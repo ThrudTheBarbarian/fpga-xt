@@ -36,13 +36,17 @@ puts ">> flow=$flow top=$top part=$part"
 # we use the error log to identify what needs porting next.
 set hdl_dir [file join [pwd] hdl]
 
-# SystemVerilog files — exclude sim-only mocks and Efinix-specific
-# vendor cores (HyperRAM PHY won't be used on Zynq).
+# SystemVerilog files — exclude sim-only mocks, Efinix-specific
+# vendor cores (HyperRAM PHY), and the v1 HyperRAM-era cache modules
+# (replaced by banked_axi_reader per sally-mem-v2.md).
 set sv_files {}
 foreach f [glob -nocomplain [file join $hdl_dir *.sv]] {
     set name [file tail $f]
     if {[string match "*_mock.sv" $name]} { continue }
     if {[string match "hyperram_*" $name]} { continue }
+    if {$name eq "bank_cache.sv"}      { continue }
+    if {$name eq "cache_line_ram.sv"}  { continue }
+    if {$name eq "mem_read_mux.sv"}    { continue }
     lappend sv_files $f
 }
 # Also pick up sally_core.sv (and any other .sv) under hdl/sally/.
@@ -71,7 +75,13 @@ foreach f [glob -nocomplain [file join [pwd] constraints *.xdc]] {
 }
 
 # ---- Synthesis ----------------------------------------------------------
-synth_design -top $top -part $part -include_dirs $include_dirs
+# Out-of-context mode: standalone synth probe doesn't need IO placement
+# (sally_synth_top has 173 top-level pads with the v2a AXI port; CLG400
+# only has 125 user IO). OOC skips IO buf inference + IO placement, so
+# the timing report measures internal logic delay only — exactly what
+# we want for an fmax probe.
+synth_design -mode out_of_context \
+             -top $top -part $part -include_dirs $include_dirs
 write_checkpoint -force [file join $out_dir post_synth.dcp]
 report_utilization -file [file join $out_dir post_synth_util.rpt]
 report_timing_summary -file [file join $out_dir post_synth_timing.rpt]
