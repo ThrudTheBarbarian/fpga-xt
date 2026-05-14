@@ -45,8 +45,12 @@ foreach f [glob -nocomplain [file join $hdl_dir *.sv]] {
     if {[string match "hyperram_*" $name]} { continue }
     lappend sv_files $f
 }
+# Also pick up sally_core.sv (and any other .sv) under hdl/sally/.
+foreach f [glob -nocomplain [file join $hdl_dir sally *.sv]] {
+    lappend sv_files $f
+}
 
-# Verilog files (sally core etc.)
+# Verilog files (sally ALU + cpu, etc.)
 set v_files [glob -nocomplain [file join $hdl_dir *.v]]
 foreach f [glob -nocomplain [file join $hdl_dir sally *.v]] {
     lappend v_files $f

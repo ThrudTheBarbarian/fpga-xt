@@ -535,6 +535,21 @@ module sally_mem #(
                             & ((is_cart_s4_window & ~bus_rd4_n_in)
                             |  (is_cart_s5_window & ~bus_rd5_n_in));
 
+    // BRAM write port: clk-only (no reset), single write-enable +
+    // address + data mux. Vivado BRAM inference requires this shape.
+    // ROM-load wins on the rare same-cycle collision with a CPU write —
+    // matches the original Verilog last-assignment-wins ordering.
+    wire        cpu_w      = rdy && !rw && !is_hwreg_page && !is_in_window_w;
+    wire        mem_we     = cpu_w || rom_we;
+    wire [15:0] mem_addr_w = rom_we ? rom_addr : addr;
+    wire  [7:0] mem_din_w  = rom_we ? rom_data : data_in;
+
+    always_ff @(posedge clk) begin
+        if (mem_we) mem[mem_addr_w] <= mem_din_w;
+    end
+
+    // Read pipeline + path-tracking flops. Async reset kept here, but
+    // away from the mem array so Vivado can still infer BRAM above.
     always_ff @(posedge clk or posedge rst) begin
         if (rst) begin
             bram_dout_q          <= 8'h00;
@@ -543,23 +558,13 @@ module sally_mem #(
             was_bank_q           <= 1'b0;
             was_mpd_window_q     <= 1'b0;
             was_cart_external_q  <= 1'b0;
-        end else begin
-            if (rdy) begin
-                // BRAM path
-                bram_dout_q          <= mem[addr];
-                hwreg_dout_q         <= hwreg_dout;
-                was_hwreg_q          <= is_hwreg_page;
-                was_bank_q           <= is_in_window_w;
-                was_mpd_window_q     <= is_mpd_window;
-                was_cart_external_q  <= cart_external_read;
-                // BRAM write — gated by rdy AND not-hwreg AND not-in-window.
-                if (!rw && !is_hwreg_page && !is_in_window_w)
-                    mem[addr] <= data_in;
-            end
-            // ROM-load write port — independent of CPU rdy. Always
-            // committed when rom_we is high. antic_regs gates by
-            // WRITE_LOCK upstream so we trust the strobe here.
-            if (rom_we) mem[rom_addr] <= rom_data;
+        end else if (rdy) begin
+            bram_dout_q          <= mem[addr];
+            hwreg_dout_q         <= hwreg_dout;
+            was_hwreg_q          <= is_hwreg_page;
+            was_bank_q           <= is_in_window_w;
+            was_mpd_window_q     <= is_mpd_window;
+            was_cart_external_q  <= cart_external_read;
         end
     end
 
