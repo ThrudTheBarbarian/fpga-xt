@@ -1593,21 +1593,10 @@ module antic_top #(
     assign rgb_pixclk_o = clk_pix;
 
     // ============================================================
-    // N6 PERIPHERAL INTERFACE — Phase 0 stubs (docs/n6-hdl-migration.md)
+    // N6 PERIPHERAL INTERFACE — Zynq build stubs
     // ============================================================
-    // Drive outputs to safe defaults. Functional drivers land in
-    // Phases 1–4:
-    // Zynq build: n6_pssi_* removed (no N6)
-    //   Phase 2: n6_fmc_*            (fmc_slave)
-    //   Phase 3: n6_ltdc_* consumers (ltdc_capture → tmds_encoder mux)
-    //   Phase 4: n6_spi_*, n6_irq_*  (spi_event_master + irq_aggregator)
-
-    // Zynq build: n6_pssi_* removed.
-    // Phase 0 hardcoded stubs). See the module instantiations later
-    // in this file under "Phase 1 — PSSI byte channel".
-
-    assign n6_fmc_data_out  = 8'h00;
-    assign n6_fmc_data_oe   = 1'b0;   // bus tri-stated until fmc_slave drives it
+    // n6_pssi_*, n6_fmc_* removed — no N6 co-processor on Zynq.
+    // SPI / LTDC / IRQ ports remain with defaults for future use.
 
     assign n6_spi_clk       = 1'b0;
     assign n6_spi_mosi      = 1'b0;
@@ -1621,7 +1610,6 @@ module antic_top #(
     // sentinel — Phases 1–4 replace it with real consumers.
     /* verilator lint_off UNUSED */
     wire _n6_inputs_alive = |{
-        n6_fmc_addr, n6_fmc_data_in, n6_fmc_cs_n, n6_fmc_oe_n, n6_fmc_we_n,
         n6_spi_miso,
         n6_ltdc_r, n6_ltdc_g, n6_ltdc_b,
         n6_ltdc_hsync, n6_ltdc_vsync, n6_ltdc_de, n6_ltdc_pixclk,
