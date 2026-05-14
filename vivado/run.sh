@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Run Vivado flows for fpga-antic-zynq on the remote 'ubuntu' Linux box.
+# Run Vivado flows for fpga-xt on the remote 'ubuntu' Linux box.
 #
 # Usage: ./run.sh [flow] [top] [part]
 #   flow ∈ {synth, impl, bit}    (default: synth)
@@ -11,9 +11,10 @@
 # vendor toolchain, run a batch-mode build, rsync artefacts back.
 #
 # Env var overrides:
-#   VIVADO_PATH=/opt/Xilinx/Vivado/2024.1   (default; adjust per install)
-#   REMOTE=ubuntu                           (SSH alias of the build box)
-#   REMOTE_DIR=fpga-antic-zynq-build        (build path on remote)
+#   VIVADO_PATH=/opt/xilinx/2025.2.1/Vivado  (default; adjust per install)
+#   REMOTE=ubuntu                            (SSH alias of the build box;
+#                                             resolves to ldaps)
+#   REMOTE_DIR=fpga-xt-build                 (build path on remote)
 
 set -euo pipefail
 
@@ -22,8 +23,8 @@ TOP="${2:-sally_synth_top}"
 PART="${3:-xc7z020-2clg400}"
 
 REMOTE="${REMOTE:-ubuntu}"
-REMOTE_DIR="${REMOTE_DIR:-fpga-antic-zynq-build}"
-VIVADO_PATH="${VIVADO_PATH:-/opt/Xilinx/Vivado/2024.1}"
+REMOTE_DIR="${REMOTE_DIR:-fpga-xt-build}"
+VIVADO_PATH="${VIVADO_PATH:-/opt/xilinx/2025.2.1/Vivado}"
 
 REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 LOCAL_BUILD="$REPO_ROOT/vivado/build"

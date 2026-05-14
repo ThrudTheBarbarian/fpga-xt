@@ -48,7 +48,7 @@ margin tells us what fmax it actually achieves.
 ## Env var overrides
 
 ```sh
-VIVADO_PATH=/opt/Xilinx/Vivado/2024.2 ./run.sh synth
+VIVADO_PATH=/opt/xilinx/2025.2.1/Vivado ./run.sh synth
 REMOTE=otherbox ./run.sh synth
 REMOTE_DIR=zynq-experiments ./run.sh synth
 ```
