@@ -1,14 +1,18 @@
 # fpga_xt_top.xdc — Phase 1 timing constraints for fpga_xt_top (Zynq-7020 -2).
 #
 # Phase 1a: all domains share a single physical clock (clk_50).
-# Constrain clk_50 at the SALLY target frequency (121 MHz / 8.22 ns)
-# to verify the integrated design closes at that speed.
+# Constrain clk_50 at the Phase 1 bring-up frequency (100 MHz / 10 ns).
+# The SALLY CPU's unpipelined ALU limits fmax to ~107 MHz on Zynq-7020 -2.
 #
 # Phase 1b: when a PLL generates separate clocks, each domain will
 # get its own create_clock constraint with set_clock_groups for CDC.
 
-# ---- Primary input clock (121 MHz target for Phase 1a) --------------------
-create_clock -name clk_50 -period 8.22 [get_ports clk_50]
+# ---- Primary input clock (100 MHz — fmax-limited by BRAM→ALU carry chain) --
+# The SALLY CPU's unpipelined ALU (14 LUT levels from BRAM read through
+# carry chain) limits fmax to ~107 MHz on Zynq-7020 -2.  Target 100 MHz
+# (10 ns) for reliable Phase 1 bring-up.  A 65816 core with pipelined
+# memory access would reclaim margin here.
+create_clock -name clk_50 -period 10.00 [get_ports clk_50]
 
 # ---- Output delays (SiI9022A HDMI transmitter) ----------------------------
 # The SiI9022A on Z-Turn SOM samples RGB + sync on pixclk rising edge.

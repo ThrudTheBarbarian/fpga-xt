@@ -1,7 +1,7 @@
 // fpga_xt_top.sv — Phase 1 top-level: SALLY + ANTIC integrated on Zynq-7020.
 //
 // Clock domains:
-//   clk_sally (121 MHz) — SALLY core, sally_mem, banked_axi_reader
+//   clk_sally (100 MHz) — SALLY core, sally_mem, banked_axi_reader
 //   clk_sys   (162 MHz) — ANTIC pipeline (DL parser, GTIA, POKEY, compositor)
 //   clk_pix   (25.175 MHz) — RGB565 pixel output to SiI9022A HDMI transmitter
 //

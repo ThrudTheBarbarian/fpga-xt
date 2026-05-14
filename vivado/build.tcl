@@ -101,7 +101,6 @@ foreach f [glob -nocomplain [file join [pwd] constraints *.xdc]] {
 # the timing report measures internal logic delay only — exactly what
 # we want for an fmax probe.
 synth_design -mode out_of_context \
-             -retiming \
              -top $top -part $part -include_dirs $include_dirs
 write_checkpoint -force [file join $out_dir post_synth.dcp]
 report_utilization -file [file join $out_dir post_synth_util.rpt]
