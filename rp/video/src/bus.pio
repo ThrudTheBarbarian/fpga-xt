@@ -1,0 +1,38 @@
+; bus.pio — FPGA<->RP bus state machines.
+;
+; Skeleton for M0-RP — the program assembles cleanly so the build
+; closes, but is not exercised yet. M3 fills in the production
+; FETCH/SET/DRAW ingest and the response-side TX SM.
+;
+; Wire format: ../../docs/wire-protocol.md § "FPGA<->RP bus".
+;
+; Target SM clock: matches the FPGA-driven rp_tx_clk (≤ 100 MHz).
+; Pin layout (per pinmap.h):
+;   GPIO  0..23 = bus_rx_payload[23:0]
+;   GPIO 24..25 = bus_rx_tag[1:0]
+;   GPIO 26     = bus_rx_clk (FPGA-driven)
+;
+; In-bound ingest: on each rising bus_rx_clk, read {tag[1:0], payload[23:0]}
+; into ISR (LSB-first), push to RX FIFO. Core 0 drains the FIFO and
+; dispatches by tag.
+
+.program bus_rx_skel
+.wrap_target
+    wait 0 gpio 26           ; wait for clk low (matched-low pattern, see rp-antic gotchas.md)
+    wait 1 gpio 26           ; rising edge — sample is now valid
+    in pins, 26              ; capture 24 payload + 2 tag = 26 bits (LSB-first)
+    push                     ; commit to RX FIFO
+.wrap
+
+; Out-bound TX: when host writes to TX FIFO, drive 16-bit response on
+; GPIO 27..42 and pulse GPIO 43 (bus_tx_clk) high for one cycle.
+;
+; Skeleton only — M3 lands the IRQ-synced production version.
+
+.program bus_tx_skel
+.wrap_target
+    pull                     ; wait for ARM-side response word (16 bits in low half)
+    out pins, 16             ; drive payload onto GPIO 27..42
+    set pins, 1 [3]          ; bus_tx_clk high
+    set pins, 0              ; bus_tx_clk low
+.wrap

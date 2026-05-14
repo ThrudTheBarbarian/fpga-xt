@@ -1,0 +1,55 @@
+{
+    "debug_cores": [
+        {
+            "name": "vio0",
+            "type": "vio",
+            "uuid": "268bbc21b7014e3481e9c8316d5c1e0c",
+            "probes": [
+                {
+                    "name": "s0_Mode",
+                    "width": 1,
+                    "init": "0x0"
+                },
+                {
+                    "name": "s1_ShiftCtrl_en",
+                    "width": 1,
+                    "init": "0x0"
+                },
+                {
+                    "name": "s2_PLL_Shift",
+                    "width": 3,
+                    "init": "0x0"
+                },
+                {
+                    "name": "p0_ShiftCtrl_en",
+                    "width": 1,
+                    "init": null
+                },
+                {
+                    "name": "p1_PLL_Shift",
+                    "width": 6,
+                    "init": null
+                },
+                {
+                    "name": "p2_Status",
+                    "width": 3,
+                    "init": null
+                },
+                {
+                    "name": "p3_Freq",
+                    "width": 29,
+                    "init": null
+                },
+                {
+                    "name": "p4_Window_Lock",
+                    "width": 11,
+                    "init": null
+                }
+            ]
+        }
+    ],
+    "session": {
+        "debug_widget": [],
+        "wizard": {}
+    }
+}

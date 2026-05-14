@@ -1,0 +1,94 @@
+# build.tcl — non-project-mode Vivado build for fpga-antic on Zynq-7020.
+#
+# Invoked by vivado/run.sh:
+#   vivado -mode batch -source build.tcl -tclargs <flow> <top> <part>
+#
+# Flow ∈ {synth, impl, bit}:
+#   synth — run synthesis only; write post-synth checkpoint + utilisation
+#   impl  — synth, then opt/place/route; write post-route checkpoint
+#   bit   — full flow including bitstream generation
+#
+# Top module: Phase 0 default is sally_synth_top (SALLY stack only —
+# probes fmax in isolation, no antic_top / no Atari I/O / no peripheral
+# pads). Later phases extend the top to include antic_top and the new
+# Zynq-specific Atari-I/O wrapper.
+#
+# Part: xc7z020-2clg400 (Z-Turn full SOM). Override via -tclargs.
+
+if {[llength $argv] < 3} {
+    puts "Usage: vivado -mode batch -source build.tcl -tclargs <flow> <top> <part>"
+    exit 1
+}
+
+set flow [lindex $argv 0]
+set top  [lindex $argv 1]
+set part [lindex $argv 2]
+
+set out_dir [file join [pwd] build]
+file mkdir $out_dir
+
+puts ">> flow=$flow top=$top part=$part"
+
+# ---- Read sources -------------------------------------------------------
+# Phase 0 source-list strategy: pull in every .sv from hdl/ that isn't a
+# sim-only mock or an Efinix-specific vendor IP (HyperRAM PHY, etc.).
+# Synthesis will complain about anything that doesn't elaborate cleanly;
+# we use the error log to identify what needs porting next.
+set hdl_dir [file join [pwd] hdl]
+
+# SystemVerilog files — exclude sim-only mocks and Efinix-specific
+# vendor cores (HyperRAM PHY won't be used on Zynq).
+set sv_files {}
+foreach f [glob -nocomplain [file join $hdl_dir *.sv]] {
+    set name [file tail $f]
+    if {[string match "*_mock.sv" $name]} { continue }
+    if {[string match "hyperram_*" $name]} { continue }
+    lappend sv_files $f
+}
+
+# Verilog files (sally core etc.)
+set v_files [glob -nocomplain [file join $hdl_dir *.v]]
+foreach f [glob -nocomplain [file join $hdl_dir sally *.v]] {
+    lappend v_files $f
+}
+
+# Includes (bus_opcodes.vh)
+set include_dirs [list $hdl_dir]
+
+puts ">> reading [llength $sv_files] .sv files, [llength $v_files] .v files"
+
+foreach f $sv_files { read_verilog -sv $f }
+foreach f $v_files  { read_verilog     $f }
+
+# Constraints — XDC files in vivado/constraints/. Optional in Phase 0.
+foreach f [glob -nocomplain [file join [pwd] constraints *.xdc]] {
+    puts ">> reading constraints: $f"
+    read_xdc $f
+}
+
+# ---- Synthesis ----------------------------------------------------------
+synth_design -top $top -part $part -include_dirs $include_dirs
+write_checkpoint -force [file join $out_dir post_synth.dcp]
+report_utilization -file [file join $out_dir post_synth_util.rpt]
+report_timing_summary -file [file join $out_dir post_synth_timing.rpt]
+puts ">> synth complete"
+
+# ---- Implementation -----------------------------------------------------
+if {$flow eq "impl" || $flow eq "bit"} {
+    opt_design
+    place_design
+    route_design
+    write_checkpoint -force [file join $out_dir post_route.dcp]
+    report_utilization -file [file join $out_dir post_route_util.rpt]
+    report_timing_summary -file [file join $out_dir post_route_timing.rpt]
+    report_drc -file [file join $out_dir post_route_drc.rpt]
+    puts ">> impl complete"
+}
+
+# ---- Bitstream ----------------------------------------------------------
+if {$flow eq "bit"} {
+    write_bitstream -force [file join $out_dir $top.bit]
+    puts ">> bitstream written: $out_dir/$top.bit"
+}
+
+puts ">> done"

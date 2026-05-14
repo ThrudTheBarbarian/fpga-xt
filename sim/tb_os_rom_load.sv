@@ -1,0 +1,301 @@
+// tb_os_rom_load.sv — M24-6 OS ROM load path.
+//
+// Wires antic_regs + sally_mem and exercises the chiplet-ext register
+// set $D48C-$D48F. Verifies:
+//
+//   A. Set address ($D48C/$D48D), stream a byte through $D48E,
+//      verify the BRAM at the target address holds the byte AND
+//      $D48C/$D48D auto-incremented.
+//   B. Stream multiple bytes — auto-increment cycles correctly.
+//   C. WRITE_LOCK ($D48F bit 0) blocks further loads — write attempt
+//      after locking does NOT update BRAM.
+//   D. ROM-load lands in a region the CPU normally treats as ROM
+//      ($C000-$CFFF, $D800-$FFFF). Verify a CPU-side read after the
+//      load returns the loaded byte.
+//
+// Production note: real ROM contents come from a `$readmemh`'d
+// `os_rom.hex` baked into the bitstream at synth time. This test
+// uses the load-port to overwrite addresses regardless of initial
+// contents.
+
+`timescale 1ns / 1ps
+
+module tb_os_rom_load;
+
+    logic clk = 1'b0;
+    always #5 clk = ~clk;
+    logic rst = 1'b1;
+
+    // ---- antic_regs <-> sally_mem wires ---------------------------
+    logic [15:0] cpu_addr  = 16'h0000;
+    logic [7:0]  cpu_wdata = 8'h00;
+    logic        cpu_rw    = 1'b1;
+    wire  [7:0]  cpu_rdata;
+
+    wire        rom_we;
+    wire [15:0] rom_addr;
+    wire [7:0]  rom_data;
+
+    // hwreg interface — sally_mem ↔ antic_regs.
+    wire [15:0] hwreg_addr;
+    wire        hwreg_we_w;
+    wire [7:0]  hwreg_din_w;
+    wire [7:0]  antic_rdata_w;
+
+    // antic_regs read mux for the hwreg port (bus_addr → rdata).
+    // sally_mem provides hwreg_addr (the live CPU address) for the
+    // read path.
+    antic_regs u_antic_regs (
+        .clk                  (clk),
+        .rst                  (rst),
+        .we                   (hwreg_we_w),
+        .waddr                (hwreg_addr[7:0]),
+        .wdata                (hwreg_din_w),
+        .raddr                (hwreg_addr[7:0]),
+        .rdata                (antic_rdata_w),
+        .wsync_pending        (),
+        .nmires_strobe        (),
+        .pal_write_strobe     (),
+        .pal_r_q              (),
+        .pal_g_q              (),
+        .pal_b_q              (),
+        .pal_idx_q            (),
+        .dmactl_q             (),
+        .chactl_q             (),
+        .dlistl_q             (),
+        .dlisth_q             (),
+        .hscrol_q             (),
+        .vscrol_q             (),
+        .pmbase_q             (),
+        .chbase_q             (),
+        .nmien_q              (),
+        .mode_snoop_q         (),
+        .clock_mult_q         (),
+        .output_mode_q        (),
+        .antic_code_bank_q    (),
+        .antic_data_bank_q    (),
+        .antic_regc_bank_lo_q (),
+        .antic_regc_bank_hi_q (),
+        .os_rom_addr_q        (rom_addr),
+        .os_rom_data_q        (rom_data),
+        .os_rom_we            (rom_we),
+        .os_rom_locked_q      (),
+        .vcount_in            (8'h00),
+        .nmist_in             (8'h00),
+        .serial_clock_mult_in (8'd12)
+    );
+
+    // HyperRAM mock for sally_mem's bank_cache (unused in this test).
+    // Burst-aware (Step 5).
+    wire [22:0] hr_addr;
+    wire [9:0]  hr_burst_len;
+    wire        hr_we;
+    wire [7:0]  hr_wdata;
+    wire        hr_req;
+    logic [7:0] hr_rdata  = 8'h00;
+    logic       hr_rvalid = 1'b0;
+    logic       hr_done   = 1'b0;
+    logic [7:0] hr_mem [0:1048575];
+
+    logic [22:0] burst_addr_q   = '0;
+    logic [10:0] burst_remain_q = '0;
+    logic        burst_we_q     = 1'b0;
+    logic        burst_active_q = 1'b0;
+
+    always_ff @(posedge clk) begin
+        hr_rvalid <= 1'b0;
+        hr_done   <= 1'b0;
+        if (hr_req && !burst_active_q) begin
+            if (hr_we) hr_mem[hr_addr[19:0]] <= hr_wdata;
+            else begin
+                hr_rdata  <= hr_mem[hr_addr[19:0]];
+                hr_rvalid <= 1'b1;
+            end
+            if (hr_burst_len == 10'h000) hr_done <= 1'b1;
+            else begin
+                burst_active_q <= 1'b1;
+                burst_we_q     <= hr_we;
+                burst_addr_q   <= hr_addr + 1'b1;
+                burst_remain_q <= {1'b0, hr_burst_len};
+            end
+        end else if (burst_active_q) begin
+            if (burst_we_q) hr_mem[burst_addr_q[19:0]] <= hr_wdata;
+            else begin
+                hr_rdata  <= hr_mem[burst_addr_q[19:0]];
+                hr_rvalid <= 1'b1;
+            end
+            burst_addr_q <= burst_addr_q + 1'b1;
+            if (burst_remain_q == 11'h001) begin
+                hr_done        <= 1'b1;
+                burst_active_q <= 1'b0;
+            end else begin
+                burst_remain_q <= burst_remain_q - 1'b1;
+            end
+        end
+    end
+
+    wire mem_busy;
+
+    sally_mem u_mem (
+        .clk        (clk),
+        .rst        (rst),
+        .addr       (cpu_addr),
+        .data_in    (cpu_wdata),
+        .rw         (cpu_rw),
+        .data_out   (cpu_rdata),
+        .rdy        (1'b1),
+        .busy       (mem_busy),
+        .hwreg_addr (hwreg_addr),
+        .hwreg_we   (hwreg_we_w),
+        .hwreg_din  (hwreg_din_w),
+        .hwreg_dout (antic_rdata_w),
+        .cpu_code_bank_q    (),
+        .cpu_data_bank_q    (),
+        .cpu_regc_bank_lo_q (),
+        .cpu_regc_bank_hi_q (),
+        .antic_code_bank    (8'h00),
+        .antic_data_bank    (8'h00),
+        .antic_regc_bank_lo (8'h00),
+        .antic_regc_bank_hi (8'h00),
+        .view_is_antic      (1'b0),
+        .hr_addr      (hr_addr),
+        .hr_burst_len (hr_burst_len),
+        .hr_we        (hr_we),
+        .hr_wdata     (hr_wdata),
+        .hr_req       (hr_req),
+        .hr_rdata     (hr_rdata),
+        .hr_rvalid    (hr_rvalid),
+        .hr_done      (hr_done),
+        .rom_addr    (rom_addr),
+        .rom_data    (rom_data),
+        .rom_we      (rom_we),
+        .attr_lookup_idx  (),
+        .attr_lookup_data (4'h0)
+    );
+
+    int fail_count = 0;
+    task automatic expect_eq(input string label,
+                             input [31:0] got, input [31:0] want);
+        if (got !== want) begin
+            $display("FAIL %s: got=$%0h expected=$%0h", label, got, want);
+            fail_count++;
+        end
+    endtask
+
+    // CPU-side write to a hardware-register-page address. After the
+    // task returns we've advanced past the strobe → mem write → idle
+    // sequence, so subsequent reads of u_mem.mem see the new byte.
+    task automatic do_hwreg_write(input [15:0] a, input [7:0] v);
+        @(negedge clk);
+        cpu_addr  = a;
+        cpu_wdata = v;
+        cpu_rw    = 1'b0;
+        @(posedge clk);            // antic_regs latches; os_rom_we <= 1
+        @(negedge clk);
+        cpu_addr  = 16'h0000;
+        cpu_wdata = 8'h00;
+        cpu_rw    = 1'b1;
+        @(posedge clk);            // sally_mem sees rom_we=1 → mem[rom_addr] <= rom_data
+        @(negedge clk);            // NBA from prior posedge has committed; mem updated
+    endtask
+
+    // CPU-side read of an arbitrary address; samples cpu_rdata two
+    // cycles after presenting the addr (synchronous-mem contract).
+    task automatic do_read(input [15:0] a, output [7:0] v);
+        @(negedge clk);
+        cpu_addr = a;
+        cpu_rw   = 1'b1;
+        @(posedge clk);
+        @(negedge clk);
+        v = cpu_rdata;
+    endtask
+
+    initial begin
+        $display("=== M24-6 os_rom_load ===");
+
+        repeat (4) @(posedge clk);
+        rst = 1'b0;
+        @(posedge clk);
+
+        // ===== Phase A — single-byte load + auto-increment =============
+        $display("[A] single-byte load + auto-increment");
+        // Set target address $C100 → write $D48C=$00, $D48D=$C1
+        do_hwreg_write(16'hD48C, 8'h00);
+        do_hwreg_write(16'hD48D, 8'hC1);
+        // Stream a byte
+        do_hwreg_write(16'hD48E, 8'hAB);
+        // Verify BRAM at $C100
+        expect_eq("A.bram[$C100]", u_mem.mem[16'hC100], 8'hAB);
+        // Verify auto-increment: address now $C101
+        expect_eq("A.os_rom_addr", rom_addr, 16'hC101);
+
+        // ===== Phase B — multi-byte stream =============================
+        // Stream 4 more bytes. Target advances each time.
+        $display("[B] multi-byte stream");
+        do_hwreg_write(16'hD48E, 8'h11);   // → $C101
+        do_hwreg_write(16'hD48E, 8'h22);   // → $C102
+        do_hwreg_write(16'hD48E, 8'h33);   // → $C103
+        do_hwreg_write(16'hD48E, 8'h44);   // → $C104
+        expect_eq("B.bram[$C101]", u_mem.mem[16'hC101], 8'h11);
+        expect_eq("B.bram[$C102]", u_mem.mem[16'hC102], 8'h22);
+        expect_eq("B.bram[$C103]", u_mem.mem[16'hC103], 8'h33);
+        expect_eq("B.bram[$C104]", u_mem.mem[16'hC104], 8'h44);
+        expect_eq("B.os_rom_addr final", rom_addr, 16'hC105);
+
+        // ===== Phase C — WRITE_LOCK blocks further loads ===============
+        $display("[C] WRITE_LOCK blocks further loads");
+        // Lock by writing 1 to $D48F bit 0.
+        do_hwreg_write(16'hD48F, 8'h01);
+        // Try a load — should be ignored. Address shouldn't auto-incr.
+        do_hwreg_write(16'hD48E, 8'h99);
+        // mem[$C105] is uninitialised (= X) but it must NOT equal $99
+        // — that's the headline "lock blocked the write" check.
+        if (u_mem.mem[16'hC105] === 8'h99) begin
+            $display("FAIL C.bram[$C105]: locked write committed ($99 leaked through)");
+            fail_count++;
+        end
+        expect_eq("C.os_rom_addr unchanged after locked write", rom_addr, 16'hC105);
+
+        // Unlock and confirm the path resumes.
+        do_hwreg_write(16'hD48F, 8'h00);
+        do_hwreg_write(16'hD48E, 8'h99);
+        expect_eq("C.bram[$C105] after unlock", u_mem.mem[16'hC105], 8'h99);
+
+        // ===== Phase D — CPU-side readback through normal path =========
+        // After the load, the CPU should read the loaded byte through
+        // the normal sally_mem read path (= the BRAM region for
+        // $C000-$CFFF is now populated).
+        $display("[D] CPU-side readback through normal path");
+        begin
+            logic [7:0] v;
+            do_read(16'hC100, v);
+            expect_eq("D.cpu_read $C100", v, 8'hAB);
+            do_read(16'hC102, v);
+            expect_eq("D.cpu_read $C102", v, 8'h22);
+        end
+
+        // ===== Phase E — load into the high ROM region $D800-$FFFF =====
+        $display("[E] load into $D800-$FFFF region");
+        do_hwreg_write(16'hD48C, 8'hFC);   // addr lo = $FC
+        do_hwreg_write(16'hD48D, 8'hFF);   // addr hi = $FF → $FFFC
+        do_hwreg_write(16'hD48E, 8'h00);   // reset vec lo
+        do_hwreg_write(16'hD48E, 8'h02);   // reset vec hi
+        expect_eq("E.bram[$FFFC]", u_mem.mem[16'hFFFC], 8'h00);
+        expect_eq("E.bram[$FFFD]", u_mem.mem[16'hFFFD], 8'h02);
+
+        if (fail_count == 0) begin
+            $display("*** OS_ROM_LOAD OK *** stream + auto-incr + lock + cpu-readback");
+            $finish;
+        end else begin
+            $display("*** OS_ROM_LOAD FAIL *** %0d failures", fail_count);
+            $fatal(1);
+        end
+    end
+
+    initial begin
+        #1_000_000;
+        $display("FAIL: tb_os_rom_load watchdog");
+        $fatal(1);
+    end
+
+endmodule

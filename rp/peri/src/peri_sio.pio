@@ -1,0 +1,50 @@
+; peri_sio.pio — SIO bus UART PIO state machine.
+;
+; Bit-level serial framing on DATAIN (RX) + DATAOUT (TX). Standard
+; SIO is async UART at 19.2 kbaud (start bit + 8 data + stop bit).
+; Fast accessories (Black Box / MIO / SIO2PC at 38.4-127 kbaud,
+; modern USB-SIO bridges at 250+ kbaud) push the rate up; the C side
+; (peri_sio.c) configures the sm clock divider per command.
+;
+; Production implementation deferred — calibration against a real
+; SIO peripheral on rp-XT board needed to nail down the exact
+; sample-point + stop-bit-end timing tolerances. Stub keeps the
+; build green.
+
+.program peri_sio_rx
+
+.wrap_target
+    nop
+.wrap
+
+.program peri_sio_tx
+
+.wrap_target
+    nop
+.wrap
+
+% c-sdk {
+#include "hardware/pio.h"
+#include "hardware/gpio.h"
+
+static inline void peri_sio_rx_program_init(PIO pio, uint sm,
+                                             uint offset, uint datain_pin) {
+    pio_sm_config c = peri_sio_rx_program_get_default_config(offset);
+    sm_config_set_in_pins(&c, datain_pin);
+    pio_gpio_init(pio, datain_pin);
+    pio_sm_set_consecutive_pindirs(pio, sm, datain_pin, 1, /* is_out */ false);
+    pio_sm_init(pio, sm, offset, &c);
+    pio_sm_set_enabled(pio, sm, true);
+}
+
+static inline void peri_sio_tx_program_init(PIO pio, uint sm,
+                                             uint offset, uint dataout_pin) {
+    pio_sm_config c = peri_sio_tx_program_get_default_config(offset);
+    sm_config_set_out_pins(&c, dataout_pin, 1);
+    sm_config_set_set_pins(&c, dataout_pin, 1);
+    pio_gpio_init(pio, dataout_pin);
+    pio_sm_set_consecutive_pindirs(pio, sm, dataout_pin, 1, /* is_out */ true);
+    pio_sm_init(pio, sm, offset, &c);
+    pio_sm_set_enabled(pio, sm, true);
+}
+%}

@@ -1,0 +1,316 @@
+Efinity Synthesis report for project hyperram
+Version: 2025.2.288.4.15
+Generated at: May 07, 2026 11:39:37
+Copyright (C) 2013 - 2025  All rights reserved.
+
+Top-level Entity Name : hyperram
+
+family : Topaz
+device : Tz50F256
+project : hyperram
+root : hyperram
+I,include : /home/simon/src/efinity/project/ip_project/ip/hyperram
+insert-ios : 0
+insert-gclk : 0
+max-carry-cascade : 320
+max-dsp-cascade : 16
+max_mult : -1
+max_ram : -1
+mode : speed
+num_srl : -1
+output-dir : /home/simon/src/efinity/project/ip_project/ip/hyperram/outflow
+project : hyperram
+root : hyperram
+write-postmap-module : /home/simon/src/efinity/project/ip_project/ip/hyperram/outflow/hyperram.ooc.vdb
+
+File List:
+
+/home/simon/src/efinity/project/ip_project/ip/hyperram/hyperram.sv
+
+### ### Report Section Start ### ###
+
+"MEM|SYN-0677" : ... Memory 'ram' is not initialized, assuming empty initial contents. (/home/simon/src/efinity/project/ip_project/ip/hyperram/hyperram.sv:6041)
+"MEM|SYN-0677" : ... Memory 'ram' is not initialized, assuming empty initial contents. (/home/simon/src/efinity/project/ip_project/ip/hyperram/hyperram.sv:6041)
+"MEM|SYN-0677" : ... Memory 'ram' is not initialized, assuming empty initial contents. (/home/simon/src/efinity/project/ip_project/ip/hyperram/hyperram.sv:6041)
+"MEM|SYN-0677" : ... Memory 'ram' is not initialized, assuming empty initial contents. (/home/simon/src/efinity/project/ip_project/ip/hyperram/hyperram.sv:6041)
+
+### ### EFX_FF CE enables (begin) ### ### ###
+Total number of enable signals: 65
+Total number of FFs with enable signals: 215
+CE signal <ceg_net2>, number of controlling flip flops: 5
+CE signal <u_hbram_top/hard_cal_block.hbram_cal_axi_top_inst/equal_30/n9>, number of controlling flip flops: 1
+CE signal <ceg_net16>, number of controlling flip flops: 3
+CE signal <u_hbram_top/hard_cal_block.hbram_cal_axi_top_inst/calibration_block.hbram_cal_top_inst/hbram_cal_ctrl_inst/i_req_latch>, number of controlling flip flops: 1
+CE signal <u_hbram_top/hard_cal_block.hbram_cal_axi_top_inst/calibration_block.hbram_cal_top_inst/hbram_cal_ctrl_inst/n1182>, number of controlling flip flops: 16
+CE signal <ceg_net20>, number of controlling flip flops: 10
+CE signal <ceg_net23>, number of controlling flip flops: 1
+CE signal <ceg_net25>, number of controlling flip flops: 24
+CE signal <ceg_net28>, number of controlling flip flops: 1
+CE signal <ceg_net30>, number of controlling flip flops: 1
+CE signal <ceg_net33>, number of controlling flip flops: 1
+CE signal <u_hbram_top/hard_cal_block.hbram_cal_axi_top_inst/calibration_block.hbram_cal_top_inst/hbram_cal_ctrl_inst/fifo_rden_block.genblk1.rd_data_fifo/wr_en_int>, number of controlling flip flops: 5
+CE signal <ceg_net35>, number of controlling flip flops: 1
+CE signal <ceg_net37>, number of controlling flip flops: 1
+CE signal <ceg_net40>, number of controlling flip flops: 1
+CE signal <ceg_net44>, number of controlling flip flops: 5
+CE signal <u_hbram_top/hard_cal_block.hbram_cal_axi_top_inst/calibration_block.hbram_cal_top_inst/hbram_cal_ctrl_inst/state[6]>, number of controlling flip flops: 1
+CE signal <ceg_net47>, number of controlling flip flops: 1
+CE signal <ceg_net119>, number of controlling flip flops: 8
+CE signal <ceg_net52>, number of controlling flip flops: 1
+CE signal <ceg_net55>, number of controlling flip flops: 6
+CE signal <ceg_net58>, number of controlling flip flops: 1
+CE signal <ceg_net62>, number of controlling flip flops: 6
+CE signal <ceg_net65>, number of controlling flip flops: 3
+CE signal <ceg_net69>, number of controlling flip flops: 16
+CE signal <ceg_net165>, number of controlling flip flops: 8
+CE signal <ceg_net74>, number of controlling flip flops: 5
+CE signal <u_hbram_top/hard_cal_block.hbram_cal_axi_top_inst/calibration_block.hbram_cal_top_inst/pll_mode_block.genblk1.hbram_cal_slv_inst/last_check>, number of controlling flip flops: 1
+CE signal <ceg_net76>, number of controlling flip flops: 7
+CE signal <ceg_net78>, number of controlling flip flops: 3
+CE signal <ceg_net80>, number of controlling flip flops: 1
+CE signal <u_hbram_top/hard_cal_block.hbram_cal_axi_top_inst/calibration_block.hbram_cal_top_inst/cal_rwen>, number of controlling flip flops: 7
+CE signal <ceg_net86>, number of controlling flip flops: 1
+CE signal <ceg_net88>, number of controlling flip flops: 5
+CE signal <ceg_net90>, number of controlling flip flops: 1
+CE signal <ceg_net92>, number of controlling flip flops: 4
+CE signal <ceg_net95>, number of controlling flip flops: 1
+CE signal <ceg_net97>, number of controlling flip flops: 1
+CE signal <ceg_net99>, number of controlling flip flops: 1
+CE signal <ceg_net101>, number of controlling flip flops: 1
+CE signal <ceg_net103>, number of controlling flip flops: 1
+CE signal <ceg_net105>, number of controlling flip flops: 1
+CE signal <ceg_net107>, number of controlling flip flops: 1
+CE signal <ceg_net109>, number of controlling flip flops: 1
+CE signal <ceg_net113>, number of controlling flip flops: 3
+CE signal <ceg_net171>, number of controlling flip flops: 3
+CE signal <ceg_net131>, number of controlling flip flops: 1
+CE signal <ceg_net133>, number of controlling flip flops: 1
+CE signal <ceg_net135>, number of controlling flip flops: 1
+CE signal <ceg_net137>, number of controlling flip flops: 1
+CE signal <ceg_net139>, number of controlling flip flops: 1
+CE signal <ceg_net141>, number of controlling flip flops: 1
+CE signal <ceg_net143>, number of controlling flip flops: 1
+CE signal <ceg_net145>, number of controlling flip flops: 1
+CE signal <ceg_net147>, number of controlling flip flops: 1
+CE signal <ceg_net151>, number of controlling flip flops: 3
+CE signal <ceg_net153>, number of controlling flip flops: 5
+CE signal <ceg_net156>, number of controlling flip flops: 4
+CE signal <u_hbram_top/hard_cal_block.hbram_cal_axi_top_inst/calibration_block.hbram_cal_top_inst/pll_mode_block.genblk1.hbram_cal_mst_inst/n71>, number of controlling flip flops: 1
+CE signal <u_hbram_top/hard_cal_block.hbram_cal_axi_top_inst/interface_block2.hbram_native_if_inst/w_data_inst/wr_en_int>, number of controlling flip flops: 5
+CE signal <u_hbram_top/hard_cal_block.hbram_cal_axi_top_inst/interface_block2.hbram_native_if_inst/n520>, number of controlling flip flops: 1
+CE signal <ceg_net160>, number of controlling flip flops: 1
+CE signal <ceg_net163>, number of controlling flip flops: 1
+CE signal <u_hbram_top/hard_cal_block.hbram_cal_axi_top_inst/interface_block2.hbram_native_if_inst/r_data_inst/wr_en_int>, number of controlling flip flops: 5
+CE signal <u_hbram_top/hard_cal_block.hbram_cal_axi_top_inst/interface_block2.hbram_native_if_inst/user2ram_fifo/wr_en_int>, number of controlling flip flops: 3
+### ### EFX_FF CE enables (end) ### ### ###
+
+### ### EFX_FF SR set/reset (begin) ### ### ###
+Total number of set/reset signals: 12
+Total number of FFs with set/reset signals: 522
+SR signal <hbc_rst_n>, number of controlling flip flops: 295
+SR signal <rst>, number of controlling flip flops: 22
+SR signal <u_hbram_top/hard_cal_block.hbram_cal_axi_top_inst/calibration_block.hbram_cal_top_inst/hbram_cal_ctrl_inst/fifo_rden_block.genblk1.rd_data_fifo/wr_rst_int>, number of controlling flip flops: 25
+SR signal <u_hbram_top/hard_cal_block.hbram_cal_axi_top_inst/calibration_block.hbram_cal_top_inst/hbram_cal_ctrl_inst/fifo_rden_block.genblk1.rd_data_fifo/rd_rst_int>, number of controlling flip flops: 26
+SR signal <u_hbram_top/hard_cal_block.hbram_cal_axi_top_inst/ramcal_rst_w>, number of controlling flip flops: 35
+SR signal <u_hbram_top/hard_cal_block.hbram_cal_axi_top_inst/interface_block2.hbram_native_if_inst/w_data_inst/rd_rst_int>, number of controlling flip flops: 27
+SR signal <u_hbram_top/hard_cal_block.hbram_cal_axi_top_inst/interface_block2.hbram_native_if_inst/w_data_inst/wr_rst_int>, number of controlling flip flops: 25
+SR signal <u_hbram_top/hard_cal_block.hbram_cal_axi_top_inst/io_axi_rst_w>, number of controlling flip flops: 4
+SR signal <u_hbram_top/hard_cal_block.hbram_cal_axi_top_inst/interface_block2.hbram_native_if_inst/r_data_inst/wr_rst_int>, number of controlling flip flops: 17
+SR signal <u_hbram_top/hard_cal_block.hbram_cal_axi_top_inst/interface_block2.hbram_native_if_inst/r_data_inst/rd_rst_int>, number of controlling flip flops: 16
+SR signal <u_hbram_top/hard_cal_block.hbram_cal_axi_top_inst/interface_block2.hbram_native_if_inst/user2ram_fifo/rd_rst_int>, number of controlling flip flops: 15
+SR signal <u_hbram_top/hard_cal_block.hbram_cal_axi_top_inst/interface_block2.hbram_native_if_inst/user2ram_fifo/wr_rst_int>, number of controlling flip flops: 15
+### ### EFX_FF SR set/reset (end) ### ### ###
+
+### ### Memory Trimming Report (begin) ### ### ### 
+Memory instance 'u_hbram_top/hard_cal_block.hbram_cal_axi_top_inst/interface_block2.hbram_native_if_inst/w_data_inst/xefx_fifo_ram/ram__D$1' WE[1] tied off to 0.
+Memory instance 'u_hbram_top/hard_cal_block.hbram_cal_axi_top_inst/interface_block2.hbram_native_if_inst/r_data_inst/xefx_fifo_ram/ram__D$b1' WE[1] tied off to 0.
+Memory instance 'u_hbram_top/hard_cal_block.hbram_cal_axi_top_inst/interface_block2.hbram_native_if_inst/r_data_inst/xefx_fifo_ram/ram__D$b2' WE[1] tied off to 0.
+Memory instance 'u_hbram_top/hard_cal_block.hbram_cal_axi_top_inst/interface_block2.hbram_native_if_inst/r_data_inst/xefx_fifo_ram/ram__D$12' WE[1] tied off to 0.
+Memory instance 'u_hbram_top/hard_cal_block.hbram_cal_axi_top_inst/interface_block2.hbram_native_if_inst/r_data_inst/xefx_fifo_ram/ram__D$21' WE[1] tied off to 0.
+### ### Memory Trimming Report (end) ### ### ### 
+
+### ### Sequential Elements Trimming Report (begin) ### ### ### 
+FF|OPT : Flip-flop optimization by equivalence checking
+@ "/home/simon/src/efinity/project/ip_project/ip/hyperram/hyperram.sv (3519)" removed instance : u_hbram_top/hard_cal_block.hbram_cal_axi_top_inst/calibration_block.hbram_cal_top_inst/hbram_cal_ctrl_inst/i470
+@ "/home/simon/src/efinity/project/ip_project/ip/hyperram/hyperram.sv (3519)" representative instance : u_hbram_top/hard_cal_block.hbram_cal_axi_top_inst/calibration_block.hbram_cal_top_inst/hbram_cal_ctrl_inst/i348
+FF|OPT : Flip-flop optimization by equivalence checking
+@ "/home/simon/src/efinity/project/ip_project/ip/hyperram/hyperram.sv (3519)" removed instance : u_hbram_top/hard_cal_block.hbram_cal_axi_top_inst/calibration_block.hbram_cal_top_inst/hbram_cal_ctrl_inst/i352
+@ "/home/simon/src/efinity/project/ip_project/ip/hyperram/hyperram.sv (3519)" representative instance : u_hbram_top/hard_cal_block.hbram_cal_axi_top_inst/calibration_block.hbram_cal_top_inst/hbram_cal_ctrl_inst/i348
+FF|OPT : Flip-flop optimization by equivalence checking
+@ "/home/simon/src/efinity/project/ip_project/ip/hyperram/hyperram.sv (3519)" removed instance : u_hbram_top/hard_cal_block.hbram_cal_axi_top_inst/calibration_block.hbram_cal_top_inst/hbram_cal_ctrl_inst/i579
+@ "/home/simon/src/efinity/project/ip_project/ip/hyperram/hyperram.sv (3519)" representative instance : u_hbram_top/hard_cal_block.hbram_cal_axi_top_inst/calibration_block.hbram_cal_top_inst/hbram_cal_ctrl_inst/dff_313/i5
+FF|OPT : Flip-flop optimization by equivalence checking
+@ "/home/simon/src/efinity/project/ip_project/ip/hyperram/hyperram.sv (3519)" removed instance : u_hbram_top/hard_cal_block.hbram_cal_axi_top_inst/calibration_block.hbram_cal_top_inst/hbram_cal_ctrl_inst/dff_276/i3
+@ "/home/simon/src/efinity/project/ip_project/ip/hyperram/hyperram.sv (3519)" representative instance : u_hbram_top/hard_cal_block.hbram_cal_axi_top_inst/calibration_block.hbram_cal_top_inst/hbram_cal_ctrl_inst/dff_276/i2
+FF|OPT : Flip-flop optimization by equivalence checking
+@ "/home/simon/src/efinity/project/ip_project/ip/hyperram/hyperram.sv (3519)" removed instance : u_hbram_top/hard_cal_block.hbram_cal_axi_top_inst/calibration_block.hbram_cal_top_inst/hbram_cal_ctrl_inst/dff_276/i4
+@ "/home/simon/src/efinity/project/ip_project/ip/hyperram/hyperram.sv (3519)" representative instance : u_hbram_top/hard_cal_block.hbram_cal_axi_top_inst/calibration_block.hbram_cal_top_inst/hbram_cal_ctrl_inst/dff_276/i2
+FF|OPT : Flip-flop optimization by equivalence checking
+@ "/home/simon/src/efinity/project/ip_project/ip/hyperram/hyperram.sv (3519)" removed instance : u_hbram_top/hard_cal_block.hbram_cal_axi_top_inst/calibration_block.hbram_cal_top_inst/hbram_cal_ctrl_inst/dff_276/i7
+@ "/home/simon/src/efinity/project/ip_project/ip/hyperram/hyperram.sv (3519)" representative instance : u_hbram_top/hard_cal_block.hbram_cal_axi_top_inst/calibration_block.hbram_cal_top_inst/hbram_cal_ctrl_inst/dff_276/i6
+FF|OPT : Flip-flop optimization by equivalence checking
+@ "/home/simon/src/efinity/project/ip_project/ip/hyperram/hyperram.sv (3519)" removed instance : u_hbram_top/hard_cal_block.hbram_cal_axi_top_inst/calibration_block.hbram_cal_top_inst/hbram_cal_ctrl_inst/dff_276/i8
+@ "/home/simon/src/efinity/project/ip_project/ip/hyperram/hyperram.sv (3519)" representative instance : u_hbram_top/hard_cal_block.hbram_cal_axi_top_inst/calibration_block.hbram_cal_top_inst/hbram_cal_ctrl_inst/dff_276/i2
+FF|OPT : Flip-flop optimization by equivalence checking
+@ "/home/simon/src/efinity/project/ip_project/ip/hyperram/hyperram.sv (3519)" removed instance : u_hbram_top/hard_cal_block.hbram_cal_axi_top_inst/calibration_block.hbram_cal_top_inst/hbram_cal_ctrl_inst/dff_277/i3
+@ "/home/simon/src/efinity/project/ip_project/ip/hyperram/hyperram.sv (3519)" representative instance : u_hbram_top/hard_cal_block.hbram_cal_axi_top_inst/calibration_block.hbram_cal_top_inst/hbram_cal_ctrl_inst/dff_277/i2
+FF|OPT : Flip-flop optimization by equivalence checking
+@ "/home/simon/src/efinity/project/ip_project/ip/hyperram/hyperram.sv (3519)" removed instance : u_hbram_top/hard_cal_block.hbram_cal_axi_top_inst/calibration_block.hbram_cal_top_inst/hbram_cal_ctrl_inst/dff_277/i4
+@ "/home/simon/src/efinity/project/ip_project/ip/hyperram/hyperram.sv (3519)" representative instance : u_hbram_top/hard_cal_block.hbram_cal_axi_top_inst/calibration_block.hbram_cal_top_inst/hbram_cal_ctrl_inst/dff_277/i2
+FF|OPT : Flip-flop optimization by equivalence checking
+@ "/home/simon/src/efinity/project/ip_project/ip/hyperram/hyperram.sv (3519)" removed instance : u_hbram_top/hard_cal_block.hbram_cal_axi_top_inst/calibration_block.hbram_cal_top_inst/hbram_cal_ctrl_inst/dff_277/i6
+@ "/home/simon/src/efinity/project/ip_project/ip/hyperram/hyperram.sv (3519)" representative instance : u_hbram_top/hard_cal_block.hbram_cal_axi_top_inst/calibration_block.hbram_cal_top_inst/hbram_cal_ctrl_inst/dff_277/i2
+FF|OPT : Flip-flop optimization by equivalence checking
+@ "/home/simon/src/efinity/project/ip_project/ip/hyperram/hyperram.sv (3519)" removed instance : u_hbram_top/hard_cal_block.hbram_cal_axi_top_inst/calibration_block.hbram_cal_top_inst/hbram_cal_ctrl_inst/dff_277/i7
+@ "/home/simon/src/efinity/project/ip_project/ip/hyperram/hyperram.sv (3519)" representative instance : u_hbram_top/hard_cal_block.hbram_cal_axi_top_inst/calibration_block.hbram_cal_top_inst/hbram_cal_ctrl_inst/dff_276/i5
+FF|OPT : Flip-flop optimization by equivalence checking
+@ "/home/simon/src/efinity/project/ip_project/ip/hyperram/hyperram.sv (3519)" removed instance : u_hbram_top/hard_cal_block.hbram_cal_axi_top_inst/calibration_block.hbram_cal_top_inst/hbram_cal_ctrl_inst/dff_277/i8
+@ "/home/simon/src/efinity/project/ip_project/ip/hyperram/hyperram.sv (3519)" representative instance : u_hbram_top/hard_cal_block.hbram_cal_axi_top_inst/calibration_block.hbram_cal_top_inst/hbram_cal_ctrl_inst/dff_276/i5
+FF|OPT : Flip-flop optimization by equivalence checking
+@ "/home/simon/src/efinity/project/ip_project/ip/hyperram/hyperram.sv (3827)" removed instance : u_hbram_top/hard_cal_block.hbram_cal_axi_top_inst/calibration_block.hbram_cal_top_inst/pll_mode_block.genblk1.hbram_cal_mst_inst/dff_6/i2
+@ "/home/simon/src/efinity/project/ip_project/ip/hyperram/hyperram.sv (3827)" representative instance : u_hbram_top/hard_cal_block.hbram_cal_axi_top_inst/calibration_block.hbram_cal_top_inst/pll_mode_block.genblk1.hbram_cal_mst_inst/dff_6/i1
+FF Output: u_hbram_top/hard_cal_block.hbram_cal_axi_top_inst/calibration_block.hbram_cal_top_inst/hbram_cal_ctrl_inst/atype_req(=0)
+FF Output: u_hbram_top/hard_cal_block.hbram_cal_axi_top_inst/calibration_block.hbram_cal_top_inst/hbram_cal_ctrl_inst/dpd_req(=0)
+FF Output: u_hbram_top/hard_cal_block.hbram_cal_axi_top_inst/calibration_block.hbram_cal_top_inst/hbram_cal_ctrl_inst/soft_rst_req(=0)
+FF Output: u_hbram_top/hard_cal_block.hbram_cal_axi_top_inst/calibration_block.hbram_cal_top_inst/hbram_cal_ctrl_inst/latency[0](=0)
+FF Output: hbc_ck_p_LO(=0)
+FF Output: u_hbram_top/hard_cal_block.hbram_cal_axi_top_inst/calibration_block.hbram_cal_top_inst/hbram_cal_ctrl_inst/latency[1](=0)
+FF Output: u_hbram_top/hard_cal_block.hbram_cal_axi_top_inst/calibration_block.hbram_cal_top_inst/hbram_cal_ctrl_inst/latency[2](=0)
+FF Output: u_hbram_top/hard_cal_block.hbram_cal_axi_top_inst/calibration_block.hbram_cal_top_inst/hbram_cal_ctrl_inst/latency[3](=0)
+FF Output: u_hbram_top/hard_cal_block.hbram_cal_axi_top_inst/calibration_block.hbram_cal_top_inst/hbram_cal_ctrl_inst/latency[5](=0)
+FF Output: u_hbram_top/hard_cal_block.hbram_cal_axi_top_inst/calibration_block.hbram_cal_top_inst/hbram_cal_ctrl_inst/latency[6](=0)
+FF Output: u_hbram_top/hard_cal_block.hbram_cal_axi_top_inst/calibration_block.hbram_cal_top_inst/hbram_cal_ctrl_inst/latency[7](=0)
+FF Output: u_hbram_top/hard_cal_block.hbram_cal_axi_top_inst/calibration_block.hbram_cal_top_inst/hbram_cal_ctrl_inst/latency[8](=0)
+FF Output: u_hbram_top/hard_cal_block.hbram_cal_axi_top_inst/calibration_block.hbram_cal_top_inst/hbram_cal_ctrl_inst/latency[9](=0)
+FF Output: u_hbram_top/hard_cal_block.hbram_cal_axi_top_inst/calibration_block.hbram_cal_top_inst/hbram_cal_ctrl_inst/init_dq_OUT_LO[4](=0)
+FF Output: u_hbram_top/hard_cal_block.hbram_cal_axi_top_inst/calibration_block.hbram_cal_top_inst/prd_cal_start_w(=0)
+FF Output: u_hbram_top/hard_cal_block.hbram_cal_axi_top_inst/calibration_block.hbram_cal_top_inst/pll_mode_block.genblk1.hbram_cal_mst_inst/prd_readout_done_r(=0)
+FF Output: u_hbram_top/hard_cal_block.hbram_cal_axi_top_inst/calibration_block.hbram_cal_top_inst/pll_mode_block.genblk1.hbram_cal_mst_inst/prd_cal_end(=0)
+FF Output: u_hbram_top/hard_cal_block.hbram_cal_axi_top_inst/interface_block2.hbram_native_if_inst/prd_cal_start_reg(=0)
+FF Output: u_hbram_top/hard_cal_block.hbram_cal_axi_top_inst/interface_block2.hbram_native_if_inst/state[3](=0)
+FF Output: u_hbram_top/hard_cal_block.hbram_cal_axi_top_inst/calibration_block.hbram_cal_top_inst/hbram_cal_ctrl_inst/soft_rst_mode(=0)
+FF Output: u_hbram_top/hard_cal_block.hbram_cal_axi_top_inst/calibration_block.hbram_cal_top_inst/hbram_cal_ctrl_inst/hse_req(=0)
+FF Output: u_hbram_top/hard_cal_block.hbram_cal_axi_top_inst/calibration_block.hbram_cal_top_inst/hbram_cal_ctrl_inst/dpd_mode(=0)
+FF Output: u_hbram_top/hard_cal_block.hbram_cal_axi_top_inst/calibration_block.hbram_cal_top_inst/hbram_cal_ctrl_inst/hse_mode(=0)
+FF Output: u_hbram_top/hard_cal_block.hbram_cal_axi_top_inst/calibration_block.hbram_cal_top_inst/hbram_cal_ctrl_inst/latency[4](=1)
+### ### Sequential Elements Trimming Report (end) ### ### ### 
+
+### ### Module Resource Usage Distribution Estimates (begin) ### ###
+
+**Note: some resources maybe grouped under different hierarchy due to optimization and LUT mapping
+
+Module                                                             FFs      SRLs      ADDs      LUTs    COMB4s      RAMs DSP/MULTs
+------------------------------------------------------------       ---      ----      ----      ----      ----      ---- ---------
+hyperram:hyperram                                               522(0)      0(0)    107(0)    647(0)      0(0)     13(0)      0(0)
+ +u_hbram_top:hbram_top_2d715ebddfec4a2289c485ca66dd30eb(...    522(0)      0(0)    107(0)    647(0)      0(0)     13(0)      0(0)
+  +hard_cal_block.hbram_cal_axi_top_inst:hbram_cal_axi_to...   522(10)      0(0)    107(0)   647(12)      0(0)     13(0)      0(0)
+   +axi_rst_syncronizer:efx_resetsync_2d715ebddfec4a2289c...      2(0)      0(0)      0(0)      0(0)      0(0)      0(0)      0(0)
+    +active_low.efx_resetsync_active_low:efx_asyncreg_2d7...      2(2)      0(0)      0(0)      0(0)      0(0)      0(0)      0(0)
+   +ram_rst_syncronizer:efx_resetsync_2d715ebddfec4a2289c...      2(0)      0(0)      0(0)      0(0)      0(0)      0(0)      0(0)
+    +active_low.efx_resetsync_active_low:efx_asyncreg_2d7...      2(2)      0(0)      0(0)      0(0)      0(0)      0(0)      0(0)
+   +ramcal_rst_syncronizer:efx_resetsync_2d715ebddfec4a22...      2(0)      0(0)      0(0)      0(0)      0(0)      0(0)      0(0)
+    +active_low.efx_resetsync_active_low:efx_asyncreg_2d7...      2(2)      0(0)      0(0)      0(0)      0(0)      0(0)      0(0)
+   +interface_block2.hbram_native_if_inst:hbram_native_if...   149(20)      0(0)    18(11)   147(58)      0(0)     12(0)      0(0)
+    +xop_done_sync:efx_asyncreg_2d715ebddfec4a2289c485ca6...      2(2)      0(0)      0(0)      0(0)      0(0)      0(0)      0(0)
+    +user2ram_fifo:efx_fifo_top_2d715ebddfec4a2289c485ca6...     34(0)      0(0)      0(0)     16(0)      0(0)      3(0)      0(0)
+     +genblk2.genblk1.efx_resetsync_wr_rst:efx_resetsync_...      2(0)      0(0)      0(0)      0(0)      0(0)      0(0)      0(0)
+      +active_high.efx_resetsync_active_high:efx_asyncreg...      2(2)      0(0)      0(0)      0(0)      0(0)      0(0)      0(0)
+     +genblk2.genblk1.efx_resetsync_rd_rst:efx_resetsync_...      2(0)      0(0)      0(0)      0(0)      0(0)      0(0)      0(0)
+      +active_high.efx_resetsync_active_high:efx_asyncreg...      2(2)      0(0)      0(0)      0(0)      0(0)      0(0)      0(0)
+     +xefx_fifo_ram:efx_fifo_ram_2d715ebddfec4a2289c485ca...      0(0)      0(0)      0(0)      0(0)      0(0)      3(3)      0(0)
+     +xefx_fifo_ctl:efx_fifo_ctl_2d715ebddfec4a2289c485ca...    30(18)      0(0)      0(0)     16(9)      0(0)      0(0)      0(0)
+      +async_clk.xrd2wr_bin2gray:efx_fifo_bin2gray_2d715e...      0(0)      0(0)      0(0)      2(2)      0(0)      0(0)      0(0)
+      +async_clk.xrd2wr_addr_sync:efx_asyncreg_2d715ebddf...      6(6)      0(0)      0(0)      0(0)      0(0)      0(0)      0(0)
+      +async_clk.xrd2wr_gray2bin:efx_fifo_gray2bin_2d715e...      0(0)      0(0)      0(0)      2(1)      0(0)      0(0)      0(0)
+       +genblk1.genblk1.u_gray2bin:efx_fifo_gray2bin_2d71...      0(0)      0(0)      0(0)      1(1)      0(0)      0(0)      0(0)
+      +async_clk.wr2rd_bin2gray:efx_fifo_bin2gray_2d715eb...      0(0)      0(0)      0(0)      1(1)      0(0)      0(0)      0(0)
+      +async_clk.wr2rd_addr_sync:efx_asyncreg_2d715ebddfe...      6(6)      0(0)      0(0)      0(0)      0(0)      0(0)      0(0)
+      +async_clk.wr2rd_gray2bin:efx_fifo_gray2bin_2d715eb...      0(0)      0(0)      0(0)      2(1)      0(0)      0(0)      0(0)
+       +genblk1.genblk1.u_gray2bin:efx_fifo_gray2bin_2d71...      0(0)      0(0)      0(0)      1(1)      0(0)      0(0)      0(0)
+    +w_data_inst:efx_fifo_top_2d715ebddfec4a2289c485ca66d...     56(0)      0(0)      7(0)     50(0)      0(0)      5(0)      0(0)
+     +genblk2.genblk1.efx_resetsync_wr_rst:efx_resetsync_...      2(0)      0(0)      0(0)      0(0)      0(0)      0(0)      0(0)
+      +active_high.efx_resetsync_active_high:efx_asyncreg...      2(2)      0(0)      0(0)      0(0)      0(0)      0(0)      0(0)
+     +genblk2.genblk1.efx_resetsync_rd_rst:efx_resetsync_...      2(0)      0(0)      0(0)      0(0)      0(0)      0(0)      0(0)
+      +active_high.efx_resetsync_active_high:efx_asyncreg...      2(2)      0(0)      0(0)      0(0)      0(0)      0(0)      0(0)
+     +xefx_fifo_ram:efx_fifo_ram_2d715ebddfec4a2289c485ca...      0(0)      0(0)      0(0)      0(0)      0(0)      5(5)      0(0)
+     +xefx_fifo_ctl:efx_fifo_ctl_2d715ebddfec4a2289c485ca...    52(32)      0(0)      7(7)    50(35)      0(0)      0(0)      0(0)
+      +async_clk.xrd2wr_bin2gray:efx_fifo_bin2gray_2d715e...      0(0)      0(0)      0(0)      4(4)      0(0)      0(0)      0(0)
+      +async_clk.xrd2wr_addr_sync:efx_asyncreg_2d715ebddf...    10(10)      0(0)      0(0)      0(0)      0(0)      0(0)      0(0)
+      +async_clk.xrd2wr_gray2bin:efx_fifo_gray2bin_2d715e...      0(0)      0(0)      0(0)      4(1)      0(0)      0(0)      0(0)
+       +genblk1.genblk1.u_gray2bin:efx_fifo_gray2bin_2d71...      0(0)      0(0)      0(0)      3(1)      0(0)      0(0)      0(0)
+        +genblk1.genblk1.u_gray2bin:efx_fifo_gray2bin_2d7...      0(0)      0(0)      0(0)      2(1)      0(0)      0(0)      0(0)
+         +genblk1.genblk1.u_gray2bin:efx_fifo_gray2bin_2d...      0(0)      0(0)      0(0)      1(1)      0(0)      0(0)      0(0)
+      +async_clk.wr2rd_bin2gray:efx_fifo_bin2gray_2d715eb...      0(0)      0(0)      0(0)      3(3)      0(0)      0(0)      0(0)
+      +async_clk.wr2rd_addr_sync:efx_asyncreg_2d715ebddfe...    10(10)      0(0)      0(0)      0(0)      0(0)      0(0)      0(0)
+      +async_clk.wr2rd_gray2bin:efx_fifo_gray2bin_2d715eb...      0(0)      0(0)      0(0)      4(1)      0(0)      0(0)      0(0)
+       +genblk1.genblk1.u_gray2bin:efx_fifo_gray2bin_2d71...      0(0)      0(0)      0(0)      3(1)      0(0)      0(0)      0(0)
+        +genblk1.genblk1.u_gray2bin:efx_fifo_gray2bin_2d7...      0(0)      0(0)      0(0)      2(1)      0(0)      0(0)      0(0)
+         +genblk1.genblk1.u_gray2bin:efx_fifo_gray2bin_2d...      0(0)      0(0)      0(0)      1(1)      0(0)      0(0)      0(0)
+    +r_data_inst:efx_fifo_top_2d715ebddfec4a2289c485ca66d...     37(0)      0(0)      0(0)     23(0)      0(0)      4(0)      0(0)
+     +genblk2.genblk1.efx_resetsync_wr_rst:efx_resetsync_...      2(0)      0(0)      0(0)      0(0)      0(0)      0(0)      0(0)
+      +active_high.efx_resetsync_active_high:efx_asyncreg...      2(2)      0(0)      0(0)      0(0)      0(0)      0(0)      0(0)
+     +genblk2.genblk1.efx_resetsync_rd_rst:efx_resetsync_...      2(0)      0(0)      0(0)      0(0)      0(0)      0(0)      0(0)
+      +active_high.efx_resetsync_active_high:efx_asyncreg...      2(2)      0(0)      0(0)      0(0)      0(0)      0(0)      0(0)
+     +xefx_fifo_ram:efx_fifo_ram_2d715ebddfec4a2289c485ca...      0(0)      0(0)      0(0)      0(0)      0(0)      4(4)      0(0)
+     +xefx_fifo_ctl:efx_fifo_ctl_2d715ebddfec4a2289c485ca...    33(21)      0(0)      0(0)    23(15)      0(0)      0(0)      0(0)
+      +async_clk.xrd2wr_bin2gray:efx_fifo_bin2gray_2d715e...      0(0)      0(0)      0(0)      2(2)      0(0)      0(0)      0(0)
+      +async_clk.xrd2wr_addr_sync:efx_asyncreg_2d715ebddf...      6(6)      0(0)      0(0)      0(0)      0(0)      0(0)      0(0)
+      +async_clk.xrd2wr_gray2bin:efx_fifo_gray2bin_2d715e...      0(0)      0(0)      0(0)      2(1)      0(0)      0(0)      0(0)
+       +genblk1.genblk1.u_gray2bin:efx_fifo_gray2bin_2d71...      0(0)      0(0)      0(0)      1(1)      0(0)      0(0)      0(0)
+      +async_clk.wr2rd_bin2gray:efx_fifo_bin2gray_2d715eb...      0(0)      0(0)      0(0)      2(2)      0(0)      0(0)      0(0)
+      +async_clk.wr2rd_addr_sync:efx_asyncreg_2d715ebddfe...      6(6)      0(0)      0(0)      0(0)      0(0)      0(0)      0(0)
+      +async_clk.wr2rd_gray2bin:efx_fifo_gray2bin_2d715eb...      0(0)      0(0)      0(0)      2(1)      0(0)      0(0)      0(0)
+       +genblk1.genblk1.u_gray2bin:efx_fifo_gray2bin_2d71...      0(0)      0(0)      0(0)      1(1)      0(0)      0(0)      0(0)
+   +calibration_block.hbram_cal_top_inst:hbram_cal_contro...    357(1)      0(0)     89(0)    488(1)      0(0)      1(0)      0(0)
+    +hbram_cal_ctrl_inst:hbram_cal_ctrl_2d715ebddfec4a228...  226(163)      0(0)    65(60)  268(241)      0(0)      1(0)      0(0)
+     +fail_safe_sync:efx_asyncreg_2d715ebddfec4a2289c485c...      8(8)      0(0)      0(0)      0(0)      0(0)      0(0)      0(0)
+     +fifo_rden_block.genblk1.rd_data_fifo:efx_fifo_top_2...     55(0)      0(0)      5(0)     27(0)      0(0)      1(0)      0(0)
+      +genblk2.genblk1.efx_resetsync_wr_rst:efx_resetsync...      2(0)      0(0)      0(0)      0(0)      0(0)      0(0)      0(0)
+       +active_high.efx_resetsync_active_high:efx_asyncre...      2(2)      0(0)      0(0)      0(0)      0(0)      0(0)      0(0)
+      +genblk2.genblk1.efx_resetsync_rd_rst:efx_resetsync...      2(0)      0(0)      0(0)      0(0)      0(0)      0(0)      0(0)
+       +active_high.efx_resetsync_active_high:efx_asyncre...      2(2)      0(0)      0(0)      0(0)      0(0)      0(0)      0(0)
+      +xefx_fifo_ram:efx_fifo_ram_2d715ebddfec4a2289c485c...      0(0)      0(0)      0(0)      0(0)      0(0)      1(1)      0(0)
+      +xefx_fifo_ctl:efx_fifo_ctl_2d715ebddfec4a2289c485c...    51(31)      0(0)      5(5)    27(12)      0(0)      0(0)      0(0)
+       +async_clk.xrd2wr_bin2gray:efx_fifo_bin2gray_2d715...      0(0)      0(0)      0(0)      4(4)      0(0)      0(0)      0(0)
+       +async_clk.xrd2wr_addr_sync:efx_asyncreg_2d715ebdd...    10(10)      0(0)      0(0)      0(0)      0(0)      0(0)      0(0)
+       +async_clk.xrd2wr_gray2bin:efx_fifo_gray2bin_2d715...      0(0)      0(0)      0(0)      4(1)      0(0)      0(0)      0(0)
+        +genblk1.genblk1.u_gray2bin:efx_fifo_gray2bin_2d7...      0(0)      0(0)      0(0)      3(1)      0(0)      0(0)      0(0)
+         +genblk1.genblk1.u_gray2bin:efx_fifo_gray2bin_2d...      0(0)      0(0)      0(0)      2(1)      0(0)      0(0)      0(0)
+          +genblk1.genblk1.u_gray2bin:efx_fifo_gray2bin_2...      0(0)      0(0)      0(0)      1(1)      0(0)      0(0)      0(0)
+       +async_clk.wr2rd_bin2gray:efx_fifo_bin2gray_2d715e...      0(0)      0(0)      0(0)      3(3)      0(0)      0(0)      0(0)
+       +async_clk.wr2rd_addr_sync:efx_asyncreg_2d715ebddf...    10(10)      0(0)      0(0)      0(0)      0(0)      0(0)      0(0)
+       +async_clk.wr2rd_gray2bin:efx_fifo_gray2bin_2d715e...      0(0)      0(0)      0(0)      4(1)      0(0)      0(0)      0(0)
+        +genblk1.genblk1.u_gray2bin:efx_fifo_gray2bin_2d7...      0(0)      0(0)      0(0)      3(1)      0(0)      0(0)      0(0)
+         +genblk1.genblk1.u_gray2bin:efx_fifo_gray2bin_2d...      0(0)      0(0)      0(0)      2(1)      0(0)      0(0)      0(0)
+          +genblk1.genblk1.u_gray2bin:efx_fifo_gray2bin_2...      0(0)      0(0)      0(0)      1(1)      0(0)      0(0)      0(0)
+    +pll_mode_block.genblk1.hbram_cal_mst_inst:hbram_cal_...    12(12)      0(0)      0(0)    22(22)      0(0)      0(0)      0(0)
+    +pll_mode_block.genblk1.hbram_cal_slv_inst:hbram_cal_...  118(118)      0(0)    24(24)  197(197)      0(0)      0(0)      0(0)
+
+### ### Module Resource Usage Distribution Estimates (end) ### ###
+
+
+### ### Clock Load Distribution Report (begin) ### ###
+
+       Clock      Flip-Flops      Shift-Regs    Memory PortsMultipliers/DSPs
+       -----      ----------      ----------    ----------------------------
+     ram_clk             390               0              13               0
+ ram_clk_cal              64               0               1               0
+  native_clk              68               0              12               0
+
+### ### Clock Load Distribution Report (end) ### ###
+
+### ### Resource Summary (begin) ### ### ### 
+INPUT  PORTS    : 	144
+OUTPUT PORTS    : 	137
+
+EFX_ADD         : 	107
+EFX_LUT4        : 	647
+   1-2  Inputs  : 	279
+   3    Inputs  : 	120
+   4    Inputs  : 	248
+EFX_FF          : 	522
+EFX_RAM10       : 	13
+### ### Resource Summary (end) ### ### ###
+
+Plain synthesis (without verilog dump and post-map checks) time : 4s
+Elapsed synthesis time : 4s

@@ -1,0 +1,22 @@
+sim/build/
+rp/peri/sim/build/
+sim/visual/*.ppm
+sim/test_data/*.hex
+# Hand-authored stubs are committed; only the .bin-derived hex files
+# (Klaus, etc.) are derived artefacts.
+!sim/test_data/os_rom_stub.hex
+*.vcd
+*.fst
+
+# Efinity synth artefacts (~55 MB; reproducible from sources via
+# efinity/run.sh).
+efinity/build/
+
+# Vivado synth artefacts (similarly reproducible via vivado/run.sh).
+vivado/build/
+
+# Claude Code internal session state (lockfiles, scheduled tasks).
+.claude/
+
+# macOS junk.
+.DS_Store

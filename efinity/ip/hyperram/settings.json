@@ -1,0 +1,117 @@
+{
+    "args": [
+        "-o",
+        "hyperram",
+        "--base_path",
+        "/home/simon/src/efinity/project/ip_project/ip",
+        "--vlnv",
+        {
+            "vendor": "efinixinc.com",
+            "library": "memory_controller",
+            "name": "efx_hyper_ram",
+            "version": "6.13"
+        }
+    ],
+    "conf": {
+        "RAM_DBW": "8",
+        "RAM_ABW": "24",
+        "CR0_DPD": "1'b1",
+        "CR0_ILC": "2",
+        "CR0_ODS": "0",
+        "CR0_HBE": "1'b1",
+        "CR0_WBL": "3",
+        "CR1_MCT": "1'b1",
+        "CR1_PAR": "0",
+        "CR1_HSE": "1'b0",
+        "AXI_DBW_2": "128",
+        "DDIN_MODE": "1'b0",
+        "AXI_AWR_DEPTH": "16",
+        "AXI_R_DEPTH_2": "256",
+        "AXI_W_DEPTH_2": "256",
+        "CAL_CLK_CH": "4",
+        "MHZ": "200",
+        "AXI_IF": "1'b0",
+        "NATIVE_DBW": "64",
+        "NATIVE_R_DEPTH": "16",
+        "NATIVE_W_DEPTH": "16",
+        "DUAL_RAM": "0",
+        "INDIVI_DUAL_CAL": "0",
+        "CAL_CLK_CH_LO": "4",
+        "CAL_CLK_CH_HI": "8",
+        "DUAL_RAM_enable": "0",
+        "PERIODIC_CAL": "0",
+        "RECAL_DAYS": "7",
+        "RECAL_HOURS": "23",
+        "PRD_CAL_USER_SIGNAL": "0",
+        "RWDS_OUT_MODE": "1",
+        "CAL_MODE": "2",
+        "DQ_FILTER": "1",
+        "CAL_SCHEME": "2",
+        "TIMER_RESET": "1",
+        "CFG_REG_RW": "0",
+        "ON_DEMAND_CAL": "0"
+    },
+    "output": {
+        "external_source_source": [
+            "hyperram/hyperram_tmpl.vhd",
+            "hyperram/hyperram.sv",
+            "hyperram/hyperram_define.svh",
+            "hyperram/hyperram_tmpl.sv"
+        ],
+        "external_testbench_testbench": [
+            "hyperram/Testbench/tb.v",
+            "hyperram/Testbench/clock_gen.v",
+            "hyperram/Testbench/efx_crc32.v",
+            "hyperram/Testbench/efx_ed_hyper_ram_native_tc.v",
+            "hyperram/Testbench/efx_ed_hyper_ram_axi_tc.v",
+            "hyperram/Testbench/top.v",
+            "hyperram/Testbench/efx_lut4.v",
+            "hyperram/Testbench/EFX_GPIO_model.v",
+            "hyperram/Testbench/flist",
+            "hyperram/Testbench/modelsim.do",
+            "hyperram/Testbench/modelsim.sh",
+            "hyperram/Testbench/xrun.sh",
+            "hyperram/Testbench/W958D6NKY.vp",
+            "hyperram/Testbench/Config-AC.v",
+            "hyperram/Testbench/hyperram.sv",
+            "hyperram/Testbench/hyperram_define.svh"
+        ],
+        "external_example_2": [
+            "hyperram/Ti60F225_devkit_native_pll_auto/hbram_ti60.xml",
+            "hyperram/Ti60F225_devkit_native_pll_auto/hbram_ti60.peri.xml",
+            "hyperram/Ti60F225_devkit_native_pll_auto/efx_clk_monitor.v",
+            "hyperram/Ti60F225_devkit_native_pll_auto/top.v",
+            "hyperram/Ti60F225_devkit_native_pll_auto/efx_ed_hyper_ram_native_tc.v",
+            "hyperram/Ti60F225_devkit_native_pll_auto/efx_ed_hyper_ram_axi_tc.v",
+            "hyperram/Ti60F225_devkit_native_pll_auto/efx_crc32.v",
+            "hyperram/Ti60F225_devkit_native_pll_auto/debug_top.v",
+            "hyperram/Ti60F225_devkit_native_pll_auto/constraints.sdc",
+            "hyperram/Ti60F225_devkit_native_pll_auto/debug_profile.json",
+            "hyperram/Ti60F225_devkit_native_pll_auto/hyperram.sv",
+            "hyperram/Ti60F225_devkit_native_pll_auto/hyperram_define.svh"
+        ],
+        "external_example_4": [
+            "hyperram/Ti60F100_SiP_native_pll_auto/hbram_ti60.xml",
+            "hyperram/Ti60F100_SiP_native_pll_auto/hbram_ti60.peri.xml",
+            "hyperram/Ti60F100_SiP_native_pll_auto/top.v",
+            "hyperram/Ti60F100_SiP_native_pll_auto/efx_ed_hyper_ram_native_tc.v",
+            "hyperram/Ti60F100_SiP_native_pll_auto/efx_ed_hyper_ram_axi_tc.v",
+            "hyperram/Ti60F100_SiP_native_pll_auto/efx_crc32.v",
+            "hyperram/Ti60F100_SiP_native_pll_auto/efx_clk_monitor.v",
+            "hyperram/Ti60F100_SiP_native_pll_auto/debug_top.v",
+            "hyperram/Ti60F100_SiP_native_pll_auto/debug_profile.json",
+            "hyperram/Ti60F100_SiP_native_pll_auto/constraints.sdc",
+            "hyperram/Ti60F100_SiP_native_pll_auto/hyperram.sv",
+            "hyperram/Ti60F100_SiP_native_pll_auto/hyperram_define.svh"
+        ],
+        "external_testbench_ncsim": [
+            "hyperram/Testbench/ncsim/hyperram.sv"
+        ]
+    },
+    "ooc_synthesis": {
+        "enable": "true",
+        "option": "DEFAULT"
+    },
+    "sw_version": "2025.2.288.4.15",
+    "generated_date": "2026-05-07T10:39:41.946284+00:00"
+}

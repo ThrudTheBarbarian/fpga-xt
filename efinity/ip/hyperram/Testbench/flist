@@ -1,0 +1,12 @@
+ncsim/hyperram.sv
+ncsim/hyperram.v
+efx_crc32.v
+efx_ed_hyper_ram_axi_tc.v
+efx_ed_hyper_ram_native_tc.v
+top.v
+EFX_GPIO_model.v
+efx_lut4.v
+clock_gen.v
+tb.v
+
+W958D6NKY.nc.vp

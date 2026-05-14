@@ -1,0 +1,51 @@
+; peri_pot.pio — POT discharge counter PIO state machine.
+;
+; Per-channel scan loop. The C side (peri_pot.c) configures one PIO
+; state machine per channel (or one shared SM with channel rotation;
+; final design TBD on hardware bring-up). Each scan:
+;
+;   1. Drive POT_n low for `discharge_ticks` cycles to discharge the
+;      cap (slow scan only — fast scan disables the discharge
+;      transistors per Altirra §5.9).
+;   2. Switch the pin to high-Z input mode.
+;   3. Count `tick`s until the input rises through Vth, or the
+;      counter saturates at 228 (slow) / 229 (fast).
+;   4. Push the count to the RX FIFO. C side reads it into peri_regs.
+;
+; Per-channel timing source:
+;   slow scan: 15 kHz reference (sm clock divided down from sys_clk)
+;   fast scan: 1.79 MHz machine clock (sm clock = sys_clk / 141 at
+;              252 MHz sys_clk; or use an explicit divider config in
+;              peri_pot.c's PIO setup)
+;
+; Production implementation deferred to hardware bring-up — needs a
+; logic analyser on the POT_n pins to validate timing alignment with
+; period software's POTGO → ALLPOT → POTn polling loop. The stub
+; below sketches the structure so the build doesn't break.
+
+.program peri_pot
+
+; Stub — see header. Real implementation lands when rp-XT board is
+; in hand and the POT discharge curves can be measured.
+.wrap_target
+    nop
+.wrap
+
+% c-sdk {
+#include "hardware/pio.h"
+#include "hardware/gpio.h"
+
+static inline void peri_pot_program_init(PIO pio, uint sm,
+                                          uint offset, uint pot_pin) {
+    pio_sm_config c = peri_pot_program_get_default_config(offset);
+    sm_config_set_in_pins(&c, pot_pin);
+    sm_config_set_out_pins(&c, pot_pin, 1);
+    sm_config_set_set_pins(&c, pot_pin, 1);
+
+    pio_gpio_init(pio, pot_pin);
+    pio_sm_set_consecutive_pindirs(pio, sm, pot_pin, 1, /* is_out */ false);
+
+    pio_sm_init(pio, sm, offset, &c);
+    pio_sm_set_enabled(pio, sm, true);
+}
+%}
