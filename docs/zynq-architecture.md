@@ -247,17 +247,27 @@ These decisions all stand:
 - **6502 talks to the modern half via $D4xx chiplet-extension
   registers.** Same address map ($D49C PSSI_BYTE, $D49D PSSI_STATUS).
   The byte stream just goes to AXI instead of off-chip pads.
+
 - **VDI wire format is 8-bit indexed (classic ops) + RGB888 (extended
   ops at 0xC1–0xCF).** Unchanged — wire format is target-independent;
   framebuffer downsampling to RGB565 happens at flush time.
+
 - **LVGL configured `LV_COLOR_DEPTH 16` (RGB565)** to match the
   SiI9022A's 16-lane wiring on the Z-Turn carrier.
+
 - **Mailbox / RPC semantics from FMC** — re-cast as PS-side AXI
   registers, same source-bitmap-with-counters pattern. The wire format
   for the RPC payload itself is identical.
+
 - **SALLY tasking extensions** (SP_BANK, ZP_BANK, wider SP, etc.)
   unchanged — they're 6502-core mods, independent of off-chip
-  architecture.
+  architecture. 
+  
+  Though, the presence of DDR3 might make some of the assumptions
+  regarding a deep page-1 worth revisiting. If a 4K section can be
+  swapped out easily as part of a context switch, this becomes more
+  attractive
+  
 - **GEM port plan** (AES on 6502, VDI dispatch, GEMDOS RPC) unchanged
   in shape, just hosted on a different "modern" half.
 

@@ -1,16 +1,18 @@
-# sally_synth_probe.xdc — Phase 0 fmax probe constraints for sally_synth_top.
+# fpga_xt_top.xdc — Phase 1 timing constraints for fpga_xt_top (Zynq-7020 -2).
 #
-# This XDC is for the *standalone SALLY synth wrapper* (sally_synth_top.sv),
-# not antic_top. It sets a single virtual clock on the `clk` input at 165 MHz
-# so the timing summary reports the WNS / slack against today's Ti60 target.
+# Phase 1a: all domains share a single physical clock (clk_50).
+# Constrain clk_50 at the SALLY target frequency (121 MHz / 8.22 ns)
+# to verify the integrated design closes at that speed.
 #
-# Goal: get a clear "SALLY closes at X MHz on Zynq-7020 -2" number from the
-# post-synth timing report, before any RTL changes. Compare against the
-# Ti60 -3 result of ~165 MHz.
-#
-# Once we have real Atari I/O wiring on the carrier, the production XDC
-# will have IO placements (set_property PACKAGE_PIN), IO standards, and
-# real off-chip clock relationships. This file is intentionally minimal.
+# Phase 1b: when a PLL generates separate clocks, each domain will
+# get its own create_clock constraint with set_clock_groups for CDC.
 
-# Single 165 MHz target on the `clk` input. Period is in ns.
-create_clock -name clk_bus -period 6.06 [get_ports clk]
+# ---- Primary input clock (121 MHz target for Phase 1a) --------------------
+create_clock -name clk_50 -period 8.22 [get_ports clk_50]
+
+# ---- Output delays (SiI9022A HDMI transmitter) ----------------------------
+# The SiI9022A on Z-Turn SOM samples RGB + sync on pixclk rising edge.
+# Setup requirement is typically ~2 ns; hold ~0 ns.  Budget accordingly.
+# TODO: populate once board-level IO standards and package pins are known.
+# set_output_delay -clock clk_pix -max 2.0 [get_ports rgb_*]
+# set_output_delay -clock clk_pix -min -0.5 [get_ports rgb_*]

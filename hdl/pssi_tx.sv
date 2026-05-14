@@ -138,6 +138,14 @@ module pssi_tx #(
     logic wr_overflow_qr;
     assign wr_overflow_q = wr_overflow_qr;
 
+    // BRAM write — separate always_ff without async reset so Vivado can
+    // infer a block/distributed RAM. The control registers below keep
+    // their reset for proper startup behaviour.
+    always_ff @(posedge clk_wr) begin
+        if (wr_we && !wr_full_w)
+            mem[wr_ptr_bin_q[IDX_W-1:0]] <= wr_byte;
+    end
+
     always_ff @(posedge clk_wr or posedge rst_wr) begin
         if (rst_wr) begin
             wr_ptr_bin_q   <= '0;
@@ -149,9 +157,8 @@ module pssi_tx #(
                     // Drop write, set sticky overflow.
                     wr_overflow_qr <= 1'b1;
                 end else begin
-                    mem[wr_ptr_bin_q[IDX_W-1:0]] <= wr_byte;
-                    wr_ptr_bin_q                 <= wr_ptr_bin_q + 1'b1;
-                    wr_ptr_gray_q                <= bin_to_gray(wr_ptr_bin_q + 1'b1);
+                    wr_ptr_bin_q  <= wr_ptr_bin_q + 1'b1;
+                    wr_ptr_gray_q <= bin_to_gray(wr_ptr_bin_q + 1'b1);
                 end
             end
             // Software-driven clear of the sticky overflow flag. If a

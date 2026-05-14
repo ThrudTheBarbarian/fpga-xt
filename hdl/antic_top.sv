@@ -34,9 +34,9 @@ module antic_top #(
     // System clock + reset
     input  wire        clk_bus,         // phi2 × CLOCK_MULT — see register $D480
     input  wire        clk_pix,         // 25.175 MHz (640x480) / 40 MHz (800x600)
-    input  wire        clk_pssi    = 1'b0,  // 80 MHz N6 PSSI sample clock (default 0 keeps PSSI quiescent in legacy tbs)
+    // Zynq build: clk_pssi removed (no PSSI).
     input  wire        rst_n,           // /G_RST, active-low (sync'd internally)
-    input  wire        rst_pssi_n  = 1'b0,  // /G_RST in clk_pssi domain (sync'd internally); default-asserted
+    // Zynq build: rst_pssi_n removed (no PSSI).
 
     // CPU bus inputs
     input  wire [15:0] bus_addr,        // A[15:0]
@@ -141,6 +141,18 @@ module antic_top #(
     output wire        tmds_b,
     output wire        tmds_clk,
 
+    // ---- Parallel RGB565 output (Zynq / SiI9022A path) -----------------
+    // Driven in parallel with the TMDS path.  On Zynq builds, hdmi_out
+    // produces RGB565 + sync on these ports instead of serial TMDS.
+    // On legacy Efinix builds these are unused (feed nc in the wrapper).
+    output wire [4:0]  rgb_r_o,
+    output wire [5:0]  rgb_g_o,
+    output wire [4:0]  rgb_b_o,
+    output wire        rgb_hsync_o,
+    output wire        rgb_vsync_o,
+    output wire        rgb_de_o,
+    output wire        rgb_pixclk_o,
+
     // Diagnostic counters (consumed by serial-link logic in later milestones)
     output wire [31:0] diag_wsync_overdue_count,
 
@@ -225,50 +237,23 @@ module antic_top #(
     // existing external bus_addr / bus_data / bus_rw inputs against
     // this internal CPU bus; today the internal CPU runs in parallel
     // with the external one and these ports surface for synth + diag.
-    output wire [15:0] sally_addr_o,
-    output wire [7:0]  sally_data_o,
-    output wire        sally_rw_o,
-    output wire        sally_busy_o,
+    // Zynq build: shadow SALLY core + bank_translator + N6 PSSI removed.
+    // The main CPU in fpga_xt_top handles everything.
 
-    // ---- M24-int-3 — bank_translator observability ---------------------
-    // bank_translator's logical→physical translation for PORTB-style
-    // 130XE banking + cart-banking. Surfaces as a diag pin so synth
-    // keeps the module live; the runtime cache integration arrives in
-    // a follow-up (130XE software hits this path; XT-zero-page-snoop
-    // software stays on bank_xlat).
-    output wire [22:0] xlat_phys_addr_o,
-
-    // ============================================================
-    // N6 PERIPHERAL INTERFACE (Phase 0 — ports declared, stubbed)
-    // ============================================================
-    // Replaces the paired-RP / peri-RP serial links with the STM32N6
-    // transports per docs/n6-migration.md. Behaviour lands in
-    // Phases 1–4 of docs/n6-hdl-migration.md. Phase 0 keeps inputs
-    // tied alive and outputs at safe defaults; LEGACY_RP=1 keeps the
-    // existing RP interfaces driving anything functional.
-    //
-    // Port defaults (`= ...`) let existing testbenches keep using
-    // named connections without explicitly tying every new pin —
-    // unconnected inputs land on their inactive default rather than X.
-
-    // ---- PSSI TX: 16-bit forward stream to N6 (DRAW + bulk uploads) -----
-    // 80 MHz source-synchronous, PIXCLK + DE qualified. FPGA master.
-    output wire        n6_pssi_pixclk,
-    output wire        n6_pssi_de,
-    output wire [15:0] n6_pssi_data,
+    // Zynq build: N6 PSSI stream removed — no co-processor on Zynq.
 
     // ---- FMC slave: 8-bit memory-mapped peripheral to N6 ----------------
     // N6 is FMC master; 256-byte address space. Async mode (no source-sync
     // clock from N6). Bidirectional data uses the project's split-pad
     // convention: data_in / data_out / data_oe at RTL level; the synth
     // wrapper combines them with a vendor IO primitive.
-    input  wire [7:0]  n6_fmc_addr           = 8'h00,
-    input  wire [7:0]  n6_fmc_data_in        = 8'h00,
-    output wire [7:0]  n6_fmc_data_out,
-    output wire        n6_fmc_data_oe,
-    input  wire        n6_fmc_cs_n           = 1'b1,   // /CS de-asserted
-    input  wire        n6_fmc_oe_n           = 1'b1,   // /OE de-asserted
-    input  wire        n6_fmc_we_n           = 1'b1,   // /WE de-asserted
+    // Zynq build: input  wire [7:0]  n6_fmc_addr           = 8'h00,  -- removed (no N6)
+    // Zynq build: input  wire [7:0]  n6_fmc_data_in        = 8'h00,  -- removed (no N6)
+    // Zynq build: output wire [7:0]  n6_fmc_data_out,  -- removed (no N6)
+    // Zynq build: output wire        n6_fmc_data_oe,  -- removed (no N6)
+    // Zynq build: input  wire        n6_fmc_cs_n           = 1'b1,   // /CS de-asserted  -- removed (no N6)
+    // Zynq build: input  wire        n6_fmc_oe_n           = 1'b1,   // /OE de-asserted  -- removed (no N6)
+    // Zynq build: input  wire        n6_fmc_we_n           = 1'b1,   // /WE de-asserted  -- removed (no N6)
 
     // ---- SPI master: 4-wire event payload pull (FPGA master, MODE 0) ----
     output wire        n6_spi_clk,
@@ -405,30 +390,12 @@ module antic_top #(
     wire        snoop_re_pokey_l, snoop_re_pokey_r;
     wire        snoop_re_cache;
 
-    // M24-int-2 — bus-source mux. When `cpu_internal_q` is set,
-    // bus_snoop reads SALLY's bus instead of the external pins. Both
-    // sources fan-in via combinational mux; `cpu_internal_q` defaults
-    // to 0 at /G_RST so existing external-CPU behaviour is preserved
-    // until software writes $D481[1]=1.
-    //
-    // Forward declarations of the internal SALLY bus — the SALLY
-    // stack itself lives further down (after dma_master / draw_regs)
-    // because it needs `dma_busy_w` and `draw_read_data` in scope.
-    wire [15:0] sally_addr_w;
-    wire [7:0]  sally_dout_w;
-    wire        sally_rw_w;
-
-    // Forward declaration so the mux below sees `cpu_internal_q`; it's
-    // driven by antic_regs further down.
-    wire        cpu_internal_q;
-
-    wire [15:0] snoop_bus_addr_w   = cpu_internal_q ? sally_addr_w   : bus_addr;
-    wire [7:0]  snoop_bus_data_w   = cpu_internal_q ? sally_dout_w   : bus_data_in;
-    wire        snoop_bus_rw_w     = cpu_internal_q ? sally_rw_w     : bus_rw;
-    // Reg-file read ports are combinational off the active master's
-    // address — when SALLY is running, the read mux upstream of
-    // sally_mem.hwreg_dout uses sally's hwreg_addr (also = sally_addr_w).
-    wire [15:0] read_addr_w        = cpu_internal_q ? sally_addr_w   : bus_addr;
+    // Zynq build: no internal SALLY stack — snoop always reads the
+    // external bus (from the main CPU in fpga_xt_top).
+    wire [15:0] snoop_bus_addr_w   = bus_addr;
+    wire [7:0]  snoop_bus_data_w   = bus_data_in;
+    wire        snoop_bus_rw_w     = bus_rw;
+    wire [15:0] read_addr_w        = bus_addr;
 
     bus_snoop u_snoop (
         .clk              (clk_bus),
@@ -558,7 +525,7 @@ module antic_top #(
         .chbase_q             (chbase_q),
         .nmien_q              (nmien_q),
         .mode_snoop_q         (mode_snoop_q),
-        .cpu_internal_q       (cpu_internal_q),
+        // Zynq build: cpu_internal_q removed — no shadow SALLY core.
         .clock_mult_q         (clock_mult_q),
         .output_mode_q        (output_mode_q),
         .antic_code_bank_q    (antic_code_bank_q),
@@ -1145,7 +1112,7 @@ module antic_top #(
     // ---- DRAW chiplet-ext register port (M17-2) ------------------------
     // Software stages opcode + 5 16-bit args at $D488-$D492, strobes
     // DRAW_GO at $D493. draw_regs handles the latching + pending flag
-    // and dispatches to rp_tx's draw port when ready. draw_full
+    // Zynq build: rp_tx removed.
     // back-pressure from the RP queue is tied off until the RP-side
     // handler lands at M17-3 (will surface as a top-level input).
     wire [7:0]  draw_read_data;
@@ -1178,285 +1145,8 @@ module antic_top #(
         .draw_arg8      (draw_arg8_w)
     );
 
-    // ---- Phase 1 — PSSI byte channel -----------------------------------
-    // pssi_bytes exposes $D49C PSSI_BYTE (W: push byte to FIFO) and
-    // $D49D PSSI_STATUS (R: bit 0 = overflow; W: bit 0 clears overflow).
-    // pssi_tx is the async-FIFO + 80 MHz output stage driving n6_pssi_*.
-    // The chiplet read-data mux below ORs pssi_bytes_read_data into the
-    // existing antic / draw read tree.
 
-    wire [7:0] pssi_bytes_read_data;
-    wire [7:0] pssi_byte_to_fifo;
-    wire       pssi_byte_we;
-    wire       pssi_overflow_q;
-    wire       pssi_overflow_clear;
-
-    pssi_bytes u_pssi_bytes (
-        .clk                 (clk_bus),
-        .rst                 (rst_bus),
-        .we                  (snoop_we_antic),
-        .waddr               (snoop_addr[7:0]),
-        .wdata               (snoop_data),
-        .raddr               (read_addr_w[7:0]),
-        .rdata               (pssi_bytes_read_data),
-        .pssi_wr_byte        (pssi_byte_to_fifo),
-        .pssi_wr_we          (pssi_byte_we),
-        .pssi_overflow_q     (pssi_overflow_q),
-        .pssi_overflow_clear (pssi_overflow_clear)
-    );
-
-    // rst_pssi_n is active-low at the pad; pssi_tx wants active-high.
-    wire rst_pssi_internal = ~rst_pssi_n;
-
-    pssi_tx #(.RING_BYTES(16384)) u_pssi_tx (
-        .clk_wr            (clk_bus),
-        .rst_wr            (rst_bus),
-        .wr_byte           (pssi_byte_to_fifo),
-        .wr_we             (pssi_byte_we),
-        .wr_ready          (),                  // back-pressure unused for Phase 1
-        .wr_fill_level     (),                  // status reg landing in Phase 1.5
-        .wr_overflow_q     (pssi_overflow_q),
-        .wr_overflow_clear (pssi_overflow_clear),
-        .clk_pssi          (clk_pssi),
-        .rst_pssi          (rst_pssi_internal),
-        .pssi_pixclk       (n6_pssi_pixclk),
-        .pssi_de           (n6_pssi_de),
-        .pssi_data         (n6_pssi_data)
-    );
-
-    // ---- Cache control register file ($D380-$D3FF, M-cache-rework) ------
-    // Owns the PIA-mirror window registers + per-bank attribute SRAM.
-    //
-    // Step 1 plumbed the API surface (bankAttrSet / bankAttrGet builtins
-    // for xtc). Step 4 wires the attribute SRAM lookup port back into
-    // sally_mem so the cache routes streaming-tagged banks to the
-    // bypass slots — see sally_mem's attr_lookup_idx / attr_lookup_data
-    // ports.
-    wire [7:0]  cache_read_data;
-    wire        cache_enable_partition_q;
-    wire [7:0]  cache_code_lines_q;
-    wire [3:0]  cache_current_task_q;
-    wire        cache_flush_pulse;
-    wire [11:0] cache_attr_lookup_idx;       // sally_mem → cache_regs
-    wire [3:0]  cache_attr_lookup_data;      // cache_regs → sally_mem
-
-    cache_regs u_cache_regs (
-        .clk                (clk_bus),
-        .rst                (rst_bus),
-        .we                 (snoop_we_cache),
-        .waddr              (snoop_addr),
-        .wdata              (snoop_data),
-        .raddr              (read_addr_w),
-        .rdata              (cache_read_data),
-        .enable_partition_q (cache_enable_partition_q),
-        .code_lines_q       (cache_code_lines_q),
-        .current_task_q     (cache_current_task_q),
-        .flush_pulse        (cache_flush_pulse),
-        .attr_lookup_idx    (cache_attr_lookup_idx),
-        .attr_lookup_data   (cache_attr_lookup_data)
-    );
-
-    // ---- M24-int-1 — internal SALLY stack ------------------------------
-    // sally_clock + sally_core + sally_mem (which embeds bank_cache and
-    // bank_xlat). The CPU runs on clk_bus alongside the existing snoop
-    // pipeline. M24-int-2 will mux the bus_snoop's address / data /
-    // R/W inputs against this internal CPU; for now the SALLY bus is
-    // observable only via the new sally_*_o pins.
-    //
-    // Interrupts:
-    //   • sally_irq_n  ← POKEY's irq_n (same source as the external pin)
-    //   • sally_nmi_n  ← tied 1 (M12 wires this to nmi_gen later)
-    //
-    // Bus arbitration:
-    //   • halt_n       ← dma_master (cycle-stealing at CLOCK_MULT=1)
-    //   • wsync_rdy_n  ← !wsync_pending (rough; M13 will replace with a
-    //                    cycle-105 release pulse)
-    //
-    // Hardware-register read mux for sally_mem's hwreg_dout — combine
-    // the existing per-page read sources by sally_mem.hwreg_addr.
-    wire        sally_busy_w;
-
-    wire [15:0] sally_hwreg_addr;
-    wire        sally_hwreg_we;
-    wire [7:0]  sally_hwreg_din;
-    wire [7:0]  sally_mem_dout;
-
-    wire [7:0]  cpu_code_bank_q;
-    wire [7:0]  cpu_data_bank_q;
-    wire [7:0]  cpu_regc_bank_lo_q;
-    wire [7:0]  cpu_regc_bank_hi_q;
-
-    wire        sally_rdy_w;
-    wire        sally_step_w;          // unused at M24-int-1 (no diag pin yet)
-
-    // sally_mem hwreg_dout — combinational mux off the page select.
-    // M24-int-2 will give SALLY-driven reads through gtia_regs/etc.
-    // their own read paths; meanwhile the existing combinational read
-    // mux on bus_addr is reused by routing sally's hwreg page address
-    // through the same comparators.
-    // Forward declaration — pia_regs is instantiated further down
-    // (after sally_mem) but its read output feeds the mux here.
-    wire [7:0]  pia_read_data;
-
-    wire [7:0]  sally_hwreg_dout =
-        (sally_hwreg_addr[15:8] == 8'hD0) ? gtia_read_data
-      : (sally_hwreg_addr[15:8] == 8'hD1) ? bus_pbi_rdata_q      // M-PBI: PBI device drives D[7:0] (phi2-fall sample)
-      : (sally_hwreg_addr[15:8] == 8'hD2 && !sally_hwreg_addr[4]) ? pokey_l_read_data
-      : (sally_hwreg_addr[15:8] == 8'hD2 &&  sally_hwreg_addr[4]) ? pokey_r_read_data
-      : (sally_hwreg_addr[15:8] == 8'hD3 &&  sally_hwreg_addr[7]) ? cache_read_data
-      : (sally_hwreg_addr[15:8] == 8'hD3 && !sally_hwreg_addr[7]) ? pia_read_data
-      : (sally_hwreg_addr[15:8] == 8'hD4) ? (antic_read_data | draw_read_data | pssi_bytes_read_data)
-      : 8'hFF;                         // unassigned defaults to $FF (Altirra §4.1)
-
-    // HyperRAM port for the bank cache — at M24-int-1 we self-complete
-    // misses with garbage data so synth sees real combinational paths
-    // through the cache's miss FSM. Real backing storage lands at
-    // M24-int-3 when bank_cache shares the cpu_shadow HyperRAM space.
-    //
-    // M-cache-rework Step 5: bank_cache uses a burst handshake
-    // (one hr_req pulse per refill / writeback). For the synth stub
-    // we generate a small counter that emits hr_rvalid for each WORD
-    // of the burst and pulses hr_done on the last. Words themselves
-    // remain garbage — real data lands when the cache is wired to
-    // hyperram_shim.
-    //
-    // Step 7: bank_cache widens its HR data path to
-    // CACHE_WORD_BYTES * 8 bits per pulse (= 16 bits at WORD_BYTES=2),
-    // halving the burst length for a 1 KB line (1024 → 512 words).
-    localparam int unsigned SALLY_HR_WORD_BYTES = 2;
-    wire [22:0] sally_hr_addr_w;
-    wire [9:0]  sally_hr_burst_len_w;
-    wire        sally_hr_we_w;
-    wire [SALLY_HR_WORD_BYTES*8-1:0] sally_hr_wdata_w;
-    wire        sally_hr_req_w;
-    logic [9:0] sally_hr_burst_remain_q;
-    logic       sally_hr_burst_active_q;
-    logic       sally_hr_rvalid_q;
-    logic       sally_hr_done_q;
-    always_ff @(posedge clk_bus or posedge rst_bus) begin
-        if (rst_bus) begin
-            sally_hr_burst_active_q <= 1'b0;
-            sally_hr_burst_remain_q <= 10'h000;
-            sally_hr_rvalid_q       <= 1'b0;
-            sally_hr_done_q         <= 1'b0;
-        end else begin
-            sally_hr_rvalid_q <= 1'b0;
-            sally_hr_done_q   <= 1'b0;
-            if (sally_hr_req_w && !sally_hr_burst_active_q) begin
-                sally_hr_burst_active_q <= 1'b1;
-                sally_hr_burst_remain_q <= sally_hr_burst_len_w;
-                // First byte processed this cycle. For reads pulse
-                // rvalid; writes silently consume hr_wdata (mock has
-                // no backing store).
-                if (!sally_hr_we_w) sally_hr_rvalid_q <= 1'b1;
-                if (sally_hr_burst_len_w == 10'h000) begin
-                    sally_hr_done_q         <= 1'b1;
-                    sally_hr_burst_active_q <= 1'b0;
-                end
-            end else if (sally_hr_burst_active_q) begin
-                if (!sally_hr_we_w) sally_hr_rvalid_q <= 1'b1;
-                if (sally_hr_burst_remain_q == 10'h001) begin
-                    sally_hr_done_q         <= 1'b1;
-                    sally_hr_burst_active_q <= 1'b0;
-                end else begin
-                    sally_hr_burst_remain_q <= sally_hr_burst_remain_q - 10'h001;
-                end
-            end
-        end
-    end
-
-    sally_clock #(.BASE_DIV(BASE_DIV)) u_sally_clock (
-        .clk         (clk_bus),
-        .rst         (rst_bus),
-        .phi2_tick   (phi2_tick),
-        .clock_mult  (clock_mult_q),
-        .halt_n      (halt_n),
-        .wsync_rdy_n (wsync_rdy_w),
-        .busy_n      (~sally_busy_w),
-        .sally_rdy   (sally_rdy_w),
-        .sally_step  (sally_step_w)
-    );
-
-    // SALLY is held in reset until software (a) loads OS-B into BRAM
-    // via the rom-load chiplet path and (b) flips $D481[1] to 1. This
-    // prevents the CPU from running garbage out of uninitialised BRAM
-    // at boot. M24-int-3 pre-bakes the OS image in the bitstream, at
-    // which point this gate becomes "wait for cpu_internal_q only."
-    wire sally_rst_w = rst_bus | ~(cpu_internal_q & os_rom_locked_q);
-
-    sally_core u_sally_core (
-        .clk      (clk_bus),
-        .rst      (sally_rst_w),
-        .addr     (sally_addr_w),
-        .data_in  (sally_mem_dout),
-        .data_out (sally_dout_w),
-        .rw       (sally_rw_w),
-        .rdy      (sally_rdy_w),
-        .irq_n    (irq_n_combined),       // POKEY irq_n OR'd with PBI /EXTIRQ (M-PBI)
-        .nmi_n    (nmi_n_w)               // M-vbeam-feedback: from nmi_gen
-    );
-
-    // sally_mem's OS_ROM_HEX_PATH parameter is overridden at synth time
-    // via Synplify (`-fdp:OS_ROM_HEX_PATH=...`) or by editing the
-    // default in sally_mem.sv. iverilog's string-parameter passthrough
-    // is flaky, so we leave the antic_top hierarchy parameter-free and
-    // let the leaf carry it.
-    sally_mem #(
-        // M-cache-rework Step 2 production geometry — 16 sets × 4 ways
-        // × 1 KB lines = 64 KB total. Defaults in sally_mem.sv are
-        // sized for sim speed; antic_top overrides at synth so the
-        // production build gets the full cache.
-        // Step 7: WORD_BYTES=2 widens the HR data path so each refill
-        // cycle commits 2 bytes (1 KB miss drops 1024 → ~512 cycles).
-        .CACHE_NUM_SETS    (16),
-        .CACHE_NUM_WAYS    (4),
-        .CACHE_LINE_BYTES  (1024),
-        .CACHE_WORD_BYTES  (SALLY_HR_WORD_BYTES)
-    ) u_sally_mem (
-        .clk        (clk_bus),
-        .rst        (rst_bus),
-        .addr       (sally_addr_w),
-        .data_in    (sally_dout_w),
-        .rw         (sally_rw_w),
-        .data_out   (sally_mem_dout),
-        .rdy        (sally_rdy_w),
-        .busy       (sally_busy_w),
-        .hwreg_addr (sally_hwreg_addr),
-        .hwreg_we   (sally_hwreg_we),
-        .hwreg_din  (sally_hwreg_din),
-        .hwreg_dout (sally_hwreg_dout),
-        .cpu_code_bank_q    (cpu_code_bank_q),
-        .cpu_data_bank_q    (cpu_data_bank_q),
-        .cpu_regc_bank_lo_q (cpu_regc_bank_lo_q),
-        .cpu_regc_bank_hi_q (cpu_regc_bank_hi_q),
-        .antic_code_bank    (antic_code_bank_q),
-        .antic_data_bank    (antic_data_bank_q),
-        .antic_regc_bank_lo (antic_regc_bank_lo_q),
-        .antic_regc_bank_hi (antic_regc_bank_hi_q),
-        .view_is_antic      (dma_busy_w),    // ANTIC view active during DMA
-        .bus_mpd_n_in       (bus_mpd_n_q),    // M-PBI step 2: /MPD masks $D800-$DFFF FP ROM
-        .bus_pbi_rdata      (bus_pbi_rdata_q),// M-PBI #1: phi2-fall sample of PBI/cart D[7:0]
-        .bus_rd4_n_in       (bus_rd4_q),      // M-PBI #2: cart-detect $8000-$9FFF (active-low)
-        .bus_rd5_n_in       (bus_rd5_q),      // M-PBI #2: cart-detect $A000-$BFFF (active-low)
-        .hr_addr      (sally_hr_addr_w),
-        .hr_burst_len (sally_hr_burst_len_w),
-        .hr_we        (sally_hr_we_w),
-        .hr_wdata     (sally_hr_wdata_w),
-        .hr_req       (sally_hr_req_w),
-        .hr_rdata     ({(SALLY_HR_WORD_BYTES*8){1'b0}}),  // M24-int-3 will route real data
-        .hr_rvalid    (sally_hr_rvalid_q),
-        .hr_done      (sally_hr_done_q),
-        .rom_addr    (os_rom_addr_q),
-        .rom_data    (os_rom_data_q),
-        .rom_we      (os_rom_we),
-        .attr_lookup_idx  (cache_attr_lookup_idx),
-        .attr_lookup_data (cache_attr_lookup_data)
-    );
-
-    assign sally_addr_o = sally_addr_w;
-    assign sally_data_o = sally_dout_w;
-    assign sally_rw_o   = sally_rw_w;
-    assign sally_busy_o = sally_busy_w;
+    // Zynq build: cache_regs + shadow SALLY stack removed.
 
     // ---- M25-1 — PIA shadow at $D300-$D37F -----------------------------
     // Owns PORTA / PORTB / PACTL / PBCTL. PORTB writes feed the
@@ -1484,7 +1174,7 @@ module antic_top #(
         .waddr         (snoop_addr),
         .wdata         (snoop_data),
         .raddr         (read_addr_w),
-        .rdata         (pia_read_data),
+        // Zynq build: .rdata unused — no shadow SALLY reading PIA.
         .joy_porta_in  (w_joy_porta_in),
         .joy_portb_in  (w_joy_portb_in),
         .joy_porta_out (w_joy_porta_out),
@@ -1551,46 +1241,7 @@ module antic_top #(
         .spi_irq             (spi_irq)
     );
 
-    // bank_translator — logical-to-physical translation for the
-    // 130XE/cart banking schemes. PORTB[4]=0 enables the CPU window
-    // ($4000-$7FFF → extended bank PORTB[3:2]). Cart pins tied off
-    // until cart-slot wiring lands at M22 / M25.
-    bank_translator #(.LOG_ADDR_W(16), .PHYS_ADDR_W(23)) u_xlat (
-        .logical_addr   (sally_addr_w),
-        .portb_bank_en  (~portb_q[4]),
-        .portb_bank_idx (portb_q[3:2]),
-        .cart_en        (1'b0),
-        .cart_bank_idx  (4'h0),
-        .cart_size_16k  (1'b0),
-        .physical_addr  (xlat_phys_addr_o)
-    );
 
-    // ---- rp_tx ----------------------------------------------------------
-    // FETCH/SET host port driven by the compositor's cmd_* output.
-    // DRAW host port driven by draw_regs (M17-2). draw_full ties off
-    // until the RP-side handler lands at M17-3.
-    wire [1:0]  rp_bus_tag;
-    wire [23:0] rp_bus_payload;
-    wire [31:0] rp_tx_misalign_count;
-    wire [31:0] rp_tx_draw_op_invalid_count;
-    rp_tx u_rp_tx (
-        .clk(clk_bus), .rst(rst_bus),
-        .cmd_tag(cmp_cmd_tag), .cmd_addr(cmp_cmd_addr),
-        .cmd_data(cmp_cmd_data), .cmd_valid(cmp_cmd_valid),
-        .cmd_ready(cmp_cmd_ready),
-        .draw_cmd_valid(draw_cmd_valid_w),
-        .draw_cmd_ready(draw_cmd_ready_w),
-        .draw_op(draw_op_w),
-        .draw_arg0(draw_arg0_w), .draw_arg1(draw_arg1_w),
-        .draw_arg2(draw_arg2_w), .draw_arg3(draw_arg3_w),
-        .draw_arg4(draw_arg4_w), .draw_arg5(draw_arg5_w),
-        .draw_arg6(draw_arg6_w), .draw_arg7(draw_arg7_w),
-        .draw_arg8(draw_arg8_w),
-        .draw_full(1'b0),
-        .bus_tag(rp_bus_tag), .bus_payload(rp_bus_payload),
-        .tx_set_misalign_count(rp_tx_misalign_count),
-        .tx_draw_op_invalid_count(rp_tx_draw_op_invalid_count)
-    );
 
     // ---- Color resolvers (M-video-int) -------------------------------
     // Two color_resolver instances — one per pixel in the cmd_data pair
@@ -1638,7 +1289,7 @@ module antic_top #(
     wire d2xx_read_r = d2xx_read &  bus_addr[4];
 
     wire [7:0] bus_data_out_w = d0xx_read   ? gtia_read_data
-                              : d4xx_read   ? (antic_read_data | draw_read_data | pssi_bytes_read_data)
+                              : d4xx_read   ? (antic_read_data | draw_read_data )
                               : d2xx_read_l ? pokey_l_read_data
                               : d2xx_read_r ? pokey_r_read_data
                               : 8'h00;
@@ -1656,7 +1307,7 @@ module antic_top #(
     // FPGA package and the short FPGA-to-LVC8T245 board traces, no
     // dynamic-power burn. LVC8T245 OE-disable is secondary safety
     // handled at the synth wrapper.
-    wire ext_bus_active = cpu_internal_q ? (clock_mult_q == 8'h01) : 1'b1;
+    wire ext_bus_active = 1'b1;
 
     // Address-decoded outbound control signals, combinational (registered
     // below for the pad drive).
@@ -1730,7 +1381,7 @@ module antic_top #(
     // At fast mode (cpu_internal_q=1, clock_mult_q != 1) ext_bus_active
     // forces both signals to {0, 8'h00} — the synth wrapper's pad-
     // register flop sees a stable D and doesn't toggle.
-    wire prod_write_drive = cpu_internal_q & (clock_mult_q == 8'h01) & ~snoop_bus_rw_w;
+    wire prod_write_drive = 1'b0;
     wire [7:0] bus_data_drive_w = prod_write_drive ? snoop_bus_data_w
                                 : bus_data_oe_w    ? bus_data_out_w
                                                    : 8'h00;
@@ -1929,17 +1580,29 @@ module antic_top #(
         .tmds_clk         (tmds_clk)
     );
 
+    // ---- Parallel RGB565 output (Zynq / SiI9022A path) -----------------
+    // Down-sample palette RGB888 to RGB565 and forward sync signals from
+    // vbeam.  On Zynq, these drive the SiI9022A HDMI transmitter directly;
+    // on legacy TMDS builds they're unconnected (nc in the synth wrapper).
+    assign rgb_r_o     = palette_rgb_w[23:19];    // 8-bit R → top 5 bits
+    assign rgb_g_o     = palette_rgb_w[15:10];    // 8-bit G → top 6 bits
+    assign rgb_b_o     = palette_rgb_w[7:3];      // 8-bit B → top 5 bits
+    assign rgb_hsync_o = hdmi_hsync_w;
+    assign rgb_vsync_o = hdmi_vsync_w;
+    assign rgb_de_o    = hdmi_de;
+    assign rgb_pixclk_o = clk_pix;
+
     // ============================================================
     // N6 PERIPHERAL INTERFACE — Phase 0 stubs (docs/n6-hdl-migration.md)
     // ============================================================
     // Drive outputs to safe defaults. Functional drivers land in
     // Phases 1–4:
-    //   Phase 1: n6_pssi_*           (pssi_tx)
+    // Zynq build: n6_pssi_* removed (no N6)
     //   Phase 2: n6_fmc_*            (fmc_slave)
     //   Phase 3: n6_ltdc_* consumers (ltdc_capture → tmds_encoder mux)
     //   Phase 4: n6_spi_*, n6_irq_*  (spi_event_master + irq_aggregator)
 
-    // Phase 1: pssi_tx + pssi_bytes drive n6_pssi_* (replaces the
+    // Zynq build: n6_pssi_* removed.
     // Phase 0 hardcoded stubs). See the module instantiations later
     // in this file under "Phase 1 — PSSI byte channel".
 

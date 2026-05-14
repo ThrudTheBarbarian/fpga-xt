@@ -19,7 +19,7 @@
 set -euo pipefail
 
 FLOW="${1:-synth}"
-TOP="${2:-sally_synth_top}"
+TOP="${2:-fpga_xt_top}"
 PART="${3:-xc7z020-2clg400}"
 
 REMOTE="${REMOTE:-ubuntu}"

@@ -143,7 +143,16 @@ module sally_mem #(
     // the BRAM, bypassing the normal CPU write pipeline.
     input  wire [15:0] rom_addr,
     input  wire [7:0]  rom_data,
-    input  wire        rom_we
+    input  wire        rom_we,
+
+    // ANTIC DMA read port — independent clock domain (clk_sys).
+    // Provides a second read port into the main BRAM so ANTIC can
+    // fetch display data without halting SALLY (at CLOCK_MULT>=2).
+    // dma_addr is sampled on posedge dma_clk; dma_rdata is registered
+    // and available 1 cycle later.
+    input  wire         dma_clk,
+    input  wire [15:0]  dma_addr,
+    output wire [7:0]   dma_rdata
 );
 
     // ---- Backing BRAM ($0000-$3FFF, $8000-$FFFF less hwreg page) ---
@@ -299,6 +308,16 @@ module sally_mem #(
     always_ff @(posedge clk) begin
         if (mem_we) mem[mem_addr_w] <= mem_din_w;
     end
+
+    // ANTIC DMA read port — independent clock.  Vivado infers a true
+    // dual-port BRAM (RAMB36E1 has two independent ports, each with
+    // its own clock).  The array declaration above (`mem[0:65535]`)
+    // is shared between both ports.
+    logic [7:0] dma_rdata_q;
+    always_ff @(posedge dma_clk) begin
+        dma_rdata_q <= mem[dma_addr];
+    end
+    assign dma_rdata = dma_rdata_q;
 
     // Read pipeline + path-tracking flops. Async reset kept here, but
     // away from the mem array so Vivado can still infer BRAM above.

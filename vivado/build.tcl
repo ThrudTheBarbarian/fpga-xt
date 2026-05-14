@@ -1,4 +1,4 @@
-# build.tcl — non-project-mode Vivado build for fpga-antic on Zynq-7020.
+# build.tcl — non-project-mode Vivado build for fpga-xt on Zynq-7020.
 #
 # Invoked by vivado/run.sh:
 #   vivado -mode batch -source build.tcl -tclargs <flow> <top> <part>
@@ -8,10 +8,9 @@
 #   impl  — synth, then opt/place/route; write post-route checkpoint
 #   bit   — full flow including bitstream generation
 #
-# Top module: Phase 0 default is sally_synth_top (SALLY stack only —
-# probes fmax in isolation, no antic_top / no Atari I/O / no peripheral
-# pads). Later phases extend the top to include antic_top and the new
-# Zynq-specific Atari-I/O wrapper.
+# Top module: Phase 1 default is fpga_xt_top (SALLY + ANTIC integrated).
+# Phase 0 used sally_synth_top (SALLY stack only, standalone fmax probe).
+# Override via -tclargs <flow> <top> <part>.
 #
 # Part: xc7z020-2clg400 (Z-Turn full SOM). Override via -tclargs.
 
@@ -30,23 +29,44 @@ file mkdir $out_dir
 puts ">> flow=$flow top=$top part=$part"
 
 # ---- Read sources -------------------------------------------------------
-# Phase 0 source-list strategy: pull in every .sv from hdl/ that isn't a
-# sim-only mock or an Efinix-specific vendor IP (HyperRAM PHY, etc.).
-# Synthesis will complain about anything that doesn't elaborate cleanly;
-# we use the error log to identify what needs porting next.
+# Phase 1 source-list strategy: pull in every .sv from hdl/ that isn't a
+# sim-only mock, an Efinix-specific vendor IP (HyperRAM PHY, TMDS
+# serializers), or a v1 HyperRAM-era cache module (replaced by
+# banked_axi_reader + bram_shim per sally-mem-v2.md).
 set hdl_dir [file join [pwd] hdl]
 
-# SystemVerilog files — exclude sim-only mocks, Efinix-specific
-# vendor cores (HyperRAM PHY), and the v1 HyperRAM-era cache modules
-# (replaced by banked_axi_reader per sally-mem-v2.md).
+# SystemVerilog files — exclude:
+#   *_mock.sv                   — simulation-only mocks
+#   hyperram_phy.sv             — Efinix HyperRAM PHY (vendor primitive)
+#   tmds_serializer.sv          — Efinix OSER10 serializer (vendor primitive)
+#   hdmi_out.sv                 — replaced by hdmi_out_zynq.sv (same module name,
+#                                 Zynq-compatible: keeps vbeam, no TMDS serializer)
+#   bank_cache.sv, cache_line_ram.sv — v1 HyperRAM cache (deleted per v2a)
+#   prefetch.sv                 — v1 cache support module (unused on Zynq)
+#   cache_regs.sv               — v1 cache register file (unused on Zynq)
+#   bank_translator.sv          — v1 cache address translator (unused on Zynq)
+#   pssi_tx.sv, pssi_bytes.sv   — N6 PSSI serial link (Efinix-era, no N6 on Zynq)
+#   rp_tx.sv, rp_rx.sv         — FPGA⇄RP serial link (Efinix-era, no RP on Zynq)
+#   sally_synth_top.sv          — Phase 0 standalone SALLY fmax probe top
+#   cache_line_ram_synth_top.sv — Phase 0 standalone cache-bram fmax probe top
 set sv_files {}
 foreach f [glob -nocomplain [file join $hdl_dir *.sv]] {
     set name [file tail $f]
-    if {[string match "*_mock.sv" $name]} { continue }
-    if {[string match "hyperram_*" $name]} { continue }
-    if {$name eq "bank_cache.sv"}      { continue }
-    if {$name eq "cache_line_ram.sv"}  { continue }
-    if {$name eq "mem_read_mux.sv"}    { continue }
+    if {[string match "*_mock.sv" $name]}          { continue }
+    if {$name eq "hyperram_phy.sv"}                { continue }
+    if {$name eq "tmds_serializer.sv"}             { continue }
+    if {$name eq "hdmi_out.sv"}                    { continue }
+    if {$name eq "bank_cache.sv"}                  { continue }
+    if {$name eq "cache_line_ram.sv"}              { continue }
+    if {$name eq "prefetch.sv"}                    { continue }
+    if {$name eq "cache_regs.sv"}                  { continue }
+    if {$name eq "bank_translator.sv"}             { continue }
+    if {$name eq "pssi_tx.sv"}                     { continue }
+    if {$name eq "pssi_bytes.sv"}                  { continue }
+    if {$name eq "rp_tx.sv"}                       { continue }
+    if {$name eq "rp_rx.sv"}                       { continue }
+    if {$name eq "sally_synth_top.sv"}             { continue }
+    if {$name eq "cache_line_ram_synth_top.sv"}    { continue }
     lappend sv_files $f
 }
 # Also pick up sally_core.sv (and any other .sv) under hdl/sally/.
@@ -80,7 +100,15 @@ foreach f [glob -nocomplain [file join [pwd] constraints *.xdc]] {
 # only has 125 user IO). OOC skips IO buf inference + IO placement, so
 # the timing report measures internal logic delay only — exactly what
 # we want for an fmax probe.
+#
+# Performance-tuned strategy (mirrors project-mode "Performance_Retiming"):
+#   -directive PerformanceOptimized — timing-focused synth
+#   -retiming                       — allow register retiming
+#   -flatten_hierarchy full         — let retiming cross module boundaries
 synth_design -mode out_of_context \
+             -directive PerformanceOptimized \
+             -retiming \
+             -flatten_hierarchy full \
              -top $top -part $part -include_dirs $include_dirs
 write_checkpoint -force [file join $out_dir post_synth.dcp]
 report_utilization -file [file join $out_dir post_synth_util.rpt]
@@ -88,10 +116,14 @@ report_timing_summary -file [file join $out_dir post_synth_timing.rpt]
 puts ">> synth complete"
 
 # ---- Implementation -----------------------------------------------------
+# Performance-tuned implementation directives: opt with remap, place
+# with timing-focused effort, phys_opt for post-place retiming, and
+# route with aggressive timing exploration.
 if {$flow eq "impl" || $flow eq "bit"} {
-    opt_design
-    place_design
-    route_design
+    opt_design       -directive ExploreWithRemap
+    place_design     -directive ExtraTimingOpt
+    phys_opt_design  -directive AggressiveExplore
+    route_design     -directive AggressiveExplore
     write_checkpoint -force [file join $out_dir post_route.dcp]
     report_utilization -file [file join $out_dir post_route_util.rpt]
     report_timing_summary -file [file join $out_dir post_route_timing.rpt]
