@@ -100,15 +100,7 @@ foreach f [glob -nocomplain [file join [pwd] constraints *.xdc]] {
 # only has 125 user IO). OOC skips IO buf inference + IO placement, so
 # the timing report measures internal logic delay only — exactly what
 # we want for an fmax probe.
-#
-# Performance-tuned strategy (mirrors project-mode "Performance_Retiming"):
-#   -directive PerformanceOptimized — timing-focused synth
-#   -retiming                       — allow register retiming
-#   -flatten_hierarchy full         — let retiming cross module boundaries
 synth_design -mode out_of_context \
-             -directive PerformanceOptimized \
-             -retiming \
-             -flatten_hierarchy full \
              -top $top -part $part -include_dirs $include_dirs
 write_checkpoint -force [file join $out_dir post_synth.dcp]
 report_utilization -file [file join $out_dir post_synth_util.rpt]
@@ -116,14 +108,10 @@ report_timing_summary -file [file join $out_dir post_synth_timing.rpt]
 puts ">> synth complete"
 
 # ---- Implementation -----------------------------------------------------
-# Performance-tuned implementation directives: opt with remap, place
-# with timing-focused effort, phys_opt for post-place retiming, and
-# route with aggressive timing exploration.
 if {$flow eq "impl" || $flow eq "bit"} {
-    opt_design       -directive ExploreWithRemap
-    place_design     -directive ExtraTimingOpt
-    phys_opt_design  -directive AggressiveExplore
-    route_design     -directive AggressiveExplore
+    opt_design
+    place_design
+    route_design
     write_checkpoint -force [file join $out_dir post_route.dcp]
     report_utilization -file [file join $out_dir post_route_util.rpt]
     report_timing_summary -file [file join $out_dir post_route_timing.rpt]
