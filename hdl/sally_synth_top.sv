@@ -38,7 +38,7 @@ module sally_synth_top (
     output wire        pad_rw,
     output wire        pad_busy,
 
-    // AXI4 burst read master to PS DDR3 (banked-window port; v2b).
+    // AXI4 burst read + write master to PS DDR3 (banked-window port; v2c).
     output wire [31:0] pad_m_axi_araddr,
     output wire [7:0]  pad_m_axi_arlen,
     output wire [2:0]  pad_m_axi_arsize,
@@ -49,6 +49,19 @@ module sally_synth_top (
     input  wire        pad_m_axi_rvalid,
     input  wire        pad_m_axi_rlast,
     output wire        pad_m_axi_rready,
+    output wire [31:0] pad_m_axi_awaddr,
+    output wire [7:0]  pad_m_axi_awlen,
+    output wire [2:0]  pad_m_axi_awsize,
+    output wire [1:0]  pad_m_axi_awburst,
+    output wire        pad_m_axi_awvalid,
+    input  wire        pad_m_axi_awready,
+    output wire [63:0] pad_m_axi_wdata,
+    output wire [7:0]  pad_m_axi_wstrb,
+    output wire        pad_m_axi_wlast,
+    output wire        pad_m_axi_wvalid,
+    input  wire        pad_m_axi_wready,
+    input  wire        pad_m_axi_bvalid,
+    output wire        pad_m_axi_bready,
 
     // ROM-load pads (chiplet-ext register loader)
     input  wire [15:0] pad_rom_addr,
@@ -65,6 +78,9 @@ module sally_synth_top (
     logic [63:0] m_axi_rdata_q;
     logic        m_axi_rvalid_q;
     logic        m_axi_rlast_q;
+    logic        m_axi_awready_q;
+    logic        m_axi_wready_q;
+    logic        m_axi_bvalid_q;
     logic [15:0] rom_addr_q;
     logic [7:0]  rom_data_q;
     logic        rom_we_q;
@@ -81,6 +97,9 @@ module sally_synth_top (
         m_axi_rdata_q   <= pad_m_axi_rdata;
         m_axi_rvalid_q  <= pad_m_axi_rvalid;
         m_axi_rlast_q   <= pad_m_axi_rlast;
+        m_axi_awready_q <= pad_m_axi_awready;
+        m_axi_wready_q  <= pad_m_axi_wready;
+        m_axi_bvalid_q  <= pad_m_axi_bvalid;
         rom_addr_q      <= pad_rom_addr;
         rom_data_q      <= pad_rom_data;
         rom_we_q        <= pad_rom_we;
@@ -132,6 +151,16 @@ module sally_synth_top (
     wire [1:0]  m_axi_arburst_w;
     wire        m_axi_arvalid_w;
     wire        m_axi_rready_w;
+    wire [31:0] m_axi_awaddr_w;
+    wire [7:0]  m_axi_awlen_w;
+    wire [2:0]  m_axi_awsize_w;
+    wire [1:0]  m_axi_awburst_w;
+    wire        m_axi_awvalid_w;
+    wire [63:0] m_axi_wdata_w;
+    wire [7:0]  m_axi_wstrb_w;
+    wire        m_axi_wlast_w;
+    wire        m_axi_wvalid_w;
+    wire        m_axi_bready_w;
 
     wire [7:0]  cpu_code_bank_q_w, cpu_data_bank_q_w;
     wire [7:0]  cpu_regc_bank_lo_q_w, cpu_regc_bank_hi_q_w;
@@ -172,6 +201,19 @@ module sally_synth_top (
         .m_axi_rvalid       (m_axi_rvalid_q),
         .m_axi_rlast        (m_axi_rlast_q),
         .m_axi_rready       (m_axi_rready_w),
+        .m_axi_awaddr       (m_axi_awaddr_w),
+        .m_axi_awlen        (m_axi_awlen_w),
+        .m_axi_awsize       (m_axi_awsize_w),
+        .m_axi_awburst      (m_axi_awburst_w),
+        .m_axi_awvalid      (m_axi_awvalid_w),
+        .m_axi_awready      (m_axi_awready_q),
+        .m_axi_wdata        (m_axi_wdata_w),
+        .m_axi_wstrb        (m_axi_wstrb_w),
+        .m_axi_wlast        (m_axi_wlast_w),
+        .m_axi_wvalid       (m_axi_wvalid_w),
+        .m_axi_wready       (m_axi_wready_q),
+        .m_axi_bvalid       (m_axi_bvalid_q),
+        .m_axi_bready       (m_axi_bready_w),
         .rom_addr    (rom_addr_q),
         .rom_data    (rom_data_q),
         .rom_we      (rom_we_q)
@@ -188,6 +230,16 @@ module sally_synth_top (
     logic [1:0]  pad_m_axi_arburst_q;
     logic        pad_m_axi_arvalid_q;
     logic        pad_m_axi_rready_q;
+    logic [31:0] pad_m_axi_awaddr_q;
+    logic [7:0]  pad_m_axi_awlen_q;
+    logic [2:0]  pad_m_axi_awsize_q;
+    logic [1:0]  pad_m_axi_awburst_q;
+    logic        pad_m_axi_awvalid_q;
+    logic [63:0] pad_m_axi_wdata_q;
+    logic [7:0]  pad_m_axi_wstrb_q;
+    logic        pad_m_axi_wlast_q;
+    logic        pad_m_axi_wvalid_q;
+    logic        pad_m_axi_bready_q;
 
     always_ff @(posedge clk) begin
         pad_addr_q          <= cpu_addr_w;
@@ -200,6 +252,16 @@ module sally_synth_top (
         pad_m_axi_arburst_q <= m_axi_arburst_w;
         pad_m_axi_arvalid_q <= m_axi_arvalid_w;
         pad_m_axi_rready_q  <= m_axi_rready_w;
+        pad_m_axi_awaddr_q  <= m_axi_awaddr_w;
+        pad_m_axi_awlen_q   <= m_axi_awlen_w;
+        pad_m_axi_awsize_q  <= m_axi_awsize_w;
+        pad_m_axi_awburst_q <= m_axi_awburst_w;
+        pad_m_axi_awvalid_q <= m_axi_awvalid_w;
+        pad_m_axi_wdata_q   <= m_axi_wdata_w;
+        pad_m_axi_wstrb_q   <= m_axi_wstrb_w;
+        pad_m_axi_wlast_q   <= m_axi_wlast_w;
+        pad_m_axi_wvalid_q  <= m_axi_wvalid_w;
+        pad_m_axi_bready_q  <= m_axi_bready_w;
     end
 
     assign pad_addr          = pad_addr_q;
@@ -212,6 +274,16 @@ module sally_synth_top (
     assign pad_m_axi_arburst = pad_m_axi_arburst_q;
     assign pad_m_axi_arvalid = pad_m_axi_arvalid_q;
     assign pad_m_axi_rready  = pad_m_axi_rready_q;
+    assign pad_m_axi_awaddr  = pad_m_axi_awaddr_q;
+    assign pad_m_axi_awlen   = pad_m_axi_awlen_q;
+    assign pad_m_axi_awsize  = pad_m_axi_awsize_q;
+    assign pad_m_axi_awburst = pad_m_axi_awburst_q;
+    assign pad_m_axi_awvalid = pad_m_axi_awvalid_q;
+    assign pad_m_axi_wdata   = pad_m_axi_wdata_q;
+    assign pad_m_axi_wstrb   = pad_m_axi_wstrb_q;
+    assign pad_m_axi_wlast   = pad_m_axi_wlast_q;
+    assign pad_m_axi_wvalid  = pad_m_axi_wvalid_q;
+    assign pad_m_axi_bready  = pad_m_axi_bready_q;
 
 endmodule
 

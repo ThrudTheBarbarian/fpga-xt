@@ -112,7 +112,8 @@ module sally_mem #(
     input  wire        bus_rd4_n_in,   // $8000-$9FFF cart present
     input  wire        bus_rd5_n_in,   // $A000-$BFFF cart present
 
-    // AXI4 burst read master to PS DDR3 (via Zynq AXI HP port).
+    // AXI4 burst read + single-beat write master to PS DDR3
+    // (via Zynq AXI HP port).
     output wire [31:0] m_axi_araddr,
     output wire [7:0]  m_axi_arlen,
     output wire [2:0]  m_axi_arsize,
@@ -123,6 +124,19 @@ module sally_mem #(
     input  wire        m_axi_rvalid,
     input  wire        m_axi_rlast,
     output wire        m_axi_rready,
+    output wire [31:0] m_axi_awaddr,
+    output wire [7:0]  m_axi_awlen,
+    output wire [2:0]  m_axi_awsize,
+    output wire [1:0]  m_axi_awburst,
+    output wire        m_axi_awvalid,
+    input  wire        m_axi_awready,
+    output wire [63:0] m_axi_wdata,
+    output wire [7:0]  m_axi_wstrb,
+    output wire        m_axi_wlast,
+    output wire        m_axi_wvalid,
+    input  wire        m_axi_wready,
+    input  wire        m_axi_bvalid,
+    output wire        m_axi_bready,
 
     // M24-6 OS ROM load port. Pulse rom_we high for one cycle with
     // a valid rom_addr / rom_data to commit a byte directly into
@@ -204,13 +218,16 @@ module sally_mem #(
     // visible for retiming. Production builds will replace the
     // hardcoded base with a chiplet-ext register read.
     //
-    // v2b: banked_axi_reader has a 1-line prefetch buffer; req_valid
-    // is level-sensitive (held high while SALLY presents a banked-
-    // window read), and req_ready is combinational on hit / pulses
-    // on burst-complete on miss. No in_flight_q needed at this layer.
+    // v2c: banked_axi_reader handles both reads (with 1-line prefetch)
+    // and writes (single-beat write-through, line invalidated on
+    // matching write). req_valid is level-sensitive (held high while
+    // SALLY presents any banked-window access); req_we selects the
+    // direction. req_ready is combinational on read-hit / pulses on
+    // read-burst-complete / pulses on write-B-response.
     wire [31:0] axi_req_addr = DDR3_BANKED_BASE
                              | {4'b0000, bank_id_w[15:0], offset_in_block_w[11:0]};
-    wire        axi_req_valid = rdy && is_in_window_w && rw;
+    wire        axi_req_valid = rdy && is_in_window_w;
+    wire        axi_req_we    = !rw;     // SALLY rw: 1=read, 0=write
     wire [7:0]  axi_rdata_w;
     wire        axi_ready_w;
 
@@ -221,6 +238,8 @@ module sally_mem #(
         .rst           (rst),
         .req_addr      (axi_req_addr),
         .req_valid     (axi_req_valid),
+        .req_we        (axi_req_we),
+        .req_wdata     (data_in),
         .req_rdata     (axi_rdata_w),
         .req_ready     (axi_ready_w),
         .m_axi_araddr  (m_axi_araddr),
@@ -232,7 +251,20 @@ module sally_mem #(
         .m_axi_rdata   (m_axi_rdata),
         .m_axi_rvalid  (m_axi_rvalid),
         .m_axi_rlast   (m_axi_rlast),
-        .m_axi_rready  (m_axi_rready)
+        .m_axi_rready  (m_axi_rready),
+        .m_axi_awaddr  (m_axi_awaddr),
+        .m_axi_awlen   (m_axi_awlen),
+        .m_axi_awsize  (m_axi_awsize),
+        .m_axi_awburst (m_axi_awburst),
+        .m_axi_awvalid (m_axi_awvalid),
+        .m_axi_awready (m_axi_awready),
+        .m_axi_wdata   (m_axi_wdata),
+        .m_axi_wstrb   (m_axi_wstrb),
+        .m_axi_wlast   (m_axi_wlast),
+        .m_axi_wvalid  (m_axi_wvalid),
+        .m_axi_wready  (m_axi_wready),
+        .m_axi_bvalid  (m_axi_bvalid),
+        .m_axi_bready  (m_axi_bready)
     );
 
     // SALLY stalls while the reader can't serve the current request.
