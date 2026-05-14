@@ -38,8 +38,11 @@ module sally_synth_top (
     output wire        pad_rw,
     output wire        pad_busy,
 
-    // AXI4-Lite-class read master to PS DDR3 (banked-window port).
+    // AXI4 burst read master to PS DDR3 (banked-window port; v2b).
     output wire [31:0] pad_m_axi_araddr,
+    output wire [7:0]  pad_m_axi_arlen,
+    output wire [2:0]  pad_m_axi_arsize,
+    output wire [1:0]  pad_m_axi_arburst,
     output wire        pad_m_axi_arvalid,
     input  wire        pad_m_axi_arready,
     input  wire [63:0] pad_m_axi_rdata,
@@ -124,6 +127,9 @@ module sally_synth_top (
     wire [7:0]  hwreg_din_w;
 
     wire [31:0] m_axi_araddr_w;
+    wire [7:0]  m_axi_arlen_w;
+    wire [2:0]  m_axi_arsize_w;
+    wire [1:0]  m_axi_arburst_w;
     wire        m_axi_arvalid_w;
     wire        m_axi_rready_w;
 
@@ -157,6 +163,9 @@ module sally_synth_top (
         .bus_rd4_n_in       (1'b1),
         .bus_rd5_n_in       (1'b1),
         .m_axi_araddr       (m_axi_araddr_w),
+        .m_axi_arlen        (m_axi_arlen_w),
+        .m_axi_arsize       (m_axi_arsize_w),
+        .m_axi_arburst      (m_axi_arburst_w),
         .m_axi_arvalid      (m_axi_arvalid_w),
         .m_axi_arready      (m_axi_arready_q),
         .m_axi_rdata        (m_axi_rdata_q),
@@ -174,6 +183,9 @@ module sally_synth_top (
     logic        pad_rw_q;
     logic        pad_busy_q;
     logic [31:0] pad_m_axi_araddr_q;
+    logic [7:0]  pad_m_axi_arlen_q;
+    logic [2:0]  pad_m_axi_arsize_q;
+    logic [1:0]  pad_m_axi_arburst_q;
     logic        pad_m_axi_arvalid_q;
     logic        pad_m_axi_rready_q;
 
@@ -183,6 +195,9 @@ module sally_synth_top (
         pad_rw_q            <= cpu_rw_w;
         pad_busy_q          <= mem_busy_w;
         pad_m_axi_araddr_q  <= m_axi_araddr_w;
+        pad_m_axi_arlen_q   <= m_axi_arlen_w;
+        pad_m_axi_arsize_q  <= m_axi_arsize_w;
+        pad_m_axi_arburst_q <= m_axi_arburst_w;
         pad_m_axi_arvalid_q <= m_axi_arvalid_w;
         pad_m_axi_rready_q  <= m_axi_rready_w;
     end
@@ -192,6 +207,9 @@ module sally_synth_top (
     assign pad_rw            = pad_rw_q;
     assign pad_busy          = pad_busy_q;
     assign pad_m_axi_araddr  = pad_m_axi_araddr_q;
+    assign pad_m_axi_arlen   = pad_m_axi_arlen_q;
+    assign pad_m_axi_arsize  = pad_m_axi_arsize_q;
+    assign pad_m_axi_arburst = pad_m_axi_arburst_q;
     assign pad_m_axi_arvalid = pad_m_axi_arvalid_q;
     assign pad_m_axi_rready  = pad_m_axi_rready_q;
 

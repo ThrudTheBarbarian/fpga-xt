@@ -112,8 +112,11 @@ module sally_mem #(
     input  wire        bus_rd4_n_in,   // $8000-$9FFF cart present
     input  wire        bus_rd5_n_in,   // $A000-$BFFF cart present
 
-    // AXI4-Lite-class read master to PS DDR3 (via Zynq AXI HP port).
+    // AXI4 burst read master to PS DDR3 (via Zynq AXI HP port).
     output wire [31:0] m_axi_araddr,
+    output wire [7:0]  m_axi_arlen,
+    output wire [2:0]  m_axi_arsize,
+    output wire [1:0]  m_axi_arburst,
     output wire        m_axi_arvalid,
     input  wire        m_axi_arready,
     input  wire [63:0] m_axi_rdata,
@@ -195,32 +198,21 @@ module sally_mem #(
     );
 
     // ---- Banked-window AXI port ----------------------------------
-    // Address composition (v2a placeholder): byte address into DDR3 is
+    // Address composition (placeholder): byte address into DDR3 is
     //    DDR3_BANKED_BASE | {bank_id_w[15:0], offset_in_block_w[11:0]}.
     // The OR-form keeps the synth path short and the base register
     // visible for retiming. Production builds will replace the
     // hardcoded base with a chiplet-ext register read.
+    //
+    // v2b: banked_axi_reader has a 1-line prefetch buffer; req_valid
+    // is level-sensitive (held high while SALLY presents a banked-
+    // window read), and req_ready is combinational on hit / pulses
+    // on burst-complete on miss. No in_flight_q needed at this layer.
     wire [31:0] axi_req_addr = DDR3_BANKED_BASE
                              | {4'b0000, bank_id_w[15:0], offset_in_block_w[11:0]};
-    wire        axi_req_valid_pulse;     // edge-detected one-cycle pulse
+    wire        axi_req_valid = rdy && is_in_window_w && rw;
     wire [7:0]  axi_rdata_w;
     wire        axi_ready_w;
-
-    // Pulse req_valid for one cycle when SALLY presents a banked-window
-    // read AND we're not already in flight. (banked_axi_reader latches
-    // the address on the cycle it sees req_valid; further pulses while
-    // busy are ignored by its IDLE-only transition.)
-    logic in_flight_q;
-    always_ff @(posedge clk or posedge rst) begin
-        if (rst) begin
-            in_flight_q <= 1'b0;
-        end else begin
-            if (axi_req_valid_pulse) in_flight_q <= 1'b1;
-            if (axi_ready_w)         in_flight_q <= 1'b0;
-        end
-    end
-    assign axi_req_valid_pulse =
-        rdy && is_in_window_w && rw && !in_flight_q;
 
     banked_axi_reader #(
         .AXI_ADDR_W (32)
@@ -228,10 +220,13 @@ module sally_mem #(
         .clk           (clk),
         .rst           (rst),
         .req_addr      (axi_req_addr),
-        .req_valid     (axi_req_valid_pulse),
+        .req_valid     (axi_req_valid),
         .req_rdata     (axi_rdata_w),
         .req_ready     (axi_ready_w),
         .m_axi_araddr  (m_axi_araddr),
+        .m_axi_arlen   (m_axi_arlen),
+        .m_axi_arsize  (m_axi_arsize),
+        .m_axi_arburst (m_axi_arburst),
         .m_axi_arvalid (m_axi_arvalid),
         .m_axi_arready (m_axi_arready),
         .m_axi_rdata   (m_axi_rdata),
@@ -240,12 +235,12 @@ module sally_mem #(
         .m_axi_rready  (m_axi_rready)
     );
 
-    // SALLY stalls while the AXI transaction is in flight (or when
-    // we're presenting a banked read but the prior result isn't
-    // captured yet).
-    assign busy = in_flight_q && !axi_ready_w;
+    // SALLY stalls while the reader can't serve the current request.
+    assign busy = axi_req_valid && !axi_ready_w;
 
-    // Latch the AXI-returned byte for the output mux.
+    // Latch the AXI-returned byte for the output mux. Latched on the
+    // cycle ready fires (hit or burst-complete), aligned with the
+    // bram_dout_q / was_bank_q latches for N+1 mux consumption.
     logic [7:0] axi_rdata_q;
     always_ff @(posedge clk or posedge rst) begin
         if (rst)              axi_rdata_q <= 8'h00;
