@@ -95,8 +95,7 @@ if {$gp0_iface ne ""} {
 
 # GP0 clock — driven by clk_sys from the PL (not FCLK_CLK0, which stays
 # internal for HP ports).  clk_sys and FCLK_CLK0 are both 150 MHz.
-create_bd_port -dir I -type clk s_axi_gp0_aclk
-set_property CONFIG.FREQ_HZ {150000000} [get_bd_ports s_axi_gp0_aclk]
+create_bd_port -dir I -type clk -freq_hz 150000000 s_axi_gp0_aclk
 connect_bd_net [get_bd_ports s_axi_gp0_aclk] [get_bd_pins zynq_ps/M_AXI_GP0_ACLK]
 
 # ---- Make FCLK reset external -----------------------------------------------

@@ -1,4 +1,4 @@
-# Current state — Phase 2b v0.13 (cx CARRY4 pipeline, clk_sys 150 MHz)
+# Current state — Phase 2b v0.14 (AXI-Lite bridge for ARM GP0 → blitter)
 
 Session date: 2026-05-15.
 
@@ -175,30 +175,67 @@ to `{~bus_addr[5], bus_addr[3:0]}`, restoring $D4Bx → DST/PAT/CMD (0-15)
 and $D4Cx → SRC/FLAGS/FONT (16-31).  Any PS software written for the
 v0.4–v0.6 behaviour must update its register addresses.
 
-## Timing — three domains, post-route OOC (Phase 2b v0.13, all features, clk_sys 150 MHz)
+## Timing — three domains (Phase 2b v0.14, all features + PS BD, bitstream build)
+
+Two timing snapshots are relevant:
+
+### OOC synthesis (fmax probe, no PS BD) — 150 MHz clk_sys
 
 ```
 Intra-clock:
   clk_sally   (100.0000 MHz)  WNS +0.651   WHS +0.125    1029 endpoints  ✅
   clk_sys     (150.0000 MHz)  WNS +0.312   WHS +0.059    5649 endpoints  ✅
   clk_pix     (148.4375 MHz)  WNS +2.407   WHS +0.159     110 endpoints  ✅
-
-Inter-clock: no inter-clock paths constrained (set_clock_groups
--asynchronous not matching generated clock names).
 ```
 
-**clk_sys at 150 MHz timing-closed** with WNS = +0.312 ns (0 failing
-endpoints).  The cx CARRY4 pipeline successfully broke the previous
-critical path from cx_reg[0] → CARRY4×6 → LUT6×6 → state_reg[1] that
-limited the 133 MHz build to WNS +0.477 ns (12 logic levels, 6.862 ns
-data path).  The new critical path is the line-draw Bresenham engine:
-`line_dy_reg[0] → 9× CARRY4 + 5× LUT → line_err_reg[13]` at 14 logic
-levels, 6.282 ns data path (62 % logic, 38 % route), slack +0.312 ns.
+**clk_sys at 150 MHz timing-closed** (OOC) with WNS = +0.312 ns.
+The cx CARRY4 pipeline broke the previous cx_reg → state_reg path.
+Critical path: line_dy → line_err Bresenham engine, 14 levels, 6.282 ns.
 
-**clk_sally at 100 MHz** timing-closed at WNS = +0.767 ns
-(0 failing endpoints).  The critical path is a BRAM read-to-write path
-through the SALLY CPU ALU address decoder (7 logic levels, 8.704 ns
-data path, 55 % route delay).
+**clk_sally at 100 MHz**: WNS = +0.767 ns. Critical path: BRAM read-to-write
+through SALLY ALU address decoder (7 logic levels, 8.704 ns).
+
+### Full bitstream build (with PS block design) — 150 MHz clk_sys
+
+```
+Intra-clock:
+  clk_pix     (148.4375 MHz)  WNS +3.425   WHS +0.162     132 endpoints  ✅
+  clk_sally   (100.0000 MHz)  WNS +0.228   WHS +0.184    1029 endpoints  ✅
+  clk_sys     (150.0000 MHz)  WNS -1.845   WHS +0.060    9237 endpoints  ❌ (43 failing)
+```
+
+The bitstream build includes the full PS block design with AXI interconnect,
+address decoders, and clock distribution.  This adds routing congestion and
+clock insertion delay that is absent in OOC.  The 43 failing endpoints are
+all inside xt_blitter's bilinear blend accumulation path:
+
+  `bl_fx8_q[1] → 8× CARRY4 + 6× LUT → bl_pixel_q[26]`
+
+— a 14-level, 8.427 ns data path (51 % logic, 49 % route) that exceeds
+the 6.667 ns period by 1.845 ns.  This path was not visible in OOC because
+the tool placed the blitter differently without PS BD logic competing for
+routing resources.
+
+**Mitigation options** (ordered by effort):
+1. Drop clk_sys to 120 MHz (8.333 ns period): estimated WNS ≈ -0.179 ns,
+   still marginal.  100 MHz (10.000 ns) would close cleanly at +1.497 ns.
+2. Pipeline the bl_fx8 weight computation: register the four bilinear
+   weights (w00/w10/w01/w11, 9-bit each) before entering the blend
+   multiply-accumulate.  Cost: ~36 FFs, +1 cycle latency.  Would restore
+   150 MHz closure on the critical path.
+3. Use Vivado `-retiming` to let the tool redistribute the CARRY4 chain.
+
+**Utilization (bitstream build vs OOC):**
+| Resource | OOC v0.13 | Bitstream v0.14 | Available | Util% |
+|----------|----------:|-----------------:|----------:|------:|
+| Slice LUTs | 2,611 | 5,158 | 53,200 | 9.70% |
+| Slice Registers | 2,902 | 4,932 | 106,400 | 4.64% |
+| Block RAM Tile | 35.5 | 37.5 | 140 | 26.79% |
+| BUFG | 5 | 6 | 32 | 18.75% |
+| MMCME2 | 2 | 2 | 4 | 50.00% |
+
+The increase from PS BD (AXI interconnect, address decoder) + AXI pipeline
+registers + GP0 bridge is ~2,547 LUTs / 2,030 FFs.
 
 ### Fixes applied in v0.13
 
@@ -364,15 +401,33 @@ Per [zynq-architecture.md](./zynq-architecture.md) Phase 1 / 2 criteria:
   WNS = +0.312 ns (0 failing endpoints, 5649 endpoints).  New critical
   path: line_dy → line_err Bresenham engine (14 logic levels, 6.282 ns).
 
-### Phase 2b v0.14 — Next up: expanded testbench, bitstream build
+### Phase 2b v0.14 — AXI-Lite bridge for ARM GP0 → blitter register access
 
-- [ ] Verify BL_RACC2 and SC_SBLEND2 in simulation (blender testbench
-  with AXI mock that checks blended pixel values).
-- [ ] Full bitstream build with PS block design for hardware test.
+- ✅ **AXI-Lite bridge (axi_blitter_bridge.sv)**: Translates AXI4-Lite writes
+  from the Cortex-A9s (via PS M_AXI_GP0) into the blitter's hwreg-style
+  register bus.  2-cycle write FSM, single-cycle read FSM.  Maps AXI byte
+  offset 0x00..0x0F → $D4Bx (reg_addr 0-15, DST/PAT/CMD page) and
+  0x10..0x1F → $D4Cx (reg_addr 16-31, SRC/FLAGS page).  Returns bl_busy
+  on STATUS read (offset 0x0D).  Runs on clk_sys (150 MHz, same as blitter),
+  no CDC needed.
+- ✅ **PS BD GP0 export**: gen_ps_bd.tcl enables M_AXI_GP0 and exports it as
+  an external AXI3 master interface (32-bit, 150 MHz) with s_axi_gp0_aclk
+  clock input.  GP0 address segment assigned for PL register space.
+- ✅ **Top-level mux integration**: Bridge outputs (bl_we, bl_addr, bl_data)
+  are OR'd with the SALLY CDC path via bl_we_mux/bl_addr_mux/bl_data_mux
+  inside `ifdef USE_PS_BD`.  OOC path falls through to SALLY-only (bridge
+  signals tied to 0).  Full AXI3 signal set connected to ps_bd with tie-offs
+  for bid/rid/rlast.
+- ✅ **PS BD regenerated** with GP0 support.
+- ✅ **Bitstream build complete**: `fpga_xt_top.bit` generated. Timing on
+  clk_sys shows 43 failing endpoints (WNS=-1.845 ns) due to blitter
+  bilinear blend path exposed by PS BD routing congestion.  See timing
+  section for mitigation options.
 - [ ] SDRAM / DDR3 bring-up: verify fb_scanout reads and xt_blitter
-  writes to the real DDR3 framebuffer on hardware.
-- [ ] Consider clk_sally at 120 MHz (currently 100 MHz, ALU carry chain
-  caps ~107 MHz — may need ALU pipelining first).
+  writes to the real DDR3 framebuffer on hardware (use reduced clk_sys
+  frequency if needed).
+- [ ] Vitis FreeRTOS BSP + simple GP0 write test (poke CMD register, poll
+  STATUS busy bit).
 
 ### Phase 3 — FreeRTOS + LVGL
 
@@ -423,6 +478,7 @@ bare metal.
 | hdl/fpga_xt_top.sv | Top-level integration (SALLY + ANTIC + fb_scanout + xt_blitter, dual MMCM, internal HP AXI3 stub) |
 | hdl/zynq_ps_hp_stub.sv | AXI3 slave responder stub for HP0/HP1 — provides AXI targets for OOC synthesis |
 | hdl/fb_scanout.sv | DDR3 framebuffer → HDMI scan-out (vbeam + AXI HP read + ping-pong line buffer + Bayer dither) |
+| hdl/axi_blitter_bridge.sv | AXI4-Lite slave bridge from PS GP0 to xt_blitter register bus. 2-cycle write / 1-cycle read FSMs. Maps AXI offset 0x00..0x0F → $D4Bx, 0x10..0x1F → $D4Cx, returns bl_busy on STATUS read. Runs on clk_sys (150 MHz), no CDC. |
 | hdl/xt_blitter.sv | 2D GPU v0.11: rect fill + line draw + block blit + NN/bilinear scaled blit + alpha-blend rect fill + font raster + GEM raster ops; $D4Bx/$D4Cx register interface, FLAGS, FONT_DATA, FONT_CTRL, RASTER_OP. Fixes: S_W no longer clears wvalid/wlast early, L_PLOT_W hold state for AXI write handshake, font-cache pipeline (`(* keep = "true" *)` + ft_al pre-compute in S_ACCUM_WAIT) closes timing at 150 MHz. |
 | hdl/antic_top.sv | ANTIC video pipeline + peripheral I/O |
 | hdl/sally_mem.sv | 64 KB dual-port BRAM + banked-window AXI reader |
