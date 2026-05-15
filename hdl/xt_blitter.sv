@@ -556,6 +556,10 @@ module xt_blitter #(
 
     // Pipeline register for bilinear blend output (1-cycle delay to break
     // the 20-level combinatorial path from bl_fx8_q → burst_data CE).
+    // The full split is: SC_BL_ACC computes weights → bl_w??_q,
+    // then SC_BL_BLEND computes the weighted blend → bl_pixel_q,
+    // then SC_BL_ACC2 writes into the burst buffer.
+    logic [8:0]  bl_w00_q, bl_w10_q, bl_w01_q, bl_w11_q;
     logic [31:0] bl_pixel_q;
 
     // Pipeline register for alpha-blend fill (BL_RACC / SC_SBLEND).
@@ -564,6 +568,18 @@ module xt_blitter #(
     // bl_blend_q, cycle 2 uses bl_blend_q for the burst-buffer write.
     logic [31:0] bl_blend_q;
     logic        bl_blend_valid_q;
+
+    // Pipeline register for destination pixel in alpha-blend (BL_RACC / SC_SBLEND).
+    // Latching m_axi_rdata into bl_dst_q lets us split the blend multiply-accumulate
+    // across two cycles: cycle 1 registers dst, cycle 2 computes the weighted sum.
+    logic [31:0] bl_dst_q;
+
+    // Pipeline registers for alpha-blend multiply-accumulate intermediate products.
+    // Each holds 4 channels × 16-bit product (src*sa or dst*inv_a) computed in
+    // BL_RACC_BLEND / SC_SBLEND_BLEND.  The combine step in BL_RACC_BLEND2 /
+    // SC_SBLEND_BLEND2 sums the products and shifts to produce bl_blend_q.
+    logic [63:0] bl_src_prod_q;   // {R_prod, G_prod, B_prod, A_unused}  each 16-bit
+    logic [63:0] bl_dst_prod_q;   // {R_prod, G_prod, B_prod, A_unused}
 
     // ====================================================================
     // DMA fill mode — solid-colour rect fill without per-pixel FSM
@@ -684,6 +700,7 @@ module xt_blitter #(
         SC_BL_W   = 6'd25, // wait for R data, latch into correct pixel register
         SC_BL_WT  = 6'd26, // compute 8-bit fractional weights (sequential divider)
         SC_BL_ACC = 6'd27, // cycle 1: bilinear blend — compute weighted pixel
+        SC_BL_BLEND = 6'd42, // cycle 1.5: bilinear blend — weighted pixel from registered weights
         SC_BL_ACC2= 6'd36, // cycle 2: bilinear blend — accumulate into burst buffer
         SC_SBLEND = 6'd28, // scaled-blit blend: wait for dest read, blend, accumulate, goto SC_NEXT
         // Block-blit raster-op states
@@ -695,7 +712,11 @@ module xt_blitter #(
         S_DMA_B   = 6'd39, // wait for B, advance counters
         // Pipeline stages for alpha-blend (break critical path)
         BL_RACC2  = 6'd40, // cycle 2 of BL_RACC: accumulate blended pixel
-        SC_SBLEND2= 6'd41  // cycle 2 of SC_SBLEND: accumulate blended pixel
+        SC_SBLEND2= 6'd41, // cycle 2 of SC_SBLEND: accumulate blended pixel
+        BL_RACC_BLEND = 6'd43, // cycle 1.5: compute src*sa and dst*inv_a products
+        SC_SBLEND_BLEND = 6'd44, // cycle 1.5: compute src*sa and dst*inv_a products
+        BL_RACC_BLEND2 = 6'd45, // cycle 1.75: combine products → bl_blend_q
+        SC_SBLEND_BLEND2 = 6'd46 // cycle 1.75: combine products → bl_blend_q
     } state_t;
     state_t state;
 
@@ -756,6 +777,10 @@ module xt_blitter #(
             p11_q             <= 32'd0;
             bl_fx8_q          <= 8'd0;
             bl_fy8_q          <= 8'd0;
+            bl_w00_q          <= 9'd0;
+            bl_w10_q          <= 9'd0;
+            bl_w01_q          <= 9'd0;
+            bl_w11_q          <= 9'd0;
             bl_rem_x_q        <= 24'd0;
             bl_rem_y_q        <= 24'd0;
             bl_div_cycle_q    <= 4'd0;
@@ -782,6 +807,9 @@ module xt_blitter #(
             m_axi_rready      <= 1'b0;
             bl_blend_q        <= 32'd0;
             bl_blend_valid_q  <= 1'b0;
+            bl_dst_q          <= 32'd0;
+            bl_src_prod_q     <= 64'd0;
+            bl_dst_prod_q     <= 64'd0;
         end else begin
             // one-shot strobes default off
             m_axi_awvalid <= 1'b0;
@@ -2120,33 +2148,55 @@ module xt_blitter #(
                 end
 
                 // ============================================================
-                // SC_BL_ACC — bilinear blend / pipeline stage 1
+                // SC_BL_ACC — bilinear blend / pipeline stage 1 (weight compute)
                 //
-                // Compute 2×2 weighted blend of p00/p10/p01/p11 using the
-                // 8-bit fractional weights fx8/fy8.  The result is registered
-                // in bl_pixel_q; SC_BL_ACC2 handles the burst-buffer write and
-                // dest-read dispatch on the next cycle.  This two-cycle split
-                // breaks the ~20-level combinatorial path from bl_fx8_q through
-                // the weight computation + multiply-accumulate to the burst
-                // buffer CE logic, enabling 100 MHz timing closure.
+                // Compute the four 8-bit bilinear weights (w00..w11) from
+                // the fractional pixel positions fx8/fy8 and register them.
+                // The actual blend multiply-accumulate is deferred to
+                // SC_BL_BLEND (stage 2) so neither path exceeds ~7 logic levels
+                // at 150 MHz.
+                //
+                //   w00 = (256-fx8)*(256-fy8) >> 8    (top-left contribution)
+                //   w10 = (fx8)*(256-fy8) >> 8        (top-right)
+                //   w01 = (256-fx8)*(fy8) >> 8        (bottom-left)
+                //   w11 = (fx8)*(fy8) >> 8            (bottom-right)
+                //
+                // Source pixels p00..p11 were loaded in SC_BL_W and remain
+                // stable through SC_BL_ACC → SC_BL_BLEND → SC_BL_ACC2.
                 // ============================================================
                 SC_BL_ACC: begin
-                    // ---- Bilinear blend (all four channels including alpha) -----
                     logic [8:0]  fx8_inv = 9'd256 - {1'b0, bl_fx8_q};
                     logic [8:0]  fy8_inv = 9'd256 - {1'b0, bl_fy8_q};
-                    logic [8:0]  w00     = (fx8_inv * fy8_inv) >> 8;
-                    logic [8:0]  w10     = ({1'b0, bl_fx8_q} * fy8_inv) >> 8;
-                    logic [8:0]  w01     = (fx8_inv * {1'b0, bl_fy8_q}) >> 8;
-                    logic [8:0]  w11     = ({1'b0, bl_fx8_q} * {1'b0, bl_fy8_q}) >> 8;
 
-                    logic [15:0] r_blend = p00_q[31:24] * w00 + p10_q[31:24] * w10
-                                         + p01_q[31:24] * w01 + p11_q[31:24] * w11;
-                    logic [15:0] g_blend = p00_q[23:16] * w00 + p10_q[23:16] * w10
-                                         + p01_q[23:16] * w01 + p11_q[23:16] * w11;
-                    logic [15:0] b_blend = p00_q[15:8]  * w00 + p10_q[15:8]  * w10
-                                         + p01_q[15:8]  * w01 + p11_q[15:8]  * w11;
-                    logic [15:0] a_blend = p00_q[7:0]   * w00 + p10_q[7:0]   * w10
-                                         + p01_q[7:0]   * w01 + p11_q[7:0]   * w11;
+                    bl_w00_q <= (fx8_inv * fy8_inv) >> 8;
+                    bl_w10_q <= ({1'b0, bl_fx8_q} * fy8_inv) >> 8;
+                    bl_w01_q <= (fx8_inv * {1'b0, bl_fy8_q}) >> 8;
+                    bl_w11_q <= ({1'b0, bl_fx8_q} * {1'b0, bl_fy8_q}) >> 8;
+
+                    state <= SC_BL_BLEND;
+                end
+
+                // ============================================================
+                // SC_BL_BLEND — bilinear blend / pipeline stage 2 (blend)
+                //
+                // 2×2 weighted blend of p00/p10/p01/p11 using the registered
+                // weights from SC_BL_ACC.  Result registered in bl_pixel_q;
+                // SC_BL_ACC2 handles burst-buffer write / dest-read dispatch.
+                //
+                // Separating weight computation (SC_BL_ACC) from blend
+                // multiply-accumulate (SC_BL_BLEND) breaks the critical path
+                // bl_fx8_q → 8× CARRY4 + 6× LUT → bl_pixel_q that exceeded
+                // 6.667 ns at 150 MHz with the full PS BD clock tree.
+                // ============================================================
+                SC_BL_BLEND: begin
+                    logic [15:0] r_blend = p00_q[31:24] * bl_w00_q + p10_q[31:24] * bl_w10_q
+                                         + p01_q[31:24] * bl_w01_q + p11_q[31:24] * bl_w11_q;
+                    logic [15:0] g_blend = p00_q[23:16] * bl_w00_q + p10_q[23:16] * bl_w10_q
+                                         + p01_q[23:16] * bl_w01_q + p11_q[23:16] * bl_w11_q;
+                    logic [15:0] b_blend = p00_q[15:8]  * bl_w00_q + p10_q[15:8]  * bl_w10_q
+                                         + p01_q[15:8]  * bl_w01_q + p11_q[15:8]  * bl_w11_q;
+                    logic [15:0] a_blend = p00_q[7:0]   * bl_w00_q + p10_q[7:0]   * bl_w10_q
+                                         + p01_q[7:0]   * bl_w01_q + p11_q[7:0]   * bl_w11_q;
 
                     bl_pixel_q[31:24] <= r_blend[15:8];
                     bl_pixel_q[23:16] <= g_blend[15:8];
@@ -2157,13 +2207,13 @@ module xt_blitter #(
                 end
 
                 // ============================================================
-                // SC_BL_ACC2 — bilinear blend / pipeline stage 2
+                // SC_BL_ACC2 — bilinear blend / pipeline stage 3 (burst write)
                 //
-                // Uses the registered bl_pixel_q to write into the burst buffer
-                // or dispatch a destination read for partial-alpha blending.
-                // All control signals (cx, beat_lo_filled, etc.) are already
-                // registered from prior states so no additional pipeline delay
-                // is incurred for those paths.
+                // Uses bl_pixel_q (registered in SC_BL_BLEND) to write into
+                // the burst buffer or dispatch a destination read for
+                // partial-alpha blending.  All control signals (cx,
+                // beat_lo_filled, etc.) are already registered from prior
+                // states so no additional pipeline delay is incurred.
                 // ============================================================
                 SC_BL_ACC2: begin
                     logic [7:0]  bl_pixel_a = bl_pixel_q[7:0];
@@ -2244,33 +2294,65 @@ module xt_blitter #(
                 end
 
                 // ============================================================
-                // SC_SBLEND — scaled-blit blend: dest read + blend (cycle 1)
+                // SC_SBLEND — scaled-blit blend: dest read, register dst
                 //
-                // Entered from SC_ACCUM or SC_BL_ACC when 0 < source alpha < 255
+                // Entered from SC_ACCUM or SC_BL_ACC2 when 0 < source alpha < 255
                 // (and sc_blend_q is set).  Bl_src_pixel_q holds the source pixel,
-                // bl_px_low_q holds the half-position latch (set before cx advance
-                // in the calling state).  Cycle 1: compute blend, register in
-                // bl_blend_q.  Cycle 2 (SC_SBLEND2): accumulate into burst buffer.
+                // bl_px_low_q holds the half-position latch.  We register
+                // m_axi_rdata into bl_dst_q so the blend multiply-accumulate
+                // can be computed in SC_SBLEND_BLEND from registered operands.
+                //
+                // Pipeline: BL_RACC (reg dst) → BL_RACC_BLEND (products) →
+                //           BL_RACC_BLEND2 (combine) → BL_RACC2 (accumulate).
+                // SC_SBLEND path follows the same 4-stage structure.
                 // ============================================================
                 SC_SBLEND: begin
                     m_axi_rready <= 1'b1;
 
                     if (m_axi_rvalid) begin
-                        // ---- Blend (same arithmetic as BL_RACC) -----------------
-                        logic [7:0]  sa      = bl_src_pixel_q[7:0];
-                        logic [7:0]  inv_a   = 8'd255 - sa;
-                        logic [31:0] dst     = m_axi_rdata[31:0];
-
-                        bl_blend_q[31:24] <= (bl_src_pixel_q[31:24] * sa
-                                           + dst[31:24] * inv_a + 16'd128) >> 8;
-                        bl_blend_q[23:16] <= (bl_src_pixel_q[23:16] * sa
-                                           + dst[23:16] * inv_a + 16'd128) >> 8;
-                        bl_blend_q[15:8]  <= (bl_src_pixel_q[15:8]  * sa
-                                           + dst[15:8]  * inv_a + 16'd128) >> 8;
-                        bl_blend_q[7:0]   <= sa;   // preserve source alpha
-                        bl_blend_valid_q  <= 1'b1;
-                        state <= SC_SBLEND2;
+                        bl_dst_q <= m_axi_rdata[31:0];
+                        state <= SC_SBLEND_BLEND;
                     end
+                end
+
+                // ============================================================
+                // SC_SBLEND_BLEND — compute src*sa and dst*inv_a products
+                //
+                // Same arithmetic as BL_RACC_BLEND — pipeline stage 1 of 2.
+                // ============================================================
+                SC_SBLEND_BLEND: begin
+                    logic [7:0]  sa      = bl_src_pixel_q[7:0];
+                    logic [7:0]  inv_a   = 8'd255 - sa;
+                    logic [31:0] dst     = bl_dst_q;
+
+                    bl_src_prod_q[63:48] <= bl_src_pixel_q[31:24] * sa;
+                    bl_src_prod_q[47:32] <= bl_src_pixel_q[23:16] * sa;
+                    bl_src_prod_q[31:16] <= bl_src_pixel_q[15:8]  * sa;
+                    bl_src_prod_q[15:0]  <= 16'd0;
+
+                    bl_dst_prod_q[63:48] <= dst[31:24] * inv_a;
+                    bl_dst_prod_q[47:32] <= dst[23:16] * inv_a;
+                    bl_dst_prod_q[31:16] <= dst[15:8]  * inv_a;
+                    bl_dst_prod_q[15:0]  <= 16'd0;
+
+                    state <= SC_SBLEND_BLEND2;
+                end
+
+                // ============================================================
+                // SC_SBLEND_BLEND2 — combine products into blended pixel
+                //
+                // Same arithmetic as BL_RACC_BLEND2 — pipeline stage 2 of 2.
+                // ============================================================
+                SC_SBLEND_BLEND2: begin
+                    bl_blend_q[31:24] <= (bl_src_prod_q[63:48]
+                                        + bl_dst_prod_q[63:48] + 16'd128) >> 8;
+                    bl_blend_q[23:16] <= (bl_src_prod_q[47:32]
+                                        + bl_dst_prod_q[47:32] + 16'd128) >> 8;
+                    bl_blend_q[15:8]  <= (bl_src_prod_q[31:16]
+                                        + bl_dst_prod_q[31:16] + 16'd128) >> 8;
+                    bl_blend_q[7:0]   <= bl_src_pixel_q[7:0];   // preserve source alpha
+                    bl_blend_valid_q  <= 1'b1;
+                    state <= SC_SBLEND2;
                 end
 
                 // ============================================================
@@ -2330,46 +2412,76 @@ module xt_blitter #(
                 end
 
                 // ============================================================
-                // Alpha-blend rect fill
-                // ============================================================
-
-                // ============================================================
-                // BL_RACC — wait for destination read data, blend, pipeline
+                // BL_RACC — wait for destination read data, register dst
                 //
                 // Destination pixel arrives on m_axi_rdata[31:0] (4-byte
-                // single-beat read).  Blend with the latched source pixel
-                // (bl_src_pixel_q) using the source alpha:
+                // single-beat read).  We register it in bl_dst_q so the blend
+                // multiply-accumulate can be pipelined across two more stages
+                // without the AXI read-data distribution delay.
                 //
-                //   out = (src * alpha + dst * (255 - alpha) + 128) >> 8
-                //
-                // Cycle 1: compute blend, register in bl_blend_q.
-                // Cycle 2 (BL_RACC2): use bl_blend_q for burst-buffer write.
-                //
-                // Splitting into two cycles breaks the critical path from
-                // bl_src_pixel_q[0] through blend multipliers and CARRY4s
-                // to burst_data write enables.
+                // Pipeline: BL_RACC (reg dst) → BL_RACC_BLEND (products) →
+                //           BL_RACC_BLEND2 (combine) → BL_RACC2 (accumulate).
                 // ============================================================
                 BL_RACC: begin
                     m_axi_rready <= 1'b1;
 
                     if (m_axi_rvalid) begin
-                        // ---- Blend -------------------------------------------------
-                        logic [7:0]  sa   = bl_src_pixel_q[7:0];   // source alpha
-                        logic [7:0]  inv_a = 8'd255 - sa;
-                        logic [31:0] dst   = m_axi_rdata[31:0];    // destination RGBA
-
-                        // Per-channel blend: (src * alpha + dst * (255-alpha) + 128) >> 8
-                        // Each multiply is 8×8→16-bit.
-                        bl_blend_q[31:24] <= (bl_src_pixel_q[31:24] * sa
-                                           + dst[31:24] * inv_a + 16'd128) >> 8;
-                        bl_blend_q[23:16] <= (bl_src_pixel_q[23:16] * sa
-                                           + dst[23:16] * inv_a + 16'd128) >> 8;
-                        bl_blend_q[15:8]  <= (bl_src_pixel_q[15:8]  * sa
-                                           + dst[15:8]  * inv_a + 16'd128) >> 8;
-                        bl_blend_q[7:0]   <= sa;   // preserve source alpha
-                        bl_blend_valid_q  <= 1'b1;
-                        state <= BL_RACC2;
+                        bl_dst_q <= m_axi_rdata[31:0];
+                        state <= BL_RACC_BLEND;
                     end
+                end
+
+                // ============================================================
+                // BL_RACC_BLEND — compute src*sa and dst*inv_a products
+                //
+                // bl_src_pixel_q (registered in S_ACCUM_W) and bl_dst_q
+                // (registered in BL_RACC) are both stable.  We compute the
+                // 8×8→16 products for each colour channel and register them.
+                //
+                // Per-channel products:  src_ch * alpha,  dst_ch * (255-alpha)
+                //
+                // Pipeline stage 1 of 2 (stage 2 = BL_RACC_BLEND2 combines).
+                // ============================================================
+                BL_RACC_BLEND: begin
+                    logic [7:0]  sa    = bl_src_pixel_q[7:0];   // source alpha
+                    logic [7:0]  inv_a = 8'd255 - sa;
+                    logic [31:0] dst   = bl_dst_q;              // registered dest
+
+                    bl_src_prod_q[63:48] <= bl_src_pixel_q[31:24] * sa;
+                    bl_src_prod_q[47:32] <= bl_src_pixel_q[23:16] * sa;
+                    bl_src_prod_q[31:16] <= bl_src_pixel_q[15:8]  * sa;
+                    bl_src_prod_q[15:0]  <= 16'd0;
+
+                    bl_dst_prod_q[63:48] <= dst[31:24] * inv_a;
+                    bl_dst_prod_q[47:32] <= dst[23:16] * inv_a;
+                    bl_dst_prod_q[31:16] <= dst[15:8]  * inv_a;
+                    bl_dst_prod_q[15:0]  <= 16'd0;
+
+                    state <= BL_RACC_BLEND2;
+                end
+
+                // ============================================================
+                // BL_RACC_BLEND2 — combine products into blended pixel
+                //
+                // Pipeline stage 2 of 2: add the two 16-bit products for each
+                // channel, add 128 (rounding), and right-shift by 8.
+                //
+                // Per-channel: (src_prod + dst_prod + 128) >> 8
+                // Alpha is preserved as source alpha.
+                //
+                // A single 16-bit add + constant + shift per channel (~4 CARRY4
+                // levels) is well within the 6.667 ns budget.
+                // ============================================================
+                BL_RACC_BLEND2: begin
+                    bl_blend_q[31:24] <= (bl_src_prod_q[63:48]
+                                        + bl_dst_prod_q[63:48] + 16'd128) >> 8;
+                    bl_blend_q[23:16] <= (bl_src_prod_q[47:32]
+                                        + bl_dst_prod_q[47:32] + 16'd128) >> 8;
+                    bl_blend_q[15:8]  <= (bl_src_prod_q[31:16]
+                                        + bl_dst_prod_q[31:16] + 16'd128) >> 8;
+                    bl_blend_q[7:0]   <= bl_src_pixel_q[7:0];   // preserve source alpha
+                    bl_blend_valid_q  <= 1'b1;
+                    state <= BL_RACC2;
                 end
 
                 // ============================================================

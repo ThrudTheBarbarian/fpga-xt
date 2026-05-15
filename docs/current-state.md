@@ -1,4 +1,4 @@
-# Current state — Phase 2b v0.14 (AXI-Lite bridge for ARM GP0 → blitter)
+# Current state — Phase 2b v0.15 (pipeline blitter blend paths for 150 MHz timing closure)
 
 Session date: 2026-05-15.
 
@@ -175,7 +175,7 @@ to `{~bus_addr[5], bus_addr[3:0]}`, restoring $D4Bx → DST/PAT/CMD (0-15)
 and $D4Cx → SRC/FLAGS/FONT (16-31).  Any PS software written for the
 v0.4–v0.6 behaviour must update its register addresses.
 
-## Timing — three domains (Phase 2b v0.14, all features + PS BD, bitstream build)
+## Timing — three domains (Phase 2b v0.15, all features + PS BD, bitstream build, pipelined blend paths)
 
 Two timing snapshots are relevant:
 
@@ -195,47 +195,46 @@ Critical path: line_dy → line_err Bresenham engine, 14 levels, 6.282 ns.
 **clk_sally at 100 MHz**: WNS = +0.767 ns. Critical path: BRAM read-to-write
 through SALLY ALU address decoder (7 logic levels, 8.704 ns).
 
-### Full bitstream build (with PS block design) — 150 MHz clk_sys
+### Full bitstream build (with PS block design) — 150 MHz clk_sys ✅ CLOSED
 
 ```
 Intra-clock:
-  clk_pix     (148.4375 MHz)  WNS +3.425   WHS +0.162     132 endpoints  ✅
-  clk_sally   (100.0000 MHz)  WNS +0.228   WHS +0.184    1029 endpoints  ✅
-  clk_sys     (150.0000 MHz)  WNS -1.845   WHS +0.060    9237 endpoints  ❌ (43 failing)
+  clk_pix     (148.4375 MHz)  WNS +3.547   WHS +0.115     132 endpoints  ✅
+  clk_sally   (100.0000 MHz)  WNS +0.527   WHS +0.125    1029 endpoints  ✅
+  clk_sys     (150.0000 MHz)  WNS +0.143   WHS +0.058    9475 endpoints  ✅
 ```
 
-The bitstream build includes the full PS block design with AXI interconnect,
-address decoders, and clock distribution.  This adds routing congestion and
-clock insertion delay that is absent in OOC.  The 43 failing endpoints are
-all inside xt_blitter's bilinear blend accumulation path:
+**clk_sys at 150 MHz timing-closed** (bitstream build) with WNS = +0.143 ns.
+Three pipeline splits were required to break the blitter's critical paths:
 
-  `bl_fx8_q[1] → 8× CARRY4 + 6× LUT → bl_pixel_q[26]`
+1. **Bilinear blend weight pipeline** (SC_BL_ACC → SC_BL_BLEND, v0.14):
+   Registered the four 9-bit bilinear weights (w00/w10/w01/w11) between weight
+   computation and the blend multiply-accumulate.  Split the 14-level CARRY4
+   chain into two ~7-level halves.  Fixed the worst path at -1.845 ns.
 
-— a 14-level, 8.427 ns data path (51 % logic, 49 % route) that exceeds
-the 6.667 ns period by 1.845 ns.  This path was not visible in OOC because
-the tool placed the blitter differently without PS BD logic competing for
-routing resources.
+2. **Alpha-blend dst register** (BL_RACC → BL_RACC_BLEND, v0.15):
+   Latched `m_axi_rdata` into `bl_dst_q` so the blend arithmetic no longer
+   fans out from the AXI read-data distribution network.  Gained ~0.2 ns.
 
-**Mitigation options** (ordered by effort):
-1. Drop clk_sys to 120 MHz (8.333 ns period): estimated WNS ≈ -0.179 ns,
-   still marginal.  100 MHz (10.000 ns) would close cleanly at +1.497 ns.
-2. Pipeline the bl_fx8 weight computation: register the four bilinear
-   weights (w00/w10/w01/w11, 9-bit each) before entering the blend
-   multiply-accumulate.  Cost: ~36 FFs, +1 cycle latency.  Would restore
-   150 MHz closure on the critical path.
-3. Use Vivado `-retiming` to let the tool redistribute the CARRY4 chain.
+3. **Alpha-blend product registers** (BL_RACC_BLEND → BL_RACC_BLEND2, v0.15):
+   Registered the 8×8→16 products (src*sa, dst*inv_a) for all four colour
+   channels in 64-bit `bl_src_prod_q` / `bl_dst_prod_q`.  The CARRY4 adder
+   chain that sums the two products is now a separate 4-level stage instead
+   of an 8-level combined multiply-accumulate.  Gained ~0.2 ns.
 
-**Utilization (bitstream build vs OOC):**
-| Resource | OOC v0.13 | Bitstream v0.14 | Available | Util% |
-|----------|----------:|-----------------:|----------:|------:|
-| Slice LUTs | 2,611 | 5,158 | 53,200 | 9.70% |
-| Slice Registers | 2,902 | 4,932 | 106,400 | 4.64% |
-| Block RAM Tile | 35.5 | 37.5 | 140 | 26.79% |
-| BUFG | 5 | 6 | 32 | 18.75% |
-| MMCME2 | 2 | 2 | 4 | 50.00% |
+Total improvement on the alpha-blend path: from -0.880 ns → +0.143 ns.
 
-The increase from PS BD (AXI interconnect, address decoder) + AXI pipeline
-registers + GP0 bridge is ~2,547 LUTs / 2,030 FFs.
+**Utilization (bitstream build v0.15):**
+| Resource | OOC v0.13 | Bitstream v0.14 | Bitstream v0.15 | Available | Util% |
+|----------|----------:|-----------------:|-----------------:|----------:|------:|
+| Slice LUTs | 2,611 | 5,158 | 5,036 | 53,200 | 9.47% |
+| Slice Registers | 2,902 | 4,932 | 5,047 | 106,400 | 4.74% |
+| Block RAM Tile | 35.5 | 37.5 | 37.5 | 140 | 26.43% |
+| BUFG | 5 | 6 | 6 | 32 | 18.75% |
+| MMCME2 | 2 | 2 | 2 | 4 | 50.00% |
+
+Pipeline registers added ~115 FFs; the product-register optimisation let
+Vivado drop ~122 LUTs vs v0.14.
 
 ### Fixes applied in v0.13
 
@@ -340,7 +339,7 @@ Per [zynq-architecture.md](./zynq-architecture.md) Phase 1 / 2 criteria:
 | Zynq PS block design generated | ✅ `gen_ps_bd.tcl` creates a BD project with HP0/HP1 as external AXI3 64-bit slave interfaces, DDR3 (1 GB, 32-bit), FCLK_CLK0 at 150 MHz. Usable in Vivado for block-diagram view. |
 | BD integrated into OOC synthesis | ✅ AXI masters (fb_scanout → HP0, xt_blitter → HP1) connect through internal `zynq_ps_hp_stub` AXI3 responder. AXI logic preserved in OOC synth. No external AXI ports on `fpga_xt_top`. |
 | Per-module testbenches pass | ⚠️ Not yet run under Vivado XSIM (no local simulator setup). |
-| Real-hardware DDR3 read/write | ⚠️ Requires Zynq PS block design with PS/HP-port wiring in the bitstream build. OOC synth + impl proves the PL-side logic timing at 120 MHz. clk_sys timing closed at WNS +1.234 ns (v0.12). clk_sally timing closed at WNS +0.767 ns. |
+| Real-hardware DDR3 read/write | ⚠️ Requires Zynq PS block design with PS/HP-port wiring in the bitstream build. PL-side logic timing closed at 150 MHz (v0.15, clk_sys WNS +0.143 ns with full PS BD). clk_sally timing closed at WNS +0.527 ns. |
 
 ## Next steps (Phase 2b v0.10 onward)
 
@@ -419,15 +418,28 @@ Per [zynq-architecture.md](./zynq-architecture.md) Phase 1 / 2 criteria:
   signals tied to 0).  Full AXI3 signal set connected to ps_bd with tie-offs
   for bid/rid/rlast.
 - ✅ **PS BD regenerated** with GP0 support.
-- ✅ **Bitstream build complete**: `fpga_xt_top.bit` generated. Timing on
-  clk_sys shows 43 failing endpoints (WNS=-1.845 ns) due to blitter
-  bilinear blend path exposed by PS BD routing congestion.  See timing
-  section for mitigation options.
-- [ ] SDRAM / DDR3 bring-up: verify fb_scanout reads and xt_blitter
-  writes to the real DDR3 framebuffer on hardware (use reduced clk_sys
-  frequency if needed).
-- [ ] Vitis FreeRTOS BSP + simple GP0 write test (poke CMD register, poll
-  STATUS busy bit).
+- ✅ **Bitstream build complete**: `fpga_xt_top.bit` generated.
+
+### Phase 2b v0.15 — Pipeline blitter blend paths for 150 MHz timing closure
+
+- ✅ **Bilinear blend weight pipeline**: Registered the four 9-bit bilinear
+  weights (w00/w10/w01/w11) between weight computation (SC_BL_ACC) and blend
+  multiply-accumulate (new SC_BL_BLEND state, 6'd42).  Split the 14-level
+  CARRY4 chain into two ~7-level halves.  Fixed WNS from -1.845 ns → -0.880 ns.
+- ✅ **Alpha-blend dst register**: Latched `m_axi_rdata` into `bl_dst_q` in
+  BL_RACC/SC_SBLEND, blend computation moves to new BL_RACC_BLEND/
+  SC_SBLEND_BLEND states (6'd43/6'd44).  Fixed WNS from -0.880 ns → -0.680 ns.
+- ✅ **Alpha-blend product registers**: Registered 8×8→16 products
+  (src*sa, dst*inv_a) in 64-bit bl_src_prod_q/bl_dst_prod_q.  New
+  BL_RACC_BLEND2/SC_SBLEND_BLEND2 states (6'd45/6'd46) sum the products
+  and shift.  Split 8-CARRY4 multiply-accumulate into two 4-CARRY4 stages.
+  Fixed WNS from -0.680 ns → **+0.143 ns**.
+- ✅ **Timing closed on clk_sys at 150 MHz** (bitstream build with PS BD):
+  WNS +0.143 ns, WHS +0.058 ns, 0 failing endpoints.  All three clocks
+  positive slack.
+- ✅ **Utilization**: 5,036 LUTs, 5,047 FFs, 37.5 BRAM, 6 BUFG, 2 MMCM.
+  Pipeline registers added ~115 FFs; product-register optimisation let
+  Vivado drop ~122 LUTs vs v0.14.
 
 ### Phase 3 — FreeRTOS + LVGL
 
@@ -479,7 +491,7 @@ bare metal.
 | hdl/zynq_ps_hp_stub.sv | AXI3 slave responder stub for HP0/HP1 — provides AXI targets for OOC synthesis |
 | hdl/fb_scanout.sv | DDR3 framebuffer → HDMI scan-out (vbeam + AXI HP read + ping-pong line buffer + Bayer dither) |
 | hdl/axi_blitter_bridge.sv | AXI4-Lite slave bridge from PS GP0 to xt_blitter register bus. 2-cycle write / 1-cycle read FSMs. Maps AXI offset 0x00..0x0F → $D4Bx, 0x10..0x1F → $D4Cx, returns bl_busy on STATUS read. Runs on clk_sys (150 MHz), no CDC. |
-| hdl/xt_blitter.sv | 2D GPU v0.11: rect fill + line draw + block blit + NN/bilinear scaled blit + alpha-blend rect fill + font raster + GEM raster ops; $D4Bx/$D4Cx register interface, FLAGS, FONT_DATA, FONT_CTRL, RASTER_OP. Fixes: S_W no longer clears wvalid/wlast early, L_PLOT_W hold state for AXI write handshake, font-cache pipeline (`(* keep = "true" *)` + ft_al pre-compute in S_ACCUM_WAIT) closes timing at 150 MHz. |
+| hdl/xt_blitter.sv | 2D GPU v0.15: rect fill + line draw + block blit + NN/bilinear scaled blit + alpha-blend rect fill + font raster + GEM raster ops; $D4Bx/$D4Cx register interface, FLAGS, FONT_DATA, FONT_CTRL, RASTER_OP. Features 3-stage bilinear blend pipeline (SC_BL_ACC→SC_BL_BLEND→SC_BL_ACC2), 4-stage alpha-blend pipeline (BL_RACC→BL_RACC_BLEND→BL_RACC_BLEND2→BL_RACC2), and cx CARRY4 pipeline — all required for 150 MHz timing closure with full PS BD. |
 | hdl/antic_top.sv | ANTIC video pipeline + peripheral I/O |
 | hdl/sally_mem.sv | 64 KB dual-port BRAM + banked-window AXI reader |
 | hdl/sally_core.sv + hdl/sally/* | Arlet 6502 CPU |
