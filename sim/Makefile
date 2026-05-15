@@ -71,9 +71,9 @@ HDL_SRCS := \
 
 BUILD_DIR := build
 
-.PHONY: all smoke snoop read vbeam rp_bus prefetch dl_parse mode_f char_modes gfx_modes pm prior scroll nmi wsync palette tmds tmds_out terc4 hdmi_bch hdmi_pkt hdmi_out dma_master mem_read_mux dma_int hyperram bank draw draw_regs pokey pokey_i2s sally sally_mem sally_arb bank_cache bank_xlat cache_regs cache_partition pia_regs peri_link joy_link joy_bridge peri_bridge os_rom_load klaus visual lint clean pssi_tx pssi_int
+.PHONY: all smoke snoop read vbeam rp_bus prefetch dl_parse mode_f char_modes gfx_modes pm prior scroll nmi wsync palette tmds tmds_out terc4 hdmi_bch hdmi_pkt hdmi_out dma_master mem_read_mux dma_int hyperram bank draw draw_regs pokey pokey_i2s sally sally_mem sally_arb bank_cache bank_xlat cache_regs cache_partition pia_regs peri_link joy_link joy_bridge peri_bridge os_rom_load klaus visual lint clean pssi_tx pssi_int xt_blitter
 
-all: smoke snoop read vbeam rp_bus prefetch dl_parse mode_f char_modes gfx_modes pm prior scroll nmi wsync palette tmds tmds_out terc4 hdmi_bch hdmi_pkt hdmi_out dma_master mem_read_mux dma_int hyperram bank draw draw_regs pokey pokey_i2s sally sally_mem sally_arb bank_cache bank_xlat cache_regs cache_partition pia_regs peri_link joy_link joy_bridge peri_bridge os_rom_load pbi pcm1808_rx visual pssi_tx pssi_int
+all: smoke snoop read vbeam rp_bus prefetch dl_parse mode_f char_modes gfx_modes pm prior scroll nmi wsync palette tmds tmds_out terc4 hdmi_bch hdmi_pkt hdmi_out dma_master mem_read_mux dma_int hyperram bank draw draw_regs pokey pokey_i2s sally sally_mem sally_arb bank_cache bank_xlat cache_regs cache_partition pia_regs peri_link joy_link joy_bridge peri_bridge os_rom_load pbi pcm1808_rx visual pssi_tx pssi_int xt_blitter
 
 # `klaus` is NOT in `all` — Klaus Dormann's full test takes ~96 M
 # cycles (≥10 minutes of iverilog wall-clock). Run it manually with
@@ -580,6 +580,19 @@ pssi_int: $(BUILD_DIR)/tb_pssi_int.vvp
 
 $(BUILD_DIR)/tb_pssi_int.vvp: $(HDL_DIR)/pssi_tx.sv $(HDL_DIR)/pssi_bytes.sv tb_pssi_int.sv | $(BUILD_DIR)
 	$(IVERILOG) $(SV_FLAGS) -o $@ -s tb_pssi_int $(HDL_DIR)/pssi_tx.sv $(HDL_DIR)/pssi_bytes.sv tb_pssi_int.sv
+
+# ---- xt_blitter -- 2D GPU testbench --------------------------------------
+xt_blitter: $(BUILD_DIR)/tb_xt_blitter.vvp
+	@echo "=== xt_blitter ==="
+	@$(VVP) -N $< | tee $(BUILD_DIR)/tb_xt_blitter.log
+	@grep -q 'ALL TESTS PASSED' $(BUILD_DIR)/tb_xt_blitter.log || \
+	    (echo "FAIL: tb_xt_blitter did not pass all tests"; exit 1)
+	@grep -q 'FATAL\|FAIL' $(BUILD_DIR)/tb_xt_blitter.log && \
+	    (echo "FAIL: tb_xt_blitter reported a failure"; exit 1) || true
+	@echo "PASS: tb_xt_blitter"
+
+$(BUILD_DIR)/tb_xt_blitter.vvp: $(HDL_DIR)/xt_blitter.sv tb_xt_blitter.sv | $(BUILD_DIR)
+	$(IVERILOG) $(SV_FLAGS) -o $@ -s tb_xt_blitter $(HDL_DIR)/xt_blitter.sv tb_xt_blitter.sv
 
 # ---- M17-2 — chiplet-ext DRAW register port ------------------------------
 draw_regs: $(BUILD_DIR)/tb_draw_regs.vvp

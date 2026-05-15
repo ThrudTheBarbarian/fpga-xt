@@ -40,6 +40,11 @@ if [ -d "$REPO_ROOT/vivado/constraints" ]; then
     rsync -az --delete "$REPO_ROOT/vivado/constraints/" "$REMOTE:$REMOTE_DIR/constraints/"
 fi
 
+if [ -d "$REPO_ROOT/vivado/bd" ]; then
+    echo ">> syncing bd/ -> $REMOTE:$REMOTE_DIR/bd/"
+    rsync -az --delete "$REPO_ROOT/vivado/bd/" "$REMOTE:$REMOTE_DIR/bd/"
+fi
+
 echo ">> syncing build.tcl -> $REMOTE:$REMOTE_DIR/build.tcl"
 rsync -az "$REPO_ROOT/vivado/build.tcl" "$REMOTE:$REMOTE_DIR/build.tcl"
 

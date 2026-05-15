@@ -88,20 +88,96 @@ puts ">> reading [llength $sv_files] .sv files, [llength $v_files] .v files"
 foreach f $sv_files { read_verilog -sv $f }
 foreach f $v_files  { read_verilog     $f }
 
-# Constraints — XDC files in vivado/constraints/. Optional in Phase 0.
+# Constraints — XDC files in vivado/constraints/.
+# For bitstream flow, load all XDC files including board pin constraints.
+# For OOC synth/impl flows (no IO buffers), skip board-level XDC to avoid
+# Place 30-188 (UnBuffered IOs) errors.
 foreach f [glob -nocomplain [file join [pwd] constraints *.xdc]] {
+    set name [file tail $f]
+    if {$flow ne "bit" && $name eq "zturn_board.xdc"} {
+        puts ">> skipping board constraints (OOC): $name"
+        continue
+    }
     puts ">> reading constraints: $f"
     read_xdc $f
 }
 
+# ---- PS block design sources (bitstream flow only) --------------------------
+# The pre-generated Zynq PS BD provides DDR3, MIO (UART, SD, etc.), and HP
+# AXI3 slave ports that our PL masters (fb_scanout, xt_blitter) connect to.
+# For OOC synth/impl flows the zynq_ps_hp_stub.sv AXI responder is used
+# instead — no PS BD required.
+#
+# We read the pre-generated synthesis netlists directly instead of using
+# read_bd + generate_target.  This avoids IP-locking issues that occur when
+# a BD created in a prior Vivado session is read in non-project mode.
+if {$flow eq "bit"} {
+    # Root directory of the pre-generated PS BD project.
+    set bd_gen [file join [pwd] bd zynq_ps_bd zynq_ps_bd.gen sources_1 bd ps_bd]
+
+    # List of files to read, in dependency order (leaf modules first).
+    set ps_files {}
+
+    # IP shared modules (leaf-level ATC, trace buffer)
+    lappend ps_files [file join $bd_gen ipshared 4b52 hdl verilog processing_system7_v5_5_trace_buffer.v]
+    lappend ps_files [file join $bd_gen ipshared 4b52 hdl verilog processing_system7_v5_5_w_atc.v]
+    lappend ps_files [file join $bd_gen ipshared 4b52 hdl verilog processing_system7_v5_5_b_atc.v]
+    lappend ps_files [file join $bd_gen ipshared 4b52 hdl verilog processing_system7_v5_5_aw_atc.v]
+    lappend ps_files [file join $bd_gen ipshared 4b52 hdl verilog processing_system7_v5_5_atc.v]
+
+    # Main PS module (processing_system7_v5_5_processing_system7)
+    lappend ps_files [file join $bd_gen ip ps_bd_zynq_ps_0 hdl verilog processing_system7_v5_5_processing_system7.v]
+
+    # PS IP synthesis wrapper (instantiates processing_system7_*)
+    lappend ps_files [file join $bd_gen ip ps_bd_zynq_ps_0 synth ps_bd_zynq_ps_0.v]
+
+    # BD-level structural netlist (instantiates ps_bd_zynq_ps_0)
+    lappend ps_files [file join $bd_gen synth ps_bd.v]
+
+    # Read all PS files if they exist.  Missing files trigger a warning
+    # but don't abort — the build continues with the AXI stub.
+    set ps_ok 1
+    foreach f $ps_files {
+        if {[file exists $f]} {
+            puts ">> reading PS source: $f"
+            read_verilog $f
+        } else {
+            puts ">> WARNING: missing PS source: $f"
+            set ps_ok 0
+        }
+    }
+
+    if {$ps_ok} {
+        puts ">> PS BD sources loaded successfully."
+    } else {
+        puts ">> WARNING: some PS BD sources were missing."
+        puts ">> Run vivado/bd/gen_ps_bd.tcl to regenerate the BD."
+        puts ">> Bitstream build will proceed without PS block — DDR and"
+        puts ">> FIXED_IO ports will be unconnected."
+    }
+}
+
+# Limit parallel threads to 2 — the remote build server has 15 GB RAM and
+# default threading causes memory thrashing (7+ workers × 1.3 GB RSS).
+# With 2 threads the design still builds in ~5 min without swapping.
+set_param general.maxThreads 2
+
 # ---- Synthesis ----------------------------------------------------------
-# Out-of-context mode: standalone synth probe doesn't need IO placement
-# (sally_synth_top has 173 top-level pads with the v2a AXI port; CLG400
-# only has 125 user IO). OOC skips IO buf inference + IO placement, so
-# the timing report measures internal logic delay only — exactly what
-# we want for an fmax probe.
-synth_design -mode out_of_context \
-             -top $top -part $part -include_dirs $include_dirs
+# Out-of-context mode for synth/impl flows: standalone fmax probe doesn't
+# need IO placement (OOC skips IO buf inference + IO placement, so timing
+# measures internal logic delay only).
+#
+# For the bit flow we use full (non-OOC) synthesis so I/O buffers are
+# inferred and the design can be packaged into a bitstream.  We also pass
+# -verilog_define USE_PS_BD so fpga_xt_top selects the real ps_bd_wrapper
+# over the OOC AXI stub.
+if {$flow eq "bit"} {
+    synth_design -top $top -part $part -include_dirs $include_dirs \
+                 -verilog_define USE_PS_BD
+} else {
+    synth_design -mode out_of_context \
+                 -top $top -part $part -include_dirs $include_dirs
+}
 write_checkpoint -force [file join $out_dir post_synth.dcp]
 report_utilization -file [file join $out_dir post_synth_util.rpt]
 report_timing_summary -file [file join $out_dir post_synth_timing.rpt]

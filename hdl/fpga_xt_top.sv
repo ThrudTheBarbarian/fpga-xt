@@ -2,8 +2,10 @@
 //
 // Clock domains:
 //   clk_sally (100 MHz) — SALLY core, sally_mem, banked_axi_reader
-//   clk_sys   (162 MHz) — ANTIC pipeline (DL parser, GTIA, POKEY, compositor)
-//   clk_pix   (25.175 MHz) — RGB565 pixel output to SiI9022A HDMI transmitter
+//   clk_sys   (150 MHz) — ANTIC pipeline, I2C HDMI config, blitter,
+//                         AXI HP fetch (raised from 100 MHz via
+//                         BL_RACC pipeline + AXI register slice)
+//   clk_pix   (148.44 MHz) — RGB565 pixel output to SiI9022A HDMI transmitter
 //
 // CDC:
 //   - SALLY→ANTIC register writes: async FIFO (cdc_fifo_1w1r)
@@ -38,67 +40,135 @@ module fpga_xt_top (
     output wire        rgb_de,
     output wire        rgb_pixclk,
 
-    // ---- AXI4 burst master to PS DDR3 (banked-window port) ----------------
-    output wire [31:0] m_axi_araddr,
-    output wire [7:0]  m_axi_arlen,
-    output wire [2:0]  m_axi_arsize,
-    output wire [1:0]  m_axi_arburst,
-    output wire        m_axi_arvalid,
-    input  wire        m_axi_arready,
-    input  wire [63:0] m_axi_rdata,
-    input  wire        m_axi_rvalid,
-    input  wire        m_axi_rlast,
-    output wire        m_axi_rready,
-    output wire [31:0] m_axi_awaddr,
-    output wire [7:0]  m_axi_awlen,
-    output wire [2:0]  m_axi_awsize,
-    output wire [1:0]  m_axi_awburst,
-    output wire        m_axi_awvalid,
-    input  wire        m_axi_awready,
-    output wire [63:0] m_axi_wdata,
-    output wire [7:0]  m_axi_wstrb,
-    output wire        m_axi_wlast,
-    output wire        m_axi_wvalid,
-    input  wire        m_axi_wready,
-    input  wire        m_axi_bvalid,
-    output wire        m_axi_bready,
-
     // ---- Debug UART (through PS MIO) --------------------------------------
     output wire        uart_tx,
-    input  wire        uart_rx
-);
+    input  wire        uart_rx,
+
+    // ---- SiI9022A I2C configuration bus (open-drain) --------------------
+    // Connected to the HDMI transmitter on the Z-Turn baseboard.
+    // External 4.7 kΩ pull-ups to 3.3 V on the baseboard.
+    inout  wire        hdmi_sda,
+    inout  wire        hdmi_scl,
+
+    // ---- Debug observability (OOC synth preserves domains) ----------------
+    // Sampled signals from each clock domain.  In OOC synthesis, these give
+    // the tool a path from every domain to an output port, preventing the
+    // constant-propagation cascade that would otherwise optimise away the
+    // AXI masters, SALLY core, and ANTIC pipeline.
+        output wire [3:0]  dbg         // {bl_busy, antic_we, sally_step, fb_arvalid}
+    );
 
     // ====================================================================
-    // Clock generation
+    // Clock generation — two MMCME2_BASE primitives
     // ====================================================================
-    // Phase 1: use generated clocks via PLL.  For synth-probe (out_of_context),
-    // the XDC creates virtual clocks; for impl, the PLL is instantiated or
-    // we use the PS's FCLK outputs.
+    // MMCM #1 (system + CPU domains)
+    //   VCO = 50 MHz × 24 = 1200 MHz (within -2 600-1600 MHz range)
+    //     CLKOUT0 /12 → 100.000 MHz clk_sally
+    //                    (Phase 1a fmax-limited target; Arlet ALU carry
+    //                    chain caps us here at ~107 MHz)
+    //     CLKOUT1 /8  → 150.000 MHz clk_sys
+    //                    (ANTIC pipeline, AXI HP fetch clock;
+    //                     raised from 100 MHz via BL_RACC pipeline +
+    //                     AXI register slice + cx CARRY4 pipeline
+    //                     to close timing at 150 MHz)
     //
-    // Target frequencies:
-    //   clk_sally: 121.7045 MHz (= 68 × 1.7897725 MHz NTSC phi2)
-    //   clk_sys:   162 MHz (or whatever the PLL can produce)
-    //   clk_pix:   25.175 MHz (640×480 VESA)
+    // MMCM #2 (pixel clock — dedicated so MMCM #1 can keep exact 100/150)
+    //   VCO = 50 MHz × 23.750 = 1187.5 MHz
+    //     CLKOUT0_F /8.000 → 148.4375 MHz clk_pix
+    //                    (target 148.500 MHz CEA-861 1080p60, error
+    //                    -0.042 % — well inside the HDMI ±0.5 % spec)
     //
-    // For the first pass, clk_sally and clk_sys are shorted (single
-    // 121 MHz domain).  Clock split comes in Phase 1b.
+    // Two MMCMs keep clk_sys at 133.3 MHz while letting clk_pix
+    // sit on its own VCO without forcing a compromise between the two.
+    // MMCM utilisation rises to 2/4 — still plenty of headroom.
 
-    wire clk = clk_50;   // placeholder: replace with PLL output
-    wire clk_pix_int;     // placeholder: PLL-generated pixel clock
+    wire clk_sally, clk_sys, clk_pix;
 
-    // For now, use the 50 MHz input directly as a stand-in for both clocks.
-    // The XDC overrides these with the real target frequencies for timing
-    // analysis; the physical PLL instantiation lands when we have a board.
-    assign clk_pix_int = clk_50;
+    // ---- MMCM #1: 100 MHz (clk_sally) + 133 MHz (clk_sys) from 50 MHz reference ---
+    wire mmcm1_fb_in, mmcm1_fb_out;
+    wire clk_sally_unbuf, clk_sys_unbuf;
+    wire mmcm1_locked;
 
-    // ---- Reset synchroniser ----------------------------------------------
-    logic rst_sync_ff0, rst_sync_ff1;
-    wire  rst;
-    always_ff @(posedge clk) begin
-        rst_sync_ff0 <= ~rst_n;
-        rst_sync_ff1 <= rst_sync_ff0;
+    MMCME2_BASE #(
+        .CLKIN1_PERIOD    (20.000),
+        .CLKFBOUT_MULT_F  (24.000),
+        .DIVCLK_DIVIDE    (1),
+        .CLKOUT0_DIVIDE_F (12.000),
+        .CLKOUT1_DIVIDE   (8),
+        .BANDWIDTH        ("OPTIMIZED")
+    ) u_mmcm1 (
+        .CLKIN1   (clk_50),
+        .CLKFBIN  (mmcm1_fb_in),
+        .CLKFBOUT (mmcm1_fb_out),
+        .CLKOUT0  (clk_sally_unbuf),
+        .CLKOUT1  (clk_sys_unbuf),
+        .CLKOUT2  (),
+        .CLKOUT3  (),
+        .CLKOUT4  (),
+        .CLKOUT5  (),
+        .CLKOUT6  (),
+        .RST      (~rst_n),
+        .PWRDWN   (1'b0),
+        .LOCKED   (mmcm1_locked)
+    );
+
+    BUFG u_bufg_fb1   (.I(mmcm1_fb_out),     .O(mmcm1_fb_in));
+    BUFG u_bufg_sally (.I(clk_sally_unbuf),  .O(clk_sally));
+    BUFG u_bufg_sys   (.I(clk_sys_unbuf),    .O(clk_sys));
+
+    // ---- MMCM #2: 148.4375 MHz pixel clock -----------------------------
+    wire mmcm2_fb_in, mmcm2_fb_out;
+    wire clk_pix_unbuf;
+    wire mmcm2_locked;
+
+    MMCME2_BASE #(
+        .CLKIN1_PERIOD    (20.000),
+        .CLKFBOUT_MULT_F  (23.750),
+        .DIVCLK_DIVIDE    (1),
+        .CLKOUT0_DIVIDE_F (8.000),
+        .BANDWIDTH        ("OPTIMIZED")
+    ) u_mmcm2 (
+        .CLKIN1   (clk_50),
+        .CLKFBIN  (mmcm2_fb_in),
+        .CLKFBOUT (mmcm2_fb_out),
+        .CLKOUT0  (clk_pix_unbuf),
+        .CLKOUT1  (),
+        .CLKOUT2  (),
+        .CLKOUT3  (),
+        .CLKOUT4  (),
+        .CLKOUT5  (),
+        .CLKOUT6  (),
+        .RST      (~rst_n),
+        .PWRDWN   (1'b0),
+        .LOCKED   (mmcm2_locked)
+    );
+
+    BUFG u_bufg_fb2 (.I(mmcm2_fb_out),  .O(mmcm2_fb_in));
+    BUFG u_bufg_pix (.I(clk_pix_unbuf), .O(clk_pix));
+
+    // ---- Per-domain reset synchronisers ---------------------------------
+    // Async-assert / sync-deassert.  Reset stays held until rst_n is high
+    // AND both MMCMs are locked.
+    wire rst_release_n = rst_n & mmcm1_locked & mmcm2_locked;
+
+    logic [2:0] rst_sally_pipe, rst_sys_pipe, rst_pix_pipe;
+    always_ff @(posedge clk_sally or negedge rst_release_n) begin
+        if (!rst_release_n) rst_sally_pipe <= 3'b111;
+        else                rst_sally_pipe <= {rst_sally_pipe[1:0], 1'b0};
     end
-    assign rst = rst_sync_ff1;
+    always_ff @(posedge clk_sys or negedge rst_release_n) begin
+        if (!rst_release_n) rst_sys_pipe <= 3'b111;
+        else                rst_sys_pipe <= {rst_sys_pipe[1:0], 1'b0};
+    end
+    always_ff @(posedge clk_pix or negedge rst_release_n) begin
+        if (!rst_release_n) rst_pix_pipe <= 3'b111;
+        else                rst_pix_pipe <= {rst_pix_pipe[1:0], 1'b0};
+    end
+    wire rst_sally   = rst_sally_pipe[2];
+    wire rst_sys     = rst_sys_pipe[2];
+    wire rst_pix     = rst_pix_pipe[2];
+    wire rst_sally_n = ~rst_sally;
+    wire rst_sys_n   = ~rst_sys;
 
     // ====================================================================
     // SALLY + memory (runs on clk_sally)
@@ -130,25 +200,86 @@ module fpga_xt_top (
     wire        hwreg_we;
     wire [7:0]  hwreg_dout;
 
-    // AXI bus to DDR3 (banked-window port)
+    // AXI bus to DDR3 (banked-window port) — tied off in Phase 2a/b since
+    // the SALLY core runs entirely from BRAM; banked_axi_reader is unused.
+    // Outputs from sally_mem left open; inputs tied to 0 (slave never ready).
     wire [31:0] axi_araddr;
     wire [7:0]  axi_arlen;
     wire [2:0]  axi_arsize;
     wire [1:0]  axi_arburst;
-    wire        axi_arvalid, axi_arready;
-    wire [63:0] axi_rdata;
-    wire        axi_rvalid, axi_rlast;
+    wire        axi_arvalid;
     wire        axi_rready;
     wire [31:0] axi_awaddr;
     wire [7:0]  axi_awlen;
     wire [2:0]  axi_awsize;
     wire [1:0]  axi_awburst;
-    wire        axi_awvalid, axi_awready;
+    wire        axi_awvalid;
     wire [63:0] axi_wdata;
     wire [7:0]  axi_wstrb;
     wire        axi_wlast;
-    wire        axi_wvalid, axi_wready;
-    wire        axi_bvalid, axi_bready;
+    wire        axi_wvalid;
+    wire        axi_bready;
+    wire        axi_arready = 1'b0;
+    wire [63:0] axi_rdata   = 64'd0;
+    wire        axi_rvalid  = 1'b0;
+    wire        axi_rlast   = 1'b0;
+    wire        axi_awready = 1'b0;
+    wire        axi_wready  = 1'b0;
+    wire        axi_bvalid  = 1'b0;
+
+    // ---- AXI HP port connections — routed through internal HP stub ---------
+    // HP0 — fb_scanout (read-only AXI4 master → AXI3 slave)
+    // Note: fb_scanout uses 8-bit arlen (AXI4); AXI3 truncates to lower 4 bits.
+    wire [31:0] hp0_araddr;
+    wire [7:0]  hp0_arlen;     // 8-bit from fb_scanout; truncated to 4-bit at stub
+    wire [2:0]  hp0_arsize;
+    wire [1:0]  hp0_arburst;
+    wire        hp0_arvalid;
+    wire        hp0_arready;
+    wire [63:0] hp0_rdata;
+    wire        hp0_rvalid;
+    wire        hp0_rlast;
+    wire        hp0_rready;
+    // HP0 write channel — tied (fb_scanout is read-only)
+    wire [31:0] hp0_awaddr = 32'd0;
+    wire [3:0]  hp0_awlen  = 4'd0;
+    wire [2:0]  hp0_awsize = 3'd0;
+    wire [1:0]  hp0_awburst = 2'd0;
+    wire        hp0_awvalid = 1'b0;
+    wire        hp0_awready;
+    wire [63:0] hp0_wdata = 64'd0;
+    wire [7:0]  hp0_wstrb = 8'd0;
+    wire        hp0_wlast = 1'b0;
+    wire        hp0_wvalid = 1'b0;
+    wire        hp0_wready;
+    wire        hp0_bvalid;
+    wire        hp0_bready = 1'b0;
+
+    // HP1 — xt_blitter (AXI4 read/write master → AXI3 slave)
+    wire [31:0] hp1_awaddr;
+    wire [3:0]  hp1_awlen;
+    wire [2:0]  hp1_awsize;
+    wire [1:0]  hp1_awburst;
+    wire        hp1_awvalid;
+    wire        hp1_awready;
+    wire [63:0] hp1_wdata;
+    wire [7:0]  hp1_wstrb;
+    wire        hp1_wlast;
+    wire        hp1_wvalid;
+    wire        hp1_wready;
+    wire        hp1_bvalid;
+    wire        hp1_bready;
+    // HP1 read channel — driven by xt_blitter (block blit)
+    wire [31:0] hp1_araddr;
+    wire [3:0]  hp1_arlen;
+    wire [2:0]  hp1_arsize;
+    wire [1:0]  hp1_arburst;
+    wire        hp1_arvalid;
+    wire        hp1_arready;
+    wire [63:0] hp1_rdata;
+    wire        hp1_rvalid;
+    wire        hp1_rlast;
+    wire        hp1_rready;
 
     // ANTIC DMA BRAM read port (reserved for Phase 1b when we bypass
     // hyperram_shim for direct reads from sally_mem's second BRAM port).
@@ -157,6 +288,160 @@ module fpga_xt_top (
     wire [15:0] dma_addr_unused;
     wire [7:0]  dma_rdata_unused;
     assign dma_addr_unused = 16'h0000;
+
+    // ====================================================================
+    // AXI pipeline registers — HP1 (xt_blitter) → PS BD
+    // ====================================================================
+    // Only used in the PS BD bitstream path (USE_PS_BD).  The OOC stub path
+    // (else branch below) connects hp1_* directly to the stub.
+    //
+    // 2-deep register slice on every AXI signal between xt_blitter and
+    // the PS block design.  This cuts the critical path through the PS
+    // address decoder CARRY4s (processing_system7_v5_5 address decoder)
+    // that was limiting clk_sys to 100 MHz.
+    //
+    // Forward paths (blitter → PS):
+    //   AW: awaddr, awlen, awsize, awburst, awvalid
+    //   W:  wdata, wstrb, wlast, wvalid
+    //   AR: araddr, arlen, arsize, arburst, arvalid
+    // Return paths (PS → blitter):
+    //   B:  bvalid
+    //   R:  rdata, rvalid, rlast
+    // Ready signals are registered in the reverse direction:
+    //   Forward-ready (PS→blitter): awready, wready, arready
+    //   Return-ready (blitter→PS):  bready, rready
+
+    `ifdef USE_PS_BD
+    // Wires to PS BD side of the register slice
+    wire [31:0] ps_hp1_awaddr;
+    wire [3:0]  ps_hp1_awlen;
+    wire [2:0]  ps_hp1_awsize;
+    wire [1:0]  ps_hp1_awburst;
+    wire        ps_hp1_awvalid;
+    wire        ps_hp1_awready;
+    wire [63:0] ps_hp1_wdata;
+    wire [7:0]  ps_hp1_wstrb;
+    wire        ps_hp1_wlast;
+    wire        ps_hp1_wvalid;
+    wire        ps_hp1_wready;
+    wire        ps_hp1_bvalid;
+    wire        ps_hp1_bready;
+    wire [31:0] ps_hp1_araddr;
+    wire [3:0]  ps_hp1_arlen;
+    wire [2:0]  ps_hp1_arsize;
+    wire [1:0]  ps_hp1_arburst;
+    wire        ps_hp1_arvalid;
+    wire        ps_hp1_arready;
+    wire [63:0] ps_hp1_rdata;
+    wire        ps_hp1_rvalid;
+    wire        ps_hp1_rlast;
+    wire        ps_hp1_rready;
+
+    // ---- Register slices (all on clk_sys) ---------------------------------
+    reg [31:0] hp1_awaddr_r, ps_hp1_awaddr_r;
+    reg [3:0]  hp1_awlen_r, ps_hp1_awlen_r;
+    reg [2:0]  hp1_awsize_r, ps_hp1_awsize_r;
+    reg [1:0]  hp1_awburst_r, ps_hp1_awburst_r;
+    reg        hp1_awvalid_r, ps_hp1_awvalid_r;
+    reg        hp1_awready_r, ps_hp1_awready_r;
+    reg [63:0] hp1_wdata_r, ps_hp1_wdata_r;
+    reg [7:0]  hp1_wstrb_r, ps_hp1_wstrb_r;
+    reg        hp1_wlast_r, ps_hp1_wlast_r;
+    reg        hp1_wvalid_r, ps_hp1_wvalid_r;
+    reg        hp1_wready_r, ps_hp1_wready_r;
+    reg        hp1_bvalid_r, ps_hp1_bvalid_r;
+    reg        hp1_bready_r, ps_hp1_bready_r;
+    reg [31:0] hp1_araddr_r, ps_hp1_araddr_r;
+    reg [3:0]  hp1_arlen_r, ps_hp1_arlen_r;
+    reg [2:0]  hp1_arsize_r, ps_hp1_arsize_r;
+    reg [1:0]  hp1_arburst_r, ps_hp1_arburst_r;
+    reg        hp1_arvalid_r, ps_hp1_arvalid_r;
+    reg        hp1_arready_r, ps_hp1_arready_r;
+    reg [63:0] hp1_rdata_r, ps_hp1_rdata_r;
+    reg        hp1_rvalid_r, ps_hp1_rvalid_r;
+    reg        hp1_rlast_r, ps_hp1_rlast_r;
+    reg        hp1_rready_r, ps_hp1_rready_r;
+
+    always_ff @(posedge clk_sys) begin
+        // Forward: blitter → register stage 1 → register stage 2 → PS
+        // (two-stage pipeline for maximum timing isolation)
+        //
+        // Stage 1: capture blitter outputs
+        hp1_awaddr_r    <= hp1_awaddr;
+        hp1_awlen_r     <= hp1_awlen;
+        hp1_awsize_r    <= hp1_awsize;
+        hp1_awburst_r   <= hp1_awburst;
+        hp1_awvalid_r   <= hp1_awvalid;
+        hp1_wdata_r     <= hp1_wdata;
+        hp1_wstrb_r     <= hp1_wstrb;
+        hp1_wlast_r     <= hp1_wlast;
+        hp1_wvalid_r    <= hp1_wvalid;
+        hp1_araddr_r    <= hp1_araddr;
+        hp1_arlen_r     <= hp1_arlen;
+        hp1_arsize_r    <= hp1_arsize;
+        hp1_arburst_r   <= hp1_arburst;
+        hp1_arvalid_r   <= hp1_arvalid;
+        hp1_bready_r    <= hp1_bready;
+        hp1_rready_r    <= hp1_rready;
+
+        // Stage 2: drive to PS
+        ps_hp1_awaddr_r   <= hp1_awaddr_r;
+        ps_hp1_awlen_r    <= hp1_awlen_r;
+        ps_hp1_awsize_r   <= hp1_awsize_r;
+        ps_hp1_awburst_r  <= hp1_awburst_r;
+        ps_hp1_awvalid_r  <= hp1_awvalid_r;
+        ps_hp1_wdata_r    <= hp1_wdata_r;
+        ps_hp1_wstrb_r    <= hp1_wstrb_r;
+        ps_hp1_wlast_r    <= hp1_wlast_r;
+        ps_hp1_wvalid_r   <= hp1_wvalid_r;
+        ps_hp1_araddr_r   <= hp1_araddr_r;
+        ps_hp1_arlen_r    <= hp1_arlen_r;
+        ps_hp1_arsize_r   <= hp1_arsize_r;
+        ps_hp1_arburst_r  <= hp1_arburst_r;
+        ps_hp1_arvalid_r  <= hp1_arvalid_r;
+        ps_hp1_bready_r   <= hp1_bready_r;
+        ps_hp1_rready_r   <= hp1_rready_r;
+
+        // Return: PS → register stage 1 → register stage 2 → blitter
+        hp1_awready_r     <= ps_hp1_awready;
+        hp1_wready_r      <= ps_hp1_wready;
+        hp1_arready_r     <= ps_hp1_arready;
+        hp1_bvalid_r      <= ps_hp1_bvalid;
+        hp1_rdata_r       <= ps_hp1_rdata;
+        hp1_rvalid_r      <= ps_hp1_rvalid;
+        hp1_rlast_r       <= ps_hp1_rlast;
+    end
+
+    // Connect stage-2 outputs to PS BD
+    assign ps_hp1_awaddr   = ps_hp1_awaddr_r;
+    assign ps_hp1_awlen    = ps_hp1_awlen_r;
+    assign ps_hp1_awsize   = ps_hp1_awsize_r;
+    assign ps_hp1_awburst  = ps_hp1_awburst_r;
+    assign ps_hp1_awvalid  = ps_hp1_awvalid_r;
+    assign ps_hp1_wdata    = ps_hp1_wdata_r;
+    assign ps_hp1_wstrb    = ps_hp1_wstrb_r;
+    assign ps_hp1_wlast    = ps_hp1_wlast_r;
+    assign ps_hp1_wvalid   = ps_hp1_wvalid_r;
+    assign ps_hp1_araddr   = ps_hp1_araddr_r;
+    assign ps_hp1_arlen    = ps_hp1_arlen_r;
+    assign ps_hp1_arsize   = ps_hp1_arsize_r;
+    assign ps_hp1_arburst  = ps_hp1_arburst_r;
+    assign ps_hp1_arvalid  = ps_hp1_arvalid_r;
+    assign ps_hp1_bready   = ps_hp1_bready_r;
+    assign ps_hp1_rready   = ps_hp1_rready_r;
+
+    // Connect return signals to blitter
+    assign hp1_awready = hp1_awready_r;
+    assign hp1_wready  = hp1_wready_r;
+    assign hp1_arready = hp1_arready_r;
+    assign hp1_bvalid  = hp1_bvalid_r;
+    assign hp1_rdata   = hp1_rdata_r;
+    assign hp1_rvalid  = hp1_rvalid_r;
+    assign hp1_rlast   = hp1_rlast_r;
+    `else
+    // OOC path: direct connection — stub drives hp1_* directly, no pipeline
+    // registers.  ps_hp1_* wires are not declared in this branch.
+    `endif
 
     // ---- sally_clock -----------------------------------------------------
     // CLOCK_MULT=68 gives ~121 MHz from 1.79 MHz phi2.
@@ -167,8 +452,8 @@ module fpga_xt_top (
     sally_clock #(
         .BASE_DIV (68)
     ) u_sally_clock (
-        .clk           (clk),
-        .rst           (rst),
+        .clk           (clk_sally),
+        .rst           (rst_sally),
         .phi2_tick     (phi2_tick),
         .clock_mult    (8'd68),
         .halt_n        (1'b1),         // bypassed at CLOCK_MULT>=2
@@ -180,8 +465,8 @@ module fpga_xt_top (
 
     // ---- sally_core ------------------------------------------------------
     sally_core u_sally_core (
-        .clk      (clk),
-        .rst      (rst),
+        .clk      (clk_sally),
+        .rst      (rst_sally),
         .addr     (cpu_addr),
         .data_in  (cpu_din),
         .data_out (cpu_dout),
@@ -196,8 +481,8 @@ module fpga_xt_top (
         .OS_ROM_HEX_PATH (""),
         .DDR3_BANKED_BASE (32'h2000_0000)
     ) u_sally_mem (
-        .clk        (clk),
-        .rst        (rst),
+        .clk        (clk_sally),
+        .rst        (rst_sally),
         .addr       (cpu_addr),
         .data_in    (cpu_dout),
         .rw         (cpu_rw),
@@ -253,17 +538,58 @@ module fpga_xt_top (
     );
 
     // ====================================================================
-    // CDC: register writes SALLY → ANTIC
+    // CDC: register writes SALLY (clk_sally) → ANTIC (clk_sys)
     // ====================================================================
-    // SALLY's hwreg_we/hwreg_addr/hwreg_din are the bus register write
-    // interface.  For Phase 1a (single clock), wire directly.  When clocks
-    // split, insert cdc_fifo_1w1r here.
+    // SALLY's hwreg_we pulse pushes {hwreg_addr, hwreg_din} into a 4-deep
+    // async FIFO.  ANTIC drains it on clk_sys and regenerates a 1-cycle
+    // bus write strobe with d0xx_n / d4xx_n decoded.
+    //
+    // Register-write cadence is bounded by phi2 (~1.5 MHz) and the FIFO
+    // drains at clk_sys (133 MHz), so wr_full never asserts in practice.
+    // We deliberately ignore it — a half-full warning would be the place
+    // to add observability later if this assumption ever breaks.
 
-    wire [15:0] bus_addr_antic      = hwreg_addr;
-    wire [7:0]  bus_data_in_antic   = hwreg_din;
-    wire        bus_rw_antic        = !hwreg_we;   // invert: 1=read for antic_top
-    wire        d0xx_n_antic        = ~(hwreg_we && (hwreg_addr[15:8] == 8'hD0));
-    wire        d4xx_n_antic        = ~(hwreg_we && (hwreg_addr[15:8] == 8'hD4));
+    wire        hwreg_wr_full_unused;
+    wire        hwreg_rd_empty;
+    wire [23:0] hwreg_rd_data;
+    wire        hwreg_rd_en = ~hwreg_rd_empty;
+
+    cdc_fifo_1w1r #(.DATA_W(24), .ADDR_W(2)) u_hwreg_cdc (
+        .src_clk  (clk_sally),
+        .src_rst  (rst_sally),
+        .wr_en    (hwreg_we),
+        .wr_data  ({hwreg_addr, hwreg_din}),
+        .wr_full  (hwreg_wr_full_unused),
+        .dst_clk  (clk_sys),
+        .dst_rst  (rst_sys),
+        .rd_en    (hwreg_rd_en),
+        .rd_data  (hwreg_rd_data),
+        .rd_empty (hwreg_rd_empty)
+    );
+
+    // Generate 1-cycle write strobe on clk_sys.  rd_en pulses high whenever
+    // the FIFO is non-empty; we capture the popped descriptor and present
+    // it (with bus_rw low) to antic_top for one clk_sys cycle.
+    logic        antic_we_q;
+    logic [15:0] bus_addr_antic_q;
+    logic [7:0]  bus_data_in_antic_q;
+    always_ff @(posedge clk_sys) begin
+        if (rst_sys) begin
+            antic_we_q          <= 1'b0;
+            bus_addr_antic_q    <= 16'h0000;
+            bus_data_in_antic_q <= 8'h00;
+        end else begin
+            antic_we_q          <= hwreg_rd_en;
+            bus_addr_antic_q    <= hwreg_rd_data[23:8];
+            bus_data_in_antic_q <= hwreg_rd_data[7:0];
+        end
+    end
+
+    wire [15:0] bus_addr_antic    = bus_addr_antic_q;
+    wire [7:0]  bus_data_in_antic = bus_data_in_antic_q;
+    wire        bus_rw_antic      = ~antic_we_q;
+    wire        d0xx_n_antic      = ~(antic_we_q && (bus_addr_antic_q[15:8] == 8'hD0));
+    wire        d4xx_n_antic      = ~(antic_we_q && (bus_addr_antic_q[15:8] == 8'hD4));
 
     // ====================================================================
     // CDC: status signals ANTIC → SALLY
@@ -272,7 +598,7 @@ module fpga_xt_top (
     wire nmi_n_sync, irq_n_sync;
 
     cdc_sync_bit #(.WIDTH(2)) u_sync_irq_nmi (
-        .dst_clk (clk),
+        .dst_clk (clk_sally),
         .src_sig ({nmi_n_antic, irq_n_antic}),
         .dst_sig ({nmi_n_sync,   irq_n_sync})
     );
@@ -281,7 +607,7 @@ module fpga_xt_top (
     // We keep it wired for the CLOCK_MULT=1 fallback path, but never
     // gate on it at our operating point.
     cdc_sync_bit #(.WIDTH(1)) u_sync_halt (
-        .dst_clk (clk),
+        .dst_clk (clk_sally),
         .src_sig (halt_n_antic),
         .dst_sig (halt_n_sally)
     );
@@ -311,12 +637,12 @@ module fpga_xt_top (
     wire       antic_rgb_hsync, antic_rgb_vsync, antic_rgb_de, antic_rgb_pixclk;
 
     antic_top #(
-        .POKEY_CLK_BUS_HZ (121_704_500),    // 68 × 1.7897725 MHz
+        .POKEY_CLK_BUS_HZ (150_000_000),    // clk_sys nominal (150 MHz)
         .LEGACY_RP        (1'b1)             // keep RP interfaces active
     ) u_antic_top (
-        .clk_bus            (clk),
-        .clk_pix            (clk_pix_int),
-        .rst_n              (rst_n),
+        .clk_bus            (clk_sys),
+        .clk_pix            (clk_pix),
+        .rst_n              (rst_sys_n),
         .bus_addr           (bus_addr_antic),
         .bus_data_in        (bus_data_in_antic),
         .bus_rw             (bus_rw_antic),
@@ -409,94 +735,370 @@ module fpga_xt_top (
     assign wsync_rdy_n = antic_rdy_n;
 
     // ====================================================================
-    // Video output: RGB565 + sync (replaces TMDS)
+    // DDR3 framebuffer scan-out — Phase 2a native / GEM-mode video path
     // ====================================================================
-    // Driven directly from antic_top's new parallel RGB565 ports.
-    // These are registered on clk_pix inside antic_top (from palette_lut
-    // output + vbeam timing signals).  The SiI9022A on the Z-Turn SOM
-    // samples on pixclk rising edge.
+    // fb_scanout owns its own raster (vbeam at 1080p60), its own AXI HP
+    // read master, and a ping-pong line buffer fed from DDR3.  For Phase
+    // 2a the scan-out output goes straight to the rgb_* pads, replacing
+    // the legacy ANTIC chain at the pin level (ANTIC's pipeline still
+    // synthesises and runs but its rgb_o outputs are observed only — a
+    // future mode mux will wire it in for legacy-Atari mode at 1080p
+    // with a 5× pillarbox upscaler).
 
-    assign rgb_r      = antic_rgb_r;
-    assign rgb_g      = antic_rgb_g;
-    assign rgb_b      = antic_rgb_b;
-    assign rgb_hsync  = antic_rgb_hsync;
-    assign rgb_vsync  = antic_rgb_vsync;
-    assign rgb_de     = antic_rgb_de;
-    assign rgb_pixclk = antic_rgb_pixclk;
+    wire [4:0] fb_rgb_r;
+    wire [5:0] fb_rgb_g;
+    wire [4:0] fb_rgb_b;
+    wire       fb_rgb_hsync, fb_rgb_vsync, fb_rgb_de, fb_rgb_pixclk;
+
+    fb_scanout #(
+        .FB_BASE      (32'h3000_0000),
+        .H_ACTIVE     (1920),
+        .H_FRONT_PORCH(88),
+        .H_SYNC_WIDTH (44),
+        .H_BACK_PORCH (148),
+        .V_ACTIVE     (1080),
+        .V_FRONT_PORCH(4),
+        .V_SYNC_WIDTH (5),
+        .V_BACK_PORCH (36)
+    ) u_fb_scanout (
+        .clk_sys         (clk_sys),
+        .rst_sys         (rst_sys),
+        .clk_pix         (clk_pix),
+        .rst_pix         (rst_pix),
+        .enable          (1'b1),
+        .m_axi_araddr    (hp0_araddr),
+        .m_axi_arlen     (hp0_arlen),
+        .m_axi_arsize    (hp0_arsize),
+        .m_axi_arburst   (hp0_arburst),
+        .m_axi_arvalid   (hp0_arvalid),
+        .m_axi_arready   (hp0_arready),
+        .m_axi_rdata     (hp0_rdata),
+        .m_axi_rvalid    (hp0_rvalid),
+        .m_axi_rlast     (hp0_rlast),
+        .m_axi_rready    (hp0_rready),
+        .rgb_r           (fb_rgb_r),
+        .rgb_g           (fb_rgb_g),
+        .rgb_b           (fb_rgb_b),
+        .rgb_hsync       (fb_rgb_hsync),
+        .rgb_vsync       (fb_rgb_vsync),
+        .rgb_de          (fb_rgb_de),
+        .rgb_pixclk      (fb_rgb_pixclk)
+    );
+
+    assign rgb_r      = fb_rgb_r;
+    assign rgb_g      = fb_rgb_g;
+    assign rgb_b      = fb_rgb_b;
+    assign rgb_hsync  = fb_rgb_hsync;
+    assign rgb_vsync  = fb_rgb_vsync;
+    assign rgb_de     = fb_rgb_de;
+    assign rgb_pixclk = fb_rgb_pixclk;
 
     // ====================================================================
-    // AXI output pad registers
+    // xt_blitter v0 — rect fill with solid RGBA-8888
     // ====================================================================
-    // Registered at the pads so the timing report measures internal logic,
-    // not pad-to-pad delays.  (Matches the style used in sally_synth_top.)
+    // Taps the same clk_sys-domain post-CDC SALLY hwreg bus that ANTIC
+    // uses; the blitter address-decodes $D4B0..$D4BF internally so the
+    // ANTIC and blitter register spaces are disjoint.  Writes outside
+    // $D4Bx are ignored by the blitter.
 
-    logic [31:0] m_axi_araddr_q;
-    logic [7:0]  m_axi_arlen_q;
-    logic [2:0]  m_axi_arsize_q;
-    logic [1:0]  m_axi_arburst_q;
-    logic        m_axi_arvalid_q;
-    logic        m_axi_rready_q;
-    logic [31:0] m_axi_awaddr_q;
-    logic [7:0]  m_axi_awlen_q;
-    logic [2:0]  m_axi_awsize_q;
-    logic [1:0]  m_axi_awburst_q;
-    logic        m_axi_awvalid_q;
-    logic [63:0] m_axi_wdata_q;
-    logic [7:0]  m_axi_wstrb_q;
-    logic        m_axi_wlast_q;
-    logic        m_axi_wvalid_q;
-    logic        m_axi_bready_q;
+    wire bl_busy;
 
-    logic        m_axi_arready_q;
-    logic [63:0] m_axi_rdata_q;
-    logic        m_axi_rvalid_q;
-    logic        m_axi_rlast_q;
-    logic        m_axi_awready_q;
-    logic        m_axi_wready_q;
-    logic        m_axi_bvalid_q;
+    xt_blitter #(
+        .FB_BASE     (32'h3000_0000),
+        .FB_STRIDE_B (8192)
+    ) u_xt_blitter (
+        .clk             (clk_sys),
+        .rst             (rst_sys),
+        .bus_addr        (bus_addr_antic_q),
+        .bus_data        (bus_data_in_antic_q),
+        .bus_we          (antic_we_q),
+        .busy            (bl_busy),
+        .m_axi_awaddr    (hp1_awaddr),
+        .m_axi_awlen     (hp1_awlen),
+        .m_axi_awsize    (hp1_awsize),
+        .m_axi_awburst   (hp1_awburst),
+        .m_axi_awvalid   (hp1_awvalid),
+        .m_axi_awready   (hp1_awready),
+        .m_axi_wdata     (hp1_wdata),
+        .m_axi_wstrb     (hp1_wstrb),
+        .m_axi_wlast     (hp1_wlast),
+        .m_axi_wvalid    (hp1_wvalid),
+        .m_axi_wready    (hp1_wready),
+        .m_axi_bvalid    (hp1_bvalid),
+        .m_axi_bready    (hp1_bready),
+        // AXI4 read master (HP1 AR channel)
+        .m_axi_araddr    (hp1_araddr),
+        .m_axi_arlen     (hp1_arlen),
+        .m_axi_arsize    (hp1_arsize),
+        .m_axi_arburst   (hp1_arburst),
+        .m_axi_arvalid   (hp1_arvalid),
+        .m_axi_arready   (hp1_arready),
+        .m_axi_rdata     (hp1_rdata),
+        .m_axi_rvalid    (hp1_rvalid),
+        .m_axi_rlast     (hp1_rlast),
+        .m_axi_rready    (hp1_rready)
+    );
 
-    always_ff @(posedge clk) begin
-        m_axi_araddr_q  <= axi_araddr;
-        m_axi_arlen_q   <= axi_arlen;
-        m_axi_arsize_q  <= axi_arsize;
-        m_axi_arburst_q <= axi_arburst;
-        m_axi_arvalid_q <= axi_arvalid;
-        m_axi_rready_q  <= axi_rready;
-        m_axi_awaddr_q  <= axi_awaddr;
-        m_axi_awlen_q   <= axi_awlen;
-        m_axi_awsize_q  <= axi_awsize;
-        m_axi_awburst_q <= axi_awburst;
-        m_axi_awvalid_q <= axi_awvalid;
-        m_axi_wdata_q   <= axi_wdata;
-        m_axi_wstrb_q   <= axi_wstrb;
-        m_axi_wlast_q   <= axi_wlast;
-        m_axi_wvalid_q  <= axi_wvalid;
-        m_axi_bready_q  <= axi_bready;
-        m_axi_arready_q <= m_axi_arready;
-        m_axi_rdata_q   <= m_axi_rdata;
-        m_axi_rvalid_q  <= m_axi_rvalid;
-        m_axi_rlast_q   <= m_axi_rlast;
-        m_axi_awready_q <= m_axi_awready;
-        m_axi_wready_q  <= m_axi_wready;
-        m_axi_bvalid_q  <= m_axi_bvalid;
-    end
+    // ====================================================================
+    // CDC: blitter busy (clk_sys → clk_sally) for SALLY register reads
+    // ====================================================================
+    wire bl_busy_sally;
 
-    assign m_axi_araddr  = m_axi_araddr_q;
-    assign m_axi_arlen   = m_axi_arlen_q;
-    assign m_axi_arsize  = m_axi_arsize_q;
-    assign m_axi_arburst = m_axi_arburst_q;
-    assign m_axi_arvalid = m_axi_arvalid_q;
-    assign m_axi_rready  = m_axi_rready_q;
-    assign m_axi_awaddr  = m_axi_awaddr_q;
-    assign m_axi_awlen   = m_axi_awlen_q;
-    assign m_axi_awsize  = m_axi_awsize_q;
-    assign m_axi_awburst = m_axi_awburst_q;
-    assign m_axi_awvalid = m_axi_awvalid_q;
-    assign m_axi_wdata   = m_axi_wdata_q;
-    assign m_axi_wstrb   = m_axi_wstrb_q;
-    assign m_axi_wlast   = m_axi_wlast_q;
-    assign m_axi_wvalid  = m_axi_wvalid_q;
-    assign m_axi_bready  = m_axi_bready_q;
+    cdc_sync_bit #(.WIDTH(1)) u_sync_bl_busy (
+        .dst_clk (clk_sally),
+        .src_sig (bl_busy),
+        .dst_sig (bl_busy_sally)
+    );
+
+    // ====================================================================
+    // SiI9022A HDMI transmitter I2C configuration
+    // ====================================================================
+    // Runs on clk_sys (133 MHz).  After reset deassertion, configures the
+    // SiI9022A TPI registers via the bit-banged I2C master for 1080p60
+    // RGB565 operation.  The SDA/SCL pins are inout (open-drain) with
+    // external pull-ups on the baseboard.
+    //
+    // The done flag is observed-only for now — the fb_scanout drives its
+    // pixel clock and sync signals regardless, and the SiI9022A will begin
+    // outputting valid TMDS once its PLL locks to the programmed pixel rate.
+
+    wire hdmi_cfg_done;
+
+    hdmi_config u_hdmi_config (
+        .clk_i       (clk_sys),
+        .rst_n_i     (rst_sys_n),
+        .sda_io      (hdmi_sda),
+        .scl_io      (hdmi_scl),
+        .done_o      (hdmi_cfg_done)
+    );
+
+    // ---- Hardware register read data (clk_sally) --------------------------
+    // hwreg_dout feeds into sally_mem's read pipeline — it must be
+    // combinational from hwreg_addr.  Default to 8'hFF (like sally_synth_top)
+    // for unassigned addresses.  The blitter STATUS register at $D4BD
+    // returns {7'b0, bl_busy_sally}.
+    assign hwreg_dout = (hwreg_addr == 16'hD4BD) ? {7'b0, bl_busy_sally}
+                       : 8'hFF;
+
+    assign dbg = {bl_busy, antic_we_q, sally_step, hp0_arvalid};
+
+    `ifdef USE_PS_BD
+    // ====================================================================
+    // Zynq PS — block design (bitstream builds)
+    // ====================================================================
+    // The ps_bd module is auto-generated from the block design during
+    // synth_design elaboration (via read_bd in build.tcl).  It connects
+    // DDR3, MIO (UART, etc.) and exposes HP0/HP1 AXI3 slave ports to
+    // the PL fabric.  HP0 serves fb_scanout (framebuffer read), HP1
+    // serves xt_blitter (rect fill read/write).  Both HP interfaces
+    // clock at 150 MHz from the PS FCLK_CLK0 internally; our PL-side
+    // masters run on clk_sys (133 MHz from MMCM #1) and rely on AXI
+    // handshake for the asynchronous crossing.
+    //
+    // In non-project mode, read_bd makes the 'ps_bd' module available
+    // directly — the ps_bd_wrapper.v wrapper is not auto-generated so
+    // we instantiate the BD module itself.
+
+    ps_bd u_ps_bd (
+        // DDR + FIXED_IO — tied off; PS dedicated pins are hard-wired on SOM
+        .DDR_addr          (),
+        .DDR_ba            (),
+        .DDR_cas_n         (),
+        .DDR_ck_n          (),
+        .DDR_ck_p          (),
+        .DDR_cke           (),
+        .DDR_cs_n          (),
+        .DDR_dm            (),
+        .DDR_dq            (),
+        .DDR_dqs_n         (),
+        .DDR_dqs_p         (),
+        .DDR_odt           (),
+        .DDR_ras_n         (),
+        .DDR_reset_n       (),
+        .DDR_we_n          (),
+        .FIXED_IO_ddr_vrn  (),
+        .FIXED_IO_ddr_vrp  (),
+        .FIXED_IO_mio      (),
+        .FIXED_IO_ps_clk   (),
+        .FIXED_IO_ps_porb  (),
+        .FIXED_IO_ps_srstb (),
+        .FCLK_RESET0_N_0   (),
+        .m_axi_hp0_araddr   (hp0_araddr[31:0]),
+        .m_axi_hp0_arburst  (hp0_arburst[1:0]),
+        .m_axi_hp0_arcache  (4'd0),
+        .m_axi_hp0_arid     (6'd0),
+        .m_axi_hp0_arlen    (hp0_arlen[3:0]),
+        .m_axi_hp0_arlock   (2'd0),
+        .m_axi_hp0_arprot   (3'd0),
+        .m_axi_hp0_arqos    (4'd0),
+        .m_axi_hp0_arready  (hp0_arready),
+        .m_axi_hp0_arsize   (hp0_arsize[2:0]),
+        .m_axi_hp0_arvalid  (hp0_arvalid),
+        .m_axi_hp0_awaddr   (hp0_awaddr[31:0]),
+        .m_axi_hp0_awburst  (hp0_awburst[1:0]),
+        .m_axi_hp0_awcache  (4'd0),
+        .m_axi_hp0_awid     (6'd0),
+        .m_axi_hp0_awlen    (hp0_awlen[3:0]),
+        .m_axi_hp0_awlock   (2'd0),
+        .m_axi_hp0_awprot   (3'd0),
+        .m_axi_hp0_awqos    (4'd0),
+        .m_axi_hp0_awready  (hp0_awready),
+        .m_axi_hp0_awsize   (hp0_awsize[2:0]),
+        .m_axi_hp0_awvalid  (hp0_awvalid),
+        .m_axi_hp0_bid      (),
+        .m_axi_hp0_bready   (hp0_bready),
+        .m_axi_hp0_bresp    (),
+        .m_axi_hp0_bvalid   (hp0_bvalid),
+        .m_axi_hp0_rdata    (hp0_rdata),
+        .m_axi_hp0_rid      (),
+        .m_axi_hp0_rlast    (hp0_rlast),
+        .m_axi_hp0_rready   (hp0_rready),
+        .m_axi_hp0_rresp    (),
+        .m_axi_hp0_rvalid   (hp0_rvalid),
+        .m_axi_hp0_wdata    (hp0_wdata),
+        .m_axi_hp0_wid      (6'd0),
+        .m_axi_hp0_wlast    (hp0_wlast),
+        .m_axi_hp0_wready   (hp0_wready),
+        .m_axi_hp0_wstrb    (hp0_wstrb),
+        .m_axi_hp0_wvalid   (hp0_wvalid),
+
+        // HP1 — xt_blitter (read/write) through pipeline registers
+        .m_axi_hp1_araddr   (ps_hp1_araddr[31:0]),
+        .m_axi_hp1_arburst  (ps_hp1_arburst[1:0]),
+        .m_axi_hp1_arcache  (4'd0),
+        .m_axi_hp1_arid     (6'd0),
+        .m_axi_hp1_arlen    (ps_hp1_arlen[3:0]),
+        .m_axi_hp1_arlock   (2'd0),
+        .m_axi_hp1_arprot   (3'd0),
+        .m_axi_hp1_arqos    (4'd0),
+        .m_axi_hp1_arready  (ps_hp1_arready),
+        .m_axi_hp1_arsize   (ps_hp1_arsize[2:0]),
+        .m_axi_hp1_arvalid  (ps_hp1_arvalid),
+        .m_axi_hp1_awaddr   (ps_hp1_awaddr[31:0]),
+        .m_axi_hp1_awburst  (ps_hp1_awburst[1:0]),
+        .m_axi_hp1_awcache  (4'd0),
+        .m_axi_hp1_awid     (6'd0),
+        .m_axi_hp1_awlen    (ps_hp1_awlen[3:0]),
+        .m_axi_hp1_awlock   (2'd0),
+        .m_axi_hp1_awprot   (3'd0),
+        .m_axi_hp1_awqos    (4'd0),
+        .m_axi_hp1_awready  (ps_hp1_awready),
+        .m_axi_hp1_awsize   (ps_hp1_awsize[2:0]),
+        .m_axi_hp1_awvalid  (ps_hp1_awvalid),
+        .m_axi_hp1_bid      (),
+        .m_axi_hp1_bready   (ps_hp1_bready),
+        .m_axi_hp1_bresp    (),
+        .m_axi_hp1_bvalid   (ps_hp1_bvalid),
+        .m_axi_hp1_rdata    (ps_hp1_rdata),
+        .m_axi_hp1_rid      (),
+        .m_axi_hp1_rlast    (ps_hp1_rlast),
+        .m_axi_hp1_rready   (ps_hp1_rready),
+        .m_axi_hp1_rresp    (),
+        .m_axi_hp1_rvalid   (ps_hp1_rvalid),
+        .m_axi_hp1_wdata    (ps_hp1_wdata),
+        .m_axi_hp1_wid      (6'd0),
+        .m_axi_hp1_wlast    (ps_hp1_wlast),
+        .m_axi_hp1_wready   (ps_hp1_wready),
+        .m_axi_hp1_wstrb    (ps_hp1_wstrb),
+        .m_axi_hp1_wvalid   (ps_hp1_wvalid)
+    );
+
+    `else
+    // ====================================================================
+    // Zynq PS HP ports — internal AXI3 stub targets (OOC synthesis)
+    // ====================================================================
+    // Provides AXI3 slave targets for fb_scanout (HP0, read) and xt_blitter
+    // (HP1, write) so the AXI master logic is preserved in OOC synthesis.
+    // The stub implements simple always-ready responders; the real PS BD
+    // wrapper replaces this for bitstream builds.
+    //
+    // Extra AXI3 signals (id, cache, lock, prot, qos) are tied to 0 since
+    // our PL-side masters don't drive them.
+
+    zynq_ps_hp_stub u_hp_stub (
+        .clk                (clk_sys),
+
+        // HP0 — fb_scanout (read-only)
+        .s_axi_hp0_araddr   (hp0_araddr[31:0]),
+        .s_axi_hp0_arburst  (hp0_arburst[1:0]),
+        .s_axi_hp0_arcache  (4'd0),
+        .s_axi_hp0_arid     (6'd0),
+        .s_axi_hp0_arlen    (hp0_arlen[3:0]),
+        .s_axi_hp0_arlock   (2'd0),
+        .s_axi_hp0_arprot   (3'd0),
+        .s_axi_hp0_arqos    (4'd0),
+        .s_axi_hp0_arready  (hp0_arready),
+        .s_axi_hp0_arsize   (hp0_arsize[2:0]),
+        .s_axi_hp0_arvalid  (hp0_arvalid),
+        .s_axi_hp0_awaddr   (hp0_awaddr[31:0]),
+        .s_axi_hp0_awburst  (hp0_awburst[1:0]),
+        .s_axi_hp0_awcache  (4'd0),
+        .s_axi_hp0_awid     (6'd0),
+        .s_axi_hp0_awlen    (hp0_awlen[3:0]),
+        .s_axi_hp0_awlock   (2'd0),
+        .s_axi_hp0_awprot   (3'd0),
+        .s_axi_hp0_awqos    (4'd0),
+        .s_axi_hp0_awready  (hp0_awready),
+        .s_axi_hp0_awsize   (hp0_awsize[2:0]),
+        .s_axi_hp0_awvalid  (hp0_awvalid),
+        .s_axi_hp0_bid      (),
+        .s_axi_hp0_bready   (hp0_bready),
+        .s_axi_hp0_bresp    (),
+        .s_axi_hp0_bvalid   (hp0_bvalid),
+        .s_axi_hp0_rdata    (hp0_rdata),
+        .s_axi_hp0_rid      (),
+        .s_axi_hp0_rlast    (hp0_rlast),
+        .s_axi_hp0_rready   (hp0_rready),
+        .s_axi_hp0_rresp    (),
+        .s_axi_hp0_rvalid   (hp0_rvalid),
+        .s_axi_hp0_wdata    (hp0_wdata),
+        .s_axi_hp0_wid      (6'd0),
+        .s_axi_hp0_wlast    (hp0_wlast),
+        .s_axi_hp0_wready   (hp0_wready),
+        .s_axi_hp0_wstrb    (hp0_wstrb),
+        .s_axi_hp0_wvalid   (hp0_wvalid),
+
+        // HP1 — xt_blitter (read/write)
+        .s_axi_hp1_araddr   (hp1_araddr[31:0]),
+        .s_axi_hp1_arburst  (hp1_arburst[1:0]),
+        .s_axi_hp1_arcache  (4'd0),
+        .s_axi_hp1_arid     (6'd0),
+        .s_axi_hp1_arlen    (hp1_arlen[3:0]),
+        .s_axi_hp1_arlock   (2'd0),
+        .s_axi_hp1_arprot   (3'd0),
+        .s_axi_hp1_arqos    (4'd0),
+        .s_axi_hp1_arready  (hp1_arready),
+        .s_axi_hp1_arsize   (hp1_arsize[2:0]),
+        .s_axi_hp1_arvalid  (hp1_arvalid),
+        .s_axi_hp1_awaddr   (hp1_awaddr[31:0]),
+        .s_axi_hp1_awburst  (hp1_awburst[1:0]),
+        .s_axi_hp1_awcache  (4'd0),
+        .s_axi_hp1_awid     (6'd0),
+        .s_axi_hp1_awlen    (hp1_awlen[3:0]),
+        .s_axi_hp1_awlock   (2'd0),
+        .s_axi_hp1_awprot   (3'd0),
+        .s_axi_hp1_awqos    (4'd0),
+        .s_axi_hp1_awready  (hp1_awready),
+        .s_axi_hp1_awsize   (hp1_awsize[2:0]),
+        .s_axi_hp1_awvalid  (hp1_awvalid),
+        .s_axi_hp1_bid      (),
+        .s_axi_hp1_bready   (hp1_bready),
+        .s_axi_hp1_bresp    (),
+        .s_axi_hp1_bvalid   (hp1_bvalid),
+        .s_axi_hp1_rdata    (hp1_rdata),
+        .s_axi_hp1_rid      (),
+        .s_axi_hp1_rlast    (hp1_rlast),
+        .s_axi_hp1_rready   (hp1_rready),
+        .s_axi_hp1_rresp    (),
+        .s_axi_hp1_rvalid   (hp1_rvalid),
+        .s_axi_hp1_wdata    (hp1_wdata),
+        .s_axi_hp1_wid      (6'd0),
+        .s_axi_hp1_wlast    (hp1_wlast),
+        .s_axi_hp1_wready   (hp1_wready),
+        .s_axi_hp1_wstrb    (hp1_wstrb),
+        .s_axi_hp1_wvalid   (hp1_wvalid)
+    );
+    `endif
 
 endmodule
 

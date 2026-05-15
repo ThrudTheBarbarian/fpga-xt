@@ -55,6 +55,35 @@ hangs directly off the PL pins via the existing peripheral modules.
 Modern services (Linux filesystem, USB HID, networking) ride the PS
 side.
 
+## Display output — always 1920×1080 @ 60 Hz
+
+HDMI output is **fixed at 1080p60** (148.5 MHz pixel clock). The
+SiI9022A on the Z-Turn SOM is configured once at boot and never
+re-initialised. Content composition depends on the active mode but the
+output timing never changes:
+
+- **Legacy Atari mode** — ANTIC/GTIA produces its native framebuffer
+  (320×192 typical, up to 384×240 with overscan). A hardware 5×
+  nearest-neighbour up-scaler enlarges this to 1600×960 and centres it
+  in the 1920×1080 frame, leaving black pillarbox bars (160 px each
+  side) and letterbox bars (60 px top + bottom). Square pixels, true
+  4:3 aspect, no scaling blur.
+- **Native / GEM mode** — the framebuffer is the full 1920×1080 RGB565
+  surface in DDR3. LVGL, xt-blitter, and the sprite engine all target
+  the native resolution.
+
+Rejected alternatives:
+- Mode-switched output (640×480 / 720p / 1080p depending on workload)
+  — requires SiI9022A I²C re-init per switch, multiple MMCM configs,
+  LVGL per-mode tuning, and EDID re-negotiation that some monitors
+  handle poorly. The complexity wasn't worth it.
+- 16:9 stretch of Atari content — distorts circles into ovals; the 6×
+  horizontal × 5× vertical option (1920×960 letterbox) hits the same
+  problem.
+
+Cost: ~250 MB/s of DDR3 scan-out bandwidth (≈25 % of one AXI HP port)
+even when the Atari "owns" the screen. Comfortably inside our budget.
+
 ## Hardware target
 
 - **SoC**: **Xilinx XC7Z020-2CLG400** — the same part MyIR Z-Turn (full)

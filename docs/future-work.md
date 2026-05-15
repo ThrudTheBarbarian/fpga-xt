@@ -133,6 +133,41 @@ closing timing at the target 121-133 MHz, or (b) a cycle-tested demo is
 identified that breaks due to the extra stall cycles (unlikely with the
 same-clock workaround, but recorded in case).
 
+## Clock-domain separated AXI bus
+
+The PL-side AXI masters (fb_scanout, xt_blitter) currently run on clk_sys (100 MHz).
+The PS HP ports can run at 150+ MHz, so the AXI bandwidth is artificially capped
+at 800 MB/s (64-bit × 100 MHz) vs 1.2 GB/s available at 150 MHz.
+
+The fix: create a separate clk_axi (150 MHz from MMCM #1 CLKOUT2, divider /8)
+for the AXI interface logic only. Keep the blitter pixel pipeline and fb_scanout
+raster logic on their existing slower clocks. Async CDC FIFOs bridge the domains:
+
+- **xt_blitter**: pixel pipeline → burst buffer at 100 MHz; drain FIFO → AXI
+  write master at 150 MHz. Read-return path similarly FIFO-buffered.
+- **fb_scanout**: AXI read master at 150 MHz → line buffer write port. Line
+  buffer read port stays on clk_pix (148.44 MHz). The line buffer BRAM is
+  already dual-clock; only the AXI fetch FSM changes domain.
+- **zynq_ps_hp_stub.sv**: already a simple register slice — stays on clk_axi.
+
+Benefits:
+- Rect fill bandwidth: 800 MB/s → 1.2 GB/s (full-screen clear ~8 ms)
+- Framebuffer read margin: 3.9 µs slack → 7.5 µs slack per 1080p60 line
+- Blitter DMA bursts drain faster → less time with the AXI bus locked
+
+Cost:
+- Two async CDC FIFOs (~200 FF + 2 BRAM18 for the blitter's read/write paths;
+  fb_scanout reuses the existing line buffer BRAM)
+- Extra MMCM output + BUFG for clk_axi
+- Constraint update (set_clock_groups for the 4th clock domain)
+- ~150 lines of new RTL
+
+Why not now: the DMA fill mode (see Phase 2b blitter changes) already delivers
+within-frame rect fills at 100 MHz. The clock-domain separation becomes worth
+doing when (a) we want alpha-blend rect fills at fill-rate, (b) we add a second
+blitter instance, or (c) we drive a 4K display panel that needs >800 MB/s
+framebuffer bandwidth. Not needed for Phase 2b bring-up.
+
 ## Other ideas (one-liners, in case we revisit)
 
 - **Sweet 16** as native hardware ops (referenced in M24 — Apple II's
