@@ -129,6 +129,45 @@ COMPONENT ps_bd
     m_axi_hp1_wid : IN STD_LOGIC_VECTOR(5 DOWNTO 0);
     m_axi_hp1_wdata : IN STD_LOGIC_VECTOR(63 DOWNTO 0);
     m_axi_hp1_wstrb : IN STD_LOGIC_VECTOR(7 DOWNTO 0);
+    m_axi_gp0_arvalid : OUT STD_LOGIC;
+    m_axi_gp0_awvalid : OUT STD_LOGIC;
+    m_axi_gp0_bready : OUT STD_LOGIC;
+    m_axi_gp0_rready : OUT STD_LOGIC;
+    m_axi_gp0_wlast : OUT STD_LOGIC;
+    m_axi_gp0_wvalid : OUT STD_LOGIC;
+    m_axi_gp0_arid : OUT STD_LOGIC_VECTOR(11 DOWNTO 0);
+    m_axi_gp0_awid : OUT STD_LOGIC_VECTOR(11 DOWNTO 0);
+    m_axi_gp0_wid : OUT STD_LOGIC_VECTOR(11 DOWNTO 0);
+    m_axi_gp0_arburst : OUT STD_LOGIC_VECTOR(1 DOWNTO 0);
+    m_axi_gp0_arlock : OUT STD_LOGIC_VECTOR(1 DOWNTO 0);
+    m_axi_gp0_arsize : OUT STD_LOGIC_VECTOR(2 DOWNTO 0);
+    m_axi_gp0_awburst : OUT STD_LOGIC_VECTOR(1 DOWNTO 0);
+    m_axi_gp0_awlock : OUT STD_LOGIC_VECTOR(1 DOWNTO 0);
+    m_axi_gp0_awsize : OUT STD_LOGIC_VECTOR(2 DOWNTO 0);
+    m_axi_gp0_arprot : OUT STD_LOGIC_VECTOR(2 DOWNTO 0);
+    m_axi_gp0_awprot : OUT STD_LOGIC_VECTOR(2 DOWNTO 0);
+    m_axi_gp0_araddr : OUT STD_LOGIC_VECTOR(31 DOWNTO 0);
+    m_axi_gp0_awaddr : OUT STD_LOGIC_VECTOR(31 DOWNTO 0);
+    m_axi_gp0_wdata : OUT STD_LOGIC_VECTOR(31 DOWNTO 0);
+    m_axi_gp0_arcache : OUT STD_LOGIC_VECTOR(3 DOWNTO 0);
+    m_axi_gp0_arlen : OUT STD_LOGIC_VECTOR(3 DOWNTO 0);
+    m_axi_gp0_arqos : OUT STD_LOGIC_VECTOR(3 DOWNTO 0);
+    m_axi_gp0_awcache : OUT STD_LOGIC_VECTOR(3 DOWNTO 0);
+    m_axi_gp0_awlen : OUT STD_LOGIC_VECTOR(3 DOWNTO 0);
+    m_axi_gp0_awqos : OUT STD_LOGIC_VECTOR(3 DOWNTO 0);
+    m_axi_gp0_wstrb : OUT STD_LOGIC_VECTOR(3 DOWNTO 0);
+    m_axi_gp0_arready : IN STD_LOGIC;
+    m_axi_gp0_awready : IN STD_LOGIC;
+    m_axi_gp0_bvalid : IN STD_LOGIC;
+    m_axi_gp0_rlast : IN STD_LOGIC;
+    m_axi_gp0_rvalid : IN STD_LOGIC;
+    m_axi_gp0_wready : IN STD_LOGIC;
+    m_axi_gp0_bid : IN STD_LOGIC_VECTOR(11 DOWNTO 0);
+    m_axi_gp0_rid : IN STD_LOGIC_VECTOR(11 DOWNTO 0);
+    m_axi_gp0_bresp : IN STD_LOGIC_VECTOR(1 DOWNTO 0);
+    m_axi_gp0_rresp : IN STD_LOGIC_VECTOR(1 DOWNTO 0);
+    m_axi_gp0_rdata : IN STD_LOGIC_VECTOR(31 DOWNTO 0);
+    s_axi_gp0_aclk : IN STD_LOGIC;
     FCLK_RESET0_N_0 : OUT STD_LOGIC;
     DDR_cas_n : INOUT STD_LOGIC;
     DDR_cke : INOUT STD_LOGIC;
@@ -237,6 +276,45 @@ your_instance_name : ps_bd
     m_axi_hp1_wid => m_axi_hp1_wid,
     m_axi_hp1_wdata => m_axi_hp1_wdata,
     m_axi_hp1_wstrb => m_axi_hp1_wstrb,
+    m_axi_gp0_arvalid => m_axi_gp0_arvalid,
+    m_axi_gp0_awvalid => m_axi_gp0_awvalid,
+    m_axi_gp0_bready => m_axi_gp0_bready,
+    m_axi_gp0_rready => m_axi_gp0_rready,
+    m_axi_gp0_wlast => m_axi_gp0_wlast,
+    m_axi_gp0_wvalid => m_axi_gp0_wvalid,
+    m_axi_gp0_arid => m_axi_gp0_arid,
+    m_axi_gp0_awid => m_axi_gp0_awid,
+    m_axi_gp0_wid => m_axi_gp0_wid,
+    m_axi_gp0_arburst => m_axi_gp0_arburst,
+    m_axi_gp0_arlock => m_axi_gp0_arlock,
+    m_axi_gp0_arsize => m_axi_gp0_arsize,
+    m_axi_gp0_awburst => m_axi_gp0_awburst,
+    m_axi_gp0_awlock => m_axi_gp0_awlock,
+    m_axi_gp0_awsize => m_axi_gp0_awsize,
+    m_axi_gp0_arprot => m_axi_gp0_arprot,
+    m_axi_gp0_awprot => m_axi_gp0_awprot,
+    m_axi_gp0_araddr => m_axi_gp0_araddr,
+    m_axi_gp0_awaddr => m_axi_gp0_awaddr,
+    m_axi_gp0_wdata => m_axi_gp0_wdata,
+    m_axi_gp0_arcache => m_axi_gp0_arcache,
+    m_axi_gp0_arlen => m_axi_gp0_arlen,
+    m_axi_gp0_arqos => m_axi_gp0_arqos,
+    m_axi_gp0_awcache => m_axi_gp0_awcache,
+    m_axi_gp0_awlen => m_axi_gp0_awlen,
+    m_axi_gp0_awqos => m_axi_gp0_awqos,
+    m_axi_gp0_wstrb => m_axi_gp0_wstrb,
+    m_axi_gp0_arready => m_axi_gp0_arready,
+    m_axi_gp0_awready => m_axi_gp0_awready,
+    m_axi_gp0_bvalid => m_axi_gp0_bvalid,
+    m_axi_gp0_rlast => m_axi_gp0_rlast,
+    m_axi_gp0_rvalid => m_axi_gp0_rvalid,
+    m_axi_gp0_wready => m_axi_gp0_wready,
+    m_axi_gp0_bid => m_axi_gp0_bid,
+    m_axi_gp0_rid => m_axi_gp0_rid,
+    m_axi_gp0_bresp => m_axi_gp0_bresp,
+    m_axi_gp0_rresp => m_axi_gp0_rresp,
+    m_axi_gp0_rdata => m_axi_gp0_rdata,
+    s_axi_gp0_aclk => s_axi_gp0_aclk,
     FCLK_RESET0_N_0 => FCLK_RESET0_N_0,
     DDR_cas_n => DDR_cas_n,
     DDR_cke => DDR_cke,

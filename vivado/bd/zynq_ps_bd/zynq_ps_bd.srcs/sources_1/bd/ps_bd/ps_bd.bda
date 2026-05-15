@@ -229,6 +229,24 @@
                 "SV": "xilinx.com:ip:processing_system7:5.5",
                 "TM": "both",
                 "TU": "memory"
+            },
+            "V5": {
+                "VT": "AC",
+                "BA": "0x43C00000",
+                "HA": "0x43C0FFFF",
+                "BP": "C_BASEADDR",
+                "HP": "C_HIGHADDR",
+                "MA": "Data",
+                "MX": "/zynq_ps",
+                "MI": "M_AXI_GP0",
+                "MS": "SEG_m_axi_gp0_Reg",
+                "MV": "xilinx.com:ip:processing_system7:5.5",
+                "SX": "/",
+                "SI": "m_axi_gp0",
+                "SS": "Reg",
+                "SV": "::ps_bd_imp:",
+                "TM": "both",
+                "TU": "register"
             }
         },
         "edges": [
@@ -247,6 +265,11 @@
             },
             {
                 "src": "V4",
+                "trg": "V2",
+                "EH": "2"
+            },
+            {
+                "src": "V5",
                 "trg": "V2",
                 "EH": "2"
             }

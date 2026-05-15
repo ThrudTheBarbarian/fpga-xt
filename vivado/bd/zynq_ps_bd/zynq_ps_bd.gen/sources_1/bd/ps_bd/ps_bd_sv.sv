@@ -61,6 +61,12 @@ module ps_bd_sv (
   (* X_INTERFACE_MODE = "slave m_axi_hp1" *)
   (* X_INTERFACE_PARAMETER = "XIL_INTERFACENAME m_axi_hp1, DATA_WIDTH 64, PROTOCOL AXI3, FREQ_HZ 150000000, ID_WIDTH 0, ADDR_WIDTH 32, AWUSER_WIDTH 0, ARUSER_WIDTH 0, WUSER_WIDTH 0, RUSER_WIDTH 0, BUSER_WIDTH 0, READ_WRITE_MODE READ_WRITE, HAS_BURST 1, HAS_LOCK 1, HAS_PROT 1, HAS_CACHE 1, HAS_QOS 1, HAS_REGION 1, HAS_WSTRB 1, HAS_BRESP 1, HAS_RRESP 1, SUPPORTS_NARROW_BURST 1, NUM_READ_OUTSTANDING 1, NUM_WRITE_OUTSTANDING 1, MAX_BURST_LENGTH 16, PHASE 0.0, NUM_READ_THREADS 1, NUM_WRITE_THREADS 1, RUSER_BITS_PER_BYTE 0, WUSER_BITS_PER_BYTE 0, INSERT_VIP 0" *)
   vivado_aximm_v1_0.slave m_axi_hp1,
+  (* X_INTERFACE_INFO = "xilinx.com:interface:aximm:1.0 m_axi_gp0" *)
+  (* X_INTERFACE_MODE = "master m_axi_gp0" *)
+  (* X_INTERFACE_PARAMETER = "XIL_INTERFACENAME m_axi_gp0, DATA_WIDTH 32, PROTOCOL AXI3, FREQ_HZ 150000000, ID_WIDTH 12, ADDR_WIDTH 32, AWUSER_WIDTH 0, ARUSER_WIDTH 0, WUSER_WIDTH 0, RUSER_WIDTH 0, BUSER_WIDTH 0, READ_WRITE_MODE READ_WRITE, HAS_BURST 1, HAS_LOCK 1, HAS_PROT 1, HAS_CACHE 1, HAS_QOS 1, HAS_REGION 0, HAS_WSTRB 1, HAS_BRESP 1, HAS_RRESP 1, SUPPORTS_NARROW_BURST 0, NUM_READ_OUTSTANDING 8, NUM_WRITE_OUTSTANDING 8, MAX_BURST_LENGTH 16, PHASE 0.0, CLK_DOMAIN ps_bd_s_axi_gp0_aclk, NUM_READ_THREADS 4, NUM_WRITE_THREADS 4, RUSER_BITS_PER_BYTE 0, WUSER_BITS_PER_BYTE 0, INSERT_VIP 0" *)
+  vivado_aximm_v1_0.master m_axi_gp0,
+  (* X_INTERFACE_IGNORE = "true" *)
+  input wire s_axi_gp0_aclk,
   (* X_INTERFACE_IGNORE = "true" *)
   output wire FCLK_RESET0_N_0,
   (* X_INTERFACE_IGNORE = "true" *)
@@ -112,6 +118,11 @@ module ps_bd_sv (
   assign m_axi_hp0.RUSER = 0;
   assign m_axi_hp1.BUSER = 0;
   assign m_axi_hp1.RUSER = 0;
+  assign m_axi_gp0.ARREGION = 0;
+  assign m_axi_gp0.ARUSER = 0;
+  assign m_axi_gp0.AWREGION = 0;
+  assign m_axi_gp0.AWUSER = 0;
+  assign m_axi_gp0.WUSER = 0;
 
   ps_bd inst (
     .m_axi_hp0_arready(m_axi_hp0.ARREADY),
@@ -190,6 +201,45 @@ module ps_bd_sv (
     .m_axi_hp1_wid(m_axi_hp1.WID),
     .m_axi_hp1_wdata(m_axi_hp1.WDATA),
     .m_axi_hp1_wstrb(m_axi_hp1.WSTRB),
+    .m_axi_gp0_arvalid(m_axi_gp0.ARVALID),
+    .m_axi_gp0_awvalid(m_axi_gp0.AWVALID),
+    .m_axi_gp0_bready(m_axi_gp0.BREADY),
+    .m_axi_gp0_rready(m_axi_gp0.RREADY),
+    .m_axi_gp0_wlast(m_axi_gp0.WLAST),
+    .m_axi_gp0_wvalid(m_axi_gp0.WVALID),
+    .m_axi_gp0_arid(m_axi_gp0.ARID),
+    .m_axi_gp0_awid(m_axi_gp0.AWID),
+    .m_axi_gp0_wid(m_axi_gp0.WID),
+    .m_axi_gp0_arburst(m_axi_gp0.ARBURST),
+    .m_axi_gp0_arlock(m_axi_gp0.ARLOCK),
+    .m_axi_gp0_arsize(m_axi_gp0.ARSIZE),
+    .m_axi_gp0_awburst(m_axi_gp0.AWBURST),
+    .m_axi_gp0_awlock(m_axi_gp0.AWLOCK),
+    .m_axi_gp0_awsize(m_axi_gp0.AWSIZE),
+    .m_axi_gp0_arprot(m_axi_gp0.ARPROT),
+    .m_axi_gp0_awprot(m_axi_gp0.AWPROT),
+    .m_axi_gp0_araddr(m_axi_gp0.ARADDR),
+    .m_axi_gp0_awaddr(m_axi_gp0.AWADDR),
+    .m_axi_gp0_wdata(m_axi_gp0.WDATA),
+    .m_axi_gp0_arcache(m_axi_gp0.ARCACHE),
+    .m_axi_gp0_arlen(m_axi_gp0.ARLEN),
+    .m_axi_gp0_arqos(m_axi_gp0.ARQOS),
+    .m_axi_gp0_awcache(m_axi_gp0.AWCACHE),
+    .m_axi_gp0_awlen(m_axi_gp0.AWLEN),
+    .m_axi_gp0_awqos(m_axi_gp0.AWQOS),
+    .m_axi_gp0_wstrb(m_axi_gp0.WSTRB),
+    .m_axi_gp0_arready(m_axi_gp0.ARREADY),
+    .m_axi_gp0_awready(m_axi_gp0.AWREADY),
+    .m_axi_gp0_bvalid(m_axi_gp0.BVALID),
+    .m_axi_gp0_rlast(m_axi_gp0.RLAST),
+    .m_axi_gp0_rvalid(m_axi_gp0.RVALID),
+    .m_axi_gp0_wready(m_axi_gp0.WREADY),
+    .m_axi_gp0_bid(m_axi_gp0.BID),
+    .m_axi_gp0_rid(m_axi_gp0.RID),
+    .m_axi_gp0_bresp(m_axi_gp0.BRESP),
+    .m_axi_gp0_rresp(m_axi_gp0.RRESP),
+    .m_axi_gp0_rdata(m_axi_gp0.RDATA),
+    .s_axi_gp0_aclk(s_axi_gp0_aclk),
     .FCLK_RESET0_N_0(FCLK_RESET0_N_0),
     .DDR_cas_n(DDR_cas_n),
     .DDR_cke(DDR_cke),

@@ -63,12 +63,15 @@
 // INTF_TAG     ------ Begin cut for INTERFACE INSTANTIATION Template ------
 vivado_aximm_v1_0 #(.DATA_WIDTH(64)) m_axi_hp0();
 vivado_aximm_v1_0 #(.DATA_WIDTH(64)) m_axi_hp1();
+vivado_aximm_v1_0 #(.ID_WIDTH(12)) m_axi_gp0();
 // INTF_TAG_END ------  End cut for INTERFACE INSTANTIATION Template  ------
 
 // INST_TAG     ------ Begin cut for WRAPPER INSTANTIATION Template ------
 ps_bd_sv your_instance_name (
   .m_axi_hp0(m_axi_hp0.slave), // vivado_aximm_v1_0.slave m_axi_hp0
   .m_axi_hp1(m_axi_hp1.slave), // vivado_aximm_v1_0.slave m_axi_hp1
+  .m_axi_gp0(m_axi_gp0.master), // vivado_aximm_v1_0.master m_axi_gp0
+  .s_axi_gp0_aclk(s_axi_gp0_aclk), // input wire s_axi_gp0_aclk
   .FCLK_RESET0_N_0(FCLK_RESET0_N_0), // output wire FCLK_RESET0_N_0
   .DDR_cas_n(DDR_cas_n), // inout wire DDR_cas_n
   .DDR_cke(DDR_cke), // inout wire DDR_cke

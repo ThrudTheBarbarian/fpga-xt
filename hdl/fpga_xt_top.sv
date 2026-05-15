@@ -794,12 +794,48 @@ module fpga_xt_top (
     assign rgb_pixclk = fb_rgb_pixclk;
 
     // ====================================================================
+    // AXI-Lite bridge — GP0 from ARM PS → blitter register bus
+    // ====================================================================
+    // Bridge signals exist only in PS BD builds; in OOC path they are
+    // tied to 0 so the mux below falls through to the SALLY CDC path.
+    //
+    // Bridge output bus (before reconstructing full bus_addr):
+    `ifdef USE_PS_BD
+    wire        bl_bridge_we;
+    wire [5:0]  bl_bridge_addr;
+    wire [7:0]  bl_bridge_data;
+    `else
+    wire        bl_bridge_we   = 1'b0;
+    wire [5:0]  bl_bridge_addr = 6'd0;
+    wire [7:0]  bl_bridge_data = 8'd0;
+    `endif
+
+    // Reconstruct full 16-bit bus_addr from bridge's 6-bit register addr.
+    //   bl_bridge_addr[5] = 1 → $D4Bx page, bl_bridge_addr[5] = 0 → $D4Cx page
+    //   bus_addr[7:4] = 4'b1011 for $D4Bx, 4'b1100 for $D4Cx
+    //   bus_addr[3:0] = register index within page
+    wire [15:0] bridge_bus_addr;
+    assign bridge_bus_addr[15:8] = 8'hD4;
+    assign bridge_bus_addr[7:4]  = bl_bridge_addr[5] ? 4'b1011 : 4'b1100;
+    assign bridge_bus_addr[3:0]  = bl_bridge_addr[3:0];
+
+    // Mux: bridge takes priority when bl_bridge_we is asserted.
+    // Both sources run on clk_sys and produce single-cycle strobes.
+    wire        bl_we_mux   = bl_bridge_we | antic_we_q;
+    wire [15:0] bl_addr_mux = bl_bridge_we ? bridge_bus_addr : bus_addr_antic_q;
+    wire [7:0]  bl_data_mux = bl_bridge_we ? bl_bridge_data  : bus_data_in_antic_q;
+
+    // ====================================================================
     // xt_blitter v0 — rect fill with solid RGBA-8888
     // ====================================================================
     // Taps the same clk_sys-domain post-CDC SALLY hwreg bus that ANTIC
     // uses; the blitter address-decodes $D4B0..$D4BF internally so the
     // ANTIC and blitter register spaces are disjoint.  Writes outside
     // $D4Bx are ignored by the blitter.
+    //
+    // When the AXI-Lite bridge is present (USE_PS_BD), register writes
+    // from the ARM Cortex-A9s are merged with the SALLY CDC path via
+    // the bl_addr_mux / bl_data_mux / bl_we_mux above.
 
     wire bl_busy;
 
@@ -809,9 +845,9 @@ module fpga_xt_top (
     ) u_xt_blitter (
         .clk             (clk_sys),
         .rst             (rst_sys),
-        .bus_addr        (bus_addr_antic_q),
-        .bus_data        (bus_data_in_antic_q),
-        .bus_we          (antic_we_q),
+        .bus_addr        (bl_addr_mux),
+        .bus_data        (bl_data_mux),
+        .bus_we          (bl_we_mux),
         .busy            (bl_busy),
         .m_axi_awaddr    (hp1_awaddr),
         .m_axi_awlen     (hp1_awlen),
@@ -899,6 +935,33 @@ module fpga_xt_top (
     // directly — the ps_bd_wrapper.v wrapper is not auto-generated so
     // we instantiate the BD module itself.
 
+    // GP0 AXI3 signals — connect PS BD M_AXI_GP0 (master) → AXI-Lite bridge
+    // AXI4-Lite subset (used by the bridge):
+    wire [31:0] gp0_awaddr;
+    wire        gp0_awvalid;
+    wire        gp0_awready;
+    wire [31:0] gp0_wdata;
+    wire [3:0]  gp0_wstrb;
+    wire        gp0_wvalid;
+    wire        gp0_wready;
+    wire [1:0]  gp0_bresp;
+    wire        gp0_bvalid;
+    wire        gp0_bready;
+    wire [31:0] gp0_araddr;
+    wire        gp0_arvalid;
+    wire        gp0_arready;
+    wire [31:0] gp0_rdata;
+    wire [1:0]  gp0_rresp;
+    wire        gp0_rvalid;
+    wire        gp0_rready;
+    // Extra AXI3 signals — tie-offs for master inputs (bridge doesn't drive)
+    wire [11:0] gp0_bid;
+    wire [11:0] gp0_rid;
+    wire        gp0_rlast;
+    assign gp0_bid   = 12'd0;
+    assign gp0_rid   = 12'd0;
+    assign gp0_rlast = 1'b1;
+
     ps_bd u_ps_bd (
         // DDR + FIXED_IO — tied off; PS dedicated pins are hard-wired on SOM
         .DDR_addr          (),
@@ -923,6 +986,7 @@ module fpga_xt_top (
         .FIXED_IO_ps_porb  (),
         .FIXED_IO_ps_srstb (),
         .FCLK_RESET0_N_0   (),
+        .s_axi_gp0_aclk     (clk_sys),
         .m_axi_hp0_araddr   (hp0_araddr[31:0]),
         .m_axi_hp0_arburst  (hp0_arburst[1:0]),
         .m_axi_hp0_arcache  (4'd0),
@@ -1000,7 +1064,86 @@ module fpga_xt_top (
         .m_axi_hp1_wlast    (ps_hp1_wlast),
         .m_axi_hp1_wready   (ps_hp1_wready),
         .m_axi_hp1_wstrb    (ps_hp1_wstrb),
-        .m_axi_hp1_wvalid   (ps_hp1_wvalid)
+        .m_axi_hp1_wvalid   (ps_hp1_wvalid),
+
+        // GP0 — ARM PS AXI3 master → PL bridge (blitter register writes).
+        // Extra AXI3 signals not used by the AXI4-Lite bridge are left
+        // unconnected on the PS output side; bridge input tie-offs are
+        // driven via gp0_bid/gp0_rid/gp0_rlast assignments above.
+        .m_axi_gp0_araddr   (gp0_araddr),
+        .m_axi_gp0_arburst  (),
+        .m_axi_gp0_arcache  (),
+        .m_axi_gp0_arid     (),
+        .m_axi_gp0_arlen    (),
+        .m_axi_gp0_arlock   (),
+        .m_axi_gp0_arprot   (),
+        .m_axi_gp0_arqos    (),
+        .m_axi_gp0_arready  (gp0_arready),
+        .m_axi_gp0_arsize   (),
+        .m_axi_gp0_arvalid  (gp0_arvalid),
+        .m_axi_gp0_awaddr   (gp0_awaddr),
+        .m_axi_gp0_awburst  (),
+        .m_axi_gp0_awcache  (),
+        .m_axi_gp0_awid     (),
+        .m_axi_gp0_awlen    (),
+        .m_axi_gp0_awlock   (),
+        .m_axi_gp0_awprot   (),
+        .m_axi_gp0_awqos    (),
+        .m_axi_gp0_awready  (gp0_awready),
+        .m_axi_gp0_awsize   (),
+        .m_axi_gp0_awvalid  (gp0_awvalid),
+        .m_axi_gp0_bid      (gp0_bid),
+        .m_axi_gp0_bready   (gp0_bready),
+        .m_axi_gp0_bresp    (gp0_bresp),
+        .m_axi_gp0_bvalid   (gp0_bvalid),
+        .m_axi_gp0_rdata    (gp0_rdata),
+        .m_axi_gp0_rid      (gp0_rid),
+        .m_axi_gp0_rlast    (gp0_rlast),
+        .m_axi_gp0_rready   (gp0_rready),
+        .m_axi_gp0_rresp    (gp0_rresp),
+        .m_axi_gp0_rvalid   (gp0_rvalid),
+        .m_axi_gp0_wdata    (gp0_wdata),
+        .m_axi_gp0_wid      (),
+        .m_axi_gp0_wlast    (),
+        .m_axi_gp0_wready   (gp0_wready),
+        .m_axi_gp0_wstrb    (gp0_wstrb),
+        .m_axi_gp0_wvalid   (gp0_wvalid)
+    );
+
+    // ---- AXI-Lite bridge: ARM PS GP0 → blitter register bus ---------------
+    // Translates AXI4-Lite writes from the Cortex-A9s (via PS GP0 port) into
+    // the blitter's hwreg-style register strobe (bl_we).  Runs on clk_sys
+    // (same domain as the blitter), no CDC needed.
+    //
+    // Bridge outputs are OR'd with the SALLY CDC path via bl_we_mux above.
+
+    axi_blitter_bridge u_axi_bridge (
+        .clk             (clk_sys),
+        .rst             (rst_sys),
+
+        .s_axi_awaddr    (gp0_awaddr),
+        .s_axi_awvalid   (gp0_awvalid),
+        .s_axi_awready   (gp0_awready),
+        .s_axi_wdata     (gp0_wdata),
+        .s_axi_wstrb     (gp0_wstrb),
+        .s_axi_wvalid    (gp0_wvalid),
+        .s_axi_wready    (gp0_wready),
+        .s_axi_bresp     (gp0_bresp),
+        .s_axi_bvalid    (gp0_bvalid),
+        .s_axi_bready    (gp0_bready),
+
+        .s_axi_araddr    (gp0_araddr),
+        .s_axi_arvalid   (gp0_arvalid),
+        .s_axi_arready   (gp0_arready),
+        .s_axi_rdata     (gp0_rdata),
+        .s_axi_rresp     (gp0_rresp),
+        .s_axi_rvalid    (gp0_rvalid),
+        .s_axi_rready    (gp0_rready),
+
+        .bl_addr         (bl_bridge_addr),
+        .bl_data         (bl_bridge_data),
+        .bl_we           (bl_bridge_we),
+        .bl_busy         (bl_busy)
     );
 
     `else

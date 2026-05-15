@@ -2,7 +2,7 @@
 //Copyright 2022-2026 Advanced Micro Devices, Inc. All Rights Reserved.
 //--------------------------------------------------------------------------------
 //Tool Version: Vivado v.2025.2.1 (lin64) Build 6403652 Thu Mar 19 13:47:00 MDT 2026
-//Date        : Thu May 14 20:06:09 2026
+//Date        : Fri May 15 22:45:01 2026
 //Host        : ldaps.e-2-e.net running 64-bit Ubuntu 24.04.4 LTS
 //Command     : generate_target ps_bd_wrapper.bd
 //Design      : ps_bd_wrapper
@@ -33,6 +33,44 @@ module ps_bd_wrapper
     FIXED_IO_ps_clk,
     FIXED_IO_ps_porb,
     FIXED_IO_ps_srstb,
+    m_axi_gp0_araddr,
+    m_axi_gp0_arburst,
+    m_axi_gp0_arcache,
+    m_axi_gp0_arid,
+    m_axi_gp0_arlen,
+    m_axi_gp0_arlock,
+    m_axi_gp0_arprot,
+    m_axi_gp0_arqos,
+    m_axi_gp0_arready,
+    m_axi_gp0_arsize,
+    m_axi_gp0_arvalid,
+    m_axi_gp0_awaddr,
+    m_axi_gp0_awburst,
+    m_axi_gp0_awcache,
+    m_axi_gp0_awid,
+    m_axi_gp0_awlen,
+    m_axi_gp0_awlock,
+    m_axi_gp0_awprot,
+    m_axi_gp0_awqos,
+    m_axi_gp0_awready,
+    m_axi_gp0_awsize,
+    m_axi_gp0_awvalid,
+    m_axi_gp0_bid,
+    m_axi_gp0_bready,
+    m_axi_gp0_bresp,
+    m_axi_gp0_bvalid,
+    m_axi_gp0_rdata,
+    m_axi_gp0_rid,
+    m_axi_gp0_rlast,
+    m_axi_gp0_rready,
+    m_axi_gp0_rresp,
+    m_axi_gp0_rvalid,
+    m_axi_gp0_wdata,
+    m_axi_gp0_wid,
+    m_axi_gp0_wlast,
+    m_axi_gp0_wready,
+    m_axi_gp0_wstrb,
+    m_axi_gp0_wvalid,
     m_axi_hp0_araddr,
     m_axi_hp0_arburst,
     m_axi_hp0_arcache,
@@ -108,7 +146,8 @@ module ps_bd_wrapper
     m_axi_hp1_wlast,
     m_axi_hp1_wready,
     m_axi_hp1_wstrb,
-    m_axi_hp1_wvalid);
+    m_axi_hp1_wvalid,
+    s_axi_gp0_aclk);
   inout [14:0]DDR_addr;
   inout [2:0]DDR_ba;
   inout DDR_cas_n;
@@ -131,6 +170,44 @@ module ps_bd_wrapper
   inout FIXED_IO_ps_clk;
   inout FIXED_IO_ps_porb;
   inout FIXED_IO_ps_srstb;
+  output [31:0]m_axi_gp0_araddr;
+  output [1:0]m_axi_gp0_arburst;
+  output [3:0]m_axi_gp0_arcache;
+  output [11:0]m_axi_gp0_arid;
+  output [3:0]m_axi_gp0_arlen;
+  output [1:0]m_axi_gp0_arlock;
+  output [2:0]m_axi_gp0_arprot;
+  output [3:0]m_axi_gp0_arqos;
+  input m_axi_gp0_arready;
+  output [2:0]m_axi_gp0_arsize;
+  output m_axi_gp0_arvalid;
+  output [31:0]m_axi_gp0_awaddr;
+  output [1:0]m_axi_gp0_awburst;
+  output [3:0]m_axi_gp0_awcache;
+  output [11:0]m_axi_gp0_awid;
+  output [3:0]m_axi_gp0_awlen;
+  output [1:0]m_axi_gp0_awlock;
+  output [2:0]m_axi_gp0_awprot;
+  output [3:0]m_axi_gp0_awqos;
+  input m_axi_gp0_awready;
+  output [2:0]m_axi_gp0_awsize;
+  output m_axi_gp0_awvalid;
+  input [11:0]m_axi_gp0_bid;
+  output m_axi_gp0_bready;
+  input [1:0]m_axi_gp0_bresp;
+  input m_axi_gp0_bvalid;
+  input [31:0]m_axi_gp0_rdata;
+  input [11:0]m_axi_gp0_rid;
+  input m_axi_gp0_rlast;
+  output m_axi_gp0_rready;
+  input [1:0]m_axi_gp0_rresp;
+  input m_axi_gp0_rvalid;
+  output [31:0]m_axi_gp0_wdata;
+  output [11:0]m_axi_gp0_wid;
+  output m_axi_gp0_wlast;
+  input m_axi_gp0_wready;
+  output [3:0]m_axi_gp0_wstrb;
+  output m_axi_gp0_wvalid;
   input [31:0]m_axi_hp0_araddr;
   input [1:0]m_axi_hp0_arburst;
   input [3:0]m_axi_hp0_arcache;
@@ -207,6 +284,7 @@ module ps_bd_wrapper
   output m_axi_hp1_wready;
   input [7:0]m_axi_hp1_wstrb;
   input m_axi_hp1_wvalid;
+  input s_axi_gp0_aclk;
 
   wire [14:0]DDR_addr;
   wire [2:0]DDR_ba;
@@ -230,6 +308,44 @@ module ps_bd_wrapper
   wire FIXED_IO_ps_clk;
   wire FIXED_IO_ps_porb;
   wire FIXED_IO_ps_srstb;
+  wire [31:0]m_axi_gp0_araddr;
+  wire [1:0]m_axi_gp0_arburst;
+  wire [3:0]m_axi_gp0_arcache;
+  wire [11:0]m_axi_gp0_arid;
+  wire [3:0]m_axi_gp0_arlen;
+  wire [1:0]m_axi_gp0_arlock;
+  wire [2:0]m_axi_gp0_arprot;
+  wire [3:0]m_axi_gp0_arqos;
+  wire m_axi_gp0_arready;
+  wire [2:0]m_axi_gp0_arsize;
+  wire m_axi_gp0_arvalid;
+  wire [31:0]m_axi_gp0_awaddr;
+  wire [1:0]m_axi_gp0_awburst;
+  wire [3:0]m_axi_gp0_awcache;
+  wire [11:0]m_axi_gp0_awid;
+  wire [3:0]m_axi_gp0_awlen;
+  wire [1:0]m_axi_gp0_awlock;
+  wire [2:0]m_axi_gp0_awprot;
+  wire [3:0]m_axi_gp0_awqos;
+  wire m_axi_gp0_awready;
+  wire [2:0]m_axi_gp0_awsize;
+  wire m_axi_gp0_awvalid;
+  wire [11:0]m_axi_gp0_bid;
+  wire m_axi_gp0_bready;
+  wire [1:0]m_axi_gp0_bresp;
+  wire m_axi_gp0_bvalid;
+  wire [31:0]m_axi_gp0_rdata;
+  wire [11:0]m_axi_gp0_rid;
+  wire m_axi_gp0_rlast;
+  wire m_axi_gp0_rready;
+  wire [1:0]m_axi_gp0_rresp;
+  wire m_axi_gp0_rvalid;
+  wire [31:0]m_axi_gp0_wdata;
+  wire [11:0]m_axi_gp0_wid;
+  wire m_axi_gp0_wlast;
+  wire m_axi_gp0_wready;
+  wire [3:0]m_axi_gp0_wstrb;
+  wire m_axi_gp0_wvalid;
   wire [31:0]m_axi_hp0_araddr;
   wire [1:0]m_axi_hp0_arburst;
   wire [3:0]m_axi_hp0_arcache;
@@ -306,6 +422,7 @@ module ps_bd_wrapper
   wire m_axi_hp1_wready;
   wire [7:0]m_axi_hp1_wstrb;
   wire m_axi_hp1_wvalid;
+  wire s_axi_gp0_aclk;
 
   ps_bd ps_bd_i
        (.DDR_addr(DDR_addr),
@@ -330,6 +447,44 @@ module ps_bd_wrapper
         .FIXED_IO_ps_clk(FIXED_IO_ps_clk),
         .FIXED_IO_ps_porb(FIXED_IO_ps_porb),
         .FIXED_IO_ps_srstb(FIXED_IO_ps_srstb),
+        .m_axi_gp0_araddr(m_axi_gp0_araddr),
+        .m_axi_gp0_arburst(m_axi_gp0_arburst),
+        .m_axi_gp0_arcache(m_axi_gp0_arcache),
+        .m_axi_gp0_arid(m_axi_gp0_arid),
+        .m_axi_gp0_arlen(m_axi_gp0_arlen),
+        .m_axi_gp0_arlock(m_axi_gp0_arlock),
+        .m_axi_gp0_arprot(m_axi_gp0_arprot),
+        .m_axi_gp0_arqos(m_axi_gp0_arqos),
+        .m_axi_gp0_arready(m_axi_gp0_arready),
+        .m_axi_gp0_arsize(m_axi_gp0_arsize),
+        .m_axi_gp0_arvalid(m_axi_gp0_arvalid),
+        .m_axi_gp0_awaddr(m_axi_gp0_awaddr),
+        .m_axi_gp0_awburst(m_axi_gp0_awburst),
+        .m_axi_gp0_awcache(m_axi_gp0_awcache),
+        .m_axi_gp0_awid(m_axi_gp0_awid),
+        .m_axi_gp0_awlen(m_axi_gp0_awlen),
+        .m_axi_gp0_awlock(m_axi_gp0_awlock),
+        .m_axi_gp0_awprot(m_axi_gp0_awprot),
+        .m_axi_gp0_awqos(m_axi_gp0_awqos),
+        .m_axi_gp0_awready(m_axi_gp0_awready),
+        .m_axi_gp0_awsize(m_axi_gp0_awsize),
+        .m_axi_gp0_awvalid(m_axi_gp0_awvalid),
+        .m_axi_gp0_bid(m_axi_gp0_bid),
+        .m_axi_gp0_bready(m_axi_gp0_bready),
+        .m_axi_gp0_bresp(m_axi_gp0_bresp),
+        .m_axi_gp0_bvalid(m_axi_gp0_bvalid),
+        .m_axi_gp0_rdata(m_axi_gp0_rdata),
+        .m_axi_gp0_rid(m_axi_gp0_rid),
+        .m_axi_gp0_rlast(m_axi_gp0_rlast),
+        .m_axi_gp0_rready(m_axi_gp0_rready),
+        .m_axi_gp0_rresp(m_axi_gp0_rresp),
+        .m_axi_gp0_rvalid(m_axi_gp0_rvalid),
+        .m_axi_gp0_wdata(m_axi_gp0_wdata),
+        .m_axi_gp0_wid(m_axi_gp0_wid),
+        .m_axi_gp0_wlast(m_axi_gp0_wlast),
+        .m_axi_gp0_wready(m_axi_gp0_wready),
+        .m_axi_gp0_wstrb(m_axi_gp0_wstrb),
+        .m_axi_gp0_wvalid(m_axi_gp0_wvalid),
         .m_axi_hp0_araddr(m_axi_hp0_araddr),
         .m_axi_hp0_arburst(m_axi_hp0_arburst),
         .m_axi_hp0_arcache(m_axi_hp0_arcache),
@@ -405,5 +560,6 @@ module ps_bd_wrapper
         .m_axi_hp1_wlast(m_axi_hp1_wlast),
         .m_axi_hp1_wready(m_axi_hp1_wready),
         .m_axi_hp1_wstrb(m_axi_hp1_wstrb),
-        .m_axi_hp1_wvalid(m_axi_hp1_wvalid));
+        .m_axi_hp1_wvalid(m_axi_hp1_wvalid),
+        .s_axi_gp0_aclk(s_axi_gp0_aclk));
 endmodule

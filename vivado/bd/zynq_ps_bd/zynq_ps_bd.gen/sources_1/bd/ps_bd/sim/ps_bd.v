@@ -2,7 +2,7 @@
 //Copyright 2022-2026 Advanced Micro Devices, Inc. All Rights Reserved.
 //--------------------------------------------------------------------------------
 //Tool Version: Vivado v.2025.2.1 (lin64) Build 6403652 Thu Mar 19 13:47:00 MDT 2026
-//Date        : Thu May 14 20:06:08 2026
+//Date        : Fri May 15 22:45:01 2026
 //Host        : ldaps.e-2-e.net running 64-bit Ubuntu 24.04.4 LTS
 //Command     : generate_target ps_bd.bd
 //Design      : ps_bd
@@ -34,6 +34,44 @@ module ps_bd
     FIXED_IO_ps_clk,
     FIXED_IO_ps_porb,
     FIXED_IO_ps_srstb,
+    m_axi_gp0_araddr,
+    m_axi_gp0_arburst,
+    m_axi_gp0_arcache,
+    m_axi_gp0_arid,
+    m_axi_gp0_arlen,
+    m_axi_gp0_arlock,
+    m_axi_gp0_arprot,
+    m_axi_gp0_arqos,
+    m_axi_gp0_arready,
+    m_axi_gp0_arsize,
+    m_axi_gp0_arvalid,
+    m_axi_gp0_awaddr,
+    m_axi_gp0_awburst,
+    m_axi_gp0_awcache,
+    m_axi_gp0_awid,
+    m_axi_gp0_awlen,
+    m_axi_gp0_awlock,
+    m_axi_gp0_awprot,
+    m_axi_gp0_awqos,
+    m_axi_gp0_awready,
+    m_axi_gp0_awsize,
+    m_axi_gp0_awvalid,
+    m_axi_gp0_bid,
+    m_axi_gp0_bready,
+    m_axi_gp0_bresp,
+    m_axi_gp0_bvalid,
+    m_axi_gp0_rdata,
+    m_axi_gp0_rid,
+    m_axi_gp0_rlast,
+    m_axi_gp0_rready,
+    m_axi_gp0_rresp,
+    m_axi_gp0_rvalid,
+    m_axi_gp0_wdata,
+    m_axi_gp0_wid,
+    m_axi_gp0_wlast,
+    m_axi_gp0_wready,
+    m_axi_gp0_wstrb,
+    m_axi_gp0_wvalid,
     m_axi_hp0_araddr,
     m_axi_hp0_arburst,
     m_axi_hp0_arcache,
@@ -109,7 +147,8 @@ module ps_bd
     m_axi_hp1_wlast,
     m_axi_hp1_wready,
     m_axi_hp1_wstrb,
-    m_axi_hp1_wvalid);
+    m_axi_hp1_wvalid,
+    s_axi_gp0_aclk);
   (* X_INTERFACE_INFO = "xilinx.com:interface:ddrx:1.0 DDR ADDR" *) (* X_INTERFACE_MODE = "Master" *) (* X_INTERFACE_PARAMETER = "XIL_INTERFACENAME DDR, AXI_ARBITRATION_SCHEME TDM, BURST_LENGTH 8, CAN_DEBUG false, CAS_LATENCY 11, CAS_WRITE_LATENCY 11, CS_ENABLED true, DATA_MASK_ENABLED true, DATA_WIDTH 8, MEMORY_TYPE COMPONENTS, MEM_ADDR_MAP ROW_COLUMN_BANK, SLOT Single, TIMEPERIOD_PS 1250" *) inout [14:0]DDR_addr;
   (* X_INTERFACE_INFO = "xilinx.com:interface:ddrx:1.0 DDR BA" *) inout [2:0]DDR_ba;
   (* X_INTERFACE_INFO = "xilinx.com:interface:ddrx:1.0 DDR CAS_N" *) inout DDR_cas_n;
@@ -132,6 +171,44 @@ module ps_bd
   (* X_INTERFACE_INFO = "xilinx.com:display_processing_system7:fixedio:1.0 FIXED_IO PS_CLK" *) inout FIXED_IO_ps_clk;
   (* X_INTERFACE_INFO = "xilinx.com:display_processing_system7:fixedio:1.0 FIXED_IO PS_PORB" *) inout FIXED_IO_ps_porb;
   (* X_INTERFACE_INFO = "xilinx.com:display_processing_system7:fixedio:1.0 FIXED_IO PS_SRSTB" *) inout FIXED_IO_ps_srstb;
+  (* X_INTERFACE_INFO = "xilinx.com:interface:aximm:1.0 m_axi_gp0 ARADDR" *) (* X_INTERFACE_MODE = "Master" *) (* X_INTERFACE_PARAMETER = "XIL_INTERFACENAME m_axi_gp0, ADDR_WIDTH 32, ARUSER_WIDTH 0, AWUSER_WIDTH 0, BUSER_WIDTH 0, CLK_DOMAIN ps_bd_s_axi_gp0_aclk, DATA_WIDTH 32, FREQ_HZ 150000000, HAS_BRESP 1, HAS_BURST 1, HAS_CACHE 1, HAS_LOCK 1, HAS_PROT 1, HAS_QOS 1, HAS_REGION 0, HAS_RRESP 1, HAS_WSTRB 1, ID_WIDTH 12, INSERT_VIP 0, MAX_BURST_LENGTH 16, NUM_READ_OUTSTANDING 8, NUM_READ_THREADS 4, NUM_WRITE_OUTSTANDING 8, NUM_WRITE_THREADS 4, PHASE 0.0, PROTOCOL AXI3, READ_WRITE_MODE READ_WRITE, RUSER_BITS_PER_BYTE 0, RUSER_WIDTH 0, SUPPORTS_NARROW_BURST 0, WUSER_BITS_PER_BYTE 0, WUSER_WIDTH 0" *) output [31:0]m_axi_gp0_araddr;
+  (* X_INTERFACE_INFO = "xilinx.com:interface:aximm:1.0 m_axi_gp0 ARBURST" *) output [1:0]m_axi_gp0_arburst;
+  (* X_INTERFACE_INFO = "xilinx.com:interface:aximm:1.0 m_axi_gp0 ARCACHE" *) output [3:0]m_axi_gp0_arcache;
+  (* X_INTERFACE_INFO = "xilinx.com:interface:aximm:1.0 m_axi_gp0 ARID" *) output [11:0]m_axi_gp0_arid;
+  (* X_INTERFACE_INFO = "xilinx.com:interface:aximm:1.0 m_axi_gp0 ARLEN" *) output [3:0]m_axi_gp0_arlen;
+  (* X_INTERFACE_INFO = "xilinx.com:interface:aximm:1.0 m_axi_gp0 ARLOCK" *) output [1:0]m_axi_gp0_arlock;
+  (* X_INTERFACE_INFO = "xilinx.com:interface:aximm:1.0 m_axi_gp0 ARPROT" *) output [2:0]m_axi_gp0_arprot;
+  (* X_INTERFACE_INFO = "xilinx.com:interface:aximm:1.0 m_axi_gp0 ARQOS" *) output [3:0]m_axi_gp0_arqos;
+  (* X_INTERFACE_INFO = "xilinx.com:interface:aximm:1.0 m_axi_gp0 ARREADY" *) input m_axi_gp0_arready;
+  (* X_INTERFACE_INFO = "xilinx.com:interface:aximm:1.0 m_axi_gp0 ARSIZE" *) output [2:0]m_axi_gp0_arsize;
+  (* X_INTERFACE_INFO = "xilinx.com:interface:aximm:1.0 m_axi_gp0 ARVALID" *) output m_axi_gp0_arvalid;
+  (* X_INTERFACE_INFO = "xilinx.com:interface:aximm:1.0 m_axi_gp0 AWADDR" *) output [31:0]m_axi_gp0_awaddr;
+  (* X_INTERFACE_INFO = "xilinx.com:interface:aximm:1.0 m_axi_gp0 AWBURST" *) output [1:0]m_axi_gp0_awburst;
+  (* X_INTERFACE_INFO = "xilinx.com:interface:aximm:1.0 m_axi_gp0 AWCACHE" *) output [3:0]m_axi_gp0_awcache;
+  (* X_INTERFACE_INFO = "xilinx.com:interface:aximm:1.0 m_axi_gp0 AWID" *) output [11:0]m_axi_gp0_awid;
+  (* X_INTERFACE_INFO = "xilinx.com:interface:aximm:1.0 m_axi_gp0 AWLEN" *) output [3:0]m_axi_gp0_awlen;
+  (* X_INTERFACE_INFO = "xilinx.com:interface:aximm:1.0 m_axi_gp0 AWLOCK" *) output [1:0]m_axi_gp0_awlock;
+  (* X_INTERFACE_INFO = "xilinx.com:interface:aximm:1.0 m_axi_gp0 AWPROT" *) output [2:0]m_axi_gp0_awprot;
+  (* X_INTERFACE_INFO = "xilinx.com:interface:aximm:1.0 m_axi_gp0 AWQOS" *) output [3:0]m_axi_gp0_awqos;
+  (* X_INTERFACE_INFO = "xilinx.com:interface:aximm:1.0 m_axi_gp0 AWREADY" *) input m_axi_gp0_awready;
+  (* X_INTERFACE_INFO = "xilinx.com:interface:aximm:1.0 m_axi_gp0 AWSIZE" *) output [2:0]m_axi_gp0_awsize;
+  (* X_INTERFACE_INFO = "xilinx.com:interface:aximm:1.0 m_axi_gp0 AWVALID" *) output m_axi_gp0_awvalid;
+  (* X_INTERFACE_INFO = "xilinx.com:interface:aximm:1.0 m_axi_gp0 BID" *) input [11:0]m_axi_gp0_bid;
+  (* X_INTERFACE_INFO = "xilinx.com:interface:aximm:1.0 m_axi_gp0 BREADY" *) output m_axi_gp0_bready;
+  (* X_INTERFACE_INFO = "xilinx.com:interface:aximm:1.0 m_axi_gp0 BRESP" *) input [1:0]m_axi_gp0_bresp;
+  (* X_INTERFACE_INFO = "xilinx.com:interface:aximm:1.0 m_axi_gp0 BVALID" *) input m_axi_gp0_bvalid;
+  (* X_INTERFACE_INFO = "xilinx.com:interface:aximm:1.0 m_axi_gp0 RDATA" *) input [31:0]m_axi_gp0_rdata;
+  (* X_INTERFACE_INFO = "xilinx.com:interface:aximm:1.0 m_axi_gp0 RID" *) input [11:0]m_axi_gp0_rid;
+  (* X_INTERFACE_INFO = "xilinx.com:interface:aximm:1.0 m_axi_gp0 RLAST" *) input m_axi_gp0_rlast;
+  (* X_INTERFACE_INFO = "xilinx.com:interface:aximm:1.0 m_axi_gp0 RREADY" *) output m_axi_gp0_rready;
+  (* X_INTERFACE_INFO = "xilinx.com:interface:aximm:1.0 m_axi_gp0 RRESP" *) input [1:0]m_axi_gp0_rresp;
+  (* X_INTERFACE_INFO = "xilinx.com:interface:aximm:1.0 m_axi_gp0 RVALID" *) input m_axi_gp0_rvalid;
+  (* X_INTERFACE_INFO = "xilinx.com:interface:aximm:1.0 m_axi_gp0 WDATA" *) output [31:0]m_axi_gp0_wdata;
+  (* X_INTERFACE_INFO = "xilinx.com:interface:aximm:1.0 m_axi_gp0 WID" *) output [11:0]m_axi_gp0_wid;
+  (* X_INTERFACE_INFO = "xilinx.com:interface:aximm:1.0 m_axi_gp0 WLAST" *) output m_axi_gp0_wlast;
+  (* X_INTERFACE_INFO = "xilinx.com:interface:aximm:1.0 m_axi_gp0 WREADY" *) input m_axi_gp0_wready;
+  (* X_INTERFACE_INFO = "xilinx.com:interface:aximm:1.0 m_axi_gp0 WSTRB" *) output [3:0]m_axi_gp0_wstrb;
+  (* X_INTERFACE_INFO = "xilinx.com:interface:aximm:1.0 m_axi_gp0 WVALID" *) output m_axi_gp0_wvalid;
   (* X_INTERFACE_INFO = "xilinx.com:interface:aximm:1.0 m_axi_hp0 ARADDR" *) (* X_INTERFACE_MODE = "Slave" *) (* X_INTERFACE_PARAMETER = "XIL_INTERFACENAME m_axi_hp0, ADDR_WIDTH 32, ARUSER_WIDTH 0, AWUSER_WIDTH 0, BUSER_WIDTH 0, DATA_WIDTH 64, FREQ_HZ 150000000, HAS_BRESP 1, HAS_BURST 1, HAS_CACHE 1, HAS_LOCK 1, HAS_PROT 1, HAS_QOS 1, HAS_REGION 1, HAS_RRESP 1, HAS_WSTRB 1, ID_WIDTH 0, INSERT_VIP 0, MAX_BURST_LENGTH 16, NUM_READ_OUTSTANDING 1, NUM_READ_THREADS 1, NUM_WRITE_OUTSTANDING 1, NUM_WRITE_THREADS 1, PHASE 0.0, PROTOCOL AXI3, READ_WRITE_MODE READ_WRITE, RUSER_BITS_PER_BYTE 0, RUSER_WIDTH 0, SUPPORTS_NARROW_BURST 1, WUSER_BITS_PER_BYTE 0, WUSER_WIDTH 0" *) input [31:0]m_axi_hp0_araddr;
   (* X_INTERFACE_INFO = "xilinx.com:interface:aximm:1.0 m_axi_hp0 ARBURST" *) input [1:0]m_axi_hp0_arburst;
   (* X_INTERFACE_INFO = "xilinx.com:interface:aximm:1.0 m_axi_hp0 ARCACHE" *) input [3:0]m_axi_hp0_arcache;
@@ -208,6 +285,7 @@ module ps_bd
   (* X_INTERFACE_INFO = "xilinx.com:interface:aximm:1.0 m_axi_hp1 WREADY" *) output m_axi_hp1_wready;
   (* X_INTERFACE_INFO = "xilinx.com:interface:aximm:1.0 m_axi_hp1 WSTRB" *) input [7:0]m_axi_hp1_wstrb;
   (* X_INTERFACE_INFO = "xilinx.com:interface:aximm:1.0 m_axi_hp1 WVALID" *) input m_axi_hp1_wvalid;
+  (* X_INTERFACE_INFO = "xilinx.com:signal:clock:1.0 CLK.S_AXI_GP0_ACLK CLK" *) (* X_INTERFACE_PARAMETER = "XIL_INTERFACENAME CLK.S_AXI_GP0_ACLK, ASSOCIATED_BUSIF m_axi_gp0, CLK_DOMAIN ps_bd_s_axi_gp0_aclk, FREQ_HZ 150000000, FREQ_TOLERANCE_HZ 0, INSERT_VIP 0, PHASE 0.0" *) input s_axi_gp0_aclk;
 
   wire [14:0]DDR_addr;
   wire [2:0]DDR_ba;
@@ -231,6 +309,44 @@ module ps_bd
   wire FIXED_IO_ps_clk;
   wire FIXED_IO_ps_porb;
   wire FIXED_IO_ps_srstb;
+  wire [31:0]m_axi_gp0_araddr;
+  wire [1:0]m_axi_gp0_arburst;
+  wire [3:0]m_axi_gp0_arcache;
+  wire [11:0]m_axi_gp0_arid;
+  wire [3:0]m_axi_gp0_arlen;
+  wire [1:0]m_axi_gp0_arlock;
+  wire [2:0]m_axi_gp0_arprot;
+  wire [3:0]m_axi_gp0_arqos;
+  wire m_axi_gp0_arready;
+  wire [2:0]m_axi_gp0_arsize;
+  wire m_axi_gp0_arvalid;
+  wire [31:0]m_axi_gp0_awaddr;
+  wire [1:0]m_axi_gp0_awburst;
+  wire [3:0]m_axi_gp0_awcache;
+  wire [11:0]m_axi_gp0_awid;
+  wire [3:0]m_axi_gp0_awlen;
+  wire [1:0]m_axi_gp0_awlock;
+  wire [2:0]m_axi_gp0_awprot;
+  wire [3:0]m_axi_gp0_awqos;
+  wire m_axi_gp0_awready;
+  wire [2:0]m_axi_gp0_awsize;
+  wire m_axi_gp0_awvalid;
+  wire [11:0]m_axi_gp0_bid;
+  wire m_axi_gp0_bready;
+  wire [1:0]m_axi_gp0_bresp;
+  wire m_axi_gp0_bvalid;
+  wire [31:0]m_axi_gp0_rdata;
+  wire [11:0]m_axi_gp0_rid;
+  wire m_axi_gp0_rlast;
+  wire m_axi_gp0_rready;
+  wire [1:0]m_axi_gp0_rresp;
+  wire m_axi_gp0_rvalid;
+  wire [31:0]m_axi_gp0_wdata;
+  wire [11:0]m_axi_gp0_wid;
+  wire m_axi_gp0_wlast;
+  wire m_axi_gp0_wready;
+  wire [3:0]m_axi_gp0_wstrb;
+  wire m_axi_gp0_wvalid;
   wire [31:0]m_axi_hp0_araddr;
   wire [1:0]m_axi_hp0_arburst;
   wire [3:0]m_axi_hp0_arcache;
@@ -307,6 +423,7 @@ module ps_bd
   wire m_axi_hp1_wready;
   wire [7:0]m_axi_hp1_wstrb;
   wire m_axi_hp1_wvalid;
+  wire s_axi_gp0_aclk;
   wire zynq_ps_FCLK_CLK0;
 
   ps_bd_zynq_ps_0 zynq_ps
@@ -330,6 +447,45 @@ module ps_bd
         .FCLK_CLK0(zynq_ps_FCLK_CLK0),
         .FCLK_RESET0_N(FCLK_RESET0_N_0),
         .MIO(FIXED_IO_mio),
+        .M_AXI_GP0_ACLK(s_axi_gp0_aclk),
+        .M_AXI_GP0_ARADDR(m_axi_gp0_araddr),
+        .M_AXI_GP0_ARBURST(m_axi_gp0_arburst),
+        .M_AXI_GP0_ARCACHE(m_axi_gp0_arcache),
+        .M_AXI_GP0_ARID(m_axi_gp0_arid),
+        .M_AXI_GP0_ARLEN(m_axi_gp0_arlen),
+        .M_AXI_GP0_ARLOCK(m_axi_gp0_arlock),
+        .M_AXI_GP0_ARPROT(m_axi_gp0_arprot),
+        .M_AXI_GP0_ARQOS(m_axi_gp0_arqos),
+        .M_AXI_GP0_ARREADY(m_axi_gp0_arready),
+        .M_AXI_GP0_ARSIZE(m_axi_gp0_arsize),
+        .M_AXI_GP0_ARVALID(m_axi_gp0_arvalid),
+        .M_AXI_GP0_AWADDR(m_axi_gp0_awaddr),
+        .M_AXI_GP0_AWBURST(m_axi_gp0_awburst),
+        .M_AXI_GP0_AWCACHE(m_axi_gp0_awcache),
+        .M_AXI_GP0_AWID(m_axi_gp0_awid),
+        .M_AXI_GP0_AWLEN(m_axi_gp0_awlen),
+        .M_AXI_GP0_AWLOCK(m_axi_gp0_awlock),
+        .M_AXI_GP0_AWPROT(m_axi_gp0_awprot),
+        .M_AXI_GP0_AWQOS(m_axi_gp0_awqos),
+        .M_AXI_GP0_AWREADY(m_axi_gp0_awready),
+        .M_AXI_GP0_AWSIZE(m_axi_gp0_awsize),
+        .M_AXI_GP0_AWVALID(m_axi_gp0_awvalid),
+        .M_AXI_GP0_BID(m_axi_gp0_bid),
+        .M_AXI_GP0_BREADY(m_axi_gp0_bready),
+        .M_AXI_GP0_BRESP(m_axi_gp0_bresp),
+        .M_AXI_GP0_BVALID(m_axi_gp0_bvalid),
+        .M_AXI_GP0_RDATA(m_axi_gp0_rdata),
+        .M_AXI_GP0_RID(m_axi_gp0_rid),
+        .M_AXI_GP0_RLAST(m_axi_gp0_rlast),
+        .M_AXI_GP0_RREADY(m_axi_gp0_rready),
+        .M_AXI_GP0_RRESP(m_axi_gp0_rresp),
+        .M_AXI_GP0_RVALID(m_axi_gp0_rvalid),
+        .M_AXI_GP0_WDATA(m_axi_gp0_wdata),
+        .M_AXI_GP0_WID(m_axi_gp0_wid),
+        .M_AXI_GP0_WLAST(m_axi_gp0_wlast),
+        .M_AXI_GP0_WREADY(m_axi_gp0_wready),
+        .M_AXI_GP0_WSTRB(m_axi_gp0_wstrb),
+        .M_AXI_GP0_WVALID(m_axi_gp0_wvalid),
         .PS_CLK(FIXED_IO_ps_clk),
         .PS_PORB(FIXED_IO_ps_porb),
         .PS_SRSTB(FIXED_IO_ps_srstb),

@@ -6,6 +6,7 @@
 # This constraints file is not used in normal top-down synthesis (default flow
 # of Vivado)
 ################################################################################
+create_clock -name s_axi_gp0_aclk -period 6.667 [get_ports s_axi_gp0_aclk]
 create_clock -name zynq_ps_FCLK_CLK0 -period 6.667 [get_pins zynq_ps/FCLK_CLK0]
 
 ################################################################################

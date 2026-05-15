@@ -44,7 +44,7 @@ set_property -dict [list \
     CONFIG.PCW_EN_RST1_PORT {0} \
     CONFIG.PCW_EN_RST2_PORT {0} \
     CONFIG.PCW_EN_RST3_PORT {0} \
-    CONFIG.PCW_USE_M_AXI_GP0 {0} \
+    CONFIG.PCW_USE_M_AXI_GP0 {1} \
     CONFIG.PCW_USE_S_AXI_GP0 {0} \
     CONFIG.PCW_USE_S_AXI_ACP {0} \
     CONFIG.PCW_USE_S_AXI_HP2 {0} \
@@ -77,19 +77,47 @@ for {set i 0} {$i <= 1} {incr i} {
     }
 }
 
-# ---- Make FCLK and reset external ------------------------------------------
-make_bd_pins_external [get_bd_pins zynq_ps/FCLK_CLK0]
+# ---- Export GP0 as external AXI3 master interface (32-bit, 150 MHz) ---------
+set gp0_iface [get_bd_intf_pins -quiet zynq_ps/M_AXI_GP0]
+if {$gp0_iface ne ""} {
+    set ext_name "m_axi_gp0"
+    create_bd_intf_port -mode Master \
+        -vlnv xilinx.com:interface:aximm_rtl:1.0 $ext_name
+    set_property -dict [list \
+        CONFIG.PROTOCOL {AXI3} \
+        CONFIG.DATA_WIDTH {32} \
+        CONFIG.FREQ_HZ {150000000} \
+        CONFIG.ADDR_WIDTH {32} \
+    ] [get_bd_intf_ports $ext_name]
+    connect_bd_intf_net [get_bd_intf_ports $ext_name] $gp0_iface
+    puts ">> exported GP0 as external interface '$ext_name' (AXI3, 32-bit)"
+}
+
+# GP0 clock — driven by clk_sys from the PL (not FCLK_CLK0, which stays
+# internal for HP ports).  clk_sys and FCLK_CLK0 are both 150 MHz.
+create_bd_port -dir I -type clk s_axi_gp0_aclk
+set_property CONFIG.FREQ_HZ {150000000} [get_bd_ports s_axi_gp0_aclk]
+connect_bd_net [get_bd_ports s_axi_gp0_aclk] [get_bd_pins zynq_ps/M_AXI_GP0_ACLK]
+
+# ---- Make FCLK reset external -----------------------------------------------
 make_bd_pins_external [get_bd_pins zynq_ps/FCLK_RESET0_N]
 
-# Associate AXI interfaces with the clock port (find it by name pattern)
+# Associate AXI interfaces with their clocks
 set fclk_port [get_bd_ports -quiet *FCLK_CLK0*]
 if {$fclk_port ne ""} {
     set_property CONFIG.ASSOCIATED_BUSIF {m_axi_hp0 m_axi_hp1} $fclk_port
+}
+set gp0clk_port [get_bd_ports s_axi_gp0_aclk]
+if {$gp0clk_port ne ""} {
+    set_property CONFIG.ASSOCIATED_BUSIF {m_axi_gp0} $gp0clk_port
 }
 
 # ---- Assign HP address spaces to DDR ---------------------------------------
 assign_bd_address [get_bd_addr_segs /zynq_ps/S_AXI_HP0/HP0_DDR_LOWOCM]
 assign_bd_address [get_bd_addr_segs /zynq_ps/S_AXI_HP1/HP1_DDR_LOWOCM]
+
+# ---- Assign GP0 address range for PL register access -----------------------
+assign_bd_address [get_bd_addr_segs /m_axi_gp0/Reg]
 
 # ---- DDR + MIO -------------------------------------------------------------
 create_bd_intf_port -mode Master -vlnv xilinx.com:interface:ddrx_rtl:1.0 DDR

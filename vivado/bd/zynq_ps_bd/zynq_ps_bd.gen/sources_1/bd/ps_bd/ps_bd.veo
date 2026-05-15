@@ -130,6 +130,45 @@ ps_bd your_instance_name (
   .m_axi_hp1_wid(m_axi_hp1_wid), // input wire [5:0] m_axi_hp1_wid
   .m_axi_hp1_wdata(m_axi_hp1_wdata), // input wire [63:0] m_axi_hp1_wdata
   .m_axi_hp1_wstrb(m_axi_hp1_wstrb), // input wire [7:0] m_axi_hp1_wstrb
+  .m_axi_gp0_arvalid(m_axi_gp0_arvalid), // output wire m_axi_gp0_arvalid
+  .m_axi_gp0_awvalid(m_axi_gp0_awvalid), // output wire m_axi_gp0_awvalid
+  .m_axi_gp0_bready(m_axi_gp0_bready), // output wire m_axi_gp0_bready
+  .m_axi_gp0_rready(m_axi_gp0_rready), // output wire m_axi_gp0_rready
+  .m_axi_gp0_wlast(m_axi_gp0_wlast), // output wire m_axi_gp0_wlast
+  .m_axi_gp0_wvalid(m_axi_gp0_wvalid), // output wire m_axi_gp0_wvalid
+  .m_axi_gp0_arid(m_axi_gp0_arid), // output wire [11:0] m_axi_gp0_arid
+  .m_axi_gp0_awid(m_axi_gp0_awid), // output wire [11:0] m_axi_gp0_awid
+  .m_axi_gp0_wid(m_axi_gp0_wid), // output wire [11:0] m_axi_gp0_wid
+  .m_axi_gp0_arburst(m_axi_gp0_arburst), // output wire [1:0] m_axi_gp0_arburst
+  .m_axi_gp0_arlock(m_axi_gp0_arlock), // output wire [1:0] m_axi_gp0_arlock
+  .m_axi_gp0_arsize(m_axi_gp0_arsize), // output wire [2:0] m_axi_gp0_arsize
+  .m_axi_gp0_awburst(m_axi_gp0_awburst), // output wire [1:0] m_axi_gp0_awburst
+  .m_axi_gp0_awlock(m_axi_gp0_awlock), // output wire [1:0] m_axi_gp0_awlock
+  .m_axi_gp0_awsize(m_axi_gp0_awsize), // output wire [2:0] m_axi_gp0_awsize
+  .m_axi_gp0_arprot(m_axi_gp0_arprot), // output wire [2:0] m_axi_gp0_arprot
+  .m_axi_gp0_awprot(m_axi_gp0_awprot), // output wire [2:0] m_axi_gp0_awprot
+  .m_axi_gp0_araddr(m_axi_gp0_araddr), // output wire [31:0] m_axi_gp0_araddr
+  .m_axi_gp0_awaddr(m_axi_gp0_awaddr), // output wire [31:0] m_axi_gp0_awaddr
+  .m_axi_gp0_wdata(m_axi_gp0_wdata), // output wire [31:0] m_axi_gp0_wdata
+  .m_axi_gp0_arcache(m_axi_gp0_arcache), // output wire [3:0] m_axi_gp0_arcache
+  .m_axi_gp0_arlen(m_axi_gp0_arlen), // output wire [3:0] m_axi_gp0_arlen
+  .m_axi_gp0_arqos(m_axi_gp0_arqos), // output wire [3:0] m_axi_gp0_arqos
+  .m_axi_gp0_awcache(m_axi_gp0_awcache), // output wire [3:0] m_axi_gp0_awcache
+  .m_axi_gp0_awlen(m_axi_gp0_awlen), // output wire [3:0] m_axi_gp0_awlen
+  .m_axi_gp0_awqos(m_axi_gp0_awqos), // output wire [3:0] m_axi_gp0_awqos
+  .m_axi_gp0_wstrb(m_axi_gp0_wstrb), // output wire [3:0] m_axi_gp0_wstrb
+  .m_axi_gp0_arready(m_axi_gp0_arready), // input wire m_axi_gp0_arready
+  .m_axi_gp0_awready(m_axi_gp0_awready), // input wire m_axi_gp0_awready
+  .m_axi_gp0_bvalid(m_axi_gp0_bvalid), // input wire m_axi_gp0_bvalid
+  .m_axi_gp0_rlast(m_axi_gp0_rlast), // input wire m_axi_gp0_rlast
+  .m_axi_gp0_rvalid(m_axi_gp0_rvalid), // input wire m_axi_gp0_rvalid
+  .m_axi_gp0_wready(m_axi_gp0_wready), // input wire m_axi_gp0_wready
+  .m_axi_gp0_bid(m_axi_gp0_bid), // input wire [11:0] m_axi_gp0_bid
+  .m_axi_gp0_rid(m_axi_gp0_rid), // input wire [11:0] m_axi_gp0_rid
+  .m_axi_gp0_bresp(m_axi_gp0_bresp), // input wire [1:0] m_axi_gp0_bresp
+  .m_axi_gp0_rresp(m_axi_gp0_rresp), // input wire [1:0] m_axi_gp0_rresp
+  .m_axi_gp0_rdata(m_axi_gp0_rdata), // input wire [31:0] m_axi_gp0_rdata
+  .s_axi_gp0_aclk(s_axi_gp0_aclk), // input wire s_axi_gp0_aclk
   .FCLK_RESET0_N_0(FCLK_RESET0_N_0), // output wire FCLK_RESET0_N_0
   .DDR_cas_n(DDR_cas_n), // inout wire DDR_cas_n
   .DDR_cke(DDR_cke), // inout wire DDR_cke
