@@ -597,6 +597,173 @@ module tb_sally_isa;
         $display("PASS: test_psh_pll_flags");
     endtask
 
+    // ---- Test 17: 65C02 BRA ($80) — unconditional forward branch -----
+    //   Both paths converge at $040E STA $0340 / $0411 JMP-stuck, but
+    //   carry different A values.  Take-branch leaves A=$AA via the
+    //   LDA at $040B; fall-through (broken) leaves A=$11 from the
+    //   pre-BRA load.
+    task automatic test_bra_forward();
+        $display("=== Test 17: BRA forward ($80) ===");
+        reset_cpu();
+
+        mem[16'hFFFC] = 8'h00;
+        mem[16'hFFFD] = 8'h04;
+        prologue();
+
+        put(16'h0404, 8'hA9); put(16'h0405, 8'h11);             // LDA #$11 (fail sentinel)
+        put(16'h0406, 8'h80); put(16'h0407, 8'h03);             // BRA +3 → $040B
+        put(16'h0408, 8'h4C); put(16'h0409, 8'h0E); put(16'h040A, 8'h04);  // JMP $040E (fall-through)
+        put(16'h040B, 8'hA9); put(16'h040C, 8'hAA);             // LDA #$AA (BRA target)
+        put(16'h040D, 8'hEA);                                   // NOP padding
+        put(16'h040E, 8'h8D); put(16'h040F, 8'h40); put(16'h0410, 8'h03);  // STA $0340
+        put(16'h0411, 8'h4C); put(16'h0412, 8'h11); put(16'h0413, 8'h04);  // JMP $0411 (stuck)
+
+        run_until_stuck(16'h0411, 400, "BRA forward");
+        expect_mem(16'h0340, 8'hAA, "BRA forward: branch taken, mem[$0340]=$AA");
+        $display("PASS: test_bra_forward");
+    endtask
+
+    // ---- Test 18: 65C02 BRA ($80) — backward branch with counter -----
+    //   Loop body INX / CPX / BEQ / BRA -7 four times until X==4, then
+    //   BEQ-escapes to a success store.  Exercises backward offset path.
+    task automatic test_bra_backward();
+        $display("=== Test 18: BRA backward ($80) ===");
+        reset_cpu();
+
+        mem[16'hFFFC] = 8'h00;
+        mem[16'hFFFD] = 8'h04;
+        prologue();
+
+        put(16'h0404, 8'hA2); put(16'h0405, 8'h00);             // LDX #$00
+        put(16'h0406, 8'h4C); put(16'h0407, 8'h0A); put(16'h0408, 8'h04);  // JMP $040A
+        put(16'h040A, 8'hE8);                                   // INX
+        put(16'h040B, 8'hE0); put(16'h040C, 8'h04);             // CPX #$04
+        put(16'h040D, 8'hF0); put(16'h040E, 8'h09);             // BEQ +9 → $0418
+        put(16'h040F, 8'h80); put(16'h0410, 8'hF9);             // BRA -7 → $040A
+        // Fall-through path (BRA broken): land at $0411
+        put(16'h0411, 8'hA2); put(16'h0412, 8'hFF);             // LDX #$FF (fail sentinel)
+        put(16'h0413, 8'h8E); put(16'h0414, 8'h41); put(16'h0415, 8'h03);  // STX $0341
+        put(16'h0416, 8'h4C); put(16'h0417, 8'h16); put(16'h0418, 8'h04);  // JMP $0416 (fail-stuck)
+        // BEQ-escape target — success path
+        put(16'h0418, 8'h8E); put(16'h0419, 8'h41); put(16'h041A, 8'h03);  // STX $0341 = $04
+        put(16'h041B, 8'h4C); put(16'h041C, 8'h1B); put(16'h041D, 8'h04);  // JMP $041B (success)
+
+        run_until_stuck(16'h041B, 800, "BRA backward");
+        expect_mem(16'h0341, 8'h04, "BRA backward: looped 4 times, X=$04");
+        $display("PASS: test_bra_backward");
+    endtask
+
+    // ---- Test 19: 65C02 BIT #imm ($89) — Z flag from A AND imm -------
+    //   LDA #$0F; BIT #$F0 → A & imm = $00 → Z=1.  BEQ taken proves Z=1.
+    //   Also verify A is NOT modified ($0F stays $0F).
+    task automatic test_bit_imm_z();
+        $display("=== Test 19: BIT #imm Z flag ===");
+        reset_cpu();
+
+        mem[16'hFFFC] = 8'h00;
+        mem[16'hFFFD] = 8'h04;
+        prologue();
+
+        put(16'h0404, 8'hA9); put(16'h0405, 8'h0F);             // LDA #$0F
+        put(16'h0406, 8'h89); put(16'h0407, 8'hF0);             // BIT #$F0 → A&F0=0, Z=1
+        put(16'h0408, 8'hF0); put(16'h0409, 8'h05);             // BEQ +5 → $040F
+        put(16'h040A, 8'h4C); put(16'h040B, 8'h12); put(16'h040C, 8'h04);  // JMP $0412 (fail)
+        put(16'h040D, 8'hEA);                                   // NOP padding
+        put(16'h040E, 8'hEA);                                   // NOP padding
+        put(16'h040F, 8'h8D); put(16'h0410, 8'h42); put(16'h0411, 8'h03);  // STA $0342 (A=$0F)
+        put(16'h0412, 8'h4C); put(16'h0413, 8'h12); put(16'h0414, 8'h04);  // JMP $0412 (stuck for both paths)
+
+        run_until_stuck(16'h0412, 500, "BIT #imm Z=1");
+        // Both paths reach $0412 — success: A=$0F preserved at $0342.
+        // Fail (Z=0 → BEQ not taken, falls to JMP $0412): mem[$0342]
+        //   never written, stays $00.
+        expect_mem(16'h0342, 8'h0F,
+                   "BIT #imm: Z=1 → BEQ taken, A=$0F preserved");
+        $display("PASS: test_bit_imm_z");
+    endtask
+
+    // ---- Test 20: 65C02 BIT #imm ($89) — N and V flags from imm ------
+    //   BIT #imm copies imm[7]→N, imm[6]→V (per the BIT semantics).
+    //   X starts at 0 (fail default); each branch-skip-fail chains the
+    //   next test.  Reaching the LDX #$03 means both N and V landed.
+    //   Fail-path JMPs go to a distinct stuck at $041F so test_stuck
+    //   target $0419 only fires on the success path.
+    task automatic test_bit_imm_nv();
+        $display("=== Test 20: BIT #imm N/V flags ===");
+        reset_cpu();
+
+        mem[16'hFFFC] = 8'h00;
+        mem[16'hFFFD] = 8'h04;
+        prologue();
+
+        put(16'h0404, 8'hA2); put(16'h0405, 8'h00);             // LDX #$00 (fail default)
+        put(16'h0406, 8'hA9); put(16'h0407, 8'h01);             // LDA #$01
+        put(16'h0408, 8'h89); put(16'h0409, 8'hC1);             // BIT #$C1 (N=1,V=1,Z=0)
+        put(16'h040A, 8'h30); put(16'h040B, 8'h03);             // BMI +3 → $040F
+        put(16'h040C, 8'h4C); put(16'h040D, 8'h1F); put(16'h040E, 8'h04);  // JMP $041F (fail N)
+        put(16'h040F, 8'h70); put(16'h0410, 8'h03);             // BVS +3 → $0414
+        put(16'h0411, 8'h4C); put(16'h0412, 8'h1F); put(16'h0413, 8'h04);  // JMP $041F (fail V)
+        put(16'h0414, 8'hA2); put(16'h0415, 8'h03);             // LDX #$03 (success)
+        put(16'h0416, 8'h8E); put(16'h0417, 8'h43); put(16'h0418, 8'h03);  // STX $0343
+        put(16'h0419, 8'h4C); put(16'h041A, 8'h19); put(16'h041B, 8'h04);  // JMP $0419 (success stuck)
+        put(16'h041F, 8'h4C); put(16'h0420, 8'h1F); put(16'h0421, 8'h04);  // JMP $041F (fail stuck)
+
+        run_until_stuck(16'h0419, 600, "BIT #imm N+V");
+        expect_mem(16'h0343, 8'h03, "BIT #imm: N=1 and V=1, both branches taken");
+        $display("PASS: test_bit_imm_nv");
+    endtask
+
+    // ---- Test 21: end-to-end calling convention ----------------------
+    //   cdecl-style call: caller pushes two args right-to-left, JSRs;
+    //   callee uses PSH #0 + SP-relative addressing to read params,
+    //   computes the result, overwrites the saved-A slot with the
+    //   return value (so PLL restores A as the return), then RTS.
+    //   Caller stores the return, then ADD SP, #+2 cleans up params.
+    //
+    //   Verifies: JSR / RTS through 12-bit SP, PSH allocates frame,
+    //   SP-rel LDA/ADC read params at +9/+10, STA $05,SP overwrites
+    //   saved-A, PLL restores from updated slot, ADD SP cleans the
+    //   caller-pushed params.  All of Stage A/B/C in one program.
+    task automatic test_calling_convention();
+        $display("=== Test 21: calling convention end-to-end ===");
+        reset_cpu();
+
+        mem[16'hFFFC] = 8'h00;
+        mem[16'hFFFD] = 8'h04;
+        prologue();
+
+        // Caller: push b=$14 then a=$22, JSR add_two, STA result, ADD SP #+2
+        put(16'h0404, 8'hA9); put(16'h0405, 8'h14);             // LDA #$14 (b)
+        put(16'h0406, 8'h48);                                   // PHA
+        put(16'h0407, 8'hA9); put(16'h0408, 8'h22);             // LDA #$22 (a)
+        put(16'h0409, 8'h48);                                   // PHA
+        put(16'h040A, 8'h20); put(16'h040B, 8'h20); put(16'h040C, 8'h04);  // JSR $0420
+        put(16'h040D, 8'h8D); put(16'h040E, 8'h50); put(16'h040F, 8'h03);  // STA $0350 (result)
+        put(16'h0410, 8'h22); put(16'h0411, 8'h02);             // ADD SP, #+2 (cleanup)
+        put(16'h0412, 8'hBA);                                   // TSX
+        put(16'h0413, 8'h8E); put(16'h0414, 8'h51); put(16'h0415, 8'h03);  // STX $0351 (SP_lo)
+        put(16'h0416, 8'h4C); put(16'h0417, 8'h16); put(16'h0418, 8'h04);  // JMP $0416 (stuck)
+
+        // Callee at $0420: add_two(a, b) = a + b
+        //   PSH #0 frame layout (offsets from new SP):
+        //     +0 P  +1 SP_lo  +2 SP_hi  +3 Y  +4 X  +5 A
+        //     +6 gap (JSR's 2-byte push leaves one byte unwritten)
+        //     +7 ret_lo  +8 ret_hi  +9 arg0 (a)  +10 arg1 (b)
+        put(16'h0420, 8'h32); put(16'h0421, 8'h00);             // PSH #0
+        put(16'h0422, 8'hB2); put(16'h0423, 8'h09);             // LDA $09,SP (= a = $22)
+        put(16'h0424, 8'h18);                                   // CLC
+        put(16'h0425, 8'h72); put(16'h0426, 8'h0A);             // ADC $0A,SP (+= b = $14)
+        put(16'h0427, 8'h92); put(16'h0428, 8'h05);             // STA $05,SP (overwrite saved-A
+                                                                //              with return value)
+        put(16'h0429, 8'h62); put(16'h042A, 8'h00);             // PLL #0 (A <- saved-A = $36)
+        put(16'h042B, 8'h60);                                   // RTS
+
+        run_until_stuck(16'h0416, 2000, "calling convention");
+        expect_mem(16'h0350, 8'h36, "callee returns a + b = $22 + $14 = $36");
+        expect_mem(16'h0351, 8'hFF, "caller cleanup leaves SP back at $FF");
+        $display("PASS: test_calling_convention");
+    endtask
+
     // ---- Main scheduler -------------------------------------------------
     initial begin
         $display("=== tb_sally_isa starting ===");
@@ -622,6 +789,11 @@ module tb_sally_isa;
         test_psh_pll_roundtrip();
         test_psh_pll_locals();
         test_psh_pll_flags();
+        test_bra_forward();
+        test_bra_backward();
+        test_bit_imm_z();
+        test_bit_imm_nv();
+        test_calling_convention();
 
         $display("=== ALL TESTS PASSED ===");
         $finish;

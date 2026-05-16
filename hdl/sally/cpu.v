@@ -149,8 +149,9 @@ reg adj_bcd;            // results should be BCD adjusted
  * get loaded at the DECODE state, and used later
  */
 reg bit_ins;            // doing BIT instruction
+reg bra_always;         // 65C02 BRA ($80) — branch taken unconditionally
 reg plp;                // doing PLP instruction
-reg php;                // doing PHP instruction 
+reg php;                // doing PHP instruction
 reg clc;                // clear carry
 reg sec;                // set carry
 reg cld;                // clear decimal
@@ -1166,6 +1167,12 @@ always @(posedge clk or posedge reset)
                 8'b0011_0010:   state <= PSH0;  // PSH #N
                 8'b0110_0010:   state <= PLL0;  // PLL #N
                 8'b0xx1_1000:   state <= REG;   // CLC, SEC, CLI, SEI
+                // 65C02 BRA ($80) — unconditional branch.  Must
+                // precede 8'b1xx0_00x0 (which would otherwise route
+                // $80 to FETCH as a harmless 2-byte NOP).  Uses the
+                // existing BRA0 state; the `bra_always` register set
+                // below forces the branch through cond_true logic.
+                8'b1000_0000:   state <= BRA0;
                 8'b1xx0_00x0:   state <= FETCH; // IMM
                 8'b1xx0_1100:   state <= ABS0;  // X/Y abs
                 8'b1xxx_1000:   state <= REG;   // DEY, TYA, ...
@@ -1246,7 +1253,7 @@ always @(posedge clk or posedge reset)
         RTS2    : state <= RTS3;
         RTS3    : state <= FETCH;
 
-        BRA0    : state <= cond_true ? BRA1 : DECODE;
+        BRA0    : state <= (cond_true | bra_always) ? BRA1 : DECODE;
         BRA1    : state <= (CO ^ backwards) ? BRA2 : DECODE;
         BRA2    : state <= DECODE;
 
@@ -1521,18 +1528,34 @@ always @(posedge clk )
                 8'b010x_xx01,   // EOR
                 8'b00xx_xx01:   // ORA, AND
                                 op <= { 2'b11, IR[6:5] };
-                
-                default:        op <= OP_ADD; 
+
+                // 65C02 BIT #imm ($89) — AND-for-flags-only; op=OP_AND
+                // so the FETCH-state ALU computes A & imm into ADD.
+                // bit_ins (below) drives N/V from DIMUX and Z from
+                // the ALU AZ at DECODE writeback.  load_reg stays 0
+                // so A is not modified.
+                8'b1000_1001:   op <= OP_AND;
+
+                default:        op <= OP_ADD;
         endcase
 
 always @(posedge clk )
      if( state == DECODE && RDY )
         casex( IR )
-                8'b0010_x100:   // BIT zp/abs   
+                8'b0010_x100,   // BIT zp/abs
+                8'b1000_1001:   // 65C02 BIT #imm ($89)
                                 bit_ins <= 1;
 
-                default:        bit_ins <= 0; 
+                default:        bit_ins <= 0;
         endcase
+
+// 65C02 BRA ($80) — registered flag set on DECODE.  ORed into the
+// BRA0 state-transition condition so the branch always takes;
+// otherwise cond_code=100 (IR[7:5]) would route through the BCC
+// case and only branch when C=0.
+always @(posedge clk )
+     if( state == DECODE && RDY )
+        bra_always <= (IR == 8'h80);
 
 /*
  * special instructions
