@@ -205,6 +205,16 @@ if {$flow eq "impl" || $flow eq "bit"} {
 if {$flow eq "bit"} {
     write_bitstream -force [file join $out_dir $top.bit]
     puts ">> bitstream written: $out_dir/$top.bit"
+
+    # ---- Hardware handoff for Vitis ------------------------------------
+    # `.xsa` (Xilinx Shell Archive) is the artefact Vitis consumes to
+    # generate the BSP / FSBL / platform.  `-fixed` says "no DFX, no
+    # PR regions" — appropriate for a plain Zynq-7000 bare-metal flow.
+    # `-include_bit` bundles the bitstream so a single .xsa fully
+    # describes the hardware platform.  See docs/bring-up.md.
+    write_hw_platform -fixed -force -include_bit \
+        -file [file join $out_dir $top.xsa]
+    puts ">> hw_platform written: $out_dir/$top.xsa"
 }
 
 puts ">> done"

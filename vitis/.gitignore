@@ -1,0 +1,25 @@
+# Vitis workspace + per-component build trees regenerate from the
+# committed scripts / sources, so none of it is checked in.
+workspace/
+build/
+*.elf
+*.o
+*.d
+
+# Vitis (and the older XSDK) drop these alongside source trees.
+.metadata/
+.cproject
+.project
+.sdk/
+SDK.log
+hsi.log
+
+# IDE caches
+.settings/
+.ipcache/
+_ide/
+
+# Tcl/Python wrapper output
+*.log
+*.jou
+*.str
