@@ -53,7 +53,15 @@ module fb_scanout #(
     parameter int          V_ACTIVE      = 1080,
     parameter int          V_FRONT_PORCH = 4,
     parameter int          V_SYNC_WIDTH  = 5,
-    parameter int          V_BACK_PORCH  = 36
+    parameter int          V_BACK_PORCH  = 36,
+
+    // Bring-up Phase 2: bypass the AXI HP read path and drive a
+    // deterministic 8-colour-bar test pattern from h_count.  The
+    // AXI master still functions (its read requests just go nowhere
+    // useful) but the RGB output is taken from the pattern generator
+    // instead of the dithered line-buffer read.  Default 0 so normal
+    // builds are unaffected.  See docs/bring-up.md.
+    parameter bit          TEST_PATTERN  = 1'b0
 ) (
     // ---- Clocks & reset --------------------------------------------------
     input  wire        clk_sys,    // AXI HP fetch clock (~150 MHz)
@@ -370,9 +378,48 @@ module fb_scanout #(
     wire [8:0] b_sum = {1'b0, b8} + {6'd0, bayer_xy[3:1]};
     wire [4:0] b5    = b_sum[8] ? 5'h1F : b_sum[7:3];
 
-    assign rgb_r      = de_q ? r5 : 5'd0;
-    assign rgb_g      = de_q ? g6 : 6'd0;
-    assign rgb_b      = de_q ? b5 : 5'd0;
+    // ====================================================================
+    // Bring-up Phase 2 — colour-bar test pattern (TEST_PATTERN = 1)
+    // ====================================================================
+    // 8 vertical colour bars (100 %-saturated SMPTE-ish ordering: white /
+    // yellow / cyan / green / magenta / red / blue / black).  Each bar is
+    // 256 pixels wide; the right-most bar is narrower (1792..1919) which
+    // is fine for confirming the RGB565 bit wiring is correct.  h_count_q
+    // delays h_count by one cycle to align with de_q (which is itself
+    // delayed by one cycle for line-buffer phase alignment above).
+    logic [11:0] h_count_q;
+    always_ff @(posedge clk_pix or posedge rst_pix)
+        if (rst_pix) h_count_q <= '0;
+        else         h_count_q <= h_count;
+
+    wire  [2:0] bar_idx = h_count_q[10:8];
+    logic [4:0] pattern_r;
+    logic [5:0] pattern_g;
+    logic [4:0] pattern_b;
+    always_comb begin
+        unique case (bar_idx)
+            3'd0: {pattern_r, pattern_g, pattern_b} = {5'h1F, 6'h3F, 5'h1F}; // white
+            3'd1: {pattern_r, pattern_g, pattern_b} = {5'h1F, 6'h3F, 5'h00}; // yellow
+            3'd2: {pattern_r, pattern_g, pattern_b} = {5'h00, 6'h3F, 5'h1F}; // cyan
+            3'd3: {pattern_r, pattern_g, pattern_b} = {5'h00, 6'h3F, 5'h00}; // green
+            3'd4: {pattern_r, pattern_g, pattern_b} = {5'h1F, 6'h00, 5'h1F}; // magenta
+            3'd5: {pattern_r, pattern_g, pattern_b} = {5'h1F, 6'h00, 5'h00}; // red
+            3'd6: {pattern_r, pattern_g, pattern_b} = {5'h00, 6'h00, 5'h1F}; // blue
+            3'd7: {pattern_r, pattern_g, pattern_b} = {5'h00, 6'h00, 5'h00}; // black
+        endcase
+    end
+
+    // TEST_PATTERN is a build-time constant; the unused branch synthesises
+    // away to nothing.  AXI HP master continues to issue reads when
+    // TEST_PATTERN=1 (responses get latched but ignored) — keeps the path
+    // active for separate validation.
+    wire [4:0] out_r5 = TEST_PATTERN ? pattern_r : r5;
+    wire [5:0] out_g6 = TEST_PATTERN ? pattern_g : g6;
+    wire [4:0] out_b5 = TEST_PATTERN ? pattern_b : b5;
+
+    assign rgb_r      = de_q ? out_r5 : 5'd0;
+    assign rgb_g      = de_q ? out_g6 : 6'd0;
+    assign rgb_b      = de_q ? out_b5 : 5'd0;
     assign rgb_hsync  = hsync_q;
     assign rgb_vsync  = vsync_q;
     assign rgb_de     = de_q;

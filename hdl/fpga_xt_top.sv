@@ -26,7 +26,13 @@
 
 `default_nettype none
 
-module fpga_xt_top (
+module fpga_xt_top #(
+    // Bring-up Phase 2 build switch: when 1, fb_scanout overrides the
+    // framebuffer read path with an on-fabric 8-colour-bar test pattern
+    // so HDMI can be verified before DDR3 / AXI HP is functional.
+    // Default 0 = normal operation.  See docs/bring-up.md.
+    parameter bit SCANOUT_TEST_PATTERN = 1'b0
+) (
     // ---- Clocks & reset --------------------------------------------------
     input  wire        clk_50,           // 50 MHz reference from onboard osc
     input  wire        rst_n,            // active-low reset (from PS or button)
@@ -766,7 +772,8 @@ module fpga_xt_top (
         .V_ACTIVE     (1080),
         .V_FRONT_PORCH(4),
         .V_SYNC_WIDTH (5),
-        .V_BACK_PORCH (36)
+        .V_BACK_PORCH (36),
+        .TEST_PATTERN (SCANOUT_TEST_PATTERN)
     ) u_fb_scanout (
         .clk_sys         (clk_sys),
         .rst_sys         (rst_sys),
@@ -983,7 +990,33 @@ module fpga_xt_top (
                             ? bl_seq_counter_sally[15:8]
                       :     8'hFF;
 
-    assign dbg = {bl_busy, antic_we_q, sally_step, hp0_arvalid};
+    // ---- Bring-up debug LEDs --------------------------------------------
+    // Z-Turn Z7-Lite carrier exposes 3 LEDs as dbg[2:0] (Y16 / Y17 / R14).
+    // Bit 3 has no pin and is just there to round out the byte.
+    //
+    //   dbg[0] = heartbeat from clk_50 — proves the bitstream loaded and
+    //            the on-board oscillator is reaching the PL.  ~1.5 Hz
+    //            blink (50 MHz / 2^25).  Runs free of rst, so it lights
+    //            up the moment the bitstream loads — even if rst_n is
+    //            stuck low or both MMCMs fail to lock.
+    //   dbg[1] = PLL lock — both MMCMs locked.  Solid on once the SOM is
+    //            stable; flickers / off = clock subsystem trouble.  Cross
+    //            from clk_50 with a tiny 2-FF synchroniser since the
+    //            LOCKED outputs are async to clk_50.
+    //   dbg[2] = bl_busy — handy ongoing-dev signal kept across bring-up;
+    //            the blitter pulses this whenever a command is in flight.
+    //   dbg[3] = unused (no pin on the carrier).
+    //
+    // Bring-up Phase 1: heartbeat blinks, PLL-lock LED solid.  See
+    // docs/bring-up.md.
+    reg [24:0] heartbeat_cnt = '0;
+    always_ff @(posedge clk_50) heartbeat_cnt <= heartbeat_cnt + 1'b1;
+
+    reg [1:0] pll_lock_sync = '0;
+    always_ff @(posedge clk_50)
+        pll_lock_sync <= {pll_lock_sync[0], mmcm1_locked & mmcm2_locked};
+
+    assign dbg = {1'b0, bl_busy, pll_lock_sync[1], heartbeat_cnt[24]};
 
     `ifdef USE_PS_BD
     // ====================================================================
