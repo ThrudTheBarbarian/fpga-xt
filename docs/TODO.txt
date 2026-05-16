@@ -1,0 +1,51 @@
+  
+  o SALLY improvements as per docs/6502-embellishments.md
+
+  o Sprite engine as per docs/sprite-engine.md
+  
+  o Pattern rotation / affine transform — For rotated text and general image 
+    warping (currently done in software per §17 of vdi-sw-implementation.md).
+    Probably defer this for now
+  
+  o HW bring-up checklist — write up the test plan for when the Z-Turn SOM
+    lands: DDR3 calibration, SiI9022A I²C init from the PS, fb_scanout test
+    pattern, blitter smoke test. Also figure out how we load the bitstream
+    + PS software (SD card? JTAG? QSPI?).
+    
+  o PS-side driver skeleton — start a Vitis workspace with FreeRTOS, write 
+    the xt-blitter command ring driver (register poke helper functions), 
+    prove out the AXI register write path from the PS side via the GP port.
+     
+  o Interrupt on completion — Instead of polling STATUS, the blitter 
+    could pulse an IRQ so the PS doesn't spin. defer until we have 
+    freeRTOS in place
+
+  o Hardware bring-up (requires Options 1 + 2)
+  
+  	Load the bitstream via JTAG/openocd and test:
+
+  		1. SALLY CPU boots from BRAM (OS ROM loaded via hwreg writes)
+  		2. ANTIC generates 1080p60 video (check with scope on SiI9022A)
+  		3. fb_scanout reads from DDR3 and drives HDMI
+  		4. xt_blitter writes test patterns to the framebuffer
+
+  o XSA export for Vitis — After building the bitstream with the PS BD, 
+    run write_hw_platform in Vivado to produce the .xsa file that Vitis 
+    needs for BSP + FSBL generation. Currently we only have the .bit — no 
+    hardware handoff file.
+    
+  o FSBL + boot image — The FSBL (First Stage Boot Loader) initialises the 
+    PS (PLLs, DDR3, MIO) and loads the bitstream. This is generated in Vitis
+    from the XSA. Without it, the board can't bring up the PS at all.
+    
+  o Board bring-up test — Flash the bitstream + FSBL to QSPI (or load via 
+    JTAG), connect UART, and verify:
+    	- PS boots and DDR3 initialises
+    	- PL configures and the AXI interconnect is alive
+    	- GP0 write → blitter STATUS readback works (the "hello world" of 
+    	  ARM software)
+    	- fb_scanout reads the framebuffer and drives HDMI
+  
+  o Vitis FreeRTOS BSP — A workspace with the FreeRTOS BSP for the Cortex-A9s, 
+    a hello-world task that pokes the blitter CMD register and polls 
+    STATUS.busy.
