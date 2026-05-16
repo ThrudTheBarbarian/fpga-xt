@@ -840,6 +840,7 @@ module fpga_xt_top (
     wire bl_busy;
     wire bl_cq_full;
     wire bl_pat_blocked;
+    wire [15:0] bl_seq_counter;
 
     xt_blitter #(
         .FB_BASE     (32'h3000_0000),
@@ -853,6 +854,7 @@ module fpga_xt_top (
         .busy            (bl_busy),
         .cq_full         (bl_cq_full),
         .pat_blocked     (bl_pat_blocked),
+        .seq_counter     (bl_seq_counter),
         .m_axi_awaddr    (hp1_awaddr),
         .m_axi_awlen     (hp1_awlen),
         .m_axi_awsize    (hp1_awsize),
@@ -909,6 +911,33 @@ module fpga_xt_top (
     );
 
     // ====================================================================
+    // CDC: seq_counter (16-bit, clk_sys → clk_sally) via Gray code
+    // ====================================================================
+    // The seq counter is a monotonic-on-increment integer; raw multi-bit
+    // 2-FF sync would glitch across binary transitions like 0xFF → 0x100
+    // (9 bits change at once).  Encode to Gray on the source side: only
+    // one bit changes per increment, so each bit can be sync'd
+    // independently and the result is always a valid Gray code (possibly
+    // one cycle out of date).  Decode back to binary on the destination
+    // side via the standard XOR-prefix recurrence.
+    wire [15:0] bl_seq_gray = bl_seq_counter ^ (bl_seq_counter >> 1);
+    wire [15:0] bl_seq_gray_sally;
+    logic [15:0] bl_seq_counter_sally;
+
+    cdc_sync_bit #(.WIDTH(16)) u_sync_bl_seq (
+        .dst_clk (clk_sally),
+        .src_sig (bl_seq_gray),
+        .dst_sig (bl_seq_gray_sally)
+    );
+
+    // Gray-to-binary decode: counter[i] = XOR of gray[15:i].
+    always_comb begin
+        bl_seq_counter_sally[15] = bl_seq_gray_sally[15];
+        for (int i = 14; i >= 0; i--)
+            bl_seq_counter_sally[i] = bl_seq_gray_sally[i] ^ bl_seq_counter_sally[i+1];
+    end
+
+    // ====================================================================
     // SiI9022A HDMI transmitter I2C configuration
     // ====================================================================
     // Runs on clk_sys (133 MHz).  After reset deassertion, configures the
@@ -933,16 +962,19 @@ module fpga_xt_top (
     // ---- Hardware register read data (clk_sally) --------------------------
     // hwreg_dout feeds into sally_mem's read pipeline — it must be
     // combinational from hwreg_addr.  Default to 8'hFF (like sally_synth_top)
-    // for unassigned addresses.  The blitter STATUS register at $D4BD
-    // returns {5'b0, bl_pat_blocked_sally, bl_cq_full_sally, bl_busy_sally}
-    //   bit 0 = busy
-    //   bit 1 = queue_full
-    //   bit 2 = pat_blocked (sticky)
+    // for unassigned addresses.
+    //   $D4BD STATUS = {5'b0, pat_blocked, queue_full, busy}
+    //   $D4C9 SEQ_LO = low byte of 16-bit SYNC counter
+    //   $D4CA SEQ_HI = high byte
     assign hwreg_dout = (hwreg_addr == 16'hD4BD)
                             ? {5'b0, bl_pat_blocked_sally,
                                      bl_cq_full_sally,
                                      bl_busy_sally}
-                            : 8'hFF;
+                      : (hwreg_addr == 16'hD4C9)
+                            ? bl_seq_counter_sally[7:0]
+                      : (hwreg_addr == 16'hD4CA)
+                            ? bl_seq_counter_sally[15:8]
+                      :     8'hFF;
 
     assign dbg = {bl_busy, antic_we_q, sally_step, hp0_arvalid};
 
@@ -1173,7 +1205,8 @@ module fpga_xt_top (
         .bl_we           (bl_bridge_we),
         .bl_busy         (bl_busy),
         .bl_queue_full   (bl_cq_full),
-        .bl_pat_blocked  (bl_pat_blocked)
+        .bl_pat_blocked  (bl_pat_blocked),
+        .bl_seq_counter  (bl_seq_counter)
     );
 
     `else

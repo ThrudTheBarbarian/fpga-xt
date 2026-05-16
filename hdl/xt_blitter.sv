@@ -98,9 +98,16 @@
 //                            write 0x02 → line draw (qualify with FLAGS.BLEND
 //                                          for per-pixel alpha blend);
 //                            write 0x03 → block blit;
+//                            (continued below; see also 0x07 for SYNC.)
 //                            write 0x04 → scaled blit (qualify with FLAGS);
 //                            write 0x05 → font raster (always blends);
-//                            write 0x06 → bilinear scaled blit
+//                            write 0x06 → bilinear scaled blit;
+//                            write 0x07 → SYNC barrier (no drawing; increments
+//                                          SEQ_COUNTER on pop — see $D4C9/CA.
+//                                          Hardware short-cut: pushing 0x07
+//                                          into an empty + idle blitter bumps
+//                                          the counter the same cycle, no
+//                                          queue round-trip).
 //                            (snapshots DST_*, PAT_*, SRC_* registers)
 //   $D4BD   STATUS       R   read: bit 0 = busy (1 = queue non-empty OR FSM
 //                            active, 0 = drained and idle);
@@ -134,7 +141,13 @@
 //                            bit 1 (BILINEAR)— bilinear filtering (vs NN)
 //                            bit 2 (FONT)    — font raster (alpha from font BRAM)
 //                            bits 7:3 reserved
-//   $D4C9..$D4CD _reserved
+//   $D4C9   SEQ_LO       R   low byte of 16-bit SYNC sequence counter
+//                            (read-only, increments on each SYNC pop, wraps
+//                             at 65536).  Software fence pattern:
+//                              e = SEQ_COUNTER; write CMD=0x07;
+//                              wait until SEQ_COUNTER != e.
+//   $D4CA   SEQ_HI       R   high byte of 16-bit SYNC sequence counter
+//   $D4CB..$D4CD _reserved
 //   $D4CE   FONT_DATA    W   font coverage byte (auto-advances; 4 bytes/word)
 //   $D4CF   FONT_CTRL    W   writing any value resets FONT_DATA load pointer
 //
@@ -172,6 +185,8 @@ module xt_blitter #(
     output wire        cq_full,            // command queue cannot accept another CMD
     output wire        pat_blocked,        // sticky: pat/font load was attempted while busy
                                            //         (write was dropped to preserve queue state)
+    output wire [15:0] seq_counter,        // increments on each SYNC barrier completion
+                                           //         (CMD=0x07); read via $D4C9/$D4CA
 
     // ---- AXI4 write master (clk_sys, drives DDR3 HP slave) ---------------
     output logic [31:0] m_axi_awaddr,
@@ -454,14 +469,15 @@ module xt_blitter #(
     // further down) so all queued commands observe a consistent pat/font
     // state — software must drain the queue before reloading patterns.
     //
-    // Storage: 16 × 192 bits = 3072 bits, mapped to a single RAMB18 via
-    // (* ram_style = "block" *).  Read latency is 1 cycle, hidden by a
-    // small prefetch FSM: cq_front_q always reflects the oldest entry
-    // when cq_front_valid = 1, with a write-first bypass for the push-to-
-    // empty edge case so the first command after an idle period dispatches
-    // without an extra stall.
-    localparam int Q_DEPTH = 16;
-    localparam int Q_AW    = 4;             // $clog2(Q_DEPTH)
+    // Storage: 1024 × 192 bits = 196608 bits, forced to BRAM via
+    // (* ram_style = "block" *).  Vivado typically maps this as
+    // 6× RAMB36E1 (3 columns of 72-bit width × 2 banks of 512 depth).
+    // Read latency is 1 cycle, hidden by a small prefetch FSM:
+    // cq_front_q always reflects the oldest entry when cq_front_valid = 1,
+    // with a write-first bypass for the push-to-empty edge case so the
+    // first command after an idle period dispatches without an extra stall.
+    localparam int Q_DEPTH = 1024;
+    localparam int Q_AW    = 10;            // $clog2(Q_DEPTH)
 
     (* ram_style = "block" *)
     logic [191:0]    cmd_fifo [0:Q_DEPTH-1];
@@ -489,51 +505,73 @@ module xt_blitter #(
         {4'd0, raster_op_reg}, 8'd0
     };
 
-    wire valid_cmd = (bus_data >= 8'h01) && (bus_data <= 8'h06);
-    wire cq_push   = reg_we && (reg_addr == 5'h0C) && valid_cmd && !cq_full;
+    wire valid_cmd = (bus_data >= 8'h01) && (bus_data <= 8'h07);
+    // SYNC short-cut: CMD=0x07 written while !busy (= queue empty AND FSM
+    // idle, by the definition of busy) can bypass the queue entirely and
+    // increment seq_counter_q this cycle, saving the queue push + pop
+    // round-trip (~3 cycles).  Software doing "fence-after-drain" gets
+    // sub-100 ns sync latency.
+    wire sync_direct = reg_we && (reg_addr == 5'h0C) && (bus_data == 8'h07)
+                       && !busy;
+    wire cq_push     = reg_we && (reg_addr == 5'h0C) && valid_cmd
+                       && !cq_full && !sync_direct;
     wire cq_pop;   // driven below (forward reference; declared as wire so it
                    // is visible to the FIFO management always_ff)
 
-    // Synchronous read of the oldest entry — registered at the BRAM output.
-    // cq_front_valid tracks whether cq_front_q currently reflects the entry
-    // at cq_tail (i.e., BRAM has had at least one cycle to read after the
-    // last cq_tail change).  The write-first bypass on the read port (in
-    // the BRAM always_ff below) handles the same-cycle push-to-empty case.
-    logic [191:0] cq_front_q;
-    logic         cq_front_valid;
+    // BRAM-friendly storage pattern: bare write + registered read with NO
+    // conditional logic on the read port.  Vivado infers a BRAM at this
+    // size only if the read port is "always read mem[ra] into rd_reg".
+    // The push-to-empty bypass lives in a separate register below, mux'd
+    // into cq_front_q combinationally.
+    logic [191:0] cq_front_bram_q;     // registered output of the BRAM
 
-    // BRAM write port + registered read port with write-first bypass.
-    // When cq_push fires AND the write slot (cq_head) is the same as the
-    // read slot (cq_tail) — the push-to-empty case — bypass the BRAM and
-    // feed the snapshot directly into cq_front_q, so cq_front_valid can be
-    // set the same cycle and the first command dispatches without delay.
     always_ff @(posedge clk) begin
         if (cq_push) cmd_fifo[cq_head] <= cmd_snapshot_in;
-
-        if (cq_push && (cq_head == cq_tail))
-            cq_front_q <= cmd_snapshot_in;
-        else
-            cq_front_q <= cmd_fifo[cq_tail];
+        cq_front_bram_q <= cmd_fifo[cq_tail];
     end
 
-    // cq_front_valid: high iff cq_front_q reflects the entry currently at
-    // cq_tail.  Goes low on cq_pop (tail advances → BRAM needs to refetch),
-    // goes high one cycle later (or same cycle on the write-first bypass).
+    // Bypass register — holds the snapshot from the most recent push-to-
+    // empty, since the BRAM read collides with that write and returns
+    // stale data the next cycle (read-first mode).  Cleared on the
+    // first pop that consumes it.
+    logic         cq_bypass_valid_q;
+    logic [191:0] cq_bypass_data_q;
     always_ff @(posedge clk or posedge rst) begin
         if (rst) begin
-            cq_front_valid <= 1'b0;
-        end else if (cq_pop) begin
-            // We just popped — BRAM read of the new tail hasn't settled.
-            // It will settle next cycle unless we hit the bypass below.
-            cq_front_valid <= cq_push && (cq_head == (cq_tail + 1'd1));
+            cq_bypass_valid_q <= 1'b0;
+            cq_bypass_data_q  <= '0;
         end else if (cq_push && cq_empty_w) begin
-            // Push to empty queue — bypass routes the snapshot into
-            // cq_front_q this same cycle, so dispatch is allowed next cycle.
-            cq_front_valid <= 1'b1;
-        end else if (!cq_empty_w) begin
-            // Steady state with entries queued — BRAM has settled.
-            cq_front_valid <= 1'b1;
+            cq_bypass_valid_q <= 1'b1;
+            cq_bypass_data_q  <= cmd_snapshot_in;
+        end else if (cq_pop) begin
+            cq_bypass_valid_q <= 1'b0;
         end
+    end
+
+    // cq_front_q: bypass takes priority, otherwise the BRAM read.
+    wire [191:0] cq_front_q = cq_bypass_valid_q ? cq_bypass_data_q
+                                                : cq_front_bram_q;
+
+    // cq_front_valid tracks whether cq_front_q reflects the entry at
+    // cq_tail.  Goes low on cq_pop (tail advances → BRAM needs to
+    // refetch), goes high one cycle later, OR same cycle on push-to-
+    // empty (the bypass register carries the data immediately).
+    logic         cq_front_valid;
+
+    // cq_front_valid: high iff cq_front_q reflects the entry at cq_tail.
+    // Goes low on cq_pop (cq_tail advances → BRAM needs to refetch from
+    // the new slot).  Comes back high one cycle later in steady state,
+    // OR the same cycle on push-to-empty (the bypass register carries
+    // the snapshot directly into cq_front_q without waiting for BRAM).
+    always_ff @(posedge clk or posedge rst) begin
+        if (rst)
+            cq_front_valid <= 1'b0;
+        else if (cq_pop)
+            cq_front_valid <= 1'b0;
+        else if (cq_push && cq_empty_w)
+            cq_front_valid <= 1'b1;
+        else if (!cq_empty_w)
+            cq_front_valid <= 1'b1;
     end
 
     // Unpacked fields for use in S_IDLE (read from the registered output).
@@ -563,6 +601,7 @@ module xt_blitter #(
     wire q_sc_blend   = ((q_cmd == 8'h04) || (q_cmd == 8'h06)) && q_flags[0];
     wire q_blend_mode = ((q_cmd == 8'h01) || (q_cmd == 8'h02)) && q_flags[0];
     wire q_font_mode  = (q_cmd == 8'h05);
+    wire q_sync_mode  = (q_cmd == 8'h07);
 
     // FIFO pointer/count management
     always_ff @(posedge clk or posedge rst) begin
@@ -580,6 +619,25 @@ module xt_blitter #(
             endcase
         end
     end
+
+    // ====================================================================
+    // Sync sequence counter (16-bit, wraps at 65536)
+    // ====================================================================
+    // Incremented every time a SYNC (CMD=0x07) entry is popped from the
+    // queue, OR via the sync_direct short-cut when SW pushes SYNC into an
+    // empty + idle queue.  Software uses this for fence semantics: read
+    // SEQ_COUNTER, push SYNC, poll SEQ_COUNTER until it advances past the
+    // recorded value — at which point all preceding queued operations
+    // are known to have completed.  16 bits gives wrap=65536, well above
+    // the 1024 queue depth so multiple in-flight syncs are unambiguous.
+    logic [15:0] seq_counter_q;
+    wire seq_inc = sync_direct || (cq_pop && q_sync_mode);
+
+    always_ff @(posedge clk or posedge rst) begin
+        if (rst)             seq_counter_q <= 16'd0;
+        else if (seq_inc)    seq_counter_q <= seq_counter_q + 16'd1;
+    end
+    assign seq_counter = seq_counter_q;
 
     // ====================================================================
     // Line-draw state registers
@@ -1035,7 +1093,12 @@ module xt_blitter #(
                 // prefetch hasn't settled yet we just wait another cycle.
                 // ============================================================
                 S_IDLE: begin
-                    if (!cq_empty_w && cq_front_valid) begin
+                    if (!cq_empty_w && cq_front_valid && q_sync_mode) begin
+                        // SYNC barrier — pop the entry and stay in S_IDLE.
+                        // seq_counter_q is bumped by its own always_ff via
+                        // the (cq_pop && q_sync_mode) qualifier.  No drawing
+                        // state to enter, no working registers to load.
+                    end else if (!cq_empty_w && cq_front_valid) begin
                         dst_x_q   <= q_dst_x;
                         dst_y_q   <= q_dst_y;
                         dst_w_q   <= q_dst_w;

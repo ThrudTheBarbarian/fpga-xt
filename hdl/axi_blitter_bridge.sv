@@ -20,6 +20,8 @@
 //   bit 0 = bl_busy (queue non-empty OR FSM active)
 //   bit 1 = bl_queue_full (next CMD write would be dropped)
 //   bit 2 = bl_pat_blocked (sticky: pat/font load was dropped while busy)
+// Reads at offset 0x19 return SEQ_LO (low byte of SYNC counter).
+// Reads at offset 0x1A return SEQ_HI (high byte of SYNC counter).
 // All other addresses return zero.
 
 `default_nettype none
@@ -56,7 +58,8 @@ module axi_blitter_bridge (
     // ---- Blitter status (clk_sys domain) ------------------------------------
     input  wire        bl_busy,            // returned on STATUS read ($D4BD bit 0)
     input  wire        bl_queue_full,      // returned on STATUS read ($D4BD bit 1)
-    input  wire        bl_pat_blocked      // returned on STATUS read ($D4BD bit 2)
+    input  wire        bl_pat_blocked,     // returned on STATUS read ($D4BD bit 2)
+    input  wire [15:0] bl_seq_counter      // returned at SEQ_LO/HI ($D4C9/CA, offsets 0x19/0x1A)
 );
 
     // ====================================================================
@@ -147,10 +150,15 @@ module axi_blitter_bridge (
                         //   bit 1 = bl_queue_full (next CMD write dropped)
                         //   bit 2 = bl_pat_blocked (sticky: pat/font load
                         //           dropped while busy; clears on busy=0)
+                        // SEQ counter at offsets 0x19 (lo byte) / 0x1A (hi).
                         if (s_axi_araddr[7:0] == 8'h0D)
                             s_axi_rdata <= {29'b0, bl_pat_blocked,
                                                   bl_queue_full,
                                                   bl_busy};
+                        else if (s_axi_araddr[7:0] == 8'h19)
+                            s_axi_rdata <= {24'b0, bl_seq_counter[7:0]};
+                        else if (s_axi_araddr[7:0] == 8'h1A)
+                            s_axi_rdata <= {24'b0, bl_seq_counter[15:8]};
                         else
                             s_axi_rdata <= 32'd0;
                         s_axi_rresp  <= 2'b00;

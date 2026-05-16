@@ -46,6 +46,7 @@ module tb_xt_blitter;
     wire         busy;
     wire         cq_full;
     wire         pat_blocked;
+    wire [15:0]  seq_counter;
 
     // AXI4 write master
     wire [31:0] m_axi_awaddr;
@@ -89,6 +90,7 @@ module tb_xt_blitter;
         .busy          (busy),
         .cq_full       (cq_full),
         .pat_blocked   (pat_blocked),
+        .seq_counter   (seq_counter),
         .m_axi_awaddr  (m_axi_awaddr),
         .m_axi_awlen   (m_axi_awlen),
         .m_axi_awsize  (m_axi_awsize),
@@ -910,6 +912,87 @@ module tb_xt_blitter;
         $display("PASS: test_pat_while_busy");
     endtask
 
+    // ----------------------------------------------------------------
+    // Test 10: SYNC barrier (CMD=0x07) + seq counter
+    //
+    // Two scenarios:
+    //   (a) Direct shortcut: with queue empty + FSM idle, writing
+    //       CMD=0x07 bumps seq_counter immediately (same cycle).
+    //   (b) Through-the-queue: push a slow rect, push SYNC behind it,
+    //       verify seq_counter only advances after the rect's AXI
+    //       write completes.
+    // ----------------------------------------------------------------
+    task test_sync_barrier();
+        logic [15:0] seq_before;
+        logic [15:0] seq_after_direct;
+        $display("=== Test 10: SYNC barrier + seq counter ===");
+
+        clear_logs();
+
+        // Previous test left us drained (busy=0); confirm and proceed.
+        @(negedge clk);
+        if (busy) begin
+            $display("FAIL: test entered with busy=1 (previous test didn't drain)");
+            $fatal(1);
+        end
+
+        // ---- (a) Direct shortcut ----------------------------------------
+        seq_before = seq_counter;
+        write_reg(16'hD4BC, 8'h07);     // CMD = SYNC
+        @(negedge clk);
+        seq_after_direct = seq_counter;
+        if (seq_after_direct != (seq_before + 16'd1)) begin
+            $display("FAIL: SYNC direct shortcut: seq %h -> %h, expected +1",
+                     seq_before, seq_after_direct);
+            $fatal(1);
+        end
+
+        // The shortcut shouldn't have generated any AXI traffic.
+        expect_write_count(0);
+        expect_read_count(0);
+
+        // ---- (b) SYNC behind a real op ---------------------------------
+        // Load 1x1 red pattern.
+        write_reg(16'hD4BA, 8'h00);
+        load_1x1_pattern(8'hFF, 8'h00, 8'h00, 8'hFF);
+        write_reg(16'hD4BE, 8'h00);
+
+        // 2x1 rect at (0,0) — generates one AXI write beat.
+        write_reg(16'hD4B0, 8'd0);  write_reg(16'hD4B1, 8'd0);
+        write_reg(16'hD4B2, 8'd0);  write_reg(16'hD4B3, 8'd0);
+        write_reg(16'hD4B4, 8'd2);  write_reg(16'hD4B5, 8'd0);
+        write_reg(16'hD4B6, 8'd1);  write_reg(16'hD4B7, 8'd0);
+        write_reg(16'hD4BF, 8'd3);
+
+        seq_before = seq_counter;
+        write_reg(16'hD4BC, 8'h01);     // push the rect — queue is non-empty now
+        write_reg(16'hD4BC, 8'h07);     // push SYNC behind it
+
+        // SYNC should NOT have shortcut this time — queue was non-empty.
+        // seq should still be at seq_before until the rect drains.
+        @(negedge clk);
+        if (seq_counter != seq_before) begin
+            $display("FAIL: SYNC behind rect: seq advanced too early (%h -> %h)",
+                     seq_before, seq_counter);
+            $fatal(1);
+        end
+
+        // Drain.  At end of drain, the rect's AXI write has happened AND
+        // SYNC has popped, bumping seq.
+        wait_idle();
+        if (seq_counter != (seq_before + 16'd1)) begin
+            $display("FAIL: SYNC behind rect: seq %h -> %h after drain, expected +1",
+                     seq_before, seq_counter);
+            $fatal(1);
+        end
+
+        // Exactly one AXI write beat from the rect.
+        expect_write_count(1);
+        expect_write(0, 32'h3000_0000, {32'hFF_00_00_FF, 32'hFF_00_00_FF}, 8'hFF);
+
+        $display("PASS: test_sync_barrier");
+    endtask
+
     // ====================================================================
     // Main test scheduler
     // ====================================================================
@@ -934,6 +1017,7 @@ module tb_xt_blitter;
         test_line_draw_blend();
         test_command_queue();
         test_pat_while_busy();
+        test_sync_barrier();
 
         // Done
         $display("=== ALL TESTS PASSED ===");

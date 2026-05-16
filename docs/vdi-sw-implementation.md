@@ -13,18 +13,36 @@ or alignment rules.
 
 ## 1.  Blitter calling convention (all commands)
 
+The blitter accepts commands through a **1024-deep FIFO**.  Each CMD
+write snapshots the current register state into a FIFO entry; the
+engine drains entries in order.  Software typically does:
+
 1. Write all parameter registers ($D4B0..$D4BF, $D4C0..$D4CF).
-2. Optionally write FLAGS ($D4C8) with modifier bits (see below).
-3. Write CMD ($D4BC) with the command byte.
-4. Poll `busy` (read chip select at any $D4xx address, bit 0 or
-   dedicated status register) until it clears.
-5. The blitter has latched all registers at the CMD write strobe;
-   registers can be reused for the next call immediately after
-   `busy` goes low.
+2. Optionally write FLAGS ($D4C8) with modifier bits (see §1.1).
+3. Write CMD ($D4BC) with the command byte — this snapshots the
+   current registers into the queue and the engine takes care of
+   the rest.
+4. Repeat for the next command — **no busy-poll needed between
+   pushes** unless the queue is full or a pattern/font reload is
+   required (see §22).
+5. When done with the batch, poll `STATUS.busy` ($D4BD bit 0) for
+   "everything finished", OR use the SYNC barrier (§23) to wait
+   for a specific point in the stream.
+
+Registers `dst_*`, `src_*`, `pat_phase_*`, `log_p*`, `cmd`,
+`flags`, and `raster_op` are **snapshotted per CMD**, so software
+can vary them between pushes without affecting in-flight
+operations.  Pattern memory and font memory are **shared by all
+queued commands** — see §22 for the loading rules.
+
+Single-CMD-then-poll callers (the old v0.18 convention) still work
+unchanged: with the queue empty, push pops on the next cycle and
+behaviour is identical aside from a 1-cycle dispatch latency.
 
 Register writes are **byte-wide**.  16-bit values are written
 little-endian: low byte first, then high byte.  All register
-addresses live in the $D4xx page of the SALLY hwreg bus.
+addresses live in the $D4xx page of the SALLY hwreg bus, or via
+the AXI-Lite GP0 bridge for ARM-side access (see §24).
 
 ### 1.1  FLAGS register ($D4C8)
 
@@ -220,6 +238,14 @@ Small glyphs (fit in BRAM, §2.1): effects are implemented by the
 PS making **multiple blitter calls** per glyph (described below).
 The blitter has no native effect logic.
 
+**Batching note:** multi-pass effects (bold, outline, shadow) that
+reuse the same pattern can be pushed back-to-back into the queue
+without draining between passes.  Effects that change pattern
+between passes (e.g., outline → text colour at §7.4) need to drain
+between the colour change, because pat_mem is shared across queued
+commands (see §22).  Software that ignores this gets `pat_blocked`
+asserted and the colour change silently dropped.
+
 Large glyphs (DDR3-rendered, CMD=0x86 path): effects are applied
 **during the PS rendering step**.  The PS draws the glyph outline
 at full resolution with the effect baked in — bold = thicker
@@ -277,19 +303,21 @@ Three-pass font raster (simple approach, good for small to
 medium sizes):
 
 ```
-// Pass 1 — outline colour, offset left-up
-set pattern = outline_colour (1×1)
+// Pass 1 + 2 — outline colour (queue both back-to-back)
+load_pattern(outline_colour, 1×1)
 set DST_X = x - 1, DST_Y = y - 1
-CMD = 0x05
-
-// Pass 2 — outline colour, offset right-down
+CMD = 0x05                          // pass 1: queued
 set DST_X = x + 1, DST_Y = y + 1
-CMD = 0x05
+CMD = 0x05                          // pass 2: queued
+
+// DRAIN — wait for passes 1 + 2 to finish before changing pattern
+while (*(volatile uint8_t *)0xD4BD & 0x01)
+    ;
 
 // Pass 3 — text colour, centred
-set pattern = text_colour (1×1)
+load_pattern(text_colour, 1×1)      // safe now that passes 1+2 are done
 set DST_X = x, DST_Y = y
-CMD = 0x05
+CMD = 0x05                          // pass 3
 ```
 
 For larger text (>24pt), a 1-pixel outline is too thin.  Use
@@ -299,16 +327,19 @@ loading into font memory.
 
 ### 7.5  Shadow (bit 4)
 
-Two-pass font raster:
+Two-pass font raster (drain between passes — pattern changes):
 
 ```
 // Pass 1 — shadow colour, offset right-down, reduced alpha
-set pattern = shadow_colour with A = 128  (1×1 or texture)
+load_pattern(shadow_colour with A=128, 1×1)
 set DST_X = x + 2, DST_Y = y + 2
 CMD = 0x05
 
+// DRAIN
+while (*(volatile uint8_t *)0xD4BD & 0x01) ;
+
 // Pass 2 — text colour
-set pattern = text_colour (1×1)
+load_pattern(text_colour, 1×1)
 set DST_X = x, DST_Y = y
 CMD = 0x05
 ```
@@ -376,7 +407,8 @@ all alignment is software-side.
 int16_t v_pline(int16_t handle, int16_t count, int16_t *points);
 ```
 
-**Blitter command:** CMD=0x02 (line draw) per segment.
+**Blitter command:** CMD=0x02 (line draw) per segment, optionally
+with FLAGS.BLEND for alpha-blended lines.
 
 For each consecutive pair of points `(x1,y1) → (x2,y2)`:
 
@@ -384,6 +416,7 @@ For each consecutive pair of points `(x1,y1) → (x2,y2)`:
 DST_X = x1, DST_Y = y1
 DST_W = x2 - x1    // signed DX
 DST_H = y2 - y1    // signed DY
+FLAGS = 0          // 0x01 for per-pixel alpha blend
 CMD = 0x02
 ```
 
@@ -394,6 +427,14 @@ pixel plots at `(x1, y1)`, the last at `(x2, y2)`.
 fill).  A solid line uses a 1×1 pattern; a dashed line uses a
 pattern where alternating pixels are transparent.
 
+**Anti-aliased lines:** with FLAGS.BLEND=1 and a pattern whose
+alpha varies smoothly along the line, the blitter does the per-
+pixel destination read + blend automatically.  For Wu-style AA,
+software typically uses a small (e.g., 8×1) pattern with falloff
+on alpha and steps the line through it.  Multi-pixel anti-aliasing
+(stamp brush) is two parallel CMD=0x02 calls with offsets — the
+queue lets you push them back-to-back without intermediate polling.
+
 ---
 
 ## 11.  vr_recfl — fill rectangle
@@ -402,16 +443,22 @@ pattern where alternating pixels are transparent.
 int16_t vr_recfl(int16_t handle, int16_t *xy_array);
 ```
 
-**Blitter command:** CMD=0x01 (rect fill) or CMD=0x05 (alpha-blend
-rect fill).
+**Blitter command:** CMD=0x01 (rect fill), optionally with
+FLAGS.BLEND set for alpha-blend.
 
 ```
 DST_X = x1, DST_Y = y1
 DST_W = x2 - x1 + 1
 DST_H = y2 - y1 + 1
-// For opaque pattern:          CMD = 0x01
-// For pattern with RGBA-alpha: CMD = 0x05
+FLAGS = 0          // 0x01 = enable per-pixel alpha-blend
+CMD   = 0x01
 ```
+
+When FLAGS.BLEND=0 the pattern is composited with simple alpha-test:
+α=0 pixels are skipped (wstrb=0), α>0 pixels write opaquely.  When
+FLAGS.BLEND=1 the blitter reads the destination for any pixel with
+0 < α < 255 and blends:
+`out = (src*α + dst*(255-α) + 128) >> 8` per channel.
 
 `xy_array` contains `(x1, y1, x2, y2)` — note VDI uses inclusive
 coordinates.  Width = `x2 - x1 + 1`, height = `y2 - y1 + 1`.
@@ -440,31 +487,59 @@ int16_t vro_cpyfm(int16_t handle, int16_t w, int16_t h,
                    int16_t *src_xy, int16_t *dst_xy, int16_t op);
 ```
 
-**Blitter command:** CMD=0x03 (block blit).
+**Blitter command:** CMD=0x03 (block blit), with the GEM raster
+op selected via the RASTER_OP register at $D4BF.
+
+```
+SRC_X = src_x, SRC_Y = src_y
+DST_X = dst_x, DST_Y = dst_y
+DST_W = w, DST_H = h
+RASTER_OP = op        // 0..15, see table below
+CMD = 0x03
+```
 
 Constraints:
 - Source X and destination X must have the same parity
   (`src_x[0] == dst_x[0]`).
 - Width must be even (each AXI beat transfers 2 pixels).
 
-Raster ops (GEM `op` parameter) are **not yet implemented** in
-hardware.  For v0.7, only `op=3` (direct copy, the most common
-GEM operation for transparent sprite compositing) is supported.
-Other ops must be emulated in software:
+All 16 GEM raster ops are implemented in hardware via the
+RASTER_OP register.  Ops that need destination data add one
+extra AXI read segment per block-blit segment; otherwise the path
+is the same single-segment read+write:
 
-| op | GEM name | PS fallback |
-|----|----------|-------------|
-| 3  | ALL → DST | blitter CMD=0x03 (native) |
-| 0  | ZERO → DST | fill with black rect |
-| 1  | SRC AND DST | read-modify-write in software |
-| 2  | SRC AND NOT DST | software |
-| 4  | NOT SRC → DST | invert src colour before blit |
-| 5  | DST → DST | no-op |
-| 6  | SRC OR DST | software |
-| 7  | SRC → DST | CMD=0x03 (same as op=3 for opaque) |
-| 8–15 | misc | software |
+| op | GEM name        | Boolean   | Dest read? |
+|----|-----------------|-----------|------------|
+| 0  | ZERO            | 0         | no  |
+| 1  | SRC AND DST     | s & d     | yes |
+| 2  | SRC AND NOT DST | s & ~d    | yes |
+| 3  | SRC (copy)      | s         | no  (default) |
+| 4  | NOT SRC AND DST | ~s & d    | yes |
+| 5  | DST (no-op)     | d         | (skipped — no AXI traffic emitted) |
+| 6  | SRC XOR DST     | s ^ d     | yes |
+| 7  | SRC OR DST      | s \| d    | yes |
+| 8  | NOT(SRC OR DST) | ~(s\|d)   | yes |
+| 9  | NOT(SRC XOR DST)| ~(s^d)    | yes |
+| 10 | NOT DST         | ~d        | yes |
+| 11 | NOT(SRC AND DST)| ~(s & d)  | yes |
+| 12 | NOT SRC         | ~s        | no  (inverted in BL_RWAIT on the fly) |
+| 13 | NOT SRC OR DST  | ~s \| d   | yes |
+| 14 | NOT(SRC AND ~DST)|~(s & ~d) | yes |
+| 15 | SRC (copy)      | s         | no  (same as op 3) |
 
-Future blitter revisions may include a raster-op register.
+Ops 0 and 5 take a fast path (S_DONE immediately without an AXI
+transaction).  Op 12 inverts the source bytes during the read in
+state BL_RWAIT, so it doesn't pay the dest-read penalty.  Ops
+1-2, 4, 6-11, 13-14 all do a destination read per blit segment
+(adding one AR per segment alongside the source read).
+
+Combines are byte-wise, matching the GEM `vro_cpyfm` convention.
+RGBA-8888 source and destination → each colour channel combined
+independently with the selected boolean.
+
+For batching: software can queue many `vro_cpyfm` calls back-to-
+back, each with its own RASTER_OP value — the queue snapshots
+RASTER_OP per entry, so changes between pushes are honoured.
 
 ---
 
@@ -546,7 +621,7 @@ primitive is a future candidate.
 int16_t vst_rotation(int16_t handle, int16_t angle);  // tenths of degrees
 ```
 
-PS-side rotation only for v0.7:
+PS-side rotation only for now:
 
 1. Render the glyph into a temporary 32-bit RGBA buffer in DDR3
    (using the font coverage map + pattern colour, all in software
@@ -554,7 +629,8 @@ PS-side rotation only for v0.7:
 2. Rotate the buffer to the target angle (software bilinear
    interpolation).
 3. Composite the rotated buffer via bilinear scaled blit
-   (CMD=0x06) to the desired screen position.
+   (CMD=0x04 + FLAGS.BILINEAR | optionally FLAGS.BLEND) to the
+   desired screen position.
 
 For small glyphs (≤32×32) this is fast on a 667 MHz Cortex-A9.
 If rotation becomes a bottleneck, a dedicated affine-transform
@@ -566,33 +642,39 @@ blit can be added in a later phase.
 
 | Register | $D4 | Purpose |
 |----------|:---:|---------|
-| `PAT_LOG_W` | BA | writing ANY value sets log2(pattern_width) [4:0] (0→1, 1→2, ... 5→32 px) AND resets `PAT_DATA` load pointer to 0 |
-| `PAT_DATA`  | BB | write RGBA bytes; auto-advances; wraps at 4096 |
-| `PAT_LOG_H` | BE | pattern height log2 (does NOT reset load pointer) |
-| `FONT_DATA` | CE | write coverage bytes; auto-advances (future) |
-| `FONT_CTRL` | CF | writing any value resets `FONT_DATA` load pointer (future) |
+| `PAT_LOG_W` | BA | log2(pattern_width) [4:0] (0→1, 1→2, ... 5→32 px).  `log_pw_reg` writes are always accepted (snapshotted per CMD); the byte-stream pointer reset is gated on `!busy` — see §22 |
+| `PAT_DATA`  | BB | write RGBA bytes; auto-advances; wraps at 4096.  Gated on `!busy` |
+| `PAT_LOG_H` | BE | pattern height log2.  Always accepted; no pointer side-effect |
+| `FONT_DATA` | CE | write coverage bytes; auto-advances.  Gated on `!busy` |
+| `FONT_CTRL` | CF | writing any value resets `FONT_DATA` load pointer.  Gated on `!busy` |
 
 The sequence for loading a pattern:
 
-```
-// Reset pointer
-*(uint8_t *)0xD4BA = log_w;
+```c
+// (Ensure blitter has drained — STATUS.busy = 0 — see §22)
+while (*(volatile uint8_t *)0xD4BD & 0x01)
+    ;
+
+// Reset pointer + set width
+*(volatile uint8_t *)0xD4BA = log_w;
 
 // Write 4 bytes per pixel, row-major
 for (y = 0; y < h; y++)
     for (x = 0; x < w; x++) {
-        *(uint8_t *)0xD4BB = pixel[y][x].R;
-        *(uint8_t *)0xD4BB = pixel[y][x].G;
-        *(uint8_t *)0xD4BB = pixel[y][x].B;
-        *(uint8_t *)0xD4BB = pixel[y][x].A;
+        *(volatile uint8_t *)0xD4BB = pixel[y][x].R;
+        *(volatile uint8_t *)0xD4BB = pixel[y][x].G;
+        *(volatile uint8_t *)0xD4BB = pixel[y][x].B;
+        *(volatile uint8_t *)0xD4BB = pixel[y][x].A;
     }
 
 // Set height
-*(uint8_t *)0xD4BE = log_h;
+*(volatile uint8_t *)0xD4BE = log_h;
 ```
 
 The pattern loading pointer wraps at 4096 bytes = 1024 entries, so
-it is safe to overshoot the pattern size.
+it is safe to overshoot the pattern size.  Software MUST drain the
+queue (poll STATUS.busy=0) before loading a new pattern — see §22
+for the consistency rules and the `pat_blocked` diagnostic flag.
 
 ---
 
@@ -613,23 +695,52 @@ it is safe to overshoot the pattern size.
 
 ---
 
-## 20.  Busy polling — STATUS register ($D4BD)
+## 20.  Status registers ($D4BD, $D4C9, $D4CA)
 
-A dedicated read-only **STATUS** register at `$D4BD` returns the
-blitter state.  Bit 0 is `busy` (1 = blitter active, 0 = idle);
-bits 7:1 are reserved (read 0).
+### 20.1  STATUS — $D4BD (read-only)
+
+| Bit | Name        | Meaning |
+|-----|-------------|---------|
+| 0   | `busy`      | 1 = queue non-empty OR FSM running; 0 = drained and idle |
+| 1   | `queue_full`| 1 = next CMD write will be silently dropped — poll until 0 before pushing |
+| 2   | `pat_blocked` | sticky: 1 = at some point during the current busy interval, software attempted to write a pat/font load register while busy; the write was dropped to preserve queue consistency.  Auto-clears when `busy` goes 0.  See §22. |
+| 7:3 | —           | Reserved (read 0) |
 
 ```c
-// Poll until idle
-while (*(uint8_t *)0xD4BD & 0x01)
+// Drain everything (typical end-of-frame fence)
+while (*(volatile uint8_t *)0xD4BD & 0x01)
     ;
+
+// Push CMDs only when there's room
+while (*(volatile uint8_t *)0xD4BD & 0x02)
+    ;
+push_next_cmd();
 ```
 
-Do not write any blitter register while `busy` is asserted; writes
-are ignored or may corrupt the in-flight command.  The STATUS
-register is safe to read at any time and has no side effects.
+### 20.2  SEQ_LO / SEQ_HI — $D4C9 / $D4CA (read-only)
 
-### 20.1  Why a dedicated register?
+16-bit free-running counter, incremented every time a SYNC barrier
+(CMD=0x07) is consumed.  Wraps at 65536.  Used to wait for a
+specific point in the command stream rather than for the whole
+queue to drain — useful when an immediate-mode call like
+`getpixel()` needs to come after a particular set of paint ops but
+the caller doesn't want to fully drain the queue.  See §23 for the
+fence-after-N-ops pattern.
+
+```c
+static inline uint16_t bl_seq(void) {
+    uint16_t lo = *(volatile uint8_t *)0xD4C9;
+    uint16_t hi = *(volatile uint8_t *)0xD4CA;
+    return (hi << 8) | lo;
+}
+```
+
+CDC note for the SALLY side: the counter is encoded as Gray on the
+clk_sys side and 2-FF-synced into clk_sally, so reads via $D4C9/CA
+are glitch-free even though the underlying counter is on a faster
+clock.  PS-side reads through GP0 are direct (same clock domain).
+
+### 20.3  Why dedicated registers?
 
 Earlier revisions suggested reading any $D4xx register and checking
 bit 0, but that constrains all future register additions — every
@@ -638,3 +749,210 @@ dedicated STATUS register at $D4BD decouples polling from all other
 register reads, leaving $D4B0..$D4BC / $D4BE..$D4CF free for
 write-only parameter and data registers (or future readable
 registers with independent semantics).
+
+---
+
+## 21.  Command queue (1024 entries, BRAM-backed)
+
+The blitter buffers up to **1024 commands** in an internal FIFO.
+Each CMD write at $D4BC pushes a 192-bit snapshot of these
+registers into the queue:
+
+- DST_X/Y/W/H (4 × 16 bits)
+- SRC_X/Y/W/H (4 × 16 bits)
+- PAT_PHASE_X/Y, PAT_LOG_W/H
+- CMD code, FLAGS byte, RASTER_OP
+
+Pattern memory and font memory are **NOT** snapshotted (they live
+in shared BRAM that all queued commands read from at execute time
+— see §22).
+
+### 21.1  Push semantics
+
+A CMD write succeeds when STATUS.queue_full is 0; otherwise the
+write is silently dropped.  Software should poll queue_full before
+each push if pushing more than one CMD without intermediate drains:
+
+```c
+static inline void push_cmd(uint8_t cmd) {
+    while (*(volatile uint8_t *)0xD4BD & 0x02)
+        ;
+    *(volatile uint8_t *)0xD4BC = cmd;
+}
+```
+
+For batches of up to 1024 commands the inner poll is essentially
+always 0 (queue empty vs queue full happens only under sustained
+PS submit > blitter consume rate, which is unusual).
+
+### 21.2  Use cases
+
+- **LVGL widget redraw**: a single widget can emit dozens of small
+  rect fills + line draws + glyph rasters; pushing them all
+  without intermediate polling cuts overhead.
+- **Polyline / polygon outline**: many CMD=0x02 calls with the
+  same pattern; queue once, walk away.
+- **Font run**: one CMD=0x05 per glyph, queued back-to-back.
+- **Anti-aliasing brush**: 2-4 parallel line draws with offset
+  patterns, queued as one batch.
+
+### 21.3  What does NOT vary across queued commands
+
+The pattern and font BRAM contents are shared.  If a batch needs
+to change pattern, software must drain the queue first (poll
+STATUS.busy=0), reload pattern, then push the next batch.  See
+§22 for the hardware safeguard.
+
+### 21.4  Storage
+
+The queue is mapped to BRAM (`(* ram_style = "block" *)` hint on
+the SystemVerilog array).  Vivado typically uses ~6× RAMB36 at the
+1024 × 192 size.  Reads are synchronous with 1-cycle BRAM latency
+hidden by a small prefetch tracker.  A bypass register handles the
+push-to-empty edge case, so the very first command after an idle
+period dispatches without an extra stall.
+
+---
+
+## 22.  Pattern / font load safety
+
+Pattern and font memory are shared across all queued commands — a
+write to pat_mem or font_mem while a command that uses them is
+still in the queue would corrupt the in-flight operation.  To make
+this safe, the hardware **gates the load registers on `!busy`**:
+
+| Register | Behaviour while STATUS.busy = 1 |
+|----------|--------------------------------|
+| `$D4BA` PAT_LOG_W | `log_pw_reg` write accepted (snapshotted per CMD); pointer reset is DROPPED |
+| `$D4BB` PAT_DATA  | byte write DROPPED, pointer does NOT advance |
+| `$D4CE` FONT_DATA | byte write DROPPED |
+| `$D4CF` FONT_CTRL | pointer reset DROPPED |
+
+Any attempted pat/font write while busy sets the sticky
+**`pat_blocked`** flag at STATUS bit 2.  The flag auto-clears
+when busy goes 0.
+
+Recommended software pattern: drain before loading.
+
+```c
+// Wait for all in-flight ops to complete
+while (*(volatile uint8_t *)0xD4BD & 0x01)
+    ;
+
+// Now safe to reload pattern
+*(volatile uint8_t *)0xD4BA = log_w;        // pointer reset goes through
+for (i = 0; i < n_bytes; i++)
+    *(volatile uint8_t *)0xD4BB = bytes[i]; // byte stream writes succeed
+
+// Push CMDs that use the new pattern
+*(volatile uint8_t *)0xD4BC = 0x01;
+```
+
+If software writes pattern bytes WITHOUT draining first, those
+writes are silently dropped and `pat_blocked` asserts.  Software
+can detect this after the fact:
+
+```c
+if (*(volatile uint8_t *)0xD4BD & 0x04) {
+    // pat_blocked — at least one pat/font load was dropped.
+    // Drain queue, reload pattern, retry.
+}
+```
+
+The blitter doesn't try to buffer dropped bytes — software is
+expected to drain and retry.  This keeps the hardware simple
+(no 4KB pending-pattern FIFO) and the contract clear.
+
+---
+
+## 23.  SYNC barrier (immediate-mode fence)
+
+When the queue is in use, immediate-mode operations like
+`v_get_pixel()` or `vq_extnd()` need to know "have all preceding
+paint ops finished?" without necessarily draining the entire queue
+(other paint ops might be legitimately queued behind the read).
+
+CMD=0x07 is a **SYNC barrier**.  Pushing it enqueues a no-op
+entry; when the engine processes it (after all earlier entries
+have completed), the 16-bit SEQ counter at $D4C9/CA increments.
+Software remembers the expected post-barrier value and polls until
+the counter reaches it.
+
+```c
+uint16_t bl_fence(void) {
+    uint16_t expected;
+    // Hardware short-cut: pushing 0x07 while the blitter is fully
+    // idle bumps SEQ the same cycle, no queue round-trip.
+    expected = bl_seq() + 1;
+    *(volatile uint8_t *)0xD4BC = 0x07;
+    return expected;
+}
+
+void bl_wait_fence(uint16_t expected) {
+    while ((int16_t)(bl_seq() - expected) < 0)
+        ;
+}
+
+// Use:
+//   uint16_t f = bl_fence();
+//   ... push more paint ops ...
+//   bl_wait_fence(f);
+//   pixel = read_framebuffer(x, y);  // safely after the fenced ops
+```
+
+### 23.1  Direct-mode short-cut
+
+When SW writes CMD=0x07 and the blitter is idle (queue empty AND
+FSM in S_IDLE), the hardware bypasses the queue entirely and
+increments SEQ the same cycle.  Cost: zero queue slot, ~1 cycle of
+latency.
+
+When the queue is non-empty OR the FSM is mid-op, SYNC takes a
+normal slot in the FIFO and increments SEQ when it reaches the
+head.  Cost: 1 slot, latency = whatever's queued ahead of it.
+
+### 23.2  Wrap arithmetic
+
+The 16-bit SEQ wraps at 65536.  For comparison, software uses the
+signed-difference trick: `(int16_t)(seq - expected) < 0` means
+"haven't reached expected yet" and handles wraparound correctly as
+long as the gap doesn't exceed 32767 — which is far above the
+queue depth of 1024.
+
+### 23.3  Use cases
+
+- **getpixel / readpixel**: fence, then read the framebuffer via
+  the PS DDR3 view at `0x30000000 + (y << 13) + (x << 2)`.
+- **Read-after-write within a frame**: fence between the write and
+  the read, so the PS sees the updated pixel.
+- **Multi-task ordering**: each task can fence its own batch and
+  wait independently, without blocking other tasks' submissions.
+
+---
+
+## 24.  AXI-Lite GP0 path (ARM-side access)
+
+The PS Cortex-A9s reach the blitter through the AXI-Lite GP0
+bridge (`axi_blitter_bridge`).  Each blitter register at $D4Bx /
+$D4Cx maps to an AXI byte offset:
+
+```
+$D4B0..$D4BF → GP0 offsets 0x00..0x0F  (DST/PAT/CMD/STATUS page)
+$D4C0..$D4CF → GP0 offsets 0x10..0x1F  (SRC/FLAGS/FONT page)
+```
+
+So `STATUS` at $D4BD is at GP0 offset 0x0D; `SEQ_LO` at $D4C9 is
+at offset 0x19; `SEQ_HI` at $D4CA is at offset 0x1A.
+
+Writes use 32-bit AXI-Lite transactions but only the low byte is
+honoured (the bridge generates a 1-cycle byte-wide `bus_we` pulse
+into the blitter using `wdata[7:0]`).  Reads return the byte in
+`rdata[7:0]`.
+
+The bridge runs on clk_sys (150 MHz, same as the blitter) so no
+CDC is needed on the PS path — STATUS/SEQ reads are immediate.
+The SALLY path uses CDC into clk_sally (100 MHz) with a 2-FF
+synchroniser, so SALLY-side polling may see up to ~3 clk_sally
+cycles of lag — safe for polling, not safe for tight loop-back
+where the SALLY needs to see effect-of-its-own-write within a
+fixed cycle count.
