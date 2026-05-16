@@ -186,6 +186,92 @@ module tb_sally_isa;
         $display("PASS: test_push_pop_mixed");
     endtask
 
+    // ---- Test 5: STA d,SP ($92 dd) -----------------------------------
+    // After prologue SP = $FFF (top of stack).  Use displacement $FE
+    // (= -2 signed) → effective addr = $FFD.  STA writes $33 there;
+    // verify by reading $0FFD via the absolute-addressing LDA.
+    //   $0404 A9 33     LDA #$33
+    //   $0406 92 FE     STA $FE,SP        ; stack[SP-2] = stack[$FFD] <- $33
+    //   $0408 A9 00     LDA #$00
+    //   $040A AD FD 0F  LDA $0FFD         ; A <- $33
+    //   $040D 8D 05 03  STA $0305
+    //   $0410 4C 10 04  JMP $0410
+    task automatic test_sta_d_sp();
+        $display("=== Test 5: STA d,SP ($92) ===");
+        reset_cpu();
+
+        mem[16'hFFFC] = 8'h00;
+        mem[16'hFFFD] = 8'h04;
+        prologue();
+
+        put(16'h0404, 8'hA9); put(16'h0405, 8'h33);             // LDA #$33
+        put(16'h0406, 8'h92); put(16'h0407, 8'hFE);             // STA $FE,SP (=-2)
+        put(16'h0408, 8'hA9); put(16'h0409, 8'h00);             // LDA #$00
+        put(16'h040A, 8'hAD); put(16'h040B, 8'hFD); put(16'h040C, 8'h0F);  // LDA $0FFD
+        put(16'h040D, 8'h8D); put(16'h040E, 8'h05); put(16'h040F, 8'h03);  // STA $0305
+        put(16'h0410, 8'h4C); put(16'h0411, 8'h10); put(16'h0412, 8'h04);  // JMP $0410
+
+        run_until_stuck(16'h0410, 400, "STA d,SP");
+        expect_mem(16'h0305, 8'h33, "STA $FE,SP: stored value visible");
+        $display("PASS: test_sta_d_sp");
+    endtask
+
+    // ---- Test 6: LDX/STX/LDY/STY d,SP ($42/$02/$52/$12) --------------
+    // Using signed-negative displacements (−3, −4) so writes land at
+    // $FFC / $FFB (below the SP=$FFF top), then loads pull them back.
+    task automatic test_xy_d_sp();
+        $display("=== Test 6: LDX/STX/LDY/STY d,SP ($42/$02/$52/$12) ===");
+        reset_cpu();
+
+        mem[16'hFFFC] = 8'h00;
+        mem[16'hFFFD] = 8'h04;
+        prologue();
+
+        put(16'h0404, 8'hA2); put(16'h0405, 8'h7E);             // LDX #$7E
+        put(16'h0406, 8'h02); put(16'h0407, 8'hFD);             // STX $FD,SP (=-3)
+        put(16'h0408, 8'hA2); put(16'h0409, 8'h00);             // LDX #$00
+        put(16'h040A, 8'h42); put(16'h040B, 8'hFD);             // LDX $FD,SP
+        put(16'h040C, 8'h8E); put(16'h040D, 8'h06); put(16'h040E, 8'h03);  // STX $0306
+        put(16'h040F, 8'hA0); put(16'h0410, 8'h91);             // LDY #$91
+        put(16'h0411, 8'h12); put(16'h0412, 8'hFC);             // STY $FC,SP (=-4)
+        put(16'h0413, 8'hA0); put(16'h0414, 8'h00);             // LDY #$00
+        put(16'h0415, 8'h52); put(16'h0416, 8'hFC);             // LDY $FC,SP
+        put(16'h0417, 8'h8C); put(16'h0418, 8'h07); put(16'h0419, 8'h03);  // STY $0307
+        put(16'h041A, 8'h4C); put(16'h041B, 8'h1A); put(16'h041C, 8'h04);  // JMP $041A
+
+        run_until_stuck(16'h041A, 600, "LDX/STX/LDY/STY d,SP");
+        expect_mem(16'h0306, 8'h7E, "LDX d,SP round-trip");
+        expect_mem(16'h0307, 8'h91, "LDY d,SP round-trip");
+        $display("PASS: test_xy_d_sp");
+    endtask
+
+    // ---- Test 4: LDA d,SP ($B2 dd) ------------------------------------
+    //   $0404 A9 AB     LDA #$AB        ; A = $AB
+    //   $0406 48        PHA             ; push $AB at stack[$FFF], SP -> $FFE
+    //   $0407 A9 00     LDA #$00        ; A = $00 (clobber)
+    //   $0409 B2 01     LDA $01,SP      ; A <- stack[SP+1] = stack[$FFF] = $AB
+    //   $040B 8D 04 03  STA $0304       ; mem[$0304] = $AB
+    //   $040E 4C 0E 04  JMP $040E
+    task automatic test_lda_d_sp();
+        $display("=== Test 4: LDA d,SP ($B2) ===");
+        reset_cpu();
+
+        mem[16'hFFFC] = 8'h00;
+        mem[16'hFFFD] = 8'h04;
+        prologue();
+
+        put(16'h0404, 8'hA9); put(16'h0405, 8'hAB);             // LDA #$AB
+        put(16'h0406, 8'h48);                                   // PHA
+        put(16'h0407, 8'hA9); put(16'h0408, 8'h00);             // LDA #$00
+        put(16'h0409, 8'hB2); put(16'h040A, 8'h01);             // LDA $01,SP
+        put(16'h040B, 8'h8D); put(16'h040C, 8'h04); put(16'h040D, 8'h03);  // STA $0304
+        put(16'h040E, 8'h4C); put(16'h040F, 8'h0E); put(16'h0410, 8'h04);  // JMP $040E
+
+        run_until_stuck(16'h040E, 300, "LDA d,SP");
+        expect_mem(16'h0304, 8'hAB, "LDA $01,SP: stored value");
+        $display("PASS: test_lda_d_sp");
+    endtask
+
     // ---- Main scheduler -------------------------------------------------
     initial begin
         $display("=== tb_sally_isa starting ===");
@@ -198,6 +284,9 @@ module tb_sally_isa;
         test_push_pop_x();
         test_push_pop_y();
         test_push_pop_mixed();
+        test_lda_d_sp();
+        test_sta_d_sp();
+        test_xy_d_sp();
 
         $display("=== ALL TESTS PASSED ===");
         $finish;

@@ -229,10 +229,11 @@ parameter
     RTS1   = 6'd43, // RTS     - read PCL from stack 
     RTS2   = 6'd44, // RTS     - write PCL to ALU, read PCH 
     RTS3   = 6'd45, // RTS     - load PC and increment
-    WRITE  = 6'd46, // Write memory for read/modify/write 
+    WRITE  = 6'd46, // Write memory for read/modify/write
     ZP0    = 6'd47, // Z-page  - fetch ZP address
     ZPX0   = 6'd48, // ZP, X   - fetch ZP, and send to ALU (+X)
-    ZPX1   = 6'd49; // ZP, X   - load from memory
+    ZPX1   = 6'd49, // ZP, X   - load from memory
+    SP0    = 6'd50; // Stage B - SP-relative: fetch operand AND stack access
 
 `ifdef SIM
 
@@ -395,6 +396,23 @@ reg [3:0] S_high;
 // does TSX + LDA $0100,X still works for the top 256 bytes.
 wire [7:0] STACKPAGE_DYN = { 4'h0, S_high };
 
+// Stage B: SP-relative effective address.
+//   sp_q = current 12-bit SP = { S_high, AXYS[SEL_S] }
+//   d_s  = signed 8-bit displacement, sign-extended to 13 bits
+//   sp_eff_clamped = clamp(sp_q + d_s, 0, $FFF) — clamps rather than
+//   wrapping so an out-of-range displacement does not silently land
+//   the access at the wrong end of the stack BRAM.
+//
+//   The displacement comes from DIMUX during SP0 — i.e., the byte at
+//   PC+1 that was fetched in the prior cycle's address bus.
+wire signed [12:0] sp_q_signed   = { 1'b0, S_high, AXYS[SEL_S] };
+wire signed [12:0] sp_d_signed   = { {5{DIMUX[7]}}, DIMUX };
+wire signed [12:0] sp_eff_signed = sp_q_signed + sp_d_signed;
+wire [11:0]        sp_eff_clamped =
+    (sp_eff_signed < 0)              ? 12'h000 :
+    (sp_eff_signed > 13'sd4095)      ? 12'hFFF :
+                                       sp_eff_signed[11:0];
+
 always @* begin
     stack_op = 1'b0;
     case( state )
@@ -427,6 +445,8 @@ always @* begin
         RTI2,
         RTI3,
         BRK2:           begin AB = { STACKPAGE_DYN, ADD     }; stack_op = 1'b1; end
+
+        SP0:            begin AB = { 4'h0, sp_eff_clamped }; stack_op = 1'b1; end
 
         INDY1,
         INDX1,
@@ -496,7 +516,8 @@ always @*
         ABSX2,
         ABS1,
         ZPX1,
-        ZP0:     WE = store;
+        ZP0,
+        SP0:     WE = store;
 
         default: WE = 0;
     endcase
@@ -948,6 +969,15 @@ always @(posedge clk or posedge reset)
                 // catches below (matching is first-hit in casex).
                 8'b010x_0100:   state <= PUSH0; // PUSH X ($44), PUSH Y ($54)
                 8'b011x_0100:   state <= PULL0; // POP  X ($64), POP  Y ($74)
+                // Stage B SP-relative — $x2 opcodes (NMOS JAMs).
+                // LDA / LDX / LDY / STA / STX / STY (d,SP)
+                8'b1011_0010,                   // LDA d,SP ($B2)
+                8'b0100_0010,                   // LDX d,SP ($42)
+                8'b0101_0010,                   // LDY d,SP ($52)
+                8'b1001_0010,                   // STA d,SP ($92)
+                8'b0000_0010,                   // STX d,SP ($02)
+                8'b0001_0010:                   // STY d,SP ($12)
+                                state <= SP0;
                 8'b0xx1_1000:   state <= REG;   // CLC, SEC, CLI, SEI
                 8'b1xx0_00x0:   state <= FETCH; // IMM
                 8'b1xx0_1100:   state <= ABS0;  // X/Y abs
@@ -997,8 +1027,11 @@ always @(posedge clk or posedge reset)
         PUSH1   : state <= DECODE;
 
         PULL0   : state <= PULL1;
-        PULL1   : state <= PULL2; 
+        PULL1   : state <= PULL2;
         PULL2   : state <= DECODE;
+        SP0     : state <= FETCH;       // SP-relative: stack access on this cycle,
+                                        //              then FETCH does ALU pass-through
+                                        //              and prefetches the next opcode
 
         JSR0    : state <= JSR1;
         JSR1    : state <= JSR2;
@@ -1055,7 +1088,10 @@ always @(posedge clk)
                 8'b11001010,    // DEX
                 8'b1x1xxx01,    // LDA, SBC
                 8'bxxx01000,    // DEY, TAY, INY, INX, PLA
-                8'b01xx_0100:   // Stage B: PUSH/POP X/Y ($44/$54/$64/$74)
+                8'b01xx_0100,   // Stage B: PUSH/POP X/Y ($44/$54/$64/$74)
+                8'b1011_0010,   // Stage B: LDA d,SP ($B2)
+                8'b0100_0010,   // Stage B: LDX d,SP ($42)
+                8'b0101_0010:   // Stage B: LDY d,SP ($52)
                                 load_reg <= 1;
 
                 default:        load_reg <= 0;
@@ -1064,10 +1100,17 @@ always @(posedge clk)
 always @(posedge clk)
      if( state == DECODE && RDY )
         casex( IR )
+                // Stage B SP-relative LDA d,SP ($B2) must precede the LDX
+                // catch-all 8'b101x_xx10 below, otherwise $B2 ends up
+                // loading X instead of A.
+                8'b1011_0010:   // Stage B: LDA d,SP ($B2) → A
+                                dst_reg <= SEL_A;
+
                 8'b1110_1000,   // INX
                 8'b1100_1010,   // DEX
                 8'b101x_xx10,   // LDX, TAX, TSX
-                8'b0110_0100:   // Stage B: POP X ($64)
+                8'b0110_0100,   // Stage B: POP X ($64)
+                8'b0100_0010:   // Stage B: LDX d,SP ($42)
                                 dst_reg <= SEL_X;
 
                 8'b0x00_1000,   // PHP, PHA
@@ -1078,7 +1121,8 @@ always @(posedge clk)
                 8'b1x00_1000,   // DEY, DEX
                 8'b101x_x100,   // LDY
                 8'b1010_x000,   // LDY #imm, TAY
-                8'b0111_0100:   // Stage B: POP Y ($74)
+                8'b0111_0100,   // Stage B: POP Y ($74)
+                8'b0101_0010:   // Stage B: LDY d,SP ($52)
                                 dst_reg <= SEL_Y;
 
                 default:        dst_reg <= SEL_A;
@@ -1094,14 +1138,16 @@ always @(posedge clk)
                 8'b100x_1x10,   // TXA, TXS
                 8'b1110_xx00,   // INX, CPX
                 8'b1100_1010,   // DEX
-                8'b0100_0100:   // Stage B: PUSH X ($44)
+                8'b0100_0100,   // Stage B: PUSH X ($44)
+                8'b0000_0010:   // Stage B: STX d,SP ($02)
                                 src_reg <= SEL_X;
 
                 8'b100x_x100,   // STY
                 8'b1001_1000,   // TYA
                 8'b1100_xx00,   // CPY
                 8'b1x00_1000,   // DEY, INY
-                8'b0101_0100:   // Stage B: PUSH Y ($54)
+                8'b0101_0100,   // Stage B: PUSH Y ($54)
+                8'b0001_0010:   // Stage B: STY d,SP ($12)
                                 src_reg <= SEL_Y;
 
                 default:        src_reg <= SEL_A;
@@ -1123,7 +1169,9 @@ always @(posedge clk)
      if( state == DECODE && RDY )
         casex( IR )
                 8'b100x_x1x0,   // STX, STY
-                8'b100x_xx01:   // STA
+                8'b100x_xx01,   // STA
+                8'b1001_0010,   // Stage B: STA d,SP ($92)
+                8'b000x_0010:   // Stage B: STX/STY d,SP ($02/$12)
                                 store <= 1;
 
                 default:        store <= 0;
@@ -1144,7 +1192,9 @@ always @(posedge clk )
 always @(posedge clk )
      if( state == DECODE && RDY )
         casex( IR )
-                8'b101x_xxxx:   // LDA, LDX, LDY
+                8'b101x_xxxx,   // LDA, LDX, LDY (also catches $B2 LDA d,SP)
+                8'b0100_0010,   // Stage B: LDX d,SP ($42)
+                8'b0101_0010:   // Stage B: LDY d,SP ($52)
                                 load_only <= 1;
                 default:        load_only <= 0;
         endcase
@@ -1220,18 +1270,36 @@ always @(posedge clk )
 always @(posedge clk )
      if( state == DECODE && RDY )
         casex( IR )
+                // Stage B SP-relative load/store/ADC must precede the
+                // generic 8'b01xx_xx10 ROR/LSR catch below, otherwise
+                // $42/$52/$72 end up with OP_A (pass-AI) and zero out
+                // through the load_only AI=0 path.
+                8'b0100_0010,   // LDX d,SP ($42)
+                8'b0101_0010,   // LDY d,SP ($52)
+                8'b0111_0010,   // ADC d,SP ($72)
+                8'b1001_0010,   // STA d,SP ($92) — op unused but explicit
+                8'b0000_0010,   // STX d,SP ($02)
+                8'b0001_0010,   // STY d,SP ($12)
+                8'b1011_0010:   // LDA d,SP ($B2) — already defaults but explicit
+                                op <= OP_ADD;
+
+                // CMP d,SP / SBC d,SP — explicit OP_SUB.
+                8'b1101_0010,   // CMP d,SP ($D2)
+                8'b1111_0010:   // SBC d,SP ($F2)
+                                op <= OP_SUB;
+
                 8'b00xx_xx10:   // ROL, ASL
                                 op <= OP_ROL;
 
-                8'b0010_x100:   // BIT zp/abs   
+                8'b0010_x100:   // BIT zp/abs
                                 op <= OP_AND;
 
                 8'b01xx_xx10:   // ROR, LSR
                                 op <= OP_A;
 
                 8'b1000_1000,   // DEY
-                8'b1100_1010,   // DEX 
-                8'b110x_x110,   // DEC 
+                8'b1100_1010,   // DEX
+                8'b110x_x110,   // DEC
                 8'b11xx_xx01,   // CMP, SBC
                 8'b11x0_0x00,   // CPX, CPY (imm, zpg)
                 8'b11x0_1100:   op <= OP_SUB;
