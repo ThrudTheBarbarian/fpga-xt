@@ -345,19 +345,22 @@ module sally_mem #(
     // ROM-load wins on the rare same-cycle collision with a CPU write —
     // matches the original Verilog last-assignment-wins ordering.
     //
-    // Two exclusions from cpu_w:
-    //   - !stack_op: when cpu.v is doing a stack push (stack_op=1), the
-    //     12-bit address could land anywhere in $0000-$0FFF.  Shadowing
-    //     those writes into main mem would corrupt zero page or low
-    //     RAM.  Gate them out and let stack_mem hold the data.
-    //   - The legacy $0100-$01FF alias is NOT gated here — those writes
-    //     land in both main mem and stack_mem.  Reads still prefer
-    //     stack_mem via was_stack_q.  Gating $0100-$01FF specifically
-    //     (Increment 1's first attempt) broke Vivado's 64K BRAM cascade
-    //     inference on bits 2 and 7 (DRC REQP-1962).  stack_op is a
-    //     non-addr-derived input so it doesn't perturb the cascade.
-    wire        cpu_w      = rdy && !rw && !is_hwreg_page && !is_in_window_w
-                             && !stack_op;
+    // Only one exclusion from cpu_w: !stack_op.  When cpu.v is doing a
+    // stack push (stack_op=1), the 12-bit address could land anywhere
+    // in $0000-$0FFF.  Shadowing those writes into main mem would
+    // corrupt zero page or low RAM, so gate them out and let stack_mem
+    // hold the data.
+    //
+    // is_hwreg_page / is_in_window_w deliberately are NOT gated — they
+    // are address-derived and cause DRC REQP-1962 on the 64 KB BRAM
+    // cascade (Vivado optimises the ADDR15 pin inconsistently between
+    // cascaded BRAM pairs once enough address-bit logic sits in the
+    // WE path).  The Stage C v0.28 RTL pushed the synthesiser past
+    // the threshold that v0.27 sat under.  Removing the addr-derived
+    // gates puts the cascade back together; shadow writes into hwreg
+    // / bank-window addresses are harmless because the read path
+    // already prefers was_hwreg_q / was_bank_q over bram_dout_q.
+    wire        cpu_w      = rdy && !rw && !stack_op;
     wire        mem_we     = cpu_w || rom_we;
     wire [15:0] mem_addr_w = rom_we ? rom_addr : addr;
     wire  [7:0] mem_din_w  = rom_we ? rom_data : data_in;
