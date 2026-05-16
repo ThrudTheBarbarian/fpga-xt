@@ -943,10 +943,15 @@ always @(posedge clk or posedge reset)
                 8'b0110_1100:   state <= JMPI0;
                 8'b0x00_1000:   state <= PUSH0;
                 8'b0x10_1000:   state <= PULL0;
-                8'b0xx1_1000:   state <= REG;   // CLC, SEC, CLI, SEI 
+                // Stage B PUSH/POP X/Y — repurpose NMOS-NOP $44/$54/$64/$74
+                // These must precede the generic 8'bxxx[01]_01xx ZP/ZPX
+                // catches below (matching is first-hit in casex).
+                8'b010x_0100:   state <= PUSH0; // PUSH X ($44), PUSH Y ($54)
+                8'b011x_0100:   state <= PULL0; // POP  X ($64), POP  Y ($74)
+                8'b0xx1_1000:   state <= REG;   // CLC, SEC, CLI, SEI
                 8'b1xx0_00x0:   state <= FETCH; // IMM
                 8'b1xx0_1100:   state <= ABS0;  // X/Y abs
-                8'b1xxx_1000:   state <= REG;   // DEY, TYA, ... 
+                8'b1xxx_1000:   state <= REG;   // DEY, TYA, ...
                 8'bxxx0_0001:   state <= INDX0;
                 8'bxxx0_01xx:   state <= ZP0;
                 8'bxxx0_1001:   state <= FETCH; // IMM
@@ -1044,12 +1049,13 @@ always @(posedge clk)
                 8'b0xx01010,    // ASLA, ROLA, LSRA, RORA
                 8'b0xxxxx01,    // ORA, AND, EOR, ADC
                 8'b100x10x0,    // DEY, TYA, TXA, TXS
-                8'b1010xxx0,    // LDA/LDX/LDY 
+                8'b1010xxx0,    // LDA/LDX/LDY
                 8'b10111010,    // TSX
                 8'b1011x1x0,    // LDX/LDY
                 8'b11001010,    // DEX
                 8'b1x1xxx01,    // LDA, SBC
-                8'bxxx01000:    // DEY, TAY, INY, INX
+                8'bxxx01000,    // DEY, TAY, INY, INX, PLA
+                8'b01xx_0100:   // Stage B: PUSH/POP X/Y ($44/$54/$64/$74)
                                 load_reg <= 1;
 
                 default:        load_reg <= 0;
@@ -1060,16 +1066,19 @@ always @(posedge clk)
         casex( IR )
                 8'b1110_1000,   // INX
                 8'b1100_1010,   // DEX
-                8'b101x_xx10:   // LDX, TAX, TSX
+                8'b101x_xx10,   // LDX, TAX, TSX
+                8'b0110_0100:   // Stage B: POP X ($64)
                                 dst_reg <= SEL_X;
 
                 8'b0x00_1000,   // PHP, PHA
-                8'b1001_1010:   // TXS
+                8'b1001_1010,   // TXS
+                8'b010x_0100:   // Stage B: PUSH X ($44) / PUSH Y ($54)
                                 dst_reg <= SEL_S;
 
                 8'b1x00_1000,   // DEY, DEX
                 8'b101x_x100,   // LDY
-                8'b1010_x000:   // LDY #imm, TAY
+                8'b1010_x000,   // LDY #imm, TAY
+                8'b0111_0100:   // Stage B: POP Y ($74)
                                 dst_reg <= SEL_Y;
 
                 default:        dst_reg <= SEL_A;
@@ -1084,13 +1093,15 @@ always @(posedge clk)
                 8'b100x_x110,   // STX
                 8'b100x_1x10,   // TXA, TXS
                 8'b1110_xx00,   // INX, CPX
-                8'b1100_1010:   // DEX
-                                src_reg <= SEL_X; 
+                8'b1100_1010,   // DEX
+                8'b0100_0100:   // Stage B: PUSH X ($44)
+                                src_reg <= SEL_X;
 
                 8'b100x_x100,   // STY
                 8'b1001_1000,   // TYA
                 8'b1100_xx00,   // CPY
-                8'b1x00_1000:   // DEY, INY
+                8'b1x00_1000,   // DEY, INY
+                8'b0101_0100:   // Stage B: PUSH Y ($54)
                                 src_reg <= SEL_Y;
 
                 default:        src_reg <= SEL_A;
