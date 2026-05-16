@@ -7,17 +7,6 @@ half (FreeRTOS, USB HID, SD filesystem, GEM AES helpers). A custom 2D
 blitter (`xt-blitter`) in fabric replaces the discrete N6 graphics
 co-processor that the earlier paired-FPGA design used.
 
-## Status
-
-**Project pivoted 2026-05-14** from a dual-chip Ti60+N6 design to
-single-chip Zynq via the MyIR Z-Turn SOM. Reorganised at this
-location as a fresh start; the Generation 1 (paired-RP2354) and
-Generation 2 (Ti60+N6) work is preserved at
-`/Users/simon/src/ai/claude/xt/fpga-antic/` for historical reference.
-
-The pivot reasoning, BoM, pin budget, phased migration plan, and risk
-register are in **[docs/zynq-architecture.md](docs/zynq-architecture.md)**.
-
 ## Hardware target
 
 - **MyIR Z-Turn (full)** SOM — XC7Z020-2CLG400, 1 GB DDR3, microSD,
@@ -36,21 +25,18 @@ register are in **[docs/zynq-architecture.md](docs/zynq-architecture.md)**.
   top is `sally_synth_top`, part `xc7z020-2clg400` (-2 speed grade).
 - **Simulation (iverilog)**: [`sim/`](sim/) — `make -C sim all` runs
   the per-module testbench suite locally. Works without Vivado.
-- **(Archived) Efinity**: [`efinity/`](efinity/) is the Ti60 batch-mode
-  build from Generation 2; kept for reference, not active.
 
 ## Document map
 
 | Doc | Scope |
 |-----|-------|
 | [docs/zynq-architecture.md](docs/zynq-architecture.md) | **Primary** — Zynq-7020 target spec, BoM, pin budget, phased migration |
-| [docs/VDI-opcodes.md](docs/VDI-opcodes.md) | Wire format for 6502 → 2D-GPU drawing commands (target-independent) |
-| [docs/GEM-implementation.md](docs/GEM-implementation.md) | GEM port plan — AES on 6502, VDI dispatch, GEMDOS shim. Pre-pivot; needs an N6→Zynq sweep. |
+| [docs/GEM/VDI-opcodes.md](docs/VDI-opcodes.md) | Wire format for 6502 → 2D-GPU drawing commands (target-independent) |
+| [docs/GEM/GEM-implementation.md](docs/GEM-implementation.md) | GEM port plan — AES on 6502, VDI dispatch, GEMDOS shim. Pre-pivot; needs an N6→Zynq sweep. |
 | [docs/architecture.md](docs/architecture.md), [docs/FPGA.md](docs/FPGA.md), [docs/hdmi.md](docs/hdmi.md), [docs/wire-protocol.md](docs/wire-protocol.md) | Pre-pivot architecture notes — some still apply, some are Ti60/Efinity/N6-specific. Sweep TBD. |
-| [docs/palette.md](docs/palette.md), [docs/register-map.md](docs/register-map.md), [docs/pin-map.md](docs/pin-map.md) | Atari-specific reference. `pin-map.md` is Ti60-pin specific and will need a full rewrite for Zynq. |
-| [docs/altirra-*.md](docs/), [docs/altirra-reference-manual.pdf](docs/altirra-reference-manual.pdf) | Reference material from the Altirra Atari emulator |
+| [docs/palette.md](docs/palette.md), [docs/register-map.md](docs/register-map.md), [docs/pin-map.md](docs/pin-map.md) | Atari-specific reference. |
+| [docs//Altirra/altirra-*.md](docs/), [docs/Altirra/altirra-reference-manual.pdf](docs/altirra-reference-manual.pdf) | Reference material from the Altirra Atari emulator |
 | [docs/future-work.md](docs/future-work.md) | Ongoing project ideas / deferred items |
-| [docs/archive/](docs/archive/) | Generation 1/2 historical docs (N6 migration, Ti60 datasheet, GEM-rp2354) |
 | [refs/](refs/) | Hardware reference (Z-Turn schematic, board dimensions) |
 
 ## Layout
