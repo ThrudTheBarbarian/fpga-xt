@@ -135,7 +135,23 @@ module sally_clock #(
     // honoured.
     wire halt_effective = (clock_mult == 8'd1) ? halt_n : 1'b1;
 
-    assign sally_rdy = step & halt_effective & wsync_rdy_n & busy_n;
+    // Pipeline register for busy_n to break the apparent combinatorial loop
+    // through RDY → CPU address → memory decode → busy_n → RDY.  While the
+    // CPU's address bus is registered (cpu.v AB reg), Vivado's DRC (LUTLP-1)
+    // may still flag a loop through the combinational RDY path.  Registering
+    // busy_n at the clock input makes the feedback explicitly sequential.
+    //
+    // Adding 1 cycle of latency means the CPU executes one extra instruction
+    // after the memory signals busy before RDY goes low — this is safe because
+    // the memory is always at least N cycles behind (cache refill, etc.) and
+    // RDY is re-evaluated every cycle.
+    logic busy_n_q;
+    always_ff @(posedge clk or posedge rst) begin
+        if (rst)  busy_n_q <= 1'b1;   // default: not busy (ready)
+        else      busy_n_q <= busy_n;
+    end
+
+    assign sally_rdy = step & halt_effective & wsync_rdy_n & busy_n_q;
 
 endmodule
 

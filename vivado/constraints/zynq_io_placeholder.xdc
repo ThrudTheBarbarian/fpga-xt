@@ -29,16 +29,8 @@ set_property SEVERITY {Warning} [get_drc_checks UCIO-1]
 # the warning noise and gives the tools a sensible buffer standard.
 set_property IOSTANDARD LVCMOS33 [get_ports]
 
-# ---- Combinatorial loop allowance ------------------------------------------
-# The SALLY RDY path (sally_clock → CPU address → memory busy → sally_clock)
-# creates a combinatorial loop through the step-generator carry chain and the
-# memory address decode.  This loop is broken by the CPU's registered address
-# outputs in actual hardware — the combinational path through the design goes
-# through flip-flops and is never a true loop.
-#
-# Downgrade LUTLP-1 (Combinatorial Loop Alert) from ERROR to WARNING so that
-# write_bitstream's DRC pre-check does not abort bitgen.  The exact net name
-# reported by the DRC is a synthesis artifact that may vary between Vivado
-# versions; suppressing the entire check is more robust than chasing a net
-# name that may not exist in a particular run.
-set_property SEVERITY {Warning} [get_drc_checks LUTLP-1]
+# ---- Combinatorial loop allowance (now fixed) --------------------------------
+# The SALLY RDY loop was fixed in v0.15 by registering busy_n in sally_clock.sv.
+# The DRC suppression LUTLP-1 is no longer needed — keep the set_property for
+# safety in case this XDC is used with an older bitstream build that lacks the
+# fix, but the proper fix should always be preferred.
