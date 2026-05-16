@@ -170,10 +170,14 @@ if {$flow eq "bit"} {
     }
 }
 
-# Limit parallel threads to 2 — the remote build server has 15 GB RAM and
-# default threading causes memory thrashing (7+ workers × 1.3 GB RSS).
-# With 2 threads the design still builds in ~5 min without swapping.
-set_param general.maxThreads 2
+# Parallel threads: default 8 (good for 16-core / 64 GB win10 build host).
+# Override via MAX_THREADS env var when running on a smaller box — the old
+# ubuntu host had 15 GB RAM and needed MAX_THREADS=2 to avoid swapping
+# (7+ workers × 1.3 GB RSS).
+set max_threads 8
+if {[info exists ::env(MAX_THREADS)]} { set max_threads $::env(MAX_THREADS) }
+puts ">> maxThreads=$max_threads"
+set_param general.maxThreads $max_threads
 
 # ---- Synthesis ----------------------------------------------------------
 # Out-of-context mode for synth/impl flows: standalone fmax probe doesn't
