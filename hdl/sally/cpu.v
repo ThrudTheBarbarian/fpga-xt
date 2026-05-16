@@ -234,7 +234,12 @@ parameter
     ZPX0   = 6'd48, // ZP, X   - fetch ZP, and send to ALU (+X)
     ZPX1   = 6'd49, // ZP, X   - load from memory
     SP0    = 6'd50, // Stage B - SP-relative: fetch operand AND stack access
-    SP_ADJ = 6'd51; // Stage B - ADD SP, #imm8: write back clamped SP+d
+    SP_ADJ = 6'd51, // Stage B - ADD SP, #imm8: write back clamped SP+d
+    PSH0   = 6'd52, // Stage C - PSH #N init: latch sp_new, write P slot
+    PSH_RUN= 6'd53, // Stage C - PSH #N runs idx=1..5 writes (SP_lo/SP_hi/Y/X/A)
+    PLL0   = 6'd54, // Stage C - PLL #N init: present P read, latch sp_new
+    PLL_RUN= 6'd55, // Stage C - PLL #N runs idx=1..5 reads (data appears next cycle)
+    PLL_FIN= 6'd56; // Stage C - PLL #N final: latch A, commit SP, fetch next opcode
 
 `ifdef SIM
 
@@ -297,6 +302,11 @@ always @*
             JMPI1:  statename = "JMPI1";
             SP0:    statename = "SP0";
             SP_ADJ: statename = "SP_ADJ";
+            PSH0:   statename = "PSH0";
+            PSH_RUN:statename = "PSHRUN";
+            PLL0:   statename = "PLL0";
+            PLL_RUN:statename = "PLLRUN";
+            PLL_FIN:statename = "PLLFIN";
     endcase
 
 //always @( PC )
@@ -368,7 +378,11 @@ always @*
         RTS3,
         // Stage B ADD SP, #imm8 ($22) — SP_ADJ advances PC past the
         // next opcode just like FETCH does for an IMM instruction.
-        SP_ADJ:         PC_inc = 1;
+        SP_ADJ,
+        // Stage C — PLL_FIN fetches the next opcode (PC was held
+        // across PLL0..PLL_RUN with PC_inc=0); PSH terminates into
+        // FETCH which already has PC_inc=1.
+        PLL_FIN:        PC_inc = 1;
 
         BRA1:           PC_inc = CO ^~ backwards;
 
@@ -423,6 +437,32 @@ wire [11:0]        sp_eff_clamped =
     (sp_eff_signed > 14'sd4095)      ? 12'hFFF :
                                        sp_eff_signed[11:0];
 
+// Stage C: PSH/PLL frame-size adders.  PSH subtracts N+6 from SP
+// (allocating reg save + locals); PLL adds N+6 (deallocating).  Both
+// clamp at the 12-bit SP boundary.  13-bit unsigned holds the full
+// range (max addition = $FFF + $FF + 6 = $1104, max subtraction
+// underflow flag in bit 12).  DIMUX is the imm8 byte during PSH0/PLL0.
+wire [12:0] sp_minus_frame_raw = { 1'b0, S_high, AXYS[SEL_S] }
+                                 - { 5'b0, DIMUX } - 13'd6;
+wire [12:0] sp_plus_frame_raw  = { 1'b0, S_high, AXYS[SEL_S] }
+                                 + { 5'b0, DIMUX } + 13'd6;
+wire [11:0] sp_new_psh = sp_minus_frame_raw[12] ? 12'h000
+                                                : sp_minus_frame_raw[11:0];
+wire [11:0] sp_new_pll = sp_plus_frame_raw[12]  ? 12'hFFF
+                                                : sp_plus_frame_raw[11:0];
+
+// Stage C: PSH/PLL holding registers.
+//   sp_new_q        — latched new SP after frame-size adjust.
+//   sp_save_lo_q    — original SP_lo at entry to PSH (written to slot 1).
+//   sp_save_hi_q    — original SP_hi at entry to PSH (written to slot 2).
+//   frame_idx       — byte index 0..6 within the frame.  PSH writes
+//                     0..5; PLL reads 0..5 with data arriving 1 cycle
+//                     after the address presentation (idx=6 = final).
+reg [11:0] sp_new_q;
+reg [7:0]  sp_save_lo_q;
+reg [3:0]  sp_save_hi_q;
+reg [2:0]  frame_idx;
+
 always @* begin
     stack_op = 1'b0;
     case( state )
@@ -457,6 +497,25 @@ always @* begin
         BRK2:           begin AB = { STACKPAGE_DYN, ADD     }; stack_op = 1'b1; end
 
         SP0:            begin AB = { 4'h0, sp_eff_clamped }; stack_op = 1'b1; end
+
+        // Stage C — PSH/PLL frame access.  All operate on the hidden
+        // stack BRAM; stack_op asserted so sally_mem routes the access
+        // to the BRAM port rather than main RAM.
+        //   PSH0:   write P at sp_new (combinational from DIMUX=N)
+        //   PSH_RUN: write slot idx=1..5 at sp_new_q + frame_idx
+        //   PLL0:   present read of slot 0 at sp_q (current SP)
+        //   PLL_RUN: present read of slot frame_idx at sp_q + frame_idx
+        //   PLL_FIN: no stack access — AB=PC for next-opcode fetch
+        //            (so stack_op stays 0 there and PC_inc=1 advances)
+        PSH0:           begin AB = { 4'h0, sp_new_psh };
+                              stack_op = 1'b1; end
+        PSH_RUN:        begin AB = { 4'h0, sp_new_q + { 9'b0, frame_idx } };
+                              stack_op = 1'b1; end
+        PLL0:           begin AB = { 4'h0, S_high, AXYS[SEL_S] };
+                              stack_op = 1'b1; end
+        PLL_RUN:        begin AB = { 4'h0, { S_high, AXYS[SEL_S] }
+                                          + { 9'b0, frame_idx } };
+                              stack_op = 1'b1; end
 
         INDY1,
         INDX1,
@@ -504,6 +563,19 @@ always @*
 
         BRK2:    DO = (IRQ | NMI_edge) ? (P & 8'b1110_1111) : P;
 
+        // Stage C — PSH writes one register byte per cycle.  PSH0
+        // writes the P slot; PSH_RUN cycles through frame_idx=1..5
+        // for SP_lo / SP_hi / Y / X / A.
+        PSH0:    DO = P;
+        PSH_RUN: case (frame_idx)
+                    3'd1:    DO = sp_save_lo_q;
+                    3'd2:    DO = { 4'h0, sp_save_hi_q };
+                    3'd3:    DO = AXYS[SEL_Y];
+                    3'd4:    DO = AXYS[SEL_X];
+                    3'd5:    DO = AXYS[SEL_A];
+                    default: DO = 8'h00;
+                 endcase
+
         default: DO = regfile;
     endcase
 
@@ -519,6 +591,9 @@ always @*
         JSR0,
         JSR1,
         PUSH1,
+        // Stage C — PSH frame writes (P slot + idx 1..5).
+        PSH0,
+        PSH_RUN,
         WRITE:   WE = 1;
 
         INDX3,  // only if doing a STA, STX or STY
@@ -598,14 +673,67 @@ end
  * the PCL. This is possible, because the S register itself is stored in
  * the ALU during those cycles.
  */
-always @(posedge clk)
-    // Stage B ADD SP, #imm8: SP_ADJ writes the clamped 12-bit add
-    // result back into SP_lo; this path is independent of regsel /
-    // write_register and runs in the SP_ADJ cycle only.
-    if( RDY && state == SP_ADJ )
-        AXYS[SEL_S] <= sp_eff_clamped[7:0];
-    else if( write_register & RDY )
-        AXYS[regsel] <= (state == JSR0) ? DIMUX : { ADD[7:4] + ADJH, ADD[3:0] + ADJL };
+always @(posedge clk) begin
+    if( RDY ) begin
+        // Stage B ADD SP, #imm8: SP_ADJ writes the clamped 12-bit add
+        // result back into SP_lo; this path is independent of regsel /
+        // write_register and runs in the SP_ADJ cycle only.
+        if( state == SP_ADJ )
+            AXYS[SEL_S] <= sp_eff_clamped[7:0];
+        // Stage C PSH — final cycle (frame_idx=5, writing A): commit
+        // the latched sp_new_q into SP.  AXYS[SEL_A] is unchanged; only
+        // the BRAM has the saved copy of A.
+        else if( state == PSH_RUN && frame_idx == 3'd5 )
+            AXYS[SEL_S] <= sp_new_q[7:0];
+        // Stage C PLL — latch the slot reads as they arrive.  DIMUX
+        // at PLL_RUN/idx=N is the data read at idx=N-1 (one-cycle
+        // BRAM latency), so Y comes back at idx=4, X at idx=5, A at
+        // PLL_FIN.  PLL_FIN also commits the post-frame SP.
+        else if( state == PLL_RUN && frame_idx == 3'd4 )
+            AXYS[SEL_Y] <= DIMUX;
+        else if( state == PLL_RUN && frame_idx == 3'd5 )
+            AXYS[SEL_X] <= DIMUX;
+        else if( state == PLL_FIN ) begin
+            AXYS[SEL_A] <= DIMUX;
+            AXYS[SEL_S] <= sp_new_q[7:0];
+        end
+        else if( write_register )
+            AXYS[regsel] <= (state == JSR0) ? DIMUX
+                          : { ADD[7:4] + ADJH, ADD[3:0] + ADJL };
+    end
+end
+
+// Stage C — PSH/PLL holding registers and the frame_idx counter.
+//   PSH0 latches sp_new (= clamp(SP - N - 6, 0)) along with the
+//     entry SP for writing into the diagnostic slots 1 + 2.
+//   PLL0 latches sp_new (= clamp(SP + N + 6, $FFF)).
+//   frame_idx counts 0..5 for PSH and 0..6 for PLL.  It is forced
+//     back to 0 in any DECODE cycle so leftover values from one
+//     PSH/PLL never bleed into a later instruction.
+always @(posedge clk) begin
+    if (reset) begin
+        sp_new_q     <= 12'h000;
+        sp_save_lo_q <= 8'h00;
+        sp_save_hi_q <= 4'h0;
+        frame_idx    <= 3'd0;
+    end
+    else if (RDY) begin
+        if (state == DECODE)
+            frame_idx <= 3'd0;
+        else if (state == PSH0) begin
+            sp_new_q     <= sp_new_psh;
+            sp_save_lo_q <= AXYS[SEL_S];
+            sp_save_hi_q <= S_high;
+            frame_idx    <= 3'd1;
+        end
+        else if (state == PLL0) begin
+            sp_new_q  <= sp_new_pll;
+            frame_idx <= 3'd1;
+        end
+        else if (state == PSH_RUN || state == PLL_RUN)
+            frame_idx <= frame_idx + 3'd1;
+    end
+end
 
 /*
  * 12-bit stack-pointer extension (Stage A).  The low 8 bits live in
@@ -635,6 +763,13 @@ always @(posedge clk) begin
         // in the matching `AXYS[SEL_S] <= …` block below.
         S_high <= sp_eff_clamped[11:8];
     end
+    else if (RDY && state == PSH_RUN && frame_idx == 3'd5)
+        // Stage C PSH: commit the high nibble of sp_new alongside the
+        // low byte (committed in the AXYS block above).
+        S_high <= sp_new_q[11:8];
+    else if (RDY && state == PLL_FIN)
+        // Stage C PLL: commit post-frame SP high nibble.
+        S_high <= sp_new_q[11:8];
     else if (write_register & RDY & (regsel == SEL_S) & (state != JSR0)) begin
         if (AXYS[SEL_S] == 8'h00 && ADD == 8'hFF)
             S_high <= S_high - 4'd1;            // push wrap: e.g., $F00 → $EFF
@@ -858,6 +993,9 @@ always @(posedge clk )
         C <= CO;
     else if( state == RTI2 )
         C <= DIMUX[0];
+    // Stage C PLL: restore P from slot-0 read response.
+    else if( state == PLL_RUN && frame_idx == 3'd1 )
+        C <= DIMUX[0];
     else if( ~write_back && state == DECODE ) begin
         if( adc_sbc | shift | compare )
             C <= CO;
@@ -873,10 +1011,12 @@ always @(posedge clk )
  * Update Z, N flags when writing A, X, Y, Memory, or when doing compare
  */
 
-always @(posedge clk) 
-    if( state == WRITE ) 
+always @(posedge clk)
+    if( state == WRITE )
         Z <= AZ;
     else if( state == RTI2 )
+        Z <= DIMUX[1];
+    else if( state == PLL_RUN && frame_idx == 3'd1 )
         Z <= DIMUX[1];
     else if( state == DECODE ) begin
         if( plp )
@@ -889,6 +1029,8 @@ always @(posedge clk)
     if( state == WRITE )
         N <= AN;
     else if( state == RTI2 )
+        N <= DIMUX[7];
+    else if( state == PLL_RUN && frame_idx == 3'd1 )
         N <= DIMUX[7];
     else if( state == DECODE ) begin
         if( plp )
@@ -907,6 +1049,8 @@ always @(posedge clk)
         I <= 1;
     else if( state == RTI2 )
         I <= DIMUX[2];
+    else if( state == PLL_RUN && frame_idx == 3'd1 )
+        I <= DIMUX[2];
     else if( state == REG ) begin
         if( sei ) I <= 1;
         if( cli ) I <= 0;
@@ -916,8 +1060,10 @@ always @(posedge clk)
 /*
  * Update D flag
  */
-always @(posedge clk ) 
+always @(posedge clk )
     if( state == RTI2 )
+        D <= DIMUX[3];
+    else if( state == PLL_RUN && frame_idx == 3'd1 )
         D <= DIMUX[3];
     else if( state == DECODE ) begin
         if( sed ) D <= 1;
@@ -929,7 +1075,9 @@ always @(posedge clk )
  * Update V flag
  */
 always @(posedge clk )
-    if( state == RTI2 ) 
+    if( state == RTI2 )
+        V <= DIMUX[6];
+    else if( state == PLL_RUN && frame_idx == 3'd1 )
         V <= DIMUX[6];
     else if( state == DECODE ) begin
         if( adc_sbc ) V <= AV;
@@ -1011,6 +1159,12 @@ always @(posedge clk or posedge reset)
                 // No stack-BRAM access, no flag updates; the new SP
                 // is latched at the end of SP_ADJ.
                 8'b0010_0010:   state <= SP_ADJ;
+                // Stage C — PSH #N ($32) / PLL #N ($62): bulk
+                // save/restore of P/SP_lo/SP_hi/Y/X/A around a
+                // function frame of N bytes of locals.  Single-port
+                // stack-BRAM, 8 cycles total per instruction.
+                8'b0011_0010:   state <= PSH0;  // PSH #N
+                8'b0110_0010:   state <= PLL0;  // PLL #N
                 8'b0xx1_1000:   state <= REG;   // CLC, SEC, CLI, SEI
                 8'b1xx0_00x0:   state <= FETCH; // IMM
                 8'b1xx0_1100:   state <= ABS0;  // X/Y abs
@@ -1064,6 +1218,15 @@ always @(posedge clk or posedge reset)
         PULL2   : state <= DECODE;
         SP_ADJ  : state <= DECODE;      // ADD SP, #imm8: SP latched, next opcode fetched
         SP0     : state <= FETCH;       // SP-relative: stack access on this cycle,
+        // Stage C — PSH walks frame_idx 0..5 in PSH0 / PSH_RUN, then
+        // FETCH does the next-opcode fetch.  PLL walks 0..6 (idx=6 is
+        // the cycle that consumes the slot-5 read response = A) before
+        // transitioning to PLL_FIN, which fetches the next opcode.
+        PSH0    : state <= PSH_RUN;
+        PSH_RUN : state <= (frame_idx == 3'd5) ? FETCH : PSH_RUN;
+        PLL0    : state <= PLL_RUN;
+        PLL_RUN : state <= (frame_idx == 3'd5) ? PLL_FIN : PLL_RUN;
+        PLL_FIN : state <= DECODE;
                                         //              then FETCH does ALU pass-through
                                         //              and prefetches the next opcode
 
@@ -1290,12 +1453,15 @@ always @(posedge clk )
 always @(posedge clk )
      if( state == DECODE && RDY )
         casex( IR )
-                // Stage B SP-relative ($42/$52/$72) must precede the
-                // generic 8'b01xx_xx10 ROR/LSR catch — otherwise
-                // alu_shift_right asserts in FETCH and the SP-rel
-                // load/ADC result comes back right-shifted.
+                // Stage B SP-relative ($42/$52/$72) and Stage C PLL
+                // ($62) must precede the generic 8'b01xx_xx10 ROR/LSR
+                // catch — otherwise alu_shift_right asserts in
+                // FETCH/PLL paths and the result comes back
+                // right-shifted (PLL would corrupt the final A
+                // commit since FETCH still runs for one cycle).
                 8'b0100_0010,   // LDX d,SP
                 8'b0101_0010,   // LDY d,SP
+                8'b0110_0010,   // PLL #N
                 8'b0111_0010:   // ADC d,SP
                                 shift_right <= 0;
 
