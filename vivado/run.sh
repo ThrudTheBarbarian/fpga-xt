@@ -55,7 +55,11 @@ set +u
 source $VIVADO_PATH/settings64.sh
 set -u
 cd ~/$REMOTE_DIR
-rm -rf build
+# The "xsa" flow re-emits the hardware handoff from an existing
+# post_route checkpoint — don't blow away build/ in that case.
+if [ "$FLOW" != "xsa" ]; then
+    rm -rf build
+fi
 vivado -mode batch -nojournal -nolog \\
     -source build.tcl \\
     -tclargs $FLOW $TOP $PART

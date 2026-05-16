@@ -29,13 +29,11 @@
 #include <stdint.h>
 #include "xparameters.h"
 #include "xil_printf.h"
-#include "xtime_l.h"
 #include "sleep.h"
 
-/* COUNTS_PER_SECOND comes from xtime_l.h on Zynq-7000; it's the
- * global timer tick rate (CPU_FREQ / 2).  For the default 666.667 MHz
- * CPU clock this is ~333 MHz.  We just use sleep() so the precise
- * value doesn't matter to us.
+/* sleep() comes from the standalone BSP's sleep.h.  No xtime_l.h
+ * dependency — we don't read the global timer directly, just block
+ * for whole seconds.
  */
 
 int main(void)

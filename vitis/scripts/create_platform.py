@@ -18,6 +18,7 @@
 # way to regenerate the workspace from the XSA.
 
 import os
+import shutil
 import sys
 import vitis
 
@@ -27,13 +28,37 @@ VITIS_DIR  = os.path.dirname(SCRIPT_DIR)
 REPO_ROOT  = os.path.dirname(VITIS_DIR)
 
 WORKSPACE  = os.path.join(VITIS_DIR, "workspace")
-XSA        = os.path.join(REPO_ROOT, "vivado", "build", "fpga_xt_top.xsa")
 APP_SRC    = os.path.join(VITIS_DIR, "app_blink", "src")
 
-if not os.path.exists(XSA):
-    print(f"ERROR: XSA not found at {XSA}")
+# The XSA lives in different places depending on where this is being
+# run from:
+#   * Local Mac:   <repo>/vivado/build/fpga_xt_top.xsa
+#   * Remote box:  ~/fpga-xt-build/build/fpga_xt_top.xsa  (run.sh only
+#                  rsyncs hdl/, build.tcl, constraints/ — no vivado/
+#                  prefix on the remote)
+# Try both; whichever exists wins.
+XSA_CANDIDATES = [
+    os.path.join(REPO_ROOT, "vivado", "build", "fpga_xt_top.xsa"),
+    os.path.join(REPO_ROOT, "build",  "fpga_xt_top.xsa"),
+]
+XSA = next((p for p in XSA_CANDIDATES if os.path.exists(p)), None)
+
+if XSA is None:
+    print("ERROR: XSA not found in any of:")
+    for p in XSA_CANDIDATES:
+        print(f"   {p}")
     print("Run `cd vivado && ./run.sh bit fpga_xt_top xc7z020-2clg400` first.")
     sys.exit(1)
+
+# Clean workspace before each run.  The Vitis Python API doesn't have
+# a clean "re-open or create" idiom — create_platform_component fails
+# with ALREADY_EXISTS if there's anything at the workspace path.  The
+# workspace is gitignored and regenerable, so wiping it is fine.  Set
+# VITIS_KEEP_WORKSPACE=1 to skip this (e.g., when you've manually
+# edited the BSP and want to rebuild the app against it).
+if os.path.exists(WORKSPACE) and not os.environ.get("VITIS_KEEP_WORKSPACE"):
+    print(f">> wiping existing workspace: {WORKSPACE}")
+    shutil.rmtree(WORKSPACE)
 
 # ---- Vitis client ----------------------------------------------------
 client = vitis.create_client()
@@ -50,7 +75,11 @@ platform = client.create_platform_component(
     hw_design=XSA,
     os="standalone",
     cpu="ps7_cortexa9_0",
-    no_boot_bsp=False,
+    # Skip the auto-generated FSBL boot BSP — its CMake step fails
+    # because the XSA doesn't currently include ps7_init.c (see notes
+    # in the FSBL block below).  Boot BSP is only needed for SD/QSPI
+    # boot; JTAG iteration runs without it.
+    no_boot_bsp=True,
 )
 status = platform.build()
 print(f">> platform build status: {status}")
@@ -59,21 +88,27 @@ PFM_FILE = os.path.join(WORKSPACE, "fpga_xt_platform", "export",
                        "fpga_xt_platform", "fpga_xt_platform.xpfm")
 DOMAIN   = "standalone_ps7_cortexa9_0"
 
-# ---- FSBL ------------------------------------------------------------
+# ---- FSBL (deferred) -------------------------------------------------
 # The Zynq FSBL initialises the PS (DDR3 calibration, clocks, MIO) and
-# then loads the user .elf + bitstream from the boot image.  Required
-# for SD / QSPI boot; not strictly needed for JTAG-only iteration
-# (xsct can do the FSBL's job directly), but generating it now keeps
-# both paths open.
-print(">> creating FSBL component ...")
-fsbl = client.create_app_component(
-    name="fsbl",
-    platform=PFM_FILE,
-    domain=DOMAIN,
-    template="zynq_fsbl",
-)
-status = fsbl.build()
-print(f">> fsbl build status: {status}")
+# is required for SD / QSPI boot.  Vitis 2025.x's zynq_fsbl template
+# wants a ps7_init.c sourced from the XSA, which our `write_hw_platform
+# -fixed -include_bit` output doesn't currently package — even though
+# the file exists in the BD's .gen tree.  Investigating in a separate
+# pass; for now JTAG boot via xsct doesn't need an FSBL (it does the
+# DDR3 calibration directly via ps7_init.tcl).
+#
+# Re-enable once the XSA-export step is fixed; see docs/bring-up.md
+# "Phase 3 — PS boots".
+if False:
+    print(">> creating FSBL component ...")
+    fsbl = client.create_app_component(
+        name="fsbl",
+        platform=PFM_FILE,
+        domain=DOMAIN,
+        template="zynq_fsbl",
+    )
+    status = fsbl.build()
+    print(f">> fsbl build status: {status}")
 
 # ---- app_blink -------------------------------------------------------
 # Bare-metal hello world that prints to UART1 (the on-board USB-UART

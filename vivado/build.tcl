@@ -112,30 +112,35 @@ foreach f [glob -nocomplain [file join [pwd] constraints *.xdc]] {
 # read_bd + generate_target.  This avoids IP-locking issues that occur when
 # a BD created in a prior Vivado session is read in non-project mode.
 if {$flow eq "bit"} {
-    # Root directory of the pre-generated PS BD project.
-    set bd_gen [file join [pwd] bd zynq_ps_bd zynq_ps_bd.gen sources_1 bd ps_bd]
+    # Two-pronged BD ingest for non-project-mode synthesis:
+    #
+    #   1. read_verilog on the BD's pre-generated *.v files — gives
+    #      the synth elaborator concrete module bodies (the BD's
+    #      out-of-context cached netlists).  Without this, synth
+    #      hits 'module ps_bd_zynq_ps_0 not found'.
+    #
+    #   2. read_bd on the .bd file — adds the BD-level metadata
+    #      (PS register config, address map, HWH file) to the
+    #      design.  Required for write_hw_platform to emit a
+    #      Vitis-consumable XSA; without it the XSA is just the
+    #      bitstream with empty handoff data.
+    #
+    # Both BD and build run Vivado 2025.2.x so the IP-locking risk
+    # that originally motivated reading source files directly no
+    # longer applies.
+    set bd_gen  [file join [pwd] bd zynq_ps_bd zynq_ps_bd.gen sources_1 bd ps_bd]
+    set bd_path [file join [pwd] bd zynq_ps_bd zynq_ps_bd.srcs sources_1 bd ps_bd ps_bd.bd]
 
-    # List of files to read, in dependency order (leaf modules first).
     set ps_files {}
-
-    # IP shared modules (leaf-level ATC, trace buffer)
     lappend ps_files [file join $bd_gen ipshared 4b52 hdl verilog processing_system7_v5_5_trace_buffer.v]
     lappend ps_files [file join $bd_gen ipshared 4b52 hdl verilog processing_system7_v5_5_w_atc.v]
     lappend ps_files [file join $bd_gen ipshared 4b52 hdl verilog processing_system7_v5_5_b_atc.v]
     lappend ps_files [file join $bd_gen ipshared 4b52 hdl verilog processing_system7_v5_5_aw_atc.v]
     lappend ps_files [file join $bd_gen ipshared 4b52 hdl verilog processing_system7_v5_5_atc.v]
-
-    # Main PS module (processing_system7_v5_5_processing_system7)
     lappend ps_files [file join $bd_gen ip ps_bd_zynq_ps_0 hdl verilog processing_system7_v5_5_processing_system7.v]
-
-    # PS IP synthesis wrapper (instantiates processing_system7_*)
     lappend ps_files [file join $bd_gen ip ps_bd_zynq_ps_0 synth ps_bd_zynq_ps_0.v]
-
-    # BD-level structural netlist (instantiates ps_bd_zynq_ps_0)
     lappend ps_files [file join $bd_gen synth ps_bd.v]
 
-    # Read all PS files if they exist.  Missing files trigger a warning
-    # but don't abort — the build continues with the AXI stub.
     set ps_ok 1
     foreach f $ps_files {
         if {[file exists $f]} {
@@ -147,10 +152,18 @@ if {$flow eq "bit"} {
         }
     }
 
-    if {$ps_ok} {
-        puts ">> PS BD sources loaded successfully."
+    if {[file exists $bd_path]} {
+        puts ">> read_bd (for handoff metadata): $bd_path"
+        read_bd $bd_path
     } else {
-        puts ">> WARNING: some PS BD sources were missing."
+        puts ">> WARNING: $bd_path missing — XSA will lack HWH metadata."
+        set ps_ok 0
+    }
+
+    if {$ps_ok} {
+        puts ">> PS BD ready for synthesis + handoff."
+    } else {
+        puts ">> WARNING: some PS BD ingest steps failed."
         puts ">> Run vivado/bd/gen_ps_bd.tcl to regenerate the BD."
         puts ">> Bitstream build will proceed without PS block — DDR and"
         puts ">> FIXED_IO ports will be unconnected."
@@ -211,9 +224,27 @@ if {$flow eq "bit"} {
     # generate the BSP / FSBL / platform.  `-fixed` says "no DFX, no
     # PR regions" — appropriate for a plain Zynq-7000 bare-metal flow.
     # `-include_bit` bundles the bitstream so a single .xsa fully
-    # describes the hardware platform.  See docs/bring-up.md.
+    # describes the hardware platform.  The filename argument is
+    # positional (UG835 — no `-file` switch).  See docs/bring-up.md.
     write_hw_platform -fixed -force -include_bit \
-        -file [file join $out_dir $top.xsa]
+        [file join $out_dir $top.xsa]
+    puts ">> hw_platform written: $out_dir/$top.xsa"
+}
+
+# ---- XSA-only flow -----------------------------------------------------
+# Quick re-emit of the .xsa from an existing post_route checkpoint.
+# Avoids re-running place+route just to refresh the Vitis handoff
+# after a script tweak.  Requires that a previous "bit" flow ran
+# (otherwise post_route.dcp doesn't exist).  Wall time: ~30 s.
+if {$flow eq "xsa"} {
+    set dcp_path [file join $out_dir post_route.dcp]
+    if {![file exists $dcp_path]} {
+        puts stderr "ERROR: $dcp_path missing — run the 'bit' flow first."
+        exit 1
+    }
+    open_checkpoint $dcp_path
+    write_hw_platform -fixed -force -include_bit \
+        [file join $out_dir $top.xsa]
     puts ">> hw_platform written: $out_dir/$top.xsa"
 }
 
