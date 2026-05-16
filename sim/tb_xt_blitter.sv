@@ -44,6 +44,7 @@ module tb_xt_blitter;
     logic [7:0]  bus_data;
     logic        bus_we;
     wire         busy;
+    wire         cq_full;
 
     // AXI4 write master
     wire [31:0] m_axi_awaddr;
@@ -85,6 +86,7 @@ module tb_xt_blitter;
         .bus_data      (bus_data),
         .bus_we        (bus_we),
         .busy          (busy),
+        .cq_full       (cq_full),
         .m_axi_awaddr  (m_axi_awaddr),
         .m_axi_awlen   (m_axi_awlen),
         .m_axi_awsize  (m_axi_awsize),
@@ -744,6 +746,80 @@ module tb_xt_blitter;
         $display("PASS: test_line_draw_blend");
     endtask
 
+    // ----------------------------------------------------------------
+    // Test 8: Command queue -- push 3 rect fills back-to-back
+    //
+    // Pushes three CMD=0x01 operations without polling busy between
+    // them: a 2x1 red rect at (0,0), a 2x1 green rect at (4,0), and
+    // a 2x1 blue rect at (8,0).  All share the same pattern memory
+    // (caveat: only the LAST loaded pattern actually applies — the
+    // queue snapshots register state, not pattern BRAM contents).
+    //
+    // The point of this test is to verify FIFO ordering and that
+    // each queued operation runs to completion without the PS poking
+    // busy in between.  We use the SAME colour pattern for all three
+    // rects to avoid the pattern-memory-shared caveat, then verify
+    // by destination address.
+    //
+    // Per rect (2 pixels at known X): 1 AXI write beat per rect since
+    // both pixels fit in one 64-bit beat (even-X start, even count).
+    // Total: 3 write beats, no reads.
+    // ----------------------------------------------------------------
+    task test_command_queue();
+        $display("=== Test 8: Command queue, 3 batched rect fills ===");
+
+        clear_logs();
+
+        // Load 1x1 solid red pattern (shared by all queued rects).
+        write_reg(16'hD4BA, 8'h00);
+        load_1x1_pattern(8'hFF, 8'h00, 8'h00, 8'hFF);
+        write_reg(16'hD4BE, 8'h00);
+
+        // Rect 1: (0,0) 2x1
+        write_reg(16'hD4B0, 8'd0);
+        write_reg(16'hD4B1, 8'd0);
+        write_reg(16'hD4B2, 8'd0);
+        write_reg(16'hD4B3, 8'd0);
+        write_reg(16'hD4B4, 8'd2);
+        write_reg(16'hD4B5, 8'd0);
+        write_reg(16'hD4B6, 8'd1);
+        write_reg(16'hD4B7, 8'd0);
+        write_reg(16'hD4BF, 8'd3);            // RASTER_OP = COPY
+        write_reg(16'hD4BC, 8'h01);           // push CMD #1
+
+        // Don't poll busy — just update regs for rect 2 and push.
+        // Rect 2: (4,0) 2x1
+        write_reg(16'hD4B0, 8'd4);
+        write_reg(16'hD4B1, 8'd0);
+        write_reg(16'hD4B4, 8'd2);
+        write_reg(16'hD4B6, 8'd1);
+        write_reg(16'hD4BC, 8'h01);           // push CMD #2
+
+        // Rect 3: (8,0) 2x1
+        write_reg(16'hD4B0, 8'd8);
+        write_reg(16'hD4B1, 8'd0);
+        write_reg(16'hD4B4, 8'd2);
+        write_reg(16'hD4B6, 8'd1);
+        write_reg(16'hD4BC, 8'h01);           // push CMD #3
+
+        // Now wait for the whole batch to drain.
+        wait_idle();
+
+        // Expect 3 write beats — one per rect, in pushed order.
+        // pixel addr (x*4 + y*8192), 8-byte-aligned beat addr.
+        //   rect1: x=0,1 → beat at 0x3000_0000, both halves = red
+        //   rect2: x=4,5 → beat at 0x3000_0010
+        //   rect3: x=8,9 → beat at 0x3000_0020
+        expect_write_count(3);
+        expect_write(0, 32'h3000_0000, {32'hFF_00_00_FF, 32'hFF_00_00_FF}, 8'hFF);
+        expect_write(1, 32'h3000_0010, {32'hFF_00_00_FF, 32'hFF_00_00_FF}, 8'hFF);
+        expect_write(2, 32'h3000_0020, {32'hFF_00_00_FF, 32'hFF_00_00_FF}, 8'hFF);
+
+        expect_read_count(0);
+
+        $display("PASS: test_command_queue");
+    endtask
+
     // ====================================================================
     // Main test scheduler
     // ====================================================================
@@ -766,6 +842,7 @@ module tb_xt_blitter;
         test_block_blit_xor();
         test_block_blit_notsrc();
         test_line_draw_blend();
+        test_command_queue();
 
         // Done
         $display("=== ALL TESTS PASSED ===");

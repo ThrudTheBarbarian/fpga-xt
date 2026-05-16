@@ -16,8 +16,10 @@
 //   Offset 0x10..0x1F (awaddr[4]=1) -> bl_addr[5]=0 ($D4Cx page)
 //
 // Writes are converted to byte-wide bl_we pulses matching the SALLY CPU's
-// access pattern.  Reads return STATUS ($D4BD, offset 0x0D) busy bit;
-// other addresses return zero.
+// access pattern.  Reads at offset 0x0D return STATUS:
+//   bit 0 = bl_busy (queue non-empty OR FSM active)
+//   bit 1 = bl_queue_full (next CMD write would be dropped)
+// All other addresses return zero.
 
 `default_nettype none
 
@@ -51,7 +53,8 @@ module axi_blitter_bridge (
     output reg         bl_we,              // 1-cycle write strobe
 
     // ---- Blitter status (clk_sys domain) ------------------------------------
-    input  wire        bl_busy             // returned on STATUS read ($D4BD)
+    input  wire        bl_busy,            // returned on STATUS read ($D4BD bit 0)
+    input  wire        bl_queue_full       // returned on STATUS read ($D4BD bit 1)
 );
 
     // ====================================================================
@@ -137,9 +140,11 @@ module axi_blitter_bridge (
                 RST_IDLE: begin
                     if (s_axi_arvalid) begin
                         s_axi_arready <= 1'b1;
-                        // Return bl_busy on STATUS read (offset 0x0D)
+                        // Return STATUS bits on read at offset 0x0D:
+                        //   bit 0 = bl_busy (queue non-empty OR FSM active)
+                        //   bit 1 = bl_queue_full (next CMD write dropped)
                         if (s_axi_araddr[7:0] == 8'h0D)
-                            s_axi_rdata <= {31'b0, bl_busy};
+                            s_axi_rdata <= {30'b0, bl_queue_full, bl_busy};
                         else
                             s_axi_rdata <= 32'd0;
                         s_axi_rresp  <= 2'b00;

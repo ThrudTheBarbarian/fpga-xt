@@ -102,8 +102,11 @@
 //                            write 0x05 → font raster (always blends);
 //                            write 0x06 → bilinear scaled blit
 //                            (snapshots DST_*, PAT_*, SRC_* registers)
-//   $D4BD   STATUS       R   read: bit 0 = busy (1 = blitter active, 0 = idle);
-//                            bits 7:1 reserved (read 0)
+//   $D4BD   STATUS       R   read: bit 0 = busy (1 = queue non-empty OR FSM
+//                            active, 0 = drained and idle);
+//                            bit 1 = queue_full (1 = next CMD write will be
+//                            dropped; poll until 0 before pushing);
+//                            bits 7:2 reserved (read 0)
 //   $D4BE   PAT_LOG_H    W   log2(pattern_height) [4:0], range 0..5
 //   $D4BF   RASTER_OP    W   GEM raster op [3:0] for block blit (CMD=0x03):
 //                            0=ZERO, 1=SRC&DST, 2=SRC&~DST, 3=SRC(copy),
@@ -162,6 +165,7 @@ module xt_blitter #(
 
     // ---- Status (clk_sys) -------------------------------------------------
     output wire        busy,
+    output wire        cq_full,            // command queue cannot accept another CMD
 
     // ---- AXI4 write master (clk_sys, drives DDR3 HP slave) ---------------
     output logic [31:0] m_axi_awaddr,
@@ -204,20 +208,18 @@ module xt_blitter #(
                 && (is_d4bx || is_d4cx);
     wire [4:0] reg_addr = {~bus_addr[5], bus_addr[3:0]};
 
-    // ---- Parameter registers (all written by SALLY) ---------------------
+    // ---- Parameter registers (all written by SALLY / PS GP0) ------------
+    // These hold the most-recent values written by software.  A CMD write
+    // ($D4BC) snapshots them (plus the CMD code and FLAGS) into the command
+    // FIFO; S_IDLE pops the oldest snapshot and copies it into the *_q
+    // working registers before firing the state machine.  Software can
+    // therefore reprogram these between CMD writes without affecting
+    // already-queued operations.
     logic [15:0] dst_x_reg, dst_y_reg, dst_w_reg, dst_h_reg;
     logic [15:0] src_x_reg, src_y_reg;
     logic [15:0] src_w_reg, src_h_reg;      // source dimensions for scaled blit
     logic [4:0]  pat_phase_x_reg, pat_phase_y_reg;
     logic [4:0]  log_pw_reg, log_ph_reg;
-    logic        start_pulse;
-    logic        line_mode;              // 1 = line draw active (routed from CMD)
-    logic        blk_mode;               // 1 = block blit active (routed from CMD)
-    logic        sc_mode;                // 1 = scaled blit active (routed from CMD)
-    logic        blend_mode;             // 1 = alpha-blend rect fill (routed from CMD)
-    logic        bilin_mode;             // 1 = bilinear scaled blit (routed from CMD)
-    logic        font_mode;              // 1 = font raster (routed from CMD=0x05)
-    logic        sc_blend;               // 1 = scaled blit + FLAGS.BLEND (CMD=0x04/0x06 + FLAGS[0])
     logic [7:0]  flags_reg;              // FLAGS register at $D4C8
     logic [3:0]  raster_op_reg;          // GEM raster op for block blit ($D4BF)
 
@@ -265,14 +267,6 @@ module xt_blitter #(
             pat_phase_y_reg <= 5'd0;
             log_pw_reg      <= 5'd0;
             log_ph_reg      <= 5'd0;
-            start_pulse     <= 1'b0;
-            line_mode       <= 1'b0;
-            blk_mode        <= 1'b0;
-            sc_mode         <= 1'b0;
-            blend_mode      <= 1'b0;
-            bilin_mode      <= 1'b0;
-            font_mode       <= 1'b0;
-            sc_blend        <= 1'b0;
             raster_op_reg   <= 4'd3;    // default: SRC copy
             flags_reg       <= 8'd0;
             src_x_reg       <= 16'd0;
@@ -285,7 +279,6 @@ module xt_blitter #(
             font_load_accum     <= 32'd0;
             font_load_byte_idx  <= 2'd0;
         end else begin
-            start_pulse <= 1'b0;
             if (reg_we) begin
                 unique case (reg_addr)
                     5'h00: dst_x_reg[7:0]   <= bus_data;
@@ -320,34 +313,16 @@ module xt_blitter #(
                         pat_load_ptr <= pat_load_ptr + 12'd1;
                     end
                     5'h0C: begin
-                        // CMD: 0x01=rect_fill, 0x02=line_draw, 0x03=block_blit,
-                        //      0x04=scaled_blit, 0x05=font_raster,
-                        //      0x06=bilinear_scaled_blit
-                        // blend_mode  = (CMD=0x01 || CMD=0x02) + FLAGS.BLEND
-                        // sc/bilin    = CMD=0x04 (+FLAGS.BILINEAR) or CMD=0x06
-                        // font_mode   = CMD=0x05 (always blends, font BRAM)
-                        // sc_blend    = CMD=0x04/0x06 + FLAGS.BLEND (any scaled blit with blend)
-                        start_pulse <= (bus_data == 8'h01) || (bus_data == 8'h02)
-                                    || (bus_data == 8'h03) || (bus_data == 8'h04)
-                                    || (bus_data == 8'h05) || (bus_data == 8'h06);
-                        line_mode   <= (bus_data == 8'h02);
-                        blk_mode    <= (bus_data == 8'h03);
-                        // CMD=0x04: NN if FLAGS.BILINEAR=0, bilinear if FLAGS.BILINEAR=1.
-                        // sc_blend covers the FLAGS.BLEND case for both.
-                        sc_mode     <= (bus_data == 8'h04) && !flags_reg[1];
-                        bilin_mode  <= (bus_data == 8'h04) && flags_reg[1]
-                                    || (bus_data == 8'h06);
-                        // sc_blend: CMD=0x04 or 0x06 with FLAGS.BLEND
-                        sc_blend    <= ((bus_data == 8'h04) || (bus_data == 8'h06))
-                                    && flags_reg[0];
-                        // blend_mode: alpha-blend with destination for rect fill
-                        // (CMD=0x01) or line draw (CMD=0x02) when FLAGS.BLEND=1.
-                        // Line-draw branch uses the same BL_RACC* pipeline as
-                        // rect-fill, discriminated by line_mode_q at the end.
-                        blend_mode  <= ((bus_data == 8'h01) || (bus_data == 8'h02))
-                                    && flags_reg[0];
-                        // font_mode = CMD=0x05 (font raster, always blends)
-                        font_mode   <= (bus_data == 8'h05);
+                        // CMD write — snapshot pushed into the command FIFO
+                        // below (outside this always_ff).  Mode flags are
+                        // derived from the snapshot's CMD code + FLAGS byte
+                        // when the entry is popped in S_IDLE.
+                        //   0x01 = rect fill        (+FLAGS.BLEND → alpha blend)
+                        //   0x02 = line draw        (+FLAGS.BLEND → alpha blend)
+                        //   0x03 = block blit       (uses RASTER_OP)
+                        //   0x04 = scaled blit      (FLAGS.BILINEAR / FLAGS.BLEND)
+                        //   0x05 = font raster      (always blends, uses font BRAM)
+                        //   0x06 = bilinear scaled blit (legacy alias for 0x04+BILINEAR)
                     end
                     5'h0E: log_ph_reg  <= bus_data[4:0];   // PAT_LOG_H
                     // $D4BF — RASTER_OP (GEM raster op for block blit)
@@ -412,6 +387,114 @@ module xt_blitter #(
                                             font_load_accum[23:16],  // byte2 → [23:16]
                                             font_load_accum[15:8],   // byte1 → [15:8]
                                             font_load_accum[7:0]};   // byte0 → [7:0]
+    end
+
+    // ====================================================================
+    // Command queue — FIFO of register snapshots
+    // ====================================================================
+    // Each CMD write ($D4BC) snapshots the current *_reg values, CMD code,
+    // FLAGS, and RASTER_OP into a fixed-width entry and pushes it into a
+    // small FIFO.  S_IDLE pops the oldest entry, derives mode flags from
+    // the snapshot's CMD + FLAGS, copies the fields into the *_q working
+    // registers, and dispatches to the first state.
+    //
+    // Software can therefore submit several operations back-to-back without
+    // polling STATUS between each one; the PS just programs the registers,
+    // writes CMD, and moves on.  When the queue is full, STATUS.queue_full
+    // (bit 1 at $D4BD) asserts and further CMD writes are silently dropped.
+    //
+    // Pattern memory and font memory are NOT snapshotted — they are shared
+    // by all queued commands.  Software wanting per-command patterns must
+    // either reload between CMDs (and let the queue drain first) or use the
+    // pattern phase/log_pw to vary tiling within one shared pattern.
+    //
+    // Implementation: 4-deep × 192-bit array with combinational front-read.
+    // Vivado typically maps to LUTRAM at this size; for deeper queues add
+    // (* ram_style = "block" *) and accept a 1-cycle pop latency.
+    localparam int Q_DEPTH = 4;
+    localparam int Q_AW    = 2;             // $clog2(Q_DEPTH)
+
+    logic [191:0]    cmd_fifo [0:Q_DEPTH-1];
+    logic [Q_AW-1:0] cq_head;               // next write slot
+    logic [Q_AW-1:0] cq_tail;               // next read slot
+    logic [Q_AW:0]   cq_count;              // occupancy, 0..Q_DEPTH
+
+    wire cq_empty_w = (cq_count == '0);
+    assign cq_full  = (cq_count == Q_DEPTH);
+
+    // Snapshot packed from current *_reg values at the moment of CMD write.
+    // Layout (MSB first):
+    //   [191:176] dst_x   [175:160] dst_y   [159:144] dst_w   [143:128] dst_h
+    //   [127:112] src_x   [111:96]  src_y   [95:80]   src_w   [79:64]   src_h
+    //   [63:56]  pat_phase_x  [55:48] pat_phase_y
+    //   [47:40]  log_pw       [39:32] log_ph
+    //   [31:24]  cmd          [23:16] flags
+    //   [15:8]   raster_op    [7:0]   reserved
+    wire [191:0] cmd_snapshot_in = {
+        dst_x_reg, dst_y_reg, dst_w_reg, dst_h_reg,
+        src_x_reg, src_y_reg, src_w_reg, src_h_reg,
+        {3'd0, pat_phase_x_reg}, {3'd0, pat_phase_y_reg},
+        {3'd0, log_pw_reg},      {3'd0, log_ph_reg},
+        bus_data, flags_reg,
+        {4'd0, raster_op_reg}, 8'd0
+    };
+
+    wire valid_cmd = (bus_data >= 8'h01) && (bus_data <= 8'h06);
+    wire cq_push   = reg_we && (reg_addr == 5'h0C) && valid_cmd && !cq_full;
+    wire cq_pop;   // driven below (forward reference; declared as wire so it
+                   // is visible to the FIFO management always_ff)
+
+    // Combinational read of the oldest entry — consumed by S_IDLE on cq_pop.
+    wire [191:0] cq_front = cmd_fifo[cq_tail];
+
+    // Unpacked fields for use in S_IDLE.
+    wire [15:0] q_dst_x      = cq_front[191:176];
+    wire [15:0] q_dst_y      = cq_front[175:160];
+    wire [15:0] q_dst_w      = cq_front[159:144];
+    wire [15:0] q_dst_h      = cq_front[143:128];
+    wire [15:0] q_src_x      = cq_front[127:112];
+    wire [15:0] q_src_y      = cq_front[111:96];
+    wire [15:0] q_src_w      = cq_front[95:80];
+    wire [15:0] q_src_h      = cq_front[79:64];
+    wire [4:0]  q_phase_x    = cq_front[60:56];
+    wire [4:0]  q_phase_y    = cq_front[52:48];
+    wire [4:0]  q_log_pw     = cq_front[44:40];
+    wire [4:0]  q_log_ph     = cq_front[36:32];
+    wire [7:0]  q_cmd        = cq_front[31:24];
+    wire [7:0]  q_flags      = cq_front[23:16];
+    wire [3:0]  q_raster_op  = cq_front[11:8];
+
+    // Mode flags re-derived from the popped snapshot.  Same logic as the
+    // pre-queue CMD-write decoder used to produce, now evaluated at pop
+    // time instead.
+    wire q_line_mode  = (q_cmd == 8'h02);
+    wire q_blk_mode   = (q_cmd == 8'h03);
+    wire q_sc_mode    = (q_cmd == 8'h04) && !q_flags[1];
+    wire q_bilin_mode = ((q_cmd == 8'h04) && q_flags[1]) || (q_cmd == 8'h06);
+    wire q_sc_blend   = ((q_cmd == 8'h04) || (q_cmd == 8'h06)) && q_flags[0];
+    wire q_blend_mode = ((q_cmd == 8'h01) || (q_cmd == 8'h02)) && q_flags[0];
+    wire q_font_mode  = (q_cmd == 8'h05);
+
+    // FIFO management
+    always_ff @(posedge clk or posedge rst) begin
+        if (rst) begin
+            cq_head  <= '0;
+            cq_tail  <= '0;
+            cq_count <= '0;
+        end else begin
+            if (cq_push) begin
+                cmd_fifo[cq_head] <= cmd_snapshot_in;
+                cq_head <= cq_head + 1'd1;
+            end
+            if (cq_pop) begin
+                cq_tail <= cq_tail + 1'd1;
+            end
+            case ({cq_push, cq_pop})
+                2'b10:   cq_count <= cq_count + 1'd1;
+                2'b01:   cq_count <= cq_count - 1'd1;
+                default: ;   // 2'b00 (no change) or 2'b11 (push and pop cancel)
+            endcase
+        end
     end
 
     // ====================================================================
@@ -481,13 +564,13 @@ module xt_blitter #(
     logic [15:0] dst_x_q, dst_y_q, dst_w_q, dst_h_q;
     logic [4:0]  phase_x_q, phase_y_q;
     logic [4:0]  log_pw_q, log_ph_q;
-    logic        line_mode_q;              // captured from line_mode at S_IDLE
-    logic        blk_mode_q;               // captured from blk_mode at S_IDLE
-    logic        sc_mode_q;                // captured from sc_mode at S_IDLE
-    logic        blend_mode_q;             // captured from blend_mode at S_IDLE
-    logic        bilin_mode_q;             // captured from bilin_mode at S_IDLE
-    logic        font_mode_q;              // captured from font_mode at S_IDLE
-    logic        sc_blend_q;               // captured from sc_blend at S_IDLE
+    logic        line_mode_q;              // derived from popped CMD at S_IDLE (q_line_mode)
+    logic        blk_mode_q;               // derived from popped CMD at S_IDLE (q_blk_mode)
+    logic        sc_mode_q;                // derived from popped CMD + FLAGS at S_IDLE
+    logic        blend_mode_q;             // derived from popped CMD + FLAGS at S_IDLE
+    logic        bilin_mode_q;             // derived from popped CMD + FLAGS at S_IDLE
+    logic        font_mode_q;              // derived from popped CMD at S_IDLE
+    logic        sc_blend_q;               // derived from popped CMD + FLAGS at S_IDLE
     logic [3:0]  raster_op_q;             // captured from raster_op_reg at S_IDLE
     // bl_need_dst: true when the raster op needs to read destination data
     // (ops 1,2,4,6,7,8,9,10,11,13,14 combine src+dst).  Ops 0/3/5/12/15 use
@@ -750,7 +833,12 @@ module xt_blitter #(
     // ---- AXI output --------------------------------------------------------
     assign m_axi_bready  = 1'b1;
     // awsize/awburst are set procedurally in S_AW (rect) and L_PLOT (line).
-    assign busy          = (state != S_IDLE);
+    // busy = FSM not idle OR work still queued — software polls this to
+    // know when a batch of CMDs has fully drained.
+    assign busy          = (state != S_IDLE) || !cq_empty_w;
+    // cq_pop fires when S_IDLE sees a non-empty queue; the same combinational
+    // signal is consumed by the FIFO-management always_ff above.
+    assign cq_pop        = (state == S_IDLE) && !cq_empty_w;
 
     // ====================================================================
     always_ff @(posedge clk or posedge rst) begin
@@ -851,28 +939,36 @@ module xt_blitter #(
             unique case (state)
 
                 // ============================================================
+                // S_IDLE — pop the next command off the FIFO and dispatch.
+                //
+                // cq_pop = (state == S_IDLE) && !cq_empty_w is computed
+                // outside the case and consumed by the FIFO-management
+                // always_ff to advance cq_tail.  Here we just snapshot the
+                // popped fields (q_*) into the working registers and pick
+                // the first state based on the popped CMD.
+                // ============================================================
                 S_IDLE: begin
-                    if (start_pulse) begin
-                        dst_x_q   <= dst_x_reg;
-                        dst_y_q   <= dst_y_reg;
-                        dst_w_q   <= dst_w_reg;
-                        dst_h_q   <= dst_h_reg;
-                        phase_x_q <= pat_phase_x_reg;
-                        phase_y_q <= pat_phase_y_reg;
-                        log_pw_q  <= log_pw_reg;
-                        log_ph_q  <= log_ph_reg;
-                        line_mode_q <= line_mode;
-                        blk_mode_q  <= blk_mode;
-                        sc_mode_q   <= sc_mode;
-                        blend_mode_q <= blend_mode;
-                        bilin_mode_q <= bilin_mode;
-                        font_mode_q  <= font_mode;
-                        sc_blend_q   <= sc_blend;
-                        raster_op_q  <= raster_op_reg;
-                        src_x_q     <= src_x_reg;
-                        src_y_q     <= src_y_reg;
-                        src_w_q     <= src_w_reg;
-                        src_h_q     <= src_h_reg;
+                    if (!cq_empty_w) begin
+                        dst_x_q   <= q_dst_x;
+                        dst_y_q   <= q_dst_y;
+                        dst_w_q   <= q_dst_w;
+                        dst_h_q   <= q_dst_h;
+                        phase_x_q <= q_phase_x;
+                        phase_y_q <= q_phase_y;
+                        log_pw_q  <= q_log_pw;
+                        log_ph_q  <= q_log_ph;
+                        line_mode_q  <= q_line_mode;
+                        blk_mode_q   <= q_blk_mode;
+                        sc_mode_q    <= q_sc_mode;
+                        blend_mode_q <= q_blend_mode;
+                        bilin_mode_q <= q_bilin_mode;
+                        font_mode_q  <= q_font_mode;
+                        sc_blend_q   <= q_sc_blend;
+                        raster_op_q  <= q_raster_op;
+                        src_x_q     <= q_src_x;
+                        src_y_q     <= q_src_y;
+                        src_w_q     <= q_src_w;
+                        src_h_q     <= q_src_h;
                         cx        <= 16'd0;
                         cy        <= 16'd0;
                         burst_len         <= 5'd0;
@@ -884,58 +980,58 @@ module xt_blitter #(
                         // eligible solid-colour fills.
                         dma_mode_q <= 1'b0;
 
-                        if (line_mode) begin
+                        if (q_line_mode) begin
                             // Line draw — skip rect init
-                            if (dst_w_reg == 16'd0 && dst_h_reg == 16'd0)
+                            if (q_dst_w == 16'd0 && q_dst_h == 16'd0)
                                 state <= S_DONE;
                             else
                                 state <= L_INIT;
-                        end else if (blk_mode) begin
+                        end else if (q_blk_mode) begin
                             // Block blit
-                            if (dst_w_reg == 16'd0 || dst_h_reg == 16'd0 || raster_op_reg == 4'd0 || raster_op_reg == 4'd5)
+                            if (q_dst_w == 16'd0 || q_dst_h == 16'd0 || q_raster_op == 4'd0 || q_raster_op == 4'd5)
                                 state <= S_DONE;
                             else
                                 state <= BL_READ;
-                        end else if (sc_mode) begin
+                        end else if (q_sc_mode) begin
                             // Scaled blit
-                            if (dst_w_reg == 16'd0 || dst_h_reg == 16'd0
-                                || src_w_reg == 16'd0 || src_h_reg == 16'd0)
+                            if (q_dst_w == 16'd0 || q_dst_h == 16'd0
+                                || q_src_w == 16'd0 || q_src_h == 16'd0)
                                 state <= S_DONE;
                             else
                                 state <= SC_ROW;
-                        end else if (blend_mode) begin
+                        end else if (q_blend_mode) begin
                             // Alpha-blend rect fill
-                            if (dst_w_reg == 16'd0 || dst_h_reg == 16'd0 || raster_op_reg == 4'd0 || raster_op_reg == 4'd5)
+                            if (q_dst_w == 16'd0 || q_dst_h == 16'd0 || q_raster_op == 4'd0 || q_raster_op == 4'd5)
                                 state <= S_DONE;
                             else
                                 state <= S_SEG;
-                        end else if (font_mode) begin
+                        end else if (q_font_mode) begin
                             // Font raster
-                            if (dst_w_reg == 16'd0 || dst_h_reg == 16'd0 || raster_op_reg == 4'd0 || raster_op_reg == 4'd5)
+                            if (q_dst_w == 16'd0 || q_dst_h == 16'd0 || q_raster_op == 4'd0 || q_raster_op == 4'd5)
                                 state <= S_DONE;
                             else
                                 state <= S_SEG;
-                        end else if (bilin_mode) begin
+                        end else if (q_bilin_mode) begin
                             // Bilinear scaled blit
-                            if (dst_w_reg == 16'd0 || dst_h_reg == 16'd0
-                                || src_w_reg == 16'd0 || src_h_reg == 16'd0)
+                            if (q_dst_w == 16'd0 || q_dst_h == 16'd0
+                                || q_src_w == 16'd0 || q_src_h == 16'd0)
                                 state <= S_DONE;
                             else
                                 state <= SC_ROW;
                         end else begin
                             // Rect fill
-                            if (dst_w_reg == 16'd0 || dst_h_reg == 16'd0 || raster_op_reg == 4'd0 || raster_op_reg == 4'd5) begin
+                            if (q_dst_w == 16'd0 || q_dst_h == 16'd0 || q_raster_op == 4'd0 || q_raster_op == 4'd5) begin
                                 state <= S_DONE;
-                            end else if (log_pw_reg == 5'd0 && log_ph_reg == 5'd0 && !blend_mode && !font_mode && !bilin_mode
-                                         && (raster_op_reg == 4'd3 || raster_op_reg == 4'd15)) begin
+                            end else if (q_log_pw == 5'd0 && q_log_ph == 5'd0 && !q_blend_mode && !q_font_mode && !q_bilin_mode
+                                         && (q_raster_op == 4'd3 || q_raster_op == 4'd15)) begin
                                 // DMA fill mode: 1×1 pattern (solid colour), no blend/font,
                                 // raster op = COPY.  Bypasses per-pixel FSM entirely.
                                 dma_mode_q      <= 1'b1;
-                                dma_next_q      <= FB_BASE + (32'(dst_y_reg) << 13) + (32'(dst_x_reg) << 2);
-                                dma_rem_rows_q  <= dst_h_reg;
-                                dma_rem_row_px_q<= dst_w_reg;
+                                dma_next_q      <= FB_BASE + (32'(q_dst_y) << 13) + (32'(q_dst_x) << 2);
+                                dma_rem_rows_q  <= q_dst_h;
+                                dma_rem_row_px_q<= q_dst_w;
                                 dma_head_q      <= 1'b1;
-                                dma_head_pad_q  <= dst_x_reg[0];
+                                dma_head_pad_q  <= q_dst_x[0];
                                 state <= S_ACCUM;   // warm up BRAM (pat_mem[0] → pat_pixel_q2)
                             end else begin
                                 dma_mode_q <= 1'b0;

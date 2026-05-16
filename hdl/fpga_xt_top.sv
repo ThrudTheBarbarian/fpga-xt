@@ -838,6 +838,7 @@ module fpga_xt_top (
     // the bl_addr_mux / bl_data_mux / bl_we_mux above.
 
     wire bl_busy;
+    wire bl_cq_full;
 
     xt_blitter #(
         .FB_BASE     (32'h3000_0000),
@@ -849,6 +850,7 @@ module fpga_xt_top (
         .bus_data        (bl_data_mux),
         .bus_we          (bl_we_mux),
         .busy            (bl_busy),
+        .cq_full         (bl_cq_full),
         .m_axi_awaddr    (hp1_awaddr),
         .m_axi_awlen     (hp1_awlen),
         .m_axi_awsize    (hp1_awsize),
@@ -876,14 +878,25 @@ module fpga_xt_top (
     );
 
     // ====================================================================
-    // CDC: blitter busy (clk_sys → clk_sally) for SALLY register reads
+    // CDC: blitter status (clk_sys → clk_sally) for SALLY register reads
     // ====================================================================
+    // Both busy and queue_full cross to clk_sally for the $D4BD STATUS
+    // readback.  cdc_sync_bit is a 2-FF synchroniser; with WIDTH=2 each
+    // bit gets its own pair (no Gray-coding needed since the bits are
+    // sampled independently and SW polls until stable).
     wire bl_busy_sally;
+    wire bl_cq_full_sally;
 
     cdc_sync_bit #(.WIDTH(1)) u_sync_bl_busy (
         .dst_clk (clk_sally),
         .src_sig (bl_busy),
         .dst_sig (bl_busy_sally)
+    );
+
+    cdc_sync_bit #(.WIDTH(1)) u_sync_bl_cq_full (
+        .dst_clk (clk_sally),
+        .src_sig (bl_cq_full),
+        .dst_sig (bl_cq_full_sally)
     );
 
     // ====================================================================
@@ -912,9 +925,11 @@ module fpga_xt_top (
     // hwreg_dout feeds into sally_mem's read pipeline — it must be
     // combinational from hwreg_addr.  Default to 8'hFF (like sally_synth_top)
     // for unassigned addresses.  The blitter STATUS register at $D4BD
-    // returns {7'b0, bl_busy_sally}.
-    assign hwreg_dout = (hwreg_addr == 16'hD4BD) ? {7'b0, bl_busy_sally}
-                       : 8'hFF;
+    // returns {6'b0, bl_cq_full_sally, bl_busy_sally} — bit 0 = busy,
+    // bit 1 = queue_full.
+    assign hwreg_dout = (hwreg_addr == 16'hD4BD)
+                            ? {6'b0, bl_cq_full_sally, bl_busy_sally}
+                            : 8'hFF;
 
     assign dbg = {bl_busy, antic_we_q, sally_step, hp0_arvalid};
 
@@ -1143,7 +1158,8 @@ module fpga_xt_top (
         .bl_addr         (bl_bridge_addr),
         .bl_data         (bl_bridge_data),
         .bl_we           (bl_bridge_we),
-        .bl_busy         (bl_busy)
+        .bl_busy         (bl_busy),
+        .bl_queue_full   (bl_cq_full)
     );
 
     `else
