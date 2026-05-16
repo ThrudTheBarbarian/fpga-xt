@@ -87,7 +87,15 @@ module axi_blitter_bridge (
 
             unique case (wstate)
                 WST_IDLE: begin
-                    if (s_axi_awvalid && s_axi_wvalid) begin
+                    // Bring-up co-tenancy: the same GP0 AXI-Lite window
+                    // ($43C0_0000..$43C0_FFFF, 64 KB) hosts both this
+                    // blitter bridge and the ROM-init loader.  The
+                    // blitter owns offsets $0000-$001F (32 bytes);
+                    // anything outside that window belongs to
+                    // sally_rom_loader.  Gate on awaddr[15:5]==0 so the
+                    // two slaves never both ack the same write.
+                    if (s_axi_awvalid && s_axi_wvalid
+                        && (s_axi_awaddr[15:5] == 11'h000)) begin
                         s_axi_awready <= 1'b1;
                         s_axi_wready  <= 1'b1;
 
@@ -143,7 +151,11 @@ module axi_blitter_bridge (
 
             unique case (rstate)
                 RST_IDLE: begin
-                    if (s_axi_arvalid) begin
+                    // Same window gating as the write side — ignore
+                    // reads outside the blitter sub-range so the
+                    // ROM-init loader can OR-mux on the same bus.
+                    if (s_axi_arvalid
+                        && (s_axi_araddr[15:5] == 11'h000)) begin
                         s_axi_arready <= 1'b1;
                         // Return STATUS bits on read at offset 0x0D:
                         //   bit 0 = bl_busy (queue non-empty OR FSM active)

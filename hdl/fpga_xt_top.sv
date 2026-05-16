@@ -487,6 +487,19 @@ module fpga_xt_top #(
         .s_high   (cpu_s_high)       // SALLY Stage A: high 4 bits of SP
     );
 
+    // ROM-init wires (driven by sally_rom_loader when USE_PS_BD is set;
+    // tied to 0 below in the OOC stub path).  Both branches need the
+    // declaration so sally_mem sees the same nets either way.
+    wire [15:0] rom_load_addr;
+    wire  [7:0] rom_load_data;
+    wire        rom_load_we;
+
+    `ifndef USE_PS_BD
+    assign rom_load_addr = 16'h0000;
+    assign rom_load_data = 8'h00;
+    assign rom_load_we   = 1'b0;
+    `endif
+
     // ---- sally_mem -------------------------------------------------------
     sally_mem #(
         .OS_ROM_HEX_PATH (""),
@@ -542,9 +555,9 @@ module fpga_xt_top #(
         .m_axi_wready       (axi_wready),
         .m_axi_bvalid       (axi_bvalid),
         .m_axi_bready       (axi_bready),
-        .rom_addr    (16'h0000),
-        .rom_data    (8'h00),
-        .rom_we      (1'b0),
+        .rom_addr    (rom_load_addr),
+        .rom_data    (rom_load_data),
+        .rom_we      (rom_load_we),
         .dma_clk     (1'b0),          // tied off — hyperram_shim handles DMA reads
         .dma_addr    (dma_addr_unused),
         .dma_rdata   (dma_rdata_unused)
@@ -1217,27 +1230,58 @@ module fpga_xt_top #(
     //
     // Bridge outputs are OR'd with the SALLY CDC path via bl_we_mux above.
 
+    // GP0 AXI-Lite is shared between two slaves at non-overlapping
+    // sub-windows of the 64 KB GP0 mapping:
+    //   * blitter bridge — offsets $0000-$001F (32 bytes)
+    //   * ROM-init loader (sally_rom_loader) — everything else, with
+    //     awaddr[15:0] mapped 1:1 to SALLY rom_addr
+    //
+    // Each slave gates its own *_ready / *_valid / *_resp on its
+    // window predicate, so the two never both ack the same write.
+    // The OR-mux below merges their responses back onto the GP0
+    // signals the PS-BD wrapper sees.
+    wire        bl_awready, bl_wready, bl_bvalid;
+    wire [1:0]  bl_bresp;
+    wire        bl_arready, bl_rvalid;
+    wire [1:0]  bl_rresp;
+    wire [31:0] bl_rdata;
+
+    wire        rom_awready, rom_wready, rom_bvalid;
+    wire [1:0]  rom_bresp;
+    wire        rom_arready, rom_rvalid;
+    wire [1:0]  rom_rresp;
+    wire [31:0] rom_rdata;
+
+    assign gp0_awready = bl_awready | rom_awready;
+    assign gp0_wready  = bl_wready  | rom_wready;
+    assign gp0_bvalid  = bl_bvalid  | rom_bvalid;
+    assign gp0_bresp   = bl_bvalid  ? bl_bresp  : rom_bresp;
+    assign gp0_arready = bl_arready | rom_arready;
+    assign gp0_rvalid  = bl_rvalid  | rom_rvalid;
+    assign gp0_rresp   = bl_rvalid  ? bl_rresp  : rom_rresp;
+    assign gp0_rdata   = bl_rvalid  ? bl_rdata  : rom_rdata;
+
     axi_blitter_bridge u_axi_bridge (
         .clk             (clk_sys),
         .rst             (rst_sys),
 
         .s_axi_awaddr    (gp0_awaddr),
         .s_axi_awvalid   (gp0_awvalid),
-        .s_axi_awready   (gp0_awready),
+        .s_axi_awready   (bl_awready),
         .s_axi_wdata     (gp0_wdata),
         .s_axi_wstrb     (gp0_wstrb),
         .s_axi_wvalid    (gp0_wvalid),
-        .s_axi_wready    (gp0_wready),
-        .s_axi_bresp     (gp0_bresp),
-        .s_axi_bvalid    (gp0_bvalid),
+        .s_axi_wready    (bl_wready),
+        .s_axi_bresp     (bl_bresp),
+        .s_axi_bvalid    (bl_bvalid),
         .s_axi_bready    (gp0_bready),
 
         .s_axi_araddr    (gp0_araddr),
         .s_axi_arvalid   (gp0_arvalid),
-        .s_axi_arready   (gp0_arready),
-        .s_axi_rdata     (gp0_rdata),
-        .s_axi_rresp     (gp0_rresp),
-        .s_axi_rvalid    (gp0_rvalid),
+        .s_axi_arready   (bl_arready),
+        .s_axi_rdata     (bl_rdata),
+        .s_axi_rresp     (bl_rresp),
+        .s_axi_rvalid    (bl_rvalid),
         .s_axi_rready    (gp0_rready),
 
         .bl_addr         (bl_bridge_addr),
@@ -1247,6 +1291,37 @@ module fpga_xt_top #(
         .bl_queue_full   (bl_cq_full),
         .bl_pat_blocked  (bl_pat_blocked),
         .bl_seq_counter  (bl_seq_counter)
+    );
+
+    // ROM-init AXI-Lite slave — see hdl/sally_rom_loader.sv.
+    sally_rom_loader u_rom_loader (
+        .clk_sys         (clk_sys),
+        .rst_sys         (rst_sys),
+
+        .s_axi_awaddr    (gp0_awaddr),
+        .s_axi_awvalid   (gp0_awvalid),
+        .s_axi_awready   (rom_awready),
+        .s_axi_wdata     (gp0_wdata),
+        .s_axi_wstrb     (gp0_wstrb),
+        .s_axi_wvalid    (gp0_wvalid),
+        .s_axi_wready    (rom_wready),
+        .s_axi_bresp     (rom_bresp),
+        .s_axi_bvalid    (rom_bvalid),
+        .s_axi_bready    (gp0_bready),
+
+        .s_axi_araddr    (gp0_araddr),
+        .s_axi_arvalid   (gp0_arvalid),
+        .s_axi_arready   (rom_arready),
+        .s_axi_rdata     (rom_rdata),
+        .s_axi_rresp     (rom_rresp),
+        .s_axi_rvalid    (rom_rvalid),
+        .s_axi_rready    (gp0_rready),
+
+        .clk_sally       (clk_sally),
+        .rst_sally       (rst_sally),
+        .rom_addr        (rom_load_addr),
+        .rom_data        (rom_load_data),
+        .rom_we          (rom_load_we)
     );
 
     `else
