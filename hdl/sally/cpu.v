@@ -233,7 +233,8 @@ parameter
     ZP0    = 6'd47, // Z-page  - fetch ZP address
     ZPX0   = 6'd48, // ZP, X   - fetch ZP, and send to ALU (+X)
     ZPX1   = 6'd49, // ZP, X   - load from memory
-    SP0    = 6'd50; // Stage B - SP-relative: fetch operand AND stack access
+    SP0    = 6'd50, // Stage B - SP-relative: fetch operand AND stack access
+    SP_ADJ = 6'd51; // Stage B - ADD SP, #imm8: write back clamped SP+d
 
 `ifdef SIM
 
@@ -294,6 +295,8 @@ always @*
             JMP1:   statename = "JMP1";
             JMPI0:  statename = "JMPI0";
             JMPI1:  statename = "JMPI1";
+            SP0:    statename = "SP0";
+            SP_ADJ: statename = "SP_ADJ";
     endcase
 
 //always @( PC )
@@ -362,7 +365,10 @@ always @*
         // suppress.
         JMP1,
         RTI4,
-        RTS3:           PC_inc = 1;
+        RTS3,
+        // Stage B ADD SP, #imm8 ($22) — SP_ADJ advances PC past the
+        // next opcode just like FETCH does for an IMM instruction.
+        SP_ADJ:         PC_inc = 1;
 
         BRA1:           PC_inc = CO ^~ backwards;
 
@@ -397,20 +403,24 @@ reg [3:0] S_high;
 wire [7:0] STACKPAGE_DYN = { 4'h0, S_high };
 
 // Stage B: SP-relative effective address.
-//   sp_q = current 12-bit SP = { S_high, AXYS[SEL_S] }
-//   d_s  = signed 8-bit displacement, sign-extended to 13 bits
+//   sp_q = current 12-bit SP = { S_high, AXYS[SEL_S] } (unsigned 0..4095)
+//   d_s  = signed 8-bit displacement (-128..+127)
 //   sp_eff_clamped = clamp(sp_q + d_s, 0, $FFF) — clamps rather than
 //   wrapping so an out-of-range displacement does not silently land
 //   the access at the wrong end of the stack BRAM.
 //
-//   The displacement comes from DIMUX during SP0 — i.e., the byte at
-//   PC+1 that was fetched in the prior cycle's address bus.
-wire signed [12:0] sp_q_signed   = { 1'b0, S_high, AXYS[SEL_S] };
-wire signed [12:0] sp_d_signed   = { {5{DIMUX[7]}}, DIMUX };
-wire signed [12:0] sp_eff_signed = sp_q_signed + sp_d_signed;
+//   Width: the sum range is −128..+4222, so we need 14-bit signed to
+//   hold the upper end (13-bit signed maxes at +4095 and wraps to
+//   negative for +4096..+4222, defeating the high-side clamp).
+//
+//   The displacement comes from DIMUX during SP0 / SP_ADJ — i.e., the
+//   byte at PC+1 that was fetched in the prior cycle's address bus.
+wire signed [13:0] sp_q_signed   = { 2'b00, S_high, AXYS[SEL_S] };
+wire signed [13:0] sp_d_signed   = { {6{DIMUX[7]}}, DIMUX };
+wire signed [13:0] sp_eff_signed = sp_q_signed + sp_d_signed;
 wire [11:0]        sp_eff_clamped =
     (sp_eff_signed < 0)              ? 12'h000 :
-    (sp_eff_signed > 13'sd4095)      ? 12'hFFF :
+    (sp_eff_signed > 14'sd4095)      ? 12'hFFF :
                                        sp_eff_signed[11:0];
 
 always @* begin
@@ -589,7 +599,12 @@ end
  * the ALU during those cycles.
  */
 always @(posedge clk)
-    if( write_register & RDY )
+    // Stage B ADD SP, #imm8: SP_ADJ writes the clamped 12-bit add
+    // result back into SP_lo; this path is independent of regsel /
+    // write_register and runs in the SP_ADJ cycle only.
+    if( RDY && state == SP_ADJ )
+        AXYS[SEL_S] <= sp_eff_clamped[7:0];
+    else if( write_register & RDY )
         AXYS[regsel] <= (state == JSR0) ? DIMUX : { ADD[7:4] + ADJH, ADD[3:0] + ADJL };
 
 /*
@@ -614,6 +629,12 @@ assign s_high = S_high;
 always @(posedge clk) begin
     if (reset)
         S_high <= 4'hF;
+    else if (RDY && state == SP_ADJ) begin
+        // Stage B ADD SP, #imm8: write the full 12-bit clamped result
+        // back into { S_high, AXYS[SEL_S] }.  The low byte is updated
+        // in the matching `AXYS[SEL_S] <= …` block below.
+        S_high <= sp_eff_clamped[11:8];
+    end
     else if (write_register & RDY & (regsel == SEL_S) & (state != JSR0)) begin
         if (AXYS[SEL_S] == 8'h00 && ADD == 8'hFF)
             S_high <= S_high - 4'd1;            // push wrap: e.g., $F00 → $EFF
@@ -621,6 +642,7 @@ always @(posedge clk) begin
             S_high <= S_high + 4'd1;            // pull wrap: e.g., $EFF → $F00
     end
 end
+
 
 /*
  * register select logic. This determines which of the A, X, Y or
@@ -984,6 +1006,11 @@ always @(posedge clk or posedge reset)
                 8'b1101_0010,                   // CMP d,SP ($D2)
                 8'b1111_0010:                   // SBC d,SP ($F2)
                                 state <= SP0;
+                // Stage B ADD SP, #imm8 ($22) — adjusts the 12-bit
+                // SP register by signed imm8 (clamped to $000..$FFF).
+                // No stack-BRAM access, no flag updates; the new SP
+                // is latched at the end of SP_ADJ.
+                8'b0010_0010:   state <= SP_ADJ;
                 8'b0xx1_1000:   state <= REG;   // CLC, SEC, CLI, SEI
                 8'b1xx0_00x0:   state <= FETCH; // IMM
                 8'b1xx0_1100:   state <= ABS0;  // X/Y abs
@@ -1035,6 +1062,7 @@ always @(posedge clk or posedge reset)
         PULL0   : state <= PULL1;
         PULL1   : state <= PULL2;
         PULL2   : state <= DECODE;
+        SP_ADJ  : state <= DECODE;      // ADD SP, #imm8: SP latched, next opcode fetched
         SP0     : state <= FETCH;       // SP-relative: stack access on this cycle,
                                         //              then FETCH does ALU pass-through
                                         //              and prefetches the next opcode

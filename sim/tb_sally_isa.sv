@@ -357,6 +357,86 @@ module tb_sally_isa;
         $display("PASS: test_cmp_d_sp");
     endtask
 
+    // ---- Test 10: ADD SP, #imm8 — basic +N/-N round trip --------------
+    //   After prologue SP=$FFF.
+    //   ADD SP, #$FC (=-4) → SP=$FFB → TSX gives X=$FB.
+    //   ADD SP, #$04 (= +4) → SP=$FFF → TSX gives X=$FF.
+    task automatic test_add_sp_basic();
+        $display("=== Test 10: ADD SP, #imm8 basic +N/-N ===");
+        reset_cpu();
+
+        mem[16'hFFFC] = 8'h00;
+        mem[16'hFFFD] = 8'h04;
+        prologue();
+
+        put(16'h0404, 8'h22); put(16'h0405, 8'hFC);             // ADD SP, #-4
+        put(16'h0406, 8'hBA);                                   // TSX
+        put(16'h0407, 8'h8E); put(16'h0408, 8'h20); put(16'h0409, 8'h03);  // STX $0320
+        put(16'h040A, 8'h22); put(16'h040B, 8'h04);             // ADD SP, #+4
+        put(16'h040C, 8'hBA);                                   // TSX
+        put(16'h040D, 8'h8E); put(16'h040E, 8'h21); put(16'h040F, 8'h03);  // STX $0321
+        put(16'h0410, 8'h4C); put(16'h0411, 8'h10); put(16'h0412, 8'h04);  // JMP $0410
+
+        run_until_stuck(16'h0410, 400, "ADD SP basic");
+        expect_mem(16'h0320, 8'hFB, "ADD SP #-4: SP_lo = $FB");
+        expect_mem(16'h0321, 8'hFF, "ADD SP #+4: SP_lo = $FF");
+        $display("PASS: test_add_sp_basic");
+    endtask
+
+    // ---- Test 11: ADD SP positive clamp at $FFF -----------------------
+    //   ADD SP, #$05 from SP=$FFF should clamp at $FFF (no overflow into
+    //   imaginary stack page $1000+).  Verify SP[7:0]=$FF.
+    task automatic test_add_sp_pos_clamp();
+        $display("=== Test 11: ADD SP positive clamp at $FFF ===");
+        reset_cpu();
+
+        mem[16'hFFFC] = 8'h00;
+        mem[16'hFFFD] = 8'h04;
+        prologue();
+
+        put(16'h0404, 8'h22); put(16'h0405, 8'h05);             // ADD SP, #+5
+        put(16'h0406, 8'hBA);                                   // TSX
+        put(16'h0407, 8'h8E); put(16'h0408, 8'h22); put(16'h0409, 8'h03);  // STX $0322
+        put(16'h040A, 8'h4C); put(16'h040B, 8'h0A); put(16'h040C, 8'h04);  // JMP $040A
+
+        run_until_stuck(16'h040A, 300, "ADD SP clamp+");
+        expect_mem(16'h0322, 8'hFF, "ADD SP clamp at $FFF: SP_lo = $FF");
+        $display("PASS: test_add_sp_pos_clamp");
+    endtask
+
+    // ---- Test 12: ADD SP crosses S_high boundary ($F → $E) ------------
+    //   Two ADD SP, #-128 ops from $FFF land at $EFF (S_high transitions
+    //   from $F to $E).  Verify by pre-populating mem[$0EFF] with a
+    //   sentinel via absolute store, then reading it back via LDA $00,SP
+    //   at the new SP — which only works if S_high updated correctly.
+    task automatic test_add_sp_cross_boundary();
+        $display("=== Test 12: ADD SP crosses S_high boundary ===");
+        reset_cpu();
+
+        mem[16'hFFFC] = 8'h00;
+        mem[16'hFFFD] = 8'h04;
+        prologue();
+
+        // Pre-populate stack BRAM slot at $0EFF with $AA via flat-mem
+        // absolute store (sally_core in this TB writes to the flat mem
+        // array, no stack-BRAM split).
+        put(16'h0404, 8'hA9); put(16'h0405, 8'hAA);             // LDA #$AA
+        put(16'h0406, 8'h8D); put(16'h0407, 8'hFF); put(16'h0408, 8'h0E);  // STA $0EFF
+        // Drag SP down across the boundary: $FFF -128 -128 = $EFF.
+        put(16'h0409, 8'h22); put(16'h040A, 8'h80);             // ADD SP, #-128
+        put(16'h040B, 8'h22); put(16'h040C, 8'h80);             // ADD SP, #-128
+        // SP should now be $EFF.  Read back via SP-relative:
+        put(16'h040D, 8'hA9); put(16'h040E, 8'h00);             // LDA #$00
+        put(16'h040F, 8'hB2); put(16'h0410, 8'h00);             // LDA $00,SP
+        put(16'h0411, 8'h8D); put(16'h0412, 8'h23); put(16'h0413, 8'h03);  // STA $0323
+        put(16'h0414, 8'h4C); put(16'h0415, 8'h14); put(16'h0416, 8'h04);  // JMP $0414
+
+        run_until_stuck(16'h0414, 500, "ADD SP cross-boundary");
+        expect_mem(16'h0323, 8'hAA,
+                   "ADD SP crosses S_high: stack[$EFF] reachable via SP-rel");
+        $display("PASS: test_add_sp_cross_boundary");
+    endtask
+
     // ---- Main scheduler -------------------------------------------------
     initial begin
         $display("=== tb_sally_isa starting ===");
@@ -375,6 +455,9 @@ module tb_sally_isa;
         test_adc_d_sp();
         test_sbc_d_sp();
         test_cmp_d_sp();
+        test_add_sp_basic();
+        test_add_sp_pos_clamp();
+        test_add_sp_cross_boundary();
 
         $display("=== ALL TESTS PASSED ===");
         $finish;

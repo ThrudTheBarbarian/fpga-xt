@@ -125,9 +125,9 @@ is near zero.
 
 | Opcode | Mnemonic | Operation | JAM? |
 |--------|----------|-----------|------|
-| `$22` | `ADD SP, #signed8` | `PC ← PC + signed8` | ✓ |
+| `$22` | `ADD SP, #signed8` | `SP ← clamp(SP + signed8, $000, $FFF)` | ✓ |
 
-This is used by the caller after a function call, and saves a whole dance where A needs to be preserved but the stack needs to be adjusted
+This is used by the caller after a function call, and saves a whole dance where A needs to be preserved but the stack needs to be adjusted.  The result is clamped to the 12-bit range, mirroring the SP-relative load/store path, so a too-large displacement does not silently wrap the SP into an unrelated area.  No flags are modified.
 
 ### Encoding note
 
