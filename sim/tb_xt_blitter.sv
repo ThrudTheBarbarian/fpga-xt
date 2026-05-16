@@ -675,6 +675,75 @@ module tb_xt_blitter;
         $display("PASS: test_block_blit_notsrc");
     endtask
 
+    // ----------------------------------------------------------------
+    // Test 7: Line draw + FLAGS.BLEND -- horizontal blended line
+    //
+    // 5-pixel horizontal line (DX=+4, DY=0) at (0,0).
+    // Pattern pixel: R=255 G=0 B=0 A=128 (half-alpha red).
+    // Destination pre-seeded with grey: R=64 G=64 B=64 A=255.
+    // FLAGS.BLEND=1 should cause each pixel to read dest, blend, write.
+    //
+    // Expected blend (per channel):
+    //   out = (src*sa + dst*inv_a + 128) >> 8
+    //   sa=128, inv_a=127
+    //   R = (255*128 + 64*127 + 128) >> 8 = 40896 >> 8 = 159 (0x9F)
+    //   G = (  0*128 + 64*127 + 128) >> 8 =  8256 >> 8 =  32 (0x20)
+    //   B = (  0*128 + 64*127 + 128) >> 8 =                  32 (0x20)
+    //   A = 128 (source alpha preserved)
+    //   Result pixel = 0x9F_20_20_80
+    //
+    // Expects 5 AXI reads + 5 AXI writes (one each per pixel).
+    // ----------------------------------------------------------------
+    task test_line_draw_blend();
+        $display("=== Test 7: Line draw + FLAGS.BLEND, DX=4 -> 5 blended pixels ===");
+
+        clear_logs();
+
+        // Pre-seed destination: 3 beats covering x=0..4 at y=0.
+        // Both halves of each beat hold the grey dest, so the read works
+        // regardless of which half the blitter extracts.
+        mem[mem_idx(32'h3000_0000)] = {32'h40_40_40_FF, 32'h40_40_40_FF};
+        mem[mem_idx(32'h3000_0008)] = {32'h40_40_40_FF, 32'h40_40_40_FF};
+        mem[mem_idx(32'h3000_0010)] = {32'h40_40_40_FF, 32'h40_40_40_FF};
+
+        // Pattern: 1x1 half-alpha red
+        write_reg(16'hD4BA, 8'h00);
+        load_1x1_pattern(8'hFF, 8'h00, 8'h00, 8'h80);
+        write_reg(16'hD4BE, 8'h00);
+
+        // Line: (0,0) → DX=+4, DY=0
+        write_reg(16'hD4B0, 8'h00);
+        write_reg(16'hD4B1, 8'h00);
+        write_reg(16'hD4B2, 8'h00);
+        write_reg(16'hD4B3, 8'h00);
+        write_reg(16'hD4B4, 8'h04);
+        write_reg(16'hD4B5, 8'h00);
+        write_reg(16'hD4B6, 8'h00);
+        write_reg(16'hD4B7, 8'h00);
+
+        // FLAGS.BLEND=1
+        write_reg(16'hD4C8, 8'h01);
+
+        write_reg(16'hD4BC, 8'h02);    // CMD = 0x02 (line draw)
+        wait_idle();
+
+        // Verify: 5 single-beat reads + 5 single-beat writes
+        expect_read_count(5);
+        expect_write_count(5);
+
+        // Blended pixel = 0x9F_20_20_80
+        expect_write(0, 32'h3000_0000, {32'h0, 32'h9F_20_20_80}, 8'h0F);
+        expect_write(1, 32'h3000_0000, {32'h9F_20_20_80, 32'h0}, 8'hF0);
+        expect_write(2, 32'h3000_0008, {32'h0, 32'h9F_20_20_80}, 8'h0F);
+        expect_write(3, 32'h3000_0008, {32'h9F_20_20_80, 32'h0}, 8'hF0);
+        expect_write(4, 32'h3000_0010, {32'h0, 32'h9F_20_20_80}, 8'h0F);
+
+        // Clear FLAGS for subsequent tests
+        write_reg(16'hD4C8, 8'h00);
+
+        $display("PASS: test_line_draw_blend");
+    endtask
+
     // ====================================================================
     // Main test scheduler
     // ====================================================================
@@ -696,6 +765,7 @@ module tb_xt_blitter;
         test_block_blit_copy();
         test_block_blit_xor();
         test_block_blit_notsrc();
+        test_line_draw_blend();
 
         // Done
         $display("=== ALL TESTS PASSED ===");

@@ -95,7 +95,8 @@
 //                            are packed R,G,B,A in that byte order — same
 //                            RGBA-8888 layout used everywhere.
 //   $D4BC   CMD          W   write 0x01 → rect fill (qualify with FLAGS);
-//                            write 0x02 → line draw;
+//                            write 0x02 → line draw (qualify with FLAGS.BLEND
+//                                          for per-pixel alpha blend);
 //                            write 0x03 → block blit;
 //                            write 0x04 → scaled blit (qualify with FLAGS);
 //                            write 0x05 → font raster (always blends);
@@ -322,7 +323,7 @@ module xt_blitter #(
                         // CMD: 0x01=rect_fill, 0x02=line_draw, 0x03=block_blit,
                         //      0x04=scaled_blit, 0x05=font_raster,
                         //      0x06=bilinear_scaled_blit
-                        // blend_mode  = CMD=0x01 + FLAGS.BLEND
+                        // blend_mode  = (CMD=0x01 || CMD=0x02) + FLAGS.BLEND
                         // sc/bilin    = CMD=0x04 (+FLAGS.BILINEAR) or CMD=0x06
                         // font_mode   = CMD=0x05 (always blends, font BRAM)
                         // sc_blend    = CMD=0x04/0x06 + FLAGS.BLEND (any scaled blit with blend)
@@ -339,8 +340,12 @@ module xt_blitter #(
                         // sc_blend: CMD=0x04 or 0x06 with FLAGS.BLEND
                         sc_blend    <= ((bus_data == 8'h04) || (bus_data == 8'h06))
                                     && flags_reg[0];
-                        // blend_mode = CMD=0x01 + FLAGS.BLEND (alpha-blend rect fill)
-                        blend_mode  <= (bus_data == 8'h01) && flags_reg[0];
+                        // blend_mode: alpha-blend with destination for rect fill
+                        // (CMD=0x01) or line draw (CMD=0x02) when FLAGS.BLEND=1.
+                        // Line-draw branch uses the same BL_RACC* pipeline as
+                        // rect-fill, discriminated by line_mode_q at the end.
+                        blend_mode  <= ((bus_data == 8'h01) || (bus_data == 8'h02))
+                                    && flags_reg[0];
                         // font_mode = CMD=0x05 (font raster, always blends)
                         font_mode   <= (bus_data == 8'h05);
                     end
@@ -588,6 +593,21 @@ module xt_blitter #(
     logic [63:0] bl_dst_prod_q;   // {R_prod, G_prod, B_prod, A_unused}
 
     // ====================================================================
+    // Line-draw blend support
+    // ====================================================================
+    // bl_read_high_half_q: registered at AR-issue time for blend reads, used
+    // in BL_RACC / SC_SBLEND to select the correct half of the 8-byte AXI3
+    // read beat.  araddr[2]=1 means the 4-byte pixel sits on rdata[63:32];
+    // araddr[2]=0 means rdata[31:0].  Without this, blend reads of odd-X
+    // destinations would latch the wrong pixel.
+    logic        bl_read_high_half_q;
+    // line_use_blend_q: set in BL_RACC_BLEND2 when returning from the line-
+    // draw blend detour.  L_PLOT consumes it to issue the AXI write with
+    // bl_blend_q instead of pat_pixel_q (and to skip the alpha re-check that
+    // would otherwise route back into the blend pipeline forever).
+    logic        line_use_blend_q;
+
+    // ====================================================================
     // DMA fill mode — solid-colour rect fill without per-pixel FSM
     //
     // When the pattern is 1×1 (solid colour, no blend/font/raster-op), the
@@ -818,6 +838,8 @@ module xt_blitter #(
             bl_src_prod_q     <= 64'd0;
             bl_dst_prod_q     <= 64'd0;
             line_step_q       <= 2'd0;
+            bl_read_high_half_q <= 1'b0;
+            line_use_blend_q  <= 1'b0;
         end else begin
             // one-shot strobes default off
             m_axi_awvalid <= 1'b0;
@@ -978,8 +1000,10 @@ module xt_blitter #(
                 // ============================================================
                 S_ACCUM_WAIT: begin
                     if (font_mode_q) begin
-                        logic [7:0]  ft_a   = pat_pixel_q2[7:0];
-                        logic [15:0] ft_mod = font_coverage2 * ft_a;
+                        logic [7:0]  ft_a;
+                        logic [15:0] ft_mod;
+                        ft_a   = pat_pixel_q2[7:0];
+                        ft_mod = font_coverage2 * ft_a;
                         ft_al_q <= ft_mod[15:8];
                     end
                     if (dma_mode_q) begin
@@ -1054,7 +1078,8 @@ module xt_blitter #(
                             state <= S_ACCUM_W2;
                         end else if (ft_al_q == 8'd255) begin
                             // Fully opaque — use pattern RGB with A=255
-                            logic [31:0] ft_px = {pat_pixel_q2[31:8], 8'd255};
+                            logic [31:0] ft_px;
+                            ft_px = {pat_pixel_q2[31:8], 8'd255};
                             if (px_in_low_half) begin
                                 beat_lo        <= ft_px;
                                 beat_strb_lo   <= 4'hF;
@@ -1087,6 +1112,7 @@ module xt_blitter #(
                             m_axi_arsize  <= 3'b010;
                             m_axi_arburst <= 2'b01;
                             m_axi_arvalid <= 1'b1;
+                            bl_read_high_half_q <= ~px_in_low_half;
                             cx <= cx + 16'd1;
                             state <= BL_RACC;
                         end
@@ -1104,6 +1130,7 @@ module xt_blitter #(
                         m_axi_arsize  <= 3'b010;   // 4 bytes
                         m_axi_arburst <= 2'b01;
                         m_axi_arvalid <= 1'b1;
+                        bl_read_high_half_q <= ~px_in_low_half;
 
                         cx <= cx + 16'd1;
                         state <= BL_RACC;
@@ -1580,31 +1607,59 @@ module xt_blitter #(
                 // ============================================================
                 // L_PLOT — pat_pixel_q valid (BRAM read from L_ACCUM cycle)
                 //
-                // Issue single-beat AXI write (awlen=0) for this pixel.
-                // awaddr = {line_pix_addr[31:3], 3'b000}  (8-byte aligned)
-                // Pixel in low half if line_pix_addr[2]==0, else high half.
-                // wstrb masks the active half based on alpha.
-                // Go to S_B to wait for B response.
+                // Three paths:
+                //   (a) blend_mode_q && 0 < pat alpha < 255 && !line_use_blend_q:
+                //       issue an AXI read for the destination pixel and detour
+                //       through BL_RACC* (4-stage blend pipeline shared with
+                //       rect-fill).  BL_RACC_BLEND2 sets line_use_blend_q and
+                //       returns to L_PLOT.
+                //   (b) line_use_blend_q: write bl_blend_q (always full strb).
+                //   (c) opaque / transparent / no-blend: write pat_pixel_q with
+                //       px_strb (alpha-derived).
+                //
+                // For (b) and (c): single-beat AXI write (awlen=0), awaddr
+                // 8-byte aligned, pixel in low half if line_pix_addr[2]==0.
+                // Go to S_B via L_PLOT_W to wait for B response.
                 // ============================================================
                 L_PLOT: begin
-                    m_axi_awaddr  <= {line_pix_addr[31:3], 3'b000};
-                    m_axi_awlen   <= 8'd0;
-                    m_axi_awsize  <= 3'b011;
-                    m_axi_awburst <= 2'b01;
-                    m_axi_awvalid <= 1'b1;
-
-                    if (line_pix_addr[2] == 1'b0) begin
-                        m_axi_wdata <= {32'd0, pat_pixel_q};
-                        m_axi_wstrb <= {4'h0, px_strb};
+                    if (blend_mode_q && !line_use_blend_q
+                        && pat_pixel_q[7:0] != 8'd0
+                        && pat_pixel_q[7:0] != 8'd255) begin
+                        // (a) partial-alpha: read dest, blend, come back here
+                        bl_src_pixel_q <= pat_pixel_q;
+                        m_axi_araddr   <= line_pix_addr;
+                        m_axi_arlen    <= 8'd0;
+                        m_axi_arsize   <= 3'b010;
+                        m_axi_arburst  <= 2'b01;
+                        m_axi_arvalid  <= 1'b1;
+                        bl_read_high_half_q <= line_pix_addr[2];
+                        state <= BL_RACC;
                     end else begin
-                        m_axi_wdata <= {pat_pixel_q, 32'd0};
-                        m_axi_wstrb <= {px_strb, 4'h0};
-                    end
-                    m_axi_wlast  <= 1'b1;
-                    m_axi_wvalid <= 1'b1;
+                        // (b)/(c) write path
+                        logic [31:0] px;
+                        logic [3:0]  st;
+                        px = line_use_blend_q ? bl_blend_q : pat_pixel_q;
+                        st = line_use_blend_q ? 4'hF       : px_strb;
 
-                    // Hold one extra cycle for slave to sample the transaction.
-                    state <= L_PLOT_W;
+                        m_axi_awaddr  <= {line_pix_addr[31:3], 3'b000};
+                        m_axi_awlen   <= 8'd0;
+                        m_axi_awsize  <= 3'b011;
+                        m_axi_awburst <= 2'b01;
+                        m_axi_awvalid <= 1'b1;
+
+                        if (line_pix_addr[2] == 1'b0) begin
+                            m_axi_wdata <= {32'd0, px};
+                            m_axi_wstrb <= {4'h0, st};
+                        end else begin
+                            m_axi_wdata <= {px, 32'd0};
+                            m_axi_wstrb <= {st, 4'h0};
+                        end
+                        m_axi_wlast  <= 1'b1;
+                        m_axi_wvalid <= 1'b1;
+
+                        line_use_blend_q <= 1'b0;
+                        state <= L_PLOT_W;
+                    end
                 end
 
                 // ============================================================
@@ -1949,6 +2004,7 @@ module xt_blitter #(
                         m_axi_arsize   <= 3'b010;
                         m_axi_arburst  <= 2'b01;
                         m_axi_arvalid  <= 1'b1;
+                        bl_read_high_half_q <= ~(dst_x_q[0] == cx[0]);
                         state <= SC_SBLEND;
                         // Note: cx NOT incremented here — SC_SBLEND handles cx
                         // advance after the blend/accumulate.
@@ -2138,10 +2194,14 @@ module xt_blitter #(
                         bl_div_cycle_q <= 4'd1;
                     end else if (bl_div_cycle_q <= 4'd8) begin
                         // Cycles 1..8: shift-and-compare iteration
-                        logic [16:0] rem_x_sh = {bl_rem_x_q[15:0], 1'b0};
-                        logic [16:0] rem_y_sh = {bl_rem_y_q[15:0], 1'b0};
-                        logic        bit_x    = (rem_x_sh >= {1'b0, dst_w_q});
-                        logic        bit_y    = (rem_y_sh >= {1'b0, dst_h_q});
+                        logic [16:0] rem_x_sh;
+                        logic [16:0] rem_y_sh;
+                        logic        bit_x;
+                        logic        bit_y;
+                        rem_x_sh = {bl_rem_x_q[15:0], 1'b0};
+                        rem_y_sh = {bl_rem_y_q[15:0], 1'b0};
+                        bit_x    = (rem_x_sh >= {1'b0, dst_w_q});
+                        bit_y    = (rem_y_sh >= {1'b0, dst_h_q});
 
                         bl_rem_x_q[15:0] <= bit_x ? (rem_x_sh[15:0] - dst_w_q) : rem_x_sh[15:0];
                         bl_rem_y_q[15:0] <= bit_y ? (rem_y_sh[15:0] - dst_h_q) : rem_y_sh[15:0];
@@ -2197,14 +2257,18 @@ module xt_blitter #(
                 // 6.667 ns at 150 MHz with the full PS BD clock tree.
                 // ============================================================
                 SC_BL_BLEND: begin
-                    logic [15:0] r_blend = p00_q[31:24] * bl_w00_q + p10_q[31:24] * bl_w10_q
-                                         + p01_q[31:24] * bl_w01_q + p11_q[31:24] * bl_w11_q;
-                    logic [15:0] g_blend = p00_q[23:16] * bl_w00_q + p10_q[23:16] * bl_w10_q
-                                         + p01_q[23:16] * bl_w01_q + p11_q[23:16] * bl_w11_q;
-                    logic [15:0] b_blend = p00_q[15:8]  * bl_w00_q + p10_q[15:8]  * bl_w10_q
-                                         + p01_q[15:8]  * bl_w01_q + p11_q[15:8]  * bl_w11_q;
-                    logic [15:0] a_blend = p00_q[7:0]   * bl_w00_q + p10_q[7:0]   * bl_w10_q
-                                         + p01_q[7:0]   * bl_w01_q + p11_q[7:0]   * bl_w11_q;
+                    logic [15:0] r_blend;
+                    logic [15:0] g_blend;
+                    logic [15:0] b_blend;
+                    logic [15:0] a_blend;
+                    r_blend = p00_q[31:24] * bl_w00_q + p10_q[31:24] * bl_w10_q
+                            + p01_q[31:24] * bl_w01_q + p11_q[31:24] * bl_w11_q;
+                    g_blend = p00_q[23:16] * bl_w00_q + p10_q[23:16] * bl_w10_q
+                            + p01_q[23:16] * bl_w01_q + p11_q[23:16] * bl_w11_q;
+                    b_blend = p00_q[15:8]  * bl_w00_q + p10_q[15:8]  * bl_w10_q
+                            + p01_q[15:8]  * bl_w01_q + p11_q[15:8]  * bl_w11_q;
+                    a_blend = p00_q[7:0]   * bl_w00_q + p10_q[7:0]   * bl_w10_q
+                            + p01_q[7:0]   * bl_w01_q + p11_q[7:0]   * bl_w11_q;
 
                     bl_pixel_q[31:24] <= r_blend[15:8];
                     bl_pixel_q[23:16] <= g_blend[15:8];
@@ -2224,8 +2288,10 @@ module xt_blitter #(
                 // states so no additional pipeline delay is incurred.
                 // ============================================================
                 SC_BL_ACC2: begin
-                    logic [7:0]  bl_pixel_a = bl_pixel_q[7:0];
-                    logic [31:0] bl_pixel   = bl_pixel_q;
+                    logic [7:0]  bl_pixel_a;
+                    logic [31:0] bl_pixel;
+                    bl_pixel_a = bl_pixel_q[7:0];
+                    bl_pixel   = bl_pixel_q;
 
                     // ---- Alpha-aware dispatch (when sc_blend_q is set) ---------
                     if (sc_blend_q && bl_pixel_a != 8'd0 && bl_pixel_a != 8'd255) begin
@@ -2239,6 +2305,7 @@ module xt_blitter #(
                         m_axi_arsize   <= 3'b010;
                         m_axi_arburst  <= 2'b01;
                         m_axi_arvalid  <= 1'b1;
+                        bl_read_high_half_q <= ~(dst_x_q[0] == cx[0]);
                         state <= SC_SBLEND;
                         // cx NOT incremented — SC_SBLEND handles that after blend
 
@@ -2318,7 +2385,8 @@ module xt_blitter #(
                     m_axi_rready <= 1'b1;
 
                     if (m_axi_rvalid) begin
-                        bl_dst_q <= m_axi_rdata[31:0];
+                        bl_dst_q <= bl_read_high_half_q ? m_axi_rdata[63:32]
+                                                        : m_axi_rdata[31:0];
                         state <= SC_SBLEND_BLEND;
                     end
                 end
@@ -2329,9 +2397,12 @@ module xt_blitter #(
                 // Same arithmetic as BL_RACC_BLEND — pipeline stage 1 of 2.
                 // ============================================================
                 SC_SBLEND_BLEND: begin
-                    logic [7:0]  sa      = bl_src_pixel_q[7:0];
-                    logic [7:0]  inv_a   = 8'd255 - sa;
-                    logic [31:0] dst     = bl_dst_q;
+                    logic [7:0]  sa;
+                    logic [7:0]  inv_a;
+                    logic [31:0] dst;
+                    sa    = bl_src_pixel_q[7:0];
+                    inv_a = 8'd255 - sa;
+                    dst   = bl_dst_q;
 
                     bl_src_prod_q[63:48] <= bl_src_pixel_q[31:24] * sa;
                     bl_src_prod_q[47:32] <= bl_src_pixel_q[23:16] * sa;
@@ -2422,19 +2493,23 @@ module xt_blitter #(
                 // ============================================================
                 // BL_RACC — wait for destination read data, register dst
                 //
-                // Destination pixel arrives on m_axi_rdata[31:0] (4-byte
-                // single-beat read).  We register it in bl_dst_q so the blend
-                // multiply-accumulate can be pipelined across two more stages
-                // without the AXI read-data distribution delay.
+                // Destination pixel arrives on the 4-byte AXI3 read beat in
+                // either m_axi_rdata[31:0] (low half, araddr[2]=0) or
+                // m_axi_rdata[63:32] (high half, araddr[2]=1).  We register
+                // it in bl_dst_q so the blend multiply-accumulate can be
+                // pipelined across two more stages without the AXI read-
+                // data distribution delay.
                 //
                 // Pipeline: BL_RACC (reg dst) → BL_RACC_BLEND (products) →
-                //           BL_RACC_BLEND2 (combine) → BL_RACC2 (accumulate).
+                //           BL_RACC_BLEND2 (combine) → BL_RACC2 (accumulate
+                //           into burst buffer) or → L_PLOT (line-draw write).
                 // ============================================================
                 BL_RACC: begin
                     m_axi_rready <= 1'b1;
 
                     if (m_axi_rvalid) begin
-                        bl_dst_q <= m_axi_rdata[31:0];
+                        bl_dst_q <= bl_read_high_half_q ? m_axi_rdata[63:32]
+                                                        : m_axi_rdata[31:0];
                         state <= BL_RACC_BLEND;
                     end
                 end
@@ -2451,9 +2526,12 @@ module xt_blitter #(
                 // Pipeline stage 1 of 2 (stage 2 = BL_RACC_BLEND2 combines).
                 // ============================================================
                 BL_RACC_BLEND: begin
-                    logic [7:0]  sa    = bl_src_pixel_q[7:0];   // source alpha
-                    logic [7:0]  inv_a = 8'd255 - sa;
-                    logic [31:0] dst   = bl_dst_q;              // registered dest
+                    logic [7:0]  sa;
+                    logic [7:0]  inv_a;
+                    logic [31:0] dst;
+                    sa    = bl_src_pixel_q[7:0];   // source alpha
+                    inv_a = 8'd255 - sa;
+                    dst   = bl_dst_q;              // registered dest
 
                     bl_src_prod_q[63:48] <= bl_src_pixel_q[31:24] * sa;
                     bl_src_prod_q[47:32] <= bl_src_pixel_q[23:16] * sa;
@@ -2489,7 +2567,15 @@ module xt_blitter #(
                                         + bl_dst_prod_q[31:16] + 16'd128) >> 8;
                     bl_blend_q[7:0]   <= bl_src_pixel_q[7:0];   // preserve source alpha
                     bl_blend_valid_q  <= 1'b1;
-                    state <= BL_RACC2;
+                    // Line-draw blend returns to L_PLOT to issue the AXI write
+                    // for this pixel; rect-fill goes to BL_RACC2 to accumulate
+                    // into the burst buffer.
+                    if (line_mode_q) begin
+                        line_use_blend_q <= 1'b1;
+                        state <= L_PLOT;
+                    end else begin
+                        state <= BL_RACC2;
+                    end
                 end
 
                 // ============================================================
