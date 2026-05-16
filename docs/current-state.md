@@ -2,6 +2,12 @@
 
 Session date: 2026-05-16.
 
+## Handoff for next session — fix remaining timing bugs
+
+While waiting for a Z-Turn board, squash the last ~3 failing timing paths
+on clk_sys (WNS -0.030 ns, all in the Bresenham line-draw engine in
+xt_blitter).  See the "Residual timing fixes needed" section below.
+
 ## Overall goals
 
 See [docs/zynq-architecture.md](./zynq-architecture.md) for the full plan.
@@ -214,7 +220,7 @@ The remaining 9468 endpoints have positive slack.
 the apparent path through RDY → CPU address → memory busy → RDY by registering
 `busy_n` at the sally_clock input.
 
-The three pipeline splits from v0.15 that broke the blitter's critical paths:
+Three pipeline splits were required to break the blitter's critical paths:
 
 1. **Bilinear blend weight pipeline** (SC_BL_ACC → SC_BL_BLEND, v0.14):
    Registered the four 9-bit bilinear weights (w00/w10/w01/w11) between weight
@@ -466,6 +472,104 @@ Per [zynq-architecture.md](./zynq-architecture.md) Phase 1 / 2 criteria:
 - ✅ **All clocks positive** except 3 marginal endpoints on the pre-existing
   line_dy → cx Bresenham path (-0.030 ns, TNS -0.081 ns).  This is
   placement noise from the added FF; functionally insignificant.
+
+## Residual timing fixes needed (before hardware bring-up)
+
+### 1. Bresenham line-draw pipeline (L_STEP) — -0.030 ns WNS
+
+**The problem:** 3 failing endpoints on `line_dy_reg[0] → cx_reg[15]` in
+L_STEP (hdl/xt_blitter.sv ~line 1634).  The data path is 6.604 ns
+(logic 3.779 ns, route 2.825 ns) with 14 logic levels and 9 CARRY4s:
+
+```
+line_err_reg → be2 (<<1) → bstep_x compare (−line_dy)  [CARRY4×2]
+           → bstep_y compare (+line_dx)                   [CARRY4×2]
+           → berr_delta mux + add                         [CARRY4×2]
+           → line_err update                              [CARRY4×2]
+           → cx = line_x ± step_x − dst_x_q               [CARRY4×1]
+```
+
+**The fix:** Split L_STEP into two states — L_STEP (register step flags)
+and L_STEP2 (apply registered flags).  Same pattern as the BL_RACC
+pipeline in v0.15.
+
+**What to change (xt_blitter.sv):**
+
+a) Add state codes:
+```
+L_STEP   = 6'd13,  // cycle 1: compute bstep_x/bstep_y, register them
+L_STEP2  = 6'd47,  // cycle 2: update line_x, line_y, cx from registered flags
+```
+(6'd47 is free — next unused after SC_SBLEND_BLEND2 = 6'd46)
+
+b) Add a 2-bit step-flag register:
+```
+logic [1:0] line_step_q;   // {bstep_y, bstep_x} registered in L_STEP, used in L_STEP2
+```
+
+c) Modify L_STEP to compute and register flags only:
+```systemverilog
+L_STEP: begin
+    if (line_x == line_x_end && line_y == line_y_end) begin
+        state <= S_DONE;
+    end else begin
+        line_step_q <= {bstep_y, bstep_x};  // register step flags
+        state <= L_STEP2;
+    end
+end
+```
+
+d) Add L_STEP2 to apply the registered flags:
+```systemverilog
+L_STEP2: begin
+    line_err <= line_err + berr_delta;  // berr_delta still combinational from current line_err
+    
+    if (line_step_q[0]) begin           // bstep_x (registered)
+        if (line_sx) line_x <= line_x + 16'd1;
+        else         line_x <= line_x - 16'd1;
+    end
+    if (line_step_q[1]) begin           // bstep_y (registered)
+        if (line_sy) line_y <= line_y + 16'd1;
+        else         line_y <= line_y - 16'd1;
+    end
+    
+    cx <= (line_x + (line_step_q[0] ? (line_sx ? 16'd1 : -16'd1) : 16'd0)) - dst_x_q;
+    cy <= (line_y + (line_step_q[1] ? (line_sy ? 16'd1 : -16'd1) : 16'd0)) - dst_y_q;
+    
+    state <= L_ACCUM;
+end
+```
+
+e) Add `line_step_q` to the reset block (`<= 2'd0`).
+
+This splits the 9-CARRY4 chain into:
+- L_STEP: be2 → bstep_x/bstep_y (~4 CARRY4s) → 2-bit register
+- L_STEP2: berr_delta → line_err + cx/cy (~5 CARRY4s)
+
+Each half should fit within 6.667 ns.  Cost: +2 FFs, +1 cycle per pixel
+(negligible — line draw is already I/O-bound by single-beat AXI writes).
+
+After the fix, rebuild (OOC first for quick turnaround) and verify
+clk_sys WNS ≥ +0.1 ns.
+
+### 2. SALLY ALU pipeline (optional — 0.569 ns WNS, headroom only)
+
+clk_sally at 100 MHz has WNS +0.569 ns — fine for the target frequency.
+No action needed unless you want to raise clk_sally above 100 MHz later.
+
+### Build command for timing verification
+
+```
+# OOC (fast, ~3 min) — use for iterative development:
+cd ~/fpga-xt-build && rm -f build/*.dcp build/*.rpt
+vivado -mode batch -source build.tcl -tclargs synth fpga_xt_top xc7z020clg400-2
+# Check timing:
+grep 'clk_sys_unbuf' build/post_synth_timing.rpt
+
+# Full bitstream (with PS BD, ~6 min) — final verification:
+rm -f build/*.bit build/*.rpt build/*.dcp
+vivado -mode batch -source build.tcl -tclargs bit fpga_xt_top xc7z020clg400-2
+```
 
 ### Phase 3 — FreeRTOS + LVGL
 
