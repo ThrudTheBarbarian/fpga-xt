@@ -1,12 +1,18 @@
-# Current state — Phase 2b v0.16 (fix SALLY RDY combinatorial loop)
+# Current state — Phase 2b v0.17 (split Bresenham L_STEP for clk_sys closure)
 
 Session date: 2026-05-16.
 
-## Handoff for next session — fix remaining timing bugs
+## Handoff for next session — hardware bring-up
 
-While waiting for a Z-Turn board, squash the last ~3 failing timing paths
-on clk_sys (WNS -0.030 ns, all in the Bresenham line-draw engine in
-xt_blitter).  See the "Residual timing fixes needed" section below.
+PL-side bitstream is now timing-clean at 150 MHz on `clk_sys` with the
+full PS BD in place (WNS +0.140 ns, 0 failing endpoints).  The Bresenham
+line-draw chain was split across two states (L_STEP + L_STEP2) and the
+critical path moved away from the line-draw engine entirely.
+
+Next session: bring up the Z-Turn SOM when it arrives — flash the
+bitstream via JTAG, build a minimal Vitis FreeRTOS BSP on the
+Cortex-A9s, and exercise the AXI-Lite GP0 register window into the
+blitter (write CMD → poll STATUS busy bit via $D4BD).
 
 ## Overall goals
 
@@ -181,7 +187,7 @@ to `{~bus_addr[5], bus_addr[3:0]}`, restoring $D4Bx → DST/PAT/CMD (0-15)
 and $D4Cx → SRC/FLAGS/FONT (16-31).  Any PS software written for the
 v0.4–v0.6 behaviour must update its register addresses.
 
-## Timing — three domains (Phase 2b v0.16, all features + PS BD, bitstream build, pipelined blend paths, RDY loop fixed)
+## Timing — three domains (Phase 2b v0.17, all features + PS BD, bitstream build, Bresenham L_STEP split)
 
 Two timing snapshots are relevant:
 
@@ -201,26 +207,30 @@ Critical path: line_dy → line_err Bresenham engine, 14 levels, 6.282 ns.
 **clk_sally at 100 MHz**: WNS = +0.767 ns. Critical path: BRAM read-to-write
 through SALLY ALU address decoder (7 logic levels, 8.704 ns).
 
-### Full bitstream build (with PS block design) — 150 MHz clk_sys ✅ DRC loop-free
+### Full bitstream build (with PS block design) — 150 MHz clk_sys ✅ all clocks closed
 
 ```
 Intra-clock:
-  clk_pix     (148.4375 MHz)  WNS +3.367   WHS +0.189     132 endpoints  ✅
-  clk_sally   (100.0000 MHz)  WNS +0.569   WHS +0.137    1026 endpoints  ✅
-  clk_sys     (150.0000 MHz)  WNS -0.030   WHS +0.036    9471 endpoints  ⚠️ (3 marginal)
+  clk_pix     (148.4375 MHz)  WNS +3.112   WHS +0.094     132 endpoints  ✅
+  clk_sally   (100.0000 MHz)  WNS +0.867   WHS +0.189    1026 endpoints  ✅
+  clk_sys     (150.0000 MHz)  WNS +0.140   WHS +0.097    9480 endpoints  ✅
 ```
 
-**clk_sys at 150 MHz** — The RDY-loop fix registered `busy_n` in sally_clock,
-adding 1 FF that shifted placement slightly. The pre-existing Bresenham
-line-draw path (`line_dy_reg[0] → cx_reg[15]`, 14 levels, 9 CARRY4s) is
-now marginally failing at -0.030 ns (3 endpoints, TNS -0.081 ns).
-The remaining 9468 endpoints have positive slack.
+**clk_sys at 150 MHz** — Splitting Bresenham L_STEP into L_STEP +
+L_STEP2 (v0.17) registered the bstep_x/bstep_y flags in `line_step_q`,
+breaking the 9-CARRY4 chain (`line_dy_reg[0] → be2 → bstep compares →
+berr_delta → line_err → cx`) into ~4-CARRY4 (L_STEP: be2→bstep) and
+~5-CARRY4 (L_STEP2: berr_delta_q→line_err+cx) halves.  The new clk_sys
+worst path is `pat_pixel_q2_reg → burst_data_reg` (rect-fill burst
+accumulation, 7 logic levels, 0 CARRY4s, 6.207 ns dominated 82 % by
+route).  All three clocks closed with positive slack and 0 failing
+endpoints.
 
 **DRC**: LUTLP-1 (combinatorial loop) no longer fires — the RDY fix breaks
 the apparent path through RDY → CPU address → memory busy → RDY by registering
 `busy_n` at the sally_clock input.
 
-Three pipeline splits were required to break the blitter's critical paths:
+Four pipeline splits were required to break the blitter's critical paths:
 
 1. **Bilinear blend weight pipeline** (SC_BL_ACC → SC_BL_BLEND, v0.14):
    Registered the four 9-bit bilinear weights (w00/w10/w01/w11) between weight
@@ -237,19 +247,27 @@ Three pipeline splits were required to break the blitter's critical paths:
    chain that sums the two products is now a separate 4-level stage instead
    of an 8-level combined multiply-accumulate.  Gained ~0.2 ns.
 
-Total improvement on the alpha-blend path: from -0.880 ns → +0.143 ns.
+4. **Bresenham step-flag register** (L_STEP → L_STEP2, v0.17):
+   Registered `{bstep_y, bstep_x}` in `line_step_q` between cycle 1 (the
+   be2→bstep compares from line_err) and cycle 2 (berr_delta_q → line_err
+   update and the cx/cy stepping subtract).  Split the 9-CARRY4 chain
+   (`line_err → be2 → bstep → berr_delta → line_err → cx`) into ~4-CARRY4
+   and ~5-CARRY4 halves.  Fixed WNS from -0.030 ns → +0.140 ns.
 
-**Utilization (bitstream build v0.15):**
-| Resource | OOC v0.13 | Bitstream v0.14 | Bitstream v0.15 | Available | Util% |
+Total improvement: alpha-blend -0.880 → +0.143 ns (v0.14→v0.15), then
+line-draw -0.030 → +0.140 ns (v0.16→v0.17).
+
+**Utilization (bitstream build v0.17):**
+| Resource | OOC v0.13 | Bitstream v0.15 | Bitstream v0.17 | Available | Util% |
 |----------|----------:|-----------------:|-----------------:|----------:|------:|
-| Slice LUTs | 2,611 | 5,158 | 5,036 | 53,200 | 9.47% |
-| Slice Registers | 2,902 | 4,932 | 5,047 | 106,400 | 4.74% |
+| Slice LUTs | 2,611 | 5,036 | 5,096 | 53,200 | 9.58% |
+| Slice Registers | 2,902 | 5,047 | 5,052 | 106,400 | 4.75% |
 | Block RAM Tile | 35.5 | 37.5 | 37.5 | 140 | 26.43% |
 | BUFG | 5 | 6 | 6 | 32 | 18.75% |
 | MMCME2 | 2 | 2 | 2 | 4 | 50.00% |
 
-Pipeline registers added ~115 FFs; the product-register optimisation let
-Vivado drop ~122 LUTs vs v0.14.
+L_STEP split added +5 FFs and +60 LUTs vs v0.15 — well under 0.2 %
+of device capacity.
 
 ### Fixes applied in v0.13
 
@@ -354,7 +372,7 @@ Per [zynq-architecture.md](./zynq-architecture.md) Phase 1 / 2 criteria:
 | Zynq PS block design generated | ✅ `gen_ps_bd.tcl` creates a BD project with HP0/HP1 as external AXI3 64-bit slave interfaces, DDR3 (1 GB, 32-bit), FCLK_CLK0 at 150 MHz. Usable in Vivado for block-diagram view. |
 | BD integrated into OOC synthesis | ✅ AXI masters (fb_scanout → HP0, xt_blitter → HP1) connect through internal `zynq_ps_hp_stub` AXI3 responder. AXI logic preserved in OOC synth. No external AXI ports on `fpga_xt_top`. |
 | Per-module testbenches pass | ⚠️ Not yet run under Vivado XSIM (no local simulator setup). |
-| Real-hardware DDR3 read/write | ⚠️ Requires Zynq PS block design with PS/HP-port wiring in the bitstream build. PL-side logic timing closed at 150 MHz (v0.15, clk_sys WNS +0.143 ns with full PS BD). clk_sally timing closed at WNS +0.527 ns. |
+| Real-hardware DDR3 read/write | ⚠️ Requires Zynq PS block design with PS/HP-port wiring in the bitstream build. PL-side logic timing closed at 150 MHz (v0.17, clk_sys WNS +0.140 ns with full PS BD, all 9480 endpoints positive). clk_sally timing closed at WNS +0.867 ns. |
 
 ## Next steps (Phase 2b v0.10 onward)
 
@@ -470,91 +488,36 @@ Per [zynq-architecture.md](./zynq-architecture.md) Phase 1 / 2 criteria:
   comment noting the fix.  The bitstream DRC pre-check no longer reports
   LUTLP-1 violations.
 - ✅ **All clocks positive** except 3 marginal endpoints on the pre-existing
-  line_dy → cx Bresenham path (-0.030 ns, TNS -0.081 ns).  This is
-  placement noise from the added FF; functionally insignificant.
+  line_dy → cx Bresenham path (-0.030 ns, TNS -0.081 ns) — fixed in v0.17.
+
+### Phase 2b v0.17 — Split Bresenham L_STEP for clk_sys closure
+
+- ✅ **L_STEP split into L_STEP + L_STEP2**: Registered `{bstep_y, bstep_x}`
+  in a new 2-bit `line_step_q` between cycle 1 (`be2 → bstep` compares from
+  `line_err`) and cycle 2 (`berr_delta_q → line_err update → cx/cy step`).
+  Added a `berr_delta_q` wire that uses `line_step_q` instead of the
+  combinational `bstep_x/bstep_y`, so the be2→bstep compare chain stays
+  entirely in L_STEP and doesn't recur in L_STEP2.  Same pipeline pattern
+  as v0.15's BL_RACC split.  State code: `L_STEP2 = 6'd47`.
+- ✅ **clk_sys 150 MHz timing closed (bitstream + PS BD)**: WNS +0.140 ns,
+  WHS +0.097 ns, **0 failing endpoints out of 9480**.  New worst path is
+  `pat_pixel_q2_reg → burst_data_reg` (rect-fill burst accumulation,
+  7 logic levels, 0 CARRY4s, 6.207 ns, 82 % route-dominated).
+- ✅ **All clocks closed**: clk_pix +3.112 ns, clk_sally +0.867 ns,
+  clk_sys +0.140 ns.
+- ✅ **iverilog testbench**: All 6 existing tb_xt_blitter tests still pass
+  (pattern fill, transparent skip, horizontal line draw, block-blit
+  copy / XOR / NOT-SRC).  The +1 cycle latency per Bresenham pixel is
+  absorbed by the existing AXI write-handshake wait states.
+- ✅ **Utilization**: 5,096 LUTs (+60), 5,052 FFs (+5), 37.5 BRAM (unchanged)
+  vs v0.15.  Cost is negligible — line draw is I/O-bound by single-beat
+  AXI writes, so the extra cycle per pixel doesn't affect throughput.
 
 ## Residual timing fixes needed (before hardware bring-up)
 
-### 1. Bresenham line-draw pipeline (L_STEP) — -0.030 ns WNS
+### 1. SALLY ALU pipeline (optional — 0.867 ns WNS, headroom only)
 
-**The problem:** 3 failing endpoints on `line_dy_reg[0] → cx_reg[15]` in
-L_STEP (hdl/xt_blitter.sv ~line 1634).  The data path is 6.604 ns
-(logic 3.779 ns, route 2.825 ns) with 14 logic levels and 9 CARRY4s:
-
-```
-line_err_reg → be2 (<<1) → bstep_x compare (−line_dy)  [CARRY4×2]
-           → bstep_y compare (+line_dx)                   [CARRY4×2]
-           → berr_delta mux + add                         [CARRY4×2]
-           → line_err update                              [CARRY4×2]
-           → cx = line_x ± step_x − dst_x_q               [CARRY4×1]
-```
-
-**The fix:** Split L_STEP into two states — L_STEP (register step flags)
-and L_STEP2 (apply registered flags).  Same pattern as the BL_RACC
-pipeline in v0.15.
-
-**What to change (xt_blitter.sv):**
-
-a) Add state codes:
-```
-L_STEP   = 6'd13,  // cycle 1: compute bstep_x/bstep_y, register them
-L_STEP2  = 6'd47,  // cycle 2: update line_x, line_y, cx from registered flags
-```
-(6'd47 is free — next unused after SC_SBLEND_BLEND2 = 6'd46)
-
-b) Add a 2-bit step-flag register:
-```
-logic [1:0] line_step_q;   // {bstep_y, bstep_x} registered in L_STEP, used in L_STEP2
-```
-
-c) Modify L_STEP to compute and register flags only:
-```systemverilog
-L_STEP: begin
-    if (line_x == line_x_end && line_y == line_y_end) begin
-        state <= S_DONE;
-    end else begin
-        line_step_q <= {bstep_y, bstep_x};  // register step flags
-        state <= L_STEP2;
-    end
-end
-```
-
-d) Add L_STEP2 to apply the registered flags:
-```systemverilog
-L_STEP2: begin
-    line_err <= line_err + berr_delta;  // berr_delta still combinational from current line_err
-    
-    if (line_step_q[0]) begin           // bstep_x (registered)
-        if (line_sx) line_x <= line_x + 16'd1;
-        else         line_x <= line_x - 16'd1;
-    end
-    if (line_step_q[1]) begin           // bstep_y (registered)
-        if (line_sy) line_y <= line_y + 16'd1;
-        else         line_y <= line_y - 16'd1;
-    end
-    
-    cx <= (line_x + (line_step_q[0] ? (line_sx ? 16'd1 : -16'd1) : 16'd0)) - dst_x_q;
-    cy <= (line_y + (line_step_q[1] ? (line_sy ? 16'd1 : -16'd1) : 16'd0)) - dst_y_q;
-    
-    state <= L_ACCUM;
-end
-```
-
-e) Add `line_step_q` to the reset block (`<= 2'd0`).
-
-This splits the 9-CARRY4 chain into:
-- L_STEP: be2 → bstep_x/bstep_y (~4 CARRY4s) → 2-bit register
-- L_STEP2: berr_delta → line_err + cx/cy (~5 CARRY4s)
-
-Each half should fit within 6.667 ns.  Cost: +2 FFs, +1 cycle per pixel
-(negligible — line draw is already I/O-bound by single-beat AXI writes).
-
-After the fix, rebuild (OOC first for quick turnaround) and verify
-clk_sys WNS ≥ +0.1 ns.
-
-### 2. SALLY ALU pipeline (optional — 0.569 ns WNS, headroom only)
-
-clk_sally at 100 MHz has WNS +0.569 ns — fine for the target frequency.
+clk_sally at 100 MHz has WNS +0.867 ns — fine for the target frequency.
 No action needed unless you want to raise clk_sally above 100 MHz later.
 
 ### Build command for timing verification
@@ -621,7 +584,7 @@ bare metal.
 | hdl/zynq_ps_hp_stub.sv | AXI3 slave responder stub for HP0/HP1 — provides AXI targets for OOC synthesis |
 | hdl/fb_scanout.sv | DDR3 framebuffer → HDMI scan-out (vbeam + AXI HP read + ping-pong line buffer + Bayer dither) |
 | hdl/axi_blitter_bridge.sv | AXI4-Lite slave bridge from PS GP0 to xt_blitter register bus. 2-cycle write / 1-cycle read FSMs. Maps AXI offset 0x00..0x0F → $D4Bx, 0x10..0x1F → $D4Cx, returns bl_busy on STATUS read. Runs on clk_sys (150 MHz), no CDC. |
-| hdl/xt_blitter.sv | 2D GPU v0.15: rect fill + line draw + block blit + NN/bilinear scaled blit + alpha-blend rect fill + font raster + GEM raster ops; $D4Bx/$D4Cx register interface, FLAGS, FONT_DATA, FONT_CTRL, RASTER_OP. Features 3-stage bilinear blend pipeline (SC_BL_ACC→SC_BL_BLEND→SC_BL_ACC2), 4-stage alpha-blend pipeline (BL_RACC→BL_RACC_BLEND→BL_RACC_BLEND2→BL_RACC2), and cx CARRY4 pipeline — all required for 150 MHz timing closure with full PS BD. |
+| hdl/xt_blitter.sv | 2D GPU v0.17: rect fill + line draw + block blit + NN/bilinear scaled blit + alpha-blend rect fill + font raster + GEM raster ops; $D4Bx/$D4Cx register interface, FLAGS, FONT_DATA, FONT_CTRL, RASTER_OP. Features 3-stage bilinear blend pipeline (SC_BL_ACC→SC_BL_BLEND→SC_BL_ACC2), 4-stage alpha-blend pipeline (BL_RACC→BL_RACC_BLEND→BL_RACC_BLEND2→BL_RACC2), cx CARRY4 pipeline, and 2-stage Bresenham step pipeline (L_STEP→L_STEP2 via line_step_q) — all required for 150 MHz timing closure with full PS BD. |
 | hdl/antic_top.sv | ANTIC video pipeline + peripheral I/O |
 | hdl/sally_mem.sv | 64 KB dual-port BRAM + banked-window AXI reader |
 | hdl/sally_core.sv + hdl/sally/* | Arlet 6502 CPU |

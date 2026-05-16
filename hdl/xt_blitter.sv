@@ -419,14 +419,20 @@ module xt_blitter #(
     logic signed [16:0] line_err;        // Bresenham error term (signed 17-bit)
     logic [15:0] line_x_end, line_y_end; // end point (dst + dx, dst + dy)
     logic [31:0] line_pix_addr;          // 8-byte-aligned pixel address for AW
+    // L_STEP registers bstep_y/bstep_x here; L_STEP2 applies them.  Splits
+    // the 9-CARRY4 Bresenham chain (be2→bstep→berr_delta→line_err→cx) into
+    // two halves so each fits in 6.667 ns at clk_sys=150 MHz.
+    logic [1:0]  line_step_q;            // {bstep_y, bstep_x} registered
 
     // Bresenham decision variables (combinational)
     wire signed [16:0] be2       = line_err <<< 1;
     wire        bstep_x = (be2 > -17'(line_dy));
     wire        bstep_y = (be2 <  17'(line_dx));
-    // Combined delta for the error term (applied in one assignment)
-    wire signed [16:0] berr_delta = (bstep_x ? -17'(line_dy) : 17'd0)
-                                  + (bstep_y ?  17'(line_dx) : 17'd0);
+    // Combined delta for the error term, using the registered step flags
+    // so L_STEP2 doesn't recompute the be2→bstep compare chain — keeps
+    // each Bresenham critical-path half within one cycle at 150 MHz.
+    wire signed [16:0] berr_delta_q = (line_step_q[0] ? -17'(line_dy) : 17'd0)
+                                    + (line_step_q[1] ?  17'(line_dx) : 17'd0);
 
     // ====================================================================
     // Burst buffer — 16 beats of {64-bit data, 8-bit wstrb}
@@ -716,7 +722,8 @@ module xt_blitter #(
         BL_RACC_BLEND = 6'd43, // cycle 1.5: compute src*sa and dst*inv_a products
         SC_SBLEND_BLEND = 6'd44, // cycle 1.5: compute src*sa and dst*inv_a products
         BL_RACC_BLEND2 = 6'd45, // cycle 1.75: combine products → bl_blend_q
-        SC_SBLEND_BLEND2 = 6'd46 // cycle 1.75: combine products → bl_blend_q
+        SC_SBLEND_BLEND2 = 6'd46, // cycle 1.75: combine products → bl_blend_q
+        L_STEP2  = 6'd47   // line-draw: apply registered step flags
     } state_t;
     state_t state;
 
@@ -810,6 +817,7 @@ module xt_blitter #(
             bl_dst_q          <= 32'd0;
             bl_src_prod_q     <= 64'd0;
             bl_dst_prod_q     <= 64'd0;
+            line_step_q       <= 2'd0;
         end else begin
             // one-shot strobes default off
             m_axi_awvalid <= 1'b0;
@@ -1615,8 +1623,7 @@ module xt_blitter #(
                 end
 
                 // ============================================================
-                // L_STEP — Bresenham step: compute next pixel coordinates
-                //          and set pattern BRAM address for the next pixel.
+                // L_STEP — Bresenham step, cycle 1: register step flags.
                 //
                 // Runs AFTER the AXI write for the current pixel has completed
                 // (we arrive here from S_B via line_mode_q routing).
@@ -1626,46 +1633,47 @@ module xt_blitter #(
                 //   step_x if e2 > -dy    → err -= dy,  x += sx
                 //   step_y if e2 <  dx    → err += dx,  y += sy
                 //
-                // cx/cy are updated to (line_x - dst_x_q) so L_ACCUM's BRAM
-                // read on the next cycle uses the correct pattern address.
-                //
-                // berr_delta, bstep_x/y are combinational from line_err.
+                // Split into two cycles (v0.17) to fit clk_sys=150 MHz:
+                //   L_STEP : capture {bstep_y,bstep_x} from line_err into
+                //            line_step_q (~4 CARRY4s of be2→bstep compares).
+                //   L_STEP2: apply the registered flags to update
+                //            line_err/line_x/line_y/cx/cy (~5 CARRY4s).
                 // ============================================================
                 L_STEP: begin
                     if (line_x == line_x_end && line_y == line_y_end) begin
                         state <= S_DONE;
                     end else begin
-                        line_err <= line_err + berr_delta;
-
-                        if (bstep_x) begin
-                            if (line_sx) line_x <= line_x + 16'd1;
-                            else         line_x <= line_x - 16'd1;
-                        end
-                        if (bstep_y) begin
-                            if (line_sy) line_y <= line_y + 16'd1;
-                            else         line_y <= line_y - 16'd1;
-                        end
-
-                        // Drive cx/cy for next pixel's BRAM address.
-                        // Use the NEW value of line_x/y after the step.
-                        // Note: non-blocking means we use the current
-                        // line_x/y (pre-step) for the subtraction, then
-                        // line_x/y are updated.  L_ACCUM will see the
-                        // updated values.
-
-                        // Actually, we need to set cx/cy from the UPDATED
-                        // line_x/y.  Since non-blocking assignments haven't
-                        // taken effect yet at this point in the block, we
-                        // need to compute the new value inline.
-                        // cx = (line_x + step_x_adjust) - dst_x_q
-                        // cy = (line_y + step_y_adjust) - dst_y_q
-                        cx <= (line_x + (bstep_x ? (line_sx ? 16'd1 : -16'd1) : 16'd0))
-                            - dst_x_q;
-                        cy <= (line_y + (bstep_y ? (line_sy ? 16'd1 : -16'd1) : 16'd0))
-                            - dst_y_q;
-
-                        state <= L_ACCUM;
+                        line_step_q <= {bstep_y, bstep_x};
+                        state <= L_STEP2;
                     end
+                end
+
+                // ============================================================
+                // L_STEP2 — Bresenham step, cycle 2: apply registered flags.
+                //
+                // line_step_q[0] = bstep_x, line_step_q[1] = bstep_y.
+                // berr_delta_q reuses the registered flags so the be2→bstep
+                // compare chain stays in L_STEP and L_STEP2 sees only the
+                // shorter line_err+delta and cx subtract paths.
+                // ============================================================
+                L_STEP2: begin
+                    line_err <= line_err + berr_delta_q;
+
+                    if (line_step_q[0]) begin
+                        if (line_sx) line_x <= line_x + 16'd1;
+                        else         line_x <= line_x - 16'd1;
+                    end
+                    if (line_step_q[1]) begin
+                        if (line_sy) line_y <= line_y + 16'd1;
+                        else         line_y <= line_y - 16'd1;
+                    end
+
+                    cx <= (line_x + (line_step_q[0] ? (line_sx ? 16'd1 : -16'd1) : 16'd0))
+                        - dst_x_q;
+                    cy <= (line_y + (line_step_q[1] ? (line_sy ? 16'd1 : -16'd1) : 16'd0))
+                        - dst_y_q;
+
+                    state <= L_ACCUM;
                 end
 
                 // ============================================================
