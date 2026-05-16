@@ -512,16 +512,35 @@ PSH/PLL are multi-cycle but fixed-cost regardless of N:
 | `ADC d,SP` | 2 | fetch opcode + fetch operand/read stack/ALU |
 | `SBC d,SP` | 2 | |
 | `CMP d,SP` | 2 | |
-| `PSH #N`   | 5 | fetch opcode + fetch imm/compute SP / 3×2-beat BRAM writes |
-| `PLL #N`   | 5 | fetch opcode + fetch imm / 3×2-beat BRAM reads + SP adjust |
+| `PSH #N`   | 8 | fetch opcode + fetch imm/compute sp_new + 6×1-byte BRAM writes + next-opcode fetch |
+| `PLL #N`   | 8 | fetch opcode + fetch imm/compute sp_new + 6×1-byte BRAM reads + final commit/next-opcode fetch |
 
-**Why 5 cycles and not 9:** the stack RAM is a synchronous dual-port
-BRAM.  The CPU registers (A, X, Y, P) are just flip-flops in the
-fabric — no bus cycle is needed to "fetch" them.  Each BRAM port can
-write or read one byte per cycle.  With two ports, 6 register slots
-require 3 cycles of writes (PSH) or reads (PLL).  The SP adjustment
-(`±(N+6)`) is a combinatorial 12-bit add that settles in <4 ns and
-is folded into the same cycle as the operand fetch.
+**Current implementation: single-port stack BRAM, 8 cycles each.**
+The stack RAM in `sally_mem` is a single-port synchronous BRAM (one
+byte read or written per cycle), so PSH/PLL serialise the 6-byte
+frame transfer.  Cycle breakdown (PSH):
+
+```
+Cycle 1: DECODE     fetch $32 opcode
+Cycle 2: PSH0       DIMUX = N; latch sp_new = SP − (N+6); write P  at sp_new+0
+Cycle 3: PSH_RUN/1                                        write SP_lo at sp_new+1
+Cycle 4: PSH_RUN/2                                        write SP_hi at sp_new+2
+Cycle 5: PSH_RUN/3                                        write Y     at sp_new+3
+Cycle 6: PSH_RUN/4                                        write X     at sp_new+4
+Cycle 7: PSH_RUN/5  write A at sp_new+5, commit SP
+Cycle 8: FETCH      AB = PC = next-opcode addr
+```
+
+PLL is symmetric: addresses present in cycles 2..7, BRAM data
+arrives 1 cycle later, so P is consumed at the start of PSH_RUN/1,
+the saved Y/X latch at PSH_RUN/4 and PSH_RUN/5, and A lands in the
+PLL_FIN cycle alongside the PC=next-opcode fetch and SP commit.
+
+**Theoretical 5-cycle target.**  A dual-port BRAM (or 16-bit-wide
+data path) could write/read two bytes per cycle, dropping PSH/PLL
+to 5 cycles each.  This is a future-work optimisation in
+`sally_mem` — see Issues docs.  No code currently relies on the
+faster timing.
 
 PSH #N micro‑architecture:
 
