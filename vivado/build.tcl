@@ -187,6 +187,12 @@ puts ">> synth complete"
 if {$flow eq "impl" || $flow eq "bit"} {
     opt_design
     place_design
+    # phys_opt_design runs after placement and applies physical optimisations
+    # (e.g., replicating high-fanout drivers near their loads, retiming small
+    # bits of logic across registers).  Often recovers 0.1-0.3 ns on marginal
+    # paths with zero RTL cost — added 2026-05-16 when xt_blitter's cx_reg
+    # CARRY4 chain flipped negative after adding the sally_mem stack BRAM.
+    phys_opt_design
     route_design
     write_checkpoint -force [file join $out_dir post_route.dcp]
     report_utilization -file [file join $out_dir post_route_util.rpt]

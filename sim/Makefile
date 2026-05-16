@@ -71,7 +71,7 @@ HDL_SRCS := \
 
 BUILD_DIR := build
 
-.PHONY: all smoke snoop read vbeam rp_bus prefetch dl_parse mode_f char_modes gfx_modes pm prior scroll nmi wsync palette tmds tmds_out terc4 hdmi_bch hdmi_pkt hdmi_out dma_master mem_read_mux dma_int hyperram bank draw draw_regs pokey pokey_i2s sally sally_mem sally_arb bank_cache bank_xlat cache_regs cache_partition pia_regs peri_link joy_link joy_bridge peri_bridge os_rom_load klaus visual lint clean pssi_tx pssi_int xt_blitter
+.PHONY: all smoke snoop read vbeam rp_bus prefetch dl_parse mode_f char_modes gfx_modes pm prior scroll nmi wsync palette tmds tmds_out terc4 hdmi_bch hdmi_pkt hdmi_out dma_master mem_read_mux dma_int hyperram bank draw draw_regs pokey pokey_i2s sally sally_mem sally_arb bank_cache bank_xlat cache_regs cache_partition pia_regs peri_link joy_link joy_bridge peri_bridge os_rom_load klaus visual lint clean pssi_tx pssi_int xt_blitter sally_stack
 
 all: smoke snoop read vbeam rp_bus prefetch dl_parse mode_f char_modes gfx_modes pm prior scroll nmi wsync palette tmds tmds_out terc4 hdmi_bch hdmi_pkt hdmi_out dma_master mem_read_mux dma_int hyperram bank draw draw_regs pokey pokey_i2s sally sally_mem sally_arb bank_cache bank_xlat cache_regs cache_partition pia_regs peri_link joy_link joy_bridge peri_bridge os_rom_load pbi pcm1808_rx visual pssi_tx pssi_int xt_blitter
 
@@ -657,10 +657,29 @@ SALLY_HDL := \
     $(HDL_DIR)/bank_xlat.sv        \
     $(HDL_DIR)/bank_cache.sv       \
     $(HDL_DIR)/cache_line_ram.sv   \
+    $(HDL_DIR)/banked_axi_reader.sv \
     $(HDL_DIR)/sally_mem.sv
 
 $(BUILD_DIR)/tb_sally.vvp: $(SALLY_HDL) tb_sally.sv | $(BUILD_DIR)
 	$(IVERILOG) $(SV_FLAGS) -o $@ -s tb_sally $(SALLY_HDL) tb_sally.sv
+
+# ---- sally_stack — Stage A Increment 1 stack-BRAM alias test -------------
+SALLY_STACK_HDL := \
+    $(HDL_DIR)/bank_xlat.sv         \
+    $(HDL_DIR)/bank_cache.sv        \
+    $(HDL_DIR)/cache_line_ram.sv    \
+    $(HDL_DIR)/banked_axi_reader.sv \
+    $(HDL_DIR)/sally_mem.sv
+
+sally_stack: $(BUILD_DIR)/tb_sally_stack.vvp
+	@echo "=== sally_stack — stack-BRAM alias test ==="
+	@$(VVP) -N $< | tee $(BUILD_DIR)/tb_sally_stack.log
+	@grep -q 'ALL TESTS PASSED' $(BUILD_DIR)/tb_sally_stack.log || \
+	    (echo "FAIL: tb_sally_stack did not pass"; exit 1)
+	@echo "PASS: tb_sally_stack"
+
+$(BUILD_DIR)/tb_sally_stack.vvp: $(SALLY_STACK_HDL) tb_sally_stack.sv | $(BUILD_DIR)
+	$(IVERILOG) $(SV_FLAGS) -o $@ -s tb_sally_stack $(SALLY_STACK_HDL) tb_sally_stack.sv
 
 # ---- M24-klaus — Klaus Dormann 6502 functional test --------------------
 # Runs Klaus Dormann's full documented-opcode test against sally_core.
@@ -866,6 +885,7 @@ OS_ROM_HDL := \
     $(HDL_DIR)/bank_xlat.sv  \
     $(HDL_DIR)/bank_cache.sv \
     $(HDL_DIR)/cache_line_ram.sv \
+    $(HDL_DIR)/banked_axi_reader.sv \
     $(HDL_DIR)/sally_mem.sv
 
 $(BUILD_DIR)/tb_os_rom_load.vvp: $(OS_ROM_HDL) tb_os_rom_load.sv | $(BUILD_DIR)

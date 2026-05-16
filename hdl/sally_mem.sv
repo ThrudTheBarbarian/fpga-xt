@@ -161,15 +161,38 @@ module sally_mem #(
     // BRAM init from a baked-in OS image when OS_ROM_HEX_PATH is set.
     initial if (OS_ROM_HEX_PATH != "") $readmemh(OS_ROM_HEX_PATH, mem);
 
+    // ---- Hidden stack BRAM (4 KB, SALLY 6502 embellishment Stage A) ----
+    // 4096 bytes of dedicated stack RAM that is NOT visible at any normal
+    // 16-bit address.  Accesses to $0100-$01FF (the legacy 6502 stack
+    // page) are redirected here to the TOP 256 bytes ($F00-$FFF), giving
+    // a backward-compatible alias window for existing code that uses
+    // TSX + LDA $0100,X style addressing.
+    //
+    // Stage A Increment 1 (this file): only the top 256 bytes are reachable
+    // via the alias.  cpu.v still uses an 8-bit SP, so the lower 3840
+    // bytes are unused for now.
+    //
+    // Stage A Increment 2 will widen the CPU SP to 12 bits and add a
+    // `stack_op` signal that lets the CPU reach the full 4 KB via PHA /
+    // PLA / JSR / RTS / RTI / BRK and the new SP-relative addressing
+    // mode.  See docs/6502-embellishments.md.
+    (* ram_style = "block" *)
+    logic [7:0] stack_mem [0:4095];
+
     // ---- Address-decode helpers -----------------------------------
     wire is_hwreg_page   = (addr[15:11] == 5'b1101_0);   // $D000-$D7FF
     wire is_bank_window  = (addr[15:14] == 2'b01);       // $4000-$7FFF
     wire is_mpd_window   = (addr[15:11] == 5'b11011);    // $D800-$DFFF
     wire is_cart_s4_window = (addr[15:13] == 3'b100);    // $8000-$9FFF
     wire is_cart_s5_window = (addr[15:13] == 3'b101);    // $A000-$BFFF
+    wire is_stack_page     = (addr[15:8] == 8'h01);      // $0100-$01FF
     wire cart_external_read = rw                                // reads only
                             & ((is_cart_s4_window & ~bus_rd4_n_in)
                             |  (is_cart_s5_window & ~bus_rd5_n_in));
+
+    // Alias addressing into stack_mem: $0100-$01FF maps to the top 256
+    // bytes ($F00-$FFF), i.e., stack_mem[{4'hF, addr[7:0]}].
+    wire [11:0] stack_alias_addr = {4'hF, addr[7:0]};
 
     // ---- CPU bank-select snoop -----------------------------------
     // Mirror writes to $0082-$0085 into latched registers so bank_xlat
@@ -290,16 +313,27 @@ module sally_mem #(
 
     // ---- Read pipeline + path-tracking flops ----------------------
     logic [7:0] bram_dout_q;
+    logic [7:0] stack_dout_q;         // from stack_mem read port
     logic [7:0] hwreg_dout_q;
     logic       was_hwreg_q;
     logic       was_bank_q;
+    logic       was_stack_q;          // prev addr was stack-page ($0100-$01FF)
     logic       was_mpd_window_q;     // M-PBI step 2: was the prev addr in $D800-$DFFF
     logic       was_cart_external_q;  // M-PBI #2: prev addr was cart-window AND RD asserted
 
-    // BRAM write port: clk-only (no reset), single write-enable +
+    // Main BRAM write port: clk-only (no reset), single write-enable +
     // address + data mux. Vivado BRAM inference requires this shape.
     // ROM-load wins on the rare same-cycle collision with a CPU write —
     // matches the original Verilog last-assignment-wins ordering.
+    //
+    // Stack-page writes ($0100-$01FF) are NOT gated out of mem_we here —
+    // they land in both main mem AND stack_mem (below).  Reads from the
+    // stack page prefer stack_mem via was_stack_q, so the alias is the
+    // single source of truth.  Keeping mem_we's expression simple is
+    // critical: any extra terms in the condition were observed (May 16)
+    // to break Vivado's 64K cascade BRAM inference on a couple of bit
+    // columns (DRC REQP-1962 ADDR15 cascade mismatch).  The few wasted
+    // main-mem writes to $0100-$01FF cost nothing in steady state.
     wire        cpu_w      = rdy && !rw && !is_hwreg_page && !is_in_window_w;
     wire        mem_we     = cpu_w || rom_we;
     wire [15:0] mem_addr_w = rom_we ? rom_addr : addr;
@@ -307,6 +341,20 @@ module sally_mem #(
 
     always_ff @(posedge clk) begin
         if (mem_we) mem[mem_addr_w] <= mem_din_w;
+    end
+
+    // ---- Stack BRAM write port (separate array; reads prefer this) ----
+    // Stack page writes always land here in parallel with main mem so
+    // the alias window reads back the correct value.  Same applies to
+    // rom_we writes targeting $0100-$01FF.
+    wire        stack_cpu_w  = rdy && !rw && is_stack_page;
+    wire        rom_is_stack = (rom_addr[15:8] == 8'h01);
+    wire        stack_we     = stack_cpu_w || (rom_we && rom_is_stack);
+    wire [11:0] stack_addr_w = rom_we ? {4'hF, rom_addr[7:0]} : stack_alias_addr;
+    wire  [7:0] stack_din_w  = rom_we ? rom_data : data_in;
+
+    always_ff @(posedge clk) begin
+        if (stack_we) stack_mem[stack_addr_w] <= stack_din_w;
     end
 
     // ANTIC DMA read port — independent clock.  Vivado infers a true
@@ -324,16 +372,20 @@ module sally_mem #(
     always_ff @(posedge clk or posedge rst) begin
         if (rst) begin
             bram_dout_q          <= 8'h00;
+            stack_dout_q         <= 8'h00;
             hwreg_dout_q         <= 8'h00;
             was_hwreg_q          <= 1'b0;
             was_bank_q           <= 1'b0;
+            was_stack_q          <= 1'b0;
             was_mpd_window_q     <= 1'b0;
             was_cart_external_q  <= 1'b0;
         end else if (rdy) begin
             bram_dout_q          <= mem[addr];
+            stack_dout_q         <= stack_mem[stack_alias_addr];
             hwreg_dout_q         <= hwreg_dout;
             was_hwreg_q          <= is_hwreg_page;
             was_bank_q           <= is_in_window_w;
+            was_stack_q          <= is_stack_page;
             was_mpd_window_q     <= is_mpd_window;
             was_cart_external_q  <= cart_external_read;
         end
@@ -345,12 +397,14 @@ module sally_mem #(
     //   2. was_cart_external_q      -> bus_pbi_rdata (physical cart wins)
     //   3. was_mpd_window_q & /MPD  -> bus_pbi_rdata (PBI replaces FP ROM)
     //   4. was_bank_q               -> axi_rdata_q  (DDR3-backed bank)
-    //   5. default                  -> bram_dout_q
+    //   5. was_stack_q              -> stack_dout_q (hidden stack alias)
+    //   6. default                  -> bram_dout_q
     wire mpd_active = ~bus_mpd_n_in;
     assign data_out = was_hwreg_q                       ? hwreg_dout_q
                     : was_cart_external_q               ? bus_pbi_rdata
                     : (was_mpd_window_q & mpd_active)   ? bus_pbi_rdata
                     : was_bank_q                        ? axi_rdata_q
+                    : was_stack_q                       ? stack_dout_q
                                                         : bram_dout_q;
 
     // ---- Hardware-register write passthrough ----------------------
