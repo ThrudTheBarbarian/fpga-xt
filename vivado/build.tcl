@@ -226,9 +226,33 @@ if {$flow eq "bit"} {
     # `-include_bit` bundles the bitstream so a single .xsa fully
     # describes the hardware platform.  The filename argument is
     # positional (UG835 — no `-file` switch).  See docs/bring-up.md.
-    write_hw_platform -fixed -force -include_bit \
-        [file join $out_dir $top.xsa]
-    puts ">> hw_platform written: $out_dir/$top.xsa"
+    set xsa_path [file join $out_dir $top.xsa]
+    write_hw_platform -fixed -force -include_bit $xsa_path
+    puts ">> hw_platform written: $xsa_path"
+
+    # ---- ps7_init.* post-injection ------------------------------------
+    # Vitis 2025.x's zynq_fsbl template wants ps7_init.c at the XSA root,
+    # but `write_hw_platform -fixed -include_bit` doesn't pull the file
+    # into the archive even though the BD has it on disk in its .gen
+    # tree.  Inject them by hand — the XSA is just a zip archive, so
+    # `zip -j` appends the files at the root with no path prefix.
+    set ps_ip_dir [file join [pwd] bd zynq_ps_bd zynq_ps_bd.gen \
+                              sources_1 bd ps_bd ip ps_bd_zynq_ps_0]
+    set ps_init_files [list \
+        ps7_init.c   ps7_init.h \
+        ps7_init_gpl.c ps7_init_gpl.h \
+        ps7_init.tcl ps7_init.html]
+    set added 0
+    foreach f $ps_init_files {
+        set src [file join $ps_ip_dir $f]
+        if {[file exists $src]} {
+            exec zip -j $xsa_path $src
+            incr added
+        } else {
+            puts ">> WARNING: ps_init source missing: $src"
+        }
+    }
+    puts ">> injected $added ps7_init.* files into $xsa_path"
 }
 
 # ---- XSA-only flow -----------------------------------------------------
@@ -243,9 +267,21 @@ if {$flow eq "xsa"} {
         exit 1
     }
     open_checkpoint $dcp_path
-    write_hw_platform -fixed -force -include_bit \
-        [file join $out_dir $top.xsa]
-    puts ">> hw_platform written: $out_dir/$top.xsa"
+    set xsa_path [file join $out_dir $top.xsa]
+    write_hw_platform -fixed -force -include_bit $xsa_path
+    puts ">> hw_platform written: $xsa_path"
+
+    # Same ps7_init.* injection as the bit flow above.
+    set ps_ip_dir [file join [pwd] bd zynq_ps_bd zynq_ps_bd.gen \
+                              sources_1 bd ps_bd ip ps_bd_zynq_ps_0]
+    foreach f {ps7_init.c ps7_init.h ps7_init_gpl.c ps7_init_gpl.h
+               ps7_init.tcl ps7_init.html} {
+        set src [file join $ps_ip_dir $f]
+        if {[file exists $src]} {
+            exec zip -j $xsa_path $src
+        }
+    }
+    puts ">> ps7_init.* injection complete"
 }
 
 puts ">> done"

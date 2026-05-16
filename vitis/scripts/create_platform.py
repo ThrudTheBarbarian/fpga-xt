@@ -75,10 +75,14 @@ platform = client.create_platform_component(
     hw_design=XSA,
     os="standalone",
     cpu="ps7_cortexa9_0",
-    # Skip the auto-generated FSBL boot BSP — its CMake step fails
-    # because the XSA doesn't currently include ps7_init.c (see notes
-    # in the FSBL block below).  Boot BSP is only needed for SD/QSPI
-    # boot; JTAG iteration runs without it.
+    # Skip the auto FSBL BSP creation.  Setting no_boot_bsp=False
+    # makes Vitis 2025.x try to build a zynq_fsbl BSP at platform-
+    # create time; its CMakeLists references ps7_init.c at the
+    # component root, but Vitis doesn't extract the XSA-bundled
+    # copy into that location even though vivado/build.tcl injects
+    # ps7_init.* into the XSA root.  FSBL is only needed for
+    # SD/QSPI boot; JTAG iteration works without it.  See bring-up
+    # phase 3 + the deferred-work block at the bottom of this file.
     no_boot_bsp=True,
 )
 status = platform.build()
@@ -90,25 +94,37 @@ DOMAIN   = "standalone_ps7_cortexa9_0"
 
 # ---- FSBL (deferred) -------------------------------------------------
 # The Zynq FSBL initialises the PS (DDR3 calibration, clocks, MIO) and
-# is required for SD / QSPI boot.  Vitis 2025.x's zynq_fsbl template
-# wants a ps7_init.c sourced from the XSA, which our `write_hw_platform
-# -fixed -include_bit` output doesn't currently package — even though
-# the file exists in the BD's .gen tree.  Investigating in a separate
-# pass; for now JTAG boot via xsct doesn't need an FSBL (it does the
-# DDR3 calibration directly via ps7_init.tcl).
+# is required for SD / QSPI boot — NOT for JTAG iteration, where xsct
+# does the equivalent via ps7_init.tcl.
 #
-# Re-enable once the XSA-export step is fixed; see docs/bring-up.md
-# "Phase 3 — PS boots".
-if False:
-    print(">> creating FSBL component ...")
-    fsbl = client.create_app_component(
-        name="fsbl",
-        platform=PFM_FILE,
-        domain=DOMAIN,
-        template="zynq_fsbl",
-    )
-    status = fsbl.build()
-    print(f">> fsbl build status: {status}")
+# Current state (2026-05-16): Vitis 2025.x's auto FSBL BSP creation
+# (when no_boot_bsp=False) needs ps7_init.c at component-create time.
+# Even though vivado/build.tcl injects ps7_init.* into the XSA root,
+# Vitis 2025.x doesn't extract them into the FSBL BSP working dir at
+# create time, and CMake fails with "Cannot find source file:
+# ps7_init.c".  Things tried so far:
+#
+#   * Injecting ps7_init.* at the XSA root via `zip -j`
+#     -> XSA now contains them, but the BSP build still can't find
+#        them.  Vitis likely needs sysdef.xml to list ps7_init.c
+#        explicitly OR a specific subdir layout we haven't matched.
+#   * Creating FSBL as a separate component (post-platform) and
+#     using import_files() to bring in ps7_init.*
+#     -> doesn't run, because the failure is during platform create's
+#        auto BSP step, before our code gets a turn.
+#   * Targeting FSBL at the standalone_ps7_cortexa9_0 domain
+#     -> "BSP is missing ['xilffs', 'xilrsa']" — that domain lacks
+#        the FSBL-required libs.  Would need a platform-level
+#        add-library API call we haven't found yet.
+#
+# Path forward when SD/QSPI boot is on the critical path:
+#   1. Open the workspace in the Vitis IDE.
+#   2. Add xilffs + xilrsa to the standalone_ps7_cortexa9_0 BSP.
+#   3. Create the FSBL component manually targeting that domain.
+#   4. Capture the IDE actions as a Python script and fold back here.
+#
+# JTAG-only bring-up (Phase 0-7 in docs/bring-up.md) doesn't need any
+# of the above to work.
 
 # ---- app_blink -------------------------------------------------------
 # Bare-metal hello world that prints to UART1 (the on-board USB-UART

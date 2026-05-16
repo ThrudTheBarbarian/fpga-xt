@@ -1,8 +1,10 @@
 # vitis/ — PS-side build (Vitis Unified 2025.x)
 
-PS-side counterpart to `vivado/`.  Generates the Vitis platform, the
-Zynq FSBL, and the bare-metal `app_blink` hello-world from the XSA
-that Vivado writes alongside the bitstream.
+PS-side counterpart to `vivado/`.  Generates the Vitis platform and
+the bare-metal `app_blink` hello-world from the XSA that Vivado
+writes alongside the bitstream.  An FSBL component is sketched in
+the script but currently disabled — see "Things this does NOT do
+yet" below.
 
 ## Layout
 
@@ -17,7 +19,6 @@ vitis/
 │   └── src/main.c      bare-metal app source (committed)
 └── workspace/          (gitignored) Vitis-generated workspace
     ├── fpga_xt_platform/    standalone platform + BSP
-    ├── fsbl/                Zynq FSBL component
     └── app_blink/           our app, builds against the platform
 ```
 
@@ -30,7 +31,7 @@ build box, the Xilinx toolchain runs there, artefacts come back.
 
 ```sh
 cd vivado && ./run.sh bit fpga_xt_top xc7z020-2clg400   # writes XSA
-cd ../vitis && ./run.sh                                  # creates platform + FSBL + app
+cd ../vitis && ./run.sh                                  # creates platform + app
 ```
 
 After this, `vitis/workspace/app_blink/build/app_blink.elf` exists
@@ -78,11 +79,21 @@ A canned version of the above lives at
 
 ## Things this does NOT do yet
 
+- **FSBL** — Vitis 2025.x's auto-FSBL-BSP creation fails with
+  "Cannot find source file: ps7_init.c" even though
+  `vivado/build.tcl` injects `ps7_init.*` into the XSA root.  The
+  inheritance trail (sysdef.xml entries, import_files post-creation,
+  domain library config) sits in `scripts/create_platform.py` as a
+  deferred-block comment.  Only matters for SD/QSPI boot; JTAG
+  iteration works without it.  Pick this up when SD-boot is on the
+  critical path — likely fastest path is to open the workspace in
+  the Vitis IDE, configure the FSBL by hand, then capture the
+  resulting Python in a script.
 - **FreeRTOS BSP** — committed scope is standalone (bare-metal).
   FreeRTOS comes once the boot path is proven.
 - **boot.bin builder** — `bootgen` wrapping FSBL + bitstream + app
   into an SD-bootable image.  Phase 3+ prereq from
-  `docs/bring-up.md`; defer until JTAG bring-up is solid.
+  `docs/bring-up.md`; gated on the FSBL above.
 - **GPIO blink** — currently the heartbeat is UART-only.  Need to
   confirm the Z-Turn PS-side LED MIO assignments before driving real
   LEDs from `app_blink`.

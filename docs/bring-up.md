@@ -63,7 +63,13 @@ debug.
       generate BSP.  Z-Turn's PS DDR3 preset is shipped by MyIR;
       use it verbatim, don't hand-edit timings.
 - [ ] **FSBL** — generated from the platform, no custom code
-      beyond default PS init.  Lives in `vitis/fsbl/`.
+      beyond default PS init.  Lives in `vitis/fsbl/`.  **Current
+      status (2026-05-16):** Vitis 2025.x's auto FSBL BSP creation
+      hits "Cannot find source file: ps7_init.c" even though
+      `vivado/build.tcl` now injects `ps7_init.*` into the XSA
+      root.  Deferred — see `vitis/scripts/create_platform.py`
+      for the inheritance trail of things tried.  JTAG iteration
+      (Phase 0-7 of this doc) doesn't need an FSBL.
 - [ ] **Bare-metal "blink + UART hello" app.**  Lives in
       `vitis/app_blink/`.  Minimum viable: configures the UART,
       prints "fpga-xt boot OK", strobes a GPIO pin connected to
