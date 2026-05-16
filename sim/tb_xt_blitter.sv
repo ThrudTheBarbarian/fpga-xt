@@ -45,6 +45,7 @@ module tb_xt_blitter;
     logic        bus_we;
     wire         busy;
     wire         cq_full;
+    wire         pat_blocked;
 
     // AXI4 write master
     wire [31:0] m_axi_awaddr;
@@ -87,6 +88,7 @@ module tb_xt_blitter;
         .bus_we        (bus_we),
         .busy          (busy),
         .cq_full       (cq_full),
+        .pat_blocked   (pat_blocked),
         .m_axi_awaddr  (m_axi_awaddr),
         .m_axi_awlen   (m_axi_awlen),
         .m_axi_awsize  (m_axi_awsize),
@@ -820,6 +822,94 @@ module tb_xt_blitter;
         $display("PASS: test_command_queue");
     endtask
 
+    // ----------------------------------------------------------------
+    // Test 9: Pattern-while-busy block
+    //
+    // 1. Load red pattern, push CMD #1 (2x1 rect at (0,0)).
+    // 2. While the blitter is busy executing #1, attempt to load a
+    //    green pattern.  Hardware should drop the write and set
+    //    pat_blocked.
+    // 3. Push CMD #2 (2x1 rect at (4,0)).  Since the pattern load
+    //    was dropped, this rect should ALSO come out red.
+    // 4. wait_idle, verify pat_blocked is set, verify both rects
+    //    are red.
+    // 5. Now drained — load green pattern (allowed), push CMD #3
+    //    (2x1 rect at (8,0)), wait_idle.  Verify rect 3 is green
+    //    and pat_blocked auto-cleared on drain.
+    // ----------------------------------------------------------------
+    task test_pat_while_busy();
+        $display("=== Test 9: Pattern-while-busy block ===");
+
+        clear_logs();
+
+        // Step 1: load red pattern, push rect 1
+        write_reg(16'hD4BA, 8'h00);
+        load_1x1_pattern(8'hFF, 8'h00, 8'h00, 8'hFF);
+        write_reg(16'hD4BE, 8'h00);
+
+        write_reg(16'hD4B0, 8'd0);   write_reg(16'hD4B1, 8'd0);
+        write_reg(16'hD4B2, 8'd0);   write_reg(16'hD4B3, 8'd0);
+        write_reg(16'hD4B4, 8'd2);   write_reg(16'hD4B5, 8'd0);
+        write_reg(16'hD4B6, 8'd1);   write_reg(16'hD4B7, 8'd0);
+        write_reg(16'hD4BF, 8'd3);
+        write_reg(16'hD4BC, 8'h01);   // push CMD #1 (red)
+
+        // Step 2: immediately try to load green — should be dropped.
+        // Skip past the CMD push cycle so busy is asserted.
+        @(posedge clk);
+        @(posedge clk);
+        if (!busy) begin
+            $display("FAIL: blitter should be busy after CMD push");
+            $fatal(1);
+        end
+        // Attempt a pattern load while busy.  The single $D4BA write below
+        // would normally reset pat_load_ptr — gated on !busy, it doesn't —
+        // and raises pat_blocked.  Read after @(negedge clk) so NBAs settle.
+        write_reg(16'hD4BA, 8'h00);
+        @(negedge clk);
+        if (!pat_blocked) begin
+            $display("FAIL: pat_blocked should be set after dropped $D4BA write");
+            $fatal(1);
+        end
+
+        // Continue the load — should also be dropped, pat_blocked stays set.
+        load_1x1_pattern(8'h00, 8'hFF, 8'h00, 8'hFF);
+
+        // Step 3: while still busy, push rect 2.  Should reuse RED pattern.
+        write_reg(16'hD4B0, 8'd4);
+        write_reg(16'hD4BC, 8'h01);
+
+        // Step 4: drain.  pat_blocked auto-clears when busy goes 0.
+        wait_idle();
+
+        // Both rects should be red — the green load was dropped.
+        expect_write_count(2);
+        expect_write(0, 32'h3000_0000, {32'hFF_00_00_FF, 32'hFF_00_00_FF}, 8'hFF);
+        expect_write(1, 32'h3000_0010, {32'hFF_00_00_FF, 32'hFF_00_00_FF}, 8'hFF);
+
+        // Wait a couple of cycles for the cdc/sticky logic to settle, then
+        // pat_blocked should be 0 (auto-clear once busy=0).
+        @(posedge clk);
+        @(posedge clk);
+        if (pat_blocked) begin
+            $display("FAIL: pat_blocked should clear once busy=0");
+            $fatal(1);
+        end
+
+        // Step 5: now allowed — load green, push rect 3.
+        clear_logs();
+        write_reg(16'hD4BA, 8'h00);
+        load_1x1_pattern(8'h00, 8'hFF, 8'h00, 8'hFF);
+        write_reg(16'hD4B0, 8'd8);
+        write_reg(16'hD4BC, 8'h01);
+        wait_idle();
+
+        expect_write_count(1);
+        expect_write(0, 32'h3000_0020, {32'h00_FF_00_FF, 32'h00_FF_00_FF}, 8'hFF);
+
+        $display("PASS: test_pat_while_busy");
+    endtask
+
     // ====================================================================
     // Main test scheduler
     // ====================================================================
@@ -843,6 +933,7 @@ module tb_xt_blitter;
         test_block_blit_notsrc();
         test_line_draw_blend();
         test_command_queue();
+        test_pat_while_busy();
 
         // Done
         $display("=== ALL TESTS PASSED ===");

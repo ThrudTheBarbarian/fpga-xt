@@ -106,7 +106,11 @@
 //                            active, 0 = drained and idle);
 //                            bit 1 = queue_full (1 = next CMD write will be
 //                            dropped; poll until 0 before pushing);
-//                            bits 7:2 reserved (read 0)
+//                            bit 2 = pat_blocked (sticky: a pat/font load
+//                            register was written while busy — write was
+//                            dropped, retry after busy goes 0; auto-clears
+//                            when busy=0);
+//                            bits 7:3 reserved (read 0)
 //   $D4BE   PAT_LOG_H    W   log2(pattern_height) [4:0], range 0..5
 //   $D4BF   RASTER_OP    W   GEM raster op [3:0] for block blit (CMD=0x03):
 //                            0=ZERO, 1=SRC&DST, 2=SRC&~DST, 3=SRC(copy),
@@ -166,6 +170,8 @@ module xt_blitter #(
     // ---- Status (clk_sys) -------------------------------------------------
     output wire        busy,
     output wire        cq_full,            // command queue cannot accept another CMD
+    output wire        pat_blocked,        // sticky: pat/font load was attempted while busy
+                                           //         (write was dropped to preserve queue state)
 
     // ---- AXI4 write master (clk_sys, drives DDR3 HP slave) ---------------
     output logic [31:0] m_axi_awaddr,
@@ -292,17 +298,21 @@ module xt_blitter #(
                     5'h08: pat_phase_x_reg  <= bus_data[4:0];
                     5'h09: pat_phase_y_reg  <= bus_data[4:0];
                     5'h0A: begin
-                        // PAT_LOG_W: writing ANY value resets the byte-stream
-                        // load pointer so a fresh pattern can be written
-                        // without an extra "reset pointer" register.
-                        log_pw_reg     <= bus_data[4:0];
-                        pat_load_ptr   <= 12'd0;
-                        pat_load_accum <= 24'd0;
+                        // PAT_LOG_W: log_pw_reg is snapshotted per CMD so the
+                        // write is always allowed; the byte-stream pointer
+                        // reset is gated on !busy so we don't disturb the
+                        // load state for queued commands.
+                        log_pw_reg <= bus_data[4:0];
+                        if (!busy) begin
+                            pat_load_ptr   <= 12'd0;
+                            pat_load_accum <= 24'd0;
+                        end
                     end
-                    5'h0B: begin
+                    5'h0B: if (!busy) begin
                         // Byte-stream pattern load. Bytes 0..2 accumulate;
                         // byte 3 commits the entry to BRAM and advances
-                        // the entry pointer.
+                        // the entry pointer.  Gated on !busy so queued
+                        // commands keep a consistent pat_mem.
                         case (pat_load_ptr[1:0])
                             2'd0: pat_load_accum[7:0]   <= bus_data;          // R
                             2'd1: pat_load_accum[15:8]  <= bus_data;          // G
@@ -339,8 +349,9 @@ module xt_blitter #(
                     5'h17: src_h_reg[15:8] <= bus_data;
                     // $D4C8 — FLAGS (option byte)
                     5'h18: flags_reg <= bus_data;
-                    // $D4CE — FONT_DATA byte-stream load
-                    5'h1E: begin
+                    // $D4CE — FONT_DATA byte-stream load (gated on !busy
+                    // so queued commands keep a consistent font_mem)
+                    5'h1E: if (!busy) begin
                         case (font_load_byte_idx)
                             2'd0: font_load_accum[7:0]   <= bus_data;
                             2'd1: font_load_accum[15:8]  <= bus_data;
@@ -352,7 +363,7 @@ module xt_blitter #(
                         font_load_ptr <= font_load_ptr + 11'd1;
                     end
                     // $D4CF — FONT_CTRL (writing any value resets load pointer)
-                    5'h1F: begin
+                    5'h1F: if (!busy) begin
                         font_load_ptr      <= 11'd0;
                         font_load_accum    <= 32'd0;
                         font_load_byte_idx <= 2'd0;
@@ -364,8 +375,12 @@ module xt_blitter #(
     end
 
     // Pattern memory write port — fires when byte 3 (A) of an entry arrives.
-    // Pack in fb_scanout-compatible order: {R, G, B, A}.
-    wire pat_we = reg_we && (reg_addr == 5'h0B) && (pat_load_ptr[1:0] == 2'd3);
+    // Pack in fb_scanout-compatible order: {R, G, B, A}.  Gated on !busy:
+    // if software writes a pat byte while the blitter is busy, the byte-
+    // stream pointer logic (above) silently drops the write.  pat_we
+    // mirrors that gate so the BRAM contents stay frozen until the queue
+    // drains, preserving pat consistency for in-flight commands.
+    wire pat_we = reg_we && (reg_addr == 5'h0B) && (pat_load_ptr[1:0] == 2'd3) && !busy;
     wire [9:0] pat_entry_idx_wr = pat_load_ptr[11:2];
 
     always_ff @(posedge clk) begin
@@ -378,7 +393,8 @@ module xt_blitter #(
 
     // ---- Font memory write port — fires when byte 3 (4th coverage byte) ----
     // Packs in AAAA order: {byte3, byte2, byte1, byte0} → [31:24],[23:16],[15:8],[7:0]
-    wire font_we = reg_we && (reg_addr == 5'h1E) && (font_load_byte_idx == 2'd3);
+    // Same !busy gate as pat_we — keeps font_mem consistent for queued commands.
+    wire font_we = reg_we && (reg_addr == 5'h1E) && (font_load_byte_idx == 2'd3) && !busy;
     wire [8:0] font_entry_idx_wr = font_load_ptr[10:2];   // byte ptr → word index
 
     always_ff @(posedge clk) begin
@@ -390,30 +406,64 @@ module xt_blitter #(
     end
 
     // ====================================================================
-    // Command queue — FIFO of register snapshots
+    // pat_blocked — sticky diagnostic flag
+    // ====================================================================
+    // Asserts the moment software writes any pat/font load register
+    // ($D4BA pointer-reset, $D4BB byte, $D4CE font byte, $D4CF font reset)
+    // while the blitter is busy.  All such writes are silently dropped by
+    // the gates above, but pat_blocked tells software that it did so — so
+    // SW knows it needs to drain the queue and retry the load.  Clears
+    // automatically when busy goes 0 (the safe state for pat/font writes).
+    wire pat_load_attempt   = reg_we && busy && (reg_addr == 5'h0B);
+    wire pat_logw_attempt   = reg_we && busy && (reg_addr == 5'h0A);
+    wire font_load_attempt  = reg_we && busy && (reg_addr == 5'h1E);
+    wire font_ctrl_attempt  = reg_we && busy && (reg_addr == 5'h1F);
+    // Note: pat_logw_attempt only flags if the side-effect (pointer reset)
+    // would have applied — software writing $D4BA just to change log_pw_reg
+    // for a future CMD is legitimate and not a "blocked" event per se, but
+    // the pointer reset IS dropped, so we still raise the flag to keep the
+    // SW model simple: any pat/font register touch while busy = flagged.
+    logic pat_blocked_q;
+    always_ff @(posedge clk or posedge rst) begin
+        if (rst)
+            pat_blocked_q <= 1'b0;
+        else if (pat_load_attempt || pat_logw_attempt
+              || font_load_attempt || font_ctrl_attempt)
+            pat_blocked_q <= 1'b1;
+        else if (!busy)
+            pat_blocked_q <= 1'b0;
+    end
+    assign pat_blocked = pat_blocked_q;
+
+    // ====================================================================
+    // Command queue — FIFO of register snapshots (BRAM-backed, 16-deep)
     // ====================================================================
     // Each CMD write ($D4BC) snapshots the current *_reg values, CMD code,
-    // FLAGS, and RASTER_OP into a fixed-width entry and pushes it into a
-    // small FIFO.  S_IDLE pops the oldest entry, derives mode flags from
-    // the snapshot's CMD + FLAGS, copies the fields into the *_q working
+    // FLAGS, and RASTER_OP into a 192-bit entry and pushes it into the
+    // FIFO.  S_IDLE pops the oldest entry, re-derives mode flags from the
+    // snapshot's CMD + FLAGS, copies the fields into the *_q working
     // registers, and dispatches to the first state.
     //
-    // Software can therefore submit several operations back-to-back without
+    // Software can submit up to Q_DEPTH operations back-to-back without
     // polling STATUS between each one; the PS just programs the registers,
     // writes CMD, and moves on.  When the queue is full, STATUS.queue_full
     // (bit 1 at $D4BD) asserts and further CMD writes are silently dropped.
     //
-    // Pattern memory and font memory are NOT snapshotted — they are shared
-    // by all queued commands.  Software wanting per-command patterns must
-    // either reload between CMDs (and let the queue drain first) or use the
-    // pattern phase/log_pw to vary tiling within one shared pattern.
+    // Pattern memory and font memory are NOT snapshotted per entry.  The
+    // byte-stream loads for pat_mem and font_mem are gated on `!busy` (see
+    // further down) so all queued commands observe a consistent pat/font
+    // state — software must drain the queue before reloading patterns.
     //
-    // Implementation: 4-deep × 192-bit array with combinational front-read.
-    // Vivado typically maps to LUTRAM at this size; for deeper queues add
-    // (* ram_style = "block" *) and accept a 1-cycle pop latency.
-    localparam int Q_DEPTH = 4;
-    localparam int Q_AW    = 2;             // $clog2(Q_DEPTH)
+    // Storage: 16 × 192 bits = 3072 bits, mapped to a single RAMB18 via
+    // (* ram_style = "block" *).  Read latency is 1 cycle, hidden by a
+    // small prefetch FSM: cq_front_q always reflects the oldest entry
+    // when cq_front_valid = 1, with a write-first bypass for the push-to-
+    // empty edge case so the first command after an idle period dispatches
+    // without an extra stall.
+    localparam int Q_DEPTH = 16;
+    localparam int Q_AW    = 4;             // $clog2(Q_DEPTH)
 
+    (* ram_style = "block" *)
     logic [191:0]    cmd_fifo [0:Q_DEPTH-1];
     logic [Q_AW-1:0] cq_head;               // next write slot
     logic [Q_AW-1:0] cq_tail;               // next read slot
@@ -444,25 +494,64 @@ module xt_blitter #(
     wire cq_pop;   // driven below (forward reference; declared as wire so it
                    // is visible to the FIFO management always_ff)
 
-    // Combinational read of the oldest entry — consumed by S_IDLE on cq_pop.
-    wire [191:0] cq_front = cmd_fifo[cq_tail];
+    // Synchronous read of the oldest entry — registered at the BRAM output.
+    // cq_front_valid tracks whether cq_front_q currently reflects the entry
+    // at cq_tail (i.e., BRAM has had at least one cycle to read after the
+    // last cq_tail change).  The write-first bypass on the read port (in
+    // the BRAM always_ff below) handles the same-cycle push-to-empty case.
+    logic [191:0] cq_front_q;
+    logic         cq_front_valid;
 
-    // Unpacked fields for use in S_IDLE.
-    wire [15:0] q_dst_x      = cq_front[191:176];
-    wire [15:0] q_dst_y      = cq_front[175:160];
-    wire [15:0] q_dst_w      = cq_front[159:144];
-    wire [15:0] q_dst_h      = cq_front[143:128];
-    wire [15:0] q_src_x      = cq_front[127:112];
-    wire [15:0] q_src_y      = cq_front[111:96];
-    wire [15:0] q_src_w      = cq_front[95:80];
-    wire [15:0] q_src_h      = cq_front[79:64];
-    wire [4:0]  q_phase_x    = cq_front[60:56];
-    wire [4:0]  q_phase_y    = cq_front[52:48];
-    wire [4:0]  q_log_pw     = cq_front[44:40];
-    wire [4:0]  q_log_ph     = cq_front[36:32];
-    wire [7:0]  q_cmd        = cq_front[31:24];
-    wire [7:0]  q_flags      = cq_front[23:16];
-    wire [3:0]  q_raster_op  = cq_front[11:8];
+    // BRAM write port + registered read port with write-first bypass.
+    // When cq_push fires AND the write slot (cq_head) is the same as the
+    // read slot (cq_tail) — the push-to-empty case — bypass the BRAM and
+    // feed the snapshot directly into cq_front_q, so cq_front_valid can be
+    // set the same cycle and the first command dispatches without delay.
+    always_ff @(posedge clk) begin
+        if (cq_push) cmd_fifo[cq_head] <= cmd_snapshot_in;
+
+        if (cq_push && (cq_head == cq_tail))
+            cq_front_q <= cmd_snapshot_in;
+        else
+            cq_front_q <= cmd_fifo[cq_tail];
+    end
+
+    // cq_front_valid: high iff cq_front_q reflects the entry currently at
+    // cq_tail.  Goes low on cq_pop (tail advances → BRAM needs to refetch),
+    // goes high one cycle later (or same cycle on the write-first bypass).
+    always_ff @(posedge clk or posedge rst) begin
+        if (rst) begin
+            cq_front_valid <= 1'b0;
+        end else if (cq_pop) begin
+            // We just popped — BRAM read of the new tail hasn't settled.
+            // It will settle next cycle unless we hit the bypass below.
+            cq_front_valid <= cq_push && (cq_head == (cq_tail + 1'd1));
+        end else if (cq_push && cq_empty_w) begin
+            // Push to empty queue — bypass routes the snapshot into
+            // cq_front_q this same cycle, so dispatch is allowed next cycle.
+            cq_front_valid <= 1'b1;
+        end else if (!cq_empty_w) begin
+            // Steady state with entries queued — BRAM has settled.
+            cq_front_valid <= 1'b1;
+        end
+    end
+
+    // Unpacked fields for use in S_IDLE (read from the registered output).
+    wire [15:0] q_dst_x      = cq_front_q[191:176];
+    wire [15:0] q_dst_y      = cq_front_q[175:160];
+    wire [15:0] q_dst_w      = cq_front_q[159:144];
+    wire [15:0] q_dst_h      = cq_front_q[143:128];
+    wire [15:0] q_src_x      = cq_front_q[127:112];
+    wire [15:0] q_src_y      = cq_front_q[111:96];
+    wire [15:0] q_src_w      = cq_front_q[95:80];
+    wire [15:0] q_src_h      = cq_front_q[79:64];
+    wire [4:0]  q_phase_x    = cq_front_q[60:56];
+    wire [4:0]  q_phase_y    = cq_front_q[52:48];
+    wire [4:0]  q_log_pw     = cq_front_q[44:40];
+    wire [4:0]  q_log_ph     = cq_front_q[36:32];
+    wire [7:0]  q_cmd        = cq_front_q[31:24];
+    wire [7:0]  q_flags      = cq_front_q[23:16];
+    wire [3:0]  q_raster_op  = cq_front_q[11:8];
 
     // Mode flags re-derived from the popped snapshot.  Same logic as the
     // pre-queue CMD-write decoder used to produce, now evaluated at pop
@@ -475,20 +564,15 @@ module xt_blitter #(
     wire q_blend_mode = ((q_cmd == 8'h01) || (q_cmd == 8'h02)) && q_flags[0];
     wire q_font_mode  = (q_cmd == 8'h05);
 
-    // FIFO management
+    // FIFO pointer/count management
     always_ff @(posedge clk or posedge rst) begin
         if (rst) begin
             cq_head  <= '0;
             cq_tail  <= '0;
             cq_count <= '0;
         end else begin
-            if (cq_push) begin
-                cmd_fifo[cq_head] <= cmd_snapshot_in;
-                cq_head <= cq_head + 1'd1;
-            end
-            if (cq_pop) begin
-                cq_tail <= cq_tail + 1'd1;
-            end
+            if (cq_push) cq_head <= cq_head + 1'd1;
+            if (cq_pop)  cq_tail <= cq_tail + 1'd1;
             case ({cq_push, cq_pop})
                 2'b10:   cq_count <= cq_count + 1'd1;
                 2'b01:   cq_count <= cq_count - 1'd1;
@@ -836,9 +920,10 @@ module xt_blitter #(
     // busy = FSM not idle OR work still queued — software polls this to
     // know when a batch of CMDs has fully drained.
     assign busy          = (state != S_IDLE) || !cq_empty_w;
-    // cq_pop fires when S_IDLE sees a non-empty queue; the same combinational
-    // signal is consumed by the FIFO-management always_ff above.
-    assign cq_pop        = (state == S_IDLE) && !cq_empty_w;
+    // cq_pop fires when S_IDLE sees a non-empty queue AND the prefetched
+    // entry is valid.  cq_front_valid hides the BRAM 1-cycle read latency
+    // and the push-to-empty bypass takes care of the first-CMD case.
+    assign cq_pop        = (state == S_IDLE) && !cq_empty_w && cq_front_valid;
 
     // ====================================================================
     always_ff @(posedge clk or posedge rst) begin
@@ -941,14 +1026,16 @@ module xt_blitter #(
                 // ============================================================
                 // S_IDLE — pop the next command off the FIFO and dispatch.
                 //
-                // cq_pop = (state == S_IDLE) && !cq_empty_w is computed
-                // outside the case and consumed by the FIFO-management
-                // always_ff to advance cq_tail.  Here we just snapshot the
-                // popped fields (q_*) into the working registers and pick
-                // the first state based on the popped CMD.
+                // cq_pop = (state == S_IDLE) && !cq_empty_w && cq_front_valid
+                // is computed outside the case and consumed by the FIFO-
+                // management always_ff to advance cq_tail.  Here we just
+                // snapshot the popped fields (q_*) into the working
+                // registers and pick the first state based on the popped
+                // CMD.  cq_front_valid gates on BRAM read latency — if the
+                // prefetch hasn't settled yet we just wait another cycle.
                 // ============================================================
                 S_IDLE: begin
-                    if (!cq_empty_w) begin
+                    if (!cq_empty_w && cq_front_valid) begin
                         dst_x_q   <= q_dst_x;
                         dst_y_q   <= q_dst_y;
                         dst_w_q   <= q_dst_w;
