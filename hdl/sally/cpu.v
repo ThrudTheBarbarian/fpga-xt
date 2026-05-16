@@ -970,13 +970,19 @@ always @(posedge clk or posedge reset)
                 8'b010x_0100:   state <= PUSH0; // PUSH X ($44), PUSH Y ($54)
                 8'b011x_0100:   state <= PULL0; // POP  X ($64), POP  Y ($74)
                 // Stage B SP-relative — $x2 opcodes (NMOS JAMs).
-                // LDA / LDX / LDY / STA / STX / STY (d,SP)
+                // Loads, stores, and ADC/SBC/CMP all share the SP0 state
+                // (one-cycle stack access) then FETCH for the ALU
+                // operation.  ADC/SBC/CMP just use a different alu_op
+                // (set by the `op` decode further down).
                 8'b1011_0010,                   // LDA d,SP ($B2)
                 8'b0100_0010,                   // LDX d,SP ($42)
                 8'b0101_0010,                   // LDY d,SP ($52)
                 8'b1001_0010,                   // STA d,SP ($92)
                 8'b0000_0010,                   // STX d,SP ($02)
-                8'b0001_0010:                   // STY d,SP ($12)
+                8'b0001_0010,                   // STY d,SP ($12)
+                8'b0111_0010,                   // ADC d,SP ($72)
+                8'b1101_0010,                   // CMP d,SP ($D2)
+                8'b1111_0010:                   // SBC d,SP ($F2)
                                 state <= SP0;
                 8'b0xx1_1000:   state <= REG;   // CLC, SEC, CLI, SEI
                 8'b1xx0_00x0:   state <= FETCH; // IMM
@@ -1091,7 +1097,9 @@ always @(posedge clk)
                 8'b01xx_0100,   // Stage B: PUSH/POP X/Y ($44/$54/$64/$74)
                 8'b1011_0010,   // Stage B: LDA d,SP ($B2)
                 8'b0100_0010,   // Stage B: LDX d,SP ($42)
-                8'b0101_0010:   // Stage B: LDY d,SP ($52)
+                8'b0101_0010,   // Stage B: LDY d,SP ($52)
+                8'b0111_0010,   // Stage B: ADC d,SP ($72)
+                8'b1111_0010:   // Stage B: SBC d,SP ($F2)
                                 load_reg <= 1;
 
                 default:        load_reg <= 0;
@@ -1212,7 +1220,9 @@ always @(posedge clk )
 always @(posedge clk )
      if( (state == DECODE || state == BRK0) && RDY )
         casex( IR )
-                8'bx11x_xx01:   // SBC, ADC
+                8'bx11x_xx01,   // SBC, ADC
+                8'b0111_0010,   // Stage B: ADC d,SP ($72)
+                8'b1111_0010:   // Stage B: SBC d,SP ($F2)
                                 adc_sbc <= 1;
 
                 default:        adc_sbc <= 0;
@@ -1242,7 +1252,8 @@ always @(posedge clk )
         casex( IR )
                 8'b11x0_0x00,   // CPX, CPY (imm/zp)
                 8'b11x0_1100,   // CPX, CPY (abs)
-                8'b110x_xx01:   // CMP 
+                8'b110x_xx01,   // CMP
+                8'b1101_0010:   // Stage B: CMP d,SP ($D2)
                                 compare <= 1;
 
                 default:        compare <= 0;
@@ -1251,10 +1262,19 @@ always @(posedge clk )
 always @(posedge clk )
      if( state == DECODE && RDY )
         casex( IR )
+                // Stage B SP-relative ($42/$52/$72) must precede the
+                // generic 8'b01xx_xx10 ROR/LSR catch — otherwise
+                // alu_shift_right asserts in FETCH and the SP-rel
+                // load/ADC result comes back right-shifted.
+                8'b0100_0010,   // LDX d,SP
+                8'b0101_0010,   // LDY d,SP
+                8'b0111_0010:   // ADC d,SP
+                                shift_right <= 0;
+
                 8'b01xx_xx10:   // ROR, LSR
                                 shift_right <= 1;
 
-                default:        shift_right <= 0; 
+                default:        shift_right <= 0;
         endcase
 
 always @(posedge clk )

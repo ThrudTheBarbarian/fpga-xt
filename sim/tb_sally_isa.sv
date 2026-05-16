@@ -272,6 +272,91 @@ module tb_sally_isa;
         $display("PASS: test_lda_d_sp");
     endtask
 
+    // ---- Test 7: ADC d,SP ($72 dd) ------------------------------------
+    // After prologue (SP=$FFF): place $05 at stack[$0FFE], then
+    //   LDA #$10 ; CLC ; ADC $FF,SP   ->  A = $10 + $05 + 0 = $15
+    //   $0404 A9 05     LDA #$05
+    //   $0406 92 FF     STA $FF,SP        ; stack[$0FFE] = $05
+    //   $0408 A9 10     LDA #$10
+    //   $040A 18        CLC
+    //   $040B 72 FF     ADC $FF,SP        ; A = $10 + $05 = $15
+    //   $040D 8D 08 03  STA $0308
+    //   $0410 4C 10 04  JMP $0410
+    task automatic test_adc_d_sp();
+        $display("=== Test 7: ADC d,SP ($72) ===");
+        reset_cpu();
+
+        mem[16'hFFFC] = 8'h00;
+        mem[16'hFFFD] = 8'h04;
+        prologue();
+
+        put(16'h0404, 8'hA9); put(16'h0405, 8'h05);             // LDA #$05
+        put(16'h0406, 8'h92); put(16'h0407, 8'hFF);             // STA $FF,SP (=-1)
+        put(16'h0408, 8'hA9); put(16'h0409, 8'h10);             // LDA #$10
+        put(16'h040A, 8'h18);                                   // CLC
+        put(16'h040B, 8'h72); put(16'h040C, 8'hFF);             // ADC $FF,SP
+        put(16'h040D, 8'h8D); put(16'h040E, 8'h08); put(16'h040F, 8'h03);  // STA $0308
+        put(16'h0410, 8'h4C); put(16'h0411, 8'h10); put(16'h0412, 8'h04);  // JMP $0410
+
+        run_until_stuck(16'h0410, 400, "ADC d,SP");
+        expect_mem(16'h0308, 8'h15, "ADC $FF,SP: 0x10 + 0x05 = 0x15");
+        $display("PASS: test_adc_d_sp");
+    endtask
+
+    // ---- Test 8: SBC d,SP ($F2 dd) ------------------------------------
+    //   LDA #$03 ; STA $FE,SP
+    //   LDA #$20 ; SEC ; SBC $FE,SP  ->  A = $20 - $03 = $1D
+    task automatic test_sbc_d_sp();
+        $display("=== Test 8: SBC d,SP ($F2) ===");
+        reset_cpu();
+
+        mem[16'hFFFC] = 8'h00;
+        mem[16'hFFFD] = 8'h04;
+        prologue();
+
+        put(16'h0404, 8'hA9); put(16'h0405, 8'h03);             // LDA #$03
+        put(16'h0406, 8'h92); put(16'h0407, 8'hFE);             // STA $FE,SP (-2)
+        put(16'h0408, 8'hA9); put(16'h0409, 8'h20);             // LDA #$20
+        put(16'h040A, 8'h38);                                   // SEC
+        put(16'h040B, 8'hF2); put(16'h040C, 8'hFE);             // SBC $FE,SP
+        put(16'h040D, 8'h8D); put(16'h040E, 8'h09); put(16'h040F, 8'h03);  // STA $0309
+        put(16'h0410, 8'h4C); put(16'h0411, 8'h10); put(16'h0412, 8'h04);  // JMP $0410
+
+        run_until_stuck(16'h0410, 400, "SBC d,SP");
+        expect_mem(16'h0309, 8'h1D, "SBC $FE,SP: 0x20 - 0x03 = 0x1D");
+        $display("PASS: test_sbc_d_sp");
+    endtask
+
+    // ---- Test 9: CMP d,SP ($D2 dd) ------------------------------------
+    // CMP sets Z=1 if equal.  After CMP, BEQ branches; we use a small
+    // branch to a "success" path that stores $AA, vs a "fail" path that
+    // stores $FF.
+    //   LDA #$77 ; STA $FD,SP
+    //   LDA #$77 ; CMP $FD,SP        ; equal -> Z=1
+    //   BEQ +4   ; LDA #$FF ; (skipped); LDA #$AA ; STA $030A
+    task automatic test_cmp_d_sp();
+        $display("=== Test 9: CMP d,SP ($D2) ===");
+        reset_cpu();
+
+        mem[16'hFFFC] = 8'h00;
+        mem[16'hFFFD] = 8'h04;
+        prologue();
+
+        put(16'h0404, 8'hA9); put(16'h0405, 8'h77);             // LDA #$77
+        put(16'h0406, 8'h92); put(16'h0407, 8'hFD);             // STA $FD,SP
+        put(16'h0408, 8'hA9); put(16'h0409, 8'h77);             // LDA #$77 (same)
+        put(16'h040A, 8'hD2); put(16'h040B, 8'hFD);             // CMP $FD,SP
+        put(16'h040C, 8'hF0); put(16'h040D, 8'h02);             // BEQ +2 (skip the LDA #$FF)
+        put(16'h040E, 8'hA9); put(16'h040F, 8'hFF);             // LDA #$FF (skipped if Z=1)
+        put(16'h0410, 8'hA9); put(16'h0411, 8'hAA);             // LDA #$AA
+        put(16'h0412, 8'h8D); put(16'h0413, 8'h0A); put(16'h0414, 8'h03);  // STA $030A
+        put(16'h0415, 8'h4C); put(16'h0416, 8'h15); put(16'h0417, 8'h04);  // JMP $0415
+
+        run_until_stuck(16'h0415, 400, "CMP d,SP");
+        expect_mem(16'h030A, 8'hAA, "CMP equal: BEQ taken (path = $AA)");
+        $display("PASS: test_cmp_d_sp");
+    endtask
+
     // ---- Main scheduler -------------------------------------------------
     initial begin
         $display("=== tb_sally_isa starting ===");
@@ -287,6 +372,9 @@ module tb_sally_isa;
         test_lda_d_sp();
         test_sta_d_sp();
         test_xy_d_sp();
+        test_adc_d_sp();
+        test_sbc_d_sp();
+        test_cmp_d_sp();
 
         $display("=== ALL TESTS PASSED ===");
         $finish;
