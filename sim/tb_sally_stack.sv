@@ -29,6 +29,8 @@ module tb_sally_stack;
     wire  [7:0]  data_out;
     logic        rdy = 1'b1;
     wire         busy;
+    logic        stack_op = 1'b0;
+    logic [3:0]  s_high   = 4'h0;   // unused by sally_mem but plumbed for clarity
 
     wire [15:0] hwreg_addr;
     wire        hwreg_we;
@@ -65,6 +67,8 @@ module tb_sally_stack;
         .data_out            (data_out),
         .rdy                 (rdy),
         .busy                (busy),
+        .stack_op            (stack_op),
+        .s_high              (s_high),
         .hwreg_addr          (hwreg_addr),
         .hwreg_we            (hwreg_we),
         .hwreg_din           (hwreg_din),
@@ -137,6 +141,36 @@ module tb_sally_stack;
         end
     endtask
 
+    // Stack-op write: simulates a cpu.v push.  addr is the 16-bit AB
+    // (low 12 bits = stack offset).  stack_op asserted for one cycle.
+    task automatic stack_write(input [15:0] a, input [7:0] d);
+        @(negedge clk);
+        addr     <= a;
+        data_in  <= d;
+        rw       <= 1'b0;
+        stack_op <= 1'b1;
+        @(negedge clk);
+        rw       <= 1'b1;
+        stack_op <= 1'b0;
+    endtask
+
+    // Stack-op read: same shape as stack_write but rw=1.
+    task automatic stack_read_expect(input [15:0] a, input [7:0] expected,
+                                     input string label);
+        @(negedge clk);
+        addr     <= a;
+        rw       <= 1'b1;
+        stack_op <= 1'b1;
+        @(posedge clk);
+        @(negedge clk);
+        stack_op <= 1'b0;
+        if (data_out !== expected) begin
+            $display("FAIL: %s — stack read [%04h] = %02h, expected %02h",
+                     label, a, data_out, expected);
+            $fatal(1);
+        end
+    endtask
+
     // ---- Test scheduler -------------------------------------------------
     initial begin
         $display("=== tb_sally_stack starting ===");
@@ -193,6 +227,39 @@ module tb_sally_stack;
         @(negedge clk);
         rom_we   <= 1'b0;
         read_byte_expect(16'h0300, 8'h84, "rom_we → main[$0300]");
+
+        // ---- 6. Stage A Increment 2: deep stack via stack_op ---------
+        // CPU pushes at SP=$EFF (deep, below the legacy alias).  AB will
+        // be $0EFF with stack_op=1.  Should land in stack_mem[$EFF].
+        stack_write(16'h0EFF, 8'hDE);
+        stack_read_expect(16'h0EFF, 8'hDE, "stack_op write/read [$EFF]");
+
+        // Deep stack write should NOT corrupt main mem at the same
+        // logical 16-bit address.  Verify by reading $0EFF as a normal
+        // (non-stack-op) access — main mem there is still its initial
+        // value (could be anything from prior writes, but specifically
+        // NOT $DE).
+        // Pre-write a known value to main mem at $0E00 via normal STA,
+        // then do a stack-op write at $0E00 with a different value, then
+        // verify the normal-read still returns the original.
+        write_byte(16'h0E00, 8'h11);
+        read_byte_expect(16'h0E00, 8'h11, "main[$0E00] before stack-op");
+        stack_write(16'h0E00, 8'h22);
+        stack_read_expect(16'h0E00, 8'h22, "stack[$E00] after stack_op write");
+        read_byte_expect(16'h0E00, 8'h11, "main[$0E00] uncorrupted by stack_op");
+
+        // ---- 7. Stage A Increment 2: stack-op write to top 256 bytes -
+        // A push at SP=$FFF lands at the SAME stack_mem location as a
+        // legacy LDA $01FF read (both map to stack_mem[$FFF]).  Verify
+        // by stack-writing then reading back via the alias.
+        stack_write(16'h0FFF, 8'hAB);
+        read_byte_expect(16'h01FF, 8'hAB, "alias reads stack_op write at top");
+
+        // ---- 8. Stage A Increment 2: legacy alias write → stack_op read -
+        // Mirror of #7: legacy STA $01FE writes through the alias, and
+        // a stack-op read at $0FFE pulls the same byte.
+        write_byte(16'h01FE, 8'hCD);
+        stack_read_expect(16'h0FFE, 8'hCD, "stack_op reads alias write at top");
 
         $display("=== ALL TESTS PASSED ===");
         $finish;

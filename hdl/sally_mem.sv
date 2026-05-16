@@ -78,6 +78,17 @@ module sally_mem #(
     input  wire        rdy,
     output wire        busy,           // 1 when banked_axi_reader in flight
 
+    // SALLY Stage A — 12-bit hidden-stack interface.
+    //   stack_op asserts on push/pull cycles; the 12-bit stack-mem
+    //   address is addr[11:0] (cpu.v outputs AB = {4'h0, s_high, S[7:0]}
+    //   on those cycles).  Non-stack accesses to $0100-$01FF still go
+    //   through the alias window in stack_mem's top 256 bytes.
+    input  wire        stack_op,
+    input  wire [3:0]  s_high,         // currently unused — addr[11:0] already
+                                       // carries the full stack address from
+                                       // cpu.v.  Kept as a port for clarity
+                                       // and future use (e.g., debug taps).
+
     // Hardware-register passthrough.
     output wire [15:0] hwreg_addr,
     output wire        hwreg_we,
@@ -185,14 +196,22 @@ module sally_mem #(
     wire is_mpd_window   = (addr[15:11] == 5'b11011);    // $D800-$DFFF
     wire is_cart_s4_window = (addr[15:13] == 3'b100);    // $8000-$9FFF
     wire is_cart_s5_window = (addr[15:13] == 3'b101);    // $A000-$BFFF
-    wire is_stack_page     = (addr[15:8] == 8'h01);      // $0100-$01FF
+    wire is_stack_page     = (addr[15:8] == 8'h01);      // $0100-$01FF (legacy alias)
     wire cart_external_read = rw                                // reads only
                             & ((is_cart_s4_window & ~bus_rd4_n_in)
                             |  (is_cart_s5_window & ~bus_rd5_n_in));
 
-    // Alias addressing into stack_mem: $0100-$01FF maps to the top 256
-    // bytes ($F00-$FFF), i.e., stack_mem[{4'hF, addr[7:0]}].
-    wire [11:0] stack_alias_addr = {4'hF, addr[7:0]};
+    // Stack BRAM addressing.
+    //   - When `stack_op` is asserted (cpu.v is in a push/pull cycle),
+    //     the full 12-bit stack address is in addr[11:0] (cpu.v outputs
+    //     AB = { 4'h0, s_high, S[7:0] }).
+    //   - When not a stack op but the address is in the legacy stack
+    //     page $0100-$01FF, alias to the top 256 bytes of stack_mem.
+    //   - Otherwise stack_mem is not addressed and the access goes to
+    //     main mem.
+    wire        is_stack_access = stack_op || is_stack_page;
+    wire [11:0] stack_addr_rd   = stack_op ? addr[11:0]
+                                           : {4'hF, addr[7:0]};
 
     // ---- CPU bank-select snoop -----------------------------------
     // Mirror writes to $0082-$0085 into latched registers so bank_xlat
@@ -326,15 +345,19 @@ module sally_mem #(
     // ROM-load wins on the rare same-cycle collision with a CPU write —
     // matches the original Verilog last-assignment-wins ordering.
     //
-    // Stack-page writes ($0100-$01FF) are NOT gated out of mem_we here —
-    // they land in both main mem AND stack_mem (below).  Reads from the
-    // stack page prefer stack_mem via was_stack_q, so the alias is the
-    // single source of truth.  Keeping mem_we's expression simple is
-    // critical: any extra terms in the condition were observed (May 16)
-    // to break Vivado's 64K cascade BRAM inference on a couple of bit
-    // columns (DRC REQP-1962 ADDR15 cascade mismatch).  The few wasted
-    // main-mem writes to $0100-$01FF cost nothing in steady state.
-    wire        cpu_w      = rdy && !rw && !is_hwreg_page && !is_in_window_w;
+    // Two exclusions from cpu_w:
+    //   - !stack_op: when cpu.v is doing a stack push (stack_op=1), the
+    //     12-bit address could land anywhere in $0000-$0FFF.  Shadowing
+    //     those writes into main mem would corrupt zero page or low
+    //     RAM.  Gate them out and let stack_mem hold the data.
+    //   - The legacy $0100-$01FF alias is NOT gated here — those writes
+    //     land in both main mem and stack_mem.  Reads still prefer
+    //     stack_mem via was_stack_q.  Gating $0100-$01FF specifically
+    //     (Increment 1's first attempt) broke Vivado's 64K BRAM cascade
+    //     inference on bits 2 and 7 (DRC REQP-1962).  stack_op is a
+    //     non-addr-derived input so it doesn't perturb the cascade.
+    wire        cpu_w      = rdy && !rw && !is_hwreg_page && !is_in_window_w
+                             && !stack_op;
     wire        mem_we     = cpu_w || rom_we;
     wire [15:0] mem_addr_w = rom_we ? rom_addr : addr;
     wire  [7:0] mem_din_w  = rom_we ? rom_data : data_in;
@@ -344,13 +367,18 @@ module sally_mem #(
     end
 
     // ---- Stack BRAM write port (separate array; reads prefer this) ----
-    // Stack page writes always land here in parallel with main mem so
-    // the alias window reads back the correct value.  Same applies to
-    // rom_we writes targeting $0100-$01FF.
-    wire        stack_cpu_w  = rdy && !rw && is_stack_page;
+    // Three write paths land in stack_mem:
+    //   - CPU stack op (stack_op=1):  full 12-bit addr → stack_mem[addr[11:0]]
+    //   - CPU legacy $0100-$01FF write: alias to top 256 bytes
+    //   - ROM-load write into $0100-$01FF: same alias
+    // The first path is the new Stage A Increment 2 feature; the latter
+    // two are the legacy alias from Increment 1.
+    wire        stack_cpu_w  = rdy && !rw && (stack_op || is_stack_page);
     wire        rom_is_stack = (rom_addr[15:8] == 8'h01);
     wire        stack_we     = stack_cpu_w || (rom_we && rom_is_stack);
-    wire [11:0] stack_addr_w = rom_we ? {4'hF, rom_addr[7:0]} : stack_alias_addr;
+    wire [11:0] stack_addr_w = rom_we    ? {4'hF, rom_addr[7:0]} :
+                               stack_op  ? addr[11:0]            :
+                                           {4'hF, addr[7:0]};
     wire  [7:0] stack_din_w  = rom_we ? rom_data : data_in;
 
     always_ff @(posedge clk) begin
@@ -381,11 +409,11 @@ module sally_mem #(
             was_cart_external_q  <= 1'b0;
         end else if (rdy) begin
             bram_dout_q          <= mem[addr];
-            stack_dout_q         <= stack_mem[stack_alias_addr];
+            stack_dout_q         <= stack_mem[stack_addr_rd];
             hwreg_dout_q         <= hwreg_dout;
             was_hwreg_q          <= is_hwreg_page;
             was_bank_q           <= is_in_window_w;
-            was_stack_q          <= is_stack_page;
+            was_stack_q          <= is_stack_access;
             was_mpd_window_q     <= is_mpd_window;
             was_cart_external_q  <= cart_external_read;
         end

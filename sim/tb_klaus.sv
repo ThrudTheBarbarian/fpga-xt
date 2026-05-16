@@ -40,6 +40,9 @@ module tb_klaus;
     wire        cpu_rw;
     logic [7:0] cpu_din_q;
 
+    wire        cpu_stack_op;
+    wire [3:0]  cpu_s_high;
+
     sally_core u_cpu (
         .clk      (clk),
         .rst      (rst),
@@ -49,15 +52,30 @@ module tb_klaus;
         .rw       (cpu_rw),
         .rdy      (1'b1),
         .irq_n    (1'b1),
-        .nmi_n    (1'b1)
+        .nmi_n    (1'b1),
+        .stack_op (cpu_stack_op),
+        .s_high   (cpu_s_high)
     );
 
     // Synchronous-memory contract: addr cycle N, data cycle N+1.
     // Writes commit at the same posedge.
+    //
+    // SALLY Stage A note: cpu.v now outputs AB = {4'h0, S_high, S[7:0]}
+    // for stack ops — with S_high = $F at reset, that's $0Fxx instead
+    // of the legacy $01xx.  Klaus's test code uses legacy direct
+    // addressing (LDA $0100,X, STA $01FF, etc.) to inspect stack state,
+    // so we add a flat-memory alias here: any access to $0100-$01FF
+    // is redirected to $0F00-$0FFF, mirroring the alias window that
+    // sally_mem provides in the production design.  This keeps Klaus's
+    // ISA semantics working against the widened SP.
+    wire [15:0] cpu_addr_eff = (cpu_addr[15:8] == 8'h01)
+                                ? {8'h0F, cpu_addr[7:0]}
+                                : cpu_addr;
+
     always_ff @(posedge clk) begin
         if (!cpu_rw)
-            mem[cpu_addr] <= cpu_dout;
-        cpu_din_q <= mem[cpu_addr];
+            mem[cpu_addr_eff] <= cpu_dout;
+        cpu_din_q <= mem[cpu_addr_eff];
     end
 
     // ---- Stuck-PC watchdog --------------------------------------------
@@ -86,6 +104,16 @@ module tb_klaus;
         $display("=== M24-klaus Klaus Dormann 6502 functional test ===");
         $display("[load] reading sim/test_data/6502_functional_test.hex …");
         $readmemh("test_data/6502_functional_test.hex", mem);
+
+        // SALLY Stage A: cpu.v now outputs $0Fxx for stack ops; the
+        // CPU read path is aliased back to $0F00-$0FFF for $0100-$01FF
+        // legacy accesses (cpu_addr_eff above).  The hex loader still
+        // wrote initial stack-page sentinels ($FF) into mem[$0100-$01FF],
+        // so we need to mirror those into mem[$0F00-$0FFF] where the
+        // alias actually reads from.  Without this, the CPU would read
+        // back $00 instead of $FF and Klaus diverges.
+        for (int i = 0; i < 256; i++)
+            mem[16'h0F00 + i] = mem[16'h0100 + i];
 
         // Patch reset vector so PC starts at $0400 (Klaus's `start`
         // label = code_segment).

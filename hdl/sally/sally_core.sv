@@ -35,7 +35,14 @@ module sally_core (
     // Active-low interrupt inputs (real-6502 / Atari pin polarity).
     // The wrapper inverts to feed the vendor's active-high IRQ / NMI.
     input  wire        irq_n,
-    input  wire        nmi_n
+    input  wire        nmi_n,
+
+    // SALLY Stage A — 12-bit hidden stack pointer.  stack_op asserts on
+    // every push/pull cycle; s_high is the high 4 bits of SP.  Combined
+    // with the 8-bit S in AXYS, this gives a 12-bit SP reaching the full
+    // 4 KB hidden stack RAM in sally_mem.  See docs/6502-embellishments.md.
+    output wire        stack_op,
+    output wire [3:0]  s_high
 );
 
     // ---- Polarity adapters ---------------------------------------------
@@ -46,15 +53,17 @@ module sally_core (
 
     // ---- Vendor core ---------------------------------------------------
     cpu u_cpu (
-        .clk    (clk),
-        .reset  (rst),
-        .AB     (addr),
-        .DI     (data_in),
-        .DO     (data_out),
-        .WE     (vendor_we),
-        .IRQ    (vendor_irq),
-        .NMI    (vendor_nmi),
-        .RDY    (rdy)
+        .clk      (clk),
+        .reset    (rst),
+        .AB       (addr),
+        .DI       (data_in),
+        .DO       (data_out),
+        .WE       (vendor_we),
+        .IRQ      (vendor_irq),
+        .NMI      (vendor_nmi),
+        .RDY      (rdy),
+        .stack_op (stack_op),
+        .s_high   (s_high)
     );
 
     // ---- R/W convention -------------------------------------------------

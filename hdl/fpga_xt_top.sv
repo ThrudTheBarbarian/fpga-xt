@@ -464,6 +464,9 @@ module fpga_xt_top (
     );
 
     // ---- sally_core ------------------------------------------------------
+    wire        cpu_stack_op;
+    wire [3:0]  cpu_s_high;
+
     sally_core u_sally_core (
         .clk      (clk_sally),
         .rst      (rst_sally),
@@ -473,7 +476,9 @@ module fpga_xt_top (
         .rw       (cpu_rw),
         .rdy      (sally_rdy),
         .irq_n    (irq_n_sync),      // from ANTIC via CDC
-        .nmi_n    (nmi_n_sync)       // from ANTIC via CDC
+        .nmi_n    (nmi_n_sync),      // from ANTIC via CDC
+        .stack_op (cpu_stack_op),    // SALLY Stage A: 12-bit stack push/pull cycle
+        .s_high   (cpu_s_high)       // SALLY Stage A: high 4 bits of SP
     );
 
     // ---- sally_mem -------------------------------------------------------
@@ -488,6 +493,8 @@ module fpga_xt_top (
         .rw         (cpu_rw),
         .data_out   (cpu_din),
         .rdy        (sally_rdy),
+        .stack_op   (cpu_stack_op),
+        .s_high     (cpu_s_high),
         .busy       (mem_busy_n),
         .hwreg_addr (hwreg_addr),
         .hwreg_we   (hwreg_we),

@@ -18,9 +18,10 @@
  * on the output pads if external memory is required.
  */
 
-module cpu( clk, reset, AB, DI, DO, WE, IRQ, NMI, RDY );
+module cpu( clk, reset, AB, DI, DO, WE, IRQ, NMI, RDY,
+            stack_op, s_high );
 
-input clk;              // CPU clock 
+input clk;              // CPU clock
 input reset;            // reset signal
 output reg [15:0] AB;   // address bus
 input [7:0] DI;         // data in, read bus
@@ -28,7 +29,19 @@ output [7:0] DO;        // data out, write bus
 output WE;              // write enable
 input IRQ;              // interrupt request
 input NMI;              // non-maskable interrupt request
-input RDY;              // Ready signal. Pauses CPU when RDY=0 
+input RDY;              // Ready signal. Pauses CPU when RDY=0
+
+// ---- SALLY 6502 embellishment Stage A (see docs/6502-embellishments.md) ----
+// stack_op  asserts on any cycle when AB is generated as a stack address
+//           (PHA/PLA/JSR/RTS/RTI/BRK push/pull cycles).  Combinational
+//           from `state` — same set of states that today form
+//           AB = { STACKPAGE, regfile } or { STACKPAGE, ADD }.
+// s_high    high 4 bits of the widened 12-bit stack pointer.  Initial
+//           value $F at reset, so SP = { s_high=$F, S=$FF } = $FFF.
+//           Increments / decrements when S wraps $FF→$00 / $00→$FF.
+//           TSX/TXS only touch the low 8 bits; s_high is preserved.
+output reg   stack_op;
+output [3:0] s_high;
 
 /*
  * internal signals
@@ -367,10 +380,23 @@ always @(posedge clk)
  */
 
 parameter
-        ZEROPAGE  = 8'h00,
-        STACKPAGE = 8'h01;
+        ZEROPAGE  = 8'h00;
 
-always @*
+// SALLY Stage A: stack-pointer high nibble.  Lives in a 4-bit register
+// (assignment / wrap detection are further down in the file alongside
+// the AXYS register-file write block).  Forward-declared here so the
+// AB address generator below can see it.
+reg [3:0] S_high;
+
+// Stack page top byte is now { 4'h0, S_high } — the v0.16 STACKPAGE
+// constant 8'h01 is gone.  S_high defaults to $F at reset so the
+// initial 8-bit-compatible stack page is still $0Fxx; the legacy
+// $0100-$01FF alias is provided by sally_mem so existing code that
+// does TSX + LDA $0100,X still works for the top 256 bytes.
+wire [7:0] STACKPAGE_DYN = { 4'h0, S_high };
+
+always @* begin
+    stack_op = 1'b0;
     case( state )
         ABSX1,
         INDX3,
@@ -390,7 +416,7 @@ always @*
         PUSH1,
         RTS0,
         RTI0,
-        BRK0:           AB = { STACKPAGE, regfile };
+        BRK0:           begin AB = { STACKPAGE_DYN, regfile }; stack_op = 1'b1; end
 
         BRK1,
         JSR1,
@@ -400,8 +426,8 @@ always @*
         RTI1,
         RTI2,
         RTI3,
-        BRK2:           AB = { STACKPAGE, ADD };
-        
+        BRK2:           begin AB = { STACKPAGE_DYN, ADD     }; stack_op = 1'b1; end
+
         INDY1,
         INDX1,
         ZPX1,
@@ -416,6 +442,7 @@ always @*
 
         default:        AB = PC;
     endcase
+end
 
 /*
  * ABH/ABL pair is used for registering previous address bus state.
@@ -543,6 +570,36 @@ end
 always @(posedge clk)
     if( write_register & RDY )
         AXYS[regsel] <= (state == JSR0) ? DIMUX : { ADD[7:4] + ADJH, ADD[3:0] + ADJL };
+
+/*
+ * 12-bit stack-pointer extension (Stage A).  The low 8 bits live in
+ * AXYS[SEL_S] as before; this register holds bits [11:8].  Initial
+ * value $F at reset so SP = $FFF.
+ *
+ * Wrap detection: whenever AXYS[SEL_S] is being updated with ADD
+ * (i.e., the normal ALU output, NOT the JSR0 temp-PCL stash), check
+ * for $00→$FF (push underflow → S_high--) and $FF→$00 (pull overflow
+ * → S_high++).  ADJH/ADJL are nonzero only during BCD adjusts; the
+ * wrap-detect equality on raw ADD is safe because none of the stack
+ * micro-ops use BCD.
+ *
+ * TXS/TSX never reach this block — they only touch AXYS[SEL_S], so
+ * S_high is preserved across `LDX #$FF : TXS`, the legacy reset
+ * sequence.  That sequence lands at SP = $FFF (top of the 4 KB stack).
+ * (S_high register is declared earlier near the AB generator.)
+ */
+assign s_high = S_high;
+
+always @(posedge clk) begin
+    if (reset)
+        S_high <= 4'hF;
+    else if (write_register & RDY & (regsel == SEL_S) & (state != JSR0)) begin
+        if (AXYS[SEL_S] == 8'h00 && ADD == 8'hFF)
+            S_high <= S_high - 4'd1;            // push wrap: e.g., $F00 → $EFF
+        else if (AXYS[SEL_S] == 8'hFF && ADD == 8'h00)
+            S_high <= S_high + 4'd1;            // pull wrap: e.g., $EFF → $F00
+    end
+end
 
 /*
  * register select logic. This determines which of the A, X, Y or
