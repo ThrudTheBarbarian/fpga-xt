@@ -55,7 +55,6 @@ module i2c_master #(
     always_ff @(posedge clk or negedge rst_n) begin
         if (!rst_n) begin
             timer <= 0;
-            timer_run <= 1'b0;
         end else if (timer_run) begin
             if (timer == PRESCALE-1)
                 timer <= 0;
