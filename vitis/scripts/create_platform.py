@@ -58,7 +58,12 @@ if XSA is None:
 # edited the BSP and want to rebuild the app against it).
 if os.path.exists(WORKSPACE) and not os.environ.get("VITIS_KEEP_WORKSPACE"):
     print(f">> wiping existing workspace: {WORKSPACE}")
-    shutil.rmtree(WORKSPACE)
+    # Windows leaves some files read-only after Vitis exits — rmtree fails
+    # with PermissionError unless we chmod first.
+    def _on_rmtree_error(func, path, exc_info):
+        os.chmod(path, 0o700)
+        func(path)
+    shutil.rmtree(WORKSPACE, onerror=_on_rmtree_error)
 
 # ---- Vitis client ----------------------------------------------------
 client = vitis.create_client()
@@ -70,27 +75,74 @@ print(f">> XSA:       {XSA}")
 # Standalone OS on the first Cortex-A9 core.  No FreeRTOS yet — that
 # comes once the UART-hello path is proven.
 print(">> creating platform component fpga_xt_platform ...")
+# Always skip the auto FSBL BSP creation — Vitis 2025.2.1's auto path
+# creates the zynq_fsbl domain but never populates the source files,
+# leaving CMake with "No SOURCES given to target: fsbl.elf".  We build
+# the FSBL as a separate app component below, which DOES pull in the
+# template sources from $XILINX_VITIS/data/embeddedsw.
 platform = client.create_platform_component(
     name="fpga_xt_platform",
     hw_design=XSA,
     os="standalone",
     cpu="ps7_cortexa9_0",
-    # Skip the auto FSBL BSP creation.  Setting no_boot_bsp=False
-    # makes Vitis 2025.x try to build a zynq_fsbl BSP at platform-
-    # create time; its CMakeLists references ps7_init.c at the
-    # component root, but Vitis doesn't extract the XSA-bundled
-    # copy into that location even though vivado/build.tcl injects
-    # ps7_init.* into the XSA root.  FSBL is only needed for
-    # SD/QSPI boot; JTAG iteration works without it.  See bring-up
-    # phase 3 + the deferred-work block at the bottom of this file.
     no_boot_bsp=True,
 )
+
+# FSBL needs xilffs (FAT file system to read BOOT.BIN from SD/QSPI) and
+# xilrsa (image signature/decryption).  Add them to the standalone BSP
+# BEFORE the first platform.build() so the libraries are present when
+# create_app_component validates the zynq_fsbl template.
+if not os.environ.get("VITIS_NO_FSBL"):
+    print(">> adding xilffs + xilrsa to BSP for FSBL ...")
+    domain = platform.get_domain("standalone_ps7_cortexa9_0")
+    domain.set_lib(lib_name="xilffs")
+    domain.set_lib(lib_name="xilrsa")
 status = platform.build()
 print(f">> platform build status: {status}")
 
 PFM_FILE = os.path.join(WORKSPACE, "fpga_xt_platform", "export",
                        "fpga_xt_platform", "fpga_xt_platform.xpfm")
 DOMAIN   = "standalone_ps7_cortexa9_0"
+
+# ---- FSBL app -------------------------------------------------------
+# Vitis 2025.2.1's `template="zynq_fsbl"` runs CMake during component
+# create and fails before we get a chance to import ps7_init.c (which
+# the template's CMakeLists.txt expects alongside the FSBL sources).
+# Workaround: create the component as empty_application and import
+# both the FSBL template tree from $XILINX_VITIS/data/embeddedsw AND
+# ps7_init.* from the BD's gen tree, then build.  Skip via
+# VITIS_NO_FSBL=1.
+if not os.environ.get("VITIS_NO_FSBL"):
+    print(">> creating fsbl app component (empty + manual import) ...")
+    fsbl = client.create_app_component(
+        name="fsbl",
+        platform=PFM_FILE,
+        domain=DOMAIN,
+        template="empty_application",
+    )
+
+    # FSBL template sources (CMakeLists, fsbl_main.c, image_mover.c, ...)
+    fsbl_tpl = os.path.join(os.environ["XILINX_VITIS"], "data", "embeddedsw",
+                            "lib", "sw_apps", "zynq_fsbl", "src")
+    for fn in os.listdir(fsbl_tpl):
+        src = os.path.join(fsbl_tpl, fn)
+        if os.path.isfile(src):
+            fsbl.import_files(from_loc=fsbl_tpl, files=[fn])
+
+    # ps7_init.c / ps7_init.h from the PS BD's gen tree (the same files
+    # vivado/build.tcl injects into the XSA root).
+    ps_ip_dir = os.path.join(REPO_ROOT, "bd", "zynq_ps_bd", "zynq_ps_bd.gen",
+                             "sources_1", "bd", "ps_bd", "ip",
+                             "ps_bd_zynq_ps_0")
+    if not os.path.isdir(ps_ip_dir):
+        ps_ip_dir = os.path.join(REPO_ROOT, "vivado", "bd", "zynq_ps_bd",
+                                 "zynq_ps_bd.gen", "sources_1", "bd",
+                                 "ps_bd", "ip", "ps_bd_zynq_ps_0")
+    for fn in ("ps7_init.c", "ps7_init.h"):
+        fsbl.import_files(from_loc=ps_ip_dir, files=[fn])
+
+    status = fsbl.build()
+    print(f">> fsbl build status: {status}")
 
 # ---- FSBL (deferred) -------------------------------------------------
 # The Zynq FSBL initialises the PS (DDR3 calibration, clocks, MIO) and

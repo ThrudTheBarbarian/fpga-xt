@@ -1,10 +1,9 @@
 # vitis/ — PS-side build (Vitis Unified 2025.x)
 
-PS-side counterpart to `vivado/`.  Generates the Vitis platform and
-the bare-metal `app_blink` hello-world from the XSA that Vivado
-writes alongside the bitstream.  An FSBL component is sketched in
-the script but currently disabled — see "Things this does NOT do
-yet" below.
+PS-side counterpart to `vivado/`.  Generates the Vitis platform,
+the Zynq FSBL, and the bare-metal `app_blink` hello-world from the
+XSA that Vivado writes.  Set `VITIS_NO_FSBL=1` to skip the FSBL
+build (JTAG-only bring-up doesn't need it).
 
 ## Layout
 
@@ -79,21 +78,12 @@ A canned version of the above lives at
 
 ## Things this does NOT do yet
 
-- **FSBL** — Vitis 2025.x's auto-FSBL-BSP creation fails with
-  "Cannot find source file: ps7_init.c" even though
-  `vivado/build.tcl` injects `ps7_init.*` into the XSA root.  The
-  inheritance trail (sysdef.xml entries, import_files post-creation,
-  domain library config) sits in `scripts/create_platform.py` as a
-  deferred-block comment.  Only matters for SD/QSPI boot; JTAG
-  iteration works without it.  Pick this up when SD-boot is on the
-  critical path — likely fastest path is to open the workspace in
-  the Vitis IDE, configure the FSBL by hand, then capture the
-  resulting Python in a script.
 - **FreeRTOS BSP** — committed scope is standalone (bare-metal).
   FreeRTOS comes once the boot path is proven.
 - **boot.bin builder** — `bootgen` wrapping FSBL + bitstream + app
   into an SD-bootable image.  Phase 3+ prereq from
-  `docs/bring-up.md`; gated on the FSBL above.
+  `docs/bring-up.md`.  FSBL is now in hand; bootgen is the next
+  step when SD boot lands on the critical path.
 - **GPIO blink** — currently the heartbeat is UART-only.  Need to
   confirm the Z-Turn PS-side LED MIO assignments before driving real
   LEDs from `app_blink`.
