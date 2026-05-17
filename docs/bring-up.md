@@ -86,9 +86,10 @@ debug.
 - [x] **`vivado/scripts/jtag_load.tcl`** — one-shot xsct flow.
       Reduces "load new build" to one command — see [Running
       jtag_load.tcl](#running-jtag_loadtcl) below for usage.
-- [ ] **`Makefile` rule for boot.bin** — wraps FSBL + bitstream
-      + app via `bootgen -arch zynq -image bif`.  Used for SD-boot
-      once JTAG bring-up is done.
+- [x] **`vitis/scripts/build_boot_bin.sh`** — wraps FSBL +
+      bitstream + app via `bootgen -arch zynq`.  Used for SD-boot
+      once JTAG bring-up is done — see [Building BOOT.BIN](#building-bootbin)
+      below for usage.
 - [ ] **CI smoke step** that runs the iverilog `tb_sally_isa`
       suite per commit.  Already works locally via `make -C sim`;
       just needs a GH Actions runner or similar.  Defer if no CI
@@ -164,6 +165,56 @@ produces.  Override directly when neither applies.
 `JTAG_DRY_RUN=1` resolves and prints all paths and exits before
 touching JTAG.  Handy as a pre-flight check that no file paths
 have drifted.
+
+## Building BOOT.BIN
+
+Once JTAG bring-up is solid, SD-boot is the next step.
+`vitis/scripts/build_boot_bin.sh` wraps `bootgen` — it generates
+a BIF that lists `fsbl.elf` + `fpga_xt_top.bit` + `app_blink.elf`
+in the right order for Zynq-7000, runs `bootgen` on win10 (where
+the tool and the artefacts live), and pulls the resulting
+4 MB BOOT.BIN back.
+
+### Usage:
+
+```
+./vitis/scripts/build_boot_bin.sh                  # default output
+./vitis/scripts/build_boot_bin.sh path/to/out.bin  # custom output path
+```
+
+### Prerequisites:
+
+The script just packages — it doesn't build anything.  Before
+running it:
+
+1. `vivado/run-win10.sh bit` — produces the bitstream on win10
+2. `ssh win10` + `cd vitis && vitis -s scripts/create_platform.py` —
+   produces fsbl.elf and app_blink.elf on win10
+
+### Env-var overrides:
+
+| Var          | Default                                                    |
+|--------------|------------------------------------------------------------|
+| `REMOTE`     | `win10`                                                    |
+| `REMOTE_DIR` | `C:/Users/simon/fpga`                                      |
+| `BOOTGEN`    | `C:\Xilinx\2025.2.1\Vitis\bin\bootgen.bat`                 |
+| `FSBL`       | `$REMOTE_DIR/vitis/workspace/fsbl/build/fsbl.elf`          |
+| `BIT`        | `$REMOTE_DIR/build/fpga_xt_top.bit`                        |
+| `APP`        | `$REMOTE_DIR/vitis/workspace/app_blink/build/app_blink.elf`|
+
+### Using the output:
+
+- **SD boot**: copy BOOT.BIN to the root of a FAT32-formatted
+  microSD, set the Z-Turn's boot-mode jumpers to SD, power-cycle.
+  FSBL initialises the PS, loads the bitstream, and starts
+  `app_blink`.
+- **JTAG-load BOOT.BIN** (for testing without the SD card):
+  `xsct` + `dow BOOT.BIN`, run from the FSBL load address.  Use
+  this to validate the BOOT.BIN against the same hardware that
+  the JTAG iteration path runs against.
+- **QSPI flash**: `program_flash -f BOOT.BIN -fsbl fsbl.elf
+  -flash_type qspi_single` via xsct — only needed for
+  production-style boot with no SD card.
 
 ### Expected output (good case):
 
