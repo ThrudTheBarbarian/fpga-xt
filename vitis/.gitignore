@@ -6,6 +6,10 @@ build/
 *.o
 *.d
 
+# bootgen output (regenerable via scripts/build_boot_bin.sh).
+BOOT.BIN
+boot.bif
+
 # Vitis (and the older XSDK) drop these alongside source trees.
 .metadata/
 .cproject
