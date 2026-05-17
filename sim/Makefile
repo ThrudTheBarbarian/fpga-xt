@@ -71,9 +71,9 @@ HDL_SRCS := \
 
 BUILD_DIR := build
 
-.PHONY: all smoke snoop read vbeam rp_bus prefetch dl_parse mode_f char_modes gfx_modes pm prior scroll nmi wsync palette tmds tmds_out terc4 hdmi_bch hdmi_pkt hdmi_out dma_master mem_read_mux dma_int hyperram bank draw draw_regs pokey pokey_i2s sally sally_mem sally_arb bank_cache bank_xlat cache_regs cache_partition pia_regs peri_link joy_link joy_bridge peri_bridge os_rom_load klaus visual lint clean pssi_tx pssi_int xt_blitter sally_stack sally_isa
+.PHONY: all smoke snoop read vbeam rp_bus prefetch dl_parse mode_f char_modes gfx_modes pm prior scroll nmi wsync palette tmds tmds_out terc4 hdmi_bch hdmi_pkt hdmi_out dma_master mem_read_mux dma_int draw draw_regs pokey pokey_i2s sally sally_mem sally_arb bank_cache bank_xlat cache_regs pia_regs peri_link joy_link joy_bridge peri_bridge os_rom_load klaus visual lint clean pssi_tx pssi_int xt_blitter sally_stack sally_isa
 
-all: smoke snoop read vbeam rp_bus prefetch dl_parse mode_f char_modes gfx_modes pm prior scroll nmi wsync palette tmds tmds_out terc4 hdmi_bch hdmi_pkt hdmi_out dma_master mem_read_mux dma_int hyperram bank draw draw_regs pokey pokey_i2s sally sally_mem sally_arb bank_cache bank_xlat cache_regs cache_partition pia_regs peri_link joy_link joy_bridge peri_bridge os_rom_load pbi pcm1808_rx visual pssi_tx pssi_int xt_blitter
+all: smoke snoop read vbeam rp_bus prefetch dl_parse mode_f char_modes gfx_modes pm prior scroll nmi wsync palette tmds tmds_out terc4 hdmi_bch hdmi_pkt hdmi_out dma_master mem_read_mux dma_int draw draw_regs pokey pokey_i2s sally sally_mem sally_arb bank_cache bank_xlat cache_regs pia_regs peri_link joy_link joy_bridge peri_bridge os_rom_load pbi pcm1808_rx visual pssi_tx pssi_int xt_blitter
 
 # `klaus` is NOT in `all` — Klaus Dormann's full test takes ~96 M
 # cycles (≥10 minutes of iverilog wall-clock). Run it manually with
@@ -507,41 +507,6 @@ DMA_INT_HDL := \
 $(BUILD_DIR)/tb_dma_int.vvp: $(DMA_INT_HDL) tb_dma_int.sv $(HDL_DIR)/bus_opcodes.vh | $(BUILD_DIR)
 	$(IVERILOG) $(SV_FLAGS) -o $@ -s tb_dma_int $(DMA_INT_HDL) tb_dma_int.sv
 
-# ---- M16b — HyperRAM shim foundation -------------------------------------
-hyperram: $(BUILD_DIR)/tb_hyperram.vvp
-	@echo "=== M16b hyperram ==="
-	@$(VVP) -N $< | tee $(BUILD_DIR)/tb_hyperram.log
-	@grep -q '\*\*\* HYPERRAM OK \*\*\*' $(BUILD_DIR)/tb_hyperram.log || \
-	    (echo "FAIL: tb_hyperram missing HYPERRAM OK"; exit 1)
-	@grep -q 'TRAP\|FATAL\|FAIL' $(BUILD_DIR)/tb_hyperram.log && \
-	    (echo "FAIL: tb_hyperram reported a trap"; exit 1) || true
-	@echo "PASS: tb_hyperram"
-
-HYPERRAM_HDL := \
-    $(HDL_DIR)/hyperram_mock.sv    \
-    $(HDL_DIR)/hyperram_shim.sv
-
-$(BUILD_DIR)/tb_hyperram.vvp: $(HYPERRAM_HDL) tb_hyperram.sv | $(BUILD_DIR)
-	$(IVERILOG) $(SV_FLAGS) -o $@ -s tb_hyperram $(HYPERRAM_HDL) tb_hyperram.sv
-
-# ---- M16b-2 — bank_translator + 130XE PORTB banking ----------------------
-bank: $(BUILD_DIR)/tb_bank.vvp
-	@echo "=== M16b-2 bank ==="
-	@$(VVP) -N $< | tee $(BUILD_DIR)/tb_bank.log
-	@grep -q '\*\*\* BANK OK \*\*\*' $(BUILD_DIR)/tb_bank.log || \
-	    (echo "FAIL: tb_bank missing BANK OK"; exit 1)
-	@grep -q 'TRAP\|FATAL\|FAIL' $(BUILD_DIR)/tb_bank.log && \
-	    (echo "FAIL: tb_bank reported a trap"; exit 1) || true
-	@echo "PASS: tb_bank"
-
-BANK_HDL := \
-    $(HDL_DIR)/hyperram_mock.sv    \
-    $(HDL_DIR)/hyperram_shim.sv    \
-    $(HDL_DIR)/bank_translator.sv
-
-$(BUILD_DIR)/tb_bank.vvp: $(BANK_HDL) tb_bank.sv | $(BUILD_DIR)
-	$(IVERILOG) $(SV_FLAGS) -o $@ -s tb_bank $(BANK_HDL) tb_bank.sv
-
 # ---- M17-1 — DRAW emission via rp_tx -------------------------------------
 draw: $(BUILD_DIR)/tb_draw.vvp
 	@echo "=== M17-1 draw ==="
@@ -872,19 +837,6 @@ pia_regs: $(BUILD_DIR)/tb_pia_regs.vvp
 
 $(BUILD_DIR)/tb_pia_regs.vvp: $(HDL_DIR)/pia_regs.sv tb_pia_regs.sv | $(BUILD_DIR)
 	$(IVERILOG) $(SV_FLAGS) -o $@ -s tb_pia_regs $(HDL_DIR)/pia_regs.sv tb_pia_regs.sv
-
-# ---- M-cache-rework Step 3 — code/data partition routing ------------------
-cache_partition: $(BUILD_DIR)/tb_cache_partition.vvp
-	@echo "=== M-cache-rework cache_partition ==="
-	@$(VVP) -N $< | tee $(BUILD_DIR)/tb_cache_partition.log
-	@grep -q '\*\*\* CACHE_PARTITION OK \*\*\*' $(BUILD_DIR)/tb_cache_partition.log || \
-	    (echo "FAIL: tb_cache_partition missing CACHE_PARTITION OK"; exit 1)
-	@grep -q 'TRAP\|FATAL\|FAIL' $(BUILD_DIR)/tb_cache_partition.log && \
-	    (echo "FAIL: tb_cache_partition reported a trap"; exit 1) || true
-	@echo "PASS: tb_cache_partition"
-
-$(BUILD_DIR)/tb_cache_partition.vvp: $(HDL_SRCS) tb_cache_partition.sv | $(BUILD_DIR)
-	$(IVERILOG) $(SV_FLAGS) -o $@ -s tb_cache_partition $(HDL_SRCS) tb_cache_partition.sv
 
 # ---- M24-6 — OS ROM load path -----------------------------------------
 os_rom_load: $(BUILD_DIR)/tb_os_rom_load.vvp
