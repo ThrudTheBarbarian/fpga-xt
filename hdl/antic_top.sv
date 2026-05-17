@@ -441,6 +441,7 @@ module antic_top #(
     wire [7:0] dmactl_q, chactl_q, dlistl_q, dlisth_q;
     wire [7:0] hscrol_q, vscrol_q, pmbase_q, chbase_q, nmien_q;
     wire       mode_snoop_q;
+    wire       cpu_internal_q;
     wire [7:0] clock_mult_q, output_mode_q;
 
     // M24-4 — antic_regs.bank_q outputs (chiplet-ext $D488-$D48B). Drive
@@ -525,7 +526,7 @@ module antic_top #(
         .chbase_q             (chbase_q),
         .nmien_q              (nmien_q),
         .mode_snoop_q         (mode_snoop_q),
-        // Zynq build: cpu_internal_q removed — no shadow SALLY core.
+        .cpu_internal_q       (cpu_internal_q),
         .clock_mult_q         (clock_mult_q),
         .output_mode_q        (output_mode_q),
         .antic_code_bank_q    (antic_code_bank_q),
@@ -1307,7 +1308,11 @@ module antic_top #(
     // FPGA package and the short FPGA-to-LVC8T245 board traces, no
     // dynamic-power burn. LVC8T245 OE-disable is secondary safety
     // handled at the synth wrapper.
-    wire ext_bus_active = 1'b1;
+    //
+    // Active when in testbench mode (cpu_internal_q=0) OR when running
+    // at base clock_mult (1× → phi2 = 1.79 MHz, the legitimate Atari
+    // bus rate).  Holds the pads frozen otherwise.
+    wire ext_bus_active = !cpu_internal_q || (clock_mult_q == 8'd1);
 
     // Address-decoded outbound control signals, combinational (registered
     // below for the pad drive).
