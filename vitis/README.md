@@ -28,10 +28,16 @@ build box, the Xilinx toolchain runs there, artefacts come back.
 
 ### One-time platform setup
 
+For the win10 build host (the current default):
+
 ```sh
-cd vivado && ./run.sh bit fpga_xt_top xc7z020-2clg400   # writes XSA
-cd ../vitis && ./run.sh                                  # creates platform + app
+cd vivado && ./run-win10.sh bit fpga_xt_top xc7z020-2clg400   # writes XSA
+cd ../vitis && ./run-win10.sh                                  # creates platform + FSBL + app
 ```
+
+The original `./run.sh` targets the older ubuntu Linux box (rsync +
+bash settings64.sh).  Keep using it on that path; the win10 wrapper
+uses scp + PowerShell because the win10 host has no rsync.
 
 After this, `vitis/workspace/app_blink/build/app_blink.elf` exists
 and is ready for JTAG load.
