@@ -35,54 +35,50 @@ if we waited.  Grouped by what kind of work it is.
 Small, cheap to do now, expensive to add when we're elbows-deep in
 debug.
 
-- [ ] **PLL lock → debug LED.**  Bring `pll_pix_locked` (and ideally
-      all PLL locked signals) out to one of `dbg[0]` / `dbg[1]`.
-      Phase 1 diagnostic — without this, "no signal" can mean PLL
-      didn't lock OR PLL locked but downstream is broken, and we
-      have to scope to tell them apart.
-- [ ] **Heartbeat counter → debug LED.**  A simple divider off
-      `clk_50` driving the remaining `dbg[]` at ~1 Hz.  Phase 1
-      signal-of-life that proves the bitstream loaded and the
-      oscillator is feeding the PL.
-- [ ] **Test-pattern mux on fb_scanout.**  A build-time parameter
-      (`SCANOUT_TEST_PATTERN`) that bypasses the AXI HP fill and
-      drives a deterministic gradient / colour-bar split instead.
-      Phase 2 needs this — proving HDMI without depending on
-      blitter + DDR3 first.
-- [ ] **Optional: ROM-init via AXI-Lite registers.**  An AXI-Lite
+- [x] **PLL lock + heartbeat → debug LEDs** — `dbg[0]` =
+      heartbeat from a `clk_50` divider, `dbg[1]` = combined PLL
+      lock from `mmcm1` + `mmcm2`, `dbg[2]` = `bl_busy`.  Drives
+      Phase 1 diagnostics.  Committed in 844e155.
+- [x] **Test-pattern mux on fb_scanout** — `SCANOUT_TEST_PATTERN`
+      build parameter bypasses the AXI HP fill and drives a
+      deterministic gradient instead.  Phase 2 leverage.
+      Committed in 844e155.
+- [x] **ROM-init via AXI-Lite (`sally_rom_loader`)** — AXI-Lite
       slave window into `sally_mem`'s `rom_addr` / `rom_data` /
       `rom_we` ports so the PS can load a tiny 6502 ROM at boot
-      without an SD card or QSPI flash for the OS image.  Phase 7
-      needs *something* — this is the simplest path.
+      without SD or QSPI.  Phase 7 prereq.  Committed in a4ca8c3.
 
 ### PS-side software (Vitis)
 
-- [ ] **Vitis platform** built off the v0.29 `post_synth.dcp` (or
-      whatever is current at bring-up time).  Standard flow:
-      `xsa` export from Vivado → `platform create` in Vitis →
-      generate BSP.  Z-Turn's PS DDR3 preset is shipped by MyIR;
-      use it verbatim, don't hand-edit timings.
-- [ ] **FSBL** — generated from the platform, no custom code
-      beyond default PS init.  Lives in `vitis/fsbl/`.  **Current
-      status (2026-05-16):** Vitis 2025.x's auto FSBL BSP creation
-      hits "Cannot find source file: ps7_init.c" even though
-      `vivado/build.tcl` now injects `ps7_init.*` into the XSA
-      root.  Deferred — see `vitis/scripts/create_platform.py`
-      for the inheritance trail of things tried.  JTAG iteration
-      (Phase 0-7 of this doc) doesn't need an FSBL.
-- [ ] **Bare-metal "blink + UART hello" app.**  Lives in
-      `vitis/app_blink/`.  Minimum viable: configures the UART,
-      prints "fpga-xt boot OK", strobes a GPIO pin connected to
-      one of the SOM LEDs once a second.  Promotes to FreeRTOS
-      later — not day 1.
-- [ ] **AXI poke helper.**  Tiny C library in
-      `vitis/lib_xtblit/` with `xt_blit_write(reg, val)` and
-      `xt_blit_read(reg)` wrappers.  Phase 4 needs this; better
-      to write it once and reuse than to inline `Xil_Out32` calls
-      in each test.
+- [x] **Vitis platform** built from `vivado/build/fpga_xt_top.xsa`
+      via `vitis/scripts/create_platform.py`.  Wraps the
+      Vitis Unified Python API and adds `xilffs` + `xilrsa` to
+      the standalone BSP so the FSBL build works.
+- [x] **FSBL** — generated via the same `create_platform.py`
+      using the empty-application + manual-source-import
+      workaround (Vitis 2025.2.1's auto-FSBL path doesn't
+      populate the source dir on its own).  Lives in
+      `vitis/workspace/fsbl/build/fsbl.elf` (~85 KB).  Set
+      `VITIS_NO_FSBL=1` to skip when iterating on the app only.
+- [x] **Bare-metal UART hello — `vitis/app_blink/src/main.c`.**
+      Prints `fpga-xt boot OK`, smoke-tests the GP0 → blitter
+      bridge via `xt_blitter_status()`, then loops with a
+      1-second `tick N` heartbeat.  GPIO LED toggling waits on
+      Z-Turn MIO mapping confirmation.
+- [x] **AXI poke helper — `vitis/app_blink/src/xt_blitter.{h,c}`.**
+      Symbolic register offsets + command opcodes + GEM raster
+      ops, plus convenience wrappers (`xt_blitter_status`,
+      `xt_blitter_wait_idle`, `xt_blitter_set_dst`,
+      `xt_blitter_fire`, etc.).  Targets the AXI-Lite bridge at
+      `0x43C0_0000`.
 
 ### Build / load tooling
 
+- [x] **`vivado/run-win10.sh` + `vitis/run-win10.sh`** — Mac-side
+      scp + PowerShell-over-SSH wrappers driving the win10 Vivado
+      and Vitis builds.  Match the run.sh patterns for the ubuntu
+      box but use scp (no rsync on win10) and PowerShell instead
+      of bash + settings64.sh.
 - [x] **`vivado/scripts/jtag_load.tcl`** — one-shot xsct flow.
       Reduces "load new build" to one command — see [Running
       jtag_load.tcl](#running-jtag_loadtcl) below for usage.
@@ -329,67 +325,103 @@ loads the bitstream, sources `ps7_init.tcl` to bring up DDR3 /
 clocks / MIO, downloads `app_blink.elf`, and runs.  No FSBL on
 this path — FSBL is for SD/QSPI standalone boot.
 
-**Pass**:
-- DDR3 calibration succeeds (FSBL stdout reports `MIO is up` and
-  `DDR is up`).
-- App `printf("hello\n")` reaches the UART console.
+**Pass** — UART console (115200 8N1) prints the app's boot
+banner within ~2 seconds of `con`:
+
+```
+fpga-xt boot OK
+build: <date> <time>
+blitter @0x43c00000: status=0x00 seq=0
+tick 0
+tick 1
+...
+```
 
 **Likely fail**:
-- DDR3 calibration error — wrong PS DDR config in the BD.  Re-check
-  against the MyIR Vitis BSP defaults; Z-Turn ships with a known-good
-  preset (use it verbatim, don't hand-edit timings).
-- Bitstream not loaded → FSBL falls back to "PS only" boot and PL
-  is unconfigured.  Symptoms: app runs but `dbg` LEDs are dark.
-  Diagnostic: FSBL stdout reports the bitstream load explicitly;
-  if it doesn't appear, check the `boot.bin` partition ordering.
+- DDR3 calibration silently broken — ps7_init.tcl finishes but
+  the heap / .bss region in DDR3 is uninitialised.  Visible as
+  the app crashing in early init.  Re-check the PS DDR config in
+  the BD against MyIR's Z-Turn preset; their preset is shipped
+  known-good, don't hand-edit timings.
+- No banner — UART pinmux / baud wrong, or the app is stuck
+  before xil_printf.  Probe TX with a scope; if it's dead, the
+  PS MIO config for UART1 is wrong (Z-Turn maps the on-SOM FTDI
+  UART to MIO 48/49 by default).
+- Banner reaches "fpga-xt boot OK" but no tick lines — `sleep(1)`
+  hung.  Usually means the global timer (xtimer) isn't ticking;
+  the standalone BSP relies on the PS timer being initialised by
+  ps7_init.  Re-run jtag_load.tcl; if it persists, the PS timer
+  config in the BD is wrong.
 
 ## Phase 4 — PS↔PL AXI register access
 
-App pokes a few xt_blitter registers over AXI-Lite (e.g.,
-`STATUS` read, `CMD_QUEUE_BASE` write/read-back).  No actual
-drawing yet — just proving the AXI clock-crossing and address
-decode work.
+`app_blink` already does this at boot — the
+`blitter @0x43c00000: status=0x?? seq=??` line proves the PS →
+GP0 → AXI-Lite-bridge → blitter-register-bus path is live.
 
-**Pass**: write a known value to a R/W register, read it back, get
-the same value.  Repeat for several addresses to rule out
-single-bit fluke.
+**Pass**: that line reads `status=0x00 seq=0` — clean idle state.
 
-**Likely fail**:
-- AXI hang on first write — AR/AW handshake never completes.
-  Common cause: clk_sys not running (PLL didn't lock) or
-  AXI-Lite slave's `aclk` mis-wired.  AXI hangs show as Vitis
-  debugger sitting forever in the store instruction.
-- Read returns zero or garbage — address decode wrong, or the
-  slave register isn't actually R/W (some are reserved /
-  side-effect-on-read).  Try a different register.
+**Likely fail** — what each non-idle reading means:
+- `status=0xff seq=ffff` — AXI bridge is silent and the bus is
+  reading back its all-ones default.  Either `clk_sys` isn't
+  running (PLL didn't lock — check `dbg[1]`), `axi_blitter_bridge`
+  isn't being clocked (no `s_axi_gp0_aclk` from the PS BD), or
+  the GP0 mapping is wrong (BD address allocator put us elsewhere).
+- `status=0x02` — queue is reported full before any CMD was
+  written.  Usually a stuck strobe from the SALLY CDC path
+  (`bl_we_mux` glitching).  Triage by re-running with the PS
+  app stripped down to just the read — if it persists, the bug
+  is in the PL.
+- `status=0x04` — sticky `pat_blocked` set, meaning a pat/font
+  write got dropped while the blitter was already busy.  At boot
+  the blitter is idle so this shouldn't fire.  If it does, check
+  for spurious writes during PL reset deassertion.
+
+To extend coverage, edit `app_blink/src/main.c` to also pump a
+few register writes through `xt_blitter_write8()` and read the
+SEQ counter to confirm CMD-issue → seq-bump works.  Side-effect
+registers (`PAT_DATA`, `FONT_DATA`) auto-advance internal
+pointers so they can't simply be written and read back; use
+`SEQ_LO`/`SEQ_HI` as the proxy for "did the blitter see my CMD".
 
 ## Phase 5 — Blitter smoke test
 
 Goal: prove the blitter writes to DDR3 framebuffer correctly.
-Smallest test that exercises everything: a single SOLID FILL
-command issued via the command-queue ring.
+Smallest test that exercises everything: a single rect fill.
 
-App sequence:
-1. Set `BLIT_CMD_BASE` to a 1 KB region in DDR3.
-2. Write one command word (opcode = FILL, target = framebuffer A
-   at `0x3000_0000`, rect = 100×100 at (10, 10), colour = $FF0000).
-3. Increment the producer pointer, ring the doorbell.
-4. Poll `STATUS.busy` until clear.
-5. Read back a few framebuffer pixels via PS → DDR3 to confirm
-   the colour landed at the right address.
+PS-side sequence (use the driver helpers in `xt_blitter.h`):
 
-**Pass**: framebuffer at the expected addresses contains the fill
-colour; surrounding pixels untouched.  No AXI errors logged.
+1. Wait for idle: `xt_blitter_wait_idle(1000)`.
+2. Set up a fully-opaque pattern.  For a 1×1 white pattern:
+   `xt_blitter_set_pat_log(0, 0)`,
+   `xt_blitter_write_pat({0xFF,0xFF,0xFF,0xFF}, 4)` — RGBA.
+3. Set the destination rect:
+   `xt_blitter_set_dst(10, 10, 100, 100)`.
+4. Fire the command: `xt_blitter_fire(XT_BL_CMD_RECT_FILL)`.
+5. Poll `xt_blitter_busy()` until cleared, or wait via
+   `xt_blitter_wait_idle()`.
+6. Read back a few framebuffer pixels through PS → DDR3 at
+   `FB_BASE = 0x3000_0000`, stride 8192 bytes per row (so pixel
+   `(x, y)` lives at `FB_BASE + y * 8192 + x * 4` for RGBA-8888).
+
+**Pass**: the 100×100 region at (10, 10) reads back as the
+pattern; surrounding pixels untouched.  No AXI errors logged.
 
 **Likely fail**:
-- AXI master timeout — blitter's HP port unwired or clock
-  mismatch.  Check `m_axi_aclk` connection in the BD.
-- Stride wrong — fill renders at the wrong pitch (visible later
-  in Phase 6 as a smeared rectangle).  Re-check the row stride
-  config (8192 B, not 7680).
+- AXI master timeout / queue stays full — blitter's HP1 port
+  unwired or clock mismatch.  Check `m_axi_aclk` connection in
+  the BD; the HP1 master is driven by `clk_sys` (150 MHz).
+- Stride wrong — fill renders at the wrong pitch (visible in
+  Phase 6 as a smeared rectangle).  Re-check
+  `FB_STRIDE_B = 8192` matches the value the blitter was
+  parameterised with.
 - Bytes swapped — endianness mismatch on the AXI HP burst.
-  Zynq AXI HP is little-endian by default; the blitter's
-  `m_axi_wdata` should pack low bytes at low addresses.
+  Zynq AXI HP is little-endian by default; the blitter packs
+  RGBA-8888 with R in the low byte (lane 0), A in the high
+  byte (lane 3).
+- `pat_blocked` sticky set — pattern bytes were written while
+  the previous CMD was still busy.  Always check
+  `xt_blitter_wait_idle()` before re-pumping pattern data.
 
 ## Phase 6 — fb_scanout reads DDR3, drives HDMI
 
@@ -415,19 +447,37 @@ size, and the expected colour.
 
 ## Phase 7 — SALLY runs against the bitstream
 
-Load a tiny 6502 ROM into `sally_mem` via the PS (via the
-ROM-init AXI-Lite window — RTL-adds prereq).  ROM: a 16-byte
-program that writes `$AA` to some hwreg, loops on a JMP.
+Load a tiny 6502 ROM into `sally_mem` via `sally_rom_loader`'s
+AXI-Lite window (allocated alongside the blitter bridge under
+the GP0 mapping — see `fpga_xt_top.sv:1245-1252`).  ROM: a
+~16-byte program that writes `$AA` to some hwreg and loops on
+a JMP.
 
-**Pass**: hwreg read from PS shows `$AA`.  SALLY is running.
+PS-side sequence (no driver helpers yet — use `Xil_Out32`):
+
+1. Pulse `sally_rst` from the PS (via the dedicated reset bit
+   in the ROM-loader window).
+2. Stream the program bytes through the `rom_addr` / `rom_data`
+   / `rom_we` ports.  The loader auto-increments `rom_addr` on
+   each `rom_we` pulse so software writes a flat byte stream.
+3. Include `$FFFC/$FFFD` = reset vector pointing at the program's
+   start address.
+4. De-assert the rom-load gate, release `sally_rst`.
+
+**Pass**: hwreg read from PS (via the blitter bridge or via
+ANTIC's snoop) shows `$AA`.  SALLY is running.
 
 **Likely fail**:
-- CPU stuck in reset — `rst` polarity wrong on the SOM (we use
-  `rst_n` from SW[0] which is active-low; sally_core wants
-  active-high `rst`).  The top-level invert should handle this
-  but double-check the polarity reaches sally_core correctly.
+- CPU stuck in reset — `rst` polarity wrong.  `sally_core` wants
+  active-high; the wiring through `sally_clock` should invert
+  the SOM-side active-low.  Probe the actual signal at
+  `sally_core.rst`.
 - CPU running but at wrong PC — reset vector at `$FFFC/$FFFD`
-  uninitialised.  ROM-load must include those bytes.
+  uninitialised.  ROM-load sequence must include those two bytes
+  before releasing reset.
+- `sally_rom_loader` not in the GP0 mapping — check the OR-mux
+  at `fpga_xt_top.sv:1264-1273` is routing both bridge and
+  loader responses back to GP0.
 
 ## Phase 8 — full system
 
