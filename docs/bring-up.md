@@ -83,10 +83,9 @@ debug.
 
 ### Build / load tooling
 
-- [ ] **`vivado/scripts/jtag_load.tcl`** — one-shot xsct flow:
-      `connect; fpga -file build/fpga_xt_top.bit; targets -set
-      -filter {name =~ "ARM*#0"}; dow vitis/app_blink/app.elf;
-      con`.  Reduces "load new build" to one command.
+- [x] **`vivado/scripts/jtag_load.tcl`** — one-shot xsct flow.
+      Reduces "load new build" to one command — see [Running
+      jtag_load.tcl](#running-jtag_loadtcl) below for usage.
 - [ ] **`Makefile` rule for boot.bin** — wraps FSBL + bitstream
       + app via `bootgen -arch zynq -image bif`.  Used for SD-boot
       once JTAG bring-up is done.
@@ -116,6 +115,82 @@ debug.
 - [ ] **A second host** running `hw_server` if the dev box is
       remote from the bench.  Otherwise the JTAG over USB is
       whatever machine the SOM is plugged into.
+
+## Running jtag_load.tcl
+
+Every Phase 3+ step uses the same xsct sequence: connect to
+`hw_server`, load the bitstream, init the PS via `ps7_init.tcl`,
+download an ELF, run.  `vivado/scripts/jtag_load.tcl` packages
+that.  Works with any cable Vivado's `hw_server` recognises —
+Digilent JTAG-HS3 in particular needs nothing beyond the standard
+driver install.
+
+### Quick start (defaults — newest local build):
+
+```
+xsct vivado/scripts/jtag_load.tcl
+```
+
+Defaults to `vivado/build/fpga_xt_top.bit` +
+`vitis/workspace/app_blink/build/app_blink.elf` +
+`hw_server` on `127.0.0.1:3121`.
+
+### Positional args:
+
+```
+xsct vivado/scripts/jtag_load.tcl <bit> <elf>          # custom paths
+xsct vivado/scripts/jtag_load.tcl <bit> <elf> <host>   # remote hw_server
+```
+
+`<host>` is an xsct URL — `TCP:host:port` for a remote `hw_server`
+(useful when the JTAG cable lives on a different machine than the
+dev box).  Start the remote side with `hw_server -d` first.
+
+### Env-var overrides (lower priority than positional args):
+
+| Var            | Default                                          |
+|----------------|--------------------------------------------------|
+| `BITSTREAM`    | `vivado/build/fpga_xt_top.bit`                   |
+| `ELF`          | `vitis/workspace/app_blink/build/app_blink.elf`  |
+| `HW_SERVER`    | `TCP:127.0.0.1:3121`                             |
+| `PS7_INIT_TCL` | auto-discovered relative to the bitstream's dir  |
+| `JTAG_DRY_RUN` | unset (set `=1` to skip the connect step)        |
+
+`PS7_INIT_TCL` is auto-resolved by walking up from the bitstream
+to find the BD's `ps7_init.tcl` — works on both the Mac-side
+`vivado/bd/...` layout and the flatter win10 layout `run-win10.sh`
+produces.  Override directly when neither applies.
+
+`JTAG_DRY_RUN=1` resolves and prints all paths and exits before
+touching JTAG.  Handy as a pre-flight check that no file paths
+have drifted.
+
+### Expected output (good case):
+
+```
+fpga-xt boot OK
+build: <date> <time>
+blitter @0x43c00000: status=0x00 seq=0
+tick 0
+tick 1
+...
+```
+
+### Common failure modes:
+
+- **`Cannot connect to hw_server`** — `hw_server` isn't running.
+  Start it with `hw_server -d` on the machine the cable is on, or
+  let Vivado start one for you if the cable is on the same box.
+- **`No targets after `targets -set -filter ...``** — cable not
+  detected, or no power to the SOM, or the device's IDCODE doesn't
+  match the filter.  Sanity-check with bare `targets` (no filter).
+- **`status=0xff seq=ffff`** in the UART output — AXI bridge isn't
+  responding; reads are returning all-ones (bus default).  GP0
+  clock not running, PS isn't out of reset, or `axi_blitter_bridge`
+  isn't being clocked.  Probe `clk_sys` on the dbg pins.
+- **`status=0x02` at boot** — queue already full before any CMD
+  was written.  Probably a stuck strobe from the SALLY CDC path
+  (`bl_we_mux` glitching).
 
 ## Phase 0 — power-on smoke test
 
@@ -196,9 +271,12 @@ the input.  Either:
 
 ## Phase 3 — PS boots, talks to UART
 
-Switch from "PL bitstream only" to "PS + bitstream" via the FSBL.
-JTAG flow: `xsct` connects, downloads FSBL to OCM, FSBL runs DDR3
-calibration, then downloads the app `.elf` and the bitstream.
+Switch from "PL bitstream only" to "PS + bitstream" via JTAG.
+`vivado/scripts/jtag_load.tcl` runs the whole sequence (see
+[Running jtag_load.tcl](#running-jtag_loadtcl) for usage) — it
+loads the bitstream, sources `ps7_init.tcl` to bring up DDR3 /
+clocks / MIO, downloads `app_blink.elf`, and runs.  No FSBL on
+this path — FSBL is for SD/QSPI standalone boot.
 
 **Pass**:
 - DDR3 calibration succeeds (FSBL stdout reports `MIO is up` and
