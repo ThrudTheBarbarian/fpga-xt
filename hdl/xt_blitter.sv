@@ -2479,8 +2479,8 @@ module xt_blitter #(
                 // stable through SC_BL_ACC → SC_BL_BLEND → SC_BL_ACC2.
                 // ============================================================
                 SC_BL_ACC: begin
-                    logic [8:0]  fx8_inv = 9'd256 - {1'b0, bl_fx8_q};
-                    logic [8:0]  fy8_inv = 9'd256 - {1'b0, bl_fy8_q};
+                    automatic logic [8:0]  fx8_inv = 9'd256 - {1'b0, bl_fx8_q};
+                    automatic logic [8:0]  fy8_inv = 9'd256 - {1'b0, bl_fy8_q};
 
                     bl_w00_q <= (fx8_inv * fy8_inv) >> 8;
                     bl_w10_q <= ({1'b0, bl_fx8_q} * fy8_inv) >> 8;

@@ -262,8 +262,10 @@ module fpga_xt_top #(
     wire        hp0_bready = 1'b0;
 
     // HP1 — xt_blitter (AXI4 read/write master → AXI3 slave)
+    // awlen/arlen carried as AXI4 8-bit internally; sliced to 4-bit at the
+    // stub / PS BD boundary (see s_axi_hp1_*len connections below).
     wire [31:0] hp1_awaddr;
-    wire [3:0]  hp1_awlen;
+    wire [7:0]  hp1_awlen;
     wire [2:0]  hp1_awsize;
     wire [1:0]  hp1_awburst;
     wire        hp1_awvalid;
@@ -277,7 +279,7 @@ module fpga_xt_top #(
     wire        hp1_bready;
     // HP1 read channel — driven by xt_blitter (block blit)
     wire [31:0] hp1_araddr;
-    wire [3:0]  hp1_arlen;
+    wire [7:0]  hp1_arlen;
     wire [2:0]  hp1_arsize;
     wire [1:0]  hp1_arburst;
     wire        hp1_arvalid;
@@ -320,7 +322,7 @@ module fpga_xt_top #(
     `ifdef USE_PS_BD
     // Wires to PS BD side of the register slice
     wire [31:0] ps_hp1_awaddr;
-    wire [3:0]  ps_hp1_awlen;
+    wire [7:0]  ps_hp1_awlen;
     wire [2:0]  ps_hp1_awsize;
     wire [1:0]  ps_hp1_awburst;
     wire        ps_hp1_awvalid;
@@ -333,7 +335,7 @@ module fpga_xt_top #(
     wire        ps_hp1_bvalid;
     wire        ps_hp1_bready;
     wire [31:0] ps_hp1_araddr;
-    wire [3:0]  ps_hp1_arlen;
+    wire [7:0]  ps_hp1_arlen;
     wire [2:0]  ps_hp1_arsize;
     wire [1:0]  ps_hp1_arburst;
     wire        ps_hp1_arvalid;
@@ -345,7 +347,7 @@ module fpga_xt_top #(
 
     // ---- Register slices (all on clk_sys) ---------------------------------
     reg [31:0] hp1_awaddr_r, ps_hp1_awaddr_r;
-    reg [3:0]  hp1_awlen_r, ps_hp1_awlen_r;
+    reg [7:0]  hp1_awlen_r, ps_hp1_awlen_r;
     reg [2:0]  hp1_awsize_r, ps_hp1_awsize_r;
     reg [1:0]  hp1_awburst_r, ps_hp1_awburst_r;
     reg        hp1_awvalid_r, ps_hp1_awvalid_r;
@@ -358,7 +360,7 @@ module fpga_xt_top #(
     reg        hp1_bvalid_r, ps_hp1_bvalid_r;
     reg        hp1_bready_r, ps_hp1_bready_r;
     reg [31:0] hp1_araddr_r, ps_hp1_araddr_r;
-    reg [3:0]  hp1_arlen_r, ps_hp1_arlen_r;
+    reg [7:0]  hp1_arlen_r, ps_hp1_arlen_r;
     reg [2:0]  hp1_arsize_r, ps_hp1_arsize_r;
     reg [1:0]  hp1_arburst_r, ps_hp1_arburst_r;
     reg        hp1_arvalid_r, ps_hp1_arvalid_r;
@@ -1030,6 +1032,11 @@ module fpga_xt_top #(
         pll_lock_sync <= {pll_lock_sync[0], mmcm1_locked & mmcm2_locked};
 
     assign dbg = {1'b0, bl_busy, pll_lock_sync[1], heartbeat_cnt[24]};
+
+    // PL-side UART is a vestigial port (real debug UART runs through the PS
+    // MIO, not the PL).  Tie tx idle-high so the synth dangling-port warning
+    // doesn't fire; uart_rx (input) is intentionally unused.
+    assign uart_tx = 1'b1;
 
     `ifdef USE_PS_BD
     // ====================================================================

@@ -1039,7 +1039,7 @@ module antic_top #(
         .line_start    (line_start_pulse_bus),
         .cur_row       (nmi_cur_row),
         .cur_row_dli   (nmi_cur_row_dli),
-        .atari_row_in  (atari_row_sync_q2),
+        .atari_row_in  (atari_row_sync_q2[7:0]),
         .nmist_q       (nmist_q),
         .nmi_n         (nmi_n_w)
     );

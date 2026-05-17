@@ -172,7 +172,13 @@ module zynq_ps_hp_stub (
     //   10 — W seen, waiting for AW
     //   11 — both seen, bvalid asserted
 
-    logic [1:0] hp0_wr_state;
+    // INIT-value reset (Xilinx GSR at config sets FFs to declared INIT).
+    // The stub has no async reset; the INIT keeps the state out of X on
+    // power-up.  fsm_encoding="none" tells Vivado not to treat this as
+    // an FSM (it's 2 bits of plain sequential logic) — clears Synth
+    // 8-13157 ("FSM state register has no reset") which would otherwise
+    // fire because Vivado's FSM analyser ignores the INIT value.
+    (* fsm_encoding = "none" *) logic [1:0] hp0_wr_state = 2'b00;
 
     always_ff @(posedge clk) begin
         case (hp0_wr_state)
@@ -205,7 +211,7 @@ module zynq_ps_hp_stub (
     // Write channel responder — HP1
     // ====================================================================
 
-    logic [1:0] hp1_wr_state;
+    (* fsm_encoding = "none" *) logic [1:0] hp1_wr_state = 2'b00;
 
     always_ff @(posedge clk) begin
         case (hp1_wr_state)

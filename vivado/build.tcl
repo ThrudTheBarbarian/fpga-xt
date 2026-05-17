@@ -28,6 +28,25 @@ file mkdir $out_dir
 
 puts ">> flow=$flow top=$top part=$part"
 
+# ---- Suppress structural noise warnings ---------------------------------
+# These come from intentional design choices, not real issues:
+#   Synth 8-7129 — unconnected ports on zynq_ps_hp_stub (it's an OOC
+#                  responder; doesn't model unused AXI HP signals).
+#                  Real PS BD replaces it for the bit flow.
+#   Synth 8-7071 — unconnected complement (*B) outputs of MMCME2_BASE
+#                  (CLKFBOUTB, CLKOUT0B, ...).  Vendor primitive ports
+#                  we don't need.
+#   Synth 8-7023 — "N connections declared, M given" — same MMCM
+#                  unused-port story, just a different message.
+#   Synth 8-3917 — top-level port driven by constant.  uart_tx is tied
+#                  high (PL UART vestigial, real UART through PS MIO),
+#                  dbg[3] tied low (no carrier-board pin).  Both are
+#                  intentional, not bugs.
+set_msg_config -id "Synth 8-7129" -suppress
+set_msg_config -id "Synth 8-7071" -suppress
+set_msg_config -id "Synth 8-7023" -suppress
+set_msg_config -id "Synth 8-3917" -suppress
+
 # ---- Read sources -------------------------------------------------------
 # Phase 1 source-list strategy: pull in every .sv from hdl/ that isn't a
 # sim-only mock, an Efinix-specific vendor IP (HyperRAM PHY, TMDS

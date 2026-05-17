@@ -236,7 +236,7 @@ module hdmi_config (
                                     if (i2c_ack_o) begin
                                         i2c_cmd_valid <= 1'b1;
                                         i2c_cmd_op    <= 2'd3;   // READ
-                                        sub_op        <= 3'd8;
+                                        sub_op        <= 4'd8;
                                     end else begin
                                         // NACK on read address — retry
                                         i2c_cmd_valid <= 1'b1;
@@ -257,7 +257,7 @@ module hdmi_config (
                                 end
 
                                 // READ completed → STOP
-                                3'd8: begin
+                                4'd8: begin
                                     // data is in i2c_data_o (ignore for now)
                                     i2c_cmd_valid <= 1'b1;
                                     i2c_cmd_op    <= 2'd1;   // STOP
