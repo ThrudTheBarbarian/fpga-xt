@@ -48,13 +48,20 @@ module cdc_fifo_1w1r #(
     logic [ADDR_W:0] wr_ptr_gray, rd_ptr_gray;
     logic [ADDR_W:0] wr_ptr_sync, rd_ptr_sync;
 
-    // Write pointer (src_clk domain)
+    // Write pointer (src_clk domain) — kept in an async-reset block so the
+    // FIFO empties cleanly on src_rst.
     always_ff @(posedge src_clk or posedge src_rst) begin
         if (src_rst) wr_ptr <= '0;
-        else if (wr_en && !wr_full) begin
-            mem[wr_ptr[ADDR_W-1:0]] <= wr_data;
-            wr_ptr <= wr_ptr + 1'b1;
-        end
+        else if (wr_en && !wr_full) wr_ptr <= wr_ptr + 1'b1;
+    end
+
+    // mem write must be in a sync-only block — the async reset on the
+    // pointer always_ff would otherwise block both BRAM and distributed-RAM
+    // inference (Synth 8-4767 "RAM is sensitive to asynchronous reset
+    // signal").  The storage doesn't actually need reset: stale bytes
+    // become unreachable once wr_ptr/rd_ptr return to 0.
+    always_ff @(posedge src_clk) begin
+        if (wr_en && !wr_full) mem[wr_ptr[ADDR_W-1:0]] <= wr_data;
     end
 
     // Read pointer (dst_clk domain)
