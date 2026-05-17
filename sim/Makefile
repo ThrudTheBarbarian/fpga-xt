@@ -50,21 +50,15 @@ HDL_SRCS := \
     $(HDL_DIR)/sally_mem.sv       \
     $(HDL_DIR)/line_buffer.sv     \
     $(HDL_DIR)/scan_out.sv        \
-    $(HDL_DIR)/tmds_encoder.sv    \
-    $(HDL_DIR)/tmds_serializer.sv \
-    $(HDL_DIR)/terc4_encoder.sv   \
-    $(HDL_DIR)/hdmi_bch.sv        \
-    $(HDL_DIR)/hdmi_packet.sv     \
-    $(HDL_DIR)/hdmi_pkt_source.sv \
-    $(HDL_DIR)/hdmi_out.sv        \
+    $(HDL_DIR)/hdmi_out_zynq.sv   \
     $(HDL_DIR)/pcm1808_rx.sv      \
     $(HDL_DIR)/antic_top.sv
 
 BUILD_DIR := build
 
-.PHONY: all smoke snoop read vbeam rp_bus dl_parse mode_f char_modes gfx_modes pm prior scroll nmi wsync palette tmds tmds_out terc4 hdmi_bch hdmi_pkt hdmi_out dma_master mem_read_mux dma_int draw_regs pokey pokey_i2s sally sally_mem sally_arb bank_xlat pia_regs peri_link joy_link joy_bridge peri_bridge os_rom_load klaus visual lint clean xt_blitter sally_stack sally_isa
+.PHONY: all smoke snoop read vbeam rp_bus dl_parse mode_f char_modes gfx_modes pm prior scroll nmi wsync palette dma_master mem_read_mux dma_int draw_regs pokey pokey_i2s sally sally_mem sally_arb bank_xlat pia_regs peri_link joy_link joy_bridge peri_bridge os_rom_load klaus visual lint clean xt_blitter sally_stack sally_isa
 
-all: smoke snoop read vbeam rp_bus dl_parse mode_f char_modes gfx_modes pm prior scroll nmi wsync palette tmds tmds_out terc4 hdmi_bch hdmi_pkt hdmi_out dma_master mem_read_mux dma_int draw_regs pokey pokey_i2s sally sally_mem sally_arb bank_xlat pia_regs peri_link joy_link joy_bridge peri_bridge os_rom_load pbi pcm1808_rx visual xt_blitter
+all: smoke snoop read vbeam rp_bus dl_parse mode_f char_modes gfx_modes pm prior scroll nmi wsync palette dma_master mem_read_mux dma_int draw_regs pokey pokey_i2s sally sally_mem sally_arb bank_xlat pia_regs peri_link joy_link joy_bridge peri_bridge os_rom_load pbi pcm1808_rx visual xt_blitter
 
 # `klaus` is NOT in `all` — Klaus Dormann's full test takes ~96 M
 # cycles (≥10 minutes of iverilog wall-clock). Run it manually with
@@ -277,112 +271,6 @@ PALETTE_HDL := \
 
 $(BUILD_DIR)/tb_palette.vvp: $(PALETTE_HDL) tb_palette.sv $(HDL_DIR)/bus_opcodes.vh | $(BUILD_DIR)
 	$(IVERILOG) $(SV_FLAGS) -o $@ -s tb_palette $(PALETTE_HDL) tb_palette.sv
-
-# ---- M14b — TMDS encoder -------------------------------------------------
-tmds: $(BUILD_DIR)/tb_tmds.vvp
-	@echo "=== M14b tmds ==="
-	@$(VVP) -N $< | tee $(BUILD_DIR)/tb_tmds.log
-	@grep -q '\*\*\* TMDS OK \*\*\*' $(BUILD_DIR)/tb_tmds.log || \
-	    (echo "FAIL: tb_tmds missing TMDS OK"; exit 1)
-	@grep -q 'TRAP\|FATAL\|FAIL' $(BUILD_DIR)/tb_tmds.log && \
-	    (echo "FAIL: tb_tmds reported a trap"; exit 1) || true
-	@echo "PASS: tb_tmds"
-
-TMDS_HDL := \
-    $(HDL_DIR)/tmds_encoder.sv     \
-    $(HDL_DIR)/tmds_serializer.sv
-
-$(BUILD_DIR)/tb_tmds.vvp: $(TMDS_HDL) tb_tmds.sv | $(BUILD_DIR)
-	$(IVERILOG) $(SV_FLAGS) -o $@ -s tb_tmds $(TMDS_HDL) tb_tmds.sv
-
-# ---- M15 — TMDS-output integration (vbeam + 3 encoders + 4 serializers) ----
-tmds_out: $(BUILD_DIR)/tb_tmds_out.vvp
-	@echo "=== M15 tmds_out ==="
-	@$(VVP) -N $< | tee $(BUILD_DIR)/tb_tmds_out.log
-	@grep -q '\*\*\* TMDS_OUT OK \*\*\*' $(BUILD_DIR)/tb_tmds_out.log || \
-	    (echo "FAIL: tb_tmds_out missing TMDS_OUT OK"; exit 1)
-	@grep -q 'TRAP\|FATAL\|FAIL' $(BUILD_DIR)/tb_tmds_out.log && \
-	    (echo "FAIL: tb_tmds_out reported a trap"; exit 1) || true
-	@echo "PASS: tb_tmds_out"
-
-TMDS_OUT_HDL := \
-    $(HDL_DIR)/vbeam.sv            \
-    $(HDL_DIR)/tmds_encoder.sv     \
-    $(HDL_DIR)/tmds_serializer.sv  \
-    $(HDL_DIR)/tmds_out.sv
-
-$(BUILD_DIR)/tb_tmds_out.vvp: $(TMDS_OUT_HDL) tb_tmds_out.sv | $(BUILD_DIR)
-	$(IVERILOG) $(SV_FLAGS) -o $@ -s tb_tmds_out $(TMDS_OUT_HDL) tb_tmds_out.sv
-
-# (M15b — external I2S receiver removed; POKEY → HDMI audio is an internal
-# fabric feed. See pokey_i2s_tx.sv / tb_pokey_i2s.sv.)
-
-# ---- M15b — TERC4 4b/10b encoder (HDMI data island) ----------------------
-terc4: $(BUILD_DIR)/tb_terc4.vvp
-	@echo "=== M15b terc4 ==="
-	@$(VVP) -N $< | tee $(BUILD_DIR)/tb_terc4.log
-	@grep -q '\*\*\* TERC4 OK \*\*\*' $(BUILD_DIR)/tb_terc4.log || \
-	    (echo "FAIL: tb_terc4 missing TERC4 OK"; exit 1)
-	@grep -q 'TRAP\|FATAL\|FAIL' $(BUILD_DIR)/tb_terc4.log && \
-	    (echo "FAIL: tb_terc4 reported a trap"; exit 1) || true
-	@echo "PASS: tb_terc4"
-
-$(BUILD_DIR)/tb_terc4.vvp: $(HDL_DIR)/terc4_encoder.sv tb_terc4.sv | $(BUILD_DIR)
-	$(IVERILOG) $(SV_FLAGS) -o $@ -s tb_terc4 $(HDL_DIR)/terc4_encoder.sv tb_terc4.sv
-
-# ---- M15b — HDMI BCH ECC encoders ----------------------------------------
-hdmi_bch: $(BUILD_DIR)/tb_hdmi_bch.vvp
-	@echo "=== M15b hdmi_bch ==="
-	@$(VVP) -N $< | tee $(BUILD_DIR)/tb_hdmi_bch.log
-	@grep -q '\*\*\* BCH OK \*\*\*' $(BUILD_DIR)/tb_hdmi_bch.log || \
-	    (echo "FAIL: tb_hdmi_bch missing BCH OK"; exit 1)
-	@grep -q 'TRAP\|FATAL\|FAIL' $(BUILD_DIR)/tb_hdmi_bch.log && \
-	    (echo "FAIL: tb_hdmi_bch reported a trap"; exit 1) || true
-	@echo "PASS: tb_hdmi_bch"
-
-$(BUILD_DIR)/tb_hdmi_bch.vvp: $(HDL_DIR)/hdmi_bch.sv tb_hdmi_bch.sv | $(BUILD_DIR)
-	$(IVERILOG) $(SV_FLAGS) -o $@ -s tb_hdmi_bch $(HDL_DIR)/hdmi_bch.sv tb_hdmi_bch.sv
-
-# ---- M15b — HDMI packet content (audio sample + InfoFrames + clk regen) ----
-hdmi_pkt: $(BUILD_DIR)/tb_hdmi_pkt.vvp
-	@echo "=== M15b hdmi_pkt ==="
-	@$(VVP) -N $< | tee $(BUILD_DIR)/tb_hdmi_pkt.log
-	@grep -q '\*\*\* HDMI_PKT OK \*\*\*' $(BUILD_DIR)/tb_hdmi_pkt.log || \
-	    (echo "FAIL: tb_hdmi_pkt missing HDMI_PKT OK"; exit 1)
-	@grep -q 'TRAP\|FATAL\|FAIL' $(BUILD_DIR)/tb_hdmi_pkt.log && \
-	    (echo "FAIL: tb_hdmi_pkt reported a trap"; exit 1) || true
-	@echo "PASS: tb_hdmi_pkt"
-
-HDMI_PKT_HDL := \
-    $(HDL_DIR)/hdmi_bch.sv         \
-    $(HDL_DIR)/hdmi_packet.sv      \
-    $(HDL_DIR)/hdmi_pkt_source.sv
-
-$(BUILD_DIR)/tb_hdmi_pkt.vvp: $(HDMI_PKT_HDL) tb_hdmi_pkt.sv | $(BUILD_DIR)
-	$(IVERILOG) $(SV_FLAGS) -o $@ -s tb_hdmi_pkt $(HDMI_PKT_HDL) tb_hdmi_pkt.sv
-
-# ---- M15b — full HDMI output integration (FSM + audio data island) -------
-hdmi_out: $(BUILD_DIR)/tb_hdmi_out.vvp
-	@echo "=== M15b hdmi_out ==="
-	@$(VVP) -N $< | tee $(BUILD_DIR)/tb_hdmi_out.log
-	@grep -q '\*\*\* HDMI_OUT OK \*\*\*' $(BUILD_DIR)/tb_hdmi_out.log || \
-	    (echo "FAIL: tb_hdmi_out missing HDMI_OUT OK"; exit 1)
-	@grep -q 'TRAP\|FATAL\|FAIL' $(BUILD_DIR)/tb_hdmi_out.log && \
-	    (echo "FAIL: tb_hdmi_out reported a trap"; exit 1) || true
-	@echo "PASS: tb_hdmi_out"
-
-HDMI_OUT_HDL := \
-    $(HDL_DIR)/vbeam.sv            \
-    $(HDL_DIR)/tmds_encoder.sv     \
-    $(HDL_DIR)/tmds_serializer.sv  \
-    $(HDL_DIR)/terc4_encoder.sv    \
-    $(HDL_DIR)/hdmi_bch.sv         \
-    $(HDL_DIR)/hdmi_packet.sv      \
-    $(HDL_DIR)/hdmi_pkt_source.sv  \
-    $(HDL_DIR)/hdmi_out.sv
-
-$(BUILD_DIR)/tb_hdmi_out.vvp: $(HDMI_OUT_HDL) tb_hdmi_out.sv | $(BUILD_DIR)
-	$(IVERILOG) $(SV_FLAGS) -o $@ -s tb_hdmi_out $(HDMI_OUT_HDL) tb_hdmi_out.sv
 
 # ---- M16 — DMA bus master ------------------------------------------------
 dma_master: $(BUILD_DIR)/tb_dma_master.vvp

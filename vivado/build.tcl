@@ -73,21 +73,16 @@ proc xsa_inject {xsa_path src} {
 }
 
 # ---- Read sources -------------------------------------------------------
-# Pull in every .sv from hdl/ that isn't a sim-only mock or one of the
-# two remaining Efinix-vintage modules that share their module name
-# with a Zynq replacement (hdmi_out.sv → hdmi_out_zynq.sv;
-# tmds_serializer.sv is only referenced by the dead Efinix hdmi_out.sv
-# and tmds_out.sv chain — both still need an antic_top refactor before
-# they can be deleted from hdl/).
+# Pull in every .sv from hdl/ that isn't a sim-only mock.  The Efinix-
+# era HyperRAM / HDMI chains are gone from hdl/ entirely (commits
+# 2f3f03e + 614f2f9 + this commit's Phase B), so no explicit module
+# exclusions are needed any more.
 set hdl_dir [file join [pwd] hdl]
 
 set sv_files {}
 foreach f [glob -nocomplain [file join $hdl_dir *.sv]] {
     set name [file tail $f]
     if {[string match "*_mock.sv" $name]} { continue }
-    if {$name eq "hdmi_out.sv"}           { continue }
-    if {$name eq "tmds_serializer.sv"}    { continue }
-    if {$name eq "tmds_out.sv"}           { continue }
     lappend sv_files $f
 }
 # Also pick up sally_core.sv (and any other .sv) under hdl/sally/.
