@@ -185,7 +185,10 @@ module fpga_xt_top #(
     wire        sally_rdy;
 
     // sally_clock wires
-    wire        phi2_tick;
+    // phi2_tick gating is bypassed at clock_mult >= 2 (we run at 68); the
+    // strobe input is still required by the port, so tie it off.  antic_top
+    // computes its own phi2_tick internally for its consumers (vbeam etc.).
+    wire        phi2_tick = 1'b0;
     wire        halt_n_sally;      // /HALT after CDC (if needed)
     wire        wsync_rdy_n;       // from ANTIC WSYNC
     wire        mem_busy_n;        // from sally_mem (1 = ready)
@@ -195,10 +198,11 @@ module fpga_xt_top #(
     wire [7:0]  cpu_code_bank, cpu_data_bank;
     wire [7:0]  cpu_regc_bank_lo, cpu_regc_bank_hi;
 
-    // ANTIC-view bank select state (from chiplet-ext registers)
-    wire [7:0]  antic_code_bank, antic_data_bank;
-    wire [7:0]  antic_regc_bank_lo, antic_regc_bank_hi;
-    wire        view_is_antic;
+    // ANTIC-view bank registers ($D488-$D48B) are currently unused in the
+    // Zynq build — ANTIC's DMA reaches RAM via bram_shim, not via
+    // sally_mem's CPU bus, so sally_mem never needs to switch to the
+    // ANTIC bank context.  Inputs tied to 0 / 1'b0 at the sally_mem
+    // instantiation below.
 
     // Hardware register passthrough (SALLY→ANTIC bus via CDC FIFO)
     wire [15:0] hwreg_addr;
@@ -525,11 +529,11 @@ module fpga_xt_top #(
         .cpu_data_bank_q    (cpu_data_bank),
         .cpu_regc_bank_lo_q (cpu_regc_bank_lo),
         .cpu_regc_bank_hi_q (cpu_regc_bank_hi),
-        .antic_code_bank    (antic_code_bank),
-        .antic_data_bank    (antic_data_bank),
-        .antic_regc_bank_lo (antic_regc_bank_lo),
-        .antic_regc_bank_hi (antic_regc_bank_hi),
-        .view_is_antic      (view_is_antic),
+        .antic_code_bank    (8'h00),
+        .antic_data_bank    (8'h00),
+        .antic_regc_bank_lo (8'h00),
+        .antic_regc_bank_hi (8'h00),
+        .view_is_antic      (1'b0),
         .bus_mpd_n_in       (1'b1),         // no PBI
         .bus_pbi_rdata      (8'hFF),        // no PBI
         .bus_rd4_n_in       (1'b1),         // no cart

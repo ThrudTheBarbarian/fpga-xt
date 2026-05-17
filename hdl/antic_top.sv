@@ -1077,7 +1077,10 @@ module antic_top #(
     wire [23:0] cmp_cmd_addr;
     wire [23:0] cmp_cmd_data;
     wire        cmp_cmd_valid;
-    wire        cmp_cmd_ready;
+    // Zynq build: rp_tx removed.  Back-pressure from the downstream RP
+    // queue would surface here on the Efinix build — tied to always-ready
+    // until the M17-3 RP handler lands.
+    wire        cmp_cmd_ready = 1'b1;
     wire        cmp_done;
     wire [31:0] cmp_count;
 
@@ -1118,7 +1121,9 @@ module antic_top #(
     // handler lands at M17-3 (will surface as a top-level input).
     wire [7:0]  draw_read_data;
     wire        draw_cmd_valid_w;
-    wire        draw_cmd_ready_w;
+    // Same RP-queue back-pressure story as cmp_cmd_ready above — tied to
+    // always-ready until the M17-3 handler is wired in.
+    wire        draw_cmd_ready_w = 1'b1;
     wire [7:0]  draw_op_w;
     wire [15:0] draw_arg0_w, draw_arg1_w, draw_arg2_w, draw_arg3_w;
     wire [15:0] draw_arg4_w, draw_arg5_w, draw_arg6_w;
