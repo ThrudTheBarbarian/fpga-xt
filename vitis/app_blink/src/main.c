@@ -31,10 +31,7 @@
 #include "xil_printf.h"
 #include "sleep.h"
 
-/* sleep() comes from the standalone BSP's sleep.h.  No xtime_l.h
- * dependency — we don't read the global timer directly, just block
- * for whole seconds.
- */
+#include "xt_blitter.h"
 
 int main(void)
 {
@@ -45,6 +42,18 @@ int main(void)
     xil_printf("\r\n");
     xil_printf("fpga-xt boot OK\r\n");
     xil_printf("build: " __DATE__ " " __TIME__ "\r\n");
+
+    /* Smoke-test the GP0 → axi_blitter_bridge path before entering
+     * the tick loop.  At reset the blitter queue is empty and the
+     * FSM is idle, so STATUS should read 0.  A non-zero read
+     * indicates: bit 0 set = busy (unexpected at boot), bit 1 set
+     * = queue already full (unexpected), bit 2 set = sticky
+     * pat_blocked from earlier pat/font writes while busy.
+     */
+    uint8_t status = xt_blitter_status();
+    uint16_t seq   = xt_blitter_seq_counter();
+    xil_printf("blitter @0x%08x: status=0x%02x seq=%u\r\n",
+               (unsigned)XT_BLITTER_BASE, status, seq);
 
     uint32_t tick = 0;
     while (1) {
