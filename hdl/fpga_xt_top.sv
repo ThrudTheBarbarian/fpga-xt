@@ -293,13 +293,12 @@ module fpga_xt_top #(
     wire        hp1_rlast;
     wire        hp1_rready;
 
-    // ANTIC DMA BRAM read port (reserved for Phase 1b when we bypass
-    // hyperram_shim for direct reads from sally_mem's second BRAM port).
-    // Tied off for now — hyperram_shim (BRAM-backed, inside antic_top)
-    // handles DMA reads via its own internal BRAM.
-    wire [15:0] dma_addr_unused;
-    wire [7:0]  dma_rdata_unused;
-    assign dma_addr_unused = 16'h0000;
+    // ANTIC's BRAM read port — driven by antic_top's u_bram_shim and
+    // serviced by sally_mem's second BRAM port (clk_sys side).  SALLY
+    // writes propagate naturally through sally_mem; ANTIC sees the
+    // same state without a shadow memory.
+    wire [15:0] antic_bram_addr;
+    wire [7:0]  antic_bram_rdata;
 
     // ====================================================================
     // AXI pipeline registers — HP1 (xt_blitter) → PS BD
@@ -564,9 +563,9 @@ module fpga_xt_top #(
         .rom_addr    (rom_load_addr),
         .rom_data    (rom_load_data),
         .rom_we      (rom_load_we),
-        .dma_clk     (1'b0),          // tied off — hyperram_shim handles DMA reads
-        .dma_addr    (dma_addr_unused),
-        .dma_rdata   (dma_rdata_unused)
+        .dma_clk     (clk_sys),       // ANTIC reads sally_mem's BRAM at clk_bus
+        .dma_addr    (antic_bram_addr),
+        .dma_rdata   (antic_bram_rdata)
     );
 
     // ====================================================================
@@ -719,27 +718,9 @@ module fpga_xt_top #(
         .joy_spi_miso       (1'b0),
         .joy_spi_cs_n       (),
         .joy_spi_int_n      (1'b1),
-        .ram_clk            (1'b0),
-        .ram_clk_cal        (1'b0),
-        .hbc_cal_pass       (),
-        .hbc_ck_p_LO        (),
-        .hbc_ck_p_HI        (),
-        .hbc_cs_n           (),
-        .hbc_rst_n          (),
-        .hbc_dq_OE          (),
-        .hbc_dq_IN_LO       (8'h00),
-        .hbc_dq_IN_HI       (8'h00),
-        .hbc_dq_OUT_LO      (),
-        .hbc_dq_OUT_HI      (),
-        .hbc_rwds_OE        (),
-        .hbc_rwds_IN_LO     (1'b0),
-        .hbc_rwds_IN_HI     (1'b0),
-        .hbc_rwds_OUT_LO    (),
-        .hbc_rwds_OUT_HI    (),
-        .hbc_cal_SHIFT_SEL  (),
-        .hbc_cal_SHIFT      (),
-        .hbc_cal_SHIFT_ENA  (),
-        .hbc_cal_debug_info (),
+        // ANTIC's BRAM read port — connects to sally_mem's dma port.
+        .bram_addr          (antic_bram_addr),
+        .bram_rdata         (antic_bram_rdata),
         // Zynq build: sally_* / xlat_phys_addr removed (no shadow SALLY core).
         .adc_bclk_o         (),
         .adc_lrck_o         (),

@@ -199,37 +199,13 @@ module antic_top #(
     output wire        joy_spi_cs_n,
     input  wire        joy_spi_int_n,
 
-    // ---- HyperRAM PHY (M16b-int) ---------------------------------------
-    // The Efinix HyperRAM Controller IP exposes the PHY as pre-DDR-mux
-    // signal pairs (LO/HI per edge); the synth wrapper above antic_top
-    // instantiates EFX_GPIO DDR primitives that combine these into the
-    // physical DDR pins on the board. ram_clk + ram_clk_cal come from
-    // a sibling PLL in that wrapper.
-    input  wire        ram_clk,
-    input  wire        ram_clk_cal,
-    output wire        hbc_cal_pass,
-    // CK_n omitted — single-ended HyperRAM clock committed.
-    // The IP still emits hbc_ck_n_LO/HI internally; we tie them off
-    // at the IP instantiation below. ram_clk capped at 250 MHz on
-    // rp-XT (well below where modern HyperRAM ICs require diff clock).
-    output wire        hbc_ck_p_LO,
-    output wire        hbc_ck_p_HI,
-    output wire        hbc_cs_n,
-    output wire        hbc_rst_n,
-    output wire [7:0]  hbc_dq_OE,
-    input  wire [7:0]  hbc_dq_IN_LO,
-    input  wire [7:0]  hbc_dq_IN_HI,
-    output wire [7:0]  hbc_dq_OUT_LO,
-    output wire [7:0]  hbc_dq_OUT_HI,
-    output wire        hbc_rwds_OE,
-    input  wire        hbc_rwds_IN_LO,
-    input  wire        hbc_rwds_IN_HI,
-    output wire        hbc_rwds_OUT_LO,
-    output wire        hbc_rwds_OUT_HI,
-    output wire [4:0]  hbc_cal_SHIFT_SEL,
-    output wire [2:0]  hbc_cal_SHIFT,
-    output wire        hbc_cal_SHIFT_ENA,
-    output wire [26:0] hbc_cal_debug_info,
+    // ---- ANTIC DMA read port → external BRAM (sally_mem's dma port) ----
+    // ANTIC's dl_parser and compositor read scanline data through a
+    // bram_shim into this port.  On the Zynq build the BRAM lives in
+    // sally_mem (its second port at clk_bus), so SALLY writes are
+    // visible to ANTIC without a separate shadow memory.
+    output wire [15:0] bram_addr,
+    input  wire [7:0]  bram_rdata,
 
     // ---- M24-int-1 — internal SALLY observability ----------------------
     // Internal SALLY's bus is exposed as an observation port for the
@@ -865,52 +841,26 @@ module antic_top #(
     wire        dl_sh_req,   cmp_sh_req;
     wire [7:0]  dl_sh_rdata, cmp_sh_rdata;
     wire        dl_sh_ready, cmp_sh_ready;
-    wire        sh_rd_valid_a_unused, sh_rd_valid_b_unused;
-    wire        sh_wready_unused;
 
-    hyperram_shim #(.ADDR_W(16), .LATENCY(8)) u_cpu_shadow (
+    // bram_shim replaces the Efinix-era u_cpu_shadow (hyperram_shim).
+    // SALLY writes propagate to sally_mem's BRAM directly via its
+    // normal bus interface; ANTIC reads the same BRAM through its
+    // second port (sally_mem.dma_addr/dma_rdata at clk_bus).  No
+    // separate shadow memory is needed, and the long HyperRAM PHY
+    // port plumbing falls away.
+    bram_shim #(.ADDR_W(16)) u_bram_shim (
         .clk           (clk_bus),
         .rst           (rst_bus),
-        .we            (snoop_we_screen),
-        .waddr         (snoop_addr),
-        .wdata         (snoop_data),
-        .wready        (sh_wready_unused),
+        .bram_addr     (bram_addr),
+        .bram_rdata    (bram_rdata),
         .req_a         (dl_sh_req),
         .raddr_a       (dl_sh_raddr),
         .rdata_a       (dl_sh_rdata),
-        .rd_valid_a    (sh_rd_valid_a_unused),
         .ready_a       (dl_sh_ready),
         .req_b         (cmp_sh_req),
         .raddr_b       (cmp_sh_raddr),
         .rdata_b       (cmp_sh_rdata),
-        .rd_valid_b    (sh_rd_valid_b_unused),
-        .ready_b       (cmp_sh_ready),
-        // PHY pass-through (top-level ports → outer synth wrapper)
-        .ram_clk            (ram_clk),
-        .ram_clk_cal        (ram_clk_cal),
-        .hbc_cal_pass       (hbc_cal_pass),
-        // CK_n single-ended commit: IP still drives both halves of
-        // the DDR mux; we leave them dangling. Synth optimises away.
-        .hbc_ck_n_LO        (),
-        .hbc_ck_n_HI        (),
-        .hbc_ck_p_LO        (hbc_ck_p_LO),
-        .hbc_ck_p_HI        (hbc_ck_p_HI),
-        .hbc_cs_n           (hbc_cs_n),
-        .hbc_rst_n          (hbc_rst_n),
-        .hbc_dq_OE          (hbc_dq_OE),
-        .hbc_dq_IN_LO       (hbc_dq_IN_LO),
-        .hbc_dq_IN_HI       (hbc_dq_IN_HI),
-        .hbc_dq_OUT_LO      (hbc_dq_OUT_LO),
-        .hbc_dq_OUT_HI      (hbc_dq_OUT_HI),
-        .hbc_rwds_OE        (hbc_rwds_OE),
-        .hbc_rwds_IN_LO     (hbc_rwds_IN_LO),
-        .hbc_rwds_IN_HI     (hbc_rwds_IN_HI),
-        .hbc_rwds_OUT_LO    (hbc_rwds_OUT_LO),
-        .hbc_rwds_OUT_HI    (hbc_rwds_OUT_HI),
-        .hbc_cal_SHIFT_SEL  (hbc_cal_SHIFT_SEL),
-        .hbc_cal_SHIFT      (hbc_cal_SHIFT),
-        .hbc_cal_SHIFT_ENA  (hbc_cal_SHIFT_ENA),
-        .hbc_cal_debug_info (hbc_cal_debug_info)
+        .ready_b       (cmp_sh_ready)
     );
 
     // ---- dma_mode latch (vsync-aligned, snapped at dl_start_pulse) -----

@@ -30,7 +30,7 @@ HDL_SRCS := \
     $(HDL_DIR)/dma_master.sv     \
     $(HDL_DIR)/dma_arbiter.sv     \
     $(HDL_DIR)/mem_read_mux.sv    \
-    $(HDL_DIR)/hyperram_shim.sv   \
+    $(HDL_DIR)/bram_shim.sv       \
     $(HDL_DIR)/draw_regs.sv       \
     $(HDL_DIR)/pia_regs.sv        \
     $(HDL_DIR)/peri_link.sv       \
