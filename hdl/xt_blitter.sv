@@ -2479,13 +2479,21 @@ module xt_blitter #(
                 // stable through SC_BL_ACC → SC_BL_BLEND → SC_BL_ACC2.
                 // ============================================================
                 SC_BL_ACC: begin
-                    automatic logic [8:0]  fx8_inv = 9'd256 - {1'b0, bl_fx8_q};
-                    automatic logic [8:0]  fy8_inv = 9'd256 - {1'b0, bl_fy8_q};
-
-                    bl_w00_q <= (fx8_inv * fy8_inv) >> 8;
-                    bl_w10_q <= ({1'b0, bl_fx8_q} * fy8_inv) >> 8;
-                    bl_w01_q <= (fx8_inv * {1'b0, bl_fy8_q}) >> 8;
-                    bl_w11_q <= ({1'b0, bl_fx8_q} * {1'b0, bl_fy8_q}) >> 8;
+                    // Combinational temps for bilinear weight calc.
+                    // Inlined rather than declared with `automatic`/
+                    // `static` to stay portable across both Vivado
+                    // synth (which demands an explicit lifetime on
+                    // initialised case-item-local logic — Synth
+                    // 8-10180) and iverilog 13.0 (which doesn't yet
+                    // support overriding default variable lifetime).
+                    bl_w00_q <= ((9'd256 - {1'b0, bl_fx8_q})
+                                 * (9'd256 - {1'b0, bl_fy8_q})) >> 8;
+                    bl_w10_q <= ({1'b0, bl_fx8_q}
+                                 * (9'd256 - {1'b0, bl_fy8_q})) >> 8;
+                    bl_w01_q <= ((9'd256 - {1'b0, bl_fx8_q})
+                                 * {1'b0, bl_fy8_q}) >> 8;
+                    bl_w11_q <= ({1'b0, bl_fx8_q}
+                                 * {1'b0, bl_fy8_q}) >> 8;
 
                     state <= SC_BL_BLEND;
                 end
