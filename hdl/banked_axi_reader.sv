@@ -104,8 +104,13 @@ module banked_axi_reader #(
     wire   line_match    = (req_addr[AXI_ADDR_W-1:6] == line_addr_q);
     wire   read_hit_w    = req_valid && !req_we && line_valid_q && line_match && (state_q == IDLE);
 
-    // Read burst delivers original byte on the rlast beat.
-    wire   fill_deliver  = (state_q == R) && m_axi_rvalid && m_axi_rlast;
+    // Read burst delivers the original byte on whichever beat of the
+    // INCR burst actually holds the requested address — NOT necessarily
+    // the last beat.  pending_addr_q[5:3] is the beat index of the
+    // requested byte within the 64-byte cache line.  Subsequent beats
+    // still arrive to finish filling line_q so cache hits work later.
+    wire   fill_deliver  = (state_q == R) && m_axi_rvalid &&
+                           (beat_q == pending_addr_q[5:3]);
 
     // Write completes on bvalid.
     wire   write_done    = (state_q == B) && m_axi_bvalid;

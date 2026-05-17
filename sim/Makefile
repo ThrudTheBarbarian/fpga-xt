@@ -700,12 +700,11 @@ sally_mem: $(BUILD_DIR)/tb_sally_mem.vvp
 
 SALLY_MEM_HDL := \
     $(HDL_DIR)/bank_xlat.sv \
-    $(HDL_DIR)/bank_cache.sv \
-    $(HDL_DIR)/cache_line_ram.sv \
+    $(HDL_DIR)/banked_axi_reader.sv \
     $(HDL_DIR)/sally_mem.sv
 
-$(BUILD_DIR)/tb_sally_mem.vvp: $(SALLY_MEM_HDL) tb_sally_mem.sv | $(BUILD_DIR)
-	$(IVERILOG) $(SV_FLAGS) -o $@ -s tb_sally_mem $(SALLY_MEM_HDL) tb_sally_mem.sv
+$(BUILD_DIR)/tb_sally_mem.vvp: $(SALLY_MEM_HDL) tb_sally_mem.sv axi_slave_mem.sv | $(BUILD_DIR)
+	$(IVERILOG) $(SV_FLAGS) -o $@ -s tb_sally_mem $(SALLY_MEM_HDL) axi_slave_mem.sv tb_sally_mem.sv
 
 # ---- M24-5 — SALLY bus arbitration -------------------------------------
 sally_arb: $(BUILD_DIR)/tb_sally_arbitration.vvp
