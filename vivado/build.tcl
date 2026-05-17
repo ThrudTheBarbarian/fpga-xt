@@ -54,11 +54,19 @@ set_msg_config -id "Synth 8-3917" -suppress
 # name is stored in the archive (matches `zip -j` semantics).
 proc xsa_inject {xsa_path src} {
     if {$::tcl_platform(platform) eq "windows"} {
-        set saved [pwd]
-        cd [file dirname $src]
-        # -bd: no progress bar, -y: assume yes, -tzip: zip (not 7z) format
-        catch {exec 7z a -tzip -bd -y $xsa_path [file tail $src]} result
-        cd $saved
+        # Vivado bundles an Info-ZIP at <vivado>/../tps/win64/zip/bin/zip.exe.
+        # We use it rather than the WindowsApps `7z` stub or PowerShell's
+        # Compress-Archive: the former isn't on Vivado's `exec` PATH and
+        # the latter is awkward to drive through Tcl's quoting.
+        set zip_exe [file normalize \
+            [file join $::env(XILINX_VIVADO) .. tps win64 zip bin zip.exe]]
+        if {![file exists $zip_exe]} {
+            error "xsa_inject: bundled zip.exe not found at $zip_exe"
+        }
+        set rc [catch {exec $zip_exe -j $xsa_path $src} result]
+        if {$rc != 0} {
+            error "xsa_inject: zip failed for [file tail $src] -- $result"
+        }
     } else {
         exec zip -j $xsa_path $src
     }
@@ -271,15 +279,17 @@ if {$flow eq "bit"} {
     # describes the hardware platform.  The filename argument is
     # positional (UG835 — no `-file` switch).  See docs/bring-up.md.
     set xsa_path [file join $out_dir $top.xsa]
-    write_hw_platform -fixed -force -include_bit $xsa_path
+    # See xsa flow below for the same `-minimal` justification — Vivado
+    # 2025.2.1's auto write_mem_info trips on our sub-BD PS layout.
+    write_hw_platform -fixed -force -minimal $xsa_path
     puts ">> hw_platform written: $xsa_path"
 
     # ---- ps7_init.* post-injection ------------------------------------
     # Vitis 2025.x's zynq_fsbl template wants ps7_init.c at the XSA root,
-    # but `write_hw_platform -fixed -include_bit` doesn't pull the file
-    # into the archive even though the BD has it on disk in its .gen
-    # tree.  Inject them by hand — the XSA is just a zip archive, so
-    # `zip -j` appends the files at the root with no path prefix.
+    # but `write_hw_platform -fixed` doesn't pull the files into the
+    # archive even though the BD has them on disk in its .gen tree.
+    # Inject them by hand — the XSA is just a zip archive, so `zip -j`
+    # appends the files at the root with no path prefix.
     set ps_ip_dir [file join [pwd] bd zynq_ps_bd zynq_ps_bd.gen \
                               sources_1 bd ps_bd ip ps_bd_zynq_ps_0]
     set ps_init_files [list \
@@ -312,7 +322,14 @@ if {$flow eq "xsa"} {
     }
     open_checkpoint $dcp_path
     set xsa_path [file join $out_dir $top.xsa]
-    write_hw_platform -fixed -force -include_bit $xsa_path
+    # `-minimal` skips Vivado 2025.2.1's auto write_mem_info step, which
+    # otherwise blows up with Common 17-69 when the PS lives inside a
+    # sub-BD rather than at top level.  We don't use updatemem (Zynq
+    # code runs from DDR3, not BRAM), so the .mmi is irrelevant; the
+    # tradeoff is that the bitstream is no longer bundled in the XSA
+    # — Vitis flows that need it load <build>/fpga_xt_top.bit directly
+    # via JTAG / bootgen.
+    write_hw_platform -fixed -force -minimal $xsa_path
     puts ">> hw_platform written: $xsa_path"
 
     # Same ps7_init.* injection as the bit flow above.
