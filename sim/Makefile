@@ -24,19 +24,14 @@ HDL_SRCS := \
     $(HDL_DIR)/dl_parser.sv       \
     $(HDL_DIR)/compositor.sv      \
     $(HDL_DIR)/color_resolver.sv  \
-    $(HDL_DIR)/rp_tx.sv           \
     $(HDL_DIR)/nmi_gen.sv         \
     $(HDL_DIR)/wsync_gen.sv       \
     $(HDL_DIR)/palette_lut.sv     \
-    $(HDL_DIR)/dma_master.sv      \
+    $(HDL_DIR)/dma_master.sv     \
     $(HDL_DIR)/dma_arbiter.sv     \
     $(HDL_DIR)/mem_read_mux.sv    \
-    $(HDL_DIR)/hyperram_mock.sv   \
     $(HDL_DIR)/hyperram_shim.sv   \
     $(HDL_DIR)/draw_regs.sv       \
-    $(HDL_DIR)/pssi_tx.sv         \
-    $(HDL_DIR)/pssi_bytes.sv      \
-    $(HDL_DIR)/cache_regs.sv      \
     $(HDL_DIR)/pia_regs.sv        \
     $(HDL_DIR)/peri_link.sv       \
     $(HDL_DIR)/peri_bridge.sv \
@@ -52,13 +47,9 @@ HDL_SRCS := \
     $(HDL_DIR)/sally/sally_core.sv \
     $(HDL_DIR)/sally_clock.sv     \
     $(HDL_DIR)/bank_xlat.sv       \
-    $(HDL_DIR)/bank_cache.sv      \
-    $(HDL_DIR)/cache_line_ram.sv  \
     $(HDL_DIR)/sally_mem.sv       \
-    $(HDL_DIR)/bank_translator.sv \
     $(HDL_DIR)/line_buffer.sv     \
     $(HDL_DIR)/scan_out.sv        \
-    $(HDL_DIR)/prefetch.sv        \
     $(HDL_DIR)/tmds_encoder.sv    \
     $(HDL_DIR)/tmds_serializer.sv \
     $(HDL_DIR)/terc4_encoder.sv   \
@@ -71,9 +62,9 @@ HDL_SRCS := \
 
 BUILD_DIR := build
 
-.PHONY: all smoke snoop read vbeam rp_bus prefetch dl_parse mode_f char_modes gfx_modes pm prior scroll nmi wsync palette tmds tmds_out terc4 hdmi_bch hdmi_pkt hdmi_out dma_master mem_read_mux dma_int draw draw_regs pokey pokey_i2s sally sally_mem sally_arb bank_cache bank_xlat cache_regs pia_regs peri_link joy_link joy_bridge peri_bridge os_rom_load klaus visual lint clean pssi_tx pssi_int xt_blitter sally_stack sally_isa
+.PHONY: all smoke snoop read vbeam rp_bus dl_parse mode_f char_modes gfx_modes pm prior scroll nmi wsync palette tmds tmds_out terc4 hdmi_bch hdmi_pkt hdmi_out dma_master mem_read_mux dma_int draw_regs pokey pokey_i2s sally sally_mem sally_arb bank_xlat pia_regs peri_link joy_link joy_bridge peri_bridge os_rom_load klaus visual lint clean xt_blitter sally_stack sally_isa
 
-all: smoke snoop read vbeam rp_bus prefetch dl_parse mode_f char_modes gfx_modes pm prior scroll nmi wsync palette tmds tmds_out terc4 hdmi_bch hdmi_pkt hdmi_out dma_master mem_read_mux dma_int draw draw_regs pokey pokey_i2s sally sally_mem sally_arb bank_cache bank_xlat cache_regs pia_regs peri_link joy_link joy_bridge peri_bridge os_rom_load pbi pcm1808_rx visual pssi_tx pssi_int xt_blitter
+all: smoke snoop read vbeam rp_bus dl_parse mode_f char_modes gfx_modes pm prior scroll nmi wsync palette tmds tmds_out terc4 hdmi_bch hdmi_pkt hdmi_out dma_master mem_read_mux dma_int draw_regs pokey pokey_i2s sally sally_mem sally_arb bank_xlat pia_regs peri_link joy_link joy_bridge peri_bridge os_rom_load pbi pcm1808_rx visual xt_blitter
 
 # `klaus` is NOT in `all` — Klaus Dormann's full test takes ~96 M
 # cycles (≥10 minutes of iverilog wall-clock). Run it manually with
@@ -86,9 +77,9 @@ all: smoke snoop read vbeam rp_bus prefetch dl_parse mode_f char_modes gfx_modes
 # committing if you can.
 VERILATOR := verilator
 VERILATOR_FLAGS := --lint-only --Wall -Wno-fatal -I$(HDL_DIR)
-VERILATOR_TOPS := antic_top vbeam rp_tx rp_rx rp_bus_mock bus_snoop antic_regs gtia_regs cache_regs byte_ram byte_ram_dp
+VERILATOR_TOPS := antic_top vbeam bus_snoop antic_regs gtia_regs byte_ram byte_ram_dp
 
-LINT_SRCS := $(filter-out $(HDL_DIR)/hyperram_phy.sv,$(wildcard $(HDL_DIR)/*.sv))
+LINT_SRCS := $(wildcard $(HDL_DIR)/*.sv)
 
 lint:
 	@for top in $(VERILATOR_TOPS); do \
@@ -150,46 +141,6 @@ vbeam: $(BUILD_DIR)/tb_vbeam.vvp
 $(BUILD_DIR)/tb_vbeam.vvp: $(HDL_DIR)/vbeam.sv tb_vbeam.sv | $(BUILD_DIR)
 	$(IVERILOG) $(SV_FLAGS) -o $@ -s tb_vbeam $(HDL_DIR)/vbeam.sv tb_vbeam.sv
 
-# ---- M3 — FPGA<->RP paired sim --------------------------------------------
-RP_BUS_HDL := \
-    $(HDL_DIR)/rp_tx.sv        \
-    $(HDL_DIR)/rp_rx.sv        \
-    $(HDL_DIR)/rp_bus_mock.sv
-
-rp_bus: $(BUILD_DIR)/tb_rp_bus.vvp
-	@echo "=== M3 rp_bus ==="
-	@$(VVP) -N $< | tee $(BUILD_DIR)/tb_rp_bus.log
-	@grep -q '\*\*\* RP_BUS OK \*\*\*' $(BUILD_DIR)/tb_rp_bus.log || \
-	    (echo "FAIL: tb_rp_bus missing RP_BUS OK"; exit 1)
-	@grep -q 'TRAP\|FATAL\|FAIL' $(BUILD_DIR)/tb_rp_bus.log && \
-	    (echo "FAIL: tb_rp_bus reported a trap"; exit 1) || true
-	@echo "PASS: tb_rp_bus"
-
-$(BUILD_DIR)/tb_rp_bus.vvp: $(RP_BUS_HDL) tb_rp_bus.sv $(HDL_DIR)/bus_opcodes.vh | $(BUILD_DIR)
-	$(IVERILOG) $(SV_FLAGS) -o $@ -s tb_rp_bus $(RP_BUS_HDL) tb_rp_bus.sv
-
-# ---- M4 — line-buffer prefetch loop --------------------------------------
-PREFETCH_HDL := \
-    $(HDL_DIR)/vbeam.sv          \
-    $(HDL_DIR)/line_buffer.sv    \
-    $(HDL_DIR)/prefetch.sv       \
-    $(HDL_DIR)/scan_out.sv       \
-    $(HDL_DIR)/rp_tx.sv          \
-    $(HDL_DIR)/rp_rx.sv          \
-    $(HDL_DIR)/rp_bus_mock.sv
-
-prefetch: $(BUILD_DIR)/tb_prefetch.vvp
-	@echo "=== M4 prefetch ==="
-	@$(VVP) -N $< | tee $(BUILD_DIR)/tb_prefetch.log
-	@grep -q '\*\*\* PREFETCH OK \*\*\*' $(BUILD_DIR)/tb_prefetch.log || \
-	    (echo "FAIL: tb_prefetch missing PREFETCH OK"; exit 1)
-	@grep -q 'TRAP\|FATAL\|FAIL' $(BUILD_DIR)/tb_prefetch.log && \
-	    (echo "FAIL: tb_prefetch reported a trap"; exit 1) || true
-	@echo "PASS: tb_prefetch"
-
-$(BUILD_DIR)/tb_prefetch.vvp: $(PREFETCH_HDL) tb_prefetch.sv $(HDL_DIR)/bus_opcodes.vh | $(BUILD_DIR)
-	$(IVERILOG) $(SV_FLAGS) -o $@ -s tb_prefetch $(PREFETCH_HDL) tb_prefetch.sv
-
 # ---- M5 — display-list parser ---------------------------------------------
 DL_PARSE_HDL := \
     $(HDL_DIR)/byte_ram.sv       \
@@ -207,25 +158,6 @@ dl_parse: $(BUILD_DIR)/tb_dl_parse.vvp
 $(BUILD_DIR)/tb_dl_parse.vvp: $(DL_PARSE_HDL) tb_dl_parse.sv | $(BUILD_DIR)
 	$(IVERILOG) $(SV_FLAGS) -o $@ -s tb_dl_parse $(DL_PARSE_HDL) tb_dl_parse.sv
 
-# ---- M6 — mode-F compositor pipeline -------------------------------------
-MODE_F_HDL := \
-    $(HDL_DIR)/byte_ram.sv       \
-    $(HDL_DIR)/dl_parser.sv      \
-    $(HDL_DIR)/compositor.sv     \
-    $(HDL_DIR)/rp_tx.sv          \
-    $(HDL_DIR)/rp_bus_mock.sv
-
-mode_f: $(BUILD_DIR)/tb_mode_f.vvp
-	@echo "=== M6 mode_f ==="
-	@$(VVP) -N $< | tee $(BUILD_DIR)/tb_mode_f.log
-	@grep -q '\*\*\* MODE_F OK \*\*\*' $(BUILD_DIR)/tb_mode_f.log || \
-	    (echo "FAIL: tb_mode_f missing MODE_F OK"; exit 1)
-	@grep -q 'TRAP\|FATAL\|FAIL' $(BUILD_DIR)/tb_mode_f.log && \
-	    (echo "FAIL: tb_mode_f reported a trap"; exit 1) || true
-	@echo "PASS: tb_mode_f"
-
-$(BUILD_DIR)/tb_mode_f.vvp: $(MODE_F_HDL) tb_mode_f.sv $(HDL_DIR)/bus_opcodes.vh | $(BUILD_DIR)
-	$(IVERILOG) $(SV_FLAGS) -o $@ -s tb_mode_f $(MODE_F_HDL) tb_mode_f.sv
 
 # ---- M7 — char-mode compositor pipeline ---------------------------------
 # Same HDL set as mode_f — compositor handles all char modes too.
@@ -498,53 +430,12 @@ DMA_INT_HDL := \
     $(HDL_DIR)/byte_ram_dp.sv      \
     $(HDL_DIR)/dl_parser.sv        \
     $(HDL_DIR)/compositor.sv       \
-    $(HDL_DIR)/rp_tx.sv            \
-    $(HDL_DIR)/rp_bus_mock.sv      \
     $(HDL_DIR)/dma_master.sv       \
     $(HDL_DIR)/dma_arbiter.sv      \
     $(HDL_DIR)/mem_read_mux.sv
 
 $(BUILD_DIR)/tb_dma_int.vvp: $(DMA_INT_HDL) tb_dma_int.sv $(HDL_DIR)/bus_opcodes.vh | $(BUILD_DIR)
 	$(IVERILOG) $(SV_FLAGS) -o $@ -s tb_dma_int $(DMA_INT_HDL) tb_dma_int.sv
-
-# ---- M17-1 — DRAW emission via rp_tx -------------------------------------
-draw: $(BUILD_DIR)/tb_draw.vvp
-	@echo "=== M17-1 draw ==="
-	@$(VVP) -N $< | tee $(BUILD_DIR)/tb_draw.log
-	@grep -q '\*\*\* DRAW OK \*\*\*' $(BUILD_DIR)/tb_draw.log || \
-	    (echo "FAIL: tb_draw missing DRAW OK"; exit 1)
-	@grep -q 'TRAP\|FATAL\|FAIL' $(BUILD_DIR)/tb_draw.log && \
-	    (echo "FAIL: tb_draw reported a trap"; exit 1) || true
-	@echo "PASS: tb_draw"
-
-$(BUILD_DIR)/tb_draw.vvp: $(HDL_DIR)/rp_tx.sv tb_draw.sv $(HDL_DIR)/bus_opcodes.vh | $(BUILD_DIR)
-	$(IVERILOG) $(SV_FLAGS) -o $@ -s tb_draw $(HDL_DIR)/rp_tx.sv tb_draw.sv
-
-# ---- N6-HDL Phase 1 — PSSI TX standalone unit test -----------------------
-pssi_tx: $(BUILD_DIR)/tb_pssi_tx.vvp
-	@echo "=== N6 Phase 1 pssi_tx ==="
-	@$(VVP) -N $< | tee $(BUILD_DIR)/tb_pssi_tx.log
-	@grep -q '\*\*\* PSSI_TX OK \*\*\*' $(BUILD_DIR)/tb_pssi_tx.log || \
-	    (echo "FAIL: tb_pssi_tx missing PSSI_TX OK"; exit 1)
-	@grep -q 'PSSI_TX FAILED\|TRAP\|FATAL' $(BUILD_DIR)/tb_pssi_tx.log && \
-	    (echo "FAIL: tb_pssi_tx reported a failure"; exit 1) || true
-	@echo "PASS: tb_pssi_tx"
-
-$(BUILD_DIR)/tb_pssi_tx.vvp: $(HDL_DIR)/pssi_tx.sv tb_pssi_tx.sv | $(BUILD_DIR)
-	$(IVERILOG) $(SV_FLAGS) -o $@ -s tb_pssi_tx $(HDL_DIR)/pssi_tx.sv tb_pssi_tx.sv
-
-# ---- N6-HDL Phase 1 — PSSI integration test (pssi_bytes + pssi_tx) -------
-pssi_int: $(BUILD_DIR)/tb_pssi_int.vvp
-	@echo "=== N6 Phase 1 pssi_int ==="
-	@$(VVP) -N $< | tee $(BUILD_DIR)/tb_pssi_int.log
-	@grep -q '\*\*\* PSSI_INT OK \*\*\*' $(BUILD_DIR)/tb_pssi_int.log || \
-	    (echo "FAIL: tb_pssi_int missing PSSI_INT OK"; exit 1)
-	@grep -q 'PSSI_INT FAILED\|TRAP\|FATAL' $(BUILD_DIR)/tb_pssi_int.log && \
-	    (echo "FAIL: tb_pssi_int reported a failure"; exit 1) || true
-	@echo "PASS: tb_pssi_int"
-
-$(BUILD_DIR)/tb_pssi_int.vvp: $(HDL_DIR)/pssi_tx.sv $(HDL_DIR)/pssi_bytes.sv tb_pssi_int.sv | $(BUILD_DIR)
-	$(IVERILOG) $(SV_FLAGS) -o $@ -s tb_pssi_int $(HDL_DIR)/pssi_tx.sv $(HDL_DIR)/pssi_bytes.sv tb_pssi_int.sv
 
 # ---- xt_blitter -- 2D GPU testbench --------------------------------------
 xt_blitter: $(BUILD_DIR)/tb_xt_blitter.vvp
@@ -629,8 +520,6 @@ $(BUILD_DIR)/tb_sally.vvp: $(SALLY_HDL) tb_sally.sv axi_slave_mem.sv | $(BUILD_D
 # ---- sally_stack — Stage A Increment 1 stack-BRAM alias test -------------
 SALLY_STACK_HDL := \
     $(HDL_DIR)/bank_xlat.sv         \
-    $(HDL_DIR)/bank_cache.sv        \
-    $(HDL_DIR)/cache_line_ram.sv    \
     $(HDL_DIR)/banked_axi_reader.sv \
     $(HDL_DIR)/sally_mem.sv
 
@@ -726,19 +615,6 @@ SALLY_ARB_HDL := \
 $(BUILD_DIR)/tb_sally_arbitration.vvp: $(SALLY_ARB_HDL) tb_sally_arbitration.sv axi_slave_mem.sv | $(BUILD_DIR)
 	$(IVERILOG) $(SV_FLAGS) -o $@ -s tb_sally_arbitration $(SALLY_ARB_HDL) axi_slave_mem.sv tb_sally_arbitration.sv
 
-# ---- M24-3 — bank cache ($4000-$7FFF) ---------------------------------
-bank_cache: $(BUILD_DIR)/tb_bank_cache.vvp
-	@echo "=== M24-3 bank_cache ==="
-	@$(VVP) -N $< | tee $(BUILD_DIR)/tb_bank_cache.log
-	@grep -q '\*\*\* BANK_CACHE OK \*\*\*' $(BUILD_DIR)/tb_bank_cache.log || \
-	    (echo "FAIL: tb_bank_cache missing BANK_CACHE OK"; exit 1)
-	@grep -q 'TRAP\|FATAL\|FAIL' $(BUILD_DIR)/tb_bank_cache.log && \
-	    (echo "FAIL: tb_bank_cache reported a trap"; exit 1) || true
-	@echo "PASS: tb_bank_cache"
-
-$(BUILD_DIR)/tb_bank_cache.vvp: $(HDL_DIR)/bank_cache.sv $(HDL_DIR)/cache_line_ram.sv tb_bank_cache.sv | $(BUILD_DIR)
-	$(IVERILOG) $(SV_FLAGS) -o $@ -s tb_bank_cache $(HDL_DIR)/bank_cache.sv $(HDL_DIR)/cache_line_ram.sv tb_bank_cache.sv
-
 # ---- M24-4 — bank translator (CPU vs ANTIC view) -----------------------
 bank_xlat: $(BUILD_DIR)/tb_bank_xlat.vvp
 	@echo "=== M24-4 bank_xlat ==="
@@ -751,19 +627,6 @@ bank_xlat: $(BUILD_DIR)/tb_bank_xlat.vvp
 
 $(BUILD_DIR)/tb_bank_xlat.vvp: $(HDL_DIR)/bank_xlat.sv tb_bank_xlat.sv | $(BUILD_DIR)
 	$(IVERILOG) $(SV_FLAGS) -o $@ -s tb_bank_xlat $(HDL_DIR)/bank_xlat.sv tb_bank_xlat.sv
-
-# ---- M-cache-rework Step 1 — cache_regs unit test --------------------------
-cache_regs: $(BUILD_DIR)/tb_cache_regs.vvp
-	@echo "=== M-cache-rework cache_regs ==="
-	@$(VVP) -N $< | tee $(BUILD_DIR)/tb_cache_regs.log
-	@grep -q '\*\*\* CACHE_REGS OK \*\*\*' $(BUILD_DIR)/tb_cache_regs.log || \
-	    (echo "FAIL: tb_cache_regs missing CACHE_REGS OK"; exit 1)
-	@grep -q 'TRAP\|FATAL\|FAIL' $(BUILD_DIR)/tb_cache_regs.log && \
-	    (echo "FAIL: tb_cache_regs reported a trap"; exit 1) || true
-	@echo "PASS: tb_cache_regs"
-
-$(BUILD_DIR)/tb_cache_regs.vvp: $(HDL_DIR)/cache_regs.sv tb_cache_regs.sv | $(BUILD_DIR)
-	$(IVERILOG) $(SV_FLAGS) -o $@ -s tb_cache_regs $(HDL_DIR)/cache_regs.sv tb_cache_regs.sv
 
 # ---- M25-2 — peri_link FPGA-side SPI master ------------------------------
 peri_link: $(BUILD_DIR)/tb_peri_link.vvp

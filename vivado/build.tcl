@@ -73,44 +73,21 @@ proc xsa_inject {xsa_path src} {
 }
 
 # ---- Read sources -------------------------------------------------------
-# Phase 1 source-list strategy: pull in every .sv from hdl/ that isn't a
-# sim-only mock, an Efinix-specific vendor IP (HyperRAM PHY, TMDS
-# serializers), or a v1 HyperRAM-era cache module (replaced by
-# banked_axi_reader + bram_shim per sally-mem-v2.md).
+# Pull in every .sv from hdl/ that isn't a sim-only mock or one of the
+# two remaining Efinix-vintage modules that share their module name
+# with a Zynq replacement (hdmi_out.sv → hdmi_out_zynq.sv;
+# tmds_serializer.sv is only referenced by the dead Efinix hdmi_out.sv
+# and tmds_out.sv chain — both still need an antic_top refactor before
+# they can be deleted from hdl/).
 set hdl_dir [file join [pwd] hdl]
 
-# SystemVerilog files — exclude:
-#   *_mock.sv                   — simulation-only mocks
-#   hyperram_phy.sv             — Efinix HyperRAM PHY (vendor primitive)
-#   tmds_serializer.sv          — Efinix OSER10 serializer (vendor primitive)
-#   hdmi_out.sv                 — replaced by hdmi_out_zynq.sv (same module name,
-#                                 Zynq-compatible: keeps vbeam, no TMDS serializer)
-#   bank_cache.sv, cache_line_ram.sv — v1 HyperRAM cache (deleted per v2a)
-#   prefetch.sv                 — v1 cache support module (unused on Zynq)
-#   cache_regs.sv               — v1 cache register file (unused on Zynq)
-#   bank_translator.sv          — v1 cache address translator (unused on Zynq)
-#   pssi_tx.sv, pssi_bytes.sv   — N6 PSSI serial link (Efinix-era, no N6 on Zynq)
-#   rp_tx.sv, rp_rx.sv         — FPGA⇄RP serial link (Efinix-era, no RP on Zynq)
-#   sally_synth_top.sv          — Phase 0 standalone SALLY fmax probe top
-#   cache_line_ram_synth_top.sv — Phase 0 standalone cache-bram fmax probe top
 set sv_files {}
 foreach f [glob -nocomplain [file join $hdl_dir *.sv]] {
     set name [file tail $f]
-    if {[string match "*_mock.sv" $name]}          { continue }
-    if {$name eq "hyperram_phy.sv"}                { continue }
-    if {$name eq "tmds_serializer.sv"}             { continue }
-    if {$name eq "hdmi_out.sv"}                    { continue }
-    if {$name eq "bank_cache.sv"}                  { continue }
-    if {$name eq "cache_line_ram.sv"}              { continue }
-    if {$name eq "prefetch.sv"}                    { continue }
-    if {$name eq "cache_regs.sv"}                  { continue }
-    if {$name eq "bank_translator.sv"}             { continue }
-    if {$name eq "pssi_tx.sv"}                     { continue }
-    if {$name eq "pssi_bytes.sv"}                  { continue }
-    if {$name eq "rp_tx.sv"}                       { continue }
-    if {$name eq "rp_rx.sv"}                       { continue }
-    if {$name eq "sally_synth_top.sv"}             { continue }
-    if {$name eq "cache_line_ram_synth_top.sv"}    { continue }
+    if {[string match "*_mock.sv" $name]} { continue }
+    if {$name eq "hdmi_out.sv"}           { continue }
+    if {$name eq "tmds_serializer.sv"}    { continue }
+    if {$name eq "tmds_out.sv"}           { continue }
     lappend sv_files $f
 }
 # Also pick up sally_core.sv (and any other .sv) under hdl/sally/.
