@@ -58,13 +58,21 @@ set_clock_groups -name async_xt_domains -asynchronous \
 # antic_top rst_n_q2 -> rst_pix (LUT fanout buffer) -> CLR on 1653 loads,
 # route-dominated at 5.5 ns.  Safe to false-path since rst_n_q2 is
 # synchronised and reset deassertion is not cycle-accurate.
-set_false_path -from [get_pins u_antic_top/rst_n_q2_reg/C] \
+#
+# The `-quiet` flag silences ~100 Constraints 18-401 warnings: the
+# -hier filter on CLR/PRE pin names also matches FFs that synth
+# remapped to FDRE/FDSE primitives where the CLR/PRE input is tied
+# to a constant — those pins exist in the netlist but aren't real
+# timing endpoints.  The constraint still applies to the pins that
+# ARE endpoints; we just don't want a warning for every dead pin
+# the filter touches.
+set_false_path -quiet -from [get_pins u_antic_top/rst_n_q2_reg/C] \
                -to [get_pins -hier -filter {NAME =~ */CLR || NAME =~ */PRE}]
 
 # fb_scanout vbeam CLR/PRE paths from rst_pix_pipe
-set_false_path -from [get_pins rst_pix_pipe_reg[*]/C] \
+set_false_path -quiet -from [get_pins rst_pix_pipe_reg[*]/C] \
                -to [get_pins -hier -filter {NAME =~ */CLR || NAME =~ */PRE}]
 
 # sally_core CLR/PRE paths from rst_sally_pipe
-set_false_path -from [get_pins rst_sally_pipe_reg[*]/C] \
+set_false_path -quiet -from [get_pins rst_sally_pipe_reg[*]/C] \
                -to [get_pins -hier -filter {NAME =~ */CLR || NAME =~ */PRE}]
