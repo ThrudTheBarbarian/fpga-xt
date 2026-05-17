@@ -26,14 +26,9 @@
 # ---- Primary input clock (50 MHz on-board oscillator) ---------------------
 create_clock -name clk_50 -period 20.000 [get_ports clk_50]
 
-# OOC-mode clock source hint: tell the OOC timer which buffer site to model
-# for clock-network delay/skew on clk_50.  Without this, Vivado emits
-# "Timing 38-242: property HD.CLK_SRC of clock port clk_50 is not set"
-# and can't estimate the BUFG insertion delay.  Any valid BUFGCTRL site on
-# xc7z020 works; BUFGCTRL_X0Y0 is the canonical pick per UG903.  Ignored
-# in the bit flow (where a real IBUF+BUFG is inferred from the top-level
-# board constraints).
-set_property HD.CLK_SRC BUFGCTRL_X0Y0 [get_ports clk_50]
+# HD.CLK_SRC for clk_50 lives in constraints/ooc_only.xdc — applying it
+# in the bit flow trips Common 17-69 because clk_50's IBUF is already
+# inferred.
 
 # ---- MMCM-derived clocks are auto-derived by Vivado from the MMCM cell ----
 # create_generated_clock is implicit when an MMCME2_BASE is instantiated.

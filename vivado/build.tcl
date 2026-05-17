@@ -47,6 +47,23 @@ set_msg_config -id "Synth 8-7071" -suppress
 set_msg_config -id "Synth 8-7023" -suppress
 set_msg_config -id "Synth 8-3917" -suppress
 
+# ---- Helper: append a file to an .xsa archive (which is just a zip) -----
+# Linux/macOS use `zip -j` (junk paths so files land at the archive root).
+# Windows has no `zip` binary by default; 7-Zip is available — run it
+# from the file's parent dir with just the basename so only the leaf
+# name is stored in the archive (matches `zip -j` semantics).
+proc xsa_inject {xsa_path src} {
+    if {$::tcl_platform(platform) eq "windows"} {
+        set saved [pwd]
+        cd [file dirname $src]
+        # -bd: no progress bar, -y: assume yes, -tzip: zip (not 7z) format
+        catch {exec 7z a -tzip -bd -y $xsa_path [file tail $src]} result
+        cd $saved
+    } else {
+        exec zip -j $xsa_path $src
+    }
+}
+
 # ---- Read sources -------------------------------------------------------
 # Phase 1 source-list strategy: pull in every .sv from hdl/ that isn't a
 # sim-only mock, an Efinix-specific vendor IP (HyperRAM PHY, TMDS
@@ -115,6 +132,10 @@ foreach f [glob -nocomplain [file join [pwd] constraints *.xdc]] {
     set name [file tail $f]
     if {$flow ne "bit" && $name eq "zturn_board.xdc"} {
         puts ">> skipping board constraints (OOC): $name"
+        continue
+    }
+    if {$flow eq "bit" && $name eq "ooc_only.xdc"} {
+        puts ">> skipping OOC-only constraints (bit flow): $name"
         continue
     }
     puts ">> reading constraints: $f"
@@ -269,7 +290,7 @@ if {$flow eq "bit"} {
     foreach f $ps_init_files {
         set src [file join $ps_ip_dir $f]
         if {[file exists $src]} {
-            exec zip -j $xsa_path $src
+            xsa_inject $xsa_path $src
             incr added
         } else {
             puts ">> WARNING: ps_init source missing: $src"
@@ -301,7 +322,7 @@ if {$flow eq "xsa"} {
                ps7_init.tcl ps7_init.html} {
         set src [file join $ps_ip_dir $f]
         if {[file exists $src]} {
-            exec zip -j $xsa_path $src
+            xsa_inject $xsa_path $src
         }
     }
     puts ">> ps7_init.* injection complete"
