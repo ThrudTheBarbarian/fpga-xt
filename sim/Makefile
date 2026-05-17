@@ -620,13 +620,11 @@ SALLY_HDL := \
     $(HDL_DIR)/sally/ALU.v        \
     $(HDL_DIR)/sally/sally_core.sv \
     $(HDL_DIR)/bank_xlat.sv        \
-    $(HDL_DIR)/bank_cache.sv       \
-    $(HDL_DIR)/cache_line_ram.sv   \
     $(HDL_DIR)/banked_axi_reader.sv \
     $(HDL_DIR)/sally_mem.sv
 
-$(BUILD_DIR)/tb_sally.vvp: $(SALLY_HDL) tb_sally.sv | $(BUILD_DIR)
-	$(IVERILOG) $(SV_FLAGS) -o $@ -s tb_sally $(SALLY_HDL) tb_sally.sv
+$(BUILD_DIR)/tb_sally.vvp: $(SALLY_HDL) tb_sally.sv axi_slave_mem.sv | $(BUILD_DIR)
+	$(IVERILOG) $(SV_FLAGS) -o $@ -s tb_sally $(SALLY_HDL) axi_slave_mem.sv tb_sally.sv
 
 # ---- sally_stack — Stage A Increment 1 stack-BRAM alias test -------------
 SALLY_STACK_HDL := \
@@ -721,13 +719,12 @@ SALLY_ARB_HDL := \
     $(HDL_DIR)/sally/ALU.v        \
     $(HDL_DIR)/sally/sally_core.sv \
     $(HDL_DIR)/bank_xlat.sv        \
-    $(HDL_DIR)/bank_cache.sv       \
-    $(HDL_DIR)/cache_line_ram.sv   \
+    $(HDL_DIR)/banked_axi_reader.sv \
     $(HDL_DIR)/sally_mem.sv        \
     $(HDL_DIR)/sally_clock.sv
 
-$(BUILD_DIR)/tb_sally_arbitration.vvp: $(SALLY_ARB_HDL) tb_sally_arbitration.sv | $(BUILD_DIR)
-	$(IVERILOG) $(SV_FLAGS) -o $@ -s tb_sally_arbitration $(SALLY_ARB_HDL) tb_sally_arbitration.sv
+$(BUILD_DIR)/tb_sally_arbitration.vvp: $(SALLY_ARB_HDL) tb_sally_arbitration.sv axi_slave_mem.sv | $(BUILD_DIR)
+	$(IVERILOG) $(SV_FLAGS) -o $@ -s tb_sally_arbitration $(SALLY_ARB_HDL) axi_slave_mem.sv tb_sally_arbitration.sv
 
 # ---- M24-3 — bank cache ($4000-$7FFF) ---------------------------------
 bank_cache: $(BUILD_DIR)/tb_bank_cache.vvp
@@ -850,13 +847,11 @@ os_rom_load: $(BUILD_DIR)/tb_os_rom_load.vvp
 OS_ROM_HDL := \
     $(HDL_DIR)/antic_regs.sv \
     $(HDL_DIR)/bank_xlat.sv  \
-    $(HDL_DIR)/bank_cache.sv \
-    $(HDL_DIR)/cache_line_ram.sv \
     $(HDL_DIR)/banked_axi_reader.sv \
     $(HDL_DIR)/sally_mem.sv
 
-$(BUILD_DIR)/tb_os_rom_load.vvp: $(OS_ROM_HDL) tb_os_rom_load.sv | $(BUILD_DIR)
-	$(IVERILOG) $(SV_FLAGS) -o $@ -s tb_os_rom_load $(OS_ROM_HDL) tb_os_rom_load.sv
+$(BUILD_DIR)/tb_os_rom_load.vvp: $(OS_ROM_HDL) tb_os_rom_load.sv axi_slave_mem.sv | $(BUILD_DIR)
+	$(IVERILOG) $(SV_FLAGS) -o $@ -s tb_os_rom_load $(OS_ROM_HDL) axi_slave_mem.sv tb_os_rom_load.sv
 
 # ---- M-aux-audio PCM1808 I²S RX ------------------------------------------
 pcm1808_rx: $(BUILD_DIR)/tb_pcm1808_rx.vvp

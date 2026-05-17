@@ -52,59 +52,26 @@ module tb_sally_arbitration;
     wire [7:0]  hwreg_din;
     logic [7:0] hwreg_dout = 8'hFF;
 
-    // ---- HyperRAM mock — flat 1MB BRAM, burst-aware (Step 5) ----
-    wire [22:0] hr_addr;
-    wire [9:0]  hr_burst_len;
-    wire        hr_we;
-    wire [7:0]  hr_wdata;
-    wire        hr_req;
-    logic [7:0] hr_rdata  = 8'h00;
-    logic       hr_rvalid = 1'b0;
-    logic       hr_done   = 1'b0;
-    logic [7:0] hr_mem [0:1048575];
-
-    logic [22:0] burst_addr_q   = '0;
-    logic [10:0] burst_remain_q = '0;
-    logic        burst_we_q     = 1'b0;
-    logic        burst_active_q = 1'b0;
-
-    always_ff @(posedge clk) begin
-        hr_rvalid <= 1'b0;
-        hr_done   <= 1'b0;
-        if (hr_req && !burst_active_q) begin
-            if (hr_we) hr_mem[hr_addr[19:0]] <= hr_wdata;
-            else begin
-                hr_rdata  <= hr_mem[hr_addr[19:0]];
-                hr_rvalid <= 1'b1;
-            end
-            if (hr_burst_len == 10'h000) hr_done <= 1'b1;
-            else begin
-                burst_active_q <= 1'b1;
-                burst_we_q     <= hr_we;
-                burst_addr_q   <= hr_addr + 1'b1;
-                burst_remain_q <= {1'b0, hr_burst_len};
-            end
-        end else if (burst_active_q) begin
-            if (burst_we_q) hr_mem[burst_addr_q[19:0]] <= hr_wdata;
-            else begin
-                hr_rdata  <= hr_mem[burst_addr_q[19:0]];
-                hr_rvalid <= 1'b1;
-            end
-            burst_addr_q <= burst_addr_q + 1'b1;
-            if (burst_remain_q == 11'h001) begin
-                hr_done        <= 1'b1;
-                burst_active_q <= 1'b0;
-            end else begin
-                burst_remain_q <= burst_remain_q - 1'b1;
-            end
-        end
-    end
+    // ---- AXI bus to memory-backed slave (replaces v1 hyperram mock) ----
+    wire [31:0] axi_araddr, axi_awaddr;
+    wire [7:0]  axi_arlen,  axi_awlen;
+    wire [2:0]  axi_arsize, axi_awsize;
+    wire [1:0]  axi_arburst, axi_awburst;
+    wire        axi_arvalid, axi_awvalid;
+    wire        axi_arready, axi_awready;
+    wire [63:0] axi_rdata,   axi_wdata;
+    wire [7:0]  axi_wstrb;
+    wire        axi_wlast,   axi_wvalid, axi_wready;
+    wire        axi_rvalid,  axi_rlast,  axi_rready;
+    wire        axi_bvalid,  axi_bready;
 
     wire [7:0] cpu_code_bank_q, cpu_data_bank_q;
     wire [7:0] cpu_regc_bank_lo_q, cpu_regc_bank_hi_q;
     wire       mem_busy;
 
-    sally_mem u_mem (
+    sally_mem #(
+        .DDR3_BANKED_BASE (32'h0000_0000)
+    ) u_mem (
         .clk        (clk),
         .rst        (rst),
         .addr       (addr),
@@ -126,19 +93,69 @@ module tb_sally_arbitration;
         .antic_regc_bank_lo (8'h00),
         .antic_regc_bank_hi (8'h00),
         .view_is_antic      (1'b0),
-        .hr_addr      (hr_addr),
-        .hr_burst_len (hr_burst_len),
-        .hr_we        (hr_we),
-        .hr_wdata     (hr_wdata),
-        .hr_req       (hr_req),
-        .hr_rdata     (hr_rdata),
-        .hr_rvalid    (hr_rvalid),
-        .hr_done      (hr_done),
+        .bus_mpd_n_in       (1'b1),
+        .bus_pbi_rdata      (8'hFF),
+        .bus_rd4_n_in       (1'b1),
+        .bus_rd5_n_in       (1'b1),
+        .m_axi_araddr  (axi_araddr),
+        .m_axi_arlen   (axi_arlen),
+        .m_axi_arsize  (axi_arsize),
+        .m_axi_arburst (axi_arburst),
+        .m_axi_arvalid (axi_arvalid),
+        .m_axi_arready (axi_arready),
+        .m_axi_rdata   (axi_rdata),
+        .m_axi_rvalid  (axi_rvalid),
+        .m_axi_rlast   (axi_rlast),
+        .m_axi_rready  (axi_rready),
+        .m_axi_awaddr  (axi_awaddr),
+        .m_axi_awlen   (axi_awlen),
+        .m_axi_awsize  (axi_awsize),
+        .m_axi_awburst (axi_awburst),
+        .m_axi_awvalid (axi_awvalid),
+        .m_axi_awready (axi_awready),
+        .m_axi_wdata   (axi_wdata),
+        .m_axi_wstrb   (axi_wstrb),
+        .m_axi_wlast   (axi_wlast),
+        .m_axi_wvalid  (axi_wvalid),
+        .m_axi_wready  (axi_wready),
+        .m_axi_bvalid  (axi_bvalid),
+        .m_axi_bready  (axi_bready),
         .rom_addr    (16'h0000),
         .rom_data    (8'h00),
         .rom_we      (1'b0),
-        .attr_lookup_idx  (),
-        .attr_lookup_data (4'h0)
+        .stack_op    (1'b0),
+        .s_high      (4'd0),
+        .dma_clk     (clk),
+        .dma_addr    (16'd0),
+        .dma_rdata   ()
+    );
+
+    axi_slave_mem u_axi_mem (
+        .clk           (clk),
+        .rst           (rst),
+        .s_axi_awaddr  (axi_awaddr),
+        .s_axi_awlen   (axi_awlen),
+        .s_axi_awsize  (axi_awsize),
+        .s_axi_awburst (axi_awburst),
+        .s_axi_awvalid (axi_awvalid),
+        .s_axi_awready (axi_awready),
+        .s_axi_wdata   (axi_wdata),
+        .s_axi_wstrb   (axi_wstrb),
+        .s_axi_wlast   (axi_wlast),
+        .s_axi_wvalid  (axi_wvalid),
+        .s_axi_wready  (axi_wready),
+        .s_axi_bvalid  (axi_bvalid),
+        .s_axi_bready  (axi_bready),
+        .s_axi_araddr  (axi_araddr),
+        .s_axi_arlen   (axi_arlen),
+        .s_axi_arsize  (axi_arsize),
+        .s_axi_arburst (axi_arburst),
+        .s_axi_arvalid (axi_arvalid),
+        .s_axi_arready (axi_arready),
+        .s_axi_rdata   (axi_rdata),
+        .s_axi_rvalid  (axi_rvalid),
+        .s_axi_rlast   (axi_rlast),
+        .s_axi_rready  (axi_rready)
     );
 
     // ---- phi2_tick generator (BASE_DIV=12) -----------------------

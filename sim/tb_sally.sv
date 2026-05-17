@@ -33,6 +33,9 @@ module tb_sally;
     logic       irq_n   = 1'b1;
     logic       nmi_n   = 1'b1;
 
+    wire        stack_op;
+    wire [3:0]  s_high;
+
     sally_core u_dut (
         .clk      (clk),
         .rst      (rst),
@@ -42,7 +45,9 @@ module tb_sally;
         .rw       (rw),
         .rdy      (rdy),
         .irq_n    (irq_n),
-        .nmi_n    (nmi_n)
+        .nmi_n    (nmi_n),
+        .stack_op (stack_op),
+        .s_high   (s_high)
     );
 
     // ---- Memory subsystem (M24-2 — replaces inline 64KB flat) -----
@@ -50,68 +55,41 @@ module tb_sally;
     // Test programs and inspections use `u_mem.`mem[...]` directly via
     // hierarchical reference (the macro `mem` aliases it for brevity).
     `define mem u_mem.mem
+    // sally_mem keeps stack bytes in a dedicated stack_mem (not main mem).
+    // For legacy 6502 mode (s_high=$F) pushes to $01xx land in
+    // stack_mem[$Fxx] — the same locations the read-side legacy alias
+    // maps $0100-$01FF to.
+    function automatic [7:0] read_stack(input [7:0] sp);
+        return u_mem.stack_mem[{4'hF, sp}];
+    endfunction
     wire [15:0] hwreg_addr;
     wire        hwreg_we;
     wire [7:0]  hwreg_din;
     logic [7:0] hwreg_dout = 8'hFF;     // stub — Altirra-style $FF for unassigned
 
-    // HyperRAM mock — flat 1MB BRAM, burst-aware (Step 5). Required
-    // because sally_mem's bank_cache may issue refill transactions if
-    // a CPU access lands in $4000-$7FFF. tb_sally's test programs
-    // avoid the bank window, so this mock is a no-op for these tests
-    // — but the protocol still has to match.
-    wire [22:0] hr_addr;
-    wire [9:0]  hr_burst_len;
-    wire        hr_we;
-    wire [7:0]  hr_wdata;
-    wire        hr_req;
-    logic [7:0] hr_rdata  = 8'h00;
-    logic       hr_rvalid = 1'b0;
-    logic       hr_done   = 1'b0;
-    logic [7:0] hr_mem [0:1048575];
-
-    logic [22:0] burst_addr_q   = '0;
-    logic [10:0] burst_remain_q = '0;
-    logic        burst_we_q     = 1'b0;
-    logic        burst_active_q = 1'b0;
-
-    always_ff @(posedge clk) begin
-        hr_rvalid <= 1'b0;
-        hr_done   <= 1'b0;
-        if (hr_req && !burst_active_q) begin
-            if (hr_we) hr_mem[hr_addr[19:0]] <= hr_wdata;
-            else begin
-                hr_rdata  <= hr_mem[hr_addr[19:0]];
-                hr_rvalid <= 1'b1;
-            end
-            if (hr_burst_len == 10'h000) hr_done <= 1'b1;
-            else begin
-                burst_active_q <= 1'b1;
-                burst_we_q     <= hr_we;
-                burst_addr_q   <= hr_addr + 1'b1;
-                burst_remain_q <= {1'b0, hr_burst_len};
-            end
-        end else if (burst_active_q) begin
-            if (burst_we_q) hr_mem[burst_addr_q[19:0]] <= hr_wdata;
-            else begin
-                hr_rdata  <= hr_mem[burst_addr_q[19:0]];
-                hr_rvalid <= 1'b1;
-            end
-            burst_addr_q <= burst_addr_q + 1'b1;
-            if (burst_remain_q == 11'h001) begin
-                hr_done        <= 1'b1;
-                burst_active_q <= 1'b0;
-            end else begin
-                burst_remain_q <= burst_remain_q - 1'b1;
-            end
-        end
-    end
+    // ---- AXI bus to memory-backed slave (replaces v1 hyperram mock) ----
+    // tb_sally's test programs avoid the bank window ($4000-$7FFF), so the
+    // AXI slave is a no-op for these tests — but the protocol still has
+    // to wire up so sally_mem instantiates cleanly.
+    wire [31:0] axi_araddr, axi_awaddr;
+    wire [7:0]  axi_arlen,  axi_awlen;
+    wire [2:0]  axi_arsize, axi_awsize;
+    wire [1:0]  axi_arburst, axi_awburst;
+    wire        axi_arvalid, axi_awvalid;
+    wire        axi_arready, axi_awready;
+    wire [63:0] axi_rdata,   axi_wdata;
+    wire [7:0]  axi_wstrb;
+    wire        axi_wlast,   axi_wvalid, axi_wready;
+    wire        axi_rvalid,  axi_rlast,  axi_rready;
+    wire        axi_bvalid,  axi_bready;
 
     wire [7:0] cpu_code_bank_q, cpu_data_bank_q;
     wire [7:0] cpu_regc_bank_lo_q, cpu_regc_bank_hi_q;
     wire       mem_busy;
 
-    sally_mem u_mem (
+    sally_mem #(
+        .DDR3_BANKED_BASE (32'h0000_0000)
+    ) u_mem (
         .clk        (clk),
         .rst        (rst),
         .addr       (addr),
@@ -133,19 +111,69 @@ module tb_sally;
         .antic_regc_bank_lo (8'h00),
         .antic_regc_bank_hi (8'h00),
         .view_is_antic      (1'b0),
-        .hr_addr      (hr_addr),
-        .hr_burst_len (hr_burst_len),
-        .hr_we        (hr_we),
-        .hr_wdata     (hr_wdata),
-        .hr_req       (hr_req),
-        .hr_rdata     (hr_rdata),
-        .hr_rvalid    (hr_rvalid),
-        .hr_done      (hr_done),
+        .bus_mpd_n_in       (1'b1),
+        .bus_pbi_rdata      (8'hFF),
+        .bus_rd4_n_in       (1'b1),
+        .bus_rd5_n_in       (1'b1),
+        .m_axi_araddr  (axi_araddr),
+        .m_axi_arlen   (axi_arlen),
+        .m_axi_arsize  (axi_arsize),
+        .m_axi_arburst (axi_arburst),
+        .m_axi_arvalid (axi_arvalid),
+        .m_axi_arready (axi_arready),
+        .m_axi_rdata   (axi_rdata),
+        .m_axi_rvalid  (axi_rvalid),
+        .m_axi_rlast   (axi_rlast),
+        .m_axi_rready  (axi_rready),
+        .m_axi_awaddr  (axi_awaddr),
+        .m_axi_awlen   (axi_awlen),
+        .m_axi_awsize  (axi_awsize),
+        .m_axi_awburst (axi_awburst),
+        .m_axi_awvalid (axi_awvalid),
+        .m_axi_awready (axi_awready),
+        .m_axi_wdata   (axi_wdata),
+        .m_axi_wstrb   (axi_wstrb),
+        .m_axi_wlast   (axi_wlast),
+        .m_axi_wvalid  (axi_wvalid),
+        .m_axi_wready  (axi_wready),
+        .m_axi_bvalid  (axi_bvalid),
+        .m_axi_bready  (axi_bready),
         .rom_addr    (16'h0000),
         .rom_data    (8'h00),
         .rom_we      (1'b0),
-        .attr_lookup_idx  (),
-        .attr_lookup_data (4'h0)
+        .stack_op    (stack_op),
+        .s_high      (s_high),
+        .dma_clk     (clk),
+        .dma_addr    (16'd0),
+        .dma_rdata   ()
+    );
+
+    axi_slave_mem u_axi_mem (
+        .clk           (clk),
+        .rst           (rst),
+        .s_axi_awaddr  (axi_awaddr),
+        .s_axi_awlen   (axi_awlen),
+        .s_axi_awsize  (axi_awsize),
+        .s_axi_awburst (axi_awburst),
+        .s_axi_awvalid (axi_awvalid),
+        .s_axi_awready (axi_awready),
+        .s_axi_wdata   (axi_wdata),
+        .s_axi_wstrb   (axi_wstrb),
+        .s_axi_wlast   (axi_wlast),
+        .s_axi_wvalid  (axi_wvalid),
+        .s_axi_wready  (axi_wready),
+        .s_axi_bvalid  (axi_bvalid),
+        .s_axi_bready  (axi_bready),
+        .s_axi_araddr  (axi_araddr),
+        .s_axi_arlen   (axi_arlen),
+        .s_axi_arsize  (axi_arsize),
+        .s_axi_arburst (axi_arburst),
+        .s_axi_arvalid (axi_arvalid),
+        .s_axi_arready (axi_arready),
+        .s_axi_rdata   (axi_rdata),
+        .s_axi_rvalid  (axi_rvalid),
+        .s_axi_rlast   (axi_rlast),
+        .s_axi_rready  (axi_rready)
     );
 
 `ifdef SALLY_BUS_TRACE
@@ -697,17 +725,17 @@ module tb_sally;
         `mem[16'h020C] = 8'h8D; `mem[16'h020D] = 8'hFF; `mem[16'h020E] = 8'h00;  // STA $00FF
         `mem[16'hFFFC] = 8'h00; `mem[16'hFFFD] = 8'h02;
         run_until_sentinel("H.5 stack wrap", 200);
-        if (`mem[16'h0100] != 8'hAA) begin
-            $display("FAIL H.5: `mem[$0100]=$%02h (expected $AA — first push past SP=$00)",
-                     `mem[16'h0100]);
+        if (read_stack(8'h00) != 8'hAA) begin
+            $display("FAIL H.5: stack[$0100]=$%02h (expected $AA — first push past SP=$00)",
+                     read_stack(8'h00));
             fail_count++;
         end
-        if (`mem[16'h01FF] != 8'hBB) begin
-            $display("FAIL H.5: `mem[$01FF]=$%02h (expected $BB — second push, SP wrapped to $FF)",
-                     `mem[16'h01FF]);
+        if (read_stack(8'hFF) != 8'hBB) begin
+            $display("FAIL H.5: stack[$01FF]=$%02h (expected $BB — second push, SP wrapped to $FF)",
+                     read_stack(8'hFF));
             fail_count++;
         end
-        if (`mem[16'h0100] == 8'hAA && `mem[16'h01FF] == 8'hBB)
+        if (read_stack(8'h00) == 8'hAA && read_stack(8'hFF) == 8'hBB)
             $display("[H.5] Stack wraps correctly within page 1 ✓");
 
         // ---- Final report ----------------------------------------------

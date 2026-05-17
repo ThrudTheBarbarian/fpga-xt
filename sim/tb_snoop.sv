@@ -221,24 +221,13 @@ module tb_snoop;
             fail_count++;
         end
 
-        // cpu_shadow content checks via hierarchical reference into the
-        // sim mock's backing memory. The path goes
-        //   u_cpu_shadow (hyperram_shim) → u_ip (hyperram_phy in sim,
-        //   defined in hdl/hyperram_mock.sv) → mem[].
-        // Snoop writes flow through the shim's 1-deep write FIFO and
-        // the mock's command path; the test pause before this point
-        // gives them time to drain.
-        expect_eq("shadow $2000",  u_dut.u_cpu_shadow.u_ip.mem[16'h2000], 8'h12);
-        expect_eq("shadow $2001",  u_dut.u_cpu_shadow.u_ip.mem[16'h2001], 8'h34);
-        expect_eq("shadow $7FFF",  u_dut.u_cpu_shadow.u_ip.mem[16'h7FFF], 8'hAB);
-        expect_eq("shadow $BFFF",  u_dut.u_cpu_shadow.u_ip.mem[16'hBFFF], 8'hCD);
-
-        // POKEY-page write must NOT have landed (filtered by snoop_we_screen
-        // before the write reaches cpu_shadow).
-        if (u_dut.u_cpu_shadow.u_ip.mem[16'hD200] === 8'hEE) begin
-            $display("FAIL: $D200 write landed in cpu_shadow (should be filtered)");
-            fail_count++;
-        end
+        // cpu_shadow content checks: dropped on the Zynq pivot — the
+        // Efinix-era u_cpu_shadow (hyperram_shim) → u_ip (hyperram_phy)
+        // hierarchy was stripped from antic_top in 3de7955, so the
+        // previous u_dut.u_cpu_shadow.u_ip.mem peeks no longer have a
+        // referent.  The dispatch behaviour those peeks verified is
+        // now exercised by tb_sally_mem (region routing) and
+        // tb_xt_blitter (AXI write reach).
 
         // M23-stereo: confirm the dual-POKEY decode routed $D200 to
         // u_pokey_l's AUDF1 and $D210 to u_pokey_r's AUDF1 — the two
