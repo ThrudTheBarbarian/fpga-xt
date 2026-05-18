@@ -720,15 +720,22 @@ module sprite_engine #(
         .rd_data  (cache_rd_data)
     );
 
-    // Pipeline FF1 -----------------------------------------------------------
-    logic [N_SPRITES-1:0] s2_hit_q;
-    logic [15:0]          s2_fb_pixel_q;
-    logic                 s2_fb_de_q;
-    logic                 s2_fb_hsync_q;
-    logic                 s2_fb_vsync_q;
-    // Pipeline desc_prio so the priority resolver doesn't see a freshly-
-    // written prio for a sprite whose hit was computed in the previous cycle.
-    logic [4:0]           s2_prio_q [0:N_SPRITES-1];
+    // Pipeline FF1 + FF1b ----------------------------------------------------
+    // The cache now has 2-cycle read latency (BRAM clock-out FF + OREG).
+    // s2_*_q is the first stage; s2b_*_q delays everything one more cycle
+    // so hit / fb / prio align with cache_rd_data when has_color and the
+    // tree run downstream.  Pipeline depth from this restructure: +1 cycle
+    // (6 total) but the cache→tree path picks up the OREG's near-zero
+    // clock-to-Q in return.
+    logic [N_SPRITES-1:0] s2_hit_q,        s2b_hit_q;
+    logic [15:0]          s2_fb_pixel_q,   s2b_fb_pixel_q;
+    logic                 s2_fb_de_q,      s2b_fb_de_q;
+    logic                 s2_fb_hsync_q,   s2b_fb_hsync_q;
+    logic                 s2_fb_vsync_q,   s2b_fb_vsync_q;
+    // Pipeline desc_prio twice so the priority resolver doesn't see a
+    // freshly-written prio for a sprite whose hit was computed earlier.
+    logic [4:0]           s2_prio_q  [0:N_SPRITES-1];
+    logic [4:0]           s2b_prio_q [0:N_SPRITES-1];
 
     integer pi;
     always_ff @(posedge clk_pix) begin
@@ -738,14 +745,30 @@ module sprite_engine #(
             s2_fb_de_q     <= 1'b0;
             s2_fb_hsync_q  <= 1'b0;
             s2_fb_vsync_q  <= 1'b0;
-            for (pi = 0; pi < N_SPRITES; pi = pi + 1) s2_prio_q[pi] <= 5'd0;
+            s2b_hit_q      <= '0;
+            s2b_fb_pixel_q <= 16'h0000;
+            s2b_fb_de_q    <= 1'b0;
+            s2b_fb_hsync_q <= 1'b0;
+            s2b_fb_vsync_q <= 1'b0;
+            for (pi = 0; pi < N_SPRITES; pi = pi + 1) begin
+                s2_prio_q[pi]  <= 5'd0;
+                s2b_prio_q[pi] <= 5'd0;
+            end
         end else begin
+            // Stage 1 → s2 (cycle N → N+1)
             s2_hit_q       <= s1_hit;
             s2_fb_pixel_q  <= fb_pixel;
             s2_fb_de_q     <= fb_de;
             s2_fb_hsync_q  <= fb_hsync;
             s2_fb_vsync_q  <= fb_vsync;
             for (pi = 0; pi < N_SPRITES; pi = pi + 1) s2_prio_q[pi] <= desc_prio[pi];
+            // s2 → s2b (cycle N+1 → N+2) — aligns with BRAM OREG output
+            s2b_hit_q      <= s2_hit_q;
+            s2b_fb_pixel_q <= s2_fb_pixel_q;
+            s2b_fb_de_q    <= s2_fb_de_q;
+            s2b_fb_hsync_q <= s2_fb_hsync_q;
+            s2b_fb_vsync_q <= s2_fb_vsync_q;
+            for (pi = 0; pi < N_SPRITES; pi = pi + 1) s2b_prio_q[pi] <= s2_prio_q[pi];
         end
     end
 
@@ -765,7 +788,7 @@ module sprite_engine #(
     genvar ga;
     generate
         for (ga = 0; ga < N_SPRITES; ga = ga + 1) begin : g_alpha
-            assign s3_has_color[ga] = s2_hit_q[ga] && (|cache_rd_data[ga][7:0]);
+            assign s3_has_color[ga] = s2b_hit_q[ga] && (|cache_rd_data[ga][7:0]);
         end
     endgenerate
 
@@ -794,8 +817,8 @@ module sprite_engine #(
         for (gtr = 0; gtr < 8; gtr = gtr + 1) begin : g_l1
             wire        a_v = s3_has_color[gtr*2];
             wire        b_v = s3_has_color[gtr*2 + 1];
-            wire [4:0]  a_p = s2_prio_q[gtr*2];
-            wire [4:0]  b_p = s2_prio_q[gtr*2 + 1];
+            wire [4:0]  a_p = s2b_prio_q[gtr*2];
+            wire [4:0]  b_p = s2b_prio_q[gtr*2 + 1];
             wire        b_wins = b_v && (!a_v || (b_p >= a_p));
             assign l1_valid[gtr] = a_v || b_v;
             assign l1_prio[gtr]  = b_wins ? b_p : a_p;
@@ -842,10 +865,10 @@ module sprite_engine #(
                 mid_prio_q[mi]  <= l2_prio[mi];
                 mid_pixel_q[mi] <= l2_pixel[mi];
             end
-            mid_fb_pixel_q <= s2_fb_pixel_q;
-            mid_fb_de_q    <= s2_fb_de_q;
-            mid_fb_hsync_q <= s2_fb_hsync_q;
-            mid_fb_vsync_q <= s2_fb_vsync_q;
+            mid_fb_pixel_q <= s2b_fb_pixel_q;
+            mid_fb_de_q    <= s2b_fb_de_q;
+            mid_fb_hsync_q <= s2b_fb_hsync_q;
+            mid_fb_vsync_q <= s2b_fb_vsync_q;
         end
     end
 

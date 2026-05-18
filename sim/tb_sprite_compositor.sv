@@ -148,19 +148,21 @@ module tb_sprite_compositor;
         endcase
     endtask
 
-    // Drive h_count to a specific column, wait 5 clk_pix cycles for the
+    // Drive h_count to a specific column, wait 6 clk_pix cycles for the
     // compositor pipeline to settle, and sample the output.  Compositor
-    // depth: stage1 → FF1 → BRAM read → mid (cycle A of tree) → FF2
-    // (winner) → FF_mul (multiplier output) → FF_out (final) = 5 FF stages.
+    // depth: stage1 → FF1 (s2) → FF1b (s2b, BRAM clock-out FF aligned) →
+    // BRAM OREG read → mid (cycle A of tree) → FF2 (winner) → FF_mul →
+    // FF_out (final) = 6 FF stages.
     task automatic probe(input [11:0] hx,
                         output [4:0] gr,
                         output [5:0] gg,
                         output [4:0] gb);
         @(posedge clk_pix); #1;
         h_count = hx;
-        @(posedge clk_pix);    // FF1: s2_hit_q
-        @(posedge clk_pix);    // mid: l2 candidates
-        @(posedge clk_pix);    // FF2: s4_winner_pixel_q
+        @(posedge clk_pix);    // FF1:  s2_hit_q
+        @(posedge clk_pix);    // FF1b: s2b_hit_q (cache rd_data_int valid)
+        @(posedge clk_pix);    // mid:  l2 candidates (cache rd_data valid)
+        @(posedge clk_pix);    // FF2:  s4_winner_pixel_q
         @(posedge clk_pix);    // FF_mul: r/g/b_mul_*_q
         @(posedge clk_pix); #1; // FF_out: rgb_*_q
         gr = rgb_r;
