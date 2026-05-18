@@ -69,12 +69,18 @@ module sprite_engine #(
     // ---- Framebuffer pixel input (from fb_scanout, clk_pix) ----------------
     input  wire [15:0] fb_pixel,            // {R[4:0], G[5:0], B[4:0]} RGB565
     input  wire        fb_de,
+    input  wire        fb_hsync,
+    input  wire        fb_vsync,
 
     // ---- Composited pixel output (drives SOM RGB pins, clk_pix) ------------
+    // 3-cycle pipeline delay through the compositor: hsync / vsync / de are
+    // pipelined alongside the pixel data so all timing signals exit aligned.
     output wire [4:0]  rgb_r,
     output wire [5:0]  rgb_g,
     output wire [4:0]  rgb_b,
     output wire        rgb_de,
+    output wire        rgb_hsync,
+    output wire        rgb_vsync,
 
     // ---- AXI4 burst-read master (dedicated PS HP2 port, clk_fetch) ---------
     output wire [31:0] m_axi_araddr,
@@ -540,11 +546,58 @@ module sprite_engine #(
     end
 
     // ========================================================================
-    // Sprite line cache — fetcher writes on clk_fetch; compositor (later
-    // commit) reads on clk_pix.  Read side is dangled for now.
+    // Pixel compositor (clk_pix domain)
+    //
+    // Pipeline (3 cycles, input → output):
+    //   Stage 1 (combinational at cycle N):
+    //     Per-sprite hit check (in_box) + cache rd_addr drive.
+    //   Pipeline FF1 (latched at posedge N+1):
+    //     s2_hit_q, s2_fb_*_q.  BRAM port B also registers rd_data at this
+    //     edge based on cycle-N rd_addr.
+    //   Stage 3 (combinational at cycle N+1):
+    //     Alpha test + priority resolve.
+    //   Pipeline FF2 (latched at posedge N+2):
+    //     s4_winner_*_q, s4_fb_*_q.
+    //   Stage 4 (combinational at cycle N+2):
+    //     Alpha blend with framebuffer.
+    //   Pipeline FF3 (latched at posedge N+3):
+    //     Final rgb_*_q output.
+    //
+    // CDC note: desc_* / sprite_* fields live in clk_fetch.  We read them
+    // directly from clk_pix without a synchroniser — the values change at
+    // SALLY's ~1 MHz cadence, so a 1-pixel-period glitch during transition
+    // is invisible at 1080p60.  XDC max_delay constraints on these paths
+    // (or false_path during CDC review) keep timing closure clean.
     // ========================================================================
-    logic [9:0]                   cache_rd_addr_pix;
-    logic [31:0]                  cache_rd_data [0:N_SPRITES-1];
+
+    // Per-sprite local coordinate + hit check ---------------------------------
+    logic [N_SPRITES-1:0] s1_hit;
+    logic [9:0]           s1_rd_addr [0:N_SPRITES-1];
+
+    genvar gc;
+    generate
+        for (gc = 0; gc < N_SPRITES; gc = gc + 1) begin : g_hit
+            wire signed [13:0] cx = $signed({2'b00, h_count});
+            wire signed [13:0] cy = $signed({2'b00, v_count});
+            wire signed [13:0] sx = $signed({{2{desc_screen_x[gc][11]}}, desc_screen_x[gc]});
+            wire signed [13:0] sy = $signed({{2{desc_screen_y[gc][11]}}, desc_screen_y[gc]});
+            wire signed [13:0] sz = $signed({1'b0, (13'd1 << desc_log2sz[gc])});
+            wire signed [13:0] cap = $signed(14'(LINE_WIDTH));
+            wire signed [13:0] lx = cx - sx;
+            wire signed [13:0] ly = cy - sy;
+            wire in_x = (lx >= 0) && (lx < cap) && (lx < sz);
+            wire in_y = (ly >= 0) && (ly < sz);
+            assign s1_hit[gc]     = sprite_en[gc] && global_enable && in_x && in_y;
+            assign s1_rd_addr[gc] = lx[9:0];
+        end
+    endgenerate
+
+    // ========================================================================
+    // Sprite line cache — fetcher writes on clk_fetch; compositor reads on
+    // clk_pix.  Per-sprite rd_addr enables parallel reads at distinct
+    // local_x values (each sprite has its own screen_x).
+    // ========================================================================
+    logic [31:0] cache_rd_data [0:N_SPRITES-1];
 
     sprite_line_cache #(
         .N_SPRITES  (N_SPRITES),
@@ -557,27 +610,169 @@ module sprite_engine #(
         .wr_addr  (cache_wr_addr),
         .wr_data  (cache_wr_data),
         .clk_b    (clk_pix),
-        .rd_addr  (cache_rd_addr_pix),
+        .rd_addr  (s1_rd_addr),
         .rd_data  (cache_rd_data)
     );
 
-    // Tie off read port until compositor lands.
-    assign cache_rd_addr_pix = 10'd0;
+    // Pipeline FF1 -----------------------------------------------------------
+    logic [N_SPRITES-1:0] s2_hit_q;
+    logic [15:0]          s2_fb_pixel_q;
+    logic                 s2_fb_de_q;
+    logic                 s2_fb_hsync_q;
+    logic                 s2_fb_vsync_q;
+    // Pipeline desc_prio so the priority resolver doesn't see a freshly-
+    // written prio for a sprite whose hit was computed in the previous cycle.
+    logic [4:0]           s2_prio_q [0:N_SPRITES-1];
 
-    // ========================================================================
-    // STUB: RGB passthrough.  Compositor lands in a later commit and consumes
-    // the descriptor file + per-sprite control flags + cache_rd_data above.
-    // ========================================================================
-    assign rgb_r  = fb_pixel[15:11];
-    assign rgb_g  = fb_pixel[10:5];
-    assign rgb_b  = fb_pixel[4:0];
-    assign rgb_de = fb_de;
+    integer pi;
+    always_ff @(posedge clk_pix) begin
+        if (rst) begin
+            s2_hit_q       <= '0;
+            s2_fb_pixel_q  <= 16'h0000;
+            s2_fb_de_q     <= 1'b0;
+            s2_fb_hsync_q  <= 1'b0;
+            s2_fb_vsync_q  <= 1'b0;
+            for (pi = 0; pi < N_SPRITES; pi = pi + 1) s2_prio_q[pi] <= 5'd0;
+        end else begin
+            s2_hit_q       <= s1_hit;
+            s2_fb_pixel_q  <= fb_pixel;
+            s2_fb_de_q     <= fb_de;
+            s2_fb_hsync_q  <= fb_hsync;
+            s2_fb_vsync_q  <= fb_vsync;
+            for (pi = 0; pi < N_SPRITES; pi = pi + 1) s2_prio_q[pi] <= desc_prio[pi];
+        end
+    end
 
-    // Unused inputs — quiet Vivado until the compositor lands.
+    // Stage 3: alpha test + priority resolve ---------------------------------
+    logic [N_SPRITES-1:0] s3_has_color;
+    genvar ga;
+    generate
+        for (ga = 0; ga < N_SPRITES; ga = ga + 1) begin : g_alpha
+            assign s3_has_color[ga] = s2_hit_q[ga] && (|cache_rd_data[ga][7:0]);
+        end
+    endgenerate
+
+    logic [4:0]  s3_winner_prio;
+    logic [3:0]  s3_winner_idx;
+    logic        s3_winner_valid;
+    logic [31:0] s3_winner_pixel;
+
+    always_comb begin
+        s3_winner_prio  = 5'd0;
+        s3_winner_idx   = 4'd0;
+        s3_winner_valid = 1'b0;
+        for (int k = 0; k < N_SPRITES; k = k + 1) begin
+            // >= so higher-index ties win (consistent, deterministic).
+            if (s3_has_color[k] && (s2_prio_q[k] >= s3_winner_prio)) begin
+                s3_winner_prio  = s2_prio_q[k];
+                s3_winner_idx   = 4'(k);
+                s3_winner_valid = 1'b1;
+            end
+        end
+        s3_winner_pixel = cache_rd_data[s3_winner_idx];
+    end
+
+    // Pipeline FF2 -----------------------------------------------------------
+    logic [31:0] s4_winner_pixel_q;
+    logic        s4_winner_valid_q;
+    logic [15:0] s4_fb_pixel_q;
+    logic        s4_fb_de_q;
+    logic        s4_fb_hsync_q;
+    logic        s4_fb_vsync_q;
+
+    always_ff @(posedge clk_pix) begin
+        if (rst) begin
+            s4_winner_pixel_q <= 32'd0;
+            s4_winner_valid_q <= 1'b0;
+            s4_fb_pixel_q     <= 16'd0;
+            s4_fb_de_q        <= 1'b0;
+            s4_fb_hsync_q     <= 1'b0;
+            s4_fb_vsync_q     <= 1'b0;
+        end else begin
+            s4_winner_pixel_q <= s3_winner_pixel;
+            s4_winner_valid_q <= s3_winner_valid;
+            s4_fb_pixel_q     <= s2_fb_pixel_q;
+            s4_fb_de_q        <= s2_fb_de_q;
+            s4_fb_hsync_q     <= s2_fb_hsync_q;
+            s4_fb_vsync_q     <= s2_fb_vsync_q;
+        end
+    end
+
+    // Stage 4: alpha blend (combinational) -----------------------------------
+    // Expand fb_pixel RGB565 → RGB888 (replicate top bits into the LSBs).
+    wire [7:0] fb_r8 = {s4_fb_pixel_q[15:11], s4_fb_pixel_q[15:13]};
+    wire [7:0] fb_g8 = {s4_fb_pixel_q[10:5],  s4_fb_pixel_q[10:9]};
+    wire [7:0] fb_b8 = {s4_fb_pixel_q[4:0],   s4_fb_pixel_q[4:2]};
+
+    wire [7:0] sp_r8 = s4_winner_pixel_q[31:24];
+    wire [7:0] sp_g8 = s4_winner_pixel_q[23:16];
+    wire [7:0] sp_b8 = s4_winner_pixel_q[15:8];
+    wire [7:0] alpha = s4_winner_pixel_q[7:0];
+    wire [7:0] inv_a = 8'hFF - alpha;
+
+    // out = (sp * a + fb * (255-a) + 128) >> 8.  The +128 is the standard
+    // round-to-nearest for 8-bit Porter-Duff blends and costs a single
+    // adder slice.  3 × 8x8 unsigned mults map to DSP48s on Zynq-7020.
+    wire [15:0] r_mul_sp = sp_r8 * alpha;
+    wire [15:0] r_mul_fb = fb_r8 * inv_a;
+    wire [16:0] r_sum    = {1'b0, r_mul_sp} + {1'b0, r_mul_fb} + 17'd128;
+    wire [7:0]  blend_r8 = r_sum[15:8];
+
+    wire [15:0] g_mul_sp = sp_g8 * alpha;
+    wire [15:0] g_mul_fb = fb_g8 * inv_a;
+    wire [16:0] g_sum    = {1'b0, g_mul_sp} + {1'b0, g_mul_fb} + 17'd128;
+    wire [7:0]  blend_g8 = g_sum[15:8];
+
+    wire [15:0] b_mul_sp = sp_b8 * alpha;
+    wire [15:0] b_mul_fb = fb_b8 * inv_a;
+    wire [16:0] b_sum    = {1'b0, b_mul_sp} + {1'b0, b_mul_fb} + 17'd128;
+    wire [7:0]  blend_b8 = b_sum[15:8];
+
+    // Truncate back to RGB565 for the SOM output.
+    wire [4:0] out_r5 = s4_winner_valid_q ? blend_r8[7:3] : s4_fb_pixel_q[15:11];
+    wire [5:0] out_g6 = s4_winner_valid_q ? blend_g8[7:2] : s4_fb_pixel_q[10:5];
+    wire [4:0] out_b5 = s4_winner_valid_q ? blend_b8[7:3] : s4_fb_pixel_q[4:0];
+
+    // Pipeline FF3 — final output register -----------------------------------
+    logic [4:0] rgb_r_q;
+    logic [5:0] rgb_g_q;
+    logic [4:0] rgb_b_q;
+    logic       rgb_de_q;
+    logic       rgb_hsync_q;
+    logic       rgb_vsync_q;
+
+    always_ff @(posedge clk_pix) begin
+        if (rst) begin
+            rgb_r_q     <= 5'd0;
+            rgb_g_q     <= 6'd0;
+            rgb_b_q     <= 5'd0;
+            rgb_de_q    <= 1'b0;
+            rgb_hsync_q <= 1'b0;
+            rgb_vsync_q <= 1'b0;
+        end else begin
+            rgb_r_q     <= out_r5;
+            rgb_g_q     <= out_g6;
+            rgb_b_q     <= out_b5;
+            rgb_de_q    <= s4_fb_de_q;
+            rgb_hsync_q <= s4_fb_hsync_q;
+            rgb_vsync_q <= s4_fb_vsync_q;
+        end
+    end
+
+    assign rgb_r     = rgb_r_q;
+    assign rgb_g     = rgb_g_q;
+    assign rgb_b     = rgb_b_q;
+    assign rgb_de    = rgb_de_q;
+    assign rgb_hsync = rgb_hsync_q;
+    assign rgb_vsync = rgb_vsync_q;
+
+    // Unused inputs — frame_start is consumed by the fetcher elsewhere
+    // (per-line) so this module observes but doesn't use it; the cache's
+    // 16-element rd_data is fully consumed inside the compositor genvar
+    // loop above but Verilator still flags the array reference.
     /* verilator lint_off UNUSED */
     wire _unused = &{1'b0,
-                     h_count, frame_start,
-                     cache_rd_data[0],
+                     frame_start,
                      1'b0};
     /* verilator lint_on UNUSED */
 

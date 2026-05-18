@@ -7,16 +7,14 @@
 // 1024-entry × 32-bit organisation (parity bits unused).
 //
 // Address space:
-//   wr_addr / rd_addr are sprite-local pixel X (0..LINE_WIDTH-1).
-//   wr_en is one-hot per sprite — the fetcher walks sprites sequentially,
-//   so at most one sprite is being written at a time.  rd_addr is shared
-//   across all sprites because the compositor looks up the *same screen X*
-//   in every sprite's line (visibility / priority resolution happens
-//   downstream on the read data).
+//   wr_addr is shared across all sprites — the fetcher iterates sprites
+//   sequentially and asserts a one-hot wr_en bit at any given moment.
+//   rd_addr is PER-sprite: each sprite has its own screen_x, so the
+//   compositor computes a distinct local_x for every sprite at every
+//   pixel.  Reads run in parallel across all 16 BRAMs.
 //
-// Reset semantics: BRAM contents come up undefined (FPGA URAM-style init is
-// not used — software loads initial pixels via the arena).  Compositor's
-// own enable / visibility gating ensures only valid pixels are emitted.
+// Reset semantics: BRAM contents come up undefined.  Compositor's own
+// hit / alpha gating ensures only valid pixels reach the output.
 
 `default_nettype none
 
@@ -34,7 +32,7 @@ module sprite_line_cache #(
 
     // ---- Port B: reader (clk_pix) ------------------------------------------
     input  wire                       clk_b,
-    input  wire [ADDR_W-1:0]          rd_addr,
+    input  wire [ADDR_W-1:0]          rd_addr [0:N_SPRITES-1],  // per-sprite
     output logic [PIXEL_W-1:0]        rd_data [0:N_SPRITES-1]
 );
 
@@ -43,16 +41,16 @@ module sprite_line_cache #(
         for (gs = 0; gs < N_SPRITES; gs = gs + 1) begin : g_sprite
             (* ram_style = "block" *) logic [PIXEL_W-1:0] mem [0:LINE_WIDTH-1];
 
-            // Port A: synchronous write, no read (writer-only port).
+            // Port A: synchronous write, no read.
             always_ff @(posedge clk_a) begin
                 if (wr_en[gs])
                     mem[wr_addr] <= wr_data;
             end
 
             // Port B: registered read.  One-cycle BRAM read latency matches
-            // the compositor pipeline's stage-2 fetch slot.
+            // the compositor pipeline's stage-1 FF.
             always_ff @(posedge clk_b) begin
-                rd_data[gs] <= mem[rd_addr];
+                rd_data[gs] <= mem[rd_addr[gs]];
             end
         end
     endgenerate

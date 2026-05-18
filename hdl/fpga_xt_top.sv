@@ -823,6 +823,8 @@ module fpga_xt_top #(
     wire [5:0] spr_rgb_g;
     wire [4:0] spr_rgb_b;
     wire       spr_rgb_de;
+    wire       spr_rgb_hsync;
+    wire       spr_rgb_vsync;
 
     // Sprite engine register snoop — fires on $D4Ax (per-sprite control)
     // and $D4Dx (indexed descriptor + collision + ctrl) writes from the
@@ -852,11 +854,15 @@ module fpga_xt_top #(
 
         .fb_pixel      ({fb_rgb_r, fb_rgb_g, fb_rgb_b}),
         .fb_de         (fb_rgb_de),
+        .fb_hsync      (fb_rgb_hsync),
+        .fb_vsync      (fb_rgb_vsync),
 
         .rgb_r         (spr_rgb_r),
         .rgb_g         (spr_rgb_g),
         .rgb_b         (spr_rgb_b),
         .rgb_de        (spr_rgb_de),
+        .rgb_hsync     (spr_rgb_hsync),
+        .rgb_vsync     (spr_rgb_vsync),
 
         // AXI HP2 master — dangled for the scaffold.  When the line
         // fetcher lands these connect to the PS BD's M_AXI_HP2 (bit
@@ -876,8 +882,8 @@ module fpga_xt_top #(
     assign rgb_r      = spr_rgb_r;
     assign rgb_g      = spr_rgb_g;
     assign rgb_b      = spr_rgb_b;
-    assign rgb_hsync  = fb_rgb_hsync;
-    assign rgb_vsync  = fb_rgb_vsync;
+    assign rgb_hsync  = spr_rgb_hsync;
+    assign rgb_vsync  = spr_rgb_vsync;
     assign rgb_de     = spr_rgb_de;
     assign rgb_pixclk = fb_rgb_pixclk;
 
