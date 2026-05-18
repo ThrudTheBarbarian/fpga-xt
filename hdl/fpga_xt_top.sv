@@ -824,6 +824,17 @@ module fpga_xt_top #(
     wire [4:0] spr_rgb_b;
     wire       spr_rgb_de;
 
+    // Sprite engine register snoop — fires on $D4Ax (per-sprite control)
+    // and $D4Dx (indexed descriptor + collision + ctrl) writes from the
+    // SALLY hwreg path (already at clk_sys post-CDC).  Read-back into
+    // SALLY is wired by the d4xx read-path mux in a later commit; until
+    // then reg_rdata is observable in sim only.
+    wire sprite_reg_we = antic_we_q
+                        && (bus_addr_antic_q[15:8] == 8'hD4)
+                        && ((bus_addr_antic_q[7:4] == 4'hA)
+                            || (bus_addr_antic_q[7:4] == 4'hD));
+    wire [7:0] sprite_reg_rdata_unused;
+
     sprite_engine u_sprite_engine (
         .clk_fetch     (clk_sys),
         .clk_pix       (clk_pix),
@@ -834,12 +845,10 @@ module fpga_xt_top #(
         .line_start    (fb_line_start),
         .frame_start   (fb_frame_start),
 
-        // Register interface — tied off until commit-2 wires descriptor
-        // writes from SALLY's hwreg path.
-        .reg_we        (1'b0),
-        .reg_addr      (8'h00),
-        .reg_wdata     (8'h00),
-        .reg_rdata     (),
+        .reg_we        (sprite_reg_we),
+        .reg_addr      (bus_addr_antic_q[7:0]),
+        .reg_wdata     (bus_data_in_antic_q),
+        .reg_rdata     (sprite_reg_rdata_unused),
 
         .fb_pixel      ({fb_rgb_r, fb_rgb_g, fb_rgb_b}),
         .fb_de         (fb_rgb_de),

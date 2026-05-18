@@ -56,9 +56,9 @@ HDL_SRCS := \
 
 BUILD_DIR := build
 
-.PHONY: all smoke snoop read vbeam rp_bus dl_parse mode_f char_modes gfx_modes pm prior scroll nmi wsync palette dma_master mem_read_mux dma_int draw_regs pokey pokey_i2s sally sally_mem sally_arb bank_xlat pia_regs peri_link joy_link joy_bridge peri_bridge os_rom_load klaus visual lint clean xt_blitter sally_stack sally_isa
+.PHONY: all smoke snoop read vbeam rp_bus dl_parse mode_f char_modes gfx_modes pm prior scroll nmi wsync palette dma_master mem_read_mux dma_int draw_regs pokey pokey_i2s sally sally_mem sally_arb bank_xlat pia_regs peri_link joy_link joy_bridge peri_bridge os_rom_load klaus visual lint clean xt_blitter sally_stack sally_isa sprite_regs
 
-all: smoke snoop read vbeam rp_bus dl_parse mode_f char_modes gfx_modes pm prior scroll nmi wsync palette dma_master mem_read_mux dma_int draw_regs pokey pokey_i2s sally sally_mem sally_arb bank_xlat pia_regs peri_link joy_link joy_bridge peri_bridge os_rom_load pbi pcm1808_rx visual xt_blitter
+all: smoke snoop read vbeam rp_bus dl_parse mode_f char_modes gfx_modes pm prior scroll nmi wsync palette dma_master mem_read_mux dma_int draw_regs pokey pokey_i2s sally sally_mem sally_arb bank_xlat pia_regs peri_link joy_link joy_bridge peri_bridge os_rom_load pbi pcm1808_rx visual xt_blitter sprite_regs
 
 # `klaus` is NOT in `all` — Klaus Dormann's full test takes ~96 M
 # cycles (≥10 minutes of iverilog wall-clock). Run it manually with
@@ -629,6 +629,19 @@ pbi: $(BUILD_DIR)/tb_pbi.vvp
 
 $(BUILD_DIR)/tb_pbi.vvp: $(HDL_SRCS) tb_pbi.sv | $(BUILD_DIR)
 	$(IVERILOG) $(SV_FLAGS) -o $@ -s tb_pbi $(HDL_SRCS) tb_pbi.sv
+
+# ---- sprite_regs — sprite_engine descriptor register file ----------------
+sprite_regs: $(BUILD_DIR)/tb_sprite_regs.vvp
+	@echo "=== sprite_regs ==="
+	@$(VVP) -N $< | tee $(BUILD_DIR)/tb_sprite_regs.log
+	@grep -q '\*\*\* SPRITE_REGS OK \*\*\*' $(BUILD_DIR)/tb_sprite_regs.log || \
+	    (echo "FAIL: tb_sprite_regs missing SPRITE_REGS OK"; exit 1)
+	@grep -q 'TRAP\|FATAL\|FAIL' $(BUILD_DIR)/tb_sprite_regs.log && \
+	    (echo "FAIL: tb_sprite_regs reported a trap"; exit 1) || true
+	@echo "PASS: tb_sprite_regs"
+
+$(BUILD_DIR)/tb_sprite_regs.vvp: $(HDL_DIR)/sprite_engine.sv tb_sprite_regs.sv | $(BUILD_DIR)
+	$(IVERILOG) $(SV_FLAGS) -o $@ -s tb_sprite_regs $(HDL_DIR)/sprite_engine.sv tb_sprite_regs.sv
 
 # ---- Visual smoke (no oracle, dumps PPMs only) ---------------------------
 visual: $(BUILD_DIR)/tb_visual.vvp
