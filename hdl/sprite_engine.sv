@@ -1,9 +1,10 @@
 // sprite_engine.sv — hardware sprite compositor for the 1080p scan-out path.
 //
-// Commit-2: descriptor register file.  Adds the SALLY-visible register
-// surface ($D4Ax per-sprite control bytes + $D4Dx indexed descriptor
-// page).  Compositor / fetcher / line cache still stubbed — the RGB
-// path remains a passthrough until those submodules land.
+// Commit-3: AXI HP2 line fetcher + line cache.  Adds the per-scanline
+// burst-read FSM that pulls sprite pixel data from the arena in PS DDR3
+// and writes it into the dual-port line cache.  Compositor still
+// stubbed — the RGB path remains a passthrough until the pixel pipeline
+// commit lands.
 //
 // Spec: docs/Progress/sprite-engine.md.  Deviations from spec applied at
 // design time, captured in the per-commit messages:
@@ -16,46 +17,37 @@
 //     contiguous $D4A0-$D4BF span that collided with the blitter at
 //     $D4B0-$D4BF).
 //   * Coordinate widths: arena_x/arena_y both 12-bit, screen_x/screen_y
-//     both 12-bit signed.  Spec implied 13-bit + 13-bit + 12-bit which
-//     does not pack cleanly into the 8-byte descriptor; 12-bit each
-//     preserves the spec's 64 MB arena footprint at 32 bpp (4096×4096)
-//     and a ±2048 screen window which covers 1920×1080 with off-screen
-//     scroll headroom.
+//     both 12-bit signed — see commit-2 message for the rationale.
 //   * clk_bus = 150 MHz (was 162 MHz in the spec).  Per-scanline AXI HP2
 //     budget recomputed to ~12.4 KB.
 //
-// Register map (decoded from low 8 bits of D4xx):
+// Arena layout (per-sprite, depends on format bit):
+//   format=0 (16-bit RGBA-5:5:5:1):
+//     row stride = 4096 columns × 2 B = 8 KB  (1 << 13)
+//     pixel addr = ARENA_BASE + (arena_row << 13) + (arena_col << 1)
+//   format=1 (32-bit RGBA-8888):
+//     row stride = 4096 columns × 4 B = 16 KB (1 << 14)
+//     pixel addr = ARENA_BASE + (arena_row << 14) + (arena_col << 2)
+//   Sprites of different formats must live in non-overlapping arena
+//   regions; software chooses the base offsets per format pool.
 //
-//   $D4A0..$D4AF — Per-sprite status (one byte per sprite N at $D4A0+N)
-//     bit 0: en        — sprite enabled
-//     bit 1: h_flip    — horizontal mirror (future)
-//     bit 2: v_flip    — vertical mirror   (future)
-//     bit 3: 2x_w      — 2× width          (future)
-//     bit 4: 2x_h      — 2× height         (future)
-//     bit 5: format    — 0=RGBA-5:5:5:1 source, 1=RGBA-8888 source
-//     bit 6: reserved
-//     bit 7: any_col   — R: sticky any-collision; W: 1 clears (W1C)
-//
-//   $D4D0  SPRITE_SEL   — W: sprite index (0..15) for descriptor R/W
-//   $D4D1  SPRITE_B0    — R/W: priority[4:0]
-//   $D4D2  SPRITE_B1    — R/W: log2_size[3:0]
-//   $D4D3  SPRITE_B2    — R/W: arena_y[7:0]
-//   $D4D4  SPRITE_B3    — R/W: {arena_x[11:8], arena_y[11:8]}
-//   $D4D5  SPRITE_B4    — R/W: arena_x[7:0]
-//   $D4D6  SPRITE_B5    — R/W: screen_y[7:0]
-//   $D4D7  SPRITE_B6    — R/W: {screen_x[11:8], screen_y[11:8]}
-//   $D4D8  SPRITE_B7    — R/W: screen_x[7:0]  (write commits descriptor)
-//   $D4D9  COL_SEL      — W: collision row select (0..15)
-//   $D4DA  COL_LO       — R / W1C: collision row [7:0]   for COL_SEL
-//   $D4DB  COL_HI       — R / W1C: collision row [15:8]  for COL_SEL
-//   $D4DC..$D4DE        — reserved
-//   $D4DF  SPRITE_CTRL  — R/W: bit 0 = GLOBAL_ENABLE
+// AXI burst plan:
+//   arsize  = 3'b011 (8 bytes per beat, 64-bit data bus)
+//   arburst = 2'b01  (INCR)
+//   arlen   = 8'd7   (8 beats per burst = 64 bytes)
+//   Bursts are 8-byte aligned at issue time.  Pixel-precise scrolling is
+//   supported by skipping the first 0..3 (16-bit) or 0..1 (32-bit) pixels
+//   of the first beat — the fetcher tracks a 2-bit skip_pixels counter
+//   that suppresses cache writes until aligned with the visible region.
 
 `default_nettype none
 
 module sprite_engine #(
     parameter int unsigned ARENA_BASE = 32'h2000_0000,
-    parameter int unsigned N_SPRITES  = 16
+    parameter int unsigned N_SPRITES  = 16,
+    parameter int unsigned LINE_WIDTH = 1024,        // max sprite width in cache
+    parameter int unsigned SCREEN_W   = 1920,
+    parameter int unsigned FETCH_BUDGET_BURSTS = 200 // ≈ 12.8 KB per scanline
 ) (
     // ---- Clocks & reset ----------------------------------------------------
     input  wire        clk_fetch,           // AXI HP2 + fetcher clock (150 MHz / clk_sys)
@@ -111,8 +103,6 @@ module sprite_engine #(
 
     // ========================================================================
     // Per-sprite descriptor file — latched on write to $D4D8 (SPRITE_B7).
-    // Reads of $D4D1..$D4D8 reconstruct the descriptor bytes from these fields
-    // for the sprite addressed by sprite_sel.
     // ========================================================================
     logic [4:0]         desc_prio    [0:N_SPRITES-1];
     logic [3:0]         desc_log2sz  [0:N_SPRITES-1];
@@ -121,30 +111,17 @@ module sprite_engine #(
     logic signed [11:0] desc_screen_x[0:N_SPRITES-1];
     logic signed [11:0] desc_screen_y[0:N_SPRITES-1];
 
-    // ========================================================================
-    // Shadow descriptor bytes B0..B6 — accumulate on writes to $D4D1..$D4D7.
-    // Writing $D4D8 commits {B0..B6, this byte} into the descriptor file at
-    // index sprite_sel.  B7 (screen_x[7:0]) is taken from reg_wdata on the
-    // commit cycle, not stored in the shadow.
-    // ========================================================================
+    // Shadow descriptor bytes B0..B6 + global ctrl --------------------------
     logic [7:0]         shadow_b [0:6];
+    logic [3:0]         sprite_sel;
+    logic [3:0]         col_sel;
+    logic               global_enable;
 
-    // Indexed-access registers and global control ----------------------------
-    logic [3:0]         sprite_sel;     // $D4D0
-    logic [3:0]         col_sel;        // $D4D9
-    logic               global_enable;  // $D4DF[0]
-
-    // ========================================================================
-    // Cross-product collision matrix — one N_SPRITES-bit row per sprite.
-    // Bit collision[a][b] = 1 means sprite a's pixels overlapped sprite b's
-    // since the last clear.  Compositor (later commit) drives collision_set;
-    // CPU clears bits via W1C through $D4DA/$D4DB at row col_sel.
-    // ========================================================================
+    // Cross-product collision matrix ----------------------------------------
     logic [N_SPRITES-1:0] collision     [0:N_SPRITES-1];
     logic [N_SPRITES-1:0] collision_set [0:N_SPRITES-1];
 
-    // No compositor yet — drive the set side to zero.  Later commit replaces
-    // these with per-pixel overlap signals from the priority resolver.
+    // No compositor yet — drive the set side to zero.
     genvar gi;
     generate
         for (gi = 0; gi < N_SPRITES; gi = gi + 1) begin : g_collision_set_tieoff
@@ -153,7 +130,7 @@ module sprite_engine #(
     endgenerate
 
     // ========================================================================
-    // Address decode
+    // Register address decode
     // ========================================================================
     wire is_d4ax = (reg_addr[7:4] == 4'hA);
     wire is_d4dx = (reg_addr[7:4] == 4'hD);
@@ -163,7 +140,6 @@ module sprite_engine #(
     wire is_d4ax_write = reg_we && is_d4ax;
     wire is_d4dx_write = reg_we && is_d4dx;
 
-    // Per-row collision clear mask (combinational pre-flop) ------------------
     logic [N_SPRITES-1:0] col_clear_mask;
     always_comb begin
         col_clear_mask = '0;
@@ -174,7 +150,7 @@ module sprite_engine #(
     end
 
     // ========================================================================
-    // Write FSM (clk_fetch domain) — register storage + descriptor commit.
+    // Register write FSM (clk_fetch domain)
     // ========================================================================
     integer si;
     always_ff @(posedge clk_fetch) begin
@@ -201,7 +177,6 @@ module sprite_engine #(
                 collision[si]     <= '0;
             end
         end else begin
-            // ---- $D4Ax per-sprite control byte write -----------------------
             if (is_d4ax_write) begin
                 sprite_en    [d4ax_idx] <= reg_wdata[0];
                 sprite_h_flip[d4ax_idx] <= reg_wdata[1];
@@ -209,11 +184,8 @@ module sprite_engine #(
                 sprite_2x_w  [d4ax_idx] <= reg_wdata[3];
                 sprite_2x_h  [d4ax_idx] <= reg_wdata[4];
                 sprite_format[d4ax_idx] <= reg_wdata[5];
-                // bit 6 reserved
-                // bit 7: W1C — handled in the any_col loop below
             end
 
-            // ---- $D4Dx indexed descriptor / collision / ctrl writes --------
             if (is_d4dx_write) begin
                 case (d4dx_idx)
                     4'h0: sprite_sel <= reg_wdata[3:0];
@@ -225,7 +197,6 @@ module sprite_engine #(
                     4'h6: shadow_b[5] <= reg_wdata;
                     4'h7: shadow_b[6] <= reg_wdata;
                     4'h8: begin
-                        // Commit: latch {B0..B6, reg_wdata} into descriptor file.
                         desc_prio    [sprite_sel] <= shadow_b[0][4:0];
                         desc_log2sz  [sprite_sel] <= shadow_b[1][3:0];
                         desc_arena_y [sprite_sel] <= {shadow_b[3][3:0], shadow_b[2]};
@@ -234,16 +205,11 @@ module sprite_engine #(
                         desc_screen_x[sprite_sel] <= $signed({shadow_b[6][7:4], reg_wdata});
                     end
                     4'h9: col_sel <= reg_wdata[3:0];
-                    // 4'hA / 4'hB: handled by collision loop below (W1C).
                     4'hF: global_enable <= reg_wdata[0];
-                    default: ; // reserved — drop
+                    default: ;
                 endcase
             end
 
-            // ---- any_col sticky bit (per sprite) ---------------------------
-            // Sets when compositor reports any collision for that sprite,
-            // clears on $D4Ax write with bit 7 = 1.  Clear takes precedence
-            // over set on the same cycle.
             for (si = 0; si < N_SPRITES; si = si + 1) begin
                 if (is_d4ax_write && (d4ax_idx == si[3:0]) && reg_wdata[7])
                     sprite_any_col[si] <= 1'b0;
@@ -251,7 +217,6 @@ module sprite_engine #(
                     sprite_any_col[si] <= 1'b1;
             end
 
-            // ---- Collision matrix (sticky-OR with set, W1C from CPU) -------
             for (si = 0; si < N_SPRITES; si = si + 1) begin
                 if (col_sel == si[3:0])
                     collision[si] <= (collision[si] & ~col_clear_mask) | collision_set[si];
@@ -262,18 +227,18 @@ module sprite_engine #(
     end
 
     // ========================================================================
-    // Read-back path — combinational mux on reg_addr.
+    // Register read-back path
     // ========================================================================
     logic [7:0] rdata_d4ax;
     always_comb begin
-        rdata_d4ax = {sprite_any_col[d4ax_idx],   // bit 7
-                      1'b0,                        // bit 6 reserved
-                      sprite_format[d4ax_idx],     // bit 5
-                      sprite_2x_h[d4ax_idx],       // bit 4
-                      sprite_2x_w[d4ax_idx],       // bit 3
-                      sprite_v_flip[d4ax_idx],     // bit 2
-                      sprite_h_flip[d4ax_idx],     // bit 1
-                      sprite_en[d4ax_idx]};        // bit 0
+        rdata_d4ax = {sprite_any_col[d4ax_idx],
+                      1'b0,
+                      sprite_format[d4ax_idx],
+                      sprite_2x_h[d4ax_idx],
+                      sprite_2x_w[d4ax_idx],
+                      sprite_v_flip[d4ax_idx],
+                      sprite_h_flip[d4ax_idx],
+                      sprite_en[d4ax_idx]};
     end
 
     logic [7:0] rdata_d4dx;
@@ -302,29 +267,317 @@ module sprite_engine #(
                        8'h00;
 
     // ========================================================================
-    // STUB: RGB passthrough.  Compositor lands in a later commit and consumes
-    // the descriptor file + per-sprite control flags declared above.
+    // CDC: vbeam taps from clk_pix → clk_fetch
+    //
+    // Source: line_start is a 1-cycle clk_pix pulse.  We convert it to a
+    // toggle on clk_pix, sync the toggle into clk_fetch, and re-extract a
+    // 1-cycle pulse by edge-detect.  The next-line vcount is latched in
+    // clk_pix at line_start and synced as a stable bus — by the time the
+    // toggle pulse appears in clk_fetch, the synced vcount has settled.
     // ========================================================================
-    assign rgb_r = fb_pixel[15:11];
-    assign rgb_g = fb_pixel[10:5];
-    assign rgb_b = fb_pixel[4:0];
+    logic        pix_line_toggle;
+    logic [11:0] pix_next_vcount;
+    always_ff @(posedge clk_pix) begin
+        if (rst) begin
+            pix_line_toggle <= 1'b0;
+            pix_next_vcount <= 12'd0;
+        end else if (line_start) begin
+            pix_line_toggle <= ~pix_line_toggle;
+            pix_next_vcount <= v_count + 12'd1;
+        end
+    end
+
+    wire        fetch_line_toggle;
+    wire [11:0] fetch_next_vcount;
+    cdc_sync_bit #(.WIDTH(1))  u_sync_line_tog (
+        .dst_clk (clk_fetch),
+        .src_sig (pix_line_toggle),
+        .dst_sig (fetch_line_toggle)
+    );
+    cdc_sync_bit #(.WIDTH(12)) u_sync_vcount (
+        .dst_clk (clk_fetch),
+        .src_sig (pix_next_vcount),
+        .dst_sig (fetch_next_vcount)
+    );
+
+    logic fetch_line_toggle_q;
+    always_ff @(posedge clk_fetch) begin
+        if (rst) fetch_line_toggle_q <= 1'b0;
+        else     fetch_line_toggle_q <= fetch_line_toggle;
+    end
+    wire fetch_line_start = fetch_line_toggle ^ fetch_line_toggle_q;
+
+    // ========================================================================
+    // Sprite line fetcher FSM (clk_fetch domain)
+    // ========================================================================
+    typedef enum logic [2:0] {
+        F_IDLE,
+        F_EVAL,
+        F_ISSUE_AR,
+        F_DRAIN,
+        F_NEXT
+    } fetch_state_t;
+
+    fetch_state_t fstate;
+
+    logic [3:0]  sprite_idx;             // 0..15
+    logic [11:0] next_vcount_q;          // latched at line start
+    logic [12:0] visible_width_q;        // 0..1920 pixels to write
+    logic        format_q;
+    logic [11:0] cache_wr_x_q;
+    logic [31:0] byte_addr_burst_q;      // 8-byte aligned address of current burst
+    logic [13:0] bytes_remaining_q;      // pixel bytes still to write for this sprite
+    logic [1:0]  skip_pixels_q;          // 0..3 (16-bit) / 0..1 (32-bit) skip at start
+    logic [7:0]  budget_bursts_q;        // bursts remaining for this scanline
+
+    // Per-beat draining state -----------------------------------------------
+    logic [63:0] beat_buffer_q;
+    logic [3:0]  beat_drain_q;           // pixels left to emit from beat_buffer_q
+    logic [3:0]  beats_left_q;           // beats still to come AFTER the one in buffer
+
+    // AXI master outputs — combinational on FSM state to avoid handshake
+    // races (NBA-deferred arvalid would otherwise miss arready in the same
+    // cycle that the master transitions into F_ISSUE_AR).
+    assign m_axi_araddr  = byte_addr_burst_q;
+    assign m_axi_arlen   = 8'd7;
+    assign m_axi_arsize  = 3'b011;
+    assign m_axi_arburst = 2'b01;
+    assign m_axi_arvalid = (fstate == F_ISSUE_AR);
+    assign m_axi_rready  = (fstate == F_DRAIN) && (beat_drain_q == 4'd0);
+
+    // Cache write port (drives sprite_line_cache port A) --------------------
+    logic [N_SPRITES-1:0] cache_wr_en;
+    logic [9:0]           cache_wr_addr;
+    logic [31:0]          cache_wr_data;
+
+    // ------------------------------------------------------------------------
+    // Combinational visibility / clip computation for sprite_idx.
+    // ------------------------------------------------------------------------
+    wire signed [12:0] eval_screen_x = $signed({desc_screen_x[sprite_idx][11], desc_screen_x[sprite_idx]});
+    wire signed [12:0] eval_screen_y = $signed({desc_screen_y[sprite_idx][11], desc_screen_y[sprite_idx]});
+    wire signed [12:0] eval_vc       = $signed({1'b0, next_vcount_q});
+    wire signed [12:0] eval_size     = $signed({1'b0, 12'd1 << desc_log2sz[sprite_idx]});
+    wire signed [12:0] eval_local_y  = eval_vc - eval_screen_y;
+
+    wire eval_y_in_range = (eval_local_y >= 0) && (eval_local_y < eval_size);
+    wire signed [13:0] eval_right_edge = eval_screen_x + eval_size;
+
+    wire signed [12:0] eval_vis_left  = (eval_screen_x  < 0)                  ? 13'sd0 : eval_screen_x;
+    wire signed [13:0] eval_vis_right = (eval_right_edge > $signed(14'(SCREEN_W))) ?
+                                            $signed(14'(SCREEN_W)) : eval_right_edge;
+    wire signed [13:0] eval_vis_width_full = eval_vis_right - eval_vis_left;
+    // Clamp to LINE_WIDTH so we never exceed cache geometry.
+    wire signed [13:0] eval_vis_width = (eval_vis_width_full > $signed(14'(LINE_WIDTH))) ?
+                                            $signed(14'(LINE_WIDTH)) : eval_vis_width_full;
+    wire eval_visible = sprite_en[sprite_idx]
+                        && global_enable
+                        && eval_y_in_range
+                        && (eval_vis_width > 0);
+
+    wire signed [12:0] eval_clip_left = eval_vis_left - eval_screen_x;       // sprite-local x of first emitted pixel
+    wire [11:0]        eval_arena_row = desc_arena_y[sprite_idx] + eval_local_y[11:0];
+    wire [11:0]        eval_arena_col_first = desc_arena_x[sprite_idx] + eval_clip_left[11:0];
+
+    wire eval_format        = sprite_format[sprite_idx];
+    wire [5:0]  eval_pix_shift    = eval_format ? 6'd2 : 6'd1;
+    wire [5:0]  eval_stride_shift = eval_format ? 6'd14 : 6'd13;
+
+    // Byte-precise start address (pre-alignment)
+    wire [31:0] eval_addr_pix = ARENA_BASE
+                              + ({20'd0, eval_arena_row} << eval_stride_shift)
+                              + ({20'd0, eval_arena_col_first} << eval_pix_shift);
+    wire [31:0] eval_addr_aligned = eval_addr_pix & 32'hFFFF_FFF8;
+    wire [2:0]  eval_skip_bytes = eval_addr_pix[2:0];
+    wire [1:0]  eval_skip_pixels = eval_format ? {1'b0, eval_skip_bytes[2]} : eval_skip_bytes[2:1];
+
+    wire [13:0] eval_byte_len_pix = (eval_vis_width[11:0] << eval_pix_shift); // up to 4096
+    wire [14:0] eval_total_bytes = {1'b0, eval_byte_len_pix} + {12'd0, eval_skip_bytes};
+
+    // ------------------------------------------------------------------------
+    // Pixel demux from beat_buffer_q.
+    //   16-bit format: low 16 bits = next pixel.
+    //   32-bit format: low 32 bits = next pixel.
+    // After emitting one pixel we right-shift the buffer by pixel width.
+    // ------------------------------------------------------------------------
+    function automatic logic [31:0] expand_5551(input logic [15:0] p);
+        logic [4:0] r5, g5, b5;
+        logic       a1;
+        r5 = p[15:11];
+        g5 = p[10:6];
+        b5 = p[5:1];
+        a1 = p[0];
+        return {{r5, r5[4:2]}, {g5, g5[4:2]}, {b5, b5[4:2]}, {8{a1}}};
+    endfunction
+
+    wire [31:0] next_pixel_internal = format_q
+        ? beat_buffer_q[31:0]
+        : expand_5551(beat_buffer_q[15:0]);
+
+    // ------------------------------------------------------------------------
+    // Main fetcher state machine.
+    // ------------------------------------------------------------------------
+    integer ci;
+    always_ff @(posedge clk_fetch) begin
+        if (rst) begin
+            fstate            <= F_IDLE;
+            sprite_idx        <= 4'd0;
+            next_vcount_q     <= 12'd0;
+            visible_width_q   <= 13'd0;
+            format_q          <= 1'b0;
+            cache_wr_x_q      <= 12'd0;
+            byte_addr_burst_q <= 32'd0;
+            bytes_remaining_q <= 14'd0;
+            skip_pixels_q     <= 2'd0;
+            budget_bursts_q   <= 8'(FETCH_BUDGET_BURSTS);
+            beat_buffer_q     <= 64'd0;
+            beat_drain_q      <= 4'd0;
+            beats_left_q      <= 4'd0;
+            for (ci = 0; ci < N_SPRITES; ci = ci + 1)
+                cache_wr_en[ci] <= 1'b0;
+            cache_wr_addr     <= 10'd0;
+            cache_wr_data     <= 32'd0;
+        end else begin
+            // Default: drop one-shots
+            for (ci = 0; ci < N_SPRITES; ci = ci + 1)
+                cache_wr_en[ci] <= 1'b0;
+
+            case (fstate)
+                // ------------------------------------------------------------
+                F_IDLE: begin
+                    if (fetch_line_start && global_enable) begin
+                        next_vcount_q   <= fetch_next_vcount;
+                        sprite_idx      <= 4'd0;
+                        budget_bursts_q <= 8'(FETCH_BUDGET_BURSTS);
+                        fstate          <= F_EVAL;
+                    end
+                end
+
+                // ------------------------------------------------------------
+                F_EVAL: begin
+                    if (eval_visible && (budget_bursts_q > 0)) begin
+                        visible_width_q   <= eval_vis_width[12:0];
+                        format_q          <= eval_format;
+                        cache_wr_x_q      <= eval_clip_left[11:0];
+                        byte_addr_burst_q <= eval_addr_aligned;
+                        bytes_remaining_q <= eval_total_bytes[13:0];
+                        skip_pixels_q     <= eval_skip_pixels;
+                        fstate            <= F_ISSUE_AR;
+                    end else begin
+                        // Skip this sprite (not visible or budget exhausted).
+                        if (sprite_idx == N_SPRITES - 1)
+                            fstate <= F_IDLE;
+                        else
+                            sprite_idx <= sprite_idx + 4'd1;
+                    end
+                end
+
+                // ------------------------------------------------------------
+                F_ISSUE_AR: begin
+                    // arvalid is combinational on (fstate == F_ISSUE_AR).
+                    // Wait for arready, then capture the burst.
+                    if (m_axi_arready) begin
+                        beats_left_q   <= 4'd8;
+                        beat_drain_q   <= 4'd0;
+                        if (budget_bursts_q != 0)
+                            budget_bursts_q <= budget_bursts_q - 8'd1;
+                        fstate <= F_DRAIN;
+                    end
+                end
+
+                // ------------------------------------------------------------
+                F_DRAIN: begin
+                    // 1) If beat_drain_q == 0, accept the next AXI beat.
+                    //    rready is automatic via (fstate == F_DRAIN) && (beat_drain_q == 0).
+                    if ((beat_drain_q == 4'd0) && m_axi_rvalid) begin
+                        beat_buffer_q <= m_axi_rdata;
+                        beat_drain_q  <= format_q ? 4'd2 : 4'd4;
+                        beats_left_q  <= beats_left_q - 4'd1;
+                    end
+
+                    // 2) Emit one pixel per cycle from the beat buffer.
+                    if (beat_drain_q != 0) begin
+                        if (skip_pixels_q != 0) begin
+                            skip_pixels_q <= skip_pixels_q - 2'd1;
+                        end else if (visible_width_q != 0) begin
+                            cache_wr_en[sprite_idx] <= 1'b1;
+                            cache_wr_addr           <= cache_wr_x_q[9:0];
+                            cache_wr_data           <= next_pixel_internal;
+                            cache_wr_x_q            <= cache_wr_x_q + 12'd1;
+                            visible_width_q         <= visible_width_q - 13'd1;
+                        end
+                        // Shift the beat buffer down by one pixel.
+                        beat_buffer_q <= format_q ? {32'd0, beat_buffer_q[63:32]}
+                                                  : {16'd0, beat_buffer_q[63:16]};
+                        beat_drain_q  <= beat_drain_q - 4'd1;
+                        // Last beat fully consumed?
+                        if ((beat_drain_q == 4'd1) && (beats_left_q == 4'd0)) begin
+                            // Burst done.  rready already gated to 0 since beats_left_q reached 0.
+                            byte_addr_burst_q <= byte_addr_burst_q + 32'd64;
+                            bytes_remaining_q <= (bytes_remaining_q > 14'd64)
+                                                ? bytes_remaining_q - 14'd64
+                                                : 14'd0;
+                            if ((bytes_remaining_q > 14'd64) && (visible_width_q > 13'd1))
+                                fstate <= F_ISSUE_AR;
+                            else
+                                fstate <= F_NEXT;
+                        end
+                    end
+                end
+
+                // ------------------------------------------------------------
+                F_NEXT: begin
+                    if (sprite_idx == N_SPRITES - 1)
+                        fstate <= F_IDLE;
+                    else begin
+                        sprite_idx <= sprite_idx + 4'd1;
+                        fstate     <= F_EVAL;
+                    end
+                end
+
+                default: fstate <= F_IDLE;
+            endcase
+        end
+    end
+
+    // ========================================================================
+    // Sprite line cache — fetcher writes on clk_fetch; compositor (later
+    // commit) reads on clk_pix.  Read side is dangled for now.
+    // ========================================================================
+    logic [9:0]                   cache_rd_addr_pix;
+    logic [31:0]                  cache_rd_data [0:N_SPRITES-1];
+
+    sprite_line_cache #(
+        .N_SPRITES  (N_SPRITES),
+        .LINE_WIDTH (LINE_WIDTH),
+        .PIXEL_W    (32),
+        .ADDR_W     (10)
+    ) u_cache (
+        .clk_a    (clk_fetch),
+        .wr_en    (cache_wr_en),
+        .wr_addr  (cache_wr_addr),
+        .wr_data  (cache_wr_data),
+        .clk_b    (clk_pix),
+        .rd_addr  (cache_rd_addr_pix),
+        .rd_data  (cache_rd_data)
+    );
+
+    // Tie off read port until compositor lands.
+    assign cache_rd_addr_pix = 10'd0;
+
+    // ========================================================================
+    // STUB: RGB passthrough.  Compositor lands in a later commit and consumes
+    // the descriptor file + per-sprite control flags + cache_rd_data above.
+    // ========================================================================
+    assign rgb_r  = fb_pixel[15:11];
+    assign rgb_g  = fb_pixel[10:5];
+    assign rgb_b  = fb_pixel[4:0];
     assign rgb_de = fb_de;
 
-    // AXI HP2 master tied off (no transactions until line fetcher lands).
-    assign m_axi_araddr  = 32'd0;
-    assign m_axi_arlen   = 8'd0;
-    assign m_axi_arsize  = 3'd0;
-    assign m_axi_arburst = 2'd0;
-    assign m_axi_arvalid = 1'b0;
-    assign m_axi_rready  = 1'b1;
-
-    // Unused inputs — quiet Vivado about them until the real compositor
-    // and fetcher land in later commits.
+    // Unused inputs — quiet Vivado until the compositor lands.
     /* verilator lint_off UNUSED */
     wire _unused = &{1'b0,
-                     clk_pix, rst,
-                     h_count, v_count, line_start, frame_start,
-                     m_axi_arready, m_axi_rdata, m_axi_rvalid, m_axi_rlast,
+                     h_count, frame_start,
+                     cache_rd_data[0],
                      1'b0};
     /* verilator lint_on UNUSED */
 

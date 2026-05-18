@@ -56,9 +56,9 @@ HDL_SRCS := \
 
 BUILD_DIR := build
 
-.PHONY: all smoke snoop read vbeam rp_bus dl_parse mode_f char_modes gfx_modes pm prior scroll nmi wsync palette dma_master mem_read_mux dma_int draw_regs pokey pokey_i2s sally sally_mem sally_arb bank_xlat pia_regs peri_link joy_link joy_bridge peri_bridge os_rom_load klaus visual lint clean xt_blitter sally_stack sally_isa sprite_regs
+.PHONY: all smoke snoop read vbeam rp_bus dl_parse mode_f char_modes gfx_modes pm prior scroll nmi wsync palette dma_master mem_read_mux dma_int draw_regs pokey pokey_i2s sally sally_mem sally_arb bank_xlat pia_regs peri_link joy_link joy_bridge peri_bridge os_rom_load klaus visual lint clean xt_blitter sally_stack sally_isa sprite_regs sprite_fetcher
 
-all: smoke snoop read vbeam rp_bus dl_parse mode_f char_modes gfx_modes pm prior scroll nmi wsync palette dma_master mem_read_mux dma_int draw_regs pokey pokey_i2s sally sally_mem sally_arb bank_xlat pia_regs peri_link joy_link joy_bridge peri_bridge os_rom_load pbi pcm1808_rx visual xt_blitter sprite_regs
+all: smoke snoop read vbeam rp_bus dl_parse mode_f char_modes gfx_modes pm prior scroll nmi wsync palette dma_master mem_read_mux dma_int draw_regs pokey pokey_i2s sally sally_mem sally_arb bank_xlat pia_regs peri_link joy_link joy_bridge peri_bridge os_rom_load pbi pcm1808_rx visual xt_blitter sprite_regs sprite_fetcher
 
 # `klaus` is NOT in `all` — Klaus Dormann's full test takes ~96 M
 # cycles (≥10 minutes of iverilog wall-clock). Run it manually with
@@ -631,6 +631,11 @@ $(BUILD_DIR)/tb_pbi.vvp: $(HDL_SRCS) tb_pbi.sv | $(BUILD_DIR)
 	$(IVERILOG) $(SV_FLAGS) -o $@ -s tb_pbi $(HDL_SRCS) tb_pbi.sv
 
 # ---- sprite_regs — sprite_engine descriptor register file ----------------
+SPRITE_ENG_HDL := \
+    $(HDL_DIR)/cdc_sync_bit.sv     \
+    $(HDL_DIR)/sprite_line_cache.sv \
+    $(HDL_DIR)/sprite_engine.sv
+
 sprite_regs: $(BUILD_DIR)/tb_sprite_regs.vvp
 	@echo "=== sprite_regs ==="
 	@$(VVP) -N $< | tee $(BUILD_DIR)/tb_sprite_regs.log
@@ -640,8 +645,21 @@ sprite_regs: $(BUILD_DIR)/tb_sprite_regs.vvp
 	    (echo "FAIL: tb_sprite_regs reported a trap"; exit 1) || true
 	@echo "PASS: tb_sprite_regs"
 
-$(BUILD_DIR)/tb_sprite_regs.vvp: $(HDL_DIR)/sprite_engine.sv tb_sprite_regs.sv | $(BUILD_DIR)
-	$(IVERILOG) $(SV_FLAGS) -o $@ -s tb_sprite_regs $(HDL_DIR)/sprite_engine.sv tb_sprite_regs.sv
+$(BUILD_DIR)/tb_sprite_regs.vvp: $(SPRITE_ENG_HDL) tb_sprite_regs.sv | $(BUILD_DIR)
+	$(IVERILOG) $(SV_FLAGS) -o $@ -s tb_sprite_regs $(SPRITE_ENG_HDL) tb_sprite_regs.sv
+
+# ---- sprite_fetcher — AXI HP2 line fetcher + line cache ------------------
+sprite_fetcher: $(BUILD_DIR)/tb_sprite_fetcher.vvp
+	@echo "=== sprite_fetcher ==="
+	@$(VVP) -N $< | tee $(BUILD_DIR)/tb_sprite_fetcher.log
+	@grep -q '\*\*\* SPRITE_FETCHER OK \*\*\*' $(BUILD_DIR)/tb_sprite_fetcher.log || \
+	    (echo "FAIL: tb_sprite_fetcher missing SPRITE_FETCHER OK"; exit 1)
+	@grep -q 'TRAP\|FATAL\|FAIL' $(BUILD_DIR)/tb_sprite_fetcher.log && \
+	    (echo "FAIL: tb_sprite_fetcher reported a trap"; exit 1) || true
+	@echo "PASS: tb_sprite_fetcher"
+
+$(BUILD_DIR)/tb_sprite_fetcher.vvp: $(SPRITE_ENG_HDL) tb_sprite_fetcher.sv axi_slave_mem.sv | $(BUILD_DIR)
+	$(IVERILOG) $(SV_FLAGS) -o $@ -s tb_sprite_fetcher $(SPRITE_ENG_HDL) axi_slave_mem.sv tb_sprite_fetcher.sv
 
 # ---- Visual smoke (no oracle, dumps PPMs only) ---------------------------
 visual: $(BUILD_DIR)/tb_visual.vvp
