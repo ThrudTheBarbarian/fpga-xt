@@ -93,7 +93,13 @@ module fb_scanout #(
     output wire         rgb_hsync,
     output wire         rgb_vsync,
     output wire         rgb_de,
-    output wire         rgb_pixclk
+    output wire         rgb_pixclk,
+
+    // ---- vbeam taps (clk_pix) — for sprite_engine compositor -------------
+    output wire  [11:0] h_count_o,
+    output wire  [11:0] v_count_o,
+    output wire         line_start_o,    // 1-cycle pulse at start of each scanline
+    output wire         frame_start_o    // 1-cycle pulse at start of each frame
 );
 
     // ====================================================================
@@ -103,6 +109,13 @@ module fb_scanout #(
     wire        in_active;
     wire        de_pix, hsync_pix, vsync_pix;
     wire        line_start_pix, frame_start_pix;
+
+    // Expose the vbeam taps so sprite_engine can drive its compositor /
+    // line-fetcher off the same scanline timing.
+    assign h_count_o    = h_count;
+    assign v_count_o    = v_count;
+    assign line_start_o = line_start_pix;
+    assign frame_start_o = frame_start_pix;
 
     vbeam #(
         .H_ACTIVE          (H_ACTIVE),

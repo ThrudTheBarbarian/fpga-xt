@@ -767,10 +767,12 @@ module fpga_xt_top #(
     // future mode mux will wire it in for legacy-Atari mode at 1080p
     // with a 5× pillarbox upscaler).
 
-    wire [4:0] fb_rgb_r;
-    wire [5:0] fb_rgb_g;
-    wire [4:0] fb_rgb_b;
-    wire       fb_rgb_hsync, fb_rgb_vsync, fb_rgb_de, fb_rgb_pixclk;
+    wire [4:0]  fb_rgb_r;
+    wire [5:0]  fb_rgb_g;
+    wire [4:0]  fb_rgb_b;
+    wire        fb_rgb_hsync, fb_rgb_vsync, fb_rgb_de, fb_rgb_pixclk;
+    wire [11:0] fb_h_count, fb_v_count;
+    wire        fb_line_start, fb_frame_start;
 
     fb_scanout #(
         .FB_BASE      (32'h3000_0000),
@@ -805,15 +807,69 @@ module fpga_xt_top #(
         .rgb_hsync       (fb_rgb_hsync),
         .rgb_vsync       (fb_rgb_vsync),
         .rgb_de          (fb_rgb_de),
-        .rgb_pixclk      (fb_rgb_pixclk)
+        .rgb_pixclk      (fb_rgb_pixclk),
+        .h_count_o       (fb_h_count),
+        .v_count_o       (fb_v_count),
+        .line_start_o    (fb_line_start),
+        .frame_start_o   (fb_frame_start)
     );
 
-    assign rgb_r      = fb_rgb_r;
-    assign rgb_g      = fb_rgb_g;
-    assign rgb_b      = fb_rgb_b;
+    // ====================================================================
+    // sprite_engine — sprite compositor between fb_scanout and SOM RGB pins
+    // ====================================================================
+    // Scaffold stub: passthrough.  All internal submodules (descriptor
+    // regs, line cache, fetcher, compositor) land in subsequent commits.
+    wire [4:0] spr_rgb_r;
+    wire [5:0] spr_rgb_g;
+    wire [4:0] spr_rgb_b;
+    wire       spr_rgb_de;
+
+    sprite_engine u_sprite_engine (
+        .clk_fetch     (clk_sys),
+        .clk_pix       (clk_pix),
+        .rst           (rst_pix),
+
+        .h_count       (fb_h_count),
+        .v_count       (fb_v_count),
+        .line_start    (fb_line_start),
+        .frame_start   (fb_frame_start),
+
+        // Register interface — tied off until commit-2 wires descriptor
+        // writes from SALLY's hwreg path.
+        .reg_we        (1'b0),
+        .reg_addr      (8'h00),
+        .reg_wdata     (8'h00),
+        .reg_rdata     (),
+
+        .fb_pixel      ({fb_rgb_r, fb_rgb_g, fb_rgb_b}),
+        .fb_de         (fb_rgb_de),
+
+        .rgb_r         (spr_rgb_r),
+        .rgb_g         (spr_rgb_g),
+        .rgb_b         (spr_rgb_b),
+        .rgb_de        (spr_rgb_de),
+
+        // AXI HP2 master — dangled for the scaffold.  When the line
+        // fetcher lands these connect to the PS BD's M_AXI_HP2 (bit
+        // flow) or the OOC stub.
+        .m_axi_araddr  (),
+        .m_axi_arlen   (),
+        .m_axi_arsize  (),
+        .m_axi_arburst (),
+        .m_axi_arvalid (),
+        .m_axi_arready (1'b0),
+        .m_axi_rdata   (64'd0),
+        .m_axi_rvalid  (1'b0),
+        .m_axi_rlast   (1'b0),
+        .m_axi_rready  ()
+    );
+
+    assign rgb_r      = spr_rgb_r;
+    assign rgb_g      = spr_rgb_g;
+    assign rgb_b      = spr_rgb_b;
     assign rgb_hsync  = fb_rgb_hsync;
     assign rgb_vsync  = fb_rgb_vsync;
-    assign rgb_de     = fb_rgb_de;
+    assign rgb_de     = spr_rgb_de;
     assign rgb_pixclk = fb_rgb_pixclk;
 
     // ====================================================================
