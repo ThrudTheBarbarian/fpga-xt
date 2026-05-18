@@ -97,6 +97,15 @@ module fpga_xt_top #(
 
     MMCME2_BASE #(
         .CLKIN1_PERIOD    (20.000),
+        // Z7020 Artix-7 production config: sally 100 MHz, sys 150 MHz.
+        // VCO = 1200 MHz (MULT_F=24); CLKOUT0_F=12 → 100 MHz sally,
+        // CLKOUT1=8 → 150 MHz sys.
+        //
+        // Z7030 Kintex-7 fabric headroom note (probed 2026-05-18): same
+        // logic closes timing at sally 135 MHz on -2 Kintex (WNS +0.079
+        // ns post-route) — a 35% sally speedup if/when a Z7030 board
+        // becomes worthwhile.  Limit is Arlet's CPU pipeline (11 logic
+        // levels from BRAM read through IR/ALU to BRAM write).
         .CLKFBOUT_MULT_F  (24.000),
         .DIVCLK_DIVIDE    (1),
         .CLKOUT0_DIVIDE_F (12.000),
