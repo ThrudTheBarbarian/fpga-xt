@@ -231,6 +231,10 @@ if {$flow eq "impl" || $flow eq "bit"} {
     # CARRY4 chain flipped negative after adding the sally_mem stack BRAM.
     phys_opt_design
     route_design
+    # Post-route phys_opt — recovers sub-ns slack on routing-bound paths
+    # that survive route_design (e.g., the sprite compositor's BRAM→tree
+    # path where the logic levels are small but routing dominates).
+    phys_opt_design -directive AggressiveExplore
     write_checkpoint -force [file join $out_dir post_route.dcp]
     report_utilization -file [file join $out_dir post_route_util.rpt]
     report_timing_summary -file [file join $out_dir post_route_timing.rpt]

@@ -316,9 +316,24 @@ module sprite_engine #(
     // ========================================================================
     // Sprite line fetcher FSM (clk_fetch domain)
     // ========================================================================
-    typedef enum logic [2:0] {
+    // The eval phase is split into 3 cycles to break the long combinational
+    // chain (sprite_idx mux → CARRY4 chain for visibility/clip → FSM next
+    // state) that otherwise pushes WNS to ≈ -3.6 ns at 150 MHz clk_sys:
+    //
+    //   F_EVAL_LATCH — latch desc[sprite_idx] fields into eval_*_q.
+    //   F_EVAL_VIS   — compute visibility + clip from eval_*_q; register
+    //                  vis_*_q and decide eval_visible_q.
+    //   F_EVAL_ADDR  — compute byte_addr/byte_len/skip from vis_*_q + format;
+    //                  transition to F_ISSUE_AR or advance sprite_idx.
+    //
+    // Per-sprite cost rises from 1 cycle to 3 cycles in the skip path, but
+    // 16 × 3 = 48 cycles is negligible against a 2200-cycle scanline.
+    typedef enum logic [3:0] {
         F_IDLE,
-        F_EVAL,
+        F_EVAL_LATCH,    // mux desc[sprite_idx] → ev_*_q
+        F_EVAL_VIS_A,    // compute vis_right + vis_width_full + arena_row/col
+        F_EVAL_VIS_B,    // compute vis_width (clamp to LINE_WIDTH) + decision
+        F_EVAL_ADDR,     // byte_addr math, transition to F_ISSUE_AR
         F_ISSUE_AR,
         F_DRAIN,
         F_NEXT
@@ -335,6 +350,29 @@ module sprite_engine #(
     logic [13:0] bytes_remaining_q;      // pixel bytes still to write for this sprite
     logic [1:0]  skip_pixels_q;          // 0..3 (16-bit) / 0..1 (32-bit) skip at start
     logic [7:0]  budget_bursts_q;        // bursts remaining for this scanline
+
+    // ---- Pipelined eval-stage registers (clk_fetch) -----------------------
+    // Populated in F_EVAL_LATCH from desc[sprite_idx].
+    logic signed [11:0] ev_screen_x_q;
+    logic signed [11:0] ev_screen_y_q;
+    logic [11:0]        ev_arena_x_q;
+    logic [11:0]        ev_arena_y_q;
+    logic [3:0]         ev_log2sz_q;
+    logic               ev_format_q;
+    logic               ev_en_q;
+    logic [13:0]        ev_size_q;       // 1 << log2sz
+    logic signed [12:0] ev_local_y_q;    // next_vcount - screen_y
+    logic               ev_y_in_range_q;
+    logic signed [12:0] ev_vis_left_q;
+    logic signed [13:0] ev_vis_right_edge_q;
+    // Populated in F_EVAL_VIS from the _q values above.
+    logic signed [13:0] ev_vis_right_q;
+    logic signed [13:0] ev_vis_width_full_q;     // populated in F_EVAL_VIS_A
+    logic signed [13:0] ev_vis_width_q;
+    logic               ev_visible_q;
+    logic [11:0]        ev_clip_left_q;
+    logic [11:0]        ev_arena_row_q;
+    logic [11:0]        ev_arena_col_first_q;
 
     // Per-beat draining state -----------------------------------------------
     logic [63:0] beat_buffer_q;
@@ -357,47 +395,54 @@ module sprite_engine #(
     logic [31:0]          cache_wr_data;
 
     // ------------------------------------------------------------------------
-    // Combinational visibility / clip computation for sprite_idx.
+    // Eval stage 1 (F_EVAL_LATCH) — combinational inputs sourced from
+    // desc[sprite_idx].  Registered into ev_*_q at the F_EVAL_LATCH posedge.
     // ------------------------------------------------------------------------
-    wire signed [12:0] eval_screen_x = $signed({desc_screen_x[sprite_idx][11], desc_screen_x[sprite_idx]});
-    wire signed [12:0] eval_screen_y = $signed({desc_screen_y[sprite_idx][11], desc_screen_y[sprite_idx]});
-    wire signed [12:0] eval_vc       = $signed({1'b0, next_vcount_q});
-    wire signed [12:0] eval_size     = $signed({1'b0, 12'd1 << desc_log2sz[sprite_idx]});
-    wire signed [12:0] eval_local_y  = eval_vc - eval_screen_y;
+    wire signed [12:0] latch_screen_x_se = $signed({desc_screen_x[sprite_idx][11], desc_screen_x[sprite_idx]});
+    wire signed [12:0] latch_screen_y_se = $signed({desc_screen_y[sprite_idx][11], desc_screen_y[sprite_idx]});
+    wire signed [12:0] latch_vc          = $signed({1'b0, next_vcount_q});
+    wire [13:0]        latch_size        = 14'd1 << desc_log2sz[sprite_idx];
+    wire signed [12:0] latch_local_y     = latch_vc - latch_screen_y_se;
+    wire               latch_y_in_range  = (latch_local_y >= 0) &&
+                                            ($signed({1'b0, latch_local_y}) < $signed({1'b0, latch_size}));
+    wire signed [13:0] latch_right_edge  = $signed({latch_screen_x_se[12], latch_screen_x_se})
+                                              + $signed({1'b0, latch_size});
+    wire signed [12:0] latch_vis_left    = (latch_screen_x_se < 0) ? 13'sd0 : latch_screen_x_se;
 
-    wire eval_y_in_range = (eval_local_y >= 0) && (eval_local_y < eval_size);
-    wire signed [13:0] eval_right_edge = eval_screen_x + eval_size;
+    // ------------------------------------------------------------------------
+    // Eval stage 2A (F_EVAL_VIS_A) — combinational from ev_*_q populated by
+    // F_EVAL_LATCH.  Computes vis_right (clamp) and vis_width_full
+    // (subtract).  Registered at the F_EVAL_VIS_A posedge.
+    // ------------------------------------------------------------------------
+    wire signed [13:0] vis_right_w     = (ev_vis_right_edge_q > $signed(14'(SCREEN_W)))
+                                            ? $signed(14'(SCREEN_W)) : ev_vis_right_edge_q;
+    wire signed [13:0] vis_width_full_w = vis_right_w - $signed({1'b0, ev_vis_left_q});
+    wire signed [12:0] vis_clip_left_w = ev_vis_left_q - ev_screen_x_q;
+    wire [11:0]        vis_arena_row_w = ev_arena_y_q + ev_local_y_q[11:0];
+    wire [11:0]        vis_arena_col_first_w = ev_arena_x_q + vis_clip_left_w[11:0];
 
-    wire signed [12:0] eval_vis_left  = (eval_screen_x  < 0)                  ? 13'sd0 : eval_screen_x;
-    wire signed [13:0] eval_vis_right = (eval_right_edge > $signed(14'(SCREEN_W))) ?
-                                            $signed(14'(SCREEN_W)) : eval_right_edge;
-    wire signed [13:0] eval_vis_width_full = eval_vis_right - eval_vis_left;
-    // Clamp to LINE_WIDTH so we never exceed cache geometry.
-    wire signed [13:0] eval_vis_width = (eval_vis_width_full > $signed(14'(LINE_WIDTH))) ?
-                                            $signed(14'(LINE_WIDTH)) : eval_vis_width_full;
-    wire eval_visible = sprite_en[sprite_idx]
-                        && global_enable
-                        && eval_y_in_range
-                        && (eval_vis_width > 0);
+    // ------------------------------------------------------------------------
+    // Eval stage 2B (F_EVAL_VIS_B) — combinational from registered
+    // ev_vis_width_full_q.  Computes vis_width clamp + visible decision.
+    // ------------------------------------------------------------------------
+    wire signed [13:0] vis_width_w     = (ev_vis_width_full_q > $signed(14'(LINE_WIDTH)))
+                                            ? $signed(14'(LINE_WIDTH)) : ev_vis_width_full_q;
+    wire               vis_visible_w   = ev_en_q && global_enable && ev_y_in_range_q && (vis_width_w > 0);
 
-    wire signed [12:0] eval_clip_left = eval_vis_left - eval_screen_x;       // sprite-local x of first emitted pixel
-    wire [11:0]        eval_arena_row = desc_arena_y[sprite_idx] + eval_local_y[11:0];
-    wire [11:0]        eval_arena_col_first = desc_arena_x[sprite_idx] + eval_clip_left[11:0];
-
-    wire eval_format        = sprite_format[sprite_idx];
-    wire [5:0]  eval_pix_shift    = eval_format ? 6'd2 : 6'd1;
-    wire [5:0]  eval_stride_shift = eval_format ? 6'd14 : 6'd13;
-
-    // Byte-precise start address (pre-alignment)
-    wire [31:0] eval_addr_pix = ARENA_BASE
-                              + ({20'd0, eval_arena_row} << eval_stride_shift)
-                              + ({20'd0, eval_arena_col_first} << eval_pix_shift);
-    wire [31:0] eval_addr_aligned = eval_addr_pix & 32'hFFFF_FFF8;
-    wire [2:0]  eval_skip_bytes = eval_addr_pix[2:0];
-    wire [1:0]  eval_skip_pixels = eval_format ? {1'b0, eval_skip_bytes[2]} : eval_skip_bytes[2:1];
-
-    wire [13:0] eval_byte_len_pix = (eval_vis_width[11:0] << eval_pix_shift); // up to 4096
-    wire [14:0] eval_total_bytes = {1'b0, eval_byte_len_pix} + {12'd0, eval_skip_bytes};
+    // ------------------------------------------------------------------------
+    // Eval stage 3 (F_EVAL_ADDR) — byte-address math from vis_*_q.  Uses
+    // ev_format_q to choose 16-bit vs 32-bit arena stride.
+    // ------------------------------------------------------------------------
+    wire [5:0]  addr_pix_shift    = ev_format_q ? 6'd2 : 6'd1;
+    wire [5:0]  addr_stride_shift = ev_format_q ? 6'd14 : 6'd13;
+    wire [31:0] addr_pix_w        = ARENA_BASE
+                                  + ({20'd0, ev_arena_row_q} << addr_stride_shift)
+                                  + ({20'd0, ev_arena_col_first_q} << addr_pix_shift);
+    wire [31:0] addr_aligned_w    = addr_pix_w & 32'hFFFF_FFF8;
+    wire [2:0]  addr_skip_bytes_w = addr_pix_w[2:0];
+    wire [1:0]  addr_skip_pixels_w = ev_format_q ? {1'b0, addr_skip_bytes_w[2]} : addr_skip_bytes_w[2:1];
+    wire [13:0] addr_byte_len_pix_w = (ev_vis_width_q[11:0] << addr_pix_shift);
+    wire [14:0] addr_total_bytes_w  = {1'b0, addr_byte_len_pix_w} + {12'd0, addr_skip_bytes_w};
 
     // ------------------------------------------------------------------------
     // Pixel demux from beat_buffer_q.
@@ -442,6 +487,25 @@ module sprite_engine #(
                 cache_wr_en[ci] <= 1'b0;
             cache_wr_addr     <= 10'd0;
             cache_wr_data     <= 32'd0;
+            ev_screen_x_q        <= 12'sd0;
+            ev_screen_y_q        <= 12'sd0;
+            ev_arena_x_q         <= 12'd0;
+            ev_arena_y_q         <= 12'd0;
+            ev_log2sz_q          <= 4'd0;
+            ev_format_q          <= 1'b0;
+            ev_en_q              <= 1'b0;
+            ev_size_q            <= 14'd0;
+            ev_local_y_q         <= 13'sd0;
+            ev_y_in_range_q      <= 1'b0;
+            ev_vis_left_q        <= 13'sd0;
+            ev_vis_right_edge_q  <= 14'sd0;
+            ev_vis_right_q       <= 14'sd0;
+            ev_vis_width_full_q  <= 14'sd0;
+            ev_vis_width_q       <= 14'sd0;
+            ev_visible_q         <= 1'b0;
+            ev_clip_left_q       <= 12'd0;
+            ev_arena_row_q       <= 12'd0;
+            ev_arena_col_first_q <= 12'd0;
         end else begin
             // Default: drop one-shots
             for (ci = 0; ci < N_SPRITES; ci = ci + 1)
@@ -454,27 +518,69 @@ module sprite_engine #(
                         next_vcount_q   <= fetch_next_vcount;
                         sprite_idx      <= 4'd0;
                         budget_bursts_q <= 8'(FETCH_BUDGET_BURSTS);
-                        fstate          <= F_EVAL;
+                        fstate          <= F_EVAL_LATCH;
                     end
                 end
 
                 // ------------------------------------------------------------
-                F_EVAL: begin
-                    if (eval_visible && (budget_bursts_q > 0)) begin
-                        visible_width_q   <= eval_vis_width[12:0];
-                        format_q          <= eval_format;
-                        cache_wr_x_q      <= eval_clip_left[11:0];
-                        byte_addr_burst_q <= eval_addr_aligned;
-                        bytes_remaining_q <= eval_total_bytes[13:0];
-                        skip_pixels_q     <= eval_skip_pixels;
-                        fstate            <= F_ISSUE_AR;
+                F_EVAL_LATCH: begin
+                    // Cycle 1: latch desc[sprite_idx] + compute size, local_y.
+                    ev_screen_x_q       <= desc_screen_x[sprite_idx];
+                    ev_screen_y_q       <= desc_screen_y[sprite_idx];
+                    ev_arena_x_q        <= desc_arena_x[sprite_idx];
+                    ev_arena_y_q        <= desc_arena_y[sprite_idx];
+                    ev_log2sz_q         <= desc_log2sz[sprite_idx];
+                    ev_format_q         <= sprite_format[sprite_idx];
+                    ev_en_q             <= sprite_en[sprite_idx];
+                    ev_size_q           <= latch_size;
+                    ev_local_y_q        <= latch_local_y;
+                    ev_y_in_range_q     <= latch_y_in_range;
+                    ev_vis_left_q       <= latch_vis_left;
+                    ev_vis_right_edge_q <= latch_right_edge;
+                    fstate              <= F_EVAL_VIS_A;
+                end
+
+                // ------------------------------------------------------------
+                F_EVAL_VIS_A: begin
+                    // Cycle 2: clamp vis_right, subtract vis_width_full,
+                    // pre-compute arena_row/col + clip_left.  No decision
+                    // — that happens in F_EVAL_VIS_B against a registered
+                    // vis_width_full so the CARRY4 chain doesn't gate the
+                    // sprite_idx CE in a single cycle.
+                    ev_vis_right_q       <= vis_right_w;
+                    ev_vis_width_full_q  <= vis_width_full_w;
+                    ev_clip_left_q       <= vis_clip_left_w[11:0];
+                    ev_arena_row_q       <= vis_arena_row_w;
+                    ev_arena_col_first_q <= vis_arena_col_first_w;
+                    fstate               <= F_EVAL_VIS_B;
+                end
+
+                // ------------------------------------------------------------
+                F_EVAL_VIS_B: begin
+                    // Cycle 3: clamp vis_width to LINE_WIDTH + decide.
+                    ev_vis_width_q <= vis_width_w;
+                    ev_visible_q   <= vis_visible_w;
+                    if (vis_visible_w && (budget_bursts_q > 0)) begin
+                        fstate <= F_EVAL_ADDR;
+                    end else if (sprite_idx == N_SPRITES - 1) begin
+                        fstate <= F_IDLE;
                     end else begin
-                        // Skip this sprite (not visible or budget exhausted).
-                        if (sprite_idx == N_SPRITES - 1)
-                            fstate <= F_IDLE;
-                        else
-                            sprite_idx <= sprite_idx + 4'd1;
+                        sprite_idx <= sprite_idx + 4'd1;
+                        fstate     <= F_EVAL_LATCH;
                     end
+                end
+
+                // ------------------------------------------------------------
+                F_EVAL_ADDR: begin
+                    // Cycle 3: byte_addr math, latch burst-walk state,
+                    // advance to F_ISSUE_AR.
+                    visible_width_q   <= ev_vis_width_q[12:0];
+                    format_q          <= ev_format_q;
+                    cache_wr_x_q      <= ev_clip_left_q;
+                    byte_addr_burst_q <= addr_aligned_w;
+                    bytes_remaining_q <= addr_total_bytes_w[13:0];
+                    skip_pixels_q     <= addr_skip_pixels_w;
+                    fstate            <= F_ISSUE_AR;
                 end
 
                 // ------------------------------------------------------------
@@ -536,7 +642,7 @@ module sprite_engine #(
                         fstate <= F_IDLE;
                     else begin
                         sprite_idx <= sprite_idx + 4'd1;
-                        fstate     <= F_EVAL;
+                        fstate     <= F_EVAL_LATCH;
                     end
                 end
 
@@ -644,6 +750,17 @@ module sprite_engine #(
     end
 
     // Stage 3: alpha test + priority resolve ---------------------------------
+    //
+    // Tree-reduce priority resolve over 16 candidates, split across two
+    // clk_pix cycles to keep logic depth per cycle under the 6.7 ns budget:
+    //   Cycle A: leaves → l1 → l2 (16 → 8 → 4 candidates), register into
+    //            mid_cand_q[0:3] at the next posedge.
+    //   Cycle B: mid_cand_q → l3 → l4 (4 → 2 → 1 winner), feeds the alpha
+    //            blend.
+    // Each merge picks the higher-priority candidate, carrying its pixel
+    // data alongside the priority field so no separate "mux by winner
+    // index" step is needed.  Ties resolve to the higher sprite index
+    // (b-side wins on equal prio).
     logic [N_SPRITES-1:0] s3_has_color;
     genvar ga;
     generate
@@ -652,25 +769,108 @@ module sprite_engine #(
         end
     endgenerate
 
-    logic [4:0]  s3_winner_prio;
-    logic [3:0]  s3_winner_idx;
-    logic        s3_winner_valid;
-    logic [31:0] s3_winner_pixel;
+    // Level 1: 16 leaves → 8 pairs ------------------------------------------
+    logic        l1_valid [0:7];
+    logic [4:0]  l1_prio  [0:7];
+    logic [31:0] l1_pixel [0:7];
 
-    always_comb begin
-        s3_winner_prio  = 5'd0;
-        s3_winner_idx   = 4'd0;
-        s3_winner_valid = 1'b0;
-        for (int k = 0; k < N_SPRITES; k = k + 1) begin
-            // >= so higher-index ties win (consistent, deterministic).
-            if (s3_has_color[k] && (s2_prio_q[k] >= s3_winner_prio)) begin
-                s3_winner_prio  = s2_prio_q[k];
-                s3_winner_idx   = 4'(k);
-                s3_winner_valid = 1'b1;
-            end
+    // Level 2: 8 → 4 ---------------------------------------------------------
+    logic        l2_valid [0:3];
+    logic [4:0]  l2_prio  [0:3];
+    logic [31:0] l2_pixel [0:3];
+
+    // Level 3: 4 → 2 ---------------------------------------------------------
+    logic        l3_valid [0:1];
+    logic [4:0]  l3_prio  [0:1];
+    logic [31:0] l3_pixel [0:1];
+
+    // Level 4: 2 → 1 (final winner) -----------------------------------------
+    logic        l4_valid;
+    logic [4:0]  l4_prio;
+    logic [31:0] l4_pixel;
+
+    genvar gtr;
+    generate
+        for (gtr = 0; gtr < 8; gtr = gtr + 1) begin : g_l1
+            wire        a_v = s3_has_color[gtr*2];
+            wire        b_v = s3_has_color[gtr*2 + 1];
+            wire [4:0]  a_p = s2_prio_q[gtr*2];
+            wire [4:0]  b_p = s2_prio_q[gtr*2 + 1];
+            wire        b_wins = b_v && (!a_v || (b_p >= a_p));
+            assign l1_valid[gtr] = a_v || b_v;
+            assign l1_prio[gtr]  = b_wins ? b_p : a_p;
+            assign l1_pixel[gtr] = b_wins ? cache_rd_data[gtr*2 + 1]
+                                          : cache_rd_data[gtr*2];
         end
-        s3_winner_pixel = cache_rd_data[s3_winner_idx];
+
+        for (gtr = 0; gtr < 4; gtr = gtr + 1) begin : g_l2
+            wire b_wins = l1_valid[gtr*2 + 1]
+                           && (!l1_valid[gtr*2] || (l1_prio[gtr*2 + 1] >= l1_prio[gtr*2]));
+            assign l2_valid[gtr] = l1_valid[gtr*2] || l1_valid[gtr*2 + 1];
+            assign l2_prio[gtr]  = b_wins ? l1_prio[gtr*2 + 1]  : l1_prio[gtr*2];
+            assign l2_pixel[gtr] = b_wins ? l1_pixel[gtr*2 + 1] : l1_pixel[gtr*2];
+        end
+
+    endgenerate
+
+    // Pipeline register between l2 and l3 ------------------------------------
+    logic        mid_valid_q [0:3];
+    logic [4:0]  mid_prio_q  [0:3];
+    logic [31:0] mid_pixel_q [0:3];
+    // Pipeline fb_pixel chain by one extra cycle to align with the deeper
+    // compositor pipeline (was 3 stages, now 4 stages).
+    logic [15:0] mid_fb_pixel_q;
+    logic        mid_fb_de_q;
+    logic        mid_fb_hsync_q;
+    logic        mid_fb_vsync_q;
+
+    integer mi;
+    always_ff @(posedge clk_pix) begin
+        if (rst) begin
+            for (mi = 0; mi < 4; mi = mi + 1) begin
+                mid_valid_q[mi] <= 1'b0;
+                mid_prio_q[mi]  <= 5'd0;
+                mid_pixel_q[mi] <= 32'd0;
+            end
+            mid_fb_pixel_q <= 16'h0000;
+            mid_fb_de_q    <= 1'b0;
+            mid_fb_hsync_q <= 1'b0;
+            mid_fb_vsync_q <= 1'b0;
+        end else begin
+            for (mi = 0; mi < 4; mi = mi + 1) begin
+                mid_valid_q[mi] <= l2_valid[mi];
+                mid_prio_q[mi]  <= l2_prio[mi];
+                mid_pixel_q[mi] <= l2_pixel[mi];
+            end
+            mid_fb_pixel_q <= s2_fb_pixel_q;
+            mid_fb_de_q    <= s2_fb_de_q;
+            mid_fb_hsync_q <= s2_fb_hsync_q;
+            mid_fb_vsync_q <= s2_fb_vsync_q;
+        end
     end
+
+    // Cycle B: 4 candidates → 1 winner --------------------------------------
+    generate
+        for (gtr = 0; gtr < 2; gtr = gtr + 1) begin : g_l3
+            wire b_wins = mid_valid_q[gtr*2 + 1]
+                           && (!mid_valid_q[gtr*2]
+                               || (mid_prio_q[gtr*2 + 1] >= mid_prio_q[gtr*2]));
+            assign l3_valid[gtr] = mid_valid_q[gtr*2] || mid_valid_q[gtr*2 + 1];
+            assign l3_prio[gtr]  = b_wins ? mid_prio_q[gtr*2 + 1]  : mid_prio_q[gtr*2];
+            assign l3_pixel[gtr] = b_wins ? mid_pixel_q[gtr*2 + 1] : mid_pixel_q[gtr*2];
+        end
+    endgenerate
+
+    wire l4_b_wins = l3_valid[1] && (!l3_valid[0] || (l3_prio[1] >= l3_prio[0]));
+    assign l4_valid = l3_valid[0] || l3_valid[1];
+    assign l4_prio  = l4_b_wins ? l3_prio[1]  : l3_prio[0];
+    assign l4_pixel = l4_b_wins ? l3_pixel[1] : l3_pixel[0];
+
+    wire        s3_winner_valid = l4_valid;
+    wire [31:0] s3_winner_pixel = l4_pixel;
+    /* verilator lint_off UNUSED */
+    wire [4:0]  s3_winner_prio_unused = l4_prio;
+    /* verilator lint_on UNUSED */
 
     // Pipeline FF2 -----------------------------------------------------------
     logic [31:0] s4_winner_pixel_q;
@@ -691,14 +891,16 @@ module sprite_engine #(
         end else begin
             s4_winner_pixel_q <= s3_winner_pixel;
             s4_winner_valid_q <= s3_winner_valid;
-            s4_fb_pixel_q     <= s2_fb_pixel_q;
-            s4_fb_de_q        <= s2_fb_de_q;
-            s4_fb_hsync_q     <= s2_fb_hsync_q;
-            s4_fb_vsync_q     <= s2_fb_vsync_q;
+            s4_fb_pixel_q     <= mid_fb_pixel_q;
+            s4_fb_de_q        <= mid_fb_de_q;
+            s4_fb_hsync_q     <= mid_fb_hsync_q;
+            s4_fb_vsync_q     <= mid_fb_vsync_q;
         end
     end
 
-    // Stage 4: alpha blend (combinational) -----------------------------------
+    // Stage 4a: multiplier inputs (combinational from s4_winner_pixel_q).
+    // Pipeline FF_mul absorbs the multiplier output into the DSP48 M
+    // register so the add + truncate + final mux all fit in one cycle.
     // Expand fb_pixel RGB565 → RGB888 (replicate top bits into the LSBs).
     wire [7:0] fb_r8 = {s4_fb_pixel_q[15:11], s4_fb_pixel_q[15:13]};
     wire [7:0] fb_g8 = {s4_fb_pixel_q[10:5],  s4_fb_pixel_q[10:9]};
@@ -710,30 +912,61 @@ module sprite_engine #(
     wire [7:0] alpha = s4_winner_pixel_q[7:0];
     wire [7:0] inv_a = 8'hFF - alpha;
 
-    // out = (sp * a + fb * (255-a) + 128) >> 8.  The +128 is the standard
-    // round-to-nearest for 8-bit Porter-Duff blends and costs a single
-    // adder slice.  3 × 8x8 unsigned mults map to DSP48s on Zynq-7020.
-    wire [15:0] r_mul_sp = sp_r8 * alpha;
-    wire [15:0] r_mul_fb = fb_r8 * inv_a;
-    wire [16:0] r_sum    = {1'b0, r_mul_sp} + {1'b0, r_mul_fb} + 17'd128;
+    // Pipeline FF_mul — registered multiplier outputs + fb pixeled forward.
+    // 3 × 2 = 6 × 8x8 unsigned mults map to 6 DSP48s on Zynq-7020.  Output
+    // registers get absorbed into the DSP M register for sub-ns delay.
+    logic [15:0] r_mul_sp_q, r_mul_fb_q;
+    logic [15:0] g_mul_sp_q, g_mul_fb_q;
+    logic [15:0] b_mul_sp_q, b_mul_fb_q;
+    logic        s5_winner_valid_q;
+    logic [15:0] s5_fb_pixel_q;
+    logic        s5_fb_de_q;
+    logic        s5_fb_hsync_q;
+    logic        s5_fb_vsync_q;
+
+    always_ff @(posedge clk_pix) begin
+        if (rst) begin
+            r_mul_sp_q <= 16'd0;
+            r_mul_fb_q <= 16'd0;
+            g_mul_sp_q <= 16'd0;
+            g_mul_fb_q <= 16'd0;
+            b_mul_sp_q <= 16'd0;
+            b_mul_fb_q <= 16'd0;
+            s5_winner_valid_q <= 1'b0;
+            s5_fb_pixel_q     <= 16'h0000;
+            s5_fb_de_q        <= 1'b0;
+            s5_fb_hsync_q     <= 1'b0;
+            s5_fb_vsync_q     <= 1'b0;
+        end else begin
+            r_mul_sp_q <= sp_r8 * alpha;
+            r_mul_fb_q <= fb_r8 * inv_a;
+            g_mul_sp_q <= sp_g8 * alpha;
+            g_mul_fb_q <= fb_g8 * inv_a;
+            b_mul_sp_q <= sp_b8 * alpha;
+            b_mul_fb_q <= fb_b8 * inv_a;
+            s5_winner_valid_q <= s4_winner_valid_q;
+            s5_fb_pixel_q     <= s4_fb_pixel_q;
+            s5_fb_de_q        <= s4_fb_de_q;
+            s5_fb_hsync_q     <= s4_fb_hsync_q;
+            s5_fb_vsync_q     <= s4_fb_vsync_q;
+        end
+    end
+
+    // Stage 4b (comb): add the products + 128 round bias and truncate.
+    //   out = (sp*a + fb*(255-a) + 128) >> 8.
+    wire [16:0] r_sum    = {1'b0, r_mul_sp_q} + {1'b0, r_mul_fb_q} + 17'd128;
     wire [7:0]  blend_r8 = r_sum[15:8];
-
-    wire [15:0] g_mul_sp = sp_g8 * alpha;
-    wire [15:0] g_mul_fb = fb_g8 * inv_a;
-    wire [16:0] g_sum    = {1'b0, g_mul_sp} + {1'b0, g_mul_fb} + 17'd128;
+    wire [16:0] g_sum    = {1'b0, g_mul_sp_q} + {1'b0, g_mul_fb_q} + 17'd128;
     wire [7:0]  blend_g8 = g_sum[15:8];
-
-    wire [15:0] b_mul_sp = sp_b8 * alpha;
-    wire [15:0] b_mul_fb = fb_b8 * inv_a;
-    wire [16:0] b_sum    = {1'b0, b_mul_sp} + {1'b0, b_mul_fb} + 17'd128;
+    wire [16:0] b_sum    = {1'b0, b_mul_sp_q} + {1'b0, b_mul_fb_q} + 17'd128;
     wire [7:0]  blend_b8 = b_sum[15:8];
 
     // Truncate back to RGB565 for the SOM output.
-    wire [4:0] out_r5 = s4_winner_valid_q ? blend_r8[7:3] : s4_fb_pixel_q[15:11];
-    wire [5:0] out_g6 = s4_winner_valid_q ? blend_g8[7:2] : s4_fb_pixel_q[10:5];
-    wire [4:0] out_b5 = s4_winner_valid_q ? blend_b8[7:3] : s4_fb_pixel_q[4:0];
+    wire [4:0] out_r5 = s5_winner_valid_q ? blend_r8[7:3] : s5_fb_pixel_q[15:11];
+    wire [5:0] out_g6 = s5_winner_valid_q ? blend_g8[7:2] : s5_fb_pixel_q[10:5];
+    wire [4:0] out_b5 = s5_winner_valid_q ? blend_b8[7:3] : s5_fb_pixel_q[4:0];
 
-    // Pipeline FF3 — final output register -----------------------------------
+    // Pipeline FF_out — final output register --------------------------------
     logic [4:0] rgb_r_q;
     logic [5:0] rgb_g_q;
     logic [4:0] rgb_b_q;
@@ -753,9 +986,9 @@ module sprite_engine #(
             rgb_r_q     <= out_r5;
             rgb_g_q     <= out_g6;
             rgb_b_q     <= out_b5;
-            rgb_de_q    <= s4_fb_de_q;
-            rgb_hsync_q <= s4_fb_hsync_q;
-            rgb_vsync_q <= s4_fb_vsync_q;
+            rgb_de_q    <= s5_fb_de_q;
+            rgb_hsync_q <= s5_fb_hsync_q;
+            rgb_vsync_q <= s5_fb_vsync_q;
         end
     end
 
