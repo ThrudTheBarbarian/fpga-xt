@@ -12,11 +12,19 @@
 # BRAMs without any real resource pressure (BRAM util ~52 %, slice
 # util ~31 %).
 #
-# Fix: pin sally_mem + sally_core inside CLOCKREGION_X0Y0 (lower-left
-# quadrant).  That region has a full BRAM column (≥ 25 RAMB36 sites,
-# we use 16) plus ~2 kLUT of slices — more than sally_mem + sally_core
-# need.  Forcing co-location eliminates the cross-die routing and makes
-# the path's slack reproducible across builds.
+# Fix: pin sally_mem + sally_core inside CLOCKREGION_X0Y0 alone (30 RAMB36
+# for sally_mem's 17, 2500 SLICE for ~1.1 k cells).
+#
+# IMPORTANT — this MUST stay a single region.  A floorplan study (2026-05-22)
+# found that letting sally span two regions (any pairing: {X0Y0,X1Y0},
+# {X0Y0,X0Y1}, or overlapping xt_blitter) lifts clk_sally setup to
+# +0.12..+0.16 ns BUT breaks clk_sys hold (-0.18..-0.20 ns on the
+# rst_sys_pipe -> xt_blitter/hdmi CLR reset-deassertion paths) that even
+# three phys_opt+route hold-recovery passes cannot fix; one overlapping
+# variant crashed phys_opt outright.  Confining sally to X0Y0 keeps the
+# reset distribution compact enough that clk_sys hold closes (+0.057 ns),
+# at the cost of a tight-but-positive clk_sally setup (+0.005 ns).  The two
+# goals are mutually exclusive without reworking the sys-reset pipeline.
 #
 # Note: this pblock is "soft" (no CONTAIN_ROUTING).  The placer must keep
 # the listed cells inside the region; routing across the boundary is
@@ -25,4 +33,4 @@
 create_pblock pb_sally
 add_cells_to_pblock [get_pblocks pb_sally] [get_cells u_sally_mem]
 add_cells_to_pblock [get_pblocks pb_sally] [get_cells u_sally_core]
-resize_pblock [get_pblocks pb_sally] -add {CLOCKREGION_X0Y0 CLOCKREGION_X1Y0}
+resize_pblock [get_pblocks pb_sally] -add {CLOCKREGION_X0Y0}

@@ -242,6 +242,25 @@ if {$flow eq "impl" || $flow eq "bit"} {
     # setup gains stay while hold is cleaned up.  (Added 2026-05-22 after
     # the sally_mem defrag exposed a clk_sys hold violation in xt_blitter.)
     route_design
+    # Hold recovery.  The AggressiveExplore phys_opt above is setup-focused
+    # and can leave residual hold (min-delay) violations that the single
+    # route pass doesn't fully clean up (observed: clk_sys hold in
+    # xt_blitter at WHS=-0.18 ns after an unrelated CPU netlist change
+    # perturbed the placer).  If hold is still negative, run balanced
+    # phys_opt (which includes hold fixing) + route again, up to 3 times.
+    proc _worst_hold_ns {} {
+        set p [get_timing_paths -quiet -delay_type min -max_paths 1 -nworst 1]
+        if {[llength $p] == 0} { return 999.0 }
+        return [get_property SLACK [lindex $p 0]]
+    }
+    set whs [_worst_hold_ns]
+    for {set hp 0} {$hp < 3 && $whs < 0} {incr hp} {
+        puts ">> hold recovery pass [expr {$hp + 1}] (WHS = $whs ns) — phys_opt + route"
+        phys_opt_design
+        route_design
+        set whs [_worst_hold_ns]
+    }
+    puts ">> final worst hold slack: $whs ns"
     write_checkpoint -force [file join $out_dir post_route.dcp]
     report_utilization -file [file join $out_dir post_route_util.rpt]
     report_timing_summary -file [file join $out_dir post_route_timing.rpt]
