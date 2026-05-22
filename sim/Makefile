@@ -446,7 +446,12 @@ $(BUILD_DIR)/tb_sally_isa.vvp: $(SALLY_ISA_HDL) tb_sally_isa.sv | $(BUILD_DIR)
 # Long-running — not in the default `all`. Exits early on stuck-PC.
 klaus: $(BUILD_DIR)/tb_klaus.vvp test_data/6502_functional_test.hex
 	@echo "=== M24-klaus Klaus Dormann functional test ==="
-	@$(VVP) -N $< | tee $(BUILD_DIR)/tb_klaus.log
+	# -i (interactive, unbuffered stdio) instead of -N: this run is many
+	# minutes long, and with -N vvp's stdout is block-buffered when piped
+	# to tee, so the [progress] pings + verdict don't appear until the end.
+	# -i streams them live.  Safe here — the tb halts via $finish/$fatal
+	# (never $stop), and </dev/null guarantees no interactive blocking.
+	@$(VVP) -i $< </dev/null | tee $(BUILD_DIR)/tb_klaus.log
 	@grep -q '\*\*\* KLAUS OK \*\*\*' $(BUILD_DIR)/tb_klaus.log || \
 	    (echo "FAIL: tb_klaus did not reach success trap"; exit 1)
 	@echo "PASS: tb_klaus"
