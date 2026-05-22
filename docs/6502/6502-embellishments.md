@@ -169,6 +169,113 @@ Equally, the 65C02 has the ability to do an immediate bit-test, at this opcode l
 
 ---
 
+## 2b. Stack-pointer indirect & indexed addressing
+
+### Motivation
+
+`d,SP` (§2) covers *scalar* in-frame access, but a C compiler still
+falls back to a software stack (an `FP`-based frame in main RAM, indexed
+with `(FP),Y`) for two cases the deeper 4 KB hidden stack can't reach:
+
+1. **Dereferencing a pointer that lives on the stack.**  With only `d,SP`
+   you can load the pointer's bytes but not follow them — so pointer
+   locals/temps get pinned in zero page, and the ZP ceiling is what
+   blocks `printf` and friends.
+2. **Indexed access into an in-frame aggregate** (arrays/structs whose
+   base is at `SP+d`, indexed by a runtime value).
+
+Two new modes close both, so the software FP-frame can retire except for
+the genuinely address-taken (escaping) arena:
+
+| Mnemonic | Operation | Use |
+|----------|-----------|-----|
+| `LDA/STA (d,SP),Y` | `addr = stack8(SP+d) ∣ stack8(SP+d+1)<<8; mem[addr + Y]` | deref a stacked pointer in place |
+| `LDA/STA d,SP,X`   | `stack8(SP + d + X)` | indexed in-frame aggregate access |
+
+`(d,SP),Y` is exactly `(zp),Y` with the 16-bit pointer fetched from the
+hidden stack instead of zero page; the post-index by `Y` and the
+resulting access hit **main memory**.  `d,SP,X` is `d,SP` with `X` added
+into the (clamped, 12-bit) stack address — the access stays in the
+hidden stack.
+
+### Encoding
+
+These are addressing *modes* spanning load+store, so they don't fit the
+near-full `$x2` column.  They land in the **`$x3` column** — the cc=11
+(low-two-bits `11`) quadrant, which is the SLO/RLA/SRE/RRA combo-illegal
+group on NMOS.  A documented-only core (Arlet) decodes *none* of it, and
+SALLY's other embellishments all live in cc=00 (`$x4`: PUSH/POP) and
+cc=10 (`$x2`: `d,SP`), so the whole `$x3` column is free.  Anchored at
+the bottom for an orthogonal decode:
+
+| Opcode | bits | Mnemonic | `IR[5]` mode | `IR[4]` ld/st |
+|--------|------|----------|--------------|---------------|
+| `$03` | `0000_0011` | `LDA (d,SP),Y` | 0 = `(),Y` | 0 = load |
+| `$13` | `0001_0011` | `STA (d,SP),Y` | 0 = `(),Y` | 1 = store |
+| `$23` | `0010_0011` | `LDA d,SP,X`   | 1 = `,X`   | 0 = load |
+| `$33` | `0011_0011` | `STA d,SP,X`   | 1 = `,X`   | 1 = store |
+
+Decode is two single-bit tests: `mode_x = IR[5]`, `store = IR[4]` — no
+four-way match.  Verified (2026-05-22) that no `casex(IR)` arm in
+`cpu.v` matches these (all decode patterns need bits[3:2]∈{01,11} or
+bits[7:5]=101; `$x3` has bits[3:2]=00, bits[7:5]∈{000,001}), so they
+currently fall through to the `default` arms (treated as no-ops).  The
+remaining twelve `$x3` slots are reserved for future SP-indirect
+variants (`ADC (d,SP),Y`, `CMP d,SP,X`, …).
+
+### FSM states and datapath
+
+`(d,SP),Y` reuses the back half of Arlet's existing `(zp),Y` flow
+(`INDY2`/`INDY3`, where the 16-bit `ptr+Y` add already happens via the
+ALU).  Only the pointer fetch changes — from the stack BRAM instead of
+zero page:
+
+```
+SPINDY0:  AB = {4'h0, sp_eff_clamped};  stack_op=1     ; DI→ ptr LSB
+SPINDY1:  AB = {ABH,ABL} + 1;           stack_op=1     ; ALU: LSB + Y
+   →  INDY2 (existing): AB = {DIMUX(=ptr MSB), ADD(=LSB+Y)} ; ALU: MSB+carry  (main mem)
+   →  INDY3 (existing): page-cross fixup
+```
+
+The high-byte stack address is `(SP+d)+1`, formed by incrementing the
+already-latched `{ABH,ABL}` — no second `sp_eff` adder.
+
+`d,SP,X` is a single stack access with the index folded in:
+
+```
+SP0X_A:  AB = {4'h0, sp_eff_clamped};   (= SP+d, latched into ABH:ABL)
+SP0X_B:  AB = {ABH,ABL} + {4'h0,X};     stack_op=1     ; stack read/write
+```
+
+The `+X` is done as a **second 2-input add** on the already-computed
+`SP+d`, *not* as a single 3-input `SP+d+X`.  This keeps every cycle's
+stack-address path at the existing 2-input adder depth, which matters:
+post-place `clk_sally` WNS is thin (+0.039 ns after the sally pblock),
+and the stack-address path is in that critical family.  A single-cycle
+3-input add would add ~1 carry-save level (~0.3-0.5 ns) and erode that
+margin; the pipelined form costs one extra cycle instead and is
+fMax-neutral.
+
+### fMax
+
+Both modes are **fMax-neutral**.  `(d,SP),Y` adds only FSM states — it
+reuses `sp_eff_clamped` (2-input) and the existing INDY `ptr+Y` ALU add,
+introducing no new combinational depth.  `d,SP,X` is fMax-neutral *as
+specified* (pipelined `+X`); the ALU carry chain remains the
+`clk_sally` fmax ceiling (~107 MHz).
+
+### Cycle counts
+
+| Instruction | Cycles | Breakdown |
+|-------------|--------|-----------|
+| `LDA/STA (d,SP),Y` | 5 (+1 on page cross) | DECODE / fetch d / SPINDY0 (LSB) / SPINDY1 (MSB, +Y) / INDY2 (data) |
+| `LDA/STA d,SP,X`   | 3 | DECODE / SP0X_A (SP+d) / SP0X_B (+X, stack access) |
+
+These match the shape of the equivalent NMOS modes (`(zp),Y` = 5-6,
+`zp,X` = 4) given the hidden stack's single-port BRAM.
+
+---
+
 ## 3. Housekeeping — PSH / PLL
 
 ### Design rationale
@@ -351,6 +458,18 @@ for interrupts mid-instruction.  Even if it did, the reversed order
 points below the allocated frame.  Any interrupt push would land
 strictly below the frame, never corrupting register saves or locals.
 
+### Scope-bounded critical sections
+
+Because PSH saves `P` (including the I-flag) at function entry and
+PLL restores it at exit, an `SEI` inside the function body does not
+need a matching `CLI` before `RTS` — `PLL` puts the I-flag back to
+whatever the caller had on entry.  Critical sections inside a
+normal-prologue/epilogue function are therefore scope-bounded by
+construction: a library routine can `SEI; STA lo; STA hi` for an
+atomic 16-bit store and let the epilogue restore the caller's
+interrupt-enable state.  This is the canonical atomicity primitive
+on this CPU; no LL/SC or CAS instruction is required.
+
 ---
 
 ## 4. Calling convention sketch
@@ -513,6 +632,8 @@ PSH/PLL are multi-cycle but fixed-cost regardless of N:
 | `SBC d,SP`       | 2 | |
 | `CMP d,SP`       | 2 | |
 | `ADD SP, #signed8` | 2 | DECODE / SP_ADJ (SP write, no stack-BRAM access) |
+| `LDA/STA (d,SP),Y` | 5 (+1) | DECODE / SPIY0 (ptr LSB) / SPIY1 (ptr MSB, LSB+Y) / INDY2 (data) / FETCH; +1 cycle on page cross (INDY3) — see §2b |
+| `LDA/STA d,SP,X`   | 3 | DECODE / SPIX0 (SP+d) / SPIX1 (+X, stack access) — see §2b |
 | `PSH #N`         | 8 | fetch opcode + fetch imm/compute sp_new + 6×1-byte BRAM writes + next-opcode fetch |
 | `PLL #N`         | 8 | fetch opcode + fetch imm/compute sp_new + 6×1-byte BRAM reads + final commit/next-opcode fetch |
 
@@ -593,10 +714,21 @@ $x2 column (all JAM on original NMOS 6502):
   $32: PSH #N          $72: ADC d,SP        $B2: LDA d,SP       $F2: SBC d,SP
 
 * $A2 is LDX #imm on the original 6502 (NOT a JAM) — do not reassign.
+
+$x4 column (PUSH/POP — see §2):
+  $44: PUSH X   $54: PUSH Y   $64: POP X   $74: POP Y
+
+$x3 column (cc=11 combo-illegals on NMOS; whole column free in SALLY):
+
+  $03: LDA (d,SP),Y    $13: STA (d,SP),Y    $23: LDA d,SP,X    $33: STA d,SP,X
+  ($43..$F3 reserved for future SP-indirect variants: ADC/CMP/AND/…)
+
+  decode: mode_x = IR[5]  (0 = (),Y ; 1 = ,X) ;  store = IR[4]
 ```
 
-Spare opcodes: `$82`, `$C2`, `$E2`.  Reserve these for future
-extensions (e.g., `BIT d,SP`, `AND d,SP`, `ORA d,SP`, `EOR d,SP`).
+Spare `$x2` slots: `$82`, `$C2`, `$E2` (e.g. `AND d,SP`, `ORA d,SP`,
+`EOR d,SP`).  The `$x3` column has twelve free slots beyond the four
+above for the SP-indirect/indexed family.
 
 ---
 

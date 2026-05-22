@@ -240,7 +240,13 @@ parameter
     PSH_RUN= 6'd53, // Stage C - PSH #N runs idx=1..5 writes (SP_lo/SP_hi/Y/X/A)
     PLL0   = 6'd54, // Stage C - PLL #N init: present P read, latch sp_new
     PLL_RUN= 6'd55, // Stage C - PLL #N runs idx=1..5 reads (data appears next cycle)
-    PLL_FIN= 6'd56; // Stage C - PLL #N final: latch A, commit SP, fetch next opcode
+    PLL_FIN= 6'd56, // Stage C - PLL #N final: latch A, commit SP, fetch next opcode
+    // Stage B2 — stack-pointer indirect / indexed (§2b of embellishments).
+    SPIY0  = 6'd57, // (d,SP),Y - read ptr LSB from stack[SP+d]
+    SPIY1  = 6'd58, // (d,SP),Y - read ptr MSB from stack[SP+d+1], ALU does LSB+Y
+                    //            then merges into existing INDY2/INDY3
+    SPIX0  = 6'd59, // d,SP,X   - compute SP+d, latch into ABH:ABL (no access)
+    SPIX1  = 6'd60; // d,SP,X   - stack access at (SP+d)+X
 
 `ifdef SIM
 
@@ -308,6 +314,10 @@ always @*
             PLL0:   statename = "PLL0";
             PLL_RUN:statename = "PLLRUN";
             PLL_FIN:statename = "PLLFIN";
+            SPIY0:  statename = "SPIY0";
+            SPIY1:  statename = "SPIY1";
+            SPIX0:  statename = "SPIX0";
+            SPIX1:  statename = "SPIX1";
     endcase
 
 //always @( PC )
@@ -464,6 +474,11 @@ reg [7:0]  sp_save_lo_q;
 reg [3:0]  sp_save_hi_q;
 reg [2:0]  frame_idx;
 
+// d,SP,X stack address: the latched (SP+d) in {ABH,ABL} plus X, truncated
+// to the 4 KB hidden-stack range.  Second 2-input add (not 3-input SP+d+X)
+// to keep the stack-address path off the clk_sally critical chain.
+wire [15:0] spix_addr = { ABH, ABL } + { 8'd0, AXYS[SEL_X] };
+
 always @* begin
     stack_op = 1'b0;
     case( state )
@@ -498,6 +513,22 @@ always @* begin
         BRK2:           begin AB = { STACKPAGE_DYN, ADD     }; stack_op = 1'b1; end
 
         SP0:            begin AB = { 4'h0, sp_eff_clamped }; stack_op = 1'b1; end
+
+        // Stage B2 — stack-pointer indirect (d,SP),Y.  SPIY0 reads the
+        // pointer LSB at stack[SP+d]; ABH:ABL latch that address so SPIY1
+        // can read the MSB at (SP+d)+1 without a second sp_eff adder.
+        // After SPIY1 we fall into the existing INDY2/INDY3 ptr+Y path
+        // (which hits MAIN memory, stack_op=0 there).
+        SPIY0:          begin AB = { 4'h0, sp_eff_clamped }; stack_op = 1'b1; end
+        SPIY1:          begin AB = { ABH, ABL } + 16'd1;     stack_op = 1'b1; end
+
+        // Stage B2 — stack-pointer indexed d,SP,X.  SPIX0 computes SP+d
+        // and latches it into ABH:ABL (no stack access — stack_op stays
+        // 0, the main-mem read it triggers is discarded).  SPIX1 adds X
+        // as a second 2-input add and does the actual stack access; the
+        // 12-bit truncation keeps it inside the 4 KB hidden stack.
+        SPIX0:          AB = { 4'h0, sp_eff_clamped };
+        SPIX1:          begin AB = { 4'h0, spix_addr[11:0] }; stack_op = 1'b1; end
 
         // Stage C — PSH/PLL frame access.  All operate on the hidden
         // stack BRAM; stack_op asserted so sally_mem routes the access
@@ -603,7 +634,8 @@ always @*
         ABS1,
         ZPX1,
         ZP0,
-        SP0:     WE = store;
+        SP0,
+        SPIX1:   WE = store;    // d,SP,X store; (d,SP),Y store uses INDY3
 
         default: WE = 0;
     endcase
@@ -788,6 +820,7 @@ end
 always @*  
     case( state )
         INDY1,
+        SPIY1,
         INDX0,
         ZPX0,
         ABSX0  : regsel = index_y ? SEL_Y : SEL_X;
@@ -898,6 +931,7 @@ always @*
         BRK0,
         PULL0,
         INDY1,
+        SPIY1,
         PUSH0,
         PUSH1:  AI = regfile;
 
@@ -1166,6 +1200,11 @@ always @(posedge clk or posedge reset)
                 // stack-BRAM, 8 cycles total per instruction.
                 8'b0011_0010:   state <= PSH0;  // PSH #N
                 8'b0110_0010:   state <= PLL0;  // PLL #N
+                // Stage B2 — stack-pointer indirect/indexed ($x3 column,
+                // cc=11 NMOS combo-illegals; whole column free in SALLY).
+                // mode_x = IR[5] (0=(),Y, 1=,X); store = IR[4].
+                8'b000x_0011:   state <= SPIY0; // LDA/STA (d,SP),Y ($03/$13)
+                8'b001x_0011:   state <= SPIX0; // LDA/STA d,SP,X    ($23/$33)
                 8'b0xx1_1000:   state <= REG;   // CLC, SEC, CLI, SEI
                 // 65C02 BRA ($80) — unconditional branch.  Must
                 // precede 8'b1xx0_00x0 (which would otherwise route
@@ -1225,6 +1264,13 @@ always @(posedge clk or posedge reset)
         PULL2   : state <= DECODE;
         SP_ADJ  : state <= DECODE;      // ADD SP, #imm8: SP latched, next opcode fetched
         SP0     : state <= FETCH;       // SP-relative: stack access on this cycle,
+        // Stage B2 — (d,SP),Y: read ptr LSB then MSB from the hidden
+        // stack, then merge into the existing INDY2/INDY3 ptr+Y path.
+        SPIY0   : state <= SPIY1;
+        SPIY1   : state <= INDY2;
+        // Stage B2 — d,SP,X: latch SP+d, then +X stack access, then FETCH.
+        SPIX0   : state <= SPIX1;
+        SPIX1   : state <= FETCH;
         // Stage C — PSH walks frame_idx 0..5 in PSH0 / PSH_RUN, then
         // FETCH does the next-opcode fetch.  PLL walks 0..6 (idx=6 is
         // the cycle that consumes the slot-5 read response = A) before
@@ -1297,7 +1343,8 @@ always @(posedge clk)
                 8'b0100_0010,   // Stage B: LDX d,SP ($42)
                 8'b0101_0010,   // Stage B: LDY d,SP ($52)
                 8'b0111_0010,   // Stage B: ADC d,SP ($72)
-                8'b1111_0010:   // Stage B: SBC d,SP ($F2)
+                8'b1111_0010,   // Stage B: SBC d,SP ($F2)
+                8'b00x0_0011:   // Stage B2: LDA (d,SP),Y ($03) / LDA d,SP,X ($23)
                                 load_reg <= 1;
 
                 default:        load_reg <= 0;
@@ -1364,7 +1411,8 @@ always @(posedge clk)
         casex( IR )
                 8'bxxx1_0001,   // INDY
                 8'b10x1_x110,   // LDX/STX zpg/abs, Y
-                8'bxxxx_1001:   // abs, Y
+                8'bxxxx_1001,   // abs, Y
+                8'b000x_0011:   // Stage B2: (d,SP),Y ($03/$13) — post-index by Y
                                 index_y <= 1;
 
                 default:        index_y <= 0;
@@ -1377,7 +1425,8 @@ always @(posedge clk)
                 8'b100x_x1x0,   // STX, STY
                 8'b100x_xx01,   // STA
                 8'b1001_0010,   // Stage B: STA d,SP ($92)
-                8'b000x_0010:   // Stage B: STX/STY d,SP ($02/$12)
+                8'b000x_0010,   // Stage B: STX/STY d,SP ($02/$12)
+                8'b00x1_0011:   // Stage B2: STA (d,SP),Y ($13) / STA d,SP,X ($33)
                                 store <= 1;
 
                 default:        store <= 0;
@@ -1400,7 +1449,8 @@ always @(posedge clk )
         casex( IR )
                 8'b101x_xxxx,   // LDA, LDX, LDY (also catches $B2 LDA d,SP)
                 8'b0100_0010,   // Stage B: LDX d,SP ($42)
-                8'b0101_0010:   // Stage B: LDY d,SP ($52)
+                8'b0101_0010,   // Stage B: LDY d,SP ($52)
+                8'b00x0_0011:   // Stage B2: LDA (d,SP),Y ($03) / LDA d,SP,X ($23)
                                 load_only <= 1;
                 default:        load_only <= 0;
         endcase

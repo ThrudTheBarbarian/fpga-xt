@@ -764,6 +764,82 @@ module tb_sally_isa;
         $display("PASS: test_calling_convention");
     endtask
 
+    // ---- Test 22: LDA d,SP,X ($23) — in-frame indexed load -----------
+    // SP=$FFF.  d=$F0 (=-16) → SP+d=$FEF.  X=5 → stack[$FEF+5]=$FF4.
+    // Pre-load mem[$0FF4]=$AB; LDA $F0,SP,X must bring it into A.
+    task automatic test_lda_d_sp_x();
+        $display("=== Test 22: LDA d,SP,X ($23) ===");
+        reset_cpu();
+        mem[16'hFFFC] = 8'h00;
+        mem[16'hFFFD] = 8'h04;
+        prologue();
+        mem[16'h0FF4] = 8'hAB;                                  // stack[$FF4]
+        put(16'h0404, 8'hA2); put(16'h0405, 8'h05);             // LDX #$05
+        put(16'h0406, 8'h23); put(16'h0407, 8'hF0);             // LDA $F0,SP,X
+        put(16'h0408, 8'h8D); put(16'h0409, 8'h20); put(16'h040A, 8'h03); // STA $0320
+        put(16'h040B, 8'h4C); put(16'h040C, 8'h0B); put(16'h040D, 8'h04); // JMP $040B
+        run_until_stuck(16'h040B, 400, "LDA d,SP,X");
+        expect_mem(16'h0320, 8'hAB, "LDA $F0,SP,X → A");
+        $display("PASS: test_lda_d_sp_x");
+    endtask
+
+    // ---- Test 23: STA d,SP,X ($33) — in-frame indexed store ----------
+    // SP+d=$FEF, X=3 → stack[$FF2].  STA $F0,SP,X writes $5C there.
+    task automatic test_sta_d_sp_x();
+        $display("=== Test 23: STA d,SP,X ($33) ===");
+        reset_cpu();
+        mem[16'hFFFC] = 8'h00;
+        mem[16'hFFFD] = 8'h04;
+        prologue();
+        put(16'h0404, 8'hA2); put(16'h0405, 8'h03);             // LDX #$03
+        put(16'h0406, 8'hA9); put(16'h0407, 8'h5C);             // LDA #$5C
+        put(16'h0408, 8'h33); put(16'h0409, 8'hF0);             // STA $F0,SP,X
+        put(16'h040A, 8'h4C); put(16'h040B, 8'h0A); put(16'h040C, 8'h04); // JMP $040A
+        run_until_stuck(16'h040A, 400, "STA d,SP,X");
+        expect_mem(16'h0FF2, 8'h5C, "STA $F0,SP,X → stack[$FF2]");
+        $display("PASS: test_sta_d_sp_x");
+    endtask
+
+    // ---- Test 24: LDA (d,SP),Y ($03) — deref stacked pointer + Y ------
+    // Pointer $0350 lives on the stack at $FEF(lo)/$FF0(hi); Y=4.
+    // Target = $0350+4 = $0354 (= $77).  LDA ($F0,SP),Y must read it.
+    task automatic test_lda_ind_sp_y();
+        $display("=== Test 24: LDA (d,SP),Y ($03) ===");
+        reset_cpu();
+        mem[16'hFFFC] = 8'h00;
+        mem[16'hFFFD] = 8'h04;
+        prologue();
+        mem[16'h0FEF] = 8'h50;                                  // ptr lo
+        mem[16'h0FF0] = 8'h03;                                  // ptr hi → $0350
+        mem[16'h0354] = 8'h77;                                  // *(ptr+4)
+        put(16'h0404, 8'hA0); put(16'h0405, 8'h04);             // LDY #$04
+        put(16'h0406, 8'h03); put(16'h0407, 8'hF0);             // LDA ($F0,SP),Y
+        put(16'h0408, 8'h8D); put(16'h0409, 8'h30); put(16'h040A, 8'h03); // STA $0330
+        put(16'h040B, 8'h4C); put(16'h040C, 8'h0B); put(16'h040D, 8'h04); // JMP $040B
+        run_until_stuck(16'h040B, 400, "LDA (d,SP),Y");
+        expect_mem(16'h0330, 8'h77, "LDA ($F0,SP),Y → A");
+        $display("PASS: test_lda_ind_sp_y");
+    endtask
+
+    // ---- Test 25: STA (d,SP),Y ($13) — store through stacked ptr + Y --
+    // Pointer $0300 at $FEF/$FF0; Y=2 → target $0302.  STA writes $9E.
+    task automatic test_sta_ind_sp_y();
+        $display("=== Test 25: STA (d,SP),Y ($13) ===");
+        reset_cpu();
+        mem[16'hFFFC] = 8'h00;
+        mem[16'hFFFD] = 8'h04;
+        prologue();
+        mem[16'h0FEF] = 8'h00;                                  // ptr lo
+        mem[16'h0FF0] = 8'h03;                                  // ptr hi → $0300
+        put(16'h0404, 8'hA0); put(16'h0405, 8'h02);             // LDY #$02
+        put(16'h0406, 8'hA9); put(16'h0407, 8'h9E);             // LDA #$9E
+        put(16'h0408, 8'h13); put(16'h0409, 8'hF0);             // STA ($F0,SP),Y
+        put(16'h040A, 8'h4C); put(16'h040B, 8'h0A); put(16'h040C, 8'h04); // JMP $040A
+        run_until_stuck(16'h040A, 400, "STA (d,SP),Y");
+        expect_mem(16'h0302, 8'h9E, "STA ($F0,SP),Y → *(ptr+2)");
+        $display("PASS: test_sta_ind_sp_y");
+    endtask
+
     // ---- Main scheduler -------------------------------------------------
     initial begin
         $display("=== tb_sally_isa starting ===");
@@ -794,6 +870,10 @@ module tb_sally_isa;
         test_bit_imm_z();
         test_bit_imm_nv();
         test_calling_convention();
+        test_lda_d_sp_x();
+        test_sta_d_sp_x();
+        test_lda_ind_sp_y();
+        test_sta_ind_sp_y();
 
         $display("=== ALL TESTS PASSED ===");
         $finish;
