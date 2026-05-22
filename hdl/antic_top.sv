@@ -420,11 +420,10 @@ module antic_top #(
     wire       cpu_internal_q;
     wire [7:0] clock_mult_q, output_mode_q;
 
-    // M24-4 — antic_regs.bank_q outputs (chiplet-ext $D488-$D48B). Drive
-    // bank_xlat's ANTIC view; sally_mem.view_is_antic selects between
-    // these and the CPU-snooped values.
-    wire [7:0] antic_code_bank_q, antic_data_bank_q;
-    wire [7:0] antic_regc_bank_lo_q, antic_regc_bank_hi_q;
+    // ANTIC has no banking under the xtc memory model — it reads the flat
+    // 64 KB BRAM directly via sally_mem's dma port.  The antic_regs
+    // $D488-$D48B "bank" registers are now vestigial (writable/readable but
+    // unwired), so their outputs are left unconnected at the instance below.
     // M24-6 — OS ROM load path (chiplet-ext $D48C-$D48F). Streams a
     // baked-in OS image into sally_mem's BRAM at boot, then locks.
     wire [15:0] os_rom_addr_q;
@@ -505,10 +504,7 @@ module antic_top #(
         .cpu_internal_q       (cpu_internal_q),
         .clock_mult_q         (clock_mult_q),
         .output_mode_q        (output_mode_q),
-        .antic_code_bank_q    (antic_code_bank_q),
-        .antic_data_bank_q    (antic_data_bank_q),
-        .antic_regc_bank_lo_q (antic_regc_bank_lo_q),
-        .antic_regc_bank_hi_q (antic_regc_bank_hi_q),
+        // antic_*_bank_q ($D488-$D48B) left unconnected — ANTIC no longer banks.
         .os_rom_addr_q        (os_rom_addr_q),
         .os_rom_data_q        (os_rom_data_q),
         .os_rom_we            (os_rom_we),

@@ -71,8 +71,9 @@ CDC handoffs:
 - ANTIC → SALLY status (`nmi_n`, `irq_n`, `halt_n`, `rdy_n`):
   2-FF synchroniser.
 - ANTIC DMA reads from sally_mem via the second BRAM port (dual-port
-  BRAM crosses the domain with no synchroniser).
-- Bank-select state SALLY → ANTIC: 2-FF sync on an update strobe.
+  BRAM crosses the domain with no synchroniser).  ANTIC reads the flat
+  64 KB BRAM directly and has no banking of its own — there is no
+  SALLY → ANTIC bank-select crossing.
 - Line buffer fb_scanout → SiI9022A: same-domain (`clk_pix`).
 
 ## ANTIC display-fetch modes
@@ -100,7 +101,7 @@ Selection is via the ANTIC register `MODE_SNOOP`.
 | Main RAM (64 KB)      | sally_mem BRAM (16× RAMB36)  | 64 KB     | Single-port write, dual-port read (ANTIC DMA) |
 | Hidden stack BRAM     | sally_mem BRAM (1× RAMB36)   | 4 KB      | 12-bit SP; `$0100-$01FF` aliases the top 256  |
 | HW register page      | sally_mem hwreg dispatch     | —         | `$D000-$D7FF` decoded combinatorially         |
-| Banked window         | DDR3 via banked_axi_reader   | up to 1 GB| Code-bank / data-bank / reg-cluster bank pairs|
+| Banked window         | DDR3 via banked_axi_reader   | up to 1 GB| Code page `$6000-$9FFF` via `$82` (16 KB); data page `$A000-$CFFF` via `{$84,$83}` (12 KB) |
 | Framebuffer (RGB565)  | DDR3 via xt_blitter / fb_scanout | ~2 MB  | 1080p double-buffered                         |
 | xt_blitter cmd queue  | xt_blitter BRAM (5× RAMB36)  | 1024 cmds | 192-bit-wide command words                    |
 | fb_scanout line buf   | fb_scanout BRAM              | 2× 2 KB   | Ping-pong, one scan line each                 |

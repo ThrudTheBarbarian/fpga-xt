@@ -59,13 +59,17 @@ module sally_mem #(
     // Production builds override with a path to a 64 KB hex image
     // (one byte per line, addresses $0000..$FFFF — only $C000-$CFFF
     // and $D800-$FFFF need to be populated; the rest is overwritten
-    // by RAM accesses). The runtime rom-load chiplet path ($D48C-$F)
+    // by RAM accesses). The runtime rom-load chiplet path ($D49C-$F)
     // remains usable on top of this for live OS swaps.
     parameter string         OS_ROM_HEX_PATH    = "",
-    // Base byte-address in DDR3 for the banked-window backing store.
-    // Production builds set this from a chiplet-ext register; for
-    // synth the constant gives Vivado a real address to time against.
-    parameter logic [31:0]   DDR3_BANKED_BASE   = 32'h2000_0000
+    // Base byte-addresses in DDR3 for the banked windows.  Code and data
+    // pages live in separate sub-regions so their page indices can't
+    // collide.  Both use a 16 KB stride (data uses the low 12 KB of each
+    // page); code is 256 pages (4 MB), data is up to 65536 pages.
+    // Production builds set these from chiplet-ext registers; for synth
+    // the constants give Vivado a real address to time against.
+    parameter logic [31:0]   DDR3_BANKED_BASE   = 32'h2000_0000,  // code base
+    parameter logic [31:0]   DDR3_DATA_BASE     = 32'h2040_0000   // code base + 4 MB
 ) (
     input  wire        clk,
     input  wire        rst,
@@ -95,23 +99,13 @@ module sally_mem #(
     output wire [7:0]  hwreg_din,
     input  wire [7:0]  hwreg_dout,
 
-    // CPU bank-select state — latched from zero-page writes.
-    // Exposed as outputs so antic_top can mirror to ANTIC's read path
-    // if needed (currently only used internally by bank_xlat).
-    output wire [7:0]  cpu_code_bank_q,
-    output wire [7:0]  cpu_data_bank_q,
-    output wire [7:0]  cpu_regc_bank_lo_q,
-    output wire [7:0]  cpu_regc_bank_hi_q,
-
-    // ANTIC-view bank-select state (from antic_regs $D488..$D48B).
-    // Tie low for CPU-only configurations.
-    input  wire [7:0]  antic_code_bank,
-    input  wire [7:0]  antic_data_bank,
-    input  wire [7:0]  antic_regc_bank_lo,
-    input  wire [7:0]  antic_regc_bank_hi,
-
-    // View selector — 0 = CPU view, 1 = ANTIC view.
-    input  wire        view_is_antic,
+    // CPU bank-select state — latched from zero-page writes ($0082-$0084).
+    // Exposed for debug/observability (only used internally by bank_xlat).
+    // ANTIC has no banking — it reads the flat 64 KB BRAM directly via the
+    // dma port — so there is no ANTIC-view input here any more.
+    output wire [7:0]  cpu_code_bank_q,    // $0082
+    output wire [7:0]  cpu_data_bank_lo_q, // $0083
+    output wire [7:0]  cpu_data_bank_hi_q, // $0084
 
     // M-PBI step 2/3: /MPD Math-Pack Disable from the PBI device.
     input  wire        bus_mpd_n_in,
@@ -192,7 +186,6 @@ module sally_mem #(
 
     // ---- Address-decode helpers -----------------------------------
     wire is_hwreg_page   = (addr[15:11] == 5'b1101_0);   // $D000-$D7FF
-    wire is_bank_window  = (addr[15:14] == 2'b01);       // $4000-$7FFF
     wire is_mpd_window   = (addr[15:11] == 5'b11011);    // $D800-$DFFF
     wire is_cart_s4_window = (addr[15:13] == 3'b100);    // $8000-$9FFF
     wire is_cart_s5_window = (addr[15:13] == 3'b101);    // $A000-$BFFF
@@ -214,60 +207,54 @@ module sally_mem #(
                                            : {4'hF, addr[7:0]};
 
     // ---- CPU bank-select snoop -----------------------------------
-    // Mirror writes to $0082-$0085 into latched registers so bank_xlat
+    // Mirror writes to $0082-$0084 into latched registers so bank_xlat
     // sees the live values without needing a BRAM read port.
-    logic [7:0] cpu_code_bank, cpu_data_bank;
-    logic [7:0] cpu_regc_bank_lo, cpu_regc_bank_hi;
+    //   $0082 = code-window page; $0083/$0084 = data-window page lo/hi.
+    logic [7:0] cpu_code_bank, cpu_data_bank_lo, cpu_data_bank_hi;
 
     always_ff @(posedge clk or posedge rst) begin
         if (rst) begin
             cpu_code_bank    <= 8'h00;
-            cpu_data_bank    <= 8'h00;
-            cpu_regc_bank_lo <= 8'h00;
-            cpu_regc_bank_hi <= 8'h00;
+            cpu_data_bank_lo <= 8'h00;
+            cpu_data_bank_hi <= 8'h00;
         end else if (rdy && !rw) begin
             case (addr)
                 16'h0082: cpu_code_bank    <= data_in;
-                16'h0083: cpu_data_bank    <= data_in;
-                16'h0084: cpu_regc_bank_lo <= data_in;
-                16'h0085: cpu_regc_bank_hi <= data_in;
+                16'h0083: cpu_data_bank_lo <= data_in;
+                16'h0084: cpu_data_bank_hi <= data_in;
                 default: ;
             endcase
         end
     end
 
     assign cpu_code_bank_q    = cpu_code_bank;
-    assign cpu_data_bank_q    = cpu_data_bank;
-    assign cpu_regc_bank_lo_q = cpu_regc_bank_lo;
-    assign cpu_regc_bank_hi_q = cpu_regc_bank_hi;
+    assign cpu_data_bank_lo_q = cpu_data_bank_lo;
+    assign cpu_data_bank_hi_q = cpu_data_bank_hi;
 
     // ---- Bank translator -----------------------------------------
     wire [15:0] bank_id_w;
-    wire [11:0] offset_in_block_w;
-    wire        is_in_window_w;        // identical to is_bank_window when CPU view
+    wire [13:0] offset_in_block_w;
+    wire        is_in_window_w;        // 1 if addr ∈ $6000-$CFFF
+    wire        is_code_w;             // 1 = code window, 0 = data window
 
     bank_xlat u_xlat (
         .cpu_code_bank      (cpu_code_bank),
-        .cpu_data_bank      (cpu_data_bank),
-        .cpu_regc_bank_lo   (cpu_regc_bank_lo),
-        .cpu_regc_bank_hi   (cpu_regc_bank_hi),
-        .antic_code_bank    (antic_code_bank),
-        .antic_data_bank    (antic_data_bank),
-        .antic_regc_bank_lo (antic_regc_bank_lo),
-        .antic_regc_bank_hi (antic_regc_bank_hi),
+        .cpu_data_bank_lo   (cpu_data_bank_lo),
+        .cpu_data_bank_hi   (cpu_data_bank_hi),
         .cpu_addr           (addr),
-        .view_is_antic      (view_is_antic),
         .is_in_window       (is_in_window_w),
+        .is_code            (is_code_w),
         .offset_in_block    (offset_in_block_w),
         .bank_id            (bank_id_w)
     );
 
     // ---- Banked-window AXI port ----------------------------------
-    // Address composition (placeholder): byte address into DDR3 is
-    //    DDR3_BANKED_BASE | {bank_id_w[15:0], offset_in_block_w[11:0]}.
-    // The OR-form keeps the synth path short and the base register
-    // visible for retiming. Production builds will replace the
-    // hardcoded base with a chiplet-ext register read.
+    // Address composition (placeholder): code and data pages sit in
+    // separate DDR3 sub-regions with a 16 KB stride, so the byte address
+    // is  base + page*16K + offset  =  base + {bank_id, offset[13:0]}.
+    // is_code_w selects the base (code vs data) so their page indices
+    // never collide.  Production builds replace the constant bases with
+    // chiplet-ext register reads.
     //
     // v2c: banked_axi_reader handles both reads (with 1-line prefetch)
     // and writes (single-beat write-through, line invalidated on
@@ -275,8 +262,8 @@ module sally_mem #(
     // SALLY presents any banked-window access); req_we selects the
     // direction. req_ready is combinational on read-hit / pulses on
     // read-burst-complete / pulses on write-B-response.
-    wire [31:0] axi_req_addr = DDR3_BANKED_BASE
-                             | {4'b0000, bank_id_w[15:0], offset_in_block_w[11:0]};
+    wire [31:0] axi_req_addr = (is_code_w ? DDR3_BANKED_BASE : DDR3_DATA_BASE)
+                             + {2'b00, bank_id_w[15:0], offset_in_block_w[13:0]};
     wire        axi_req_valid = rdy && is_in_window_w;
     wire        axi_req_we    = !rw;     // SALLY rw: 1=read, 0=write
     wire [7:0]  axi_rdata_w;

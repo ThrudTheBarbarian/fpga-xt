@@ -65,8 +65,7 @@ module tb_sally_arbitration;
     wire        axi_rvalid,  axi_rlast,  axi_rready;
     wire        axi_bvalid,  axi_bready;
 
-    wire [7:0] cpu_code_bank_q, cpu_data_bank_q;
-    wire [7:0] cpu_regc_bank_lo_q, cpu_regc_bank_hi_q;
+    wire [7:0] cpu_code_bank_q, cpu_data_bank_lo_q, cpu_data_bank_hi_q;
     wire       mem_busy;
 
     sally_mem #(
@@ -85,14 +84,8 @@ module tb_sally_arbitration;
         .hwreg_din  (hwreg_din),
         .hwreg_dout (hwreg_dout),
         .cpu_code_bank_q    (cpu_code_bank_q),
-        .cpu_data_bank_q    (cpu_data_bank_q),
-        .cpu_regc_bank_lo_q (cpu_regc_bank_lo_q),
-        .cpu_regc_bank_hi_q (cpu_regc_bank_hi_q),
-        .antic_code_bank    (8'h00),
-        .antic_data_bank    (8'h00),
-        .antic_regc_bank_lo (8'h00),
-        .antic_regc_bank_hi (8'h00),
-        .view_is_antic      (1'b0),
+        .cpu_data_bank_lo_q (cpu_data_bank_lo_q),
+        .cpu_data_bank_hi_q (cpu_data_bank_hi_q),
         .bus_mpd_n_in       (1'b1),
         .bus_pbi_rdata      (8'hFF),
         .bus_rd4_n_in       (1'b1),

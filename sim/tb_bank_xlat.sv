@@ -1,39 +1,28 @@
-// tb_bank_xlat.sv — M24-4 bank translator unit test.
+// tb_bank_xlat.sv — bank translator unit test (xtc window scheme).
 //
-// Demonstrates that bank_xlat produces distinct bank_ids for the
-// CPU view and the ANTIC view when their bank-select state differs,
-// and identical bank_ids when they match. The headline guarantee:
-// at the same cpu_addr, switching view_is_antic gives a different
-// bank_id whenever the corresponding selector differs.
+// Checks the window decode ($6000-$9FFF code, $A000-$CFFF data, with
+// $4000-$5FFF screen and everything else unbanked), the code/data page-id
+// composition ($82 vs {$84,$83}), and the in-window offset.
 
 `timescale 1ns / 1ps
 
 module tb_bank_xlat;
 
     logic [7:0]  cpu_code_bank;
-    logic [7:0]  cpu_data_bank;
-    logic [7:0]  cpu_regc_bank_lo, cpu_regc_bank_hi;
-    logic [7:0]  antic_code_bank;
-    logic [7:0]  antic_data_bank;
-    logic [7:0]  antic_regc_bank_lo, antic_regc_bank_hi;
+    logic [7:0]  cpu_data_bank_lo, cpu_data_bank_hi;
     logic [15:0] cpu_addr;
-    logic        view_is_antic;
     wire         is_in_window;
-    wire [11:0]  offset_in_block;
+    wire         is_code;
+    wire [13:0]  offset_in_block;
     wire [15:0]  bank_id;
 
     bank_xlat u_dut (
         .cpu_code_bank      (cpu_code_bank),
-        .cpu_data_bank      (cpu_data_bank),
-        .cpu_regc_bank_lo   (cpu_regc_bank_lo),
-        .cpu_regc_bank_hi   (cpu_regc_bank_hi),
-        .antic_code_bank    (antic_code_bank),
-        .antic_data_bank    (antic_data_bank),
-        .antic_regc_bank_lo (antic_regc_bank_lo),
-        .antic_regc_bank_hi (antic_regc_bank_hi),
+        .cpu_data_bank_lo   (cpu_data_bank_lo),
+        .cpu_data_bank_hi   (cpu_data_bank_hi),
         .cpu_addr           (cpu_addr),
-        .view_is_antic      (view_is_antic),
         .is_in_window       (is_in_window),
+        .is_code            (is_code),
         .offset_in_block    (offset_in_block),
         .bank_id            (bank_id)
     );
@@ -48,97 +37,47 @@ module tb_bank_xlat;
     endtask
 
     initial begin
-        $display("=== M24-4 bank_xlat ===");
+        $display("=== bank_xlat (xtc window scheme) ===");
 
-        // Set up distinct CPU vs ANTIC banks for each region.
-        cpu_code_bank      = 8'h05;     antic_code_bank      = 8'h0A;
-        cpu_data_bank      = 8'h11;     antic_data_bank      = 8'h22;
-        cpu_regc_bank_lo   = 8'h33;     antic_regc_bank_lo   = 8'h66;
-        cpu_regc_bank_hi   = 8'h00;     antic_regc_bank_hi   = 8'h00;
+        cpu_code_bank    = 8'h05;
+        cpu_data_bank_lo = 8'h11;
+        cpu_data_bank_hi = 8'h22;
         #1;
 
-        // ---- A. is_in_window decoder ----------------------------------
-        $display("[A] is_in_window decoder");
-        cpu_addr = 16'h3FFF;
-        view_is_antic = 1'b0;
-        #1; expect_eq("A.1 not in window @ $3FFF", is_in_window, 1'b0);
-        cpu_addr = 16'h4000;
-        #1; expect_eq("A.2 in window @ $4000", is_in_window, 1'b1);
-        cpu_addr = 16'h7FFF;
-        #1; expect_eq("A.3 in window @ $7FFF", is_in_window, 1'b1);
-        cpu_addr = 16'h8000;
-        #1; expect_eq("A.4 not in window @ $8000", is_in_window, 1'b0);
+        // ---- A. window decode -----------------------------------------
+        $display("[A] window decode");
+        cpu_addr = 16'h4000; #1; expect_eq("A.1 screen $4000 not banked",  is_in_window, 1'b0);
+        cpu_addr = 16'h5FFF; #1; expect_eq("A.2 screen $5FFF not banked",  is_in_window, 1'b0);
+        cpu_addr = 16'h6000; #1; expect_eq("A.3 code $6000 in window",     is_in_window, 1'b1);
+        cpu_addr = 16'h6000; #1; expect_eq("A.3b code $6000 is_code",      is_code,      1'b1);
+        cpu_addr = 16'h9FFF; #1; expect_eq("A.4 code $9FFF in window",     is_in_window, 1'b1);
+        cpu_addr = 16'h9FFF; #1; expect_eq("A.4b code $9FFF is_code",      is_code,      1'b1);
+        cpu_addr = 16'hA000; #1; expect_eq("A.5 data $A000 in window",     is_in_window, 1'b1);
+        cpu_addr = 16'hA000; #1; expect_eq("A.5b data $A000 !is_code",     is_code,      1'b0);
+        cpu_addr = 16'hCFFF; #1; expect_eq("A.6 data $CFFF in window",     is_in_window, 1'b1);
+        cpu_addr = 16'hD000; #1; expect_eq("A.7 $D000 not banked",         is_in_window, 1'b0);
+        cpu_addr = 16'h3FFF; #1; expect_eq("A.8 $3FFF not banked",         is_in_window, 1'b0);
 
-        // ---- B. CPU view picks CPU bank-select state ------------------
-        $display("[B] CPU view encodes CPU selectors");
-        view_is_antic = 1'b0;
-        cpu_addr = 16'h4500;     // code lo region
-        #1; expect_eq("B.1 cpu code lo bank_id", bank_id, 16'h0005);  // {2'b00, 6'b0, $05}
-        cpu_addr = 16'h5500;     // code hi region
-        #1; expect_eq("B.2 cpu code hi bank_id", bank_id, 16'h4005);  // {2'b01, 6'b0, $05}
-        cpu_addr = 16'h6800;     // data region
-        #1; expect_eq("B.3 cpu data bank_id",    bank_id, 16'h8011);  // {2'b10, 6'b0, $11}
-        cpu_addr = 16'h7100;     // regc region
-        #1; expect_eq("B.4 cpu regc bank_id",    bank_id, 16'hC033);  // {2'b11, 6'b0, $33}
+        // ---- B. code page-id = $82 ($6000-$9FFF) ----------------------
+        $display("[B] code page-id");
+        cpu_addr = 16'h6800; #1; expect_eq("B.1 code bank_id", bank_id, 16'h0005);
+        cpu_addr = 16'h9000; #1; expect_eq("B.2 code bank_id", bank_id, 16'h0005);
 
-        // ---- C. ANTIC view picks ANTIC bank-select state --------------
-        $display("[C] ANTIC view encodes ANTIC selectors");
-        view_is_antic = 1'b1;
-        cpu_addr = 16'h4500;
-        #1; expect_eq("C.1 antic code lo bank_id", bank_id, 16'h000A);
-        cpu_addr = 16'h5500;
-        #1; expect_eq("C.2 antic code hi bank_id", bank_id, 16'h400A);
-        cpu_addr = 16'h6800;
-        #1; expect_eq("C.3 antic data bank_id",    bank_id, 16'h8022);
-        cpu_addr = 16'h7100;
-        #1; expect_eq("C.4 antic regc bank_id",    bank_id, 16'hC066);
+        // ---- C. data page-id = {$84,$83} ($A000-$CFFF) ----------------
+        $display("[C] data page-id");
+        cpu_addr = 16'hA800; #1; expect_eq("C.1 data bank_id", bank_id, 16'h2211);
+        cpu_addr = 16'hC400; #1; expect_eq("C.2 data bank_id", bank_id, 16'h2211);
 
-        // ---- D. Dual-view divergence at same address ------------------
-        // Headline test: at $4500 with CPU code = $05 vs ANTIC code = $0A,
-        // the bank_id differs by exactly the (5 ^ A) low byte → caches
-        // store independent banks for each view.
-        $display("[D] dual-view divergence at $4500");
-        begin
-            logic [15:0] cpu_id, antic_id;
-            cpu_addr = 16'h4500;
-            view_is_antic = 1'b0;
-            #1; cpu_id = bank_id;
-            view_is_antic = 1'b1;
-            #1; antic_id = bank_id;
-            $display("[D] $4500: cpu_id=$%04h antic_id=$%04h", cpu_id, antic_id);
-            if (cpu_id == antic_id) begin
-                $display("FAIL D: views collapsed to same bank_id");
-                fail_count++;
-            end
-        end
-
-        // ---- E. Identical selectors → identical bank_ids --------------
-        // Software that doesn't enable dual-view sets all ANTIC bank
-        // registers to 0 (boot default). With CPU bank state also 0,
-        // both views give identical bank_ids and the cache treats them
-        // as one bank.
-        $display("[E] matching selectors → same bank_id");
-        cpu_code_bank      = 8'h00; antic_code_bank      = 8'h00;
-        cpu_data_bank      = 8'h00; antic_data_bank      = 8'h00;
-        cpu_regc_bank_lo   = 8'h00; antic_regc_bank_lo   = 8'h00;
-        cpu_regc_bank_hi   = 8'h00; antic_regc_bank_hi   = 8'h00;
-        cpu_addr = 16'h4500;
-        view_is_antic = 1'b0;
-        #1; begin
-            logic [15:0] cpu_id;
-            cpu_id = bank_id;
-            view_is_antic = 1'b1;
-            #1;
-            expect_eq("E.matching banks", bank_id, cpu_id);
-        end
-
-        // ---- F. offset_in_block extraction ----------------------------
-        $display("[F] offset_in_block extraction");
-        cpu_addr = 16'h47A5;
-        #1; expect_eq("F offset", offset_in_block, 12'h7A5);
+        // ---- D. offset within the active page -------------------------
+        $display("[D] offset_in_block");
+        cpu_addr = 16'h6000; #1; expect_eq("D.1 code off 0",     offset_in_block, 14'h0000);
+        cpu_addr = 16'h6123; #1; expect_eq("D.2 code off $123",  offset_in_block, 14'h0123);
+        cpu_addr = 16'h9FFF; #1; expect_eq("D.3 code off $3FFF", offset_in_block, 14'h3FFF);
+        cpu_addr = 16'hA000; #1; expect_eq("D.4 data off 0",     offset_in_block, 14'h0000);
+        cpu_addr = 16'hCFFF; #1; expect_eq("D.5 data off $2FFF", offset_in_block, 14'h2FFF);
 
         if (fail_count == 0) begin
-            $display("*** BANK_XLAT OK *** in_window + cpu_view + antic_view + dual-view divergence");
+            $display("*** BANK_XLAT OK *** window decode + code/data page-id + offset");
             $finish;
         end else begin
             $display("*** BANK_XLAT FAIL *** %0d failures", fail_count);

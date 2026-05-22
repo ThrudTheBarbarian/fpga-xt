@@ -16,8 +16,13 @@ below are defaults — they can be overridden at instantiation time.
 0x0000_0000 ┬─────────────────────────────────────────────────────────┐
             │ (reserved — PS-side use: FreeRTOS / Vitis BSP / heap)   │
 0x2000_0000 ├─────────────────────────────────────────────────────────┤
-            │ SALLY banked memory window (32 MB allocation, 8 MB used │
-            │ in v1). Backed by sally_mem's banked_axi_reader.        │
+            │ SALLY code-bank pages (DDR3_BANKED_BASE). $82 selects a │
+            │ 16 KB page into CPU $6000-$9FFF; 256 pages = 4 MB.      │
+0x2040_0000 ├─────────────────────────────────────────────────────────┤
+            │ SALLY data-bank pages (DDR3_DATA_BASE). {$84,$83}       │
+            │ select a 16 KB-strided page (12 KB used) into CPU       │
+            │ $A000-$CFFF; xtc heap maps pages on demand. Both backed │
+            │ by sally_mem's banked_axi_reader.                       │
 0x3000_0000 ├─────────────────────────────────────────────────────────┤
             │ Framebuffer A (RGBA-8888, 1920 × 1080, stride 8192 B,   │
             │ ~8.44 MB) — primary surface for native / GEM mode.      │

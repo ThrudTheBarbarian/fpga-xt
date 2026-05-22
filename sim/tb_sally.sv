@@ -83,8 +83,7 @@ module tb_sally;
     wire        axi_rvalid,  axi_rlast,  axi_rready;
     wire        axi_bvalid,  axi_bready;
 
-    wire [7:0] cpu_code_bank_q, cpu_data_bank_q;
-    wire [7:0] cpu_regc_bank_lo_q, cpu_regc_bank_hi_q;
+    wire [7:0] cpu_code_bank_q, cpu_data_bank_lo_q, cpu_data_bank_hi_q;
     wire       mem_busy;
 
     sally_mem #(
@@ -103,14 +102,8 @@ module tb_sally;
         .hwreg_din  (hwreg_din),
         .hwreg_dout (hwreg_dout),
         .cpu_code_bank_q    (cpu_code_bank_q),
-        .cpu_data_bank_q    (cpu_data_bank_q),
-        .cpu_regc_bank_lo_q (cpu_regc_bank_lo_q),
-        .cpu_regc_bank_hi_q (cpu_regc_bank_hi_q),
-        .antic_code_bank    (8'h00),
-        .antic_data_bank    (8'h00),
-        .antic_regc_bank_lo (8'h00),
-        .antic_regc_bank_hi (8'h00),
-        .view_is_antic      (1'b0),
+        .cpu_data_bank_lo_q (cpu_data_bank_lo_q),
+        .cpu_data_bank_hi_q (cpu_data_bank_hi_q),
         .bus_mpd_n_in       (1'b1),
         .bus_pbi_rdata      (8'hFF),
         .bus_rd4_n_in       (1'b1),
@@ -398,7 +391,7 @@ module tb_sally;
         // sentinel cycle count is then the same except for the +1
         // page-cross penalty (or 0 for stores, which always pay).
         //
-        // Memory stash: $C001 / $C100 / $C101 etc. preloaded with
+        // Memory stash: $3E01 / $3F00 / $C101 etc. preloaded with
         // distinguishable values so we can also confirm the right
         // address was read.
         $display("[G] indexed-addressing page-boundary cycle behavior");
@@ -406,26 +399,26 @@ module tb_sally;
             int cyc_g1, cyc_g2, cyc_g3, cyc_g4, cyc_g5, cyc_g6, cyc_g7, cyc_g8;
 
             // ---- G.1: LDA abs,X — no page cross ----
-            // LDX #$01 ; LDA $C000,X ; STA $00FF
-            // Reads $C001. Expected 4 cycles for LDA.
+            // LDX #$01 ; LDA $3E00,X ; STA $00FF
+            // Reads $3E01. Expected 4 cycles for LDA.
             clear_mem();
             `mem[16'h0203] = 8'hA2; `mem[16'h0204] = 8'h01;             // LDX #$01
-            `mem[16'h0205] = 8'hBD; `mem[16'h0206] = 8'h00; `mem[16'h0207] = 8'hC0;  // LDA $C000,X
+            `mem[16'h0205] = 8'hBD; `mem[16'h0206] = 8'h00; `mem[16'h0207] = 8'h3E;  // LDA $3E00,X
             `mem[16'h0208] = 8'h8D; `mem[16'h0209] = 8'hFF; `mem[16'h020A] = 8'h00;  // STA $00FF
-            `mem[16'hC001] = 8'h11;
+            `mem[16'h3E01] = 8'h11;
             `mem[16'hFFFC] = 8'h00; `mem[16'hFFFD] = 8'h02;
             run_until_sentinel("G.1 LDA abs,X no-cross", 200);
             cyc_g1 = last_sentinel_cycles;
             expect_eq("G.1 `mem[$FF]", `mem[16'h00FF], 8'h11);
 
             // ---- G.2: LDA abs,X — with page cross ----
-            // LDX #$01 ; LDA $C0FF,X ; STA $00FF
-            // Reads $C100. Expected 5 cycles for LDA (+1 vs G.1).
+            // LDX #$01 ; LDA $3EFF,X ; STA $00FF
+            // Reads $3F00. Expected 5 cycles for LDA (+1 vs G.1).
             clear_mem();
             `mem[16'h0203] = 8'hA2; `mem[16'h0204] = 8'h01;             // LDX #$01
-            `mem[16'h0205] = 8'hBD; `mem[16'h0206] = 8'hFF; `mem[16'h0207] = 8'hC0;  // LDA $C0FF,X
+            `mem[16'h0205] = 8'hBD; `mem[16'h0206] = 8'hFF; `mem[16'h0207] = 8'h3E;  // LDA $3EFF,X
             `mem[16'h0208] = 8'h8D; `mem[16'h0209] = 8'hFF; `mem[16'h020A] = 8'h00;  // STA $00FF
-            `mem[16'hC100] = 8'h22;
+            `mem[16'h3F00] = 8'h22;
             `mem[16'hFFFC] = 8'h00; `mem[16'hFFFD] = 8'h02;
             run_until_sentinel("G.2 LDA abs,X cross", 200);
             cyc_g2 = last_sentinel_cycles;
@@ -441,30 +434,30 @@ module tb_sally;
 
             // ---- G.3: STA abs,X — no page cross ----
             // STA always pays 5 cycles, independent of page cross.
-            // LDX #$01 ; LDA #$AB ; STA $C000,X ; STA $00FF
+            // LDX #$01 ; LDA #$AB ; STA $3E00,X ; STA $00FF
             clear_mem();
             `mem[16'h0203] = 8'hA2; `mem[16'h0204] = 8'h01;             // LDX #$01
             `mem[16'h0205] = 8'hA9; `mem[16'h0206] = 8'hAB;             // LDA #$AB
-            `mem[16'h0207] = 8'h9D; `mem[16'h0208] = 8'h00; `mem[16'h0209] = 8'hC0;  // STA $C000,X
+            `mem[16'h0207] = 8'h9D; `mem[16'h0208] = 8'h00; `mem[16'h0209] = 8'h3E;  // STA $3E00,X
             `mem[16'h020A] = 8'h8D; `mem[16'h020B] = 8'hFF; `mem[16'h020C] = 8'h00;  // STA $00FF
             `mem[16'hFFFC] = 8'h00; `mem[16'hFFFD] = 8'h02;
             run_until_sentinel("G.3 STA abs,X no-cross", 200);
             cyc_g3 = last_sentinel_cycles;
-            expect_eq("G.3 `mem[$C001]", `mem[16'hC001], 8'hAB);
+            expect_eq("G.3 `mem[$3E01]", `mem[16'h3E01], 8'hAB);
 
             // ---- G.4: STA abs,X — with page cross ----
-            // Same store, target $C100. Should take SAME cycles as G.3
+            // Same store, target $3F00. Should take SAME cycles as G.3
             // (STA pays the extra cycle even without a page cross —
             // 5 cycles regardless).
             clear_mem();
             `mem[16'h0203] = 8'hA2; `mem[16'h0204] = 8'h01;             // LDX #$01
             `mem[16'h0205] = 8'hA9; `mem[16'h0206] = 8'hAB;             // LDA #$AB
-            `mem[16'h0207] = 8'h9D; `mem[16'h0208] = 8'hFF; `mem[16'h0209] = 8'hC0;  // STA $C0FF,X
+            `mem[16'h0207] = 8'h9D; `mem[16'h0208] = 8'hFF; `mem[16'h0209] = 8'h3E;  // STA $3EFF,X
             `mem[16'h020A] = 8'h8D; `mem[16'h020B] = 8'hFF; `mem[16'h020C] = 8'h00;  // STA $00FF
             `mem[16'hFFFC] = 8'h00; `mem[16'hFFFD] = 8'h02;
             run_until_sentinel("G.4 STA abs,X cross", 200);
             cyc_g4 = last_sentinel_cycles;
-            expect_eq("G.4 `mem[$C100]", `mem[16'hC100], 8'hAB);
+            expect_eq("G.4 `mem[$3F00]", `mem[16'h3F00], 8'hAB);
             if (cyc_g4 != cyc_g3) begin
                 $display("FAIL G.STA-no-penalty: G.4=%0d G.3=%0d (expected equal — STA always pays)",
                          cyc_g4, cyc_g3);
@@ -476,25 +469,25 @@ module tb_sally;
             // ---- G.5 / G.6: LDA (zp),Y — no cross / cross ----
             // $80/$81 holds a 16-bit pointer. LDA ($80),Y indexes by Y.
             // 5 cycles no-cross, 6 cycles cross.
-            // G.5: pointer = $C000, Y=$01 → reads $C001 (no cross).
+            // G.5: pointer = $3E00, Y=$01 → reads $3E01 (no cross).
             clear_mem();
-            `mem[16'h0080] = 8'h00; `mem[16'h0081] = 8'hC0;             // ($80) → $C000
+            `mem[16'h0080] = 8'h00; `mem[16'h0081] = 8'h3E;             // ($80) → $3E00
             `mem[16'h0203] = 8'hA0; `mem[16'h0204] = 8'h01;             // LDY #$01
             `mem[16'h0205] = 8'hB1; `mem[16'h0206] = 8'h80;             // LDA ($80),Y
             `mem[16'h0207] = 8'h8D; `mem[16'h0208] = 8'hFF; `mem[16'h0209] = 8'h00;  // STA $00FF
-            `mem[16'hC001] = 8'h33;
+            `mem[16'h3E01] = 8'h33;
             `mem[16'hFFFC] = 8'h00; `mem[16'hFFFD] = 8'h02;
             run_until_sentinel("G.5 LDA (zp),Y no-cross", 200);
             cyc_g5 = last_sentinel_cycles;
             expect_eq("G.5 `mem[$FF]", `mem[16'h00FF], 8'h33);
 
-            // G.6: pointer = $C0FF, Y=$01 → reads $C100 (page cross).
+            // G.6: pointer = $3EFF, Y=$01 → reads $3F00 (page cross).
             clear_mem();
-            `mem[16'h0080] = 8'hFF; `mem[16'h0081] = 8'hC0;             // ($80) → $C0FF
+            `mem[16'h0080] = 8'hFF; `mem[16'h0081] = 8'h3E;             // ($80) → $3EFF
             `mem[16'h0203] = 8'hA0; `mem[16'h0204] = 8'h01;             // LDY #$01
             `mem[16'h0205] = 8'hB1; `mem[16'h0206] = 8'h80;             // LDA ($80),Y
             `mem[16'h0207] = 8'h8D; `mem[16'h0208] = 8'hFF; `mem[16'h0209] = 8'h00;  // STA $00FF
-            `mem[16'hC100] = 8'h44;
+            `mem[16'h3F00] = 8'h44;
             `mem[16'hFFFC] = 8'h00; `mem[16'hFFFD] = 8'h02;
             run_until_sentinel("G.6 LDA (zp),Y cross", 200);
             cyc_g6 = last_sentinel_cycles;
@@ -613,18 +606,18 @@ module tb_sally;
         // INC abs on NMOS 6502 does:
         //   read original value, write original value back (DUMMY),
         //   write modified value.
-        // Count writes to $C000 over the INC instruction.
+        // Count writes to $3E00 over the INC instruction.
         $display("[H.2] RMW (INC abs) dummy-write count");
         begin
             int writes_at_target;
             int cycles;
             bit hit;
             clear_mem();
-            `mem[16'h0203] = 8'hEE; `mem[16'h0204] = 8'h00; `mem[16'h0205] = 8'hC0;  // INC $C000
+            `mem[16'h0203] = 8'hEE; `mem[16'h0204] = 8'h00; `mem[16'h0205] = 8'h3E;  // INC $3E00
             `mem[16'h0206] = 8'h8D; `mem[16'h0207] = 8'hFF; `mem[16'h0208] = 8'h00;  // STA $00FF
-            `mem[16'hC000] = 8'h41;     // initial value
+            `mem[16'h3E00] = 8'h41;     // initial value
             `mem[16'hFFFC] = 8'h00; `mem[16'hFFFD] = 8'h02;
-            // Reset, then run while counting writes to $C000.
+            // Reset, then run while counting writes to $3E00.
             rst = 1'b1;
             repeat (4) @(posedge clk);
             rst = 1'b0;
@@ -634,10 +627,10 @@ module tb_sally;
             while (cycles < 200 && !hit) begin
                 @(posedge clk);
                 cycles++;
-                if (!rw && addr == 16'hC000) writes_at_target++;
+                if (!rw && addr == 16'h3E00) writes_at_target++;
                 if (!rw && addr == 16'h00FF) hit = 1'b1;
             end
-            $display("[H.2] writes to $C000 during INC: %0d (real NMOS does 2 — dummy + modified)",
+            $display("[H.2] writes to $3E00 during INC: %0d (real NMOS does 2 — dummy + modified)",
                      writes_at_target);
             if (writes_at_target == 2) begin
                 $display("[H.2] NMOS RMW dummy-write modelled ✓");
@@ -650,8 +643,8 @@ module tb_sally;
                 fail_count++;
             end
             // Final stored value: $41 + 1 = $42.
-            if (`mem[16'hC000] != 8'h42) begin
-                $display("FAIL H.2: `mem[$C000]=$%02h (expected $42 after INC)", `mem[16'hC000]);
+            if (`mem[16'h3E00] != 8'h42) begin
+                $display("FAIL H.2: `mem[$3E00]=$%02h (expected $42 after INC)", `mem[16'h3E00]);
                 fail_count++;
             end
         end

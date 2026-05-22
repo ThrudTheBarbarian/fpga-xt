@@ -1,13 +1,13 @@
 // tb_os_rom_load.sv — M24-6 OS ROM load path.
 //
 // Wires antic_regs + sally_mem and exercises the chiplet-ext register
-// set $D48C-$D48F. Verifies:
+// set $D49C-$D49F. Verifies:
 //
-//   A. Set address ($D48C/$D48D), stream a byte through $D48E,
+//   A. Set address ($D49C/$D49D), stream a byte through $D49E,
 //      verify the BRAM at the target address holds the byte AND
-//      $D48C/$D48D auto-incremented.
+//      $D49C/$D49D auto-incremented.
 //   B. Stream multiple bytes — auto-increment cycles correctly.
-//   C. WRITE_LOCK ($D48F bit 0) blocks further loads — write attempt
+//   C. WRITE_LOCK ($D49F bit 0) blocks further loads — write attempt
 //      after locking does NOT update BRAM.
 //   D. ROM-load lands in a region the CPU normally treats as ROM
 //      ($C000-$CFFF, $D800-$FFFF). Verify a CPU-side read after the
@@ -72,10 +72,6 @@ module tb_os_rom_load;
         .mode_snoop_q         (),
         .clock_mult_q         (),
         .output_mode_q        (),
-        .antic_code_bank_q    (),
-        .antic_data_bank_q    (),
-        .antic_regc_bank_lo_q (),
-        .antic_regc_bank_hi_q (),
         .os_rom_addr_q        (rom_addr),
         .os_rom_data_q        (rom_data),
         .os_rom_we            (rom_we),
@@ -118,14 +114,8 @@ module tb_os_rom_load;
         .hwreg_din  (hwreg_din_w),
         .hwreg_dout (antic_rdata_w),
         .cpu_code_bank_q    (),
-        .cpu_data_bank_q    (),
-        .cpu_regc_bank_lo_q (),
-        .cpu_regc_bank_hi_q (),
-        .antic_code_bank    (8'h00),
-        .antic_data_bank    (8'h00),
-        .antic_regc_bank_lo (8'h00),
-        .antic_regc_bank_hi (8'h00),
-        .view_is_antic      (1'b0),
+        .cpu_data_bank_lo_q (),
+        .cpu_data_bank_hi_q (),
         .bus_mpd_n_in       (1'b1),
         .bus_pbi_rdata      (8'hFF),
         .bus_rd4_n_in       (1'b1),
@@ -237,47 +227,47 @@ module tb_os_rom_load;
 
         // ===== Phase A — single-byte load + auto-increment =============
         $display("[A] single-byte load + auto-increment");
-        // Set target address $C100 → write $D48C=$00, $D48D=$C1
-        do_hwreg_write(16'hD48C, 8'h00);
-        do_hwreg_write(16'hD48D, 8'hC1);
+        // Set target address $E100 → write $D49C=$00, $D49D=$C1
+        do_hwreg_write(16'hD49C, 8'h00);
+        do_hwreg_write(16'hD49D, 8'hE1);
         // Stream a byte
-        do_hwreg_write(16'hD48E, 8'hAB);
-        // Verify BRAM at $C100
-        expect_eq("A.bram[$C100]", u_mem.mem[16'hC100], 8'hAB);
-        // Verify auto-increment: address now $C101
-        expect_eq("A.os_rom_addr", rom_addr, 16'hC101);
+        do_hwreg_write(16'hD49E, 8'hAB);
+        // Verify BRAM at $E100
+        expect_eq("A.bram[$E100]", u_mem.mem[16'hE100], 8'hAB);
+        // Verify auto-increment: address now $E101
+        expect_eq("A.os_rom_addr", rom_addr, 16'hE101);
 
         // ===== Phase B — multi-byte stream =============================
         // Stream 4 more bytes. Target advances each time.
         $display("[B] multi-byte stream");
-        do_hwreg_write(16'hD48E, 8'h11);   // → $C101
-        do_hwreg_write(16'hD48E, 8'h22);   // → $C102
-        do_hwreg_write(16'hD48E, 8'h33);   // → $C103
-        do_hwreg_write(16'hD48E, 8'h44);   // → $C104
-        expect_eq("B.bram[$C101]", u_mem.mem[16'hC101], 8'h11);
-        expect_eq("B.bram[$C102]", u_mem.mem[16'hC102], 8'h22);
-        expect_eq("B.bram[$C103]", u_mem.mem[16'hC103], 8'h33);
-        expect_eq("B.bram[$C104]", u_mem.mem[16'hC104], 8'h44);
-        expect_eq("B.os_rom_addr final", rom_addr, 16'hC105);
+        do_hwreg_write(16'hD49E, 8'h11);   // → $E101
+        do_hwreg_write(16'hD49E, 8'h22);   // → $E102
+        do_hwreg_write(16'hD49E, 8'h33);   // → $E103
+        do_hwreg_write(16'hD49E, 8'h44);   // → $E104
+        expect_eq("B.bram[$E101]", u_mem.mem[16'hE101], 8'h11);
+        expect_eq("B.bram[$E102]", u_mem.mem[16'hE102], 8'h22);
+        expect_eq("B.bram[$E103]", u_mem.mem[16'hE103], 8'h33);
+        expect_eq("B.bram[$E104]", u_mem.mem[16'hE104], 8'h44);
+        expect_eq("B.os_rom_addr final", rom_addr, 16'hE105);
 
         // ===== Phase C — WRITE_LOCK blocks further loads ===============
         $display("[C] WRITE_LOCK blocks further loads");
-        // Lock by writing 1 to $D48F bit 0.
-        do_hwreg_write(16'hD48F, 8'h01);
+        // Lock by writing 1 to $D49F bit 0.
+        do_hwreg_write(16'hD49F, 8'h01);
         // Try a load — should be ignored. Address shouldn't auto-incr.
-        do_hwreg_write(16'hD48E, 8'h99);
-        // mem[$C105] is uninitialised (= X) but it must NOT equal $99
+        do_hwreg_write(16'hD49E, 8'h99);
+        // mem[$E105] is uninitialised (= X) but it must NOT equal $99
         // — that's the headline "lock blocked the write" check.
-        if (u_mem.mem[16'hC105] === 8'h99) begin
-            $display("FAIL C.bram[$C105]: locked write committed ($99 leaked through)");
+        if (u_mem.mem[16'hE105] === 8'h99) begin
+            $display("FAIL C.bram[$E105]: locked write committed ($99 leaked through)");
             fail_count++;
         end
-        expect_eq("C.os_rom_addr unchanged after locked write", rom_addr, 16'hC105);
+        expect_eq("C.os_rom_addr unchanged after locked write", rom_addr, 16'hE105);
 
         // Unlock and confirm the path resumes.
-        do_hwreg_write(16'hD48F, 8'h00);
-        do_hwreg_write(16'hD48E, 8'h99);
-        expect_eq("C.bram[$C105] after unlock", u_mem.mem[16'hC105], 8'h99);
+        do_hwreg_write(16'hD49F, 8'h00);
+        do_hwreg_write(16'hD49E, 8'h99);
+        expect_eq("C.bram[$E105] after unlock", u_mem.mem[16'hE105], 8'h99);
 
         // ===== Phase D — CPU-side readback through normal path =========
         // After the load, the CPU should read the loaded byte through
@@ -286,18 +276,18 @@ module tb_os_rom_load;
         $display("[D] CPU-side readback through normal path");
         begin
             logic [7:0] v;
-            do_read(16'hC100, v);
-            expect_eq("D.cpu_read $C100", v, 8'hAB);
-            do_read(16'hC102, v);
-            expect_eq("D.cpu_read $C102", v, 8'h22);
+            do_read(16'hE100, v);
+            expect_eq("D.cpu_read $E100", v, 8'hAB);
+            do_read(16'hE102, v);
+            expect_eq("D.cpu_read $E102", v, 8'h22);
         end
 
         // ===== Phase E — load into the high ROM region $D800-$FFFF =====
         $display("[E] load into $D800-$FFFF region");
-        do_hwreg_write(16'hD48C, 8'hFC);   // addr lo = $FC
-        do_hwreg_write(16'hD48D, 8'hFF);   // addr hi = $FF → $FFFC
-        do_hwreg_write(16'hD48E, 8'h00);   // reset vec lo
-        do_hwreg_write(16'hD48E, 8'h02);   // reset vec hi
+        do_hwreg_write(16'hD49C, 8'hFC);   // addr lo = $FC
+        do_hwreg_write(16'hD49D, 8'hFF);   // addr hi = $FF → $FFFC
+        do_hwreg_write(16'hD49E, 8'h00);   // reset vec lo
+        do_hwreg_write(16'hD49E, 8'h02);   // reset vec hi
         expect_eq("E.bram[$FFFC]", u_mem.mem[16'hFFFC], 8'h00);
         expect_eq("E.bram[$FFFD]", u_mem.mem[16'hFFFD], 8'h02);
 

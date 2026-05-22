@@ -1,80 +1,52 @@
-// bank_xlat.sv — bank-id translator for the $4000-$7FFF window (M24-4).
+// bank_xlat.sv — bank-id translator for the xtc banked windows.
 //
-// Combinational module: given a CPU address + the active bank-select
-// state for both the CPU and the ANTIC views, plus a "who's asking"
-// flag, produce a 16-bit `bank_id` that uniquely tags the 4 KB block
-// being requested. Downstream consumer is bank_cache.sv.
+// Combinational: given a CPU address + the active bank-select registers
+// (zero-page $0082-$0084, snooped by sally_mem), produce the bank_id +
+// in-window offset that identify the DDR3-backed page being addressed.
 //
-// Bank-select model — XT 3-way split + XE flat 16K:
+// xtc memory model (CPU view only — ANTIC has no banking and reads the
+// flat 64 KB BRAM directly):
 //
-//   Address     Region              Selector (CPU view)    Selector (ANTIC view)
-//   ----------  ------------------  ---------------------  ----------------------
-//   $4000-$4FFF  Code half 0 (4 K)  $0082 (low half)       ANTIC_CODE_BANK[low]
-//   $5000-$5FFF  Code half 1 (4 K)  $0082 (high half)      ANTIC_CODE_BANK[high]
-//   $6000-$6FFF  Data       (4 K)   $0083                  ANTIC_DATA_BANK
-//   $7000-$7FFF  Region-C   (4 K)   $0084 / $0085          ANTIC_REGC_BANK_LO/HI
+//   Address      Region        Backing            Selector
+//   -----------  ------------  -----------------  --------------------------
+//   $4000-$5FFF  Screen RAM    flat 64 KB BRAM    — (fixed, not banked)
+//   $6000-$9FFF  Code window   DDR3 banked page   $0082            (16 KB pages)
+//   $A000-$CFFF  Data window   DDR3 banked page   $0083/$0084      (12 KB pages)
+//   else         Unbanked      flat 64 KB BRAM    —
 //
-// For XE flat 16K, software fans the same PORTB-derived bank into all
-// four selectors so each 4 KB block sees the same bank_id.
+//   • Code window: $0082 is an 8-bit page index → 256 pages of 16 KB.
+//   • Data window: {$0084,$0083} is a 16-bit composite page index → 65536
+//     pages of 12 KB.  The xtc heap reserves data pages on demand and maps
+//     the active one into $A000-$CFFF via $83/$84.
 //
-// bank_id encoding — uses high bits as a "region tag" so banks from
-// different regions never collide in the cache:
-//
-//   bank_id[15:14]  Region tag (00=code lo, 01=code hi, 10=data, 11=regc)
-//   bank_id[13:0]   Sub-bank within that region
-//
-// This gives 4 × 16384 = 65536 distinct bank ids — plenty.
+// bank_id carries only the page index; the caller uses `is_code` to pick
+// the DDR3 base + page stride (16 KB vs 12 KB) when composing the address.
 
 `default_nettype none
 
 module bank_xlat (
-    // CPU's view (latched from zero-page $0082-$0085 by sally_mem).
+    // CPU bank-select registers (latched from zero-page by sally_mem).
     input  wire [7:0]  cpu_code_bank,    // $0082
-    input  wire [7:0]  cpu_data_bank,    // $0083
-    input  wire [7:0]  cpu_regc_bank_lo, // $0084
-    input  wire [7:0]  cpu_regc_bank_hi, // $0085
+    input  wire [7:0]  cpu_data_bank_lo, // $0083
+    input  wire [7:0]  cpu_data_bank_hi, // $0084
 
-    // ANTIC's view (latched from $D488-$D48A by antic_regs).
-    input  wire [7:0]  antic_code_bank,
-    input  wire [7:0]  antic_data_bank,
-    input  wire [7:0]  antic_regc_bank_lo,
-    input  wire [7:0]  antic_regc_bank_hi,
-
-    // Lookup inputs.
     input  wire [15:0] cpu_addr,
-    input  wire        view_is_antic,    // 0 = CPU view, 1 = ANTIC view
 
-    // Outputs.
-    output wire        is_in_window,     // 1 if cpu_addr ∈ $4000-$7FFF
-    output wire [11:0] offset_in_block,  // cpu_addr[11:0] (4 KB offset)
-    output logic [15:0] bank_id
+    output wire        is_in_window,     // 1 if cpu_addr ∈ $6000-$CFFF
+    output wire        is_code,          // 1 = code window, 0 = data window
+    output wire [13:0] offset_in_block,  // byte offset within the active page
+    output wire [15:0] bank_id           // page index (code: 8-bit; data: 16-bit)
 );
 
-    assign is_in_window    = (cpu_addr[15:14] == 2'b01);
-    assign offset_in_block = cpu_addr[11:0];
+    wire in_code = (cpu_addr >= 16'h6000) && (cpu_addr <= 16'h9FFF);
+    wire in_data = (cpu_addr >= 16'hA000) && (cpu_addr <= 16'hCFFF);
 
-    // Sub-block within $4000-$7FFF: cpu_addr[13:12]
-    //   00 → $4000-$4FFF (code lo)
-    //   01 → $5000-$5FFF (code hi)
-    //   10 → $6000-$6FFF (data)
-    //   11 → $7000-$7FFF (region-C)
-    wire [1:0] sub_block = cpu_addr[13:12];
-
-    // Pick selectors per view.
-    wire [7:0] code_bank      = view_is_antic ? antic_code_bank      : cpu_code_bank;
-    wire [7:0] data_bank      = view_is_antic ? antic_data_bank      : cpu_data_bank;
-    wire [7:0] regc_bank_lo   = view_is_antic ? antic_regc_bank_lo   : cpu_regc_bank_lo;
-    wire [7:0] regc_bank_hi   = view_is_antic ? antic_regc_bank_hi   : cpu_regc_bank_hi;
-
-    // Compose bank_id.
-    always_comb begin
-        case (sub_block)
-            2'b00: bank_id = {2'b00, 6'b0, code_bank};                // code lo
-            2'b01: bank_id = {2'b01, 6'b0, code_bank};                // code hi
-            2'b10: bank_id = {2'b10, 6'b0, data_bank};                // data
-            2'b11: bank_id = {2'b11, regc_bank_hi[5:0], regc_bank_lo}; // region-C (14-bit composite)
-        endcase
-    end
+    assign is_in_window    = in_code | in_data;
+    assign is_code         = in_code;
+    assign offset_in_block = in_code ? (cpu_addr - 16'h6000)
+                                     : (cpu_addr - 16'hA000);
+    assign bank_id         = in_code ? {8'h00, cpu_code_bank}
+                                     : {cpu_data_bank_hi, cpu_data_bank_lo};
 
 endmodule
 

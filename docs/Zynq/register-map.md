@@ -167,7 +167,11 @@ ANTIC and C|GTIA". Mirror behaviour does NOT apply here.
 | $D499 | DRAW_ARG7_HI| R/W | Arg 7, high byte. |
 | $D49A | DRAW_ARG8_LO| R/W | Arg 8, low byte. BEZIER's colour. |
 | $D49B | DRAW_ARG8_HI| R/W | Arg 8, high byte. |
-| $D49C-$D4FF | reserved | - | Future chiplet-extension registers. Reads 0; writes ignored. |
+| $D49C | OS_ROM_ADDR_LO | R/W | Chiplet OS-ROM loader (SALLY-driven; distinct from the PS/AXI sally_rom_loader). Target write-address low byte. |
+| $D49D | OS_ROM_ADDR_HI | R/W | Target write-address high byte. |
+| $D49E | OS_ROM_DATA | R/W | Write a byte → committed to memory at OS_ROM_ADDR, then OS_ROM_ADDR auto-increments (unless WRITE_LOCK set). Read returns the last byte written. |
+| $D49F | OS_ROM_CTL | R/W | bit 0 = WRITE_LOCK: once set, further OS_ROM_DATA writes are ignored (ROM-load disabled). |
+| $D4A0-$D4FF | reserved | - | Future chiplet-extension registers. Reads 0; writes ignored. |
 
 ### Palette write semantics
 

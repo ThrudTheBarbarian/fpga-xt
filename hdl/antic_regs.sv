@@ -46,24 +46,15 @@ module antic_regs (
     output logic [7:0] clock_mult_q,    // $D480 (driven by serial-link)
     output logic [7:0] output_mode_q,   // $D482
 
-    // M24-4: ANTIC's view of the bank-select state, mirrored into
-    // the bank_xlat alongside the CPU's $0082-$0085 zp values.
-    // CPU and ANTIC can see different banks at the same address
-    // when these differ from the CPU values — period-correct
-    // technique for "CPU runs from one bank while ANTIC composites
-    // a different bank's screen RAM".
-    output logic [7:0] antic_code_bank_q,    // $D488
-    output logic [7:0] antic_data_bank_q,    // $D489
-    output logic [7:0] antic_regc_bank_lo_q, // $D48A
-    output logic [7:0] antic_regc_bank_hi_q, // $D48B
-
-    // M24-6: OS ROM load path. Software stages a load by writing
-    // OS_ROM_ADDR_{LO,HI} once, then streaming bytes through
-    // OS_ROM_DATA. Each $D48E write pulses os_rom_we for 1 cycle and
-    // auto-increments OS_ROM_ADDR. WRITE_LOCK ($D48F bit 0) gates
-    // os_rom_we — once locked, further $D48E writes are ignored.
+    // M24-6: OS ROM load path (chiplet, SALLY-driven — distinct from the
+    // PS/AXI sally_rom_loader).  Software stages a load by writing
+    // OS_ROM_ADDR_{LO,HI} ($D49C/$D49D) once, then streaming bytes through
+    // OS_ROM_DATA ($D49E). Each $D49E write pulses os_rom_we for 1 cycle
+    // and auto-increments OS_ROM_ADDR. WRITE_LOCK ($D49F bit 0) gates
+    // os_rom_we — once locked, further $D49E writes are ignored.
+    // (Moved off $D48C-$D48F, which now belong to DRAW_ARG1-3.)
     output logic [15:0] os_rom_addr_q,       // current target address
-    output logic [7:0]  os_rom_data_q,       // last $D48E write data
+    output logic [7:0]  os_rom_data_q,       // last $D49E write data
     output logic        os_rom_we,           // 1-cycle pulse per accepted load
     output logic        os_rom_locked_q,     // 1 = ROM-load disabled
 
@@ -113,8 +104,6 @@ module antic_regs (
     logic [7:0] pal_g;
     logic [7:0] pal_b;
     logic [7:0] pal_idx;
-    logic [7:0] antic_code_bank, antic_data_bank;
-    logic [7:0] antic_regc_bank_lo, antic_regc_bank_hi;
     logic [15:0] os_rom_addr;
     logic [15:0] os_rom_pending_addr;     // address paired with current strobe
     logic [7:0]  os_rom_data;
@@ -156,10 +145,6 @@ module antic_regs (
             pal_g        <= 8'h00;
             pal_b        <= 8'h00;
             pal_idx      <= 8'h00;
-            antic_code_bank    <= 8'h00;
-            antic_data_bank    <= 8'h00;
-            antic_regc_bank_lo <= 8'h00;
-            antic_regc_bank_hi <= 8'h00;
             os_rom_addr         <= 16'h0000;
             os_rom_pending_addr <= 16'h0000;
             os_rom_data         <= 8'h00;
@@ -214,13 +199,13 @@ module antic_regs (
                         pal_write_strobe <= 1'b1;        // commits {R,G,B} into palette_lut[wdata]
                     end
                     7'h07: ;                            // $D487 reserved
-                    7'h08: antic_code_bank    <= wdata;  // $D488 ANTIC_CODE_BANK
-                    7'h09: antic_data_bank    <= wdata;  // $D489 ANTIC_DATA_BANK
-                    7'h0A: antic_regc_bank_lo <= wdata;  // $D48A ANTIC_REGC_BANK_LO
-                    7'h0B: antic_regc_bank_hi <= wdata;  // $D48B ANTIC_REGC_BANK_HI
-                    7'h0C: os_rom_addr[7:0]   <= wdata;  // $D48C OS_ROM_ADDR_LO
-                    7'h0D: os_rom_addr[15:8]  <= wdata;  // $D48D OS_ROM_ADDR_HI
-                    7'h0E: begin                          // $D48E OS_ROM_DATA
+                    // $D488-$D49B (offsets 7'h08-7'h1B) belong to draw_regs
+                    // (DRAW_OP / DRAW_ARG0-8 / DRAW_GO).  antic_regs does not
+                    // decode them.  The OS-ROM-load chiplet path moved to
+                    // $D49C-$D49F (7'h1C-7'h1F) to clear the DRAW range.
+                    7'h1C: os_rom_addr[7:0]   <= wdata;  // $D49C OS_ROM_ADDR_LO
+                    7'h1D: os_rom_addr[15:8]  <= wdata;  // $D49D OS_ROM_ADDR_HI
+                    7'h1E: begin                          // $D49E OS_ROM_DATA
                         // Commit byte → fire os_rom_we strobe and
                         // auto-increment the target address. The
                         // strobe is paired with the PRE-increment
@@ -237,7 +222,7 @@ module antic_regs (
                             os_rom_addr         <= os_rom_addr + 16'd1;
                         end
                     end
-                    7'h0F: os_rom_locked      <= wdata[0]; // $D48F OS_ROM_CTL bit 0
+                    7'h1F: os_rom_locked      <= wdata[0]; // $D49F OS_ROM_CTL bit 0
                     default: ;
                 endcase
             end
@@ -303,14 +288,12 @@ module antic_regs (
                 7'h05: rdata = pal_b;                        // $D485 PAL_B
                 7'h06: rdata = pal_idx;                      // $D486 PAL_IDX
                 7'h07: rdata = 8'h00;                        // $D487 reserved
-                7'h08: rdata = antic_code_bank;              // $D488
-                7'h09: rdata = antic_data_bank;              // $D489
-                7'h0A: rdata = antic_regc_bank_lo;           // $D48A
-                7'h0B: rdata = antic_regc_bank_hi;           // $D48B
-                7'h0C: rdata = os_rom_addr[7:0];             // $D48C
-                7'h0D: rdata = os_rom_addr[15:8];            // $D48D
-                7'h0E: rdata = os_rom_data;                  // $D48E
-                7'h0F: rdata = {7'h00, os_rom_locked};       // $D48F
+                // $D488-$D49B (7'h08-7'h1B) read from draw_regs; antic_regs
+                // returns 0 there and the top-level mux ORs in draw_regs.
+                7'h1C: rdata = os_rom_addr[7:0];             // $D49C OS_ROM_ADDR_LO
+                7'h1D: rdata = os_rom_addr[15:8];            // $D49D OS_ROM_ADDR_HI
+                7'h1E: rdata = os_rom_data;                  // $D49E OS_ROM_DATA
+                7'h1F: rdata = {7'h00, os_rom_locked};       // $D49F OS_ROM_CTL
                 default: rdata = 8'h00;
             endcase
         end
@@ -338,10 +321,6 @@ module antic_regs (
     assign pal_g_q        = pal_g;
     assign pal_b_q        = pal_b;
     assign pal_idx_q      = pal_idx;
-    assign antic_code_bank_q    = antic_code_bank;
-    assign antic_data_bank_q    = antic_data_bank;
-    assign antic_regc_bank_lo_q = antic_regc_bank_lo;
-    assign antic_regc_bank_hi_q = antic_regc_bank_hi;
     // os_rom_addr_q exposes the *next* target address (= the value
     // software reads back at $D48C/$D48D after a stream of writes).
     // The strobe pairs with os_rom_pending_addr — that's what

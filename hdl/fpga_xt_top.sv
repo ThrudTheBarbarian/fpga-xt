@@ -204,8 +204,7 @@ module fpga_xt_top #(
     wire        sally_step;
 
     // Bank-select state (from SALLY zero-page snoop)
-    wire [7:0]  cpu_code_bank, cpu_data_bank;
-    wire [7:0]  cpu_regc_bank_lo, cpu_regc_bank_hi;
+    wire [7:0]  cpu_code_bank, cpu_data_bank_lo, cpu_data_bank_hi;
 
     // ANTIC-view bank registers ($D488-$D48B) are currently unused in the
     // Zynq build — ANTIC's DMA reaches RAM via bram_shim, not via
@@ -517,7 +516,8 @@ module fpga_xt_top #(
     // ---- sally_mem -------------------------------------------------------
     sally_mem #(
         .OS_ROM_HEX_PATH (""),
-        .DDR3_BANKED_BASE (32'h2000_0000)
+        .DDR3_BANKED_BASE (32'h2000_0000),
+        .DDR3_DATA_BASE   (32'h2040_0000)
     ) u_sally_mem (
         .clk        (clk_sally),
         .rst        (rst_sally),
@@ -534,14 +534,8 @@ module fpga_xt_top #(
         .hwreg_din  (hwreg_din),
         .hwreg_dout (hwreg_dout),
         .cpu_code_bank_q    (cpu_code_bank),
-        .cpu_data_bank_q    (cpu_data_bank),
-        .cpu_regc_bank_lo_q (cpu_regc_bank_lo),
-        .cpu_regc_bank_hi_q (cpu_regc_bank_hi),
-        .antic_code_bank    (8'h00),
-        .antic_data_bank    (8'h00),
-        .antic_regc_bank_lo (8'h00),
-        .antic_regc_bank_hi (8'h00),
-        .view_is_antic      (1'b0),
+        .cpu_data_bank_lo_q (cpu_data_bank_lo),
+        .cpu_data_bank_hi_q (cpu_data_bank_hi),
         .bus_mpd_n_in       (1'b1),         // no PBI
         .bus_pbi_rdata      (8'hFF),        // no PBI
         .bus_rd4_n_in       (1'b1),         // no cart

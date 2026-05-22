@@ -61,12 +61,12 @@ module tb_sally_mem;
     wire        axi_bvalid;
     wire        axi_bready;
 
-    wire [7:0] cpu_code_bank_q, cpu_data_bank_q;
-    wire [7:0] cpu_regc_bank_lo_q, cpu_regc_bank_hi_q;
+    wire [7:0] cpu_code_bank_q, cpu_data_bank_lo_q, cpu_data_bank_hi_q;
     wire       mem_busy;
 
     sally_mem #(
-        .DDR3_BANKED_BASE (32'h0000_0000)
+        .DDR3_BANKED_BASE (32'h0000_0000),  // code base
+        .DDR3_DATA_BASE   (32'h0008_0000)   // data base = +512 KB (within the 1 MiB slave)
     ) u_mem (
         .clk        (clk),
         .rst        (rst),
@@ -81,14 +81,8 @@ module tb_sally_mem;
         .hwreg_din  (hwreg_din),
         .hwreg_dout (hwreg_dout),
         .cpu_code_bank_q    (cpu_code_bank_q),
-        .cpu_data_bank_q    (cpu_data_bank_q),
-        .cpu_regc_bank_lo_q (cpu_regc_bank_lo_q),
-        .cpu_regc_bank_hi_q (cpu_regc_bank_hi_q),
-        .antic_code_bank    (8'h00),
-        .antic_data_bank    (8'h00),
-        .antic_regc_bank_lo (8'h00),
-        .antic_regc_bank_hi (8'h00),
-        .view_is_antic      (1'b0),
+        .cpu_data_bank_lo_q (cpu_data_bank_lo_q),
+        .cpu_data_bank_hi_q (cpu_data_bank_hi_q),
         .bus_mpd_n_in       (1'b1),    // M-PBI: /MPD inactive in unit-level sim
         .bus_pbi_rdata      (8'hFF),   // M-PBI: no PBI device in unit-level sim
         .bus_rd4_n_in       (1'b1),    // M-PBI: no physical cart in $8000-$9FFF
@@ -244,18 +238,24 @@ module tb_sally_mem;
             expect_eq("A.3 ram_hi[$ABCD]", v, 8'h22);
         end
 
-        // A.4: bank window ($4000-$7FFF). M24-3 will wire the cache;
-        // for M24-2 it passes through to the same BRAM, so writes
-        // round-trip just like main RAM.
-        $display("[A.4] bank window (cache stub)");
+        // A.4: banked windows — code ($6000-$9FFF via $82) and data
+        // ($A000-$CFFF via $83/$84) round-trip through the DDR3 AXI slave.
+        // ($4000-$5FFF is now Screen RAM in BRAM, not banked.)
+        $display("[A.4] banked windows (code + data)");
         begin
             logic [7:0] v;
-            do_write(16'h4000, 8'h33);
-            do_read (16'h4000, v);
-            expect_eq("A.4 bank[$4000]", v, 8'h33);
-            do_write(16'h7FFF, 8'h44);
-            do_read (16'h7FFF, v);
-            expect_eq("A.4 bank[$7FFF]", v, 8'h44);
+            do_write(16'h6000, 8'h33);     // code window, bottom
+            do_read (16'h6000, v);
+            expect_eq("A.4 code[$6000]", v, 8'h33);
+            do_write(16'h9FFF, 8'h44);     // code window, top
+            do_read (16'h9FFF, v);
+            expect_eq("A.4 code[$9FFF]", v, 8'h44);
+            do_write(16'hA000, 8'h55);     // data window, bottom
+            do_read (16'hA000, v);
+            expect_eq("A.4 data[$A000]", v, 8'h55);
+            do_write(16'hCFFF, 8'h66);     // data window, top
+            do_read (16'hCFFF, v);
+            expect_eq("A.4 data[$CFFF]", v, 8'h66);
         end
 
         // A.5: ROM regions ($C000-$CFFF, $D800-$FFFF). For M24-2
