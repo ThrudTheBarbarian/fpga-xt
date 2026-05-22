@@ -1,12 +1,26 @@
-  
-  o SALLY improvements as per docs/6502-embellishments.md
 
-  o Sprite engine as per docs/sprite-engine.md
-  
-  o Pattern rotation / affine transform — For rotated text and general image 
-    warping (currently done in software per §17 of vdi-sw-implementation.md).
-    Probably defer this for now
-  
+  o Sprite engine as per docs/Progress/sprite-engine.md
+
+  o SALLY Klaus conformance bug (HIGH — likely a real CPU bug, not a
+    Klaus-ism).  The Klaus 6502 functional test does NOT pass on SALLY:
+    it traps at $0da3 (BNE * failure trap) on the flag/stack sub-test
+    around $0d98 (load_flag 0 ; txs ; php ; lda $0101 ; cmp #fao=$30).
+    Differential proven PRE-EXISTING (baseline cpu.v fails identically),
+    so unrelated to the new $03/$13/$23/$33 modes.  The simple sequence
+    works in isolation (pushes/reads $30 correctly through the $0100→
+    $0Fxx alias), so it depends on accumulated CPU state — needs a VCD
+    trace of the real run near $0d98 to root-cause.  Leading suspects:
+    S_high drift desyncing the hardwired top-page legacy alias, or a
+    flag (D/I) interaction.  Until fixed, Klaus is NOT a valid
+    regression gate for SALLY — use the ISA + sally/sally_mem/sally_arb
+    suites.
+
+  o tb_klaus stuck-detector: also recognise 2-byte BRANCH-self traps
+    (BNE/BEQ/... = $D0/$F0/etc. + $FE), not just JMP-self ($4C).  Klaus
+    failure traps are `bxx *`, so the detector currently misses them and
+    runs the full 250M-cycle watchdog (~90 min) instead of failing fast
+    in seconds.
+
   o HW bring-up checklist — write up the test plan for when the Z-Turn SOM
     lands: DDR3 calibration, SiI9022A I²C init from the PS, fb_scanout test
     pattern, blitter smoke test. Also figure out how we load the bitstream
