@@ -1,30 +1,27 @@
 
   o Sprite engine as per docs/Progress/sprite-engine.md
 
-  o SALLY Klaus $0da3 stack-wrap bug — FIXED 2026-05-22.  Was a genuine
-    S_high mis-track: a pull crossing SP_low $FF<->$00 read one 256-byte
-    page low (PHA->$0F00, PLP read $0E00 instead of carrying back), and
-    the legacy low-byte wrap heuristic also mis-fired on TXS.  cpu.v now
-    treats SP as a coherent 12-bit entity (per embellishments §1):
-    full-12-bit pull/push addresses, per-state page-cross detection on
-    the S_high commit, and a dec_is_push flag so TXS preserves S_high.
-    Covered by sally_isa Tests 26-29 and tb_sally H.5.
-    NOTE: Klaus still can't *fully* pass — its "proper stack wrap around"
-    subtest (test #$0E, $0d89-$0e45) assumes a strict single 256-byte
-    stack page, which conflicts with SALLY's 12-bit / 4 KB SP (pushes
-    cross into hidden pages).  That's a semantics conflict, not a bug, so
-    tb_klaus now PATCHES OUT test #$0E (LDX #$FF:TXS:JMP next_test).  Klaus
-    is still NOT a full regression gate — use sally_isa + sally /
-    sally_mem / sally_arb / sally_stack.
-
-  o SALLY Klaus test #$12 ($103f) — separate PRE-EXISTING bug, newly
-    reachable now that #$0da3/#$0E are handled.  test #$12 is the indexed
-    addressing wraparound test; it stops at the next_test guard because
-    test_case ($0200) reads $00 instead of $12 — `sta test_case` at $1003
-    wrote A=$00 although the code (a9 12 8d 00 02) is intact and the zp,X/
-    abs,X indexed stores land correctly.  So it's a control-flow /
-    accumulator issue in tests #$0f-$11, NOT addressing and NOT the SP
-    fix.  Needs a VCD trace of $0ff0-$1006 to root-cause why A=$00.
+  o SALLY now PASSES the full Klaus Dormann 6502 functional test
+    (success trap $3469 @ ~96M cycles) — DONE 2026-05-22.  Three pieces:
+      1. $0da3 stack-wrap bug (genuine): S_high mis-tracked page crossings.
+         A pull across SP_low $FF<->$00 read one 256-byte page low
+         (PHA->$0F00, PLP read $0E00) and the legacy wrap heuristic mis-
+         fired on TXS.  cpu.v now treats SP as a coherent 12-bit entity
+         (embellishments §1): full-12-bit pull/push addresses, per-state
+         page-cross detection on the S_high commit, dec_is_push so TXS
+         preserves S_high.  Covered by sally_isa Tests 26-29 + tb_sally H.5.
+      2. test #$0E ("proper stack wrap around", $0d89-$0e45) assumes a
+         strict single 256-byte stack page — conflicts with SALLY's 12-bit
+         / 4 KB SP by design (not a bug).  tb_klaus PATCHES IT OUT
+         (LDX #$FF:TXS:JMP next_test).
+      3. The "#$12" failure was a tb_klaus MODELLING bug, not a CPU defect:
+         the flat 64 KB memory put SALLY's stack ($0F00-$0FFF) in the same
+         array as Klaus's code there, so every PHA/PHP/JSR push clobbered
+         the code.  tb_klaus now models the hidden 4 KB stack as a separate
+         stack_mem (routed by cpu_stack_op; $01xx legacy alias -> top page),
+         exactly as sally_mem does.  -> Klaus runs clean to the success trap.
+    Klaus IS now a valid SALLY regression gate (alongside sally_isa /
+    sally / sally_mem / sally_arb / sally_stack), modulo the dropped #$0E.
 
   o tb_klaus stuck-detector — DONE 2026-05-22: now recognises 2-byte
     BRANCH-self traps ((op & $1F)==$10 + offset $FE), not just JMP-self

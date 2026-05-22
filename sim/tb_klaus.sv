@@ -31,8 +31,15 @@ module tb_klaus;
     always #5 clk = ~clk;
     logic rst = 1'b1;
 
-    // ---- Flat 64 KB memory directly behind the CPU ---------------------
-    logic [7:0] mem [0:65535];
+    // ---- 64 KB main memory + separate 4 KB hidden stack ----------------
+    // The hidden stack is modelled as its own array (as sally_mem does in
+    // the production design), NOT as part of main memory.  Klaus's program
+    // code occupies $0F00-$0FFF, which is exactly SALLY's top stack page
+    // ({S_high=$F, SP}); if the stack lived in `mem` (a flat model), every
+    // PHA/PHP/JSR would overwrite that code.  Routing stack ops to
+    // stack_mem keeps the two disjoint, matching real hardware.
+    logic [7:0] mem       [0:65535];
+    logic [7:0] stack_mem [0:4095];
 
     // ---- sally_core wires ----------------------------------------------
     wire [15:0] cpu_addr;
@@ -57,25 +64,23 @@ module tb_klaus;
         .s_high   (cpu_s_high)
     );
 
-    // Synchronous-memory contract: addr cycle N, data cycle N+1.
-    // Writes commit at the same posedge.
-    //
-    // SALLY Stage A note: cpu.v now outputs AB = {4'h0, S_high, S[7:0]}
-    // for stack ops — with S_high = $F at reset, that's $0Fxx instead
-    // of the legacy $01xx.  Klaus's test code uses legacy direct
-    // addressing (LDA $0100,X, STA $01FF, etc.) to inspect stack state,
-    // so we add a flat-memory alias here: any access to $0100-$01FF
-    // is redirected to $0F00-$0FFF, mirroring the alias window that
-    // sally_mem provides in the production design.  This keeps Klaus's
-    // ISA semantics working against the widened SP.
-    wire [15:0] cpu_addr_eff = (cpu_addr[15:8] == 8'h01)
-                                ? {8'h0F, cpu_addr[7:0]}
-                                : cpu_addr;
+    // Synchronous-memory contract: addr cycle N, data cycle N+1; writes
+    // commit at the same posedge.  Address routing (mirrors sally_mem):
+    //   • Stack ops (cpu_stack_op): SALLY drives AB = {4'h0, S_high, SP},
+    //     so the low 12 bits index the hidden stack directly.
+    //   • Legacy $0100-$01FF (non-stack-op, e.g. Klaus's LDA $0101 to
+    //     inspect the stack): aliased to the TOP stack page $F00-$FFF.
+    //   • Everything else: main memory (code/data).
+    wire        use_stack = cpu_stack_op || (cpu_addr[15:8] == 8'h01);
+    wire [11:0] stk_idx   = cpu_stack_op ? cpu_addr[11:0]
+                                         : {4'hF, cpu_addr[7:0]};
 
     always_ff @(posedge clk) begin
-        if (!cpu_rw)
-            mem[cpu_addr_eff] <= cpu_dout;
-        cpu_din_q <= mem[cpu_addr_eff];
+        if (!cpu_rw) begin
+            if (use_stack) stack_mem[stk_idx] <= cpu_dout;
+            else           mem[cpu_addr]      <= cpu_dout;
+        end
+        cpu_din_q <= use_stack ? stack_mem[stk_idx] : mem[cpu_addr];
     end
 
     // ---- Stuck-PC watchdog --------------------------------------------
@@ -105,15 +110,14 @@ module tb_klaus;
         $display("[load] reading sim/test_data/6502_functional_test.hex …");
         $readmemh("test_data/6502_functional_test.hex", mem);
 
-        // SALLY Stage A: cpu.v now outputs $0Fxx for stack ops; the
-        // CPU read path is aliased back to $0F00-$0FFF for $0100-$01FF
-        // legacy accesses (cpu_addr_eff above).  The hex loader still
-        // wrote initial stack-page sentinels ($FF) into mem[$0100-$01FF],
-        // so we need to mirror those into mem[$0F00-$0FFF] where the
-        // alias actually reads from.  Without this, the CPU would read
-        // back $00 instead of $FF and Klaus diverges.
-        for (int i = 0; i < 256; i++)
-            mem[16'h0F00 + i] = mem[16'h0100 + i];
+        // Initialise the hidden stack.  Its top page (stack_mem[$F00-$FFF],
+        // i.e. the legacy $0100-$01FF alias window) takes the binary's
+        // $0100-$01FF stack sentinels; the deeper 3.75 KB starts at $00.
+        // CRUCIALLY, mem[$0F00-$0FFF] is left holding the LOADED CODE — the
+        // old flat model mirrored the $01xx sentinels over it (and stack
+        // pushes then clobbered it too), destroying Klaus's program there.
+        for (int i = 0; i < 4096; i++) stack_mem[i]              = 8'h00;
+        for (int i = 0; i < 256;  i++) stack_mem[16'h0F00 + i]   = mem[16'h0100 + i];
 
         // Patch reset vector so PC starts at $0400 (Klaus's `start`
         // label = code_segment).
