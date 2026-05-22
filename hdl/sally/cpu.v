@@ -126,6 +126,10 @@ reg [1:0] dst_reg;      // destination register index
 
 reg index_y;            // if set, then Y is index reg rather than X 
 reg load_reg;           // loading a register (A, X, Y, S) in this instruction
+reg dec_is_push;        // committing instruction is a stack PUSH (PHA/PHP/PUSH X/Y)
+                        // — distinguishes a deferred push (-1, may wrap S_high)
+                        // from a TXS transfer (preserves S_high) at the DECODE
+                        // S commit, since both write S there.
 reg inc;                // increment
 reg write_back;         // set if memory is read/modified/written 
 reg load_only;          // LDA/LDX/LDY instruction
@@ -427,6 +431,11 @@ reg [3:0] S_high;
 // does TSX + LDA $0100,X still works for the top 256 bytes.
 wire [7:0] STACKPAGE_DYN = { 4'h0, S_high };
 
+// Pull-read address for a single increment (PLA/PLP): the FULL 12-bit
+// SP+1 so a cross of SP_low $FF→$00 carries into S_high instead of
+// being formed from a one-cycle-late S_high glued to the new low byte.
+wire [11:0] sp_pull1_addr = { S_high, AXYS[SEL_S] } + 12'd1;
+
 // Stage B: SP-relative effective address.
 //   sp_q = current 12-bit SP = { S_high, AXYS[SEL_S] } (unsigned 0..4095)
 //   d_s  = signed 8-bit displacement (-128..+127)
@@ -502,15 +511,29 @@ always @* begin
         RTI0,
         BRK0:           begin AB = { STACKPAGE_DYN, regfile }; stack_op = 1'b1; end
 
-        BRK1,
-        JSR1,
-        PULL1,
+        // Pull reads (PLA/PLP) — single increment from the current 12-bit
+        // SP.  Use the FULL 12-bit {S_high,SP_low}+1 so a cross of
+        // SP_low $FF→$00 carries into the page nibble (the old
+        // {STACKPAGE_DYN, ADD} mixed a one-cycle-late S_high with the
+        // incremented low byte → read one 256-byte page low).
+        PULL1:          begin AB = { 4'h0, sp_pull1_addr }; stack_op = 1'b1; end
+
+        // Multi-step pull reads (RTS/RTI) — each step is the previous
+        // stack address + 1.  {ABH,ABL} holds the prior (correct) address
+        // and the +1 carries into the page nibble, so successive reads
+        // track the wrap without relying on S_high.
         RTS1,
         RTS2,
         RTI1,
         RTI2,
-        RTI3,
-        BRK2:           begin AB = { STACKPAGE_DYN, ADD     }; stack_op = 1'b1; end
+        RTI3:           begin AB = { ABH, ABL } + 16'd1; stack_op = 1'b1; end
+
+        // Multi-step push writes (BRK/JSR) — previous stack address − 1.
+        // Same idea; also sidesteps JSR's use of S as a PCL scratch
+        // (we read ABH:ABL, not AXYS[SEL_S]).
+        BRK1,
+        JSR1,
+        BRK2:           begin AB = { ABH, ABL } - 16'd1; stack_op = 1'b1; end
 
         SP0:            begin AB = { 4'h0, sp_eff_clamped }; stack_op = 1'b1; end
 
@@ -773,16 +796,19 @@ end
  * AXYS[SEL_S] as before; this register holds bits [11:8].  Initial
  * value $F at reset so SP = $FFF.
  *
- * Wrap detection: whenever AXYS[SEL_S] is being updated with ADD
- * (i.e., the normal ALU output, NOT the JSR0 temp-PCL stash), check
- * for $00→$FF (push underflow → S_high--) and $FF→$00 (pull overflow
- * → S_high++).  ADJH/ADJL are nonzero only during BCD adjusts; the
- * wrap-detect equality on raw ADD is safe because none of the stack
- * micro-ops use BCD.
+ * Wrap detection: a stack instruction's NET push/pull is detected from
+ * the final committed low byte (ADD) and the per-state step count, so a
+ * cross of a 256-byte boundary carries/borrows into S_high.  Each op
+ * commits S exactly once (see write_register), at the state cased below.
  *
- * TXS/TSX never reach this block — they only touch AXYS[SEL_S], so
- * S_high is preserved across `LDX #$FF : TXS`, the legacy reset
- * sequence.  That sequence lands at SP = $FFF (top of the 4 KB stack).
+ * TXS also writes S at DECODE (it loads SP_low from X) but must PRESERVE
+ * S_high — it is a transfer, not an SP step.  Because pushes (PHA/PHP/
+ * PUSH X/Y) ALSO defer their −1 commit to DECODE, the DECODE arm only
+ * adjusts the page when dec_is_push says the committing op was a push;
+ * otherwise (TXS) S_high is left untouched, even if X looks like a wrap.
+ * That keeps `LDX #$FF : TXS` (the legacy reset sequence) at SP = $FFF.
+ * ADJH/ADJL are nonzero only during BCD adjusts; the equality tests on
+ * raw ADD are safe because no stack micro-op uses BCD.
  * (S_high register is declared earlier near the AB generator.)
  */
 assign s_high = S_high;
@@ -804,10 +830,36 @@ always @(posedge clk) begin
         // Stage C PLL: commit post-frame SP high nibble.
         S_high <= sp_new_q[11:8];
     else if (write_register & RDY & (regsel == SEL_S) & (state != JSR0)) begin
-        if (AXYS[SEL_S] == 8'h00 && ADD == 8'hFF)
-            S_high <= S_high - 4'd1;            // push wrap: e.g., $F00 → $EFF
-        else if (AXYS[SEL_S] == 8'hFF && ADD == 8'h00)
-            S_high <= S_high + 4'd1;            // pull wrap: e.g., $EFF → $F00
+        // The committed low byte (ADD) is the FINAL 12-bit SP low byte
+        // after this instruction's net push/pull.  Multi-step ops commit
+        // once at their final state, so detect a page cross from the step
+        // count + ADD alone (NOT the old low byte — JSR has overwritten
+        // AXYS[SEL_S] with a PCL scratch by JSR2).
+        case (state)
+            // Multi-step pulls: SP rose by 2 (RTS) / 3 (RTI).  ADD landing
+            // below the step count means it carried up into the page.
+            RTS2: if (ADD <= 8'h01) S_high <= S_high + 4'd1;   // +2
+            RTI3: if (ADD <= 8'h02) S_high <= S_high + 4'd1;   // +3
+            // Multi-step pushes: SP fell by 3 (BRK) / 2 (JSR).  ADD landing
+            // in the top of the page means it borrowed down a page.  The
+            // reset sequence reuses the BRK path with a garbage entry SP,
+            // so skip the page borrow while `res` is asserted — reset must
+            // leave S_high at its $F init value (then LDX #$FF : TXS = $FFF).
+            BRK3: if (~res && ADD >= 8'hFD) S_high <= S_high - 4'd1;   // -3
+            JSR2: if (ADD >= 8'hFE) S_high <= S_high - 4'd1;   // -2
+            // Single-step pull (+1): PLP/PLA and POP X/Y commit S here.
+            // A pull crossing SP_low $FF→$00 carries up a page.
+            PULL1: if (AXYS[SEL_S] == 8'hFF && ADD == 8'h00)
+                       S_high <= S_high + 4'd1;                // $EFF → $F00
+            // DECODE is a deferred writeback shared by stack pushes (-1)
+            // and register transfers (TXS).  ONLY a real push adjusts the
+            // page (a push crossing SP_low $00→$FF borrows down); TXS sets
+            // SP_low from X and must leave S_high untouched, even when X
+            // happens to look like a wrap (e.g. txs to $00 with old SP=$FF).
+            DECODE: if (dec_is_push && AXYS[SEL_S] == 8'h00 && ADD == 8'hFF)
+                        S_high <= S_high - 4'd1;               // $F00 → $EFF
+            default: ;
+        endcase
     end
 end
 
@@ -1348,6 +1400,18 @@ always @(posedge clk)
                                 load_reg <= 1;
 
                 default:        load_reg <= 0;
+        endcase
+
+// Decoded alongside load_reg so it tracks the SAME (deferred) instruction
+// that writes S at the next DECODE.  Only stack pushes decrement S there;
+// TXS also writes S at DECODE but must preserve S_high.
+always @(posedge clk)
+     if( state == DECODE && RDY )
+        casex( IR )
+                8'b0x00_1000,   // PHP ($08), PHA ($48)
+                8'b010x_0100:   // PUSH X ($44), PUSH Y ($54)
+                                dec_is_push <= 1'b1;
+                default:        dec_is_push <= 1'b0;
         endcase
 
 always @(posedge clk)

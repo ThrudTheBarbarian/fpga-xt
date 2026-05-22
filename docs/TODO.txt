@@ -1,25 +1,45 @@
 
   o Sprite engine as per docs/Progress/sprite-engine.md
 
-  o SALLY Klaus conformance bug (HIGH — likely a real CPU bug, not a
-    Klaus-ism).  The Klaus 6502 functional test does NOT pass on SALLY:
-    it traps at $0da3 (BNE * failure trap) on the flag/stack sub-test
-    around $0d98 (load_flag 0 ; txs ; php ; lda $0101 ; cmp #fao=$30).
-    Differential proven PRE-EXISTING (baseline cpu.v fails identically),
-    so unrelated to the new $03/$13/$23/$33 modes.  The simple sequence
-    works in isolation (pushes/reads $30 correctly through the $0100→
-    $0Fxx alias), so it depends on accumulated CPU state — needs a VCD
-    trace of the real run near $0d98 to root-cause.  Leading suspects:
-    S_high drift desyncing the hardwired top-page legacy alias, or a
-    flag (D/I) interaction.  Until fixed, Klaus is NOT a valid
-    regression gate for SALLY — use the ISA + sally/sally_mem/sally_arb
-    suites.
+  o SALLY Klaus $0da3 stack-wrap bug — FIXED 2026-05-22.  Was a genuine
+    S_high mis-track: a pull crossing SP_low $FF<->$00 read one 256-byte
+    page low (PHA->$0F00, PLP read $0E00 instead of carrying back), and
+    the legacy low-byte wrap heuristic also mis-fired on TXS.  cpu.v now
+    treats SP as a coherent 12-bit entity (per embellishments §1):
+    full-12-bit pull/push addresses, per-state page-cross detection on
+    the S_high commit, and a dec_is_push flag so TXS preserves S_high.
+    Covered by sally_isa Tests 26-29 and tb_sally H.5.
+    NOTE: Klaus still can't *fully* pass — its "proper stack wrap around"
+    subtest (test #$0E, $0d89-$0e45) assumes a strict single 256-byte
+    stack page, which conflicts with SALLY's 12-bit / 4 KB SP (pushes
+    cross into hidden pages).  That's a semantics conflict, not a bug, so
+    tb_klaus now PATCHES OUT test #$0E (LDX #$FF:TXS:JMP next_test).  Klaus
+    is still NOT a full regression gate — use sally_isa + sally /
+    sally_mem / sally_arb / sally_stack.
 
-  o tb_klaus stuck-detector: also recognise 2-byte BRANCH-self traps
-    (BNE/BEQ/... = $D0/$F0/etc. + $FE), not just JMP-self ($4C).  Klaus
-    failure traps are `bxx *`, so the detector currently misses them and
-    runs the full 250M-cycle watchdog (~90 min) instead of failing fast
-    in seconds.
+  o SALLY Klaus test #$12 ($103f) — separate PRE-EXISTING bug, newly
+    reachable now that #$0da3/#$0E are handled.  test #$12 is the indexed
+    addressing wraparound test; it stops at the next_test guard because
+    test_case ($0200) reads $00 instead of $12 — `sta test_case` at $1003
+    wrote A=$00 although the code (a9 12 8d 00 02) is intact and the zp,X/
+    abs,X indexed stores land correctly.  So it's a control-flow /
+    accumulator issue in tests #$0f-$11, NOT addressing and NOT the SP
+    fix.  Needs a VCD trace of $0ff0-$1006 to root-cause why A=$00.
+
+  o tb_klaus stuck-detector — DONE 2026-05-22: now recognises 2-byte
+    BRANCH-self traps ((op & $1F)==$10 + offset $FE), not just JMP-self
+    ($4C), so a `bxx *` failure fails fast (~seconds) instead of running
+    the 250M-cycle watchdog.
+
+  o clk_sys hold is MARGINAL / non-deterministic (~ -0.18..-0.20 ns on
+    rst_sys_pipe -> xt_blitter/hdmi CLR reset-deassertion paths).  build.tcl
+    has a phys_opt+route hold-recovery loop and pblock_sally/pblock_blitter
+    floorplan the design (sally pinned to X0Y0 ALONE — 2 regions breaks
+    clk_sys hold), but closure still varies run-to-run (one impl closed at
+    +0.057, a re-run hit -0.195).  PROPER FIX: rework the sys-reset
+    distribution into a per-clock-region reset synchroniser/pipeline so the
+    deassertion hold closes reliably; that also frees sally to use 2 regions
+    for clk_sally setup margin (+0.005 -> ~+0.15 ns).
 
   o HW bring-up checklist — write up the test plan for when the Z-Turn SOM
     lands: DDR3 calibration, SiI9022A I²C init from the PS, fb_scanout test

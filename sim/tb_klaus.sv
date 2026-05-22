@@ -120,6 +120,21 @@ module tb_klaus;
         mem[16'hFFFC] = 8'h00;
         mem[16'hFFFD] = 8'h04;
 
+        // Drop Klaus test #$0E ("TSX sets NZ / proper stack wrap around",
+        // $0D89-$0E45).  That subtest assumes a strict single 256-byte
+        // stack page — pushing past SP_low=$00 must wrap back to $01FF in
+        // the SAME page.  SALLY deliberately has a 12-bit SP / 4 KB stack
+        // (deep pushes cross into hidden pages; see
+        // docs/6502/6502-embellishments.md §1), so it is incompatible BY
+        // DESIGN, not a CPU defect.  Overwrite the test body at $0D89 with
+        // `LDX #$FF : TXS : JMP $0E46`: re-establish SP=$FFF and jump to
+        // this test's next_test (which advances test_case $0E->$0F).
+        // Every other Klaus subtest still runs and is a valid gate.
+        mem[16'h0D89] = 8'hA2; mem[16'h0D8A] = 8'hFF;  // LDX #$FF
+        mem[16'h0D8B] = 8'h9A;                         // TXS  (SP = $FFF)
+        mem[16'h0D8C] = 8'h4C;                         // JMP $0E46
+        mem[16'h0D8D] = 8'h46; mem[16'h0D8E] = 8'h0E;
+
         // Some basic sanity checks.
         if (mem[16'h0400] !== 8'hD8) begin
             $display("FAIL: $0400 = $%02h, expected $D8 (CLD) — bad image", mem[16'h0400]);
@@ -164,19 +179,31 @@ module tb_klaus;
             // `JMP *` loop. Reset the window between samples.
             repeat (STUCK_BUDGET) @(posedge clk);
 
-            // Window range ≤ 2 alone isn't enough — a tight INX/BNE
-            // loop also stays in 3 bytes. Confirm the PC is inside a
-            // literal `JMP self` (opcode $4C, target == window_min).
+            // Window range ≤ 2 alone isn't enough — a tight INX/BNE data
+            // loop also stays in 3 bytes. Confirm the PC is inside a real
+            // self-trap, which in Klaus is one of:
+            //   • JMP self  ($4C lo hi, target == window_min) — the success
+            //     trap ($3469) and some failure traps.
+            //   • Bxx self  (a conditional-branch opcode + offset $FE) —
+            //     Klaus's trap_xx failure macros (`bne *`, `beq *`, …).
+            //     Branch opcodes are $10/$30/$50/$70/$90/$B0/$D0/$F0, i.e.
+            //     (op & $1F) == $10.  Without this the watchdog ran the
+            //     full 250M cycles on a branch-self failure instead of
+            //     failing fast.
             if ((stuck_window_max - stuck_window_min) <= 16'd2
-                && mem[stuck_window_min]            == 8'h4C
-                && mem[stuck_window_min + 16'd1]    == stuck_window_min[7:0]
-                && mem[stuck_window_min + 16'd2]    == stuck_window_min[15:8]) begin
-                if (stuck_window_min == SUCCESS_TRAP) begin
+                && ( (mem[stuck_window_min]         == 8'h4C
+                      && mem[stuck_window_min + 16'd1] == stuck_window_min[7:0]
+                      && mem[stuck_window_min + 16'd2] == stuck_window_min[15:8])
+                  || ((mem[stuck_window_min] & 8'h1F) == 8'h10
+                      && mem[stuck_window_min + 16'd1] == 8'hFE) )) begin
+                if (mem[stuck_window_min] == 8'h4C
+                    && stuck_window_min == SUCCESS_TRAP) begin
                     $display("*** KLAUS OK *** PC reached success trap $%04h after %0d cycles",
                              stuck_window_min, cycle_count);
                     $finish;
                 end else begin
-                    $display("*** KLAUS FAIL *** PC stuck in `JMP $%04h` after %0d cycles",
+                    $display("*** KLAUS FAIL *** PC stuck in `%s $%04h` after %0d cycles",
+                             (mem[stuck_window_min] == 8'h4C) ? "JMP" : "Bxx",
                              stuck_window_min, cycle_count);
                     $display("Cross-reference $%04h in sim/test_data/6502_functional_test.lst",
                              stuck_window_min);

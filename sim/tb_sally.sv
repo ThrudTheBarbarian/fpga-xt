@@ -710,33 +710,36 @@ module tb_sally;
             $display("[H.4] PHP pushes B=1 correctly ✓");
         end
 
-        // ---- H.5: Stack wrap on push past SP=$00 ----
-        // After the prelude SP=$FF. Forcibly set SP=$00, then PHA. SP
-        // wraps to $FF; the byte lands at $0100. Subsequent PHA at
-        // SP=$FF lands at $01FF and SP wraps to $FE.
-        $display("[H.5] Stack wrap on push past SP=$00");
+        // ---- H.5: Push past SP_low=$00 crosses into the hidden page ----
+        // SALLY's SP is 12-bit (embellishments §1): SP grows DOWN through
+        // the full 4 KB.  With SP=$F00 the first PHA lands at $0F00 (the
+        // top page, aliased to $0100); pushing past SP_low=$00 borrows
+        // into S_high, so the next PHA lands at $0EFF — hidden, with no
+        // $01xx alias.  (This is NOT a legacy single-page wrap back to
+        // $01FF — that would clobber the just-pushed top-of-stack.)
+        $display("[H.5] Push past SP_low=$00 crosses into the hidden page");
         clear_mem();
         `mem[16'h0203] = 8'hA2; `mem[16'h0204] = 8'h00;     // LDX #$00
-        `mem[16'h0205] = 8'h9A;                             // TXS  (SP = $00)
+        `mem[16'h0205] = 8'h9A;                             // TXS  (SP = $F00)
         `mem[16'h0206] = 8'hA9; `mem[16'h0207] = 8'hAA;     // LDA #$AA
-        `mem[16'h0208] = 8'h48;                             // PHA  (writes $0100, SP wraps to $FF)
+        `mem[16'h0208] = 8'h48;                             // PHA  → $0F00 (alias $0100), SP → $EFF
         `mem[16'h0209] = 8'hA9; `mem[16'h020A] = 8'hBB;     // LDA #$BB
-        `mem[16'h020B] = 8'h48;                             // PHA  (writes $01FF, SP = $FE)
+        `mem[16'h020B] = 8'h48;                             // PHA  → $0EFF (hidden), SP → $EFE
         `mem[16'h020C] = 8'h8D; `mem[16'h020D] = 8'hFF; `mem[16'h020E] = 8'h00;  // STA $00FF
         `mem[16'hFFFC] = 8'h00; `mem[16'hFFFD] = 8'h02;
         run_until_sentinel("H.5 stack wrap", 200);
         if (read_stack(8'h00) != 8'hAA) begin
-            $display("FAIL H.5: stack[$0100]=$%02h (expected $AA — first push past SP=$00)",
+            $display("FAIL H.5: stack[$0F00]=$%02h (expected $AA — first push, aliased to $0100)",
                      read_stack(8'h00));
             fail_count++;
         end
-        if (read_stack(8'hFF) != 8'hBB) begin
-            $display("FAIL H.5: stack[$01FF]=$%02h (expected $BB — second push, SP wrapped to $FF)",
-                     read_stack(8'hFF));
+        if (u_mem.stack_mem[12'hEFF] != 8'hBB) begin
+            $display("FAIL H.5: stack[$0EFF]=$%02h (expected $BB — second push crossed into hidden page)",
+                     u_mem.stack_mem[12'hEFF]);
             fail_count++;
         end
-        if (read_stack(8'h00) == 8'hAA && read_stack(8'hFF) == 8'hBB)
-            $display("[H.5] Stack wraps correctly within page 1 ✓");
+        if (read_stack(8'h00) == 8'hAA && u_mem.stack_mem[12'hEFF] == 8'hBB)
+            $display("[H.5] Push crosses $0F00→$0EFF (12-bit SP depth) ✓");
 
         // ---- Final report ----------------------------------------------
         if (fail_count == 0) begin

@@ -840,6 +840,111 @@ module tb_sally_isa;
         $display("PASS: test_sta_ind_sp_y");
     endtask
 
+    // ---- Test 26: stack wrap round-trip (PHA at SP_low=$00, PLA back) --
+    // Regression for the 12-bit-SP pull-across-wrap bug: a push at
+    // SP_low=$00 writes at {S_high,$00} and wraps S_high down; the
+    // matching pull must read that same byte back.  With the old
+    // late-updating S_high, PLA read one page low and returned garbage.
+    task automatic test_stack_wrap_roundtrip();
+        $display("=== Test 26: stack wrap round-trip (PHA/PLA across $00) ===");
+        reset_cpu();
+        mem[16'hFFFC] = 8'h00;
+        mem[16'hFFFD] = 8'h04;
+        prologue();
+        put(16'h0404, 8'hA2); put(16'h0405, 8'h00);             // LDX #$00
+        put(16'h0406, 8'h9A);                                   // TXS  (SP_low=$00)
+        put(16'h0407, 8'hA9); put(16'h0408, 8'h5A);             // LDA #$5A
+        put(16'h0409, 8'h48);                                   // PHA  (write @ {S_high,$00}, wrap)
+        put(16'h040A, 8'hA9); put(16'h040B, 8'h00);             // LDA #$00  (clobber)
+        put(16'h040C, 8'h68);                                   // PLA  (must read $5A back)
+        put(16'h040D, 8'h8D); put(16'h040E, 8'h10); put(16'h040F, 8'h03);  // STA $0310
+        put(16'h0410, 8'h4C); put(16'h0411, 8'h10); put(16'h0412, 8'h04);  // JMP $0410
+        run_until_stuck(16'h0410, 400, "stack wrap round-trip");
+        expect_mem(16'h0310, 8'h5A, "PHA@$00 then PLA round-trips across the SP wrap");
+        $display("PASS: test_stack_wrap_roundtrip");
+    endtask
+
+    // Test 27 — JSR (push −2) then RTS (pull +2) with the call/return
+    // straddling a 256-byte page boundary.  With SP_low=$00, JSR pushes
+    // PCH @ {$F,$00}=$F00 then PCL @ $EFF (borrows a page), leaving
+    // SP=$EFE / S_high=$E; RTS must pull PCL @ $EFF, PCH @ $F00 (carries
+    // back up) and commit S_high=$F.  If either the multi-step address
+    // ({ABH,ABL}±1) or the S_high commit is wrong, RTS returns to garbage
+    // and the post-return store never lands.
+    task automatic test_jsr_rts_wrap();
+        $display("=== Test 27: JSR/RTS across SP page boundary ===");
+        reset_cpu();
+        mem[16'hFFFC] = 8'h00;
+        mem[16'hFFFD] = 8'h04;
+        prologue();
+        put(16'h0404, 8'hA2); put(16'h0405, 8'h00);             // LDX #$00
+        put(16'h0406, 8'h9A);                                   // TXS (SP=$F00)
+        put(16'h0407, 8'h20); put(16'h0408, 8'h18); put(16'h0409, 8'h04); // JSR $0418
+        put(16'h040A, 8'hA9); put(16'h040B, 8'h42);             // LDA #$42 (return target)
+        put(16'h040C, 8'h8D); put(16'h040D, 8'h30); put(16'h040E, 8'h03); // STA $0330
+        put(16'h040F, 8'h4C); put(16'h0410, 8'h0F); put(16'h0411, 8'h04); // JMP $040F
+        put(16'h0418, 8'h60);                                   // RTS
+        run_until_stuck(16'h040F, 400, "JSR/RTS across wrap");
+        expect_mem(16'h0330, 8'h42, "JSR(−2)+RTS(+2) round-trips across the SP page");
+        $display("PASS: test_jsr_rts_wrap");
+    endtask
+
+    // Test 28 — BRK (push −3) then RTI (pull +3) straddling a page
+    // boundary.  SP_low=$01: BRK pushes PCH @ $F01, PCL @ $F00, P @ $EFF
+    // (borrows), SP=$EFE / S_high=$E; the handler's RTI pulls P @ $EFF,
+    // PCL @ $F00, PCH @ $F01 (carries up) and commits S_high=$F, then
+    // resumes at the byte after BRK's signature.  Exercises BRK3 (−3) and
+    // RTI3 (+3) multi-step commits across the wrap.
+    task automatic test_brk_rti_wrap();
+        $display("=== Test 28: BRK/RTI across SP page boundary ===");
+        reset_cpu();
+        mem[16'hFFFC] = 8'h00;
+        mem[16'hFFFD] = 8'h04;
+        mem[16'hFFFE] = 8'h20;                                  // IRQ/BRK vector → $0420
+        mem[16'hFFFF] = 8'h04;
+        prologue();
+        put(16'h0404, 8'hA2); put(16'h0405, 8'h01);             // LDX #$01
+        put(16'h0406, 8'h9A);                                   // TXS (SP=$F01)
+        put(16'h0407, 8'h00);                                   // BRK (pushes $0409 + P)
+        put(16'h0408, 8'hEA);                                   // signature byte (skipped)
+        put(16'h0409, 8'hA9); put(16'h040A, 8'h77);             // LDA #$77 (RTI returns here)
+        put(16'h040B, 8'h8D); put(16'h040C, 8'h40); put(16'h040D, 8'h03); // STA $0340
+        put(16'h040E, 8'h4C); put(16'h040F, 8'h0E); put(16'h0410, 8'h04); // JMP $040E
+        put(16'h0420, 8'h40);                                   // RTI
+        run_until_stuck(16'h040E, 400, "BRK/RTI across wrap");
+        expect_mem(16'h0340, 8'h77, "BRK(−3)+RTI(+3) round-trips across the SP page");
+        $display("PASS: test_brk_rti_wrap");
+    endtask
+
+    // Test 29 — TXS must PRESERVE S_high (it is a register transfer, not
+    // an SP increment).  Klaus's "proper stack wrap" subtest does
+    // `pha (SP_low $00→$FF, S_high $F→$E) … txs` with X=$00, i.e. TXS
+    // loads $00 while the old SP_low is $FF.  The legacy low-byte
+    // heuristic mistook that for a pull-wrap and bumped S_high $E→$F,
+    // so the next push landed a page high.  Here: drop into page $E via
+    // a wrapping PHA, TXS to SP_low=$00 (must stay in page $E), then PHA
+    // a sentinel — it must write $0E00, NOT $0F00.
+    task automatic test_txs_preserves_shigh();
+        $display("=== Test 29: TXS preserves S_high across a low-byte wrap ===");
+        reset_cpu();
+        mem[16'hFFFC] = 8'h00;
+        mem[16'hFFFD] = 8'h04;
+        mem[16'h0E00] = 8'h00;                                  // clear discriminator
+        prologue();
+        put(16'h0404, 8'hA2); put(16'h0405, 8'h00);             // LDX #$00
+        put(16'h0406, 8'h9A);                                   // TXS (SP=$F00)
+        put(16'h0407, 8'hA9); put(16'h0408, 8'h11);             // LDA #$11
+        put(16'h0409, 8'h48);                                   // PHA → $F00, SP_low→$FF, S_high→$E
+        put(16'h040A, 8'hA2); put(16'h040B, 8'h00);             // LDX #$00
+        put(16'h040C, 8'h9A);                                   // TXS (SP_low=$00; S_high MUST stay $E)
+        put(16'h040D, 8'hA9); put(16'h040E, 8'h33);             // LDA #$33
+        put(16'h040F, 8'h48);                                   // PHA → must write {S_high,$00}=$E00
+        put(16'h0410, 8'h4C); put(16'h0411, 8'h10); put(16'h0412, 8'h04); // JMP $0410
+        run_until_stuck(16'h0410, 400, "TXS preserves S_high");
+        expect_mem(16'h0E00, 8'h33, "TXS kept S_high in page $E (PHA wrote $0E00)");
+        $display("PASS: test_txs_preserves_shigh");
+    endtask
+
     // ---- Main scheduler -------------------------------------------------
     initial begin
         $display("=== tb_sally_isa starting ===");
@@ -874,6 +979,10 @@ module tb_sally_isa;
         test_sta_d_sp_x();
         test_lda_ind_sp_y();
         test_sta_ind_sp_y();
+        test_stack_wrap_roundtrip();
+        test_jsr_rts_wrap();
+        test_brk_rti_wrap();
+        test_txs_preserves_shigh();
 
         $display("=== ALL TESTS PASSED ===");
         $finish;
