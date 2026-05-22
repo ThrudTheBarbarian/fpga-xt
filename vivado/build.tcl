@@ -235,6 +235,13 @@ if {$flow eq "impl" || $flow eq "bit"} {
     # that survive route_design (e.g., the sprite compositor's BRAM→tree
     # path where the logic levels are small but routing dominates).
     phys_opt_design -directive AggressiveExplore
+    # The setup-focused phys_opt above can re-introduce hold (min-delay)
+    # violations after the router already fixed them.  Re-run route_design
+    # so routing — and its hold-fix pass — is the LAST step.  This only
+    # re-routes (placement/netlist from phys_opt are preserved), so the
+    # setup gains stay while hold is cleaned up.  (Added 2026-05-22 after
+    # the sally_mem defrag exposed a clk_sys hold violation in xt_blitter.)
+    route_design
     write_checkpoint -force [file join $out_dir post_route.dcp]
     report_utilization -file [file join $out_dir post_route_util.rpt]
     report_timing_summary -file [file join $out_dir post_route_timing.rpt]

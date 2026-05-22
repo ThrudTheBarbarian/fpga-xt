@@ -365,37 +365,23 @@ module sally_mem #(
     wire [15:0] mem_addr_w = rom_we ? rom_addr : addr;
     wire  [7:0] mem_din_w  = rom_we ? rom_data : data_in;
 
-    // Pipeline the SALLY-side write by one clk_sally cycle.  The
-    // BRAM-read → CPU-decode → ALU → BRAM-write-address path was the
-    // post-route WNS critical path once mem went dual-port (Vivado's
-    // TDP cascade adds ~150 ps to the read tail) — registering the
-    // write inputs cuts the chain after the CPU output.
+    // Single CPU read/write port (defrag, 2026-05-22).  The CPU does at
+    // most one bus op per cycle (read OR write), so the write and the
+    // registered read share ONE BRAM port, both addressed by mem_addr_w
+    // (= rom_we ? rom_addr : addr).  Combined with the ANTIC DMA read on
+    // port B, `mem` infers as a clean true-dual-port array → ~16 RAMB36
+    // instead of the ~48 the previous structure forced (CPU write @
+    // cpu_addr_q, CPU read @ addr, DMA read @ dma_addr = 3 address
+    // streams → Vivado replicated the whole 64 KB array ~3×).
     //
-    // ROM-load writes are NOT pipelined.  They come from
-    // sally_rom_loader (PS-side), which doesn't have the rdy gating
-    // SALLY does, and the OS-ROM load test exercises immediate
-    // read-after-write semantics.  ROM-load writes are infrequent and
-    // not on the timing-critical path.
-    //
-    // SALLY's pipelining is safe at clock_mult ≥ 2: sally_clock holds
-    // rdy low for ≥1 cycle between every actual bus cycle, so a
-    // read-after-write to the same address always lands at least one
-    // rdy-low cycle after the write commits.  At clock_mult=1 SALLY
-    // does run rdy-high every clk_sally cycle — that's the
-    // testbench / Atari-base-rate path; real bring-up runs at higher
-    // multipliers where this is safe.
-    logic        cpu_we_q;
-    logic [15:0] cpu_addr_q;
-    logic  [7:0] cpu_din_q;
+    // The write is no longer pipelined.  The earlier 1-cycle write delay
+    // existed only to register the BRAM-read → CPU → BRAM-write-address
+    // critical path off the CPU output, but it was exactly what forced
+    // read-addr ≠ write-addr in the same cycle (the replication trigger).
+    // Un-pipelining writes at the current addr also removes the
+    // clock_mult=1 read-after-write hazard the pipeline introduced.
     always_ff @(posedge clk) begin
-        cpu_we_q   <= cpu_w;
-        cpu_addr_q <= addr;
-        cpu_din_q  <= data_in;
-    end
-
-    always_ff @(posedge clk) begin
-        if      (rom_we)   mem[rom_addr]   <= rom_data;
-        else if (cpu_we_q) mem[cpu_addr_q] <= cpu_din_q;
+        if (mem_we) mem[mem_addr_w] <= mem_din_w;
     end
 
     // ---- Stack BRAM write port (separate array; reads prefer this) ----
@@ -440,7 +426,7 @@ module sally_mem #(
             was_mpd_window_q     <= 1'b0;
             was_cart_external_q  <= 1'b0;
         end else if (rdy) begin
-            bram_dout_q          <= mem[addr];
+            bram_dout_q          <= mem[mem_addr_w];
             stack_dout_q         <= stack_mem[stack_addr_rd];
             hwreg_dout_q         <= hwreg_dout;
             was_hwreg_q          <= is_hwreg_page;
