@@ -52,7 +52,7 @@ module i2c_master #(
     reg                         timer_run;
     wire                        timeout;   // end of half-period
 
-    always_ff @(posedge clk or negedge rst_n) begin
+    always_ff @(posedge clk) begin  // sync reset: rst_n (clk_sys) held post-lock; avoids async removal-hold
         if (!rst_n) begin
             timer <= 0;
         end else if (timer_run) begin
@@ -86,7 +86,7 @@ module i2c_master #(
     reg [7:0] shift_reg;
     reg       is_read;        // 1 during READ command
 
-    always_ff @(posedge clk or negedge rst_n) begin
+    always_ff @(posedge clk) begin  // sync reset: rst_n (clk_sys) held post-lock; avoids async removal-hold
         if (!rst_n) begin
             state       <= S_IDLE;
             cmd_ready   <= 1'b1;

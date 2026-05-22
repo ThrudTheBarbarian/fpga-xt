@@ -173,6 +173,11 @@ module xt_blitter #(
 ) (
     // ---- Clocks & reset --------------------------------------------------
     input  wire        clk,                 // = clk_sys
+    // SYNCHRONOUS reset (sampled on posedge clk, not async).  rst_sys is a
+    // synchronised, post-MMCM-lock reset that is held for several clk_sys
+    // cycles, so a sync reset reliably clears every FF.  Using sync reset
+    // (vs `posedge clk or posedge rst`) avoids async-reset removal-timing
+    // hold violations on the high-fanout rst_sys net across the die.
     input  wire        rst,                 // active-high, clk domain
 
     // ---- Register-write tap from SALLY (post-CDC, clk_sys) ---------------
@@ -278,7 +283,7 @@ module xt_blitter #(
     logic [1:0]  font_load_byte_idx;   // next byte position within word (0-3)
 
     // ---- Register write decode --------------------------------------------
-    always_ff @(posedge clk or posedge rst) begin
+    always_ff @(posedge clk) begin  // sync reset — see note at `rst` port
         if (rst) begin
             dst_x_reg       <= 16'd0;
             dst_y_reg       <= 16'd0;
@@ -439,7 +444,7 @@ module xt_blitter #(
     // the pointer reset IS dropped, so we still raise the flag to keep the
     // SW model simple: any pat/font register touch while busy = flagged.
     logic pat_blocked_q;
-    always_ff @(posedge clk or posedge rst) begin
+    always_ff @(posedge clk) begin  // sync reset — see note at `rst` port
         if (rst)
             pat_blocked_q <= 1'b0;
         else if (pat_load_attempt || pat_logw_attempt
@@ -536,7 +541,7 @@ module xt_blitter #(
     // first pop that consumes it.
     logic         cq_bypass_valid_q;
     logic [191:0] cq_bypass_data_q;
-    always_ff @(posedge clk or posedge rst) begin
+    always_ff @(posedge clk) begin  // sync reset — see note at `rst` port
         if (rst) begin
             cq_bypass_valid_q <= 1'b0;
             cq_bypass_data_q  <= '0;
@@ -563,7 +568,7 @@ module xt_blitter #(
     // the new slot).  Comes back high one cycle later in steady state,
     // OR the same cycle on push-to-empty (the bypass register carries
     // the snapshot directly into cq_front_q without waiting for BRAM).
-    always_ff @(posedge clk or posedge rst) begin
+    always_ff @(posedge clk) begin  // sync reset — see note at `rst` port
         if (rst)
             cq_front_valid <= 1'b0;
         else if (cq_pop)
@@ -604,7 +609,7 @@ module xt_blitter #(
     wire q_sync_mode  = (q_cmd == 8'h07);
 
     // FIFO pointer/count management
-    always_ff @(posedge clk or posedge rst) begin
+    always_ff @(posedge clk) begin  // sync reset — see note at `rst` port
         if (rst) begin
             cq_head  <= '0;
             cq_tail  <= '0;
@@ -633,7 +638,7 @@ module xt_blitter #(
     logic [15:0] seq_counter_q;
     wire seq_inc = sync_direct || (cq_pop && q_sync_mode);
 
-    always_ff @(posedge clk or posedge rst) begin
+    always_ff @(posedge clk) begin  // sync reset — see note at `rst` port
         if (rst)             seq_counter_q <= 16'd0;
         else if (seq_inc)    seq_counter_q <= seq_counter_q + 16'd1;
     end
@@ -984,7 +989,7 @@ module xt_blitter #(
     assign cq_pop        = (state == S_IDLE) && !cq_empty_w && cq_front_valid;
 
     // ====================================================================
-    always_ff @(posedge clk or posedge rst) begin
+    always_ff @(posedge clk) begin  // sync reset — see note at `rst` port
         if (rst) begin
             state             <= S_IDLE;
             cx                <= 16'd0;

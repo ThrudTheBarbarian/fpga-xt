@@ -95,7 +95,7 @@ module hdmi_config (
     reg [7:0]  seq_write_val;
     reg        seq_is_read;
 
-    always_ff @(posedge clk_i or negedge rst_n_i) begin
+    always_ff @(posedge clk_i) begin  // sync reset: rst_n_i (clk_sys) held post-lock; avoids async removal-hold
         if (!rst_n_i) begin
             seq_state    <= SEQ_IDLE;
             phase        <= PH_ISSUE;

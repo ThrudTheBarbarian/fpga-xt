@@ -91,7 +91,7 @@ module sally_rom_loader (
     localparam WST_IDLE = 0, WST_B = 1;
     reg wstate;
 
-    always_ff @(posedge clk_sys or posedge rst_sys) begin
+    always_ff @(posedge clk_sys) begin  // sync reset: rst_sys held post-lock; avoids async removal-hold
         if (rst_sys) begin
             wstate        <= WST_IDLE;
             s_axi_awready <= 1'b0;
@@ -141,7 +141,7 @@ module sally_rom_loader (
     localparam RST_IDLE = 0, RST_R = 1;
     reg rstate;
 
-    always_ff @(posedge clk_sys or posedge rst_sys) begin
+    always_ff @(posedge clk_sys) begin  // sync reset: rst_sys held post-lock; avoids async removal-hold
         if (rst_sys) begin
             rstate        <= RST_IDLE;
             s_axi_arready <= 1'b0;

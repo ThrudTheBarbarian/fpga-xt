@@ -28,15 +28,19 @@
     ($4C), so a `bxx *` failure fails fast (~seconds) instead of running
     the 250M-cycle watchdog.
 
-  o clk_sys hold is MARGINAL / non-deterministic (~ -0.18..-0.20 ns on
-    rst_sys_pipe -> xt_blitter/hdmi CLR reset-deassertion paths).  build.tcl
-    has a phys_opt+route hold-recovery loop and pblock_sally/pblock_blitter
-    floorplan the design (sally pinned to X0Y0 ALONE — 2 regions breaks
-    clk_sys hold), but closure still varies run-to-run (one impl closed at
-    +0.057, a re-run hit -0.195).  PROPER FIX: rework the sys-reset
-    distribution into a per-clock-region reset synchroniser/pipeline so the
-    deassertion hold closes reliably; that also frees sally to use 2 regions
-    for clk_sally setup margin (+0.005 -> ~+0.15 ns).
+  o clk_sys hold — FIXED 2026-05-22 by converting the clk_sys async resets
+    to SYNCHRONOUS.  Was marginal/non-deterministic (~ -0.18..-0.20 ns):
+    partly async-reset removal on the high-fanout rst_sys net
+    (rst_sys -> xt_blitter/hdmi/i2c CLR), partly clock-skew hold on short
+    xt_blitter BRAM-write paths.  rst_sys is synchronised + held for several
+    clk_sys cycles post-MMCM-lock, so a sync reset clears every FF reliably
+    while removing the async removal-timing class entirely.  Converted
+    xt_blitter, fb_scanout (clk_sys blocks), sally_rom_loader (clk_sys),
+    i2c_master, hdmi_config.  Result: two back-to-back impls close
+    identically — clk_sys +0.094/+0.051, clk_sally +0.094/+0.127, clk_pix
+    +0.423/+0.098 (setup/hold).  As a bonus the freed placement lifted
+    clk_sally setup +0.005 -> +0.094.  build.tcl's hold-recovery loop +
+    pblock_sally/pblock_blitter are kept as belt-and-braces.
 
   o HW bring-up checklist — write up the test plan for when the Z-Turn SOM
     lands: DDR3 calibration, SiI9022A I²C init from the PS, fb_scanout test

@@ -158,7 +158,7 @@ module fb_scanout #(
 
     logic [1:0] line_start_sync;
     logic       line_start_sync_prev;
-    always_ff @(posedge clk_sys or posedge rst_sys) begin
+    always_ff @(posedge clk_sys) begin  // sync reset: rst_sys held post-lock; avoids async removal-hold on the high-fanout rst_sys net
         if (rst_sys) begin
             line_start_sync      <= 2'b0;
             line_start_sync_prev <= 1'b0;
@@ -215,7 +215,7 @@ module fb_scanout #(
     logic        line_pending;          // 1 = there's a fetch to do
     logic        fetch_done;             // 1-cycle pulse when a line finishes
 
-    always_ff @(posedge clk_sys or posedge rst_sys) begin
+    always_ff @(posedge clk_sys) begin  // sync reset: rst_sys held post-lock; avoids async removal-hold on the high-fanout rst_sys net
         if (rst_sys) begin
             fetch_line   <= 11'd0;
             line_pending <= 1'b1;       // pre-fetch line 0 after reset
@@ -259,7 +259,7 @@ module fb_scanout #(
     assign m_axi_arlen   = 8'd15;       // 16 beats
     assign m_axi_rready  = 1'b1;        // always ready — line_buf accepts every beat
 
-    always_ff @(posedge clk_sys or posedge rst_sys) begin
+    always_ff @(posedge clk_sys) begin  // sync reset: rst_sys held post-lock; avoids async removal-hold on the high-fanout rst_sys net
         if (rst_sys) begin
             state         <= S_IDLE;
             burst_idx     <= 6'd0;
