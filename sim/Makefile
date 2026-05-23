@@ -400,6 +400,7 @@ SALLY_HDL := \
     $(HDL_DIR)/sally/sally_core.sv \
     $(HDL_DIR)/bank_xlat.sv        \
     $(HDL_DIR)/banked_axi_reader.sv \
+    $(HDL_DIR)/banked_page_cache.sv \
     $(HDL_DIR)/sally_mem.sv
 
 $(BUILD_DIR)/tb_sally.vvp: $(SALLY_HDL) tb_sally.sv axi_slave_mem.sv | $(BUILD_DIR)
@@ -409,6 +410,7 @@ $(BUILD_DIR)/tb_sally.vvp: $(SALLY_HDL) tb_sally.sv axi_slave_mem.sv | $(BUILD_D
 SALLY_STACK_HDL := \
     $(HDL_DIR)/bank_xlat.sv         \
     $(HDL_DIR)/banked_axi_reader.sv \
+    $(HDL_DIR)/banked_page_cache.sv \
     $(HDL_DIR)/sally_mem.sv
 
 sally_stack: $(BUILD_DIR)/tb_sally_stack.vvp
@@ -468,6 +470,22 @@ $(BUILD_DIR)/tb_klaus.vvp: $(KLAUS_HDL) tb_klaus.sv | $(BUILD_DIR)
 test_data/6502_functional_test.hex: test_data/6502_functional_test.bin
 	od -An -tx1 -v $< | tr -s ' ' '\n' | grep -v '^$$' > $@
 
+# ---- tb_page_test — PAGE cache unit test ---------------------------------
+PAGE_TEST_HDL := \
+    $(HDL_DIR)/bank_xlat.sv \
+    $(HDL_DIR)/banked_page_cache.sv \
+    $(HDL_DIR)/sally_mem.sv
+
+page_test: $(BUILD_DIR)/tb_page_test.vvp
+	@echo "=== tb_page_test — PAGE cache ==="
+	@$(VVP) -N $< | tee $(BUILD_DIR)/tb_page_test.log
+	@grep -q '\*\*\* PAGE CACHE OK \*\*\*' $(BUILD_DIR)/tb_page_test.log || \
+	    (echo "FAIL: tb_page_test missing PAGE CACHE OK"; exit 1)
+	@echo "PASS: tb_page_test"
+
+$(BUILD_DIR)/tb_page_test.vvp: $(PAGE_TEST_HDL) tb_page_test.sv axi_slave_mem.sv | $(BUILD_DIR)
+	$(IVERILOG) $(SV_FLAGS) -o $@ -s tb_page_test $(PAGE_TEST_HDL) axi_slave_mem.sv tb_page_test.sv
+
 # ---- M24-2 — SALLY memory subsystem -------------------------------------
 sally_mem: $(BUILD_DIR)/tb_sally_mem.vvp
 	@echo "=== M24-2 sally_mem ==="
@@ -481,6 +499,7 @@ sally_mem: $(BUILD_DIR)/tb_sally_mem.vvp
 SALLY_MEM_HDL := \
     $(HDL_DIR)/bank_xlat.sv \
     $(HDL_DIR)/banked_axi_reader.sv \
+    $(HDL_DIR)/banked_page_cache.sv \
     $(HDL_DIR)/sally_mem.sv
 
 $(BUILD_DIR)/tb_sally_mem.vvp: $(SALLY_MEM_HDL) tb_sally_mem.sv axi_slave_mem.sv | $(BUILD_DIR)
@@ -502,6 +521,7 @@ SALLY_ARB_HDL := \
     $(HDL_DIR)/sally/sally_core.sv \
     $(HDL_DIR)/bank_xlat.sv        \
     $(HDL_DIR)/banked_axi_reader.sv \
+    $(HDL_DIR)/banked_page_cache.sv \
     $(HDL_DIR)/sally_mem.sv        \
     $(HDL_DIR)/sally_clock.sv
 
@@ -604,6 +624,7 @@ OS_ROM_HDL := \
     $(HDL_DIR)/antic_regs.sv \
     $(HDL_DIR)/bank_xlat.sv  \
     $(HDL_DIR)/banked_axi_reader.sv \
+    $(HDL_DIR)/banked_page_cache.sv \
     $(HDL_DIR)/sally_mem.sv
 
 $(BUILD_DIR)/tb_os_rom_load.vvp: $(OS_ROM_HDL) tb_os_rom_load.sv axi_slave_mem.sv | $(BUILD_DIR)

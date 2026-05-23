@@ -69,7 +69,12 @@ module sally_mem #(
     // Production builds set these from chiplet-ext registers; for synth
     // the constants give Vivado a real address to time against.
     parameter logic [31:0]   DDR3_BANKED_BASE   = 32'h2000_0000,  // code base
-    parameter logic [31:0]   DDR3_DATA_BASE     = 32'h2040_0000   // code base + 4 MB
+    parameter logic [31:0]   DDR3_DATA_BASE     = 32'h2040_0000,  // code base + 4 MB
+    // Cache architecture for the banked-window AXI port.
+    //   "LINE" = banked_axi_reader (single 64 B line, write-through).
+    //   "PAGE" = banked_page_cache (full-page resident, write-back).
+    // A/B comparison via this parameter before committing to the page cache.
+    parameter string         BANKED_CACHE       = "PAGE"
 ) (
     input  wire        clk,
     input  wire        rst,
@@ -269,41 +274,83 @@ module sally_mem #(
     wire [7:0]  axi_rdata_w;
     wire        axi_ready_w;
 
-    banked_axi_reader #(
-        .AXI_ADDR_W (32)
-    ) u_axi_reader (
-        .clk           (clk),
-        .rst           (rst),
-        .req_addr      (axi_req_addr),
-        .req_valid     (axi_req_valid),
-        .req_we        (axi_req_we),
-        .req_wdata     (data_in),
-        .req_rdata     (axi_rdata_w),
-        .req_ready     (axi_ready_w),
-        .m_axi_araddr  (m_axi_araddr),
-        .m_axi_arlen   (m_axi_arlen),
-        .m_axi_arsize  (m_axi_arsize),
-        .m_axi_arburst (m_axi_arburst),
-        .m_axi_arvalid (m_axi_arvalid),
-        .m_axi_arready (m_axi_arready),
-        .m_axi_rdata   (m_axi_rdata),
-        .m_axi_rvalid  (m_axi_rvalid),
-        .m_axi_rlast   (m_axi_rlast),
-        .m_axi_rready  (m_axi_rready),
-        .m_axi_awaddr  (m_axi_awaddr),
-        .m_axi_awlen   (m_axi_awlen),
-        .m_axi_awsize  (m_axi_awsize),
-        .m_axi_awburst (m_axi_awburst),
-        .m_axi_awvalid (m_axi_awvalid),
-        .m_axi_awready (m_axi_awready),
-        .m_axi_wdata   (m_axi_wdata),
-        .m_axi_wstrb   (m_axi_wstrb),
-        .m_axi_wlast   (m_axi_wlast),
-        .m_axi_wvalid  (m_axi_wvalid),
-        .m_axi_wready  (m_axi_wready),
-        .m_axi_bvalid  (m_axi_bvalid),
-        .m_axi_bready  (m_axi_bready)
-    );
+    generate
+        if (BANKED_CACHE == "LINE") begin : g_line_cache
+            banked_axi_reader #(
+                .AXI_ADDR_W (32)
+            ) u_axi_reader (
+                .clk           (clk),
+                .rst           (rst),
+                .req_addr      (axi_req_addr),
+                .req_valid     (axi_req_valid),
+                .req_we        (axi_req_we),
+                .req_wdata     (data_in),
+                .req_rdata     (axi_rdata_w),
+                .req_ready     (axi_ready_w),
+                .m_axi_araddr  (m_axi_araddr),
+                .m_axi_arlen   (m_axi_arlen),
+                .m_axi_arsize  (m_axi_arsize),
+                .m_axi_arburst (m_axi_arburst),
+                .m_axi_arvalid (m_axi_arvalid),
+                .m_axi_arready (m_axi_arready),
+                .m_axi_rdata   (m_axi_rdata),
+                .m_axi_rvalid  (m_axi_rvalid),
+                .m_axi_rlast   (m_axi_rlast),
+                .m_axi_rready  (m_axi_rready),
+                .m_axi_awaddr  (m_axi_awaddr),
+                .m_axi_awlen   (m_axi_awlen),
+                .m_axi_awsize  (m_axi_awsize),
+                .m_axi_awburst (m_axi_awburst),
+                .m_axi_awvalid (m_axi_awvalid),
+                .m_axi_awready (m_axi_awready),
+                .m_axi_wdata   (m_axi_wdata),
+                .m_axi_wstrb   (m_axi_wstrb),
+                .m_axi_wlast   (m_axi_wlast),
+                .m_axi_wvalid  (m_axi_wvalid),
+                .m_axi_wready  (m_axi_wready),
+                .m_axi_bvalid  (m_axi_bvalid),
+                .m_axi_bready  (m_axi_bready)
+            );
+        end else begin : g_page_cache
+            banked_page_cache #(
+                .AXI_ADDR_W (32)
+            ) u_page_cache (
+                .clk           (clk),
+                .rst           (rst),
+                .req_addr      (axi_req_addr),
+                .req_valid     (axi_req_valid),
+                .req_we        (axi_req_we),
+                .req_wdata     (data_in),
+                .req_rdata     (axi_rdata_w),
+                .req_ready     (axi_ready_w),
+                .bank_id       (bank_id_w),
+                .is_code       (is_code_w),
+                .m_axi_araddr  (m_axi_araddr),
+                .m_axi_arlen   (m_axi_arlen),
+                .m_axi_arsize  (m_axi_arsize),
+                .m_axi_arburst (m_axi_arburst),
+                .m_axi_arvalid (m_axi_arvalid),
+                .m_axi_arready (m_axi_arready),
+                .m_axi_rdata   (m_axi_rdata),
+                .m_axi_rvalid  (m_axi_rvalid),
+                .m_axi_rlast   (m_axi_rlast),
+                .m_axi_rready  (m_axi_rready),
+                .m_axi_awaddr  (m_axi_awaddr),
+                .m_axi_awlen   (m_axi_awlen),
+                .m_axi_awsize  (m_axi_awsize),
+                .m_axi_awburst (m_axi_awburst),
+                .m_axi_awvalid (m_axi_awvalid),
+                .m_axi_awready (m_axi_awready),
+                .m_axi_wdata   (m_axi_wdata),
+                .m_axi_wstrb   (m_axi_wstrb),
+                .m_axi_wlast   (m_axi_wlast),
+                .m_axi_wvalid  (m_axi_wvalid),
+                .m_axi_wready  (m_axi_wready),
+                .m_axi_bvalid  (m_axi_bvalid),
+                .m_axi_bready  (m_axi_bready)
+            );
+        end
+    endgenerate
 
     // SALLY stalls while the reader can't serve the current request.
     assign busy = axi_req_valid && !axi_ready_w;
@@ -314,7 +361,13 @@ module sally_mem #(
     logic [7:0] axi_rdata_q;
     always_ff @(posedge clk or posedge rst) begin
         if (rst)              axi_rdata_q <= 8'h00;
-        else if (axi_ready_w) axi_rdata_q <= axi_rdata_w;
+        else if (axi_ready_w) begin
+            axi_rdata_q <= axi_rdata_w;
+`ifndef SYNTHESIS
+            $display("[sally_mem] latch axi_rdata_q=%02h (from ready=%d we=%d)",
+                axi_rdata_w, axi_ready_w, axi_req_we);
+`endif
+        end
     end
 
     // ---- Read pipeline + path-tracking flops ----------------------
@@ -421,6 +474,11 @@ module sally_mem #(
             was_stack_q          <= is_stack_access;
             was_mpd_window_q     <= is_mpd_window;
             was_cart_external_q  <= cart_external_read;
+`ifndef SYNTHESIS
+            if (is_in_window_w) begin
+                $display("[sally_mem] rdy: was_bank_q <= 1 (addr=%04h)", addr);
+            end
+`endif
         end
     end
 
