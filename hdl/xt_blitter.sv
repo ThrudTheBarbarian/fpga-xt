@@ -269,6 +269,7 @@ module xt_blitter #(
     // Shift-register accumulator for the in-flight entry.  When byte 3 (A)
     // arrives, the full 32-bit RGBA word commits to pat_mem.
     logic [23:0] pat_load_accum;
+    logic [23:0] pat_load_accum_q;   // pipeline stage for BRAM hold timing
 
     // ---- Font coverage memory (512 × 32-bit = 16 Kb, one BRAM18) -----------
     // Stores packed AAAA coverage bytes: 4 pixels per word.
@@ -393,36 +394,89 @@ module xt_blitter #(
             end
         end
     end
+    // LUT2 hold-delay insertion for BRAM DI paths.
+    // At clk_sys=150 MHz, direct FF→BRAM DI paths with 0 logic levels suffer
+    // hold violations (WHS=-0.197 ns) because clock skew between SLICEs and
+    // BRAMs within pb_blitter's two clock regions reaches 0.309 ns — more
+    // than the 0.267 ns data delay + 0.155 ns BRAM hold requirement.
+    // phys_opt cannot fix 0-logic-level paths (no logic to replicate/delay).
+    //
+    // We insert LUT2 AND buffers on every write-data bit to pat_mem and
+    // font_mem.  Each LUT2 is configured as O = I0 & I1 where I1 is the
+    // respective write-enable signal (pat_we / font_we).  This adds ~0.15 ns
+    // of logic delay to the data path, sufficient to meet hold.  When the
+    // write enable is deasserted the DI value is don't-care (BRAM captures
+    // data only when WE is active), so the AND is functionally transparent.
+    //
+    // Critically, a LUT2 with a non-constant second input performs a real
+    // logic function — unlike a LUT1 pass-through (INIT=2'b10), which
+    // Vivado's opt_design removes regardless of DONT_TOUCH per UG901.
+    //
+    // pat_mem write data — packed as {R, G, B, A} in fb_scanout order.
+    wire [31:0] pat_mem_din_pre = {pat_load_accum_q[7:0],    // R → [31:24]
+                                    pat_load_accum_q[15:8],   // G → [23:16]
+                                    pat_load_accum_q[23:16],  // B → [15:8]
+                                    bus_data};                // A → [7:0]
+
+    // Pattern memory write enable — gated on !busy so pat contents stay frozen
+    // for in-flight commands (declared before the generate block uses it).
+    wire pat_we = reg_we && (reg_addr == 5'h0B) && (pat_load_ptr[1:0] == 2'd3) && !busy;
+
+    wire [31:0] pat_mem_din;
+    generate
+        genvar pb;
+        for (pb = 0; pb < 32; pb++) begin : pat_di_buf
+`ifdef XILINX
+            (* DONT_TOUCH = "true" *)
+            LUT2 #(.INIT(4'h8)) u_buf (.I0(pat_mem_din_pre[pb]), .I1(pat_we), .O(pat_mem_din[pb]));
+`else
+            assign pat_mem_din[pb] = pat_mem_din_pre[pb] & pat_we;
+`endif
+        end
+    endgenerate
 
     // Pattern memory write port — fires when byte 3 (A) of an entry arrives.
-    // Pack in fb_scanout-compatible order: {R, G, B, A}.  Gated on !busy:
-    // if software writes a pat byte while the blitter is busy, the byte-
-    // stream pointer logic (above) silently drops the write.  pat_we
+    // Gated on !busy: if software writes a pat byte while the blitter is busy,
+    // the byte-stream pointer logic (above) silently drops the write.  pat_we
     // mirrors that gate so the BRAM contents stay frozen until the queue
     // drains, preserving pat consistency for in-flight commands.
-    wire pat_we = reg_we && (reg_addr == 5'h0B) && (pat_load_ptr[1:0] == 2'd3) && !busy;
     wire [9:0] pat_entry_idx_wr = pat_load_ptr[11:2];
+
+    always_ff @(posedge clk) pat_load_accum_q <= pat_load_accum;
 
     always_ff @(posedge clk) begin
         if (pat_we)
-            pat_mem[pat_entry_idx_wr] <= {pat_load_accum[7:0],    // R → [31:24]
-                                          pat_load_accum[15:8],   // G → [23:16]
-                                          pat_load_accum[23:16],  // B → [15:8]
-                                          bus_data};              // A → [7:0]
+            pat_mem[pat_entry_idx_wr] <= pat_mem_din;
     end
 
     // ---- Font memory write port — fires when byte 3 (4th coverage byte) ----
-    // Packs in AAAA order: {byte3, byte2, byte1, byte0} → [31:24],[23:16],[15:8],[7:0]
-    // Same !busy gate as pat_we — keeps font_mem consistent for queued commands.
+    // Same LUT2 hold-delay treatment as pat_mem above.
+    wire [31:0] font_mem_din_pre = {bus_data,               // byte3 → [31:24]
+                                     font_load_accum[23:16],  // byte2 → [23:16]
+                                     font_load_accum[15:8],   // byte1 → [15:8]
+                                     font_load_accum[7:0]};   // byte0 → [7:0]
+
+    // Font memory write enable — declared before the generate block uses it.
     wire font_we = reg_we && (reg_addr == 5'h1E) && (font_load_byte_idx == 2'd3) && !busy;
+
+    wire [31:0] font_mem_din;
+    generate
+        genvar pb2;
+        for (pb2 = 0; pb2 < 32; pb2++) begin : font_di_buf
+`ifdef XILINX
+            (* DONT_TOUCH = "true" *)
+            LUT2 #(.INIT(4'h8)) u_buf (.I0(font_mem_din_pre[pb2]), .I1(font_we), .O(font_mem_din[pb2]));
+`else
+            assign font_mem_din[pb2] = font_mem_din_pre[pb2] & font_we;
+`endif
+        end
+    endgenerate
+
     wire [8:0] font_entry_idx_wr = font_load_ptr[10:2];   // byte ptr → word index
 
     always_ff @(posedge clk) begin
         if (font_we)
-            font_mem[font_entry_idx_wr] <= {bus_data,               // byte3 → [31:24]
-                                            font_load_accum[23:16],  // byte2 → [23:16]
-                                            font_load_accum[15:8],   // byte1 → [15:8]
-                                            font_load_accum[7:0]};   // byte0 → [7:0]
+            font_mem[font_entry_idx_wr] <= font_mem_din;
     end
 
     // ====================================================================
