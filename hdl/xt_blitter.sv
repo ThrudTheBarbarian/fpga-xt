@@ -577,6 +577,25 @@ module xt_blitter #(
     wire cq_pop;   // driven below (forward reference; declared as wire so it
                    // is visible to the FIFO management always_ff)
 
+    // ---- cmd_fifo write-data hold-fix buffer ----------------------------
+    // LUT2 AND buffers gate each bit of the write data with cq_push.
+    // Without this, the 0-logic-level FF→BRAM DI paths (e.g. flags_reg →
+    // cmd_fifo_reg_0/DIADI) violate clk_sys hold.  The LUT2 adds ~0.15 ns
+    // of logic delay that opt_design cannot remove (it implements a real
+    // AND function, unlike a LUT1 identity).  Same approach used for
+    // pat_mem/font_mem DI paths above.
+    wire [191:0] cmd_fifo_din;
+    generate
+        for (genvar i = 0; i < 192; i++) begin : g_cmd_fifo_din_buf
+`ifdef XILINX
+            (* DONT_TOUCH = "true" *)
+            LUT2 #(.INIT(4'h8)) u_buf (.I0(cmd_snapshot_in[i]), .I1(cq_push), .O(cmd_fifo_din[i]));
+`else
+            assign cmd_fifo_din[i] = cmd_snapshot_in[i] & cq_push;
+`endif
+        end
+    endgenerate
+
     // BRAM-friendly storage pattern: bare write + registered read with NO
     // conditional logic on the read port.  Vivado infers a BRAM at this
     // size only if the read port is "always read mem[ra] into rd_reg".
@@ -585,7 +604,7 @@ module xt_blitter #(
     logic [191:0] cq_front_bram_q;     // registered output of the BRAM
 
     always_ff @(posedge clk) begin
-        if (cq_push) cmd_fifo[cq_head] <= cmd_snapshot_in;
+        if (cq_push) cmd_fifo[cq_head] <= cmd_fifo_din;
         cq_front_bram_q <= cmd_fifo[cq_tail];
     end
 
@@ -758,6 +777,9 @@ module xt_blitter #(
     logic        accum_commits_q;          // registered accum_commits_beat
     logic [15:0] cx_q;                     // cx captured before increment
     logic        cx_ge_dst_w_q;            // (cx + 1 >= dst_w_q) pipelined, breaks CARRY4 chain
+    logic        cy_ge_dst_h_m1_q;          // (cy >= dst_h_q - 1) pipelined, breaks CARRY4 chain
+                                            //   to state_reg.  Registered every cycle so it's
+                                            //   ready in S_PEND / S_B for scaled/bilin row check.
     logic [7:0]  ft_al_q;                  // ft_al captured after multiplier
     logic        strb_nonzero_q;           // committed beat had non-zero wstrb
 
@@ -789,6 +811,13 @@ module xt_blitter #(
 
     // ---- Sweep counters (cx across columns, cy across rows) ---------------
     logic [15:0] cx, cy;
+
+    // Pipelined row-complete check (cy >= dst_h_q - 1).  Breaks the CARRY4
+    // chain from dst_h_q through the subtractor/comparator to state_reg,
+    // closing ~0.1 ns setup on the scaled/bilin row-advance path.
+    always_ff @(posedge clk) begin
+        cy_ge_dst_h_m1_q <= (cy >= dst_h_q - 16'd1);
+    end
 
     // ====================================================================
     // Segment address snapshot
@@ -1557,7 +1586,7 @@ module xt_blitter #(
                         if (sc_mode_q) begin
                             // Scaled blit: go directly to row/next-pixel check
                             if (cx >= dst_w_q) begin
-                                if (cy >= dst_h_q - 16'd1 || dst_h_q == 16'd0)
+                                if (cy_ge_dst_h_m1_q || dst_h_q == 16'd0)
                                     state <= S_DONE;
                                 else begin
                                     cy <= cy + 16'd1;
@@ -1569,7 +1598,7 @@ module xt_blitter #(
                         end else if (bilin_mode_q) begin
                             // Bilinear scaled blit: same row advance as scaled
                             if (cx >= dst_w_q) begin
-                                if (cy >= dst_h_q - 16'd1 || dst_h_q == 16'd0)
+                                if (cy_ge_dst_h_m1_q || dst_h_q == 16'd0)
                                     state <= S_DONE;
                                 else begin
                                     cy <= cy + 16'd1;
@@ -1637,7 +1666,7 @@ module xt_blitter #(
                             // check if row is complete or continue.
                             burst_len <= 5'd0;   // reset after flush
                             if (cx >= dst_w_q) begin
-                                if (cy >= dst_h_q - 16'd1 || dst_h_q == 16'd0)
+                                if (cy_ge_dst_h_m1_q || dst_h_q == 16'd0)
                                     state <= S_DONE;
                                 else begin
                                     cy <= cy + 16'd1;
@@ -1650,7 +1679,7 @@ module xt_blitter #(
                             // Bilinear scaled blit: same row/pixel check
                             burst_len <= 5'd0;   // reset after flush
                             if (cx >= dst_w_q) begin
-                                if (cy >= dst_h_q - 16'd1 || dst_h_q == 16'd0)
+                                if (cy_ge_dst_h_m1_q || dst_h_q == 16'd0)
                                     state <= S_DONE;
                                 else begin
                                     cy <= cy + 16'd1;
@@ -1666,7 +1695,7 @@ module xt_blitter #(
                             // {burst_len, 1'b0} = burst_len * 2 pixels.
                             if (cx + {burst_len, 1'b0} >= dst_w_q) begin
                                 // Row complete
-                                if (cy >= dst_h_q - 16'd1) begin
+                                if (cy_ge_dst_h_m1_q) begin
                                     state <= S_DONE;
                                 end else begin
                                     cy <= cy + 16'd1;
