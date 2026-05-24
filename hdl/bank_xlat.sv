@@ -16,8 +16,9 @@
 //
 //   • Code window: $0082 is an 8-bit page index → 256 pages of 16 KB.
 //   • Data window: $0083 is an 8-bit page index → 256 pages of 12 KB.
-//   • $0084 (atomic task switch) writes the same value to BOTH $0082
-//     and $0083, redirecting both windows in a single cycle.
+//   • $0084 (atomic task switch) writes the lower 4 bits to BOTH
+//     $0082 and $0083 (bits [7:4] forced to 0), redirecting both
+//     windows in a single cycle — limits to 16 tasks.
 //
 // bank_id carries only the page index; the caller uses `is_code` to pick
 // the DDR3 base + page stride (16 KB vs 12 KB) when composing the address.

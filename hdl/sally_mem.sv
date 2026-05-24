@@ -214,9 +214,10 @@ module sally_mem #(
     // Mirror writes to $0082-$0084 into latched registers so bank_xlat
     // sees the live values without needing a BRAM read port.
     //   $0082 = code-window page; $0083 = data-window page.
-    //   $0084 = atomic task switch — writes the same value to BOTH
-    //          code and data banks so a context switch atomically
-    //          redirects both windows.
+    //   $0084 = atomic task switch — lower 4 bits written to BOTH
+    //          code and data banks (upper 4 masked to 0, limiting to
+    //          16 tasks). A context switch atomically redirects both
+    //          windows.
     logic [7:0] cpu_code_bank, cpu_data_bank;
 
     always_ff @(posedge clk or posedge rst) begin
@@ -227,9 +228,9 @@ module sally_mem #(
             case (addr)
                 16'h0082: cpu_code_bank <= data_in;
                 16'h0083: cpu_data_bank <= data_in;
-                16'h0084: begin           // atomic task switch
-                    cpu_code_bank <= data_in;
-                    cpu_data_bank <= data_in;
+                16'h0084: begin           // atomic task switch (lower 4 bits only = 16 tasks max)
+                    cpu_code_bank <= {4'b0, data_in[3:0]};
+                    cpu_data_bank <= {4'b0, data_in[3:0]};
                 end
                 default: ;
             endcase
