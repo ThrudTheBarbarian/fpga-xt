@@ -577,24 +577,18 @@ module xt_blitter #(
     wire cq_pop;   // driven below (forward reference; declared as wire so it
                    // is visible to the FIFO management always_ff)
 
-    // ---- cmd_fifo write-data hold-fix buffer ----------------------------
-    // LUT2 AND buffers gate each bit of the write data with cq_push.
-    // Without this, the 0-logic-level FF→BRAM DI paths (e.g. flags_reg →
-    // cmd_fifo_reg_0/DIADI) violate clk_sys hold.  The LUT2 adds ~0.15 ns
-    // of logic delay that opt_design cannot remove (it implements a real
-    // AND function, unlike a LUT1 identity).  Same approach used for
-    // pat_mem/font_mem DI paths above.
-    wire [191:0] cmd_fifo_din;
-    generate
-        for (genvar i = 0; i < 192; i++) begin : g_cmd_fifo_din_buf
-`ifdef XILINX
-            (* DONT_TOUCH = "true" *)
-            LUT2 #(.INIT(4'h8)) u_buf (.I0(cmd_snapshot_in[i]), .I1(cq_push), .O(cmd_fifo_din[i]));
-`else
-            assign cmd_fifo_din[i] = cmd_snapshot_in[i] & cq_push;
-`endif
-        end
-    endgenerate
+    // ---- cmd_fifo write-data pipeline register ---------------------------
+    // Adds one FF stage between cmd_snapshot_in and the BRAM write port to
+    // break 0-logic-level hold paths (e.g. flags_reg → cmd_fifo_reg_0 DIADI).
+    // The cq_push write-enable is pipelined alongside the data so the BRAM
+    // write timing is consistent (one cycle delayed relative to the original
+    // push, which is invisible to the queue consumer).
+    logic [191:0] cmd_snapshot_q;
+    logic         cq_push_q;
+    always_ff @(posedge clk) begin
+        cmd_snapshot_q <= cmd_snapshot_in;
+        cq_push_q      <= cq_push;
+    end
 
     // BRAM-friendly storage pattern: bare write + registered read with NO
     // conditional logic on the read port.  Vivado infers a BRAM at this
@@ -604,23 +598,35 @@ module xt_blitter #(
     logic [191:0] cq_front_bram_q;     // registered output of the BRAM
 
     always_ff @(posedge clk) begin
-        if (cq_push) cmd_fifo[cq_head] <= cmd_fifo_din;
+        if (cq_push_q) cmd_fifo[cq_head] <= cmd_snapshot_q;
         cq_front_bram_q <= cmd_fifo[cq_tail];
+    end
+
+    // Pipeline register for the combinational empty flag so the bypass
+    // register (below) can use pipelined control signals for consistent
+    // timing.  Captures cq_empty_w one cycle after the count changes,
+    // matching the cq_push_q / cmd_snapshot_q pipeline.
+    logic         cq_empty_q;
+    always_ff @(posedge clk) begin
+        cq_empty_q <= cq_empty_w;
     end
 
     // Bypass register — holds the snapshot from the most recent push-to-
     // empty, since the BRAM read collides with that write and returns
-    // stale data the next cycle (read-first mode).  Cleared on the
-    // first pop that consumes it.
+    // stale data the next cycle (read-first mode).  Uses pipelined
+    // signals (cq_push_q, cmd_snapshot_q, cq_empty_q) so every path
+    // from source registers (flags_reg, etc.) passes through at least
+    // one FF before reaching the BRAM DI or this bypass register's DI
+    // — fixing 0-logic-level hold violations on the BRAM data port.
     logic         cq_bypass_valid_q;
     logic [191:0] cq_bypass_data_q;
     always_ff @(posedge clk) begin  // sync reset — see note at `rst` port
         if (rst) begin
             cq_bypass_valid_q <= 1'b0;
             cq_bypass_data_q  <= '0;
-        end else if (cq_push && cq_empty_w) begin
+        end else if (cq_push_q && cq_empty_q) begin
             cq_bypass_valid_q <= 1'b1;
-            cq_bypass_data_q  <= cmd_snapshot_in;
+            cq_bypass_data_q  <= cmd_snapshot_q;
         end else if (cq_pop) begin
             cq_bypass_valid_q <= 1'b0;
         end
@@ -632,21 +638,16 @@ module xt_blitter #(
 
     // cq_front_valid tracks whether cq_front_q reflects the entry at
     // cq_tail.  Goes low on cq_pop (tail advances → BRAM needs to
-    // refetch), goes high one cycle later, OR same cycle on push-to-
-    // empty (the bypass register carries the data immediately).
+    // refetch), goes high one cycle later (or the cycle after a
+    // push-to-empty, via cq_push_q && (cq_count == 0)).
     logic         cq_front_valid;
 
-    // cq_front_valid: high iff cq_front_q reflects the entry at cq_tail.
-    // Goes low on cq_pop (cq_tail advances → BRAM needs to refetch from
-    // the new slot).  Comes back high one cycle later in steady state,
-    // OR the same cycle on push-to-empty (the bypass register carries
-    // the snapshot directly into cq_front_q without waiting for BRAM).
     always_ff @(posedge clk) begin  // sync reset — see note at `rst` port
         if (rst)
             cq_front_valid <= 1'b0;
         else if (cq_pop)
             cq_front_valid <= 1'b0;
-        else if (cq_push && cq_empty_w)
+        else if (cq_push_q && (cq_count == '0))
             cq_front_valid <= 1'b1;
         else if (!cq_empty_w)
             cq_front_valid <= 1'b1;
@@ -688,9 +689,9 @@ module xt_blitter #(
             cq_tail  <= '0;
             cq_count <= '0;
         end else begin
-            if (cq_push) cq_head <= cq_head + 1'd1;
-            if (cq_pop)  cq_tail <= cq_tail + 1'd1;
-            case ({cq_push, cq_pop})
+            if (cq_push_q) cq_head <= cq_head + 1'd1;
+            if (cq_pop)    cq_tail <= cq_tail + 1'd1;
+            case ({cq_push_q, cq_pop})
                 2'b10:   cq_count <= cq_count + 1'd1;
                 2'b01:   cq_count <= cq_count - 1'd1;
                 default: ;   // 2'b00 (no change) or 2'b11 (push and pop cancel)
