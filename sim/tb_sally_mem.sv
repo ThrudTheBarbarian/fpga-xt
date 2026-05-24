@@ -61,7 +61,7 @@ module tb_sally_mem;
     wire        axi_bvalid;
     wire        axi_bready;
 
-    wire [7:0] cpu_code_bank_q, cpu_data_bank_lo_q, cpu_data_bank_hi_q;
+    wire [7:0] cpu_code_bank_q, cpu_data_bank_q;
     wire       mem_busy;
 
     sally_mem #(
@@ -81,8 +81,7 @@ module tb_sally_mem;
         .hwreg_din  (hwreg_din),
         .hwreg_dout (hwreg_dout),
         .cpu_code_bank_q    (cpu_code_bank_q),
-        .cpu_data_bank_lo_q (cpu_data_bank_lo_q),
-        .cpu_data_bank_hi_q (cpu_data_bank_hi_q),
+        .cpu_data_bank_q    (cpu_data_bank_q),
         .bus_mpd_n_in       (1'b1),    // M-PBI: /MPD inactive in unit-level sim
         .bus_pbi_rdata      (8'hFF),   // M-PBI: no PBI device in unit-level sim
         .bus_rd4_n_in       (1'b1),    // M-PBI: no physical cart in $8000-$9FFF

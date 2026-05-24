@@ -109,8 +109,7 @@ module sally_mem #(
     // ANTIC has no banking — it reads the flat 64 KB BRAM directly via the
     // dma port — so there is no ANTIC-view input here any more.
     output wire [7:0]  cpu_code_bank_q,    // $0082
-    output wire [7:0]  cpu_data_bank_lo_q, // $0083
-    output wire [7:0]  cpu_data_bank_hi_q, // $0084
+    output wire [7:0]  cpu_data_bank_q,    // $0083  (writes to $0084 set BOTH banks)
 
     // M-PBI step 2/3: /MPD Math-Pack Disable from the PBI device.
     input  wire        bus_mpd_n_in,
@@ -214,27 +213,31 @@ module sally_mem #(
     // ---- CPU bank-select snoop -----------------------------------
     // Mirror writes to $0082-$0084 into latched registers so bank_xlat
     // sees the live values without needing a BRAM read port.
-    //   $0082 = code-window page; $0083/$0084 = data-window page lo/hi.
-    logic [7:0] cpu_code_bank, cpu_data_bank_lo, cpu_data_bank_hi;
+    //   $0082 = code-window page; $0083 = data-window page.
+    //   $0084 = atomic task switch — writes the same value to BOTH
+    //          code and data banks so a context switch atomically
+    //          redirects both windows.
+    logic [7:0] cpu_code_bank, cpu_data_bank;
 
     always_ff @(posedge clk or posedge rst) begin
         if (rst) begin
-            cpu_code_bank    <= 8'h00;
-            cpu_data_bank_lo <= 8'h00;
-            cpu_data_bank_hi <= 8'h00;
+            cpu_code_bank <= 8'h00;
+            cpu_data_bank <= 8'h00;
         end else if (rdy && !rw) begin
             case (addr)
-                16'h0082: cpu_code_bank    <= data_in;
-                16'h0083: cpu_data_bank_lo <= data_in;
-                16'h0084: cpu_data_bank_hi <= data_in;
+                16'h0082: cpu_code_bank <= data_in;
+                16'h0083: cpu_data_bank <= data_in;
+                16'h0084: begin           // atomic task switch
+                    cpu_code_bank <= data_in;
+                    cpu_data_bank <= data_in;
+                end
                 default: ;
             endcase
         end
     end
 
-    assign cpu_code_bank_q    = cpu_code_bank;
-    assign cpu_data_bank_lo_q = cpu_data_bank_lo;
-    assign cpu_data_bank_hi_q = cpu_data_bank_hi;
+    assign cpu_code_bank_q = cpu_code_bank;
+    assign cpu_data_bank_q = cpu_data_bank;
 
     // ---- Bank translator -----------------------------------------
     wire [15:0] bank_id_w;
@@ -244,8 +247,7 @@ module sally_mem #(
 
     bank_xlat u_xlat (
         .cpu_code_bank      (cpu_code_bank),
-        .cpu_data_bank_lo   (cpu_data_bank_lo),
-        .cpu_data_bank_hi   (cpu_data_bank_hi),
+        .cpu_data_bank      (cpu_data_bank),
         .cpu_addr           (addr),
         .is_in_window       (is_in_window_w),
         .is_code            (is_code_w),

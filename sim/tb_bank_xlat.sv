@@ -2,14 +2,14 @@
 //
 // Checks the window decode ($6000-$9FFF code, $A000-$CFFF data, with
 // $4000-$5FFF screen and everything else unbanked), the code/data page-id
-// composition ($82 vs {$84,$83}), and the in-window offset.
+// composition ($82 vs $83), and the in-window offset.
 
 `timescale 1ns / 1ps
 
 module tb_bank_xlat;
 
     logic [7:0]  cpu_code_bank;
-    logic [7:0]  cpu_data_bank_lo, cpu_data_bank_hi;
+    logic [7:0]  cpu_data_bank;
     logic [15:0] cpu_addr;
     wire         is_in_window;
     wire         is_code;
@@ -18,8 +18,7 @@ module tb_bank_xlat;
 
     bank_xlat u_dut (
         .cpu_code_bank      (cpu_code_bank),
-        .cpu_data_bank_lo   (cpu_data_bank_lo),
-        .cpu_data_bank_hi   (cpu_data_bank_hi),
+        .cpu_data_bank      (cpu_data_bank),
         .cpu_addr           (cpu_addr),
         .is_in_window       (is_in_window),
         .is_code            (is_code),
@@ -39,9 +38,8 @@ module tb_bank_xlat;
     initial begin
         $display("=== bank_xlat (xtc window scheme) ===");
 
-        cpu_code_bank    = 8'h05;
-        cpu_data_bank_lo = 8'h11;
-        cpu_data_bank_hi = 8'h22;
+        cpu_code_bank = 8'h05;
+        cpu_data_bank = 8'h11;
         #1;
 
         // ---- A. window decode -----------------------------------------
@@ -63,10 +61,10 @@ module tb_bank_xlat;
         cpu_addr = 16'h6800; #1; expect_eq("B.1 code bank_id", bank_id, 16'h0005);
         cpu_addr = 16'h9000; #1; expect_eq("B.2 code bank_id", bank_id, 16'h0005);
 
-        // ---- C. data page-id = {$84,$83} ($A000-$CFFF) ----------------
+        // ---- C. data page-id = $83 ($A000-$CFFF) ----------------------
         $display("[C] data page-id");
-        cpu_addr = 16'hA800; #1; expect_eq("C.1 data bank_id", bank_id, 16'h2211);
-        cpu_addr = 16'hC400; #1; expect_eq("C.2 data bank_id", bank_id, 16'h2211);
+        cpu_addr = 16'hA800; #1; expect_eq("C.1 data bank_id", bank_id, 16'h0011);
+        cpu_addr = 16'hC400; #1; expect_eq("C.2 data bank_id", bank_id, 16'h0011);
 
         // ---- D. offset within the active page -------------------------
         $display("[D] offset_in_block");

@@ -204,7 +204,7 @@ module fpga_xt_top #(
     wire        sally_step;
 
     // Bank-select state (from SALLY zero-page snoop)
-    wire [7:0]  cpu_code_bank, cpu_data_bank_lo, cpu_data_bank_hi;
+    wire [7:0]  cpu_code_bank, cpu_data_bank;
 
     // ANTIC-view bank registers ($D488-$D48B) are currently unused in the
     // Zynq build — ANTIC's DMA reaches RAM via bram_shim, not via
@@ -534,8 +534,7 @@ module fpga_xt_top #(
         .hwreg_din  (hwreg_din),
         .hwreg_dout (hwreg_dout),
         .cpu_code_bank_q    (cpu_code_bank),
-        .cpu_data_bank_lo_q (cpu_data_bank_lo),
-        .cpu_data_bank_hi_q (cpu_data_bank_hi),
+        .cpu_data_bank_q    (cpu_data_bank),
         .bus_mpd_n_in       (1'b1),         // no PBI
         .bus_pbi_rdata      (8'hFF),        // no PBI
         .bus_rd4_n_in       (1'b1),         // no cart

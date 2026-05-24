@@ -245,7 +245,7 @@ if {$flow eq "impl" || $flow eq "bit"} {
     # and can leave residual hold (min-delay) violations that the single
     # route pass doesn't fully clean up.  If hold is still negative, run
     # balanced phys_opt (which includes hold fixing) + route again, up to
-    # 5 times.  (Note: xt_blitter's LUT1 buffers on pat_mem/font_mem DI
+    # 5 times.  (Note: xt_blitter's LUT2 AND buffers on pat_mem/font_mem DI
     # handle the worst 0-logic-level FF→BRAM paths; the loop cleans up
     # any remaining cmd_fifo or other BRAM DI paths.)
     proc _worst_hold_ns {} {

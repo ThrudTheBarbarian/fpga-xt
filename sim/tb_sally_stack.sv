@@ -37,7 +37,7 @@ module tb_sally_stack;
     wire [7:0]  hwreg_din;
     logic [7:0] hwreg_dout = 8'hFF;
 
-    wire [7:0]  cpu_code_bank_q, cpu_data_bank_lo_q, cpu_data_bank_hi_q;
+    wire [7:0]  cpu_code_bank_q, cpu_data_bank_q;
 
     // AXI master ports — tied off (banked window unused in this test)
     wire [31:0] m_axi_araddr, m_axi_awaddr;
@@ -73,8 +73,7 @@ module tb_sally_stack;
         .hwreg_din           (hwreg_din),
         .hwreg_dout          (hwreg_dout),
         .cpu_code_bank_q     (cpu_code_bank_q),
-        .cpu_data_bank_lo_q  (cpu_data_bank_lo_q),
-        .cpu_data_bank_hi_q  (cpu_data_bank_hi_q),
+        .cpu_data_bank_q     (cpu_data_bank_q),
         .bus_mpd_n_in        (1'b1),         // /MPD high = no PBI override
         .bus_pbi_rdata       (8'h00),
         .bus_rd4_n_in        (1'b1),         // no cart $8000-$9FFF
