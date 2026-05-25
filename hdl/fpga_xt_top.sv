@@ -1083,9 +1083,10 @@ module fpga_xt_top (
         .rgb_hsync     (spr_rgb_hsync),
         .rgb_vsync     (spr_rgb_vsync),
 
-        // AXI HP2 master — dangled for the scaffold.  When the line
-        // fetcher lands these connect to the PS BD's M_AXI_HP2 (bit
-        // flow) or the OOC stub.
+        // AXI read master (sprite-image fetch) — dangled for the scaffold.
+        // When the line fetcher lands it joins the other clk_sys plane reads
+        // on HP0 via a BD SmartConnect (NOT a dedicated port — see
+        // docs/video-architecture.md §10; HP2 is SALLY's banked-DDR window).
         .m_axi_araddr  (),
         .m_axi_arlen   (),
         .m_axi_arsize  (),
