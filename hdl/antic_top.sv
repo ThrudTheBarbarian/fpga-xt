@@ -357,6 +357,27 @@ module antic_top #(
     wire phi2_tick = phi2 & ~phi2_q;     // 1-cycle pulse on phi2 rising edge
     wire phi2_fall = phi2_q & ~phi2;     // 1-cycle pulse on phi2 falling edge
 
+    // ---- ANTIC native raster timer (video-arch §5.1, task-0013) ----------
+    // phi2-paced raster heartbeat — replaces the 800×600 hdmi_out vbeam as the
+    // source of atari_row / line_start / vbi_start / vcount (the display chain
+    // is bypassed for output; see §5.1).  Locked to phi2 so VCOUNT/WSYNC/VBI
+    // cadence is correct vs the CPU.  All clk_bus — no CDC.
+    wire [8:0] ar_scanline;
+    wire [7:0] ar_phi2_in_line;
+    wire       ar_line_start, ar_vbi_start;
+    wire [7:0] ar_atari_row, ar_vcount;
+    antic_raster u_antic_raster (
+        .clk          (clk_bus),
+        .rst          (rst_bus),
+        .phi2_tick    (phi2_tick),
+        .scanline     (ar_scanline),
+        .phi2_in_line (ar_phi2_in_line),
+        .line_start   (ar_line_start),
+        .vbi_start    (ar_vbi_start),
+        .atari_row    (ar_atari_row),
+        .vcount       (ar_vcount)
+    );
+
     // ---- M-PBI deferred #1: phi2-cycle-gated bus_data_in capture --------
     // Capture the 2-FF-synced external D[7:0] on phi2 falling edge, when
     // any PBI/cart slave has had the full phi2-high window to drive the
@@ -493,8 +514,11 @@ module antic_top #(
             line_start_sync   <= {line_start_sync[1:0], hdmi_line_start};
         end
     end
-    wire        vbi_start_pulse_bus  = vbi_start_sync[1]  & ~vbi_start_sync[2];
-    wire        line_start_pulse_bus = line_start_sync[1] & ~line_start_sync[2];
+    // Heartbeat pulses now come from the phi2-paced antic_raster (above), not
+    // the 800×600 vbeam CDC.  The vcount/atari_row/vbi/line sync chain above is
+    // dead (its hdmi_* sources are deleted with the display chain in step 3).
+    wire        vbi_start_pulse_bus  = ar_vbi_start;
+    wire        line_start_pulse_bus = ar_line_start;
 
     antic_regs u_antic_regs (
         .clk                  (clk_bus),
@@ -529,7 +553,7 @@ module antic_top #(
         .os_rom_data_q        (os_rom_data_q),
         .os_rom_we            (os_rom_we),
         .os_rom_locked_q      (os_rom_locked_q),
-        .vcount_in            (vcount_sync_q2),        // M-video-int: 2-FF synced from hdmi_out
+        .vcount_in            (ar_vcount),             // VCOUNT from the phi2 raster timer
         .nmist_in             (nmist_q),               // from nmi_gen
         .serial_clock_mult_in (8'd12),                 // boot default; serial-link push later
 
@@ -1006,27 +1030,19 @@ module antic_top #(
         .line_start    (line_start_pulse_bus),
         .cur_row       (nmi_cur_row),
         .cur_row_dli   (nmi_cur_row_dli),
-        .atari_row_in  (atari_row_sync_q2[7:0]),
+        .atari_row_in  (ar_atari_row),
         .nmist_q       (nmist_q),
         .nmi_n         (nmi_n_w)
     );
 
     // ---- WSYNC handler: release at bus cycle 105 of the line ---------
-    // Resolves the `wsync-cycle-105` Altirra-audit deferral. ANTIC's
-    // real /RDY release point is bus cycle 105 of the current scan line
-    // (start of horizontal blank), NOT cycle 0 of the next line. We
-    // count phi2 ticks within a line; when count == 105, pulse the
-    // release signal that wsync_gen consumes.
-    //
-    // 8-bit counter is plenty (NTSC line = 228 phi2 cycles, PAL = 228).
-    logic [7:0] phi2_in_line_q;
-    always_ff @(posedge clk_bus or posedge rst_bus) begin
-        if (rst_bus)                   phi2_in_line_q <= 8'h00;
-        else if (line_start_pulse_bus) phi2_in_line_q <= 8'h00;
-        else if (phi2_tick && phi2_in_line_q != 8'd255)
-            phi2_in_line_q <= phi2_in_line_q + 8'd1;
-    end
-    wire cycle_105_pulse = phi2_tick && (phi2_in_line_q == 8'd105);
+    // ANTIC's real /RDY release point is bus cycle 105 of the current scan
+    // line (start of horizontal blank).  The phi2-cycle-within-line count now
+    // comes from antic_raster (ar_phi2_in_line, 0..113) — which is what makes
+    // this correct: the old local counter was reset by the 140 kHz vbeam
+    // line_start (~12 phi2 cycles), so it never reached 105 and WSYNC never
+    // released.  phi2-paced line_start fixes it.
+    wire cycle_105_pulse = phi2_tick && (ar_phi2_in_line == 8'd105);
 
     wire        wsync_rdy_w;             // 1 = ready, 0 = stalled
     wsync_gen u_wsync_gen (
@@ -1596,7 +1612,7 @@ module antic_top #(
     assign wb_pix_pair  = lb_wr_pair_bus_q;
     assign wb_color_lo  = lb_wr_data_bus_q[7:0];
     assign wb_color_hi  = lb_wr_data_bus_q[15:8];
-    assign wb_atari_row = atari_row_sync_q2[7:0];
+    assign wb_atari_row = ar_atari_row;
     assign wb_row_flush = line_start_pulse_bus;
     assign wb_frame_done = vbi_start_pulse_bus;
     assign wb_pal_we    = pal_write_strobe;

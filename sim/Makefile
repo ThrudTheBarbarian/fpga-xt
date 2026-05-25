@@ -52,6 +52,7 @@ HDL_SRCS := \
     $(HDL_DIR)/scan_out.sv        \
     $(HDL_DIR)/hdmi_out_zynq.sv   \
     $(HDL_DIR)/pcm1808_rx.sv      \
+    $(HDL_DIR)/antic_raster.sv    \
     $(HDL_DIR)/antic_top.sv
 
 BUILD_DIR := build
