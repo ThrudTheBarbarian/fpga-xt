@@ -185,6 +185,61 @@ ANTIC compositor (palette indices, per Atari row)
   `legacy_upscale`'s BRAM frame store is dropped; its integer scaler is
   replaced by the compositor's §4.2 accumulator scaler.
 
+### 5.1 ANTIC native raster — replace the 800×600 display heartbeat
+
+**Decision (2026-05-25):** ANTIC must render at its **own native raster**,
+paced by **phi2**, not by a display pixel clock.
+
+Background: `antic_top` still instantiates the legacy display chain
+(`hdmi_out` + `vbeam` @ 800×600, `scan_out`, the native `line_buffer`, a
+display `palette_lut`).  In the compositor model that whole chain is **dead
+weight** — `antic_rgb_*`/`tmds_*` are driven but consumed nowhere; the pads
+come from the compositor.  The 800×600 `vbeam` survives only as a *raster
+heartbeat*: it generates `atari_row` (0..191), `line_start`, `vbi_start`,
+which feed `nmi_gen`, the (now-bypassed) line-buffer swap, and the §5
+writeback (`row_flush` / `frame_done` / `atari_row`).
+
+Two problems with that heartbeat:
+
+1. It is clocked by the **148.4375 MHz `clk_pix`** while carrying 800×600@60
+   timing (which wants ~40 MHz), so ANTIC "frames" run at ~224 Hz with a
+   ~140 kHz line rate.
+2. It is **not locked to phi2.**  ANTIC's VCOUNT / WSYNC / DLI+VBI NMI cadence
+   therefore drift arbitrarily against the CPU — wrong for the *emulation*
+   (the OS times off VBI/RTCLOK), even though a window still appears because
+   the §3 double buffer decouples capture from the 1080p60 read.
+
+**Target:** a small **phi2-derived native raster timer** inside `antic_top`,
+using the existing `phi2_tick`:
+
+```
+scanline = 114 machine cycles (NTSC) ;  frame = 262 lines (NTSC) / 312 (PAL)
+count phi2_tick: 114 → line_start, atari_row++
+count lines:     262 → vbi_start, atari_row = 0
+```
+
+- `atari_row` spans the true active region (0..191 nominal; up to 0..239
+  overscan) — **no line-doubling, no letterbox** (both were display
+  artifacts).  ANTIC then renders its true native resolution at the true
+  Atari frame rate, exactly as §5 / §10 assume.
+- This **replaces** the vbeam heartbeat; the §5 writeback and the §4 compositor
+  are unchanged (they consume `atari_row`/`line_start`/`vbi_start` + the pixel
+  stream regardless of source) — a clean module boundary.
+- It also lets `hdmi_out`, `scan_out`, the native `line_buffer`, and the
+  display `palette_lut` be **deleted** (the writeback owns its own palette).
+- **Coupled scope:** ANTIC's render *trigger* is currently a scaffold
+  (`dl_parser`/`compositor` fire off a free-running `kick_counter`, not a real
+  per-scanline walk — see the `antic_top` comment "Real start-of-VBI
+  scheduling is a downstream … task tied to vbeam").  Doing this properly
+  means the phi2 timer drives **both** the line/frame pulses and per-row
+  compose — i.e. it finishes the ANTIC native raster *sequencer*.  This is
+  the emulation-timing-sensitive part; gate it behind the existing phi2/CPU
+  conformance (Klaus is unaffected — it's already phi2-based).
+
+Status: **specced, not built** — see `prompts/task-0013-antic-native-raster.md`.
+The phase-2 window (§5 wiring, committed) keeps the 800×600 heartbeat until
+this lands.
+
 ## 6. Unified sprite engine
 
 One scalable engine; sprites live in their **owning window's native
@@ -321,6 +376,10 @@ register re-partition (§9); double-buffer/front-sel plumbing (§3).
 - STe/TT emulation on ARM core1 (software 68k); its DDR3 surface + plane.
 - Configurable boot-direct-to-XL (skip the desktop).
 - Visible-span-only plane fetch (bandwidth optimisation).
+- ANTIC native raster sequencer (§5.1): replace the 800×600 `vbeam` heartbeat
+  with a phi2-derived line/frame/row timer; delete the dead display chain
+  (`hdmi_out`/`scan_out`/native `line_buffer`/display `palette_lut`).
+  Specced in `prompts/task-0013-antic-native-raster.md`.
 
 ## 13. Open sizing questions (resolve during implementation)
 
