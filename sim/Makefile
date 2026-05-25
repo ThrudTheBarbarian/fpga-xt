@@ -56,7 +56,7 @@ HDL_SRCS := \
 
 BUILD_DIR := build
 
-.PHONY: all smoke snoop read vbeam rp_bus dl_parse mode_f char_modes gfx_modes pm prior scroll nmi wsync palette dma_master mem_read_mux dma_int draw_regs pokey pokey_i2s sally sally_mem sally_arb bank_xlat hwreg_rd_cdc legacy_upscale plane_compositor plane_fetch axi_line_writer antic_writeback pia_regs peri_link joy_link joy_bridge peri_bridge os_rom_load klaus visual lint clean xt_blitter sally_stack sally_isa sprite_regs sprite_fetcher sprite_compositor
+.PHONY: all smoke snoop read vbeam rp_bus dl_parse mode_f char_modes gfx_modes pm prior scroll nmi wsync palette dma_master mem_read_mux dma_int draw_regs pokey pokey_i2s sally sally_mem sally_arb bank_xlat hwreg_rd_cdc legacy_upscale plane_compositor plane_fetch axi_line_writer antic_writeback antic_raster pia_regs peri_link joy_link joy_bridge peri_bridge os_rom_load klaus visual lint clean xt_blitter sally_stack sally_isa sprite_regs sprite_fetcher sprite_compositor
 
 all: smoke snoop read vbeam rp_bus dl_parse mode_f char_modes gfx_modes pm prior scroll nmi wsync palette dma_master mem_read_mux dma_int draw_regs pokey pokey_i2s sally sally_mem sally_arb bank_xlat pia_regs peri_link joy_link joy_bridge peri_bridge os_rom_load pbi pcm1808_rx visual xt_blitter sprite_regs sprite_fetcher sprite_compositor
 
@@ -606,6 +606,17 @@ antic_writeback: $(BUILD_DIR)/tb_antic_writeback.vvp
 
 $(BUILD_DIR)/tb_antic_writeback.vvp: $(HDL_DIR)/antic_writeback.sv $(HDL_DIR)/axi_line_writer.sv $(HDL_DIR)/palette_lut.sv axi_slave_mem.sv tb_antic_writeback.sv | $(BUILD_DIR)
 	$(IVERILOG) $(SV_FLAGS) -o $@ -s tb_antic_writeback $(HDL_DIR)/antic_writeback.sv $(HDL_DIR)/axi_line_writer.sv $(HDL_DIR)/palette_lut.sv axi_slave_mem.sv tb_antic_writeback.sv
+
+# ---- antic_raster — phi2-paced native raster timer (video-arch §5.1) ------
+antic_raster: $(BUILD_DIR)/tb_antic_raster.vvp
+	@echo "=== antic_raster — phi2-paced native raster timer ==="
+	@$(VVP) -N $< | tee $(BUILD_DIR)/tb_antic_raster.log
+	@grep -q '\*\*\* ANTIC_RASTER OK \*\*\*' $(BUILD_DIR)/tb_antic_raster.log || \
+	    (echo "FAIL: tb_antic_raster missing ANTIC_RASTER OK"; exit 1)
+	@echo "PASS: tb_antic_raster"
+
+$(BUILD_DIR)/tb_antic_raster.vvp: $(HDL_DIR)/antic_raster.sv tb_antic_raster.sv | $(BUILD_DIR)
+	$(IVERILOG) $(SV_FLAGS) -o $@ -s tb_antic_raster $(HDL_DIR)/antic_raster.sv tb_antic_raster.sv
 
 # ---- M25-2 — peri_link FPGA-side SPI master ------------------------------
 peri_link: $(BUILD_DIR)/tb_peri_link.vvp
