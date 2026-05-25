@@ -946,7 +946,7 @@ module fpga_xt_top (
     // prefetches it during the current line.
     wire [11:0] desk_fetch_row = (fb_v_count >= 12'd1079) ? 12'd0
                                                           : (fb_v_count + 12'd1);
-    wire [CMP_PLANES*12-1:0] cmp_src_col, cmp_src_row;
+    wire [CMP_PLANES*12-1:0] cmp_src_col, cmp_src_row, cmp_src_row_next;
     wire [31:0]              desk_pixel;
 
     plane_fetch u_plane_fetch0 (
@@ -976,18 +976,13 @@ module fpga_xt_top (
     localparam int XL_CLIP_Y1  = XL_ORIGIN_Y + XL_WIN_H;       // 828
 
     // Scaled vertical prefetch (deferred from phase 1b-ii): plane_fetch needs
-    // the SOURCE row that will DISPLAY on the NEXT scanline.  Inside the
-    // window that is ((next_line) - clip_y0) / scale — the same nearest-
-    // neighbour back-map the compositor's vertical accumulator uses, so the
-    // prefetched row matches what the compositor reads.  Outside the window
-    // the plane is gated off, so fetch row 0 (harmless).  Divide-by-constant.
-    wire [11:0] xl_next_line = (fb_v_count >= 12'd1079) ? 12'd0
-                                                        : (fb_v_count + 12'd1);
-    wire        xl_next_in_win = (xl_next_line >= 12'(XL_CLIP_Y0))
-                              && (xl_next_line <  12'(XL_CLIP_Y1));
-    wire [11:0] xl_fetch_row = xl_next_in_win
-        ? 12'((xl_next_line - 12'(XL_CLIP_Y0)) / 12'(XL_SCALE))
-        : 12'd0;
+    // the SOURCE row that will DISPLAY on the NEXT scanline.  The compositor
+    // computes this divider-free via its §4.2 vertical accumulator and exposes
+    // it on src_row_next_o — so we just route plane 1's slice here.  (An
+    // earlier `(next_line-clip_y0)/scale` divide at the top became an 18-level
+    // carry chain off v_count and broke the clk_pix timing path; the
+    // accumulator is a ~3-level derive of registered state.)
+    wire [11:0] xl_fetch_row = cmp_src_row_next[1*12 +: 12];
 
     // Plane-1 source: a second plane_fetch reading the XL FRONT buffer (the
     // one antic_writeback just finished) over HP3's read channel.
@@ -1028,6 +1023,7 @@ module fpga_xt_top (
         .bg_color    (24'h00_00_00),
         .src_col_o   (cmp_src_col),
         .src_row_o   (cmp_src_row),                            // current row (unused at top)
+        .src_row_next_o (cmp_src_row_next),                    // next row -> plane_fetch1 prefetch
         .src_pixel_i ({xl_pixel, desk_pixel}),                // {plane1, plane0}
         .rgb_r (comp_rgb_r), .rgb_g (comp_rgb_g), .rgb_b (comp_rgb_b),
         .de_o (comp_de), .hsync_o (comp_hsync), .vsync_o (comp_vsync)

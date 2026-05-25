@@ -52,7 +52,7 @@ module tb_plane_compositor;
     wire [N*12-1:0]   pl_clip_y1  = {12'd20, 12'd24};
     wire [23:0]       bg_color    = 24'h00_00_00;
 
-    wire [N*12-1:0]   src_col_o, src_row_o;
+    wire [N*12-1:0]   src_col_o, src_row_o, src_row_next_o;
     logic [N*32-1:0]  src_pixel_i;
 
     wire [4:0] rgb_r; wire [5:0] rgb_g; wire [4:0] rgb_b;
@@ -68,7 +68,8 @@ module tb_plane_compositor;
         .pl_clip_x0 (pl_clip_x0), .pl_clip_y0 (pl_clip_y0),
         .pl_clip_x1 (pl_clip_x1), .pl_clip_y1 (pl_clip_y1),
         .bg_color (bg_color),
-        .src_col_o (src_col_o), .src_row_o (src_row_o), .src_pixel_i (src_pixel_i),
+        .src_col_o (src_col_o), .src_row_o (src_row_o),
+        .src_row_next_o (src_row_next_o), .src_pixel_i (src_pixel_i),
         .rgb_r (rgb_r), .rgb_g (rgb_g), .rgb_b (rgb_b),
         .de_o (de_o), .hsync_o (hsync_o), .vsync_o (vsync_o)
     );
@@ -93,6 +94,19 @@ module tb_plane_compositor;
     always_ff @(posedge clk_pix) begin
         if (de_o && v_d2 < 24 && h_d2 < 40)
             cap[v_d2][h_d2] <= {rgb_r, rgb_g, rgb_b};
+    end
+
+    // ---- src_row_next_o scoreboard: it must predict next line's src_row_o --
+    // Sample mid-line (h_count==20, settled, v_count stable) per scanline.
+    logic [11:0] cur_row0 [0:31], next_row0 [0:31];
+    logic [11:0] cur_row1 [0:31], next_row1 [0:31];
+    always_ff @(posedge clk_pix) begin
+        if (h_count == 12'd20 && v_count < 24) begin
+            cur_row0[v_count]  <= src_row_o[0*12 +: 12];
+            next_row0[v_count] <= src_row_next_o[0*12 +: 12];
+            cur_row1[v_count]  <= src_row_o[1*12 +: 12];
+            next_row1[v_count] <= src_row_next_o[1*12 +: 12];
+        end
     end
 
     int fail_count = 0;
@@ -137,6 +151,23 @@ module tb_plane_compositor;
         chk("bg above",    12'd12, 12'd3,  5'h00, 6'h00, 5'h1F);
         chk("bg below",    12'd12, 12'd20, 5'h00, 6'h00, 5'h1F);  // clip_y1 exclusive
         chk("bg corner",   12'd39, 12'd23, 5'h00, 6'h00, 5'h1F);
+
+        // src_row_next_o[v] must equal src_row_o[v+1] (the prefetch contract).
+        // plane 0 (scale 1, full screen): holds for every line.
+        for (int v = 0; v <= 22; v++)
+            if (next_row0[v] !== cur_row0[v+1]) begin
+                $display("FAIL next-row p0 v=%0d: next=%0d cur[v+1]=%0d",
+                         v, next_row0[v], cur_row0[v+1]);
+                fail_count++;
+            end
+        // plane 1 (scale 2, window rows [4,20)): check entry line .. last
+        // interior line, where both v and v+1 carry meaningful rows.
+        for (int v = 3; v <= 18; v++)
+            if (next_row1[v] !== cur_row1[v+1]) begin
+                $display("FAIL next-row p1 v=%0d: next=%0d cur[v+1]=%0d",
+                         v, next_row1[v], cur_row1[v+1]);
+                fail_count++;
+            end
 
         if (fail_count == 0) begin
             $display("*** PLANE_COMPOSITOR OK *** planes + depth + scale + clip");

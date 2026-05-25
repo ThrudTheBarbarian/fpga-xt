@@ -53,7 +53,8 @@ module plane_compositor #(
 
     // ---- Per-plane source interface (frame store or line-buf+fetch) ------
     output wire [N_PLANES*12-1:0]   src_col_o,
-    output wire [N_PLANES*12-1:0]   src_row_o,
+    output wire [N_PLANES*12-1:0]   src_row_o,     // source row for THIS scanline
+    output wire [N_PLANES*12-1:0]   src_row_next_o, // source row for the NEXT scanline (prefetch)
     input  wire [N_PLANES*32-1:0]   src_pixel_i,   // RGBA8888, registered 1 clk after addr
 
     // ---- RGB565 output (clk_pix), pipeline-aligned -----------------------
@@ -133,6 +134,22 @@ module plane_compositor #(
 
             assign src_col_o[gi*12 +: 12] = src_col[gi];
             assign src_row_o[gi*12 +: 12] = src_row[gi];
+
+            // Source row for the NEXT scanline — the per-plane fetch unit
+            // prefetches this during the current line (see plane_fetch's
+            // contract).  Divider-free: derived combinationally from the
+            // CURRENT registered accumulator state (src_row/vsub), NOT a
+            // `(y-origin)/scale` divide (which is a long carry chain off
+            // v_count and blows the clk_pix path).  It is exactly the value
+            // src_row[gi] will take at the next line_start, so it tracks the
+            // §4.2 accumulator with zero extra divide.
+            wire [11:0] v_next       = v_count + 12'd1;
+            wire        next_in_clip = (v_next >= cy0) && (v_next < cy1);
+            assign src_row_next_o[gi*12 +: 12] =
+                  (v_next == cy0)  ? 12'd0
+                : next_in_clip     ? ((vsub == scale_m1) ? (src_row[gi] + 12'd1)
+                                                         : src_row[gi])
+                : 12'd0;
         end
     endgenerate
 
