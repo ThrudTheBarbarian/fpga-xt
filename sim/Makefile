@@ -56,7 +56,7 @@ HDL_SRCS := \
 
 BUILD_DIR := build
 
-.PHONY: all smoke snoop read vbeam rp_bus dl_parse mode_f char_modes gfx_modes pm prior scroll nmi wsync palette dma_master mem_read_mux dma_int draw_regs pokey pokey_i2s sally sally_mem sally_arb bank_xlat hwreg_rd_cdc legacy_upscale plane_compositor plane_fetch pia_regs peri_link joy_link joy_bridge peri_bridge os_rom_load klaus visual lint clean xt_blitter sally_stack sally_isa sprite_regs sprite_fetcher sprite_compositor
+.PHONY: all smoke snoop read vbeam rp_bus dl_parse mode_f char_modes gfx_modes pm prior scroll nmi wsync palette dma_master mem_read_mux dma_int draw_regs pokey pokey_i2s sally sally_mem sally_arb bank_xlat hwreg_rd_cdc legacy_upscale plane_compositor plane_fetch axi_line_writer pia_regs peri_link joy_link joy_bridge peri_bridge os_rom_load klaus visual lint clean xt_blitter sally_stack sally_isa sprite_regs sprite_fetcher sprite_compositor
 
 all: smoke snoop read vbeam rp_bus dl_parse mode_f char_modes gfx_modes pm prior scroll nmi wsync palette dma_master mem_read_mux dma_int draw_regs pokey pokey_i2s sally sally_mem sally_arb bank_xlat pia_regs peri_link joy_link joy_bridge peri_bridge os_rom_load pbi pcm1808_rx visual xt_blitter sprite_regs sprite_fetcher sprite_compositor
 
@@ -584,6 +584,17 @@ plane_fetch: $(BUILD_DIR)/tb_plane_fetch.vvp
 
 $(BUILD_DIR)/tb_plane_fetch.vvp: $(HDL_DIR)/plane_fetch.sv axi_slave_mem.sv tb_plane_fetch.sv | $(BUILD_DIR)
 	$(IVERILOG) $(SV_FLAGS) -o $@ -s tb_plane_fetch $(HDL_DIR)/plane_fetch.sv axi_slave_mem.sv tb_plane_fetch.sv
+
+# ---- axi_line_writer — ANTIC->DDR3 row writeback DMA (video arch phase 2) -
+axi_line_writer: $(BUILD_DIR)/tb_axi_line_writer.vvp
+	@echo "=== axi_line_writer — ANTIC->DDR3 row writeback ==="
+	@$(VVP) -N $< | tee $(BUILD_DIR)/tb_axi_line_writer.log
+	@grep -q '\*\*\* AXI_LINE_WRITER OK \*\*\*' $(BUILD_DIR)/tb_axi_line_writer.log || \
+	    (echo "FAIL: tb_axi_line_writer missing AXI_LINE_WRITER OK"; exit 1)
+	@echo "PASS: tb_axi_line_writer"
+
+$(BUILD_DIR)/tb_axi_line_writer.vvp: $(HDL_DIR)/axi_line_writer.sv axi_slave_mem.sv tb_axi_line_writer.sv | $(BUILD_DIR)
+	$(IVERILOG) $(SV_FLAGS) -o $@ -s tb_axi_line_writer $(HDL_DIR)/axi_line_writer.sv axi_slave_mem.sv tb_axi_line_writer.sv
 
 # ---- M25-2 — peri_link FPGA-side SPI master ------------------------------
 peri_link: $(BUILD_DIR)/tb_peri_link.vvp
