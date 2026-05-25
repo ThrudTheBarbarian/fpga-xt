@@ -74,6 +74,48 @@ LUTs + a couple of BRAMs.
 - Confirm VCOUNT/VBI cadence is now phi2-rated (a focused sim or on-hardware).
 - win10 synth: utilisation should DROP (deleted display chain).
 
+## Progress
+
+**Step 1 DONE** (commit b651179): `hdl/antic_raster.sv` + `sim/tb_antic_raster.sv`
++ Makefile target `antic_raster`. The phi2-paced timer is built, unit-tested
+(114-phi2 line cadence, 262 line_starts/frame, one VBI/frame at scanline 248,
+atari_row banding, VCOUNT=scanline>>1), and verilator-clean. NOT yet wired in.
+
+**Finding — WSYNC is currently broken** (fixed for free by this rework):
+`antic_top`'s `phi2_in_line_q` (cycle-105 WSYNC release) is reset by
+`line_start_pulse_bus`, which today comes from the 800x600 vbeam at ~140 kHz
+(~12 phi2 cycles), so the counter never reaches 105. The phi2 timer's
+`phi2_in_line` (0..113) fixes it.
+
+**Step 2 — wire antic_raster into antic_top (the consumer map, all in
+hdl/antic_top.sv):** instantiate after the phi2 gen (~line 341), then repoint:
+- `line_start_pulse_bus` (assign ~497) -> `ar_line_start`
+  consumers: nmi_gen :1006, phi2_in_line_q reset :1025, lb_wr counter :1421,
+  wb_row_flush :1600.
+- `vbi_start_pulse_bus` (assign ~496) -> `ar_vbi_start`
+  consumers: nmi_gen :1005, wb_frame_done :1601.
+- `atari_row_sync_q2[7:0]` -> `ar_atari_row`  (nmi_gen :1009, wb_atari_row :1599)
+- `vcount_sync_q2` -> `ar_vcount`  (antic_regs.vcount_in :532)
+- `phi2_in_line_q` -> `ar_phi2_in_line`; delete the local counter (:1022-1028);
+  `cycle_105_pulse` (:1029) uses `ar_phi2_in_line`.
+Leave the now-dead vbeam CDC (:475-497) + hdmi_out in place for step 2; verify
+with the antic_top tbs (smoke/snoop/read/pbi/pokey/pia_regs/hwreg_rd_cdc),
+`make lint`, and the fpga_xt_top parse (baseline-only).
+
+**Step 3 — delete the dead display chain** (separate commit): remove hdmi_out,
+scan_out, native line_buffer, display palette_lut, the vbeam CDC FFs, and the
+antic_rgb_*/tmds_* outputs from antic_top's port list (+ update fpga_xt_top and
+the tbs that connect those ports). Frees the BRAM (display palette_lut) +
+line_buffer + LUTs.
+
+**Timing context (win10 synth, post divide-fix, commit 531c209):** clk_pix now
+CLOSES (+0.136 ns; was -3.508 before the §4.2-accumulator fix). Remaining setup
+failures are pre-existing: clk_sys -1.430 (sally_core, sally_mem hwreg, ANTIC
+compositor), clk_sally -0.980. Utilisation is low (24% LUT, 37% BRAM) -> NOT
+globally congestion-bound, so those are specific long paths; some won't be
+touched by this rework and may need targeted closure later. Defer the closure
+pass until after the rework re-measures.
+
 ## Notes
 - This is decoupled from the committed phase-2 wiring (task-0012): the
   writeback/compositor consume the pulses regardless of source.  Until this
