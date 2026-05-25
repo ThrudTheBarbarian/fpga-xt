@@ -26,22 +26,7 @@
 
 `default_nettype none
 
-module fpga_xt_top #(
-    // Bring-up Phase 2 build switch: when 1, fb_scanout overrides the
-    // framebuffer read path with an on-fabric 8-colour-bar test pattern
-    // so HDMI can be verified before DDR3 / AXI HP is functional.
-    // Default 0 = normal operation.  See docs/bring-up.md.
-    parameter bit SCANOUT_TEST_PATTERN = 1'b0,
-    // Boot blocker #4 (prompts/task-0004): display-source select for the
-    // RGB pins.
-    //   0 = fb_scanout -> sprite_engine (1080p60 DDR3 framebuffer; GEM/native)
-    //   1 = legacy 1080p pillarbox upscaler (legacy_upscale)
-    // Default 0 preserves the validated 1080p output.  Mode 1 is a valid
-    // 1080p60 signal (the upscaler reuses fb_scanout's raster); it shows a
-    // black frame until the ANTIC compositor capture + palette mirror land
-    // (gap 4b, prompts/task-0006 + docs/TODO.txt item 4(b)).
-    parameter bit LEGACY_VIDEO = 1'b0
-) (
+module fpga_xt_top (
     // ---- Clocks & reset --------------------------------------------------
     input  wire        clk_50,           // 50 MHz reference from onboard osc
     input  wire        rst_n,            // active-low reset (from PS or button)
@@ -814,61 +799,85 @@ module fpga_xt_top #(
     assign wsync_rdy_n = antic_rdy_n;
 
     // ====================================================================
-    // DDR3 framebuffer scan-out — Phase 2a native / GEM-mode video path
+    // Display: plane compositor (vbeam + plane_fetch x N + plane_compositor)
     // ====================================================================
-    // fb_scanout owns its own raster (vbeam at 1080p60), its own AXI HP
-    // read master, and a ping-pong line buffer fed from DDR3.  For Phase
-    // 2a the scan-out output goes straight to the rgb_* pads, replacing
-    // the legacy ANTIC chain at the pin level (ANTIC's pipeline still
-    // synthesises and runs but its rgb_o outputs are observed only — a
-    // future mode mux will wire it in for legacy-Atari mode at 1080p
-    // with a 5× pillarbox upscaler).
+    // The 1080p60 desktop compositor (docs/video-architecture.md). vbeam owns
+    // the raster; each plane_fetch streams a DDR3 surface line into a ping-
+    // pong line buffer; plane_compositor mixes the planes by depth/scale/clip.
+    // Default config = one full-screen desktop plane reproducing the previous
+    // fb_scanout output; the Atari XL becomes plane 1 once the ANTIC->DDR3
+    // writeback (phase 2) feeds it. sprite_engine overlays before the pads.
 
-    wire [4:0]  fb_rgb_r;
-    wire [5:0]  fb_rgb_g;
-    wire [4:0]  fb_rgb_b;
-    wire        fb_rgb_hsync, fb_rgb_vsync, fb_rgb_de, fb_rgb_pixclk;
+    // Video-arch phases 1/1b (docs/video-architecture.md): the single-plane
+    // fb_scanout is replaced by vbeam (raster) + per-plane plane_fetch (DDR3
+    // line read) + plane_compositor (depth/scale/clip mixer).  Default config
+    // = ONE full-screen desktop plane (scale 1, depth 0), reproducing the
+    // previous fb_scanout output.  Plane 1 (the Atari XL window) is wired but
+    // DISABLED until the ANTIC->DDR3 writeback (phase 2) feeds it.
+    localparam int CMP_PLANES = 2;
+
+    // ---- vbeam: 1080p60 raster (clk_pix) --------------------------------
     wire [11:0] fb_h_count, fb_v_count;
+    wire        vb_de, vb_hsync, vb_vsync;
     wire        fb_line_start, fb_frame_start;
 
-    fb_scanout #(
-        .FB_BASE      (32'h3000_0000),
-        .H_ACTIVE     (1920),
-        .H_FRONT_PORCH(88),
-        .H_SYNC_WIDTH (44),
-        .H_BACK_PORCH (148),
-        .V_ACTIVE     (1080),
-        .V_FRONT_PORCH(4),
-        .V_SYNC_WIDTH (5),
-        .V_BACK_PORCH (36),
-        .TEST_PATTERN (SCANOUT_TEST_PATTERN)
-    ) u_fb_scanout (
-        .clk_sys         (clk_sys),
-        .rst_sys         (rst_sys),
-        .clk_pix         (clk_pix),
-        .rst_pix         (rst_pix),
-        .enable          (1'b1),
-        .m_axi_araddr    (hp0_araddr),
-        .m_axi_arlen     (hp0_arlen),
-        .m_axi_arsize    (hp0_arsize),
-        .m_axi_arburst   (hp0_arburst),
-        .m_axi_arvalid   (hp0_arvalid),
-        .m_axi_arready   (hp0_arready),
-        .m_axi_rdata     (hp0_rdata),
-        .m_axi_rvalid    (hp0_rvalid),
-        .m_axi_rlast     (hp0_rlast),
-        .m_axi_rready    (hp0_rready),
-        .rgb_r           (fb_rgb_r),
-        .rgb_g           (fb_rgb_g),
-        .rgb_b           (fb_rgb_b),
-        .rgb_hsync       (fb_rgb_hsync),
-        .rgb_vsync       (fb_rgb_vsync),
-        .rgb_de          (fb_rgb_de),
-        .rgb_pixclk      (fb_rgb_pixclk),
-        .h_count_o       (fb_h_count),
-        .v_count_o       (fb_v_count),
-        .line_start_o    (fb_line_start),
-        .frame_start_o   (fb_frame_start)
+    vbeam #(
+        .H_ACTIVE (1920), .H_FRONT_PORCH (88), .H_SYNC_WIDTH (44), .H_BACK_PORCH (148),
+        .V_ACTIVE (1080), .V_FRONT_PORCH (4),  .V_SYNC_WIDTH (5),  .V_BACK_PORCH (36),
+        .ANTIC_LINES_NATIVE (1080),
+        .HSYNC_ACTIVE_LOW (1'b0), .VSYNC_ACTIVE_LOW (1'b0)
+    ) u_vbeam (
+        .clk_pix (clk_pix), .rst (rst_pix),
+        .h_count (fb_h_count), .v_count (fb_v_count),
+        .in_active (), .h_active (), .v_active (),
+        .hsync (vb_hsync), .vsync (vb_vsync), .de (vb_de),
+        .line_start (fb_line_start), .frame_start (fb_frame_start),
+        .vbi_start (), .atari_row (), .vcount ()
+    );
+
+    // ---- Desktop plane fetch (plane 0): full-screen DDR3 read via HP0 ----
+    // fetch_row = next display line (scale 1 => src_row == line); plane_fetch
+    // prefetches it during the current line.
+    wire [11:0] desk_fetch_row = (fb_v_count >= 12'd1079) ? 12'd0
+                                                          : (fb_v_count + 12'd1);
+    wire [CMP_PLANES*12-1:0] cmp_src_col, cmp_src_row;
+    wire [31:0]              desk_pixel;
+
+    plane_fetch u_plane_fetch0 (
+        .clk_sys (clk_sys), .rst_sys (rst_sys), .enable (1'b1),
+        .surface_base (32'h3000_0000), .stride_bytes (16'd8192), .src_w (12'd1920),
+        .m_axi_araddr (hp0_araddr), .m_axi_arlen (hp0_arlen), .m_axi_arsize (hp0_arsize),
+        .m_axi_arburst (hp0_arburst), .m_axi_arvalid (hp0_arvalid),
+        .m_axi_arready (hp0_arready), .m_axi_rdata (hp0_rdata),
+        .m_axi_rvalid (hp0_rvalid), .m_axi_rlast (hp0_rlast), .m_axi_rready (hp0_rready),
+        .clk_pix (clk_pix), .rst_pix (rst_pix),
+        .line_start (fb_line_start), .fetch_row (desk_fetch_row),
+        .rd_col (cmp_src_col[0*12 +: 12]), .rd_pixel (desk_pixel)
+    );
+
+    // ---- Plane compositor -----------------------------------------------
+    wire [4:0] comp_rgb_r; wire [5:0] comp_rgb_g; wire [4:0] comp_rgb_b;
+    wire       comp_de, comp_hsync, comp_vsync;
+
+    plane_compositor #(.N_PLANES(CMP_PLANES), .H_ACTIVE(1920), .V_ACTIVE(1080)) u_compositor (
+        .clk_pix (clk_pix), .rst_pix (rst_pix),
+        .h_count (fb_h_count), .v_count (fb_v_count),
+        .de (vb_de), .hsync (vb_hsync), .vsync (vb_vsync), .line_start (fb_line_start),
+        .pl_enable   (2'b01),                          // plane 0 on; plane 1 (XL) off
+        .pl_origin_x ({12'd0,    12'd0}),
+        .pl_origin_y ({12'd0,    12'd0}),
+        .pl_scale    ({3'd1,     3'd1}),
+        .pl_depth    ({4'd1,     4'd0}),
+        .pl_clip_x0  ({12'd0,    12'd0}),
+        .pl_clip_y0  ({12'd0,    12'd0}),
+        .pl_clip_x1  ({12'd1920, 12'd1920}),
+        .pl_clip_y1  ({12'd1080, 12'd1080}),
+        .bg_color    (24'h00_00_00),
+        .src_col_o   (cmp_src_col),
+        .src_row_o   (cmp_src_row),                    // unused for scale-1 desktop
+        .src_pixel_i ({32'd0, desk_pixel}),            // plane 1 source tied off
+        .rgb_r (comp_rgb_r), .rgb_g (comp_rgb_g), .rgb_b (comp_rgb_b),
+        .de_o (comp_de), .hsync_o (comp_hsync), .vsync_o (comp_vsync)
     );
 
     // ====================================================================
@@ -909,10 +918,10 @@ module fpga_xt_top #(
         .reg_wdata     (bus_data_in_antic_q),
         .reg_rdata     (sprite_reg_rdata_unused),
 
-        .fb_pixel      ({fb_rgb_r, fb_rgb_g, fb_rgb_b}),
-        .fb_de         (fb_rgb_de),
-        .fb_hsync      (fb_rgb_hsync),
-        .fb_vsync      (fb_rgb_vsync),
+        .fb_pixel      ({comp_rgb_r, comp_rgb_g, comp_rgb_b}),
+        .fb_de         (comp_de),
+        .fb_hsync      (comp_hsync),
+        .fb_vsync      (comp_vsync),
 
         .rgb_r         (spr_rgb_r),
         .rgb_g         (spr_rgb_g),
@@ -936,62 +945,17 @@ module fpga_xt_top #(
         .m_axi_rready  ()
     );
 
-    // ---- Legacy 1080p pillarbox upscaler (boot gap 4b, task-0006) --------
-    // Peer of sprite_engine: consumes fb_scanout's 1080p raster and paints
-    // the Atari frame store, integer-scaled + centred with pillarbox bars.
-    // Its output is therefore a valid 1080p60 signal that the mux can select.
-    //
-    // The frame-store + palette write ports are tied off for now: until the
-    // ANTIC compositor capture path + palette mirror land (see
-    // prompts/task-0006 / TODO.txt item 4(b)), the store is empty so
-    // LEGACY_VIDEO=1 shows a black 1080p frame (valid sync) instead of the
-    // broken native 800x600 ANTIC raster.  wr_clk = clk_sys (ANTIC's clk_bus)
-    // for the future capture path.
-    wire [4:0] lu_rgb_r;
-    wire [5:0] lu_rgb_g;
-    wire [4:0] lu_rgb_b;
-    wire       lu_de, lu_hsync, lu_vsync;
-
-    legacy_upscale #(
-        .H_ACTIVE (1920), .V_ACTIVE (1080),
-        .ATARI_W  (384),  .ATARI_H  (240),
-        .H_SHIFT  (2),    .V_SHIFT  (2)
-    ) u_legacy_upscale (
-        .clk_pix  (clk_pix),
-        .rst_pix  (rst_pix),
-        .h_count  (fb_h_count),
-        .v_count  (fb_v_count),
-        .de       (fb_rgb_de),
-        .hsync    (fb_rgb_hsync),
-        .vsync    (fb_rgb_vsync),
-        .wr_clk   (clk_sys),       // ANTIC capture path (tied off for now)
-        .wr_en    (1'b0),
-        .wr_row   (9'd0),
-        .wr_col   (9'd0),
-        .wr_index (8'd0),
-        .pal_we   (1'b0),          // palette mirror (tied off for now)
-        .pal_waddr(8'd0),
-        .pal_wdata(24'd0),
-        .rgb_r    (lu_rgb_r),
-        .rgb_g    (lu_rgb_g),
-        .rgb_b    (lu_rgb_b),
-        .de_o     (lu_de),
-        .hsync_o  (lu_hsync),
-        .vsync_o  (lu_vsync)
-    );
-
-    // ---- Display-source mux (boot blocker #4) ----------------------------
-    // Mode 0 (fb_scanout -> sprite_engine, 1080p60) is the validated default.
-    // Mode 1 = legacy upscaler.  Both run on clk_pix, so rgb_pixclk is always
-    // fb_rgb_pixclk and the mux is glitch-safe at the pins.  (antic_top's own
-    // rgb_*_o remain observed-only.)
-    assign rgb_r      = LEGACY_VIDEO ? lu_rgb_r  : spr_rgb_r;
-    assign rgb_g      = LEGACY_VIDEO ? lu_rgb_g  : spr_rgb_g;
-    assign rgb_b      = LEGACY_VIDEO ? lu_rgb_b  : spr_rgb_b;
-    assign rgb_hsync  = LEGACY_VIDEO ? lu_hsync  : spr_rgb_hsync;
-    assign rgb_vsync  = LEGACY_VIDEO ? lu_vsync  : spr_rgb_vsync;
-    assign rgb_de     = LEGACY_VIDEO ? lu_de     : spr_rgb_de;
-    assign rgb_pixclk = fb_rgb_pixclk;
+    // ---- RGB pins -------------------------------------------------------
+    // compositor -> sprite_engine -> pads.  There is no longer a full-screen
+    // source mux: the legacy ANTIC window will appear as plane 1 of the
+    // compositor once the ANTIC->DDR3 writeback (phase 2) feeds it.
+    assign rgb_r      = spr_rgb_r;
+    assign rgb_g      = spr_rgb_g;
+    assign rgb_b      = spr_rgb_b;
+    assign rgb_hsync  = spr_rgb_hsync;
+    assign rgb_vsync  = spr_rgb_vsync;
+    assign rgb_de     = spr_rgb_de;
+    assign rgb_pixclk = clk_pix;
 
     // ====================================================================
     // AXI-Lite bridge — GP0 from ARM PS → blitter register bus
