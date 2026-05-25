@@ -50,11 +50,12 @@ HDL_SRCS := \
     $(HDL_DIR)/sally_mem.sv       \
     $(HDL_DIR)/pcm1808_rx.sv      \
     $(HDL_DIR)/antic_raster.sv    \
+    $(HDL_DIR)/antic_seq.sv       \
     $(HDL_DIR)/antic_top.sv
 
 BUILD_DIR := build
 
-.PHONY: all smoke snoop read vbeam dl_parse prior nmi wsync palette dma_master mem_read_mux draw_regs pokey pokey_i2s sally sally_mem sally_arb bank_xlat hwreg_rd_cdc legacy_upscale plane_compositor plane_fetch axi_line_writer antic_writeback antic_raster pia_regs peri_link joy_link joy_bridge peri_bridge os_rom_load klaus lint clean xt_blitter sally_stack sally_isa sprite_regs sprite_fetcher sprite_compositor
+.PHONY: all smoke snoop read vbeam dl_parse prior nmi wsync palette dma_master mem_read_mux draw_regs pokey pokey_i2s sally sally_mem sally_arb bank_xlat hwreg_rd_cdc legacy_upscale plane_compositor plane_fetch axi_line_writer antic_writeback antic_raster antic_seq antic_modes pia_regs peri_link joy_link joy_bridge peri_bridge os_rom_load klaus lint clean xt_blitter sally_stack sally_isa sprite_regs sprite_fetcher sprite_compositor
 
 # Retired tests (2026-05-25): rp_bus, mode_f, char_modes, gfx_modes, pm, scroll,
 # dma_int, visual all instantiated the v1 rp_bus injection harness
@@ -65,7 +66,7 @@ BUILD_DIR := build
 # deleted too).  They drove ANTIC through the old serial-link mocks, superseded
 # by the compositor model.  Removed from the build rather than reviving
 # intentionally-deleted RTL.
-all: smoke snoop read vbeam dl_parse prior nmi wsync palette dma_master mem_read_mux draw_regs pokey pokey_i2s sally sally_mem sally_arb bank_xlat pia_regs peri_link joy_link joy_bridge peri_bridge os_rom_load pbi pcm1808_rx xt_blitter sprite_regs sprite_fetcher sprite_compositor
+all: smoke snoop read vbeam dl_parse prior nmi wsync palette dma_master mem_read_mux draw_regs pokey pokey_i2s sally sally_mem sally_arb bank_xlat pia_regs peri_link joy_link joy_bridge peri_bridge os_rom_load pbi pcm1808_rx xt_blitter sprite_regs sprite_fetcher sprite_compositor antic_raster antic_seq antic_modes
 
 # `klaus` is NOT in `all` — Klaus Dormann's full test takes ~96 M
 # cycles (≥10 minutes of iverilog wall-clock). Run it manually with
@@ -557,6 +558,39 @@ antic_raster: $(BUILD_DIR)/tb_antic_raster.vvp
 
 $(BUILD_DIR)/tb_antic_raster.vvp: $(HDL_DIR)/antic_raster.sv tb_antic_raster.sv | $(BUILD_DIR)
 	$(IVERILOG) $(SV_FLAGS) -o $@ -s tb_antic_raster $(HDL_DIR)/antic_raster.sv tb_antic_raster.sv
+
+# ---- antic_seq — phi2-raster render sequencer (video-arch §5.1, task-0014) -
+# Integration of antic_raster -> antic_seq -> compositor (option (b)): asserts
+# dl_start once/frame at vbi, cmp_start once per active scanline (gated on the
+# parse), and the composed row advancing 0..191 in lockstep with line_start.
+ANTIC_SEQ_HDL := \
+    $(HDL_DIR)/antic_raster.sv  \
+    $(HDL_DIR)/antic_seq.sv     \
+    $(HDL_DIR)/compositor.sv
+
+antic_seq: $(BUILD_DIR)/tb_antic_seq.vvp
+	@echo "=== antic_seq — phi2-raster render sequencer ==="
+	@$(VVP) -N $< | tee $(BUILD_DIR)/tb_antic_seq.log
+	@grep -q '\*\*\* ANTIC_SEQ OK \*\*\*' $(BUILD_DIR)/tb_antic_seq.log || \
+	    (echo "FAIL: tb_antic_seq missing ANTIC_SEQ OK"; exit 1)
+	@echo "PASS: tb_antic_seq"
+
+$(BUILD_DIR)/tb_antic_seq.vvp: $(ANTIC_SEQ_HDL) tb_antic_seq.sv $(HDL_DIR)/bus_opcodes.vh | $(BUILD_DIR)
+	$(IVERILOG) $(SV_FLAGS) -o $@ -s tb_antic_seq $(ANTIC_SEQ_HDL) tb_antic_seq.sv
+
+# ---- antic_modes — compositor per-mode pixel rendering (regression) -------
+# Drives the compositor directly with a fake screen/char RAM and checks the
+# per-pair SET stream against a software oracle for modes F / 2 / E.  Restores
+# the playfield-mode coverage retired with the rp_bus-era mode tests.
+antic_modes: $(BUILD_DIR)/tb_antic_modes.vvp
+	@echo "=== antic_modes — compositor per-mode pixel rendering ==="
+	@$(VVP) -N $< | tee $(BUILD_DIR)/tb_antic_modes.log
+	@grep -q '\*\*\* ANTIC_MODES OK \*\*\*' $(BUILD_DIR)/tb_antic_modes.log || \
+	    (echo "FAIL: tb_antic_modes missing ANTIC_MODES OK"; exit 1)
+	@echo "PASS: tb_antic_modes"
+
+$(BUILD_DIR)/tb_antic_modes.vvp: $(HDL_DIR)/compositor.sv tb_antic_modes.sv $(HDL_DIR)/bus_opcodes.vh | $(BUILD_DIR)
+	$(IVERILOG) $(SV_FLAGS) -o $@ -s tb_antic_modes $(HDL_DIR)/compositor.sv tb_antic_modes.sv
 
 # ---- M25-2 — peri_link FPGA-side SPI master ------------------------------
 peri_link: $(BUILD_DIR)/tb_peri_link.vvp

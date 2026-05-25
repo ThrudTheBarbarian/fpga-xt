@@ -857,10 +857,11 @@ module antic_top #(
     );
 
     // ---- dma_mode latch (vsync-aligned, snapped at dl_start_pulse) -----
-    // dl_start_pulse fires once per "frame" (the kick_counter wraps).
-    // Snapshotting mode_snoop_q at that boundary keeps the dma_mode
-    // stable for the duration of a parse + compose cycle. (Forward
-    // declaration; dl_start_pulse is driven by the kick FSM below.)
+    // dl_start_pulse fires once per frame at vbi_start (driven by the
+    // antic_seq render sequencer below).  Snapshotting mode_snoop_q at that
+    // frame boundary keeps dma_mode stable for the whole frame's parse +
+    // per-scanline compose.  (Forward declaration; both pulses are driven by
+    // the u_antic_seq instance further down.)
     logic dl_start_pulse;
     logic cmp_start_pulse;
     logic dma_mode_q;
@@ -927,23 +928,42 @@ module antic_top #(
         .dma_ack(cmp_dma_ack), .dma_data_valid(cmp_dma_dvalid),
         .dma_rdata(cmp_dma_rdata), .dma_busy(dma_busy_w));
 
-    // ---- dl_parser ------------------------------------------------------
-    // Tied to a periodic kick for now (every 256K cycles ≈ ~12 ms at
-    // 21.5 MHz, faster than VBI but acceptable for synth). Real start-of-
-    // VBI scheduling is a downstream M-int task tied to vbeam.
-    logic [17:0] kick_counter;
-    always_ff @(posedge clk_bus or posedge rst_bus) begin
-        if (rst_bus) begin
-            kick_counter    <= 18'h0;
-            dl_start_pulse  <= 1'b0;
-            cmp_start_pulse <= 1'b0;
-        end else begin
-            kick_counter    <= kick_counter + 18'd1;
-            dl_start_pulse  <= (kick_counter == 18'h0);
-            cmp_start_pulse <= (kick_counter == 18'h00400);  // 1024 cycles after parse start
-        end
-    end
+    // dl_parser status (declared here so the render sequencer below can gate
+    // the first compose on parse_done; the parser itself is instanced after).
+    wire        dl_done;
+    wire [31:0] dl_count;
 
+    // ---- ANTIC native-raster render sequencer (task-0014, video-arch §5.1) -
+    // Replaces the old free-running kick_counter scaffold (a fixed ~12 ms timer
+    // unrelated to the emulated frame).  Render is now locked to the phi2
+    // raster (antic_raster): dl_start_pulse fires once per frame at vbi_start
+    // (parse the whole DL during vblank); cmp_start_pulse fires once per active
+    // scanline at line_start, composing the row ar_atari_row in raster order.
+    // The compositor runs in option-(b) mode (one row per start_compose,
+    // row_in = ar_atari_row) so mid-frame register writes / DLIs land on the
+    // correct scanline relative to the CPU.
+    //
+    // Timing budget: clk_bus = phi2 × BASE_DIV (=90), so one scanline = 114 ×
+    // 90 = 10,260 clk_bus cycles.  In snoop mode (the v1 config, mem_ready tied
+    // high) a row's compose is a few hundred cycles + the writeback row DMA is a
+    // few hundred — both fit with ~10× margin.  DMA mode (deferred banked path)
+    // is phi2-paced per byte and is tighter for dense rows; revisit with
+    // explicit overrun handling when that path is brought up.  An overrun
+    // (cmp_start while the compositor is still busy on the previous row) is
+    // safe-degrading, not corrupting: the compositor ignores start_compose
+    // outside S_IDLE, so the row would simply be skipped (stale buffer data).
+    antic_seq u_antic_seq (
+        .clk        (clk_bus),
+        .rst        (rst_bus),
+        .vbi_start  (vbi_start_pulse_bus),
+        .line_start (line_start_pulse_bus),
+        .active_row (ar_atari_row != 8'hFF),
+        .parse_done (dl_done),
+        .dl_start   (dl_start_pulse),
+        .cmp_start  (cmp_start_pulse)
+    );
+
+    // ---- dl_parser ------------------------------------------------------
     wire [7:0]  meta_row_q;
     wire [3:0]  dl_meta_mode;
     wire        dl_meta_dli;
@@ -951,8 +971,6 @@ module antic_top #(
     wire [3:0]  dl_meta_sub;
     wire        dl_meta_hscrol_en;
     wire        dl_meta_vscrol_en;
-    wire        dl_done;
-    wire [31:0] dl_count;
 
     dl_parser u_dl_parser (
         .clk(clk_bus), .rst(rst_bus), .start_parse(dl_start_pulse),
@@ -1021,6 +1039,7 @@ module antic_top #(
 
     compositor u_compositor (
         .clk(clk_bus), .rst(rst_bus), .start_compose(cmp_start_pulse),
+        .row_in(ar_atari_row),                 // task-0014: compose this row
         .meta_row(meta_row_q),
         .meta_mode(dl_meta_mode), .meta_lms_addr(dl_meta_lms),
         .meta_sub_row(dl_meta_sub),

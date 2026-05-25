@@ -1,6 +1,13 @@
 # task-0014 — ANTIC native raster *sequencer* (phi2-paced render trigger)
 
-**Status: SPECCED, not built.**  Follow-on to task-0013 (which made the
+**Status: BUILT (2026-05-25).**  Implemented as `hdl/antic_seq.sv` (the
+sequencer) + `compositor` option (b) (one row per `start_compose`, row =
+`ar_atari_row`) wired into `antic_top`; unit-tested by `sim/tb_antic_seq.sv`.
+`make -C sim lint` clean; full `make -C sim all` green (now includes
+`antic_raster` + `antic_seq`); Klaus run as the conformance gate.  **Still
+deferred:** win10 re-synth / timing re-measure (see Verify item below).
+
+**Status (original): SPECCED, not built.**  Follow-on to task-0013 (which made the
 *heartbeat* phi2-correct and deleted the dead 800×600 display chain).  Re-read
 `docs/video-architecture.md` §5.1 — specifically the "Coupled scope" paragraph
 — before starting.  Branch context: `video-compositor`.

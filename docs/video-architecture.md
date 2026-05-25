@@ -230,21 +230,26 @@ count lines:     262 → vbi_start, atari_row = 0
   stream regardless of source) — a clean module boundary.
 - It also lets `hdmi_out`, `scan_out`, the native `line_buffer`, and the
   display `palette_lut` be **deleted** (the writeback owns its own palette).
-- **Coupled scope:** ANTIC's render *trigger* is currently a scaffold
-  (`dl_parser`/`compositor` fire off a free-running `kick_counter`, not a real
-  per-scanline walk — see the `antic_top` comment "Real start-of-VBI
-  scheduling is a downstream … task tied to vbeam").  Doing this properly
-  means the phi2 timer drives **both** the line/frame pulses and per-row
-  compose — i.e. it finishes the ANTIC native raster *sequencer*.  This is
-  the emulation-timing-sensitive part; gate it behind the existing phi2/CPU
-  conformance (Klaus is unaffected — it's already phi2-based).
+- **Coupled scope:** ANTIC's render *trigger* used to be a scaffold
+  (`dl_parser`/`compositor` fired off a free-running `kick_counter`, not a real
+  per-scanline walk).  Doing it properly means the phi2 timer drives **both**
+  the line/frame pulses and per-row compose — i.e. it finishes the ANTIC native
+  raster *sequencer*.  This is the emulation-timing-sensitive part; gated
+  behind the existing phi2/CPU conformance (Klaus is unaffected — it's already
+  phi2-based).  **Done in task-0014** (see below).
 
-Status: **built** (task-0013, 2026-05-25) — see
-`prompts/task-0013-antic-native-raster.md`.  `antic_raster` paces ANTIC off
+Status: **built** (task-0013 + task-0014, 2026-05-25).  task-0013
+(`prompts/task-0013-antic-native-raster.md`): `antic_raster` paces ANTIC off
 phi2 and the 800×600 display chain is deleted; ANTIC's only image path is the
-§5 writeback tap.  Remaining: the per-row render trigger is still the
-free-running `kick_counter` scaffold (the "coupled scope" below), not yet a
-true per-scanline display-list walk.
+§5 writeback tap.  task-0014 (`prompts/task-0014-antic-render-sequencer.md`):
+the `kick_counter` scaffold is replaced by `antic_seq`, a phi2-raster-locked
+sequencer — `dl_start` once per frame at `vbi_start` (parse the whole display
+list into dl_parser's 192-entry meta table during vblank), `cmp_start` once per
+active scanline at `line_start`.  The `compositor` now composes one row per
+`start_compose` (row = `ar_atari_row`), so the frame is walked in raster order
+in lockstep with the CPU: mid-frame register writes / DLIs land on the correct
+scanline.  ANTIC native raster is now fully done (heartbeat + dead-chain
+deletion + sequencer).
 
 ## 6. Unified sprite engine
 
@@ -441,13 +446,16 @@ register re-partition (§9); double-buffer/front-sel plumbing (§3).
 - STe/TT emulation on ARM core1 (software 68k); its DDR3 surface + plane.
 - Configurable boot-direct-to-XL (skip the desktop).
 - Visible-span-only plane fetch (bandwidth optimisation).
-- ANTIC native raster (§5.1) — **DONE** (task-0013, 2026-05-25): the 800×600
-  `vbeam` heartbeat is replaced by the phi2-derived line/frame/row timer
-  (`antic_raster`), and the dead display chain (`hdmi_out`/`scan_out`/native
-  `line_buffer`/display `palette_lut`) is deleted — ANTIC reaches the screen
-  only via the §5 writeback tap.  One sub-item remains deferred: the per-row
-  render *trigger* is still the free-running `kick_counter` scaffold, not a true
-  per-scanline display-list walk (the §5.1 "coupled scope").
+- ANTIC native raster (§5.1) — **DONE** (task-0013 + task-0014, 2026-05-25):
+  task-0013 replaced the 800×600 `vbeam` heartbeat with the phi2-derived
+  line/frame/row timer (`antic_raster`) and deleted the dead display chain
+  (`hdmi_out`/`scan_out`/native `line_buffer`/display `palette_lut`).  task-0014
+  replaced the free-running `kick_counter` render trigger with `antic_seq` — a
+  phi2-raster-locked sequencer that parses the display list once per frame at
+  `vbi_start` and composes one row per active scanline at `line_start` (the
+  `compositor` now composes a single supplied row per `start_compose`).  Render
+  is phi2/beam-locked, so mid-frame register writes land on the correct row.
+  No sub-items remain.
 
 ## 13. Open sizing questions (resolve during implementation)
 

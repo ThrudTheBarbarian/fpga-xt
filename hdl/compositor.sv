@@ -1,8 +1,18 @@
 // compositor.sv — per-row playfield index emitter.
 //
-// On `start_compose`, walks atari rows 0..ATARI_H-1; for each row, the
-// dl_parser meta read port yields (mode, lms_addr, sub_row). The
-// compositor then dispatches per-mode:
+// On `start_compose`, composes exactly ONE row — the row supplied on `row_in`
+// (compositor option (b), task-0014).  The dl_parser meta read port yields
+// (mode, lms_addr, sub_row) for that row; the compositor then dispatches
+// per-mode.  The ANTIC native-raster sequencer (antic_seq) pulses
+// `start_compose` once per active scanline with row_in = ar_atari_row, so the
+// frame is walked in raster order in lockstep with the CPU (register values
+// latched here reflect mid-frame writes up to the composed row).
+//
+// (Historic note: this module previously self-walked rows 0..ATARI_H-1 on a
+// single start_compose, driven by a free-running kick_counter.  task-0014
+// retargeted it to one-row-per-start so render is phi2/beam-locked.)
+//
+// Per-mode dispatch:
 //
 //   Mode F  (1 bpp, 320 atari px): 40 source bytes; bit set → $04
 //                                  (COLPF2 owner), bit clear → $00.
@@ -54,6 +64,7 @@ module compositor #(
     input  wire        rst,
 
     input  wire        start_compose,
+    input  wire  [7:0] row_in,            // row to compose (option (b), = ar_atari_row)
 
     // dl_parser metadata read port.
     output logic [7:0]  meta_row,
@@ -915,8 +926,13 @@ module compositor #(
                 S_IDLE: begin
                     cmd_valid <= 1'b0;
                     if (start_compose) begin
-                        cur_row <= 8'd0;
-                        state   <= S_FETCH_META;
+                        // option (b): compose exactly the supplied row.  Guard
+                        // against an out-of-range index (active band is
+                        // 0..ATARI_H-1); the sequencer only fires in-band, so
+                        // an out-of-range request just stays idle (dropped).
+                        cur_row <= row_in;
+                        if (row_in < ATARI_H[7:0])
+                            state <= S_FETCH_META;
                     end
                 end
 
@@ -1293,14 +1309,13 @@ module compositor #(
                 end
 
                 S_NEXT_ROW: begin
-                    if (cur_row == ATARI_H[7:0] - 8'd1) begin
-                        compose_done  <= 1'b1;
-                        compose_count <= compose_count + 32'd1;
-                        state         <= S_IDLE;
-                    end else begin
-                        cur_row <= cur_row + 8'd1;
-                        state   <= S_FETCH_META;
-                    end
+                    // option (b), task-0014: one row per start_compose.  The
+                    // antic_seq sequencer supplies the row (= ar_atari_row) and
+                    // pulses start_compose once per active scanline, so the
+                    // compositor no longer self-walks rows 0..ATARI_H-1.
+                    compose_done  <= 1'b1;
+                    compose_count <= compose_count + 32'd1;
+                    state         <= S_IDLE;
                 end
 
                 default: state <= S_IDLE;
