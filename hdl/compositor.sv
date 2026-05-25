@@ -624,8 +624,8 @@ module compositor #(
 
     // pm_presence: returns 8-bit vector {P3,P2,P1,P0,M3,M2,M1,M0} for one
     // atari_x. Per-missile VDELAY picks between the current-row and prev-
-    // row missile byte. Used by both apply_pm_overlay (for OR-into-pair)
-    // and by collision_contribution.
+    // row missile byte. Used by apply_pm_overlay (pixel path) and registered
+    // per pair (col_presL/H_q) for the next-cycle collision_combine.
     function automatic logic [7:0] pm_presence(logic [9:0] atari_x);
         logic [7:0] ms_eff;
         logic       p0p, p1p, p2p, p3p;
@@ -691,25 +691,26 @@ module compositor #(
         return {m_hi, m_lo, hi, lo};
     endfunction
 
-    // collision_contribution: returns the OR-into-latches contribution for
-    // both atari pixels of a pair. raw_pair is the post-pack_pair, pre-
-    // overlay value (low nibble = PF source bits). 64-bit packed return:
+    // collision_combine: returns the OR-into-latches contribution for both
+    // atari pixels of a pair, from the PF nibbles (raw_pair) and the two
+    // already-resolved P/M presence vectors.  Split out from the old
+    // collision_contribution() so the deep pm_presence cone can be REGISTERED
+    // in the emit cycle (clk_sys closure): this combine is then a shallow
+    // nibble-AND + 4x4 P/P matrix, run one cycle later.  64-bit packed return:
     //   bits [15:0]  = mpf
     //   bits [31:16] = ppf
     //   bits [47:32] = mpl
     //   bits [63:48] = ppl
-    function automatic logic [63:0] collision_contribution(
+    function automatic logic [63:0] collision_combine(
         logic [15:0] raw_pair,
-        logic [9:0]  atari_x_lo);
+        logic [7:0]  pres_lo,
+        logic [7:0]  pres_hi);
         logic [3:0]  pf_lo, pf_hi;
-        logic [7:0]  pres_lo, pres_hi;
         logic [15:0] mpf_c, ppf_c, mpl_c, ppl_c;
         integer      i, j;
 
         pf_lo   = raw_pair[3:0];
         pf_hi   = raw_pair[11:8];
-        pres_lo = pm_presence(atari_x_lo);
-        pres_hi = pm_presence(atari_x_lo + 10'd1);
 
         mpf_c = 16'h0;
         ppf_c = 16'h0;
@@ -884,14 +885,20 @@ module compositor #(
     // ---- Collision-accumulation pipeline (clk_sys closure) --------------
     // The collision latches (mpf/ppf/mpl/ppl) feed the GTIA $D000-$D00F
     // collision reads + HITCLR — they are NOT on the pixel-output path, and
-    // the CPU reads them many cycles later.  So instead of OR-ing each pair's
-    // collision_contribution() into the latches in the same cycle it is
-    // produced (a long, route-spread path cur_mode -> pack_pair ->
-    // collision_contribution -> latch that limited clk_sys), we REGISTER the
-    // 64-bit contribution here and OR it in one cycle later.  This anchors the
-    // whole contribution cone at a local FF bank; the latch update is then a
-    // trivial OR.  Collisions simply lag the beam by one clk_bus cycle.
-    logic [63:0] col_contrib_q;
+    // the CPU reads them many cycles later.  So the collision math is
+    // pipelined off the emit critical path:
+    //   emit cycle  : register the pair's PF bits (col_raw_q) AND the two
+    //                 resolved P/M presence vectors (col_presL/H_q).  This
+    //                 splits the long cone — pack_pair and pm_presence each
+    //                 terminate at their own FF (both individually meet 150
+    //                 MHz; the pixel path cmd_data uses the same two cones).
+    //   next cycle  : collision_combine() does the shallow nibble-AND + 4x4
+    //                 P/P matrix from the registered values and ORs into the
+    //                 latches.
+    // Collisions simply lag the beam by one clk_bus cycle.
+    logic [15:0] col_raw_q;        // PF-bit pair, registered for the combine
+    logic [7:0]  col_presL_q;      // P/M presence at the pair's low  atari_x
+    logic [7:0]  col_presH_q;      // P/M presence at the pair's high atari_x
     logic        col_valid_q;
 
     always_ff @(posedge clk or posedge rst) begin
@@ -931,7 +938,9 @@ module compositor #(
             ppf_q           <= 16'h0;
             mpl_q           <= 16'h0;
             ppl_q           <= 16'h0;
-            col_contrib_q   <= 64'h0;
+            col_raw_q       <= 16'h0;
+            col_presL_q     <= 8'h0;
+            col_presH_q     <= 8'h0;
             col_valid_q     <= 1'b0;
         end else begin
             compose_done <= 1'b0;
@@ -1046,17 +1055,17 @@ module compositor #(
 
                 S_F_LATCH_BYTE: begin : sblk_f_latch
                     logic [15:0] raw_f;
-                    logic [63:0] contrib_f;
                     raw_f     = pack_pair(cur_mode, mem_rdata, 8'h0, 4'd0);
-                    contrib_f = collision_contribution(raw_f, pair_atari_x_lo);
                     cur_byte  <= mem_rdata;
                     pair_idx  <= 4'd0;
                     cmd_tag   <= `BUS_TAG_SET;
                     cmd_addr  <= set_addr;
                     cmd_data  <= apply_pm_overlay(raw_f, pair_atari_x_lo);
                     cmd_valid <= 1'b1;
-                    col_contrib_q <= contrib_f;     // accumulated next cycle
-                    col_valid_q   <= 1'b1;
+                    col_raw_q   <= raw_f;           // combined + accumulated next cycle
+                    col_presL_q <= pm_presence(pair_atari_x_lo);
+                    col_presH_q <= pm_presence(pair_atari_x_lo + 10'd1);
+                    col_valid_q <= 1'b1;
                     state     <= S_ISSUE_SET;
                 end
 
@@ -1086,7 +1095,6 @@ module compositor #(
                     logic [15:0] window;
                     logic [15:0] raw_h;       // PF-bit encoding (collision input)
                     logic [15:0] idx_h;       // value actually stored in idx_buf
-                    logic [63:0] contrib_h;
                     window = {cur_byte, mem_rdata};
                     // Mode-dispatched pack: F → bit-set window (or GTIA
                     // nibble); 8-E → per-mode gfx_window unpack.
@@ -1101,15 +1109,16 @@ module compositor #(
                         raw_h = pack_pair_gfx_window(cur_mode, window, 4'd0, hs_sub_atari);
                         idx_h = raw_h;
                     end
-                    contrib_h = collision_contribution(raw_h, pair_atari_x_lo);
                     next_byte <= mem_rdata;
                     pair_idx  <= 4'd0;
                     cmd_tag   <= `BUS_TAG_SET;
                     cmd_addr  <= set_addr;
                     cmd_data  <= apply_pm_overlay(idx_h, pair_atari_x_lo);
                     cmd_valid <= 1'b1;
-                    col_contrib_q <= contrib_h;     // accumulated next cycle
-                    col_valid_q   <= 1'b1;
+                    col_raw_q   <= raw_h;           // combined + accumulated next cycle
+                    col_presL_q <= pm_presence(pair_atari_x_lo);
+                    col_presH_q <= pm_presence(pair_atari_x_lo + 10'd1);
+                    col_valid_q <= 1'b1;
                     state     <= S_ISSUE_SET;
                 end
 
@@ -1168,7 +1177,6 @@ module compositor #(
                     logic [7:0]  blanking_code;
                     logic        blanking_b7;
                     logic [15:0] raw_t;
-                    logic [63:0] contrib_t;
                     // Pick which char's bits drive the inv-blank / mode-3
                     // descender blanking. In HSCROL phase 1 we're latching
                     // the nxt char; otherwise it's the cur char.
@@ -1215,14 +1223,15 @@ module compositor #(
                             cur_glyph <= glyph_eff;
                             raw_t = pack_pair(cur_mode, glyph_eff, cur_code, 4'd0);
                         end
-                        contrib_t = collision_contribution(raw_t, pair_atari_x_lo);
                         pair_idx  <= 4'd0;
                         cmd_tag   <= `BUS_TAG_SET;
                         cmd_addr  <= set_addr;
                         cmd_data  <= apply_pm_overlay(raw_t, pair_atari_x_lo);
                         cmd_valid <= 1'b1;
-                        col_contrib_q <= contrib_t;     // accumulated next cycle
-                        col_valid_q   <= 1'b1;
+                        col_raw_q   <= raw_t;           // combined + accumulated next cycle
+                        col_presL_q <= pm_presence(pair_atari_x_lo);
+                        col_presH_q <= pm_presence(pair_atari_x_lo + 10'd1);
+                        col_valid_q <= 1'b1;
                         state     <= S_ISSUE_SET;
                     end
                 end
@@ -1269,7 +1278,6 @@ module compositor #(
                         end else begin : sblk_issue_advance
                             logic [15:0] raw_a;       // PF-bit form (collision)
                             logic [15:0] idx_a;       // stored value
-                            logic [63:0] contrib_a;
                             logic [9:0]  next_x_lo;
                             logic [3:0]  next_p;
                             next_p    = pair_idx + 4'd1;
@@ -1305,13 +1313,14 @@ module compositor #(
                                                    cur_code, next_p);
                                 idx_a = raw_a;
                             end
-                            contrib_a = collision_contribution(raw_a, next_x_lo);
                             pair_idx <= next_p;
                             cmd_addr <= row_base + unit_offset
                                       + {next_p, 1'b0};
                             cmd_data <= apply_pm_overlay(idx_a, next_x_lo);
-                            col_contrib_q <= contrib_a;     // accumulated next cycle
-                            col_valid_q   <= 1'b1;
+                            col_raw_q   <= raw_a;           // combined + accumulated next cycle
+                            col_presL_q <= pm_presence(next_x_lo);
+                            col_presH_q <= pm_presence(next_x_lo + 10'd1);
+                            col_valid_q <= 1'b1;
                         end
                     end
                 end
@@ -1332,11 +1341,13 @@ module compositor #(
             // Pipelined collision accumulate: OR the previous cycle's
             // registered contribution into the latches.  One OR level — short
             // path.  (HITCLR below still wins over this same-cycle update.)
-            if (col_valid_q) begin
-                mpf_q <= mpf_q | col_contrib_q[15:0];
-                ppf_q <= ppf_q | col_contrib_q[31:16];
-                mpl_q <= mpl_q | col_contrib_q[47:32];
-                ppl_q <= ppl_q | col_contrib_q[63:48];
+            if (col_valid_q) begin : sblk_col_acc
+                logic [63:0] cc;
+                cc = collision_combine(col_raw_q, col_presL_q, col_presH_q);
+                mpf_q <= mpf_q | cc[15:0];
+                ppf_q <= ppf_q | cc[31:16];
+                mpl_q <= mpl_q | cc[47:32];
+                ppl_q <= ppl_q | cc[63:48];
             end
 
             // HITCLR override — strobed by gtia_regs on $D01E write. Wins
