@@ -74,22 +74,18 @@ Boot-to-BASIC blockers (analysis 2026-05-24, ordered)
      a request/response round-trip, not just the write FIFO.
 
   4. ANTIC -> HDMI display path.
-     (a) [DONE] Display-source mux at fpga_xt_top (LEGACY_VIDEO param):
-         rgb_* pins select between fb_scanout->sprite_engine (mode 0,
-         1080p60, default) and the ANTIC RGB path (mode 1). See
-         prompts/task-0004.
-     (b) [TODO -- the real visible-display work] 1080p pillarbox upscaler.
-         Mode 1 is NOT yet correct: antic_top's hdmi_out is an 800x600
-         raster (Efinix leftover, "observed only") and scan_out only spans
-         768 native px, so ANTIC does not emit a valid 1080p60 signal.
-         Output is always 1080p60 (legacy = pillarbox), so the legacy path
-         needs an upscaler. Recommended (A): capture the ANTIC compositor
-         output into a small frame store (384 x ~240 palette indices, BRAM
-         ~92 KB) and read it in fb_scanout's 1920x1080 raster with integer
-         H-scale + centering (pillarbox bars) + V-scale + palette, selected
-         by the mux. Alt (B): render ANTIC into the DDR3 framebuffer
-         fb_scanout already displays (adds an AXI write master; no output
-         mux needed). This is its own milestone.
+     *** SUPERSEDED by docs/video-architecture.md (agreed 2026-05-25). ***
+     The full-screen approach (XL owns the screen) was wrong. Real model:
+     ONE 1080p60 desktop compositor; the XL is a movable/scalable WINDOW.
+     See the spec for the plane compositor, ANTIC->DDR3 writeback, unified
+     sprite engine, and the v1 blue-desktop + auto-XL bring-up.
+       - Reused: legacy_upscale's integer scaler folds into the compositor
+         (source becomes a DDR3 surface; the BRAM frame store is dropped;
+         power-of-two shift -> integer accumulator for scales 2/3/5).
+       - Deleted: the LEGACY_VIDEO full-screen mux in fpga_xt_top.
+       - Retargeted: the ANTIC capture path now writes a DDR3 surface
+         (writeback master), not a BRAM frame store.
+     Implementation is phased in spec section 14.
 
   5. Keyboard injection (post-READY, not on the path to the prompt):
      debug UART -> POKEY KBCODE via antic_top's kbd_event_valid/code

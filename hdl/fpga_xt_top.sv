@@ -35,13 +35,11 @@ module fpga_xt_top #(
     // Boot blocker #4 (prompts/task-0004): display-source select for the
     // RGB pins.
     //   0 = fb_scanout -> sprite_engine (1080p60 DDR3 framebuffer; GEM/native)
-    //   1 = legacy ANTIC RGB path
-    // Default 0 preserves the validated 1080p output.  NOTE: the ANTIC path
-    // is NOT yet 1080p-correct — antic_top's hdmi_out raster is 800x600 and
-    // scan_out only spans 768 native px (384 Atari px * 2), so mode 1 will
-    // produce a valid picture only once the 1080p pillarbox upscaler lands
-    // (see prompts/task-0004 + docs/TODO.txt).  The mux below is the
-    // infrastructure that lets that source be selected.
+    //   1 = legacy 1080p pillarbox upscaler (legacy_upscale)
+    // Default 0 preserves the validated 1080p output.  Mode 1 is a valid
+    // 1080p60 signal (the upscaler reuses fb_scanout's raster); it shows a
+    // black frame until the ANTIC compositor capture + palette mirror land
+    // (gap 4b, prompts/task-0006 + docs/TODO.txt item 4(b)).
     parameter bit LEGACY_VIDEO = 1'b0
 ) (
     // ---- Clocks & reset --------------------------------------------------
@@ -938,20 +936,62 @@ module fpga_xt_top #(
         .m_axi_rready  ()
     );
 
+    // ---- Legacy 1080p pillarbox upscaler (boot gap 4b, task-0006) --------
+    // Peer of sprite_engine: consumes fb_scanout's 1080p raster and paints
+    // the Atari frame store, integer-scaled + centred with pillarbox bars.
+    // Its output is therefore a valid 1080p60 signal that the mux can select.
+    //
+    // The frame-store + palette write ports are tied off for now: until the
+    // ANTIC compositor capture path + palette mirror land (see
+    // prompts/task-0006 / TODO.txt item 4(b)), the store is empty so
+    // LEGACY_VIDEO=1 shows a black 1080p frame (valid sync) instead of the
+    // broken native 800x600 ANTIC raster.  wr_clk = clk_sys (ANTIC's clk_bus)
+    // for the future capture path.
+    wire [4:0] lu_rgb_r;
+    wire [5:0] lu_rgb_g;
+    wire [4:0] lu_rgb_b;
+    wire       lu_de, lu_hsync, lu_vsync;
+
+    legacy_upscale #(
+        .H_ACTIVE (1920), .V_ACTIVE (1080),
+        .ATARI_W  (384),  .ATARI_H  (240),
+        .H_SHIFT  (2),    .V_SHIFT  (2)
+    ) u_legacy_upscale (
+        .clk_pix  (clk_pix),
+        .rst_pix  (rst_pix),
+        .h_count  (fb_h_count),
+        .v_count  (fb_v_count),
+        .de       (fb_rgb_de),
+        .hsync    (fb_rgb_hsync),
+        .vsync    (fb_rgb_vsync),
+        .wr_clk   (clk_sys),       // ANTIC capture path (tied off for now)
+        .wr_en    (1'b0),
+        .wr_row   (9'd0),
+        .wr_col   (9'd0),
+        .wr_index (8'd0),
+        .pal_we   (1'b0),          // palette mirror (tied off for now)
+        .pal_waddr(8'd0),
+        .pal_wdata(24'd0),
+        .rgb_r    (lu_rgb_r),
+        .rgb_g    (lu_rgb_g),
+        .rgb_b    (lu_rgb_b),
+        .de_o     (lu_de),
+        .hsync_o  (lu_hsync),
+        .vsync_o  (lu_vsync)
+    );
+
     // ---- Display-source mux (boot blocker #4) ----------------------------
-    // Selects which video source drives the RGB pins.  Both sources are in
-    // the clk_pix domain.  Mode 0 (fb_scanout -> sprite_engine, 1080p60) is
-    // the validated default and preserves current behaviour.  Mode 1 routes
-    // the legacy ANTIC chain to the pins — valid only once that chain is
-    // re-rastered to 1080p with the pillarbox upscaler (see the LEGACY_VIDEO
-    // parameter note above).
-    assign rgb_r      = LEGACY_VIDEO ? antic_rgb_r      : spr_rgb_r;
-    assign rgb_g      = LEGACY_VIDEO ? antic_rgb_g      : spr_rgb_g;
-    assign rgb_b      = LEGACY_VIDEO ? antic_rgb_b      : spr_rgb_b;
-    assign rgb_hsync  = LEGACY_VIDEO ? antic_rgb_hsync  : spr_rgb_hsync;
-    assign rgb_vsync  = LEGACY_VIDEO ? antic_rgb_vsync  : spr_rgb_vsync;
-    assign rgb_de     = LEGACY_VIDEO ? antic_rgb_de     : spr_rgb_de;
-    assign rgb_pixclk = LEGACY_VIDEO ? antic_rgb_pixclk : fb_rgb_pixclk;
+    // Mode 0 (fb_scanout -> sprite_engine, 1080p60) is the validated default.
+    // Mode 1 = legacy upscaler.  Both run on clk_pix, so rgb_pixclk is always
+    // fb_rgb_pixclk and the mux is glitch-safe at the pins.  (antic_top's own
+    // rgb_*_o remain observed-only.)
+    assign rgb_r      = LEGACY_VIDEO ? lu_rgb_r  : spr_rgb_r;
+    assign rgb_g      = LEGACY_VIDEO ? lu_rgb_g  : spr_rgb_g;
+    assign rgb_b      = LEGACY_VIDEO ? lu_rgb_b  : spr_rgb_b;
+    assign rgb_hsync  = LEGACY_VIDEO ? lu_hsync  : spr_rgb_hsync;
+    assign rgb_vsync  = LEGACY_VIDEO ? lu_vsync  : spr_rgb_vsync;
+    assign rgb_de     = LEGACY_VIDEO ? lu_de     : spr_rgb_de;
+    assign rgb_pixclk = fb_rgb_pixclk;
 
     // ====================================================================
     // AXI-Lite bridge — GP0 from ARM PS → blitter register bus
