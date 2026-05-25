@@ -74,6 +74,7 @@ module tb_sally_stack;
         .hwreg_dout          (hwreg_dout),
         .cpu_code_bank_q     (cpu_code_bank_q),
         .cpu_data_bank_q     (cpu_data_bank_q),
+        .portb               (8'hFF),
         .bus_mpd_n_in        (1'b1),         // /MPD high = no PBI override
         .bus_pbi_rdata       (8'h00),
         .bus_rd4_n_in        (1'b1),         // no cart $8000-$9FFF

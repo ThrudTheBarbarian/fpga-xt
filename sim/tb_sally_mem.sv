@@ -63,6 +63,7 @@ module tb_sally_mem;
 
     wire [7:0] cpu_code_bank_q, cpu_data_bank_q;
     wire       mem_busy;
+    logic [7:0] portb = 8'h02;     // default (XL): OS off (bit0=0) + BASIC off (bit1=1) -> both windows RAM
 
     sally_mem #(
         .DDR3_BANKED_BASE (32'h0000_0000),  // code base
@@ -82,6 +83,7 @@ module tb_sally_mem;
         .hwreg_dout (hwreg_dout),
         .cpu_code_bank_q    (cpu_code_bank_q),
         .cpu_data_bank_q    (cpu_data_bank_q),
+        .portb              (portb),
         .bus_mpd_n_in       (1'b1),    // M-PBI: /MPD inactive in unit-level sim
         .bus_pbi_rdata      (8'hFF),   // M-PBI: no PBI device in unit-level sim
         .bus_rd4_n_in       (1'b1),    // M-PBI: no physical cart in $8000-$9FFF
@@ -237,38 +239,73 @@ module tb_sally_mem;
             expect_eq("A.3 ram_hi[$ABCD]", v, 8'h22);
         end
 
-        // A.4: banked windows — code ($6000-$9FFF via $82) and data
-        // ($A000-$CFFF via $83/$84) round-trip through the DDR3 AXI slave.
-        // ($4000-$5FFF is now Screen RAM in BRAM, not banked.)
-        $display("[A.4] banked windows (code + data)");
+        // A.4: code window ($6000-$9FFF). Bank 0 = flat BRAM (writable,
+        // ANTIC-coherent); a non-zero $0082 selects a DDR3-backed page.
+        // Boot runs entirely on bank 0 — this is the gap-1 contract.
+        $display("[A.4] code window: bank 0 = BRAM, bank!=0 = DDR3");
         begin
             logic [7:0] v;
-            do_write(16'h6000, 8'h33);     // code window, bottom
+            // Bank 0 -> BRAM: full write/read round-trip. The OS needs
+            // $6000-$9FFF as RAM (RAM-sizing, GR.0 screen ~$9C00).
+            do_write(16'h6000, 8'h33);
             do_read (16'h6000, v);
-            expect_eq("A.4 code[$6000]", v, 8'h33);
-            do_write(16'h9FFF, 8'h44);     // code window, top
+            expect_eq("A.4 code bank0 BRAM[$6000]", v, 8'h33);
+            do_write(16'h9FFF, 8'h44);
             do_read (16'h9FFF, v);
-            expect_eq("A.4 code[$9FFF]", v, 8'h44);
-            do_write(16'hA000, 8'h55);     // data window, bottom
-            do_read (16'hA000, v);
-            expect_eq("A.4 data[$A000]", v, 8'h55);
-            do_write(16'hCFFF, 8'h66);     // data window, top
-            do_read (16'hCFFF, v);
-            expect_eq("A.4 data[$CFFF]", v, 8'h66);
+            expect_eq("A.4 code bank0 BRAM[$9FFF]", v, 8'h44);
+
+            // Select code bank 1 ($0082=1) -> DDR3 page cache.
+            //   axi = DDR3_BANKED_BASE + (bank<<14) + offset
+            //       = 0 + (1<<14) + 0 = 0x0000_4000 for $6000.
+            do_write(16'h0082, 8'h01);
+            u_axi_mem.seed_byte(32'h0000_4000, 8'hAA);
+            do_read (16'h6000, v);
+            expect_eq("A.4 code bank1 DDR3[$6000]", v, 8'hAA);
+
+            // Back to bank 0: the BRAM contents are intact (the DDR3
+            // page read did not clobber them).
+            do_write(16'h0082, 8'h00);
+            do_read (16'h6000, v);
+            expect_eq("A.4 code bank0 intact[$6000]", v, 8'h33);
         end
 
-        // A.5: ROM regions ($C000-$CFFF, $D800-$FFFF). For M24-2
-        // these are still writable BRAM (the WRITE_LOCK lands at
-        // M24-6); just confirm round-trip works.
-        $display("[A.5] ROM regions writable in M24-2 (lock arrives at M24-6)");
+        // A.4b: data window ($A000-$CFFF). Same contract: bank 0 = BRAM,
+        // non-zero $0083 = DDR3. portb default ($41) leaves both ROMs
+        // disabled so the window is RAM, not ROM.
+        $display("[A.4b] data window: bank 0 = BRAM, bank!=0 = DDR3");
         begin
             logic [7:0] v;
-            do_write(16'hC123, 8'h55);
-            do_read (16'hC123, v);
-            expect_eq("A.5 rom_lo[$C123]", v, 8'h55);
-            do_write(16'hFFFC, 8'h66);
+            do_write(16'hA000, 8'h55);
+            do_read (16'hA000, v);
+            expect_eq("A.4b data bank0 BRAM[$A000]", v, 8'h55);
+            do_write(16'hCFFF, 8'h66);
+            do_read (16'hCFFF, v);
+            expect_eq("A.4b data bank0 BRAM[$CFFF]", v, 8'h66);
+
+            // Select data bank 1 ($0083=1) -> DDR3.
+            //   axi = DDR3_DATA_BASE + (bank<<14) + offset
+            //       = 0x0008_0000 + (1<<14) = 0x0008_4000 for $A000.
+            do_write(16'h0083, 8'h01);
+            u_axi_mem.seed_byte(32'h0008_4000, 8'hBB);
+            do_read (16'hA000, v);
+            expect_eq("A.4b data bank1 DDR3[$A000]", v, 8'hBB);
+
+            do_write(16'h0083, 8'h00);
+            do_read (16'hA000, v);
+            expect_eq("A.4b data bank0 intact[$A000]", v, 8'h55);
+        end
+
+        // A.5: OS-high BRAM ($D800-$FFFF) — direct BRAM, outside any
+        // banked window.  Round-trip works regardless of PORTB.
+        $display("[A.5] OS-high BRAM ($D800-$FFFF)");
+        begin
+            logic [7:0] v;
+            do_write(16'hD800, 8'h77);
+            do_read (16'hD800, v);
+            expect_eq("A.5 bram[$D800]", v, 8'h77);
+            do_write(16'hFFFC, 8'h88);
             do_read (16'hFFFC, v);
-            expect_eq("A.5 rom_hi[$FFFC]", v, 8'h66);
+            expect_eq("A.5 bram[$FFFC]", v, 8'h88);
         end
 
         // A.6: hardware-register page ($D000-$D7FF) — read returns
@@ -317,6 +354,80 @@ module tb_sally_mem;
             do_read(16'hD000, v);
             expect_eq("A.7 $D000 is hwreg (stub $FF)", v, 8'hFF);
         end
+
+        // A.8: PORTB BASIC ROM enabled (bit1=0 -> ROM visible at $A000-$BFFF).
+        // Writes should be blocked (cpu_w gated by !rom_override); reads
+        // return the BASIC ROM content from BRAM init (sally-boot.hex).
+        $display("[A.8] PORTB BASIC ROM enabled (bit1=0)");
+        begin
+            logic [7:0] v;
+            portb = 8'h00;          // bit1=0 (BASIC ROM on), bit0=0 (OS RAM) -> BASIC visible
+            #1;
+            // Write to $A000 should NOT modify BRAM (blocked by rom_override).
+            do_write(16'hA000, 8'hAA);
+            do_read (16'hA000, v);
+            // BRAM was pre-loaded from sally-boot.hex.  $A000 is BASIC ROM;
+            // the hex file has BASIC at $A000-$BFFF.  We can't predict the
+            // exact byte, but it won't be $AA (our blocked write).
+            if (v == 8'hAA) begin
+                $display("FAIL A.8 BASIC ROM write went through (got $AA, expected ROM content)");
+                fail_count++;
+            end else begin
+                $display("A.8 BASIC ROM block OK (read $%h from $A000, not $AA)", v);
+            end
+        end
+
+        // A.9: PORTB BASIC ROM disabled (portb[0]=1 -> RAM at $A000-$BFFF).
+        // With data bank 0 (default) the RAM-under-ROM is the flat BRAM,
+        // so this is a plain BRAM write/read round-trip.
+        $display("[A.9] PORTB BASIC disabled (portb[0]=1) -> RAM at $A000");
+        begin
+            logic [7:0] v;
+            portb = 8'h02;          // OS off (bit0=0) + BASIC off (bit1=1) -> RAM
+            #1;
+            do_write(16'hA000, 8'hBB);
+            do_read (16'hA000, v);
+            expect_eq("A.9 $A000 RAM (bank0 BRAM)", v, 8'hBB);
+        end
+
+        // A.10: PORTB OS ROM enabled (bit0=1 -> ROM visible at
+        // $C000-$CFFF + $D800-$FFFF).  Writes blocked, reads return
+        // OS ROM content from BRAM init.
+        $display("[A.10] PORTB OS ROM enabled (bit0=1)");
+        begin
+            logic [7:0] v;
+            portb = 8'h03;          // bit0=1 (OS ROM on), bit1=1 (BASIC RAM) -> OS visible
+            #1;
+            do_write(16'hC000, 8'hCC);
+            do_read (16'hC000, v);
+            if (v == 8'hCC) begin
+                $display("FAIL A.10 OS ROM write went through (got $CC, expected ROM content)");
+                fail_count++;
+            end else begin
+                $display("A.10 OS ROM block OK (read $%h from $C000, not $CC)", v);
+            end
+        end
+
+        // A.11: PORTB OS ROM disabled (portb[1]=1 -> backing RAM visible).
+        // $C000-$CFFF is data-window RAM; with bank 0 (default) that is
+        // the flat BRAM. $D800-$FFFF is direct BRAM.
+        $display("[A.11] PORTB OS disabled (portb[1]=1) -> RAM at $C000");
+        begin
+            logic [7:0] v;
+            portb = 8'h02;          // OS off (bit0=0) + BASIC off (bit1=1) -> RAM
+            #1;
+            do_write(16'hC000, 8'hDD);
+            do_read (16'hC000, v);
+            expect_eq("A.11 $C000 RAM (bank0 BRAM)", v, 8'hDD);
+            // $FFFC - BRAM (outside banked window).  Round-trip.
+            do_write(16'hFFFC, 8'hEE);
+            do_read (16'hFFFC, v);
+            expect_eq("A.11 BRAM[$FFFC]", v, 8'hEE);
+        end
+
+        // Reset portb to default for any subsequent tests.
+        portb = 8'h02;
+        #1;
 
         // ===== Phase B — sally_core + sally_mem end-to-end ==============
         // The CPU integration test is in tb_sally proper. Here we

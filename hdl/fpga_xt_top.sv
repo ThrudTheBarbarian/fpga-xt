@@ -31,7 +31,18 @@ module fpga_xt_top #(
     // framebuffer read path with an on-fabric 8-colour-bar test pattern
     // so HDMI can be verified before DDR3 / AXI HP is functional.
     // Default 0 = normal operation.  See docs/bring-up.md.
-    parameter bit SCANOUT_TEST_PATTERN = 1'b0
+    parameter bit SCANOUT_TEST_PATTERN = 1'b0,
+    // Boot blocker #4 (prompts/task-0004): display-source select for the
+    // RGB pins.
+    //   0 = fb_scanout -> sprite_engine (1080p60 DDR3 framebuffer; GEM/native)
+    //   1 = legacy ANTIC RGB path
+    // Default 0 preserves the validated 1080p output.  NOTE: the ANTIC path
+    // is NOT yet 1080p-correct — antic_top's hdmi_out raster is 800x600 and
+    // scan_out only spans 768 native px (384 Atari px * 2), so mode 1 will
+    // produce a valid picture only once the 1080p pillarbox upscaler lands
+    // (see prompts/task-0004 + docs/TODO.txt).  The mux below is the
+    // infrastructure that lets that source be selected.
+    parameter bit LEGACY_VIDEO = 1'b0
 ) (
     // ---- Clocks & reset --------------------------------------------------
     input  wire        clk_50,           // 50 MHz reference from onboard osc
@@ -203,6 +214,14 @@ module fpga_xt_top #(
     wire        mem_busy_n;        // from sally_mem (1 = ready)
     wire        sally_step;
 
+    // Register read-back CDC (boot blocker #3, prompts/task-0003) —
+    // declared early so sally_clock can fold hwreg_rd_busy into its stall.
+    // Driven by u_hwreg_rd_cdc further down.
+    wire        cdc_bus_read;      // clk_sys: CDC owns the ANTIC bus for a read
+    wire [15:0] cdc_bus_addr;      // clk_sys: read address presented to ANTIC
+    wire [7:0]  cdc_rd_data;       // clk_sally: returned register byte
+    wire        hwreg_rd_busy;     // clk_sally: stall SALLY during the round-trip
+
     // Bank-select state (from SALLY zero-page snoop)
     wire [7:0]  cpu_code_bank, cpu_data_bank;
 
@@ -307,6 +326,16 @@ module fpga_xt_top #(
     // same state without a shadow memory.
     wire [15:0] antic_bram_addr;
     wire [7:0]  antic_bram_rdata;
+
+    // PORTB ($D301) from PIA — controls ROM vs banked/BRAM visibility.
+    wire [7:0]  portb_q;
+
+    // Keyboard inject (boot blocker #5, prompts/task-0005): the PS writes an
+    // Atari KBCODE byte via the GP0 blitter-register bridge ($D4CF); that
+    // pulses ANTIC's kbd_event into POKEY (loads KBCODE + raises the
+    // keyboard IRQ).  Bridge and antic_top both run on clk_sys, so no CDC.
+    logic       kbd_event_valid_q;
+    logic [7:0] kbd_event_code_q;
 
     // ====================================================================
     // AXI pipeline registers — HP1 (xt_blitter) → PS BD
@@ -477,7 +506,7 @@ module fpga_xt_top #(
         .clock_mult    (8'd68),
         .halt_n        (1'b1),         // bypassed at CLOCK_MULT>=2
         .wsync_rdy_n   (wsync_rdy_n),
-        .busy_n        (~mem_busy_n),  // sally_mem.busy: 1=busy, invert to busy_n
+        .busy_n        (~(mem_busy_n | hwreg_rd_busy)),  // stall on sally_mem cache miss OR hwreg-read CDC round-trip
         .sally_rdy     (sally_rdy),
         .sally_step    (sally_step)
     );
@@ -515,7 +544,7 @@ module fpga_xt_top #(
 
     // ---- sally_mem -------------------------------------------------------
     sally_mem #(
-        .OS_ROM_HEX_PATH (""),
+        .OS_ROM_HEX_PATH ("rsrc/sally-boot.hex"),
         .DDR3_BANKED_BASE (32'h2000_0000),
         .DDR3_DATA_BASE   (32'h2040_0000)
     ) u_sally_mem (
@@ -535,6 +564,7 @@ module fpga_xt_top #(
         .hwreg_dout (hwreg_dout),
         .cpu_code_bank_q    (cpu_code_bank),
         .cpu_data_bank_q    (cpu_data_bank),
+        .portb              (portb_q),
         .bus_mpd_n_in       (1'b1),         // no PBI
         .bus_pbi_rdata      (8'hFF),        // no PBI
         .bus_rd4_n_in       (1'b1),         // no cart
@@ -582,10 +612,18 @@ module fpga_xt_top #(
     // We deliberately ignore it — a half-full warning would be the place
     // to add observability later if this assumption ever breaks.
 
+    // hwreg READ classification (clk_sally).  $D000-$D7FF read, minus the
+    // blitter register window $D4B0-$D4CF (served locally in hwreg_dout).
+    wire        hwreg_page_rd  = (cpu_addr[15:11] == 5'b11010) & cpu_rw;
+    wire        is_blitter_reg = (cpu_addr[15:8] == 8'hD4)
+                               & (cpu_addr[7:4] == 4'hB || cpu_addr[7:4] == 4'hC);
+    wire        hwreg_cdc_rd   = hwreg_page_rd & ~is_blitter_reg;
+
     wire        hwreg_wr_full_unused;
     wire        hwreg_rd_empty;
     wire [23:0] hwreg_rd_data;
-    wire        hwreg_rd_en = ~hwreg_rd_empty;
+    // Pause the write-FIFO drain while the CDC owns the bus for a read.
+    wire        hwreg_rd_en = ~hwreg_rd_empty & ~cdc_bus_read;
 
     cdc_fifo_1w1r #(.DATA_W(24), .ADDR_W(2)) u_hwreg_cdc (
         .src_clk  (clk_sally),
@@ -618,11 +656,37 @@ module fpga_xt_top #(
         end
     end
 
-    wire [15:0] bus_addr_antic    = bus_addr_antic_q;
+    // The CDC read transaction overrides the bus when servicing a SALLY
+    // hwreg read (cdc_bus_read); otherwise the write-FIFO drain drives it.
+    wire [15:0] bus_addr_antic    = cdc_bus_read ? cdc_bus_addr : bus_addr_antic_q;
     wire [7:0]  bus_data_in_antic = bus_data_in_antic_q;
-    wire        bus_rw_antic      = ~antic_we_q;
-    wire        d0xx_n_antic      = ~(antic_we_q && (bus_addr_antic_q[15:8] == 8'hD0));
-    wire        d4xx_n_antic      = ~(antic_we_q && (bus_addr_antic_q[15:8] == 8'hD4));
+    wire        bus_rw_antic      = cdc_bus_read ? 1'b1 : ~antic_we_q;
+    wire        d0xx_n_antic = cdc_bus_read
+                             ? ~(cdc_bus_addr[15:8] == 8'hD0)
+                             : ~(antic_we_q && (bus_addr_antic_q[15:8] == 8'hD0));
+    wire        d4xx_n_antic = cdc_bus_read
+                             ? ~(cdc_bus_addr[15:8] == 8'hD4)
+                             : ~(antic_we_q && (bus_addr_antic_q[15:8] == 8'hD4));
+
+    // ---- Register read-back CDC bridge (boot blocker #3) ----------------
+    // SALLY hwreg reads cross to clk_sys, get presented to ANTIC's
+    // combinational read mux, and the byte crosses back.  bus_idle gates
+    // the read start so a draining register write can't collide on the bus.
+    wire        hwreg_bus_idle = hwreg_rd_empty & ~antic_we_q;
+    hwreg_rd_cdc u_hwreg_rd_cdc (
+        .clk_sally (clk_sally),
+        .rst_sally (rst_sally),
+        .rd_req    (hwreg_cdc_rd),
+        .rd_addr   (cpu_addr),
+        .rd_busy   (hwreg_rd_busy),
+        .rd_data   (cdc_rd_data),
+        .clk_sys   (clk_sys),
+        .rst_sys   (rst_sys),
+        .bus_idle  (hwreg_bus_idle),
+        .bus_addr  (cdc_bus_addr),
+        .bus_read  (cdc_bus_read),
+        .bus_rdata (antic_bus_data_out)   // ANTIC's combinational read mux
+    );
 
     // ====================================================================
     // CDC: status signals ANTIC → SALLY
@@ -708,8 +772,8 @@ module fpga_xt_top #(
         .rgb_de_o           (antic_rgb_de),
         .rgb_pixclk_o       (antic_rgb_pixclk),
         .diag_wsync_overdue_count(),
-        .kbd_event_valid    (1'b0),
-        .kbd_event_code     (8'h00),
+        .kbd_event_valid    (kbd_event_valid_q),
+        .kbd_event_code     (kbd_event_code_q),
         .spi_clk            (),
         .spi_mosi           (),
         .spi_miso           (1'b0),
@@ -723,6 +787,8 @@ module fpga_xt_top #(
         // ANTIC's BRAM read port — connects to sally_mem's dma port.
         .bram_addr          (antic_bram_addr),
         .bram_rdata         (antic_bram_rdata),
+        // PORTB state — consumed by sally_mem for ROM vs RAM control.
+        .portb_q            (portb_q),
         // Zynq build: sally_* / xlat_phys_addr removed (no shadow SALLY core).
         .adc_bclk_o         (),
         .adc_lrck_o         (),
@@ -872,13 +938,20 @@ module fpga_xt_top #(
         .m_axi_rready  ()
     );
 
-    assign rgb_r      = spr_rgb_r;
-    assign rgb_g      = spr_rgb_g;
-    assign rgb_b      = spr_rgb_b;
-    assign rgb_hsync  = spr_rgb_hsync;
-    assign rgb_vsync  = spr_rgb_vsync;
-    assign rgb_de     = spr_rgb_de;
-    assign rgb_pixclk = fb_rgb_pixclk;
+    // ---- Display-source mux (boot blocker #4) ----------------------------
+    // Selects which video source drives the RGB pins.  Both sources are in
+    // the clk_pix domain.  Mode 0 (fb_scanout -> sprite_engine, 1080p60) is
+    // the validated default and preserves current behaviour.  Mode 1 routes
+    // the legacy ANTIC chain to the pins — valid only once that chain is
+    // re-rastered to 1080p with the pillarbox upscaler (see the LEGACY_VIDEO
+    // parameter note above).
+    assign rgb_r      = LEGACY_VIDEO ? antic_rgb_r      : spr_rgb_r;
+    assign rgb_g      = LEGACY_VIDEO ? antic_rgb_g      : spr_rgb_g;
+    assign rgb_b      = LEGACY_VIDEO ? antic_rgb_b      : spr_rgb_b;
+    assign rgb_hsync  = LEGACY_VIDEO ? antic_rgb_hsync  : spr_rgb_hsync;
+    assign rgb_vsync  = LEGACY_VIDEO ? antic_rgb_vsync  : spr_rgb_vsync;
+    assign rgb_de     = LEGACY_VIDEO ? antic_rgb_de     : spr_rgb_de;
+    assign rgb_pixclk = LEGACY_VIDEO ? antic_rgb_pixclk : fb_rgb_pixclk;
 
     // ====================================================================
     // AXI-Lite bridge — GP0 from ARM PS → blitter register bus
@@ -905,6 +978,23 @@ module fpga_xt_top #(
     assign bridge_bus_addr[15:8] = 8'hD4;
     assign bridge_bus_addr[7:4]  = bl_bridge_addr[5] ? 4'b1011 : 4'b1100;
     assign bridge_bus_addr[3:0]  = bl_bridge_addr[3:0];
+
+    // Keyboard-inject decode (boot blocker #5).  A PS write through the GP0
+    // bridge to $D4CF carries an Atari KBCODE byte; pulse kbd_event for one
+    // clk_sys cycle.  The blitter only decodes $D4Bx and the sprite engine
+    // $D4Ax/$D4Dx, so $D4CF is free.  Gated on bl_bridge_we (PS-originated)
+    // so a stray SALLY write can't fake a keypress.  ASCII->KBCODE mapping
+    // is done PS-side.  (OOC build: bl_bridge_we is tied 0, so this is inert.)
+    wire kbd_inject_we = bl_bridge_we && (bridge_bus_addr == 16'hD4CF);
+    always_ff @(posedge clk_sys) begin
+        if (rst_sys) begin
+            kbd_event_valid_q <= 1'b0;
+            kbd_event_code_q  <= 8'h00;
+        end else begin
+            kbd_event_valid_q <= kbd_inject_we;          // 1-cycle pulse
+            if (kbd_inject_we) kbd_event_code_q <= bl_bridge_data;
+        end
+    end
 
     // Mux: bridge takes priority when bl_bridge_we is asserted.
     // Both sources run on clk_sys and produce single-cycle strobes.
@@ -1061,7 +1151,9 @@ module fpga_xt_top #(
                             ? bl_seq_counter_sally[7:0]
                       : (hwreg_addr == 16'hD4CA)
                             ? bl_seq_counter_sally[15:8]
-                      :     8'hFF;
+                      : is_blitter_reg
+                            ? 8'hFF              // other blitter regs: no readback
+                      : cdc_rd_data;             // ANTIC/GTIA/POKEY/PIA via read-back CDC
 
     // ---- Bring-up debug LEDs --------------------------------------------
     // Z-Turn Z7-Lite carrier exposes 3 LEDs as dbg[2:0] (Y16 / Y17 / R14).

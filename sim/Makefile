@@ -56,7 +56,7 @@ HDL_SRCS := \
 
 BUILD_DIR := build
 
-.PHONY: all smoke snoop read vbeam rp_bus dl_parse mode_f char_modes gfx_modes pm prior scroll nmi wsync palette dma_master mem_read_mux dma_int draw_regs pokey pokey_i2s sally sally_mem sally_arb bank_xlat pia_regs peri_link joy_link joy_bridge peri_bridge os_rom_load klaus visual lint clean xt_blitter sally_stack sally_isa sprite_regs sprite_fetcher sprite_compositor
+.PHONY: all smoke snoop read vbeam rp_bus dl_parse mode_f char_modes gfx_modes pm prior scroll nmi wsync palette dma_master mem_read_mux dma_int draw_regs pokey pokey_i2s sally sally_mem sally_arb bank_xlat hwreg_rd_cdc pia_regs peri_link joy_link joy_bridge peri_bridge os_rom_load klaus visual lint clean xt_blitter sally_stack sally_isa sprite_regs sprite_fetcher sprite_compositor
 
 all: smoke snoop read vbeam rp_bus dl_parse mode_f char_modes gfx_modes pm prior scroll nmi wsync palette dma_master mem_read_mux dma_int draw_regs pokey pokey_i2s sally sally_mem sally_arb bank_xlat pia_regs peri_link joy_link joy_bridge peri_bridge os_rom_load pbi pcm1808_rx visual xt_blitter sprite_regs sprite_fetcher sprite_compositor
 
@@ -540,6 +540,17 @@ bank_xlat: $(BUILD_DIR)/tb_bank_xlat.vvp
 
 $(BUILD_DIR)/tb_bank_xlat.vvp: $(HDL_DIR)/bank_xlat.sv tb_bank_xlat.sv | $(BUILD_DIR)
 	$(IVERILOG) $(SV_FLAGS) -o $@ -s tb_bank_xlat $(HDL_DIR)/bank_xlat.sv tb_bank_xlat.sv
+
+# ---- hwreg_rd_cdc — register-read CDC bridge (boot blocker #3) ----------
+hwreg_rd_cdc: $(BUILD_DIR)/tb_hwreg_rd_cdc.vvp
+	@echo "=== hwreg_rd_cdc — register-read CDC bridge ==="
+	@$(VVP) -N $< | tee $(BUILD_DIR)/tb_hwreg_rd_cdc.log
+	@grep -q '\*\*\* HWREG_RD_CDC OK \*\*\*' $(BUILD_DIR)/tb_hwreg_rd_cdc.log || \
+	    (echo "FAIL: tb_hwreg_rd_cdc missing HWREG_RD_CDC OK"; exit 1)
+	@echo "PASS: tb_hwreg_rd_cdc"
+
+$(BUILD_DIR)/tb_hwreg_rd_cdc.vvp: $(HDL_DIR)/hwreg_rd_cdc.sv $(HDL_DIR)/cdc_sync_bit.sv tb_hwreg_rd_cdc.sv | $(BUILD_DIR)
+	$(IVERILOG) $(SV_FLAGS) -o $@ -s tb_hwreg_rd_cdc $(HDL_DIR)/hwreg_rd_cdc.sv $(HDL_DIR)/cdc_sync_bit.sv tb_hwreg_rd_cdc.sv
 
 # ---- M25-2 — peri_link FPGA-side SPI master ------------------------------
 peri_link: $(BUILD_DIR)/tb_peri_link.vvp

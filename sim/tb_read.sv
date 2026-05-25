@@ -153,6 +153,38 @@ module tb_read;
         d4xx_n      = 1'b1;
     endtask
 
+    // PIA at $D3xx has no page-select pin (like POKEY) — decode off addr.
+    task automatic do_read_d3xx(input logic [7:0] addr_lo,
+                                 output logic [7:0] data,
+                                 output logic       oe);
+        @(negedge clk_bus);
+        bus_addr = {8'hD3, addr_lo};
+        bus_rw   = 1'b1;
+        d0xx_n   = 1'b1;
+        d4xx_n   = 1'b1;
+        @(posedge clk_bus);
+        #1;
+        data = bus_data_out;
+        oe   = bus_data_oe;
+        @(negedge clk_bus);
+        bus_addr = 16'h0000;
+    endtask
+
+    task automatic do_write_d3xx(input logic [7:0] addr_lo,
+                                  input logic [7:0] wdata);
+        @(negedge clk_bus);
+        bus_addr    = {8'hD3, addr_lo};
+        bus_data_in = wdata;
+        bus_rw      = 1'b0;
+        d0xx_n      = 1'b1;
+        d4xx_n      = 1'b1;
+        @(posedge clk_bus);
+        @(negedge clk_bus);
+        bus_addr    = 16'h0000;
+        bus_data_in = 8'h00;
+        bus_rw      = 1'b1;
+    endtask
+
     logic [7:0] data;
     logic       oe;
 
@@ -213,6 +245,26 @@ module tb_read;
         $display("[E] /D4xx write does not assert bus_data_oe");
         do_write_d4xx(8'h00, 8'h22, oe);    // DMACTL = $22
         expect_oe("E.D4xx_write.oe", oe, 1'b0);
+
+        // ===== F — $D3xx read: PIA (boot blocker #3) =====
+        // Before this fix PIA was absent from the bus read mux (oe stayed
+        // low on $D3xx).  F.1 proves the mux now selects PIA; F.2/F.3
+        // write a DDR latch (PACTL[2]/PBCTL[2]=0 at reset → DDR mode)
+        // then read it back to prove the data path.
+        $display("[F] $D3xx PIA reads");
+        do_read_d3xx (8'h02, data, oe);          // PACTL = $00 at reset
+        expect_oe("F.1 PACTL.oe",  oe,   1'b1);
+        expect_eq("F.1 PACTL.val", data, 8'h00);
+
+        do_write_d3xx(8'h00, 8'hA5);             // PORTA DDR <- $A5
+        do_read_d3xx (8'h00, data, oe);
+        expect_oe("F.2 PORTA.oe",  oe,   1'b1);
+        expect_eq("F.2 PORTA.val", data, 8'hA5);
+
+        do_write_d3xx(8'h01, 8'h5A);             // PORTB DDR <- $5A
+        do_read_d3xx (8'h01, data, oe);
+        expect_oe("F.3 PORTB.oe",  oe,   1'b1);
+        expect_eq("F.3 PORTB.val", data, 8'h5A);
 
         if (fail_count == 0) begin
             $display("*** READ OK *** all checks passed");

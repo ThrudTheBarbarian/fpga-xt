@@ -85,6 +85,7 @@ module tb_sally_arbitration;
         .hwreg_dout (hwreg_dout),
         .cpu_code_bank_q    (cpu_code_bank_q),
         .cpu_data_bank_q    (cpu_data_bank_q),
+        .portb              (8'hFF),
         .bus_mpd_n_in       (1'b1),
         .bus_pbi_rdata      (8'hFF),
         .bus_rd4_n_in       (1'b1),

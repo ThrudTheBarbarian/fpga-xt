@@ -43,6 +43,7 @@ module tb_page_test;
         .hwreg_we   (hwreg_we),
         .hwreg_din  (hwreg_din),
         .hwreg_dout (hwreg_dout),
+        .portb      (8'hFF),
         .bus_mpd_n_in      (1'b1),
         .bus_pbi_rdata     (8'hFF),
         .bus_rd4_n_in      (1'b1),
@@ -162,6 +163,12 @@ module tb_page_test;
         rst = 1'b0;
         @(posedge clk);
 
+        // Bank 0 = BRAM now (gap-1, prompts/task-0001). This test
+        // exercises the DDR3 page cache, so it runs on NON-ZERO banks:
+        // code bank 1, data bank 1.
+        do_write(16'h0082, 8'h01);   // $0082 code bank = 1
+        do_write(16'h0083, 8'h01);   // $0083 data bank = 1
+
         // ---- Test 1: Data window write + read-back (write allocate) ----
         $display("[T1] data write allocate + read-back");
         begin
@@ -196,36 +203,36 @@ module tb_page_test;
         $display("[T4] code window read");
         begin
             logic [7:0] v;
-            // Write code page 0 via AXI directly to seed data
-            u_axi_mem.seed_byte(32'h0000_0000, 8'hC0);
+            // Seed code page 1 via AXI directly (code bank 1, offset 0):
+            //   axi = DDR3_BANKED_BASE + (1<<14) + 0 = 0x0000_4000.
+            u_axi_mem.seed_byte(32'h0000_4000, 8'hC0);
             do_read(16'h6000, v);
             expect_eq("T4 code[$6000]", v, 8'hC0);
         end
 
-        // ---- Test 5: Page swap (data) ----
-        $display("[T5] data page swap");
+        // ---- Test 5: Page swap (data), bank 1 <-> bank 2 ----
+        // Bank 0 is BRAM, so the swap test uses two DDR3 pages (1 and 2)
+        // to exercise dirty-line write-back + re-fill on swap-back.
+        $display("[T5] data page swap (write-back + re-fill)");
         begin
             logic [7:0] v;
-            // We're currently on data page 0 (from T1/T3).
-            // Write to page 0 first to have dirty data.
+            // Currently on data page 1 (from T1/T3). Dirty it.
             do_write(16'hA000, 8'h11);
             do_write(16'hA001, 8'h22);
-            // Switch to data page 1 by writing to $0084/$0083
-            do_write(16'h0084, 8'h00);  // high byte of bank_id
-            do_write(16'h0083, 8'h01);  // low byte = page 1
-            // Write to page 1
+            // Switch to data page 2 ($0083=2) and write there.
+            do_write(16'h0083, 8'h02);
             do_write(16'hA000, 8'h33);
             do_read (16'hA000, v);
-            expect_eq("T5 page1[$A000]", v, 8'h33);
-            // Switch back to page 0
-            do_write(16'h0083, 8'h00);
-            // Debug: check AXI slave contents for page 0, line 0
-            peek_axi(32'h0008_0000);
-            // Read back — should see the dirty data that was flushed
+            expect_eq("T5 page2[$A000]", v, 8'h33);
+            // Switch back to page 1: the dirty bytes must have been
+            // flushed to DDR3 and re-fill on swap-back.
+            do_write(16'h0083, 8'h01);
+            // Debug: page 1 base = DDR3_DATA_BASE + (1<<14) = 0x0008_4000.
+            peek_axi(32'h0008_4000);
             do_read (16'hA000, v);
-            expect_eq("T5 page0[$A000] after swap", v, 8'h11);
+            expect_eq("T5 page1[$A000] after swap", v, 8'h11);
             do_read (16'hA001, v);
-            expect_eq("T5 page0[$A001] after swap", v, 8'h22);
+            expect_eq("T5 page1[$A001] after swap", v, 8'h22);
         end
 
         // ---- Final report ----------------------------------------------

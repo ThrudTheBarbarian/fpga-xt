@@ -254,7 +254,10 @@ module antic_top #(
     output wire        n6_irq_to_n6_hp,
     output wire        n6_irq_to_n6_lp,
     input  wire        n6_irq_to_fpga_hp     = 1'b0,
-    input  wire        n6_irq_to_fpga_lp     = 1'b0
+    input  wire        n6_irq_to_fpga_lp     = 1'b0,
+
+    // PORTB ($D301) state — needed by sally_mem for ROM vs RAM control.
+    output wire [7:0]  portb_q
 );
 
     // Synchronise /G_RST into the bus_clk domain.
@@ -1113,10 +1116,11 @@ module antic_top #(
     // M25-2c: joy_porta_in / joy_portb_in / joy_fire / joy_*_out /
     // joy_*_oe all stay internal — peri_bridge below shadows them
     // over SPI to/from the peripheral RP2354B.
-    wire [7:0] portb_q;
+    // portb_q is now an output port (declared above), no internal wire needed.
     wire [7:0] w_joy_porta_in,  w_joy_portb_in;
     wire [7:0] w_joy_porta_out, w_joy_porta_oe;
     wire [7:0] w_joy_portb_out, w_joy_portb_oe;
+    wire [7:0] pia_read_data;   // $D3xx PIA read data (PORTA/PORTB/PACTL/PBCTL)
     // w_joy_fire forward-declared near the GTIA collision generate.
 
     pia_regs u_pia_regs (
@@ -1126,7 +1130,7 @@ module antic_top #(
         .waddr         (snoop_addr),
         .wdata         (snoop_data),
         .raddr         (read_addr_w),
-        // Zynq build: .rdata unused — no shadow SALLY reading PIA.
+        .rdata         (pia_read_data),   // boot blocker #3: feed PIA reads to the bus mux
         .joy_porta_in  (w_joy_porta_in),
         .joy_portb_in  (w_joy_portb_in),
         .joy_porta_out (w_joy_porta_out),
@@ -1239,13 +1243,17 @@ module antic_top #(
     wire d2xx_read   = (bus_addr[15:8] == 8'hD2) & bus_rw;
     wire d2xx_read_l = d2xx_read & ~bus_addr[4];
     wire d2xx_read_r = d2xx_read &  bus_addr[4];
+    // PIA at $D3xx (boot blocker #3): PORTA/PORTB/PACTL/PBCTL reads.
+    // No dedicated page-select pin; decode straight off the address.
+    wire d3xx_read   = (bus_addr[15:8] == 8'hD3) & bus_rw;
 
     wire [7:0] bus_data_out_w = d0xx_read   ? gtia_read_data
                               : d4xx_read   ? (antic_read_data | draw_read_data )
                               : d2xx_read_l ? pokey_l_read_data
                               : d2xx_read_r ? pokey_r_read_data
+                              : d3xx_read   ? pia_read_data
                               : 8'h00;
-    wire       bus_data_oe_w  = d0xx_read | d4xx_read | d2xx_read;
+    wire       bus_data_oe_w  = d0xx_read | d4xx_read | d2xx_read | d3xx_read;
 
     // ---- M-PBI: external-bus gating + output flops ---------------------
     // ext_bus_active controls whether the external 6502 bus + cart/PBI/ECI

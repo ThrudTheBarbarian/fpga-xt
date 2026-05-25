@@ -3,21 +3,31 @@
 // CPU's view of memory in tiered form:
 //
 //   $0000-$3FFF  Direct BRAM (zero page + stack + main RAM lo)
-//   $4000-$7FFF  Banked-window port (DDR3 via AXI).
-//                bank_xlat translates (cpu_addr, bank-select state,
-//                view) into a 16-bit bank_id + 12-bit offset_in_block.
-//                The composed AXI address is read via banked_axi_reader.
-//                CPU bank-select state is snooped from zero-page
-//                $0082-$0085. ANTIC's view comes from chiplet-ext
-//                registers $D488-$D48B.
-//   $8000-$BFFF  Direct BRAM (main RAM hi)
-//   $C000-$CFFF  OS ROM lo (loadable, M24-6)
+//   $4000-$5FFF  Screen RAM in BRAM (fixed, unbanked)
+//   $6000-$9FFF  Code window (DDR3 banked via $0082, 16 KB pages)
+//   $A000-$BFFF  BASIC window: BASIC ROM from BRAM (if PORTB[1]=0)
+//                or RAM / DDR3 data window (if PORTB[1]=1)
+//   $C000-$CFFF  OS ROM low:  OS ROM from BRAM (if PORTB[0]=1)
+//                or RAM / DDR3 data window (if PORTB[0]=0)
 //   $D000-$D7FF  Hardware-register page — combinational override of
-//                BRAM. Receiver (GTIA / ANTIC / POKEY) supplies
-//                hwreg_dout combinationally; sally_mem registers it
-//                alongside the BRAM read so both share the N → N+1
-//                pipeline.
-//   $D800-$FFFF  OS ROM hi (loadable, M24-6)
+//                BRAM.
+//   $D800-$FFFF  OS ROM high: OS ROM from BRAM (if PORTB[0]=1)
+//                or unbanked RAM (if PORTB[0]=0)
+//
+// PORTB ($D301) control — stock Atari XL/XE semantics (boot blocker #2,
+// prompts/task-0002).  The stock OS drives these bits; matching them lets
+// the OS's own PORTB writes keep the ROMs mapped:
+//   bit 0: OS ROM enable, ACTIVE HIGH.  1 = OS ROM at $C000-$CFFF +
+//          $D800-$FFFF visible; 0 = RAM there.
+//   bit 1: BASIC ROM enable, ACTIVE LOW. 0 = BASIC ROM at $A000-$BFFF
+//          visible; 1 = RAM there.
+//   Reset value $FF => OS ROM on, BASIC off — the correct power-on state.
+//   The OS coldstart clears bit 1 to map BASIC in when OPTION isn't held.
+//
+// Banking (bank_xlat):
+//   - Code window $6000-$9FFF (16 KB pages selected by $0082)
+//   - Data window $A000-$CFFF (12 KB pages selected by $0083)
+//   - PORTB overrides the data window for ROM ranges
 //
 // Pipeline summary:
 //   Cycle N: cpu_addr = X presented (combinational from CPU state).
@@ -111,6 +121,11 @@ module sally_mem #(
     output wire [7:0]  cpu_code_bank_q,    // $0082
     output wire [7:0]  cpu_data_bank_q,    // $0083  (writes to $0084 set BOTH banks)
 
+    // PORTB ($D301) from PIA — controls ROM vs banked/BRAM visibility.
+    // Stock XL/XE: bit0 = OS ROM enable (active HIGH), bit1 = BASIC enable
+    // (active LOW).  See the memory-map header.
+    input  wire [7:0]  portb,
+
     // M-PBI step 2/3: /MPD Math-Pack Disable from the PBI device.
     input  wire        bus_mpd_n_in,
 
@@ -198,6 +213,19 @@ module sally_mem #(
                             & ((is_cart_s4_window & ~bus_rd4_n_in)
                             |  (is_cart_s5_window & ~bus_rd5_n_in));
 
+    // ---- PORTB-based ROM override (stock Atari XL/XE semantics) ----
+    // PORTB ($D301) bit 0: OS ROM enable, ACTIVE HIGH (1 = OS ROM visible)
+    // PORTB ($D301) bit 1: BASIC ROM enable, ACTIVE LOW (0 = BASIC visible)
+    wire basic_rom_range = is_cart_s5_window;                    // $A000-$BFFF
+    wire os_rom_lo_range = (addr[15:12] == 4'b1100);             // $C000-$CFFF
+    wire os_rom_hi_range = is_mpd_window;                        // $D800-$DFFF
+    wire os_rom_top_range = (addr[15:12] == 4'b1110)            // $E000-$EFFF
+                          | (addr[15:12] == 4'b1111);            // $F000-$FFFF
+
+    wire basic_rom_en   = basic_rom_range && !portb[1];
+    wire os_rom_en      = (os_rom_lo_range || os_rom_hi_range || os_rom_top_range) && portb[0];
+    wire rom_override   = basic_rom_en || os_rom_en;
+
     // Stack BRAM addressing.
     //   - When `stack_op` is asserted (cpu.v is in a push/pull cycle),
     //     the full 12-bit stack address is in addr[11:0] (cpu.v outputs
@@ -211,13 +239,15 @@ module sally_mem #(
                                            : {4'hF, addr[7:0]};
 
     // ---- CPU bank-select snoop -----------------------------------
-    // Mirror writes to $0082-$0084 into latched registers so bank_xlat
-    // sees the live values without needing a BRAM read port.
-    //   $0082 = code-window page; $0083 = data-window page.
-    //   $0084 = atomic task switch — lower 4 bits written to BOTH
-    //          code and data banks (upper 4 masked to 0, limiting to
-    //          16 tasks). A context switch atomically redirects both
-    //          windows.
+    // Mirror writes to $0082-$0083 into latched registers so bank_xlat
+    // sees the live values.
+    //   $0082 = code-window page select.
+    //   $0083 = reserved for future data-window use (stored but not
+    //          currently used — see bank_xlat).
+    //   $0084 = atomic code-window switch — lower 4 bits written to
+    //          $0082 (bits [7:4] masked to 0, limiting to 16 tasks).
+    //          Previously redirected both windows; data window is
+    //          removed for now (see bank_xlat).
     logic [7:0] cpu_code_bank, cpu_data_bank;
 
     always_ff @(posedge clk or posedge rst) begin
@@ -228,9 +258,9 @@ module sally_mem #(
             case (addr)
                 16'h0082: cpu_code_bank <= data_in;
                 16'h0083: cpu_data_bank <= data_in;
-                16'h0084: begin           // atomic task switch (lower 4 bits only = 16 tasks max)
+                16'h0084: begin           // atomic code-window switch (lower 4 bits only = 16 tasks max)
                     cpu_code_bank <= {4'b0, data_in[3:0]};
-                    cpu_data_bank <= {4'b0, data_in[3:0]};
+                    cpu_data_bank <= {4'b0, data_in[3:0]};  // stored for future data-window use
                 end
                 default: ;
             endcase
@@ -272,7 +302,7 @@ module sally_mem #(
     // read-burst-complete / pulses on write-B-response.
     wire [31:0] axi_req_addr = (is_code_w ? DDR3_BANKED_BASE : DDR3_DATA_BASE)
                              + {2'b00, bank_id_w[15:0], offset_in_block_w[13:0]};
-    wire        axi_req_valid = rdy && is_in_window_w;
+    wire        axi_req_valid = rdy && is_in_window_w && !rom_override;
     wire        axi_req_we    = !rw;     // SALLY rw: 1=read, 0=write
     wire [7:0]  axi_rdata_w;
     wire        axi_ready_w;
@@ -379,6 +409,7 @@ module sally_mem #(
     logic [7:0] hwreg_dout_q;
     logic       was_hwreg_q;
     logic       was_bank_q;
+    logic       was_rom_override_q;   // prev addr was ROM-overridden (PORTB)
     logic       was_stack_q;          // prev addr was stack-page ($0100-$01FF)
     logic       was_mpd_window_q;     // M-PBI step 2: was the prev addr in $D800-$DFFF
     logic       was_cart_external_q;  // M-PBI #2: prev addr was cart-window AND RD asserted
@@ -403,7 +434,7 @@ module sally_mem #(
     // gates puts the cascade back together; shadow writes into hwreg
     // / bank-window addresses are harmless because the read path
     // already prefers was_hwreg_q / was_bank_q over bram_dout_q.
-    wire        cpu_w      = rdy && !rw && !stack_op;
+    wire        cpu_w      = rdy && !rw && !stack_op && !rom_override;
     wire        mem_we     = cpu_w || rom_we;
     wire [15:0] mem_addr_w = rom_we ? rom_addr : addr;
     wire  [7:0] mem_din_w  = rom_we ? rom_data : data_in;
@@ -468,6 +499,7 @@ module sally_mem #(
             was_stack_q          <= 1'b0;
             was_mpd_window_q     <= 1'b0;
             was_cart_external_q  <= 1'b0;
+            was_rom_override_q   <= 1'b0;
         end else if (rdy) begin
             bram_dout_q          <= mem[mem_addr_w];
             stack_dout_q         <= stack_mem[stack_addr_rd];
@@ -477,6 +509,7 @@ module sally_mem #(
             was_stack_q          <= is_stack_access;
             was_mpd_window_q     <= is_mpd_window;
             was_cart_external_q  <= cart_external_read;
+            was_rom_override_q   <= rom_override;
 `ifndef SYNTHESIS
             if (is_in_window_w) begin
                 $display("[sally_mem] rdy: was_bank_q <= 1 (addr=%04h)", addr);
@@ -490,13 +523,15 @@ module sally_mem #(
     //   1. was_hwreg_q              -> hwreg_dout_q (internal regs)
     //   2. was_cart_external_q      -> bus_pbi_rdata (physical cart wins)
     //   3. was_mpd_window_q & /MPD  -> bus_pbi_rdata (PBI replaces FP ROM)
-    //   4. was_bank_q               -> axi_rdata_q  (DDR3-backed bank)
-    //   5. was_stack_q              -> stack_dout_q (hidden stack alias)
-    //   6. default                  -> bram_dout_q
+    //   4. was_rom_override_q       -> bram_dout_q  (PORTB-based ROM override)
+    //   5. was_bank_q               -> axi_rdata_q  (DDR3-backed bank)
+    //   6. was_stack_q              -> stack_dout_q (hidden stack alias)
+    //   7. default                  -> bram_dout_q
     wire mpd_active = ~bus_mpd_n_in;
     assign data_out = was_hwreg_q                       ? hwreg_dout_q
                     : was_cart_external_q               ? bus_pbi_rdata
                     : (was_mpd_window_q & mpd_active)   ? bus_pbi_rdata
+                    : was_rom_override_q                ? bram_dout_q
                     : was_bank_q                        ? axi_rdata_q
                     : was_stack_q                       ? stack_dout_q
                                                         : bram_dout_q;

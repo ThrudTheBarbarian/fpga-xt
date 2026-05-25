@@ -1,56 +1,4 @@
 
-  o Sprite engine as per docs/Progress/sprite-engine.md
-
-  o SALLY now PASSES the full Klaus Dormann 6502 functional test
-    (success trap $3469 @ ~96M cycles) — DONE 2026-05-22.  Three pieces:
-      1. $0da3 stack-wrap bug (genuine): S_high mis-tracked page crossings.
-         A pull across SP_low $FF<->$00 read one 256-byte page low
-         (PHA->$0F00, PLP read $0E00) and the legacy wrap heuristic mis-
-         fired on TXS.  cpu.v now treats SP as a coherent 12-bit entity
-         (embellishments §1): full-12-bit pull/push addresses, per-state
-         page-cross detection on the S_high commit, dec_is_push so TXS
-         preserves S_high.  Covered by sally_isa Tests 26-29 + tb_sally H.5.
-      2. test #$0E ("proper stack wrap around", $0d89-$0e45) assumes a
-         strict single 256-byte stack page — conflicts with SALLY's 12-bit
-         / 4 KB SP by design (not a bug).  tb_klaus PATCHES IT OUT
-         (LDX #$FF:TXS:JMP next_test).
-      3. The "#$12" failure was a tb_klaus MODELLING bug, not a CPU defect:
-         the flat 64 KB memory put SALLY's stack ($0F00-$0FFF) in the same
-         array as Klaus's code there, so every PHA/PHP/JSR push clobbered
-         the code.  tb_klaus now models the hidden 4 KB stack as a separate
-         stack_mem (routed by cpu_stack_op; $01xx legacy alias -> top page),
-         exactly as sally_mem does.  -> Klaus runs clean to the success trap.
-    Klaus IS now a valid SALLY regression gate (alongside sally_isa /
-    sally / sally_mem / sally_arb / sally_stack), modulo the dropped #$0E.
-
-  o tb_klaus stuck-detector — DONE 2026-05-22: now recognises 2-byte
-    BRANCH-self traps ((op & $1F)==$10 + offset $FE), not just JMP-self
-    ($4C), so a `bxx *` failure fails fast (~seconds) instead of running
-    the 250M-cycle watchdog.
-
-  o clk_sys hold — FIXED 2026-05-22 by converting the clk_sys async resets
-    to SYNCHRONOUS.  Was marginal/non-deterministic (~ -0.18..-0.20 ns):
-    partly async-reset removal on the high-fanout rst_sys net
-    (rst_sys -> xt_blitter/hdmi/i2c CLR), partly clock-skew hold on short
-    xt_blitter BRAM-write paths.  rst_sys is synchronised + held for several
-    clk_sys cycles post-MMCM-lock, so a sync reset clears every FF reliably
-    while removing the async removal-timing class entirely.  Converted
-    xt_blitter, fb_scanout (clk_sys blocks), sally_rom_loader (clk_sys),
-    i2c_master, hdmi_config.  Result: two back-to-back impls close
-    identically — clk_sys +0.094/+0.051, clk_sally +0.094/+0.127, clk_pix
-    +0.423/+0.098 (setup/hold).  As a bonus the freed placement lifted
-    clk_sally setup +0.005 -> +0.094.  build.tcl's hold-recovery loop +
-    pblock_sally/pblock_blitter are kept as belt-and-braces.
-
-  o HW bring-up checklist — write up the test plan for when the Z-Turn SOM
-    lands: DDR3 calibration, SiI9022A I²C init from the PS, fb_scanout test
-    pattern, blitter smoke test. Also figure out how we load the bitstream
-    + PS software (SD card? JTAG? QSPI?).
-    
-  o PS-side driver skeleton — start a Vitis workspace with FreeRTOS, write 
-    the xt-blitter command ring driver (register poke helper functions), 
-    prove out the AXI register write path from the PS side via the GP port.
-     
   o Interrupt on completion — Instead of polling STATUS, the blitter 
     could pulse an IRQ so the PS doesn't spin. defer until we have 
     freeRTOS in place
@@ -63,24 +11,144 @@
   		2. ANTIC generates 1080p60 video (check with scope on SiI9022A)
   		3. fb_scanout reads from DDR3 and drives HDMI
   		4. xt_blitter writes test patterns to the framebuffer
-
-  o XSA export for Vitis — After building the bitstream with the PS BD, 
-    run write_hw_platform in Vivado to produce the .xsa file that Vitis 
-    needs for BSP + FSBL generation. Currently we only have the .bit — no 
-    hardware handoff file.
-    
-  o FSBL + boot image — The FSBL (First Stage Boot Loader) initialises the 
-    PS (PLLs, DDR3, MIO) and loads the bitstream. This is generated in Vitis
-    from the XSA. Without it, the board can't bring up the PS at all.
-    
-  o Board bring-up test — Flash the bitstream + FSBL to QSPI (or load via 
-    JTAG), connect UART, and verify:
-    	- PS boots and DDR3 initialises
-    	- PL configures and the AXI interconnect is alive
-    	- GP0 write → blitter STATUS readback works (the "hello world" of 
-    	  ARM software)
-    	- fb_scanout reads the framebuffer and drives HDMI
-  
+          
   o Vitis FreeRTOS BSP — A workspace with the FreeRTOS BSP for the Cortex-A9s, 
     a hello-world task that pokes the blitter CMD register and polls 
     STATUS.busy.
+
+
+Bootup: 
+
+  The fastest path to a "READY" prompt:
+
+  1. Create a 64 KB hex combining OS ROM at $C000-$FFFF + BASIC at 
+     $A000-$BFFF. Put a tek/hex-load script in tools/ that takes an Atari 
+     XL/XE ROM and produces the hex (or just provide the already-split 
+     images with a git annex / download pattern).
+     
+  2. Add a PS GPIO reset line for SALLY so the PS holds reset until the 
+     ROM is loaded (or just use baked hex and skip this).
+     
+  3. Verify the ANTIC DMA read path from BRAM — this is the risky unknown. 
+     The OS writes display lists into RAM, sets up ANTIC registers via 
+     $D4xx writes through the CDC FIFO, and expects the display to appear. 
+     If the dual-port BRAM path has bugs, we'll get a black screen.
+     
+  4. Add a keyboard injection path: simplest is the debug UART → type on
+     the terminal → inject into POKEY's serial port → OS reads it as 
+     standard PS/2 keyboard data.
+
+
+
+Boot-to-BASIC blockers (analysis 2026-05-24, ordered)
+=====================================================
+
+  Reaching a visible READY needs these, in dependency order. DDR3 is
+  NOT on this path (see "DDR3 banked window" below) -- boot runs from
+  flat BRAM with banking off (bank 0). Decision: boot-to-BASIC first,
+  DDR3 as a parallel track.
+
+  1. Bank 0 = BRAM (BOTH code + data windows). bank_xlat/sally_mem
+     today route $6000-$CFFF to the DDR3 page cache for ALL bank
+     indices including 0; gate is_in_window / axi_req_valid on
+     bank != 0 so bank 0 reads/writes the flat 64 KB BRAM. REQUIRED
+     for boot: $6000-$9FFF must be writable RAM (OS RAM-test sizing,
+     GR.0 screen + display list land ~$9C00 on a 48K machine) and
+     ANTIC reads that SAME BRAM via its DMA port (sally_mem.sv:480),
+     so this also keeps the displayed screen coherent. Note the
+     current page cache makes the code window READ-ONLY anyway (see
+     DDR3 req #2), so bank-0-to-DDR3 cannot work for legacy RAM.
+
+  2. PORTB semantics must match the stock Atari XL OS:
+     bit0 = OS-ROM enable (active-high), bit1 = BASIC enable
+     (active-low). sally_mem currently uses bit0=BASIC / bit6=OS
+     (sally_mem.sv:219-220), which the real OS never drives -- so
+     after the OS writes PORTB the ROMs map out and $C000 stalls.
+     PIA resets PORTB=$FF (pia_regs.sv:120).
+
+  3. Register read-back path across the SALLY<->ANTIC CDC. The reg
+     bus is write-only today (async FIFO); hwreg_dout is hardcoded to
+     blitter STATUS/SEQ else $FF (fpga_xt_top.sv:1062-1070), and
+     antic_bus_data_out is wired out of antic_top but never consumed.
+     The OS constantly reads GTIA/POKEY/PIA/ANTIC ($D0xx-$D4xx). Needs
+     a request/response round-trip, not just the write FIFO.
+
+  4. ANTIC -> HDMI display path.
+     (a) [DONE] Display-source mux at fpga_xt_top (LEGACY_VIDEO param):
+         rgb_* pins select between fb_scanout->sprite_engine (mode 0,
+         1080p60, default) and the ANTIC RGB path (mode 1). See
+         prompts/task-0004.
+     (b) [TODO -- the real visible-display work] 1080p pillarbox upscaler.
+         Mode 1 is NOT yet correct: antic_top's hdmi_out is an 800x600
+         raster (Efinix leftover, "observed only") and scan_out only spans
+         768 native px, so ANTIC does not emit a valid 1080p60 signal.
+         Output is always 1080p60 (legacy = pillarbox), so the legacy path
+         needs an upscaler. Recommended (A): capture the ANTIC compositor
+         output into a small frame store (384 x ~240 palette indices, BRAM
+         ~92 KB) and read it in fb_scanout's 1920x1080 raster with integer
+         H-scale + centering (pillarbox bars) + V-scale + palette, selected
+         by the mux. Alt (B): render ANTIC into the DDR3 framebuffer
+         fb_scanout already displays (adds an AXI write master; no output
+         mux needed). This is its own milestone.
+
+  5. Keyboard injection (post-READY, not on the path to the prompt):
+     debug UART -> POKEY KBCODE via antic_top's kbd_event_valid/code
+     port (currently tied off, fpga_xt_top.sv:715).
+
+
+DDR3 banked window (parallel track -- NOT required for boot-to-BASIC)
+=====================================================================
+
+  Boot runs from flat BRAM (bank 0). DDR3 backs the extended-arch
+  banked pages, bank index from $0082 (code) / $0083 (data). Because
+  a normal boot (bank 0, ROMs on) never touches DDR3, "DDR3 working"
+  must be proven by an explicit bank-switch test, not by reaching the
+  prompt. Wiring it up:
+
+  1. Connect sally_mem's AXI master to a real HP port -- it is hard
+     tied-off today (fpga_xt_top.sv:240-246). Add HP2 on the PS BD.
+     The master runs on clk_sally (100 MHz); each HP port has its own
+     aclk, so clock HP2 at clk_sally to avoid an AXI clock converter.
+     Needs the AXI4->AXI3 burst-len handling the blitter's HP1 path
+     already does (8-beat arlen=7 fits AXI3's 4-bit len field).
+
+  2. *** CODE PAGES MUST BE WRITABLE. *** banked_page_cache's code
+     cache is currently READ-ONLY (banked_page_cache.sv:5-7; a code
+     write is a no-op at :290-291). The legacy machine treats
+     $6000-$9FFF as ordinary RAM, and extended code banks need the
+     same writability. Make the code cache read-write with dirty-bit
+     write-back on page swap, exactly like the existing data cache
+     (DATA_FLUSH_* FSM + read-allocate-on-write-miss). Without this,
+     a code-window write to a non-zero bank silently vanishes: the
+     shadow BRAM gets it but the cache read path returns stale DDR3
+     data.
+
+  3. Reserve the DDR3 region: 0x2000_0000 code / 0x2040_0000 data
+     (sally_mem.sv:75-76) vs the framebuffer at 0x3000_0000. Keep the
+     PS (FSBL/app, later Linux) out of 0x2000_0000-0x207F_FFFF.
+
+  4. Validate with a bank-switch test (boot won't exercise DDR3):
+     set $0083=1, write a pattern across $A000-$BFFF, switch to bank 2
+     and back, verify the data survived the page swap. Repeat on the
+     code window ($0082) once code writes work, to prove req #2.
+
+
+
+DONE: Just references so we don't think they're still pending
+=============================================================
+
+
+  o Klaus passes. This remains an ongoing test to pass
+
+  o Hardware bringup: see docs/bring-up.md.
+    
+  o PS-side driver skeleton — see vitis/app_blink/src/xt_blitter.{h,c} and
+    main.c is the skeleton.
+
+  o XSA export for Vitis — vitis/workspace/fpga_xt_platform/hw/fpga_xt_top.xsa
+    exists
+ 
+  o FSBL + boot image —vitis/BOOT.BIN exists (4.1 MB, built 17 May)
+   
+  o Sprite engine as per docs/Progress/sprite-engine.md
+     
