@@ -1,36 +1,43 @@
-# pblock_sally.xdc — anchor sally_mem + sally_core inside one clock region.
+# pblock_sally.xdc — anchor sally_mem + sally_core in the LEFT clock-region
+# column so its placement is reproducible across unrelated netlist churn.
 #
 # Problem: Without a placement constraint, Vivado's placer scatters
 # sally_mem's BRAM banks across multiple BRAM columns (post-impl shows the
 # violating path running from RAMB36_X5Y4 → sally_core CARRY4 chain →
-# RAMB36_X2Y16 — i.e. opposite sides of the die).  The path is the CPU's
-# stack-pointer write-back: BRAM read DATA → ALU adders → BRAM write
-# ADDR.  With ~4 ns of logic in the carry chains and ~5 ns of cross-die
-# routing, post-route WNS lands at −0.12 ns on a path that pre-sprite was
-# +0.106 ns.  The slack delta is dominated by placer variance: adding
-# unrelated cells perturbs the placer's LOC choices for sally_mem's
-# BRAMs without any real resource pressure (BRAM util ~52 %, slice
-# util ~31 %).
+# RAMB36_X2Y16 — i.e. opposite sides of the die).  The critical paths are the
+# CPU's single-cycle BRAM→ALU loops: a 64 KB read (a 2-deep RAMB36 cascade,
+# ~3.7 ns) feeds the 12-bit hidden-stack SP arithmetic + cpu_addr/hwreg mux.
+# With ~4.8 ns of logic plus cross-region routing this is the design's tightest
+# clk_sally path; keeping the cells together is what makes it close.
 #
-# Fix: pin sally_mem + sally_core inside CLOCKREGION_X0Y0 alone (30 RAMB36
-# for sally_mem's 17, 2500 SLICE for ~1.1 k cells).
+# History / sizing (read before re-tightening):
+#   * 2026-05-22 (pre-sprite netlist): confining to CLOCKREGION_X0Y0 alone
+#     gave clk_sally setup +0.005 ns and was REQUIRED to close clk_sys hold
+#     (the rst_sys_pipe → xt_blitter/hdmi reset-deassertion paths went
+#     -0.18..-0.20 when sally spanned two regions).  X0Y0-only was right then.
+#   * 2026-05-25: that trade-off flipped.  task-0013 deleted the 800×600 hdmi
+#     display chain (removing most of those reset-deassertion hold paths), the
+#     ANTIC compositor grew (collision pipeline etc.), and X0Y0-alone became
+#     OVERCROWDED — clk_sally setup fell to -0.348 ns (sally_mem BRAM→hwreg
+#     path, 54 % routing, cells spread X14..29/Y16..25) while clk_sys hold sat
+#     at a comfortable +0.058 ns.  The single region no longer fits sally.
 #
-# IMPORTANT — this MUST stay a single region.  A floorplan study (2026-05-22)
-# found that letting sally span two regions (any pairing: {X0Y0,X1Y0},
-# {X0Y0,X0Y1}, or overlapping xt_blitter) lifts clk_sally setup to
-# +0.12..+0.16 ns BUT breaks clk_sys hold (-0.18..-0.20 ns on the
-# rst_sys_pipe -> xt_blitter/hdmi CLR reset-deassertion paths) that even
-# three phys_opt+route hold-recovery passes cannot fix; one overlapping
-# variant crashed phys_opt outright.  Confining sally to X0Y0 keeps the
-# reset distribution compact enough that clk_sys hold closes (+0.057 ns),
-# at the cost of a tight-but-positive clk_sally setup (+0.005 ns).  The two
-# goals are mutually exclusive without reworking the sys-reset pipeline.
+# Fix (2026-05-25): give sally the left column's lower TWO regions
+# {X0Y0, X0Y1} so the placer can keep the BRAM→ALU loop compact without
+# cross-column routes.  Stays DISJOINT from xt_blitter ({X1Y0,X1Y1}, right
+# column — pblock_blitter.xdc) so neither perturbs the other's placement and
+# phys_opt's hold-fix stays stable (an overlapping floorplan once crashed
+# phys_opt with EXCEPTION_ACCESS_VIOLATION — do NOT overlap).
 #
-# Note: this pblock is "soft" (no CONTAIN_ROUTING).  The placer must keep
-# the listed cells inside the region; routing across the boundary is
-# allowed but the placer will prefer short routes inside the region.
+# WATCH clk_sys hold on re-synth: the 2026-05-22 note found two-region sally
+# could pull the reset-deassertion paths negative.  With the hdmi chain gone
+# and the build's phys_opt+route hold-recovery loop it is expected to close,
+# but verify WHS stays positive; if not, the documented real fix is pipelining
+# the rst_sys distribution rather than re-confining sally.
+#
+# Soft pblock (no CONTAIN_ROUTING): placement-only; routing may cross out.
 
 create_pblock pb_sally
 add_cells_to_pblock [get_pblocks pb_sally] [get_cells u_sally_mem]
 add_cells_to_pblock [get_pblocks pb_sally] [get_cells u_sally_core]
-resize_pblock [get_pblocks pb_sally] -add {CLOCKREGION_X0Y0}
+resize_pblock [get_pblocks pb_sally] -add {CLOCKREGION_X0Y0 CLOCKREGION_X0Y1}
