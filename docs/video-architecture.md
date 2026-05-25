@@ -53,10 +53,13 @@ is a window.
 Producers write DDR3 surfaces independently:
 
 ```
-   ARM core0 (GEM/blitter) ─ HP1 write ─► desktop surface
-   ANTIC (fabric)          ─ HPx write ─► XL surface  (double-buffered)
-   ARM core1 (soft-68k)    ─ write     ─► ST surface  [future]
+   ARM core0 (GEM via blitter, fabric) ─ HP1 write   ─► desktop surface
+   ANTIC (fabric)                       ─ HP3 write   ─► XL surface (double-buffered)
+   ARM core1 (soft-68k, CPU→DDR direct) ─ no HP port  ─► ST surface [future]
 ```
+
+(HP ports carry *fabric* masters only; an ARM core writing a surface uses the
+PS DDR path directly — see §10.0.)
 
 ## 3. DDR3 surface model
 
@@ -338,14 +341,73 @@ register blocks).  Proposed offset map (migration item):
 Global compositor regs: `BG_COLOR`, frame status/IRQ.  Plane/sprite regs per
 §4.1 / §6.1.
 
-## 10. Bandwidth (sanity)
+## 10. AXI HP port allocation + bandwidth
+
+### 10.0 The model — HP ports are for *PL* masters only
+
+The Zynq-7020 has **4 AXI-HP slave ports** (HP0–HP3), each 64-bit, full-duplex
+(independent read + write channels), 150 MHz.  They exist so **PL-fabric
+masters reach PS DDR3**.  The **ARM cores reach DDR natively** through L1/L2 +
+the DDR controller — they *never* use an HP port.  Consequences:
+
+- An emulation hosted *on an ARM core* (the future ST/TT soft-68k on core1)
+  accesses its emulated RAM through the ARM's own memory path — *higher*
+  bandwidth than any HP port, and not on this map at all.
+- A surface *written by an ARM core* (the ST/TT surface, written by the
+  soft-68k as CPU stores) needs **no HP write master**.  Only a surface
+  written by *fabric* does — ANTIC, hence `antic_writeback`.
+- A surface *read by the compositor* always needs an HP **read** channel
+  (the plane fetch is fabric), whoever produced it.
+- **SALLY** is fabric, but its main memory is BRAM (bank 0); boot-to-BASIC
+  touches no DDR.  Only the *extended banked-memory* model (deferred) needs an
+  HP port — `sally_mem`'s `m_axi_*`, on `clk_sally` (100 MHz), tied off today.
+
+So "what needs a port" is just the fabric masters, and one full-duplex port
+can host a read master and a write master at once.  Where more masters than
+ports exist, a BD **SmartConnect** fans several into one HP port (arbitration,
+shared bandwidth) — §10.2 shows there is ample headroom.
+
+### 10.1 Port allocation
+
+| Port | Read channel | Write channel | Clock |
+|------|--------------|---------------|-------|
+| HP0  | compositor reads — desktop + ST/TT + sprite-image fetch (SmartConnect) | — | clk_pix/clk_sys |
+| HP1  | blitter source | blitter dest (desktop surface) | clk_sys |
+| HP2  | SALLY banked DDR (extended model) | SALLY banked DDR | clk_sally (100 MHz) |
+| HP3  | XL plane fetch | XL writeback (`antic_writeback`) | clk_sys |
+
+Notes:
+- **HP3 is the XL *window* port, not a generic "compositor" port** — XL fetch
+  (R) + XL writeback (W).  This is what's wired today (phase 2).
+- **HP2 conflict resolved**: earlier text had HP2 = sprites *and* TODO.txt had
+  HP2 = SALLY banked DDR.  Sprites are light and homogeneous with the other
+  clk_sys plane reads, so the **sprite-image fetch moves onto HP0's read
+  SmartConnect**; HP2 is dedicated to SALLY's banked window (its own
+  `clk_sally` domain — keeping it isolated avoids a clock converter and the
+  100 MHz path dragging the 150 MHz compositor reads).
+- **ST/TT adds no new port**: emulated RAM is ARM/DDR-direct; the surface is
+  ARM-written (no write master); the compositor's ST plane fetch is just
+  another read on HP0's SmartConnect.
+- Spare for later: the **ACP** (cache-coherent ARM↔PL) and **S_AXI_GP**
+  ports are unused — available if a master wants its own port.
+
+### 10.2 Bandwidth (sanity)
 
 clk_pix = 148.4375 MHz; 2200×1125 total per frame.  Each active plane fetches
-one (scaled) source line per scanline into its line buffer — the same pattern
-`fb_scanout` already sustains for one plane on HP0.  N≈4 planes ⇒ N fetch
-units across the AXI HP ports (HP0–HP3 available; HP0 desktop, HP1 blitter
-write, HP2 sprites, HP3 XL/compositor).  Full-line fetch (including occluded
-spans) is fine at this N; visible-span-only fetch is a later optimisation.
+one (scaled) source line per scanline into its line buffer — the pattern
+`fb_scanout`/`plane_fetch` already sustains for one plane on HP0.
+
+- DDR3-1066 ×32-bit ≈ 4.3 GB/s peak, ~2.5–3 GB/s usable; each HP port ≈
+  1.2 GB/s (64-bit @ 150 MHz).
+- Desktop fetch (full-screen, scale 1) ≈ 1920×1080×4×60 ≈ 0.5 GB/s.  A
+  full-screen ST/TT plane ≈ another 0.5 GB/s.  XL fetch/writeback and sprites
+  are tiny (XL ≈ 320 px/line × window lines × 60 ≈ tens of MB/s).
+- So even desktop + full-screen ST/TT ≈ 1 GB/s — under one port, well under
+  DDR.  **The constraint is port count/arbitration, not bandwidth** — and
+  SmartConnect handles count.
+
+Full-line fetch (including occluded spans) is fine at this N; visible-span-only
+fetch is a later optimisation.
 
 ## 11. Migration from current RTL
 
