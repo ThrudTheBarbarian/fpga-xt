@@ -87,26 +87,39 @@ atari_row banding, VCOUNT=scanline>>1), and verilator-clean. NOT yet wired in.
 (~12 phi2 cycles), so the counter never reaches 105. The phi2 timer's
 `phi2_in_line` (0..113) fixes it.
 
-**Step 2 — wire antic_raster into antic_top (the consumer map, all in
-hdl/antic_top.sv):** instantiate after the phi2 gen (~line 341), then repoint:
-- `line_start_pulse_bus` (assign ~497) -> `ar_line_start`
-  consumers: nmi_gen :1006, phi2_in_line_q reset :1025, lb_wr counter :1421,
-  wb_row_flush :1600.
-- `vbi_start_pulse_bus` (assign ~496) -> `ar_vbi_start`
-  consumers: nmi_gen :1005, wb_frame_done :1601.
-- `atari_row_sync_q2[7:0]` -> `ar_atari_row`  (nmi_gen :1009, wb_atari_row :1599)
-- `vcount_sync_q2` -> `ar_vcount`  (antic_regs.vcount_in :532)
-- `phi2_in_line_q` -> `ar_phi2_in_line`; delete the local counter (:1022-1028);
-  `cycle_105_pulse` (:1029) uses `ar_phi2_in_line`.
-Leave the now-dead vbeam CDC (:475-497) + hdmi_out in place for step 2; verify
-with the antic_top tbs (smoke/snoop/read/pbi/pokey/pia_regs/hwreg_rd_cdc),
-`make lint`, and the fpga_xt_top parse (baseline-only).
+**Step 2 DONE** (commit 2ca4613): instantiated antic_raster in antic_top and
+repointed every consumer (line_start/vbi_start, nmi_gen.atari_row_in,
+antic_regs.vcount_in, WSYNC cycle-105 -> ar_phi2_in_line; deleted the local
+phi2_in_line_q). ANTIC is now phi2-paced; WSYNC fixed. The 800x600 vbeam CDC +
+hdmi_out are left in place (dead) for step 3. Added antic_raster.sv to the sim
+ANTIC source list. Verified: fpga_xt_top parse baseline-only; make lint clean;
+antic_top tbs (smoke/snoop/read/pbi) + submodule tbs green; tb_antic_raster
+green.
 
-**Step 3 — delete the dead display chain** (separate commit): remove hdmi_out,
-scan_out, native line_buffer, display palette_lut, the vbeam CDC FFs, and the
-antic_rgb_*/tmds_* outputs from antic_top's port list (+ update fpga_xt_top and
-the tbs that connect those ports). Frees the BRAM (display palette_lut) +
-line_buffer + LUTs.
+**Step 3 — delete the dead display chain** (NOT started; pure cleanup, no
+functional effect — the chain is already bypassed). In hdl/antic_top.sv DELETE:
+- hdmi_out (u_hdmi_out) + the hdmi_* forward decls (hdmi_vcount/atari_row/
+  vbi_start/line_start/h_count/de/hsync/vsync).
+- scan_out (u_scan_out) + pix_idx*/pix_*_w.
+- the native line_buffer (u_line_buffer) + its clk_pix CDC (lb_wr_strobe_pix_
+  sync, lb_wr_pix_pulse, lb_wr_addr_pix/data_pix, lb_rd_addr/data).
+- the display palette_lut (u_palette) + pal_strobe_pix_sync/pal_idx_pix_q/
+  pal_data_pix_q/pal_we_pix/palette_rgb_w.
+- the dead vbeam CDC FFs (vcount_sync/atari_row_sync/vbi_start_sync/
+  line_start_sync, ~:496-516).
+- antic_top output ports rgb_{r,g,b}_o / rgb_{hsync,vsync,de,pixclk}_o /
+  tmds_{r,g,b,clk}; and the clk_pix INPUT if nothing else uses it (check).
+**KEEP** (critical — this is the render tap source): the lb_wr_*_bus_q
+generator block (lb_wr_pair_bus_q / lb_wr_data_bus_q / lb_wr_strobe_bus_q,
+reset by line_start_pulse_bus, incremented per cmp_cmd_valid&&ready) — it feeds
+wb_pix_valid/pix_pair/color_*; also keep color_resolver, the ANTIC compositor,
+dl_parser, the writeback's own palette_lut.
+Then update the antic_top instantiations: fpga_xt_top (drop antic_rgb_*/tmds_*/
+rgb_pixclk + the clk_pix conn if removed) and the 4 antic_top tbs
+(smoke/snoop/read/pbi) — drop the deleted ports. Frees a BRAM (display
+palette_lut) + the line_buffer + hdmi_out/scan_out LUTs. Verify as in step 2,
+then a win10 re-synth to re-measure clk_sys/clk_sally (the deletion + lower
+congestion may move them; then decide on a targeted closure pass).
 
 **Timing context (win10 synth, post divide-fix, commit 531c209):** clk_pix now
 CLOSES (+0.136 ns; was -3.508 before the §4.2-accumulator fix). Remaining setup
