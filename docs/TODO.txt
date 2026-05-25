@@ -87,6 +87,26 @@ Boot-to-BASIC blockers (analysis 2026-05-24, ordered)
          (writeback master), not a BRAM frame store.
      Implementation is phased in spec section 14.
 
+     Status (2026-05-25) -- spec section 14 phases:
+       (a) Compositor core (plane_compositor) ................. DONE (sim)
+       (b) Per-plane DDR3 fetch (plane_fetch) + top swap ...... DONE (sim)
+       (c) ANTIC->DDR3 writeback wired end-to-end ............. DONE (RTL)
+            antic_top exposes the render tap (wb_* ports); fpga_xt_top
+            instantiates antic_writeback on HP3 (write) and a 2nd
+            plane_fetch on HP3 (read) for the XL surface; compositor
+            plane 1 enabled (320x192 @3x, centred, depth 1).  front_sel
+            (ANTIC vblank) selects the front buffer the plane reads.
+            Lint-clean; fpga_xt_top parses to baseline-only; all
+            compositor sims green.  REMAINING: regenerate the PS BD on
+            win10 (vivado/bd/gen_ps_bd.tcl now enables M_AXI_HP3), then
+            win10 synth + HDMI to confirm the scaled XL window appears.
+            Deferred: tear-free front_sel sampling at the compositor's
+            own frame start (today the fetch reads front_sel directly --
+            spec section 3 / open question section 13); narrow/wide
+            playfield src_w tracking (fixed 320 for v1).
+       (d) v1 desktop.app (blue fill + plane config + XL start)  TODO (ARM)
+       (e) GP0 register re-partition + ARM driver ............. TODO
+
   5. Keyboard injection (post-READY, not on the path to the prompt):
      debug UART -> POKEY KBCODE via antic_top's kbd_event_valid/code
      port (currently tied off, fpga_xt_top.sv:715).

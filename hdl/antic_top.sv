@@ -257,7 +257,24 @@ module antic_top #(
     input  wire        n6_irq_to_fpga_lp     = 1'b0,
 
     // PORTB ($D301) state — needed by sally_mem for ROM vs RAM control.
-    output wire [7:0]  portb_q
+    output wire [7:0]  portb_q,
+
+    // ---- ANTIC render tap → compositor writeback (video-arch §5, phase 2) --
+    // The per-pixel-pair render stream, palette writes and frame/line pulses
+    // that drive the ANTIC->DDR3 writeback master (antic_writeback) at the
+    // top level.  All clk_bus domain (= clk_sys in this build).  These tap
+    // the SAME signals that feed the (now display-bypassed) native line_buffer
+    // + palette_lut chain, so the DDR3 XL surface mirrors the legacy image.
+    output wire        wb_pix_valid,    // 1-cycle pulse: a pixel-PAIR is ready
+    output wire [7:0]  wb_pix_pair,     // pair index within the line (col/2)
+    output wire [7:0]  wb_color_lo,     // 8-bit Atari colour code, even column
+    output wire [7:0]  wb_color_hi,     //                          odd  column
+    output wire [7:0]  wb_atari_row,    // ANTIC row being rendered (0..191)
+    output wire        wb_row_flush,    // pulse (line_start): row complete -> DMA
+    output wire        wb_frame_done,   // pulse (vbi): flip the double buffer
+    output wire        wb_pal_we,       // palette write strobe (clk_bus origin)
+    output wire [7:0]  wb_pal_idx,      // palette index
+    output wire [23:0] wb_pal_rgb       // {R,G,B} palette entry
 );
 
     // Synchronise /G_RST into the bus_clk domain.
@@ -1568,6 +1585,23 @@ module antic_top #(
 
     assign n6_irq_to_n6_hp  = 1'b0;
     assign n6_irq_to_n6_lp  = 1'b0;
+
+    // ---- ANTIC render tap → compositor writeback (video-arch §5) -------
+    // Surface the clk_bus render stream / palette / frame pulses for the
+    // top-level antic_writeback master.  lb_wr_pair_bus_q / _data_bus_q /
+    // _strobe_bus_q advance one column-pair per accepted compositor pair
+    // (the same stream that fed the native line_buffer); atari_row /
+    // line_start / vbi_start are the CDC'd hdmi_out vbeam pulses.
+    assign wb_pix_valid = lb_wr_strobe_bus_q;
+    assign wb_pix_pair  = lb_wr_pair_bus_q;
+    assign wb_color_lo  = lb_wr_data_bus_q[7:0];
+    assign wb_color_hi  = lb_wr_data_bus_q[15:8];
+    assign wb_atari_row = atari_row_sync_q2[7:0];
+    assign wb_row_flush = line_start_pulse_bus;
+    assign wb_frame_done = vbi_start_pulse_bus;
+    assign wb_pal_we    = pal_write_strobe;
+    assign wb_pal_idx   = pal_idx_q;
+    assign wb_pal_rgb   = {pal_r_q, pal_g_q, pal_b_q};
 
     // Keep unconnected N6 inputs alive in synth (prevents "unused
     // port" pruning during Phase 0). The reduction-OR is purely a

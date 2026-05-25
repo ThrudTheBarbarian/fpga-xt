@@ -48,11 +48,13 @@ set_property -dict [list \
     CONFIG.PCW_USE_S_AXI_GP0 {0} \
     CONFIG.PCW_USE_S_AXI_ACP {0} \
     CONFIG.PCW_USE_S_AXI_HP2 {0} \
-    CONFIG.PCW_USE_S_AXI_HP3 {0} \
+    CONFIG.PCW_USE_S_AXI_HP3 {1} \
 ] $ps
 
 # ---- Connect HP AXI clocks to FCLK_CLK0 ------------------------------------
-for {set i 0} {$i <= 1} {incr i} {
+# HP0/HP1 + HP3 (the XL/compositor port).  HP2 stays disabled, so its pins
+# don't exist and the -quiet guard skips it.
+for {set i 0} {$i <= 3} {incr i} {
     set aclk_pin [get_bd_pins -quiet /zynq_ps/S_AXI_HP${i}_ACLK]
     if {$aclk_pin ne ""} {
         connect_bd_net [get_bd_pins /zynq_ps/FCLK_CLK0] $aclk_pin
@@ -60,7 +62,7 @@ for {set i 0} {$i <= 1} {incr i} {
 }
 
 # ---- Export HP ports as external AXI3 slave interfaces (64-bit, 150 MHz) ----
-for {set i 0} {$i <= 1} {incr i} {
+for {set i 0} {$i <= 3} {incr i} {
     set hp_name "S_AXI_HP${i}"
     set iface [get_bd_intf_pins -quiet zynq_ps/$hp_name]
     if {$iface ne ""} {
@@ -104,7 +106,7 @@ make_bd_pins_external [get_bd_pins zynq_ps/FCLK_RESET0_N]
 # Associate AXI interfaces with their clocks
 set fclk_port [get_bd_ports -quiet *FCLK_CLK0*]
 if {$fclk_port ne ""} {
-    set_property CONFIG.ASSOCIATED_BUSIF {m_axi_hp0 m_axi_hp1} $fclk_port
+    set_property CONFIG.ASSOCIATED_BUSIF {m_axi_hp0 m_axi_hp1 m_axi_hp3} $fclk_port
 }
 set gp0clk_port [get_bd_ports s_axi_gp0_aclk]
 if {$gp0clk_port ne ""} {
@@ -114,6 +116,7 @@ if {$gp0clk_port ne ""} {
 # ---- Assign HP address spaces to DDR ---------------------------------------
 assign_bd_address [get_bd_addr_segs /zynq_ps/S_AXI_HP0/HP0_DDR_LOWOCM]
 assign_bd_address [get_bd_addr_segs /zynq_ps/S_AXI_HP1/HP1_DDR_LOWOCM]
+assign_bd_address [get_bd_addr_segs /zynq_ps/S_AXI_HP3/HP3_DDR_LOWOCM]
 
 # ---- Assign GP0 address range for PL register access -----------------------
 assign_bd_address [get_bd_addr_segs /m_axi_gp0/Reg]

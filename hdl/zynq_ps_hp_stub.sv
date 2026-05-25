@@ -110,7 +110,52 @@ module zynq_ps_hp_stub (
     input  wire        s_axi_hp1_wlast,
     output reg         s_axi_hp1_wready,
     input  wire [7:0]  s_axi_hp1_wstrb,
-    input  wire        s_axi_hp1_wvalid
+    input  wire        s_axi_hp1_wvalid,
+
+    // ---- HP3 (full duplex read/write) — XL/compositor port ----------------
+    // Write ← antic_writeback (XL surface); read ← plane_fetch1 (XL plane).
+    input  wire [31:0] s_axi_hp3_araddr,
+    input  wire [1:0]  s_axi_hp3_arburst,
+    input  wire [3:0]  s_axi_hp3_arcache,
+    input  wire [5:0]  s_axi_hp3_arid,
+    input  wire [3:0]  s_axi_hp3_arlen,
+    input  wire [1:0]  s_axi_hp3_arlock,
+    input  wire [2:0]  s_axi_hp3_arprot,
+    input  wire [3:0]  s_axi_hp3_arqos,
+    output reg         s_axi_hp3_arready,
+    input  wire [2:0]  s_axi_hp3_arsize,
+    input  wire        s_axi_hp3_arvalid,
+    // Write address
+    input  wire [31:0] s_axi_hp3_awaddr,
+    input  wire [1:0]  s_axi_hp3_awburst,
+    input  wire [3:0]  s_axi_hp3_awcache,
+    input  wire [5:0]  s_axi_hp3_awid,
+    input  wire [3:0]  s_axi_hp3_awlen,
+    input  wire [1:0]  s_axi_hp3_awlock,
+    input  wire [2:0]  s_axi_hp3_awprot,
+    input  wire [3:0]  s_axi_hp3_awqos,
+    output reg         s_axi_hp3_awready,
+    input  wire [2:0]  s_axi_hp3_awsize,
+    input  wire        s_axi_hp3_awvalid,
+    // Write response
+    output reg  [5:0]  s_axi_hp3_bid,
+    input  wire        s_axi_hp3_bready,
+    output reg  [1:0]  s_axi_hp3_bresp,
+    output reg         s_axi_hp3_bvalid,
+    // Read data
+    output reg  [63:0] s_axi_hp3_rdata,
+    output reg  [5:0]  s_axi_hp3_rid,
+    output reg         s_axi_hp3_rlast,
+    input  wire        s_axi_hp3_rready,
+    output reg  [1:0]  s_axi_hp3_rresp,
+    output reg         s_axi_hp3_rvalid,
+    // Write data
+    input  wire [63:0] s_axi_hp3_wdata,
+    input  wire [5:0]  s_axi_hp3_wid,
+    input  wire        s_axi_hp3_wlast,
+    output reg         s_axi_hp3_wready,
+    input  wire [7:0]  s_axi_hp3_wstrb,
+    input  wire        s_axi_hp3_wvalid
 );
 
     // ====================================================================
@@ -239,6 +284,60 @@ module zynq_ps_hp_stub (
     assign s_axi_hp1_bvalid  = (hp1_wr_state == 2'b11);
     assign s_axi_hp1_bresp   = 2'b00;
     assign s_axi_hp1_bid     = 6'd0;
+
+    // ====================================================================
+    // Read channel responder — HP3 (plane_fetch1, XL plane)
+    // ====================================================================
+
+    logic        hp3_rd_pending;
+
+    always_ff @(posedge clk) begin
+        if (~hp3_rd_pending && s_axi_hp3_arvalid) begin
+            hp3_rd_pending <= 1'b1;
+        end else if (hp3_rd_pending && s_axi_hp3_rready) begin
+            hp3_rd_pending <= 1'b0;
+        end
+    end
+
+    assign s_axi_hp3_arready = ~hp3_rd_pending;
+    assign s_axi_hp3_rvalid  =  hp3_rd_pending;
+    assign s_axi_hp3_rlast   =  hp3_rd_pending;
+    assign s_axi_hp3_rdata   = 64'd0;
+    assign s_axi_hp3_rid     = 6'd0;
+    assign s_axi_hp3_rresp   = 2'b00;  // OKAY
+
+    // ====================================================================
+    // Write channel responder — HP3 (antic_writeback, XL surface)
+    // ====================================================================
+
+    (* fsm_encoding = "none" *) logic [1:0] hp3_wr_state = 2'b00;
+
+    always_ff @(posedge clk) begin
+        case (hp3_wr_state)
+            2'b00: begin
+                if (s_axi_hp3_awvalid) begin
+                    hp3_wr_state <= s_axi_hp3_wvalid ? 2'b11 : 2'b01;
+                end else if (s_axi_hp3_wvalid) begin
+                    hp3_wr_state <= 2'b10;
+                end
+            end
+            2'b01: begin
+                if (s_axi_hp3_wvalid) hp3_wr_state <= 2'b11;
+            end
+            2'b10: begin
+                if (s_axi_hp3_awvalid) hp3_wr_state <= 2'b11;
+            end
+            2'b11: begin
+                if (s_axi_hp3_bready) hp3_wr_state <= 2'b00;
+            end
+        endcase
+    end
+
+    assign s_axi_hp3_awready = (hp3_wr_state == 2'b00) || (hp3_wr_state == 2'b10);
+    assign s_axi_hp3_wready  = (hp3_wr_state == 2'b00) || (hp3_wr_state == 2'b01);
+    assign s_axi_hp3_bvalid  = (hp3_wr_state == 2'b11);
+    assign s_axi_hp3_bresp   = 2'b00;
+    assign s_axi_hp3_bid     = 6'd0;
 
 endmodule
 

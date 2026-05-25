@@ -303,6 +303,38 @@ module fpga_xt_top (
     wire        hp1_rlast;
     wire        hp1_rready;
 
+    // HP3 — the XL/compositor port (video-arch §5, §10).  Full-duplex:
+    //   write channel ← antic_writeback (ANTIC render → DDR3 XL surface)
+    //   read  channel ← plane_fetch1    (XL surface → compositor plane 1)
+    // The two use independent AXI channels of the same HP port (writeback
+    // targets the back buffer; the fetch reads the front buffer), so they
+    // never collide.  Runs on clk_sys, like HP0/HP1.
+    // Write channel (mirrors HP1's write side):
+    wire [31:0] hp3_awaddr;
+    wire [7:0]  hp3_awlen;     // 8-bit (AXI4); AXI3 slave truncates to lower 4
+    wire [2:0]  hp3_awsize;
+    wire [1:0]  hp3_awburst;
+    wire        hp3_awvalid;
+    wire        hp3_awready;
+    wire [63:0] hp3_wdata;
+    wire [7:0]  hp3_wstrb;
+    wire        hp3_wlast;
+    wire        hp3_wvalid;
+    wire        hp3_wready;
+    wire        hp3_bvalid;
+    wire        hp3_bready;
+    // Read channel (mirrors HP0's read side):
+    wire [31:0] hp3_araddr;
+    wire [7:0]  hp3_arlen;
+    wire [2:0]  hp3_arsize;
+    wire [1:0]  hp3_arburst;
+    wire        hp3_arvalid;
+    wire        hp3_arready;
+    wire [63:0] hp3_rdata;
+    wire        hp3_rvalid;
+    wire        hp3_rlast;
+    wire        hp3_rready;
+
     // ANTIC's BRAM read port — driven by antic_top's u_bram_shim and
     // serviced by sally_mem's second BRAM port (clk_sys side).  SALLY
     // writes propagate naturally through sally_mem; ANTIC sees the
@@ -716,6 +748,18 @@ module fpga_xt_top (
     wire [4:0] antic_rgb_b;
     wire       antic_rgb_hsync, antic_rgb_vsync, antic_rgb_de, antic_rgb_pixclk;
 
+    // ANTIC render tap → DDR3 writeback (video-arch §5, phase 2). All clk_sys
+    // (= antic_top's clk_bus). Feeds antic_writeback (instantiated below) on
+    // HP3; its front_sel picks which XL surface the compositor's plane 1 reads.
+    wire        antic_wb_pix_valid;
+    wire [7:0]  antic_wb_pix_pair;
+    wire [7:0]  antic_wb_color_lo, antic_wb_color_hi;
+    wire [7:0]  antic_wb_atari_row;
+    wire        antic_wb_row_flush, antic_wb_frame_done;
+    wire        antic_wb_pal_we;
+    wire [7:0]  antic_wb_pal_idx;
+    wire [23:0] antic_wb_pal_rgb;
+
     antic_top #(
         .POKEY_CLK_BUS_HZ (150_000_000),    // clk_sys nominal (150 MHz)
         .LEGACY_RP        (1'b1)             // keep RP interfaces active
@@ -772,6 +816,17 @@ module fpga_xt_top (
         .bram_rdata         (antic_bram_rdata),
         // PORTB state — consumed by sally_mem for ROM vs RAM control.
         .portb_q            (portb_q),
+        // ANTIC render tap → DDR3 writeback (HP3, see antic_writeback below).
+        .wb_pix_valid       (antic_wb_pix_valid),
+        .wb_pix_pair        (antic_wb_pix_pair),
+        .wb_color_lo        (antic_wb_color_lo),
+        .wb_color_hi        (antic_wb_color_hi),
+        .wb_atari_row       (antic_wb_atari_row),
+        .wb_row_flush       (antic_wb_row_flush),
+        .wb_frame_done      (antic_wb_frame_done),
+        .wb_pal_we          (antic_wb_pal_we),
+        .wb_pal_idx         (antic_wb_pal_idx),
+        .wb_pal_rgb         (antic_wb_pal_rgb),
         // Zynq build: sally_* / xlat_phys_addr removed (no shadow SALLY core).
         .adc_bclk_o         (),
         .adc_lrck_o         (),
@@ -797,6 +852,57 @@ module fpga_xt_top (
     assign irq_n_antic = antic_irq_n;
     assign halt_n_antic = antic_halt_n;
     assign wsync_rdy_n = antic_rdy_n;
+
+    // ====================================================================
+    // ANTIC → DDR3 writeback (the XL plane source) — video-arch §5, phase 2
+    // ====================================================================
+    // Palette-resolves ANTIC's render tap to RGBA8888, accumulates a scanline,
+    // and DMAs it to a double-buffered DDR3 XL surface over HP3.  front_sel
+    // (flipped on ANTIC vblank) tells the compositor which buffer to read, so
+    // it always scans a complete frame while the next is being written.
+    //
+    // XL surface geometry — two buffers A/B (spec §3), RGBA8888.  The native
+    // playfield is the nominal 320×192 GR.0 region (atari_row spans 0..191 in
+    // hdmi_out's vbeam; the active playfield is 320 px = 160 column-pairs).
+    localparam [31:0] XL_BASE_A  = 32'h3100_0000;   // compositor reads when front_sel=0
+    localparam [31:0] XL_BASE_B  = 32'h3110_0000;   // 1 MB apart; ≤320×192×4 ≈ 240 KB each
+    localparam int    XL_SRC_W   = 320;             // active playfield width (px)
+    localparam int    XL_SRC_H   = 192;             // active playfield height (atari rows)
+    localparam int    XL_STRIDE  = XL_SRC_W * 4;    // bytes/row (RGBA8888) = 1280
+
+    wire xl_front_sel;   // 0 → compositor reads BASE_A; 1 → BASE_B
+
+    antic_writeback u_antic_writeback (
+        .clk_sys      (clk_sys),
+        .rst_sys      (rst_sys),
+        // Render tap (clk_sys) from antic_top
+        .pix_valid    (antic_wb_pix_valid),
+        .pix_pair     (antic_wb_pix_pair),
+        .color_lo     (antic_wb_color_lo),
+        .color_hi     (antic_wb_color_hi),
+        .atari_row    (antic_wb_atari_row),
+        .row_flush    (antic_wb_row_flush),
+        .frame_done   (antic_wb_frame_done),
+        // Palette writes (mirror ANTIC's palette)
+        .pal_we       (antic_wb_pal_we),
+        .pal_idx      (antic_wb_pal_idx),
+        .pal_rgb      (antic_wb_pal_rgb),
+        // Config
+        .base_a       (XL_BASE_A),
+        .base_b       (XL_BASE_B),
+        .stride_bytes (16'(XL_STRIDE)),
+        .src_w        (12'(XL_SRC_W)),
+        // Status
+        .front_sel    (xl_front_sel),
+        // AXI4 write master → HP3
+        .m_axi_awaddr (hp3_awaddr),  .m_axi_awlen  (hp3_awlen),
+        .m_axi_awsize (hp3_awsize),  .m_axi_awburst(hp3_awburst),
+        .m_axi_awvalid(hp3_awvalid), .m_axi_awready(hp3_awready),
+        .m_axi_wdata  (hp3_wdata),   .m_axi_wstrb  (hp3_wstrb),
+        .m_axi_wlast  (hp3_wlast),   .m_axi_wvalid (hp3_wvalid),
+        .m_axi_wready (hp3_wready),
+        .m_axi_bvalid (hp3_bvalid),  .m_axi_bready (hp3_bready)
+    );
 
     // ====================================================================
     // Display: plane compositor (vbeam + plane_fetch x N + plane_compositor)
@@ -855,6 +961,52 @@ module fpga_xt_top (
         .rd_col (cmp_src_col[0*12 +: 12]), .rd_pixel (desk_pixel)
     );
 
+    // ---- XL plane (plane 1): scaled, centred window over the desktop ----
+    // Window geometry (video-arch §4/§7): integer scale, centred on 1920×1080.
+    // clip rect = window rect for v1.  Tunable on hardware; scale 3 gives a
+    // 960×576 window with a clear desktop border.
+    localparam int XL_SCALE    = 3;
+    localparam int XL_WIN_W    = XL_SRC_W * XL_SCALE;          // 960
+    localparam int XL_WIN_H    = XL_SRC_H * XL_SCALE;          // 576
+    localparam int XL_ORIGIN_X = (1920 - XL_WIN_W) / 2;        // 480
+    localparam int XL_ORIGIN_Y = (1080 - XL_WIN_H) / 2;        // 252
+    localparam int XL_CLIP_X0  = XL_ORIGIN_X;                  // 480
+    localparam int XL_CLIP_X1  = XL_ORIGIN_X + XL_WIN_W;       // 1440
+    localparam int XL_CLIP_Y0  = XL_ORIGIN_Y;                  // 252
+    localparam int XL_CLIP_Y1  = XL_ORIGIN_Y + XL_WIN_H;       // 828
+
+    // Scaled vertical prefetch (deferred from phase 1b-ii): plane_fetch needs
+    // the SOURCE row that will DISPLAY on the NEXT scanline.  Inside the
+    // window that is ((next_line) - clip_y0) / scale — the same nearest-
+    // neighbour back-map the compositor's vertical accumulator uses, so the
+    // prefetched row matches what the compositor reads.  Outside the window
+    // the plane is gated off, so fetch row 0 (harmless).  Divide-by-constant.
+    wire [11:0] xl_next_line = (fb_v_count >= 12'd1079) ? 12'd0
+                                                        : (fb_v_count + 12'd1);
+    wire        xl_next_in_win = (xl_next_line >= 12'(XL_CLIP_Y0))
+                              && (xl_next_line <  12'(XL_CLIP_Y1));
+    wire [11:0] xl_fetch_row = xl_next_in_win
+        ? 12'((xl_next_line - 12'(XL_CLIP_Y0)) / 12'(XL_SCALE))
+        : 12'd0;
+
+    // Plane-1 source: a second plane_fetch reading the XL FRONT buffer (the
+    // one antic_writeback just finished) over HP3's read channel.
+    wire [31:0] xl_surface_base = xl_front_sel ? XL_BASE_B : XL_BASE_A;
+    wire [31:0] xl_pixel;
+
+    plane_fetch u_plane_fetch1 (
+        .clk_sys (clk_sys), .rst_sys (rst_sys), .enable (1'b1),
+        .surface_base (xl_surface_base), .stride_bytes (16'(XL_STRIDE)),
+        .src_w (12'(XL_SRC_W)),
+        .m_axi_araddr (hp3_araddr), .m_axi_arlen (hp3_arlen), .m_axi_arsize (hp3_arsize),
+        .m_axi_arburst (hp3_arburst), .m_axi_arvalid (hp3_arvalid),
+        .m_axi_arready (hp3_arready), .m_axi_rdata (hp3_rdata),
+        .m_axi_rvalid (hp3_rvalid), .m_axi_rlast (hp3_rlast), .m_axi_rready (hp3_rready),
+        .clk_pix (clk_pix), .rst_pix (rst_pix),
+        .line_start (fb_line_start), .fetch_row (xl_fetch_row),
+        .rd_col (cmp_src_col[1*12 +: 12]), .rd_pixel (xl_pixel)
+    );
+
     // ---- Plane compositor -----------------------------------------------
     wire [4:0] comp_rgb_r; wire [5:0] comp_rgb_g; wire [4:0] comp_rgb_b;
     wire       comp_de, comp_hsync, comp_vsync;
@@ -863,19 +1015,20 @@ module fpga_xt_top (
         .clk_pix (clk_pix), .rst_pix (rst_pix),
         .h_count (fb_h_count), .v_count (fb_v_count),
         .de (vb_de), .hsync (vb_hsync), .vsync (vb_vsync), .line_start (fb_line_start),
-        .pl_enable   (2'b01),                          // plane 0 on; plane 1 (XL) off
-        .pl_origin_x ({12'd0,    12'd0}),
-        .pl_origin_y ({12'd0,    12'd0}),
-        .pl_scale    ({3'd1,     3'd1}),
-        .pl_depth    ({4'd1,     4'd0}),
-        .pl_clip_x0  ({12'd0,    12'd0}),
-        .pl_clip_y0  ({12'd0,    12'd0}),
-        .pl_clip_x1  ({12'd1920, 12'd1920}),
-        .pl_clip_y1  ({12'd1080, 12'd1080}),
+        // Buses pack {plane1, plane0}; plane 1 = the XL window (front of desktop).
+        .pl_enable   (2'b11),                                  // both planes on
+        .pl_origin_x ({12'(XL_ORIGIN_X), 12'd0}),
+        .pl_origin_y ({12'(XL_ORIGIN_Y), 12'd0}),
+        .pl_scale    ({3'(XL_SCALE),     3'd1}),
+        .pl_depth    ({4'd1,             4'd0}),               // XL (1) over desktop (0)
+        .pl_clip_x0  ({12'(XL_CLIP_X0),  12'd0}),
+        .pl_clip_y0  ({12'(XL_CLIP_Y0),  12'd0}),
+        .pl_clip_x1  ({12'(XL_CLIP_X1),  12'd1920}),
+        .pl_clip_y1  ({12'(XL_CLIP_Y1),  12'd1080}),
         .bg_color    (24'h00_00_00),
         .src_col_o   (cmp_src_col),
-        .src_row_o   (cmp_src_row),                    // unused for scale-1 desktop
-        .src_pixel_i ({32'd0, desk_pixel}),            // plane 1 source tied off
+        .src_row_o   (cmp_src_row),                            // current row (unused at top)
+        .src_pixel_i ({xl_pixel, desk_pixel}),                // {plane1, plane0}
         .rgb_r (comp_rgb_r), .rgb_g (comp_rgb_g), .rgb_b (comp_rgb_b),
         .de_o (comp_de), .hsync_o (comp_hsync), .vsync_o (comp_vsync)
     );
@@ -1340,6 +1493,50 @@ module fpga_xt_top (
         .m_axi_hp1_wstrb    (ps_hp1_wstrb),
         .m_axi_hp1_wvalid   (ps_hp1_wvalid),
 
+        // HP3 — XL/compositor port (video-arch §10): antic_writeback (write) +
+        // plane_fetch1 (read).  Connected directly (no pipeline slice — like
+        // HP0), the XL traffic is light vs the blitter on HP1.  REQUIRES the
+        // BD to be regenerated with HP3 enabled — run vivado/bd/gen_ps_bd.tcl
+        // (it sets PCW_USE_S_AXI_HP3=1 and exports m_axi_hp3).
+        .m_axi_hp3_araddr   (hp3_araddr[31:0]),
+        .m_axi_hp3_arburst  (hp3_arburst[1:0]),
+        .m_axi_hp3_arcache  (4'd0),
+        .m_axi_hp3_arid     (6'd0),
+        .m_axi_hp3_arlen    (hp3_arlen[3:0]),
+        .m_axi_hp3_arlock   (2'd0),
+        .m_axi_hp3_arprot   (3'd0),
+        .m_axi_hp3_arqos    (4'd0),
+        .m_axi_hp3_arready  (hp3_arready),
+        .m_axi_hp3_arsize   (hp3_arsize[2:0]),
+        .m_axi_hp3_arvalid  (hp3_arvalid),
+        .m_axi_hp3_awaddr   (hp3_awaddr[31:0]),
+        .m_axi_hp3_awburst  (hp3_awburst[1:0]),
+        .m_axi_hp3_awcache  (4'd0),
+        .m_axi_hp3_awid     (6'd0),
+        .m_axi_hp3_awlen    (hp3_awlen[3:0]),
+        .m_axi_hp3_awlock   (2'd0),
+        .m_axi_hp3_awprot   (3'd0),
+        .m_axi_hp3_awqos    (4'd0),
+        .m_axi_hp3_awready  (hp3_awready),
+        .m_axi_hp3_awsize   (hp3_awsize[2:0]),
+        .m_axi_hp3_awvalid  (hp3_awvalid),
+        .m_axi_hp3_bid      (),
+        .m_axi_hp3_bready   (hp3_bready),
+        .m_axi_hp3_bresp    (),
+        .m_axi_hp3_bvalid   (hp3_bvalid),
+        .m_axi_hp3_rdata    (hp3_rdata),
+        .m_axi_hp3_rid      (),
+        .m_axi_hp3_rlast    (hp3_rlast),
+        .m_axi_hp3_rready   (hp3_rready),
+        .m_axi_hp3_rresp    (),
+        .m_axi_hp3_rvalid   (hp3_rvalid),
+        .m_axi_hp3_wdata    (hp3_wdata),
+        .m_axi_hp3_wid      (6'd0),
+        .m_axi_hp3_wlast    (hp3_wlast),
+        .m_axi_hp3_wready   (hp3_wready),
+        .m_axi_hp3_wstrb    (hp3_wstrb),
+        .m_axi_hp3_wvalid   (hp3_wvalid),
+
         // GP0 — ARM PS AXI3 master → PL bridge (blitter register writes).
         // Extra AXI3 signals not used by the AXI4-Lite bridge are left
         // unconnected on the PS output side; bridge input tie-offs are
@@ -1578,7 +1775,47 @@ module fpga_xt_top (
         .s_axi_hp1_wlast    (hp1_wlast),
         .s_axi_hp1_wready   (hp1_wready),
         .s_axi_hp1_wstrb    (hp1_wstrb),
-        .s_axi_hp1_wvalid   (hp1_wvalid)
+        .s_axi_hp1_wvalid   (hp1_wvalid),
+
+        // HP3 — XL/compositor: antic_writeback (write) + plane_fetch1 (read)
+        .s_axi_hp3_araddr   (hp3_araddr[31:0]),
+        .s_axi_hp3_arburst  (hp3_arburst[1:0]),
+        .s_axi_hp3_arcache  (4'd0),
+        .s_axi_hp3_arid     (6'd0),
+        .s_axi_hp3_arlen    (hp3_arlen[3:0]),
+        .s_axi_hp3_arlock   (2'd0),
+        .s_axi_hp3_arprot   (3'd0),
+        .s_axi_hp3_arqos    (4'd0),
+        .s_axi_hp3_arready  (hp3_arready),
+        .s_axi_hp3_arsize   (hp3_arsize[2:0]),
+        .s_axi_hp3_arvalid  (hp3_arvalid),
+        .s_axi_hp3_awaddr   (hp3_awaddr[31:0]),
+        .s_axi_hp3_awburst  (hp3_awburst[1:0]),
+        .s_axi_hp3_awcache  (4'd0),
+        .s_axi_hp3_awid     (6'd0),
+        .s_axi_hp3_awlen    (hp3_awlen[3:0]),
+        .s_axi_hp3_awlock   (2'd0),
+        .s_axi_hp3_awprot   (3'd0),
+        .s_axi_hp3_awqos    (4'd0),
+        .s_axi_hp3_awready  (hp3_awready),
+        .s_axi_hp3_awsize   (hp3_awsize[2:0]),
+        .s_axi_hp3_awvalid  (hp3_awvalid),
+        .s_axi_hp3_bid      (),
+        .s_axi_hp3_bready   (hp3_bready),
+        .s_axi_hp3_bresp    (),
+        .s_axi_hp3_bvalid   (hp3_bvalid),
+        .s_axi_hp3_rdata    (hp3_rdata),
+        .s_axi_hp3_rid      (),
+        .s_axi_hp3_rlast    (hp3_rlast),
+        .s_axi_hp3_rready   (hp3_rready),
+        .s_axi_hp3_rresp    (),
+        .s_axi_hp3_rvalid   (hp3_rvalid),
+        .s_axi_hp3_wdata    (hp3_wdata),
+        .s_axi_hp3_wid      (6'd0),
+        .s_axi_hp3_wlast    (hp3_wlast),
+        .s_axi_hp3_wready   (hp3_wready),
+        .s_axi_hp3_wstrb    (hp3_wstrb),
+        .s_axi_hp3_wvalid   (hp3_wvalid)
     );
     `endif
 
