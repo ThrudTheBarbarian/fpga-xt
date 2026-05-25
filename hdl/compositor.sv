@@ -881,6 +881,19 @@ module compositor #(
     // Post-CHACTL glyph (after vrefl / inv_en / inv_blank).
     logic [7:0]  cur_glyph;
 
+    // ---- Collision-accumulation pipeline (clk_sys closure) --------------
+    // The collision latches (mpf/ppf/mpl/ppl) feed the GTIA $D000-$D00F
+    // collision reads + HITCLR — they are NOT on the pixel-output path, and
+    // the CPU reads them many cycles later.  So instead of OR-ing each pair's
+    // collision_contribution() into the latches in the same cycle it is
+    // produced (a long, route-spread path cur_mode -> pack_pair ->
+    // collision_contribution -> latch that limited clk_sys), we REGISTER the
+    // 64-bit contribution here and OR it in one cycle later.  This anchors the
+    // whole contribution cone at a local FF bank; the latch update is then a
+    // trivial OR.  Collisions simply lag the beam by one clk_bus cycle.
+    logic [63:0] col_contrib_q;
+    logic        col_valid_q;
+
     always_ff @(posedge clk or posedge rst) begin
         if (rst) begin
             state           <= S_IDLE;
@@ -918,9 +931,12 @@ module compositor #(
             ppf_q           <= 16'h0;
             mpl_q           <= 16'h0;
             ppl_q           <= 16'h0;
+            col_contrib_q   <= 64'h0;
+            col_valid_q     <= 1'b0;
         end else begin
             compose_done <= 1'b0;
             cmd_valid    <= cmd_valid;     // hold by default
+            col_valid_q  <= 1'b0;          // 1-cycle pulse: a pair was produced
 
             unique case (state)
                 S_IDLE: begin
@@ -1039,10 +1055,8 @@ module compositor #(
                     cmd_addr  <= set_addr;
                     cmd_data  <= apply_pm_overlay(raw_f, pair_atari_x_lo);
                     cmd_valid <= 1'b1;
-                    mpf_q     <= mpf_q | contrib_f[15:0];
-                    ppf_q     <= ppf_q | contrib_f[31:16];
-                    mpl_q     <= mpl_q | contrib_f[47:32];
-                    ppl_q     <= ppl_q | contrib_f[63:48];
+                    col_contrib_q <= contrib_f;     // accumulated next cycle
+                    col_valid_q   <= 1'b1;
                     state     <= S_ISSUE_SET;
                 end
 
@@ -1094,10 +1108,8 @@ module compositor #(
                     cmd_addr  <= set_addr;
                     cmd_data  <= apply_pm_overlay(idx_h, pair_atari_x_lo);
                     cmd_valid <= 1'b1;
-                    mpf_q     <= mpf_q | contrib_h[15:0];
-                    ppf_q     <= ppf_q | contrib_h[31:16];
-                    mpl_q     <= mpl_q | contrib_h[47:32];
-                    ppl_q     <= ppl_q | contrib_h[63:48];
+                    col_contrib_q <= contrib_h;     // accumulated next cycle
+                    col_valid_q   <= 1'b1;
                     state     <= S_ISSUE_SET;
                 end
 
@@ -1209,10 +1221,8 @@ module compositor #(
                         cmd_addr  <= set_addr;
                         cmd_data  <= apply_pm_overlay(raw_t, pair_atari_x_lo);
                         cmd_valid <= 1'b1;
-                        mpf_q     <= mpf_q | contrib_t[15:0];
-                        ppf_q     <= ppf_q | contrib_t[31:16];
-                        mpl_q     <= mpl_q | contrib_t[47:32];
-                        ppl_q     <= ppl_q | contrib_t[63:48];
+                        col_contrib_q <= contrib_t;     // accumulated next cycle
+                        col_valid_q   <= 1'b1;
                         state     <= S_ISSUE_SET;
                     end
                 end
@@ -1300,10 +1310,8 @@ module compositor #(
                             cmd_addr <= row_base + unit_offset
                                       + {next_p, 1'b0};
                             cmd_data <= apply_pm_overlay(idx_a, next_x_lo);
-                            mpf_q    <= mpf_q | contrib_a[15:0];
-                            ppf_q    <= ppf_q | contrib_a[31:16];
-                            mpl_q    <= mpl_q | contrib_a[47:32];
-                            ppl_q    <= ppl_q | contrib_a[63:48];
+                            col_contrib_q <= contrib_a;     // accumulated next cycle
+                            col_valid_q   <= 1'b1;
                         end
                     end
                 end
@@ -1320,6 +1328,16 @@ module compositor #(
 
                 default: state <= S_IDLE;
             endcase
+
+            // Pipelined collision accumulate: OR the previous cycle's
+            // registered contribution into the latches.  One OR level — short
+            // path.  (HITCLR below still wins over this same-cycle update.)
+            if (col_valid_q) begin
+                mpf_q <= mpf_q | col_contrib_q[15:0];
+                ppf_q <= ppf_q | col_contrib_q[31:16];
+                mpl_q <= mpl_q | col_contrib_q[47:32];
+                ppl_q <= ppl_q | col_contrib_q[63:48];
+            end
 
             // HITCLR override — strobed by gtia_regs on $D01E write. Wins
             // over any same-cycle collision OR-update.
