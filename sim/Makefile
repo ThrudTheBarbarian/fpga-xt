@@ -48,18 +48,24 @@ HDL_SRCS := \
     $(HDL_DIR)/sally_clock.sv     \
     $(HDL_DIR)/bank_xlat.sv       \
     $(HDL_DIR)/sally_mem.sv       \
-    $(HDL_DIR)/line_buffer.sv     \
-    $(HDL_DIR)/scan_out.sv        \
-    $(HDL_DIR)/hdmi_out_zynq.sv   \
     $(HDL_DIR)/pcm1808_rx.sv      \
     $(HDL_DIR)/antic_raster.sv    \
     $(HDL_DIR)/antic_top.sv
 
 BUILD_DIR := build
 
-.PHONY: all smoke snoop read vbeam rp_bus dl_parse mode_f char_modes gfx_modes pm prior scroll nmi wsync palette dma_master mem_read_mux dma_int draw_regs pokey pokey_i2s sally sally_mem sally_arb bank_xlat hwreg_rd_cdc legacy_upscale plane_compositor plane_fetch axi_line_writer antic_writeback antic_raster pia_regs peri_link joy_link joy_bridge peri_bridge os_rom_load klaus visual lint clean xt_blitter sally_stack sally_isa sprite_regs sprite_fetcher sprite_compositor
+.PHONY: all smoke snoop read vbeam dl_parse prior nmi wsync palette dma_master mem_read_mux draw_regs pokey pokey_i2s sally sally_mem sally_arb bank_xlat hwreg_rd_cdc legacy_upscale plane_compositor plane_fetch axi_line_writer antic_writeback antic_raster pia_regs peri_link joy_link joy_bridge peri_bridge os_rom_load klaus lint clean xt_blitter sally_stack sally_isa sprite_regs sprite_fetcher sprite_compositor
 
-all: smoke snoop read vbeam rp_bus dl_parse mode_f char_modes gfx_modes pm prior scroll nmi wsync palette dma_master mem_read_mux dma_int draw_regs pokey pokey_i2s sally sally_mem sally_arb bank_xlat pia_regs peri_link joy_link joy_bridge peri_bridge os_rom_load pbi pcm1808_rx visual xt_blitter sprite_regs sprite_fetcher sprite_compositor
+# Retired tests (2026-05-25): rp_bus, mode_f, char_modes, gfx_modes, pm, scroll,
+# dma_int, visual all instantiated the v1 rp_bus injection harness
+# (rp_tx/rp_bus_mock) deleted in 2f3f03e.  The mode tests
+# (char_modes/gfx_modes/pm/scroll/visual) additionally relied on the
+# never-defined MODE_F_HDL var (empty -> even byte_ram/dl_parser/compositor went
+# missing); rp_bus/mode_f were already dangling no-op phonies (their tbs were
+# deleted too).  They drove ANTIC through the old serial-link mocks, superseded
+# by the compositor model.  Removed from the build rather than reviving
+# intentionally-deleted RTL.
+all: smoke snoop read vbeam dl_parse prior nmi wsync palette dma_master mem_read_mux draw_regs pokey pokey_i2s sally sally_mem sally_arb bank_xlat pia_regs peri_link joy_link joy_bridge peri_bridge os_rom_load pbi pcm1808_rx xt_blitter sprite_regs sprite_fetcher sprite_compositor
 
 # `klaus` is NOT in `all` — Klaus Dormann's full test takes ~96 M
 # cycles (≥10 minutes of iverilog wall-clock). Run it manually with
@@ -154,45 +160,9 @@ $(BUILD_DIR)/tb_dl_parse.vvp: $(DL_PARSE_HDL) tb_dl_parse.sv | $(BUILD_DIR)
 	$(IVERILOG) $(SV_FLAGS) -o $@ -s tb_dl_parse $(DL_PARSE_HDL) tb_dl_parse.sv
 
 
-# ---- M7 — char-mode compositor pipeline ---------------------------------
-# Same HDL set as mode_f — compositor handles all char modes too.
-char_modes: $(BUILD_DIR)/tb_char_modes.vvp
-	@echo "=== M7 char_modes ==="
-	@$(VVP) -N $< | tee $(BUILD_DIR)/tb_char_modes.log
-	@grep -q '\*\*\* CHAR_MODES OK \*\*\*' $(BUILD_DIR)/tb_char_modes.log || \
-	    (echo "FAIL: tb_char_modes missing CHAR_MODES OK"; exit 1)
-	@grep -q 'TRAP\|FATAL\|FAIL' $(BUILD_DIR)/tb_char_modes.log && \
-	    (echo "FAIL: tb_char_modes reported a trap"; exit 1) || true
-	@echo "PASS: tb_char_modes"
-
-$(BUILD_DIR)/tb_char_modes.vvp: $(MODE_F_HDL) tb_char_modes.sv $(HDL_DIR)/bus_opcodes.vh | $(BUILD_DIR)
-	$(IVERILOG) $(SV_FLAGS) -o $@ -s tb_char_modes $(MODE_F_HDL) tb_char_modes.sv
-
-# ---- M8 — graphics modes 8-E ---------------------------------------------
-gfx_modes: $(BUILD_DIR)/tb_gfx_modes.vvp
-	@echo "=== M8 gfx_modes ==="
-	@$(VVP) -N $< | tee $(BUILD_DIR)/tb_gfx_modes.log
-	@grep -q '\*\*\* GFX_MODES OK \*\*\*' $(BUILD_DIR)/tb_gfx_modes.log || \
-	    (echo "FAIL: tb_gfx_modes missing GFX_MODES OK"; exit 1)
-	@grep -q 'TRAP\|FATAL\|FAIL' $(BUILD_DIR)/tb_gfx_modes.log && \
-	    (echo "FAIL: tb_gfx_modes reported a trap"; exit 1) || true
-	@echo "PASS: tb_gfx_modes"
-
-$(BUILD_DIR)/tb_gfx_modes.vvp: $(MODE_F_HDL) tb_gfx_modes.sv $(HDL_DIR)/bus_opcodes.vh | $(BUILD_DIR)
-	$(IVERILOG) $(SV_FLAGS) -o $@ -s tb_gfx_modes $(MODE_F_HDL) tb_gfx_modes.sv
-
-# ---- M9 — P/M overlay -----------------------------------------------------
-pm: $(BUILD_DIR)/tb_pm.vvp
-	@echo "=== M9 pm ==="
-	@$(VVP) -N $< | tee $(BUILD_DIR)/tb_pm.log
-	@grep -q '\*\*\* PM OK \*\*\*' $(BUILD_DIR)/tb_pm.log || \
-	    (echo "FAIL: tb_pm missing PM OK"; exit 1)
-	@grep -q 'TRAP\|FATAL\|FAIL' $(BUILD_DIR)/tb_pm.log && \
-	    (echo "FAIL: tb_pm reported a trap"; exit 1) || true
-	@echo "PASS: tb_pm"
-
-$(BUILD_DIR)/tb_pm.vvp: $(MODE_F_HDL) tb_pm.sv $(HDL_DIR)/bus_opcodes.vh | $(BUILD_DIR)
-	$(IVERILOG) $(SV_FLAGS) -o $@ -s tb_pm $(MODE_F_HDL) tb_pm.sv
+# ---- M7/M8/M9 (char_modes / gfx_modes / pm) — RETIRED 2026-05-25 ----------
+# Depended on the deleted v1 rp_bus harness + undefined MODE_F_HDL.  See the
+# retirement note above the `all:` target.
 
 # ---- M10 — PRIOR / colour resolver ---------------------------------------
 prior: $(BUILD_DIR)/tb_prior.vvp
@@ -207,18 +177,7 @@ prior: $(BUILD_DIR)/tb_prior.vvp
 $(BUILD_DIR)/tb_prior.vvp: $(HDL_DIR)/color_resolver.sv tb_prior.sv | $(BUILD_DIR)
 	$(IVERILOG) $(SV_FLAGS) -o $@ -s tb_prior $(HDL_DIR)/color_resolver.sv tb_prior.sv
 
-# ---- M11 — HSCROL / VSCROL --------------------------------------------------
-scroll: $(BUILD_DIR)/tb_scroll.vvp
-	@echo "=== M11 scroll ==="
-	@$(VVP) -N $< | tee $(BUILD_DIR)/tb_scroll.log
-	@grep -q '\*\*\* SCROLL OK \*\*\*' $(BUILD_DIR)/tb_scroll.log || \
-	    (echo "FAIL: tb_scroll missing SCROLL OK"; exit 1)
-	@grep -q 'TRAP\|FATAL\|FAIL' $(BUILD_DIR)/tb_scroll.log && \
-	    (echo "FAIL: tb_scroll reported a trap"; exit 1) || true
-	@echo "PASS: tb_scroll"
-
-$(BUILD_DIR)/tb_scroll.vvp: $(MODE_F_HDL) tb_scroll.sv $(HDL_DIR)/bus_opcodes.vh | $(BUILD_DIR)
-	$(IVERILOG) $(SV_FLAGS) -o $@ -s tb_scroll $(MODE_F_HDL) tb_scroll.sv
+# ---- M11 — HSCROL / VSCROL — RETIRED 2026-05-25 (see note above `all:`) ---
 
 # ---- M12 — NMI generator -------------------------------------------------
 nmi: $(BUILD_DIR)/tb_nmi.vvp
@@ -304,27 +263,7 @@ MEM_MUX_HDL := \
 $(BUILD_DIR)/tb_mem_read_mux.vvp: $(MEM_MUX_HDL) tb_mem_read_mux.sv | $(BUILD_DIR)
 	$(IVERILOG) $(SV_FLAGS) -o $@ -s tb_mem_read_mux $(MEM_MUX_HDL) tb_mem_read_mux.sv
 
-# ---- M16-int-tb — DL through both modes integration test -----------------
-dma_int: $(BUILD_DIR)/tb_dma_int.vvp
-	@echo "=== M16-int-tb dma_int ==="
-	@$(VVP) -N $< | tee $(BUILD_DIR)/tb_dma_int.log
-	@grep -q '\*\*\* DMA_INT OK \*\*\*' $(BUILD_DIR)/tb_dma_int.log || \
-	    (echo "FAIL: tb_dma_int missing DMA_INT OK"; exit 1)
-	@grep -q 'TRAP\|FATAL\|FAIL' $(BUILD_DIR)/tb_dma_int.log && \
-	    (echo "FAIL: tb_dma_int reported a trap"; exit 1) || true
-	@echo "PASS: tb_dma_int"
-
-DMA_INT_HDL := \
-    $(HDL_DIR)/byte_ram.sv         \
-    $(HDL_DIR)/byte_ram_dp.sv      \
-    $(HDL_DIR)/dl_parser.sv        \
-    $(HDL_DIR)/compositor.sv       \
-    $(HDL_DIR)/dma_master.sv       \
-    $(HDL_DIR)/dma_arbiter.sv      \
-    $(HDL_DIR)/mem_read_mux.sv
-
-$(BUILD_DIR)/tb_dma_int.vvp: $(DMA_INT_HDL) tb_dma_int.sv $(HDL_DIR)/bus_opcodes.vh | $(BUILD_DIR)
-	$(IVERILOG) $(SV_FLAGS) -o $@ -s tb_dma_int $(DMA_INT_HDL) tb_dma_int.sv
+# ---- M16-int-tb (dma_int) — RETIRED 2026-05-25 (see note above `all:`) ----
 
 # ---- xt_blitter -- 2D GPU testbench --------------------------------------
 xt_blitter: $(BUILD_DIR)/tb_xt_blitter.vvp
@@ -778,18 +717,7 @@ sprite_compositor: $(BUILD_DIR)/tb_sprite_compositor.vvp
 $(BUILD_DIR)/tb_sprite_compositor.vvp: $(SPRITE_ENG_HDL) tb_sprite_compositor.sv | $(BUILD_DIR)
 	$(IVERILOG) $(SV_FLAGS) -o $@ -s tb_sprite_compositor $(SPRITE_ENG_HDL) tb_sprite_compositor.sv
 
-# ---- Visual smoke (no oracle, dumps PPMs only) ---------------------------
-visual: $(BUILD_DIR)/tb_visual.vvp
-	@echo "=== Visual ==="
-	@$(VVP) -N $< | tee $(BUILD_DIR)/tb_visual.log
-	@grep -q '\*\*\* VISUAL OK \*\*\*' $(BUILD_DIR)/tb_visual.log || \
-	    (echo "FAIL: tb_visual missing VISUAL OK"; exit 1)
-	@grep -q 'TRAP\|FATAL\|FAIL' $(BUILD_DIR)/tb_visual.log && \
-	    (echo "FAIL: tb_visual reported a trap"; exit 1) || true
-	@echo "PASS: tb_visual"
-
-$(BUILD_DIR)/tb_visual.vvp: $(MODE_F_HDL) tb_visual.sv $(HDL_DIR)/bus_opcodes.vh | $(BUILD_DIR)
-	$(IVERILOG) $(SV_FLAGS) -o $@ -s tb_visual $(MODE_F_HDL) tb_visual.sv
+# ---- Visual smoke — RETIRED 2026-05-25 (see note above `all:`) -----------
 
 $(BUILD_DIR):
 	@mkdir -p $@

@@ -743,10 +743,10 @@ module fpga_xt_top (
     // raw clock.  Its internal BASE_DIV parameter needs to match
     // our sally_clock BASE_DIV.
 
-    wire [4:0] antic_rgb_r;
-    wire [5:0] antic_rgb_g;
-    wire [4:0] antic_rgb_b;
-    wire       antic_rgb_hsync, antic_rgb_vsync, antic_rgb_de, antic_rgb_pixclk;
+    // task-0013 step 3: antic_rgb_* wires removed — antic_top's 800×600
+    // display chain (and its rgb_*_o/tmds_* outputs) is deleted; the HDMI pads
+    // are driven by the compositor → sprite chain, and the ANTIC image reaches
+    // the screen via the §5 writeback tap below.
 
     // ANTIC render tap → DDR3 writeback (video-arch §5, phase 2). All clk_sys
     // (= antic_top's clk_bus). Feeds antic_writeback (instantiated below) on
@@ -765,7 +765,6 @@ module fpga_xt_top (
         .LEGACY_RP        (1'b1)             // keep RP interfaces active
     ) u_antic_top (
         .clk_bus            (clk_sys),
-        .clk_pix            (clk_pix),
         .rst_n              (rst_sys_n),
         .bus_addr           (bus_addr_antic),
         .bus_data_in        (bus_data_in_antic),
@@ -786,18 +785,7 @@ module fpga_xt_top (
         .dma_addr_o         (),
         .dma_rw_o           (),
         .dma_oe             (),
-        .clk_bit            (1'b0),
-        .tmds_r             (),
-        .tmds_g             (),
-        .tmds_b             (),
-        .tmds_clk           (),
-        .rgb_r_o            (antic_rgb_r),
-        .rgb_g_o            (antic_rgb_g),
-        .rgb_b_o            (antic_rgb_b),
-        .rgb_hsync_o        (antic_rgb_hsync),
-        .rgb_vsync_o        (antic_rgb_vsync),
-        .rgb_de_o           (antic_rgb_de),
-        .rgb_pixclk_o       (antic_rgb_pixclk),
+        // task-0013 step 3: clk_pix/clk_bit/tmds_*/rgb_*_o ports removed.
         .diag_wsync_overdue_count(),
         .kbd_event_valid    (kbd_event_valid_q),
         .kbd_event_code     (kbd_event_code_q),
@@ -862,8 +850,8 @@ module fpga_xt_top (
     // it always scans a complete frame while the next is being written.
     //
     // XL surface geometry — two buffers A/B (spec §3), RGBA8888.  The native
-    // playfield is the nominal 320×192 GR.0 region (atari_row spans 0..191 in
-    // hdmi_out's vbeam; the active playfield is 320 px = 160 column-pairs).
+    // playfield is the nominal 320×192 GR.0 region (atari_row spans 0..191 from
+    // the phi2 raster timer; the active playfield is 320 px = 160 column-pairs).
     localparam [31:0] XL_BASE_A  = 32'h3100_0000;   // compositor reads when front_sel=0
     localparam [31:0] XL_BASE_B  = 32'h3110_0000;   // 1 MB apart; ≤320×192×4 ≈ 240 KB each
     localparam int    XL_SRC_W   = 320;             // active playfield width (px)

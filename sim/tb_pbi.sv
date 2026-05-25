@@ -21,13 +21,10 @@
 
 module tb_pbi;
 
-    // Clocks — keep them simple; phi2 = clk_bus/90 internally.
+    // Clock — keep it simple; phi2 = clk_bus/90 internally.  clk_pix/clk_bit
+    // dropped — task-0013 step 3 removed antic_top's 800×600 display chain.
     logic clk_bus = 1'b0;
-    logic clk_pix = 1'b0;
-    logic clk_bit = 1'b0;
     always #3.5    clk_bus = ~clk_bus;   // ~143 MHz half-period 3.5 ns
-    always #19.860 clk_pix = ~clk_pix;
-    always #1.500  clk_bit = ~clk_bit;
 
     // Bus stimulus inputs.
     logic        rst_n       = 1'b0;
@@ -55,7 +52,6 @@ module tb_pbi;
 
     antic_top u_dut (
         .clk_bus                  (clk_bus),
-        .clk_pix                  (clk_pix),
         .rst_n                    (rst_n),
         .bus_addr                 (bus_addr),
         .bus_data_in              (bus_data_in),
@@ -82,7 +78,6 @@ module tb_pbi;
         .halt_n                   (halt_n),
         .rdy_n                    (rdy_n),
         .irq_n                    (irq_n),
-        .clk_bit                  (clk_bit),
         .spi_miso                 (1'b1),
         .spi_irq                  (1'b1),
         .joy_spi_miso             (1'b1),

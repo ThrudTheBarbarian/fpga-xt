@@ -239,9 +239,12 @@ count lines:     262 → vbi_start, atari_row = 0
   the emulation-timing-sensitive part; gate it behind the existing phi2/CPU
   conformance (Klaus is unaffected — it's already phi2-based).
 
-Status: **specced, not built** — see `prompts/task-0013-antic-native-raster.md`.
-The phase-2 window (§5 wiring, committed) keeps the 800×600 heartbeat until
-this lands.
+Status: **built** (task-0013, 2026-05-25) — see
+`prompts/task-0013-antic-native-raster.md`.  `antic_raster` paces ANTIC off
+phi2 and the 800×600 display chain is deleted; ANTIC's only image path is the
+§5 writeback tap.  Remaining: the per-row render trigger is still the
+free-running `kick_counter` scaffold (the "coupled scope" below), not yet a
+true per-scanline display-list walk.
 
 ## 6. Unified sprite engine
 
@@ -438,10 +441,13 @@ register re-partition (§9); double-buffer/front-sel plumbing (§3).
 - STe/TT emulation on ARM core1 (software 68k); its DDR3 surface + plane.
 - Configurable boot-direct-to-XL (skip the desktop).
 - Visible-span-only plane fetch (bandwidth optimisation).
-- ANTIC native raster sequencer (§5.1): replace the 800×600 `vbeam` heartbeat
-  with a phi2-derived line/frame/row timer; delete the dead display chain
-  (`hdmi_out`/`scan_out`/native `line_buffer`/display `palette_lut`).
-  Specced in `prompts/task-0013-antic-native-raster.md`.
+- ANTIC native raster (§5.1) — **DONE** (task-0013, 2026-05-25): the 800×600
+  `vbeam` heartbeat is replaced by the phi2-derived line/frame/row timer
+  (`antic_raster`), and the dead display chain (`hdmi_out`/`scan_out`/native
+  `line_buffer`/display `palette_lut`) is deleted — ANTIC reaches the screen
+  only via the §5 writeback tap.  One sub-item remains deferred: the per-row
+  render *trigger* is still the free-running `kick_counter` scaffold, not a true
+  per-scanline display-list walk (the §5.1 "coupled scope").
 
 ## 13. Open sizing questions (resolve during implementation)
 

@@ -11,11 +11,10 @@
 
 module tb_smoke;
 
-    // Clocks: 21.5 MHz bus_clk (12× NTSC baseline), 25.175 MHz pix_clk.
+    // Clock: 21.5 MHz bus_clk (12× NTSC baseline).  clk_pix dropped —
+    // task-0013 step 3 removed antic_top's 800×600 display chain.
     logic clk_bus = 1'b0;
-    logic clk_pix = 1'b0;
     always #23.256 clk_bus = ~clk_bus;   // ~21.5 MHz: half-period 23.256 ns
-    always #19.860 clk_pix = ~clk_pix;   // 25.175 MHz: half-period 19.860 ns
 
     // Bus inputs.
     logic        rst_n      = 1'b0;
@@ -33,7 +32,6 @@ module tb_smoke;
 
     antic_top u_dut (
         .clk_bus                  (clk_bus),
-        .clk_pix                  (clk_pix),
         .rst_n                    (rst_n),
         .bus_addr                 (bus_addr),
         .bus_data_in              (bus_data_in),

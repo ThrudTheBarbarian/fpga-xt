@@ -1,8 +1,13 @@
-# task-0013 — ANTIC native raster sequencer (retire the 800×600 heartbeat)
+# task-0013 — ANTIC native raster heartbeat (retire the 800×600 heartbeat)
 
-**Status: SPECCED, not built.**  Design agreed 2026-05-25 (see
-`docs/video-architecture.md` §5.1).  Do NOT start without re-reading §5.1 +
-§5 + §10 of the spec.  Branch context: `video-compositor`.
+**Status: DONE (2026-05-25).**  Steps 1-3 complete: `antic_raster` paces ANTIC
+off phi2 (steps 1-2) and the dead 800×600 display chain is deleted (step 3).
+ANTIC's only image path is now the §5 writeback tap.  The per-scanline render
+*sequencer* (the §5.1 "coupled scope" — replacing the free-running
+`kick_counter` trigger) is split out to **task-0014** and is NOT part of this
+task.  win10 re-synth deferred to task-0014 (measure the intended end state).
+Design agreed 2026-05-25 (see `docs/video-architecture.md` §5.1).  Branch
+context: `video-compositor`.
 
 ## Why
 In the compositor model ANTIC is a *window source*, not a display owner, yet
@@ -96,8 +101,29 @@ ANTIC source list. Verified: fpga_xt_top parse baseline-only; make lint clean;
 antic_top tbs (smoke/snoop/read/pbi) + submodule tbs green; tb_antic_raster
 green.
 
-**Step 3 — delete the dead display chain** (NOT started; pure cleanup, no
-functional effect — the chain is already bypassed). In hdl/antic_top.sv DELETE:
+**Step 3 DONE** (uncommitted): deleted the dead 800×600 display chain. In
+hdl/antic_top.sv: removed the clk_pix CDC FFs (lb_wr_strobe_pix_sync,
+lb_wr_addr/data_pix, lb_rd_addr/data), the native line_buffer, scan_out, the
+display palette_lut, hdmi_out, the rgb_*_o assigns, the dead vbeam-CDC sync FFs
++ hdmi_* forward decls; dropped ports clk_pix / clk_bit / tmds_{r,g,b,clk} /
+rgb_{r,g,b}_o / rgb_{hsync,vsync,de,pixclk}_o. KEPT the lb_wr_*_bus_q render
+generator + the wb_* writeback tap + color_resolver + compositor + dl_parser +
+the writeback's own palette_lut. Updated fpga_xt_top (dropped the port conns +
+the dead antic_rgb_* wires; clk_pix stays for the real 1080p chain), the 4
+antic_top tbs (smoke/snoop/read drop clk_pix; pbi drops clk_pix+clk_bit), and
+the sim ANTIC source list. DELETED the now-orphaned files hdl/hdmi_out_zynq.sv,
+hdl/scan_out.sv, hdl/line_buffer.sv (palette_lut.sv + vbeam.sv kept — still
+shared). Verified: make -C sim lint PASS (lost the hdmi_out_zynq DECLFILENAME
+warning); fpga_xt_top verilator parse = baseline MODMISSING only, and a HEAD-vs-
+worktree diagnostic diff shows ZERO new warnings (8 removed: tmds_* tie-offs +
+hdmi_out's v_count/period/frame_start empty pins + DECLFILENAME); tb_antic_raster
++ smoke/snoop/read/pbi/pokey/pia_regs/hwreg_rd_cdc + all other building ANTIC
+sims green. Pre-existing broken (NOT this change, confirmed at HEAD): tb_dma_int
++ tb_char_modes/gfx_modes/pm/scroll/visual (all miss the nonexistent rp_tx/
+rp_bus_mock mocks), tb_xt_blitter (functional "3 write beats" fail). STILL TODO:
+win10 re-synth to re-measure clk_sys/clk_sally + utilisation drop.
+
+**Original step-3 plan (for reference):** In hdl/antic_top.sv DELETE:
 - hdmi_out (u_hdmi_out) + the hdmi_* forward decls (hdmi_vcount/atari_row/
   vbi_start/line_start/h_count/de/hsync/vsync).
 - scan_out (u_scan_out) + pix_idx*/pix_*_w.

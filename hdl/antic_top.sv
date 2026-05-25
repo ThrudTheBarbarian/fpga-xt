@@ -33,7 +33,9 @@ module antic_top #(
 ) (
     // System clock + reset
     input  wire        clk_bus,         // phi2 × CLOCK_MULT — see register $D480
-    input  wire        clk_pix,         // 25.175 MHz (640x480) / 40 MHz (800x600)
+    // task-0013 step 3: clk_pix input removed — the 800×600 display chain
+    // (line_buffer/scan_out/palette_lut/hdmi_out) is deleted; ANTIC is paced
+    // by the phi2 raster (antic_raster) and is a window *source*, not a display.
     // Zynq build: clk_pssi removed (no PSSI).
     input  wire        rst_n,           // /G_RST, active-low (sync'd internally)
     // Zynq build: rst_pssi_n removed (no PSSI).
@@ -129,29 +131,13 @@ module antic_top #(
     output wire        dma_rw_o,
     output wire        dma_oe,
 
-    // ---- TMDS / HDMI output (M-video-int — POR) ----------------------
-    // Pix-clock domain video output. clk_pix is the pixel-rate clock
-    // (25.175 MHz for 640x480 / 40 MHz for 800x600); clk_bit is 5×
-    // clk_pix (125.875 / 200 MHz) and drives the OSER10 serializers
-    // inside hdmi_out. The four serial outputs go to the HDMI/DVI pads
-    // via Efinix LVDS-class differential drivers in the synth wrapper.
-    input  wire        clk_bit,
-    output wire        tmds_r,
-    output wire        tmds_g,
-    output wire        tmds_b,
-    output wire        tmds_clk,
-
-    // ---- Parallel RGB565 output (Zynq / SiI9022A path) -----------------
-    // Driven in parallel with the TMDS path.  On Zynq builds, hdmi_out
-    // produces RGB565 + sync on these ports instead of serial TMDS.
-    // On legacy Efinix builds these are unused (feed nc in the wrapper).
-    output wire [4:0]  rgb_r_o,
-    output wire [5:0]  rgb_g_o,
-    output wire [4:0]  rgb_b_o,
-    output wire        rgb_hsync_o,
-    output wire        rgb_vsync_o,
-    output wire        rgb_de_o,
-    output wire        rgb_pixclk_o,
+    // ---- TMDS / RGB video output — REMOVED (task-0013 step 3) ---------
+    // The 800×600 display chain that owned these pads (hdmi_out's TMDS
+    // serializers + the parallel RGB565/SiI9022A path) is deleted.  In the
+    // compositor model the HDMI pads are driven by the top-level compositor →
+    // sprite chain, not by ANTIC.  clk_bit (the 5× serializer clock) goes with
+    // it.  The ANTIC image now reaches the screen via the §5 writeback tap
+    // (wb_* below) → DDR3 XL surface → compositor.
 
     // Diagnostic counters (consumed by serial-link logic in later milestones)
     output wire [31:0] diag_wsync_overdue_count,
@@ -262,9 +248,9 @@ module antic_top #(
     // ---- ANTIC render tap → compositor writeback (video-arch §5, phase 2) --
     // The per-pixel-pair render stream, palette writes and frame/line pulses
     // that drive the ANTIC->DDR3 writeback master (antic_writeback) at the
-    // top level.  All clk_bus domain (= clk_sys in this build).  These tap
-    // the SAME signals that feed the (now display-bypassed) native line_buffer
-    // + palette_lut chain, so the DDR3 XL surface mirrors the legacy image.
+    // top level.  All clk_bus domain (= clk_sys in this build).  This is now
+    // ANTIC's ONLY image output path — the 800×600 line_buffer/scan_out/
+    // palette_lut/hdmi_out display chain was deleted in task-0013 step 3.
     output wire        wb_pix_valid,    // 1-cycle pulse: a pixel-PAIR is ready
     output wire [7:0]  wb_pix_pair,     // pair index within the line (col/2)
     output wire [7:0]  wb_color_lo,     // 8-bit Atari colour code, even column
@@ -472,51 +458,18 @@ module antic_top #(
     wire        os_rom_we;
     wire        os_rom_locked_q;
 
-    // ---- vbeam feedback from hdmi_out (clk_pix) → CDC → clk_bus ------
-    // hdmi_out's internal vbeam exposes vcount, atari_row, vbi_start,
-    // line_start. The register file ($D40B VCOUNT, $D40F NMIST) and
-    // nmi_gen consume these in clk_bus. CDC: 2-FF synchroniser per
-    // bit on the slow-changing buses (~1 transition per scan line ≈
-    // tens of µs ≫ clk_bus period); pulse signals get edge-detected
-    // post-sync.
+    // ---- Raster heartbeat — phi2-paced (antic_raster, instanced above) --
+    // VCOUNT / atari_row / line_start / vbi_start all come from the phi2
+    // raster timer now.  The old 800×600 vbeam-feedback CDC (clk_pix →
+    // clk_bus 2-FF sync of hdmi_out's vbeam) was deleted in task-0013 step 3
+    // along with the display chain that drove it.
     //
-    // Forward declarations — these signals are driven by hdmi_out (in
-    // the video-pipeline block further down) and consumed up here for
-    // the CDC.
-    wire [7:0]  hdmi_vcount;
-    wire [15:0] hdmi_atari_row;
-    wire        hdmi_vbi_start;
-    wire        hdmi_line_start;
     // Forward declarations for nmi_gen outputs (block further down).
     wire [7:0]  nmist_q;
     wire [7:0]  nmi_cur_row;
     wire        nmi_cur_row_dli;
     wire        nmi_n_w;
 
-    logic [7:0]  vcount_sync_q1, vcount_sync_q2;
-    logic [15:0] atari_row_sync_q1, atari_row_sync_q2;
-    logic [2:0]  vbi_start_sync;
-    logic [2:0]  line_start_sync;
-    always_ff @(posedge clk_bus or posedge rst_bus) begin
-        if (rst_bus) begin
-            vcount_sync_q1    <= 8'h00;
-            vcount_sync_q2    <= 8'h00;
-            atari_row_sync_q1 <= 16'h0000;
-            atari_row_sync_q2 <= 16'h0000;
-            vbi_start_sync    <= 3'b0;
-            line_start_sync   <= 3'b0;
-        end else begin
-            vcount_sync_q1    <= hdmi_vcount;
-            vcount_sync_q2    <= vcount_sync_q1;
-            atari_row_sync_q1 <= hdmi_atari_row;
-            atari_row_sync_q2 <= atari_row_sync_q1;
-            vbi_start_sync    <= {vbi_start_sync[1:0],  hdmi_vbi_start};
-            line_start_sync   <= {line_start_sync[1:0], hdmi_line_start};
-        end
-    end
-    // Heartbeat pulses now come from the phi2-paced antic_raster (above), not
-    // the 800×600 vbeam CDC.  The vcount/atari_row/vbi/line sync chain above is
-    // dead (its hdmi_* sources are deleted with the display chain in step 3).
     wire        vbi_start_pulse_bus  = ar_vbi_start;
     wire        line_start_pulse_bus = ar_line_start;
 
@@ -1395,35 +1348,24 @@ module antic_top #(
     // halt_n is driven by dma_master (M16-int).
     assign rdy_n  = wsync_rdy_w;       // 1 = ready, 0 = stall (active-high naming, despite the _n suffix)
 
-    // ---- Video pipeline (M-video-int — TMDS POR) ---------------------
-    // compositor → line_buffer → scan_out → palette_lut → hdmi_out → TMDS pads.
+    // ---- ANTIC render-tap source (video-arch §5) --------------------
+    // The 800×600 display chain (compositor → line_buffer → scan_out →
+    // palette_lut → hdmi_out → TMDS pads) was deleted in task-0013 step 3.
+    // In the compositor model ANTIC is a window *source*: its rendered line
+    // is captured by the §5 writeback into a DDR3 XL surface and scanned out
+    // by the top-level 1080p compositor, not by a local display.
     //
-    //   line_buffer   : ping-pong, dual-clock (clk_bus write, clk_pix read).
-    //                   Writer is the compositor; pair-index counter resets
-    //                   on each line_start (CDC'd from clk_pix).
-    //   scan_out      : reads 1 atari px per pix_clk, doubles to native
-    //                   px (320 → 640), applies HSCROL.
-    //   palette_lut   : 256 × RGB888. Writes from antic_regs ($D483-$D486).
-    //                   Reads in clk_pix.
-    //   hdmi_out      : owns vbeam timing. rgb_r/g/b inputs sampled
-    //                   cycle-aligned to its internal h_count.
+    // What remains is the clk_bus render-stream generator that feeds the
+    // writeback tap (wb_pix_* below): a per-line column-pair counter advanced
+    // by each accepted compositor pair and reset by the phi2 raster's
+    // line_start_pulse_bus.  (The old clk_pix CDC, line_buffer, scan_out,
+    // display palette_lut and hdmi_out are gone — line_start_pulse_bus now
+    // comes from antic_raster, not a vbeam.)
+    localparam int LB_WIDTH    = 384;                // active playfield (px)
+    localparam int LB_WR_AW    = $clog2(LB_WIDTH/2); // 8 (column-pair index)
 
-    // hdmi_line_start (clk_pix pulse) is captured + edge-detected by the
-    // 2-FF sync chain at the top of the antic_regs section, producing
-    // `line_start_pulse_bus`. The line_buffer's write-pair counter
-    // (below) and nmi_gen both consume that single pulse.
-
-    // ---- Line-buffer (clk_pix domain) + CDC for compositor writes -----
-    // line_buffer is a single-clock module; we run it in clk_pix so
-    // scan_out reads cleanly. Compositor writes are CDC'd from clk_bus
-    // to clk_pix via 2-FF synchroniser on the wr_en pulse + held wr_*
-    // payload.
-    localparam int LB_WIDTH    = 384;
-    localparam int LB_RD_AW    = $clog2(LB_WIDTH);   // 9
-    localparam int LB_WR_AW    = $clog2(LB_WIDTH/2); // 8
-
-    // Write-side counter (clk_bus). Resets at line_start, increments per
-    // accepted compositor pair. Held registers source the CDC'd write.
+    // Column-pair counter (clk_bus). Resets at line_start, increments per
+    // accepted compositor pair; the held registers source the render tap.
     logic [LB_WR_AW-1:0] lb_wr_pair_bus_q;
     logic [15:0]         lb_wr_data_bus_q;
     logic                lb_wr_strobe_bus_q;
@@ -1444,150 +1386,11 @@ module antic_top #(
         end
     end
 
-    // CDC: 2-FF synchroniser on the strobe (clk_bus → clk_pix). Address
-    // and data are held stable in clk_bus across the strobe window; in
-    // clk_pix the rising edge fires a single write at the captured
-    // address.
-    logic [2:0] lb_wr_strobe_pix_sync;
-    always_ff @(posedge clk_pix or posedge rst_bus) begin
-        if (rst_bus) lb_wr_strobe_pix_sync <= 3'b0;
-        else         lb_wr_strobe_pix_sync <= {lb_wr_strobe_pix_sync[1:0],
-                                               lb_wr_strobe_bus_q};
-    end
-    wire lb_wr_pix_pulse = lb_wr_strobe_pix_sync[1] & ~lb_wr_strobe_pix_sync[2];
-
-    // Address/data captured one cycle before the synchronised pulse —
-    // since the bus-side held them through the strobe, sampling them
-    // on the rising edge in clk_pix is safe.
-    wire [LB_WR_AW-1:0] lb_wr_addr_pix = lb_wr_pair_bus_q;
-    wire [15:0]         lb_wr_data_pix = lb_wr_data_bus_q;
-
-    wire [LB_RD_AW-1:0] lb_rd_addr;
-    wire [7:0]          lb_rd_data;
-
-    line_buffer #(.WIDTH(LB_WIDTH)) u_line_buffer (
-        .clk    (clk_pix),
-        .rst    (rst_bus),
-        .wr_en  (lb_wr_pix_pulse),
-        .wr_addr(lb_wr_addr_pix),
-        .wr_data(lb_wr_data_pix),
-        .rd_addr(lb_rd_addr),
-        .rd_data(lb_rd_data),
-        .swap   (hdmi_line_start)
-    );
-
-    // ---- scan_out (clk_pix) -------------------------------------------
-    wire [11:0] hdmi_h_count;
-    wire        hdmi_de, hdmi_hsync_w, hdmi_vsync_w;
-    wire        rst_pix = rst_bus;        // simple — not synced to clk_pix yet
-
-    wire [7:0] pix_idx_r, pix_idx_g, pix_idx_b;   // grayscale-bytes from scan_out
-    wire       pix_de_w, pix_hsync_w, pix_vsync_w;
-
-    scan_out #(.LB_RD_AW(LB_RD_AW)) u_scan_out (
-        .clk_pix    (clk_pix),
-        .rst        (rst_pix),
-        .in_active  (hdmi_de),       // hdmi_out's de = h_active && v_active
-        .h_active   (hdmi_de),
-        .hsync      (hdmi_hsync_w),
-        .vsync      (hdmi_vsync_w),
-        .h_count    (hdmi_h_count),
-        .line_hscrol(4'h0),           // M5+ DL-parser populates per-line; tied 0 for now
-        .lb_rd_addr (lb_rd_addr),
-        .lb_rd_data (lb_rd_data),
-        .pix_r      (pix_idx_r),
-        .pix_g      (pix_idx_g),
-        .pix_b      (pix_idx_b),
-        .pix_de     (pix_de_w),
-        .pix_hsync  (pix_hsync_w),
-        .pix_vsync  (pix_vsync_w)
-    );
-
-    // pix_idx_{r,g,b} are all the same byte (= line-buffer idx in M4
-    // grayscale mode). Use any channel as the palette read address.
-    wire [7:0] pix_idx = pix_idx_r;
-
-    // ---- palette_lut (clk_pix domain) --------------------------------
-    // The palette runs in clk_pix because reads dominate. Writes from
-    // antic_regs (clk_bus) are CDC'd via a 2-FF synchroniser on the
-    // commit strobe; the address + data are held stable in clk_bus
-    // across the strobe so a single sync gives correct results.
-    logic [2:0]  pal_strobe_pix_sync;
-    logic [7:0]  pal_idx_pix_q;
-    logic [23:0] pal_data_pix_q;
-    always_ff @(posedge clk_pix or posedge rst_bus) begin
-        if (rst_bus) begin
-            pal_strobe_pix_sync <= 3'b0;
-            pal_idx_pix_q       <= 8'h00;
-            pal_data_pix_q      <= 24'h0;
-        end else begin
-            pal_strobe_pix_sync <= {pal_strobe_pix_sync[1:0], pal_write_strobe};
-            // Sample the latched bus-domain payload on every edge —
-            // antic_regs holds it stable through the commit cycle.
-            pal_idx_pix_q       <= pal_idx_q;
-            pal_data_pix_q      <= {pal_r_q, pal_g_q, pal_b_q};
-        end
-    end
-    wire pal_we_pix = pal_strobe_pix_sync[1] & ~pal_strobe_pix_sync[2];
-
-    wire [23:0] palette_rgb_w;
-    palette_lut u_palette (
-        .clk    (clk_pix),
-        .we     (pal_we_pix),
-        .waddr  (pal_idx_pix_q),
-        .wdata  (pal_data_pix_q),
-        .raddr  (pix_idx),
-        .rdata  (palette_rgb_w)
-    );
-
-    // ---- hdmi_out — owns vbeam, drives TMDS pads ----------------------
-    hdmi_out u_hdmi_out (
-        .clk_pix          (clk_pix),
-        .clk_bit          (clk_bit),
-        .rst              (rst_pix),
-        .rgb_r            (palette_rgb_w[23:16]),
-        .rgb_g            (palette_rgb_w[15:8]),
-        .rgb_b            (palette_rgb_w[7:0]),
-        .audio_l0         (audio_l0),
-        .audio_l1         (audio_l1),
-        .audio_l2         (audio_l2),
-        .audio_l3         (audio_l3),
-        .audio_r0         (audio_r0),
-        .audio_r1         (audio_r1),
-        .audio_r2         (audio_r2),
-        .audio_r3         (audio_r3),
-        .audio_present    (audio_present),
-        .audio_flat       (audio_flat),
-        .audio_block_start(audio_block_start),
-        .pkt_select       (3'b000),         // video-only for now; M15b extends
-        .h_count          (hdmi_h_count),
-        .v_count          (),
-        .de               (hdmi_de),
-        .hsync            (hdmi_hsync_w),
-        .vsync            (hdmi_vsync_w),
-        .line_start       (hdmi_line_start),
-        .frame_start      (),
-        .vbi_start        (hdmi_vbi_start),
-        .atari_row        (hdmi_atari_row),
-        .vcount           (hdmi_vcount),
-        .period           (),
-        .tmds_r           (tmds_r),
-        .tmds_g           (tmds_g),
-        .tmds_b           (tmds_b),
-        .tmds_clk         (tmds_clk)
-    );
-
-    // ---- Parallel RGB565 output (Zynq / SiI9022A path) -----------------
-    // Down-sample palette RGB888 to RGB565 and forward sync signals from
-    // vbeam.  On Zynq, these drive the SiI9022A HDMI transmitter directly;
-    // on legacy TMDS builds they're unconnected (nc in the synth wrapper).
-    assign rgb_r_o     = palette_rgb_w[23:19];    // 8-bit R → top 5 bits
-    assign rgb_g_o     = palette_rgb_w[15:10];    // 8-bit G → top 6 bits
-    assign rgb_b_o     = palette_rgb_w[7:3];      // 8-bit B → top 5 bits
-    assign rgb_hsync_o = hdmi_hsync_w;
-    assign rgb_vsync_o = hdmi_vsync_w;
-    assign rgb_de_o    = hdmi_de;
-    assign rgb_pixclk_o = clk_pix;
+    // (No clk_pix CDC / line_buffer / scan_out / display palette_lut /
+    // hdmi_out / RGB565 output here any more — task-0013 step 3 deleted the
+    // 800×600 display chain.  lb_wr_pair_bus_q / lb_wr_data_bus_q /
+    // lb_wr_strobe_bus_q above are surfaced directly to the §5 writeback tap
+    // at the bottom of this module.)
 
     // ============================================================
     // N6 PERIPHERAL INTERFACE — Zynq build stubs
@@ -1605,9 +1408,9 @@ module antic_top #(
     // ---- ANTIC render tap → compositor writeback (video-arch §5) -------
     // Surface the clk_bus render stream / palette / frame pulses for the
     // top-level antic_writeback master.  lb_wr_pair_bus_q / _data_bus_q /
-    // _strobe_bus_q advance one column-pair per accepted compositor pair
-    // (the same stream that fed the native line_buffer); atari_row /
-    // line_start / vbi_start are the CDC'd hdmi_out vbeam pulses.
+    // _strobe_bus_q advance one column-pair per accepted compositor pair;
+    // atari_row / line_start / vbi_start come from the phi2 raster timer
+    // (antic_raster) — see line_start_pulse_bus / vbi_start_pulse_bus above.
     assign wb_pix_valid = lb_wr_strobe_bus_q;
     assign wb_pix_pair  = lb_wr_pair_bus_q;
     assign wb_color_lo  = lb_wr_data_bus_q[7:0];

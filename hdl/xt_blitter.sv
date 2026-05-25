@@ -602,29 +602,29 @@ module xt_blitter #(
         cq_front_bram_q <= cmd_fifo[cq_tail];
     end
 
-    // Pipeline register for the combinational empty flag so the bypass
-    // register (below) can use pipelined control signals for consistent
-    // timing.  Captures cq_empty_w one cycle after the count changes,
-    // matching the cq_push_q / cmd_snapshot_q pipeline.
-    logic         cq_empty_q;
-    always_ff @(posedge clk) begin
-        cq_empty_q <= cq_empty_w;
-    end
-
     // Bypass register — holds the snapshot from the most recent push-to-
     // empty, since the BRAM read collides with that write and returns
-    // stale data the next cycle (read-first mode).  Uses pipelined
-    // signals (cq_push_q, cmd_snapshot_q, cq_empty_q) so every path
-    // from source registers (flags_reg, etc.) passes through at least
-    // one FF before reaching the BRAM DI or this bypass register's DI
-    // — fixing 0-logic-level hold violations on the BRAM data port.
+    // stale data the next cycle (read-first mode).  Data path is pipelined
+    // (cq_push_q, cmd_snapshot_q) so every path from source registers
+    // (flags_reg, etc.) passes through at least one FF before reaching the
+    // BRAM DI or this bypass register's DI — fixing 0-logic-level hold
+    // violations on the BRAM data port.
+    //
+    // The arming condition MUST be "pushing while the queue is empty right
+    // now" — i.e. (cq_count == 0) at the cq_push_q cycle, the exact moment
+    // head == tail and the BRAM write/read collide.  This is the SAME
+    // condition cq_front_valid uses below; they must agree.  (An earlier
+    // version armed on a 1-cycle-delayed empty flag, which disagreed when a
+    // command was pushed into a queue that drained on the very same cycle
+    // — that push-to-just-emptied case left the bypass un-armed, so the FSM
+    // popped stale BRAM data instead of the command and silently dropped it.)
     logic         cq_bypass_valid_q;
     logic [191:0] cq_bypass_data_q;
     always_ff @(posedge clk) begin  // sync reset — see note at `rst` port
         if (rst) begin
             cq_bypass_valid_q <= 1'b0;
             cq_bypass_data_q  <= '0;
-        end else if (cq_push_q && cq_empty_q) begin
+        end else if (cq_push_q && (cq_count == '0)) begin
             cq_bypass_valid_q <= 1'b1;
             cq_bypass_data_q  <= cmd_snapshot_q;
         end else if (cq_pop) begin
@@ -1064,9 +1064,19 @@ module xt_blitter #(
     // ---- AXI output --------------------------------------------------------
     assign m_axi_bready  = 1'b1;
     // awsize/awburst are set procedurally in S_AW (rect) and L_PLOT (line).
-    // busy = FSM not idle OR work still queued — software polls this to
-    // know when a batch of CMDs has fully drained.
-    assign busy          = (state != S_IDLE) || !cq_empty_w;
+    // busy = FSM not idle OR work still queued OR a CMD in flight in the push
+    // pipeline — software (and tb wait_idle) polls this to know when a batch of
+    // CMDs has fully drained.  The cq_push_q term is essential: a CMD write
+    // takes two cycles to reach cq_count (cq_push -> cq_push_q -> count), so
+    // without it busy can momentarily read 0 the cycle after a CMD write while
+    // the previous op's fill is finishing — a false "idle" that makes a poller
+    // (or wait_idle) stop one command early and silently drop it.  Only the
+    // REGISTERED cq_push_q is used here, not the combinational cq_push: cq_push
+    // feeds sync_direct (which gates on !busy), so including it would form a
+    // busy -> cq_push -> sync_direct -> busy combinational loop.  cq_push_q is a
+    // flop output, so it breaks the loop while still covering the gap (software
+    // reads STATUS at least one cycle after writing CMD).
+    assign busy          = (state != S_IDLE) || !cq_empty_w || cq_push_q;
     // cq_pop fires when S_IDLE sees a non-empty queue AND the prefetched
     // entry is valid.  cq_front_valid hides the BRAM 1-cycle read latency
     // and the push-to-empty bypass takes care of the first-CMD case.
