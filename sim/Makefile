@@ -56,7 +56,7 @@ HDL_SRCS := \
 
 BUILD_DIR := build
 
-.PHONY: all smoke snoop read vbeam rp_bus dl_parse mode_f char_modes gfx_modes pm prior scroll nmi wsync palette dma_master mem_read_mux dma_int draw_regs pokey pokey_i2s sally sally_mem sally_arb bank_xlat hwreg_rd_cdc legacy_upscale pia_regs peri_link joy_link joy_bridge peri_bridge os_rom_load klaus visual lint clean xt_blitter sally_stack sally_isa sprite_regs sprite_fetcher sprite_compositor
+.PHONY: all smoke snoop read vbeam rp_bus dl_parse mode_f char_modes gfx_modes pm prior scroll nmi wsync palette dma_master mem_read_mux dma_int draw_regs pokey pokey_i2s sally sally_mem sally_arb bank_xlat hwreg_rd_cdc legacy_upscale plane_compositor pia_regs peri_link joy_link joy_bridge peri_bridge os_rom_load klaus visual lint clean xt_blitter sally_stack sally_isa sprite_regs sprite_fetcher sprite_compositor
 
 all: smoke snoop read vbeam rp_bus dl_parse mode_f char_modes gfx_modes pm prior scroll nmi wsync palette dma_master mem_read_mux dma_int draw_regs pokey pokey_i2s sally sally_mem sally_arb bank_xlat pia_regs peri_link joy_link joy_bridge peri_bridge os_rom_load pbi pcm1808_rx visual xt_blitter sprite_regs sprite_fetcher sprite_compositor
 
@@ -562,6 +562,17 @@ legacy_upscale: $(BUILD_DIR)/tb_legacy_upscale.vvp
 
 $(BUILD_DIR)/tb_legacy_upscale.vvp: $(HDL_DIR)/legacy_upscale.sv $(HDL_DIR)/palette_lut.sv tb_legacy_upscale.sv | $(BUILD_DIR)
 	$(IVERILOG) $(SV_FLAGS) -o $@ -s tb_legacy_upscale $(HDL_DIR)/legacy_upscale.sv $(HDL_DIR)/palette_lut.sv tb_legacy_upscale.sv
+
+# ---- plane_compositor — multi-plane compositor core (video arch phase 1) -
+plane_compositor: $(BUILD_DIR)/tb_plane_compositor.vvp
+	@echo "=== plane_compositor — multi-plane compositor core ==="
+	@$(VVP) -N $< | tee $(BUILD_DIR)/tb_plane_compositor.log
+	@grep -q '\*\*\* PLANE_COMPOSITOR OK \*\*\*' $(BUILD_DIR)/tb_plane_compositor.log || \
+	    (echo "FAIL: tb_plane_compositor missing PLANE_COMPOSITOR OK"; exit 1)
+	@echo "PASS: tb_plane_compositor"
+
+$(BUILD_DIR)/tb_plane_compositor.vvp: $(HDL_DIR)/plane_compositor.sv $(HDL_DIR)/vbeam.sv tb_plane_compositor.sv | $(BUILD_DIR)
+	$(IVERILOG) $(SV_FLAGS) -o $@ -s tb_plane_compositor $(HDL_DIR)/plane_compositor.sv $(HDL_DIR)/vbeam.sv tb_plane_compositor.sv
 
 # ---- M25-2 — peri_link FPGA-side SPI master ------------------------------
 peri_link: $(BUILD_DIR)/tb_peri_link.vvp
