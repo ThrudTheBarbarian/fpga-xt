@@ -1,0 +1,67 @@
+$D000 - $D01F CTIA/GTIA (stock hardware)
+$D020 - $D03F reserved for second GTIA
+$D040 - $D05F reserved for third GTIA
+$D080 - $D0FF VBXE soft reset area
+
+$D100 - $D1FF PBI
+$D100 - $D107 MyIDE Internal
+$D100 - $D1BE U1MB RAM
+$D1BF         U1MB PBI Bankswitching
+$D100,  $D104, 1400XL/1450XLD Modem, Voice and Disk interface
+$D108,  $D110 "
+$D114         "
+$D170 - $D171 BlackBox
+$D17C,  $D1BC "
+$D1BE,  $D1C0 "
+$D1C0 - $D1C1 SmartIDE LCD
+$D1E0 - $D1E3 MIO
+$D1B0 - $D1C7 Atari Speech/Modem/Disc Registers
+$D1B0, $D1B8  Unreleased 800XLD floppy controller
+$D1C8 - $D1CE Atari Reserved
+$D1CF         Read Alternate Interrupt Register (Atari 1450 XLD only)
+$D1D1, $D1D2  1090 XL Amy Board 1
+$D1D4, $D1D5  1090 XL Amy Board 2
+$D1D8, $D1D9  1090 XL Amy Board 3
+$D1DC, $D1DD  1090 XL Amy Board 4
+$D1E0 - $D1E3 1090 XL Serial/Parallel Card, ACIA0
+$D1E4 - $D1E7 1090 XL Serial/Parallel Card, ACIA1
+$D1E8 - $D1EF 1090 XL Serial/Parallel Registers
+$D1F0 - $D1F7 1090 XL Z80 / Alternate CPU registers
+$D1F8 - $D1FD 1090 XL 80 Column Video Card Registers
+$D1FE         1090 XL RAM Bank Select Register
+$D1FF         PBI Device Enable (W) / IRQ Mask (R)
+
+$D200 - $D20F POKEY (stock hardware)
+$D210 - $D21F Second POKEY (GUMBY)
+$D280 - $D283 Covox, new location
+
+$D300 - $D303 PIA 6520 (stock hardware)
+$D310 - $D313 second PIA 6520
+$D320 - $D323 VIA 6522
+$D380 - $D381 U1MB configuration registers
+$D383 - $D384 U1MB status registers
+$D3E2         U1MB SDX Real Time Clock (SPI interface)
+
+$D400 - $D40F ANTIC (stock hardware) ($D406 and $D408 are unused)
+$D410 - $D41F reserved for second ANTIC
+
+$D500         4-bit Audio Samplers (e.g. ADC0804 based samplers)
+$D500 - $D507 MyIDE External
+$D5B8 - $D5BF R-Time 8
+$D5E0         SDX Bankswitching
+$D5E0 - $D5E1 U1MB SDX Bankswitching, Enable/Disable
+$D5E0 - $D5FF SIDE1/2 Registers (Banking, DS1305 RTC, 8 IDE Registers, and ID)
+
+$D600 - $D7FF PBI
+$D600 - $D7FF 1400XL/1450XLD Parallel Device RAM (Atari Official)
+$D600 - $D603 Covox
+$D600 - $D6FF MIO RAM
+$D600 - $D6FF BlackBox RAM
+$D640 - $D65F VBXE D6-Install
+$D740 - $D75F VBXE D7-Install
+
+Notes:
+* Pages $D0, $D2, $D3 and $D4 are completely zeroed at warm- and coldstart, except for $D301.
+* Free ranges should be kept mirrors of the stock chips as much as possible.
+* Games that rely on specific mirror locations:
+- Bounty Bob Strikes Back ($D47B)

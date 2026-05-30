@@ -1,0 +1,55 @@
+sim/build/
+rp/peri/sim/build/
+# Stray vvp binary from a manual `iverilog -o sim/tb_bank_xlat` (build output
+# normally lands in sim/build/). Exact path so the tb_*.sv sources stay tracked.
+sim/tb_bank_xlat
+sim/visual/*.ppm
+sim/test_data/*.hex
+# Hand-authored stubs are committed; only the .bin-derived hex files
+# (Klaus, etc.) are derived artefacts.
+!sim/test_data/os_rom_stub.hex
+*.vcd
+*.fst
+
+# Efinity synth artefacts (~55 MB; reproducible from sources via
+# efinity/run.sh).
+efinity/build/
+
+# Vivado synth artefacts (similarly reproducible via vivado/run.sh).
+vivado/build/
+
+# Local editor/tooling session state.
+.claude/
+
+# Local working/design notes (kept out of the published tree).
+prompts/
+
+# Co-sim instruction traces (golden Atari800 refs + RTL-sim captures, ~150 MB).
+# Durable copies of the /tmp working traces; large + reproducible, not published.
+traces/
+
+# Astro site build outputs (web/site/.gitignore already covers node_modules/,
+# dist/, .astro/).  These tarballs/zips sit at the site root or under
+# public/downloads/ and bypass that nested ignore.
+web/site/xtc-site-*.tar.bz2
+web/site/xtc-site-*.zip
+# xtc toolchain distribution archives (built externally in the fpga-xtc repo,
+# copied here for the site to serve — reproducible there, not tracked here).
+web/site/public/downloads/
+# Per-user editor config + unpublished drafts.
+web/site/.vscode/
+web/site/private/
+
+# SD-card boot payload assembled by `make boot.bin` (BOOT.BIN is large +
+# reproducible from the bitstream/FSBL/app on win10; not tracked here).
+/boot.bin/
+
+# macOS junk.
+.DS_Store
+
+# Local notes (was accidentally checked in at f2ac061 — removed via amend).
+web/CLAUDE.md
+
+# Duplicate of docs/HDMI/SIL9022a-programmer.pdf (already tracked there); the
+# refs/ copy is kept locally but not committed a second time.
+/refs/SIL9022a-programmer.pdf

@@ -1,0 +1,118 @@
+
+  o Interrupt on completion — Instead of polling STATUS, the blitter
+    could pulse an IRQ so the PS doesn't spin. defer until we have
+    freeRTOS in place
+
+  o Vitis FreeRTOS BSP — A workspace with the FreeRTOS BSP for the Cortex-A9s,
+    a hello-world task that pokes the blitter CMD register and polls
+    STATUS.busy.
+
+
+BUGS
+====
+
+  o SCANOUT_TEST_PATTERN is orphaned after the fb_scanout -> plane
+    compositor swap. The PL-only HDMI test pattern (build-time
+    SCANOUT_TEST_PATTERN, bypassing the AXI HP fill with a colour-bar /
+    gradient) lived ONLY in fb_scanout.sv (param at :64, output mux at
+    :395-431), which is no longer instantiated -- fpga_xt_top now drives
+    the display via vbeam + plane_fetch + plane_compositor. So the
+    bring-up step ("prove PL -> HDMI with no DDR3 and no PS help") has no
+    test-pattern source. Fix: add an equivalent build-time test-pattern
+    source to plane_compositor (or a plane_fetch bypass) driving the RGB
+    pads, so the signal chain can be proven before the DDR3 read path works.
+
+  o Sprite engine image-fetch AXI master is DANGLED at the top level.
+    The sprite_engine submodules (descriptor regs $D4Ax/$D4Dx, line
+    cache, line fetcher, pixel compositor) are built and timing-closed
+    and the engine sits in the scan-out chain -- BUT its AXI read master
+    (sprite-image fetch from the DDR3 arena) is tied off in fpga_xt_top.sv
+    (m_axi_arready=1'b0, m_axi_rdata=64'd0, araddr/arvalid left open). So
+    the stage is a framebuffer passthrough and composites NO fetched
+    sprites yet. Fix: join the master to the clk_sys plane reads on HP0
+    via the BD SmartConnect (per the comment there +
+    docs/video-architecture.md s10), NOT a dedicated port; then drive
+    descriptors and confirm a sprite composites over the framebuffer.
+    Also update the scaffold header at fpga_xt_top.sv:1050 ("Scaffold
+    stub: passthrough ... submodules land in subsequent commits") -- the
+    submodules DID land.
+
+
+Boot-to-BASIC: remaining open work
+==================================
+
+  Boot reaches the BASIC cartridge path; the open work to a visible
+  READY and an interactive prompt:
+
+  1. ANTIC -> HDMI display path (plane compositor, ARM side):
+       (d) v1 desktop.app: blue fill + plane config + XL start ... TODO (ARM)
+       (e) GP0 register re-partition + ARM driver ............... TODO
+     Deferred: tear-free front_sel sampling at the compositor's own frame
+     start (today the fetch reads front_sel directly); narrow/wide
+     playfield src_w tracking (fixed 320 for v1).
+
+  2. Keyboard injection (post-READY, not on the path to the prompt):
+     debug UART -> POKEY KBCODE via antic_top's kbd_event_valid/code port
+     (currently tied off, fpga_xt_top.sv:715).
+
+
+DDR3 banked window (parallel track -- NOT required for boot-to-BASIC)
+=====================================================================
+
+  Boot runs from flat BRAM (bank 0). DDR3 backs the extended-arch
+  banked pages, bank index from $D5C0 (code) / $D5C1 (data). Because
+  a normal boot (bank 0, ROMs on) never touches DDR3, "DDR3 working"
+  must be proven by an explicit bank-switch test, not by reaching the
+  prompt. Wiring it up:
+
+  1. Connect sally_mem's AXI master to a real HP port -- it is hard
+     tied-off today (fpga_xt_top.sv:240-246). Add HP2 on the PS BD.
+     The master runs on clk_sally (100 MHz); each HP port has its own
+     aclk, so clock HP2 at clk_sally to avoid an AXI clock converter.
+     Needs the AXI4->AXI3 burst-len handling the blitter's HP1 path
+     already does (8-beat arlen=7 fits AXI3's 4-bit len field).
+
+  2. *** CODE PAGES MUST BE WRITABLE. *** banked_page_cache's code
+     cache is currently READ-ONLY (banked_page_cache.sv:5-7; a code
+     write is a no-op at :290-291). The legacy machine treats
+     $6000-$9FFF as ordinary RAM, and extended code banks need the
+     same writability. Make the code cache read-write with dirty-bit
+     write-back on page swap, exactly like the existing data cache
+     (DATA_FLUSH_* FSM + read-allocate-on-write-miss). Without this,
+     a code-window write to a non-zero bank silently vanishes: the
+     shadow BRAM gets it but the cache read path returns stale DDR3
+     data.
+
+  3. Reserve the DDR3 region: 0x2000_0000 code / 0x2040_0000 data
+     (sally_mem.sv:75-76) vs the framebuffer at 0x3000_0000. Keep the
+     PS (FSBL/app, later Linux) out of 0x2000_0000-0x207F_FFFF.
+
+  4. Validate with a bank-switch test (boot won't exercise DDR3):
+     set $D5C1=1, write a pattern across $A000-$BFFF, switch to bank 2
+     and back, verify the data survived the page swap. Repeat on the
+     code window ($D5C0) once code writes work, to prove req #2.
+
+
+DONE: Just references so we don't think they're still pending
+=============================================================
+
+  o Boot blockers 1-3 (bank 0 = BRAM; PORTB stock XL semantics; hwreg
+    read-back CDC round-trip) -- all in RTL; the emulated 6502 boots the
+    real XL OS and takes the BASIC cartridge path.
+
+  o ANTIC -> HDMI compositor RTL: plane_compositor core, per-plane DDR3
+    fetch (plane_fetch), and ANTIC->DDR3 writeback (antic_writeback on
+    HP3) all built and sim-green. Remaining work is ARM-side -- see
+    "Boot-to-BASIC" above.
+
+  o Klaus passes. This remains an ongoing test to pass.
+
+  o Hardware bringup: see docs/bring-up.md.
+
+  o PS-side driver skeleton — see vitis/app_blink/src/xt_blitter.{h,c} and
+    main.c is the skeleton.
+
+  o XSA export for Vitis — vitis/workspace/fpga_xt_platform/hw/fpga_xt_top.xsa
+    exists.
+
+  o FSBL + boot image — vitis/BOOT.BIN exists.

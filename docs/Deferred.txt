@@ -1,0 +1,4 @@
+  
+  o Pattern rotation / affine transform — For rotated text and general image 
+    warping (currently done in software per §17 of vdi-sw-implementation.md).
+    Probably defer this for now

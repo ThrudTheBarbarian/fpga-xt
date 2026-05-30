@@ -1,0 +1,91 @@
+OS requirements
+===============
+
+o Zero-page:
+  $00-$01	   LINZBS	   .   avail, doesn't actually seem that useful
+  $02-$03	   CASINI	   c   keep if use cassette, init vec 	
+  $04-$05	   RAMLO	   *   keep
+  $06		   TRAMSZ	   *   keep, used at boot, reads 1 for BASIC
+  $07		   TSTDAT	   *   keep, used at boot, should disk be booted
+  $08		   WARMST	   *   keep, boot-type
+  $09		   BOOT?	   *   keep, are we booted
+  $0A-$0B	   DOSVEC	   d   keep to support DOS, we want to use DOS
+  $0C-$0D	   DOSINI	   d   keep to support DOS, init address for DOS boot
+  $0E-$0F	   APPMHI	   *   keep, memory management
+  $10		   POKMSK	   *   keep, POKEY interrupts
+  $11		   BRKKEY	   *   keep, is [BREAK] pressed
+  $12-$14	   RTCLOK	   *   keep, real-time-clock 
+  $15-$16	   BUFADR	   d   keep to support DOS, temporary DOS vector, 
+  $17		   ICCOMT      i   keep unless re-implement CIO, command id
+  $18-$19	   DSKFMS	   d   keep to support DOS, vector to FMS 
+  $1A-$1B	   DSKUTL	   d   keep to support DOS, disk utilities ptr 
+  $1C		   PTIMOT	   p   keep to support printers, Printer timeout
+  $1D		   PBPNT 	   p   keep to support printers, index into buffer
+  $1E		   PBUFSZ	   p   keep to support printers, printer buffer size
+  $1F		   PTEMP 	   p   keep to support printers, temp value
+  $20-$2F	   ZIOCB	   i   keep unless re-implement CIO
+  $30		   STATUS	   i   keep unless re-implement CIO
+  $31		   CHKSUM	   i   keep unless re-implement CIO
+  $32-$33	   BUFRLO/HI   i   keep unless re-implement CIO, ptr to databuf 
+  $34-$35	   BFENLO/HI   i   keep unless re-implement CIO, ptr to databuf end
+  $36		   CRETRY	   i   keep unless re-implement CIO, # command retries
+  $37		   DRETRY	   i   keep unless re-implement CIO, # device retries
+  $38		   BUFRFL	   i   keep unless re-implement CIO, buffer full
+  $39		   RECVDN	   i   keep unless re-implement CIO, receive done
+  $3A		   XMTDON	   i   keep unless re-implement CIO, transmit done
+  $3B		   CHKSNT	   i   keep unless re-implement CIO, checksum sent
+  $3C		   NOCKSM	   i   keep unless re-implement CIO, no checksum
+  $3D		   BPTR        c   keep if use cassette, buffer pointer
+  $3E		   FTYPE       c   keep if use cassette, inter-record gap
+  $3F		   FEOF        c   keep if use cassette, end-of-file flag
+  $40		   FREQ        c   keep if use cassette, beep count
+  $41		   SOUNDR      c   keep unless re-implement CIO, noisy CIO i/o
+  $42		   CRITIC      *   keep, vblank control
+  $43-$49      FMZSPG      d   keep to support DOS,  FMS page zero registers
+  $4A		   CKEY        c   keep if use cassette, boot from cassette
+  $4B		   CASSBT      c   keep if use cassette, cassette is booting
+  $4C		   DSTAT	   *   keep, display status
+  $4D		   ATRACT	   *   keep, attract mode timer and flag
+  $4E		   DRKMSK	   *   keep, dark attract mask
+  $4F		   COLRSH	   *   keep, attract colour shift mask
+  $50		   TEMP  	   s   keep unless re-implement S: temp register
+  $51		   TEMP  	   s   keep unless re-implement S: temp register
+  $52		   LMARGN  	   s   keep unless re-implement S: left margin of text
+  $53		   RMARGN  	   s   keep unless re-implement S: right margin of text
+  $54		   ROWCRS  	   s   keep unless re-implement S: current row
+  $55-$56      COLCRS  	   s   keep unless re-implement S: current col
+  $57          DINDEX      s   keep unless re-implement S: current graphics mode
+  $58-$59      SAVMSC      s   keep unless re-implement S: low addr of scrn mem
+  $5A          OLDROW      s   keep unless re-implement S: previous row
+  $5B-$5C      OLDCOL      s   keep unless re-implement S: previous col
+  $5D          OLDCHR      s   keep unless re-implement S: value under cursor
+  $5E-$5F      OLDADR      s   keep unless re-implement S: pointer to old r,c
+  $60          NEWROW      s   keep unless re-implement S: row for nxt DRAW/FILL
+  $61-$62      NEWCOL      s   keep unless re-implement S: col for nxt DRAW/FILL
+  $63          LOGCOL      s   keep unless re-implement S: logical text col 
+  $64-$65      ADRESS      s   keep unless re-implement S: temp DLIST address
+  $66-$67      MLTTMP      s   keep unless re-implement S: first byte/temp reg
+  $68-$69      SAVADR      s   keep unless re-implement S: temp storage
+  $6A          RAMTOP      *   keep, #pages of RAM available
+  $6B          BUFCNT      e   keep unless re-implement E: logical line counter
+  $6C-$6D      BUFSTR      e   keep unless re-implement E: editor low byte
+  $6E          BITMSK      s   keep unless re-implement S: bitmask for screen op
+  $6F          SHFAMT      s   keep unless re-implement S: shift amount
+  $70-$71      ROWAC       s   keep unless re-implement S: row pix accumulator
+  $72-$73      COLAC       s   keep unless re-implement S: col pix accumulator
+  $74-$75      ENDPT       s   keep unless re-implement S: end pt of line-draw
+  $76          DELTAR      s   keep unless re-implement S: NEWROW - ROWCRS
+  $77-$78      DELTAC      s   keep unless re-implement S: NEWCOL - COLCRS
+  $79          ROWINC      s   keep unless re-implement S: +/-1 for row delta
+  $7A          COLINC      s   keep unless re-implement S: +/-1 for col delta
+  $7B          SWPFLG      s   keep unless re-implement S: split-screen control
+  $7C          HOLDCH      e   keep unless re-implement E: temp character buf
+  $7D          INSDAT      e   keep unless re-implement E: temp storage byte
+  $7E-$7F      COUNTR      s   keep unless re-implement S: DELTAR or DELTAC
+  $80-$FF      user        .   available
+  
+	
+	
+o Page 2:
+  $0236-$0237  BRKVEC	   *   process a [BREAK] key-press, keep
+	

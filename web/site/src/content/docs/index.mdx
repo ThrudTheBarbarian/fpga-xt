@@ -1,0 +1,67 @@
+---
+title: Atari-XT
+description: A modern take on Atari computers, implemented on a single Xilinx Zynq-7020 — FPGA fabric for the SALLY 6502 and ANTIC/GTIA/POKEY pipeline, dual Cortex-A9 for the modern half, and the xtc toolchain.
+template: splash
+hero:
+  image:
+    file: ../../assets/jigsaw.png
+    alt: A jigsaw of white pieces with a single golden piece dropped into place.
+  tagline: A modern take on Atari computers, written with AI assistance, implemented on a single FPGA, and a compiler that targets them.
+  actions:
+    - text: Explore the hardware
+      link: /hardware/
+      icon: right-arrow
+    - text: Read the compiler docs
+      link: /compiler/
+      icon: right-arrow
+      variant: minimal
+    - text: Get the toolchain
+      link: /downloads/
+      icon: down-arrow
+      variant: minimal
+---
+
+import { Card, CardGrid } from '@astrojs/starlight/components';
+
+## What is Atari-XT?
+
+**Atari-XT** (repo: [`fpga-xt`](https://github.com/ThrudTheBarbarian/fpga-xt)) fuses two Atari lineages on a single FPGA: the name takes its **X** from the 8-bit **X**E line and its **T** from the S**T** / T**T** line. 
+
+The FPGA provides system-level services such as HDMI output, I2S audio routing to that HDMI, and a 2D blitter that is designed to be very useful when implementing GUI toolkits as well as games. There is also a 2D sprite engine that wcan work with any power-of-two sprite up to the 64MB of sprite-memory. The keyboard (and mouse) are implemented using USB from the FPGA ARM cores. System memory and a 1080p framebuffer live in DDR3, reached over AXI HP ports. 
+
+The "X" machine's custom silicon is implemented in the FPGA fabric — a cycle-accurate enhanced SALLY 6502 with the ANTIC/GTIA/POKEY display-and-sound pipeline, as well as connections to the custom I/O ports of the 8-bit range, other than the keyboard and mouse of course, which are USB-based. Banked memory is backed by DDR via a page-cache so the system can run at top-speed as much as possible - meaning this CPU runs in triple-digits of MHz.
+
+The "T" machine, a 680x0-family STe/TT, is planned. Unlike the 6502, this will be a software implementation on one of the Cortex-A9 ARM processing system (PS) cores on the FPGA. The idea will be to use a JIT compiler to translate the 68k opcodes into ARM assembly and run the binary "natively". The resulting emulation is estimated at making it feel like a 50MHz+ 68030.
+
+Underlying both chipsets is the host that ties them together: Running on the boot-A9 core, is a FreeRTOS-based multi-tasking environment that offers USB HID, the SD filesystem, ethernet networking, HDMI out (with audio), and a desktop environment with vended UI services (eg: GEM, available to both 6502 and 68k)
+
+The system runs unmodified Atari XL/XE software, but isn't bounded by 1979: expanded RAM is bank-switched into the 6502's address space, the display is an always-on 1080p60 compositor in which each machine is just a scalable window, and a custom language — **xtc** (repo: [`fpga-xtc`](https://github.com/ThrudTheBarbarian/fpga-xtc))— compiles modern, typed, class-based code straight to executables.
+
+## What this site covers
+
+<CardGrid>
+	<Card title="Hardware" icon="setting">
+		The FPGA design — SALLY/xt6502 CPU core, the ANTIC display pipeline,
+		the blitter and HDMI scan-out, memory/register/pin maps, and the bring-up guide.
+
+		[Explore the hardware →](/hardware/)
+	</Card>
+	<Card title="Compiler (xtc)" icon="open-book">
+		The xtc language, its standard library, and the xtc/xta/xts toolchain —
+		a C/ObjC-like language that compiles to native executable with bank switching as a first-class feature.
+
+		[Read the compiler docs →](/compiler/)
+	</Card>
+	<Card title="Operating system" icon="laptop">
+		The software half — multitasking and executable loading across hosted platforms,
+		fast banked-stack context switching, the GEM/VDI blitter driver, and OS memory layout.
+
+		[See the OS docs →](/os/)
+	</Card>
+	<Card title="Project & status" icon="rocket">
+		Where the build is now — implementation status, the roadmap and future work,
+		and design notes for in-flight subsystems.
+
+		[Check project status →](/project/)
+	</Card>
+</CardGrid>

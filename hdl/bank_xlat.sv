@@ -1,0 +1,71 @@
+// bank_xlat.sv — bank-id translator for the xtc banked windows.
+//
+// Combinational: given a CPU address + the active bank-select registers
+// ($D5C0 code / $D5C1 data, snooped by sally_mem from the CCTL I/O gap —
+// relocated off zero page $0082/$0083 which are BASIC's VNTP/VNTD), produce
+// the bank_id + in-window offset that identify the DDR3-backed page addressed.
+//
+// xtc memory model (CPU view only — ANTIC has no banking and reads the
+// flat 64 KB BRAM directly):
+//
+//   Address      Region        Backing            Selector
+//   -----------  ------------  -----------------  --------------------------
+//   $4000-$5FFF  Screen RAM    flat 64 KB BRAM    — (fixed, not banked)
+//   $6000-$9FFF  Code window   DDR3 banked page   $D5C0            (16 KB pages)
+//   $A000-$CFFF  Data window   DDR3 banked page   $D5C1            (12 KB pages)
+//   else         Unbanked      flat 64 KB BRAM    —
+//
+//   • Code window: $D5C0 is an 8-bit page index → 256 pages of 16 KB.
+//   • Data window: $D5C1 is an 8-bit page index → 256 pages of 12 KB.
+//   • (An atomic both-window task-switch reg, formerly $0084, is dropped
+//     until the multitasking API stabilises — re-add at $D5C2 then.)
+//
+// ROM regions $A000-$BFFF (BASIC), $C000-$CFFF (OS low), and
+// $D800-$FFFF (OS high) overlap the data window and unbanked BRAM.
+// PORTB ($D301) selects whether ROM or the banked/BRAM backing is
+// visible — see sally_mem for the override logic.
+//
+// bank_id carries only the page index; the caller uses `is_code` to pick
+// the DDR3 base + page stride (16 KB vs 12 KB) when composing the address.
+//
+// Bank 0 = BRAM (boot-to-BASIC blocker #1):
+//   Bank index 0 of each window lives in the flat 64 KB BRAM, NOT DDR3.
+//   Only a non-zero bank ($D5C0 code / $D5C1 data) selects a DDR3-backed
+//   page.  This keeps the legacy machine's $6000-$9FFF as ordinary
+//   writable RAM (OS RAM-sizing, GR.0 screen/display list ~$9C00) and
+//   coherent with ANTIC, which reads that same BRAM via its DMA port.
+//   is_in_window therefore deasserts on bank 0, so sally_mem routes the
+//   access through its BRAM read/write path instead of the page cache.
+
+`default_nettype none
+
+module bank_xlat (
+    // CPU bank-select registers (latched from $D5C0/$D5C1 by sally_mem).
+    input  wire [7:0]  cpu_code_bank,    // $D5C0
+    input  wire [7:0]  cpu_data_bank,    // $D5C1
+
+    input  wire [15:0] cpu_addr,
+
+    output wire        is_in_window,     // 1 if cpu_addr ∈ $6000-$CFFF AND bank != 0
+    output wire        is_code,          // 1 = code window, 0 = data window
+    output wire [13:0] offset_in_block,  // byte offset within the active page
+    output wire [15:0] bank_id           // page index (zero-extended 8-bit)
+);
+
+    wire in_code = (cpu_addr >= 16'h6000) && (cpu_addr <= 16'h9FFF);
+    wire in_data = (cpu_addr >= 16'hA000) && (cpu_addr <= 16'hCFFF);
+
+    // A window is DDR3-backed only when its selected bank index is non-zero.
+    wire code_banked = in_code & (cpu_code_bank != 8'h00);
+    wire data_banked = in_data & (cpu_data_bank != 8'h00);
+
+    assign is_in_window    = code_banked | data_banked;
+    assign is_code         = in_code;   // window identity (independent of bank)
+    assign offset_in_block = in_code ? (cpu_addr - 16'h6000)
+                                     : (cpu_addr - 16'hA000);
+    assign bank_id         = in_code ? {8'h00, cpu_code_bank}
+                                     : {8'h00, cpu_data_bank};
+
+endmodule
+
+`default_nettype wire
