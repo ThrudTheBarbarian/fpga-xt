@@ -59,7 +59,12 @@ module axi_blitter_bridge (
     input  wire        bl_busy,            // returned on STATUS read ($D4BD bit 0)
     input  wire        bl_queue_full,      // returned on STATUS read ($D4BD bit 1)
     input  wire        bl_pat_blocked,     // returned on STATUS read ($D4BD bit 2)
-    input  wire [15:0] bl_seq_counter      // returned at SEQ_LO/HI ($D4C9/CA, offsets 0x19/0x1A)
+    input  wire [15:0] bl_seq_counter,     // returned at SEQ_LO/HI ($D4C9/CA, offsets 0x19/0x1A)
+
+    // ---- PL debug word (clk_sys domain) — read at offset 0x1C --------------
+    // General-purpose diagnostic read (clock-lock state, heartbeats, etc.);
+    // built in fpga_xt_top, surfaced over GP0 so the PS app can print it.
+    input  wire [31:0] diag_word
 );
 
     // ====================================================================
@@ -171,6 +176,8 @@ module axi_blitter_bridge (
                             s_axi_rdata <= {24'b0, bl_seq_counter[7:0]};
                         else if (s_axi_araddr[7:0] == 8'h1A)
                             s_axi_rdata <= {24'b0, bl_seq_counter[15:8]};
+                        else if (s_axi_araddr[7:0] == 8'h1C)
+                            s_axi_rdata <= diag_word;        // PL debug word
                         else
                             s_axi_rdata <= 32'd0;
                         s_axi_rresp  <= 2'b00;

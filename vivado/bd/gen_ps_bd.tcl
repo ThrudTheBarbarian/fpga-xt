@@ -29,10 +29,10 @@ source [file join $script_dir zturn_ps_preset.tcl]
 
 # Step 2 — OUR PL interface overrides, applied last (last write wins).  These
 # own every PS<->PL port so the ps_bd port set keeps matching fpga_xt_top:
-# HP0/1/3 + GP0 read/write masters on a single 150 MHz clk_sys net, FCLK0 = 150,
-# and — critically — every EMIO the MyIR reference enabled (GPIO/I2C0/TTC0 +
-# FCLK_CLK1) is forced OFF, since our top has no ports for them.  TTC0/I2C0
-# (which MyIR routed via EMIO) are disabled outright; we don't use them.
+# HP0/1/3 + GP0 read/write masters on a single 150 MHz clk_sys net, FCLK0 = 150.
+# I2C0 is ENABLED on EMIO (exactly as the MyIR reference) to drive the SiI9022A
+# HDMI transmitter's control bus over P15/P16 — replacing our PL bit-bang, which
+# never got the chip to ACK.  GPIO/TTC0/FCLK_CLK1 EMIO stay OFF (unused).
 set_property -dict [list \
     CONFIG.PCW_PACKAGE_NAME {clg400} \
     CONFIG.PCW_USE_S_AXI_HP0 {1} \
@@ -44,11 +44,12 @@ set_property -dict [list \
     CONFIG.PCW_USE_S_AXI_GP0 {0} \
     CONFIG.PCW_USE_S_AXI_ACP {0} \
     CONFIG.PCW_EN_CLK0_PORT {1} \
-    CONFIG.PCW_EN_CLK1_PORT {0} \
+    CONFIG.PCW_EN_CLK1_PORT {1} \
     CONFIG.PCW_EN_CLK2_PORT {0} \
     CONFIG.PCW_EN_CLK3_PORT {0} \
-    CONFIG.PCW_FCLK_CLK1_BUF {FALSE} \
+    CONFIG.PCW_FCLK_CLK1_BUF {TRUE} \
     CONFIG.PCW_FPGA0_PERIPHERAL_FREQMHZ {150} \
+    CONFIG.PCW_FPGA1_PERIPHERAL_FREQMHZ {50} \
     CONFIG.PCW_EN_RST0_PORT {1} \
     CONFIG.PCW_EN_RST1_PORT {0} \
     CONFIG.PCW_EN_RST2_PORT {0} \
@@ -57,8 +58,9 @@ set_property -dict [list \
     CONFIG.PCW_IRQ_F2P_MODE {DIRECT} \
     CONFIG.PCW_EN_EMIO_GPIO {0} \
     CONFIG.PCW_GPIO_EMIO_GPIO_ENABLE {0} \
-    CONFIG.PCW_EN_EMIO_I2C0 {0} \
-    CONFIG.PCW_I2C0_PERIPHERAL_ENABLE {0} \
+    CONFIG.PCW_EN_EMIO_I2C0 {1} \
+    CONFIG.PCW_I2C0_PERIPHERAL_ENABLE {1} \
+    CONFIG.PCW_I2C0_I2C0_IO {EMIO} \
     CONFIG.PCW_EN_EMIO_TTC0 {0} \
     CONFIG.PCW_TTC0_PERIPHERAL_ENABLE {0} \
 ] $ps
@@ -107,6 +109,19 @@ if {$gp0_iface ne ""} {
     puts ">> exported GP0 as external interface '$ext_name' (AXI3, 32-bit)"
 }
 
+# ---- Export PS I2C0 (EMIO) as an external iic_rtl interface ----------------
+# Drives the SiI9022A control bus on P15/P16 (same pins MyIR routes EMIO I2C0
+# to).  Flattens in the wrapper to iic_0_scl_{i,o,t} / iic_0_sda_{i,o,t};
+# fpga_xt_top wraps those in IOBUFs to the pads.
+set iic_iface [get_bd_intf_pins -quiet zynq_ps/IIC_0]
+if {$iic_iface ne ""} {
+    create_bd_intf_port -mode Master -vlnv xilinx.com:interface:iic_rtl:1.0 iic_0
+    connect_bd_intf_net [get_bd_intf_ports iic_0] $iic_iface
+    puts ">> exported I2C0 (EMIO) as external interface 'iic_0'"
+} else {
+    puts ">> WARNING: zynq_ps/IIC_0 interface pin not found — I2C0 not exported"
+}
+
 # GP0 + HP clock — one external clk_sys net (150 MHz) for ALL PS<->PL AXI.
 # Named s_axi_gp0_aclk for back-compat (fpga_xt_top drives it with clk_sys);
 # it now also clocks every enabled S_AXI_HP* port so the HP datapath stays in
@@ -123,6 +138,16 @@ foreach i {0 1 2 3} {
 
 # ---- Make FCLK reset external -----------------------------------------------
 make_bd_pins_external [get_bd_pins zynq_ps/FCLK_RESET0_N]
+
+# ---- FCLK_CLK1 (50 MHz) — the PL reference clock --------------------------
+# The Z-Turn has NO 50 MHz PL oscillator: the only PL clock pin (U14/clk_50)
+# is fed by a 12 MHz crystal (X2, schematic sheet 10).  Feeding the MMCMs from
+# that 12 MHz made every derived clock 1/4 of spec (clk_pix ~37 MHz -> HDMI
+# out of range).  Instead, generate an EXACT 50 MHz from the PS (derived from
+# the 33.33 MHz PS crystal) on FCLK_CLK1 and route it to the MMCMs, so
+# clk_pix = 50 * 23.75/8 = 148.4375 MHz precisely.  fpga_xt_top feeds both
+# MMCME2_BASE .CLKIN1 from this port instead of the clk_50 pin.
+make_bd_pins_external [get_bd_pins zynq_ps/FCLK_CLK1]
 
 # Associate AXI interfaces with their clocks.  ALL of them (GP0 + HP) are now
 # on the s_axi_gp0_aclk (clk_sys) net, so associate them there and clear the

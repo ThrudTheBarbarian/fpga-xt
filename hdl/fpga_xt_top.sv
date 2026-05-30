@@ -83,6 +83,13 @@ module fpga_xt_top (
 
     wire clk_sally, clk_sys, clk_pix;
 
+    // PL reference clock: an EXACT 50 MHz from the PS (FCLK_CLK1, derived from
+    // the 33.33 MHz PS crystal), NOT the clk_50 pin.  The Z-Turn's only PL clock
+    // pin (U14) is a 12 MHz crystal (X2, schematic sheet 10) — feeding the MMCMs
+    // from it ran every derived clock at 1/4 spec (clk_pix ~37 MHz, HDMI dead).
+    // FCLK_CLK1 is buffered in the PS and routed here by gen_ps_bd.tcl.
+    wire fclk_50;
+
     // ---- MMCM #1: 120 MHz (clk_sally) + 150 MHz (clk_sys) from 50 MHz reference ---
     wire mmcm1_fb_in, mmcm1_fb_out;
     wire clk_sally_unbuf, clk_sys_unbuf;
@@ -107,7 +114,7 @@ module fpga_xt_top (
         .CLKOUT1_DIVIDE   (8),
         .BANDWIDTH        ("OPTIMIZED")
     ) u_mmcm1 (
-        .CLKIN1   (clk_50),
+        .CLKIN1   (fclk_50),     // 50 MHz from PS FCLK_CLK1 (not the 12 MHz pin)
         .CLKFBIN  (mmcm1_fb_in),
         .CLKFBOUT (mmcm1_fb_out),
         .CLKOUT0  (clk_sally_unbuf),
@@ -142,7 +149,7 @@ module fpga_xt_top (
         .CLKOUT0_DIVIDE_F (8.000),
         .BANDWIDTH        ("OPTIMIZED")
     ) u_mmcm2 (
-        .CLKIN1   (clk_50),
+        .CLKIN1   (fclk_50),     // 50 MHz from PS FCLK_CLK1 (not the 12 MHz pin)
         .CLKFBIN  (mmcm2_fb_in),
         .CLKFBOUT (mmcm2_fb_out),
         .CLKOUT0  (clk_pix_unbuf),
@@ -190,6 +197,67 @@ module fpga_xt_top (
     wire rst_pix     = rst_pix_pipe[2];
     wire rst_sally_n = ~rst_sally;
     wire rst_sys_n   = ~rst_sys;
+
+    // ====================================================================
+    // PL diagnostic word — read over GP0 at 0x43C0001C (no LED guessing)
+    // ====================================================================
+    //   diag_word[0]     = mmcm1_locked (clk_sally/clk_sys MMCM)
+    //   diag_word[1]     = mmcm2_locked (clk_pix MMCM)
+    //   diag_word[15:8]  = clk_pix-alive count — climbs while clk_pix toggles;
+    //                      STUCK => clk_pix dead (e.g. mmcm2 not locked)
+    //   diag_word[23:16] = mmcm2 unlock-event count — # of falling edges of
+    //                      mmcm2_locked since config; 0 => it never dropped
+    wire [31:0] diag_word;
+
+    // MMCM LOCKED outputs are asynchronous — sync into clk_sys.
+    (* ASYNC_REG = "TRUE" *) reg [1:0] m1_lock_sync = '0, m2_lock_sync = '0;
+    always_ff @(posedge clk_sys) begin
+        m1_lock_sync <= {m1_lock_sync[0], mmcm1_locked};
+        m2_lock_sync <= {m2_lock_sync[0], mmcm2_locked};
+    end
+    wire mmcm1_lock_s = m1_lock_sync[1];
+    wire mmcm2_lock_s = m2_lock_sync[1];
+
+    // clk_pix liveness: a slow toggle on clk_pix, synced + edge-counted in
+    // clk_sys, so a running clk_pix makes clk_pix_alive climb.
+    reg [16:0] pix_div = '0;
+    always_ff @(posedge clk_pix) pix_div <= pix_div + 1'b1;   // bit16 ~566 Hz
+    (* ASYNC_REG = "TRUE" *) reg [2:0] pix_tgl_sync = '0;
+    reg [7:0] clk_pix_alive = '0;
+    always_ff @(posedge clk_sys) begin
+        pix_tgl_sync <= {pix_tgl_sync[1:0], pix_div[16]};
+        if (pix_tgl_sync[2] ^ pix_tgl_sync[1]) clk_pix_alive <= clk_pix_alive + 1'b1;
+    end
+
+    // mmcm2 unlock-event counter (falling edges of the synced lock).
+    reg       m2_lock_prev = 1'b0;
+    reg [7:0] mmcm2_unlocks = '0;
+    always_ff @(posedge clk_sys) begin
+        m2_lock_prev <= mmcm2_lock_s;
+        if (m2_lock_prev & ~mmcm2_lock_s) mmcm2_unlocks <= mmcm2_unlocks + 1'b1;
+    end
+
+    // SiI9022 config now lives in the PS app (it drives I2C0 over EMIO and
+    // reads back the device ID), so the PL no longer tracks config state.  Tie
+    // the diag bit off; the app reports HDMI status over UART from its own I2C.
+    wire hdmi_cfg_done = 1'b0;
+
+    // vbeam frame heartbeat — PROVES vbeam is generating 1080p60 frames.  The
+    // clk_pix-alive counter only proves the CLOCK toggles; vbeam itself is
+    // rst_pix-gated, so it could be stuck while clk_pix runs.  fb_frame_tgl
+    // toggles once per vbeam frame (driven @clk_pix in the video section);
+    // edge-count it in clk_sys -> vbeam_frames climbs ~60/sec if vbeam runs.
+    reg                                fb_frame_tgl   = 1'b0;  // driven @clk_pix below
+    (* ASYNC_REG = "TRUE" *) reg [2:0]  frame_tgl_sync = '0;
+    reg [7:0]                          vbeam_frames   = '0;
+    always_ff @(posedge clk_sys) begin
+        frame_tgl_sync <= {frame_tgl_sync[1:0], fb_frame_tgl};
+        if (frame_tgl_sync[2] ^ frame_tgl_sync[1]) vbeam_frames <= vbeam_frames + 1'b1;
+    end
+
+    //   diag_word[31:24] = vbeam frame count, [2] = unused
+    assign diag_word = {vbeam_frames, mmcm2_unlocks, clk_pix_alive,
+                        5'b0, hdmi_cfg_done, mmcm2_lock_s, mmcm1_lock_s};
 
     // ====================================================================
     // SALLY + memory (runs on clk_sally)
@@ -952,6 +1020,11 @@ module fpga_xt_top (
         .vbi_start (), .atari_row (), .vcount ()
     );
 
+    // vbeam frame heartbeat toggle (read via diag_word[31:24]) — toggles once
+    // per frame, so it ONLY moves if vbeam is actually advancing.  Lets the PS
+    // distinguish "clk_pix toggling" from "vbeam producing real frames".
+    always_ff @(posedge clk_pix) if (fb_frame_start) fb_frame_tgl <= ~fb_frame_tgl;
+
     // ---- Desktop plane fetch (plane 0): full-screen DDR3 read via HP0 ----
     // fetch_row = next display line (scale 1 => src_row == line); plane_fetch
     // prefetches it during the current line.
@@ -1107,16 +1180,73 @@ module fpga_xt_top (
     );
 
     // ---- RGB pins -------------------------------------------------------
-    // compositor -> sprite_engine -> pads.  There is no longer a full-screen
-    // source mux: the legacy ANTIC window will appear as plane 1 of the
-    // compositor once the ANTIC->DDR3 writeback (phase 2) feeds it.
-    assign rgb_r      = spr_rgb_r;
-    assign rgb_g      = spr_rgb_g;
-    assign rgb_b      = spr_rgb_b;
-    assign rgb_hsync  = spr_rgb_hsync;
-    assign rgb_vsync  = spr_rgb_vsync;
-    assign rgb_de     = spr_rgb_de;
-    assign rgb_pixclk = clk_pix;
+    // Normal path: compositor -> sprite_engine -> pads (the legacy ANTIC
+    // window appears as plane 1 once the ANTIC->DDR3 writeback feeds it).
+    //
+    // Bring-up TEST PATTERN: 8 vertical SMPTE-style colour bars derived from
+    // the raster column (clk_pix), muxed onto the pads ahead of the normal
+    // path.  Proves the physical HDMI chain (clk_pix -> RGB565 -> SiI9022 ->
+    // display) before the planes carry real pixels.  Sync/DE always come from
+    // the compositor, so the timing the SiI9022 sees is the real raster.
+    localparam bit TEST_PATTERN = 1'b1;     // bring-up: force colour bars
+    reg [4:0] tp_r; reg [5:0] tp_g; reg [4:0] tp_b;
+    always_ff @(posedge clk_pix) begin
+        unique case (fb_h_count[10:8])      // 8 bars of 256 px across the line
+            3'd0: {tp_r,tp_g,tp_b} <= {5'd31,6'd63,5'd31}; // white
+            3'd1: {tp_r,tp_g,tp_b} <= {5'd31,6'd63,5'd0 }; // yellow
+            3'd2: {tp_r,tp_g,tp_b} <= {5'd0 ,6'd63,5'd31}; // cyan
+            3'd3: {tp_r,tp_g,tp_b} <= {5'd0 ,6'd63,5'd0 }; // green
+            3'd4: {tp_r,tp_g,tp_b} <= {5'd31,6'd0 ,5'd31}; // magenta
+            3'd5: {tp_r,tp_g,tp_b} <= {5'd31,6'd0 ,5'd0 }; // red
+            3'd6: {tp_r,tp_g,tp_b} <= {5'd0 ,6'd0 ,5'd31}; // blue
+            3'd7: {tp_r,tp_g,tp_b} <= {5'd0 ,6'd0 ,5'd0 }; // black
+        endcase
+    end
+
+    // Final output stage — register RGB + sync + DE on clk_pix in one place so
+    // they launch cleanly and aligned (pack into the IOB output FFs via
+    // IOB=TRUE in the XDC), matched to the ODDR-forwarded pixel clock.  In
+    // TEST_PATTERN mode the sync/DE come straight from vbeam (vb_*), NOT the
+    // compositor (spr_*), so the test frame is fully vbeam-sourced and free of
+    // the compositor/plane-fetch pipeline (which depends on DDR data we don't
+    // have yet).
+    reg [4:0] o_r; reg [5:0] o_g; reg [4:0] o_b;
+    reg       o_de, o_hs, o_vs;
+    always_ff @(posedge clk_pix) begin
+        o_r  <= TEST_PATTERN ? tp_r     : spr_rgb_r;
+        o_g  <= TEST_PATTERN ? tp_g     : spr_rgb_g;
+        o_b  <= TEST_PATTERN ? tp_b     : spr_rgb_b;
+        o_de <= TEST_PATTERN ? vb_de    : spr_rgb_de;
+        o_hs <= TEST_PATTERN ? vb_hsync : spr_rgb_hsync;
+        o_vs <= TEST_PATTERN ? vb_vsync : spr_rgb_vsync;
+    end
+    assign rgb_r      = o_r;
+    assign rgb_g      = o_g;
+    assign rgb_b      = o_b;
+    assign rgb_hsync  = o_hs;
+    assign rgb_vsync  = o_vs;
+    assign rgb_de     = o_de;
+
+    // Forward clk_pix to the SiI9022 pixel-clock pin (IDCK) through an ODDR —
+    // NOT a plain assign.  A plain assign routes the global clock through the
+    // fabric to the IOB and does not present a clean pixel clock; the chip then
+    // can't lock TMDS ("no signal").  D1=0/D2=1 emits clk_pix inverted (180°),
+    // so the rising edge the SiI9022 samples on lands mid-data-eye (data is
+    // launched on clk_pix rising).  If colours come out wrong, flip the chip's
+    // input clock-edge bit (TPI reg 0x08) in software — no rebuild.
+    ODDR #(
+        .DDR_CLK_EDGE ("SAME_EDGE"),
+        .INIT         (1'b0),
+        .SRTYPE       ("SYNC")
+    ) u_pixclk_oddr (
+        .Q  (rgb_pixclk),
+        .C  (clk_pix),
+        .CE (1'b1),
+        .D1 (1'b0),
+        .D2 (1'b1),
+        .R  (1'b0),
+        .S  (1'b0)
+    );
 
     // ====================================================================
     // AXI-Lite bridge — GP0 from ARM PS → blitter register bus
@@ -1291,15 +1421,15 @@ module fpga_xt_top (
     // pixel clock and sync signals regardless, and the SiI9022A will begin
     // outputting valid TMDS once its PLL locks to the programmed pixel rate.
 
-    wire hdmi_cfg_done;
-
-    hdmi_config u_hdmi_config (
-        .clk_i       (clk_sys),
-        .rst_n_i     (rst_sys_n),
-        .sda_io      (hdmi_sda),
-        .scl_io      (hdmi_scl),
-        .done_o      (hdmi_cfg_done)
-    );
+    // SiI9022A control bus is driven by PS I2C0 over EMIO (see gen_ps_bd.tcl) —
+    // exactly as MyIR's working HDMI reference.  The EMIO iic_0 3-state signals
+    // come up from u_ps_bd; wrap them in IOBUFs to the open-drain pads P15/P16
+    // (external 4.7k pull-ups on the baseboard).  The PL bit-bang hdmi_config is
+    // retired: the PS app (XIic) now configures the chip and reads back its ID.
+    wire i2c_scl_i, i2c_scl_o, i2c_scl_t;
+    wire i2c_sda_i, i2c_sda_o, i2c_sda_t;
+    IOBUF u_iic_scl (.I(i2c_scl_o), .O(i2c_scl_i), .T(i2c_scl_t), .IO(hdmi_scl));
+    IOBUF u_iic_sda (.I(i2c_sda_o), .O(i2c_sda_i), .T(i2c_sda_t), .IO(hdmi_sda));
 
     // ---- Hardware register read data (clk_sally) --------------------------
     // hwreg_dout feeds into sally_mem's read pipeline — it must be
@@ -1320,45 +1450,26 @@ module fpga_xt_top (
                             ? 8'hFF              // other blitter regs: no readback
                       : cdc_rd_data;             // ANTIC/GTIA/POKEY/PIA via read-back CDC
 
-    // ---- Bring-up debug LEDs --------------------------------------------
-    // Z-Turn Z7-Lite carrier exposes 3 LEDs as dbg[2:0] (Y16 / Y17 / R14).
-    // Bit 3 has no pin and is just there to round out the byte.
+    // ---- Bring-up debug LEDs (RGB LED on the carrier) -------------------
+    // VERIFIED pin/colour mapping (MyIR Z-Turn V2 schematic + clg400 pinout):
+    //   dbg[0] = Y16 = IO_B34_LP7 = GREEN
+    //   dbg[1] = Y17 = IO_B34_LN7 = BLUE
+    //   dbg[2] = R14 = IO_B34_LN6 = RED
+    //   dbg[3] = no pin.
+    // (The earlier comments mislabelled Y17 as "green"; it is BLUE — which is
+    // why watching the green LED blink read as "pll-lock dropping" when it was
+    // just the heartbeat on green.  Definitive lock state is the GP0 diag_word.)
     //
-    //   dbg[0] = heartbeat from clk_50 — proves the bitstream loaded and
-    //            the on-board oscillator is reaching the PL.  ~1.5 Hz
-    //            blink (50 MHz / 2^25).  Runs free of rst, so it lights
-    //            up the moment the bitstream loads — even if rst_n is
-    //            stuck low or both MMCMs fail to lock.
-    //   dbg[1] = PLL lock — both MMCMs locked.  Solid on once the SOM is
-    //            stable; flickers / off = clock subsystem trouble.  Cross
-    //            from clk_50 with a tiny 2-FF synchroniser since the
-    //            LOCKED outputs are async to clk_50.
-    //   dbg[2] = bl_busy — handy ongoing-dev signal kept across bring-up;
-    //            the blitter pulses this whenever a command is in flight.
-    //   dbg[3] = unused (no pin on the carrier).
-    //
-    // Bring-up Phase 1: heartbeat blinks, PLL-lock LED solid.  See
-    // docs/bring-up.md.
+    // Assignment — glance test = GREEN+BLUE solid, RED blinking:
+    //   GREEN (dbg[0]) = mmcm1_locked  (clk_sally/clk_sys MMCM) — solid = OK
+    //   BLUE  (dbg[1]) = mmcm2_locked  (clk_pix MMCM)           — solid = OK
+    //   RED   (dbg[2]) = clk_50 heartbeat — always blinks once the bitstream
+    //                    loads (liveness, independent of either MMCM)
     reg [24:0] heartbeat_cnt = '0;
-    always_ff @(posedge clk_50) heartbeat_cnt <= heartbeat_cnt + 1'b1;
+    always_ff @(posedge clk_50) heartbeat_cnt <= heartbeat_cnt + 1'b1;  // ~1.5 Hz
 
-    reg [1:0] pll_lock_sync = '0;
-    always_ff @(posedge clk_50)
-        pll_lock_sync <= {pll_lock_sync[0], mmcm1_locked & mmcm2_locked};
-
-    // clk_sys liveness probe (2026-05-29): a FREE-RUNNING counter on clk_sys
-    // (no reset gate — so it depends ONLY on clk_sys toggling, not on rst_sys).
-    // clk_sys is the shared PS<->PL AXI clock (GP0 + HP0/1/3 ACLK).  The GP0
-    // read hangs; if clk_sys never reaches PL logic this LED stays dark while
-    // the clk_50 heartbeat blinks -> root cause of the whole AXI interface.
-    // ~150MHz / 2^28 ~= 0.56 Hz (clearly slower than the clk_50 ~1.5 Hz one).
-    reg [27:0] hb_sys = '0;
-    always_ff @(posedge clk_sys) hb_sys <= hb_sys + 1'b1;
-
-    // dbg[0]=Y16 clk_50 heartbeat (~1.5Hz, CONTROL — known good)
-    // dbg[1]=Y17 PLL-lock (solid green)
-    // dbg[2]=R14 clk_sys heartbeat (~0.56Hz slow — blinks ONLY if clk_sys lives)
-    assign dbg = {1'b0, hb_sys[27], pll_lock_sync[1], heartbeat_cnt[24]};
+    //   dbg = {  -,           RED,              BLUE,         GREEN }
+    assign dbg = {1'b0, heartbeat_cnt[24], mmcm2_lock_s, mmcm1_lock_s};
 
     // PL-side UART is a vestigial port (real debug UART runs through the PS
     // MIO, not the PL).  Tie tx idle-high so the synth dangling-port warning
@@ -1449,7 +1560,14 @@ module fpga_xt_top (
         .FIXED_IO_ps_porb  (),
         .FIXED_IO_ps_srstb (),
         .FCLK_RESET0_N_0   (),
+        .FCLK_CLK1_0        (fclk_50),   // 50 MHz PL reference -> both MMCMs
         .s_axi_gp0_aclk     (clk_sys),
+        .iic_0_scl_i        (i2c_scl_i),
+        .iic_0_scl_o        (i2c_scl_o),
+        .iic_0_scl_t        (i2c_scl_t),
+        .iic_0_sda_i        (i2c_sda_i),
+        .iic_0_sda_o        (i2c_sda_o),
+        .iic_0_sda_t        (i2c_sda_t),
         .m_axi_hp0_araddr   (hp0_araddr[31:0]),
         .m_axi_hp0_arburst  (hp0_arburst[1:0]),
         .m_axi_hp0_arcache  (4'd0),
@@ -1684,7 +1802,8 @@ module fpga_xt_top (
         .bl_busy         (bl_busy),
         .bl_queue_full   (bl_cq_full),
         .bl_pat_blocked  (bl_pat_blocked),
-        .bl_seq_counter  (bl_seq_counter)
+        .bl_seq_counter  (bl_seq_counter),
+        .diag_word       (diag_word)
     );
 
     // ROM-init AXI-Lite slave — see hdl/sally_rom_loader.sv.

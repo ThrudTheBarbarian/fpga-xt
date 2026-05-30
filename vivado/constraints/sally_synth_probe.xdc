@@ -23,8 +23,12 @@
 # All cross-domain paths are CDC-safe; tell STA to skip them via
 # set_clock_groups -asynchronous.
 
-# ---- Primary input clock (50 MHz on-board oscillator) ---------------------
-create_clock -name clk_50 -period 20.000 [get_ports clk_50]
+# ---- clk_50 pin: actually a 12 MHz crystal (X2), heartbeat-LED only -------
+# The Z-Turn's PL clock pin (U14) is a 12 MHz crystal, NOT 50 MHz — so it no
+# longer feeds the MMCMs (they run off the PS FCLK_CLK1 = exact 50 MHz; see
+# fpga_xt_top.sv).  clk_50 now drives only the free-running heartbeat counter,
+# so its period is non-critical, but constrain it honestly at 12 MHz (83.333 ns).
+create_clock -name clk_50 -period 83.333 [get_ports clk_50]
 
 # HD.CLK_SRC for clk_50 lives in constraints/ooc_only.xdc — applying it
 # in the bit flow trips Common 17-69 because clk_50's IBUF is already

@@ -55,18 +55,30 @@ set_property IOSTANDARD LVCMOS33 [get_ports rgb_vsync]
 set_property IOSTANDARD LVCMOS33 [get_ports rgb_de]
 set_property IOSTANDARD LVCMOS33 [get_ports rgb_pixclk]
 
+# Pack the final RGB/sync/DE output FFs into the IOBs so they launch cleanly
+# and aligned with the ODDR-forwarded pixel clock (clean setup/hold at the
+# SiI9022 input).  (rgb_pixclk is driven by an ODDR already in the IOB.)
+set_property IOB TRUE [get_ports {rgb_r[*]}]
+set_property IOB TRUE [get_ports {rgb_g[*]}]
+set_property IOB TRUE [get_ports {rgb_b[*]}]
+set_property IOB TRUE [get_ports rgb_hsync]
+set_property IOB TRUE [get_ports rgb_vsync]
+set_property IOB TRUE [get_ports rgb_de]
+
 # ---- User push-button as reset (SW[0] on baseboard, active-low) ------------
 set_property PACKAGE_PIN R19     [get_ports rst_n]
 set_property IOSTANDARD  LVCMOS33 [get_ports rst_n]
 
-# ---- SiI9022A I2C configuration bus (HDMI DDC channel) --------------------
-# I2C0_SCL → IO_L24N_T3_34 → P16
-# I2C0_SDA → IO_L24P_T3_34 → P15
-# External 4.7 kΩ pull-ups to 3.3 V on baseboard (Bank 35).
+# ---- SiI9022A control I2C — driven by PS I2C0 (EMIO) via IOBUFs ------------
+# DCC_SCL → P16, DCC_SDA → P15 (the exact pins MyIR routes EMIO I2C0 to).
+# External 4.7 kΩ pull-ups on the baseboard; PULLUP true adds the internal
+# weak pull-up too (MyIR does this — belt and braces for open-drain I2C).
 set_property PACKAGE_PIN P16 [get_ports hdmi_scl]
 set_property PACKAGE_PIN P15 [get_ports hdmi_sda]
 set_property IOSTANDARD LVCMOS33 [get_ports hdmi_scl]
 set_property IOSTANDARD LVCMOS33 [get_ports hdmi_sda]
+set_property PULLUP true [get_ports hdmi_scl]
+set_property PULLUP true [get_ports hdmi_sda]
 
 # ---- Debug LEDs (LEDS[2:0] on baseboard) -----------------------------------
 set_property PACKAGE_PIN Y16 [get_ports {dbg[0]}]
