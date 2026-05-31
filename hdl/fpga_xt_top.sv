@@ -1188,10 +1188,25 @@ module fpga_xt_top (
     // path.  Proves the physical HDMI chain (clk_pix -> RGB565 -> SiI9022 ->
     // display) before the planes carry real pixels.  Sync/DE always come from
     // the compositor, so the timing the SiI9022 sees is the real raster.
-    localparam bit TEST_PATTERN = 1'b1;     // bring-up: force colour bars
+    // Test-pattern enable is RUNTIME-controlled: GP0 control register bit0
+    // (gp0_ctrl[0] from axi_blitter_bridge, written at byte-offset 0x1C =
+    // 0x43C0001C), synchronised clk_sys -> clk_pix.  It RESETS to 1 so the
+    // board still boots showing bars; the PS clears it to show the live
+    // compositor — no bitstream rebuild to toggle (config belongs in PS sw).
+    wire [7:0] gp0_ctrl;                              // driven by u_axi_bridge
+    (* ASYNC_REG = "TRUE" *) reg [1:0] tp_en_sync = 2'b11;
+    always_ff @(posedge clk_pix) tp_en_sync <= {tp_en_sync[0], gp0_ctrl[0]};
+    wire test_pattern_pix = tp_en_sync[1];
+
+    // 8 colour bars selected directly by fb_h_count[10:8] (256-px bars; the 8th
+    // (black) is half-width since 1920/256 = 7.5).  This direct bit-slice form
+    // is the proven-working one (full 8 colours on the 20:54 HDMI build); an
+    // intermediate tp_bar signal (comparator ladder or per-line counter) left
+    // bars 4-7 black on HW for reasons TBD — revisit even-width bars later, now
+    // that GP0 writes work it can be experimented with live via the REPL.
     reg [4:0] tp_r; reg [5:0] tp_g; reg [4:0] tp_b;
     always_ff @(posedge clk_pix) begin
-        unique case (fb_h_count[10:8])      // 8 bars of 256 px across the line
+        unique case (fb_h_count[10:8])
             3'd0: {tp_r,tp_g,tp_b} <= {5'd31,6'd63,5'd31}; // white
             3'd1: {tp_r,tp_g,tp_b} <= {5'd31,6'd63,5'd0 }; // yellow
             3'd2: {tp_r,tp_g,tp_b} <= {5'd0 ,6'd63,5'd31}; // cyan
@@ -1205,20 +1220,20 @@ module fpga_xt_top (
 
     // Final output stage — register RGB + sync + DE on clk_pix in one place so
     // they launch cleanly and aligned (pack into the IOB output FFs via
-    // IOB=TRUE in the XDC), matched to the ODDR-forwarded pixel clock.  In
-    // TEST_PATTERN mode the sync/DE come straight from vbeam (vb_*), NOT the
-    // compositor (spr_*), so the test frame is fully vbeam-sourced and free of
-    // the compositor/plane-fetch pipeline (which depends on DDR data we don't
-    // have yet).
+    // IOB=TRUE in the XDC), matched to the ODDR-forwarded pixel clock.  When the
+    // test pattern is enabled (test_pattern_pix) the sync/DE come straight from
+    // vbeam (vb_*), NOT the compositor (spr_*), so the test frame is fully
+    // vbeam-sourced and free of the compositor/plane-fetch pipeline (which
+    // depends on DDR data we don't have yet).
     reg [4:0] o_r; reg [5:0] o_g; reg [4:0] o_b;
     reg       o_de, o_hs, o_vs;
     always_ff @(posedge clk_pix) begin
-        o_r  <= TEST_PATTERN ? tp_r     : spr_rgb_r;
-        o_g  <= TEST_PATTERN ? tp_g     : spr_rgb_g;
-        o_b  <= TEST_PATTERN ? tp_b     : spr_rgb_b;
-        o_de <= TEST_PATTERN ? vb_de    : spr_rgb_de;
-        o_hs <= TEST_PATTERN ? vb_hsync : spr_rgb_hsync;
-        o_vs <= TEST_PATTERN ? vb_vsync : spr_rgb_vsync;
+        o_r  <= test_pattern_pix ? tp_r     : spr_rgb_r;
+        o_g  <= test_pattern_pix ? tp_g     : spr_rgb_g;
+        o_b  <= test_pattern_pix ? tp_b     : spr_rgb_b;
+        o_de <= test_pattern_pix ? vb_de    : spr_rgb_de;
+        o_hs <= test_pattern_pix ? vb_hsync : spr_rgb_hsync;
+        o_vs <= test_pattern_pix ? vb_vsync : spr_rgb_vsync;
     end
     assign rgb_r      = o_r;
     assign rgb_g      = o_g;
@@ -1803,7 +1818,8 @@ module fpga_xt_top (
         .bl_queue_full   (bl_cq_full),
         .bl_pat_blocked  (bl_pat_blocked),
         .bl_seq_counter  (bl_seq_counter),
-        .diag_word       (diag_word)
+        .diag_word       (diag_word),
+        .gp0_ctrl        (gp0_ctrl)
     );
 
     // ROM-init AXI-Lite slave — see hdl/sally_rom_loader.sv.

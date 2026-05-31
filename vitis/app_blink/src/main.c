@@ -27,10 +27,12 @@
  */
 
 #include <stdint.h>
+#include <stdlib.h>          /* strtoul (REPL hex parsing) */
+#include <string.h>          /* strcmp  (REPL dispatch)    */
 #include "xparameters.h"
 #include "xil_printf.h"
 #include "xil_io.h"
-#include "sleep.h"
+#include "sleep.h"           /* usleep — paces the REPL loop (1 ms/iter) */
 #include "xiicps.h"          /* PS I2C0 (EMIO) -> SiI9022A control bus */
 
 #include "xt_blitter.h"
@@ -78,17 +80,14 @@ static int sii_read(uint8_t reg, uint8_t *val)
     return s;
 }
 
-/* Internal (indexed) register access: page 0 via 0xBC, offset via 0xBD, data
- * at 0xBE.  Used for source termination (0x82) and the TCLK-stable status (0x72). */
+/* Internal (indexed) register read: select page 0 via 0xBC, offset via 0xBD,
+ * data at 0xBE.  Used for the TCLK-stable status (0x72).  (Indexed *writes* —
+ * e.g. source termination 0x82 — are done inline / via the REPL's `iw`.) */
 static uint8_t sii_read_idx(uint8_t offset)
 {
     sii_write(0xBC, 0x01); sii_write(0xBD, offset);
     uint8_t v = 0; sii_read(0xBE, &v);
     return v;
-}
-static void sii_write_idx(uint8_t offset, uint8_t val)
-{
-    sii_write(0xBC, 0x01); sii_write(0xBD, offset); sii_write(0xBE, val);
 }
 
 /* Hot-Plug Service: (re)establish the video output once a sink is attached
@@ -235,6 +234,163 @@ static void ps_led1_set(int on)
     Xil_Out32(0xE000A000 + 0x040, on ? (d | 0x1u) : (d & ~0x1u));
 }
 
+/* ====================================================================
+ * Serial REPL — interactive debug console on UART1.
+ *
+ * The bring-up tax this pays off: instead of editing C, rebuilding, and
+ * re-flashing to poke one register, you poke it live and watch the result.
+ *   mr/mw  = peek/poke ANY 32-bit address (Xil_In32/Out32): PL GP0 regs
+ *            (blitter 0x43C0xxxx, diag, test-pattern ctrl), MIO GPIO, PS regs.
+ *   ir/iw/id = SiI9022 I2C read / write / dump (over PS I2C0).
+ * plus convenience wrappers (bars, hdmi, diag, mon) and 'help'.
+ * ==================================================================== */
+static int g_mon = 0;        /* periodic status tick on/off */
+
+/* Lightweight UART1 char I/O (no FIFO reset, unlike uart1_raw_puts) so it
+ * interleaves cleanly with xil_printf.  UART1 @0xE0001000: SR @0x2C
+ * (bit1=RXEMPTY, bit4=TXFULL), data FIFO @0x30, CR @0x00. */
+static void uart1_putc(char ch)
+{
+    volatile uint32_t *u = (volatile uint32_t *)0xE0001000u;
+    while (u[0x2C / 4] & 0x10u) { }          /* spin while TX FIFO full */
+    u[0x30 / 4] = (uint32_t)(unsigned char)ch;
+}
+static void uart1_puts(const char *s) { while (*s) uart1_putc(*s++); }
+
+/* Enable the UART1 receiver — ps7_init sets baud/mode, but the early TX-only
+ * CR write in uart1_raw_puts cleared RX_EN, so turn it back on for the REPL. */
+static void uart1_rx_enable(void)
+{
+    volatile uint32_t *u = (volatile uint32_t *)0xE0001000u;
+    u[0x00 / 4] = 0x03;                      /* RXRST|TXRST (self-clearing) */
+    u[0x00 / 4] = 0x14;                      /* RX_EN|TX_EN                 */
+}
+/* Non-blocking: returns the next RX byte, or -1 if the FIFO is empty. */
+static int uart1_getc(void)
+{
+    volatile uint32_t *u = (volatile uint32_t *)0xE0001000u;
+    if (u[0x2C / 4] & 0x02u) return -1;      /* SR bit1 = RXEMPTY */
+    return (int)(u[0x30 / 4] & 0xFFu);
+}
+
+static void repl_help(void)
+{
+    uart1_puts(
+      "\r\ncommands (all values are HEX):\r\n"
+      "  mr <addr> [n]    memory read n words (Xil_In32), default n=1\r\n"
+      "  mw <addr> <val>  memory write, 32-bit (Xil_Out32)\r\n"
+      "  ir <reg>         SiI9022 I2C register read\r\n"
+      "  iw <reg> <val>   SiI9022 I2C register write\r\n"
+      "  id [start] [n]   SiI9022 I2C dump (default start=00, n=20)\r\n"
+      "  bars <0|1>       HDMI test pattern off/on (writes 43C0001C)\r\n"
+      "  hdmi             re-run SiI9022 output init (sii_enable_output)\r\n"
+      "  diag             decode GP0 diag word + measured H_RES/V_RES\r\n"
+      "  mon <0|1>        periodic 1s status tick off/on\r\n"
+      "  help             this list\r\n"
+      "e.g.  mr 43c0001c  |  iw 1a 01  |  id 00 20  |  bars 0\r\n");
+}
+
+/* One decoded status line: GP0 diag word (clock-lock / clk_pix-alive / vbeam
+ * frames) + the SiI9022's live HPD/RxSense/TCLK and measured input sync. */
+static void repl_status(void)
+{
+    uint32_t d = Xil_In32(XT_BLITTER_BASE + 0x1Cu);
+    uint8_t  st = 0, tclk, hl = 0, hh = 0, vl = 0, vh = 0;
+    (void)sii_read(0x3D, &st);
+    tclk = sii_read_idx(0x72);
+    sii_read(0x6A, &hl); sii_read(0x6B, &hh);
+    sii_read(0x6C, &vl); sii_read(0x6D, &vh);
+    xil_printf("diag=%08x m1=%u m2=%u pixalive=%u frames=%u | "
+               "HPD=%u RxSense=%u tclk=%02x H_RES=%u V_RES=%u\r\n",
+               (unsigned)d, (unsigned)(d & 1u), (unsigned)((d >> 1) & 1u),
+               (unsigned)((d >> 8) & 0xFFu), (unsigned)((d >> 24) & 0xFFu),
+               (unsigned)((st >> 2) & 1u), (unsigned)((st >> 3) & 1u), tclk,
+               ((unsigned)(hh & 0x0F) << 8) | hl,
+               ((unsigned)(vh & 0x0F) << 8) | vl);
+}
+
+/* Parse + run one command line (modified in place by the tokenizer). */
+static void repl_exec(char *cmd)
+{
+    char *argv[5]; int argc = 0;
+    char *p = cmd;
+    while (*p && argc < 5) {
+        while (*p == ' ' || *p == '\t') p++;
+        if (!*p) break;
+        argv[argc++] = p;
+        while (*p && *p != ' ' && *p != '\t') p++;
+        if (*p) *p++ = '\0';
+    }
+    if (argc == 0) return;
+
+    if (!strcmp(argv[0], "help")) { repl_help(); return; }
+
+    if (!strcmp(argv[0], "mr")) {
+        if (argc < 2) { uart1_puts("usage: mr <addr> [n]\r\n"); return; }
+        uint32_t a = (uint32_t)strtoul(argv[1], NULL, 16);
+        unsigned n = (argc >= 3) ? (unsigned)strtoul(argv[2], NULL, 16) : 1u;
+        for (unsigned i = 0; i < n; i++)
+            xil_printf("  [%08x] = %08x\r\n", (unsigned)(a + 4u * i),
+                       (unsigned)Xil_In32(a + 4u * i));
+        return;
+    }
+    if (!strcmp(argv[0], "mw")) {
+        if (argc < 3) { uart1_puts("usage: mw <addr> <val>\r\n"); return; }
+        uint32_t a = (uint32_t)strtoul(argv[1], NULL, 16);
+        uint32_t v = (uint32_t)strtoul(argv[2], NULL, 16);
+        xil_printf("  writing [%08x] <= %08x ...\r\n", (unsigned)a, (unsigned)v);
+        Xil_Out32(a, v);                 /* if no "ok" prints, this write HUNG */
+        uart1_puts("  ok\r\n");
+        return;
+    }
+    if (!strcmp(argv[0], "ir")) {
+        if (argc < 2) { uart1_puts("usage: ir <reg>\r\n"); return; }
+        uint8_t r = (uint8_t)strtoul(argv[1], NULL, 16), v = 0;
+        sii_read(r, &v);
+        xil_printf("  i2c[%02x] = %02x\r\n", r, v);
+        return;
+    }
+    if (!strcmp(argv[0], "iw")) {
+        if (argc < 3) { uart1_puts("usage: iw <reg> <val>\r\n"); return; }
+        uint8_t r = (uint8_t)strtoul(argv[1], NULL, 16);
+        uint8_t v = (uint8_t)strtoul(argv[2], NULL, 16);
+        sii_write(r, v);
+        xil_printf("  i2c[%02x] <= %02x\r\n", r, v);
+        return;
+    }
+    if (!strcmp(argv[0], "id")) {
+        unsigned s = (argc >= 2) ? (unsigned)strtoul(argv[1], NULL, 16) : 0x00u;
+        unsigned n = (argc >= 3) ? (unsigned)strtoul(argv[2], NULL, 16) : 0x20u;
+        for (unsigned i = 0; i < n; i++) {
+            uint8_t v = 0; sii_read((uint8_t)(s + i), &v);
+            if ((i & 7u) == 0) xil_printf("\r\n  %02x:", s + i);
+            xil_printf(" %02x", v);
+        }
+        uart1_puts("\r\n");
+        return;
+    }
+    if (!strcmp(argv[0], "bars")) {
+        unsigned on = (argc >= 2) ? (unsigned)strtoul(argv[1], NULL, 16) : 1u;
+        xil_printf("  writing bars=%u (43C0001C) ...\r\n", on ? 1u : 0u);
+        Xil_Out32(XT_BLITTER_BASE + 0x1Cu, on ? 1u : 0u);   /* may HANG if no "ok" */
+        uart1_puts("  ok\r\n");
+        return;
+    }
+    if (!strcmp(argv[0], "hdmi")) {
+        sii_enable_output();
+        uart1_puts("  sii_enable_output() done\r\n");
+        return;
+    }
+    if (!strcmp(argv[0], "diag")) { repl_status(); return; }
+    if (!strcmp(argv[0], "mon")) {
+        if (argc < 2) { uart1_puts("usage: mon <0|1>\r\n"); return; }
+        g_mon = (strtoul(argv[1], NULL, 16) != 0);
+        xil_printf("  mon %s\r\n", g_mon ? "ON" : "OFF");
+        return;
+    }
+    uart1_puts("? unknown — type 'help'\r\n");
+}
+
 int main(void)
 {
     /* PS-software liveness LED, FIRST thing — before anything that could hang
@@ -328,68 +484,70 @@ int main(void)
     xil_printf("PL diag @0x%08x (m1/m2 lock, clk_pix-alive, m2-unlocks)\r\n",
                (unsigned)(XT_BLITTER_BASE + 0x1Cu));
 
-    uint32_t tick = 0, prev_pix = 0, prev_frm = 0;
-    unsigned out_on = 0;          /* output enabled for the current plug? */
+    /* Test pattern (colour bars) defaults ON in the bitstream — gp0_ctrl resets
+     * to 1 — so DON'T write it here.  A GP0 *write* at this point hangs the CPU
+     * before the REPL even starts (the write-response path is unverified on HW —
+     * reads work, but this would be the first write).  Toggle bars from the REPL
+     * with `bars 0|1` once the console is up and the write path is confirmed. */
+    xil_printf("HDMI test pattern: BARS (bitstream default; use 'bars 0|1' in REPL)\r\n");
+
+    /* ---- Serial REPL ----------------------------------------------------
+     * Interactive debug console.  The loop is non-blocking: it polls UART for
+     * a command line and dispatches on Enter, paced by a 1 ms usleep so a ~1s
+     * counter still services hot-plug (auto-enable output on HDMI plug),
+     * toggles the liveness LED, and prints a status line when `mon` is on. */
+    uart1_rx_enable();
+    repl_help();
+    uart1_puts("> ");
+
+    char     line[80];
+    unsigned ll = 0;
+    unsigned out_on = 0, tick = 0, ms = 0;
+
     while (1) {
-        ps_led1_set(tick & 1u);   /* blink PS_USER_LED1 each second — PS-alive proof */
-
-        uint32_t d        = Xil_In32(XT_BLITTER_BASE + 0x1Cu);
-        unsigned m1       = (d >> 0) & 1u;
-        unsigned m2       = (d >> 1) & 1u;
-        unsigned pixalive = (d >> 8) & 0xFFu;
-        unsigned m2unlk   = (d >> 16) & 0xFFu;
-        unsigned frames   = (d >> 24) & 0xFFu;   /* vbeam frame count */
-        unsigned pixmoving = (tick && pixalive != prev_pix);   /* changed since last tick */
-        unsigned vbrun     = (tick && frames != prev_frm);     /* vbeam advancing? */
-        prev_pix = pixalive;
-        prev_frm = frames;
-
-        /* Live SiI9022 hot-plug status (0x3D bit2=HPD, bit3=RxSense). */
-        uint8_t st = 0;
-        (void)sii_read(0x3D, &st);
-        unsigned hpd = (st >> 2) & 1u;
-
-        /* HOT-PLUG SERVICE (the doc's "must"): enable the video output when a
-         * sink is present, re-running on each plug.  out_on starts 0 so the
-         * output is (re)enabled on the FIRST HPD-high seen here — i.e. AFTER
-         * HPD is confirmed, not statically at boot. */
-        if (hpd && !out_on) {
-            sii_enable_output();
-            out_on = 1;
-            xil_printf(">> HPD high: output enabled (hot-plug service)\r\n");
-        } else if (!hpd) {
-            out_on = 0;            /* unplug: re-enable on next plug */
+        /* Interactive: drain RX, echo, dispatch on CR/LF. */
+        int c;
+        while ((c = uart1_getc()) >= 0) {
+            if (c == '\r' || c == '\n') {
+                uart1_puts("\r\n");
+                line[ll] = '\0';
+                if (ll > 0) repl_exec(line);
+                ll = 0;
+                uart1_puts("> ");
+            } else if (c == 0x08 || c == 0x7F) {        /* backspace / DEL */
+                if (ll > 0) { ll--; uart1_puts("\b \b"); }
+            } else if (c >= 0x20 && c < 0x7F && ll < sizeof(line) - 1) {
+                line[ll++] = (char)c;
+                uart1_putc((char)c);
+            }
         }
 
-        /* TMDS clock stability: indexed page0/0x72 bit1 = TCLK_STABLE change
-         * interrupt.  Read it, then clear (write 1).  If it stays clear after
-         * clearing, the TMDS clock is stable (chip locked to our IDCK); if it
-         * keeps re-asserting, the clock is flapping -> the pixel clock we feed
-         * the chip isn't usable. */
-        uint8_t tclk = sii_read_idx(0x72);
-        if (tclk & 0x02) sii_write_idx(0x72, 0x02);   /* W1C the change flag */
+        usleep(1000);                       /* 1 ms — pace the loop (echo ≤1ms) */
 
-        /* Live H_RES/V_RES — the chip's measured input sync.  Unlike the one-shot
-         * post-cfg read (taken mid-frame, so V_RES was a partial count), this
-         * samples once/sec after the measurement has settled: H_RES~2200,
-         * V_RES~1125 means the chip sees a clean 1080p60 raster on our HS/VS. */
-        uint8_t hl = 0, hh = 0, vl = 0, vh = 0;
-        sii_read(0x6A, &hl); sii_read(0x6B, &hh);
-        sii_read(0x6C, &vl); sii_read(0x6D, &vh);
-        unsigned hres = ((unsigned)(hh & 0x0F) << 8) | hl;
-        unsigned vres = ((unsigned)(vh & 0x0F) << 8) | vl;
+        /* Periodic (~1s): hot-plug service + LED + optional mon status feed. */
+        if (++ms >= 1000) {
+            ms = 0;
+            ps_led1_set(tick & 1u);
 
-        xil_printf("tick %2u  clk_pix=%s  vbeam=%s (frm=%u)  "
-                   "HPD=%u RxSense=%u  tclk=0x%02x  H_RES=%u V_RES=%u\r\n",
-                   tick,
-                   pixmoving ? "RUNNING" : (tick ? "STUCK" : "?"),
-                   vbrun ? "FRAMING" : (tick ? "STUCK" : "?"), frames,
-                   hpd, (unsigned)((st>>3)&1u),
-                   tclk, hres, vres);
-        (void)m1; (void)m2; (void)m2unlk; (void)pixalive;
-        (void)m1; (void)m2;
-        tick++;
-        sleep(1);   /* 1 second */
+            uint8_t st = 0; (void)sii_read(0x3D, &st);
+            unsigned hpd = (st >> 2) & 1u;
+            if (hpd && !out_on) {                       /* plug: enable output */
+                sii_enable_output();
+                out_on = 1;
+                uart1_puts("\r\n>> HPD high: output enabled\r\n> ");
+                for (unsigned k = 0; k < ll; k++) uart1_putc(line[k]);
+            } else if (!hpd) {
+                out_on = 0;                             /* unplug: re-arm */
+            }
+
+            if (g_mon) {                                /* live status feed */
+                uart1_puts("\r\n");
+                repl_status();
+                uart1_puts("> ");
+                for (unsigned k = 0; k < ll; k++) uart1_putc(line[k]);
+            }
+            tick++;
+        }
     }
 
     /* Unreachable, but make the compiler happy. */

@@ -64,16 +64,44 @@ module axi_blitter_bridge (
     // ---- PL debug word (clk_sys domain) — read at offset 0x1C --------------
     // General-purpose diagnostic read (clock-lock state, heartbeats, etc.);
     // built in fpga_xt_top, surfaced over GP0 so the PS app can print it.
-    input  wire [31:0] diag_word
+    input  wire [31:0] diag_word,
+
+    // ---- PL control register (clk_sys domain) — WRITTEN at offset 0x1C ------
+    // Software-writable control bits (the read at 0x1C returns diag_word; the
+    // write at 0x1C lands here — read/write share the offset).  bit0 = HDMI
+    // test-pattern (colour-bar) enable.  Resets to 0x01 so the board still
+    // boots showing bars; the PS can clear it to show the live compositor.
+    output reg  [7:0]  gp0_ctrl
 );
 
     // ====================================================================
     // AXI4-Lite write transaction FSM
+    //
+    // AW and W are accepted INDEPENDENTLY — they are NOT coupled.  The PS GP0
+    // master may assert AWVALID and wait for AWREADY *before* it drives WVALID;
+    // a slave that only accepts when both are valid together then deadlocks
+    // (it waits for WVALID that the master won't send until it sees AWREADY) ->
+    // every GP0 write hangs the issuing core.  Reads are immune (single AR
+    // channel), which is exactly why reads worked while the first write hung.
+    //
+    // So: capture AW when it arrives (only if it addresses our 0x00-0x1F
+    // window), capture W only once we own that AW (the W channel is shared with
+    // sally_rom_loader, so the slave that matched the address must claim the W),
+    // then drive the response once both halves are in.
+    //
+    //   bl_addr maps the AXI byte offset to the blitter reg page:
+    //     0x00..0x0F -> bl_addr[5]=0 ($D4Bx),  0x10..0x1F -> bl_addr[5]=1 ($D4Cx)
+    //   offset 0x1C is the SW control register (gp0_ctrl), NOT a blitter reg:
+    //     it latches gp0_ctrl and does NOT strobe bl_we.
     // ====================================================================
-    localparam WST_IDLE  = 0,
-               WST_WRITE = 1;
+    localparam WST_IDLE = 1'b0,
+               WST_RESP = 1'b1;
 
-    reg [1:0]  wstate;
+    reg        wstate;
+    reg        aw_have, w_have;       // AW / W captured for the in-flight write
+    reg [4:0]  aw_off;                // latched AXI byte offset awaddr[4:0]
+    reg [7:0]  w_byte;                // latched first active write byte
+    wire       aw_mine = s_axi_awvalid && (s_axi_awaddr[15:5] == 11'h000);
 
     always_ff @(posedge clk or posedge rst) begin
         if (rst) begin
@@ -85,6 +113,11 @@ module axi_blitter_bridge (
             bl_addr       <= 6'd0;
             bl_data       <= 8'd0;
             bl_we         <= 1'b0;
+            aw_have       <= 1'b0;
+            w_have        <= 1'b0;
+            aw_off        <= 5'd0;
+            w_byte        <= 8'd0;
+            gp0_ctrl      <= 8'h01;    // test pattern ON at reset (bars on boot)
         end else begin
             s_axi_awready <= 1'b0;
             s_axi_wready  <= 1'b0;
@@ -92,44 +125,44 @@ module axi_blitter_bridge (
 
             unique case (wstate)
                 WST_IDLE: begin
-                    // Bring-up co-tenancy: the same GP0 AXI-Lite window
-                    // ($43C0_0000..$43C0_FFFF, 64 KB) hosts both this
-                    // blitter bridge and the ROM-init loader.  The
-                    // blitter owns offsets $0000-$001F (32 bytes);
-                    // anything outside that window belongs to
-                    // sally_rom_loader.  Gate on awaddr[15:5]==0 so the
-                    // two slaves never both ack the same write.
-                    if (s_axi_awvalid && s_axi_wvalid
-                        && (s_axi_awaddr[15:5] == 11'h000)) begin
+                    // Accept AW (once) if it addresses our window; decode the
+                    // blitter reg address now so it is stable before bl_we.
+                    if (aw_mine && !aw_have) begin
                         s_axi_awready <= 1'b1;
-                        s_axi_wready  <= 1'b1;
+                        aw_have       <= 1'b1;
+                        aw_off        <= s_axi_awaddr[4:0];
+                        bl_addr       <= {~s_axi_awaddr[4], s_axi_awaddr[3:0]};
+                    end
 
-                        // Map AXI byte offset to blitter reg_addr:
-                        //   0x00..0x0F -> bl_addr[5]=0 ($D4Bx page)
-                        //   0x10..0x1F -> bl_addr[5]=1 ($D4Cx page)
-                        bl_addr <= {~s_axi_awaddr[4], s_axi_awaddr[3:0]};
+                    // Accept W only once we own the AW (this cycle or earlier),
+                    // so the shared W beat is claimed by the right slave.
+                    if (s_axi_wvalid && !w_have && (aw_have || aw_mine)) begin
+                        s_axi_wready <= 1'b1;
+                        w_have       <= 1'b1;
+                        if (s_axi_wstrb[0])      w_byte <= s_axi_wdata[7:0];
+                        else if (s_axi_wstrb[1]) w_byte <= s_axi_wdata[15:8];
+                        else if (s_axi_wstrb[2]) w_byte <= s_axi_wdata[23:16];
+                        else                     w_byte <= s_axi_wdata[31:24];
+                    end
 
-                        // Extract first byte from whichever lane is active
-                        if (s_axi_wstrb[0])
-                            bl_data <= s_axi_wdata[7:0];
-                        else if (s_axi_wstrb[1])
-                            bl_data <= s_axi_wdata[15:8];
-                        else if (s_axi_wstrb[2])
-                            bl_data <= s_axi_wdata[23:16];
-                        else
-                            bl_data <= s_axi_wdata[31:24];
-
-                        wstate <= WST_WRITE;
+                    // Both halves captured (in prior cycles) -> commit + respond.
+                    if (aw_have && w_have) begin
+                        bl_data      <= w_byte;
+                        if (aw_off == 5'h1C) gp0_ctrl <= w_byte;   // control reg
+                        else                 bl_we    <= 1'b1;     // blitter strobe
+                        s_axi_bresp  <= 2'b00;
+                        s_axi_bvalid <= 1'b1;
+                        aw_have      <= 1'b0;
+                        w_have       <= 1'b0;
+                        wstate       <= WST_RESP;
                     end
                 end
 
-                WST_WRITE: begin
-                    bl_we <= 1'b1;
-                    s_axi_bresp  <= 2'b00;
-                    s_axi_bvalid <= 1'b1;
+                WST_RESP: begin
+                    s_axi_bvalid <= 1'b1;            // hold until the PS accepts
                     if (s_axi_bready) begin
                         s_axi_bvalid <= 1'b0;
-                        wstate <= WST_IDLE;
+                        wstate       <= WST_IDLE;
                     end
                 end
             endcase
