@@ -88,7 +88,8 @@ module sally_mem #(
     // original $0082/$0083 collide with Atari BASIC's VNTP/VNTD, and $1C-$1F
     // are VBI/PBI scratch — any zero-page home conflicts with some software.
     // The CCTL I/O gap $D5C0-$D5DF is touched by no cart/OS and is NOT zeroed
-    // at warm/coldstart (only $D0/$D2/$D3/$D4 are — see rsrc/mem-locations.txt),
+    // at warm/coldstart (only $D0/$D2/$D3/$D4 are — see the ecosystem appendix
+    // in docs/Zynq/register-map.md),
     // so the regs sit at reset until xtc software writes them.  Must be even
     // (two consecutive regs: BASE+0 = code bank, BASE+1 = data bank).  Both
     // are readable.  (The old $0084 atomic both-window switch is dropped until

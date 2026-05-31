@@ -8,6 +8,13 @@ hardware-register list
 ([forums.atariage.com/topic/157241](https://forums.atariage.com/topic/157241-list-of-hardware-registers/))
 to ensure no canonical register is shadowed.
 
+For the wider `$D0xx-$D7xx` I/O space — including the **third-party /
+expansion** usage (PBI devices, U1MB, SIDE, MyIDE, VBXE, R-Time 8, …) that
+constrains where new XT registers can safely live — see the **Appendix:
+ecosystem usage** at the end of this file. New XT allocations are placed in
+ranges that table shows free; e.g. the `$D5xx` block below sits in the
+`$D5C0-$D5DF` gap between R-Time 8 (`$D5B8-$D5BF`) and SIDE/SDX (`$D5E0-$D5FF`).
+
 ## $D0xx — GTIA / CTIA
 
 `fpga-antic` owns the entire page. Real-silicon mirror behaviour is
@@ -197,3 +204,135 @@ The legacy hardware palette (COLBK / COLPF0-3 / COLPM0-3) is stored
 separately and indexes into the full 256-entry palette via its own
 small lookup; software written for canonical Atari hardware is
 unaffected.
+
+## $D5xx — XT extension (bank select + GEM service)
+
+Registers added by the XT extended architecture in the CCTL I/O gap.
+Mirror behaviour does NOT apply here. The XT owns only `$D5C0-$D5DF` — the
+free gap between R-Time 8 (`$D5B8-$D5BF`) and SIDE1/2 / SDX / U1MB
+(`$D5E0-$D5FF`); see the ecosystem Appendix at the end of this file.
+Do NOT extend XT registers into `$D5E0+`.
+
+### $D5C0-$D5C1 — bank selectors
+
+| Addr  | Name      | R/W | Purpose |
+|-------|-----------|-----|---------|
+| $D5C0 | CODE_BANK | R/W | Code bank selector — selects the page mapped into the `$6000-$9FFF` code window (16 KB). 8-bit (256 banks); bank 0 = flat BRAM. Readable (the scheduler saves/restores it). Relocated off zero page (was BASIC VNTP) into the CCTL gap. |
+| $D5C1 | DATA_BANK | R/W | Data bank selector — selects the page mapped into the `$A000-$CFFF` data window (12 KB). 8-bit (256 banks); bank 0 = flat BRAM; **bank `$FF` = the shared GEM arena** (see doorbell below). Readable. |
+| $D5C2-$D5CF | reserved | - | Reserved. Reads 0; writes ignored. |
+
+### $D5D0-$D5D4 — GEM service doorbell
+
+The XL issues VDI/AES calls to the ARM-A9 GEM service through this block:
+stage the parameter block + arrays in bank `$FF` (the `$A000-$CFFF` data
+window), then drive these registers. Synchronous / blocking. Full protocol in
+[../GEM/gem-service-abi.md](../GEM/gem-service-abi.md).
+
+| Addr  | Name         | R/W | Purpose |
+|-------|--------------|-----|---------|
+| $D5D0 | GEM_DISPATCH | W   | Namespace select: `115` ($73) = VDI, `200` ($C8) = AES (ST `TRAP #2` d0 convention). |
+| $D5D1 | GEM_PBLK_LO  | W   | Parameter-block address within the `$A000-$CFFF` window, low byte. Bank is implicitly `$FF`. |
+| $D5D2 | GEM_PBLK_HI  | W   | Parameter-block address, high byte. |
+| $D5D3 | GEM_GO / GEM_STATUS | R/W | **Write** (any value) rings the doorbell to the A9. **Read** returns status: bit 7 `BUSY` (1 while the A9 is servicing), bit 0 `ERR`, bits 6-1 result code. Poll `BUSY`=0 for completion. |
+| $D5D4 | GEM_ABIVER   | R   | GEM service ABI version / magic for capability probe. `$00` = no service present. |
+| $D5D5-$D5DF | reserved | - | Reserved for future GEM / service registers (XT window ends at `$D5DF` — `$D5E0+` is SIDE/SDX). Reads 0; writes ignored. |
+
+## Appendix — Atari I/O-space ecosystem usage ($D0xx-$D7xx)
+
+A reference catalogue of how the `$D0xx-$D7xx` hardware-register space is used
+across the Atari 8-bit ecosystem: stock chips plus third-party expansions
+(U1MB, SIDE, MyIDE, VBXE, PBI devices, the 1090 XL, …). Collected from
+community sources (AtariAge and similar) — treat as a best-effort guide, not an
+exhaustive spec. It exists to keep new XT allocations clear of established
+usage: e.g. the XT `$D5xx` block above sits in the `$D5C0-$D5DF` slot this table
+shows is free.
+
+### $D0xx — GTIA
+
+| Range | Use |
+|-------|-----|
+| `$D000-$D01F` | CTIA / GTIA (stock) |
+| `$D020-$D03F` | reserved — second GTIA |
+| `$D040-$D05F` | reserved — third GTIA |
+| `$D080-$D0FF` | VBXE soft-reset area |
+
+### $D1xx — PBI
+
+| Range | Use |
+|-------|-----|
+| `$D100-$D1FF` | PBI (general) |
+| `$D100-$D107` | MyIDE Internal |
+| `$D100-$D1BE` | U1MB RAM |
+| `$D1BF` | U1MB PBI bankswitching |
+| `$D100, $D104, $D108, $D110, $D114` | 1400XL / 1450XLD modem, voice & disk interface |
+| `$D170-$D171, $D17C, $D1BC, $D1BE, $D1C0` | BlackBox |
+| `$D1C0-$D1C1` | SmartIDE LCD |
+| `$D1B0-$D1C7` | Atari speech / modem / disc registers |
+| `$D1B0, $D1B8` | unreleased 800XLD floppy controller |
+| `$D1C8-$D1CE` | Atari reserved |
+| `$D1CF` | read alternate interrupt register (1450 XLD only) |
+| `$D1D1-$D1DD` | 1090 XL Amy boards 1-4 |
+| `$D1E0-$D1E3` | MIO / 1090 XL serial-parallel ACIA0 |
+| `$D1E4-$D1E7` | 1090 XL serial-parallel ACIA1 |
+| `$D1E8-$D1EF` | 1090 XL serial-parallel registers |
+| `$D1F0-$D1F7` | 1090 XL Z80 / alternate-CPU registers |
+| `$D1F8-$D1FD` | 1090 XL 80-column video card |
+| `$D1FE` | 1090 XL RAM bank-select |
+| `$D1FF` | PBI device enable (W) / IRQ mask (R) |
+
+### $D2xx — POKEY
+
+| Range | Use |
+|-------|-----|
+| `$D200-$D20F` | POKEY (stock) |
+| `$D210-$D21F` | second POKEY (GUMBY) |
+| `$D280-$D283` | Covox (new location) |
+
+### $D3xx — PIA
+
+| Range | Use |
+|-------|-----|
+| `$D300-$D303` | PIA 6520 (stock) |
+| `$D310-$D313` | second PIA 6520 |
+| `$D320-$D323` | VIA 6522 |
+| `$D380-$D381` | U1MB configuration registers |
+| `$D383-$D384` | U1MB status registers |
+| `$D3E2` | U1MB SDX real-time clock (SPI) |
+
+### $D4xx — ANTIC
+
+| Range | Use |
+|-------|-----|
+| `$D400-$D40F` | ANTIC (stock; `$D406`, `$D408` unused) |
+| `$D410-$D41F` | reserved — second ANTIC |
+
+### $D5xx — cartridge control (CCTL)
+
+| Range | Use |
+|-------|-----|
+| `$D500` | 4-bit audio samplers (e.g. ADC0804) |
+| `$D500-$D507` | MyIDE External |
+| `$D5B8-$D5BF` | R-Time 8 |
+| `$D5C0-$D5DF` | **XT extension — claimed here** (bank select + GEM doorbell; see the `$D5xx` section above) |
+| `$D5E0` | SDX bankswitching |
+| `$D5E0-$D5E1` | U1MB SDX bankswitching enable / disable |
+| `$D5E0-$D5FF` | SIDE 1/2 registers (banking, DS1305 RTC, IDE, ID) |
+
+### $D6xx-$D7xx — PBI
+
+| Range | Use |
+|-------|-----|
+| `$D600-$D7FF` | PBI / 1400XL-1450XLD parallel-device RAM (Atari official) |
+| `$D600-$D603` | Covox |
+| `$D600-$D6FF` | MIO RAM / BlackBox RAM |
+| `$D640-$D65F` | VBXE D6 install |
+| `$D740-$D75F` | VBXE D7 install |
+
+### Notes
+
+- Pages `$D0`, `$D2`, `$D3`, `$D4` are zeroed at warm- and cold-start —
+  **except `$D301`**. `$D5` is *not* zeroed, which is why the XT bank-select and
+  GEM registers there persist.
+- Free ranges should mirror the stock chips as much as possible.
+- Games that rely on specific mirror locations: *Bounty Bob Strikes Back*
+  (`$D47B`).
