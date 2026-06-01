@@ -53,7 +53,14 @@ module plane_fetch #(
     output wire [31:0] rd_pixel       // RGBA8888, registered 1 clk after rd_col
 );
 
-    localparam int BEATS_PER_BURST = 16;
+    // Read-burst sizing.  Reduced 16->8 beats as a silicon read-path
+    // experiment: 16-beat PL->DDR reads never returned data on HW (the PS HP
+    // read channel accepted the AR but never produced rvalid), while the
+    // blitter's HP1 path was built at 8-beat reads.  All burst geometry below
+    // derives from this so it stays correct if the value changes again.
+    localparam int BEATS_PER_BURST = 8;
+    localparam int BURST_BYTES     = BEATS_PER_BURST * 8;   // 8-byte (64-bit) beats
+    localparam int BURST_PX        = BEATS_PER_BURST * 2;   // 2 RGBA px per beat
 
     // FSM state — declared early so the combinational wr_en below can use it.
     typedef enum logic [1:0] { S_IDLE, S_AR, S_R, S_DONE } state_t;
@@ -120,8 +127,8 @@ module plane_fetch #(
     wire line_start_sys = ls_sync[1] ^ ls_sync_prev;
 
     // ---- Fetch bookkeeping (clk_sys) -------------------------------------
-    // n_bursts = ceil(src_w / 32): 32 px = 16 beats × 2 px/beat.
-    wire [6:0] n_bursts = 7'((src_w + 12'd31) >> 5);
+    // n_bursts = ceil(src_w / BURST_PX) (BURST_PX source px per burst).
+    wire [6:0] n_bursts = 7'((src_w + 12'(BURST_PX-1)) >> $clog2(BURST_PX));
     logic [11:0] row_to_fetch;
     logic        line_pending;
     logic        fetch_done;     // 1-cycle pulse when a line's fetch completes
@@ -151,8 +158,20 @@ module plane_fetch #(
     assign m_axi_arlen   = 8'(BEATS_PER_BURST - 1);
     assign m_axi_rready  = 1'b1;
 
-    // burst byte offset = burst_idx * 128 (16 beats × 8 bytes)
-    wire [31:0] burst_addr = row_base + (32'(burst_idx) << 7);
+    // burst byte offset = burst_idx * BURST_BYTES
+    wire [31:0] burst_addr = row_base + (32'(burst_idx) << $clog2(BURST_BYTES));
+
+    // Read watchdog.  HW bring-up found that PL->DDR reads fail for a short
+    // window right after reset (~0.7 ms) and then work — proven by the HP2
+    // hp_read_probe, which only survives because it RETRIES.  Without a
+    // watchdog, plane_fetch's first read (issued on scanline 0, inside that
+    // dead window) gets no rvalid and wedges S_R forever (AR=1, R-beats=0 on
+    // silicon).  So: if AR or R stalls for RD_TIMEOUT cycles, abort the line
+    // and let the next line_start re-issue.  RD_TIMEOUT >> normal read latency
+    // (~tens of cycles) but << one scanline, so it never fires in steady state
+    // — only during the startup window, after which lines fill normally.
+    localparam int RD_TIMEOUT = 2048;
+    logic [12:0] rd_wd;
 
     always_ff @(posedge clk_sys) begin
         if (rst_sys) begin
@@ -162,6 +181,7 @@ module plane_fetch #(
             fetch_done    <= 1'b0;
             m_axi_arvalid <= 1'b0;
             m_axi_araddr  <= 32'd0;
+            rd_wd         <= 13'd0;
         end else begin
             fetch_done <= 1'b0;
 
@@ -172,30 +192,40 @@ module plane_fetch #(
                         wr_idx        <= 11'd0;
                         m_axi_araddr  <= burst_addr;     // burst_idx = 0
                         m_axi_arvalid <= 1'b1;
+                        rd_wd         <= 13'd0;
                         state         <= S_AR;
                     end
                 end
                 S_AR: begin
+                    rd_wd <= rd_wd + 13'd1;
                     if (m_axi_arready) begin
                         m_axi_arvalid <= 1'b0;
+                        rd_wd         <= 13'd0;
                         state         <= S_R;
+                    end else if (rd_wd >= RD_TIMEOUT[12:0]) begin
+                        m_axi_arvalid <= 1'b0;           // AR never accepted -> abort
+                        state         <= S_DONE;
                     end
                 end
                 S_R: begin
+                    rd_wd <= rd_wd + 13'd1;
                     if (m_axi_rvalid) begin
                         // wr_en is combinational (asserts this cycle); just
                         // advance the slot for the next beat.
+                        rd_wd  <= 13'd0;                 // progress: pet the dog
                         wr_idx <= wr_idx + 11'd1;
                         if (m_axi_rlast) begin
                             if (burst_idx == n_bursts - 7'd1) begin
                                 state <= S_DONE;
                             end else begin
                                 burst_idx     <= burst_idx + 7'd1;
-                                m_axi_araddr  <= row_base + (32'(burst_idx + 7'd1) << 7);
+                                m_axi_araddr  <= row_base + (32'(burst_idx + 7'd1) << $clog2(BURST_BYTES));
                                 m_axi_arvalid <= 1'b1;
                                 state         <= S_AR;
                             end
                         end
+                    end else if (rd_wd >= RD_TIMEOUT[12:0]) begin
+                        state <= S_DONE;                 // stalled read -> abort, retry next line
                     end
                 end
                 S_DONE: begin
