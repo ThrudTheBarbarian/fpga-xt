@@ -11,31 +11,41 @@
 BUGS
 ====
 
-  o SCANOUT_TEST_PATTERN is orphaned after the fb_scanout -> plane
-    compositor swap. The PL-only HDMI test pattern (build-time
-    SCANOUT_TEST_PATTERN, bypassing the AXI HP fill with a colour-bar /
-    gradient) lived ONLY in fb_scanout.sv (param at :64, output mux at
-    :395-431), which is no longer instantiated -- fpga_xt_top now drives
-    the display via vbeam + plane_fetch + plane_compositor. So the
-    bring-up step ("prove PL -> HDMI with no DDR3 and no PS help") has no
-    test-pattern source. Fix: add an equivalent build-time test-pattern
-    source to plane_compositor (or a plane_fetch bypass) driving the RGB
-    pads, so the signal chain can be proven before the DDR3 read path works.
-
   o Sprite engine image-fetch AXI master is DANGLED at the top level.
     The sprite_engine submodules (descriptor regs $D4Ax/$D4Dx, line
     cache, line fetcher, pixel compositor) are built and timing-closed
     and the engine sits in the scan-out chain -- BUT its AXI read master
-    (sprite-image fetch from the DDR3 arena) is tied off in fpga_xt_top.sv
-    (m_axi_arready=1'b0, m_axi_rdata=64'd0, araddr/arvalid left open). So
-    the stage is a framebuffer passthrough and composites NO fetched
-    sprites yet. Fix: join the master to the clk_sys plane reads on HP0
-    via the BD SmartConnect (per the comment there +
+    (sprite-image fetch from the DDR3 arena) is dangled: the sprite_engine
+    instance leaves its m_axi_ar* OUTPUT ports OPEN (fpga_xt_top.sv
+    ~1202-1206). (NB: this is a DIFFERENT dangle from the
+    m_axi_arready=1'b0 / m_axi_rdata=64'd0 tie-off at fpga_xt_top.sv:322-327
+    -- that one is sally_mem's DDR3 master; see the DDR3 banked-window
+    section below.) So the stage is a framebuffer passthrough and composites
+    NO fetched sprites yet. Fix: join the master to the clk_sys plane reads
+    on HP0 via the BD SmartConnect (per the comment there +
     docs/video-architecture.md s10), NOT a dedicated port; then drive
     descriptors and confirm a sprite composites over the framebuffer.
-    Also update the scaffold header at fpga_xt_top.sv:1050 ("Scaffold
-    stub: passthrough ... submodules land in subsequent commits") -- the
-    submodules DID land.
+    Also update the scaffold header at fpga_xt_top.sv:1151 ("Scaffold
+    stub: passthrough ... submodules land in subsequent commits").
+
+  o *** LIVE BLOCKER (2026-05-31): PL->DDR READ path returns zero on
+    silicon -- compositor scans out SOLID BLACK. *** PL->DDR *writes* are
+    proven on HW (antic_writeback over HP3: prod counters move + real RGBA
+    pixels in the XL buffers 0x3100_0000/0x3110_0000). But plane_fetch's
+    DDR *reads* (HP0 desktop + HP3-read XL) deliver all-zero to the
+    compositor: with bars off the screen is black, and the desktop plane
+    reads 0x3000_0000 (=all-FF per A9 mr) which would scan WHITE if the
+    read worked -- it's black, so plane_fetch returns 0. plane_compositor
+    is alpha-blind (rectangle+depth only), so a working read would show
+    colour-on-black, not all-black -> confirms the read, not the compositor.
+    plane_fetch.sv read FSM looks structurally correct (S_IDLE/AR/R/DONE,
+    arlen=15, combinational wr_en, toggle+2FF line_start CDC, opposite-phase
+    ping-pong) -> silicon-specific, never validated on HW. Diagnostic built:
+    `rdp` REPL cmd -> diag3_word @ GP0 0x14 = {hp0_ar, hp0_rbeat, hp3_ar,
+    hp3_rbeat} counters; splits the failure into AR-not-issued (line_start
+    CDC / FSM) vs PS-not-returning-R (HP read channel) vs returned-but-CDC-
+    dropped. Bitstream with rdp building 2026-05-31. This gates the entire
+    "Boot-to-BASIC display path" below.
 
 
 Boot-to-BASIC: remaining open work
@@ -44,7 +54,10 @@ Boot-to-BASIC: remaining open work
   Boot reaches the BASIC cartridge path; the open work to a visible
   READY and an interactive prompt:
 
-  1. ANTIC -> HDMI display path (plane compositor, ARM side):
+  1. ANTIC -> HDMI display path (plane compositor):
+       (c) *** BLOCKED: plane_fetch DDR reads return zero on silicon ***
+           -- see the LIVE BLOCKER under BUGS above; nothing displays until
+           this is fixed (write path + ANTIC render are already proven on HW).
        (d) v1 desktop.app: blue fill + plane config + XL start ... TODO (ARM)
        (e) GP0 register re-partition + ARM driver ............... TODO
      Deferred: tear-free front_sel sampling at the compositor's own frame
@@ -52,8 +65,10 @@ Boot-to-BASIC: remaining open work
      playfield src_w tracking (fixed 320 for v1).
 
   2. Keyboard injection (post-READY, not on the path to the prompt):
-     debug UART -> POKEY KBCODE via antic_top's kbd_event_valid/code port
-     (currently tied off, fpga_xt_top.sv:715).
+     RTL path DONE -- the GP0 bridge carries an Atari KBCODE byte to $D4CF,
+     which pulses antic_top's kbd_event_valid/code into POKEY (driven at
+     fpga_xt_top.sv:1325-1334, instanced at :880-881). Remaining: a host-side
+     source (debug UART / REPL -> $D4CF) + the ASCII->KBCODE mapping.
 
 
 DDR3 banked window (parallel track -- NOT required for boot-to-BASIC)
@@ -66,7 +81,8 @@ DDR3 banked window (parallel track -- NOT required for boot-to-BASIC)
   prompt. Wiring it up:
 
   1. Connect sally_mem's AXI master to a real HP port -- it is hard
-     tied-off today (fpga_xt_top.sv:240-246). Add HP2 on the PS BD.
+     tied-off today (dead wires fpga_xt_top.sv:322-327, instance ports
+     :669-690). Add HP2 on the PS BD (still PCW_USE_S_AXI_HP2=0).
      The master runs on clk_sally (100 MHz); each HP port has its own
      aclk, so clock HP2 at clk_sally to avoid an AXI clock converter.
      Needs the AXI4->AXI3 burst-len handling the blitter's HP1 path
@@ -102,17 +118,22 @@ DONE: Just references so we don't think they're still pending
 
   o ANTIC -> HDMI compositor RTL: plane_compositor core, per-plane DDR3
     fetch (plane_fetch), and ANTIC->DDR3 writeback (antic_writeback on
-    HP3) all built and sim-green. Remaining work is ARM-side -- see
-    "Boot-to-BASIC" above.
+    HP3) all built and sim-green. On HW: writeback (PL->DDR write) PROVEN;
+    plane_fetch (PL->DDR read) NOT yet validated -- it returns zero on
+    silicon (see the LIVE BLOCKER under BUGS). Plus ARM-side desktop.app /
+    register partition -- see "Boot-to-BASIC" above.
 
   o Klaus passes. This remains an ongoing test to pass.
 
-  o Hardware bringup: see docs/bring-up.md.
+  o Hardware bringup: see docs/bring-up.md. (Now well past silent-board:
+    HDMI 1080p60 bars + GP0 read AND write both work on real silicon.)
 
-  o PS-side driver skeleton — see vitis/app_blink/src/xt_blitter.{h,c} and
-    main.c is the skeleton.
+  o PS-side driver skeleton — vitis/app_blink/src/xt_blitter.{h,c} + main.c.
+    Now well beyond a skeleton: a full UART1 REPL (mr/mw/ir/iw/id/bars/sync/
+    fill/prod/rdp/hdmi/diag/mon) + SiI9022 init = the live HW debug console.
 
-  o XSA export for Vitis — vitis/workspace/fpga_xt_platform/hw/fpga_xt_top.xsa
-    exists.
+  o XSA export for Vitis — built to vivado/build/fpga_xt_top.xsa by
+    vivado/run-win10.sh (also staged into the Vitis platform).
 
-  o FSBL + boot image — vitis/BOOT.BIN exists.
+  o FSBL + boot image — `make boot.bin` produces boot.bin/BOOT.BIN at the
+    repo root (FSBL + bitstream + app_blink); copy to a FAT32 SD root.

@@ -146,7 +146,7 @@ variants where those are JAMs rather than NOPs).
 | `$44` | `PUSH X` | `SP ← X; SP --` | no, NOP |
 | `$54` | `PUSH Y` | `SP ← Y; SP --` | no, NOP |
 | `$64` | `POP X` | `X ← SP; SP ++` | no, NOP |
-| `$64` | `POP Y` | `Y ← SP; SP ++` | no, NOP |
+| `$74` | `POP Y` | `Y ← SP; SP ++` | no, NOP |
 
 These allow direct store to/restore from the stack pointer, without having
 to go through A, and doing the increment/decrement operation of the stack
