@@ -321,5 +321,6 @@ later:
   doorbell.
 - [Video architecture](../video/video-architecture.md) — the plane compositor (P2).
 - [Texture-mapping unit](../video/texture-mapping.md) — blitter TMU proposal.
+- [Banked screen RAM](../video/screen-banking.md) — dual CPU/ANTIC screen bank ($D5C2/$D5C3).
 - [Multitasking notes](../MultiTasking/) — banked context switching, exec
   loading (P1/P4 background).
