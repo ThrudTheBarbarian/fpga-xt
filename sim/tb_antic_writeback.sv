@@ -1,16 +1,18 @@
 // tb_antic_writeback.sv — unit test for the ANTIC->DDR3 writeback orchestrator.
 //
 // Feeds a synthetic pixel-pair stream + palette, flushes a row, and peeks the
-// DDR3 surface back. Then exercises the double-buffer: frame_done flips
-// front_sel so the next row lands in the other buffer.
+// DDR3 surface back. Then exercises the triple-buffer write target: changing
+// write_idx (driven by xl_buffer_ctrl in the real design) lands the next row in
+// a different buffer slot.
 
 `default_nettype none
 `timescale 1ns / 1ps
 
 module tb_antic_writeback;
 
-    localparam [31:0] BASE_A = 32'h0000_1000;
-    localparam [31:0] BASE_B = 32'h0000_2000;
+    localparam [31:0] BASE0  = 32'h0000_1000;
+    localparam [31:0] BASE1  = 32'h0000_2000;
+    localparam [31:0] BASE2  = 32'h0000_3000;
     localparam [15:0] STRIDE = 16'd64;
     localparam int    W      = 8;
 
@@ -19,11 +21,11 @@ module tb_antic_writeback;
 
     logic        pix_valid = 0;
     logic [7:0]  pix_pair = 0, color_lo = 0, color_hi = 0, atari_row = 0;
-    logic        row_flush = 0, frame_done = 0;
+    logic        row_flush = 0;
+    logic [1:0]  write_idx = 2'd0;
     logic        pal_we = 0;
     logic [7:0]  pal_idx = 0;
     logic [23:0] pal_rgb = 0;
-    wire         front_sel;
 
     wire [31:0] awaddr; wire [7:0] awlen; wire [2:0] awsize; wire [1:0] awburst;
     wire        awvalid, awready, wvalid, wready, wlast, bvalid, bready;
@@ -33,10 +35,10 @@ module tb_antic_writeback;
         .clk_sys (clk), .rst_sys (rst),
         .pix_valid (pix_valid), .pix_pair (pix_pair),
         .color_lo (color_lo), .color_hi (color_hi), .atari_row (atari_row),
-        .row_flush (row_flush), .frame_done (frame_done),
+        .row_flush (row_flush),
         .pal_we (pal_we), .pal_idx (pal_idx), .pal_rgb (pal_rgb),
-        .base_a (BASE_A), .base_b (BASE_B), .stride_bytes (STRIDE), .src_w (W[11:0]),
-        .front_sel (front_sel),
+        .base0 (BASE0), .base1 (BASE1), .base2 (BASE2), .write_idx (write_idx),
+        .stride_bytes (STRIDE), .src_w (W[11:0]),
         .m_axi_awaddr (awaddr), .m_axi_awlen (awlen), .m_axi_awsize (awsize),
         .m_axi_awburst (awburst), .m_axi_awvalid (awvalid), .m_axi_awready (awready),
         .m_axi_wdata (wdata), .m_axi_wstrb (wstrb), .m_axi_wlast (wlast),
@@ -105,21 +107,20 @@ module tb_antic_writeback;
 
         for (int c = 0; c < W; c++) pal_write(code(c), rgb(c));
 
-        // Frame 0: front_sel=0 -> writeback targets BASE_B. Render row 5.
-        if (front_sel !== 1'b0) begin $display("FAIL front_sel init"); fail_count++; end
+        // write_idx=0 -> writeback targets BASE0. Render row 5.
+        write_idx = 2'd0;
         for (int p = 0; p < W/2; p++) send_pair(p, 5);
         flush_row;
-        check_surface("rowB", BASE_B, 5);
+        check_surface("slot0", BASE0, 5);
 
-        // vblank -> flip; now front_sel=1 -> writeback targets BASE_A.
-        @(negedge clk); frame_done = 1;
-        @(negedge clk); frame_done = 0;
+        // xl_buffer_ctrl advances write_idx between frames; here drive it to slot 2
+        // and confirm the next row lands in BASE2 (and slots are disjoint).
+        @(negedge clk); write_idx = 2'd2;
         repeat (2) @(posedge clk);
-        if (front_sel !== 1'b1) begin $display("FAIL front_sel did not flip"); fail_count++; end
 
         for (int p = 0; p < W/2; p++) send_pair(p, 6);
         flush_row;
-        check_surface("rowA", BASE_A, 6);
+        check_surface("slot2", BASE2, 6);
 
         if (fail_count == 0) begin
             $display("*** ANTIC_WRITEBACK OK *** palette resolve + row DMA + double-buffer");

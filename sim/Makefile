@@ -58,7 +58,7 @@ HDL_SRCS := \
 
 BUILD_DIR := build
 
-.PHONY: all smoke snoop read vbeam dl_parse prior nmi wsync palette dma_master mem_read_mux draw_regs pokey pokey_i2s sally sally_mem sally_arb bank_xlat hwreg_rd_cdc legacy_upscale plane_compositor plane_fetch axi_line_writer antic_writeback antic_raster antic_seq antic_modes antic_display pia_regs peri_link joy_link joy_bridge peri_bridge os_rom_load klaus lint clean xt_blitter sally_stack sally_isa sprite_regs sprite_fetcher sprite_compositor xt6502 boot boot_trace
+.PHONY: all smoke snoop read vbeam dl_parse prior nmi wsync palette dma_master mem_read_mux draw_regs pokey pokey_i2s sally sally_mem sally_arb bank_xlat hwreg_rd_cdc legacy_upscale plane_compositor plane_fetch axi_line_writer antic_writeback xl_buffer_ctrl antic_raster antic_seq antic_modes antic_display pia_regs peri_link joy_link joy_bridge peri_bridge os_rom_load klaus lint clean xt_blitter sally_stack sally_isa sprite_regs sprite_fetcher sprite_compositor xt6502 boot boot_trace
 
 # Retired tests (2026-05-25): rp_bus, mode_f, char_modes, gfx_modes, pm, scroll,
 # dma_int, visual all instantiated the v1 rp_bus injection harness
@@ -648,6 +648,17 @@ antic_writeback: $(BUILD_DIR)/tb_antic_writeback.vvp
 
 $(BUILD_DIR)/tb_antic_writeback.vvp: $(HDL_DIR)/antic_writeback.sv $(HDL_DIR)/axi_line_writer.sv $(HDL_DIR)/palette_lut.sv axi_slave_mem.sv tb_antic_writeback.sv | $(BUILD_DIR)
 	$(IVERILOG) $(SV_FLAGS) $(ANTIC_PAL_DEF) -o $@ -s tb_antic_writeback $(HDL_DIR)/antic_writeback.sv $(HDL_DIR)/axi_line_writer.sv $(HDL_DIR)/palette_lut.sv axi_slave_mem.sv tb_antic_writeback.sv
+
+# ---- xl_buffer_ctrl — ANTIC->DDR triple-buffer index controller (video-arch §5)
+xl_buffer_ctrl: $(BUILD_DIR)/tb_xl_buffer_ctrl.vvp
+	@echo "=== xl_buffer_ctrl — XL surface triple-buffer controller ==="
+	@$(VVP) -N $< | tee $(BUILD_DIR)/tb_xl_buffer_ctrl.log
+	@grep -q '\*\*\* XL_BUFFER_CTRL OK \*\*\*' $(BUILD_DIR)/tb_xl_buffer_ctrl.log || \
+	    (echo "FAIL: tb_xl_buffer_ctrl missing XL_BUFFER_CTRL OK"; exit 1)
+	@echo "PASS: tb_xl_buffer_ctrl"
+
+$(BUILD_DIR)/tb_xl_buffer_ctrl.vvp: $(HDL_DIR)/xl_buffer_ctrl.sv $(HDL_DIR)/cdc_sync_bit.sv tb_xl_buffer_ctrl.sv | $(BUILD_DIR)
+	$(IVERILOG) $(SV_FLAGS) -o $@ -s tb_xl_buffer_ctrl $(HDL_DIR)/xl_buffer_ctrl.sv $(HDL_DIR)/cdc_sync_bit.sv tb_xl_buffer_ctrl.sv
 
 # ---- antic_raster — phi2-paced native raster timer (video-arch §5.1) ------
 antic_raster: $(BUILD_DIR)/tb_antic_raster.vvp

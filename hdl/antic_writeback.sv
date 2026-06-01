@@ -2,10 +2,12 @@
 //
 // docs/video-architecture.md section 5 (phase 2).  Taps ANTIC's per-pixel-pair
 // render stream (clk_bus), palette-resolves the 8-bit Atari colour codes to
-// RGBA8888, accumulates a scanline, and DMAs it to a double-buffered DDR3
-// surface via axi_line_writer.  front_sel tells the compositor which buffer
-// to read; it flips on ANTIC vblank so the compositor always reads a complete
-// frame while the next is being written.
+// RGBA8888, accumulates a scanline, and DMAs it to a TRIPLE-buffered DDR3
+// surface via axi_line_writer.  The buffer rotation lives in xl_buffer_ctrl,
+// which hands us `write_idx` (the slot to fill) and decouples the writeback
+// from the clk_pix scan-out so the compositor always reads a complete, stable
+// frame — no mid-frame swap (the ~1 Hz tear) and no reading a buffer being
+// written (the moving ghost lines).
 //
 // Timing assumption: a row's DMA completes before the next row's pixels
 // arrive (ANTIC pixels are phi2-paced — slow vs clk_sys, and the DMA is a few
@@ -37,7 +39,6 @@ module antic_writeback #(
     input  wire [7:0]  color_hi,       //                          odd column
     input  wire [7:0]  atari_row,      // row being rendered
     input  wire        row_flush,      // pulse: current row complete -> DMA it
-    input  wire        frame_done,     // pulse (vbi): flip the front buffer
 
     // ---- Palette writes (clk_bus origin) --------------------------------
     input  wire        pal_we,
@@ -45,13 +46,13 @@ module antic_writeback #(
     input  wire [23:0] pal_rgb,        // {R,G,B}
 
     // ---- Config ----------------------------------------------------------
-    input  wire [31:0] base_a,
-    input  wire [31:0] base_b,
+    input  wire [31:0] base0,          // triple-buffer slot bases (xl_buffer_ctrl
+    input  wire [31:0] base1,          //   selects via write_idx; rotation lives
+    input  wire [31:0] base2,          //   there, not here)
+    input  wire [1:0]  write_idx,      // slot to write this frame (clk_sys, stable
+                                       //   between frames)
     input  wire [15:0] stride_bytes,
     input  wire [11:0] src_w,
-
-    // ---- Status ----------------------------------------------------------
-    output reg         front_sel,      // 0 = compositor reads base_a (writeback -> base_b)
 
     // ---- AXI4 write master (to a Zynq HP port) ---------------------------
     output wire [31:0] m_axi_awaddr,
@@ -183,21 +184,31 @@ module antic_writeback #(
         end
     end
 
-    // ---- Row flush + double-buffer ---------------------------------------
-    // writeback writes the BACK buffer (the one the compositor isn't reading).
-    // The flush is LATCHED at row-complete (row_flush) and fired only once the
-    // tap FIFO has fully drained into the row buffer and the writer is free, so
-    // a row is never DMA'd before all its pixels are resolved.  The destination
-    // (base + front_sel + row) is snapshotted at latch time, immune to a
-    // front_sel flip during the drain.
+    // ---- Row flush + triple-buffer write target --------------------------
+    // The writeback fills the slot xl_buffer_ctrl picked (write_idx) — never the
+    // one the compositor is displaying.  The flush is LATCHED at row-complete
+    // (row_flush) and fired only once the tap FIFO has fully drained into the row
+    // buffer and the writer is free, so a row is never DMA'd before all its
+    // pixels are resolved.  The destination (base + row) is snapshotted at latch
+    // time; write_idx is stable between frames so the snapshot is consistent.
     logic        flush_pending;
     logic [31:0] flush_base_q;
+
+    // write_idx → slot base.  write_idx only changes at frame boundaries (in
+    // xl_buffer_ctrl), so this is stable across a frame's row flushes.
+    logic [31:0] write_base;
+    always_comb begin
+        unique case (write_idx)
+            2'd0:    write_base = base0;
+            2'd1:    write_base = base1;
+            default: write_base = base2;
+        endcase
+    end
 
     always_ff @(posedge clk_sys or posedge rst_sys) begin
         if (rst_sys) begin
             lw_flush      <= 1'b0;
             lw_flush_base <= 32'd0;
-            front_sel     <= 1'b0;
             row_dirty     <= 1'b0;
             flush_pending <= 1'b0;
             flush_base_q  <= 32'd0;
@@ -207,7 +218,7 @@ module antic_writeback #(
             // Latch the request + snapshot the destination at row-complete.
             if (row_flush && row_dirty) begin
                 flush_pending <= 1'b1;
-                flush_base_q  <= (front_sel ? base_a : base_b)
+                flush_base_q  <= write_base
                                  + (32'(atari_row) * 32'(stride_bytes));
             end
 
@@ -221,9 +232,6 @@ module antic_writeback #(
             // row_dirty: set when a pixel is delivered, cleared once flush fires.
             if (lw_flush)         row_dirty <= 1'b0;
             else if (pix_valid)   row_dirty <= 1'b1;
-
-            // Flip the front buffer at end of frame.
-            if (frame_done) front_sel <= ~front_sel;
         end
     end
 

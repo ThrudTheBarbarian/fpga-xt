@@ -859,7 +859,7 @@ module fpga_xt_top (
 
     // ANTIC render tap → DDR3 writeback (video-arch §5, phase 2). All clk_sys
     // (= antic_top's clk_bus). Feeds antic_writeback (instantiated below) on
-    // HP3; its front_sel picks which XL surface the compositor's plane 1 reads.
+    // HP3; xl_buffer_ctrl picks which XL slot it fills and which plane 1 reads.
     wire        antic_wb_pix_valid;
     wire [7:0]  antic_wb_pix_pair;
     wire [7:0]  antic_wb_color_lo, antic_wb_color_hi;
@@ -954,20 +954,36 @@ module fpga_xt_top (
     // ANTIC → DDR3 writeback (the XL plane source) — video-arch §5, phase 2
     // ====================================================================
     // Palette-resolves ANTIC's render tap to RGBA8888, accumulates a scanline,
-    // and DMAs it to a double-buffered DDR3 XL surface over HP3.  front_sel
-    // (flipped on ANTIC vblank) tells the compositor which buffer to read, so
-    // it always scans a complete frame while the next is being written.
+    // and DMAs it to a TRIPLE-buffered DDR3 XL surface over HP3.  xl_buffer_ctrl
+    // (below) owns the rotation: the writeback fills write_idx; the compositor
+    // reads display_idx, adopted at the scan-out vblank.  Producer (ANTIC, clk_sys)
+    // and consumer (clk_pix) are fully decoupled — no mid-frame swap, no reading a
+    // buffer being written — so the ~1 Hz tear and the moving ghost lines are gone.
     //
-    // XL surface geometry — two buffers A/B (spec §3), RGBA8888.  The native
+    // XL surface geometry — three buffers (spec §5), RGBA8888.  The native
     // playfield is the nominal 320×192 GR.0 region (atari_row spans 0..191 from
     // the phi2 raster timer; the active playfield is 320 px = 160 column-pairs).
-    localparam [31:0] XL_BASE_A  = 32'h3100_0000;   // compositor reads when front_sel=0
-    localparam [31:0] XL_BASE_B  = 32'h3110_0000;   // 1 MB apart; ≤320×192×4 ≈ 240 KB each
+    localparam [31:0] XL_BASE_0  = 32'h3100_0000;   // triple-buffer slots, 1 MB apart
+    localparam [31:0] XL_BASE_1  = 32'h3110_0000;   //   (≤320×192×4 ≈ 240 KB each)
+    localparam [31:0] XL_BASE_2  = 32'h3120_0000;
     localparam int    XL_SRC_W   = 320;             // active playfield width (px)
     localparam int    XL_SRC_H   = 192;             // active playfield height (atari rows)
     localparam int    XL_STRIDE  = XL_SRC_W * 4;    // bytes/row (RGBA8888) = 1280
 
-    wire xl_front_sel;   // 0 → compositor reads BASE_A; 1 → BASE_B
+    wire [1:0] xl_write_idx;     // slot the writeback fills
+    wire [1:0] xl_display_idx;   // slot the compositor reads (clk_sys)
+
+    // Triple-buffer rotation + clk_pix-vblank adopt (decouples producer/consumer).
+    xl_buffer_ctrl u_xl_buf_ctrl (
+        .clk_sys     (clk_sys),
+        .rst_sys     (rst_sys),
+        .frame_done  (antic_wb_frame_done),   // ANTIC vbi: publish + advance
+        .write_idx   (xl_write_idx),
+        .display_idx (xl_display_idx),
+        .clk_pix     (clk_pix),
+        .rst_pix     (rst_pix),
+        .disp_vbi    (fb_vbi_start)            // scan-out entered vblank: adopt newest
+    );
 
     // The scan-out palette is baked in via the ANTIC_PALETTE_HEX macro in
     // antic_writeback.sv (Atari NTSC table); $D483-$D486 can override at runtime.
@@ -981,18 +997,17 @@ module fpga_xt_top (
         .color_hi     (antic_wb_color_hi),
         .atari_row    (antic_wb_atari_row),
         .row_flush    (antic_wb_row_flush),
-        .frame_done   (antic_wb_frame_done),
         // Palette writes (mirror ANTIC's palette)
         .pal_we       (antic_wb_pal_we),
         .pal_idx      (antic_wb_pal_idx),
         .pal_rgb      (antic_wb_pal_rgb),
-        // Config
-        .base_a       (XL_BASE_A),
-        .base_b       (XL_BASE_B),
+        // Config — triple-buffer slot bases + the slot to fill this frame
+        .base0        (XL_BASE_0),
+        .base1        (XL_BASE_1),
+        .base2        (XL_BASE_2),
+        .write_idx    (xl_write_idx),
         .stride_bytes (16'(XL_STRIDE)),
         .src_w        (12'(XL_SRC_W)),
-        // Status
-        .front_sel    (xl_front_sel),
         // AXI4 write master → HP3
         .m_axi_awaddr (hp3_awaddr),  .m_axi_awlen  (hp3_awlen),
         .m_axi_awsize (hp3_awsize),  .m_axi_awburst(hp3_awburst),
@@ -1101,7 +1116,7 @@ module fpga_xt_top (
     // ---- vbeam: 1080p60 raster (clk_pix) --------------------------------
     wire [11:0] fb_h_count, fb_v_count;
     wire        vb_de, vb_hsync, vb_vsync;
-    wire        fb_line_start, fb_frame_start;
+    wire        fb_line_start, fb_frame_start, fb_vbi_start;
 
     vbeam #(
         .H_ACTIVE (1920), .H_FRONT_PORCH (88), .H_SYNC_WIDTH (44), .H_BACK_PORCH (148),
@@ -1114,7 +1129,7 @@ module fpga_xt_top (
         .in_active (), .h_active (), .v_active (),
         .hsync (vb_hsync), .vsync (vb_vsync), .de (vb_de),
         .line_start (fb_line_start), .frame_start (fb_frame_start),
-        .vbi_start (), .atari_row (), .vcount ()
+        .vbi_start (fb_vbi_start), .atari_row (), .vcount ()
     );
 
     // vbeam frame heartbeat toggle (read via diag_word[31:24]) — toggles once
@@ -1165,17 +1180,19 @@ module fpga_xt_top (
     // accumulator is a ~3-level derive of registered state.)
     wire [11:0] xl_fetch_row = cmp_src_row_next[1*12 +: 12];
 
-    // Plane-1 source: a second plane_fetch reading the XL FRONT buffer (the
-    // one antic_writeback just finished) over HP3's read channel.
-    //
-    // NOTE (tearing): antic_writeback flips xl_front_sel on ITS frame_done
-    // (clk_sys / ANTIC rate), which is unsynchronised to the compositor's
-    // clk_pix scan-out, so a mid-frame flip tears between two COMPLETE buffers
-    // (the ~1 Hz beat seen on HW).  This is benign tearing.  A compositor-side
-    // latch does NOT fix it — it makes the writeback write the buffer the
-    // compositor is reading (corruption).  A real fix needs triple-buffering or
-    // genlock; deferred.  Keep the simple disjoint front/back mapping here.
-    wire [31:0] xl_surface_base = xl_front_sel ? XL_BASE_B : XL_BASE_A;
+    // Plane-1 source: a second plane_fetch reading the XL DISPLAY buffer over
+    // HP3's read channel.  xl_display_idx (clk_sys, from xl_buffer_ctrl) is
+    // adopted at the scan-out vblank and is provably never the slot the writeback
+    // is filling, so plane_fetch always reads a complete, stable frame — the old
+    // ~1 Hz tear and moving ghost lines (from the async front_sel flip) are gone.
+    logic [31:0] xl_surface_base;
+    always_comb begin
+        unique case (xl_display_idx)
+            2'd0:    xl_surface_base = XL_BASE_0;
+            2'd1:    xl_surface_base = XL_BASE_1;
+            default: xl_surface_base = XL_BASE_2;
+        endcase
+    end
     wire [31:0] xl_pixel;
 
     plane_fetch u_plane_fetch1 (
