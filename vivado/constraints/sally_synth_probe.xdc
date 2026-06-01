@@ -3,10 +3,12 @@
 # Three independent clock domains sourced from the on-board 50 MHz osc
 # and synthesised via two MMCME2_BASE primitives inside fpga_xt_top:
 #
-#   clk_sally  100.000   MHz  — SALLY core, sally_mem, sally_clock, AXI
-#                                pad registers.  Phase 1a closed at this
-#                                rate with WNS +0.343 ns; Arlet ALU
-#                                carry chain caps fmax ~107 MHz.
+#   clk_sally  120.000   MHz  — xt6502 core, sally_mem, sally_clock, AXI
+#                                pad registers (MMCM1 CLKOUT0: VCO 1200 /10).
+#                                The xt6502 operating target; the binding
+#                                paths are the sally_mem BRAM->hwreg read mux
+#                                and the core P/state regs (floorplan-sensitive,
+#                                see pblock_sally.xdc).
 #   clk_sys    150.000   MHz  — ANTIC pipeline + AXI HP fetch master(s)
 #                                (ANTIC bus, POKEY, fb_scanout AXI side).
 #                                Raised back to 150 MHz via BL_RACC pipeline +

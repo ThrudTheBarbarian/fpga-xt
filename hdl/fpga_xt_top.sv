@@ -1,7 +1,7 @@
 // fpga_xt_top.sv — Phase 1 top-level: SALLY + ANTIC integrated on Zynq-7020.
 //
 // Clock domains:
-//   clk_sally (100 MHz) — SALLY core, sally_mem, banked_axi_reader
+//   clk_sally (120 MHz) — SALLY core, sally_mem, banked_axi_reader
 //   clk_sys   (150 MHz) — ANTIC pipeline, I2C HDMI config, blitter,
 //                         AXI HP fetch (raised from 100 MHz via
 //                         BL_RACC pipeline + AXI register slice)
