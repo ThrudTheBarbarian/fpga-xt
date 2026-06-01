@@ -383,27 +383,13 @@ module fpga_xt_top (
     wire        hp1_rlast;
     wire        hp1_rready;
 
-    // HP3 — the XL/compositor port (video-arch §5, §10).  Full-duplex:
-    //   write channel ← antic_writeback (ANTIC render → DDR3 XL surface)
-    //   read  channel ← plane_fetch1    (XL surface → compositor plane 1)
-    // The two use independent AXI channels of the same HP port (writeback
-    // targets the back buffer; the fetch reads the front buffer), so they
-    // never collide.  Runs on clk_sys, like HP0/HP1.
-    // Write channel (mirrors HP1's write side):
-    wire [31:0] hp3_awaddr;
-    wire [7:0]  hp3_awlen;     // 8-bit (AXI4); AXI3 slave truncates to lower 4
-    wire [2:0]  hp3_awsize;
-    wire [1:0]  hp3_awburst;
-    wire        hp3_awvalid;
-    wire        hp3_awready;
-    wire [63:0] hp3_wdata;
-    wire [7:0]  hp3_wstrb;
-    wire        hp3_wlast;
-    wire        hp3_wvalid;
-    wire        hp3_wready;
-    wire        hp3_bvalid;
-    wire        hp3_bready;
-    // Read channel (mirrors HP0's read side):
+    // HP3 — the XL plane READ port (video-arch §5, §10).  READ-ONLY:
+    //   read channel ← plane_fetch1 (XL surface → compositor plane 1).
+    // The writeback's WRITE channel moved to HP2 (below) so a write burst can no
+    // longer stall this read on the same HP port — that read/write contention
+    // tripped plane_fetch's watchdog, abandoning a read mid-burst and leaving a
+    // stale line (the beat-correlated ghost line + text glitch).  Write channel
+    // tied off at the ps_bd instance.  Runs on clk_sys, like HP0/HP1.
     wire [31:0] hp3_araddr;
     wire [7:0]  hp3_arlen;
     wire [2:0]  hp3_arsize;
@@ -415,24 +401,24 @@ module fpga_xt_top (
     wire        hp3_rlast;
     wire        hp3_rready;
 
-    // HP2 — hp_read_probe (bring-up PL->DDR read-test engine, read-only).
-    // Isolated single-beat reads of 0x3100_0000 to test whether ANY clean PL
-    // read returns data (plane_fetch's reads hang on HP0/HP3).  Write channel
-    // tied off at the ps_bd instance.
-    wire [31:0] hp2_araddr;
-    wire [7:0]  hp2_arlen;
-    wire [2:0]  hp2_arsize;
-    wire [1:0]  hp2_arburst;
-    wire        hp2_arvalid;
-    wire        hp2_arready;
-    wire [63:0] hp2_rdata;
-    wire [1:0]  hp2_rresp;
-    wire        hp2_rvalid;
-    wire        hp2_rlast;
-    wire        hp2_rready;
-    wire        hp2_awready;   // PS outputs (write channel unused)
+    // HP2 — the XL surface WRITE port.  WRITE-ONLY:
+    //   write channel ← antic_writeback (ANTIC render → DDR3 XL surface).
+    // (Was the bring-up hp_read_probe, retired — PL→DDR reads are proven by the
+    // live display.)  Separating writeback writes from the XL read (HP3) removes
+    // the same-port read/write contention.  Read channel tied off at ps_bd.
+    wire [31:0] hp2_awaddr;
+    wire [7:0]  hp2_awlen;      // 8-bit (AXI4); AXI3 slave truncates to lower 4
+    wire [2:0]  hp2_awsize;
+    wire [1:0]  hp2_awburst;
+    wire        hp2_awvalid;
+    wire        hp2_awready;
+    wire [63:0] hp2_wdata;
+    wire [7:0]  hp2_wstrb;
+    wire        hp2_wlast;
+    wire        hp2_wvalid;
     wire        hp2_wready;
     wire        hp2_bvalid;
+    wire        hp2_bready;
 
     // ANTIC's BRAM read port — driven by antic_top's u_bram_shim and
     // serviced by sally_mem's second BRAM port (clk_sys side).  SALLY
@@ -1008,27 +994,29 @@ module fpga_xt_top (
         .write_idx    (xl_write_idx),
         .stride_bytes (16'(XL_STRIDE)),
         .src_w        (12'(XL_SRC_W)),
-        // AXI4 write master → HP3
-        .m_axi_awaddr (hp3_awaddr),  .m_axi_awlen  (hp3_awlen),
-        .m_axi_awsize (hp3_awsize),  .m_axi_awburst(hp3_awburst),
-        .m_axi_awvalid(hp3_awvalid), .m_axi_awready(hp3_awready),
-        .m_axi_wdata  (hp3_wdata),   .m_axi_wstrb  (hp3_wstrb),
-        .m_axi_wlast  (hp3_wlast),   .m_axi_wvalid (hp3_wvalid),
-        .m_axi_wready (hp3_wready),
-        .m_axi_bvalid (hp3_bvalid),  .m_axi_bready (hp3_bready)
+        // AXI4 write master → HP2 (moved off HP3 so writeback writes can't
+        // stall the XL read sharing that port)
+        .m_axi_awaddr (hp2_awaddr),  .m_axi_awlen  (hp2_awlen),
+        .m_axi_awsize (hp2_awsize),  .m_axi_awburst(hp2_awburst),
+        .m_axi_awvalid(hp2_awvalid), .m_axi_awready(hp2_awready),
+        .m_axi_wdata  (hp2_wdata),   .m_axi_wstrb  (hp2_wstrb),
+        .m_axi_wlast  (hp2_wlast),   .m_axi_wvalid (hp2_wvalid),
+        .m_axi_wready (hp2_wready),
+        .m_axi_bvalid (hp2_bvalid),  .m_axi_bready (hp2_bready)
     );
 
     // Production-chain activity counters (clk_sys) — read via diag2_word at GP0
     // offset 0x18.  On hardware these answer "is the emulator actually running?"
     // without any sim: antic_frame_cnt climbs => 6502+ANTIC are producing frames;
-    // hp3_wbeat_cnt climbs => the writeback is genuinely DMA-ing pixels to DDR.
+    // hp2_wbeat_cnt climbs => the writeback is genuinely DMA-ing pixels to DDR
+    // (writeback writes now go to HP2).
     reg [7:0] antic_frame_cnt = 8'd0;
-    reg [7:0] hp3_wbeat_cnt   = 8'd0;
+    reg [7:0] hp2_wbeat_cnt   = 8'd0;
     always_ff @(posedge clk_sys) begin
         if (antic_wb_frame_done)     antic_frame_cnt <= antic_frame_cnt + 8'd1;
-        if (hp3_wvalid & hp3_wready) hp3_wbeat_cnt   <= hp3_wbeat_cnt   + 8'd1;
+        if (hp2_wvalid & hp2_wready) hp2_wbeat_cnt   <= hp2_wbeat_cnt   + 8'd1;
     end
-    wire [31:0] diag2_word = {16'd0, hp3_wbeat_cnt, antic_frame_cnt};
+    wire [31:0] diag2_word = {16'd0, hp2_wbeat_cnt, antic_frame_cnt};
 
     // Read-path activity counters (clk_sys) — read via diag3_word at GP0 offset
     // 0x14.  The XL writeback proved PL->DDR *writes* work on silicon; these
@@ -1068,33 +1056,27 @@ module fpga_xt_top (
     wire [31:0] diag4_word = hp3_first_araddr;   // XL plane first read address
     wire [31:0] diag5_word = hp0_first_araddr;   // desktop plane first read address
 
-    // ---- HP read-test probe (HP2) — bring-up PL->DDR read diagnostic -------
-    // Auto-runs single-beat reads of 0x3100_0000 on the isolated HP2 port,
-    // tallying successes vs timeouts.  Read via diag6/diag7 @ GP0 0x04/0x08:
-    //   success_cnt climbs        => isolated PL->DDR reads WORK (bug is in
-    //                                plane_fetch / bursting / CDC, not the PS)
-    //   timeout_cnt climbs, succ=0 => PL->DDR reads not serviced by the PS
-    // last_rdata lets a success be validated against writeback's pixel data.
-    wire [7:0]  probe_succ1, probe_to1, probe_succ8, probe_to8;
-    wire [1:0]  probe_last_rresp;
-    wire [31:0] probe_last_rdata;
-    hp_read_probe #(.TEST_ADDR(32'h3100_0000)) u_hp_read_probe (
-        .clk          (clk_sys),       .rst          (rst_sys),
-        .m_axi_araddr (hp2_araddr),    .m_axi_arlen  (hp2_arlen),
-        .m_axi_arsize (hp2_arsize),    .m_axi_arburst(hp2_arburst),
-        .m_axi_arvalid(hp2_arvalid),   .m_axi_arready(hp2_arready),
-        .m_axi_rdata  (hp2_rdata),     .m_axi_rresp  (hp2_rresp),
-        .m_axi_rvalid (hp2_rvalid),    .m_axi_rlast  (hp2_rlast),
-        .m_axi_rready (hp2_rready),
-        .succ1        (probe_succ1),   .to1          (probe_to1),
-        .succ8        (probe_succ8),   .to8          (probe_to8),
-        .last_rresp   (probe_last_rresp), .last_rdata (probe_last_rdata)
-    );
-    // diag6 @0x04: {succ1[7:0], to1[7:0], succ8[7:0], to8[7:0]} — 1-beat vs
-    // 8-beat read tallies (succ8 frozen + to8 climbing => multi-beat reads are
-    // the plane_fetch bug; both climbing => burst length is not the cause).
-    wire [31:0] diag6_word = {probe_succ1, probe_to1, probe_succ8, probe_to8};
-    wire [31:0] diag7_word = probe_last_rdata;   // last beat read back
+    // ---- plane_fetch read-abort counters (clk_sys) — diag6/7 @ GP0 0x04/0x08 -
+    // The HP2 bring-up read-probe is retired (PL->DDR reads proven by the live
+    // display).  Its diag slots now count plane_fetch watchdog aborts: a read
+    // that times out (DDR-port contention) abandons a line and shows stale data
+    // — the beat-correlated ghost line / text glitch.  Moving the writeback off
+    // HP3 (to HP2) should drive these to ZERO in steady state; if they keep
+    // climbing, contention persists and the abort needs draining.
+    //   diag6 @0x04: {xl_abort_cnt[15:0], desk_abort_cnt[15:0]}
+    //   diag7 @0x08: {xl_last_abort_row[15:0], 16'd0}
+    wire xl_read_abort, hp0_read_abort;
+    reg [15:0] xl_abort_cnt = 16'd0, desk_abort_cnt = 16'd0;
+    reg [15:0] xl_last_abort_row = 16'd0;
+    always_ff @(posedge clk_sys) begin
+        if (xl_read_abort) begin
+            xl_abort_cnt      <= xl_abort_cnt + 16'd1;
+            xl_last_abort_row <= {4'd0, xl_fetch_row};
+        end
+        if (hp0_read_abort) desk_abort_cnt <= desk_abort_cnt + 16'd1;
+    end
+    wire [31:0] diag6_word = {xl_abort_cnt, desk_abort_cnt};
+    wire [31:0] diag7_word = {xl_last_abort_row, 16'd0};
 
     // ====================================================================
     // Display: plane compositor (vbeam + plane_fetch x N + plane_compositor)
@@ -1154,7 +1136,8 @@ module fpga_xt_top (
         .m_axi_rvalid (hp0_rvalid), .m_axi_rlast (hp0_rlast), .m_axi_rready (hp0_rready),
         .clk_pix (clk_pix), .rst_pix (rst_pix),
         .line_start (fb_line_start), .fetch_row (desk_fetch_row),
-        .rd_col (cmp_src_col[0*12 +: 12]), .rd_pixel (desk_pixel)
+        .rd_col (cmp_src_col[0*12 +: 12]), .rd_pixel (desk_pixel),
+        .read_abort (hp0_read_abort)
     );
 
     // ---- XL plane (plane 1): scaled, centred window over the desktop ----
@@ -1205,7 +1188,8 @@ module fpga_xt_top (
         .m_axi_rvalid (hp3_rvalid), .m_axi_rlast (hp3_rlast), .m_axi_rready (hp3_rready),
         .clk_pix (clk_pix), .rst_pix (rst_pix),
         .line_start (fb_line_start), .fetch_row (xl_fetch_row),
-        .rd_col (cmp_src_col[1*12 +: 12]), .rd_pixel (xl_pixel)
+        .rd_col (cmp_src_col[1*12 +: 12]), .rd_pixel (xl_pixel),
+        .read_abort (xl_read_abort)
     );
 
     // ---- Plane compositor -----------------------------------------------
@@ -1800,74 +1784,75 @@ module fpga_xt_top (
         .m_axi_hp3_arready  (hp3_arready),
         .m_axi_hp3_arsize   (hp3_arsize[2:0]),
         .m_axi_hp3_arvalid  (hp3_arvalid),
-        .m_axi_hp3_awaddr   (hp3_awaddr[31:0]),
-        .m_axi_hp3_awburst  (hp3_awburst[1:0]),
+        // HP3 write channel tied off — writeback moved to HP2 (read-only now).
+        .m_axi_hp3_awaddr   (32'd0),
+        .m_axi_hp3_awburst  (2'd0),
         .m_axi_hp3_awcache  (4'd0),
         .m_axi_hp3_awid     (6'd0),
-        .m_axi_hp3_awlen    (hp3_awlen[3:0]),
+        .m_axi_hp3_awlen    (4'd0),
         .m_axi_hp3_awlock   (2'd0),
         .m_axi_hp3_awprot   (3'd0),
         .m_axi_hp3_awqos    (4'd0),
-        .m_axi_hp3_awready  (hp3_awready),
-        .m_axi_hp3_awsize   (hp3_awsize[2:0]),
-        .m_axi_hp3_awvalid  (hp3_awvalid),
+        .m_axi_hp3_awready  (),
+        .m_axi_hp3_awsize   (3'd0),
+        .m_axi_hp3_awvalid  (1'b0),
         .m_axi_hp3_bid      (),
-        .m_axi_hp3_bready   (hp3_bready),
+        .m_axi_hp3_bready   (1'b0),
         .m_axi_hp3_bresp    (),
-        .m_axi_hp3_bvalid   (hp3_bvalid),
+        .m_axi_hp3_bvalid   (),
         .m_axi_hp3_rdata    (hp3_rdata),
         .m_axi_hp3_rid      (),
         .m_axi_hp3_rlast    (hp3_rlast),
         .m_axi_hp3_rready   (hp3_rready),
         .m_axi_hp3_rresp    (),
         .m_axi_hp3_rvalid   (hp3_rvalid),
-        .m_axi_hp3_wdata    (hp3_wdata),
+        .m_axi_hp3_wdata    (64'd0),
         .m_axi_hp3_wid      (6'd0),
-        .m_axi_hp3_wlast    (hp3_wlast),
-        .m_axi_hp3_wready   (hp3_wready),
-        .m_axi_hp3_wstrb    (hp3_wstrb),
-        .m_axi_hp3_wvalid   (hp3_wvalid),
+        .m_axi_hp3_wlast    (1'b0),
+        .m_axi_hp3_wready   (),
+        .m_axi_hp3_wstrb    (8'd0),
+        .m_axi_hp3_wvalid   (1'b0),
 
-        // HP2 — hp_read_probe (read-only bring-up read-test engine).  Write
-        // channel tied off; ARCACHE=0011 like the other read masters.
-        .m_axi_hp2_araddr   (hp2_araddr[31:0]),
-        .m_axi_hp2_arburst  (hp2_arburst[1:0]),
-        .m_axi_hp2_arcache  (4'b0011),
+        // HP2 — antic_writeback WRITE master (moved off HP3).  Read channel
+        // tied off; AWCACHE=0011 (bufferable+modifiable) like HP3's write was.
+        .m_axi_hp2_araddr   (32'd0),
+        .m_axi_hp2_arburst  (2'd0),
+        .m_axi_hp2_arcache  (4'd0),
         .m_axi_hp2_arid     (6'd0),
-        .m_axi_hp2_arlen    (hp2_arlen[3:0]),
+        .m_axi_hp2_arlen    (4'd0),
         .m_axi_hp2_arlock   (2'd0),
         .m_axi_hp2_arprot   (3'd0),
         .m_axi_hp2_arqos    (4'd0),
-        .m_axi_hp2_arready  (hp2_arready),
-        .m_axi_hp2_arsize   (hp2_arsize[2:0]),
-        .m_axi_hp2_arvalid  (hp2_arvalid),
-        .m_axi_hp2_awaddr   (32'd0),
-        .m_axi_hp2_awburst  (2'd0),
-        .m_axi_hp2_awcache  (4'd0),
+        .m_axi_hp2_arready  (),
+        .m_axi_hp2_arsize   (3'd0),
+        .m_axi_hp2_arvalid  (1'b0),
+        .m_axi_hp2_awaddr   (hp2_awaddr[31:0]),
+        .m_axi_hp2_awburst  (hp2_awburst[1:0]),
+        .m_axi_hp2_awcache  (4'b0011),
         .m_axi_hp2_awid     (6'd0),
-        .m_axi_hp2_awlen    (4'd0),
+        .m_axi_hp2_awlen    (hp2_awlen[3:0]),
         .m_axi_hp2_awlock   (2'd0),
         .m_axi_hp2_awprot   (3'd0),
         .m_axi_hp2_awqos    (4'd0),
         .m_axi_hp2_awready  (hp2_awready),
-        .m_axi_hp2_awsize   (3'd0),
-        .m_axi_hp2_awvalid  (1'b0),
+        .m_axi_hp2_awsize   (hp2_awsize[2:0]),
+        .m_axi_hp2_awvalid  (hp2_awvalid),
         .m_axi_hp2_bid      (),
-        .m_axi_hp2_bready   (1'b0),
+        .m_axi_hp2_bready   (hp2_bready),
         .m_axi_hp2_bresp    (),
         .m_axi_hp2_bvalid   (hp2_bvalid),
-        .m_axi_hp2_rdata    (hp2_rdata),
+        .m_axi_hp2_rdata    (),
         .m_axi_hp2_rid      (),
-        .m_axi_hp2_rlast    (hp2_rlast),
-        .m_axi_hp2_rready   (hp2_rready),
-        .m_axi_hp2_rresp    (hp2_rresp),
-        .m_axi_hp2_rvalid   (hp2_rvalid),
-        .m_axi_hp2_wdata    (64'd0),
+        .m_axi_hp2_rlast    (),
+        .m_axi_hp2_rready   (1'b0),
+        .m_axi_hp2_rresp    (),
+        .m_axi_hp2_rvalid   (),
+        .m_axi_hp2_wdata    (hp2_wdata),
         .m_axi_hp2_wid      (6'd0),
-        .m_axi_hp2_wlast    (1'b0),
+        .m_axi_hp2_wlast    (hp2_wlast),
         .m_axi_hp2_wready   (hp2_wready),
-        .m_axi_hp2_wstrb    (8'd0),
-        .m_axi_hp2_wvalid   (1'b0),
+        .m_axi_hp2_wstrb    (hp2_wstrb),
+        .m_axi_hp2_wvalid   (hp2_wvalid),
 
         // GP0 — ARM PS AXI3 master → PL bridge (blitter register writes).
         // Extra AXI3 signals not used by the AXI4-Lite bridge are left
@@ -2129,34 +2114,40 @@ module fpga_xt_top (
         .s_axi_hp3_arready  (hp3_arready),
         .s_axi_hp3_arsize   (hp3_arsize[2:0]),
         .s_axi_hp3_arvalid  (hp3_arvalid),
-        .s_axi_hp3_awaddr   (hp3_awaddr[31:0]),
-        .s_axi_hp3_awburst  (hp3_awburst[1:0]),
+        .s_axi_hp3_awaddr   (32'd0),
+        .s_axi_hp3_awburst  (2'd0),
         .s_axi_hp3_awcache  (4'd0),
         .s_axi_hp3_awid     (6'd0),
-        .s_axi_hp3_awlen    (hp3_awlen[3:0]),
+        .s_axi_hp3_awlen    (4'd0),
         .s_axi_hp3_awlock   (2'd0),
         .s_axi_hp3_awprot   (3'd0),
         .s_axi_hp3_awqos    (4'd0),
-        .s_axi_hp3_awready  (hp3_awready),
-        .s_axi_hp3_awsize   (hp3_awsize[2:0]),
-        .s_axi_hp3_awvalid  (hp3_awvalid),
+        .s_axi_hp3_awready  (),
+        .s_axi_hp3_awsize   (3'd0),
+        .s_axi_hp3_awvalid  (1'b0),
         .s_axi_hp3_bid      (),
-        .s_axi_hp3_bready   (hp3_bready),
+        .s_axi_hp3_bready   (1'b0),
         .s_axi_hp3_bresp    (),
-        .s_axi_hp3_bvalid   (hp3_bvalid),
+        .s_axi_hp3_bvalid   (),
         .s_axi_hp3_rdata    (hp3_rdata),
         .s_axi_hp3_rid      (),
         .s_axi_hp3_rlast    (hp3_rlast),
         .s_axi_hp3_rready   (hp3_rready),
         .s_axi_hp3_rresp    (),
         .s_axi_hp3_rvalid   (hp3_rvalid),
-        .s_axi_hp3_wdata    (hp3_wdata),
+        .s_axi_hp3_wdata    (64'd0),
         .s_axi_hp3_wid      (6'd0),
-        .s_axi_hp3_wlast    (hp3_wlast),
-        .s_axi_hp3_wready   (hp3_wready),
-        .s_axi_hp3_wstrb    (hp3_wstrb),
-        .s_axi_hp3_wvalid   (hp3_wvalid)
+        .s_axi_hp3_wlast    (1'b0),
+        .s_axi_hp3_wready   (),
+        .s_axi_hp3_wstrb    (8'd0),
+        .s_axi_hp3_wvalid   (1'b0)
     );
+    // Non-BD stub has no HP2 port; ack the writeback's HP2 write so it doesn't
+    // wedge in a non-BD (sim/lint) build.  The real bit flow (USE_PS_BD) drives
+    // these from the PS HP2 slave.
+    assign hp2_awready = 1'b1;
+    assign hp2_wready  = 1'b1;
+    assign hp2_bvalid  = 1'b1;
     `endif
 
 endmodule

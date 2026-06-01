@@ -50,7 +50,13 @@ module plane_fetch #(
     input  wire        line_start,
     input  wire [11:0] fetch_row,     // source row to display NEXT line
     input  wire [11:0] rd_col,        // source column to read this pixel
-    output wire [31:0] rd_pixel       // RGBA8888, registered 1 clk after rd_col
+    output wire [31:0] rd_pixel,      // RGBA8888, registered 1 clk after rd_col
+
+    // ---- Diagnostics (clk_sys) -------------------------------------------
+    output reg         read_abort     // 1-cyc pulse when a line read times out
+                                      // (AR not accepted / R stalled) and is
+                                      // abandoned — the watchdog firing in
+                                      // steady state means DDR-port contention.
 );
 
     // Read-burst sizing.  Reduced 16->8 beats as a silicon read-path
@@ -198,8 +204,10 @@ module plane_fetch #(
             m_axi_arvalid <= 1'b0;
             m_axi_araddr  <= 32'd0;
             rd_wd         <= 13'd0;
+            read_abort    <= 1'b0;
         end else begin
             fetch_done <= 1'b0;
+            read_abort <= 1'b0;
 
             unique case (state)
                 S_IDLE: begin
@@ -220,6 +228,7 @@ module plane_fetch #(
                         state         <= S_R;
                     end else if (rd_wd >= RD_TIMEOUT[12:0]) begin
                         m_axi_arvalid <= 1'b0;           // AR never accepted -> abort
+                        read_abort    <= 1'b1;
                         state         <= S_DONE;
                     end
                 end
@@ -241,6 +250,7 @@ module plane_fetch #(
                             end
                         end
                     end else if (rd_wd >= RD_TIMEOUT[12:0]) begin
+                        read_abort <= 1'b1;
                         state <= S_DONE;                 // stalled read -> abort, retry next line
                     end
                 end
