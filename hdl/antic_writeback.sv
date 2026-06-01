@@ -100,15 +100,35 @@ module antic_writeback #(
         .m_axi_bvalid (m_axi_bvalid), .m_axi_bready (m_axi_bready)
     );
 
+    // ---- Tap FIFO --------------------------------------------------------
+    // ANTIC delivers resolved colour pairs at up to 1 per clk_sys cycle, but
+    // the resolve FSM below takes 4 cycles per pair.  Without buffering, 3 of
+    // every 4 pairs are dropped and the surface renders 2 lit + 6 black columns
+    // per 8 (the column-stripe artifact seen on HW).  This per-line FIFO
+    // captures every delivered pair; the resolve drains it (~640 cyc for a
+    // 160-pair GR.0 line) inside the long inter-line gap (~9500 cyc), so no
+    // pixel is lost.  The line-writer (proven write path) is unchanged.
+    localparam int TF_DEPTH = 256;
+    localparam int TF_AW    = $clog2(TF_DEPTH);
+    (* ram_style = "distributed" *)
+    logic [23:0]      tf_mem [0:TF_DEPTH-1];     // {pair[7:0], color_hi, color_lo}
+    logic [TF_AW-1:0] tf_wr, tf_rd;
+    wire              tf_empty = (tf_wr == tf_rd);
+    wire              tf_full  = (TF_AW'(tf_wr + 1'b1) == tf_rd);
+    wire              tf_push  = pix_valid && !tf_full;
+    wire [23:0]       tf_dout  = tf_mem[tf_rd];
+
     // ---- Pixel-pair resolve FSM ------------------------------------------
-    // Per pix_valid: read palette for color_lo (col 2*pair), then color_hi
-    // (col 2*pair+1), writing RGBA into the writer's row buffer.
+    // Pops one pair from the FIFO, reads the palette for color_lo (col 2*pair)
+    // then color_hi (col 2*pair+1), writing RGBA into the writer's row buffer.
     // R_SETUP covers palette_lut's 1-cycle read latency before R_LO samples.
+    // Held off while the writer is DMA-ing (lw_busy) so the next row can't
+    // overwrite row_buf mid-flush (the FIFO holds the pairs meanwhile).
     typedef enum logic [1:0] { R_IDLE, R_SETUP, R_LO, R_HI } rstate_t;
     rstate_t rstate;
     logic [7:0] pair_q, chi_q;
-    logic [7:0] row_q;          // row being filled (captured from atari_row)
-    logic       row_dirty;      // ≥1 pixel written this row
+    logic       row_dirty;      // ≥1 pixel delivered this row (driven below)
+    wire        tf_pop = (rstate == R_IDLE) && !tf_empty && !lw_busy;
 
     always_ff @(posedge clk_sys or posedge rst_sys) begin
         if (rst_sys) begin
@@ -119,16 +139,24 @@ module antic_writeback #(
             lw_wr_pixel <= 32'd0;
             pair_q    <= 8'd0;
             chi_q     <= 8'd0;
-            row_q     <= 8'd0;
+            tf_wr     <= '0;
+            tf_rd     <= '0;
         end else begin
             lw_wr_en <= 1'b0;
+
+            // FIFO push (tap) / pop (resolve accept).
+            if (tf_push) begin
+                tf_mem[tf_wr] <= {pix_pair, color_hi, color_lo};
+                tf_wr <= TF_AW'(tf_wr + 1'b1);
+            end
+            if (tf_pop) tf_rd <= TF_AW'(tf_rd + 1'b1);
+
             unique case (rstate)
                 R_IDLE: begin
-                    if (pix_valid) begin
-                        pair_q    <= pix_pair;
-                        chi_q     <= color_hi;
-                        row_q     <= atari_row;
-                        pal_raddr <= color_lo;     // start even-pixel resolve
+                    if (!tf_empty && !lw_busy) begin
+                        pair_q    <= tf_dout[23:16];
+                        chi_q     <= tf_dout[15:8];
+                        pal_raddr <= tf_dout[7:0];     // color_lo -> even-pixel resolve
                         rstate    <= R_SETUP;
                     end
                 end
@@ -157,8 +185,13 @@ module antic_writeback #(
 
     // ---- Row flush + double-buffer ---------------------------------------
     // writeback writes the BACK buffer (the one the compositor isn't reading).
-    wire [31:0] wb_base   = front_sel ? base_a : base_b;
-    wire [31:0] row_addr  = wb_base + (32'(row_q) * 32'(stride_bytes));
+    // The flush is LATCHED at row-complete (row_flush) and fired only once the
+    // tap FIFO has fully drained into the row buffer and the writer is free, so
+    // a row is never DMA'd before all its pixels are resolved.  The destination
+    // (base + front_sel + row) is snapshotted at latch time, immune to a
+    // front_sel flip during the drain.
+    logic        flush_pending;
+    logic [31:0] flush_base_q;
 
     always_ff @(posedge clk_sys or posedge rst_sys) begin
         if (rst_sys) begin
@@ -166,17 +199,29 @@ module antic_writeback #(
             lw_flush_base <= 32'd0;
             front_sel     <= 1'b0;
             row_dirty     <= 1'b0;
+            flush_pending <= 1'b0;
+            flush_base_q  <= 32'd0;
         end else begin
             lw_flush <= 1'b0;
-            // Flush the just-completed row (resolve FSM idle, writer free, row
-            // has data) when row_flush fires.
-            if (row_flush && row_dirty && !lw_busy && rstate == R_IDLE) begin
-                lw_flush_base <= row_addr;
-                lw_flush      <= 1'b1;
+
+            // Latch the request + snapshot the destination at row-complete.
+            if (row_flush && row_dirty) begin
+                flush_pending <= 1'b1;
+                flush_base_q  <= (front_sel ? base_a : base_b)
+                                 + (32'(atari_row) * 32'(stride_bytes));
             end
-            // row_dirty: set when a pixel arrives, cleared once a flush fires.
+
+            // Fire the DMA once the FIFO is drained and resolve+writer are idle.
+            if (flush_pending && tf_empty && (rstate == R_IDLE) && !lw_busy && !lw_flush) begin
+                lw_flush_base <= flush_base_q;
+                lw_flush      <= 1'b1;
+                flush_pending <= 1'b0;
+            end
+
+            // row_dirty: set when a pixel is delivered, cleared once flush fires.
             if (lw_flush)         row_dirty <= 1'b0;
             else if (pix_valid)   row_dirty <= 1'b1;
+
             // Flip the front buffer at end of frame.
             if (frame_done) front_sel <= ~front_sel;
         end
