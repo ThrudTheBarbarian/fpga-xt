@@ -1,6 +1,6 @@
 // xl_buffer_ctrl.sv — triple-buffer index controller for the ANTIC→DDR XL surface.
 //
-// docs/video-architecture.md §5.  Decouples the ANTIC writeback (clk_sys, paced by
+// docs/video/video-architecture.md §5.  Decouples the ANTIC writeback (clk_sys, paced by
 // the phi2 raster — NTSC ~59.92 Hz / PAL ~49.86 Hz) from the 1080p60 scan-out
 // (clk_pix) so the compositor always reads a COMPLETE, stable frame.  Removes both
 // display artifacts the single-front_sel double-buffer produced:

@@ -69,7 +69,7 @@ the `docs/` tree below is working notes and design drafts (some pre-pivot).
 
 | Doc | Scope |
 |-----|-------|
-| [docs/architecture.md](docs/architecture.md), [docs/video-architecture.md](docs/video-architecture.md) | System architecture + the current video model (1080p desktop compositor, scalable ANTIC window) |
+| [docs/architecture.md](docs/architecture.md), [docs/video/video-architecture.md](docs/video/video-architecture.md) | System architecture + the current video model (1080p desktop compositor, scalable ANTIC window) |
 | [docs/Zynq/](docs/Zynq/) | Zynq-7020 target — [FPGA.md](docs/Zynq/FPGA.md), [memory-map.md](docs/Zynq/memory-map.md), [register-map.md](docs/Zynq/register-map.md), [pin-map.md](docs/Zynq/pin-map.md), board schematic |
 | [docs/bring-up.md](docs/bring-up.md) | Hardware bring-up — JTAG, FSBL, board boot |
 | [docs/Issues/](docs/Issues/) | Open issue write-ups (e.g. GP0 AXI read hang) |

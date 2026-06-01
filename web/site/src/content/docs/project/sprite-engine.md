@@ -18,7 +18,7 @@ Two things still gate visible sprites:
    stage passes the compositor output straight through. When the fetcher is
    wired, it joins the other `clk_sys` plane reads on **HP0 via the BD
    SmartConnect** — *not* a dedicated HP port (HP2 is SALLY's banked-DDR
-   window; see `docs/video-architecture.md` §10).
+   window; see `docs/video/video-architecture.md` §10).
 2. **The SALLY-side register read-back mux isn't wired**, so descriptor
    writes take effect but reads are observable in simulation only.
 

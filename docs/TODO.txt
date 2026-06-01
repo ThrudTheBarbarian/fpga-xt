@@ -23,7 +23,7 @@ BUGS
     section below.) So the stage is a framebuffer passthrough and composites
     NO fetched sprites yet. Fix: join the master to the clk_sys plane reads
     on HP0 via the BD SmartConnect (per the comment there +
-    docs/video-architecture.md s10), NOT a dedicated port; then drive
+    docs/video/video-architecture.md s10), NOT a dedicated port; then drive
     descriptors and confirm a sprite composites over the framebuffer.
     Also update the scaffold header at fpga_xt_top.sv:1151 ("Scaffold
     stub: passthrough ... submodules land in subsequent commits").

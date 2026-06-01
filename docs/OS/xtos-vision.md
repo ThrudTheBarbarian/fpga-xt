@@ -319,6 +319,7 @@ later:
   client↔A9 GEM ABI (P3).
 - [Register map](../Zynq/register-map.md) — `$D5xx` XT extension incl. the GEM
   doorbell.
-- [Video architecture](../video-architecture.md) — the plane compositor (P2).
+- [Video architecture](../video/video-architecture.md) — the plane compositor (P2).
+- [Texture-mapping unit](../video/texture-mapping.md) — blitter TMU proposal.
 - [Multitasking notes](../MultiTasking/) — banked context switching, exec
   loading (P1/P4 background).

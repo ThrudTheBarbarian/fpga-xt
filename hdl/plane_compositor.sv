@@ -1,6 +1,6 @@
 // plane_compositor.sv — multi-plane display compositor core (phase 1).
 //
-// docs/video-architecture.md section 4.  Composites N depth-ordered
+// docs/video/video-architecture.md section 4.  Composites N depth-ordered
 // planes, each with an integer scale, an origin,
 // and a clip rect.  For every output pixel it picks the front-most (highest
 // depth) plane whose clip rect covers it, back-maps to that plane's source

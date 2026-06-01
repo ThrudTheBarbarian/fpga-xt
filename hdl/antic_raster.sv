@@ -1,6 +1,6 @@
 // antic_raster.sv — ANTIC native raster timer (phi2-paced).
 //
-// docs/video-architecture.md §5.1.  Replaces the legacy
+// docs/video/video-architecture.md §5.1.  Replaces the legacy
 // 800×600 hdmi_out `vbeam` that antic_top used as a raster *heartbeat*.  That
 // vbeam was clocked by the 148 MHz pixel clock carrying VESA 800×600 timing,
 // so ANTIC's frame/line/NMI cadence ran at ~224 Hz and was NOT locked to phi2

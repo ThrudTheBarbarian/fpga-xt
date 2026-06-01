@@ -1099,14 +1099,14 @@ module fpga_xt_top (
     // ====================================================================
     // Display: plane compositor (vbeam + plane_fetch x N + plane_compositor)
     // ====================================================================
-    // The 1080p60 desktop compositor (docs/video-architecture.md). vbeam owns
+    // The 1080p60 desktop compositor (docs/video/video-architecture.md). vbeam owns
     // the raster; each plane_fetch streams a DDR3 surface line into a ping-
     // pong line buffer; plane_compositor mixes the planes by depth/scale/clip.
     // Default config = one full-screen desktop plane; the Atari XL becomes
     // plane 1 once the ANTIC->DDR3 writeback (phase 2) feeds it.
     // sprite_engine overlays before the pads.
 
-    // Video path (docs/video-architecture.md): vbeam (raster) + per-plane
+    // Video path (docs/video/video-architecture.md): vbeam (raster) + per-plane
     // plane_fetch (DDR3 line read) + plane_compositor (depth/scale/clip
     // mixer).  Default config = ONE full-screen desktop plane (scale 1,
     // depth 0).  Plane 1 (the Atari XL window) is wired but DISABLED until
@@ -1288,7 +1288,7 @@ module fpga_xt_top (
         // AXI read master (sprite-image fetch) — dangled for the scaffold.
         // When the line fetcher lands it joins the other clk_sys plane reads
         // on HP0 via a BD SmartConnect (NOT a dedicated port — see
-        // docs/video-architecture.md §10; HP2 is SALLY's banked-DDR window).
+        // docs/video/video-architecture.md §10; HP2 is SALLY's banked-DDR window).
         .m_axi_araddr  (),
         .m_axi_arlen   (),
         .m_axi_arsize  (),

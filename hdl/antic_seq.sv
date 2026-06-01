@@ -1,6 +1,6 @@
 // antic_seq.sv — ANTIC native-raster render sequencer (phi2-paced).
 //
-// docs/video-architecture.md §5.1 ("Coupled scope").
+// docs/video/video-architecture.md §5.1 ("Coupled scope").
 // Replaces the free-running `kick_counter` scaffold that antic_top used to
 // trigger the display-list parse + compose.  That scaffold was a fixed ~12 ms
 // timer unrelated to the emulated frame, so the *rendered image* was not phi2-

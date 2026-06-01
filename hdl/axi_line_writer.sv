@@ -1,6 +1,6 @@
 // axi_line_writer.sv — AXI4 write master that streams one pixel row to DDR3.
 //
-// docs/video-architecture.md section 5 (ANTIC -> DDR3 writeback).  The mirror
+// docs/video/video-architecture.md section 5 (ANTIC -> DDR3 writeback).  The mirror
 // of plane_fetch: a producer fills an internal row buffer one RGBA pixel at a
 // time; a `flush` pulse then DMAs `flush_w` pixels to a DDR3 byte address via
 // AXI4 write bursts (16-beat × 8-byte beats = 2 RGBA px/beat).  One flush per

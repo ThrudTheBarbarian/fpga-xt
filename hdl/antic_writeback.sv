@@ -1,6 +1,6 @@
 // antic_writeback.sv — ANTIC render -> DDR3 XL surface writeback orchestrator.
 //
-// docs/video-architecture.md section 5 (phase 2).  Taps ANTIC's per-pixel-pair
+// docs/video/video-architecture.md section 5 (phase 2).  Taps ANTIC's per-pixel-pair
 // render stream (clk_bus), palette-resolves the 8-bit Atari colour codes to
 // RGBA8888, accumulates a scanline, and DMAs it to a TRIPLE-buffered DDR3
 // surface via axi_line_writer.  The buffer rotation lives in xl_buffer_ctrl,

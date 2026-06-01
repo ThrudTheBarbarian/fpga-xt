@@ -1,6 +1,6 @@
 // plane_fetch.sv — per-plane DDR3 line fetch unit (video-arch phase 1b).
 //
-// docs/video-architecture.md section 4/11.  An AXI-read + ping-pong
+// docs/video/video-architecture.md section 4/11.  An AXI-read + ping-pong
 // line-buffer per-plane source: it
 // fetches one source ROW of a DDR3 surface into a line buffer, and serves the
 // compositor a pixel read indexed by source COLUMN.  One instance per plane.
