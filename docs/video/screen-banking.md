@@ -33,8 +33,9 @@ tear-avoidance** — it only has to be atomic, which a single register write is.
 
 | Addr | Name | Width | Semantics |
 |---|---|---|---|
-| `$D5C2` | `SCRNBANK_CPU`   | 8 | Chunk the CPU draws/reads through the aperture. **Takes effect immediately** on write. |
-| `$D5C3` | `SCRNBANK_ANTIC` | 8 | Chunk ANTIC fetches. Written any time, but **latched to the effective value only at VBI** (`antic_bank_eff`). |
+| `$D5C2` | `SCRNBANK_CPU`   | 8 | Chunk the CPU draws/reads through the aperture. A write is a **request**: the PL writes the CPU-BRAM back to its old DDR slot (if dirty), loads the new slot into CPU-BRAM, then sets `SCRNBANK_STAT.ready`. |
+| `$D5C3` | `SCRNBANK_ANTIC` | 8 | Chunk ANTIC fetches. Written any time, but **latched to the effective value only at VBI** (`antic_bank_eff`); the ANTIC-BRAM reloads from DDR on the change. |
+| `$D5C4` | `SCRNBANK_STAT`  | 8 | bit0 `ready`: 0 while a `$D5C2` copy is in flight, 1 when CPU-BRAM holds the requested bank. **CPU must poll `ready` before touching screen RAM again** after writing `$D5C2`. |
 
 8-bit index → up to 256 × 8 KB = 2 MB of screen chunks in DDR. Bank policy
 (when/whether to flip, allocator) lives in PS/6502 software; the PL provides only
@@ -43,7 +44,7 @@ memory note).
 
 **Why VBI-latch ANTIC but not the CPU:** ANTIC must read a *stable* chunk for a
 whole frame, so its effective bank can only change between frames. The CPU's view
-is its own; it changes the instant software writes `$D5C2`.
+is its own BRAM; it changes when the `$D5C2` copy completes (poll `ready`).
 
 ## The 8 KB aperture
 
@@ -78,59 +79,72 @@ Text screens are small (DL + 40×24 data ≪ 8 KB), so a font fits. Bitmap modes
 
 ## Coherency model
 
-One BRAM holds the **ANTIC** chunk (the displayed one). The CPU's writes are
-routed by comparing `SCRNBANK_CPU` against the **effective** ANTIC bank:
+**Two independent BRAM caches** over one DDR chunk-stack — symmetric, no
+write-path comparator, no special "live" case. The CPU always works against its
+own BRAM (fast read/modify/write); DDR is touched only on a bank switch.
 
-- **`cpu_bank == antic_bank_eff`** (single-buffer / drawing the live screen):
-  CPU writes go **straight into the ANTIC BRAM** — exactly what the snoop path
-  (`bus_snoop` → `bram_shim`) does today. No DDR round-trip. (This case is
-  unchanged from the current design, which is why the lift is small.)
+- **CPU-BRAM** (cache of `cpu_bank`): the aperture as the 6502 sees it, full
+  read/write. Writing `$D5C2` is a **request** handled by a `banked_page_cache`-
+  style engine: write the CPU-BRAM back to the *old* `cpu_bank` DDR slot (skip if
+  a **dirty** bit says it's unchanged), load the *new* slot into CPU-BRAM, then
+  set `SCRNBANK_STAT.ready`. The CPU **polls `ready`** before touching screen RAM
+  again. RMW (XOR lines, etc.) is always BRAM-speed — no per-byte DDR access.
 
-- **`cpu_bank != antic_bank_eff`** (drawing off-screen): CPU writes are
-  **write-through to DDR** chunk `cpu_bank` — never the ANTIC BRAM, so the
-  displayed page is untouched.
+- **ANTIC-BRAM** (cache of `antic_bank_eff`): **read-only** — ANTIC never writes
+  screen RAM, so it needs **no writeback**, only a reload. `$D5C3` latches at VBI;
+  on a change the engine reads the new chunk DDR → ANTIC-BRAM inside the ~1.3 ms
+  vblank (8 KB ≈ a few µs), with a small interlock against the (idle) fetch path.
 
-- **VBI, when `antic_bank_eff` changes** (a flip): in the vblank window,
-  **write back the outgoing BRAM → DDR** (only if a *dirty* bit is set — skip the
-  redundant write in pure ping-pong double-buffering), then **read the incoming
-  chunk DDR → BRAM**. 8 KB out + 8 KB in is a few µs against a ~1.3 ms vblank, so
-  timing is a non-issue; a small interlock stalls CPU screen-writes during the
-  reload as belt-and-braces.
+Data path: `CPU-BRAM → DDR → ANTIC-BRAM`. Software sequences it; the two caches
+never alias because the flush and the reload are explicit, register-driven steps.
 
-This keeps the hard part — cross-view coherency — reduced to "write-through +
-reload," reusing the existing `banked_page_cache` DDR↔BRAM machinery.
+Polling (not a CPU bus stall) is deliberate: an 8 KB copy is ~tens of µs, so the
+CPU should be free to do other work meanwhile rather than wait-stated.
 
-### Usage (software)
+### Usage (software) — the canonical double-buffer flip
 
-- **Single buffer:** `cpu_bank == antic_bank`. Drawing while ANTIC displays the
-  same chunk can tear *at the Atari level* (ANTIC reads a half-drawn BRAM) — this
-  is **official Atari behaviour**; the triple buffer does not mask it. Avoid it by
-  drawing during the VBI, or (easier) by double-buffering.
-- **Double / N buffer (recommended):** draw into an off-screen bank
-  (`cpu_bank != antic_bank`, writes → DDR), then point `$D5C3` at it. At the next
-  VBI ANTIC reloads it and reveals a complete, glitch-free frame.
+```
+draw frame into CPU-BRAM (bank A)         ; fast BRAM R/M/W
+write $D5C2 = B                           ; flush A -> DDR[A], load DDR[B] -> CPU-BRAM
+poll  $D5C4.ready                          ; wait for the copy
+write $D5C3 = A                           ; ask ANTIC to show A
+  ; at VBI: ANTIC-BRAM <- DDR[A]; the finished frame appears, tear-free
+draw next frame into CPU-BRAM (bank B) ... ; ping-pong
+```
+
+Single-buffer (`cpu_bank == antic_bank`, live drawing into the displayed page) is
+**not** a shared-BRAM mode here — the two caches are separate copies, so the CPU's
+edits only reach ANTIC via a flush+reload. That's fine: live single-buffer
+drawing tears at the Atari level anyway (official Atari behaviour); the
+double-buffer flow above is both cleaner and the recommended path.
 
 ## Plumbing (PL)
 
-1. **ANTIC read path:** route in-aperture reads (DL + screen data) from the
-   `mem_read_mux` consumers (`dl_parser`, `compositor`) to the ANTIC chunk BRAM
-   (cache of `antic_bank_eff`); out-of-aperture reads stay on the main 64 KB
-   shadow.
-2. **CPU write router:** the `cpu_bank == antic_bank_eff` comparator (both
-   registers are 6502-written, so it sits naturally in `clk_sally`); in-aperture
-   writes go to BRAM (`==`) or DDR (`!=`). Only `antic_bank_eff` needs a 2-FF sync
-   into `clk_sys` for ANTIC's fetch (changes once per frame).
-3. **VBI FSM:** a slimmed `banked_page_cache` — on `antic_bank_eff` change, dirty
-   writeback then reload, with the CPU-screen-write interlock.
+1. **CPU aperture + copy engine:** an 8 KB CPU-BRAM mapped at the aperture for the
+   6502 (read/write), plus a `banked_page_cache`-style engine driven by `$D5C2`
+   writes (dirty writeback → reload → set `ready`). Both bank registers are
+   6502-written so they live in `clk_sally`.
+2. **ANTIC read path + reload engine:** route in-aperture reads (DL + screen data)
+   from the `mem_read_mux` consumers (`dl_parser`, `compositor`) to the 8 KB
+   ANTIC-BRAM (cache of `antic_bank_eff`); out-of-aperture reads stay on the main
+   64 KB shadow. `antic_bank_eff` is latched at VBI (2-FF sync into `clk_sys`);
+   on change, reload-only (no writeback — read-only cache).
+3. **Shared DDR chunk-stack** on an HP port; the CPU copy engine and the ANTIC
+   reload engine are the only masters. **Neither copy is latency-critical** — a
+   bank switch (and thus its DDR traffic) is never required to complete
+   *immediately*, so the engine can run at low priority / share bandwidth without
+   stalling anything on the hot path.
 
 ## Open points
 
-- **Off-screen CPU *reads* / read-modify-write.** The model above handles
-  off-screen *writes* (write-through). Off-screen RMW drawing (XOR lines, etc.)
-  needs a CPU-side read path from DDR `cpu_bank` — either add a CPU-side cache
-  (a second `banked_page_cache` instance) or declare off-screen banks
-  write-only. Decide based on whether the OS/clients do off-screen RMW.
 - **Aperture base register vs hard-coded layout** — leaning hard-coded; revisit
   if a client needs to relocate it.
 - **Interaction with the existing `$D5C0`/`$D5C1` windows** if the screen
   aperture overlaps them (it should be disjoint).
+- **BRAM budget** — two 8 KB screen caches (CPU + ANTIC) on top of the existing
+  64 KB shadow + page caches; confirm it fits the target's BRAM (the 7010 is the
+  tight one).
+
+Resolved: off-screen RMW (the CPU always works against its own BRAM, so
+read-modify-write is BRAM-speed; DDR is touched only on a `$D5C2` bank switch,
+which is not latency-critical).
