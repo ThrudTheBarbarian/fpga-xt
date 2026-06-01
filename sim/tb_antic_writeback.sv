@@ -108,10 +108,16 @@ module tb_antic_writeback;
         for (int c = 0; c < W; c++) pal_write(code(c), rgb(c));
 
         // write_idx=0 -> writeback targets BASE0. Render row 5.
+        // CRITICAL: model the real antic_raster timing — atari_row advances to
+        // the NEXT row before row_flush fires (row_flush = line_start of the
+        // next scanline).  The DMA must still land row 5's pixels in buffer
+        // row 5 (captured at pixel time), NOT row 6 (the live atari_row at
+        // flush).  This is the off-by-one that left buffer row 0 unwritten on HW.
         write_idx = 2'd0;
         for (int p = 0; p < W/2; p++) send_pair(p, 5);
+        @(negedge clk); atari_row = 8'd6;   // raster has advanced past row 5
         flush_row;
-        check_surface("slot0", BASE0, 5);
+        check_surface("slot0", BASE0, 5);   // must be row 5, not row 6
 
         // xl_buffer_ctrl advances write_idx between frames; here drive it to slot 2
         // and confirm the next row lands in BASE2 (and slots are disjoint).
@@ -119,8 +125,9 @@ module tb_antic_writeback;
         repeat (2) @(posedge clk);
 
         for (int p = 0; p < W/2; p++) send_pair(p, 6);
+        @(negedge clk); atari_row = 8'd7;   // raster advanced past row 6
         flush_row;
-        check_surface("slot2", BASE2, 6);
+        check_surface("slot2", BASE2, 6);   // must be row 6, not row 7
 
         if (fail_count == 0) begin
             $display("*** ANTIC_WRITEBACK OK *** palette resolve + row DMA + double-buffer");

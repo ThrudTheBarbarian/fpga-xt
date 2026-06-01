@@ -129,6 +129,14 @@ module antic_writeback #(
     rstate_t rstate;
     logic [7:0] pair_q, chi_q;
     logic       row_dirty;      // ≥1 pixel delivered this row (driven below)
+    logic [7:0] row_capt;       // atari_row captured at the FIRST pixel of the
+                                // row.  The DMA destination MUST use this, not
+                                // the live atari_row: row_flush is line_start of
+                                // the NEXT scanline, by which point antic_raster
+                                // has already advanced atari_row to row+1.  Using
+                                // the live value wrote row R to buffer R+1, left
+                                // buffer row 0 unwritten (the stale "white line"
+                                // at the top) and dropped row 191.
     wire        tf_pop = (rstate == R_IDLE) && !tf_empty && !lw_busy;
 
     always_ff @(posedge clk_sys or posedge rst_sys) begin
@@ -210,16 +218,24 @@ module antic_writeback #(
             lw_flush      <= 1'b0;
             lw_flush_base <= 32'd0;
             row_dirty     <= 1'b0;
+            row_capt      <= 8'd0;
             flush_pending <= 1'b0;
             flush_base_q  <= 32'd0;
         end else begin
             lw_flush <= 1'b0;
 
+            // Capture the row at its FIRST pixel (row_dirty 0->1).  Every pixel
+            // of a row arrives while atari_row holds that row, so this is the
+            // correct destination — unlike atari_row at row_flush time, which
+            // has already advanced to row+1 (see row_capt declaration).
+            if (pix_valid && !row_dirty)
+                row_capt <= atari_row;
+
             // Latch the request + snapshot the destination at row-complete.
             if (row_flush && row_dirty) begin
                 flush_pending <= 1'b1;
                 flush_base_q  <= write_base
-                                 + (32'(atari_row) * 32'(stride_bytes));
+                                 + (32'(row_capt) * 32'(stride_bytes));
             end
 
             // Fire the DMA once the FIFO is drained and resolve+writer are idle.
