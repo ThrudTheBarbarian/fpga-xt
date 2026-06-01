@@ -289,6 +289,7 @@ static void repl_help(void)
       "  rdp              plane_fetch read-path counters (HP0/HP3 AR + R-beats)\r\n"
       "  rda              plane_fetch first-AR addresses (HP3/XL, HP0/desktop)\r\n"
       "  hpread           HP2 isolated PL->DDR read-test (success/timeout/rdata)\r\n"
+      "  deskfill [rgba]  fill desktop plane-0 surface (0x30000000); default black\r\n"
       "  bars <0|1>       HDMI test pattern off/on (writes 43C0001C)\r\n"
       "  hdmi             re-run SiI9022 output init (sii_enable_output)\r\n"
       "  diag             decode GP0 diag word + measured H_RES/V_RES\r\n"
@@ -470,6 +471,24 @@ static void repl_exec(char *cmd)
         xil_printf("  HP2 probe: 1-beat succ=%u to=%u   8-beat succ=%u to=%u   rdata=%08x  (run again)\r\n",
                    (unsigned)((s >> 24) & 0xFFu), (unsigned)((s >> 16) & 0xFFu),
                    (unsigned)((s >> 8) & 0xFFu),  (unsigned)(s & 0xFFu), (unsigned)d);
+        return;
+    }
+    if (!strcmp(argv[0], "deskfill")) {
+        /* Fill the desktop plane-0 surface (0x30000000; plane_fetch0 reads it
+         * via HP0, stride 8192 = 2048 words/row, 1080 rows) with a solid RGBA
+         * word, then flush the A9 cache so the non-coherent PL read sees it.
+         * Replaces the uninitialized-DDR garbage around the Atari window with a
+         * clean field, and tests whether the surround flicker is just garbage
+         * (-> goes static) or a plane-0 read issue (-> still flickers).
+         * Word = 0xRRGGBBaa (compositor takes [31:8] as RGB, ignores alpha);
+         * default 0x00000000 = black. */
+        uint32_t c = (argc >= 2) ? (uint32_t)strtoul(argv[1], NULL, 16) : 0x00000000u;
+        volatile uint32_t *p = (volatile uint32_t *)0x30000000u;
+        uint32_t words = 1080u * 2048u;          /* 1080 rows x 8192-byte stride */
+        for (uint32_t i = 0; i < words; i++) p[i] = c;
+        Xil_DCacheFlushRange((INTPTR)0x30000000u, (INTPTR)(words * 4u));
+        xil_printf("  desktop @0x30000000 filled = %08x (%u words) + cache flushed\r\n",
+                   (unsigned)c, (unsigned)words);
         return;
     }
     if (!strcmp(argv[0], "bars")) {

@@ -1167,6 +1167,14 @@ module fpga_xt_top (
 
     // Plane-1 source: a second plane_fetch reading the XL FRONT buffer (the
     // one antic_writeback just finished) over HP3's read channel.
+    //
+    // NOTE (tearing): antic_writeback flips xl_front_sel on ITS frame_done
+    // (clk_sys / ANTIC rate), which is unsynchronised to the compositor's
+    // clk_pix scan-out, so a mid-frame flip tears between two COMPLETE buffers
+    // (the ~1 Hz beat seen on HW).  This is benign tearing.  A compositor-side
+    // latch does NOT fix it — it makes the writeback write the buffer the
+    // compositor is reading (corruption).  A real fix needs triple-buffering or
+    // genlock; deferred.  Keep the simple disjoint front/back mapping here.
     wire [31:0] xl_surface_base = xl_front_sel ? XL_BASE_B : XL_BASE_A;
     wire [31:0] xl_pixel;
 
