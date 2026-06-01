@@ -32,6 +32,7 @@
 #include "xparameters.h"
 #include "xil_printf.h"
 #include "xil_io.h"
+#include "xil_cache.h"       /* Xil_DCacheInvalidateRange — coherent DDR peeks */
 #include "sleep.h"           /* usleep — paces the REPL loop (1 ms/iter) */
 #include "xiicps.h"          /* PS I2C0 (EMIO) -> SiI9022A control bus */
 
@@ -282,6 +283,12 @@ static void repl_help(void)
       "  ir <reg>         SiI9022 I2C register read\r\n"
       "  iw <reg> <val>   SiI9022 I2C register write\r\n"
       "  id [start] [n]   SiI9022 I2C dump (default start=00, n=20)\r\n"
+      "  fill             blitter solid-rect to DDR 0x30000000 (PL->DDR test)\r\n"
+      "  sync             fire blitter SYNC; SEQ counter moves if FSM alive\r\n"
+      "  prod             ANTIC-frame + HP3-writeback counters (emulator alive?)\r\n"
+      "  rdp              plane_fetch read-path counters (HP0/HP3 AR + R-beats)\r\n"
+      "  rda              plane_fetch first-AR addresses (HP3/XL, HP0/desktop)\r\n"
+      "  hpread           HP2 isolated PL->DDR read-test (success/timeout/rdata)\r\n"
       "  bars <0|1>       HDMI test pattern off/on (writes 43C0001C)\r\n"
       "  hdmi             re-run SiI9022 output init (sii_enable_output)\r\n"
       "  diag             decode GP0 diag word + measured H_RES/V_RES\r\n"
@@ -329,6 +336,11 @@ static void repl_exec(char *cmd)
         if (argc < 2) { uart1_puts("usage: mr <addr> [n]\r\n"); return; }
         uint32_t a = (uint32_t)strtoul(argv[1], NULL, 16);
         unsigned n = (argc >= 3) ? (unsigned)strtoul(argv[2], NULL, 16) : 1u;
+        /* Invalidate the A9 cache for this range first: the PL writes DDR over
+         * HP-AXI (not snooped by the A9 cache), so without this a cached read
+         * returns stale data and never sees what the PL put there.  No-op for
+         * the device-mapped GP0 region (uncached). */
+        Xil_DCacheInvalidateRange((INTPTR)a, (unsigned)(n * 4u));
         for (unsigned i = 0; i < n; i++)
             xil_printf("  [%08x] = %08x\r\n", (unsigned)(a + 4u * i),
                        (unsigned)Xil_In32(a + 4u * i));
@@ -367,6 +379,97 @@ static void repl_exec(char *cmd)
             xil_printf(" %02x", v);
         }
         uart1_puts("\r\n");
+        return;
+    }
+    if (!strcmp(argv[0], "fill")) {
+        /* Blitter solid-rect fill to FB_BASE (0x3000_0000) — tests the PL->DDR
+         * HP-AXI write path with no 6502/ANTIC involved.  64x16 px of
+         * 0xFFE04010 (R=10,G=40,B=E0,A=FF) at (0,0).  Then `mr 30000000 10`:
+         * repeating FFE04010 => HP->DDR write works; still FF/00 => it doesn't. */
+        unsigned g = 0;
+        while (xt_blitter_busy() && g++ < 1000000u) { }     /* wait idle */
+        xt_blitter_set_dst(0, 0, 64, 16);
+        xt_blitter_set_pat_log(0, 0);                       /* 1x1 = solid colour */
+        { uint8_t px[4] = { 0x10, 0x40, 0xE0, 0xFF };       /* R,G,B,A */
+          xt_blitter_write_pat(px, 4); }
+        xt_blitter_set_raster_op(0x0F);                     /* copy */
+        xt_blitter_fire(0x01);                              /* rect fill */
+        g = 0; while (xt_blitter_busy() && g++ < 1000000u) { }   /* wait done */
+        uart1_puts("  blitter fill fired: 64x16 @ 0x30000000, px=0xFFE04010\r\n"
+                   "  check: mr 30000000 10  (repeating FFE04010 = PL->DDR works)\r\n");
+        return;
+    }
+    if (!strcmp(argv[0], "sync")) {
+        /* Fire a blitter SYNC barrier (CMD=0x07) — bumps the SEQ counter if the
+         * blitter FSM is alive, with NO DDR access.  Bisects "blitter didn't
+         * run" from "PL->DDR write broken": SEQ changes => FSM alive (so a fill
+         * that didn't land means HP1->DDR is the problem); SEQ static => the
+         * blitter isn't processing commands at all. */
+        uint8_t lo0 = xt_blitter_read8(XT_BL_SEQ_LO);
+        uint8_t hi0 = xt_blitter_read8(XT_BL_SEQ_HI);
+        uint8_t st  = xt_blitter_read8(XT_BL_STATUS);
+        xt_blitter_fire(0x07);
+        usleep(2000);
+        uint8_t lo1 = xt_blitter_read8(XT_BL_SEQ_LO);
+        uint8_t hi1 = xt_blitter_read8(XT_BL_SEQ_HI);
+        xil_printf("  STATUS=%02x  SEQ %02x%02x -> %02x%02x  (%s)\r\n",
+                   st, hi0, lo0, hi1, lo1,
+                   (lo0 != lo1 || hi0 != hi1) ? "FSM ALIVE" : "FSM NOT RESPONDING");
+        return;
+    }
+    if (!strcmp(argv[0], "prod")) {
+        /* Production-chain counters (diag2 @ GP0 0x18): [7:0] ANTIC frame_done
+         * count, [15:8] HP3 writeback write-beat count.  Run a few times — if
+         * ANTIC frames climb, the 6502+ANTIC are alive on silicon; if HP3 beats
+         * climb, the writeback is DMA-ing pixels to DDR. */
+        uint32_t d2 = Xil_In32(XT_BLITTER_BASE + 0x18u);
+        xil_printf("  ANTIC frames=%u  HP3 write-beats=%u  (run again; climbing = alive)\r\n",
+                   (unsigned)(d2 & 0xFFu), (unsigned)((d2 >> 8) & 0xFFu));
+        return;
+    }
+    if (!strcmp(argv[0], "rdp")) {
+        /* Read-path counters (diag3 @ GP0 0x14): {hp0_ar, hp0_rbeat, hp3_ar,
+         * hp3_rbeat}.  plane_fetch DDR reads -> compositor; the half we've never
+         * validated on silicon (both planes scan out black).  Run twice:
+         *   AR climbs, R-beats DON'T => PS not returning read data (HP read ch);
+         *   both climb but screen black => line-buf->pixel CDC drops it;
+         *   AR static => plane_fetch never issues reads (line_start CDC / FSM). */
+        uint32_t d3 = Xil_In32(XT_BLITTER_BASE + 0x14u);
+        xil_printf("  HP0(desk) AR=%u R-beats=%u   HP3(XL) AR=%u R-beats=%u  (run again)\r\n",
+                   (unsigned)((d3 >> 24) & 0xFFu), (unsigned)((d3 >> 16) & 0xFFu),
+                   (unsigned)((d3 >> 8) & 0xFFu),  (unsigned)(d3 & 0xFFu));
+        return;
+    }
+    if (!strcmp(argv[0], "rda")) {
+        /* First-AR address latches (diag4 @ 0x10 = HP3/XL, diag5 @ 0x0C =
+         * HP0/desktop).  Confirms plane_fetch drives a sane read address on
+         * silicon: HP3 ~3100xxxx/3110xxxx, HP0 ~3000xxxx.  Garbage/0 => an
+         * addressing/startup bug; sane => the AR is well-formed and the hang
+         * is in the PS read-data path. */
+        uint32_t xl   = Xil_In32(XT_BLITTER_BASE + 0x10u);
+        uint32_t desk = Xil_In32(XT_BLITTER_BASE + 0x0Cu);
+        xil_printf("  first AR addr: HP3(XL)=%08x  HP0(desk)=%08x  (sane ~3100xxxx / ~3000xxxx)\r\n",
+                   (unsigned)xl, (unsigned)desk);
+        return;
+    }
+    if (!strcmp(argv[0], "hpread")) {
+        /* HP2 read-test probe (auto-running, isolated single-beat reads of
+         * 0x31000000).  diag6 @0x04 = {success[15:0], timeout[12:0], to_in_r,
+         * rresp[1:0]}; diag7 @0x08 = last rdata.  Run twice:
+         *   success climbing      => isolated PL->DDR reads WORK (the bug is
+         *                            in plane_fetch / bursting / CDC)
+         *   timeout climbing, succ=0, to_in_r=1
+         *                         => AR accepted but PS returns no data: the
+         *                            read-data path is fundamentally dead. */
+        /* diag6 @0x04 = {succ1[31:24], to1[23:16], succ8[15:8], to8[7:0]}.
+         * succ1 climbs + succ8 frozen/to8 climbs => MULTI-BEAT reads are the
+         * plane_fetch bug (single-beat works); both succ climbing => burst
+         * length is not the cause (look at CDC/ping-pong). */
+        uint32_t s = Xil_In32(XT_BLITTER_BASE + 0x04u);
+        uint32_t d = Xil_In32(XT_BLITTER_BASE + 0x08u);
+        xil_printf("  HP2 probe: 1-beat succ=%u to=%u   8-beat succ=%u to=%u   rdata=%08x  (run again)\r\n",
+                   (unsigned)((s >> 24) & 0xFFu), (unsigned)((s >> 16) & 0xFFu),
+                   (unsigned)((s >> 8) & 0xFFu),  (unsigned)(s & 0xFFu), (unsigned)d);
         return;
     }
     if (!strcmp(argv[0], "bars")) {
