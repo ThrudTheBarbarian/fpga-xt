@@ -94,17 +94,33 @@ module plane_fetch #(
     assign rd_pixel = rd_lsb_q ? rd_word_q[63:32] : rd_word_q[31:0];
 
     // ---- line_start + fetch_row CDC (clk_pix -> clk_sys) -----------------
+    // The compositor's src_row_next (driven onto fetch_row) is combinational
+    // from the vertical accumulator, which UPDATES at line_start.  Sampling
+    // fetch_row AT line_start captures the PRE-update value, which lags the
+    // accumulator by a line: the image shifts down a row, the bottom row is
+    // dropped, and at the window's top boundary (where the accumulator has just
+    // reset) the stale previous-frame state predicts an out-of-range row -> a
+    // garbage line.  Sample one cycle later, when src_row_next has settled to
+    // the next scanline's true source row.  The read-half flip + fetch trigger
+    // + row latch are delayed together so the ping-pong rd/wr phase stays
+    // coherent; the 1-cycle slip is hidden by the horizontal blanking before
+    // the active read.
     logic       ls_toggle_pix;
     logic [11:0] fetch_row_pix;
+    logic       line_start_d1;
     always_ff @(posedge clk_pix or posedge rst_pix) begin
         if (rst_pix) begin
             ls_toggle_pix <= 1'b0;
             fetch_row_pix <= 12'd0;
             ping_pong_rd  <= 1'b0;
-        end else if (line_start) begin
-            ls_toggle_pix <= ~ls_toggle_pix;
-            fetch_row_pix <= fetch_row;
-            ping_pong_rd  <= ~ping_pong_rd;
+            line_start_d1 <= 1'b0;
+        end else begin
+            line_start_d1 <= line_start;
+            if (line_start_d1) begin
+                ls_toggle_pix <= ~ls_toggle_pix;
+                fetch_row_pix <= fetch_row;
+                ping_pong_rd  <= ~ping_pong_rd;
+            end
         end
     end
 

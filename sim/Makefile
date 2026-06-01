@@ -649,6 +649,17 @@ antic_writeback: $(BUILD_DIR)/tb_antic_writeback.vvp
 $(BUILD_DIR)/tb_antic_writeback.vvp: $(HDL_DIR)/antic_writeback.sv $(HDL_DIR)/axi_line_writer.sv $(HDL_DIR)/palette_lut.sv axi_slave_mem.sv tb_antic_writeback.sv | $(BUILD_DIR)
 	$(IVERILOG) $(SV_FLAGS) $(ANTIC_PAL_DEF) -o $@ -s tb_antic_writeback $(HDL_DIR)/antic_writeback.sv $(HDL_DIR)/axi_line_writer.sv $(HDL_DIR)/palette_lut.sv axi_slave_mem.sv tb_antic_writeback.sv
 
+# ---- plane_vscale — scan-out vertical row-addressing at scale 3 (integration) --
+plane_vscale: $(BUILD_DIR)/tb_plane_vscale.vvp
+	@echo "=== plane_vscale — scan-out vertical addressing (compositor+fetch) ==="
+	@$(VVP) -N $< | tee $(BUILD_DIR)/tb_plane_vscale.log
+	@grep -q '\*\*\* PLANE_VSCALE OK \*\*\*' $(BUILD_DIR)/tb_plane_vscale.log || \
+	    (echo "FAIL: tb_plane_vscale"; exit 1)
+	@echo "PASS: tb_plane_vscale"
+
+$(BUILD_DIR)/tb_plane_vscale.vvp: $(HDL_DIR)/vbeam.sv $(HDL_DIR)/plane_compositor.sv $(HDL_DIR)/plane_fetch.sv axi_slave_mem.sv tb_plane_vscale.sv | $(BUILD_DIR)
+	$(IVERILOG) $(SV_FLAGS) -o $@ -s tb_plane_vscale $(HDL_DIR)/vbeam.sv $(HDL_DIR)/plane_compositor.sv $(HDL_DIR)/plane_fetch.sv axi_slave_mem.sv tb_plane_vscale.sv
+
 # ---- xl_buffer_ctrl — ANTIC->DDR triple-buffer index controller (video-arch §5)
 xl_buffer_ctrl: $(BUILD_DIR)/tb_xl_buffer_ctrl.vvp
 	@echo "=== xl_buffer_ctrl — XL surface triple-buffer controller ==="

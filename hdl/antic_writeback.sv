@@ -224,11 +224,16 @@ module antic_writeback #(
         end else begin
             lw_flush <= 1'b0;
 
-            // Capture the row at its FIRST pixel (row_dirty 0->1).  Every pixel
-            // of a row arrives while atari_row holds that row, so this is the
-            // correct destination — unlike atari_row at row_flush time, which
-            // has already advanced to row+1 (see row_capt declaration).
-            if (pix_valid && !row_dirty)
+            // Capture the row on EVERY pixel — every pixel of a row arrives
+            // while atari_row holds that row, so row_capt always tracks the row
+            // currently being delivered.  row_flush (line_start of the NEXT
+            // scanline) samples row_capt BEFORE that next row's first pixel
+            // arrives, so it reads the just-completed row's index.  NOT gated on
+            // !row_dirty: row_dirty is cleared by the (possibly-late) flush, and
+            // gating on it would skip the capture if the flush lagged the next
+            // row's first pixel — collapsing/skipping rows (the alternating-row
+            // artifact).
+            if (pix_valid)
                 row_capt <= atari_row;
 
             // Latch the request + snapshot the destination at row-complete.
