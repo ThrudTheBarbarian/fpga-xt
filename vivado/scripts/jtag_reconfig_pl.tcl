@@ -53,6 +53,10 @@ if {$gp0_ctrl ne ""} {
     # AXI-AP is non-intrusive (no halt).
     set ok [catch {targets -set -filter {name =~ "*Cortex-A9*#0"}} err]
     if {$ok} { puts "ERROR: could not select A9 core for gp0_ctrl write: $err"; exit 1 }
+    # xsdb guards PL AXI slave addresses by default ("access is not allowed");
+    # this lifts the guard so the single register poke through the A9's AXI view
+    # is permitted.
+    configparams force-mem-accesses 1
     puts ">> writing gp0_ctrl: *0x43C0001C = $gp0_ctrl (via A9 #0)"
     mwr 0x43C0001C $gp0_ctrl
     puts ">> gp0_ctrl readback: [mrd -value 0x43C0001C]"
