@@ -186,6 +186,12 @@ module dl_parser (
     logic        is_jvb;            // current $41 JVB (vs $01 JMP)
     logic        is_blank;          // decoded line is a blank ($00)
     logic [4:0]  blank_count;       // blank-line scan count (1..8)
+    logic        seen_mode;         // a visible mode line (2..F) has been
+                                    // emitted this frame. Leading blanks (before
+                                    // the first mode line) are top overscan and
+                                    // are skipped so they don't consume rows;
+                                    // blanks AFTER it are interior bands and DO
+                                    // emit COLBK rows. See video-arch §5.1.
 
     // ---- Pending (1-DL-line buffer; decoded before emit) ---------------
     logic        pend_valid;
@@ -249,6 +255,7 @@ module dl_parser (
             is_jvb          <= 1'b0;
             is_blank        <= 1'b0;
             blank_count     <= 5'd1;
+            seen_mode       <= 1'b0;
             pend_valid      <= 1'b0;
             pend_mode       <= 4'h0;
             pend_dli        <= 1'b0;
@@ -286,6 +293,7 @@ module dl_parser (
                         ops            <= 11'd0;
                         pending_dli    <= 1'b0;
                         pend_valid     <= 1'b0;
+                        seen_mode      <= 1'b0;
                         emit_phase     <= E_STAGE;
                         state          <= S_FETCH_OP;
                     end
@@ -334,8 +342,19 @@ module dl_parser (
                         // Blank line: bits 4..6 = scan_count - 1.
                         is_blank    <= 1'b1;
                         blank_count <= {2'b0, mem_rdata[6:4]} + 5'd1;
-                        state       <= S_STAGE;
-                        emit_phase  <= E_STAGE;
+                        if (seen_mode) begin
+                            // Interior/trailing blank: emit it (the compositor
+                            // paints these rows COLBK) so a mid-screen blank band
+                            // renders and the writeback gets a written row.
+                            state       <= S_STAGE;
+                            emit_phase  <= E_STAGE;
+                        end else begin
+                            // Leading overscan blank — skip entirely. It must NOT
+                            // consume an atari_row or the playfield is shoved down
+                            // and the bottom mode lines clip off (the top-band /
+                            // bottom-clip artifact). dl_pos already advanced above.
+                            state       <= S_FETCH_OP;
+                        end
                     end else if (mem_rdata[3:0] == 4'h1) begin
                         // JMP ($01) / JVB ($41) — bit 6 distinguishes.
                         is_blank <= 1'b0;
@@ -345,11 +364,13 @@ module dl_parser (
                         // LMS-bearing graphics/text mode. Read 2-byte LMS,
                         // then stage.
                         is_blank       <= 1'b0;
+                        seen_mode      <= 1'b1;
                         lms_was_loaded <= 1'b1;
                         state          <= S_FETCH_LMS_LO;
                     end else begin
                         // Plain mode line — auto-advance LMS at REFILL.
                         is_blank   <= 1'b0;
+                        seen_mode  <= 1'b1;
                         state      <= S_STAGE;
                         emit_phase <= E_STAGE;
                     end

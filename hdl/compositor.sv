@@ -161,7 +161,10 @@ module compositor #(
         S_TXT_LATCH_GLYPH   = 5'd11,
         // Shared SET issuance
         S_ISSUE_SET         = 5'd12,
-        S_NEXT_ROW          = 5'd13
+        S_NEXT_ROW          = 5'd13,
+
+        S_BLANK_FILL        = 5'd23     // paint a full row of COLBK (idx 0) for
+                                        // blank ($x0) / unsupported-mode lines
     } state_t;
 
     state_t      state;
@@ -191,6 +194,11 @@ module compositor #(
 
     logic [5:0]  unit_idx;            // source-unit index (0..MAX_UNITS-1)
     logic [3:0]  pair_idx;            // 0..15 for mode 8/9; 0..7 for 16-px modes; 0..3 for 8-px modes
+    logic [8:0]  blank_col;           // S_BLANK_FILL pair counter (0..BLANK_PAIRS)
+
+    // Active playfield is 384 px = 192 pairs (matches the antic_top render-tap
+    // LB_WIDTH).  A blank/unsupported row issues this many COLBK pairs.
+    localparam int BLANK_PAIRS = 192;
 
     logic [7:0]  cur_byte;            // mode F's source byte (also char glyph for char modes)
     logic [7:0]  cur_code;            // char-mode char code
@@ -933,6 +941,7 @@ module compositor #(
             cmd_tag         <= `BUS_TAG_NOP;
             cmd_addr        <= '0;
             cmd_data        <= 24'h0;
+            blank_col       <= 9'd0;
             mem_raddr       <= 16'h0;
             meta_row        <= 8'h0;
             compose_done    <= 1'b0;
@@ -1010,7 +1019,13 @@ module compositor #(
                         // fetch first; mode dispatch happens after.
                         state <= S_PM_FETCH;
                     end else begin
-                        state <= S_NEXT_ROW;        // skip blank / JMP / mode 3
+                        // Blank ($x0) line or an unsupported mode (e.g. 3): paint
+                        // the whole active row with background (idx 0 -> COLBK) so
+                        // the writeback always gets a fully-written row — no stale
+                        // / FF-garbage rows on real DDR — and a mid-screen blank
+                        // line renders as a COLBK band.
+                        blank_col <= 9'd0;
+                        state     <= S_BLANK_FILL;
                     end
                 end
 
@@ -1324,6 +1339,28 @@ module compositor #(
                             col_presL_q <= pm_presence(next_x_lo);
                             col_presH_q <= pm_presence(next_x_lo + 10'd1);
                             col_valid_q <= 1'b1;
+                        end
+                    end
+                end
+
+                // ==== Blank / unsupported-row background fill ===============
+                // Issue BLANK_PAIRS pairs of idx 0 (-> COLBK after the colour
+                // resolver) across the active row.  cmd_ready is always high in
+                // this build, so one pair is accepted per cycle; the render tap
+                // counts accepted pairs with its own counter and caps at the
+                // active width, so cmd_addr here is cosmetic.  col_valid_q stays
+                // low (default) — blank pixels make no collision contribution.
+                S_BLANK_FILL: begin
+                    cmd_tag   <= `BUS_TAG_SET;
+                    cmd_addr  <= row_base + {blank_col, 1'b0};
+                    cmd_data  <= 24'h0;            // both pixels of the pair -> COLBK
+                    cmd_valid <= 1'b1;
+                    if (cmd_valid && cmd_ready) begin
+                        if (blank_col == BLANK_PAIRS[8:0] - 9'd1) begin
+                            cmd_valid <= 1'b0;
+                            state     <= S_NEXT_ROW;
+                        end else begin
+                            blank_col <= blank_col + 9'd1;
                         end
                     end
                 end
