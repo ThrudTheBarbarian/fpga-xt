@@ -415,6 +415,25 @@ module fpga_xt_top (
     wire        hp3_rlast;
     wire        hp3_rready;
 
+    // HP2 — hp_read_probe (bring-up PL->DDR read-test engine, read-only).
+    // Isolated single-beat reads of 0x3100_0000 to test whether ANY clean PL
+    // read returns data (plane_fetch's reads hang on HP0/HP3).  Write channel
+    // tied off at the ps_bd instance.
+    wire [31:0] hp2_araddr;
+    wire [7:0]  hp2_arlen;
+    wire [2:0]  hp2_arsize;
+    wire [1:0]  hp2_arburst;
+    wire        hp2_arvalid;
+    wire        hp2_arready;
+    wire [63:0] hp2_rdata;
+    wire [1:0]  hp2_rresp;
+    wire        hp2_rvalid;
+    wire        hp2_rlast;
+    wire        hp2_rready;
+    wire        hp2_awready;   // PS outputs (write channel unused)
+    wire        hp2_wready;
+    wire        hp2_bvalid;
+
     // ANTIC's BRAM read port — driven by antic_top's u_bram_shim and
     // serviced by sally_mem's second BRAM port (clk_sys side).  SALLY
     // writes propagate naturally through sally_mem; ANTIC sees the
@@ -983,6 +1002,84 @@ module fpga_xt_top (
         .m_axi_wready (hp3_wready),
         .m_axi_bvalid (hp3_bvalid),  .m_axi_bready (hp3_bready)
     );
+
+    // Production-chain activity counters (clk_sys) — read via diag2_word at GP0
+    // offset 0x18.  On hardware these answer "is the emulator actually running?"
+    // without any sim: antic_frame_cnt climbs => 6502+ANTIC are producing frames;
+    // hp3_wbeat_cnt climbs => the writeback is genuinely DMA-ing pixels to DDR.
+    reg [7:0] antic_frame_cnt = 8'd0;
+    reg [7:0] hp3_wbeat_cnt   = 8'd0;
+    always_ff @(posedge clk_sys) begin
+        if (antic_wb_frame_done)     antic_frame_cnt <= antic_frame_cnt + 8'd1;
+        if (hp3_wvalid & hp3_wready) hp3_wbeat_cnt   <= hp3_wbeat_cnt   + 8'd1;
+    end
+    wire [31:0] diag2_word = {16'd0, hp3_wbeat_cnt, antic_frame_cnt};
+
+    // Read-path activity counters (clk_sys) — read via diag3_word at GP0 offset
+    // 0x14.  The XL writeback proved PL->DDR *writes* work on silicon; these
+    // answer whether plane_fetch's PL->DDR *reads* deliver to the compositor
+    // (never validated on HW; both planes scan out black).  Per HP read port:
+    //   *_ar_cnt    climbs => plane_fetch issues read bursts (AR handshakes)
+    //   *_rbeat_cnt climbs => the PS returns read data (R beats)
+    // AR but no R  => PS not servicing reads (HP read channel / address).
+    // R but black  => the line-buffer -> pixel (clk_sys->clk_pix) path drops it.
+    reg [7:0] hp0_ar_cnt    = 8'd0;   // desktop plane (plane 0)
+    reg [7:0] hp0_rbeat_cnt = 8'd0;
+    reg [7:0] hp3_ar_cnt    = 8'd0;   // XL plane (plane 1)
+    reg [7:0] hp3_rbeat_cnt = 8'd0;
+    always_ff @(posedge clk_sys) begin
+        if (hp0_arvalid & hp0_arready) hp0_ar_cnt    <= hp0_ar_cnt    + 8'd1;
+        if (hp0_rvalid  & hp0_rready)  hp0_rbeat_cnt <= hp0_rbeat_cnt + 8'd1;
+        if (hp3_arvalid & hp3_arready) hp3_ar_cnt    <= hp3_ar_cnt    + 8'd1;
+        if (hp3_rvalid  & hp3_rready)  hp3_rbeat_cnt <= hp3_rbeat_cnt + 8'd1;
+    end
+    wire [31:0] diag3_word = {hp0_ar_cnt, hp0_rbeat_cnt, hp3_ar_cnt, hp3_rbeat_cnt};
+
+    // First-AR address latch (sticky) — read via diag4/diag5 @ GP0 0x10/0x0C.
+    // Confirms plane_fetch drives a SANE read address on silicon (rules out a
+    // startup-race garbage AR): HP3(XL) should be ~0x3100_xxxx/0x3110_xxxx,
+    // HP0(desktop) ~0x3000_xxxx.  Since reads currently hang after one AR, this
+    // captures the only AR each port ever issued.
+    reg [31:0] hp3_first_araddr = 32'd0;  reg hp3_ar_seen = 1'b0;
+    reg [31:0] hp0_first_araddr = 32'd0;  reg hp0_ar_seen = 1'b0;
+    always_ff @(posedge clk_sys) begin
+        if (hp3_arvalid & hp3_arready & ~hp3_ar_seen) begin
+            hp3_first_araddr <= hp3_araddr; hp3_ar_seen <= 1'b1;
+        end
+        if (hp0_arvalid & hp0_arready & ~hp0_ar_seen) begin
+            hp0_first_araddr <= hp0_araddr; hp0_ar_seen <= 1'b1;
+        end
+    end
+    wire [31:0] diag4_word = hp3_first_araddr;   // XL plane first read address
+    wire [31:0] diag5_word = hp0_first_araddr;   // desktop plane first read address
+
+    // ---- HP read-test probe (HP2) — bring-up PL->DDR read diagnostic -------
+    // Auto-runs single-beat reads of 0x3100_0000 on the isolated HP2 port,
+    // tallying successes vs timeouts.  Read via diag6/diag7 @ GP0 0x04/0x08:
+    //   success_cnt climbs        => isolated PL->DDR reads WORK (bug is in
+    //                                plane_fetch / bursting / CDC, not the PS)
+    //   timeout_cnt climbs, succ=0 => PL->DDR reads not serviced by the PS
+    // last_rdata lets a success be validated against writeback's pixel data.
+    wire [7:0]  probe_succ1, probe_to1, probe_succ8, probe_to8;
+    wire [1:0]  probe_last_rresp;
+    wire [31:0] probe_last_rdata;
+    hp_read_probe #(.TEST_ADDR(32'h3100_0000)) u_hp_read_probe (
+        .clk          (clk_sys),       .rst          (rst_sys),
+        .m_axi_araddr (hp2_araddr),    .m_axi_arlen  (hp2_arlen),
+        .m_axi_arsize (hp2_arsize),    .m_axi_arburst(hp2_arburst),
+        .m_axi_arvalid(hp2_arvalid),   .m_axi_arready(hp2_arready),
+        .m_axi_rdata  (hp2_rdata),     .m_axi_rresp  (hp2_rresp),
+        .m_axi_rvalid (hp2_rvalid),    .m_axi_rlast  (hp2_rlast),
+        .m_axi_rready (hp2_rready),
+        .succ1        (probe_succ1),   .to1          (probe_to1),
+        .succ8        (probe_succ8),   .to8          (probe_to8),
+        .last_rresp   (probe_last_rresp), .last_rdata (probe_last_rdata)
+    );
+    // diag6 @0x04: {succ1[7:0], to1[7:0], succ8[7:0], to8[7:0]} — 1-beat vs
+    // 8-beat read tallies (succ8 frozen + to8 climbing => multi-beat reads are
+    // the plane_fetch bug; both climbing => burst length is not the cause).
+    wire [31:0] diag6_word = {probe_succ1, probe_to1, probe_succ8, probe_to8};
+    wire [31:0] diag7_word = probe_last_rdata;   // last beat read back
 
     // ====================================================================
     // Display: plane compositor (vbeam + plane_fetch x N + plane_compositor)
@@ -1585,7 +1682,7 @@ module fpga_xt_top (
         .iic_0_sda_t        (i2c_sda_t),
         .m_axi_hp0_araddr   (hp0_araddr[31:0]),
         .m_axi_hp0_arburst  (hp0_arburst[1:0]),
-        .m_axi_hp0_arcache  (4'd0),
+        .m_axi_hp0_arcache  (4'b0011),   // read-path expt: bufferable+modifiable (was 0000)
         .m_axi_hp0_arid     (6'd0),
         .m_axi_hp0_arlen    (hp0_arlen[3:0]),
         .m_axi_hp0_arlock   (2'd0),
@@ -1669,7 +1766,7 @@ module fpga_xt_top (
         // (it sets PCW_USE_S_AXI_HP3=1 and exports m_axi_hp3).
         .m_axi_hp3_araddr   (hp3_araddr[31:0]),
         .m_axi_hp3_arburst  (hp3_arburst[1:0]),
-        .m_axi_hp3_arcache  (4'd0),
+        .m_axi_hp3_arcache  (4'b0011),   // read-path expt: bufferable+modifiable (was 0000)
         .m_axi_hp3_arid     (6'd0),
         .m_axi_hp3_arlen    (hp3_arlen[3:0]),
         .m_axi_hp3_arlock   (2'd0),
@@ -1705,6 +1802,47 @@ module fpga_xt_top (
         .m_axi_hp3_wready   (hp3_wready),
         .m_axi_hp3_wstrb    (hp3_wstrb),
         .m_axi_hp3_wvalid   (hp3_wvalid),
+
+        // HP2 — hp_read_probe (read-only bring-up read-test engine).  Write
+        // channel tied off; ARCACHE=0011 like the other read masters.
+        .m_axi_hp2_araddr   (hp2_araddr[31:0]),
+        .m_axi_hp2_arburst  (hp2_arburst[1:0]),
+        .m_axi_hp2_arcache  (4'b0011),
+        .m_axi_hp2_arid     (6'd0),
+        .m_axi_hp2_arlen    (hp2_arlen[3:0]),
+        .m_axi_hp2_arlock   (2'd0),
+        .m_axi_hp2_arprot   (3'd0),
+        .m_axi_hp2_arqos    (4'd0),
+        .m_axi_hp2_arready  (hp2_arready),
+        .m_axi_hp2_arsize   (hp2_arsize[2:0]),
+        .m_axi_hp2_arvalid  (hp2_arvalid),
+        .m_axi_hp2_awaddr   (32'd0),
+        .m_axi_hp2_awburst  (2'd0),
+        .m_axi_hp2_awcache  (4'd0),
+        .m_axi_hp2_awid     (6'd0),
+        .m_axi_hp2_awlen    (4'd0),
+        .m_axi_hp2_awlock   (2'd0),
+        .m_axi_hp2_awprot   (3'd0),
+        .m_axi_hp2_awqos    (4'd0),
+        .m_axi_hp2_awready  (hp2_awready),
+        .m_axi_hp2_awsize   (3'd0),
+        .m_axi_hp2_awvalid  (1'b0),
+        .m_axi_hp2_bid      (),
+        .m_axi_hp2_bready   (1'b0),
+        .m_axi_hp2_bresp    (),
+        .m_axi_hp2_bvalid   (hp2_bvalid),
+        .m_axi_hp2_rdata    (hp2_rdata),
+        .m_axi_hp2_rid      (),
+        .m_axi_hp2_rlast    (hp2_rlast),
+        .m_axi_hp2_rready   (hp2_rready),
+        .m_axi_hp2_rresp    (hp2_rresp),
+        .m_axi_hp2_rvalid   (hp2_rvalid),
+        .m_axi_hp2_wdata    (64'd0),
+        .m_axi_hp2_wid      (6'd0),
+        .m_axi_hp2_wlast    (1'b0),
+        .m_axi_hp2_wready   (hp2_wready),
+        .m_axi_hp2_wstrb    (8'd0),
+        .m_axi_hp2_wvalid   (1'b0),
 
         // GP0 — ARM PS AXI3 master → PL bridge (blitter register writes).
         // Extra AXI3 signals not used by the AXI4-Lite bridge are left
@@ -1819,6 +1957,12 @@ module fpga_xt_top (
         .bl_pat_blocked  (bl_pat_blocked),
         .bl_seq_counter  (bl_seq_counter),
         .diag_word       (diag_word),
+        .diag2_word      (diag2_word),
+        .diag3_word      (diag3_word),
+        .diag4_word      (diag4_word),
+        .diag5_word      (diag5_word),
+        .diag6_word      (diag6_word),
+        .diag7_word      (diag7_word),
         .gp0_ctrl        (gp0_ctrl)
     );
 

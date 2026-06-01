@@ -66,6 +66,28 @@ module axi_blitter_bridge (
     // built in fpga_xt_top, surfaced over GP0 so the PS app can print it.
     input  wire [31:0] diag_word,
 
+    // ---- 2nd PL debug word (clk_sys) — read at offset 0x18 -----------------
+    // Production-chain activity counters (ANTIC frames / HP3 writeback beats);
+    // built in fpga_xt_top.  Word-aligned offset so a plain Xil_In32 reads it.
+    input  wire [31:0] diag2_word,
+
+    // ---- 3rd PL debug word (clk_sys) — read at offset 0x14 -----------------
+    // Read-path activity counters: {hp0_ar, hp0_rbeat, hp3_ar, hp3_rbeat}
+    // (plane_fetch DDR reads → compositor).  Word-aligned for a plain Xil_In32.
+    input  wire [31:0] diag3_word,
+
+    // ---- First-AR address latches (clk_sys) — read at 0x10 / 0x0C ----------
+    // diag4 = HP3(XL) first read address, diag5 = HP0(desktop) first read
+    // address.  Confirms plane_fetch drives a sane araddr on silicon.
+    input  wire [31:0] diag4_word,
+    input  wire [31:0] diag5_word,
+
+    // ---- HP read-test probe results (clk_sys) — read at 0x04 / 0x08 --------
+    // diag6 = {success_cnt[15:0], timeout_cnt[12:0], to_in_r, rresp[1:0]},
+    // diag7 = last rdata.  Auto-running isolated PL->DDR read test (HP2).
+    input  wire [31:0] diag6_word,
+    input  wire [31:0] diag7_word,
+
     // ---- PL control register (clk_sys domain) — WRITTEN at offset 0x1C ------
     // Software-writable control bits (the read at 0x1C returns diag_word; the
     // write at 0x1C lands here — read/write share the offset).  bit0 = HDMI
@@ -201,16 +223,32 @@ module axi_blitter_bridge (
                         //   bit 2 = bl_pat_blocked (sticky: pat/font load
                         //           dropped while busy; clears on busy=0)
                         // SEQ counter at offsets 0x19 (lo byte) / 0x1A (hi).
+                        // Byte-wide read-backs (STATUS/SEQ) are REPLICATED
+                        // across all 4 byte lanes: these regs sit at odd byte
+                        // offsets (0x0D/0x19/0x1A -> lanes 1/1/2), so an Xil_In8
+                        // at the real lane must find the value there — returning
+                        // it only in [7:0] made every byte read come back 0.
                         if (s_axi_araddr[7:0] == 8'h0D)
-                            s_axi_rdata <= {29'b0, bl_pat_blocked,
-                                                  bl_queue_full,
-                                                  bl_busy};
+                            s_axi_rdata <= {4{5'b0, bl_pat_blocked,
+                                                  bl_queue_full, bl_busy}};
                         else if (s_axi_araddr[7:0] == 8'h19)
-                            s_axi_rdata <= {24'b0, bl_seq_counter[7:0]};
+                            s_axi_rdata <= {4{bl_seq_counter[7:0]}};
                         else if (s_axi_araddr[7:0] == 8'h1A)
-                            s_axi_rdata <= {24'b0, bl_seq_counter[15:8]};
+                            s_axi_rdata <= {4{bl_seq_counter[15:8]}};
+                        else if (s_axi_araddr[7:0] == 8'h18)
+                            s_axi_rdata <= diag2_word;       // production-chain counters
+                        else if (s_axi_araddr[7:0] == 8'h14)
+                            s_axi_rdata <= diag3_word;       // read-path activity counters
+                        else if (s_axi_araddr[7:0] == 8'h10)
+                            s_axi_rdata <= diag4_word;       // HP3(XL) first-AR address
+                        else if (s_axi_araddr[7:0] == 8'h0C)
+                            s_axi_rdata <= diag5_word;       // HP0(desktop) first-AR address
+                        else if (s_axi_araddr[7:0] == 8'h04)
+                            s_axi_rdata <= diag6_word;       // HP2 read-probe status
+                        else if (s_axi_araddr[7:0] == 8'h08)
+                            s_axi_rdata <= diag7_word;       // HP2 read-probe last rdata
                         else if (s_axi_araddr[7:0] == 8'h1C)
-                            s_axi_rdata <= diag_word;        // PL debug word
+                            s_axi_rdata <= diag_word;        // PL debug word (word read)
                         else
                             s_axi_rdata <= 32'd0;
                         s_axi_rresp  <= 2'b00;

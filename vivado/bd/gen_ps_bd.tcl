@@ -29,7 +29,8 @@ source [file join $script_dir zturn_ps_preset.tcl]
 
 # Step 2 — OUR PL interface overrides, applied last (last write wins).  These
 # own every PS<->PL port so the ps_bd port set keeps matching fpga_xt_top:
-# HP0/1/3 + GP0 read/write masters on a single 150 MHz clk_sys net, FCLK0 = 150.
+# HP0/1/2/3 + GP0 read/write masters on a single 150 MHz clk_sys net, FCLK0 = 150.
+# (HP2 = hp_read_probe, a bring-up PL->DDR read-test engine.)
 # I2C0 is ENABLED on EMIO (exactly as the MyIR reference) to drive the SiI9022A
 # HDMI transmitter's control bus over P15/P16 — replacing our PL bit-bang, which
 # never got the chip to ACK.  GPIO/TTC0/FCLK_CLK1 EMIO stay OFF (unused).
@@ -37,7 +38,7 @@ set_property -dict [list \
     CONFIG.PCW_PACKAGE_NAME {clg400} \
     CONFIG.PCW_USE_S_AXI_HP0 {1} \
     CONFIG.PCW_USE_S_AXI_HP1 {1} \
-    CONFIG.PCW_USE_S_AXI_HP2 {0} \
+    CONFIG.PCW_USE_S_AXI_HP2 {1} \
     CONFIG.PCW_USE_S_AXI_HP3 {1} \
     CONFIG.PCW_USE_M_AXI_GP0 {1} \
     CONFIG.PCW_USE_M_AXI_GP1 {0} \
@@ -158,12 +159,13 @@ if {$fclk_port ne ""} {
 }
 set gp0clk_port [get_bd_ports s_axi_gp0_aclk]
 if {$gp0clk_port ne ""} {
-    set_property CONFIG.ASSOCIATED_BUSIF {m_axi_gp0 m_axi_hp0 m_axi_hp1 m_axi_hp3} $gp0clk_port
+    set_property CONFIG.ASSOCIATED_BUSIF {m_axi_gp0 m_axi_hp0 m_axi_hp1 m_axi_hp2 m_axi_hp3} $gp0clk_port
 }
 
 # ---- Assign HP address spaces to DDR ---------------------------------------
 assign_bd_address [get_bd_addr_segs /zynq_ps/S_AXI_HP0/HP0_DDR_LOWOCM]
 assign_bd_address [get_bd_addr_segs /zynq_ps/S_AXI_HP1/HP1_DDR_LOWOCM]
+assign_bd_address [get_bd_addr_segs /zynq_ps/S_AXI_HP2/HP2_DDR_LOWOCM]
 assign_bd_address [get_bd_addr_segs /zynq_ps/S_AXI_HP3/HP3_DDR_LOWOCM]
 
 # ---- Assign GP0 address range for PL register access -----------------------
