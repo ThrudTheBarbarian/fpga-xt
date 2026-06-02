@@ -294,6 +294,7 @@ static void repl_help(void)
       "  hdmi             re-run SiI9022 output init (sii_enable_output)\r\n"
       "  diag             decode GP0 diag word + measured H_RES/V_RES\r\n"
       "  mon <0|1>        periodic 1s status tick off/on\r\n"
+      "  reset            soft-reset the PS (SLCR) -> full reboot (FSBL/DDR/PL)\r\n"
       "  help             this list\r\n"
       "e.g.  mr 43c0001c  |  iw 1a 01  |  id 00 20  |  bars 0\r\n");
 }
@@ -509,6 +510,17 @@ static void repl_exec(char *cmd)
         g_mon = (strtoul(argv[1], NULL, 16) != 0);
         xil_printf("  mon %s\r\n", g_mon ? "ON" : "OFF");
         return;
+    }
+    if (!strcmp(argv[0], "reset")) {
+        /* SLCR software reset of the whole PS -> BootROM -> FSBL (ps7_init/DDR
+         * re-init) -> bitstream reload -> app.  A convenient cold-boot-like
+         * reboot for repeat testing without a physical power-cycle.  Unlock the
+         * SLCR (key 0xDF0D @ 0xF8000008), then set PSS_RST_CTRL.SOFT_RST
+         * (0xF8000200 bit0).  Does not return. */
+        uart1_puts("  PS soft reset (SLCR) — rebooting...\r\n");
+        Xil_Out32(0xF8000008u, 0x0000DF0Du);   /* SLCR_UNLOCK */
+        Xil_Out32(0xF8000200u, 0x00000001u);   /* PSS_RST_CTRL.SOFT_RST */
+        for (;;) { }                            /* wait for the reset to land */
     }
     uart1_puts("? unknown — type 'help'\r\n");
 }
