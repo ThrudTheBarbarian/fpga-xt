@@ -33,6 +33,7 @@
 #include "xil_printf.h"
 #include "xil_io.h"
 #include "xil_cache.h"       /* Xil_DCacheInvalidateRange — coherent DDR peeks */
+#include "usb_hid.h"          /* TinyUSB host (USB0) bring-up */
 #include "sleep.h"           /* usleep — paces the REPL loop (1 ms/iter) */
 #include "xiicps.h"          /* PS I2C0 (EMIO) -> SiI9022A control bus */
 
@@ -662,6 +663,7 @@ int main(void)
      * counter still services hot-plug (auto-enable output on HDMI plug),
      * toggles the liveness LED, and prints a status line when `mon` is on. */
     uart1_rx_enable();
+    usb_hid_init();                     /* bring up the USB0 host (TinyUSB) */
     repl_help();
     uart1_puts("> ");
 
@@ -671,6 +673,7 @@ int main(void)
     unsigned desk_cleared = 0;          /* one-shot deferred desktop clear */
 
     while (1) {
+        usb_hid_task();                 /* poll the USB host stack */
         /* Interactive: drain RX, echo, dispatch on CR/LF. */
         int c;
         while ((c = uart1_getc()) >= 0) {

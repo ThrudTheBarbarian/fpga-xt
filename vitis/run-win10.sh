@@ -60,9 +60,13 @@ echo ">> pushing scripts/ -> $REMOTE:$REMOTE_DIR/vitis/scripts/"
 ps_wipe "$REMOTE_DIR/vitis/scripts"
 scp -q -r "$REPO_ROOT/vitis/scripts" "$REMOTE:$REMOTE_DIR/vitis/scripts"
 
-echo ">> pushing xtos/ -> $REMOTE:$REMOTE_DIR/vitis/xtos/"
+echo ">> pushing xtos/ (app src + tinyusb/src only) -> $REMOTE:$REMOTE_DIR/vitis/xtos/"
 ps_wipe "$REMOTE_DIR/vitis/xtos"
-scp -q -r "$REPO_ROOT/vitis/xtos" "$REMOTE:$REMOTE_DIR/vitis/xtos"
+ps_mkdir "$REMOTE_DIR/vitis/xtos/tinyusb"
+# App sources, then ONLY the TinyUSB src/ tree (not the ~50 MB submodule's
+# examples/docs/test/hw/.git — the build only compiles + includes src/).
+scp -q -r "$REPO_ROOT/vitis/xtos/src" "$REMOTE:$REMOTE_DIR/vitis/xtos/src"
+scp -q -r "$REPO_ROOT/vitis/xtos/tinyusb/src" "$REMOTE:$REMOTE_DIR/vitis/xtos/tinyusb/src"
 
 # Run Vitis ---------------------------------------------------------------
 echo ">> running vitis -s $SCRIPT"
