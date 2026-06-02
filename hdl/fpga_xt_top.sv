@@ -1145,6 +1145,25 @@ module fpga_xt_top (
     // distinguish "clk_pix toggling" from "vbeam producing real frames".
     always_ff @(posedge clk_pix) if (fb_frame_start) fb_frame_tgl <= ~fb_frame_tgl;
 
+    // ---- Frame-aligned plane_fetch arm (cold-boot scan-out determinism) -
+    // ddr_warm (clk_sys) says the DDR/AXI path is up.  But just flipping
+    // plane_fetch.enable on mid-frame leaves its ping-pong/prefetch pipeline at
+    // whatever phase the cold-boot clk_pix↔clk_sys lock landed on — a one-row
+    // scan-out offset + a tear that VARY per cold boot.  Instead, hold
+    // plane_fetch in reset through warm-up and RELEASE it at a frame boundary,
+    // so its pipeline starts frame-aligned and identical every boot.
+    wire ddr_warm_pix;
+    cdc_sync_bit u_ddrwarm_pix (.dst_clk (clk_pix), .src_sig (ddr_warm), .dst_sig (ddr_warm_pix));
+    logic pf_armed = 1'b0;
+    always_ff @(posedge clk_pix or posedge rst_pix) begin
+        if (rst_pix)                              pf_armed <= 1'b0;
+        else if (ddr_warm_pix && fb_frame_start)  pf_armed <= 1'b1;   // arm at frame top
+    end
+    wire pf_armed_sys;
+    cdc_sync_bit u_pfarmed_sys (.dst_clk (clk_sys), .src_sig (pf_armed), .dst_sig (pf_armed_sys));
+    wire pf_rst_pix = rst_pix | ~pf_armed;       // held in reset until armed
+    wire pf_rst_sys = rst_sys | ~pf_armed_sys;
+
     // ---- Desktop plane fetch (plane 0): full-screen DDR3 read via HP0 ----
     // fetch_row = next display line (scale 1 => src_row == line); plane_fetch
     // prefetches it during the current line.
@@ -1154,13 +1173,13 @@ module fpga_xt_top (
     wire [31:0]              desk_pixel;
 
     plane_fetch u_plane_fetch0 (
-        .clk_sys (clk_sys), .rst_sys (rst_sys), .enable (ddr_warm),
+        .clk_sys (clk_sys), .rst_sys (pf_rst_sys), .enable (1'b1),
         .surface_base (32'h3000_0000), .stride_bytes (16'd8192), .src_w (12'd1920),
         .m_axi_araddr (hp0_araddr), .m_axi_arlen (hp0_arlen), .m_axi_arsize (hp0_arsize),
         .m_axi_arburst (hp0_arburst), .m_axi_arvalid (hp0_arvalid),
         .m_axi_arready (hp0_arready), .m_axi_rdata (hp0_rdata),
         .m_axi_rvalid (hp0_rvalid), .m_axi_rlast (hp0_rlast), .m_axi_rready (hp0_rready),
-        .clk_pix (clk_pix), .rst_pix (rst_pix),
+        .clk_pix (clk_pix), .rst_pix (pf_rst_pix),
         .line_start (fb_line_start), .fetch_row (desk_fetch_row),
         .rd_col (cmp_src_col[0*12 +: 12]), .rd_pixel (desk_pixel),
         .read_abort (hp0_read_abort), .fetch_overrun (hp0_overrun)
@@ -1205,14 +1224,14 @@ module fpga_xt_top (
     wire [31:0] xl_pixel;
 
     plane_fetch u_plane_fetch1 (
-        .clk_sys (clk_sys), .rst_sys (rst_sys), .enable (ddr_warm),
+        .clk_sys (clk_sys), .rst_sys (pf_rst_sys), .enable (1'b1),
         .surface_base (xl_surface_base), .stride_bytes (16'(XL_STRIDE)),
         .src_w (12'(XL_SRC_W)),
         .m_axi_araddr (hp3_araddr), .m_axi_arlen (hp3_arlen), .m_axi_arsize (hp3_arsize),
         .m_axi_arburst (hp3_arburst), .m_axi_arvalid (hp3_arvalid),
         .m_axi_arready (hp3_arready), .m_axi_rdata (hp3_rdata),
         .m_axi_rvalid (hp3_rvalid), .m_axi_rlast (hp3_rlast), .m_axi_rready (hp3_rready),
-        .clk_pix (clk_pix), .rst_pix (rst_pix),
+        .clk_pix (clk_pix), .rst_pix (pf_rst_pix),
         .line_start (fb_line_start), .fetch_row (xl_fetch_row),
         .rd_col (cmp_src_col[1*12 +: 12]), .rd_pixel (xl_pixel),
         .read_abort (xl_read_abort), .fetch_overrun (xl_overrun)
