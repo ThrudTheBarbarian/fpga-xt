@@ -95,6 +95,14 @@ if {[info exists ::env(JTAG_DRY_RUN)]} {
 puts ">> connecting to hw_server"
 connect -url $hw_host
 
+# ---- Halt the A9 before reconfig/ps7_init ---------------------------
+# So this can take over a board that's ALREADY running (e.g. an SD-booted
+# image) without ps7_init re-initialising DDR under a live CPU (-> hang)
+# and without the A9 driving GP0/AXI into the PL mid-reconfiguration.
+# catch: the core may not be enumerated/running yet (cold JTAG-mode board).
+puts ">> halting A9 (take over any running image)"
+catch { targets -set -filter {name =~ "ARM*#0"}; stop }
+
 # ---- Load bitstream into PL -----------------------------------------
 # Pick the FPGA target (Zynq XC7Z020 here).  `targets -set -filter` is
 # precise; if multiple devices are on the chain, narrow with "name".

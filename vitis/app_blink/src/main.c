@@ -695,25 +695,6 @@ int main(void)
             ms = 0;
             ps_led1_set(tick & 1u);
 
-            /* One-shot: clear the desktop plane-0 surface (0x30000000) ~2 s
-             * after boot, replacing the power-on DDR garbage around the Atari
-             * window with a clean black field.  DEFERRED into the loop (not
-             * early boot): the early-boot memset reset-looped back when the PL
-             * hammered DDR from t=0 and collided with this 8 MB write; now the
-             * ~224 ms ddr_warm gate holds PL->DDR off at reset, and firing at
-             * ~2 s is safely past both ddr_warm and HDMI bring-up.  Same code
-             * path as the `deskfill` REPL command, which works fine at runtime. */
-            if (!desk_cleared && tick >= 2u) {
-                volatile uint32_t *p = (volatile uint32_t *)0x30000000u;
-                uint32_t words = 1080u * 2048u;     /* 1080 rows x 8192-byte stride */
-                for (uint32_t i = 0; i < words; i++) p[i] = 0x00000000u;
-                Xil_DCacheFlushRange((INTPTR)0x30000000u, (INTPTR)(words * 4u));
-                desk_cleared = 1u;
-                xil_printf("\r\ndesktop @0x30000000 auto-cleared (black) at boot+%us\r\n> ",
-                           tick);
-                for (unsigned k = 0; k < ll; k++) uart1_putc(line[k]);
-            }
-
             uint8_t st = 0; (void)sii_read(0x3D, &st);
             unsigned hpd = (st >> 2) & 1u;
             if (hpd && !out_on) {                       /* plug: enable output */
@@ -732,6 +713,23 @@ int main(void)
                 for (unsigned k = 0; k < ll; k++) uart1_putc(line[k]);
             }
             tick++;
+        }
+
+        /* One-shot: clear the desktop plane-0 surface (0x30000000) ~0.5 s into
+         * the loop — gated on the free-running ms counter (not the 1 s tick) so
+         * it fires mid-first-second, well past the ~224 ms ddr_warm PL->DDR gate
+         * + HDMI bring-up.  Replaces power-on DDR garbage with a clean black
+         * field.  DEFERRED (not early boot): the early-boot memset reset-looped
+         * when the then-ungated PL pounded DDR at t=0; same code path as the
+         * working `deskfill` REPL command. */
+        if (!desk_cleared && ms >= 500u) {
+            volatile uint32_t *p = (volatile uint32_t *)0x30000000u;
+            uint32_t words = 1080u * 2048u;     /* 1080 rows x 8192-byte stride */
+            for (uint32_t i = 0; i < words; i++) p[i] = 0x00000000u;
+            Xil_DCacheFlushRange((INTPTR)0x30000000u, (INTPTR)(words * 4u));
+            desk_cleared = 1u;
+            xil_printf("\r\ndesktop @0x30000000 auto-cleared (black) at boot+~0.5s\r\n> ");
+            for (unsigned k = 0; k < ll; k++) uart1_putc(line[k]);
         }
     }
 
