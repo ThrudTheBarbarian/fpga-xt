@@ -613,6 +613,19 @@ int main(void)
      * with `bars 0|1` once the console is up and the write path is confirmed. */
     xil_printf("HDMI test pattern: BARS (bitstream default; use 'bars 0|1' in REPL)\r\n");
 
+    /* Clear the desktop plane-0 surface (0x30000000) at boot so we come up with a
+     * clean black background instead of uninitialised-DDR garbage around the
+     * Atari window.  DDR write + A9 cache flush so the non-coherent PL
+     * plane_fetch (HP0) read sees it.  (Same as the `deskfill` REPL command, run
+     * once here.  Pure DDR write — not a GP0 write — so safe at boot.) */
+    {
+        volatile uint32_t *dp = (volatile uint32_t *)0x30000000u;
+        uint32_t dwords = 1080u * 2048u;     /* 1080 rows x 8192-byte stride */
+        for (uint32_t i = 0; i < dwords; i++) dp[i] = 0x00000000u;
+        Xil_DCacheFlushRange((INTPTR)0x30000000u, (INTPTR)(dwords * 4u));
+        xil_printf("desktop surface @0x30000000 cleared (black)\r\n");
+    }
+
     /* ---- Serial REPL ----------------------------------------------------
      * Interactive debug console.  The loop is non-blocking: it polls UART for
      * a command line and dispatches on Enter, paced by a 1 ms usleep so a ~1s

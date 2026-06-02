@@ -10,9 +10,10 @@
 #   xsdb jtag_reconfig_pl.tcl <bit> [host] [gp0_ctrl_hex]
 #     bit          bitstream to load (required)
 #     host         hw_server URL           (default TCP:127.0.0.1:3121)
-#     gp0_ctrl_hex if given, written to 0x43C0001C after config (e.g. 0x1 =
-#                  switch the compositor path on; omit to leave PL at reset
-#                  defaults — test pattern / bars)
+#     gp0_ctrl_hex if given, written to 0x43C0001C after config.  bit0: 0 =
+#                  compositor, 1 = test-pattern bars (gp0_ctrl resets to 1 = bars),
+#                  so pass 0x0 to show the compositor.  Omit to leave the PL at
+#                  its reset default (bars).
 #
 # Recovery if the PS wedges: `xsdb` -> connect -> `rst -system` (clean SD reboot).
 
