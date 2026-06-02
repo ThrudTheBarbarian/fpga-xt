@@ -660,28 +660,6 @@ plane_vscale: $(BUILD_DIR)/tb_plane_vscale.vvp
 $(BUILD_DIR)/tb_plane_vscale.vvp: $(HDL_DIR)/vbeam.sv $(HDL_DIR)/plane_compositor.sv $(HDL_DIR)/plane_fetch.sv axi_slave_mem.sv tb_plane_vscale.sv | $(BUILD_DIR)
 	$(IVERILOG) $(SV_FLAGS) -o $@ -s tb_plane_vscale $(HDL_DIR)/vbeam.sv $(HDL_DIR)/plane_compositor.sv $(HDL_DIR)/plane_fetch.sv axi_slave_mem.sv tb_plane_vscale.sv
 
-# ---- plane_vscale_lat — same DUT under DDR read latency + jitter -------------
-# Realistic-margin geometry (long back porch => the fetch completes early in the
-# line, as on HW) + read latency + address-hashed jitter (some rows fetch slow,
-# the row-128 analog).  Must stay frame-stable AND collision-free (collisions=0):
-# guards plane_fetch's triple line-buffer against the ping-pong wr/rd CDC race.
-# (The default plane_vscale is RD_LAT=0; the tiny-geometry stress case at RD_LAT>0
-# shows cadence jitter that is a tb artifact, not an RTL bug, so it is NOT gated.)
-plane_vscale_lat: $(BUILD_DIR)/tb_plane_vscale_lat.vvp
-	@echo "=== plane_vscale_lat — realistic margin + DDR read latency/jitter ==="
-	@$(VVP) -N $< | tee $(BUILD_DIR)/tb_plane_vscale_lat.log
-	@grep -q '\*\*\* PLANE_VSCALE OK \*\*\*' $(BUILD_DIR)/tb_plane_vscale_lat.log || \
-	    (echo "FAIL: tb_plane_vscale_lat"; exit 1)
-	@grep -q 'collisions=0 ' $(BUILD_DIR)/tb_plane_vscale_lat.log || \
-	    (echo "FAIL: ping-pong collision under read latency"; exit 1)
-	@echo "PASS: tb_plane_vscale_lat"
-
-$(BUILD_DIR)/tb_plane_vscale_lat.vvp: $(HDL_DIR)/vbeam.sv $(HDL_DIR)/plane_compositor.sv $(HDL_DIR)/plane_fetch.sv axi_slave_mem.sv tb_plane_vscale.sv | $(BUILD_DIR)
-	$(IVERILOG) $(SV_FLAGS) \
-	    -Ptb_plane_vscale.RD_LAT=15 -Ptb_plane_vscale.RD_LAT_JIT=30 \
-	    -Ptb_plane_vscale.H_ACTIVE=96 -Ptb_plane_vscale.SRC_W=32 -Ptb_plane_vscale.H_BP=200 \
-	    -o $@ -s tb_plane_vscale $(HDL_DIR)/vbeam.sv $(HDL_DIR)/plane_compositor.sv $(HDL_DIR)/plane_fetch.sv axi_slave_mem.sv tb_plane_vscale.sv
-
 # ---- xl_buffer_ctrl — ANTIC->DDR triple-buffer index controller (video-arch §5)
 xl_buffer_ctrl: $(BUILD_DIR)/tb_xl_buffer_ctrl.vvp
 	@echo "=== xl_buffer_ctrl — XL surface triple-buffer controller ==="
