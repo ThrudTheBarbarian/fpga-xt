@@ -12,7 +12,7 @@
 # Prerequisites:
 #   1. vivado/build/fpga_xt_top.bit on win10  (vivado/run-win10.sh bit)
 #   2. vitis/workspace/fsbl/build/fsbl.elf and
-#      vitis/workspace/app_blink/build/app_blink.elf on win10
+#      vitis/workspace/xtos/build/xtos.elf on win10
 #      (Vitis -s scripts/create_platform.py — see vitis/README.md)
 #
 # Env-var overrides:
@@ -30,7 +30,7 @@ BOOTGEN="${BOOTGEN:-C:\\Xilinx\\2025.2.1\\Vitis\\bin\\bootgen.bat}"
 
 FSBL="${FSBL:-$REMOTE_DIR/vitis/workspace/fsbl/build/fsbl.elf}"
 BIT="${BIT:-$REMOTE_DIR/build/fpga_xt_top.bit}"
-APP="${APP:-$REMOTE_DIR/vitis/workspace/app_blink/build/app_blink.elf}"
+APP="${APP:-$REMOTE_DIR/vitis/workspace/xtos/build/xtos.elf}"
 
 REPO_ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 LOCAL_OUT="${1:-$REPO_ROOT/vitis/BOOT.BIN}"

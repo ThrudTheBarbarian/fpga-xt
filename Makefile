@@ -38,7 +38,7 @@ help:
 	@echo '               if you changed the RTL or PS app.'
 	@echo '    bitstream  Build the PL bitstream + XSA on win10 (~6 min;'
 	@echo '               vivado/run-win10.sh bit).  Needed before platform.'
-	@echo '    platform   Build the Vitis platform, FSBL and app_blink on win10'
+	@echo '    platform   Build the Vitis platform, FSBL and xtos on win10'
 	@echo '               and pull the ELFs back (vitis/run-win10.sh).  Needs a'
 	@echo '               current XSA on win10 (run bitstream first).'
 	@echo ''
@@ -55,7 +55,7 @@ help:
 bitstream:
 	./vivado/run-win10.sh bit
 
-# Build the Vitis platform + FSBL + app_blink on win10 and pull the ELFs back.
+# Build the Vitis platform + FSBL + xtos on win10 and pull the ELFs back.
 # Requires a current XSA on win10 (run `make bitstream` first).
 platform:
 	PULL=1 ./vitis/run-win10.sh
@@ -70,14 +70,14 @@ boot.bin:
 	  'fpga-xt — SD-card boot payload' \
 	  '' \
 	  'Bare-metal Zynq-7000 SD boot needs only BOOT.BIN (FSBL + PL bitstream' \
-	  '+ app_blink, packaged by bootgen).' \
+	  '+ xtos, packaged by bootgen).' \
 	  '' \
 	  'To flash:' \
 	  '  1. Format a microSD (>=1 GB) as FAT32.' \
 	  '  2. Copy BOOT.BIN to the root of the card.' \
 	  '  3. Set the Z-Turn boot-mode jumpers to SD.' \
 	  '  4. Power-cycle.  FSBL brings up the PS, loads the bitstream, runs' \
-	  '     app_blink (UART banner @115200 8N1; HDMI from the PL plane' \
+	  '     xtos (UART banner @115200 8N1; HDMI from the PL plane' \
 	  '     compositor).' \
 	  '' \
 	  'Regenerate with: make boot.bin  (rebuild upstream first with' \

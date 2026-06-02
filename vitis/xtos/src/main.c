@@ -1,5 +1,5 @@
 /*
- * app_blink/main.c — fpga-xt bring-up Phase 3 hello world.
+ * xtos/main.c — fpga-xt bring-up Phase 3 hello world.
  *
  * Smallest possible Zynq-7000 bare-metal app that proves:
  *   1. FSBL ran, jumped to us, and we're executing from DDR3.
@@ -23,7 +23,7 @@
  *
  * Build: `vitis -s ../scripts/create_platform.py` (one-time platform
  * setup), then `vitis -s ../scripts/build_app.py` (or rebuild inside
- * the IDE).  Result: workspace/app_blink/build/app_blink.elf.
+ * the IDE).  Result: workspace/xtos/build/xtos.elf.
  */
 
 #include <stdint.h>

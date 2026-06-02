@@ -1,4 +1,4 @@
-# create_platform.py — Vitis Unified 2025.x platform + FSBL + app_blink.
+# create_platform.py — Vitis Unified 2025.x platform + FSBL + xtos.
 #
 # Driven by `vitis -s create_platform.py` on the remote build machine
 # after Vivado has written `vivado/build/fpga_xt_top.xsa`.
@@ -7,9 +7,9 @@
 #   * fpga_xt_platform — standalone (bare-metal) Zynq-7000 platform
 #                        with one domain on ps7_cortexa9_0.
 #   * fsbl             — Zynq FSBL component (boot/BSP launcher).
-#   * app_blink        — bare-metal hello-world app that prints to
+#   * xtos        — bare-metal hello-world app that prints to
 #                        UART and toggles a PS GPIO.  Sources in
-#                        ../app_blink/src/.
+#                        ../xtos/src/.
 #
 # All paths are resolved relative to the script's location so the
 # same script works in-tree and after rsync'ing to the build host.
@@ -28,7 +28,7 @@ VITIS_DIR  = os.path.dirname(SCRIPT_DIR)
 REPO_ROOT  = os.path.dirname(VITIS_DIR)
 
 WORKSPACE  = os.path.join(VITIS_DIR, "workspace")
-APP_SRC    = os.path.join(VITIS_DIR, "app_blink", "src")
+APP_SRC    = os.path.join(VITIS_DIR, "xtos", "src")
 
 # The XSA lives in different places depending on where this is being
 # run from:
@@ -161,7 +161,7 @@ if not os.environ.get("VITIS_NO_FSBL"):
     # runs -> PL never configures (no heartbeat) -> no UART -> dead board.
     # Overwrite the component linker script with the zynq_fsbl template's
     # OCM one (sections -> ps7_ram_0 @ 0x0 / ps7_ram_1 @ 0xFFFF0000).
-    # The build uses <component>/src/lscript.ld (the same path app_blink links
+    # The build uses <component>/src/lscript.ld (the same path xtos links
     # against).  Vitis marks it read-only, so chmod before overwriting.  (Don't
     # touch the component-root lscript.ld — it's read-only and unused here.)
     fsbl_lds_src = os.path.join(fsbl_tpl, "lscript.ld")
@@ -239,14 +239,14 @@ if not os.environ.get("VITIS_NO_FSBL"):
 # JTAG-only bring-up (Phase 0-7 in docs/bring-up.md) doesn't need any
 # of the above to work.
 
-# ---- app_blink -------------------------------------------------------
+# ---- xtos -------------------------------------------------------
 # Bare-metal hello world that prints to UART1 (the on-board USB-UART
 # bridge) and toggles a PS GPIO LED.  Source lives in
-# ../app_blink/src/; we import it into the component so editing
+# ../xtos/src/; we import it into the component so editing
 # remains in-tree and not in the gitignored workspace.
-print(">> creating app_blink component ...")
+print(">> creating xtos component ...")
 app = client.create_app_component(
-    name="app_blink",
+    name="xtos",
     platform=PFM_FILE,
     domain=DOMAIN,
     template="empty_application",
@@ -257,9 +257,9 @@ for fn in os.listdir(APP_SRC):
         app.import_files(from_loc=APP_SRC, files=[fn])
         print(f"   imported {fn}")
 status = app.build()
-print(f">> app_blink build status: {status}")
+print(f">> xtos build status: {status}")
 
 print(">> done.  Artefacts in:")
 print(f"     {WORKSPACE}/fpga_xt_platform/export/")
 print(f"     {WORKSPACE}/fsbl/build/")
-print(f"     {WORKSPACE}/app_blink/build/")
+print(f"     {WORKSPACE}/xtos/build/")

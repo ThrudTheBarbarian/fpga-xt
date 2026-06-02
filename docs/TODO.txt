@@ -128,7 +128,7 @@ DONE: Just references so we don't think they're still pending
   o Hardware bringup: see docs/bring-up.md. (Now well past silent-board:
     HDMI 1080p60 bars + GP0 read AND write both work on real silicon.)
 
-  o PS-side driver skeleton — vitis/app_blink/src/xt_blitter.{h,c} + main.c.
+  o PS-side driver skeleton — vitis/xtos/src/xt_blitter.{h,c} + main.c.
     Now well beyond a skeleton: a full UART1 REPL (mr/mw/ir/iw/id/bars/sync/
     fill/prod/rdp/hdmi/diag/mon) + SiI9022 init = the live HW debug console.
 
@@ -136,4 +136,4 @@ DONE: Just references so we don't think they're still pending
     vivado/run-win10.sh (also staged into the Vitis platform).
 
   o FSBL + boot image — `make boot.bin` produces boot.bin/BOOT.BIN at the
-    repo root (FSBL + bitstream + app_blink); copy to a FAT32 SD root.
+    repo root (FSBL + bitstream + xtos); copy to a FAT32 SD root.

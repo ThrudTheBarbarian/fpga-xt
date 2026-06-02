@@ -2,7 +2,7 @@
 # run-win10.sh — Vitis platform / FSBL / app build on the win10 box.
 #
 # Mac-side companion to vivado/run-win10.sh.  scp pushes scripts/ +
-# app_blink/, ssh runs vitis -s <script>, optionally scp pulls the
+# xtos/, ssh runs vitis -s <script>, optionally scp pulls the
 # build elves back.  The full workspace is NOT pulled — it's tens of
 # thousands of files, gitignored, and reproducible from the script.
 #
@@ -12,7 +12,7 @@
 # Usage:
 #   ./run-win10.sh                       # full scripts/create_platform.py
 #   ./run-win10.sh <script>              # custom Python script
-#   PULL=1 ./run-win10.sh                # also pull fsbl.elf + app_blink.elf
+#   PULL=1 ./run-win10.sh                # also pull fsbl.elf + xtos.elf
 #                                        #  back to vitis/workspace/...
 #
 # Env-var overrides:
@@ -60,9 +60,9 @@ echo ">> pushing scripts/ -> $REMOTE:$REMOTE_DIR/vitis/scripts/"
 ps_wipe "$REMOTE_DIR/vitis/scripts"
 scp -q -r "$REPO_ROOT/vitis/scripts" "$REMOTE:$REMOTE_DIR/vitis/scripts"
 
-echo ">> pushing app_blink/ -> $REMOTE:$REMOTE_DIR/vitis/app_blink/"
-ps_wipe "$REMOTE_DIR/vitis/app_blink"
-scp -q -r "$REPO_ROOT/vitis/app_blink" "$REMOTE:$REMOTE_DIR/vitis/app_blink"
+echo ">> pushing xtos/ -> $REMOTE:$REMOTE_DIR/vitis/xtos/"
+ps_wipe "$REMOTE_DIR/vitis/xtos"
+scp -q -r "$REPO_ROOT/vitis/xtos" "$REMOTE:$REMOTE_DIR/vitis/xtos"
 
 # Run Vitis ---------------------------------------------------------------
 echo ">> running vitis -s $SCRIPT"
@@ -75,17 +75,17 @@ ssh "$REMOTE" "Set-Location '$REMOTE_DIR/vitis'; & '$VITIS_BAT' -s $SCRIPT"
 if [ -n "${PULL:-}" ]; then
     echo ">> pulling build elves -> $LOCAL_WORKSPACE/"
     mkdir -p "$LOCAL_WORKSPACE/fsbl/build"
-    mkdir -p "$LOCAL_WORKSPACE/app_blink/build"
+    mkdir -p "$LOCAL_WORKSPACE/xtos/build"
     scp -q "$REMOTE:$REMOTE_DIR/vitis/workspace/fsbl/build/fsbl.elf" \
         "$LOCAL_WORKSPACE/fsbl/build/fsbl.elf" 2>/dev/null \
         || echo "   (fsbl.elf not present — VITIS_NO_FSBL set?)"
-    scp -q "$REMOTE:$REMOTE_DIR/vitis/workspace/app_blink/build/app_blink.elf" \
-        "$LOCAL_WORKSPACE/app_blink/build/app_blink.elf"
-    ls -lh "$LOCAL_WORKSPACE"/{fsbl/build/fsbl.elf,app_blink/build/app_blink.elf} 2>/dev/null || true
+    scp -q "$REMOTE:$REMOTE_DIR/vitis/workspace/xtos/build/xtos.elf" \
+        "$LOCAL_WORKSPACE/xtos/build/xtos.elf"
+    ls -lh "$LOCAL_WORKSPACE"/{fsbl/build/fsbl.elf,xtos/build/xtos.elf} 2>/dev/null || true
 fi
 
 echo ">> done."
 echo "   workspace on win10: $REMOTE_DIR/vitis/workspace/"
 if [ -n "${PULL:-}" ]; then
-    echo "   local elves:        $LOCAL_WORKSPACE/{fsbl,app_blink}/build/*.elf"
+    echo "   local elves:        $LOCAL_WORKSPACE/{fsbl,xtos}/build/*.elf"
 fi

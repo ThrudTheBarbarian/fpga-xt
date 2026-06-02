@@ -12,7 +12,7 @@
 #
 # Defaults (override by passing args or setting env vars):
 #   bit  = $BITSTREAM   or vivado/build/fpga_xt_top.bit
-#   elf  = $ELF         or vitis/workspace/app_blink/build/app_blink.elf
+#   elf  = $ELF         or vitis/workspace/xtos/build/xtos.elf
 #   host = $HW_SERVER   or TCP:127.0.0.1:3121
 #
 # Prerequisites:
@@ -40,8 +40,8 @@ set bit_path   [expr {$argc >= 1 ? [lindex $argv 0] :
                               [file join $repo_root vivado build fpga_xt_top.bit]}]}]
 set elf_path   [expr {$argc >= 2 ? [lindex $argv 1] :
                        [expr {[info exists ::env(ELF)] ? $::env(ELF) :
-                              [file join $repo_root vitis workspace app_blink \
-                                         build app_blink.elf]}]}]
+                              [file join $repo_root vitis workspace xtos \
+                                         build xtos.elf]}]}]
 set hw_host    [expr {$argc >= 3 ? [lindex $argv 2] :
                        [expr {[info exists ::env(HW_SERVER)] ? $::env(HW_SERVER) :
                               "TCP:127.0.0.1:3121"}]}]

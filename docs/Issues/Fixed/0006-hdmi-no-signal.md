@@ -1,7 +1,7 @@
 # Issue #0006 — HDMI "no signal" / monitor wakes but won't sync
 
 - **Component:** Video clocking (MMCM reference) + SiI9022A TPI init (`fpga_xt_top`,
-  `gen_ps_bd.tcl`, `app_blink` SiI9022 driver)
+  `gen_ps_bd.tcl`, `xtos` SiI9022 driver)
 - **Severity:** High (no display output on real hardware)
 - **Status:** Fixed (2026-05-30 — confirmed on hardware: 1080p60 colour-bar test
   pattern displays on an HDMI monitor)
@@ -10,7 +10,7 @@
   - `vivado/bd/gen_ps_bd.tcl` — export PS `FCLK_CLK1` @ 50 MHz
   - `hdl/fpga_xt_top.sv` — both MMCMs fed from `FCLK_CLK1`, not the `clk_50` pin
   - `vivado/constraints/sally_synth_probe.xdc` — `clk_50` constraint = 12 MHz (real)
-  - `vitis/app_blink/src/main.c` — `sii_enable_output()`: HDMI mode + AVI InfoFrame
+  - `vitis/xtos/src/main.c` — `sii_enable_output()`: HDMI mode + AVI InfoFrame
 
 ---
 
@@ -92,6 +92,6 @@ leaves 7.5 bars) displays stably at 1080p60.
   actually runs at 120 MHz; close it with an impl re-run if it ever misbehaves.
 - The SiI9022 cannot be `i2cdump`-ed from the MyIR Linux image — the `sii902x` kernel
   driver owns the I2C device (reads fail / show `UU`).
-- DE diagnostics added to `app_blink`: `H_RES`/`V_RES` (RO, expect 2200/1125 — read
+- DE diagnostics added to `xtos`: `H_RES`/`V_RES` (RO, expect 2200/1125 — read
   `V_RES` after a frame settles, a fresh read mid-frame gives a partial count) and the
   TCLK-stable interrupt (`0x72[1]`).

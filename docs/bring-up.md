@@ -65,12 +65,12 @@ debug.
       populate the source dir on its own).  Lives in
       `vitis/workspace/fsbl/build/fsbl.elf` (~85 KB).  Set
       `VITIS_NO_FSBL=1` to skip when iterating on the app only.
-- [x] **Bare-metal UART hello — `vitis/app_blink/src/main.c`.**
+- [x] **Bare-metal UART hello — `vitis/xtos/src/main.c`.**
       Prints `fpga-xt boot OK`, smoke-tests the GP0 → blitter
       bridge via `xt_blitter_status()`, then loops with a
       1-second `tick N` heartbeat.  GPIO LED toggling waits on
       Z-Turn MIO mapping confirmation.
-- [x] **AXI poke helper — `vitis/app_blink/src/xt_blitter.{h,c}`.**
+- [x] **AXI poke helper — `vitis/xtos/src/xt_blitter.{h,c}`.**
       Symbolic register offsets + command opcodes + GEM raster
       ops, plus convenience wrappers (`xt_blitter_status`,
       `xt_blitter_wait_idle`, `xt_blitter_set_dst`,
@@ -134,7 +134,7 @@ xsct vivado/scripts/jtag_load.tcl
 ```
 
 Defaults to `vivado/build/fpga_xt_top.bit` +
-`vitis/workspace/app_blink/build/app_blink.elf` +
+`vitis/workspace/xtos/build/xtos.elf` +
 `hw_server` on `127.0.0.1:3121`.
 
 ### Positional args:
@@ -153,7 +153,7 @@ dev box).  Start the remote side with `hw_server -d` first.
 | Var            | Default                                          |
 |----------------|--------------------------------------------------|
 | `BITSTREAM`    | `vivado/build/fpga_xt_top.bit`                   |
-| `ELF`          | `vitis/workspace/app_blink/build/app_blink.elf`  |
+| `ELF`          | `vitis/workspace/xtos/build/xtos.elf`  |
 | `HW_SERVER`    | `TCP:127.0.0.1:3121`                             |
 | `PS7_INIT_TCL` | auto-discovered relative to the bitstream's dir  |
 | `JTAG_DRY_RUN` | unset (set `=1` to skip the connect step)        |
@@ -171,7 +171,7 @@ have drifted.
 
 Once JTAG bring-up is solid, SD-boot is the next step.
 `vitis/scripts/build_boot_bin.sh` wraps `bootgen` — it generates
-a BIF that lists `fsbl.elf` + `fpga_xt_top.bit` + `app_blink.elf`
+a BIF that lists `fsbl.elf` + `fpga_xt_top.bit` + `xtos.elf`
 in the right order for Zynq-7000, runs `bootgen` on win10 (where
 the tool and the artefacts live), and pulls the resulting
 4 MB BOOT.BIN back.
@@ -190,7 +190,7 @@ running it:
 
 1. `vivado/run-win10.sh bit` — produces the bitstream on win10
 2. `ssh win10` + `cd vitis && vitis -s scripts/create_platform.py` —
-   produces fsbl.elf and app_blink.elf on win10
+   produces fsbl.elf and xtos.elf on win10
 
 ### Env-var overrides:
 
@@ -201,14 +201,14 @@ running it:
 | `BOOTGEN`    | `C:\Xilinx\2025.2.1\Vitis\bin\bootgen.bat`                 |
 | `FSBL`       | `$REMOTE_DIR/vitis/workspace/fsbl/build/fsbl.elf`          |
 | `BIT`        | `$REMOTE_DIR/build/fpga_xt_top.bit`                        |
-| `APP`        | `$REMOTE_DIR/vitis/workspace/app_blink/build/app_blink.elf`|
+| `APP`        | `$REMOTE_DIR/vitis/workspace/xtos/build/xtos.elf`|
 
 ### Using the output:
 
 - **SD boot**: copy BOOT.BIN to the root of a FAT32-formatted
   microSD, set the Z-Turn's boot-mode jumpers to SD, power-cycle.
   FSBL initialises the PS, loads the bitstream, and starts
-  `app_blink`.
+  `xtos`.
 - **JTAG-load BOOT.BIN** (for testing without the SD card):
   `xsct` + `dow BOOT.BIN`, run from the FSBL load address.  Use
   this to validate the BOOT.BIN against the same hardware that
@@ -335,7 +335,7 @@ Switch from "PL bitstream only" to "PS + bitstream" via JTAG.
 `vivado/scripts/jtag_load.tcl` runs the whole sequence (see
 [Running jtag_load.tcl](#running-jtag_loadtcl) for usage) — it
 loads the bitstream, sources `ps7_init.tcl` to bring up DDR3 /
-clocks / MIO, downloads `app_blink.elf`, and runs.  No FSBL on
+clocks / MIO, downloads `xtos.elf`, and runs.  No FSBL on
 this path — FSBL is for SD/QSPI standalone boot.
 
 **Pass** — UART console (115200 8N1) prints the app's boot
@@ -368,7 +368,7 @@ tick 1
 
 ## Phase 4 — PS↔PL AXI register access
 
-`app_blink` already does this at boot — the
+`xtos` already does this at boot — the
 `blitter @0x43c00000: status=0x?? seq=??` line proves the PS →
 GP0 → AXI-Lite-bridge → blitter-register-bus path is live.
 
@@ -390,7 +390,7 @@ GP0 → AXI-Lite-bridge → blitter-register-bus path is live.
   the blitter is idle so this shouldn't fire.  If it does, check
   for spurious writes during PL reset deassertion.
 
-To extend coverage, edit `app_blink/src/main.c` to also pump a
+To extend coverage, edit `xtos/src/main.c` to also pump a
 few register writes through `xt_blitter_write8()` and read the
 SEQ counter to confirm CMD-issue → seq-bump works.  Side-effect
 registers (`PAT_DATA`, `FONT_DATA`) auto-advance internal

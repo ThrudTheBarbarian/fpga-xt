@@ -7,14 +7,14 @@
 - **Found:** 2026-05-29 (on-hardware, after [[0002]] got the board booting)
 - **Files:** `hdl/fpga_xt_top.sv` (GP0 ID reflection, ~line 1409; `m_axi_gp0_arid`
   / `m_axi_gp0_awid` connections)
-- **Probe:** `vitis/app_blink/src/main.c` tick-5 `xt_blitter_status()` read of
+- **Probe:** `vitis/xtos/src/main.c` tick-5 `xt_blitter_status()` read of
   `axi_blitter_bridge` @ `0x43C00000` over PS M_AXI_GP0
 
 ---
 
 ## Summary
 
-`app_blink` runs fully (tick loop + PS_USER_LED1 blink), but the first read of the
+`xtos` runs fully (tick loop + PS_USER_LED1 blink), but the first read of the
 blitter bridge over PS M_AXI_GP0 hangs the CPU forever — no AXI RVALID, and PS GP0
 reads have no timeout. The hang is **deterministic**: every read, every boot (cold
 and warm), independent of clocking.

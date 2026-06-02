@@ -65,4 +65,4 @@ rsync -az --delete \
 echo ">> done.  Build artefacts in $LOCAL_WORKSPACE/"
 echo "   * platform: $LOCAL_WORKSPACE/fpga_xt_platform/export/"
 echo "   * FSBL elf: $LOCAL_WORKSPACE/fsbl/build/fsbl.elf"
-echo "   * app elf:  $LOCAL_WORKSPACE/app_blink/build/app_blink.elf"
+echo "   * app elf:  $LOCAL_WORKSPACE/xtos/build/xtos.elf"

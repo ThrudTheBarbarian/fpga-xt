@@ -1,0 +1,3 @@
+[submodule "vitis/app_blink/tinyusb"]
+	path = vitis/xtos/tinyusb
+	url = https://github.com/hathach/tinyusb.git

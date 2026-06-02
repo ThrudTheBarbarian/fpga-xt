@@ -1,7 +1,7 @@
 # vitis/ — PS-side build (Vitis Unified 2025.x)
 
 PS-side counterpart to `vivado/`.  Generates the Vitis platform,
-the Zynq FSBL, and the bare-metal `app_blink` hello-world from the
+the Zynq FSBL, and the bare-metal `xtos` hello-world from the
 XSA that Vivado writes.  Set `VITIS_NO_FSBL=1` to skip the FSBL
 build (JTAG-only bring-up doesn't need it).
 
@@ -14,11 +14,11 @@ vitis/
 ├── run.sh              rsync sources to remote box, run vitis -s, sync back
 ├── scripts/
 │   └── create_platform.py    Vitis Unified Python script
-├── app_blink/
+├── xtos/
 │   └── src/main.c      bare-metal app source (committed)
 └── workspace/          (gitignored) Vitis-generated workspace
     ├── fpga_xt_platform/    standalone platform + BSP
-    └── app_blink/           our app, builds against the platform
+    └── xtos/           our app, builds against the platform
 ```
 
 ## Workflow
@@ -39,16 +39,16 @@ The original `./run.sh` targets the older ubuntu Linux box (rsync +
 bash settings64.sh).  Keep using it on that path; the win10 wrapper
 uses scp + PowerShell because the win10 host has no rsync.
 
-After this, `vitis/workspace/app_blink/build/app_blink.elf` exists
+After this, `vitis/workspace/xtos/build/xtos.elf` exists
 and is ready for JTAG load.
 
 ### Editing the app
 
-`vitis/app_blink/src/main.c` is the source of truth.  The Vitis
+`vitis/xtos/src/main.c` is the source of truth.  The Vitis
 component imports from there, so:
 
 ```sh
-# edit vitis/app_blink/src/main.c
+# edit vitis/xtos/src/main.c
 cd vitis && ./run.sh   # rebuilds platform + app (idempotent)
 ```
 
@@ -59,14 +59,14 @@ the platform is cached.
 
 ### JTAG load
 
-Once the bitstream and `app_blink.elf` are in hand:
+Once the bitstream and `xtos.elf` are in hand:
 
 ```sh
 xsct -eval "
     connect
     fpga -file ../vivado/build/fpga_xt_top.bit
     targets -set -filter {name =~ \"ARM*#0\"}
-    dow workspace/app_blink/build/app_blink.elf
+    dow workspace/xtos/build/xtos.elf
     con
 "
 ```
@@ -92,4 +92,4 @@ A canned version of the above lives at
   step when SD boot lands on the critical path.
 - **GPIO blink** — currently the heartbeat is UART-only.  Need to
   confirm the Z-Turn PS-side LED MIO assignments before driving real
-  LEDs from `app_blink`.
+  LEDs from `xtos`.
