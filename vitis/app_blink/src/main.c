@@ -727,8 +727,15 @@ int main(void)
             uint32_t words = 1080u * 2048u;     /* 1080 rows x 8192-byte stride */
             for (uint32_t i = 0; i < words; i++) p[i] = 0x00000000u;
             Xil_DCacheFlushRange((INTPTR)0x30000000u, (INTPTR)(words * 4u));
+            /* Then flip the display from the boot bars to the compositor
+             * (desktop + Atari window): clear desktop FIRST so it's clean when
+             * shown.  gp0_ctrl bit0=0 = compositor, bits[3:1]=0 = default
+             * scale.  GP0 writes are proven safe here (deferred, in the REPL
+             * loop — not the early-boot window that used to hang). */
+            g_gp0 = 0x00u;
+            Xil_Out32(XT_BLITTER_BASE + 0x1Cu, (u32)g_gp0);
             desk_cleared = 1u;
-            xil_printf("\r\ndesktop @0x30000000 auto-cleared (black) at boot+~0.5s\r\n> ");
+            xil_printf("\r\ndesktop cleared + compositor on (off bars) at boot+~0.5s\r\n> ");
             for (unsigned k = 0; k < ll; k++) uart1_putc(line[k]);
         }
     }
