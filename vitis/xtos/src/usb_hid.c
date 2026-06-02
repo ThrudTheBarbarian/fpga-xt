@@ -13,9 +13,19 @@
 #include "xil_types.h"
 #include "xil_cache.h"
 #include "xil_printf.h"
+#include "xiltimer.h"        /* XTime_GetTime / COUNTS_PER_SECOND (this BSP uses xiltimer, not xtime_l.h) */
 
 #include "tusb.h"
 #include "usb_hid.h"
+
+/* ---- TinyUSB time base (app-provided) --------------------------------- */
+/* The host stack times enumeration/transfers in ms.  Derive it from the A9
+ * global timer (free-running, COUNTS_PER_SECOND ticks/s). */
+uint32_t tusb_time_millis_api(void) {
+  XTime now;
+  XTime_GetTime(&now);
+  return (uint32_t)(now / (COUNTS_PER_SECOND / 1000ULL));
+}
 
 /* ---- EHCI dcache hooks (override ehci.c's TU_ATTR_WEAK no-ops) --------- */
 bool hcd_dcache_clean(void const *addr, uint32_t data_size) {
