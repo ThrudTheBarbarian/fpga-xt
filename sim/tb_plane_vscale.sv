@@ -130,31 +130,38 @@ module tb_plane_vscale;
         end
     endtask
 
-    // capture displayed rgb_r per output line (output lags h_count by 2).
+    // capture displayed rgb_r per output line (output lags h_count by 2), PER
+    // FRAME, so we can catch a line whose row ALTERNATES frame-to-frame (the
+    // per-frame ping-pong-phase blend — invisible to a single-frame check).
     logic [11:0] v_d1, v_d2;
     always_ff @(posedge clk_pix) begin v_d1 <= v_count; v_d2 <= v_d1; end
-    logic [4:0] line_r [0:V_ACTIVE-1];
+    int frame_no = 0;
+    always_ff @(posedge clk_pix) if (frame_start) frame_no <= frame_no + 1;
+    logic [4:0] line_r [0:V_ACTIVE-1];      // latest frame (single-frame check)
+    logic [4:0] line_a [0:V_ACTIVE-1];      // frame 5
+    logic [4:0] line_b [0:V_ACTIVE-1];      // frame 6 (consecutive)
     logic       line_seen [0:V_ACTIVE-1];
     always_ff @(posedge clk_pix) begin
-        // sample a settled mid-window pixel
         if (de_o && v_d2 < V_ACTIVE[11:0] && h_count == 12'd8) begin
             line_r[v_d2]    <= rgb_r;
             line_seen[v_d2] <= 1'b1;
+            if (frame_no == 5) line_a[v_d2] <= rgb_r;
+            if (frame_no == 6) line_b[v_d2] <= rgb_r;
         end
     end
 
     int fail_count = 0;
     int exp_row, exp_r;
     initial begin
-        $display("=== PLANE_VSCALE TEST (scale %0d, window [%0d,%0d)) ===", SCALE, CY0, CY1);
+        $display("=== PLANE_VSCALE TEST (scale %0d, window [%0d,%0d), V_TOTAL parity matters) ===", SCALE, CY0, CY1);
         for (int i = 0; i < V_ACTIVE; i++) line_seen[i] = 1'b0;
         for (int r = 0; r < SRC_H; r++) seed_row(r);
 
         repeat (4) @(posedge clk_pix);
         rst_sys = 1'b0; rst_pix = 1'b0;
-        repeat (3*((H_ACTIVE+8)*(V_ACTIVE+5))) @(posedge clk_pix);  // a few frames
+        repeat (9*(H_ACTIVE+8)*(V_ACTIVE+5)) @(posedge clk_pix);  // ~9 frames
 
-        // Verify each output line.
+        // (1) single-frame correctness (latest frame).
         for (int v = 0; v < V_ACTIVE; v++) begin
             if (!line_seen[v]) continue;
             if (v >= CY0 && v < CY1) begin
@@ -165,21 +172,28 @@ module tb_plane_vscale;
                              v, line_r[v], exp_row, exp_r);
                     fail_count++;
                 end
-            end else begin
-                if (line_r[v] !== 5'h1F) begin
-                    $display("FAIL line %0d (border): got rgb_r=%0d expected bg(0x1F)", v, line_r[v]);
-                    fail_count++;
-                end
+            end else if (line_r[v] !== 5'h1F) begin
+                $display("FAIL line %0d (border): got rgb_r=%0d expected bg(0x1F)", v, line_r[v]);
+                fail_count++;
             end
         end
 
-        // dump the mapping for eyeballing
-        $write("line->rgb_r: ");
-        for (int v = 0; v < V_ACTIVE; v++) $write("%0d:%0d ", v, line_r[v]);
-        $write("\n");
+        // (2) PER-FRAME STABILITY: frame 5 vs frame 6 must be identical.  A
+        // line that differs is one whose source row alternates frame-to-frame
+        // -> the blend on HW (eye/camera averages the two rows).
+        for (int v = 0; v < V_ACTIVE; v++) begin
+            if (line_seen[v] && (line_a[v] !== line_b[v])) begin
+                $display("FAIL line %0d ALTERNATES across frames: frame5=%0d frame6=%0d (the blend!)",
+                         v, line_a[v], line_b[v]);
+                fail_count++;
+            end
+        end
 
-        if (fail_count == 0) $display("*** PLANE_VSCALE OK *** vertical row addressing clean at scale %0d", SCALE);
-        else                 $display("*** PLANE_VSCALE FAIL *** %0d line(s) wrong", fail_count);
+        $write("frame5: "); for (int v=0;v<V_ACTIVE;v++) $write("%0d ", line_a[v]); $write("\n");
+        $write("frame6: "); for (int v=0;v<V_ACTIVE;v++) $write("%0d ", line_b[v]); $write("\n");
+
+        if (fail_count == 0) $display("*** PLANE_VSCALE OK *** vertical addressing clean + frame-stable at scale %0d", SCALE);
+        else                 $display("*** PLANE_VSCALE FAIL *** %0d issue(s)", fail_count);
         if (fail_count) $fatal(1); else $finish;
     end
 
