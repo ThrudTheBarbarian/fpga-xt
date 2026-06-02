@@ -108,18 +108,18 @@ module fpga_xt_top (
         // ceiling ~133-155 MHz).
         .CLKFBOUT_MULT_F  (24.000),
         .DIVCLK_DIVIDE    (1),
-        // clk_sally = VCO 1200 / 10 = 120 MHz — full xt6502 turbo (~67x), the
-        // proven operating point (held across ~2 weeks of builds).  It is
-        // placer-marginal though: one build closed at only -0.022 ns / 3
-        // failing sally_mem endpoints and CRASHED the OS boot (corrupt CPU
-        // reads -> no READY).  So clk_sally REQUIRES a placement that closes;
-        // DIV_F 12 (100 MHz, +0.444 ns) is the always-safe fallback if a seed
-        // won't close.  clk_sys = VCO 1200 / 9 = 133.3 MHz (healthy margin vs
-        // the production 150 razor edge; ~11% slower emulated frame rate is
-        // invisible behind the triple-buffered 60 Hz HDMI scan-out).  clk_pix
+        // PRODUCTION config, proven across ~2 weeks of builds: clk_sally =
+        // VCO 1200 / 10 = 120 MHz (~67x turbo), clk_sys = VCO 1200 / 8 =
+        // 150 MHz.  This is the clock combo that reliably closed clk_sally at
+        // 120; the 133.3 MHz (DIV 9) detour was the rainbow-line TIMING
+        // EXPERIMENT (now resolved — that bug was a multi-bit fetch_row CDC,
+        // fixed in plane_fetch.sv, NOT timing).  clk_sally is placer-marginal
+        // (one bad seed at 133/120 closed at -0.022 ns / 3 failing endpoints
+        // and crashed the OS) so a build must be gated on clk_sally closing;
+        // DIV_F 12 (100 MHz, +0.444 ns) is the always-safe fallback.  clk_pix
         // (MMCM #2) untouched = 148.4375 MHz 1080p60.
         .CLKOUT0_DIVIDE_F (10.000),
-        .CLKOUT1_DIVIDE   (9),
+        .CLKOUT1_DIVIDE   (8),
         .BANDWIDTH        ("OPTIMIZED")
     ) u_mmcm1 (
         .CLKIN1   (fclk_50),     // 50 MHz from PS FCLK_CLK1 (not the 12 MHz pin)
