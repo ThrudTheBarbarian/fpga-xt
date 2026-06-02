@@ -1199,6 +1199,45 @@ module fpga_xt_top (
     localparam int XL_CLIP_Y0  = XL_ORIGIN_Y;                  // 252
     localparam int XL_CLIP_Y1  = XL_ORIGIN_Y + XL_WIN_H;       // 828
 
+    // ---- Runtime XL scale (diagnostic; gp0_ctrl[3:1], "PS does config") --
+    // The XL plane scale is normally XL_SCALE (3) but is runtime-overridable
+    // from the PS REPL (`scale <n>`) so the scale<->blend-offset correlation
+    // can be probed live: an intermittent wrong-row scan-out fetch shows as
+    // exactly `scale` output lines of offset, so if the observed READY blend
+    // moves by `scale` lines as scale is swept, that IS the mechanism (and if
+    // it stays fixed in output-line space, it is not).  gp0_ctrl[3:1] picks
+    // the scale; 0 keeps the XL_SCALE default (so legacy 0x00/0x01 ctrl
+    // writes — incl. `bars 0|1` — are unchanged).  The window is re-centred
+    // for the chosen scale on BOTH axes (pl_scale is isotropic) so the
+    // geometry stays valid; clamped to 5 (192*6 = 1152 > 1080).
+    wire [2:0] xl_scale_sel = gp0_ctrl[3:1];
+    (* ASYNC_REG = "TRUE" *) reg [2:0] xl_scale_s0  = 3'(XL_SCALE);
+    (* ASYNC_REG = "TRUE" *) reg [2:0] xl_scale_pix = 3'(XL_SCALE);
+    always_ff @(posedge clk_pix) begin
+        xl_scale_s0  <= (xl_scale_sel == 3'd0) ? 3'(XL_SCALE) : xl_scale_sel;
+        xl_scale_pix <= xl_scale_s0;
+    end
+    // Geometry is REGISTERED (changes only on a REPL `scale` write) so the
+    // compositor sees quasi-static clip/origin inputs — the multiply+subtract
+    // sits between register stages, never on a per-pixel comparator path, so
+    // clk_pix timing is identical to the old constant case.
+    wire [2:0]  xl_scale_c = (xl_scale_pix > 3'd5) ? 3'd5 :
+                             (xl_scale_pix < 3'd1) ? 3'd1 : xl_scale_pix;
+    wire [11:0] xl_win_w_c = 12'(XL_SRC_W * int'(xl_scale_c));     // 320*s
+    wire [11:0] xl_win_h_c = 12'(XL_SRC_H * int'(xl_scale_c));     // 192*s
+    wire [11:0] xl_org_x_c = (12'd1920 - xl_win_w_c) >> 1;
+    wire [11:0] xl_org_y_c = (12'd1080 - xl_win_h_c) >> 1;
+    reg  [2:0]  xl_scale_q = 3'(XL_SCALE);
+    reg  [11:0] xl_org_x_r = 12'(XL_ORIGIN_X), xl_org_y_r = 12'(XL_ORIGIN_Y);
+    reg  [11:0] xl_clx1_r  = 12'(XL_CLIP_X1),  xl_cly1_r  = 12'(XL_CLIP_Y1);
+    always_ff @(posedge clk_pix) begin
+        xl_scale_q <= xl_scale_c;
+        xl_org_x_r <= xl_org_x_c;
+        xl_org_y_r <= xl_org_y_c;
+        xl_clx1_r  <= xl_org_x_c + xl_win_w_c;
+        xl_cly1_r  <= xl_org_y_c + xl_win_h_c;
+    end
+
     // Scaled vertical prefetch (deferred from phase 1b-ii): plane_fetch needs
     // the SOURCE row that will DISPLAY on the NEXT scanline.  The compositor
     // computes this divider-free via its §4.2 vertical accumulator and exposes
@@ -1247,14 +1286,14 @@ module fpga_xt_top (
         .de (vb_de), .hsync (vb_hsync), .vsync (vb_vsync), .line_start (fb_line_start),
         // Buses pack {plane1, plane0}; plane 1 = the XL window (front of desktop).
         .pl_enable   (2'b11),                                  // both planes on
-        .pl_origin_x ({12'(XL_ORIGIN_X), 12'd0}),
-        .pl_origin_y ({12'(XL_ORIGIN_Y), 12'd0}),
-        .pl_scale    ({3'(XL_SCALE),     3'd1}),
+        .pl_origin_x ({xl_org_x_r,       12'd0}),             // runtime-scaled (gp0_ctrl[3:1])
+        .pl_origin_y ({xl_org_y_r,       12'd0}),
+        .pl_scale    ({xl_scale_q,       3'd1}),
         .pl_depth    ({4'd1,             4'd0}),               // XL (1) over desktop (0)
-        .pl_clip_x0  ({12'(XL_CLIP_X0),  12'd0}),
-        .pl_clip_y0  ({12'(XL_CLIP_Y0),  12'd0}),
-        .pl_clip_x1  ({12'(XL_CLIP_X1),  12'd1920}),
-        .pl_clip_y1  ({12'(XL_CLIP_Y1),  12'd1080}),
+        .pl_clip_x0  ({xl_org_x_r,       12'd0}),
+        .pl_clip_y0  ({xl_org_y_r,       12'd0}),
+        .pl_clip_x1  ({xl_clx1_r,        12'd1920}),
+        .pl_clip_y1  ({xl_cly1_r,        12'd1080}),
         .bg_color    (24'h00_00_00),
         .src_col_o   (cmp_src_col),
         .src_row_o   (cmp_src_row),                            // current row (unused at top)

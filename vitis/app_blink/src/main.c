@@ -246,6 +246,12 @@ static void ps_led1_set(int on)
  * plus convenience wrappers (bars, hdmi, diag, mon) and 'help'.
  * ==================================================================== */
 static int g_mon = 0;        /* periodic status tick on/off */
+/* Shadow of gp0_ctrl (43C0001C is write-only as a control reg — the read at
+ * that offset returns the diag word, not the ctrl bits — so the PS must track
+ * the byte it last wrote).  Resets to match the bitstream default (0x01 =
+ * bars on, scale field 0 => XL_SCALE default).  bit0 = HDMI bars; bits[3:1]
+ * = XL plane scale (0 => default 3). */
+static u8 g_gp0 = 0x01;
 
 /* Lightweight UART1 char I/O (no FIFO reset, unlike uart1_raw_puts) so it
  * interleaves cleanly with xil_printf.  UART1 @0xE0001000: SR @0x2C
@@ -291,6 +297,7 @@ static void repl_help(void)
       "  hpread           HP2 isolated PL->DDR read-test (success/timeout/rdata)\r\n"
       "  deskfill [rgba]  fill desktop plane-0 surface (0x30000000); default black\r\n"
       "  bars <0|1>       HDMI test pattern off/on (writes 43C0001C)\r\n"
+      "  scale <1..5>     XL plane scale (gp0_ctrl[3:1]); sweep for blend correlation\r\n"
       "  hdmi             re-run SiI9022 output init (sii_enable_output)\r\n"
       "  diag             decode GP0 diag word + measured H_RES/V_RES\r\n"
       "  mon <0|1>        periodic 1s status tick off/on\r\n"
@@ -494,8 +501,24 @@ static void repl_exec(char *cmd)
     }
     if (!strcmp(argv[0], "bars")) {
         unsigned on = (argc >= 2) ? (unsigned)strtoul(argv[1], NULL, 16) : 1u;
-        xil_printf("  writing bars=%u (43C0001C) ...\r\n", on ? 1u : 0u);
-        Xil_Out32(XT_BLITTER_BASE + 0x1Cu, on ? 1u : 0u);   /* may HANG if no "ok" */
+        g_gp0 = (u8)((g_gp0 & ~0x01u) | (on ? 0x01u : 0x00u));  /* preserve scale bits */
+        xil_printf("  writing gp0_ctrl=%02x (bars=%u) ...\r\n", g_gp0, on ? 1u : 0u);
+        Xil_Out32(XT_BLITTER_BASE + 0x1Cu, (u32)g_gp0);
+        uart1_puts("  ok\r\n");
+        return;
+    }
+    if (!strcmp(argv[0], "scale")) {
+        /* XL plane vertical/horizontal scale (gp0_ctrl[3:1]).  n in 1..5
+         * (PL clamps to 5; 0 => default 3).  An intermittent wrong-row
+         * scan-out fetch offsets the picture by exactly `scale` output
+         * lines, so sweep this and watch whether the READY blend tracks. */
+        if (argc < 2) { xil_printf("usage: scale <1..5>   (cur=%u)\r\n",
+                                   (g_gp0 >> 1) & 0x7u); return; }
+        unsigned n = (unsigned)strtoul(argv[1], NULL, 10) & 0x7u;
+        g_gp0 = (u8)((g_gp0 & ~0x0Eu) | ((n & 0x7u) << 1));    /* preserve bar bit */
+        xil_printf("  writing gp0_ctrl=%02x (scale=%u, bars=%u) ...\r\n",
+                   g_gp0, n, g_gp0 & 1u);
+        Xil_Out32(XT_BLITTER_BASE + 0x1Cu, (u32)g_gp0);
         uart1_puts("  ok\r\n");
         return;
     }
