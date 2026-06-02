@@ -248,10 +248,10 @@ static void ps_led1_set(int on)
 static int g_mon = 0;        /* periodic status tick on/off */
 /* Shadow of gp0_ctrl (43C0001C is write-only as a control reg — the read at
  * that offset returns the diag word, not the ctrl bits — so the PS must track
- * the byte it last wrote).  Resets to match the bitstream default (0x01 =
- * bars on, scale field 0 => XL_SCALE default).  bit0 = HDMI bars; bits[3:1]
- * = XL plane scale (0 => default 3). */
-static u8 g_gp0 = 0x01;
+ * the byte it last wrote).  Resets to match the bitstream default (0x00 =
+ * compositor/desktop, scale field 0 => XL_SCALE default).  bit0 = HDMI bars
+ * (debug only now); bits[3:1] = XL plane scale (0 => default 3). */
+static u8 g_gp0 = 0x00;
 
 /* Lightweight UART1 char I/O (no FIFO reset, unlike uart1_raw_puts) so it
  * interleaves cleanly with xil_printf.  UART1 @0xE0001000: SR @0x2C
@@ -641,12 +641,12 @@ int main(void)
     xil_printf("PL diag @0x%08x (m1/m2 lock, clk_pix-alive, m2-unlocks)\r\n",
                (unsigned)(XT_BLITTER_BASE + 0x1Cu));
 
-    /* Test pattern (colour bars) defaults ON in the bitstream — gp0_ctrl resets
-     * to 1 — so DON'T write it here.  A GP0 *write* at this point hangs the CPU
-     * before the REPL even starts (the write-response path is unverified on HW —
-     * reads work, but this would be the first write).  Toggle bars from the REPL
-     * with `bars 0|1` once the console is up and the write path is confirmed. */
-    xil_printf("HDMI test pattern: BARS (bitstream default; use 'bars 0|1' in REPL)\r\n");
+    /* gp0_ctrl now resets to 0x00 in the bitstream = COMPOSITOR (desktop) — bars
+     * are a debug option only (`bars 1`), never the default, even after a PS
+     * `reset` / cold boot.  Still DON'T write gp0_ctrl here in early boot (a GP0
+     * write before the REPL is up historically hung the CPU); the deferred
+     * desktop-clear block below pokes it at ~0.5 s where writes are proven safe. */
+    xil_printf("display: COMPOSITOR/desktop (bitstream default; 'bars 1' for test pattern)\r\n");
 
     /* NOTE: a desktop-surface memset (0x30000000, 8 MB) to clear the plane-0
      * power-on garbage is NOT done here — doing it in early boot reset-looped
@@ -727,11 +727,12 @@ int main(void)
             uint32_t words = 1080u * 2048u;     /* 1080 rows x 8192-byte stride */
             for (uint32_t i = 0; i < words; i++) p[i] = 0x00000000u;
             Xil_DCacheFlushRange((INTPTR)0x30000000u, (INTPTR)(words * 4u));
-            /* Then flip the display from the boot bars to the compositor
-             * (desktop + Atari window): clear desktop FIRST so it's clean when
-             * shown.  gp0_ctrl bit0=0 = compositor, bits[3:1]=0 = default
-             * scale.  GP0 writes are proven safe here (deferred, in the REPL
-             * loop — not the early-boot window that used to hang). */
+            /* Belt-and-braces: assert the compositor (bit0=0) + default scale.
+             * The bitstream now resets gp0_ctrl to 0x00 (compositor) so this is
+             * usually a no-op, but it keeps g_gp0 consistent and guarantees the
+             * desktop is shown clean even if something poked bars earlier.  GP0
+             * writes are proven safe here (deferred in the REPL loop, not the
+             * early-boot window that used to hang). */
             g_gp0 = 0x00u;
             Xil_Out32(XT_BLITTER_BASE + 0x1Cu, (u32)g_gp0);
             desk_cleared = 1u;

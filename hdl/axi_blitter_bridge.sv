@@ -139,7 +139,11 @@ module axi_blitter_bridge (
             w_have        <= 1'b0;
             aw_off        <= 5'd0;
             w_byte        <= 8'd0;
-            gp0_ctrl      <= 8'h01;    // test pattern ON at reset (bars on boot)
+            gp0_ctrl      <= 8'h00;    // boot to the COMPOSITOR (desktop); bars
+                                       // (bit0=1) is now a debug option only,
+                                       // never the default — incl. after a PS
+                                       // `reset` / cold boot.  bits[3:1]=0 =
+                                       // default XL scale.
         end else begin
             s_axi_awready <= 1'b0;
             s_axi_wready  <= 1'b0;
