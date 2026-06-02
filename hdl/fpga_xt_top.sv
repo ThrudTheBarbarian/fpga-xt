@@ -108,17 +108,17 @@ module fpga_xt_top (
         // ceiling ~133-155 MHz).
         .CLKFBOUT_MULT_F  (24.000),
         .DIVCLK_DIVIDE    (1),
-        // clk_sally = VCO 1200 / 10 = 120 MHz — full xt6502 turbo (~67x).
-        // clk_sys = VCO 1200 / 9 = 133.3 MHz (was 150 / DIV 8).  Kept at 133
-        // for healthy timing margin (~+0.84 ns) instead of the production
-        // 150 MHz razor edge (clk_sys WNS was +9 ps): the row-128 rainbow line
-        // turned out to be a multi-bit fetch_row CDC bug (fixed in
-        // plane_fetch.sv), NOT timing, but +9 ps is uncomfortable to ship and
-        // the ~11% slower emulated frame rate is invisible (triple-buffered to
-        // the 60 Hz HDMI scan-out).  clk_pix (MMCM #2) untouched = 148.4375 MHz
-        // 1080p60.  Bump CLKOUT1_DIVIDE back to 8 for 150 MHz if an exactly-
-        // period-correct emulated frame rate is ever wanted (accepts the edge).
-        .CLKOUT0_DIVIDE_F (10.000),
+        // clk_sally = VCO 1200 / 12 = 100 MHz (~56x turbo).  120 MHz (DIV_F 10)
+        // is chronically placer-marginal: a build that closed clk_sally at
+        // only -0.022 ns / 3 failing sally_mem endpoints CRASHED the OS boot
+        // (corrupt CPU reads -> no READY) on 2026-06-02, while 100 MHz closes
+        // at +0.444 ns and boots reliably.  100 is the stable operating point;
+        // 120 needs real clk_sally timing closure (floorplan), not just a
+        // lucky seed.  clk_sys = VCO 1200 / 9 = 133.3 MHz (healthy margin vs
+        // the production 150 razor edge; ~11% slower emulated frame rate is
+        // invisible behind the triple-buffered 60 Hz HDMI scan-out).  clk_pix
+        // (MMCM #2) untouched = 148.4375 MHz 1080p60.
+        .CLKOUT0_DIVIDE_F (12.000),
         .CLKOUT1_DIVIDE   (9),
         .BANDWIDTH        ("OPTIMIZED")
     ) u_mmcm1 (
