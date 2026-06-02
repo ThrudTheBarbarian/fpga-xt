@@ -648,11 +648,13 @@ int main(void)
      * with `bars 0|1` once the console is up and the write path is confirmed. */
     xil_printf("HDMI test pattern: BARS (bitstream default; use 'bars 0|1' in REPL)\r\n");
 
-    /* NOTE: a boot-time desktop-surface memset (0x30000000, 8 MB) was tried here
-     * to clear the plane-0 garbage, but on a cold SD boot it correlated with a
-     * reset loop (large DDR write before the system settles, while PL->DDR is
-     * still flaky after reset).  Reverted — use the `deskfill` REPL command on
-     * demand instead.  Revisit only after the cold-boot DDR-bring-up is solid. */
+    /* NOTE: a desktop-surface memset (0x30000000, 8 MB) to clear the plane-0
+     * power-on garbage is NOT done here — doing it in early boot reset-looped
+     * (large DDR write before the system settled, while PL->DDR was ungated and
+     * flaky after reset).  It is now done DEFERRED in the REPL loop at ~2 s
+     * uptime (search "desktop @0x30000000 auto-cleared"), safely past the
+     * ~224 ms ddr_warm PL->DDR gate + HDMI bring-up.  `deskfill` still does it
+     * on demand (any colour). */
 
     /* ---- Serial REPL ----------------------------------------------------
      * Interactive debug console.  The loop is non-blocking: it polls UART for
@@ -666,6 +668,7 @@ int main(void)
     char     line[80];
     unsigned ll = 0;
     unsigned out_on = 0, tick = 0, ms = 0;
+    unsigned desk_cleared = 0;          /* one-shot deferred desktop clear */
 
     while (1) {
         /* Interactive: drain RX, echo, dispatch on CR/LF. */
@@ -691,6 +694,25 @@ int main(void)
         if (++ms >= 1000) {
             ms = 0;
             ps_led1_set(tick & 1u);
+
+            /* One-shot: clear the desktop plane-0 surface (0x30000000) ~2 s
+             * after boot, replacing the power-on DDR garbage around the Atari
+             * window with a clean black field.  DEFERRED into the loop (not
+             * early boot): the early-boot memset reset-looped back when the PL
+             * hammered DDR from t=0 and collided with this 8 MB write; now the
+             * ~224 ms ddr_warm gate holds PL->DDR off at reset, and firing at
+             * ~2 s is safely past both ddr_warm and HDMI bring-up.  Same code
+             * path as the `deskfill` REPL command, which works fine at runtime. */
+            if (!desk_cleared && tick >= 2u) {
+                volatile uint32_t *p = (volatile uint32_t *)0x30000000u;
+                uint32_t words = 1080u * 2048u;     /* 1080 rows x 8192-byte stride */
+                for (uint32_t i = 0; i < words; i++) p[i] = 0x00000000u;
+                Xil_DCacheFlushRange((INTPTR)0x30000000u, (INTPTR)(words * 4u));
+                desk_cleared = 1u;
+                xil_printf("\r\ndesktop @0x30000000 auto-cleared (black) at boot+%us\r\n> ",
+                           tick);
+                for (unsigned k = 0; k < ll; k++) uart1_putc(line[k]);
+            }
 
             uint8_t st = 0; (void)sii_read(0x3D, &st);
             unsigned hpd = (st >> 2) & 1u;
