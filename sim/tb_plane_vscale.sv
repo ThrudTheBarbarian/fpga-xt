@@ -16,7 +16,16 @@
 `default_nettype none
 `timescale 1ns / 1ps
 
-module tb_plane_vscale;
+module tb_plane_vscale #(
+    // DDR read-latency model (override from iverilog with
+    // -Ptb_plane_vscale.RD_LAT=N -Ptb_plane_vscale.RD_LAT_JIT=M).  RD_LAT=0
+    // is the original zero-latency memory.  Cranking these emulates real
+    // PL->DDR read latency + arbiter/writeback contention, the conditions
+    // under which a per-line fetch can finish late and the ping-pong read
+    // half is served stale/partial (the on-HW row-128 rainbow-dash line).
+    parameter int RD_LAT     = 0,
+    parameter int RD_LAT_JIT = 0
+);
 
     localparam int H_ACTIVE = 16, V_ACTIVE = 30;
     localparam int SCALE    = 3;
@@ -107,7 +116,7 @@ module tb_plane_vscale;
 
     assign src_pixel_i = {xl_pixel, bg_pixel};
 
-    axi_slave_mem u_mem (
+    axi_slave_mem #(.RD_LAT(RD_LAT), .RD_LAT_JIT(RD_LAT_JIT)) u_mem (
         .clk (clk_sys), .rst (rst_sys),
         .s_axi_awaddr (32'd0), .s_axi_awlen (8'd0), .s_axi_awsize (3'd0),
         .s_axi_awburst (2'd0), .s_axi_awvalid (1'b0), .s_axi_awready (),
@@ -147,6 +156,23 @@ module tb_plane_vscale;
             line_seen[v_d2] <= 1'b1;
             if (frame_no == 5) line_a[v_d2] <= rgb_r;
             if (frame_no == 6) line_b[v_d2] <= rgb_r;
+        end
+    end
+
+    // ---- ping-pong collision / overrun monitor --------------------------
+    // collision = a fetch write beat lands in the half the scan-out is
+    // CURRENTLY reading (ping_pong_wr == ping_pong_rd) — i.e. the read sees a
+    // half mid-write -> partial/stale pixels (the rainbow-dash line).  This
+    // is the wr/rd CDC catch-up window; a late (high-latency) fetch widens the
+    // window of opportunity.  overrun = fetch still pending at the next line.
+    int collision_cnt = 0;
+    int overrun_cnt   = 0;
+    always_ff @(posedge clk_sys) begin
+        if (!rst_sys) begin
+            if (u_fetch.wr_en && (u_fetch.ping_pong_wr === u_fetch.ping_pong_rd))
+                collision_cnt <= collision_cnt + 1;
+            if (u_fetch.fetch_overrun)
+                overrun_cnt <= overrun_cnt + 1;
         end
     end
 
@@ -191,6 +217,9 @@ module tb_plane_vscale;
 
         $write("frame5: "); for (int v=0;v<V_ACTIVE;v++) $write("%0d ", line_a[v]); $write("\n");
         $write("frame6: "); for (int v=0;v<V_ACTIVE;v++) $write("%0d ", line_b[v]); $write("\n");
+
+        $display("MONITOR: RD_LAT=%0d RD_LAT_JIT=%0d  collisions=%0d  overruns=%0d",
+                 RD_LAT, RD_LAT_JIT, collision_cnt, overrun_cnt);
 
         if (fail_count == 0) $display("*** PLANE_VSCALE OK *** vertical addressing clean + frame-stable at scale %0d", SCALE);
         else                 $display("*** PLANE_VSCALE FAIL *** %0d issue(s)", fail_count);

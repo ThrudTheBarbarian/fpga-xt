@@ -31,7 +31,14 @@
 module axi_slave_mem #(
     parameter int ADDR_W    = 32,
     parameter int DATA_W    = 64,
-    parameter int STRB_W    = DATA_W / 8
+    parameter int STRB_W    = DATA_W / 8,
+    // Read-latency model (sim realism).  RD_LAT = cycles from AR-accept to the
+    // first RVALID; RD_LAT_JIT adds a pseudo-random 0..RD_LAT_JIT extra cycles
+    // per burst (address-hashed, deterministic) to emulate DDR page/bank +
+    // arbiter variance.  Defaults 0/0 keep the original zero-latency,
+    // always-accept behaviour for every existing testbench.
+    parameter int RD_LAT     = 0,
+    parameter int RD_LAT_JIT = 0
 ) (
     input  wire             clk,
     input  wire             rst,
@@ -140,15 +147,39 @@ module axi_slave_mem #(
         return v;
     endfunction
 
+    // Per-burst read latency (AR-accept -> first RVALID).  Address-hashed
+    // jitter is deterministic so runs are reproducible.
+    reg [15:0] rd_lat_cnt;
+    reg        rd_wait;
+    function automatic [15:0] lat_for(input [ADDR_W-1:0] a);
+        if (RD_LAT_JIT <= 0) return RD_LAT[15:0];
+        else return RD_LAT[15:0] +
+                    16'(((a >> 6) ^ (a >> 13)) % (RD_LAT_JIT + 1));
+    endfunction
+
     always_ff @(posedge clk or posedge rst) begin
         if (rst) begin
             ar_addr_q    <= '0;
             ar_beats_q   <= '0;
             ar_busy      <= 1'b0;
+            rd_wait      <= 1'b0;
+            rd_lat_cnt   <= 16'd0;
             s_axi_rdata  <= '0;
             s_axi_rvalid <= 1'b0;
             s_axi_rlast  <= 1'b0;
         end else begin
+            // Latency wait: AR accepted, counting down to the first beat.
+            if (rd_wait) begin
+                if (rd_lat_cnt == 16'd0) begin
+                    s_axi_rdata  <= mem_read64(ar_addr_q);
+                    s_axi_rvalid <= 1'b1;
+                    s_axi_rlast  <= (ar_beats_q == 8'd1);
+                    rd_wait      <= 1'b0;
+                end else begin
+                    rd_lat_cnt <= rd_lat_cnt - 16'd1;
+                end
+            end
+
             if (s_axi_rvalid && s_axi_rready) begin
                 if (s_axi_rlast) begin
                     s_axi_rvalid <= 1'b0;
@@ -166,9 +197,15 @@ module axi_slave_mem #(
                 ar_addr_q    <= s_axi_araddr;
                 ar_beats_q   <= s_axi_arlen + 8'd1;
                 ar_busy      <= 1'b1;
-                s_axi_rdata  <= mem_read64(s_axi_araddr);
-                s_axi_rvalid <= 1'b1;
-                s_axi_rlast  <= (s_axi_arlen == 8'd0);
+                if (lat_for(s_axi_araddr) == 16'd0) begin
+                    s_axi_rdata  <= mem_read64(s_axi_araddr);   // zero-lat: original
+                    s_axi_rvalid <= 1'b1;
+                    s_axi_rlast  <= (s_axi_arlen == 8'd0);
+                end else begin
+                    rd_wait      <= 1'b1;
+                    rd_lat_cnt   <= lat_for(s_axi_araddr) - 16'd1;
+                    s_axi_rvalid <= 1'b0;
+                end
             end
         end
     end
