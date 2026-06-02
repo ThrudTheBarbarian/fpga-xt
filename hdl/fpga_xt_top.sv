@@ -108,10 +108,18 @@ module fpga_xt_top (
         // ceiling ~133-155 MHz).
         .CLKFBOUT_MULT_F  (24.000),
         .DIVCLK_DIVIDE    (1),
-        // clk_sally = VCO 1200 / 10 = 120.0 MHz, the agreed xt6502 operating
-        // point (closes in the bit flow at +0.004 ns).
-        .CLKOUT0_DIVIDE_F (10.000),
-        .CLKOUT1_DIVIDE   (8),
+        // *** TIMING-MARGIN EXPERIMENT (temporary, tag known-good-preclock to
+        // revert) ***  Production is sally 120 (DIV_F 10) / sys 150 (DIV 8),
+        // but those close at razor margin (clk_sys WNS +9 ps, clk_sally -88 ps).
+        // To test whether the residual scan-out glitches (row-128 rainbow line,
+        // READY single-line blends) are marginal-timing artifacts, drop to
+        // sally 100 MHz (VCO 1200 / 12) and sys 133.3 MHz (VCO 1200 / 9) for
+        // real margin (~+0.84 ns on clk_sys, ~+1.6 ns on clk_sally).  clk_pix
+        // (MMCM #2) is UNTOUCHED so HDMI stays 148.4375 MHz / 1080p60.  If the
+        // glitches vanish -> timing closure was the cause; if they persist ->
+        // it is logic.  Restore DIV_F 10 / DIV 8 once decided.
+        .CLKOUT0_DIVIDE_F (12.000),
+        .CLKOUT1_DIVIDE   (9),
         .BANDWIDTH        ("OPTIMIZED")
     ) u_mmcm1 (
         .CLKIN1   (fclk_50),     // 50 MHz from PS FCLK_CLK1 (not the 12 MHz pin)
