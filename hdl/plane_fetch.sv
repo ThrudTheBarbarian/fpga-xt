@@ -141,21 +141,30 @@ module plane_fetch #(
         end
     end
 
+    // CDC: only the 1-bit line_start TOGGLE is synchronised (2-FF + edge).  The
+    // 12-bit fetch_row is NOT free-run through a 2-FF — that is a multi-bit CDC
+    // violation: a clk_sys edge coincident with fetch_row_pix's transition
+    // resolves each bit to old-or-new INDEPENDENTLY, capturing a garbage mixed
+    // value.  Worst at the 127->128 (0x07F->0x080) transition where all 8 low
+    // bits flip -> a wild row number -> plane_fetch reads a wrong DDR address ->
+    // multi-coloured garbage that is NOT in the buffer, blinking at the
+    // clk_pix/clk_sys phase-drift beat (the row-128 rainbow line; the READY
+    // off-by-1/3 blends are the small-transition version of the same bug).
+    // Correct stable-data+flag: fetch_row_pix is held stable from line_start_d1
+    // until the next one, and line_start_sys fires ~2-3 clk_sys later, so
+    // capturing fetch_row_pix DIRECTLY on line_start_sys samples a settled bus.
+    // The clk_pix->clk_sys path is bounded by a set_max_delay -datapath_only
+    // (constraints/cdc_fetch_row.xdc).
     logic [1:0] ls_sync;
     logic       ls_sync_prev;
-    logic [11:0] fetch_row_s0, fetch_row_s1;
     always_ff @(posedge clk_sys) begin
         if (rst_sys) begin
             ls_sync      <= 2'b0;
             ls_sync_prev <= 1'b0;
-            fetch_row_s0 <= 12'd0;
-            fetch_row_s1 <= 12'd0;
             pp_rd_sync   <= 2'b00;        // rd init 0 -> wr = ~0 = 1 (opposite)
         end else begin
             ls_sync      <= {ls_sync[0], ls_toggle_pix};
             ls_sync_prev <= ls_sync[1];
-            fetch_row_s0 <= fetch_row_pix;   // stable between line_starts
-            fetch_row_s1 <= fetch_row_s0;
             pp_rd_sync   <= {pp_rd_sync[0], ping_pong_rd};
         end
     end
@@ -177,7 +186,11 @@ module plane_fetch #(
             // Overrun: a new line started while the prior fetch was still pending.
             fetch_overrun <= line_start_sys && line_pending;
             if (line_start_sys) begin
-                row_to_fetch <= fetch_row_s1;
+                // Stable-data + synced-flag CDC: fetch_row_pix has been held
+                // stable since line_start_d1 (~2-3 clk_sys before this flag),
+                // so sampling it directly here is clean — no multi-bit 2-FF
+                // bus sync that could capture a mid-transition garbage row.
+                row_to_fetch <= fetch_row_pix;
                 line_pending <= 1'b1;
                 // ping_pong_wr is derived from pp_rd_sync (see its declaration) —
                 // no independent flip here.
