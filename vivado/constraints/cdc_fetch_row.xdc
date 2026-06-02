@@ -7,11 +7,13 @@
 # multi-bit hazard was the row-128 "rainbow line" — a 127->128 8-bit transition
 # caught mid-flight gave a garbage row -> wrong DDR address -> garbage pixels).
 #
-# set_max_delay -datapath_only keeps the 12 data bits' routing skew well under one
-# destination cycle so they all settle before the capture edge.  6.0 ns < both the
-# 133 MHz (7.5 ns) and the production 150 MHz (6.67 ns) clk_sys period.  Covers both
+# It is a genuinely false path for STA: the transfer is qualified by the synced
+# line_start flag, not by the clk_pix/clk_sys relationship, and fetch_row_pix is
+# stable for a whole line (~6.7 us) before the capture edge — so the bits always
+# settle regardless of routing skew.  -to the clk_sys clock catches the real
+# destination robustly (row_to_fetch is absorbed into the row*stride DSP input
+# register, so a row_to_fetch_reg cell filter matches nothing).  Covers both
 # plane_fetch instances (desktop + XL).
-set_max_delay -datapath_only \
+set_false_path \
     -from [get_cells -hier -filter {NAME =~ *plane_fetch*fetch_row_pix_reg[*]}] \
-    -to   [get_cells -hier -filter {NAME =~ *plane_fetch*row_to_fetch_reg[*]}] \
-    6.0
+    -to   [get_clocks clk_sys_unbuf]

@@ -108,17 +108,17 @@ module fpga_xt_top (
         // ceiling ~133-155 MHz).
         .CLKFBOUT_MULT_F  (24.000),
         .DIVCLK_DIVIDE    (1),
-        // *** TIMING-MARGIN EXPERIMENT (temporary, tag known-good-preclock to
-        // revert) ***  Production is sally 120 (DIV_F 10) / sys 150 (DIV 8),
-        // but those close at razor margin (clk_sys WNS +9 ps, clk_sally -88 ps).
-        // To test whether the residual scan-out glitches (row-128 rainbow line,
-        // READY single-line blends) are marginal-timing artifacts, drop to
-        // sally 100 MHz (VCO 1200 / 12) and sys 133.3 MHz (VCO 1200 / 9) for
-        // real margin (~+0.84 ns on clk_sys, ~+1.6 ns on clk_sally).  clk_pix
-        // (MMCM #2) is UNTOUCHED so HDMI stays 148.4375 MHz / 1080p60.  If the
-        // glitches vanish -> timing closure was the cause; if they persist ->
-        // it is logic.  Restore DIV_F 10 / DIV 8 once decided.
-        .CLKOUT0_DIVIDE_F (12.000),
+        // clk_sally = VCO 1200 / 10 = 120 MHz — full xt6502 turbo (~67x).
+        // clk_sys = VCO 1200 / 9 = 133.3 MHz (was 150 / DIV 8).  Kept at 133
+        // for healthy timing margin (~+0.84 ns) instead of the production
+        // 150 MHz razor edge (clk_sys WNS was +9 ps): the row-128 rainbow line
+        // turned out to be a multi-bit fetch_row CDC bug (fixed in
+        // plane_fetch.sv), NOT timing, but +9 ps is uncomfortable to ship and
+        // the ~11% slower emulated frame rate is invisible (triple-buffered to
+        // the 60 Hz HDMI scan-out).  clk_pix (MMCM #2) untouched = 148.4375 MHz
+        // 1080p60.  Bump CLKOUT1_DIVIDE back to 8 for 150 MHz if an exactly-
+        // period-correct emulated frame rate is ever wanted (accepts the edge).
+        .CLKOUT0_DIVIDE_F (10.000),
         .CLKOUT1_DIVIDE   (9),
         .BANDWIDTH        ("OPTIMIZED")
     ) u_mmcm1 (
