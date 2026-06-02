@@ -613,18 +613,11 @@ int main(void)
      * with `bars 0|1` once the console is up and the write path is confirmed. */
     xil_printf("HDMI test pattern: BARS (bitstream default; use 'bars 0|1' in REPL)\r\n");
 
-    /* Clear the desktop plane-0 surface (0x30000000) at boot so we come up with a
-     * clean black background instead of uninitialised-DDR garbage around the
-     * Atari window.  DDR write + A9 cache flush so the non-coherent PL
-     * plane_fetch (HP0) read sees it.  (Same as the `deskfill` REPL command, run
-     * once here.  Pure DDR write — not a GP0 write — so safe at boot.) */
-    {
-        volatile uint32_t *dp = (volatile uint32_t *)0x30000000u;
-        uint32_t dwords = 1080u * 2048u;     /* 1080 rows x 8192-byte stride */
-        for (uint32_t i = 0; i < dwords; i++) dp[i] = 0x00000000u;
-        Xil_DCacheFlushRange((INTPTR)0x30000000u, (INTPTR)(dwords * 4u));
-        xil_printf("desktop surface @0x30000000 cleared (black)\r\n");
-    }
+    /* NOTE: a boot-time desktop-surface memset (0x30000000, 8 MB) was tried here
+     * to clear the plane-0 garbage, but on a cold SD boot it correlated with a
+     * reset loop (large DDR write before the system settles, while PL->DDR is
+     * still flaky after reset).  Reverted — use the `deskfill` REPL command on
+     * demand instead.  Revisit only after the cold-boot DDR-bring-up is solid. */
 
     /* ---- Serial REPL ----------------------------------------------------
      * Interactive debug console.  The loop is non-blocking: it polls UART for
