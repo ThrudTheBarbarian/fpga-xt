@@ -1064,19 +1064,23 @@ module fpga_xt_top (
     // HP3 (to HP2) should drive these to ZERO in steady state; if they keep
     // climbing, contention persists and the abort needs draining.
     //   diag6 @0x04: {xl_abort_cnt[15:0], desk_abort_cnt[15:0]}
-    //   diag7 @0x08: {xl_last_abort_row[15:0], 16'd0}
-    wire xl_read_abort, hp0_read_abort;
+    //   diag7 @0x08: {xl_last_abort_row[15:0], xl_overrun_cnt[15:0]}
+    // After the HP3 split + ping-pong hardening, all of these should stay 0 in
+    // steady state.
+    wire xl_read_abort, hp0_read_abort, xl_overrun, hp0_overrun;
     reg [15:0] xl_abort_cnt = 16'd0, desk_abort_cnt = 16'd0;
     reg [15:0] xl_last_abort_row = 16'd0;
+    reg [15:0] xl_overrun_cnt = 16'd0;
     always_ff @(posedge clk_sys) begin
         if (xl_read_abort) begin
             xl_abort_cnt      <= xl_abort_cnt + 16'd1;
             xl_last_abort_row <= {4'd0, xl_fetch_row};
         end
         if (hp0_read_abort) desk_abort_cnt <= desk_abort_cnt + 16'd1;
+        if (xl_overrun)     xl_overrun_cnt <= xl_overrun_cnt + 16'd1;
     end
     wire [31:0] diag6_word = {xl_abort_cnt, desk_abort_cnt};
-    wire [31:0] diag7_word = {xl_last_abort_row, 16'd0};
+    wire [31:0] diag7_word = {xl_last_abort_row, xl_overrun_cnt};
 
     // ====================================================================
     // Display: plane compositor (vbeam + plane_fetch x N + plane_compositor)
@@ -1137,7 +1141,7 @@ module fpga_xt_top (
         .clk_pix (clk_pix), .rst_pix (rst_pix),
         .line_start (fb_line_start), .fetch_row (desk_fetch_row),
         .rd_col (cmp_src_col[0*12 +: 12]), .rd_pixel (desk_pixel),
-        .read_abort (hp0_read_abort)
+        .read_abort (hp0_read_abort), .fetch_overrun (hp0_overrun)
     );
 
     // ---- XL plane (plane 1): scaled, centred window over the desktop ----
@@ -1189,7 +1193,7 @@ module fpga_xt_top (
         .clk_pix (clk_pix), .rst_pix (rst_pix),
         .line_start (fb_line_start), .fetch_row (xl_fetch_row),
         .rd_col (cmp_src_col[1*12 +: 12]), .rd_pixel (xl_pixel),
-        .read_abort (xl_read_abort)
+        .read_abort (xl_read_abort), .fetch_overrun (xl_overrun)
     );
 
     // ---- Plane compositor -----------------------------------------------

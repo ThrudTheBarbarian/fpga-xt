@@ -53,10 +53,15 @@ module plane_fetch #(
     output wire [31:0] rd_pixel,      // RGBA8888, registered 1 clk after rd_col
 
     // ---- Diagnostics (clk_sys) -------------------------------------------
-    output reg         read_abort     // 1-cyc pulse when a line read times out
+    output reg         read_abort,    // 1-cyc pulse when a line read times out
                                       // (AR not accepted / R stalled) and is
                                       // abandoned — the watchdog firing in
                                       // steady state means DDR-port contention.
+    output reg         fetch_overrun  // 1-cyc pulse when a new line's fetch is
+                                      // triggered while the previous one is still
+                                      // in flight (fetch slower than a scanline)
+                                      // — the other way a stale/adjacent row can
+                                      // reach the display.
 );
 
     // Read-burst sizing.  Reduced 16->8 beats as a silicon read-path
@@ -77,11 +82,17 @@ module plane_fetch #(
     (* ram_style = "block" *)
     logic [63:0] line_buf [0:2*LB_WORDS-1];
 
-    // Double-buffered: rd and wr flip on the SAME event (line_start) but
-    // start in opposite phase, so the read half is always the one the
-    // previous line's fetch completed, and the write half is the other.
-    logic        ping_pong_wr;        // clk_sys (init 1)
+    // Double-buffered.  ping_pong_rd (clk_pix) flips at line_start; ping_pong_wr
+    // is DERIVED from it via CDC (wr = ~sync(rd)) rather than flipped
+    // independently in clk_sys.  Two independent flips in two close-but-unequal
+    // clocks (148.4 vs 150 MHz) could slip into the SAME half for a line, serving
+    // the read the half being written = an adjacent/wrong row (the intermittent
+    // text offset, "3 ahead / 8 behind").  Deriving wr from rd makes them always
+    // opposite by construction; rd is stable for a whole line, so the synced wr
+    // is stable across the fetch.
     logic        ping_pong_rd;        // clk_pix (init 0)
+    logic [1:0]  pp_rd_sync;          // ping_pong_rd synced into clk_sys (2-FF)
+    wire         ping_pong_wr = ~pp_rd_sync[1];   // always the half rd is NOT on
     logic [10:0] wr_idx;
     // Combinational write strobe so each beat lands in its own slot on the
     // cycle it arrives (a registered wr_en would drop the first beat).
@@ -139,11 +150,13 @@ module plane_fetch #(
             ls_sync_prev <= 1'b0;
             fetch_row_s0 <= 12'd0;
             fetch_row_s1 <= 12'd0;
+            pp_rd_sync   <= 2'b00;        // rd init 0 -> wr = ~0 = 1 (opposite)
         end else begin
             ls_sync      <= {ls_sync[0], ls_toggle_pix};
             ls_sync_prev <= ls_sync[1];
             fetch_row_s0 <= fetch_row_pix;   // stable between line_starts
             fetch_row_s1 <= fetch_row_s0;
+            pp_rd_sync   <= {pp_rd_sync[0], ping_pong_rd};
         end
     end
     wire line_start_sys = ls_sync[1] ^ ls_sync_prev;
@@ -157,14 +170,17 @@ module plane_fetch #(
 
     always_ff @(posedge clk_sys) begin
         if (rst_sys) begin
-            row_to_fetch <= 12'd0;
-            line_pending <= 1'b0;
-            ping_pong_wr <= 1'b1;        // opposite phase to ping_pong_rd (init 0)
+            row_to_fetch  <= 12'd0;
+            line_pending  <= 1'b0;
+            fetch_overrun <= 1'b0;
         end else begin
+            // Overrun: a new line started while the prior fetch was still pending.
+            fetch_overrun <= line_start_sys && line_pending;
             if (line_start_sys) begin
                 row_to_fetch <= fetch_row_s1;
                 line_pending <= 1'b1;
-                ping_pong_wr <= ~ping_pong_wr;   // flip with the read, opposite phase
+                // ping_pong_wr is derived from pp_rd_sync (see its declaration) —
+                // no independent flip here.
             end else if (fetch_done) begin
                 line_pending <= 1'b0;
             end
