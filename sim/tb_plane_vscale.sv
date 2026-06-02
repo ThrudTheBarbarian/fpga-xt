@@ -24,17 +24,23 @@ module tb_plane_vscale #(
     // under which a per-line fetch can finish late and the ping-pong read
     // half is served stale/partial (the on-HW row-128 rainbow-dash line).
     parameter int RD_LAT     = 0,
-    parameter int RD_LAT_JIT = 0
+    parameter int RD_LAT_JIT = 0,
+    // Geometry is parameterised so the same tb runs as a PESSIMISTIC stress
+    // case (default: tiny line, fetch fills it) AND a REALISTIC-margin case
+    // (large H_BP: fetch completes early in the line, like HW).  Override with
+    // -Ptb_plane_vscale.H_ACTIVE=.. -Ptb_plane_vscale.SRC_W=.. -Ptb_plane_vscale.H_BP=..
+    parameter int H_ACTIVE   = 16,
+    parameter int SRC_W      = 16,
+    parameter int H_BP       = 2          // horizontal back porch (line slack)
 );
 
-    localparam int H_ACTIVE = 16, V_ACTIVE = 30;
+    localparam int V_ACTIVE = 30;
     localparam int SCALE    = 3;
     localparam int CY0      = 6;          // window top  (origin_y)
     localparam int SRC_H    = 6;          // source rows 0..5
     localparam int CY1      = CY0 + SRC_H*SCALE;   // 24, exclusive
-    localparam int SRC_W    = 16;
     localparam [31:0] BASE  = 32'h0000_1000;
-    localparam [15:0] STRIDE= 16'd64;     // SRC_W*4
+    localparam [15:0] STRIDE= 16'(SRC_W*4);
 
     logic clk_pix = 1'b0; always #5 clk_pix = ~clk_pix;
     logic clk_sys = 1'b0; always #3 clk_sys = ~clk_sys;
@@ -44,7 +50,7 @@ module tb_plane_vscale #(
     wire [11:0] h_count, v_count;
     wire        de, hsync, vsync, line_start, frame_start;
     vbeam #(
-        .H_ACTIVE (H_ACTIVE), .H_FRONT_PORCH (2), .H_SYNC_WIDTH (4), .H_BACK_PORCH (2),
+        .H_ACTIVE (H_ACTIVE), .H_FRONT_PORCH (2), .H_SYNC_WIDTH (4), .H_BACK_PORCH (H_BP),
         .V_ACTIVE (V_ACTIVE), .V_FRONT_PORCH (1), .V_SYNC_WIDTH (2), .V_BACK_PORCH (2),
         .ANTIC_LINES_NATIVE (V_ACTIVE)
     ) u_vbeam (
@@ -169,7 +175,7 @@ module tb_plane_vscale #(
     int overrun_cnt   = 0;
     always_ff @(posedge clk_sys) begin
         if (!rst_sys) begin
-            if (u_fetch.wr_en && (u_fetch.ping_pong_wr === u_fetch.ping_pong_rd))
+            if (u_fetch.wr_en && (u_fetch.wr_buf_q === u_fetch.rd_buf))
                 collision_cnt <= collision_cnt + 1;
             if (u_fetch.fetch_overrun)
                 overrun_cnt <= overrun_cnt + 1;

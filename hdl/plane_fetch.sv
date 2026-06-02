@@ -78,34 +78,41 @@ module plane_fetch #(
     state_t      state;
     logic [6:0]  burst_idx;
 
-    // ---- Line buffer (clk_sys write / clk_pix read) ----------------------
+    // ---- Line buffer: TRIPLE-buffered (clk_sys write / clk_pix read) ------
     (* ram_style = "block" *)
-    logic [63:0] line_buf [0:2*LB_WORDS-1];
+    logic [63:0] line_buf [0:3*LB_WORDS-1];   // 3 buffers, indexed {buf[1:0], idx[9:0]}
 
-    // Double-buffered.  ping_pong_rd (clk_pix) flips at line_start; ping_pong_wr
-    // is DERIVED from it via CDC (wr = ~sync(rd)) rather than flipped
-    // independently in clk_sys.  Two independent flips in two close-but-unequal
-    // clocks (148.4 vs 150 MHz) could slip into the SAME half for a line, serving
-    // the read the half being written = an adjacent/wrong row (the intermittent
-    // text offset, "3 ahead / 8 behind").  Deriving wr from rd makes them always
-    // opposite by construction; rd is stable for a whole line, so the synced wr
-    // is stable across the fetch.
-    logic        ping_pong_rd;        // clk_pix (init 0)
-    logic [1:0]  pp_rd_sync;          // ping_pong_rd synced into clk_sys (2-FF)
-    wire         ping_pong_wr = ~pp_rd_sync[1];   // always the half rd is NOT on
+    // Three buffers remove the ping-pong wr/rd CDC race for good.  The reader
+    // reads ready_buf (the most-recently-COMPLETED row, adopted at line_start)
+    // or — for the few cycles of CDC lag after a completion — the PREVIOUS
+    // ready buffer; the writer always fills the THIRD buffer (neither ready nor
+    // prev-ready).  So the buffer being written is NEVER the buffer being
+    // scanned out, independent of any clk_pix<->clk_sys flip skew.  A 2-buffer
+    // ping-pong (ping_pong_wr = ~sync(ping_pong_rd)) cannot achieve this: the
+    // sync lag let the write half briefly equal the read half right after each
+    // line_start, so a fetch beat near the boundary landed in the scanned-out
+    // half -> the row-128 "rainbow-dash" line (reproduced in tb_plane_vscale
+    // under read latency: collisions>0 with overruns=0, matching the HW
+    // counters reading 0).  rd_buf may lag onto prev_ready, which the writer
+    // also avoids, so even the adopt CDC lag is safe.
+    logic [1:0]  rd_buf;        // clk_pix: buffer being read
+    logic [1:0]  ready_buf;     // clk_sys: latest fully-written buffer
+    logic [1:0]  prev_ready;    // clk_sys: the one before it (reader may still be on it)
+    logic [1:0]  wr_buf_q;      // clk_sys: buffer the active fetch writes (the third)
+    logic        ready_tgl;     // clk_sys: toggles when ready_buf updates (CDC flag)
     logic [10:0] wr_idx;
     // Combinational write strobe so each beat lands in its own slot on the
     // cycle it arrives (a registered wr_en would drop the first beat).
     wire         wr_en = (state == S_R) && m_axi_rvalid;
     always_ff @(posedge clk_sys) begin
-        if (wr_en) line_buf[{ping_pong_wr, wr_idx[9:0]}] <= m_axi_rdata;
+        if (wr_en) line_buf[{wr_buf_q, wr_idx[9:0]}] <= m_axi_rdata;
     end
 
     // Read port (clk_pix): word at rd_col[10:1], half by rd_col[0] (1-cyc).
     logic [63:0] rd_word_q;
     logic        rd_lsb_q;
     always_ff @(posedge clk_pix) begin
-        rd_word_q <= line_buf[{ping_pong_rd, rd_col[10:1]}];
+        rd_word_q <= line_buf[{rd_buf, rd_col[10:1]}];
         rd_lsb_q  <= rd_col[0];
     end
     assign rd_pixel = rd_lsb_q ? rd_word_q[63:32] : rd_word_q[31:0];
@@ -125,18 +132,37 @@ module plane_fetch #(
     logic       ls_toggle_pix;
     logic [11:0] fetch_row_pix;
     logic       line_start_d1;
+    // ready_buf (clk_sys) -> clk_pix via toggle + stable-data: sample the 2-bit
+    // value only when the synced toggle edge shows it has settled, so a 2-bit
+    // transition is never caught as a transient (e.g. the unused code 3).
+    (* ASYNC_REG = "TRUE" *) logic [1:0] rt_sync;
+    (* ASYNC_REG = "TRUE" *) logic [1:0] rb_sync0, rb_sync1;
+    logic       rt_prev;
+    logic [1:0] ready_buf_pix;
     always_ff @(posedge clk_pix or posedge rst_pix) begin
         if (rst_pix) begin
             ls_toggle_pix <= 1'b0;
             fetch_row_pix <= 12'd0;
-            ping_pong_rd  <= 1'b0;
             line_start_d1 <= 1'b0;
+            rt_sync       <= 2'b00;
+            rb_sync0      <= 2'b00;
+            rb_sync1      <= 2'b00;
+            rt_prev       <= 1'b0;
+            ready_buf_pix <= 2'b00;
+            rd_buf        <= 2'b00;
         end else begin
+            rt_sync  <= {rt_sync[0], ready_tgl};
+            rb_sync0 <= ready_buf;
+            rb_sync1 <= rb_sync0;
+            if (rt_sync[1] != rt_prev) begin
+                ready_buf_pix <= rb_sync1;       // settled latest-complete buffer
+                rt_prev       <= rt_sync[1];
+            end
             line_start_d1 <= line_start;
             if (line_start_d1) begin
                 ls_toggle_pix <= ~ls_toggle_pix;
                 fetch_row_pix <= fetch_row;
-                ping_pong_rd  <= ~ping_pong_rd;
+                rd_buf        <= ready_buf_pix;  // adopt the latest complete buffer
             end
         end
     end
@@ -150,13 +176,11 @@ module plane_fetch #(
             ls_sync_prev <= 1'b0;
             fetch_row_s0 <= 12'd0;
             fetch_row_s1 <= 12'd0;
-            pp_rd_sync   <= 2'b00;        // rd init 0 -> wr = ~0 = 1 (opposite)
         end else begin
             ls_sync      <= {ls_sync[0], ls_toggle_pix};
             ls_sync_prev <= ls_sync[1];
             fetch_row_s0 <= fetch_row_pix;   // stable between line_starts
             fetch_row_s1 <= fetch_row_s0;
-            pp_rd_sync   <= {pp_rd_sync[0], ping_pong_rd};
         end
     end
     wire line_start_sys = ls_sync[1] ^ ls_sync_prev;
@@ -221,6 +245,10 @@ module plane_fetch #(
             m_axi_araddr  <= 32'd0;
             rd_wd         <= 13'd0;
             read_abort    <= 1'b0;
+            ready_buf     <= 2'd0;
+            prev_ready    <= 2'd1;       // distinct from ready_buf at init
+            wr_buf_q      <= 2'd2;       // the third buffer
+            ready_tgl     <= 1'b0;
         end else begin
             fetch_done <= 1'b0;
             read_abort <= 1'b0;
@@ -233,6 +261,9 @@ module plane_fetch #(
                         m_axi_araddr  <= burst_addr;     // burst_idx = 0
                         m_axi_arvalid <= 1'b1;
                         rd_wd         <= 13'd0;
+                        // Fill the one buffer that is neither ready nor
+                        // prev-ready (0+1+2 = 3, so the third = 3 - the two).
+                        wr_buf_q      <= 2'd3 - ready_buf - prev_ready;
                         state         <= S_AR;
                     end
                 end
@@ -257,7 +288,13 @@ module plane_fetch #(
                         wr_idx <= wr_idx + 11'd1;
                         if (m_axi_rlast) begin
                             if (burst_idx == n_bursts - 7'd1) begin
-                                state <= S_DONE;
+                                // Row fully written: publish it.  Only here
+                                // (success), never on the abort paths, so the
+                                // reader never adopts a partially-filled buffer.
+                                prev_ready <= ready_buf;
+                                ready_buf  <= wr_buf_q;
+                                ready_tgl  <= ~ready_tgl;
+                                state      <= S_DONE;
                             end else begin
                                 burst_idx     <= burst_idx + 7'd1;
                                 m_axi_araddr  <= row_base + (32'(burst_idx + 7'd1) << $clog2(BURST_BYTES));
