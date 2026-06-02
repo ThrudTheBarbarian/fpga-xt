@@ -234,7 +234,15 @@ if {$flow eq "impl" || $flow eq "bit"} {
     # critical path (sally_mem BRAM -> CPU bank/ALU) is route-bound after the
     # cascade fix — the BRAMs drift away from their consuming logic inside the
     # pblock.  ExtraTimingOpt pulls them tighter; pure placement, no RTL.
-    place_design -directive ExtraTimingOpt
+    # Overridable (PLACE_DIRECTIVE env) to retry a different placement when
+    # clk_sally lands on the marginal side at 120 MHz (e.g. Explore) — the
+    # non-project flow's "different seed".
+    set place_dir ExtraTimingOpt
+    if {[info exists ::env(PLACE_DIRECTIVE)] && $::env(PLACE_DIRECTIVE) ne ""} {
+        set place_dir $::env(PLACE_DIRECTIVE)
+    }
+    puts ">> place_design -directive $place_dir"
+    place_design -directive $place_dir
     # phys_opt_design runs after placement and applies physical optimisations
     # (e.g., replicating high-fanout drivers near their loads, retiming small
     # bits of logic across registers).  Often recovers 0.1-0.3 ns on marginal

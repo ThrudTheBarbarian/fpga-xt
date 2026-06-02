@@ -138,7 +138,7 @@ echo ">> running vivado (flow=$FLOW top=$TOP part=$PART threads=$MAX_THREADS)"
 # to ssh; the inner single quotes wrap the vivado.bat path for the `&` call
 # operator. $env:MAX_THREADS pushes the value through to build.tcl's
 # [info exists ::env(MAX_THREADS)] check.
-ssh "$REMOTE" "Set-Location '$REMOTE_DIR'; \$env:MAX_THREADS='$MAX_THREADS'; \$env:XT_CPU='${XT_CPU:-}'; & '$VIVADO_BAT' -mode batch -nojournal -nolog -source build.tcl -tclargs $FLOW $TOP $PART"
+ssh "$REMOTE" "Set-Location '$REMOTE_DIR'; \$env:MAX_THREADS='$MAX_THREADS'; \$env:XT_CPU='${XT_CPU:-}'; \$env:PLACE_DIRECTIVE='${PLACE_DIRECTIVE:-}'; & '$VIVADO_BAT' -mode batch -nojournal -nolog -source build.tcl -tclargs $FLOW $TOP $PART"
 
 # Pull artefacts back ------------------------------------------------------
 echo ">> pulling build/ -> $LOCAL_BUILD/"

@@ -108,17 +108,17 @@ module fpga_xt_top (
         // ceiling ~133-155 MHz).
         .CLKFBOUT_MULT_F  (24.000),
         .DIVCLK_DIVIDE    (1),
-        // clk_sally = VCO 1200 / 12 = 100 MHz (~56x turbo).  120 MHz (DIV_F 10)
-        // is chronically placer-marginal: a build that closed clk_sally at
-        // only -0.022 ns / 3 failing sally_mem endpoints CRASHED the OS boot
-        // (corrupt CPU reads -> no READY) on 2026-06-02, while 100 MHz closes
-        // at +0.444 ns and boots reliably.  100 is the stable operating point;
-        // 120 needs real clk_sally timing closure (floorplan), not just a
-        // lucky seed.  clk_sys = VCO 1200 / 9 = 133.3 MHz (healthy margin vs
+        // clk_sally = VCO 1200 / 10 = 120 MHz — full xt6502 turbo (~67x), the
+        // proven operating point (held across ~2 weeks of builds).  It is
+        // placer-marginal though: one build closed at only -0.022 ns / 3
+        // failing sally_mem endpoints and CRASHED the OS boot (corrupt CPU
+        // reads -> no READY).  So clk_sally REQUIRES a placement that closes;
+        // DIV_F 12 (100 MHz, +0.444 ns) is the always-safe fallback if a seed
+        // won't close.  clk_sys = VCO 1200 / 9 = 133.3 MHz (healthy margin vs
         // the production 150 razor edge; ~11% slower emulated frame rate is
         // invisible behind the triple-buffered 60 Hz HDMI scan-out).  clk_pix
         // (MMCM #2) untouched = 148.4375 MHz 1080p60.
-        .CLKOUT0_DIVIDE_F (12.000),
+        .CLKOUT0_DIVIDE_F (10.000),
         .CLKOUT1_DIVIDE   (9),
         .BANDWIDTH        ("OPTIMIZED")
     ) u_mmcm1 (
