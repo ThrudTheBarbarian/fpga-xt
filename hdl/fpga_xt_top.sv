@@ -846,6 +846,28 @@ module fpga_xt_top (
     // ANTIC render tap → DDR3 writeback (video-arch §5, phase 2). All clk_sys
     // (= antic_top's clk_bus). Feeds antic_writeback (instantiated below) on
     // HP3; xl_buffer_ctrl picks which XL slot it fills and which plane 1 reads.
+
+    // ---- DDR startup gate (cold-boot robustness) ------------------------
+    // On a cold SD boot the PL runs before the PS↔PL DDR path is fully up.
+    // plane_fetch reads time out but RECOVER (they have a watchdog); the
+    // writeback's axi_line_writer has NO watchdog, so its first write burst
+    // waits forever for a BVALID the HP2 path can't yet give and WEDGES (HW:
+    // hp2_wbeat stuck at 16, ANTIC frames still climbing) → the XL buffer never
+    // fills → permanent garbage (a JTAG reconfig clears it because it restarts
+    // warm).  Hold off ALL PL→DDR traffic (writeback flush + both plane reads)
+    // for ~224 ms after reset so the first access happens once DDR/AXI is up.
+    logic [24:0] ddr_warm_cnt = '0;
+    logic        ddr_warm     = 1'b0;     // 0 for ~224 ms (clk_sys 150 MHz), then 1
+    always_ff @(posedge clk_sys) begin
+        if (rst_sys) begin
+            ddr_warm_cnt <= '0;
+            ddr_warm     <= 1'b0;
+        end else if (!ddr_warm) begin
+            if (&ddr_warm_cnt) ddr_warm <= 1'b1;
+            else               ddr_warm_cnt <= ddr_warm_cnt + 1'b1;
+        end
+    end
+
     wire        antic_wb_pix_valid;
     wire [7:0]  antic_wb_pix_pair;
     wire [7:0]  antic_wb_color_lo, antic_wb_color_hi;
@@ -982,7 +1004,7 @@ module fpga_xt_top (
         .color_lo     (antic_wb_color_lo),
         .color_hi     (antic_wb_color_hi),
         .atari_row    (antic_wb_atari_row),
-        .row_flush    (antic_wb_row_flush),
+        .row_flush    (antic_wb_row_flush & ddr_warm),   // held off until DDR/AXI up
         // Palette writes (mirror ANTIC's palette)
         .pal_we       (antic_wb_pal_we),
         .pal_idx      (antic_wb_pal_idx),
@@ -1132,7 +1154,7 @@ module fpga_xt_top (
     wire [31:0]              desk_pixel;
 
     plane_fetch u_plane_fetch0 (
-        .clk_sys (clk_sys), .rst_sys (rst_sys), .enable (1'b1),
+        .clk_sys (clk_sys), .rst_sys (rst_sys), .enable (ddr_warm),
         .surface_base (32'h3000_0000), .stride_bytes (16'd8192), .src_w (12'd1920),
         .m_axi_araddr (hp0_araddr), .m_axi_arlen (hp0_arlen), .m_axi_arsize (hp0_arsize),
         .m_axi_arburst (hp0_arburst), .m_axi_arvalid (hp0_arvalid),
@@ -1183,7 +1205,7 @@ module fpga_xt_top (
     wire [31:0] xl_pixel;
 
     plane_fetch u_plane_fetch1 (
-        .clk_sys (clk_sys), .rst_sys (rst_sys), .enable (1'b1),
+        .clk_sys (clk_sys), .rst_sys (rst_sys), .enable (ddr_warm),
         .surface_base (xl_surface_base), .stride_bytes (16'(XL_STRIDE)),
         .src_w (12'(XL_SRC_W)),
         .m_axi_araddr (hp3_araddr), .m_axi_arlen (hp3_arlen), .m_axi_arsize (hp3_arsize),
