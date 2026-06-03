@@ -43,6 +43,7 @@ module pokey #(
     // sets KEY_LATCH.
     input  wire        kbd_event_valid,
     input  wire [7:0]  kbd_event_code,
+    input  wire        kbd_release,         // all-keys-up strobe (clears SKSTAT key-down)
 
     // M25-3c POT scan. POKEY no longer runs the discharge counter
     // in HDL — peri_pot_bridge above antic_top hands shadow values
@@ -118,6 +119,7 @@ module pokey #(
         .random_byte          (random_byte),
         .kbd_event_valid      (kbd_event_valid),
         .kbd_event_code       (kbd_event_code),
+        .kbd_release          (kbd_release),
         .potgo_pulse          (potgo_pulse),
         .stimer_pulse         (stimer_pulse_w),
         .pot0                 (pot0),

@@ -89,6 +89,11 @@ module pokey_regs (
     input  wire        kbd_event_valid,
     input  wire  [7:0] kbd_event_code,
 
+    // Key-release strobe (1 cycle): clears the SKSTAT "key still pressed"
+    // bit so the OS auto-repeat stops.  kbd_event_valid sets it (key down);
+    // kbd_release clears it (all keys up) — driven from the USB-host PS.
+    input  wire        kbd_release,
+
     // M23-5: POT scan. potgo_pulse pulses for one cycle on a $D20B
     // write, kicking off a new scan inside pokey_pot. The POTn /
     // ALLPOT reads come back through this register file's read mux.
@@ -149,6 +154,7 @@ module pokey_regs (
     // M23-4 keyboard
     logic [7:0] kbcode_q;        // last received scan code (+ shift / ctrl)
     logic       key_latch_q;     // SKSTAT[5] — set on event, cleared on KBCODE read
+    logic       key_down_q;      // SKSTAT[2] (active-low) — a key is currently held
     logic [7:0] skctl_q;         // $D20F write — debounce / scan rate / serial mode
 
     // M23-6 IRQ + serial
@@ -206,6 +212,7 @@ module pokey_regs (
             audctl_q    <= 8'h00;
             kbcode_q    <= 8'h00;
             key_latch_q <= 1'b0;
+            key_down_q  <= 1'b0;
             skctl_q     <= 8'h00;
             irqen_q     <= 8'h00;
             irq_latch_q <= 8'h00;
@@ -221,6 +228,11 @@ module pokey_regs (
             if (re && (re_addr[3:0] == 4'h9)) begin
                 key_latch_q <= 1'b0;
             end
+            // SKSTAT "key still pressed" (bit 2, active-low): a key-down event
+            // sets it; the PS clears it when all keys are released, so the OS
+            // auto-repeat runs only while a key is genuinely held.
+            if (kbd_event_valid)  key_down_q <= 1'b1;
+            else if (kbd_release) key_down_q <= 1'b0;
 
             // ---- Serial input byte capture (M23-6) -----
             if (ser_in_byte_pulse) serin_q <= ser_in_byte;
@@ -301,16 +313,19 @@ module pokey_regs (
             4'hE: rdata = ~irq_pending;  // IRQST (0 = pending; bit 3 live)
             // SKSTAT layout (Atari):
             //   bit 7 = SHIFT key live (kbcode_q[6])
-            //   bit 6 = KEY_DOWN live   (no press/release tracking yet → 0)
+            //   bit 6 = KEY_DOWN live   (0 — covered by bit 2 below)
             //   bit 5 = KEY_LATCH       (1 = event waiting; cleared on
             //                            KBCODE read)
             //   bit 4 = SER FRAMING ERR (from SIO state machine)
             //   bit 3 = SER INPUT OVERRUN
-            //   bit 2 = SER INPUT BUSY  (1 = receiving)
-            //   bits 1..0 = unused (always 0)
+            //   bit 2 = KEY still pressed (active-low: 0 = a key is held).
+            //           The OS auto-repeat reads this bit; it must release
+            //           between taps or every key repeats forever.
+            //   bit 1 = SER INPUT BUSY  (1 = receiving)
+            //   bit 0 = unused (always 0)
             4'hF: rdata = {kbcode_q[6], 1'b0, key_latch_q,
                            ser_framing_err, ser_input_overrun,
-                           ser_input_busy, 2'b00};
+                           ~key_down_q, ser_input_busy, 1'b0};
             default: rdata = 8'h00;
         endcase
     end

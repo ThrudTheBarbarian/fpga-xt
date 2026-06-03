@@ -444,6 +444,8 @@ module fpga_xt_top (
     // keyboard IRQ).  Bridge and antic_top both run on clk_sys, so no CDC.
     logic       kbd_event_valid_q;
     logic [7:0] kbd_event_code_q;
+    logic       kbd_release_q;        // $D4CD write — all-keys-up (clears SKSTAT key-down)
+    logic       break_pulse_q;        // $D4CB write — Atari BREAK (POKEY IRQST bit 7)
 
     // ====================================================================
     // AXI pipeline registers — HP1 (xt_blitter) → PS BD
@@ -914,6 +916,8 @@ module fpga_xt_top (
         .diag_wsync_overdue_count(),
         .kbd_event_valid    (kbd_event_valid_q),
         .kbd_event_code     (kbd_event_code_q),
+        .kbd_release        (kbd_release_q),
+        .kbd_break_pulse    (break_pulse_q),
         .spi_clk            (),
         .spi_mosi           (),
         .spi_miso           (1'b0),
@@ -1493,14 +1497,24 @@ module fpga_xt_top (
     // $D4Ax/$D4Dx, so $D4CF is free.  Gated on bl_bridge_we (PS-originated)
     // so a stray SALLY write can't fake a keypress.  ASCII->KBCODE mapping
     // is done PS-side.  (OOC build: bl_bridge_we is tied 0, so this is inert.)
-    wire kbd_inject_we = bl_bridge_we && (bridge_bus_addr == 16'hD4CF);
+    // $D4CF = key-down (KBCODE + keyboard IRQ), $D4CD = all-keys-up (clears the
+    // SKSTAT key-down so the OS auto-repeat stops), $D4CB = Atari BREAK (POKEY
+    // IRQST bit 7, a separate source from the KBCODE matrix).  All free in the
+    // $D4Cx I/O gap; gated on bl_bridge_we so only the PS can drive them.
+    wire kbd_inject_we  = bl_bridge_we && (bridge_bus_addr == 16'hD4CF);
+    wire kbd_release_we = bl_bridge_we && (bridge_bus_addr == 16'hD4CD);
+    wire kbd_break_we   = bl_bridge_we && (bridge_bus_addr == 16'hD4CB);
     always_ff @(posedge clk_sys) begin
         if (rst_sys) begin
             kbd_event_valid_q <= 1'b0;
             kbd_event_code_q  <= 8'h00;
+            kbd_release_q     <= 1'b0;
+            break_pulse_q     <= 1'b0;
         end else begin
             kbd_event_valid_q <= kbd_inject_we;          // 1-cycle pulse
             if (kbd_inject_we) kbd_event_code_q <= bl_bridge_data;
+            kbd_release_q     <= kbd_release_we;          // 1-cycle pulse
+            break_pulse_q     <= kbd_break_we;            // 1-cycle pulse
         end
     end
 

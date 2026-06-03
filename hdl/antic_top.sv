@@ -146,6 +146,8 @@ module antic_top #(
     // into clk_bus before it reaches this port.
     input  wire        kbd_event_valid,
     input  wire [7:0]  kbd_event_code,
+    input  wire        kbd_release,         // all-keys-up strobe -> SKSTAT key-down clear
+    input  wire        kbd_break_pulse,     // F12 -> Atari BREAK (OR'd with the SIO break)
 
     // ---- Peripheral RP link (M25-2 + M25-2c-rev + M25-3c) --------------
     // The peri-RP2354B handles POT / SIO / SD card. peri_pot_bridge
@@ -594,6 +596,7 @@ module antic_top #(
         .rdata                (pokey_l_read_data),
         .kbd_event_valid      (kbd_event_valid),
         .kbd_event_code       (kbd_event_code),
+        .kbd_release          (kbd_release),
         .shadow_pot0          (pot_shadow_0),
         .shadow_pot1          (pot_shadow_1),
         .shadow_pot2          (pot_shadow_2),
@@ -614,7 +617,7 @@ module antic_top #(
         .ser_out_complete     (sio_bridge_out_complete),
         .ser_in_byte_pulse    (sio_bridge_in_byte_pulse),
         .ser_in_byte          (sio_bridge_in_byte),
-        .break_key_pulse      (sio_bridge_break_key_pulse),
+        .break_key_pulse      (sio_bridge_break_key_pulse | kbd_break_pulse),
         .ser_framing_err      (sio_bridge_framing_err),
         .ser_input_overrun    (sio_bridge_input_overrun),
         .ser_input_busy       (sio_bridge_input_busy),
@@ -647,6 +650,7 @@ module antic_top #(
         .rdata                (pokey_r_read_data),
         .kbd_event_valid      (1'b0),
         .kbd_event_code       (8'h00),
+        .kbd_release          (1'b0),
         .shadow_pot0          (8'h00),
         .shadow_pot1          (8'h00),
         .shadow_pot2          (8'h00),
