@@ -303,6 +303,29 @@ with open(_user_cmake, "a") as _f:
     _f.write(")\n")
 print(f">> UserConfig.cmake: {len(_app_srcs)} app + {len(_tu_srcs)} TinyUSB sources -> {_user_cmake}")
 
+# --- bump stack sizes for the USB stack + interrupt handler --------------
+# Defaults are tiny: main stack 8KB, IRQ stack only 1KB.  The USB ISR runs on
+# the IRQ stack and does a lot (EHCI async/periodic schedule walks,
+# hcd_event_xfer_complete, usb_logf's 256-byte vsnprintf buffer), and the deep
+# enumeration call chain in tuh_task uses the main stack — both overflow and
+# corrupt adjacent memory (deterministic crashes / data aborts).  Bump both.
+_lds = os.path.join(WORKSPACE, "xtos", "src", "lscript.ld")
+with open(_lds, "r") as _f:
+    _lds_txt = _f.read()
+_lds_new = (_lds_txt
+    .replace("_STACK_SIZE = DEFINED(_STACK_SIZE) ? _STACK_SIZE : 0x2000;",
+             "_STACK_SIZE = DEFINED(_STACK_SIZE) ? _STACK_SIZE : 0x10000;")
+    .replace("_IRQ_STACK_SIZE = DEFINED(_IRQ_STACK_SIZE) ? _IRQ_STACK_SIZE : 1024;",
+             "_IRQ_STACK_SIZE = DEFINED(_IRQ_STACK_SIZE) ? _IRQ_STACK_SIZE : 0x8000;"))
+if _lds_new != _lds_txt:
+    try:
+        os.chmod(_lds, 0o644)
+    except OSError:
+        pass
+    with open(_lds, "w") as _f:
+        _f.write(_lds_new)
+    print(">> bumped _STACK_SIZE=0x10000 _IRQ_STACK_SIZE=0x8000 in lscript.ld")
+
 status = app.build()
 print(f">> xtos build status: {status}")
 
