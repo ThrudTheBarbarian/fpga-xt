@@ -58,7 +58,7 @@ HDL_SRCS := \
 
 BUILD_DIR := build
 
-.PHONY: all smoke snoop read vbeam dl_parse prior nmi wsync palette dma_master mem_read_mux draw_regs pokey pokey_i2s sally sally_mem sally_arb bank_xlat hwreg_rd_cdc legacy_upscale plane_compositor plane_fetch axi_line_writer antic_writeback xl_buffer_ctrl antic_raster antic_seq antic_modes antic_display pia_regs peri_link joy_link joy_bridge peri_bridge os_rom_load klaus lint clean xt_blitter sally_stack sally_isa sprite_regs sprite_fetcher sprite_compositor xt6502 boot boot_trace
+.PHONY: all smoke snoop read vbeam dl_parse prior nmi wsync palette dma_master mem_read_mux draw_regs pokey pokey_i2s sally sally_mem sally_arb bank_xlat hwreg_rd_cdc legacy_upscale plane_compositor plane_fetch axi_line_writer antic_writeback xl_buffer_ctrl antic_raster antic_seq antic_modes antic_display pia_regs peri_link joy_link joy_bridge peri_bridge os_rom_load klaus lint clean xt_blitter sally_stack sally_isa sprite_regs sprite_fetcher sprite_compositor xt6502 boot boot_trace plane_vscale disp_modef_wrap
 
 # Retired tests (2026-05-25): rp_bus, mode_f, char_modes, gfx_modes, pm, scroll,
 # dma_int, visual all instantiated the v1 rp_bus injection harness
@@ -659,6 +659,21 @@ plane_vscale: $(BUILD_DIR)/tb_plane_vscale.vvp
 
 $(BUILD_DIR)/tb_plane_vscale.vvp: $(HDL_DIR)/vbeam.sv $(HDL_DIR)/plane_compositor.sv $(HDL_DIR)/plane_fetch.sv axi_slave_mem.sv tb_plane_vscale.sv | $(BUILD_DIR)
 	$(IVERILOG) $(SV_FLAGS) -o $@ -s tb_plane_vscale $(HDL_DIR)/vbeam.sv $(HDL_DIR)/plane_compositor.sv $(HDL_DIR)/plane_fetch.sv axi_slave_mem.sv tb_plane_vscale.sv
+
+# ---- disp_modef_wrap — GR.8 (mode F) right-edge horizontal-WRAP repro --------
+# Drives plane_fetch+plane_compositor at the real XL config (scale 3) with
+# src_w large enough that n_bursts > 1, exposing plane_fetch's stale-burst_idx
+# AR address on burst 0 (right-edge source data lands at the left of the line
+# buffer => the right bar ghosts onto the left).  FAILS on the buggy RTL.
+disp_modef_wrap: $(BUILD_DIR)/tb_disp_modef_wrap.vvp
+	@echo "=== disp_modef_wrap — GR.8 right-edge wrap (display path) ==="
+	@$(VVP) -N $< | tee $(BUILD_DIR)/tb_disp_modef_wrap.log
+	@grep -q '\*\*\* DISP_MODEF_WRAP OK \*\*\*' $(BUILD_DIR)/tb_disp_modef_wrap.log || \
+	    (echo "FAIL: tb_disp_modef_wrap"; exit 1)
+	@echo "PASS: tb_disp_modef_wrap"
+
+$(BUILD_DIR)/tb_disp_modef_wrap.vvp: $(HDL_DIR)/vbeam.sv $(HDL_DIR)/plane_compositor.sv $(HDL_DIR)/plane_fetch.sv axi_slave_mem.sv tb_disp_modef_wrap.sv | $(BUILD_DIR)
+	$(IVERILOG) $(SV_FLAGS) -o $@ -s tb_disp_modef_wrap $(HDL_DIR)/vbeam.sv $(HDL_DIR)/plane_compositor.sv $(HDL_DIR)/plane_fetch.sv axi_slave_mem.sv tb_disp_modef_wrap.sv
 
 # ---- xl_buffer_ctrl — ANTIC->DDR triple-buffer index controller (video-arch §5)
 xl_buffer_ctrl: $(BUILD_DIR)/tb_xl_buffer_ctrl.vvp

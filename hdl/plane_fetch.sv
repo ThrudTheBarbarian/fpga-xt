@@ -243,7 +243,14 @@ module plane_fetch #(
                     if (line_pending && enable) begin
                         burst_idx     <= 7'd0;
                         wr_idx        <= 11'd0;
-                        m_axi_araddr  <= burst_addr;     // burst_idx = 0
+                        // Burst 0 = row start.  Do NOT use burst_addr here: burst_idx
+                        // is being cleared by the (non-blocking) assignment above, so
+                        // burst_addr still reflects the PREVIOUS row's final burst_idx
+                        // (n_bursts-1) — issuing burst 0's AR at the row's LAST chunk and
+                        // writing it into the FIRST line-buffer words (right edge aliased
+                        // onto the left of every scanline).  row_base already reflects the
+                        // row latched at line_start_sys.
+                        m_axi_araddr  <= row_base;
                         m_axi_arvalid <= 1'b1;
                         rd_wd         <= 13'd0;
                         state         <= S_AR;
