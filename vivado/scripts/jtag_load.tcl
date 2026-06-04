@@ -95,16 +95,18 @@ if {[info exists ::env(JTAG_DRY_RUN)]} {
 puts ">> connecting to hw_server"
 connect -url $hw_host
 
-# ---- System reset first (the "soft power-cycle") --------------------
-# Re-running over a LIVE image (A9 mid-AXI/IRQ) and then reconfiguring the
-# PL under it wedges the DAP (AP transaction timeout / "no targets" -> a
-# physical power-cycle).  A JTAG system reset returns the PS+PL to their
-# post-PoR state FIRST, so the halt/fpga/ps7_init below run from a clean
-# slate.  Removes the need to power-cycle between reloads.
-puts ">> system reset (clean slate — avoids the DAP wedge)"
-catch { targets -set -filter {name =~ "ARM*#0"} }
-catch { rst -system }
-after 2000
+# ---- Stop + core reset first (clean slate, no SD re-boot) -----------
+# Re-running over a LIVE image (A9 mid-AXI/IRQ) and then reconfiguring the PL
+# under it wedges the DAP (AP transaction timeout / "no targets" -> a physical
+# power-cycle).  Stop the A9 and reset just the CORE so its in-flight AXI/IRQ
+# activity is cleared before fpga/ps7_init.  Crucially `rst -processor` (unlike
+# `rst -system`) does NOT re-run the boot ROM, so on an SD-boot-mode board it
+# won't pull a stale FSBL from the SD card over our JTAG session.
+puts ">> stop + core reset (clean slate, no SD re-boot)"
+catch { targets -set -filter {name =~ "ARM*#0"}; stop }
+catch { rst -processor }
+catch { stop }
+after 300
 
 # ---- Halt the A9 before reconfig/ps7_init ---------------------------
 # So this can take over a board that's ALREADY running (e.g. an SD-booted
