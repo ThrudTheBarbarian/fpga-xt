@@ -95,6 +95,17 @@ if {[info exists ::env(JTAG_DRY_RUN)]} {
 puts ">> connecting to hw_server"
 connect -url $hw_host
 
+# ---- System reset first (the "soft power-cycle") --------------------
+# Re-running over a LIVE image (A9 mid-AXI/IRQ) and then reconfiguring the
+# PL under it wedges the DAP (AP transaction timeout / "no targets" -> a
+# physical power-cycle).  A JTAG system reset returns the PS+PL to their
+# post-PoR state FIRST, so the halt/fpga/ps7_init below run from a clean
+# slate.  Removes the need to power-cycle between reloads.
+puts ">> system reset (clean slate — avoids the DAP wedge)"
+catch { targets -set -filter {name =~ "ARM*#0"} }
+catch { rst -system }
+after 2000
+
 # ---- Halt the A9 before reconfig/ps7_init ---------------------------
 # So this can take over a board that's ALREADY running (e.g. an SD-booted
 # image) without ps7_init re-initialising DDR under a live CPU (-> hang)
