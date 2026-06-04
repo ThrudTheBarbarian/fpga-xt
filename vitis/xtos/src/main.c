@@ -254,6 +254,16 @@ static int g_mon = 0;        /* periodic status tick on/off */
  * (debug only now); bits[3:1] = XL plane scale (0 => default 3). */
 static u8 g_gp0 = 0x00;
 
+/* `*key 1` — bridge the serial console to the Atari keyboard while the USB host
+ * is out of service: each typed char is translated to an Atari KBCODE and poked
+ * to POKEY via the GP0 keyboard-inject ($D4CF) + release ($D4CD), so typing in
+ * the terminal lands in BASIC.  `*key 0` (typed in passthrough) exits. */
+#define XT_KBD_INJECT   (XT_BLITTER_BASE + 0x1Fu)   /* $D4CF: KBCODE + keyboard IRQ */
+#define XT_KBD_RELEASE  (XT_BLITTER_BASE + 0x1Du)   /* $D4CD: all-keys-up (no auto-repeat) */
+#define XT_KBD_BREAK    (XT_BLITTER_BASE + 0x1Bu)   /* $D4CB: Atari BREAK (POKEY IRQST b7) */
+static int      g_key_passthru = 0;
+static unsigned g_key_match    = 0;  /* progress matching the "*key 0" exit sentinel */
+
 /* Lightweight UART1 char I/O (no FIFO reset, unlike uart1_raw_puts) so it
  * interleaves cleanly with xil_printf.  UART1 @0xE0001000: SR @0x2C
  * (bit1=RXEMPTY, bit4=TXFULL), data FIFO @0x30, CR @0x00. */
@@ -301,6 +311,8 @@ static void repl_help(void)
       "  scale <1..5>     XL plane scale (gp0_ctrl[3:1]); sweep for blend correlation\r\n"
       "  hdmi             re-run SiI9022 output init (sii_enable_output)\r\n"
       "  diag             decode GP0 diag word + measured H_RES/V_RES\r\n"
+      "  *key <0|1>       serial->Atari keyboard passthrough; '*key 0' to exit\r\n"
+      "  speed <n>        SALLY clock multiplier (DECIMAL); 1=boot-safe, raise after READY\r\n"
       "  mon <0|1>        periodic 1s status tick off/on\r\n"
       "  reset            soft-reset the PS (SLCR) -> full reboot (FSBL/DDR/PL)\r\n"
       "  help             this list\r\n"
@@ -326,6 +338,78 @@ static void repl_status(void)
                ((unsigned)(vh & 0x0F) << 8) | vl);
 }
 
+/* ASCII -> Atari KBCODE (bit6 = Shift, bit7 = Ctrl); 0xFF = no Atari key.
+ * Letters map to the unshifted key so the Atari's power-on caps gives uppercase
+ * (BASIC-friendly); shifted symbols carry bit6.  Rare graphics symbols may need
+ * tweaking vs the exact XL layout, but all of BASIC's character set is here. */
+static u8 ascii_to_kbcode(int c)
+{
+    static const u8 LET[26] = {  /* A..Z key codes */
+      0x3F,0x15,0x12,0x3A,0x2A,0x38,0x3D,0x39,0x0D,0x01,0x05,0x00,0x25,
+      0x23,0x08,0x0A,0x2F,0x28,0x3E,0x2D,0x0B,0x10,0x2E,0x16,0x2B,0x17 };
+    static const u8 DIG[10] = {  /* 0..9 unshifted */
+      0x32,0x1F,0x1E,0x1A,0x18,0x1D,0x1B,0x33,0x35,0x30 };
+    if (c >= 'a' && c <= 'z') return LET[c - 'a'];
+    if (c >= 'A' && c <= 'Z') return LET[c - 'A'];   /* both -> uppercase */
+    if (c >= '0' && c <= '9') return DIG[c - '0'];
+    switch (c) {
+      case ' ':  return 0x21;
+      case '\r': case '\n': return 0x0C;             /* Return */
+      case 0x08: case 0x7F: return 0x34;             /* Backspace/Delete */
+      case '\t': return 0x2C;                        /* Tab */
+      case 0x1B: return 0x1C;                        /* Esc */
+      case '-': return 0x0E;  case '=': return 0x0F;  case ';': return 0x02;
+      case ',': return 0x20;  case '.': return 0x22;  case '/': return 0x26;
+      case '+': return 0x06;  case '*': return 0x07;  case '<': return 0x36;
+      case '>': return 0x37;
+      case '!': return 0x1F|0x40;  case '"': return 0x1E|0x40;
+      case '#': return 0x1A|0x40;  case '$': return 0x18|0x40;
+      case '%': return 0x1D|0x40;  case '&': return 0x1B|0x40;
+      case '\'':return 0x33|0x40;  case '@': return 0x35|0x40;
+      case '(': return 0x30|0x40;  case ')': return 0x32|0x40;
+      case ':': return 0x02|0x40;  case '?': return 0x26|0x40;
+      case '[': return 0x20|0x40;  case ']': return 0x22|0x40;
+      case '_': return 0x0E|0x40;  case '|': return 0x0F|0x40;
+      case '\\':return 0x06|0x40;  case '^': return 0x07|0x40;
+      default:  return 0xFF;
+    }
+}
+
+/* Inject one serial char as a keystroke: KBCODE down then up (release stops the
+ * OS auto-repeat), paced ~50 cps so the Atari editor's per-frame getkey keeps
+ * up (no dropped chars when pasting a listing). */
+static void key_inject_ascii(int c)
+{
+    if (c == 0x03) {                      /* Ctrl-C -> Atari BREAK (stop RUN) */
+        Xil_Out8(XT_KBD_BREAK, 0);
+        usleep(20000);
+        return;
+    }
+    u8 kb = ascii_to_kbcode(c);
+    if (kb == 0xFFu) return;
+    Xil_Out8(XT_KBD_INJECT,  kb);
+    Xil_Out8(XT_KBD_RELEASE, 0);
+    usleep(20000);
+}
+
+/* Passthrough char handler: watch for the literal "*key 0" to exit; everything
+ * else (after flushing any buffered partial-match) goes to the Atari keyboard. */
+static void key_passthru_char(int c)
+{
+    static const char EXIT[] = "*key 0";
+    if (c == EXIT[g_key_match]) {
+        g_key_match++;
+        if (EXIT[g_key_match] == '\0') {             /* whole sentinel matched */
+            g_key_passthru = 0; g_key_match = 0;
+            uart1_puts("\r\n>> key passthrough OFF\r\n> ");
+        }
+        return;                                       /* buffer the partial match */
+    }
+    for (unsigned i = 0; i < g_key_match; i++) key_inject_ascii(EXIT[i]);
+    g_key_match = (c == EXIT[0]) ? 1u : 0u;           /* this char may restart it */
+    if (g_key_match == 0u) key_inject_ascii(c);
+}
+
 /* Parse + run one command line (modified in place by the tokenizer). */
 static void repl_exec(char *cmd)
 {
@@ -341,6 +425,27 @@ static void repl_exec(char *cmd)
     if (argc == 0) return;
 
     if (!strcmp(argv[0], "help")) { repl_help(); return; }
+
+    if (!strcmp(argv[0], "*key")) {
+        g_key_passthru = (argc > 1 && strtoul(argv[1], NULL, 16) != 0);
+        g_key_match = 0;
+        uart1_puts(g_key_passthru
+          ? "  key passthrough ON — type into BASIC; Ctrl-C = BREAK; '*key 0' exits\r\n"
+          : "  key passthrough OFF\r\n");
+        return;
+    }
+
+    if (!strcmp(argv[0], "speed")) {     /* SALLY clock_mult (DECIMAL) -> $D4CA */
+        if (argc < 2) {
+            uart1_puts("  usage: speed <n>  (decimal; 1 = safe/boot, then dial up)\r\n"
+                       "  clean grades: 1 2 3 4 5 6 9 12 18 30 68 (others fall back to 1x)\r\n");
+            return;
+        }
+        unsigned n = strtoul(argv[1], NULL, 10);
+        Xil_Out8(XT_BLITTER_BASE + 0x1Au, (u8)n);
+        xil_printf("  SALLY clock_mult = %u (boot at 1, raise after READY)\r\n", n);
+        return;
+    }
 
     if (!strcmp(argv[0], "mr")) {
         if (argc < 2) { uart1_puts("usage: mr <addr> [n]\r\n"); return; }
@@ -677,6 +782,7 @@ int main(void)
         /* Interactive: drain RX, echo, dispatch on CR/LF. */
         int c;
         while ((c = uart1_getc()) >= 0) {
+            if (g_key_passthru) { key_passthru_char(c); continue; }
             if (c == '\r' || c == '\n') {
                 uart1_puts("\r\n");
                 line[ll] = '\0';

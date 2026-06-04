@@ -109,6 +109,7 @@ module sally_clock #(
             8'd18: sub_threshold = CTR_W'((BASE_DIV / 18) - 1);   // clean: BASE_DIV=90
             8'd30: sub_threshold = CTR_W'((BASE_DIV / 30) - 1);   // clean: BASE_DIV=90
             8'd45: sub_threshold = CTR_W'((BASE_DIV / 45) - 1);   // clean: BASE_DIV=90
+            8'd68: sub_threshold = CTR_W'((BASE_DIV / 68) - 1);   // clean: BASE_DIV=68 (PRODUCTION turbo — without this, 68 hits default=1x)
             8'd90: sub_threshold = CTR_W'((BASE_DIV / 90) - 1);   // clean: BASE_DIV=90
             default: sub_threshold = CTR_W'(BASE_DIV - 1);        // 1× fallback
         endcase

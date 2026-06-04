@@ -446,6 +446,7 @@ module fpga_xt_top (
     logic [7:0] kbd_event_code_q;
     logic       kbd_release_q;        // $D4CD write — all-keys-up (clears SKSTAT key-down)
     logic       break_pulse_q;        // $D4CB write — Atari BREAK (POKEY IRQST bit 7)
+    logic [7:0] clock_mult_q;         // $D4CA write — SALLY speed multiplier (resets to 1x)
 
     // ====================================================================
     // AXI pipeline registers — HP1 (xt_blitter) → PS BD
@@ -613,7 +614,7 @@ module fpga_xt_top (
         .clk           (clk_sally),
         .rst           (rst_sally),
         .phi2_tick     (phi2_tick),
-        .clock_mult    (8'd68),
+        .clock_mult    (clock_mult_sally),   // runtime-set via $D4CA (REPL `speed`); resets to 1x
         .halt_n        (1'b1),         // bypassed at CLOCK_MULT>=2
         .wsync_rdy_n   (wsync_rdy_n),
         .busy_n        (~(mem_busy_n | hwreg_rd_busy)),  // stall on sally_mem cache miss OR hwreg-read CDC round-trip
@@ -1504,18 +1505,33 @@ module fpga_xt_top (
     wire kbd_inject_we  = bl_bridge_we && (bridge_bus_addr == 16'hD4CF);
     wire kbd_release_we = bl_bridge_we && (bridge_bus_addr == 16'hD4CD);
     wire kbd_break_we   = bl_bridge_we && (bridge_bus_addr == 16'hD4CB);
+    // $D4CA = SALLY speed (clock_mult) register.  Resets to 1 (lockstep / safe
+    // boot); the PS dials it up at runtime via the REPL `speed` command once the
+    // OS has booted, so turbo doesn't have to survive cold boot.
+    wire clock_mult_we  = bl_bridge_we && (bridge_bus_addr == 16'hD4CA);
     always_ff @(posedge clk_sys) begin
         if (rst_sys) begin
             kbd_event_valid_q <= 1'b0;
             kbd_event_code_q  <= 8'h00;
             kbd_release_q     <= 1'b0;
             break_pulse_q     <= 1'b0;
+            clock_mult_q      <= 8'd1;
         end else begin
             kbd_event_valid_q <= kbd_inject_we;          // 1-cycle pulse
             if (kbd_inject_we) kbd_event_code_q <= bl_bridge_data;
             kbd_release_q     <= kbd_release_we;          // 1-cycle pulse
             break_pulse_q     <= kbd_break_we;            // 1-cycle pulse
+            if (clock_mult_we) clock_mult_q <= bl_bridge_data;
         end
+    end
+
+    // clock_mult is clk_sys; sally_clock samples it in clk_sally.  It's quasi-
+    // static (changed only by a REPL poke), so a plain 2-FF sync is fine — a
+    // 1-cycle transient on a change just blips the step rate, no data hazard.
+    (* ASYNC_REG = "TRUE" *) logic [7:0] clock_mult_s1, clock_mult_sally;
+    always_ff @(posedge clk_sally) begin
+        clock_mult_s1    <= clock_mult_q;
+        clock_mult_sally <= clock_mult_s1;
     end
 
     // Mux: bridge takes priority when bl_bridge_we is asserted.
