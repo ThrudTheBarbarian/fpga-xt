@@ -254,15 +254,15 @@ static int g_mon = 0;        /* periodic status tick on/off */
  * (debug only now); bits[3:1] = XL plane scale (0 => default 3). */
 static u8 g_gp0 = 0x00;
 
-/* `*key 1` — bridge the serial console to the Atari keyboard while the USB host
- * is out of service: each typed char is translated to an Atari KBCODE and poked
- * to POKEY via the GP0 keyboard-inject ($D4CF) + release ($D4CD), so typing in
- * the terminal lands in BASIC.  `*key 0` (typed in passthrough) exits. */
+/* Serial-console -> Atari keyboard bridge (while the USB host is out of service):
+ * each typed char is translated to an Atari KBCODE and poked to POKEY via the GP0
+ * keyboard-inject ($D4CF) + release ($D4CD), so typing in the terminal lands in
+ * BASIC.  A literal '{' enters passthrough, '}' ends it — braces aren't on the
+ * Atari keyboard, so they never collide with a pasted listing (even mid-line). */
 #define XT_KBD_INJECT   (XT_BLITTER_BASE + 0x1Fu)   /* $D4CF: KBCODE + keyboard IRQ */
 #define XT_KBD_RELEASE  (XT_BLITTER_BASE + 0x1Du)   /* $D4CD: all-keys-up (no auto-repeat) */
 #define XT_KBD_BREAK    (XT_BLITTER_BASE + 0x1Bu)   /* $D4CB: Atari BREAK (POKEY IRQST b7) */
 static int      g_key_passthru = 0;
-static unsigned g_key_match    = 0;  /* progress matching the "*key 0" exit sentinel */
 
 /* Lightweight UART1 char I/O (no FIFO reset, unlike uart1_raw_puts) so it
  * interleaves cleanly with xil_printf.  UART1 @0xE0001000: SR @0x2C
@@ -311,7 +311,7 @@ static void repl_help(void)
       "  scale <1..5>     XL plane scale (gp0_ctrl[3:1]); sweep for blend correlation\r\n"
       "  hdmi             re-run SiI9022 output init (sii_enable_output)\r\n"
       "  diag             decode GP0 diag word + measured H_RES/V_RES\r\n"
-      "  *key <0|1>       serial->Atari keyboard passthrough; '*key 0' to exit\r\n"
+      "  { ... }          serial->Atari keyboard passthrough ('key' or '{' in, '}' out)\r\n"
       "  speed <n>        SALLY clock multiplier (DECIMAL); 1=boot-safe, raise after READY\r\n"
       "  mon <0|1>        periodic 1s status tick off/on\r\n"
       "  reset            soft-reset the PS (SLCR) -> full reboot (FSBL/DDR/PL)\r\n"
@@ -376,38 +376,51 @@ static u8 ascii_to_kbcode(int c)
 }
 
 /* Inject one serial char as a keystroke: KBCODE down then up (release stops the
- * OS auto-repeat), paced ~50 cps so the Atari editor's per-frame getkey keeps
- * up (no dropped chars when pasting a listing). */
+ * OS auto-repeat).  No pacing here — the loop meters chars out of the ring (see
+ * key_paste_tick), so the UART RX FIFO is drained every pass and never overflows. */
 static void key_inject_ascii(int c)
 {
-    if (c == 0x03) {                      /* Ctrl-C -> Atari BREAK (stop RUN) */
-        Xil_Out8(XT_KBD_BREAK, 0);
-        usleep(20000);
-        return;
-    }
+    if (c == 0x03) { Xil_Out8(XT_KBD_BREAK, 0); return; }   /* Ctrl-C -> Atari BREAK */
     u8 kb = ascii_to_kbcode(c);
     if (kb == 0xFFu) return;
     Xil_Out8(XT_KBD_INJECT,  kb);
     Xil_Out8(XT_KBD_RELEASE, 0);
-    usleep(20000);
 }
 
-/* Passthrough char handler: watch for the literal "*key 0" to exit; everything
- * else (after flushing any buffered partial-match) goes to the Atari keyboard. */
-static void key_passthru_char(int c)
+
+/* Paste ring buffer.  The REPL loop drains the UART into here every pass (fast,
+ * non-blocking) so a fast paste can't overflow the 64-byte UART RX FIFO; chars
+ * are then metered OUT at keyboard pace below.  8 KB holds a big listing. */
+static char     s_kr[8192];
+static unsigned s_kr_head, s_kr_tail, s_kr_pace;
+static void kr_push(char c) { unsigned n = (s_kr_head + 1u) & (sizeof(s_kr)-1u);
+                              if (n != s_kr_tail) { s_kr[s_kr_head] = c; s_kr_head = n; } }
+static int  kr_pop(void)    { if (s_kr_tail == s_kr_head) return -1;
+                              int c = (unsigned char)s_kr[s_kr_tail];
+                              s_kr_tail = (s_kr_tail + 1u) & (sizeof(s_kr)-1u); return c; }
+static int  kr_peek(void)   { return (s_kr_tail == s_kr_head) ? -1 : (unsigned char)s_kr[s_kr_tail]; }
+
+/* One loop pass of metered paste injection (loop runs ~1 ms/pass, so the pace
+ * counts are ~milliseconds): ~20 ms between chars (~50 cps), 60 ms before a
+ * repeated key (beat the OS KEYDEL debounce), 100 ms after Return (let BASIC
+ * tokenize the line before the next one arrives). */
+static void key_paste_tick(void)
 {
-    static const char EXIT[] = "*key 0";
-    if (c == EXIT[g_key_match]) {
-        g_key_match++;
-        if (EXIT[g_key_match] == '\0') {             /* whole sentinel matched */
-            g_key_passthru = 0; g_key_match = 0;
-            uart1_puts("\r\n>> key passthrough OFF\r\n> ");
-        }
-        return;                                       /* buffer the partial match */
+    if (s_kr_pace) { s_kr_pace--; return; }
+    int c = kr_pop();
+    if (c < 0) return;
+    if (c == '}') {                       /* '}' ends passthrough (not an Atari key) */
+        g_key_passthru = 0; s_kr_head = s_kr_tail = 0;
+        uart1_puts("\r\n>> key passthrough OFF\r\n> ");
+        return;
     }
-    for (unsigned i = 0; i < g_key_match; i++) key_inject_ascii(EXIT[i]);
-    g_key_match = (c == EXIT[0]) ? 1u : 0u;           /* this char may restart it */
-    if (g_key_match == 0u) key_inject_ascii(c);
+    key_inject_ascii(c);
+    int nx = kr_peek();
+    u8  kbc = ascii_to_kbcode(c);
+    u8  kbn = (nx >= 0) ? ascii_to_kbcode(nx) : 0xFFu;
+    if      (c == '\r' || c == '\n')          s_kr_pace = 100u;  /* tokenize gap   */
+    else if (kbn != 0xFFu && kbn == kbc)      s_kr_pace = 60u;   /* repeated key   */
+    else                                      s_kr_pace = 20u;   /* ~50 cps        */
 }
 
 /* Parse + run one command line (modified in place by the tokenizer). */
@@ -426,12 +439,9 @@ static void repl_exec(char *cmd)
 
     if (!strcmp(argv[0], "help")) { repl_help(); return; }
 
-    if (!strcmp(argv[0], "*key")) {
-        g_key_passthru = (argc > 1 && strtoul(argv[1], NULL, 16) != 0);
-        g_key_match = 0;
-        uart1_puts(g_key_passthru
-          ? "  key passthrough ON — type into BASIC; Ctrl-C = BREAK; '*key 0' exits\r\n"
-          : "  key passthrough OFF\r\n");
+    if (!strcmp(argv[0], "key")) {       /* "key" = enter passthrough (same as '{') */
+        g_key_passthru = 1;
+        uart1_puts(">> key passthrough ON — '}' ends it; Ctrl-C = BREAK\r\n");
         return;
     }
 
@@ -768,7 +778,10 @@ int main(void)
      * counter still services hot-plug (auto-enable output on HDMI plug),
      * toggles the liveness LED, and prints a status line when `mon` is on. */
     uart1_rx_enable();
-    usb_hid_init();                     /* bring up the USB0 host (TinyUSB) */
+    /* The USB0 host (TinyUSB) is not started here.  Keyboard input comes via the
+     * serial '{ }' passthrough, and USB HID will live on an external companion;
+     * leaving the ChipIdea host's ISR armed serves no purpose and draws bus power. */
+    /* usb_hid_init(); */
     repl_help();
     uart1_puts("> ");
 
@@ -778,11 +791,16 @@ int main(void)
     unsigned desk_cleared = 0;          /* one-shot deferred desktop clear */
 
     while (1) {
-        usb_hid_task();                 /* poll the USB host stack */
+        /* usb_hid_task(); */           /* USB host not started (see above) */
         /* Interactive: drain RX, echo, dispatch on CR/LF. */
         int c;
         while ((c = uart1_getc()) >= 0) {
-            if (g_key_passthru) { key_passthru_char(c); continue; }
+            if (g_key_passthru) { kr_push((char)c); continue; }   /* drain fast -> ring */
+            if (c == '{') {                                       /* enter passthrough */
+                g_key_passthru = 1;
+                uart1_puts("\r\n>> key passthrough ON — '}' ends it; Ctrl-C = BREAK\r\n");
+                continue;
+            }
             if (c == '\r' || c == '\n') {
                 uart1_puts("\r\n");
                 line[ll] = '\0';
@@ -796,6 +814,8 @@ int main(void)
                 uart1_putc((char)c);
             }
         }
+
+        if (g_key_passthru) key_paste_tick();   /* meter one queued paste char out */
 
         usleep(1000);                       /* 1 ms — pace the loop (echo ≤1ms) */
 

@@ -1505,10 +1505,11 @@ module fpga_xt_top (
     wire kbd_inject_we  = bl_bridge_we && (bridge_bus_addr == 16'hD4CF);
     wire kbd_release_we = bl_bridge_we && (bridge_bus_addr == 16'hD4CD);
     wire kbd_break_we   = bl_bridge_we && (bridge_bus_addr == 16'hD4CB);
-    // $D4CA = SALLY speed (clock_mult) register.  Resets to 1 (lockstep / safe
-    // boot); the PS dials it up at runtime via the REPL `speed` command once the
-    // OS has booted, so turbo doesn't have to survive cold boot.
-    wire clock_mult_we  = bl_bridge_we && (bridge_bus_addr == 16'hD4CA);
+    // $D4CA = SALLY speed (clock_mult) register — get/set by BOTH the 6502 (POKE,
+    // via the muxed bus below) and the A9 (GP0 / REPL `speed`).  Resets to 1
+    // (lockstep / safe boot); software dials it up after the OS reaches READY, so
+    // turbo never has to survive cold boot.  Read-back at $D4CA (overrides SEQ_HI).
+    wire clock_mult_we  = bl_we_mux && (bl_addr_mux == 16'hD4CA);
     always_ff @(posedge clk_sys) begin
         if (rst_sys) begin
             kbd_event_valid_q <= 1'b0;
@@ -1521,7 +1522,7 @@ module fpga_xt_top (
             if (kbd_inject_we) kbd_event_code_q <= bl_bridge_data;
             kbd_release_q     <= kbd_release_we;          // 1-cycle pulse
             break_pulse_q     <= kbd_break_we;            // 1-cycle pulse
-            if (clock_mult_we) clock_mult_q <= bl_bridge_data;
+            if (clock_mult_we) clock_mult_q <= bl_data_mux;
         end
     end
 
@@ -1688,7 +1689,7 @@ module fpga_xt_top (
                       : (hwreg_addr == 16'hD4C9)
                             ? bl_seq_counter_sally[7:0]
                       : (hwreg_addr == 16'hD4CA)
-                            ? bl_seq_counter_sally[15:8]
+                            ? clock_mult_sally       // SALLY speed register read-back (was SEQ_HI)
                       : is_blitter_reg
                             ? 8'hFF              // other blitter regs: no readback
                       : cdc_rd_data;             // ANTIC/GTIA/POKEY/PIA via read-back CDC
