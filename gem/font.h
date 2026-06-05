@@ -36,6 +36,10 @@ int   font_char_metrics(font *f, unsigned cp, int *lbear, int *rover);
 // top (accent line), ascent, half, descent, bottom (deepest descender).
 void  font_vmetrics(const font *f, int *top, int *ascent, int *half,
                     int *descent, int *bottom);
+// Fractional (sub-pixel) advances in 26.6 fixed (1/64 px), tracking included —
+// the basis of the NVDI fractional text calls (vqt_advance / vqt_f_extent).
+long  font_f_advance(font *f, unsigned cp);
+long  font_f_text_width(font *f, const char *s);
 
 // Draw NUL-terminated ASCII with the em box's top-left at (x,y), antialiased in
 // colour rgba over the existing pixels.  Clipped to the inclusive rect

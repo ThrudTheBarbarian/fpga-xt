@@ -179,6 +179,9 @@ instead of the screen, and the result blits back with `vro_cpyfm`.
 | v_bez_on / v_bez_off | 11 / sub 13 | ✓ | query/enable capability (always available) |
 | v_opnbm | 100 / sub 1 | ✓ | open an off-screen device-format bitmap as a workstation |
 | v_clsbm | 101 / sub 1 | ✓ | close an off-screen bitmap workstation (the v_opnbm pair) |
+| vst_arbpt | 246 | ✓ | select an arbitrary point size (every size is native on a scalable device) |
+| vqt_f_extent | 240 | ✓ | text extent with the width summed fractionally (rounded once — no per-glyph drift) |
+| vqt_advance | 247 | ✓ | one character's advance as integer + a 1/65536 px remainder (sub-pixel pen positioning) |
 
 ### Fonts
 

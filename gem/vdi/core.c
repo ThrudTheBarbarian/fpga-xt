@@ -357,6 +357,9 @@ void vdi_call(vdi_pb *pb) {
         case VDI_QF_ATTR:     op_qf_attr(pb);    break;
         case VDI_QT_ATTR:     op_qt_attr(pb);    break;
         case VDI_QT_FONTINFO: op_qt_fontinfo(pb); break;
+        case VDI_QT_F_EXTENT: op_qt_f_extent(pb); break;
+        case VDI_QT_ADVANCE:  op_qt_advance(pb);  break;
+        case VDI_ST_ARBPT:    op_st_arbpt(pb);    break;
         case VDI_SIN_MODE:    op_sin_mode(pb);   break;
         case VDI_LOCATOR:     op_locator(pb);    break;
         case VDI_VALUATOR:    op_valuator(pb);   break;

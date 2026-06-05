@@ -639,6 +639,28 @@ int main(void) {
     CHECK(dist[3] == font_ascent(font_at(ef, 24)));     // ascent line = font ascent
     CHECK(dist[3] + dist[1] <= font_height(font_at(ef, 24)) + 2);  // asc+desc ~ line
 
+    // vst_arbpt: arbitrary point size, reports metrics + returns the size used.
+    int aw = 0, ah = 0, acw = 0, ach = 0;
+    CHECK(vst_arbpt(he, 22, &aw, &ah, &acw, &ach) == 22);
+    CHECK(ach == font_height(font_at(ef, 22)));
+
+    // vqt_advance: integer advance + a sub-pixel remainder (1/65536 px).
+    vst_height(he, 24, NULL, NULL, NULL, NULL);
+    int ax = -1, ay = -1, rx = -1, ry = -1;
+    vqt_advance(he, 'W', &ax, &ay, &rx, &ry);
+    CHECK(ax > 0 && rx >= 0 && rx < 65536 && ay == 0);
+    double adv = ax + rx / 65536.0;                     // matches the 26.6 source
+    CHECK(adv > 0 && adv <= font_max_advance(font_at(ef, 24)) + 1);
+
+    // vqt_f_extent: fractional width is within a pixel of the integer extent for
+    // a short string, but never accumulates the per-glyph rounding drift.
+    int16_t ie[8], fe[8];
+    vqt_extent(he, "Wide String", ie);
+    vqt_f_extent(he, "Wide String", fe);
+    int iw = ie[2] - ie[0], fw = fe[2] - fe[0];
+    CHECK(fw > 0 && (iw - fw <= 2 && fw - iw <= 2));     // close, but fractionally summed
+    CHECK(fe[6] == 0 && fe[7] == 0);                    // same corner layout as vqt_extent
+
     // Input / cursor: with no host pump, REQUEST degrades to non-blocking.
     vdi_input_mouse(50, 60, VDI_BTN_LEFT);
     int qb = -1, qx = -1, qy = -1;

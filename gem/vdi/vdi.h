@@ -52,6 +52,9 @@ enum {                          // VDI opcodes (standard GEM)
     VDI_QT_WIDTH    = 117,      // vqt_width  — one character's cell width
     VDI_QT_NAME     = 130,      // vqt_name   — inquire a font's id + name
     VDI_QT_FONTINFO = 131,      // vqt_fontinfo — structural font metrics
+    VDI_QT_F_EXTENT = 240,      // vqt_f_extent — fractional text extent
+    VDI_ST_ARBPT    = 246,      // vst_arbpt    — arbitrary text size (points)
+    VDI_QT_ADVANCE  = 247,      // vqt_advance  — sub-pixel character advance
     VDI_CONTOURFILL = 103,      // v_contourfill — seed fill
     VDI_ST_COLOR    = 22,       // vst_color  — text colour
     VDI_SF_INTERIOR = 23,       // vsf_interior — see VDI_FIS_*
@@ -248,6 +251,13 @@ void vqt_attributes(int handle, int16_t *attrib);
 // top), the max cell width, and the special-effect offsets.
 void vqt_fontinfo(int handle, int *minADE, int *maxADE, int16_t distances[5],
                   int *maxwidth, int16_t effects[3]);
+// Fractional text (scalable-font precision): vst_arbpt sets an arbitrary point
+// size; vqt_f_extent is vqt_extent with the width summed fractionally (rounded
+// once); vqt_advance gives one character's advance as integer + a 1/65536
+// remainder (advance_x = *advx + *remx/65536).
+int  vst_arbpt(int handle, int point, int *wchar, int *hchar, int *wcell, int *hcell);
+void vqt_f_extent(int handle, const char *s, int16_t *extent);
+void vqt_advance(int handle, int ch, int *advx, int *advy, int *remx, int *remy);
 int  vst_load_fonts(int handle, int select);           // map OS/Fonts; -> extra-font count
 void vst_unload_fonts(int handle, int select);         // no-op
 void v_pline(int handle, int n, const int16_t *pxy);   // n point-pairs

@@ -199,6 +199,28 @@ int font_char_metrics(font *f, unsigned cp, int *lbear, int *rover) {
     return adv;
 }
 
+// Fractional advance of one codepoint at this view's size, in 26.6 fixed (1/64
+// px), tracking included.  No hinting, so the advance keeps its sub-pixel part
+// (the whole point of the NVDI fractional text calls).
+long font_f_advance(font *f, unsigned cp) {
+    if (!f) return 0;
+    FT_Set_Pixel_Sizes(f->owner->ft, 0, f->px);
+    if (FT_Load_Char(f->owner->ft, cp, FT_LOAD_NO_HINTING)) return 0;
+    return f->owner->ft->glyph->advance.x + ((long)f->owner->tracking << 6);
+}
+// Fractional pen advance for a whole UTF-8 string, in 26.6 fixed.
+long font_f_text_width(font *f, const char *s) {
+    if (!f || !s) return 0;
+    FT_Set_Pixel_Sizes(f->owner->ft, 0, f->px);
+    long w = 0;
+    for (const char *p = s; *p; ) {
+        unsigned cp = utf8_next(&p);
+        if (FT_Load_Char(f->owner->ft, cp, FT_LOAD_NO_HINTING)) continue;
+        w += f->owner->ft->glyph->advance.x + ((long)f->owner->tracking << 6);
+    }
+    return w;
+}
+
 // out = src*cov + dst*(1-cov), per channel; alpha forced opaque.
 static inline uint32_t blend(uint32_t dst, uint32_t src, unsigned cov) {
     if (cov == 0)   return dst;
