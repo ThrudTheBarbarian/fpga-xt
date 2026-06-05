@@ -8,8 +8,10 @@
 // ptsin[2*n] + intin[n], terminated by a record whose opcode is 0xFFFF.  The
 // handle (contrl[6]) is not stored — replay supplies the target.
 //
-// Caveat: vro_cpyfm carries its MFDB pointers out-of-band (not in the param
-// block), so raster copies are recorded without their bitmaps and don't replay.
+// vro_cpyfm carries its MFDB pointers out-of-band (not in the param block), so
+// after a cpyfm record we inline the source bitmap — { w, h, stride } + the
+// stride*h device pixels — and reconstruct it on replay (as the better real
+// metafile drivers do).  The destination is always the replay workstation.
 
 #include "vdi/vdi.h"
 #include "vdi/internal.h"
@@ -39,6 +41,13 @@ void metafile_record(vdi_ws *w, vdi_pb *pb) {
     w16(m->f, pb->contrl[0]); w16(m->f, npts); w16(m->f, nint); w16(m->f, pb->contrl[5]);
     for (int i = 0; i < 2 * npts; i++) w16(m->f, pb->ptsin[i]);
     for (int i = 0; i < nint;     i++) w16(m->f, pb->intin[i]);
+    if (pb->contrl[0] == VDI_CPYFM) {       // inline the source bitmap
+        const MFDB *s = g_cpyfm_src;
+        if (s && s->addr && s->stride > 0 && s->h > 0) {
+            w16(m->f, s->w); w16(m->f, s->h); w16(m->f, s->stride);
+            fwrite(s->addr, sizeof(uint32_t), (size_t)s->stride * s->h, m->f);
+        } else { w16(m->f, 0); w16(m->f, 0); w16(m->f, 0); }
+    }
 }
 
 void metafile_close(vdi_ws *w) {
@@ -66,7 +75,22 @@ int vdi_play_metafile(const char *path, int handle) {
         if ((int)fread(intin, sizeof(int16_t), nint, f) != nint) break;
         contrl[0] = rec[0]; contrl[1] = (int16_t)npts; contrl[3] = (int16_t)nint;
         contrl[5] = rec[3]; contrl[6] = (int16_t)handle;
+
+        uint32_t *cbuf = NULL; MFDB csrc = { 0 };
+        if (rec[0] == VDI_CPYFM) {                          // read the inlined bitmap
+            int16_t md[3];
+            if (fread(md, sizeof(int16_t), 3, f) != 3) break;
+            size_t npx = (md[1] > 0 && md[2] > 0) ? (size_t)md[2] * md[1] : 0;
+            if (npx) {
+                cbuf = malloc(npx * sizeof(uint32_t));
+                if (!cbuf || fread(cbuf, sizeof(uint32_t), npx, f) != npx) { free(cbuf); break; }
+            }
+            csrc.addr = cbuf; csrc.w = md[0]; csrc.h = md[1]; csrc.stride = md[2];
+            g_cpyfm_src = npx ? &csrc : NULL;
+            g_cpyfm_dst = NULL;                             // copy to the workstation surface
+        }
         vdi_call(&pb);
+        if (rec[0] == VDI_CPYFM) { g_cpyfm_src = NULL; g_cpyfm_dst = NULL; free(cbuf); }
         played++;
     }
     fclose(f);

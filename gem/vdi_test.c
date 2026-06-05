@@ -240,6 +240,27 @@ int main(void) {
     v_clsvwk(mhs);
     gfx_surface_free(mp);
 
+    // Metafile vro_cpyfm: the source bitmap is inlined and replays.
+    vdi_set_device_file("/tmp/vdi_test_cpy.gem");
+    int16_t cwin[11] = { 31 }; int chm = -1; int16_t cwout[57] = { 0 };
+    v_opnwk(cwin, &chm, cwout);
+    gfx_surface *csrc = gfx_surface_alloc(8, 8);
+    for (int i = 0; i < 8 * 8; i++) csrc->px[i] = vdi_pen_rgba(3);   // green
+    MFDB cmf; mfdb_from_surface(&cmf, csrc);
+    int16_t cpy[8] = { 0, 0, 7, 7, 4, 4, 11, 11 };     // 8x8 src -> dst at (4,4)
+    vro_cpyfm(chm, VRO_COPY, cpy, &cmf, NULL);
+    v_clswk(chm);
+    gfx_surface_free(csrc);                            // freed after the inline copy
+
+    gfx_surface *cdst = gfx_surface_alloc(20, 20);
+    for (int i = 0; i < 20 * 20; i++) cdst->px[i] = 0;
+    int chs = v_opnvwk(cdst);
+    CHECK(vdi_play_metafile("/tmp/vdi_test_cpy.gem", chs) >= 1);
+    CHECK(PX(cdst, 6, 6) == vdi_pen_rgba(3));          // inside the replayed copy
+    CHECK(PX(cdst, 15, 15) == 0);                      // outside it
+    v_clsvwk(chs);
+    gfx_surface_free(cdst);
+
     // True-colour detection: v_opnvwk work_out[13] >= 2, vq_extnd work_out[5] == 0.
     int16_t oc[16] = {0}, oii[128], opi[256], oio[128], opo[256];
     vdi_pb opb = { oc, oii, opi, oio, opo };
