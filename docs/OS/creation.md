@@ -70,6 +70,30 @@ We are a **true-colour** (RGBA-8888) device. Apps detect that the standard way: 
 
 The device mechanism is in place, so adding a device is now just a driver behind `v_opnwk`. The **metafile** (id 31–40) is implemented (`metafile.c`): opening it records subsequent VDI calls to a `.gem` file (an 8-word header + one record per call), and `vdi_play_metafile()` replays them onto any workstation. The **printer** (id 21–30) will be a **PDF device** — "print" emits a PDF, no hardware driver needed — planned, currently reports failure. (`vro_cpyfm`'s MFDB pointers are out-of-band, so the metafile inlines the source bitmap into the record and rebuilds it on replay — as the better real GEM/NVDI metafile drivers do — rather than dropping the image like the original DRI driver.)
 
+The off-screen-bitmap workstation pair `v_opnbm` (100/1) / `v_clsbm` (101/1) and the Bézier
+toggles `v_bez_on` / `v_bez_off` (11/13) live in the **NVDI extensions** section.
+
+Cross-referencing the [FreeMiNT VDI control set](https://freemint.github.io/tos.hyp/en/vdi_control.html),
+the remaining functions (Rec = ✅ implement, 🤔 optional, ⛔ skip):
+
+| Call | Op | Rec | Notes / rationale |
+|------|----|-----|-------|
+| v_getoutline / v_get_outline | 243 (/1) | ✅ | the glyph **outline** as a Bézier/point path — FreeType gives us `FT_Outline` directly, so we can hand back the contour (points + on/off-curve flags, like the v_bez arrays). Genuinely useful: text as paths, custom effects, engraving |
+| v_killoutline | 242 | 🤔 | frees an outline from v_getoutline — a no-op for us if v_getoutline writes into a caller buffer (no allocation to release) |
+| v_flushcache | 251 | 🤔 | drop the rasterised glyph cache — easy memory hygiene (`font_face` owns the cache); add a flush entry |
+| v_resize_bm | 100 / 2 | 🤔 | re-point an off-screen-bitmap workstation at a new MFDB — small, complements v_opnbm |
+| v_open_bm | 100 / 3 | 🤔 | the "modern" open-bitmap variant — alias of v_opnbm with a richer work_in |
+| vst_ex_load_fonts | 119 | 🤔 | vst_load_fonts with paging control we don't need — alias |
+| v_loadcache / v_load_cache | 250, 226/7 | ⛔ | load a Speedo/GDOS font-cache file — we rasterise on demand, no cache file format |
+| v_savecache / v_save_cache | 249, 226/6 | ⛔ | save the font cache to disk — same |
+| v_set_app_buff | -1 / 6 | ⛔ | hand the Bézier generator a work buffer — we use our own static buffers |
+| v_opnprn | 1 | ⛔ | open a printer driver — parked PDF/printer device |
+| v_pat_rotate | 134 | ⛔ | printer pattern-rotation angle — hardcopy only (note: shares 134 with the screen-side vex_wheelv; only the printer path would ever use it) |
+
+Recommendation: **v_getoutline** (✅) is the one with real reach — exposing FreeType outlines opens
+text-as-paths for the GEM layer. The bitmap-resize / cache-flush / load-fonts-ex calls (🤔) are
+small conveniences. The Speedo/GDOS cache-file and printer calls (⛔) have no backing here.
+
 **Output / drawing**
 
 | Call | Op | Sup | Notes |
