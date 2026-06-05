@@ -84,12 +84,26 @@ int main(int argc, char **argv) {
     if (xlwin) gem_wm_set_redraw(xlwin, xl_redraw, NULL);
     if (info)  gem_wm_set_redraw(info,  app_redraw, NULL);
 
+    SDL_ShowCursor(SDL_DISABLE);           // the WM draws its own pointer
+
     int running = 1;
     while (running) {
         SDL_Event e;
         while (SDL_PollEvent(&e)) {
             if (e.type == SDL_QUIT) running = 0;
-            if (e.type == SDL_KEYDOWN && e.key.keysym.sym == SDLK_ESCAPE) running = 0;
+            else if (e.type == SDL_KEYDOWN && e.key.keysym.sym == SDLK_ESCAPE) running = 0;
+            else if (e.type == SDL_MOUSEMOTION) {
+                float lx, ly;
+                SDL_RenderWindowToLogical(ren, e.motion.x, e.motion.y, &lx, &ly);
+                gem_wm_mouse_move(&wm, (int)lx, (int)ly);
+            } else if (e.type == SDL_MOUSEBUTTONDOWN || e.type == SDL_MOUSEBUTTONUP) {
+                if (e.button.button == SDL_BUTTON_LEFT) {
+                    float lx, ly;
+                    SDL_RenderWindowToLogical(ren, e.button.x, e.button.y, &lx, &ly);
+                    gem_wm_mouse_button(&wm, (int)lx, (int)ly,
+                                        e.type == SDL_MOUSEBUTTONDOWN);
+                }
+            }
         }
         gem_wm_draw(&wm);                  // redraw dirty content + frames + composite
         SDL_UpdateTexture(tex, NULL, desk->px, desk->stride * (int)sizeof(uint32_t));

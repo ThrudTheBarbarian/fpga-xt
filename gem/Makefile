@@ -35,12 +35,18 @@ all: $(TARGET)
 $(TARGET): $(OBJ)
 	$(CC) $(OBJ) $(LDLIBS) -o $@
 
-# Headless VDI self-test (no SDL): the VDI core + the software gfx backend.
+# Headless self-tests (no SDL): VDI primitives, then the WM interaction layer.
 TEST_OBJ := $(addprefix $(BUILD)/,gfx_soft.o vdi_test.o $(VDI_SRC:.c=.o))
 $(BUILD)/gem_test: $(TEST_OBJ)
 	$(CC) $(TEST_OBJ) -o $@
-test: $(BUILD)/gem_test
+
+WMTEST_OBJ := $(addprefix $(BUILD)/,gfx_soft.o wm.o wm_test.o $(VDI_SRC:.c=.o))
+$(BUILD)/wm_test: $(WMTEST_OBJ)
+	$(CC) $(WMTEST_OBJ) -o $@
+
+test: $(BUILD)/gem_test $(BUILD)/wm_test
 	./$(BUILD)/gem_test
+	./$(BUILD)/wm_test
 
 $(BUILD)/%.o: %.c | $(BUILD)
 	@mkdir -p $(dir $@)
