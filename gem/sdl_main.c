@@ -13,21 +13,16 @@
 #include <SDL2/SDL.h>
 #include <stdio.h>
 
-// Target raster (matches the FPGA HDMI output); the window scales to fit.
-#define SCREEN_W 1920
-#define SCREEN_H 1080
+// The desktop surface is rendered 1:1 with the window's device pixels and
+// presented without any rescale, so text and 1px frame lines stay crisp.  (The
+// FPGA target is 1920x1080; on a sub-1080p / non-Retina dev screen a 1:1 1080p
+// surface would have to be bilinearly shrunk to fit — which softens every edge.
+// So the testbed renders at a fit-to-screen size instead; the GEM core is
+// resolution-independent, and the real 1080p look is best judged on the HDMI
+// output itself.)
+#define WIN_W 1280
+#define WIN_H 720
 #define COL_DESKTOP  GFX_RGB(0x20, 0x80, 0x84)   // muted teal
-
-// Milestone-1 target: frame the live Atari plane with a window's content area.
-// The legacy Atari display is 4:3 (HW renders a 384px playfield over 192 rows;
-// vbeam.sv / antic_top.sv), so the content area is 4:3 here too — 960x576 (5:3)
-// looked horizontally stretched.
-#define XL_X 480
-#define XL_Y 252
-#define XL_W 768
-#define XL_H 576
-#define TITLE_H 30
-#define EDGE    2
 
 // Stand-in for the live XL plane: a blue field with cyan diagonals, drawn into
 // the window's backing surface in local coords via its VDI workstation.
@@ -67,13 +62,14 @@ int main(int argc, char **argv) {
     }
     SDL_Window   *win = SDL_CreateWindow("XTOS / GEM testbed",
         SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED,
-        1280, 720, SDL_WINDOW_RESIZABLE);
+        WIN_W, WIN_H, SDL_WINDOW_RESIZABLE);
     SDL_Renderer *ren = SDL_CreateRenderer(win, -1, SDL_RENDERER_ACCELERATED);
-    SDL_RenderSetLogicalSize(ren, SCREEN_W, SCREEN_H);   // scale 1080p -> window
+    // No logical-size rescale: the texture is the same size as the desktop and
+    // is blitted 1:1 (centred if the window is resized), so nothing resamples.
     SDL_Texture  *tex = SDL_CreateTexture(ren, SDL_PIXELFORMAT_RGBA8888,
-        SDL_TEXTUREACCESS_STREAMING, SCREEN_W, SCREEN_H);
+        SDL_TEXTUREACCESS_STREAMING, WIN_W, WIN_H);
 
-    gfx_surface *desk = gfx_surface_alloc(SCREEN_W, SCREEN_H);
+    gfx_surface *desk = gfx_surface_alloc(WIN_W, WIN_H);
     if (!win || !ren || !tex || !desk) {
         fprintf(stderr, "SDL/surface init failed: %s\n", SDL_GetError());
         return 1;
@@ -85,14 +81,17 @@ int main(int argc, char **argv) {
     if (!uifont) fprintf(stderr, "warning: title font failed to load\n");
     gem_wm_set_font(&wm, uifont);                        // titles + VDI default text
 
-    gem_window *xlwin = gem_wm_add(&wm,
-        XL_X - EDGE, XL_Y - EDGE - TITLE_H,
-        XL_W + 2 * EDGE, XL_H + 2 * EDGE + TITLE_H, "Atari XL", 1);
-    gem_window *info  = gem_wm_add(&wm, 1150, 120, 520, 340, "Info", 0);
+    // "Atari XL" content is 4:3 (512x384); outer adds 2px edge + 30px title bar.
+    gem_window *xlwin = gem_wm_add(&wm,  60,  70, 516, 418, "Atari XL", 1);
+    gem_window *info  = gem_wm_add(&wm, 770,  60, 450, 320, "Info", 0);
     if (xlwin) gem_wm_set_redraw(xlwin, xl_redraw, NULL);
     if (info)  gem_wm_set_redraw(info,  app_redraw, NULL);
 
     SDL_ShowCursor(SDL_DISABLE);           // the WM draws its own pointer
+
+    // The 1:1 desktop is centred in the (possibly resized) window; this is the
+    // top-left offset, kept in sync so mouse coords map straight to desktop px.
+    int off_x = 0, off_y = 0;
 
     int running = 1;
     while (running) {
@@ -100,23 +99,23 @@ int main(int argc, char **argv) {
         while (SDL_PollEvent(&e)) {
             if (e.type == SDL_QUIT) running = 0;
             else if (e.type == SDL_KEYDOWN && e.key.keysym.sym == SDLK_ESCAPE) running = 0;
-            else if (e.type == SDL_MOUSEMOTION) {
-                float lx, ly;
-                SDL_RenderWindowToLogical(ren, e.motion.x, e.motion.y, &lx, &ly);
-                gem_wm_mouse_move(&wm, (int)lx, (int)ly);
-            } else if (e.type == SDL_MOUSEBUTTONDOWN || e.type == SDL_MOUSEBUTTONUP) {
-                if (e.button.button == SDL_BUTTON_LEFT) {
-                    float lx, ly;
-                    SDL_RenderWindowToLogical(ren, e.button.x, e.button.y, &lx, &ly);
-                    gem_wm_mouse_button(&wm, (int)lx, (int)ly,
-                                        e.type == SDL_MOUSEBUTTONDOWN);
-                }
-            }
+            else if (e.type == SDL_MOUSEMOTION)
+                gem_wm_mouse_move(&wm, e.motion.x - off_x, e.motion.y - off_y);
+            else if ((e.type == SDL_MOUSEBUTTONDOWN || e.type == SDL_MOUSEBUTTONUP)
+                     && e.button.button == SDL_BUTTON_LEFT)
+                gem_wm_mouse_button(&wm, e.button.x - off_x, e.button.y - off_y,
+                                    e.type == SDL_MOUSEBUTTONDOWN);
         }
         gem_wm_draw(&wm);                  // redraw dirty content + frames + composite
         SDL_UpdateTexture(tex, NULL, desk->px, desk->stride * (int)sizeof(uint32_t));
+
+        int ow = WIN_W, oh = WIN_H;
+        SDL_GetRendererOutputSize(ren, &ow, &oh);
+        off_x = (ow - WIN_W) / 2; off_y = (oh - WIN_H) / 2;
+        SDL_Rect dst = { off_x, off_y, WIN_W, WIN_H };   // 1:1, centred
+        SDL_SetRenderDrawColor(ren, 0, 0, 0, 255);
         SDL_RenderClear(ren);
-        SDL_RenderCopy(ren, tex, NULL, NULL);
+        SDL_RenderCopy(ren, tex, NULL, &dst);
         SDL_RenderPresent(ren);
         SDL_Delay(16);
     }
