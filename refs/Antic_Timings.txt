@@ -1,0 +1,166 @@
+The inner workings of Antic - By Bennet (beipdev@yahoo.com)
+
+I = Instruction
+M = Missile (always on 112, V on top of M means V + M)
+P = Player
+A = Address
+R = Refresh
+C = Character Data
+G = Graphics Data (applies to data used to display characters too)
+V = Virtual Read (no DMA, but memory counter is incremented)
+
+105 = Last cycle Antic does any DMA until Missiles
+
+WSYNC: When an STA WSYNC is executed, Antic takes 1 cycle to respond before halting the CPU.  It releases WSYNC on cycle 105 on a scanline.
+This has the appearance of the CPU restarting on cycle 104, but it's really that you get 1 cycle after STA WSYNC and restarting on 105.
+Note that if Antic is doing DMA on the cycle immediately after STA WSYNC completes, the CPU misses that extra cycle (due to the DMA).
+
+0   8   16  24  32  40  48  56  64  72  80  88  96  104 112 120 128 136 114 152 160 168 176 184 192 200 208 216 224  (228) Color Clocks
+0   4   8   12  16  20  24  28  32  36  40  44  48  52  56  60  64  68  72  76  80  84  88  92  96  100 104 108 112  (114) Cycles
+|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|-
+                ]                                                                                             [     Visible Area on my monitor (not inclusive)
+                                NNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNN                    Narrow
+                                0 1 2 3 4 5 6 7 8 9 10111213141516171819202122232425262728293031                    
+|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|-
+                        SSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSS            Standard
+                        0 1 2 3 4 5 6 7 8 9 101112131415161718192021222324252627282930313233343536373839            
+|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|-
+                      WWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWW      Visible Wide
+                WWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWW    Physical Wide
+                0 1 2 3 4 5 6 7 8 9 1011121314151617181920212223242526272829303132333435363738394041424344454647
+|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|-
+IPPPPAA                  R   R   R   R   R   R   R   R   R                                                       M  Mode 0,1
+|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|-
+IPPPPAA   C CGCGCGCGCGCGCGCGCGCGCGCGCGCGCGCGCGCGCGCGCGCGCGCGCGCGCGCGCGCGCGCGCGCGCGCGCGCGCGCGCGCGCGCGCGCGCGR      M  Mode 2,3,4,5 - Wide HSCROL=0
+ PPPP        G G G G G G GRG GRG GRG GRG GRG GRG GRG GRG GRG G G G G G G G G G G G G G G G G G G G G G G G       M  Mode 2,3,4,5 - Wide HSCROL=0  LINE 1+
+IPPPPAA    C CGCGCGCGCGCGCGCGCGCGCGCGCGCGCGCGCGCGCGCGCGCGCGCGCGCGCGCGCGCGCGCGCGCGCGCGCGCGCGCGCGCGCGCGCGCGCR      M  Mode 2,3,4,5 - Wide HSCROL=2
+ PPPP         G G G G G GRG GRG GRG GRG GRG GRG GRG GRG GRG G G G G G G G G G G G G G G G G G G G G G G G        M  Mode 2,3,4,5 - Wide HSCROL=2  LINE 1+
+IPPPPAA     C CGCGCGCGCGCGCGCGCGCGCGCGCGCGCGCGCGCGCGCGCGCGCGCGCGCGCGCGCGCGCGCGCGCGCGCGCGCGCGCGCGCGCGCGCGCGR      M  Mode 2,3,4,5 - Wide HSCROL=4 (R includes V)
+ PPPP          G G G G G GRG GRG GRG GRG GRG GRG GRG GRG GRG G G G G G G G G G G G G G G G G G G G G G G G       M  Mode 2,3,4,5 - Wide HSCROL=4  LINE 1+
+IPPPPAA      C CGCGCGCGCGCGCGCGCGCGCGCGCGCGCGCGCGCGCGCGCGCGCGCGCGCGCGCGCGCGCGCGCGCGCGCGCGCGCGCGCGCGCGCGCGCRV     M  Mode 2,3,4,5 - Wide HSCROL=6
+ PPPP           G G G G GRG GRG GRG GRG GRG GRG GRG GRG GRG G G G G G G G G G G G G G G G G G G G G G G G        M  Mode 2,3,4,5 - Wide HSCROL=6  LINE 1+
+IPPPPAA       C CGCGCGCGCGCGCGCGCGCGCGCGCGCGCGCGCGCGCGCGCGCGCGCGCGCGCGCGCGCGCGCGCGCGCGCGCGCGCGCGCGCGCGCGCGR V    M  Mode 2,3,4,5 - Wide HSCROL=8 (R includes V)
+ PPPP            G G G G GRG GRG GRG GRG GRG GRG GRG GRG GRG G G G G G G G G G G G G G G G G G G G G G G G       M  Mode 2,3,4,5 - Wide HSCROL=8  LINE 1+
+IPPPPAA        C CGCGCGCGCGCGCGCGCGCGCGCGCGCGCGCGCGCGCGCGCGCGCGCGCGCGCGCGCGCGCGCGCGCGCGCGCGCGCGCGCGCGCGCGCRV V   M  Mode 2,3,4,5 - Wide HSCROL=10
+ PPPP             G G G GRG GRG GRG GRG GRG GRG GRG GRG GRG G G G G G G G G G G G G G G G G G G G G G G G        M  Mode 2,3,4,5 - Wide HSCROL=10 LINE 1+
+IPPPPAA         C CGCGCGCGCGCGCGCGCGCGCGCGCGCGCGCGCGCGCGCGCGCGCGCGCGCGCGCGCGCGCGCGCGCGCGCGCGCGCGCGCGCGCGCGR V V  M  Mode 2,3,4,5 - Wide HSCROL=12 (R includes V)
+ PPPP              G G G GRG GRG GRG GRG GRG GRG GRG GRG GRG G G G G G G G G G G G G G G G G G G G G G G G       M  Mode 2,3,4,5 - Wide HSCROL=12 LINE 1+
+IPPPPAA          C CGCGCGCGCGCGCGCGCGCGCGCGCGCGCGCGCGCGCGCGCGCGCGCGCGCGCGCGCGCGCGCGCGCGCGCGCGCGCGCGCGCGCGCRV V V M  Mode 2,3,4,5 - Wide HSCROL=14
+ PPPP               G G GRG GRG GRG GRG GRG GRG GRG GRG GRG G G G G G G G G G G G G G G G G G G G G G G G        M  Mode 2,3,4,5 - Wide HSCROL=14 LINE 1+
+|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|-
+IPPPPAA           C CGCGCGCGCGCGCGCGCGCGCGCGCGCGCGCGCGCGCGCGCGCGCGCGCGCGCGCGCGCGCGCGCGCGCGCGCGCGCGRG             M  Mode 2,3,4,5 - Standard - HSCROL=0
+ PPPP                G G GRG GRG GRG GRG GRG GRG GRG GRG GRG G G G G G G G G G G G G G G G G G G G G             M  Mode 2,3,4,5 - Standard - LINE=1+ HSCROL=0
+IPPPPAA            C CGCGCGCGCGCGCGCGCGCGCGCGCGCGCGCGCGCGCGCGCGCGCGCGCGCGCGCGCGCGCGCGCGCGCGCGCGCGCGRG            M  Mode 2,3,4,5 - Standard - HSCROL=2
+ PPPP                 G GRG GRG GRG GRG GRG GRG GRG GRG GRG G G G G G G G G G G G G G G G G G G G G G            M  Mode 2,3,4,5 - Standard - LINE=1+ HSCROL=2
+IPPPPAA             C CGCGCGCGCGCGCGCGCGCGCGCGCGCGCGCGCGCGCGCGCGCGCGCGCGCGCGCGCGCGCGCGCGCGCGCGCGCGCGRG           M  Mode 2,3,4,5 - Standard - HSCROL=4
+ PPPP                  G GRG GRG GRG GRG GRG GRG GRG GRG GRG G G G G G G G G G G G G G G G G G G G G G           M  Mode 2,3,4,5 - Standard - LINE=1+ HSCROL=4
+IPPPPAA              C CGCGCGCGCGCGCGCGCGCGCGCGCGCGCGCGCGCGCGCGCGCGCGCGCGCGCGCGCGCGCGCGCGCGCGCGCGCGCGRG          M  Mode 2,3,4,5 - Standard - HSCROL=6
+ PPPP                   GRG GRG GRG GRG GRG GRG GRG GRG GRG G G G G G G G G G G G G G G G G G G G G G G          M  Mode 2,3,4,5 - Standard - LINE=1+ HSCROL=6
+IPPPPAA               C CGCGCGCGCGCGCGCGCGCGCGCGCGCGCGCGCGCGCGCGCGCGCGCGCGCGCGCGCGCGCGCGCGCGCGCGCGCGCGRG         M  Mode 2,3,4,5 - Standard - HSCROL=8
+ PPPP                    GRG GRG GRG GRG GRG GRG GRG GRG GRG G G G G G G G G G G G G G G G G G G G G G G         M  Mode 2,3,4,5 - Standard - LINE=1+ HSCROL=8
+IPPPPAA                C CGCGCGCGCGCGCGCGCGCGCGCGCGCGCGCGCGCGCGCGCGCGCGCGCGCGCGCGCGCGCGCGCGCGCGCGCGCGCGRG        M  Mode 2,3,4,5 - Standard - HSCROL=10
+ PPPP                    RG GRG GRG GRG GRG GRG GRG GRG GRG G G G G G G G G G G G G G G G G G G G G G G G        M  Mode 2,3,4,5 - Standard - LINE=1+ HSCROL=10
+IPPPPAA                 CRCGCGCGCGCGCGCGCGCGCGCGCGCGCGCGCGCGCGCGCGCGCGCGCGCGCGCGCGCGCGCGCGCGCGCGCGCGCGCGRG       M  Mode 2,3,4,5 - Standard - HSCROL=12
+ PPPP                    R G GRG GRG GRG GRG GRG GRG GRG GRG G G G G G G G G G G G G G G G G G G G G G G G       M  Mode 2,3,4,5 - Standard - LINE=1+ HSCROL=12
+IPPPPAA                  CRCGCGCGCGCGCGCGCGCGCGCGCGCGCGCGCGCGCGCGCGCGCGCGCGCGCGCGCGCGCGCGCGCGCGCGCGCGCGCGR       M  Mode 2,3,4,5 - Standard - HSCROL=14
+ PPPP                    R  GRG GRG GRG GRG GRG GRG GRG GRG G G G G G G G G G G G G G G G G G G G G G G G        M  Mode 2,3,4,5 - Standard - LINE=1+ HSCROL=14
+|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|-
+IPPPPAA                  RC CGCGCGCGCGCGCGCGCGCGCGCGCGCGCGCGCGCGCGCGCGCGCGCGCGCGCGCGCGCGCGRG                     M  Mode 2,3,4,5 - Narrow
+ PPPPAA                  R   GRG GRG GRG GRG GRG GRG GRG GRG G G G G G G G G G G G G G G G G                     M  Mode 2,3,4,5 - Narrow
+|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|-
+IPPPPAA   C  GC  GC  GC  GCR GCR GCR GCR GCR GCR GCR GCR GCR GC  GC  GC  GC  GC  GC  GC  GC  GC  GC  GC  G       M  Mode 6,7 - Wide HSCROL=0
+ PPPP        G   G   G   GR  GR  GR  GR  GR  GR  GR  GR  GR  G   G   G   G   G   G   G   G   G   G   G   G       M  Mode 6,7 - Wide HSCROL=0 LINE 1+
+IPPPPAA    C  GC  GC  GC RGC RGC RGC RGC RGC RGC RGC RGC RGC  GC  GC  GC  GC  GC  GC  GC  GC  GC  GC  GC         M  Mode 6,7 - Wide HSCROL=2
+ PPPP         G   G   G  RG  RG  RG  RG  RG  RG  RG  RG  RG   G   G   G   G   G   G   G   G   G   G   G          M  Mode 6,7 - Wide HSCROL=2 LINE 1+
+IPPPPAA     C  GC  GC  GCR GCR GCR GCR GCR GCR GCR GCR GCR GC  GC  GC  GC  GC  GC  GC  GC  GC  GC  GC  GC        M  Mode 6,7 - Wide HSCROL=4
+ PPPP          G   G   G R G R G R G R G R G R G R G R G R G   G   G   G   G   G   G   G   G   G   G   G         M  Mode 6,7 - Wide HSCROL=4 LINE 1+
+IPPPPAA      C  GC  GC  GCR GCR GCR GCR GCR GCR GCR GCR GCR GC  GC  GC  GC  GC  GC  GC  GC  GC  GC  GC  GC       M  Mode 6,7 - Wide HSCROL=6
+ PPPP           G   G   GR  GR  GR  GR  GR  GR  GR  GR  GR  G   G   G   G   G   G   G   G   G   G   G   G        M  Mode 6,7 - Wide HSCROL=6 LINE 1+
+IPPPPAA       C  GC  GC  GCR GCR GCR GCR GCR GCR GCR GCR GCR GC  GC  GC  GC  GC  GC  GC  GC  GC  GC  GC  GV      M  Mode 6,7 - Wide HSCROL=8
+ PPPP            G   G   GR  GR  GR  GR  GR  GR  GR  GR  GR  G   G   G   G   G   G   G   G   G   G   G   G       M  Mode 6,7 - Wide HSCROL=8 LINE 1+
+IPPPPAA        C  GC  GC RGC RGC RGC RGC RGC RGC RGC RGC RGC  GC  GC  GC  GC  GC  GC  GC  GC  GC  GC  GC   V     M  Mode 6,7 - Wide HSCROL=10
+ PPPP             G   G  RG  RG  RG  RG  RG  RG  RG  RG  RG   G   G   G   G   G   G   G   G   G   G   G          M  Mode 6,7 - Wide HSCROL=10 LINE 1+
+IPPPPAA         C  GC  GCR GCR GCR GCR GCR GCR GCR GCR GCR GC  GC  GC  GC  GC  GC  GC  GC  GC  GC  GC  GC   V    M  Mode 6,7 - Wide HSCROL=12
+ PPPP              G   G R G R G R G R G R G R G R G R G R G   G   G   G   G   G   G   G   G   G   G   G         M  Mode 6,7 - Wide HSCROL=12 LINE 1+
+IPPPPAA          C  GC  GCR GCR GCR GCR GCR GCR GCR GCR GCR GC  GC  GC  GC  GC  GC  GC  GC  GC  GC  GC  GC   V   M  Mode 6,7 - Wide HSCROL=14
+ PPPP               G   GR  GR  GR  GR  GR  GR  GR  GR  GR  G   G   G   G   G   G   G   G   G   G   G   G        M  Mode 6,7 - Wide HSCROL=14 LINE 1+
+|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|-
+IPPPPAA           C  GC  GCR GCR GCR GCR GCR GCR GCR GCR GCR GC  GC  GC  GC  GC  GC  GC  GC  GC  G               M  Mode 6,7 - Standard HSCROL=0
+ PPPP                G   GR  GR  GR  GR  GR  GR  GR  GR  GR  G   G   G   G   G   G   G   G   G   G               M  Mode 6,7 - Standard HSCROL=0 LINE 1+
+IPPPPAA            C  GC RGC RGC RGC RGC RGC RGC RGC RGC RGC  GC  GC  GC  GC  GC  GC  GC  GC  GC  G              M  Mode 6,7 - Standard HSCROL=2
+ PPPP                 G  RG  RG  RG  RG  RG  RG  RG  RG  RG   G   G   G   G   G   G   G   G   G   G              M  Mode 6,7 - Standard HSCROL=2 LINE 1+
+IPPPPAA             C  GCR GCR GCR GCR GCR GCR GCR GCR GCR GC  GC  GC  GC  GC  GC  GC  GC  GC  GC  G             M  Mode 6,7 - Standard HSCROL=4
+ PPPP                  G R G R G R G R G R G R G R G R G R G   G   G   G   G   G   G   G   G   G   G             M  Mode 6,7 - Standard HSCROL=4 LINE 1+
+IPPPPAA              C  GCR GCR GCR GCR GCR GCR GCR GCR GCR GC  GC  GC  GC  GC  GC  GC  GC  GC  GC  G            M  Mode 6,7 - Standard HSCROL=6
+ PPPP                   GR  GR  GR  GR  GR  GR  GR  GR  GR  G   G   G   G   G   G   G   G   G   G   G            M  Mode 6,7 - Standard HSCROL=6 LINE 1+
+IPPPPAA               C  GCR GCR GCR GCR GCR GCR GCR GCR GCR GC  GC  GC  GC  GC  GC  GC  GC  GC  GC  G           M  Mode 6,7 - Standard HSCROL=8
+ PPPP                    GR  GR  GR  GR  GR  GR  GR  GR  GR  G   G   G   G   G   G   G   G   G   G   G           M  Mode 6,7 - Standard HSCROL=8 LINE 1+
+IPPPPAA                C RGC RGC RGC RGC RGC RGC RGC RGC RGC  GC  GC  GC  GC  GC  GC  GC  GC  GC  GC  G          M  Mode 6,7 - Standard HSCROL=10
+ PPPP                    RG  RG  RG  RG  RG  RG  RG  RG  RG   G   G   G   G   G   G   G   G   G   G   G          M  Mode 6,7 - Standard HSCROL=10 LINE 1+
+IPPPPAA                 CR GCR GCR GCR GCR GCR GCR GCR GCR GC  GC  GC  GC  GC  GC  GC  GC  GC  GC  GC  G         M  Mode 6,7 - Standard HSCROL=12
+ PPPP                    R G R G R G R G R G R G R G R G R G   G   G   G   G   G   G   G   G   G   G   G         M  Mode 6,7 - Standard HSCROL=12 LINE 1+
+IPPPPAA                  CR GCR GCR GCR GCR GCR GCR GCR GCR GC  GC  GC  GC  GC  GC  GC  GC  GC  GC  GC  G        M  Mode 6,7 - Standard HSCROL=14
+ PPPP                    R  GR  GR  GR  GR  GR  GR  GR  GR  G   G   G   G   G   G   G   G   G   G   G   G        M  Mode 6,7 - Standard HSCROL=14 LINE 1+
+|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|-
+IPPPPAA                  RC  GCR GCR GCR GCR GCR GCR GCR GCR GC  GC  GC  GC  GC  GC  GC  G                       M  Mode 6,7 - Narrow
+ PPPP                    R   GR  GR  GR  GR  GR  GR  GR  GR  G   G   G   G   G   G   G   G                       M  Mode 6,7 - Narrow LINE 1+
+|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|-
+IPPPPAA     G       G    R  GR   R  GR   R  GR   R  GR   R  G       G       G       G       G       G            M  Mode 8,9 - Wide - HSCROL=0
+IPPPPAA      G       G   R   GR  R   GR  R   GR  R   GR  R   G       G       G       G       G       G           M  Mode 8,9 - Wide - HSCROL=2
+IPPPPAA       G       G  R   RG  R   RG  R   RG  R   RG  R    G       G       G       G       G       G          M  Mode 8,9 - Wide - HSCROL=4
+IPPPPAA        G       G R   R G R   R G R   R G R   R G R     G       G       G       G       G       G         M  Mode 8,9 - Wide - HSCROL=6
+IPPPPAA         G       GR   R  GR   R  GR   R  GR   R  GR      G       G       G       G       G       G        M  Mode 8,9 - Wide - HSCROL=8
+IPPPPAA          G       GR  R   GR  R   GR  R   GR  R   GR      G       G       G       G       G       G       M  Mode 8,9 - Wide - HSCROL=10
+IPPPPAA           G      RG  R   RG  R   RG  R   RG  R   RG       G       G       G       G       G       V      M  Mode 8,9 - Wide - HSCROL=12
+IPPPPAA            G     R G R   R G R   R G R   R G R   R G       G       G       G       G       G       V     M  Mode 8,9 - Wide - HSCROL=14
+|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|-
+IPPPPAA             G    R  GR   R  GR   R  GR   R  GR   R  G       G       G       G       G                    M  Mode 8,9 - Standard - HSCROL=0
+IPPPPAA              G   R   GR  R   GR  R   GR  R   GR  R   G       G       G       G       G                   M  Mode 8,9 - Standard - HSCROL=2
+IPPPPAA               G  R   RG  R   RG  R   RG  R   RG  R    G       G       G       G       G                  M  Mode 8,9 - Standard - HSCROL=4
+IPPPPAA                G R   R G R   R G R   R G R   R G R     G       G       G       G       G                 M  Mode 8,9 - Standard - HSCROL=6
+IPPPPAA                 GR   R  GR   R  GR   R  GR   R  GR      G       G       G       G       G                M  Mode 8,9 - Standard - HSCROL=8
+IPPPPAA                  GR  R   GR  R   GR  R   GR  R   GR      G       G       G       G       G               M  Mode 8,9 - Standard - HSCROL=10
+IPPPPAA                  RG  R   RG  R   RG  R   RG  R   RG       G       G       G       G       G              M  Mode 8,9 - Standard - HSCROL=12
+IPPPPAA                  R G R   R G R   R G R   R G R   R G       G       G       G       G       G             M  Mode 8,9 - Standard - HSCROL=14
+|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|-
+IPPPPAA                  R  GR   R  GR   R  GR   R  GR   R  G       G       G       G                            M  Mode 8,9 - Narrow
+|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|-
+IPPPPAA     G   G   G   GR  GR  GR  GR  GR  GR  GR  GR  GR  G   G   G   G   G   G   G   G   G   G   G   G        M  Mode A,B,C - Wide - HSCROL=0
+IPPPPAA      G   G   G   GR  GR  GR  GR  GR  GR  GR  GR  GR  G   G   G   G   G   G   G   G   G   G   G   G       M  Mode A,B,C - Wide - HSCROL=2
+IPPPPAA       G   G   G  RG  RG  RG  RG  RG  RG  RG  RG  RG   G   G   G   G   G   G   G   G   G   G   G   V      M  Mode A,B,C - Wide - HSCROL=4
+IPPPPAA        G   G   G R G R G R G R G R G R G R G R G R G   G   G   G   G   G   G   G   G   G   G   G   V     M  Mode A,B,C - Wide - HSCROL=6
+IPPPPAA         G   G   GR  GR  GR  GR  GR  GR  GR  GR  GR  G   G   G   G   G   G   G   G   G   G   G   G   V    M  Mode A,B,C - Wide - HSCROL=8
+IPPPPAA          G   G   GR  GR  GR  GR  GR  GR  GR  GR  GR  G   G   G   G   G   G   G   G   G   G   G   G   V   M  Mode A,B,C - Wide - HSCROL=10
+IPPPPAA           G   G  RG  RG  RG  RG  RG  RG  RG  RG  RG   G   G   G   G   G   G   G   G   G   G   G   V   V  M  Mode A,B,C - Wide - HSCROL=12
+IPPPPAA            G   G R G R G R G R G R G R G R G R G R G   G   G   G   G   G   G   G   G   G   G   G   V   V M  Mode A,B,C - Wide - HSCROL=14
+|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|-
+IPPPPAA             G   GR  GR  GR  GR  GR  GR  GR  GR  GR  G   G   G   G   G   G   G   G   G   G                M  Mode A,B,C - Standard - HSCROL=0
+IPPPPAA              G   GR  GR  GR  GR  GR  GR  GR  GR  GR  G   G   G   G   G   G   G   G   G   G               M  Mode A,B,C - Standard - HSCROL=2
+IPPPPAA               G  RG  RG  RG  RG  RG  RG  RG  RG  RG   G   G   G   G   G   G   G   G   G   G              M  Mode A,B,C - Standard - HSCROL=4
+IPPPPAA                G R G R G R G R G R G R G R G R G R G   G   G   G   G   G   G   G   G   G   G             M  Mode A,B,C - Standard - HSCROL=6
+IPPPPAA                 GR  GR  GR  GR  GR  GR  GR  GR  GR  G   G   G   G   G   G   G   G   G   G   G            M  Mode A,B,C - Standard - HSCROL=8
+IPPPPAA                  GR  GR  GR  GR  GR  GR  GR  GR  GR  G   G   G   G   G   G   G   G   G   G   G           M  Mode A,B,C - Standard - HSCROL=10
+IPPPPAA                  RG  RG  RG  RG  RG  RG  RG  RG  RG   G   G   G   G   G   G   G   G   G   G   G          M  Mode A,B,C - Standard - HSCROL=12
+IPPPPAA                  R G R G R G R G R G R G R G R G R G   G   G   G   G   G   G   G   G   G   G   G         M  Mode A,B,C - Standard - HSCROL=14
+|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|-
+IPPPPAA                  R  GR  GR  GR  GR  GR  GR  GR  GR  G   G   G   G   G   G   G   G                        M  Mode A,B,C - Narrow
+|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|-
+IPPPPAA     G G G G G G GRG GRG GRG GRG GRG GRG GRG GRG GRG G G G G G G G G G G G G G G G G G G G G G G G        M  Mode D,E,F - Wide - HSCROL=0
+IPPPPAA      G G G G G G GRG GRG GRG GRG GRG GRG GRG GRG GRG G G G G G G G G G G G G G G G G G G G G G G G       M  Mode D,E,F - Wide - HSCROL=2
+IPPPPAA       G G G G G GRG GRG GRG GRG GRG GRG GRG GRG GRG G G G G G G G G G G G G G G G G G G G G G G G V      M  Mode D,E,F - Wide - HSCROL=4
+IPPPPAA        G G G G G GRG GRG GRG GRG GRG GRG GRG GRG GRG G G G G G G G G G G G G G G G G G G G G G G G V     M  Mode D,E,F - Wide - HSCROL=6
+IPPPPAA         G G G G GRG GRG GRG GRG GRG GRG GRG GRG GRG G G G G G G G G G G G G G G G G G G G G G G G V V    M  Mode D,E,F - Wide - HSCROL=8
+IPPPPAA          G G G G GRG GRG GRG GRG GRG GRG GRG GRG GRG G G G G G G G G G G G G G G G G G G G G G G G V V   M  Mode D,E,F - Wide - HSCROL=10
+IPPPPAA           G G G GRG GRG GRG GRG GRG GRG GRG GRG GRG G G G G G G G G G G G G G G G G G G G G G G G V V V  M  Mode D,E,F - Wide - HSCROL=12
+IPPPPAA            G G G GRG GRG GRG GRG GRG GRG GRG GRG GRG G G G G G G G G G G G G G G G G G G G G G G G V V V M  Mode D,E,F - Wide - HSCROL=14
+|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|-
+IPPPPAA             G G GRG GRG GRG GRG GRG GRG GRG GRG GRG G G G G G G G G G G G G G G G G G G G G              M  Mode D,E,F - Standard - HSCROL=0
+IPPPPAA              G G GRG GRG GRG GRG GRG GRG GRG GRG GRG G G G G G G G G G G G G G G G G G G G G             M  Mode D,E,F - Standard - HSCROL=2
+IPPPPAA               G GRG GRG GRG GRG GRG GRG GRG GRG GRG G G G G G G G G G G G G G G G G G G G G G            M  Mode D,E,F - Standard - HSCROL=4
+IPPPPAA                G GRG GRG GRG GRG GRG GRG GRG GRG GRG G G G G G G G G G G G G G G G G G G G G G           M  Mode D,E,F - Standard - HSCROL=6
+IPPPPAA                 GRG GRG GRG GRG GRG GRG GRG GRG GRG G G G G G G G G G G G G G G G G G G G G G G          M  Mode D,E,F - Standard - HSCROL=8
+IPPPPAA                  GRG GRG GRG GRG GRG GRG GRG GRG GRG G G G G G G G G G G G G G G G G G G G G G G         M  Mode D,E,F - Standard - HSCROL=10
+IPPPPAA                  RG GRG GRG GRG GRG GRG GRG GRG GRG G G G G G G G G G G G G G G G G G G G G G G G        M  Mode D,E,F - Standard - HSCROL=12
+IPPPPAA                  R G GRG GRG GRG GRG GRG GRG GRG GRG G G G G G G G G G G G G G G G G G G G G G G G       M  Mode D,E,F - Standard - HSCROL=14
+|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|-
+IPPPPAA                  R  GRG GRG GRG GRG GRG GRG GRG GRG G G G G G G G G G G G G G G G G                      M  Mode D,E,F - Narrow
