@@ -394,6 +394,8 @@ void vdi_call(vdi_pb *pb) {
         case VDI_Q_KEY_S:     op_q_key_s(pb);    break;
         case VDI_VEX_BUTV: case VDI_VEX_MOTV:
         case VDI_VEX_CURV: case VDI_VEX_TIMV:    op_vex(pb);  break;
+        case VDI_VEX_WHEELV:  op_vex_wheel(pb);  break;
+        case VDI_SC_FORM:     op_sc_form(pb);    break;
         case VDI_ST_ROTATION: op_st_rotation(pb);break;
         case VDI_ST_EFFECTS:  op_st_effects(pb); break;
         case VDI_ST_ALIGN:    op_st_alignment(pb);break;

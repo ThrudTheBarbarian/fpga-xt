@@ -227,18 +227,15 @@ read so nothing hangs.
 | vq_key_s | 128 | ✓ | keyboard shift/ctrl/alt state |
 | vex_butv / vex_motv / vex_curv / vex_timv | 125–127 / 118 | ✓ | exchange an input-interrupt vector (returns the previous) |
 
-Cross-referencing the [FreeMiNT VDI input set](https://freemint.github.io/tos.hyp/en/vdi_input.html),
-two functions are missing:
+Cross-referencing the [FreeMiNT VDI input set](https://freemint.github.io/tos.hyp/en/vdi_input.html):
 
-| Call | Op | Sup | Rec | Notes / rationale |
-|------|----|-----|-----|-------|
-| vex_wheelv | 134 | ✗ | ✅ | install a **mouse-wheel** event handler (wheel number + amount). Real wheel support — needs the vector exchange (like the other vex_*) *and* the SDL host to feed `SDL_MOUSEWHEEL` (currently it isn't, so we have **no working wheel** yet). Essential for a scrolling desktop |
-| vsc_form | 111 | ✗ | ✅ | set the **mouse-pointer shape** (16×16 cursor + mask + hot spot). The WM draws a hardcoded arrow today; this lets apps/AES swap cursors (I-beam, busy, hand). Store the form, have the WM draw it |
+| Call | Op | Sup | Notes |
+|------|----|-----|-------|
+| vex_wheelv | 134 | ✓ | install a **mouse-wheel** handler (wheel number + signed amount). `vdi_input_wheel()` fires it and accumulates into the valuator; the SDL host feeds `SDL_MOUSEWHEEL` (on hardware the RP2354 USB-HID companion is the wheel source) |
+| vsc_form | 111 | ✓ | set the **mouse-pointer shape** — 16×16 mono cursor (data over mask) + hot spot, stored device-wide; the WM draws it (via `vdi_cursor_form`) instead of the built-in arrow |
 
-Wheel status: the generic *valuator* device (op 29) could carry a wheel value, but nothing feeds
-it from a real wheel and there's no `vex_wheelv` vector — so **wheels aren't actually supported**
-yet. Both calls above are ✅ recommended; `vex_wheelv` also requires wiring `SDL_MOUSEWHEEL` in the
-host (and a PS/hardware wheel source later).
+So mouse wheels **are** supported now (vex_wheelv + the SDL feed), and the pointer shape is
+app/AES-settable. That completes the VDI input group.
 
 **NVDI extensions**
 

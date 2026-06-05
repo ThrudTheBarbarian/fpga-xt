@@ -28,6 +28,7 @@ static struct {
     void (*pump)(void *);
     void *pump_ctx;
     vdi_vec vec_but, vec_mot, vec_cur, vec_tim;
+    vdi_wheel_vec vec_wheel;
 } in;
 
 // ---- Host-facing setters (called by the SDL backend / AES pump) -----------
@@ -43,6 +44,11 @@ void vdi_input_key(int ch) {
 void vdi_input_shift(int mask)    { in.shift = mask; }
 void vdi_input_valuator(int v)    { in.valuator = v; }
 void vdi_input_choice(int c)      { in.choice = c; }
+// A wheel event: accumulate into the valuator and fire the vex_wheelv handler.
+void vdi_input_wheel(int wheel, int amount) {
+    in.valuator += amount;
+    if (in.vec_wheel) in.vec_wheel(wheel, amount);
+}
 void vdi_input_set_pump(void (*pump)(void *), void *ctx) { in.pump = pump; in.pump_ctx = ctx; }
 int  vdi_cursor_visible(void)     { return in.hide_depth == 0; }
 
@@ -161,6 +167,9 @@ void op_vex(vdi_pb *pb) {
         case VDI_VEX_TIMV: g_vex_out = in.vec_tim; in.vec_tim = g_vex_in; break;
     }
 }
+// vex_wheelv: exchange the wheel handler (its own type — takes wheel + amount).
+vdi_wheel_vec g_vex_wheel_in, g_vex_wheel_out;
+void op_vex_wheel(vdi_pb *pb) { (void)pb; g_vex_wheel_out = in.vec_wheel; in.vec_wheel = g_vex_wheel_in; }
 
 // ===========================================================================
 // C bindings
@@ -248,3 +257,8 @@ vdi_vec vex_butv(int handle, vdi_vec f) { return vex(handle, VDI_VEX_BUTV, f); }
 vdi_vec vex_motv(int handle, vdi_vec f) { return vex(handle, VDI_VEX_MOTV, f); }
 vdi_vec vex_curv(int handle, vdi_vec f) { return vex(handle, VDI_VEX_CURV, f); }
 vdi_vec vex_timv(int handle, vdi_vec f) { return vex(handle, VDI_VEX_TIMV, f); }
+vdi_wheel_vec vex_wheelv(int handle, vdi_wheel_vec f) {
+    g_vex_wheel_in = f; g_vex_wheel_out = 0;
+    vdi_emit(VDI_VEX_WHEELV, 0, handle, 0, 0);
+    return g_vex_wheel_out;
+}

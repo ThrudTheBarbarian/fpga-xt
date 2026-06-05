@@ -215,8 +215,28 @@ static void draw_frame(gem_wm *wm, gem_window *win) {
     }
 }
 
+// Draw the vsc_form mouse shape (16x16 mono, MSB = leftmost): foreground where
+// data=1, background where mask=1 & data=0, else transparent.  Placed so its hot
+// spot sits at the pointer position.
+static void draw_mform(gem_wm *wm, const MFORM *m) {
+    gfx_surface *d = wm->desk;
+    uint32_t fg = vdi_pen_rgba(m->fg), bg = vdi_pen_rgba(m->bg);
+    for (int row = 0; row < 16; row++) {
+        int py = wm->my - m->hoty + row; if (py < 0 || py >= d->h) continue;
+        for (int col = 0; col < 16; col++) {
+            uint16_t bit = (uint16_t)(0x8000u >> col);
+            int on = (m->data[row] & bit) != 0, out = (m->mask[row] & bit) != 0;
+            if (!on && !out) continue;                          // transparent
+            int px = wm->mx - m->hotx + col; if (px < 0 || px >= d->w) continue;
+            d->px[(size_t)py * d->stride + px] = on ? fg : bg;
+        }
+    }
+}
+
 // A minimal arrow pointer (hot spot = top-left).  X = black outline, . = white.
 static void draw_pointer(gem_wm *wm) {
+    const MFORM *m = vdi_cursor_form();
+    if (m) { draw_mform(wm, m); return; }                       // app/AES-set shape
     static const char *arrow[] = {
         "X           ", "XX          ", "X.X         ", "X..X        ",
         "X...X       ", "X....X      ", "X.....X     ", "X......X    ",

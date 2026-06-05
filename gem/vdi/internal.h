@@ -157,7 +157,10 @@ void op_hide_c(vdi_pb *pb);
 void op_q_mouse(vdi_pb *pb);
 void op_q_key_s(vdi_pb *pb);
 void op_vex(vdi_pb *pb);
+void op_vex_wheel(vdi_pb *pb);
+void op_sc_form(vdi_pb *pb);
 extern vdi_vec g_vex_in, g_vex_out;     // out-of-band vex_* handler exchange
+extern vdi_wheel_vec g_vex_wheel_in, g_vex_wheel_out;   // vex_wheelv exchange
 void op_bez(vdi_pb *pb, int fill);      // v_bez (fill=0) / v_bez_fill (fill=1)
 void op_bez_qual(vdi_pb *pb);
 void op_bez_onoff(vdi_pb *pb);

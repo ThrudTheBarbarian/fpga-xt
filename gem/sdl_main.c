@@ -114,6 +114,9 @@ int main(int argc, char **argv) {
                 if (k == SDLK_RETURN || k == SDLK_BACKSPACE || (k >= 0x20 && k < 0x7f))
                     vdi_input_key(k == SDLK_RETURN ? '\r' : (int)k);
             }
+            else if (e.type == SDL_MOUSEWHEEL) {
+                vdi_input_wheel(0, e.wheel.y);       // vertical wheel -> vex_wheelv
+            }
             else if (e.type == SDL_MOUSEMOTION) {
                 gem_wm_mouse_move(&wm, e.motion.x - off_x, e.motion.y - off_y);
                 vdi_input_mouse(e.motion.x - off_x, e.motion.y - off_y, btn_mask);

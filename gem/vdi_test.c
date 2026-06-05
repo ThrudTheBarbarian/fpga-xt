@@ -23,6 +23,8 @@ static void ink_bbox(gfx_surface *s, int *w, int *h) {
     printf("  FAIL %s:%d  %s\n", __FILE__, __LINE__, #cond); fails++; } } while (0)
 
 static void dummy_vec(void) { }     // a vex_* handler to exchange
+static int g_wheel_amt = 0;
+static void wheel_vec(int wheel, int amount) { (void)wheel; g_wheel_amt += amount; }
 
 int main(void) {
     gfx_surface *s = gfx_surface_alloc(100, 100);
@@ -829,6 +831,24 @@ int main(void) {
 
     CHECK(vex_butv(he, dummy_vec) == NULL);              // no prior handler
     CHECK(vex_butv(he, NULL) == dummy_vec);              // returns the one we set
+
+    // vex_wheelv: a wheel tick fires the installed handler and bumps the valuator.
+    g_wheel_amt = 0;
+    CHECK(vex_wheelv(he, wheel_vec) == NULL);            // no prior handler
+    vdi_input_valuator(0);
+    vdi_input_wheel(0, 3);
+    CHECK(g_wheel_amt == 3);                             // handler ran
+    int wv = -1; vsm_valuator(he, &wv); CHECK(wv == 3);  // accumulated into the valuator
+    CHECK(vex_wheelv(he, NULL) == wheel_vec);            // returns the one we set
+
+    // vsc_form: setting a pointer shape makes vdi_cursor_form report it.
+    CHECK(vdi_cursor_form() == NULL);                    // built-in arrow until set
+    MFORM mf = { 4, 2, 1, 0, 1, {0}, {0} };
+    mf.data[3] = 0x8000; mf.mask[3] = 0xC000;            // one fg pixel, two mask
+    vsc_form(he, &mf);
+    const MFORM *mform_cur = vdi_cursor_form();
+    CHECK(mform_cur != NULL && mform_cur->hotx == 4 && mform_cur->hoty == 2);
+    CHECK(mform_cur->fg == 1 && mform_cur->bg == 0 && mform_cur->data[3] == 0x8000 && mform_cur->mask[3] == 0xC000);
 
     v_clsvwk(he); gfx_surface_free(es); font_face_close(ef);
 

@@ -111,8 +111,22 @@ enum {                          // VDI opcodes (standard GEM)
     VDI_VEX_MOTV    = 126,      // vex_motv   — pointer-motion vector
     VDI_VEX_CURV    = 127,      // vex_curv   — cursor-draw vector
     VDI_Q_KEY_S     = 128,      // vq_key_s   — keyboard shift state
+    VDI_SC_FORM     = 111,      // vsc_form    — set the mouse-pointer shape
+    VDI_VEX_WHEELV  = 134,      // vex_wheelv  — mouse-wheel event vector
     VDI_ESCAPE      = 5,        // VDI escape (sub 99 = v_bez_qual)
 };
+
+// Mouse-pointer shape (vsc_form): 16x16 mono cursor, MSB = leftmost pixel.
+typedef struct {
+    int16_t  hotx, hoty;       // hot spot (the click point), in cursor px
+    int16_t  planes;           // 1 (mono); 0 in a fresh struct = "not set"
+    int16_t  bg, fg;           // background (mask) and foreground (data) pens
+    uint16_t mask[16];         // 1 = background/outline pixel
+    uint16_t data[16];         // 1 = foreground pixel
+} MFORM;
+
+// The mouse-wheel handler installed by vex_wheelv: (wheel number, signed amount).
+typedef void (*vdi_wheel_vec)(int wheel, int amount);
 
 // NVDI Bézier sub-opcodes.  v_bez/v_bez_fill ride op 6/9 with contrl[5]=13;
 // v_bez_on/off ride op 11 (GDP) sub 13; v_bez_qual rides escape (op 5) sub 99.
@@ -371,6 +385,7 @@ void vdi_input_key(int ch);                        // enqueue a typed character
 void vdi_input_shift(int mask);                    // shift/ctrl/alt state
 void vdi_input_valuator(int v);                    // current valuator value
 void vdi_input_choice(int c);                      // current choice number
+void vdi_input_wheel(int wheel, int amount);       // a wheel tick (fires vex_wheelv)
 // REQUEST-mode (blocking) input drives this pump until the device triggers;
 // with no pump set, REQUEST degrades to one non-blocking read (never hangs).
 void vdi_input_set_pump(void (*pump)(void *), void *ctx);
@@ -400,6 +415,9 @@ vdi_vec vex_butv(int handle, vdi_vec f);           // button change
 vdi_vec vex_motv(int handle, vdi_vec f);           // pointer motion
 vdi_vec vex_curv(int handle, vdi_vec f);           // cursor draw
 vdi_vec vex_timv(int handle, vdi_vec f);           // timer tick
+vdi_wheel_vec vex_wheelv(int handle, vdi_wheel_vec f);   // mouse wheel
+void vsc_form(int handle, const MFORM *form);      // set the mouse-pointer shape
+const MFORM *vdi_cursor_form(void);                // current pointer shape, or NULL (WM draws it)
 
 // ---- NVDI extensions ------------------------------------------------------
 // Bézier paths: `xy` holds count (x,y) points (anchors + control points); `bez`
