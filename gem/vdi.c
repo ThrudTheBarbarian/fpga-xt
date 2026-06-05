@@ -54,6 +54,22 @@ static void pen_init(void) {
 
 uint32_t vdi_pen_rgba(int pen) { return pen_tab[pen & 0xFF]; }
 
+void mfdb_from_surface(MFDB *m, gfx_surface *s) {
+    m->addr = s->px; m->w = (int16_t)s->w; m->h = (int16_t)s->h; m->stride = (int16_t)s->stride;
+}
+
+// MFDB pointers are passed out-of-band (not packed into the WORD arrays): the C
+// wrapper sets these, and on the A9 the m68k trap handler will reconstruct them
+// from the app's MFDB pointers before calling vdi_call.
+static const MFDB *g_cpyfm_src, *g_cpyfm_dst;
+
+// View an MFDB as a gfx_surface (addr NULL => the workstation's target surface).
+static gfx_surface mfdb_surf(const MFDB *m, const vdi_ws *w) {
+    if (!m || !m->addr) return *w->target;
+    gfx_surface s = { m->w, m->h, m->stride, m->addr };
+    return s;
+}
+
 void vdi_init(gfx_surface *default_target) {
     memset(ws_tab, 0, sizeof(ws_tab));
     pen_init();
@@ -141,6 +157,25 @@ static void op_fillrect(vdi_pb *pb) {   // vr_recfl + v_bar (GDP sub 1)
     vdi_ws *w = ws_of(pb->contrl[6]); if (!w || !w->fill_interior) return;
     fill_rect_clipped(w, pb->ptsin[0], pb->ptsin[1], pb->ptsin[2], pb->ptsin[3], w->fill_color);
 }
+static void op_cpyfm(vdi_pb *pb) {      // vro_cpyfm — opaque raster copy
+    vdi_ws *w = ws_of(pb->contrl[6]); if (!w || !g_cpyfm_src) return;
+    gfx_surface src = mfdb_surf(g_cpyfm_src, w);
+    gfx_surface dst = mfdb_surf(g_cpyfm_dst, w);
+    int sx1 = pb->ptsin[0], sy1 = pb->ptsin[1], sx2 = pb->ptsin[2], sy2 = pb->ptsin[3];
+    int dx1 = pb->ptsin[4], dy1 = pb->ptsin[5];
+    if (sx1 > sx2) { int t = sx1; sx1 = sx2; sx2 = t; }
+    if (sy1 > sy2) { int t = sy1; sy1 = sy2; sy2 = t; }
+    int bw = sx2 - sx1 + 1, bh = sy2 - sy1 + 1;
+    // Clip the destination to the ws clip rect when copying to the screen target.
+    if (!g_cpyfm_dst || !g_cpyfm_dst->addr) {
+        int cx0, cy0, cx1, cy1; ws_clip(w, &cx0, &cy0, &cx1, &cy1);
+        if (dx1 < cx0) { int d = cx0 - dx1; sx1 += d; bw -= d; dx1 = cx0; }
+        if (dy1 < cy0) { int d = cy0 - dy1; sy1 += d; bh -= d; dy1 = cy0; }
+        if (dx1 + bw - 1 > cx1) bw = cx1 - dx1 + 1;
+        if (dy1 + bh - 1 > cy1) bh = cy1 - dy1 + 1;
+    }
+    if (bw > 0 && bh > 0) gfx_blit(&dst, dx1, dy1, &src, sx1, sy1, bw, bh);
+}
 
 void vdi_call(vdi_pb *pb) {
     switch (pb->contrl[0]) {
@@ -152,6 +187,7 @@ void vdi_call(vdi_pb *pb) {
         case VDI_CLIP:        op_clip(pb);       break;
         case VDI_PLINE:       op_pline(pb);      break;
         case VDI_RECFL:       op_fillrect(pb);   break;
+        case VDI_CPYFM:       op_cpyfm(pb);      break;
         case VDI_GDP:         if (pb->contrl[5] == 1) op_fillrect(pb); break;  // v_bar
         default: break;       // unimplemented opcode -> no-op (logged later)
     }
@@ -196,4 +232,10 @@ void vs_clip(int handle, int on, const int16_t *pxy) {
     g_intin[0] = (int16_t)(on ? 1 : 0);
     memcpy(g_ptsin, pxy, 4 * sizeof(int16_t));
     call(VDI_CLIP, 0, handle, 2, 1);
+}
+void vro_cpyfm(int handle, int mode, const int16_t *pxy, const MFDB *src, const MFDB *dst) {
+    g_cpyfm_src = src; g_cpyfm_dst = dst;
+    memcpy(g_ptsin, pxy, 8 * sizeof(int16_t));      // src x1,y1,x2,y2 + dst x1,y1,x2,y2
+    call(VDI_CPYFM, mode, handle, 4, 0);
+    g_cpyfm_src = g_cpyfm_dst = NULL;
 }

@@ -47,6 +47,24 @@ int main(void) {
     CHECK(PX(s, 30, 30) == BLACK);   // on the clipped diagonal, inside clip
     CHECK(PX(s,  5,  5) == 0);        // segment outside clip not drawn
 
+    // vro_cpyfm: copy a green 20x20 source into a fresh dst at (10,10).
+    gfx_surface *srcS = gfx_surface_alloc(20, 20);
+    for (int i = 0; i < 20 * 20; i++) srcS->px[i] = vdi_pen_rgba(3);  // green
+    gfx_surface *dstS = gfx_surface_alloc(40, 40);
+    int hd = v_opnvwk(dstS);
+    MFDB ms, md;
+    mfdb_from_surface(&ms, srcS);
+    mfdb_from_surface(&md, dstS);
+    int16_t cp[8] = { 0, 0, 19, 19, 10, 10, 29, 29 };
+    vro_cpyfm(hd, VRO_COPY, cp, &ms, &md);
+    CHECK(PX(dstS, 15, 15) == vdi_pen_rgba(3));   // inside the copied rect
+    CHECK(PX(dstS, 10, 10) == vdi_pen_rgba(3));   // top-left of copy
+    CHECK(PX(dstS, 29, 29) == vdi_pen_rgba(3));   // bottom-right of copy
+    CHECK(PX(dstS,  5,  5) == 0);                  // outside the copy
+    CHECK(PX(dstS, 35, 35) == 0);
+    gfx_surface_free(srcS); gfx_surface_free(dstS);
+    v_clsvwk(hd);
+
     if (fails == 0) printf("*** VDI TEST OK ***\n");
     else            printf("*** VDI TEST: %d FAIL(s) ***\n", fails);
     gfx_surface_free(s);

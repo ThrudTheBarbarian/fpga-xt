@@ -27,9 +27,25 @@ enum {                          // VDI opcodes (standard GEM)
     VDI_SL_COLOR    = 17,       // vsl_color  — polyline colour
     VDI_SF_INTERIOR = 23,       // vsf_interior — 0 hollow, 1 solid
     VDI_SF_COLOR    = 25,       // vsf_color  — fill colour
+    VDI_CPYFM       = 109,      // vro_cpyfm  — copy raster, opaque
     VDI_RECFL       = 114,      // vr_recfl   — fill rectangle
     VDI_CLIP        = 129,      // vs_clip
 };
+
+// Memory Form Definition Block — a bitmap, in device format (RGBA-8888 chunky).
+// Real GEM MFDBs are planar with fd_wdwidth/fd_nplanes; the planar<->device
+// conversion for ST binary compatibility is a later layer in the trap path.
+// addr == NULL means "the destination is the workstation's target surface".
+typedef struct {
+    uint32_t *addr;            // device pixels (RGBA-8888), or NULL = screen
+    int16_t   w, h;            // size in pixels
+    int16_t   stride;          // pixels per row
+} MFDB;
+
+void mfdb_from_surface(MFDB *m, gfx_surface *s);   // wrap a surface as a device MFDB
+
+// VDI raster copy modes (subset).  3 = S replace (plain copy) — the only one yet.
+enum { VRO_COPY = 3 };
 
 // The GEM parameter block: contrl[0]=opcode, [1]=#ptsin pairs, [2]=#ptsout,
 // [3]=#intin, [4]=#intout, [5]=sub-opcode, [6]=handle.
@@ -52,5 +68,7 @@ void v_pline(int handle, int n, const int16_t *pxy);   // n point-pairs
 void v_bar(int handle, const int16_t *pxy);            // pxy = x1,y1,x2,y2
 void vr_recfl(int handle, const int16_t *pxy);         // pxy = x1,y1,x2,y2
 void vs_clip(int handle, int on, const int16_t *pxy);  // pxy = x1,y1,x2,y2
+// vro_cpyfm: pxy = src x1,y1,x2,y2, dst x1,y1 (,x2,y2). mode = VRO_COPY.
+void vro_cpyfm(int handle, int mode, const int16_t *pxy, const MFDB *src, const MFDB *dst);
 
 #endif // GEM_VDI_H
