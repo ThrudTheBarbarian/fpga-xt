@@ -335,7 +335,10 @@ module compositor #(
 
     // Mode F: bit p of glyph → 0x04 (set) or 0x00 (clear).
     function automatic logic [7:0] modeF_pixel(logic [7:0] glyph, logic [2:0] bit_idx);
-        return glyph[bit_idx] ? 8'h04 : 8'h00;
+        // GR.8 hi-res: lit pixel = COLPF1 (its LUMA on COLPF2's hue, via
+        // colpf1_luma_only — see antic_top), background = COLPF2.  Same colour
+        // rule as hi-res text (mode 2), NOT lit=COLPF2 / bg=COLBK.
+        return glyph[bit_idx] ? 8'h02 : 8'h04;
     endfunction
 
     // Mode F window pack: pair p of a 16-bit window {cur_byte, next_byte}
@@ -353,8 +356,8 @@ module compositor #(
         logic [7:0] lo_px, hi_px;
         lo_idx = 5'd15 - {2'b00, hs_sub[2:0]} - {3'b000, p[1:0], 1'b0};
         hi_idx = 5'd14 - {2'b00, hs_sub[2:0]} - {3'b000, p[1:0], 1'b0};
-        lo_px  = window[lo_idx[3:0]] ? 8'h04 : 8'h00;
-        hi_px  = window[hi_idx[3:0]] ? 8'h04 : 8'h00;
+        lo_px  = window[lo_idx[3:0]] ? 8'h02 : 8'h04;   // lit=COLPF1(luma), bg=COLPF2
+        hi_px  = window[hi_idx[3:0]] ? 8'h02 : 8'h04;
         return {hi_px, lo_px};
     endfunction
 

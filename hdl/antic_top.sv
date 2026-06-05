@@ -1181,8 +1181,8 @@ module antic_top #(
     // word.
     wire [7:0] resolved_color_lo, resolved_color_hi;
 
-    // GR.0 text modes (ANTIC 2/3): GTIA takes the char LUMA from COLPF1 but
-    // the HUE from COLPF2.  REGISTERED on clk_bus so the comb fan-out from
+    // Hi-res modes (ANTIC 2/3 text + F = GR.8): the lit pixel takes its LUMA
+    // from COLPF1 but its HUE from COLPF2.  REGISTERED on clk_bus so the fan-out from
     // dl_meta_mode (4-bit) to two color_resolver instances stays local to a
     // flop — feeding it combinationally cost ~155 ps of clk_sally margin in
     // testing (it pulled cells into the placement region next to sally_mem,
@@ -1193,8 +1193,9 @@ module antic_top #(
     reg  colpf1_luma_only_q;
     always_ff @(posedge clk_bus or posedge rst_bus) begin
         if (rst_bus) colpf1_luma_only_q <= 1'b0;
-        else         colpf1_luma_only_q <= (dl_meta_mode == 4'd2)
-                                         || (dl_meta_mode == 4'd3);
+        else         colpf1_luma_only_q <= (dl_meta_mode == 4'd2)   // GR.0 hi-res text
+                                         || (dl_meta_mode == 4'd3)
+                                         || (dl_meta_mode == 4'hF);  // GR.8 hi-res 1bpp
     end
     wire colpf1_luma_only = colpf1_luma_only_q;
 
