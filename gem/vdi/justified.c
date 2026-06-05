@@ -28,7 +28,7 @@ void op_justified(vdi_pb *pb) {
     int cx0, cy0, cx1, cy1; vdi_ws_clip(w, &cx0, &cy0, &cx1, &cy1);
     int clip[4] = { cx0, cy0, cx1, cy1 };
     font_draw_justified(f, w->target, x, y, buf, width,
-                        pb->intin[0], pb->intin[1], vdi_pen_rgba(w->text_color), clip);
+                        pb->intin[0], pb->intin[1], vdi_pen_rgba(w->text_color), clip, w->wr_mode);
 }
 
 void v_justified(int handle, int x, int y, const char *s, int width,

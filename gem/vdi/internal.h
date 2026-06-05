@@ -7,6 +7,16 @@
 #include "vdi/vdi.h"
 #include <stdint.h>
 
+// Combine an ink pixel into the destination per the writing mode.  `bit` is the
+// source foreground/background bit (solid primitives pass 1); `ground` is VDI
+// colour 0.  XOR touches only RGB so it stays reversible and keeps dst alpha.
+static inline uint32_t vdi_wrmix(int mode, uint32_t dst, uint32_t ink, uint32_t ground, int bit) {
+    if (bit) return mode == VDI_MD_XOR   ? (dst ^ (ink & 0xFFFFFF00u))
+                  : mode == VDI_MD_ERASE ? dst : ink;
+    else     return mode == VDI_MD_REPLACE ? ground
+                  : mode == VDI_MD_ERASE   ? ink : dst;
+}
+
 #define VDI_MAX_WS 16
 
 // A workstation: target surface + drawing attributes + clip rect.
@@ -29,6 +39,7 @@ typedef struct {
     font_face   *text_face;        // selected face (vst_font); NULL => the VDI default
     int          text_px;          // selected size (0 => VDI_TEXT_PX_DEFAULT)
     int          text_font_id;     // selected font id (vst_font; 1 = system)
+    int          wr_mode;          // VDI_MD_* (vswr_mode; default REPLACE)
     int          clip_on, cx0, cy0, cx1, cy1;   // clip rect, inclusive
     int          device;           // v_opnwk device id (0 = virtual/screen draw)
     void        *dev;              // device state (metafile recorder / PDF page)
@@ -84,6 +95,7 @@ void op_updwk(vdi_pb *pb);
 void op_opnvwk(vdi_pb *pb);
 void op_clsvwk(vdi_pb *pb);
 void op_vq_extnd(vdi_pb *pb);
+void op_swr_mode(vdi_pb *pb);
 void op_sl_color(vdi_pb *pb);
 void op_sl_width(vdi_pb *pb);
 void op_sl_type(vdi_pb *pb);

@@ -44,6 +44,7 @@ enum {                          // VDI opcodes (standard GEM)
     VDI_SM_HEIGHT   = 19,       // vsm_height — marker height
     VDI_SM_COLOR    = 20,       // vsm_color  — marker colour
     VDI_ST_FONT     = 21,       // vst_font   — select text face by id
+    VDI_SWR_MODE    = 32,       // vswr_mode  — writing mode
     VDI_QT_NAME     = 130,      // vqt_name   — inquire a font's id + name
     VDI_CONTOURFILL = 103,      // v_contourfill — seed fill
     VDI_ST_COLOR    = 22,       // vst_color  — text colour
@@ -75,6 +76,13 @@ void mfdb_from_surface(MFDB *m, gfx_surface *s);   // wrap a surface as a device
 
 // VDI raster copy modes (subset).  3 = S replace (plain copy) — the only one yet.
 enum { VRO_COPY = 3 };
+
+// Writing modes (vswr_mode).  Per pixel, given a source foreground bit:
+//   REPLACE: fg -> ink, bg -> colour 0 (opaque)
+//   TRANS:   fg -> ink, bg -> unchanged (the default in classic GEM)
+//   XOR:     fg -> dst XOR ink, bg -> unchanged (reversible)
+//   ERASE:   fg -> unchanged, bg -> ink (reverse transparent)
+enum { VDI_MD_REPLACE = 1, VDI_MD_TRANS = 2, VDI_MD_XOR = 3, VDI_MD_ERASE = 4 };
 
 // Marker types (vsm_type) for v_pmarker.
 enum { VDI_MK_DOT = 1, VDI_MK_PLUS = 2, VDI_MK_ASTERISK = 3,
@@ -138,6 +146,7 @@ void v_clsvwk(int handle);
 // Extended inquiry.  owflag 0 = the open-workstation caps; 1 = extended info
 // (work_out[5] == 0 => true-colour / no palette LUT).  work_out is 57 WORDs.
 void vq_extnd(int handle, int owflag, int16_t *work_out);
+int  vswr_mode(int handle, int mode);                  // VDI_MD_*; returns selected
 void vsl_color(int handle, int pen);
 int  vsl_type(int handle, int style);                  // 1 solid..6; returns selected
 int  vsl_width(int handle, int width);                 // px; returns selected

@@ -24,6 +24,7 @@ int vdi_ws_alloc(void) {
         ws_tab[i].fill_color = 1; ws_tab[i].text_color = 1; ws_tab[i].fill_interior = 1;
         ws_tab[i].fill_style = 1; ws_tab[i].fill_perimeter = 1;
         ws_tab[i].marker_type = 3; ws_tab[i].marker_height = 11; ws_tab[i].marker_color = 1;
+        ws_tab[i].wr_mode = VDI_MD_REPLACE;
         ws_tab[i].text_font_id = 1; ws_tab[i].text_valign = VDI_TA_TOP;
         return i + 1;
     }
@@ -72,7 +73,16 @@ void vdi_fill_rect(const vdi_ws *w, int x0, int y0, int x1, int y1, int pen) {
     if (x0 < cx0) x0 = cx0; if (y0 < cy0) y0 = cy0;
     if (x1 > cx1) x1 = cx1; if (y1 > cy1) y1 = cy1;
     if (x0 > x1 || y0 > y1) return;
-    gfx_fill_rect(w->target, x0, y0, x1 - x0 + 1, y1 - y0 + 1, pen_tab[pen & 0xFF]);
+    uint32_t ink = pen_tab[pen & 0xFF];
+    int mode = w->wr_mode;
+    if (mode == VDI_MD_ERASE) return;                  // solid = all foreground
+    if (mode != VDI_MD_XOR) { gfx_fill_rect(w->target, x0, y0, x1-x0+1, y1-y0+1, ink); return; }
+    gfx_surface *s = w->target;
+    uint32_t x = ink & 0xFFFFFF00u;
+    for (int y = y0; y <= y1; y++) {
+        uint32_t *row = s->px + (size_t)y * s->stride;
+        for (int i = x0; i <= x1; i++) row[i] ^= x;
+    }
 }
 
 void vdi_fill_rect_masked(const vdi_ws *w, int x0, int y0, int x1, int y1,
@@ -84,13 +94,14 @@ void vdi_fill_rect_masked(const vdi_ws *w, int x0, int y0, int x1, int y1,
     if (x0 < cx0) x0 = cx0; if (y0 < cy0) y0 = cy0;
     if (x1 > cx1) x1 = cx1; if (y1 > cy1) y1 = cy1;
     if (x0 > x1 || y0 > y1) return;
-    uint32_t rgba = pen_tab[pen & 0xFF];
+    uint32_t ink = pen_tab[pen & 0xFF], ground = pen_tab[0];
+    int mode = w->wr_mode;
     gfx_surface *s = w->target;
     for (int y = y0; y <= y1; y++) {
         uint16_t bits = mask[y & 15];
         uint32_t *row = s->px + (size_t)y * s->stride;
         for (int x = x0; x <= x1; x++)
-            if (bits & (1u << (x & 15))) row[x] = rgba;    // pattern bit set -> ink
+            row[x] = vdi_wrmix(mode, row[x], ink, ground, (bits >> (x & 15)) & 1);
     }
 }
 
@@ -101,7 +112,8 @@ void vdi_fill_poly(const vdi_ws *w, const int16_t *xy, int n, int pen, const uin
     int ymin = cy1, ymax = cy0;
     for (int i = 0; i < n; i++) { int y = xy[2*i+1]; if (y < ymin) ymin = y; if (y > ymax) ymax = y; }
     if (ymin < cy0) ymin = cy0; if (ymax > cy1) ymax = cy1;
-    uint32_t rgba = pen_tab[pen & 0xFF];
+    uint32_t ink = pen_tab[pen & 0xFF], ground = pen_tab[0];
+    int mode = w->wr_mode;
     gfx_surface *s = w->target;
     int xs[128];
     for (int y = ymin; y <= ymax; y++) {
@@ -121,7 +133,8 @@ void vdi_fill_poly(const vdi_ws *w, const int16_t *xy, int n, int pen, const uin
             if (xa < cx0) xa = cx0; if (xb > cx1) xb = cx1;
             uint16_t bits = mask ? mask[y & 15] : 0xFFFF;
             uint32_t *row = s->px + (size_t)y * s->stride;
-            for (int x = xa; x <= xb; x++) if (bits & (1u << (x & 15))) row[x] = rgba;
+            for (int x = xa; x <= xb; x++)
+                row[x] = vdi_wrmix(mode, row[x], ink, ground, (bits >> (x & 15)) & 1);
         }
     }
 }
@@ -166,7 +179,7 @@ static uint16_t line_pattern(int type) {
 // a square one is ~1.41x thicker along diagonals.  The disc is centred on a
 // half-pixel for even widths so the on-axis span is exactly `width`.  Compare
 // is in doubled integers: (2dx-oc)^2 + (2dy-oc)^2 <= width^2.
-static void brush(gfx_surface *s, int cx, int cy, int width, uint32_t rgba,
+static void brush(gfx_surface *s, int cx, int cy, int width, uint32_t rgba, int mode,
                   int x0c, int y0c, int x1c, int y1c) {
     int oc = (width & 1) ? 0 : 1, w2 = width * width, R = width / 2 + 1;
     for (int dy = -R; dy <= R; dy++) {
@@ -178,7 +191,7 @@ static void brush(gfx_surface *s, int cx, int cy, int width, uint32_t rgba,
             int tx = 2 * dx - oc;
             if (tx * tx + ty > w2) continue;
             int x = cx + dx; if (x < x0c || x > x1c || x < 0 || x >= s->w) continue;
-            row[x] = rgba;
+            row[x] = vdi_wrmix(mode, row[x], rgba, 0, 1);   // line = solid foreground
         }
     }
 }
@@ -204,9 +217,9 @@ void vdi_line(const vdi_ws *w, int x0, int y0, int x1, int y1, int pen) {
     uint16_t pat = line_pattern(w->line_type);
     int dx = x1 > x0 ? x1 - x0 : x0 - x1, sx = x0 < x1 ? 1 : -1;
     int dy = y1 > y0 ? y0 - y1 : y1 - y0, sy = y0 < y1 ? 1 : -1;   // dy negative
-    int err = dx + dy, d = 0;
+    int err = dx + dy, d = 0, mode = w->wr_mode;
     for (;;) {
-        if (pat & (1u << (d & 15))) brush(w->target, x0, y0, width, rgba, cx0, cy0, cx1, cy1);
+        if (pat & (1u << (d & 15))) brush(w->target, x0, y0, width, rgba, mode, cx0, cy0, cx1, cy1);
         if (x0 == x1 && y0 == y1) break;
         int e2 = 2 * err;
         if (e2 >= dy) { err += dy; x0 += sx; }
@@ -235,6 +248,7 @@ void vdi_init(gfx_surface *default_target) {
     ws_tab[0].fill_color = 1; ws_tab[0].text_color = 1; ws_tab[0].fill_interior = 1;
     ws_tab[0].fill_style = 1; ws_tab[0].fill_perimeter = 1;
     ws_tab[0].marker_type = 3; ws_tab[0].marker_height = 11; ws_tab[0].marker_color = 1;
+    ws_tab[0].wr_mode = VDI_MD_REPLACE;
     ws_tab[0].text_font_id = 1; ws_tab[0].text_valign = VDI_TA_TOP;
 }
 
@@ -302,6 +316,7 @@ void vdi_call(vdi_pb *pb) {
         case VDI_OPNVWK:      op_opnvwk(pb);     break;
         case VDI_CLSVWK:      op_clsvwk(pb);     break;
         case VDI_VQ_EXTND:    op_vq_extnd(pb);   break;
+        case VDI_SWR_MODE:    op_swr_mode(pb);   break;
         case VDI_SL_COLOR:    op_sl_color(pb);   break;
         case VDI_SL_TYPE:     op_sl_type(pb);    break;
         case VDI_SL_WIDTH:    op_sl_width(pb);   break;

@@ -109,7 +109,7 @@ The device mechanism is in place, so adding a device is now just a driver behind
 | vsf_style | 24 | ✓ | full set: 24 patterns (8 graduated dither + 16 textures), 12 hatches |
 | vsf_color | 25 | ✓ | |
 | vsf_perimeter | 104 | ✓ | outline filled areas |
-| vswr_mode | 32 | ✗ | only replace/transparent (no XOR/reverse) |
+| vswr_mode | 32 | ✓ | replace / transparent / XOR / reverse-transparent; default replace. XOR is reversible (rubber-banding). Text honours XOR (else blends) |
 | vst_rotation | 13 | ✗ | rotated text |
 | vst_effects | 106 | ✗ | bold/italic/underline |
 | vsl_ends | 108 | ✗ | line caps / arrowheads |

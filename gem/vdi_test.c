@@ -129,6 +129,7 @@ int main(void) {
     // vs_color (palette) + fill patterns/hatch + perimeter.
     gfx_surface *fs = gfx_surface_alloc(40, 40);
     int hf = v_opnvwk(fs);
+    vswr_mode(hf, VDI_MD_TRANS);                        // transparent: pattern gaps stay clear
     int16_t redrgb[3] = { 1000, 0, 0 };
     vs_color(hf, 5, redrgb);                            // redefine pen 5 -> pure red
     vsf_color(hf, 5); vsf_interior(hf, VDI_FIS_SOLID); vsf_perimeter(hf, 0);
@@ -445,6 +446,30 @@ int main(void) {
     CHECK(PX(vf, 12, 12) == vdi_pen_rgba(3) && PX(vf, 128, 128) == vdi_pen_rgba(3));
     CHECK(PX(vf, 5, 5) == 0);
     v_clsvwk(hvf); gfx_surface_free(vf);
+
+    // vswr_mode: XOR is reversible, REPLACE writes the ground, ERASE inverts.
+    gfx_surface *wm = gfx_surface_alloc(20, 20);
+    int hwm = v_opnvwk(wm);
+    vsf_color(hwm, 2); vsf_interior(hwm, VDI_FIS_SOLID); vsf_perimeter(hwm, 0);
+    for (int i = 0; i < 20 * 20; i++) wm->px[i] = 0x11223344;
+    CHECK(vswr_mode(hwm, VDI_MD_XOR) == VDI_MD_XOR);
+    int16_t wr[4] = { 2, 2, 12, 12 };
+    vr_recfl(hwm, wr); CHECK(PX(wm, 5, 5) != 0x11223344);   // XOR changed it
+    vr_recfl(hwm, wr); CHECK(PX(wm, 5, 5) == 0x11223344);   // XOR twice restores
+
+    vswr_mode(hwm, VDI_MD_REPLACE);                    // opaque pattern: gaps = pen 0
+    for (int i = 0; i < 20 * 20; i++) wm->px[i] = 0;
+    vsf_color(hwm, 1); vsf_interior(hwm, VDI_FIS_HATCH); vsf_style(hwm, 5);   // horizontal
+    int16_t wr2[4] = { 0, 0, 15, 15 }; vr_recfl(hwm, wr2);
+    CHECK(PX(wm, 5, 0) == vdi_pen_rgba(1));            // hatch line
+    CHECK(PX(wm, 5, 1) == vdi_pen_rgba(0));            // gap filled with the ground
+
+    vswr_mode(hwm, VDI_MD_ERASE);                      // reverse-transparent
+    for (int i = 0; i < 20 * 20; i++) wm->px[i] = 0;
+    vsf_color(hwm, 3); vr_recfl(hwm, wr2);
+    CHECK(PX(wm, 5, 0) == 0);                          // on the line: left unchanged
+    CHECK(PX(wm, 5, 1) == vdi_pen_rgba(3));            // in the gap: drawn
+    v_clsvwk(hwm); gfx_surface_free(wm);
 
     if (fails == 0) printf("*** VDI TEST OK ***\n");
     else            printf("*** VDI TEST: %d FAIL(s) ***\n", fails);

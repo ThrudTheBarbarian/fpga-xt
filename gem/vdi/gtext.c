@@ -36,7 +36,7 @@ void op_gtext(vdi_pb *pb) {
     }
     int cx0, cy0, cx1, cy1; vdi_ws_clip(w, &cx0, &cy0, &cx1, &cy1);
     int clip[4] = { cx0, cy0, cx1, cy1 };
-    font_draw(f, w->target, x, y, buf, vdi_pen_rgba(w->text_color), clip);
+    font_draw(f, w->target, x, y, buf, vdi_pen_rgba(w->text_color), clip, w->wr_mode);
 }
 
 void v_gtext(int handle, int x, int y, const char *s) {
