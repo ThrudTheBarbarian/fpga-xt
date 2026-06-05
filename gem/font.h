@@ -49,6 +49,13 @@ void  font_vmetrics(const font *f, int *top, int *ascent, int *half,
 // the basis of the NVDI fractional text calls (vqt_advance / vqt_f_extent).
 long  font_f_advance(font *f, unsigned cp);
 long  font_f_text_width(font *f, const char *s);
+// Inquiry helpers: pair-kern delta (px), uniform track offset, tight inked bbox
+// (relative to the em-box top-left), and per-codepoint justified x offsets.
+int   font_pair_kern(font *f, unsigned a, unsigned b);
+int   font_face_track(const font_face *face);
+void  font_ink_extent(font *f, const char *s, int *x0, int *y0, int *x1, int *y1);
+int   font_justify_offsets(font *f, const char *s, int width, int word_space,
+                           int char_space, int16_t *offx);
 
 // Draw NUL-terminated ASCII with the em box's top-left at (x,y), antialiased in
 // colour rgba over the existing pixels.  Clipped to the inclusive rect

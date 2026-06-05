@@ -249,6 +249,66 @@ long font_f_text_width(font *f, const char *s) {
     return w;
 }
 
+// Pair-kern delta (px) between two codepoints, regardless of the kern-enable
+// flag (this is the query, vqt_pairkern); 0 if the face has no kern table.
+int font_pair_kern(font *f, unsigned a, unsigned b) {
+    if (!f || !FT_HAS_KERNING(f->owner->ft)) return 0;
+    FT_Face ft = f->owner->ft;
+    FT_Set_Pixel_Sizes(ft, f->wpx, f->px);
+    FT_Vector k;
+    if (FT_Get_Kerning(ft, FT_Get_Char_Index(ft, a), FT_Get_Char_Index(ft, b),
+                       FT_KERNING_DEFAULT, &k)) return 0;
+    return (int)(k.x >> 6);
+}
+int font_face_track(const font_face *face) { return face ? face->track_off : 0; }
+
+// Tight inked bounding box of s (vqt_real_extent), relative to the em-box
+// top-left: the union of the glyph bitmaps, not the cell box.
+void font_ink_extent(font *f, const char *s, int *x0, int *y0, int *x1, int *y1) {
+    *x0 = *y0 = *x1 = *y1 = 0;
+    if (!f || !s) return;
+    int pen = 0, base = f->ascent, trk = face_trk(f), set = 0;
+    for (const char *p = s; *p; ) {
+        const glyph *g = glyph_get(f, utf8_next(&p)); if (!g) continue;
+        if (g->cov && g->w && g->h) {
+            int gx0 = pen + g->left, gy0 = base - g->top, gx1 = gx0 + g->w, gy1 = gy0 + g->h;
+            if (!set) { *x0 = gx0; *y0 = gy0; *x1 = gx1; *y1 = gy1; set = 1; }
+            else { if (gx0 < *x0) *x0 = gx0; if (gy0 < *y0) *y0 = gy0;
+                   if (gx1 > *x1) *x1 = gx1; if (gy1 > *y1) *y1 = gy1; }
+        }
+        pen += g->advance + trk;
+    }
+}
+
+// Per-codepoint pen-x offsets for a justified line (vqt_justified): same slack
+// distribution as font_draw_justified.  Fills offx[i], returns the count.
+int font_justify_offsets(font *f, const char *s, int width, int word_space,
+                         int char_space, int16_t *offx) {
+    if (!f || !s) return 0;
+    int trk = face_trk(f), natural = 0, n = 0, nspaces = 0;
+    for (const char *p = s; *p; ) {
+        unsigned cp = utf8_next(&p);
+        const glyph *g = glyph_get(f, cp); if (!g) continue;
+        natural += g->advance + trk; if (cp == ' ') nspaces++; n++;
+    }
+    int gaps = n > 1 ? n - 1 : 0, extra = width - natural, word_add = 0, char_add = 0;
+    if (word_space && char_space) {
+        if (nspaces > 0) word_add = (extra / 2) / nspaces;
+        if (gaps > 0)    char_add = (extra - word_add * nspaces) / gaps;
+    } else if (word_space) { if (nspaces > 0) word_add = extra / nspaces; }
+    else if (char_space)   { if (gaps > 0)    char_add = extra / gaps; }
+    int pen = 0, i = 0;
+    for (const char *p = s; *p; i++) {
+        unsigned cp = utf8_next(&p);
+        const glyph *g = glyph_get(f, cp); if (!g) { i--; continue; }
+        if (offx) offx[i] = (int16_t)pen;
+        pen += g->advance + trk;
+        if (cp == ' ' && word_space) pen += word_add;
+        if (i < n - 1 && char_space) pen += char_add;
+    }
+    return n;
+}
+
 // out = src*cov + dst*(1-cov), per channel; alpha forced opaque.
 static inline uint32_t blend(uint32_t dst, uint32_t src, unsigned cov) {
     if (cov == 0)   return dst;

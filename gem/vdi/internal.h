@@ -74,6 +74,7 @@ void        vdi_line(const vdi_ws *w, int x0, int y0, int x1, int y1, int pen);
 void        vdi_line_ex(const vdi_ws *w, int x0, int y0, int x1, int y1, int pen, int sq0, int sq1);
 void        vdi_set_pen(int index, uint32_t rgba);       // vs_color writes the palette
 uint32_t    vdi_pen_rgba(int pen);                       // read a pen's RGBA
+int         vdi_pen_of(uint32_t rgba);                   // pen index for an exact RGBA, else -1
 gfx_surface *vdi_screen_target(void);                    // the desktop surface (physical ws)
 void        vdi_fill_caps(int16_t *intout, int16_t *ptsout);   // v_opnwk/v_opnvwk work_out
 
@@ -138,6 +139,14 @@ void op_st_width(vdi_pb *pb);
 void op_st_skew(vdi_pb *pb);
 void op_st_kern(vdi_pb *pb);
 void op_st_charmap(vdi_pb *pb);
+void op_vq_fg_color(vdi_pb *pb);
+void op_vq_bg_color(vdi_pb *pb);
+void op_qt_pairkern(vdi_pb *pb);
+void op_qt_real_extent(vdi_pb *pb);
+void op_qt_justified(vdi_pb *pb);
+void op_qt_trackkern(vdi_pb *pb);
+void op_qt_char_index(vdi_pb *pb);
+void op_vq_cellarray(vdi_pb *pb);
 void op_sin_mode(vdi_pb *pb);
 void op_locator(vdi_pb *pb);
 void op_valuator(vdi_pb *pb);

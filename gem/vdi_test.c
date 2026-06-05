@@ -4,6 +4,7 @@
 #include "vdi/vdi.h"
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
 
 static int fails = 0;
 static uint32_t PX(gfx_surface *s, int x, int y) { return s->px[(size_t)y * s->stride + x]; }
@@ -711,6 +712,68 @@ int main(void) {
     for (int y = 0; y < 40; y++) for (int x = 50; x < 80; x++) if (fh->px[(size_t)y*fh->stride+x]) rightcol++;
     CHECK(leftcol > 0 && rightcol > 0);                 // ink in both the placed positions
     v_clsvwk(hfg); v_clsvwk(hfh); gfx_surface_free(fg); gfx_surface_free(fh);
+
+    // --- Extended inquiry (NVDI/FSM) ---
+    vst_color(he, 5); vsf_color(he, 6); vsl_color(he, 7); vsm_color(he, 8);
+    CHECK(vqt_fg_color(he) == 5);                        // read back text / fill / line / marker pens
+    CHECK(vqf_fg_color(he) == 6);
+    CHECK(vql_fg_color(he) == 7);
+    CHECK(vqm_fg_color(he) == 8);
+    vswr_mode(he, VDI_MD_REPLACE); vst_bg_color(he, 3);
+    CHECK(vqt_bg_color(he) == 3);                        // read back opaque bg
+    vst_bg_color(he, -1);
+
+    // vqt_advance32: full 16.16 advance == vqt_advance's integer + remainder.
+    vst_height(he, 24, NULL, NULL, NULL, NULL);
+    int aax = 0, arx = 0; vqt_advance(he, 'W', &aax, NULL, &arx, NULL);
+    long a32 = 0; vqt_advance32(he, 'W', &a32, NULL);
+    CHECK(a32 == (((long)aax << 16) | arx));
+
+    // vqt_name_and_id: name -> id without selecting, with canonical name back.
+    char syscanon[40]; vqt_name(he, 1, sysname);
+    CHECK(vqt_name_and_id(he, sysname, syscanon) == 1);
+    CHECK(strcmp(syscanon, sysname) == 0);
+
+    // vq_scrninfo: direct true-colour RGBA-8888.
+    int16_t sci[12]; vq_scrninfo(he, sci);
+    CHECK(sci[0] == 2 && sci[1] == 32);                 // model=true colour, 32 bpp
+    CHECK(sci[3] == 8 && sci[4] == 24);                 // red: 8 bits at shift 24
+
+    // vqt_pairkern: a number (0 if the face has no kern table) without crashing.
+    int kx = -1, ky = -1; vqt_pairkern(he, 'A', 'V', &kx, &ky);
+    CHECK(ky == 0 && (font_face_has_kern(ef) || kx == 0));
+
+    // vqt_trackkern: reflects the uniform track offset.
+    vst_track_offset(he, 3);
+    int tkx = -1; vqt_trackkern(he, &tkx, NULL);
+    CHECK(tkx == 3);
+    vst_track_offset(he, 0);
+
+    // vqt_real_extent: inked box is no wider than the cell-box extent.
+    int16_t rex[8], cex[8];
+    vqt_extent(he, "Wax", cex);
+    vqt_real_extent(he, "Wax", rex);
+    int cellw = cex[2] - cex[0], inkw = rex[2] - rex[0];
+    CHECK(inkw > 0 && inkw <= cellw + 1);
+
+    // vqt_justified: per-char offsets ascend and span ~ the requested width.
+    int16_t joff[16];
+    int jn = vqt_justified(he, "abcd", 200, 0, 1, joff);
+    CHECK(jn == 4 && joff[0] == 0 && joff[2*3] > joff[0]);
+
+    // vqt_char_index: Unicode-only identity.
+    CHECK(vqt_char_index(he, 'Z', 0, 1) == 'Z');
+
+    // vq_cellarray: read back a painted region as pen indices.
+    gfx_surface *ce = gfx_surface_alloc(20, 20);
+    int hce = v_opnvwk(ce);
+    vsf_color(hce, 2); vsf_interior(hce, VDI_FIS_SOLID); vsf_perimeter(hce, 0);
+    int16_t cer[4] = { 0, 0, 19, 19 }; vr_recfl(hce, cer);
+    int16_t carr[16]; int eu = 0, ru = 0, st = -1;
+    int16_t cpxy[4] = { 0, 0, 19, 19 };
+    vq_cellarray(hce, cpxy, 4, 4, &eu, &ru, &st, carr);
+    CHECK(st == 0 && eu == 4 && ru == 4 && carr[0] == 2 && carr[15] == 2);
+    v_clsvwk(hce); gfx_surface_free(ce);
 
     // vst_arbpt: arbitrary point size, reports metrics + returns the size used.
     int aw = 0, ah = 0, acw = 0, ach = 0;

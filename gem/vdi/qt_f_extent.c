@@ -9,6 +9,7 @@
 #include <math.h>
 
 void op_qt_f_extent(vdi_pb *pb) {
+    if (pb->contrl[5] == 4200) { op_qt_real_extent(pb); return; }   // vqt_real_extent
     vdi_ws *w = vdi_ws_of(pb->contrl[6]); if (!w) return;
     for (int i = 0; i < 8; i++) pb->ptsout[i] = 0;
     font *f = vdi_ws_font(w); if (!f) return;

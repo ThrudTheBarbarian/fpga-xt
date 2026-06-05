@@ -64,6 +64,10 @@ static void pen_init(void) {
 }
 uint32_t vdi_pen_rgba(int pen) { return pen_tab[pen & 0xFF]; }
 void vdi_set_pen(int index, uint32_t rgba) { pen_tab[index & 0xFF] = rgba; }
+int vdi_pen_of(uint32_t rgba) {                          // exact pen match, else -1
+    for (int i = 0; i < 256; i++) if (pen_tab[i] == rgba) return i;
+    return -1;
+}
 
 // Fill pattern/hatch masks live in patterns.c (vdi_fill_mask).
 
@@ -372,6 +376,13 @@ void vdi_call(vdi_pb *pb) {
         case VDI_ST_SKEW:     op_st_skew(pb);     break;
         case VDI_ST_KERN:     op_st_kern(pb);     break;
         case VDI_ST_CHARMAP:  op_st_charmap(pb);  break;
+        case VDI_VQ_FG_COLOR: op_vq_fg_color(pb); break;
+        case VDI_VQ_BG_COLOR: op_vq_bg_color(pb); break;
+        case VDI_QT_PAIRKERN: op_qt_pairkern(pb); break;
+        case VDI_QT_JUSTIFIED:op_qt_justified(pb);break;
+        case VDI_QT_TRACKKERN:op_qt_trackkern(pb);break;
+        case VDI_QT_CHAR_INDEX:op_qt_char_index(pb);break;
+        case VDI_VQ_CELLARRAY:op_vq_cellarray(pb);break;
         case VDI_SIN_MODE:    op_sin_mode(pb);   break;
         case VDI_LOCATOR:     op_locator(pb);    break;
         case VDI_VALUATOR:    op_valuator(pb);   break;

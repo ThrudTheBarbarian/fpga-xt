@@ -65,6 +65,16 @@ enum {                          // VDI opcodes (standard GEM)
     VDI_ST_KERN     = 237,      // vst_kern / vst_track_offset (sub 255)
     VDI_ST_SETSIZE  = 252,      // vst_setsize(32) — character width in points
     VDI_ST_SKEW     = 253,      // vst_skew     — arbitrary text shear angle
+    VDI_VQ_CELLARRAY = 27,      // vq_cellarray — read back a cell-array region
+    VDI_QT_JUSTIFIED = 132,     // vqt_justified — justified character offsets
+    VDI_QT_CHAR_INDEX = 190,    // vqt_char_index — encoding map (Unicode = identity)
+    VDI_VQ_FG_COLOR = 202,      // vq?_fg_color — read a class's foreground pen
+    VDI_VQ_BG_COLOR = 203,      // vq?_bg_color — read a class's background pen
+    VDI_QT_TRACKKERN = 234,     // vqt_trackkern — track-kerning vector
+    VDI_QT_PAIRKERN = 235,      // vqt_pairkern  — pair-kerning vector
+    // vqt_real_extent rides VDI_QT_F_EXTENT (240) with sub 4200;
+    // vqt_name_and_id rides VDI_ST_NAME (230) sub 100; vq_scrninfo rides
+    // VDI_VQ_EXTND (102) sub 1; vqt_advance32 / vqt_ext_name reuse 247 / 130.
     VDI_CONTOURFILL = 103,      // v_contourfill — seed fill
     VDI_ST_COLOR    = 22,       // vst_color  — text colour
     VDI_SF_INTERIOR = 23,       // vsf_interior — see VDI_FIS_*
@@ -295,6 +305,25 @@ void vst_track_offset(int handle, int offset);         // extra uniform letter-s
 int  vst_charmap(int handle, int mode);                // -> VDI_MAP_UNICODE (Unicode-only device)
 int  vst_map_mode(int handle, int mode);               // -> VDI_MAP_UNICODE
 void vsf_xperimeter(int handle, int on);               // perimeter using the current line style
+
+// ---- Extended inquiry (NVDI/FSM) ------------------------------------------
+int  vqt_fg_color(int handle);                         // text / fill / line / marker foreground pen
+int  vqf_fg_color(int handle);
+int  vql_fg_color(int handle);
+int  vqm_fg_color(int handle);
+int  vqt_bg_color(int handle);                         // opaque-text background pen (-1 = none)
+void vqt_advance32(int handle, int ch, long *advx, long *advy);   // advance as 16.16 per axis
+int  vqt_name_and_id(int handle, const char *name, char *out_name);  // name -> id (+ canonical name)
+int  vqt_ext_name(int handle, int id, char *name, int *format, int *flags);
+void vq_scrninfo(int handle, int16_t *work_out);       // screen pixel format (true-colour RGBA)
+int  vqt_pairkern(int handle, int ch1, int ch2, int *x, int *y);    // pair-kern vector (px)
+int  vqt_trackkern(int handle, int *x, int *y);        // track-kern (uniform offset) vector
+void vqt_real_extent(int handle, const char *s, int16_t *extent);   // tight inked bounding box
+int  vqt_justified(int handle, const char *s, int width, int word_space,
+                   int char_space, int16_t *off);      // per-char offsets a justified line uses
+int  vqt_char_index(int handle, int src, int src_mode, int dst_mode);   // encoding map (identity)
+void vq_cellarray(int handle, const int16_t *pxy, int row_len, int num_rows,
+                  int *el_used, int *rows_used, int *status, int16_t *colarray);
 void v_pline(int handle, int n, const int16_t *pxy);   // n point-pairs
 void v_pmarker(int handle, int n, const int16_t *pxy); // markers at n points
 void vsm_type(int handle, int type);                   // VDI_MK_*

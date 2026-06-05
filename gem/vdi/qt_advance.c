@@ -27,3 +27,11 @@ void vqt_advance(int handle, int ch, int *advx, int *advy, int *remx, int *remy)
     if (remx) *remx = (uint16_t)g_ptsout[2];
     if (remy) *remy = (uint16_t)g_ptsout[3];
 }
+// Same advance as one 16.16 fixed value per axis (*advx/*advy), the full-
+// precision form (integer part << 16 | fractional part).
+void vqt_advance32(int handle, int ch, long *advx, long *advy) {
+    g_intin[0] = (int16_t)ch;
+    vdi_emit(VDI_QT_ADVANCE, 0, handle, 0, 1);
+    if (advx) *advx = ((long)g_ptsout[0] << 16) | (uint16_t)g_ptsout[2];
+    if (advy) *advy = ((long)g_ptsout[1] << 16) | (uint16_t)g_ptsout[3];
+}
