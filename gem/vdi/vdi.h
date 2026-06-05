@@ -72,6 +72,9 @@ enum {                          // VDI opcodes (standard GEM)
     VDI_VQ_BG_COLOR = 203,      // vq?_bg_color — read a class's background pen
     VDI_QT_TRACKKERN = 234,     // vqt_trackkern — track-kerning vector
     VDI_QT_PAIRKERN = 235,      // vqt_pairkern  — pair-kerning vector
+    VDI_KILLOUTLINE = 242,      // v_killoutline — free an outline (no-op here)
+    VDI_GETOUTLINE  = 243,      // v_getoutline / v_get_outline — glyph outline path
+    VDI_FLUSHCACHE  = 251,      // v_flushcache  — drop the glyph cache
     // vqt_real_extent rides VDI_QT_F_EXTENT (240) with sub 4200;
     // vqt_name_and_id rides VDI_ST_NAME (230) sub 100; vq_scrninfo rides
     // VDI_VQ_EXTND (102) sub 1; vqt_advance32 / vqt_ext_name reuse 247 / 130.
@@ -439,6 +442,18 @@ void v_bez_off(int handle);
 // instead of the screen.  Returns the handle (0 = failed), close with v_clsvwk.
 // work_out (>= 57 words, or NULL) gets the capabilities, extent = bitmap size.
 int  v_opnbm(const MFDB *bitmap, int16_t *work_out);
+int  v_open_bm(const MFDB *bitmap, int16_t *work_out);   // "modern" v_opnbm variant
+int  v_resize_bm(int handle, const MFDB *bitmap);        // re-point at a new MFDB (0 ok, -1 fail)
 void v_clsbm(int handle);              // close an off-screen bitmap workstation
+
+// Glyph outline as a Bézier path (the v_bez xy/flag format, y down, glyph-
+// origin-relative); returns the point count.  v_killoutline frees it (no-op
+// here).  v_flushcache drops the rasterised glyph cache.  vst_ex_load_fonts is
+// vst_load_fonts with an extra (ignored) paging flag.
+int  v_getoutline(int handle, int ch, int16_t *xy, uint8_t *bez, int maxpts);
+int  v_get_outline(int handle, int ch, int16_t *xy, uint8_t *bez, int maxpts);
+void v_killoutline(int handle);
+void v_flushcache(int handle);
+int  vst_ex_load_fonts(int handle, int select, int flags);
 
 #endif // GEM_VDI_H

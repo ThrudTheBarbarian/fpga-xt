@@ -850,6 +850,46 @@ int main(void) {
     CHECK(mform_cur != NULL && mform_cur->hotx == 4 && mform_cur->hoty == 2);
     CHECK(mform_cur->fg == 1 && mform_cur->bg == 0 && mform_cur->data[3] == 0x8000 && mform_cur->mask[3] == 0xC000);
 
+    // --- Control extensions ---
+    // v_getoutline: a glyph's outline as a v_bez path; re-fill it and check ink.
+    vst_height(he, 40, NULL, NULL, NULL, NULL);
+    int16_t oxy[512]; uint8_t obez[256];
+    int onp = v_getoutline(he, 'o', oxy, obez, 256);
+    CHECK(onp > 4);                                      // a real contour
+    int hasmove = 0, hasbez = 0;
+    for (int i = 0; i < onp; i++) { if (obez[i] & 2) hasmove++; if (obez[i] & 1) hasbez++; }
+    CHECK(hasmove >= 1 && hasbez >= 1);                  // contour start(s) + cubic(s)
+    // Render it via v_bez_fill at an offset and confirm pixels land.
+    gfx_surface *os = gfx_surface_alloc(80, 80);
+    for (int i = 0; i < 80 * 80; i++) os->px[i] = 0;
+    int hos = v_opnvwk(os);
+    for (int i = 0; i < onp; i++) { oxy[2*i] += 20; oxy[2*i+1] += 50; }   // into view
+    vsf_color(hos, 1); vsf_interior(hos, VDI_FIS_SOLID); vsf_perimeter(hos, 0);
+    v_bez_fill(hos, onp, oxy, obez, NULL, NULL, NULL);
+    int oink = 0; for (int i = 0; i < 80 * 80; i++) if (os->px[i]) oink++;
+    CHECK(oink > 0);                                     // the outline filled
+    v_clsvwk(hos); gfx_surface_free(os);
+    v_killoutline(he);                                   // no-op, must not crash
+
+    // v_flushcache: drops the cache; text still renders afterwards.
+    v_flushcache(he);
+    for (int i = 0; i < 80 * 40; i++) es->px[i] = 0;
+    vst_color(he, 1); v_gtext(he, 2, 2, "Z");
+    int zdrew = 0; for (int i = 0; i < 80 * 40; i++) if (es->px[i]) { zdrew = 1; break; }
+    CHECK(zdrew);                                        // re-rasterised on demand
+
+    // v_resize_bm: re-point a bitmap workstation at a bigger MFDB.
+    uint32_t bm1[10 * 10], bm2[30 * 30];
+    for (int i = 0; i < 10 * 10; i++) bm1[i] = 0;
+    for (int i = 0; i < 30 * 30; i++) bm2[i] = 0;
+    MFDB mb1 = { bm1, 10, 10, 10, 0, 0 }, mb2 = { bm2, 30, 30, 30, 0, 0 };
+    int hrb = v_opnbm(&mb1, NULL);
+    CHECK(v_resize_bm(hrb, &mb2) == 0);
+    vsf_color(hrb, 2); vsf_interior(hrb, VDI_FIS_SOLID); vsf_perimeter(hrb, 0);
+    int16_t rbr[4] = { 0, 0, 29, 29 }; vr_recfl(hrb, rbr);
+    CHECK(bm2[29 * 30 + 29] == vdi_pen_rgba(2));         // fills the new larger bitmap
+    v_clsbm(hrb);
+
     v_clsvwk(he); gfx_surface_free(es); font_face_close(ef);
 
     // vsl_ends: an arrow end adds a filled arrowhead (more ink than a plain line).

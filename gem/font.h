@@ -56,6 +56,10 @@ int   font_face_track(const font_face *face);
 void  font_ink_extent(font *f, const char *s, int *x0, int *y0, int *x1, int *y1);
 int   font_justify_offsets(font *f, const char *s, int width, int word_space,
                            int char_space, int16_t *offx);
+// Glyph outline as a v_bez path (xy points + bit0/bit1 flags, y down, glyph-
+// origin-relative); returns the point count.  And drop the rasterised cache.
+int   font_get_outline(font *f, unsigned cp, int16_t *xy, uint8_t *bez, int maxpts);
+void  font_face_flush(font_face *face);
 
 // Draw NUL-terminated ASCII with the em box's top-left at (x,y), antialiased in
 // colour rgba over the existing pixels.  Clipped to the inclusive rect

@@ -68,6 +68,12 @@ int vst_load_fonts(int handle, int select) {
     vdi_emit(VDI_LOAD_FONTS, 0, handle, 0, 1);
     return g_intout[0];
 }
+// vst_ex_load_fonts — load_fonts with a paging-control argument we don't need
+// (fonts are mapped, then opened on demand); behaves as vst_load_fonts.
+int vst_ex_load_fonts(int handle, int select, int flags) {
+    (void)flags;
+    return vst_load_fonts(handle, select);
+}
 void vst_unload_fonts(int handle, int select) {
     g_intin[0] = (int16_t)select;
     vdi_emit(VDI_UNLOAD_FONTS, 0, handle, 0, 1);

@@ -26,8 +26,19 @@ void op_opnbm(vdi_pb *pb) {
     pb->ptsout[0] = (int16_t)(m->w - 1); pb->ptsout[1] = (int16_t)(m->h - 1);
 }
 
+// Re-point an existing off-screen-bitmap workstation at a new MFDB (v_resize_bm).
+static void op_resize_bm(vdi_pb *pb) {
+    const MFDB *m = g_opnbm_mfdb;
+    vdi_ws *w = vdi_ws_of(pb->contrl[6]);
+    if (!w || !m || !m->addr || m->stand) { pb->intout[0] = -1; return; }
+    w->bm.w = m->w; w->bm.h = m->h; w->bm.stride = m->stride ? m->stride : m->w;
+    w->bm.px = m->addr; w->target = &w->bm;
+    pb->intout[0] = 0;
+}
+
 void op_opnvwk(vdi_pb *pb) {
-    if (pb->contrl[5] == 1) { op_opnbm(pb); return; }   // v_opnbm path
+    if (pb->contrl[5] == 1 || pb->contrl[5] == 3) { op_opnbm(pb); return; }  // v_opnbm / v_open_bm
+    if (pb->contrl[5] == 2) { op_resize_bm(pb); return; }                    // v_resize_bm
     pb->contrl[6] = (int16_t)vdi_ws_alloc();     // return handle (0 = none free)
     vdi_fill_caps(pb->intout, pb->ptsout);       // work_out (incl. colour count)
 }
@@ -61,3 +72,22 @@ int v_opnbm(const MFDB *bitmap, int16_t *work_out) {
 // Close an off-screen bitmap workstation (the v_opnbm pair).  The caller still
 // owns the bitmap memory; this only releases the workstation slot.
 void v_clsbm(int handle) { vdi_emit(VDI_CLSVWK, 1, handle, 0, 0); }
+
+// The "modern" open-bitmap variant — same behaviour as v_opnbm here.
+int v_open_bm(const MFDB *bitmap, int16_t *work_out) {
+    g_opnbm_mfdb = bitmap;
+    vdi_emit(VDI_OPNVWK, 3, 0, 0, 0);
+    g_opnbm_mfdb = 0;
+    if (work_out) {
+        for (int i = 0; i < 45; i++) work_out[i] = g_intout[i];
+        for (int i = 0; i < 12; i++) work_out[45 + i] = g_ptsout[i];
+    }
+    return g_contrl[6];
+}
+// Re-point an open bitmap workstation at a new (resized) device-format MFDB.
+int v_resize_bm(int handle, const MFDB *bitmap) {
+    g_opnbm_mfdb = bitmap;
+    vdi_emit(VDI_OPNVWK, 2, handle, 0, 0);
+    g_opnbm_mfdb = 0;
+    return g_intout[0];                          // 0 = ok, -1 = failed
+}

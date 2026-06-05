@@ -166,6 +166,12 @@ void op_bez_qual(vdi_pb *pb);
 void op_bez_onoff(vdi_pb *pb);
 void op_opnbm(vdi_pb *pb);
 extern const MFDB *g_opnbm_mfdb;        // out-of-band MFDB for v_opnbm
+void op_getoutline(vdi_pb *pb);
+void op_killoutline(vdi_pb *pb);
+void op_flushcache(vdi_pb *pb);
+extern int16_t *g_outline_xy;           // out-of-band v_getoutline buffers
+extern uint8_t *g_outline_bez;
+extern int      g_outline_max;
 void op_st_rotation(vdi_pb *pb);
 void op_st_effects(vdi_pb *pb);
 void op_st_alignment(vdi_pb *pb);

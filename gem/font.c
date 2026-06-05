@@ -249,6 +249,68 @@ long font_f_text_width(font *f, const char *s) {
     return w;
 }
 
+// ---- Glyph outline extraction (v_getoutline) ------------------------------
+// Decompose a glyph's FreeType outline into the v_bez point/flag representation:
+// xy[] gets (x,y) device-pixel points (y down, relative to the glyph origin),
+// bez[] the matching flags (bit0 = start of a cubic, bit1 = move/new contour).
+// TrueType quadratics are promoted to cubics so the result feeds straight into
+// v_bez / v_bez_fill.
+typedef struct { int16_t *xy; uint8_t *bez; int n, max, pen; } outl_ctx;
+
+static void ol_pt(outl_ctx *c, double x, double y, int flag) {
+    if (c->n >= c->max) return;
+    c->xy[2*c->n] = (int16_t)lround(x); c->xy[2*c->n+1] = (int16_t)lround(-y);  // y down
+    c->bez[c->n] = (uint8_t)flag;
+    c->n++;
+}
+static int ol_move(const FT_Vector *to, void *u) {
+    outl_ctx *c = u; c->pen = c->n; ol_pt(c, to->x/64.0, to->y/64.0, 2); return 0;
+}
+static int ol_line(const FT_Vector *to, void *u) {
+    outl_ctx *c = u; c->pen = c->n; ol_pt(c, to->x/64.0, to->y/64.0, 0); return 0;
+}
+static int ol_conic(const FT_Vector *ctl, const FT_Vector *to, void *u) {
+    outl_ctx *c = u;
+    double x0 = c->xy[2*c->pen], y0 = -c->xy[2*c->pen+1];     // current on-curve point
+    double cx = ctl->x/64.0, cy = ctl->y/64.0, ex = to->x/64.0, ey = to->y/64.0;
+    if (c->pen < c->n) c->bez[c->pen] |= 1;                  // start anchor of the cubic
+    ol_pt(c, x0 + 2.0/3*(cx-x0), y0 + 2.0/3*(cy-y0), 0);     // quad -> cubic controls
+    ol_pt(c, ex + 2.0/3*(cx-ex), ey + 2.0/3*(cy-ey), 0);
+    c->pen = c->n; ol_pt(c, ex, ey, 0);
+    return 0;
+}
+static int ol_cubic(const FT_Vector *c1, const FT_Vector *c2, const FT_Vector *to, void *u) {
+    outl_ctx *c = u;
+    if (c->pen < c->n) c->bez[c->pen] |= 1;
+    ol_pt(c, c1->x/64.0, c1->y/64.0, 0);
+    ol_pt(c, c2->x/64.0, c2->y/64.0, 0);
+    c->pen = c->n; ol_pt(c, to->x/64.0, to->y/64.0, 0);
+    return 0;
+}
+int font_get_outline(font *f, unsigned cp, int16_t *xy, uint8_t *bez, int maxpts) {
+    if (!f || !xy || !bez || maxpts < 1) return 0;
+    FT_Face ft = f->owner->ft;
+    FT_Set_Pixel_Sizes(ft, f->wpx, f->px);
+    if (FT_Load_Char(ft, cp, FT_LOAD_NO_BITMAP | FT_LOAD_NO_HINTING)) return 0;
+    static const FT_Outline_Funcs fns = { ol_move, ol_line, ol_conic, ol_cubic, 0, 0 };
+    outl_ctx c = { xy, bez, 0, maxpts, 0 };
+    if (FT_Outline_Decompose(&ft->glyph->outline, &fns, &c)) return c.n;
+    return c.n;
+}
+
+// Drop every rasterised glyph (v_flushcache); the sized views survive so any
+// held font* stays valid and re-rasterises on next use.
+void font_face_flush(font_face *face) {
+    if (!face) return;
+    for (font *f = face->sizes; f; f = f->next) {
+        for (int i = 0; i < ASCII_N; i++) { free(f->ascii[i].cov); f->ascii[i].cov = 0; f->ascii[i].ready = 0; }
+        for (int h = 0; h < GHASH; h++) {
+            for (gnode *n = f->hash[h]; n; ) { gnode *nx = n->next; free(n->g.cov); free(n); n = nx; }
+            f->hash[h] = 0;
+        }
+    }
+}
+
 // Pair-kern delta (px) between two codepoints, regardless of the kern-enable
 // flag (this is the query, vqt_pairkern); 0 if the face has no kern table.
 int font_pair_kern(font *f, unsigned a, unsigned b) {
