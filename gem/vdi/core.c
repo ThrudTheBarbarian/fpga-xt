@@ -232,14 +232,16 @@ void vdi_line_ex(const vdi_ws *w, int x0, int y0, int x1, int y1, int pen, int s
     uint16_t pat = line_pattern(w->line_type);
     int dx = x1 > x0 ? x1 - x0 : x0 - x1, sx = x0 < x1 ? 1 : -1;
     int dy = y1 > y0 ? y0 - y1 : y1 - y0, sy = y0 < y1 ? 1 : -1;   // dy negative
-    int err = dx + dy, d = 0, mode = w->wr_mode;
-    for (;;) {
-        if (pat & (1u << (d & 15))) brush(w->target, x0, y0, width, rgba, mode, cx0, cy0, cx1, cy1, pcap0, pcap1);
+    int err = dx + dy, mode = w->wr_mode;
+    double dist = 0.0;                                   // dash phase = device distance, so the
+    for (;;) {                                           // pattern is angle-independent (no walking)
+        if (pat & (1u << (((int)dist) & 15)))
+            brush(w->target, x0, y0, width, rgba, mode, cx0, cy0, cx1, cy1, pcap0, pcap1);
         if (x0 == x1 && y0 == y1) break;
-        int e2 = 2 * err;
-        if (e2 >= dy) { err += dy; x0 += sx; }
-        if (e2 <= dx) { err += dx; y0 += sy; }
-        d++;
+        int e2 = 2 * err, mx = 0, my = 0;
+        if (e2 >= dy) { err += dy; x0 += sx; mx = 1; }
+        if (e2 <= dx) { err += dx; y0 += sy; my = 1; }
+        dist += (mx && my) ? 1.41421356 : 1.0;           // diagonal step is sqrt(2)
     }
 }
 
