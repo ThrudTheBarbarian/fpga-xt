@@ -177,6 +177,29 @@ int main(void) {
     v_clsvwk(hg);
     gfx_surface_free(gs);
 
+    // Line styles: width thickens, dash leaves gaps.
+    gfx_surface *ls = gfx_surface_alloc(40, 40);
+    int hl = v_opnvwk(ls);
+    vsl_color(hl, 1);
+    CHECK(vsl_width(hl, 3) == 3);
+    for (int i = 0; i < 40 * 40; i++) ls->px[i] = 0;
+    int16_t hline[4] = { 2, 20, 37, 20 };              // horizontal, width 3
+    v_pline(hl, 2, hline);
+    CHECK(PX(ls, 20, 19) == vdi_pen_rgba(1));          // one row above centre
+    CHECK(PX(ls, 20, 20) == vdi_pen_rgba(1));          // centre
+    CHECK(PX(ls, 20, 21) == vdi_pen_rgba(1));          // one row below => width 3
+
+    CHECK(vsl_type(hl, 3) == 3);                        // dotted
+    vsl_width(hl, 1);
+    for (int i = 0; i < 40 * 40; i++) ls->px[i] = 0;
+    int16_t dline[4] = { 0, 10, 39, 10 };
+    v_pline(hl, 2, dline);
+    int on = 0, off = 0;
+    for (int x = 0; x < 32; x++) { if (PX(ls, x, 10)) on = 1; else off = 1; }
+    CHECK(on && off);                                  // dotted => some on, some off
+    v_clsvwk(hl);
+    gfx_surface_free(ls);
+
     if (fails == 0) printf("*** VDI TEST OK ***\n");
     else            printf("*** VDI TEST: %d FAIL(s) ***\n", fails);
     gfx_surface_free(s);

@@ -14,6 +14,8 @@ typedef struct {
     int          used;
     gfx_surface *target;
     int          line_color;       // pen
+    int          line_width;       // px (default 1)
+    int          line_type;        // 1 solid .. 6 (vsl_type)
     int          fill_color;       // pen
     int          text_color;       // pen
     int          text_halign;      // VDI_TA_LEFT/CENTER/RIGHT
@@ -56,6 +58,8 @@ void        vdi_emit(int op, int sub, int handle, int npts, int nint);   // fill
 void op_opnvwk(vdi_pb *pb);
 void op_clsvwk(vdi_pb *pb);
 void op_sl_color(vdi_pb *pb);
+void op_sl_width(vdi_pb *pb);
+void op_sl_type(vdi_pb *pb);
 void op_st_color(vdi_pb *pb);
 void op_st_height(vdi_pb *pb);
 void op_st_point(vdi_pb *pb);

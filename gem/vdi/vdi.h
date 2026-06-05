@@ -28,6 +28,8 @@ enum {                          // VDI opcodes (standard GEM)
     VDI_GDP         = 11,       // sub-opcode 1 = v_bar (filled rectangle)
     VDI_ST_HEIGHT   = 12,       // vst_height — text size in pixels
     VDI_VS_COLOR    = 14,       // vs_color   — set a palette pen (RGB 0..1000)
+    VDI_SL_TYPE     = 15,       // vsl_type   — line style (1 solid .. 6)
+    VDI_SL_WIDTH    = 16,       // vsl_width  — line width (px)
     VDI_SL_COLOR    = 17,       // vsl_color  — polyline colour
     VDI_ST_COLOR    = 22,       // vst_color  — text colour
     VDI_SF_INTERIOR = 23,       // vsf_interior — see VDI_FIS_*
@@ -91,6 +93,8 @@ void     vdi_set_face(font_face *face);
 int  v_opnvwk(gfx_surface *target);           // -> workstation handle (>0), 0 = fail
 void v_clsvwk(int handle);
 void vsl_color(int handle, int pen);
+int  vsl_type(int handle, int style);                  // 1 solid..6; returns selected
+int  vsl_width(int handle, int width);                 // px; returns selected
 void vst_color(int handle, int pen);                   // text colour
 void vsf_color(int handle, int pen);
 void vsf_interior(int handle, int style);              // VDI_FIS_*

@@ -20,6 +20,7 @@ int vdi_ws_alloc(void) {
     for (int i = 1; i < VDI_MAX_WS; i++) if (!ws_tab[i].used) {   // slot 0 = physical
         memset(&ws_tab[i], 0, sizeof(ws_tab[i]));
         ws_tab[i].used = 1; ws_tab[i].line_color = 1;
+        ws_tab[i].line_width = 1; ws_tab[i].line_type = 1;
         ws_tab[i].fill_color = 1; ws_tab[i].text_color = 1; ws_tab[i].fill_interior = 1;
         ws_tab[i].fill_style = 1; ws_tab[i].fill_perimeter = 1;
         ws_tab[i].text_valign = VDI_TA_TOP;
@@ -173,6 +174,32 @@ static int cs_code(int x, int y, int cx0, int cy0, int cx1, int cy1) {
     if (y < cy0) c |= 4; else if (y > cy1) c |= 8;
     return c;
 }
+
+// vsl_type 1..6 as a 16-bit dash pattern (bit per pixel along the line).
+static uint16_t line_pattern(int type) {
+    switch (type) {
+        case 2:  return 0xFFF0;     // long dash
+        case 3:  return 0x8888;     // dotted
+        case 4:  return 0xFC30;     // dash-dot
+        case 5:  return 0xF0F0;     // dashed
+        case 6:  return 0xE4E4;     // dash-dot-dot
+        default: return 0xFFFF;     // solid
+    }
+}
+
+// Stamp the line-width brush (a square) at (cx,cy), clipped.
+static void brush(gfx_surface *s, int cx, int cy, int lo, int hi, uint32_t rgba,
+                  int x0c, int y0c, int x1c, int y1c) {
+    for (int dy = -lo; dy <= hi; dy++) {
+        int y = cy + dy; if (y < y0c || y > y1c || y < 0 || y >= s->h) continue;
+        uint32_t *row = s->px + (size_t)y * s->stride;
+        for (int dx = -lo; dx <= hi; dx++) {
+            int x = cx + dx; if (x < x0c || x > x1c || x < 0 || x >= s->w) continue;
+            row[x] = rgba;
+        }
+    }
+}
+
 void vdi_line(const vdi_ws *w, int x0, int y0, int x1, int y1, int pen) {
     int cx0, cy0, cx1, cy1; vdi_ws_clip(w, &cx0, &cy0, &cx1, &cy1);
     int c0 = cs_code(x0, y0, cx0, cy0, cx1, cy1);
@@ -188,7 +215,22 @@ void vdi_line(const vdi_ws *w, int x0, int y0, int x1, int y1, int pen) {
         if (co == c0) { x0 = x; y0 = y; c0 = cs_code(x0, y0, cx0, cy0, cx1, cy1); }
         else          { x1 = x; y1 = y; c1 = cs_code(x1, y1, cx0, cy0, cx1, cy1); }
     }
-    gfx_line(w->target, x0, y0, x1, y1, pen_tab[pen & 0xFF]);
+    // Rasterise (Bresenham) so we can apply width + dash ourselves.
+    uint32_t rgba = pen_tab[pen & 0xFF];
+    int width = w->line_width < 1 ? 1 : w->line_width;
+    int lo = (width - 1) / 2, hi = width / 2;
+    uint16_t pat = line_pattern(w->line_type);
+    int dx = x1 > x0 ? x1 - x0 : x0 - x1, sx = x0 < x1 ? 1 : -1;
+    int dy = y1 > y0 ? y0 - y1 : y1 - y0, sy = y0 < y1 ? 1 : -1;   // dy negative
+    int err = dx + dy, d = 0;
+    for (;;) {
+        if (pat & (1u << (d & 15))) brush(w->target, x0, y0, lo, hi, rgba, cx0, cy0, cx1, cy1);
+        if (x0 == x1 && y0 == y1) break;
+        int e2 = 2 * err;
+        if (e2 >= dy) { err += dy; x0 += sx; }
+        if (e2 <= dx) { err += dx; y0 += sy; }
+        d++;
+    }
 }
 
 // ---- MFDB -----------------------------------------------------------------
@@ -207,8 +249,8 @@ void vdi_init(gfx_surface *default_target) {
     memset(ws_tab, 0, sizeof(ws_tab));
     pen_init();
     ws_tab[0].used = 1; ws_tab[0].target = default_target;     // handle 1 = physical
-    ws_tab[0].line_color = 1; ws_tab[0].fill_color = 1;
-    ws_tab[0].text_color = 1; ws_tab[0].fill_interior = 1;
+    ws_tab[0].line_color = 1; ws_tab[0].line_width = 1; ws_tab[0].line_type = 1;
+    ws_tab[0].fill_color = 1; ws_tab[0].text_color = 1; ws_tab[0].fill_interior = 1;
     ws_tab[0].fill_style = 1; ws_tab[0].fill_perimeter = 1;
     ws_tab[0].text_valign = VDI_TA_TOP;
 }
@@ -228,6 +270,8 @@ void vdi_call(vdi_pb *pb) {
         case VDI_OPNVWK:      op_opnvwk(pb);     break;
         case VDI_CLSVWK:      op_clsvwk(pb);     break;
         case VDI_SL_COLOR:    op_sl_color(pb);   break;
+        case VDI_SL_TYPE:     op_sl_type(pb);    break;
+        case VDI_SL_WIDTH:    op_sl_width(pb);   break;
         case VDI_ST_COLOR:    op_st_color(pb);   break;
         case VDI_ST_HEIGHT:   op_st_height(pb);  break;
         case VDI_ST_POINT:    op_st_point(pb);   break;
