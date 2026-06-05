@@ -31,6 +31,7 @@ enum {                          // VDI opcodes (standard GEM)
     VDI_META_END    = 0xFFFF,   // end-of-metafile marker (not a real opcode)
     VDI_PLINE       = 6,
     VDI_GTEXT       = 8,        // v_gtext    — graphic text
+    VDI_FILLAREA    = 9,        // v_fillarea — filled polygon
     VDI_GDP         = 11,       // sub-opcode 1 = v_bar (filled rectangle)
     VDI_ST_HEIGHT   = 12,       // vst_height — text size in pixels
     VDI_VS_COLOR    = 14,       // vs_color   — set a palette pen (RGB 0..1000)
@@ -141,6 +142,7 @@ int  vst_point (int handle, int points,    int *cw, int *ch, int *cellw, int *ce
 int  vst_load_fonts(int handle, int select);           // -> font-file count
 void vst_unload_fonts(int handle, int select);         // no-op
 void v_pline(int handle, int n, const int16_t *pxy);   // n point-pairs
+void v_fillarea(int handle, int n, const int16_t *pxy);// filled polygon, n vertices
 void v_bar(int handle, const int16_t *pxy);            // pxy = x1,y1,x2,y2
 // Curved GDPs.  Filled ones use the fill colour/interior/perimeter; arcs and
 // v_rbox use the line colour.  Angles are tenths of a degree (0=east, CCW).

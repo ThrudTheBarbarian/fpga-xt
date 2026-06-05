@@ -284,6 +284,19 @@ int main(void) {
     v_clsvwk(hc);
     gfx_surface_free(clr);
 
+    // v_fillarea: filled polygon (a triangle), interior in / edge-region out.
+    gfx_surface *fa = gfx_surface_alloc(20, 20);
+    for (int i = 0; i < 20 * 20; i++) fa->px[i] = 0;
+    int hfa = v_opnvwk(fa);
+    vsf_color(hfa, 2); vsf_interior(hfa, VDI_FIS_SOLID); vsf_perimeter(hfa, 0);
+    int16_t tri[6] = { 2, 2, 18, 2, 10, 18 };          // base top, apex bottom
+    v_fillarea(hfa, 3, tri);
+    CHECK(PX(fa, 10, 8) == vdi_pen_rgba(2));           // inside the triangle
+    CHECK(PX(fa,  2, 8) == 0);                          // left of the left edge
+    CHECK(PX(fa, 18, 8) == 0);                          // right of the right edge
+    v_clsvwk(hfa);
+    gfx_surface_free(fa);
+
     if (fails == 0) printf("*** VDI TEST OK ***\n");
     else            printf("*** VDI TEST: %d FAIL(s) ***\n", fails);
     gfx_surface_free(s);

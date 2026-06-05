@@ -341,6 +341,7 @@ void vdi_call(vdi_pb *pb) {
         case VDI_SF_PERIM:    op_sf_perimeter(pb);break;
         case VDI_CLIP:        op_clip(pb);       break;
         case VDI_PLINE:       op_pline(pb);      break;
+        case VDI_FILLAREA:    op_fillarea(pb);   break;
         case VDI_GTEXT:       op_gtext(pb);      break;
         case VDI_RECFL:       op_fillrect(pb);   break;
         case VDI_CPYFM:       op_cpyfm(pb);      break;

@@ -89,6 +89,7 @@ void op_sf_style(vdi_pb *pb);
 void op_sf_perimeter(vdi_pb *pb);
 void op_clip(vdi_pb *pb);
 void op_pline(vdi_pb *pb);
+void op_fillarea(vdi_pb *pb);
 void op_gdp(vdi_pb *pb);        // GDP dispatch (v_bar + curved primitives)
 void op_gtext(vdi_pb *pb);
 void op_fillrect(vdi_pb *pb);

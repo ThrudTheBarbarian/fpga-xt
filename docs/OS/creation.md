@@ -76,7 +76,7 @@ The device mechanism is in place, so adding a device is now just a driver behind
 |------|----|-----|-------|
 | v_pline | 6 | ✓ | Cohen–Sutherland clipped, width + dash |
 | v_gtext | 8 | ✓ | FreeType, UTF-8, sized/aligned |
-| v_fillarea | 9 | ◐ | `vdi_fill_poly` exists internally; no public binding yet |
+| v_fillarea | 9 | ✓ | filled polygon (fill colour/interior/style/perimeter) |
 | v_bar | 11.1 | ✓ | filled rect (also `vr_recfl`) |
 | v_arc | 11.2 | ✓ | line colour |
 | v_pieslice | 11.3 | ✓ | filled |
