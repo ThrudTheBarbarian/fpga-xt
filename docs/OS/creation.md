@@ -92,6 +92,20 @@ The device mechanism is in place, so adding a device is now just a driver behind
 | v_cellarray | 10 | ✓ | grid of coloured cells scaled into a rect |
 | v_contourfill | 103 | ✓ | 4-connected seed fill (boundary or seed-colour) |
 
+Cross-referencing the [FreeMiNT VDI output set](https://freemint.github.io/tos.hyp/en/vdi_output.html):
+every classic output call and GDP (1–10) is covered above, and the Bézier GDPs (v_bez / v_bez_fill)
+are in the **NVDI extensions** section. The only gap is the **outline-text output** group:
+
+| Call | Op | Sup | Rec | Notes / rationale |
+|------|----|-----|-----|-------|
+| v_ftext | 241 | ✗ | ✅ | output text via the **outline (vector) font** — on this device that's exactly what v_gtext already does (FreeType), so it's a thin alias over the same render path; worth it for NVDI-app compatibility |
+| v_ftext_offset | 241 | ✗ | ✅ | outline text where the app supplies a **per-character (x,y) offset array** — the one genuinely new capability: app-driven glyph placement (custom kerning / justification / curved baselines). Needs a "draw one glyph at a point" entry in the font module |
+| v_etext | 11 / GDP 11 | ✗ | 🤔 | listed as "text at position", but GDP 11 is non-standard (classic GDPs end at 10, which we use for v_justified) — likely a doc artifact or an alias of v_gtext (whose ptsin already *is* the position). Verify it's real before implementing; probably redundant |
+
+Recommendation: **v_ftext** + **v_ftext_offset** (✅) are the worthwhile pair — `v_ftext` is nearly
+free (alias), and `v_ftext_offset` adds real app-controlled per-glyph positioning. `v_etext` (🤔)
+should be confirmed against a real header first; it appears to duplicate v_gtext.
+
 **Attributes**
 
 | Call | Op | Sup | Notes |
