@@ -538,12 +538,16 @@ int main(void) {
     CHECK(arrowl > plainl + 20);                        // arrowhead adds a triangle of ink
     CHECK(PX(ae, 40, 16) != 0 && PX(ae, 40, 24) != 0);  // both wings off the line
 
-    // A round cap on a thick line: ink appears off-axis at the end point.
+    // Square vs round caps on a thick line: square is flat at the end point,
+    // round bulges past it.
     vsl_width(hae, 6);
     for (int i = 0; i < 60 * 40; i++) ae->px[i] = 0;
+    vsl_ends(hae, VDI_LE_SQUARE, VDI_LE_SQUARE); v_pline(hae, 2, aln);
+    CHECK(PX(ae, 50, 20) != 0);                         // reaches the end point
+    CHECK(PX(ae, 52, 20) == 0);                         // flat: no bulge past it
+    for (int i = 0; i < 60 * 40; i++) ae->px[i] = 0;
     vsl_ends(hae, VDI_LE_ROUND, VDI_LE_ROUND); v_pline(hae, 2, aln);
-    CHECK(PX(ae, 50, 20) != 0);                         // cap at the end point
-    CHECK(PX(ae, 52, 20) != 0);                         // bulges past the line end
+    CHECK(PX(ae, 52, 20) != 0);                         // round cap bulges past
     v_clsvwk(hae); gfx_surface_free(ae);
 
     if (fails == 0) printf("*** VDI TEST OK ***\n");

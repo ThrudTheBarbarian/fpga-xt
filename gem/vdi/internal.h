@@ -64,6 +64,8 @@ void        vdi_rect_outline(const vdi_ws *w, int x0, int y0, int x1, int y1, in
 void        vdi_fill_poly(const vdi_ws *w, const int16_t *xy, int n, int pen, const uint16_t *mask);
 void        vdi_polyline(const vdi_ws *w, const int16_t *xy, int n, int pen, int closed);
 void        vdi_line(const vdi_ws *w, int x0, int y0, int x1, int y1, int pen);
+// As vdi_line, but sq0/sq1 give the start/end a flat (square) cap, not round.
+void        vdi_line_ex(const vdi_ws *w, int x0, int y0, int x1, int y1, int pen, int sq0, int sq1);
 void        vdi_set_pen(int index, uint32_t rgba);       // vs_color writes the palette
 gfx_surface *vdi_screen_target(void);                    // the desktop surface (physical ws)
 void        vdi_fill_caps(int16_t *intout, int16_t *ptsout);   // v_opnwk/v_opnvwk work_out

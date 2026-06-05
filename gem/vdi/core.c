@@ -179,8 +179,11 @@ static uint16_t line_pattern(int type) {
 // a square one is ~1.41x thicker along diagonals.  The disc is centred on a
 // half-pixel for even widths so the on-axis span is exactly `width`.  Compare
 // is in doubled integers: (2dx-oc)^2 + (2dy-oc)^2 <= width^2.
+// Stamp the round pen, clipped to the surface, the workstation clip rect, and
+// optionally two half-planes (cap0/cap1) that square off the line ends: a pixel
+// is kept only where capN[0]*x + capN[1]*y + capN[2] >= 0.
 static void brush(gfx_surface *s, int cx, int cy, int width, uint32_t rgba, int mode,
-                  int x0c, int y0c, int x1c, int y1c) {
+                  int x0c, int y0c, int x1c, int y1c, const long *cap0, const long *cap1) {
     int oc = (width & 1) ? 0 : 1, w2 = width * width, R = width / 2 + 1;
     for (int dy = -R; dy <= R; dy++) {
         int y = cy + dy; if (y < y0c || y > y1c || y < 0 || y >= s->h) continue;
@@ -191,12 +194,24 @@ static void brush(gfx_surface *s, int cx, int cy, int width, uint32_t rgba, int 
             int tx = 2 * dx - oc;
             if (tx * tx + ty > w2) continue;
             int x = cx + dx; if (x < x0c || x > x1c || x < 0 || x >= s->w) continue;
+            if (cap0 && cap0[0]*x + cap0[1]*y + cap0[2] < 0) continue;   // square cap
+            if (cap1 && cap1[0]*x + cap1[1]*y + cap1[2] < 0) continue;
             row[x] = vdi_wrmix(mode, row[x], rgba, 0, 1);   // line = solid foreground
         }
     }
 }
 
 void vdi_line(const vdi_ws *w, int x0, int y0, int x1, int y1, int pen) {
+    vdi_line_ex(w, x0, y0, x1, y1, pen, 0, 0);
+}
+
+// Like vdi_line, but sq0/sq1 square off the start/end caps (flat, perpendicular)
+// instead of the round pen's default rounded cap.
+void vdi_line_ex(const vdi_ws *w, int x0, int y0, int x1, int y1, int pen, int sq0, int sq1) {
+    long Dx = x1 - x0, Dy = y1 - y0;                     // cap planes from the true ends
+    long cp0[3] = { Dx, Dy, -(Dx*x0 + Dy*y0) };          // inward from (x0,y0)
+    long cp1[3] = { -Dx, -Dy, Dx*x1 + Dy*y1 };           // inward from (x1,y1)
+    const long *pcap0 = sq0 ? cp0 : NULL, *pcap1 = sq1 ? cp1 : NULL;
     int cx0, cy0, cx1, cy1; vdi_ws_clip(w, &cx0, &cy0, &cx1, &cy1);
     int c0 = cs_code(x0, y0, cx0, cy0, cx1, cy1);
     int c1 = cs_code(x1, y1, cx0, cy0, cx1, cy1);
@@ -219,7 +234,7 @@ void vdi_line(const vdi_ws *w, int x0, int y0, int x1, int y1, int pen) {
     int dy = y1 > y0 ? y0 - y1 : y1 - y0, sy = y0 < y1 ? 1 : -1;   // dy negative
     int err = dx + dy, d = 0, mode = w->wr_mode;
     for (;;) {
-        if (pat & (1u << (d & 15))) brush(w->target, x0, y0, width, rgba, mode, cx0, cy0, cx1, cy1);
+        if (pat & (1u << (d & 15))) brush(w->target, x0, y0, width, rgba, mode, cx0, cy0, cx1, cy1, pcap0, pcap1);
         if (x0 == x1 && y0 == y1) break;
         int e2 = 2 * err;
         if (e2 >= dy) { err += dy; x0 += sx; }

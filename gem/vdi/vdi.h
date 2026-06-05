@@ -80,8 +80,9 @@ void mfdb_from_surface(MFDB *m, gfx_surface *s);   // wrap a surface as a device
 // VDI raster copy modes (subset).  3 = S replace (plain copy) — the only one yet.
 enum { VRO_COPY = 3 };
 
-// Polyline end styles (vsl_ends), for the start and the end point: SQUARE (the
-// plain pen end), ARROW (an arrowhead), ROUND (a round cap disc).
+// Polyline end styles (vsl_ends), for the start and the end point: SQUARE (a
+// flat butt cap), ARROW (an arrowhead; the line stops at its base), ROUND (the
+// round pen cap).
 enum { VDI_LE_SQUARE = 0, VDI_LE_ARROW = 1, VDI_LE_ROUND = 2 };
 
 // Writing modes (vswr_mode).  Per pixel, given a source foreground bit:
