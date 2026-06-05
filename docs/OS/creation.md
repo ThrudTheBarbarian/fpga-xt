@@ -88,9 +88,9 @@ The device mechanism is in place, so adding a device is now just a driver behind
 | v_rfbox | 11.9 | ✓ | filled rounded rect |
 | v_justified | 11.10 | ✓ | text spread to a width (word and/or character spacing) |
 | vr_recfl | 114 | ✓ | fill rect, honours interior/style/perimeter |
-| v_pmarker | 7 | ✗ | polymarkers |
-| v_cellarray | 10 | ✗ | |
-| v_contourfill | 103 | ✗ | seed/flood fill |
+| v_pmarker | 7 | ✓ | 6 marker types (dot/plus/asterisk/square/cross/diamond) |
+| v_cellarray | 10 | ✓ | grid of coloured cells scaled into a rect |
+| v_contourfill | 103 | ✓ | 4-connected seed fill (boundary or seed-colour) |
 
 **Attributes**
 
@@ -115,7 +115,7 @@ The device mechanism is in place, so adding a device is now just a driver behind
 | vsl_ends | 108 | ✗ | line caps / arrowheads |
 | vsl_udsty | 113 | ✗ | user line style |
 | vsf_udpat | 112 | ✓ | user fill pattern (16x16); selected by vsf_interior FIS_USER |
-| vsm_type / vsm_height / vsm_color | 18 / 19 / 20 | ✗ | polymarkers |
+| vsm_type / vsm_height / vsm_color | 18 / 19 / 20 | ✓ | marker type / size / colour |
 
 **Raster**
 

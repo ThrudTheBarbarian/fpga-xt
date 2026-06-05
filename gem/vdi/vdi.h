@@ -30,14 +30,20 @@ enum {                          // VDI opcodes (standard GEM)
     VDI_VQ_EXTND    = 102,      // vq_extnd  — extended workstation inquiry
     VDI_META_END    = 0xFFFF,   // end-of-metafile marker (not a real opcode)
     VDI_PLINE       = 6,
+    VDI_PMARKER     = 7,        // v_pmarker  — polymarkers
     VDI_GTEXT       = 8,        // v_gtext    — graphic text
     VDI_FILLAREA    = 9,        // v_fillarea — filled polygon
+    VDI_CELLARRAY   = 10,       // v_cellarray — grid of coloured cells
     VDI_GDP         = 11,       // sub-opcode 1 = v_bar (filled rectangle)
     VDI_ST_HEIGHT   = 12,       // vst_height — text size in pixels
     VDI_VS_COLOR    = 14,       // vs_color   — set a palette pen (RGB 0..1000)
     VDI_SL_TYPE     = 15,       // vsl_type   — line style (1 solid .. 6)
     VDI_SL_WIDTH    = 16,       // vsl_width  — line width (px)
     VDI_SL_COLOR    = 17,       // vsl_color  — polyline colour
+    VDI_SM_TYPE     = 18,       // vsm_type   — marker type
+    VDI_SM_HEIGHT   = 19,       // vsm_height — marker height
+    VDI_SM_COLOR    = 20,       // vsm_color  — marker colour
+    VDI_CONTOURFILL = 103,      // v_contourfill — seed fill
     VDI_ST_COLOR    = 22,       // vst_color  — text colour
     VDI_SF_INTERIOR = 23,       // vsf_interior — see VDI_FIS_*
     VDI_SF_STYLE    = 24,       // vsf_style  — pattern/hatch index
@@ -67,6 +73,10 @@ void mfdb_from_surface(MFDB *m, gfx_surface *s);   // wrap a surface as a device
 
 // VDI raster copy modes (subset).  3 = S replace (plain copy) — the only one yet.
 enum { VRO_COPY = 3 };
+
+// Marker types (vsm_type) for v_pmarker.
+enum { VDI_MK_DOT = 1, VDI_MK_PLUS = 2, VDI_MK_ASTERISK = 3,
+       VDI_MK_SQUARE = 4, VDI_MK_CROSS = 5, VDI_MK_DIAMOND = 6 };
 
 // Fill interior style (vsf_interior).  PATTERN (24 styles) / HATCH (12 styles)
 // pick a mask via vsf_style; USER uses the 16x16 pattern set by vsf_udpat.
@@ -150,7 +160,16 @@ int  vst_point (int handle, int points,    int *cw, int *ch, int *cellw, int *ce
 int  vst_load_fonts(int handle, int select);           // -> font-file count
 void vst_unload_fonts(int handle, int select);         // no-op
 void v_pline(int handle, int n, const int16_t *pxy);   // n point-pairs
+void v_pmarker(int handle, int n, const int16_t *pxy); // markers at n points
+void vsm_type(int handle, int type);                   // VDI_MK_*
+int  vsm_height(int handle, int height);               // px; returns selected
+void vsm_color(int handle, int pen);
 void v_fillarea(int handle, int n, const int16_t *pxy);// filled polygon, n vertices
+// Grid of cols x rows coloured cells (pen indices) scaled into pxy=x1,y1,x2,y2.
+void v_cellarray(int handle, const int16_t *pxy, int cols, int rows, const int16_t *colors);
+// Seed fill from (x,y) with the fill colour; index>=0 = fill up to that boundary
+// pen, index<0 = fill the connected region matching the seed pixel's colour.
+void v_contourfill(int handle, int x, int y, int index);
 void v_bar(int handle, const int16_t *pxy);            // pxy = x1,y1,x2,y2
 // Curved GDPs.  Filled ones use the fill colour/interior/perimeter; arcs and
 // v_rbox use the line colour.  Angles are tenths of a degree (0=east, CCW).

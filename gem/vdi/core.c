@@ -23,6 +23,7 @@ int vdi_ws_alloc(void) {
         ws_tab[i].line_width = 1; ws_tab[i].line_type = 1;
         ws_tab[i].fill_color = 1; ws_tab[i].text_color = 1; ws_tab[i].fill_interior = 1;
         ws_tab[i].fill_style = 1; ws_tab[i].fill_perimeter = 1;
+        ws_tab[i].marker_type = 3; ws_tab[i].marker_height = 11; ws_tab[i].marker_color = 1;
         ws_tab[i].text_valign = VDI_TA_TOP;
         return i + 1;
     }
@@ -233,6 +234,7 @@ void vdi_init(gfx_surface *default_target) {
     ws_tab[0].line_color = 1; ws_tab[0].line_width = 1; ws_tab[0].line_type = 1;
     ws_tab[0].fill_color = 1; ws_tab[0].text_color = 1; ws_tab[0].fill_interior = 1;
     ws_tab[0].fill_style = 1; ws_tab[0].fill_perimeter = 1;
+    ws_tab[0].marker_type = 3; ws_tab[0].marker_height = 11; ws_tab[0].marker_color = 1;
     ws_tab[0].text_valign = VDI_TA_TOP;
 }
 
@@ -315,7 +317,13 @@ void vdi_call(vdi_pb *pb) {
         case VDI_SF_PERIM:    op_sf_perimeter(pb);break;
         case VDI_CLIP:        op_clip(pb);       break;
         case VDI_PLINE:       op_pline(pb);      break;
+        case VDI_PMARKER:     op_pmarker(pb);    break;
+        case VDI_SM_TYPE:     op_sm_type(pb);    break;
+        case VDI_SM_HEIGHT:   op_sm_height(pb);  break;
+        case VDI_SM_COLOR:    op_sm_color(pb);   break;
         case VDI_FILLAREA:    op_fillarea(pb);   break;
+        case VDI_CELLARRAY:   op_cellarray(pb);  break;
+        case VDI_CONTOURFILL: op_contourfill(pb);break;
         case VDI_GTEXT:       op_gtext(pb);      break;
         case VDI_RECFL:       op_fillrect(pb);   break;
         case VDI_CPYFM:       op_cpyfm(pb);      break;

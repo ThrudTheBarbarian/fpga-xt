@@ -23,6 +23,9 @@ typedef struct {
     int          fill_interior;    // VDI_FIS_*
     int          fill_style;       // pattern/hatch index (1-based)
     int          fill_perimeter;   // outline filled areas (default 1)
+    int          marker_type;      // vsm_type (default 3 = asterisk)
+    int          marker_height;    // px (vsm_height)
+    int          marker_color;     // pen (vsm_color)
     font        *text_font;        // face for v_gtext (NULL => the VDI default)
     int          clip_on, cx0, cy0, cx1, cy1;   // clip rect, inclusive
     int          device;           // v_opnwk device id (0 = virtual/screen draw)
@@ -91,7 +94,13 @@ void op_sf_udpat(vdi_pb *pb);
 void op_sf_perimeter(vdi_pb *pb);
 void op_clip(vdi_pb *pb);
 void op_pline(vdi_pb *pb);
+void op_pmarker(vdi_pb *pb);
+void op_sm_type(vdi_pb *pb);
+void op_sm_height(vdi_pb *pb);
+void op_sm_color(vdi_pb *pb);
 void op_fillarea(vdi_pb *pb);
+void op_cellarray(vdi_pb *pb);
+void op_contourfill(vdi_pb *pb);
 void op_gdp(vdi_pb *pb);        // GDP dispatch (v_bar + curved primitives)
 void op_gtext(vdi_pb *pb);
 void op_justified(vdi_pb *pb);  // GDP sub 10 (justified text)

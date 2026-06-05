@@ -332,6 +332,43 @@ int main(void) {
     gfx_surface_free(js);
     font_face_close(jf);
 
+    // v_pmarker: an asterisk marks its centre and arms.
+    gfx_surface *pm = gfx_surface_alloc(40, 40);
+    for (int i = 0; i < 40 * 40; i++) pm->px[i] = 0;
+    int hpm = v_opnvwk(pm);
+    vsm_color(hpm, 1); vsm_type(hpm, VDI_MK_ASTERISK); CHECK(vsm_height(hpm, 16) == 16);
+    int16_t mk[2] = { 20, 20 }; v_pmarker(hpm, 1, mk);
+    CHECK(PX(pm, 20, 20) == vdi_pen_rgba(1));          // centre
+    CHECK(PX(pm, 20, 14) == vdi_pen_rgba(1));          // vertical arm (r=8)
+    CHECK(PX(pm, 14, 20) == vdi_pen_rgba(1));          // horizontal arm
+    v_clsvwk(hpm); gfx_surface_free(pm);
+
+    // v_cellarray: 2x2 cells -> four coloured quadrants.
+    gfx_surface *ca = gfx_surface_alloc(20, 20);
+    for (int i = 0; i < 20 * 20; i++) ca->px[i] = 0;
+    int hca = v_opnvwk(ca);
+    int16_t crect[4] = { 0, 0, 19, 19 };
+    int16_t cells[4] = { 2, 3, 4, 5 };                 // TL TR BL BR
+    v_cellarray(hca, crect, 2, 2, cells);
+    CHECK(PX(ca,  5,  5) == vdi_pen_rgba(2));
+    CHECK(PX(ca, 15,  5) == vdi_pen_rgba(3));
+    CHECK(PX(ca,  5, 15) == vdi_pen_rgba(4));
+    CHECK(PX(ca, 15, 15) == vdi_pen_rgba(5));
+    v_clsvwk(hca); gfx_surface_free(ca);
+
+    // v_contourfill: seed fill inside a boundary box.
+    gfx_surface *cf = gfx_surface_alloc(30, 30);
+    for (int i = 0; i < 30 * 30; i++) cf->px[i] = 0;
+    int hcf = v_opnvwk(cf);
+    vsl_color(hcf, 1); vsl_width(hcf, 1); vsl_type(hcf, 1);
+    int16_t box[10] = { 5,5, 24,5, 24,24, 5,24, 5,5 }; v_pline(hcf, 5, box);
+    vsf_color(hcf, 2);
+    v_contourfill(hcf, 15, 15, 1);                     // fill up to boundary pen 1
+    CHECK(PX(cf, 15, 15) == vdi_pen_rgba(2));          // interior filled
+    CHECK(PX(cf,  2,  2) == 0);                         // outside the box untouched
+    CHECK(PX(cf,  5,  5) == vdi_pen_rgba(1));           // boundary intact
+    v_clsvwk(hcf); gfx_surface_free(cf);
+
     if (fails == 0) printf("*** VDI TEST OK ***\n");
     else            printf("*** VDI TEST: %d FAIL(s) ***\n", fails);
     gfx_surface_free(s);
