@@ -301,7 +301,8 @@ void font_draw_fx(font *f, gfx_surface *d, int x, int y, const char *s,
     uint32_t shadow = ((rgba >> 1) & 0x7F7F7F00u) | 0xFF;   // darkened
     FT_Stroker stroker = NULL;
     if (effects & FX_OUTLINE) { FT_Stroker_New(g_ft, &stroker);
-        FT_Stroker_Set(stroker, f->px * 64 / 28, FT_STROKER_LINECAP_ROUND, FT_STROKER_LINEJOIN_ROUND, 0); }
+        FT_Pos sr = f->px * 64 / 48; if (sr < 48) sr = 48;   // thin contour (~1px), so it stays hollow
+        FT_Stroker_Set(stroker, sr, FT_STROKER_LINECAP_ROUND, FT_STROKER_LINEJOIN_ROUND, 0); }
 
     double penx = x, peny = y + f->ascent, trk = f->owner->tracking;
     double startx = penx, starty = peny;
