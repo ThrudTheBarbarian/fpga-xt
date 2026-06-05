@@ -33,7 +33,7 @@ OBJ      := $(addprefix $(BUILD)/,$(SRC:.c=.o))
 
 TARGET  := $(BUILD)/gem_sdl
 
-.PHONY: all run test clean fills shapes output text
+.PHONY: all run test clean fills shapes output text lines
 all: $(TARGET)
 
 $(TARGET): $(OBJ)
@@ -63,6 +63,12 @@ $(BUILD)/gem_textdemo: $(TEXT_OBJ)
 	$(CC) $(TEXT_OBJ) $(LDLIBS) -o $@
 text: $(BUILD)/gem_textdemo
 	./$(BUILD)/gem_textdemo
+
+LINES_OBJ := $(addprefix $(BUILD)/,gfx_soft.o font.o lines_demo.o $(VDI_SRC:.c=.o))
+$(BUILD)/gem_lines: $(LINES_OBJ)
+	$(CC) $(LINES_OBJ) $(LDLIBS) -o $@
+lines: $(BUILD)/gem_lines
+	./$(BUILD)/gem_lines
 
 # Headless self-tests (no SDL): VDI primitives, then the WM interaction layer.
 TEST_OBJ := $(addprefix $(BUILD)/,gfx_soft.o font.o vdi_test.o $(VDI_SRC:.c=.o))
