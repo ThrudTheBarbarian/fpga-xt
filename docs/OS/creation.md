@@ -227,6 +227,19 @@ read so nothing hangs.
 | vq_key_s | 128 | ✓ | keyboard shift/ctrl/alt state |
 | vex_butv / vex_motv / vex_curv / vex_timv | 125–127 / 118 | ✓ | exchange an input-interrupt vector (returns the previous) |
 
+Cross-referencing the [FreeMiNT VDI input set](https://freemint.github.io/tos.hyp/en/vdi_input.html),
+two functions are missing:
+
+| Call | Op | Sup | Rec | Notes / rationale |
+|------|----|-----|-----|-------|
+| vex_wheelv | 134 | ✗ | ✅ | install a **mouse-wheel** event handler (wheel number + amount). Real wheel support — needs the vector exchange (like the other vex_*) *and* the SDL host to feed `SDL_MOUSEWHEEL` (currently it isn't, so we have **no working wheel** yet). Essential for a scrolling desktop |
+| vsc_form | 111 | ✗ | ✅ | set the **mouse-pointer shape** (16×16 cursor + mask + hot spot). The WM draws a hardcoded arrow today; this lets apps/AES swap cursors (I-beam, busy, hand). Store the form, have the WM draw it |
+
+Wheel status: the generic *valuator* device (op 29) could carry a wheel value, but nothing feeds
+it from a real wheel and there's no `vex_wheelv` vector — so **wheels aren't actually supported**
+yet. Both calls above are ✅ recommended; `vex_wheelv` also requires wiring `SDL_MOUSEWHEEL` in the
+host (and a PS/hardware wheel source later).
+
 **NVDI extensions**
 
 Beyond the classic VDI: Bézier curves and off-screen bitmaps as workstations.
