@@ -18,11 +18,13 @@
 #define SCREEN_H 1080
 #define COL_DESKTOP  GFX_RGB(0x20, 0x80, 0x84)   // muted teal
 
-// The real compositor XL-plane rect (origin 480,252, size 960x576): milestone-1
-// target is to frame exactly this with a window's content area.
+// Milestone-1 target: frame the live Atari plane with a window's content area.
+// The legacy Atari display is 4:3 (HW renders a 384px playfield over 192 rows;
+// vbeam.sv / antic_top.sv), so the content area is 4:3 here too — 960x576 (5:3)
+// looked horizontally stretched.
 #define XL_X 480
 #define XL_Y 252
-#define XL_W 960
+#define XL_W 768
 #define XL_H 576
 #define TITLE_H 30
 #define EDGE    2
