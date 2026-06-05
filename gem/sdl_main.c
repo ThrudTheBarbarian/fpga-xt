@@ -9,7 +9,7 @@
 // Build:  make -C gem        Run:  make -C gem run        Quit: ESC / close.
 
 #include "gem.h"
-#include "vdi.h"
+#include "vdi/vdi.h"
 #include <SDL2/SDL.h>
 #include <stdio.h>
 

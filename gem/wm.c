@@ -4,7 +4,7 @@
 // window's backing-store content with vro_cpyfm.  No platform calls.
 
 #include "gem.h"
-#include "vdi.h"
+#include "vdi/vdi.h"
 #include <stddef.h>
 
 // Provisional theme as VDI pens (-> themed artwork / OS/Themes later).

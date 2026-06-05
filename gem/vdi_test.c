@@ -1,7 +1,7 @@
 // vdi_test.c — headless sanity for the VDI (no SDL): dispatch, clipping, pens.
 // Draws onto an in-memory surface and checks individual pixels.
 
-#include "vdi.h"
+#include "vdi/vdi.h"
 #include <stdio.h>
 #include <stdlib.h>
 
