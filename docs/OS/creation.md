@@ -46,6 +46,98 @@ So a clean implementation then. The API is well documented, the goal is simply t
 * NVDI, fVDI etc have expanded the GEM interface calls, we should support those. Not really interested in supporting the VT52 opcodes at this level though, those seem Atari-ST/TT specific, and can be handled inside the m68k emulation window
 * Use the blitter as much as possible
 
+### VDI coverage
+
+Status of the standard VDI calls. Legend: ✓ implemented · ◐ partial (logic exists, no binding / limited) · ✗ not yet. Opcodes in parentheses; GDP sub-opcodes are `11.n`.
+
+**Control**
+
+| Call | Op | Sup | Notes |
+|------|----|-----|-------|
+| v_opnvwk | 100 | ✓ | virtual workstation; 16 slots, handle 1 = physical |
+| v_clsvwk | 101 | ✓ | |
+| vs_clip | 129 | ✓ | per-workstation clip rectangle; every primitive honours it |
+| v_opnwk / v_clswk | 1 / 2 | ✗ | physical workstation is implicit (the desktop surface) |
+| v_clrwk | 3 | ✗ | |
+| v_updwk | 4 | ✗ | drawing is immediate, no batching |
+| vst_load_fonts / vst_unload_fonts | 119 / 120 | ✗ | FreeType faces load on demand instead |
+| vq_extnd | 102 | ✗ | extended inquire |
+
+**Output / drawing**
+
+| Call | Op | Sup | Notes |
+|------|----|-----|-------|
+| v_pline | 6 | ✓ | Cohen–Sutherland clipped, width + dash |
+| v_gtext | 8 | ✓ | FreeType, UTF-8, sized/aligned |
+| v_fillarea | 9 | ◐ | `vdi_fill_poly` exists internally; no public binding yet |
+| v_bar | 11.1 | ✓ | filled rect (also `vr_recfl`) |
+| v_arc | 11.2 | ✓ | line colour |
+| v_pieslice | 11.3 | ✓ | filled |
+| v_circle | 11.4 | ✓ | filled |
+| v_ellipse | 11.5 | ✓ | filled |
+| v_ellarc | 11.6 | ✓ | line colour |
+| v_ellpie | 11.7 | ✓ | filled |
+| v_rbox | 11.8 | ✓ | rounded-rect outline |
+| v_rfbox | 11.9 | ✓ | filled rounded rect |
+| v_justified | 11.10 | ✗ | justified text |
+| vr_recfl | 114 | ✓ | fill rect, honours interior/style/perimeter |
+| v_pmarker | 7 | ✗ | polymarkers |
+| v_cellarray | 10 | ✗ | |
+| v_contourfill | 103 | ✗ | seed/flood fill |
+
+**Attributes**
+
+| Call | Op | Sup | Notes |
+|------|----|-----|-------|
+| vs_color | 14 | ✓ | set palette pen (RGB 0..1000) |
+| vsl_type | 15 | ✓ | 1 solid .. 6 dash-dot-dot |
+| vsl_width | 16 | ✓ | round pen |
+| vsl_color | 17 | ✓ | |
+| vst_height | 12 | ✓ | px |
+| vst_point | 107 | ✓ | points (72 dpi) |
+| vst_color | 22 | ✓ | |
+| vst_alignment | 39 | ✓ | h: left/centre/right · v: GEM codes |
+| vst_font | 21 | ◐ | single default face (`vdi_set_face`); no per-id selection |
+| vsf_interior | 23 | ✓ | hollow / solid / pattern / hatch |
+| vsf_style | 24 | ✓ | 4 dither + 6 hatch masks |
+| vsf_color | 25 | ✓ | |
+| vsf_perimeter | 104 | ✓ | outline filled areas |
+| vswr_mode | 32 | ✗ | only replace/transparent (no XOR/reverse) |
+| vst_rotation | 13 | ✗ | rotated text |
+| vst_effects | 106 | ✗ | bold/italic/underline |
+| vsl_ends | 108 | ✗ | line caps / arrowheads |
+| vsl_udsty | 113 | ✗ | user line style |
+| vsf_udpat | 112 | ✗ | user fill pattern |
+| vsm_type / vsm_height / vsm_color | 18 / 19 / 20 | ✗ | polymarkers |
+
+**Raster**
+
+| Call | Op | Sup | Notes |
+|------|----|-----|-------|
+| vro_cpyfm | 109 | ✓ | opaque copy (mode 3); device-format MFDB |
+| vrt_cpyfm | 121 | ✗ | transparent mono→colour copy |
+| vr_trnfm | 110 | ✗ | planar↔device transform |
+| v_get_pixel | 105 | ✗ | |
+
+**Inquiry**
+
+| Call | Op | Sup | Notes |
+|------|----|-----|-------|
+| vqt_extent | 116 | ◐ | `font_text_width` internal; no binding |
+| vqt_width | 117 | ✗ | per-character width |
+| vqt_name | 130 | ✗ | font name |
+| vq_color | 26 | ✗ | read back a pen |
+| vql_/vqm_/vqf_/vqt_attributes | 35–38 | ✗ | read current attributes |
+
+**Input / cursor** (handled by the host/AES event layer, not the VDI here)
+
+| Call | Op | Sup | Notes |
+|------|----|-----|-------|
+| vsin_mode, vrq/vsm_locator/valuator/choice/string | various | ✗ | input via SDL/AES, not VDI device input |
+| v_show_c / v_hide_c | 122 / 123 | ✗ | the WM draws the pointer plane |
+| vq_mouse | 124 | ✗ | |
+| vex_butv / vex_motv / vex_curv | 125–127 | ✗ | input interrupt vectors |
+
 ### Fonts
 
 We need a font story. I think the best way forward is to incorporate (simpler, less capable) [libttf](https://github.com/tayoky/libttf) or 
@@ -63,6 +155,31 @@ If a default theme isn't set, then we use the first directory we come across in 
 
 We can use the [Aristo2](https://github.com/cappuccino/cappuccino/tree/main/AppKit/Themes/Aristo2) resources (I checked with the developer) to make the look-and-feel nice and pretty, better than original GEM anyway. 
 
+Seems like we need the following theme elements to draw a pretty UI:
+
+#### Window
+ * 4 corners and t/l/r/b edges
+ * titlebar left (to match tl corner), center, right (to match tr corner)
+ * controls to go into the titlebar (close, iconise, fullscreen)
+
+#### Scrollbars
+ * for vertical scrollbar: top, center, bottom sections, with arrows
+ * and thumb top/center/bottom to draw appropriately sized
+ * same for left/right scrollvar
+
+#### Forms
+* button {disabled, normal, selected, default}
+* radio button {disabled, selected, deselected}
+* checkbox {checked, unchecked, disabled}
+* text-field {disabled, normal}
+* combo-box with pop-up menu {disabled, normal}
+* and menu for combo-box
+* slider (circular, linear horizontal, linear vertical}
+
+### Menu
+* pulldown background with all sides and corners
+* tick-mark / chosen inicator
+* key-equiv symbol
 
 
 ## Integrate Lua
