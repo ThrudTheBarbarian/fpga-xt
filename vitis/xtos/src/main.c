@@ -312,7 +312,7 @@ static void repl_help(void)
       "  hdmi             re-run SiI9022 output init (sii_enable_output)\r\n"
       "  diag             decode GP0 diag word + measured H_RES/V_RES\r\n"
       "  { ... }          serial->Atari keyboard passthrough ('key' or '{' in, '}' out)\r\n"
-      "  speed <n>        SALLY clock multiplier (DECIMAL); 1=boot-safe, raise after READY\r\n"
+      "  speed <n>        CPU speed = n x real Atari (DECIMAL); 1=real/boot-safe, 56=max turbo\r\n"
       "  mon <0|1>        periodic 1s status tick off/on\r\n"
       "  reset            soft-reset the PS (SLCR) -> full reboot (FSBL/DDR/PL)\r\n"
       "  help             this list\r\n"
