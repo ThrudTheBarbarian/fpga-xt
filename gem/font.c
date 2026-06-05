@@ -15,6 +15,9 @@
 
 #include <ft2build.h>
 #include FT_FREETYPE_H
+#include FT_OUTLINE_H
+#include FT_GLYPH_H
+#include FT_STROKER_H
 
 #define ASCII_N 128
 #define GHASH   97                      // buckets for codepoints >= 128
@@ -245,9 +248,9 @@ void font_draw_justified(font *f, gfx_surface *d, int x, int y, const char *s,
     }
 }
 
-// Blit a freshly-rendered (transformed) FT bitmap's coverage at device top-left.
+// Blit an FT bitmap's coverage at device top-left.  `light` halves coverage.
 static void blit_ft(gfx_surface *d, const FT_Bitmap *bm, int bx, int by,
-                    uint32_t rgba, int cx0, int cy0, int cx1, int cy1, int mode) {
+                    uint32_t rgba, int cx0, int cy0, int cx1, int cy1, int mode, int light) {
     uint32_t xr = rgba & 0xFFFFFF00u;
     for (int row = 0; row < (int)bm->rows; row++) {
         int py = by + row; if (py < cy0 || py > cy1 || py < 0 || py >= d->h) continue;
@@ -255,33 +258,85 @@ static void blit_ft(gfx_surface *d, const FT_Bitmap *bm, int bx, int by,
         uint32_t *dr = d->px + (size_t)py * d->stride;
         for (int col = 0; col < (int)bm->width; col++) {
             int px = bx + col; if (px < cx0 || px > cx1 || px < 0 || px >= d->w) continue;
-            if (mode == 3) { if (cr[col] >= 128) dr[px] ^= xr; }
-            else dr[px] = blend(dr[px], rgba, cr[col]);
+            unsigned cov = cr[col]; if (light) cov = (cov * 102) / 255;   // ~40%
+            if (mode == 3) { if (cov >= 128) dr[px] ^= xr; }
+            else dr[px] = blend(dr[px], rgba, cov);
         }
     }
 }
 
-void font_draw_rotated(font *f, gfx_surface *d, int x, int y, const char *s,
-                       int angle_tenths, uint32_t rgba, const int *clip, int mode) {
+// Stamp a thick segment (for underline) directly into the surface.
+static void stamp_line(gfx_surface *d, double x0, double y0, double x1, double y1,
+                       int thick, uint32_t rgba, int cx0, int cy0, int cx1, int cy1, int mode) {
+    double dx = x1 - x0, dy = y1 - y0, len = sqrt(dx*dx + dy*dy);
+    int n = (int)len + 1, r = thick / 2;
+    uint32_t xr = rgba & 0xFFFFFF00u;
+    for (int i = 0; i <= n; i++) {
+        int px = (int)lround(x0 + dx * i / n), py = (int)lround(y0 + dy * i / n);
+        for (int oy = -r; oy <= r; oy++) for (int ox = -r; ox <= r; ox++) {
+            int X = px + ox, Y = py + oy;
+            if (X < cx0 || X > cx1 || Y < cy0 || Y > cy1 || X < 0 || Y < 0 || X >= d->w || Y >= d->h) continue;
+            uint32_t *q = &d->px[(size_t)Y * d->stride + X];
+            *q = (mode == 3) ? (*q ^ xr) : ((rgba & 0xFFFFFF00u) | 0xFF);
+        }
+    }
+}
+
+void font_draw_fx(font *f, gfx_surface *d, int x, int y, const char *s,
+                  int angle_tenths, int effects, uint32_t rgba, const int *clip, int mode) {
     if (!f || !s || !d) return;
     int cx0, cy0, cx1, cy1; clip_of(d, clip, &cx0, &cy0, &cx1, &cy1);
-    double a = angle_tenths * (M_PI / 1800.0);          // tenths of a degree, CCW
+    double a = angle_tenths * (M_PI / 1800.0);          // CCW
+    double c = cos(a), sn = sin(a);
+    double k = (effects & FX_ITALIC) ? 0.21 : 0.0;      // italic shear (tan ~12 deg)
+    // M = rotation . shear  (shear glyph first, then rotate)
     FT_Matrix m = {
-        (FT_Fixed)lround( cos(a) * 65536.0), (FT_Fixed)lround(-sin(a) * 65536.0),
-        (FT_Fixed)lround( sin(a) * 65536.0), (FT_Fixed)lround( cos(a) * 65536.0) };
+        (FT_Fixed)lround(c * 65536.0),              (FT_Fixed)lround((c*k - sn) * 65536.0),
+        (FT_Fixed)lround(sn * 65536.0),             (FT_Fixed)lround((sn*k + c) * 65536.0) };
     FT_Face face = f->owner->ft;
     FT_Set_Pixel_Sizes(face, 0, f->px);
-    double penx = x, peny = y + f->ascent;              // baseline origin = pivot (device y-down)
-    int trk = f->owner->tracking;
+    FT_Pos bold = (effects & FX_BOLD) ? (FT_Pos)(f->px * 64 / 22) : 0;
+    int light = (effects & FX_LIGHT) ? 1 : 0;
+    int sh = (effects & FX_SHADOW) ? (f->px / 12 + 1) : 0;
+    uint32_t shadow = ((rgba >> 1) & 0x7F7F7F00u) | 0xFF;   // darkened
+    FT_Stroker stroker = NULL;
+    if (effects & FX_OUTLINE) { FT_Stroker_New(g_ft, &stroker);
+        FT_Stroker_Set(stroker, f->px * 64 / 28, FT_STROKER_LINECAP_ROUND, FT_STROKER_LINEJOIN_ROUND, 0); }
+
+    double penx = x, peny = y + f->ascent, trk = f->owner->tracking;
+    double startx = penx, starty = peny;
     for (const char *p = s; *p; ) {
         unsigned cp = utf8_next(&p);
         FT_Set_Transform(face, &m, NULL);
-        if (FT_Load_Char(face, cp, FT_LOAD_RENDER)) continue;
+        if (FT_Load_Char(face, cp, FT_LOAD_DEFAULT)) continue;
         FT_GlyphSlot g = face->glyph;
-        blit_ft(d, &g->bitmap, (int)lround(penx) + g->bitmap_left,
-                (int)lround(peny) - g->bitmap_top, rgba, cx0, cy0, cx1, cy1, mode);
-        penx += g->advance.x / 64.0 + trk * cos(a);     // advance along the rotated baseline
-        peny -= g->advance.y / 64.0 + trk * sin(a);     // FT y is up; device y is down
+        if (bold) FT_Outline_Embolden(&g->outline, bold);
+        int ox = (int)lround(penx), oy = (int)lround(peny);
+        if (stroker) {                                  // outline: stroke the border
+            FT_Glyph gl;
+            if (!FT_Get_Glyph(g, &gl)) {
+                FT_Glyph_Stroke(&gl, stroker, 1);       // stroke the contour -> hollow
+                if (!FT_Glyph_To_Bitmap(&gl, FT_RENDER_MODE_NORMAL, NULL, 1)) {
+                    FT_BitmapGlyph bg = (FT_BitmapGlyph)gl;
+                    if (sh) blit_ft(d, &bg->bitmap, ox+bg->left+sh, oy-bg->top+sh, shadow, cx0,cy0,cx1,cy1, 0, 0);
+                    blit_ft(d, &bg->bitmap, ox+bg->left, oy-bg->top, rgba, cx0,cy0,cx1,cy1, mode, light);
+                }
+                FT_Done_Glyph(gl);
+            }
+        } else {
+            FT_Render_Glyph(g, FT_RENDER_MODE_NORMAL);
+            if (sh) blit_ft(d, &g->bitmap, ox+g->bitmap_left+sh, oy-g->bitmap_top+sh, shadow, cx0,cy0,cx1,cy1, 0, 0);
+            blit_ft(d, &g->bitmap, ox+g->bitmap_left, oy-g->bitmap_top, rgba, cx0,cy0,cx1,cy1, mode, light);
+        }
+        penx += g->advance.x / 64.0 + trk * c;
+        peny -= g->advance.y / 64.0 + trk * sn;
     }
+    if (effects & FX_UNDERLINE) {                        // along the (rotated) baseline, just below
+        double uoff = f->px / 8.0 + 1, perpx = sn, perpy = c;   // device "below text"
+        stamp_line(d, startx + perpx*uoff, starty + perpy*uoff,
+                      penx  + perpx*uoff, peny  + perpy*uoff,
+                      f->px / 16 + 1, rgba, cx0, cy0, cx1, cy1, mode);
+    }
+    if (stroker) FT_Stroker_Done(stroker);
     FT_Set_Transform(face, NULL, NULL);                 // identity again for the cached path
 }

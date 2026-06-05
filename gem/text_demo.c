@@ -21,6 +21,11 @@ static const char *words[12] = {
     "Orbit", "Gyrate", "Revolve", "Turn", "Cycle", "Wheel",
 };
 static const int sizes[12] = { 18, 24, 30, 36, 22, 28, 34, 40, 20, 26, 32, 38 };
+static const int fx[12] = {
+    0, FX_BOLD, FX_ITALIC, FX_BOLD | FX_ITALIC,
+    FX_OUTLINE, FX_SHADOW, FX_LIGHT, FX_UNDERLINE,
+    FX_BOLD | FX_SHADOW, FX_OUTLINE | FX_ITALIC, FX_BOLD | FX_UNDERLINE, FX_SHADOW | FX_ITALIC,
+};
 static const int16_t hue[12][3] = {
     {1000,0,0}, {1000,500,0}, {1000,800,0}, {1000,1000,0},
     {600,1000,0}, {0,1000,0}, {0,1000,600}, {0,1000,1000},
@@ -34,7 +39,7 @@ static void draw(gfx_surface *desk) {
 
     vst_color(VH, 0); vst_height(VH, 22, NULL, NULL, NULL, NULL);
     vst_rotation(VH, 0); vst_alignment(VH, VDI_TA_CENTER, VDI_TA_TOP, NULL, NULL);
-    v_gtext(VH, WIN_W/2, 16, "GEM VDI — 12 rotating strings (vst_rotation, any angle)");
+    v_gtext(VH, WIN_W/2, 16, "GEM VDI — 12 rotating strings (vst_rotation), each with a vst_effect");
     vst_alignment(VH, VDI_TA_LEFT, VDI_TA_TOP, NULL, NULL);
 
     for (int i = 0; i < 12; i++) {
@@ -44,6 +49,7 @@ static void draw(gfx_surface *desk) {
         vst_color(VH, 100 + i);
         vst_height(VH, size, NULL, NULL, NULL, NULL);
         vst_rotation(VH, a);
+        vst_effects(VH, fx[i]);                        // a different effect per string
 
         font *f = font_at(g_face, size);
         int W = font_text_width(f, words[i]), asc = font_ascent(f);

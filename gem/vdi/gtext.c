@@ -35,14 +35,17 @@ void op_gtext(vdi_pb *pb) {
     uint32_t pen = vdi_pen_rgba(w->text_color);
 
     if (w->text_rotation) {                              // rotated: pivot at the anchor
-        font_draw_rotated(f, w->target, x, y, buf, w->text_rotation, pen, clip, w->wr_mode);
+        font_draw_fx(f, w->target, x, y, buf, w->text_rotation, w->text_effects, pen, clip, w->wr_mode);
         return;
     }
     switch (w->text_halign) {                            // horizontal alignment (unrotated)
         case VDI_TA_CENTER: x -= font_text_width(f, buf) / 2; break;
         case VDI_TA_RIGHT:  x -= font_text_width(f, buf);     break;
     }
-    font_draw(f, w->target, x, y, buf, pen, clip, w->wr_mode);
+    if (w->text_effects)                                 // upright with effects
+        font_draw_fx(f, w->target, x, y, buf, 0, w->text_effects, pen, clip, w->wr_mode);
+    else
+        font_draw(f, w->target, x, y, buf, pen, clip, w->wr_mode);
 }
 
 void v_gtext(int handle, int x, int y, const char *s) {

@@ -31,6 +31,7 @@ typedef struct {
     int          text_halign;      // VDI_TA_LEFT/CENTER/RIGHT
     int          text_valign;      // VDI_TA_* (default TOP)
     int          text_rotation;    // tenths of a degree, CCW (vst_rotation)
+    int          text_effects;     // FX_* bitmask (vst_effects)
     int          fill_interior;    // VDI_FIS_*
     int          fill_style;       // pattern/hatch index (1-based)
     int          fill_perimeter;   // outline filled areas (default 1)
@@ -106,6 +107,7 @@ void op_st_point(vdi_pb *pb);
 void op_st_font(vdi_pb *pb);
 void op_qt_name(vdi_pb *pb);
 void op_st_rotation(vdi_pb *pb);
+void op_st_effects(vdi_pb *pb);
 void op_st_alignment(vdi_pb *pb);
 void op_load_fonts(vdi_pb *pb);
 void op_unload_fonts(vdi_pb *pb);

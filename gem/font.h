@@ -44,10 +44,15 @@ void  font_draw_justified(font *f, gfx_surface *dst, int x, int y, const char *s
                           int width, int word_space, int char_space,
                           uint32_t rgba, const int *clip, int mode);
 
+// Text effects (vst_effects), matching the GEM bitmask.
+enum { FX_BOLD = 0x01, FX_LIGHT = 0x02, FX_ITALIC = 0x04,
+       FX_UNDERLINE = 0x08, FX_OUTLINE = 0x10, FX_SHADOW = 0x20 };
+
 // Draw `s` rotated by `angle_tenths` (tenths of a degree, CCW) about the
-// baseline start (em box top-left at x,y).  Glyph outlines are transformed via
-// FreeType, so any angle works (these aren't cached).  Honours the writing mode.
-void  font_draw_rotated(font *f, gfx_surface *dst, int x, int y, const char *s,
-                        int angle_tenths, uint32_t rgba, const int *clip, int mode);
+// baseline start (em box top-left at x,y), with the given effects.  Glyph
+// outlines are transformed/emboldened/stroked via FreeType, so any angle and
+// effect works (these aren't cached).  Honours the writing mode.
+void  font_draw_fx(font *f, gfx_surface *dst, int x, int y, const char *s,
+                   int angle_tenths, int effects, uint32_t rgba, const int *clip, int mode);
 
 #endif // GEM_FONT_H

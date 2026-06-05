@@ -55,6 +55,7 @@ enum {                          // VDI opcodes (standard GEM)
     VDI_SF_UDPAT    = 112,      // vsf_udpat  — set user-defined fill pattern
     VDI_ST_ALIGN    = 39,       // vst_alignment — text anchor
     VDI_SF_PERIM    = 104,      // vsf_perimeter — outline filled areas (0/1)
+    VDI_ST_EFFECTS  = 106,      // vst_effects — text effects bitmask
     VDI_ST_POINT    = 107,      // vst_point  — text size in points
     VDI_LOAD_FONTS  = 119,      // vst_load_fonts   — returns the font-file count
     VDI_UNLOAD_FONTS= 120,      // vst_unload_fonts — no-op
@@ -153,6 +154,7 @@ int  vsl_type(int handle, int style);                  // 1 solid..6; returns se
 int  vsl_width(int handle, int width);                 // px; returns selected
 void vst_color(int handle, int pen);                   // text colour
 int  vst_rotation(int handle, int angle);              // baseline angle, 1/10 deg CCW; -> selected
+int  vst_effects(int handle, int effects);             // FX_* bitmask (from font.h); -> selected
 void vsf_color(int handle, int pen);
 void vsf_interior(int handle, int style);              // VDI_FIS_*
 void vsf_style(int handle, int index);                 // pattern/hatch index (1-based)

@@ -506,6 +506,24 @@ int main(void) {
     CHECK(vst_rotation(hrs, -100) == 3500);            // normalised into 0..3599
     v_clsvwk(hrs); gfx_surface_free(rs); font_face_close(rotf);
 
+    // vst_effects: bold adds ink; the bitmask round-trips (6 bits).
+    font_face *ef = font_face_open("fonts/AovelSansRounded.ttf");
+    vdi_set_face(ef);
+    gfx_surface *es = gfx_surface_alloc(80, 40);
+    int he = v_opnvwk(es);
+    vst_color(he, 1); vst_height(he, 28, NULL, NULL, NULL, NULL);
+    CHECK(vst_effects(he, FX_BOLD) == FX_BOLD);
+    for (int i = 0; i < 80 * 40; i++) es->px[i] = 0;
+    v_gtext(he, 6, 4, "M");
+    int boldn = 0; for (int i = 0; i < 80 * 40; i++) if (es->px[i]) boldn++;
+    vst_effects(he, 0);
+    for (int i = 0; i < 80 * 40; i++) es->px[i] = 0;
+    v_gtext(he, 6, 4, "M");
+    int plainn = 0; for (int i = 0; i < 80 * 40; i++) if (es->px[i]) plainn++;
+    CHECK(boldn > plainn);                             // bold is heavier
+    CHECK(vst_effects(he, 0x7F) == 0x3F);              // only the six defined bits kept
+    v_clsvwk(he); gfx_surface_free(es); font_face_close(ef);
+
     if (fails == 0) printf("*** VDI TEST OK ***\n");
     else            printf("*** VDI TEST: %d FAIL(s) ***\n", fails);
     gfx_surface_free(s);
