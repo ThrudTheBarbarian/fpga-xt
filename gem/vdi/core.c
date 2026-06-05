@@ -6,6 +6,7 @@
 #include "vdi/internal.h"
 #include <stddef.h>
 #include <string.h>
+#include <math.h>
 
 // ---- Workstations ---------------------------------------------------------
 static vdi_ws   ws_tab[VDI_MAX_WS];
@@ -212,6 +213,9 @@ void vdi_line_ex(const vdi_ws *w, int x0, int y0, int x1, int y1, int pen, int s
     long cp0[3] = { Dx, Dy, -(Dx*x0 + Dy*y0) };          // inward from (x0,y0)
     long cp1[3] = { -Dx, -Dy, Dx*x1 + Dy*y1 };           // inward from (x1,y1)
     const long *pcap0 = sq0 ? cp0 : NULL, *pcap1 = sq1 ? cp1 : NULL;
+    int ox0 = x0, oy0 = y0;                              // dash phase = true distance along the
+    double len = sqrt((double)Dx*Dx + (double)Dy*Dy);    // line from the start (angle-independent)
+    double ux = len > 0 ? Dx / len : 0, uy = len > 0 ? Dy / len : 0;
     int cx0, cy0, cx1, cy1; vdi_ws_clip(w, &cx0, &cy0, &cx1, &cy1);
     int c0 = cs_code(x0, y0, cx0, cy0, cx1, cy1);
     int c1 = cs_code(x1, y1, cx0, cy0, cx1, cy1);
@@ -233,15 +237,14 @@ void vdi_line_ex(const vdi_ws *w, int x0, int y0, int x1, int y1, int pen, int s
     int dx = x1 > x0 ? x1 - x0 : x0 - x1, sx = x0 < x1 ? 1 : -1;
     int dy = y1 > y0 ? y0 - y1 : y1 - y0, sy = y0 < y1 ? 1 : -1;   // dy negative
     int err = dx + dy, mode = w->wr_mode;
-    double dist = 0.0;                                   // dash phase = device distance, so the
-    for (;;) {                                           // pattern is angle-independent (no walking)
-        if (pat & (1u << (((int)dist) & 15)))
+    for (;;) {
+        int phase = (int)((x0 - ox0) * ux + (y0 - oy0) * uy);   // projected distance from start
+        if (pat & (1u << (phase & 15)))
             brush(w->target, x0, y0, width, rgba, mode, cx0, cy0, cx1, cy1, pcap0, pcap1);
         if (x0 == x1 && y0 == y1) break;
-        int e2 = 2 * err, mx = 0, my = 0;
-        if (e2 >= dy) { err += dy; x0 += sx; mx = 1; }
-        if (e2 <= dx) { err += dx; y0 += sy; my = 1; }
-        dist += (mx && my) ? 1.41421356 : 1.0;           // diagonal step is sqrt(2)
+        int e2 = 2 * err;
+        if (e2 >= dy) { err += dy; x0 += sx; }
+        if (e2 <= dx) { err += dx; y0 += sy; }
     }
 }
 
