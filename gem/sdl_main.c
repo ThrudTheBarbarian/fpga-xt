@@ -79,6 +79,7 @@ int main(int argc, char **argv) {
     gem_wm_init(&wm, desk, COL_DESKTOP);                 // brings up the VDI on desk
     font *uifont = font_open("fonts/AovelSansRounded.ttf", 18);
     if (!uifont) fprintf(stderr, "warning: title font failed to load\n");
+    if (uifont) font_set_tracking(uifont, 1);            // this face is cut tight
     gem_wm_set_font(&wm, uifont);                        // titles + VDI default text
 
     // "Atari XL" content is 4:3 (512x384); outer adds 2px edge + 30px title bar.

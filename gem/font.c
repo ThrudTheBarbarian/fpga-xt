@@ -26,6 +26,7 @@ typedef struct {
 struct font {
     FT_Face face;
     int     height, ascent;
+    int     tracking;                   // extra px added to each glyph advance
     glyph   cache[GLYPH_CACHE];
 };
 
@@ -54,6 +55,7 @@ void font_close(font *f) {
 
 int font_height(const font *f) { return f ? f->height : 0; }
 int font_ascent(const font *f) { return f ? f->ascent : 0; }
+void font_set_tracking(font *f, int px) { if (f) f->tracking = px; }
 
 // Rasterise codepoint c into the cache (no-op if already there).  Returns the
 // glyph, or NULL if it can't be loaded.
@@ -81,7 +83,10 @@ static const glyph *glyph_get(font *f, unsigned c) {
 int font_text_width(font *f, const char *s) {
     if (!f || !s) return 0;
     int w = 0;
-    for (; *s; s++) { const glyph *g = glyph_get(f, (unsigned char)*s); if (g) w += g->advance; }
+    for (; *s; s++) {
+        const glyph *g = glyph_get(f, (unsigned char)*s);
+        if (g) w += g->advance + f->tracking;
+    }
     return w;
 }
 
@@ -122,6 +127,6 @@ void font_draw(font *f, gfx_surface *d, int x, int y, const char *s,
                 }
             }
         }
-        pen += g->advance;
+        pen += g->advance + f->tracking;
     }
 }

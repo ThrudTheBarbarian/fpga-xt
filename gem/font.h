@@ -21,6 +21,10 @@ int   font_height(const font *f);              // line height (px)
 int   font_ascent(const font *f);              // baseline offset from the top (px)
 int   font_text_width(font *f, const char *s); // pen advance for the string (px)
 
+// Extra letter-spacing added to every glyph advance (px; default 0 = the face's
+// own metrics).  Some faces are cut very tight; a little tracking opens them up.
+void  font_set_tracking(font *f, int px);
+
 // Draw NUL-terminated ASCII with the em box's top-left at (x,y), antialiased in
 // colour rgba over the existing pixels.  Clipped to the inclusive rect
 // [clip[0],clip[1]]-[clip[2],clip[3]] when clip != NULL, else surface bounds.
