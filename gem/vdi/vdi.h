@@ -17,14 +17,17 @@
 #define GEM_VDI_H
 
 #include "gfx.h"
+#include "font.h"
 #include <stdint.h>
 
 enum {                          // VDI opcodes (standard GEM)
     VDI_OPNVWK      = 100,
     VDI_CLSVWK      = 101,
     VDI_PLINE       = 6,
+    VDI_GTEXT       = 8,        // v_gtext    — graphic text
     VDI_GDP         = 11,       // sub-opcode 1 = v_bar (filled rectangle)
     VDI_SL_COLOR    = 17,       // vsl_color  — polyline colour
+    VDI_ST_COLOR    = 22,       // vst_color  — text colour
     VDI_SF_INTERIOR = 23,       // vsf_interior — 0 hollow, 1 solid
     VDI_SF_COLOR    = 25,       // vsf_color  — fill colour
     VDI_CPYFM       = 109,      // vro_cpyfm  — copy raster, opaque
@@ -58,12 +61,17 @@ void vdi_call(vdi_pb *pb);                    // the doorbell: dispatch one VDI 
 
 uint32_t vdi_pen_rgba(int pen);               // pen index -> RGBA (for the WM/theming)
 
+// The default text face used by v_gtext (until per-workstation vst_font lands).
+void     vdi_set_font(font *f);
+
 // ---- C binding (fills shared arrays, calls vdi_call) ----------------------
 int  v_opnvwk(gfx_surface *target);           // -> workstation handle (>0), 0 = fail
 void v_clsvwk(int handle);
 void vsl_color(int handle, int pen);
+void vst_color(int handle, int pen);                   // text colour
 void vsf_color(int handle, int pen);
 void vsf_interior(int handle, int style);
+void v_gtext(int handle, int x, int y, const char *s); // (x,y) = top-left
 void v_pline(int handle, int n, const int16_t *pxy);   // n point-pairs
 void v_bar(int handle, const int16_t *pxy);            // pxy = x1,y1,x2,y2
 void vr_recfl(int handle, const int16_t *pxy);         // pxy = x1,y1,x2,y2

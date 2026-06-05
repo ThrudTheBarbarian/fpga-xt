@@ -43,9 +43,15 @@ void gem_wm_init(gem_wm *wm, gfx_surface *desk, uint32_t desktop_color) {
     wm->nwin          = 0;
     wm->mx = wm->my   = 0;
     wm->drag_slot     = -1;
+    wm->title_font    = NULL;
     for (int i = 0; i < GEM_MAX_WINDOWS; i++) wm->win[i].used = 0;
     vdi_init(desk);          // pen palette + physical workstation (handle 1) on desk
     wm->desk_vh = 1;
+}
+
+void gem_wm_set_font(gem_wm *wm, font *f) {
+    wm->title_font = f;
+    vdi_set_font(f);         // v_gtext default face
 }
 
 gem_window *gem_wm_add(gem_wm *wm, int x, int y, int w, int h,
@@ -190,6 +196,19 @@ static void draw_frame(gem_wm *wm, gem_window *win) {
     vsf_color(vh, PEN_BODY);                                                 // close box
     int bx0, by0, bx1, by1; close_box(win, &bx0, &by0, &bx1, &by1);
     r[0]=bx0; r[1]=by0; r[2]=bx1; r[3]=by1; vr_recfl(vh, r);
+
+    if (wm->title_font && win->title) {                                     // title text
+        int tx = bx1 + 8;                                                   // after the close box
+        int th = font_height(wm->title_font);
+        int ty = y + EDGE + (TITLE_H - th) / 2;
+        int16_t tc[4] = { (int16_t)tx, (int16_t)(y+EDGE),
+                          (int16_t)(x+w-1-EDGE), (int16_t)(y+EDGE+TITLE_H-1) };
+        vs_clip(vh, 1, tc);                                                 // keep text in the bar
+        vst_color(vh, PEN_EDGE);
+        v_gtext(vh, tx, ty, win->title);
+        int16_t full[4] = { 0, 0, (int16_t)(wm->desk->w-1), (int16_t)(wm->desk->h-1) };
+        vs_clip(vh, 0, full);                                              // restore
+    }
 }
 
 // A minimal arrow pointer (hot spot = top-left).  X = black outline, . = white.

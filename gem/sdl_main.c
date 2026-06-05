@@ -39,8 +39,8 @@ static void xl_redraw(gem_window *w, void *ud) {
     v_pline(w->vh, 2, d1); v_pline(w->vh, 2, d2);
 }
 
-// A demo "app": colour bars + a polyline.  Bars/lines overrun the content and
-// are clipped to the backing surface (the content rect) — no bleed.
+// A demo "app": colour bars, a polyline, and a line of graphic text.  Bars/
+// lines/text overrun the content and are clipped to the backing surface.
 static void app_redraw(gem_window *w, void *ud) {
     (void)ud;
     int16_t full[4] = { 0, 0, (int16_t)(w->cw - 1), (int16_t)(w->ch - 1) };
@@ -53,6 +53,8 @@ static void app_redraw(gem_window *w, void *ud) {
     int16_t poly[8] = { -30, 200, (int16_t)(w->cw/3), 60,
                         (int16_t)(2*w->cw/3), 260, (int16_t)(w->cw + 30), 100 };
     vsl_color(w->vh, 1); v_pline(w->vh, 4, poly);
+    vst_color(w->vh, 0);                          // white text
+    v_gtext(w->vh, 16, 16, "GEM / VDI text — AovelSansRounded");
 }
 
 int main(int argc, char **argv) {
@@ -77,6 +79,10 @@ int main(int argc, char **argv) {
 
     gem_wm wm;
     gem_wm_init(&wm, desk, COL_DESKTOP);                 // brings up the VDI on desk
+    font *uifont = font_open("fonts/AovelSansRounded.ttf", 18);
+    if (!uifont) fprintf(stderr, "warning: title font failed to load\n");
+    gem_wm_set_font(&wm, uifont);                        // titles + VDI default text
+
     gem_window *xlwin = gem_wm_add(&wm,
         XL_X - EDGE, XL_Y - EDGE - TITLE_H,
         XL_W + 2 * EDGE, XL_H + 2 * EDGE + TITLE_H, "Atari XL", 1);
@@ -113,6 +119,7 @@ int main(int argc, char **argv) {
         SDL_Delay(16);
     }
 
+    if (uifont) font_close(uifont);
     gfx_surface_free(desk);
     SDL_DestroyTexture(tex);
     SDL_DestroyRenderer(ren);

@@ -65,6 +65,36 @@ int main(void) {
     gfx_surface_free(srcS); gfx_surface_free(dstS);
     v_clsvwk(hd);
 
+    // v_gtext: FreeType text renders, has positive width, and clips.
+    const uint32_t WHITE = vdi_pen_rgba(0);
+    font *tf = font_open("fonts/AovelSansRounded.ttf", 24);
+    CHECK(tf != NULL);
+    if (tf) {
+        vdi_set_font(tf);
+        gfx_surface *ts = gfx_surface_alloc(160, 48);
+        for (int i = 0; i < 160 * 48; i++) ts->px[i] = WHITE;
+        int ht = v_opnvwk(ts);
+        vst_color(ht, 1);                              // black text
+        CHECK(font_text_width(tf, "Ag") > 0);
+        v_gtext(ht, 4, 4, "Ag");
+        int drew = 0;
+        for (int i = 0; i < 160 * 48; i++) if (ts->px[i] != WHITE) { drew = 1; break; }
+        CHECK(drew);                                   // glyphs marked the surface
+
+        for (int i = 0; i < 160 * 48; i++) ts->px[i] = WHITE;
+        int16_t cl[4] = { 150, 40, 151, 41 };          // clip far from the text
+        vs_clip(ht, 1, cl);
+        v_gtext(ht, 4, 4, "Ag");
+        int leaked = 0;
+        for (int y = 0; y < 40; y++) for (int x = 0; x < 150; x++)
+            if (PX(ts, x, y) != WHITE) leaked = 1;
+        CHECK(!leaked);                                // nothing drawn outside the clip
+
+        v_clsvwk(ht);
+        gfx_surface_free(ts);
+        font_close(tf);
+    }
+
     if (fails == 0) printf("*** VDI TEST OK ***\n");
     else            printf("*** VDI TEST: %d FAIL(s) ***\n", fails);
     gfx_surface_free(s);

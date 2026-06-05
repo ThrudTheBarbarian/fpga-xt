@@ -15,14 +15,18 @@ BUILD   := build
 CC      := cc
 CSTD    := -std=c11
 WARN    := -Wall -Wextra
+# FreeType powers the scalable text (font.c).
+FT_CFLAGS := $(shell pkg-config --cflags freetype2)
+FT_LIBS   := $(shell pkg-config --libs freetype2)
+
 # -I. so the per-call VDI files resolve "vdi/vdi.h", "vdi/internal.h", etc.
-CFLAGS  := $(CSTD) $(WARN) -O2 -g -I. $(shell pkg-config --cflags sdl2 2>/dev/null || sdl2-config --cflags)
-LDLIBS  := $(shell pkg-config --libs sdl2 2>/dev/null || sdl2-config --libs)
+CFLAGS  := $(CSTD) $(WARN) -O2 -g -I. $(FT_CFLAGS) $(shell pkg-config --cflags sdl2 2>/dev/null || sdl2-config --cflags)
+LDLIBS  := $(FT_LIBS) $(shell pkg-config --libs sdl2 2>/dev/null || sdl2-config --libs)
 
 # Portable core + host backend.  The VDI is one file per call under vdi/.
 # (GEM AES sources get added here as they land.)
 VDI_SRC  := $(wildcard vdi/*.c)
-CORE_SRC := gfx_soft.c $(VDI_SRC) wm.c
+CORE_SRC := gfx_soft.c font.c $(VDI_SRC) wm.c
 HOST_SRC := sdl_main.c
 SRC      := $(CORE_SRC) $(HOST_SRC)
 OBJ      := $(addprefix $(BUILD)/,$(SRC:.c=.o))
@@ -36,13 +40,13 @@ $(TARGET): $(OBJ)
 	$(CC) $(OBJ) $(LDLIBS) -o $@
 
 # Headless self-tests (no SDL): VDI primitives, then the WM interaction layer.
-TEST_OBJ := $(addprefix $(BUILD)/,gfx_soft.o vdi_test.o $(VDI_SRC:.c=.o))
+TEST_OBJ := $(addprefix $(BUILD)/,gfx_soft.o font.o vdi_test.o $(VDI_SRC:.c=.o))
 $(BUILD)/gem_test: $(TEST_OBJ)
-	$(CC) $(TEST_OBJ) -o $@
+	$(CC) $(TEST_OBJ) $(FT_LIBS) -o $@
 
-WMTEST_OBJ := $(addprefix $(BUILD)/,gfx_soft.o wm.o wm_test.o $(VDI_SRC:.c=.o))
+WMTEST_OBJ := $(addprefix $(BUILD)/,gfx_soft.o font.o wm.o wm_test.o $(VDI_SRC:.c=.o))
 $(BUILD)/wm_test: $(WMTEST_OBJ)
-	$(CC) $(WMTEST_OBJ) -o $@
+	$(CC) $(WMTEST_OBJ) $(FT_LIBS) -o $@
 
 test: $(BUILD)/gem_test $(BUILD)/wm_test
 	./$(BUILD)/gem_test

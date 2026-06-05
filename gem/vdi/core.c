@@ -20,7 +20,7 @@ int vdi_ws_alloc(void) {
     for (int i = 1; i < VDI_MAX_WS; i++) if (!ws_tab[i].used) {   // slot 0 = physical
         memset(&ws_tab[i], 0, sizeof(ws_tab[i]));
         ws_tab[i].used = 1; ws_tab[i].line_color = 1;
-        ws_tab[i].fill_color = 1; ws_tab[i].fill_interior = 1;
+        ws_tab[i].fill_color = 1; ws_tab[i].text_color = 1; ws_tab[i].fill_interior = 1;
         return i + 1;
     }
     return 0;
@@ -107,18 +107,24 @@ void vdi_init(gfx_surface *default_target) {
     memset(ws_tab, 0, sizeof(ws_tab));
     pen_init();
     ws_tab[0].used = 1; ws_tab[0].target = default_target;     // handle 1 = physical
-    ws_tab[0].line_color = 1; ws_tab[0].fill_color = 1; ws_tab[0].fill_interior = 1;
+    ws_tab[0].line_color = 1; ws_tab[0].fill_color = 1;
+    ws_tab[0].text_color = 1; ws_tab[0].fill_interior = 1;
 }
+
+font *g_default_font;
+void vdi_set_font(font *f) { g_default_font = f; }
 
 void vdi_call(vdi_pb *pb) {
     switch (pb->contrl[0]) {
         case VDI_OPNVWK:      op_opnvwk(pb);     break;
         case VDI_CLSVWK:      op_clsvwk(pb);     break;
         case VDI_SL_COLOR:    op_sl_color(pb);   break;
+        case VDI_ST_COLOR:    op_st_color(pb);   break;
         case VDI_SF_COLOR:    op_sf_color(pb);   break;
         case VDI_SF_INTERIOR: op_sf_interior(pb);break;
         case VDI_CLIP:        op_clip(pb);       break;
         case VDI_PLINE:       op_pline(pb);      break;
+        case VDI_GTEXT:       op_gtext(pb);      break;
         case VDI_RECFL:       op_fillrect(pb);   break;
         case VDI_CPYFM:       op_cpyfm(pb);      break;
         case VDI_GDP:         if (pb->contrl[5] == 1) op_fillrect(pb); break;  // v_bar

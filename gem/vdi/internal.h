@@ -15,7 +15,9 @@ typedef struct {
     gfx_surface *target;
     int          line_color;       // pen
     int          fill_color;       // pen
+    int          text_color;       // pen
     int          fill_interior;    // 0 hollow, 1 solid
+    font        *text_font;        // face for v_gtext (NULL => the VDI default)
     int          clip_on, cx0, cy0, cx1, cy1;   // clip rect, inclusive
 } vdi_ws;
 
@@ -32,16 +34,19 @@ gfx_surface vdi_mfdb_surf(const MFDB *m, const vdi_ws *w);
 extern int16_t     g_contrl[16], g_intin[128], g_ptsin[256], g_intout[128], g_ptsout[256];
 extern vdi_pb      g_pb;
 extern const MFDB *g_cpyfm_src, *g_cpyfm_dst;
+extern font       *g_default_font;     // set by vdi_set_font; used when ws has none
 void        vdi_emit(int op, int sub, int handle, int npts, int nint);   // fill contrl + dispatch
 
 // ---- opcode handlers (one per vdi/<call>.c) -------------------------------
 void op_opnvwk(vdi_pb *pb);
 void op_clsvwk(vdi_pb *pb);
 void op_sl_color(vdi_pb *pb);
+void op_st_color(vdi_pb *pb);
 void op_sf_color(vdi_pb *pb);
 void op_sf_interior(vdi_pb *pb);
 void op_clip(vdi_pb *pb);
 void op_pline(vdi_pb *pb);
+void op_gtext(vdi_pb *pb);
 void op_fillrect(vdi_pb *pb);
 void op_cpyfm(vdi_pb *pb);
 
