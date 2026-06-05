@@ -117,6 +117,38 @@ The device mechanism is in place, so adding a device is now just a driver behind
 | vsf_udpat | 112 | ✓ | user fill pattern (16x16); selected by vsf_interior FIS_USER |
 | vsm_type / vsm_height / vsm_color | 18 / 19 / 20 | ✓ | marker type / size / colour |
 
+**Extended attributes (NVDI / FSM-GDOS)** — the rest of the
+[FreeMiNT VDI attribute set](https://freemint.github.io/tos.hyp/en/vdi_attribute.html)
+we don't yet implement. Rec = recommendation: ✅ implement, 🤔 optional, ⛔ skip.
+
+| Call | Op | Rec | Notes / rationale |
+|------|----|-----|-------|
+| vst_fg_color / vsl_/vsf_/vsm_/vsr_fg_color | 200 / sub 0-4 | 🤔 | per-class **foreground** colour by index — we already have line/fill/text/marker colour; these are aliases, so low marginal value (the binding could just forward) |
+| vst_bg_color / vsl_/vsf_/vsm_/vsr_bg_color | 201 / sub 0-4 | ✅ | per-class **background** colour — the real gap: writing modes (transparent / reverse-transparent, opaque text) currently use pen 0 as the only ground. A per-class bg makes opaque text + erase modes correct |
+| v_setrgb | — | 🤔 | set a pen's RGB at full precision; we're true-colour so it's natural, but `vs_color` (0..1000) already covers it — thin wrapper |
+| v_setrgbi | — | ⛔ | colour-or-intensity for indexed/greyscale devices; meaningless on a true-colour surface |
+| vs_color2 / vs_bkcolor / vs_grayoverride | — | ⛔ | indexed-palette / greyscale tuning; not applicable to RGBA-8888 |
+| vst_name | — | ✅ | select a face by **family name** (complements vst_font-by-id + vqt_name); trivial against the existing font registry |
+| vst_arbpt32 | 246 | ✅ | fractional point **size** (16.16) — the missing half of the fractional-text work (we expose fractional metrics but only integer sizes); FreeType takes a 26.6 size directly |
+| vst_setsize / vst_setsize32 | — | ✅ | character **width** in points, independent of height — condensed / expanded text; FreeType does anisotropic via separate x/y sizes (font module would cache by (w,h)) |
+| vst_width | — | 🤔 | same family as vst_setsize but in pixels; fold in if setsize lands |
+| vst_skew | — | 🤔 | arbitrary **skew** angle — we already shear for the italic effect via the transform matrix, so exposing the angle is small; `font_draw_fx` would take a skew param |
+| vst_kern | — | 🤔 | pair / track **kerning** — FreeType has pair kerning; needs fonts with kern tables (our bundled face may lack them). Apply in width/draw when enabled |
+| vst_track_offset | — | 🤔 | track-kerning offset; only with vst_kern |
+| vst_charmap / vst_map_mode | 236 | 🤔 | character-encoding mode (Atari / Bitstream / **Unicode**) — we're Unicode-native, so a stub that reports Unicode; only matters for legacy-encoded ST apps via the trap path |
+| vsf_xperimeter | 104 | ✅ | perimeter visibility **with line-style control** — a one-line extension of vsf_perimeter (our perimeter already draws through the line machinery) |
+| vst_error | 245 | ⛔ | GDOS error-handling mode — no GDOS here (FreeType backend); no-op stub only if an ST app calls it |
+| vst_scratch | — | ⛔ | GDOS rasteriser scratch-buffer size — we don't use one |
+| v_ps_halftone / v_topbot | — | ⛔ | PostScript / printer-driver attributes — belongs to the parked PDF/printer device, not the screen |
+
+**Recommendation summary:** the worthwhile batch is **vst_bg_color family**, **vst_name**,
+**vst_arbpt32**, **vst_setsize**, and **vsf_xperimeter** (✅) — each adds a real capability
+on a true-colour scalable device. The skew/kern/width/charmap group (🤔) is nice-to-have and
+mostly cheap given the FreeType backend, worth doing if/when ST-app compatibility via the trap
+path is in scope. The indexed-palette, greyscale and GDOS/PostScript calls (⛔) have no meaning
+for an RGBA-8888 FreeType surface and should stay unimplemented (or no-op stubs only if a real
+caller needs them).
+
 **Raster**
 
 | Call | Op | Sup | Notes |
