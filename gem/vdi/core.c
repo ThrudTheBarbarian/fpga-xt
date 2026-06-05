@@ -251,6 +251,7 @@ void vdi_line_ex(const vdi_ws *w, int x0, int y0, int x1, int y1, int pen, int s
 // ---- MFDB -----------------------------------------------------------------
 void mfdb_from_surface(MFDB *m, gfx_surface *s) {
     m->addr = s->px; m->w = (int16_t)s->w; m->h = (int16_t)s->h; m->stride = (int16_t)s->stride;
+    m->nplanes = 0; m->stand = 0;                       // device (RGBA chunky)
 }
 const MFDB *g_cpyfm_src, *g_cpyfm_dst;
 gfx_surface vdi_mfdb_surf(const MFDB *m, const vdi_ws *w) {
@@ -371,6 +372,9 @@ void vdi_call(vdi_pb *pb) {
         case VDI_GTEXT:       op_gtext(pb);      break;
         case VDI_RECFL:       op_fillrect(pb);   break;
         case VDI_CPYFM:       op_cpyfm(pb);      break;
+        case VDI_VRT_CPYFM:   op_vrt_cpyfm(pb);  break;
+        case VDI_VR_TRNFM:    op_vr_trnfm(pb);   break;
+        case VDI_GET_PIXEL:   op_get_pixel(pb);  break;
         case VDI_GDP:         op_gdp(pb);        break;  // v_bar + circle/ellipse/arc/...
         default: break;       // unimplemented opcode -> no-op
     }

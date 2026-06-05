@@ -75,6 +75,53 @@ int main(void) {
     gfx_surface_free(srcS); gfx_surface_free(dstS);
     v_clsvwk(hd);
 
+    // vrt_cpyfm: colour an 8x8 monochrome checkerboard (MSB = leftmost pixel).
+    static const uint16_t mono[8] = { 0xAA00,0x5500,0xAA00,0x5500,0xAA00,0x5500,0xAA00,0x5500 };
+    MFDB mm = { (uint32_t *)mono, 8, 8, 1 };           // w,h pixels; stride = 1 word/row
+    gfx_surface *mc = gfx_surface_alloc(16, 16);
+    for (int i = 0; i < 16 * 16; i++) mc->px[i] = 0;
+    int hm = v_opnvwk(mc);
+    int16_t mpxy[8] = { 0, 0, 7, 7, 2, 2, 9, 9 };
+    int16_t mcol[2] = { 2, 3 };                         // fg red, bg green
+    vrt_cpyfm(hm, VDI_MD_REPLACE, mpxy, &mm, NULL, mcol);
+    CHECK(PX(mc, 2, 2) == vdi_pen_rgba(2));            // set bit -> foreground
+    CHECK(PX(mc, 3, 2) == vdi_pen_rgba(3));            // clear bit -> background
+    CHECK(PX(mc, 4, 2) == vdi_pen_rgba(2));            // set bit again
+    v_clsvwk(hm); gfx_surface_free(mc);
+
+    // vr_trnfm: standard (planar) <-> device (chunky).  Build a 16x1, 4-plane
+    // standard form where pixel x has colour index x (pens 0..15).
+    uint16_t planar[4] = { 0, 0, 0, 0 };               // 4 planes, 1 word each (16 px)
+    for (int x = 0; x < 16; x++) for (int p = 0; p < 4; p++)
+        if ((x >> p) & 1) planar[p] |= (uint16_t)(1u << (15 - x));
+    MFDB std = { (uint32_t *)planar, 16, 1, 1, 4, 1 };  // stride=1 word, 4 planes, standard
+    gfx_surface *dev = gfx_surface_alloc(16, 1);
+    for (int i = 0; i < 16; i++) dev->px[i] = 0;
+    MFDB dmf; mfdb_from_surface(&dmf, dev);
+    int htr = v_opnvwk(dev);
+    vr_trnfm(htr, &std, &dmf);                          // planar -> chunky
+    int ok = 1; for (int x = 0; x < 16; x++) if (dev->px[x] != vdi_pen_rgba(x)) ok = 0;
+    CHECK(ok);                                          // each pixel = pen[x]
+    uint16_t back[4] = { 9, 9, 9, 9 };                  // garbage to be overwritten
+    MFDB std2 = { (uint32_t *)back, 16, 1, 1, 4, 1 };
+    vr_trnfm(htr, &dmf, &std2);                          // chunky -> planar (round-trip)
+    CHECK(back[0] == planar[0] && back[1] == planar[1] &&
+          back[2] == planar[2] && back[3] == planar[3]);
+    v_clsvwk(htr); gfx_surface_free(dev);
+
+    // v_get_pixel: read back a pen; an unmatched true-colour pixel -> index -1.
+    gfx_surface *gp = gfx_surface_alloc(10, 10);
+    int hgp = v_opnvwk(gp);
+    vsf_color(hgp, 4); vsf_interior(hgp, VDI_FIS_SOLID); vsf_perimeter(hgp, 0);
+    int16_t gpr[4] = { 0, 0, 9, 9 }; vr_recfl(hgp, gpr);
+    int pel = -9, idx = -9;
+    v_get_pixel(hgp, 5, 5, &pel, &idx);
+    CHECK(idx == 4 && pel == 4);                        // matched pen 4
+    gp->px[0] = 0x12345678;
+    v_get_pixel(hgp, 0, 0, &pel, &idx);
+    CHECK(idx == -1);                                  // no palette match
+    v_clsvwk(hgp); gfx_surface_free(gp);
+
     // v_gtext: FreeType text renders, has positive width, sizes, and clips.
     const uint32_t WHITE = vdi_pen_rgba(0);
     font_face *tf = font_face_open("fonts/AovelSansRounded.ttf");

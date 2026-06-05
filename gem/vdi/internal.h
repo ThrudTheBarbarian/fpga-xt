@@ -137,5 +137,8 @@ void op_gtext(vdi_pb *pb);
 void op_justified(vdi_pb *pb);  // GDP sub 10 (justified text)
 void op_fillrect(vdi_pb *pb);
 void op_cpyfm(vdi_pb *pb);
+void op_vrt_cpyfm(vdi_pb *pb);
+void op_vr_trnfm(vdi_pb *pb);
+void op_get_pixel(vdi_pb *pb);
 
 #endif // GEM_VDI_INTERNAL_H

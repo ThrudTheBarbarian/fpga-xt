@@ -122,9 +122,9 @@ The device mechanism is in place, so adding a device is now just a driver behind
 | Call | Op | Sup | Notes |
 |------|----|-----|-------|
 | vro_cpyfm | 109 | ✓ | opaque copy (mode 3); device-format MFDB |
-| vrt_cpyfm | 121 | ✗ | transparent mono→colour copy |
-| vr_trnfm | 110 | ✗ | planar↔device transform |
-| v_get_pixel | 105 | ✗ | |
+| vrt_cpyfm | 121 | ✓ | colour a 1-bpp source (fg/bg pens) honouring the writing mode |
+| vr_trnfm | 110 | ✓ | standard(planar)↔device(RGBA chunky) conversion via the palette |
+| v_get_pixel | 105 | ✓ | read back the matching palette pen (-1 if the true-colour pixel matches none) |
 
 **Inquiry**
 

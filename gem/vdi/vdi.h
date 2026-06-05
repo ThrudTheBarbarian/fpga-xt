@@ -56,6 +56,9 @@ enum {                          // VDI opcodes (standard GEM)
     VDI_SF_COLOR    = 25,       // vsf_color  — fill colour
     VDI_SF_UDPAT    = 112,      // vsf_udpat  — set user-defined fill pattern
     VDI_ST_ALIGN    = 39,       // vst_alignment — text anchor
+    VDI_GET_PIXEL   = 105,      // v_get_pixel — read a pixel
+    VDI_VR_TRNFM    = 110,      // vr_trnfm   — transform form (standard<->device)
+    VDI_VRT_CPYFM   = 121,      // vrt_cpyfm  — colour a monochrome raster
     VDI_SF_PERIM    = 104,      // vsf_perimeter — outline filled areas (0/1)
     VDI_ST_EFFECTS  = 106,      // vst_effects — text effects bitmask
     VDI_ST_POINT    = 107,      // vst_point  — text size in points
@@ -66,14 +69,18 @@ enum {                          // VDI opcodes (standard GEM)
     VDI_CLIP        = 129,      // vs_clip
 };
 
-// Memory Form Definition Block — a bitmap, in device format (RGBA-8888 chunky).
-// Real GEM MFDBs are planar with fd_wdwidth/fd_nplanes; the planar<->device
-// conversion for ST binary compatibility is a later layer in the trap path.
-// addr == NULL means "the destination is the workstation's target surface".
+// Memory Form Definition Block — a bitmap.  In device format it is RGBA-8888
+// chunky (one uint32 per pixel, `stride` pixels per row).  In standard format
+// it is planar: `nplanes` bit planes, word-interleaved per scanline, MSB =
+// leftmost pixel, `stride` 16-bit words per row per plane — that's the device-
+// independent layout vr_trnfm converts to/from device.  addr == NULL means "the
+// destination is the workstation's target surface".
 typedef struct {
-    uint32_t *addr;            // device pixels (RGBA-8888), or NULL = screen
+    uint32_t *addr;            // device: RGBA-8888 pixels; standard: planar bits; NULL = screen
     int16_t   w, h;            // size in pixels
-    int16_t   stride;          // pixels per row
+    int16_t   stride;          // device: pixels/row; standard: 16-bit words/row/plane
+    int16_t   nplanes;         // standard form: number of bit planes (device: unused)
+    int16_t   stand;           // 0 = device (chunky RGBA), 1 = standard (planar)
 } MFDB;
 
 void mfdb_from_surface(MFDB *m, gfx_surface *s);   // wrap a surface as a device MFDB
@@ -211,5 +218,16 @@ void vr_recfl(int handle, const int16_t *pxy);         // pxy = x1,y1,x2,y2
 void vs_clip(int handle, int on, const int16_t *pxy);  // pxy = x1,y1,x2,y2
 // vro_cpyfm: pxy = src x1,y1,x2,y2, dst x1,y1 (,x2,y2). mode = VRO_COPY.
 void vro_cpyfm(int handle, int mode, const int16_t *pxy, const MFDB *src, const MFDB *dst);
+// vrt_cpyfm: colour a 1-bit-per-pixel source (MSB first; src->stride = 16-bit
+// words per row) — col[0]=foreground pen, col[1]=background pen; mode = VDI_MD_*.
+void vrt_cpyfm(int handle, int mode, const int16_t *pxy,
+               const MFDB *src, const MFDB *dst, const int16_t *col);
+// vr_trnfm: convert src to dst between standard (planar) and device (RGBA
+// chunky) format; the direction follows src->stand.  Set src->nplanes for a
+// standard source, dst->nplanes for a standard destination.
+void vr_trnfm(int handle, const MFDB *src, const MFDB *dst);
+// v_get_pixel: read (x,y); *pel and *index get the matching palette pen, or
+// *index = -1 if the (true-colour) pixel matches no pen.
+void v_get_pixel(int handle, int x, int y, int *pel, int *index);
 
 #endif // GEM_VDI_H
