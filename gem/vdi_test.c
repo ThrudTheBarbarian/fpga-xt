@@ -8,6 +8,16 @@
 static int fails = 0;
 static uint32_t PX(gfx_surface *s, int x, int y) { return s->px[(size_t)y * s->stride + x]; }
 
+// Bounding box (width,height) of the non-zero pixels in s.
+static void ink_bbox(gfx_surface *s, int *w, int *h) {
+    int x0 = s->w, y0 = s->h, x1 = -1, y1 = -1;
+    for (int y = 0; y < s->h; y++) for (int x = 0; x < s->w; x++)
+        if (s->px[(size_t)y * s->stride + x]) {
+            if (x < x0) x0 = x; if (x > x1) x1 = x; if (y < y0) y0 = y; if (y > y1) y1 = y;
+        }
+    *w = x1 - x0; *h = y1 - y0;
+}
+
 #define CHECK(cond) do { if (!(cond)) { \
     printf("  FAIL %s:%d  %s\n", __FILE__, __LINE__, #cond); fails++; } } while (0)
 
@@ -470,6 +480,31 @@ int main(void) {
     CHECK(PX(wm, 5, 0) == 0);                          // on the line: left unchanged
     CHECK(PX(wm, 5, 1) == vdi_pen_rgba(3));            // in the gap: drawn
     v_clsvwk(hwm); gfx_surface_free(wm);
+
+    // vst_rotation: text rotates to any angle (not just 0/90/180/270).
+    font_face *rotf = font_face_open("fonts/AovelSansRounded.ttf");
+    vdi_set_face(rotf);
+    gfx_surface *rs = gfx_surface_alloc(120, 120);
+    int hrs = v_opnvwk(rs);
+    vst_color(hrs, 1); vst_height(hrs, 24, NULL, NULL, NULL, NULL);
+    int rw, rh;
+    CHECK(vst_rotation(hrs, 0) == 0);
+    for (int i = 0; i < 120 * 120; i++) rs->px[i] = 0;
+    v_gtext(hrs, 8, 50, "mmmm");
+    ink_bbox(rs, &rw, &rh); CHECK(rw > rh);            // horizontal: wider than tall
+
+    CHECK(vst_rotation(hrs, 900) == 900);              // 90 degrees
+    for (int i = 0; i < 120 * 120; i++) rs->px[i] = 0;
+    v_gtext(hrs, 70, 90, "mmmm");
+    ink_bbox(rs, &rw, &rh); CHECK(rh > rw);            // rotated: taller than wide
+
+    CHECK(vst_rotation(hrs, 450) == 450);              // arbitrary (45 degrees) accepted
+    for (int i = 0; i < 120 * 120; i++) rs->px[i] = 0;
+    v_gtext(hrs, 30, 70, "Ag");
+    int rdr = 0; for (int i = 0; i < 120 * 120; i++) if (rs->px[i]) { rdr = 1; break; }
+    CHECK(rdr);                                        // renders at 45 degrees
+    CHECK(vst_rotation(hrs, -100) == 3500);            // normalised into 0..3599
+    v_clsvwk(hrs); gfx_surface_free(rs); font_face_close(rotf);
 
     if (fails == 0) printf("*** VDI TEST OK ***\n");
     else            printf("*** VDI TEST: %d FAIL(s) ***\n", fails);

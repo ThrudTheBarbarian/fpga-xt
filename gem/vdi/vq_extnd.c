@@ -15,6 +15,7 @@ void op_vq_extnd(vdi_pb *pb) {
     if (pb->intin[0] == 0) { vdi_fill_caps(pb->intout, pb->ptsout); return; }
     pb->intout[4]  = 32;     // colour planes (RGBA-8888)
     pb->intout[5]  = 0;      // 0 = no lookup table => TRUE COLOUR
+    pb->intout[8]  = 2;      // text rotation: 2 = arbitrary angles (not just 90s)
     pb->intout[9]  = 4;      // writing modes
     pb->intout[14] = 256;    // max polyline vertices (nominal)
     pb->intout[16] = 2;      // mouse buttons

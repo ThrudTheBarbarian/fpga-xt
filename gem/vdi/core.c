@@ -276,6 +276,7 @@ void vdi_fill_caps(int16_t *io, int16_t *po) {
     static const int16_t gdp_at[10] = { 3,0,3,3,3,0,3,0,3,2 }; // fill/polyline/.../text
     for (int i = 0; i < 10; i++) { io[15+i] = gdp_id[i]; io[25+i] = gdp_at[i]; }
     io[35] = 1;                                      // colour capable
+    io[36] = 1;                                      // text rotation capable
     io[37] = 1;                                      // fill-area capable
     io[39] = 256;                                    // colours available
     io[40] = io[41] = io[42] = io[43] = 1;           // locator/valuator/choice/string
@@ -325,6 +326,7 @@ void vdi_call(vdi_pb *pb) {
         case VDI_ST_POINT:    op_st_point(pb);   break;
         case VDI_ST_FONT:     op_st_font(pb);    break;
         case VDI_QT_NAME:     op_qt_name(pb);    break;
+        case VDI_ST_ROTATION: op_st_rotation(pb);break;
         case VDI_ST_ALIGN:    op_st_alignment(pb);break;
         case VDI_LOAD_FONTS:  op_load_fonts(pb); break;
         case VDI_UNLOAD_FONTS:op_unload_fonts(pb);break;

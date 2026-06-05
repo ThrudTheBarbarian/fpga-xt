@@ -11,6 +11,7 @@
 #include "font.h"
 #include <stdlib.h>
 #include <string.h>
+#include <math.h>
 
 #include <ft2build.h>
 #include FT_FREETYPE_H
@@ -242,4 +243,45 @@ void font_draw_justified(font *f, gfx_surface *d, int x, int y, const char *s,
         if (cp == ' ' && word_space) pen += word_add;
         if (i < n - 1 && char_space) pen += char_add;
     }
+}
+
+// Blit a freshly-rendered (transformed) FT bitmap's coverage at device top-left.
+static void blit_ft(gfx_surface *d, const FT_Bitmap *bm, int bx, int by,
+                    uint32_t rgba, int cx0, int cy0, int cx1, int cy1, int mode) {
+    uint32_t xr = rgba & 0xFFFFFF00u;
+    for (int row = 0; row < (int)bm->rows; row++) {
+        int py = by + row; if (py < cy0 || py > cy1 || py < 0 || py >= d->h) continue;
+        const uint8_t *cr = bm->buffer + (size_t)row * bm->pitch;
+        uint32_t *dr = d->px + (size_t)py * d->stride;
+        for (int col = 0; col < (int)bm->width; col++) {
+            int px = bx + col; if (px < cx0 || px > cx1 || px < 0 || px >= d->w) continue;
+            if (mode == 3) { if (cr[col] >= 128) dr[px] ^= xr; }
+            else dr[px] = blend(dr[px], rgba, cr[col]);
+        }
+    }
+}
+
+void font_draw_rotated(font *f, gfx_surface *d, int x, int y, const char *s,
+                       int angle_tenths, uint32_t rgba, const int *clip, int mode) {
+    if (!f || !s || !d) return;
+    int cx0, cy0, cx1, cy1; clip_of(d, clip, &cx0, &cy0, &cx1, &cy1);
+    double a = angle_tenths * (M_PI / 1800.0);          // tenths of a degree, CCW
+    FT_Matrix m = {
+        (FT_Fixed)lround( cos(a) * 65536.0), (FT_Fixed)lround(-sin(a) * 65536.0),
+        (FT_Fixed)lround( sin(a) * 65536.0), (FT_Fixed)lround( cos(a) * 65536.0) };
+    FT_Face face = f->owner->ft;
+    FT_Set_Pixel_Sizes(face, 0, f->px);
+    double penx = x, peny = y + f->ascent;              // baseline origin = pivot (device y-down)
+    int trk = f->owner->tracking;
+    for (const char *p = s; *p; ) {
+        unsigned cp = utf8_next(&p);
+        FT_Set_Transform(face, &m, NULL);
+        if (FT_Load_Char(face, cp, FT_LOAD_RENDER)) continue;
+        FT_GlyphSlot g = face->glyph;
+        blit_ft(d, &g->bitmap, (int)lround(penx) + g->bitmap_left,
+                (int)lround(peny) - g->bitmap_top, rgba, cx0, cy0, cx1, cy1, mode);
+        penx += g->advance.x / 64.0 + trk * cos(a);     // advance along the rotated baseline
+        peny -= g->advance.y / 64.0 + trk * sin(a);     // FT y is up; device y is down
+    }
+    FT_Set_Transform(face, NULL, NULL);                 // identity again for the cached path
 }

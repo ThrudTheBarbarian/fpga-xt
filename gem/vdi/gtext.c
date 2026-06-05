@@ -24,11 +24,7 @@ void op_gtext(vdi_pb *pb) {
     // Anchor (ptsin) -> em-box top-left, which is what font_draw takes.
     int x = pb->ptsin[0], y = pb->ptsin[1];
     int asc = font_ascent(f), H = font_height(f);
-    switch (w->text_halign) {
-        case VDI_TA_CENTER: x -= font_text_width(f, buf) / 2; break;
-        case VDI_TA_RIGHT:  x -= font_text_width(f, buf);     break;
-    }
-    switch (w->text_valign) {
+    switch (w->text_valign) {                            // vertical alignment
         case VDI_TA_TOP:     case VDI_TA_ASCENT:               break;   // y = top
         case VDI_TA_BASELINE:                       y -= asc;  break;
         case VDI_TA_HALF:                           y -= H/2;  break;
@@ -36,7 +32,17 @@ void op_gtext(vdi_pb *pb) {
     }
     int cx0, cy0, cx1, cy1; vdi_ws_clip(w, &cx0, &cy0, &cx1, &cy1);
     int clip[4] = { cx0, cy0, cx1, cy1 };
-    font_draw(f, w->target, x, y, buf, vdi_pen_rgba(w->text_color), clip, w->wr_mode);
+    uint32_t pen = vdi_pen_rgba(w->text_color);
+
+    if (w->text_rotation) {                              // rotated: pivot at the anchor
+        font_draw_rotated(f, w->target, x, y, buf, w->text_rotation, pen, clip, w->wr_mode);
+        return;
+    }
+    switch (w->text_halign) {                            // horizontal alignment (unrotated)
+        case VDI_TA_CENTER: x -= font_text_width(f, buf) / 2; break;
+        case VDI_TA_RIGHT:  x -= font_text_width(f, buf);     break;
+    }
+    font_draw(f, w->target, x, y, buf, pen, clip, w->wr_mode);
 }
 
 void v_gtext(int handle, int x, int y, const char *s) {

@@ -36,6 +36,7 @@ enum {                          // VDI opcodes (standard GEM)
     VDI_CELLARRAY   = 10,       // v_cellarray — grid of coloured cells
     VDI_GDP         = 11,       // sub-opcode 1 = v_bar (filled rectangle)
     VDI_ST_HEIGHT   = 12,       // vst_height — text size in pixels
+    VDI_ST_ROTATION = 13,       // vst_rotation — text baseline angle (1/10 deg)
     VDI_VS_COLOR    = 14,       // vs_color   — set a palette pen (RGB 0..1000)
     VDI_SL_TYPE     = 15,       // vsl_type   — line style (1 solid .. 6)
     VDI_SL_WIDTH    = 16,       // vsl_width  — line width (px)
@@ -151,6 +152,7 @@ void vsl_color(int handle, int pen);
 int  vsl_type(int handle, int style);                  // 1 solid..6; returns selected
 int  vsl_width(int handle, int width);                 // px; returns selected
 void vst_color(int handle, int pen);                   // text colour
+int  vst_rotation(int handle, int angle);              // baseline angle, 1/10 deg CCW; -> selected
 void vsf_color(int handle, int pen);
 void vsf_interior(int handle, int style);              // VDI_FIS_*
 void vsf_style(int handle, int index);                 // pattern/hatch index (1-based)

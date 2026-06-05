@@ -66,7 +66,7 @@ We are a **true-colour** (RGBA-8888) device. Apps detect that the standard way: 
 | v_updwk | 4 | ✓ | no-op (drawing is immediate); the PDF printer will flush its page here |
 | vst_load_fonts | 119 | ✓ | maps `OS/Fonts` files to ids 2..N (mapped now, opened on first use); returns the extra-font count |
 | vst_unload_fonts | 120 | ✓ | no-op |
-| vq_extnd | 102 | ✓ | extended inquiry; reports true-colour (owflag 1 → work_out[5] == 0, 32 planes) |
+| vq_extnd | 102 | ✓ | extended inquiry; reports true-colour (work_out[5]==0, 32 planes) + arbitrary text rotation (work_out[8]==2) |
 
 The device mechanism is in place, so adding a device is now just a driver behind `v_opnwk`. The **metafile** (id 31–40) is implemented (`metafile.c`): opening it records subsequent VDI calls to a `.gem` file (an 8-word header + one record per call), and `vdi_play_metafile()` replays them onto any workstation. The **printer** (id 21–30) will be a **PDF device** — "print" emits a PDF, no hardware driver needed — planned, currently reports failure. (`vro_cpyfm`'s MFDB pointers are out-of-band, so the metafile inlines the source bitmap into the record and rebuilds it on replay — as the better real GEM/NVDI metafile drivers do — rather than dropping the image like the original DRI driver.)
 
@@ -110,7 +110,7 @@ The device mechanism is in place, so adding a device is now just a driver behind
 | vsf_color | 25 | ✓ | |
 | vsf_perimeter | 104 | ✓ | outline filled areas |
 | vswr_mode | 32 | ✓ | replace / transparent / XOR / reverse-transparent; default replace. XOR is reversible (rubber-banding). Text honours XOR (else blends) |
-| vst_rotation | 13 | ✗ | rotated text |
+| vst_rotation | 13 | ✓ | text at any angle (1/10 deg, CCW) — glyph outlines transformed via FreeType, not just 90s |
 | vst_effects | 106 | ✗ | bold/italic/underline |
 | vsl_ends | 108 | ✗ | line caps / arrowheads |
 | vsl_udsty | 113 | ✗ | user line style |
