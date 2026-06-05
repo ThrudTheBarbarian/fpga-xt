@@ -46,6 +46,7 @@ static void draw(gfx_surface *desk) {
         int col = i % 4, row = i / 4;
         int cx = 160 + col * 320, cy = 170 + row * 200;
         int size = sizes[i], a = angle[i];
+        if (fx[i] & FX_OUTLINE) size *= 2;             // outline needs room to show hollow
         vst_color(VH, 100 + i);
         vst_height(VH, size, NULL, NULL, NULL, NULL);
         vst_rotation(VH, a);
