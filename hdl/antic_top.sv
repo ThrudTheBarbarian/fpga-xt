@@ -107,6 +107,11 @@ module antic_top #(
     // (gated off at turbo) to reproduce real-Atari bus-stealing timing.
     output wire        dma_steal,
 
+    // Optional DMACTL screen-blanking: when 1, honour DMACTL like real silicon —
+    // playfield/DL DMA off (DMACTL[1:0]==0 or DMACTL[5]==0) shows COLBK.  From a
+    // PS config bit (gp0_ctrl[4]); 0 = ignore DMACTL (legacy: always render).
+    input  wire        dmactl_honor,
+
     // POKEY-driven IRQ (active-low). Asserted while any IRQEN-enabled
     // POKEY source has its latch set. Goes to the SALLY core (M24)
     // once that lands; meanwhile the synth wrapper drives it onto
@@ -1204,8 +1209,18 @@ module antic_top #(
     // halves are NOT contiguous: lo = {m_lo, lo8} = {[19:16],[7:0]};
     // hi = {m_hi, hi8} = {[23:20],[15:8]}.  (Slicing [11:0]/[23:12] put the
     // wrong byte in the HI owner field — every odd COLPF pixel mis-resolved.)
+    // DMACTL screen-blank: real ANTIC shows COLBK when the playfield isn't being
+    // DMA'd (DMACTL playfield width = 0, or DL DMA disabled).  Forcing the
+    // resolver's pixel command to 0 (owner=COLBK, no P/M overlay) blanks the
+    // whole playfield to COLBK while the CPU keeps drawing into screen RAM —
+    // re-enabling DMACTL brings the finished picture back next frame.  Gated by
+    // dmactl_honor (PS opt-in) so legacy behaviour (always render) is the default.
+    wire       dmactl_blank   = dmactl_honor
+                              && ((dmactl_q[1:0] == 2'b00) || ~dmactl_q[5]);
+    wire [23:0] cmp_cmd_eff   = dmactl_blank ? 24'd0 : cmp_cmd_data;
+
     color_resolver u_color_lo (
-        .idx_buf  ({cmp_cmd_data[19:16], cmp_cmd_data[7:0]}),
+        .idx_buf  ({cmp_cmd_eff[19:16], cmp_cmd_eff[7:0]}),
         .prior    (prior_q),
         .colpm0   (colpm_q[0]), .colpm1(colpm_q[1]),
         .colpm2   (colpm_q[2]), .colpm3(colpm_q[3]),
@@ -1216,7 +1231,7 @@ module antic_top #(
         .color_out(resolved_color_lo)
     );
     color_resolver u_color_hi (
-        .idx_buf  ({cmp_cmd_data[23:20], cmp_cmd_data[15:8]}),
+        .idx_buf  ({cmp_cmd_eff[23:20], cmp_cmd_eff[15:8]}),
         .prior    (prior_q),
         .colpm0   (colpm_q[0]), .colpm1(colpm_q[1]),
         .colpm2   (colpm_q[2]), .colpm3(colpm_q[3]),

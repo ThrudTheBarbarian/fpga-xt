@@ -923,6 +923,7 @@ module fpga_xt_top (
         .halt_n             (antic_halt_n),
         .rdy_n              (antic_rdy_n),
         .dma_steal          (antic_dma_steal_w),
+        .dmactl_honor       (gp0_ctrl[4]),    // PS opt-in: honour DMACTL screen-blank
         .irq_n              (antic_irq_n),
         .bus_pbi_in_status_o(),
         .audio_l0(), .audio_l1(), .audio_l2(), .audio_l3(),

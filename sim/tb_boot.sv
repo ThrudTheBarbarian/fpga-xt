@@ -407,6 +407,7 @@ module tb_boot;
         .halt_n             (antic_halt_n),
         .rdy_n              (antic_rdy_n),
         .dma_steal          (),            // boot tb runs CLOCK_MULT=2 (turbo) — steal bypassed
+        .dmactl_honor       (1'b0),        // legacy render (no DMACTL screen-blank) for the boot tb
         .irq_n              (antic_irq_n),
         .bus_pbi_in_status_o(),
         .audio_l0(), .audio_l1(), .audio_l2(), .audio_l3(),

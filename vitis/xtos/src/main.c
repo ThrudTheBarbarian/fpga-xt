@@ -309,6 +309,7 @@ static void repl_help(void)
       "  deskfill [rgba]  fill desktop plane-0 surface (0x30000000); default black\r\n"
       "  bars <0|1>       HDMI test pattern off/on (writes 43C0001C)\r\n"
       "  scale <1..5>     XL plane scale (gp0_ctrl[3:1]); sweep for blend correlation\r\n"
+      "  dmactl <0|1>     honour DMACTL screen-blank (gp0_ctrl[4]); 1=real Atari, 0=legacy\r\n"
       "  hdmi             re-run SiI9022 output init (sii_enable_output)\r\n"
       "  diag             decode GP0 diag word + measured H_RES/V_RES\r\n"
       "  { ... }          serial->Atari keyboard passthrough ('key' or '{' in, '}' out)\r\n"
@@ -634,6 +635,17 @@ static void repl_exec(char *cmd)
         g_gp0 = (u8)((g_gp0 & ~0x0Eu) | ((n & 0x7u) << 1));    /* preserve bar bit */
         xil_printf("  writing gp0_ctrl=%02x (scale=%u, bars=%u) ...\r\n",
                    g_gp0, n, g_gp0 & 1u);
+        Xil_Out32(XT_BLITTER_BASE + 0x1Cu, (u32)g_gp0);
+        uart1_puts("  ok\r\n");
+        return;
+    }
+    if (!strcmp(argv[0], "dmactl")) {
+        /* gp0_ctrl[4] = honour DMACTL screen-blanking (playfield/DL DMA off ->
+         * COLBK), like real ANTIC.  0 = legacy (always render).  The desktop
+         * sets this per-app; games that blank-while-drawing need it on. */
+        unsigned on = (argc >= 2) ? (unsigned)strtoul(argv[1], NULL, 10) : 1u;
+        g_gp0 = (u8)((g_gp0 & ~0x10u) | (on ? 0x10u : 0x00u));  /* preserve bars+scale */
+        xil_printf("  writing gp0_ctrl=%02x (dmactl-honor=%u) ...\r\n", g_gp0, on ? 1u : 0u);
         Xil_Out32(XT_BLITTER_BASE + 0x1Cu, (u32)g_gp0);
         uart1_puts("  ok\r\n");
         return;
