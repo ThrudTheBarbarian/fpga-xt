@@ -44,6 +44,7 @@ typedef struct {
     int          text_px;          // selected size (0 => VDI_TEXT_PX_DEFAULT)
     int          text_font_id;     // selected font id (vst_font; 1 = system)
     int          wr_mode;          // VDI_MD_* (vswr_mode; default REPLACE)
+    int          in_mode[5];       // vsin_mode per device class (1..4)
     int          clip_on, cx0, cy0, cx1, cy1;   // clip rect, inclusive
     int          device;           // v_opnwk device id (0 = virtual/screen draw)
     void        *dev;              // device state (metafile recorder / PDF page)
@@ -120,6 +121,17 @@ void op_ql_attr(vdi_pb *pb);
 void op_qm_attr(vdi_pb *pb);
 void op_qf_attr(vdi_pb *pb);
 void op_qt_attr(vdi_pb *pb);
+void op_sin_mode(vdi_pb *pb);
+void op_locator(vdi_pb *pb);
+void op_valuator(vdi_pb *pb);
+void op_choice(vdi_pb *pb);
+void op_string(vdi_pb *pb);
+void op_show_c(vdi_pb *pb);
+void op_hide_c(vdi_pb *pb);
+void op_q_mouse(vdi_pb *pb);
+void op_q_key_s(vdi_pb *pb);
+void op_vex(vdi_pb *pb);
+extern vdi_vec g_vex_in, g_vex_out;     // out-of-band vex_* handler exchange
 void op_st_rotation(vdi_pb *pb);
 void op_st_effects(vdi_pb *pb);
 void op_st_alignment(vdi_pb *pb);

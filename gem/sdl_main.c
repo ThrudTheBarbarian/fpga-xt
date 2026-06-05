@@ -98,18 +98,35 @@ int main(int argc, char **argv) {
     // top-left offset, kept in sync so mouse coords map straight to desktop px.
     int off_x = 0, off_y = 0;
 
-    int running = 1;
+    int running = 1, btn_mask = 0;
     while (running) {
         SDL_Event e;
         while (SDL_PollEvent(&e)) {
             if (e.type == SDL_QUIT) running = 0;
             else if (e.type == SDL_KEYDOWN && e.key.keysym.sym == SDLK_ESCAPE) running = 0;
-            else if (e.type == SDL_MOUSEMOTION)
+            else if (e.type == SDL_KEYDOWN) {
+                SDL_Keymod m = SDL_GetModState();
+                vdi_input_shift((m & KMOD_RSHIFT ? VDI_KS_RSHIFT : 0)
+                              | (m & KMOD_LSHIFT ? VDI_KS_LSHIFT : 0)
+                              | (m & KMOD_CTRL   ? VDI_KS_CTRL   : 0)
+                              | (m & KMOD_ALT    ? VDI_KS_ALT    : 0));
+                SDL_Keycode k = e.key.keysym.sym;
+                if (k == SDLK_RETURN || k == SDLK_BACKSPACE || (k >= 0x20 && k < 0x7f))
+                    vdi_input_key(k == SDLK_RETURN ? '\r' : (int)k);
+            }
+            else if (e.type == SDL_MOUSEMOTION) {
                 gem_wm_mouse_move(&wm, e.motion.x - off_x, e.motion.y - off_y);
-            else if ((e.type == SDL_MOUSEBUTTONDOWN || e.type == SDL_MOUSEBUTTONUP)
-                     && e.button.button == SDL_BUTTON_LEFT)
-                gem_wm_mouse_button(&wm, e.button.x - off_x, e.button.y - off_y,
-                                    e.type == SDL_MOUSEBUTTONDOWN);
+                vdi_input_mouse(e.motion.x - off_x, e.motion.y - off_y, btn_mask);
+            }
+            else if (e.type == SDL_MOUSEBUTTONDOWN || e.type == SDL_MOUSEBUTTONUP) {
+                int bit = e.button.button == SDL_BUTTON_LEFT  ? VDI_BTN_LEFT
+                        : e.button.button == SDL_BUTTON_RIGHT ? VDI_BTN_RIGHT : VDI_BTN_MIDDLE;
+                if (e.type == SDL_MOUSEBUTTONDOWN) btn_mask |= bit; else btn_mask &= ~bit;
+                if (e.button.button == SDL_BUTTON_LEFT)
+                    gem_wm_mouse_button(&wm, e.button.x - off_x, e.button.y - off_y,
+                                        e.type == SDL_MOUSEBUTTONDOWN);
+                vdi_input_mouse(e.button.x - off_x, e.button.y - off_y, btn_mask);
+            }
         }
         gem_wm_draw(&wm);                  // redraw dirty content + frames + composite
         SDL_UpdateTexture(tex, NULL, desk->px, desk->stride * (int)sizeof(uint32_t));

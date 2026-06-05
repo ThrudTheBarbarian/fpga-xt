@@ -21,6 +21,8 @@ static void ink_bbox(gfx_surface *s, int *w, int *h) {
 #define CHECK(cond) do { if (!(cond)) { \
     printf("  FAIL %s:%d  %s\n", __FILE__, __LINE__, #cond); fails++; } } while (0)
 
+static void dummy_vec(void) { }     // a vex_* handler to exchange
+
 int main(void) {
     gfx_surface *s = gfx_surface_alloc(100, 100);
     vdi_init(s);
@@ -624,6 +626,40 @@ int main(void) {
     vqt_attributes(he, ta);
     CHECK(ta[1] == 3 && ta[3] == VDI_TA_CENTER && ta[4] == VDI_TA_BOTTOM);
     CHECK(ta[9] == font_height(font_at(ef, 20)));       // cell height = line height
+
+    // Input / cursor: with no host pump, REQUEST degrades to non-blocking.
+    vdi_input_mouse(50, 60, VDI_BTN_LEFT);
+    int qb = -1, qx = -1, qy = -1;
+    CHECK(vq_mouse(he, &qb, &qx, &qy) == VDI_BTN_LEFT);
+    CHECK(qx == 50 && qy == 60);
+    int lx = -1, ly = -1;
+    vsm_locator(he, 0, 0, &lx, &ly);
+    CHECK(lx == 50 && ly == 60);                         // samples current pos
+
+    vdi_input_shift(VDI_KS_CTRL | VDI_KS_LSHIFT);
+    int sh = 0;
+    CHECK(vq_key_s(he, &sh) == (VDI_KS_CTRL | VDI_KS_LSHIFT));
+
+    CHECK(vdi_cursor_visible() == 1);
+    v_hide_c(he); v_hide_c(he); CHECK(vdi_cursor_visible() == 0);   // nests
+    v_show_c(he, 0); CHECK(vdi_cursor_visible() == 0);              // one undone
+    v_show_c(he, 0); CHECK(vdi_cursor_visible() == 1);              // both undone
+    v_hide_c(he); v_show_c(he, 1); CHECK(vdi_cursor_visible() == 1);// reset forces visible
+
+    vdi_input_valuator(42);
+    int vv = -1; vsm_valuator(he, &vv); CHECK(vv == 42);
+    vdi_input_choice(3);
+    int ch = -1; CHECK(vsm_choice(he, &ch) != 0 && ch == 3);
+
+    vsin_mode(he, VDI_DEV_STRING, VDI_MODE_REQUEST);
+    vdi_input_key('H'); vdi_input_key('i'); vdi_input_key('\r'); vdi_input_key('X');
+    char sbuf[32];
+    CHECK(vrq_string(he, 30, 0, sbuf) == 2);             // stops at Enter
+    CHECK(sbuf[0] == 'H' && sbuf[1] == 'i' && sbuf[2] == '\0');
+
+    CHECK(vex_butv(he, dummy_vec) == NULL);              // no prior handler
+    CHECK(vex_butv(he, NULL) == dummy_vec);              // returns the one we set
+
     v_clsvwk(he); gfx_surface_free(es); font_face_close(ef);
 
     // vsl_ends: an arrow end adds a filled arrowhead (more ink than a plain line).

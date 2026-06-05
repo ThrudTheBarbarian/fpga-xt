@@ -85,7 +85,12 @@ test: $(BUILD)/gem_test $(BUILD)/wm_test
 
 $(BUILD)/%.o: %.c | $(BUILD)
 	@mkdir -p $(dir $@)
-	$(CC) $(CFLAGS) -c $< -o $@
+	$(CC) $(CFLAGS) -MMD -MP -c $< -o $@
+
+# Header-dependency tracking (-MMD): a header edit (e.g. a struct in
+# internal.h) rebuilds every TU that includes it, so incremental builds can't
+# silently mix two layouts of the same struct.
+-include $(shell find $(BUILD) -name '*.d' 2>/dev/null)
 
 $(BUILD):
 	mkdir -p $(BUILD)

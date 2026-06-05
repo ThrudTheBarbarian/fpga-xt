@@ -356,6 +356,17 @@ void vdi_call(vdi_pb *pb) {
         case VDI_QM_ATTR:     op_qm_attr(pb);    break;
         case VDI_QF_ATTR:     op_qf_attr(pb);    break;
         case VDI_QT_ATTR:     op_qt_attr(pb);    break;
+        case VDI_SIN_MODE:    op_sin_mode(pb);   break;
+        case VDI_LOCATOR:     op_locator(pb);    break;
+        case VDI_VALUATOR:    op_valuator(pb);   break;
+        case VDI_CHOICE:      op_choice(pb);     break;
+        case VDI_STRING:      op_string(pb);     break;
+        case VDI_SHOW_C:      op_show_c(pb);     break;
+        case VDI_HIDE_C:      op_hide_c(pb);     break;
+        case VDI_Q_MOUSE:     op_q_mouse(pb);    break;
+        case VDI_Q_KEY_S:     op_q_key_s(pb);    break;
+        case VDI_VEX_BUTV: case VDI_VEX_MOTV:
+        case VDI_VEX_CURV: case VDI_VEX_TIMV:    op_vex(pb);  break;
         case VDI_ST_ROTATION: op_st_rotation(pb);break;
         case VDI_ST_EFFECTS:  op_st_effects(pb); break;
         case VDI_ST_ALIGN:    op_st_alignment(pb);break;

@@ -136,14 +136,28 @@ The device mechanism is in place, so adding a device is now just a driver behind
 | vq_color | 26 | ✓ | read back a pen (RGB 0..1000) |
 | vql_/vqm_/vqf_/vqt_attributes | 35–38 | ✓ | read current line/marker/fill/text attributes |
 
-**Input / cursor** (handled by the host/AES event layer, not the VDI here)
+**Input / cursor**
+
+The VDI input devices read a host-fed state: the backend (SDL today, the AES
+event pump on hardware) pushes the live pointer position, button mask, shift
+state and typed characters in through `vdi_input_*` setters, and the calls below
+read it. Each device has two modes (`vsin_mode`): REQUEST blocks until the
+device triggers (a button or a terminator key), SAMPLE returns the current state
+at once. Blocking is cooperative — it drives a registered host pump until the
+trigger arrives; with no pump (headless), REQUEST degrades to one non-blocking
+read so nothing hangs.
 
 | Call | Op | Sup | Notes |
 |------|----|-----|-------|
-| vsin_mode, vrq/vsm_locator/valuator/choice/string | various | ✗ | input via SDL/AES, not VDI device input |
-| v_show_c / v_hide_c | 122 / 123 | ✗ | the WM draws the pointer plane |
-| vq_mouse | 124 | ✗ | |
-| vex_butv / vex_motv / vex_curv | 125–127 | ✗ | input interrupt vectors |
+| vsin_mode | 33 | ✓ | request/sample per device class |
+| vrq_locator / vsm_locator | 28 | ✓ | pointer position + terminator (button/key) |
+| vrq_valuator / vsm_valuator | 29 | ✓ | a scalar input (dial/wheel) |
+| vrq_choice / vsm_choice | 30 | ✓ | a numbered selection |
+| vrq_string / vsm_string | 31 | ✓ | a typed line (Enter-terminated, backspace) |
+| v_show_c / v_hide_c | 122 / 123 | ✓ | pointer visibility (hide nests); the WM honours it |
+| vq_mouse | 124 | ✓ | pointer position + button mask |
+| vq_key_s | 128 | ✓ | keyboard shift/ctrl/alt state |
+| vex_butv / vex_motv / vex_curv / vex_timv | 125–127 / 118 | ✓ | exchange an input-interrupt vector (returns the previous) |
 
 ### Fonts
 

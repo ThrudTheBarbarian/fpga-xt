@@ -74,7 +74,27 @@ enum {                          // VDI opcodes (standard GEM)
     VDI_QM_ATTR     = 36,       // vqm_attributes — current marker attributes
     VDI_QF_ATTR     = 37,       // vqf_attributes — current fill attributes
     VDI_QT_ATTR     = 38,       // vqt_attributes — current text attributes
+    VDI_LOCATOR     = 28,       // vrq/vsm_locator  — pointer position
+    VDI_VALUATOR    = 29,       // vrq/vsm_valuator — a scalar input
+    VDI_CHOICE      = 30,       // vrq/vsm_choice   — a numbered selection
+    VDI_STRING      = 31,       // vrq/vsm_string   — a typed line
+    VDI_SIN_MODE    = 33,       // vsin_mode  — request/sample per device
+    VDI_VEX_TIMV    = 118,      // vex_timv   — timer vector
+    VDI_SHOW_C      = 122,      // v_show_c   — show the mouse pointer
+    VDI_HIDE_C      = 123,      // v_hide_c   — hide the mouse pointer
+    VDI_Q_MOUSE     = 124,      // vq_mouse   — pointer position + buttons
+    VDI_VEX_BUTV    = 125,      // vex_butv   — button-change vector
+    VDI_VEX_MOTV    = 126,      // vex_motv   — pointer-motion vector
+    VDI_VEX_CURV    = 127,      // vex_curv   — cursor-draw vector
+    VDI_Q_KEY_S     = 128,      // vq_key_s   — keyboard shift state
 };
+
+// Input device classes (vsin_mode) and the two input modes.
+enum { VDI_DEV_LOCATOR = 1, VDI_DEV_VALUATOR = 2, VDI_DEV_CHOICE = 3, VDI_DEV_STRING = 4 };
+enum { VDI_MODE_REQUEST = 1, VDI_MODE_SAMPLE = 2 };
+// Button mask bits / keyboard shift-state bits (GEM convention).
+enum { VDI_BTN_LEFT = 0x01, VDI_BTN_RIGHT = 0x02, VDI_BTN_MIDDLE = 0x04 };
+enum { VDI_KS_RSHIFT = 0x01, VDI_KS_LSHIFT = 0x02, VDI_KS_CTRL = 0x04, VDI_KS_ALT = 0x08 };
 
 // Memory Form Definition Block — a bitmap.  In device format it is RGBA-8888
 // chunky (one uint32 per pixel, `stride` pixels per row).  In standard format
@@ -256,5 +276,44 @@ void vr_trnfm(int handle, const MFDB *src, const MFDB *dst);
 // v_get_pixel: read (x,y); *pel and *index get the matching palette pen, or
 // *index = -1 if the (true-colour) pixel matches no pen.
 void v_get_pixel(int handle, int x, int y, int *pel, int *index);
+
+// ---- Input / cursor -------------------------------------------------------
+// The VDI's input devices read a host-fed state.  The backend (SDL today, the
+// AES event pump on hardware) pushes the live pointer/keyboard state in through
+// these setters; the vrq_*/vsm_* calls below read it.
+void vdi_input_mouse(int x, int y, int buttons);  // pointer pos + button mask
+void vdi_input_key(int ch);                        // enqueue a typed character
+void vdi_input_shift(int mask);                    // shift/ctrl/alt state
+void vdi_input_valuator(int v);                    // current valuator value
+void vdi_input_choice(int c);                      // current choice number
+// REQUEST-mode (blocking) input drives this pump until the device triggers;
+// with no pump set, REQUEST degrades to one non-blocking read (never hangs).
+void vdi_input_set_pump(void (*pump)(void *), void *ctx);
+int  vdi_cursor_visible(void);                     // WM asks: draw the pointer?
+
+void vsin_mode(int handle, int dev, int mode);     // VDI_DEV_* x VDI_MODE_*
+// Locator: (x,y) seeds the pointer; *ox,*oy get the final position.  REQUEST
+// blocks for a button/key and returns the terminator; SAMPLE returns at once
+// with the button mask (or a pending key).
+int  vrq_locator(int handle, int x, int y, int *ox, int *oy);
+int  vsm_locator(int handle, int x, int y, int *ox, int *oy);
+int  vrq_valuator(int handle, int valin);          // -> final value
+int  vsm_valuator(int handle, int *val);           // sample; -> terminator
+int  vrq_choice(int handle, int chin);             // -> chosen number
+int  vsm_choice(int handle, int *choice);          // sample; -> nonzero if a choice
+// Read a typed line into out[] (NUL-terminated, up to maxlen).  echo!=0 lets
+// the host echo it.  Returns the character count.
+int  vrq_string(int handle, int maxlen, int echo, char *out);
+int  vsm_string(int handle, int maxlen, int echo, char *out);
+void v_show_c(int handle, int reset);              // reset!=0 forces visible
+void v_hide_c(int handle);                         // nests (matching v_show_c)
+int  vq_mouse(int handle, int *buttons, int *x, int *y);  // -> button mask
+int  vq_key_s(int handle, int *shift);             // -> shift mask
+// Exchange an input-interrupt vector; returns the previous handler.
+typedef void (*vdi_vec)(void);
+vdi_vec vex_butv(int handle, vdi_vec f);           // button change
+vdi_vec vex_motv(int handle, vdi_vec f);           // pointer motion
+vdi_vec vex_curv(int handle, vdi_vec f);           // cursor draw
+vdi_vec vex_timv(int handle, vdi_vec f);           // timer tick
 
 #endif // GEM_VDI_H

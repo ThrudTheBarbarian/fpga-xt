@@ -253,5 +253,5 @@ void gem_wm_draw(gem_wm *wm) {
                            (int16_t)(win->cx + win->cw - 1), (int16_t)(win->cy + win->ch - 1) };
         vro_cpyfm(wm->desk_vh, VRO_COPY, pxy, &src, &dst);
     }
-    draw_pointer(wm);
+    if (vdi_cursor_visible()) draw_pointer(wm);
 }
