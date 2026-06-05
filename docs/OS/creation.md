@@ -130,7 +130,7 @@ The device mechanism is in place, so adding a device is now just a driver behind
 
 | Call | Op | Sup | Notes |
 |------|----|-----|-------|
-| vqt_extent | 116 | ◐ | `font_text_width` internal; no binding |
+| vqt_extent | 116 | ✓ | text bounding box (4 corners, size/effects/rotation-aware) |
 | vqt_width | 117 | ✗ | per-character width |
 | vqt_name | 130 | ✓ | a font's id + name (enumerate the registry to build a font menu) |
 | vq_color | 26 | ✗ | read back a pen |

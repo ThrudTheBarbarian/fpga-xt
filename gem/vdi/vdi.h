@@ -48,6 +48,7 @@ enum {                          // VDI opcodes (standard GEM)
     VDI_SM_COLOR    = 20,       // vsm_color  — marker colour
     VDI_ST_FONT     = 21,       // vst_font   — select text face by id
     VDI_SWR_MODE    = 32,       // vswr_mode  — writing mode
+    VDI_QT_EXTENT   = 116,      // vqt_extent — text bounding box
     VDI_QT_NAME     = 130,      // vqt_name   — inquire a font's id + name
     VDI_CONTOURFILL = 103,      // v_contourfill — seed fill
     VDI_ST_COLOR    = 22,       // vst_color  — text colour
@@ -190,6 +191,9 @@ int  vst_height(int handle, int height_px, int *cw, int *ch, int *cellw, int *ce
 int  vst_point (int handle, int points,    int *cw, int *ch, int *cellw, int *cellh);
 int  vst_font(int handle, int id);                     // select face (1=system); -> id in use
 int  vqt_name(int handle, int id, char *name);         // name of font id (>=32-byte buf); -> id
+// Bounding box of `s` in the current font/size/effects/rotation: 4 corner points
+// (offsets from the text origin) as LL, LR, UR, UL in extent[0..7].
+void vqt_extent(int handle, const char *s, int16_t *extent);
 int  vst_load_fonts(int handle, int select);           // map OS/Fonts; -> extra-font count
 void vst_unload_fonts(int handle, int select);         // no-op
 void v_pline(int handle, int n, const int16_t *pxy);   // n point-pairs

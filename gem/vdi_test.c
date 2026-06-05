@@ -569,6 +569,24 @@ int main(void) {
     int plainn = 0; for (int i = 0; i < 80 * 40; i++) if (es->px[i]) plainn++;
     CHECK(boldn > plainn);                             // bold is heavier
     CHECK(vst_effects(he, 0x7F) == 0x3F);              // only the six defined bits kept
+
+    // vqt_extent: bounding box matches the font width/height and rotates.
+    vst_effects(he, 0); vst_rotation(he, 0); vst_height(he, 20, NULL, NULL, NULL, NULL);
+    int16_t tex[8];
+    vqt_extent(he, "Wide", tex);
+    int ew = tex[2], eh = tex[1];                      // LR.x = width, LL.y = height
+    CHECK(ew == font_text_width(font_at(ef, 20), "Wide"));
+    CHECK(eh == font_height(font_at(ef, 20)));
+    CHECK(tex[6] == 0 && tex[7] == 0);                 // upper-left at the origin
+    CHECK(tex[0] == 0 && tex[4] == ew);                // left x=0; right x=width
+    vst_rotation(he, 900);                             // 90 deg: box becomes taller than wide
+    vqt_extent(he, "Wide", tex);
+    int minx = tex[0], maxx = tex[0], miny = tex[1], maxy = tex[1];
+    for (int i = 0; i < 4; i++) {
+        if (tex[2*i]   < minx) minx = tex[2*i];   if (tex[2*i]   > maxx) maxx = tex[2*i];
+        if (tex[2*i+1] < miny) miny = tex[2*i+1]; if (tex[2*i+1] > maxy) maxy = tex[2*i+1];
+    }
+    CHECK(maxy - miny > maxx - minx);                  // rotated upright
     v_clsvwk(he); gfx_surface_free(es); font_face_close(ef);
 
     // vsl_ends: an arrow end adds a filled arrowhead (more ink than a plain line).

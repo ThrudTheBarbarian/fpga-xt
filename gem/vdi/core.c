@@ -349,6 +349,7 @@ void vdi_call(vdi_pb *pb) {
         case VDI_ST_POINT:    op_st_point(pb);   break;
         case VDI_ST_FONT:     op_st_font(pb);    break;
         case VDI_QT_NAME:     op_qt_name(pb);    break;
+        case VDI_QT_EXTENT:   op_qt_extent(pb);  break;
         case VDI_ST_ROTATION: op_st_rotation(pb);break;
         case VDI_ST_EFFECTS:  op_st_effects(pb); break;
         case VDI_ST_ALIGN:    op_st_alignment(pb);break;
