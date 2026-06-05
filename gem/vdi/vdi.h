@@ -72,7 +72,7 @@ enum { VDI_FIS_HOLLOW = 0, VDI_FIS_SOLID = 1, VDI_FIS_PATTERN = 2, VDI_FIS_HATCH
 
 // GDP (VDI_GDP) sub-opcodes.  Angles are tenths of a degree, 0 = east, CCW.
 enum { GDP_BAR = 1, GDP_ARC = 2, GDP_PIE = 3, GDP_CIRCLE = 4, GDP_ELLIPSE = 5,
-       GDP_ELLARC = 6, GDP_ELLPIE = 7, GDP_RBOX = 8, GDP_RFBOX = 9 };
+       GDP_ELLARC = 6, GDP_ELLPIE = 7, GDP_RBOX = 8, GDP_RFBOX = 9, GDP_JUSTIFIED = 10 };
 
 // v_gtext anchor (vst_alignment).  Horizontal is standard GEM; vertical uses the
 // GEM codes but DEFAULTS to TOP (our v_gtext anchor has always been the em-box
@@ -133,6 +133,10 @@ void vsf_style(int handle, int index);                 // pattern/hatch index (1
 void vsf_perimeter(int handle, int on);                // outline filled areas
 void vs_color(int handle, int index, const int16_t *rgb);  // rgb[3] each 0..1000
 void v_gtext(int handle, int x, int y, const char *s); // anchored per vst_alignment
+// Justify s to occupy `width` px from (x,y): word_space/char_space (0/1) pick
+// whether slack goes to spaces and/or between characters.
+void v_justified(int handle, int x, int y, const char *s, int width,
+                 int word_space, int char_space);
 // Set the text anchor; set_h/set_v (may be NULL) get the clamped values back.
 void vst_alignment(int handle, int halign, int valign, int *set_h, int *set_v);
 // Set text size; out (each may be NULL) gets char_w, char_h, cell_w, cell_h in

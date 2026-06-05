@@ -86,7 +86,7 @@ The device mechanism is in place, so adding a device is now just a driver behind
 | v_ellpie | 11.7 | ✓ | filled |
 | v_rbox | 11.8 | ✓ | rounded-rect outline |
 | v_rfbox | 11.9 | ✓ | filled rounded rect |
-| v_justified | 11.10 | ✗ | justified text |
+| v_justified | 11.10 | ✓ | text spread to a width (word and/or character spacing) |
 | vr_recfl | 114 | ✓ | fill rect, honours interior/style/perimeter |
 | v_pmarker | 7 | ✗ | polymarkers |
 | v_cellarray | 10 | ✗ | |

@@ -35,4 +35,10 @@ int   font_text_width(font *f, const char *s); // pen advance for the string (px
 void  font_draw(font *f, gfx_surface *dst, int x, int y, const char *s,
                 uint32_t rgba, const int *clip);
 
+// Draw `s` spread to occupy `width` px (em box top-left at x,y): slack is added
+// to the gaps after spaces (word_space) and/or between all glyphs (char_space).
+void  font_draw_justified(font *f, gfx_surface *dst, int x, int y, const char *s,
+                          int width, int word_space, int char_space,
+                          uint32_t rgba, const int *clip);
+
 #endif // GEM_FONT_H

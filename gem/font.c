@@ -163,30 +163,76 @@ static inline uint32_t blend(uint32_t dst, uint32_t src, unsigned cov) {
     return (r<<24) | (g<<16) | (b<<8) | 0xFF;
 }
 
+// Blend one glyph's coverage at pen/base, clipped to the inclusive rect.
+static void blit_glyph(gfx_surface *d, int pen, int base, const glyph *g,
+                       uint32_t rgba, int cx0, int cy0, int cx1, int cy1) {
+    if (!g->cov) return;
+    int gx = pen + g->left, gy = base - g->top;
+    for (int row = 0; row < g->h; row++) {
+        int py = gy + row; if (py < cy0 || py > cy1) continue;
+        const uint8_t *cr = g->cov + (size_t)row * g->w;
+        uint32_t *dr = d->px + (size_t)py * d->stride;
+        for (int col = 0; col < g->w; col++) {
+            int px = gx + col; if (px < cx0 || px > cx1) continue;
+            dr[px] = blend(dr[px], rgba, cr[col]);
+        }
+    }
+}
+
+static void clip_of(gfx_surface *d, const int *clip, int *cx0, int *cy0, int *cx1, int *cy1) {
+    *cx0 = 0; *cy0 = 0; *cx1 = d->w - 1; *cy1 = d->h - 1;
+    if (clip) {
+        if (clip[0] > *cx0) *cx0 = clip[0]; if (clip[1] > *cy0) *cy0 = clip[1];
+        if (clip[2] < *cx1) *cx1 = clip[2]; if (clip[3] < *cy1) *cy1 = clip[3];
+    }
+}
+
 void font_draw(font *f, gfx_surface *d, int x, int y, const char *s,
                uint32_t rgba, const int *clip) {
     if (!f || !s || !d) return;
-    int cx0 = 0, cy0 = 0, cx1 = d->w - 1, cy1 = d->h - 1;
-    if (clip) {
-        if (clip[0] > cx0) cx0 = clip[0]; if (clip[1] > cy0) cy0 = clip[1];
-        if (clip[2] < cx1) cx1 = clip[2]; if (clip[3] < cy1) cy1 = clip[3];
-    }
+    int cx0, cy0, cx1, cy1; clip_of(d, clip, &cx0, &cy0, &cx1, &cy1);
     int pen = x, base = y + f->ascent, trk = f->owner->tracking;
     for (const char *p = s; *p; ) {
         const glyph *g = glyph_get(f, utf8_next(&p));
         if (!g) continue;
-        if (g->cov) {
-            int gx = pen + g->left, gy = base - g->top;
-            for (int row = 0; row < g->h; row++) {
-                int py = gy + row; if (py < cy0 || py > cy1) continue;
-                const uint8_t *cr = g->cov + (size_t)row * g->w;
-                uint32_t *dr = d->px + (size_t)py * d->stride;
-                for (int col = 0; col < g->w; col++) {
-                    int px = gx + col; if (px < cx0 || px > cx1) continue;
-                    dr[px] = blend(dr[px], rgba, cr[col]);
-                }
-            }
-        }
+        blit_glyph(d, pen, base, g, rgba, cx0, cy0, cx1, cy1);
         pen += g->advance + trk;
+    }
+}
+
+// Spread `s` to occupy `width` px: extra slack goes to the gaps after spaces
+// (word_space) and/or between every glyph (char_space).  Used by v_justified.
+void font_draw_justified(font *f, gfx_surface *d, int x, int y, const char *s,
+                         int width, int word_space, int char_space,
+                         uint32_t rgba, const int *clip) {
+    if (!f || !s || !d) return;
+    int trk = f->owner->tracking;
+    int natural = 0, n = 0, nspaces = 0;                 // measure
+    for (const char *p = s; *p; ) {
+        unsigned cp = utf8_next(&p);
+        const glyph *g = glyph_get(f, cp); if (!g) continue;
+        natural += g->advance + trk;
+        if (cp == ' ') nspaces++;
+        n++;
+    }
+    int gaps = n > 1 ? n - 1 : 0, extra = width - natural;
+    int word_add = 0, char_add = 0;
+    if (word_space && char_space) {
+        if (nspaces > 0) word_add = (extra / 2) / nspaces;
+        if (gaps > 0)    char_add = (extra - word_add * nspaces) / gaps;
+    } else if (word_space) {
+        if (nspaces > 0) word_add = extra / nspaces;
+    } else if (char_space) {
+        if (gaps > 0)    char_add = extra / gaps;
+    }
+    int cx0, cy0, cx1, cy1; clip_of(d, clip, &cx0, &cy0, &cx1, &cy1);
+    int pen = x, base = y + f->ascent, i = 0;
+    for (const char *p = s; *p; i++) {
+        unsigned cp = utf8_next(&p);
+        const glyph *g = glyph_get(f, cp); if (!g) { i--; continue; }
+        blit_glyph(d, pen, base, g, rgba, cx0, cy0, cx1, cy1);
+        pen += g->advance + trk;
+        if (cp == ' ' && word_space) pen += word_add;
+        if (i < n - 1 && char_space) pen += char_add;
     }
 }

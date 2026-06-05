@@ -61,7 +61,8 @@ static int build_rrect(int16_t *out, int x1, int y1, int x2, int y2, int r) {
 
 void op_gdp(vdi_pb *pb) {
     int sub = pb->contrl[5];
-    if (sub == GDP_BAR) { op_fillrect(pb); return; }
+    if (sub == GDP_BAR)       { op_fillrect(pb);  return; }
+    if (sub == GDP_JUSTIFIED) { op_justified(pb); return; }
     vdi_ws *w = vdi_ws_of(pb->contrl[6]); if (!w) return;
 
     const int16_t *p = pb->ptsin;

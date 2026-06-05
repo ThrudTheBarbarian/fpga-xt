@@ -297,6 +297,26 @@ int main(void) {
     v_clsvwk(hfa);
     gfx_surface_free(fa);
 
+    // v_justified: text spreads to fill the requested width.
+    font_face *jf = font_face_open("fonts/AovelSansRounded.ttf");   // (earlier face was closed)
+    vdi_set_face(jf);
+    gfx_surface *js = gfx_surface_alloc(160, 30);
+    int hj = v_opnvwk(js);
+    vst_color(hj, 1); vst_height(hj, 16, NULL, NULL, NULL, NULL);
+    #define RIGHTMOST(surf, W, H) ({ int r = -1; for (int yy=0; yy<(H); yy++) \
+        for (int xx=0; xx<(W); xx++) if ((surf)->px[(size_t)yy*(surf)->stride+xx]) if (xx>r) r=xx; r; })
+    for (int i = 0; i < 160 * 30; i++) js->px[i] = 0;
+    v_gtext(hj, 2, 4, "ABCD");
+    int nat_right = RIGHTMOST(js, 160, 30);
+    for (int i = 0; i < 160 * 30; i++) js->px[i] = 0;
+    v_justified(hj, 2, 4, "ABCD", 120, 0, 1);           // char-spacing, width 120
+    int just_right = RIGHTMOST(js, 160, 30);
+    CHECK(just_right > nat_right + 30);                  // visibly spread out
+    CHECK(just_right >= 100);                            // reaches near 2+120
+    v_clsvwk(hj);
+    gfx_surface_free(js);
+    font_face_close(jf);
+
     if (fails == 0) printf("*** VDI TEST OK ***\n");
     else            printf("*** VDI TEST: %d FAIL(s) ***\n", fails);
     gfx_surface_free(s);
