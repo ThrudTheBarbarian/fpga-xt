@@ -1,0 +1,41 @@
+// gfx.h — portable surface + low-level backend primitives for the GEM core.
+//
+// The GEM service (VDI/AES/window-manager/theming) is platform-neutral C and
+// only ever calls the primitives below — never SDL or the blitter directly.
+// Two backends implement them:
+//   - gfx_soft.c : software, for the SDL host testbed (fast iterate, mouse).
+//   - gfx_a9.c   : the Zynq hardware blitter (later, on the A9).
+// Selected at link time: the testbed links gfx_soft.c, the A9 build gfx_a9.c.
+//
+// One pixel format everywhere: RGBA-8888 packed 0xRRGGBBAA (R in the MSB, A in
+// the LSB) — matches the on-DDR XL framebuffer the writeback produces, so the
+// A9 backend is a straight pass-through to the compositor surface.
+
+#ifndef GEM_GFX_H
+#define GEM_GFX_H
+
+#include <stdint.h>
+
+typedef struct {
+    int       w, h;      // size in pixels
+    int       stride;    // pixels per row (>= w; allows sub-surfaces later)
+    uint32_t *px;        // stride*h pixels, RGBA-8888 (0xRRGGBBAA)
+} gfx_surface;
+
+#define GFX_RGBA(r, g, b, a) \
+    (((uint32_t)(uint8_t)(r) << 24) | ((uint32_t)(uint8_t)(g) << 16) | \
+     ((uint32_t)(uint8_t)(b) <<  8) |  (uint32_t)(uint8_t)(a))
+#define GFX_RGB(r, g, b)  GFX_RGBA((r), (g), (b), 0xFF)
+
+// Surface lifecycle (host: malloc; A9: a DDR3 region from the allocator).
+gfx_surface *gfx_surface_alloc(int w, int h);
+void         gfx_surface_free(gfx_surface *s);
+
+// ---- Backend primitives (software in gfx_soft.c, blitter on A9) -----------
+// All clip to the destination surface; out-of-range args are safe no-ops.
+void gfx_fill_rect(gfx_surface *s, int x, int y, int w, int h, uint32_t rgba);
+void gfx_blit(gfx_surface *dst, int dx, int dy,
+              const gfx_surface *src, int sx, int sy, int w, int h);
+void gfx_line(gfx_surface *s, int x0, int y0, int x1, int y1, uint32_t rgba);
+
+#endif // GEM_GFX_H
