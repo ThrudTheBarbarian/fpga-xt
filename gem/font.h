@@ -23,6 +23,15 @@ const char *font_face_name(const font_face *face);           // family name ("" 
 
 // A view of the face at a pixel size (cached inside the face; do not free).
 font *font_at(font_face *face, int px);
+// Anisotropic view: independent cell width / height in px (condensed/expanded
+// text via vst_setsize / vst_width).  font_at(px) == font_at_wh(px, px).
+font *font_at_wh(font_face *face, int wpx, int hpx);
+
+// vst_kern: enable pair kerning; returns 1 only if the face actually has a kern
+// table (else stays off).  vst_track_offset: extra uniform letter-spacing (px).
+int  font_face_set_kern(font_face *face, int on);
+int  font_face_has_kern(const font_face *face);
+void font_face_set_track(font_face *face, int off);
 
 int   font_height(const font *f);              // line height (px)
 int   font_ascent(const font *f);              // baseline offset from the top (px)
@@ -64,6 +73,7 @@ enum { FX_BOLD = 0x01, FX_LIGHT = 0x02, FX_ITALIC = 0x04,
 // outlines are transformed/emboldened/stroked via FreeType, so any angle and
 // effect works (these aren't cached).  Honours the writing mode.
 void  font_draw_fx(font *f, gfx_surface *dst, int x, int y, const char *s,
-                   int angle_tenths, int effects, uint32_t rgba, const int *clip, int mode);
+                   int angle_tenths, int effects, int skew_tenths,
+                   uint32_t rgba, const int *clip, int mode);
 
 #endif // GEM_FONT_H

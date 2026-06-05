@@ -53,8 +53,17 @@ enum {                          // VDI opcodes (standard GEM)
     VDI_QT_NAME     = 130,      // vqt_name   — inquire a font's id + name
     VDI_QT_FONTINFO = 131,      // vqt_fontinfo — structural font metrics
     VDI_QT_F_EXTENT = 240,      // vqt_f_extent — fractional text extent
-    VDI_ST_ARBPT    = 246,      // vst_arbpt    — arbitrary text size (points)
+    VDI_ST_ARBPT    = 246,      // vst_arbpt(32)— arbitrary text size (sub 1 = 16.16)
     VDI_QT_ADVANCE  = 247,      // vqt_advance  — sub-pixel character advance
+    VDI_V_SETRGB    = 138,      // v_setrgb     — set a pen from 8-bit RGB
+    VDI_ST_FG_COLOR = 200,      // vst_fg_color — text foreground pen (sub 0)
+    VDI_ST_BG_COLOR = 201,      // vst_bg_color — text background pen (sub 0)
+    VDI_ST_NAME     = 230,      // vst_name     — select a face by family name
+    VDI_ST_WIDTH    = 231,      // vst_width    — character width in pixels
+    VDI_ST_CHARMAP  = 236,      // vst_charmap / vst_map_mode (sub 1) — encoding
+    VDI_ST_KERN     = 237,      // vst_kern / vst_track_offset (sub 255)
+    VDI_ST_SETSIZE  = 252,      // vst_setsize(32) — character width in points
+    VDI_ST_SKEW     = 253,      // vst_skew     — arbitrary text shear angle
     VDI_CONTOURFILL = 103,      // v_contourfill — seed fill
     VDI_ST_COLOR    = 22,       // vst_color  — text colour
     VDI_SF_INTERIOR = 23,       // vsf_interior — see VDI_FIS_*
@@ -97,6 +106,8 @@ enum {                          // VDI opcodes (standard GEM)
 // NVDI Bézier sub-opcodes.  v_bez/v_bez_fill ride op 6/9 with contrl[5]=13;
 // v_bez_on/off ride op 11 (GDP) sub 13; v_bez_qual rides escape (op 5) sub 99.
 enum { VDI_BEZ_SUB = 13, GDP_BEZ = 13, ESC_BEZ_QUAL = 99 };
+
+enum { VDI_MAP_UNICODE = 2 };   // vst_charmap mode: we are Unicode-only
 
 // Input device classes (vsin_mode) and the two input modes.
 enum { VDI_DEV_LOCATOR = 1, VDI_DEV_VALUATOR = 2, VDI_DEV_CHOICE = 3, VDI_DEV_STRING = 4 };
@@ -260,6 +271,24 @@ void vqt_f_extent(int handle, const char *s, int16_t *extent);
 void vqt_advance(int handle, int ch, int *advx, int *advy, int *remx, int *remy);
 int  vst_load_fonts(int handle, int select);           // map OS/Fonts; -> extra-font count
 void vst_unload_fonts(int handle, int select);         // no-op
+
+// ---- Extended text / colour attributes (NVDI/FSM) -------------------------
+int  vst_fg_color(int handle, int pen);                // text foreground; -> previous
+int  vst_bg_color(int handle, int pen);                // opaque text bg (pen<0 = none); -> prev
+void v_setrgb(int handle, int index, int r, int g, int b);   // set a pen, 8-bit RGB
+int  vst_name(int handle, const char *name, int *id);  // select face by family name; -> id (0 none)
+int  vst_arbpt32(int handle, long point_16_16, int *wc, int *hc, int *wcell, int *hcell);
+// Character width independent of height (condensed/expanded text).  setsize in
+// points, width in pixels; width 0 restores a square cell.
+int  vst_setsize(int handle, int width_pts, int *wc, int *hc, int *wcell, int *hcell);
+int  vst_setsize32(int handle, long width_16_16, int *wc, int *hc, int *wcell, int *hcell);
+int  vst_width(int handle, int width_px, int *wc, int *hc, int *wcell, int *hcell);
+int  vst_skew(int handle, int skew_tenths);            // text shear, tenths of a degree
+int  vst_kern(int handle, int mode);                   // pair kerning; -> mode in effect (0 if unsupported)
+void vst_track_offset(int handle, int offset);         // extra uniform letter-spacing (px)
+int  vst_charmap(int handle, int mode);                // -> VDI_MAP_UNICODE (Unicode-only device)
+int  vst_map_mode(int handle, int mode);               // -> VDI_MAP_UNICODE
+void vsf_xperimeter(int handle, int on);               // perimeter using the current line style
 void v_pline(int handle, int n, const int16_t *pxy);   // n point-pairs
 void v_pmarker(int handle, int n, const int16_t *pxy); // markers at n points
 void vsm_type(int handle, int type);                   // VDI_MK_*

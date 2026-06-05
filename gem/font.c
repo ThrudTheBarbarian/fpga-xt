@@ -32,9 +32,9 @@ typedef struct {
 
 typedef struct gnode { unsigned cp; glyph g; struct gnode *next; } gnode;
 
-struct font {                           // a face at one pixel size
+struct font {                           // a face at one (width x height) px size
     font_face *owner;                   // for the shared FT_Face + tracking
-    int        px, height, ascent, max_adv;
+    int        px, wpx, height, ascent, max_adv;   // wpx = cell width (anisotropic)
     glyph      ascii[ASCII_N];          // 0..127, lazily rasterised
     gnode     *hash[GHASH];             // >= 128
     font      *next;                    // next sized view of the same face
@@ -43,6 +43,8 @@ struct font {                           // a face at one pixel size
 struct font_face {
     FT_Face ft;
     int     tracking;                   // extra px added to each glyph advance
+    int     track_off;                  // vst_track_offset (extra letter-spacing)
+    int     kern;                       // vst_kern: apply pair kerning when the face has it
     font   *sizes;                      // linked list of sized views
 };
 
@@ -76,19 +78,42 @@ const char *font_face_name(const font_face *face) {
     return (face && face->ft && face->ft->family_name) ? face->ft->family_name : "";
 }
 
-font *font_at(font_face *face, int px) {
-    if (!face || px < 1) return NULL;
-    for (font *f = face->sizes; f; f = f->next) if (f->px == px) return f;
+font *font_at_wh(font_face *face, int wpx, int hpx) {
+    if (!face || hpx < 1) return NULL;
+    if (wpx < 1) wpx = hpx;
+    for (font *f = face->sizes; f; f = f->next) if (f->px == hpx && f->wpx == wpx) return f;
     font *f = calloc(1, sizeof(*f));
     if (!f) return NULL;
-    f->owner = face; f->px = px;
-    if (FT_Set_Pixel_Sizes(face->ft, 0, px)) { free(f); return NULL; }
+    f->owner = face; f->px = hpx; f->wpx = wpx;
+    if (FT_Set_Pixel_Sizes(face->ft, wpx, hpx)) { free(f); return NULL; }
     f->ascent  = (int)(face->ft->size->metrics.ascender    >> 6);
     f->height  = (int)(face->ft->size->metrics.height      >> 6);
     f->max_adv = (int)(face->ft->size->metrics.max_advance >> 6);
     f->next = face->sizes; face->sizes = f;
     return f;
 }
+font *font_at(font_face *face, int px) { return font_at_wh(face, px, px); }
+
+// vst_kern / vst_track_offset / vst_skew support flags on the face.
+int  font_face_set_kern(font_face *face, int on) {       // -> 1 if actually kerning
+    if (!face) return 0;
+    face->kern = on && FT_HAS_KERNING(face->ft);
+    return face->kern;
+}
+int  font_face_has_kern(const font_face *face) { return face && FT_HAS_KERNING(face->ft); }
+void font_face_set_track(font_face *face, int off) { if (face) face->track_off = off; }
+
+// Pair-kern delta (px) between two codepoints at this view's size; 0 unless
+// kerning is enabled and the face has a kern table.  The caller sets the size.
+static int kern_px(font *f, unsigned prev, unsigned cur) {
+    if (!prev || !f->owner->kern || !FT_HAS_KERNING(f->owner->ft)) return 0;
+    FT_Face ft = f->owner->ft;
+    FT_Vector k;
+    if (FT_Get_Kerning(ft, FT_Get_Char_Index(ft, prev), FT_Get_Char_Index(ft, cur),
+                       FT_KERNING_DEFAULT, &k)) return 0;
+    return (int)(k.x >> 6);
+}
+static int face_trk(const font *f) { return f->owner->tracking + f->owner->track_off; }
 
 int font_height(const font *f)      { return f ? f->height  : 0; }
 int font_ascent(const font *f)      { return f ? f->ascent  : 0; }
@@ -140,7 +165,7 @@ static unsigned utf8_next(const char **ps) {
 }
 
 static void raster_into(font *f, glyph *g, unsigned cp) {
-    FT_Set_Pixel_Sizes(f->owner->ft, 0, f->px);     // sized views share the FT_Face
+    FT_Set_Pixel_Sizes(f->owner->ft, f->wpx, f->px);   // sized views share the FT_Face
     if (FT_Load_Char(f->owner->ft, cp, FT_LOAD_RENDER)) { g->ready = 1; return; }
     FT_GlyphSlot s = f->owner->ft->glyph;
     FT_Bitmap *bm = &s->bitmap;
@@ -175,10 +200,13 @@ static const glyph *glyph_get(font *f, unsigned cp) {
 
 int font_text_width(font *f, const char *s) {
     if (!f || !s) return 0;
-    int w = 0, trk = f->owner->tracking;
+    int w = 0, trk = face_trk(f);
+    unsigned prev = 0;
+    if (f->owner->kern) FT_Set_Pixel_Sizes(f->owner->ft, f->wpx, f->px);
     for (const char *p = s; *p; ) {
-        const glyph *g = glyph_get(f, utf8_next(&p));
-        if (g) w += g->advance + trk;
+        unsigned cp = utf8_next(&p);
+        const glyph *g = glyph_get(f, cp);
+        if (g) { w += kern_px(f, prev, cp) + g->advance + trk; prev = cp; }
     }
     return w;
 }
@@ -192,7 +220,7 @@ int font_char_metrics(font *f, unsigned cp, int *lbear, int *rover) {
     if (!f) return 0;
     const glyph *g = glyph_get(f, cp);
     if (!g) return 0;
-    int adv = g->advance + f->owner->tracking;
+    int adv = g->advance + face_trk(f);
     if (lbear) *lbear = g->left > 0 ? g->left : 0;
     int right = g->left + g->w;            // ink right edge from cell origin
     if (rover) *rover = right > adv ? right - adv : 0;
@@ -204,19 +232,19 @@ int font_char_metrics(font *f, unsigned cp, int *lbear, int *rover) {
 // (the whole point of the NVDI fractional text calls).
 long font_f_advance(font *f, unsigned cp) {
     if (!f) return 0;
-    FT_Set_Pixel_Sizes(f->owner->ft, 0, f->px);
+    FT_Set_Pixel_Sizes(f->owner->ft, f->wpx, f->px);
     if (FT_Load_Char(f->owner->ft, cp, FT_LOAD_NO_HINTING)) return 0;
-    return f->owner->ft->glyph->advance.x + ((long)f->owner->tracking << 6);
+    return f->owner->ft->glyph->advance.x + ((long)face_trk(f) << 6);
 }
 // Fractional pen advance for a whole UTF-8 string, in 26.6 fixed.
 long font_f_text_width(font *f, const char *s) {
     if (!f || !s) return 0;
-    FT_Set_Pixel_Sizes(f->owner->ft, 0, f->px);
+    FT_Set_Pixel_Sizes(f->owner->ft, f->wpx, f->px);
     long w = 0;
     for (const char *p = s; *p; ) {
         unsigned cp = utf8_next(&p);
         if (FT_Load_Char(f->owner->ft, cp, FT_LOAD_NO_HINTING)) continue;
-        w += f->owner->ft->glyph->advance.x + ((long)f->owner->tracking << 6);
+        w += f->owner->ft->glyph->advance.x + ((long)face_trk(f) << 6);
     }
     return w;
 }
@@ -265,12 +293,16 @@ void font_draw(font *f, gfx_surface *d, int x, int y, const char *s,
                uint32_t rgba, const int *clip, int mode) {
     if (!f || !s || !d) return;
     int cx0, cy0, cx1, cy1; clip_of(d, clip, &cx0, &cy0, &cx1, &cy1);
-    int pen = x, base = y + f->ascent, trk = f->owner->tracking;
+    int pen = x, base = y + f->ascent, trk = face_trk(f);
+    unsigned prev = 0;
+    if (f->owner->kern) FT_Set_Pixel_Sizes(f->owner->ft, f->wpx, f->px);
     for (const char *p = s; *p; ) {
-        const glyph *g = glyph_get(f, utf8_next(&p));
+        unsigned cp = utf8_next(&p);
+        const glyph *g = glyph_get(f, cp);
         if (!g) continue;
+        pen += kern_px(f, prev, cp);
         blit_glyph(d, pen, base, g, rgba, cx0, cy0, cx1, cy1, mode);
-        pen += g->advance + trk;
+        pen += g->advance + trk; prev = cp;
     }
 }
 
@@ -280,7 +312,7 @@ void font_draw_justified(font *f, gfx_surface *d, int x, int y, const char *s,
                          int width, int word_space, int char_space,
                          uint32_t rgba, const int *clip, int mode) {
     if (!f || !s || !d) return;
-    int trk = f->owner->tracking;
+    int trk = face_trk(f);
     int natural = 0, n = 0, nspaces = 0;                 // measure
     for (const char *p = s; *p; ) {
         unsigned cp = utf8_next(&p);
@@ -346,18 +378,21 @@ static void stamp_line(gfx_surface *d, double x0, double y0, double x1, double y
 }
 
 void font_draw_fx(font *f, gfx_surface *d, int x, int y, const char *s,
-                  int angle_tenths, int effects, uint32_t rgba, const int *clip, int mode) {
+                  int angle_tenths, int effects, int skew_tenths,
+                  uint32_t rgba, const int *clip, int mode) {
     if (!f || !s || !d) return;
     int cx0, cy0, cx1, cy1; clip_of(d, clip, &cx0, &cy0, &cx1, &cy1);
     double a = angle_tenths * (M_PI / 1800.0);          // CCW
     double c = cos(a), sn = sin(a);
-    double k = (effects & FX_ITALIC) ? 0.21 : 0.0;      // italic shear (tan ~12 deg)
+    // Shear: the italic effect adds a fixed ~12deg, vst_skew an arbitrary angle.
+    double k = (effects & FX_ITALIC) ? 0.21 : 0.0;
+    if (skew_tenths) k += tan(skew_tenths * (M_PI / 1800.0));
     // M = rotation . shear  (shear glyph first, then rotate)
     FT_Matrix m = {
         (FT_Fixed)lround(c * 65536.0),              (FT_Fixed)lround((c*k - sn) * 65536.0),
         (FT_Fixed)lround(sn * 65536.0),             (FT_Fixed)lround((sn*k + c) * 65536.0) };
     FT_Face face = f->owner->ft;
-    FT_Set_Pixel_Sizes(face, 0, f->px);
+    FT_Set_Pixel_Sizes(face, f->wpx, f->px);
     FT_Pos bold = (effects & FX_BOLD) ? (FT_Pos)(f->px * 64 / 22) : 0;
     int light = (effects & FX_LIGHT) ? 1 : 0;
     int sh = (effects & FX_SHADOW) ? (f->px / 12 + 1) : 0;
@@ -367,7 +402,7 @@ void font_draw_fx(font *f, gfx_surface *d, int x, int y, const char *s,
         FT_Pos sr = f->px * 64 / 48; if (sr < 48) sr = 48;   // thin contour (~1px), so it stays hollow
         FT_Stroker_Set(stroker, sr, FT_STROKER_LINECAP_ROUND, FT_STROKER_LINEJOIN_ROUND, 0); }
 
-    double penx = x, peny = y + f->ascent, trk = f->owner->tracking;
+    double penx = x, peny = y + f->ascent, trk = face_trk(f);
     double startx = penx, starty = peny;
     for (const char *p = s; *p; ) {
         unsigned cp = utf8_next(&p);

@@ -35,15 +35,20 @@ void op_gtext(vdi_pb *pb) {
     uint32_t pen = vdi_pen_rgba(w->text_color);
 
     if (w->text_rotation) {                              // rotated: pivot at the anchor
-        font_draw_fx(f, w->target, x, y, buf, w->text_rotation, w->text_effects, pen, clip, w->wr_mode);
+        font_draw_fx(f, w->target, x, y, buf, w->text_rotation, w->text_effects,
+                     w->text_skew, pen, clip, w->wr_mode);
         return;
     }
     switch (w->text_halign) {                            // horizontal alignment (unrotated)
         case VDI_TA_CENTER: x -= font_text_width(f, buf) / 2; break;
         case VDI_TA_RIGHT:  x -= font_text_width(f, buf);     break;
     }
-    if (w->text_effects)                                 // upright with effects
-        font_draw_fx(f, w->target, x, y, buf, 0, w->text_effects, pen, clip, w->wr_mode);
+    if (w->text_bg_color >= 0 && w->wr_mode == VDI_MD_REPLACE) {   // opaque text: paint the cell box
+        int tw = font_text_width(f, buf), H = font_height(f);
+        vdi_fill_rect(w, x, y, x + tw - 1, y + H - 1, w->text_bg_color);
+    }
+    if (w->text_effects || w->text_skew)                 // upright with effects/skew
+        font_draw_fx(f, w->target, x, y, buf, 0, w->text_effects, w->text_skew, pen, clip, w->wr_mode);
     else
         font_draw(f, w->target, x, y, buf, pen, clip, w->wr_mode);
 }

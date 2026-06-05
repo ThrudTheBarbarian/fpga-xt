@@ -27,6 +27,7 @@ int vdi_ws_alloc(void) {
         ws_tab[i].marker_type = 3; ws_tab[i].marker_height = 11; ws_tab[i].marker_color = 1;
         ws_tab[i].wr_mode = VDI_MD_REPLACE;
         ws_tab[i].text_font_id = 1; ws_tab[i].text_valign = VDI_TA_TOP;
+        ws_tab[i].text_bg_color = -1;                         // no opaque text bg
         return i + 1;
     }
     return 0;
@@ -271,6 +272,7 @@ void vdi_init(gfx_surface *default_target) {
     ws_tab[0].marker_type = 3; ws_tab[0].marker_height = 11; ws_tab[0].marker_color = 1;
     ws_tab[0].wr_mode = VDI_MD_REPLACE;
     ws_tab[0].text_font_id = 1; ws_tab[0].text_valign = VDI_TA_TOP;
+    ws_tab[0].text_bg_color = -1;                              // no opaque text bg
 }
 
 font_face *g_default_face;
@@ -318,7 +320,7 @@ font *vdi_ws_font(const vdi_ws *w) {
     font_face *face = w->text_face ? w->text_face : g_default_face;
     if (!face) return NULL;
     int px = w->text_px > 0 ? w->text_px : VDI_TEXT_PX_DEFAULT;
-    return font_at(face, px);
+    return font_at_wh(face, w->text_wpx > 0 ? w->text_wpx : px, px);
 }
 
 void vdi_call(vdi_pb *pb) {
@@ -360,6 +362,15 @@ void vdi_call(vdi_pb *pb) {
         case VDI_QT_F_EXTENT: op_qt_f_extent(pb); break;
         case VDI_QT_ADVANCE:  op_qt_advance(pb);  break;
         case VDI_ST_ARBPT:    op_st_arbpt(pb);    break;
+        case VDI_V_SETRGB:    op_v_setrgb(pb);    break;
+        case VDI_ST_FG_COLOR: op_st_fg_color(pb); break;
+        case VDI_ST_BG_COLOR: op_st_bg_color(pb); break;
+        case VDI_ST_NAME:     op_st_name(pb);     break;
+        case VDI_ST_SETSIZE:  op_st_setsize(pb);  break;
+        case VDI_ST_WIDTH:    op_st_width(pb);    break;
+        case VDI_ST_SKEW:     op_st_skew(pb);     break;
+        case VDI_ST_KERN:     op_st_kern(pb);     break;
+        case VDI_ST_CHARMAP:  op_st_charmap(pb);  break;
         case VDI_SIN_MODE:    op_sin_mode(pb);   break;
         case VDI_LOCATOR:     op_locator(pb);    break;
         case VDI_VALUATOR:    op_valuator(pb);   break;

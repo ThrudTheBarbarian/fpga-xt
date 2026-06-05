@@ -639,6 +639,56 @@ int main(void) {
     CHECK(dist[3] == font_ascent(font_at(ef, 24)));     // ascent line = font ascent
     CHECK(dist[3] + dist[1] <= font_height(font_at(ef, 24)) + 2);  // asc+desc ~ line
 
+    // --- Extended text / colour attributes (NVDI/FSM) ---
+    // v_setrgb: set a pen straight from 8-bit RGB.
+    v_setrgb(he, 50, 10, 20, 30);
+    CHECK(vdi_pen_rgba(50) == GFX_RGB(10, 20, 30));
+
+    // vst_fg_color: alias of the text pen; returns the previous value.
+    vst_color(he, 1);
+    CHECK(vst_fg_color(he, 2) == 1);                    // previous was 1
+    vst_color(he, 1);                                   // restore
+
+    // vst_bg_color: opaque text fills its cell box first (-1 = none = blend).
+    vswr_mode(he, VDI_MD_REPLACE);                      // opaque mode (XOR left set earlier)
+    vst_height(he, 16, NULL, NULL, NULL, NULL); vst_color(he, 1);
+    for (int i = 0; i < 80 * 40; i++) es->px[i] = 0;
+    vst_bg_color(he, 2);                                // red opaque background
+    v_gtext(he, 2, 2, "x");
+    int redbg = 0; for (int i = 0; i < 80 * 40; i++) if (es->px[i] == vdi_pen_rgba(2)) redbg++;
+    CHECK(redbg > 0);                                   // background painted behind the glyph
+    CHECK(vst_bg_color(he, -1) == 2);                   // disable, returns previous
+
+    // vst_name: select the system face by its family name -> id 1.
+    char sysname[40]; vqt_name(he, 1, sysname);
+    int nid = -1;
+    CHECK(vst_name(he, sysname, &nid) == 1 && nid == 1);
+
+    // vst_setsize / vst_width: a narrow cell makes the string narrower.
+    vst_height(he, 24, NULL, NULL, NULL, NULL);
+    int16_t we[8]; vqt_extent(he, "MMMM", we); int wideW = we[2] - we[0];
+    vst_width(he, 8, NULL, NULL, NULL, NULL);           // 8px cells (condensed)
+    vqt_extent(he, "MMMM", we); int narrowW = we[2] - we[0];
+    CHECK(narrowW > 0 && narrowW < wideW);
+    vst_height(he, 24, NULL, NULL, NULL, NULL);         // resets to square
+
+    // vst_arbpt32: fractional size rounds to whole px for the raster.
+    CHECK(vst_arbpt32(he, 18L << 16, NULL, NULL, NULL, NULL) == 18);
+    CHECK(vst_arbpt32(he, (20L << 16) | 0x8000, NULL, NULL, NULL, NULL) == 21);  // 20.5 -> 21
+
+    // vst_skew: returns the previous shear; renders without disturbing metrics.
+    CHECK(vst_skew(he, 200) == 0);
+    CHECK(vst_skew(he, 0) == 200);
+
+    // vst_kern: engages only if the face has a kern table; reports what's in effect.
+    CHECK(vst_kern(he, 1) == (font_face_has_kern(ef) ? 1 : 0));
+    vst_kern(he, 0);
+    vst_track_offset(he, 0);
+
+    // vst_charmap / vst_map_mode: Unicode-only device.
+    CHECK(vst_charmap(he, 0) == VDI_MAP_UNICODE);
+    CHECK(vst_map_mode(he, 1) == VDI_MAP_UNICODE);
+
     // vst_arbpt: arbitrary point size, reports metrics + returns the size used.
     int aw = 0, ah = 0, acw = 0, ach = 0;
     CHECK(vst_arbpt(he, 22, &aw, &ah, &acw, &ach) == 22);

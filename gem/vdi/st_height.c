@@ -13,6 +13,7 @@ int vdi_set_text_px(vdi_ws *w, int px, int16_t *ptsout) {
     font *f = font_at(face, px);
     if (!f) return 0;
     w->text_px = px;
+    w->text_wpx = 0;                                 // height sets a square cell (vst_setsize overrides)
     if (ptsout) {
         ptsout[0] = (int16_t)font_max_advance(f);   // char width
         ptsout[1] = (int16_t)font_ascent(f);        // char height (cap-ish)

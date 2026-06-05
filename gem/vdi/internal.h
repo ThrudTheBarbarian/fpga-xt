@@ -34,6 +34,9 @@ typedef struct {
     int          text_valign;      // VDI_TA_* (default TOP)
     int          text_rotation;    // tenths of a degree, CCW (vst_rotation)
     int          text_effects;     // FX_* bitmask (vst_effects)
+    int          text_skew;        // extra shear, tenths of a degree (vst_skew)
+    int          text_wpx;         // cell width override px (vst_setsize/width; 0 = square)
+    int          text_bg_color;    // opaque-text background pen, or -1 = none (vst_bg_color)
     int          fill_interior;    // VDI_FIS_*
     int          fill_style;       // pattern/hatch index (1-based)
     int          fill_perimeter;   // outline filled areas (default 1)
@@ -126,6 +129,15 @@ void op_qt_fontinfo(vdi_pb *pb);
 void op_qt_f_extent(vdi_pb *pb);
 void op_qt_advance(vdi_pb *pb);
 void op_st_arbpt(vdi_pb *pb);
+void op_st_fg_color(vdi_pb *pb);
+void op_st_bg_color(vdi_pb *pb);
+void op_v_setrgb(vdi_pb *pb);
+void op_st_name(vdi_pb *pb);
+void op_st_setsize(vdi_pb *pb);
+void op_st_width(vdi_pb *pb);
+void op_st_skew(vdi_pb *pb);
+void op_st_kern(vdi_pb *pb);
+void op_st_charmap(vdi_pb *pb);
 void op_sin_mode(vdi_pb *pb);
 void op_locator(vdi_pb *pb);
 void op_valuator(vdi_pb *pb);

@@ -13,3 +13,11 @@ void vsf_perimeter(int handle, int on) {
     g_intin[0] = (int16_t)(on ? 1 : 0);
     vdi_emit(VDI_SF_PERIM, 0, handle, 0, 1);
 }
+
+// vsf_xperimeter — same toggle, but the perimeter is drawn with the current
+// line type/width (which our perimeter already does, via the line machinery),
+// so it's vsf_perimeter with that contract made explicit.
+void vsf_xperimeter(int handle, int on) {
+    g_intin[0] = (int16_t)(on ? 1 : 0);
+    vdi_emit(VDI_SF_PERIM, 1, handle, 0, 1);
+}
