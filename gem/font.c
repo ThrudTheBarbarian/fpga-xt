@@ -2,9 +2,11 @@
 //
 // One shared FT_Library (lazily created).  A font_face wraps an FT_Face; a font
 // is that face at a pixel size (font_at), holding its own rasterised alpha-
-// coverage cache.  Sized views share the FT_Face, so glyph_get re-selects the
-// size before rasterising (cached glyphs are untouched afterwards).  Caches
-// ASCII (0..127) inline.  Blend keeps the destination opaque (alpha 0xFF).
+// coverage cache.  Strings are UTF-8: ASCII (0..127) is cached in an inline
+// array (the common path); higher codepoints hang off a small chained hash, so
+// accented Latin, dashes, arrows etc. cost only what's used.  Sized views share
+// the FT_Face, so a raster re-selects the size first (cached glyphs untouched).
+// Blend keeps the destination opaque (alpha 0xFF).
 
 #include "font.h"
 #include <stdlib.h>
@@ -13,7 +15,8 @@
 #include <ft2build.h>
 #include FT_FREETYPE_H
 
-#define GLYPH_CACHE 128                 // ASCII 0..127
+#define ASCII_N 128
+#define GHASH   97                      // buckets for codepoints >= 128
 
 typedef struct {
     int      ready;                     // 0 = not yet rasterised
@@ -23,10 +26,13 @@ typedef struct {
     uint8_t *cov;                       // w*h alpha coverage (malloc'd), or NULL
 } glyph;
 
+typedef struct gnode { unsigned cp; glyph g; struct gnode *next; } gnode;
+
 struct font {                           // a face at one pixel size
     font_face *owner;                   // for the shared FT_Face + tracking
     int        px, height, ascent, max_adv;
-    glyph      cache[GLYPH_CACHE];
+    glyph      ascii[ASCII_N];          // 0..127, lazily rasterised
+    gnode     *hash[GHASH];             // >= 128
     font      *next;                    // next sized view of the same face
 };
 
@@ -50,7 +56,9 @@ void font_face_close(font_face *face) {
     if (!face) return;
     for (font *f = face->sizes; f; ) {
         font *next = f->next;
-        for (int i = 0; i < GLYPH_CACHE; i++) free(f->cache[i].cov);
+        for (int i = 0; i < ASCII_N; i++) free(f->ascii[i].cov);
+        for (int b = 0; b < GHASH; b++)
+            for (gnode *n = f->hash[b]; n; ) { gnode *nx = n->next; free(n->g.cov); free(n); n = nx; }
         free(f);
         f = next;
     }
@@ -79,13 +87,28 @@ int font_ascent(const font *f)      { return f ? f->ascent  : 0; }
 int font_max_advance(const font *f) { return f ? f->max_adv : 0; }
 int font_size(const font *f)        { return f ? f->px      : 0; }
 
-// Rasterise codepoint c into this view's cache (no-op if already there).
-static const glyph *glyph_get(font *f, unsigned c) {
-    if (c >= GLYPH_CACHE) c = '?';
-    glyph *g = &f->cache[c];
-    if (g->ready) return g;
+// Decode one UTF-8 codepoint and advance *ps past it.  Malformed bytes yield
+// U+FFFD and advance one byte.  Never reads past a NUL (it fails as a bad
+// continuation byte first).
+static unsigned utf8_next(const char **ps) {
+    const unsigned char *s = (const unsigned char *)(*ps);
+    unsigned c = s[0], cp; int n;
+    if      (c < 0x80)        { cp = c;        n = 1; }
+    else if ((c & 0xE0)==0xC0){ cp = c & 0x1F; n = 2; }
+    else if ((c & 0xF0)==0xE0){ cp = c & 0x0F; n = 3; }
+    else if ((c & 0xF8)==0xF0){ cp = c & 0x07; n = 4; }
+    else { *ps = (const char *)(s + 1); return 0xFFFD; }
+    for (int i = 1; i < n; i++) {
+        if ((s[i] & 0xC0) != 0x80) { *ps = (const char *)(s + 1); return 0xFFFD; }
+        cp = (cp << 6) | (s[i] & 0x3F);
+    }
+    *ps = (const char *)(s + n);
+    return cp;
+}
+
+static void raster_into(font *f, glyph *g, unsigned cp) {
     FT_Set_Pixel_Sizes(f->owner->ft, 0, f->px);     // sized views share the FT_Face
-    if (FT_Load_Char(f->owner->ft, c, FT_LOAD_RENDER)) return NULL;
+    if (FT_Load_Char(f->owner->ft, cp, FT_LOAD_RENDER)) { g->ready = 1; return; }
     FT_GlyphSlot s = f->owner->ft->glyph;
     FT_Bitmap *bm = &s->bitmap;
     g->w = bm->width; g->h = bm->rows;
@@ -99,13 +122,31 @@ static const glyph *glyph_get(font *f, unsigned c) {
                        bm->buffer + (size_t)row * bm->pitch, g->w);
     }
     g->ready = 1;
-    return g;
+}
+
+// Cached glyph for a codepoint: inline array for ASCII, chained hash above it.
+static const glyph *glyph_get(font *f, unsigned cp) {
+    if (cp < ASCII_N) {
+        glyph *g = &f->ascii[cp];
+        if (!g->ready) raster_into(f, g, cp);
+        return g;
+    }
+    unsigned h = cp % GHASH;
+    for (gnode *n = f->hash[h]; n; n = n->next) if (n->cp == cp) return &n->g;
+    gnode *n = calloc(1, sizeof(*n));
+    if (!n) return NULL;
+    n->cp = cp; raster_into(f, &n->g, cp);
+    n->next = f->hash[h]; f->hash[h] = n;
+    return &n->g;
 }
 
 int font_text_width(font *f, const char *s) {
     if (!f || !s) return 0;
     int w = 0, trk = f->owner->tracking;
-    for (; *s; s++) { const glyph *g = glyph_get(f, (unsigned char)*s); if (g) w += g->advance + trk; }
+    for (const char *p = s; *p; ) {
+        const glyph *g = glyph_get(f, utf8_next(&p));
+        if (g) w += g->advance + trk;
+    }
     return w;
 }
 
@@ -131,8 +172,8 @@ void font_draw(font *f, gfx_surface *d, int x, int y, const char *s,
         if (clip[2] < cx1) cx1 = clip[2]; if (clip[3] < cy1) cy1 = clip[3];
     }
     int pen = x, base = y + f->ascent, trk = f->owner->tracking;
-    for (; *s; s++) {
-        const glyph *g = glyph_get(f, (unsigned char)*s);
+    for (const char *p = s; *p; ) {
+        const glyph *g = glyph_get(f, utf8_next(&p));
         if (!g) continue;
         if (g->cov) {
             int gx = pen + g->left, gy = base - g->top;

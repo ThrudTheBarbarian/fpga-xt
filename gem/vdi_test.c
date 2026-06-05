@@ -93,6 +93,11 @@ int main(void) {
         int pt = vst_point(ht, 18, NULL, NULL, NULL, NULL);  // 72dpi => 18px
         CHECK(pt == 18);
 
+        // UTF-8: a multibyte codepoint is one glyph, not one-per-byte.
+        font *f24 = font_at(tf, 24);
+        CHECK(font_text_width(f24, "é") < font_text_width(f24, "??"));   // é (2 bytes)
+        CHECK(font_text_width(f24, "—") < font_text_width(f24, "???"));  // — (3 bytes)
+
         for (int i = 0; i < 220 * 64; i++) ts->px[i] = WHITE;
         int16_t cl[4] = { 200, 56, 201, 57 };          // clip far from the text
         vs_clip(ht, 1, cl);
