@@ -21,6 +21,7 @@ int vdi_ws_alloc(void) {
         memset(&ws_tab[i], 0, sizeof(ws_tab[i]));
         ws_tab[i].used = 1; ws_tab[i].line_color = 1;
         ws_tab[i].fill_color = 1; ws_tab[i].text_color = 1; ws_tab[i].fill_interior = 1;
+        ws_tab[i].fill_style = 1; ws_tab[i].fill_perimeter = 1;
         ws_tab[i].text_valign = VDI_TA_TOP;
         return i + 1;
     }
@@ -57,6 +58,36 @@ static void pen_init(void) {
     for (int i = 0; i < 256; i++) pen_tab[i] = (i < 16) ? vdi16[i] : GFX_RGB(0,0,0);
 }
 uint32_t vdi_pen_rgba(int pen) { return pen_tab[pen & 0xFF]; }
+void vdi_set_pen(int index, uint32_t rgba) { pen_tab[index & 0xFF] = rgba; }
+
+// ---- Fill patterns (8x8 masks; bit 1<<(x&7) of row y&7) --------------------
+static const uint8_t pat_d12[8]   = {0x11,0x00,0x44,0x00,0x11,0x00,0x44,0x00}; // ~12%
+static const uint8_t pat_d25[8]   = {0x11,0x44,0x11,0x44,0x11,0x44,0x11,0x44}; // ~25%
+static const uint8_t pat_d50[8]   = {0x55,0xAA,0x55,0xAA,0x55,0xAA,0x55,0xAA}; // checker
+static const uint8_t pat_d75[8]   = {0xEE,0xBB,0xEE,0xBB,0xEE,0xBB,0xEE,0xBB}; // ~75%
+static const uint8_t hat_hori[8]  = {0xFF,0x00,0x00,0x00,0xFF,0x00,0x00,0x00}; // horizontal
+static const uint8_t hat_vert[8]  = {0x11,0x11,0x11,0x11,0x11,0x11,0x11,0x11}; // vertical
+static const uint8_t hat_cross[8] = {0xFF,0x11,0x11,0x11,0xFF,0x11,0x11,0x11}; // grid
+static const uint8_t hat_diag1[8] = {0x11,0x22,0x44,0x88,0x11,0x22,0x44,0x88}; // diagonal
+static const uint8_t hat_diag2[8] = {0x88,0x44,0x22,0x11,0x88,0x44,0x22,0x11}; // anti-diagonal
+static const uint8_t hat_dcross[8]= {0x99,0x5A,0x3C,0xDB,0xDB,0x3C,0x5A,0x99}; // diagonal grid
+
+const uint8_t *vdi_fill_mask(int interior, int style) {
+    if (interior == VDI_FIS_PATTERN) {
+        static const uint8_t *const p[] = { pat_d12, pat_d25, pat_d50, pat_d75 };
+        int n = (int)(sizeof p / sizeof p[0]);
+        int i = style - 1; if (i < 0) i = 0; if (i >= n) i = n - 1;
+        return p[i];
+    }
+    if (interior == VDI_FIS_HATCH) {
+        static const uint8_t *const h[] = { hat_hori, hat_vert, hat_cross,
+                                            hat_diag1, hat_diag2, hat_dcross };
+        int n = (int)(sizeof h / sizeof h[0]);
+        int i = style - 1; if (i < 0) i = 0; if (i >= n) i = n - 1;
+        return h[i];
+    }
+    return NULL;        // solid / hollow
+}
 
 // ---- Clipped primitives ---------------------------------------------------
 void vdi_fill_rect(const vdi_ws *w, int x0, int y0, int x1, int y1, int pen) {
@@ -67,6 +98,34 @@ void vdi_fill_rect(const vdi_ws *w, int x0, int y0, int x1, int y1, int pen) {
     if (x1 > cx1) x1 = cx1; if (y1 > cy1) y1 = cy1;
     if (x0 > x1 || y0 > y1) return;
     gfx_fill_rect(w->target, x0, y0, x1 - x0 + 1, y1 - y0 + 1, pen_tab[pen & 0xFF]);
+}
+
+void vdi_fill_rect_masked(const vdi_ws *w, int x0, int y0, int x1, int y1,
+                          int pen, const uint8_t *mask) {
+    if (!mask) { vdi_fill_rect(w, x0, y0, x1, y1, pen); return; }
+    if (x0 > x1) { int t = x0; x0 = x1; x1 = t; }
+    if (y0 > y1) { int t = y0; y0 = y1; y1 = t; }
+    int cx0, cy0, cx1, cy1; vdi_ws_clip(w, &cx0, &cy0, &cx1, &cy1);
+    if (x0 < cx0) x0 = cx0; if (y0 < cy0) y0 = cy0;
+    if (x1 > cx1) x1 = cx1; if (y1 > cy1) y1 = cy1;
+    if (x0 > x1 || y0 > y1) return;
+    uint32_t rgba = pen_tab[pen & 0xFF];
+    gfx_surface *s = w->target;
+    for (int y = y0; y <= y1; y++) {
+        uint8_t bits = mask[y & 7];
+        uint32_t *row = s->px + (size_t)y * s->stride;
+        for (int x = x0; x <= x1; x++)
+            if (bits & (1u << (x & 7))) row[x] = rgba;     // pattern bit set -> ink
+    }
+}
+
+void vdi_rect_outline(const vdi_ws *w, int x0, int y0, int x1, int y1, int pen) {
+    if (x0 > x1) { int t = x0; x0 = x1; x1 = t; }
+    if (y0 > y1) { int t = y0; y0 = y1; y1 = t; }
+    vdi_line(w, x0, y0, x1, y0, pen);   // top
+    vdi_line(w, x0, y1, x1, y1, pen);   // bottom
+    vdi_line(w, x0, y0, x0, y1, pen);   // left
+    vdi_line(w, x1, y0, x1, y1, pen);   // right
 }
 static int cs_code(int x, int y, int cx0, int cy0, int cx1, int cy1) {
     int c = 0;
@@ -110,6 +169,7 @@ void vdi_init(gfx_surface *default_target) {
     ws_tab[0].used = 1; ws_tab[0].target = default_target;     // handle 1 = physical
     ws_tab[0].line_color = 1; ws_tab[0].fill_color = 1;
     ws_tab[0].text_color = 1; ws_tab[0].fill_interior = 1;
+    ws_tab[0].fill_style = 1; ws_tab[0].fill_perimeter = 1;
     ws_tab[0].text_valign = VDI_TA_TOP;
 }
 
@@ -132,8 +192,11 @@ void vdi_call(vdi_pb *pb) {
         case VDI_ST_HEIGHT:   op_st_height(pb);  break;
         case VDI_ST_POINT:    op_st_point(pb);   break;
         case VDI_ST_ALIGN:    op_st_alignment(pb);break;
+        case VDI_VS_COLOR:    op_vs_color(pb);   break;
         case VDI_SF_COLOR:    op_sf_color(pb);   break;
         case VDI_SF_INTERIOR: op_sf_interior(pb);break;
+        case VDI_SF_STYLE:    op_sf_style(pb);   break;
+        case VDI_SF_PERIM:    op_sf_perimeter(pb);break;
         case VDI_CLIP:        op_clip(pb);       break;
         case VDI_PLINE:       op_pline(pb);      break;
         case VDI_GTEXT:       op_gtext(pb);      break;

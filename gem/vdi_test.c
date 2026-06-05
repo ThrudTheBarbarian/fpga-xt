@@ -126,6 +126,31 @@ int main(void) {
         font_face_close(tf);
     }
 
+    // vs_color (palette) + fill patterns/hatch + perimeter.
+    gfx_surface *fs = gfx_surface_alloc(40, 40);
+    int hf = v_opnvwk(fs);
+    int16_t redrgb[3] = { 1000, 0, 0 };
+    vs_color(hf, 5, redrgb);                            // redefine pen 5 -> pure red
+    vsf_color(hf, 5); vsf_interior(hf, VDI_FIS_SOLID); vsf_perimeter(hf, 0);
+    int16_t solid[4] = { 0, 0, 9, 9 }; vr_recfl(hf, solid);
+    CHECK(PX(fs, 3, 3) == GFX_RGB(255, 0, 0));         // pen 5 is now red
+
+    for (int i = 0; i < 40 * 40; i++) fs->px[i] = 0;   // hatch: horizontal lines
+    vsf_color(hf, 1); vsf_interior(hf, VDI_FIS_HATCH); vsf_style(hf, 1);
+    int16_t hr[4] = { 0, 0, 15, 15 }; vr_recfl(hf, hr);
+    CHECK(PX(fs, 5, 0) == vdi_pen_rgba(1));            // row 0 = hatch line
+    CHECK(PX(fs, 5, 1) == 0);                          // row 1 = gap
+    CHECK(PX(fs, 5, 4) == vdi_pen_rgba(1));            // row 4 = hatch line
+
+    for (int i = 0; i < 40 * 40; i++) fs->px[i] = 0;   // hollow + perimeter = outline only
+    vsf_color(hf, 2); vsf_interior(hf, VDI_FIS_HOLLOW); vsf_perimeter(hf, 1);
+    int16_t pr[4] = { 2, 2, 12, 12 }; vr_recfl(hf, pr);
+    CHECK(PX(fs, 7, 2) == vdi_pen_rgba(2));            // top edge drawn
+    CHECK(PX(fs, 2, 7) == vdi_pen_rgba(2));            // left edge drawn
+    CHECK(PX(fs, 7, 7) == 0);                          // interior left empty
+    v_clsvwk(hf);
+    gfx_surface_free(fs);
+
     if (fails == 0) printf("*** VDI TEST OK ***\n");
     else            printf("*** VDI TEST: %d FAIL(s) ***\n", fails);
     gfx_surface_free(s);
