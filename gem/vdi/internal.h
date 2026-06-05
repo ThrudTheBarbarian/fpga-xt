@@ -43,6 +43,7 @@ void        vdi_fill_poly(const vdi_ws *w, const int16_t *xy, int n, int pen, co
 void        vdi_polyline(const vdi_ws *w, const int16_t *xy, int n, int pen, int closed);
 void        vdi_line(const vdi_ws *w, int x0, int y0, int x1, int y1, int pen);
 void        vdi_set_pen(int index, uint32_t rgba);       // vs_color writes the palette
+gfx_surface *vdi_screen_target(void);                    // the desktop surface (physical ws)
 gfx_surface vdi_mfdb_surf(const MFDB *m, const vdi_ws *w);
 
 // Shared C-binding scratch (filled by the per-call wrappers).
@@ -55,6 +56,8 @@ int         vdi_set_text_px(vdi_ws *w, int px, int16_t *ptsout);  // size ws + r
 void        vdi_emit(int op, int sub, int handle, int npts, int nint);   // fill contrl + dispatch
 
 // ---- opcode handlers (one per vdi/<call>.c) -------------------------------
+void op_open_wk(vdi_pb *pb);
+void op_close_wk(vdi_pb *pb);
 void op_opnvwk(vdi_pb *pb);
 void op_clsvwk(vdi_pb *pb);
 void op_sl_color(vdi_pb *pb);

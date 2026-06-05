@@ -21,6 +21,8 @@
 #include <stdint.h>
 
 enum {                          // VDI opcodes (standard GEM)
+    VDI_OPEN_WK     = 1,        // v_opnwk  — open a physical device workstation
+    VDI_CLOSE_WK    = 2,        // v_clswk
     VDI_OPNVWK      = 100,
     VDI_CLSVWK      = 101,
     VDI_PLINE       = 6,
@@ -94,6 +96,10 @@ void     vdi_set_font_dir(const char *path);
 #define  VDI_TEXT_PX_DEFAULT  16
 
 // ---- C binding (fills shared arrays, calls vdi_call) ----------------------
+// Open a physical device: work_in[0] = device id (1..10 screen; 11+ no driver
+// yet => *handle == 0).  work_out (57 WORDs) gets the device caps.
+void v_opnwk(const int16_t *work_in, int *handle, int16_t *work_out);
+void v_clswk(int handle);
 int  v_opnvwk(gfx_surface *target);           // -> workstation handle (>0), 0 = fail
 void v_clsvwk(int handle);
 void vsl_color(int handle, int pen);

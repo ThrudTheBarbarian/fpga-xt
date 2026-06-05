@@ -266,6 +266,8 @@ void vdi_init(gfx_surface *default_target) {
 font_face *g_default_face;
 void vdi_set_face(font_face *face) { g_default_face = face; }
 
+gfx_surface *vdi_screen_target(void) { return ws_tab[0].target; }   // the desktop surface
+
 // The sized font a workstation draws text with: its own (set by vst_height/
 // vst_point), else the default face at the default size.
 font *vdi_ws_font(const vdi_ws *w) {
@@ -275,6 +277,8 @@ font *vdi_ws_font(const vdi_ws *w) {
 
 void vdi_call(vdi_pb *pb) {
     switch (pb->contrl[0]) {
+        case VDI_OPEN_WK:     op_open_wk(pb);    break;
+        case VDI_CLOSE_WK:    op_close_wk(pb);   break;
         case VDI_OPNVWK:      op_opnvwk(pb);     break;
         case VDI_CLSVWK:      op_clsvwk(pb);     break;
         case VDI_SL_COLOR:    op_sl_color(pb);   break;

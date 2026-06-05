@@ -207,6 +207,18 @@ int main(void) {
     CHECK(vst_load_fonts(1, 0) == 0);                  // missing dir -> 0
     vst_unload_fonts(1, 0);                            // no-op, must not crash
 
+    // v_opnwk: screen device opens with a handle + extent; others report failure.
+    int16_t win[11] = { 1 };                           // device 1 = screen
+    int hw = -1; int16_t wout[57] = { 0 };
+    v_opnwk(win, &hw, wout);
+    CHECK(hw > 0);
+    CHECK(wout[0] > 0 && wout[1] > 0);                 // device extent in work_out
+    v_clswk(hw);
+    int16_t pin[11] = { 21 };                          // device 21 = printer (no driver)
+    int hp = -1;
+    v_opnwk(pin, &hp, wout);
+    CHECK(hp == 0);                                    // failed to open
+
     if (fails == 0) printf("*** VDI TEST OK ***\n");
     else            printf("*** VDI TEST: %d FAIL(s) ***\n", fails);
     gfx_surface_free(s);
