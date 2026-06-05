@@ -447,8 +447,8 @@ static void repl_exec(char *cmd)
 
     if (!strcmp(argv[0], "speed")) {     /* SALLY clock_mult (DECIMAL) -> $D4CA */
         if (argc < 2) {
-            uart1_puts("  usage: speed <n>  (decimal; 1 = safe/boot, then dial up)\r\n"
-                       "  clean grades: 1 2 3 4 5 6 9 12 18 30 68 (others fall back to 1x)\r\n");
+            uart1_puts("  usage: speed <n>  (decimal; n = x real Atari; 1 = real/boot-safe)\r\n"
+                       "  clean grades: 1 2 4 7 8 14 28 56 (56 = full turbo 100MHz; others fall back to 1x)\r\n");
             return;
         }
         unsigned n = strtoul(argv[1], NULL, 10);

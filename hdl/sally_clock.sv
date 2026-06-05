@@ -25,22 +25,18 @@
 //   bypassed; only WSYNC + step gate the line.
 // - CLOCK_MULT=0 or unrecognised values default to 1× behaviour.
 //
-// BASE_DIV is the cycles-per-phi2 ratio at CLOCK_MULT=1. The case
-// statement enumerates every CLOCK_MULT value that divides cleanly
-// into either of the two production BASE_DIVs in current use:
+// BASE_DIV is the cycles-per-phi2 ratio at CLOCK_MULT=1, so phi2 (the 1×
+// "real Atari" rate) = clk / BASE_DIV.  It must track the clk_sally frequency
+// as round(clk_MHz / 1.79) so 1× lands on real NTSC phi2 (1.7898 MHz).
 //
-//   BASE_DIV=12 (legacy / sim default): clean grades = {1,2,3,4,6,12}
-//   BASE_DIV=90 (M-cache-rework Step 5b ceiling): clean grades =
-//                          {1,2,3,5,6,9,10,15,18,30,45,90}
+//   clk_sally=100 MHz -> BASE_DIV=56 (PRODUCTION): 1× = 1.786 MHz ≈ real;
+//     clean grades = {1,2,4,7,8,14,28,56}; CLOCK_MULT=56 = full turbo = 100 MHz.
+//   BASE_DIV=12 (legacy / sim default): clean grades = {1,2,3,4,6,12}.
 //
-// Software is responsible for picking a clock_mult that divides
-// BASE_DIV cleanly — non-clean combinations still produce a step
-// pulse (rounded by integer division) but the effective frequency
-// won't match the requested K×.
-//
-// At BASE_DIV=90 the design exposes 12 clean speed grades up to
-// 90× original Atari (= 90 × 1.7898 MHz ≈ 161 MHz). See `docs/
-// Issues.md` `clock-mult-range`.
+// Software picks a clock_mult that divides BASE_DIV cleanly — non-clean
+// combinations still step (rounded by integer division) but won't match the
+// requested K×.  CLOCK_MULT > BASE_DIV underflows (BASE_DIV/K = 0), so the case
+// only enumerates K <= BASE_DIV; anything else falls to the 1× default.
 
 `default_nettype none
 
@@ -95,22 +91,19 @@ module sally_clock #(
         // Branches not used by the current BASE_DIV still synthesise
         // safely (just produce a non-clean rate that software is
         // expected to avoid).
+        // Clean speed grades for BASE_DIV=56 (the clk_sally=100 MHz point):
+        // divisors of 56 = {1,2,4,7,8,14,28,56}.  1× = real Atari (1.786 MHz),
+        // 56× = full turbo (100 MHz).  K>BASE_DIV would underflow (BASE_DIV/K=0),
+        // so don't enumerate values above 56 — they fall to the 1× default.
         case (clock_mult)
-            8'd1:  sub_threshold = CTR_W'(BASE_DIV - 1);
+            8'd1:  sub_threshold = CTR_W'(BASE_DIV - 1);          // 1× = real Atari
             8'd2:  sub_threshold = CTR_W'((BASE_DIV / 2)  - 1);
-            8'd3:  sub_threshold = CTR_W'((BASE_DIV / 3)  - 1);
-            8'd4:  sub_threshold = CTR_W'((BASE_DIV / 4)  - 1);   // clean: BASE_DIV=12
-            8'd5:  sub_threshold = CTR_W'((BASE_DIV / 5)  - 1);   // clean: BASE_DIV=90
-            8'd6:  sub_threshold = CTR_W'((BASE_DIV / 6)  - 1);
-            8'd9:  sub_threshold = CTR_W'((BASE_DIV / 9)  - 1);   // clean: BASE_DIV=90
-            8'd10: sub_threshold = CTR_W'((BASE_DIV / 10) - 1);   // clean: BASE_DIV=90
-            8'd12: sub_threshold = CTR_W'((BASE_DIV / 12) - 1);   // clean: BASE_DIV=12
-            8'd15: sub_threshold = CTR_W'((BASE_DIV / 15) - 1);   // clean: BASE_DIV=90
-            8'd18: sub_threshold = CTR_W'((BASE_DIV / 18) - 1);   // clean: BASE_DIV=90
-            8'd30: sub_threshold = CTR_W'((BASE_DIV / 30) - 1);   // clean: BASE_DIV=90
-            8'd45: sub_threshold = CTR_W'((BASE_DIV / 45) - 1);   // clean: BASE_DIV=90
-            8'd68: sub_threshold = CTR_W'((BASE_DIV / 68) - 1);   // clean: BASE_DIV=68 (PRODUCTION turbo — without this, 68 hits default=1x)
-            8'd90: sub_threshold = CTR_W'((BASE_DIV / 90) - 1);   // clean: BASE_DIV=90
+            8'd4:  sub_threshold = CTR_W'((BASE_DIV / 4)  - 1);
+            8'd7:  sub_threshold = CTR_W'((BASE_DIV / 7)  - 1);
+            8'd8:  sub_threshold = CTR_W'((BASE_DIV / 8)  - 1);
+            8'd14: sub_threshold = CTR_W'((BASE_DIV / 14) - 1);
+            8'd28: sub_threshold = CTR_W'((BASE_DIV / 28) - 1);
+            8'd56: sub_threshold = CTR_W'((BASE_DIV / 56) - 1);   // full turbo = 100 MHz (~56× real)
             default: sub_threshold = CTR_W'(BASE_DIV - 1);        // 1× fallback
         endcase
     end

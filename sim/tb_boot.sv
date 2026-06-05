@@ -136,13 +136,12 @@ module tb_boot;
     // ====================================================================
     // sally_clock (fpga_xt_top lines ~522-534)
     // ====================================================================
-    // SIM-SPEED NOTE.  fpga_xt_top runs BASE_DIV=68 / clock_mult=68.  In
-    // sally_clock's case() the value 68 is NOT a clean grade, so it falls to
-    // `default` (sub_threshold = BASE_DIV-1 = 67) and the CPU steps once every
-    // 68 clk_sally cycles — i.e. the authentic ~1.79 MHz Atari rate.  For a
-    // *functional* boot sim that 68× idle padding only makes iverilog slower;
-    // the CPU executes the identical instruction stream either way (clock_mult
-    // is purely a RDY clock-enable divisor; it does not change CPU semantics,
+    // SIM-SPEED NOTE.  fpga_xt_top runs BASE_DIV=56; clock_mult resets to 1
+    // (1× = real Atari ~1.786 MHz at clk_sally=100 MHz) and software dials it to
+    // 56 for full turbo (100 MHz).  At 1× the CPU steps once every 56 clk_sally
+    // cycles, which for a *functional* boot sim only makes iverilog slower; the
+    // CPU executes the identical instruction stream either way (clock_mult is
+    // purely a RDY clock-enable divisor; it does not change CPU semantics,
     // ANTIC's frame cadence, or the CDC handshakes — ANTIC's VBLANK NMI is
     // paced by clk_sys/antic_raster, not by this divisor).
     //

@@ -276,7 +276,7 @@ module fpga_xt_top (
     wire        sally_rdy;
 
     // sally_clock wires
-    // phi2_tick gating is bypassed at clock_mult >= 2 (we run at 68); the
+    // phi2_tick gating is bypassed at clock_mult >= 2 (56 = full turbo); the
     // strobe input is still required by the port, so tie it off.  antic_top
     // computes its own phi2_tick internally for its consumers (vbeam etc.).
     wire        phi2_tick = 1'b0;
@@ -603,13 +603,17 @@ module fpga_xt_top (
     `endif
 
     // ---- sally_clock -----------------------------------------------------
-    // CLOCK_MULT=68 gives ~121 MHz from 1.79 MHz phi2.
+    // BASE_DIV sets the 1x (real-Atari) phi2: phi2 = clk_sally / BASE_DIV, so
+    // BASE_DIV tracks clk_sally as round(clk_sally_MHz / 1.79).  At clk_sally =
+    // 100 MHz, BASE_DIV=56 -> 1.786 MHz ≈ real NTSC phi2; CLOCK_MULT=56 (full
+    // turbo) steps every cycle = 100 MHz.  Keep the phi2 RATE matched to
+    // antic_top's BASE_DIV (which divides clk_sys, so a different value).
     // /HALT is bypassed at CLOCK_MULT>=2, so halt_n is tied high.
     // wsync_rdy_n comes from ANTIC via CDC.
     // busy_n comes from sally_mem (1 = ready, 0 = cache miss stall).
 
     sally_clock #(
-        .BASE_DIV (68)
+        .BASE_DIV (56)
     ) u_sally_clock (
         .clk           (clk_sally),
         .rst           (rst_sally),

@@ -256,17 +256,18 @@ module antic_top #(
     wire [7:0] bus_data_in_q = data_in_sync1_q;
     assign bus_pbi_in_status_o = {bus_mpd_n_q, bus_rd4_q, bus_rd5_q};
 
-    // Synthetic phi2 derived from the bus clock. clk_bus = clk_sys,
-    // 150 MHz nominal. The counter wraps at BASE_DIV/2-1 and toggles
-    // `phi2`, giving phi2 = clk_bus / BASE_DIV (=90) ≈ 1.67 MHz. The
-    // 1-cycle phi2_tick pulse on
-    // each phi2 rising edge is exposed for use by POKEY's
-    // high-freq channel mode and fast pot-scan path (no
-    // multiplier hardcoded in any POKEY-side logic — phi2_tick
-    // is the only contract).
-    localparam int unsigned BASE_DIV    = 90;
+    // Synthetic phi2 derived from the bus clock (clk_bus = clk_sys = 133.3 MHz).
+    // The counter wraps at BASE_DIV/2-1 and toggles `phi2`, giving
+    // phi2 = clk_bus / BASE_DIV = 133.3/74 ≈ 1.80 MHz ≈ real NTSC phi2, so the
+    // raster/VBI cadence is ~60 Hz.  BASE_DIV tracks clk_sys as
+    // round(clk_sys_MHz / 1.79); keep this phi2 RATE matched to the CPU's
+    // sally_clock BASE_DIV (which divides clk_sally, hence a different value).
+    // The 1-cycle phi2_tick pulse on each phi2 rising edge is exposed for use by
+    // POKEY's high-freq channel mode and fast pot-scan path (no multiplier
+    // hardcoded in any POKEY-side logic — phi2_tick is the only contract).
+    localparam int unsigned BASE_DIV    = 74;
     localparam int unsigned PHI2_CTR_W  = $clog2(BASE_DIV);
-    localparam int unsigned PHI2_HALF   = (BASE_DIV / 2) - 1;       // 44 at BASE_DIV=90
+    localparam int unsigned PHI2_HALF   = (BASE_DIV / 2) - 1;       // 36 at BASE_DIV=74
 
     logic [PHI2_CTR_W-1:0] phi2_div = '0;
     logic                  phi2     = 1'b0;
@@ -882,7 +883,7 @@ module antic_top #(
     // row_in = ar_atari_row) so mid-frame register writes / DLIs land on the
     // correct scanline relative to the CPU.
     //
-    // Timing budget: clk_bus = phi2 × BASE_DIV (=90), so one scanline = 114 ×
+    // Timing budget: clk_bus = phi2 × BASE_DIV (=74), so one scanline = 114 ×
     // 90 = 10,260 clk_bus cycles.  In snoop mode (the v1 config, mem_ready tied
     // high) a row's compose is a few hundred cycles + the writeback row DMA is a
     // few hundred — both fit with ~10× margin.  DMA mode (deferred banked path)
