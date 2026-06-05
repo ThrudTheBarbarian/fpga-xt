@@ -26,7 +26,9 @@ typedef struct {
     int          marker_type;      // vsm_type (default 3 = asterisk)
     int          marker_height;    // px (vsm_height)
     int          marker_color;     // pen (vsm_color)
-    font        *text_font;        // face for v_gtext (NULL => the VDI default)
+    font_face   *text_face;        // selected face (vst_font); NULL => the VDI default
+    int          text_px;          // selected size (0 => VDI_TEXT_PX_DEFAULT)
+    int          text_font_id;     // selected font id (vst_font; 1 = system)
     int          clip_on, cx0, cy0, cx1, cy1;   // clip rect, inclusive
     int          device;           // v_opnwk device id (0 = virtual/screen draw)
     void        *dev;              // device state (metafile recorder / PDF page)
@@ -64,9 +66,14 @@ gfx_surface vdi_mfdb_surf(const MFDB *m, const vdi_ws *w);
 extern int16_t     g_contrl[16], g_intin[128], g_ptsin[256], g_intout[128], g_ptsout[256];
 extern vdi_pb      g_pb;
 extern const MFDB *g_cpyfm_src, *g_cpyfm_dst;
-extern font_face  *g_default_face;     // set by vdi_set_face; sized views via font_at
-font       *vdi_ws_font(const vdi_ws *w);   // the ws's sized font (or the default)
+extern font_face  *g_default_face;     // set by vdi_set_face; the system font (id 1)
+font       *vdi_ws_font(const vdi_ws *w);   // the ws's face at its size (or the default)
 int         vdi_set_text_px(vdi_ws *w, int px, int16_t *ptsout);  // size ws + report metrics
+
+// Font registry (load_fonts.c): vst_load_fonts maps OS/Fonts files to ids 2..N
+// (id 1 = the system/default face); faces are opened on first selection.
+font_face  *vdi_font_by_id(int id);              // id>=2 -> lazily-opened face; else NULL
+const char *vdi_font_name(int id);               // name for a font id ("" if none)
 void        vdi_emit(int op, int sub, int handle, int npts, int nint);   // fill contrl + dispatch
 
 // ---- opcode handlers (one per vdi/<call>.c) -------------------------------
@@ -83,6 +90,8 @@ void op_sl_type(vdi_pb *pb);
 void op_st_color(vdi_pb *pb);
 void op_st_height(vdi_pb *pb);
 void op_st_point(vdi_pb *pb);
+void op_st_font(vdi_pb *pb);
+void op_qt_name(vdi_pb *pb);
 void op_st_alignment(vdi_pb *pb);
 void op_load_fonts(vdi_pb *pb);
 void op_unload_fonts(vdi_pb *pb);

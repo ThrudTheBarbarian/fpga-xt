@@ -68,6 +68,10 @@ void font_face_close(font_face *face) {
 
 void font_face_set_tracking(font_face *face, int px) { if (face) face->tracking = px; }
 
+const char *font_face_name(const font_face *face) {
+    return (face && face->ft && face->ft->family_name) ? face->ft->family_name : "";
+}
+
 font *font_at(font_face *face, int px) {
     if (!face || px < 1) return NULL;
     for (font *f = face->sizes; f; f = f->next) if (f->px == px) return f;

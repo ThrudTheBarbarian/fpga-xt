@@ -19,6 +19,7 @@ typedef struct font      font;
 font_face *font_face_open(const char *path);    // load a TTF/OTF (NULL on fail)
 void       font_face_close(font_face *face);     // frees the face + all sized views
 void       font_face_set_tracking(font_face *face, int px);  // extra letter-spacing
+const char *font_face_name(const font_face *face);           // family name ("" if none)
 
 // A view of the face at a pixel size (cached inside the face; do not free).
 font *font_at(font_face *face, int px);

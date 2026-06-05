@@ -7,10 +7,12 @@
 // Shared by vst_height/vst_point: select px on the ws, fill ptsout[0..3] with
 // char_w, char_h, cell_w, cell_h.  Returns the pixel size actually used (0 fail).
 int vdi_set_text_px(vdi_ws *w, int px, int16_t *ptsout) {
-    if (!w || !g_default_face || px < 1) return 0;
-    font *f = font_at(g_default_face, px);
+    if (!w || px < 1) return 0;
+    font_face *face = w->text_face ? w->text_face : g_default_face;
+    if (!face) return 0;
+    font *f = font_at(face, px);
     if (!f) return 0;
-    w->text_font = f;
+    w->text_px = px;
     if (ptsout) {
         ptsout[0] = (int16_t)font_max_advance(f);   // char width
         ptsout[1] = (int16_t)font_ascent(f);        // char height (cap-ish)
@@ -33,5 +35,5 @@ int vst_height(int handle, int height_px, int *cw, int *ch, int *cellw, int *cel
     if (cellw) *cellw = g_ptsout[2];
     if (cellh) *cellh = g_ptsout[3];
     vdi_ws *w = vdi_ws_of(handle);
-    return w && w->text_font ? font_size(w->text_font) : 0;
+    return w ? w->text_px : 0;
 }

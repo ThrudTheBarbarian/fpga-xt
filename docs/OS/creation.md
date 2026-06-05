@@ -64,7 +64,7 @@ We are a **true-colour** (RGBA-8888) device. Apps detect that the standard way: 
 | metafile device | 31–40 | ✓ | `v_opnwk` records calls to a `.gem`; `vdi_play_metafile` replays |
 | v_clrwk | 3 | ✓ | whole-device clear to pen 0 (ignores clip) |
 | v_updwk | 4 | ✓ | no-op (drawing is immediate); the PDF printer will flush its page here |
-| vst_load_fonts | 119 | ✓ | no-op (faces load on demand) but returns the font-file count in `OS/Fonts` |
+| vst_load_fonts | 119 | ✓ | maps `OS/Fonts` files to ids 2..N (mapped now, opened on first use); returns the extra-font count |
 | vst_unload_fonts | 120 | ✓ | no-op |
 | vq_extnd | 102 | ✓ | extended inquiry; reports true-colour (owflag 1 → work_out[5] == 0, 32 planes) |
 
@@ -104,7 +104,7 @@ The device mechanism is in place, so adding a device is now just a driver behind
 | vst_point | 107 | ✓ | points (72 dpi) |
 | vst_color | 22 | ✓ | |
 | vst_alignment | 39 | ✓ | h: left/centre/right · v: GEM codes |
-| vst_font | 21 | ◐ | single default face (`vdi_set_face`); no per-id selection |
+| vst_font | 21 | ✓ | select face by id (1 = system, 2..N mapped from `OS/Fonts`, opened on first use) |
 | vsf_interior | 23 | ✓ | hollow / solid / pattern / hatch / user |
 | vsf_style | 24 | ✓ | full set: 24 patterns (8 graduated dither + 16 textures), 12 hatches |
 | vsf_color | 25 | ✓ | |
@@ -132,7 +132,7 @@ The device mechanism is in place, so adding a device is now just a driver behind
 |------|----|-----|-------|
 | vqt_extent | 116 | ◐ | `font_text_width` internal; no binding |
 | vqt_width | 117 | ✗ | per-character width |
-| vqt_name | 130 | ✗ | font name |
+| vqt_name | 130 | ✓ | a font's id + name (enumerate the registry to build a font menu) |
 | vq_color | 26 | ✗ | read back a pen |
 | vql_/vqm_/vqf_/vqt_attributes | 35–38 | ✗ | read current attributes |
 

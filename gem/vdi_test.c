@@ -215,12 +215,34 @@ int main(void) {
     v_clsvwk(hl);
     gfx_surface_free(ls);
 
-    // vst_load_fonts: count of font files in the fonts directory.
+    // Font registry: vst_load_fonts maps OS/Fonts, vqt_name enumerates,
+    // vst_font selects a face by id (id 1 = system, 2.. = mapped files).
+    font_face *sysf = font_face_open("fonts/AovelSansRounded.ttf");
+    vdi_set_face(sysf);                                 // system font (id 1)
     vdi_set_font_dir("fonts");
-    CHECK(vst_load_fonts(1, 0) == 1);                  // only AovelSansRounded.ttf
+    CHECK(vst_load_fonts(1, 0) == 1);                  // one extra font mapped (id 2)
+    char fnm[40] = {0};
+    CHECK(vqt_name(1, 1, fnm) == 1); CHECK(fnm[0] != '\0');   // system family name
+    char fnm2[40] = {0};
+    CHECK(vqt_name(1, 2, fnm2) == 2); CHECK(fnm2[0] != '\0'); // mapped file name
+    CHECK(vqt_name(1, 9, fnm2) == 0);                  // unknown id
+
+    gfx_surface *rf = gfx_surface_alloc(80, 30);
+    for (int i = 0; i < 80 * 30; i++) rf->px[i] = 0;
+    int hrf = v_opnvwk(rf);
+    CHECK(vst_font(hrf, 2) == 2);                       // select the mapped face (opens it)
+    vst_color(hrf, 1); vst_height(hrf, 18, NULL, NULL, NULL, NULL);
+    v_gtext(hrf, 2, 2, "Hi");
+    int rdrew = 0; for (int i = 0; i < 80 * 30; i++) if (rf->px[i]) { rdrew = 1; break; }
+    CHECK(rdrew);                                       // rendered with the selected face
+    CHECK(vst_font(hrf, 1) == 1);                       // back to the system font
+    CHECK(vst_font(hrf, 99) == 1);                      // invalid id -> unchanged
+    v_clsvwk(hrf); gfx_surface_free(rf);
+
     vdi_set_font_dir("does/not/exist");
     CHECK(vst_load_fonts(1, 0) == 0);                  // missing dir -> 0
     vst_unload_fonts(1, 0);                            // no-op, must not crash
+    (void)sysf;                                         // left open: keeps the system face valid
 
     // v_opnwk: screen device opens with a handle + extent; others report failure.
     int16_t win[11] = { 1 };                           // device 1 = screen

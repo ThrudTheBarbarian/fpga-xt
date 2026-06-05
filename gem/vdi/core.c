@@ -24,7 +24,7 @@ int vdi_ws_alloc(void) {
         ws_tab[i].fill_color = 1; ws_tab[i].text_color = 1; ws_tab[i].fill_interior = 1;
         ws_tab[i].fill_style = 1; ws_tab[i].fill_perimeter = 1;
         ws_tab[i].marker_type = 3; ws_tab[i].marker_height = 11; ws_tab[i].marker_color = 1;
-        ws_tab[i].text_valign = VDI_TA_TOP;
+        ws_tab[i].text_font_id = 1; ws_tab[i].text_valign = VDI_TA_TOP;
         return i + 1;
     }
     return 0;
@@ -235,7 +235,7 @@ void vdi_init(gfx_surface *default_target) {
     ws_tab[0].fill_color = 1; ws_tab[0].text_color = 1; ws_tab[0].fill_interior = 1;
     ws_tab[0].fill_style = 1; ws_tab[0].fill_perimeter = 1;
     ws_tab[0].marker_type = 3; ws_tab[0].marker_height = 11; ws_tab[0].marker_color = 1;
-    ws_tab[0].text_valign = VDI_TA_TOP;
+    ws_tab[0].text_font_id = 1; ws_tab[0].text_valign = VDI_TA_TOP;
 }
 
 font_face *g_default_face;
@@ -276,11 +276,13 @@ void vdi_set_device_file(const char *path) {
     g_device_file[i] = '\0';
 }
 
-// The sized font a workstation draws text with: its own (set by vst_height/
-// vst_point), else the default face at the default size.
+// The sized font a workstation draws text with: its selected face (vst_font, or
+// the system default) at its selected size (vst_height/vst_point, or default).
 font *vdi_ws_font(const vdi_ws *w) {
-    if (w->text_font) return w->text_font;
-    return g_default_face ? font_at(g_default_face, VDI_TEXT_PX_DEFAULT) : NULL;
+    font_face *face = w->text_face ? w->text_face : g_default_face;
+    if (!face) return NULL;
+    int px = w->text_px > 0 ? w->text_px : VDI_TEXT_PX_DEFAULT;
+    return font_at(face, px);
 }
 
 void vdi_call(vdi_pb *pb) {
@@ -306,6 +308,8 @@ void vdi_call(vdi_pb *pb) {
         case VDI_ST_COLOR:    op_st_color(pb);   break;
         case VDI_ST_HEIGHT:   op_st_height(pb);  break;
         case VDI_ST_POINT:    op_st_point(pb);   break;
+        case VDI_ST_FONT:     op_st_font(pb);    break;
+        case VDI_QT_NAME:     op_qt_name(pb);    break;
         case VDI_ST_ALIGN:    op_st_alignment(pb);break;
         case VDI_LOAD_FONTS:  op_load_fonts(pb); break;
         case VDI_UNLOAD_FONTS:op_unload_fonts(pb);break;

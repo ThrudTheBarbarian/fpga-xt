@@ -43,6 +43,8 @@ enum {                          // VDI opcodes (standard GEM)
     VDI_SM_TYPE     = 18,       // vsm_type   — marker type
     VDI_SM_HEIGHT   = 19,       // vsm_height — marker height
     VDI_SM_COLOR    = 20,       // vsm_color  — marker colour
+    VDI_ST_FONT     = 21,       // vst_font   — select text face by id
+    VDI_QT_NAME     = 130,      // vqt_name   — inquire a font's id + name
     VDI_CONTOURFILL = 103,      // v_contourfill — seed fill
     VDI_ST_COLOR    = 22,       // vst_color  — text colour
     VDI_SF_INTERIOR = 23,       // vsf_interior — see VDI_FIS_*
@@ -157,7 +159,9 @@ void vst_alignment(int handle, int halign, int valign, int *set_h, int *set_v);
 // px.  vst_height returns the pixel size used; vst_point the point size used.
 int  vst_height(int handle, int height_px, int *cw, int *ch, int *cellw, int *cellh);
 int  vst_point (int handle, int points,    int *cw, int *ch, int *cellw, int *cellh);
-int  vst_load_fonts(int handle, int select);           // -> font-file count
+int  vst_font(int handle, int id);                     // select face (1=system); -> id in use
+int  vqt_name(int handle, int id, char *name);         // name of font id (>=32-byte buf); -> id
+int  vst_load_fonts(int handle, int select);           // map OS/Fonts; -> extra-font count
 void vst_unload_fonts(int handle, int select);         // no-op
 void v_pline(int handle, int n, const int16_t *pxy);   // n point-pairs
 void v_pmarker(int handle, int n, const int16_t *pxy); // markers at n points
