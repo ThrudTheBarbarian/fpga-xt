@@ -186,21 +186,19 @@ behaviour.
 | v_get_pixel | 105 | ✓ | read back the matching palette pen (-1 if the true-colour pixel matches none) |
 
 Cross-referencing the [FreeMiNT VDI raster set](https://freemint.github.io/tos.hyp/en/vdi_raster.html),
-the remaining functions (Rec = ✅ implement, 🤔 optional, ⛔ skip):
+the remaining functions:
 
-| Call | Op | Rec | Notes / rationale |
+| Call | Op | Sup | Notes |
 |------|----|-----|-------|
-| vr_transfer_bits | 170 / 0 | ✅ | combine two bitmaps **with scaling** (stretch/shrink blit) — the real gap: `vro_cpyfm` is 1:1 only. Genuinely useful (scaled image blits, the compositor's zoom path); straightforward bilinear/nearest stretch on RGBA-8888 |
-| vr_clip_rects_by_dst / by_src | 171 / 0,1 | 🤔 | clip-rect helpers for vr_transfer_bits (intersect + map src↔dst) — pure geometry, cheap; useful once the scaled blit lands |
-| vr_clip_rects32_by_dst / by_src | 171 / 2,3 | 🤔 | the 32-bit-coordinate forms — redundant on our coordinate range, fold in only if the 16-bit pair lands |
-| vs_hilite_color / vs_min_color / vs_max_color / vs_weight_color | 207 / 0-3 | 🤔 | colours for the **extended raster ops** (highlight, additive MAX, subtractive MIN, weighted blend) — meaningful only if those blend modes are added to vro_cpyfm / vr_transfer_bits; otherwise store-only state |
-| vq_hilite_color / vq_min_color / vq_max_color / vq_weight_color | 209 / 0-3 | 🤔 | read back the above — pairs with the setters |
+| vr_transfer_bits | 170 / 0 | ✓ | combine two bitmaps **with scaling** (nearest-neighbour stretch/shrink); modes 0-15 are the BitBlt logic ops (3 = copy, applied to the RGB bits, alpha kept opaque), 16-19 the extended blends below |
+| vr_clip_rects_by_dst / by_src | 171 / 0,1 | ✓ | trim a transfer rect pair to a clip rect — by_dst clips the destination and scales the source by the same fraction; by_src the reverse |
+| vr_clip_rects32_by_dst / by_src | 171 / 2,3 | ✓ | the 32-bit-coordinate forms (folded onto the 16-bit path; our range fits) |
+| vs_hilite/min/max/weight_color | 207 / 0-3 | ✓ | the colours for the extended blends: **VR_HILITE** (src-set → hilite), **VR_MAX** (additive, ceilinged by max), **VR_MIN** (subtractive, floored by min), **VR_BLEND** (per-channel weighted lerp) |
+| vq_hilite/min/max/weight_color | 209 / 0-3 | ✓ | read back those colours |
 
-Recommendation: **vr_transfer_bits** (✅) is the one that adds a real capability — scaled bitmap
-copy, which `vro_cpyfm` can't do and the desktop will want (zoomed previews, the XL-plane scale).
-The clip-rect helpers (🤔) are cheap geometry that complement it. The hilite/min/max/weight colour
-pairs (🤔) are only worth wiring alongside the extended additive/subtractive/blend raster modes —
-on a true-colour surface those would be a nice compositor feature, but inert state until then.
+The extended blends make `vr_transfer_bits` a real compositor primitive on the true-colour
+surface — additive/subtractive/weighted mixing, not just BitBlt. The same op handles the
+desktop's scaled blits (zoomed previews, the XL-plane scale).
 
 **Inquiry**
 

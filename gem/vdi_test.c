@@ -890,6 +890,48 @@ int main(void) {
     CHECK(bm2[29 * 30 + 29] == vdi_pen_rgba(2));         // fills the new larger bitmap
     v_clsbm(hrb);
 
+    // --- Raster: vr_transfer_bits (scaling) + extended blends + clip rects ---
+    // Scale a 2x2 red source up into a 20x20 dst (nearest-neighbour copy).
+    uint32_t tsrc[4] = { vdi_pen_rgba(2), vdi_pen_rgba(2), vdi_pen_rgba(2), vdi_pen_rgba(2) };
+    gfx_surface *td = gfx_surface_alloc(20, 20);
+    for (int i = 0; i < 20 * 20; i++) td->px[i] = 0;
+    int htb = v_opnvwk(td);
+    MFDB tsm = { tsrc, 2, 2, 2, 0, 0 }, tdm; mfdb_from_surface(&tdm, td);
+    int16_t tpx[8] = { 0, 0, 1, 1, 0, 0, 19, 19 };      // 2x2 -> 20x20
+    vr_transfer_bits(htb, &tsm, &tdm, tpx, VRO_COPY);
+    CHECK(td->px[10 * 20 + 10] == vdi_pen_rgba(2));      // scaled up to fill
+    CHECK(td->px[0] == vdi_pen_rgba(2));
+
+    // VR_MAX (additive): white source onto a dark dst saturates toward white.
+    for (int i = 0; i < 20 * 20; i++) td->px[i] = GFX_RGB(40, 40, 40);
+    uint32_t white1[1] = { GFX_RGB(200, 200, 200) };
+    MFDB wsm = { white1, 1, 1, 1, 0, 0 };
+    int16_t apx[8] = { 0, 0, 0, 0, 5, 5, 14, 14 };
+    vs_max_color(htb, 0);                               // ceiling = white pen
+    vr_transfer_bits(htb, &wsm, &tdm, apx, VR_MAX);
+    CHECK(((td->px[10*20+10] >> 24) & 0xFF) == 240);    // 40 + 200 = 240
+
+    // VR_BLEND with a 50% weight pen (mid grey, ~128): halfway between src/dst.
+    for (int i = 0; i < 20 * 20; i++) td->px[i] = GFX_RGB(0, 0, 0);
+    uint32_t srcw[1] = { GFX_RGB(255, 255, 255) };
+    MFDB bsm = { srcw, 1, 1, 1, 0, 0 };
+    vs_weight_color(htb, 9);                            // pen 9 = 0x80 grey -> ~50%
+    vr_transfer_bits(htb, &bsm, &tdm, apx, VR_BLEND);
+    int bch = (td->px[10*20+10] >> 24) & 0xFF;
+    CHECK(bch >= 120 && bch <= 136);                    // ~128
+    v_clsvwk(htb); gfx_surface_free(td);
+
+    // vs_/vq_ raster colours round-trip.
+    vs_hilite_color(he, 4); CHECK(vq_hilite_color(he) == 4);
+    vs_min_color(he, 5);    CHECK(vq_min_color(he) == 5);
+
+    // vr_clip_rects_by_dst: clipping the dst trims the src proportionally.
+    int16_t tclip[4] = { 0, 0, 9, 19 };                  // keep the left half (x 0..9)
+    int16_t tcpxy[8] = { 0, 0, 19, 19, 0, 0, 19, 19 };   // src 20 wide, dst 20 wide
+    vr_clip_rects_by_dst(he, tclip, tcpxy);
+    CHECK(tcpxy[6] == 9);                                // dst clipped to x=9
+    CHECK(tcpxy[2] > 8 && tcpxy[2] < 11);                 // src x2 scaled to ~half
+
     v_clsvwk(he); gfx_surface_free(es); font_face_close(ef);
 
     // vsl_ends: an arrow end adds a filled arrowhead (more ink than a plain line).

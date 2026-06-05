@@ -169,6 +169,11 @@ extern const MFDB *g_opnbm_mfdb;        // out-of-band MFDB for v_opnbm
 void op_getoutline(vdi_pb *pb);
 void op_killoutline(vdi_pb *pb);
 void op_flushcache(vdi_pb *pb);
+void op_transfer_bits(vdi_pb *pb);
+void op_clip_rects(vdi_pb *pb);
+void op_vs_rcolor(vdi_pb *pb);
+void op_vq_rcolor(vdi_pb *pb);
+extern int g_hilite_color, g_min_color, g_max_color, g_weight_color;  // extended-raster colours
 extern int16_t *g_outline_xy;           // out-of-band v_getoutline buffers
 extern uint8_t *g_outline_bez;
 extern int      g_outline_max;

@@ -75,6 +75,10 @@ enum {                          // VDI opcodes (standard GEM)
     VDI_KILLOUTLINE = 242,      // v_killoutline — free an outline (no-op here)
     VDI_GETOUTLINE  = 243,      // v_getoutline / v_get_outline — glyph outline path
     VDI_FLUSHCACHE  = 251,      // v_flushcache  — drop the glyph cache
+    VDI_TRANSFER_BITS = 170,    // vr_transfer_bits — scaled bitmap combine
+    VDI_CLIP_RECTS  = 171,      // vr_clip_rects_* — clip the transfer rectangles
+    VDI_VS_RCOLOR   = 207,      // vs_hilite/min/max/weight_color (sub 0-3)
+    VDI_VQ_RCOLOR   = 209,      // vq_hilite/min/max/weight_color (sub 0-3)
     // vqt_real_extent rides VDI_QT_F_EXTENT (240) with sub 4200;
     // vqt_name_and_id rides VDI_ST_NAME (230) sub 100; vq_scrninfo rides
     // VDI_VQ_EXTND (102) sub 1; vqt_advance32 / vqt_ext_name reuse 247 / 130.
@@ -162,6 +166,12 @@ void mfdb_from_surface(MFDB *m, gfx_surface *s);   // wrap a surface as a device
 
 // VDI raster copy modes (subset).  3 = S replace (plain copy) — the only one yet.
 enum { VRO_COPY = 3 };
+// vr_transfer_bits modes: 0-15 are the BitBlt logic ops (3 = copy); 16-19 are
+// the extended blends that use the hilite/min/max/weight colours.
+enum { VR_HILITE = 16,   // src-set pixels -> hilite colour
+       VR_MAX    = 17,   // additive  : min(max_colour, src+dst) per channel
+       VR_MIN    = 18,   // subtractive: max(min_colour, dst-src) per channel
+       VR_BLEND  = 19 }; // weighted  : lerp(dst, src, weight_colour) per channel
 
 // Polyline end styles (vsl_ends), for the start and the end point: SQUARE (a
 // flat butt cap), ARROW (an arrowhead; the line stops at its base), ROUND (the
@@ -378,6 +388,28 @@ void vr_trnfm(int handle, const MFDB *src, const MFDB *dst);
 // v_get_pixel: read (x,y); *pel and *index get the matching palette pen, or
 // *index = -1 if the (true-colour) pixel matches no pen.
 void v_get_pixel(int handle, int x, int y, int *pel, int *index);
+// vr_transfer_bits: scaled copy of the src rect onto the dst rect (pxy = src
+// x1,y1,x2,y2, dst x1,y1,x2,y2).  mode: 0-15 logic ops (3 = copy), or VR_HILITE/
+// VR_MAX/VR_MIN/VR_BLEND extended blends (using the colours below).  dst NULL =
+// the workstation surface.
+void vr_transfer_bits(int handle, const MFDB *src, const MFDB *dst, const int16_t *pxy, int mode);
+// Clip a transfer rectangle pair (pxy = src[0..3] + dst[4..7]) to `clip`,
+// updating pxy in place — by the destination or the source rectangle.
+void vr_clip_rects_by_dst(int handle, const int16_t *clip, int16_t *pxy);
+void vr_clip_rects_by_src(int handle, const int16_t *clip, int16_t *pxy);
+void vr_clip_rects32_by_dst(int handle, const int32_t *clip, int32_t *pxy);
+void vr_clip_rects32_by_src(int handle, const int32_t *clip, int32_t *pxy);
+// Colours for the extended raster blends (palette pen indices; return previous /
+// current).  hilite = VR_HILITE colour, min/max = VR_MIN/VR_MAX clamps, weight =
+// VR_BLEND per-channel weight.
+int  vs_hilite_color(int handle, int pen);
+int  vs_min_color(int handle, int pen);
+int  vs_max_color(int handle, int pen);
+int  vs_weight_color(int handle, int pen);
+int  vq_hilite_color(int handle);
+int  vq_min_color(int handle);
+int  vq_max_color(int handle);
+int  vq_weight_color(int handle);
 
 // ---- Input / cursor -------------------------------------------------------
 // The VDI's input devices read a host-fed state.  The backend (SDL today, the

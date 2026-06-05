@@ -277,6 +277,7 @@ void vdi_init(gfx_surface *default_target) {
     ws_tab[0].wr_mode = VDI_MD_REPLACE;
     ws_tab[0].text_font_id = 1; ws_tab[0].text_valign = VDI_TA_TOP;
     ws_tab[0].text_bg_color = -1;                              // no opaque text bg
+    g_hilite_color = 1; g_min_color = 1; g_max_color = 0; g_weight_color = 9;  // extended-raster colours
 }
 
 font_face *g_default_face;
@@ -399,6 +400,10 @@ void vdi_call(vdi_pb *pb) {
         case VDI_GETOUTLINE:  op_getoutline(pb); break;
         case VDI_KILLOUTLINE: op_killoutline(pb);break;
         case VDI_FLUSHCACHE:  op_flushcache(pb); break;
+        case VDI_TRANSFER_BITS: op_transfer_bits(pb); break;
+        case VDI_CLIP_RECTS:  op_clip_rects(pb); break;
+        case VDI_VS_RCOLOR:   op_vs_rcolor(pb);  break;
+        case VDI_VQ_RCOLOR:   op_vq_rcolor(pb);  break;
         case VDI_ST_ROTATION: op_st_rotation(pb);break;
         case VDI_ST_EFFECTS:  op_st_effects(pb); break;
         case VDI_ST_ALIGN:    op_st_alignment(pb);break;
