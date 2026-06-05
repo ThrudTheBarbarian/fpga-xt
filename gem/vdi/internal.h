@@ -35,13 +35,14 @@ int         vdi_ws_alloc(void);                  // -> handle (>0), 0 = none fre
 void        vdi_ws_free(int handle);             // never frees the physical ws
 void        vdi_ws_clip(const vdi_ws *w, int *x0, int *y0, int *x1, int *y1);
 void        vdi_fill_rect(const vdi_ws *w, int x0, int y0, int x1, int y1, int pen);
-// Masked fill: mask==NULL is solid, else an 8x8 pattern (bit 1<<(x&7) of row y&7,
-// aligned to surface coords so adjacent fills tile).
+// Masked fill: mask==NULL is solid, else a 16x16 pattern (bit 1<<(x&15) of row
+// y&15, aligned to surface coords so adjacent fills tile).
 void        vdi_fill_rect_masked(const vdi_ws *w, int x0, int y0, int x1, int y1,
-                                 int pen, const uint8_t *mask);
-const uint8_t *vdi_fill_mask(int interior, int style);   // NULL = solid/hollow
+                                 int pen, const uint16_t *mask);
+const uint16_t *vdi_fill_mask(int interior, int style);  // NULL = solid/hollow
+void        vdi_set_userpat(const uint16_t *rows16);     // vsf_udpat (16 rows)
 void        vdi_rect_outline(const vdi_ws *w, int x0, int y0, int x1, int y1, int pen);
-void        vdi_fill_poly(const vdi_ws *w, const int16_t *xy, int n, int pen, const uint8_t *mask);
+void        vdi_fill_poly(const vdi_ws *w, const int16_t *xy, int n, int pen, const uint16_t *mask);
 void        vdi_polyline(const vdi_ws *w, const int16_t *xy, int n, int pen, int closed);
 void        vdi_line(const vdi_ws *w, int x0, int y0, int x1, int y1, int pen);
 void        vdi_set_pen(int index, uint32_t rgba);       // vs_color writes the palette
@@ -86,6 +87,7 @@ void op_vs_color(vdi_pb *pb);
 void op_sf_color(vdi_pb *pb);
 void op_sf_interior(vdi_pb *pb);
 void op_sf_style(vdi_pb *pb);
+void op_sf_udpat(vdi_pb *pb);
 void op_sf_perimeter(vdi_pb *pb);
 void op_clip(vdi_pb *pb);
 void op_pline(vdi_pb *pb);

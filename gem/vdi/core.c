@@ -61,34 +61,7 @@ static void pen_init(void) {
 uint32_t vdi_pen_rgba(int pen) { return pen_tab[pen & 0xFF]; }
 void vdi_set_pen(int index, uint32_t rgba) { pen_tab[index & 0xFF] = rgba; }
 
-// ---- Fill patterns (8x8 masks; bit 1<<(x&7) of row y&7) --------------------
-static const uint8_t pat_d12[8]   = {0x11,0x00,0x44,0x00,0x11,0x00,0x44,0x00}; // ~12%
-static const uint8_t pat_d25[8]   = {0x11,0x44,0x11,0x44,0x11,0x44,0x11,0x44}; // ~25%
-static const uint8_t pat_d50[8]   = {0x55,0xAA,0x55,0xAA,0x55,0xAA,0x55,0xAA}; // checker
-static const uint8_t pat_d75[8]   = {0xEE,0xBB,0xEE,0xBB,0xEE,0xBB,0xEE,0xBB}; // ~75%
-static const uint8_t hat_hori[8]  = {0xFF,0x00,0x00,0x00,0xFF,0x00,0x00,0x00}; // horizontal
-static const uint8_t hat_vert[8]  = {0x11,0x11,0x11,0x11,0x11,0x11,0x11,0x11}; // vertical
-static const uint8_t hat_cross[8] = {0xFF,0x11,0x11,0x11,0xFF,0x11,0x11,0x11}; // grid
-static const uint8_t hat_diag1[8] = {0x11,0x22,0x44,0x88,0x11,0x22,0x44,0x88}; // diagonal
-static const uint8_t hat_diag2[8] = {0x88,0x44,0x22,0x11,0x88,0x44,0x22,0x11}; // anti-diagonal
-static const uint8_t hat_dcross[8]= {0x99,0x5A,0x3C,0xDB,0xDB,0x3C,0x5A,0x99}; // diagonal grid
-
-const uint8_t *vdi_fill_mask(int interior, int style) {
-    if (interior == VDI_FIS_PATTERN) {
-        static const uint8_t *const p[] = { pat_d12, pat_d25, pat_d50, pat_d75 };
-        int n = (int)(sizeof p / sizeof p[0]);
-        int i = style - 1; if (i < 0) i = 0; if (i >= n) i = n - 1;
-        return p[i];
-    }
-    if (interior == VDI_FIS_HATCH) {
-        static const uint8_t *const h[] = { hat_hori, hat_vert, hat_cross,
-                                            hat_diag1, hat_diag2, hat_dcross };
-        int n = (int)(sizeof h / sizeof h[0]);
-        int i = style - 1; if (i < 0) i = 0; if (i >= n) i = n - 1;
-        return h[i];
-    }
-    return NULL;        // solid / hollow
-}
+// Fill pattern/hatch masks live in patterns.c (vdi_fill_mask).
 
 // ---- Clipped primitives ---------------------------------------------------
 void vdi_fill_rect(const vdi_ws *w, int x0, int y0, int x1, int y1, int pen) {
@@ -102,7 +75,7 @@ void vdi_fill_rect(const vdi_ws *w, int x0, int y0, int x1, int y1, int pen) {
 }
 
 void vdi_fill_rect_masked(const vdi_ws *w, int x0, int y0, int x1, int y1,
-                          int pen, const uint8_t *mask) {
+                          int pen, const uint16_t *mask) {
     if (!mask) { vdi_fill_rect(w, x0, y0, x1, y1, pen); return; }
     if (x0 > x1) { int t = x0; x0 = x1; x1 = t; }
     if (y0 > y1) { int t = y0; y0 = y1; y1 = t; }
@@ -113,15 +86,15 @@ void vdi_fill_rect_masked(const vdi_ws *w, int x0, int y0, int x1, int y1,
     uint32_t rgba = pen_tab[pen & 0xFF];
     gfx_surface *s = w->target;
     for (int y = y0; y <= y1; y++) {
-        uint8_t bits = mask[y & 7];
+        uint16_t bits = mask[y & 15];
         uint32_t *row = s->px + (size_t)y * s->stride;
         for (int x = x0; x <= x1; x++)
-            if (bits & (1u << (x & 7))) row[x] = rgba;     // pattern bit set -> ink
+            if (bits & (1u << (x & 15))) row[x] = rgba;    // pattern bit set -> ink
     }
 }
 
-// Scanline fill of a polygon (even-odd), clipped, with an optional 8x8 mask.
-void vdi_fill_poly(const vdi_ws *w, const int16_t *xy, int n, int pen, const uint8_t *mask) {
+// Scanline fill of a polygon (even-odd), clipped, with an optional 16x16 mask.
+void vdi_fill_poly(const vdi_ws *w, const int16_t *xy, int n, int pen, const uint16_t *mask) {
     if (n < 3) return;
     int cx0, cy0, cx1, cy1; vdi_ws_clip(w, &cx0, &cy0, &cx1, &cy1);
     int ymin = cy1, ymax = cy0;
@@ -145,9 +118,9 @@ void vdi_fill_poly(const vdi_ws *w, const int16_t *xy, int n, int pen, const uin
         for (int k = 0; k + 1 < ni; k += 2) {
             int xa = xs[k], xb = xs[k+1];
             if (xa < cx0) xa = cx0; if (xb > cx1) xb = cx1;
-            uint8_t bits = mask ? mask[y & 7] : 0xFF;
+            uint16_t bits = mask ? mask[y & 15] : 0xFFFF;
             uint32_t *row = s->px + (size_t)y * s->stride;
-            for (int x = xa; x <= xb; x++) if (bits & (1u << (x & 7))) row[x] = rgba;
+            for (int x = xa; x <= xb; x++) if (bits & (1u << (x & 15))) row[x] = rgba;
         }
     }
 }
@@ -338,6 +311,7 @@ void vdi_call(vdi_pb *pb) {
         case VDI_SF_COLOR:    op_sf_color(pb);   break;
         case VDI_SF_INTERIOR: op_sf_interior(pb);break;
         case VDI_SF_STYLE:    op_sf_style(pb);   break;
+        case VDI_SF_UDPAT:    op_sf_udpat(pb);   break;
         case VDI_SF_PERIM:    op_sf_perimeter(pb);break;
         case VDI_CLIP:        op_clip(pb);       break;
         case VDI_PLINE:       op_pline(pb);      break;

@@ -135,8 +135,8 @@ int main(void) {
     int16_t solid[4] = { 0, 0, 9, 9 }; vr_recfl(hf, solid);
     CHECK(PX(fs, 3, 3) == GFX_RGB(255, 0, 0));         // pen 5 is now red
 
-    for (int i = 0; i < 40 * 40; i++) fs->px[i] = 0;   // hatch: horizontal lines
-    vsf_color(hf, 1); vsf_interior(hf, VDI_FIS_HATCH); vsf_style(hf, 1);
+    for (int i = 0; i < 40 * 40; i++) fs->px[i] = 0;   // hatch 5 = horizontal lines
+    vsf_color(hf, 1); vsf_interior(hf, VDI_FIS_HATCH); vsf_style(hf, 5);
     int16_t hr[4] = { 0, 0, 15, 15 }; vr_recfl(hf, hr);
     CHECK(PX(fs, 5, 0) == vdi_pen_rgba(1));            // row 0 = hatch line
     CHECK(PX(fs, 5, 1) == 0);                          // row 1 = gap
@@ -148,6 +148,21 @@ int main(void) {
     CHECK(PX(fs, 7, 2) == vdi_pen_rgba(2));            // top edge drawn
     CHECK(PX(fs, 2, 7) == vdi_pen_rgba(2));            // left edge drawn
     CHECK(PX(fs, 7, 7) == 0);                          // interior left empty
+
+    // The full pattern range is handled: a high style fills (not all clamped to
+    // empty), and a user-defined pattern fills exactly its bits.
+    for (int i = 0; i < 40 * 40; i++) fs->px[i] = 0;
+    vsf_color(hf, 1); vsf_interior(hf, VDI_FIS_PATTERN); vsf_style(hf, 21); vsf_perimeter(hf, 0);
+    int16_t fr[4] = { 0, 0, 15, 15 }; vr_recfl(hf, fr);
+    int any = 0; for (int i = 0; i < 40 * 40; i++) if (fs->px[i]) { any = 1; break; }
+    CHECK(any);                                        // pattern 21 produced ink
+
+    uint16_t up[16]; for (int i = 0; i < 16; i++) up[i] = 0x0001;   // column x%16==0
+    vsf_udpat(hf, up); vsf_interior(hf, VDI_FIS_USER);
+    for (int i = 0; i < 40 * 40; i++) fs->px[i] = 0;
+    vr_recfl(hf, fr);
+    CHECK(PX(fs, 0, 5) == vdi_pen_rgba(1));            // user-pattern column set
+    CHECK(PX(fs, 1, 5) == 0);                          // adjacent column clear
     v_clsvwk(hf);
     gfx_surface_free(fs);
 

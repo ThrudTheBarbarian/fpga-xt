@@ -105,8 +105,8 @@ The device mechanism is in place, so adding a device is now just a driver behind
 | vst_color | 22 | ✓ | |
 | vst_alignment | 39 | ✓ | h: left/centre/right · v: GEM codes |
 | vst_font | 21 | ◐ | single default face (`vdi_set_face`); no per-id selection |
-| vsf_interior | 23 | ✓ | hollow / solid / pattern / hatch |
-| vsf_style | 24 | ✓ | 4 dither + 6 hatch masks |
+| vsf_interior | 23 | ✓ | hollow / solid / pattern / hatch / user |
+| vsf_style | 24 | ✓ | full set: 24 patterns (8 graduated dither + 16 textures), 12 hatches |
 | vsf_color | 25 | ✓ | |
 | vsf_perimeter | 104 | ✓ | outline filled areas |
 | vswr_mode | 32 | ✗ | only replace/transparent (no XOR/reverse) |
@@ -114,7 +114,7 @@ The device mechanism is in place, so adding a device is now just a driver behind
 | vst_effects | 106 | ✗ | bold/italic/underline |
 | vsl_ends | 108 | ✗ | line caps / arrowheads |
 | vsl_udsty | 113 | ✗ | user line style |
-| vsf_udpat | 112 | ✗ | user fill pattern |
+| vsf_udpat | 112 | ✓ | user fill pattern (16x16); selected by vsf_interior FIS_USER |
 | vsm_type / vsm_height / vsm_color | 18 / 19 / 20 | ✗ | polymarkers |
 
 **Raster**

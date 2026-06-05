@@ -42,6 +42,7 @@ enum {                          // VDI opcodes (standard GEM)
     VDI_SF_INTERIOR = 23,       // vsf_interior — see VDI_FIS_*
     VDI_SF_STYLE    = 24,       // vsf_style  — pattern/hatch index
     VDI_SF_COLOR    = 25,       // vsf_color  — fill colour
+    VDI_SF_UDPAT    = 112,      // vsf_udpat  — set user-defined fill pattern
     VDI_ST_ALIGN    = 39,       // vst_alignment — text anchor
     VDI_SF_PERIM    = 104,      // vsf_perimeter — outline filled areas (0/1)
     VDI_ST_POINT    = 107,      // vst_point  — text size in points
@@ -67,8 +68,10 @@ void mfdb_from_surface(MFDB *m, gfx_surface *s);   // wrap a surface as a device
 // VDI raster copy modes (subset).  3 = S replace (plain copy) — the only one yet.
 enum { VRO_COPY = 3 };
 
-// Fill interior style (vsf_interior).  PATTERN/HATCH pick a mask via vsf_style.
-enum { VDI_FIS_HOLLOW = 0, VDI_FIS_SOLID = 1, VDI_FIS_PATTERN = 2, VDI_FIS_HATCH = 3 };
+// Fill interior style (vsf_interior).  PATTERN (24 styles) / HATCH (12 styles)
+// pick a mask via vsf_style; USER uses the 16x16 pattern set by vsf_udpat.
+enum { VDI_FIS_HOLLOW = 0, VDI_FIS_SOLID = 1, VDI_FIS_PATTERN = 2,
+       VDI_FIS_HATCH  = 3, VDI_FIS_USER  = 4 };
 
 // GDP (VDI_GDP) sub-opcodes.  Angles are tenths of a degree, 0 = east, CCW.
 enum { GDP_BAR = 1, GDP_ARC = 2, GDP_PIE = 3, GDP_CIRCLE = 4, GDP_ELLIPSE = 5,
@@ -130,6 +133,7 @@ void vst_color(int handle, int pen);                   // text colour
 void vsf_color(int handle, int pen);
 void vsf_interior(int handle, int style);              // VDI_FIS_*
 void vsf_style(int handle, int index);                 // pattern/hatch index (1-based)
+void vsf_udpat(int handle, const uint16_t *pat16);     // user fill pattern: 16 rows
 void vsf_perimeter(int handle, int on);                // outline filled areas
 void vs_color(int handle, int index, const int16_t *rgb);  // rgb[3] each 0..1000
 void v_gtext(int handle, int x, int y, const char *s); // anchored per vst_alignment

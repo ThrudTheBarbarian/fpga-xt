@@ -64,59 +64,55 @@ static void tile_color(int x, int y, int w, int h, int pen, const char *cap) {
 static void draw(gfx_surface *desk, int perim) {
     vdi_init(desk);                                // fresh palette + workstation
     gfx_fill_rect(desk, 0, 0, WIN_W, WIN_H, COL_BG);   // teal backdrop
+    char buf[16];
 
-    label(WIN_W/2, 16, "GEM VDI fills — patterns, hatches, vs_color palette, perimeters", 0, 22);
-    label(WIN_W/2, 46, perim ? "pattern/hatch perimeter: ON   [SPACE to toggle, ESC to quit]"
-                             : "pattern/hatch perimeter: OFF  [SPACE to toggle, ESC to quit]", 0, 14);
+    label(WIN_W/2, 12, "GEM VDI fill styles — all patterns, hatches, interiors", 0, 22);
+    label(WIN_W/2, 40, perim ? "pattern/hatch perimeter: ON   [SPACE to toggle, ESC to quit]"
+                             : "pattern/hatch perimeter: OFF  [SPACE to toggle, ESC to quit]", 0, 13);
 
-    const int TW = 96, TH = 70, GAP = 24;
+    const int TW = 88, TH = 40, SX = 100;          // tile size + column stride
 
-    // --- Patterns (vsf_interior PATTERN, vsf_style 1..4) ---
-    left_label(40, 86, "Patterns (vsf_interior FIS_PATTERN)", 0, 15);
-    const char *pn[] = { "d12", "d25", "d50", "d75" };
-    for (int i = 0; i < 4; i++)
-        tile_fill(40 + i*(TW+GAP), 110, TW, TH, VDI_FIS_PATTERN, i+1, 1, perim, pn[i]);
-
-    // --- Hatches (vsf_interior HATCH, vsf_style 1..6) ---
-    left_label(40, 214, "Hatches (vsf_interior FIS_HATCH)", 0, 15);
-    const char *hn[] = { "horiz", "vert", "grid", "diag", "anti", "xgrid" };
-    for (int i = 0; i < 6; i++)
-        tile_fill(40 + i*(TW+GAP), 238, TW, TH, VDI_FIS_HATCH, i+1, 4, perim, hn[i]);
-
-    // --- Standard palette pens (0..7) ---
-    left_label(40, 342, "Standard pens (vsf_color)", 0, 15);
-    const char *cn[] = { "0 white","1 black","2 red","3 green","4 blue","5 cyan","6 yellow","7 magenta" };
-    for (int i = 0; i < 8; i++)
-        tile_color(40 + i*(TW+GAP), 366, TW, TH, i, cn[i]);
-
-    // --- Palette redefined with vs_color (a hue ramp) ---
-    left_label(40, 470, "Palette redefined live with vs_color (RGB 0..1000)", 0, 15);
-    static const int16_t ramp[8][3] = {
-        {1000,   0,   0}, {1000, 500,   0}, {1000,1000,   0}, {   0,1000,   0},
-        {   0,1000,1000}, {   0,   0,1000}, { 600,   0,1000}, {1000,   0, 600},
-    };
-    for (int i = 0; i < 8; i++) {
-        vs_color(VH, 200 + i, ramp[i]);            // redefine a spare pen
-        tile_color(40 + i*(TW+GAP), 494, TW, TH, 200 + i, NULL);
+    // --- All 24 patterns (vsf_interior 2, vsf_style 1..24), 2 rows of 12 ---
+    left_label(40, 64, "Patterns — vsf_interior FIS_PATTERN, vsf_style 1..24", 0, 14);
+    for (int s = 1; s <= 24; s++) {
+        int col = (s-1) % 12, row = (s-1) / 12;
+        int x = 40 + col*SX, y = 82 + row*60;
+        snprintf(buf, sizeof buf, "%d", s);
+        tile_fill(x, y, TW, TH, VDI_FIS_PATTERN, s, 1, perim, buf);
     }
 
-    // --- Perimeter behaviour ---
-    left_label(40, 598, "vsf_perimeter", 0, 15);
-    // OFF: hatch reaches the tile edge, no border line
-    white_bg(40, 622, 150, 60);
-    vsf_color(VH, 4); vsf_interior(VH, VDI_FIS_HATCH); vsf_style(VH, 4); vsf_perimeter(VH, 0);
-    rect(40, 622, 150, 60);
-    label(40 + 75, 686, "OFF", 0, 13);
-    // ON: same hatch + a solid border in the fill colour
-    white_bg(230, 622, 150, 60);
-    vsf_color(VH, 4); vsf_interior(VH, VDI_FIS_HATCH); vsf_style(VH, 4); vsf_perimeter(VH, 1);
-    rect(230, 622, 150, 60);
-    label(230 + 75, 686, "ON", 0, 13);
-    // HOLLOW + perimeter: outline only, empty interior
-    white_bg(420, 622, 150, 60);
-    vsf_color(VH, 4); vsf_interior(VH, VDI_FIS_HOLLOW); vsf_perimeter(VH, 1);
-    rect(420, 622, 150, 60);
-    label(420 + 75, 686, "HOLLOW + perimeter", 0, 13);
+    // --- All 12 hatches (vsf_interior 3, vsf_style 1..12), 1 row ---
+    left_label(40, 206, "Hatches — vsf_interior FIS_HATCH, vsf_style 1..12", 0, 14);
+    for (int s = 1; s <= 12; s++) {
+        snprintf(buf, sizeof buf, "%d", s);
+        tile_fill(40 + (s-1)*SX, 224, TW, TH, VDI_FIS_HATCH, s, 4, perim, buf);
+    }
+
+    // --- Interior styles: hollow / solid / user, then the perimeter demo ---
+    left_label(40, 296, "Interior styles + vsf_perimeter", 0, 14);
+    tile_fill(40,  314, TW, TH, VDI_FIS_HOLLOW, 0, 1, 0, "0 hollow");
+    vsf_color(VH, 4); tile_fill(140, 314, TW, TH, VDI_FIS_SOLID, 0, 4, 0, "1 solid");
+    uint16_t up[16] = { 0x8001,0x4002,0x2004,0x1008,0x0810,0x0420,0x0240,0x0180,
+                        0x0180,0x0240,0x0420,0x0810,0x1008,0x2004,0x4002,0x8001 };
+    vsf_udpat(VH, up); vsf_color(VH, 1);
+    tile_fill(240, 314, TW, TH, VDI_FIS_USER, 0, 1, 0, "4 user (vsf_udpat)");
+    // perimeter off / on / hollow (a hatch so it's visible)
+    vsf_color(VH, 1);
+    tile_fill(400, 314, TW, TH, VDI_FIS_HATCH, 7, 1, 0, "perim OFF");
+    tile_fill(500, 314, TW, TH, VDI_FIS_HATCH, 7, 1, 1, "perim ON");
+    tile_fill(600, 314, TW, TH, VDI_FIS_HOLLOW, 0, 1, 1, "hollow+perim");
+
+    // --- Standard pens + a vs_color hue ramp ---
+    left_label(40, 392, "Pens — vsf_color (0..7) and vs_color (redefined palette)", 0, 14);
+    const char *cn[] = { "0","1","2","3","4","5","6","7" };
+    for (int i = 0; i < 8; i++) tile_color(40 + i*SX, 410, TW, TH, i, cn[i]);
+    static const int16_t ramp[8][3] = {
+        {1000,0,0},{1000,500,0},{1000,1000,0},{0,1000,0},
+        {0,1000,1000},{0,0,1000},{600,0,1000},{1000,0,600} };
+    for (int i = 0; i < 8; i++) {
+        vs_color(VH, 200 + i, ramp[i]);
+        tile_color(40 + i*SX, 480, TW, TH, 200 + i, NULL);
+    }
 }
 
 int main(int argc, char **argv) {
