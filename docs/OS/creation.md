@@ -60,7 +60,8 @@ Status of the standard VDI calls. Legend: ✓ implemented · ◐ partial (logic 
 | v_opnwk / v_clswk | 1 / 2 | ✗ | physical workstation is implicit (the desktop surface) |
 | v_clrwk | 3 | ✗ | |
 | v_updwk | 4 | ✗ | drawing is immediate, no batching |
-| vst_load_fonts / vst_unload_fonts | 119 / 120 | ✗ | FreeType faces load on demand instead |
+| vst_load_fonts | 119 | ✓ | no-op (faces load on demand) but returns the font-file count in `OS/Fonts` |
+| vst_unload_fonts | 120 | ✓ | no-op |
 | vq_extnd | 102 | ✗ | extended inquire |
 
 **Output / drawing**

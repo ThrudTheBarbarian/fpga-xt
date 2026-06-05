@@ -200,6 +200,13 @@ int main(void) {
     v_clsvwk(hl);
     gfx_surface_free(ls);
 
+    // vst_load_fonts: count of font files in the fonts directory.
+    vdi_set_font_dir("fonts");
+    CHECK(vst_load_fonts(1, 0) == 1);                  // only AovelSansRounded.ttf
+    vdi_set_font_dir("does/not/exist");
+    CHECK(vst_load_fonts(1, 0) == 0);                  // missing dir -> 0
+    vst_unload_fonts(1, 0);                            // no-op, must not crash
+
     if (fails == 0) printf("*** VDI TEST OK ***\n");
     else            printf("*** VDI TEST: %d FAIL(s) ***\n", fails);
     gfx_surface_free(s);

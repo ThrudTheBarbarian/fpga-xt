@@ -284,6 +284,8 @@ void vdi_call(vdi_pb *pb) {
         case VDI_ST_HEIGHT:   op_st_height(pb);  break;
         case VDI_ST_POINT:    op_st_point(pb);   break;
         case VDI_ST_ALIGN:    op_st_alignment(pb);break;
+        case VDI_LOAD_FONTS:  op_load_fonts(pb); break;
+        case VDI_UNLOAD_FONTS:op_unload_fonts(pb);break;
         case VDI_VS_COLOR:    op_vs_color(pb);   break;
         case VDI_SF_COLOR:    op_sf_color(pb);   break;
         case VDI_SF_INTERIOR: op_sf_interior(pb);break;

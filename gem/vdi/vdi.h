@@ -38,6 +38,8 @@ enum {                          // VDI opcodes (standard GEM)
     VDI_ST_ALIGN    = 39,       // vst_alignment — text anchor
     VDI_SF_PERIM    = 104,      // vsf_perimeter — outline filled areas (0/1)
     VDI_ST_POINT    = 107,      // vst_point  — text size in points
+    VDI_LOAD_FONTS  = 119,      // vst_load_fonts   — returns the font-file count
+    VDI_UNLOAD_FONTS= 120,      // vst_unload_fonts — no-op
     VDI_CPYFM       = 109,      // vro_cpyfm  — copy raster, opaque
     VDI_RECFL       = 114,      // vr_recfl   — fill rectangle
     VDI_CLIP        = 129,      // vs_clip
@@ -86,6 +88,8 @@ uint32_t vdi_pen_rgba(int pen);               // pen index -> RGBA (for the WM/t
 // The default text face used by v_gtext (until per-workstation vst_font lands);
 // vst_height / vst_point pick sizes from it.  72 px-per-inch (1 point == 1 px).
 void     vdi_set_face(font_face *face);
+// Directory scanned by vst_load_fonts to count font files (default "OS/Fonts").
+void     vdi_set_font_dir(const char *path);
 #define  VDI_TEXT_DPI         72
 #define  VDI_TEXT_PX_DEFAULT  16
 
@@ -108,6 +112,8 @@ void vst_alignment(int handle, int halign, int valign, int *set_h, int *set_v);
 // px.  vst_height returns the pixel size used; vst_point the point size used.
 int  vst_height(int handle, int height_px, int *cw, int *ch, int *cellw, int *cellh);
 int  vst_point (int handle, int points,    int *cw, int *ch, int *cellw, int *cellh);
+int  vst_load_fonts(int handle, int select);           // -> font-file count
+void vst_unload_fonts(int handle, int select);         // no-op
 void v_pline(int handle, int n, const int16_t *pxy);   // n point-pairs
 void v_bar(int handle, const int16_t *pxy);            // pxy = x1,y1,x2,y2
 // Curved GDPs.  Filled ones use the fill colour/interior/perimeter; arcs and

@@ -64,6 +64,8 @@ void op_st_color(vdi_pb *pb);
 void op_st_height(vdi_pb *pb);
 void op_st_point(vdi_pb *pb);
 void op_st_alignment(vdi_pb *pb);
+void op_load_fonts(vdi_pb *pb);
+void op_unload_fonts(vdi_pb *pb);
 void op_vs_color(vdi_pb *pb);
 void op_sf_color(vdi_pb *pb);
 void op_sf_interior(vdi_pb *pb);
