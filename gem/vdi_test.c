@@ -273,6 +273,17 @@ int main(void) {
     CHECK(ext[5] == 0);                                // 0 => true-colour (no LUT)
     CHECK(ext[4] == 32);                               // 32 planes
 
+    // v_clrwk clears the whole surface to pen 0; v_updwk is a harmless no-op.
+    gfx_surface *clr = gfx_surface_alloc(16, 16);
+    for (int i = 0; i < 16 * 16; i++) clr->px[i] = 0x12345678;
+    int hc = v_opnvwk(clr);
+    v_clrwk(hc);
+    CHECK(PX(clr, 0, 0)   == vdi_pen_rgba(0));         // pen 0 = background
+    CHECK(PX(clr, 15, 15) == vdi_pen_rgba(0));
+    v_updwk(hc);                                       // no-op, must not crash
+    v_clsvwk(hc);
+    gfx_surface_free(clr);
+
     if (fails == 0) printf("*** VDI TEST OK ***\n");
     else            printf("*** VDI TEST: %d FAIL(s) ***\n", fails);
     gfx_surface_free(s);

@@ -23,6 +23,8 @@
 enum {                          // VDI opcodes (standard GEM)
     VDI_OPEN_WK     = 1,        // v_opnwk  — open a physical device workstation
     VDI_CLOSE_WK    = 2,        // v_clswk
+    VDI_CLRWK       = 3,        // v_clrwk  — clear workstation to pen 0
+    VDI_UPDWK       = 4,        // v_updwk  — flush workstation (screen: no-op)
     VDI_OPNVWK      = 100,
     VDI_CLSVWK      = 101,
     VDI_VQ_EXTND    = 102,      // vq_extnd  — extended workstation inquiry
@@ -107,6 +109,8 @@ enum { VDI_DEV_SCREEN_LO = 1,  VDI_DEV_SCREEN_HI = 10,
 // others no driver yet => *handle == 0).  work_out (57 WORDs) gets the caps.
 void v_opnwk(const int16_t *work_in, int *handle, int16_t *work_out);
 void v_clswk(int handle);
+void v_clrwk(int handle);                     // clear the workstation to pen 0
+void v_updwk(int handle);                     // flush pending output (screen: no-op)
 
 // Set the output file for the next metafile/printer v_opnwk (else a default).
 void vdi_set_device_file(const char *path);

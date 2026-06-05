@@ -320,6 +320,8 @@ void vdi_call(vdi_pb *pb) {
     switch (pb->contrl[0]) {
         case VDI_OPEN_WK:     op_open_wk(pb);    break;
         case VDI_CLOSE_WK:    op_close_wk(pb);   break;
+        case VDI_CLRWK:       op_clrwk(pb);      break;
+        case VDI_UPDWK:       op_updwk(pb);      break;
         case VDI_OPNVWK:      op_opnvwk(pb);     break;
         case VDI_CLSVWK:      op_clsvwk(pb);     break;
         case VDI_VQ_EXTND:    op_vq_extnd(pb);   break;

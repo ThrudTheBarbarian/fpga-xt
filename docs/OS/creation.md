@@ -62,8 +62,8 @@ We are a **true-colour** (RGBA-8888) device. Apps detect that the standard way: 
 | v_opnwk | 1 | ✓ | open a device: id 1..10 = screen (opens onto the desktop). 11+ (plotter/printer/**metafile**/camera/tablet) have no driver yet → returns handle 0 |
 | v_clswk | 2 | ✓ | close a physical workstation (finalises a metafile) |
 | metafile device | 31–40 | ✓ | `v_opnwk` records calls to a `.gem`; `vdi_play_metafile` replays |
-| v_clrwk | 3 | ✗ | |
-| v_updwk | 4 | ✗ | drawing is immediate, no batching |
+| v_clrwk | 3 | ✓ | whole-device clear to pen 0 (ignores clip) |
+| v_updwk | 4 | ✓ | no-op (drawing is immediate); the PDF printer will flush its page here |
 | vst_load_fonts | 119 | ✓ | no-op (faces load on demand) but returns the font-file count in `OS/Fonts` |
 | vst_unload_fonts | 120 | ✓ | no-op |
 | vq_extnd | 102 | ✓ | extended inquiry; reports true-colour (owflag 1 → work_out[5] == 0, 32 planes) |

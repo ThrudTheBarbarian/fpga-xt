@@ -68,6 +68,8 @@ void        vdi_emit(int op, int sub, int handle, int npts, int nint);   // fill
 // ---- opcode handlers (one per vdi/<call>.c) -------------------------------
 void op_open_wk(vdi_pb *pb);
 void op_close_wk(vdi_pb *pb);
+void op_clrwk(vdi_pb *pb);
+void op_updwk(vdi_pb *pb);
 void op_opnvwk(vdi_pb *pb);
 void op_clsvwk(vdi_pb *pb);
 void op_vq_extnd(vdi_pb *pb);
