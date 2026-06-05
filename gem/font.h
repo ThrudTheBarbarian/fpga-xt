@@ -32,6 +32,10 @@ int   font_text_width(font *f, const char *s); // pen advance for the string (px
 // Per-character cell width (advance); *lbear/*rover = left bearing / right
 // overhang past the cell (>=0).  cp is a Unicode codepoint.  vqt_width.
 int   font_char_metrics(font *f, unsigned cp, int *lbear, int *rover);
+// The five baseline-relative structural distances (all >=0) for vqt_fontinfo:
+// top (accent line), ascent, half, descent, bottom (deepest descender).
+void  font_vmetrics(const font *f, int *top, int *ascent, int *half,
+                    int *descent, int *bottom);
 
 // Draw NUL-terminated ASCII with the em box's top-left at (x,y), antialiased in
 // colour rgba over the existing pixels.  Clipped to the inclusive rect

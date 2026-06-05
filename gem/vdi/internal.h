@@ -122,6 +122,7 @@ void op_ql_attr(vdi_pb *pb);
 void op_qm_attr(vdi_pb *pb);
 void op_qf_attr(vdi_pb *pb);
 void op_qt_attr(vdi_pb *pb);
+void op_qt_fontinfo(vdi_pb *pb);
 void op_sin_mode(vdi_pb *pb);
 void op_locator(vdi_pb *pb);
 void op_valuator(vdi_pb *pb);

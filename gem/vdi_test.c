@@ -627,6 +627,18 @@ int main(void) {
     CHECK(ta[1] == 3 && ta[3] == VDI_TA_CENTER && ta[4] == VDI_TA_BOTTOM);
     CHECK(ta[9] == font_height(font_at(ef, 20)));       // cell height = line height
 
+    // vqt_fontinfo: structural metrics — ordered distances, sane range.
+    vst_height(he, 24, NULL, NULL, NULL, NULL);
+    int fmin = -1, fmax = -1, fmw = -1; int16_t dist[5], fx[3];
+    vqt_fontinfo(he, &fmin, &fmax, dist, &fmw, fx);
+    CHECK(fmin == 32 && fmax == 255);
+    CHECK(fmw > 0);
+    // distances are bottom, descent, half, ascent, top — top >= ascent and
+    // bottom >= descent (box spans accents + deepest descenders).
+    CHECK(dist[4] >= dist[3] && dist[1] >= 0 && dist[0] >= dist[1]);
+    CHECK(dist[3] == font_ascent(font_at(ef, 24)));     // ascent line = font ascent
+    CHECK(dist[3] + dist[1] <= font_height(font_at(ef, 24)) + 2);  // asc+desc ~ line
+
     // Input / cursor: with no host pump, REQUEST degrades to non-blocking.
     vdi_input_mouse(50, 60, VDI_BTN_LEFT);
     int qb = -1, qx = -1, qy = -1;
@@ -709,7 +721,7 @@ int main(void) {
     int16_t br[4] = { 5, 5, 34, 24 }; vr_recfl(hbm, br);
     CHECK(bmpx[15 * 40 + 20] == vdi_pen_rgba(2));        // filled into the caller's buffer
     CHECK(bmpx[0] == 0);                                 // outside the rect untouched
-    v_clsvwk(hbm);
+    v_clsbm(hbm);                                        // the v_opnbm pair
     MFDB bmstd = { bmpx, 40, 30, 40, 1, 1 };             // standard (planar) -> rejected
     CHECK(v_opnbm(&bmstd, NULL) == 0);
 

@@ -57,3 +57,7 @@ int v_opnbm(const MFDB *bitmap, int16_t *work_out) {
     }
     return g_contrl[6];
 }
+
+// Close an off-screen bitmap workstation (the v_opnbm pair).  The caller still
+// owns the bitmap memory; this only releases the workstation slot.
+void v_clsbm(int handle) { vdi_emit(VDI_CLSVWK, 1, handle, 0, 0); }

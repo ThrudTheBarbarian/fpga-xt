@@ -51,6 +51,7 @@ enum {                          // VDI opcodes (standard GEM)
     VDI_QT_EXTENT   = 116,      // vqt_extent — text bounding box
     VDI_QT_WIDTH    = 117,      // vqt_width  — one character's cell width
     VDI_QT_NAME     = 130,      // vqt_name   — inquire a font's id + name
+    VDI_QT_FONTINFO = 131,      // vqt_fontinfo — structural font metrics
     VDI_CONTOURFILL = 103,      // v_contourfill — seed fill
     VDI_ST_COLOR    = 22,       // vst_color  — text colour
     VDI_SF_INTERIOR = 23,       // vsf_interior — see VDI_FIS_*
@@ -242,6 +243,11 @@ void vql_attributes(int handle, int16_t *attrib);
 void vqm_attributes(int handle, int16_t *attrib);
 void vqf_attributes(int handle, int16_t *attrib);
 void vqt_attributes(int handle, int16_t *attrib);
+// Structural font metrics (vector geometry, not the coarse cell box): character
+// range, the five baseline-relative distances (bottom, descent, half, ascent,
+// top), the max cell width, and the special-effect offsets.
+void vqt_fontinfo(int handle, int *minADE, int *maxADE, int16_t distances[5],
+                  int *maxwidth, int16_t effects[3]);
 int  vst_load_fonts(int handle, int select);           // map OS/Fonts; -> extra-font count
 void vst_unload_fonts(int handle, int select);         // no-op
 void v_pline(int handle, int n, const int16_t *pxy);   // n point-pairs
@@ -341,5 +347,6 @@ void v_bez_off(int handle);
 // instead of the screen.  Returns the handle (0 = failed), close with v_clsvwk.
 // work_out (>= 57 words, or NULL) gets the capabilities, extent = bitmap size.
 int  v_opnbm(const MFDB *bitmap, int16_t *work_out);
+void v_clsbm(int handle);              // close an off-screen bitmap workstation
 
 #endif // GEM_VDI_H

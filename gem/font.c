@@ -95,6 +95,31 @@ int font_ascent(const font *f)      { return f ? f->ascent  : 0; }
 int font_max_advance(const font *f) { return f ? f->max_adv : 0; }
 int font_size(const font *f)        { return f ? f->px      : 0; }
 
+// Structural vertical metrics for vqt_fontinfo — the five baseline-relative
+// distances (all >= 0).  top/bottom come from the design bounding box (so they
+// span accents + the deepest descenders); ascent/descent are the typographic
+// lines; half is the mid-line.  Any out pointer may be NULL.
+void font_vmetrics(const font *f, int *top, int *ascent, int *half,
+                   int *descent, int *bottom) {
+    int asc = 0, desc = 0, tp = 0, bt = 0;
+    if (f) {
+        FT_Face ft = f->owner->ft;
+        FT_Set_Pixel_Sizes(ft, 0, f->px);               // sized views share the FT_Face
+        asc  = (int)(ft->size->metrics.ascender  >> 6);
+        desc = (int)(-(ft->size->metrics.descender >> 6));   // make it positive (below baseline)
+        long upm = ft->units_per_EM ? ft->units_per_EM : 1;
+        tp = (int)((long)ft->bbox.yMax * f->px / upm);  // design box top (accents)
+        bt = (int)((long)-ft->bbox.yMin * f->px / upm); // design box bottom (descenders)
+        if (tp < asc)  tp = asc;
+        if (bt < desc) bt = desc;
+    }
+    if (top)     *top     = tp;
+    if (ascent)  *ascent  = asc;
+    if (half)    *half    = asc / 2;
+    if (descent) *descent = desc;
+    if (bottom)  *bottom  = bt;
+}
+
 // Decode one UTF-8 codepoint and advance *ps past it.  Malformed bytes yield
 // U+FFFD and advance one byte.  Never reads past a NUL (it fails as a bad
 // continuation byte first).

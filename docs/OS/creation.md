@@ -133,6 +133,7 @@ The device mechanism is in place, so adding a device is now just a driver behind
 | vqt_extent | 116 | ✓ | text bounding box (4 corners, size/effects/rotation-aware) |
 | vqt_width | 117 | ✓ | one character's cell width + left bearing / right overhang |
 | vqt_name | 130 | ✓ | a font's id + name (enumerate the registry to build a font menu) |
+| vqt_fontinfo | 131 | ✓ | structural metrics: char range, the five baseline-relative distances (bottom/descent/half/ascent/top from the design box), max cell width, effect offsets |
 | vq_color | 26 | ✓ | read back a pen (RGB 0..1000) |
 | vql_/vqm_/vqf_/vqt_attributes | 35–38 | ✓ | read current line/marker/fill/text attributes |
 
@@ -177,6 +178,7 @@ instead of the screen, and the result blits back with `vro_cpyfm`.
 | v_bez_qual | 5 / sub 99 | ✓ | flattening quality 0..100 % (chord tolerance) |
 | v_bez_on / v_bez_off | 11 / sub 13 | ✓ | query/enable capability (always available) |
 | v_opnbm | 100 / sub 1 | ✓ | open an off-screen device-format bitmap as a workstation |
+| v_clsbm | 101 / sub 1 | ✓ | close an off-screen bitmap workstation (the v_opnbm pair) |
 
 ### Fonts
 
