@@ -587,6 +587,14 @@ int main(void) {
         if (tex[2*i+1] < miny) miny = tex[2*i+1]; if (tex[2*i+1] > maxy) maxy = tex[2*i+1];
     }
     CHECK(maxy - miny > maxx - minx);                  // rotated upright
+
+    // vqt_width: one character's cell width == its single-char string width.
+    vst_rotation(he, 0); vst_height(he, 20, NULL, NULL, NULL, NULL);
+    int lbear = -1, rover = -1;
+    int cwid = vqt_width(he, 'W', &lbear, &rover);
+    CHECK(cwid == font_text_width(font_at(ef, 20), "W"));
+    CHECK(lbear >= 0 && rover >= 0);
+    CHECK(vqt_width(he, 'i', NULL, NULL) < cwid);       // 'i' narrower than 'W'
     v_clsvwk(he); gfx_surface_free(es); font_face_close(ef);
 
     // vsl_ends: an arrow end adds a filled arrowhead (more ink than a plain line).

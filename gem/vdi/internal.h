@@ -113,6 +113,7 @@ void op_st_point(vdi_pb *pb);
 void op_st_font(vdi_pb *pb);
 void op_qt_name(vdi_pb *pb);
 void op_qt_extent(vdi_pb *pb);
+void op_qt_width(vdi_pb *pb);
 void op_st_rotation(vdi_pb *pb);
 void op_st_effects(vdi_pb *pb);
 void op_st_alignment(vdi_pb *pb);

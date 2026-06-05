@@ -29,6 +29,9 @@ int   font_ascent(const font *f);              // baseline offset from the top (
 int   font_max_advance(const font *f);         // widest glyph advance (px)
 int   font_size(const font *f);                // the pixel size of this view
 int   font_text_width(font *f, const char *s); // pen advance for the string (px)
+// Per-character cell width (advance); *lbear/*rover = left bearing / right
+// overhang past the cell (>=0).  cp is a Unicode codepoint.  vqt_width.
+int   font_char_metrics(font *f, unsigned cp, int *lbear, int *rover);
 
 // Draw NUL-terminated ASCII with the em box's top-left at (x,y), antialiased in
 // colour rgba over the existing pixels.  Clipped to the inclusive rect

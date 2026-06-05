@@ -49,6 +49,7 @@ enum {                          // VDI opcodes (standard GEM)
     VDI_ST_FONT     = 21,       // vst_font   — select text face by id
     VDI_SWR_MODE    = 32,       // vswr_mode  — writing mode
     VDI_QT_EXTENT   = 116,      // vqt_extent — text bounding box
+    VDI_QT_WIDTH    = 117,      // vqt_width  — one character's cell width
     VDI_QT_NAME     = 130,      // vqt_name   — inquire a font's id + name
     VDI_CONTOURFILL = 103,      // v_contourfill — seed fill
     VDI_ST_COLOR    = 22,       // vst_color  — text colour
@@ -194,6 +195,10 @@ int  vqt_name(int handle, int id, char *name);         // name of font id (>=32-
 // Bounding box of `s` in the current font/size/effects/rotation: 4 corner points
 // (offsets from the text origin) as LL, LR, UR, UL in extent[0..7].
 void vqt_extent(int handle, const char *s, int16_t *extent);
+// Cell width of one character `ch` in the current font/size.  *left/*right get
+// the left bearing and right overhang past the cell (px).  Returns the cell
+// width, or -1 if the character has no glyph.
+int  vqt_width(int handle, int ch, int *left, int *right);
 int  vst_load_fonts(int handle, int select);           // map OS/Fonts; -> extra-font count
 void vst_unload_fonts(int handle, int select);         // no-op
 void v_pline(int handle, int n, const int16_t *pxy);   // n point-pairs

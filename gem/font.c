@@ -158,6 +158,22 @@ int font_text_width(font *f, const char *s) {
     return w;
 }
 
+// Per-character metrics for vqt_width.  Returns the cell width (pen advance,
+// tracking included); *lbear = px the ink starts right of the cell origin,
+// *rover = px the ink extends past the cell's right edge (both >= 0).
+int font_char_metrics(font *f, unsigned cp, int *lbear, int *rover) {
+    if (lbear) *lbear = 0;
+    if (rover) *rover = 0;
+    if (!f) return 0;
+    const glyph *g = glyph_get(f, cp);
+    if (!g) return 0;
+    int adv = g->advance + f->owner->tracking;
+    if (lbear) *lbear = g->left > 0 ? g->left : 0;
+    int right = g->left + g->w;            // ink right edge from cell origin
+    if (rover) *rover = right > adv ? right - adv : 0;
+    return adv;
+}
+
 // out = src*cov + dst*(1-cov), per channel; alpha forced opaque.
 static inline uint32_t blend(uint32_t dst, uint32_t src, unsigned cov) {
     if (cov == 0)   return dst;
