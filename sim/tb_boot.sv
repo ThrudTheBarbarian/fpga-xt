@@ -406,6 +406,7 @@ module tb_boot;
         .nmi_n              (antic_nmi_n),
         .halt_n             (antic_halt_n),
         .rdy_n              (antic_rdy_n),
+        .dma_steal          (),            // boot tb runs CLOCK_MULT=2 (turbo) — steal bypassed
         .irq_n              (antic_irq_n),
         .bus_pbi_in_status_o(),
         .audio_l0(), .audio_l1(), .audio_l2(), .audio_l3(),

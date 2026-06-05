@@ -102,6 +102,11 @@ module antic_top #(
     output wire        halt_n,
     output wire        rdy_n,
 
+    // Cycle-exact ANTIC DMA cycle-steal (active-HIGH: 1 = ANTIC takes this
+    // machine cycle from the CPU).  Consumed by sally_clock at CLOCK_MULT=1
+    // (gated off at turbo) to reproduce real-Atari bus-stealing timing.
+    output wire        dma_steal,
+
     // POKEY-driven IRQ (active-low). Asserted while any IRQEN-enabled
     // POKEY source has its latch set. Goes to the SALLY core (M24)
     // once that lands; meanwhile the synth wrapper drives it onto
@@ -927,6 +932,31 @@ module antic_top #(
         .dli_at(nmi_cur_row_dli),
         .parse_done(dl_done), .parse_count(dl_count)
     );
+
+    // ---- Cycle-exact ANTIC DMA cycle-steal -----------------------------
+    // Drives the CPU's /HALT (through sally_clock at CLOCK_MULT=1) so the
+    // emulated 6502 loses bus cycles to refresh/DL/playfield/P-M DMA exactly as
+    // on real hardware.  Combinational on the current machine cycle (phi2 raster
+    // position) + the current row's mode/sub-row + DMACTL.  dl_meta_mode/_sub are
+    // the metadata for the row being rendered (meta_row_q tracks ar_atari_row).
+    wire dma_steal_comb;
+    antic_dma_steal u_dma_steal (
+        .cyc      (ar_phi2_in_line),
+        .mode     (dl_meta_mode),
+        .is_first (dl_meta_sub == 4'd0),
+        .active   (ar_atari_row != 8'hFF),
+        .dmactl   (dmactl_q),
+        .steal    (dma_steal_comb)
+    );
+    // Register in clk_bus so the cross-domain CDC source (into clk_sally) is a
+    // flop, like the other ANTIC->SALLY status bits.  The 1-clk_bus latency is
+    // negligible: the steal envelope is stable for a whole machine cycle (~74
+    // clk_bus = one phi2).
+    reg dma_steal_q;
+    always_ff @(posedge clk_bus or posedge rst_bus)
+        if (rst_bus) dma_steal_q <= 1'b0;
+        else         dma_steal_q <= dma_steal_comb;
+    assign dma_steal = dma_steal_q;
 
     // ---- NMI generator (M12) -----------------------------------------
     // Instantiated in clk_bus. Vbeam-domain pulses (vbi_start, line_start)

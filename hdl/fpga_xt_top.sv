@@ -280,7 +280,9 @@ module fpga_xt_top (
     // strobe input is still required by the port, so tie it off.  antic_top
     // computes its own phi2_tick internally for its consumers (vbeam etc.).
     wire        phi2_tick = 1'b0;
-    wire        halt_n_sally;      // /HALT after CDC (if needed)
+    wire        halt_n_sally;      // /HALT after CDC (external-ANTIC mode; unused at our op point)
+    wire        antic_dma_steal_w; // ANTIC cycle-steal (clk_sys, active-high) from antic_top
+    wire        dma_steal_sally;   // ...CDC'd into clk_sally; gates the CPU at CLOCK_MULT=1
     wire        wsync_rdy_n;       // from ANTIC WSYNC
     wire        mem_busy_n;        // from sally_mem (1 = ready)
     wire        sally_step;
@@ -619,7 +621,7 @@ module fpga_xt_top (
         .rst           (rst_sally),
         .phi2_tick     (phi2_tick),
         .clock_mult    (clock_mult_sally),   // runtime-set via $D4CA (REPL `speed`); resets to 1x
-        .halt_n        (1'b1),         // bypassed at CLOCK_MULT>=2
+        .halt_n        (~dma_steal_sally), // ANTIC DMA bus-steal; gated to CLOCK_MULT=1 inside
         .wsync_rdy_n   (wsync_rdy_n),
         .busy_n        (~(mem_busy_n | hwreg_rd_busy)),  // stall on sally_mem cache miss OR hwreg-read CDC round-trip
         .sally_rdy     (sally_rdy),
@@ -833,6 +835,17 @@ module fpga_xt_top (
         .dst_sig (halt_n_sally)
     );
 
+    // Cycle-exact ANTIC DMA cycle-steal (antic_top, clk_sys) -> clk_sally.  The
+    // steal envelope is stable for a whole machine cycle (~one phi2 = ~56
+    // clk_sally cycles), so a 2-FF sync samples it cleanly; the CPU steps once
+    // per machine cycle and WSYNC re-aligns CPU<->ANTIC each scanline, so the
+    // ~1% phi2 drift between the two clocks stays bounded within a line.
+    cdc_sync_bit #(.WIDTH(1)) u_sync_dma_steal (
+        .dst_clk (clk_sally),
+        .src_sig (antic_dma_steal_w),
+        .dst_sig (dma_steal_sally)
+    );
+
     // ====================================================================
     // ANTIC pipeline (runs on clk_sys / same clock for Phase 1a)
     // ====================================================================
@@ -909,6 +922,7 @@ module fpga_xt_top (
         .nmi_n              (antic_nmi_n),
         .halt_n             (antic_halt_n),
         .rdy_n              (antic_rdy_n),
+        .dma_steal          (antic_dma_steal_w),
         .irq_n              (antic_irq_n),
         .bus_pbi_in_status_o(),
         .audio_l0(), .audio_l1(), .audio_l2(), .audio_l3(),

@@ -54,11 +54,12 @@ HDL_SRCS := \
     $(HDL_DIR)/pcm1808_rx.sv      \
     $(HDL_DIR)/antic_raster.sv    \
     $(HDL_DIR)/antic_seq.sv       \
-    $(HDL_DIR)/antic_top.sv
+    $(HDL_DIR)/antic_top.sv       \
+    $(HDL_DIR)/antic_dma_steal.sv
 
 BUILD_DIR := build
 
-.PHONY: all smoke snoop read vbeam dl_parse prior nmi wsync palette dma_master mem_read_mux draw_regs pokey pokey_i2s sally sally_mem sally_arb bank_xlat hwreg_rd_cdc legacy_upscale plane_compositor plane_fetch axi_line_writer antic_writeback xl_buffer_ctrl antic_raster antic_seq antic_modes antic_display pia_regs peri_link joy_link joy_bridge peri_bridge os_rom_load klaus lint clean xt_blitter sally_stack sally_isa sprite_regs sprite_fetcher sprite_compositor xt6502 boot boot_trace plane_vscale disp_modef_wrap
+.PHONY: all smoke snoop read vbeam dl_parse prior nmi wsync palette dma_master mem_read_mux draw_regs pokey pokey_i2s sally sally_mem sally_arb bank_xlat hwreg_rd_cdc legacy_upscale plane_compositor plane_fetch axi_line_writer antic_writeback xl_buffer_ctrl antic_raster antic_seq antic_modes antic_display pia_regs peri_link joy_link joy_bridge peri_bridge os_rom_load klaus lint clean xt_blitter sally_stack sally_isa sprite_regs sprite_fetcher sprite_compositor xt6502 boot boot_trace plane_vscale disp_modef_wrap antic_dma_steal
 
 # Retired tests (2026-05-25): rp_bus, mode_f, char_modes, gfx_modes, pm, scroll,
 # dma_int, visual all instantiated the v1 rp_bus injection harness
@@ -459,7 +460,8 @@ BOOT_ANTIC_HDL := \
     $(HDL_DIR)/pcm1808_rx.sv      \
     $(HDL_DIR)/antic_raster.sv    \
     $(HDL_DIR)/antic_seq.sv       \
-    $(HDL_DIR)/antic_top.sv
+    $(HDL_DIR)/antic_top.sv       \
+    $(HDL_DIR)/antic_dma_steal.sv
 
 BOOT_SYS_HDL := \
     $(HDL_DIR)/sally_clock.sv     \
@@ -674,6 +676,17 @@ disp_modef_wrap: $(BUILD_DIR)/tb_disp_modef_wrap.vvp
 
 $(BUILD_DIR)/tb_disp_modef_wrap.vvp: $(HDL_DIR)/vbeam.sv $(HDL_DIR)/plane_compositor.sv $(HDL_DIR)/plane_fetch.sv axi_slave_mem.sv tb_disp_modef_wrap.sv | $(BUILD_DIR)
 	$(IVERILOG) $(SV_FLAGS) -o $@ -s tb_disp_modef_wrap $(HDL_DIR)/vbeam.sv $(HDL_DIR)/plane_compositor.sv $(HDL_DIR)/plane_fetch.sv axi_slave_mem.sv tb_disp_modef_wrap.sv
+
+# ---- antic_dma_steal — cycle-exact ANTIC DMA bus-steal model -----------------
+antic_dma_steal: $(BUILD_DIR)/tb_antic_dma_steal.vvp
+	@echo "=== antic_dma_steal — stolen cycles/scanline vs Altirra totals ==="
+	@$(VVP) -N $< | tee $(BUILD_DIR)/tb_antic_dma_steal.log
+	@grep -q '\*\*\* ANTIC_DMA_STEAL OK \*\*\*' $(BUILD_DIR)/tb_antic_dma_steal.log || \
+	    (echo "FAIL: tb_antic_dma_steal"; exit 1)
+	@echo "PASS: tb_antic_dma_steal"
+
+$(BUILD_DIR)/tb_antic_dma_steal.vvp: $(HDL_DIR)/antic_dma_steal.sv tb_antic_dma_steal.sv | $(BUILD_DIR)
+	$(IVERILOG) $(SV_FLAGS) -o $@ -s tb_antic_dma_steal $(HDL_DIR)/antic_dma_steal.sv tb_antic_dma_steal.sv
 
 # ---- xl_buffer_ctrl — ANTIC->DDR triple-buffer index controller (video-arch §5)
 xl_buffer_ctrl: $(BUILD_DIR)/tb_xl_buffer_ctrl.vvp
