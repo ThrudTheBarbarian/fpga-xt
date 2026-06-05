@@ -33,18 +33,24 @@ OBJ      := $(addprefix $(BUILD)/,$(SRC:.c=.o))
 
 TARGET  := $(BUILD)/gem_sdl
 
-.PHONY: all run test clean fills
+.PHONY: all run test clean fills shapes
 all: $(TARGET)
 
 $(TARGET): $(OBJ)
 	$(CC) $(OBJ) $(LDLIBS) -o $@
 
-# Standalone example: the VDI fill attributes (patterns/hatches/colours/perims).
+# Standalone examples: fill attributes, and the curved GDPs + line styles.
 FILLS_OBJ := $(addprefix $(BUILD)/,gfx_soft.o font.o fills_demo.o $(VDI_SRC:.c=.o))
 $(BUILD)/gem_fills: $(FILLS_OBJ)
 	$(CC) $(FILLS_OBJ) $(LDLIBS) -o $@
 fills: $(BUILD)/gem_fills
 	./$(BUILD)/gem_fills
+
+SHAPES_OBJ := $(addprefix $(BUILD)/,gfx_soft.o font.o shapes_demo.o $(VDI_SRC:.c=.o))
+$(BUILD)/gem_shapes: $(SHAPES_OBJ)
+	$(CC) $(SHAPES_OBJ) $(LDLIBS) -o $@
+shapes: $(BUILD)/gem_shapes
+	./$(BUILD)/gem_shapes
 
 # Headless self-tests (no SDL): VDI primitives, then the WM interaction layer.
 TEST_OBJ := $(addprefix $(BUILD)/,gfx_soft.o font.o vdi_test.o $(VDI_SRC:.c=.o))
