@@ -175,6 +175,38 @@ behaviour.
 | vqt_fontinfo | 131 | ✓ | structural metrics: char range, the five baseline-relative distances (bottom/descent/half/ascent/top from the design box), max cell width, effect offsets |
 | vq_color | 26 | ✓ | read back a pen (RGB 0..1000) |
 | vql_/vqm_/vqf_/vqt_attributes | 35–38 | ✓ | read current line/marker/fill/text attributes |
+| vqt_advance | 247 | ✓ | sub-pixel character advance (integer + 1/65536) — see NVDI extensions |
+| vqt_f_extent | 240 | ✓ | fractional text extent — see NVDI extensions |
+
+**Extended inquiry (NVDI / FSM-GDOS)** — the rest of the
+[FreeMiNT VDI inquire set](https://freemint.github.io/tos.hyp/en/vdi_inquire.html).
+Rec = recommendation: ✅ implement, 🤔 optional, ⛔ skip. The colour read-backs mirror the
+fg/bg setters; the Speedo/GDOS/printer queries don't apply to a FreeType screen device.
+
+| Call | Op | Rec | Notes / rationale |
+|------|----|-----|-------|
+| vqt_fg_color / vqt_bg_color | 202/0, 203/0 | ✅ | read back the text fg/bg pens we already store (vst_fg_color / vst_bg_color) — trivial complements |
+| vqt_advance32 | 247 | ✅ | the advance as two fix31 (16.16) values — same data as vqt_advance, full-precision format |
+| vqt_name_and_id | 230 / 100 | ✅ | search a font id **and** canonical name by name (the inquiry form of vst_name; we have both halves already) |
+| vq_scrninfo | — | ✅ | report the screen pixel format — genuinely useful: tells NVDI apps we're **direct RGBA-8888 true-colour** (no LUT) |
+| vqt_pairkern | 235 | 🤔 | the kern delta for a character pair — easy via FreeType FT_Get_Kerning (we already kern); exposes it to app-side layout |
+| vqt_real_extent | — | 🤔 | the *tight inked* bounding box (vs vqt_extent's cell box) — computable from FreeType glyph bounds; nice for precise framing |
+| vqt_justified | 132 | 🤔 | the per-character offsets v_justified would use — pairs naturally with v_justified / v_ftext_offset |
+| vqt_ext_name / vqt_xfntinfo | 130/1, — | 🤔 | font name + format/classification flags — we can give name + basic flags; the Speedo classification bits we'd stub |
+| vqt_char_index | 190 / 0 | 🤔 | map a char index between encodings — Unicode-only here, so an identity stub |
+| vqt_trackkern | — | 🤔 | track-kerning vectors — we only do a uniform track offset, so limited |
+| vql_/vqf_/vqm_/vqr_fg_color / _bg_color | 202/203 sub 1–4 | 🤔 | line/fill/marker/raster colour read-backs — only worth it if we wire those per-class fg/bg setters (currently only text is) |
+| vq_cellarray | — | 🤔 | read back a cell-array region (reverse of v_cellarray) — low value |
+| vqt_fontheader / vqt_get_table / vqt_cachesize | 232 / 254 / 255 | ⛔ | Speedo font header / GDOS transform tables / vector cache size — GDOS/Speedo internals, N/A to FreeType |
+| vqt_devinfo / vq_devinfo / vq_ext_devinfo / vq_ptsinsz | 248 / — | ⛔ | GDOS driver / device-status queries — the screen is always present |
+| v_create/delete/get_driver_info / v_getbitmap_info | — | ⛔ | GDOS driver management / Speedo bitmap placement — no GDOS |
+| v_read/write_default_settings | — | ⛔ | printer default settings — parked PDF/printer device |
+
+Recommendation: the worthwhile set is **vqt_fg_color / vqt_bg_color**, **vqt_advance32**,
+**vqt_name_and_id**, and **vq_scrninfo** (✅) — all small read-backs of state we already hold,
+plus the true-colour screen-format report. The kerning/extent/justify queries (🤔) are cheap given
+FreeType and worth adding if app-side text layout needs them. The Speedo/GDOS/printer queries (⛔)
+have no backing on a FreeType screen device.
 
 **Input / cursor**
 
