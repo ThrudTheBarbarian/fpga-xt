@@ -187,13 +187,22 @@ static uint16_t line_pattern(int type) {
     }
 }
 
-// Stamp the line-width brush (a square) at (cx,cy), clipped.
-static void brush(gfx_surface *s, int cx, int cy, int lo, int hi, uint32_t rgba,
+// Stamp a round pen of diameter `width` at (cx,cy), clipped.  A round (not
+// square) brush gives the same perpendicular thickness in every direction —
+// a square one is ~1.41x thicker along diagonals.  The disc is centred on a
+// half-pixel for even widths so the on-axis span is exactly `width`.  Compare
+// is in doubled integers: (2dx-oc)^2 + (2dy-oc)^2 <= width^2.
+static void brush(gfx_surface *s, int cx, int cy, int width, uint32_t rgba,
                   int x0c, int y0c, int x1c, int y1c) {
-    for (int dy = -lo; dy <= hi; dy++) {
+    int oc = (width & 1) ? 0 : 1, w2 = width * width, R = width / 2 + 1;
+    for (int dy = -R; dy <= R; dy++) {
         int y = cy + dy; if (y < y0c || y > y1c || y < 0 || y >= s->h) continue;
+        int ty = 2 * dy - oc; ty *= ty;
+        if (ty > w2) continue;
         uint32_t *row = s->px + (size_t)y * s->stride;
-        for (int dx = -lo; dx <= hi; dx++) {
+        for (int dx = -R; dx <= R; dx++) {
+            int tx = 2 * dx - oc;
+            if (tx * tx + ty > w2) continue;
             int x = cx + dx; if (x < x0c || x > x1c || x < 0 || x >= s->w) continue;
             row[x] = rgba;
         }
@@ -218,13 +227,12 @@ void vdi_line(const vdi_ws *w, int x0, int y0, int x1, int y1, int pen) {
     // Rasterise (Bresenham) so we can apply width + dash ourselves.
     uint32_t rgba = pen_tab[pen & 0xFF];
     int width = w->line_width < 1 ? 1 : w->line_width;
-    int lo = (width - 1) / 2, hi = width / 2;
     uint16_t pat = line_pattern(w->line_type);
     int dx = x1 > x0 ? x1 - x0 : x0 - x1, sx = x0 < x1 ? 1 : -1;
     int dy = y1 > y0 ? y0 - y1 : y1 - y0, sy = y0 < y1 ? 1 : -1;   // dy negative
     int err = dx + dy, d = 0;
     for (;;) {
-        if (pat & (1u << (d & 15))) brush(w->target, x0, y0, lo, hi, rgba, cx0, cy0, cx1, cy1);
+        if (pat & (1u << (d & 15))) brush(w->target, x0, y0, width, rgba, cx0, cy0, cx1, cy1);
         if (x0 == x1 && y0 == y1) break;
         int e2 = 2 * err;
         if (e2 >= dy) { err += dy; x0 += sx; }
