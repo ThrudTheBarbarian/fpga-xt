@@ -369,6 +369,61 @@ int main(void) {
     CHECK(PX(cf,  5,  5) == vdi_pen_rgba(1));           // boundary intact
     v_clsvwk(hcf); gfx_surface_free(cf);
 
+    // ---- various sizes of the last three ----------------------------------
+    // Markers scale with vsm_height: the asterisk arm reaches ~height/2.
+    gfx_surface *vm = gfx_surface_alloc(120, 120);
+    int hvm = v_opnvwk(vm);
+    vsm_color(hvm, 1); vsm_type(hvm, VDI_MK_ASTERISK);
+    int mheights[] = { 4, 10, 21, 40 };
+    for (int k = 0; k < 4; k++) {
+        for (int i = 0; i < 120 * 120; i++) vm->px[i] = 0;
+        CHECK(vsm_height(hvm, mheights[k]) == mheights[k]);
+        int16_t p[2] = { 60, 60 }; v_pmarker(hvm, 1, p);
+        int r = mheights[k] / 2;
+        CHECK(PX(vm, 60, 60)     == vdi_pen_rgba(1));   // centre
+        CHECK(PX(vm, 60, 60 - r) == vdi_pen_rgba(1));   // arm top at ~height/2
+        CHECK(PX(vm, 60, 60 - r - 2) == 0);             // nothing past the arm
+    }
+    v_clsvwk(hvm); gfx_surface_free(vm);
+
+    // Cell arrays at different grid dimensions, all into a 40x40 rect.
+    gfx_surface *vc = gfx_surface_alloc(40, 40);
+    int hvc = v_opnvwk(vc);
+    int16_t full40[4] = { 0, 0, 39, 39 }, fourc[4] = { 2, 3, 4, 5 };
+    for (int i = 0; i < 40 * 40; i++) vc->px[i] = 0;
+    v_cellarray(hvc, full40, 1, 1, fourc);              // 1x1: whole rect
+    CHECK(PX(vc, 0, 0) == vdi_pen_rgba(2) && PX(vc, 39, 39) == vdi_pen_rgba(2));
+    for (int i = 0; i < 40 * 40; i++) vc->px[i] = 0;
+    v_cellarray(hvc, full40, 4, 1, fourc);              // 4 columns
+    CHECK(PX(vc, 5, 20) == vdi_pen_rgba(2) && PX(vc, 15, 20) == vdi_pen_rgba(3));
+    CHECK(PX(vc, 25, 20) == vdi_pen_rgba(4) && PX(vc, 35, 20) == vdi_pen_rgba(5));
+    for (int i = 0; i < 40 * 40; i++) vc->px[i] = 0;
+    v_cellarray(hvc, full40, 1, 4, fourc);              // 4 rows
+    CHECK(PX(vc, 20, 5) == vdi_pen_rgba(2) && PX(vc, 20, 35) == vdi_pen_rgba(5));
+    int16_t fine[64]; for (int i = 0; i < 64; i++) fine[i] = (i & 1) ? 1 : 2;
+    int16_t r32[4] = { 0, 0, 31, 31 };
+    for (int i = 0; i < 40 * 40; i++) vc->px[i] = 0;
+    v_cellarray(hvc, r32, 8, 8, fine);                  // 8x8 fine grid (4px cells)
+    CHECK(PX(vc, 1, 1) == vdi_pen_rgba(2) && PX(vc, 5, 1) == vdi_pen_rgba(1));
+    v_clsvwk(hvc); gfx_surface_free(vc);
+
+    // Contour fill of a small and a large region (the latter grows the stack).
+    gfx_surface *vf = gfx_surface_alloc(140, 140);
+    int hvf = v_opnvwk(vf);
+    vsl_color(hvf, 1); vsl_width(hvf, 1); vsl_type(hvf, 1);
+    for (int i = 0; i < 140 * 140; i++) vf->px[i] = 0;
+    int16_t sbox[10] = { 10,10, 20,10, 20,20, 10,20, 10,10 }; v_pline(hvf, 5, sbox);
+    vsf_color(hvf, 2); v_contourfill(hvf, 15, 15, 1);
+    CHECK(PX(vf, 15, 15) == vdi_pen_rgba(2) && PX(vf, 11, 11) == vdi_pen_rgba(2));
+    CHECK(PX(vf, 5, 5) == 0);
+    for (int i = 0; i < 140 * 140; i++) vf->px[i] = 0;
+    int16_t lbox[10] = { 10,10, 130,10, 130,130, 10,130, 10,10 }; v_pline(hvf, 5, lbox);
+    vsf_color(hvf, 3); v_contourfill(hvf, 70, 70, 1);   // ~120x120 interior
+    CHECK(PX(vf, 70, 70) == vdi_pen_rgba(3));
+    CHECK(PX(vf, 12, 12) == vdi_pen_rgba(3) && PX(vf, 128, 128) == vdi_pen_rgba(3));
+    CHECK(PX(vf, 5, 5) == 0);
+    v_clsvwk(hvf); gfx_surface_free(vf);
+
     if (fails == 0) printf("*** VDI TEST OK ***\n");
     else            printf("*** VDI TEST: %d FAIL(s) ***\n", fails);
     gfx_surface_free(s);
