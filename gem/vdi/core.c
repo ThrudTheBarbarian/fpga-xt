@@ -351,6 +351,11 @@ void vdi_call(vdi_pb *pb) {
         case VDI_QT_NAME:     op_qt_name(pb);    break;
         case VDI_QT_EXTENT:   op_qt_extent(pb);  break;
         case VDI_QT_WIDTH:    op_qt_width(pb);   break;
+        case VDI_Q_COLOR:     op_q_color(pb);    break;
+        case VDI_QL_ATTR:     op_ql_attr(pb);    break;
+        case VDI_QM_ATTR:     op_qm_attr(pb);    break;
+        case VDI_QF_ATTR:     op_qf_attr(pb);    break;
+        case VDI_QT_ATTR:     op_qt_attr(pb);    break;
         case VDI_ST_ROTATION: op_st_rotation(pb);break;
         case VDI_ST_EFFECTS:  op_st_effects(pb); break;
         case VDI_ST_ALIGN:    op_st_alignment(pb);break;

@@ -595,6 +595,35 @@ int main(void) {
     CHECK(cwid == font_text_width(font_at(ef, 20), "W"));
     CHECK(lbear >= 0 && rover >= 0);
     CHECK(vqt_width(he, 'i', NULL, NULL) < cwid);       // 'i' narrower than 'W'
+
+    // Attribute inquiries: set state, read it back.
+    int16_t qrgb[3] = { -1, -1, -1 };
+    int16_t setrgb[3] = { 1000, 0, 0 };                 // pure red
+    vs_color(he, 40, setrgb);
+    vq_color(he, 40, 0, qrgb);
+    CHECK(qrgb[0] == 1000 && qrgb[1] == 0 && qrgb[2] == 0);
+
+    vsl_type(he, 3); vsl_color(he, 2); vsl_width(he, 5); vswr_mode(he, VDI_MD_XOR);
+    int16_t lat[4];
+    vql_attributes(he, lat);
+    CHECK(lat[0] == 3 && lat[1] == 2 && lat[2] == VDI_MD_XOR && lat[3] == 5);
+
+    vsm_type(he, 4); vsm_color(he, 6); vsm_height(he, 12);
+    int16_t mat[4];
+    vqm_attributes(he, mat);
+    CHECK(mat[0] == 4 && mat[1] == 6 && mat[3] == 12);
+
+    vsf_interior(he, VDI_FIS_PATTERN); vsf_color(he, 7); vsf_style(he, 5);
+    vsf_perimeter(he, 1);
+    int16_t fqa[5];
+    vqf_attributes(he, fqa);
+    CHECK(fqa[0] == VDI_FIS_PATTERN && fqa[1] == 7 && fqa[2] == 5 && fqa[4] == 1);
+
+    vst_color(he, 3); vst_rotation(he, 0); vst_alignment(he, VDI_TA_CENTER, VDI_TA_BOTTOM, NULL, NULL);
+    int16_t ta[10];
+    vqt_attributes(he, ta);
+    CHECK(ta[1] == 3 && ta[3] == VDI_TA_CENTER && ta[4] == VDI_TA_BOTTOM);
+    CHECK(ta[9] == font_height(font_at(ef, 20)));       // cell height = line height
     v_clsvwk(he); gfx_surface_free(es); font_face_close(ef);
 
     // vsl_ends: an arrow end adds a filled arrowhead (more ink than a plain line).

@@ -69,6 +69,11 @@ enum {                          // VDI opcodes (standard GEM)
     VDI_CPYFM       = 109,      // vro_cpyfm  — copy raster, opaque
     VDI_RECFL       = 114,      // vr_recfl   — fill rectangle
     VDI_CLIP        = 129,      // vs_clip
+    VDI_Q_COLOR     = 26,       // vq_color   — read a palette pen (RGB 0..1000)
+    VDI_QL_ATTR     = 35,       // vql_attributes — current line attributes
+    VDI_QM_ATTR     = 36,       // vqm_attributes — current marker attributes
+    VDI_QF_ATTR     = 37,       // vqf_attributes — current fill attributes
+    VDI_QT_ATTR     = 38,       // vqt_attributes — current text attributes
 };
 
 // Memory Form Definition Block — a bitmap.  In device format it is RGBA-8888
@@ -199,6 +204,19 @@ void vqt_extent(int handle, const char *s, int16_t *extent);
 // the left bearing and right overhang past the cell (px).  Returns the cell
 // width, or -1 if the character has no glyph.
 int  vqt_width(int handle, int ch, int *left, int *right);
+// Read a palette pen as RGB on the 0..1000 scale (set_flag 0 requested, 1
+// realised — identical here).  rgb[3] out.
+void vq_color(int handle, int index, int set_flag, int16_t *rgb);
+// Inquire the workstation's current attributes into a caller array:
+//   vql attrib[4]  = line type, colour, writing mode, width
+//   vqm attrib[4]  = marker type, colour, writing mode, height
+//   vqf attrib[5]  = interior, colour, style, writing mode, perimeter
+//   vqt attrib[10] = font id, colour, rotation, halign, valign, writing mode,
+//                    char_w, char_h, cell_w, cell_h
+void vql_attributes(int handle, int16_t *attrib);
+void vqm_attributes(int handle, int16_t *attrib);
+void vqf_attributes(int handle, int16_t *attrib);
+void vqt_attributes(int handle, int16_t *attrib);
 int  vst_load_fonts(int handle, int select);           // map OS/Fonts; -> extra-font count
 void vst_unload_fonts(int handle, int select);         // no-op
 void v_pline(int handle, int n, const int16_t *pxy);   // n point-pairs

@@ -133,8 +133,8 @@ The device mechanism is in place, so adding a device is now just a driver behind
 | vqt_extent | 116 | ✓ | text bounding box (4 corners, size/effects/rotation-aware) |
 | vqt_width | 117 | ✓ | one character's cell width + left bearing / right overhang |
 | vqt_name | 130 | ✓ | a font's id + name (enumerate the registry to build a font menu) |
-| vq_color | 26 | ✗ | read back a pen |
-| vql_/vqm_/vqf_/vqt_attributes | 35–38 | ✗ | read current attributes |
+| vq_color | 26 | ✓ | read back a pen (RGB 0..1000) |
+| vql_/vqm_/vqf_/vqt_attributes | 35–38 | ✓ | read current line/marker/fill/text attributes |
 
 **Input / cursor** (handled by the host/AES event layer, not the VDI here)
 

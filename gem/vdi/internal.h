@@ -68,6 +68,7 @@ void        vdi_line(const vdi_ws *w, int x0, int y0, int x1, int y1, int pen);
 // As vdi_line, but sq0/sq1 give the start/end a flat (square) cap, not round.
 void        vdi_line_ex(const vdi_ws *w, int x0, int y0, int x1, int y1, int pen, int sq0, int sq1);
 void        vdi_set_pen(int index, uint32_t rgba);       // vs_color writes the palette
+uint32_t    vdi_pen_rgba(int pen);                       // read a pen's RGBA
 gfx_surface *vdi_screen_target(void);                    // the desktop surface (physical ws)
 void        vdi_fill_caps(int16_t *intout, int16_t *ptsout);   // v_opnwk/v_opnvwk work_out
 
@@ -114,6 +115,11 @@ void op_st_font(vdi_pb *pb);
 void op_qt_name(vdi_pb *pb);
 void op_qt_extent(vdi_pb *pb);
 void op_qt_width(vdi_pb *pb);
+void op_q_color(vdi_pb *pb);
+void op_ql_attr(vdi_pb *pb);
+void op_qm_attr(vdi_pb *pb);
+void op_qf_attr(vdi_pb *pb);
+void op_qt_attr(vdi_pb *pb);
 void op_st_rotation(vdi_pb *pb);
 void op_st_effects(vdi_pb *pb);
 void op_st_alignment(vdi_pb *pb);
