@@ -112,7 +112,7 @@ The device mechanism is in place, so adding a device is now just a driver behind
 | vswr_mode | 32 | ✓ | replace / transparent / XOR / reverse-transparent; default replace. XOR is reversible (rubber-banding). Text honours XOR (else blends) |
 | vst_rotation | 13 | ✓ | text at any angle (1/10 deg, CCW) — glyph outlines transformed via FreeType, not just 90s |
 | vst_effects | 106 | ✓ | thicken/light/skew/underline/outline/shadow (FreeType embolden/shear/stroke); combine with rotation |
-| vsl_ends | 108 | ✗ | line caps / arrowheads |
+| vsl_ends | 108 | ✓ | polyline end styles: square / arrow / round, per start and end |
 | vsl_udsty | 113 | ✗ | user line style |
 | vsf_udpat | 112 | ✓ | user fill pattern (16x16); selected by vsf_interior FIS_USER |
 | vsm_type / vsm_height / vsm_color | 18 / 19 / 20 | ✓ | marker type / size / colour |

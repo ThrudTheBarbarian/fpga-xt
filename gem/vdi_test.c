@@ -524,6 +524,28 @@ int main(void) {
     CHECK(vst_effects(he, 0x7F) == 0x3F);              // only the six defined bits kept
     v_clsvwk(he); gfx_surface_free(es); font_face_close(ef);
 
+    // vsl_ends: an arrow end adds a filled arrowhead (more ink than a plain line).
+    gfx_surface *ae = gfx_surface_alloc(60, 40);
+    int hae = v_opnvwk(ae);
+    vsl_color(hae, 1); vsl_width(hae, 1); vsl_type(hae, 1);
+    int16_t aln[4] = { 6, 20, 50, 20 };
+    for (int i = 0; i < 60 * 40; i++) ae->px[i] = 0;
+    vsl_ends(hae, VDI_LE_SQUARE, VDI_LE_SQUARE); v_pline(hae, 2, aln);
+    int plainl = 0; for (int i = 0; i < 60 * 40; i++) if (ae->px[i]) plainl++;
+    for (int i = 0; i < 60 * 40; i++) ae->px[i] = 0;
+    vsl_ends(hae, VDI_LE_SQUARE, VDI_LE_ARROW); v_pline(hae, 2, aln);
+    int arrowl = 0; for (int i = 0; i < 60 * 40; i++) if (ae->px[i]) arrowl++;
+    CHECK(arrowl > plainl + 20);                        // arrowhead adds a triangle of ink
+    CHECK(PX(ae, 40, 16) != 0 && PX(ae, 40, 24) != 0);  // both wings off the line
+
+    // A round cap on a thick line: ink appears off-axis at the end point.
+    vsl_width(hae, 6);
+    for (int i = 0; i < 60 * 40; i++) ae->px[i] = 0;
+    vsl_ends(hae, VDI_LE_ROUND, VDI_LE_ROUND); v_pline(hae, 2, aln);
+    CHECK(PX(ae, 50, 20) != 0);                         // cap at the end point
+    CHECK(PX(ae, 52, 20) != 0);                         // bulges past the line end
+    v_clsvwk(hae); gfx_surface_free(ae);
+
     if (fails == 0) printf("*** VDI TEST OK ***\n");
     else            printf("*** VDI TEST: %d FAIL(s) ***\n", fails);
     gfx_surface_free(s);

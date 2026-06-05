@@ -26,6 +26,7 @@ typedef struct {
     int          line_color;       // pen
     int          line_width;       // px (default 1)
     int          line_type;        // 1 solid .. 6 (vsl_type)
+    int          line_beg, line_end;  // VDI_LE_* end styles (vsl_ends)
     int          fill_color;       // pen
     int          text_color;       // pen
     int          text_halign;      // VDI_TA_LEFT/CENTER/RIGHT
@@ -101,6 +102,7 @@ void op_swr_mode(vdi_pb *pb);
 void op_sl_color(vdi_pb *pb);
 void op_sl_width(vdi_pb *pb);
 void op_sl_type(vdi_pb *pb);
+void op_sl_ends(vdi_pb *pb);
 void op_st_color(vdi_pb *pb);
 void op_st_height(vdi_pb *pb);
 void op_st_point(vdi_pb *pb);

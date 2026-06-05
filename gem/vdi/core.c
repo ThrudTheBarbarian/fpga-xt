@@ -321,6 +321,7 @@ void vdi_call(vdi_pb *pb) {
         case VDI_SL_COLOR:    op_sl_color(pb);   break;
         case VDI_SL_TYPE:     op_sl_type(pb);    break;
         case VDI_SL_WIDTH:    op_sl_width(pb);   break;
+        case VDI_SL_ENDS:     op_sl_ends(pb);    break;
         case VDI_ST_COLOR:    op_st_color(pb);   break;
         case VDI_ST_HEIGHT:   op_st_height(pb);  break;
         case VDI_ST_POINT:    op_st_point(pb);   break;

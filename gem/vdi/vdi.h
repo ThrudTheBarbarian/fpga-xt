@@ -41,6 +41,7 @@ enum {                          // VDI opcodes (standard GEM)
     VDI_SL_TYPE     = 15,       // vsl_type   — line style (1 solid .. 6)
     VDI_SL_WIDTH    = 16,       // vsl_width  — line width (px)
     VDI_SL_COLOR    = 17,       // vsl_color  — polyline colour
+    VDI_SL_ENDS     = 108,      // vsl_ends   — polyline end styles
     VDI_SM_TYPE     = 18,       // vsm_type   — marker type
     VDI_SM_HEIGHT   = 19,       // vsm_height — marker height
     VDI_SM_COLOR    = 20,       // vsm_color  — marker colour
@@ -78,6 +79,10 @@ void mfdb_from_surface(MFDB *m, gfx_surface *s);   // wrap a surface as a device
 
 // VDI raster copy modes (subset).  3 = S replace (plain copy) — the only one yet.
 enum { VRO_COPY = 3 };
+
+// Polyline end styles (vsl_ends), for the start and the end point: SQUARE (the
+// plain pen end), ARROW (an arrowhead), ROUND (a round cap disc).
+enum { VDI_LE_SQUARE = 0, VDI_LE_ARROW = 1, VDI_LE_ROUND = 2 };
 
 // Writing modes (vswr_mode).  Per pixel, given a source foreground bit:
 //   REPLACE: fg -> ink, bg -> colour 0 (opaque)
@@ -152,6 +157,7 @@ int  vswr_mode(int handle, int mode);                  // VDI_MD_*; returns sele
 void vsl_color(int handle, int pen);
 int  vsl_type(int handle, int style);                  // 1 solid..6; returns selected
 int  vsl_width(int handle, int width);                 // px; returns selected
+void vsl_ends(int handle, int beg, int end);           // VDI_LE_* for start/end of a polyline
 void vst_color(int handle, int pen);                   // text colour
 int  vst_rotation(int handle, int angle);              // baseline angle, 1/10 deg CCW; -> selected
 int  vst_effects(int handle, int effects);             // FX_* bitmask (from font.h); -> selected
