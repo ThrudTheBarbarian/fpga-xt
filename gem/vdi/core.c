@@ -268,6 +268,32 @@ void vdi_set_face(font_face *face) { g_default_face = face; }
 
 gfx_surface *vdi_screen_target(void) { return ws_tab[0].target; }   // the desktop surface
 
+// Fill a v_opnwk / v_opnvwk work_out capability array (intout[0..44] +
+// ptsout[0..11]).  Key field: intout[13] = number of simultaneous colours
+// (>= 2 => a colour device); the true-colour flag is reported by vq_extnd.
+void vdi_fill_caps(int16_t *io, int16_t *po) {
+    for (int i = 0; i < 45; i++) io[i] = 0;
+    for (int i = 0; i < 12; i++) po[i] = 0;
+    gfx_surface *s = vdi_screen_target();
+    int mx = s ? s->w - 1 : 0, my = s ? s->h - 1 : 0;
+    io[0] = (int16_t)mx; io[1] = (int16_t)my;        // addressable extent
+    io[3] = 278; io[4] = 278;                        // pixel size (microns, nominal)
+    io[6] = 6;                                       // line types
+    io[10] = 1;                                      // font faces (the default)
+    io[11] = 24; io[12] = 12;                        // fill patterns, hatches
+    io[13] = 256;                                    // simultaneous colours (>= 2)
+    io[14] = 10;                                     // number of GDPs
+    static const int16_t gdp_id[10] = { 1,2,3,4,5,6,7,8,9,10 };
+    static const int16_t gdp_at[10] = { 3,0,3,3,3,0,3,0,3,2 }; // fill/polyline/.../text
+    for (int i = 0; i < 10; i++) { io[15+i] = gdp_id[i]; io[25+i] = gdp_at[i]; }
+    io[35] = 1;                                      // colour capable
+    io[37] = 1;                                      // fill-area capable
+    io[39] = 256;                                    // colours available
+    io[40] = io[41] = io[42] = io[43] = 1;           // locator/valuator/choice/string
+    io[44] = 2;                                      // workstation type: input+output
+    po[0] = (int16_t)mx; po[1] = (int16_t)my;
+}
+
 char g_device_file[256];
 void vdi_set_device_file(const char *path) {
     if (!path) { g_device_file[0] = '\0'; return; }
@@ -296,6 +322,7 @@ void vdi_call(vdi_pb *pb) {
         case VDI_CLOSE_WK:    op_close_wk(pb);   break;
         case VDI_OPNVWK:      op_opnvwk(pb);     break;
         case VDI_CLSVWK:      op_clsvwk(pb);     break;
+        case VDI_VQ_EXTND:    op_vq_extnd(pb);   break;
         case VDI_SL_COLOR:    op_sl_color(pb);   break;
         case VDI_SL_TYPE:     op_sl_type(pb);    break;
         case VDI_SL_WIDTH:    op_sl_width(pb);   break;

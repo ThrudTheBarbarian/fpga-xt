@@ -5,6 +5,7 @@
 
 void op_opnvwk(vdi_pb *pb) {
     pb->contrl[6] = (int16_t)vdi_ws_alloc();     // return handle (0 = none free)
+    vdi_fill_caps(pb->intout, pb->ptsout);       // work_out (incl. colour count)
 }
 void op_clsvwk(vdi_pb *pb) {
     vdi_ws_free(pb->contrl[6]);                  // never closes the physical ws

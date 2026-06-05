@@ -25,6 +25,7 @@ enum {                          // VDI opcodes (standard GEM)
     VDI_CLOSE_WK    = 2,        // v_clswk
     VDI_OPNVWK      = 100,
     VDI_CLSVWK      = 101,
+    VDI_VQ_EXTND    = 102,      // vq_extnd  — extended workstation inquiry
     VDI_META_END    = 0xFFFF,   // end-of-metafile marker (not a real opcode)
     VDI_PLINE       = 6,
     VDI_GTEXT       = 8,        // v_gtext    — graphic text
@@ -114,6 +115,9 @@ void vdi_set_device_file(const char *path);
 int  vdi_play_metafile(const char *path, int handle);
 int  v_opnvwk(gfx_surface *target);           // -> workstation handle (>0), 0 = fail
 void v_clsvwk(int handle);
+// Extended inquiry.  owflag 0 = the open-workstation caps; 1 = extended info
+// (work_out[5] == 0 => true-colour / no palette LUT).  work_out is 57 WORDs.
+void vq_extnd(int handle, int owflag, int16_t *work_out);
 void vsl_color(int handle, int pen);
 int  vsl_type(int handle, int style);                  // 1 solid..6; returns selected
 int  vsl_width(int handle, int width);                 // px; returns selected

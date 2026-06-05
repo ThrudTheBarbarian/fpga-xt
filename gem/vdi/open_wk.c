@@ -26,11 +26,7 @@ void op_open_wk(vdi_pb *pb) {
     w->device = dev;
     w->target = vdi_screen_target();                        // for extent inquiries
     pb->contrl[6] = (int16_t)h;
-    if (w->target) {
-        pb->intout[0] = (int16_t)(w->target->w - 1);        // device extent
-        pb->intout[1] = (int16_t)(w->target->h - 1);
-    }
-    pb->intout[13] = 256;                                   // simultaneous colours
+    vdi_fill_caps(pb->intout, pb->ptsout);                  // device capabilities
 }
 
 void op_close_wk(vdi_pb *pb) {

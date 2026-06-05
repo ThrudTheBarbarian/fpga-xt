@@ -46,6 +46,7 @@ void        vdi_polyline(const vdi_ws *w, const int16_t *xy, int n, int pen, int
 void        vdi_line(const vdi_ws *w, int x0, int y0, int x1, int y1, int pen);
 void        vdi_set_pen(int index, uint32_t rgba);       // vs_color writes the palette
 gfx_surface *vdi_screen_target(void);                    // the desktop surface (physical ws)
+void        vdi_fill_caps(int16_t *intout, int16_t *ptsout);   // v_opnwk/v_opnvwk work_out
 
 // Device file path consumed by the next v_opnwk (metafile / printer); set via
 // vdi_set_device_file, else a per-device default.  And the metafile recorder.
@@ -69,6 +70,7 @@ void op_open_wk(vdi_pb *pb);
 void op_close_wk(vdi_pb *pb);
 void op_opnvwk(vdi_pb *pb);
 void op_clsvwk(vdi_pb *pb);
+void op_vq_extnd(vdi_pb *pb);
 void op_sl_color(vdi_pb *pb);
 void op_sl_width(vdi_pb *pb);
 void op_sl_type(vdi_pb *pb);

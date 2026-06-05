@@ -50,6 +50,8 @@ So a clean implementation then. The API is well documented, the goal is simply t
 
 Status of the standard VDI calls. Legend: ✓ implemented · ◐ partial (logic exists, no binding / limited) · ✗ not yet. Opcodes in parentheses; GDP sub-opcodes are `11.n`.
 
+We are a **true-colour** (RGBA-8888) device. Apps detect that the standard way: `v_opnvwk` returns ≥ 2 in `work_out[13]` (a colour device), then `vq_extnd(owflag=1)` returns `work_out[5] == 0` (no palette LUT → direct/true colour). `vs_color` still works as a 256-pen palette for GEM-style code; both coexist (see §"32-bit ARGB vs 8-bit LUT" above).
+
 **Control**
 
 | Call | Op | Sup | Notes |
@@ -64,7 +66,7 @@ Status of the standard VDI calls. Legend: ✓ implemented · ◐ partial (logic 
 | v_updwk | 4 | ✗ | drawing is immediate, no batching |
 | vst_load_fonts | 119 | ✓ | no-op (faces load on demand) but returns the font-file count in `OS/Fonts` |
 | vst_unload_fonts | 120 | ✓ | no-op |
-| vq_extnd | 102 | ✗ | extended inquire |
+| vq_extnd | 102 | ✓ | extended inquiry; reports true-colour (owflag 1 → work_out[5] == 0, 32 planes) |
 
 The device mechanism is in place, so adding a device is now just a driver behind `v_opnwk`. The **metafile** (id 31–40) is implemented (`metafile.c`): opening it records subsequent VDI calls to a `.gem` file (an 8-word header + one record per call), and `vdi_play_metafile()` replays them onto any workstation. The **printer** (id 21–30) will be a **PDF device** — "print" emits a PDF, no hardware driver needed — planned, currently reports failure. (`vro_cpyfm` carries its MFDB pointers out-of-band, so raster copies aren't captured in a metafile.)
 

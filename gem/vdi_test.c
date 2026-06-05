@@ -240,6 +240,18 @@ int main(void) {
     v_clsvwk(mhs);
     gfx_surface_free(mp);
 
+    // True-colour detection: v_opnvwk work_out[13] >= 2, vq_extnd work_out[5] == 0.
+    int16_t oc[16] = {0}, oii[128], opi[256], oio[128], opo[256];
+    vdi_pb opb = { oc, oii, opi, oio, opo };
+    oc[0] = VDI_OPNVWK; oc[6] = 0;
+    vdi_call(&opb);                                    // raw param-block open
+    CHECK(oio[13] >= 2);                               // colour device
+    if (oc[6] > 0) v_clsvwk(oc[6]);
+    int16_t ext[57] = { 0 };
+    vq_extnd(1, 1, ext);                               // extended inquiry on the physical ws
+    CHECK(ext[5] == 0);                                // 0 => true-colour (no LUT)
+    CHECK(ext[4] == 32);                               // 32 planes
+
     if (fails == 0) printf("*** VDI TEST OK ***\n");
     else            printf("*** VDI TEST: %d FAIL(s) ***\n", fails);
     gfx_surface_free(s);
