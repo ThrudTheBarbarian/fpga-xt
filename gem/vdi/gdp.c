@@ -17,8 +17,11 @@ static int build_arc(int16_t *out, double cx, double cy, double rx, double ry,
     double a0 = beg * (M_PI / 1800.0), a1 = end * (M_PI / 1800.0);
     if (a1 <= a0) a1 += 2 * M_PI;
     double span = a1 - a0;
-    int segs = (int)(span / (M_PI / 36.0)) + 1;          // ~5-degree steps
-    if (segs < 2) segs = 2; if (segs > 180) segs = 180;
+    // ~3px chords, scaled by radius, so the curve stays smooth at any size /
+    // line width (too few segments => visible facets, worst at the apex).
+    double rr = rx > ry ? rx : ry;
+    int segs = (int)(span * rr / 3.0) + 1;
+    if (segs < 8) segs = 8; if (segs > GDP_MAXPTS - 2) segs = GDP_MAXPTS - 2;
     int n = 0;
     for (int i = 0; i <= segs && n < GDP_MAXPTS; i++) {
         double a = a0 + span * i / segs;
@@ -42,10 +45,10 @@ static int build_rrect(int16_t *out, int x1, int y1, int x2, int y2, int r) {
         { x2-r, y2-r, 360, 270 },   // bottom-right: right-> bottom
         { x1+r, y2-r, 270, 180 },   // bottom-left:  bottom->left
     };
+    int steps = r / 3 + 2; if (steps < 4) steps = 4; if (steps > 32) steps = 32;
     int n = 0;
     for (int c = 0; c < 4; c++) {
         double a0 = cor[c].a0 * (M_PI/180.0), a1 = cor[c].a1 * (M_PI/180.0);
-        const int steps = 8;
         for (int i = 0; i <= steps && n < GDP_MAXPTS; i++) {
             double a = a0 + (a1 - a0) * i / steps;
             out[2*n]   = (int16_t)lround(cor[c].cx + r * cos(a));
