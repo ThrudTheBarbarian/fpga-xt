@@ -63,6 +63,7 @@ void op_gdp(vdi_pb *pb) {
     int sub = pb->contrl[5];
     if (sub == GDP_BAR)       { op_fillrect(pb);  return; }
     if (sub == GDP_JUSTIFIED) { op_justified(pb); return; }
+    if (sub == GDP_BEZ)       { op_bez_onoff(pb); return; }   // v_bez_on/off
     vdi_ws *w = vdi_ws_of(pb->contrl[6]); if (!w) return;
 
     const int16_t *p = pb->ptsin;

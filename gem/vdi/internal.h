@@ -48,6 +48,7 @@ typedef struct {
     int          clip_on, cx0, cy0, cx1, cy1;   // clip rect, inclusive
     int          device;           // v_opnwk device id (0 = virtual/screen draw)
     void        *dev;              // device state (metafile recorder / PDF page)
+    gfx_surface  bm;               // backing surface for an off-screen bitmap ws (v_opnbm)
 } vdi_ws;
 
 // ---- core.c: workstation table + clipped primitives + dispatch ------------
@@ -132,6 +133,11 @@ void op_q_mouse(vdi_pb *pb);
 void op_q_key_s(vdi_pb *pb);
 void op_vex(vdi_pb *pb);
 extern vdi_vec g_vex_in, g_vex_out;     // out-of-band vex_* handler exchange
+void op_bez(vdi_pb *pb, int fill);      // v_bez (fill=0) / v_bez_fill (fill=1)
+void op_bez_qual(vdi_pb *pb);
+void op_bez_onoff(vdi_pb *pb);
+void op_opnbm(vdi_pb *pb);
+extern const MFDB *g_opnbm_mfdb;        // out-of-band MFDB for v_opnbm
 void op_st_rotation(vdi_pb *pb);
 void op_st_effects(vdi_pb *pb);
 void op_st_alignment(vdi_pb *pb);

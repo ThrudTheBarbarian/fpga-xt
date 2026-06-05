@@ -159,6 +159,25 @@ read so nothing hangs.
 | vq_key_s | 128 | ✓ | keyboard shift/ctrl/alt state |
 | vex_butv / vex_motv / vex_curv / vex_timv | 125–127 / 118 | ✓ | exchange an input-interrupt vector (returns the previous) |
 
+**NVDI extensions**
+
+Beyond the classic VDI: Bézier curves and off-screen bitmaps as workstations.
+A Bézier path interleaves anchors + control points in one `(x,y)` array with a
+parallel flag byte per point (bit 0 = start of a cubic, bit 1 = pen-up / new
+sub-path); curves flatten adaptively to a tolerance set by `v_bez_qual` and draw
+through the shared polyline/polygon fillers, so they inherit the current
+line/fill attributes. `v_opnbm` opens a device-format MFDB (chunky RGBA-8888) as
+a virtual workstation — every VDI call then renders into the caller's bitmap
+instead of the screen, and the result blits back with `vro_cpyfm`.
+
+| Call | Op | Sup | Notes |
+|------|----|-----|-------|
+| v_bez | 6 / sub 13 | ✓ | stroke a Bézier path (line attributes); reports extent + point/contour counts |
+| v_bez_fill | 9 / sub 13 | ✓ | fill a Bézier path (fill attributes) |
+| v_bez_qual | 5 / sub 99 | ✓ | flattening quality 0..100 % (chord tolerance) |
+| v_bez_on / v_bez_off | 11 / sub 13 | ✓ | query/enable capability (always available) |
+| v_opnbm | 100 / sub 1 | ✓ | open an off-screen device-format bitmap as a workstation |
+
 ### Fonts
 
 We need a font story. I think the best way forward is to incorporate (simpler, less capable) [libttf](https://github.com/tayoky/libttf) or 

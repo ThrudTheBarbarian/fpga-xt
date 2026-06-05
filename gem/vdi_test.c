@@ -698,6 +698,52 @@ int main(void) {
     CHECK(PX(ae, 18, 10) == vdi_pen_rgba(1));           // phase 18 (=2 mod 16) -> on again
     v_clsvwk(hae); gfx_surface_free(ae);
 
+    // v_opnbm: open an off-screen device-format bitmap as a workstation and draw
+    // into it (no screen target).
+    uint32_t bmpx[40 * 30];
+    for (int i = 0; i < 40 * 30; i++) bmpx[i] = 0;
+    MFDB bm = { bmpx, 40, 30, 40, 0, 0 };               // device form (stand=0)
+    int hbm = v_opnbm(&bm, NULL);
+    CHECK(hbm > 0);
+    vsf_color(hbm, 2); vsf_interior(hbm, VDI_FIS_SOLID); vsf_perimeter(hbm, 0);
+    int16_t br[4] = { 5, 5, 34, 24 }; vr_recfl(hbm, br);
+    CHECK(bmpx[15 * 40 + 20] == vdi_pen_rgba(2));        // filled into the caller's buffer
+    CHECK(bmpx[0] == 0);                                 // outside the rect untouched
+    v_clsvwk(hbm);
+    MFDB bmstd = { bmpx, 40, 30, 40, 1, 1 };             // standard (planar) -> rejected
+    CHECK(v_opnbm(&bmstd, NULL) == 0);
+
+    // v_bez: a cubic bulging up from the baseline marks ink above its endpoints,
+    // reports one contour, and a sane bounding box.
+    gfx_surface *bs = gfx_surface_alloc(120, 80);
+    for (int i = 0; i < 120 * 80; i++) bs->px[i] = 0;
+    int hbz = v_opnvwk(bs);
+    vsl_color(hbz, 1); vsl_width(hbz, 1); vsl_type(hbz, 1);
+    int16_t bxy[8]  = { 10, 70, 40, 0, 80, 0, 110, 70 };   // anchor,ctrl,ctrl,anchor
+    uint8_t bfl[4]  = { 1, 0, 0, 0 };                       // point 0 starts a cubic
+    int16_t bext[4]; int btp = 0, btm = 0;
+    v_bez(hbz, 4, bxy, bfl, bext, &btp, &btm);
+    CHECK(btp > 4 && btm == 1);                          // flattened to many pts, 1 contour
+    CHECK(bext[1] < 70 && bext[3] >= 70);               // box reaches up above the ends
+    int bezink = 0;
+    for (int y = 0; y < 40; y++) for (int x = 0; x < 120; x++)
+        if (bs->px[(size_t)y * bs->stride + x]) bezink++;
+    CHECK(bezink > 0);                                   // the curve arched into the top half
+
+    // v_bez_qual: lower quality => coarser flattening => fewer generated points.
+    v_bez_qual(hbz, 100, NULL); int hiq = 0; v_bez(hbz, 4, bxy, bfl, NULL, &hiq, NULL);
+    v_bez_qual(hbz, 0, NULL);   int loq = 0; v_bez(hbz, 4, bxy, bfl, NULL, &loq, NULL);
+    CHECK(hiq > loq);
+    CHECK(v_bez_on(hbz) != 0);                           // capability advertised
+
+    // v_bez_fill: close the curve to the baseline and fill it solid.
+    for (int i = 0; i < 120 * 80; i++) bs->px[i] = 0;
+    vsf_color(hbz, 3); vsf_interior(hbz, VDI_FIS_SOLID); vsf_perimeter(hbz, 0);
+    v_bez_qual(hbz, 100, NULL);
+    v_bez_fill(hbz, 4, bxy, bfl, NULL, NULL, NULL);
+    CHECK(bs->px[(size_t)60 * bs->stride + 60] == vdi_pen_rgba(3));  // interior filled
+    v_clsvwk(hbz); gfx_surface_free(bs);
+
     if (fails == 0) printf("*** VDI TEST OK ***\n");
     else            printf("*** VDI TEST: %d FAIL(s) ***\n", fails);
     gfx_surface_free(s);

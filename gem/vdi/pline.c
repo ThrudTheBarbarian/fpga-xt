@@ -37,6 +37,7 @@ static void pull_back(int16_t *x, int16_t *y, int tx, int ty, double d) {
 }
 
 void op_pline(vdi_pb *pb) {
+    if (pb->contrl[5] == VDI_BEZ_SUB) { op_bez(pb, 0); return; }   // v_bez
     vdi_ws *w = vdi_ws_of(pb->contrl[6]); if (!w) return;
     int n = pb->contrl[1]; if (n < 1) return;
     int16_t pts[256];

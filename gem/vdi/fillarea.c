@@ -8,6 +8,7 @@
 #include <string.h>
 
 void op_fillarea(vdi_pb *pb) {
+    if (pb->contrl[5] == VDI_BEZ_SUB) { op_bez(pb, 1); return; }   // v_bez_fill
     vdi_ws *w = vdi_ws_of(pb->contrl[6]); if (!w) return;
     int n = pb->contrl[1]; if (n < 2) return;
     if (w->fill_interior != VDI_FIS_HOLLOW)

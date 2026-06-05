@@ -394,6 +394,7 @@ void vdi_call(vdi_pb *pb) {
         case VDI_VR_TRNFM:    op_vr_trnfm(pb);   break;
         case VDI_GET_PIXEL:   op_get_pixel(pb);  break;
         case VDI_GDP:         op_gdp(pb);        break;  // v_bar + circle/ellipse/arc/...
+        case VDI_ESCAPE:      op_bez_qual(pb);   break;  // escape sub 99 = v_bez_qual
         default: break;       // unimplemented opcode -> no-op
     }
 }

@@ -87,7 +87,12 @@ enum {                          // VDI opcodes (standard GEM)
     VDI_VEX_MOTV    = 126,      // vex_motv   — pointer-motion vector
     VDI_VEX_CURV    = 127,      // vex_curv   — cursor-draw vector
     VDI_Q_KEY_S     = 128,      // vq_key_s   — keyboard shift state
+    VDI_ESCAPE      = 5,        // VDI escape (sub 99 = v_bez_qual)
 };
+
+// NVDI Bézier sub-opcodes.  v_bez/v_bez_fill ride op 6/9 with contrl[5]=13;
+// v_bez_on/off ride op 11 (GDP) sub 13; v_bez_qual rides escape (op 5) sub 99.
+enum { VDI_BEZ_SUB = 13, GDP_BEZ = 13, ESC_BEZ_QUAL = 99 };
 
 // Input device classes (vsin_mode) and the two input modes.
 enum { VDI_DEV_LOCATOR = 1, VDI_DEV_VALUATOR = 2, VDI_DEV_CHOICE = 3, VDI_DEV_STRING = 4 };
@@ -315,5 +320,26 @@ vdi_vec vex_butv(int handle, vdi_vec f);           // button change
 vdi_vec vex_motv(int handle, vdi_vec f);           // pointer motion
 vdi_vec vex_curv(int handle, vdi_vec f);           // cursor draw
 vdi_vec vex_timv(int handle, vdi_vec f);           // timer tick
+
+// ---- NVDI extensions ------------------------------------------------------
+// Bézier paths: `xy` holds count (x,y) points (anchors + control points); `bez`
+// flags each point — bit0 = start of a cubic (this + next 3 points), bit1 =
+// pen-up (new sub-path).  extent[4] gets the bounding box, *totpts the flattened
+// point count, *totmoves the sub-path count.  v_bez strokes (line attributes),
+// v_bez_fill fills (fill attributes).  v_bez_qual sets flattening quality (0..
+// 100%).  v_bez_on returns the quality-level count (nonzero = available).
+void v_bez(int handle, int count, const int16_t *xy, const uint8_t *bez,
+           int16_t *extent, int *totpts, int *totmoves);
+void v_bez_fill(int handle, int count, const int16_t *xy, const uint8_t *bez,
+                int16_t *extent, int *totpts, int *totmoves);
+int  v_bez_qual(int handle, int percent, int16_t *set);
+int  v_bez_on(int handle);
+void v_bez_off(int handle);
+
+// Off-screen bitmap workstation: open `bitmap` (device-format MFDB — chunky
+// RGBA-8888, stand==0) as a workstation; every VDI call then draws into it
+// instead of the screen.  Returns the handle (0 = failed), close with v_clsvwk.
+// work_out (>= 57 words, or NULL) gets the capabilities, extent = bitmap size.
+int  v_opnbm(const MFDB *bitmap, int16_t *work_out);
 
 #endif // GEM_VDI_H
