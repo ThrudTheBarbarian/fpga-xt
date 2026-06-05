@@ -97,7 +97,7 @@ The device mechanism is in place, so adding a device is now just a driver behind
 | Call | Op | Sup | Notes |
 |------|----|-----|-------|
 | vs_color | 14 | ✓ | set palette pen (RGB 0..1000) |
-| vsl_type | 15 | ✓ | 1 solid .. 6 dash-dot-dot |
+| vsl_type | 15 | ✓ | 1 solid .. 6 dash-dot-dot, 7 user (vsl_udsty) |
 | vsl_width | 16 | ✓ | round pen |
 | vsl_color | 17 | ✓ | |
 | vst_height | 12 | ✓ | px |
@@ -113,7 +113,7 @@ The device mechanism is in place, so adding a device is now just a driver behind
 | vst_rotation | 13 | ✓ | text at any angle (1/10 deg, CCW) — glyph outlines transformed via FreeType, not just 90s |
 | vst_effects | 106 | ✓ | thicken/light/skew/underline/outline/shadow (FreeType embolden/shear/stroke); combine with rotation |
 | vsl_ends | 108 | ✓ | polyline end styles: square / arrow / round, per start and end |
-| vsl_udsty | 113 | ✗ | user line style |
+| vsl_udsty | 113 | ✓ | user-defined line style (16-bit dash mask) used by vsl_type 7 |
 | vsf_udpat | 112 | ✓ | user fill pattern (16x16); selected by vsf_interior FIS_USER |
 | vsm_type / vsm_height / vsm_color | 18 / 19 / 20 | ✓ | marker type / size / colour |
 

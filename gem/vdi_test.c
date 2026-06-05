@@ -548,6 +548,16 @@ int main(void) {
     for (int i = 0; i < 60 * 40; i++) ae->px[i] = 0;
     vsl_ends(hae, VDI_LE_ROUND, VDI_LE_ROUND); v_pline(hae, 2, aln);
     CHECK(PX(ae, 52, 20) != 0);                         // round cap bulges past
+
+    // vsl_udsty: a user dash mask used by line type 7 (distance-phased).
+    vsl_width(hae, 1); vsl_ends(hae, VDI_LE_SQUARE, VDI_LE_SQUARE);
+    CHECK(vsl_type(hae, 7) == 7);
+    vsl_udsty(hae, 0x000F);                             // 4 on, 12 off
+    for (int i = 0; i < 60 * 40; i++) ae->px[i] = 0;
+    int16_t uln[4] = { 0, 10, 40, 10 }; v_pline(hae, 2, uln);
+    CHECK(PX(ae, 2, 10) == vdi_pen_rgba(1));            // phase 2 -> on
+    CHECK(PX(ae, 8, 10) == 0);                          // phase 8 -> off
+    CHECK(PX(ae, 18, 10) == vdi_pen_rgba(1));           // phase 18 (=2 mod 16) -> on again
     v_clsvwk(hae); gfx_surface_free(ae);
 
     if (fails == 0) printf("*** VDI TEST OK ***\n");

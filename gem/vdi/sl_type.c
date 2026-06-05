@@ -6,7 +6,7 @@
 
 void op_sl_type(vdi_pb *pb) {
     vdi_ws *w = vdi_ws_of(pb->contrl[6]); if (!w) return;
-    int t = pb->intin[0]; if (t < 1) t = 1; if (t > 6) t = 6;
+    int t = pb->intin[0]; if (t < 1) t = 1; if (t > 7) t = 7;   // 7 = user (vsl_udsty)
     w->line_type = t;
     pb->intout[0] = (int16_t)t;
 }

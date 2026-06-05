@@ -21,7 +21,7 @@ int vdi_ws_alloc(void) {
     for (int i = 1; i < VDI_MAX_WS; i++) if (!ws_tab[i].used) {   // slot 0 = physical
         memset(&ws_tab[i], 0, sizeof(ws_tab[i]));
         ws_tab[i].used = 1; ws_tab[i].line_color = 1;
-        ws_tab[i].line_width = 1; ws_tab[i].line_type = 1;
+        ws_tab[i].line_width = 1; ws_tab[i].line_type = 1; ws_tab[i].line_udsty = 0xFFFF;
         ws_tab[i].fill_color = 1; ws_tab[i].text_color = 1; ws_tab[i].fill_interior = 1;
         ws_tab[i].fill_style = 1; ws_tab[i].fill_perimeter = 1;
         ws_tab[i].marker_type = 3; ws_tab[i].marker_height = 11; ws_tab[i].marker_color = 1;
@@ -233,7 +233,7 @@ void vdi_line_ex(const vdi_ws *w, int x0, int y0, int x1, int y1, int pen, int s
     // Rasterise (Bresenham) so we can apply width + dash ourselves.
     uint32_t rgba = pen_tab[pen & 0xFF];
     int width = w->line_width < 1 ? 1 : w->line_width;
-    uint16_t pat = line_pattern(w->line_type);
+    uint16_t pat = (w->line_type == 7) ? (uint16_t)w->line_udsty : line_pattern(w->line_type);
     int dx = x1 > x0 ? x1 - x0 : x0 - x1, sx = x0 < x1 ? 1 : -1;
     int dy = y1 > y0 ? y0 - y1 : y1 - y0, sy = y0 < y1 ? 1 : -1;   // dy negative
     int err = dx + dy, mode = w->wr_mode;
@@ -264,7 +264,7 @@ void vdi_init(gfx_surface *default_target) {
     memset(ws_tab, 0, sizeof(ws_tab));
     pen_init();
     ws_tab[0].used = 1; ws_tab[0].target = default_target;     // handle 1 = physical
-    ws_tab[0].line_color = 1; ws_tab[0].line_width = 1; ws_tab[0].line_type = 1;
+    ws_tab[0].line_color = 1; ws_tab[0].line_width = 1; ws_tab[0].line_type = 1; ws_tab[0].line_udsty = 0xFFFF;
     ws_tab[0].fill_color = 1; ws_tab[0].text_color = 1; ws_tab[0].fill_interior = 1;
     ws_tab[0].fill_style = 1; ws_tab[0].fill_perimeter = 1;
     ws_tab[0].marker_type = 3; ws_tab[0].marker_height = 11; ws_tab[0].marker_color = 1;
@@ -341,6 +341,7 @@ void vdi_call(vdi_pb *pb) {
         case VDI_SL_COLOR:    op_sl_color(pb);   break;
         case VDI_SL_TYPE:     op_sl_type(pb);    break;
         case VDI_SL_WIDTH:    op_sl_width(pb);   break;
+        case VDI_SL_UDSTY:    op_sl_udsty(pb);   break;
         case VDI_SL_ENDS:     op_sl_ends(pb);    break;
         case VDI_ST_COLOR:    op_st_color(pb);   break;
         case VDI_ST_HEIGHT:   op_st_height(pb);  break;

@@ -42,6 +42,7 @@ enum {                          // VDI opcodes (standard GEM)
     VDI_SL_WIDTH    = 16,       // vsl_width  — line width (px)
     VDI_SL_COLOR    = 17,       // vsl_color  — polyline colour
     VDI_SL_ENDS     = 108,      // vsl_ends   — polyline end styles
+    VDI_SL_UDSTY    = 113,      // vsl_udsty  — user-defined line style (type 7)
     VDI_SM_TYPE     = 18,       // vsm_type   — marker type
     VDI_SM_HEIGHT   = 19,       // vsm_height — marker height
     VDI_SM_COLOR    = 20,       // vsm_color  — marker colour
@@ -156,9 +157,10 @@ void v_clsvwk(int handle);
 void vq_extnd(int handle, int owflag, int16_t *work_out);
 int  vswr_mode(int handle, int mode);                  // VDI_MD_*; returns selected
 void vsl_color(int handle, int pen);
-int  vsl_type(int handle, int style);                  // 1 solid..6; returns selected
+int  vsl_type(int handle, int style);                  // 1 solid..6, 7 user; returns selected
 int  vsl_width(int handle, int width);                 // px; returns selected
 void vsl_ends(int handle, int beg, int end);           // VDI_LE_* for start/end of a polyline
+void vsl_udsty(int handle, uint16_t pattern);          // 16-bit dash mask for vsl_type 7
 void vst_color(int handle, int pen);                   // text colour
 int  vst_rotation(int handle, int angle);              // baseline angle, 1/10 deg CCW; -> selected
 int  vst_effects(int handle, int effects);             // FX_* bitmask (from font.h); -> selected

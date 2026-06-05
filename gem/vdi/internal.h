@@ -25,7 +25,8 @@ typedef struct {
     gfx_surface *target;
     int          line_color;       // pen
     int          line_width;       // px (default 1)
-    int          line_type;        // 1 solid .. 6 (vsl_type)
+    int          line_type;        // 1 solid .. 6, 7 user (vsl_type)
+    int          line_udsty;       // 16-bit user dash mask (vsl_udsty, type 7)
     int          line_beg, line_end;  // VDI_LE_* end styles (vsl_ends)
     int          fill_color;       // pen
     int          text_color;       // pen
@@ -104,6 +105,7 @@ void op_swr_mode(vdi_pb *pb);
 void op_sl_color(vdi_pb *pb);
 void op_sl_width(vdi_pb *pb);
 void op_sl_type(vdi_pb *pb);
+void op_sl_udsty(vdi_pb *pb);
 void op_sl_ends(vdi_pb *pb);
 void op_st_color(vdi_pb *pb);
 void op_st_height(vdi_pb *pb);
