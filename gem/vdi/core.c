@@ -360,6 +360,7 @@ void vdi_call(vdi_pb *pb) {
         case VDI_QT_ATTR:     op_qt_attr(pb);    break;
         case VDI_QT_FONTINFO: op_qt_fontinfo(pb); break;
         case VDI_QT_F_EXTENT: op_qt_f_extent(pb); break;
+        case VDI_FTEXT:       op_ftext(pb);       break;
         case VDI_QT_ADVANCE:  op_qt_advance(pb);  break;
         case VDI_ST_ARBPT:    op_st_arbpt(pb);    break;
         case VDI_V_SETRGB:    op_v_setrgb(pb);    break;

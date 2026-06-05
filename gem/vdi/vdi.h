@@ -53,6 +53,7 @@ enum {                          // VDI opcodes (standard GEM)
     VDI_QT_NAME     = 130,      // vqt_name   — inquire a font's id + name
     VDI_QT_FONTINFO = 131,      // vqt_fontinfo — structural font metrics
     VDI_QT_F_EXTENT = 240,      // vqt_f_extent — fractional text extent
+    VDI_FTEXT       = 241,      // v_ftext / v_ftext_offset — outline text output
     VDI_ST_ARBPT    = 246,      // vst_arbpt(32)— arbitrary text size (sub 1 = 16.16)
     VDI_QT_ADVANCE  = 247,      // vqt_advance  — sub-pixel character advance
     VDI_V_SETRGB    = 138,      // v_setrgb     — set a pen from 8-bit RGB
@@ -225,6 +226,11 @@ void vsf_udpat(int handle, const uint16_t *pat16);     // user fill pattern: 16 
 void vsf_perimeter(int handle, int on);                // outline filled areas
 void vs_color(int handle, int index, const int16_t *rgb);  // rgb[3] each 0..1000
 void v_gtext(int handle, int x, int y, const char *s); // anchored per vst_alignment
+// Outline-font text output (op 241).  v_ftext is v_gtext on this scalable device;
+// v_ftext_offset places each character at its own (x,y) offset from the anchor
+// (off[] = one pair per character) for app-controlled glyph layout.
+void v_ftext(int handle, int x, int y, const char *s);
+void v_ftext_offset(int handle, int x, int y, const char *s, const int16_t *off);
 // Justify s to occupy `width` px from (x,y): word_space/char_space (0/1) pick
 // whether slack goes to spaces and/or between characters.
 void v_justified(int handle, int x, int y, const char *s, int width,

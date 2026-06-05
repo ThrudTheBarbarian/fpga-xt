@@ -343,6 +343,21 @@ void font_draw_justified(font *f, gfx_surface *d, int x, int y, const char *s,
     }
 }
 
+// Draw each glyph of s at its own offset from (x,y) (em-box top-left): glyph
+// j (the j-th codepoint) goes at (x + off[2j], y + off[2j+1]).  The app owns the
+// layout (v_ftext_offset) — no kerning/tracking is applied here.
+void font_draw_offsets(font *f, gfx_surface *d, int x, int y, const char *s,
+                       const int16_t *off, uint32_t rgba, const int *clip, int mode) {
+    if (!f || !s || !d || !off) return;
+    int cx0, cy0, cx1, cy1; clip_of(d, clip, &cx0, &cy0, &cx1, &cy1);
+    int base0 = y + f->ascent, j = 0;
+    for (const char *p = s; *p; j++) {
+        const glyph *g = glyph_get(f, utf8_next(&p));
+        if (!g) { j--; continue; }
+        blit_glyph(d, x + off[2*j], base0 + off[2*j+1], g, rgba, cx0, cy0, cx1, cy1, mode);
+    }
+}
+
 // Blit an FT bitmap's coverage at device top-left.  `light` halves coverage.
 static void blit_ft(gfx_surface *d, const FT_Bitmap *bm, int bx, int by,
                     uint32_t rgba, int cx0, int cy0, int cx1, int cy1, int mode, int light) {

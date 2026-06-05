@@ -176,6 +176,7 @@ void op_cellarray(vdi_pb *pb);
 void op_contourfill(vdi_pb *pb);
 void op_gdp(vdi_pb *pb);        // GDP dispatch (v_bar + curved primitives)
 void op_gtext(vdi_pb *pb);
+void op_ftext(vdi_pb *pb);      // v_ftext / v_ftext_offset (outline text)
 void op_justified(vdi_pb *pb);  // GDP sub 10 (justified text)
 void op_fillrect(vdi_pb *pb);
 void op_cpyfm(vdi_pb *pb);

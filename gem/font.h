@@ -76,4 +76,9 @@ void  font_draw_fx(font *f, gfx_surface *dst, int x, int y, const char *s,
                    int angle_tenths, int effects, int skew_tenths,
                    uint32_t rgba, const int *clip, int mode);
 
+// Draw each glyph at an app-supplied offset from (x,y): codepoint j at
+// (x+off[2j], y+off[2j+1]).  Backs v_ftext_offset (explicit glyph placement).
+void  font_draw_offsets(font *f, gfx_surface *dst, int x, int y, const char *s,
+                        const int16_t *off, uint32_t rgba, const int *clip, int mode);
+
 #endif // GEM_FONT_H

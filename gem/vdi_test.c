@@ -689,6 +689,29 @@ int main(void) {
     CHECK(vst_charmap(he, 0) == VDI_MAP_UNICODE);
     CHECK(vst_map_mode(he, 1) == VDI_MAP_UNICODE);
 
+    // v_ftext: outline text == v_gtext on this device (same pixels).
+    vswr_mode(he, VDI_MD_REPLACE); vst_skew(he, 0); vst_bg_color(he, -1);
+    vst_height(he, 18, NULL, NULL, NULL, NULL); vst_color(he, 1);
+    vst_alignment(he, VDI_TA_LEFT, VDI_TA_TOP, NULL, NULL);
+    gfx_surface *fg = gfx_surface_alloc(80, 40), *fh = gfx_surface_alloc(80, 40);
+    for (int i = 0; i < 80 * 40; i++) { fg->px[i] = 0; fh->px[i] = 0; }
+    int hfg = v_opnvwk(fg), hfh = v_opnvwk(fh);
+    vst_color(hfg, 1); vst_color(hfh, 1);
+    v_gtext(hfg, 4, 4, "Ag");
+    v_ftext(hfh, 4, 4, "Ag");
+    int same = 1; for (int i = 0; i < 80 * 40; i++) if (fg->px[i] != fh->px[i]) { same = 0; break; }
+    CHECK(same);                                         // v_ftext mirrors v_gtext
+
+    // v_ftext_offset: explicit per-glyph placement — push the 2nd glyph far right.
+    for (int i = 0; i < 80 * 40; i++) fh->px[i] = 0;
+    int16_t foff[4] = { 0, 0, 50, 0 };                  // glyph 0 at origin, glyph 1 +50px
+    v_ftext_offset(hfh, 4, 4, "Ag", foff);
+    int leftcol = 0, rightcol = 0;
+    for (int y = 0; y < 40; y++) for (int x = 0; x < 30; x++) if (fh->px[(size_t)y*fh->stride+x]) leftcol++;
+    for (int y = 0; y < 40; y++) for (int x = 50; x < 80; x++) if (fh->px[(size_t)y*fh->stride+x]) rightcol++;
+    CHECK(leftcol > 0 && rightcol > 0);                 // ink in both the placed positions
+    v_clsvwk(hfg); v_clsvwk(hfh); gfx_surface_free(fg); gfx_surface_free(fh);
+
     // vst_arbpt: arbitrary point size, reports metrics + returns the size used.
     int aw = 0, ah = 0, acw = 0, ach = 0;
     CHECK(vst_arbpt(he, 22, &aw, &ah, &acw, &ach) == 22);

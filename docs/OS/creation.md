@@ -94,18 +94,13 @@ The device mechanism is in place, so adding a device is now just a driver behind
 
 Cross-referencing the [FreeMiNT VDI output set](https://freemint.github.io/tos.hyp/en/vdi_output.html):
 every classic output call and GDP (1–10) is covered above, and the Bézier GDPs (v_bez / v_bez_fill)
-are in the **NVDI extensions** section. The only gap is the **outline-text output** group:
+are in the **NVDI extensions** section. The **outline-text output** group:
 
-| Call | Op | Sup | Rec | Notes / rationale |
-|------|----|-----|-----|-------|
-| v_ftext | 241 | ✗ | ✅ | output text via the **outline (vector) font** — on this device that's exactly what v_gtext already does (FreeType), so it's a thin alias over the same render path; worth it for NVDI-app compatibility |
-| v_ftext_offset | 241 | ✗ | ✅ | outline text where the app supplies a **per-character (x,y) offset array** — the one genuinely new capability: app-driven glyph placement (custom kerning / justification / curved baselines). Needs a "draw one glyph at a point" entry in the font module |
-| v_etext | 11 / GDP 11 | ✗ | ⛔ | **printers/plotters only** — writes each character relative to the start position to override the driver's default justification. A hardcopy-device call; belongs with the parked PDF/printer device, not the screen |
-
-Recommendation: **v_ftext** + **v_ftext_offset** (✅) are the worthwhile pair — `v_ftext` is nearly
-free (alias of v_gtext on a scalable device), and `v_ftext_offset` adds real app-controlled
-per-glyph positioning. `v_etext` (⛔) is a printer/plotter justification-override call and goes
-with the parked PDF/printer device.
+| Call | Op | Sup | Notes |
+|------|----|-----|-------|
+| v_ftext | 241 | ✓ | output text via the outline font — identical to v_gtext on this scalable device (shares the render path: alignment / rotation / effects / opaque bg) |
+| v_ftext_offset | 241 | ✓ | outline text with an app-supplied **per-character (x,y) offset** (one pair per codepoint after the anchor) — app-driven glyph placement: custom kerning, justification, text on a path |
+| v_etext | 11 / GDP 11 | ⛔ | **printers/plotters only** — emits each character relative to the start to override the driver's justification; belongs with the parked PDF/printer device, not the screen |
 
 **Attributes**
 
