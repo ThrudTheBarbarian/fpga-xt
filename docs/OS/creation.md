@@ -100,11 +100,12 @@ are in the **NVDI extensions** section. The only gap is the **outline-text outpu
 |------|----|-----|-----|-------|
 | v_ftext | 241 | ✗ | ✅ | output text via the **outline (vector) font** — on this device that's exactly what v_gtext already does (FreeType), so it's a thin alias over the same render path; worth it for NVDI-app compatibility |
 | v_ftext_offset | 241 | ✗ | ✅ | outline text where the app supplies a **per-character (x,y) offset array** — the one genuinely new capability: app-driven glyph placement (custom kerning / justification / curved baselines). Needs a "draw one glyph at a point" entry in the font module |
-| v_etext | 11 / GDP 11 | ✗ | 🤔 | listed as "text at position", but GDP 11 is non-standard (classic GDPs end at 10, which we use for v_justified) — likely a doc artifact or an alias of v_gtext (whose ptsin already *is* the position). Verify it's real before implementing; probably redundant |
+| v_etext | 11 / GDP 11 | ✗ | ⛔ | **printers/plotters only** — writes each character relative to the start position to override the driver's default justification. A hardcopy-device call; belongs with the parked PDF/printer device, not the screen |
 
 Recommendation: **v_ftext** + **v_ftext_offset** (✅) are the worthwhile pair — `v_ftext` is nearly
-free (alias), and `v_ftext_offset` adds real app-controlled per-glyph positioning. `v_etext` (🤔)
-should be confirmed against a real header first; it appears to duplicate v_gtext.
+free (alias of v_gtext on a scalable device), and `v_ftext_offset` adds real app-controlled
+per-glyph positioning. `v_etext` (⛔) is a printer/plotter justification-override call and goes
+with the parked PDF/printer device.
 
 **Attributes**
 
