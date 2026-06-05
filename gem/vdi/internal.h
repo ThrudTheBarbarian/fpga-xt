@@ -16,6 +16,8 @@ typedef struct {
     int          line_color;       // pen
     int          fill_color;       // pen
     int          text_color;       // pen
+    int          text_halign;      // VDI_TA_LEFT/CENTER/RIGHT
+    int          text_valign;      // VDI_TA_* (default TOP)
     int          fill_interior;    // 0 hollow, 1 solid
     font        *text_font;        // face for v_gtext (NULL => the VDI default)
     int          clip_on, cx0, cy0, cx1, cy1;   // clip rect, inclusive
@@ -46,6 +48,7 @@ void op_sl_color(vdi_pb *pb);
 void op_st_color(vdi_pb *pb);
 void op_st_height(vdi_pb *pb);
 void op_st_point(vdi_pb *pb);
+void op_st_alignment(vdi_pb *pb);
 void op_sf_color(vdi_pb *pb);
 void op_sf_interior(vdi_pb *pb);
 void op_clip(vdi_pb *pb);

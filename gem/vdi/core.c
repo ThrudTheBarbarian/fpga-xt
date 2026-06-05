@@ -21,6 +21,7 @@ int vdi_ws_alloc(void) {
         memset(&ws_tab[i], 0, sizeof(ws_tab[i]));
         ws_tab[i].used = 1; ws_tab[i].line_color = 1;
         ws_tab[i].fill_color = 1; ws_tab[i].text_color = 1; ws_tab[i].fill_interior = 1;
+        ws_tab[i].text_valign = VDI_TA_TOP;
         return i + 1;
     }
     return 0;
@@ -109,6 +110,7 @@ void vdi_init(gfx_surface *default_target) {
     ws_tab[0].used = 1; ws_tab[0].target = default_target;     // handle 1 = physical
     ws_tab[0].line_color = 1; ws_tab[0].fill_color = 1;
     ws_tab[0].text_color = 1; ws_tab[0].fill_interior = 1;
+    ws_tab[0].text_valign = VDI_TA_TOP;
 }
 
 font_face *g_default_face;
@@ -129,6 +131,7 @@ void vdi_call(vdi_pb *pb) {
         case VDI_ST_COLOR:    op_st_color(pb);   break;
         case VDI_ST_HEIGHT:   op_st_height(pb);  break;
         case VDI_ST_POINT:    op_st_point(pb);   break;
+        case VDI_ST_ALIGN:    op_st_alignment(pb);break;
         case VDI_SF_COLOR:    op_sf_color(pb);   break;
         case VDI_SF_INTERIOR: op_sf_interior(pb);break;
         case VDI_CLIP:        op_clip(pb);       break;

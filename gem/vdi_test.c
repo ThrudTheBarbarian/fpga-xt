@@ -98,6 +98,20 @@ int main(void) {
         CHECK(font_text_width(f24, "é") < font_text_width(f24, "??"));   // é (2 bytes)
         CHECK(font_text_width(f24, "—") < font_text_width(f24, "???"));  // — (3 bytes)
 
+        // vst_alignment: right-anchored text ends at the anchor; centred straddles it.
+        vst_height(ht, 16, NULL, NULL, NULL, NULL);
+        font *f16 = font_at(tf, 16);
+        int tw = font_text_width(f16, "Align");
+        for (int i = 0; i < 220 * 64; i++) ts->px[i] = WHITE;
+        vst_alignment(ht, VDI_TA_RIGHT, VDI_TA_TOP, NULL, NULL);
+        v_gtext(ht, 120, 4, "Align");                  // text occupies ~[120-tw, 120)
+        int left_of_anchor = 0, right_of_anchor = 0;
+        for (int y = 4; y < 24; y++) for (int x = 0; x < 220; x++)
+            if (PX(ts, x, y) != WHITE) { if (x < 120) left_of_anchor = 1; if (x > 120) right_of_anchor = 1; }
+        CHECK(left_of_anchor && !right_of_anchor);     // all ink left of the anchor
+        (void)tw;
+        vst_alignment(ht, VDI_TA_LEFT, VDI_TA_TOP, NULL, NULL);   // restore
+
         for (int i = 0; i < 220 * 64; i++) ts->px[i] = WHITE;
         int16_t cl[4] = { 200, 56, 201, 57 };          // clip far from the text
         vs_clip(ht, 1, cl);

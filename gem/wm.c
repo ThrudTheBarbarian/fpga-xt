@@ -201,15 +201,15 @@ static void draw_frame(gem_wm *wm, gem_window *win) {
     int bx0, by0, bx1, by1; close_box(win, &bx0, &by0, &bx1, &by1);
     r[0]=bx0; r[1]=by0; r[2]=bx1; r[3]=by1; vr_recfl(vh, r);
 
-    if (wm->title_font && win->title) {                                     // title text
-        int tx = bx1 + 8;                                                   // after the close box
-        int th = font_height(wm->title_font);
-        int ty = y + EDGE + (TITLE_H - th) / 2;
-        int16_t tc[4] = { (int16_t)tx, (int16_t)(y+EDGE),
-                          (int16_t)(x+w-1-EDGE), (int16_t)(y+EDGE+TITLE_H-1) };
+    if (wm->title_font && win->title) {                                     // centred title text
+        int rl = bx1 + 8, rr = x + w - 1 - EDGE;                            // between close box + edge
+        int16_t tc[4] = { (int16_t)rl, (int16_t)(y+EDGE),
+                          (int16_t)rr, (int16_t)(y+EDGE+TITLE_H-1) };
         vs_clip(vh, 1, tc);                                                 // keep text in the bar
         vst_color(vh, PEN_EDGE);
-        v_gtext(vh, tx, ty, win->title);
+        vst_alignment(vh, VDI_TA_CENTER, VDI_TA_HALF, NULL, NULL);
+        v_gtext(vh, (rl + rr) / 2, y + EDGE + TITLE_H / 2, win->title);
+        vst_alignment(vh, VDI_TA_LEFT, VDI_TA_TOP, NULL, NULL);            // restore
         int16_t full[4] = { 0, 0, (int16_t)(wm->desk->w-1), (int16_t)(wm->desk->h-1) };
         vs_clip(vh, 0, full);                                              // restore
     }

@@ -28,6 +28,7 @@ enum {                          // VDI opcodes (standard GEM)
     VDI_GDP         = 11,       // sub-opcode 1 = v_bar (filled rectangle)
     VDI_ST_HEIGHT   = 12,       // vst_height — text size in pixels
     VDI_SL_COLOR    = 17,       // vsl_color  — polyline colour
+    VDI_ST_ALIGN    = 39,       // vst_alignment — text anchor
     VDI_ST_COLOR    = 22,       // vst_color  — text colour
     VDI_SF_INTERIOR = 23,       // vsf_interior — 0 hollow, 1 solid
     VDI_SF_COLOR    = 25,       // vsf_color  — fill colour
@@ -51,6 +52,13 @@ void mfdb_from_surface(MFDB *m, gfx_surface *s);   // wrap a surface as a device
 
 // VDI raster copy modes (subset).  3 = S replace (plain copy) — the only one yet.
 enum { VRO_COPY = 3 };
+
+// v_gtext anchor (vst_alignment).  Horizontal is standard GEM; vertical uses the
+// GEM codes but DEFAULTS to TOP (our v_gtext anchor has always been the em-box
+// top-left), not GEM's baseline.
+enum { VDI_TA_LEFT = 0, VDI_TA_CENTER = 1, VDI_TA_RIGHT = 2 };
+enum { VDI_TA_BASELINE = 0, VDI_TA_HALF = 1, VDI_TA_ASCENT = 2,
+       VDI_TA_BOTTOM   = 3, VDI_TA_DESCENT = 4, VDI_TA_TOP = 5 };
 
 // The GEM parameter block: contrl[0]=opcode, [1]=#ptsin pairs, [2]=#ptsout,
 // [3]=#intin, [4]=#intout, [5]=sub-opcode, [6]=handle.
@@ -76,7 +84,9 @@ void vsl_color(int handle, int pen);
 void vst_color(int handle, int pen);                   // text colour
 void vsf_color(int handle, int pen);
 void vsf_interior(int handle, int style);
-void v_gtext(int handle, int x, int y, const char *s); // (x,y) = top-left
+void v_gtext(int handle, int x, int y, const char *s); // anchored per vst_alignment
+// Set the text anchor; set_h/set_v (may be NULL) get the clamped values back.
+void vst_alignment(int handle, int halign, int valign, int *set_h, int *set_v);
 // Set text size; out (each may be NULL) gets char_w, char_h, cell_w, cell_h in
 // px.  vst_height returns the pixel size used; vst_point the point size used.
 int  vst_height(int handle, int height_px, int *cw, int *ch, int *cellw, int *cellh);
