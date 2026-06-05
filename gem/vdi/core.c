@@ -119,6 +119,46 @@ void vdi_fill_rect_masked(const vdi_ws *w, int x0, int y0, int x1, int y1,
     }
 }
 
+// Scanline fill of a polygon (even-odd), clipped, with an optional 8x8 mask.
+void vdi_fill_poly(const vdi_ws *w, const int16_t *xy, int n, int pen, const uint8_t *mask) {
+    if (n < 3) return;
+    int cx0, cy0, cx1, cy1; vdi_ws_clip(w, &cx0, &cy0, &cx1, &cy1);
+    int ymin = cy1, ymax = cy0;
+    for (int i = 0; i < n; i++) { int y = xy[2*i+1]; if (y < ymin) ymin = y; if (y > ymax) ymax = y; }
+    if (ymin < cy0) ymin = cy0; if (ymax > cy1) ymax = cy1;
+    uint32_t rgba = pen_tab[pen & 0xFF];
+    gfx_surface *s = w->target;
+    int xs[128];
+    for (int y = ymin; y <= ymax; y++) {
+        int ni = 0;
+        for (int i = 0; i < n; i++) {
+            int j = (i + 1) % n;
+            int y0 = xy[2*i+1], y1 = xy[2*j+1], x0 = xy[2*i], x1 = xy[2*j];
+            if ((y0 <= y && y1 > y) || (y1 <= y && y0 > y)) {       // half-open edge rule
+                int xi = x0 + (int)((long)(y - y0) * (x1 - x0) / (y1 - y0));
+                if (ni < 128) xs[ni++] = xi;
+            }
+        }
+        for (int a = 0; a < ni - 1; a++)                            // sort intersections
+            for (int b = a + 1; b < ni; b++) if (xs[b] < xs[a]) { int t = xs[a]; xs[a] = xs[b]; xs[b] = t; }
+        for (int k = 0; k + 1 < ni; k += 2) {
+            int xa = xs[k], xb = xs[k+1];
+            if (xa < cx0) xa = cx0; if (xb > cx1) xb = cx1;
+            uint8_t bits = mask ? mask[y & 7] : 0xFF;
+            uint32_t *row = s->px + (size_t)y * s->stride;
+            for (int x = xa; x <= xb; x++) if (bits & (1u << (x & 7))) row[x] = rgba;
+        }
+    }
+}
+
+// Connect points with clipped line segments; closed joins the last back to the first.
+void vdi_polyline(const vdi_ws *w, const int16_t *xy, int n, int pen, int closed) {
+    for (int i = 0; i + 1 < n; i++)
+        vdi_line(w, xy[2*i], xy[2*i+1], xy[2*i+2], xy[2*i+3], pen);
+    if (closed && n > 2)
+        vdi_line(w, xy[2*(n-1)], xy[2*n-1], xy[0], xy[1], pen);
+}
+
 void vdi_rect_outline(const vdi_ws *w, int x0, int y0, int x1, int y1, int pen) {
     if (x0 > x1) { int t = x0; x0 = x1; x1 = t; }
     if (y0 > y1) { int t = y0; y0 = y1; y1 = t; }
@@ -202,7 +242,7 @@ void vdi_call(vdi_pb *pb) {
         case VDI_GTEXT:       op_gtext(pb);      break;
         case VDI_RECFL:       op_fillrect(pb);   break;
         case VDI_CPYFM:       op_cpyfm(pb);      break;
-        case VDI_GDP:         if (pb->contrl[5] == 1) op_fillrect(pb); break;  // v_bar
+        case VDI_GDP:         op_gdp(pb);        break;  // v_bar + circle/ellipse/arc/...
         default: break;       // unimplemented opcode -> no-op
     }
 }

@@ -37,6 +37,8 @@ void        vdi_fill_rect_masked(const vdi_ws *w, int x0, int y0, int x1, int y1
                                  int pen, const uint8_t *mask);
 const uint8_t *vdi_fill_mask(int interior, int style);   // NULL = solid/hollow
 void        vdi_rect_outline(const vdi_ws *w, int x0, int y0, int x1, int y1, int pen);
+void        vdi_fill_poly(const vdi_ws *w, const int16_t *xy, int n, int pen, const uint8_t *mask);
+void        vdi_polyline(const vdi_ws *w, const int16_t *xy, int n, int pen, int closed);
 void        vdi_line(const vdi_ws *w, int x0, int y0, int x1, int y1, int pen);
 void        vdi_set_pen(int index, uint32_t rgba);       // vs_color writes the palette
 gfx_surface vdi_mfdb_surf(const MFDB *m, const vdi_ws *w);
@@ -65,6 +67,7 @@ void op_sf_style(vdi_pb *pb);
 void op_sf_perimeter(vdi_pb *pb);
 void op_clip(vdi_pb *pb);
 void op_pline(vdi_pb *pb);
+void op_gdp(vdi_pb *pb);        // GDP dispatch (v_bar + curved primitives)
 void op_gtext(vdi_pb *pb);
 void op_fillrect(vdi_pb *pb);
 void op_cpyfm(vdi_pb *pb);

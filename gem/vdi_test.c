@@ -151,6 +151,32 @@ int main(void) {
     v_clsvwk(hf);
     gfx_surface_free(fs);
 
+    // GDP curved primitives: filled circle, filled rounded rect, rbox outline.
+    gfx_surface *gs = gfx_surface_alloc(40, 40);
+    int hg = v_opnvwk(gs);
+    vsf_color(hg, 2); vsf_interior(hg, VDI_FIS_SOLID); vsf_perimeter(hg, 0);
+
+    for (int i = 0; i < 40 * 40; i++) gs->px[i] = 0;
+    v_circle(hg, 20, 20, 15);
+    CHECK(PX(gs, 20, 20) == vdi_pen_rgba(2));      // centre filled
+    CHECK(PX(gs, 20,  2) == 0);                    // above the circle
+    CHECK(PX(gs,  2,  2) == 0);                    // corner outside the disc
+
+    for (int i = 0; i < 40 * 40; i++) gs->px[i] = 0;
+    int16_t rb[4] = { 2, 2, 37, 37 };
+    v_rfbox(hg, rb);
+    CHECK(PX(gs, 20, 20) == vdi_pen_rgba(2));      // centre filled
+    CHECK(PX(gs, 20,  2) == vdi_pen_rgba(2));      // top edge filled
+    CHECK(PX(gs,  2,  2) == 0);                    // rounded corner cut away
+
+    for (int i = 0; i < 40 * 40; i++) gs->px[i] = 0;
+    vsl_color(hg, 1);
+    v_rbox(hg, rb);                                // outline only (line colour)
+    CHECK(PX(gs, 20,  2) == vdi_pen_rgba(1));      // top edge drawn
+    CHECK(PX(gs, 20, 20) == 0);                    // interior empty
+    v_clsvwk(hg);
+    gfx_surface_free(gs);
+
     if (fails == 0) printf("*** VDI TEST OK ***\n");
     else            printf("*** VDI TEST: %d FAIL(s) ***\n", fails);
     gfx_surface_free(s);

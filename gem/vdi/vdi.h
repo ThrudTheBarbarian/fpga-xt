@@ -59,6 +59,10 @@ enum { VRO_COPY = 3 };
 // Fill interior style (vsf_interior).  PATTERN/HATCH pick a mask via vsf_style.
 enum { VDI_FIS_HOLLOW = 0, VDI_FIS_SOLID = 1, VDI_FIS_PATTERN = 2, VDI_FIS_HATCH = 3 };
 
+// GDP (VDI_GDP) sub-opcodes.  Angles are tenths of a degree, 0 = east, CCW.
+enum { GDP_BAR = 1, GDP_ARC = 2, GDP_PIE = 3, GDP_CIRCLE = 4, GDP_ELLIPSE = 5,
+       GDP_ELLARC = 6, GDP_ELLPIE = 7, GDP_RBOX = 8, GDP_RFBOX = 9 };
+
 // v_gtext anchor (vst_alignment).  Horizontal is standard GEM; vertical uses the
 // GEM codes but DEFAULTS to TOP (our v_gtext anchor has always been the em-box
 // top-left), not GEM's baseline.
@@ -102,6 +106,16 @@ int  vst_height(int handle, int height_px, int *cw, int *ch, int *cellw, int *ce
 int  vst_point (int handle, int points,    int *cw, int *ch, int *cellw, int *cellh);
 void v_pline(int handle, int n, const int16_t *pxy);   // n point-pairs
 void v_bar(int handle, const int16_t *pxy);            // pxy = x1,y1,x2,y2
+// Curved GDPs.  Filled ones use the fill colour/interior/perimeter; arcs and
+// v_rbox use the line colour.  Angles are tenths of a degree (0=east, CCW).
+void v_circle(int handle, int x, int y, int r);
+void v_ellipse(int handle, int x, int y, int rx, int ry);
+void v_pieslice(int handle, int x, int y, int r, int beg, int end);
+void v_ellpie(int handle, int x, int y, int rx, int ry, int beg, int end);
+void v_arc(int handle, int x, int y, int r, int beg, int end);
+void v_ellarc(int handle, int x, int y, int rx, int ry, int beg, int end);
+void v_rbox(int handle, const int16_t *pxy);           // rounded rect, outline
+void v_rfbox(int handle, const int16_t *pxy);          // rounded rect, filled
 void vr_recfl(int handle, const int16_t *pxy);         // pxy = x1,y1,x2,y2
 void vs_clip(int handle, int on, const int16_t *pxy);  // pxy = x1,y1,x2,y2
 // vro_cpyfm: pxy = src x1,y1,x2,y2, dst x1,y1 (,x2,y2). mode = VRO_COPY.
