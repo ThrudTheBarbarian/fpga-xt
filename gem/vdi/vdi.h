@@ -26,10 +26,12 @@ enum {                          // VDI opcodes (standard GEM)
     VDI_PLINE       = 6,
     VDI_GTEXT       = 8,        // v_gtext    — graphic text
     VDI_GDP         = 11,       // sub-opcode 1 = v_bar (filled rectangle)
+    VDI_ST_HEIGHT   = 12,       // vst_height — text size in pixels
     VDI_SL_COLOR    = 17,       // vsl_color  — polyline colour
     VDI_ST_COLOR    = 22,       // vst_color  — text colour
     VDI_SF_INTERIOR = 23,       // vsf_interior — 0 hollow, 1 solid
     VDI_SF_COLOR    = 25,       // vsf_color  — fill colour
+    VDI_ST_POINT    = 107,      // vst_point  — text size in points
     VDI_CPYFM       = 109,      // vro_cpyfm  — copy raster, opaque
     VDI_RECFL       = 114,      // vr_recfl   — fill rectangle
     VDI_CLIP        = 129,      // vs_clip
@@ -61,8 +63,11 @@ void vdi_call(vdi_pb *pb);                    // the doorbell: dispatch one VDI 
 
 uint32_t vdi_pen_rgba(int pen);               // pen index -> RGBA (for the WM/theming)
 
-// The default text face used by v_gtext (until per-workstation vst_font lands).
-void     vdi_set_font(font *f);
+// The default text face used by v_gtext (until per-workstation vst_font lands);
+// vst_height / vst_point pick sizes from it.  72 px-per-inch (1 point == 1 px).
+void     vdi_set_face(font_face *face);
+#define  VDI_TEXT_DPI         72
+#define  VDI_TEXT_PX_DEFAULT  16
 
 // ---- C binding (fills shared arrays, calls vdi_call) ----------------------
 int  v_opnvwk(gfx_surface *target);           // -> workstation handle (>0), 0 = fail
@@ -72,6 +77,10 @@ void vst_color(int handle, int pen);                   // text colour
 void vsf_color(int handle, int pen);
 void vsf_interior(int handle, int style);
 void v_gtext(int handle, int x, int y, const char *s); // (x,y) = top-left
+// Set text size; out (each may be NULL) gets char_w, char_h, cell_w, cell_h in
+// px.  vst_height returns the pixel size used; vst_point the point size used.
+int  vst_height(int handle, int height_px, int *cw, int *ch, int *cellw, int *cellh);
+int  vst_point (int handle, int points,    int *cw, int *ch, int *cellw, int *cellh);
 void v_pline(int handle, int n, const int16_t *pxy);   // n point-pairs
 void v_bar(int handle, const int16_t *pxy);            // pxy = x1,y1,x2,y2
 void vr_recfl(int handle, const int16_t *pxy);         // pxy = x1,y1,x2,y2

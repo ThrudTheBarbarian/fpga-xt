@@ -47,7 +47,8 @@ typedef struct {
     gfx_surface *desk;                 // the single live desktop surface
     uint32_t     desktop_color;
     int          desk_vh;              // VDI workstation on the desktop (frames + blits)
-    font        *title_font;           // face for window titles (NULL = no titles)
+    font_face   *title_face;           // window-title face (NULL = no titles)
+    font        *title_font;           // that face sized for the title bar
     gem_window   win[GEM_MAX_WINDOWS]; // storage; .used marks live slots (not packed)
     int          z[GEM_MAX_WINDOWS];   // slot indices in stacking order, bottom..top
     int          nwin;                 // number of live windows (== entries in z[])
@@ -60,9 +61,9 @@ typedef struct {
 // init also brings up the VDI on the desktop surface (vdi_init).
 void        gem_wm_init(gem_wm *wm, gfx_surface *desk, uint32_t desktop_color);
 
-// Set the title font (also becomes the VDI default text face).  NULL disables
-// title text.  The WM does not own the font; the caller closes it.
-void        gem_wm_set_font(gem_wm *wm, font *f);
+// Set the title face (also becomes the VDI default text face).  NULL disables
+// title text.  The WM does not own the face; the caller closes it.
+void        gem_wm_set_font(gem_wm *wm, font_face *face);
 
 // Add a window (top of the stack).  Allocates its backing surface + a VDI
 // workstation on it, and marks it dirty so it redraws once.  NULL if full.

@@ -15,8 +15,9 @@
 #define PEN_TITLE_ACT 4     // blue
 #define PEN_TITLE_INA 9     // grey
 
-#define TITLE_H 30
-#define EDGE    2
+#define TITLE_H    30
+#define EDGE       2
+#define TITLE_PX   18       // title text size (fits the 30px bar)
 #define CLOSE_M 7           // close-box inset from the title's left/top
 #define CLOSE_S (TITLE_H - 16)   // close-box side
 #define RESIZE  14          // bottom-right resize-grip extent
@@ -43,15 +44,18 @@ void gem_wm_init(gem_wm *wm, gfx_surface *desk, uint32_t desktop_color) {
     wm->nwin          = 0;
     wm->mx = wm->my   = 0;
     wm->drag_slot     = -1;
+    wm->title_face    = NULL;
     wm->title_font    = NULL;
     for (int i = 0; i < GEM_MAX_WINDOWS; i++) wm->win[i].used = 0;
     vdi_init(desk);          // pen palette + physical workstation (handle 1) on desk
     wm->desk_vh = 1;
 }
 
-void gem_wm_set_font(gem_wm *wm, font *f) {
-    wm->title_font = f;
-    vdi_set_font(f);         // v_gtext default face
+void gem_wm_set_font(gem_wm *wm, font_face *face) {
+    wm->title_face = face;
+    wm->title_font = face ? font_at(face, TITLE_PX) : NULL;
+    vdi_set_face(face);                          // v_gtext default face
+    if (face) vst_height(wm->desk_vh, TITLE_PX, NULL, NULL, NULL, NULL);  // desk ws @ title size
 }
 
 gem_window *gem_wm_add(gem_wm *wm, int x, int y, int w, int h,

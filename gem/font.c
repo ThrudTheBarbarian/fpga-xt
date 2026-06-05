@@ -1,10 +1,10 @@
-// font.c — FreeType-backed text with a per-codepoint glyph cache.  See font.h.
+// font.c — FreeType-backed text: a face, and per-size views with glyph caches.
 //
-// One shared FT_Library (lazily created); each font wraps an FT_Face sized to a
-// pixel height.  The first time a glyph is drawn it is rendered to an 8-bit
-// alpha-coverage bitmap and cached; later draws just blend the cached coverage.
-// Caches ASCII (0..127) inline — enough for the UI; wider ranges can hang off a
-// hash later.  Blend keeps the destination opaque (alpha forced to 0xFF).
+// One shared FT_Library (lazily created).  A font_face wraps an FT_Face; a font
+// is that face at a pixel size (font_at), holding its own rasterised alpha-
+// coverage cache.  Sized views share the FT_Face, so glyph_get re-selects the
+// size before rasterising (cached glyphs are untouched afterwards).  Caches
+// ASCII (0..127) inline.  Blend keeps the destination opaque (alpha 0xFF).
 
 #include "font.h"
 #include <stdlib.h>
@@ -23,48 +23,70 @@ typedef struct {
     uint8_t *cov;                       // w*h alpha coverage (malloc'd), or NULL
 } glyph;
 
-struct font {
-    FT_Face face;
-    int     height, ascent;
+struct font {                           // a face at one pixel size
+    font_face *owner;                   // for the shared FT_Face + tracking
+    int        px, height, ascent, max_adv;
+    glyph      cache[GLYPH_CACHE];
+    font      *next;                    // next sized view of the same face
+};
+
+struct font_face {
+    FT_Face ft;
     int     tracking;                   // extra px added to each glyph advance
-    glyph   cache[GLYPH_CACHE];
+    font   *sizes;                      // linked list of sized views
 };
 
 static FT_Library g_ft;                 // shared, lazily initialised
 
-font *font_open(const char *path, int px_height) {
+font_face *font_face_open(const char *path) {
     if (!g_ft && FT_Init_FreeType(&g_ft)) return NULL;
+    font_face *face = calloc(1, sizeof(*face));
+    if (!face) return NULL;
+    if (FT_New_Face(g_ft, path, 0, &face->ft)) { free(face); return NULL; }
+    return face;
+}
+
+void font_face_close(font_face *face) {
+    if (!face) return;
+    for (font *f = face->sizes; f; ) {
+        font *next = f->next;
+        for (int i = 0; i < GLYPH_CACHE; i++) free(f->cache[i].cov);
+        free(f);
+        f = next;
+    }
+    FT_Done_Face(face->ft);
+    free(face);
+}
+
+void font_face_set_tracking(font_face *face, int px) { if (face) face->tracking = px; }
+
+font *font_at(font_face *face, int px) {
+    if (!face || px < 1) return NULL;
+    for (font *f = face->sizes; f; f = f->next) if (f->px == px) return f;
     font *f = calloc(1, sizeof(*f));
     if (!f) return NULL;
-    if (FT_New_Face(g_ft, path, 0, &f->face)) { free(f); return NULL; }
-    if (FT_Set_Pixel_Sizes(f->face, 0, px_height)) {
-        FT_Done_Face(f->face); free(f); return NULL;
-    }
-    // size metrics are 26.6 fixed point (1/64 px)
-    f->ascent = (int)(f->face->size->metrics.ascender >> 6);
-    f->height = (int)(f->face->size->metrics.height   >> 6);
+    f->owner = face; f->px = px;
+    if (FT_Set_Pixel_Sizes(face->ft, 0, px)) { free(f); return NULL; }
+    f->ascent  = (int)(face->ft->size->metrics.ascender    >> 6);
+    f->height  = (int)(face->ft->size->metrics.height      >> 6);
+    f->max_adv = (int)(face->ft->size->metrics.max_advance >> 6);
+    f->next = face->sizes; face->sizes = f;
     return f;
 }
 
-void font_close(font *f) {
-    if (!f) return;
-    for (int i = 0; i < GLYPH_CACHE; i++) free(f->cache[i].cov);
-    FT_Done_Face(f->face);
-    free(f);
-}
+int font_height(const font *f)      { return f ? f->height  : 0; }
+int font_ascent(const font *f)      { return f ? f->ascent  : 0; }
+int font_max_advance(const font *f) { return f ? f->max_adv : 0; }
+int font_size(const font *f)        { return f ? f->px      : 0; }
 
-int font_height(const font *f) { return f ? f->height : 0; }
-int font_ascent(const font *f) { return f ? f->ascent : 0; }
-void font_set_tracking(font *f, int px) { if (f) f->tracking = px; }
-
-// Rasterise codepoint c into the cache (no-op if already there).  Returns the
-// glyph, or NULL if it can't be loaded.
+// Rasterise codepoint c into this view's cache (no-op if already there).
 static const glyph *glyph_get(font *f, unsigned c) {
     if (c >= GLYPH_CACHE) c = '?';
     glyph *g = &f->cache[c];
     if (g->ready) return g;
-    if (FT_Load_Char(f->face, c, FT_LOAD_RENDER)) return NULL;
-    FT_GlyphSlot s = f->face->glyph;
+    FT_Set_Pixel_Sizes(f->owner->ft, 0, f->px);     // sized views share the FT_Face
+    if (FT_Load_Char(f->owner->ft, c, FT_LOAD_RENDER)) return NULL;
+    FT_GlyphSlot s = f->owner->ft->glyph;
     FT_Bitmap *bm = &s->bitmap;
     g->w = bm->width; g->h = bm->rows;
     g->left = s->bitmap_left; g->top = s->bitmap_top;
@@ -82,11 +104,8 @@ static const glyph *glyph_get(font *f, unsigned c) {
 
 int font_text_width(font *f, const char *s) {
     if (!f || !s) return 0;
-    int w = 0;
-    for (; *s; s++) {
-        const glyph *g = glyph_get(f, (unsigned char)*s);
-        if (g) w += g->advance + f->tracking;
-    }
+    int w = 0, trk = f->owner->tracking;
+    for (; *s; s++) { const glyph *g = glyph_get(f, (unsigned char)*s); if (g) w += g->advance + trk; }
     return w;
 }
 
@@ -111,7 +130,7 @@ void font_draw(font *f, gfx_surface *d, int x, int y, const char *s,
         if (clip[0] > cx0) cx0 = clip[0]; if (clip[1] > cy0) cy0 = clip[1];
         if (clip[2] < cx1) cx1 = clip[2]; if (clip[3] < cy1) cy1 = clip[3];
     }
-    int pen = x, base = y + f->ascent;             // (x,y) = top-left of the em box
+    int pen = x, base = y + f->ascent, trk = f->owner->tracking;
     for (; *s; s++) {
         const glyph *g = glyph_get(f, (unsigned char)*s);
         if (!g) continue;
@@ -127,6 +146,6 @@ void font_draw(font *f, gfx_surface *d, int x, int y, const char *s,
                 }
             }
         }
-        pen += g->advance + f->tracking;
+        pen += g->advance + trk;
     }
 }

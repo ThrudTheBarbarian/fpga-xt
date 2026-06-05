@@ -51,7 +51,10 @@ static void app_redraw(gem_window *w, void *ud) {
                         (int16_t)(2*w->cw/3), 260, (int16_t)(w->cw + 30), 100 };
     vsl_color(w->vh, 1); v_pline(w->vh, 4, poly);
     vst_color(w->vh, 0);                          // white text
-    v_gtext(w->vh, 16, 16, "GEM / VDI text — AovelSansRounded");
+    vst_point(w->vh, 22, NULL, NULL, NULL, NULL); // bigger via vst_point
+    v_gtext(w->vh, 16, 12, "GEM / VDI text");
+    vst_height(w->vh, 13, NULL, NULL, NULL, NULL);// smaller via vst_height
+    v_gtext(w->vh, 16, 40, "AovelSansRounded, sized by the workstation");
 }
 
 int main(int argc, char **argv) {
@@ -77,10 +80,10 @@ int main(int argc, char **argv) {
 
     gem_wm wm;
     gem_wm_init(&wm, desk, COL_DESKTOP);                 // brings up the VDI on desk
-    font *uifont = font_open("fonts/AovelSansRounded.ttf", 18);
-    if (!uifont) fprintf(stderr, "warning: title font failed to load\n");
-    if (uifont) font_set_tracking(uifont, 1);            // this face is cut tight
-    gem_wm_set_font(&wm, uifont);                        // titles + VDI default text
+    font_face *uiface = font_face_open("fonts/AovelSansRounded.ttf");
+    if (!uiface) fprintf(stderr, "warning: title font failed to load\n");
+    if (uiface) font_face_set_tracking(uiface, 1);       // this face is cut tight
+    gem_wm_set_font(&wm, uiface);                         // titles + VDI default text
 
     // "Atari XL" content is 4:3 (512x384); outer adds 2px edge + 30px title bar.
     gem_window *xlwin = gem_wm_add(&wm,  60,  70, 516, 418, "Atari XL", 1);
@@ -121,7 +124,7 @@ int main(int argc, char **argv) {
         SDL_Delay(16);
     }
 
-    if (uifont) font_close(uifont);
+    if (uiface) font_face_close(uiface);
     gfx_surface_free(desk);
     SDL_DestroyTexture(tex);
     SDL_DestroyRenderer(ren);

@@ -4,7 +4,7 @@
 //
 // GEM transports the characters one-per-int in intin[]; the C wrapper packs the
 // string for us.  The face is the workstation's (vst_font, later) or the VDI
-// default set via vdi_set_font.
+// default face set via vdi_set_face, sized by vst_height/vst_point.
 
 #include "vdi/vdi.h"
 #include "vdi/internal.h"
@@ -12,7 +12,7 @@
 
 void op_gtext(vdi_pb *pb) {
     vdi_ws *w = vdi_ws_of(pb->contrl[6]); if (!w) return;
-    font *f = w->text_font ? w->text_font : g_default_font;
+    font *f = vdi_ws_font(w);
     if (!f) return;
     int n = pb->contrl[3]; if (n < 0) n = 0; if (n > 127) n = 127;
     char buf[128];

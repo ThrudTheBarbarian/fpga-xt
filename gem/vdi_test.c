@@ -65,34 +65,46 @@ int main(void) {
     gfx_surface_free(srcS); gfx_surface_free(dstS);
     v_clsvwk(hd);
 
-    // v_gtext: FreeType text renders, has positive width, and clips.
+    // v_gtext: FreeType text renders, has positive width, sizes, and clips.
     const uint32_t WHITE = vdi_pen_rgba(0);
-    font *tf = font_open("fonts/AovelSansRounded.ttf", 24);
+    font_face *tf = font_face_open("fonts/AovelSansRounded.ttf");
     CHECK(tf != NULL);
     if (tf) {
-        vdi_set_font(tf);
-        gfx_surface *ts = gfx_surface_alloc(160, 48);
-        for (int i = 0; i < 160 * 48; i++) ts->px[i] = WHITE;
+        vdi_set_face(tf);
+        gfx_surface *ts = gfx_surface_alloc(220, 64);
+        for (int i = 0; i < 220 * 64; i++) ts->px[i] = WHITE;
         int ht = v_opnvwk(ts);
         vst_color(ht, 1);                              // black text
-        CHECK(font_text_width(tf, "Ag") > 0);
+        CHECK(font_text_width(font_at(tf, 24), "Ag") > 0);
+        vst_height(ht, 24, NULL, NULL, NULL, NULL);
         v_gtext(ht, 4, 4, "Ag");
         int drew = 0;
-        for (int i = 0; i < 160 * 48; i++) if (ts->px[i] != WHITE) { drew = 1; break; }
+        for (int i = 0; i < 220 * 64; i++) if (ts->px[i] != WHITE) { drew = 1; break; }
         CHECK(drew);                                   // glyphs marked the surface
 
-        for (int i = 0; i < 160 * 48; i++) ts->px[i] = WHITE;
-        int16_t cl[4] = { 150, 40, 151, 41 };          // clip far from the text
+        // vst_height / vst_point change the size: wider string at a bigger size.
+        int w24 = 0, w12 = 0, cellh = 0;
+        vst_height(ht, 12, NULL, NULL, NULL, &cellh);
+        w12 = font_text_width(font_at(tf, 12), "Width");
+        vst_height(ht, 24, NULL, NULL, NULL, NULL);
+        w24 = font_text_width(font_at(tf, 24), "Width");
+        CHECK(w24 > w12);                              // bigger size => wider text
+        CHECK(cellh > 0);
+        int pt = vst_point(ht, 18, NULL, NULL, NULL, NULL);  // 72dpi => 18px
+        CHECK(pt == 18);
+
+        for (int i = 0; i < 220 * 64; i++) ts->px[i] = WHITE;
+        int16_t cl[4] = { 200, 56, 201, 57 };          // clip far from the text
         vs_clip(ht, 1, cl);
         v_gtext(ht, 4, 4, "Ag");
         int leaked = 0;
-        for (int y = 0; y < 40; y++) for (int x = 0; x < 150; x++)
+        for (int y = 0; y < 50; y++) for (int x = 0; x < 200; x++)
             if (PX(ts, x, y) != WHITE) leaked = 1;
         CHECK(!leaked);                                // nothing drawn outside the clip
 
         v_clsvwk(ht);
         gfx_surface_free(ts);
-        font_close(tf);
+        font_face_close(tf);
     }
 
     if (fails == 0) printf("*** VDI TEST OK ***\n");
