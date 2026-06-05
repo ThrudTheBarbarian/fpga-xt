@@ -268,6 +268,13 @@ void vdi_set_face(font_face *face) { g_default_face = face; }
 
 gfx_surface *vdi_screen_target(void) { return ws_tab[0].target; }   // the desktop surface
 
+char g_device_file[256];
+void vdi_set_device_file(const char *path) {
+    if (!path) { g_device_file[0] = '\0'; return; }
+    size_t i = 0; for (; path[i] && i < sizeof(g_device_file) - 1; i++) g_device_file[i] = path[i];
+    g_device_file[i] = '\0';
+}
+
 // The sized font a workstation draws text with: its own (set by vst_height/
 // vst_point), else the default face at the default size.
 font *vdi_ws_font(const vdi_ws *w) {
@@ -276,6 +283,14 @@ font *vdi_ws_font(const vdi_ws *w) {
 }
 
 void vdi_call(vdi_pb *pb) {
+    // A metafile workstation records every call instead of drawing (close still
+    // goes through so it can finalise the file).
+    vdi_ws *mw = vdi_ws_of(pb->contrl[6]);
+    if (mw && mw->device >= VDI_DEV_META_LO && mw->device <= VDI_DEV_META_HI
+           && pb->contrl[0] != VDI_CLOSE_WK) {
+        metafile_record(mw, pb);
+        return;
+    }
     switch (pb->contrl[0]) {
         case VDI_OPEN_WK:     op_open_wk(pb);    break;
         case VDI_CLOSE_WK:    op_close_wk(pb);   break;

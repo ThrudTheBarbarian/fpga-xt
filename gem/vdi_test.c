@@ -214,10 +214,31 @@ int main(void) {
     CHECK(hw > 0);
     CHECK(wout[0] > 0 && wout[1] > 0);                 // device extent in work_out
     v_clswk(hw);
-    int16_t pin[11] = { 21 };                          // device 21 = printer (no driver)
+    int16_t pin[11] = { 21 };                          // device 21 = printer (no driver yet)
     int hp = -1;
     v_opnwk(pin, &hp, wout);
     CHECK(hp == 0);                                    // failed to open
+
+    // Metafile: record drawing to a .gem, then replay it onto a fresh surface.
+    vdi_set_device_file("/tmp/vdi_test.gem");
+    int16_t mwin[11] = { 31 };                          // device 31 = metafile
+    int mh = -1; int16_t mwout[57] = { 0 };
+    v_opnwk(mwin, &mh, mwout);
+    CHECK(mh > 0);
+    vsf_color(mh, 2); vsf_interior(mh, VDI_FIS_SOLID); vsf_perimeter(mh, 0);
+    int16_t mrect[4] = { 5, 5, 20, 20 }; vr_recfl(mh, mrect);   // recorded, not drawn
+    v_clswk(mh);
+
+    gfx_surface *mp = gfx_surface_alloc(40, 40);
+    for (int i = 0; i < 40 * 40; i++) mp->px[i] = 0;
+    int mhs = v_opnvwk(mp);
+    int played = vdi_play_metafile("/tmp/vdi_test.gem", mhs);
+    CHECK(played >= 2);                                 // attrs + the fill
+    CHECK(PX(mp, 10, 10) == vdi_pen_rgba(2));           // the rect replayed
+    CHECK(PX(mp, 30, 30) == 0);                         // outside it
+    CHECK(vdi_play_metafile("/tmp/does-not-exist.gem", mhs) == -1);
+    v_clsvwk(mhs);
+    gfx_surface_free(mp);
 
     if (fails == 0) printf("*** VDI TEST OK ***\n");
     else            printf("*** VDI TEST: %d FAIL(s) ***\n", fails);

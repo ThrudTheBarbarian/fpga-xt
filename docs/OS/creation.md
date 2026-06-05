@@ -58,14 +58,15 @@ Status of the standard VDI calls. Legend: ✓ implemented · ◐ partial (logic 
 | v_clsvwk | 101 | ✓ | |
 | vs_clip | 129 | ✓ | per-workstation clip rectangle; every primitive honours it |
 | v_opnwk | 1 | ✓ | open a device: id 1..10 = screen (opens onto the desktop). 11+ (plotter/printer/**metafile**/camera/tablet) have no driver yet → returns handle 0 |
-| v_clswk | 2 | ✓ | close a physical workstation |
+| v_clswk | 2 | ✓ | close a physical workstation (finalises a metafile) |
+| metafile device | 31–40 | ✓ | `v_opnwk` records calls to a `.gem`; `vdi_play_metafile` replays |
 | v_clrwk | 3 | ✗ | |
 | v_updwk | 4 | ✗ | drawing is immediate, no batching |
 | vst_load_fonts | 119 | ✓ | no-op (faces load on demand) but returns the font-file count in `OS/Fonts` |
 | vst_unload_fonts | 120 | ✓ | no-op |
 | vq_extnd | 102 | ✗ | extended inquire |
 
-The device mechanism is in place, so adding a device is now just a driver behind `v_opnwk`. The **metafile** (id 31–40) is the natural next one — it needs no hardware: opening it records subsequent VDI calls to a `.gem` file (a header + one record per call) for later replay, so it's a `vdi_call` intercept plus the GEM metafile (de)serialiser.
+The device mechanism is in place, so adding a device is now just a driver behind `v_opnwk`. The **metafile** (id 31–40) is implemented (`metafile.c`): opening it records subsequent VDI calls to a `.gem` file (an 8-word header + one record per call), and `vdi_play_metafile()` replays them onto any workstation. The **printer** (id 21–30) will be a **PDF device** — "print" emits a PDF, no hardware driver needed — planned, currently reports failure. (`vro_cpyfm` carries its MFDB pointers out-of-band, so raster copies aren't captured in a metafile.)
 
 **Output / drawing**
 

@@ -25,6 +25,8 @@ typedef struct {
     int          fill_perimeter;   // outline filled areas (default 1)
     font        *text_font;        // face for v_gtext (NULL => the VDI default)
     int          clip_on, cx0, cy0, cx1, cy1;   // clip rect, inclusive
+    int          device;           // v_opnwk device id (0 = virtual/screen draw)
+    void        *dev;              // device state (metafile recorder / PDF page)
 } vdi_ws;
 
 // ---- core.c: workstation table + clipped primitives + dispatch ------------
@@ -44,6 +46,13 @@ void        vdi_polyline(const vdi_ws *w, const int16_t *xy, int n, int pen, int
 void        vdi_line(const vdi_ws *w, int x0, int y0, int x1, int y1, int pen);
 void        vdi_set_pen(int index, uint32_t rgba);       // vs_color writes the palette
 gfx_surface *vdi_screen_target(void);                    // the desktop surface (physical ws)
+
+// Device file path consumed by the next v_opnwk (metafile / printer); set via
+// vdi_set_device_file, else a per-device default.  And the metafile recorder.
+extern char g_device_file[256];
+int  metafile_open(vdi_ws *w, const char *path);         // 0 = ok
+void metafile_record(vdi_ws *w, vdi_pb *pb);             // serialise one call
+void metafile_close(vdi_ws *w);                          // end record + close
 gfx_surface vdi_mfdb_surf(const MFDB *m, const vdi_ws *w);
 
 // Shared C-binding scratch (filled by the per-call wrappers).
