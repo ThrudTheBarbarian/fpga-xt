@@ -42,6 +42,7 @@
 #include "lauxlib.h"
 #include "lualib.h"
 #include "lodepng.h"         /* PNG decode (wallpaper) */
+#include "vfs.h"             /* VFS: FatFs (/) + tmpfs (/tmp) backends */
 #include "xiicps.h"          /* PS I2C0 (EMIO) -> SiI9022A control bus */
 
 #include "xt_blitter.h"
@@ -738,28 +739,22 @@ static void repl_exec(char *cmd)
         return;
     }
 
-    if (!strcmp(argv[0], "ls")) {        /* list a directory (default 0:/) */
+    if (!strcmp(argv[0], "ls")) {        /* list a directory (default /) — via VFS */
         const char *path = (argc >= 2) ? argv[1] : "/";
-        DIR dir; FILINFO fno;
-        FRESULT fr = f_opendir(&dir, path);
-        if (fr != FR_OK) {
-            xil_printf("  ls: f_opendir(%s) failed (%d)%s\r\n", path, (int)fr,
-                       g_fs_mounted ? "" : " — not mounted (try 'mount')");
+        int dh = vfs_opendir(path);          /* backend entries + child mounts */
+        if (dh < 0) {
+            xil_printf("  ls: opendir(%s) failed%s\r\n", path,
+                       g_fs_mounted ? "" : " — SD not mounted (try 'mount')");
             return;
         }
+        struct vfs_dirent de;
         unsigned files = 0;
-        for (;;) {
-            fr = f_readdir(&dir, &fno);
-            if (fr != FR_OK || fno.fname[0] == 0) break;
-            /* xil_printf's %lu reads a 64-bit arg, but ARM `unsigned long` is
-             * 32-bit — that over-reads varargs (garbage + a bad %s ptr).  Use
-             * plain %u with a 32-bit cast; name before size so no field width. */
+        while (vfs_readdir(dh, &de) == 1) {   /* %u (not %lu): xil_printf long bug */
             xil_printf("  %c  %s  (%u bytes)\r\n",
-                       (fno.fattrib & AM_DIR) ? 'd' : '-',
-                       fno.fname, (unsigned)fno.fsize);
+                       de.is_dir ? 'd' : '-', de.name, (unsigned)de.size);
             files++;
         }
-        f_closedir(&dir);
+        vfs_closedir(dh);
         xil_printf("  (%u entries)\r\n", files);
         return;
     }
@@ -1129,6 +1124,11 @@ int main(void)
      * counter still services hot-plug (auto-enable output on HDMI plug),
      * toggles the liveness LED, and prints a status line when `mon` is on. */
     uart1_rx_enable();
+
+    /* Register the VFS backends: FatFs on the SD at "/", tmpfs (RAM) at "/tmp".
+     * After this, fopen/fread (and FreeType, Lua io) route by path prefix. */
+    fatfs_backend_register();
+    tmpfs_backend_register();
 
     /* Mount the SD card FAT volume (boot scripts + apps live here).  Done before
      * the scheduler so the boot log shows SD status; `mount` re-tries at runtime
