@@ -1,0 +1,19 @@
+# name x y w h  l t r b  fill
+window                 0 0 11 11  5 5 5 5  stretch
+titlebar               0 12 11 31  5 0 5 0  stretch
+titlebar.inactive      0 44 11 31  5 0 5 0  stretch
+close                  0 76 16 16  0 0 0 0  none
+minimize               0 93 16 16  0 0 0 0  none
+maximize               0 110 16 16  0 0 0 0  none
+button                 0 127 9 25  4 0 4 0  stretch
+button.selected        0 153 9 25  4 0 4 0  stretch
+button.disabled        0 179 9 25  4 0 4 0  stretch
+textfield              0 205 9 9  4 4 4 4  stretch
+combo                  0 215 29 25  4 0 24 0  stretch
+combo.arrow            0 241 24 25  0 0 0 0  none
+check                  0 267 21 21  0 0 0 0  none
+check.selected         0 289 21 21  0 0 0 0  none
+radio                  0 311 21 21  0 0 0 0  none
+radio.selected         0 333 21 21  0 0 0 0  none
+vscroll.track          0 355 9 9  0 4 0 4  stretch
+vscroll.thumb          0 365 9 9  0 4 0 4  stretch

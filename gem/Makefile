@@ -33,7 +33,7 @@ OBJ      := $(addprefix $(BUILD)/,$(SRC:.c=.o))
 
 TARGET  := $(BUILD)/gem_sdl
 
-.PHONY: all run test clean fills shapes output text lines
+.PHONY: all run test clean fills shapes output text lines theme themewin themepack
 all: $(TARGET)
 
 $(TARGET): $(OBJ)
@@ -75,6 +75,20 @@ $(BUILD)/gem_theme: $(THEME_OBJ)
 	$(CC) $(THEME_OBJ) $(LDLIBS) -o $@
 theme: $(BUILD)/gem_theme
 	./$(BUILD)/gem_theme
+
+TWIN_OBJ := $(addprefix $(BUILD)/,gfx_soft.o font.o theme.o theme_window_demo.o $(VDI_SRC:.c=.o))
+$(BUILD)/gem_themewin: $(TWIN_OBJ)
+	$(CC) $(TWIN_OBJ) $(LDLIBS) -o $@
+themewin: $(BUILD)/gem_themewin
+	./$(BUILD)/gem_themewin
+
+# Bake the Aristo2 atlas (needs ImageMagick + the Cappuccino resources).
+ARISTO2 ?= $(HOME)/src/cappuccino/cappuccino/AppKit/Themes/Aristo2/Resources
+$(BUILD)/themepack: tools/themepack.c | $(BUILD)
+	$(CC) $(CSTD) -O2 -o $@ $<
+themepack: $(BUILD)/themepack
+	mkdir -p themes/Aristo2/1x
+	./$(BUILD)/themepack "$(ARISTO2)" themes/aristo2.recipe themes/Aristo2/1x
 
 # Headless self-tests (no SDL): VDI primitives, then the WM interaction layer.
 TEST_OBJ := $(addprefix $(BUILD)/,gfx_soft.o font.o vdi_test.o $(VDI_SRC:.c=.o))

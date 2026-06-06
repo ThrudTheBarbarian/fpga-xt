@@ -1,0 +1,31 @@
+# Aristo2 -> GEM theme recipe.  name  type  files...
+# type: sprite (1 file) | h3 (left center right) | v3 (top center bottom) |
+#       nine (tl tc tr  cl cc cr  bl bc br)
+
+# --- window frame + titlebar -------------------------------------------------
+window              nine    window-standard-top-left window-standard-top-center window-standard-top-right window-standard-center-left window-standard-center-center window-standard-center-right window-standard-bottom-left window-standard-bottom-center window-standard-bottom-right
+titlebar            h3      window-standard-head-left window-standard-head-center window-standard-head-right
+titlebar.inactive   h3      window-standard-head-inactive-left window-standard-head-inactive-center window-standard-head-inactive-right
+close               sprite  window-standard-close-button
+minimize            sprite  window-standard-minimize-button
+maximize            sprite  window-standard-maximize-button
+
+# --- buttons -----------------------------------------------------------------
+button              h3      button-bezel-left button-bezel-center button-bezel-right
+button.selected     h3      button-bezel-highlighted-left button-bezel-highlighted-center button-bezel-highlighted-right
+button.disabled     h3      button-bezel-disabled-left button-bezel-disabled-center button-bezel-disabled-right
+
+# --- text field + combo ------------------------------------------------------
+textfield           nine    textfield-bezel-square-0 textfield-bezel-square-1 textfield-bezel-square-2 textfield-bezel-square-3 textfield-bezel-square-4 textfield-bezel-square-5 textfield-bezel-square-6 textfield-bezel-square-7 textfield-bezel-square-8
+combo               h3      combobox-bezel-left combobox-bezel-center combobox-bezel-right
+combo.arrow         sprite  popup-bezel-right
+
+# --- checkbox / radio --------------------------------------------------------
+check               sprite  check-box-image
+check.selected      sprite  check-box-image-selected
+radio               sprite  radio-image
+radio.selected      sprite  radio-image-selected
+
+# --- scrollbar (vertical) ----------------------------------------------------
+vscroll.track       v3      scroller-vertical-track-top scroller-vertical-track-center scroller-vertical-track-bottom
+vscroll.thumb       v3      scroller-vertical-knob-top scroller-vertical-knob-center scroller-vertical-knob-bottom
