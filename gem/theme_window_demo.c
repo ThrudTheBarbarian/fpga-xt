@@ -34,9 +34,22 @@ static int btn(const char *variant, int x, int y, const char *l) {
     return w;
 }
 // A label-in-field helper (popup/combo/textfield) at a fixed width; h==0 = the
-// element's natural height.
+// element's natural height.  (x,y,w,h) is the *content* box: a focus variant's
+// glow ring draws outward from it (the focused bezel is larger than the base),
+// so all states share one content box.  The ring is derived from how much the
+// variant's 9-slice insets exceed the base element's.
 static void field(const char *variant, int x, int y, int w, int h, const char *l, int dim) {
-    if(!h) h=sh(variant); if(!h) h=24; d9(variant,x,y,w,h);
+    if(!h) h=sh(variant); if(!h) h=24;
+    char base[40]; snprintf(base,sizeof base,"%s",variant);
+    char *dot=strchr(base,'.'); if(dot)*dot=0;
+    const theme_slice *b=g(base), *v=g(variant);
+    int rl=0,rt=0,rr=0,rb=0;
+    if(b && v && strcmp(base,variant)) {             // a state variant: find its ring
+        rl=v->l-b->l; rr=v->r-b->r;
+        if(b->t||b->b){ rt=v->t-b->t; rb=v->b-b->b; } else { rt=rb=(v->sh-b->sh)/2; }
+        if(rl<0)rl=0; if(rt<0)rt=0; if(rr<0)rr=0; if(rb<0)rb=0;
+    }
+    d9(variant, x-rl, y-rt, w+rl+rr, h+rt+rb);
     vst_color(H,dim?9:1); vst_height(H,13,0,0,0,0); v_gtext(H,x+8,y+h/2-7,l);
 }
 
