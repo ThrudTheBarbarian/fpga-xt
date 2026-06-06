@@ -61,9 +61,10 @@ static void draw_obj(OBJECT *o, int x, int y) {
         case G_IBOX: break;                                     // invisible container
         case G_BUTTON: {
             int def = fl & OF_DEFAULT;
-            const char *v = (st & OS_DISABLED) ? "button.disabled"
-                          : def                ? "button.default"
-                          : (st & OS_SELECTED) ? "button.selected" : "button";
+            const char *v = (st & OS_DISABLED)         ? "button.disabled"
+                          : def && (st & OS_SELECTED)  ? "button.default.pressed"
+                          : def                        ? "button.default"
+                          : (st & OS_SELECTED)         ? "button.selected" : "button";
             theme_draw(g_vh, g_th, v, x, y, w, h);
             centered(txt ? txt : "", x, y, w, h, def ? 0 : (st & OS_DISABLED) ? 9 : 1, def);
             break;
