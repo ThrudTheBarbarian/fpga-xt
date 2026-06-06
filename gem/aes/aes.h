@@ -49,18 +49,47 @@ void objc_draw(OBJECT *tree, int start, int depth, int clx, int cly, int clw, in
 // Topmost drawable object under (mx,my) within `depth` levels of `start`; -1 none.
 int  objc_find(OBJECT *tree, int start, int depth, int mx, int my);
 
-// ---- form_do: the modal dialog loop -------------------------------------
-// AES is event-driven by a host source: it presents the current frame, blocks
-// for the next input, and returns its type.  (On the SDL testbed that's
-// present + SDL_WaitEvent; on hardware it's the AES event pump.)
-enum { AES_NONE = 0, AES_BTN_DOWN = 1, AES_BTN_UP = 2, AES_KEY = 3, AES_QUIT = 4 };
-typedef struct { int type, mx, my, key; } aes_event;
-typedef int (*aes_event_fn)(aes_event *ev);
+// ---- Events: the host source, the multiplexer, the message pipe ---------
+// AES is event-driven by one host source: wait up to timeout_ms (-1 = forever)
+// for the next input, fill ev (mx/my/button = the current pointer state), and
+// return its type (AES_TIMER on timeout).  On the SDL testbed that's present +
+// SDL_WaitEventTimeout; on hardware it's the AES event pump over the VDI input
+// layer.  Everything else (form_do, evnt_multi) builds on this.
+enum { AES_NONE=0, AES_BTN_DOWN=1, AES_BTN_UP=2, AES_KEY=3, AES_QUIT=4,
+       AES_MOTION=5, AES_TIMER=6 };
+typedef struct { int type, mx, my, button, key, shift; } aes_event;
+typedef int (*aes_event_fn)(aes_event *ev, int timeout_ms);
 void aes_set_events(aes_event_fn fn);
+int  aes_wait(aes_event *ev, int timeout_ms);     // low level: calls the source
 
-// Run a modal form: track clicks (push buttons flash while held, checkboxes
-// toggle, radio buttons exclude their siblings), Return triggers the DEFAULT
-// button, and the first EXIT/TOUCHEXIT object clicked is returned (-1 = quit).
+// evnt_multi flags (+ MU_QUIT, our host extension for window close).
+enum { MU_KEYBD=0x01, MU_BUTTON=0x02, MU_M1=0x04, MU_M2=0x08,
+       MU_MESAG=0x10, MU_TIMER=0x20, MU_QUIT=0x40 };
+
+// Wait on any of the requested event classes at once; returns the MU_* that
+// fired.  Outputs (any may be NULL): mouse x/y, button mask, key, shift state,
+// click count.  m1/m2 are enter(flag 0)/leave(flag 1) rectangle waits; mepbuf
+// (>=8 words) receives a message for MU_MESAG; tlc/thc are the timer ms (lo/hi).
+int  evnt_multi(int flags, int bclk, int bmask, int bstate,
+                int m1f,int m1x,int m1y,int m1w,int m1h,
+                int m2f,int m2x,int m2y,int m2w,int m2h,
+                int16_t *mepbuf, int tlc, int thc,
+                int *mx,int *my,int *mbut,int *kstate,int *key,int *nclk);
+int  evnt_keybd(void);                            // -> key
+int  evnt_button(int clicks,int mask,int state,int*mx,int*my,int*mbut,int*kstate);
+int  evnt_mouse(int leave,int x,int y,int w,int h,int*mx,int*my,int*mbut,int*kstate);
+int  evnt_mesag(int16_t *mepbuf);
+int  evnt_timer(int lo_ms,int hi_ms);
+
+// Minimal application / message pipe: appl_write posts, evnt_mesag reads.
+int  appl_init(void);                             // -> ap_id
+void appl_exit(void);
+void appl_write(int dest_id, int len, const void *msg);
+int  appl_read(int id, int len, void *buf);
+
+// Run a modal form: push buttons flash while held + trigger on release-inside,
+// checkboxes toggle, radio buttons exclude their siblings, Return fires the
+// DEFAULT button; returns the EXIT/TOUCHEXIT object clicked (-1 = quit).
 int  form_do(OBJECT *tree, int start);
 
 #endif // GEM_AES_H

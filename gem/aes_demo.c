@@ -27,8 +27,10 @@ static SDL_Renderer *g_ren;
 static SDL_Texture  *g_tex;
 static gfx_surface  *g_desk;
 
-// Host event source: present the current frame, then block for the next event.
-static int present_and_wait(aes_event *ev) {
+// Host event source: present the current frame, then block (up to timeout_ms,
+// -1 = forever) for the next event, reporting the live pointer state.
+static int g_btn;     // current button mask
+static int present_and_wait(aes_event *ev, int timeout_ms) {
     SDL_UpdateTexture(g_tex, NULL, g_desk->px, g_desk->stride*(int)sizeof(uint32_t));
     int ow=WIN_W, oh=WIN_H; SDL_GetRendererOutputSize(g_ren, &ow, &oh);
     int ox=(ow-WIN_W)/2, oy=(oh-WIN_H)/2;
@@ -37,21 +39,27 @@ static int present_and_wait(aes_event *ev) {
     SDL_RenderCopy(g_ren, g_tex, NULL, &ds); SDL_RenderPresent(g_ren);
 
     SDL_Event e;
-    while (SDL_WaitEvent(&e)) {
+    int got = (timeout_ms < 0) ? SDL_WaitEvent(&e) : SDL_WaitEventTimeout(&e, timeout_ms);
+    ev->button = g_btn;
+    if (!got) { ev->type = AES_TIMER; return AES_TIMER; }
+    do {
         switch (e.type) {
             case SDL_QUIT: ev->type=AES_QUIT; return AES_QUIT;
             case SDL_KEYDOWN:
                 if (e.key.keysym.sym==SDLK_ESCAPE) { ev->type=AES_QUIT; return AES_QUIT; }
-                ev->type=AES_KEY; ev->key=(e.key.keysym.sym==SDLK_RETURN?'\r':(int)e.key.keysym.sym); return AES_KEY;
+                ev->type=AES_KEY; ev->key=(e.key.keysym.sym==SDLK_RETURN?'\r':(int)e.key.keysym.sym);
+                ev->shift = SDL_GetModState() & KMOD_SHIFT ? 1 : 0; return AES_KEY;
+            case SDL_MOUSEMOTION:
+                ev->type=AES_MOTION; ev->mx=e.motion.x-ox; ev->my=e.motion.y-oy; return AES_MOTION;
             case SDL_MOUSEBUTTONDOWN:
                 if (e.button.button!=SDL_BUTTON_LEFT) break;
-                ev->type=AES_BTN_DOWN; ev->mx=e.button.x-ox; ev->my=e.button.y-oy; return AES_BTN_DOWN;
+                g_btn |= 1; ev->button=g_btn; ev->type=AES_BTN_DOWN; ev->mx=e.button.x-ox; ev->my=e.button.y-oy; return AES_BTN_DOWN;
             case SDL_MOUSEBUTTONUP:
                 if (e.button.button!=SDL_BUTTON_LEFT) break;
-                ev->type=AES_BTN_UP; ev->mx=e.button.x-ox; ev->my=e.button.y-oy; return AES_BTN_UP;
+                g_btn &= ~1; ev->button=g_btn; ev->type=AES_BTN_UP; ev->mx=e.button.x-ox; ev->my=e.button.y-oy; return AES_BTN_UP;
         }
-    }
-    ev->type=AES_QUIT; return AES_QUIT;
+    } while (SDL_PollEvent(&e));
+    ev->type=AES_NONE; return AES_NONE;
 }
 
 int main(void) {

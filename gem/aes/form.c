@@ -8,9 +8,6 @@
 #define DEPTH 8
 #define BIG   4096
 
-static aes_event_fn g_ev;
-void aes_set_events(aes_event_fn fn) { g_ev = fn; }
-
 #define EACH_CHILD(t, parent, c) \
     for (int c = (t)[parent].ob_head; c >= 0; c = (c == (t)[parent].ob_tail ? -1 : (t)[c].ob_next))
 
@@ -41,7 +38,7 @@ int form_do(OBJECT *t, int start) {
     int pressed = -1;
     for (;;) {
         aes_event ev;
-        int ty = g_ev ? g_ev(&ev) : AES_QUIT;
+        int ty = aes_wait(&ev, -1);
         if (ty == AES_QUIT) return -1;
 
         if (ty == AES_KEY) {
