@@ -35,14 +35,14 @@ radio               sprite  radio-image
 radio.selected      sprite  radio-image-selected
 radio.pressed       sprite  radio-image-selected-highlighted
 
-# --- scrollbar: vertical -----------------------------------------------------
-vscroll.track       v3      scroller-vertical-track-top scroller-vertical-track-center scroller-vertical-track-bottom
+# --- scrollbar: vertical (legacy always-on track = a single tileable strip) --
+vscroll.track       sprite  scroller-legacy-vertical-track-center
 vscroll.thumb       v3      scroller-vertical-knob-top scroller-vertical-knob-center scroller-vertical-knob-bottom
 vscroll.up          sprite  datepicker-calendar-arrow-left@90
 vscroll.down        sprite  datepicker-calendar-arrow-right@90
 
 # --- scrollbar: horizontal ---------------------------------------------------
-hscroll.track       h3      scroller-horizontal-track-left scroller-horizontal-track-center scroller-horizontal-track-right
+hscroll.track       sprite  scroller-legacy-horizontal-track-center
 hscroll.thumb       h3      scroller-horizontal-knob-left scroller-horizontal-knob-center scroller-horizontal-knob-right
 hscroll.left        sprite  datepicker-calendar-arrow-left
 hscroll.right       sprite  datepicker-calendar-arrow-right

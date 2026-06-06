@@ -108,16 +108,19 @@ static void draw(gfx_surface *d) {
     spr("slider.circular.knob",c3+50+sw("slider.circular")/2-sw("slider.circular.knob")/2,y+12);
     y+=130;
     hdr(c3,y,"SCROLLBARS"); y+=16;
-    int vbh=150, vax=c3 + (sw("vscroll.track")-sw("vscroll.up"))/2;   // centre arrows on the track
+    int trk=sw("vscroll.track"), vbh=150;            // centre arrows + thumb on the track
+    int vax=c3+(trk-sw("vscroll.up"))/2, vtx=c3+(trk-sw("vscroll.thumb"))/2;
     spr("vscroll.up",vax,y);
-    d9("vscroll.track",c3,y+sh("vscroll.up"),sw("vscroll.track"),vbh-sh("vscroll.up")-sh("vscroll.down"));
+    d9("vscroll.track",c3,y+sh("vscroll.up"),trk,vbh-sh("vscroll.up")-sh("vscroll.down"));
     spr("vscroll.down",vax,y+vbh-sh("vscroll.down"));
-    d9("vscroll.thumb",c3,y+40,sw("vscroll.thumb"),60);
-    int hx=c3+30;
-    spr("hscroll.left",hx,y);
-    d9("hscroll.track",hx+sw("hscroll.left"),y,150-sw("hscroll.left")-sw("hscroll.right"),sh("hscroll.track"));
-    spr("hscroll.right",hx+150-sw("hscroll.right"),y);
-    d9("hscroll.thumb",hx+44,y,60,sh("hscroll.thumb"));
+    d9("vscroll.thumb",vtx,y+40,sw("vscroll.thumb"),60);
+    // horizontal: the legacy track is 14px tall; centre arrows + thumb vertically on it
+    int hx=c3+30, htk=sh("hscroll.track"), hw=150;
+    int hay=y+(htk-sh("hscroll.left"))/2, hty=y+(htk-sh("hscroll.thumb"))/2;
+    spr("hscroll.left",hx,hay);
+    d9("hscroll.track",hx+sw("hscroll.left"),y,hw-sw("hscroll.left")-sw("hscroll.right"),htk);
+    spr("hscroll.right",hx+hw-sw("hscroll.right"),hay);
+    d9("hscroll.thumb",hx+44,hty,60,sh("hscroll.thumb"));
     y+=vbh+10;
     hdr(c3,y,"TITLEBAR  active / inactive"); y+=14;
     d9("titlebar",c3,y,180,th);  lab(c3+8,y+th/2-7,"active");
