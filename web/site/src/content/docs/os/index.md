@@ -15,6 +15,9 @@ These pages cover the operating-system layer that bridges the two:
   m68k soft core.
 - **[Banked-stack context switching](/os/multitasking/6502/context-switch/)** — switching 6502 tasks in a handful
   of cycles by holding several 4 KB stacks resident in BRAM instead of copying to DDR3.
+- **[GEM — VDI, AES & theming](/os/gem/)** — the clean-room GEM environment: a true-colour
+  scalable VDI, the AES object/window/menu layer, and the 9-slice theme engine. A call-level
+  reference for each.
 - **[VDI / blitter driver](/os/vdi-blitter/)** — how GEM VDI drawing calls map onto xt-blitter
   register writes, from either the PS or the SALLY side.
 - **[Self-hosting roadmap](/os/self-hosting/)** — the plan to compile xtc with itself, hosted on

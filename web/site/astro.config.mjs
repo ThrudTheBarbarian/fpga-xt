@@ -136,6 +136,15 @@ export default defineConfig({
 								{ label: 'm68k / EmuTOS', slug: 'os/multitasking/m68k' },
 							],
 						},
+						{
+							label: 'GEM (VDI / AES)',
+							items: [
+								{ label: 'Overview', slug: 'os/gem' },
+								{ label: 'VDI reference', slug: 'os/gem/vdi' },
+								{ label: 'AES reference', slug: 'os/gem/aes' },
+								{ label: 'Theming', slug: 'os/gem/theme' },
+							],
+						},
 						{ label: 'VDI / blitter driver', slug: 'os/vdi-blitter' },
 						{ label: 'Self-hosting roadmap', slug: 'os/self-hosting' },
 					],
