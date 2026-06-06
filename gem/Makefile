@@ -26,7 +26,7 @@ LDLIBS  := $(FT_LIBS) $(shell pkg-config --libs sdl2 2>/dev/null || sdl2-config 
 # Portable core + host backend.  The VDI is one file per call under vdi/.
 # (GEM AES sources get added here as they land.)
 VDI_SRC  := $(wildcard vdi/*.c)
-CORE_SRC := gfx_soft.c font.c $(VDI_SRC) wm.c
+CORE_SRC := gfx_soft.c font.c $(VDI_SRC) wm.c theme.c
 HOST_SRC := sdl_main.c
 SRC      := $(CORE_SRC) $(HOST_SRC)
 OBJ      := $(addprefix $(BUILD)/,$(SRC:.c=.o))
@@ -69,6 +69,12 @@ $(BUILD)/gem_lines: $(LINES_OBJ)
 	$(CC) $(LINES_OBJ) $(LDLIBS) -o $@
 lines: $(BUILD)/gem_lines
 	./$(BUILD)/gem_lines
+
+THEME_OBJ := $(addprefix $(BUILD)/,gfx_soft.o font.o theme.o theme_demo.o $(VDI_SRC:.c=.o))
+$(BUILD)/gem_theme: $(THEME_OBJ)
+	$(CC) $(THEME_OBJ) $(LDLIBS) -o $@
+theme: $(BUILD)/gem_theme
+	./$(BUILD)/gem_theme
 
 # Headless self-tests (no SDL): VDI primitives, then the WM interaction layer.
 TEST_OBJ := $(addprefix $(BUILD)/,gfx_soft.o font.o vdi_test.o $(VDI_SRC:.c=.o))
