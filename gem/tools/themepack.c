@@ -24,16 +24,25 @@
 
 typedef struct { unsigned *px; int w, h; } img;        // px = 0xRRGGBBAA
 
+// `name` may carry a "@90" / "@180" / "@270" suffix to rotate the slice (used
+// to reuse the date-picker arrows for the up/down scroller buttons).
 static img load_png(const char *dir, const char *name) {
     img m = { 0, 0, 0 };
+    char base[256]; int rot = 0;
+    const char *at = strchr(name, '@');
+    if (at) { rot = atoi(at + 1); snprintf(base, sizeof base, "%.*s", (int)(at - name), name); name = base; }
+
     char path[1024], cmd[1200];
     snprintf(path, sizeof path, "%s/%s.png", dir, name);
     snprintf(cmd, sizeof cmd, "magick identify -format '%%w %%h' '%s' 2>/dev/null", path);
     FILE *p = popen(cmd, "r");
     if (!p || fscanf(p, "%d %d", &m.w, &m.h) != 2) { if (p) pclose(p); fprintf(stderr, "missing %s\n", path); exit(1); }
     pclose(p);
+    if (rot == 90 || rot == 270) { int t = m.w; m.w = m.h; m.h = t; }   // dims swap
+
     unsigned char *raw = malloc((size_t)m.w * m.h * 4);
-    snprintf(cmd, sizeof cmd, "magick '%s' -depth 8 RGBA:- 2>/dev/null", path);
+    if (rot) snprintf(cmd, sizeof cmd, "magick '%s' -rotate %d -depth 8 RGBA:- 2>/dev/null", path, rot);
+    else     snprintf(cmd, sizeof cmd, "magick '%s' -depth 8 RGBA:- 2>/dev/null", path);
     p = popen(cmd, "r");
     size_t need = (size_t)m.w * m.h * 4;
     if (!p || fread(raw, 1, need, p) != need) { fprintf(stderr, "decode %s\n", path); exit(1); }
