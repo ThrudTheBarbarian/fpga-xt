@@ -68,3 +68,8 @@ menu.tick           sprite  menu-item-on-state
 # --- table view --------------------------------------------------------------
 header              sprite  tableview-headerview
 header.pressed      sprite  tableview-headerview-pressed
+
+# --- alert icons (form_alert) ------------------------------------------------
+alert.note          sprite  alert-info
+alert.wait          sprite  alert-warning
+alert.stop          sprite  alert-error

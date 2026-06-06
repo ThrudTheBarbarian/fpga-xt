@@ -92,6 +92,11 @@ int  appl_read(int id, int len, void *buf);
 // DEFAULT button; returns the EXIT/TOUCHEXIT object clicked (-1 = quit).
 int  form_do(OBJECT *tree, int start);
 
+// Canned alert: alert = "[icon][message|with|lines][button1|button2|button3]"
+// (icon 0 none, 1 note, 2 wait, 3 stop).  Builds + centres + runs the dialog,
+// saving/restoring what's underneath; returns the 1-based button clicked.
+int  form_alert(int default_button, const char *alert);
+
 // ---- Menus --------------------------------------------------------------
 // A menu is a GEM OBJECT tree (bar of G_TITLEs + a dropdown G_BOX of G_STRINGs
 // per title).  menu_build assembles one from a simple description; menu_bar

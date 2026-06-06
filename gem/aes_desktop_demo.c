@@ -13,7 +13,7 @@
 #define WIN_H 480
 
 static const char *desk_i[] = {"About XT…"};
-static const char *file_i[] = {"New Window", "Quit"};
+static const char *file_i[] = {"New Window", "Alert…", "Quit"};
 static const char *edit_i[] = {"Cut", "Copy", "Paste"};
 static menu_def md[] = { {"Desk",desk_i,1}, {"File",file_i,2}, {"Edit",edit_i,3} };
 
@@ -115,6 +115,10 @@ int main(int argc,char**argv){
                 if(!strcmp(it,"Quit")) break;
                 else if(!strcmp(it,"New Window")) open_xl("Atari XL");
                 else if(!strcmp(it,"About XT…")) run_about();
+                else if(!strcmp(it,"Alert…")){
+                    int b=form_alert(3,"[2][Delete this window?|This cannot be undone.][Cancel|Delete|Keep]");
+                    printf("form_alert -> button %d\n", b);
+                }
                 menu_bar(g_menu,1);
             }
         }

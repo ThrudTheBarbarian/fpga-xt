@@ -92,6 +92,9 @@ static void draw_obj(OBJECT *o, int x, int y) {
             if (txt) { vst_color(g_vh,1); vst_height(g_vh,13,0,0,0,0); v_gtext(g_vh, x+8, y+h/2-7, txt); }
             break;
         }
+        case G_IMAGE:           // ob_spec = a theme element name (e.g. an alert icon)
+            if (txt) theme_draw(g_vh, g_th, txt, x, y, w, h);
+            break;
         case G_STRING: case G_TITLE:
             if (txt) { vst_color(g_vh, (st & OS_DISABLED) ? 9 : 1); vst_height(g_vh,14,0,0,0,0);
                        v_gtext(g_vh, x, y + h/2 - 7, txt); }

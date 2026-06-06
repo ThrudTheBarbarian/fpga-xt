@@ -45,3 +45,6 @@ menu                   0 781 15 15  7 7 7 7  stretch
 menu.tick              0 797 14 14  0 0 0 0  none
 header                 0 812 1 25  0 0 0 0  none
 header.pressed         0 838 1 25  0 0 0 0  none
+alert.note             0 864 53 46  0 0 0 0  none
+alert.wait             0 911 48 43  0 0 0 0  none
+alert.stop             0 955 53 46  0 0 0 0  none
