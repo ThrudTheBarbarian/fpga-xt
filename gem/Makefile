@@ -34,7 +34,7 @@ OBJ      := $(addprefix $(BUILD)/,$(SRC:.c=.o))
 
 TARGET  := $(BUILD)/gem_sdl
 
-.PHONY: all run test clean fills shapes output text lines theme themewin themepack aes aesmenu aeswin
+.PHONY: all run test clean fills shapes output text lines theme themewin themepack aes aesmenu aeswin desktop
 all: $(TARGET)
 
 $(TARGET): $(OBJ)
@@ -100,6 +100,13 @@ $(BUILD)/gem_aeswin: $(AESWIN_OBJ)
 	$(CC) $(AESWIN_OBJ) $(LDLIBS) -o $@
 aeswin: $(BUILD)/gem_aeswin
 	./$(BUILD)/gem_aeswin
+
+# The combined interactive desktop: menu bar + draggable windows + a dialog.
+DESK_OBJ := $(addprefix $(BUILD)/,gfx_soft.o font.o theme.o aes_desktop_demo.o $(VDI_SRC:.c=.o) $(AES_SRC:.c=.o))
+$(BUILD)/gem_desktop: $(DESK_OBJ)
+	$(CC) $(DESK_OBJ) $(LDLIBS) -o $@
+desktop: $(BUILD)/gem_desktop
+	./$(BUILD)/gem_desktop
 
 # Bake the Aristo2 atlas (needs ImageMagick + the Cappuccino resources).
 ARISTO2 ?= $(HOME)/src/cappuccino/cappuccino/AppKit/Themes/Aristo2/Resources
