@@ -7,12 +7,27 @@
 #include "theme.h"
 #include <stdio.h>
 #include <stdlib.h>
+#include <SDL2/SDL.h>
 
-static void putppm(const char *p, gfx_surface *s) {
-    FILE *f = fopen(p, "wb"); fprintf(f, "P6\n%d %d\n255\n", s->w, s->h);
-    for (int i = 0; i < s->w * s->h; i++) { uint32_t v = s->px[i];
-        unsigned char c[3] = { v>>24, v>>16, v>>8 }; fwrite(c, 1, 3, f); }
-    fclose(f);
+static void present(gfx_surface *d) {        // show d 1:1 in a window until quit
+    if (SDL_Init(SDL_INIT_VIDEO) != 0) return;
+    SDL_Window *w = SDL_CreateWindow("GEM theme — 9-slice engine test",
+        SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED, d->w, d->h, SDL_WINDOW_RESIZABLE);
+    SDL_Renderer *r = SDL_CreateRenderer(w, -1, SDL_RENDERER_ACCELERATED);
+    SDL_Texture *t = SDL_CreateTexture(r, SDL_PIXELFORMAT_RGBA8888,
+        SDL_TEXTUREACCESS_STREAMING, d->w, d->h);
+    int run = 1;
+    while (run) {
+        SDL_Event e;
+        while (SDL_PollEvent(&e))
+            if (e.type == SDL_QUIT || (e.type == SDL_KEYDOWN && e.key.keysym.sym == SDLK_ESCAPE)) run = 0;
+        SDL_UpdateTexture(t, NULL, d->px, d->stride * (int)sizeof(uint32_t));
+        int ow = d->w, oh = d->h; SDL_GetRendererOutputSize(r, &ow, &oh);
+        SDL_Rect ds = { (ow-d->w)/2, (oh-d->h)/2, d->w, d->h };
+        SDL_SetRenderDrawColor(r, 0,0,0,255); SDL_RenderClear(r);
+        SDL_RenderCopy(r, t, NULL, &ds); SDL_RenderPresent(r); SDL_Delay(16);
+    }
+    SDL_DestroyTexture(t); SDL_DestroyRenderer(r); SDL_DestroyWindow(w); SDL_Quit();
 }
 
 int main(void) {
@@ -51,7 +66,7 @@ int main(void) {
     theme_blit(handle, &th, &sl,  20,  95,  55, 130);   // tall (edges stretch vertically)
     theme_blit(handle, &th, &sl,  95,  95, 300, 130);   // big (centre stretches both ways)
 
-    putppm("/tmp/theme_demo.ppm", d);
+    present(d);
     theme_free(&th);
     return 0;
 }
