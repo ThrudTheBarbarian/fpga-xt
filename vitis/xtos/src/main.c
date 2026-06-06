@@ -29,6 +29,7 @@
 #include <stdint.h>
 #include <stdlib.h>          /* strtoul (REPL hex parsing) */
 #include <string.h>          /* strcmp  (REPL dispatch)    */
+#include <errno.h>           /* ENOSYS for the libc syscall stubs below */
 #include "xparameters.h"
 #include "xil_printf.h"
 #include "xil_io.h"
@@ -37,6 +38,9 @@
 #include "FreeRTOS.h"        /* xtos runs under the FreeRTOS scheduler */
 #include "task.h"
 #include "ff.h"              /* xilffs / FatFs — SD card (FAT) access */
+#include "lua.h"             /* vendored Lua 5.4 (xtos/lua) — boot scripts */
+#include "lauxlib.h"
+#include "lualib.h"
 #include "xiicps.h"          /* PS I2C0 (EMIO) -> SiI9022A control bus */
 
 #include "xt_blitter.h"
@@ -299,6 +303,113 @@ static void fs_mount(void)
     }
 }
 
+/* ---- Lua (vendored 5.4) -------------------------------------------------
+ * One persistent interpreter for boot scripts + console.  os.note(msg) writes
+ * to the console; Lua's print() goes via stdout -> outbyte -> UART1. */
+static lua_State *g_L = NULL;
+
+static int l_note(lua_State *L)
+{
+    uart1_puts(luaL_checkstring(L, 1));
+    uart1_puts("\r\n");
+    return 0;
+}
+
+static void lua_init(void)
+{
+    g_L = luaL_newstate();                 /* uses newlib malloc (bumped heap) */
+    if (g_L == NULL) {
+        xil_printf("  lua: luaL_newstate failed — heap too small?\r\n");
+        return;
+    }
+    luaL_openlibs(g_L);
+    lua_getglobal(g_L, "os");              /* add os.note(msg) */
+    lua_pushcfunction(g_L, l_note);
+    lua_setfield(g_L, -2, "note");
+    lua_pop(g_L, 1);
+    xil_printf("  lua: %s ready\r\n", LUA_RELEASE);
+}
+
+/* Load + run a FAT file as a Lua chunk.  Reads the whole file into a malloc'd
+ * (cache-irrelevant — CPU buffer, but f_read still needs alignment) buffer. */
+static void lua_run_fat(const char *path)
+{
+    if (g_L == NULL) { xil_printf("  lua not initialised\r\n"); return; }
+    FIL f;
+    FRESULT fr = f_open(&f, path, FA_READ);
+    if (fr != FR_OK) { xil_printf("  boot: open %s failed (%d)\r\n", path, (int)fr); return; }
+    FSIZE_t sz = f_size(&f);
+    char *src = malloc((size_t)sz + 1);         /* newlib heap (same as Lua) */
+    if (src == NULL) { xil_printf("  boot: OOM for %s (%u bytes)\r\n", path, (unsigned)sz); f_close(&f); return; }
+    /* Read via a 32-byte-aligned bounce buffer (SD DMA invalidates the caller's
+     * cache lines; src from malloc isn't line-aligned), copy into src. */
+    static char io_buf[512] __attribute__((aligned(32)));
+    UINT total = 0;
+    while ((FSIZE_t)total < sz) {
+        UINT want = (UINT)((sz - total) > 512u ? 512u : (sz - total));
+        UINT got = 0;
+        fr = f_read(&f, io_buf, want, &got);
+        if (fr != FR_OK || got == 0) break;
+        memcpy(src + total, io_buf, got);
+        total += got;
+    }
+    f_close(&f);
+    if (fr != FR_OK) { xil_printf("  boot: read %s failed (%d)\r\n", path, (int)fr); free(src); return; }
+    src[total] = '\0';
+    xil_printf("  boot: run %s (%u bytes)\r\n", path, (unsigned)total);
+    if (luaL_loadbuffer(g_L, src, total, path) != LUA_OK ||
+        lua_pcall(g_L, 0, 0, 0) != LUA_OK) {
+        xil_printf("  boot: %s: %s\r\n", path, lua_tostring(g_L, -1));
+        lua_pop(g_L, 1);
+    }
+    free(src);
+}
+
+/* Run OS/Boot/*.lua in filename order (00.* first, 99.Desktop last). */
+static void boot_run(void)
+{
+    if (!g_fs_mounted) { uart1_puts("  boot: SD not mounted (try 'mount')\r\n"); return; }
+    static char names[32][64];
+    unsigned n = 0;
+    DIR dir; FILINFO fno;
+    FRESULT fr = f_opendir(&dir, "0:/OS/Boot");
+    if (fr != FR_OK) { xil_printf("  boot: no 0:/OS/Boot (%d)\r\n", (int)fr); return; }
+    while (n < 32) {
+        fr = f_readdir(&dir, &fno);
+        if (fr != FR_OK || fno.fname[0] == 0) break;
+        if (fno.fattrib & AM_DIR) continue;
+        /* OS/Boot/NN-slug — must start with a digit (no extension).  This also
+         * skips macOS junk (.Spotlight-V100, ._*, .Trashes — all non-digit). */
+        if (fno.fname[0] < '0' || fno.fname[0] > '9') continue;
+        if (strlen(fno.fname) < sizeof names[0]) { strcpy(names[n], fno.fname); n++; }
+    }
+    f_closedir(&dir);
+    /* insertion sort by the numeric NN prefix (10-foo < 40-net < 99-desktop),
+     * ties broken by name — so 9-x sorts before 10-x even if not zero-padded. */
+    for (unsigned i = 1; i < n; i++) {
+        char tmp[64]; strcpy(tmp, names[i]);
+        unsigned long kt = strtoul(tmp, NULL, 10);
+        int j = (int)i - 1;
+        while (j >= 0) {
+            unsigned long kj = strtoul(names[j], NULL, 10);
+            if (kj < kt || (kj == kt && strcmp(names[j], tmp) <= 0)) break;
+            strcpy(names[j + 1], names[j]); j--;
+        }
+        strcpy(names[j + 1], tmp);
+    }
+    xil_printf("  boot: %u script(s) in 0:/OS/Boot\r\n", n);
+    for (unsigned i = 0; i < n; i++) {
+        char path[80];
+        static const char pre[] = "0:/OS/Boot/";
+        size_t pl = sizeof(pre) - 1;
+        strcpy(path, pre);
+        strncpy(path + pl, names[i], sizeof(path) - pl - 1);
+        path[sizeof(path) - 1] = '\0';
+        lua_run_fat(path);
+    }
+    uart1_puts("  boot: done\r\n");
+}
+
 /* Enable the UART1 receiver — ps7_init sets baud/mode, but the early TX-only
  * CR write in uart1_raw_puts cleared RX_EN, so turn it back on for the REPL. */
 static void uart1_rx_enable(void)
@@ -341,6 +452,8 @@ static void repl_help(void)
       "  mount            (re)mount the SD card FAT volume (0:)\r\n"
       "  ls [path]        list a directory (default 0:/)\r\n"
       "  cat <path>       dump a file to the console\r\n"
+      "  luatest          run a built-in Lua chunk (interpreter self-test)\r\n"
+      "  boot             run 0:/OS/Boot/NN-slug scripts in numeric order\r\n"
       "  mon <0|1>        periodic 1s status tick off/on\r\n"
       "  reset            soft-reset the PS (SLCR) -> full reboot (FSBL/DDR/PL)\r\n"
       "  help             this list\r\n"
@@ -553,6 +666,24 @@ static void repl_exec(char *cmd)
         } while (n == sizeof buf);
         f_close(&f);
         uart1_puts("\r\n");
+        return;
+    }
+
+    if (!strcmp(argv[0], "luatest")) {   /* prove the Lua interpreter runs */
+        if (g_L == NULL) { uart1_puts("  lua not initialised\r\n"); return; }
+        static const char *chunk =
+            "print(_VERSION .. ' on XTOS')\n"
+            "print('2 + 2 =', 2 + 2)\n"
+            "os.note('lua: boot scripts run from 0:/OS/Boot/NN-slug')\n";
+        if (luaL_dostring(g_L, chunk) != LUA_OK) {
+            xil_printf("  lua error: %s\r\n", lua_tostring(g_L, -1));
+            lua_pop(g_L, 1);
+        }
+        return;
+    }
+
+    if (!strcmp(argv[0], "boot")) {       /* run OS/Boot/*.lua in order */
+        boot_run();
         return;
     }
 
@@ -896,12 +1027,17 @@ int main(void)
      * (e.g. after inserting a card). */
     fs_mount();
 
+    /* Bring up the Lua interpreter (boot scripts + console).  After the SD mount
+     * so a boot script can read the card; before the scheduler so the banner is
+     * coherent. */
+    lua_init();
+
     /* Hand off to the scheduler; the interactive console runs as a task so the
      * GEM service, FAT/SD and Lua can run as sibling tasks later.  (Keyboard
      * input is the serial '{ }' passthrough; USB HID lives on the RP2354
      * companion, so there is no USB host here.) */
     xil_printf("[xtos] starting FreeRTOS scheduler\r\n");
-    if (xTaskCreate(repl_task, "repl", 8192, NULL,
+    if (xTaskCreate(repl_task, "repl", 16384, NULL,   /* 64KB: Lua parser/VM C-stack */
                     tskIDLE_PRIORITY + 1, NULL) != pdPASS)
         uart1_raw_puts("[xtos] FATAL: could not create repl task\r\n");
 
@@ -917,6 +1053,11 @@ int main(void)
 static void repl_task(void *arg)
 {
     (void)arg;
+
+    /* Auto-run the boot scripts (0:/OS/Boot/NN-slug) now that the scheduler is
+     * up, then drop to the interactive console. */
+    boot_run();
+
     repl_help();
     uart1_puts("> ");
 
@@ -967,6 +1108,22 @@ static void repl_task(void *arg)
                 for (unsigned k = 0; k < ll; k++) uart1_putc(line[k]);
             } else if (!hpd) {
                 out_on = 0;                             /* unplug: re-arm */
+            }
+
+            /* SD card-detect (SDHCI0 present-state @0xE0100024, bit16 = card
+             * inserted): auto-unmount on eject, auto-remount on insert — so a
+             * swapped card never reuses stale FAT/dir cache (corruption). */
+            unsigned card_in = (Xil_In32(0xE0100024u) >> 16) & 1u;
+            if (card_in && !g_fs_mounted) {
+                uart1_puts("\r\n>> SD inserted — mounting\r\n");
+                fs_mount();
+                uart1_puts("> ");
+                for (unsigned k = 0; k < ll; k++) uart1_putc(line[k]);
+            } else if (!card_in && g_fs_mounted) {
+                f_unmount("0:");
+                g_fs_mounted = 0;
+                uart1_puts("\r\n>> SD removed — unmounted\r\n> ");
+                for (unsigned k = 0; k < ll; k++) uart1_putc(line[k]);
             }
 
             if (g_mon) {                                /* live status feed */
@@ -1020,3 +1177,9 @@ void vApplicationStackOverflowHook(TaskHandle_t task, char *name)
     uart1_raw_puts("\r\n");
     for (;;) { }
 }
+
+/* newlib syscall stubs that Lua's os.remove/os.rename pull in.  There is no
+ * libc-backed filesystem (FatFs is used directly), so these just fail — boot
+ * scripts don't use os.remove/rename. */
+int _unlink(const char *path) { (void)path; errno = ENOSYS; return -1; }
+int _link(const char *oldp, const char *newp) { (void)oldp; (void)newp; errno = ENOSYS; return -1; }

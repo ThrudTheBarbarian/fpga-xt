@@ -374,23 +374,34 @@ _comp_root = os.path.join(WORKSPACE, "xtos").replace("\\", "/")
 _app_srcs = [os.path.join(_comp_root, f).replace("\\", "/")
              for f in sorted(os.listdir(APP_SRC))
              if f.endswith(".c") and f != "usb_hid.c"]
+# Vendored Lua 5.4 (REPO_ROOT/xtos/lua) compiled into the app for boot scripts —
+# every .c except the standalone interpreter (lua.c) and compiler (luac.c) mains.
+_lua_dir  = os.path.join(REPO_ROOT, "xtos", "lua")
+_lua_inc  = _lua_dir.replace("\\", "/")
+_lua_srcs = [os.path.join(_lua_dir, f).replace("\\", "/")
+             for f in sorted(os.listdir(_lua_dir))
+             if f.endswith(".c") and f not in ("lua.c", "luac.c")]
+_all_srcs = _app_srcs + _lua_srcs
 _user_cmake = os.path.join(WORKSPACE, "xtos", "src", "UserConfig.cmake")
 with open(_user_cmake, "a") as _f:
-    _f.write("\n# --- fpga-xt: app sources (root); no USB (RP2354 companion) ---\n")
-    _f.write('set(USER_INCLUDE_DIRECTORIES "%s" "${CMAKE_CURRENT_SOURCE_DIR}")\n'
-             % _comp_root)
+    _f.write("\n# --- fpga-xt: app sources (root) + vendored Lua; no USB (RP2354) ---\n")
+    _f.write('set(USER_INCLUDE_DIRECTORIES "%s" "${CMAKE_CURRENT_SOURCE_DIR}" "%s")\n'
+             % (_comp_root, _lua_inc))
     _f.write("set(USER_COMPILE_SOURCES\n")
-    for _s in _app_srcs:
+    for _s in _all_srcs:
         _f.write('  "%s"\n' % _s)
     _f.write(")\n")
-print(f">> UserConfig.cmake: {len(_app_srcs)} app sources (no USB) -> {_user_cmake}")
+    # libm for Lua's math (sin/pow/floor/fmod/…) — appended into the link's
+    # --start-group, so it resolves the Lua math refs (the BSP group has no -lm).
+    _f.write("set(USER_LINK_LIBRARIES m)\n")
+print(f">> UserConfig.cmake: {len(_app_srcs)} app + {len(_lua_srcs)} Lua sources (+libm) -> {_user_cmake}")
 
-# --- bump stack sizes for the USB stack + interrupt handler --------------
-# Defaults are tiny: main stack 8KB, IRQ stack only 1KB.  The USB ISR runs on
-# the IRQ stack and does a lot (EHCI async/periodic schedule walks,
-# hcd_event_xfer_complete, usb_logf's 256-byte vsnprintf buffer), and the deep
-# enumeration call chain in tuh_task uses the main stack — both overflow and
-# corrupt adjacent memory (deterministic crashes / data aborts).  Bump both.
+# --- bump stack + heap sizes --------------------------------------------
+# Defaults are tiny: main 8KB, IRQ 1KB, newlib heap 8KB.  Bump the IRQ stack
+# (ISRs) and the main stack (init runs there pre-scheduler), and grow the
+# newlib heap to 2 MB — Lua's allocator (luaL_newstate -> realloc) lives there,
+# and 8 KB can't hold the interpreter.  (Task stacks come from the FreeRTOS
+# heap, not _STACK_SIZE; FreeRTOS_total_heap_size is set on the domain.)
 _lds = os.path.join(WORKSPACE, "xtos", "src", "lscript.ld")
 with open(_lds, "r") as _f:
     _lds_txt = _f.read()
@@ -398,7 +409,9 @@ _lds_new = (_lds_txt
     .replace("_STACK_SIZE = DEFINED(_STACK_SIZE) ? _STACK_SIZE : 0x2000;",
              "_STACK_SIZE = DEFINED(_STACK_SIZE) ? _STACK_SIZE : 0x10000;")
     .replace("_IRQ_STACK_SIZE = DEFINED(_IRQ_STACK_SIZE) ? _IRQ_STACK_SIZE : 1024;",
-             "_IRQ_STACK_SIZE = DEFINED(_IRQ_STACK_SIZE) ? _IRQ_STACK_SIZE : 0x8000;"))
+             "_IRQ_STACK_SIZE = DEFINED(_IRQ_STACK_SIZE) ? _IRQ_STACK_SIZE : 0x8000;")
+    .replace("_HEAP_SIZE = DEFINED(_HEAP_SIZE) ? _HEAP_SIZE : 0x2000;",
+             "_HEAP_SIZE = DEFINED(_HEAP_SIZE) ? _HEAP_SIZE : 0x200000;"))
 if _lds_new != _lds_txt:
     try:
         os.chmod(_lds, 0o644)
@@ -406,7 +419,7 @@ if _lds_new != _lds_txt:
         pass
     with open(_lds, "w") as _f:
         _f.write(_lds_new)
-    print(">> bumped _STACK_SIZE=0x10000 _IRQ_STACK_SIZE=0x8000 in lscript.ld")
+    print(">> bumped _STACK_SIZE=0x10000 _IRQ_STACK_SIZE=0x8000 _HEAP_SIZE=0x200000 in lscript.ld")
 
 status = app.build()
 print(f">> xtos build status: {status}")
