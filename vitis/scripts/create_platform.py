@@ -177,8 +177,13 @@ if not os.environ.get("VITIS_NO_RTOS"):
     # freertos_stdout/freertos_stdin params (NOT the standalone_* ones).  Wrap
     # defensively: a key-name change across Vitis builds must not abort the
     # whole platform create (the bring-up app also writes UART1 raw).
+    # tick_rate=1000 Hz so a 1 ms vTaskDelay (the xtos REPL pace) is one tick;
+    # generous heap for task stacks (xtos repl task + future GEM/FAT/Lua tasks).
     for _k, _v in (("freertos_stdout", "ps7_uart_1"),
-                   ("freertos_stdin",  "ps7_uart_1")):
+                   ("freertos_stdin",  "ps7_uart_1"),
+                   ("freertos_tick_rate", "1000"),
+                   ("freertos_total_heap_size", "262144"),
+                   ("freertos_minimal_stack_size", "1024")):
         try:
             rtos_dom.set_config("os", _k, _v)
             print(f">> freertos domain: set {_k} -> {_v}")
@@ -318,15 +323,14 @@ if not os.environ.get("VITIS_NO_FSBL"):
 # of the above to work.
 
 # ---- xtos -------------------------------------------------------
-# Bare-metal hello world that prints to UART1 (the on-board USB-UART
-# bridge) and toggles a PS GPIO LED.  Source lives in
-# ../xtos/src/; we import it into the component so editing
-# remains in-tree and not in the gitignored workspace.
-print(">> creating xtos component ...")
+# The OS console: HDMI/SiI9022 + blitter init in main(), then the FreeRTOS
+# scheduler with the serial REPL running as a task.  Built against the freertos
+# domain.  Source lives in ../xtos/src/; imported so editing stays in-tree.
+print(">> creating xtos component (freertos domain) ...")
 app = client.create_app_component(
     name="xtos",
     platform=PFM_FILE,
-    domain=DOMAIN,
+    domain=RTOS_DOMAIN,
     template="empty_application",
 )
 for fn in os.listdir(APP_SRC):
@@ -335,51 +339,27 @@ for fn in os.listdir(APP_SRC):
         app.import_files(from_loc=APP_SRC, files=[fn])
         print(f"   imported {fn}")
 
-# ---- TinyUSB host (USB0) build wiring --------------------------------
-# The generated src/CMakeLists.txt does include(UserConfig.cmake) and consumes
-# USER_COMPILE_SOURCES (extra sources) + aux_source_directory(src) + the src
-# include dir.  So compile the vendored TinyUSB host subset IN PLACE (no copy)
-# and add its include dir by writing UserConfig.cmake.  TinyUSB lives at
-# <repo>/vitis/xtos/tinyusb (submodule), separate from the imported component
-# src/, so reference it by absolute path (forward slashes for CMake).
-TINYUSB_SRC = os.path.join(REPO_ROOT, "vitis", "xtos", "tinyusb", "src")
-_tu_inc  = TINYUSB_SRC.replace("\\", "/")
-_tu_srcs = [os.path.join(TINYUSB_SRC, p).replace("\\", "/") for p in (
-    "tusb.c",
-    "common/tusb_fifo.c",
-    "host/usbh.c",
-    "host/hub.c",
-    "class/hid/hid_host.c",
-    "portable/chipidea/ci_hs/hcd_ci_hs.c",
-    "portable/ehci/ehci.c",
-)]
-# APPEND to the Vitis-generated UserConfig.cmake (do NOT clobber it — it carries
-# enable_language, USER_UNDEFINED_SYMBOLS, link vars, and the linker-script
-# plumbing).  Use the intended hook variables (USER_INCLUDE_DIRECTORIES /
-# USER_COMPILE_SOURCES); CMake set() is last-wins, so these override the empty
-# defaults while everything else is preserved.
-# import_files lands the app sources (incl. tusb_config.h) at the component ROOT,
-# not src/, so add the root to the include path (the TinyUSB USER_COMPILE_SOURCES
-# only get USER_INCLUDE_DIRECTORIES, not the component's default include).
+# Compile the app sources explicitly via USER_COMPILE_SOURCES: import_files lands
+# them at the component ROOT, but the generated CMakeLists only builds
+# aux_source_directory(src) (no .c there) + USER_COMPILE_SOURCES.  USB HID is now
+# off-board on the RP2354 companion, so usb_hid.c and the vendored TinyUSB host
+# are NOT compiled (main.c no longer references them).  Append to (don't clobber)
+# the Vitis-generated UserConfig.cmake; set() is last-wins so the empty defaults
+# are overridden while its link/linker-script plumbing is preserved.
 _comp_root = os.path.join(WORKSPACE, "xtos").replace("\\", "/")
-# import_files lands the app sources at the component ROOT, but the component's
-# CMakeLists only compiles aux_source_directory(src) + USER_COMPILE_SOURCES — and
-# src/ has no .c — so the root app sources (main.c, usb_hid.c, xt_blitter.c) are
-# never compiled.  Compile them explicitly via USER_COMPILE_SOURCES (the imported
-# copies at the root), alongside the TinyUSB subset.
 _app_srcs = [os.path.join(_comp_root, f).replace("\\", "/")
-             for f in sorted(os.listdir(APP_SRC)) if f.endswith(".c")]
-_all_srcs = _app_srcs + _tu_srcs
+             for f in sorted(os.listdir(APP_SRC))
+             if f.endswith(".c") and f != "usb_hid.c"]
 _user_cmake = os.path.join(WORKSPACE, "xtos", "src", "UserConfig.cmake")
 with open(_user_cmake, "a") as _f:
-    _f.write("\n# --- fpga-xt: app sources (root) + vendored TinyUSB host (ci_hs/EHCI) ---\n")
-    _f.write('set(USER_INCLUDE_DIRECTORIES "%s" "${CMAKE_CURRENT_SOURCE_DIR}" "%s")\n'
-             % (_comp_root, _tu_inc))
+    _f.write("\n# --- fpga-xt: app sources (root); no USB (RP2354 companion) ---\n")
+    _f.write('set(USER_INCLUDE_DIRECTORIES "%s" "${CMAKE_CURRENT_SOURCE_DIR}")\n'
+             % _comp_root)
     _f.write("set(USER_COMPILE_SOURCES\n")
-    for _s in _all_srcs:
+    for _s in _app_srcs:
         _f.write('  "%s"\n' % _s)
     _f.write(")\n")
-print(f">> UserConfig.cmake: {len(_app_srcs)} app + {len(_tu_srcs)} TinyUSB sources -> {_user_cmake}")
+print(f">> UserConfig.cmake: {len(_app_srcs)} app sources (no USB) -> {_user_cmake}")
 
 # --- bump stack sizes for the USB stack + interrupt handler --------------
 # Defaults are tiny: main stack 8KB, IRQ stack only 1KB.  The USB ISR runs on

@@ -33,8 +33,9 @@
 #include "xil_printf.h"
 #include "xil_io.h"
 #include "xil_cache.h"       /* Xil_DCacheInvalidateRange — coherent DDR peeks */
-#include "usb_hid.h"          /* TinyUSB host (USB0) bring-up */
-#include "sleep.h"           /* usleep — paces the REPL loop (1 ms/iter) */
+#include "sleep.h"           /* usleep — short busy-waits in init/helpers */
+#include "FreeRTOS.h"        /* xtos runs under the FreeRTOS scheduler */
+#include "task.h"
 #include "xiicps.h"          /* PS I2C0 (EMIO) -> SiI9022A control bus */
 
 #include "xt_blitter.h"
@@ -676,6 +677,8 @@ static void repl_exec(char *cmd)
     uart1_puts("? unknown — type 'help'\r\n");
 }
 
+static void repl_task(void *arg);
+
 int main(void)
 {
     /* PS-software liveness LED, FIRST thing — before anything that could hang
@@ -790,10 +793,27 @@ int main(void)
      * counter still services hot-plug (auto-enable output on HDMI plug),
      * toggles the liveness LED, and prints a status line when `mon` is on. */
     uart1_rx_enable();
-    /* The USB0 host (TinyUSB) is not started here.  Keyboard input comes via the
-     * serial '{ }' passthrough, and USB HID will live on an external companion;
-     * leaving the ChipIdea host's ISR armed serves no purpose and draws bus power. */
-    /* usb_hid_init(); */
+    /* Hand off to the scheduler; the interactive console runs as a task so the
+     * GEM service, FAT/SD and Lua can run as sibling tasks later.  (Keyboard
+     * input is the serial '{ }' passthrough; USB HID lives on the RP2354
+     * companion, so there is no USB host here.) */
+    xil_printf("[xtos] starting FreeRTOS scheduler\r\n");
+    if (xTaskCreate(repl_task, "repl", 8192, NULL,
+                    tskIDLE_PRIORITY + 1, NULL) != pdPASS)
+        uart1_raw_puts("[xtos] FATAL: could not create repl task\r\n");
+
+    vTaskStartScheduler();
+
+    /* Only reached if the kernel couldn't start (heap exhausted). */
+    uart1_raw_puts("[xtos] FATAL: scheduler returned\r\n");
+    for (;;) { }
+    return 0;
+}
+
+/* Interactive serial console — a FreeRTOS task (was main()'s while(1) loop). */
+static void repl_task(void *arg)
+{
+    (void)arg;
     repl_help();
     uart1_puts("> ");
 
@@ -802,8 +822,7 @@ int main(void)
     unsigned out_on = 0, tick = 0, ms = 0;
     unsigned desk_cleared = 0;          /* one-shot deferred desktop clear */
 
-    while (1) {
-        /* usb_hid_task(); */           /* USB host not started (see above) */
+    for (;;) {
         /* Interactive: drain RX, echo, dispatch on CR/LF. */
         int c;
         while ((c = uart1_getc()) >= 0) {
@@ -829,7 +848,7 @@ int main(void)
 
         if (g_key_passthru) key_paste_tick();   /* meter one queued paste char out */
 
-        usleep(1000);                       /* 1 ms — pace the loop (echo ≤1ms) */
+        vTaskDelay(pdMS_TO_TICKS(1));       /* 1 ms pace (tick rate = 1000 Hz) */
 
         /* Periodic (~1s): hot-plug service + LED + optional mon status feed. */
         if (++ms >= 1000) {
@@ -881,7 +900,20 @@ int main(void)
             for (unsigned k = 0; k < ll; k++) uart1_putc(line[k]);
         }
     }
+}
 
-    /* Unreachable, but make the compiler happy. */
-    return 0;
+/* FreeRTOS hooks the Xilinx default config references. */
+void vApplicationMallocFailedHook(void)
+{
+    uart1_raw_puts("[xtos] FATAL: malloc failed\r\n");
+    for (;;) { }
+}
+
+void vApplicationStackOverflowHook(TaskHandle_t task, char *name)
+{
+    (void)task;
+    uart1_raw_puts("[xtos] FATAL: stack overflow in task: ");
+    uart1_raw_puts(name ? name : "?");
+    uart1_raw_puts("\r\n");
+    for (;;) { }
 }
