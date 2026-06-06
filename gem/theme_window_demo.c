@@ -1,100 +1,155 @@
-// theme_window_demo.c — render a window dressed in the real Aristo2 theme:
-// titlebar + window controls + frame, with buttons / checkbox / radio / text
-// field inside, text drawn through the VDI.  Proves the baked atlas + 9-slice
-// engine on actual artwork.  Shown 1:1 in an SDL window (Esc / close to quit).
+// theme_window_demo.c — the Aristo2 theme showcase: a real themed window
+// containing every baked widget, most shown in several states, all rendered
+// through the 9-slice engine (vr_transfer_bits VR_OVER) with VDI text on top.
+// Shown 1:1 in an SDL window (Esc / close to quit); `--ppm` dumps a screenshot.
 
 #include "theme.h"
 #include "font.h"
 #include <stdio.h>
+#include <string.h>
 #include <SDL2/SDL.h>
 
-#define WIN_W 440
-#define WIN_H 300
+#define WIN_W 820
+#define WIN_H 600
 
 static theme TH;
-static int H;                                          // the VDI workstation
+static int H;
+static font_face *FF;
 
-static void sprite(const char *name, int x, int y) {   // draw at natural size
-    const theme_slice *s = theme_find(&TH, name);
-    if (s) theme_blit(H, &TH, s, x, y, s->sw, s->sh);
-}
-static int text_w(font_face *ff, const char *s, int px) { return font_text_width(font_at(ff, px), s); }
+static const theme_slice *g(const char *n) { return theme_find(&TH, n); }
+static void d9(const char *n, int x, int y, int w, int h) { theme_blit(H, &TH, g(n), x, y, w, h); }
+static void spr(const char *n, int x, int y) { const theme_slice *s=g(n); if(s) theme_blit(H,&TH,s,x,y,s->sw,s->sh); }
+static int  sw(const char *n){ const theme_slice *s=g(n); return s?s->sw:0; }
+static int  sh(const char *n){ const theme_slice *s=g(n); return s?s->sh:0; }
+static void lab(int x,int y,const char *s){ vst_color(H,1); vst_height(H,13,0,0,0,0); v_gtext(H,x,y,s); }
+static void hdr(int x,int y,const char *s){ vst_color(H,9); vst_height(H,11,0,0,0,0); v_gtext(H,x,y,s); }
 
-// A themed push button sized to its label; returns its width.
-static int button(font_face *ff, const char *variant, int x, int y, const char *lbl) {
-    const theme_slice *s = theme_find(&TH, variant);
-    int h = s ? s->sh : 24, w = text_w(ff, lbl, 15) + 28;
-    theme_blit(H, &TH, s, x, y, w, h);
-    vst_color(H,1); vst_height(H,15,0,0,0,0);
-    vst_alignment(H, VDI_TA_CENTER, VDI_TA_HALF, 0,0);
-    v_gtext(H, x + w/2, y + h/2, lbl);
-    vst_alignment(H, VDI_TA_LEFT, VDI_TA_TOP, 0,0);
+// A push button sized to its label; returns its width.
+static int btn(const char *variant, int x, int y, const char *l) {
+    const theme_slice *s=g(variant); int h=s?s->sh:24, w=font_text_width(font_at(FF,14),l)+26;
+    theme_blit(H,&TH,s,x,y,w,h);
+    vst_color(H, strstr(variant,"disabled")?9:1); vst_height(H,14,0,0,0,0);
+    vst_alignment(H,VDI_TA_CENTER,VDI_TA_HALF,0,0); v_gtext(H,x+w/2,y+h/2,l);
+    vst_alignment(H,VDI_TA_LEFT,VDI_TA_TOP,0,0);
     return w;
 }
-
-static void draw(gfx_surface *d, font_face *ff) {
-    for (int i = 0; i < WIN_W*WIN_H; i++) d->px[i] = GFX_RGB(236,238,240);
-
-    int wx = 30, wy = 26, ww = 380, wh = 240;
-    const theme_slice *head = theme_find(&TH, "titlebar");
-    int th = head ? head->sh : 24;
-    theme_draw(H, &TH, "window", wx, wy, ww, wh);                 // 9-slice frame
-    theme_blit(H, &TH, head, wx, wy, ww, th);                     // titlebar strip
-    sprite("close", wx + 8, wy + (th-16)/2);
-    sprite("minimize", wx + 28, wy + (th-16)/2);
-    sprite("maximize", wx + 48, wy + (th-16)/2);
-    vst_color(H,1); vst_height(H,15,0,0,0,0);
-    vst_alignment(H, VDI_TA_CENTER, VDI_TA_HALF, 0,0);
-    v_gtext(H, wx + ww/2, wy + th/2, "Aristo2 Window");
-    vst_alignment(H, VDI_TA_LEFT, VDI_TA_TOP, 0,0);
-
-    int cx = wx + 24, cy = wy + th + 24;
-    vst_height(H,15,0,0,0,0);
-    sprite("check.selected", cx, cy);        vst_color(H,1); v_gtext(H, cx+28, cy+3, "Enabled option");
-    sprite("radio.selected", cx, cy+34);     vst_color(H,1); v_gtext(H, cx+28, cy+37, "Selected radio");
-    const theme_slice *tf = theme_find(&TH, "textfield");
-    theme_blit(H, &TH, tf, cx, cy+72, 220, 26);
-    vst_color(H,1); v_gtext(H, cx+8, cy+78, "text field");
-
-    int by = wy + wh - 50;
-    int bw = button(ff, "button.disabled", wx + 24, by, "Disabled");
-    int b2 = button(ff, "button", wx + 40 + bw, by, "Cancel");
-    button(ff, "button.selected", wx + 56 + bw + b2, by, "Accept");
+// A label-in-field helper (popup/combo/textfield) at a fixed width.
+static void field(const char *variant, int x, int y, int w, const char *l, int dim) {
+    int h=sh(variant); if(!h) h=24; d9(variant,x,y,w,h);
+    vst_color(H,dim?9:1); vst_height(H,13,0,0,0,0); v_gtext(H,x+8,y+h/2-7,l);
 }
 
-int main(void) {
-    if (SDL_Init(SDL_INIT_VIDEO) != 0) { fprintf(stderr, "SDL_Init: %s\n", SDL_GetError()); return 1; }
-    SDL_Window   *win = SDL_CreateWindow("GEM theme — Aristo2 window",
-        SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED, WIN_W, WIN_H, SDL_WINDOW_RESIZABLE);
-    SDL_Renderer *ren = SDL_CreateRenderer(win, -1, SDL_RENDERER_ACCELERATED);
-    SDL_Texture  *tex = SDL_CreateTexture(ren, SDL_PIXELFORMAT_RGBA8888,
-        SDL_TEXTUREACCESS_STREAMING, WIN_W, WIN_H);
-    gfx_surface *desk = gfx_surface_alloc(WIN_W, WIN_H);
-    if (!win || !ren || !tex || !desk) { fprintf(stderr, "init failed\n"); return 1; }
+static void draw(gfx_surface *d) {
+    for (int i=0;i<WIN_W*WIN_H;i++) d->px[i]=GFX_RGB(232,234,236);
 
-    vdi_init(desk); H = v_opnvwk(desk);
-    font_face *ff = font_face_open("fonts/AovelSansRounded.ttf");
-    if (ff) font_face_set_tracking(ff, 1);
-    vdi_set_face(ff);
-    if (theme_load(&TH, "themes/Aristo2/1x") != 0) { fprintf(stderr, "theme load failed (run: make themepack)\n"); return 1; }
+    // ---- outer window ----
+    int wx=10, wy=10, ww=WIN_W-20, wh=WIN_H-20, th=sh("titlebar");
+    d9("window", wx, wy, ww, wh);
+    d9("titlebar", wx, wy, ww, th);
+    spr("close", wx+10, wy+(th-16)/2); spr("minimize", wx+30, wy+(th-16)/2); spr("maximize", wx+50, wy+(th-16)/2);
+    vst_color(H,1); vst_height(H,15,0,0,0,0); vst_alignment(H,VDI_TA_CENTER,VDI_TA_HALF,0,0);
+    v_gtext(H, wx+ww/2, wy+th/2, "Aristo2 — GEM Theme"); vst_alignment(H,VDI_TA_LEFT,VDI_TA_TOP,0,0);
 
-    int running = 1, dirty = 1;
-    while (running) {
-        SDL_Event e;
-        while (SDL_PollEvent(&e)) {
-            if (e.type == SDL_QUIT) running = 0;
-            else if (e.type == SDL_KEYDOWN && e.key.keysym.sym == SDLK_ESCAPE) running = 0;
-        }
-        if (dirty) { draw(desk, ff); dirty = 0; }
-        SDL_UpdateTexture(tex, NULL, desk->px, desk->stride * (int)sizeof(uint32_t));
-        int ow = WIN_W, oh = WIN_H; SDL_GetRendererOutputSize(ren, &ow, &oh);
-        SDL_Rect dst = { (ow-WIN_W)/2, (oh-WIN_H)/2, WIN_W, WIN_H };
-        SDL_SetRenderDrawColor(ren, 0, 0, 0, 255); SDL_RenderClear(ren);
-        SDL_RenderCopy(ren, tex, NULL, &dst); SDL_RenderPresent(ren);
-        SDL_Delay(16);
+    int c1=34, c2=304, c3=566, y0=wy+th+22;
+
+    // ===== column 1 =====
+    int y=y0;
+    hdr(c1,y,"BUTTONS"); y+=12;
+    int bx=c1;
+    bx += btn("button",bx,y,"Normal")+8;
+    bx += btn("button.selected",bx,y,"Default")+8;
+    btn("button.disabled",bx,y,"Disabled");
+    y+=42;
+    hdr(c1,y,"CHECKBOX"); y+=14;
+    spr("check",c1,y); lab(c1+24,y+2,"off"); spr("check.selected",c1+70,y); lab(c1+94,y+2,"on");
+    spr("check.mixed",c1+140,y); lab(c1+164,y+2,"mixed"); spr("check.pressed",c1+220,y); lab(c1+244,y+2,"pressed");
+    y+=32;
+    hdr(c1,y,"RADIO"); y+=14;
+    spr("radio",c1,y); lab(c1+24,y+2,"off"); spr("radio.selected",c1+70,y); lab(c1+94,y+2,"on");
+    spr("radio.pressed",c1+140,y); lab(c1+164,y+2,"pressed");
+    y+=34;
+    hdr(c1,y,"MENU"); y+=12;
+    int mw=180, mh=96; d9("menu",c1,y,mw,mh);
+    vst_height(H,14,0,0,0,0); const char *it[]={"New","Open","Save","Quit"};
+    for(int i=0;i<4;i++){ vst_color(H,1); v_gtext(H,c1+26,y+10+i*20,it[i]); }
+    spr("menu.tick",c1+7,y+30);
+    y+=mh+18;
+    hdr(c1,y,"TABLE HEADER"); y+=12;
+    field("header",c1,y,120,"Column",0); field("header.pressed",c1+122,y,120,"Sorted",0);
+
+    // ===== column 2 =====
+    y=y0;
+    hdr(c2,y,"POPUP"); y+=14;
+    field("popup",c2,y,150,"Choose…",0); y+=34;
+    field("popup.disabled",c2,y,150,"Disabled",1); y+=42;
+    hdr(c2,y,"COMBO"); y+=14;
+    field("combo",c2,y,170,"Editable",0); y+=32;
+    field("combo.focused",c2,y,170,"Focused",0); y+=32;
+    field("combo.disabled",c2,y,170,"Disabled",1); y+=42;
+    hdr(c2,y,"TEXT FIELD"); y+=14;
+    field("textfield",c2,y,170,"normal",0); y+=30;
+    field("textfield.focused",c2,y,170,"focused",0); y+=30;
+    field("textfield.disabled",c2,y,170,"disabled",1); y+=42;
+    hdr(c2,y,"STEPPER"); y+=12;
+    d9("stepper.up",c2,y,30,sh("stepper.up")); d9("stepper.down",c2,y+sh("stepper.up"),30,sh("stepper.down"));
+
+    // ===== column 3 =====
+    y=y0;
+    hdr(c3,y,"SLIDERS"); y+=18;
+    d9("slider.htrack",c3,y,180,sh("slider.htrack"));
+    spr("slider.knob",c3+60,y+sh("slider.htrack")/2-sh("slider.knob")/2);
+    spr("slider.knob.hi",c3+130,y+sh("slider.htrack")/2-sh("slider.knob")/2);
+    y+=30;
+    d9("slider.vtrack",c3,y,sw("slider.vtrack"),110);
+    spr("slider.knob",c3+sw("slider.vtrack")/2-sw("slider.knob")/2,y+70);
+    spr("slider.circular",c3+50,y+8);
+    spr("slider.circular.knob",c3+50+sw("slider.circular")/2-sw("slider.circular.knob")/2,y+12);
+    y+=130;
+    hdr(c3,y,"SCROLLBARS"); y+=16;
+    int vbh=150;
+    spr("vscroll.up",c3,y);
+    d9("vscroll.track",c3,y+sh("vscroll.up"),sw("vscroll.track"),vbh-sh("vscroll.up")-sh("vscroll.down"));
+    spr("vscroll.down",c3,y+vbh-sh("vscroll.down"));
+    d9("vscroll.thumb",c3,y+40,sw("vscroll.thumb"),60);
+    int hx=c3+30;
+    spr("hscroll.left",hx,y);
+    d9("hscroll.track",hx+sw("hscroll.left"),y,150-sw("hscroll.left")-sw("hscroll.right"),sh("hscroll.track"));
+    spr("hscroll.right",hx+150-sw("hscroll.right"),y);
+    d9("hscroll.thumb",hx+44,y,60,sh("hscroll.thumb"));
+    y+=vbh+10;
+    hdr(c3,y,"TITLEBAR  active / inactive"); y+=14;
+    d9("titlebar",c3,y,180,th);  lab(c3+8,y+th/2-7,"active");
+    d9("titlebar.inactive",c3,y+th+4,180,th); lab(c3+8,y+th+4+th/2-7,"inactive");
+}
+
+int main(int argc, char **argv) {
+    gfx_surface *desk=gfx_surface_alloc(WIN_W,WIN_H);
+    vdi_init(desk); H=v_opnvwk(desk);
+    FF=font_face_open("fonts/AovelSansRounded.ttf"); if(FF)font_face_set_tracking(FF,1); vdi_set_face(FF);
+    if (theme_load(&TH,"themes/Aristo2/1x")!=0){fprintf(stderr,"theme load failed (make themepack)\n");return 1;}
+
+    if (argc>1 && !strcmp(argv[1],"--ppm")) {
+        draw(desk);
+        FILE *f=fopen("/tmp/theme_window.ppm","wb"); fprintf(f,"P6\n%d %d\n255\n",WIN_W,WIN_H);
+        for(int i=0;i<WIN_W*WIN_H;i++){uint32_t v=desk->px[i];unsigned char c[3]={v>>24,v>>16,v>>8};fwrite(c,1,3,f);}
+        fclose(f); return 0;
     }
-    theme_free(&TH); if (ff) font_face_close(ff);
-    gfx_surface_free(desk);
+    if (SDL_Init(SDL_INIT_VIDEO)!=0){fprintf(stderr,"SDL: %s\n",SDL_GetError());return 1;}
+    SDL_Window *win=SDL_CreateWindow("GEM theme — Aristo2 showcase",
+        SDL_WINDOWPOS_CENTERED,SDL_WINDOWPOS_CENTERED,WIN_W,WIN_H,SDL_WINDOW_RESIZABLE);
+    SDL_Renderer *ren=SDL_CreateRenderer(win,-1,SDL_RENDERER_ACCELERATED);
+    SDL_Texture *tex=SDL_CreateTexture(ren,SDL_PIXELFORMAT_RGBA8888,SDL_TEXTUREACCESS_STREAMING,WIN_W,WIN_H);
+    int run=1,dirty=1;
+    while(run){ SDL_Event e;
+        while(SDL_PollEvent(&e)) if(e.type==SDL_QUIT||(e.type==SDL_KEYDOWN&&e.key.keysym.sym==SDLK_ESCAPE))run=0;
+        if(dirty){draw(desk);dirty=0;}
+        SDL_UpdateTexture(tex,NULL,desk->px,desk->stride*(int)sizeof(uint32_t));
+        int ow=WIN_W,oh=WIN_H; SDL_GetRendererOutputSize(ren,&ow,&oh);
+        SDL_Rect ds={(ow-WIN_W)/2,(oh-WIN_H)/2,WIN_W,WIN_H};
+        SDL_SetRenderDrawColor(ren,0,0,0,255); SDL_RenderClear(ren);
+        SDL_RenderCopy(ren,tex,NULL,&ds); SDL_RenderPresent(ren); SDL_Delay(16);
+    }
+    theme_free(&TH); if(FF)font_face_close(FF); gfx_surface_free(desk);
     SDL_DestroyTexture(tex); SDL_DestroyRenderer(ren); SDL_DestroyWindow(win); SDL_Quit();
     return 0;
 }

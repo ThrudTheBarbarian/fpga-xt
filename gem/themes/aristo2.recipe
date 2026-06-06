@@ -16,17 +16,24 @@ button              h3      button-bezel-left button-bezel-center button-bezel-r
 button.selected     h3      button-bezel-highlighted-left button-bezel-highlighted-center button-bezel-highlighted-right
 button.disabled     h3      button-bezel-disabled-left button-bezel-disabled-center button-bezel-disabled-right
 
-# --- text field / popup / combo ----------------------------------------------
+# --- text field / popup / combo (with states) --------------------------------
 textfield           nine    textfield-bezel-square-0 textfield-bezel-square-1 textfield-bezel-square-2 textfield-bezel-square-3 textfield-bezel-square-4 textfield-bezel-square-5 textfield-bezel-square-6 textfield-bezel-square-7 textfield-bezel-square-8
+textfield.focused   nine    textfield-bezel-square-focused-0 textfield-bezel-square-focused-1 textfield-bezel-square-focused-2 textfield-bezel-square-focused-3 textfield-bezel-square-focused-4 textfield-bezel-square-focused-5 textfield-bezel-square-focused-6 textfield-bezel-square-focused-7 textfield-bezel-square-focused-8
+textfield.disabled  nine    textfield-bezel-square-disabled-0 textfield-bezel-square-disabled-1 textfield-bezel-square-disabled-2 textfield-bezel-square-disabled-3 textfield-bezel-square-disabled-4 textfield-bezel-square-disabled-5 textfield-bezel-square-disabled-6 textfield-bezel-square-disabled-7 textfield-bezel-square-disabled-8
 popup               h3      popup-bezel-left popup-bezel-center popup-bezel-right
+popup.disabled      h3      popup-bezel-disabled-left popup-bezel-disabled-center popup-bezel-disabled-right
 combo               h3      combobox-bezel-left combobox-bezel-center combobox-bezel-right
+combo.focused       h3      combobox-bezel-focused-left combobox-bezel-focused-center combobox-bezel-focused-right
+combo.disabled      h3      combobox-bezel-disabled-left combobox-bezel-disabled-center combobox-bezel-disabled-right
 
-# --- checkbox / radio --------------------------------------------------------
+# --- checkbox / radio (with states) ------------------------------------------
 check               sprite  check-box-image
 check.selected      sprite  check-box-image-selected
 check.mixed         sprite  check-box-image-mixed
+check.pressed       sprite  check-box-image-selected-highlighted
 radio               sprite  radio-image
 radio.selected      sprite  radio-image-selected
+radio.pressed       sprite  radio-image-selected-highlighted
 
 # --- scrollbar: vertical -----------------------------------------------------
 vscroll.track       v3      scroller-vertical-track-top scroller-vertical-track-center scroller-vertical-track-bottom

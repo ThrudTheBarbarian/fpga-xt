@@ -338,6 +338,38 @@ Seems like we need the following theme elements to draw a pretty UI:
 * tick-mark / chosen inicator
 * key-equiv symbol
 
+### Colours
+* definition of the 'foreground' colour
+* definition of the 'highlight' colour
+* we don't need a background colour because we blit things that define the background on top of which we draw
+
+### Status — implemented (`gem/theme.{h,c}`)
+
+The theming above is built and proven on the host. The model is **9-slice**: every
+element is a source rect in one atlas plus four insets and a fill mode, and
+`theme_blit()` renders it to any rect — corners 1:1, edges stretched on one axis,
+centre stretched both — through `vr_transfer_bits` in `VR_OVER` (per-pixel
+src-over alpha, so the anti-aliased edges and soft shadows composite). AES widgets
+call `theme_draw(name, rect)` and never touch pixels.
+
+* **On-disk format** (`OS/Themes/<name>/<scale>/`): `artwork.tex` (a raw RGBA
+  atlas — baked from PNGs, so the target needs no PNG decoder), `locations.txt`
+  (`name x y w h  l t r b  fill`), `theme.ini` (colours: `fg`, `highlight`,
+  `sel_bg`, `border`, `disabled` — values taken from the Aristo2 descriptor).
+* **Source = Aristo2** (Cappuccino). The host tool `tools/themepack.c` (uses
+  ImageMagick) bakes the separate slice PNGs into the atlas from a recipe
+  (`themes/aristo2.recipe`): element types `sprite` / `h3` / `v3` / `nine`, a
+  `name@90/180/270` suffix rotates a slice (the vertical scroller reuses the
+  date-picker arrows rotated), and the 9-slice **insets are derived from the
+  corner slice sizes**. `make themepack` re-bakes; the result lives in
+  `themes/Aristo2/1x` (1× now; the `<scale>` dir leaves room for `@2x`).
+* **Coverage**: window frame + titlebar (active/inactive) + close/min/max,
+  buttons (normal/default/disabled), popup/combo/text-field (with focused +
+  disabled states), checkbox (off/on/mixed/pressed) + radio, menu (rounded
+  9-slice) + tick, sliders (horizontal/vertical/circular), scrollbars (both axes,
+  track+thumb+arrows), stepper, table header. `make themewin` renders the whole
+  set, stateful, inside a themed window.
+
 
 ## Integrate Lua
 

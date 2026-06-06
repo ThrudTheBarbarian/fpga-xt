@@ -33,7 +33,7 @@ OBJ      := $(addprefix $(BUILD)/,$(SRC:.c=.o))
 
 TARGET  := $(BUILD)/gem_sdl
 
-.PHONY: all run test clean fills shapes output text lines theme themewin themepack gallery
+.PHONY: all run test clean fills shapes output text lines theme themewin themepack
 all: $(TARGET)
 
 $(TARGET): $(OBJ)
@@ -81,12 +81,6 @@ $(BUILD)/gem_themewin: $(TWIN_OBJ)
 	$(CC) $(TWIN_OBJ) $(LDLIBS) -o $@
 themewin: $(BUILD)/gem_themewin
 	./$(BUILD)/gem_themewin
-
-GAL_OBJ := $(addprefix $(BUILD)/,gfx_soft.o font.o theme.o theme_gallery_demo.o $(VDI_SRC:.c=.o))
-$(BUILD)/gem_gallery: $(GAL_OBJ)
-	$(CC) $(GAL_OBJ) $(LDLIBS) -o $@
-gallery: $(BUILD)/gem_gallery
-	./$(BUILD)/gem_gallery
 
 # Bake the Aristo2 atlas (needs ImageMagick + the Cappuccino resources).
 ARISTO2 ?= $(HOME)/src/cappuccino/cappuccino/AppKit/Themes/Aristo2/Resources
