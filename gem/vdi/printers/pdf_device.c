@@ -1,21 +1,25 @@
 // vdi/printers/pdf_device.c — PDF printer device (v_opnwk id 21..30).
 //
-// Milestone 1: vector translation of the line/fill/rectangle primitives —
-// v_pline, v_fillarea, v_bar/vr_recfl.  Curved GDPs, clipping, patterns, text
-// and raster blits are dropped (counted) for now and land in later milestones;
-// the hooks here are shaped so they slot in without disturbing this path.
+// Milestones 1-2: vector translation of the line / fill / rectangle primitives
+// (v_pline, v_fillarea, v_bar/vr_recfl), the curved GDPs (circle, ellipse, arc,
+// pie, rounded box) as true cubic beziers, the workstation clip rectangle as a
+// PDF clip path, and pattern/hatch/user fills as PDF tiling patterns.  Text and
+// raster blits are dropped (counted) for now and land in later milestones; the
+// dispatch cases below are shaped so they slot in without disturbing this path.
 //
 // Output is a minimal, dependency-free PDF 1.4: one content stream per page
-// (uncompressed — valid, just larger; Flate is a later refinement), a flat page
-// tree, and an xref built from real byte offsets.  Each page opens with a CTM
-// that maps VDI device units (top-left, y down) to PDF points (bottom-left, y
-// up), so every primitive below emits raw VDI coordinates.
+// (uncompressed — valid, just larger; Flate is a later refinement), pattern
+// objects for the tiling fills, a flat page tree, and an xref built from real
+// byte offsets.  Each page opens with a CTM that maps VDI device units (top-left,
+// y down) to PDF points (bottom-left, y up), so every primitive emits raw VDI
+// coordinates and the transform does the scaling + flip.
 
 #include "vdi/printers/pdf_device.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <stdarg.h>
+#include <math.h>
 
 // Page geometry.  Vector content is resolution-independent; PDF_DPI only sets how
 // finely apps can *place* things (the device-unit grid v_opnwk reports), not the
@@ -26,8 +30,16 @@
 #define PDF_PAGE_PT_H   842             // A4 height in points
 #define PDF_UNITS_PER_PT (PDF_DPI / 72) // 10 device units per point
 
+// A 16x16 fill mask tiles as a PDF pattern cell of 16 points (each mask pixel = 1
+// point), so a pattern is the same physical size as on the 72-dpi screen device.
+#define PDF_MAX_PATTERNS 64
+
 // ---- Growable per-page content buffer -------------------------------------
 typedef struct pdfpage { struct pdfpage *next; char *data; size_t len, cap; } pdfpage;
+
+// A tiling-fill pattern actually used in the document (deduped by interior +
+// style + colour; the mask is snapshotted at first use).
+typedef struct { int interior, style, color; uint16_t mask[16]; } pdfpat;
 
 typedef struct {
     FILE    *f;                         // output file
@@ -37,7 +49,9 @@ typedef struct {
     double   scale;                     // points per device unit (= 72/PDF_DPI)
     int      page_pt_w, page_pt_h;      // page size, points (the MediaBox)
     int      units_w, units_h;          // page size, device units (the caps extent)
-    long     dropped;                   // drawing ops not yet translated (M2+)
+    pdfpat   pats[PDF_MAX_PATTERNS];    // tiling patterns used
+    int      npats;
+    long     dropped;                   // drawing ops not yet translated (M3+)
 } pdfdev;
 
 static void pg_raw(pdfpage *p, const char *s, size_t n) {
@@ -84,7 +98,7 @@ static void pdf_page_break(pdfdev *d) {
     if (d->dirty) pdf_finalize(d);
 }
 
-// ---- Graphics-state + primitive emission ----------------------------------
+// ---- Graphics-state helpers -----------------------------------------------
 static void emit_rgb(pdfpage *p, int pen, int stroke) {
     uint32_t c = vdi_pen_rgba(pen);              // 0xRRGGBBAA
     double r = ((c >> 24) & 0xFF) / 255.0;
@@ -94,7 +108,7 @@ static void emit_rgb(pdfpage *p, int pen, int stroke) {
 }
 
 // vsl_type 1..6 as a PDF dash array, in device units (~0.1 pt each).  Type 1 and
-// the user style (7) render solid in M1.
+// the user style (7) render solid in M2.
 static const char *dash_for(int type) {
     switch (type) {
         case 2:  return "[180 60] 0";                   // long dash
@@ -111,48 +125,216 @@ static void emit_stroke_state(pdfpage *p, const vdi_ws *w) {
     pg_fmt(p, "%d J 1 j\n", round ? 1 : 0);             // cap; round join (round pen)
     pg_fmt(p, "%s d\n", dash_for(w->line_type));
 }
+
+// The workstation clip rect as a PDF clip path, wrapped in q/Q so it applies only
+// to the one primitive (VDI clip persists and only ever intersects the surface;
+// per-primitive q ... W n ... Q models that without tracking nesting).
+static int clip_push(pdfpage *p, const vdi_ws *w) {
+    if (!w->clip_on) return 0;
+    int x = w->cx0, y = w->cy0;
+    int cw = w->cx1 - w->cx0 + 1, ch = w->cy1 - w->cy0 + 1;
+    pg_fmt(p, "q\n%d %d %d %d re W n\n", x, y, cw, ch);
+    return 1;
+}
+static void clip_pop(pdfpage *p, int pushed) { if (pushed) pg_str(p, "Q\n"); }
+
+// Register (dedup) a tiling pattern; returns its index (and stable /Pp name), or
+// -1 if the table is full so the caller can fall back to a solid fill.
+static int pattern_register(pdfdev *d, int interior, int style, int color,
+                            const uint16_t *mask) {
+    for (int i = 0; i < d->npats; i++)
+        if (d->pats[i].interior == interior && d->pats[i].style == style
+            && d->pats[i].color == color)
+            return i;
+    if (d->npats >= PDF_MAX_PATTERNS) return -1;
+    int i = d->npats++;
+    d->pats[i].interior = interior; d->pats[i].style = style; d->pats[i].color = color;
+    memcpy(d->pats[i].mask, mask, sizeof d->pats[i].mask);
+    return i;
+}
+
+// Set up the fill paint for the current fill state.  Returns 0 if hollow (no
+// fill), else 1 having emitted either a solid colour (rg) or a tiling pattern
+// (/Pattern cs /PpK scn).  Pattern/hatch/user interiors come back as a 16x16
+// mask from vdi_fill_mask; solid comes back NULL.
+static int setup_fill(pdfdev *d, const vdi_ws *w) {
+    pdfpage *p = d->cur;
+    if (w->fill_interior == VDI_FIS_HOLLOW) return 0;
+    const uint16_t *mask = vdi_fill_mask(w->fill_interior, w->fill_style);
+    if (mask) {
+        int idx = pattern_register(d, w->fill_interior, w->fill_style, w->fill_color, mask);
+        if (idx >= 0) { pg_fmt(p, "/Pattern cs /Pp%d scn\n", idx); return 1; }
+        // table full -> solid fallback
+    }
+    emit_rgb(p, w->fill_color, 0);
+    return 1;
+}
+static void paint_fp(pdfpage *p, int fill, int perim, int evenodd) {
+    if (fill && perim) pg_str(p, evenodd ? "B*\n" : "B\n");
+    else if (fill)     pg_str(p, evenodd ? "f*\n" : "f\n");
+    else if (perim)    pg_str(p, "S\n");
+}
+
+// ---- Path builders --------------------------------------------------------
 static void path_polyline(pdfpage *p, const int16_t *pts, int n) {
     pg_fmt(p, "%d %d m\n", pts[0], pts[1]);
     for (int i = 1; i < n; i++) pg_fmt(p, "%d %d l\n", pts[2*i], pts[2*i+1]);
 }
 
-static void pdf_pline(pdfpage *p, const vdi_ws *w, const int16_t *pts, int n) {
+// Append an elliptical arc, centre (cx,cy) radii (rx,ry), from a0..a1 (radians),
+// as cubic beziers (<=90 deg per segment).  VDI convention: a point at angle a is
+// (cx + rx cos a, cy - ry sin a) — y down, so +angle is visually up, matching the
+// on-screen GDPs.  move!=0 starts the subpath (moveto); else a lineto joins the
+// current point to the arc start (the straight edges of a rounded box).
+static void arc_bezier(pdfpage *p, double cx, double cy, double rx, double ry,
+                       double a0, double a1, int move) {
+    double span = a1 - a0;
+    int nseg = (int)ceil(fabs(span) / (M_PI / 2));
+    if (nseg < 1) nseg = 1;
+    double d = span / nseg;
+    double k = (4.0 / 3.0) * tan(d / 4.0);              // control-point distance
+    double a = a0;
+    double sx = cx + rx * cos(a), sy = cy - ry * sin(a);
+    pg_fmt(p, "%g %g %s\n", sx, sy, move ? "m" : "l");
+    for (int i = 0; i < nseg; i++) {
+        double b = a + d;
+        double x0 = cx + rx * cos(a), y0 = cy - ry * sin(a);
+        double x3 = cx + rx * cos(b), y3 = cy - ry * sin(b);
+        double dx0 = -rx * sin(a), dy0 = -ry * cos(a);  // dP/da at a, b
+        double dx3 = -rx * sin(b), dy3 = -ry * cos(b);
+        pg_fmt(p, "%g %g %g %g %g %g c\n",
+               x0 + k*dx0, y0 + k*dy0, x3 - k*dx3, y3 - k*dy3, x3, y3);
+        a = b;
+    }
+}
+
+// Rounded-rectangle path (four quarter-circle corners + straight edges), matching
+// gdp.c's default corner radius (min(w,h)/6, clamped).
+static void rrect_path(pdfpage *p, int x1, int y1, int x2, int y2) {
+    if (x1 > x2) { int t = x1; x1 = x2; x2 = t; }
+    if (y1 > y2) { int t = y1; y1 = y2; y2 = t; }
+    int ww = x2 - x1, hh = y2 - y1, rmax = (ww < hh ? ww : hh) / 2;
+    int r = (ww < hh ? ww : hh) / 6;
+    if (r > rmax) r = rmax; if (r < 1) r = 1;
+    const double D = M_PI / 180.0;
+    const struct { double cx, cy, a0, a1; } c[4] = {
+        { x1 + r, y1 + r, 180, 90 },    // top-left:     left  -> top
+        { x2 - r, y1 + r,  90,  0 },    // top-right:    top   -> right
+        { x2 - r, y2 - r, 360, 270 },   // bottom-right: right -> bottom
+        { x1 + r, y2 - r, 270, 180 },   // bottom-left:  bottom-> left
+    };
+    for (int i = 0; i < 4; i++)
+        arc_bezier(p, c[i].cx, c[i].cy, r, r, c[i].a0 * D, c[i].a1 * D, i == 0);
+    pg_str(p, "h\n");
+}
+
+// ---- Primitives -----------------------------------------------------------
+static void pdf_pline(pdfdev *d, const vdi_ws *w, const int16_t *pts, int n) {
     if (n < 2) return;
+    pdfpage *p = d->cur;
+    int clp = clip_push(p, w);
     emit_rgb(p, w->line_color, 1);
     emit_stroke_state(p, w);
     path_polyline(p, pts, n);
-    pg_str(p, "S\n");                                   // stroke open path
+    pg_str(p, "S\n");
+    clip_pop(p, clp);
 }
 
 // v_fillarea: even-odd fill (matches vdi_fill_poly) and/or a closed perimeter in
-// the fill colour with the current line attributes (matches fillarea.c).  M1
-// renders pattern/hatch interiors as a solid fill (tiling patterns are M2).
-static void pdf_fillarea(pdfpage *p, const vdi_ws *w, const int16_t *pts, int n) {
+// the fill colour with the current line attributes (matches fillarea.c).
+static void pdf_fillarea(pdfdev *d, const vdi_ws *w, const int16_t *pts, int n) {
     if (n < 2) return;
-    int fill  = (w->fill_interior != VDI_FIS_HOLLOW);
+    pdfpage *p = d->cur;
+    int clp = clip_push(p, w);
+    int fill = setup_fill(d, w);
     int perim = w->fill_perimeter;
-    if (!fill && !perim) return;
-    if (fill)  emit_rgb(p, w->fill_color, 0);
     if (perim) { emit_rgb(p, w->fill_color, 1); emit_stroke_state(p, w); }
-    path_polyline(p, pts, n);
-    pg_str(p, "h\n");                                   // close
-    pg_str(p, fill && perim ? "B*\n" : fill ? "f*\n" : "S\n");
+    if (fill || perim) {
+        path_polyline(p, pts, n);
+        pg_str(p, "h\n");
+        paint_fp(p, fill, perim, 1);                    // even-odd
+    }
+    clip_pop(p, clp);
 }
 
 // v_bar / vr_recfl: pts = x1,y1,x2,y2.  Pixel-inclusive extent (+1) so a zero-
 // span bar still has area, matching the raster primitive.
-static void pdf_bar(pdfpage *p, const vdi_ws *w, const int16_t *pxy) {
+static void pdf_bar(pdfdev *d, const vdi_ws *w, const int16_t *pxy) {
+    pdfpage *p = d->cur;
     int x1 = pxy[0], y1 = pxy[1], x2 = pxy[2], y2 = pxy[3];
     int x = x1 < x2 ? x1 : x2, y = y1 < y2 ? y1 : y2;
     int bw = (x1 < x2 ? x2 - x1 : x1 - x2) + 1;
     int bh = (y1 < y2 ? y2 - y1 : y1 - y2) + 1;
-    int fill  = (w->fill_interior != VDI_FIS_HOLLOW);
+    int clp = clip_push(p, w);
+    int fill = setup_fill(d, w);
     int perim = w->fill_perimeter;
-    if (!fill && !perim) return;
-    if (fill)  emit_rgb(p, w->fill_color, 0);
     if (perim) { emit_rgb(p, w->fill_color, 1); emit_stroke_state(p, w); }
-    pg_fmt(p, "%d %d %d %d re\n", x, y, bw, bh);
-    pg_str(p, fill && perim ? "B\n" : fill ? "f\n" : "S\n");
+    if (fill || perim) {
+        pg_fmt(p, "%d %d %d %d re\n", x, y, bw, bh);
+        paint_fp(p, fill, perim, 0);
+    }
+    clip_pop(p, clp);
+}
+
+// Curved GDPs (circle / ellipse / arc / pie / rounded box).  Filled shapes use
+// the fill attributes + perimeter; open arcs use the line attributes — matching
+// gdp.c.  Returns 1 if it drew something.
+static int pdf_gdp(pdfdev *d, const vdi_ws *w, vdi_pb *pb) {
+    pdfpage *p = d->cur;
+    int sub = pb->contrl[5];
+    const int16_t *pt = pb->ptsin;
+    double cx = pt[0], cy = pt[1];
+    double a0 = pb->intin[0] * (M_PI / 1800.0);         // tenths of a degree -> rad
+    double a1 = pb->intin[1] * (M_PI / 1800.0);
+    if (a1 <= a0) a1 += 2 * M_PI;
+    int clp = clip_push(p, w);
+    int drew = 1;
+
+    switch (sub) {
+        case GDP_CIRCLE: case GDP_ELLIPSE: {
+            double rx = pt[2], ry = (sub == GDP_CIRCLE) ? pt[2] : pt[3];
+            int fill = setup_fill(d, w), perim = w->fill_perimeter;
+            if (perim) { emit_rgb(p, w->fill_color, 1); emit_stroke_state(p, w); }
+            arc_bezier(p, cx, cy, rx, ry, 0, 2 * M_PI, 1);
+            pg_str(p, "h\n");
+            paint_fp(p, fill, perim, 0);
+            break;
+        }
+        case GDP_PIE: case GDP_ELLPIE: {
+            double rx = pt[2], ry = (sub == GDP_PIE) ? pt[2] : pt[3];
+            int fill = setup_fill(d, w), perim = w->fill_perimeter;
+            if (perim) { emit_rgb(p, w->fill_color, 1); emit_stroke_state(p, w); }
+            arc_bezier(p, cx, cy, rx, ry, a0, a1, 1);
+            pg_fmt(p, "%g %g l\nh\n", cx, cy);          // wedge to centre + close
+            paint_fp(p, fill, perim, 0);
+            break;
+        }
+        case GDP_ARC: case GDP_ELLARC: {
+            double rx = pt[2], ry = (sub == GDP_ARC) ? pt[2] : pt[3];
+            emit_rgb(p, w->line_color, 1);
+            emit_stroke_state(p, w);
+            arc_bezier(p, cx, cy, rx, ry, a0, a1, 1);
+            pg_str(p, "S\n");
+            break;
+        }
+        case GDP_RBOX: case GDP_RFBOX: {
+            if (sub == GDP_RFBOX) {
+                int fill = setup_fill(d, w), perim = w->fill_perimeter;
+                if (perim) { emit_rgb(p, w->fill_color, 1); emit_stroke_state(p, w); }
+                rrect_path(p, pt[0], pt[1], pt[2], pt[3]);
+                paint_fp(p, fill, perim, 0);
+            } else {
+                emit_rgb(p, w->line_color, 1);
+                emit_stroke_state(p, w);
+                rrect_path(p, pt[0], pt[1], pt[2], pt[3]);
+                pg_str(p, "S\n");
+            }
+            break;
+        }
+        default: drew = 0; break;
+    }
+    clip_pop(p, clp);
+    return drew;
 }
 
 // ---- Dispatch -------------------------------------------------------------
@@ -165,20 +347,22 @@ int pdf_intercept(vdi_ws *w, vdi_pb *pb) {
         case VDI_UPDWK: return 1;                       // flush; page break is CLRWK
 
         case VDI_PLINE:
-            if (sub == VDI_BEZ_SUB) { d->dropped++; return 1; }   // v_bez: M2
-            pdf_ensure_page(d); pdf_pline(d->cur, w, pb->ptsin, pb->contrl[1]);
+            if (sub == VDI_BEZ_SUB) { d->dropped++; return 1; }   // v_bez: later
+            pdf_ensure_page(d); pdf_pline(d, w, pb->ptsin, pb->contrl[1]);
             d->dirty = 1; return 1;
         case VDI_FILLAREA:
-            if (sub == VDI_BEZ_SUB) { d->dropped++; return 1; }   // v_bez_fill: M2
-            pdf_ensure_page(d); pdf_fillarea(d->cur, w, pb->ptsin, pb->contrl[1]);
+            if (sub == VDI_BEZ_SUB) { d->dropped++; return 1; }   // v_bez_fill: later
+            pdf_ensure_page(d); pdf_fillarea(d, w, pb->ptsin, pb->contrl[1]);
             d->dirty = 1; return 1;
         case VDI_RECFL:
-            pdf_ensure_page(d); pdf_bar(d->cur, w, pb->ptsin);
+            pdf_ensure_page(d); pdf_bar(d, w, pb->ptsin);
             d->dirty = 1; return 1;
         case VDI_GDP:
-            if (sub == GDP_BAR) { pdf_ensure_page(d); pdf_bar(d->cur, w, pb->ptsin);
-                                  d->dirty = 1; return 1; }
-            d->dropped++; return 1;                     // curves / justified: M2/M3
+            if (sub == GDP_BAR)        { pdf_ensure_page(d); pdf_bar(d, w, pb->ptsin); d->dirty = 1; }
+            else if (sub == GDP_JUSTIFIED) d->dropped++;          // justified text: M3
+            else if (sub == GDP_BEZ)   { /* v_bez_on/off: state only, ignore */ }
+            else { pdf_ensure_page(d); if (pdf_gdp(d, w, pb)) d->dirty = 1; }
+            return 1;
 
         // Drawing ops not yet translated — drop (counted), don't let them scribble
         // on the screen surface via the normal handlers.
@@ -193,11 +377,37 @@ int pdf_intercept(vdi_ws *w, vdi_pb *pb) {
 }
 
 // ---- File output ----------------------------------------------------------
+// Object layout: 1 = catalog, 2 = pages, 3..(2+P) = the P pattern objects,
+// then two objects (page + contents) per page.  Pattern /PpK names are stable
+// (K = registry index) so the names emitted into the content during drawing
+// match the page /Resources here.
+static void write_pattern(pdfdev *d, FILE *f, int idx) {
+    pdfpat *pat = &d->pats[idx];
+    uint32_t c = vdi_pen_rgba(pat->color);
+    pdfpage tmp = {0};
+    pg_fmt(&tmp, "%.4g %.4g %.4g rg\n",
+           ((c >> 24) & 0xFF) / 255.0, ((c >> 16) & 0xFF) / 255.0, ((c >> 8) & 0xFF) / 255.0);
+    for (int my = 0; my < 16; my++) {                   // set bits -> 1pt cells
+        uint16_t bits = pat->mask[my];
+        for (int mx = 0; mx < 16; mx++)
+            if ((bits >> mx) & 1) pg_fmt(&tmp, "%d %d 1 1 re ", mx, 15 - my);
+    }
+    pg_str(&tmp, "\nf\n");
+    fprintf(f, "%d 0 obj\n<< /Type /Pattern /PatternType 1 /PaintType 1"
+               " /TilingType 1 /BBox [0 0 16 16] /XStep 16 /YStep 16"
+               " /Matrix [1 0 0 1 0 0] /Resources << >> /Length %zu >>\nstream\n",
+            3 + idx, tmp.len);
+    fwrite(tmp.data, 1, tmp.len, f);
+    fprintf(f, "endstream\nendobj\n");
+    free(tmp.data);
+}
+
 static void pdf_write_file(pdfdev *d) {
     FILE *f = d->f;
     int n = 0;
     for (pdfpage *p = d->pages; p; p = p->next) n++;
-    int total = 2 + 2 * n;                              // catalog + pages + 2/page
+    int P = d->npats;
+    int total = 2 + P + 2 * n;
     long *off = calloc((size_t)total + 1, sizeof(long));
 
     fprintf(f, "%%PDF-1.4\n");
@@ -205,16 +415,24 @@ static void pdf_write_file(pdfdev *d) {
     fprintf(f, "1 0 obj\n<< /Type /Catalog /Pages 2 0 R >>\nendobj\n");
     off[2] = ftell(f);
     fprintf(f, "2 0 obj\n<< /Type /Pages /Count %d /Kids [", n);
-    for (int i = 0; i < n; i++) fprintf(f, "%s%d 0 R", i ? " " : "", 3 + 2 * i);
+    for (int i = 0; i < n; i++) fprintf(f, "%s%d 0 R", i ? " " : "", 3 + P + 2 * i);
     fprintf(f, "] >>\nendobj\n");
+
+    for (int i = 0; i < P; i++) { off[3 + i] = ftell(f); write_pattern(d, f, i); }
 
     int i = 0;
     for (pdfpage *p = d->pages; p; p = p->next, i++) {
-        int pageobj = 3 + 2 * i, contobj = 4 + 2 * i;
+        int pageobj = 3 + P + 2 * i, contobj = 4 + P + 2 * i;
         off[pageobj] = ftell(f);
         fprintf(f, "%d 0 obj\n<< /Type /Page /Parent 2 0 R /MediaBox [0 0 %d %d]"
-                   " /Contents %d 0 R /Resources << >> >>\nendobj\n",
-                pageobj, d->page_pt_w, d->page_pt_h, contobj);
+                   " /Contents %d 0 R /Resources << ", pageobj,
+                d->page_pt_w, d->page_pt_h, contobj);
+        if (P > 0) {
+            fprintf(f, "/Pattern << ");
+            for (int k = 0; k < P; k++) fprintf(f, "/Pp%d %d 0 R ", k, 3 + k);
+            fprintf(f, ">> ");
+        }
+        fprintf(f, ">> >>\nendobj\n");
         off[contobj] = ftell(f);
         fprintf(f, "%d 0 obj\n<< /Length %zu >>\nstream\n", contobj, p->len);
         fwrite(p->data, 1, p->len, f);

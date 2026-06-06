@@ -49,6 +49,35 @@ int main(int argc, char **argv) {
         v_pline(h, 2, s);
     }
 
+    // ---- Page 3: curved GDPs (bezier), pattern/hatch fills, clipping --------
+    v_clrwk(h);                                         // form feed -> page 3
+    vsf_perimeter(h, 1); vsl_type(h, 1);               // solid strokes
+
+    vsf_color(h, 2); vsf_interior(h, VDI_FIS_SOLID);
+    v_circle(h, 1500, 1500, 900);                      // solid red circle
+    vsf_color(h, 4); vsf_interior(h, VDI_FIS_PATTERN); vsf_style(h, 4);
+    v_ellipse(h, 4200, 1500, 1500, 900);               // patterned blue ellipse
+    vsf_color(h, 11); vsf_interior(h, VDI_FIS_HATCH); vsf_style(h, 6);
+    v_pieslice(h, 1500, 4000, 1000, 300, 1200);        // hatched green pie wedge
+
+    vsl_color(h, 1); vsl_width(h, 10);
+    v_arc(h, 4200, 4000, 1200, 0, 1800);               // open black arc (semicircle)
+
+    vsf_color(h, 6); vsf_interior(h, VDI_FIS_SOLID);
+    int16_t rb[] = { 600, 5400, 2600, 6600 };
+    v_rfbox(h, rb);                                    // filled rounded box
+    vsl_color(h, 1); vsl_width(h, 6);
+    int16_t rb2[] = { 3200, 5400, 5400, 6600 };
+    v_rbox(h, rb2);                                    // outline rounded box
+
+    // Clipping: a big patterned fill clipped to a rectangle window.
+    int16_t cw[] = { 800, 7000, 5200, 8000 };
+    vs_clip(h, 1, cw);
+    vsf_color(h, 9); vsf_interior(h, VDI_FIS_HATCH); vsf_style(h, 3);
+    int16_t big[] = { 0, 6500, 5950, 8419 };
+    v_bar(h, big);                                     // only the clip window shows
+    vs_clip(h, 0, cw);
+
     v_clswk(h);                                         // finalise + write out.pdf
     printf("wrote %s\n", out);
 
