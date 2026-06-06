@@ -1,0 +1,4 @@
+Lua 5.4.7 — vendored verbatim from https://www.lua.org/ftp/lua-5.4.7.tar.gz
+src/*.c and src/*.h only (no Makefile/doc).  Licence: MIT (see LICENSE, from lua.h).
+Build it as part of XTOS; lua.c (the standalone interpreter) and luac.c (the
+compiler) are kept but excluded from the library build.
