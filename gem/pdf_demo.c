@@ -124,9 +124,51 @@ int main(int argc, char **argv) {
         v_justified(h, 500, 7600, "Justified text spread to fill the line.", 4950, 1, 1);
     }
 
+    // ---- Page 5: raster blits (image XObjects), markers, cell array ---------
+    v_clrwk(h);                                         // form feed -> page 5
+
+    // An RGBA gradient blitted 1:1 (vro_cpyfm) and scaled up (vr_transfer_bits).
+    gfx_surface *img = gfx_surface_alloc(96, 96);
+    for (int y = 0; y < 96; y++)
+        for (int x = 0; x < 96; x++)
+            img->px[y*img->stride + x] = GFX_RGBA(x*255/95, y*255/95, 160, 255);
+    MFDB sm; mfdb_from_surface(&sm, img);
+    int16_t cp[8] = { 0,0,95,95, 600,600,0,0 };
+    vro_cpyfm(h, VRO_COPY, cp, &sm, NULL);
+    int16_t tb[8] = { 0,0,95,95, 1400,600,3000,2200 };  // scaled 1600x1600
+    vr_transfer_bits(h, &sm, NULL, tb, VRO_COPY);
+
+    // A 1-bit mono icon coloured by vrt_cpyfm (border + diamond).
+    static uint16_t mono[32*2];                         // 32x32, 2 words/row
+    for (int y = 0; y < 32; y++)
+        for (int x = 0; x < 32; x++) {
+            int dx = x - 16, dy = y - 16, ad = (dx<0?-dx:dx) + (dy<0?-dy:dy);
+            if (x==0 || y==0 || x==31 || y==31 || ad < 9)
+                mono[y*2 + (x>>4)] |= (uint16_t)(0x8000 >> (x & 15));
+        }
+    MFDB mm = { (uint32_t*)mono, 32, 32, 2, 1, 1 };
+    int16_t vp[8] = { 0,0,31,31, 600,2600,0,0 };
+    int16_t col[2] = { 2, 8 };                          // fg red, bg light grey
+    vrt_cpyfm(h, VDI_MD_REPLACE, vp, &mm, NULL, col);
+
+    // The six marker types.
+    vsm_color(h, 4);
+    for (int t = 1; t <= 6; t++) {
+        vsm_type(h, t); vsm_height(h, 220);
+        int16_t mp[2] = { (int16_t)(1700 + t*520), 3000 };
+        v_pmarker(h, 1, mp);
+    }
+
+    // A colour cell array.
+    int16_t car[4] = { 600, 3600, 3600, 4600 };
+    int16_t pens[12*6];
+    for (int i = 0; i < 12*6; i++) pens[i] = (int16_t)(1 + (i % 7));
+    v_cellarray(h, car, 12, 6, pens);
+
     v_clswk(h);                                         // finalise + write out.pdf
     printf("wrote %s\n", out);
 
+    gfx_surface_free(img);
     if (face) font_face_close(face);
     gfx_surface_free(desk);
     return 0;

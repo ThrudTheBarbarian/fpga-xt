@@ -37,9 +37,15 @@
 // ---- Growable per-page content buffer -------------------------------------
 typedef struct pdfpage { struct pdfpage *next; char *data; size_t len, cap; } pdfpage;
 
+#define PDF_MAX_IMAGES   256
+
 // A tiling-fill pattern actually used in the document (deduped by interior +
 // style + colour; the mask is snapshotted at first use).
 typedef struct { int interior, style, color; uint16_t mask[16]; } pdfpat;
+
+// A blitted bitmap: kind 0 = DeviceRGB 8bpc (len = w*h*3); kind 1 = 1-bit image
+// mask painted in the current fill colour (len = ((w+7)/8)*h).
+typedef struct { uint8_t *data; size_t len; int w, h, kind; } pdfimg;
 
 typedef struct {
     FILE    *f;                         // output file
@@ -51,7 +57,9 @@ typedef struct {
     int      units_w, units_h;          // page size, device units (the caps extent)
     pdfpat   pats[PDF_MAX_PATTERNS];    // tiling patterns used
     int      npats;
-    long     dropped;                   // drawing ops not yet translated (M3+)
+    pdfimg   imgs[PDF_MAX_IMAGES];      // blitted bitmaps (XObjects)
+    int      nimgs;
+    long     dropped;                   // drawing ops not yet translated
 } pdfdev;
 
 static void pg_raw(pdfpage *p, const char *s, size_t n) {
@@ -523,6 +531,182 @@ static void pdf_justified(pdfdev *d, const vdi_ws *w, vdi_pb *pb) {
     clip_pop(p, clp);
 }
 
+// ---- Raster (blits -> image XObjects) -------------------------------------
+// Register a DeviceRGB image from a sub-rect of an RGBA-8888 source surface,
+// alpha-composited over white (print has no transparent paper).  Returns the
+// image index (stable /Im name) or -1.
+static int img_rgb(pdfdev *d, const gfx_surface *s, int sx, int sy, int w, int h) {
+    if (w < 1 || h < 1 || d->nimgs >= PDF_MAX_IMAGES) return -1;
+    size_t len = (size_t)w * h * 3;
+    uint8_t *buf = malloc(len);
+    if (!buf) return -1;
+    size_t o = 0;
+    for (int j = 0; j < h; j++) {
+        const uint32_t *row = s->px + (size_t)(sy + j) * s->stride;
+        for (int i = 0; i < w; i++) {
+            uint32_t c = row[sx + i];
+            int a = c & 0xFF, na = 255 - a;
+            buf[o++] = (uint8_t)((((c>>24)&0xFF)*a + 255*na) / 255);
+            buf[o++] = (uint8_t)((((c>>16)&0xFF)*a + 255*na) / 255);
+            buf[o++] = (uint8_t)((((c>> 8)&0xFF)*a + 255*na) / 255);
+        }
+    }
+    int idx = d->nimgs++;
+    d->imgs[idx] = (pdfimg){ buf, len, w, h, 0 };
+    return idx;
+}
+// Register a 1-bit image mask from a sub-rect of a mono source (16-bit words,
+// MSB = leftmost pixel; `swords` words per row).  Stored MSB-first, painted with
+// Decode [1 0] so a set bit = foreground.  Returns the index or -1.
+static int img_mask(pdfdev *d, const uint16_t *bits, int swords,
+                    int sx, int sy, int w, int h) {
+    if (w < 1 || h < 1 || d->nimgs >= PDF_MAX_IMAGES) return -1;
+    int rb = (w + 7) / 8;
+    size_t len = (size_t)rb * h;
+    uint8_t *buf = calloc(1, len);
+    if (!buf) return -1;
+    for (int j = 0; j < h; j++) {
+        const uint16_t *srow = bits + (size_t)(sy + j) * swords;
+        uint8_t *drow = buf + (size_t)j * rb;
+        for (int i = 0; i < w; i++) {
+            int xx = sx + i;
+            if ((srow[xx >> 4] >> (15 - (xx & 15))) & 1) drow[i >> 3] |= (uint8_t)(0x80 >> (i & 7));
+        }
+    }
+    int idx = d->nimgs++;
+    d->imgs[idx] = (pdfimg){ buf, len, w, h, 1 };
+    return idx;
+}
+// Paint image idx into device rect (dx,dy,dw,dh).  The cm flips the image's
+// top-first row order into our y-down device space.  maskpen >= 0 sets the fill
+// colour an image mask paints with.
+static void emit_image(pdfdev *d, int idx, int dx, int dy, int dw, int dh, int maskpen) {
+    if (idx < 0) return;
+    pdfpage *p = d->cur;
+    if (maskpen >= 0) emit_rgb(p, maskpen, 0);
+    pg_fmt(p, "q\n%d 0 0 %d %d %d cm\n/Im%d Do\nQ\n", dw, -dh, dx, dy + dh, idx);
+}
+
+// vro_cpyfm: opaque 1:1 copy of an RGBA source sub-rect to the dest origin.
+static void pdf_cpyfm(pdfdev *d, const vdi_ws *w, vdi_pb *pb) {
+    if (!g_cpyfm_src || !g_cpyfm_src->addr) return;
+    gfx_surface s = vdi_mfdb_surf(g_cpyfm_src, w);
+    int sx1 = pb->ptsin[0], sy1 = pb->ptsin[1], sx2 = pb->ptsin[2], sy2 = pb->ptsin[3];
+    int dx1 = pb->ptsin[4], dy1 = pb->ptsin[5];
+    if (sx1 > sx2) { int t = sx1; sx1 = sx2; sx2 = t; }
+    if (sy1 > sy2) { int t = sy1; sy1 = sy2; sy2 = t; }
+    int bw = sx2 - sx1 + 1, bh = sy2 - sy1 + 1;
+    if (sx1 < 0) { bw += sx1; dx1 -= sx1; sx1 = 0; }
+    if (sy1 < 0) { bh += sy1; dy1 -= sy1; sy1 = 0; }
+    if (sx1 + bw > s.w) bw = s.w - sx1;
+    if (sy1 + bh > s.h) bh = s.h - sy1;
+    int clp = clip_push(d->cur, w);
+    emit_image(d, img_rgb(d, &s, sx1, sy1, bw, bh), dx1, dy1, bw, bh, -1);
+    clip_pop(d->cur, clp);
+}
+
+// vr_transfer_bits: copy an RGBA source rect onto a (possibly different-sized)
+// dest rect — the cm scales the image.  Logic-op/blend modes that need the
+// destination pixels degrade to a plain copy (no page pixel buffer to read).
+static void pdf_transfer(pdfdev *d, const vdi_ws *w, vdi_pb *pb) {
+    if (!g_cpyfm_src || !g_cpyfm_src->addr) return;
+    gfx_surface s = vdi_mfdb_surf(g_cpyfm_src, w);
+    int sx1 = pb->ptsin[0], sy1 = pb->ptsin[1], sx2 = pb->ptsin[2], sy2 = pb->ptsin[3];
+    int dx1 = pb->ptsin[4], dy1 = pb->ptsin[5], dx2 = pb->ptsin[6], dy2 = pb->ptsin[7];
+    if (dx2 < dx1) { int t = dx1; dx1 = dx2; dx2 = t; t = sx1; sx1 = sx2; sx2 = t; }
+    if (dy2 < dy1) { int t = dy1; dy1 = dy2; dy2 = t; t = sy1; sy1 = sy2; sy2 = t; }
+    if (sx1 > sx2) { int t = sx1; sx1 = sx2; sx2 = t; }
+    if (sy1 > sy2) { int t = sy1; sy1 = sy2; sy2 = t; }
+    int sw = sx2 - sx1 + 1, sh = sy2 - sy1 + 1;
+    int dw = dx2 - dx1 + 1, dh = dy2 - dy1 + 1;
+    if (sx1 < 0) { sw += sx1; sx1 = 0; } if (sy1 < 0) { sh += sy1; sy1 = 0; }
+    if (sx1 + sw > s.w) sw = s.w - sx1;
+    if (sy1 + sh > s.h) sh = s.h - sy1;
+    int clp = clip_push(d->cur, w);
+    emit_image(d, img_rgb(d, &s, sx1, sy1, sw, sh), dx1, dy1, dw, dh, -1);
+    clip_pop(d->cur, clp);
+}
+
+// vrt_cpyfm: colour a 1-bit source — opaque modes paint a bg rect then the fg
+// mask; TRANS paints only the set bits.  XOR/ERASE have no PDF analogue and fall
+// back to the opaque colouring.
+static void pdf_vrt(pdfdev *d, const vdi_ws *w, vdi_pb *pb) {
+    if (!g_cpyfm_src || !g_cpyfm_src->addr) return;
+    const uint16_t *bits = (const uint16_t *)g_cpyfm_src->addr;
+    int swords = g_cpyfm_src->stride, sh_h = g_cpyfm_src->h;
+    int sx1 = pb->ptsin[0], sy1 = pb->ptsin[1], sx2 = pb->ptsin[2], sy2 = pb->ptsin[3];
+    int dx1 = pb->ptsin[4], dy1 = pb->ptsin[5];
+    if (sx1 > sx2) { int t = sx1; sx1 = sx2; sx2 = t; }
+    if (sy1 > sy2) { int t = sy1; sy1 = sy2; sy2 = t; }
+    int bw = sx2 - sx1 + 1, bh = sy2 - sy1 + 1;
+    if (sy1 < 0) { bh += sy1; dy1 -= sy1; sy1 = 0; }
+    if (sy1 + bh > sh_h) bh = sh_h - sy1;
+    int fg = pb->intin[0], bg = pb->intin[1];
+    int mode = pb->contrl[5] ? pb->contrl[5] : VDI_MD_REPLACE;
+    pdfpage *p = d->cur;
+    int clp = clip_push(p, w);
+    if (mode != VDI_MD_TRANS && bw > 0 && bh > 0) {     // opaque: bg behind the mask
+        emit_rgb(p, bg, 0);
+        pg_fmt(p, "%d %d %d %d re\nf\n", dx1, dy1, bw, bh);
+    }
+    emit_image(d, img_mask(d, bits, swords, sx1, sy1, bw, bh), dx1, dy1, bw, bh, fg);
+    clip_pop(p, clp);
+}
+
+// v_pmarker: the marker symbols as thin vector strokes/fills.
+static void pdf_pmarker(pdfdev *d, const vdi_ws *w, vdi_pb *pb) {
+    pdfpage *p = d->cur;
+    int n = pb->contrl[1], r = w->marker_height / 2; if (r < 1) r = 1;
+    int pen = w->marker_color, type = w->marker_type;
+    int clp = clip_push(p, w);
+    emit_rgb(p, pen, 0); emit_rgb(p, pen, 1);
+    pg_fmt(p, "%d w\n0 J 1 j\n[] 0 d\n", w->marker_height / 16 + 1);
+    for (int i = 0; i < n; i++) {
+        int cx = pb->ptsin[2*i], cy = pb->ptsin[2*i+1];
+        switch (type) {
+            case VDI_MK_DOT:
+                pg_fmt(p, "%d %d %d %d re f\n", cx-1, cy-1, 3, 3); break;
+            case VDI_MK_PLUS:
+                pg_fmt(p, "%d %d m %d %d l\n%d %d m %d %d l\nS\n",
+                       cx-r, cy, cx+r, cy, cx, cy-r, cx, cy+r); break;
+            case VDI_MK_SQUARE:
+                pg_fmt(p, "%d %d %d %d re S\n", cx-r, cy-r, 2*r, 2*r); break;
+            case VDI_MK_CROSS:
+                pg_fmt(p, "%d %d m %d %d l\n%d %d m %d %d l\nS\n",
+                       cx-r, cy-r, cx+r, cy+r, cx-r, cy+r, cx+r, cy-r); break;
+            case VDI_MK_DIAMOND:
+                pg_fmt(p, "%d %d m %d %d l %d %d l %d %d l h S\n",
+                       cx, cy-r, cx+r, cy, cx, cy+r, cx-r, cy); break;
+            default:    // asterisk
+                pg_fmt(p, "%d %d m %d %d l\n%d %d m %d %d l\n%d %d m %d %d l\n%d %d m %d %d l\nS\n",
+                       cx-r, cy, cx+r, cy, cx, cy-r, cx, cy+r,
+                       cx-r, cy-r, cx+r, cy+r, cx-r, cy+r, cx+r, cy-r); break;
+        }
+    }
+    clip_pop(p, clp);
+}
+
+// v_cellarray: a grid of solid coloured cells scaled into the dest rect.
+static void pdf_cellarray(pdfdev *d, const vdi_ws *w, vdi_pb *pb) {
+    int cols = pb->intin[0], rows = pb->intin[1];
+    if (cols < 1 || rows < 1) return;
+    pdfpage *p = d->cur;
+    int x0 = pb->ptsin[0], y0 = pb->ptsin[1], x1 = pb->ptsin[2], y1 = pb->ptsin[3];
+    if (x0 > x1) { int t = x0; x0 = x1; x1 = t; }
+    if (y0 > y1) { int t = y0; y0 = y1; y1 = t; }
+    int W = x1 - x0 + 1, H = y1 - y0 + 1;
+    int clp = clip_push(p, w);
+    for (int r = 0; r < rows; r++) {
+        int cy0 = y0 + (int)((long)r * H / rows), cy1 = y0 + (int)((long)(r+1) * H / rows) - 1;
+        for (int c = 0; c < cols; c++) {
+            int cx0 = x0 + (int)((long)c * W / cols), cx1 = x0 + (int)((long)(c+1) * W / cols) - 1;
+            emit_rgb(p, pb->intin[2 + r*cols + c], 0);
+            pg_fmt(p, "%d %d %d %d re f\n", cx0, cy0, cx1 - cx0 + 1, cy1 - cy0 + 1);
+        }
+    }
+    clip_pop(p, clp);
+}
+
 // ---- Dispatch -------------------------------------------------------------
 int pdf_intercept(vdi_ws *w, vdi_pb *pb) {
     pdfdev *d = w->dev;
@@ -563,11 +747,15 @@ int pdf_intercept(vdi_ws *w, vdi_pb *pb) {
             d->dirty = 1; return 1;
         }
 
-        // Drawing ops not yet translated — drop (counted), don't let them scribble
-        // on the screen surface via the normal handlers.
-        case VDI_PMARKER: case VDI_CELLARRAY: case VDI_CONTOURFILL:
-        case VDI_CPYFM: case VDI_VRT_CPYFM: case VDI_TRANSFER_BITS:
-            d->dropped++; return 1;
+        case VDI_PMARKER:   pdf_ensure_page(d); pdf_pmarker(d, w, pb);   d->dirty = 1; return 1;
+        case VDI_CELLARRAY: pdf_ensure_page(d); pdf_cellarray(d, w, pb); d->dirty = 1; return 1;
+        case VDI_CPYFM:     pdf_ensure_page(d); pdf_cpyfm(d, w, pb);     d->dirty = 1; return 1;
+        case VDI_VRT_CPYFM: pdf_ensure_page(d); pdf_vrt(d, w, pb);       d->dirty = 1; return 1;
+        case VDI_TRANSFER_BITS: pdf_ensure_page(d); pdf_transfer(d, w, pb); d->dirty = 1; return 1;
+
+        // Seed/flood fill needs the page's existing pixels (which a vector page
+        // has none of), so it can't be represented — drop (counted).
+        case VDI_CONTOURFILL: d->dropped++; return 1;
 
         default:
             return 0;       // attribute setters / inquiries: run the normal handler
@@ -600,12 +788,26 @@ static void write_pattern(pdfdev *d, FILE *f, int idx) {
     free(tmp.data);
 }
 
+static void write_image(pdfdev *d, FILE *f, int idx, int objn) {
+    pdfimg *im = &d->imgs[idx];
+    if (im->kind == 1)
+        fprintf(f, "%d 0 obj\n<< /Type /XObject /Subtype /Image /Width %d /Height %d"
+                   " /ImageMask true /BitsPerComponent 1 /Decode [1 0] /Length %zu >>\nstream\n",
+                objn, im->w, im->h, im->len);
+    else
+        fprintf(f, "%d 0 obj\n<< /Type /XObject /Subtype /Image /Width %d /Height %d"
+                   " /ColorSpace /DeviceRGB /BitsPerComponent 8 /Length %zu >>\nstream\n",
+                objn, im->w, im->h, im->len);
+    fwrite(im->data, 1, im->len, f);
+    fprintf(f, "\nendstream\nendobj\n");
+}
+
 static void pdf_write_file(pdfdev *d) {
     FILE *f = d->f;
     int n = 0;
     for (pdfpage *p = d->pages; p; p = p->next) n++;
-    int P = d->npats;
-    int total = 2 + P + 2 * n;
+    int P = d->npats, I = d->nimgs, base = 3 + P + I;   // first page object number
+    int total = 2 + P + I + 2 * n;
     long *off = calloc((size_t)total + 1, sizeof(long));
 
     fprintf(f, "%%PDF-1.4\n");
@@ -613,14 +815,15 @@ static void pdf_write_file(pdfdev *d) {
     fprintf(f, "1 0 obj\n<< /Type /Catalog /Pages 2 0 R >>\nendobj\n");
     off[2] = ftell(f);
     fprintf(f, "2 0 obj\n<< /Type /Pages /Count %d /Kids [", n);
-    for (int i = 0; i < n; i++) fprintf(f, "%s%d 0 R", i ? " " : "", 3 + P + 2 * i);
+    for (int i = 0; i < n; i++) fprintf(f, "%s%d 0 R", i ? " " : "", base + 2 * i);
     fprintf(f, "] >>\nendobj\n");
 
-    for (int i = 0; i < P; i++) { off[3 + i] = ftell(f); write_pattern(d, f, i); }
+    for (int i = 0; i < P; i++) { off[3 + i]     = ftell(f); write_pattern(d, f, i); }
+    for (int i = 0; i < I; i++) { off[3 + P + i] = ftell(f); write_image(d, f, i, 3 + P + i); }
 
     int i = 0;
     for (pdfpage *p = d->pages; p; p = p->next, i++) {
-        int pageobj = 3 + P + 2 * i, contobj = 4 + P + 2 * i;
+        int pageobj = base + 2 * i, contobj = base + 2 * i + 1;
         off[pageobj] = ftell(f);
         fprintf(f, "%d 0 obj\n<< /Type /Page /Parent 2 0 R /MediaBox [0 0 %d %d]"
                    " /Contents %d 0 R /Resources << ", pageobj,
@@ -628,6 +831,11 @@ static void pdf_write_file(pdfdev *d) {
         if (P > 0) {
             fprintf(f, "/Pattern << ");
             for (int k = 0; k < P; k++) fprintf(f, "/Pp%d %d 0 R ", k, 3 + k);
+            fprintf(f, ">> ");
+        }
+        if (I > 0) {
+            fprintf(f, "/XObject << ");
+            for (int k = 0; k < I; k++) fprintf(f, "/Im%d %d 0 R ", k, 3 + P + k);
             fprintf(f, ">> ");
         }
         fprintf(f, ">> >>\nendobj\n");
@@ -680,6 +888,7 @@ void pdf_close(vdi_ws *w) {
     pdf_write_file(d);
     fclose(d->f);
     for (pdfpage *p = d->pages; p; ) { pdfpage *nx = p->next; free(p->data); free(p); p = nx; }
+    for (int i = 0; i < d->nimgs; i++) free(d->imgs[i].data);
     free(d);
     w->dev = NULL;
 }
