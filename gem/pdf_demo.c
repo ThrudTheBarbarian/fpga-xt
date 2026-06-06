@@ -15,6 +15,8 @@ int main(int argc, char **argv) {
     // device never draws to it.  A tiny dummy is fine.
     gfx_surface *desk = gfx_surface_alloc(64, 64);
     vdi_init(desk);
+    font_face *face = font_face_open("fonts/AovelSansRounded.ttf");
+    if (face) vdi_set_face(face);
 
     vdi_set_device_file(out);
     int16_t work_in[11] = {0}; work_in[0] = 21;        // device 21 = PDF printer
@@ -78,9 +80,54 @@ int main(int argc, char **argv) {
     v_bar(h, big);                                     // only the clip window shows
     vs_clip(h, 0, cw);
 
+    // ---- Page 4: vector text (FreeType glyph outlines) ----------------------
+    if (face) {
+        v_clrwk(h);                                     // form feed -> page 4
+        vsl_type(h, 1); vsf_interior(h, VDI_FIS_SOLID);
+
+        // Sizes (text sized in device units; 720 dpi page).
+        vst_color(h, 1); vst_alignment(h, VDI_TA_LEFT, VDI_TA_TOP, NULL, NULL);
+        int sizes[] = { 120, 200, 320, 480 };
+        int ty = 600;
+        for (int i = 0; i < 4; i++) {
+            vst_height(h, sizes[i], NULL, NULL, NULL, NULL);
+            v_gtext(h, 500, ty, "Vector text — the quick brown fox");
+            ty += sizes[i] + 120;
+        }
+
+        // Alignment.
+        vst_height(h, 200, NULL, NULL, NULL, NULL); vst_color(h, 4);
+        vst_alignment(h, VDI_TA_LEFT,   VDI_TA_TOP, NULL, NULL); v_gtext(h, 2975, 3100, "left");
+        vst_alignment(h, VDI_TA_CENTER, VDI_TA_TOP, NULL, NULL); v_gtext(h, 2975, 3360, "centred");
+        vst_alignment(h, VDI_TA_RIGHT,  VDI_TA_TOP, NULL, NULL); v_gtext(h, 2975, 3620, "right");
+        vst_alignment(h, VDI_TA_LEFT,   VDI_TA_TOP, NULL, NULL);
+
+        // Effects.
+        vst_color(h, 1);
+        vst_effects(h, FX_BOLD);      v_gtext(h, 500, 4100, "bold");
+        vst_effects(h, FX_ITALIC);    v_gtext(h, 2200, 4100, "italic");
+        vst_effects(h, FX_UNDERLINE); v_gtext(h, 4000, 4100, "underline");
+        vst_effects(h, FX_OUTLINE);   v_gtext(h, 500, 4450, "outline");
+        vst_effects(h, FX_SHADOW);    v_gtext(h, 2600, 4450, "shadow");
+        vst_effects(h, 0);
+
+        // Rotation (about the anchor).
+        vst_color(h, 2);
+        for (int deg = 0; deg <= 90; deg += 30) {
+            vst_rotation(h, deg * 10);
+            v_gtext(h, 1200, 6400, "rotated");
+        }
+        vst_rotation(h, 0);
+
+        // Justified to a width.
+        vst_color(h, 11); vst_height(h, 180, NULL, NULL, NULL, NULL);
+        v_justified(h, 500, 7600, "Justified text spread to fill the line.", 4950, 1, 1);
+    }
+
     v_clswk(h);                                         // finalise + write out.pdf
     printf("wrote %s\n", out);
 
+    if (face) font_face_close(face);
     gfx_surface_free(desk);
     return 0;
 }

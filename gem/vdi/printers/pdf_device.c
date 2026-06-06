@@ -66,6 +66,10 @@ static void pg_raw(pdfpage *p, const char *s, size_t n) {
     p->data[p->len] = '\0';
 }
 static void pg_str(pdfpage *p, const char *s) { pg_raw(p, s, strlen(s)); }
+// Snap sub-micro values to 0 so %g never emits scientific notation (e.g. cos(90
+// deg) ~ 6e-17), which PDF's number syntax rejects.  Our coordinate range never
+// reaches the large-magnitude exponent threshold.
+static double snap0(double v) { return (v < 1e-6 && v > -1e-6) ? 0.0 : v; }
 static void pg_fmt(pdfpage *p, const char *fmt, ...) {
     char t[256];
     va_list a; va_start(a, fmt);
@@ -203,7 +207,8 @@ static void arc_bezier(pdfpage *p, double cx, double cy, double rx, double ry,
         double dx0 = -rx * sin(a), dy0 = -ry * cos(a);  // dP/da at a, b
         double dx3 = -rx * sin(b), dy3 = -ry * cos(b);
         pg_fmt(p, "%g %g %g %g %g %g c\n",
-               x0 + k*dx0, y0 + k*dy0, x3 - k*dx3, y3 - k*dy3, x3, y3);
+               snap0(x0 + k*dx0), snap0(y0 + k*dy0), snap0(x3 - k*dx3),
+               snap0(y3 - k*dy3), snap0(x3), snap0(y3));
         a = b;
     }
 }
@@ -337,6 +342,187 @@ static int pdf_gdp(pdfdev *d, const vdi_ws *w, vdi_pb *pb) {
     return drew;
 }
 
+// ---- Text (glyph outlines as vector paths) --------------------------------
+// On this device, font pixels are device units (as surface pixels are on the
+// screen device), so glyph outlines emit directly — no scale factor — and the
+// page CTM maps them to points.  The app sizes text in device units (vst_height)
+// or converts points using the reported device resolution.
+#define GLYPH_MAXPTS 1024
+
+static unsigned utf8_next(const char **pp) {
+    const unsigned char *s = (const unsigned char *)*pp;
+    unsigned cp; int n;
+    if (*s < 0x80)             { cp = *s;         n = 1; }
+    else if ((*s & 0xE0)==0xC0){ cp = *s & 0x1F;  n = 2; }
+    else if ((*s & 0xF0)==0xE0){ cp = *s & 0x0F;  n = 3; }
+    else if ((*s & 0xF8)==0xF0){ cp = *s & 0x07;  n = 4; }
+    else { (*pp)++; return 0xFFFD; }
+    for (int i = 1; i < n; i++) {
+        if ((s[i] & 0xC0) != 0x80) { (*pp)++; return 0xFFFD; }
+        cp = (cp << 6) | (s[i] & 0x3F);
+    }
+    *pp += n;
+    return cp;
+}
+
+// Append one glyph's outline (FreeType v_bez form: bit1 = move/new contour,
+// bit0 = cubic anchor whose next 3 points are the two controls + end) as closed
+// PDF subpaths, glyph origin at (ox,oy) device units (oy = baseline, y down).
+static void glyph_path(pdfpage *p, font *f, unsigned cp, double ox, double oy) {
+    int16_t xy[2 * GLYPH_MAXPTS]; uint8_t bz[GLYPH_MAXPTS];
+    int n = font_get_outline(f, cp, xy, bz, GLYPH_MAXPTS);
+    int started = 0;
+    for (int i = 0; i < n; ) {
+        int fl = bz[i];
+        if (fl & 2) {                                   // move: close prev, open new
+            if (started) pg_str(p, "h\n");
+            pg_fmt(p, "%g %g m\n", ox + xy[2*i], oy + xy[2*i+1]);
+            started = 1;
+        } else if (!(fl & 1)) {                         // plain on-curve point
+            pg_fmt(p, "%g %g l\n", ox + xy[2*i], oy + xy[2*i+1]);
+        }
+        if (fl & 1) {                                   // cubic: anchor i, ctrls i+1,i+2, end i+3
+            if (i + 3 >= n) break;
+            pg_fmt(p, "%g %g %g %g %g %g c\n",
+                   ox+xy[2*(i+1)], oy+xy[2*(i+1)+1],
+                   ox+xy[2*(i+2)], oy+xy[2*(i+2)+1],
+                   ox+xy[2*(i+3)], oy+xy[2*(i+3)+1]);
+            i += 4;
+        } else i++;
+    }
+    if (started) pg_str(p, "h\n");
+}
+
+// Sum of per-glyph cell advances — matches the placement below, so centre/right
+// alignment lands correctly.
+static int text_adv(font *f, const char *s) {
+    int w = 0;
+    for (const char *q = s; *q; ) w += font_char_metrics(f, utf8_next(&q), NULL, NULL);
+    return w;
+}
+// Lay glyphs along a baseline from (x0,baseline), advancing by metrics, each glyph
+// origin offset by (dx,dy).
+static void glyph_run(pdfpage *p, font *f, double x0, double baseline,
+                      const char *s, double dx, double dy) {
+    double penx = x0;
+    for (const char *q = s; *q; ) {
+        unsigned cp = utf8_next(&q);
+        glyph_path(p, f, cp, penx + dx, baseline + dy);
+        penx += font_char_metrics(f, cp, NULL, NULL);
+    }
+}
+// q + a text matrix (rotation a rad, shear k) about pivot (px,py); close with Q.
+static void text_matrix(pdfpage *p, double a, double k, double px, double py) {
+    double A = cos(a), B = -sin(a), C = sin(a) - k*cos(a), D = cos(a) + k*sin(a);
+    double E = px - (A*px + C*py), F = py - (B*px + D*py);
+    pg_fmt(p, "q\n%g %g %g %g %g %g cm\n",
+           snap0(A), snap0(B), snap0(C), snap0(D), snap0(E), snap0(F));
+}
+// Anchor y -> em-box top (vertical alignment), matching gtext.c.
+static int text_top(const vdi_ws *w, font *f, int ay) {
+    int asc = font_ascent(f), H = font_height(f);
+    switch (w->text_valign) {
+        case VDI_TA_BASELINE: return ay - asc;
+        case VDI_TA_HALF:     return ay - H/2;
+        case VDI_TA_BOTTOM: case VDI_TA_DESCENT: return ay - H;
+        default: return ay;                             // TOP / ASCENT
+    }
+}
+
+// v_gtext / v_ftext: advancing text with alignment, rotation, italic/skew, the
+// bold/outline/underline/shadow effects, and the opaque background box.  Writing
+// mode (XOR) has no PDF equivalent and is ignored.
+static void pdf_text(pdfdev *d, const vdi_ws *w, int ax, int ay, const char *s) {
+    if (!s[0]) return;
+    pdfpage *p = d->cur;
+    font *f = vdi_ws_font(w); if (!f) return;
+    int H = font_height(f), sz = font_size(f);
+    int ytop = text_top(w, f, ay);
+    double baseline = ytop + font_ascent(f);
+    int fx = w->text_effects;
+    double a = w->text_rotation * (M_PI / 1800.0);
+    double k = (fx & FX_ITALIC) ? 0.21 : 0.0;
+    if (w->text_skew) k += tan(w->text_skew * (M_PI / 1800.0));
+    int total = text_adv(f, s);
+    int px0 = ax;
+    if (a == 0.0) {                                     // halign only when upright
+        if (w->text_halign == VDI_TA_CENTER) px0 -= total / 2;
+        else if (w->text_halign == VDI_TA_RIGHT) px0 -= total;
+    }
+    int clp = clip_push(p, w);
+    if (w->text_bg_color >= 0 && w->wr_mode == VDI_MD_REPLACE && a == 0.0 && k == 0.0) {
+        emit_rgb(p, w->text_bg_color, 0);              // opaque cell box
+        pg_fmt(p, "%d %d %d %d re\nf\n", px0, ytop, total, H);
+    }
+    int wrapped = (a != 0.0 || k != 0.0);
+    if (wrapped) text_matrix(p, a, k, px0, baseline);
+    if (fx & FX_SHADOW) {                              // offset darker copy first
+        int sh = sz / 12 + 1;
+        uint32_t c = vdi_pen_rgba(w->text_color);
+        pg_fmt(p, "%.4g %.4g %.4g rg\n",
+               ((c>>24)&0xFF)/510.0, ((c>>16)&0xFF)/510.0, ((c>>8)&0xFF)/510.0);
+        glyph_run(p, f, px0, baseline, s, sh, sh);
+        pg_str(p, "f\n");
+    }
+    glyph_run(p, f, px0, baseline, s, 0, 0);
+    if (fx & FX_OUTLINE) {                             // hollow: stroke only
+        emit_rgb(p, w->text_color, 1);
+        pg_fmt(p, "[] 0 d\n%d w\nS\n", sz / 48 + 1);
+    } else if (fx & FX_BOLD) {                         // approximate embolden
+        emit_rgb(p, w->text_color, 0); emit_rgb(p, w->text_color, 1);
+        pg_fmt(p, "[] 0 d\n%d w\nB\n", sz / 22 + 1);
+    } else {
+        emit_rgb(p, w->text_color, 0); pg_str(p, "f\n");
+    }
+    if (fx & FX_UNDERLINE) {
+        double uo = sz / 8.0 + 1;
+        emit_rgb(p, w->text_color, 1);
+        pg_fmt(p, "[] 0 d\n%d w\n%g %g m %g %g l\nS\n",
+               sz / 16 + 1, (double)px0, baseline + uo, (double)(px0 + total), baseline + uo);
+    }
+    if (wrapped) pg_str(p, "Q\n");
+    clip_pop(p, clp);
+}
+
+// v_ftext_offset: each codepoint at an app-supplied (x,y) offset from the anchor.
+static void pdf_text_offsets(pdfdev *d, const vdi_ws *w, int ax, int ay,
+                             const char *s, const int16_t *off) {
+    if (!s[0]) return;
+    pdfpage *p = d->cur;
+    font *f = vdi_ws_font(w); if (!f) return;
+    int ytop = text_top(w, f, ay), asc = font_ascent(f);
+    int clp = clip_push(p, w);
+    int j = 0;
+    for (const char *q = s; *q; j++) {
+        unsigned cp = utf8_next(&q);
+        glyph_path(p, f, cp, ax + off[2*j], ytop + off[2*j+1] + asc);
+    }
+    emit_rgb(p, w->text_color, 0); pg_str(p, "f\n");
+    clip_pop(p, clp);
+}
+
+// v_justified (GDP 10): glyphs placed at the font module's justified x offsets.
+static void pdf_justified(pdfdev *d, const vdi_ws *w, vdi_pb *pb) {
+    pdfpage *p = d->cur;
+    font *f = vdi_ws_font(w); if (!f) return;
+    int nch = pb->contrl[3] - 2; if (nch < 0) nch = 0; if (nch > 125) nch = 125;
+    char buf[128];
+    for (int i = 0; i < nch; i++) buf[i] = (char)pb->intin[2 + i];
+    buf[nch] = '\0';
+    if (!buf[0]) return;
+    int ax = pb->ptsin[0], width = pb->ptsin[2];
+    int ytop = text_top(w, f, pb->ptsin[1]);
+    double baseline = ytop + font_ascent(f);
+    int16_t offx[256];
+    int ncp = font_justify_offsets(f, buf, width, pb->intin[0], pb->intin[1], offx);
+    int clp = clip_push(p, w);
+    int j = 0;
+    for (const char *q = buf; *q && j < ncp; j++)
+        glyph_path(p, f, utf8_next(&q), ax + offx[j], baseline);
+    emit_rgb(p, w->text_color, 0); pg_str(p, "f\n");
+    clip_pop(p, clp);
+}
+
 // ---- Dispatch -------------------------------------------------------------
 int pdf_intercept(vdi_ws *w, vdi_pb *pb) {
     pdfdev *d = w->dev;
@@ -359,14 +545,26 @@ int pdf_intercept(vdi_ws *w, vdi_pb *pb) {
             d->dirty = 1; return 1;
         case VDI_GDP:
             if (sub == GDP_BAR)        { pdf_ensure_page(d); pdf_bar(d, w, pb->ptsin); d->dirty = 1; }
-            else if (sub == GDP_JUSTIFIED) d->dropped++;          // justified text: M3
+            else if (sub == GDP_JUSTIFIED) { pdf_ensure_page(d); pdf_justified(d, w, pb); d->dirty = 1; }
             else if (sub == GDP_BEZ)   { /* v_bez_on/off: state only, ignore */ }
             else { pdf_ensure_page(d); if (pdf_gdp(d, w, pb)) d->dirty = 1; }
             return 1;
 
+        case VDI_GTEXT: case VDI_FTEXT: {
+            pdf_ensure_page(d);
+            int n = pb->contrl[3]; if (n < 0) n = 0; if (n > 127) n = 127;
+            char b[128];
+            for (int i = 0; i < n; i++) b[i] = (char)pb->intin[i];
+            b[n] = '\0';
+            if (op == VDI_FTEXT && pb->contrl[1] > 1)
+                pdf_text_offsets(d, w, pb->ptsin[0], pb->ptsin[1], b, pb->ptsin + 2);
+            else
+                pdf_text(d, w, pb->ptsin[0], pb->ptsin[1], b);
+            d->dirty = 1; return 1;
+        }
+
         // Drawing ops not yet translated — drop (counted), don't let them scribble
         // on the screen surface via the normal handlers.
-        case VDI_GTEXT: case VDI_FTEXT:
         case VDI_PMARKER: case VDI_CELLARRAY: case VDI_CONTOURFILL:
         case VDI_CPYFM: case VDI_VRT_CPYFM: case VDI_TRANSFER_BITS:
             d->dropped++; return 1;
