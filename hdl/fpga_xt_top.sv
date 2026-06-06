@@ -2115,6 +2115,7 @@ module fpga_xt_top (
         .diag5_word      (diag5_word),
         .diag6_word      (diag6_word),
         .diag7_word      (diag7_word),
+        .clock_mult      (clock_mult_q),     // $D4CA read-back at GP0 offset 0x1E
         .gp0_ctrl        (gp0_ctrl)
     );
 

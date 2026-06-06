@@ -1,4 +1,13 @@
 
+  o speed/$D4CA read-back = EFFECTIVE clock_mult (next bitstream). The GP0
+    read-back at offset 0x1E currently returns the RAW written clock_mult_q,
+    so the REPL `speed` verify needs a hardcoded clean-grade list (56%n==0)
+    to warn that non-divisor values fall back to 1x. Instead expose the
+    EFFECTIVE multiplier sally_clock actually applies (it already normalises
+    non-clean grades to 1x via the sub_threshold case) — then `speed` just
+    reads it back and reports, no SW grade table, and it auto-tracks a faster
+    turbo ceiling if BASE_DIV changes.
+
   o Interrupt on completion — Instead of polling STATUS, the blitter
     could pulse an IRQ so the PS doesn't spin. defer until we have
     freeRTOS in place

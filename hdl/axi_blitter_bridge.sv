@@ -88,6 +88,10 @@ module axi_blitter_bridge (
     input  wire [31:0] diag6_word,
     input  wire [31:0] diag7_word,
 
+    // SALLY speed/clock_mult ($D4CA), read back at offset 0x1E so the PS can
+    // verify a `speed <n>` write actually latched (the write goes out at 0x1A).
+    input  wire [7:0]  clock_mult,
+
     // ---- PL control register (clk_sys domain) — WRITTEN at offset 0x1C ------
     // Software-writable control bits (the read at 0x1C returns diag_word; the
     // write at 0x1C lands here — read/write share the offset).  bit0 = HDMI
@@ -253,6 +257,8 @@ module axi_blitter_bridge (
                             s_axi_rdata <= diag7_word;       // HP2 read-probe last rdata
                         else if (s_axi_araddr[7:0] == 8'h1C)
                             s_axi_rdata <= diag_word;        // PL debug word (word read)
+                        else if (s_axi_araddr[7:0] == 8'h1E)
+                            s_axi_rdata <= {4{clock_mult}};  // SALLY speed read-back ($D4CA)
                         else
                             s_axi_rdata <= 32'd0;
                         s_axi_rresp  <= 2'b00;

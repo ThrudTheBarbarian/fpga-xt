@@ -448,14 +448,32 @@ static void repl_exec(char *cmd)
     }
 
     if (!strcmp(argv[0], "speed")) {     /* SALLY clock_mult (DECIMAL) -> $D4CA */
+        /* Bare `speed` just reports the current register (read-back @0x1E). */
         if (argc < 2) {
+            u8 cur = Xil_In8(XT_BLITTER_BASE + 0x1Eu);
+            xil_printf("  SALLY clock_mult = %u\r\n", (unsigned)cur);
             uart1_puts("  usage: speed <n>  (decimal; n = x real Atari; 1 = real/boot-safe)\r\n"
                        "  clean grades: 1 2 4 7 8 14 28 56 (56 = full turbo 100MHz; others fall back to 1x)\r\n");
             return;
         }
         unsigned n = strtoul(argv[1], NULL, 10);
-        Xil_Out8(XT_BLITTER_BASE + 0x1Au, (u8)n);
-        xil_printf("  SALLY clock_mult = %u (boot at 1, raise after READY)\r\n", n);
+        Xil_Out8(XT_BLITTER_BASE + 0x1Au, (u8)n);          /* write $D4CA      */
+        u8 rb = Xil_In8(XT_BLITTER_BASE + 0x1Eu);          /* read it back     */
+        if (rb != (u8)n) {
+            xil_printf("  SALLY clock_mult: wrote %u but read back %u — write did NOT take!\r\n",
+                       n, (unsigned)rb);
+            return;
+        }
+        /* Write latched.  Only the divisors of 56 (the 100MHz/1.79MHz turbo
+         * ceiling) give a clean ratio; any other value makes the RTL fall back
+         * to 1x, so warn rather than imply n took effect. */
+        int clean = (n >= 1u && n <= 56u && (56u % n) == 0u);
+        if (clean)
+            xil_printf("  SALLY clock_mult = %u (verified; boot at 1, raise after READY)\r\n",
+                       (unsigned)rb);
+        else
+            xil_printf("  SALLY clock_mult = %u (register verified) — NOT a clean grade "
+                       "(1 2 4 7 8 14 28 56); CPU runs at 1x\r\n", (unsigned)rb);
         return;
     }
 
