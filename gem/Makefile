@@ -26,14 +26,15 @@ LDLIBS  := $(FT_LIBS) $(shell pkg-config --libs sdl2 2>/dev/null || sdl2-config 
 # Portable core + host backend.  The VDI is one file per call under vdi/.
 # (GEM AES sources get added here as they land.)
 VDI_SRC  := $(wildcard vdi/*.c)
-CORE_SRC := gfx_soft.c font.c $(VDI_SRC) wm.c theme.c
+AES_SRC  := $(wildcard aes/*.c)
+CORE_SRC := gfx_soft.c font.c $(VDI_SRC) wm.c theme.c $(AES_SRC)
 HOST_SRC := sdl_main.c
 SRC      := $(CORE_SRC) $(HOST_SRC)
 OBJ      := $(addprefix $(BUILD)/,$(SRC:.c=.o))
 
 TARGET  := $(BUILD)/gem_sdl
 
-.PHONY: all run test clean fills shapes output text lines theme themewin themepack
+.PHONY: all run test clean fills shapes output text lines theme themewin themepack aes
 all: $(TARGET)
 
 $(TARGET): $(OBJ)
@@ -81,6 +82,12 @@ $(BUILD)/gem_themewin: $(TWIN_OBJ)
 	$(CC) $(TWIN_OBJ) $(LDLIBS) -o $@
 themewin: $(BUILD)/gem_themewin
 	./$(BUILD)/gem_themewin
+
+AES_DEMO_OBJ := $(addprefix $(BUILD)/,gfx_soft.o font.o theme.o aes_demo.o $(VDI_SRC:.c=.o) $(AES_SRC:.c=.o))
+$(BUILD)/gem_aes: $(AES_DEMO_OBJ)
+	$(CC) $(AES_DEMO_OBJ) $(LDLIBS) -o $@
+aes: $(BUILD)/gem_aes
+	./$(BUILD)/gem_aes
 
 # Bake the Aristo2 atlas (needs ImageMagick + the Cappuccino resources).
 ARISTO2 ?= $(HOME)/src/cappuccino/cappuccino/AppKit/Themes/Aristo2/Resources
