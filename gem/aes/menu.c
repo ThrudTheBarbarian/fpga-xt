@@ -78,9 +78,10 @@ void menu_bar(OBJECT *tree, int show) {
         v_setrgb(H(), PEN_BAR, 244,245,247);
         if (th) { v_setrgb(H(), PEN_HILITE,(th->highlight>>24)&0xFF,(th->highlight>>16)&0xFF,(th->highlight>>8)&0xFF);
                   v_setrgb(H(), PEN_BARLINE,(th->border>>24)&0xFF,(th->border>>16)&0xFF,(th->border>>8)&0xFF); }
+        aes_reserve_top(BARH);          // keep windows below the bar
         draw_bar();
     } else {
-        g_menu = NULL;
+        g_menu = NULL; aes_reserve_top(0);
     }
 }
 

@@ -22,7 +22,19 @@ typedef struct {
 static awin g_w[MAXW];          // slot 0 unused (handles are 1-based)
 static int  g_z[MAXW], g_nz;    // z-order: g_z[0] bottom .. g_z[nz-1] top
 static uint32_t g_deskbg = 0x46566EFF;
+static int g_wa[4] = {-1,0,0,0};   // desktop work area (x,y,w,h); x<0 = auto
+static int g_top_reserve = 0;       // top strip reserved by chrome (e.g. menu bar)
 static int H(void){ return aes_handle(); }
+
+// The desktop work area: what Desktop.app set, else the screen minus reserved
+// top chrome.  Window 0 reports it (classic GEM).
+static void work_area(int *x,int *y,int *w,int *h){
+    if (g_wa[0] >= 0) { *x=g_wa[0]; *y=g_wa[1]; *w=g_wa[2]; *h=g_wa[3]; return; }
+    gfx_surface *d = vdi_screen_target();
+    *x = 0; *y = g_top_reserve; *w = d?d->w:0; *h = (d?d->h:0) - g_top_reserve;
+}
+void aes_set_workarea(int x,int y,int w,int h){ g_wa[0]=x; g_wa[1]=y; g_wa[2]=w; g_wa[3]=h; }
+void aes_reserve_top(int h){ g_top_reserve = h; }
 
 static int bw(void){ const theme_slice*s=theme_find(aes_theme(),"window"); return s?s->l:5; }
 static int tbh(void){ const theme_slice*s=theme_find(aes_theme(),"titlebar"); return s?s->sh:22; }
@@ -34,6 +46,18 @@ void wind_calc(int dir,int kind,int x,int y,int w,int h,int*ox,int*oy,int*ow,int
 }
 
 static void spr(const char*n,int x,int y){ const theme_slice*s=theme_find(aes_theme(),n); if(s) theme_blit(H(),aes_theme(),s,x,y,s->sw,s->sh); }
+
+// Keep the window reachable: the title bar stays below the menu bar, above the
+// work-area bottom, and at least MINVIS px stays on-screen horizontally — so a
+// window can never be dragged completely out of reach.
+#define MINVIS 72
+static void clamp_win(awin *W){
+    int wx,wy,ww,wh; work_area(&wx,&wy,&ww,&wh); int th=tbh();
+    if (W->y < wy)            W->y = wy;
+    if (W->y > wy+wh - th)    W->y = wy+wh - th;
+    if (W->x > wx+ww - MINVIS)        W->x = wx+ww - MINVIS;
+    if (W->x < wx - (W->w - MINVIS))  W->x = wx - (W->w - MINVIS);
+}
 
 static void draw_one(int hd, int active){
     awin*W=&g_w[hd]; int b=bw(), th=tbh();
@@ -71,7 +95,7 @@ int wind_create(int kind,int x,int y,int w,int h){
 }
 void wind_open(int hd,int x,int y,int w,int h){
     if(hd<1||hd>=MAXW||!g_w[hd].used) return;
-    g_w[hd].x=x; g_w[hd].y=y; g_w[hd].w=w; g_w[hd].h=h;
+    g_w[hd].x=x; g_w[hd].y=y; g_w[hd].w=w; g_w[hd].h=h; clamp_win(&g_w[hd]);
     for(int i=0;i<g_nz;i++) if(g_z[i]==hd) return;       // already open
     g_z[g_nz++]=hd; wind_redraw();
 }
@@ -82,6 +106,7 @@ void wind_set_name(int hd,const char*n){ if(hd>=1&&hd<MAXW){ snprintf(g_w[hd].na
 void wind_content(int hd,wind_draw_fn fn,void*ud){ if(hd>=1&&hd<MAXW){ g_w[hd].draw=fn; g_w[hd].ud=ud; } }
 
 void wind_get(int hd,int field,int*a,int*b,int*c,int*d){
+    if(hd==0){ int x,y,w,h; work_area(&x,&y,&w,&h); if(a)*a=x; if(b)*b=y; if(c)*c=w; if(d)*d=h; return; }  // desktop
     if(hd<1||hd>=MAXW){ if(a)*a=0; return; }
     awin*W=&g_w[hd]; int x=W->x,y=W->y,w=W->w,h=W->h;
     if(field==WF_WORKXYWH) wind_calc(WC_WORK,W->kind,W->x,W->y,W->w,W->h,&x,&y,&w,&h);
@@ -90,7 +115,7 @@ void wind_get(int hd,int field,int*a,int*b,int*c,int*d){
 }
 void wind_set(int hd,int field,int a,int b,int c,int d){
     if(hd<1||hd>=MAXW) return; awin*W=&g_w[hd];
-    if(field==WF_CURRXYWH){ W->px=W->x;W->py=W->y;W->pw=W->w;W->ph=W->h; W->x=a;W->y=b;W->w=c;W->h=d; wind_redraw(); }
+    if(field==WF_CURRXYWH){ W->px=W->x;W->py=W->y;W->pw=W->w;W->ph=W->h; W->x=a;W->y=b;W->w=c;W->h=d; clamp_win(W); wind_redraw(); }
 }
 
 int wind_find(int x,int y){
@@ -116,7 +141,7 @@ int wind_handle_click(int mx,int my){
     if((W->kind&W_MOVER) && my>=ty && my<ty+th && mx>=tx && mx<tx+tw){
         int gx=mx-W->x, gy=my-W->y;
         for(;;){ aes_event e; int t=aes_wait(&e,-1); if(t==AES_QUIT)break;
-            if(t==AES_MOTION){ W->x=e.mx-gx; W->y=e.my-gy; wind_redraw(); }
+            if(t==AES_MOTION){ W->x=e.mx-gx; W->y=e.my-gy; clamp_win(W); wind_redraw(); }
             if(t==AES_BTN_UP) break; }
         post(WM_MOVED,hd,W->x,W->y,W->w,W->h); return 1;
     }

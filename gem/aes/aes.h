@@ -134,5 +134,9 @@ int  wind_find(int x, int y);                       // topmost window at point (
 void wind_content(int handle, wind_draw_fn fn, void *ud);
 void wind_set_desktop(uint32_t rgba);               // desktop background colour
 void wind_redraw(void);                             // redraw desktop + all windows (AES owns it)
+// The desktop work area windows are clamped to (so a window can't be dragged out
+// of reach).  Defaults to the screen minus the menu bar; Desktop.app can reserve
+// more (dock/sidebar).  wind_get(0, WF_WORKXYWH, …) reports it.
+void aes_set_workarea(int x, int y, int w, int h);
 
 #endif // GEM_AES_H

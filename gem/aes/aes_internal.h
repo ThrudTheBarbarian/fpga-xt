@@ -15,6 +15,7 @@ int  menu_handle_click(int mx, int my);
 // demos / screenshots; the live pull-down is driven by menu_handle_click.
 void menu_render_open(int title_ord, int item_ord);
 void menu_redraw(void);            // repaint the active menu bar (always on top)
+void aes_reserve_top(int h);       // reserve a top strip from the work area (the menu bar)
 
 // Called by evnt_multi on a button-down outside the menu bar: handle a window
 // frame interaction (raise / drag / resize / close box).  Returns 1 if the
