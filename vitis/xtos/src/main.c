@@ -29,7 +29,7 @@
 #include <stdint.h>
 #include <stdlib.h>          /* strtoul (REPL hex parsing) */
 #include <string.h>          /* strcmp  (REPL dispatch)    */
-#include <errno.h>           /* ENOSYS for the libc syscall stubs below */
+#include <stdio.h>           /* fopen/fread (newlib->FatFs retarget, fs_fatfs.c) */
 #include "xparameters.h"
 #include "xil_printf.h"
 #include "xil_io.h"
@@ -296,7 +296,7 @@ static void fs_mount(void)
     FRESULT fr = f_mount(&g_fatfs, "0:", 1);   /* opt=1: mount + init now */
     if (fr == FR_OK) {
         g_fs_mounted = 1;
-        xil_printf("  SD: FAT mounted on 0: (LFN, CP932)\r\n");
+        xil_printf("  SD: FAT mounted at / (LFN, CP932)\r\n");
     } else {
         g_fs_mounted = 0;
         xil_printf("  SD: f_mount failed (FRESULT %d) — card inserted + FAT?\r\n",
@@ -489,8 +489,8 @@ static void boot_run(void)
     static char names[32][64];
     unsigned n = 0;
     DIR dir; FILINFO fno;
-    FRESULT fr = f_opendir(&dir, "0:/OS/Boot");
-    if (fr != FR_OK) { xil_printf("  boot: no 0:/OS/Boot (%d)\r\n", (int)fr); return; }
+    FRESULT fr = f_opendir(&dir, "/OS/Boot");
+    if (fr != FR_OK) { xil_printf("  boot: no /OS/Boot (%d)\r\n", (int)fr); return; }
     while (n < 32) {
         fr = f_readdir(&dir, &fno);
         if (fr != FR_OK || fno.fname[0] == 0) break;
@@ -517,7 +517,7 @@ static void boot_run(void)
     xil_printf("  boot: %u script(s) in 0:/OS/Boot\r\n", n);
     for (unsigned i = 0; i < n; i++) {
         char path[80];
-        static const char pre[] = "0:/OS/Boot/";
+        static const char pre[] = "/OS/Boot/";
         size_t pl = sizeof(pre) - 1;
         strcpy(path, pre);
         strncpy(path + pl, names[i], sizeof(path) - pl - 1);
@@ -739,7 +739,7 @@ static void repl_exec(char *cmd)
     }
 
     if (!strcmp(argv[0], "ls")) {        /* list a directory (default 0:/) */
-        const char *path = (argc >= 2) ? argv[1] : "0:/";
+        const char *path = (argc >= 2) ? argv[1] : "/";
         DIR dir; FILINFO fno;
         FRESULT fr = f_opendir(&dir, path);
         if (fr != FR_OK) {
@@ -764,24 +764,15 @@ static void repl_exec(char *cmd)
         return;
     }
 
-    if (!strcmp(argv[0], "cat")) {       /* dump a file to the console */
+    if (!strcmp(argv[0], "cat")) {       /* dump a file — via newlib fopen/FatFs */
         if (argc < 2) { uart1_puts("  usage: cat <path>\r\n"); return; }
-        FIL f;
-        FRESULT fr = f_open(&f, argv[1], FA_READ);
-        if (fr != FR_OK) {
-            xil_printf("  cat: f_open(%s) failed (%d)\r\n", argv[1], (int)fr);
-            return;
-        }
-        /* 32-byte aligned + whole-cache-line sized: the SD DMA invalidates
-         * these lines, so a shared/unaligned buffer would corrupt neighbours. */
-        static char buf[512] __attribute__((aligned(32)));
-        UINT n;
-        do {
-            fr = f_read(&f, buf, sizeof buf, &n);
-            if (fr != FR_OK) { xil_printf("\r\n  cat: f_read failed (%d)\r\n", (int)fr); break; }
-            for (UINT i = 0; i < n; i++) uart1_putc(buf[i]);
-        } while (n == sizeof buf);
-        f_close(&f);
+        FILE *fp = fopen(argv[1], "r");  /* exercises the fs_fatfs.c retarget */
+        if (fp == NULL) { xil_printf("  cat: fopen(%s) failed\r\n", argv[1]); return; }
+        char buf[256];
+        size_t n;
+        while ((n = fread(buf, 1, sizeof buf, fp)) > 0)
+            for (size_t i = 0; i < n; i++) uart1_putc(buf[i]);
+        fclose(fp);
         uart1_puts("\r\n");
         return;
     }
@@ -1273,8 +1264,6 @@ void vApplicationStackOverflowHook(TaskHandle_t task, char *name)
     for (;;) { }
 }
 
-/* newlib syscall stubs that Lua's os.remove/os.rename pull in.  There is no
- * libc-backed filesystem (FatFs is used directly), so these just fail — boot
- * scripts don't use os.remove/rename. */
-int _unlink(const char *path) { (void)path; errno = ENOSYS; return -1; }
-int _link(const char *oldp, const char *newp) { (void)oldp; (void)newp; errno = ENOSYS; return -1; }
+/* newlib file syscalls (_open/_read/_write/_close/_lseek/_fstat/_unlink/_link)
+ * are retargeted onto FatFs in fs_fatfs.c — so fopen/FreeType/Lua-io read the
+ * SD card with Unix paths. */
