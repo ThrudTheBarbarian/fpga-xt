@@ -17,7 +17,8 @@ CSTD    := -std=c11
 WARN    := -Wall -Wextra
 # FreeType powers the scalable text (font.c); -lm for the GDP trig (gdp.c).
 FT_CFLAGS := $(shell pkg-config --cflags freetype2)
-FT_LIBS   := $(shell pkg-config --libs freetype2) -lm
+# -lz: the PDF printer device (vdi/printers/pdf_device.c) Flate-compresses streams.
+FT_LIBS   := $(shell pkg-config --libs freetype2) -lm -lz
 
 # -I. so the per-call VDI files resolve "vdi/vdi.h", "vdi/internal.h", etc.
 CFLAGS  := $(CSTD) $(WARN) -O2 -g -I. $(FT_CFLAGS) $(shell pkg-config --cflags sdl2 2>/dev/null || sdl2-config --cflags)

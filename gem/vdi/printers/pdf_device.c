@@ -20,6 +20,7 @@
 #include <string.h>
 #include <stdarg.h>
 #include <math.h>
+#include <zlib.h>
 
 // Page geometry.  Vector content is resolution-independent; PDF_DPI only sets how
 // finely apps can *place* things (the device-unit grid v_opnwk reports), not the
@@ -767,6 +768,25 @@ int pdf_intercept(vdi_ws *w, vdi_pb *pb) {
 // then two objects (page + contents) per page.  Pattern /PpK names are stable
 // (K = registry index) so the names emitted into the content during drawing
 // match the page /Resources here.
+// Write a stream object: `dict` is the dictionary body (no /Length, /Filter), the
+// payload is Flate-compressed when that's actually smaller, else stored raw.
+static void write_stream_obj(FILE *f, int objn, const char *dict,
+                             const uint8_t *data, size_t len) {
+    uLongf clen = compressBound(len);
+    uint8_t *comp = malloc(clen);
+    int ok = comp && len && compress2(comp, &clen, data, len, 9) == Z_OK && clen < len;
+    if (ok) {
+        fprintf(f, "%d 0 obj\n<< %s /Filter /FlateDecode /Length %lu >>\nstream\n",
+                objn, dict, (unsigned long)clen);
+        fwrite(comp, 1, clen, f);
+    } else {
+        fprintf(f, "%d 0 obj\n<< %s /Length %zu >>\nstream\n", objn, dict, len);
+        fwrite(data, 1, len, f);
+    }
+    fprintf(f, "\nendstream\nendobj\n");
+    free(comp);
+}
+
 static void write_pattern(pdfdev *d, FILE *f, int idx) {
     pdfpat *pat = &d->pats[idx];
     uint32_t c = vdi_pen_rgba(pat->color);
@@ -779,27 +799,24 @@ static void write_pattern(pdfdev *d, FILE *f, int idx) {
             if ((bits >> mx) & 1) pg_fmt(&tmp, "%d %d 1 1 re ", mx, 15 - my);
     }
     pg_str(&tmp, "\nf\n");
-    fprintf(f, "%d 0 obj\n<< /Type /Pattern /PatternType 1 /PaintType 1"
-               " /TilingType 1 /BBox [0 0 16 16] /XStep 16 /YStep 16"
-               " /Matrix [1 0 0 1 0 0] /Resources << >> /Length %zu >>\nstream\n",
-            3 + idx, tmp.len);
-    fwrite(tmp.data, 1, tmp.len, f);
-    fprintf(f, "endstream\nendobj\n");
+    write_stream_obj(f, 3 + idx,
+                     "/Type /Pattern /PatternType 1 /PaintType 1 /TilingType 1"
+                     " /BBox [0 0 16 16] /XStep 16 /YStep 16 /Matrix [1 0 0 1 0 0]"
+                     " /Resources << >>",
+                     (const uint8_t *)tmp.data, tmp.len);
     free(tmp.data);
 }
 
 static void write_image(pdfdev *d, FILE *f, int idx, int objn) {
     pdfimg *im = &d->imgs[idx];
+    char dict[160];
     if (im->kind == 1)
-        fprintf(f, "%d 0 obj\n<< /Type /XObject /Subtype /Image /Width %d /Height %d"
-                   " /ImageMask true /BitsPerComponent 1 /Decode [1 0] /Length %zu >>\nstream\n",
-                objn, im->w, im->h, im->len);
+        snprintf(dict, sizeof dict, "/Type /XObject /Subtype /Image /Width %d /Height %d"
+                 " /ImageMask true /BitsPerComponent 1 /Decode [1 0]", im->w, im->h);
     else
-        fprintf(f, "%d 0 obj\n<< /Type /XObject /Subtype /Image /Width %d /Height %d"
-                   " /ColorSpace /DeviceRGB /BitsPerComponent 8 /Length %zu >>\nstream\n",
-                objn, im->w, im->h, im->len);
-    fwrite(im->data, 1, im->len, f);
-    fprintf(f, "\nendstream\nendobj\n");
+        snprintf(dict, sizeof dict, "/Type /XObject /Subtype /Image /Width %d /Height %d"
+                 " /ColorSpace /DeviceRGB /BitsPerComponent 8", im->w, im->h);
+    write_stream_obj(f, objn, dict, im->data, im->len);
 }
 
 static void pdf_write_file(pdfdev *d) {
@@ -840,9 +857,7 @@ static void pdf_write_file(pdfdev *d) {
         }
         fprintf(f, ">> >>\nendobj\n");
         off[contobj] = ftell(f);
-        fprintf(f, "%d 0 obj\n<< /Length %zu >>\nstream\n", contobj, p->len);
-        fwrite(p->data, 1, p->len, f);
-        fprintf(f, "endstream\nendobj\n");
+        write_stream_obj(f, contobj, "", (const uint8_t *)p->data, p->len);
     }
 
     long xref = ftell(f);
