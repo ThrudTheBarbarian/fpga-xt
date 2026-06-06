@@ -24,13 +24,42 @@
 
 typedef struct { unsigned *px; int w, h; } img;        // px = 0xRRGGBBAA
 
-// `name` may carry a "@90" / "@180" / "@270" suffix to rotate the slice (used
-// to reuse the date-picker arrows for the up/down scroller buttons).
+// Trim `n` px out of the centre of a strip along its longer axis (keeps the
+// outer edges / groove walls — narrows a too-wide scrollbar track).
+static img trim_center(img m, int n) {
+    if (n <= 0) return m;
+    if (m.w >= m.h) {                                  // trim columns
+        int keep = m.w - n; if (keep < 1) keep = 1;
+        int lw = (keep + 1) / 2, rw = keep - lw;
+        img o = { malloc((size_t)keep * m.h * 4), keep, m.h };
+        for (int y = 0; y < m.h; y++) {
+            for (int x = 0; x < lw; x++) o.px[(size_t)y*keep + x] = m.px[(size_t)y*m.w + x];
+            for (int x = 0; x < rw; x++) o.px[(size_t)y*keep + lw + x] = m.px[(size_t)y*m.w + (m.w-rw) + x];
+        }
+        free(m.px); return o;
+    } else {                                           // trim rows
+        int keep = m.h - n; if (keep < 1) keep = 1;
+        int th = (keep + 1) / 2, bh = keep - th;
+        img o = { malloc((size_t)m.w * keep * 4), m.w, keep };
+        for (int x = 0; x < m.w; x++) {
+            for (int y = 0; y < th; y++) o.px[(size_t)y*m.w + x] = m.px[(size_t)y*m.w + x];
+            for (int y = 0; y < bh; y++) o.px[(size_t)(th+y)*m.w + x] = m.px[(size_t)(m.h-bh+y)*m.w + x];
+        }
+        free(m.px); return o;
+    }
+}
+
+// `name` may carry "@90/180/270" (rotate) and/or "~N" (trim N px from the
+// centre of the longer axis) suffixes, in either order.
 static img load_png(const char *dir, const char *name) {
     img m = { 0, 0, 0 };
-    char base[256]; int rot = 0;
-    const char *at = strchr(name, '@');
-    if (at) { rot = atoi(at + 1); snprintf(base, sizeof base, "%.*s", (int)(at - name), name); name = base; }
+    char base[256]; int rot = 0, trim = 0;
+    snprintf(base, sizeof base, "%s", name);
+    const char *sfx;
+    if ((sfx = strchr(base, '@'))) rot  = atoi(sfx + 1);
+    if ((sfx = strchr(base, '~'))) trim = atoi(sfx + 1);
+    for (char *q = base; *q; q++) if (*q == '@' || *q == '~') { *q = 0; break; }
+    name = base;
 
     char path[1024], cmd[1200];
     snprintf(path, sizeof path, "%s/%s.png", dir, name);
@@ -53,6 +82,7 @@ static img load_png(const char *dir, const char *name) {
         m.px[i] = ((unsigned)b[0]<<24) | ((unsigned)b[1]<<16) | ((unsigned)b[2]<<8) | b[3];
     }
     free(raw);
+    if (trim) m = trim_center(m, trim);
     return m;
 }
 
