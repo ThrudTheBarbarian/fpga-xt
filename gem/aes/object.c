@@ -16,6 +16,8 @@ void aes_init(int vh, const theme *th) {
     v_setrgb(vh, PEN_DLG, 236, 238, 240);
     if (th) v_setrgb(vh, PEN_BORDER, (th->border>>24)&0xFF, (th->border>>16)&0xFF, (th->border>>8)&0xFF);
 }
+int          aes_handle(void) { return g_vh; }
+const theme *aes_theme(void)  { return g_th; }
 
 // Iterate the children of `parent` (stops after ob_tail, whose ob_next is the
 // parent again).

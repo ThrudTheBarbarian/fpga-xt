@@ -92,4 +92,19 @@ int  appl_read(int id, int len, void *buf);
 // DEFAULT button; returns the EXIT/TOUCHEXIT object clicked (-1 = quit).
 int  form_do(OBJECT *tree, int start);
 
+// ---- Menus --------------------------------------------------------------
+// A menu is a GEM OBJECT tree (bar of G_TITLEs + a dropdown G_BOX of G_STRINGs
+// per title).  menu_build assembles one from a simple description; menu_bar
+// shows/hides it.  A selection posts an MN_SELECTED message (msg[0]=MN_SELECTED,
+// msg[3]=title object, msg[4]=item object) read via evnt_mesag — the bar click
+// is intercepted inside evnt_multi, so apps just receive the message.
+enum { MN_SELECTED = 10 };
+
+typedef struct { const char *title; const char **items; int nitems; } menu_def;
+OBJECT *menu_build(const menu_def *menus, int nmenus, int screen_w);   // malloc'd tree
+void    menu_bar(OBJECT *tree, int show);          // show/erase the active menu bar
+void    menu_tnormal(OBJECT *tree, int title, int normal);   // (un)highlight a title
+void    menu_icheck(OBJECT *tree, int item, int check);      // tick / untick an item
+void    menu_ienable(OBJECT *tree, int item, int enable);    // enable / disable an item
+
 #endif // GEM_AES_H

@@ -2,7 +2,7 @@
 // source call), the appl_* message pipe, evnt_multi (the multiplexer) and its
 // evnt_keybd/button/mouse/mesag/timer convenience wrappers.
 
-#include "aes/aes.h"
+#include "aes/aes_internal.h"
 #include <string.h>
 
 static aes_event_fn g_src;
@@ -61,6 +61,10 @@ int evnt_multi(int flags, int bclk, int bmask, int bstate,
         if (t == AES_TIMER) { if (flags & MU_TIMER) return MU_TIMER; continue; }
         if (t == AES_KEY && (flags & MU_KEYBD)) {
             if (okey) *okey = ev.key; return MU_KEYBD;
+        }
+        if (t == AES_BTN_DOWN && menu_handle_click(ev.mx, ev.my)) {
+            if ((flags & MU_MESAG) && mep && appl_read(0, 16, mep)) return MU_MESAG;
+            continue;                                   // menu consumed the click
         }
         if ((t == AES_BTN_DOWN || t == AES_BTN_UP) && (flags & MU_BUTTON)) {
             if (((ev.button) & bmask) == (bstate & bmask)) { if (onc) *onc = 1; return MU_BUTTON; }

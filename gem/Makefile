@@ -34,7 +34,7 @@ OBJ      := $(addprefix $(BUILD)/,$(SRC:.c=.o))
 
 TARGET  := $(BUILD)/gem_sdl
 
-.PHONY: all run test clean fills shapes output text lines theme themewin themepack aes
+.PHONY: all run test clean fills shapes output text lines theme themewin themepack aes aesmenu
 all: $(TARGET)
 
 $(TARGET): $(OBJ)
@@ -88,6 +88,12 @@ $(BUILD)/gem_aes: $(AES_DEMO_OBJ)
 	$(CC) $(AES_DEMO_OBJ) $(LDLIBS) -o $@
 aes: $(BUILD)/gem_aes
 	./$(BUILD)/gem_aes
+
+AESMENU_OBJ := $(addprefix $(BUILD)/,gfx_soft.o font.o theme.o aes_menu_demo.o $(VDI_SRC:.c=.o) $(AES_SRC:.c=.o))
+$(BUILD)/gem_aesmenu: $(AESMENU_OBJ)
+	$(CC) $(AESMENU_OBJ) $(LDLIBS) -o $@
+aesmenu: $(BUILD)/gem_aesmenu
+	./$(BUILD)/gem_aesmenu
 
 # Bake the Aristo2 atlas (needs ImageMagick + the Cappuccino resources).
 ARISTO2 ?= $(HOME)/src/cappuccino/cappuccino/AppKit/Themes/Aristo2/Resources
