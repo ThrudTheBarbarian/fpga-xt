@@ -15,4 +15,9 @@ int  menu_handle_click(int mx, int my);
 // demos / screenshots; the live pull-down is driven by menu_handle_click.
 void menu_render_open(int title_ord, int item_ord);
 
+// Called by evnt_multi on a button-down outside the menu bar: handle a window
+// frame interaction (raise / drag / resize / close box).  Returns 1 if the
+// click hit a window frame (consumed), 0 if it fell in a work area / desktop.
+int  wind_handle_click(int mx, int my);
+
 #endif // AES_INTERNAL_H

@@ -107,4 +107,32 @@ void    menu_tnormal(OBJECT *tree, int title, int normal);   // (un)highlight a 
 void    menu_icheck(OBJECT *tree, int item, int check);      // tick / untick an item
 void    menu_ienable(OBJECT *tree, int item, int enable);    // enable / disable an item
 
+// ---- Windows ------------------------------------------------------------
+// Themed windows over the AES.  The frame (9-slice window + titlebar + traffic
+// lights) is drawn by the AES; the app draws the work area through a content
+// callback (wind_content) and reacts to WM_* messages from evnt_mesag.  Frame
+// interaction (drag, resize, close box, raise) is caught inside evnt_multi.
+enum { W_NAME=0x01, W_CLOSER=0x02, W_FULLER=0x04, W_MOVER=0x08, W_INFO=0x10,
+       W_SIZER=0x20, W_UPARROW=0x40, W_DNARROW=0x80, W_VSLIDE=0x100,
+       W_LFARROW=0x200, W_RTARROW=0x400, W_HSLIDE=0x800 };
+enum { WM_REDRAW=20, WM_TOPPED=21, WM_CLOSED=22, WM_FULLED=23, WM_ARROWED=24,
+       WM_HSLID=25, WM_VSLID=26, WM_SIZED=27, WM_MOVED=28, WM_NEWTOP=29 };
+enum { WF_NAME=2, WF_WORKXYWH=4, WF_CURRXYWH=5, WF_PREVXYWH=6, WF_FULLXYWH=7 };
+enum { WC_BORDER=0, WC_WORK=1 };                    // wind_calc direction
+
+typedef void (*wind_draw_fn)(int handle, int wx, int wy, int ww, int wh, void *ud);
+
+int  wind_create(int kind, int x, int y, int w, int h);   // -> handle (0 = none)
+void wind_open(int handle, int x, int y, int w, int h);
+void wind_close(int handle);
+void wind_delete(int handle);
+void wind_set_name(int handle, const char *name);
+void wind_get(int handle, int field, int *a, int *b, int *c, int *d);
+void wind_set(int handle, int field, int a, int b, int c, int d);
+void wind_calc(int dir, int kind, int x,int y,int w,int h, int *ox,int *oy,int *ow,int *oh);
+int  wind_find(int x, int y);                       // topmost window at point (0 = desktop)
+void wind_content(int handle, wind_draw_fn fn, void *ud);
+void wind_set_desktop(uint32_t rgba);               // desktop background colour
+void wind_redraw(void);                             // redraw desktop + all windows (AES owns it)
+
 #endif // GEM_AES_H
