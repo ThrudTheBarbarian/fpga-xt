@@ -360,8 +360,10 @@ call `theme_draw(name, rect)` and never touch pixels.
   ImageMagick) bakes the separate slice PNGs into the atlas from a recipe
   (`themes/aristo2.recipe`): element types `sprite` / `h3` / `v3` / `nine`, a
   `name@90/180/270` suffix rotates a slice (the vertical scroller reuses the
-  date-picker arrows rotated), and the 9-slice **insets are derived from the
-  corner slice sizes**. `make themepack` re-bakes; the result lives in
+  date-picker arrows rotated), `~N` trims N px from a strip's centre (narrowing
+  the scrollbar track to its arrows), `^RRGGBB` colour-tints a slice (the blue
+  Aqua **default button** from the grey bezel). The 9-slice **insets are derived
+  from the corner slice sizes**. `make themepack` re-bakes; the result lives in
   `themes/Aristo2/1x` (1× now; the `<scale>` dir leaves room for `@2x`).
 * **Coverage**: window frame + titlebar (active/inactive) + close/min/max,
   buttons (normal/default/disabled), popup/combo/text-field (with focused +

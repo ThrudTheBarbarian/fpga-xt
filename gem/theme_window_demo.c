@@ -28,7 +28,7 @@ static void hdr(int x,int y,const char *s){ vst_color(H,9); vst_height(H,11,0,0,
 static int btn(const char *variant, int x, int y, const char *l) {
     const theme_slice *s=g(variant); int h=s?s->sh:24, w=font_text_width(font_at(FF,14),l)+26;
     theme_blit(H,&TH,s,x,y,w,h);
-    vst_color(H, strstr(variant,"disabled")?9:1); vst_height(H,14,0,0,0,0);
+    vst_color(H, strstr(variant,"default")?0 : strstr(variant,"disabled")?9 : 1); vst_height(H,14,0,0,0,0);
     vst_alignment(H,VDI_TA_CENTER,VDI_TA_HALF,0,0); v_gtext(H,x+w/2,y+h/2,l);
     vst_alignment(H,VDI_TA_LEFT,VDI_TA_TOP,0,0);
     return w;
@@ -70,8 +70,8 @@ static void draw(gfx_surface *d) {
     int y=y0;
     hdr(c1,y,"BUTTONS"); y+=12;
     int bx=c1;
-    bx += btn("button",bx,y,"Normal")+8;
-    bx += btn("button.selected",bx,y,"Default")+8;
+    bx += btn("button",bx,y,"Normal")+7;
+    bx += btn("button.default",bx,y,"Default")+7;
     btn("button.disabled",bx,y,"Disabled");
     y+=42;
     hdr(c1,y,"CHECKBOX"); y+=14;

@@ -49,16 +49,18 @@ static img trim_center(img m, int n) {
     }
 }
 
-// `name` may carry "@90/180/270" (rotate) and/or "~N" (trim N px from the
-// centre of the longer axis) suffixes, in either order.
+// `name` may carry suffixes (any one): "@90/180/270" rotate, "~N" trim N px from
+// the centre of the longer axis, "^RRGGBB" tint by a colour (for the blue
+// default button — the grey bezel tinted by intensity).
 static img load_png(const char *dir, const char *name) {
     img m = { 0, 0, 0 };
-    char base[256]; int rot = 0, trim = 0;
+    char base[256]; int rot = 0, trim = 0; char tint[16] = "";
     snprintf(base, sizeof base, "%s", name);
     const char *sfx;
     if ((sfx = strchr(base, '@'))) rot  = atoi(sfx + 1);
     if ((sfx = strchr(base, '~'))) trim = atoi(sfx + 1);
-    for (char *q = base; *q; q++) if (*q == '@' || *q == '~') { *q = 0; break; }
+    if ((sfx = strchr(base, '^'))) snprintf(tint, sizeof tint, "%.6s", sfx + 1);
+    for (char *q = base; *q; q++) if (*q=='@'||*q=='~'||*q=='^') { *q = 0; break; }
     name = base;
 
     char path[1024], cmd[1200];
@@ -70,8 +72,10 @@ static img load_png(const char *dir, const char *name) {
     if (rot == 90 || rot == 270) { int t = m.w; m.w = m.h; m.h = t; }   // dims swap
 
     unsigned char *raw = malloc((size_t)m.w * m.h * 4);
-    if (rot) snprintf(cmd, sizeof cmd, "magick '%s' -rotate %d -depth 8 RGBA:- 2>/dev/null", path, rot);
-    else     snprintf(cmd, sizeof cmd, "magick '%s' -depth 8 RGBA:- 2>/dev/null", path);
+    char ops[96] = "", t[48];
+    if (rot)     { snprintf(t, sizeof t, " -rotate %d", rot); strncat(ops, t, sizeof ops-strlen(ops)-1); }
+    if (tint[0]) { snprintf(t, sizeof t, " -fill \"#%s\" -colorize 65%%", tint); strncat(ops, t, sizeof ops-strlen(ops)-1); }
+    snprintf(cmd, sizeof cmd, "magick '%s'%s -depth 8 RGBA:- 2>/dev/null", path, ops);
     p = popen(cmd, "r");
     size_t need = (size_t)m.w * m.h * 4;
     if (!p || fread(raw, 1, need, p) != need) { fprintf(stderr, "decode %s\n", path); exit(1); }
