@@ -41,6 +41,7 @@
 #include "lua.h"             /* vendored Lua 5.4 (xtos/lua) — boot scripts */
 #include "lauxlib.h"
 #include "lualib.h"
+#include "lodepng.h"         /* PNG decode (wallpaper) */
 #include "xiicps.h"          /* PS I2C0 (EMIO) -> SiI9022A control bus */
 
 #include "xt_blitter.h"
@@ -315,6 +316,112 @@ static int l_note(lua_State *L)
     return 0;
 }
 
+/* ---- desktop plane (compositor surface @0x30000000) --------------------
+ * RGBA-8888, stride 2048 words/row, 1920x1080 visible; pixel = 0xRRGGBBaa
+ * (compositor uses [31:8] as RGB).  CPU writes + cache flush (the PL read is
+ * non-coherent).  Exposed to Lua as the `screen` table — the low-level drawing
+ * the desktop/VDI sits on. */
+#define DESK_BASE    0x30000000u
+#define DESK_STRIDE  2048u           /* words per row (8192-byte stride)    */
+#define DESK_W       1920u
+#define DESK_H       1080u
+
+static int l_screen_clear(lua_State *L)   /* screen.clear(0xRRGGBB) */
+{
+    uint32_t c = ((uint32_t)luaL_optinteger(L, 1, 0) << 8) | 0xFFu;
+    volatile uint32_t *p = (volatile uint32_t *)DESK_BASE;
+    for (uint32_t i = 0; i < DESK_H * DESK_STRIDE; i++) p[i] = c;
+    Xil_DCacheFlushRange((INTPTR)DESK_BASE, (INTPTR)(DESK_H * DESK_STRIDE * 4u));
+    return 0;
+}
+
+static int l_screen_rect(lua_State *L)    /* screen.rect(x,y,w,h,0xRRGGBB) */
+{
+    int x = (int)luaL_checkinteger(L, 1), y = (int)luaL_checkinteger(L, 2);
+    int w = (int)luaL_checkinteger(L, 3), h = (int)luaL_checkinteger(L, 4);
+    uint32_t c = ((uint32_t)luaL_optinteger(L, 5, 0) << 8) | 0xFFu;
+    if (x < 0) { w += x; x = 0; }          /* clip to the surface */
+    if (y < 0) { h += y; y = 0; }
+    if (x + w > (int)DESK_W) w = (int)DESK_W - x;
+    if (y + h > (int)DESK_H) h = (int)DESK_H - y;
+    if (w <= 0 || h <= 0) return 0;
+    volatile uint32_t *base = (volatile uint32_t *)DESK_BASE;
+    for (int row = y; row < y + h; row++) {
+        volatile uint32_t *r = base + (uint32_t)row * DESK_STRIDE + (uint32_t)x;
+        for (int col = 0; col < w; col++) r[col] = c;
+    }
+    Xil_DCacheFlushRange((INTPTR)(base + (uint32_t)y * DESK_STRIDE),
+                         (INTPTR)((uint32_t)h * DESK_STRIDE * 4u));
+    return 0;
+}
+
+static int l_screen_size(lua_State *L)    /* w, h = screen.size() */
+{
+    lua_pushinteger(L, DESK_W);
+    lua_pushinteger(L, DESK_H);
+    return 2;
+}
+
+/* screen.wallpaper(path) — decode a PNG off the SD and scale-to-fill the desktop
+ * plane.  Returns true, or (false, msg).  Nearest-neighbour stretch to 1920x1080. */
+static int l_screen_wallpaper(lua_State *L)
+{
+    const char *path = luaL_checkstring(L, 1);
+    FIL fil;
+    FRESULT fr = f_open(&fil, path, FA_READ);
+    if (fr != FR_OK) { lua_pushboolean(L, 0); lua_pushfstring(L, "open %s (%d)", path, (int)fr); return 2; }
+    FSIZE_t sz = f_size(&fil);
+    unsigned char *png = malloc((size_t)sz);
+    if (png == NULL) { f_close(&fil); lua_pushboolean(L, 0); lua_pushstring(L, "OOM(png file)"); return 2; }
+    /* read via a 32-byte-aligned bounce (SD DMA cache rule) */
+    static unsigned char io[512] __attribute__((aligned(32)));
+    UINT total = 0;
+    while ((FSIZE_t)total < sz) {
+        UINT want = (UINT)((sz - total) > 512u ? 512u : (sz - total)), got = 0;
+        fr = f_read(&fil, io, want, &got);
+        if (fr != FR_OK || got == 0) break;
+        memcpy(png + total, io, got);
+        total += got;
+    }
+    f_close(&fil);
+
+    unsigned char *rgba = NULL; unsigned w = 0, h = 0;
+    unsigned err = lodepng_decode32(&rgba, &w, &h, png, total);
+    free(png);
+    if (err) { lua_pushboolean(L, 0); lua_pushfstring(L, "png decode err %d", (int)err); return 2; }
+
+    /* lodepng gives bytes R,G,B,A; the compositor word is 0xRRGGBBaa = (R<<24)|.. */
+    volatile uint32_t *base = (volatile uint32_t *)DESK_BASE;
+    for (uint32_t dy = 0; dy < DESK_H; dy++) {
+        uint32_t sy = (uint32_t)((uint64_t)dy * h / DESK_H);
+        const unsigned char *srow = rgba + (size_t)sy * w * 4u;
+        volatile uint32_t *drow = base + (size_t)dy * DESK_STRIDE;
+        for (uint32_t dx = 0; dx < DESK_W; dx++) {
+            uint32_t sx = (uint32_t)((uint64_t)dx * w / DESK_W);
+            const unsigned char *p = srow + (size_t)sx * 4u;
+            drow[dx] = ((uint32_t)p[0] << 24) | ((uint32_t)p[1] << 16)
+                     | ((uint32_t)p[2] << 8)  |  (uint32_t)p[3];
+        }
+    }
+    Xil_DCacheFlushRange((INTPTR)DESK_BASE, (INTPTR)(DESK_H * DESK_STRIDE * 4u));
+    free(rgba);
+    xil_printf("  wallpaper: %s -> %ux%u scaled to %ux%u\r\n", path, w, h, DESK_W, DESK_H);
+    lua_pushboolean(L, 1);
+    return 1;
+}
+
+/* Clear the desktop plane to black + select the compositor (gp0_ctrl bit0=0).
+ * Run once at repl_task start (scheduler up, well past the early-boot DDR window
+ * that used to reset-loop), BEFORE boot scripts so they paint a clean field. */
+static void desktop_init(void)
+{
+    volatile uint32_t *p = (volatile uint32_t *)DESK_BASE;
+    for (uint32_t i = 0; i < DESK_H * DESK_STRIDE; i++) p[i] = 0x00000000u;
+    Xil_DCacheFlushRange((INTPTR)DESK_BASE, (INTPTR)(DESK_H * DESK_STRIDE * 4u));
+    g_gp0 = 0x00u;                              /* compositor (off bars) */
+    Xil_Out32(XT_BLITTER_BASE + 0x1Cu, (u32)g_gp0);
+}
+
 static void lua_init(void)
 {
     g_L = luaL_newstate();                 /* uses newlib malloc (bumped heap) */
@@ -327,7 +434,17 @@ static void lua_init(void)
     lua_pushcfunction(g_L, l_note);
     lua_setfield(g_L, -2, "note");
     lua_pop(g_L, 1);
-    xil_printf("  lua: %s ready\r\n", LUA_RELEASE);
+    /* `screen` table — low-level compositor/desktop-plane drawing. */
+    static const luaL_Reg screen_lib[] = {
+        {"clear",     l_screen_clear},
+        {"rect",      l_screen_rect},
+        {"size",      l_screen_size},
+        {"wallpaper", l_screen_wallpaper},
+        {NULL, NULL}
+    };
+    luaL_newlib(g_L, screen_lib);
+    lua_setglobal(g_L, "screen");
+    xil_printf("  lua: %s ready (screen: clear/rect/size)\r\n", LUA_RELEASE);
 }
 
 /* Load + run a FAT file as a Lua chunk.  Reads the whole file into a malloc'd
@@ -1054,6 +1171,10 @@ static void repl_task(void *arg)
 {
     (void)arg;
 
+    /* Clear plane-0 power-on garbage + select the compositor BEFORE running boot
+     * scripts (which may paint the desktop and must not be wiped afterwards). */
+    desktop_init();
+
     /* Auto-run the boot scripts (0:/OS/Boot/NN-slug) now that the scheduler is
      * up, then drop to the interactive console. */
     boot_run();
@@ -1064,7 +1185,6 @@ static void repl_task(void *arg)
     char     line[80];
     unsigned ll = 0;
     unsigned out_on = 0, tick = 0, ms = 0;
-    unsigned desk_cleared = 0;          /* one-shot deferred desktop clear */
 
     for (;;) {
         /* Interactive: drain RX, echo, dispatch on CR/LF. */
@@ -1133,31 +1253,6 @@ static void repl_task(void *arg)
                 for (unsigned k = 0; k < ll; k++) uart1_putc(line[k]);
             }
             tick++;
-        }
-
-        /* One-shot: clear the desktop plane-0 surface (0x30000000) ~0.5 s into
-         * the loop — gated on the free-running ms counter (not the 1 s tick) so
-         * it fires mid-first-second, well past the ~224 ms ddr_warm PL->DDR gate
-         * + HDMI bring-up.  Replaces power-on DDR garbage with a clean black
-         * field.  DEFERRED (not early boot): the early-boot memset reset-looped
-         * when the then-ungated PL pounded DDR at t=0; same code path as the
-         * working `deskfill` REPL command. */
-        if (!desk_cleared && ms >= 500u) {
-            volatile uint32_t *p = (volatile uint32_t *)0x30000000u;
-            uint32_t words = 1080u * 2048u;     /* 1080 rows x 8192-byte stride */
-            for (uint32_t i = 0; i < words; i++) p[i] = 0x00000000u;
-            Xil_DCacheFlushRange((INTPTR)0x30000000u, (INTPTR)(words * 4u));
-            /* Belt-and-braces: assert the compositor (bit0=0) + default scale.
-             * The bitstream now resets gp0_ctrl to 0x00 (compositor) so this is
-             * usually a no-op, but it keeps g_gp0 consistent and guarantees the
-             * desktop is shown clean even if something poked bars earlier.  GP0
-             * writes are proven safe here (deferred in the REPL loop, not the
-             * early-boot window that used to hang). */
-            g_gp0 = 0x00u;
-            Xil_Out32(XT_BLITTER_BASE + 0x1Cu, (u32)g_gp0);
-            desk_cleared = 1u;
-            xil_printf("\r\ndesktop cleared + compositor on (off bars) at boot+~0.5s\r\n> ");
-            for (unsigned k = 0; k < ll; k++) uart1_putc(line[k]);
         }
     }
 }

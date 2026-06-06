@@ -394,6 +394,12 @@ with open(_user_cmake, "a") as _f:
     # libm for Lua's math (sin/pow/floor/fmod/…) — appended into the link's
     # --start-group, so it resolves the Lua math refs (the BSP group has no -lm).
     _f.write("set(USER_LINK_LIBRARIES m)\n")
+    # lodepng.c (in src/, auto-compiled) — decode-only: no encoder, no disk I/O
+    # (we read PNGs via FatFs), no ancillary chunks.  Keeps it lean + off newlib
+    # file stdio.  Append so we don't drop any generated defs.
+    _f.write("set(USER_COMPILE_DEFINITIONS ${USER_COMPILE_DEFINITIONS} "
+             "LODEPNG_NO_COMPILE_ENCODER LODEPNG_NO_COMPILE_DISK "
+             "LODEPNG_NO_COMPILE_ANCILLARY_CHUNKS)\n")
 print(f">> UserConfig.cmake: {len(_app_srcs)} app + {len(_lua_srcs)} Lua sources (+libm) -> {_user_cmake}")
 
 # --- bump stack + heap sizes --------------------------------------------
@@ -411,7 +417,7 @@ _lds_new = (_lds_txt
     .replace("_IRQ_STACK_SIZE = DEFINED(_IRQ_STACK_SIZE) ? _IRQ_STACK_SIZE : 1024;",
              "_IRQ_STACK_SIZE = DEFINED(_IRQ_STACK_SIZE) ? _IRQ_STACK_SIZE : 0x8000;")
     .replace("_HEAP_SIZE = DEFINED(_HEAP_SIZE) ? _HEAP_SIZE : 0x2000;",
-             "_HEAP_SIZE = DEFINED(_HEAP_SIZE) ? _HEAP_SIZE : 0x200000;"))
+             "_HEAP_SIZE = DEFINED(_HEAP_SIZE) ? _HEAP_SIZE : 0x2000000;"))
 if _lds_new != _lds_txt:
     try:
         os.chmod(_lds, 0o644)
@@ -419,7 +425,7 @@ if _lds_new != _lds_txt:
         pass
     with open(_lds, "w") as _f:
         _f.write(_lds_new)
-    print(">> bumped _STACK_SIZE=0x10000 _IRQ_STACK_SIZE=0x8000 _HEAP_SIZE=0x200000 in lscript.ld")
+    print(">> bumped _STACK_SIZE=0x10000 _IRQ_STACK_SIZE=0x8000 _HEAP_SIZE=0x2000000 in lscript.ld")
 
 status = app.build()
 print(f">> xtos build status: {status}")
