@@ -26,11 +26,13 @@ static void hdr(int x,int y,const char *s){ vst_color(H,9); vst_height(H,11,0,0,
 
 // A push button sized to its label; returns its width.
 static int btn(const char *variant, int x, int y, const char *l) {
+    int def = strstr(variant,"default")!=0;
     const theme_slice *s=g(variant); int h=s?s->sh:24, w=font_text_width(font_at(FF,14),l)+26;
     theme_blit(H,&TH,s,x,y,w,h);
-    vst_color(H, strstr(variant,"default")?0 : strstr(variant,"disabled")?9 : 1); vst_height(H,14,0,0,0,0);
+    vst_color(H, def?0 : strstr(variant,"disabled")?9 : 1); vst_height(H,14,0,0,0,0);
+    if(def) vst_effects(H,FX_BOLD);                  // bold so the white reads on blue
     vst_alignment(H,VDI_TA_CENTER,VDI_TA_HALF,0,0); v_gtext(H,x+w/2,y+h/2,l);
-    vst_alignment(H,VDI_TA_LEFT,VDI_TA_TOP,0,0);
+    vst_alignment(H,VDI_TA_LEFT,VDI_TA_TOP,0,0); vst_effects(H,0);
     return w;
 }
 // A label-in-field helper (popup/combo/textfield) at a fixed width; h==0 = the
