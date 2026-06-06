@@ -49,6 +49,39 @@ const vfs_fs *vfs_lookup(const char *path)
     return best;
 }
 
+/* ---- current directory + relative-path resolution --------------------- */
+static char vfs_cwd[VFS_PATH_MAX] = "/";
+
+void vfs_abspath(const char *in, char *out, int outsz)
+{
+    int i = 0;
+    if (in[0] == '/') {                         /* already absolute */
+        while (in[i] && i < outsz - 1) { out[i] = in[i]; i++; }
+        out[i] = 0;
+        return;
+    }
+    const char *c = vfs_cwd;                     /* prepend cwd */
+    while (*c && i < outsz - 1) out[i++] = *c++;
+    if (i > 1 && out[i - 1] != '/' && i < outsz - 1) out[i++] = '/';  /* separator */
+    while (*in && i < outsz - 1) out[i++] = *in++;
+    out[i] = 0;
+}
+
+const char *vfs_getcwd(void) { return vfs_cwd; }
+
+int vfs_chdir(const char *path)
+{
+    char a[VFS_PATH_MAX];
+    vfs_abspath(path, a, sizeof a);
+    int d = vfs_opendir(a);                      /* must be a real/valid directory */
+    if (d < 0) return -1;
+    vfs_closedir(d);
+    int i = 0;
+    while (a[i] && i < (int)sizeof(vfs_cwd) - 1) { vfs_cwd[i] = a[i]; i++; }
+    vfs_cwd[i] = 0;
+    return 0;
+}
+
 /* Is mount-prefix p a direct child of directory d? (e.g. "/tmp" under "/"). */
 static int is_direct_child(const char *p, const char *d)
 {
@@ -63,25 +96,27 @@ static int is_direct_child(const char *p, const char *d)
 }
 
 #define VFS_MAXDIR 4
-static struct { const vfs_fs *fs; int bh; int mit; char used; char path[VFS_NAME_MAX]; }
+static struct { const vfs_fs *fs; int bh; int mit; char used; char path[VFS_PATH_MAX]; }
     vdir[VFS_MAXDIR];
 
 int vfs_opendir(const char *path)
 {
+    char a[VFS_PATH_MAX];
+    vfs_abspath(path, a, sizeof a);
     int i;
     for (i = 0; i < VFS_MAXDIR; i++) if (!vdir[i].used) break;
     if (i == VFS_MAXDIR) return -1;
-    const vfs_fs *fs = vfs_lookup(path);
+    const vfs_fs *fs = vfs_lookup(a);
     vdir[i].fs  = fs;
-    vdir[i].bh  = (fs && fs->diropen) ? fs->diropen(path) : -1;
+    vdir[i].bh  = (fs && fs->diropen) ? fs->diropen(a) : -1;
     vdir[i].mit = 0;
-    strncpy(vdir[i].path, path, VFS_NAME_MAX - 1);
-    vdir[i].path[VFS_NAME_MAX - 1] = 0;
+    strncpy(vdir[i].path, a, VFS_PATH_MAX - 1);
+    vdir[i].path[VFS_PATH_MAX - 1] = 0;
     vdir[i].used = 1;
     if (vdir[i].bh < 0) {                           /* no real dir — valid only if a mount lives here */
         int has_mount = 0;
         for (int k = 0; k < nfs; k++)
-            if (strcmp(fstab[k]->prefix, "/") != 0 && is_direct_child(fstab[k]->prefix, path))
+            if (strcmp(fstab[k]->prefix, "/") != 0 && is_direct_child(fstab[k]->prefix, a))
                 { has_mount = 1; break; }
         if (!has_mount) { vdir[i].used = 0; return -1; }
     }
@@ -122,9 +157,11 @@ void vfs_closedir(int d)
 int _open(const char *path, int flags, int mode)
 {
     (void)mode;
-    const vfs_fs *fs = vfs_lookup(path);
+    char a[VFS_PATH_MAX];
+    vfs_abspath(path, a, sizeof a);
+    const vfs_fs *fs = vfs_lookup(a);
     if (!fs || !fs->open) { errno = ENOENT; return -1; }
-    int bh = fs->open(path, flags);
+    int bh = fs->open(a, flags);
     if (bh < 0) { errno = ENOENT; return -1; }
     int i;
     for (i = 0; i < VFS_MAXFD; i++) if (!fdtab[i].used) break;
@@ -183,8 +220,10 @@ int _isatty(int fd) { return (fd <= 2) ? 1 : 0; }
 
 int _unlink(const char *path)
 {
-    const vfs_fs *fs = vfs_lookup(path);
+    char a[VFS_PATH_MAX];
+    vfs_abspath(path, a, sizeof a);
+    const vfs_fs *fs = vfs_lookup(a);
     if (!fs || !fs->remove) { errno = ENOSYS; return -1; }
-    return (fs->remove(path) == 0) ? 0 : (errno = EIO, -1);
+    return (fs->remove(a) == 0) ? 0 : (errno = EIO, -1);
 }
 int _link(const char *o, const char *n) { (void)o; (void)n; errno = ENOSYS; return -1; }

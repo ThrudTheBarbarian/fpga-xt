@@ -70,7 +70,15 @@ scp -q -r "$REPO_ROOT/vitis/xtos/tinyusb/src" "$REMOTE:$REMOTE_DIR/vitis/xtos/ti
 
 echo ">> pushing freertos_hello/ (FreeRTOS bring-up app) -> $REMOTE:$REMOTE_DIR/vitis/freertos_hello/"
 ps_wipe "$REMOTE_DIR/vitis/freertos_hello"
+ps_mkdir "$REMOTE_DIR/vitis/freertos_hello"
 scp -q -r "$REPO_ROOT/vitis/freertos_hello/src" "$REMOTE:$REMOTE_DIR/vitis/freertos_hello/src"
+
+# Vendored Lua 5.4 lives at the repo-root xtos/lua (create_platform.py globs it
+# from REPO_ROOT/xtos/lua -> C:/Users/user/fpga/xtos/lua, NOT under vitis/).
+echo ">> pushing xtos/lua (vendored Lua 5.4) -> $REMOTE:$REMOTE_DIR/xtos/lua/"
+ps_wipe "$REMOTE_DIR/xtos/lua"
+ps_mkdir "$REMOTE_DIR/xtos"
+scp -q -r "$REPO_ROOT/xtos/lua" "$REMOTE:$REMOTE_DIR/xtos/lua"
 
 # Run Vitis ---------------------------------------------------------------
 echo ">> running vitis -s $SCRIPT"

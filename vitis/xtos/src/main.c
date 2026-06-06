@@ -568,8 +568,11 @@ static void repl_help(void)
       "  { ... }          serial->Atari keyboard passthrough ('key' or '{' in, '}' out)\r\n"
       "  speed <n>        CPU speed = n x real Atari (DECIMAL); 1=real/boot-safe, 56=max turbo\r\n"
       "  mount            (re)mount the SD card FAT volume (0:)\r\n"
-      "  ls [path]        list a directory (default 0:/)\r\n"
+      "  ls [path]        list a directory (default cwd)\r\n"
+      "  cd [path]        change directory (default /); paths may be relative\r\n"
+      "  pwd              print the current directory\r\n"
       "  cat <path>       dump a file to the console\r\n"
+      "  echo <t> [> f]   print text, or write/append (>>) it to a file\r\n"
       "  luatest          run a built-in Lua chunk (interpreter self-test)\r\n"
       "  boot             run 0:/OS/Boot/NN-slug scripts in numeric order\r\n"
       "  mon <0|1>        periodic 1s status tick off/on\r\n"
@@ -683,8 +686,61 @@ static void key_paste_tick(void)
 }
 
 /* Parse + run one command line (modified in place by the tokenizer). */
+/* Find the redirection '>' (or '>>') outside quotes, or NULL.  *append set. */
+static char *find_redirect(char *p, int *append)
+{
+    int q = 0;
+    for (char *s = p; *s; s++) {
+        if (*s == '"') q = !q;
+        else if (*s == '>' && !q) { *append = (s[1] == '>'); return s; }
+    }
+    return (void *)0;
+}
+
+/* echo <text> [> path] [>> path] — print text, or (re)write/append it to a file.
+ * Parses the RAW line so quoted text with spaces survives; strips one layer of
+ * surrounding double-quotes.  Redirect targets any VFS path (e.g. /tmp/x). */
+static void cmd_echo(char *cmd)
+{
+    char *p = cmd + 4;                          /* past "echo" */
+    while (*p == ' ' || *p == '\t') p++;        /* -> start of text */
+    int append = 0;
+    char *path = (void *)0;
+    char *g = find_redirect(p, &append);
+    if (g) {
+        path = g + 1 + (append ? 1 : 0);
+        while (*path == ' ' || *path == '\t') path++;
+        char *pe = path + strlen(path);
+        while (pe > path && (pe[-1] == ' ' || pe[-1] == '\t')) *--pe = '\0';
+        char *te = g;                            /* trim trailing ws off text */
+        while (te > p && (te[-1] == ' ' || te[-1] == '\t')) te--;
+        *te = '\0';
+    }
+    size_t tl = strlen(p);                        /* strip one layer of quotes */
+    if (tl >= 2 && p[0] == '"' && p[tl - 1] == '"') { p[tl - 1] = '\0'; p++; }
+
+    if (g && *path) {
+        FILE *f = fopen(path, append ? "a" : "w");
+        if (f == NULL) { xil_printf("  echo: cannot open %s\r\n", path); return; }
+        fwrite(p, 1, strlen(p), f);
+        fputc('\n', f);
+        fclose(f);
+        xil_printf("  (wrote %u bytes to %s)\r\n", (unsigned)(strlen(p) + 1), path);
+    } else {
+        uart1_puts(p);
+        uart1_puts("\r\n");
+    }
+}
+
 static void repl_exec(char *cmd)
 {
+    /* echo (+ optional >/>> redirection) is parsed on the RAW line, before the
+     * tokeniser below splits on spaces (which would break quoted text). */
+    if (!strncmp(cmd, "echo", 4) && (cmd[4] == ' ' || cmd[4] == '\0')) {
+        cmd_echo(cmd);
+        return;
+    }
+
     char *argv[5]; int argc = 0;
     char *p = cmd;
     while (*p && argc < 5) {
@@ -739,8 +795,8 @@ static void repl_exec(char *cmd)
         return;
     }
 
-    if (!strcmp(argv[0], "ls")) {        /* list a directory (default /) — via VFS */
-        const char *path = (argc >= 2) ? argv[1] : "/";
+    if (!strcmp(argv[0], "ls")) {        /* list a directory (default cwd) — via VFS */
+        const char *path = (argc >= 2) ? argv[1] : vfs_getcwd();
         int dh = vfs_opendir(path);          /* backend entries + child mounts */
         if (dh < 0) {
             xil_printf("  ls: opendir(%s) failed%s\r\n", path,
@@ -758,6 +814,14 @@ static void repl_exec(char *cmd)
         xil_printf("  (%u entries)\r\n", files);
         return;
     }
+
+    if (!strcmp(argv[0], "cd")) {        /* change directory (default /) */
+        const char *path = (argc >= 2) ? argv[1] : "/";
+        if (vfs_chdir(path) != 0) xil_printf("  cd: %s: not a directory\r\n", path);
+        return;
+    }
+
+    if (!strcmp(argv[0], "pwd")) { uart1_puts(vfs_getcwd()); uart1_puts("\r\n"); return; }
 
     if (!strcmp(argv[0], "cat")) {       /* dump a file — via newlib fopen/FatFs */
         if (argc < 2) { uart1_puts("  usage: cat <path>\r\n"); return; }

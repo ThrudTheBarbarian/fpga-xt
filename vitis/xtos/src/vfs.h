@@ -7,6 +7,7 @@
 #define VFS_H
 
 #define VFS_NAME_MAX 64
+#define VFS_PATH_MAX 256
 
 struct vfs_dirent { char name[VFS_NAME_MAX]; int is_dir; unsigned long size; };
 
@@ -27,6 +28,12 @@ typedef struct vfs_fs {
 
 void          vfs_register(const vfs_fs *fs);   // register a backend
 const vfs_fs *vfs_lookup(const char *path);     // longest-prefix match, or NULL
+
+// Current directory + relative-path resolution.  A relative path resolves
+// against the cwd (default "/"); an absolute path is taken as-is.
+void          vfs_abspath(const char *in, char *out, int outsz);
+int           vfs_chdir(const char *path);      // 0 ok, -1 not a directory
+const char   *vfs_getcwd(void);
 
 // Directory listing across the VFS: the claiming backend's entries PLUS any
 // child mount points (e.g. listing "/" yields the SD root + "tmp").
