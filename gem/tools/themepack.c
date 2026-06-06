@@ -74,7 +74,7 @@ static img load_png(const char *dir, const char *name) {
     unsigned char *raw = malloc((size_t)m.w * m.h * 4);
     char ops[96] = "", t[48];
     if (rot)     { snprintf(t, sizeof t, " -rotate %d", rot); strncat(ops, t, sizeof ops-strlen(ops)-1); }
-    if (tint[0]) { snprintf(t, sizeof t, " -fill \"#%s\" -colorize 65%%", tint); strncat(ops, t, sizeof ops-strlen(ops)-1); }
+    if (tint[0]) { snprintf(t, sizeof t, " -fill \"#%s\" -colorize 85%%", tint); strncat(ops, t, sizeof ops-strlen(ops)-1); }
     snprintf(cmd, sizeof cmd, "magick '%s'%s -depth 8 RGBA:- 2>/dev/null", path, ops);
     p = popen(cmd, "r");
     size_t need = (size_t)m.w * m.h * 4;

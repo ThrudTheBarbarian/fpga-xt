@@ -15,7 +15,7 @@ maximize            sprite  window-standard-maximize-button
 button              h3      button-bezel-left button-bezel-center button-bezel-right
 button.selected     h3      button-bezel-highlighted-left button-bezel-highlighted-center button-bezel-highlighted-right
 button.disabled     h3      button-bezel-disabled-left button-bezel-disabled-center button-bezel-disabled-right
-button.default      h3      button-bezel-left^3875D6 button-bezel-center^3875D6 button-bezel-right^3875D6
+button.default      h3      button-bezel-left^4a82e5 button-bezel-center^4a82e5 button-bezel-right^4a82e5
 
 # --- text field / popup / combo (with states) --------------------------------
 textfield           nine    textfield-bezel-square-0 textfield-bezel-square-1 textfield-bezel-square-2 textfield-bezel-square-3 textfield-bezel-square-4 textfield-bezel-square-5 textfield-bezel-square-6 textfield-bezel-square-7 textfield-bezel-square-8
