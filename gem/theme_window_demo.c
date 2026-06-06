@@ -116,7 +116,7 @@ static void draw(gfx_surface *d) {
     d9("vscroll.thumb",vtx,y+40,sw("vscroll.thumb"),60);
     // horizontal: the legacy track is 14px tall; centre arrows + thumb vertically on it
     int hx=c3+30, htk=sh("hscroll.track"), hw=150;
-    int hay=y+(htk-sh("hscroll.left"))/2, hty=y+(htk-sh("hscroll.thumb"))/2;
+    int hay=y+(htk-sh("hscroll.left")+1)/2, hty=y+(htk-sh("hscroll.thumb"))/2;  // arrows: round to track centre
     spr("hscroll.left",hx,hay);
     d9("hscroll.track",hx+sw("hscroll.left"),y,hw-sw("hscroll.left")-sw("hscroll.right"),htk);
     spr("hscroll.right",hx+hw-sw("hscroll.right"),hay);
