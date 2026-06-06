@@ -919,6 +919,13 @@ int main(void) {
     vr_transfer_bits(htb, &bsm, &tdm, apx, VR_BLEND);
     int bch = (td->px[10*20+10] >> 24) & 0xFF;
     CHECK(bch >= 120 && bch <= 136);                    // ~128
+
+    // VR_OVER: src-over using the source's own alpha (theme art compositing).
+    for (int i = 0; i < 20 * 20; i++) td->px[i] = GFX_RGB(0, 0, 0);
+    uint32_t halfpx[1] = { (255u << 24) | 128u };       // red, alpha 128
+    MFDB osm = { halfpx, 1, 1, 1, 0, 0 };
+    vr_transfer_bits(htb, &osm, &tdm, apx, VR_OVER);
+    CHECK(((td->px[10*20+10] >> 24) & 0xFF) == 128);    // 50% red over black
     v_clsvwk(htb); gfx_surface_free(td);
 
     // vs_/vq_ raster colours round-trip.

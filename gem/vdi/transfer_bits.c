@@ -31,6 +31,15 @@ static uint32_t blend_op(int mode, uint32_t s, uint32_t d) {
     uint32_t hi = vdi_pen_rgba(g_hilite_color), mn = vdi_pen_rgba(g_min_color),
              mx = vdi_pen_rgba(g_max_color), wt = vdi_pen_rgba(g_weight_color);
     if (mode == VR_HILITE) return (s & 0xFFFFFF00u) ? ((hi & 0xFFFFFF00u) | 0xFF) : d;
+    if (mode == VR_OVER) {                // src-over using the source's own alpha
+        int a = (int)(s & 0xFF);
+        if (a == 0) return d;             // fully transparent: keep dst
+        if (a == 255) return (s & 0xFFFFFF00u) | 0xFF;
+        int r = (CH(s,24)*a + CH(d,24)*(255-a)) / 255;
+        int g = (CH(s,16)*a + CH(d,16)*(255-a)) / 255;
+        int b = (CH(s,8) *a + CH(d,8) *(255-a)) / 255;
+        return GFX_RGB(r, g, b);
+    }
     int r, g, b;
     if (mode == VR_MAX) {                 // additive, ceilinged by max_colour
         r = clampi(CH(s,24)+CH(d,24), 0, CH(mx,24));

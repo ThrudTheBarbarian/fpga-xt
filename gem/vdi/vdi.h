@@ -171,7 +171,8 @@ enum { VRO_COPY = 3 };
 enum { VR_HILITE = 16,   // src-set pixels -> hilite colour
        VR_MAX    = 17,   // additive  : min(max_colour, src+dst) per channel
        VR_MIN    = 18,   // subtractive: max(min_colour, dst-src) per channel
-       VR_BLEND  = 19 }; // weighted  : lerp(dst, src, weight_colour) per channel
+       VR_BLEND  = 19,   // weighted  : lerp(dst, src, weight_colour) per channel
+       VR_OVER   = 20 }; // src-over  : composite using the source's own alpha (theme art)
 
 // Polyline end styles (vsl_ends), for the start and the end point: SQUARE (a
 // flat butt cap), ARROW (an arrowhead; the line stops at its base), ROUND (the
