@@ -31,6 +31,7 @@ font *font_at_wh(font_face *face, int wpx, int hpx);
 // table (else stays off).  vst_track_offset: extra uniform letter-spacing (px).
 int  font_face_set_kern(font_face *face, int on);
 int  font_face_has_kern(const font_face *face);
+int  font_kerning_on(const font *f);     // is pair kerning active for this font's face?
 void font_face_set_track(font_face *face, int off);
 
 int   font_height(const font *f);              // line height (px)

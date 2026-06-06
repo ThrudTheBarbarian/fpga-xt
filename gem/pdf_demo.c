@@ -119,6 +119,15 @@ int main(int argc, char **argv) {
         }
         vst_rotation(h, 0);
 
+        // Kerning off vs on (this face has a legacy kern table) — same string,
+        // same anchor; with kerning the pairs (AV, VA, To, Wa, Ya, P.) tighten.
+        vst_effects(h, 0); vst_rotation(h, 0); vst_color(h, 1);
+        vst_height(h, 200, NULL, NULL, NULL, NULL);
+        vst_alignment(h, VDI_TA_LEFT, VDI_TA_TOP, NULL, NULL);
+        vst_kern(h, 0); v_gtext(h, 2700, 6000, "AVA To Wave Ya VAP.");
+        vst_kern(h, 1); v_gtext(h, 2700, 6300, "AVA To Wave Ya VAP.");
+        vst_kern(h, 0);
+
         // Justified to a width.
         vst_color(h, 11); vst_height(h, 180, NULL, NULL, NULL, NULL);
         v_justified(h, 500, 7600, "Justified text spread to fill the line.", 4950, 1, 1);

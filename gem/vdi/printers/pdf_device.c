@@ -402,22 +402,32 @@ static void glyph_path(pdfpage *p, font *f, unsigned cp, double ox, double oy) {
     if (started) pg_str(p, "h\n");
 }
 
-// Sum of per-glyph cell advances — matches the placement below, so centre/right
-// alignment lands correctly.
+// Sum of per-glyph cell advances (with pair kerning when the face has it on) —
+// must match the placement below exactly, or centre/right alignment drifts.
 static int text_adv(font *f, const char *s) {
-    int w = 0;
-    for (const char *q = s; *q; ) w += font_char_metrics(f, utf8_next(&q), NULL, NULL);
+    int w = 0, kern = font_kerning_on(f);
+    unsigned prev = 0;
+    for (const char *q = s; *q; ) {
+        unsigned cp = utf8_next(&q);
+        if (kern && prev) w += font_pair_kern(f, prev, cp);
+        w += font_char_metrics(f, cp, NULL, NULL);
+        prev = cp;
+    }
     return w;
 }
-// Lay glyphs along a baseline from (x0,baseline), advancing by metrics, each glyph
-// origin offset by (dx,dy).
+// Lay glyphs along a baseline from (x0,baseline), advancing by metrics + kerning,
+// each glyph origin offset by (dx,dy).  Same advance model as text_adv.
 static void glyph_run(pdfpage *p, font *f, double x0, double baseline,
                       const char *s, double dx, double dy) {
     double penx = x0;
+    int kern = font_kerning_on(f);
+    unsigned prev = 0;
     for (const char *q = s; *q; ) {
         unsigned cp = utf8_next(&q);
+        if (kern && prev) penx += font_pair_kern(f, prev, cp);
         glyph_path(p, f, cp, penx + dx, baseline + dy);
         penx += font_char_metrics(f, cp, NULL, NULL);
+        prev = cp;
     }
 }
 // q + a text matrix (rotation a rad, shear k) about pivot (px,py); close with Q.
