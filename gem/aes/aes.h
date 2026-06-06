@@ -49,4 +49,18 @@ void objc_draw(OBJECT *tree, int start, int depth, int clx, int cly, int clw, in
 // Topmost drawable object under (mx,my) within `depth` levels of `start`; -1 none.
 int  objc_find(OBJECT *tree, int start, int depth, int mx, int my);
 
+// ---- form_do: the modal dialog loop -------------------------------------
+// AES is event-driven by a host source: it presents the current frame, blocks
+// for the next input, and returns its type.  (On the SDL testbed that's
+// present + SDL_WaitEvent; on hardware it's the AES event pump.)
+enum { AES_NONE = 0, AES_BTN_DOWN = 1, AES_BTN_UP = 2, AES_KEY = 3, AES_QUIT = 4 };
+typedef struct { int type, mx, my, key; } aes_event;
+typedef int (*aes_event_fn)(aes_event *ev);
+void aes_set_events(aes_event_fn fn);
+
+// Run a modal form: track clicks (push buttons flash while held, checkboxes
+// toggle, radio buttons exclude their siblings), Return triggers the DEFAULT
+// button, and the first EXIT/TOUCHEXIT object clicked is returned (-1 = quit).
+int  form_do(OBJECT *tree, int start);
+
 #endif // GEM_AES_H
