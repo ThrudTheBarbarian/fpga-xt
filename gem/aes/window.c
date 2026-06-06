@@ -58,6 +58,7 @@ void wind_redraw(void){
     gfx_surface *d = vdi_screen_target();
     if(d){ uint32_t bg=g_deskbg; for(int i=0;i<d->w*d->h;i++) d->px[i]=bg; }
     for(int i=0;i<g_nz;i++) draw_one(g_z[i], i==g_nz-1);
+    menu_redraw();                 // the menu bar sits above every window
 }
 
 int wind_create(int kind,int x,int y,int w,int h){

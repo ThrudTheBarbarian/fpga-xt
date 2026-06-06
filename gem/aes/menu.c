@@ -67,6 +67,8 @@ static void draw_bar(void) {
     EACH_CHILD(g_menu,1,c) v_gtext(H(), g_menu[c].ob_x+TPAD, BARH/2-7, (const char*)g_menu[c].ob_spec);
 }
 
+void menu_redraw(void) { if (g_menu) draw_bar(); }   // bar is always-on-top chrome
+
 void menu_bar(OBJECT *tree, int show) {
     if (show) {
         g_menu = tree;
