@@ -190,8 +190,32 @@ if not os.environ.get("VITIS_NO_RTOS"):
         except Exception as e:  # noqa: BLE001 - tolerate API key drift
             print(f">> WARNING: freertos domain set_config({_k}) failed: {e}")
 
+    # ---- FAT filesystem (xilffs / FatFs) on the SD card ------------------
+    # xtos mounts a FAT SD card for boot scripts + apps.  xsdps (the SD driver)
+    # is pulled in automatically because SD0 is enabled in the PS.  Config is
+    # XILFFS_use_lfn=3 = long filenames via a HEAP work-buffer (reentrant-safe
+    # under FreeRTOS; the static =1 buffer is not).  xilffs has NO code-page
+    # parameter — FF_CODE_PAGE is hardcoded to 932 in the generated ffconf.h —
+    # so the 850 (Latin-1 / UK £) override is a post-generate patch + rebuild
+    # (see after platform.build()).
+    print(">> adding xilffs (FatFs) to the freertos domain ...")
+    rtos_dom.set_lib(lib_name="xilffs")
+    try:
+        rtos_dom.set_config("lib", "XILFFS_use_lfn", "3", lib_name="xilffs")
+        print(">> xilffs: set XILFFS_use_lfn -> 3 (LFN, heap work-buffer)")
+    except Exception as e:  # noqa: BLE001 - tolerate param-name drift
+        print(f">> WARNING: xilffs set_config(XILFFS_use_lfn) failed: {e}")
+
 status = platform.build()
 print(f">> platform build status: {status}")
+
+# NOTE: FAT code page is fixed at 932 (Shift-JIS) — xilffs exposes no code-page
+# parameter and the generated ffconf.h hardcodes `#define FF_CODE_PAGE 932`.
+# Patching the *generated* ffconf.h doesn't help: platform.build() regenerates
+# it from the xilffs template on the next build.  Pure-ASCII filenames are
+# identical under 932/850, so this only matters for 0x80-0xFF (£, accented
+# Latin).  Forcing 850 (Latin-1/UK) means patching the xilffs *template*
+# ffconf.h in the Vitis install (modifies the toolchain) — not done by default.
 
 PFM_FILE = os.path.join(WORKSPACE, "fpga_xt_platform", "export",
                        "fpga_xt_platform", "fpga_xt_platform.xpfm")

@@ -36,6 +36,7 @@
 #include "sleep.h"           /* usleep — short busy-waits in init/helpers */
 #include "FreeRTOS.h"        /* xtos runs under the FreeRTOS scheduler */
 #include "task.h"
+#include "ff.h"              /* xilffs / FatFs — SD card (FAT) access */
 #include "xiicps.h"          /* PS I2C0 (EMIO) -> SiI9022A control bus */
 
 #include "xt_blitter.h"
@@ -276,6 +277,28 @@ static void uart1_putc(char ch)
 }
 static void uart1_puts(const char *s) { while (*s) uart1_putc(*s++); }
 
+/* ---- FAT / SD (xilffs) ---------------------------------------------------
+ * One mounted volume ("0:" = SD0).  The FATFS object is 32-byte aligned: the
+ * xsdps driver invalidates/flushes the caller's cache lines around its ADMA2
+ * DMA, so anything it touches must be cache-line aligned or it can corrupt a
+ * neighbour sharing the line.  I/O buffers passed to f_read/f_write follow the
+ * same rule (see the `cat` command). */
+static FATFS g_fatfs __attribute__((aligned(32)));
+static int   g_fs_mounted = 0;
+
+static void fs_mount(void)
+{
+    FRESULT fr = f_mount(&g_fatfs, "0:", 1);   /* opt=1: mount + init now */
+    if (fr == FR_OK) {
+        g_fs_mounted = 1;
+        xil_printf("  SD: FAT mounted on 0: (LFN, CP932)\r\n");
+    } else {
+        g_fs_mounted = 0;
+        xil_printf("  SD: f_mount failed (FRESULT %d) — card inserted + FAT?\r\n",
+                   (int)fr);
+    }
+}
+
 /* Enable the UART1 receiver — ps7_init sets baud/mode, but the early TX-only
  * CR write in uart1_raw_puts cleared RX_EN, so turn it back on for the REPL. */
 static void uart1_rx_enable(void)
@@ -315,6 +338,9 @@ static void repl_help(void)
       "  diag             decode GP0 diag word + measured H_RES/V_RES\r\n"
       "  { ... }          serial->Atari keyboard passthrough ('key' or '{' in, '}' out)\r\n"
       "  speed <n>        CPU speed = n x real Atari (DECIMAL); 1=real/boot-safe, 56=max turbo\r\n"
+      "  mount            (re)mount the SD card FAT volume (0:)\r\n"
+      "  ls [path]        list a directory (default 0:/)\r\n"
+      "  cat <path>       dump a file to the console\r\n"
       "  mon <0|1>        periodic 1s status tick off/on\r\n"
       "  reset            soft-reset the PS (SLCR) -> full reboot (FSBL/DDR/PL)\r\n"
       "  help             this list\r\n"
@@ -474,6 +500,59 @@ static void repl_exec(char *cmd)
         else
             xil_printf("  SALLY clock_mult = %u (register verified) — NOT a clean grade "
                        "(1 2 4 7 8 14 28 56); CPU runs at 1x\r\n", (unsigned)rb);
+        return;
+    }
+
+    if (!strcmp(argv[0], "mount")) {     /* (re)mount the SD card FAT volume */
+        fs_mount();
+        return;
+    }
+
+    if (!strcmp(argv[0], "ls")) {        /* list a directory (default 0:/) */
+        const char *path = (argc >= 2) ? argv[1] : "0:/";
+        DIR dir; FILINFO fno;
+        FRESULT fr = f_opendir(&dir, path);
+        if (fr != FR_OK) {
+            xil_printf("  ls: f_opendir(%s) failed (%d)%s\r\n", path, (int)fr,
+                       g_fs_mounted ? "" : " — not mounted (try 'mount')");
+            return;
+        }
+        unsigned files = 0;
+        for (;;) {
+            fr = f_readdir(&dir, &fno);
+            if (fr != FR_OK || fno.fname[0] == 0) break;
+            /* xil_printf's %lu reads a 64-bit arg, but ARM `unsigned long` is
+             * 32-bit — that over-reads varargs (garbage + a bad %s ptr).  Use
+             * plain %u with a 32-bit cast; name before size so no field width. */
+            xil_printf("  %c  %s  (%u bytes)\r\n",
+                       (fno.fattrib & AM_DIR) ? 'd' : '-',
+                       fno.fname, (unsigned)fno.fsize);
+            files++;
+        }
+        f_closedir(&dir);
+        xil_printf("  (%u entries)\r\n", files);
+        return;
+    }
+
+    if (!strcmp(argv[0], "cat")) {       /* dump a file to the console */
+        if (argc < 2) { uart1_puts("  usage: cat <path>\r\n"); return; }
+        FIL f;
+        FRESULT fr = f_open(&f, argv[1], FA_READ);
+        if (fr != FR_OK) {
+            xil_printf("  cat: f_open(%s) failed (%d)\r\n", argv[1], (int)fr);
+            return;
+        }
+        /* 32-byte aligned + whole-cache-line sized: the SD DMA invalidates
+         * these lines, so a shared/unaligned buffer would corrupt neighbours. */
+        static char buf[512] __attribute__((aligned(32)));
+        UINT n;
+        do {
+            fr = f_read(&f, buf, sizeof buf, &n);
+            if (fr != FR_OK) { xil_printf("\r\n  cat: f_read failed (%d)\r\n", (int)fr); break; }
+            for (UINT i = 0; i < n; i++) uart1_putc(buf[i]);
+        } while (n == sizeof buf);
+        f_close(&f);
+        uart1_puts("\r\n");
         return;
     }
 
@@ -811,6 +890,12 @@ int main(void)
      * counter still services hot-plug (auto-enable output on HDMI plug),
      * toggles the liveness LED, and prints a status line when `mon` is on. */
     uart1_rx_enable();
+
+    /* Mount the SD card FAT volume (boot scripts + apps live here).  Done before
+     * the scheduler so the boot log shows SD status; `mount` re-tries at runtime
+     * (e.g. after inserting a card). */
+    fs_mount();
+
     /* Hand off to the scheduler; the interactive console runs as a task so the
      * GEM service, FAT/SD and Lua can run as sibling tasks later.  (Keyboard
      * input is the serial '{ }' passthrough; USB HID lives on the RP2354
