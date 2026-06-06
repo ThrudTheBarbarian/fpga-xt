@@ -33,9 +33,10 @@ static int btn(const char *variant, int x, int y, const char *l) {
     vst_alignment(H,VDI_TA_LEFT,VDI_TA_TOP,0,0);
     return w;
 }
-// A label-in-field helper (popup/combo/textfield) at a fixed width.
-static void field(const char *variant, int x, int y, int w, const char *l, int dim) {
-    int h=sh(variant); if(!h) h=24; d9(variant,x,y,w,h);
+// A label-in-field helper (popup/combo/textfield) at a fixed width; h==0 = the
+// element's natural height.
+static void field(const char *variant, int x, int y, int w, int h, const char *l, int dim) {
+    if(!h) h=sh(variant); if(!h) h=24; d9(variant,x,y,w,h);
     vst_color(H,dim?9:1); vst_height(H,13,0,0,0,0); v_gtext(H,x+8,y+h/2-7,l);
 }
 
@@ -75,21 +76,22 @@ static void draw(gfx_surface *d) {
     spr("menu.tick",c1+7,y+30);
     y+=mh+18;
     hdr(c1,y,"TABLE HEADER"); y+=12;
-    field("header",c1,y,120,"Column",0); field("header.pressed",c1+122,y,120,"Sorted",0);
+    field("header",c1,y,120,0,"Column",0); field("header.pressed",c1+122,y,120,0,"Sorted",0);
 
-    // ===== column 2 =====
+    // ===== column 2 (uniform field height = the popup/combo row height) =====
+    int fh = sh("popup"); if (fh < 1) fh = 25;
     y=y0;
     hdr(c2,y,"POPUP"); y+=14;
-    field("popup",c2,y,150,"Choose…",0); y+=34;
-    field("popup.disabled",c2,y,150,"Disabled",1); y+=42;
+    field("popup",c2,y,150,fh,"Choose…",0); y+=fh+10;
+    field("popup.disabled",c2,y,150,fh,"Disabled",1); y+=fh+18;
     hdr(c2,y,"COMBO"); y+=14;
-    field("combo",c2,y,170,"Editable",0); y+=32;
-    field("combo.focused",c2,y,170,"Focused",0); y+=32;
-    field("combo.disabled",c2,y,170,"Disabled",1); y+=42;
+    field("combo",c2,y,170,fh,"Editable",0); y+=fh+8;
+    field("combo.focused",c2,y,170,fh,"Focused",0); y+=fh+8;
+    field("combo.disabled",c2,y,170,fh,"Disabled",1); y+=fh+18;
     hdr(c2,y,"TEXT FIELD"); y+=14;
-    field("textfield",c2,y,170,"normal",0); y+=30;
-    field("textfield.focused",c2,y,170,"focused",0); y+=30;
-    field("textfield.disabled",c2,y,170,"disabled",1); y+=42;
+    field("textfield",c2,y,170,fh,"normal",0); y+=fh+6;
+    field("textfield.focused",c2,y,170,fh,"focused",0); y+=fh+6;
+    field("textfield.disabled",c2,y,170,fh,"disabled",1); y+=fh+18;
     hdr(c2,y,"STEPPER"); y+=12;
     d9("stepper.up",c2,y,30,sh("stepper.up")); d9("stepper.down",c2,y+sh("stepper.up"),30,sh("stepper.down"));
 
@@ -106,10 +108,10 @@ static void draw(gfx_surface *d) {
     spr("slider.circular.knob",c3+50+sw("slider.circular")/2-sw("slider.circular.knob")/2,y+12);
     y+=130;
     hdr(c3,y,"SCROLLBARS"); y+=16;
-    int vbh=150;
-    spr("vscroll.up",c3,y);
+    int vbh=150, vax=c3 + (sw("vscroll.track")-sw("vscroll.up"))/2;   // centre arrows on the track
+    spr("vscroll.up",vax,y);
     d9("vscroll.track",c3,y+sh("vscroll.up"),sw("vscroll.track"),vbh-sh("vscroll.up")-sh("vscroll.down"));
-    spr("vscroll.down",c3,y+vbh-sh("vscroll.down"));
+    spr("vscroll.down",vax,y+vbh-sh("vscroll.down"));
     d9("vscroll.thumb",c3,y+40,sw("vscroll.thumb"),60);
     int hx=c3+30;
     spr("hscroll.left",hx,y);
