@@ -33,11 +33,11 @@ module plane_fetch #(
     input  wire [15:0] stride_bytes,
     input  wire [11:0] src_w,         // source pixels per row
 
-    output reg  [31:0] m_axi_araddr,
+    output wire [31:0] m_axi_araddr,
     output wire [7:0]  m_axi_arlen,
     output wire [2:0]  m_axi_arsize,
     output wire [1:0]  m_axi_arburst,
-    output reg         m_axi_arvalid,
+    output wire        m_axi_arvalid,
     input  wire        m_axi_arready,
     input  wire [63:0] m_axi_rdata,
     input  wire        m_axi_rvalid,
@@ -73,10 +73,25 @@ module plane_fetch #(
     localparam int BURST_BYTES     = BEATS_PER_BURST * 8;   // 8-byte (64-bit) beats
     localparam int BURST_PX        = BEATS_PER_BURST * 2;   // 2 RGBA px per beat
 
-    // FSM state — declared early so the combinational wr_en below can use it.
-    typedef enum logic [1:0] { S_IDLE, S_AR, S_R, S_DONE } state_t;
+    // Pipelined read: keep up to MAX_OUTSTANDING AR requests in flight so DDR
+    // read latency OVERLAPS instead of serialising.  The full-width desktop
+    // plane is ~120 bursts/row; one-AR-at-a-time it couldn't finish a row within
+    // a scanline under DDR contention -> the ping-pong served an unfinished half
+    // -> tearing.  Reads use a single ARID, so responses return IN ORDER and R
+    // beats land at a sequential wr_idx.
+    localparam int MAX_OUTSTANDING = 4;          // ARs in flight once reads are alive
+    typedef enum logic [1:0] { S_IDLE, S_FETCH, S_DRAIN } state_t;
     state_t      state;
-    logic [6:0]  burst_idx;
+    logic [6:0]  ar_idx;    // next burst to request (0..n_bursts)
+    logic [6:0]  r_done;    // bursts fully received (rlast count)
+    wire  [6:0]  outstanding = ar_idx - r_done;
+    // CRITICAL: PL->DDR reads are DEAD for ~0.7 ms after reset (ARs accepted,
+    // no rvalid).  Firing pipelined ARs into that window jams the HP read FIFO
+    // with phantom reads that never complete and DEADLOCKS the interconnect
+    // (hangs the A9 + kills video).  So cap to ONE outstanding until the first
+    // rvalid proves reads work — gentle like the old serial fetch — THEN pipeline.
+    logic        reads_alive;
+    wire  [6:0]  max_out = reads_alive ? 7'(MAX_OUTSTANDING) : 7'd1;
 
     // ---- Line buffer (clk_sys write / clk_pix read) ----------------------
     (* ram_style = "block" *)
@@ -96,7 +111,7 @@ module plane_fetch #(
     logic [10:0] wr_idx;
     // Combinational write strobe so each beat lands in its own slot on the
     // cycle it arrives (a registered wr_en would drop the first beat).
-    wire         wr_en = (state == S_R) && m_axi_rvalid;
+    wire         wr_en = (state == S_FETCH) && m_axi_rvalid;   // discard in S_DRAIN
     always_ff @(posedge clk_sys) begin
         if (wr_en) line_buf[{ping_pong_wr, wr_idx[9:0]}] <= m_axi_rdata;
     end
@@ -203,14 +218,19 @@ module plane_fetch #(
     // Row byte base = surface_base + row*stride (one multiply per line).
     wire [31:0] row_base = surface_base + (32'(row_to_fetch) * 32'(stride_bytes));
 
-    // ---- AXI read FSM (clk_sys) ------------------------------------------
+    // ---- AXI read (clk_sys) ---------------------------------------------
     assign m_axi_arsize  = 3'b011;     // 8 bytes/beat
     assign m_axi_arburst = 2'b01;      // INCR
     assign m_axi_arlen   = 8'(BEATS_PER_BURST - 1);
     assign m_axi_rready  = 1'b1;
 
-    // burst byte offset = burst_idx * BURST_BYTES
-    wire [31:0] burst_addr = row_base + (32'(burst_idx) << $clog2(BURST_BYTES));
+    // Issue ARs for bursts 0..n_bursts-1, up to MAX_OUTSTANDING in flight.
+    // araddr/arvalid are combinational off ar_idx, which only advances on
+    // arready — so the offered address is held stable until accepted (AXI-legal),
+    // and outstanding can only fall (R completes) while we wait, never rising.
+    assign m_axi_arvalid = (state == S_FETCH) && (ar_idx < n_bursts)
+                                              && (outstanding < max_out);
+    assign m_axi_araddr  = row_base + (32'(ar_idx) << $clog2(BURST_BYTES));
 
     // Read watchdog.  HW bring-up found that PL->DDR reads fail for a short
     // window right after reset (~0.7 ms) and then work — proven by the HP2
@@ -226,73 +246,64 @@ module plane_fetch #(
 
     always_ff @(posedge clk_sys) begin
         if (rst_sys) begin
-            state         <= S_IDLE;
-            burst_idx     <= 7'd0;
-            wr_idx        <= 11'd0;
-            fetch_done    <= 1'b0;
-            m_axi_arvalid <= 1'b0;
-            m_axi_araddr  <= 32'd0;
-            rd_wd         <= 13'd0;
-            read_abort    <= 1'b0;
+            state       <= S_IDLE;
+            ar_idx      <= 7'd0;
+            r_done      <= 7'd0;
+            wr_idx      <= 11'd0;
+            fetch_done  <= 1'b0;
+            read_abort  <= 1'b0;
+            rd_wd       <= 13'd0;
+            reads_alive <= 1'b0;
         end else begin
             fetch_done <= 1'b0;
             read_abort <= 1'b0;
 
+            // R collection (responses in AR order, single ID): wr_en
+            // (combinational) writes this beat; advance the slot + burst count.
+            if (m_axi_rvalid) begin
+                reads_alive <= 1'b1;          // first real read -> allow pipelining
+                if (state == S_FETCH) wr_idx <= wr_idx + 11'd1;
+                if (m_axi_rlast)      r_done <= r_done + 7'd1;
+            end
+            // AR accepted -> request the next burst.
+            if (m_axi_arvalid && m_axi_arready) ar_idx <= ar_idx + 7'd1;
+            // Watchdog: reset on any AR/R progress, else count toward abort.
+            if ((m_axi_arvalid && m_axi_arready) || m_axi_rvalid) rd_wd <= 13'd0;
+            else                                                  rd_wd <= rd_wd + 13'd1;
+
             unique case (state)
                 S_IDLE: begin
                     if (line_pending && enable) begin
-                        burst_idx     <= 7'd0;
-                        wr_idx        <= 11'd0;
-                        // Burst 0 = row start.  Do NOT use burst_addr here: burst_idx
-                        // is being cleared by the (non-blocking) assignment above, so
-                        // burst_addr still reflects the PREVIOUS row's final burst_idx
-                        // (n_bursts-1) — issuing burst 0's AR at the row's LAST chunk and
-                        // writing it into the FIRST line-buffer words (right edge aliased
-                        // onto the left of every scanline).  row_base already reflects the
-                        // row latched at line_start_sys.
-                        m_axi_araddr  <= row_base;
-                        m_axi_arvalid <= 1'b1;
-                        rd_wd         <= 13'd0;
-                        state         <= S_AR;
+                        state  <= S_FETCH;
+                        ar_idx <= 7'd0;
+                        r_done <= 7'd0;
+                        wr_idx <= 11'd0;
+                        rd_wd  <= 13'd0;
                     end
                 end
-                S_AR: begin
-                    rd_wd <= rd_wd + 13'd1;
-                    if (m_axi_arready) begin
-                        m_axi_arvalid <= 1'b0;
-                        rd_wd         <= 13'd0;
-                        state         <= S_R;
+                S_FETCH: begin
+                    // Done when the final burst's rlast arrives.
+                    if (m_axi_rvalid && m_axi_rlast && (r_done == n_bursts - 7'd1)) begin
+                        state      <= S_IDLE;
+                        fetch_done <= 1'b1;
                     end else if (rd_wd >= RD_TIMEOUT[12:0]) begin
-                        m_axi_arvalid <= 1'b0;           // AR never accepted -> abort
-                        read_abort    <= 1'b1;
-                        state         <= S_DONE;
-                    end
-                end
-                S_R: begin
-                    rd_wd <= rd_wd + 13'd1;
-                    if (m_axi_rvalid) begin
-                        // wr_en is combinational (asserts this cycle); just
-                        // advance the slot for the next beat.
-                        rd_wd  <= 13'd0;                 // progress: pet the dog
-                        wr_idx <= wr_idx + 11'd1;
-                        if (m_axi_rlast) begin
-                            if (burst_idx == n_bursts - 7'd1) begin
-                                state <= S_DONE;
-                            end else begin
-                                burst_idx     <= burst_idx + 7'd1;
-                                m_axi_araddr  <= row_base + (32'(burst_idx + 7'd1) << $clog2(BURST_BYTES));
-                                m_axi_arvalid <= 1'b1;
-                                state         <= S_AR;
-                            end
-                        end
-                    end else if (rd_wd >= RD_TIMEOUT[12:0]) begin
+                        // Startup dead-window (PL->DDR reads fail ~0.7 ms after
+                        // reset).  Abort; drain any in-flight responses first so a
+                        // late beat can't corrupt the next line.
                         read_abort <= 1'b1;
-                        state <= S_DONE;                 // stalled read -> abort, retry next line
+                        if (outstanding != 7'd0) state <= S_DRAIN;
+                        else begin state <= S_IDLE; fetch_done <= 1'b1; end
                     end
                 end
-                S_DONE: begin
-                    fetch_done <= 1'b1;
-                    state      <= S_IDLE;
+                S_DRAIN: begin
+                    // Swallow the aborted line's responses (wr_en is off here)
+                    // until none remain — or give up if they never come.
+                    if ((m_axi_rvalid && m_axi_rlast && outstanding == 7'd1)
+                        || outstanding == 7'd0) begin
+                        state <= S_IDLE; fetch_done <= 1'b1;
+                    end else if (rd_wd >= RD_TIMEOUT[12:0]) begin
+                        state <= S_IDLE; fetch_done <= 1'b1;   // dead window: drop them
+                    end
                 end
                 default: state <= S_IDLE;
             endcase
