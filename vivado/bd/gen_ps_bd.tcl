@@ -33,7 +33,11 @@ source [file join $script_dir zturn_ps_preset.tcl]
 # (HP2 = hp_read_probe, a bring-up PL->DDR read-test engine.)
 # I2C0 is ENABLED on EMIO (exactly as the MyIR reference) to drive the SiI9022A
 # HDMI transmitter's control bus over P15/P16 — replacing our PL bit-bang, which
-# never got the chip to ACK.  GPIO/TTC0/FCLK_CLK1 EMIO stay OFF (unused).
+# never got the chip to ACK.  GPIO/FCLK_CLK1 EMIO stay OFF (unused).
+# TTC0 is ENABLED as a PS-internal peripheral (no EMIO/pins) to provide the
+# FreeRTOS tick: the freertos10_xilinx BSP's xiltimer requires a TTC/AXI timer
+# (it rejects the A9 scutimer), and ps7_init must bring up the TTC clock for the
+# tick to fire on hardware.  No PL impact (PCW_EN_EMIO_TTC0 stays 0).
 set_property -dict [list \
     CONFIG.PCW_PACKAGE_NAME {clg400} \
     CONFIG.PCW_USE_S_AXI_HP0 {1} \
@@ -63,7 +67,7 @@ set_property -dict [list \
     CONFIG.PCW_I2C0_PERIPHERAL_ENABLE {1} \
     CONFIG.PCW_I2C0_I2C0_IO {EMIO} \
     CONFIG.PCW_EN_EMIO_TTC0 {0} \
-    CONFIG.PCW_TTC0_PERIPHERAL_ENABLE {0} \
+    CONFIG.PCW_TTC0_PERIPHERAL_ENABLE {1} \
 ] $ps
 
 # ---- HP AXI clocks: driven by clk_sys, NOT FCLK_CLK0 -----------------------

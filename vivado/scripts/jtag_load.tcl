@@ -95,26 +95,21 @@ if {[info exists ::env(JTAG_DRY_RUN)]} {
 puts ">> connecting to hw_server"
 connect -url $hw_host
 
-# ---- Stop + core reset first (clean slate, no SD re-boot) -----------
+# ---- System reset first (clear a wedged DAP / live image) -----------
 # Re-running over a LIVE image (A9 mid-AXI/IRQ) and then reconfiguring the PL
-# under it wedges the DAP (AP transaction timeout / "no targets" -> a physical
-# power-cycle).  Stop the A9 and reset just the CORE so its in-flight AXI/IRQ
-# activity is cleared before fpga/ps7_init.  Crucially `rst -processor` (unlike
-# `rst -system`) does NOT re-run the boot ROM, so on an SD-boot-mode board it
-# won't pull a stale FSBL from the SD card over our JTAG session.
-puts ">> stop + core reset (clean slate, no SD re-boot)"
+# under it wedges the DAP — ps7_init then dies with "AHB AP transaction error"
+# and the load hangs (otherwise needs a physical power-cycle).  A full
+# `rst -system` clears the wedge over JTAG; `rst -processor` alone is NOT enough
+# for a live takeover.  After the reset, immediately halt the A9 — before any
+# boot-ROM/FSBL gets far — so the bitstream load + ps7_init run against a quiet
+# core (no DDR re-init under a live CPU, no A9 driving GP0/AXI mid-reconfig).
+puts ">> system reset (clear wedged DAP / live image)"
+catch { rst -system }
+after 1000
+puts ">> halting A9"
 catch { targets -set -filter {name =~ "ARM*#0"}; stop }
-catch { rst -processor }
 catch { stop }
 after 300
-
-# ---- Halt the A9 before reconfig/ps7_init ---------------------------
-# So this can take over a board that's ALREADY running (e.g. an SD-booted
-# image) without ps7_init re-initialising DDR under a live CPU (-> hang)
-# and without the A9 driving GP0/AXI into the PL mid-reconfiguration.
-# catch: the core may not be enumerated/running yet (cold JTAG-mode board).
-puts ">> halting A9 (take over any running image)"
-catch { targets -set -filter {name =~ "ARM*#0"}; stop }
 
 # ---- Load bitstream into PL -----------------------------------------
 # Pick the FPGA target (Zynq XC7Z020 here).  `targets -set -filter` is

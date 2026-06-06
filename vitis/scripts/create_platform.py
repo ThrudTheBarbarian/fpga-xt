@@ -107,6 +107,84 @@ _dom.set_config("os", "standalone_stdout", "ps7_uart_1")
 _dom.set_config("os", "standalone_stdin",  "ps7_uart_1")
 print(">> set standalone stdout/stdin -> ps7_uart_1")
 
+# ---- FreeRTOS domain -------------------------------------------------
+# A SECOND domain on the same core running the freertos OS (the Xilinx
+# Cortex-A9 FreeRTOS port — GIC + SCU private-timer tick already wired by
+# the BSP).  The standalone domain stays for the FSBL + the bare-metal
+# xtos app; this one is what the FreeRTOS bring-up (freertos_hello) and,
+# later, XTOS link against.  Skip with VITIS_NO_RTOS=1.
+RTOS_DOMAIN = "freertos_ps7_cortexa9_0"
+if not os.environ.get("VITIS_NO_RTOS"):
+    # freertos10_xilinx's HW validator (baremetal_validate_comp_xlnx.py, driven
+    # by the freertos depends list) requires a TTC (ttcps) or AXI timer (tmrctr)
+    # — NOT the A9 scutimer.  The validator's node_list only includes DT nodes
+    # carrying status="okay", and matches them against the ttcps driver schema
+    # (which mandates reg + interrupts + interrupt-parent + xlnx,clock-freq).
+    # This PS config has pcw-ttc0-peripheral-enable=0, so the generated
+    # Zynq-7000 SDT leaves ttc0 with no status and no xlnx,clock-freq — it's
+    # excluded entirely, and the domain aborts with "no timer hardware
+    # instance".  The TTC0 hard IP exists regardless and counts off CPU_1X, so
+    # force-enable the node: status="okay" puts it in node_list, xlnx,clock-freq
+    # (CPU_1X ~111.111 MHz) satisfies the schema + sets the tick base, and
+    # xlnx,ip-name/xlnx,name let the BSP emit an XTtcPs config.  FreeRTOS then
+    # ticks off TTC0.  The SDT is regenerated every run, so this re-applies.
+    # With PCW_TTC0_PERIPHERAL_ENABLE=1 (gen_ps_bd.tcl) the XSA's SDT should
+    # already describe ttc0 fully (status okay, in the A9 address-map, with
+    # xlnx,clock-freq).  This stays only as an idempotent safety net: it fills
+    # any property the generator happens to omit (notably xlnx,clock-freq, which
+    # the ttcps driver mandates) and otherwise no-ops.  Matched by address so a
+    # label change can't break it; each property added only if absent.
+    _sdt = os.path.join(WORKSPACE, "fpga_xt_platform", "hw", "sdt",
+                        "zynq-7000.dtsi")
+    _ttc = "timer@f8001000 {"   # ttc0 (address is stable; label may vary)
+    _ttc_clk = 111111115        # CPU_1X, Hz (pcw act-ttc0-clk0-peripheral-freqmhz)
+    _ttc_needed = [
+        ("status",          'status = "okay";'),
+        ("xlnx,clock-freq", "xlnx,clock-freq = <%d>;" % _ttc_clk),
+        ("xlnx,ip-name",    'xlnx,ip-name = "ps7_ttc";'),
+        ("xlnx,name",       'xlnx,name = "ps7_ttc_0";'),
+    ]
+    try:
+        with open(_sdt, "r") as _f:
+            _sdt_txt = _f.read()
+        if _ttc in _sdt_txt:
+            _blk = _sdt_txt.split(_ttc, 1)[1].split("};", 1)[0]
+            _ins = "".join("\n\t\t\t" + _v for _k, _v in _ttc_needed if _k not in _blk)
+            if _ins:
+                _sdt_txt = _sdt_txt.replace(_ttc, _ttc + _ins, 1)
+                try:
+                    os.chmod(_sdt, 0o644)    # Vitis leaves the SDT read-only
+                except OSError:
+                    pass
+                with open(_sdt, "w") as _f:
+                    _f.write(_sdt_txt)
+                print(f">> ttc0 safety-net: added missing props [{', '.join(k for k,_ in _ttc_needed if k not in _blk)}]")
+            else:
+                print(">> ttc0 already fully described in SDT — no patch needed")
+        else:
+            print(">> WARNING: ttc0 node (timer@f8001000) not found in SDT")
+    except OSError as e:
+        print(f">> WARNING: could not inspect/patch ttc0: {e}")
+
+    print(">> adding freertos domain ...")
+    rtos_dom = platform.add_domain(
+        cpu="ps7_cortexa9_0",
+        os="freertos",
+        name=RTOS_DOMAIN,
+        display_name="freertos",
+    )
+    # Map this domain's console to UART1 too.  The freertos OS exposes its own
+    # freertos_stdout/freertos_stdin params (NOT the standalone_* ones).  Wrap
+    # defensively: a key-name change across Vitis builds must not abort the
+    # whole platform create (the bring-up app also writes UART1 raw).
+    for _k, _v in (("freertos_stdout", "ps7_uart_1"),
+                   ("freertos_stdin",  "ps7_uart_1")):
+        try:
+            rtos_dom.set_config("os", _k, _v)
+            print(f">> freertos domain: set {_k} -> {_v}")
+        except Exception as e:  # noqa: BLE001 - tolerate API key drift
+            print(f">> WARNING: freertos domain set_config({_k}) failed: {e}")
+
 status = platform.build()
 print(f">> platform build status: {status}")
 
@@ -329,7 +407,50 @@ if _lds_new != _lds_txt:
 status = app.build()
 print(f">> xtos build status: {status}")
 
+# ---- freertos_hello -------------------------------------------------
+# Minimal FreeRTOS bring-up proof against the freertos domain: heartbeat +
+# counter task + vTaskStartScheduler.  Sources in ../freertos_hello/src/.
+# JTAG-loaded on its own to prove the scheduler/tick before XTOS proper.
+# Skipped together with the domain via VITIS_NO_RTOS=1.
+if not os.environ.get("VITIS_NO_RTOS"):
+    print(">> creating freertos_hello component ...")
+    RTOS_SRC = os.path.join(VITIS_DIR, "freertos_hello", "src")
+    rapp = client.create_app_component(
+        name="freertos_hello",
+        platform=PFM_FILE,
+        domain=RTOS_DOMAIN,
+        template="empty_application",
+    )
+    for fn in os.listdir(RTOS_SRC):
+        src = os.path.join(RTOS_SRC, fn)
+        if os.path.isfile(src):
+            rapp.import_files(from_loc=RTOS_SRC, files=[fn])
+            print(f"   imported {fn}")
+
+    # import_files lands sources at the component ROOT, but the generated
+    # CMakeLists only compiles aux_source_directory(src) + USER_COMPILE_SOURCES
+    # — so wire the root .c files (and the root include dir) the same way the
+    # xtos component does above.
+    _rroot = os.path.join(WORKSPACE, "freertos_hello").replace("\\", "/")
+    _rsrcs = [os.path.join(_rroot, f).replace("\\", "/")
+              for f in sorted(os.listdir(RTOS_SRC)) if f.endswith(".c")]
+    _ruser = os.path.join(WORKSPACE, "freertos_hello", "src", "UserConfig.cmake")
+    with open(_ruser, "a") as _f:
+        _f.write("\n# --- fpga-xt: freertos_hello app sources (root) ---\n")
+        _f.write('set(USER_INCLUDE_DIRECTORIES "%s" "${CMAKE_CURRENT_SOURCE_DIR}")\n'
+                 % _rroot)
+        _f.write("set(USER_COMPILE_SOURCES\n")
+        for _s in _rsrcs:
+            _f.write('  "%s"\n' % _s)
+        _f.write(")\n")
+    print(f">> freertos_hello UserConfig.cmake: {len(_rsrcs)} sources -> {_ruser}")
+
+    status = rapp.build()
+    print(f">> freertos_hello build status: {status}")
+
 print(">> done.  Artefacts in:")
 print(f"     {WORKSPACE}/fpga_xt_platform/export/")
 print(f"     {WORKSPACE}/fsbl/build/")
 print(f"     {WORKSPACE}/xtos/build/")
+if not os.environ.get("VITIS_NO_RTOS"):
+    print(f"     {WORKSPACE}/freertos_hello/build/")

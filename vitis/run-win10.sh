@@ -68,6 +68,10 @@ ps_mkdir "$REMOTE_DIR/vitis/xtos/tinyusb"
 scp -q -r "$REPO_ROOT/vitis/xtos/src" "$REMOTE:$REMOTE_DIR/vitis/xtos/src"
 scp -q -r "$REPO_ROOT/vitis/xtos/tinyusb/src" "$REMOTE:$REMOTE_DIR/vitis/xtos/tinyusb/src"
 
+echo ">> pushing freertos_hello/ (FreeRTOS bring-up app) -> $REMOTE:$REMOTE_DIR/vitis/freertos_hello/"
+ps_wipe "$REMOTE_DIR/vitis/freertos_hello"
+scp -q -r "$REPO_ROOT/vitis/freertos_hello/src" "$REMOTE:$REMOTE_DIR/vitis/freertos_hello/src"
+
 # Run Vitis ---------------------------------------------------------------
 echo ">> running vitis -s $SCRIPT"
 ssh "$REMOTE" "Set-Location '$REMOTE_DIR/vitis'; & '$VITIS_BAT' -s $SCRIPT"
