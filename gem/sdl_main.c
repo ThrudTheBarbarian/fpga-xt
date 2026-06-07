@@ -81,7 +81,8 @@ int main(int argc, char **argv) {
     gem_wm wm;
     gem_wm_init(&wm, desk, COL_DESKTOP);                 // brings up the VDI on desk
     vdi_set_font_dir("fonts");                           // where vst_load_fonts looks
-    font_face *uiface = font_face_open("fonts/AovelSansRounded.ttf");
+    font_face *uiface = vdi_load_system_font();          // fonts/System.ttf, else any font
+    if (!uiface) uiface = font_face_open("fonts/AovelSansRounded.ttf");   // last-ditch
     if (!uiface) fprintf(stderr, "warning: title font failed to load\n");
     if (uiface) font_face_set_tracking(uiface, 1);       // this face is cut tight
     gem_wm_set_font(&wm, uiface);                         // titles + VDI default text
