@@ -17,15 +17,17 @@ CSTD    := -std=c11
 WARN    := -Wall -Wextra
 # FreeType powers the scalable text (font.c); -lm for the GDP trig (gdp.c).
 FT_CFLAGS := $(shell pkg-config --cflags freetype2)
-FT_LIBS   := $(shell pkg-config --libs freetype2) -lm
+# -lz: the PDF printer device (vdi/printers/pdf_device.c) Flate-compresses streams.
+FT_LIBS   := $(shell pkg-config --libs freetype2) -lm -lz
 
 # -I. so the per-call VDI files resolve "vdi/vdi.h", "vdi/internal.h", etc.
 CFLAGS  := $(CSTD) $(WARN) -O2 -g -I. $(FT_CFLAGS) $(shell pkg-config --cflags sdl2 2>/dev/null || sdl2-config --cflags)
 LDLIBS  := $(FT_LIBS) $(shell pkg-config --libs sdl2 2>/dev/null || sdl2-config --libs)
 
-# Portable core + host backend.  The VDI is one file per call under vdi/.
+# Portable core + host backend.  The VDI is one file per call under vdi/, plus
+# the output-device drivers under vdi/printers/ (the PDF printer device, etc.).
 # (GEM AES sources get added here as they land.)
-VDI_SRC  := $(wildcard vdi/*.c)
+VDI_SRC  := $(wildcard vdi/*.c) $(wildcard vdi/printers/*.c)
 AES_SRC  := $(wildcard aes/*.c)
 CORE_SRC := gfx_soft.c font.c $(VDI_SRC) wm.c theme.c $(AES_SRC)
 HOST_SRC := sdl_main.c
@@ -34,7 +36,7 @@ OBJ      := $(addprefix $(BUILD)/,$(SRC:.c=.o))
 
 TARGET  := $(BUILD)/gem_sdl
 
-.PHONY: all run test clean fills shapes output text lines theme themewin themepack aes aesmenu aeswin desktop
+.PHONY: all run test clean fills shapes output text lines theme themewin themepack aes aesmenu aeswin desktop pdf fontscan catalogtest
 all: $(TARGET)
 
 $(TARGET): $(OBJ)
@@ -115,6 +117,27 @@ $(BUILD)/themepack: tools/themepack.c | $(BUILD)
 themepack: $(BUILD)/themepack
 	mkdir -p themes/Aristo2/1x
 	./$(BUILD)/themepack "$(ARISTO2)" themes/aristo2.recipe themes/Aristo2/1x
+
+# Variable-font catalog prototype: enumerate axes + named instances via FreeType.
+$(BUILD)/fontscan: tools/fontscan.c | $(BUILD)
+	$(CC) $(CSTD) $(WARN) -O2 -I. $(FT_CFLAGS) -o $@ $< $(FT_LIBS)
+fontscan: $(BUILD)/fontscan
+	@echo "run: ./$(BUILD)/fontscan <font.ttf> ..."
+
+# OS/Fonts catalog + index exercise (host: POSIX dir scan).
+CATALOG_OBJ := $(addprefix $(BUILD)/,font_catalog.o tools/catalogtest.o)
+$(BUILD)/catalogtest: $(CATALOG_OBJ)
+	$(CC) $(CATALOG_OBJ) $(FT_LIBS) -o $@
+catalogtest: $(BUILD)/catalogtest
+	@echo "run: ./$(BUILD)/catalogtest <fontdir>"
+
+# Headless PDF printer-device smoke test (no SDL): draws vector lines/fills/bars
+# through v_opnwk(21) and writes out.pdf.
+PDF_OBJ := $(addprefix $(BUILD)/,gfx_soft.o font.o pdf_demo.o $(VDI_SRC:.c=.o))
+$(BUILD)/gem_pdf: $(PDF_OBJ)
+	$(CC) $(PDF_OBJ) $(FT_LIBS) -o $@
+pdf: $(BUILD)/gem_pdf
+	./$(BUILD)/gem_pdf && echo "-> $(CURDIR)/out.pdf"
 
 # Headless self-tests (no SDL): VDI primitives, then the WM interaction layer.
 TEST_OBJ := $(addprefix $(BUILD)/,gfx_soft.o font.o vdi_test.o $(VDI_SRC:.c=.o))

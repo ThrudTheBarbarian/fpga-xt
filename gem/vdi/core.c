@@ -4,6 +4,7 @@
 
 #include "vdi/vdi.h"
 #include "vdi/internal.h"
+#include "vdi/printers/pdf_device.h"
 #include <stddef.h>
 #include <string.h>
 #include <math.h>
@@ -336,6 +337,13 @@ void vdi_call(vdi_pb *pb) {
            && pb->contrl[0] != VDI_CLOSE_WK) {
         metafile_record(mw, pb);
         return;
+    }
+    // A PDF printer workstation translates drawing/page calls to PDF content;
+    // anything it doesn't consume (attribute setters, inquiries, close) falls
+    // through to the normal handler so the ws graphics state stays maintained.
+    if (mw && mw->device >= VDI_DEV_PRINT_LO && mw->device <= VDI_DEV_PRINT_HI
+           && pb->contrl[0] != VDI_CLOSE_WK) {
+        if (pdf_intercept(mw, pb)) return;
     }
     switch (pb->contrl[0]) {
         case VDI_OPEN_WK:     op_open_wk(pb);    break;

@@ -283,6 +283,7 @@ int main(void) {
     font_face *sysf = font_face_open("fonts/AovelSansRounded.ttf");
     vdi_set_face(sysf);                                 // system font (id 1)
     vdi_set_font_dir("fonts");
+    CHECK(vdi_load_system_font() != NULL);             // System.font pointer resolves a face
     CHECK(vst_load_fonts(1, 0) == 1);                  // one extra font mapped (id 2)
     char fnm[40] = {0};
     CHECK(vqt_name(1, 1, fnm) == 1); CHECK(fnm[0] != '\0');   // system family name
@@ -314,10 +315,12 @@ int main(void) {
     CHECK(hw > 0);
     CHECK(wout[0] > 0 && wout[1] > 0);                 // device extent in work_out
     v_clswk(hw);
-    int16_t pin[11] = { 21 };                          // device 21 = printer (no driver yet)
+    int16_t pin[11] = { 21 };                          // device 21 = PDF printer
     int hp = -1;
+    vdi_set_device_file("/tmp/vdi_test.pdf");
     v_opnwk(pin, &hp, wout);
-    CHECK(hp == 0);                                    // failed to open
+    CHECK(hp > 0);                                      // PDF printer driver opens
+    if (hp > 0) v_clswk(hp);                            // finalise the (empty) PDF
 
     // Metafile: record drawing to a .gem, then replay it onto a fresh surface.
     vdi_set_device_file("/tmp/vdi_test.gem");

@@ -101,6 +101,7 @@ int  font_face_set_kern(font_face *face, int on) {       // -> 1 if actually ker
     return face->kern;
 }
 int  font_face_has_kern(const font_face *face) { return face && FT_HAS_KERNING(face->ft); }
+int  font_kerning_on(const font *f) { return f && f->owner->kern; }   // matches kern_px's gate
 void font_face_set_track(font_face *face, int off) { if (face) face->track_off = off; }
 
 // Pair-kern delta (px) between two codepoints at this view's size; 0 unless

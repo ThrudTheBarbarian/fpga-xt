@@ -8,6 +8,7 @@
 
 #include "vdi/vdi.h"
 #include "vdi/internal.h"
+#include "vdi/printers/pdf_device.h"
 
 void op_open_wk(vdi_pb *pb) {
     for (int i = 0; i < 45; i++) pb->intout[i] = 0;     // clear work_out
@@ -15,7 +16,8 @@ void op_open_wk(vdi_pb *pb) {
     int dev = pb->intin[0];
     int screen = dev >= VDI_DEV_SCREEN_LO && dev <= VDI_DEV_SCREEN_HI;
     int meta   = dev >= VDI_DEV_META_LO   && dev <= VDI_DEV_META_HI;
-    if (!screen && !meta) { pb->contrl[6] = 0; return; }   // no driver (printer = PDF, later)
+    int pdf    = dev >= VDI_DEV_PRINT_LO  && dev <= VDI_DEV_PRINT_HI;   // PDF printer
+    if (!screen && !meta && !pdf) { pb->contrl[6] = 0; return; }        // no driver
 
     int h = vdi_ws_alloc();
     vdi_ws *w = vdi_ws_of(h);
@@ -23,16 +25,22 @@ void op_open_wk(vdi_pb *pb) {
     if (meta && metafile_open(w, g_device_file) != 0) {     // file couldn't be created
         vdi_ws_free(h); pb->contrl[6] = 0; return;
     }
+    if (pdf && pdf_open(w, g_device_file) != 0) {           // file couldn't be created
+        vdi_ws_free(h); pb->contrl[6] = 0; return;
+    }
     w->device = dev;
     w->target = vdi_screen_target();                        // for extent inquiries
     pb->contrl[6] = (int16_t)h;
     vdi_fill_caps(pb->intout, pb->ptsout);                  // device capabilities
+    if (pdf) pdf_caps(w, pb->intout, pb->ptsout);           // ...override with page extent
 }
 
 void op_close_wk(vdi_pb *pb) {
     vdi_ws *w = vdi_ws_of(pb->contrl[6]);
     if (w && w->device >= VDI_DEV_META_LO && w->device <= VDI_DEV_META_HI)
         metafile_close(w);
+    if (w && w->device >= VDI_DEV_PRINT_LO && w->device <= VDI_DEV_PRINT_HI)
+        pdf_close(w);
     vdi_ws_free(pb->contrl[6]);
 }
 
