@@ -198,6 +198,13 @@ module tb_blitter_bridge;
         return (addr - FB_BASE) >> 3;
     endfunction
 
+    // Combinational bounded read of the backing store for the single-beat AXI
+    // read model.  (A function here triggers an iverilog of_RET_VEC4 crash;
+    // continuous-assign wires avoid it.)
+    wire [31:0] ar_off  = m_axi_araddr - FB_BASE;
+    wire [28:0] ar_widx = ar_off[31:3];
+    wire [63:0] ar_rdata_w = (ar_widx < MEM_WORDS) ? mem[ar_widx] : 64'd0;
+
     // ---- write state ----
     logic        aw_pending;
     logic [31:0] aw_addr_q;
@@ -266,9 +273,10 @@ module tb_blitter_bridge;
                 m_axi_bvalid  <= 1'b0;
             end
 
-            // ---- reads (not used by rect fill; single-beat zero) ----
+            // ---- reads (single-beat; SRC_BLIT reads src + dst pixels) ----
             if (m_axi_arvalid && m_axi_arready) begin
-                m_axi_rvalid <= 1; m_axi_rlast <= 1; m_axi_rdata <= 64'd0;
+                m_axi_rvalid <= 1; m_axi_rlast <= 1;
+                m_axi_rdata  <= ar_rdata_w;
             end else if (m_axi_rvalid && m_axi_rready) begin
                 m_axi_rvalid <= 0; m_axi_rlast <= 0;
             end
@@ -436,6 +444,46 @@ module tb_blitter_bridge;
             $display("DESC RESULT: PASS — all four descriptors latched via $D4Dx");
         else
             $display("DESC RESULT: FAIL — descriptor load through the new page is wrong");
+
+        // ================================================================
+        // SRC_BLIT coverage -> plane through the FULL GP0 bridge path.
+        // Coverage atlas @0x30040000 (cov 255,128,0,64), green over black.
+        // ================================================================
+        $display("\n=== SRC_BLIT coverage -> plane over the GP0 bridge ===");
+        mem[mem_idx(32'h3004_0000)] = 64'h0000_0000_4000_80FF;   // coverage atlas
+        mem[mem_idx(32'h3000_0000)] = 64'h0; mem[mem_idx(32'h3000_0008)] = 64'h0;  // plane black
+        axi_write8(6'h0A, 8'd0);                                  // PAT_LOG_W = 0
+        axi_write8(6'h0E, 8'd0);                                  // PAT_LOG_H = 0
+        axi_write8(6'h0B, 8'h00); axi_write8(6'h0B, 8'hFF);
+        axi_write8(6'h0B, 8'h00); axi_write8(6'h0B, 8'hFF);       // 1x1 green pattern
+        axi_write8(6'h20, 8'h00); axi_write8(6'h21, 8'h00);
+        axi_write8(6'h22, 8'h04); axi_write8(6'h23, 8'h30);       // SRC_BASE = 0x30040000
+        axi_write8(6'h24, 8'd8);  axi_write8(6'h25, 8'd0);        // SRC_STRIDE = 8
+        axi_write8(6'h10, 8'd0);  axi_write8(6'h11, 8'd0);        // SRC_X = 0
+        axi_write8(6'h12, 8'd0);  axi_write8(6'h13, 8'd0);        // SRC_Y = 0
+        axi_write8(6'h00, 8'd0);  axi_write8(6'h01, 8'd0);        // DST_X = 0
+        axi_write8(6'h02, 8'd0);  axi_write8(6'h03, 8'd0);        // DST_Y = 0
+        axi_write8(6'h04, 8'd4);  axi_write8(6'h05, 8'd0);        // W = 4
+        axi_write8(6'h06, 8'd1);  axi_write8(6'h07, 8'd0);        // H = 1
+        axi_write8(6'h18, 8'h0C);                                 // FLAGS: SRC_DDR|SRC_COV (dest=plane)
+        axi_write8(6'h0C, 8'h08);                                 // CMD = SRC_BLIT
+        wait_idle();
+        begin
+            int errs; logic [31:0] e, a, g;
+            errs = 0;
+            for (int xx = 0; xx < 4; xx++) begin
+                a = FB_BASE + xx*4;
+                g = ddr32(a);
+                case (xx)
+                    0: e = 32'h00FF00FF;  1: e = 32'h008000FF;
+                    2: e = 32'h00000000;  3: e = 32'h004000FF;
+                endcase
+                $display("  bridge cov pixel %0d = %08x (expect %08x)", xx, g, e);
+                if (g !== e) errs++;
+            end
+            if (errs == 0) $display("SRCBLIT RESULT: PASS — coverage blit landed via the bridge");
+            else           $display("SRCBLIT RESULT: FAIL — %0d mismatches", errs);
+        end
 
         $finish;
     end
