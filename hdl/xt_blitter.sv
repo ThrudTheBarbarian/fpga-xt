@@ -851,6 +851,7 @@ module xt_blitter #(
     logic [31:0] src_base_q,  dst_base_q;  // captured surface bases
     logic [15:0] src_stride_q, dst_stride_q;
     logic [31:0] sb_src_row, sb_dst_row;   // current-row base addr (accumulators)
+    logic [31:0] sb_src_mult, sb_dst_mult; // y*stride (registered DSP output)
     logic [31:0] sb_color_q;               // text colour (pat_pixel_q2) for coverage
     logic [31:0] sb_pix_q;                 // source pixel result staged for write
     logic [3:0]  sb_wstrb_q;               // write strobe for the staged pixel
@@ -1132,7 +1133,8 @@ module xt_blitter #(
         SC_SBLEND_BLEND2 = 6'd46, // cycle 1.75: combine products → bl_blend_q
         L_STEP2  = 6'd47,  // line-draw: apply registered step flags
         // SRC_BLIT (CMD 0x08) — per-pixel DDR→DDR blit (copy / alpha-over / coverage)
-        SB_INIT  = 6'd48,  // compute row-base addresses, warm pattern (coverage)
+        SB_INIT  = 6'd48,  // multiply y*stride (DSP, registered)
+        SB_INIT2 = 6'd58,  // add base → row addresses (split off the DSP path)
         SB_WARM  = 6'd49,  // pat_pixel_q2 settle → latch text colour
         SB_SRD   = 6'd50,  // issue AR for the source pixel
         SB_SRD_W = 6'd51,  // receive source beat, extract pixel/coverage
@@ -3115,8 +3117,17 @@ module xt_blitter #(
                 // is no per-pixel multiply.
                 // ============================================================
                 SB_INIT: begin
-                    sb_src_row <= sb_src_base_eff + src_y_q * sb_src_stride_eff;
-                    sb_dst_row <= sb_dst_base_eff + dst_y_q * sb_dst_stride_eff;
+                    // Multiply only (DSP, registered output) — the base add is
+                    // split into SB_INIT2 so the DSP→add→reg path doesn't blow
+                    // the clk_sys budget.
+                    sb_src_mult <= src_y_q * sb_src_stride_eff;
+                    sb_dst_mult <= dst_y_q * sb_dst_stride_eff;
+                    state <= SB_INIT2;
+                end
+
+                SB_INIT2: begin
+                    sb_src_row <= sb_src_base_eff + sb_src_mult;
+                    sb_dst_row <= sb_dst_base_eff + sb_dst_mult;
                     state <= SB_WARM;          // let pat_pixel_q2 settle (coverage)
                 end
 
