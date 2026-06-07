@@ -71,14 +71,39 @@
 #define XT_BL_FONT_DATA          0x1E
 #define XT_BL_FONT_CTRL          0x1F
 
+/* $D4Dx page (offsets 0x20..0x2F) — SRC_BLIT DDR surface descriptors.
+ * Global registers (latched while the blitter is idle); set them before
+ * enqueuing the commands that use them, and don't change a surface while
+ * commands referencing it are still draining (drain via SYNC if you must). */
+#define XT_BL_SRC_BASE_0         0x20     /* SRC_BASE   byte 0 (LSB) */
+#define XT_BL_SRC_BASE_1         0x21
+#define XT_BL_SRC_BASE_2         0x22
+#define XT_BL_SRC_BASE_3         0x23     /* SRC_BASE   byte 3 (MSB) */
+#define XT_BL_SRC_STRIDE_LO      0x24     /* SRC_STRIDE bytes/row, low  */
+#define XT_BL_SRC_STRIDE_HI      0x25
+#define XT_BL_DST_BASE_0         0x26     /* DST_BASE   byte 0 (LSB) */
+#define XT_BL_DST_BASE_1         0x27
+#define XT_BL_DST_BASE_2         0x28
+#define XT_BL_DST_BASE_3         0x29     /* DST_BASE   byte 3 (MSB) */
+#define XT_BL_DST_STRIDE_LO      0x2A     /* DST_STRIDE bytes/row, low  */
+#define XT_BL_DST_STRIDE_HI      0x2B
+
+/* --- FLAGS register bits (XT_BL_FLAGS) ------------------------------- */
+#define XT_BL_FLAG_BLEND         (1u << 0)  /* rect/line: alpha-blend with dest */
+#define XT_BL_FLAG_BILINEAR      (1u << 1)  /* scaled blit: bilinear            */
+#define XT_BL_FLAG_SRC_DDR       (1u << 2)  /* SRC_BLIT: source from SRC_BASE   */
+#define XT_BL_FLAG_SRC_COV       (1u << 3)  /* SRC_BLIT: 8-bit coverage source  */
+#define XT_BL_FLAG_SRC_AOVER     (1u << 4)  /* SRC_BLIT: RGBA alpha-over        */
+#define XT_BL_FLAG_DST_DDR       (1u << 5)  /* SRC_BLIT: dest to DST_BASE       */
+
 /* --- Command opcodes (write to XT_BL_CMD) ---------------------------- */
 
 #define XT_BL_CMD_RECT_FILL      0x01
 #define XT_BL_CMD_LINE_DRAW      0x02
 #define XT_BL_CMD_BLOCK_BLIT     0x03
 #define XT_BL_CMD_SCALED_BLIT    0x04
-#define XT_BL_CMD_FONT_BLIT      0x06
 #define XT_BL_CMD_SYNC           0x07
+#define XT_BL_CMD_SRC_BLIT       0x08     /* DDR→DDR blit (coverage/RGBA) */
 
 /* --- STATUS register bits ------------------------------------------- */
 
@@ -148,6 +173,19 @@ void xt_blitter_set_raster_op(uint8_t op);
  * relevant DST/SRC/PAT/FLAGS registers first; the blitter snapshots
  * them at CMD-write time into its queue entry. */
 void xt_blitter_fire(uint8_t cmd);
+
+/* Set the SRC_BLIT (CMD 0x08) source / destination DDR surface descriptors.
+ * Global registers — set once per run; don't change while commands using the
+ * surface are still queued (drain with a SYNC first if you must). */
+void xt_blitter_set_src_surface(uint32_t base, uint16_t stride);
+void xt_blitter_set_dst_surface(uint32_t base, uint16_t stride);
+
+/* Enqueue one SRC_BLIT: source rect (sx,sy,w,h) of the current SRC surface
+ * blitted to (dx,dy) of the current DST surface, in the mode set by FLAGS
+ * (SRC_DDR + SRC_COV/SRC_AOVER + DST_DDR).  Does not wait — push a whole run,
+ * then xt_blitter_wait_idle() (or a SYNC) once at the end. */
+void xt_blitter_src_blit(int16_t sx, int16_t sy, uint16_t w, uint16_t h,
+                         int16_t dx, int16_t dy);
 
 /* Low-level byte poke for any other register access pattern not
  * covered above. */

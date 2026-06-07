@@ -214,6 +214,34 @@ static int l_vdi_hwfill(lua_State *L)
     return 2;
 }
 
+/* vdi.srctest(x, y, 0xRRGGBB) — de-risk SRC_BLIT's coverage→colour path (the
+ * font path).  Builds a 64x32 coverage atlas in DDR with a horizontal 0->255
+ * gradient, then blits it in the given colour to (x,y) on the plane: you should
+ * see a left-to-right fade from the background into a solid colour block.
+ * Proves the DDR-source read + coverage blend on hardware before FreeType. */
+static int l_vdi_srctest(lua_State *L)
+{
+    int x = (int)luaL_checkinteger(L, 1), y = (int)luaL_checkinteger(L, 2);
+    uint32_t c = (uint32_t)luaL_checkinteger(L, 3);
+    static uint8_t atlas[64 * 32] __attribute__((aligned(64)));   /* DDR, flat-mapped */
+    for (int yy = 0; yy < 32; yy++)
+        for (int xx = 0; xx < 64; xx++)
+            atlas[yy * 64 + xx] = (uint8_t)(xx * 255 / 63);       /* 0..255 across */
+    Xil_DCacheFlushRange((INTPTR)atlas, (INTPTR)sizeof atlas);    /* push to DDR for HP read */
+    desk_flush();                                                 /* no stale plane lines */
+
+    uint8_t pat[4] = { (uint8_t)(c >> 16), (uint8_t)(c >> 8), (uint8_t)c, 0xFF };
+    xt_blitter_set_pat_log(0, 0);
+    xt_blitter_set_pat_phase(0, 0);
+    xt_blitter_write_pat(pat, 4);                                 /* 1x1 = text colour */
+    xt_blitter_set_src_surface((uint32_t)(uintptr_t)atlas, 64);   /* coverage atlas */
+    xt_blitter_set_flags(XT_BL_FLAG_SRC_DDR | XT_BL_FLAG_SRC_COV);/* dest = plane (no DST_DDR) */
+    xt_blitter_src_blit(0, 0, 64, 32, (int16_t)x, (int16_t)y);
+    int idle = xt_blitter_wait_idle(200000);
+    lua_pushinteger(L, idle);
+    return 1;
+}
+
 void gem_lua_open(lua_State *L)
 {
     static const luaL_Reg vdi_lib[] = {
@@ -227,6 +255,7 @@ void gem_lua_open(lua_State *L)
         {"flush",     l_vdi_flush},
         {"font",      l_vdi_font},
         {"hwfill",    l_vdi_hwfill},   /* blitter RECT_FILL — HW de-risk */
+        {"srctest",   l_vdi_srctest},  /* SRC_BLIT coverage — HW de-risk */
         {NULL, NULL}
     };
     luaL_newlib(L, vdi_lib);
