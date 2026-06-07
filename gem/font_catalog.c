@@ -76,7 +76,20 @@ static fc_face *cat_add(fc_catalog *c) {
     memset(f, 0, sizeof *f);
     return f;
 }
-// Fill weight/width/italic conveniences from the design coords.
+// Case-insensitive search for "italic" anywhere in a style name.
+static int name_italic(const char *s) {
+    static const char it[] = "italic";
+    for (; *s; s++) {
+        int k = 0;
+        while (it[k] && (s[k] | 0x20) == it[k]) k++;
+        if (!it[k]) return 1;
+    }
+    return 0;
+}
+// Fill weight/width/italic conveniences from the design coords + style name.
+// Italic may be an axis (slnt/ital, e.g. Roboto Flex) OR a whole separate file
+// with no italic axis whose instances are just named "... Italic" (e.g. Google's
+// Roboto-Italic), so the name is the reliable cross-case signal.
 static void derive(fc_face *f) {
     f->weight = 400; f->width = 100;
     for (int i = 0; i < f->n_axes; i++) {
@@ -86,6 +99,7 @@ static void derive(fc_face *f) {
         else if (t == TAG('s','l','n','t')) { if (v < 0)      f->italic = 1; }
         else if (t == TAG('i','t','a','l')) { if (v >= 0.5f)  f->italic = 1; }
     }
+    if (name_italic(f->style)) f->italic = 1;
 }
 
 // ---- build ----------------------------------------------------------------
@@ -122,7 +136,7 @@ int fc_build(fc_catalog *cat, FT_Library lib, const char *dir,
             cpystr(f->family, FC_FAMILY_MAX, face->family_name);
             cpystr(f->style, FC_STYLE_MAX, face->style_name ? face->style_name : "Regular");
             cpystr(f->file, FC_FILE_MAX, ents[e].name);
-            f->italic = (face->style_flags & FT_STYLE_FLAG_ITALIC) ? 1 : 0;
+            f->italic = (face->style_flags & FT_STYLE_FLAG_ITALIC) || name_italic(f->style);
             f->weight = (face->style_flags & FT_STYLE_FLAG_BOLD) ? 700 : 400;
             f->width = 100;
         }

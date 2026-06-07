@@ -38,13 +38,36 @@ the family** — never the traits:
 | Static style (non-VF) | `face->style_name`, `face->style_flags` (BOLD/ITALIC) |
 
 Encoding traits in the filename is redundant, can drift from the truth, and is
-meaningless for the variable case (a variable Roboto has no single weight). So:
+meaningless for the variable case (a variable Roboto has no single weight). The
+catalog **never parses the filename** — it is a pure label.
 
-**Filename convention:** `Family+Name.ttf` — spaces become `+` for shell/path
-ergonomics, nothing else. (Keeping the original Google filename is also fine; the
-`name` table is authoritative either way.) Filenames are cp437/ASCII (the FatFs
-build has `FF_LFN_UNICODE=0`), so non-Latin family names live only in the font's
-`name` table, not the filename.
+**Filename:** anything readable. `Family+Name.ttf` (spaces → `+`) is a tidy
+convention, but Google's raw `Roboto-VariableFont_wdth,wght.ttf` works identically
+because the family, weight, width, and italic all come from the font. Filenames
+are cp437/ASCII (the FatFs build has `FF_LFN_UNICODE=0`), so non-Latin family
+names live only in the font's `name` table. (A filename *override* layer — to
+force a family or italic on a malformed font — could be added later, but
+well-formed Google fonts never need it.)
+
+### Italic as a separate file
+
+Google ships italic as a *separate variable file* with **no italic axis**:
+`Roboto-VariableFont_wdth,wght.ttf` (upright) and
+`Roboto-Italic-VariableFont_wdth,wght.ttf` (italic). Both report family `Roboto`,
+so they **group into one family automatically**. The italic file's instances are
+named `Thin Italic` … `Black Italic`, so italic is detected from the **instance
+name** (`name_italic`), not just the `slnt`/`ital` axis — a single-file italic
+axis (Roboto Flex) and a separate-italic-file (Roboto) are both handled. Result:
+one `Roboto` family, 36 instances (18 upright + 18 italic), italics flagged,
+filenames untouched.
+
+### Static duplicates
+
+Google also ships a `static/` folder of individual TTFs (`Roboto-BoldItalic.ttf`,
+…) beside the variable files. **Use the variable files; don't copy the statics
+into `OS/Fonts`** — together they'd produce duplicate `(family, weight, width,
+italic)` faces. If both ever coexist, dedup by that tuple and prefer the variable
+source.
 
 ## Three distinct things — keep them separate
 
