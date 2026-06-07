@@ -696,6 +696,44 @@ module tb_xt_blitter;
     endtask
 
     // ----------------------------------------------------------------
+    // SRC_BLIT coverage -> the PLANE (DST_DDR=0): exactly the path that
+    // vdi.srctest / hardware text rendering uses (dest = FB_BASE, stride
+    // FB_STRIDE_B).  Coverage atlas in DDR, dest = plane row 0.
+    // ----------------------------------------------------------------
+    task test_src_blit_cov_plane();
+        logic [31:0] da, got, e;
+        int errs;
+        $display("=== Test: SRC_BLIT coverage -> plane (DST_DDR=0), 4x1 ===");
+        clear_logs(); errs = 0;
+        mem[mem_idx(32'h3004_0000)] = 64'h0000_0000_4000_80FF;   // cov 255,128,0,64
+        mem[mem_idx(32'h3000_0000)] = 64'h0;                     // plane (0,0)/(1,0) black
+        mem[mem_idx(32'h3000_0008)] = 64'h0;                     // plane (2,0)/(3,0) black
+        write_reg(16'hD4BA, 8'h00); load_1x1_pattern(8'h00, 8'hFF, 8'h00, 8'hFF); write_reg(16'hD4BE, 8'h00); // green
+        write_reg(16'hD4D0,8'h00); write_reg(16'hD4D1,8'h00); write_reg(16'hD4D2,8'h04); write_reg(16'hD4D3,8'h30);
+        write_reg(16'hD4D4,8'd8);  write_reg(16'hD4D5,8'd0);     // SRC stride 8 (1 B/px)
+        write_reg(16'hD4C0,8'd0); write_reg(16'hD4C1,8'd0); write_reg(16'hD4C2,8'd0); write_reg(16'hD4C3,8'd0);
+        write_reg(16'hD4B0,8'd0); write_reg(16'hD4B1,8'd0); write_reg(16'hD4B2,8'd0); write_reg(16'hD4B3,8'd0);
+        write_reg(16'hD4B4,8'd4); write_reg(16'hD4B5,8'd0); write_reg(16'hD4B6,8'd1); write_reg(16'hD4B7,8'd0);
+        write_reg(16'hD4C8,8'h0C);   // FLAGS: SRC_DDR(2) | SRC_COV(3), NO DST_DDR -> plane
+        write_reg(16'hD4BC,8'h08);   // CMD = SRC_BLIT
+        wait_idle();
+        for (int xx = 0; xx < 4; xx++) begin
+            da  = 32'h3000_0000 + xx*4;
+            got = mem[mem_idx(da)][(da[2] ? 32 : 0) +: 32];
+            case (xx)
+                0: e = 32'h00FF00FF;   // cov 255 -> green
+                1: e = 32'h008000FF;   // cov 128 -> half green over black
+                2: e = 32'h00000000;   // cov 0   -> unchanged
+                3: e = 32'h004000FF;   // cov 64
+            endcase
+            $display("  plane pixel %0d = %08x (expect %08x)", xx, got, e);
+            if (got !== e) errs++;
+        end
+        if (errs == 0) $display("PASS: test_src_blit_cov_plane");
+        else begin $display("FAIL: test_src_blit_cov_plane (%0d mismatches)", errs); $fatal(1); end
+    endtask
+
+    // ----------------------------------------------------------------
     // Test 4: Block blit -- straight copy (RASTER_OP=3)
     //
     // Copies 4x1 pixels from (16,16) to (0,0).  Source data
@@ -1182,6 +1220,7 @@ module tb_xt_blitter;
         test_src_blit_copy();
         test_src_blit_coverage();
         test_src_blit_aover();
+        test_src_blit_cov_plane();
         test_block_blit_copy();
         test_block_blit_xor();
         test_block_blit_notsrc();
