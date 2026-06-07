@@ -733,15 +733,22 @@ module xt_blitter #(
     // two halves so each fits in 6.667 ns at clk_sys=150 MHz.
     logic [1:0]  line_step_q;            // {bstep_y, bstep_x} registered
 
-    // Bresenham decision variables (combinational)
+    // Bresenham decision variables (combinational).
+    // line_dx/line_dy are UNSIGNED |DX|/|DY|; widen them to SIGNED 17-bit before
+    // negating/comparing.  Without $signed, `-17'(line_dy)` is an unsigned
+    // wrap-around (huge positive) and forces the whole compare unsigned, so
+    // bstep_x is false for any DY>0 → x never steps and the line never reaches
+    // its endpoint (infinite loop).  Horizontal lines (DY=0) escaped it.
+    wire signed [16:0] sline_dx = $signed({1'b0, line_dx});
+    wire signed [16:0] sline_dy = $signed({1'b0, line_dy});
     wire signed [16:0] be2       = line_err <<< 1;
-    wire        bstep_x = (be2 > -17'(line_dy));
-    wire        bstep_y = (be2 <  17'(line_dx));
+    wire        bstep_x = (be2 > -sline_dy);
+    wire        bstep_y = (be2 <  sline_dx);
     // Combined delta for the error term, using the registered step flags
     // so L_STEP2 doesn't recompute the be2→bstep compare chain — keeps
     // each Bresenham critical-path half within one cycle at 150 MHz.
-    wire signed [16:0] berr_delta_q = (line_step_q[0] ? -17'(line_dy) : 17'd0)
-                                    + (line_step_q[1] ?  17'(line_dx) : 17'd0);
+    wire signed [16:0] berr_delta_q = (line_step_q[0] ? -sline_dy : 17'sd0)
+                                    + (line_step_q[1] ?  sline_dx : 17'sd0);
 
     // ====================================================================
     // Burst buffer — 16 beats of {64-bit data, 8-bit wstrb}

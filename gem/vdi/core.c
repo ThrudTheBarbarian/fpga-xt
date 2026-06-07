@@ -240,6 +240,16 @@ void vdi_line_ex(const vdi_ws *w, int x0, int y0, int x1, int y1, int pen, int s
     uint32_t rgba = pen_tab[pen & 0xFF];
     int width = w->line_width < 1 ? 1 : w->line_width;
     uint16_t pat = (w->line_type == 7) ? (uint16_t)w->line_udsty : line_pattern(w->line_type);
+
+    // Fast path: a 1px solid replace-mode line (the common case — window frames,
+    // rules) is exactly the gfx_line backend seam, so hand it off.  On the A9
+    // that hits the hardware blitter LINE_DRAW; on the SDL host it is the same
+    // Bresenham.  Width / dash / non-replace modes fall through to the brush
+    // rasteriser below; caps are no-ops at width 1, so sq0/sq1 don't matter.
+    if (width == 1 && pat == 0xFFFF && w->wr_mode == VDI_MD_REPLACE) {
+        gfx_line(w->target, x0, y0, x1, y1, rgba);
+        return;
+    }
     int dx = x1 > x0 ? x1 - x0 : x0 - x1, sx = x0 < x1 ? 1 : -1;
     int dy = y1 > y0 ? y0 - y1 : y1 - y0, sy = y0 < y1 ? 1 : -1;   // dy negative
     int err = dx + dy, mode = w->wr_mode;

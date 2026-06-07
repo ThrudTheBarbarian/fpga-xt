@@ -379,6 +379,37 @@ module tb_blitter_bridge;
         else
             $display("RESULT: MISMATCH — wrote %0d beats but pixel/data is wrong (see range)", nbeats);
 
+        // ================================================================
+        // LINE_DRAW: diagonal (10,10)->(30,25), DX=20 DY=15 -> 21 pixels.
+        // Mirrors gfx_a9's gfx_line register sequence.  Verifies the line
+        // walks the WHOLE segment (HW symptom: only the start pixel drew).
+        // ================================================================
+        nbeats = 0; have_range = 0;
+        $display("\n=== LINE_DRAW diagonal (10,10)->(30,25), DX=20 DY=15 ===");
+        axi_write8(5'h0A, 8'd0);          // PAT_LOG_W = 0
+        axi_write8(5'h0E, 8'd0);          // PAT_LOG_H = 0
+        axi_write8(5'h08, 8'd0);          // PAT_PHASE_X
+        axi_write8(5'h09, 8'd0);          // PAT_PHASE_Y
+        axi_write8(5'h0B, 8'h00);         // PAT_DATA R
+        axi_write8(5'h0B, 8'hFF);         // PAT_DATA G (green)
+        axi_write8(5'h0B, 8'h00);         // PAT_DATA B
+        axi_write8(5'h0B, 8'hFF);         // PAT_DATA A
+        axi_write8(5'h0F, 8'h03);         // RASTER_OP = S
+        axi_write8(5'h00, 8'd10); axi_write8(5'h01, 8'd0);   // DST_X = 10
+        axi_write8(5'h02, 8'd10); axi_write8(5'h03, 8'd0);   // DST_Y = 10
+        axi_write8(5'h04, 8'd20); axi_write8(5'h05, 8'd0);   // DST_W = DX = 20
+        axi_write8(5'h06, 8'd15); axi_write8(5'h07, 8'd0);   // DST_H = DY = 15
+        axi_write8(5'h0C, 8'h02);         // CMD = LINE_DRAW
+        wait_idle();
+        repeat (20) @(posedge clk);
+        $display("line write beats : %0d  (expect 21)", nbeats);
+        $display("  start (10,10)  @0x%08x = 0x%08x", FB_BASE+10*8192+10*4, ddr32(FB_BASE+10*8192+10*4));
+        $display("  mid   (20,17/18)            = 0x%08x / 0x%08x",
+                 ddr32(FB_BASE+17*8192+20*4), ddr32(FB_BASE+18*8192+20*4));
+        $display("  end   (30,25)  @0x%08x = 0x%08x", FB_BASE+25*8192+30*4, ddr32(FB_BASE+25*8192+30*4));
+        if (nbeats >= 20) $display("LINE RESULT: PASS — full segment drawn");
+        else              $display("LINE RESULT: FAIL — only %0d pixels drawn (expected 21)", nbeats);
+
         $finish;
     end
 

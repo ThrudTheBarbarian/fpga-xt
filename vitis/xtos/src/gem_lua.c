@@ -153,6 +153,19 @@ static int l_vdi_bar(lua_State *L)    /* vdi.bar(x, y, w, h) — filled rectangl
     return 0;
 }
 
+static int l_vdi_line(lua_State *L)   /* vdi.line(x0,y0,x1,y1[,pen]) — line segment */
+{
+    if (!gem_ready(L)) return 0;
+    int16_t pxy[4] = {
+        (int16_t)luaL_checkinteger(L, 1), (int16_t)luaL_checkinteger(L, 2),
+        (int16_t)luaL_checkinteger(L, 3), (int16_t)luaL_checkinteger(L, 4)
+    };
+    if (!lua_isnoneornil(L, 5)) vsl_color(g_vh, (int)luaL_checkinteger(L, 5));
+    v_pline(g_vh, 2, pxy);                /* 1px solid -> blitter LINE_DRAW path */
+    desk_flush();
+    return 0;
+}
+
 static int l_vdi_clear(lua_State *L)  /* vdi.clear() — whole workstation to pen 0 */
 {
     if (!gem_ready(L)) return 0;
@@ -209,6 +222,7 @@ void gem_lua_open(lua_State *L)
         {"color",     l_vdi_color},
         {"fillcolor", l_vdi_fillcolor},
         {"bar",       l_vdi_bar},
+        {"line",      l_vdi_line},    /* 1px solid line — blitter LINE_DRAW */
         {"clear",     l_vdi_clear},
         {"flush",     l_vdi_flush},
         {"font",      l_vdi_font},

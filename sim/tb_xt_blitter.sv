@@ -530,6 +530,48 @@ module tb_xt_blitter;
     endtask
 
     // ----------------------------------------------------------------
+    // Diagonal line, DX=5 DY=3 -> 6 pixels (x-dominant).  Exercises the
+    // Bresenham step for DY != 0 (the horizontal test has DY=0).
+    // ----------------------------------------------------------------
+    task test_line_draw_diagonal();
+        $display("=== Test: Line draw, diagonal, DX=5 DY=3 -> 6 pixels ===");
+        clear_logs();
+        write_reg(16'hD4BA, 8'h00);
+        load_1x1_pattern(8'h00, 8'hFF, 8'h00, 8'hFF);
+        write_reg(16'hD4BE, 8'h00);
+        write_reg(16'hD4B0, 8'h00); write_reg(16'hD4B1, 8'h00);   // DST_X = 0
+        write_reg(16'hD4B2, 8'h00); write_reg(16'hD4B3, 8'h00);   // DST_Y = 0
+        write_reg(16'hD4B4, 8'd5);  write_reg(16'hD4B5, 8'h00);   // DST_W = DX = 5
+        write_reg(16'hD4B6, 8'd3);  write_reg(16'hD4B7, 8'h00);   // DST_H = DY = 3
+        write_reg(16'hD4BC, 8'h02);                               // CMD = line draw
+        wait_idle();
+        $display("  diagonal wrote %0d beats (expect 6)", w_addr_q.size());
+        expect_write_count(6);
+        $display("PASS: test_line_draw_diagonal");
+    endtask
+
+    // ----------------------------------------------------------------
+    // Reverse diagonal: (5,3)->(0,0), DX=-5 DY=-3 -> 6 pixels.  Exercises
+    // negative deltas (line_sx/sy = step -1) with the signed Bresenham.
+    // ----------------------------------------------------------------
+    task test_line_draw_diagonal_rev();
+        $display("=== Test: Line draw, reverse diagonal, DX=-5 DY=-3 -> 6 pixels ===");
+        clear_logs();
+        write_reg(16'hD4BA, 8'h00);
+        load_1x1_pattern(8'h00, 8'hFF, 8'h00, 8'hFF);
+        write_reg(16'hD4BE, 8'h00);
+        write_reg(16'hD4B0, 8'd5);  write_reg(16'hD4B1, 8'h00);   // DST_X = 5
+        write_reg(16'hD4B2, 8'd3);  write_reg(16'hD4B3, 8'h00);   // DST_Y = 3
+        write_reg(16'hD4B4, 8'hFB); write_reg(16'hD4B5, 8'hFF);   // DST_W = DX = -5
+        write_reg(16'hD4B6, 8'hFD); write_reg(16'hD4B7, 8'hFF);   // DST_H = DY = -3
+        write_reg(16'hD4BC, 8'h02);                               // CMD = line draw
+        wait_idle();
+        $display("  reverse diagonal wrote %0d beats (expect 6)", w_addr_q.size());
+        expect_write_count(6);
+        $display("PASS: test_line_draw_diagonal_rev");
+    endtask
+
+    // ----------------------------------------------------------------
     // Test 4: Block blit -- straight copy (RASTER_OP=3)
     //
     // Copies 4x1 pixels from (16,16) to (0,0).  Source data
@@ -1011,6 +1053,8 @@ module tb_xt_blitter;
         test_pattern_fill();
         test_pattern_fill_transparent();
         test_line_draw_horizontal();
+        test_line_draw_diagonal();
+        test_line_draw_diagonal_rev();
         test_block_blit_copy();
         test_block_blit_xor();
         test_block_blit_notsrc();
