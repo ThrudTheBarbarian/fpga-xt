@@ -211,12 +211,15 @@ module tb_xt_blitter;
             // ---- Write data (W) ready -- always accept -----------------
             m_axi_wready <= 1'b1;
             if (aw_pending && m_axi_wvalid && m_axi_wready) begin
-                // Apply strobed bytes to backing store
+                // Apply strobed bytes to backing store.  word_idx must be a
+                // plain (per-execution) assignment, NOT `int x = expr` — the
+                // latter is a STATIC initializer evaluated once at time 0, so
+                // every write would land on a constant garbage index.
+                int word_idx;
+                word_idx = mem_idx(aw_addr_q + w_beat_count * 8);
                 for (int b = 0; b < 8; b++) begin
-                    if (m_axi_wstrb[b]) begin
-                        int word_idx = mem_idx(aw_addr_q + w_beat_count * 8);
+                    if (m_axi_wstrb[b])
                         mem[word_idx][b*8 +: 8] <= m_axi_wdata[b*8 +: 8];
-                    end
                 end
 
                 // Log the write beat
@@ -569,6 +572,127 @@ module tb_xt_blitter;
         $display("  reverse diagonal wrote %0d beats (expect 6)", w_addr_q.size());
         expect_write_count(6);
         $display("PASS: test_line_draw_diagonal_rev");
+    endtask
+
+    // ----------------------------------------------------------------
+    // SRC_BLIT (CMD 0x08) — straight RGBA copy, DDR source -> DDR dest.
+    // Source surface @0x30040000 (stride 64B), dest @0x30080000 (stride 64B).
+    // ----------------------------------------------------------------
+    task test_src_blit_copy();
+        logic [31:0] sa, da, got, exp;
+        int errs;
+        $display("=== Test: SRC_BLIT RGBA copy, 4x2, DDR src -> DDR dst ===");
+        clear_logs(); errs = 0;
+        for (int yy = 0; yy < 2; yy++)
+          for (int xx = 0; xx < 4; xx++) begin
+            sa = 32'h3004_0000 + yy*64 + xx*4;
+            mem[mem_idx(sa)][(sa[2] ? 32 : 0) +: 32] = 32'h1122_3300 + yy*32'h1000 + xx;
+          end
+        // SRC descriptor 0x30040000/64, DST descriptor 0x30080000/64
+        write_reg(16'hD4D0,8'h00); write_reg(16'hD4D1,8'h00); write_reg(16'hD4D2,8'h04); write_reg(16'hD4D3,8'h30);
+        write_reg(16'hD4D4,8'd64); write_reg(16'hD4D5,8'd0);
+        write_reg(16'hD4D6,8'h00); write_reg(16'hD4D7,8'h00); write_reg(16'hD4D8,8'h08); write_reg(16'hD4D9,8'h30);
+        write_reg(16'hD4DA,8'd64); write_reg(16'hD4DB,8'd0);
+        write_reg(16'hD4C0,8'd0); write_reg(16'hD4C1,8'd0); write_reg(16'hD4C2,8'd0); write_reg(16'hD4C3,8'd0);
+        write_reg(16'hD4B0,8'd0); write_reg(16'hD4B1,8'd0); write_reg(16'hD4B2,8'd0); write_reg(16'hD4B3,8'd0);
+        write_reg(16'hD4B4,8'd4); write_reg(16'hD4B5,8'd0); write_reg(16'hD4B6,8'd2); write_reg(16'hD4B7,8'd0);
+        write_reg(16'hD4C8,8'h24);   // FLAGS: SRC_DDR(bit2) | DST_DDR(bit5)
+        write_reg(16'hD4BC,8'h08);   // CMD = SRC_BLIT
+        wait_idle();
+        for (int yy = 0; yy < 2; yy++)
+          for (int xx = 0; xx < 4; xx++) begin
+            da  = 32'h3008_0000 + yy*64 + xx*4;
+            got = mem[mem_idx(da)][(da[2] ? 32 : 0) +: 32];
+            exp = 32'h1122_3300 + yy*32'h1000 + xx;
+            if (got !== exp) begin errs++; $display("  MISMATCH (%0d,%0d): got %08x exp %08x", xx, yy, got, exp); end
+          end
+        if (errs == 0) $display("PASS: test_src_blit_copy");
+        else begin $display("FAIL: test_src_blit_copy (%0d mismatches)", errs); $fatal(1); end
+    endtask
+
+    // ----------------------------------------------------------------
+    // SRC_BLIT coverage->colour blend: 8-bit coverage atlas + pattern colour,
+    // blended over a known background.  cov: 255(opaque) 128 0(skip) 64.
+    // ----------------------------------------------------------------
+    task test_src_blit_coverage();
+        logic [31:0] da, got;
+        int errs;
+        $display("=== Test: SRC_BLIT coverage blend, 4x1, red over black ===");
+        clear_logs(); errs = 0;
+        // Coverage atlas @0x30040000: bytes [255,128,0,64] in the first beat.
+        mem[mem_idx(32'h3004_0000)] = 64'h0000_0000_4000_80FF;
+        // Dest @0x30080000 prefilled black (alpha 0).
+        mem[mem_idx(32'h3008_0000)] = 64'h0;
+        mem[mem_idx(32'h3008_0008)] = 64'h0;
+        // 1x1 red pattern = text colour (R,G,B,A = FF,00,00,FF)
+        write_reg(16'hD4BA, 8'h00); load_1x1_pattern(8'hFF, 8'h00, 8'h00, 8'hFF); write_reg(16'hD4BE, 8'h00);
+        // SRC descriptor 0x30040000/8 (1 B/px), DST 0x30080000/64
+        write_reg(16'hD4D0,8'h00); write_reg(16'hD4D1,8'h00); write_reg(16'hD4D2,8'h04); write_reg(16'hD4D3,8'h30);
+        write_reg(16'hD4D4,8'd8);  write_reg(16'hD4D5,8'd0);
+        write_reg(16'hD4D6,8'h00); write_reg(16'hD4D7,8'h00); write_reg(16'hD4D8,8'h08); write_reg(16'hD4D9,8'h30);
+        write_reg(16'hD4DA,8'd64); write_reg(16'hD4DB,8'd0);
+        write_reg(16'hD4C0,8'd0); write_reg(16'hD4C1,8'd0); write_reg(16'hD4C2,8'd0); write_reg(16'hD4C3,8'd0);
+        write_reg(16'hD4B0,8'd0); write_reg(16'hD4B1,8'd0); write_reg(16'hD4B2,8'd0); write_reg(16'hD4B3,8'd0);
+        write_reg(16'hD4B4,8'd4); write_reg(16'hD4B5,8'd0); write_reg(16'hD4B6,8'd1); write_reg(16'hD4B7,8'd0);
+        write_reg(16'hD4C8,8'h2C);   // FLAGS: SRC_DDR(2) | SRC_COV(3) | DST_DDR(5)
+        write_reg(16'hD4BC,8'h08);   // CMD = SRC_BLIT
+        wait_idle();
+        // Expected: x0=255 fast-path FF0000FF; x1=128 -> 800000FF; x2=0 unchanged 0; x3=64 -> 400000FF
+        for (int xx = 0; xx < 4; xx++) begin
+            logic [31:0] e;
+            da  = 32'h3008_0000 + xx*4;
+            got = mem[mem_idx(da)][(da[2] ? 32 : 0) +: 32];
+            case (xx)
+                0: e = 32'hFF0000FF;
+                1: e = 32'h800000FF;
+                2: e = 32'h00000000;
+                3: e = 32'h400000FF;
+            endcase
+            $display("  cov pixel %0d = %08x (expect %08x)", xx, got, e);
+            if (got !== e) errs++;
+        end
+        if (errs == 0) $display("PASS: test_src_blit_coverage");
+        else begin $display("FAIL: test_src_blit_coverage (%0d mismatches)", errs); $fatal(1); end
+    endtask
+
+    // ----------------------------------------------------------------
+    // SRC_BLIT RGBA alpha-over: src {red@α128, green@α255, transparent@α0}
+    // composited over a blue background.
+    // ----------------------------------------------------------------
+    task test_src_blit_aover();
+        logic [31:0] da, got, e;
+        int errs;
+        $display("=== Test: SRC_BLIT RGBA alpha-over, 3x1, over blue ===");
+        clear_logs(); errs = 0;
+        // Source @0x30040000: px0=FF000080 (red α128), px1=00FF00FF (green opaque), px2=00000000 (clear)
+        mem[mem_idx(32'h3004_0000)] = 64'h00FF00FF_FF000080;
+        mem[mem_idx(32'h3004_0008)] = 64'h00000000_00000000;
+        // Dest @0x30080000 prefilled blue (0000FFFF)
+        mem[mem_idx(32'h3008_0000)] = 64'h0000FFFF_0000FFFF;
+        mem[mem_idx(32'h3008_0008)] = 64'h0000FFFF_0000FFFF;
+        write_reg(16'hD4D0,8'h00); write_reg(16'hD4D1,8'h00); write_reg(16'hD4D2,8'h04); write_reg(16'hD4D3,8'h30);
+        write_reg(16'hD4D4,8'd64); write_reg(16'hD4D5,8'd0);
+        write_reg(16'hD4D6,8'h00); write_reg(16'hD4D7,8'h00); write_reg(16'hD4D8,8'h08); write_reg(16'hD4D9,8'h30);
+        write_reg(16'hD4DA,8'd64); write_reg(16'hD4DB,8'd0);
+        write_reg(16'hD4C0,8'd0); write_reg(16'hD4C1,8'd0); write_reg(16'hD4C2,8'd0); write_reg(16'hD4C3,8'd0);
+        write_reg(16'hD4B0,8'd0); write_reg(16'hD4B1,8'd0); write_reg(16'hD4B2,8'd0); write_reg(16'hD4B3,8'd0);
+        write_reg(16'hD4B4,8'd3); write_reg(16'hD4B5,8'd0); write_reg(16'hD4B6,8'd1); write_reg(16'hD4B7,8'd0);
+        write_reg(16'hD4C8,8'h34);   // FLAGS: SRC_DDR(2) | SRC_AOVER(4) | DST_DDR(5)
+        write_reg(16'hD4BC,8'h08);   // CMD = SRC_BLIT
+        wait_idle();
+        for (int xx = 0; xx < 3; xx++) begin
+            da  = 32'h3008_0000 + xx*4;
+            got = mem[mem_idx(da)][(da[2] ? 32 : 0) +: 32];
+            case (xx)
+                0: e = 32'h80007FFF;   // red α128 over blue
+                1: e = 32'h00FF00FF;   // green opaque (fast path)
+                2: e = 32'h0000FFFF;   // α0 → unchanged blue
+            endcase
+            $display("  aover pixel %0d = %08x (expect %08x)", xx, got, e);
+            if (got !== e) errs++;
+        end
+        if (errs == 0) $display("PASS: test_src_blit_aover");
+        else begin $display("FAIL: test_src_blit_aover (%0d mismatches)", errs); $fatal(1); end
     endtask
 
     // ----------------------------------------------------------------
@@ -1055,6 +1179,9 @@ module tb_xt_blitter;
         test_line_draw_horizontal();
         test_line_draw_diagonal();
         test_line_draw_diagonal_rev();
+        test_src_blit_copy();
+        test_src_blit_coverage();
+        test_src_blit_aover();
         test_block_blit_copy();
         test_block_blit_xor();
         test_block_blit_notsrc();

@@ -601,7 +601,7 @@ module xt_blitter #(
         {4'd0, raster_op_reg}, 8'd0
     };
 
-    wire valid_cmd = (bus_data >= 8'h01) && (bus_data <= 8'h07);
+    wire valid_cmd = (bus_data >= 8'h01) && (bus_data <= 8'h08);
     // SYNC short-cut: CMD=0x07 written while !busy (= queue empty AND FSM
     // idle, by the definition of busy) can bypass the queue entirely and
     // increment seq_counter_q this cycle, saving the queue push + pop
@@ -718,6 +718,9 @@ module xt_blitter #(
     wire q_blend_mode = ((q_cmd == 8'h01) || (q_cmd == 8'h02)) && q_flags[0];
     wire q_font_mode  = (q_cmd == 8'h05);
     wire q_sync_mode  = (q_cmd == 8'h07);
+    // SRC_BLIT (CMD 0x08): blit a src rect from an arbitrary DDR surface to a
+    // dst {x,y}.  q_flags[2]=SRC_DDR, [3]=SRC_COV, [4]=SRC_AOVER, [5]=DST_DDR.
+    wire q_src_blit   = (q_cmd == 8'h08);
 
     // FIFO pointer/count management
     always_ff @(posedge clk) begin  // sync reset — see note at `rst` port
@@ -840,6 +843,25 @@ module xt_blitter #(
     logic        font_mode_q;              // derived from popped CMD at S_IDLE
     logic        sc_blend_q;               // derived from popped CMD + FLAGS at S_IDLE
     logic [3:0]  raster_op_q;             // captured from raster_op_reg at S_IDLE
+
+    // ---- SRC_BLIT (CMD 0x08) working state (snapshotted at S_IDLE) ----------
+    logic        src_blit_q;               // this command is a SRC_BLIT
+    logic        src_ddr_q, src_cov_q;     // FLAGS[2]/[3]: DDR source, coverage src
+    logic        src_aover_q, dst_ddr_q;   // FLAGS[4]/[5]: RGBA alpha-over, DDR dest
+    logic [31:0] src_base_q,  dst_base_q;  // captured surface bases
+    logic [15:0] src_stride_q, dst_stride_q;
+    logic [31:0] sb_src_row, sb_dst_row;   // current-row base addr (accumulators)
+    logic [31:0] sb_color_q;               // text colour (pat_pixel_q2) for coverage
+    logic [31:0] sb_pix_q;                 // source pixel result staged for write
+    logic [3:0]  sb_wstrb_q;               // write strobe for the staged pixel
+    logic [7:0]  sb_cov_q;                 // coverage byte (SRC_COV) for blend alpha
+    logic        sb_use_blend_q;           // SB_WR: write bl_blend_q (blend) vs sb_pix_q
+    // Effective source/dest surface params: DDR descriptor or the plane.
+    wire [31:0]  sb_src_base_eff   = src_ddr_q ? src_base_q   : FB_BASE;
+    wire [15:0]  sb_src_stride_eff = src_ddr_q ? src_stride_q : 16'(FB_STRIDE_B);
+    wire [31:0]  sb_dst_base_eff   = dst_ddr_q ? dst_base_q   : FB_BASE;
+    wire [15:0]  sb_dst_stride_eff = dst_ddr_q ? dst_stride_q : 16'(FB_STRIDE_B);
+    // Per-pixel source/dest addresses are below, after cx/cy are declared.
     // bl_need_dst: true when the raster op needs to read destination data
     // (ops 1,2,4,6,7,8,9,10,11,13,14 combine src+dst).  Ops 0/3/5/12/15 use
     // source-only transforms or skip entirely.  Only meaningful when blk_mode_q.
@@ -856,6 +878,13 @@ module xt_blitter #(
 
     // ---- Sweep counters (cx across columns, cy across rows) ---------------
     logic [15:0] cx, cy;
+
+    // SRC_BLIT per-pixel addresses (need cx/src_x_q/dst_x_q, declared above).
+    // Coverage source = 1 B/px, RGBA source = 4 B/px; dest is always RGBA.
+    wire [31:0]  sb_src_xoff = src_cov_q ? 32'(src_x_q + cx)
+                                         : (32'(src_x_q + cx) << 2);
+    wire [31:0]  sb_src_addr = sb_src_row + sb_src_xoff;
+    wire [31:0]  sb_dst_addr = sb_dst_row + (32'(dst_x_q + cx) << 2);
 
     // Pipelined row-complete check (cy >= dst_h_q - 1).  Breaks the CARRY4
     // chain from dst_h_q through the subtractor/comparator to state_reg,
@@ -1101,7 +1130,18 @@ module xt_blitter #(
         SC_SBLEND_BLEND = 6'd44, // cycle 1.5: compute src*sa and dst*inv_a products
         BL_RACC_BLEND2 = 6'd45, // cycle 1.75: combine products → bl_blend_q
         SC_SBLEND_BLEND2 = 6'd46, // cycle 1.75: combine products → bl_blend_q
-        L_STEP2  = 6'd47   // line-draw: apply registered step flags
+        L_STEP2  = 6'd47,  // line-draw: apply registered step flags
+        // SRC_BLIT (CMD 0x08) — per-pixel DDR→DDR blit (copy / alpha-over / coverage)
+        SB_INIT  = 6'd48,  // compute row-base addresses, warm pattern (coverage)
+        SB_WARM  = 6'd49,  // pat_pixel_q2 settle → latch text colour
+        SB_SRD   = 6'd50,  // issue AR for the source pixel
+        SB_SRD_W = 6'd51,  // receive source beat, extract pixel/coverage
+        SB_DRD   = 6'd52,  // issue AR for the dest pixel (blend modes)
+        SB_DRD_W = 6'd53,  // receive dest beat → blend pipeline
+        SB_WR    = 6'd54,  // issue AW+W for the dest pixel
+        SB_WR2   = 6'd55,  // hold AXI write one cycle
+        SB_B     = 6'd56,  // wait for B response
+        SB_STEP  = 6'd57   // advance cx/cy, row bases; terminate at H
     } state_t;
     state_t state;
 
@@ -1169,6 +1209,8 @@ module xt_blitter #(
             sc_need_flush_q   <= 1'b0;
             bilin_mode_q      <= 1'b0;
             font_mode_q       <= 1'b0;
+            src_blit_q        <= 1'b0;
+            sb_use_blend_q    <= 1'b0;
             sc_blend_q        <= 1'b0;
             raster_op_q       <= 4'd3;
             bl_arlen_q        <= 8'd0;
@@ -1262,6 +1304,16 @@ module xt_blitter #(
                         src_y_q     <= q_src_y;
                         src_w_q     <= q_src_w;
                         src_h_q     <= q_src_h;
+                        // SRC_BLIT: capture command flags + surface descriptors.
+                        src_blit_q   <= q_src_blit;
+                        src_ddr_q    <= q_flags[2];
+                        src_cov_q    <= q_flags[3];
+                        src_aover_q  <= q_flags[4];
+                        dst_ddr_q    <= q_flags[5];
+                        src_base_q   <= src_base_reg;
+                        src_stride_q <= src_stride_reg;
+                        dst_base_q   <= dst_base_reg;
+                        dst_stride_q <= dst_stride_reg;
                         cx        <= 16'd0;
                         cy        <= 16'd0;
                         burst_len         <= 5'd0;
@@ -1311,6 +1363,12 @@ module xt_blitter #(
                                 state <= S_DONE;
                             else
                                 state <= SC_ROW;
+                        end else if (q_src_blit) begin
+                            // DDR→DDR blit (font / general)
+                            if (q_dst_w == 16'd0 || q_dst_h == 16'd0)
+                                state <= S_DONE;
+                            else
+                                state <= SB_INIT;
                         end else begin
                             // Rect fill
                             if (q_dst_w == 16'd0 || q_dst_h == 16'd0 || q_raster_op == 4'd0 || q_raster_op == 4'd5) begin
@@ -1793,6 +1851,7 @@ module xt_blitter #(
                     line_mode_q <= 1'b0;
                     blk_mode_q  <= 1'b0;
                     dma_mode_q  <= 1'b0;
+                    src_blit_q  <= 1'b0;
                     state <= S_IDLE;
                 end
 
@@ -2972,12 +3031,14 @@ module xt_blitter #(
                                         + bl_dst_prod_q[31:16] + 16'd128) >> 8;
                     bl_blend_q[7:0]   <= bl_src_pixel_q[7:0];   // preserve source alpha
                     bl_blend_valid_q  <= 1'b1;
-                    // Line-draw blend returns to L_PLOT to issue the AXI write
-                    // for this pixel; rect-fill goes to BL_RACC2 to accumulate
-                    // into the burst buffer.
+                    // Line-draw blend returns to L_PLOT; SRC_BLIT goes to SB_WR
+                    // to issue the dest write; rect-fill accumulates in BL_RACC2.
                     if (line_mode_q) begin
                         line_use_blend_q <= 1'b1;
                         state <= L_PLOT;
+                    end else if (src_blit_q) begin
+                        sb_use_blend_q <= 1'b1;
+                        state <= SB_WR;
                     end else begin
                         state <= BL_RACC2;
                     end
@@ -3038,6 +3099,142 @@ module xt_blitter #(
                         end else begin
                             state <= S_ACCUM;
                         end
+                    end
+                end
+
+                // ============================================================
+                // SRC_BLIT (CMD 0x08) — per-pixel DDR→DDR blit
+                //
+                // Walks the W×H dst rect a pixel at a time.  Per pixel: read the
+                // source (RGBA 4B, or 8-bit coverage) from SRC_DDR?descriptor:
+                // plane; copy straight, or (SRC_AOVER / SRC_COV) read the dest,
+                // run the shared alpha-blend pipeline, and write the result.
+                // Single-beat AXI throughout (mirrors the line-draw write path);
+                // bursting is a later optimisation.  Row bases are accumulators
+                // (one multiply per blit at SB_INIT, +stride per row) so there
+                // is no per-pixel multiply.
+                // ============================================================
+                SB_INIT: begin
+                    sb_src_row <= sb_src_base_eff + src_y_q * sb_src_stride_eff;
+                    sb_dst_row <= sb_dst_base_eff + dst_y_q * sb_dst_stride_eff;
+                    state <= SB_WARM;          // let pat_pixel_q2 settle (coverage)
+                end
+
+                SB_WARM: begin
+                    sb_color_q <= pat_pixel_q2;   // 1×1 pattern = text colour
+                    state <= SB_SRD;
+                end
+
+                SB_SRD: begin
+                    // Single-beat read of the source pixel (8-byte aligned).
+                    m_axi_araddr  <= {sb_src_addr[31:3], 3'b000};
+                    m_axi_arlen   <= 8'd0;
+                    m_axi_arsize  <= 3'b011;       // 8 bytes/beat
+                    m_axi_arburst <= 2'b01;
+                    m_axi_arvalid <= 1'b1;
+                    state <= SB_SRD_W;
+                end
+
+                SB_SRD_W: begin
+                    m_axi_rready <= 1'b1;
+                    if (m_axi_rvalid) begin
+                        logic [31:0] spix;
+                        logic [7:0]  cov;
+                        cov  = m_axi_rdata[ {sb_src_addr[2:0], 3'b000} +: 8 ];
+                        spix = sb_src_addr[2] ? m_axi_rdata[63:32] : m_axi_rdata[31:0];
+
+                        if (src_cov_q) begin
+                            // Coverage → colour blend: alpha = cov, colour = pat.
+                            bl_src_pixel_q <= {sb_color_q[31:8], cov};
+                            if (cov == 8'd0)        state <= SB_STEP;         // skip
+                            else if (cov == 8'd255) begin
+                                sb_pix_q <= {sb_color_q[31:8], 8'hFF};
+                                sb_use_blend_q <= 1'b0; state <= SB_WR;
+                            end else                state <= SB_DRD;          // blend
+                        end else if (src_aover_q) begin
+                            // RGBA alpha-over: alpha = src.a, colour = src.rgb.
+                            bl_src_pixel_q <= spix;
+                            if (spix[7:0] == 8'd0)        state <= SB_STEP;
+                            else if (spix[7:0] == 8'd255) begin
+                                sb_pix_q <= spix; sb_use_blend_q <= 1'b0; state <= SB_WR;
+                            end else                       state <= SB_DRD;
+                        end else begin
+                            // Straight RGBA copy.
+                            sb_pix_q <= spix; sb_use_blend_q <= 1'b0; state <= SB_WR;
+                        end
+                    end
+                end
+
+                SB_DRD: begin
+                    // Read the dest pixel for blending.
+                    m_axi_araddr  <= {sb_dst_addr[31:3], 3'b000};
+                    m_axi_arlen   <= 8'd0;
+                    m_axi_arsize  <= 3'b011;
+                    m_axi_arburst <= 2'b01;
+                    m_axi_arvalid <= 1'b1;
+                    bl_read_high_half_q <= sb_dst_addr[2];
+                    state <= SB_DRD_W;
+                end
+
+                SB_DRD_W: begin
+                    m_axi_rready <= 1'b1;
+                    if (m_axi_rvalid) begin
+                        bl_dst_q <= bl_read_high_half_q ? m_axi_rdata[63:32]
+                                                        : m_axi_rdata[31:0];
+                        state <= BL_RACC_BLEND;    // shared blend → BL_RACC_BLEND2
+                    end
+                end
+
+                SB_WR: begin
+                    // Single-beat write of the result pixel to the dest lane.
+                    // Blended results force opaque alpha (compositing onto an
+                    // opaque surface); copies keep the source pixel verbatim.
+                    logic [31:0] wpix;
+                    wpix = sb_use_blend_q ? {bl_blend_q[31:8], 8'hFF} : sb_pix_q;
+                    m_axi_awaddr  <= {sb_dst_addr[31:3], 3'b000};
+                    m_axi_awlen   <= 8'd0;
+                    m_axi_awsize  <= 3'b011;
+                    m_axi_awburst <= 2'b01;
+                    m_axi_awvalid <= 1'b1;
+                    if (sb_dst_addr[2] == 1'b0) begin
+                        m_axi_wdata <= {32'd0, wpix};
+                        m_axi_wstrb <= 8'h0F;
+                    end else begin
+                        m_axi_wdata <= {wpix, 32'd0};
+                        m_axi_wstrb <= 8'hF0;
+                    end
+                    m_axi_wlast  <= 1'b1;
+                    m_axi_wvalid <= 1'b1;
+                    state <= SB_WR2;
+                end
+
+                SB_WR2: begin
+                    // Re-assert the (one-shot-defaulted) write signals so the
+                    // slave samples the transaction this cycle (cf. L_PLOT_W).
+                    m_axi_awvalid <= 1'b1;
+                    m_axi_wvalid  <= 1'b1;
+                    m_axi_wlast   <= 1'b1;
+                    state <= SB_B;
+                end
+
+                SB_B: begin
+                    if (m_axi_bvalid) state <= SB_STEP;
+                end
+
+                SB_STEP: begin
+                    if (cx + 16'd1 >= dst_w_q) begin
+                        if (cy + 16'd1 >= dst_h_q) begin
+                            state <= S_DONE;
+                        end else begin
+                            cx <= 16'd0;
+                            cy <= cy + 16'd1;
+                            sb_src_row <= sb_src_row + sb_src_stride_eff;
+                            sb_dst_row <= sb_dst_row + sb_dst_stride_eff;
+                            state <= SB_SRD;
+                        end
+                    end else begin
+                        cx <= cx + 16'd1;
+                        state <= SB_SRD;
                     end
                 end
 
