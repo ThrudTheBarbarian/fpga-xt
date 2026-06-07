@@ -125,9 +125,12 @@ module axi_blitter_bridge (
 
     reg        wstate;
     reg        aw_have, w_have;       // AW / W captured for the in-flight write
-    reg [4:0]  aw_off;                // latched AXI byte offset awaddr[4:0]
+    reg [5:0]  aw_off;                // latched AXI byte offset awaddr[5:0]
     reg [7:0]  w_byte;                // latched first active write byte
-    wire       aw_mine = s_axi_awvalid && (s_axi_awaddr[15:5] == 11'h000);
+    // 64-byte register window (0x00..0x3F): 4 pages of 16 byte-offsets.
+    //   0x00-0x0F -> $D4Bx,  0x10-0x1F -> $D4Cx,  0x20-0x2F -> $D4Dx (SRC/DST
+    //   descriptors),  0x30-0x3F -> $D4Ex (reserved).
+    wire       aw_mine = s_axi_awvalid && (s_axi_awaddr[15:6] == 10'h000);
 
     always_ff @(posedge clk or posedge rst) begin
         if (rst) begin
@@ -141,7 +144,7 @@ module axi_blitter_bridge (
             bl_we         <= 1'b0;
             aw_have       <= 1'b0;
             w_have        <= 1'b0;
-            aw_off        <= 5'd0;
+            aw_off        <= 6'd0;
             w_byte        <= 8'd0;
             gp0_ctrl      <= 8'h00;    // boot to the COMPOSITOR (desktop); bars
                                        // (bit0=1) is now a debug option only,
@@ -160,15 +163,15 @@ module axi_blitter_bridge (
                     if (aw_mine && !aw_have) begin
                         s_axi_awready <= 1'b1;
                         aw_have       <= 1'b1;
-                        aw_off        <= s_axi_awaddr[4:0];
-                        // Page-select bit MUST land in bl_addr[5] — that is the
-                        // bit fpga_xt_top reconstructs the $D4Bx/$D4Cx address
-                        // from (bridge_bus_addr[7:4] = bl_addr[5] ? B : C).  The
-                        // old 5-bit form {~awaddr[4], awaddr[3:0]} put it in
-                        // bl_addr[4] instead, forcing every write onto $D4Cx —
-                        // so CMD never reached $D4BC and RASTER_OP/PAT bytes hit
-                        // the keyboard-injection regs ($D4CF/$D4CB).
-                        bl_addr       <= {~s_axi_awaddr[4], 1'b0, s_axi_awaddr[3:0]};
+                        aw_off        <= s_axi_awaddr[5:0];
+                        // bl_addr = {page[1:0], offset[3:0]}: page = awaddr[5:4]
+                        // (00=$D4Bx, 01=$D4Cx, 10=$D4Dx, 11=$D4Ex), offset =
+                        // awaddr[3:0].  fpga_xt_top reconstructs the 16-bit bus
+                        // address from bl_addr[5:4] (see bridge_bus_addr).  The
+                        // historical page bug: the old 5-bit form put the page
+                        // bit in bl_addr[4] not [5], forcing every write onto
+                        // $D4Cx (CMD lost, PAT/RASTER hit the kbd-inject regs).
+                        bl_addr       <= {s_axi_awaddr[5:4], s_axi_awaddr[3:0]};
                     end
 
                     // Accept W only once we own the AW (this cycle or earlier),
@@ -185,7 +188,7 @@ module axi_blitter_bridge (
                     // Both halves captured (in prior cycles) -> commit + respond.
                     if (aw_have && w_have) begin
                         bl_data      <= w_byte;
-                        if (aw_off == 5'h1C) gp0_ctrl <= w_byte;   // control reg
+                        if (aw_off == 6'h1C) gp0_ctrl <= w_byte;   // control reg
                         else                 bl_we    <= 1'b1;     // blitter strobe
                         s_axi_bresp  <= 2'b00;
                         s_axi_bvalid <= 1'b1;
@@ -230,7 +233,7 @@ module axi_blitter_bridge (
                     // reads outside the blitter sub-range so the
                     // ROM-init loader can OR-mux on the same bus.
                     if (s_axi_arvalid
-                        && (s_axi_araddr[15:5] == 11'h000)) begin
+                        && (s_axi_araddr[15:6] == 10'h000)) begin
                         s_axi_arready <= 1'b1;
                         // Return STATUS bits on read at offset 0x0D:
                         //   bit 0 = bl_busy (queue non-empty OR FSM active)

@@ -43,8 +43,13 @@ module tb_blitter_bridge;
     wire [5:0]  bl_addr;
     wire [7:0]  bl_data;
     wire        bl_we;
-    // Reconstruct the 16-bit SALLY-style bus address exactly as fpga_xt_top.
-    wire [15:0] blit_bus_addr = {8'hD4, bl_addr[5] ? 4'hB : 4'hC, bl_addr[3:0]};
+    // Reconstruct the 16-bit SALLY-style bus address exactly as fpga_xt_top:
+    // bl_addr[5:4] = page (00=$D4Bx, 01=$D4Cx, 10=$D4Dx, 11=$D4Ex).
+    wire [15:0] blit_bus_addr = {8'hD4,
+        (bl_addr[5:4] == 2'b00) ? 4'hB :
+        (bl_addr[5:4] == 2'b01) ? 4'hC :
+        (bl_addr[5:4] == 2'b10) ? 4'hD : 4'hE,
+        bl_addr[3:0]};
 
     // ---- blitter AXI master (write side captured below) -------------------
     wire [31:0] m_axi_awaddr;
@@ -274,12 +279,12 @@ module tb_blitter_bridge;
     // AXI4-Lite master write of one byte at byte offset `off` (mimics Xil_Out8
     // to XT_BLITTER_BASE + off: data in the lane, wstrb that lane).
     // ====================================================================
-    task automatic axi_write8(input [4:0] off, input [7:0] v);
+    task automatic axi_write8(input [5:0] off, input [7:0] v);
         bit aw_done, w_done;
         begin
             aw_done = 0; w_done = 0;
             @(posedge clk);
-            s_axi_awaddr  <= {27'd0, off};
+            s_axi_awaddr  <= {26'd0, off};
             s_axi_awvalid <= 1'b1;
             s_axi_wdata   <= (32'(v) << (8*off[1:0]));
             s_axi_wstrb   <= (4'b0001 << off[1:0]);
@@ -409,6 +414,28 @@ module tb_blitter_bridge;
         $display("  end   (30,25)  @0x%08x = 0x%08x", FB_BASE+25*8192+30*4, ddr32(FB_BASE+25*8192+30*4));
         if (nbeats >= 20) $display("LINE RESULT: PASS — full segment drawn");
         else              $display("LINE RESULT: FAIL — only %0d pixels drawn (expected 21)", nbeats);
+
+        // ================================================================
+        // $D4Dx descriptor registers: load SRC/DST base+stride through the
+        // expanded bridge window (offsets 0x20-0x2B) and check they latched.
+        // ================================================================
+        $display("\n=== $D4Dx SRC/DST descriptor load (offsets 0x20-0x2B) ===");
+        axi_write8(6'h20, 8'h00); axi_write8(6'h21, 8'h00);
+        axi_write8(6'h22, 8'h00); axi_write8(6'h23, 8'h31);   // SRC_BASE = 0x31000000
+        axi_write8(6'h24, 8'h00); axi_write8(6'h25, 8'h08);   // SRC_STRIDE = 0x0800
+        axi_write8(6'h26, 8'h00); axi_write8(6'h27, 8'h00);
+        axi_write8(6'h28, 8'h00); axi_write8(6'h29, 8'h32);   // DST_BASE = 0x32000000
+        axi_write8(6'h2A, 8'h00); axi_write8(6'h2B, 8'h10);   // DST_STRIDE = 0x1000
+        repeat (8) @(posedge clk);
+        $display("  SRC_BASE   = 0x%08x (expect 0x31000000)", u_blit.src_base_reg);
+        $display("  SRC_STRIDE = 0x%04x     (expect 0x0800)", u_blit.src_stride_reg);
+        $display("  DST_BASE   = 0x%08x (expect 0x32000000)", u_blit.dst_base_reg);
+        $display("  DST_STRIDE = 0x%04x     (expect 0x1000)", u_blit.dst_stride_reg);
+        if (u_blit.src_base_reg == 32'h31000000 && u_blit.src_stride_reg == 16'h0800 &&
+            u_blit.dst_base_reg == 32'h32000000 && u_blit.dst_stride_reg == 16'h1000)
+            $display("DESC RESULT: PASS — all four descriptors latched via $D4Dx");
+        else
+            $display("DESC RESULT: FAIL — descriptor load through the new page is wrong");
 
         $finish;
     end

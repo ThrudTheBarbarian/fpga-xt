@@ -1503,12 +1503,15 @@ module fpga_xt_top (
     `endif
 
     // Reconstruct full 16-bit bus_addr from bridge's 6-bit register addr.
-    //   bl_bridge_addr[5] = 1 → $D4Bx page, bl_bridge_addr[5] = 0 → $D4Cx page
-    //   bus_addr[7:4] = 4'b1011 for $D4Bx, 4'b1100 for $D4Cx
+    //   bl_bridge_addr[5:4] = page select: 00=$D4Bx, 01=$D4Cx, 10=$D4Dx, 11=$D4Ex
+    //   bus_addr[7:4] = 4'b1011/1100/1101/1110 for B/C/D/E
     //   bus_addr[3:0] = register index within page
     wire [15:0] bridge_bus_addr;
     assign bridge_bus_addr[15:8] = 8'hD4;
-    assign bridge_bus_addr[7:4]  = bl_bridge_addr[5] ? 4'b1011 : 4'b1100;
+    assign bridge_bus_addr[7:4]  = (bl_bridge_addr[5:4] == 2'b00) ? 4'b1011 :  // $D4Bx
+                                   (bl_bridge_addr[5:4] == 2'b01) ? 4'b1100 :  // $D4Cx
+                                   (bl_bridge_addr[5:4] == 2'b10) ? 4'b1101 :  // $D4Dx
+                                                                    4'b1110;   // $D4Ex
     assign bridge_bus_addr[3:0]  = bl_bridge_addr[3:0];
 
     // Keyboard-inject decode (boot blocker #5).  A PS write through the GP0

@@ -224,15 +224,18 @@ module xt_blitter #(
     // ====================================================================
     // Register decode — covers $D4B0..$D4BF and $D4C0..$D4CF
     // ====================================================================
-    // $D4Bx: bus_addr[7:4] = 4'b1011
-    // $D4Cx: bus_addr[7:4] = 4'b1100
-    // reg_addr = {~bus_addr[5], bus_addr[3:0]} → 0-15 = $D4Bx, 16-31 = $D4Cx
+    // $D4Bx: bus_addr[7:4] = 4'b1011   reg_addr 0x00-0x0F
+    // $D4Cx: bus_addr[7:4] = 4'b1100   reg_addr 0x10-0x1F
+    // $D4Dx: bus_addr[7:4] = 4'b1101   reg_addr 0x20-0x2F (SRC/DST descriptors)
     wire        is_d4bx = (bus_addr[7:4] == 4'b1011);
     wire        is_d4cx = (bus_addr[7:4] == 4'b1100);
+    wire        is_d4dx = (bus_addr[7:4] == 4'b1101);
     wire reg_we = bus_we
                 && (bus_addr[15:8] == 8'hD4)
-                && (is_d4bx || is_d4cx);
-    wire [4:0] reg_addr = {~bus_addr[5], bus_addr[3:0]};
+                && (is_d4bx || is_d4cx || is_d4dx);
+    wire [5:0] reg_addr = is_d4bx ? {2'd0, bus_addr[3:0]}    // 0x00-0x0F
+                        : is_d4cx ? {2'd1, bus_addr[3:0]}    // 0x10-0x1F
+                        :           {2'd2, bus_addr[3:0]};   // $D4Dx 0x20-0x2F
 
     // ---- Parameter registers (all written by SALLY / PS GP0) ------------
     // These hold the most-recent values written by software.  A CMD write
@@ -248,6 +251,20 @@ module xt_blitter #(
     logic [4:0]  log_pw_reg, log_ph_reg;
     logic [7:0]  flags_reg;              // FLAGS register at $D4C8
     logic [3:0]  raster_op_reg;          // GEM raster op for block blit ($D4BF)
+
+    // ---- DDR source/dest surface descriptors ($D4Dx, SRC_BLIT = CMD 0x08) ---
+    // Let SRC_BLIT read its source from / write its dest to an arbitrary DDR
+    // surface {base, stride} instead of the hardwired plane (FB_BASE/FB_STRIDE).
+    // Global like the pattern (read at command-execute time); software keeps
+    // them stable while commands using them are queued.  FLAGS bits select use:
+    //   [2] SRC_DDR  — read source from src_base_reg/src_stride_reg
+    //   [3] SRC_COV  — source is 8-bit coverage (1 B/px); else RGBA (4 B/px)
+    //   [4] SRC_AOVER— RGBA source: alpha-over composite; else straight copy
+    //   [5] DST_DDR  — read-blend/write dest to dst_base_reg/dst_stride_reg
+    logic [31:0] src_base_reg;           // $D4D0-$D4D3
+    logic [15:0] src_stride_reg;         // $D4D4-$D4D5 (bytes per row)
+    logic [31:0] dst_base_reg;           // $D4D6-$D4D9
+    logic [15:0] dst_stride_reg;         // $D4DA-$D4DB (bytes per row)
 
     // ---- Pattern memory + byte-stream load --------------------------------
     // Up to 1024 entries × 32-bit RGBA-8888 = 32 Kb (two BRAM18s or one
@@ -300,6 +317,10 @@ module xt_blitter #(
             src_y_reg       <= 16'd0;
             src_w_reg       <= 16'd0;
             src_h_reg       <= 16'd0;
+            src_base_reg    <= 32'd0;
+            src_stride_reg  <= 16'd0;
+            dst_base_reg    <= 32'd0;
+            dst_stride_reg  <= 16'd0;
             pat_load_ptr    <= 12'd0;
             pat_load_accum  <= 24'd0;
             font_load_ptr       <= 11'd0;
@@ -370,6 +391,22 @@ module xt_blitter #(
                     5'h17: src_h_reg[15:8] <= bus_data;
                     // $D4C8 — FLAGS (option byte)
                     5'h18: flags_reg <= bus_data;
+                    // $D4D0-$D4DB — DDR source/dest surface descriptors for
+                    // SRC_BLIT.  Gated on !busy so a base/stride change can't
+                    // disturb commands still queued against the old surface
+                    // (same discipline as the pattern/font loads).
+                    6'h20: if (!busy) src_base_reg[7:0]    <= bus_data;
+                    6'h21: if (!busy) src_base_reg[15:8]   <= bus_data;
+                    6'h22: if (!busy) src_base_reg[23:16]  <= bus_data;
+                    6'h23: if (!busy) src_base_reg[31:24]  <= bus_data;
+                    6'h24: if (!busy) src_stride_reg[7:0]  <= bus_data;
+                    6'h25: if (!busy) src_stride_reg[15:8] <= bus_data;
+                    6'h26: if (!busy) dst_base_reg[7:0]    <= bus_data;
+                    6'h27: if (!busy) dst_base_reg[15:8]   <= bus_data;
+                    6'h28: if (!busy) dst_base_reg[23:16]  <= bus_data;
+                    6'h29: if (!busy) dst_base_reg[31:24]  <= bus_data;
+                    6'h2A: if (!busy) dst_stride_reg[7:0]  <= bus_data;
+                    6'h2B: if (!busy) dst_stride_reg[15:8] <= bus_data;
                     // $D4CE — FONT_DATA byte-stream load (gated on !busy
                     // so queued commands keep a consistent font_mem)
                     5'h1E: if (!busy) begin
