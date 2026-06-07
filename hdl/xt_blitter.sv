@@ -1784,9 +1784,17 @@ module xt_blitter #(
                     // Cap burst at 32 pixel slots = 16 beats max.
                     // With head_pad, first beat only carries 1 useful pixel
                     // so max useful = 31.  Without head_pad, max = 32.
-                    rem_px = 6'(dma_rem_row_px_q);
-                    if (rem_px > (32 - head_pad))
-                        rem_px = 32 - head_pad;
+                    // Compare the FULL 16-bit remaining-pixel count against the
+                    // cap BEFORE narrowing to 6 bits — truncating first (the old
+                    // `6'(dma_rem_row_px_q)`) corrupts the burst size for any row
+                    // wider than 63 px (e.g. 300 → 300&0x3F = 44), and worse,
+                    // when the low 6 bits land on a multiple of 64 with pixels
+                    // still remaining it yields total_slots==0 → the degenerate
+                    // S_DMA_B path issues no burst and the FSM hangs forever.
+                    if (dma_rem_row_px_q > (16'd32 - 16'(head_pad)))
+                        rem_px = 6'd32 - head_pad;
+                    else
+                        rem_px = 6'(dma_rem_row_px_q);
 
                     total_slots = rem_px + head_pad;   // 1..32
                     beats = (total_slots + 1) >> 1;    // ceil division, 1..16

@@ -161,7 +161,14 @@ module axi_blitter_bridge (
                         s_axi_awready <= 1'b1;
                         aw_have       <= 1'b1;
                         aw_off        <= s_axi_awaddr[4:0];
-                        bl_addr       <= {~s_axi_awaddr[4], s_axi_awaddr[3:0]};
+                        // Page-select bit MUST land in bl_addr[5] — that is the
+                        // bit fpga_xt_top reconstructs the $D4Bx/$D4Cx address
+                        // from (bridge_bus_addr[7:4] = bl_addr[5] ? B : C).  The
+                        // old 5-bit form {~awaddr[4], awaddr[3:0]} put it in
+                        // bl_addr[4] instead, forcing every write onto $D4Cx —
+                        // so CMD never reached $D4BC and RASTER_OP/PAT bytes hit
+                        // the keyboard-injection regs ($D4CF/$D4CB).
+                        bl_addr       <= {~s_axi_awaddr[4], 1'b0, s_axi_awaddr[3:0]};
                     end
 
                     // Accept W only once we own the AW (this cycle or earlier),

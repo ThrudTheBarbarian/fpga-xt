@@ -26,6 +26,7 @@
 
 #include "gfx.h"
 #include "vdi/vdi.h"
+#include "xt_blitter.h"      /* hardware blitter (HP1 DDR master) — gfx_a9 de-risk */
 
 #define DESK_BASE    0x30000000u
 #define DESK_W       1920
@@ -176,6 +177,30 @@ static int l_vdi_font(lua_State *L)   /* name = vdi.font() — system font famil
     return 1;
 }
 
+/* vdi.hwfill(x, y, w, h, 0xRRGGBB) — de-risk the hardware blitter: a solid
+ * RECT_FILL into the desktop plane (FB_BASE=0x30000000) via a 1x1 RGBA pattern.
+ * The blitter writes DDR directly through HP1 (no A9 cache flush needed).
+ * Returns (idle, seq): idle==0 means the command FSM completed, seq is the SYNC
+ * counter (was last seen NOT advancing on HW — this proves whether it does now). */
+static int l_vdi_hwfill(lua_State *L)
+{
+    int x = (int)luaL_checkinteger(L, 1), y = (int)luaL_checkinteger(L, 2);
+    int w = (int)luaL_checkinteger(L, 3), h = (int)luaL_checkinteger(L, 4);
+    uint32_t c = (uint32_t)luaL_checkinteger(L, 5);          /* 0xRRGGBB */
+    uint8_t pat[4] = { (uint8_t)(c >> 16), (uint8_t)(c >> 8),
+                       (uint8_t)c, 0xFF };                   /* R,G,B,A=opaque */
+    xt_blitter_set_pat_log(0, 0);                            /* 1x1 pattern */
+    xt_blitter_set_pat_phase(0, 0);
+    xt_blitter_write_pat(pat, 4);
+    xt_blitter_set_raster_op(XT_BL_RASTER_S);                /* S (copy) */
+    xt_blitter_set_dst((int16_t)x, (int16_t)y, (uint16_t)w, (uint16_t)h);
+    xt_blitter_fire(XT_BL_CMD_RECT_FILL);
+    int idle = xt_blitter_wait_idle(200000);                 /* 0 ok, -1 timeout */
+    lua_pushinteger(L, idle);
+    lua_pushinteger(L, (lua_Integer)xt_blitter_seq_counter());
+    return 2;
+}
+
 void gem_lua_open(lua_State *L)
 {
     static const luaL_Reg vdi_lib[] = {
@@ -187,6 +212,7 @@ void gem_lua_open(lua_State *L)
         {"clear",     l_vdi_clear},
         {"flush",     l_vdi_flush},
         {"font",      l_vdi_font},
+        {"hwfill",    l_vdi_hwfill},   /* blitter RECT_FILL — HW de-risk */
         {NULL, NULL}
     };
     luaL_newlib(L, vdi_lib);
