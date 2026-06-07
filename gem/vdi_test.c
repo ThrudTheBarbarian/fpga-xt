@@ -283,6 +283,7 @@ int main(void) {
     font_face *sysf = font_face_open("fonts/AovelSansRounded.ttf");
     vdi_set_face(sysf);                                 // system font (id 1)
     vdi_set_font_dir("fonts");
+    CHECK(vdi_load_system_font() != NULL);             // System.font pointer resolves a face
     CHECK(vst_load_fonts(1, 0) == 1);                  // one extra font mapped (id 2)
     char fnm[40] = {0};
     CHECK(vqt_name(1, 1, fnm) == 1); CHECK(fnm[0] != '\0');   // system family name

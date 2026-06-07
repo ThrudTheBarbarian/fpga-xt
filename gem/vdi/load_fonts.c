@@ -17,9 +17,11 @@
 static const char *g_font_dir = "OS/Fonts";
 void vdi_set_font_dir(const char *path) { if (path) g_font_dir = path; }
 
-// The blessed system-font filename (a real font, or a symlink/copy of one): it
-// is font id 1, not an enumerable extra, so it's excluded from the id map.
-#define SYSTEM_FONT "System.ttf"
+// The system font is named by a one-line pointer file — our portable stand-in
+// for a symlink, since FAT has none: <dir>/System.font holds the filename of the
+// TTF to use as font id 1.  Read by vdi_load_system_font below.  (Its .font
+// extension means is_font() already keeps it out of the enumerable id map.)
+#define SYSTEM_PTR "System.font"
 
 #define MAX_EXTRA 32
 typedef struct { char path[256]; char name[64]; font_face *face; } font_entry;
@@ -42,7 +44,7 @@ static int scan_fonts(void) {
     DIR *d = opendir(g_font_dir);
     if (!d) return 0;
     for (struct dirent *e; (e = readdir(d)) && g_nextra < MAX_EXTRA; ) {
-        if (!is_font(e->d_name) || !strcasecmp(e->d_name, SYSTEM_FONT)) continue;
+        if (!is_font(e->d_name)) continue;
         snprintf(g_extra[g_nextra].path, sizeof g_extra[0].path, "%s/%s", g_font_dir, e->d_name);
         size_t n = strlen(e->d_name);                           // name = filename sans extension
         const char *dot = strrchr(e->d_name, '.'); if (dot) n = (size_t)(dot - e->d_name);
@@ -56,15 +58,34 @@ static int scan_fonts(void) {
     return g_nextra;
 }
 
-// Load the system font (the VDI default / font id 1): <dir>/System.ttf if it
-// opens, else the first font in the directory (alphabetical, so it's stable
-// rather than readdir-order random).  Installs it as the default; returns it, or
-// NULL if the directory has no usable font.
+// Read the System.font pointer: its first line is the TTF filename to use.
+// Returns 1 and fills `out` (a path under the font dir) if it names something.
+static int read_system_ptr(char *out, size_t cap) {
+    char ptr[sizeof g_extra[0].path];
+    snprintf(ptr, sizeof ptr, "%s/%s", g_font_dir, SYSTEM_PTR);
+    FILE *f = fopen(ptr, "rb");
+    if (!f) return 0;
+    char line[128];
+    char *got = fgets(line, sizeof line, f);
+    fclose(f);
+    if (!got) return 0;
+    line[strcspn(line, "\r\n")] = '\0';                         // strip EOL
+    char *s = line; while (*s == ' ' || *s == '\t') s++;        // trim
+    size_t n = strlen(s); while (n && (s[n-1] == ' ' || s[n-1] == '\t')) s[--n] = '\0';
+    if (!*s) return 0;
+    snprintf(out, cap, "%s/%s", g_font_dir, s);
+    return 1;
+}
+
+// Load the system font (the VDI default / font id 1): the TTF named by
+// <dir>/System.font if that opens, else the first font in the directory
+// (alphabetical, so it's stable rather than readdir-order random).  Installs it
+// as the default; returns it, or NULL if the directory has no usable font.
 font_face *vdi_load_system_font(void) {
     char path[sizeof g_extra[0].path];
-    snprintf(path, sizeof path, "%s/%s", g_font_dir, SYSTEM_FONT);
-    font_face *f = font_face_open(path);
-    if (!f) {                                                   // no System.ttf -> any font
+    font_face *f = NULL;
+    if (read_system_ptr(path, sizeof path)) f = font_face_open(path);
+    if (!f) {                                                   // no/invalid pointer -> any font
         scan_fonts();
         for (int i = 0; i < g_nextra && !f; i++) f = font_face_open(g_extra[i].path);
     }

@@ -61,6 +61,20 @@ axis (Roboto Flex) and a separate-italic-file (Roboto) are both handled. Result:
 one `Roboto` family, 36 instances (18 upright + 18 italic), italics flagged,
 filenames untouched.
 
+### The system font
+
+The default face (font id 1 — what `v_gtext` uses with no `vst_font`) is chosen
+at boot by `vdi_load_system_font()`: it reads **`OS/Fonts/System.font`**, a
+one-line text file naming the TTF to use (e.g. `Roboto.ttf`). This is a portable
+stand-in for a symlink — FAT has no symlinks, so a real pointer file does the
+same job and survives onto the card. If the pointer is missing or names a font
+that won't open, it falls back to the **first font in the directory
+(alphabetical)** — deterministic, so the UI font doesn't change between boots.
+`System.font` is plain text (its `.font` extension keeps it out of the
+enumerable id map); the font it points to is still a normal selectable face. The
+target's GEM init calls `vdi_set_font_dir("<sd>/OS/Fonts")` then
+`vdi_load_system_font()`.
+
 ### Static duplicates
 
 Google also ships a `static/` folder of individual TTFs (`Roboto-BoldItalic.ttf`,

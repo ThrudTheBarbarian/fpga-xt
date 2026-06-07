@@ -222,9 +222,10 @@ uint32_t vdi_pen_rgba(int pen);               // pen index -> RGBA (for the WM/t
 void     vdi_set_face(font_face *face);
 // Directory scanned by vst_load_fonts to count font files (default "OS/Fonts").
 void     vdi_set_font_dir(const char *path);
-// Load the system font (the VDI default / font id 1): "<font dir>/System.ttf" if
-// present, else the first font in the directory (alphabetical).  Installs it as
-// the default and returns it, or NULL if the directory has no usable font.
+// Load the system font (the VDI default / font id 1): the TTF named by the
+// "<font dir>/System.font" pointer file (one line = a font filename — a portable
+// stand-in for a symlink), else the first font in the directory (alphabetical).
+// Installs it as the default and returns it, or NULL if no font is usable.
 font_face *vdi_load_system_font(void);
 #define  VDI_TEXT_DPI         72
 #define  VDI_TEXT_PX_DEFAULT  16
