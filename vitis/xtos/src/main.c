@@ -47,6 +47,11 @@
 
 #include "xt_blitter.h"
 
+/* gem_lua.c — GEM VDI (+ FreeType scalable text) bring-up on the desktop plane
+ * and the `vdi` Lua table.  Defined in gem_lua.c (links the portable gem core). */
+int  gem_init(void);
+void gem_lua_open(lua_State *L);
+
 /* ---- SiI9022A HDMI transmitter over PS I2C0 (EMIO -> P15/P16) -------------
  * Replaces the old PL bit-bang.  7-bit address 0x3b (CI2CA strapped high).
  * Mirrors MyIR's proven init sequence (same registers the PL seq_rom used). */
@@ -446,6 +451,12 @@ static void lua_init(void)
     luaL_newlib(g_L, screen_lib);
     lua_setglobal(g_L, "screen");
     xil_printf("  lua: %s ready (screen: clear/rect/size)\r\n", LUA_RELEASE);
+
+    /* Bring up the GEM VDI (+ FreeType text) on the desktop plane and expose
+     * the `vdi` table (text/point/color/bar/...).  Needs the SD mounted (it
+     * reads /OS/Fonts/System.font); fs_mount() ran before lua_init(). */
+    gem_init();
+    gem_lua_open(g_L);
 }
 
 /* Load + run a FAT file as a Lua chunk.  Reads the whole file into a malloc'd
@@ -573,7 +584,7 @@ static void repl_help(void)
       "  pwd              print the current directory\r\n"
       "  cat <path>       dump a file to the console\r\n"
       "  echo <t> [> f]   print text, or write/append (>>) it to a file\r\n"
-      "  luatest          run a built-in Lua chunk (interpreter self-test)\r\n"
+      "  lua <chunk>      evaluate a Lua chunk (e.g. lua vdi.text(200,200,'Hi',48))\r\n"
       "  boot             run 0:/OS/Boot/NN-slug scripts in numeric order\r\n"
       "  mon <0|1>        periodic 1s status tick off/on\r\n"
       "  reset            soft-reset the PS (SLCR) -> full reboot (FSBL/DDR/PL)\r\n"
@@ -732,12 +743,34 @@ static void cmd_echo(char *cmd)
     }
 }
 
+/* lua <chunk> — evaluate the rest of the raw line as a Lua chunk on the shared
+ * interpreter (so `lua vdi.text(200,200,'Hi',48)` etc. work from the console). */
+static void cmd_lua(char *cmd)
+{
+    if (g_L == NULL) { uart1_puts("  lua not initialised\r\n"); return; }
+    char *p = cmd + 3;                            /* past "lua" */
+    while (*p == ' ' || *p == '\t') p++;
+    if (*p == '\0') {
+        uart1_puts("usage: lua <chunk>   e.g. lua vdi.text(200,200,'Hi',48)\r\n");
+        return;
+    }
+    if (luaL_dostring(g_L, p) != LUA_OK) {
+        xil_printf("  lua: %s\r\n", lua_tostring(g_L, -1));
+        lua_pop(g_L, 1);
+    }
+}
+
 static void repl_exec(char *cmd)
 {
-    /* echo (+ optional >/>> redirection) is parsed on the RAW line, before the
-     * tokeniser below splits on spaces (which would break quoted text). */
+    /* echo (+ optional >/>> redirection) and lua are parsed on the RAW line,
+     * before the tokeniser below splits on spaces (which would break quoted
+     * text / Lua string literals). */
     if (!strncmp(cmd, "echo", 4) && (cmd[4] == ' ' || cmd[4] == '\0')) {
         cmd_echo(cmd);
+        return;
+    }
+    if (!strncmp(cmd, "lua", 3) && (cmd[3] == ' ' || cmd[3] == '\0')) {
+        cmd_lua(cmd);
         return;
     }
 
@@ -833,19 +866,6 @@ static void repl_exec(char *cmd)
             for (size_t i = 0; i < n; i++) uart1_putc(buf[i]);
         fclose(fp);
         uart1_puts("\r\n");
-        return;
-    }
-
-    if (!strcmp(argv[0], "luatest")) {   /* prove the Lua interpreter runs */
-        if (g_L == NULL) { uart1_puts("  lua not initialised\r\n"); return; }
-        static const char *chunk =
-            "print(_VERSION .. ' on XTOS')\n"
-            "print('2 + 2 =', 2 + 2)\n"
-            "os.note('lua: boot scripts run from 0:/OS/Boot/NN-slug')\n";
-        if (luaL_dostring(g_L, chunk) != LUA_OK) {
-            xil_printf("  lua error: %s\r\n", lua_tostring(g_L, -1));
-            lua_pop(g_L, 1);
-        }
         return;
     }
 
@@ -1234,8 +1254,7 @@ static void repl_task(void *arg)
      * up, then drop to the interactive console. */
     boot_run();
 
-    repl_help();
-    uart1_puts("> ");
+    uart1_puts("> ");                 /* type 'help' for the command list */
 
     char     line[80];
     unsigned ll = 0;

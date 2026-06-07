@@ -381,12 +381,34 @@ _lua_inc  = _lua_dir.replace("\\", "/")
 _lua_srcs = [os.path.join(_lua_dir, f).replace("\\", "/")
              for f in sorted(os.listdir(_lua_dir))
              if f.endswith(".c") and f not in ("lua.c", "luac.c")]
-_all_srcs = _app_srcs + _lua_srcs
+# Portable GEM VDI (+ FreeType text) compiled into the app: the VDI core
+# (gem/vdi/*.c, excluding the printers/ subdir — the PDF device needs zlib and
+# is stubbed by src/gem_pdf_stub.c), the FreeType-backed font engine + catalog,
+# and the software gfx backend (renders into the desktop plane).  See
+# src/gem_lua.c for the bring-up + `vdi` Lua table.
+_gem_dir  = os.path.join(REPO_ROOT, "gem")
+_gem_inc  = _gem_dir.replace("\\", "/")
+_vdi_dir  = os.path.join(_gem_dir, "vdi")
+_gem_srcs = [os.path.join(_vdi_dir, f).replace("\\", "/")
+             for f in sorted(os.listdir(_vdi_dir)) if f.endswith(".c")]
+_gem_srcs += [os.path.join(_gem_dir, f).replace("\\", "/")
+              for f in ("font.c", "font_catalog.c", "gfx_soft.c")]
+# Vendored FreeType 2.13.3 (REPO_ROOT/xtos/freetype): each tu/ft_*.c wrapper
+# scopes FT2_BUILD_LIBRARY and #includes one upstream module .c.  Trimmed module
+# set (truetype/cff + sfnt/smooth/autofit/...) per include/.../config/ftmodule.h.
+_ft_dir   = os.path.join(REPO_ROOT, "xtos", "freetype")
+_ft_inc   = os.path.join(_ft_dir, "include").replace("\\", "/")
+_ft_tu    = os.path.join(_ft_dir, "tu")
+_ft_srcs  = [os.path.join(_ft_tu, f).replace("\\", "/")
+             for f in sorted(os.listdir(_ft_tu)) if f.endswith(".c")]
+# POSIX <dirent.h> shim (xtos/compat) for the GEM font loader's opendir/readdir.
+_compat_inc = os.path.join(REPO_ROOT, "xtos", "compat").replace("\\", "/")
+_all_srcs = _app_srcs + _lua_srcs + _gem_srcs + _ft_srcs
 _user_cmake = os.path.join(WORKSPACE, "xtos", "src", "UserConfig.cmake")
 with open(_user_cmake, "a") as _f:
-    _f.write("\n# --- fpga-xt: app sources (root) + vendored Lua; no USB (RP2354) ---\n")
-    _f.write('set(USER_INCLUDE_DIRECTORIES "%s" "${CMAKE_CURRENT_SOURCE_DIR}" "%s")\n'
-             % (_comp_root, _lua_inc))
+    _f.write("\n# --- fpga-xt: app sources (root) + vendored Lua + GEM VDI/FreeType; no USB ---\n")
+    _f.write('set(USER_INCLUDE_DIRECTORIES "%s" "${CMAKE_CURRENT_SOURCE_DIR}" "%s" "%s" "%s" "%s")\n'
+             % (_comp_root, _lua_inc, _gem_inc, _ft_inc, _compat_inc))
     _f.write("set(USER_COMPILE_SOURCES\n")
     for _s in _all_srcs:
         _f.write('  "%s"\n' % _s)
@@ -400,7 +422,8 @@ with open(_user_cmake, "a") as _f:
     _f.write("set(USER_COMPILE_DEFINITIONS ${USER_COMPILE_DEFINITIONS} "
              "LODEPNG_NO_COMPILE_ENCODER LODEPNG_NO_COMPILE_DISK "
              "LODEPNG_NO_COMPILE_ANCILLARY_CHUNKS)\n")
-print(f">> UserConfig.cmake: {len(_app_srcs)} app + {len(_lua_srcs)} Lua sources (+libm) -> {_user_cmake}")
+print(f">> UserConfig.cmake: {len(_app_srcs)} app + {len(_lua_srcs)} Lua + "
+      f"{len(_gem_srcs)} GEM + {len(_ft_srcs)} FreeType sources (+libm) -> {_user_cmake}")
 
 # --- bump stack + heap sizes --------------------------------------------
 # Defaults are tiny: main 8KB, IRQ 1KB, newlib heap 8KB.  Bump the IRQ stack

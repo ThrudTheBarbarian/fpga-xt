@@ -80,6 +80,21 @@ ps_wipe "$REMOTE_DIR/xtos/lua"
 ps_mkdir "$REMOTE_DIR/xtos"
 scp -q -r "$REPO_ROOT/xtos/lua" "$REMOTE:$REMOTE_DIR/xtos/lua"
 
+# Vendored FreeType (xtos/freetype) + POSIX dirent shim (xtos/compat): both
+# globbed from REPO_ROOT by create_platform.py (-> C:/Users/user/fpga/xtos/...).
+echo ">> pushing xtos/freetype (vendored FreeType 2.13.3) -> $REMOTE:$REMOTE_DIR/xtos/freetype/"
+ps_wipe "$REMOTE_DIR/xtos/freetype"
+scp -q -r "$REPO_ROOT/xtos/freetype" "$REMOTE:$REMOTE_DIR/xtos/freetype"
+echo ">> pushing xtos/compat (POSIX dirent shim) -> $REMOTE:$REMOTE_DIR/xtos/compat/"
+ps_wipe "$REMOTE_DIR/xtos/compat"
+scp -q -r "$REPO_ROOT/xtos/compat" "$REMOTE:$REMOTE_DIR/xtos/compat"
+
+# Portable GEM core (VDI + FreeType font engine + software gfx backend) lives at
+# repo-root gem/; create_platform.py globs gem/vdi/*.c + font*.c + gfx_soft.c.
+echo ">> pushing gem/ (GEM VDI core) -> $REMOTE:$REMOTE_DIR/gem/"
+ps_wipe "$REMOTE_DIR/gem"
+scp -q -r "$REPO_ROOT/gem" "$REMOTE:$REMOTE_DIR/gem"
+
 # Run Vitis ---------------------------------------------------------------
 echo ">> running vitis -s $SCRIPT"
 ssh "$REMOTE" "Set-Location '$REMOTE_DIR/vitis'; & '$VITIS_BAT' -s $SCRIPT"
