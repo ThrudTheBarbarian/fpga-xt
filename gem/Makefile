@@ -36,7 +36,7 @@ OBJ      := $(addprefix $(BUILD)/,$(SRC:.c=.o))
 
 TARGET  := $(BUILD)/gem_sdl
 
-.PHONY: all run test clean fills shapes output text lines theme themewin themepack aes aesmenu aeswin desktop pdf fontscan
+.PHONY: all run test clean fills shapes output text lines theme themewin themepack aes aesmenu aeswin desktop pdf fontscan catalogtest
 all: $(TARGET)
 
 $(TARGET): $(OBJ)
@@ -123,6 +123,13 @@ $(BUILD)/fontscan: tools/fontscan.c | $(BUILD)
 	$(CC) $(CSTD) $(WARN) -O2 -I. $(FT_CFLAGS) -o $@ $< $(FT_LIBS)
 fontscan: $(BUILD)/fontscan
 	@echo "run: ./$(BUILD)/fontscan <font.ttf> ..."
+
+# OS/Fonts catalog + index exercise (host: POSIX dir scan).
+CATALOG_OBJ := $(addprefix $(BUILD)/,font_catalog.o tools/catalogtest.o)
+$(BUILD)/catalogtest: $(CATALOG_OBJ)
+	$(CC) $(CATALOG_OBJ) $(FT_LIBS) -o $@
+catalogtest: $(BUILD)/catalogtest
+	@echo "run: ./$(BUILD)/catalogtest <fontdir>"
 
 # Headless PDF printer-device smoke test (no SDL): draws vector lines/fills/bars
 # through v_opnwk(21) and writes out.pdf.
