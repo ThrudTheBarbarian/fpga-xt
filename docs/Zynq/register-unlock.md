@@ -47,10 +47,9 @@ One 8-bit unlock register, **two write ports**, with the A9 as the authority.
 | 3 | `BANK` (`$D5C0/$D5C1` code/data bank select) | open bus / cart | XT banking |
 | 4 | `GEM` (`$D5D0-$D5D4` service doorbell) | open bus / cart | GEM doorbell |
 | 5 | `KBD` (keyboard-inject region's native decode) | mirror | XT decode (see note) |
-| 6 | reserved | — | — |
-| 7 | `NATIVE_UNLOCK_EN` — **A9-only**: 1 = honor the 6502's `$D1DF` writes | 6502 cannot change the unlock | 6502 self-unlock permitted |
+| 6-7 | reserved | — | — |
 
-Reset → `0x00` (everything locked = stock, and the 6502 can't unlock itself).
+Reset → `0x00` (everything locked = stock).
 
 `KBD` note: keyboard *injection* is A9→6502 over the bridge and is never gated
 (see below). The `KBD` bit exists defensively — it masks the kbd region's
@@ -66,14 +65,14 @@ range — no stock cartridge can reach it. **This is the launcher's path and the
 authority.** (Exact offset TBD in implementation — a free intercept offset
 distinct from `0x1C`.)
 
-### Write port B — 6502 (secondary, gated)
+### Write port B — 6502 (secondary)
 
-A native write to **`$D1DF`** (PBI window) sets bits `[6:0]` — **but only while
-`NATIVE_UNLOCK_EN` (bit 7, A9-set) is 1**. Readable too (the 6502 can check the
-current unlock state). `$D1DF` is decoded **unconditionally** by the XT — it is
-the master switch and must always be reachable, so it has no lock bit of its own.
+A native read/write at **`$D1DF`** (PBI window) — XT-aware native software
+self-unlocks the groups it needs, and can read back the current state. Decoded
+**unconditionally** by the XT (it's the master switch, always reachable, no lock
+bit of its own). No permission gate — the location is the protection (below).
 
-### Why `$D1DF`, and the hole it dodges
+### Why `$D1DF` — the location is the protection
 
 The earlier candidate, `$D5CF`, sits in the **CCTL cartridge window** — the very
 space stock cartridges bank-switch through (Bounty Bob writes `$D5xx`). Putting
@@ -82,16 +81,19 @@ trouble: a stray cart write could flip the machine out of stock mode mid-game,
 and the register would be self-referential with the `BANK`/`GEM` decodes around it.
 
 `$D1DF` is in the **PBI window** (`$D100-$D1FF`), in the documented-free gap
-between the 1090 XL Amy block (`$D1D1-$D1DD`) and the MIO ACIA (`$D1E0+`). Stock
-*cartridges* never touch PBI space, and a bare machine leaves it open bus — so
-the master switch lives well clear of everything it controls.
+between the 1090 XL Amy block (`$D1D1-$D1DD`) and the MIO ACIA (`$D1E0+`):
 
-**Defense in depth:** even there, the `$D1DF` write is gated by
-`NATIVE_UNLOCK_EN` (A9-set, resets to 0). So a stock PBI driver poking the
-region can't change the unlock state unless the A9 has explicitly opened that
-door. The A9's own write port (the GP0 bridge) is outside all Atari I/O space
-and is always authoritative — it can lock the machine down (incl. clearing
-`NATIVE_UNLOCK_EN`) for a stock session.
+- stock **cartridges** never touch PBI space;
+- the OS **PBI scan** probes `$D1FF` / the `$D800` signature — it never *writes*
+  `$D1DF`;
+- no real **peripheral** claims the byte (documented free).
+
+So nothing stock writes `$D1DF`, and the stock-vs-XT split falls out naturally
+from *whether software writes it at all* — which is why an earlier
+`NATIVE_UNLOCK_EN` permission bit was dropped as redundant complexity. The A9
+still owns the policy through its bridge port (it sets the lock state before
+launching a guest); it simply can't *forbid* an XT-aware 6502 program from
+self-unlocking, which isn't a requirement (the 6502 is the machine).
 
 ## What each bit gates, precisely
 
@@ -142,8 +144,8 @@ power-on / PL reconfigure returns to the all-locked default.
 
 ## Worked example: A9 launches Bounty Bob (stock cart, uses `$D47B` + `$D5xx`)
 
-1. A9 writes the unlock reg (bridge) = `0x00` → **all groups locked**, and
-   `NATIVE_UNLOCK_EN`=0 (so the guest can't even reach the `$D1DF` switch).
+1. A9 writes the unlock reg (bridge) = `0x00` → **all groups locked**. (Bounty
+   Bob never writes `$D1DF`, so it can't un-lock anything.)
 2. Now the 6502 sees stock silicon: `$D47B` is the ANTIC mirror (Bounty Bob
    happy), `$D5xx` is pure CCTL so Bounty Bob's own cartridge bank-switching
    there is undisturbed, no sprite/chiplet/GEM decode shadows anything.
@@ -156,10 +158,10 @@ view doesn't disarm the A9.
 
 ## Worked example: XT-native app
 
-1. A9 (bridge) sets `unlock = {NATIVE_UNLOCK_EN, GEM, BANK, SPRITE, BLITTER,
-   ANTIC_CHIPLET}` for the groups the app needs.
+1. A9 (bridge) sets `unlock = {GEM, BANK, SPRITE, BLITTER, ANTIC_CHIPLET}` for
+   the groups the app needs.
 2. A9 loads + resets the 6502 into the XT app. If the app self-manages, it may
-   adjust bits via `$D1DF` (now honored, since `NATIVE_UNLOCK_EN`=1).
+   adjust bits via `$D1DF` itself.
 3. The XT registers are live for the 6502; the A9 desktop GEM/blitter also keep
    working over the bridge throughout.
 
@@ -176,6 +178,10 @@ view doesn't disarm the A9.
    stock program hitting that mirror address can't trip XT keyboard logic.
 4. **`$D1DF` location — SETTLED.** The 6502-side switch moved out of the CCTL
    window into the free PBI gap (`$D1DF`), clear of the space it governs.
+5. **`NATIVE_UNLOCK_EN` dropped — SETTLED.** It existed only to plug the
+   `$D5CF`-in-cart-window hole; with the switch at `$D1DF` (which nothing stock
+   writes) the gate is redundant, so `$D1DF` is always honored. The A9 still
+   owns policy via the bridge; it just doesn't *forbid* 6502 self-unlock.
 
 ## Open points to settle before RTL
 
@@ -191,11 +197,11 @@ view doesn't disarm the A9.
 ## Cost
 
 - Unlock register + the two write ports (bridge intercept ~`gp0_ctrl` clone;
-  `$D1DF` native decode gated by `NATIVE_UNLOCK_EN`): small.
+  `$D1DF` native read/write): small.
 - Per-group decode gating: ~1 line each, spread across `fpga_xt_top` /
   `antic_regs` / the blitter native decode, plus routing `xt_unlock` to each.
 - The mirror-conditional `$D4xx` decode: the one piece needing care.
 - Bitstream + tests (stock mirror behaviour locked; XT registers unlocked;
-  `$D1DF` ignored unless `NATIVE_UNLOCK_EN`).
+  `$D1DF` round-trips).
 
 A focused ~150-250-line change across the decode modules, low datapath risk.
