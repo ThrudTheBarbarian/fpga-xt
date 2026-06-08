@@ -178,7 +178,78 @@ ANTIC and C|GTIA". Mirror behaviour does NOT apply here.
 | $D49D | OS_ROM_ADDR_HI | R/W | Target write-address high byte. |
 | $D49E | OS_ROM_DATA | R/W | Write a byte → committed to memory at OS_ROM_ADDR, then OS_ROM_ADDR auto-increments (unless WRITE_LOCK set). Read returns the last byte written. |
 | $D49F | OS_ROM_CTL | R/W | bit 0 = WRITE_LOCK: once set, further OS_ROM_DATA writes are ignored (ROM-load disabled). |
-| $D4A0-$D4FF | reserved | - | Future chiplet-extension registers. Reads 0; writes ignored. |
+
+### $D4A0-$D4FF — sprite engine + 2D blitter (XT hardware)
+
+**This range is fully allocated** — sprite engine, the SuperSally/A9 2D
+blitter, keyboard injection, and the SALLY turbo control all live here, and
+they share the same `$D4xx` decode space. New allocations MUST avoid the pages
+below. (History: putting the blitter's DDR surface descriptors on `$D4Dx`
+silently collided with the sprite engine and corrupted the running 6502 —
+hence this section, and why the descriptors now live on `$D4Ex`.)
+
+| Page | Owner | Use |
+|------|-------|-----|
+| `$D4A0-$D4AF` | sprite engine | Per-sprite control registers (`fpga_xt_top` `sprite_reg_we` snoops `$D4Ax`). |
+| `$D4B0-$D4BF` | 2D blitter — page B | DST geometry, pattern, CMD, STATUS, raster op (table below). |
+| `$D4C0-$D4CF` | 2D blitter — page C | SRC geometry, FLAGS, SEQ; **overlaid** with `$D4CA` SEQ_HI-read / turbo-write, and keyboard-inject `$D4CB`/`$D4CD`/`$D4CF` (table below). |
+| `$D4D0-$D4DF` | sprite engine | Indexed sprite descriptor + collision + control (`sprite_reg_we` snoops `$D4Dx`). **Blitter does NOT decode this page.** |
+| `$D4E0-$D4EF` | 2D blitter — page E | SRC/DST DDR surface descriptors for `SRC_BLIT` (table below). `$D4EC-$D4EF` free. |
+| `$D4F0-$D4FF` | reserved | Free. Reads 0; writes ignored. |
+
+#### 2D blitter registers ($D4Bx / $D4Cx / $D4Ex)
+
+The blitter shares its register bus between the native SALLY/ANTIC path and the
+A9 (via the GP0 AXI-Lite bridge — see below). Byte-wide registers.
+
+| Addr | Name | R/W | Purpose |
+|------|------|-----|---------|
+| $D4B0-$D4B7 | DST_{X,Y,W,H}_{LO,HI} | W | Destination geometry. For LINE: W/H = signed DX/DY. |
+| $D4B8 / $D4B9 | PAT_PHASE_{X,Y} | W | Pattern phase (low 5 bits). |
+| $D4BA | PAT_LOG_W | W | log2(pattern width); writing resets the PAT_DATA load pointer. |
+| $D4BB | PAT_DATA | W | Pattern byte stream (R,G,B,A; auto-advances). For SRC_BLIT coverage, the 1×1 pattern = the text colour. |
+| $D4BC | CMD | W | Fire: 01=RECT_FILL, 02=LINE_DRAW, 03=BLOCK_BLIT, 04=SCALED_BLIT, 05=FONT_RASTER (legacy coverage-BRAM, unused), 06=bilinear scaled, 07=SYNC, **08=SRC_BLIT** (DDR→DDR coverage/RGBA blend). |
+| $D4BD | STATUS | R | bit0 busy, bit1 queue-full, bit2 pat/font-load-blocked. |
+| $D4BE | PAT_LOG_H | W | log2(pattern height). |
+| $D4BF | RASTER_OP | W | GEM raster op [3:0] for BLOCK_BLIT. |
+| $D4C0-$D4C7 | SRC_{X,Y,W,H}_{LO,HI} | W | Source geometry (blit / scaled / SRC_BLIT src rect). |
+| $D4C8 | FLAGS | W | bit0 BLEND, bit1 BILINEAR, **bit2 SRC_DDR, bit3 SRC_COV, bit4 SRC_AOVER, bit5 DST_DDR** (SRC_BLIT mode). |
+| $D4C9 | SEQ_LO | R | SYNC sequence counter, low byte. |
+| $D4CA | SEQ_HI / CLOCK_MULT | R / W | **Read** = SYNC counter high byte. **Write** = SALLY turbo multiplier (`clock_mult`, decoded in `fpga_xt_top`). |
+| $D4CB | (kbd_break) | W | **Keyboard injection** — pulses the 6502 BREAK (decoded in `fpga_xt_top`, not a blitter reg). |
+| $D4CD | (kbd_release) | W | **Keyboard injection** — key release. |
+| $D4CE | FONT_DATA | W | Legacy coverage-BRAM byte stream (the FONT_RASTER path; superseded by SRC_BLIT). |
+| $D4CF | (kbd_inject) | W | **Keyboard injection** — pushes a KBCODE + IRQ to POKEY. |
+| $D4E0-$D4E3 | SRC_BASE | W | SRC_BLIT source surface base address (32-bit, byte-stream LSB→MSB). Latched while `!busy`. |
+| $D4E4-$D4E5 | SRC_STRIDE | W | Source surface row stride in bytes. |
+| $D4E6-$D4E9 | DST_BASE | W | SRC_BLIT dest surface base address. |
+| $D4EA-$D4EB | DST_STRIDE | W | Dest surface row stride in bytes. |
+
+#### GP0 AXI-Lite bridge (PS view, `XT_BLITTER_BASE = 0x43C00000`)
+
+The A9 reaches the blitter's `$D4xx` registers through `axi_blitter_bridge`
+over the Zynq GP0 port. A 64-byte byte-offset window maps to four `$D4` pages
+via a 2-bit page select (`awaddr[5:4]`):
+
+| AXI byte offset | → register page |
+|-----------------|-----------------|
+| `0x00-0x0F` | `$D4Bx` |
+| `0x10-0x1F` | `$D4Cx` |
+| `0x20-0x2F` | `$D4Dx` *(sprite engine — do NOT drive from the A9)* |
+| `0x30-0x3F` | `$D4Ex` *(SRC_BLIT descriptors)* |
+
+The bridge intercepts a few offsets itself rather than forwarding them:
+
+| Offset | Direction | Meaning |
+|--------|-----------|---------|
+| `0x1C` | **write** | `gp0_ctrl` (NOT a blitter reg): bit0 = HDMI test-pattern/bars enable, bits[3:1] = XL scale. |
+| `0x1C` | read | `diag_word` (PL debug; read/write share the offset). |
+| `0x0D` | read | STATUS (replicated across all 4 byte lanes). |
+| `0x19` / `0x1A` | read | SEQ_LO / SEQ_HI. |
+| `0x1E` | read | `clock_mult` read-back (verify a `speed` write latched). |
+| `0x14` / `0x18` | read | `diag3` (read-path counters) / `diag2` (production-chain counters). |
+| `0x0C` / `0x10` | read | `diag5` (HP0 first-AR addr) / `diag4` (HP3/XL first-AR addr). |
+| `0x04` / `0x08` | read | `diag6` (HP2 read-probe status) / `diag7` (last rdata). |
 
 ### Palette write semantics
 
