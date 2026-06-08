@@ -38,4 +38,15 @@ void gfx_blit(gfx_surface *dst, int dx, int dy,
               const gfx_surface *src, int sx, int sy, int w, int h);
 void gfx_line(gfx_surface *s, int x0, int y0, int x1, int y1, uint32_t rgba);
 
+// Blit an 8-bit alpha-coverage rect to (dx,dy), alpha-blending `rgba` (the
+// coverage byte is the alpha): out = rgba*cov + dst*(255-cov), dst alpha
+// opaque.  `cov` is the coverage buffer (row stride cov_stride bytes); the
+// visible sub-rect is (sx,sy,w,h) within it.  This is the glyph-compositing
+// path — the A9 backend routes it to the hardware blitter (SRC_BLIT coverage)
+// when the dest is the plane; the host does the CPU blend.  Caller has already
+// clipped (sx,sy,w,h)/(dx,dy) to the destination.
+void gfx_blit_coverage(gfx_surface *dst, int dx, int dy,
+                       const uint8_t *cov, int cov_stride,
+                       int sx, int sy, int w, int h, uint32_t rgba);
+
 #endif // GEM_GFX_H

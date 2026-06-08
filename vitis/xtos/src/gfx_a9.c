@@ -201,3 +201,50 @@ void gfx_line(gfx_surface *s, int x0, int y0, int x1, int y1, uint32_t rgba) {
     xt_blitter_fire(XT_BL_CMD_LINE_DRAW);
     xt_blitter_wait_idle(BLIT_TIMEOUT);
 }
+
+// Software coverage blit (offscreen dest / fallback) — matches gfx_soft.c.
+static void soft_blit_coverage(gfx_surface *dst, int dx, int dy,
+                               const uint8_t *cov, int cov_stride,
+                               int sx, int sy, int w, int h, uint32_t rgba) {
+    unsigned sr = (rgba>>24)&0xFF, sg = (rgba>>16)&0xFF, sb = (rgba>>8)&0xFF;
+    for (int row = 0; row < h; row++) {
+        const uint8_t *cr = cov + (size_t)(sy + row) * cov_stride + sx;
+        uint32_t      *dr = dst->px + (size_t)(dy + row) * dst->stride + dx;
+        for (int col = 0; col < w; col++) {
+            unsigned c = cr[col];
+            if (c == 0) continue;
+            if (c == 255) { dr[col] = (rgba & 0xFFFFFF00u) | 0xFF; continue; }
+            uint32_t d = dr[col]; unsigned ic = 255 - c;
+            dr[col] = ((((sr*c + ((d>>24)&0xFF)*ic)/255) << 24) |
+                       (((sg*c + ((d>>16)&0xFF)*ic)/255) << 16) |
+                       (((sb*c + ((d>>8) &0xFF)*ic)/255) << 8)  | 0xFF);
+        }
+    }
+}
+
+void gfx_blit_coverage(gfx_surface *dst, int dx, int dy,
+                       const uint8_t *cov, int cov_stride,
+                       int sx, int sy, int w, int h, uint32_t rgba) {
+    if (!dst || !cov || w <= 0 || h <= 0) return;
+    if (!is_plane(dst)) {
+        soft_blit_coverage(dst, dx, dy, cov, cov_stride, sx, sy, w, h, rgba);
+        return;
+    }
+    // HW: blit the glyph coverage onto the plane via SRC_BLIT.  The CPU wrote
+    // the coverage, so flush those rows to DDR for the HP read; flush the dest
+    // rect so no dirty CPU line clobbers the blitter writes.  (Per-glyph and
+    // synchronous for now — each glyph has its own cov buffer, so SRC_BASE
+    // changes per glyph and can't be batched without a shared atlas.)
+    Xil_DCacheFlushRange((INTPTR)(cov + (size_t)sy * cov_stride),
+                         (INTPTR)((size_t)h * cov_stride));
+    plane_flush_rect(dx, dy, w, h);
+    uint8_t pat[4] = { (uint8_t)(rgba>>24), (uint8_t)(rgba>>16), (uint8_t)(rgba>>8), 0xFF };
+    xt_blitter_set_pat_log(0, 0);
+    xt_blitter_set_pat_phase(0, 0);
+    xt_blitter_write_pat(pat, 4);
+    xt_blitter_set_src_surface((uint32_t)(uintptr_t)cov, (uint16_t)cov_stride);
+    xt_blitter_set_flags(XT_BL_FLAG_SRC_DDR | XT_BL_FLAG_SRC_COV);   // dest = plane
+    xt_blitter_src_blit((int16_t)sx, (int16_t)sy, (uint16_t)w, (uint16_t)h,
+                        (int16_t)dx, (int16_t)dy);
+    xt_blitter_wait_idle(BLIT_TIMEOUT);
+}

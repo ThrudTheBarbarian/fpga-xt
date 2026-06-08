@@ -391,6 +391,21 @@ static void blit_glyph(gfx_surface *d, int pen, int base, const glyph *g,
                        uint32_t rgba, int cx0, int cy0, int cx1, int cy1, int mode) {
     if (!g->cov) return;
     int gx = pen + g->left, gy = base - g->top;
+
+    if (mode != 3) {
+        // Alpha-blend: clip the glyph rect to the clip box, then hand the
+        // visible coverage sub-rect to the gfx backend (hardware SRC_BLIT on
+        // the A9 plane, CPU blend on the host / off-screen surfaces).
+        int x0 = gx > cx0 ? gx : cx0,                y0 = gy > cy0 ? gy : cy0;
+        int x1 = (gx + g->w - 1) < cx1 ? gx + g->w - 1 : cx1;
+        int y1 = (gy + g->h - 1) < cy1 ? gy + g->h - 1 : cy1;
+        if (x1 < x0 || y1 < y0) return;            // fully clipped
+        gfx_blit_coverage(d, x0, y0, g->cov, g->w,
+                          x0 - gx, y0 - gy, x1 - x0 + 1, y1 - y0 + 1, rgba);
+        return;
+    }
+
+    // XOR mode (cursors / highlights) — toggle solid pixels, CPU-side.
     uint32_t xr = rgba & 0xFFFFFF00u;
     for (int row = 0; row < g->h; row++) {
         int py = gy + row; if (py < cy0 || py > cy1) continue;
@@ -398,8 +413,7 @@ static void blit_glyph(gfx_surface *d, int pen, int base, const glyph *g,
         uint32_t *dr = d->px + (size_t)py * d->stride;
         for (int col = 0; col < g->w; col++) {
             int px = gx + col; if (px < cx0 || px > cx1) continue;
-            if (mode == 3) { if (cr[col] >= 128) dr[px] ^= xr; }   // XOR
-            else dr[px] = blend(dr[px], rgba, cr[col]);
+            if (cr[col] >= 128) dr[px] ^= xr;
         }
     }
 }

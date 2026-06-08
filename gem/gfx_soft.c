@@ -66,6 +66,28 @@ static void put_px(gfx_surface *s, int x, int y, uint32_t rgba) {
         s->px[(size_t)y * s->stride + x] = rgba;
 }
 
+void gfx_blit_coverage(gfx_surface *dst, int dx, int dy,
+                       const uint8_t *cov, int cov_stride,
+                       int sx, int sy, int w, int h, uint32_t rgba) {
+    if (!dst || !cov || w <= 0 || h <= 0) return;
+    unsigned sr = (rgba>>24)&0xFF, sg = (rgba>>16)&0xFF, sb = (rgba>>8)&0xFF;
+    for (int row = 0; row < h; row++) {
+        const uint8_t *cr = cov + (size_t)(sy + row) * cov_stride + sx;
+        uint32_t      *dr = dst->px + (size_t)(dy + row) * dst->stride + dx;
+        for (int col = 0; col < w; col++) {
+            unsigned c = cr[col];
+            if (c == 0) continue;
+            if (c == 255) { dr[col] = (rgba & 0xFFFFFF00u) | 0xFF; continue; }
+            uint32_t d = dr[col];
+            unsigned ic = 255 - c;
+            unsigned r = (sr*c + ((d>>24)&0xFF)*ic) / 255;
+            unsigned g = (sg*c + ((d>>16)&0xFF)*ic) / 255;
+            unsigned b = (sb*c + ((d>>8) &0xFF)*ic) / 255;
+            dr[col] = (r<<24) | (g<<16) | (b<<8) | 0xFF;
+        }
+    }
+}
+
 void gfx_line(gfx_surface *s, int x0, int y0, int x1, int y1, uint32_t rgba) {
     if (!s) return;
     int dx =  abs(x1 - x0), sx = x0 < x1 ? 1 : -1;
