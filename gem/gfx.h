@@ -49,4 +49,9 @@ void gfx_blit_coverage(gfx_surface *dst, int dx, int dy,
                        const uint8_t *cov, int cov_stride,
                        int sx, int sy, int w, int h, uint32_t rgba);
 
+// End of a text run: the A9 backend batches glyph coverage blits into a shared
+// atlas and enqueues them without waiting; this drains the queue and resets the
+// atlas.  Call it after each string's glyph loop.  No-op on the host backend.
+void gfx_text_flush(void);
+
 #endif // GEM_GFX_H

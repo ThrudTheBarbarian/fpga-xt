@@ -441,6 +441,7 @@ void font_draw(font *f, gfx_surface *d, int x, int y, const char *s,
         blit_glyph(d, pen, base, g, rgba, cx0, cy0, cx1, cy1, mode);
         pen += g->advance + trk; prev = cp;
     }
+    gfx_text_flush();   // drain the batched glyph blits (no-op on the host)
 }
 
 // Spread `s` to occupy `width` px: extra slack goes to the gaps after spaces
@@ -478,6 +479,7 @@ void font_draw_justified(font *f, gfx_surface *d, int x, int y, const char *s,
         if (cp == ' ' && word_space) pen += word_add;
         if (i < n - 1 && char_space) pen += char_add;
     }
+    gfx_text_flush();
 }
 
 // Draw each glyph of s at its own offset from (x,y) (em-box top-left): glyph
@@ -493,6 +495,7 @@ void font_draw_offsets(font *f, gfx_surface *d, int x, int y, const char *s,
         if (!g) { j--; continue; }
         blit_glyph(d, x + off[2*j], base0 + off[2*j+1], g, rgba, cx0, cy0, cx1, cy1, mode);
     }
+    gfx_text_flush();
 }
 
 // Blit an FT bitmap's coverage at device top-left.  `light` halves coverage.

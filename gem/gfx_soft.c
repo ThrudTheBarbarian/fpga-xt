@@ -88,6 +88,8 @@ void gfx_blit_coverage(gfx_surface *dst, int dx, int dy,
     }
 }
 
+void gfx_text_flush(void) { }   // host backend draws synchronously — nothing to drain
+
 void gfx_line(gfx_surface *s, int x0, int y0, int x1, int y1, uint32_t rgba) {
     if (!s) return;
     int dx =  abs(x1 - x0), sx = x0 < x1 ? 1 : -1;
