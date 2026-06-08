@@ -46,11 +46,16 @@ One 8-bit unlock register, **two write ports**, with the A9 as the authority.
 | 2 | `BLITTER` (native-side `$D4Bx/$D4Cx/…`) | mirror | blitter regs *(native bus only; A9/bridge unaffected)* |
 | 3 | `BANK` (`$D5C0/$D5C1` code/data bank select) | open bus / cart | XT banking |
 | 4 | `GEM` (`$D5D0-$D5D4` service doorbell) | open bus / cart | GEM doorbell |
-| 5 | reserved (kbd? — see Open points) | — | — |
+| 5 | `KBD` (keyboard-inject region's native decode) | mirror | XT decode (see note) |
 | 6 | reserved | — | — |
-| 7 | `NATIVE_UNLOCK_EN` — **A9-only**: 1 = honor the 6502's `$D5CF` writes | 6502 cannot change the unlock | 6502 self-unlock permitted |
+| 7 | `NATIVE_UNLOCK_EN` — **A9-only**: 1 = honor the 6502's `$D1DF` writes | 6502 cannot change the unlock | 6502 self-unlock permitted |
 
 Reset → `0x00` (everything locked = stock, and the 6502 can't unlock itself).
+
+`KBD` note: keyboard *injection* is A9→6502 over the bridge and is never gated
+(see below). The `KBD` bit exists defensively — it masks the kbd region's
+*native-bus* decode so a stock program hitting that ANTIC-mirror address can't
+trip any XT keyboard logic; locked → the address is the plain ANTIC mirror.
 
 ### Write port A — A9 (primary)
 
@@ -63,26 +68,30 @@ distinct from `0x1C`.)
 
 ### Write port B — 6502 (secondary, gated)
 
-A native write to **`$D5CF`** sets bits `[6:0]` — **but only while
-`NATIVE_UNLOCK_EN` (bit 7, A9-set) is 1**. This closes the hole below.
+A native write to **`$D1DF`** (PBI window) sets bits `[6:0]` — **but only while
+`NATIVE_UNLOCK_EN` (bit 7, A9-set) is 1**. Readable too (the 6502 can check the
+current unlock state). `$D1DF` is decoded **unconditionally** by the XT — it is
+the master switch and must always be reachable, so it has no lock bit of its own.
 
-### The hole: `$D5CF` is in the cartridge window
+### Why `$D1DF`, and the hole it dodges
 
-`$D5xx` is CCTL — stock cartridges bank-switch there (Bounty Bob uses `$D5xx`!).
-So the very register that controls stock-vs-XT lives in space a stock cart
-writes. Without protection, a stray cart write to `$D5CF` could flip the machine
-out of stock mode mid-game.
+The earlier candidate, `$D5CF`, sits in the **CCTL cartridge window** — the very
+space stock cartridges bank-switch through (Bounty Bob writes `$D5xx`). Putting
+the master stock-vs-XT switch *inside the space it governs* is asking for
+trouble: a stray cart write could flip the machine out of stock mode mid-game,
+and the register would be self-referential with the `BANK`/`GEM` decodes around it.
 
-**Resolution (chosen):** the 6502's `$D5CF` write is honored **only when the A9
-has set `NATIVE_UNLOCK_EN`**. By default / after reset that bit is 0, so a stock
-cart's `$D5xx` traffic can never touch the unlock state. The A9 grants
-6502-self-unlock only when it is deliberately running XT-aware native software.
-The A9's own write port (the bridge) is outside the cart range and always
-authoritative.
+`$D1DF` is in the **PBI window** (`$D100-$D1FF`), in the documented-free gap
+between the 1090 XL Amy block (`$D1D1-$D1DD`) and the MIO ACIA (`$D1E0+`). Stock
+*cartridges* never touch PBI space, and a bare machine leaves it open bus — so
+the master switch lives well clear of everything it controls.
 
-*(Alternative considered: a magic key/value on `$D5CF` (e.g. arm with `$D5CE`=key
-then write the mask). Rejected as weaker — a determined-enough cart pattern
-could still hit it, and the A9-gate is simpler and strictly safer.)*
+**Defense in depth:** even there, the `$D1DF` write is gated by
+`NATIVE_UNLOCK_EN` (A9-set, resets to 0). So a stock PBI driver poking the
+region can't change the unlock state unless the A9 has explicitly opened that
+door. The A9's own write port (the GP0 bridge) is outside all Atari I/O space
+and is always authoritative — it can lock the machine down (incl. clearing
+`NATIVE_UNLOCK_EN`) for a stock session.
 
 ## What each bit gates, precisely
 
@@ -98,6 +107,9 @@ unlocked; otherwise the address falls through to the stock decode.**
 - `BANK`: gate `$D5C0/$D5C1`. Locked → open bus, so a stock cart's `$D5xx`
   bank-switching is undisturbed.
 - `GEM`: gate `$D5D0-$D5D4`. Locked → open bus.
+- `KBD`: gate the kbd region's native-bus decode. Locked → the address is the
+  plain ANTIC mirror, so a stock program hitting that mirror can't reach any XT
+  keyboard logic. (A9 bridge injection is unaffected — always live.)
 
 ### The core mechanism: a mirror-conditional `$D4xx` decode
 
@@ -120,18 +132,18 @@ for an address A in $D410..$D4FF:
 
 ## Reset semantics
 
-**Reset → `xt_unlock = 0` (fully locked / stock).** Both write ports reset to 0.
-Consequence: every 6502 cold/warm start lands in stock mode; the A9 (or, once
-permitted, XT-aware native code) re-asserts the bits it wants. A wedged XT app +
-reset can never leave the 6502 staring at half-enabled XT registers.
-
-Which reset clears it: the **system/PL reset**. Whether a *6502-only* reset (the
-SALLY reset the launcher pulses) also clears it is an Open point — see below.
+**The PL/system reset clears `xt_unlock` to 0 (fully locked / stock).** A
+**6502-only reset** (the SALLY reset the launcher pulses to boot a guest) does
+**NOT** clear it — so the A9 owns the unlock policy *across* a guest reset.
+The A9 sets the desired lock state, then pulses the 6502 reset; the guest comes
+up against exactly the personality the A9 chose, and a wedged XT app + 6502
+reset can't leave the 6502 staring at half-enabled XT registers. Only a full
+power-on / PL reconfigure returns to the all-locked default.
 
 ## Worked example: A9 launches Bounty Bob (stock cart, uses `$D47B` + `$D5xx`)
 
 1. A9 writes the unlock reg (bridge) = `0x00` → **all groups locked**, and
-   `NATIVE_UNLOCK_EN`=0.
+   `NATIVE_UNLOCK_EN`=0 (so the guest can't even reach the `$D1DF` switch).
 2. Now the 6502 sees stock silicon: `$D47B` is the ANTIC mirror (Bounty Bob
    happy), `$D5xx` is pure CCTL so Bounty Bob's own cartridge bank-switching
    there is undisturbed, no sprite/chiplet/GEM decode shadows anything.
@@ -147,39 +159,43 @@ view doesn't disarm the A9.
 1. A9 (bridge) sets `unlock = {NATIVE_UNLOCK_EN, GEM, BANK, SPRITE, BLITTER,
    ANTIC_CHIPLET}` for the groups the app needs.
 2. A9 loads + resets the 6502 into the XT app. If the app self-manages, it may
-   adjust bits via `$D5CF` (now honored, since `NATIVE_UNLOCK_EN`=1).
+   adjust bits via `$D1DF` (now honored, since `NATIVE_UNLOCK_EN`=1).
 3. The XT registers are live for the 6502; the A9 desktop GEM/blitter also keep
    working over the bridge throughout.
 
+## Decisions (settled)
+
+1. **Reset semantics — SETTLED.** PL/system reset clears; a 6502-only reset does
+   NOT (the A9 owns the policy across a guest reset). See *Reset semantics*.
+2. **`BANK` boot order — SETTLED.** The A9 unlocks `BANK` **pre-launch** (before
+   it boots the XTC environment), since the XTC runtime needs banking but reset
+   leaves it locked. Stock carts (which never expect XT banking) run with `BANK`
+   locked, so their `$D5xx` cart-switching is undisturbed.
+3. **`KBD` is a group — SETTLED.** Kept as a defensive mask (bit 5): even though
+   injection rides the bridge, the kbd region's *native* decode is gated so a
+   stock program hitting that mirror address can't trip XT keyboard logic.
+4. **`$D1DF` location — SETTLED.** The 6502-side switch moved out of the CCTL
+   window into the free PBI gap (`$D1DF`), clear of the space it governs.
+
 ## Open points to settle before RTL
 
-1. **6502-only reset vs the unlock.** If the launcher's SALLY reset clears the
-   unlock, the A9 must re-assert XT bits *after* the reset for an XT app (fine,
-   and arguably cleaner). If it doesn't clear, a stock-cart reset relies on the
-   A9 having locked first. Leaning: **PL/system reset clears; 6502-only reset
-   does NOT** — so the A9 owns the policy across a guest reset. Confirm.
-2. **`BANK` boot order.** The XTC runtime needs banking; reset → BANK locked. So
-   the XTC boot ROM must live in flat bank 0 and the A9 (or that ROM) unlocks
-   `BANK` before banked code runs. This is *why* BANK must be gateable (so stock
-   carts using `$D5xx` aren't disturbed) — but the XTC boot sequence has to
-   account for starting locked.
-3. **Is `kbd` a group at all?** Keyboard *injection* is A9→6502 over the bridge
-   (`$D4CF`), never a native register the 6502 reads — so it needs no gating.
-   Reserve bit 5 only if a *native-visible* keyboard register appears later.
-4. **A9 control offset.** Pick the bridge intercept offset for write port A
-   (distinct from `gp0_ctrl`'s `0x1C`); and decide if `xt_unlock` is read-backable
-   over the bridge (recommended, for the A9 to verify state).
-5. **Simultaneous A9 + 6502 write.** Both land at `clk_sys` after CDC. Give the
+1. **A9 control offset.** Pick the bridge intercept offset for write port A
+   (distinct from `gp0_ctrl`'s `0x1C`); make `xt_unlock` read-backable over the
+   bridge so the A9 can verify state.
+2. **Simultaneous A9 + 6502 write.** Both land at `clk_sys` after CDC. Give the
    A9 write priority on a same-cycle tie (it's the authority).
+3. **`$D1DF` decode in a PBI-equipped machine.** The XT decodes `$D1DF`
+   unconditionally; if a real PBI device ever claims that exact byte it would be
+   shadowed. Documented-free today; revisit only if a PBI device lands there.
 
 ## Cost
 
 - Unlock register + the two write ports (bridge intercept ~`gp0_ctrl` clone;
-  `$D5CF` native decode gated by `NATIVE_UNLOCK_EN`): small.
+  `$D1DF` native decode gated by `NATIVE_UNLOCK_EN`): small.
 - Per-group decode gating: ~1 line each, spread across `fpga_xt_top` /
   `antic_regs` / the blitter native decode, plus routing `xt_unlock` to each.
 - The mirror-conditional `$D4xx` decode: the one piece needing care.
 - Bitstream + tests (stock mirror behaviour locked; XT registers unlocked;
-  `$D5CF` ignored unless `NATIVE_UNLOCK_EN`).
+  `$D1DF` ignored unless `NATIVE_UNLOCK_EN`).
 
 A focused ~150-250-line change across the decode modules, low datapath risk.
