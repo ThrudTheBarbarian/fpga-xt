@@ -231,7 +231,7 @@ static void soft_blit_coverage(gfx_surface *dst, int dx, int dy,
 // that dominated the synchronous path.
 #define ATLAS_W      2048u
 #define ATLAS_H      256u
-static uint8_t g_atlas[ATLAS_W * ATLAS_H] __attribute__((aligned(64)));
+static uint8_t *g_atlas;                // ATLAS_W*ATLAS_H, lazily malloc'd from DDR heap
 static unsigned g_ax, g_ay, g_arow;     // bump allocator (x, y, current row height)
 static int      g_atlas_fresh = 1;      // batch needs SRC/colour setup (idle)
 static uint32_t g_atlas_rgba;           // colour this batch was set up with
@@ -251,6 +251,13 @@ void gfx_blit_coverage(gfx_surface *dst, int dx, int dy,
     if (!is_plane(dst) || (unsigned)w > ATLAS_W || (unsigned)h > ATLAS_H) {
         soft_blit_coverage(dst, dx, dy, cov, cov_stride, sx, sy, w, h, rgba);
         return;
+    }
+    if (!g_atlas) {
+        g_atlas = (uint8_t *)malloc(ATLAS_W * ATLAS_H);     // ~512 KB from the DDR heap
+        if (!g_atlas) {                                     // no atlas → CPU fallback
+            soft_blit_coverage(dst, dx, dy, cov, cov_stride, sx, sy, w, h, rgba);
+            return;
+        }
     }
 
     // A colour change mid-batch needs a fresh setup (colour = the 1x1 pattern,
