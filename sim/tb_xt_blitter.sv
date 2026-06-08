@@ -589,10 +589,10 @@ module tb_xt_blitter;
             mem[mem_idx(sa)][(sa[2] ? 32 : 0) +: 32] = 32'h1122_3300 + yy*32'h1000 + xx;
           end
         // SRC descriptor 0x30040000/64, DST descriptor 0x30080000/64
-        write_reg(16'hD4D0,8'h00); write_reg(16'hD4D1,8'h00); write_reg(16'hD4D2,8'h04); write_reg(16'hD4D3,8'h30);
-        write_reg(16'hD4D4,8'd64); write_reg(16'hD4D5,8'd0);
-        write_reg(16'hD4D6,8'h00); write_reg(16'hD4D7,8'h00); write_reg(16'hD4D8,8'h08); write_reg(16'hD4D9,8'h30);
-        write_reg(16'hD4DA,8'd64); write_reg(16'hD4DB,8'd0);
+        write_reg(16'hD4E0,8'h00); write_reg(16'hD4E1,8'h00); write_reg(16'hD4E2,8'h04); write_reg(16'hD4E3,8'h30);
+        write_reg(16'hD4E4,8'd64); write_reg(16'hD4E5,8'd0);
+        write_reg(16'hD4E6,8'h00); write_reg(16'hD4E7,8'h00); write_reg(16'hD4E8,8'h08); write_reg(16'hD4E9,8'h30);
+        write_reg(16'hD4EA,8'd64); write_reg(16'hD4EB,8'd0);
         write_reg(16'hD4C0,8'd0); write_reg(16'hD4C1,8'd0); write_reg(16'hD4C2,8'd0); write_reg(16'hD4C3,8'd0);
         write_reg(16'hD4B0,8'd0); write_reg(16'hD4B1,8'd0); write_reg(16'hD4B2,8'd0); write_reg(16'hD4B3,8'd0);
         write_reg(16'hD4B4,8'd4); write_reg(16'hD4B5,8'd0); write_reg(16'hD4B6,8'd2); write_reg(16'hD4B7,8'd0);
@@ -627,10 +627,10 @@ module tb_xt_blitter;
         // 1x1 red pattern = text colour (R,G,B,A = FF,00,00,FF)
         write_reg(16'hD4BA, 8'h00); load_1x1_pattern(8'hFF, 8'h00, 8'h00, 8'hFF); write_reg(16'hD4BE, 8'h00);
         // SRC descriptor 0x30040000/8 (1 B/px), DST 0x30080000/64
-        write_reg(16'hD4D0,8'h00); write_reg(16'hD4D1,8'h00); write_reg(16'hD4D2,8'h04); write_reg(16'hD4D3,8'h30);
-        write_reg(16'hD4D4,8'd8);  write_reg(16'hD4D5,8'd0);
-        write_reg(16'hD4D6,8'h00); write_reg(16'hD4D7,8'h00); write_reg(16'hD4D8,8'h08); write_reg(16'hD4D9,8'h30);
-        write_reg(16'hD4DA,8'd64); write_reg(16'hD4DB,8'd0);
+        write_reg(16'hD4E0,8'h00); write_reg(16'hD4E1,8'h00); write_reg(16'hD4E2,8'h04); write_reg(16'hD4E3,8'h30);
+        write_reg(16'hD4E4,8'd8);  write_reg(16'hD4E5,8'd0);
+        write_reg(16'hD4E6,8'h00); write_reg(16'hD4E7,8'h00); write_reg(16'hD4E8,8'h08); write_reg(16'hD4E9,8'h30);
+        write_reg(16'hD4EA,8'd64); write_reg(16'hD4EB,8'd0);
         write_reg(16'hD4C0,8'd0); write_reg(16'hD4C1,8'd0); write_reg(16'hD4C2,8'd0); write_reg(16'hD4C3,8'd0);
         write_reg(16'hD4B0,8'd0); write_reg(16'hD4B1,8'd0); write_reg(16'hD4B2,8'd0); write_reg(16'hD4B3,8'd0);
         write_reg(16'hD4B4,8'd4); write_reg(16'hD4B5,8'd0); write_reg(16'hD4B6,8'd1); write_reg(16'hD4B7,8'd0);
@@ -670,10 +670,10 @@ module tb_xt_blitter;
         // Dest @0x30080000 prefilled blue (0000FFFF)
         mem[mem_idx(32'h3008_0000)] = 64'h0000FFFF_0000FFFF;
         mem[mem_idx(32'h3008_0008)] = 64'h0000FFFF_0000FFFF;
-        write_reg(16'hD4D0,8'h00); write_reg(16'hD4D1,8'h00); write_reg(16'hD4D2,8'h04); write_reg(16'hD4D3,8'h30);
-        write_reg(16'hD4D4,8'd64); write_reg(16'hD4D5,8'd0);
-        write_reg(16'hD4D6,8'h00); write_reg(16'hD4D7,8'h00); write_reg(16'hD4D8,8'h08); write_reg(16'hD4D9,8'h30);
-        write_reg(16'hD4DA,8'd64); write_reg(16'hD4DB,8'd0);
+        write_reg(16'hD4E0,8'h00); write_reg(16'hD4E1,8'h00); write_reg(16'hD4E2,8'h04); write_reg(16'hD4E3,8'h30);
+        write_reg(16'hD4E4,8'd64); write_reg(16'hD4E5,8'd0);
+        write_reg(16'hD4E6,8'h00); write_reg(16'hD4E7,8'h00); write_reg(16'hD4E8,8'h08); write_reg(16'hD4E9,8'h30);
+        write_reg(16'hD4EA,8'd64); write_reg(16'hD4EB,8'd0);
         write_reg(16'hD4C0,8'd0); write_reg(16'hD4C1,8'd0); write_reg(16'hD4C2,8'd0); write_reg(16'hD4C3,8'd0);
         write_reg(16'hD4B0,8'd0); write_reg(16'hD4B1,8'd0); write_reg(16'hD4B2,8'd0); write_reg(16'hD4B3,8'd0);
         write_reg(16'hD4B4,8'd3); write_reg(16'hD4B5,8'd0); write_reg(16'hD4B6,8'd1); write_reg(16'hD4B7,8'd0);
@@ -709,8 +709,8 @@ module tb_xt_blitter;
         mem[mem_idx(32'h3000_0000)] = 64'h0;                     // plane (0,0)/(1,0) black
         mem[mem_idx(32'h3000_0008)] = 64'h0;                     // plane (2,0)/(3,0) black
         write_reg(16'hD4BA, 8'h00); load_1x1_pattern(8'h00, 8'hFF, 8'h00, 8'hFF); write_reg(16'hD4BE, 8'h00); // green
-        write_reg(16'hD4D0,8'h00); write_reg(16'hD4D1,8'h00); write_reg(16'hD4D2,8'h04); write_reg(16'hD4D3,8'h30);
-        write_reg(16'hD4D4,8'd8);  write_reg(16'hD4D5,8'd0);     // SRC stride 8 (1 B/px)
+        write_reg(16'hD4E0,8'h00); write_reg(16'hD4E1,8'h00); write_reg(16'hD4E2,8'h04); write_reg(16'hD4E3,8'h30);
+        write_reg(16'hD4E4,8'd8);  write_reg(16'hD4E5,8'd0);     // SRC stride 8 (1 B/px)
         write_reg(16'hD4C0,8'd0); write_reg(16'hD4C1,8'd0); write_reg(16'hD4C2,8'd0); write_reg(16'hD4C3,8'd0);
         write_reg(16'hD4B0,8'd0); write_reg(16'hD4B1,8'd0); write_reg(16'hD4B2,8'd0); write_reg(16'hD4B3,8'd0);
         write_reg(16'hD4B4,8'd4); write_reg(16'hD4B5,8'd0); write_reg(16'hD4B6,8'd1); write_reg(16'hD4B7,8'd0);

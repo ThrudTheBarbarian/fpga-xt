@@ -71,22 +71,24 @@
 #define XT_BL_FONT_DATA          0x1E
 #define XT_BL_FONT_CTRL          0x1F
 
-/* $D4Dx page (offsets 0x20..0x2F) — SRC_BLIT DDR surface descriptors.
- * Global registers (latched while the blitter is idle); set them before
- * enqueuing the commands that use them, and don't change a surface while
- * commands referencing it are still draining (drain via SYNC if you must). */
-#define XT_BL_SRC_BASE_0         0x20     /* SRC_BASE   byte 0 (LSB) */
-#define XT_BL_SRC_BASE_1         0x21
-#define XT_BL_SRC_BASE_2         0x22
-#define XT_BL_SRC_BASE_3         0x23     /* SRC_BASE   byte 3 (MSB) */
-#define XT_BL_SRC_STRIDE_LO      0x24     /* SRC_STRIDE bytes/row, low  */
-#define XT_BL_SRC_STRIDE_HI      0x25
-#define XT_BL_DST_BASE_0         0x26     /* DST_BASE   byte 0 (LSB) */
-#define XT_BL_DST_BASE_1         0x27
-#define XT_BL_DST_BASE_2         0x28
-#define XT_BL_DST_BASE_3         0x29     /* DST_BASE   byte 3 (MSB) */
-#define XT_BL_DST_STRIDE_LO      0x2A     /* DST_STRIDE bytes/row, low  */
-#define XT_BL_DST_STRIDE_HI      0x2B
+/* $D4Ex page (offsets 0x30..0x3F) — SRC_BLIT DDR surface descriptors.
+ * On $D4Ex, NOT $D4Dx: $D4Dx is the sprite engine's per-sprite descriptor page,
+ * and decoding it in the blitter collides A9 traffic with the native/6502
+ * sprite traffic.  Global registers (latched while the blitter is idle); set
+ * them before enqueuing the commands that use them, and don't change a surface
+ * while commands referencing it are still draining (drain via SYNC if you must). */
+#define XT_BL_SRC_BASE_0         0x30     /* SRC_BASE   byte 0 (LSB) */
+#define XT_BL_SRC_BASE_1         0x31
+#define XT_BL_SRC_BASE_2         0x32
+#define XT_BL_SRC_BASE_3         0x33     /* SRC_BASE   byte 3 (MSB) */
+#define XT_BL_SRC_STRIDE_LO      0x34     /* SRC_STRIDE bytes/row, low  */
+#define XT_BL_SRC_STRIDE_HI      0x35
+#define XT_BL_DST_BASE_0         0x36     /* DST_BASE   byte 0 (LSB) */
+#define XT_BL_DST_BASE_1         0x37
+#define XT_BL_DST_BASE_2         0x38
+#define XT_BL_DST_BASE_3         0x39     /* DST_BASE   byte 3 (MSB) */
+#define XT_BL_DST_STRIDE_LO      0x3A     /* DST_STRIDE bytes/row, low  */
+#define XT_BL_DST_STRIDE_HI      0x3B
 
 /* --- FLAGS register bits (XT_BL_FLAGS) ------------------------------- */
 #define XT_BL_FLAG_BLEND         (1u << 0)  /* rect/line: alpha-blend with dest */

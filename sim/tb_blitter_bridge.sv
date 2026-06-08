@@ -428,12 +428,12 @@ module tb_blitter_bridge;
         // expanded bridge window (offsets 0x20-0x2B) and check they latched.
         // ================================================================
         $display("\n=== $D4Dx SRC/DST descriptor load (offsets 0x20-0x2B) ===");
-        axi_write8(6'h20, 8'h00); axi_write8(6'h21, 8'h00);
-        axi_write8(6'h22, 8'h00); axi_write8(6'h23, 8'h31);   // SRC_BASE = 0x31000000
-        axi_write8(6'h24, 8'h00); axi_write8(6'h25, 8'h08);   // SRC_STRIDE = 0x0800
-        axi_write8(6'h26, 8'h00); axi_write8(6'h27, 8'h00);
-        axi_write8(6'h28, 8'h00); axi_write8(6'h29, 8'h32);   // DST_BASE = 0x32000000
-        axi_write8(6'h2A, 8'h00); axi_write8(6'h2B, 8'h10);   // DST_STRIDE = 0x1000
+        axi_write8(6'h30, 8'h00); axi_write8(6'h31, 8'h00);
+        axi_write8(6'h32, 8'h00); axi_write8(6'h33, 8'h31);   // SRC_BASE = 0x31000000
+        axi_write8(6'h34, 8'h00); axi_write8(6'h35, 8'h08);   // SRC_STRIDE = 0x0800
+        axi_write8(6'h36, 8'h00); axi_write8(6'h37, 8'h00);
+        axi_write8(6'h38, 8'h00); axi_write8(6'h39, 8'h32);   // DST_BASE = 0x32000000
+        axi_write8(6'h3A, 8'h00); axi_write8(6'h3B, 8'h10);   // DST_STRIDE = 0x1000
         repeat (8) @(posedge clk);
         $display("  SRC_BASE   = 0x%08x (expect 0x31000000)", u_blit.src_base_reg);
         $display("  SRC_STRIDE = 0x%04x     (expect 0x0800)", u_blit.src_stride_reg);
@@ -456,9 +456,9 @@ module tb_blitter_bridge;
         axi_write8(6'h0E, 8'd0);                                  // PAT_LOG_H = 0
         axi_write8(6'h0B, 8'h00); axi_write8(6'h0B, 8'hFF);
         axi_write8(6'h0B, 8'h00); axi_write8(6'h0B, 8'hFF);       // 1x1 green pattern
-        axi_write8(6'h20, 8'h00); axi_write8(6'h21, 8'h00);
-        axi_write8(6'h22, 8'h04); axi_write8(6'h23, 8'h30);       // SRC_BASE = 0x30040000
-        axi_write8(6'h24, 8'd8);  axi_write8(6'h25, 8'd0);        // SRC_STRIDE = 8
+        axi_write8(6'h30, 8'h00); axi_write8(6'h31, 8'h00);
+        axi_write8(6'h32, 8'h04); axi_write8(6'h33, 8'h30);       // SRC_BASE = 0x30040000
+        axi_write8(6'h34, 8'd8);  axi_write8(6'h35, 8'd0);        // SRC_STRIDE = 8
         axi_write8(6'h10, 8'd0);  axi_write8(6'h11, 8'd0);        // SRC_X = 0
         axi_write8(6'h12, 8'd0);  axi_write8(6'h13, 8'd0);        // SRC_Y = 0
         axi_write8(6'h00, 8'd0);  axi_write8(6'h01, 8'd0);        // DST_X = 0
