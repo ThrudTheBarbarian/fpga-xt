@@ -921,13 +921,16 @@ module xt_blitter #(
     logic [31:0] dst_row_base;
     wire [15:0]  dst_stride_eff = dst_ddr_q ? dst_stride_q : 16'(FB_STRIDE_B);
 
-    // Full 32-bit address of the first pixel in this segment.
-    wire [31:0]  seg_raw_addr = dst_row_base + (32'(seg_cx) << 2);
+    // Src row-base accumulator for block-blit reads -- same model as dst: seeded
+    // at S_IDLE (descriptor ROW0 or the plane shift), advanced +src_stride_eff
+    // per row in S_ADV.  No fabric multiply.
+    logic [31:0] src_row_base;
+    wire [15:0]  src_stride_eff = src_ddr_q ? src_stride_q : 16'(FB_STRIDE_B);
 
-    // Source address for block-blit read bursts (uses src_x_q/src_y_q).
-    wire [31:0]  bl_src_raw_addr = FB_BASE
-                                  + (32'(src_y_q + seg_cy) << 13)
-                                  + (32'(src_x_q + seg_cx) << 2);
+    // Full 32-bit address of the first pixel in this segment.
+    wire [31:0]  seg_raw_addr    = dst_row_base + (32'(seg_cx) << 2);
+    // Source address for block-blit read bursts.
+    wire [31:0]  bl_src_raw_addr = src_row_base + (32'(seg_cx) << 2);
 
     // ====================================================================
     // Scaled-blit state
@@ -1330,10 +1333,12 @@ module xt_blitter #(
                         src_stride_q <= src_stride_reg;
                         dst_base_q   <= dst_base_reg;
                         dst_stride_q <= dst_stride_reg;
-                        // Seed the dst row-base: descriptor ROW0 (origin folded by
-                        // the A9), or the plane via the existing power-of-2 shift.
+                        // Seed the dst/src row-bases: descriptor ROW0 (origin
+                        // folded by the A9), or the plane via the power-of-2 shift.
                         dst_row_base <= q_flags[5] ? dst_base_reg
                                       : (FB_BASE + (32'(q_dst_y) << 13) + (32'(q_dst_x) << 2));
+                        src_row_base <= q_flags[2] ? src_base_reg
+                                      : (FB_BASE + (32'(q_src_y) << 13) + (32'(q_src_x) << 2));
                         cx        <= 16'd0;
                         cy        <= 16'd0;
                         burst_len         <= 5'd0;
@@ -1830,6 +1835,10 @@ module xt_blitter #(
                                 end else begin
                                     cy <= cy + 16'd1;
                                     cx <= 16'd0;
+                                    // block-blit advances rows here (not S_ADV), so
+                                    // step both row-base accumulators here too.
+                                    dst_row_base <= dst_row_base + dst_stride_eff;
+                                    src_row_base <= src_row_base + src_stride_eff;
                                     state <= BL_READ;
                                 end
                             end else begin
@@ -1857,6 +1866,7 @@ module xt_blitter #(
                             cy <= cy + 16'd1;
                             cx <= 16'd0;
                             dst_row_base <= dst_row_base + dst_stride_eff;  // next row
+                            src_row_base <= src_row_base + src_stride_eff;
                             state <= S_SEG;
                         end
                     end else begin

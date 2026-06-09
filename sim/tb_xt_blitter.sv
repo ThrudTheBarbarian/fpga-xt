@@ -476,6 +476,46 @@ module tb_xt_blitter;
     endtask
 
     // ----------------------------------------------------------------
+    // BLOCK_BLIT DDR->DDR (SRC_DDR|DST_DDR): src + dst both off-plane,
+    // 4x2 (TWO rows) so the src_row_base AND dst_row_base accumulators must
+    // both advance +stride at S_ADV.  Straight copy (RASTER_OP=S).
+    // ----------------------------------------------------------------
+    task test_block_blit_ddr();
+        logic [31:0] sa, da, got, exp;
+        int errs;
+        $display("=== Test: BLOCK_BLIT DDR->DDR (SRC_DDR|DST_DDR), 4x2, stride 64 ===");
+        clear_logs(); errs = 0;
+        for (int yy = 0; yy < 2; yy++)
+          for (int xx = 0; xx < 4; xx++) begin
+            sa = 32'h3004_0000 + yy*64 + xx*4;
+            mem[mem_idx(sa)][(sa[2] ? 32 : 0) +: 32] = 32'hA0B0C000 + yy*32'h100 + xx;
+          end
+        // SRC descriptor 0x30040000/64, DST descriptor 0x30080000/64
+        write_reg(16'hD4E0,8'h00); write_reg(16'hD4E1,8'h00); write_reg(16'hD4E2,8'h04); write_reg(16'hD4E3,8'h30);
+        write_reg(16'hD4E4,8'd64); write_reg(16'hD4E5,8'd0);
+        write_reg(16'hD4E6,8'h00); write_reg(16'hD4E7,8'h00); write_reg(16'hD4E8,8'h08); write_reg(16'hD4E9,8'h30);
+        write_reg(16'hD4EA,8'd64); write_reg(16'hD4EB,8'd0);
+        // SRC_X/Y=0, SRC_W/H=4x2 ; DST_X/Y=0, DST_W/H=4x2 (origins folded into ROW0)
+        write_reg(16'hD4C0,8'd0); write_reg(16'hD4C1,8'd0); write_reg(16'hD4C2,8'd0); write_reg(16'hD4C3,8'd0);
+        write_reg(16'hD4C4,8'd4); write_reg(16'hD4C5,8'd0); write_reg(16'hD4C6,8'd2); write_reg(16'hD4C7,8'd0);
+        write_reg(16'hD4B0,8'd0); write_reg(16'hD4B1,8'd0); write_reg(16'hD4B2,8'd0); write_reg(16'hD4B3,8'd0);
+        write_reg(16'hD4B4,8'd4); write_reg(16'hD4B5,8'd0); write_reg(16'hD4B6,8'd2); write_reg(16'hD4B7,8'd0);
+        write_reg(16'hD4BF,8'h03);   // RASTER_OP = S (copy)
+        write_reg(16'hD4C8,8'h24);   // FLAGS: SRC_DDR(2) | DST_DDR(5)
+        write_reg(16'hD4BC,8'h03);   // CMD = BLOCK_BLIT
+        wait_idle();
+        for (int yy = 0; yy < 2; yy++)
+          for (int xx = 0; xx < 4; xx++) begin
+            da  = 32'h3008_0000 + yy*64 + xx*4;
+            got = mem[mem_idx(da)][(da[2] ? 32 : 0) +: 32];
+            exp = 32'hA0B0C000 + yy*32'h100 + xx;
+            if (got !== exp) begin errs++; $display("  MISMATCH (%0d,%0d): got %08x exp %08x", xx, yy, got, exp); end
+          end
+        if (errs == 0) $display("PASS: test_block_blit_ddr");
+        else begin $display("FAIL: test_block_blit_ddr (%0d mismatches)", errs); $fatal(1); end
+    endtask
+
+    // ----------------------------------------------------------------
     // Test 2: Pattern fill with zero alpha -- should skip all writes
     //
     // 1x1 transparent pattern (A=0), 4x1 rectangle.  The burst buffer
@@ -1249,6 +1289,7 @@ module tb_xt_blitter;
         // Run tests
         test_pattern_fill();
         test_rect_fill_ddr();
+        test_block_blit_ddr();
         test_pattern_fill_transparent();
         test_line_draw_horizontal();
         test_line_draw_diagonal();
