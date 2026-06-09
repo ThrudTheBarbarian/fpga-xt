@@ -144,3 +144,15 @@ void xt_blitter_src_blit(int16_t sx, int16_t sy, uint16_t w, uint16_t h,
     xt_blitter_set_dst(dx, dy, w, h);
     xt_blitter_fire(XT_BL_CMD_SRC_BLIT);
 }
+
+/* --- XT register-unlock (the A9 sets the stock-vs-XT personality) ------ */
+
+void xt_unlock_set(uint8_t mask)
+{
+    xt_blitter_write8(XT_BL_UNLOCK, mask);
+}
+
+uint8_t xt_unlock_get(void)
+{
+    return xt_blitter_read8(XT_BL_UNLOCK);
+}

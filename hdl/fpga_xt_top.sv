@@ -450,6 +450,27 @@ module fpga_xt_top (
     logic       break_pulse_q;        // $D4CB write — Atari BREAK (POKEY IRQST bit 7)
     logic [7:0] clock_mult_q;         // $D4CA write — SALLY speed multiplier (resets to 1x)
 
+    // ---- XT register-unlock (docs/Zynq/register-unlock.md) ---------------
+    // One 8-bit register gating the NATIVE (6502/ANTIC-side) decode of the XT
+    // extensions.  Two write ports (A9 via the GP0 bridge = authority; 6502 via
+    // $D1DF = self-unlock); the A9/bridge path itself is never gated.  This box
+    // is XT-NATIVE — its own desktop+OS depend on the XT registers — so reset
+    // defaults to ALL-UNLOCKED; the A9 LOCKS groups (then resets the 6502) only
+    // when launching a stock guest.  xt_unlock is quasi-static (changes only on
+    // an unlock write), so every consumer takes a *registered* copy near its
+    // own logic (xt_unlock_loc here; unlock_antic_q in antic_top; unlock_bank_q
+    // synced in sally_mem) — the raw register must not fan a long combinational
+    // net across the die onto critical clk_sys paths.
+    localparam int UNLK_ANTIC  = 0;   // $D480-$D49F ANTIC chiplet (MODE/pal/DRAW/ROM)
+    localparam int UNLK_SPRITE = 1;   // sprite engine $D4Ax/$D4Dx
+    localparam int UNLK_BLIT   = 2;   // blitter native $D4Bx/$D4Cx + $D4CA turbo
+    localparam int UNLK_BANK   = 3;   // $D5C0/$D5C1 code/data bank select
+    localparam int UNLK_GEM    = 4;   // $D5D0-$D5D4 GEM doorbell (reserved; not built)
+    localparam int UNLK_KBD    = 5;   // reserved (kbd inject is bridge-only — no native decode)
+    localparam logic [7:0] XT_UNLOCK_RESET = 8'hFF;  // XT-native: all groups live at power-on
+    logic [7:0] xt_unlock;
+    (* keep = "true" *) logic [7:0] xt_unlock_loc;   // local registered copy for the blitter/sprite gates
+
     // ====================================================================
     // AXI pipeline registers — HP1 (xt_blitter) → PS BD
     // ====================================================================
@@ -683,6 +704,7 @@ module fpga_xt_top (
         .hwreg_dout (hwreg_dout),
         .cpu_code_bank_q    (cpu_code_bank),
         .cpu_data_bank_q    (cpu_data_bank),
+        .unlock_bank        (xt_unlock[UNLK_BANK]),
         .portb              (portb_q),
         .bus_mpd_n_in       (1'b1),         // no PBI
         .bus_pbi_rdata      (8'hFF),        // no PBI
@@ -924,6 +946,9 @@ module fpga_xt_top (
         .rdy_n              (antic_rdy_n),
         .dma_steal          (antic_dma_steal_w),
         .dmactl_honor       (gp0_ctrl[4]),    // PS opt-in: honour DMACTL screen-blank
+        .unlock_antic       (xt_unlock[UNLK_ANTIC]),  // mirror-conditional $D4xx decode:
+        .unlock_sprite      (xt_unlock[UNLK_SPRITE]), //   each $D4xx slice mirrors stock
+        .unlock_blit        (xt_unlock[UNLK_BLIT]),   //   under its OWN group's lock
         .irq_n              (antic_irq_n),
         .bus_pbi_in_status_o(),
         .audio_l0(), .audio_l1(), .audio_l2(), .audio_l3(),
@@ -1352,7 +1377,10 @@ module fpga_xt_top (
     // SALLY hwreg path (already at clk_sys post-CDC).  Read-back into
     // SALLY is wired by the d4xx read-path mux in a later commit; until
     // then reg_rdata is observable in sim only.
+    // Gated by xt_unlock[SPRITE]: locked → the $D4Ax/$D4Dx writes never reach
+    // the sprite engine and fall through to the stock ANTIC mirror.
     wire sprite_reg_we = antic_we_q
+                        && xt_unlock_loc[UNLK_SPRITE]
                         && (bus_addr_antic_q[15:8] == 8'hD4)
                         && ((bus_addr_antic_q[7:4] == 4'hA)
                             || (bus_addr_antic_q[7:4] == 4'hD));
@@ -1496,10 +1524,12 @@ module fpga_xt_top (
     wire        bl_bridge_we;
     wire [5:0]  bl_bridge_addr;
     wire [7:0]  bl_bridge_data;
+    wire        xt_unlock_we;          // A9 unlock-write strobe (GP0 offset 0x20)
     `else
     wire        bl_bridge_we   = 1'b0;
     wire [5:0]  bl_bridge_addr = 6'd0;
     wire [7:0]  bl_bridge_data = 8'd0;
+    wire        xt_unlock_we   = 1'b0;
     `endif
 
     // Reconstruct full 16-bit bus_addr from bridge's 6-bit register addr.
@@ -1559,9 +1589,34 @@ module fpga_xt_top (
 
     // Mux: bridge takes priority when bl_bridge_we is asserted.
     // Both sources run on clk_sys and produce single-cycle strobes.
-    wire        bl_we_mux   = bl_bridge_we | antic_we_q;
+    // The NATIVE term is gated by xt_unlock[BLITTER]: locked → the 6502's
+    // $D4Bx/$D4Cx writes (and the $D4CA turbo poke, which rides bl_we_mux) never
+    // reach the blitter and fall through to the stock ANTIC mirror.  The bridge
+    // (A9) term is never gated.
+    wire        bl_we_mux   = bl_bridge_we | (antic_we_q & xt_unlock_loc[UNLK_BLIT]);
     wire [15:0] bl_addr_mux = bl_bridge_we ? bridge_bus_addr : bus_addr_antic_q;
     wire [7:0]  bl_data_mux = bl_bridge_we ? bl_bridge_data  : bus_data_in_antic_q;
+
+    // ---- XT register-unlock register (two write ports) -------------------
+    // Port A (authority): the A9 via the GP0 bridge (xt_unlock_we strobe + the
+    // byte on bl_bridge_data, latched the same cycle by the bridge).
+    // Port B: the 6502 via a native write to $D1DF (PBI window — nothing stock
+    // writes it; the location is the protection, see register-unlock.md).  The
+    // A9 wins a same-cycle tie.  PL reset → 0 (fully locked); a 6502-only reset
+    // does NOT clear it, so the A9 owns the personality across a guest reset.
+    wire unlock_d1df_we = antic_we_q && (bus_addr_antic_q == 16'hD1DF);
+    always_ff @(posedge clk_sys) begin
+        if (rst_sys) begin
+            xt_unlock     <= XT_UNLOCK_RESET;     // XT-native: all groups live at power-on
+            xt_unlock_loc <= XT_UNLOCK_RESET;
+        end else begin
+            if      (xt_unlock_we)   xt_unlock <= bl_bridge_data;        // A9 (priority)
+            else if (unlock_d1df_we) xt_unlock <= bus_data_in_antic_q;   // 6502 self-unlock
+            // Local registered copy — feeds the sprite/blitter gates near the
+            // (timing-critical) blitter pblock, off the master register's fanout.
+            xt_unlock_loc <= xt_unlock;
+        end
+    end
 
     // ====================================================================
     // xt_blitter v0 — rect fill with solid RGBA-8888
@@ -2119,7 +2174,9 @@ module fpga_xt_top (
         .diag6_word      (diag6_word),
         .diag7_word      (diag7_word),
         .clock_mult      (clock_mult_q),     // $D4CA read-back at GP0 offset 0x1E
-        .gp0_ctrl        (gp0_ctrl)
+        .gp0_ctrl        (gp0_ctrl),
+        .xt_unlock_we    (xt_unlock_we),     // A9 unlock write strobe (offset 0x20)
+        .xt_unlock_state (xt_unlock)         // effective unlock, read-back at 0x20
     );
 
     // ROM-init AXI-Lite slave — see hdl/sally_rom_loader.sv.

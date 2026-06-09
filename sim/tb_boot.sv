@@ -210,6 +210,7 @@ module tb_boot;
         .hwreg_dout (hwreg_dout),
         .cpu_code_bank_q    (cpu_code_bank),
         .cpu_data_bank_q    (cpu_data_bank),
+        .unlock_bank        (1'b1),
         .portb              (portb_q),
         .bus_mpd_n_in       (1'b1),
         .bus_pbi_rdata      (8'hFF),
@@ -280,6 +281,29 @@ module tb_boot;
     );
 
     // ====================================================================
+    // BISECTION PROBE: does the 6502 boot ever WRITE $D1xx (which would fire the
+    // real fpga_xt_top $D1DF unlock decode and corrupt xt_unlock)?
+    // ALSO: does it touch the BLITTER range $D4Bx/$D4Cx/$D4Ex?  If the OS writes
+    // there, locking BLITTER (range -> ANTIC mirror) would hit a real ANTIC reg
+    // and corrupt it — the FB-breaks-PRINT bug.  Log writes AND reads.
+    logic [15:0] last_d4b_rd = 16'hFFFF;
+    always_ff @(posedge clk_sally) begin
+        if (hwreg_we && hwreg_addr[15:8] == 8'hD1)
+            $display("[D1xx-WRITE] addr=%04h data=%02h @%0t%s", hwreg_addr,
+                     hwreg_din, $time, (hwreg_addr==16'hD1DF) ? "  <-- $D1DF!!" : "");
+        if (hwreg_we && hwreg_addr[15:8]==8'hD4 &&
+            (hwreg_addr[7:4]==4'hB || hwreg_addr[7:4]==4'hC || hwreg_addr[7:4]==4'hE))
+            $display("[D4-BLIT-WR] addr=%04h data=%02h @%0t  <-- 6502 writes blitter range!",
+                     hwreg_addr, hwreg_din, $time);
+        if ((cpu_addr[15:11]==5'b11010) && cpu_rw && cpu_addr[15:8]==8'hD4 &&
+            (cpu_addr[7:4]==4'hB || cpu_addr[7:4]==4'hC || cpu_addr[7:4]==4'hE) &&
+            cpu_addr != last_d4b_rd) begin
+            last_d4b_rd <= cpu_addr;
+            $display("[D4-BLIT-RD] addr=%04h @%0t  <-- 6502 reads blitter range!",
+                     cpu_addr, $time);
+        end
+    end
+
     // CDC: hwreg writes SALLY (clk_sally) → ANTIC (clk_sys)
     // (fpga_xt_top lines ~645-699)
     // ====================================================================
@@ -469,7 +493,8 @@ module tb_boot;
         .bus_mpd_n_in       (1'b1),
         .bus_extirq_n_in    (1'b1),
         .bus_rd4_in         (1'b1),
-        .bus_rd5_in         (1'b1)
+        .bus_rd5_in         (1'b1),
+        .unlock_antic       (1'b1), .unlock_sprite(1'b1), .unlock_blit(1'b1)
     );
 
     assign nmi_n_antic  = antic_nmi_n;

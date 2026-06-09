@@ -112,6 +112,14 @@ module antic_top #(
     // PS config bit (gp0_ctrl[4]); 0 = ignore DMACTL (legacy: always render).
     input  wire        dmactl_honor,
 
+    // XT register-unlock — the per-group mirror-conditional $D4xx decode lives
+    // in antic_regs (register-unlock.md).  antic_top routes all three $D4xx-
+    // owning group bits in (registered below) so each slice falls back to the
+    // stock ANTIC mirror under ITS OWN lock; unlock_antic also gates draw_regs.
+    input  wire        unlock_antic,
+    input  wire        unlock_sprite,
+    input  wire        unlock_blit,
+
     // POKEY-driven IRQ (active-low). Asserted while any IRQEN-enabled
     // POKEY source has its latch set. Goes to the SALLY core (M24)
     // once that lands; meanwhile the synth wrapper drives it onto
@@ -428,6 +436,19 @@ module antic_top #(
     wire        vbi_start_pulse_bus  = ar_vbi_start;
     wire        line_start_pulse_bus = ar_line_start;
 
+    // fmax: register unlock_antic at the boundary so the quasi-static unlock bit
+    // arrives inside antic_top as a clean local FF — it must NOT sit on a long
+    // cross-die combinational route into the timing-critical compositor/GTIA
+    // region (that route burned ~70 ps of clk_sys and glitched the SALLY when
+    // toggled).  A 1-cycle delay on a register that changes only on an unlock
+    // poke is irrelevant.  (* keep *) stops it being merged back into fanout.
+    (* keep = "true" *) logic unlock_antic_q, unlock_sprite_q, unlock_blit_q;
+    always_ff @(posedge clk_bus) begin
+        unlock_antic_q  <= unlock_antic;
+        unlock_sprite_q <= unlock_sprite;
+        unlock_blit_q   <= unlock_blit;
+    end
+
     antic_regs u_antic_regs (
         .clk                  (clk_bus),
         .rst                  (rst_bus),
@@ -469,7 +490,10 @@ module antic_top #(
         .bus_rd4_in       (bus_rd4_q),
         .bus_rd5_in       (bus_rd5_q),
         .bus_mpd_n_in     (bus_mpd_n_q),
-        .bus_extirq_n_in  (bus_extirq_n_q)
+        .bus_extirq_n_in  (bus_extirq_n_q),
+        .unlock_antic     (unlock_antic_q),
+        .unlock_sprite    (unlock_sprite_q),
+        .unlock_blit      (unlock_blit_q)
     );
 
     // ---- GTIA register file ---------------------------------------------
@@ -1060,7 +1084,9 @@ module antic_top #(
     draw_regs u_draw_regs (
         .clk            (clk_bus),
         .rst            (rst_bus),
-        .we             (snoop_we_antic),
+        // ANTIC_CHIPLET-gated: locked → the DRAW engine ($D488-$D49B) is dead and
+        // those addresses fall through to the stock ANTIC mirror in antic_regs.
+        .we             (snoop_we_antic & unlock_antic_q),
         .waddr          (snoop_addr[7:0]),
         .wdata          (snoop_data),
         .raddr                (read_addr_w[7:0]),

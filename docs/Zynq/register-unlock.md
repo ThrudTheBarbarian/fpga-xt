@@ -183,16 +183,43 @@ view doesn't disarm the A9.
    writes) the gate is redundant, so `$D1DF` is always honored. The A9 still
    owns policy via the bridge; it just doesn't *forbid* 6502 self-unlock.
 
-## Open points to settle before RTL
+## Settled in implementation
 
-1. **A9 control offset.** Pick the bridge intercept offset for write port A
-   (distinct from `gp0_ctrl`'s `0x1C`); make `xt_unlock` read-backable over the
-   bridge so the A9 can verify state.
-2. **Simultaneous A9 + 6502 write.** Both land at `clk_sys` after CDC. Give the
-   A9 write priority on a same-cycle tie (it's the authority).
-3. **`$D1DF` decode in a PBI-equipped machine.** The XT decodes `$D1DF`
-   unconditionally; if a real PBI device ever claims that exact byte it would be
-   shadowed. Documented-free today; revisit only if a PBI device lands there.
+1. **A9 control offset — `0x20`.** The bridge intercepts GP0 byte-offset `0x20`
+   (maps to `$D4D0` on the native bus — blitter ignores it, sprites are
+   native-only, so it's free) as the unlock write port, and returns the
+   effective `xt_unlock` on a read of the same offset so the A9 can verify
+   state (incl. any 6502 self-unlock). Distinct from `gp0_ctrl`'s `0x1C`.
+2. **Simultaneous A9 + 6502 write — A9 wins.** Both land at `clk_sys`; the
+   unlock register's update is `if (a9_we) … else if (d1df_we) …`, so the A9
+   (authority) takes a same-cycle tie.
+3. **`$D1DF` reaches the core via the existing hwreg CDC.** `sally_mem`'s
+   `is_hwreg_page` already forwards the whole `$D000-$D7FF` I/O page, so a native
+   `$D1DF` write appears on the post-CDC bus in `fpga_xt_top` — decoded there
+   directly, no `antic_top`/PBI-output change.
+
+## Remaining caveat
+
+- **`$D1DF` in a PBI-equipped machine.** The XT decodes `$D1DF`
+  unconditionally; if a real PBI device ever claims that exact byte it would be
+  shadowed. Documented-free today; revisit only if a PBI device lands there.
+
+## Implementation map (where each gate lives)
+
+- **Unlock register + `$D1DF` port:** `fpga_xt_top.sv` (`xt_unlock`, two write
+  ports; bits named `UNLK_*`).
+- **A9 write port + read-back:** `axi_blitter_bridge.sv` (offset `0x20` →
+  `xt_unlock_we` strobe; `xt_unlock_state` fed back for the read).
+- **ANTIC_CHIPLET:** `antic_regs.sv` (`is_chiplet`/`is_canon_r` gated by
+  `unlock_antic` — the mirror-conditional decode) + `antic_top.sv` gates the
+  `draw_regs` write-enable.
+- **SPRITE / BLITTER (+ `$D4CA` turbo):** `fpga_xt_top.sv` (`sprite_reg_we`,
+  `bl_we_mux` native term).
+- **BANK:** `sally_mem.sv` (`unlock_bank` gates the `$D5C0/$D5C1` write, the
+  read-shadow, and the hwreg-forward exclusion).
+- **A9 helper:** `xt_unlock_set()` / `xt_unlock_get()` in `vitis/xtos/src/xt_blitter.{h,c}`.
+- **Sim:** `make unlock` (`sim/tb_unlock.sv`) verifies the mirror-conditional
+  chiplet decode both ways; the boot/sally/blitter-bridge sims regress green.
 
 ## Cost
 

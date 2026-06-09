@@ -69,7 +69,19 @@ module antic_regs (
     input  wire        bus_rd4_in,      // $D481[4] — cart-present, $8000-$9FFF
     input  wire        bus_rd5_in,      // $D481[5] — cart-present, $A000-$BFFF
     input  wire        bus_mpd_n_in,    // $D481[6] — PBI Math-Pack Disable
-    input  wire        bus_extirq_n_in  // $D481[7] — PBI IRQ
+    input  wire        bus_extirq_n_in, // $D481[7] — PBI IRQ
+
+    // XT register-unlock — the mirror-conditional $D4xx decode (register-unlock.md).
+    // $D480-$D4FF is carved into per-group slices; each slice is an XT register
+    // ONLY when ITS OWN group is unlocked, otherwise it falls through to the
+    // canonical $D400-$D40F 16-byte mirror — so a locked group's slice is
+    // bit-for-bit a stock XL to the 6502, INDEPENDENT of the other groups.
+    //   unlock_antic  → $D480-$D49F  (chiplet: MODE/pal/DRAW/OS-ROM)
+    //   unlock_sprite → $D4Ax/$D4Dx  (sprite engine)
+    //   unlock_blit   → $D4Bx/$D4Cx/$D4Ex  (2D blitter + descriptors)
+    input  wire        unlock_antic,
+    input  wire        unlock_sprite,
+    input  wire        unlock_blit
 );
 
     // ---- Canonical register storage -------------------------------------
@@ -110,13 +122,24 @@ module antic_regs (
     logic        os_rom_locked;
 
     // ---- Address decode helpers -----------------------------------------
-    // Below $80: legacy mirror, only low 4 bits of addr matter.
-    // $80 and above: chiplet extension, full address.
-    wire is_canonical = (waddr[7] == 1'b0);
-    wire is_chiplet   = (waddr[7] == 1'b1);
+    // An $D4xx address is an XT register ("claimed", is_chiplet) ONLY when the
+    // group that owns its 16-byte slice is unlocked; otherwise it is the plain
+    // ANTIC mirror (canonical, low 4 bits).  Per-slice so each group's lock is
+    // independent — locking BLITTER restores the stock mirror over $D4Bx/$D4Cx/
+    // $D4Ex even while ANTIC/SPRITE stay live, and vice-versa.  $D400-$D47F
+    // (waddr[7]=0) and $D4Fx are never claimed → always the mirror.
+    function automatic logic claimed(input logic [7:0] a,
+                                     input logic ua, input logic us, input logic ub);
+        claimed = ( ((a[7:4]==4'h8)||(a[7:4]==4'h9))                    && ua)   // $D480-$D49F
+                | ( ((a[7:4]==4'hA)||(a[7:4]==4'hD))                    && us)   // $D4Ax/$D4Dx
+                | ( ((a[7:4]==4'hB)||(a[7:4]==4'hC)||(a[7:4]==4'hE))    && ub);  // $D4Bx/Cx/Ex
+    endfunction
+
+    wire is_chiplet   = claimed(waddr, unlock_antic, unlock_sprite, unlock_blit);
+    wire is_canonical = ~is_chiplet;
     wire [3:0] canon_w = waddr[3:0];
 
-    wire is_canon_r = (raddr[7] == 1'b0);
+    wire is_canon_r   = ~claimed(raddr, unlock_antic, unlock_sprite, unlock_blit);
     wire [3:0] canon_r = raddr[3:0];
 
     // ---- Write side -----------------------------------------------------

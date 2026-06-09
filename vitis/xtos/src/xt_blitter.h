@@ -90,6 +90,22 @@
 #define XT_BL_DST_STRIDE_LO      0x3A     /* DST_STRIDE bytes/row, low  */
 #define XT_BL_DST_STRIDE_HI      0x3B
 
+/* --- XT register-unlock control (GP0 offset 0x20) -------------------- */
+/* The A9 sets the machine's stock-vs-XT personality: each bit ungates the
+ * NATIVE (6502/ANTIC-side) decode of one feature group.  The A9/bridge path
+ * itself is never gated, so the desktop drives the blitter / injects keys /
+ * pulses reset regardless of lock state.  Reset (PL) → 0x00 (fully locked /
+ * stock).  See docs/Zynq/register-unlock.md.  Read back the EFFECTIVE value
+ * (incl. any 6502 self-unlock via $D1DF) at the same offset. */
+#define XT_BL_UNLOCK             0x20
+
+#define XT_UNLOCK_ANTIC          (1u << 0)  /* $D480-$D49F ANTIC chiplet */
+#define XT_UNLOCK_SPRITE         (1u << 1)  /* sprite engine $D4Ax/$D4Dx */
+#define XT_UNLOCK_BLITTER        (1u << 2)  /* blitter native $D4Bx/$D4Cx + $D4CA turbo */
+#define XT_UNLOCK_BANK           (1u << 3)  /* $D5C0/$D5C1 code/data bank select */
+#define XT_UNLOCK_GEM            (1u << 4)  /* $D5D0-$D5D4 GEM doorbell (reserved) */
+#define XT_UNLOCK_KBD            (1u << 5)  /* reserved (kbd inject is bridge-only) */
+
 /* --- FLAGS register bits (XT_BL_FLAGS) ------------------------------- */
 #define XT_BL_FLAG_BLEND         (1u << 0)  /* rect/line: alpha-blend with dest */
 #define XT_BL_FLAG_BILINEAR      (1u << 1)  /* scaled blit: bilinear            */
@@ -188,6 +204,15 @@ void xt_blitter_set_dst_surface(uint32_t base, uint16_t stride);
  * then xt_blitter_wait_idle() (or a SYNC) once at the end. */
 void xt_blitter_src_blit(int16_t sx, int16_t sy, uint16_t w, uint16_t h,
                          int16_t dx, int16_t dy);
+
+/* Set the XT register-unlock mask (offset 0x20).  Pass an OR of XT_UNLOCK_*
+ * bits; 0 = bone-stock (the post-reset state).  The A9 is the authority — it
+ * sets this before launching a guest (e.g. 0 for a stock cart, the needed
+ * groups for an XT app). */
+void xt_unlock_set(uint8_t mask);
+
+/* Read back the EFFECTIVE unlock mask (includes any 6502 self-unlock at $D1DF). */
+uint8_t xt_unlock_get(void);
 
 /* Low-level byte poke for any other register access pattern not
  * covered above. */

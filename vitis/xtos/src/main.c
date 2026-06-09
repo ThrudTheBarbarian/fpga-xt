@@ -587,9 +587,10 @@ static void repl_help(void)
       "  lua <chunk>      evaluate a Lua chunk (e.g. lua vdi.text(200,200,'Hi',48))\r\n"
       "  boot             run 0:/OS/Boot/NN-slug scripts in numeric order\r\n"
       "  mon <0|1>        periodic 1s status tick off/on\r\n"
+      "  unlock [mask]    XT register-unlock: no arg reads, <hex> sets (0=stock; b0 antic,b1 sprite,b2 blit,b3 bank)\r\n"
       "  reset            soft-reset the PS (SLCR) -> full reboot (FSBL/DDR/PL)\r\n"
       "  help             this list\r\n"
-      "e.g.  mr 43c0001c  |  iw 1a 01  |  id 00 20  |  bars 0\r\n");
+      "e.g.  mr 43c0001c  |  iw 1a 01  |  id 00 20  |  bars 0  |  unlock 0f\r\n");
 }
 
 /* One decoded status line: GP0 diag word (clock-lock / clk_pix-alive / vbeam
@@ -1072,6 +1073,15 @@ static void repl_exec(char *cmd)
         return;
     }
     if (!strcmp(argv[0], "diag")) { repl_status(); return; }
+    if (!strcmp(argv[0], "unlock")) {
+        /* XT register-unlock mask (docs/Zynq/register-unlock.md).  No arg =
+         * read back the effective value; <hex> = set it.  bit0 ANTIC_CHIPLET,
+         * 1 SPRITE, 2 BLITTER(+turbo), 3 BANK, 4 GEM, 5 KBD.  0 = bone-stock. */
+        if (argc >= 2)
+            xt_unlock_set((uint8_t)strtoul(argv[1], NULL, 16));
+        xil_printf("  xt_unlock = %02x\r\n", xt_unlock_get());
+        return;
+    }
     if (!strcmp(argv[0], "mon")) {
         if (argc < 2) { uart1_puts("usage: mon <0|1>\r\n"); return; }
         g_mon = (strtoul(argv[1], NULL, 16) != 0);

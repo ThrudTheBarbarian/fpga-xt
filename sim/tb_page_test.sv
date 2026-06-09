@@ -43,6 +43,7 @@ module tb_page_test;
         .hwreg_we   (hwreg_we),
         .hwreg_din  (hwreg_din),
         .hwreg_dout (hwreg_dout),
+        .unlock_bank (1'b1),
         .portb      (8'hFF),
         .bus_mpd_n_in      (1'b1),
         .bus_pbi_rdata     (8'hFF),

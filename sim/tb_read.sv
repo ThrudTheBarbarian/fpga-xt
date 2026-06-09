@@ -37,6 +37,9 @@ module tb_read;
     antic_top u_dut (
         .clk_bus                  (clk_bus),
         .rst_n                    (rst_n),
+        .unlock_antic             (1'b1),
+        .unlock_sprite(1'b1),
+        .unlock_blit(1'b1),
         .bus_addr                 (bus_addr),
         .bus_data_in              (bus_data_in),
         .bus_rw                   (bus_rw),

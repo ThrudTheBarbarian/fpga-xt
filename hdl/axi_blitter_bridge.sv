@@ -97,7 +97,17 @@ module axi_blitter_bridge (
     // write at 0x1C lands here — read/write share the offset).  bit0 = HDMI
     // test-pattern (colour-bar) enable.  Resets to 0x01 so the board still
     // boots showing bars; the PS can clear it to show the live compositor.
-    output reg  [7:0]  gp0_ctrl
+    output reg  [7:0]  gp0_ctrl,
+
+    // ---- XT register-unlock control (clk_sys domain) — WRITTEN at offset 0x20 -
+    // The A9 sets the machine's stock-vs-XT personality (see docs/Zynq/
+    // register-unlock.md).  A 1-cycle strobe + the byte on bl_data (latched the
+    // same cycle as any other write); fpga_xt_top holds the effective unlock
+    // register (this strobe is one of its two write ports — the other is the
+    // 6502 at $D1DF).  xt_unlock_state is the effective value fed back so the A9
+    // can read it (incl. any 6502 self-unlock) at offset 0x20.
+    output reg         xt_unlock_we,       // 1-cycle write strobe (byte on bl_data)
+    input  wire [7:0]  xt_unlock_state     // effective unlock, for read-back
 );
 
     // ====================================================================
@@ -128,8 +138,11 @@ module axi_blitter_bridge (
     reg [5:0]  aw_off;                // latched AXI byte offset awaddr[5:0]
     reg [7:0]  w_byte;                // latched first active write byte
     // 64-byte register window (0x00..0x3F): 4 pages of 16 byte-offsets.
-    //   0x00-0x0F -> $D4Bx,  0x10-0x1F -> $D4Cx,  0x20-0x2F -> $D4Dx (SRC/DST
-    //   descriptors),  0x30-0x3F -> $D4Ex (reserved).
+    //   0x00-0x0F -> $D4Bx,  0x10-0x1F -> $D4Cx,  0x20-0x2F -> $D4Dx,
+    //   0x30-0x3F -> $D4Ex (SRC/DST descriptors).  $D4Dx (0x20-0x2F) is the
+    //   sprite page on the native bus; the blitter ignores it and sprites are
+    //   native-only, so a bridge write there is a no-op — which is why 0x20 is
+    //   safe to steal as the XT-unlock control intercept (read + write).
     wire       aw_mine = s_axi_awvalid && (s_axi_awaddr[15:6] == 10'h000);
 
     always_ff @(posedge clk or posedge rst) begin
@@ -151,10 +164,12 @@ module axi_blitter_bridge (
                                        // never the default — incl. after a PS
                                        // `reset` / cold boot.  bits[3:1]=0 =
                                        // default XL scale.
+            xt_unlock_we  <= 1'b0;
         end else begin
             s_axi_awready <= 1'b0;
             s_axi_wready  <= 1'b0;
             bl_we         <= 1'b0;
+            xt_unlock_we  <= 1'b0;
 
             unique case (wstate)
                 WST_IDLE: begin
@@ -188,8 +203,9 @@ module axi_blitter_bridge (
                     // Both halves captured (in prior cycles) -> commit + respond.
                     if (aw_have && w_have) begin
                         bl_data      <= w_byte;
-                        if (aw_off == 6'h1C) gp0_ctrl <= w_byte;   // control reg
-                        else                 bl_we    <= 1'b1;     // blitter strobe
+                        if      (aw_off == 6'h1C) gp0_ctrl     <= w_byte; // control reg
+                        else if (aw_off == 6'h20) xt_unlock_we <= 1'b1;   // unlock ctrl
+                        else                      bl_we        <= 1'b1;   // blitter strobe
                         s_axi_bresp  <= 2'b00;
                         s_axi_bvalid <= 1'b1;
                         aw_have      <= 1'b0;
@@ -269,6 +285,8 @@ module axi_blitter_bridge (
                             s_axi_rdata <= diag_word;        // PL debug word (word read)
                         else if (s_axi_araddr[7:0] == 8'h1E)
                             s_axi_rdata <= {4{clock_mult}};  // SALLY speed read-back ($D4CA)
+                        else if (s_axi_araddr[7:0] == 8'h20)
+                            s_axi_rdata <= {4{xt_unlock_state}}; // effective XT unlock
                         else
                             s_axi_rdata <= 32'd0;
                         s_axi_rresp  <= 2'b00;

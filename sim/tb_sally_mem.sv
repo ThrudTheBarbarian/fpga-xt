@@ -85,6 +85,7 @@ module tb_sally_mem;
         .hwreg_dout (hwreg_dout),
         .cpu_code_bank_q    (cpu_code_bank_q),
         .cpu_data_bank_q    (cpu_data_bank_q),
+        .unlock_bank        (1'b1),
         .portb              (portb),
         .bus_mpd_n_in       (1'b1),    // M-PBI: /MPD inactive in unit-level sim
         .bus_pbi_rdata      (8'hFF),   // M-PBI: no PBI device in unit-level sim

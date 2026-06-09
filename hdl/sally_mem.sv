@@ -131,6 +131,11 @@ module sally_mem #(
     output wire [7:0]  cpu_code_bank_q,    // $D5C0 (XTC_CTL_BASE+0)
     output wire [7:0]  cpu_data_bank_q,    // $D5C1 (XTC_CTL_BASE+1)
 
+    // XT register-unlock: when 0 (locked / stock) the $D5C0/$D5C1 bank-select
+    // writes are ignored, so a stock cart's own $D5xx CCTL bank-switching is
+    // undisturbed.  See docs/Zynq/register-unlock.md (BANK group).
+    input  wire        unlock_bank,
+
     // PORTB ($D301) from PIA — controls ROM vs banked/BRAM visibility.
     // Stock XL/XE: bit0 = OS ROM enable (active HIGH), bit1 = BASIC enable
     // (active LOW).  See the memory-map header.
@@ -284,11 +289,23 @@ module sally_mem #(
     // in the CCTL I/O gap, so a stray RAM write can never bank the windows.
     logic [7:0] cpu_code_bank, cpu_data_bank;
 
+    // fmax + CDC: unlock_bank is a quasi-static clk_sys signal used here in the
+    // clk_sally domain.  2-FF synchronise it (also gives a clean local register
+    // instead of a long cross-die combinational route into the timing-marginal
+    // SALLY pblock).  unlock_bank changes only on an unlock poke, so the sync
+    // latency is irrelevant.
+    (* ASYNC_REG = "TRUE" *) logic unlock_bank_s1;
+    (* ASYNC_REG = "TRUE", keep = "true" *) logic unlock_bank_q;
+    always_ff @(posedge clk) begin
+        unlock_bank_s1 <= unlock_bank;
+        unlock_bank_q  <= unlock_bank_s1;
+    end
+
     always_ff @(posedge clk or posedge rst) begin
         if (rst) begin
             cpu_code_bank <= 8'h00;
             cpu_data_bank <= 8'h00;
-        end else if (rdy && !rw && is_ctlreg) begin
+        end else if (rdy && !rw && is_ctlreg && unlock_bank_q) begin
             if (!addr[0]) cpu_code_bank <= data_in;   // $D5C0 code bank
             else          cpu_data_bank <= data_in;   // $D5C1 data bank
         end
@@ -572,7 +589,9 @@ module sally_mem #(
             selftest_dout_q      <= selftest_rom[addr[10:0]];
             // xtc control-reg read-back: addr[0]=0 -> code bank, =1 -> data bank.
             ctlreg_dout_q        <= addr[0] ? cpu_data_bank : cpu_code_bank;
-            was_ctlreg_q         <= is_ctlreg;
+            // Locked (BANK group off) → don't shadow $D5C0/$D5C1; the read falls
+            // through to the CCTL/cart path (open bus) like stock silicon.
+            was_ctlreg_q         <= is_ctlreg && unlock_bank_q;
             was_hwreg_q          <= is_hwreg_page;
             was_bank_q           <= is_in_window_w;
             was_stack_q          <= is_stack_access;
@@ -643,9 +662,11 @@ module sally_mem #(
     // re-pushed into the CDC FIFO every clk_sally cycle.  That both floods the
     // FIFO and, for WSYNC ($D40A), perpetually re-arms ANTIC's wait flag so it
     // never releases the CPU → deadlock.  One write = one push.
-    // Exclude the xtc control regs ($D5C0/$D5C1): the snoop above already
-    // latched them, and they aren't ANTIC registers — don't burn a CDC slot.
-    assign hwreg_we   = rdy && !rw && is_hwreg_page && !is_ctlreg;
+    // Exclude the xtc control regs ($D5C0/$D5C1) when the BANK group is unlocked:
+    // the snoop above latches them locally, so don't burn a CDC slot.  When
+    // LOCKED, fall through to the normal hwreg forward so the write reaches the
+    // CCTL/cart path exactly like a stock $D5xx bank-switch write.
+    assign hwreg_we   = rdy && !rw && is_hwreg_page && !(is_ctlreg && unlock_bank_q);
     assign hwreg_din  = data_in;
     assign hwreg_addr = addr;
 

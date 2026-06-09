@@ -50,7 +50,8 @@ module tb_palette;
         .output_mode_q(output_mode_q),
         .vcount_in(8'h00),
         .nmist_in(8'h00),
-        .serial_clock_mult_in(8'h00)
+        .serial_clock_mult_in(8'h00),
+        .unlock_antic(1'b1), .unlock_sprite(1'b1), .unlock_blit(1'b1)
     );
 
     // ---- palette_lut -------------------------------------------------

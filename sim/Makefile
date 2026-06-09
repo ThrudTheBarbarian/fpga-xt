@@ -237,6 +237,19 @@ PALETTE_HDL := \
 $(BUILD_DIR)/tb_palette.vvp: $(PALETTE_HDL) tb_palette.sv $(HDL_DIR)/bus_opcodes.vh | $(BUILD_DIR)
 	$(IVERILOG) $(SV_FLAGS) -o $@ -s tb_palette $(PALETTE_HDL) tb_palette.sv
 
+# ---- XT register-unlock — mirror-conditional chiplet decode --------------
+unlock: $(BUILD_DIR)/tb_unlock.vvp
+	@echo "=== XT register-unlock ==="
+	@$(VVP) -N $< | tee $(BUILD_DIR)/tb_unlock.log
+	@grep -q '\*\*\* UNLOCK OK \*\*\*' $(BUILD_DIR)/tb_unlock.log || \
+	    (echo "FAIL: tb_unlock missing UNLOCK OK"; exit 1)
+	@grep -q 'TRAP\|FATAL\|FAIL' $(BUILD_DIR)/tb_unlock.log && \
+	    (echo "FAIL: tb_unlock reported a trap"; exit 1) || true
+	@echo "PASS: tb_unlock"
+
+$(BUILD_DIR)/tb_unlock.vvp: $(HDL_DIR)/antic_regs.sv tb_unlock.sv | $(BUILD_DIR)
+	$(IVERILOG) $(SV_FLAGS) -o $@ -s tb_unlock $(HDL_DIR)/antic_regs.sv tb_unlock.sv
+
 # ---- M16 — DMA bus master ------------------------------------------------
 dma_master: $(BUILD_DIR)/tb_dma_master.vvp
 	@echo "=== M16 dma_master ==="

@@ -15,6 +15,21 @@ ecosystem usage** at the end of this file. New XT allocations are placed in
 ranges that table shows free; e.g. the `$D5xx` block below sits in the
 `$D5C0-$D5DF` gap between R-Time 8 (`$D5B8-$D5BF`) and SIDE/SDX (`$D5E0-$D5FF`).
 
+## XT register-unlock (the native decode is opt-in)
+
+Every XT register group below is gated by an 8-bit **unlock register**: the
+NATIVE (6502/ANTIC-side) decode only fires when the group's bit is set, so a
+machine boots and behaves bone-stock until something deliberately unlocks it.
+**PL reset → `0x00` (fully locked / stock);** a 6502-only reset does NOT clear
+it. The A9/GP0-bridge path is **never** gated. Two write ports: the A9 (GP0
+bridge offset `0x20`, the authority) and the 6502 (`$D1DF`, self-unlock). Bits:
+`0` ANTIC_CHIPLET, `1` SPRITE, `2` BLITTER (+`$D4CA` turbo), `3` BANK, `4` GEM
+(reserved), `5` KBD (reserved — kbd-inject is bridge-only). When a group is
+locked the address falls through to the stock decode (ANTIC mirror in `$D4xx`,
+open bus / cart in `$D5xx`). Full spec + worked launcher examples:
+[register-unlock.md](register-unlock.md). The per-group notes below mark where
+the gate applies.
+
 ## $D0xx — GTIA / CTIA
 
 `fpga-antic` owns the entire page. Real-silicon mirror behaviour is
@@ -244,6 +259,8 @@ The bridge intercepts a few offsets itself rather than forwarding them:
 |--------|-----------|---------|
 | `0x1C` | **write** | `gp0_ctrl` (NOT a blitter reg): bit0 = HDMI test-pattern/bars enable, bits[3:1] = XL scale. |
 | `0x1C` | read | `diag_word` (PL debug; read/write share the offset). |
+| `0x20` | **write** | `xt_unlock` (NOT a blitter reg): the XT register-unlock mask (A9 = authority). Maps to `$D4D0` on the native bus, which the blitter ignores and sprites don't see over the bridge, so the offset is free. See the unlock section above. |
+| `0x20` | read | `xt_unlock` effective value (incl. any 6502 self-unlock at `$D1DF`). |
 | `0x0D` | read | STATUS (replicated across all 4 byte lanes). |
 | `0x19` / `0x1A` | read | SEQ_LO / SEQ_HI. |
 | `0x1E` | read | `clock_mult` read-back (verify a `speed` write latched). |
@@ -343,6 +360,7 @@ shows is free.
 | `$D1C8-$D1CE` | Atari reserved |
 | `$D1CF` | read alternate interrupt register (1450 XLD only) |
 | `$D1D1-$D1DD` | 1090 XL Amy boards 1-4 |
+| `$D1DF` | **XT register-unlock — claimed here** (6502 self-unlock write port; R/W). In the documented-free gap between the Amy block (`$D1D1-$D1DD`) and the MIO ACIA (`$D1E0+`); nothing stock writes PBI space, so the location is the protection. See the unlock section near the top. |
 | `$D1E0-$D1E3` | MIO / 1090 XL serial-parallel ACIA0 |
 | `$D1E4-$D1E7` | 1090 XL serial-parallel ACIA1 |
 | `$D1E8-$D1EF` | 1090 XL serial-parallel registers |

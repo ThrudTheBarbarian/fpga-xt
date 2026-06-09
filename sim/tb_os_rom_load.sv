@@ -78,7 +78,8 @@ module tb_os_rom_load;
         .os_rom_locked_q      (),
         .vcount_in            (8'h00),
         .nmist_in             (8'h00),
-        .serial_clock_mult_in (8'd12)
+        .serial_clock_mult_in (8'd12),
+        .unlock_antic         (1'b1), .unlock_sprite(1'b1), .unlock_blit(1'b1)
     );
 
     // ---- AXI bus to memory-backed slave (replaces v1 hyperram mock) ----
@@ -115,6 +116,7 @@ module tb_os_rom_load;
         .hwreg_dout (antic_rdata_w),
         .cpu_code_bank_q    (),
         .cpu_data_bank_q    (),
+        .unlock_bank        (1'b1),
         .portb              (8'hFF),
         .bus_mpd_n_in       (1'b1),
         .bus_pbi_rdata      (8'hFF),

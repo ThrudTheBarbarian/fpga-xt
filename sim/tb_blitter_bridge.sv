@@ -141,7 +141,9 @@ module tb_blitter_bridge;
         .diag6_word     (32'd0),
         .diag7_word     (32'd0),
         .clock_mult     (8'd1),
-        .gp0_ctrl       ()
+        .gp0_ctrl       (),
+        .xt_unlock_we   (),
+        .xt_unlock_state(8'h00)
     );
 
     xt_blitter #(
