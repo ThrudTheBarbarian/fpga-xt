@@ -2070,6 +2070,9 @@ module xt_blitter #(
                     beat_lo_filled    <= 1'b0;
                     burst_nonzero_mask <= 1'b0;
 
+                    // Seed the line pixel-address accumulator from the dst row
+                    // base (descriptor ROW0 or plane shift, = the start pixel).
+                    line_pix_addr <= dst_row_base;
                     state <= L_ACCUM;
                 end
 
@@ -2082,9 +2085,9 @@ module xt_blitter #(
                 // Also pre-compute the 8-byte-aligned AXI write address.
                 // ============================================================
                 L_ACCUM: begin
-                    line_pix_addr <= FB_BASE
-                                   + (32'(line_y) << 13)
-                                   + (32'(line_x) << 2);
+                    // line_pix_addr is an accumulator now (seeded in L_INIT,
+                    // stepped in L_STEP2); this is just the pattern-BRAM
+                    // read-latency slot before L_PLOT.
                     state <= L_PLOT;
                 end
 
@@ -2206,6 +2209,12 @@ module xt_blitter #(
                         if (line_sy) line_y <= line_y + 16'd1;
                         else         line_y <= line_y - 16'd1;
                     end
+
+                    // Step the pixel-address accumulator: +/-4 per x-step,
+                    // +/-stride per y-step (both may fire on a diagonal).
+                    line_pix_addr <= line_pix_addr
+                        + (line_step_q[0] ? (line_sx ? 32'd4 : -32'd4) : 32'd0)
+                        + (line_step_q[1] ? (line_sy ? 32'(dst_stride_eff) : -32'(dst_stride_eff)) : 32'd0);
 
                     cx <= (line_x + (line_step_q[0] ? (line_sx ? 16'd1 : -16'd1) : 16'd0))
                         - dst_x_q;

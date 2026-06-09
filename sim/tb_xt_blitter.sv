@@ -467,6 +467,7 @@ module tb_xt_blitter;
         write_reg(16'hD4C8,8'h20);   // FLAGS: DST_DDR (bit 5)
         write_reg(16'hD4BC,8'h01);   // CMD = RECT_FILL
         wait_idle();
+        write_reg(16'hD4C8, 8'h00);  // clear FLAGS so following plane tests aren't DST_DDR
         expect_write_count(4);
         expect_write(0, 32'h3008_0000, 64'hFF0000FF_FF0000FF, 8'hFF);
         expect_write(1, 32'h3008_0008, 64'hFF0000FF_FF0000FF, 8'hFF);
@@ -504,6 +505,7 @@ module tb_xt_blitter;
         write_reg(16'hD4C8,8'h24);   // FLAGS: SRC_DDR(2) | DST_DDR(5)
         write_reg(16'hD4BC,8'h03);   // CMD = BLOCK_BLIT
         wait_idle();
+        write_reg(16'hD4C8, 8'h00);  // clear FLAGS so following plane tests aren't SRC/DST_DDR
         for (int yy = 0; yy < 2; yy++)
           for (int xx = 0; xx < 4; xx++) begin
             da  = 32'h3008_0000 + yy*64 + xx*4;
