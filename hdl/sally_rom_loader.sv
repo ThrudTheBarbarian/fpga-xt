@@ -7,15 +7,18 @@
 // ROM image.  Write-only — no read-back path.
 //
 // Address layout (within the GP0 AXI-Lite window at $43C0_0000):
-//   * Offsets $0000-$001F        -> belong to the blitter bridge.
-//   * Offsets $0020-$FFFF (≈64 KB) -> ROM-init writes.  awaddr[15:0]
+//   * Offsets $0000-$003F        -> belong to the GP0/blitter bridge (its
+//     64-byte register window: blitter regs, gp0_ctrl @0x1C, xt_unlock @0x20,
+//     and the SRC/DST descriptors @0x30-0x3F).  MUST match the bridge's
+//     aw_mine = (awaddr[15:6]==0) predicate exactly — any overlap here means a
+//     bridge register write ALSO lands in SALLY memory as a stray rom_we
+//     (e.g. xt_unlock @0x20 would clobber SALLY $0020 = zero-page ICHIDZ).
+//   * Offsets $0040-$FFFF (≈64 KB) -> ROM-init writes.  awaddr[15:0]
 //     maps 1:1 to SALLY address (rom_addr = s_axi_awaddr[15:0]).
 //
-// SALLY ROM at $0000-$001F cannot be loaded this way; that's the
-// zero-page scratch area and is RAM in any real Atari image anyway.
-// If we ever need to write there, do it through a normal SALLY store
-// at runtime, or extend this loader with a configurable blitter
-// window.
+// SALLY $0000-$003F cannot be loaded this way; it's zero-page scratch (RAM in
+// any real Atari image, initialised by the OS coldstart) and overlaps the
+// bridge window.  Write there at runtime via a normal SALLY store if needed.
 //
 // Clock crossing: AXI-Lite slave runs on clk_sys (matches the rest
 // of the GP0 fabric).  rom_we / rom_addr / rom_data drive sally_mem
@@ -61,10 +64,14 @@ module sally_rom_loader (
     output reg         rom_we
 );
 
-    // Window predicate — anything OUTSIDE the blitter's 32-byte
-    // sub-range belongs to us.
-    wire write_in_window = (s_axi_awaddr[15:5] != 11'h000);
-    wire read_in_window  = (s_axi_araddr[15:5] != 11'h000);
+    // Window predicate — anything OUTSIDE the GP0/blitter bridge's 64-byte
+    // register window ($0000-$003F) belongs to us.  This MUST mirror the
+    // bridge's aw_mine = (awaddr[15:6]==0): if the loader claimed any byte the
+    // bridge also claims, that bridge write would land in SALLY memory too as a
+    // stray rom_we and corrupt the 6502 (the xt_unlock @0x20 -> SALLY $0020
+    // ICHIDZ -> ERROR-133 bug).
+    wire write_in_window = (s_axi_awaddr[15:6] != 10'h000);
+    wire read_in_window  = (s_axi_araddr[15:6] != 10'h000);
 
     // ---- FIFO (clk_sys → clk_sally) -------------------------------------
     wire        fifo_full;
