@@ -913,13 +913,16 @@ module xt_blitter #(
     // start because cx/cy advance during accumulation.
     logic [15:0] seg_cx;
     logic [15:0] seg_cy;
-    wire [15:0]  seg_pix_x = dst_x_q + seg_cx;
-    wire [15:0]  seg_pix_y = dst_y_q + seg_cy;
+
+    // Dst row-base accumulator: seeded at S_IDLE (descriptor ROW0, or the plane
+    // via the power-of-2 shift so plane callers stay byte-identical), advanced
+    // +dst_stride_eff per row in S_ADV.  No fabric multiply -- the per-segment
+    // and blend dst addresses are just this row base + (column << 2).
+    logic [31:0] dst_row_base;
+    wire [15:0]  dst_stride_eff = dst_ddr_q ? dst_stride_q : 16'(FB_STRIDE_B);
 
     // Full 32-bit address of the first pixel in this segment.
-    wire [31:0]  seg_raw_addr = FB_BASE
-                              + (32'(seg_pix_y) << 13)
-                              + (32'(seg_pix_x) << 2);
+    wire [31:0]  seg_raw_addr = dst_row_base + (32'(seg_cx) << 2);
 
     // Source address for block-blit read bursts (uses src_x_q/src_y_q).
     wire [31:0]  bl_src_raw_addr = FB_BASE
@@ -1327,6 +1330,10 @@ module xt_blitter #(
                         src_stride_q <= src_stride_reg;
                         dst_base_q   <= dst_base_reg;
                         dst_stride_q <= dst_stride_reg;
+                        // Seed the dst row-base: descriptor ROW0 (origin folded by
+                        // the A9), or the plane via the existing power-of-2 shift.
+                        dst_row_base <= q_flags[5] ? dst_base_reg
+                                      : (FB_BASE + (32'(q_dst_y) << 13) + (32'(q_dst_x) << 2));
                         cx        <= 16'd0;
                         cy        <= 16'd0;
                         burst_len         <= 5'd0;
@@ -1387,9 +1394,10 @@ module xt_blitter #(
                             if (q_dst_w == 16'd0 || q_dst_h == 16'd0 || q_raster_op == 4'd0 || q_raster_op == 4'd5) begin
                                 state <= S_DONE;
                             end else if (q_log_pw == 5'd0 && q_log_ph == 5'd0 && !q_blend_mode && !q_font_mode && !q_bilin_mode
-                                         && (q_raster_op == 4'd3 || q_raster_op == 4'd15)) begin
+                                         && (q_raster_op == 4'd3 || q_raster_op == 4'd15) && !q_flags[5]) begin
                                 // DMA fill mode: 1×1 pattern (solid colour), no blend/font,
-                                // raster op = COPY.  Bypasses per-pixel FSM entirely.
+                                // raster op = COPY, PLANE only (q_flags[5]=DST_DDR off — the DMA
+                                // path hardwires FB_BASE).  Bypasses per-pixel FSM entirely.
                                 dma_mode_q      <= 1'b1;
                                 dma_next_q      <= FB_BASE + (32'(q_dst_y) << 13) + (32'(q_dst_x) << 2);
                                 dma_rem_rows_q  <= q_dst_h;
@@ -1565,9 +1573,7 @@ module xt_blitter #(
                             // Use pattern RGB with computed alpha as source.
                             bl_src_pixel_q <= {pat_pixel_q2[31:8], ft_al_q};
                             bl_px_low_q    <= px_in_low_half;
-                            m_axi_araddr  <= FB_BASE
-                                           + (32'(dst_y_q + cy) << 13)
-                                           + (32'(dst_x_q + cx) << 2);
+                            m_axi_araddr  <= dst_row_base + (32'(cx) << 2);
                             m_axi_arlen   <= 8'd0;
                             m_axi_arsize  <= 3'b010;
                             m_axi_arburst <= 2'b01;
@@ -1583,9 +1589,7 @@ module xt_blitter #(
                         bl_src_pixel_q <= pat_pixel_q2;
                         bl_px_low_q    <= px_in_low_half;
 
-                        m_axi_araddr  <= FB_BASE
-                                       + (32'(dst_y_q + cy) << 13)
-                                       + (32'(dst_x_q + cx) << 2);
+                        m_axi_araddr  <= dst_row_base + (32'(cx) << 2);
                         m_axi_arlen   <= 8'd0;
                         m_axi_arsize  <= 3'b010;   // 4 bytes
                         m_axi_arburst <= 2'b01;
@@ -1852,6 +1856,7 @@ module xt_blitter #(
                         end else begin
                             cy <= cy + 16'd1;
                             cx <= 16'd0;
+                            dst_row_base <= dst_row_base + dst_stride_eff;  // next row
                             state <= S_SEG;
                         end
                     end else begin

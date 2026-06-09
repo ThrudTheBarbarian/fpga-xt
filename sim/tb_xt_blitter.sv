@@ -446,6 +446,36 @@ module tb_xt_blitter;
     endtask
 
     // ----------------------------------------------------------------
+    // RECT_FILL to an ARBITRARY DDR surface (DST_DDR=1): the any-DDR fill
+    // path for GEM window backing stores.  4x2 solid fill, ROW0=0x30080000,
+    // stride 64 -> row 1 must land at ROW0+64.  Proves the dst_row_base seed
+    // (descriptor ROW0, not FB_BASE) + per-row accumulate (no fabric multiply).
+    // ----------------------------------------------------------------
+    task test_rect_fill_ddr();
+        $display("=== Test: RECT_FILL -> DDR surface (DST_DDR), 4x2, stride 64 ===");
+        clear_logs();
+        write_reg(16'hD4BA, 8'h00);
+        load_1x1_pattern(8'hFF, 8'h00, 8'h00, 8'hFF);
+        write_reg(16'hD4BE, 8'h00);
+        // DST surface descriptor: ROW0 = 0x30080000, stride 64
+        write_reg(16'hD4E6,8'h00); write_reg(16'hD4E7,8'h00); write_reg(16'hD4E8,8'h08); write_reg(16'hD4E9,8'h30);
+        write_reg(16'hD4EA,8'd64); write_reg(16'hD4EB,8'd0);
+        // DST_X=0 (8-byte half parity), DST_Y=0; 4 wide x 2 tall
+        write_reg(16'hD4B0,8'h00); write_reg(16'hD4B1,8'h00); write_reg(16'hD4B2,8'h00); write_reg(16'hD4B3,8'h00);
+        write_reg(16'hD4B4,8'h04); write_reg(16'hD4B5,8'h00); write_reg(16'hD4B6,8'h02); write_reg(16'hD4B7,8'h00);
+        write_reg(16'hD4BF,8'h03);   // RASTER_OP = S (copy)
+        write_reg(16'hD4C8,8'h20);   // FLAGS: DST_DDR (bit 5)
+        write_reg(16'hD4BC,8'h01);   // CMD = RECT_FILL
+        wait_idle();
+        expect_write_count(4);
+        expect_write(0, 32'h3008_0000, 64'hFF0000FF_FF0000FF, 8'hFF);
+        expect_write(1, 32'h3008_0008, 64'hFF0000FF_FF0000FF, 8'hFF);
+        expect_write(2, 32'h3008_0040, 64'hFF0000FF_FF0000FF, 8'hFF);  // row 1 = ROW0 + stride
+        expect_write(3, 32'h3008_0048, 64'hFF0000FF_FF0000FF, 8'hFF);
+        $display("PASS: test_rect_fill_ddr");
+    endtask
+
+    // ----------------------------------------------------------------
     // Test 2: Pattern fill with zero alpha -- should skip all writes
     //
     // 1x1 transparent pattern (A=0), 4x1 rectangle.  The burst buffer
@@ -1218,6 +1248,7 @@ module tb_xt_blitter;
 
         // Run tests
         test_pattern_fill();
+        test_rect_fill_ddr();
         test_pattern_fill_transparent();
         test_line_draw_horizontal();
         test_line_draw_diagonal();
