@@ -2,8 +2,8 @@
 #
 # Loads the bitstream + initialises the PS via ps7_init.tcl + downloads
 # an ELF + runs it.  This is the fast iteration path: no SD card, no
-# BOOT.BIN, no FSBL — just JTAG and the Digilent HS3 (or any cable
-# Vivado's hw_server recognises).
+# BOOT.BIN, no FSBL — just JTAG and the FT232H-based Xilinx-clone cable
+# (or any cable Vivado's hw_server recognises).
 #
 # Usage:
 #   xsct vivado/scripts/jtag_load.tcl <bit> <elf>           # local hw_server
@@ -19,8 +19,12 @@
 #   1. hw_server running on the target host (Vivado starts one
 #      automatically on `xsct connect` if you're on the same machine
 #      as the JTAG cable; otherwise `hw_server -d` on the cable host).
-#   2. JTAG cable plugged into the SOM's debug header (HS3 → 14-pin
-#      JTAG; the Z-Turn carrier breaks this out near the FTDI bridge).
+#   2. JTAG cable plugged into the SOM's debug header (FT232H clone →
+#      14-pin JTAG; the Z-Turn carrier breaks this out near the FTDI bridge).
+#      NOTE: this multi-function FTDI is hidden from any hw_server client
+#      that didn't request -allow_non_jtag.  In practice: have a Vivado/Vitis
+#      Hardware-Manager session (Open Target → Auto Connect) running so its
+#      hw_server on :3121 has the cable open; this script then connects to it.
 #   3. Power on.  Optional: hold the on-board reset until xsct is
 #      ready, to avoid the PS running a random old image from QSPI.
 #
@@ -94,6 +98,16 @@ if {[info exists ::env(JTAG_DRY_RUN)]} {
 # ---- Connect to hw_server -------------------------------------------
 puts ">> connecting to hw_server"
 connect -url $hw_host
+
+# Force a JTAG chain scan.  When this xsct is a *fresh client* of a
+# pre-existing hw_server (e.g. one Vivado launched with -allow_non_jtag
+# so it can see a multi-function FTDI cable like the FT232H clone), the
+# debug-target tree is NOT auto-populated on connect — `targets` comes
+# back empty until a raw `jtag targets` walks the chain.  Do that here so
+# the `targets -filter` calls below resolve.  (A self-launched server
+# scans on connect, so this is harmless there.)
+puts ">> scanning JTAG chain"
+catch { jtag targets }
 
 # ---- System reset first (clear a wedged DAP / live image) -----------
 # Re-running over a LIVE image (A9 mid-AXI/IRQ) and then reconfiguring the PL
