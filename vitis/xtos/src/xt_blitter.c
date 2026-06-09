@@ -113,35 +113,56 @@ void xt_blitter_fire(uint8_t cmd)
 }
 
 /* --- SRC_BLIT (CMD 0x08) DDR surface descriptors + helper -------------- */
+/* The blitter addresses a surface by ROW0 (the byte address of the blit's
+ * (x0,y0) origin pixel) + row stride, and only accumulates (+stride/row,
+ * +bpp/pixel) — no fabric multiply.  The A9 folds the origin in, so we keep the
+ * per-surface {base, stride, bpp} here and recompute ROW0 per blit.  Stride is
+ * written to HW once per surface; ROW0 (the descriptor "base" reg) per blit. */
+static uint32_t g_sb_src_base, g_sb_dst_base;
+static uint16_t g_sb_src_stride, g_sb_dst_stride;
+static uint8_t  g_sb_src_bpp = 4;          /* 1 = 8-bit coverage, 4 = RGBA */
 
-void xt_blitter_set_src_surface(uint32_t base, uint16_t stride)
+static void xt_blitter_write32(uint8_t off0, uint32_t v)
 {
-    xt_blitter_write8(XT_BL_SRC_BASE_0,   (uint8_t)(base & 0xFF));
-    xt_blitter_write8(XT_BL_SRC_BASE_1,   (uint8_t)((base >> 8)  & 0xFF));
-    xt_blitter_write8(XT_BL_SRC_BASE_2,   (uint8_t)((base >> 16) & 0xFF));
-    xt_blitter_write8(XT_BL_SRC_BASE_3,   (uint8_t)((base >> 24) & 0xFF));
+    xt_blitter_write8(off0,     (uint8_t)(v & 0xFF));
+    xt_blitter_write8(off0 + 1, (uint8_t)((v >> 8)  & 0xFF));
+    xt_blitter_write8(off0 + 2, (uint8_t)((v >> 16) & 0xFF));
+    xt_blitter_write8(off0 + 3, (uint8_t)((v >> 24) & 0xFF));
+}
+
+void xt_blitter_set_src_surface(uint32_t base, uint16_t stride, uint8_t bpp)
+{
+    g_sb_src_base   = base;
+    g_sb_src_stride = stride;
+    g_sb_src_bpp    = bpp ? bpp : 4;
     xt_blitter_write8(XT_BL_SRC_STRIDE_LO,(uint8_t)(stride & 0xFF));
     xt_blitter_write8(XT_BL_SRC_STRIDE_HI,(uint8_t)((stride >> 8) & 0xFF));
 }
 
 void xt_blitter_set_dst_surface(uint32_t base, uint16_t stride)
 {
-    xt_blitter_write8(XT_BL_DST_BASE_0,   (uint8_t)(base & 0xFF));
-    xt_blitter_write8(XT_BL_DST_BASE_1,   (uint8_t)((base >> 8)  & 0xFF));
-    xt_blitter_write8(XT_BL_DST_BASE_2,   (uint8_t)((base >> 16) & 0xFF));
-    xt_blitter_write8(XT_BL_DST_BASE_3,   (uint8_t)((base >> 24) & 0xFF));
+    g_sb_dst_base   = base;
+    g_sb_dst_stride = stride;
     xt_blitter_write8(XT_BL_DST_STRIDE_LO,(uint8_t)(stride & 0xFF));
     xt_blitter_write8(XT_BL_DST_STRIDE_HI,(uint8_t)((stride >> 8) & 0xFF));
 }
 
 /* Enqueue one SRC_BLIT: source rect (sx,sy,w,h) -> dest (dx,dy).  Caller has
  * already set FLAGS (mode), the SRC/DST surfaces, and (for SRC_COV) the 1x1
- * pattern colour.  Pushes one command into the blitter queue; does NOT wait. */
+ * pattern colour.  Folds the origins into ROW0 and writes the descriptor bases
+ * + the sweep extent (DST_W/H).  Pushes one command; does NOT wait. */
 void xt_blitter_src_blit(int16_t sx, int16_t sy, uint16_t w, uint16_t h,
                          int16_t dx, int16_t dy)
 {
-    xt_blitter_set_src(sx, sy, w, h);
-    xt_blitter_set_dst(dx, dy, w, h);
+    uint32_t src_row0 = g_sb_src_base
+                      + (uint32_t)((int32_t)sy * (int32_t)g_sb_src_stride)
+                      + (uint32_t)((int32_t)sx * (int32_t)g_sb_src_bpp);
+    uint32_t dst_row0 = g_sb_dst_base
+                      + (uint32_t)((int32_t)dy * (int32_t)g_sb_dst_stride)
+                      + (uint32_t)((int32_t)dx * 4);
+    xt_blitter_write32(XT_BL_SRC_BASE_0, src_row0);   /* ROW0_src */
+    xt_blitter_write32(XT_BL_DST_BASE_0, dst_row0);   /* ROW0_dst */
+    xt_blitter_set_dst(0, 0, w, h);                   /* DST_W/H sweep (X/Y ignored) */
     xt_blitter_fire(XT_BL_CMD_SRC_BLIT);
 }
 

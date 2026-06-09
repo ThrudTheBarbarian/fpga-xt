@@ -192,10 +192,12 @@ void xt_blitter_set_raster_op(uint8_t op);
  * them at CMD-write time into its queue entry. */
 void xt_blitter_fire(uint8_t cmd);
 
-/* Set the SRC_BLIT (CMD 0x08) source / destination DDR surface descriptors.
- * Global registers — set once per run; don't change while commands using the
- * surface are still queued (drain with a SYNC first if you must). */
-void xt_blitter_set_src_surface(uint32_t base, uint16_t stride);
+/* Set the SRC_BLIT (CMD 0x08) source / destination DDR surfaces.  base = the
+ * surface origin, stride = bytes/row, bpp = bytes/pixel (src only: 1 for an
+ * 8-bit coverage source, 4 for RGBA; dst is always RGBA).  The stride is written
+ * to HW here; the per-blit origin is folded into ROW0 by xt_blitter_src_blit().
+ * Set once per run; don't change while commands using the surface are queued. */
+void xt_blitter_set_src_surface(uint32_t base, uint16_t stride, uint8_t bpp);
 void xt_blitter_set_dst_surface(uint32_t base, uint16_t stride);
 
 /* Enqueue one SRC_BLIT: source rect (sx,sy,w,h) of the current SRC surface

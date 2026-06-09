@@ -278,8 +278,11 @@ void gfx_blit_coverage(gfx_surface *dst, int dx, int dy,
         xt_blitter_set_pat_log(0, 0);
         xt_blitter_set_pat_phase(0, 0);
         xt_blitter_write_pat(pat, 4);
-        xt_blitter_set_src_surface((uint32_t)(uintptr_t)g_atlas, (uint16_t)ATLAS_W);
-        xt_blitter_set_flags(XT_BL_FLAG_SRC_DDR | XT_BL_FLAG_SRC_COV);  // dest = plane
+        // src = the coverage atlas (1 B/px); dst = the live plane (RGBA, 8192
+        // B/row).  xt_blitter_src_blit() folds each glyph's origin into ROW0.
+        xt_blitter_set_src_surface((uint32_t)(uintptr_t)g_atlas, (uint16_t)ATLAS_W, 1);
+        xt_blitter_set_dst_surface(PLANE_BASE, (uint16_t)PLANE_STRIDE_B);
+        xt_blitter_set_flags(XT_BL_FLAG_SRC_COV);
         g_atlas_rgba  = rgba;
         g_atlas_fresh = 0;
     }

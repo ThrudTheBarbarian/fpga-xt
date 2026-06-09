@@ -696,9 +696,10 @@ module tb_xt_blitter;
     endtask
 
     // ----------------------------------------------------------------
-    // SRC_BLIT coverage -> the PLANE (DST_DDR=0): exactly the path that
-    // vdi.srctest / hardware text rendering uses (dest = FB_BASE, stride
-    // FB_STRIDE_B).  Coverage atlas in DDR, dest = plane row 0.
+    // SRC_BLIT coverage -> the PLANE: exactly the path that vdi.srctest /
+    // hardware text rendering uses.  The plane is now an explicit surface
+    // descriptor (ROW0=FB_BASE, stride FB_STRIDE_B) like any other — there is
+    // no implicit DST_DDR=0 plane default.  Coverage atlas in DDR, dest = plane.
     // ----------------------------------------------------------------
     task test_src_blit_cov_plane();
         logic [31:0] da, got, e;
@@ -711,10 +712,14 @@ module tb_xt_blitter;
         write_reg(16'hD4BA, 8'h00); load_1x1_pattern(8'h00, 8'hFF, 8'h00, 8'hFF); write_reg(16'hD4BE, 8'h00); // green
         write_reg(16'hD4E0,8'h00); write_reg(16'hD4E1,8'h00); write_reg(16'hD4E2,8'h04); write_reg(16'hD4E3,8'h30);
         write_reg(16'hD4E4,8'd8);  write_reg(16'hD4E5,8'd0);     // SRC stride 8 (1 B/px)
+        // DST = the plane as an explicit surface: ROW0 = FB_BASE 0x30000000,
+        // stride FB_STRIDE_B = 8192 = 0x2000.
+        write_reg(16'hD4E6,8'h00); write_reg(16'hD4E7,8'h00); write_reg(16'hD4E8,8'h00); write_reg(16'hD4E9,8'h30);
+        write_reg(16'hD4EA,8'h00); write_reg(16'hD4EB,8'h20);
         write_reg(16'hD4C0,8'd0); write_reg(16'hD4C1,8'd0); write_reg(16'hD4C2,8'd0); write_reg(16'hD4C3,8'd0);
         write_reg(16'hD4B0,8'd0); write_reg(16'hD4B1,8'd0); write_reg(16'hD4B2,8'd0); write_reg(16'hD4B3,8'd0);
         write_reg(16'hD4B4,8'd4); write_reg(16'hD4B5,8'd0); write_reg(16'hD4B6,8'd1); write_reg(16'hD4B7,8'd0);
-        write_reg(16'hD4C8,8'h0C);   // FLAGS: SRC_DDR(2) | SRC_COV(3), NO DST_DDR -> plane
+        write_reg(16'hD4C8,8'h08);   // FLAGS: SRC_COV(3) (SRC_DDR/DST_DDR now implied)
         write_reg(16'hD4BC,8'h08);   // CMD = SRC_BLIT
         wait_idle();
         for (int xx = 0; xx < 4; xx++) begin

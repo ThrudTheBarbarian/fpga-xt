@@ -234,8 +234,9 @@ static int l_vdi_srctest(lua_State *L)
     xt_blitter_set_pat_log(0, 0);
     xt_blitter_set_pat_phase(0, 0);
     xt_blitter_write_pat(pat, 4);                                 /* 1x1 = text colour */
-    xt_blitter_set_src_surface((uint32_t)(uintptr_t)atlas, 64);   /* coverage atlas */
-    xt_blitter_set_flags(XT_BL_FLAG_SRC_DDR | XT_BL_FLAG_SRC_COV);/* dest = plane (no DST_DDR) */
+    xt_blitter_set_src_surface((uint32_t)(uintptr_t)atlas, 64, 1); /* coverage atlas (1 B/px) */
+    xt_blitter_set_dst_surface(DESK_BASE, DESK_STRIDE * 4);        /* dest = plane (explicit surface) */
+    xt_blitter_set_flags(XT_BL_FLAG_SRC_COV);
     xt_blitter_src_blit(0, 0, 64, 32, (int16_t)x, (int16_t)y);
     int idle = xt_blitter_wait_idle(200000);
     lua_pushinteger(L, idle);

@@ -256,19 +256,22 @@ module xt_blitter #(
     logic [7:0]  flags_reg;              // FLAGS register at $D4C8
     logic [3:0]  raster_op_reg;          // GEM raster op for block blit ($D4BF)
 
-    // ---- DDR source/dest surface descriptors ($D4Dx, SRC_BLIT = CMD 0x08) ---
-    // Let SRC_BLIT read its source from / write its dest to an arbitrary DDR
-    // surface {base, stride} instead of the hardwired plane (FB_BASE/FB_STRIDE).
-    // Global like the pattern (read at command-execute time); software keeps
-    // them stable while commands using them are queued.  FLAGS bits select use:
-    //   [2] SRC_DDR  — read source from src_base_reg/src_stride_reg
+    // ---- DDR source/dest surface descriptors ($D4Ex page, reg 0x30-0x3B) ----
+    // SRC_BLIT (CMD 0x08) reads its source from / writes its dest to an arbitrary
+    // DDR surface addressed by a software-computed ROW0 + row stride.  ROW0 = the
+    // byte address of the (x0,y0) origin pixel (= surface_base + y0*stride +
+    // x0*bpp); the A9 folds the origin in (it has a 1-cycle multiplier) so the
+    // blitter only accumulates — +stride per row, +bpp per pixel, no fabric
+    // multiply.  Global like the pattern (read at command-execute time); software
+    // keeps them stable while commands using them are queued.  FLAGS bits:
     //   [3] SRC_COV  — source is 8-bit coverage (1 B/px); else RGBA (4 B/px)
     //   [4] SRC_AOVER— RGBA source: alpha-over composite; else straight copy
-    //   [5] DST_DDR  — read-blend/write dest to dst_base_reg/dst_stride_reg
-    logic [31:0] src_base_reg;           // $D4D0-$D4D3
-    logic [15:0] src_stride_reg;         // $D4D4-$D4D5 (bytes per row)
-    logic [31:0] dst_base_reg;           // $D4D6-$D4D9
-    logic [15:0] dst_stride_reg;         // $D4DA-$D4DB (bytes per row)
+    //   ([2] SRC_DDR / [5] DST_DDR are now implied — every surface is a
+    //    descriptor; the bits are still latched but no longer gate addressing.)
+    logic [31:0] src_base_reg;           // src ROW0  (reg 0x30-0x33)
+    logic [15:0] src_stride_reg;         // src stride, bytes/row (reg 0x34-0x35)
+    logic [31:0] dst_base_reg;           // dst ROW0  (reg 0x36-0x39)
+    logic [15:0] dst_stride_reg;         // dst stride, bytes/row (reg 0x3A-0x3B)
 
     // ---- Pattern memory + byte-stream load --------------------------------
     // Up to 1024 entries × 32-bit RGBA-8888 = 32 Kb (two BRAM18s or one
@@ -855,18 +858,21 @@ module xt_blitter #(
     logic        src_aover_q, dst_ddr_q;   // FLAGS[4]/[5]: RGBA alpha-over, DDR dest
     logic [31:0] src_base_q,  dst_base_q;  // captured surface bases
     logic [15:0] src_stride_q, dst_stride_q;
-    logic [31:0] sb_src_row, sb_dst_row;   // current-row base addr (accumulators)
-    logic [31:0] sb_src_mult, sb_dst_mult; // y*stride (registered DSP output)
+    logic [31:0] sb_src_row, sb_dst_row;   // current-row base addr (accumulators,
+                                           //   seeded from the software ROW0 descriptor)
     logic [31:0] sb_color_q;               // text colour (pat_pixel_q2) for coverage
     logic [31:0] sb_pix_q;                 // source pixel result staged for write
     logic [3:0]  sb_wstrb_q;               // write strobe for the staged pixel
     logic [7:0]  sb_cov_q;                 // coverage byte (SRC_COV) for blend alpha
     logic        sb_use_blend_q;           // SB_WR: write bl_blend_q (blend) vs sb_pix_q
-    // Effective source/dest surface params: DDR descriptor or the plane.
-    wire [31:0]  sb_src_base_eff   = src_ddr_q ? src_base_q   : FB_BASE;
-    wire [15:0]  sb_src_stride_eff = src_ddr_q ? src_stride_q : 16'(FB_STRIDE_B);
-    wire [31:0]  sb_dst_base_eff   = dst_ddr_q ? dst_base_q   : FB_BASE;
-    wire [15:0]  sb_dst_stride_eff = dst_ddr_q ? dst_stride_q : 16'(FB_STRIDE_B);
+    // Row stride comes straight from the software descriptor.  src_base_q /
+    // dst_base_q hold ROW0 = the byte address of the (x0,y0) origin pixel
+    // (= surface_base + y0*stride + x0*bpp), folded in by the A9 (it has a
+    // 1-cycle multiplier).  The blitter never multiplies: SB_INIT loads ROW0 and
+    // accumulates +stride per row, +bpp per pixel.  No plane special-case — the
+    // plane is just a surface whose ROW0/stride the caller computes.
+    wire [15:0]  sb_src_stride_eff = src_stride_q;
+    wire [15:0]  sb_dst_stride_eff = dst_stride_q;
     // Per-pixel source/dest addresses are below, after cx/cy are declared.
     // bl_need_dst: true when the raster op needs to read destination data
     // (ops 1,2,4,6,7,8,9,10,11,13,14 combine src+dst).  Ops 0/3/5/12/15 use
@@ -885,12 +891,12 @@ module xt_blitter #(
     // ---- Sweep counters (cx across columns, cy across rows) ---------------
     logic [15:0] cx, cy;
 
-    // SRC_BLIT per-pixel addresses (need cx/src_x_q/dst_x_q, declared above).
-    // Coverage source = 1 B/px, RGBA source = 4 B/px; dest is always RGBA.
-    wire [31:0]  sb_src_xoff = src_cov_q ? 32'(src_x_q + cx)
-                                         : (32'(src_x_q + cx) << 2);
+    // SRC_BLIT per-pixel addresses: x0 is already folded into ROW0, so the
+    // per-pixel offset is just the column sweep cx (no x_q add).  Coverage
+    // source = 1 B/px, RGBA source = 4 B/px; dest is always RGBA.
+    wire [31:0]  sb_src_xoff = src_cov_q ? 32'(cx) : (32'(cx) << 2);
     wire [31:0]  sb_src_addr = sb_src_row + sb_src_xoff;
-    wire [31:0]  sb_dst_addr = sb_dst_row + (32'(dst_x_q + cx) << 2);
+    wire [31:0]  sb_dst_addr = sb_dst_row + (32'(cx) << 2);
 
     // Pipelined row-complete check (cy >= dst_h_q - 1).  Breaks the CARRY4
     // chain from dst_h_q through the subtractor/comparator to state_reg,
@@ -3122,18 +3128,19 @@ module xt_blitter #(
                 // is no per-pixel multiply.
                 // ============================================================
                 SB_INIT: begin
-                    // Multiply only (DSP, registered output) — the base add is
-                    // split into SB_INIT2 so the DSP→add→reg path doesn't blow
-                    // the clk_sys budget.
-                    sb_src_mult <= src_y_q * sb_src_stride_eff;
-                    sb_dst_mult <= dst_y_q * sb_dst_stride_eff;
+                    // No fabric multiply: the row-0 accumulators load straight
+                    // from the software ROW0 descriptor (the A9 folds the origin
+                    // base + y0*stride + x0*bpp in).  This removes the clk_sys
+                    // timing offender that commit 1121330 had to pipeline-split.
+                    sb_src_row <= src_base_q;   // ROW0_src
+                    sb_dst_row <= dst_base_q;   // ROW0_dst
                     state <= SB_INIT2;
                 end
 
                 SB_INIT2: begin
-                    sb_src_row <= sb_src_base_eff + sb_src_mult;
-                    sb_dst_row <= sb_dst_base_eff + sb_dst_mult;
-                    state <= SB_WARM;          // let pat_pixel_q2 settle (coverage)
+                    // Idle settle cycle (pat_pixel_q2 coverage colour); cycle
+                    // count preserved so the rest of the SB pipeline is unchanged.
+                    state <= SB_WARM;
                 end
 
                 SB_WARM: begin
