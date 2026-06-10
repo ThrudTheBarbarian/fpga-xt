@@ -991,6 +991,11 @@ module xt_blitter #(
     // then SC_BL_ACC2 writes into the burst buffer.
     logic [8:0]  bl_w00_q, bl_w10_q, bl_w01_q, bl_w11_q;
     logic [31:0] bl_pixel_q;
+    logic        bl_half_q;               // beat-half (=araddr[2]) of the tap in flight
+    // Bilinear blend pipelined: SC_BL_BLEND registers the 16 weighted products
+    // (4 taps x 4 channels, each <=255*256=16 bits), SC_BL_MAC sums them — splits
+    // the 13-level MAC that overran clk_sys.  Packed {P00,P10,P01,P11} per channel.
+    logic [63:0] bl_pr_q, bl_pg_q, bl_pb_q, bl_pa_q;
 
     // Pipeline register for alpha-blend fill (BL_RACC / SC_SBLEND).
     // Splits the critical path from bl_src_pixel_q → blend multipliers →
@@ -1145,7 +1150,9 @@ module xt_blitter #(
         SC_BL_W   = 6'd25, // wait for R data, latch into correct pixel register
         SC_BL_WT  = 6'd26, // compute 8-bit fractional weights (sequential divider)
         SC_BL_ACC = 6'd27, // cycle 1: bilinear blend — compute weighted pixel
-        SC_BL_BLEND = 6'd42, // cycle 1.5: bilinear blend — weighted pixel from registered weights
+        SC_BL_BLEND = 6'd42, // cycle 1.5: bilinear blend — 16 weighted products (registered)
+        SC_BL_MAC = 6'd59,   // cycle 1.75: sum the 4 products per channel -> bl_pixel_q
+        SC_BL_W11 = 6'd60,   // cycle 1.6: derive w11 = 256 - w00 - w10 - w01 (registered)
         SC_BL_ACC2= 6'd36, // cycle 2: bilinear blend — accumulate into burst buffer
         SC_SBLEND = 6'd28, // scaled-blit blend: wait for dest read, blend, accumulate, goto SC_NEXT
         // Block-blit raster-op states
@@ -2430,6 +2437,7 @@ module xt_blitter #(
                     if (sy_accum_q >= dst_h_q) begin
                         sy_cur_q   <= sy_cur_q + 16'd1;
                         sy_accum_q <= sy_accum_q - dst_h_q;
+                        src_row_base <= src_row_base + src_stride_eff;  // track sy_cur
                         // Stay in SC_ROW2 to check again
                     end else begin
                         if (bilin_mode_q)
@@ -2448,21 +2456,26 @@ module xt_blitter #(
                 // read (arsize=3'b010, 4 bytes — one RGBA-8888 pixel).
                 // ============================================================
                 SC_CALC: begin
+                    // Source address for THIS destination pixel.  Computed as a
+                    // blocking local so the cache compare and the AR below use
+                    // the current address — not the registered sc_raddr_q, which
+                    // still holds the *previous* pixel's address this cycle.
+                    // src_row_base tracks sy_cur (seeded at S_IDLE from the
+                    // descriptor ROW0 or the plane shift, advanced at SC_ROW2);
+                    // src_x is folded into it, so only the column offset is added.
+                    logic [31:0] sc_raddr_next;
+                    sc_raddr_next = src_row_base + (32'(sx_step_q) << 2);
                     if (cx >= dst_w_q) begin
                         // Row complete — flush any pending pixels
                         state <= S_PEND;
                     end else begin
-                        // Source address for this destination pixel
-                        sc_raddr_q <= FB_BASE
-                                    + (32'(sy_cur_q) << 13)
-                                    + (32'(src_x_q + sx_step_q) << 2);
-
-                        if (sc_pixel_valid_q && sc_pixel_addr_q == sc_raddr_q) begin
+                        sc_raddr_q <= sc_raddr_next;   // for SC_READ's addr bookkeeping
+                        if (sc_pixel_valid_q && sc_pixel_addr_q == sc_raddr_next) begin
                             // Cache hit — pixel already in sc_pixel_q
                             state <= SC_ACCUM;
                         end else begin
                             // Cache miss — issue single-beat AXI read (4 bytes)
-                            m_axi_araddr  <= sc_raddr_q;
+                            m_axi_araddr  <= sc_raddr_next;
                             m_axi_arlen   <= 8'd0;
                             m_axi_arsize  <= 3'b010;   // 4 bytes
                             m_axi_arburst <= 2'b01;    // INCR
@@ -2479,8 +2492,10 @@ module xt_blitter #(
                     m_axi_rready <= 1'b1;
 
                     if (m_axi_rvalid) begin
-                        // 4-byte read returns pixel in lower 32 bits
-                        sc_pixel_q <= m_axi_rdata[31:0];
+                        // 4-byte pixel: araddr[2]=1 -> upper half of the beat,
+                        // araddr[2]=0 -> lower half (see the read-half note above).
+                        sc_pixel_q <= sc_raddr_q[2] ? m_axi_rdata[63:32]
+                                                    : m_axi_rdata[31:0];
 
                         sc_pixel_addr_q  <= sc_raddr_q;
                         sc_pixel_valid_q <= 1'b1;
@@ -2502,22 +2517,22 @@ module xt_blitter #(
                     // Helper: byte-strobe is 0 when sc_blend_q and source alpha
                     // is 0 (transparent pixel); otherwise 4'hF (opaque).
                     // Declared as automatic logic to avoid wire-in-block issues.
-                    logic [3:0] sc_strb;
-                    sc_strb = (sc_blend_q && sc_pixel_q[7:0] == 8'd0) ? 4'h0 : 4'hF;
+                    logic [3:0]  sc_strb;
+                    logic [31:0] sc_daddr;
+                    sc_strb  = (sc_blend_q && sc_pixel_q[7:0] == 8'd0) ? 4'h0 : 4'hF;
+                    sc_daddr = dst_row_base + (32'(cx) << 2);   // any-DDR dst pixel
 
                     if (sc_blend_q && sc_pixel_q[7:0] != 8'd0
                                   && sc_pixel_q[7:0] != 8'd255) begin
                         // ---- Partial-alpha: dest read + blend ------------------
                         bl_src_pixel_q <= sc_pixel_q;
-                        bl_px_low_q    <= (dst_x_q[0] == cx[0]);
-                        m_axi_araddr   <= FB_BASE
-                                        + (32'(dst_y_q + cy) << 13)
-                                        + (32'(dst_x_q + cx) << 2);
+                        bl_px_low_q    <= ~sc_daddr[2];
+                        m_axi_araddr   <= sc_daddr;
                         m_axi_arlen    <= 8'd0;
                         m_axi_arsize   <= 3'b010;
                         m_axi_arburst  <= 2'b01;
                         m_axi_arvalid  <= 1'b1;
-                        bl_read_high_half_q <= ~(dst_x_q[0] == cx[0]);
+                        bl_read_high_half_q <= sc_daddr[2];
                         state <= SC_SBLEND;
                         // Note: cx NOT incremented here — SC_SBLEND handles cx
                         // advance after the blend/accumulate.
@@ -2633,20 +2648,29 @@ module xt_blitter #(
                         // Row complete — flush any pending pixels
                         state <= S_PEND;
                     end else begin
+                        // src_row_base = the sy_cur row (src_x folded); +1 col is
+                        // +4, +1 row is +src_stride_eff.  Latch the tap's beat
+                        // half (= addr[2]) so SC_BL_W picks the right 32 bits.
+                        // EDGE-CLAMP the +1 tap to the source rect: at the right/
+                        // bottom edge the "next" column/row clamps to the last
+                        // in-rect one, so taps never read neighbouring content
+                        // (which at upscale smears in as a coloured edge streak).
+                        logic [31:0] bl_col0, bl_col1, bl_addr, row1_add;
+                        logic [15:0] step1;
+                        step1   = (sx_step_q + 16'd1 < src_w_q) ? (sx_step_q + 16'd1)
+                                                               : sx_step_q;
+                        row1_add = (sy_cur_q - src_y_q + 16'd1 < src_h_q)
+                                       ? 32'(src_stride_eff) : 32'd0;
+                        bl_col0 = src_row_base + (32'(sx_step_q) << 2);
+                        bl_col1 = src_row_base + (32'(step1)     << 2);
                         unique case (bl_sub_q)
-                            2'd0: m_axi_araddr <= FB_BASE
-                                                 + (32'(sy_cur_q) << 13)
-                                                 + (32'(src_x_q + sx_step_q) << 2);
-                            2'd1: m_axi_araddr <= FB_BASE
-                                                 + (32'(sy_cur_q) << 13)
-                                                 + (32'(src_x_q + sx_step_q + 16'd1) << 2);
-                            2'd2: m_axi_araddr <= FB_BASE
-                                                 + (32'(sy_cur_q + 16'd1) << 13)
-                                                 + (32'(src_x_q + sx_step_q) << 2);
-                            2'd3: m_axi_araddr <= FB_BASE
-                                                 + (32'(sy_cur_q + 16'd1) << 13)
-                                                 + (32'(src_x_q + sx_step_q + 16'd1) << 2);
+                            2'd0: bl_addr = bl_col0;
+                            2'd1: bl_addr = bl_col1;
+                            2'd2: bl_addr = bl_col0 + row1_add;
+                            2'd3: bl_addr = bl_col1 + row1_add;
                         endcase
+                        m_axi_araddr  <= bl_addr;
+                        bl_half_q     <= bl_addr[2];
                         m_axi_arlen   <= 8'd0;
                         m_axi_arsize  <= 3'b010;   // 4 bytes
                         m_axi_arburst <= 2'b01;    // INCR
@@ -2667,11 +2691,14 @@ module xt_blitter #(
                     m_axi_rready <= 1'b1;
 
                     if (m_axi_rvalid) begin
+                        // Pick the beat half by the tap's latched addr[2].
+                        logic [31:0] bl_pix;
+                        bl_pix = bl_half_q ? m_axi_rdata[63:32] : m_axi_rdata[31:0];
                         unique case (bl_sub_q)
-                            2'd0: p00_q <= m_axi_rdata[31:0];
-                            2'd1: p10_q <= m_axi_rdata[31:0];
-                            2'd2: p01_q <= m_axi_rdata[31:0];
-                            2'd3: p11_q <= m_axi_rdata[31:0];
+                            2'd0: p00_q <= bl_pix;
+                            2'd1: p10_q <= bl_pix;
+                            2'd2: p01_q <= bl_pix;
+                            2'd3: p11_q <= bl_pix;
                         endcase
 
                         if (bl_sub_q == 2'd3) begin
@@ -2746,22 +2773,33 @@ module xt_blitter #(
                 // stable through SC_BL_ACC → SC_BL_BLEND → SC_BL_ACC2.
                 // ============================================================
                 SC_BL_ACC: begin
-                    // Combinational temps for bilinear weight calc.
-                    // Inlined rather than declared with `automatic`/
-                    // `static` to stay portable across both Vivado
-                    // synth (which demands an explicit lifetime on
-                    // initialised case-item-local logic — Synth
-                    // 8-10180) and iverilog 13.0 (which doesn't yet
-                    // support overriding default variable lifetime).
-                    bl_w00_q <= ((9'd256 - {1'b0, bl_fx8_q})
-                                 * (9'd256 - {1'b0, bl_fy8_q})) >> 8;
-                    bl_w10_q <= ({1'b0, bl_fx8_q}
-                                 * (9'd256 - {1'b0, bl_fy8_q})) >> 8;
-                    bl_w01_q <= ((9'd256 - {1'b0, bl_fx8_q})
-                                 * {1'b0, bl_fy8_q}) >> 8;
-                    bl_w11_q <= ({1'b0, bl_fx8_q}
-                                 * {1'b0, bl_fy8_q}) >> 8;
+                    // Bilinear weights.  18-bit product intermediates (a narrow
+                    // context truncates 256*256=65536 to 0).  Round the three
+                    // independent weights (+128) and DERIVE the fourth as
+                    // 256 - their sum, so the four sum to EXACTLY 256.  Otherwise
+                    // per-weight >>8 truncation loses up to 3/256 at non-axis-
+                    // aligned fx/fy, darkening the blend proportional to pixel
+                    // value — a cross-hatch on bright areas at the source pitch.
+                    logic [17:0] p00w, p10w, p01w;
+                    logic [8:0]  w00c, w10c, w01c;
+                    p00w = (9'd256 - {1'b0, bl_fx8_q}) * (9'd256 - {1'b0, bl_fy8_q});
+                    p10w = {1'b0, bl_fx8_q}            * (9'd256 - {1'b0, bl_fy8_q});
+                    p01w = (9'd256 - {1'b0, bl_fx8_q}) * {1'b0, bl_fy8_q};
+                    w00c = (p00w + 18'd128) >> 8;
+                    w10c = (p10w + 18'd128) >> 8;
+                    w01c = (p01w + 18'd128) >> 8;
+                    bl_w00_q <= w00c;
+                    bl_w10_q <= w10c;
+                    bl_w01_q <= w01c;
+                    // w11 derived from the REGISTERED weights next cycle, so the
+                    // 256-sum subtraction isn't chained onto the multiplies here.
+                    state <= SC_BL_W11;
+                end
 
+                // Derive w11 from the REGISTERED weights (subtraction only, short
+                // path) so the four weights sum to exactly 256 before the blend.
+                SC_BL_W11: begin
+                    bl_w11_q <= 9'd256 - bl_w00_q - bl_w10_q - bl_w01_q;
                     state <= SC_BL_BLEND;
                 end
 
@@ -2777,25 +2815,32 @@ module xt_blitter #(
                 // bl_fx8_q → 8× CARRY4 + 6× LUT → bl_pixel_q that exceeded
                 // 6.667 ns at 150 MHz with the full PS BD clock tree.
                 // ============================================================
+                // Stage 1: register the 16 weighted products (4 taps x 4 ch).
                 SC_BL_BLEND: begin
-                    logic [15:0] r_blend;
-                    logic [15:0] g_blend;
-                    logic [15:0] b_blend;
-                    logic [15:0] a_blend;
-                    r_blend = p00_q[31:24] * bl_w00_q + p10_q[31:24] * bl_w10_q
-                            + p01_q[31:24] * bl_w01_q + p11_q[31:24] * bl_w11_q;
-                    g_blend = p00_q[23:16] * bl_w00_q + p10_q[23:16] * bl_w10_q
-                            + p01_q[23:16] * bl_w01_q + p11_q[23:16] * bl_w11_q;
-                    b_blend = p00_q[15:8]  * bl_w00_q + p10_q[15:8]  * bl_w10_q
-                            + p01_q[15:8]  * bl_w01_q + p11_q[15:8]  * bl_w11_q;
-                    a_blend = p00_q[7:0]   * bl_w00_q + p10_q[7:0]   * bl_w10_q
-                            + p01_q[7:0]   * bl_w01_q + p11_q[7:0]   * bl_w11_q;
+                    // 16'() so each product fills exactly one 16-bit slot (max
+                    // 255*256=65280 fits); otherwise the 8x9 self-width is 17.
+                    bl_pr_q <= {16'(p00_q[31:24] * bl_w00_q), 16'(p10_q[31:24] * bl_w10_q),
+                                16'(p01_q[31:24] * bl_w01_q), 16'(p11_q[31:24] * bl_w11_q)};
+                    bl_pg_q <= {16'(p00_q[23:16] * bl_w00_q), 16'(p10_q[23:16] * bl_w10_q),
+                                16'(p01_q[23:16] * bl_w01_q), 16'(p11_q[23:16] * bl_w11_q)};
+                    bl_pb_q <= {16'(p00_q[15:8]  * bl_w00_q), 16'(p10_q[15:8]  * bl_w10_q),
+                                16'(p01_q[15:8]  * bl_w01_q), 16'(p11_q[15:8]  * bl_w11_q)};
+                    bl_pa_q <= {16'(p00_q[7:0]   * bl_w00_q), 16'(p10_q[7:0]   * bl_w10_q),
+                                16'(p01_q[7:0]   * bl_w01_q), 16'(p11_q[7:0]   * bl_w11_q)};
+                    state <= SC_BL_MAC;
+                end
 
+                // Stage 2: sum each channel's 4 products (>>8 = /256 normalise).
+                SC_BL_MAC: begin
+                    logic [15:0] r_blend, g_blend, b_blend, a_blend;
+                    r_blend = bl_pr_q[63:48] + bl_pr_q[47:32] + bl_pr_q[31:16] + bl_pr_q[15:0];
+                    g_blend = bl_pg_q[63:48] + bl_pg_q[47:32] + bl_pg_q[31:16] + bl_pg_q[15:0];
+                    b_blend = bl_pb_q[63:48] + bl_pb_q[47:32] + bl_pb_q[31:16] + bl_pb_q[15:0];
+                    a_blend = bl_pa_q[63:48] + bl_pa_q[47:32] + bl_pa_q[31:16] + bl_pa_q[15:0];
                     bl_pixel_q[31:24] <= r_blend[15:8];
                     bl_pixel_q[23:16] <= g_blend[15:8];
                     bl_pixel_q[15:8]  <= b_blend[15:8];
                     bl_pixel_q[7:0]   <= a_blend[15:8];
-
                     state <= SC_BL_ACC2;
                 end
 
@@ -2811,22 +2856,22 @@ module xt_blitter #(
                 SC_BL_ACC2: begin
                     logic [7:0]  bl_pixel_a;
                     logic [31:0] bl_pixel;
+                    logic [31:0] bl_daddr;
                     bl_pixel_a = bl_pixel_q[7:0];
                     bl_pixel   = bl_pixel_q;
+                    bl_daddr   = dst_row_base + (32'(cx) << 2);   // any-DDR dst pixel
 
                     // ---- Alpha-aware dispatch (when sc_blend_q is set) ---------
                     if (sc_blend_q && bl_pixel_a != 8'd0 && bl_pixel_a != 8'd255) begin
                         // Partial alpha: read destination, blend, accumulate
                         bl_src_pixel_q <= bl_pixel;
-                        bl_px_low_q    <= (dst_x_q[0] == cx[0]);
-                        m_axi_araddr   <= FB_BASE
-                                        + (32'(dst_y_q + cy) << 13)
-                                        + (32'(dst_x_q + cx) << 2);
+                        bl_px_low_q    <= ~bl_daddr[2];
+                        m_axi_araddr   <= bl_daddr;
                         m_axi_arlen    <= 8'd0;
                         m_axi_arsize   <= 3'b010;
                         m_axi_arburst  <= 2'b01;
                         m_axi_arvalid  <= 1'b1;
-                        bl_read_high_half_q <= ~(dst_x_q[0] == cx[0]);
+                        bl_read_high_half_q <= bl_daddr[2];
                         state <= SC_SBLEND;
                         // cx NOT incremented — SC_SBLEND handles that after blend
 

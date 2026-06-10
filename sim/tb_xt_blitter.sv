@@ -592,6 +592,269 @@ module tb_xt_blitter;
         else begin $display("FAIL: test_scaled_nearest_2x (%0d mismatches)", errs); $fatal(1); end
     endtask
 
+    // SCALED nearest DOWNSCALE: 4x4 src -> 2x2 dst (plane), samples (2i,2j).
+    // Exercises the multi-step SC_ROW2/SC_NEXT2 Bresenham loops.  Sampled src
+    // pixels are distinct (A/B/C/D); the rest sentinel E (must never appear).
+    task test_scaled_nearest_down();
+        logic [31:0] da, got, exp; int errs;
+        $display("=== Test: SCALED nearest downscale, 4x4 -> 2x2 (plane) ===");
+        clear_logs(); errs = 0;
+        // src row0 (y=0): (0,0)=A (2,0)=B, others E; row2 (y=2): (0,2)=C (2,2)=D.
+        mem[mem_idx(32'h3000_0000)] = 64'hEEEEEEEE_AAAAAAAA;   // px (0,0)=A (1,0)=E
+        mem[mem_idx(32'h3000_0008)] = 64'hEEEEEEEE_BBBBBBBB;   // px (2,0)=B (3,0)=E
+        mem[mem_idx(32'h3000_4000)] = 64'hEEEEEEEE_CCCCCCCC;   // px (0,2)=C (1,2)=E  [y=2 -> 0x4000]
+        mem[mem_idx(32'h3000_4008)] = 64'hEEEEEEEE_DDDDDDDD;   // px (2,2)=D (3,2)=E
+        write_reg(16'hD4C0,8'd0); write_reg(16'hD4C1,8'd0); write_reg(16'hD4C2,8'd0); write_reg(16'hD4C3,8'd0);
+        write_reg(16'hD4C4,8'd4); write_reg(16'hD4C5,8'd0); write_reg(16'hD4C6,8'd4); write_reg(16'hD4C7,8'd0);
+        write_reg(16'hD4B0,8'd8); write_reg(16'hD4B1,8'd0); write_reg(16'hD4B2,8'd0); write_reg(16'hD4B3,8'd0);
+        write_reg(16'hD4B4,8'd2); write_reg(16'hD4B5,8'd0); write_reg(16'hD4B6,8'd2); write_reg(16'hD4B7,8'd0);
+        write_reg(16'hD4C8,8'h00);
+        write_reg(16'hD4BC,8'h04);
+        wait_idle();
+        for (int j = 0; j < 2; j++)
+          for (int i = 0; i < 2; i++) begin
+            da  = 32'h3000_0000 + j*8192 + (8+i)*4;
+            got = mem[mem_idx(da)][(da[2] ? 32 : 0) +: 32];
+            case ({j[0], i[0]})
+              2'b00: exp = 32'hAAAAAAAA; 2'b01: exp = 32'hBBBBBBBB;
+              2'b10: exp = 32'hCCCCCCCC; default: exp = 32'hDDDDDDDD;
+            endcase
+            if (got !== exp) begin errs++; $display("  dst(%0d,%0d) got %08x exp %08x", i, j, got, exp); end
+          end
+        if (errs == 0) $display("PASS: test_scaled_nearest_down");
+        else begin $display("FAIL: test_scaled_nearest_down (%0d mismatches)", errs); $fatal(1); end
+    endtask
+
+    // SCALED BILINEAR 1:1 (2x2 -> 2x2): for 1:1, fx=fy=0 so each dst = P00 =
+    // its src pixel exactly.  Cleanly exercises the per-tap araddr[2] read-half
+    // (odd columns = high beat half).  Src padded to 3x3 so weight-0 boundary
+    // taps (col 2 / row 2) read valid (non-x) memory.
+    task test_scaled_bilinear_copy();
+        logic [31:0] da, got, exp; int errs;
+        $display("=== Test: SCALED bilinear 1:1, 2x2 -> 2x2 (plane) ===");
+        clear_logs(); errs = 0;
+        // row0: A B | 77(col2)  ; row1: C D | 88 ; row2: 55 66 | 99  (boundary pad)
+        mem[mem_idx(32'h3000_0000)] = 64'h22222222_11111111; mem[mem_idx(32'h3000_0008)] = 64'hAAAAAAAA_77777777;
+        mem[mem_idx(32'h3000_2000)] = 64'h44444444_33333333; mem[mem_idx(32'h3000_2008)] = 64'hBBBBBBBB_88888888;
+        mem[mem_idx(32'h3000_4000)] = 64'h66666666_55555555; mem[mem_idx(32'h3000_4008)] = 64'hCCCCCCCC_99999999;
+        write_reg(16'hD4C0,8'd0); write_reg(16'hD4C1,8'd0); write_reg(16'hD4C2,8'd0); write_reg(16'hD4C3,8'd0);
+        write_reg(16'hD4C4,8'd2); write_reg(16'hD4C5,8'd0); write_reg(16'hD4C6,8'd2); write_reg(16'hD4C7,8'd0);
+        write_reg(16'hD4B0,8'd8); write_reg(16'hD4B1,8'd0); write_reg(16'hD4B2,8'd0); write_reg(16'hD4B3,8'd0);
+        write_reg(16'hD4B4,8'd2); write_reg(16'hD4B5,8'd0); write_reg(16'hD4B6,8'd2); write_reg(16'hD4B7,8'd0);
+        write_reg(16'hD4C8,8'h02);   // FLAGS: bilinear (bit 1), no blend, no DDR
+        write_reg(16'hD4BC,8'h04);   // CMD = SCALED
+        wait_idle();
+        write_reg(16'hD4C8,8'h00);
+        for (int j = 0; j < 2; j++)
+          for (int i = 0; i < 2; i++) begin
+            da  = 32'h3000_0000 + j*8192 + (8+i)*4;
+            got = mem[mem_idx(da)][(da[2] ? 32 : 0) +: 32];
+            case ({j[0], i[0]})
+              2'b00: exp = 32'h11111111; 2'b01: exp = 32'h22222222;
+              2'b10: exp = 32'h33333333; default: exp = 32'h44444444;
+            endcase
+            $display("  dst(%0d,%0d) got %08x exp %08x", i, j, got, exp);
+            if (got !== exp) errs++;
+          end
+        if (errs == 0) $display("PASS: test_scaled_bilinear_copy");
+        else begin $display("FAIL: test_scaled_bilinear_copy (%0d mismatches)", errs); $fatal(1); end
+    endtask
+
+    // SCALED BILINEAR fractional blend: 2-wide src [A,B,B] upscaled 2->4 (fx=0.5
+    // at the odd pixels) over identical rows (fy=0).  Expect A, (A+B)/2, B, B.
+    // Validates the weight math + MAC for non-zero fx.  3x3 src so boundary taps
+    // are valid.  A=0x40.. B=0x80.. -> midpoint 0x60.. .
+    task test_scaled_bilinear_blend();
+        logic [31:0] da, got, exp; int errs;
+        $display("=== Test: SCALED bilinear blend, 2->4 horiz, (A+B)/2 ===");
+        clear_logs(); errs = 0;
+        for (int yy = 0; yy < 3; yy++) begin
+            mem[mem_idx(32'h3000_0000 + yy*8192)]     = 64'h80808080_40404040;  // col0=A col1=B
+            mem[mem_idx(32'h3000_0008 + yy*8192)]     = 64'h00000000_80808080;  // col2=B col3=pad
+        end
+        write_reg(16'hD4C0,8'd0); write_reg(16'hD4C1,8'd0); write_reg(16'hD4C2,8'd0); write_reg(16'hD4C3,8'd0);
+        write_reg(16'hD4C4,8'd2); write_reg(16'hD4C5,8'd0); write_reg(16'hD4C6,8'd2); write_reg(16'hD4C7,8'd0);
+        write_reg(16'hD4B0,8'd8); write_reg(16'hD4B1,8'd0); write_reg(16'hD4B2,8'd0); write_reg(16'hD4B3,8'd0);
+        write_reg(16'hD4B4,8'd4); write_reg(16'hD4B5,8'd0); write_reg(16'hD4B6,8'd2); write_reg(16'hD4B7,8'd0);
+        write_reg(16'hD4C8,8'h02);   // FLAGS: bilinear
+        write_reg(16'hD4BC,8'h04);   // CMD = SCALED
+        wait_idle();
+        write_reg(16'hD4C8,8'h00);
+        for (int j = 0; j < 2; j++)
+          for (int i = 0; i < 4; i++) begin
+            da  = 32'h3000_0000 + j*8192 + (8+i)*4;
+            got = mem[mem_idx(da)][(da[2] ? 32 : 0) +: 32];
+            case (i)
+              0: exp = 32'h40404040; 1: exp = 32'h60606060; default: exp = 32'h80808080;
+            endcase
+            $display("  dst(%0d,%0d) got %08x exp %08x", i, j, got, exp);
+            if (got !== exp) errs++;
+          end
+        if (errs == 0) $display("PASS: test_scaled_bilinear_blend");
+        else begin $display("FAIL: test_scaled_bilinear_blend (%0d mismatches)", errs); $fatal(1); end
+    endtask
+
+    // SCALED nearest 2x OFF-PLANE: src 2x2 @0x30100000 (stride 8) -> dst 4x4
+    // @0x30200000 (stride 16) via the descriptor (SRC_DDR|DST_DDR).  Proves the
+    // ROW0/any-DDR conversion of the scaled src + dst.
+    task test_scaled_ddr_nearest();
+        logic [31:0] da, got, exp; int errs;
+        $display("=== Test: SCALED nearest 2x, OFF-PLANE descriptor (SRC_DDR|DST_DDR) ===");
+        clear_logs(); errs = 0;
+        mem[mem_idx(32'h3010_0000)] = 64'h22222222_11111111;  // (1,0)=B (0,0)=A
+        mem[mem_idx(32'h3010_0008)] = 64'h44444444_33333333;  // (1,1)=D (0,1)=C  [row1 = +stride 8]
+        // SRC descriptor ROW0=0x30100000 stride 8; DST descriptor ROW0=0x30200000 stride 16
+        write_reg(16'hD4E0,8'h00); write_reg(16'hD4E1,8'h00); write_reg(16'hD4E2,8'h10); write_reg(16'hD4E3,8'h30);
+        write_reg(16'hD4E4,8'd8);  write_reg(16'hD4E5,8'd0);
+        write_reg(16'hD4E6,8'h00); write_reg(16'hD4E7,8'h00); write_reg(16'hD4E8,8'h20); write_reg(16'hD4E9,8'h30);
+        write_reg(16'hD4EA,8'd16); write_reg(16'hD4EB,8'd0);
+        write_reg(16'hD4C0,8'd0); write_reg(16'hD4C1,8'd0); write_reg(16'hD4C2,8'd0); write_reg(16'hD4C3,8'd0);
+        write_reg(16'hD4C4,8'd2); write_reg(16'hD4C5,8'd0); write_reg(16'hD4C6,8'd2); write_reg(16'hD4C7,8'd0);
+        write_reg(16'hD4B0,8'd0); write_reg(16'hD4B1,8'd0); write_reg(16'hD4B2,8'd0); write_reg(16'hD4B3,8'd0);
+        write_reg(16'hD4B4,8'd4); write_reg(16'hD4B5,8'd0); write_reg(16'hD4B6,8'd4); write_reg(16'hD4B7,8'd0);
+        write_reg(16'hD4C8,8'h24);   // FLAGS: SRC_DDR(2) | DST_DDR(5)
+        write_reg(16'hD4BC,8'h04);   // CMD = SCALED nearest
+        wait_idle();
+        write_reg(16'hD4C8,8'h00);   // clear FLAGS for following plane tests
+        for (int j = 0; j < 4; j++)
+          for (int i = 0; i < 4; i++) begin
+            da  = 32'h3020_0000 + j*16 + i*4;
+            got = mem[mem_idx(da)][(da[2] ? 32 : 0) +: 32];
+            case ({j[1], i[1]})
+              2'b00: exp = 32'h11111111; 2'b01: exp = 32'h22222222;
+              2'b10: exp = 32'h33333333; default: exp = 32'h44444444;
+            endcase
+            if (got !== exp) begin errs++; $display("  dst(%0d,%0d) got %08x exp %08x", i, j, got, exp); end
+          end
+        if (errs == 0) $display("PASS: test_scaled_ddr_nearest");
+        else begin $display("FAIL: test_scaled_ddr_nearest (%0d mismatches)", errs); $fatal(1); end
+    endtask
+
+    // SCALED PARTIAL-ALPHA blend (the scaled-AA-text composite): src = red @
+    // alpha 128 (0xFF000080), scaled nearest 2x over an opaque blue dst.  Each
+    // out = (src*128 + dst*127 + 128)>>8, alpha preserved -> 0x80007F80.
+    task test_scaled_partial_alpha();
+        logic [31:0] da, got; int errs;
+        $display("=== Test: SCALED partial-alpha blend, red@128 over blue ===");
+        clear_logs(); errs = 0;
+        // src 2x2: all red @ alpha 128
+        mem[mem_idx(32'h3000_0000)] = 64'hFF000080_FF000080;
+        mem[mem_idx(32'h3000_2000)] = 64'hFF000080_FF000080;
+        // dst 4x4 @ plane (8,0) prefilled opaque blue
+        for (int j = 0; j < 4; j++) begin
+            mem[mem_idx(32'h3000_0020 + j*8192)] = 64'h0000FFFF_0000FFFF;
+            mem[mem_idx(32'h3000_0028 + j*8192)] = 64'h0000FFFF_0000FFFF;
+        end
+        write_reg(16'hD4C0,8'd0); write_reg(16'hD4C1,8'd0); write_reg(16'hD4C2,8'd0); write_reg(16'hD4C3,8'd0);
+        write_reg(16'hD4C4,8'd2); write_reg(16'hD4C5,8'd0); write_reg(16'hD4C6,8'd2); write_reg(16'hD4C7,8'd0);
+        write_reg(16'hD4B0,8'd8); write_reg(16'hD4B1,8'd0); write_reg(16'hD4B2,8'd0); write_reg(16'hD4B3,8'd0);
+        write_reg(16'hD4B4,8'd4); write_reg(16'hD4B5,8'd0); write_reg(16'hD4B6,8'd4); write_reg(16'hD4B7,8'd0);
+        write_reg(16'hD4C8,8'h01);   // FLAGS: sc_blend (bit 0), nearest
+        write_reg(16'hD4BC,8'h04);   // CMD = SCALED
+        wait_idle();
+        write_reg(16'hD4C8,8'h00);
+        for (int j = 0; j < 4; j++)
+          for (int i = 0; i < 4; i++) begin
+            da  = 32'h3000_0000 + j*8192 + (8+i)*4;
+            got = mem[mem_idx(da)][(da[2] ? 32 : 0) +: 32];
+            if (got !== 32'h80007F80) begin errs++; $display("  dst(%0d,%0d) got %08x exp 80007F80", i, j, got); end
+          end
+        if (errs == 0) $display("PASS: test_scaled_partial_alpha");
+        else begin $display("FAIL: test_scaled_partial_alpha (%0d mismatches)", errs); $fatal(1); end
+    endtask
+
+    // SCALED BILINEAR + PARTIAL-ALPHA — the full AA-scaled-text path: bilinear
+    // scale of a red@128 image, alpha-composited over opaque blue.  Interpolated
+    // alpha stays 128 (uniform src) -> each out = 0x80007F80.  Exercises the
+    // SC_BL_ACC2 -> SC_SBLEND dispatch.  3x3 src so boundary taps are valid.
+    task test_scaled_bilin_alpha();
+        logic [31:0] da, got; int errs;
+        $display("=== Test: SCALED bilinear + partial-alpha, red@128 over blue ===");
+        clear_logs(); errs = 0;
+        for (int yy = 0; yy < 3; yy++) begin
+            mem[mem_idx(32'h3000_0000 + yy*8192)] = 64'hFF000080_FF000080;  // red@128
+            mem[mem_idx(32'h3000_0008 + yy*8192)] = 64'hFF000080_FF000080;
+        end
+        mem[mem_idx(32'h3000_0020)] = 64'h0000FFFF_0000FFFF;  // dst (8,0)-(9,0) blue
+        mem[mem_idx(32'h3000_2020)] = 64'h0000FFFF_0000FFFF;  // dst (8,1)-(9,1) blue
+        write_reg(16'hD4C0,8'd0); write_reg(16'hD4C1,8'd0); write_reg(16'hD4C2,8'd0); write_reg(16'hD4C3,8'd0);
+        write_reg(16'hD4C4,8'd2); write_reg(16'hD4C5,8'd0); write_reg(16'hD4C6,8'd2); write_reg(16'hD4C7,8'd0);
+        write_reg(16'hD4B0,8'd8); write_reg(16'hD4B1,8'd0); write_reg(16'hD4B2,8'd0); write_reg(16'hD4B3,8'd0);
+        write_reg(16'hD4B4,8'd2); write_reg(16'hD4B5,8'd0); write_reg(16'hD4B6,8'd2); write_reg(16'hD4B7,8'd0);
+        write_reg(16'hD4C8,8'h03);   // FLAGS: bilinear (bit1) | sc_blend (bit0)
+        write_reg(16'hD4BC,8'h04);   // CMD = SCALED
+        wait_idle();
+        write_reg(16'hD4C8,8'h00);
+        for (int j = 0; j < 2; j++)
+          for (int i = 0; i < 2; i++) begin
+            da  = 32'h3000_0000 + j*8192 + (8+i)*4;
+            got = mem[mem_idx(da)][(da[2] ? 32 : 0) +: 32];
+            if (got !== 32'h80007F80) begin errs++; $display("  dst(%0d,%0d) got %08x exp 80007F80", i, j, got); end
+          end
+        if (errs == 0) $display("PASS: test_scaled_bilin_alpha");
+        else begin $display("FAIL: test_scaled_bilin_alpha (%0d mismatches)", errs); $fatal(1); end
+    endtask
+
+    // SCALED BILINEAR uniform white, NON-power-of-2 (2->3): every tap is white,
+    // so every output must be white IFF the 4 weights sum to exactly 256.  With
+    // per-weight truncation the sum < 256 at fx/fy=170/85 -> interior darkens to
+    // ~0xFC (the cross-hatch on bright content).  3x3 src so edge taps are white.
+    task test_scaled_bilin_uniform();
+        logic [31:0] da, got; int errs;
+        $display("=== Test: SCALED bilinear uniform white 2->3 (weight-sum) ===");
+        clear_logs(); errs = 0;
+        for (int yy = 0; yy < 3; yy++) begin
+            mem[mem_idx(32'h3000_0000 + yy*8192)] = 64'hFFFFFFFF_FFFFFFFF;
+            mem[mem_idx(32'h3000_0008 + yy*8192)] = 64'hFFFFFFFF_FFFFFFFF;
+        end
+        write_reg(16'hD4C0,8'd0); write_reg(16'hD4C1,8'd0); write_reg(16'hD4C2,8'd0); write_reg(16'hD4C3,8'd0);
+        write_reg(16'hD4C4,8'd2); write_reg(16'hD4C5,8'd0); write_reg(16'hD4C6,8'd2); write_reg(16'hD4C7,8'd0);
+        write_reg(16'hD4B0,8'd8); write_reg(16'hD4B1,8'd0); write_reg(16'hD4B2,8'd0); write_reg(16'hD4B3,8'd0);
+        write_reg(16'hD4B4,8'd3); write_reg(16'hD4B5,8'd0); write_reg(16'hD4B6,8'd3); write_reg(16'hD4B7,8'd0);
+        write_reg(16'hD4C8,8'h02);   // FLAGS: bilinear
+        write_reg(16'hD4BC,8'h04);
+        wait_idle();
+        write_reg(16'hD4C8,8'h00);
+        for (int j = 0; j < 3; j++)
+          for (int i = 0; i < 3; i++) begin
+            da  = 32'h3000_0000 + j*8192 + (8+i)*4;
+            got = mem[mem_idx(da)][(da[2] ? 32 : 0) +: 32];
+            if (got !== 32'hFFFFFFFF) begin errs++; $display("  dst(%0d,%0d) got %08x exp FFFFFFFF", i, j, got); end
+          end
+        if (errs == 0) $display("PASS: test_scaled_bilin_uniform");
+        else begin $display("FAIL: test_scaled_bilin_uniform (%0d mismatches)", errs); $fatal(1); end
+    endtask
+
+    // SCALED BILINEAR edge clamp: white 2x2 rect with a RED sentinel at col 2 /
+    // row 2 (the would-be-bled neighbours).  Bilinear 2->4 (power-of-2 so the
+    // weight-sum is exact) must stay all-white IFF the edge taps clamp into the
+    // rect; without clamping the right/bottom rows bleed red.
+    task test_scaled_bilin_edge();
+        logic [31:0] da, got; int errs;
+        $display("=== Test: SCALED bilinear edge clamp (no neighbour bleed) ===");
+        clear_logs(); errs = 0;
+        // rect cols0-1/rows0-1 white; col2 + row2 RED sentinel
+        mem[mem_idx(32'h3000_0000)] = 64'hFFFFFFFF_FFFFFFFF; mem[mem_idx(32'h3000_0008)] = 64'h00000000_FF0000FF;
+        mem[mem_idx(32'h3000_2000)] = 64'hFFFFFFFF_FFFFFFFF; mem[mem_idx(32'h3000_2008)] = 64'h00000000_FF0000FF;
+        mem[mem_idx(32'h3000_4000)] = 64'hFF0000FF_FF0000FF; mem[mem_idx(32'h3000_4008)] = 64'h00000000_FF0000FF;
+        write_reg(16'hD4C0,8'd0); write_reg(16'hD4C1,8'd0); write_reg(16'hD4C2,8'd0); write_reg(16'hD4C3,8'd0);
+        write_reg(16'hD4C4,8'd2); write_reg(16'hD4C5,8'd0); write_reg(16'hD4C6,8'd2); write_reg(16'hD4C7,8'd0);
+        write_reg(16'hD4B0,8'd8); write_reg(16'hD4B1,8'd0); write_reg(16'hD4B2,8'd0); write_reg(16'hD4B3,8'd0);
+        write_reg(16'hD4B4,8'd4); write_reg(16'hD4B5,8'd0); write_reg(16'hD4B6,8'd4); write_reg(16'hD4B7,8'd0);
+        write_reg(16'hD4C8,8'h02);   // FLAGS: bilinear
+        write_reg(16'hD4BC,8'h04);
+        wait_idle();
+        write_reg(16'hD4C8,8'h00);
+        for (int j = 0; j < 4; j++)
+          for (int i = 0; i < 4; i++) begin
+            da  = 32'h3000_0000 + j*8192 + (8+i)*4;
+            got = mem[mem_idx(da)][(da[2] ? 32 : 0) +: 32];
+            if (got !== 32'hFFFFFFFF) begin errs++; $display("  dst(%0d,%0d) got %08x exp FFFFFFFF", i, j, got); end
+          end
+        if (errs == 0) $display("PASS: test_scaled_bilin_edge");
+        else begin $display("FAIL: test_scaled_bilin_edge (%0d mismatches)", errs); $fatal(1); end
+    endtask
+
     // ----------------------------------------------------------------
     // Test 2: Pattern fill with zero alpha -- should skip all writes
     //
@@ -1411,13 +1674,15 @@ module tb_xt_blitter;
         test_rect_fill_ddr();
         test_queued_fill_bases();
         test_block_blit_ddr();
-        // test_scaled_nearest_2x();  // DISABLED — exposes a PRE-EXISTING scaled
-        // burst-write fault (src column never advances past 0; small-blit beats
-        // land mis-aligned / orphaned).  Independent of the ROW0 work: SCALED
-        // had no working coverage and never did.  The dst-row advance regression
-        // from task-4 IS fixed (S_PEND/S_B SC_ROW branches); re-enable this test
-        // when the scaled burst/Bresenham path is rewritten.  See memory note
-        // blitter_addrgen_consolidation.
+        test_scaled_nearest_2x();
+        test_scaled_nearest_down();
+        test_scaled_bilinear_copy();
+        test_scaled_bilinear_blend();
+        test_scaled_ddr_nearest();
+        test_scaled_partial_alpha();
+        test_scaled_bilin_alpha();
+        test_scaled_bilin_uniform();
+        test_scaled_bilin_edge();
         test_pattern_fill_transparent();
         test_line_draw_horizontal();
         test_line_draw_diagonal();
