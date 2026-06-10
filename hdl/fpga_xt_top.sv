@@ -411,11 +411,13 @@ module fpga_xt_top (
     wire        hp3_rlast;
     wire        hp3_rready;
 
-    // HP2 — the XL surface WRITE port.  WRITE-ONLY:
+    // HP2 — the XL surface WRITE port, plus the drag-overlay READ:
     //   write channel ← antic_writeback (ANTIC render → DDR3 XL surface).
+    //   read  channel ← plane_fetch_overlay (drag-overlay line read).
     // (Was the bring-up hp_read_probe, retired — PL→DDR reads are proven by the
     // live display.)  Separating writeback writes from the XL read (HP3) removes
-    // the same-port read/write contention.  Read channel tied off at ps_bd.
+    // the same-port read/write contention.  The read channel was tied off; the
+    // drag-overlay reuses it (writeback is write-only, so AR/R were idle).
     wire [31:0] hp2_awaddr;
     wire [7:0]  hp2_awlen;      // 8-bit (AXI4); AXI3 slave truncates to lower 4
     wire [2:0]  hp2_awsize;
@@ -429,6 +431,17 @@ module fpga_xt_top (
     wire        hp2_wready;
     wire        hp2_bvalid;
     wire        hp2_bready;
+    // HP2 read channel (drag-overlay plane_fetch master).
+    wire [31:0] hp2_araddr;
+    wire [7:0]  hp2_arlen;
+    wire [2:0]  hp2_arsize;
+    wire [1:0]  hp2_arburst;
+    wire        hp2_arvalid;
+    wire        hp2_arready;
+    wire [63:0] hp2_rdata;
+    wire        hp2_rvalid;
+    wire        hp2_rlast;
+    wire        hp2_rready;
 
     // ANTIC's BRAM read port — driven by antic_top's u_bram_shim and
     // serviced by sally_mem's second BRAM port (clk_sys side).  SALLY
@@ -1176,7 +1189,8 @@ module fpga_xt_top (
     // mixer).  Default config = ONE full-screen desktop plane (scale 1,
     // depth 0).  Plane 1 (the Atari XL window) is wired but DISABLED until
     // the ANTIC->DDR3 writeback (phase 2) feeds it.
-    localparam int CMP_PLANES = 2;
+    // desktop (depth 0) + drag overlay (depth 1) + XL window (depth 2).
+    localparam int CMP_PLANES = 3;
 
     // ---- vbeam: 1080p60 raster (clk_pix) --------------------------------
     wire [11:0] fb_h_count, fb_v_count;
@@ -1302,9 +1316,9 @@ module fpga_xt_top (
     // earlier `(next_line-clip_y0)/scale` divide at the top became an 18-level
     // carry chain off v_count and broke the clk_pix timing path; the
     // accumulator is a ~3-level derive of registered state.)
-    wire [11:0] xl_fetch_row = cmp_src_row_next[1*12 +: 12];
+    wire [11:0] xl_fetch_row = cmp_src_row_next[2*12 +: 12];   // XL is plane index 2
 
-    // Plane-1 source: a second plane_fetch reading the XL DISPLAY buffer over
+    // Plane-2 source: a second plane_fetch reading the XL DISPLAY buffer over
     // HP3's read channel.  xl_display_idx (clk_sys, from xl_buffer_ctrl) is
     // adopted at the scan-out vblank and is provably never the slot the writeback
     // is filling, so plane_fetch always reads a complete, stable frame — the old
@@ -1329,8 +1343,66 @@ module fpga_xt_top (
         .m_axi_rvalid (hp3_rvalid), .m_axi_rlast (hp3_rlast), .m_axi_rready (hp3_rready),
         .clk_pix (clk_pix), .rst_pix (pf_rst_pix),
         .line_start (fb_line_start), .fetch_row (xl_fetch_row),
-        .rd_col (cmp_src_col[1*12 +: 12]), .rd_pixel (xl_pixel),
+        .rd_col (cmp_src_col[2*12 +: 12]), .rd_pixel (xl_pixel),
         .read_abort (xl_read_abort), .fetch_overrun (xl_overrun)
+    );
+
+    // ---- Drag overlay (plane 1): movable DDR-backed window surface --------
+    // A bounded surface composited above the desktop (depth 1) but below the
+    // XL/ST windows (depth 2), used to show a GEM window while it is dragged so
+    // moving it is a single (x,y) register write instead of re-blitting it into
+    // the desktop plane each frame.  Reads via HP2's idle READ channel (the
+    // antic_writeback only uses HP2 writes).  Position is adopted ATOMICALLY in
+    // clk_pix on the bridge's commit toggle (stable-data + sync-flag CDC — the
+    // clk_sys {x,y,w,h,en} are stable before the 1-bit flag toggles), then
+    // applied at the scan-out vblank (fb_vbi_start) so a mid-drag move never
+    // tears.  This deliberately avoids a free-running multi-bit 2-FF bus sync
+    // (the class of bug behind the old row-128 rainbow-dash; see docs/video).
+    wire        ov_commit_pix;
+    cdc_sync_bit u_ov_commit (.dst_clk (clk_pix), .src_sig (overlay_commit), .dst_sig (ov_commit_pix));
+    reg  ov_commit_d = 1'b0;
+    always_ff @(posedge clk_pix) ov_commit_d <= ov_commit_pix;
+    wire ov_commit_edge = ov_commit_pix ^ ov_commit_d;        // 1-cyc on either edge
+
+    // Pending = captured atomically on the commit flag; displayed = adopted at
+    // vblank (tear-free).  x/y/w/h cross as a stable group gated by the flag.
+    reg [11:0] ov_x_pend = 12'd0, ov_y_pend = 12'd0, ov_w_pend = 12'd0, ov_h_pend = 12'd0;
+    reg        ov_en_pend = 1'b0;
+    always_ff @(posedge clk_pix) if (ov_commit_edge) begin
+        ov_x_pend  <= overlay_x;  ov_y_pend  <= overlay_y;
+        ov_w_pend  <= overlay_w;  ov_h_pend  <= overlay_h;
+        ov_en_pend <= overlay_en;
+    end
+    reg [11:0] ov_x_d = 12'd0, ov_y_d = 12'd0, ov_w_d = 12'd0, ov_h_d = 12'd0;
+    reg        ov_en_d = 1'b0;
+    always_ff @(posedge clk_pix) if (fb_vbi_start) begin
+        ov_x_d  <= ov_x_pend;  ov_y_d  <= ov_y_pend;
+        ov_w_d  <= ov_w_pend;  ov_h_d  <= ov_h_pend;
+        ov_en_d <= ov_en_pend;
+    end
+    wire [11:0] ov_x1_d = ov_x_d + ov_w_d;                    // clip x1 = x + w
+    wire [11:0] ov_y1_d = ov_y_d + ov_h_d;                    // clip y1 = y + h
+    wire [11:0] ov_fetch_row = cmp_src_row_next[1*12 +: 12];  // overlay is plane index 1
+    wire [31:0] overlay_pixel;
+
+    // stride is a COMPILE-TIME CONSTANT (8192 B = 2048 px/row) so plane_fetch's
+    // row*stride folds to a shift (like the desktop/XL planes) — a variable
+    // stride synthesises a DSP multiply with overlay_w on the HP2-araddr path
+    // and busts clk_sys.  The PS renders the drag surface at this fixed stride
+    // (see OVL_STRIDE_W in xt_blitter.h); src_w (= overlay_w) still bounds the
+    // per-row fetch, so only the window's columns are read (no extra bandwidth).
+    plane_fetch u_plane_fetch_overlay (
+        .clk_sys (clk_sys), .rst_sys (pf_rst_sys), .enable (overlay_en),
+        .surface_base (overlay_base), .stride_bytes (16'd8192),  // 2048 px * 4 (RGBA)
+        .src_w (overlay_w),
+        .m_axi_araddr (hp2_araddr), .m_axi_arlen (hp2_arlen), .m_axi_arsize (hp2_arsize),
+        .m_axi_arburst (hp2_arburst), .m_axi_arvalid (hp2_arvalid),
+        .m_axi_arready (hp2_arready), .m_axi_rdata (hp2_rdata),
+        .m_axi_rvalid (hp2_rvalid), .m_axi_rlast (hp2_rlast), .m_axi_rready (hp2_rready),
+        .clk_pix (clk_pix), .rst_pix (pf_rst_pix),
+        .line_start (fb_line_start), .fetch_row (ov_fetch_row),
+        .rd_col (cmp_src_col[1*12 +: 12]), .rd_pixel (overlay_pixel),
+        .read_abort (), .fetch_overrun ()
     );
 
     // ---- Plane compositor -----------------------------------------------
@@ -1341,21 +1413,24 @@ module fpga_xt_top (
         .clk_pix (clk_pix), .rst_pix (rst_pix),
         .h_count (fb_h_count), .v_count (fb_v_count),
         .de (vb_de), .hsync (vb_hsync), .vsync (vb_vsync), .line_start (fb_line_start),
-        // Buses pack {plane1, plane0}; plane 1 = the XL window (front of desktop).
-        .pl_enable   (2'b11),                                  // both planes on
-        .pl_origin_x ({xl_org_x_r,       12'd0}),             // runtime-scaled (gp0_ctrl[3:1])
-        .pl_origin_y ({xl_org_y_r,       12'd0}),
-        .pl_scale    ({xl_scale_q,       3'd1}),
-        .pl_depth    ({4'd1,             4'd0}),               // XL (1) over desktop (0)
-        .pl_clip_x0  ({xl_org_x_r,       12'd0}),
-        .pl_clip_y0  ({xl_org_y_r,       12'd0}),
-        .pl_clip_x1  ({xl_clx1_r,        12'd1920}),
-        .pl_clip_y1  ({xl_cly1_r,        12'd1080}),
+        // Buses pack {plane2, plane1, plane0} = {XL, drag-overlay, desktop}.
+        // depth: desktop 0 (back), overlay 1, XL 2 (front) — the overlay rides
+        // above the desktop but below the XL/ST windows so a dragged window
+        // never jumps in front of them.
+        .pl_enable   ({1'b1,       ov_en_d,  1'b1}),          // XL on, overlay gated, desktop on
+        .pl_origin_x ({xl_org_x_r, ov_x_d,   12'd0}),         // XL runtime-scaled (gp0_ctrl[3:1])
+        .pl_origin_y ({xl_org_y_r, ov_y_d,   12'd0}),
+        .pl_scale    ({xl_scale_q, 3'd1,     3'd1}),
+        .pl_depth    ({4'd2,       4'd1,     4'd0}),
+        .pl_clip_x0  ({xl_org_x_r, ov_x_d,   12'd0}),
+        .pl_clip_y0  ({xl_org_y_r, ov_y_d,   12'd0}),
+        .pl_clip_x1  ({xl_clx1_r,  ov_x1_d,  12'd1920}),
+        .pl_clip_y1  ({xl_cly1_r,  ov_y1_d,  12'd1080}),
         .bg_color    (24'h00_00_00),
         .src_col_o   (cmp_src_col),
         .src_row_o   (cmp_src_row),                            // current row (unused at top)
-        .src_row_next_o (cmp_src_row_next),                    // next row -> plane_fetch1 prefetch
-        .src_pixel_i ({xl_pixel, desk_pixel}),                // {plane1, plane0}
+        .src_row_next_o (cmp_src_row_next),                    // next row -> plane_fetch prefetch
+        .src_pixel_i ({xl_pixel, overlay_pixel, desk_pixel}), // {plane2, plane1, plane0}
         .rgb_r (comp_rgb_r), .rgb_g (comp_rgb_g), .rgb_b (comp_rgb_b),
         .de_o (comp_de), .hsync_o (comp_hsync), .vsync_o (comp_vsync)
     );
@@ -1444,6 +1519,10 @@ module fpga_xt_top (
     // board still boots showing bars; the PS clears it to show the live
     // compositor — no bitstream rebuild to toggle (config belongs in PS sw).
     wire [7:0] gp0_ctrl;                              // driven by u_axi_bridge
+    // Drag-overlay config (clk_sys), driven by u_axi_bridge (offsets 0x21-0x2F).
+    wire [31:0] overlay_base;
+    wire [11:0] overlay_x, overlay_y, overlay_w, overlay_h;
+    wire        overlay_en, overlay_commit;
     (* ASYNC_REG = "TRUE" *) reg [1:0] tp_en_sync = 2'b11;
     always_ff @(posedge clk_pix) tp_en_sync <= {tp_en_sync[0], gp0_ctrl[0]};
     wire test_pattern_pix = tp_en_sync[1];
@@ -2013,19 +2092,20 @@ module fpga_xt_top (
         .m_axi_hp3_wstrb    (8'd0),
         .m_axi_hp3_wvalid   (1'b0),
 
-        // HP2 — antic_writeback WRITE master (moved off HP3).  Read channel
-        // tied off; AWCACHE=0011 (bufferable+modifiable) like HP3's write was.
-        .m_axi_hp2_araddr   (32'd0),
-        .m_axi_hp2_arburst  (2'd0),
-        .m_axi_hp2_arcache  (4'd0),
+        // HP2 — antic_writeback WRITE master (moved off HP3) + drag-overlay
+        // READ master (plane_fetch_overlay).  AWCACHE=0011 (bufferable+
+        // modifiable) like HP3's write was; ARCACHE matches the HP0/HP3 reads.
+        .m_axi_hp2_araddr   (hp2_araddr[31:0]),
+        .m_axi_hp2_arburst  (hp2_arburst[1:0]),
+        .m_axi_hp2_arcache  (4'b0011),
         .m_axi_hp2_arid     (6'd0),
-        .m_axi_hp2_arlen    (4'd0),
+        .m_axi_hp2_arlen    (hp2_arlen[3:0]),
         .m_axi_hp2_arlock   (2'd0),
         .m_axi_hp2_arprot   (3'd0),
         .m_axi_hp2_arqos    (4'd0),
-        .m_axi_hp2_arready  (),
-        .m_axi_hp2_arsize   (3'd0),
-        .m_axi_hp2_arvalid  (1'b0),
+        .m_axi_hp2_arready  (hp2_arready),
+        .m_axi_hp2_arsize   (hp2_arsize[2:0]),
+        .m_axi_hp2_arvalid  (hp2_arvalid),
         .m_axi_hp2_awaddr   (hp2_awaddr[31:0]),
         .m_axi_hp2_awburst  (hp2_awburst[1:0]),
         .m_axi_hp2_awcache  (4'b0011),
@@ -2041,12 +2121,12 @@ module fpga_xt_top (
         .m_axi_hp2_bready   (hp2_bready),
         .m_axi_hp2_bresp    (),
         .m_axi_hp2_bvalid   (hp2_bvalid),
-        .m_axi_hp2_rdata    (),
+        .m_axi_hp2_rdata    (hp2_rdata),
         .m_axi_hp2_rid      (),
-        .m_axi_hp2_rlast    (),
-        .m_axi_hp2_rready   (1'b0),
+        .m_axi_hp2_rlast    (hp2_rlast),
+        .m_axi_hp2_rready   (hp2_rready),
         .m_axi_hp2_rresp    (),
-        .m_axi_hp2_rvalid   (),
+        .m_axi_hp2_rvalid   (hp2_rvalid),
         .m_axi_hp2_wdata    (hp2_wdata),
         .m_axi_hp2_wid      (6'd0),
         .m_axi_hp2_wlast    (hp2_wlast),
@@ -2176,7 +2256,14 @@ module fpga_xt_top (
         .clock_mult      (clock_mult_q),     // $D4CA read-back at GP0 offset 0x1E
         .gp0_ctrl        (gp0_ctrl),
         .xt_unlock_we    (xt_unlock_we),     // A9 unlock write strobe (offset 0x20)
-        .xt_unlock_state (xt_unlock)         // effective unlock, read-back at 0x20
+        .xt_unlock_state (xt_unlock),        // effective unlock, read-back at 0x20
+        .overlay_base    (overlay_base),     // drag-overlay config (offsets 0x21-0x2F)
+        .overlay_x       (overlay_x),
+        .overlay_y       (overlay_y),
+        .overlay_w       (overlay_w),
+        .overlay_h       (overlay_h),
+        .overlay_en      (overlay_en),
+        .overlay_commit  (overlay_commit)
     );
 
     // ROM-init AXI-Lite slave — see hdl/sally_rom_loader.sv.
@@ -2351,6 +2438,12 @@ module fpga_xt_top (
     assign hp2_awready = 1'b1;
     assign hp2_wready  = 1'b1;
     assign hp2_bvalid  = 1'b1;
+    // Drag-overlay HP2 read channel: the OOC stub has no HP2 port, so tie the
+    // read inputs to benign constants (no functional read in OOC).
+    assign hp2_arready = 1'b1;
+    assign hp2_rvalid  = 1'b0;
+    assign hp2_rlast   = 1'b0;
+    assign hp2_rdata   = 64'd0;
     `endif
 
 endmodule

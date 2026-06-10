@@ -201,3 +201,39 @@ uint8_t xt_unlock_get(void)
 {
     return xt_blitter_read8(XT_BL_UNLOCK);
 }
+
+/* ---- Drag overlay ---------------------------------------------------------
+ * The write to OVL_EN is the COMMIT: the PL captures {x,y,w,h,en} atomically
+ * on that write and adopts it at the next vblank (so a move never tears and a
+ * half-written multi-byte position never reaches the compositor).  Always
+ * write OVL_EN last. */
+void xt_overlay_enable(uint32_t base, uint16_t x, uint16_t y, uint16_t w, uint16_t h)
+{
+    xt_blitter_write8(XT_BL_OVL_BASE_0, (uint8_t)(base & 0xFF));
+    xt_blitter_write8(XT_BL_OVL_BASE_1, (uint8_t)((base >> 8)  & 0xFF));
+    xt_blitter_write8(XT_BL_OVL_BASE_2, (uint8_t)((base >> 16) & 0xFF));
+    xt_blitter_write8(XT_BL_OVL_BASE_3, (uint8_t)((base >> 24) & 0xFF));
+    xt_blitter_write8(XT_BL_OVL_W_LO,   (uint8_t)(w & 0xFF));
+    xt_blitter_write8(XT_BL_OVL_W_HI,   (uint8_t)((w >> 8) & 0x0F));
+    xt_blitter_write8(XT_BL_OVL_H_LO,   (uint8_t)(h & 0xFF));
+    xt_blitter_write8(XT_BL_OVL_H_HI,   (uint8_t)((h >> 8) & 0x0F));
+    xt_blitter_write8(XT_BL_OVL_X_LO,   (uint8_t)(x & 0xFF));
+    xt_blitter_write8(XT_BL_OVL_X_HI,   (uint8_t)((x >> 8) & 0x0F));
+    xt_blitter_write8(XT_BL_OVL_Y_LO,   (uint8_t)(y & 0xFF));
+    xt_blitter_write8(XT_BL_OVL_Y_HI,   (uint8_t)((y >> 8) & 0x0F));
+    xt_blitter_write8(XT_BL_OVL_EN,     0x01);            /* enable + commit */
+}
+
+void xt_overlay_move(uint16_t x, uint16_t y)
+{
+    xt_blitter_write8(XT_BL_OVL_X_LO,   (uint8_t)(x & 0xFF));
+    xt_blitter_write8(XT_BL_OVL_X_HI,   (uint8_t)((x >> 8) & 0x0F));
+    xt_blitter_write8(XT_BL_OVL_Y_LO,   (uint8_t)(y & 0xFF));
+    xt_blitter_write8(XT_BL_OVL_Y_HI,   (uint8_t)((y >> 8) & 0x0F));
+    xt_blitter_write8(XT_BL_OVL_EN,     0x01);            /* keep enabled + commit */
+}
+
+void xt_overlay_disable(void)
+{
+    xt_blitter_write8(XT_BL_OVL_EN,     0x00);            /* disable + commit */
+}

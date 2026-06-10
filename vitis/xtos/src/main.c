@@ -576,6 +576,7 @@ static void repl_help(void)
       "  deskfill [rgba]  fill desktop plane-0 surface (0x30000000); default black\r\n"
       "  bars <0|1>       HDMI test pattern off/on (writes 43C0001C)\r\n"
       "  scale <1..5>     XL plane scale (gp0_ctrl[3:1]); sweep for blend correlation\r\n"
+      "  ovl [x y|off]    drag-overlay test: paint+enable plane-1 card; move; or off\r\n"
       "  dmactl <0|1>     honour DMACTL screen-blank (gp0_ctrl[4]); 1=real Atari, 0=legacy\r\n"
       "  hdmi             re-run SiI9022 output init (sii_enable_output)\r\n"
       "  diag             decode GP0 diag word + measured H_RES/V_RES\r\n"
@@ -1057,6 +1058,45 @@ static void repl_exec(char *cmd)
                    g_gp0, n, g_gp0 & 1u);
         Xil_Out32(XT_BLITTER_BASE + 0x1Cu, (u32)g_gp0);
         uart1_puts("  ok\r\n");
+        return;
+    }
+    if (!strcmp(argv[0], "ovl")) {
+        /* Drag-overlay de-risk: paint a recognisable RGBA surface into the free
+         * DDR gap (0x30800000, between the GEM plane and the XL buffers), then
+         * composite it as plane 1 (above the desktop, below the XL window).
+         *   ovl            paint + enable @ (400,300)
+         *   ovl <x> <y>    move it (tests the vblank-latched, tear-free move)
+         *   ovl off        disable
+         * Expect: a 256x160 cyan card, white border, RED top-left corner (marks
+         * the origin), GREEN bottom-right; ABOVE the GEM desktop but BEHIND the
+         * Atari XL window where they overlap; smooth, tear-free on move. */
+        #define OVL_SCRATCH 0x32000000u   /* clear of the plane (..0x30870000) + XL bufs */
+        #define OVL_RGBA(r,g,b) (((u32)(r)<<24) | ((u32)(g)<<16) | ((u32)(b)<<8) | 0xFFu)
+        const uint16_t OW = 256, OH = 160;
+        if (argc >= 2 && !strcmp(argv[1], "off")) {
+            xt_overlay_disable(); uart1_puts("  overlay disabled\r\n"); return;
+        }
+        if (argc >= 3) {
+            uint16_t x = (uint16_t)strtoul(argv[1], NULL, 0);
+            uint16_t y = (uint16_t)strtoul(argv[2], NULL, 0);
+            xt_overlay_move(x, y);
+            xil_printf("  overlay -> (%u,%u)\r\n", (unsigned)x, (unsigned)y);
+            return;
+        }
+        { u32 *s = (u32 *)(uintptr_t)OVL_SCRATCH;       /* fixed OVL_STRIDE_W words/row */
+          for (uint16_t r = 0; r < OH; r++) {
+            for (uint16_t c = 0; c < OW; c++) {
+                u32 px;
+                if (r < 4 || c < 4 || r >= OH-4 || c >= OW-4) px = OVL_RGBA(255,255,255);
+                else if (r < 28 && c < 28)                    px = OVL_RGBA(255,0,0);
+                else if (r >= OH-28 && c >= OW-28)            px = OVL_RGBA(0,255,0);
+                else                                          px = OVL_RGBA(0,200,200);
+                s[(u32)r*OVL_STRIDE_W + c] = px;
+            }
+            Xil_DCacheFlushRange((INTPTR)(s + (u32)r*OVL_STRIDE_W), (u32)OW*4u);
+          } }
+        xt_overlay_enable(OVL_SCRATCH, 400, 300, OW, OH);
+        uart1_puts("  overlay ON: 256x160 test card @ (400,300)  [ovl x y = move, ovl off]\r\n");
         return;
     }
     if (!strcmp(argv[0], "dmactl")) {

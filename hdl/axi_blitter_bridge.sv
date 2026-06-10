@@ -107,7 +107,25 @@ module axi_blitter_bridge (
     // 6502 at $D1DF).  xt_unlock_state is the effective value fed back so the A9
     // can read it (incl. any 6502 self-unlock) at offset 0x20.
     output reg         xt_unlock_we,       // 1-cycle write strobe (byte on bl_data)
-    input  wire [7:0]  xt_unlock_state     // effective unlock, for read-back
+    input  wire [7:0]  xt_unlock_state,    // effective unlock, for read-back
+
+    // ---- Drag-overlay config (clk_sys) — WRITTEN at offsets 0x21..0x2F ------
+    // A movable DDR-backed surface composited above the GEM desktop (below the
+    // XL/ST windows) to show a window while it is being dragged: the PS moves
+    // the window by updating x/y here instead of re-blitting it into the
+    // desktop plane every frame (tear-free — see docs/video).  These offsets
+    // are page 2 ($D4Dx), the NATIVE-only sprite page — a no-op on the GP0
+    // bridge — so stealing them is safe and never strobes bl_we.  A write to
+    // 0x21 (enable) also toggles overlay_commit so clk_pix can atomically adopt
+    // the whole {x,y,w,h,en} set (stable-data + sync-flag CDC), avoiding a
+    // multi-bit 2-FF bus-sync glitch.
+    output reg  [31:0] overlay_base,   // DDR byte address of the drag surface
+    output reg  [11:0] overlay_x,      // on-screen origin X
+    output reg  [11:0] overlay_y,      // on-screen origin Y
+    output reg  [11:0] overlay_w,      // surface width  (px); stride = w<<2
+    output reg  [11:0] overlay_h,      // surface height (px)
+    output reg         overlay_en,     // 1 = composite the overlay
+    output reg         overlay_commit  // toggles on each 0x21 write (commit flag)
 );
 
     // ====================================================================
@@ -165,6 +183,13 @@ module axi_blitter_bridge (
                                        // `reset` / cold boot.  bits[3:1]=0 =
                                        // default XL scale.
             xt_unlock_we  <= 1'b0;
+            overlay_base   <= 32'd0;
+            overlay_x      <= 12'd0;
+            overlay_y      <= 12'd0;
+            overlay_w      <= 12'd0;
+            overlay_h      <= 12'd0;
+            overlay_en     <= 1'b0;
+            overlay_commit <= 1'b0;
         end else begin
             s_axi_awready <= 1'b0;
             s_axi_wready  <= 1'b0;
@@ -203,9 +228,37 @@ module axi_blitter_bridge (
                     // Both halves captured (in prior cycles) -> commit + respond.
                     if (aw_have && w_have) begin
                         bl_data      <= w_byte;
-                        if      (aw_off == 6'h1C) gp0_ctrl     <= w_byte; // control reg
-                        else if (aw_off == 6'h20) xt_unlock_we <= 1'b1;   // unlock ctrl
-                        else                      bl_we        <= 1'b1;   // blitter strobe
+                        // Page 2 (0x20-0x2F = $D4Dx) is native-sprite-only — a
+                        // no-op on the bridge — so 0x20 is the unlock intercept
+                        // and 0x21-0x2F are the drag-overlay config; neither
+                        // strobes bl_we.  0x1C is the control reg.  Everything
+                        // else is a blitter register write.
+                        if (aw_off == 6'h1C) begin
+                            gp0_ctrl <= w_byte;                            // control reg
+                        end else if (aw_off[5:4] == 2'b10) begin           // page 2: $D4Dx
+                            case (aw_off[3:0])
+                                4'h0: xt_unlock_we        <= 1'b1;         // 0x20 unlock ctrl
+                                4'h1: begin                                // 0x21 enable + commit
+                                          overlay_en     <= w_byte[0];
+                                          overlay_commit <= ~overlay_commit;
+                                      end
+                                4'h4: overlay_base[7:0]   <= w_byte;       // 0x24
+                                4'h5: overlay_base[15:8]  <= w_byte;       // 0x25
+                                4'h6: overlay_base[23:16] <= w_byte;       // 0x26
+                                4'h7: overlay_base[31:24] <= w_byte;       // 0x27
+                                4'h8: overlay_x[7:0]      <= w_byte;       // 0x28
+                                4'h9: overlay_x[11:8]     <= w_byte[3:0];  // 0x29
+                                4'hA: overlay_y[7:0]      <= w_byte;       // 0x2A
+                                4'hB: overlay_y[11:8]     <= w_byte[3:0];  // 0x2B
+                                4'hC: overlay_w[7:0]      <= w_byte;       // 0x2C
+                                4'hD: overlay_w[11:8]     <= w_byte[3:0];  // 0x2D
+                                4'hE: overlay_h[7:0]      <= w_byte;       // 0x2E
+                                4'hF: overlay_h[11:8]     <= w_byte[3:0];  // 0x2F
+                                default: ;                                 // 0x22,0x23 unused
+                            endcase
+                        end else begin
+                            bl_we <= 1'b1;                                 // blitter strobe
+                        end
                         s_axi_bresp  <= 2'b00;
                         s_axi_bvalid <= 1'b1;
                         aw_have      <= 1'b0;

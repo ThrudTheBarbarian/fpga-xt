@@ -345,9 +345,30 @@ static void cur_show(int x, int y) {
     s_cx = x; s_cy = y; s_cvis = 1;
 }
 
-/* Move the pointer.  Pure moves touch only the cursor box; with a button held
- * (click/drag) the WM may move a window, so recomposite the whole scene. */
-/* Flush a plane rectangle to DDR (row by row), clamped to the desktop. */
+/* Move the pointer.  Pure moves touch only the cursor box; a HW-overlay drag
+ * moves just the overlay layer; otherwise (button held, no overlay) the WM may
+ * move a window so we recomposite the whole scene. */
+
+/* ---- HW drag overlay (compositor plane 1) ---------------------------------
+ * While a window is dragged we LIFT it off the GEM desktop plane (g_wm.hide_slot
+ * omits it from draws) and show it in the hardware overlay layer instead, so a
+ * move is one register write (vblank-latched, tear-free) with NO plane redraw.
+ * The drag surface is a tight RGBA copy of the (raised, unoccluded) window rect
+ * read straight off the plane, with the pointer baked in at the grab offset so
+ * the cursor tracks the window (the overlay sits ABOVE the plane, so the plane
+ * save-under pointer would otherwise be hidden under it).  Shares the test
+ * scratch with the REPL `ovl` command (never concurrent). */
+/* The desktop plane spans 0x30000000..0x30870000 (8192-byte stride * 1080) and
+ * the XL buffers sit at 0x31000000..0x31300000, so the drag surface lives in the
+ * clear region above them.  16 MB fits any window up to 2048x2048 at the fixed
+ * OVL_STRIDE_W. */
+#define DRAG_BASE 0x32000000u
+#define DRAG_END  0x33000000u
+static int g_drag_active = 0;
+
+/* Flush a plane rectangle to DDR (row by row), clamped to the desktop — so a
+ * damage-rect redraw only pushes its own area (not the whole 8 MB plane, which
+ * would race the scanout and flicker every window). */
 static void flush_rect(int x, int y, int w, int h)
 {
     uint32_t *pl = (uint32_t *)(uintptr_t)DESK_BASE;
@@ -359,24 +380,89 @@ static void flush_rect(int x, int y, int w, int h)
         Xil_DCacheFlushRange((INTPTR)(pl + (size_t)(y+r)*DESK_STRIDE + x), (unsigned)w*4);
 }
 
+static void drag_build_surface(gem_window *w, int gx, int gy)
+{
+    uint32_t *pl = (uint32_t *)(uintptr_t)DESK_BASE;
+    uint32_t *ds = (uint32_t *)(uintptr_t)DRAG_BASE;
+    int W = w->w, H = w->h;                           /* surface uses OVL_STRIDE_W/row */
+    for (int r = 0; r < H; r++) {
+        int py = w->y + r;
+        for (int c = 0; c < W; c++) {
+            int px = w->x + c;
+            ds[(size_t)r*OVL_STRIDE_W + c] = (px >= 0 && px < DESK_W && py >= 0 && py < DESK_H)
+                                ? pl[(size_t)py*DESK_STRIDE + px] : 0;
+        }
+    }
+    for (int r = 0; r < CURH; r++) for (int c = 0; c < CURW; c++) {   /* bake the pointer */
+        int bx = gx + c, by = gy + r;
+        if (bx < 0 || bx >= W || by < 0 || by >= H) continue;
+        char ch = s_arrow[r][c];
+        if (ch == ' ') continue;
+        ds[(size_t)by*OVL_STRIDE_W + bx] = (ch == 'X') ? GFX_RGB(0,0,0) : GFX_RGB(255,255,255);
+    }
+    for (int r = 0; r < H; r++)                       /* strided -> flush each row's W px */
+        Xil_DCacheFlushRange((INTPTR)(ds + (size_t)r*OVL_STRIDE_W), (size_t)W*4u);
+}
+
+/* Begin a HW-overlay drag of the (already raised) window in g_wm.drag_slot.
+ * All redraws are confined to the window's OWN rect (no full-screen clear/flush,
+ * which would flicker every window).  The window is NOT lifted off the plane
+ * yet: it stays drawn, exactly coincident with the overlay, so nothing changes
+ * visibly at grab.  The lift happens on the first actual move (wm_pointer). */
+static void drag_begin(void)
+{
+    gem_window *w = &g_wm.win[g_wm.drag_slot];        /* fixed stride: cap W to the stride */
+    if ((unsigned)w->w > OVL_STRIDE_W ||              /* and H so the surface fits the region */
+        (size_t)w->h * (OVL_STRIDE_W * 4u) > (DRAG_END - DRAG_BASE)) return; /* else SW path */
+    int x0 = w->x, y0 = w->y;
+    gem_wm_draw_rect(&g_wm, x0, y0, x0 + w->w - 1, y0 + w->h - 1);  /* window on top (raise) */
+    flush_rect(x0, y0, w->w, w->h);                                /* — confined to its rect */
+    drag_build_surface(w, g_wm.drag_ox, g_wm.drag_oy);             /* copy the clean window  */
+    int ox = w->x < 0 ? 0 : w->x, oy = w->y < 0 ? 0 : w->y;
+    xt_overlay_enable(DRAG_BASE, (uint16_t)ox, (uint16_t)oy,       /* overlay coincident with */
+                      (uint16_t)w->w, (uint16_t)w->h);             /* the still-drawn window  */
+    s_cvis = 0;                                       /* pointer now lives in the overlay */
+    g_drag_active = 1;                                /* hide_slot stays -1 until first move */
+}
+
+/* End a HW-overlay drag: settle the window onto the plane at its final spot
+ * (confined redraw, under the still-live overlay), then retire the overlay. */
+static void drag_end(void)
+{
+    int fx = 0, fy = 0, fw = 0, fh = 0, have = 0;
+    if (g_wm.drag_slot >= 0) {                        /* capture final rect before release */
+        gem_window *w = &g_wm.win[g_wm.drag_slot];
+        fx = w->x; fy = w->y; fw = w->w; fh = w->h; have = 1;
+    }
+    gem_wm_mouse_button(&g_wm, g_mx, g_my, 0);        /* end the WM drag (clears drag_slot) */
+    g_mbtn = 0;
+    g_wm.hide_slot = -1;                              /* un-lift: the window draws again */
+    if (have) {                                       /* redraw it at the final pos, confined */
+        gem_wm_draw_rect(&g_wm, fx, fy, fx + fw - 1, fy + fh - 1);
+        flush_rect(fx, fy, fw, fh);
+    }
+    cur_show(g_mx, g_my);                             /* restore the plane pointer        */
+    xt_overlay_disable();                             /* retire the overlay (window already there) */
+    g_drag_active = 0;
+}
+
 static void wm_pointer(int dx, int dy)
 {
     if (!g_wm_up) return;
     int nx = g_mx + dx; if (nx < 0) nx = 0; if (nx >= DESK_W) nx = DESK_W - 1;
     int ny = g_my + dy; if (ny < 0) ny = 0; if (ny >= DESK_H) ny = DESK_H - 1;
-    if (g_mbtn && g_wm.drag_slot >= 0) {              /* dragging a window -> damage-rect redraw */
-        gem_window *w = &g_wm.win[g_wm.drag_slot];   /* full old∪new rect: artifact-free (the */
-        int ox0 = w->x, oy0 = w->y;                  /* per-strip composite-in-place was buggy; */
-        int ox1 = w->x + w->w - 1, oy1 = w->y + w->h - 1;  /* tearing is the real issue -> needs */
-        s_cvis = 0;                                  /* a double-buffered GEM layer, not this).  */
+    if (g_drag_active) {                              /* HW-overlay drag: move the layer only */
+        gem_window *w = &g_wm.win[g_wm.drag_slot];
+        if (g_wm.hide_slot < 0) {                     /* first move: lift it off the plane now */
+            int x0 = w->x, y0 = w->y;                 /* OLD rect — redraw UNDER the overlay   */
+            g_wm.hide_slot = g_wm.drag_slot;          /* (overlay still covers it), then the   */
+            gem_wm_draw_rect(&g_wm, x0, y0, x0 + w->w - 1, y0 + w->h - 1);  /* move reveals the */
+            flush_rect(x0, y0, w->w, w->h);           /* clean hole — no flicker, confined.    */
+        }
         g_mx = nx; g_my = ny;
-        gem_wm_mouse_move(&g_wm, nx, ny);            /* moves the window */
-        int x0 = w->x < ox0 ? w->x : ox0, y0 = w->y < oy0 ? w->y : oy0;
-        int x1 = (w->x + w->w - 1) > ox1 ? (w->x + w->w - 1) : ox1;
-        int y1 = (w->y + w->h - 1) > oy1 ? (w->y + w->h - 1) : oy1;
-        gem_wm_draw_rect(&g_wm, x0, y0, x1, y1);
-        flush_rect(x0, y0, x1 - x0 + 1, y1 - y0 + 1);
-        cur_show(nx, ny);
+        gem_wm_mouse_move(&g_wm, nx, ny);            /* updates the (hidden) window's x/y */
+        int ox = w->x < 0 ? 0 : w->x, oy = w->y < 0 ? 0 : w->y;
+        xt_overlay_move((uint16_t)ox, (uint16_t)oy); /* tear-free; no plane write, no flush */
     } else if (g_mbtn) {                              /* button down, no window grabbed -> full */
         s_cvis = 0;
         g_mx = nx; g_my = ny;
@@ -389,15 +475,39 @@ static void wm_pointer(int dx, int dy)
     }
 }
 
+/* Topmost live window currently marked active, or NULL. */
+static gem_window *wm_active_window(void)
+{
+    for (int i = g_wm.nwin - 1; i >= 0; i--) {
+        gem_window *w = &g_wm.win[g_wm.z[i]];
+        if (w->used && w->active) return w;
+    }
+    return NULL;
+}
+
 /* Toggle the left button at the pointer (space): grab a title to drag, or tap
  * twice for a click (raise / close box). */
 static void wm_button_toggle(void)
 {
     if (!g_wm_up) return;
+    if (g_drag_active) { drag_end(); return; }        /* second press -> drop the window */
     g_mbtn = !g_mbtn;
-    s_cvis = 0;
-    gem_wm_mouse_button(&g_wm, g_mx, g_my, g_mbtn);
-    gem_wm_draw(&g_wm);
+    cur_hide();                                        /* cleanly erase the plane pointer first */
+    gem_window *prev = wm_active_window();             /* who's active BEFORE the raise/focus */
+    gem_wm_mouse_button(&g_wm, g_mx, g_my, g_mbtn);    /* press raises+focuses+grabs; release ends */
+    if (g_mbtn && g_wm.drag_slot >= 0) {              /* grabbed a title -> HW-overlay drag */
+        drag_begin();
+        if (g_drag_active) {
+            gem_window *cur = &g_wm.win[g_wm.drag_slot];
+            if (prev && prev != cur && !prev->active) {   /* focus moved: repaint the */
+                gem_wm_draw_rect(&g_wm, prev->x, prev->y, /* de-focused window inactive, */
+                                 prev->x + prev->w - 1, prev->y + prev->h - 1);
+                flush_rect(prev->x, prev->y, prev->w, prev->h);   /* confined to its rect */
+            }
+            return;                                   /* overlay running; pointer is baked in */
+        }
+    }
+    gem_wm_draw(&g_wm);                               /* click / close / too-big: normal redraw */
     desk_flush();
     cur_show(g_mx, g_my);
 }
@@ -407,7 +517,8 @@ void gem_mouse_reset(void)
 {
     g_esc = 0; g_escn = 0;
     if (!g_wm_up) return;
-    if (g_mbtn) { gem_wm_mouse_button(&g_wm, g_mx, g_my, 0); g_mbtn = 0; }
+    if (g_drag_active)      drag_end();                            /* clean up a live drag */
+    else if (g_mbtn) { gem_wm_mouse_button(&g_wm, g_mx, g_my, 0); g_mbtn = 0; }
     cur_hide();
     cur_show(g_mx, g_my);   /* (re)show the pointer at its current spot */
 }

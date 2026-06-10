@@ -90,6 +90,38 @@
 #define XT_BL_DST_STRIDE_LO      0x3A     /* DST_STRIDE bytes/row, low  */
 #define XT_BL_DST_STRIDE_HI      0x3B
 
+/* --- Drag overlay (GP0 offsets 0x21..0x2F, page 2 $D4Dx) -------------- */
+/* A movable DDR-backed surface composited above the GEM desktop (depth 1)
+ * but below the XL/ST windows (depth 2): shows a GEM window WHILE it is
+ * being dragged, so moving it is a single x/y register write instead of
+ * re-blitting it into the desktop plane each frame (tear-free).
+ *
+ * Protocol: set BASE/X/Y/W/H while disabled, then write OVL_EN=1 LAST — that
+ * write also COMMITS the whole {x,y,w,h,en} set, which the PL adopts at the
+ * next vblank (atomic, no tear).  Per drag step, update X/Y then re-write
+ * OVL_EN (=1) to re-commit.  On drop, write OVL_EN=0 (commits the disable).
+ *
+ * The surface row stride is a FIXED PL constant (OVL_STRIDE_W words below): a
+ * variable stride would synthesise a DSP multiply on the HP2 read-address path
+ * and bust clk_sys.  So the PS must render the drag surface at this stride
+ * (row r of column c at word r*OVL_STRIDE_W + c); only the first W columns are
+ * fetched, so the padding costs memory but not bandwidth.
+ * See hdl/fpga_xt_top.sv (u_plane_fetch_overlay) + hdl/axi_blitter_bridge.sv. */
+#define OVL_STRIDE_W   2048u   /* overlay surface stride in 32-bit words (= 8192 B) */
+#define XT_BL_OVL_EN             0x21   /* bit0 = enable; the write commits x/y/w/h */
+#define XT_BL_OVL_BASE_0         0x24   /* surface DDR base, byte 0 (LSB) */
+#define XT_BL_OVL_BASE_1         0x25
+#define XT_BL_OVL_BASE_2         0x26
+#define XT_BL_OVL_BASE_3         0x27   /* byte 3 (MSB) */
+#define XT_BL_OVL_X_LO           0x28   /* on-screen origin X (12-bit) */
+#define XT_BL_OVL_X_HI           0x29
+#define XT_BL_OVL_Y_LO           0x2A   /* on-screen origin Y (12-bit) */
+#define XT_BL_OVL_Y_HI           0x2B
+#define XT_BL_OVL_W_LO           0x2C   /* surface width  (12-bit); stride = w*4 */
+#define XT_BL_OVL_W_HI           0x2D
+#define XT_BL_OVL_H_LO           0x2E   /* surface height (12-bit) */
+#define XT_BL_OVL_H_HI           0x2F
+
 /* --- XT register-unlock control (GP0 offset 0x20) -------------------- */
 /* The A9 sets the machine's stock-vs-XT personality: each bit ungates the
  * NATIVE (6502/ANTIC-side) decode of one feature group.  The A9/bridge path
@@ -222,6 +254,17 @@ void xt_unlock_set(uint8_t mask);
 
 /* Read back the EFFECTIVE unlock mask (includes any 6502 self-unlock at $D1DF). */
 uint8_t xt_unlock_get(void);
+
+/* ---- Drag overlay (compositor plane 1) -------------------------------------
+ * A movable DDR-backed surface composited above the GEM desktop but below the
+ * XL/ST windows (see XT_BL_OVL_* above).  The caller renders an RGBA-8888
+ * surface at the fixed OVL_STRIDE_W row stride into DDR, FLUSHES it (HP2 read
+ * is not cache-coherent), then calls xt_overlay_enable().  Moving is one call;
+ * the PL adopts the new position at the next vblank (tear-free).  Disabling
+ * commits the hide.  No plane writes happen during a move. */
+void xt_overlay_enable(uint32_t base, uint16_t x, uint16_t y, uint16_t w, uint16_t h);
+void xt_overlay_move(uint16_t x, uint16_t y);   /* re-position only (keeps enabled) */
+void xt_overlay_disable(void);
 
 /* Low-level byte poke for any other register access pattern not
  * covered above. */

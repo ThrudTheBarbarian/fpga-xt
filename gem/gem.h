@@ -57,6 +57,10 @@ typedef struct {
     gem_hit      drag_mode;            // GEM_HIT_TITLE (move) or GEM_HIT_RESIZE
     int          drag_ox, drag_oy;     // pointer offset within the window at grab
     int          no_cursor;            // 1 = caller draws the pointer (A9 save-under)
+    int          hide_slot;            // slot to OMIT from draws, or -1.  Used to
+                                       // "lift" a window off the desktop plane
+                                       // while it is shown in a HW drag overlay,
+                                       // so it never appears in two places.
 } gem_wm;
 
 // init also brings up the VDI on the desktop surface (vdi_init).

@@ -44,6 +44,7 @@ void gem_wm_init(gem_wm *wm, gfx_surface *desk, uint32_t desktop_color) {
     wm->nwin          = 0;
     wm->mx = wm->my   = 0;
     wm->drag_slot     = -1;
+    wm->hide_slot     = -1;
     wm->title_face    = NULL;
     wm->title_font    = NULL;
     for (int i = 0; i < GEM_MAX_WINDOWS; i++) wm->win[i].used = 0;
@@ -262,6 +263,7 @@ void gem_wm_draw(gem_wm *wm) {
     for (int k = 0; k < wm->nwin; k++) {             // bottom..top
         gem_window *win = &wm->win[wm->z[k]];
         if (!win->used) continue;
+        if (wm->z[k] == wm->hide_slot) continue;     // lifted into a HW overlay
         if (win->dirty && win->redraw) { win->redraw(win, win->ud); win->dirty = 0; }
         draw_frame(wm, win);
         // Composite the backing-store content into the window's content rect.
@@ -291,6 +293,7 @@ void gem_wm_draw_rect(gem_wm *wm, int x0, int y0, int x1, int y1) {
     for (int k = 0; k < wm->nwin; k++) {             // bottom..top
         gem_window *win = &wm->win[wm->z[k]];
         if (!win->used) continue;
+        if (wm->z[k] == wm->hide_slot) continue;     // lifted into a HW overlay
         if (win->x > x1 || win->x + win->w - 1 < x0 ||
             win->y > y1 || win->y + win->h - 1 < y0) continue;      // outside the damage
         if (win->dirty && win->redraw) { win->redraw(win, win->ud); win->dirty = 0; }
