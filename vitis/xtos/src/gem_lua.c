@@ -26,6 +26,7 @@
 
 #include "gfx.h"
 #include "vdi/vdi.h"
+#include "gem.h"             /* gem_wm — backing-store window manager */
 #include "xt_blitter.h"      /* hardware blitter (HP1 DDR master) — gfx_a9 de-risk */
 
 #define DESK_BASE    0x30000000u
@@ -39,6 +40,8 @@ static gfx_surface g_desk = {
 };
 static int        g_vh  = 0;         /* VDI virtual workstation handle (0 = down) */
 static font_face *g_sys = NULL;      /* loaded system font (id 1)                 */
+static gem_wm     g_wm;              /* backing-store window manager (lazy init)  */
+static int        g_wm_up = 0;
 
 static void desk_flush(void)
 {
@@ -246,6 +249,40 @@ static int l_vdi_scaletest(lua_State *L)
     return 1;
 }
 
+/* gem_wm de-risk: bring up the backing-store window manager on the live plane
+ * and spawn two windows.  Each window owns an off-plane DDR backing the VDI
+ * draws into (local coords); gem_wm_draw() composites them onto the plane via
+ * the hardware blitter (gfx_blit, any-DDR DDR->DDR).  vdi.wintest() */
+static void win_content(gem_window *win, void *ud)
+{
+    int vh = win->vh;                       /* VDI workstation on the backing */
+    int16_t r[4];
+    vsf_interior(vh, 1);
+    vsf_color(vh, 0);                       /* pen 0 = white: content background */
+    r[0]=0; r[1]=0; r[2]=(int16_t)(win->cw-1); r[3]=(int16_t)(win->ch-1);
+    vr_recfl(vh, r);
+    vst_color(vh, 1);                       /* black text */
+    vst_height(vh, 28, NULL, NULL, NULL, NULL);
+    v_gtext(vh, 14, 44, (const char *)ud);
+}
+
+static int l_vdi_wintest(lua_State *L)
+{
+    if (!gem_ready(L)) return 0;
+    if (!g_wm_up) {
+        gem_wm_init(&g_wm, &g_desk, GFX_RGB(0x20, 0x60, 0x90));
+        gem_wm_set_font(&g_wm, g_sys);
+        g_wm_up = 1;
+    }
+    gem_window *a = gem_wm_add(&g_wm, 220, 160, 380, 260, "Window One", 1);
+    if (a) gem_wm_set_redraw(a, win_content, (void *)"Hello from window one");
+    gem_window *b = gem_wm_add(&g_wm, 560, 380, 380, 260, "Window Two", 0);
+    if (b) gem_wm_set_redraw(b, win_content, (void *)"...and window two");
+    gem_wm_draw(&g_wm);
+    desk_flush();
+    return 0;
+}
+
 /* vdi.srctest(x, y, 0xRRGGBB) — de-risk SRC_BLIT's coverage→colour path (the
  * font path).  Builds a 64x32 coverage atlas in DDR with a horizontal 0->255
  * gradient, then blits it in the given colour to (x,y) on the plane: you should
@@ -312,6 +349,7 @@ void gem_lua_open(lua_State *L)
         {"srctest",   l_vdi_srctest},  /* SRC_BLIT coverage — HW de-risk */
         {"windowtest",l_vdi_windowtest}, /* off-plane fill + composite — HW de-risk */
         {"scaletest", l_vdi_scaletest},  /* SCALED_BLIT bilinear — HW de-risk */
+        {"wintest",   l_vdi_wintest},    /* gem_wm backing-store windows — HW de-risk */
         {NULL, NULL}
     };
     luaL_newlib(L, vdi_lib);

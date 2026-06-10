@@ -392,7 +392,7 @@ _vdi_dir  = os.path.join(_gem_dir, "vdi")
 _gem_srcs = [os.path.join(_vdi_dir, f).replace("\\", "/")
              for f in sorted(os.listdir(_vdi_dir)) if f.endswith(".c")]
 _gem_srcs += [os.path.join(_gem_dir, f).replace("\\", "/")
-              for f in ("font.c", "font_catalog.c")]
+              for f in ("font.c", "font_catalog.c", "wm.c")]
 # gfx backend: the A9 build uses src/gfx_a9.c (hardware blitter for the desktop
 # plane + software fallback) instead of gem/gfx_soft.c (the SDL-testbed backend).
 # gfx_a9.c is picked up automatically by the src/ glob in _app_srcs above.
