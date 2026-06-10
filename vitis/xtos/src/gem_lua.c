@@ -272,6 +272,7 @@ static int l_vdi_wintest(lua_State *L)
     if (!g_wm_up) {
         gem_wm_init(&g_wm, &g_desk, GFX_RGB(0x20, 0x60, 0x90));
         gem_wm_set_font(&g_wm, g_sys);
+        g_wm.no_cursor = 1;          /* the A9 owns the pointer (save-under, below) */
         g_wm_up = 1;
     }
     gem_window *a = gem_wm_add(&g_wm, 220, 160, 380, 260, "Window One", 1);
@@ -281,6 +282,159 @@ static int l_vdi_wintest(lua_State *L)
     gem_wm_draw(&g_wm);
     desk_flush();
     return 0;
+}
+
+/* ---- serial-keyboard mouse driver -----------------------------------------
+ * main.c routes passthrough chars here while mouse-drive mode is on (toggled by
+ * '\').  Cursor keys move the WM pointer; Ctrl+arrow holds the LEFT button (so a
+ * Ctrl+arrow then a plain arrow = a click; sustained Ctrl+arrows = a drag).
+ * Option/Alt+arrow is the right button (reserved — gem_wm has no right action
+ * yet).  Recomposites + flushes the plane after each event. */
+static int  g_mx = DESK_W/2, g_my = DESK_H/2;   /* WM pointer position */
+static int  g_mbtn = 0;                          /* left button currently down */
+static int  g_esc = 0, g_escn = 0;               /* CSI escape parse state */
+static char g_escbuf[8];
+
+/* ---- A9 save-under pointer ------------------------------------------------
+ * gem_wm draws the scene only (no_cursor=1); we move the pointer by touching
+ * just its 12x19 box.  The scene under it is HW-composited in DDR, so the
+ * save-under read invalidates that box first; the cursor write flushes it. */
+#define CURW 12
+#define CURH 19
+static const char *s_arrow[CURH] = {
+    "X           ", "XX          ", "X.X         ", "X..X        ",
+    "X...X       ", "X....X      ", "X.....X     ", "X......X    ",
+    "X.......X   ", "X........X  ", "X.....XXXXX ", "X..X..X     ",
+    "X.X X..X    ", "XX  X..X    ", "X    X..X   ", "     X..X   ",
+    "      X..X  ", "      X..X  ", "       XX   ",
+};
+static uint32_t s_save[CURW * CURH];
+static int s_cx, s_cy, s_cvis;
+
+static void cur_inval(int x, int y) {
+    uint32_t *pl = (uint32_t *)(uintptr_t)DESK_BASE;
+    for (int r = 0; r < CURH; r++) { int py = y + r; if (py < 0 || py >= DESK_H) continue;
+        Xil_DCacheInvalidateRange((INTPTR)(pl + (size_t)py*DESK_STRIDE + x), CURW*4); }
+}
+static void cur_flush(int x, int y) {
+    uint32_t *pl = (uint32_t *)(uintptr_t)DESK_BASE;
+    for (int r = 0; r < CURH; r++) { int py = y + r; if (py < 0 || py >= DESK_H) continue;
+        Xil_DCacheFlushRange((INTPTR)(pl + (size_t)py*DESK_STRIDE + x), CURW*4); }
+}
+static void cur_hide(void) {
+    if (!s_cvis) return;
+    uint32_t *pl = (uint32_t *)(uintptr_t)DESK_BASE;
+    for (int r = 0; r < CURH; r++) { int py = s_cy + r; if (py < 0 || py >= DESK_H) continue;
+        for (int c = 0; c < CURW; c++) { int px = s_cx + c; if (px < 0 || px >= DESK_W) continue;
+            pl[(size_t)py*DESK_STRIDE + px] = s_save[r*CURW + c]; } }
+    cur_flush(s_cx, s_cy);
+    s_cvis = 0;
+}
+static void cur_show(int x, int y) {
+    uint32_t *pl = (uint32_t *)(uintptr_t)DESK_BASE;
+    cur_inval(x, y);                                   /* read fresh HW-composited scene */
+    for (int r = 0; r < CURH; r++) { int py = y + r;
+        for (int c = 0; c < CURW; c++) { int px = x + c;
+            int in = (py >= 0 && py < DESK_H && px >= 0 && px < DESK_W);
+            s_save[r*CURW + c] = in ? pl[(size_t)py*DESK_STRIDE + px] : 0;
+            char ch = s_arrow[r][c];
+            if (ch == ' ' || !in) continue;
+            pl[(size_t)py*DESK_STRIDE + px] = (ch == 'X') ? GFX_RGB(0,0,0) : GFX_RGB(255,255,255);
+        } }
+    cur_flush(x, y);
+    s_cx = x; s_cy = y; s_cvis = 1;
+}
+
+/* Move the pointer.  Pure moves touch only the cursor box; with a button held
+ * (click/drag) the WM may move a window, so recomposite the whole scene. */
+/* Flush a plane rectangle to DDR (row by row), clamped to the desktop. */
+static void flush_rect(int x, int y, int w, int h)
+{
+    uint32_t *pl = (uint32_t *)(uintptr_t)DESK_BASE;
+    if (x < 0) { w += x; x = 0; }  if (y < 0) { h += y; y = 0; }
+    if (x + w > DESK_W) w = DESK_W - x;
+    if (y + h > DESK_H) h = DESK_H - y;
+    if (w <= 0 || h <= 0) return;
+    for (int r = 0; r < h; r++)
+        Xil_DCacheFlushRange((INTPTR)(pl + (size_t)(y+r)*DESK_STRIDE + x), (unsigned)w*4);
+}
+
+static void wm_pointer(int dx, int dy)
+{
+    if (!g_wm_up) return;
+    int nx = g_mx + dx; if (nx < 0) nx = 0; if (nx >= DESK_W) nx = DESK_W - 1;
+    int ny = g_my + dy; if (ny < 0) ny = 0; if (ny >= DESK_H) ny = DESK_H - 1;
+    if (g_mbtn && g_wm.drag_slot >= 0) {              /* dragging a window -> damage-rect redraw */
+        gem_window *w = &g_wm.win[g_wm.drag_slot];   /* full old∪new rect: artifact-free (the */
+        int ox0 = w->x, oy0 = w->y;                  /* per-strip composite-in-place was buggy; */
+        int ox1 = w->x + w->w - 1, oy1 = w->y + w->h - 1;  /* tearing is the real issue -> needs */
+        s_cvis = 0;                                  /* a double-buffered GEM layer, not this).  */
+        g_mx = nx; g_my = ny;
+        gem_wm_mouse_move(&g_wm, nx, ny);            /* moves the window */
+        int x0 = w->x < ox0 ? w->x : ox0, y0 = w->y < oy0 ? w->y : oy0;
+        int x1 = (w->x + w->w - 1) > ox1 ? (w->x + w->w - 1) : ox1;
+        int y1 = (w->y + w->h - 1) > oy1 ? (w->y + w->h - 1) : oy1;
+        gem_wm_draw_rect(&g_wm, x0, y0, x1, y1);
+        flush_rect(x0, y0, x1 - x0 + 1, y1 - y0 + 1);
+        cur_show(nx, ny);
+    } else if (g_mbtn) {                              /* button down, no window grabbed -> full */
+        s_cvis = 0;
+        g_mx = nx; g_my = ny;
+        gem_wm_mouse_move(&g_wm, nx, ny);
+        gem_wm_draw(&g_wm); desk_flush(); cur_show(nx, ny);
+    } else {                                          /* pure move -> cursor box only */
+        cur_hide();
+        g_mx = nx; g_my = ny;
+        cur_show(nx, ny);
+    }
+}
+
+/* Toggle the left button at the pointer (space): grab a title to drag, or tap
+ * twice for a click (raise / close box). */
+static void wm_button_toggle(void)
+{
+    if (!g_wm_up) return;
+    g_mbtn = !g_mbtn;
+    s_cvis = 0;
+    gem_wm_mouse_button(&g_wm, g_mx, g_my, g_mbtn);
+    gem_wm_draw(&g_wm);
+    desk_flush();
+    cur_show(g_mx, g_my);
+}
+
+/* Re-sync + redraw the cursor (mode entry) and drop any held button (mode exit). */
+void gem_mouse_reset(void)
+{
+    g_esc = 0; g_escn = 0;
+    if (!g_wm_up) return;
+    if (g_mbtn) { gem_wm_mouse_button(&g_wm, g_mx, g_my, 0); g_mbtn = 0; }
+    cur_hide();
+    cur_show(g_mx, g_my);   /* (re)show the pointer at its current spot */
+}
+
+/* Feed one passthrough char while mouse-drive mode is on. */
+void gem_mouse_feed(int c)
+{
+    if (g_esc == 0) {
+        if (c == 0x1B) { g_esc = 1; return; }                /* ESC -> CSI */
+        if (c == ' ')  { wm_button_toggle(); return; }       /* space = left button grab/drop */
+        return;                                              /* ignore other keys in mouse mode */
+    }
+    if (g_esc == 1) { g_esc = (c == '[') ? 2 : 0; g_escn = 0; return; }  /* CSI introducer */
+    if ((c >= '0' && c <= '9') || c == ';') {                /* skip any modifier params */
+        if (g_escn < (int)sizeof(g_escbuf) - 1) g_escbuf[g_escn++] = (char)c;
+        return;
+    }
+    int step = 24, dx = 0, dy = 0;
+    switch (c) {
+        case 'A': dy = -step; break;     /* up    */
+        case 'B': dy =  step; break;     /* down  */
+        case 'C': dx =  step; break;     /* right */
+        case 'D': dx = -step; break;     /* left  */
+        default:  g_esc = 0; g_escn = 0; return;             /* not a cursor key */
+    }
+    wm_pointer(dx, dy);
+    g_esc = 0; g_escn = 0;
 }
 
 /* vdi.srctest(x, y, 0xRRGGBB) — de-risk SRC_BLIT's coverage→colour path (the

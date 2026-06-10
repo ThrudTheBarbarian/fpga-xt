@@ -273,5 +273,58 @@ void gem_wm_draw(gem_wm *wm) {
                            (int16_t)(win->cx + win->cw - 1), (int16_t)(win->cy + win->ch - 1) };
         vro_cpyfm(wm->desk_vh, VRO_COPY, pxy, &src, &dst);
     }
-    if (vdi_cursor_visible()) draw_pointer(wm);
+    if (!wm->no_cursor && vdi_cursor_visible()) draw_pointer(wm);  // A9 owns its own pointer
+}
+
+// Redraw only the screen rectangle [x0,y0]..[x1,y1] (a "damage" rect): fill the
+// background, then recomposite every window that intersects it, clipped to it.
+// Used while dragging — avoids the whole-desktop clear + recomposite (and its
+// flicker) by touching just the union of the window's old and new rect.
+void gem_wm_draw_rect(gem_wm *wm, int x0, int y0, int x1, int y1) {
+    if (x0 < 0) x0 = 0; if (y0 < 0) y0 = 0;
+    if (x1 > wm->desk->w - 1) x1 = wm->desk->w - 1;
+    if (y1 > wm->desk->h - 1) y1 = wm->desk->h - 1;
+    if (x1 < x0 || y1 < y0) return;
+    gfx_fill_rect(wm->desk, x0, y0, x1 - x0 + 1, y1 - y0 + 1, wm->desktop_color);
+    int16_t clip[4] = { (int16_t)x0, (int16_t)y0, (int16_t)x1, (int16_t)y1 };
+    vs_clip(wm->desk_vh, 1, clip);
+    for (int k = 0; k < wm->nwin; k++) {             // bottom..top
+        gem_window *win = &wm->win[wm->z[k]];
+        if (!win->used) continue;
+        if (win->x > x1 || win->x + win->w - 1 < x0 ||
+            win->y > y1 || win->y + win->h - 1 < y0) continue;      // outside the damage
+        if (win->dirty && win->redraw) { win->redraw(win, win->ud); win->dirty = 0; }
+        draw_frame(wm, win);                          // clipped by vs_clip
+        int ix0 = win->cx > x0 ? win->cx : x0;        // content rect ∩ damage
+        int iy0 = win->cy > y0 ? win->cy : y0;
+        int ix1 = (win->cx + win->cw - 1) < x1 ? (win->cx + win->cw - 1) : x1;
+        int iy1 = (win->cy + win->ch - 1) < y1 ? (win->cy + win->ch - 1) : y1;
+        if (ix1 < ix0 || iy1 < iy0) continue;
+        MFDB src, dst;
+        mfdb_from_surface(&src, win->backing);
+        mfdb_from_surface(&dst, wm->desk);
+        int16_t pxy[8] = { (int16_t)(ix0 - win->cx), (int16_t)(iy0 - win->cy),
+                           (int16_t)(ix1 - win->cx), (int16_t)(iy1 - win->cy),
+                           (int16_t)ix0, (int16_t)iy0, (int16_t)ix1, (int16_t)iy1 };
+        vro_cpyfm(wm->desk_vh, VRO_COPY, pxy, &src, &dst);
+    }
+    int16_t full[4] = { 0, 0, (int16_t)(wm->desk->w - 1), (int16_t)(wm->desk->h - 1) };
+    vs_clip(wm->desk_vh, 0, full);
+}
+
+// Draw ONE window (frame + composite its backing) at its current position,
+// overwriting in place — no background erase, so it doesn't flicker.  Used for
+// the dragged window: bg-fill only the strip it vacated, then redraw it here.
+void gem_wm_draw_window(gem_wm *wm, int slot) {
+    gem_window *win = &wm->win[slot];
+    if (!win->used) return;
+    if (win->dirty && win->redraw) { win->redraw(win, win->ud); win->dirty = 0; }
+    draw_frame(wm, win);
+    MFDB src, dst;
+    mfdb_from_surface(&src, win->backing);
+    mfdb_from_surface(&dst, wm->desk);
+    int16_t pxy[8] = { 0, 0, (int16_t)(win->cw - 1), (int16_t)(win->ch - 1),
+                       (int16_t)win->cx, (int16_t)win->cy,
+                       (int16_t)(win->cx + win->cw - 1), (int16_t)(win->cy + win->ch - 1) };
+    vro_cpyfm(wm->desk_vh, VRO_COPY, pxy, &src, &dst);
 }

@@ -276,6 +276,9 @@ static u8 g_gp0 = 0x00;
 #define XT_KBD_RELEASE  (XT_BLITTER_BASE + 0x1Du)   /* $D4CD: all-keys-up (no auto-repeat) */
 #define XT_KBD_BREAK    (XT_BLITTER_BASE + 0x1Bu)   /* $D4CB: Atari BREAK (POKEY IRQST b7) */
 static int      g_key_passthru = 0;
+static int      g_mouse_mode   = 0;   /* '\' toggles WM mouse-drive within passthrough */
+void gem_mouse_feed(int c);           /* gem_lua.c: cursor keys -> WM pointer */
+void gem_mouse_reset(void);           /* gem_lua.c: sync cursor / drop button */
 
 /* Lightweight UART1 char I/O (no FIFO reset, unlike uart1_raw_puts) so it
  * interleaves cleanly with xil_printf.  UART1 @0xE0001000: SR @0x2C
@@ -1274,7 +1277,18 @@ static void repl_task(void *arg)
         /* Interactive: drain RX, echo, dispatch on CR/LF. */
         int c;
         while ((c = uart1_getc()) >= 0) {
-            if (g_key_passthru) { kr_push((char)c); continue; }   /* drain fast -> ring */
+            if (g_key_passthru) {
+                if (c == '\\') {                                  /* non-Atari key: toggle mouse drive */
+                    g_mouse_mode = !g_mouse_mode;
+                    gem_mouse_reset();
+                    uart1_puts(g_mouse_mode
+                        ? "\r\n>> mouse drive ON — arrows move, SPACE = grab/drop (drag/click); '\\' off\r\n"
+                        : "\r\n>> mouse drive OFF\r\n");
+                    continue;
+                }
+                if (g_mouse_mode) { gem_mouse_feed(c); continue; } /* cursor keys -> WM pointer */
+                kr_push((char)c); continue;                        /* else drain fast -> ring */
+            }
             if (c == '{') {                                       /* enter passthrough */
                 g_key_passthru = 1;
                 uart1_puts("\r\n>> key passthrough ON — '}' ends it; Ctrl-C = BREAK\r\n");

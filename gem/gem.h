@@ -56,6 +56,7 @@ typedef struct {
     int          drag_slot;            // window being dragged, or -1
     gem_hit      drag_mode;            // GEM_HIT_TITLE (move) or GEM_HIT_RESIZE
     int          drag_ox, drag_oy;     // pointer offset within the window at grab
+    int          no_cursor;            // 1 = caller draws the pointer (A9 save-under)
 } gem_wm;
 
 // init also brings up the VDI on the desktop surface (vdi_init).
@@ -76,6 +77,8 @@ void        gem_wm_invalidate(gem_window *win);   // request a redraw (WM_REDRAW
 // Compose a frame: redraw any dirty window content, draw the desktop + frames,
 // blit each window's backing into place, then the pointer.
 void        gem_wm_draw(gem_wm *wm);
+void        gem_wm_draw_rect(gem_wm *wm, int x0, int y0, int x1, int y1);  // damage-rect redraw
+void        gem_wm_draw_window(gem_wm *wm, int slot);                      // one window, in place
 
 // ---- Window stacking / lifecycle ------------------------------------------
 gem_window *gem_wm_top(gem_wm *wm);                  // frontmost window, or NULL
