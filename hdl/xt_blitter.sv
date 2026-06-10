@@ -400,21 +400,23 @@ module xt_blitter #(
                     5'h18: flags_reg <= bus_data;
                     // $D4E0-$D4EB — DDR source/dest surface descriptors for
                     // SRC_BLIT.  On $D4Ex (NOT $D4Dx — that is the sprite
-                    // engine's page).  Gated on !busy so a base/stride change
-                    // can't disturb commands still queued against the old
-                    // surface (same discipline as the pattern/font loads).
-                    6'h30: if (!busy) src_base_reg[7:0]    <= bus_data;
-                    6'h31: if (!busy) src_base_reg[15:8]   <= bus_data;
-                    6'h32: if (!busy) src_base_reg[23:16]  <= bus_data;
-                    6'h33: if (!busy) src_base_reg[31:24]  <= bus_data;
-                    6'h34: if (!busy) src_stride_reg[7:0]  <= bus_data;
-                    6'h35: if (!busy) src_stride_reg[15:8] <= bus_data;
-                    6'h36: if (!busy) dst_base_reg[7:0]    <= bus_data;
-                    6'h37: if (!busy) dst_base_reg[15:8]   <= bus_data;
-                    6'h38: if (!busy) dst_base_reg[23:16]  <= bus_data;
-                    6'h39: if (!busy) dst_base_reg[31:24]  <= bus_data;
-                    6'h3A: if (!busy) dst_stride_reg[7:0]  <= bus_data;
-                    6'h3B: if (!busy) dst_stride_reg[15:8] <= bus_data;
+                    // engine's page).  NOT busy-gated: these are snapshotted into
+                    // each command's FIFO entry at CMD-write time and popped at
+                    // S_IDLE, so a write while busy updates the shared reg for the
+                    // NEXT command without disturbing any already-queued command
+                    // (each carries its own ROW0/stride snapshot).
+                    6'h30: src_base_reg[7:0]    <= bus_data;
+                    6'h31: src_base_reg[15:8]   <= bus_data;
+                    6'h32: src_base_reg[23:16]  <= bus_data;
+                    6'h33: src_base_reg[31:24]  <= bus_data;
+                    6'h34: src_stride_reg[7:0]  <= bus_data;
+                    6'h35: src_stride_reg[15:8] <= bus_data;
+                    6'h36: dst_base_reg[7:0]    <= bus_data;
+                    6'h37: dst_base_reg[15:8]   <= bus_data;
+                    6'h38: dst_base_reg[23:16]  <= bus_data;
+                    6'h39: dst_base_reg[31:24]  <= bus_data;
+                    6'h3A: dst_stride_reg[7:0]  <= bus_data;
+                    6'h3B: dst_stride_reg[15:8] <= bus_data;
                     // $D4CE — FONT_DATA byte-stream load (gated on !busy
                     // so queued commands keep a consistent font_mem)
                     5'h1E: if (!busy) begin
@@ -584,7 +586,7 @@ module xt_blitter #(
     localparam int Q_AW    = 10;            // $clog2(Q_DEPTH)
 
     (* ram_style = "block" *)
-    logic [191:0]    cmd_fifo [0:Q_DEPTH-1];
+    logic [287:0]    cmd_fifo [0:Q_DEPTH-1];
     logic [Q_AW-1:0] cq_head;               // next write slot
     logic [Q_AW-1:0] cq_tail;               // next read slot
     logic [Q_AW:0]   cq_count;              // occupancy, 0..Q_DEPTH
@@ -593,14 +595,22 @@ module xt_blitter #(
     assign cq_full  = (cq_count == Q_DEPTH);
 
     // Snapshot packed from current *_reg values at the moment of CMD write.
+    // The descriptor base/stride regs (ROW0 surfaces, 0x30-0x3B) are snapshotted
+    // PER COMMAND here — they are NOT busy-gated and are popped from the entry at
+    // S_IDLE, so each queued SRC_BLIT/fill/blit carries its own ROW0.  (Before
+    // this they were a single shared, busy-gated reg pair, so back-to-back glyph
+    // blits fired without waiting collapsed onto one position — "Hello"->"Hel o".)
     // Layout (MSB first):
+    //   [287:256] dst_base     [255:224] src_base
+    //   [223:208] dst_stride   [207:192] src_stride
     //   [191:176] dst_x   [175:160] dst_y   [159:144] dst_w   [143:128] dst_h
     //   [127:112] src_x   [111:96]  src_y   [95:80]   src_w   [79:64]   src_h
     //   [63:56]  pat_phase_x  [55:48] pat_phase_y
     //   [47:40]  log_pw       [39:32] log_ph
     //   [31:24]  cmd          [23:16] flags
     //   [15:8]   raster_op    [7:0]   reserved
-    wire [191:0] cmd_snapshot_in = {
+    wire [287:0] cmd_snapshot_in = {
+        dst_base_reg, src_base_reg, dst_stride_reg, src_stride_reg,
         dst_x_reg, dst_y_reg, dst_w_reg, dst_h_reg,
         src_x_reg, src_y_reg, src_w_reg, src_h_reg,
         {3'd0, pat_phase_x_reg}, {3'd0, pat_phase_y_reg},
@@ -628,7 +638,7 @@ module xt_blitter #(
     // The cq_push write-enable is pipelined alongside the data so the BRAM
     // write timing is consistent (one cycle delayed relative to the original
     // push, which is invisible to the queue consumer).
-    logic [191:0] cmd_snapshot_q;
+    logic [287:0] cmd_snapshot_q;
     logic         cq_push_q;
     always_ff @(posedge clk) begin
         cmd_snapshot_q <= cmd_snapshot_in;
@@ -640,7 +650,7 @@ module xt_blitter #(
     // size only if the read port is "always read mem[ra] into rd_reg".
     // The push-to-empty bypass lives in a separate register below, mux'd
     // into cq_front_q combinationally.
-    logic [191:0] cq_front_bram_q;     // registered output of the BRAM
+    logic [287:0] cq_front_bram_q;     // registered output of the BRAM
 
     always_ff @(posedge clk) begin
         if (cq_push_q) cmd_fifo[cq_head] <= cmd_snapshot_q;
@@ -664,7 +674,7 @@ module xt_blitter #(
     // — that push-to-just-emptied case left the bypass un-armed, so the FSM
     // popped stale BRAM data instead of the command and silently dropped it.)
     logic         cq_bypass_valid_q;
-    logic [191:0] cq_bypass_data_q;
+    logic [287:0] cq_bypass_data_q;
     always_ff @(posedge clk) begin  // sync reset — see note at `rst` port
         if (rst) begin
             cq_bypass_valid_q <= 1'b0;
@@ -678,7 +688,7 @@ module xt_blitter #(
     end
 
     // cq_front_q: bypass takes priority, otherwise the BRAM read.
-    wire [191:0] cq_front_q = cq_bypass_valid_q ? cq_bypass_data_q
+    wire [287:0] cq_front_q = cq_bypass_valid_q ? cq_bypass_data_q
                                                 : cq_front_bram_q;
 
     // cq_front_valid tracks whether cq_front_q reflects the entry at
@@ -699,6 +709,10 @@ module xt_blitter #(
     end
 
     // Unpacked fields for use in S_IDLE (read from the registered output).
+    wire [31:0] q_dst_base   = cq_front_q[287:256];
+    wire [31:0] q_src_base   = cq_front_q[255:224];
+    wire [15:0] q_dst_stride = cq_front_q[223:208];
+    wire [15:0] q_src_stride = cq_front_q[207:192];
     wire [15:0] q_dst_x      = cq_front_q[191:176];
     wire [15:0] q_dst_y      = cq_front_q[175:160];
     wire [15:0] q_dst_w      = cq_front_q[159:144];
@@ -1329,15 +1343,17 @@ module xt_blitter #(
                         src_cov_q    <= q_flags[3];
                         src_aover_q  <= q_flags[4];
                         dst_ddr_q    <= q_flags[5];
-                        src_base_q   <= src_base_reg;
-                        src_stride_q <= src_stride_reg;
-                        dst_base_q   <= dst_base_reg;
-                        dst_stride_q <= dst_stride_reg;
+                        src_base_q   <= q_src_base;
+                        src_stride_q <= q_src_stride;
+                        dst_base_q   <= q_dst_base;
+                        dst_stride_q <= q_dst_stride;
                         // Seed the dst/src row-bases: descriptor ROW0 (origin
                         // folded by the A9), or the plane via the power-of-2 shift.
-                        dst_row_base <= q_flags[5] ? dst_base_reg
+                        // ROW0/stride come from THIS command's FIFO snapshot, so
+                        // back-to-back queued blits each carry their own surface.
+                        dst_row_base <= q_flags[5] ? q_dst_base
                                       : (FB_BASE + (32'(q_dst_y) << 13) + (32'(q_dst_x) << 2));
-                        src_row_base <= q_flags[2] ? src_base_reg
+                        src_row_base <= q_flags[2] ? q_src_base
                                       : (FB_BASE + (32'(q_src_y) << 13) + (32'(q_src_x) << 2));
                         cx        <= 16'd0;
                         cy        <= 16'd0;
@@ -1725,6 +1741,7 @@ module xt_blitter #(
                                     state <= S_DONE;
                                 else begin
                                     cy <= cy + 16'd1;
+                                    dst_row_base <= dst_row_base + dst_stride_eff;
                                     state <= SC_ROW;
                                 end
                             end else begin
@@ -1737,6 +1754,7 @@ module xt_blitter #(
                                     state <= S_DONE;
                                 else begin
                                     cy <= cy + 16'd1;
+                                    dst_row_base <= dst_row_base + dst_stride_eff;
                                     state <= SC_ROW;
                                 end
                             end else begin
@@ -1805,6 +1823,7 @@ module xt_blitter #(
                                     state <= S_DONE;
                                 else begin
                                     cy <= cy + 16'd1;
+                                    dst_row_base <= dst_row_base + dst_stride_eff;
                                     state <= SC_ROW;
                                 end
                             end else begin
@@ -1818,6 +1837,7 @@ module xt_blitter #(
                                     state <= S_DONE;
                                 else begin
                                     cy <= cy + 16'd1;
+                                    dst_row_base <= dst_row_base + dst_stride_eff;
                                     state <= SC_ROW;
                                 end
                             end else begin
