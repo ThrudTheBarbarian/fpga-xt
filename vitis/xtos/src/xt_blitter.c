@@ -166,6 +166,30 @@ void xt_blitter_src_blit(int16_t sx, int16_t sy, uint16_t w, uint16_t h,
     xt_blitter_fire(XT_BL_CMD_SRC_BLIT);
 }
 
+/* --- Off-plane DDR surfaces for RECT_FILL / BLOCK_BLIT / LINE ---------- */
+/* These commands seed their row-base accumulator from the descriptor base reg
+ * when the FLAGS DDR bit is set.  Write that base = ROW0 (origin folded in:
+ * base + y0*stride + x0*4) and the row stride.  RGBA-8888 (4 B/px) only.  The
+ * caller still sets DST_X/Y (DST_X carries the 8-byte half parity), W/H, the
+ * DST_DDR/SRC_DDR flag, pattern/raster-op as needed, then fires. */
+void xt_blitter_dst_ddr_rect(uint32_t base, uint16_t stride, int16_t x0, int16_t y0)
+{
+    uint32_t row0 = base + (uint32_t)((int32_t)y0 * (int32_t)stride)
+                         + (uint32_t)((int32_t)x0 * 4);
+    xt_blitter_write32(XT_BL_DST_BASE_0, row0);
+    xt_blitter_write8(XT_BL_DST_STRIDE_LO,(uint8_t)(stride & 0xFF));
+    xt_blitter_write8(XT_BL_DST_STRIDE_HI,(uint8_t)((stride >> 8) & 0xFF));
+}
+
+void xt_blitter_src_ddr_rect(uint32_t base, uint16_t stride, int16_t x0, int16_t y0)
+{
+    uint32_t row0 = base + (uint32_t)((int32_t)y0 * (int32_t)stride)
+                         + (uint32_t)((int32_t)x0 * 4);
+    xt_blitter_write32(XT_BL_SRC_BASE_0, row0);
+    xt_blitter_write8(XT_BL_SRC_STRIDE_LO,(uint8_t)(stride & 0xFF));
+    xt_blitter_write8(XT_BL_SRC_STRIDE_HI,(uint8_t)((stride >> 8) & 0xFF));
+}
+
 /* --- XT register-unlock (the A9 sets the stock-vs-XT personality) ------ */
 
 void xt_unlock_set(uint8_t mask)

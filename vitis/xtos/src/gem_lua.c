@@ -243,6 +243,26 @@ static int l_vdi_srctest(lua_State *L)
     return 1;
 }
 
+/* vdi.windowtest(x, y, w, h, rgb) — allocate a w*h DDR backing store, HW-fill it
+ * with the colour (off-plane RECT_FILL), then HW-composite it to the desktop
+ * plane at (x,y) (BLOCK_BLIT backing-store -> plane).  Proves the any-DDR fill +
+ * compositing path that GEM windows ride on.  Returns true, or false+msg. */
+static int l_vdi_windowtest(lua_State *L)
+{
+    int x = (int)luaL_checkinteger(L, 1), y = (int)luaL_checkinteger(L, 2);
+    int w = (int)luaL_checkinteger(L, 3), h = (int)luaL_checkinteger(L, 4);
+    uint32_t rgb = (uint32_t)luaL_checkinteger(L, 5);   /* 0xRRGGBB */
+    uint32_t rgba = (rgb << 8) | 0xFFu;                 /* opaque */
+
+    gfx_surface *bs = gfx_surface_alloc(w, h);
+    if (!bs) { lua_pushboolean(L, 0); lua_pushstring(L, "backing-store alloc failed"); return 2; }
+    gfx_fill_rect(bs, 0, 0, w, h, rgba);                /* off-plane fill   */
+    gfx_blit(&g_desk, x, y, bs, 0, 0, w, h);            /* composite -> plane */
+    gfx_surface_free(bs);
+    lua_pushboolean(L, 1);
+    return 1;
+}
+
 void gem_lua_open(lua_State *L)
 {
     static const luaL_Reg vdi_lib[] = {
@@ -257,6 +277,7 @@ void gem_lua_open(lua_State *L)
         {"font",      l_vdi_font},
         {"hwfill",    l_vdi_hwfill},   /* blitter RECT_FILL — HW de-risk */
         {"srctest",   l_vdi_srctest},  /* SRC_BLIT coverage — HW de-risk */
+        {"windowtest",l_vdi_windowtest}, /* off-plane fill + composite — HW de-risk */
         {NULL, NULL}
     };
     luaL_newlib(L, vdi_lib);

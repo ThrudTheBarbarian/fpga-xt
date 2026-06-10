@@ -207,6 +207,13 @@ void xt_blitter_set_dst_surface(uint32_t base, uint16_t stride);
 void xt_blitter_src_blit(int16_t sx, int16_t sy, uint16_t w, uint16_t h,
                          int16_t dx, int16_t dy);
 
+/* Point RECT_FILL / BLOCK_BLIT / LINE at an off-plane DDR surface: write the
+ * dst (or src) descriptor base = ROW0 (= base + y0*stride + x0*4) + stride.
+ * RGBA-8888 only.  Caller sets DST_X/Y (parity) + W/H + the DST_DDR/SRC_DDR
+ * FLAGS bit + pattern/raster-op, then fires. */
+void xt_blitter_dst_ddr_rect(uint32_t base, uint16_t stride, int16_t x0, int16_t y0);
+void xt_blitter_src_ddr_rect(uint32_t base, uint16_t stride, int16_t x0, int16_t y0);
+
 /* Set the XT register-unlock mask (offset 0x20).  Pass an OR of XT_UNLOCK_*
  * bits; 0 = bone-stock (the post-reset state).  The A9 is the authority — it
  * sets this before launching a guest (e.g. 0 for a stock cart, the needed

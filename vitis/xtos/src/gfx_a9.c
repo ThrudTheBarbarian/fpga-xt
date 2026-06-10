@@ -57,6 +57,19 @@ static void plane_flush_rect(int x, int y, int w, int h) {
     }
 }
 
+// Same, for an arbitrary DDR surface (window backing store): the blitter is an
+// HP AXI master reading/writing DDR directly, so we clean+invalidate the rect
+// it touches.  s->stride is in pixels (words); byte stride = stride*4.
+static void surface_flush_rect(const gfx_surface *s, int x, int y, int w, int h) {
+    if (w <= 0 || h <= 0) return;
+    uintptr_t base   = (uintptr_t)s->px;
+    uintptr_t stride = (uintptr_t)s->stride * 4u;
+    for (int row = 0; row < h; row++) {
+        uintptr_t a = base + (uintptr_t)(y + row) * stride + (uintptr_t)x * 4u;
+        Xil_DCacheFlushRange((INTPTR)a, (INTPTR)((uintptr_t)w * 4u));
+    }
+}
+
 // ---- software fallback (identical behaviour to gfx_soft.c) ------------------
 
 // Clip [v, v+n) to [0, lim); returns clipped n (>=0) and advances *v / *off.
@@ -122,20 +135,23 @@ void gfx_fill_rect(gfx_surface *s, int x, int y, int w, int h, uint32_t rgba) {
     h = clip_span(&y, &oy, h, s->h);
     if (w <= 0 || h <= 0) return;
 
-    if (!is_plane(s) || (unsigned)(w * h) < HW_MIN_PX) {
+    if ((unsigned)(w * h) < HW_MIN_PX) {   // tiny: CPU beats the per-op overhead
         soft_fill_rect(s, x, y, w, h, rgba);
         return;
     }
 
-    // HW: solid 1x1 pattern fill (rgba = 0xRRGGBBAA).
+    // HW: solid 1x1 pattern fill into ANY DDR surface via the dst descriptor.
     uint8_t pat[4] = { (uint8_t)(rgba >> 24), (uint8_t)(rgba >> 16),
                        (uint8_t)(rgba >> 8),  (uint8_t)rgba };
-    plane_flush_rect(x, y, w, h);
+    surface_flush_rect(s, x, y, w, h);
     xt_blitter_set_pat_log(0, 0);
     xt_blitter_set_pat_phase(0, 0);
     xt_blitter_write_pat(pat, 4);
     xt_blitter_set_raster_op(XT_BL_RASTER_S);
-    xt_blitter_set_dst((int16_t)x, (int16_t)y, (uint16_t)w, (uint16_t)h);
+    xt_blitter_dst_ddr_rect((uint32_t)(uintptr_t)s->px, (uint16_t)(s->stride * 4),
+                            (int16_t)x, (int16_t)y);
+    xt_blitter_set_flags(XT_BL_FLAG_DST_DDR);
+    xt_blitter_set_dst((int16_t)x, (int16_t)y, (uint16_t)w, (uint16_t)h);  // DST_X = half parity
     xt_blitter_fire(XT_BL_CMD_RECT_FILL);
     xt_blitter_wait_idle(BLIT_TIMEOUT);
 }
@@ -154,20 +170,25 @@ void gfx_blit(gfx_surface *dst, int dx, int dy,
     sx += dox; sy += doy;
     if (w <= 0 || h <= 0) return;
 
-    // HW block blit only when BOTH surfaces are the one plane the blitter knows
-    // and the copy is large enough to beat a per-row memcpy.
-    if (is_plane(dst) && is_plane(src) && (unsigned)(w * h) >= HW_MIN_PX) {
-        plane_flush_rect(sx, sy, w, h);            /* push source to DDR  */
-        plane_flush_rect(dx, dy, w, h);            /* drop dest dirty lines */
+    if ((unsigned)(w * h) >= HW_MIN_PX) {
+        // HW block blit between ANY two DDR surfaces (window backing store <->
+        // plane).  Both addressed by descriptor ROW0 + stride.
+        surface_flush_rect(src, sx, sy, w, h);     /* push source to DDR  */
+        surface_flush_rect(dst, dx, dy, w, h);     /* drop dest dirty lines */
         xt_blitter_set_raster_op(XT_BL_RASTER_S);  /* S = straight copy   */
-        xt_blitter_set_src((int16_t)sx, (int16_t)sy, (uint16_t)w, (uint16_t)h);
-        xt_blitter_set_dst((int16_t)dx, (int16_t)dy, (uint16_t)w, (uint16_t)h);
+        xt_blitter_src_ddr_rect((uint32_t)(uintptr_t)src->px, (uint16_t)(src->stride * 4),
+                                (int16_t)sx, (int16_t)sy);
+        xt_blitter_dst_ddr_rect((uint32_t)(uintptr_t)dst->px, (uint16_t)(dst->stride * 4),
+                                (int16_t)dx, (int16_t)dy);
+        xt_blitter_set_flags(XT_BL_FLAG_SRC_DDR | XT_BL_FLAG_DST_DDR);
+        xt_blitter_set_src((int16_t)sx, (int16_t)sy, (uint16_t)w, (uint16_t)h);  // SRC_X parity
+        xt_blitter_set_dst((int16_t)dx, (int16_t)dy, (uint16_t)w, (uint16_t)h);  // DST_X parity
         xt_blitter_fire(XT_BL_CMD_BLOCK_BLIT);
         xt_blitter_wait_idle(BLIT_TIMEOUT);
         return;
     }
 
-    // Software copy (off-screen source and/or destination).
+    // Software copy (tiny).
     for (int row = 0; row < h; row++) {
         const uint32_t *sp = src->px + (size_t)(sy + row) * src->stride + sx;
         uint32_t       *dp = dst->px + (size_t)(dy + row) * dst->stride + dx;
@@ -223,12 +244,14 @@ static void soft_blit_coverage(gfx_surface *dst, int dx, int dy,
 }
 
 // ---- Glyph atlas for batched coverage blits --------------------------------
-// Each glyph has its own cov buffer, so blitting straight from it would change
-// SRC_BASE per glyph — and SRC_BASE (gated on !busy) can't change while the
-// queue drains.  So we copy each glyph's coverage into one shared DDR atlas
-// (constant SRC_BASE), enqueue its SRC_BLIT without waiting, and wait ONCE per
-// run in gfx_text_flush().  That removes the per-glyph wait_idle (≥100us each)
-// that dominated the synchronous path.
+// We pack each glyph's coverage into one shared DDR atlas, enqueue its SRC_BLIT
+// without waiting, and wait ONCE per run in gfx_text_flush() — removing the
+// per-glyph wait_idle (≥100us each) that dominated the synchronous path.  The
+// atlas keeps SRC base + colour constant across the batch (set once, while
+// idle); each glyph's slot and plane destination are carried by its ROW0
+// descriptors, which the blitter snapshots PER COMMAND into its queue entry, so
+// queued blits each land at their own slot/position (a per-command ROW0 the
+// shared base reg could not provide — that was the "Hello"->"Hel o" drop).
 #define ATLAS_W      2048u
 #define ATLAS_H      256u
 static uint8_t *g_atlas;                // ATLAS_W*ATLAS_H, lazily malloc'd from DDR heap
