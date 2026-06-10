@@ -133,6 +133,17 @@ static int l_vdi_color(lua_State *L)  /* vdi.color(pen) — text colour (1=black
     return 0;
 }
 
+/* vdi.rotation(tenths) — text baseline angle in 1/10 degree, CCW, any angle.
+ * Stateful on the workstation (like the GEM API): set it, draw with vdi.text,
+ * reset to 0.  Returns the normalised angle (0..3599). */
+static int l_vdi_rotation(lua_State *L)
+{
+    if (!gem_ready(L)) return 0;
+    int a = vst_rotation(g_vh, (int)luaL_checkinteger(L, 1));
+    lua_pushinteger(L, a);
+    return 1;
+}
+
 static int l_vdi_fillcolor(lua_State *L)  /* vdi.fillcolor(pen) — solid fill */
 {
     if (!gem_ready(L)) return 0;
@@ -214,6 +225,27 @@ static int l_vdi_hwfill(lua_State *L)
     return 2;
 }
 
+/* vdi.scaletest(sx,sy,sw,sh, dx,dy,dw,dh [,bilinear]) — scale a plane region to
+ * another plane region via the blitter SCALED_BLIT (bilinear by default).  Point
+ * the source at existing on-screen content (e.g. the READY text) and watch it
+ * scale up smoothly.  Plane src + dst (no descriptor); the blitter writes DDR
+ * directly so the compositor shows it with no flush. */
+static int l_vdi_scaletest(lua_State *L)
+{
+    int sx=(int)luaL_checkinteger(L,1), sy=(int)luaL_checkinteger(L,2);
+    int sw=(int)luaL_checkinteger(L,3), sh=(int)luaL_checkinteger(L,4);
+    int dx=(int)luaL_checkinteger(L,5), dy=(int)luaL_checkinteger(L,6);
+    int dw=(int)luaL_checkinteger(L,7), dh=(int)luaL_checkinteger(L,8);
+    int bilin = (lua_gettop(L) >= 9) ? lua_toboolean(L, 9) : 1;   /* default bilinear */
+    xt_blitter_set_src((int16_t)sx,(int16_t)sy,(uint16_t)sw,(uint16_t)sh);
+    xt_blitter_set_dst((int16_t)dx,(int16_t)dy,(uint16_t)dw,(uint16_t)dh);
+    xt_blitter_set_flags(bilin ? XT_BL_FLAG_BILINEAR : 0);   /* plane src + dst */
+    xt_blitter_fire(XT_BL_CMD_SCALED_BLIT);
+    int idle = xt_blitter_wait_idle(200000);
+    lua_pushinteger(L, idle);
+    return 1;
+}
+
 /* vdi.srctest(x, y, 0xRRGGBB) — de-risk SRC_BLIT's coverage→colour path (the
  * font path).  Builds a 64x32 coverage atlas in DDR with a horizontal 0->255
  * gradient, then blits it in the given colour to (x,y) on the plane: you should
@@ -269,6 +301,7 @@ void gem_lua_open(lua_State *L)
         {"text",      l_vdi_text},
         {"point",     l_vdi_point},
         {"color",     l_vdi_color},
+        {"rotation",  l_vdi_rotation}, /* text angle, 1/10 deg CCW (vst_rotation) */
         {"fillcolor", l_vdi_fillcolor},
         {"bar",       l_vdi_bar},
         {"line",      l_vdi_line},    /* 1px solid line — blitter LINE_DRAW */
@@ -278,6 +311,7 @@ void gem_lua_open(lua_State *L)
         {"hwfill",    l_vdi_hwfill},   /* blitter RECT_FILL — HW de-risk */
         {"srctest",   l_vdi_srctest},  /* SRC_BLIT coverage — HW de-risk */
         {"windowtest",l_vdi_windowtest}, /* off-plane fill + composite — HW de-risk */
+        {"scaletest", l_vdi_scaletest},  /* SCALED_BLIT bilinear — HW de-risk */
         {NULL, NULL}
     };
     luaL_newlib(L, vdi_lib);
