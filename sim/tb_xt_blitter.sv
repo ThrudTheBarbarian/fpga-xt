@@ -803,6 +803,49 @@ module tb_xt_blitter;
     endtask
 
     // ----------------------------------------------------------------
+    // SRC_BLIT coverage from an UNALIGNED base + ODD stride, 3x2 — proves we
+    // can blit straight from a per-glyph g->cov buffer (malloc base, stride=w)
+    // with no atlas/padding.  cov row0 [255,128,64] @ base+1, row1 [64,128,255].
+    // ----------------------------------------------------------------
+    task test_src_blit_cov_unaligned();
+        logic [31:0] da, got, e; int errs;
+        $display("=== Test: SRC_BLIT coverage, unaligned base +1, odd stride 3, 3x2 ===");
+        clear_logs(); errs = 0;
+        // Coverage bytes at 0x30040001.. : byte0 unused, [FF,80,40] row0, [40,80,FF] row1.
+        mem[mem_idx(32'h3004_0000)] = 64'h00FF_8040_4080_FF00;
+        // Dest @0x30080000 (stride 16) prefilled black.
+        mem[mem_idx(32'h3008_0000)] = 64'h0; mem[mem_idx(32'h3008_0008)] = 64'h0;
+        mem[mem_idx(32'h3008_0010)] = 64'h0; mem[mem_idx(32'h3008_0018)] = 64'h0;
+        write_reg(16'hD4BA, 8'h00); load_1x1_pattern(8'hFF, 8'h00, 8'h00, 8'hFF); write_reg(16'hD4BE, 8'h00);
+        // SRC ROW0 = 0x30040001 (UNALIGNED), stride 3 (ODD); DST 0x30080000, stride 16.
+        write_reg(16'hD4E0,8'h01); write_reg(16'hD4E1,8'h00); write_reg(16'hD4E2,8'h04); write_reg(16'hD4E3,8'h30);
+        write_reg(16'hD4E4,8'd3);  write_reg(16'hD4E5,8'd0);
+        write_reg(16'hD4E6,8'h00); write_reg(16'hD4E7,8'h00); write_reg(16'hD4E8,8'h08); write_reg(16'hD4E9,8'h30);
+        write_reg(16'hD4EA,8'd16); write_reg(16'hD4EB,8'd0);
+        write_reg(16'hD4C0,8'd0); write_reg(16'hD4C1,8'd0); write_reg(16'hD4C2,8'd0); write_reg(16'hD4C3,8'd0);
+        write_reg(16'hD4B0,8'd0); write_reg(16'hD4B1,8'd0); write_reg(16'hD4B2,8'd0); write_reg(16'hD4B3,8'd0);
+        write_reg(16'hD4B4,8'd3); write_reg(16'hD4B5,8'd0); write_reg(16'hD4B6,8'd2); write_reg(16'hD4B7,8'd0);
+        write_reg(16'hD4C8,8'h2C);   // FLAGS: SRC_DDR | SRC_COV | DST_DDR
+        write_reg(16'hD4BC,8'h08);   // CMD = SRC_BLIT
+        wait_idle();
+        write_reg(16'hD4C8,8'h00);
+        for (int yy = 0; yy < 2; yy++)
+          for (int xx = 0; xx < 3; xx++) begin
+            da  = 32'h3008_0000 + yy*16 + xx*4;
+            got = mem[mem_idx(da)][(da[2] ? 32 : 0) +: 32];
+            // cov: row0 [255,128,64], row1 [64,128,255] -> red blended over black
+            if (yy == 0) begin
+                case (xx) 0: e = 32'hFF0000FF; 1: e = 32'h800000FF; default: e = 32'h400000FF; endcase
+            end else begin
+                case (xx) 0: e = 32'h400000FF; 1: e = 32'h800000FF; default: e = 32'hFF0000FF; endcase
+            end
+            if (got !== e) begin errs++; $display("  cov(%0d,%0d) got %08x exp %08x", xx, yy, got, e); end
+          end
+        if (errs == 0) $display("PASS: test_src_blit_cov_unaligned");
+        else begin $display("FAIL: test_src_blit_cov_unaligned (%0d mismatches)", errs); $fatal(1); end
+    endtask
+
+    // ----------------------------------------------------------------
     // SRC_BLIT RGBA alpha-over: src {red@α128, green@α255, transparent@α0}
     // composited over a blue background.
     // ----------------------------------------------------------------
@@ -1381,6 +1424,7 @@ module tb_xt_blitter;
         test_line_draw_diagonal_rev();
         test_src_blit_copy();
         test_src_blit_coverage();
+        test_src_blit_cov_unaligned();
         test_src_blit_aover();
         test_src_blit_cov_plane();
         test_block_blit_copy();

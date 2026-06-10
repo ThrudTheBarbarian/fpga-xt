@@ -243,86 +243,64 @@ static void soft_blit_coverage(gfx_surface *dst, int dx, int dy,
     }
 }
 
-// ---- Glyph atlas for batched coverage blits --------------------------------
-// We pack each glyph's coverage into one shared DDR atlas, enqueue its SRC_BLIT
-// without waiting, and wait ONCE per run in gfx_text_flush() — removing the
-// per-glyph wait_idle (≥100us each) that dominated the synchronous path.  The
-// atlas keeps SRC base + colour constant across the batch (set once, while
-// idle); each glyph's slot and plane destination are carried by its ROW0
-// descriptors, which the blitter snapshots PER COMMAND into its queue entry, so
-// queued blits each land at their own slot/position (a per-command ROW0 the
-// shared base reg could not provide — that was the "Hello"->"Hel o" drop).
-#define ATLAS_W      2048u
-#define ATLAS_H      256u
-static uint8_t *g_atlas;                // ATLAS_W*ATLAS_H, lazily malloc'd from DDR heap
-static unsigned g_ax, g_ay, g_arow;     // bump allocator (x, y, current row height)
-static int      g_atlas_fresh = 1;      // batch needs SRC/colour setup (idle)
-static uint32_t g_atlas_rgba;           // colour this batch was set up with
+// ---- Coverage glyph blits (batched, straight from each glyph's buffer) ------
+// Each glyph is blitted directly from its own coverage buffer in DDR — no copy,
+// no shared atlas.  We flush the glyph's bytes out of the A9 D-cache (the
+// blitter reads DDR over HP1, bypassing cache), then enqueue its SRC_BLIT
+// without waiting; the run drains once in gfx_text_flush().  Per glyph the SRC
+// base+stride and the plane destination ROW0 ride in the command's FIFO
+// snapshot, so queued blits each read their own glyph and land at their own
+// position (the per-command ROW0 the old shared base reg could not provide —
+// that was the "Hello"->"Hel o" drop, and what made the copy-to-atlas
+// necessary).  Colour (the 1x1 pattern) is constant across a run, set once
+// while idle; a colour change drains and starts a fresh batch.
+static int      g_cov_fresh = 1;        // batch needs pattern/dst/flags setup (idle)
+static uint32_t g_cov_rgba;             // colour this batch was set up with
 
-// Wait for the queued glyph blits to drain, then reset the atlas allocator.
+// Wait for the queued glyph blits to drain, then re-arm the batch setup.
 // Called at the end of every text run (no-op on the SDL backend).
 void gfx_text_flush(void) {
     xt_blitter_wait_idle(BLIT_TIMEOUT);
-    g_ax = g_ay = g_arow = 0;
-    g_atlas_fresh = 1;
+    g_cov_fresh = 1;
 }
 
 void gfx_blit_coverage(gfx_surface *dst, int dx, int dy,
                        const uint8_t *cov, int cov_stride,
                        int sx, int sy, int w, int h, uint32_t rgba) {
     if (!dst || !cov || w <= 0 || h <= 0) return;
-    if (!is_plane(dst) || (unsigned)w > ATLAS_W || (unsigned)h > ATLAS_H) {
+    if (!is_plane(dst)) {
         soft_blit_coverage(dst, dx, dy, cov, cov_stride, sx, sy, w, h, rgba);
         return;
     }
-    if (!g_atlas) {
-        g_atlas = (uint8_t *)malloc(ATLAS_W * ATLAS_H);     // ~512 KB from the DDR heap
-        if (!g_atlas) {                                     // no atlas → CPU fallback
-            soft_blit_coverage(dst, dx, dy, cov, cov_stride, sx, sy, w, h, rgba);
-            return;
-        }
-    }
 
-    // A colour change mid-batch needs a fresh setup (colour = the 1x1 pattern,
-    // gated on !busy) — drain and start a new batch.
-    if (!g_atlas_fresh && rgba != g_atlas_rgba)
+    // A colour change mid-batch needs a fresh pattern setup (gated on !busy).
+    if (!g_cov_fresh && rgba != g_cov_rgba)
         gfx_text_flush();
 
-    // Allocate a slot in the atlas (shelf bump); wrap rows / drain when full.
-    if (g_ax + (unsigned)w > ATLAS_W) { g_ax = 0; g_ay += g_arow; g_arow = 0; }
-    if (g_ay + (unsigned)h > ATLAS_H) gfx_text_flush();   // resets g_ax/g_ay
-    unsigned slot_x = g_ax, slot_y = g_ay;
-
-    // One-time per-batch setup while the blitter is idle (descriptor + pattern
-    // writes are gated on !busy).
-    if (g_atlas_fresh) {
+    // One-time per-batch setup while the blitter is idle (pattern/dst/flags
+    // writes are gated on !busy).  Colour is the 1x1 pattern; dst is the plane.
+    if (g_cov_fresh) {
         xt_blitter_wait_idle(BLIT_TIMEOUT);
         uint8_t pat[4] = { (uint8_t)(rgba>>24), (uint8_t)(rgba>>16), (uint8_t)(rgba>>8), 0xFF };
         xt_blitter_set_pat_log(0, 0);
         xt_blitter_set_pat_phase(0, 0);
         xt_blitter_write_pat(pat, 4);
-        // src = the coverage atlas (1 B/px); dst = the live plane (RGBA, 8192
-        // B/row).  xt_blitter_src_blit() folds each glyph's origin into ROW0.
-        xt_blitter_set_src_surface((uint32_t)(uintptr_t)g_atlas, (uint16_t)ATLAS_W, 1);
         xt_blitter_set_dst_surface(PLANE_BASE, (uint16_t)PLANE_STRIDE_B);
         xt_blitter_set_flags(XT_BL_FLAG_SRC_COV);
-        g_atlas_rgba  = rgba;
-        g_atlas_fresh = 0;
+        g_cov_rgba  = rgba;
+        g_cov_fresh = 0;
     }
 
-    // Copy the (clipped) glyph coverage into the slot + flush it to DDR.
-    for (int r = 0; r < h; r++) {
-        uint8_t *arow = g_atlas + (size_t)(slot_y + r) * ATLAS_W + slot_x;
-        const uint8_t *crow = cov + (size_t)(sy + r) * cov_stride + sx;
-        for (int c = 0; c < w; c++) arow[c] = crow[c];
-        Xil_DCacheFlushRange((INTPTR)arow, (INTPTR)(unsigned)w);
-    }
+    // Flush this glyph's coverage rows out to DDR (the blitter reads via HP1,
+    // bypassing the A9 cache).  Glyph buffers are write-once, so the flush — one
+    // call, no per-pixel copy — is the only cache traffic this draw incurs.
+    Xil_DCacheFlushRange((INTPTR)(cov + (size_t)sy * cov_stride),
+                         (INTPTR)((size_t)h * cov_stride));
     plane_flush_rect(dx, dy, w, h);     // no dirty dest lines under the blitter
 
-    // Enqueue the blit (no wait) — the batch drains in gfx_text_flush().
-    xt_blitter_src_blit((int16_t)slot_x, (int16_t)slot_y, (uint16_t)w, (uint16_t)h,
+    // Source = this glyph's own coverage buffer (base + stride per glyph, both
+    // in the command snapshot).  Enqueue without waiting; drains in flush.
+    xt_blitter_set_src_surface((uint32_t)(uintptr_t)cov, (uint16_t)cov_stride, 1);
+    xt_blitter_src_blit((int16_t)sx, (int16_t)sy, (uint16_t)w, (uint16_t)h,
                         (int16_t)dx, (int16_t)dy);
-
-    g_ax += (unsigned)w;
-    if ((unsigned)h > g_arow) g_arow = (unsigned)h;
 }
