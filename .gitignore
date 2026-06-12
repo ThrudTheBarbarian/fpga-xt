@@ -53,3 +53,4 @@ web/CLAUDE.md
 # Duplicate of docs/HDMI/SIL9022a-programmer.pdf (already tracked there); the
 # refs/ copy is kept locally but not committed a second time.
 /refs/SIL9022a-programmer.pdf
+vitis/scripts/__pycache__
