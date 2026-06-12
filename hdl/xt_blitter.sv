@@ -945,6 +945,11 @@ module xt_blitter #(
     wire [31:0]  seg_raw_addr    = dst_row_base + (32'(seg_cx) << 2);
     // Source address for block-blit read bursts.
     wire [31:0]  bl_src_raw_addr = src_row_base + (32'(seg_cx) << 2);
+    // Source address keyed off the LIVE column.  BL_READ issues the AR in the
+    // same cycle it latches seg_cx <= cx, so the seg_cx-based wire above still
+    // holds the PREVIOUS segment's column there — every segment past the first
+    // would re-read from the row start.  Use cx for the read AR.
+    wire [31:0]  bl_src_addr_cx  = src_row_base + (32'(cx) << 2);
 
     // ====================================================================
     // Scaled-blit state
@@ -1785,7 +1790,10 @@ module xt_blitter #(
                 // ============================================================
                 S_AW: begin
                     m_axi_awaddr  <= {seg_raw_addr[31:3], 3'b000};
-                    m_axi_awlen   <= burst_len[3:0] - 8'd1;
+                    // burst_len is 5-bit and reaches 16 for a full 32-px segment;
+                    // [3:0] truncated 16->0, giving awlen = 255 (a 256-beat burst
+                    // claim while only 16 W beats are sent).  Use the full width.
+                    m_axi_awlen   <= 8'(burst_len) - 8'd1;
                     m_axi_awsize  <= 3'b011;       // 8 bytes/beat
                     m_axi_awburst <= 2'b01;        // INCR
                     m_axi_awvalid <= 1'b1;
@@ -2271,13 +2279,13 @@ module xt_blitter #(
                     if (cx < dst_w_q) begin
                         if (cx + 32 <= dst_w_q) begin
                             // Full segment: 32 pixels = 16 beats
-                            m_axi_araddr  <= {bl_src_raw_addr[31:3], 3'b000};
+                            m_axi_araddr  <= {bl_src_addr_cx[31:3], 3'b000};
                             m_axi_arlen   <= 8'd15;
                             bl_arlen_q    <= 8'd15;
                         end else begin
                             // Last (partial) segment.  Even width means
                             // remaining = 2,4,6..30 pixels -> beats = 1..15.
-                            m_axi_araddr  <= {bl_src_raw_addr[31:3], 3'b000};
+                            m_axi_araddr  <= {bl_src_addr_cx[31:3], 3'b000};
                             m_axi_arlen   <= ((dst_w_q - cx) >> 1) - 8'd1;
                             bl_arlen_q    <= ((dst_w_q - cx) >> 1) - 8'd1;
                         end
