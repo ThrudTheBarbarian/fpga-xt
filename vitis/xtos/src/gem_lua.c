@@ -423,6 +423,8 @@ static void drag_begin(void)
                       (uint16_t)w->w, (uint16_t)w->h);             /* the still-drawn window  */
     s_cvis = 0;                                       /* pointer now lives in the overlay */
     g_drag_active = 1;                                /* hide_slot stays -1 until first move */
+    xil_printf("[drag] GRAB slot=%d win=(%d,%d %dx%d) off=(%d,%d)\r\n",
+               g_wm.drag_slot, w->x, w->y, w->w, w->h, g_wm.drag_ox, g_wm.drag_oy);
 }
 
 /* End a HW-overlay drag: settle the window onto the plane at its final spot
@@ -434,6 +436,7 @@ static void drag_end(void)
         gem_window *w = &g_wm.win[g_wm.drag_slot];
         fx = w->x; fy = w->y; fw = w->w; fh = w->h; have = 1;
     }
+    xil_printf("[drag] DROP final=(%d,%d %dx%d)\r\n", fx, fy, fw, fh);
     gem_wm_mouse_button(&g_wm, g_mx, g_my, 0);        /* end the WM drag (clears drag_slot) */
     g_mbtn = 0;
     g_wm.hide_slot = -1;                              /* un-lift: the window draws again */
@@ -458,11 +461,14 @@ static void wm_pointer(int dx, int dy)
             g_wm.hide_slot = g_wm.drag_slot;          /* (overlay still covers it), then the   */
             gem_wm_draw_rect(&g_wm, x0, y0, x0 + w->w - 1, y0 + w->h - 1);  /* move reveals the */
             flush_rect(x0, y0, w->w, w->h);           /* clean hole — no flicker, confined.    */
+            xil_printf("[drag] LIFT hole=(%d,%d %dx%d)\r\n", x0, y0, w->w, w->h);
         }
         g_mx = nx; g_my = ny;
         gem_wm_mouse_move(&g_wm, nx, ny);            /* updates the (hidden) window's x/y */
         int ox = w->x < 0 ? 0 : w->x, oy = w->y < 0 ? 0 : w->y;
         xt_overlay_move((uint16_t)ox, (uint16_t)oy); /* tear-free; no plane write, no flush */
+        xil_printf("[drag] MOVE ptr=(%d,%d) win=(%d,%d) ovl=(%d,%d)\r\n",
+                   g_mx, g_my, w->x, w->y, ox, oy);
     } else if (g_mbtn) {                              /* button down, no window grabbed -> full */
         s_cvis = 0;
         g_mx = nx; g_my = ny;
@@ -503,6 +509,8 @@ static void wm_button_toggle(void)
                 gem_wm_draw_rect(&g_wm, prev->x, prev->y, /* de-focused window inactive, */
                                  prev->x + prev->w - 1, prev->y + prev->h - 1);
                 flush_rect(prev->x, prev->y, prev->w, prev->h);   /* confined to its rect */
+                xil_printf("[drag] DEFOCUS prev=(%d,%d %dx%d)\r\n",
+                           prev->x, prev->y, prev->w, prev->h);
             }
             return;                                   /* overlay running; pointer is baked in */
         }

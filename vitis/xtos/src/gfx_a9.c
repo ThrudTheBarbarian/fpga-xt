@@ -170,7 +170,17 @@ void gfx_blit(gfx_surface *dst, int dx, int dy,
     sx += dox; sy += doy;
     if (w <= 0 || h <= 0) return;
 
-    if ((unsigned)(w * h) >= HW_MIN_PX) {
+    // HW block-blit ONLY from a zero source offset.  xt_blitter_src_ddr_rect()
+    // folds the full source origin into ROW0 (base + y0*stride + x0*4), but the
+    // blitter's SRC_X register wants just the 8-byte half-parity bit, not the
+    // whole coordinate — so a non-zero source X is applied twice and the source
+    // is read from the wrong column (right-edge pixels wrap to the left).  Full
+    // surface blits (gem_wm_draw / gem_wm_draw_window: sx=sy=0) are unaffected
+    // and stay on HW; the *clipped* composite from gem_wm_draw_rect (sx=ix0-cx)
+    // falls to the correct software copy below.  This is the bug that doubled a
+    // window's right-side content onto its left edge during an overlapping drag
+    // — and why the all-software SDL host could never reproduce it.
+    if ((unsigned)(w * h) >= HW_MIN_PX && sx == 0 && sy == 0) {
         // HW block blit between ANY two DDR surfaces (window backing store <->
         // plane).  Both addressed by descriptor ROW0 + stride.
         surface_flush_rect(src, sx, sy, w, h);     /* push source to DDR  */
