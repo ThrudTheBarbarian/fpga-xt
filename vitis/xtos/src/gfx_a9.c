@@ -170,17 +170,24 @@ void gfx_blit(gfx_surface *dst, int dx, int dy,
     sx += dox; sy += doy;
     if (w <= 0 || h <= 0) return;
 
-    // HW block-blit ONLY from a zero source offset.  xt_blitter_src_ddr_rect()
-    // folds the full source origin into ROW0 (base + y0*stride + x0*4), but the
-    // blitter's SRC_X register wants just the 8-byte half-parity bit, not the
-    // whole coordinate — so a non-zero source X is applied twice and the source
-    // is read from the wrong column (right-edge pixels wrap to the left).  Full
-    // surface blits (gem_wm_draw / gem_wm_draw_window: sx=sy=0) are unaffected
-    // and stay on HW; the *clipped* composite from gem_wm_draw_rect (sx=ix0-cx)
-    // falls to the correct software copy below.  This is the bug that doubled a
-    // window's right-side content onto its left edge during an overlapping drag
-    // — and why the all-software SDL host could never reproduce it.
-    if ((unsigned)(w * h) >= HW_MIN_PX && sx == 0 && sy == 0) {
+    // HW block-blit ONLY plane<->plane, from a zero source offset.  Two distinct
+    // blitter bugs force the software copy otherwise:
+    //   1. Non-zero source X: xt_blitter_src_ddr_rect() folds the full origin
+    //      into ROW0 (base + y0*stride + x0*4), but SRC_X also wants the 8-byte
+    //      half-parity bit — so a non-zero sx is applied twice and the source is
+    //      read from the wrong column (right-edge pixels wrap to the left).  This
+    //      doubled a window's right-side content onto its left edge during an
+    //      overlapping drag.
+    //   2. Heap-backed (non-plane) source/dest: window backing stores come from
+    //      calloc with arbitrary alignment, and the blitter corrupts the final
+    //      row of such a blit (reads stale source into the last content row —
+    //      the glyph-shaped debris on each window's bottom border).  The plane
+    //      (0x30000000, 8192B stride) is burst-aligned and unaffected.
+    // Full plane<->plane blits stay on HW; backing<->plane composites and clipped
+    // recomposites fall to the correct software copy below.  The all-software SDL
+    // host (gfx_soft.c) never hit either, which is why neither reproduced there.
+    if ((unsigned)(w * h) >= HW_MIN_PX && sx == 0 && sy == 0
+        && is_plane(src) && is_plane(dst)) {
         // HW block blit between ANY two DDR surfaces (window backing store <->
         // plane).  Both addressed by descriptor ROW0 + stride.
         surface_flush_rect(src, sx, sy, w, h);     /* push source to DDR  */
