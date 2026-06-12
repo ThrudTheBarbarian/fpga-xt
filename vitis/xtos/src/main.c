@@ -1099,6 +1099,37 @@ static void repl_exec(char *cmd)
         uart1_puts("  overlay ON: 256x160 test card @ (400,300)  [ovl x y = move, ovl off]\r\n");
         return;
     }
+    if (!strcmp(argv[0], "plmap")) {
+        /* ASCII map of the GEM plane (0x30000000) straight from DDR — the cache
+         * is INVALIDATED first, so this shows exactly what the compositor reads,
+         * not the CPU's cached copy.  W=white K=black .=blue-desktop ?=other.
+         * Aim it at a window's bottom edge: if the dots appear here the artifact
+         * is in DDR (a CPU draw/flush bug); if this is clean but the screen
+         * shows dots they're added downstream (compositor / scan-out).
+         *   plmap [x] [y]   default 220,410 (Window One's bottom edge)      */
+        int px = argc > 1 ? (int)strtoul(argv[1], NULL, 0) : 220;
+        int py = argc > 2 ? (int)strtoul(argv[2], NULL, 0) : 410;
+        int Wd = 90;
+        if (px < 0) px = 0; if (py < 0) py = 0;
+        if (px + Wd > 1920) Wd = 1920 - px;
+        volatile u32 *pl = (volatile u32 *)(uintptr_t)0x30000000u;
+        char line[96];
+        for (int y = py; y < py + 16 && y < 1080; y++) {
+            Xil_DCacheInvalidateRange((INTPTR)((u32 *)0x30000000u + (size_t)y*2048 + px),
+                                      (unsigned)Wd*4);
+            int i = 0;
+            for (int x = px; x < px + Wd; x++) {
+                u32 p = pl[(size_t)y*2048 + x];
+                int R=(p>>24)&0xFF, G=(p>>16)&0xFF, B=(p>>8)&0xFF;
+                line[i++] = (R>200 && G>200 && B>200) ? 'W'
+                          : (R<48  && G<48  && B<48)   ? 'K'
+                          : (B>G   && G>=R)            ? '.' : '?';
+            }
+            line[i] = 0;
+            xil_printf("y%4d %s\r\n", y, line);
+        }
+        return;
+    }
     if (!strcmp(argv[0], "dmactl")) {
         /* gp0_ctrl[4] = honour DMACTL screen-blanking (playfield/DL DMA off ->
          * COLBK), like real ANTIC.  0 = legacy (always render).  The desktop
@@ -1311,7 +1342,7 @@ static void repl_task(void *arg)
 
     char     line[80];
     unsigned ll = 0;
-    unsigned out_on = 0, tick = 0, ms = 0;
+    unsigned out_on = 0, tick = 0, ms = 0, hms = 0;
 
     for (;;) {
         /* Interactive: drain RX, echo, dispatch on CR/LF. */
@@ -1352,21 +1383,25 @@ static void repl_task(void *arg)
 
         vTaskDelay(pdMS_TO_TICKS(1));       /* 1 ms pace (tick rate = 1000 Hz) */
 
-        /* Periodic (~1s): hot-plug service + LED + optional mon status feed. */
+        /* HDMI output gated on RxSense, NOT HPD.  RxSense=1 means the sink is
+         * electrically present (stable); the HPD *line* (HDMI pin 19) flaps in
+         * this rig (bad HPD wire / ground shift on the new JTAG host).  Re-initing
+         * on every HPD blip blanked the picture even with the monitor right there,
+         * so enable once on RxSense and leave it; only a real RxSense drop re-arms.
+         * The monitor shows valid TMDS regardless of the HPD-line state.  Poll at
+         * 100 ms; `diag` still reads the live HPD bit if we want to watch it. */
+        if (++hms >= 100) {
+            hms = 0;
+            uint8_t st = 0; (void)sii_read(0x3D, &st);
+            unsigned rxs = (st >> 3) & 1u;
+            if (rxs) { if (!out_on) { sii_enable_output(); out_on = 1; } }
+            else     { out_on = 0; }
+        }
+
+        /* Periodic (~1s): LED + SD hot-plug + optional mon status feed. */
         if (++ms >= 1000) {
             ms = 0;
             ps_led1_set(tick & 1u);
-
-            uint8_t st = 0; (void)sii_read(0x3D, &st);
-            unsigned hpd = (st >> 2) & 1u;
-            if (hpd && !out_on) {                       /* plug: enable output */
-                sii_enable_output();
-                out_on = 1;
-                uart1_puts("\r\n>> HPD high: output enabled\r\n> ");
-                for (unsigned k = 0; k < ll; k++) uart1_putc(line[k]);
-            } else if (!hpd) {
-                out_on = 0;                             /* unplug: re-arm */
-            }
 
             /* SD card-detect (SDHCI0 present-state @0xE0100024, bit16 = card
              * inserted): auto-unmount on eject, auto-remount on insert — so a
