@@ -170,24 +170,14 @@ void gfx_blit(gfx_surface *dst, int dx, int dy,
     sx += dox; sy += doy;
     if (w <= 0 || h <= 0) return;
 
-    // HW block-blit ONLY plane<->plane, from a zero source offset.  Two distinct
-    // blitter bugs force the software copy otherwise:
-    //   1. Non-zero source X: xt_blitter_src_ddr_rect() folds the full origin
-    //      into ROW0 (base + y0*stride + x0*4), but SRC_X also wants the 8-byte
-    //      half-parity bit — so a non-zero sx is applied twice and the source is
-    //      read from the wrong column (right-edge pixels wrap to the left).  This
-    //      doubled a window's right-side content onto its left edge during an
-    //      overlapping drag.
-    //   2. Heap-backed (non-plane) source/dest: window backing stores come from
-    //      calloc with arbitrary alignment, and the blitter corrupts the final
-    //      row of such a blit (reads stale source into the last content row —
-    //      the glyph-shaped debris on each window's bottom border).  The plane
-    //      (0x30000000, 8192B stride) is burst-aligned and unaffected.
-    // Full plane<->plane blits stay on HW; backing<->plane composites and clipped
-    // recomposites fall to the correct software copy below.  The all-software SDL
-    // host (gfx_soft.c) never hit either, which is why neither reproduced there.
-    if ((unsigned)(w * h) >= HW_MIN_PX && sx == 0 && sy == 0
-        && is_plane(src) && is_plane(dst)) {
+    // HW block-blit for any zero-source-offset blit (incl. backing-store ->
+    // plane composites).  The two block-blit defects that forced the earlier
+    // software workaround are fixed in the RTL (xt_blitter.sv, commit 911f13c):
+    // multi-segment source addressing (every segment past the first re-read the
+    // row start) and the 16-beat AWLEN over-claim.  A non-zero source X still
+    // needs a source barrel-shift the RTL doesn't do yet, so sx/sy != 0 stays on
+    // the software copy below (the GEM software never blits odd-parity anyway).
+    if ((unsigned)(w * h) >= HW_MIN_PX && sx == 0 && sy == 0) {
         // HW block blit between ANY two DDR surfaces (window backing store <->
         // plane).  Both addressed by descriptor ROW0 + stride.
         surface_flush_rect(src, sx, sy, w, h);     /* push source to DDR  */
