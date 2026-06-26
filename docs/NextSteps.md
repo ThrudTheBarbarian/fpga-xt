@@ -23,28 +23,6 @@ This is a tracker, so it intentionally carries forward-looking/historical contex
 
 ## HW / RTL bring-up
 
-- **`speed`/`$D4CA` read-back = EFFECTIVE clock_mult** — RTL DONE: `$D4CA` and GP0
-  0x1E now return the *effective* multiplier (`sally_eff_mult()` in `fpga_xt_top`
-  mirrors `sally_clock`'s BASE_DIV=56 clean-divisor case, normalising non-divisors to
-  1×), so the REPL `speed` verify needs no SW grade table. Correct by inspection (no
-  iverilog bench elaborates `fpga_xt_top`). **Synth-verified only — pending bitstream +
-  on-HW `speed` verify.** *(src: former docs/TODO.txt)*
-- **Blitter IRQ on completion** — pulse an IRQ instead of polling `STATUS.busy` so
-  the PS doesn't spin. **RTL source DONE + unit-tested**: `xt_blitter.irq` = 1-cycle
-  pulse on `busy` 1→0 (drain-to-idle); `tb_xt_blitter` monitor verifies it across the
-  whole suite. **Edge-triggered + GIC-managed** (no PL enable/ack regs). Integration
-  **LANDED** (synth/HW-verified, not testable in iverilog): `fpga_xt_top` wires
-  `irq` → `ps_bd IRQ_F2P_0`; `gen_ps_bd.tcl` sets `PCW_NUM_F2P_INTR=1` + exports
-  `IRQ_F2P` (= GIC ID 61); SW (`xt_blitter.c`) = ISR + binary semaphore +
-  `xt_blitter_wait_idle` check/drain/re-check/`xSemaphoreTake`, **poll fallback** when
-  uninitialised. **The SW IRQ path is gated OFF behind `XT_BLITTER_IRQ` (default 0)**:
-  it didn't link — the 2025.2 freertos10_xilinx SDT port exports
-  `xPortInstallInterruptHandler`/`vPortEnableInterrupt` but **no global
-  `xInterruptController`**, so `XScuGic_SetPriorityTriggerType` has no GIC instance to
-  point at. To enable: (1) resolve the port GIC-instance access, (2) **`FORCE=1` BD
-  regen** for the `IRQ_F2P_0` port, (3) one `xt_blitter_irq_init()` call from a startup
-  task, then build `-DXT_BLITTER_IRQ=1` + bitstream + HW (confirm rising-edge trigger
-  `0x03`). Until then `wait_idle` polls (the active path). *(src: former docs/TODO.txt)*
 - **Sprite-engine image-fetch AXI master is dangled** — `sprite_engine`'s
   `m_axi_ar*` outputs are left open (`fpga_xt_top.sv` ~1202); the stage is a
   framebuffer passthrough and composites no fetched sprites. Join the master to the
