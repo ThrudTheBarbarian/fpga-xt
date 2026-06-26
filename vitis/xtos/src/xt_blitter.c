@@ -8,14 +8,13 @@
 #include "xil_io.h"
 #include "sleep.h"
 
-/* Completion-IRQ path — OFF until (a) the BD exposes IRQ_F2P_0 (FORCE=1 regen)
- * and (b) the freertos10_xilinx GIC instance is wired.  The 2025.2 SDT port
- * exports xPortInstallInterruptHandler/vPortEnableInterrupt but NOT a global
- * `xInterruptController`, so XScuGic_SetPriorityTriggerType has nothing to point
- * at.  Until both are resolved, xt_blitter_wait_idle() polls.  Re-enable with
- * -DXT_BLITTER_IRQ=1. */
+/* Completion-IRQ path.  The blitter pulses IRQ_F2P[0] (GIC SPI 61) on busy 1->0;
+ * the ISR gives a semaphore that wait_idle blocks on.  The IRQ is an OPTIMISATION
+ * over the poll, not a hard dependency: wait_idle re-checks `busy` (the source of
+ * truth) on a short timeout, so a missed/misconfigured IRQ degrades to a poll
+ * rather than stalling.  Build -DXT_BLITTER_IRQ=0 to compile it out entirely. */
 #ifndef XT_BLITTER_IRQ
-#define XT_BLITTER_IRQ 0
+#define XT_BLITTER_IRQ 1
 #endif
 
 #if XT_BLITTER_IRQ
@@ -23,6 +22,7 @@
 #include "task.h"
 #include "semphr.h"
 #include "xscugic.h"
+#include "xparameters.h"
 #endif
 
 void xt_blitter_write8(uint32_t offset, uint8_t v)
@@ -52,14 +52,12 @@ uint16_t xt_blitter_seq_counter(void)
 
 #if XT_BLITTER_IRQ
 /* ---- Completion IRQ (PL IRQ_F2P[0] -> Zynq-7000 GIC SPI ID 61) ----------
- * The blitter pulses `irq` for one clk on busy 1->0 (drain-to-idle).  Register
- * it on the FreeRTOS-port GIC via the port API — no second GIC init, and no
- * dependency on usb_hid (retired for the STM32).  Call xt_blitter_irq_init()
- * ONCE from a task after the scheduler is running.  NOTE: needs the GIC instance
- * (xInterruptController) for the trigger-type config — resolve that for the
- * 2025.2 SDT port before enabling this. */
-extern XScuGic xInterruptController;   /* freertos10_xilinx port GIC instance */
-
+ * Handler install + enable go through the FreeRTOS port API (not usb_hid's GIC,
+ * retired for the STM32).  The rising-edge trigger config needs a GIC instance,
+ * which the 2025.2 SDT port does NOT expose, so use a minimal config-only
+ * XScuGic (LookupConfig, NO CfgInitialize: this touches only interrupt 61's
+ * ICFGR/priority, never the distributor the port already set up).  Call
+ * xt_blitter_irq_init() ONCE from a task after the scheduler is running. */
 #define XT_BLIT_IRQ_ID  61u            /* IRQ_F2P[0] -> GIC SPI ID 61 */
 
 static SemaphoreHandle_t s_blit_done;  /* given by the ISR on completion */
@@ -80,8 +78,14 @@ int xt_blitter_irq_init(void)
     if (!s_blit_done) {
         return -1;
     }
-    /* rising-edge: the PL drives `irq` high for a single clk on completion */
-    XScuGic_SetPriorityTriggerType(&xInterruptController, XT_BLIT_IRQ_ID, 0xA0, 0x03);
+    /* rising-edge (the PL drives irq high for a single clk on completion) */
+    XScuGic_Config *cfg = XScuGic_LookupConfig(XPAR_XSCUGIC_0_BASEADDR);
+    if (cfg) {
+        static XScuGic gic_tt;          /* config-only: trigger-type write */
+        gic_tt.Config  = cfg;
+        gic_tt.IsReady = XIL_COMPONENT_IS_READY;
+        XScuGic_SetPriorityTriggerType(&gic_tt, XT_BLIT_IRQ_ID, 0xA0, 0x03);
+    }
     if (xPortInstallInterruptHandler(XT_BLIT_IRQ_ID,
                                      (XInterruptHandler) xt_blitter_isr,
                                      NULL) != pdPASS) {
@@ -105,19 +109,21 @@ int xt_blitter_wait_idle(uint32_t timeout_us)
 
 #if XT_BLITTER_IRQ
     if (s_blit_done) {
-        /* Drain any stale completion, then re-check busy: closes the race
-         * where the blit finished between the first check and the block. */
-        (void) xSemaphoreTake(s_blit_done, 0);
-        if (!xt_blitter_busy()) {
-            return 0;
+        /* IRQ-assisted: block on the completion semaphore in short slices, but
+         * `busy` stays the source of truth.  The ISR wakes us immediately on a
+         * real completion; a missed/misconfigured IRQ just re-polls each slice,
+         * so we degrade to a poll instead of stalling on the semaphore. */
+        TickType_t slice = pdMS_TO_TICKS(2);
+        if (slice == 0) slice = 1;
+        uint32_t waited_us = 0;
+        (void) xSemaphoreTake(s_blit_done, 0);    /* drain stale give */
+        while (xt_blitter_busy()) {
+            (void) xSemaphoreTake(s_blit_done, slice);
+            if (!xt_blitter_busy()) return 0;
+            waited_us += 2000u;
+            if (timeout_us != 0 && waited_us >= timeout_us) return -1;
         }
-        TickType_t ticks = (timeout_us == 0)
-                         ? portMAX_DELAY
-                         : pdMS_TO_TICKS((timeout_us + 999u) / 1000u);
-        if (ticks == 0) {
-            ticks = 1;
-        }
-        return (xSemaphoreTake(s_blit_done, ticks) == pdTRUE) ? 0 : -1;
+        return 0;
     }
 #endif
 

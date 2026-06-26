@@ -1330,6 +1330,12 @@ static void repl_task(void *arg)
 {
     (void)arg;
 
+    /* Arm the blitter completion IRQ (GIC SPI 61) now the scheduler + GIC are up,
+     * before any drawing.  wait_idle then wakes on completion instead of polling
+     * (and falls back to polling if this fails). */
+    if (xt_blitter_irq_init() != 0)
+        uart1_puts("  [blit] IRQ init failed — wait_idle will poll\r\n");
+
     /* Clear plane-0 power-on garbage + select the compositor BEFORE running boot
      * scripts (which may paint the desktop and must not be wiped afterwards). */
     desktop_init();
