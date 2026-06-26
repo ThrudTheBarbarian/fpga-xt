@@ -16,16 +16,7 @@ This is a tracker, so it intentionally carries forward-looking/historical contex
 
 ## Open Issues (tracked bugs)
 
-- **`tb_pokey` K.7 — triage (untouched by this session).** SKSTAT serial flags: bit4
-  framing-err + bit3 overrun pass, but **bit2 "serial-input-busy" isn't set** by the
-  stimulus (`:751`). Custom SKSTAT layout (bit5=KEY_LATCH, bit7=SHIFT). Stale expectation
-  vs real busy-flag bug — needs a POKEY-serial look + a numbered issue. (`pokey_i2s` not
-  run — POKEY-dependent.)
-- **`tb_antic_modes` — triage (untouched by this session).** 161 per-mode pixel
-  mismatches (modes F/2/E) + the P/M collision golden. Systematic count ⇒ **almost
-  certainly stale golden after the validated ANTIC render/palette rework** (live render
-  confirmed-correct via `render_antic_fb.py`); confirm vs a real regression by regenerating
-  the golden. Focused ANTIC task + a numbered issue.
+- None currently — the full `make all` iverilog suite is green.
 - The numbered issues #0001–#0007 are all resolved — see `docs/Issues/Fixed/`.
 
 ---
@@ -44,13 +35,16 @@ This is a tracker, so it intentionally carries forward-looking/historical contex
   whole suite. **Edge-triggered + GIC-managed** (no PL enable/ack regs). Integration
   **LANDED** (synth/HW-verified, not testable in iverilog): `fpga_xt_top` wires
   `irq` → `ps_bd IRQ_F2P_0`; `gen_ps_bd.tcl` sets `PCW_NUM_F2P_INTR=1` + exports
-  `IRQ_F2P` (= GIC ID 61); SW (`xt_blitter.c`) = ISR + binary semaphore on the
-  **FreeRTOS port GIC** (`xPortInstallInterruptHandler`, not `usb_hid`'s — retired),
-  `xt_blitter_wait_idle` rewritten to check/drain/re-check/`xSemaphoreTake` with a
-  **poll fallback** if the IRQ isn't initialised. Pending: **`FORCE=1` BD regen** +
-  bitstream + HW; and one `xt_blitter_irq_init()` call from a startup task to
-  activate (polls until then). Confirm at build: port-GIC API names, the `IRQ_F2P_0`
-  port name, rising-edge trigger `0x03`. *(src: former docs/TODO.txt)*
+  `IRQ_F2P` (= GIC ID 61); SW (`xt_blitter.c`) = ISR + binary semaphore +
+  `xt_blitter_wait_idle` check/drain/re-check/`xSemaphoreTake`, **poll fallback** when
+  uninitialised. **The SW IRQ path is gated OFF behind `XT_BLITTER_IRQ` (default 0)**:
+  it didn't link — the 2025.2 freertos10_xilinx SDT port exports
+  `xPortInstallInterruptHandler`/`vPortEnableInterrupt` but **no global
+  `xInterruptController`**, so `XScuGic_SetPriorityTriggerType` has no GIC instance to
+  point at. To enable: (1) resolve the port GIC-instance access, (2) **`FORCE=1` BD
+  regen** for the `IRQ_F2P_0` port, (3) one `xt_blitter_irq_init()` call from a startup
+  task, then build `-DXT_BLITTER_IRQ=1` + bitstream + HW (confirm rising-edge trigger
+  `0x03`). Until then `wait_idle` polls (the active path). *(src: former docs/TODO.txt)*
 - **Sprite-engine image-fetch AXI master is dangled** — `sprite_engine`'s
   `m_axi_ar*` outputs are left open (`fpga_xt_top.sv` ~1202); the stage is a
   framebuffer passthrough and composites no fetched sprites. Join the master to the
