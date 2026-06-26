@@ -77,13 +77,10 @@ This is a tracker, so it intentionally carries forward-looking/historical contex
   decode (blitter/compositor/sprite/XL-control/ROM-loader) + ARM driver for
   plane/sprite/window control. *(blocks adding register blocks; src: former docs/TODO.txt,
   docs/video/video-architecture.md)*
-- **Sprite engine — refinements.** Core is built + HW-validated and drives the
-  GEM hardware mouse cursor: fetcher + double-buffered line cache + 4-stage
-  compositor, A9-driven over GP0 (`sprite.c`), reads DDR via the shared HP2 read
-  mux. Remaining: H/V flip + 2x exercised, palettised sprites, rotation
-  (SW-first), collision-compositor (the set side is still tied to 0), and
-  blitter→sprite-arena integration. *(src: docs/Design/sprite-engine.md,
-  docs/video/video-architecture.md)*
+- **Sprite engine — refinements.** Core + the HW mouse cursor are done and on HW.
+  Remaining: H/V flip + 2x exercised, palettised sprites, rotation (SW-first),
+  collision-compositor (the set side is still tied to 0), and blitter→sprite-arena
+  integration. *(src: docs/Design/sprite-engine.md, docs/video/video-architecture.md)*
 - **Texture mapping (tiers)** — T1 affine point-sampled (~1 day) → T2 bilinear
   (+½ day) → T3 textured triangles (+½–1 day) → T4 perspective-correct (several days);
   plus `$D4D0..` TEX_* regs / `CMD=0x08` / `TEX_WRAP` wiring and a texture-cache
@@ -203,12 +200,10 @@ This is a tracker, so it intentionally carries forward-looking/historical contex
   batching; multitasking model (cooperative vs preemptive). *(src: GEM-implementation.md)*
 - **ARM-native xtc GEM client** — lands once the xtc-ARM backend lands. *(src:
   docs/GEM/gem-service-abi.md)*
-- **Desktop redraw de-jerk (software-first, ordered)** — (1) diagnose drag lag, gate
-  per-move `xil_printf`s behind a debug flag; (2) replace the `usleep(100)` floor in
-  `xt_blitter_wait_idle` with a busy-poll; (3) GEM rectangle list + clipped `WM_REDRAW`
-  (foundation); (4) `wind_scroll(win,dy)` HW backing-store move; (5) plane-body-move
-  fast-path. Optional RTL (6): odd-X horizontal lane mux + reverse-direction
-  BLOCK_BLIT. *(src: docs/OS/desktop-redraw.md)*
+- **Desktop redraw de-jerk (software-first, ordered)** — (1) GEM rectangle list +
+  clipped `WM_REDRAW` (foundation); (2) `wind_scroll(win,dy)` HW backing-store move;
+  (3) plane-body-move fast-path. Optional RTL (4): odd-X horizontal lane mux +
+  reverse-direction BLOCK_BLIT. *(src: docs/OS/desktop-redraw.md)*
 
 ---
 
