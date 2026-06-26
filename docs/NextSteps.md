@@ -77,12 +77,12 @@ This is a tracker, so it intentionally carries forward-looking/historical contex
   decode (blitter/compositor/sprite/XL-control/ROM-loader) + ARM driver for
   plane/sprite/window control. *(blocks adding register blocks; src: former docs/TODO.txt,
   docs/video/video-architecture.md)*
-- **Sprite engine — refinements.** Core is built + HW-validated: fetcher + line
-  cache + 4-stage compositor, A9-driven over GP0 (`sprite.c`), reads DDR via the
-  shared HP2 read mux, composites on screen. Remaining: a proper **cursor sprite**
-  (replace the `sprite_test()` bring-up stub), H/V flip + 2x exercised, palettised
-  sprites, rotation (SW-first), collision-compositor (the set side is still tied to
-  0), and blitter→sprite-arena integration. *(src: docs/Design/sprite-engine.md,
+- **Sprite engine — refinements.** Core is built + HW-validated and drives the
+  GEM hardware mouse cursor: fetcher + double-buffered line cache + 4-stage
+  compositor, A9-driven over GP0 (`sprite.c`), reads DDR via the shared HP2 read
+  mux. Remaining: H/V flip + 2x exercised, palettised sprites, rotation
+  (SW-first), collision-compositor (the set side is still tied to 0), and
+  blitter→sprite-arena integration. *(src: docs/Design/sprite-engine.md,
   docs/video/video-architecture.md)*
 - **Texture mapping (tiers)** — T1 affine point-sampled (~1 day) → T2 bilinear
   (+½ day) → T3 textured triangles (+½–1 day) → T4 perspective-correct (several days);
