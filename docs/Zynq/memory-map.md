@@ -50,7 +50,7 @@ below are defaults — they can be overridden at instantiation time.
               (0x4000_0000 = top of 1 GB DDR3)
 ```
 
-The SALLY banked windows (`0x2000_0000` / `0x2040_0000`), the main framebuffer (`FB_BASE = 0x3000_0000`), the XL window surfaces (`XL_BASE_A/B = 0x3100_0000` / `0x3110_0000`), and the sprite arena (`ARENA_BASE = 0x3400_0000`) are all bound to HDL parameters. The 68k region and the GEM heap are **provisional** — chosen to fit the 1 GB ceiling, not yet wired. (The sprite arena's image-fetch AXI master is still dangled — see Progress/sprite-engine.md and the TODO bug.)
+The SALLY banked windows (`0x2000_0000` / `0x2040_0000`), the main framebuffer (`FB_BASE = 0x3000_0000`), the XL window surfaces (`XL_BASE_A/B = 0x3100_0000` / `0x3110_0000`), and the sprite arena (`ARENA_BASE = 0x3400_0000`) are all bound to HDL parameters. The 68k region and the GEM heap are **provisional** — chosen to fit the 1 GB ceiling, not yet wired. (The sprite arena's image-fetch AXI master is still dangled — see ../Design/sprite-engine.md and ../NextSteps.md.)
 
 ## Framebuffer layout (1080p RGBA-8888)
 

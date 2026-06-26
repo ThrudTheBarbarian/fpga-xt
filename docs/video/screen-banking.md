@@ -135,16 +135,4 @@ double-buffer flow above is both cleaner and the recommended path.
    *immediately*, so the engine can run at low priority / share bandwidth without
    stalling anything on the hot path.
 
-## Open points
-
-- **Aperture base register vs hard-coded layout** — leaning hard-coded; revisit
-  if a client needs to relocate it.
-- **Interaction with the existing `$D5C0`/`$D5C1` windows** if the screen
-  aperture overlaps them (it should be disjoint).
-- **BRAM budget** — two 8 KB screen caches (CPU + ANTIC) on top of the existing
-  64 KB shadow + page caches; confirm it fits the target's BRAM (the 7010 is the
-  tight one).
-
-Resolved: off-screen RMW (the CPU always works against its own BRAM, so
-read-modify-write is BRAM-speed; DDR is touched only on a `$D5C2` bank switch,
-which is not latency-critical).
+> **Open work / next steps** are tracked in [NextSteps.md](../NextSteps.md) — see "Video / compositor / sprites / textures".

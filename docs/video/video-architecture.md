@@ -387,7 +387,7 @@ shared bandwidth) — §10.2 shows there is ample headroom.
 Notes:
 - **HP3 is the XL *window* port, not a generic "compositor" port** — XL fetch
   (R) + XL writeback (W).  This is what's wired today (phase 2).
-- **HP2 conflict resolved**: earlier text had HP2 = sprites *and* TODO.txt had
+- **HP2 conflict resolved**: earlier text had HP2 = sprites *and* a separate plan had
   HP2 = SALLY banked DDR.  Sprites are light and homogeneous with the other
   clk_sys plane reads, so the **sprite-image fetch moves onto HP0's read
   SmartConnect**; HP2 is dedicated to SALLY's banked window (its own
@@ -437,34 +437,7 @@ register re-partition (§9); double-buffer/front-sel plumbing (§3).
 
 **Retarget:** task #7 (ANTIC capture) → ANTIC→DDR3 writeback.
 
-## 12. Deferred / future
-
-- Desktop-window-over-live-window occlusion (clip-rect promotion, then bitmap
-  mode, §4.4).
-- GEM-on-ARM, the windowing system, input routing (keyboard/mouse → focused
-  window), USB-HID.
-- STe/TT emulation on ARM core1 (software 68k); its DDR3 surface + plane.
-- Configurable boot-direct-to-XL (skip the desktop).
-- Visible-span-only plane fetch (bandwidth optimisation).
-- ANTIC native raster (§5.1) — **DONE** (task-0013 + task-0014, 2026-05-25):
-  task-0013 replaced the 800×600 `vbeam` heartbeat with the phi2-derived
-  line/frame/row timer (`antic_raster`) and deleted the dead display chain
-  (`hdmi_out`/`scan_out`/native `line_buffer`/display `palette_lut`).  task-0014
-  replaced the free-running `kick_counter` render trigger with `antic_seq` — a
-  phi2-raster-locked sequencer that parses the display list once per frame at
-  `vbi_start` and composes one row per active scanline at `line_start` (the
-  `compositor` now composes a single supplied row per `start_compose`).  Render
-  is phi2/beam-locked, so mid-frame register writes land on the correct row.
-  No sub-items remain.
-
-## 13. Open sizing questions (resolve during implementation)
-
-- Plane count (propose 4) and sprite count (propose 16–32).
-- Sprite image storage: DDR3 with a small BRAM line cache, or pure BRAM.
-- Exact GP0 map + the AXI-Lite decode rework.
-- Double-buffer flip handshake details (front_sel sync timing).
-- Whether the compositor and `fb_scanout` share one fetch unit time-multiplexed
-  vs N parallel fetch units (area/bandwidth trade).
+> **Open work / next steps** are tracked in [NextSteps.md](../NextSteps.md) — see "Video / compositor / sprites / textures".
 
 ## 14. Phased implementation
 

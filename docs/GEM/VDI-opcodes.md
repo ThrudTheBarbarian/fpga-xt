@@ -380,48 +380,7 @@ version is signalled by a new `bind_workstation` extension opcode at a
 different value, and the N6 dispatcher selects the parsing tables based
 on which bind was seen.
 
-## Open questions
-
-1. **Form/bitmap cache management on N6** — how are pixel forms
-   uploaded, addressed, and freed? Initial sketch:
-   - `form_create(width, height, depth) → handle_u16` via FMC RPC.
-     Supported depths: **1, 4, 8, 24** bits per pixel.
-     - 1 bpp: monochrome masks, cursor patterns, fill stipples
-     - 4 bpp: legacy 16-colour bitmap forms (Atari ST native)
-     - 8 bpp: 256-colour indexed forms (most common; uses the
-       active virtual palette for expansion)
-     - 24 bpp: true-colour RGB888 forms (photos, anti-aliased glyphs,
-       gradients); blit straight to framebuffer without palette
-       lookup
-   - Pixel data uploaded via 0x00 W bulk mailbox in `handle, byte_count,
-     bytes` packets. Byte order within a row depends on `depth`:
-     packed for 1/4 bpp; one byte/pixel for 8 bpp; three bytes/pixel
-     (R, G, B) for 24 bpp.
-   - **Mixed-depth blit** (`vro_cpyfm`, `vrt_cpyfm`): source and
-     destination depths may differ. The N6 expands source pixels at
-     blit time:
-     - 1/4/8 bpp source → palette LUT → RGB888 → write to dest
-     - 24 bpp source → write directly
-     - 24 bpp source → 8 bpp dest: not typically valid (would lose
-       information); reject with a stream fault
-   - `form_delete(handle)` via FMC RPC frees the N6-side allocation
-     and decrements its retain count.
-   - Reserved `handle = 0` means "the screen" (the current
-     framebuffer); always RGB888 internally regardless of the apps'
-     logical colour mode.
-2. **Font management** — `vst_load_fonts` / `vst_unload_fonts` operate
-   on N6-side font cache. Mapping classic Atari font IDs (1=system,
-   2=small, …) to LVGL `lv_font_t` instances needs a table.
-3. **Bezier quality (escape 99)** — does this map to LVGL's curve
-   subdivision parameter or is it purely informational?
-4. **vr_trnfm (op 110)** — transforms bitmap format (device-independent
-   ↔ device-dependent). On modern hardware this is mostly a no-op; may
-   be implementable as identity, but apps that round-trip through it
-   need verification.
-5. **Multi-plane forms** — classic VDI supported 1, 2, 4 planes for
-   bitmap forms. Wire format currently assumes 8-bit indexed; a `depth`
-   field on form_create allows 1/2/4/8/16-bit forms but requires N6
-   dispatcher to convert on blit.
+> **Open work / next steps** are tracked in [NextSteps.md](../NextSteps.md) — see "GEM (VDI + AES) / desktop".
 
 ## References
 

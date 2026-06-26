@@ -110,19 +110,7 @@ demand-filled per 64-byte line, resident until the page is swapped.
 - `busy`/`req_ready` semantics unchanged — the cache just holds `req_ready` low
   longer during a fill or a flush, and SALLY stalls as it already does.
 
-## Open decisions (pick during implementation)
-
-1. **Write miss policy**: read-allocate (recommended — keeps lines coherent for
-   flush) vs write-no-allocate (write straight to DDR3, don't cache). Recommend
-   read-allocate.
-2. **Eager vs demand fill on swap**: pure demand (recommended — no upfront
-   ~20 µs stall, no wasted fill of untouched lines) vs eager whole-page DMA.
-3. **Dirty granularity**: per-line dirty (recommended) vs whole-page-dirty
-   (simpler, flushes everything).
-4. **Two caches vs one**: two (recommended — code RO needs no dirty/flush logic;
-   data RW does).
-5. **clk_sally**: if the page-cache read can't meet +0 with the registered
-   output, add a pipeline stage and let `busy` cover the extra latency.
+> **Open work / next steps** are tracked in [NextSteps.md](../NextSteps.md) — see "Memory / banking".
 
 ## Verification
 

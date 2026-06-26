@@ -69,6 +69,7 @@ the `docs/` tree below is working notes and design drafts (some pre-pivot).
 
 | Doc | Scope |
 |-----|-------|
+| [docs/NextSteps.md](docs/NextSteps.md) | **Consolidated open-work / TODO tracker** — read first for "what's left" |
 | [docs/architecture.md](docs/architecture.md), [docs/video/video-architecture.md](docs/video/video-architecture.md) | System architecture + the current video model (1080p desktop compositor, scalable ANTIC window) |
 | [docs/Zynq/](docs/Zynq/) | Zynq-7020 target — [FPGA.md](docs/Zynq/FPGA.md), [memory-map.md](docs/Zynq/memory-map.md), [register-map.md](docs/Zynq/register-map.md), [pin-map.md](docs/Zynq/pin-map.md), board schematic |
 | [docs/bring-up.md](docs/bring-up.md) | Hardware bring-up — JTAG, FSBL, board boot |
@@ -77,7 +78,7 @@ the `docs/` tree below is working notes and design drafts (some pre-pivot).
 | [docs/HDMI/](docs/HDMI/) | [hdmi.md](docs/HDMI/hdmi.md), [palette.md](docs/HDMI/palette.md), SiI9022A datasheets |
 | [docs/6502/](docs/6502/), [docs/Altirra/](docs/Altirra/) | 6502 embellishments; Altirra ANTIC/POKEY audits + reference manual |
 | [docs/MultiTasking/](docs/MultiTasking/), [docs/OS/](docs/OS/) | Multitasking + OS design notes |
-| [docs/Progress/](docs/Progress/) | Per-feature progress — sprite engine, banked page cache, [future-work.md](docs/Progress/future-work.md) |
+| [docs/Design/](docs/Design/) | Per-feature design specs — sprite engine, banked page cache, [aux audio & reservations](docs/Design/aux-audio-and-reservations.md) |
 | [refs/](refs/) | Hardware reference (Z-Turn schematic + dimensions) |
 
 ## Layout

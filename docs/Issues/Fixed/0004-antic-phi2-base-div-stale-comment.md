@@ -2,7 +2,7 @@
 
 - **Component:** ANTIC integration — `fpga_xt_top` instantiation comment
 - **Severity:** Low (stale comment; no functional effect)
-- **Status:** Open
+- **Status:** Resolved (2026-06-26)
 - **Found:** 2026-05-30 (while reframing the stale clk_bus rate comments in `antic_top.sv`)
 - **Files:** `hdl/fpga_xt_top.sv` (~line 761), cf. `hdl/antic_top.sv:327`
 
@@ -49,3 +49,15 @@ convention ([[docs_no_historical_framing]]) describe only the current behaviour.
 Surfaced alongside the `antic_top.sv` clk_bus reframe (the old "161.08 MHz / ×90
 NTSC / SALLY speed grades" default, now `POKEY_CLK_BUS_HZ = 150_000_000` clk_sys).
 The 68-vs-90 discrepancy is the mirror-image stale note on the `fpga_xt_top` side.
+
+## Resolution (2026-06-26)
+
+Fixed (comment-only, no functional change). The `fpga_xt_top.sv` comment now states
+current behaviour: antic_top derives `phi2 = clk_bus / BASE_DIV`, `BASE_DIV` is a
+fixed `localparam` inside antic_top (not overridable from the instantiation), and it
+is independent of `sally_clock`'s `BASE_DIV` (the two divide different clocks —
+ANTIC divides clk_sys, sally_clock divides clk_sally).
+
+Note the values moved on from what this issue recorded: antic_top's `BASE_DIV` is now
+**74** at clk_sys **133.3 MHz** → phi2 ≈ 1.80 MHz (≈ real NTSC), not the 90 @ 150 MHz
+assumed above.

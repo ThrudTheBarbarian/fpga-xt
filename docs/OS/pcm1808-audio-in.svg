@@ -1,0 +1,276 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1240 1060" font-family="Helvetica, Arial, sans-serif">
+  <defs>
+    <g id="gnd" stroke="#222" stroke-width="1.6" fill="none">
+      <line x1="0" y1="0" x2="0" y2="7"/>
+      <line x1="-8" y1="7" x2="8" y2="7"/>
+      <line x1="-5" y1="11" x2="5" y2="11"/>
+      <line x1="-2" y1="15" x2="2" y2="15"/>
+    </g>
+    <marker id="dot" markerWidth="8" markerHeight="8" refX="4" refY="4">
+      <circle cx="4" cy="4" r="3" fill="#333"/>
+    </marker>
+  </defs>
+
+  <style>
+    .ic    { fill:#f4f6fb; stroke:#33415c; stroke-width:2; }
+    .blk   { fill:#eef2f7; stroke:#33415c; stroke-width:1.6; }
+    .pinlbl{ font-size:12px; fill:#1b2430; }
+    .pinno { font-size:10px; fill:#7a8699; }
+    .net   { font-size:11px; fill:#33415c; }
+    .ana   { stroke:#c1121f; stroke-width:1.8; fill:none; }
+    .dig   { stroke:#1d4ed8; stroke-width:1.8; fill:none; }
+    .p5    { stroke:#e36414; stroke-width:1.8; fill:none; }
+    .p33   { stroke:#0a9396; stroke-width:1.8; fill:none; }
+    .gw    { stroke:#222;    stroke-width:1.6; fill:none; }
+    .w     { stroke:#33415c; stroke-width:1.6; fill:none; }
+    .comp  { stroke:#33415c; stroke-width:1.6; fill:none; }
+    .cval  { font-size:10.5px; fill:#33415c; }
+    .title { font-size:21px; font-weight:bold; fill:#1b2430; }
+    .sub   { font-size:12.5px; fill:#5a6678; }
+    .nbox  { fill:#fbfbf4; stroke:#c9cdb0; stroke-width:1.2; }
+    .ntxt  { font-size:11.5px; fill:#2b3340; }
+    .nhd   { font-size:12.5px; font-weight:bold; fill:#1b2430; }
+    .warn  { font-size:11.5px; fill:#9d0208; font-weight:bold; }
+    .dot   { fill:#333; }
+  </style>
+
+  <!-- ===== Title ===== -->
+  <text x="40" y="38" class="title">PCM1808 stereo I²S ADC — SIO &amp; PBI/cart AUDIO_IN capture</text>
+  <text x="40" y="58" class="sub">Two mono analog inputs (SIO AUDIO_IN → ch-L, PBI/cart AUDIO_IN → ch-R) summed in HDL into both HDMI output channels.  Slave mode, 24-bit left-justified.  PCM1808 (on the carrier) takes SCKI + BCK + LRCK from the FPGA as one 12.288 MHz / 48 kHz domain; DOUT returns on I2S_DIN.</text>
+
+  <!-- ===== Power rails ===== -->
+  <line class="p5"  x1="300" y1="120" x2="980" y2="120"/>
+  <text x="300" y="113" class="net" fill="#e36414">+5V  (analog)</text>
+  <line class="p33" x1="300" y1="150" x2="980" y2="150"/>
+  <text x="300" y="143" class="net" fill="#0a9396">+3.3V (digital / PL bank)</text>
+
+  <!-- ===== PCM1808 IC ===== -->
+  <rect class="ic" x="470" y="300" width="240" height="290" rx="4"/>
+  <text x="590" y="330" text-anchor="middle" font-size="16" font-weight="bold" fill="#1b2430">PCM1808</text>
+  <text x="590" y="348" text-anchor="middle" font-size="10.5" fill="#7a8699">TSSOP-14 (pin nos. per pkg)</text>
+  <text x="590" y="450" text-anchor="middle" font-size="10" fill="#aab2c0">ΔΣ 24-bit / 64× OS</text>
+
+  <!-- left pins (analog) -->
+  <!-- VINL 13 -->
+  <line class="ana" x1="430" y1="345" x2="470" y2="345"/>
+  <text x="476" y="349" class="pinlbl">VINL</text><text x="476" y="361" class="pinno">13</text>
+  <!-- VINR 14 -->
+  <line class="ana" x1="430" y1="460" x2="470" y2="460"/>
+  <text x="476" y="464" class="pinlbl">VINR</text><text x="476" y="476" class="pinno">14</text>
+  <!-- VREF 1 -->
+  <line class="ana" x1="430" y1="540" x2="470" y2="540"/>
+  <text x="476" y="544" class="pinlbl">VREF</text><text x="476" y="556" class="pinno">1</text>
+
+  <!-- right pins (digital) -->
+  <line class="p33" x1="710" y1="345" x2="750" y2="345"/>
+  <text x="704" y="349" class="pinlbl" text-anchor="end">SCKI</text><text x="704" y="361" class="pinno" text-anchor="end">6</text>
+  <line class="dig" x1="710" y1="395" x2="750" y2="395"/>
+  <text x="704" y="399" class="pinlbl" text-anchor="end">LRCK</text><text x="704" y="411" class="pinno" text-anchor="end">7</text>
+  <line class="dig" x1="710" y1="445" x2="750" y2="445"/>
+  <text x="704" y="449" class="pinlbl" text-anchor="end">BCK</text><text x="704" y="461" class="pinno" text-anchor="end">8</text>
+  <line class="dig" x1="710" y1="495" x2="750" y2="495"/>
+  <text x="704" y="499" class="pinlbl" text-anchor="end">DOUT</text><text x="704" y="511" class="pinno" text-anchor="end">9</text>
+
+  <!-- top pins (power) -->
+  <line class="p5"  x1="540" y1="265" x2="540" y2="300"/>
+  <text x="540" y="290" class="pinlbl" text-anchor="middle">VCC</text><text x="556" y="290" class="pinno">3</text>
+  <line class="p33" x1="640" y1="225" x2="640" y2="300"/>
+  <text x="640" y="290" class="pinlbl" text-anchor="middle">VDD</text><text x="656" y="290" class="pinno">4</text>
+
+  <!-- bottom pins (gnd + straps) -->
+  <line class="gw"  x1="505" y1="590" x2="505" y2="625"/>
+  <text x="505" y="610" class="pinlbl" text-anchor="middle" transform="rotate(0)">AGND</text><text x="524" y="610" class="pinno">2</text>
+  <line class="gw"  x1="560" y1="590" x2="560" y2="625"/>
+  <text x="560" y="622" class="pinlbl" text-anchor="middle">DGND</text><text x="582" y="622" class="pinno">5</text>
+  <line class="w"   x1="610" y1="590" x2="610" y2="660"/>
+  <text x="610" y="605" class="pinlbl" text-anchor="middle">MD0</text><text x="628" y="605" class="pinno">10</text>
+  <line class="w"   x1="650" y1="590" x2="650" y2="660"/>
+  <text x="650" y="618" class="pinlbl" text-anchor="middle">MD1</text><text x="668" y="618" class="pinno">11</text>
+  <line class="p33" x1="690" y1="590" x2="690" y2="645"/>
+  <text x="690" y="631" class="pinlbl" text-anchor="middle">FMT</text><text x="708" y="631" class="pinno">12</text>
+
+  <!-- ===== Power decoupling ===== -->
+  <!-- ferrite bead on VCC from 5V rail -->
+  <rect class="comp" x="525" y="170" width="30" height="14" rx="3"/>
+  <text x="525" y="166" class="cval">FB1</text>
+  <line class="p5" x1="540" y1="120" x2="540" y2="170"/>
+  <line class="p5" x1="540" y1="184" x2="540" y2="265"/>
+  <circle cx="540" cy="230" r="3" class="dot"/>
+  <!-- C4 (VCC bypass) -->
+  <line class="comp" x1="540" y1="230" x2="590" y2="230"/>
+  <line class="comp" x1="590" y1="222" x2="590" y2="238"/>
+  <line class="comp" x1="600" y1="222" x2="600" y2="238"/>
+  <line class="comp" x1="600" y1="230" x2="610" y2="230"/>
+  <line class="gw"   x1="610" y1="230" x2="610" y2="245"/>
+  <use href="#gnd" x="610" y="245"/>
+  <text x="556" y="218" class="cval">C4 0.1µF ∥ 10µF</text>
+
+  <!-- C3 (VDD bypass) -->
+  <line class="p33" x1="640" y1="150" x2="640" y2="225"/>
+  <circle cx="640" cy="195" r="3" class="dot"/>
+  <line class="comp" x1="640" y1="195" x2="690" y2="195"/>
+  <line class="comp" x1="690" y1="187" x2="690" y2="203"/>
+  <line class="comp" x1="700" y1="187" x2="700" y2="203"/>
+  <line class="comp" x1="700" y1="195" x2="710" y2="195"/>
+  <line class="gw"   x1="710" y1="195" x2="710" y2="210"/>
+  <use href="#gnd" x="710" y="210"/>
+  <text x="656" y="183" class="cval">C3 0.1µF ∥ 10µF</text>
+
+  <!-- ===== VREF decoupling (C5) ===== -->
+  <line class="ana" x1="430" y1="540" x2="400" y2="540"/>
+  <line class="ana" x1="400" y1="540" x2="400" y2="560"/>
+  <line class="comp" x1="392" y1="560" x2="408" y2="560"/>
+  <line class="comp" x1="392" y1="570" x2="408" y2="570"/>
+  <line class="gw"   x1="400" y1="570" x2="400" y2="588"/>
+  <use href="#gnd" x="400" y="588"/>
+  <text x="330" y="544" class="cval">C5 0.1µF ∥ 10µF</text>
+  <text x="330" y="557" class="cval">(VREF = 0.5·VCC)</text>
+
+  <!-- ===== Mode straps ===== -->
+  <!-- FMT -> +3V3 = left-justified -->
+  <line class="p33" x1="690" y1="645" x2="730" y2="645"/>
+  <circle cx="730" cy="645" r="3" fill="#0a9396"/>
+  <text x="736" y="642" class="ntxt" font-weight="bold" fill="#0a9396">FMT → +3V3 (HIGH) = Left-justified 24-bit (Table 3)</text>
+  <text x="736" y="658" class="cval" fill="#0a9396">matches pcm1808_rx.sv (MSB on first BCK after LRCK, no 1-BCK I²S delay)</text>
+  <text x="736" y="674" class="cval" fill="#9d0208">⚠ NOT FMT=Low/I²S — RTL comment "FMT0=0,FMT1=0" is wrong (PCM1808 has one FMT pin)</text>
+  <!-- MD0 + MD1 -> GND = slave mode -->
+  <line class="w" x1="610" y1="660" x2="650" y2="660"/>
+  <line class="gw" x1="630" y1="660" x2="630" y2="678"/>
+  <use href="#gnd" x="630" y="678"/>
+  <text x="736" y="694" class="ntxt" font-weight="bold" fill="#33415c">MD0 = MD1 → DGND = Slave mode (Table 2)</text>
+
+  <!-- ===== AGND / DGND star ground ===== -->
+  <line class="gw" x1="505" y1="625" x2="505" y2="700"/>
+  <line class="gw" x1="560" y1="625" x2="560" y2="700"/>
+  <line class="gw" x1="505" y1="700" x2="560" y2="700"/>
+  <circle cx="532" cy="700" r="3" class="dot"/>
+  <line class="gw" x1="532" y1="700" x2="532" y2="712"/>
+  <use href="#gnd" x="532" y="712"/>
+  <text x="430" y="700" class="cval" text-anchor="end">AGND ⎯•⎯ DGND</text>
+  <text x="430" y="713" class="cval" text-anchor="end">single-point star</text>
+
+  <!-- ============================================================ -->
+  <!-- ===== Analog input source blocks (far left) ===== -->
+  <rect class="blk" x="40" y="322" width="150" height="46" rx="4"/>
+  <text x="115" y="342" text-anchor="middle" font-size="12" font-weight="bold">SIO port</text>
+  <text x="115" y="358" text-anchor="middle" font-size="10.5" fill="#5a6678">AUDIO_IN — DIN pin 11</text>
+
+  <rect class="blk" x="40" y="437" width="150" height="46" rx="4"/>
+  <text x="115" y="457" text-anchor="middle" font-size="12" font-weight="bold">PBI / cartridge</text>
+  <text x="115" y="473" text-anchor="middle" font-size="10.5" fill="#5a6678">AUDIO_IN — cart pin 6</text>
+
+  <!-- ===== Input network: channel L (SIO -> VINL) ===== -->
+  <!-- series protect R -->
+  <line class="ana" x1="190" y1="345" x2="215" y2="345"/>
+  <rect class="comp" x="215" y="339" width="34" height="12" rx="2"/>
+  <text x="232" y="334" class="cval" text-anchor="middle">100Ω</text>
+  <line class="ana" x1="249" y1="345" x2="280" y2="345"/>
+  <!-- series DC-block cap -->
+  <line class="comp" x1="280" y1="337" x2="280" y2="353"/>
+  <line class="comp" x1="290" y1="337" x2="290" y2="353"/>
+  <text x="285" y="332" class="cval" text-anchor="middle">1µF</text>
+  <line class="ana" x1="290" y1="345" x2="430" y2="345"/>
+  <!-- shunt anti-alias cap -->
+  <circle cx="350" cy="345" r="3" class="dot"/>
+  <line class="comp" x1="350" y1="345" x2="350" y2="365"/>
+  <line class="comp" x1="342" y1="365" x2="358" y2="365"/>
+  <line class="comp" x1="342" y1="373" x2="358" y2="373"/>
+  <line class="gw"   x1="350" y1="373" x2="350" y2="390"/>
+  <use href="#gnd" x="350" y="390"/>
+  <text x="362" y="378" class="cval">1nF</text>
+
+  <!-- ===== Input network: channel R (PBI -> VINR) ===== -->
+  <line class="ana" x1="190" y1="460" x2="215" y2="460"/>
+  <rect class="comp" x="215" y="454" width="34" height="12" rx="2"/>
+  <text x="232" y="449" class="cval" text-anchor="middle">100Ω</text>
+  <line class="ana" x1="249" y1="460" x2="280" y2="460"/>
+  <line class="comp" x1="280" y1="452" x2="280" y2="468"/>
+  <line class="comp" x1="290" y1="452" x2="290" y2="468"/>
+  <text x="285" y="447" class="cval" text-anchor="middle">1µF</text>
+  <line class="ana" x1="290" y1="460" x2="430" y2="460"/>
+  <circle cx="350" cy="460" r="3" class="dot"/>
+  <line class="comp" x1="350" y1="460" x2="350" y2="480"/>
+  <line class="comp" x1="342" y1="480" x2="358" y2="480"/>
+  <line class="comp" x1="342" y1="488" x2="358" y2="488"/>
+  <line class="gw"   x1="350" y1="488" x2="350" y2="505"/>
+  <use href="#gnd" x="350" y="505"/>
+  <text x="362" y="493" class="cval">1nF</text>
+
+  <text x="40" y="520" class="cval" fill="#9d0208">opt: BAT54S dual-Schottky clamp to rails at each connector input (ESD / overvoltage from 5–12 V port)</text>
+
+  <!-- ============================================================ -->
+  <!-- ===== FPGA block (right) ===== -->
+  <text x="960" y="306" font-size="14" font-weight="bold">Zynq-7020 PL<tspan font-size="10.5" font-weight="normal" fill="#7a8699">  ·  3.3 V HR I/O bank</tspan></text>
+  <rect class="ic" x="960" y="320" width="160" height="210" rx="4"/>
+
+  <!-- FPGA pins -->
+  <line class="p33" x1="920" y1="345" x2="960" y2="345"/>
+  <text x="966" y="349" class="pinlbl">MCLK 12.288 (gen)</text>
+  <line class="dig" x1="920" y1="395" x2="960" y2="395"/>
+  <text x="966" y="399" class="pinlbl">I2S_FSYNC_IN</text>
+  <line class="dig" x1="920" y1="445" x2="960" y2="445"/>
+  <text x="966" y="449" class="pinlbl">I2S_SCLK</text>
+  <line class="dig" x1="920" y1="495" x2="960" y2="495"/>
+  <text x="966" y="499" class="pinlbl">I2S_DIN</text>
+
+  <!-- digital nets IC<->FPGA -->
+  <!-- SCKI: tapped from the existing SiI9022 MCLK net -->
+  <line class="p33" x1="750" y1="345" x2="920" y2="345"/>
+  <text x="825" y="338" class="cval" text-anchor="middle" fill="#0a9396">SCKI ← 12.288 MHz (FPGA → carrier)</text>
+  <line class="dig" x1="750" y1="395" x2="920" y2="395"/>
+  <text x="835" y="388" class="cval" text-anchor="middle" fill="#1d4ed8">LRCK = WS  (FPGA → ADC)</text>
+  <line class="dig" x1="750" y1="445" x2="920" y2="445"/>
+  <text x="835" y="438" class="cval" text-anchor="middle" fill="#1d4ed8">BCK = SCK (64 fs, FPGA → ADC)</text>
+  <!-- DOUT direction arrow (data IN to fpga) -->
+  <line class="dig" x1="750" y1="495" x2="920" y2="495"/>
+  <polygon points="762,495 770,491 770,499" fill="#1d4ed8"/>
+  <text x="835" y="488" class="cval" text-anchor="middle" fill="#1d4ed8">24-bit left-justified (DOUT → FPGA)</text>
+
+  <text x="1040" y="550" class="cval" text-anchor="middle" fill="#0a9396">SCKI = 12.288 MHz MCLK from the FPGA</text>
+  <text x="1040" y="564" class="cval" text-anchor="middle" fill="#0a9396">(a 6th audio signal out to the carrier)</text>
+  <text x="1040" y="578" class="cval" text-anchor="middle" fill="#7a8699">not among the 5 existing I²S nets</text>
+
+  <!-- playback sub-bus (shared clocks, separate data to SiI9022) -->
+  <text x="1040" y="598" class="cval" text-anchor="middle" fill="#7a8699">I2S_FSYNC_OUT / I2S_DOUT → SiI9022 HDMI</text>
+  <text x="1040" y="611" class="cval" text-anchor="middle" fill="#7a8699">audio (playback path — not on the ADC)</text>
+
+  <!-- ===== MCLK source recommendation box (bottom-left) ===== -->
+  <rect x="45" y="596" width="300" height="118" rx="4" fill="#eafaf7" stroke="#0a9396" stroke-width="1.2"/>
+  <text x="57" y="614" class="nhd" font-size="11.5" fill="#0a7d77">Clocking — no Z-turn rework needed</text>
+  <text x="57" y="632" class="ntxt" font-size="10.5">PCM1808 is on your carrier — clock it from the FPGA:</text>
+  <text x="57" y="647" class="ntxt" font-size="10.5">SCKI = 12.288 MHz (FPGA MMCM), a 6th carrier signal</text>
+  <text x="57" y="662" class="ntxt" font-size="10.5">BCK←SCK ÷4, LRCK←WS ÷256 — one synchronous 48 kHz domain</text>
+  <text x="57" y="677" class="ntxt" font-size="10.5">SiI9022 is MCLK-less for I²S (recovers rate from SCK/WS) —</text>
+  <text x="57" y="696" class="ntxt" font-size="10.5" fill="#7a8699">Y3/R115 MCLK provision unused; nothing to wire there</text>
+
+  <!-- ===== Notes / BOM panel ===== -->
+  <rect class="nbox" x="40" y="724" width="1160" height="306" rx="6"/>
+  <text x="56" y="746" class="nhd">Design notes — what it takes to work well</text>
+
+  <text x="56"  y="770" class="warn">⚠ SCKI is mandatory — but you already have it: the SiI9022A's MCLK.</text>
+  <text x="448" y="770" class="ntxt">pcm1808_rx.sv's "slave mode, no SCKI" is wrong — no SCKI → no modulator clock → DOUT stays zero.</text>
+  <text x="56"  y="788" class="ntxt">Tap the shared <tspan font-weight="bold">MCLK</tspan> net (→ SiI9022 I²S-audio in) for SCKI — no new pin. It needs a clean <tspan font-weight="bold">12.288 MHz</tspan> (256 fs @ 48 kHz). Source is a board option: the codec MCLK is behind DNP <tspan font-weight="bold">R115</tspan>, isolated from the 12 MHz osc (X2) + FPGA IO_B34_CLKO1 node — resolve it (recommend FPGA-synthesised 12.288 MHz).</text>
+  <text x="56"  y="806" class="ntxt">Drive SCKI / SCK / WS and the PCM1808 BCK (÷4) + LRCK (÷256) all <tspan font-weight="bold">from that one 12.288 MHz domain</tspan> — not from clk_bus (today's pcm1808_rx.sv) — or SCKI/LRCK drift apart → PCM1808 resync-mutes.</text>
+
+  <text x="56"  y="832" class="nhd">Supplies / levels</text>
+  <text x="56"  y="852" class="ntxt">• VCC = <tspan font-weight="bold">5 V analog</tspan> (4.5–5.5 V), NOT 3.3 V.  VDD = 3.3 V digital.</text>
+  <text x="56"  y="870" class="ntxt">• Full-scale in = 0.6·VCC = <tspan font-weight="bold">3 Vpp</tspan> @ 5 V.  Zin = 60 kΩ (self-bias to VREF).</text>
+  <text x="56"  y="888" class="ntxt">• No level shifter: 3.3 V CMOS clears all inputs; DOUT 0–3.3 V → PL bank.</text>
+
+  <!-- BOM mini -->
+  <text x="640" y="832" class="nhd">BOM</text>
+  <text x="640" y="852" class="ntxt">U1  PCM1808PWR (TSSOP-14)</text>
+  <text x="640" y="870" class="ntxt">C1,C2  1 µF X7R (input DC-block)</text>
+  <text x="640" y="888" class="ntxt">C3,C4,C5  0.1 µF + 10 µF (decoupl.)</text>
+  <text x="930" y="852" class="ntxt">Cf1,Cf2  1 nF C0G (anti-alias)</text>
+  <text x="930" y="870" class="ntxt">R1,R2  100 Ω (series)</text>
+  <text x="930" y="888" class="ntxt">FB1  ferrite (600 Ω@100 MHz); D1,D2  BAT54S (opt)</text>
+
+  <text x="56"  y="916" class="nhd">Signal map · format · input network</text>
+  <text x="56"  y="936" class="ntxt">• <tspan font-weight="bold">"_IN/_OUT" = capture vs playback sub-bus, not wire direction.</tspan> PCM1808 is slave → FPGA drives I2S_SCLK (→BCK) &amp; I2S_FSYNC_IN (→LRCK), and reads I2S_DIN (←DOUT).</text>
+  <text x="56"  y="954" class="ntxt">• <tspan font-weight="bold">Straps:</tspan> MD0=MD1→DGND (slave);  <tspan font-weight="bold">FMT→+3V3 = left-justified</tspan> (matches pcm1808_rx.sv: MSB on first BCK after LRCK, no 1-BCK I²S delay).  Reset = hold SCKI low ≥4 µs in RTL.</text>
+  <text x="56"  y="972" class="ntxt">• Input/ch: 1 µF DC-block (2.7 Hz HPF) + 100 Ω + 1 nF anti-alias; opt BAT54S ESD clamp.  Decoupling 0.1 µF∥10 µF at VCC/VDD/VREF; FB1 on 5 V analog; star-ground AGND/DGND.</text>
+  <text x="56"  y="990" class="ntxt">• Inputs: SIO AUDIO_IN → VINL (ch-L), PBI/cart AUDIO_IN → VINR (ch-R);  HDL (pokey_i2s_tx) sums both into <tspan font-style="italic">both</tspan> output channels with soft saturation.</text>
+
+  <text x="40" y="1052" class="sub">© ThrudTheBarbarian — pin numbers / mode tables per TI PCM1808 datasheet SLES177B.  Functional schematic (symbol pin placement ≠ physical package order).</text>
+</svg>

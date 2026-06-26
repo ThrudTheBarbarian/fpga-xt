@@ -320,27 +320,7 @@ be a tax.  The better model is:
 | ARC / autoboxing bugs found at scale | The compiler exercises every alloc/free edge case | Run the compiler on itself repeatedly; use the existing test suite as a regression harness. |
 | ObjC compiler changes are copied to xtc version with bugs | Drift between the two | For Phase 2, implement each feature once in xtc and once in ObjC, testing both paths with the same test suite. |
 
-## Immediate Next Steps (If This Is Greenlit)
-
-1. **Write the ARM back-end.**  Start with `XTARMLowering.m` as a
-   structural copy of `XT6502Lowering.m`, replacing 6502 instruction
-   selection with ARM.  This can be done in parallel with everything
-   else and produces immediate value (any program can be compiled to
-   ARM for testing on the Zynq).
-
-2. **Port the std lib file I/O to the Zynq side.**  `FILE.xt` exists
-   for Atari; a Zynq device driver (FreeRTOS → FAT32 via SD) is the
-   only missing piece.  This is an afternoon's work in C on the
-   FreeRTOS side.
-
-3. **Write a minimal `xtc.xt`.**  Even 200 lines of xtc that can lex
-   and parse a subset of itself, emitting ARM asm, would be a useful
-   milestone.  The full compiler can grow incrementally.
-
-4. **Benchmark a simple parse on the Zynq.**  Before committing to
-   the full effort, compile a test program to ARM, run it on the
-   Zynq, and measure throughput (source bytes / second through the
-   lexer + parser).  This validates the performance assumption.
+> **Open work / next steps** are tracked in [NextSteps.md](../NextSteps.md) — see "Multitasking / self-hosting / compiler".
 
 ## Related Work
 

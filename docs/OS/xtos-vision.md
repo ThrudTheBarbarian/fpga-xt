@@ -299,19 +299,7 @@ later:
 - **Phase 6 — Cross-core source-level debugger.** xt6502 debug RTL + m68k
   interpreter-debug + xtc debug-info consumer + IDE integration.
 
-## 6. Open decisions
-
-- **Debug ambition:** single-frame locals (no unwind info) **vs** full backtrace
-  (xtc emits frame/unwind info). Drives §3 item 5.
-- **Full-screen front GEM plane** (large GEM windows raised over emulators):
-  deferred nice-to-have; decide if/when it's worth a 5th surface.
-- **Memory protection** for ARM-native apps: deferred; revisit as the ecosystem
-  matures. The P4 service seam keeps the door open.
-- **Debug-info DWARF profile:** the format is settled (a restricted profile of
-  standard DWARF, §3); the concrete subset spec — exact attributes, the 6502/m68k
-  register numbering, the DWARF version to pin — is still to be written.
-- **Card-less boot:** move the boot image (FSBL + bitstream + kernel) to QSPI so
-  the machine boots with no SD inserted. Optional future.
+> **Open work / next steps** are tracked in [NextSteps.md](../NextSteps.md) — see "XTOS / OS / boot / fonts / Lua".
 
 ## Related
 

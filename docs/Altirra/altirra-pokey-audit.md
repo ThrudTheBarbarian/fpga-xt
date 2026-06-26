@@ -230,6 +230,6 @@ Altirra). Inner FF-wraps in linked mode are not fudged — they wrap to
 $FF without alteration. Ref-clock modes are unaffected (the 3-cycle
 delay is absorbed in the wait for the next reference tick).
 
-**Cosmetic items A-D** are recorded in `docs/future-work.md` under
-"Analog audio fidelity" — these are HDMI-irrelevant in our digital path
+**Cosmetic items A-D** are tracked in [`NextSteps.md`](../NextSteps.md) under
+"Audio" (analog-audio fidelity) — these are HDMI-irrelevant in our digital path
 and only matter if a "purist" mode is ever pursued.

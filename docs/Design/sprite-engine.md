@@ -537,25 +537,4 @@ $D4BF  SPRITE_CTRL    (W)  — bit 0 = GLOBAL_ENABLE
                               1: sprite compositing active
 ```
 
-## Open questions / future work
-
-1. **Green channel mapping.** Sprite G[4:0] → RGB565 G[5:1] loses the
-   LSB. Better to map G[4:0] → G[5:1] with G[0] = G[1] (duplicate
-   adjacent bit) for 32 half-steps instead of 16 full steps.
-
-2. **Horizontal/vertical flip.** Common sprite feature. Add a flip bit
-   in the descriptor that reverses the arena_x or arena_y increment
-   direction. Simple to implement (invert the local coordinate).
-
-3. **Palettised sprites.** 8-bit index into a 256-entry palette instead
-   of direct 16-bit RGB. Cuts arena bandwidth in half (1 BPP vs 2 BPP)
-   at the cost of an extra palette LUT read in the compositor pipeline.
-
-4. **Sprite rotation.** Would need a line buffer and interpolation. Not
-   worth the fabric cost for the first cut — software can pre-rotate
-   into the arena.
-
-5. **Blitter integration.** The DRAW/chiplet-extension blitter should
-   target the sprite arena so the CPU can render sprite surfaces
-   without DMA. The Zynq PS (Cortex-A9) can also write to the arena
-   over its own AXI port for LVGL/UI rendering.
+> **Open work / next steps** are tracked in [NextSteps.md](../NextSteps.md) — see "Video / compositor / sprites / textures".

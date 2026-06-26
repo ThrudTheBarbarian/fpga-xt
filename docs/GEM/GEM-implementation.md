@@ -310,53 +310,7 @@ to the hardware work.
   Probably fine to start without; revisit if address-space sharing
   between tasks becomes painful.
 
-## Open design questions
-
-1. **Multi-tasking model** — Classic GEM was cooperative single-task via
-   `evnt_multi`. MagiC added preemptive multitasking on Atari ST. The
-   choice interacts with:
-   - xtc runtime support (task / fiber primitives — not visible in the
-     language reference TOC; needs investigation)
-   - SALLY hardware extensions chosen (see [SALLY CPU extensions for
-     multi-tasking](#sally-cpu-extensions-for-multi-tasking) above)
-   - ARC under preemption — atomic refcount needed for shared objects
-   - 6502 stack model — each task needs its own stack page; cheap with
-     hardware support, more expensive without
-   - GEMDOS reentrancy — filesystem syscalls hitting the N6 must
-     serialize cleanly
-   - Whether legacy 1.79 MHz apps coexist with modern 165 MHz tasks
-     under the same scheduler
-   
-   **Deferred to Phase 5**, but worth thinking about early enough that
-   AES doesn't accidentally assume single-task semantics in places that
-   would be expensive to undo. The SALLY extensions are also worth
-   deciding early — they're cheap individually but affect the whole
-   tasking design.
-
-2. **Font rendering boundary**
-   - (A) 6502 sends Unicode + style, N6 rasterizes using LVGL fonts
-   - (B) 6502 manages a bitmap font cache, sends pre-rasterized glyphs
-   
-   LVGL's font system is mature; (A) is probably right, but the 6502
-   still needs glyph metrics for layout. Metric inquiry is a small FMC
-   RPC.
-
-3. **Resource (.RSC) file format**
-   - Reuse Atari ST `.RSC` (compatibility with existing GEM resource
-     editors / converters)
-   - Design a native format better suited to xtc's class system
-   
-   Reusing buys tooling; designing fresh buys clarity. Probably reuse
-   for v0.1 and revisit.
-
-4. **VBI tick rate** — Atari ST GEM expected 50 Hz; HDMI on this
-   hardware runs at 60 Hz. Some legacy apps may have hardcoded delays.
-   Mostly cosmetic, but flag it: cursor blink rate, animation timing.
-
-5. **Per-frame DRAW batching** — should the 6502 buffer DRAW commands
-   and emit per-VBI, or stream live? Streaming is simpler; buffering is
-   faster under sustained high command rates. Defer until profiling
-   shows it matters.
+> **Open work / next steps** are tracked in [NextSteps.md](../NextSteps.md) — see "GEM (VDI + AES) / desktop".
 
 ## Risks
 

@@ -160,11 +160,15 @@ The 65C02 already has BRA at this location, make $80 be BRA #imm with an 8-bit s
 |--------|----------|-----------|------|
 | `$80` | `BRA #imm` | `PC += imm` | no, but NOP |
 
-Equally, the 65C02 has the ability to do an immediate bit-test, at this opcode location
+Equally, the 65C02 has the ability to do an immediate bit-test, at `$89`
 
 | Opcode | Mnemonic | Operation | JAM? |
 |--------|----------|-----------|------|
-| `$80` | `BIT #imm8` | N,Z,V set if applicable | no, but NOP |
+| `$89` | `BIT #imm8` | `Z = (A & imm)==0`; N,V unchanged | no, but NOP |
+
+Note the immediate `BIT` affects **only Z** — unlike the memory-operand
+`BIT` modes, there are no memory bits 7/6 to copy into N/V, so the 65C02
+leaves them alone.
 
 
 ---

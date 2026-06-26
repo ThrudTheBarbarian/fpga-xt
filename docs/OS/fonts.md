@@ -158,12 +158,4 @@ This composes for free with the PDF printer: M3 renders text as glyph *outlines*
 (`font_get_outline`), so a variable instance simply yields different outline
 coordinates — the printer needs no changes to gain real weights/widths.
 
-## Open items
-
-- Confirm the **xilffs** (SD) BSP config also has `FF_USE_LFN` / `FF_MAX_LFN=255`
-  (the tinyusb FatFs copy does); long names on the card depend on it.
-- `opsz` should ideally track the render pixel size rather than its default.
-- Catalog/index on-disk format (binary vs text) and location (`OS/Fonts/.index`?).
-- Wire the registry into the existing `font_face`/`font` model (one `FT_Face` per
-  instance; `vst_font`/`vst_name` → catalog → registry).
-- A Font Chooser UI (named instances as the menu; sliders later).
+> **Open work / next steps** are tracked in [NextSteps.md](../NextSteps.md) — see "XTOS / OS / boot / fonts / Lua".

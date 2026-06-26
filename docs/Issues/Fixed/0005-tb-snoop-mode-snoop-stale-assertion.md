@@ -2,7 +2,7 @@
 
 - **Component:** Verification — `sim/tb_snoop.sv` ($D481 MODE check)
 - **Severity:** Medium (a real `make snoop` failure; the design is correct, the test is wrong)
-- **Status:** Open
+- **Status:** Resolved (2026-06-26)
 - **Found:** 2026-05-30 (running the suite after the `antic_top` clk_bus reframe;
   confirmed pre-existing — fails identically against the committed `antic_top.sv`)
 - **Files:** `sim/tb_snoop.sv:158,215-218`; design ref `hdl/antic_regs.sv:186-189,138`
@@ -55,3 +55,17 @@ Update `tb_snoop.sv`:
 
 The design needs no change. Once the test matches the current `$D481` contract,
 `make snoop` should rejoin the green suite.
+
+## Resolution (2026-06-26)
+
+Fixed, test-only (no RTL change). `tb_snoop.sv` now writes 0 to `$D481` and asserts
+`mode_snoop` **stays 1** (snoop) — i.e. the lock holds — rather than the old
+"flips to 0 (DMA)" expectation. `make snoop` → `*** SNOOP OK ***`.
+
+Nuance worth recording: the "Fix" note above suggested also asserting that `$D481`
+*aliases to CHACTL*, but that only holds in the **canonical (locked)** decode. The
+test runs at the **native/unlocked default** (`unlock_antic` resets to 1), where
+`$D481` is the *chiplet MODE register* with `mode_snoop` reset-locked — it does **not**
+touch CHACTL (which is why the test's existing `CHACTL==$02` check already passed).
+So the robust, decode-independent assertion is simply "a `$D481` write leaves
+`mode_snoop` at 1", which is true in both decodes.
