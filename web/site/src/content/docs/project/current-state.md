@@ -1,33 +1,36 @@
 ---
 title: "Current state"
-description: "Implementation snapshot — the SuperSally-v2 xt6502 core, the ANTIC video pipeline, full-system OS boot, timing closure, and what's left before on-hardware bring-up."
+description: "Implementation snapshot — the xt6502 core, the ANTIC video pipeline, full-system OS boot to READY on real HDMI, timing closure, and what's next."
 ---
 
-Snapshot date: 2026-05-27.
+Snapshot date: 2026-06-23.
 
 ## Headline
 
-`main` is **SuperSally-v2** (tag `SuperSally-v2`): the clean-sheet **xt6502**
-turbo core driving the full ANTIC / GTIA / POKEY video pipeline on a single
-Zynq-7020, with a 1080p60 plane compositor + 2D blitter + sprite engine on
-the scan-out side. In whole-system simulation the emulated 6502 **boots the
-real Atari XL OS to a rendered BASIC `READY` prompt**. Real-PS bitstream
-timing is closed on all three clock domains. The only thing standing between
-here and a running board is the physical Z-Turn SOM, due around the end of
-May 2026.
+`main` runs on real **Z-Turn Zynq-7020** hardware. The clean-sheet **xt6502**
+turbo core drives the full ANTIC / GTIA / POKEY pipeline, with a 1080p60 plane
+compositor + 2D blitter + sprite engine on the scan-out side, and the system
+outputs **HDMI 1080p60** — the emulated 6502 **boots the real Atari XL OS to a
+rock-steady BASIC `READY` on the HDMI display** (GR.0 and GR.8 modes render; the
+early display artifacts are fixed). PS↔PL register access (GP0 AXI) works in both
+directions, the blitter does hardware font rendering, and the GEM/FreeType stack
+draws real fonts on screen. Real-PS bitstream timing closes on all three clock
+domains.
 
-- **CPU** — xt6502: full 6502 ISA + the xt embellishments, **~120 MHz**
-  `clk_sally`, one fabric clock per emulated cycle ≈ **67× turbo** over a
-  stock 1.79 MHz Atari. Passes the full Klaus functional test and the
-  ISA / integration testbench suite.
+- **CPU** — xt6502: full 6502 ISA + the xt embellishments, **100 MHz**
+  `clk_sally`, one fabric clock per emulated cycle ≈ **56× turbo** over a
+  stock 1.79 MHz Atari (the core path closes ~120 MHz; the build backed off to
+  100 as it grew around the blitter — recoverable as a floorplan task). Passes
+  the full Klaus functional test and the ISA / integration testbench suite.
 - **Video** — ANTIC native phi2-paced raster + render tap → DDR3 writeback →
   plane compositor → SiI9022A. The legacy Atari image is integer-upscaled
   and pillarboxed into the fixed 1080p frame.
 - **OS** — the full-system `tb_boot` sim cold-starts the real XL OS ROM,
   cross-checked against an Atari800 golden trace, and reaches the BASIC
   cartridge `READY` prompt.
-- **Hardware** — bitstream timing-closed with the real PS block design;
-  on-hardware bring-up is blocked only on the board arriving.
+- **Hardware** — running on the Z-Turn: HDMI 1080p60 out, the XL booting to
+  `READY` on the display, GP0 register access both ways. Bitstream timing
+  closes on all three domains with the real PS block design.
 
 ## Overall goal
 
@@ -45,11 +48,11 @@ xt6502 CPU + `sally_mem` + the ANTIC/GTIA/POKEY chain + the plane compositor
 
 | Domain | Frequency | Drives |
 |--------|----------:|--------|
-| `clk_sally` | 120.000 MHz | xt6502, sally_mem, sally_clock |
-| `clk_sys` | 150.000 MHz | antic_top, plane_fetch AXI, xt_blitter, sprite_engine, AXI HP |
+| `clk_sally` | 100.000 MHz | xt6502, sally_mem, sally_clock |
+| `clk_sys` | 133.333 MHz | antic_top, plane_fetch AXI, xt_blitter, sprite_engine, AXI HP |
 | `clk_pix` | 148.4375 MHz | plane_compositor + vbeam + 8888→565 Bayer dither; RGB565 + sync to the SiI9022A (CEA-861 1080p60, −0.042 % error) |
 
-The xt6502 core is clocked at 120 MHz from MMCM #1 (`CLKOUT0 /10`).
+The xt6502 core is clocked at 100 MHz from MMCM #1.
 
 Reset: each domain has an async-assert / sync-deassert pipeline gated by
 `rst_n & mmcm1_locked & mmcm2_locked`. `clk_sys` modules use **synchronous**
@@ -66,10 +69,10 @@ Subsystems:
    (4 KB hidden stack, 12-bit SP, SP-relative addressing, PSH/PLL, BRA,
    `BIT #imm`, SP-indirect). One fabric clock per emulated cycle. Passes
    Klaus ($3469) and the `sally_isa_xt` / `sally_xt` testbenches against the
-   real `sally_mem`. `clk_sally` closes at 120 MHz.
+   real `sally_mem`. `clk_sally` runs at 100 MHz (core path closes ~120).
 2. **`sally_mem`** — 64 KB dual-port BRAM (the second port serves ANTIC DMA
    reads) + a banked-window AXI reader for the DDR3-backed bank windows.
-   `hwreg_dout` is registered locally to close `clk_sally` at 120 MHz. The
+   `hwreg_dout` is registered locally to keep `clk_sally` closing. The
    bank-select registers live at **$D5C0 (code) / $D5C1 (data)** in the CCTL
    I/O gap and are readable (see [register map](/hardware/register-map/)).
 3. **ANTIC / GTIA / POKEY** — the full chain: display-list parser, a native
@@ -86,7 +89,7 @@ Subsystems:
 5. **xt-blitter (v0.17)** — rect fill, line draw, block blit, NN + bilinear
    scaled blit, alpha-blend, font raster, and the 16 GEM raster ops, all on
    RGBA-8888 memory, with the $D4Bx/$D4Cx register interface and an AXI-Lite
-   GP0 bridge (`axi_blitter_bridge`) for PS-side access. Closes 150 MHz with
+   GP0 bridge (`axi_blitter_bridge`) for PS-side access. Closes `clk_sys` (133.3 MHz) with
    the full PS BD.
 6. **Sprite engine** — hardware sprite compositor on the 1080p scan-out path
    (see the [sprite engine](/project/sprite-engine/) page).
@@ -102,20 +105,22 @@ Subsystems:
 The real-PS bitstream (with the full PS block design) closes all three
 domains with positive slack and 0 failing endpoints:
 
-- **`clk_sys` 150 MHz**, **`clk_sally` 120 MHz** (xt6502), **`clk_pix`
-  148.4 MHz**. Margins are thin (placer-variance), held via
+- **`clk_sys` 133.3 MHz**, **`clk_sally` 100 MHz** (xt6502), **`clk_pix`
+  148.4 MHz** — the current stable operating point, confirmed on hardware. Both
+  backed off from the earlier 150 / 120 as later block-blit fixes grew the design;
+  recovering 150 / 120 is a deliberate floorplan/fmax task. Margins held via
   `cascade_height=1` on the 64 KB memory, the HP ports placed on `clk_sys`,
   `ExtraTimingOpt` placement, and a setup-recovery loop in `build.tcl`.
-- `clk_sally` reached 120 MHz by registering `hwreg_dout` locally in
-  `sally_mem` plus the xt6502 fmax levers (early `sp_eff`, the `sally_mem`
-  read-mux, `PSH_CALC`, and the PSH/PLL guard byte). The CPU is no longer
-  the binding path — residual variance is in the `clk_sys` / ANTIC fabric.
+- The xt6502 core path itself closes ~120 MHz (early `sp_eff`, the `sally_mem`
+  read-mux, `PSH_CALC`, the PSH/PLL guard byte, `hwreg_dout` registered locally);
+  the CPU is not the binding path — the system clock is set by the `clk_sys` /
+  ANTIC / blitter fabric.
 
 (Exact post-route slack should be read from the latest `build/*_timing.rpt`;
 the figures above are the latest known closure on the real PS BD.)
 
-**How the blitter reached 150 MHz** (condensed history): closing `clk_sys`
-at 150 MHz with the blitter in the design took four pipeline splits — the
+**Blitter timing history** (condensed): closing `clk_sys` with the blitter in
+the design took four pipeline splits — the
 bilinear blend weights (`SC_BL_BLEND`), the alpha-blend dst + product
 registers (`BL_RACC_BLEND`/`BL_RACC_BLEND2`), the `cx ≥ dst_w` compare
 register, and the Bresenham step-flag split (`L_STEP`/`L_STEP2`) — plus a
@@ -142,36 +147,38 @@ The iverilog testbench suite (`make` under `sim/`) passes. Highlights:
 
 | Gate | Status |
 |------|--------|
-| SALLY core boots from BRAM | ✅ xt6502 core; `clk_sally` 120 MHz closed. |
+| SALLY core boots from BRAM | ✅ xt6502 core; `clk_sally` 100 MHz closed (core path ~120). |
 | 6502 ISA conformance | ✅ Klaus passes on both SALLY and xt6502 ($3469). |
 | ANTIC pipeline produces video | ✅ Native phi2 raster + render tap; the compositor drives the pads. |
 | Full-system OS boot | ✅ `tb_boot` boots the real XL OS to a rendered BASIC `READY` (sim), golden-trace verified. |
-| HDMI output via SiI9022A | ✅ Plane compositor drives parallel RGB565 + sync at 148.4375 MHz. |
+| HDMI output via SiI9022A | ✅ 1080p60 live on the Z-Turn — plane compositor drives parallel RGB565 + sync at 148.4375 MHz into the SiI9022A. |
 | Three independent clock domains | ✅ Two MMCMs → `clk_sally` / `clk_sys` / `clk_pix`; CDC FIFO + sync bits; async clock groups. |
 | 1080p60 pixel clock | ✅ MMCM #2 at 148.4375 MHz (−0.042 % CEA-861, well inside HDMI ±0.5 %). |
 | DDR3 framebuffer scan-out | ✅ `plane_fetch` + `plane_compositor` (the generalised successor to `fb_scanout`). |
-| xt-blitter (full feature set) | ✅ v0.17 — fill / line / block / scaled / blend / font / GEM raster ops; closes 150 MHz with the PS BD. |
-| Zynq PS block design | ✅ `gen_ps_bd.tcl` (HP0/HP1, GP0, DDR3 1 GB, FCLK 150 MHz); integrated into both OOC and bitstream builds. |
+| xt-blitter (full feature set) | ✅ v0.17 — fill / line / block / scaled / blend / font / GEM raster ops; closes `clk_sys` (133.3 MHz) with the PS BD. |
+| Zynq PS block design | ✅ `gen_ps_bd.tcl` (HP0/HP1, GP0, DDR3 1 GB, FCLK 50 MHz → MMCMs); integrated into both OOC and bitstream builds. |
 | Real-PS bitstream timing | ✅ All three domains closed, 0 failing endpoints (margins thin). |
-| On-hardware DDR3 + HDMI | ⚠️ Blocked on the physical Z-Turn board. |
+| On-hardware DDR3 + HDMI | ✅ Running on the Z-Turn — HDMI 1080p60 + DDR3 framebuffer scan-out confirmed on real silicon. |
 | Vivado XSIM regression | ⚠️ Not set up; the iverilog suite is the regression gate today. |
 
 ## Next steps
 
-1. **On-hardware bring-up** (board due ~end May 2026): flash the bitstream
-   over JTAG (JTAG-HS3 → Z-turn J1), build a minimal Vitis FSBL + FreeRTOS
-   BSP on the Cortex-A9s, exercise the AXI-Lite GP0 window into the blitter
-   (write CMD → poll STATUS busy at $D4BD), and bring up HDMI out.
-2. **FreeRTOS + LVGL** on the PS (Phase 3): FatFs over SDIO, USB HID, the
-   blitter command-ring driver, and LVGL (`LV_COLOR_DEPTH 32`, RGBA-8888)
-   rendering into the DDR3 framebuffer; the compositor's 8888→565 dither
-   handles the downsample at scan-out.
-3. **Atari I/O integration** (Phase 4): PCM1808, cart slot, SIO, and the PBI
-   bridges against real PL pins.
-4. **SALLY multitasking kernel** (Phase 5): the stack embellishments and
+On-hardware bring-up is **done** — bitstream over JTAG, FSBL + FreeRTOS on the
+Cortex-A9s, the GP0 window into the blitter, and HDMI 1080p60 out all work on the
+Z-Turn, with the XL booting to `READY` on the display. What's ahead:
+
+1. **GEM desktop + windowing**: the four-surface compositor WM, GEM/VDI as an A9
+   service over the blitter, and input routing. FreeRTOS + the boot/Lua runner are
+   up (HW-verify of the FreeRTOS path ongoing); GEM/FreeType already renders fonts
+   on screen.
+2. **Atari I/O on the carrier** (Phase 4): PCM1808 audio-in, the cart slot, SIO via
+   the STM32F411 companion, and the expansion bus (a byte-wide synchronous bus with
+   RP2354 cards) against real carrier pins.
+3. **SALLY multitasking kernel** (Phase 5): the stack embellishments and
    banked-stack context switching are designed (see
-   [multitasking](/os/multitasking/)); implementation follows once the PS
-   pipeline is up.
+   [multitasking](/os/multitasking/)); implementation follows.
+4. **Recover turbo** (optional fmax task): floorplan to restore `clk_sally` 120 /
+   `clk_sys` 150 MHz.
 
 ### Build commands
 

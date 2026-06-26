@@ -39,6 +39,7 @@ export default defineConfig({
 								{ label: 'Display & compositor', slug: 'hardware/video' },
 								{ label: 'HDMI output', slug: 'hardware/hdmi' },
 								{ label: 'Audio', slug: 'hardware/audio' },
+								{ label: 'Carrier board', slug: 'hardware/carrier' },
 								{ label: 'Memory map', slug: 'hardware/memory-map' },
 								{ label: 'Pin map', slug: 'hardware/pin-map' },
 								{ label: 'Hardware bring-up', slug: 'hardware/bring-up' },
@@ -114,6 +115,15 @@ export default defineConfig({
 							],
 						},
 						{ label: 'Future work', slug: 'compiler/future-work' },
+						{
+							label: 'Downloads',
+							collapsed: true,
+							items: [
+								{ label: 'Most Recent Release', slug: 'compiler/downloads' },
+								{ label: 'Historical Releases', slug: 'compiler/downloads/historical' },
+								{ label: 'ChangeLog', slug: 'compiler/downloads/changelog' },
+							],
+						},
 					],
 				},
 				{
@@ -159,15 +169,6 @@ export default defineConfig({
 						{ label: 'Resident page cache', slug: 'project/page-cache' },
 						{ label: 'Sprite engine', slug: 'project/sprite-engine' },
 						{ label: 'Issue: PSH guard byte', slug: 'project/issues/psh-guard-byte' },
-					],
-				},
-				{
-					label: 'Downloads',
-					collapsed: true,
-					items: [
-						{ label: 'Most Recent Release', slug: 'downloads' },
-						{ label: 'Historical Releases', slug: 'downloads/historical' },
-						{ label: 'ChangeLog', slug: 'downloads/changelog' },
 					],
 				},
 				{ label: 'Report a bug', slug: 'feedback' },

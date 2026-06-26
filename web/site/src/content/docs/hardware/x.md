@@ -5,7 +5,7 @@ description: "The X realm — the SALLY 6502 with the ANTIC/GTIA/POKEY pipeline,
 
 The **"X"** in Atari-XT is the Atari 8-bit machine, named after the **X**E line. It is reproduced in FPGA fabric and runs unmodified Atari XL/XE software, but lifts the era's limits, for example expanded RAM is paged into the 6502 address space so programs can grow well beyond 64 KB, currently Sally maps 4MB of code-space and 3 MB of data-space.
 
-With the current CPU implementation, SALLY can run at 120 MHz, or roughly 67x the speed of the original Atari X{L|E}, and with Snoop mode enabled for [ANTIC](/hardware/antic/), the actual speed-up over the original X{L|E} is more like **126x.**. It can also run at 1x for backwards compatibility with ANTIC stealing cycles for its own DMA.
+With the current CPU implementation, SALLY runs at 100 MHz, or roughly 56× the speed of the original Atari X{L|E}, and with Snoop mode enabled for [ANTIC](/hardware/antic/), the effective speed-up in DMA-heavy modes is more like **~105×**. It can also run at 1× for backwards compatibility, with ANTIC stealing cycles for its own DMA. (The core path closes at ~120 MHz; production `clk_sally` is 100 MHz since the design grew around the blitter.)
 
 The realm is the classic Atari chip set, cycle-accurate, mapped into the original I/O space:
 
@@ -86,8 +86,8 @@ sit alongside; they're independent of the display path.
 
 | Clock        | Rate          | Purpose                                       |
 |--------------|--------------:|-----------------------------------------------|
-| `clk_sally`  | 120 MHz       | SALLY core, sally_mem, banked_axi_reader      |
-| `clk_sys`    | 150 MHz       | ANTIC pipeline, xt_blitter, plane_fetch AXI HP|
+| `clk_sally`  | 100 MHz       | SALLY core, sally_mem, banked_axi_reader      |
+| `clk_sys`    | 133.3 MHz     | ANTIC pipeline, xt_blitter, plane_fetch AXI HP|
 | `clk_pix`    | 148.4375 MHz  | plane_compositor + line-buffer read, RGB565 → SiI9022A |
 
 Clock-crossing handoffs:

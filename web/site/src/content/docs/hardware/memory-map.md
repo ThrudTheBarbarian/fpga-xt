@@ -74,17 +74,17 @@ overhead (= 0.5 MB per frame) is irrelevant in 1 GB DDR3.
 
 ## Bandwidth budgets
 
-Per HP port (Zynq-7020 AXI HP at 150 MHz × 64-bit):
-- Theoretical peak: **1.2 GB/s**
-- Sustained (DDR3 arbitration + row activation): **~0.9 GB/s**
+Per HP port (Zynq-7020 AXI HP at 133.3 MHz × 64-bit):
+- Theoretical peak: **~1.07 GB/s**
+- Sustained (DDR3 arbitration + row activation): **~0.8 GB/s**
 
 Per scan-out at 1080p60, 32 bpp:
 - 1920 × 1080 × 4 B × 60 Hz = **498 MB/s** continuous
 - Per scanline: 1920 × 4 = 7680 B used (8192 B stride)
 - Per scanline time: 1/(60 × 1125) = **14.81 µs**
-- 16-beat AXI3 burst at 150 MHz: ~17–20 cycles each
-- 60 bursts/line × ~18 cycles = ~1080 cycles = **7.2 µs/line** — half
-  the budget, leaves headroom for blitter writes on the same HP port.
+- 16-beat AXI3 burst at 133.3 MHz: ~17–20 cycles each
+- 60 bursts/line × ~18 cycles = ~1080 cycles = **~8.1 µs/line** — just over
+  half the budget, still leaves headroom for blitter writes on the same HP port.
 
 ## Module ownership
 

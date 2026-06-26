@@ -9,13 +9,6 @@ Plan of attack for the first power-on of the MyIR Z-Turn Z7-Lite SOM
 Each phase has a success criterion and the most likely failure mode
 so we don't burn an afternoon debugging the wrong layer.
 
-:::caution[Display module changed since this checklist was written]
-**One gap:** the `SCANOUT_TEST_PATTERN` mux (Phase 2 below) lived only in
-the older `fb_scanout`, which is no longer instantiated — the equivalent test-pattern
-source must be re-added to `plane_compositor`/`plane_fetch` before the
-PL-only test-pattern step works.
-:::
-
 ## Loading mechanism — JTAG first, SD second
 
 Three options for getting the bitstream + PS app onto the board:
@@ -50,10 +43,6 @@ debug.
       heartbeat from a `clk_50` divider, `dbg[1]` = combined PLL
       lock from `mmcm1` + `mmcm2`, `dbg[2]` = `bl_busy`.  Drives
       Phase 1 diagnostics. Done.
-- [x] **Test-pattern mux on fb_scanout** — `SCANOUT_TEST_PATTERN`
-      build parameter bypasses the AXI HP fill and drives a
-      deterministic gradient instead.  Phase 2 leverage.
-      Done.
 - [x] **ROM-init via AXI-Lite (`sally_rom_loader`)** — AXI-Lite
       slave window into `sally_mem`'s `rom_addr` / `rom_data` /
       `rom_we` ports so the PS can load a tiny 6502 ROM at boot
@@ -284,41 +273,32 @@ prereq).  Scope on `rgb_pixclk` (PL pin R17) reads 148.4 MHz ±
 
 ## Phase 2 — HDMI test pattern
 
-Goal: prove the PL → SiI9022A → HDMI signal chain by displaying a
-**static, deterministic test pattern** generated entirely in the PL
-(no PS-side help yet, no DDR3 read).
+Goal: prove the PL → SiI9022A → HDMI signal chain at **1080p60** by displaying a
+deterministic colour-bar pattern generated in the PL — no DDR3 read, no blitter.
 
-Approach: build with `SCANOUT_TEST_PATTERN=1` (RTL-adds prereq).
-That bypasses `fb_scanout`'s AXI HP fill and drives a deterministic
-gradient / colour-bar split instead, on the same RGB565 + DE +
-HSYNC + VSYNC pins.  Avoids depending on the blitter or DDR3 for
-the first HDMI test.
+Source: a PL-side **colour-bar generator**, selected via the GP0 control register
+(bars ↔ compositor), drives RGB565 + DE + HSYNC + VSYNC straight at the SiI9022A.
+This was the first thing up on the Z-Turn.
 
-The SiI9022A still needs I²C init to come out of reset and accept
-the input.  Either:
-- **Boot ROM hands the I²C init**: pre-program the SiI9022A
-  config sequence into the FSBL.  Requires Phase 3 first.
-- **Skip the init**: rely on the SiI9022A's reset defaults to
-  pass-through a known input format.  Some Sil9022A revs do this;
-  others sit silent until programmed.  Read the datasheet section
-  on "Reset / power-on state".
+Two things the chain needs, both learned the hard way during bring-up:
+- **Pixel clock from a PS FCLK**, not the SOM reference — the SOM's crystal is
+  12 MHz, which left every clock at quarter-speed and `clk_pix` out of HDMI range.
+- **The SiI9022A in HDMI mode with an AVI InfoFrame (VIC 16)** — a bare-DVI output
+  won't sync. The PS does this init over I²C0 / EMIO, so this step overlaps the PS
+  bring-up (Phase 3) rather than being strictly PL-only.
 
-**Pass**: HDMI monitor shows the test pattern, locked at 1920×1080
-60 Hz.  Pattern is stable (no flicker, no roll, no tearing).
+**Pass**: HDMI monitor shows the colour bars, locked at 1920 × 1080 @ 60 Hz, stable
+(no flicker, roll, or tearing).
 
 **Likely fail**:
-- Monitor reports "no signal" — pixel clock wrong, HSYNC/VSYNC
-  polarity wrong, or the SiI9022A is unconfigured.  Probe DE on
-  R16 to confirm timing matches 1080p60 (148.5 MHz pix clock,
-  active 1920 × 1080 within 2200 × 1125 total).
-- Monitor reports the wrong resolution — check the InfoFrame /
-  AVI packet config in the SiI9022A.  Until we send InfoFrames
-  the sink does TMDS-clock-period geometry detection; should
-  still report 1080p60.
-- Colours wrong — RGB565 bit order mismatch.  The mapping in
-  `vivado/constraints/zturn_board.xdc` puts LCD_DATA[15:11] →
-  rgb_r[4:0], [10:5] → rgb_g[5:0], [4:0] → rgb_b[4:0].  Confirm
-  `fb_scanout`'s `o_rgb_r/g/b` widths match.
+- "No signal" — pixel clock wrong, HSYNC/VSYNC polarity wrong, or the SiI9022A
+  unconfigured.  Probe DE on R16 to confirm timing matches 1080p60 (148.5 MHz pix
+  clock, active 1920 × 1080 within 2200 × 1125 total).
+- Wrong resolution — check the AVI InfoFrame (VIC 16) the PS programs into the
+  SiI9022A.
+- Colours wrong — RGB565 bit-order mismatch.  `vivado/constraints/zturn_board.xdc`
+  maps LCD_DATA[15:11] → rgb_r[4:0], [10:5] → rgb_g[5:0], [4:0] → rgb_b[4:0];
+  confirm the compositor's RGB565 output widths match.
 
 ## Phase 3 — PS boots, talks to UART
 
@@ -414,7 +394,7 @@ pattern; surrounding pixels untouched.  No AXI errors logged.
 **Likely fail**:
 - AXI master timeout / queue stays full — blitter's HP1 port
   unwired or clock mismatch.  Check `m_axi_aclk` connection in
-  the BD; the HP1 master is driven by `clk_sys` (150 MHz).
+  the BD; the HP1 master is driven by `clk_sys` (133.3 MHz).
 - Stride wrong — fill renders at the wrong pitch (visible in
   Phase 6 as a smeared rectangle).  Re-check
   `FB_STRIDE_B = 8192` matches the value the blitter was

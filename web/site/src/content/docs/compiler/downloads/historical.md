@@ -3,7 +3,7 @@ title: Historical Releases
 description: Older xtc toolchain binaries kept for archival reference.
 ---
 
-These are the previously-released archives, kept here so an existing build can be reproduced byte-for-byte against the version it was originally compiled with. For new work, grab the [most recent release](/downloads/) — the [ChangeLog](/downloads/changelog/) lists what's changed since.
+These are the previously-released archives, kept here so an existing build can be reproduced byte-for-byte against the version it was originally compiled with. For new work, grab the [most recent release](/compiler/downloads/) — the [ChangeLog](/compiler/downloads/changelog/) lists what's changed since.
 
 ## xtc 0.11
 

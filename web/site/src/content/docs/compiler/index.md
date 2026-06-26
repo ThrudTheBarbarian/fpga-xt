@@ -20,4 +20,4 @@ These pages cover the language and its toolchain:
   architecture-neutral IR with pluggable backends: a native arm64 backend and a redesigned FPGA 6502
   core with a hidden hardware stack.
 
-Prebuilt binaries for macOS, Linux, and Windows are on the [Downloads](/downloads/) page.
+Prebuilt binaries for macOS, Linux, and Windows are on the [Downloads](/compiler/downloads/) page.

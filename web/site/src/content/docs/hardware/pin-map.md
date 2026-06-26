@@ -82,7 +82,7 @@ bridge; not assigned to PL pins in this build.
 Derived from `clk_50` inside the PL:
 
 - `clk_sally` (100 MHz) — SALLY 6502 core domain
-- `clk_sys`   (150 MHz) — ANTIC + blitter + sally_mem main mem
+- `clk_sys`   (133.3 MHz) — ANTIC + blitter + sally_mem main mem
 - `clk_pix`   (148.4375 MHz) — `plane_compositor` → SiI9022A
 
 ## Reserved / unused

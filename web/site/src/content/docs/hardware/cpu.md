@@ -220,7 +220,9 @@ Both modes are **fMax-neutral**.  `(d,SP),Y` adds only FSM states — it
 reuses `sp_eff_clamped` (2-input) and the existing INDY `ptr+Y` ALU add,
 introducing no new combinational depth.  `d,SP,X` is fMax-neutral *as
 specified* (pipelined `+X`); the ALU carry chain remains the
-`clk_sally` fmax ceiling (~120 MHz).
+`clk_sally` fmax ceiling (~120 MHz for the core path; production `clk_sally`
+currently runs at 100 MHz — the full design backed off from 120 as it grew
+around the blitter).
 
 ### Cycle counts
 

@@ -32,4 +32,4 @@ Selection is via the ANTIC `MODE` register, bit 0: `MODE_SNOOP`.
 
 Note that in high-memory-use graphics modes (eg: BASIC "GRAPHICS 8"), ANTIC could 'steal' roughly 47% of the CPU memory-bus bandwidth by /HALT-ing the CPU so it could fetch memory for the screen.
 
-With the current CPU implementation, SALLY can run at 120 MHz, or roughly 67x the speed of the original Atari X{L|E}, and with Snoop mode enabled, the actual speed-up over the original X{L|E} is more like **126x.**
+With the current CPU implementation, SALLY runs at 100 MHz, or roughly 56× the speed of the original Atari X{L|E}, and with Snoop mode enabled the effective speed-up in DMA-heavy modes (e.g. GR.8) is more like **~105×**. (The CPU core path itself closes at ~120 MHz; production `clk_sally` backed off to 100 MHz as the design grew around the blitter — recoverable as a later floorplan/fmax task.)

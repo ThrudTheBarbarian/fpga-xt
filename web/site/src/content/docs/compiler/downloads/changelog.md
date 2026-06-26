@@ -6,7 +6,7 @@ description: Release notes for the xtc toolchain — bug fixes and new features 
 ## Unreleased — new-IR backend + new-xt core (in development)
 
 This work lives in the active development tree and is **not in a released
-build** — the [downloads](/downloads/) are still the 0.12 AST-codegen
+build** — the [downloads](/compiler/downloads/) are still the 0.12 AST-codegen
 compiler. It tracks a ground-up reimplementation of the code generator
 around an architecture-neutral IR plus a redesigned 6502 target, so the
 items below are progress notes, not shipped features.

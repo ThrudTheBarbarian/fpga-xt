@@ -9,6 +9,11 @@ driven by RGB565 + HSYNC/VSYNC/DE on the PL pins.  We never roll our
 own TMDS serialiser — the SiI9022A handles TMDS encoding, the +5 V
 on HDMI pin 18, hot-plug detect, DDC EDID, and CEC.
 
+HDMI 1080p60 is up on the Z-Turn V2. Two bring-up gotchas worth recording: the pixel clock
+must be synthesised from a **PS FCLK**, not the board reference — the SOM's crystal is 12 MHz,
+which left every clock at quarter-speed and `clk_pix` out of HDMI range; and a bare-DVI output
+won't sync, so the SiI9022A is put in **HDMI mode with an AVI InfoFrame** (VIC 16).
+
 ## Mandatory bring-up
 
   1. I²C init of the SiI9022A from the PS (CEC_A0..CEC_A2 strap, input

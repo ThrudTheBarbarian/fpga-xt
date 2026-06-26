@@ -12,6 +12,10 @@ FreeRTOS, USB HID, SD filesystem, GEM helpers.  System memory and
 the framebuffer live in DDR3 reached through the PS's DDR
 controller via AXI HP ports.
 
+:::note
+**Running on real Z-Turn hardware** — see [Current state](/project/current-state/) for the live implementation status.
+:::
+
 ## The two machines behind "XT"
 
 **Atari-XT** fuses two Atari lineages on one chip — the name takes its **X** from the

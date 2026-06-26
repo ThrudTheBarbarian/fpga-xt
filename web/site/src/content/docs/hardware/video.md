@@ -329,7 +329,7 @@ Global compositor regs: `BG_COLOR`, frame status/IRQ.  Plane/sprite regs per
 ### 10.0 The model — HP ports are for *PL* masters only
 
 The Zynq-7020 has **4 AXI-HP slave ports** (HP0–HP3), each 64-bit, full-duplex
-(independent read + write channels), 150 MHz.  They exist so **PL-fabric
+(independent read + write channels), 133.3 MHz.  They exist so **PL-fabric
 masters reach PS DDR3**.  The **ARM cores reach DDR natively** through L1/L2 +
 the DDR controller — they *never* use an HP port.  Consequences:
 
@@ -366,7 +366,7 @@ Notes:
   clk_sys plane reads, so the sprite-image fetch rides HP0's read SmartConnect;
   HP2 is dedicated to SALLY's banked window (its own `clk_sally` domain —
   keeping it isolated avoids a clock converter and the 100 MHz path dragging
-  the 150 MHz compositor reads).
+  the 133.3 MHz compositor reads).
 - **ST/TT adds no new port**: emulated RAM is ARM/DDR-direct; the surface is
   ARM-written (no write master); the compositor's ST plane fetch is just
   another read on HP0's SmartConnect.
@@ -380,12 +380,13 @@ one (scaled) source line per scanline into its line buffer; one `plane_fetch`
 unit sustains a single plane on HP0.
 
 - DDR3-1066 ×32-bit ≈ 4.3 GB/s peak, ~2.5–3 GB/s usable; each HP port ≈
-  1.2 GB/s (64-bit @ 150 MHz).
+  1.07 GB/s (64-bit @ 133.3 MHz).
 - Desktop fetch (full-screen, scale 1) ≈ 1920×1080×4×60 ≈ 0.5 GB/s.  A
   full-screen ST/TT plane ≈ another 0.5 GB/s.  XL fetch/writeback and sprites
   are tiny (XL ≈ 320 px/line × window lines × 60 ≈ tens of MB/s).
-- So even desktop + full-screen ST/TT ≈ 1 GB/s — under one port, well under
-  DDR.  **The constraint is port count/arbitration, not bandwidth** — and
+- So even desktop + full-screen ST/TT ≈ 1 GB/s total — split across ports
+  (≈0.5 GB/s each, comfortably under a port's ~1.07 GB/s), well under DDR.
+  **The constraint is port count/arbitration, not bandwidth** — and
   SmartConnect handles count.
 
 Full-line fetch (including occluded spans) is fine at this N; visible-span-only
