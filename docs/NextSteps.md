@@ -16,18 +16,16 @@ This is a tracker, so it intentionally carries forward-looking/historical contex
 
 ## Open Issues (tracked bugs)
 
-- None currently — the full `make all` iverilog suite is green.
+- The `make all` iverilog suite is green. Separately, **`make blitter_bridge` has a
+  pre-existing `SRCBLIT FAIL` (3 mismatches)** — the bridge tb's blitter SRC_BLIT
+  check; it fails on the committed bridge too (predates + unrelated to the
+  sprite-dedangle work). Triage: stale golden vs a real SRC_BLIT regression.
 - The numbered issues #0001–#0007 are all resolved — see `docs/Issues/Fixed/`.
 
 ---
 
 ## HW / RTL bring-up
 
-- **Sprite-engine image-fetch AXI master is dangled** — `sprite_engine`'s
-  `m_axi_ar*` outputs are left open (`fpga_xt_top.sv` ~1202); the stage is a
-  framebuffer passthrough and composites no fetched sprites. Join the master to the
-  clk_sys plane reads on HP0 via the BD SmartConnect, drive descriptors, confirm a
-  sprite composites. *(real bug; src: former docs/TODO.txt, docs/Zynq/memory-map.md)*
 - **Keyboard injection host source** — RTL path is done (GP0 → `$D4CF` → POKEY).
   Remaining: a host-side source + ASCII→KBCODE map. *(likely partly covered by the
   serial `{ }` paste path — verify; src: former docs/TODO.txt)*
@@ -79,11 +77,12 @@ This is a tracker, so it intentionally carries forward-looking/historical contex
   decode (blitter/compositor/sprite/XL-control/ROM-loader) + ARM driver for
   plane/sprite/window control. *(blocks adding register blocks; src: former docs/TODO.txt,
   docs/video/video-architecture.md)*
-- **Sprite engine (build)** — implement `sprite_engine` (descriptor regs $D4A0-$D4BF,
-  line fetcher, dual-port line cache, 4-stage compositor + collision), instantiate +
-  route HP2 + register decode; expose framebuffer RGB565+de from `antic_top`. Then:
-  G[4:0]→RGB565 mapping refinement, H/V flip bit, palettised sprites, rotation
-  (SW-first), blitter→sprite-arena integration. *(src: docs/Design/sprite-engine.md,
+- **Sprite engine — refinements.** Core is built + HW-validated: fetcher + line
+  cache + 4-stage compositor, A9-driven over GP0 (`sprite.c`), reads DDR via the
+  shared HP2 read mux, composites on screen. Remaining: a proper **cursor sprite**
+  (replace the `sprite_test()` bring-up stub), H/V flip + 2x exercised, palettised
+  sprites, rotation (SW-first), collision-compositor (the set side is still tied to
+  0), and blitter→sprite-arena integration. *(src: docs/Design/sprite-engine.md,
   docs/video/video-architecture.md)*
 - **Texture mapping (tiers)** — T1 affine point-sampled (~1 day) → T2 bilinear
   (+½ day) → T3 textured triangles (+½–1 day) → T4 perspective-correct (several days);
