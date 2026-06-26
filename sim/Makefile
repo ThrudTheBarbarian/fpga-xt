@@ -121,6 +121,17 @@ snoop: $(BUILD_DIR)/tb_snoop.vvp
 $(BUILD_DIR)/tb_snoop.vvp: $(HDL_SRCS) tb_snoop.sv | $(BUILD_DIR)
 	$(IVERILOG) $(SV_FLAGS) -o $@ -s tb_snoop $(HDL_SRCS) tb_snoop.sv
 
+# hp2_rd_mux — shared-HP2 read arbiter (self-contained: only its own RTL)
+hp2_mux: $(BUILD_DIR)/tb_hp2_rd_mux.vvp
+	@echo "=== hp2_rd_mux — shared HP2 read arbiter ==="
+	@$(VVP) -N $< | tee $(BUILD_DIR)/tb_hp2_rd_mux.log
+	@grep -q '\*\*\* HP2_RD_MUX OK \*\*\*' $(BUILD_DIR)/tb_hp2_rd_mux.log || \
+	    (echo "FAIL: tb_hp2_rd_mux missing HP2_RD_MUX OK"; exit 1)
+	@echo "PASS: tb_hp2_rd_mux"
+
+$(BUILD_DIR)/tb_hp2_rd_mux.vvp: $(HDL_DIR)/hp2_rd_mux.sv tb_hp2_rd_mux.sv | $(BUILD_DIR)
+	$(IVERILOG) $(SV_FLAGS) -o $@ -s tb_hp2_rd_mux $(HDL_DIR)/hp2_rd_mux.sv tb_hp2_rd_mux.sv
+
 # ---- M2b — bus-side register-read mux verification ------------------------
 read: $(BUILD_DIR)/tb_read.vvp
 	@echo "=== M2b read ==="

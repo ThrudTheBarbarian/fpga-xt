@@ -443,6 +443,15 @@ module fpga_xt_top (
     wire        hp2_rlast;
     wire        hp2_rready;
 
+    // HP2 read is shared (hp2_rd_mux): drag-overlay (s0) + sprite fetcher (s1).
+    // The two masters drive these; the mux drives the hp2_* read channel above.
+    wire [31:0] ovl_araddr;  wire [7:0] ovl_arlen;  wire [2:0] ovl_arsize;
+    wire [1:0]  ovl_arburst; wire ovl_arvalid, ovl_arready;
+    wire [63:0] ovl_rdata;   wire ovl_rvalid, ovl_rlast, ovl_rready;
+    wire [31:0] spr_araddr;  wire [7:0] spr_arlen;  wire [2:0] spr_arsize;
+    wire [1:0]  spr_arburst; wire spr_arvalid, spr_arready;
+    wire [63:0] spr_rdata;   wire spr_rvalid, spr_rlast, spr_rready;
+
     // ANTIC's BRAM read port — driven by antic_top's u_bram_shim and
     // serviced by sally_mem's second BRAM port (clk_sys side).  SALLY
     // writes propagate naturally through sally_mem; ANTIC sees the
@@ -1394,10 +1403,10 @@ module fpga_xt_top (
         .clk_sys (clk_sys), .rst_sys (pf_rst_sys), .enable (overlay_en),
         .surface_base (overlay_base), .stride_bytes (16'd8192),  // 2048 px * 4 (RGBA)
         .src_w (overlay_w),
-        .m_axi_araddr (hp2_araddr), .m_axi_arlen (hp2_arlen), .m_axi_arsize (hp2_arsize),
-        .m_axi_arburst (hp2_arburst), .m_axi_arvalid (hp2_arvalid),
-        .m_axi_arready (hp2_arready), .m_axi_rdata (hp2_rdata),
-        .m_axi_rvalid (hp2_rvalid), .m_axi_rlast (hp2_rlast), .m_axi_rready (hp2_rready),
+        .m_axi_araddr (ovl_araddr), .m_axi_arlen (ovl_arlen), .m_axi_arsize (ovl_arsize),
+        .m_axi_arburst (ovl_arburst), .m_axi_arvalid (ovl_arvalid),
+        .m_axi_arready (ovl_arready), .m_axi_rdata (ovl_rdata),
+        .m_axi_rvalid (ovl_rvalid), .m_axi_rlast (ovl_rlast), .m_axi_rready (ovl_rready),
         .clk_pix (clk_pix), .rst_pix (pf_rst_pix),
         .line_start (fb_line_start), .fetch_row (ov_fetch_row),
         .rd_col (cmp_src_col[1*12 +: 12]), .rd_pixel (overlay_pixel),
@@ -1458,6 +1467,16 @@ module fpga_xt_top (
                         && (bus_addr_antic_q[15:8] == 8'hD4)
                         && ((bus_addr_antic_q[7:4] == 4'hA)
                             || (bus_addr_antic_q[7:4] == 4'hD));
+
+    // A9-driven sprite reg writes (GP0 0x22 = reg index, 0x23 = data + strobe,
+    // via the bridge).  The sprite engine is a desktop compositor owned by the
+    // A9, so the A9 drives reg_* directly (no unlock gate); the dormant SALLY-bus
+    // path above is muxed in behind it.
+    wire [7:0] spr_reg_addr_a9, spr_reg_data_a9;
+    wire       spr_reg_we_a9;
+    wire       sprite_reg_we_mux    = spr_reg_we_a9 | sprite_reg_we;
+    wire [7:0] sprite_reg_addr_mux  = spr_reg_we_a9 ? spr_reg_addr_a9 : bus_addr_antic_q[7:0];
+    wire [7:0] sprite_reg_wdata_mux = spr_reg_we_a9 ? spr_reg_data_a9 : bus_data_in_antic_q;
     wire [7:0] sprite_reg_rdata_unused;
 
     sprite_engine u_sprite_engine (
@@ -1470,9 +1489,9 @@ module fpga_xt_top (
         .line_start    (fb_line_start),
         .frame_start   (fb_frame_start),
 
-        .reg_we        (sprite_reg_we),
-        .reg_addr      (bus_addr_antic_q[7:0]),
-        .reg_wdata     (bus_data_in_antic_q),
+        .reg_we        (sprite_reg_we_mux),
+        .reg_addr      (sprite_reg_addr_mux),
+        .reg_wdata     (sprite_reg_wdata_mux),
         .reg_rdata     (sprite_reg_rdata_unused),
 
         .fb_pixel      ({comp_rgb_r, comp_rgb_g, comp_rgb_b}),
@@ -1487,20 +1506,34 @@ module fpga_xt_top (
         .rgb_hsync     (spr_rgb_hsync),
         .rgb_vsync     (spr_rgb_vsync),
 
-        // AXI read master (sprite-image fetch) — dangled for the scaffold.
-        // When the line fetcher lands it joins the other clk_sys plane reads
-        // on HP0 via a BD SmartConnect (NOT a dedicated port — see
-        // docs/video/video-architecture.md §10; HP2 is SALLY's banked-DDR window).
-        .m_axi_araddr  (),
-        .m_axi_arlen   (),
-        .m_axi_arsize  (),
-        .m_axi_arburst (),
-        .m_axi_arvalid (),
-        .m_axi_arready (1'b0),
-        .m_axi_rdata   (64'd0),
-        .m_axi_rvalid  (1'b0),
-        .m_axi_rlast   (1'b0),
-        .m_axi_rready  ()
+        // AXI read master (sprite-image fetch).  Shares HP2's read channel with
+        // the (intermittent) drag-overlay via hp2_rd_mux below — HP2's write
+        // channel is antic_writeback (write-only), so the read channel is free.
+        .m_axi_araddr  (spr_araddr),
+        .m_axi_arlen   (spr_arlen),
+        .m_axi_arsize  (spr_arsize),
+        .m_axi_arburst (spr_arburst),
+        .m_axi_arvalid (spr_arvalid),
+        .m_axi_arready (spr_arready),
+        .m_axi_rdata   (spr_rdata),
+        .m_axi_rvalid  (spr_rvalid),
+        .m_axi_rlast   (spr_rlast),
+        .m_axi_rready  (spr_rready)
+    );
+
+    // Shared HP2 read: drag-overlay (s0, priority) + sprite fetcher (s1) -> HP2.
+    // Multi-outstanding so the overlay keeps its pipelined AR (no drag tearing).
+    hp2_rd_mux u_hp2_rd_mux (
+        .clk (clk_sys), .rst (pf_rst_sys),
+        .s0_araddr (ovl_araddr), .s0_arlen (ovl_arlen), .s0_arsize (ovl_arsize),
+        .s0_arburst (ovl_arburst), .s0_arvalid (ovl_arvalid), .s0_arready (ovl_arready),
+        .s0_rdata (ovl_rdata), .s0_rvalid (ovl_rvalid), .s0_rlast (ovl_rlast), .s0_rready (ovl_rready),
+        .s1_araddr (spr_araddr), .s1_arlen (spr_arlen), .s1_arsize (spr_arsize),
+        .s1_arburst (spr_arburst), .s1_arvalid (spr_arvalid), .s1_arready (spr_arready),
+        .s1_rdata (spr_rdata), .s1_rvalid (spr_rvalid), .s1_rlast (spr_rlast), .s1_rready (spr_rready),
+        .m_araddr (hp2_araddr), .m_arlen (hp2_arlen), .m_arsize (hp2_arsize),
+        .m_arburst (hp2_arburst), .m_arvalid (hp2_arvalid), .m_arready (hp2_arready),
+        .m_rdata (hp2_rdata), .m_rvalid (hp2_rvalid), .m_rlast (hp2_rlast), .m_rready (hp2_rready)
     );
 
     // ---- RGB pins -------------------------------------------------------
@@ -2261,6 +2294,9 @@ module fpga_xt_top (
         .bl_addr         (bl_bridge_addr),
         .bl_data         (bl_bridge_data),
         .bl_we           (bl_bridge_we),
+        .spr_reg_addr    (spr_reg_addr_a9),
+        .spr_reg_data    (spr_reg_data_a9),
+        .spr_reg_we      (spr_reg_we_a9),
         .bl_busy         (bl_busy),
         .bl_queue_full   (bl_cq_full),
         .bl_pat_blocked  (bl_pat_blocked),

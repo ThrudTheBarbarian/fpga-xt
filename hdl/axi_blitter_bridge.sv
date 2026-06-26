@@ -55,6 +55,15 @@ module axi_blitter_bridge (
     output reg  [7:0]  bl_data,
     output reg         bl_we,              // 1-cycle write strobe
 
+    // ---- Sprite-engine reg bus output (A9-driven, clk_sys domain) -----------
+    // The sprite engine is a desktop compositor, owned by the A9 (not the 6502).
+    // GP0 0x22 latches the sprite reg index ($D4Ax/$D4Dx low byte), 0x23 carries
+    // the data and pulses spr_reg_we — muxed into the sprite engine's reg port in
+    // fpga_xt_top alongside the (dormant) SALLY-bus source.
+    output reg  [7:0]  spr_reg_addr,
+    output reg  [7:0]  spr_reg_data,
+    output reg         spr_reg_we,         // 1-cycle write strobe
+
     // ---- Blitter status (clk_sys domain) ------------------------------------
     input  wire        bl_busy,            // returned on STATUS read ($D4BD bit 0)
     input  wire        bl_queue_full,      // returned on STATUS read ($D4BD bit 1)
@@ -190,11 +199,15 @@ module axi_blitter_bridge (
             overlay_h      <= 12'd0;
             overlay_en     <= 1'b0;
             overlay_commit <= 1'b0;
+            spr_reg_addr   <= 8'h00;
+            spr_reg_data   <= 8'h00;
+            spr_reg_we     <= 1'b0;
         end else begin
             s_axi_awready <= 1'b0;
             s_axi_wready  <= 1'b0;
             bl_we         <= 1'b0;
             xt_unlock_we  <= 1'b0;
+            spr_reg_we    <= 1'b0;
 
             unique case (wstate)
                 WST_IDLE: begin
@@ -254,7 +267,12 @@ module axi_blitter_bridge (
                                 4'hD: overlay_w[11:8]     <= w_byte[3:0];  // 0x2D
                                 4'hE: overlay_h[7:0]      <= w_byte;       // 0x2E
                                 4'hF: overlay_h[11:8]     <= w_byte[3:0];  // 0x2F
-                                default: ;                                 // 0x22,0x23 unused
+                                4'h2: spr_reg_addr        <= w_byte;       // 0x22 sprite reg index
+                                4'h3: begin                                // 0x23 sprite reg data + strobe
+                                          spr_reg_data <= w_byte;
+                                          spr_reg_we   <= 1'b1;
+                                      end
+                                default: ;
                             endcase
                         end else begin
                             bl_we <= 1'b1;                                 // blitter strobe
