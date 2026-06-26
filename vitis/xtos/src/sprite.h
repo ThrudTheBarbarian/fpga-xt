@@ -34,6 +34,10 @@ void sprite_enable(int slot, int format);
 /* Master enable for the whole engine. */
 void sprite_global_enable(int en);
 
+/* Write a w×h RGBA-8888 image into the arena at (arena_x, arena_y) (format-1
+ * layout), flushing it out to DDR for the fetcher. */
+void sprite_load_rgba(int arena_x, int arena_y, int w, int h, const uint32_t *img);
+
 /* Bring-up self-test: paint a 32x32 opaque-white sprite into the arena and show
  * it at screen (100,100) via slot 0.  Proves the fetch+composite path on HW. */
 void sprite_test(void);

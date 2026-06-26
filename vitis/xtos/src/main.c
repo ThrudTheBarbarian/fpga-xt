@@ -46,7 +46,6 @@
 #include "xiicps.h"          /* PS I2C0 (EMIO) -> SiI9022A control bus */
 
 #include "xt_blitter.h"
-#include "sprite.h"
 
 /* gem_lua.c — GEM VDI (+ FreeType scalable text) bring-up on the desktop plane
  * and the `vdi` Lua table.  Defined in gem_lua.c (links the portable gem core). */
@@ -1340,12 +1339,6 @@ static void repl_task(void *arg)
     /* Clear plane-0 power-on garbage + select the compositor BEFORE running boot
      * scripts (which may paint the desktop and must not be wiped afterwards). */
     desktop_init();
-
-    /* BRING-UP: a 32x32 white hardware sprite at (100,100), proving the sprite
-     * engine's HP2 fetch + composite path (the de-dangle).  It also exercises the
-     * HP2 read mux while a window is dragged (sprite + drag-overlay contention).
-     * Composites in the scan-out path, independent of the desktop plane content. */
-    sprite_test();
 
     /* Auto-run the boot scripts (0:/OS/Boot/NN-slug) now that the scheduler is
      * up, then drop to the interactive console. */

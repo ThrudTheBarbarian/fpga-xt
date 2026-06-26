@@ -2,6 +2,7 @@
  * sprite.c — A9-side hardware sprite-engine driver.  See sprite.h.
  */
 #include "sprite.h"
+#include <stddef.h>         /* size_t */
 #include "xt_blitter.h"     /* XT_BLITTER_BASE (the GP0 bridge window) */
 #include "xil_io.h"
 #include "xil_cache.h"
@@ -53,6 +54,19 @@ void sprite_enable(int slot, int format)
 void sprite_global_enable(int en)
 {
     spr_reg(R_GLOBAL, en ? 0x01u : 0x00u);
+}
+
+void sprite_load_rgba(int arena_x, int arena_y, int w, int h, const uint32_t *img)
+{
+    /* Format-1 arena layout: each row at (arena_y+r)<<14, pixels at (arena_x+c)<<2.
+     * Flush each row (the fetcher reads the arena over HP2, bypassing the cache). */
+    for (int r = 0; r < h; r++) {
+        volatile uint32_t *p = (volatile uint32_t *)(uintptr_t)
+            (SPR_ARENA_BASE + ((uint32_t)(arena_y + r) << 14) + ((uint32_t)arena_x << 2));
+        for (int c = 0; c < w; c++)
+            p[c] = img[(size_t)r * w + c];
+        Xil_DCacheFlushRange((INTPTR)p, (size_t)w * sizeof(uint32_t));
+    }
 }
 
 void sprite_test(void)

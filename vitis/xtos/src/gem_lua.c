@@ -16,6 +16,7 @@
 #include <stdio.h>
 #include "xil_cache.h"
 #include "xil_printf.h"
+#include "sprite.h"
 
 #include "lua.h"
 #include "lauxlib.h"
@@ -266,14 +267,17 @@ static void win_content(gem_window *win, void *ud)
     v_gtext(vh, 14, 44, (const char *)ud);
 }
 
+static void cur_init(void);                 /* HW-sprite cursor (defined below) */
+
 static int l_vdi_wintest(lua_State *L)
 {
     if (!gem_ready(L)) return 0;
     if (!g_wm_up) {
         gem_wm_init(&g_wm, &g_desk, GFX_RGB(0x20, 0x60, 0x90));
         gem_wm_set_font(&g_wm, g_sys);
-        g_wm.no_cursor = 1;          /* the A9 owns the pointer (save-under, below) */
+        g_wm.no_cursor = 1;          /* the A9 owns the pointer (HW sprite, below) */
         g_wm_up = 1;
+        cur_init();                  /* bring up the hardware-sprite cursor */
     }
     gem_window *a = gem_wm_add(&g_wm, 220, 160, 380, 260, "Window One", 1);
     if (a) gem_wm_set_redraw(a, win_content, (void *)"Hello from window one");
@@ -295,12 +299,14 @@ static int  g_mbtn = 0;                          /* left button currently down *
 static int  g_esc = 0, g_escn = 0;               /* CSI escape parse state */
 static char g_escbuf[8];
 
-/* ---- A9 save-under pointer ------------------------------------------------
- * gem_wm draws the scene only (no_cursor=1); we move the pointer by touching
- * just its 12x19 box.  The scene under it is HW-composited in DDR, so the
- * save-under read invalidates that box first; the cursor write flushes it. */
+/* ---- Hardware-sprite pointer ----------------------------------------------
+ * The cursor is sprite slot CUR_SLOT, composited on top of everything (including
+ * the drag overlay) in the scan-out path.  Moving it is just a descriptor
+ * reposition — no save-under, no plane traffic, and no baking into the drag
+ * surface (the sprite is already above it). */
 #define CURW 12
 #define CURH 19
+#define CUR_SLOT 0
 static const char *s_arrow[CURH] = {
     "X           ", "XX          ", "X.X         ", "X..X        ",
     "X...X       ", "X....X      ", "X.....X     ", "X......X    ",
@@ -308,41 +314,39 @@ static const char *s_arrow[CURH] = {
     "X.X X..X    ", "XX  X..X    ", "X    X..X   ", "     X..X   ",
     "      X..X  ", "      X..X  ", "       XX   ",
 };
-static uint32_t s_save[CURW * CURH];
 static int s_cx, s_cy, s_cvis;
 
-static void cur_inval(int x, int y) {
-    uint32_t *pl = (uint32_t *)(uintptr_t)DESK_BASE;
-    for (int r = 0; r < CURH; r++) { int py = y + r; if (py < 0 || py >= DESK_H) continue;
-        Xil_DCacheInvalidateRange((INTPTR)(pl + (size_t)py*DESK_STRIDE + x), CURW*4); }
+/* Paint the 12x19 arrow into a 32x32 transparent sprite image and bring the
+ * cursor up at the current pointer position.  Call once, after the sprite
+ * engine is live (post-bitstream). */
+static void cur_init(void) {
+    static uint32_t img[32 * 32];
+    for (int r = 0; r < 32; r++)
+        for (int c = 0; c < 32; c++) {
+            uint32_t px = 0x00000000u;                   /* transparent (alpha=0) */
+            if (r < CURH && c < CURW) {
+                char ch = s_arrow[r][c];
+                if      (ch == 'X') px = 0x000000FFu;     /* black outline, opaque */
+                else if (ch == '.') px = 0xFFFFFFFFu;     /* white fill, opaque    */
+            }
+            img[r * 32 + c] = px;
+        }
+    sprite_load_rgba(0, 0, 32, 32, img);                 /* arena image at (0,0) */
+    sprite_set(CUR_SLOT, /*prio*/0, /*log2sz*/5, /*arena*/0, 0, g_mx, g_my);
+    sprite_enable(CUR_SLOT, /*format32*/1);
+    sprite_global_enable(1);
+    s_cx = g_mx; s_cy = g_my; s_cvis = 1;
 }
-static void cur_flush(int x, int y) {
-    uint32_t *pl = (uint32_t *)(uintptr_t)DESK_BASE;
-    for (int r = 0; r < CURH; r++) { int py = y + r; if (py < 0 || py >= DESK_H) continue;
-        Xil_DCacheFlushRange((INTPTR)(pl + (size_t)py*DESK_STRIDE + x), CURW*4); }
-}
-static void cur_hide(void) {
-    if (!s_cvis) return;
-    uint32_t *pl = (uint32_t *)(uintptr_t)DESK_BASE;
-    for (int r = 0; r < CURH; r++) { int py = s_cy + r; if (py < 0 || py >= DESK_H) continue;
-        for (int c = 0; c < CURW; c++) { int px = s_cx + c; if (px < 0 || px >= DESK_W) continue;
-            pl[(size_t)py*DESK_STRIDE + px] = s_save[r*CURW + c]; } }
-    cur_flush(s_cx, s_cy);
-    s_cvis = 0;
-}
+
+/* Reposition the cursor sprite (hot spot = its top-left = (x,y)). */
 static void cur_show(int x, int y) {
-    uint32_t *pl = (uint32_t *)(uintptr_t)DESK_BASE;
-    cur_inval(x, y);                                   /* read fresh HW-composited scene */
-    for (int r = 0; r < CURH; r++) { int py = y + r;
-        for (int c = 0; c < CURW; c++) { int px = x + c;
-            int in = (py >= 0 && py < DESK_H && px >= 0 && px < DESK_W);
-            s_save[r*CURW + c] = in ? pl[(size_t)py*DESK_STRIDE + px] : 0;
-            char ch = s_arrow[r][c];
-            if (ch == ' ' || !in) continue;
-            pl[(size_t)py*DESK_STRIDE + px] = (ch == 'X') ? GFX_RGB(0,0,0) : GFX_RGB(255,255,255);
-        } }
-    cur_flush(x, y);
+    sprite_set(CUR_SLOT, 0, 5, 0, 0, x, y);
     s_cx = x; s_cy = y; s_cvis = 1;
+}
+
+/* The HW sprite stays composited on top — nothing to erase from the plane. */
+static void cur_hide(void) {
+    s_cvis = 0;
 }
 
 /* Move the pointer.  Pure moves touch only the cursor box; a HW-overlay drag
@@ -393,13 +397,7 @@ static void drag_build_surface(gem_window *w, int gx, int gy)
                                 ? pl[(size_t)py*DESK_STRIDE + px] : 0;
         }
     }
-    for (int r = 0; r < CURH; r++) for (int c = 0; c < CURW; c++) {   /* bake the pointer */
-        int bx = gx + c, by = gy + r;
-        if (bx < 0 || bx >= W || by < 0 || by >= H) continue;
-        char ch = s_arrow[r][c];
-        if (ch == ' ') continue;
-        ds[(size_t)by*OVL_STRIDE_W + bx] = (ch == 'X') ? GFX_RGB(0,0,0) : GFX_RGB(255,255,255);
-    }
+    (void)gx; (void)gy;   /* cursor is a HW sprite on top of the overlay — no bake */
     for (int r = 0; r < H; r++)                       /* strided -> flush each row's W px */
         Xil_DCacheFlushRange((INTPTR)(ds + (size_t)r*OVL_STRIDE_W), (size_t)W*4u);
 }
@@ -480,6 +478,7 @@ static void wm_pointer(int dx, int dy)
         gem_wm_mouse_move(&g_wm, nx, ny);            /* updates the (hidden) window's x/y */
         int ox = w->x < 0 ? 0 : w->x, oy = w->y < 0 ? 0 : w->y;
         xt_overlay_move((uint16_t)ox, (uint16_t)oy); /* tear-free; no plane write, no flush */
+        cur_show(g_mx, g_my);                        /* HW cursor sprite tracks, on top of the overlay */
         DRAG_DBG("[drag] MOVE ptr=(%d,%d) win=(%d,%d) ovl=(%d,%d)\r\n",
                    g_mx, g_my, w->x, w->y, ox, oy);
     } else if (g_mbtn) {                              /* button down, no window grabbed -> full */
