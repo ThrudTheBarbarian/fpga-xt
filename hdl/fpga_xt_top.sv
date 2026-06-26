@@ -2099,11 +2099,12 @@ module fpga_xt_top (
         .m_axi_hp1_wstrb    (ps_hp1_wstrb),
         .m_axi_hp1_wvalid   (ps_hp1_wvalid),
 
-        // HP3 — XL/compositor port (video-arch §10): antic_writeback (write) +
-        // plane_fetch1 (read).  Connected directly (no pipeline slice — like
-        // HP0), the XL traffic is light vs the blitter on HP1.  REQUIRES the
-        // BD to be regenerated with HP3 enabled — run vivado/bd/gen_ps_bd.tcl
-        // (it sets PCW_USE_S_AXI_HP3=1 and exports m_axi_hp3).
+        // HP3 — XL plane READ (video-arch §10): plane_fetch1 reads the XL window
+        // framebuffer from DDR -> compositor.  READ-ONLY (write channel tied off;
+        // antic_writeback is on HP2).  Connected directly (no pipeline slice —
+        // like HP0); the XL read traffic is light vs the blitter on HP1.
+        // REQUIRES the BD regenerated with HP3 enabled — run gen_ps_bd.tcl
+        // (sets PCW_USE_S_AXI_HP3=1 and exports m_axi_hp3).
         .m_axi_hp3_araddr   (hp3_araddr[31:0]),
         .m_axi_hp3_arburst  (hp3_arburst[1:0]),
         .m_axi_hp3_arcache  (4'b0011),   // read-path expt: bufferable+modifiable (was 0000)
@@ -2144,9 +2145,10 @@ module fpga_xt_top (
         .m_axi_hp3_wstrb    (8'd0),
         .m_axi_hp3_wvalid   (1'b0),
 
-        // HP2 — antic_writeback WRITE master (moved off HP3) + drag-overlay
-        // READ master (plane_fetch_overlay).  AWCACHE=0011 (bufferable+
-        // modifiable) like HP3's write was; ARCACHE matches the HP0/HP3 reads.
+        // HP2 — antic_writeback WRITE master (moved off HP3) + the shared READ
+        // channel (hp2_rd_mux): drag-overlay (plane_fetch_overlay) + sprite-engine
+        // line fetch.  AWCACHE=0011 (bufferable+modifiable) like HP3's write was;
+        // ARCACHE matches the HP0/HP3 reads.
         .m_axi_hp2_araddr   (hp2_araddr[31:0]),
         .m_axi_hp2_arburst  (hp2_arburst[1:0]),
         .m_axi_hp2_arcache  (4'b0011),
@@ -2447,7 +2449,7 @@ module fpga_xt_top (
         .s_axi_hp1_wstrb    (hp1_wstrb),
         .s_axi_hp1_wvalid   (hp1_wvalid),
 
-        // HP3 — XL/compositor: antic_writeback (write) + plane_fetch1 (read)
+        // HP3 — XL plane read: plane_fetch1 (read-only; writeback is on HP2)
         .s_axi_hp3_araddr   (hp3_araddr[31:0]),
         .s_axi_hp3_arburst  (hp3_arburst[1:0]),
         .s_axi_hp3_arcache  (4'd0),
