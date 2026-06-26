@@ -8,10 +8,22 @@
 #include "xil_io.h"
 #include "sleep.h"
 
+/* Completion-IRQ path — OFF until (a) the BD exposes IRQ_F2P_0 (FORCE=1 regen)
+ * and (b) the freertos10_xilinx GIC instance is wired.  The 2025.2 SDT port
+ * exports xPortInstallInterruptHandler/vPortEnableInterrupt but NOT a global
+ * `xInterruptController`, so XScuGic_SetPriorityTriggerType has nothing to point
+ * at.  Until both are resolved, xt_blitter_wait_idle() polls.  Re-enable with
+ * -DXT_BLITTER_IRQ=1. */
+#ifndef XT_BLITTER_IRQ
+#define XT_BLITTER_IRQ 0
+#endif
+
+#if XT_BLITTER_IRQ
 #include "FreeRTOS.h"
 #include "task.h"
 #include "semphr.h"
 #include "xscugic.h"
+#endif
 
 void xt_blitter_write8(uint32_t offset, uint8_t v)
 {
@@ -38,13 +50,14 @@ uint16_t xt_blitter_seq_counter(void)
     return (uint16_t)((hi << 8) | lo);
 }
 
+#if XT_BLITTER_IRQ
 /* ---- Completion IRQ (PL IRQ_F2P[0] -> Zynq-7000 GIC SPI ID 61) ----------
- * The blitter pulses `irq` for one clk on busy 1->0 (drain-to-idle).  We
- * register it on the FreeRTOS port's GIC (the one the tick already uses) via
- * the port API — no second GIC init, and no dependency on usb_hid (retired in
- * favour of the STM32 for HID).  Call xt_blitter_irq_init() ONCE from a task
- * after the scheduler is running; until then xt_blitter_wait_idle() falls back
- * to the coarse poll, so this change is safe even if the init isn't wired yet. */
+ * The blitter pulses `irq` for one clk on busy 1->0 (drain-to-idle).  Register
+ * it on the FreeRTOS-port GIC via the port API — no second GIC init, and no
+ * dependency on usb_hid (retired for the STM32).  Call xt_blitter_irq_init()
+ * ONCE from a task after the scheduler is running.  NOTE: needs the GIC instance
+ * (xInterruptController) for the trigger-type config — resolve that for the
+ * 2025.2 SDT port before enabling this. */
 extern XScuGic xInterruptController;   /* freertos10_xilinx port GIC instance */
 
 #define XT_BLIT_IRQ_ID  61u            /* IRQ_F2P[0] -> GIC SPI ID 61 */
@@ -77,15 +90,20 @@ int xt_blitter_irq_init(void)
     vPortEnableInterrupt(XT_BLIT_IRQ_ID);
     return 0;
 }
+#else
+/* IRQ path not built — wait_idle polls.  Stub keeps callers linking. */
+int xt_blitter_irq_init(void) { return -1; }
+#endif
 
 int xt_blitter_wait_idle(uint32_t timeout_us)
 {
-    /* IRQ-driven: block on the completion semaphore instead of spinning.
-     * `busy` is the source of truth; the semaphore is just the wakeup. */
+    /* busy is the source of truth; the IRQ semaphore (when built) is just the
+     * wakeup — otherwise we poll. */
     if (!xt_blitter_busy()) {
         return 0;
     }
 
+#if XT_BLITTER_IRQ
     if (s_blit_done) {
         /* Drain any stale completion, then re-check busy: closes the race
          * where the blit finished between the first check and the block. */
@@ -101,8 +119,9 @@ int xt_blitter_wait_idle(uint32_t timeout_us)
         }
         return (xSemaphoreTake(s_blit_done, ticks) == pdTRUE) ? 0 : -1;
     }
+#endif
 
-    /* Fallback (IRQ not yet initialised) — coarse poll, ~100 us granularity. */
+    /* Poll fallback — coarse, ~100 us granularity. */
     while (xt_blitter_busy()) {
         if (timeout_us == 0) {
             return -1;
