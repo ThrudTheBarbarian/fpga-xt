@@ -893,14 +893,13 @@ module fpga_xt_top (
                                    // hwreg read-back CDC (bus_data_out is ext-bus-gated)
     wire        antic_nmi_n, antic_halt_n, antic_rdy_n, antic_irq_n;
 
-    // ANTIC-side phi2 — generated from clk by antic_top internally.
-    // We just provide the phi2_tick strobe.  antic_top generates its
-    // own phi2 from clk_bus using BASE_DIV=68 (adjusted from 90 for
-    // our clock rate).
-    //
-    // For the Phase 1a single-clock integration, antic_top gets the
-    // raw clock.  Its internal BASE_DIV parameter needs to match
-    // our sally_clock BASE_DIV.
+    // ANTIC-side phi2 — antic_top generates its own phi2 internally from
+    // clk_bus (= clk_sys); we only consume its phi2_tick strobe.  phi2 =
+    // clk_bus / BASE_DIV, where BASE_DIV is a fixed localparam = 74 inside
+    // antic_top (not overridable from here): at clk_sys = 133.3 MHz that is
+    // ≈ 1.80 MHz ≈ real NTSC phi2.  Independent of sally_clock's BASE_DIV —
+    // the two divide different clocks (ANTIC divides clk_sys, sally_clock
+    // divides clk_sally), so the values differ by design.
 
     // antic_top has no RGB/TMDS outputs; the HDMI pads are driven by the
     // compositor → sprite chain, and the ANTIC image reaches
@@ -1666,6 +1665,23 @@ module fpga_xt_top (
         clock_mult_sally <= clock_mult_s1;
     end
 
+    // Read-back returns the *effective* multiplier sally_clock actually applies,
+    // not the raw written value: sally_clock normalises any clock_mult that is
+    // not a clean divisor of BASE_DIV (56) back to 1× (its case default).  Mirror
+    // that here so $D4CA / GP0 0x1E report the real speed and the REPL `speed`
+    // verify needs no software grade table.
+    // ⚠ Keep this divisor set in sync with sally_clock's case — BASE_DIV=56,
+    // divisors {1,2,4,7,8,14,28,56}.
+    function automatic [7:0] sally_eff_mult(input [7:0] m);
+        case (m)
+            8'd1, 8'd2, 8'd4, 8'd7, 8'd8, 8'd14, 8'd28, 8'd56: sally_eff_mult = m;
+            default:                                           sally_eff_mult = 8'd1;
+        endcase
+    endfunction
+
+    wire [7:0] eff_clock_mult_sys   = sally_eff_mult(clock_mult_q);     // clk_sys  -> GP0 0x1E
+    wire [7:0] eff_clock_mult_sally = sally_eff_mult(clock_mult_sally); // clk_sally -> $D4CA
+
     // Mux: bridge takes priority when bl_bridge_we is asserted.
     // Both sources run on clk_sys and produce single-cycle strobes.
     // The NATIVE term is gated by xt_unlock[BLITTER]: locked → the 6502's
@@ -1710,6 +1726,7 @@ module fpga_xt_top (
     // the bl_addr_mux / bl_data_mux / bl_we_mux above.
 
     wire bl_busy;
+    wire bl_blit_irq;            // blitter completion IRQ -> PS IRQ_F2P[0] (GIC ID 61)
     wire bl_cq_full;
     wire bl_pat_blocked;
     wire [15:0] bl_seq_counter;
@@ -1724,6 +1741,7 @@ module fpga_xt_top (
         .bus_data        (bl_data_mux),
         .bus_we          (bl_we_mux),
         .busy            (bl_busy),
+        .irq             (bl_blit_irq),
         .cq_full         (bl_cq_full),
         .pat_blocked     (bl_pat_blocked),
         .seq_counter     (bl_seq_counter),
@@ -1845,7 +1863,7 @@ module fpga_xt_top (
                       : (hwreg_addr == 16'hD4C9)
                             ? bl_seq_counter_sally[7:0]
                       : (hwreg_addr == 16'hD4CA)
-                            ? clock_mult_sally       // SALLY speed register read-back (was SEQ_HI)
+                            ? eff_clock_mult_sally   // effective SALLY speed (clock_mult normalised; was SEQ_HI)
                       : is_blitter_reg
                             ? 8'hFF              // other blitter regs: no readback
                       : cdc_rd_data;             // ANTIC/GTIA/POKEY/PIA via read-back CDC
@@ -1961,6 +1979,7 @@ module fpga_xt_top (
         .FIXED_IO_ps_srstb (),
         .FCLK_RESET0_N_0   (),
         .FCLK_CLK1_0        (fclk_50),   // 50 MHz PL reference -> both MMCMs
+        .IRQ_F2P_0          (bl_blit_irq), // PL->PS: blitter completion (GIC ID 61); needs FORCE=1 BD regen
         .s_axi_gp0_aclk     (clk_sys),
         .iic_0_scl_i        (i2c_scl_i),
         .iic_0_scl_o        (i2c_scl_o),
@@ -2253,7 +2272,7 @@ module fpga_xt_top (
         .diag5_word      (diag5_word),
         .diag6_word      (diag6_word),
         .diag7_word      (diag7_word),
-        .clock_mult      (clock_mult_q),     // $D4CA read-back at GP0 offset 0x1E
+        .clock_mult      (eff_clock_mult_sys), // effective $D4CA speed, read back at GP0 offset 0x1E
         .gp0_ctrl        (gp0_ctrl),
         .xt_unlock_we    (xt_unlock_we),     // A9 unlock write strobe (offset 0x20)
         .xt_unlock_state (xt_unlock),        // effective unlock, read-back at 0x20

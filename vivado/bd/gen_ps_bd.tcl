@@ -61,6 +61,7 @@ set_property -dict [list \
     CONFIG.PCW_EN_RST3_PORT {0} \
     CONFIG.PCW_USE_FABRIC_INTERRUPT {1} \
     CONFIG.PCW_IRQ_F2P_MODE {DIRECT} \
+    CONFIG.PCW_NUM_F2P_INTR {1} \
     CONFIG.PCW_EN_EMIO_GPIO {0} \
     CONFIG.PCW_GPIO_EMIO_GPIO_ENABLE {0} \
     CONFIG.PCW_EN_EMIO_I2C0 {1} \
@@ -79,6 +80,17 @@ set_property -dict [list \
 # instead driven from the same external clk_sys net as GP0, so ALL PS<->PL AXI
 # is one clock domain.  The connection is made after that port is created (the
 # "GP0 / HP clock" block below).
+
+# ---- Export IRQ_F2P[0] as an external port (PL completion interrupts -> GIC) -
+# 1-bit, DIRECT mode: bit 0 = blitter completion IRQ -> Zynq-7000 GIC SPI ID 61.
+# Vivado names the external port 'IRQ_F2P_0'; fpga_xt_top connects bl_blit_irq.
+set irq_pin [get_bd_pins -quiet zynq_ps/IRQ_F2P]
+if {$irq_pin ne ""} {
+    make_bd_pins_external $irq_pin
+    puts ">> exported IRQ_F2P (1-bit, DIRECT) as external port 'IRQ_F2P_0' (GIC 61)"
+} else {
+    puts ">> WARNING: zynq_ps/IRQ_F2P pin not found — fabric IRQ not exported"
+}
 
 # ---- Export HP ports as external AXI3 slave interfaces (64-bit, 150 MHz) ----
 for {set i 0} {$i <= 3} {incr i} {

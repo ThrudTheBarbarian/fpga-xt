@@ -191,8 +191,15 @@ static inline bool xt_blitter_busy(void)
     return (xt_blitter_status() & XT_BL_STATUS_BUSY) != 0;
 }
 
-/* Spin-poll STATUS.busy until it clears or we hit timeout_us.
- * Returns 0 on idle, -1 on timeout. */
+/* Register the blitter completion IRQ (PL IRQ_F2P[0] -> GIC ID 61) on the
+ * FreeRTOS port GIC and create the wait semaphore.  Call ONCE from a task after
+ * the scheduler is running.  Returns 0 on success, -1 on failure.  Until called,
+ * xt_blitter_wait_idle() falls back to polling. */
+int xt_blitter_irq_init(void);
+
+/* Wait for the blitter to drain to idle, or until timeout_us elapses.
+ * IRQ-driven (blocks on the completion semaphore) once xt_blitter_irq_init()
+ * has run; otherwise polls STATUS.busy.  Returns 0 on idle, -1 on timeout. */
 int xt_blitter_wait_idle(uint32_t timeout_us);
 
 /* Read the 16-bit SYNC sequence counter. */

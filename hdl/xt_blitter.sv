@@ -187,6 +187,7 @@ module xt_blitter #(
 
     // ---- Status (clk_sys) -------------------------------------------------
     output wire        busy,
+    output wire        irq,                // 1-cycle pulse on busy 1->0 (drain-to-idle): PL->PS completion IRQ
     output wire        cq_full,            // command queue cannot accept another CMD
     output wire        pat_blocked,        // sticky: pat/font load was attempted while busy
                                            //         (write was dropped to preserve queue state)
@@ -555,6 +556,19 @@ module xt_blitter #(
             pat_blocked_q <= 1'b0;
     end
     assign pat_blocked = pat_blocked_q;
+
+    // ---- Completion interrupt --------------------------------------------
+    // 1-cycle pulse when the blitter drains to idle (busy 1->0).  Drives a
+    // PL->PS rising-edge IRQ (IRQ_F2P / GIC) so the host can block on a
+    // semaphore instead of polling STATUS.busy.  clk_sys, same domain as busy
+    // (no CDC).  Sync reset so a reset that forces busy=0 doesn't emit a
+    // spurious edge (busy and busy_q clear together).
+    logic busy_q;
+    always_ff @(posedge clk) begin  // sync reset — see note at `rst` port
+        if (rst) busy_q <= 1'b0;
+        else     busy_q <= busy;
+    end
+    assign irq = busy_q & ~busy;
 
     // ====================================================================
     // Command queue — FIFO of register snapshots (BRAM-backed, 16-deep)

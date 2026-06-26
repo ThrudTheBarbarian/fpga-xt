@@ -44,6 +44,7 @@ module tb_xt_blitter;
     logic [7:0]  bus_data;
     logic        bus_we;
     wire         busy;
+    wire         irq;
     wire         cq_full;
     wire         pat_blocked;
     wire [15:0]  seq_counter;
@@ -88,6 +89,7 @@ module tb_xt_blitter;
         .bus_data      (bus_data),
         .bus_we        (bus_we),
         .busy          (busy),
+        .irq           (irq),
         .cq_full       (cq_full),
         .pat_blocked   (pat_blocked),
         .seq_counter   (seq_counter),
@@ -309,6 +311,18 @@ module tb_xt_blitter;
         write_reg(16'hD4BB, b);
         write_reg(16'hD4BB, a);
     endtask
+
+    // ---- Completion-IRQ monitor: irq must pulse exactly on busy 1->0 ------
+    // Replicates the dut's edge (busy delayed one cycle) and checks irq on each
+    // settled (negedge) cycle across the whole suite — catches a missing pulse,
+    // a spurious pulse, or a stuck irq.
+    logic busy_d;
+    always_ff @(posedge clk) busy_d <= rst ? 1'b0 : busy;
+    always @(negedge clk) if (!rst && (irq !== (busy_d & ~busy))) begin
+        $display("FAIL irq: got %b, expected %b (busy_d=%b busy=%b) @%0t",
+                 irq, busy_d & ~busy, busy_d, busy, $time);
+        $fatal(1);
+    end
 
     // Wait until the blitter is idle (busy == 0) or timeout.
     // First waits for busy to go high (start of operation), then for it to go low.

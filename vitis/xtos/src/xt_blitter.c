@@ -8,6 +8,11 @@
 #include "xil_io.h"
 #include "sleep.h"
 
+#include "FreeRTOS.h"
+#include "task.h"
+#include "semphr.h"
+#include "xscugic.h"
+
 void xt_blitter_write8(uint32_t offset, uint8_t v)
 {
     Xil_Out8(XT_BLITTER_BASE + offset, v);
@@ -33,12 +38,71 @@ uint16_t xt_blitter_seq_counter(void)
     return (uint16_t)((hi << 8) | lo);
 }
 
+/* ---- Completion IRQ (PL IRQ_F2P[0] -> Zynq-7000 GIC SPI ID 61) ----------
+ * The blitter pulses `irq` for one clk on busy 1->0 (drain-to-idle).  We
+ * register it on the FreeRTOS port's GIC (the one the tick already uses) via
+ * the port API — no second GIC init, and no dependency on usb_hid (retired in
+ * favour of the STM32 for HID).  Call xt_blitter_irq_init() ONCE from a task
+ * after the scheduler is running; until then xt_blitter_wait_idle() falls back
+ * to the coarse poll, so this change is safe even if the init isn't wired yet. */
+extern XScuGic xInterruptController;   /* freertos10_xilinx port GIC instance */
+
+#define XT_BLIT_IRQ_ID  61u            /* IRQ_F2P[0] -> GIC SPI ID 61 */
+
+static SemaphoreHandle_t s_blit_done;  /* given by the ISR on completion */
+
+static void xt_blitter_isr(void *unused)
+{
+    BaseType_t hpw = pdFALSE;
+    (void)unused;
+    if (s_blit_done) {
+        xSemaphoreGiveFromISR(s_blit_done, &hpw);
+    }
+    portYIELD_FROM_ISR(hpw);
+}
+
+int xt_blitter_irq_init(void)
+{
+    s_blit_done = xSemaphoreCreateBinary();
+    if (!s_blit_done) {
+        return -1;
+    }
+    /* rising-edge: the PL drives `irq` high for a single clk on completion */
+    XScuGic_SetPriorityTriggerType(&xInterruptController, XT_BLIT_IRQ_ID, 0xA0, 0x03);
+    if (xPortInstallInterruptHandler(XT_BLIT_IRQ_ID,
+                                     (XInterruptHandler) xt_blitter_isr,
+                                     NULL) != pdPASS) {
+        return -1;
+    }
+    vPortEnableInterrupt(XT_BLIT_IRQ_ID);
+    return 0;
+}
+
 int xt_blitter_wait_idle(uint32_t timeout_us)
 {
-    /* Coarse poll loop — usleep(100) gives us roughly 100us granularity
-     * which is well below typical fill latencies (~ms range).  Replace
-     * with an IRQ-driven wait when the blitter exposes a completion
-     * interrupt. */
+    /* IRQ-driven: block on the completion semaphore instead of spinning.
+     * `busy` is the source of truth; the semaphore is just the wakeup. */
+    if (!xt_blitter_busy()) {
+        return 0;
+    }
+
+    if (s_blit_done) {
+        /* Drain any stale completion, then re-check busy: closes the race
+         * where the blit finished between the first check and the block. */
+        (void) xSemaphoreTake(s_blit_done, 0);
+        if (!xt_blitter_busy()) {
+            return 0;
+        }
+        TickType_t ticks = (timeout_us == 0)
+                         ? portMAX_DELAY
+                         : pdMS_TO_TICKS((timeout_us + 999u) / 1000u);
+        if (ticks == 0) {
+            ticks = 1;
+        }
+        return (xSemaphoreTake(s_blit_done, ticks) == pdTRUE) ? 0 : -1;
+    }
+
+    /* Fallback (IRQ not yet initialised) — coarse poll, ~100 us granularity. */
     while (xt_blitter_busy()) {
         if (timeout_us == 0) {
             return -1;
