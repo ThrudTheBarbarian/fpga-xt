@@ -139,8 +139,9 @@ module pokey_regs (
     // serial framing/clocking lands with M25.
     output wire  [7:0] skctl_out,
 
-    // M23-6: SKSTAT serial-flag inputs (bits 4..2). Tied 0 here in the
-    // chiplet build until M25's SIO state machine drives them.
+    // M23-6: SKSTAT serial-flag inputs — framing=bit4, overrun=bit3,
+    // busy=bit1 (bit2 is KEY-still-pressed, not serial; see the SKSTAT read).
+    // Tied 0 here in the chiplet build until M25's SIO state machine drives them.
     input  wire        ser_framing_err,
     input  wire        ser_input_overrun,
     input  wire        ser_input_busy

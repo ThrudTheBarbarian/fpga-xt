@@ -16,8 +16,8 @@
 // With P/M off, cmd_data[15:0] = {hi_pixel, lo_pixel} as 8-bit playfield owner
 // codes, emitted unit-major / pair-minor, left to right — which is the order
 // the writeback tap streams into the line buffer.  Three representative modes:
-//   - F : 1bpp 320px hi-res     bit set -> $04 (COLPF2), clear -> $00
-//   - 2 : 40-col text 1bpp      glyph bit set -> $02 (COLPF1), clear -> $00
+//   - F : 1bpp hi-res (GR.8)    bit set -> $02 (COLPF1-luma), clear -> $04 (COLPF2)
+//   - 2 : 40-col text 1bpp      glyph bit set -> $02 (COLPF1), clear -> $04 (COLPF2)
 //   - E : 160px 2bpp map        2-bit cell -> {$00,$01,$02,$04}
 //
 // The compositor composes ONE row per start_compose (task-0014 option (b)),
@@ -37,8 +37,8 @@ module tb_antic_modes;
     // Collision golden values for the P/M scenario in the collision sub-test,
     // captured from the reference (pre-refactor) compositor.  The clk_sys
     // collision-pipeline refactor must reproduce these exactly.
-    localparam logic [15:0] EXP_MPF = 16'h4444;   // each missile over PF=$04
-    localparam logic [15:0] EXP_PPF = 16'h4444;   // each player  over PF=$04
+    localparam logic [15:0] EXP_MPF = 16'h2222;   // each missile over PF=$02 (mode-F set=COLPF1)
+    localparam logic [15:0] EXP_PPF = 16'h2222;   // each player  over PF=$02
     localparam logic [15:0] EXP_MPL = 16'h0c03;   // missile-vs-player matrix
     localparam logic [15:0] EXP_PPL = 16'h4812;   // player-vs-player matrix
 
@@ -120,7 +120,7 @@ module tb_antic_modes;
 
     // {hi_px, lo_px} for pair p of source byte/glyph `b`.
     function automatic logic [15:0] orc_F(input logic [7:0] b, input int p);
-        orc_F = {b[6-2*p] ? 8'h04 : 8'h00, b[7-2*p] ? 8'h04 : 8'h00};
+        orc_F = {b[6-2*p] ? 8'h02 : 8'h04, b[7-2*p] ? 8'h02 : 8'h04};  // set=COLPF1-luma, clear=COLPF2 (matches mode 2 / GR.8 fix c338d98)
     endfunction
     // Mode 2 (GR.0): set glyph bit -> PF1 ($02, text), clear -> PF2 ($04,
     // text-area background = COLPF2).  The clear case is PF2, NOT background

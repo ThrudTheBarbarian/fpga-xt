@@ -747,8 +747,8 @@ module tb_pokey;
                 $display("FAIL K.7: SKSTAT=$%02x bit3=1 (overrun)", rdata);
                 fail_count++;
             end
-            if (rdata[2] !== 1'b1) begin
-                $display("FAIL K.7: SKSTAT=$%02x bit2=0 (busy)", rdata);
+            if (rdata[1] !== 1'b1) begin
+                $display("FAIL K.7: SKSTAT=$%02x bit1=0 (ser input busy)", rdata);
                 fail_count++;
             end
             ser_framing_err = 1'b0;
