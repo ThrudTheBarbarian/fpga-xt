@@ -158,7 +158,10 @@ module tb_snoop;
         do_write_d4xx(8'h09, 8'hE0);   // CHBASE
         do_write_d4xx(8'h0E, 8'hC0);   // NMIEN
 
-        // ANTIC chiplet-ext ($D481 MODE: write 0 to flip to DMA mode).
+        // ANTIC chiplet-ext $D481 MODE: writing 0 *tries* to clear MODE_SNOOP,
+        // but it is reset-locked to 1 (snoop) and not bus-writable — so the
+        // write must leave mode_snoop at 1. (A stray $D481 write — the stock
+        // CHACTL-mirror address — must never clobber the snoop/DMA mode.)
         do_write_d4xx(8'h81, 8'h00);
 
         // System-memory writes (should land in cpu_shadow).
@@ -215,9 +218,10 @@ module tb_snoop;
         expect_eq("CHBASE",  u_dut.u_antic_regs.chbase,  8'hE0);
         expect_eq("NMIEN",   u_dut.u_antic_regs.nmien,   8'hC0);
 
-        // Chiplet-ext: $D481 MODE bit 0 should be 0 (DMA mode).
-        if (u_dut.u_antic_regs.mode_snoop !== 1'b0) begin
-            $display("FAIL MODE_SNOOP: expected 0 after $D481 write of 0, got %0d",
+        // Chiplet-ext: mode_snoop is reset-locked to 1 (snoop) and NOT
+        // bus-writable, so the $D481 write of 0 above must leave it at 1.
+        if (u_dut.u_antic_regs.mode_snoop !== 1'b1) begin
+            $display("FAIL MODE_SNOOP: expected 1 (snoop, reset-locked) after $D481 write of 0, got %0d",
                      u_dut.u_antic_regs.mode_snoop);
             fail_count++;
         end

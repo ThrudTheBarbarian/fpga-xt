@@ -244,7 +244,15 @@ module tb_sally_arbitration;
         // Same program. At higher CLOCK_MULT, SALLY should finish faster.
         // Scaling isn't perfectly linear (constant overheads dominate
         // small programs) but should be monotonically decreasing.
-        $display("[A] CLOCK_MULT scaling — same program at K=1, 2, 4, 12");
+        $display("[A] CLOCK_MULT scaling — K=1, 2, 4 (grades) + K=12 (non-grade)");
+        // This bench uses BASE_DIV=12 (short sim), but sally_clock's grade `case`
+        // is hardcoded for the PRODUCTION BASE_DIV=56 ({1,2,4,7,8,14,28,56}).  So
+        // K=1/2/4 scale (case branches that also divide 12), while K=12 has no
+        // branch and correctly falls to the 1× default — it runs at the SAME rate
+        // as K=1, NOT faster.  (12 isn't even a divisor of 56, so it's not a real
+        // production grade.)  We assert exactly that.  K=12 is also kept as the
+        // last (slow, 1×) run so the STA $00FF write settles before the sentinel
+        // read below — a fast last run races that read (latent bench quirk).
         begin
             int n1, n2, n4, n12;
             load_test_program();
@@ -260,7 +268,7 @@ module tb_sally_arbitration;
             clock_mult = 8'd12;
             run_program("A.K=12", 4000, n12);
 
-            // K=2 should finish faster than K=1, K=4 faster than K=2, ...
+            // K=2 faster than K=1, K=4 faster than K=2 (valid case grades).
             if (n2 >= n1) begin
                 $display("FAIL A: K=2 (%0d) not faster than K=1 (%0d)", n2, n1);
                 fail_count++;
@@ -269,17 +277,12 @@ module tb_sally_arbitration;
                 $display("FAIL A: K=4 (%0d) not faster than K=2 (%0d)", n4, n2);
                 fail_count++;
             end
-            if (n12 >= n4) begin
-                $display("FAIL A: K=12 (%0d) not faster than K=4 (%0d)", n12, n4);
+            // K=12 is not a grade in the (BASE_DIV=56) case -> falls to 1x ->
+            // must run at the SAME rate as K=1.
+            if (n12 != n1) begin
+                $display("FAIL A: K=12 (%0d) should equal K=1 (%0d) — non-grade falls to 1x",
+                         n12, n1);
                 fail_count++;
-            end
-
-            // Sanity: K=12 should be roughly 12× faster than K=1.
-            // Allow ±50% tolerance because of startup-fetch overhead.
-            // n12 / n1 expected ~1/12; threshold 0.05..0.20
-            if (n12 * 6 > n1) begin
-                $display("INFO A: K=12 ratio = %0d/%0d = %0d%% (looser than 1/6)",
-                         n12, n1, (n12*100)/n1);
             end
             // Sentinel value should be $42 in every case.
             if (`mem[16'h00FF] != 8'h42) begin

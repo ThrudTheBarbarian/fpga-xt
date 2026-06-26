@@ -30,13 +30,15 @@
 // as round(clk_MHz / 1.79) so 1× lands on real NTSC phi2 (1.7898 MHz).
 //
 //   clk_sally=100 MHz -> BASE_DIV=56 (PRODUCTION): 1× = 1.786 MHz ≈ real;
-//     clean grades = {1,2,4,7,8,14,28,56}; CLOCK_MULT=56 = full turbo = 100 MHz.
-//   BASE_DIV=12 (legacy / sim default): clean grades = {1,2,3,4,6,12}.
+//     CLOCK_MULT=56 = full turbo = 100 MHz.
 //
-// Software picks a clock_mult that divides BASE_DIV cleanly — non-clean
-// combinations still step (rounded by integer division) but won't match the
-// requested K×.  CLOCK_MULT > BASE_DIV underflows (BASE_DIV/K = 0), so the case
-// only enumerates K <= BASE_DIV; anything else falls to the 1× default.
+// The grade `case` below is **hardcoded for BASE_DIV=56** — its branches are the
+// divisors of 56: {1,2,4,7,8,14,28,56}.  Any K not in that set (including a
+// divisor of a *different* BASE_DIV — e.g. 3/6/12 under a BASE_DIV=12 sim build)
+// has no branch and falls to the 1× default.  So a non-56 BASE_DIV only gets the
+// grades that happen to be in both sets (for BASE_DIV=12 that is just {1,2,4}).
+// CLOCK_MULT > BASE_DIV would underflow (BASE_DIV/K = 0); the enumerated set
+// avoids that, and everything else lands on the 1× default.
 
 `default_nettype none
 
