@@ -240,23 +240,27 @@ module tb_sprite_fetcher;
     // generate-loop scope, so we switch on the literal sprite id.
     // ----------------------------------------------------------------------
     function automatic logic [31:0] cache_peek32(input [3:0] sid, input int lx);
+        // The line cache is double-buffered (ping-pong): the fetcher fills bank
+        // ~fetch_line_toggle.  Peek that bank (offset = bank * LINE_WIDTH=1024).
+        int a;
+        a = (u_dut.fetch_line_toggle ? 0 : 1024) + lx;
         case (sid)
-            4'd0:  cache_peek32 = u_dut.u_cache.g_sprite[0 ].mem[lx];
-            4'd1:  cache_peek32 = u_dut.u_cache.g_sprite[1 ].mem[lx];
-            4'd2:  cache_peek32 = u_dut.u_cache.g_sprite[2 ].mem[lx];
-            4'd3:  cache_peek32 = u_dut.u_cache.g_sprite[3 ].mem[lx];
-            4'd4:  cache_peek32 = u_dut.u_cache.g_sprite[4 ].mem[lx];
-            4'd5:  cache_peek32 = u_dut.u_cache.g_sprite[5 ].mem[lx];
-            4'd6:  cache_peek32 = u_dut.u_cache.g_sprite[6 ].mem[lx];
-            4'd7:  cache_peek32 = u_dut.u_cache.g_sprite[7 ].mem[lx];
-            4'd8:  cache_peek32 = u_dut.u_cache.g_sprite[8 ].mem[lx];
-            4'd9:  cache_peek32 = u_dut.u_cache.g_sprite[9 ].mem[lx];
-            4'd10: cache_peek32 = u_dut.u_cache.g_sprite[10].mem[lx];
-            4'd11: cache_peek32 = u_dut.u_cache.g_sprite[11].mem[lx];
-            4'd12: cache_peek32 = u_dut.u_cache.g_sprite[12].mem[lx];
-            4'd13: cache_peek32 = u_dut.u_cache.g_sprite[13].mem[lx];
-            4'd14: cache_peek32 = u_dut.u_cache.g_sprite[14].mem[lx];
-            4'd15: cache_peek32 = u_dut.u_cache.g_sprite[15].mem[lx];
+            4'd0:  cache_peek32 = u_dut.u_cache.g_sprite[0 ].mem[a];
+            4'd1:  cache_peek32 = u_dut.u_cache.g_sprite[1 ].mem[a];
+            4'd2:  cache_peek32 = u_dut.u_cache.g_sprite[2 ].mem[a];
+            4'd3:  cache_peek32 = u_dut.u_cache.g_sprite[3 ].mem[a];
+            4'd4:  cache_peek32 = u_dut.u_cache.g_sprite[4 ].mem[a];
+            4'd5:  cache_peek32 = u_dut.u_cache.g_sprite[5 ].mem[a];
+            4'd6:  cache_peek32 = u_dut.u_cache.g_sprite[6 ].mem[a];
+            4'd7:  cache_peek32 = u_dut.u_cache.g_sprite[7 ].mem[a];
+            4'd8:  cache_peek32 = u_dut.u_cache.g_sprite[8 ].mem[a];
+            4'd9:  cache_peek32 = u_dut.u_cache.g_sprite[9 ].mem[a];
+            4'd10: cache_peek32 = u_dut.u_cache.g_sprite[10].mem[a];
+            4'd11: cache_peek32 = u_dut.u_cache.g_sprite[11].mem[a];
+            4'd12: cache_peek32 = u_dut.u_cache.g_sprite[12].mem[a];
+            4'd13: cache_peek32 = u_dut.u_cache.g_sprite[13].mem[a];
+            4'd14: cache_peek32 = u_dut.u_cache.g_sprite[14].mem[a];
+            4'd15: cache_peek32 = u_dut.u_cache.g_sprite[15].mem[a];
             default: cache_peek32 = 32'hxxxx_xxxx;
         endcase
     endfunction

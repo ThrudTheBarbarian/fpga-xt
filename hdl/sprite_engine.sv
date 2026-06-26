@@ -294,17 +294,22 @@ module sprite_engine #(
     end
 
     wire        fetch_line_toggle;
-    wire [11:0] fetch_next_vcount;
     cdc_sync_bit #(.WIDTH(1))  u_sync_line_tog (
         .dst_clk (clk_fetch),
         .src_sig (pix_line_toggle),
         .dst_sig (fetch_line_toggle)
     );
-    cdc_sync_bit #(.WIDTH(12)) u_sync_vcount (
-        .dst_clk (clk_fetch),
-        .src_sig (pix_next_vcount),
-        .dst_sig (fetch_next_vcount)
-    );
+    // next_vcount is NOT bus-synced.  A free-running 2-FF sync of a multi-bit
+    // counter can latch a garbage value when several bits flip together (a carry
+    // such as 127->128: some flops catch the old value, some the new), which
+    // would make the fetcher read the WRONG arena row and splatter a stale or
+    // foreign scanline into the line cache.  Instead F_IDLE captures
+    // pix_next_vcount DIRECTLY, gated by the synced fetch_line_start flag:
+    // pix_next_vcount changed back at line_start and is stable by the time
+    // fetch_line_start fires (~2-3 clk_fetch cycles later, after the 1-bit toggle
+    // sync), so the multi-bit transfer is clean.  (Same failure/fix class as the
+    // row-128 fetch_row CDC.)  The pix_next_vcount -> next_vcount_q crossing is
+    // constrained false-path in cdc_sprite_vcount.xdc.
 
     logic fetch_line_toggle_q;
     always_ff @(posedge clk_fetch) begin
@@ -515,7 +520,7 @@ module sprite_engine #(
                 // ------------------------------------------------------------
                 F_IDLE: begin
                     if (fetch_line_start && global_enable) begin
-                        next_vcount_q   <= fetch_next_vcount;
+                        next_vcount_q   <= pix_next_vcount;   // stable by fetch_line_start (see CDC note)
                         sprite_idx      <= 4'd0;
                         budget_bursts_q <= 8'(FETCH_BUDGET_BURSTS);
                         fstate          <= F_EVAL_LATCH;
@@ -712,10 +717,12 @@ module sprite_engine #(
         .ADDR_W     (10)
     ) u_cache (
         .clk_a    (clk_fetch),
+        .wr_bank  (~fetch_line_toggle),   // ping-pong: fill the bank NOT being read (next line)
         .wr_en    (cache_wr_en),
         .wr_addr  (cache_wr_addr),
         .wr_data  (cache_wr_data),
         .clk_b    (clk_pix),
+        .rd_bank  (pix_line_toggle),      // read the just-filled bank (current line)
         .rd_addr  (s1_rd_addr),
         .rd_data  (cache_rd_data)
     );

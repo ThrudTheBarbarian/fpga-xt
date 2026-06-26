@@ -33,6 +33,7 @@ module sprite_line_cache #(
 ) (
     // ---- Port A: writer (clk_fetch) ----------------------------------------
     input  wire                       clk_a,
+    input  wire                       wr_bank,      // ping-pong bank to FILL (next line)
     input  wire [N_SPRITES-1:0]       wr_en,        // one-hot
     input  wire [ADDR_W-1:0]          wr_addr,
     input  wire [PIXEL_W-1:0]         wr_data,
@@ -40,26 +41,33 @@ module sprite_line_cache #(
     // ---- Port B: reader (clk_pix) ------------------------------------------
     // 2-cycle read latency: rd_addr at cycle N → rd_data at cycle N+2.
     input  wire                       clk_b,
+    input  wire                       rd_bank,      // ping-pong bank to READ (current line)
     input  wire [ADDR_W-1:0]          rd_addr [0:N_SPRITES-1],
     output logic [PIXEL_W-1:0]        rd_data [0:N_SPRITES-1]
 );
 
+    // DOUBLE-BUFFERED (ping-pong): two line banks per sprite.  The fetcher fills
+    // bank wr_bank (the next scanline) while the compositor reads bank rd_bank
+    // (the current scanline); the engine flips rd_bank every line_start and keeps
+    // wr_bank = ~rd_bank.  A single shared buffer aliased the fetch-write against
+    // the read, so the compositor saw a mix of two scanlines — invisible on a
+    // uniform sprite but flickering garbage on detailed/transparent ones.
     genvar gs;
     generate
         for (gs = 0; gs < N_SPRITES; gs = gs + 1) begin : g_sprite
-            (* ram_style = "block" *) logic [PIXEL_W-1:0] mem [0:LINE_WIDTH-1];
+            (* ram_style = "block" *) logic [PIXEL_W-1:0] mem [0:2*LINE_WIDTH-1];
             logic [PIXEL_W-1:0] rd_data_int;
 
-            // Port A: synchronous write, no read.
+            // Port A: synchronous write, no read.  Bank-prefixed address.
             always_ff @(posedge clk_a) begin
                 if (wr_en[gs])
-                    mem[wr_addr] <= wr_data;
+                    mem[{wr_bank, wr_addr}] <= wr_data;
             end
 
             // Port B: two cascaded flops — Vivado absorbs both into the
             // BRAM block (clock-out FF + DOB_REG / OREG).
             always_ff @(posedge clk_b) begin
-                rd_data_int <= mem[rd_addr[gs]];
+                rd_data_int <= mem[{rd_bank, rd_addr[gs]}];
                 rd_data[gs] <= rd_data_int;
             end
         end
