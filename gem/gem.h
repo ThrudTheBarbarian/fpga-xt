@@ -22,6 +22,15 @@
 struct gem_window;
 typedef void (*gem_redraw_fn)(struct gem_window *win, void *ud);
 
+// A window's content can be backed by a live HW emulation plane instead of a
+// backing-store surface.  The target selects which emulation source (and its
+// native surface size); the A9 maps it to the right compositor plane.
+typedef enum {
+    GEM_EMU_NONE = 0,
+    GEM_EMU_XL,                        // Atari XL (the XL compositor plane)
+    GEM_EMU_ST,                        // Atari ST (future plane; not wired yet)
+} gem_emu_target;
+
 typedef struct gem_window {
     int           used;
     int           x, y, w, h;          // outer window rect on the desktop
@@ -33,6 +42,11 @@ typedef struct gem_window {
     int           dirty;               // content needs a redraw (WM_REDRAW)
     gem_redraw_fn redraw;
     void         *ud;
+    int           emu_backed;          // content area is a live HW emulation plane, not a
+                                       // backing store (the WM skips the content blit;
+                                       // the A9 points the plane at the content rect)
+    int           emu_target;          // which emulation source (gem_emu_target)
+    int           emu_scale;           // integer scale the plane runs at
 } gem_window;
 
 // What part of a window a point falls on (for the interaction loop).
@@ -84,6 +98,21 @@ void        gem_wm_set_font(gem_wm *wm, font_face *face);
 // workstation on it, and marks it dirty so it redraws once.  NULL if full.
 gem_window *gem_wm_add(gem_wm *wm, int x, int y, int w, int h,
                        const char *title, int active);
+
+// Bind an existing window to a live HW emulation plane (XL or ST): resize it so its
+// content rect is exactly that emulation's surface at `scale` (1..5), and mark it
+// emu_backed so the WM draws only the chrome and leaves the content area for the HW
+// plane.  The caller (A9) then points the plane at win->{cx,cy,cw,ch}.  So the
+// desktop "just works": open any window, bind it to XL or ST.  unbind reverts to a
+// normal backing-store window (caller disables/repurposes the plane).
+void        gem_wm_bind_emu(gem_wm *wm, gem_window *win, gem_emu_target target, int scale);
+void        gem_wm_unbind_emu(gem_wm *wm, gem_window *win);
+// Native emulation surface size for a target (px), e.g. for sizing icons/limits.
+void        gem_emu_src_size(gem_emu_target target, int *w, int *h);
+#define GEM_XL_SRC_W 320               // Atari XL emulation surface (native px)
+#define GEM_XL_SRC_H 192
+#define GEM_ST_SRC_W 320               // Atari ST low-res (placeholder; ST not wired)
+#define GEM_ST_SRC_H 200
 
 void        gem_wm_set_redraw(gem_window *win, gem_redraw_fn fn, void *ud);
 void        gem_wm_invalidate(gem_window *win);   // request a redraw (WM_REDRAW)

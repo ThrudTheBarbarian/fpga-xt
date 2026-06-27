@@ -87,6 +87,43 @@ gem_window *gem_wm_add(gem_wm *wm, int x, int y, int w, int h,
     return win;
 }
 
+// Native emulation surface size per target (the plane's source resolution).
+void gem_emu_src_size(gem_emu_target target, int *w, int *h) {
+    switch (target) {
+        case GEM_EMU_ST: *w = GEM_ST_SRC_W; *h = GEM_ST_SRC_H; break;
+        case GEM_EMU_XL: default: *w = GEM_XL_SRC_W; *h = GEM_XL_SRC_H; break;
+    }
+}
+
+// Bind/unbind an existing window to a live HW emulation plane (XL or ST).  Binding
+// resizes the window so its content rect is the emulation surface at `scale`; the
+// content blit is skipped (the HW plane shows there) — the A9 points the plane at
+// the content rect.  Geometry uses the same EDGE/TITLE_H insets as the chrome, so
+// the content rect comes out exactly src_w*scale x src_h*scale.
+void gem_wm_bind_emu(gem_wm *wm, gem_window *win, gem_emu_target target, int scale) {
+    if (scale < 1) scale = 1; if (scale > 5) scale = 5;
+    int sw, sh; gem_emu_src_size(target, &sw, &sh);
+    win->emu_backed = 1;
+    win->emu_target = target;
+    win->emu_scale  = scale;
+    win->w = sw * scale + 2 * EDGE;
+    win->h = sh * scale + TITLE_H + EDGE;
+    if (win->x + win->w > wm->desk->w) win->x = wm->desk->w - win->w;  // keep on-screen
+    if (win->y + win->h > wm->desk->h) win->y = wm->desk->h - win->h;
+    if (win->x < 0) win->x = 0;
+    if (win->y < 0) win->y = 0;
+    recompute_content(win);
+    win->redraw = NULL;   // content is the HW plane; don't run a backing-store redraw
+    win->dirty  = 0;      // (the now-larger content rect would overflow the old backing)
+}
+
+void gem_wm_unbind_emu(gem_wm *wm, gem_window *win) {
+    (void)wm;
+    win->emu_backed = 0;
+    win->emu_target = GEM_EMU_NONE;
+    win->dirty = 1;
+}
+
 void gem_wm_set_redraw(gem_window *win, gem_redraw_fn fn, void *ud) {
     win->redraw = fn; win->ud = ud; win->dirty = 1;
 }
@@ -299,6 +336,7 @@ void gem_wm_draw(gem_wm *wm) {
         if (wm->z[k] == wm->hide_slot) continue;     // lifted into a HW overlay
         if (win->dirty && win->redraw) { win->redraw(win, win->ud); win->dirty = 0; }
         draw_frame(wm, win);
+        if (win->emu_backed) continue;  // content area is a live HW emulation plane
         // Composite the backing-store content into the window's content rect.
         MFDB src, dst;
         mfdb_from_surface(&src, win->backing);
@@ -331,6 +369,7 @@ void gem_wm_draw_rect(gem_wm *wm, int x0, int y0, int x1, int y1) {
             win->y > y1 || win->y + win->h - 1 < y0) continue;      // outside the damage
         if (win->dirty && win->redraw) { win->redraw(win, win->ud); win->dirty = 0; }
         draw_frame(wm, win);                          // clipped by vs_clip
+        if (win->emu_backed) continue;                // content is a live HW plane
         int ix0 = win->cx > x0 ? win->cx : x0;        // content rect ∩ damage
         int iy0 = win->cy > y0 ? win->cy : y0;
         int ix1 = (win->cx + win->cw - 1) < x1 ? (win->cx + win->cw - 1) : x1;
@@ -356,6 +395,7 @@ void gem_wm_draw_window(gem_wm *wm, int slot) {
     if (!win->used) return;
     if (win->dirty && win->redraw) { win->redraw(win, win->ud); win->dirty = 0; }
     draw_frame(wm, win);
+    if (win->emu_backed) return;        // content area is a live HW emulation plane
     MFDB src, dst;
     mfdb_from_surface(&src, win->backing);
     mfdb_from_surface(&dst, wm->desk);

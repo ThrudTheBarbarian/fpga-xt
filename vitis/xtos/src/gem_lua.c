@@ -416,6 +416,7 @@ static void cur_hide(void) {
 #define DRAG_BASE 0x32000000u
 #define DRAG_END  0x33000000u
 static int g_drag_active = 0;
+static void emu_track(void);          /* defined below; XL plane follows a bound window */
 
 /* Flush a plane rectangle to DDR (row by row), clamped to the desktop — so a
  * damage-rect redraw only pushes its own area (not the whole 8 MB plane, which
@@ -505,6 +506,22 @@ static void drag_end(void)
     cur_show(g_mx, g_my);                             /* restore the plane pointer        */
     xt_overlay_disable();                             /* retire the overlay (window already there) */
     g_drag_active = 0;
+    emu_track();                                      /* settle a bound XL plane at the final spot */
+}
+
+/* The window currently bound to a HW emulation plane (XL/ST), or -1.  emu_track()
+ * points the plane at that window's content rect — call it whenever the window
+ * moves, is rescaled, or closes (then the plane reverts). */
+static int g_emu_slot = -1;
+static void emu_track(void)
+{
+    if (g_emu_slot < 0) return;
+    gem_window *w = &g_wm.win[g_emu_slot];
+    if (!w->used || !w->emu_backed) { xt_xl_window_off(); g_emu_slot = -1; return; }
+    if (w->emu_target == GEM_EMU_XL)
+        xt_xl_window((uint16_t)w->cx, (uint16_t)w->cy,
+                     (uint16_t)w->cw, (uint16_t)w->ch, (uint8_t)w->emu_scale);
+    /* GEM_EMU_ST: future ST compositor plane — not wired yet. */
 }
 
 static void wm_pointer(int dx, int dy)
@@ -523,6 +540,7 @@ static void wm_pointer(int dx, int dy)
         }
         g_mx = nx; g_my = ny;
         gem_wm_mouse_move(&g_wm, nx, ny);            /* updates the (hidden) window's x/y */
+        emu_track();                                 /* XL plane follows a bound window */
         int ox = w->x < 0 ? 0 : w->x, oy = w->y < 0 ? 0 : w->y;
         xt_overlay_move((uint16_t)ox, (uint16_t)oy); /* tear-free; no plane write, no flush */
         cur_show(g_mx, g_my);                        /* HW cursor sprite tracks, on top of the overlay */
@@ -576,6 +594,7 @@ static void wm_button_toggle(void)
     }
     gem_wm_draw(&g_wm);                               /* click / close / too-big: normal redraw */
     desk_flush();
+    emu_track();                                      /* follow a bound window (or revert on close) */
     cur_show(g_mx, g_my);
 }
 
@@ -664,6 +683,34 @@ static int l_vdi_windowtest(lua_State *L)
     return 1;
 }
 
+/* vdi.xlbind([scale]) — bind the frontmost window to the live XL emulation plane:
+ * the window resizes to the emulation@scale, its content area becomes the XL plane,
+ * and the plane tracks the window as it drags/closes.  vdi.xlunbind() reverts. */
+static int l_vdi_xlbind(lua_State *L)
+{
+    if (!g_wm_up) return 0;
+    int scale = (lua_gettop(L) >= 1) ? (int)luaL_checkinteger(L, 1) : 4;
+    gem_window *w = gem_wm_top(&g_wm);
+    if (!w) return 0;
+    gem_wm_bind_emu(&g_wm, w, GEM_EMU_XL, scale);
+    g_emu_slot = (int)(w - g_wm.win);
+    gem_wm_draw(&g_wm); desk_flush();
+    emu_track();                                   /* point the plane at the content rect */
+    cur_show(g_mx, g_my);
+    return 0;
+}
+
+static int l_vdi_xlunbind(lua_State *L)
+{
+    (void)L;
+    if (g_emu_slot >= 0 && g_wm.win[g_emu_slot].used)
+        gem_wm_unbind_emu(&g_wm, &g_wm.win[g_emu_slot]);
+    xt_xl_window_off();
+    g_emu_slot = -1;
+    if (g_wm_up) { gem_wm_draw(&g_wm); desk_flush(); cur_show(g_mx, g_my); }
+    return 0;
+}
+
 void gem_lua_open(lua_State *L)
 {
     static const luaL_Reg vdi_lib[] = {
@@ -682,6 +729,8 @@ void gem_lua_open(lua_State *L)
         {"windowtest",l_vdi_windowtest}, /* off-plane fill + composite — HW de-risk */
         {"scaletest", l_vdi_scaletest},  /* SCALED_BLIT bilinear — HW de-risk */
         {"wintest",   l_vdi_wintest},    /* gem_wm backing-store windows — HW de-risk */
+        {"xlbind",    l_vdi_xlbind},     /* bind frontmost window to the XL plane (M3) */
+        {"xlunbind",  l_vdi_xlunbind},
         {NULL, NULL}
     };
     luaL_newlib(L, vdi_lib);
