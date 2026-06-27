@@ -107,6 +107,9 @@ gem_window *gem_wm_add(gem_wm *wm, int x, int y, int w, int h,
 // normal backing-store window (caller disables/repurposes the plane).
 void        gem_wm_bind_emu(gem_wm *wm, gem_window *win, gem_emu_target target, int scale);
 void        gem_wm_unbind_emu(gem_wm *wm, gem_window *win);
+// Hit-test the titlebar ^/v scale arrows of an emu-backed window: +1 up / -1 down /
+// 0 none; *slot = the window's slot.  Check before the normal drag/click handling.
+int         gem_wm_emu_scale_hit(gem_wm *wm, int x, int y, int *slot);
 // Native emulation surface size for a target (px), e.g. for sizing icons/limits.
 void        gem_emu_src_size(gem_emu_target target, int *w, int *h);
 #define GEM_XL_SRC_W 320               // Atari XL emulation surface (native px)

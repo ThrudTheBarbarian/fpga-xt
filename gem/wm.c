@@ -34,6 +34,17 @@ static void close_box(const gem_window *win, int *x0, int *y0, int *x1, int *y1)
     *x1 = *x0 + CLOSE_S;                 *y1 = *y0 + CLOSE_S;
 }
 
+// Scale controls (emu-backed windows only): two small up/down arrows near the
+// title-bar right edge — click to grow/shrink the emulation a step.
+#define SCALE_W 10
+#define SCALE_H 7
+static void scale_up_box(const gem_window *w, int *x0, int *y0) {
+    *x0 = w->x + w->w - EDGE - 2 * SCALE_W - 8;   *y0 = w->y + (TITLE_H - SCALE_H) / 2;
+}
+static void scale_dn_box(const gem_window *w, int *x0, int *y0) {
+    *x0 = w->x + w->w - EDGE - SCALE_W - 4;       *y0 = w->y + (TITLE_H - SCALE_H) / 2;
+}
+
 static void recompute_content(gem_window *win) {
     // Title bar spans the full width at the very top (its caps are the rounded top
     // corners); content sits below it with a side+bottom border only.
@@ -198,6 +209,26 @@ gem_window *gem_wm_window_at(gem_wm *wm, int x, int y) {
     return NULL;
 }
 
+// Hit-test the ^/v scale arrows on the frontmost emu-backed window covering (x,y):
+// +1 = scale up, -1 = scale down, 0 = none; *slot gets that window's slot.  A few px
+// of padding makes the small arrows easier to click.
+int gem_wm_emu_scale_hit(gem_wm *wm, int x, int y, int *slot) {
+    for (int i = wm->nwin - 1; i >= 0; i--) {        // top..bottom
+        gem_window *w = &wm->win[wm->z[i]];
+        if (!w->used) continue;
+        if (x < w->x || x >= w->x + w->w || y < w->y || y >= w->y + w->h) continue;
+        if (w->emu_backed) {
+            const int P = 3;
+            int ux, uy, dxx, dyy; scale_up_box(w, &ux, &uy); scale_dn_box(w, &dxx, &dyy);
+            if (slot) *slot = wm->z[i];
+            if (x >= ux - P && x < ux + SCALE_W + P && y >= uy - P && y < uy + SCALE_H + P) return +1;
+            if (x >= dxx - P && x < dxx + SCALE_W + P && y >= dyy - P && y < dyy + SCALE_H + P) return -1;
+        }
+        return 0;                                     // frontmost window here; don't fall through
+    }
+    return 0;
+}
+
 // ---- Mouse ----------------------------------------------------------------
 void gem_wm_mouse_move(gem_wm *wm, int x, int y) {
     wm->mx = x; wm->my = y;
@@ -242,6 +273,13 @@ static void draw_frame(gem_wm *wm, gem_window *win) {
         theme_draw(vh, wm->th, win->active ? "window" : "window.inactive", x, y, w, h);
         const theme_slice *cs = theme_find(wm->th, "close");
         if (cs) theme_blit(vh, wm->th, cs, bx0, by0, cs->sw, cs->sh);
+        if (win->emu_backed) {                        // ^/v scale arrows on the right
+            const theme_slice *up = theme_find(wm->th, "vscroll.up");
+            const theme_slice *dn = theme_find(wm->th, "vscroll.down");
+            int ux, uy, dxx, dyy; scale_up_box(win, &ux, &uy); scale_dn_box(win, &dxx, &dyy);
+            if (up) theme_blit(vh, wm->th, up, ux, uy, up->sw, up->sh);
+            if (dn) theme_blit(vh, wm->th, dn, dxx, dyy, dn->sw, dn->sh);
+        }
     } else {
         // VDI-pen skeleton fallback (no theme loaded, e.g. SDL host).
         int16_t r[4];
@@ -256,6 +294,7 @@ static void draw_frame(gem_wm *wm, gem_window *win) {
 
     if (wm->title_font && win->title) {                                     // centred title text
         int rl = bx1 + 8, rr = x + w - 1 - EDGE;                            // between close box + edge
+        if (win->emu_backed) { int sx, sy; scale_up_box(win, &sx, &sy); rr = sx - 8; }  // clear the arrows
         int16_t tc[4] = { (int16_t)rl, (int16_t)y,
                           (int16_t)rr, (int16_t)(y+TITLE_H-1) };
         vs_clip(vh, 1, tc);                                                 // keep text in the bar

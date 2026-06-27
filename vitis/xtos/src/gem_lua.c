@@ -576,6 +576,21 @@ static void wm_button_toggle(void)
     if (g_drag_active) { drag_end(); return; }        /* second press -> drop the window */
     g_mbtn = !g_mbtn;
     cur_hide();                                        /* cleanly erase the plane pointer first */
+    if (g_mbtn) {                                      /* press edge: a titlebar ^/v scale arrow? */
+        int slot, dir = gem_wm_emu_scale_hit(&g_wm, g_mx, g_my, &slot);
+        if (dir) {
+            gem_window *w = &g_wm.win[slot];
+            int ns = w->emu_scale + dir;
+            if (ns >= 1 && ns <= 5) {
+                gem_wm_bind_emu(&g_wm, w, (gem_emu_target)w->emu_target, ns);
+                g_emu_slot = slot;
+                gem_wm_draw(&g_wm); desk_flush(); emu_track();
+            }
+            g_mbtn = 0;                                /* consume the press — no drag */
+            cur_show(g_mx, g_my);
+            return;
+        }
+    }
     gem_window *prev = wm_active_window();             /* who's active BEFORE the raise/focus */
     gem_wm_mouse_button(&g_wm, g_mx, g_my, g_mbtn);    /* press raises+focuses+grabs; release ends */
     if (g_mbtn && g_wm.drag_slot >= 0) {              /* grabbed a title -> HW-overlay drag */
