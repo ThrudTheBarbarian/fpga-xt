@@ -92,11 +92,13 @@ cross-region crossing (floorplan helps) or local congestion (logic restructure)*
 - **clk_sys — GTIA/compositor colour-priority cone** (worst, +0.001, 14 levels):
   `u_compositor/cur_mode → [compositor cmd_data logic] → u_gtia_regs cmd_data CARRY4
   → missile_covers → col_presH_q`. **Both `u_compositor` and `u_gtia_regs` span
-  X0Y0 + X1Y0** — the cone crosses the X0↔X1 **column boundary**, which is the 60%
-  route. **Lever = floorplan: co-locate `u_compositor`+`u_gtia_regs` in one column**
-  to kill the crossing (RTL-free, the §1.3 "let floorplan localize it"). Pipelining
-  the col_presH cone is the fallback but it is the real-time pixel pipeline — a stage
-  shifts pixel timing, so try the co-location first.
+  X0Y0 + X1Y0**. **Floorplan co-location TRIED (2026-06-27)** — pblock pinning
+  `u_compositor`+`u_gtia_regs` to the free top row {X0Y2,X1Y2}: clk_sys **NEUTRAL**
+  (+0.000 vs +0.001), clk_sally slightly worse (+0.245 vs +0.309) → reverted. So the
+  path is **logic-depth-bound** (14 levels), not the column route. **Lever = a
+  pipeline stage** in the col_presH cone — but it is the real-time pixel pipeline, so
+  a stage shifts pixel timing and must be compensated through the compositor; deep,
+  treat carefully (deferred).
 - **clk_sally — CPU memory loop** (+0.166–0.309, 11 levels): `sally_mem BRAM → IR/adl
   /PC decode → page_cache tag-match (code_page_match) → state_q → data_flush_idx`.
   Endpoints **already co-located in X0Y0** → the 60% route is *local congestion*, not
