@@ -24,6 +24,25 @@ path crosses it). Measured on the routed design (2026-06-27):
 
 ## 2a. The RP region must be EXCLUSIVE — the hard part
 
+> **FEASIBILITY: GO (proven 2026-06-27).** Two `EXCLUDE_PLACEMENT` experiments (an
+> exclusive-RP proxy without the full DFX flow):
+> - **RP = {X0Y0,X0Y1} → FAIL at placement.** Those regions hold immovable hard
+>   blocks — `mmcm1` (X0Y0), the BUFGs, and the PS7 interface — which can't be
+>   evicted (`ERROR Place 30-1131: insufficient capacity to place PS7`). The PS/AXI
+>   corner where sally naturally sits cannot be an RP.
+> - **RP = {X1Y2} (the only hard-block-free region) → PASS.** Sally placed
+>   exclusively there, all static evicted into the other regions, design **routed
+>   and closed**: clk_sally **+0.055**, clk_sys +0.007, clk_pix +0.225 (vs the
+>   shared-placement baseline +0.309 / +0.001 / +0.128). The ~0.25 ns clk_sally hit
+>   is the price of the RP being far from the PS/AXI, but it stays ≥0 at 100 MHz —
+>   confirming the §2 slow-boundary thesis (the RP *can* live away from the PS).
+>
+> Conclusion: **DFX of the CPU is viable on the 7020 with the RP in X1Y2.** Hard
+> blocks (`mmcm1`=X0Y0, `mmcm2`=X1Y0, PS7=left edge, BUFGs=centre) rule out the
+> bottom row; X1Y2 is the home. Cost: ~0.25 ns clk_sally (acceptable at 100; would
+> bite a future 120 push). The experiment is reverted on main (it costs margin for
+> no benefit until DFX is actually wired).
+
 A partial bitstream rewrites every CLB/BRAM/DSP frame in the RP region, so **no
 static logic may live there**. Marking the cell `HD.RECONFIGURABLE` makes Vivado
 reserve the RP pblock for the RM and evict static automatically — but the static
@@ -41,21 +60,18 @@ must then **fit in the fabric *minus* the RP region**. Consequences on this 7020
   region?
 
   **Budget (RAMB36 per region, measured): X0Y0 30 · X0Y1 10 · X0Y2 10 · X1Y0 30 ·
-  X1Y1 30 · X1Y2 30 = 140.** Candidate RP = **{X0Y0}** alone (30 BRAM, 2500 SLICE):
+  X1Y1 30 · X1Y2 30 = 140.** Naive candidate {X0Y0} was disproven (hard blocks,
+  §2a); the working RP is **{X1Y2}** (30 BRAM, 2600 SLICE, hard-block-free):
   - RP needs: sally_core (1321 cells, 0 BRAM) + sally_mem (1294 cells, **22 BRAM**)
-    ≈ 2615 cells / ~1.9k LUT / ~0.5k FF / 22 BRAM → fits X0Y0 (22 ≤ 30 BRAM; logic
-    well under 2500 SLICE). Frame-aligned (one whole clock region). ✓
-  - Static then gets the other five regions: **110 BRAM** (10+10+30+30+30) and
-    ~10.8k SLICE. Static needs ~**52 BRAM** (74 used − 22 sally) and ~16k LUT →
-    52 ≤ 110, LUT trivial. ✓
+    ≈ 2615 cells / ~1.9k LUT / 22 BRAM → fits X1Y2 (22 ≤ 30 BRAM). One whole clock
+    region, frame-aligned. ✓ (proven: placed + closed.)
+  - Static gets the other five regions: **110 BRAM** and ~10.2k SLICE; it needs
+    ~**52 BRAM** + ~16k LUT → fits. ✓ (proven: evicted + routed.)
 
-  So on paper **it fits** — the RP can be a single clock region (X0Y0) and the
-  static has ample BRAM/LUT headroom in the rest. The one real uncertainty is
-  whether sally *compresses* into X0Y0 alone (it currently spreads to X0Y1, likely
-  because static crowds X0Y0) and whether the static re-places cleanly once evicted
-  — that is exactly what the step-0 placement experiment confirms. If the largest RM
-  (fidelity core) needs more, widen the RP to {X0Y0,X0Y1} (40 BRAM, still leaves the
-  static 100). [[cheap_7020_second_target]] is the same LUT/BRAM so it's no escape;
+  Confirmed by the §2a experiments. If the largest RM (fidelity core) outgrows one
+  region, widen to {X1Y1,X1Y2} (60 BRAM) — but X1Y1 is `pb_blitter` today, so the
+  blitter would need to move. [[cheap_7020_second_target]] is the same LUT/BRAM so
+  it's no escape;
   only a larger Zynq would be. **This check gates everything below.**
 
 ## 2. The boundary (future partition pins) is all slow
@@ -85,12 +101,10 @@ None is a clk_sally single-cycle critical net ⇒ the partition pins are slow �
 
 ## 3. Foundation steps (in order)
 
-0. **GO/NO-GO: prove the static fits without the RP region (§2a).** Before any RTL
-   work: define a candidate RP region (e.g. the X0 column, which has the BRAM the
-   loop needs), `set_property EXCLUDE_PLACEMENT`/reserve it, and re-run place on the
-   *current* design to confirm ANTIC/GTIA/video/blitter/sprite/PS all fit in the
-   remaining fabric (BRAM is the binding check). If it won't fit, STOP — DFX needs a
-   bigger part. This is a placement experiment (no RTL), the real gate.
+0. **GO/NO-GO — DONE, PASSED (§2a).** EXCLUDE_PLACEMENT experiments proved an
+   exclusive RP at **{X1Y2}** places, evicts all static into the rest, routes, and
+   closes (clk_sally +0.055). Region settled. (Bottom-row/X0Y0 RP impossible — hard
+   blocks.)
 1. **Wrap the loop in one module** — DFX needs the RP to be a single hierarchical
    instance. Create `sally_subsystem` containing `xt6502` + `sally_mem` (+ the
    sally CDC syncs that belong to the loop), exposing exactly the slow boundary in
