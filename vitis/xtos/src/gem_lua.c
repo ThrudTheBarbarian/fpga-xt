@@ -51,6 +51,32 @@ static gfx_surface g_wallpaper = {
     .px = (uint32_t *)(uintptr_t)WALLPAPER_BASE,
 };
 static int g_wallpaper_captured = 0;
+
+/* Window-chrome theme (9-slice artwork), loaded once from the SD: /OS/Themes/Default
+ * holds the active theme name (e.g. "Aristo2"); the art is /OS/Themes/<name>/1x/
+ * {artwork.tex,locations.txt,theme.ini}.  fopen works on the A9 via the VFS. */
+static theme g_theme;
+static int   g_theme_ok = 0;
+
+static int load_desktop_theme(void)
+{
+    char name[40] = "Aristo2", dir[80];
+    FILE *f = fopen("/OS/Themes/Default", "r");
+    if (f) {
+        if (fgets(name, sizeof name, f)) {
+            size_t n = strlen(name);                 /* trim trailing whitespace/newline */
+            while (n && (name[n-1]=='\n' || name[n-1]=='\r' || name[n-1]==' ' || name[n-1]=='\t'))
+                name[--n] = '\0';
+        }
+        fclose(f);
+    }
+    if (name[0] == '\0') return 0;
+    snprintf(dir, sizeof dir, "/OS/Themes/%s/1x", name);
+    if (theme_load(&g_theme, dir) == 0) { g_theme_ok = 1; return 1; }
+    xil_printf("    theme: load %s FAILED\r\n", dir);
+    return 0;
+}
+
 static int        g_vh  = 0;         /* VDI virtual workstation handle (0 = down) */
 static font_face *g_sys = NULL;      /* loaded system font (id 1)                 */
 static gem_wm     g_wm;              /* backing-store window manager (lazy init)  */
@@ -287,6 +313,7 @@ static int l_vdi_wintest(lua_State *L)
     if (!g_wm_up) {
         gem_wm_init(&g_wm, &g_desk, GFX_RGB(0x20, 0x60, 0x90));
         gem_wm_set_font(&g_wm, g_sys);
+        if (load_desktop_theme()) gem_wm_set_theme(&g_wm, &g_theme);  /* Aristo2 chrome */
         g_wm.no_cursor = 1;          /* the A9 owns the pointer (HW sprite, below) */
         /* Snapshot the live plane (the boot wallpaper) into the persistent
          * backdrop ONCE — before any window is drawn — then back the WM with it

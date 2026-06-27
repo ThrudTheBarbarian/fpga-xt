@@ -15,11 +15,13 @@
 #define PEN_TITLE_ACT 4     // blue
 #define PEN_TITLE_INA 9     // grey
 
-#define TITLE_H    30
-#define EDGE       2
-#define TITLE_PX   18       // title text size (fits the 30px bar)
-#define CLOSE_M 7           // close-box inset from the title's left/top
-#define CLOSE_S (TITLE_H - 16)   // close-box side
+// Border + title height match the Aristo2 theme (window inset 5, titlebar 31) so
+// the content rect + hit-testing line up with the 9-slice chrome (draw_frame).
+#define TITLE_H    31
+#define EDGE       5
+#define TITLE_PX   18       // title text size (fits the title bar)
+#define CLOSE_M 8           // close glyph inset from the title's left
+#define CLOSE_S 16          // close glyph side (theme sprite is 16x16)
 #define RESIZE  14          // bottom-right resize-grip extent
 #define MIN_W   120
 #define MIN_H   80
@@ -28,7 +30,7 @@ static int slot_of(const gem_wm *wm, const gem_window *win) { return (int)(win -
 
 // ---- Geometry helpers (must match draw_frame) -----------------------------
 static void close_box(const gem_window *win, int *x0, int *y0, int *x1, int *y1) {
-    *x0 = win->x + EDGE + CLOSE_M;       *y0 = win->y + EDGE + 8;
+    *x0 = win->x + EDGE + CLOSE_M;       *y0 = win->y + EDGE + (TITLE_H - CLOSE_S) / 2;
     *x1 = *x0 + CLOSE_S;                 *y1 = *y0 + CLOSE_S;
 }
 
@@ -42,6 +44,7 @@ void gem_wm_init(gem_wm *wm, gfx_surface *desk, uint32_t desktop_color) {
     wm->desk          = desk;
     wm->desktop_color = desktop_color;
     wm->wallpaper     = NULL;
+    wm->th            = NULL;
     wm->nwin          = 0;
     wm->mx = wm->my   = 0;
     wm->drag_slot     = -1;
@@ -193,15 +196,25 @@ void gem_wm_mouse_button(gem_wm *wm, int x, int y, int down) {
 // body is the backing-store content, blitted in by gem_wm_draw.
 static void draw_frame(gem_wm *wm, gem_window *win) {
     int vh = wm->desk_vh, x = win->x, y = win->y, w = win->w, h = win->h;
-    int16_t r[4];
-    vsf_interior(vh, 1);
-    vsf_color(vh, PEN_EDGE);
-    r[0]=x; r[1]=y; r[2]=x+w-1; r[3]=y+h-1; vr_recfl(vh, r);                 // outer edge
-    vsf_color(vh, win->active ? PEN_TITLE_ACT : PEN_TITLE_INA);
-    r[0]=x+EDGE; r[1]=y+EDGE; r[2]=x+w-1-EDGE; r[3]=y+EDGE+TITLE_H-1; vr_recfl(vh, r); // title
-    vsf_color(vh, PEN_BODY);                                                 // close box
     int bx0, by0, bx1, by1; close_box(win, &bx0, &by0, &bx1, &by1);
-    r[0]=bx0; r[1]=by0; r[2]=bx1; r[3]=by1; vr_recfl(vh, r);
+    if (wm->th) {
+        // Themed 9-slice chrome (Aristo2): window border/body, title bar, close.
+        theme_draw(vh, wm->th, "window", x, y, w, h);
+        theme_draw(vh, wm->th, win->active ? "titlebar" : "titlebar.inactive",
+                   x + EDGE, y + EDGE, w - 2 * EDGE, TITLE_H);
+        const theme_slice *cs = theme_find(wm->th, "close");
+        if (cs) theme_blit(vh, wm->th, cs, bx0, by0, cs->sw, cs->sh);
+    } else {
+        // VDI-pen skeleton fallback (no theme loaded, e.g. SDL host).
+        int16_t r[4];
+        vsf_interior(vh, 1);
+        vsf_color(vh, PEN_EDGE);
+        r[0]=x; r[1]=y; r[2]=x+w-1; r[3]=y+h-1; vr_recfl(vh, r);                 // outer edge
+        vsf_color(vh, win->active ? PEN_TITLE_ACT : PEN_TITLE_INA);
+        r[0]=x+EDGE; r[1]=y+EDGE; r[2]=x+w-1-EDGE; r[3]=y+EDGE+TITLE_H-1; vr_recfl(vh, r); // title
+        vsf_color(vh, PEN_BODY);                                                 // close box
+        r[0]=bx0; r[1]=by0; r[2]=bx1; r[3]=by1; vr_recfl(vh, r);
+    }
 
     if (wm->title_font && win->title) {                                     // centred title text
         int rl = bx1 + 8, rr = x + w - 1 - EDGE;                            // between close box + edge
@@ -257,6 +270,10 @@ static void draw_pointer(gem_wm *wm) {
                                                             : GFX_RGB(255,255,255);
         }
     }
+}
+
+void gem_wm_set_theme(gem_wm *wm, const theme *th) {
+    wm->th = th;
 }
 
 void gem_wm_set_wallpaper(gem_wm *wm, gfx_surface *wallpaper) {

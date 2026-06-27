@@ -15,6 +15,7 @@
 
 #include "gfx.h"
 #include "font.h"
+#include "theme.h"
 
 #define GEM_MAX_WINDOWS 32
 
@@ -60,6 +61,7 @@ typedef struct {
     gem_hit      drag_mode;            // GEM_HIT_TITLE (move) or GEM_HIT_RESIZE
     int          drag_ox, drag_oy;     // pointer offset within the window at grab
     int          no_cursor;            // 1 = caller draws the pointer (A9 save-under)
+    const theme *th;                   // window chrome theme (NULL = pen skeleton)
     int          hide_slot;            // slot to OMIT from draws, or -1.  Used to
                                        // "lift" a window off the desktop plane
                                        // while it is shown in a HW drag overlay,
@@ -71,6 +73,8 @@ void        gem_wm_init(gem_wm *wm, gfx_surface *desk, uint32_t desktop_color);
 // Set a desktop backdrop (desk-sized).  Windows then erase to it instead of the
 // solid desktop_color.  Pass NULL to revert to the solid fill.
 void        gem_wm_set_wallpaper(gem_wm *wm, gfx_surface *wallpaper);
+// Set the window-chrome theme (9-slice artwork).  NULL = the VDI-pen skeleton.
+void        gem_wm_set_theme(gem_wm *wm, const theme *th);
 
 // Set the title face (also becomes the VDI default text face).  NULL disables
 // title text.  The WM does not own the face; the caller closes it.
