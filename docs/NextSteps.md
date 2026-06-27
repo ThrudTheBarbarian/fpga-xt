@@ -45,14 +45,19 @@ Floorplan review outcome (evidence in `docs/Design/floorplan.md`, architecture-r
   can't reach 120; needs logic restructuring. clk_sys levers: ANTIC compositor
   `unit_idx → cmd_data` / `col_presH` depth + blitter `m_axi_araddr` addr-gen.
   - **Blitter araddr — diagnosed 2026-06-27:** worst path `sx_step_q → m_axi_araddr[24]`,
-    17 levels / **12 CARRY4** (+0.015 ns). Cause: scaled-blit recomputes
-    `src_row_base + (sx_step_q<<2)` combinationally every beat at `xt_blitter.sv:2489`
-    (SC_CALC) **and** `:2686` (bilinear SC_BL). Fix = registered column-address
-    accumulator (`+4` on Bresenham step, seeded at row start) — i.e. the
-    [[blitter_addrgen_consolidation]] approach. **Prerequisite: add a bilinear/SC_BL
-    sim test** (`test_scaled_nearest_2x` covers SC_CALC only); fixing SC_CALC alone
-    just moves the binding path to the uncovered `bl_col0`. No urgency — path closes
-    and incremental P&R reuses the recovered placement.
+    17 levels / **12 CARRY4** (+0.015 ns). **DONE (commit d8bc7a8):** registered
+    column accumulator `sc_col_addr_q` replaces the combinational recompute in
+    SC_CALC + bilinear SC_BL_RD. Measured: `sx_step->araddr` +0.015 → +0.482,
+    clk_sally +0.166 → +0.309, clk_sys unchanged (now solely ANTIC-bound — the
+    remaining clk_sys lever). +2 non-zero-origin scaled sim tests. Desktop+text
+    HW-confirmed.
+  - **⚠ OPEN (separate, PRE-EXISTING): SCALED reads the wrong SOURCE on HW at a
+    non-zero plane origin** — `vdi.scaletest` from on-screen (50,50)/(100,100)
+    pulls from ~hundreds of px right (the background), output X-collapsed; both
+    nearest + bilinear. Correct in sim (incl. the new non-zero-origin tests) and
+    NOT caused by the accumulator (provably equivalent) → a HW plane/`FB_BASE`
+    buffer-identity issue, not the blitter address math. Scaled is unused by gfx
+    (de-risk hook) so it blocks nothing. Was never run on recent HW before now.
 - **§3.1 ACP coherency** (evaluate on GEM/desktop surfaces), **§3.2** SALLY mem
   hierarchy → 120 MHz, **§3.3** HP-port budget doc — all deferred.
 - **SRC_BLIT red** (below) — a sim-model gap in a non-gating diagnostic, not on the
