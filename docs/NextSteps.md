@@ -26,12 +26,13 @@ Remaining:
   pblock → DFX static/RM flow → runtime PCAP swap. *(docs/Design/partial-reconfig.md)*
 - **§3.1 ACP coherency** (evaluate on GEM/desktop surfaces), **§3.2 SALLY memory
   hierarchy → 120 MHz**, **§3.3 HP-port budget doc** — deferred.
-- **GEM desktop with live emulation windows** — M1 (XL plane positionable via GP0,
-  `screen.xlwindow`) and M2 (Aristo2 9-slice chrome, rounded-titlebar window frame)
-  done + HW-validated. Remaining: M3 live-surface window (gem_wm window ↔ XL plane via
-  M1), M4 desktop at boot + XL/ST icons + double-click. M4 also fixes the
-  VDI-workstation leak (direct `vdi.*` after `wintest` draws into a window backing,
-  not the desktop). *(docs/OS/desktop-emulation-windows.md)*
+- **GEM desktop with live emulation windows** — M1 (XL plane positionable via GP0),
+  M2 (Aristo2 rounded-titlebar chrome), and M3 (bind any window to the XL plane via
+  `gem_wm_bind_emu` + `vdi.xlbind`, drag-tracking + titlebar ^/v scale arrows) done +
+  HW-validated. Remaining: **M4** desktop at boot + XL/ST icons + double-click (→
+  open a window, bind it). M4 also fixes the VDI-workstation leak (direct `vdi.*`
+  after `wintest` draws into a window backing, not the desktop). ST plane not wired
+  (the bind target enum is ST-ready). *(docs/OS/desktop-emulation-windows.md)*
 - **Drag-overlay alpha (compositor)** — the HW drag-overlay snapshots the *composited*
   desktop plane, so wallpaper baked into a window's translucent rounded/AA edges
   travels with it during a drag (visible halo). `plane_compositor.sv` selects planes

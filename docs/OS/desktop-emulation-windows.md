@@ -48,10 +48,12 @@ planes or compositing the emulation into a backing store — out of scope for no
   chrome surface, like the wallpaper); replace `gem_wm` `draw_frame`'s `vr_recfl`
   skeleton with blitter blits of the 9 slices, stretched/tiled to the window rect.
   **De-risk:** a window with real chrome instead of the blue-bar skeleton.
-- **M3 — live-surface GEM window.** A `gem_wm` window flavour backed by the XL plane
-  (not a DDR backing store): on open/move/resize the WM writes M1's regs (origin =
-  content-rect top-left, scale, clip = content rect); on close/hide, disable the plane.
-  Chrome from M2. **De-risk:** drag the XL emulation around in a real window.
+- **M3 — live-surface GEM window. ✓ DONE + HW-validated.** Any window binds to a HW
+  emulation plane via `gem_wm_bind_emu(win, GEM_EMU_XL|ST, scale)`: it resizes so its
+  content rect is the emulation@scale, the WM skips the content blit, and the A9
+  (`emu_track`) points the XL plane at the content rect and keeps it tracking on
+  drag/close. Titlebar **^/v arrows** step the scale 1..5 live. Lua `vdi.xlbind([scale])`
+  / `vdi.xlunbind()`. (Target enum is ST-ready; ST plane not wired.) Chrome from M2.
 - **M4 — desktop at boot.** AES desktop with XL/ST icons (objects); double-click
   (evnt_multi) → open the M3 window. Fix the **VDI-workstation leak** (direct `vdi.*`
   after `wintest` draw into a window backing, not the desktop) so the desktop and its
