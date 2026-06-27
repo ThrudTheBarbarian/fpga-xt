@@ -5,42 +5,7 @@ Grouped by theme, not by source file; each item points back to its source doc.
 This is a tracker, so it intentionally carries forward-looking/historical context
 (unlike the design docs, which describe only current behaviour).
 
-> Reconciliation note (2026-06-23): this file absorbs and replaces the old
-> top-level TODO list (now removed) and the per-doc "next steps" sections, which
-> now carry a pointer back here. One stale item is dropped on the way in: the
-> 2026-05-31 "LIVE BLOCKER — PL→DDR read returns zero / compositor scans black" is
-> **resolved** (the display path works on HW — READY rock-steady, GR.8 modes, 7
 > HDMI artifacts fixed), so it is not listed below.
-
----
-
-## Architecture review (the "tock") — open work
-
-Tracking `docs/Design/architecture-review.md`; landed pieces are in the commit log.
-Remaining:
-
-- **fmax / 120 MHz (deferred, deep).** Both binding paths are logic-depth-bound —
-  floorplan won't help (co-location tried, neutral):
-  - clk_sys: ANTIC GTIA/compositor colour-priority cone (`cur_mode → col_presH`,
-    14 levels) → needs a pipeline stage in the real-time pixel path.
-  - clk_sally: CPU/page-cache loop (11 levels) → read-pipeline already reverted;
-    residual levers = page_cache RLOC + LUTRAM ZP/stack tiers. Gates 120 turbo.
-  *(architecture-review §1.5; [[xt6502_clean_sheet]])*
-- **Partial-reconfig CPU swap.** RP region confirmed viable at X1Y2 (not the PS
-  corner — hard blocks there). Implement: `sally_subsystem` wrapper → exclusive RP
-  pblock → DFX static/RM flow → runtime PCAP swap. *(docs/Design/partial-reconfig.md)*
-- **SCALED blit burst-write rewrite (deferred — path unused by gfx).** Wide scaled
-  rows cap at one 32 px burst + beat-half mis-align (SC_ACCUM burst/Bresenham write
-  path); fix when scaled is actually used. *([[blitter_addrgen_consolidation]])*
-- **§3.1 ACP coherency** (evaluate on GEM/desktop surfaces), **§3.2 SALLY memory
-  hierarchy → 120 MHz**, **§3.3 HP-port budget doc** — deferred.
-- **GEM desktop with live emulation windows** — M1 (XL plane positionable via GP0,
-  `screen.xlwindow`) done. Remaining: M2 textured chrome (Aristo2 theme at
-  `gem/themes/Aristo2/1x` → `/OS/Themes/Aristo2`, blitter 9-slice in `gem_wm`
-  `draw_frame`), M3 live-surface window (gem_wm window ↔ XL plane via M1), M4 desktop
-  at boot + XL/ST icons + double-click. M4 also fixes the VDI-workstation leak (direct
-  `vdi.*` after `wintest` draws into a window backing, not the desktop).
-  *(docs/OS/desktop-emulation-windows.md)*
 
 ---
 
@@ -49,6 +14,33 @@ Remaining:
 - **`make blitter_bridge` `SRCBLIT FAIL` (3 mismatches)** — sim DDR/AXI-model gap
   (coverage pixels read all-zero; SRC_BLIT works on HW), not an RTL regression.
   Non-gating (not in `make all`); fix the tb model when next in the blitter.
+---
+
+## Architecture review (the "tock") — open work
+
+Tracking `docs/Design/architecture-review.md`; landed pieces are in the commit log.
+Remaining:
+
+- **Partial-reconfig CPU swap.** RP region confirmed viable at X1Y2 (not the PS
+  corner — hard blocks there). Implement: `sally_subsystem` wrapper → exclusive RP
+  pblock → DFX static/RM flow → runtime PCAP swap. *(docs/Design/partial-reconfig.md)*
+- **§3.1 ACP coherency** (evaluate on GEM/desktop surfaces), **§3.2 SALLY memory
+  hierarchy → 120 MHz**, **§3.3 HP-port budget doc** — deferred.
+- **GEM desktop with live emulation windows** — M1 (XL plane positionable via GP0,
+  `screen.xlwindow`) and M2 (Aristo2 9-slice chrome, rounded-titlebar window frame)
+  done + HW-validated. Remaining: M3 live-surface window (gem_wm window ↔ XL plane via
+  M1), M4 desktop at boot + XL/ST icons + double-click. M4 also fixes the
+  VDI-workstation leak (direct `vdi.*` after `wintest` draws into a window backing,
+  not the desktop). *(docs/OS/desktop-emulation-windows.md)*
+- **Drag-overlay alpha (compositor)** — the HW drag-overlay snapshots the *composited*
+  desktop plane, so wallpaper baked into a window's translucent rounded/AA edges
+  travels with it during a drag (visible halo). `plane_compositor.sv` selects planes
+  by clip rect only — **no alpha test**. Fix = give the overlay plane an alpha test
+  (skip α==0 → show plane behind) or full α-blend, then re-render the window into the
+  overlay buffer with alpha (not a plane copy). RTL → bitstream. Until then, rounded
+  chrome halos only *while dragging*. *(hdl/plane_compositor.sv, vitis/xtos/src/gem_lua.c
+  drag_build_surface, [[drag_overlay_layer]])*
+
 
 ---
 
@@ -59,6 +51,33 @@ Remaining:
   serial `{ }` paste path — verify; src: former docs/TODO.txt)*
 - **GPIO LED MIO mapping** — `main.c` LED toggle waits on Z-Turn MIO confirmation.
   *(src: docs/bring-up.md)*
+
+---
+## Video / compositor / sprites / textures
+
+- **v1 `desktop.app` (ARM)** — blue fill + plane config + XL auto-start. *(src:
+  former docs/TODO.txt, docs/video/video-architecture.md)*
+- **Sprite engine — refinements.** Core + the HW mouse cursor are done and on HW.
+  Remaining: H/V flip + 2x exercised, palettised sprites, rotation (SW-first),
+  collision-compositor (the set side is still tied to 0), and blitter→sprite-arena
+  integration. *(src: docs/Design/sprite-engine.md, docs/video/video-architecture.md)*
+- **Texture mapping (tiers)** — T1 affine point-sampled (~1 day) → T2 bilinear
+  (+½ day) → T3 textured triangles (+½–1 day) → T4 perspective-correct (several days);
+  plus `$D4D0..` TEX_* regs / `CMD=0x08` / `TEX_WRAP` wiring and a texture-cache
+  throughput upgrade (2×2 quad reads / BRAM tile cache). *(src: docs/video/texture-mapping.md)*
+- **Banked screen RAM** — dual-bank screen-RAM design ($D5C2/$D5C3/$D5C4, CPU+ANTIC
+  caches, copy/reload engines); verify it's disjoint from $D5C0/$D5C1 windows and fits
+  the BRAM budget (7010 is tight). *(proposal; src: docs/video/screen-banking.md)*
+- **Compositor polish (deferred)** — desktop-window-over-live-window occlusion
+  (clip-rect → bitmap override); visible-span-only plane fetch (bandwidth); tear-free
+  `front_sel` sampling at the compositor's own frame start; narrow/wide playfield
+  `src_w` tracking. *(src: docs/video/video-architecture.md, former docs/TODO.txt)*
+- **PL-only test-pattern mux in `plane_compositor`** — build-param gradient/colour-bar
+  bypass of plane_fetch reads (old `SCANOUT_TEST_PATTERN` lived only in orphaned
+  `fb_scanout.sv`). *(src: docs/bring-up.md)*
+- **Palette: PAL/NTSC runtime re-push** — page a non-default reference palette in via
+  $D483-$D486 on region switch (bake-in is the default); plus more accurate reference
+  tables. *(src: docs/HDMI/palette.md)*
 
 ---
 
@@ -94,33 +113,6 @@ Remaining:
 
 ---
 
-## Video / compositor / sprites / textures
-
-- **v1 `desktop.app` (ARM)** — blue fill + plane config + XL auto-start. *(src:
-  former docs/TODO.txt, docs/video/video-architecture.md)*
-- **Sprite engine — refinements.** Core + the HW mouse cursor are done and on HW.
-  Remaining: H/V flip + 2x exercised, palettised sprites, rotation (SW-first),
-  collision-compositor (the set side is still tied to 0), and blitter→sprite-arena
-  integration. *(src: docs/Design/sprite-engine.md, docs/video/video-architecture.md)*
-- **Texture mapping (tiers)** — T1 affine point-sampled (~1 day) → T2 bilinear
-  (+½ day) → T3 textured triangles (+½–1 day) → T4 perspective-correct (several days);
-  plus `$D4D0..` TEX_* regs / `CMD=0x08` / `TEX_WRAP` wiring and a texture-cache
-  throughput upgrade (2×2 quad reads / BRAM tile cache). *(src: docs/video/texture-mapping.md)*
-- **Banked screen RAM** — dual-bank screen-RAM design ($D5C2/$D5C3/$D5C4, CPU+ANTIC
-  caches, copy/reload engines); verify it's disjoint from $D5C0/$D5C1 windows and fits
-  the BRAM budget (7010 is tight). *(proposal; src: docs/video/screen-banking.md)*
-- **Compositor polish (deferred)** — desktop-window-over-live-window occlusion
-  (clip-rect → bitmap override); visible-span-only plane fetch (bandwidth); tear-free
-  `front_sel` sampling at the compositor's own frame start; narrow/wide playfield
-  `src_w` tracking. *(src: docs/video/video-architecture.md, former docs/TODO.txt)*
-- **PL-only test-pattern mux in `plane_compositor`** — build-param gradient/colour-bar
-  bypass of plane_fetch reads (old `SCANOUT_TEST_PATTERN` lived only in orphaned
-  `fb_scanout.sv`). *(src: docs/bring-up.md)*
-- **Palette: PAL/NTSC runtime re-push** — page a non-default reference palette in via
-  $D483-$D486 on region switch (bake-in is the default); plus more accurate reference
-  tables. *(src: docs/HDMI/palette.md)*
-
----
 
 ## Memory / banking (DDR3 banked window — parallel track, not on boot path)
 
@@ -473,3 +465,16 @@ Falcon becomes a target alongside the m68k. Conclusion of the design thread: bui
 - **End-of-frame VCOUNT anomaly** — one-cycle `$83`/`$9C` VCOUNT transient on the last
   line. *(cosmetic; deferred; src: docs/Altirra/altirra-antic-audit.md)*
 
+## Deferred (with reasons)
+
+- **fmax / 120 MHz (deferred, deep).** Both binding paths are logic-depth-bound —
+  floorplan won't help (co-location tried, neutral):
+  - clk_sys: ANTIC GTIA/compositor colour-priority cone (`cur_mode → col_presH`,
+    14 levels) → needs a pipeline stage in the real-time pixel path.
+  - clk_sally: CPU/page-cache loop (11 levels) → read-pipeline already reverted;
+    residual levers = page_cache RLOC + LUTRAM ZP/stack tiers. Gates 120 turbo.
+  *(architecture-review §1.5; [[xt6502_clean_sheet]])*
+  
+- **SCALED blit burst-write rewrite (deferred — path unused by gfx).** Wide scaled
+  rows cap at one 32 px burst + beat-half mis-align (SC_ACCUM burst/Bresenham write
+  path); fix when scaled is actually used. *([[blitter_addrgen_consolidation]])*
