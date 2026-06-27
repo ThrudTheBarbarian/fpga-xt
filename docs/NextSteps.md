@@ -226,6 +226,12 @@ Floorplan review outcome (evidence in `docs/Design/floorplan.md`, architecture-r
 
 ## GEM (VDI + AES) / desktop
 
+- **Wallpaper-backed desktop (drop the solid-blue fill)** — `gem_wm_draw()` fills the
+  whole desktop with `wm->desktop_color` (solid blue, `gem/wm.c:262/290`), painting
+  over the textured boot wallpaper. Back the WM with the wallpaper surface and erase
+  windows *to it* (copy-from-wallpaper) instead of fill-solid. More correct, and it
+  stops masking wrong-source/offset bugs (it hid the scaled-blit HW bug — see
+  [[hw_test_fidelity_textured_bg]] / §1.5). *(src: this session)*
 - **VDI dispatch layer (Phase 1, keystone)** — opcode wire format + 6502-side VDI
   library + N6 DRAW dispatcher + palette expansion + inquiry RPCs. *(highest priority;
   everything depends on it; src: docs/GEM/GEM-implementation.md)*
