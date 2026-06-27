@@ -7,18 +7,17 @@
 // ROM image.  Write-only — no read-back path.
 //
 // Address layout (within the GP0 AXI-Lite window at $43C0_0000):
-//   * Offsets $0000-$003F        -> belong to the GP0/blitter bridge (its
-//     64-byte register window: blitter regs, gp0_ctrl @0x1C, xt_unlock @0x20,
-//     and the SRC/DST descriptors @0x30-0x3F).  MUST match the bridge's
-//     aw_mine = (awaddr[15:6]==0) predicate exactly — any overlap here means a
-//     bridge register write ALSO lands in SALLY memory as a stray rom_we
-//     (e.g. xt_unlock @0x20 would clobber SALLY $0020 = zero-page ICHIDZ).
-//   * Offsets $0040-$FFFF (≈64 KB) -> ROM-init writes.  awaddr[15:0]
-//     maps 1:1 to SALLY address (rom_addr = s_axi_awaddr[15:0]).
+//   * Offsets $0000-$0FFF (4 KB) -> belong to xt_gp0_regs (the per-device
+//     control-register file).  MUST match its aw_mine = (awaddr[15:12]==0)
+//     predicate exactly — any overlap here means a register write ALSO lands in
+//     SALLY memory as a stray rom_we and corrupts the 6502.
+//   * Offsets $1000-$FFFF        -> ROM-init writes.  awaddr[15:0] maps 1:1 to
+//     SALLY address (rom_addr = s_axi_awaddr[15:0]; a load to SALLY $C000 is a
+//     write to GP0 offset $C000).
 //
-// SALLY $0000-$003F cannot be loaded this way; it's zero-page scratch (RAM in
-// any real Atari image, initialised by the OS coldstart) and overlaps the
-// bridge window.  Write there at runtime via a normal SALLY store if needed.
+// SALLY $0000-$0FFF cannot be loaded this way; it's RAM in any real Atari image
+// (zero page, stack, OS database — initialised by the OS coldstart, never ROM),
+// so ceding it to the register file costs nothing.
 //
 // Clock crossing: AXI-Lite slave runs on clk_sys (matches the rest
 // of the GP0 fabric).  rom_we / rom_addr / rom_data drive sally_mem
@@ -64,14 +63,15 @@ module sally_rom_loader (
     output reg         rom_we
 );
 
-    // Window predicate — anything OUTSIDE the GP0/blitter bridge's 64-byte
-    // register window ($0000-$003F) belongs to us.  This MUST mirror the
-    // bridge's aw_mine = (awaddr[15:6]==0): if the loader claimed any byte the
-    // bridge also claims, that bridge write would land in SALLY memory too as a
-    // stray rom_we and corrupt the 6502 (the xt_unlock @0x20 -> SALLY $0020
-    // ICHIDZ -> ERROR-133 bug).
-    wire write_in_window = (s_axi_awaddr[15:6] != 10'h000);
-    wire read_in_window  = (s_axi_araddr[15:6] != 10'h000);
+    // Window predicate — anything OUTSIDE the xt_gp0_regs control-register
+    // window ($0000-$0FFF, 4 KB) belongs to us ($1000-$FFFF).  This MUST mirror
+    // xt_gp0_regs' aw_mine = (awaddr[15:12]==0): if the loader claimed any byte
+    // the register file also claims, that register write would land in SALLY
+    // memory too as a stray rom_we and corrupt the 6502.  Only ROM regions
+    // ($5000+) are ever loaded, so ceding SALLY $0000-$0FFF (RAM) costs nothing;
+    // rom_addr = awaddr[15:0] still maps 1:1 (a load to SALLY $C000 = offset $C000).
+    wire write_in_window = (s_axi_awaddr[15:12] != 4'h0);
+    wire read_in_window  = (s_axi_araddr[15:12] != 4'h0);
 
     // ---- FIFO (clk_sys → clk_sally) -------------------------------------
     wire        fifo_full;

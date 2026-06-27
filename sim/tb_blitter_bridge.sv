@@ -80,14 +80,36 @@ module tb_blitter_bridge;
     wire        bl_busy, bl_cq_full, bl_pat_blocked;
     wire [15:0] bl_seq_counter;
 
+    // ---- new-map device outputs (checked in the new-block test below) ------
+    wire [7:0]  spr_addr_o, spr_data_o;
+    wire        spr_we_o;
+    wire [7:0]  gp0_ctrl_o;
+    wire        xt_unlock_we_o;
+    wire [31:0] ovl_base_o;
+    wire [11:0] ovl_x_o, ovl_y_o, ovl_w_o, ovl_h_o;
+    wire        ovl_en_o, ovl_commit_o;
+    // diag words driven with known patterns to test the 0x4xx read block, and
+    // known clock_mult / unlock for the control-block read-backs.
+    localparam [31:0] DIAG0=32'hD1A6_0000, DIAG2=32'hD1A6_0002, DIAG3=32'hD1A6_0003,
+                      DIAG4=32'hD1A6_0004, DIAG5=32'hD1A6_0005, DIAG6=32'hD1A6_0006,
+                      DIAG7=32'hD1A6_0007;
+    localparam [7:0]  CLKMUL_TB = 8'h2A, UNLOCK_TB = 8'h5A;
+
     // ---- probe: log every register strobe the bridge emits ----------------
-    int n_strobes = 0;
+    // Also latch the last strobed bl_addr/data and count the sprite/unlock
+    // pulses, so the new-block test can verify 1-cycle strobes after the fact.
+    int n_strobes = 0, n_unlock = 0, n_spr = 0;
+    logic [5:0] last_bl_addr = 0;
+    logic [7:0] last_bl_data = 0, last_unlock_data = 0, last_spr_data = 0;
     always @(posedge clk) begin
         if (!rst && bl_we) begin
             n_strobes++;
+            last_bl_addr <= bl_addr; last_bl_data <= bl_data;
             $display("  bl_we: bus_addr=$%04X  data=$%02X  (bl_addr[5:0]=%06b)",
                      blit_bus_addr, bl_data, bl_addr);
         end
+        if (!rst && xt_unlock_we_o) begin n_unlock++; last_unlock_data <= bl_data; end
+        if (!rst && spr_we_o)       begin n_spr++;    last_spr_data    <= spr_data_o; end
     end
 
     // ---- probe: AXI write-burst events (AW accept, wlast, B handshake) -----
@@ -106,7 +128,7 @@ module tb_blitter_bridge;
     // ====================================================================
     // DUTs
     // ====================================================================
-    axi_blitter_bridge u_bridge (
+    xt_gp0_regs u_bridge (
         .clk            (clk),
         .rst            (rst),
         .s_axi_awaddr   (s_axi_awaddr),
@@ -129,21 +151,31 @@ module tb_blitter_bridge;
         .bl_addr        (bl_addr),
         .bl_data        (bl_data),
         .bl_we          (bl_we),
+        .spr_reg_addr   (spr_addr_o),
+        .spr_reg_data   (spr_data_o),
+        .spr_reg_we     (spr_we_o),
         .bl_busy        (bl_busy),
         .bl_queue_full  (bl_cq_full),
         .bl_pat_blocked (bl_pat_blocked),
         .bl_seq_counter (bl_seq_counter),
-        .diag_word      (32'd0),
-        .diag2_word     (32'd0),
-        .diag3_word     (32'd0),
-        .diag4_word     (32'd0),
-        .diag5_word     (32'd0),
-        .diag6_word     (32'd0),
-        .diag7_word     (32'd0),
-        .clock_mult     (8'd1),
-        .gp0_ctrl       (),
-        .xt_unlock_we   (),
-        .xt_unlock_state(8'h00)
+        .diag_word      (DIAG0),
+        .diag2_word     (DIAG2),
+        .diag3_word     (DIAG3),
+        .diag4_word     (DIAG4),
+        .diag5_word     (DIAG5),
+        .diag6_word     (DIAG6),
+        .diag7_word     (DIAG7),
+        .clock_mult     (CLKMUL_TB),
+        .gp0_ctrl       (gp0_ctrl_o),
+        .xt_unlock_we   (xt_unlock_we_o),
+        .xt_unlock_state(UNLOCK_TB),
+        .overlay_base   (ovl_base_o),
+        .overlay_x      (ovl_x_o),
+        .overlay_y      (ovl_y_o),
+        .overlay_w      (ovl_w_o),
+        .overlay_h      (ovl_h_o),
+        .overlay_en     (ovl_en_o),
+        .overlay_commit (ovl_commit_o)
     );
 
     xt_blitter #(
@@ -289,12 +321,12 @@ module tb_blitter_bridge;
     // AXI4-Lite master write of one byte at byte offset `off` (mimics Xil_Out8
     // to XT_BLITTER_BASE + off: data in the lane, wstrb that lane).
     // ====================================================================
-    task automatic axi_write8(input [5:0] off, input [7:0] v);
+    task automatic axi_write8(input [11:0] off, input [7:0] v);
         bit aw_done, w_done;
         begin
             aw_done = 0; w_done = 0;
             @(posedge clk);
-            s_axi_awaddr  <= {26'd0, off};
+            s_axi_awaddr  <= {20'd0, off};
             s_axi_awvalid <= 1'b1;
             s_axi_wdata   <= (32'(v) << (8*off[1:0]));
             s_axi_wstrb   <= (4'b0001 << off[1:0]);
@@ -308,6 +340,48 @@ module tb_blitter_bridge;
             s_axi_bready <= 1'b1;
             forever begin @(posedge clk); if (s_axi_bvalid) break; end
             s_axi_bready <= 1'b0;
+            @(posedge clk);
+        end
+    endtask
+
+    // Word write (all four byte lanes) at byte offset `off`.
+    task automatic axi_write32(input [11:0] off, input [31:0] v);
+        bit aw_done, w_done;
+        begin
+            aw_done = 0; w_done = 0;
+            @(posedge clk);
+            s_axi_awaddr  <= {20'd0, off};
+            s_axi_awvalid <= 1'b1;
+            s_axi_wdata   <= v;
+            s_axi_wstrb   <= 4'b1111;
+            s_axi_wvalid  <= 1'b1;
+            forever begin
+                @(posedge clk);
+                if (s_axi_awready) begin s_axi_awvalid <= 1'b0; aw_done = 1; end
+                if (s_axi_wready)  begin s_axi_wvalid  <= 1'b0; w_done  = 1; end
+                if (aw_done && w_done) break;
+            end
+            s_axi_bready <= 1'b1;
+            forever begin @(posedge clk); if (s_axi_bvalid) break; end
+            s_axi_bready <= 1'b0;
+            @(posedge clk);
+        end
+    endtask
+
+    // Word read at byte offset `off`.
+    task automatic axi_read32(input [11:0] off, output [31:0] v);
+        begin
+            @(posedge clk);
+            s_axi_araddr  <= {20'd0, off};
+            s_axi_arvalid <= 1'b1;
+            s_axi_rready  <= 1'b1;
+            forever begin
+                @(posedge clk);
+                if (s_axi_arready) s_axi_arvalid <= 1'b0;
+                if (s_axi_rvalid)  begin v = s_axi_rdata; break; end
+            end
+            s_axi_arvalid <= 1'b0;
+            s_axi_rready  <= 1'b0;
             @(posedge clk);
         end
     endtask
@@ -485,6 +559,60 @@ module tb_blitter_bridge;
             end
             if (errs == 0) $display("SRCBLIT RESULT: PASS — coverage blit landed via the bridge");
             else           $display("SRCBLIT RESULT: FAIL — %0d mismatches", errs);
+        end
+
+        // ================================================================
+        // NEW PER-BLOCK MAP — each block decodes to the right device signal /
+        // read word (the point of the re-partition).  Strobe writes (sprite,
+        // unlock, speed/kbd bl_we) are checked via the monitors.
+        // ================================================================
+        $display("\n=== new per-device block map ===");
+        begin
+            int errs; logic [31:0] rv; int u0, s0;
+            errs = 0;
+
+            // -- Sprite block (0x100): IDX @0x100, DATA+strobe @0x104 --------
+            axi_write8(12'h100, 8'hA7);
+            if (spr_addr_o !== 8'hA7)       begin errs++; $display("  FAIL spr_addr=%02x exp A7", spr_addr_o); end
+            s0 = n_spr;
+            axi_write8(12'h104, 8'h3C);
+            if (n_spr != s0+1)              begin errs++; $display("  FAIL sprite strobe missing"); end
+            if (last_spr_data !== 8'h3C)    begin errs++; $display("  FAIL spr_data=%02x exp 3C", last_spr_data); end
+
+            // -- Compositor block (0x200): whole-word overlay regs ----------
+            axi_write32(12'h204, 32'h3456_0000);
+            if (ovl_base_o !== 32'h34560000) begin errs++; $display("  FAIL ovl_base=%08x", ovl_base_o); end
+            axi_write32(12'h208, 32'h0000_0123);
+            if (ovl_x_o !== 12'h123)         begin errs++; $display("  FAIL ovl_x=%03x", ovl_x_o); end
+            axi_write32(12'h214, 32'h0000_00C8);
+            if (ovl_h_o !== 12'h0C8)         begin errs++; $display("  FAIL ovl_h=%03x", ovl_h_o); end
+            axi_write32(12'h200, 32'h0000_0001);
+            if (ovl_en_o !== 1'b1)           begin errs++; $display("  FAIL ovl_en"); end
+
+            // -- Control block (0x300): gp0_ctrl + dual-access speed/kbd + unlock
+            axi_write8(12'h300, 8'h0A);
+            if (gp0_ctrl_o !== 8'h0A)        begin errs++; $display("  FAIL gp0_ctrl=%02x", gp0_ctrl_o); end
+            u0 = n_unlock;
+            axi_write8(12'h308, 8'h99);                 // UNLOCK
+            if (n_unlock != u0+1)            begin errs++; $display("  FAIL unlock strobe missing"); end
+            if (last_unlock_data !== 8'h99)  begin errs++; $display("  FAIL unlock data=%02x", last_unlock_data); end
+            axi_write8(12'h304, 8'h05);                 // SPEED -> bl_addr $D4CA(0x1A)
+            if (last_bl_addr !== 6'h1A)      begin errs++; $display("  FAIL speed bl_addr=%02x exp 1A", last_bl_addr); end
+            axi_write8(12'h30C, 8'h41);                 // KBD inject -> bl_addr $D4CF(0x1F)
+            if (last_bl_addr !== 6'h1F)      begin errs++; $display("  FAIL kbd bl_addr=%02x exp 1F", last_bl_addr); end
+
+            // -- Reads: control + diag, word-clean (no byte-lane replication) -
+            axi_read32(12'h300, rv); if (rv[7:0] !== 8'h0A)     begin errs++; $display("  FAIL rd gp0_ctrl=%08x", rv); end
+            axi_read32(12'h304, rv); if (rv[7:0] !== CLKMUL_TB) begin errs++; $display("  FAIL rd speed=%08x", rv); end
+            axi_read32(12'h308, rv); if (rv[7:0] !== UNLOCK_TB) begin errs++; $display("  FAIL rd unlock=%08x", rv); end
+            axi_read32(12'h400, rv); if (rv !== DIAG0)          begin errs++; $display("  FAIL rd diag0=%08x", rv); end
+            axi_read32(12'h404, rv); if (rv !== DIAG2)          begin errs++; $display("  FAIL rd diag2=%08x", rv); end
+            axi_read32(12'h418, rv); if (rv !== DIAG7)          begin errs++; $display("  FAIL rd diag7=%08x", rv); end
+            axi_read32(12'h040, rv); $display("  blitter STATUS @0x40 = %08x", rv);
+            axi_read32(12'h044, rv); $display("  blitter SEQ    @0x44 = %08x (seq=%0d)", rv, rv[15:0]);
+
+            if (errs == 0) $display("NEWMAP RESULT: PASS — all blocks decode + read clean");
+            else           $display("NEWMAP RESULT: FAIL — %0d mismatches", errs);
         end
 
         $finish;

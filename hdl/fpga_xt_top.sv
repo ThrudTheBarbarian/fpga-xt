@@ -2240,10 +2240,12 @@ module fpga_xt_top (
     // Bridge outputs are OR'd with the SALLY CDC path via bl_we_mux above.
 
     // GP0 AXI-Lite is shared between two slaves at non-overlapping
-    // sub-windows of the 64 KB GP0 mapping:
-    //   * blitter bridge — offsets $0000-$001F (32 bytes)
-    //   * ROM-init loader (sally_rom_loader) — everything else, with
-    //     awaddr[15:0] mapped 1:1 to SALLY rom_addr
+    // sub-windows of the GP0 mapping:
+    //   * xt_gp0_regs (control register file) — offsets $0000-$0FFF (4 KB:
+    //     per-device 256-byte blocks; see hdl/xt_gp0_regs.sv address map)
+    //   * ROM-init loader (sally_rom_loader) — $1000-$FFFF, with awaddr[15:0]
+    //     mapped 1:1 to SALLY rom_addr (only ROM regions $5000+ are ever
+    //     loaded, so giving up the low 4 KB — SALLY $0000-$0FFF RAM — is safe)
     //
     // Each slave gates its own *_ready / *_valid / *_resp on its
     // window predicate, so the two never both ack the same write.
@@ -2270,7 +2272,7 @@ module fpga_xt_top (
     assign gp0_rresp   = bl_rvalid  ? bl_rresp  : rom_rresp;
     assign gp0_rdata   = bl_rvalid  ? bl_rdata  : rom_rdata;
 
-    axi_blitter_bridge u_axi_bridge (
+    xt_gp0_regs u_axi_bridge (
         .clk             (clk_sys),
         .rst             (rst_sys),
 

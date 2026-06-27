@@ -312,9 +312,9 @@ blitter_bridge: $(BUILD_DIR)/tb_blitter_bridge.vvp
 	@echo "=== blitter_bridge ==="
 	@$(VVP) -N $< | tee $(BUILD_DIR)/tb_blitter_bridge.log
 
-$(BUILD_DIR)/tb_blitter_bridge.vvp: $(HDL_DIR)/xt_blitter.sv $(HDL_DIR)/axi_blitter_bridge.sv tb_blitter_bridge.sv | $(BUILD_DIR)
+$(BUILD_DIR)/tb_blitter_bridge.vvp: $(HDL_DIR)/xt_blitter.sv $(HDL_DIR)/xt_gp0_regs.sv tb_blitter_bridge.sv | $(BUILD_DIR)
 	$(IVERILOG) $(SV_FLAGS) -o $@ -s tb_blitter_bridge \
-	    $(HDL_DIR)/xt_blitter.sv $(HDL_DIR)/axi_blitter_bridge.sv tb_blitter_bridge.sv
+	    $(HDL_DIR)/xt_blitter.sv $(HDL_DIR)/xt_gp0_regs.sv tb_blitter_bridge.sv
 
 # ---- M17-2 — chiplet-ext DRAW register port ------------------------------
 draw_regs: $(BUILD_DIR)/tb_draw_regs.vvp
