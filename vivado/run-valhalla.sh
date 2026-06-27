@@ -24,6 +24,10 @@ REMOTE="${REMOTE:-valhalla}"
 REMOTE_DIR="${REMOTE_DIR:-fpga-xt-build}"
 VIVADO_PATH="${VIVADO_PATH:-/opt/xilinx/2025.2/Vivado}"
 PLACE_DIRECTIVE="${PLACE_DIRECTIVE:-}"
+# Incremental implementation: point at a routed .dcp (path on the remote, under
+# $REMOTE_DIR) to reuse its P&R for unchanged logic.  Keep it OUTSIDE build/
+# (which is rm -rf'd each run), e.g. ref.dcp.  Empty = full build.
+INCR_REF_DCP="${INCR_REF_DCP:-}"
 
 REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 LOCAL_BUILD="$REPO_ROOT/vivado/build"
@@ -46,6 +50,7 @@ source $VIVADO_PATH/settings64.sh
 set -u
 cd ~/$REMOTE_DIR
 export PLACE_DIRECTIVE="$PLACE_DIRECTIVE"
+export INCR_REF_DCP="$INCR_REF_DCP"
 # Regenerate the PS block design (gen_ps_bd.tcl) for synth/impl/bit so it
 # tracks the script, not the stale committed BD output — else an HP port added
 # to the script but not re-run fails elaboration with "m_axi_hpN_* does not
