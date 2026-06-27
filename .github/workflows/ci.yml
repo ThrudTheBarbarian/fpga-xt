@@ -18,8 +18,31 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Install Icarus Verilog
-        run: sudo apt-get update && sudo apt-get install -y iverilog
+      # The suite uses SV features (break, queues, ...) that need Icarus v13 —
+      # the version developed against locally.  Ubuntu's apt ships v12, which
+      # fails (e.g. "sorry: break statements not supported"), so build v13 from
+      # source.  Cached on the version tag so it builds once.
+      - name: Cache Icarus Verilog v13
+        id: cache-iverilog
+        uses: actions/cache@v4
+        with:
+          path: ~/iverilog-install
+          key: iverilog-v13_0-${{ runner.os }}
+      - name: Build Icarus Verilog v13 from source
+        if: steps.cache-iverilog.outputs.cache-hit != 'true'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y autoconf gperf flex bison g++ make git
+          git clone --depth 1 --branch v13_0 https://github.com/steveicarus/iverilog /tmp/iverilog
+          cd /tmp/iverilog
+          sh autoconf.sh
+          ./configure --prefix="$HOME/iverilog-install"
+          make -j"$(nproc)"
+          make install
+      - name: Add iverilog to PATH
+        run: echo "$HOME/iverilog-install/bin" >> "$GITHUB_PATH"
+      - name: Show iverilog version
+        run: iverilog -V | head -1
       - name: Run sim suite
         run: make -C sim all
 
