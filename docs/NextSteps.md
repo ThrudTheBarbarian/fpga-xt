@@ -43,7 +43,16 @@ Floorplan review outcome (evidence in `docs/Design/floorplan.md`, architecture-r
 - **§1.5 Pipeline (the real fmax/120 task)** — clk_sally is logic-depth-bound
   (`stack_mem → page_cache/state_q`, 12 levels, cells already co-located), so floorplan
   can't reach 120; needs logic restructuring. clk_sys levers: ANTIC compositor
-  `unit_idx → cmd_data` depth + blitter `m_axi_araddr` addr-gen ([[blitter_addrgen]]).
+  `unit_idx → cmd_data` / `col_presH` depth + blitter `m_axi_araddr` addr-gen.
+  - **Blitter araddr — diagnosed 2026-06-27:** worst path `sx_step_q → m_axi_araddr[24]`,
+    17 levels / **12 CARRY4** (+0.015 ns). Cause: scaled-blit recomputes
+    `src_row_base + (sx_step_q<<2)` combinationally every beat at `xt_blitter.sv:2489`
+    (SC_CALC) **and** `:2686` (bilinear SC_BL). Fix = registered column-address
+    accumulator (`+4` on Bresenham step, seeded at row start) — i.e. the
+    [[blitter_addrgen_consolidation]] approach. **Prerequisite: add a bilinear/SC_BL
+    sim test** (`test_scaled_nearest_2x` covers SC_CALC only); fixing SC_CALC alone
+    just moves the binding path to the uncovered `bl_col0`. No urgency — path closes
+    and incremental P&R reuses the recovered placement.
 - **§3.1 ACP coherency** (evaluate on GEM/desktop surfaces), **§3.2** SALLY mem
   hierarchy → 120 MHz, **§3.3** HP-port budget doc — all deferred.
 - **SRC_BLIT red** (below) — a sim-model gap in a non-gating diagnostic, not on the
