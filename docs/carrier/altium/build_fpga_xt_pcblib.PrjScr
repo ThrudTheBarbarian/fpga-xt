@@ -1,6 +1,0 @@
-[Design]
-Version=1.0
-HierarchyMode=0
-
-[Document1]
-DocumentPath=build_fpga_xt_pcblib.pas
