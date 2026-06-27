@@ -51,13 +51,18 @@ Floorplan review outcome (evidence in `docs/Design/floorplan.md`, architecture-r
     clk_sally +0.166 → +0.309, clk_sys unchanged (now solely ANTIC-bound — the
     remaining clk_sys lever). +2 non-zero-origin scaled sim tests. Desktop+text
     HW-confirmed.
-  - **⚠ OPEN (separate, PRE-EXISTING): SCALED reads the wrong SOURCE on HW at a
-    non-zero plane origin** — `vdi.scaletest` from on-screen (50,50)/(100,100)
-    pulls from ~hundreds of px right (the background), output X-collapsed; both
-    nearest + bilinear. Correct in sim (incl. the new non-zero-origin tests) and
-    NOT caused by the accumulator (provably equivalent) → a HW plane/`FB_BASE`
-    buffer-identity issue, not the blitter address math. Scaled is unused by gfx
-    (de-risk hook) so it blocks nothing. Was never run on recent HW before now.
+  - **⚠ OPEN (separate, PRE-EXISTING): SCALED output is width-capped + mis-sourced
+    on HW for wide rows** — `vdi.scaletest` with large dims produces a ~32px narrow
+    vertical strip (instead of `dst_w`) sourced from the wrong spot. ROOT CAUSE
+    (RTL-confirmed 2026-06-27): the SC_ACCUM **burst-write path** — `burst_len` is
+    5-bit (16 beats × 2px = **32 px per burst**) and a wide scaled row writes only
+    one burst instead of continuing, plus the even/odd beat-half packing mis-aligns
+    the source. NOT addressing (matches BLOCK_BLIT, which works at 1920-wide), NOT
+    registers (16-bit latched fine), NOT the column accumulator (orthogonal; that
+    fixed src-address depth). This is the known scaled burst/Bresenham WRITE-path
+    rewrite ([[blitter_addrgen_consolidation]]: "human-in-the-loop FSM task, scaled
+    unused by gfx so it blocks nothing"). My earlier "FB_BASE/plane-identity"
+    hypothesis was WRONG — addressing is correct. Low priority (unused path).
 - **§3.1 ACP coherency** (evaluate on GEM/desktop surfaces), **§3.2** SALLY mem
   hierarchy → 120 MHz, **§3.3** HP-port budget doc — all deferred.
 - **SRC_BLIT red** (below) — a sim-model gap in a non-gating diagnostic, not on the
