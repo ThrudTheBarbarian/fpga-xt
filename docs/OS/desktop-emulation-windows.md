@@ -37,12 +37,12 @@ planes or compositing the emulation into a backing store — out of scope for no
 
 ## Milestones
 
-- **M1 — XL plane positionable via GP0 (RTL + GP0 + driver + Lua).** Add an
-  `0x5xx` XL-CONTROL reg set (origin_x, origin_y, scale, win_w, win_h, mode/enable);
-  decode in `xt_gp0_regs`; mux them into `xl_org_x_c`/etc. in `fpga_xt_top` (mode bit:
-  legacy-centered vs A9-positioned). Driver `xt_xl_window(...)` + Lua `xl_window(x,y,w,h,s)`.
-  **De-risk:** position the live XL emulation at an arbitrary rect on HW. Decision-free;
-  the keystone — build first.
+- **M1 — XL plane positionable via GP0. ✓ DONE + HW-validated.** `0x5xx` XLCTL regs
+  (`XL_WIN_X/Y/W/H/SCALE/EN`) → `xt_gp0_regs` decode + `xl_win_we` commit →
+  `cdc_flag_data` to clk_pix → mux into the XL plane's origin/scale/clip vs the legacy
+  centred placement. Driver `xt_xl_window()`, Lua `screen.xlwindow(x,y,w,h[,s])` /
+  `screen.xloff()`. `screen.xlwindow` repositions/rescales/clips the live emulation
+  to any rect on HW.
 - **M2 — textured window chrome (A9, no RTL).** 9-slice chrome (corners + edges +
   title fill + close/resize glyphs) from a PNG atlas on SD; loader (lodepng → a DDR
   chrome surface, like the wallpaper); replace `gem_wm` `draw_frame`'s `vr_recfl`

@@ -34,9 +34,13 @@ Remaining:
   path); fix when scaled is actually used. *([[blitter_addrgen_consolidation]])*
 - **§3.1 ACP coherency** (evaluate on GEM/desktop surfaces), **§3.2 SALLY memory
   hierarchy → 120 MHz**, **§3.3 HP-port budget doc** — deferred.
-- **Wallpaper-backed desktop follow-on** — the VDI default workstation leaks to a
-  window backing after `wintest` (direct `vdi.*` draws land in a window, not the
-  desktop); reset the current workstation to the desk after WM ops. *(this session)*
+- **GEM desktop with live emulation windows** — M1 (XL plane positionable via GP0,
+  `screen.xlwindow`) done. Remaining: M2 textured chrome (Aristo2 theme at
+  `gem/themes/Aristo2/1x` → `/OS/Themes/Aristo2`, blitter 9-slice in `gem_wm`
+  `draw_frame`), M3 live-surface window (gem_wm window ↔ XL plane via M1), M4 desktop
+  at boot + XL/ST icons + double-click. M4 also fixes the VDI-workstation leak (direct
+  `vdi.*` after `wintest` draws into a window backing, not the desktop).
+  *(docs/OS/desktop-emulation-windows.md)*
 
 ---
 
