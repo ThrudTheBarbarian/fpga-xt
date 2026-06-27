@@ -980,6 +980,12 @@ module xt_blitter #(
     logic [31:0] sc_pixel_q;            // cached source pixel (RGBA-8888)
     logic [31:0] sc_pixel_addr_q;       // address of cached source pixel
     logic [31:0] sc_raddr_q;            // address of current AXI read request
+    // Running source column address = src_row_base + (sx_step_q << 2), maintained
+    // incrementally (+4 per sx step, +stride per sy step) instead of recomputed
+    // combinationally each beat — collapses the deep CARRY4 add off the AXI AR
+    // critical path (architecture-review §1.5).  Invariant held while sx_step_q==0
+    // through SC_ROW/SC_ROW2 and advanced lockstep with sx_step_q at SC_NEXT2.
+    logic [31:0] sc_col_addr_q;
     logic        sc_need_flush_q;       // flush needed after sx advance completes
 
     // ====================================================================
@@ -1265,6 +1271,7 @@ module xt_blitter #(
             sc_pixel_q        <= 32'd0;
             sc_pixel_addr_q   <= 32'd0;
             sc_raddr_q        <= 32'd0;
+            sc_col_addr_q     <= 32'd0;
             sc_need_flush_q   <= 1'b0;
             bilin_mode_q      <= 1'b0;
             font_mode_q       <= 1'b0;
@@ -2432,6 +2439,7 @@ module xt_blitter #(
                 SC_ROW: begin
                     cx <= 16'd0;
                     sx_step_q   <= 16'd0;
+                    sc_col_addr_q <= src_row_base;   // sx_step=0 -> col addr = row base
                     sx_accum_q  <= 16'd0;
                     sc_pixel_valid_q <= 1'b0;
                     beat_lo_filled   <= 1'b0;
@@ -2460,6 +2468,7 @@ module xt_blitter #(
                         sy_cur_q   <= sy_cur_q + 16'd1;
                         sy_accum_q <= sy_accum_q - dst_h_q;
                         src_row_base <= src_row_base + src_stride_eff;  // track sy_cur
+                        sc_col_addr_q <= sc_col_addr_q + src_stride_eff; // keep == src_row_base (sx_step=0)
                         // Stay in SC_ROW2 to check again
                     end else begin
                         if (bilin_mode_q)
@@ -2486,7 +2495,7 @@ module xt_blitter #(
                     // descriptor ROW0 or the plane shift, advanced at SC_ROW2);
                     // src_x is folded into it, so only the column offset is added.
                     logic [31:0] sc_raddr_next;
-                    sc_raddr_next = src_row_base + (32'(sx_step_q) << 2);
+                    sc_raddr_next = sc_col_addr_q;   // = src_row_base + (sx_step_q<<2), pre-accumulated
                     if (cx >= dst_w_q) begin
                         // Row complete — flush any pending pixels
                         state <= S_PEND;
@@ -2634,6 +2643,7 @@ module xt_blitter #(
                 SC_NEXT2: begin
                     if (sx_accum_q >= dst_w_q) begin
                         sx_step_q  <= sx_step_q + 16'd1;
+                        sc_col_addr_q <= sc_col_addr_q + 32'd4;  // +1 src column = +4 bytes
                         sx_accum_q <= sx_accum_q - dst_w_q;
                         // Stay in SC_NEXT2 to check again
                     end else begin
@@ -2678,13 +2688,14 @@ module xt_blitter #(
                         // in-rect one, so taps never read neighbouring content
                         // (which at upscale smears in as a coloured edge streak).
                         logic [31:0] bl_col0, bl_col1, bl_addr, row1_add;
-                        logic [15:0] step1;
-                        step1   = (sx_step_q + 16'd1 < src_w_q) ? (sx_step_q + 16'd1)
-                                                               : sx_step_q;
+                        // bl_col0 = current src column addr (pre-accumulated — no deep
+                        // add); bl_col1 = next column = +4 bytes, edge-clamped to bl_col0
+                        // at the right edge (sx_step+1 >= src_w).
                         row1_add = (sy_cur_q - src_y_q + 16'd1 < src_h_q)
                                        ? 32'(src_stride_eff) : 32'd0;
-                        bl_col0 = src_row_base + (32'(sx_step_q) << 2);
-                        bl_col1 = src_row_base + (32'(step1)     << 2);
+                        bl_col0 = sc_col_addr_q;
+                        bl_col1 = sc_col_addr_q
+                                      + ((sx_step_q + 16'd1 < src_w_q) ? 32'd4 : 32'd0);
                         unique case (bl_sub_q)
                             2'd0: bl_addr = bl_col0;
                             2'd1: bl_addr = bl_col1;

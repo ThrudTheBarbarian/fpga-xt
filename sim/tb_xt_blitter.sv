@@ -718,6 +718,78 @@ module tb_xt_blitter;
         else begin $display("FAIL: test_scaled_nearest_2x (%0d mismatches)", errs); $fatal(1); end
     endtask
 
+    // SCALED nearest 2x with NON-ZERO source origin (src_x=1,src_y=1).
+    // Every other scaled test uses src (0,0), so the src_x/src_y origin fold +
+    // the column-address accumulator seeding were never exercised in sim — the
+    // HW failure mode (scaled reads the wrong source = "scaled background").
+    // src 2x2 @ plane (1,1) -> 4x4 dst @ plane (8,0).  stride = 1<<13 = 8192.
+    task test_scaled_nearest_origin();
+        logic [31:0] da, got, exp; int errs;
+        $display("=== Test: SCALED nearest 2x, NON-ZERO origin src(1,1) -> 4x4 ===");
+        clear_logs(); errs = 0;
+        // src pixels at (1,1)=A,(2,1)=B,(1,2)=C,(2,2)=D; sentinel E elsewhere.
+        mem[mem_idx(32'h3000_2000)] = 64'hAAAAAAAA_EEEEEEEE; // (1,1)=A hi, (0,1)=E lo
+        mem[mem_idx(32'h3000_2008)] = 64'hEEEEEEEE_BBBBBBBB; // (2,1)=B lo, (3,1)=E hi
+        mem[mem_idx(32'h3000_4000)] = 64'hCCCCCCCC_EEEEEEEE; // (1,2)=C hi, (0,2)=E lo
+        mem[mem_idx(32'h3000_4008)] = 64'hEEEEEEEE_DDDDDDDD; // (2,2)=D lo, (3,2)=E hi
+        write_reg(16'hD4C0,8'd1); write_reg(16'hD4C1,8'd0); write_reg(16'hD4C2,8'd1); write_reg(16'hD4C3,8'd0); // src_x=1, src_y=1
+        write_reg(16'hD4C4,8'd2); write_reg(16'hD4C5,8'd0); write_reg(16'hD4C6,8'd2); write_reg(16'hD4C7,8'd0); // src_w=2, src_h=2
+        write_reg(16'hD4B0,8'd8); write_reg(16'hD4B1,8'd0); write_reg(16'hD4B2,8'd0); write_reg(16'hD4B3,8'd0); // dst_x=8, dst_y=0
+        write_reg(16'hD4B4,8'd4); write_reg(16'hD4B5,8'd0); write_reg(16'hD4B6,8'd4); write_reg(16'hD4B7,8'd0); // dst_w=4, dst_h=4
+        write_reg(16'hD4C8,8'h00);   // FLAGS: nearest, no DDR
+        write_reg(16'hD4BC,8'h04);   // CMD = SCALED_BLIT
+        wait_idle();
+        for (int j = 0; j < 4; j++)
+          for (int i = 0; i < 4; i++) begin
+            da  = 32'h3000_0000 + j*8192 + (8+i)*4;
+            got = mem[mem_idx(da)][(da[2] ? 32 : 0) +: 32];
+            case ({j[1], i[1]})
+              2'b00: exp = 32'hAAAAAAAA; 2'b01: exp = 32'hBBBBBBBB;
+              2'b10: exp = 32'hCCCCCCCC; default: exp = 32'hDDDDDDDD;
+            endcase
+            if (got !== exp) begin errs++; $display("  dst(%0d,%0d) got %08x exp %08x", i, j, got, exp); end
+          end
+        if (errs == 0) $display("PASS: test_scaled_nearest_origin");
+        else begin $display("FAIL: test_scaled_nearest_origin (%0d mismatches)", errs); $fatal(1); end
+    endtask
+
+    // SCALED nearest 4x, WIDE + non-zero origin: src 6x2 @ (1,1) -> 24x8 dst @
+    // (8,0).  Matches the HW scaletest shape (large upscale from a non-zero plane
+    // origin) that the tiny (0,0) tests never exercised.  Source columns carry
+    // distinct values (0xC00000 + plane_col) so an X-collapse / wrong-column read
+    // is caught precisely.
+    task test_scaled_nearest_wide_origin();
+        logic [31:0] da, got, exp; int errs;
+        $display("=== Test: SCALED nearest 4x WIDE, src 6x2 @(1,1) -> 24x8 ===");
+        clear_logs(); errs = 0;
+        // row y=1 (0x2000): plane cols 1..6 = 0xC00001..0xC00006, others E.
+        mem[mem_idx(32'h3000_2000)] = 64'h00C00001_EEEEEEEE; // c1 hi, c0 lo
+        mem[mem_idx(32'h3000_2008)] = 64'h00C00003_00C00002; // c3 hi, c2 lo
+        mem[mem_idx(32'h3000_2010)] = 64'h00C00005_00C00004; // c5 hi, c4 lo
+        mem[mem_idx(32'h3000_2018)] = 64'hEEEEEEEE_00C00006; // c7 hi(E), c6 lo
+        // row y=2 (0x4000): plane cols 1..6 = 0xC00011..0xC00016.
+        mem[mem_idx(32'h3000_4000)] = 64'h00C00011_EEEEEEEE;
+        mem[mem_idx(32'h3000_4008)] = 64'h00C00013_00C00012;
+        mem[mem_idx(32'h3000_4010)] = 64'h00C00015_00C00014;
+        mem[mem_idx(32'h3000_4018)] = 64'hEEEEEEEE_00C00016;
+        write_reg(16'hD4C0,8'd1); write_reg(16'hD4C1,8'd0); write_reg(16'hD4C2,8'd1); write_reg(16'hD4C3,8'd0); // src_x=1, src_y=1
+        write_reg(16'hD4C4,8'd6); write_reg(16'hD4C5,8'd0); write_reg(16'hD4C6,8'd2); write_reg(16'hD4C7,8'd0); // src_w=6, src_h=2
+        write_reg(16'hD4B0,8'd8); write_reg(16'hD4B1,8'd0); write_reg(16'hD4B2,8'd0); write_reg(16'hD4B3,8'd0); // dst_x=8, dst_y=0
+        write_reg(16'hD4B4,8'd24); write_reg(16'hD4B5,8'd0); write_reg(16'hD4B6,8'd8); write_reg(16'hD4B7,8'd0); // dst_w=24, dst_h=8
+        write_reg(16'hD4C8,8'h00);
+        write_reg(16'hD4BC,8'h04);
+        wait_idle();
+        for (int j = 0; j < 8; j++)
+          for (int i = 0; i < 24; i++) begin
+            da  = 32'h3000_0000 + j*8192 + (8+i)*4;
+            got = mem[mem_idx(da)][(da[2] ? 32 : 0) +: 32];
+            exp = 32'h00C00001 + (i/4) + (j/4)*32'h10;   // nearest: src col i/4, row j/4
+            if (got !== exp) begin errs++; if (errs<=8) $display("  dst(%0d,%0d) got %08x exp %08x", i, j, got, exp); end
+          end
+        if (errs == 0) $display("PASS: test_scaled_nearest_wide_origin");
+        else begin $display("FAIL: test_scaled_nearest_wide_origin (%0d mismatches)", errs); $fatal(1); end
+    endtask
+
     // SCALED nearest DOWNSCALE: 4x4 src -> 2x2 dst (plane), samples (2i,2j).
     // Exercises the multi-step SC_ROW2/SC_NEXT2 Bresenham loops.  Sampled src
     // pixels are distinct (A/B/C/D); the rest sentinel E (must never appear).
@@ -1801,6 +1873,8 @@ module tb_xt_blitter;
         test_queued_fill_bases();
         test_block_blit_ddr();
         test_scaled_nearest_2x();
+        test_scaled_nearest_origin();
+        test_scaled_nearest_wide_origin();
         test_scaled_nearest_down();
         test_scaled_bilinear_copy();
         test_scaled_bilinear_blend();
