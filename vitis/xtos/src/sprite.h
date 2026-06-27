@@ -3,9 +3,9 @@
  *
  * The sprite engine composites hardware sprites over the desktop plane in the
  * scan-out path.  It is owned by the A9 (not the 6502): its register port is
- * driven over GP0 through the axi_blitter_bridge —
- *     write reg index  -> XT_BLITTER_BASE + 0x22
- *     write reg data   -> XT_BLITTER_BASE + 0x23  (pulses the engine's reg_we)
+ * driven over GP0 through the xt_gp0_regs SPRITE block —
+ *     write reg index  -> XT_SPR_IDX   (GP0 SPRITE block)
+ *     write reg data   -> XT_SPR_DATA  (pulses the engine's reg_we)
  * The "$D4Ax / $D4Dx" values below are the engine's internal register indices
  * (reg_addr[7:4] = 0xA per-sprite control, 0xD = descriptor shadow/commit), NOT
  * memory addresses.

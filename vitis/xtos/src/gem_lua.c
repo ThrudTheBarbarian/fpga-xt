@@ -28,7 +28,8 @@
 #include "gfx.h"
 #include "vdi/vdi.h"
 #include "gem.h"             /* gem_wm — backing-store window manager */
-#include "xt_blitter.h"      /* hardware blitter (HP1 DDR master) — gfx_a9 de-risk */
+#include "blitter.h"         /* hardware blitter (HP1 DDR master) — gfx_a9 de-risk */
+#include "compositor.h"      /* drag-overlay (xt_overlay_*) */
 
 #define DESK_BASE    0x30000000u
 #define DESK_W       1920

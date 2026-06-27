@@ -3,13 +3,13 @@
  */
 #include "sprite.h"
 #include <stddef.h>         /* size_t */
-#include "xt_blitter.h"     /* XT_BLITTER_BASE (the GP0 bridge window) */
+#include "xt_gp0_map.h"     /* XT_SPR_IDX / XT_SPR_DATA (the SPRITE block) */
 #include "xil_io.h"
 #include "xil_cache.h"
 
-/* GP0 bridge offsets that carry a sprite-engine register write. */
-#define SPR_GP0_IDX   (XT_BLITTER_BASE + 0x22u)   /* reg index ($D4Ax/$D4Dx low byte) */
-#define SPR_GP0_DAT   (XT_BLITTER_BASE + 0x23u)   /* reg data + write strobe          */
+/* GP0 SPRITE-block registers that carry a sprite-engine register write. */
+#define SPR_GP0_IDX   XT_SPR_IDX    /* reg index ($D4Ax/$D4Dx low byte) */
+#define SPR_GP0_DAT   XT_SPR_DATA   /* reg data + write strobe          */
 
 /* Sprite-engine register indices (reg_addr[7:0]). */
 #define R_SEL         0xD0u   /* descriptor: select target slot       */

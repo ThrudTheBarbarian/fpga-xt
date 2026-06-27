@@ -23,7 +23,7 @@
 // vitis/scripts/create_platform.py); gfx_soft.c remains the SDL-testbed backend.
 
 #include "gfx.h"
-#include "xt_blitter.h"
+#include "blitter.h"
 #include "xil_cache.h"
 #include <stdlib.h>
 #include <string.h>

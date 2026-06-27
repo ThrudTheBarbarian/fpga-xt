@@ -45,7 +45,10 @@
 #include "vfs.h"             /* VFS: FatFs (/) + tmpfs (/tmp) backends */
 #include "xiicps.h"          /* PS I2C0 (EMIO) -> SiI9022A control bus */
 
-#include "xt_blitter.h"
+#include "blitter.h"
+#include "compositor.h"
+#include "xtctl.h"
+#include "xt_gp0_map.h"
 
 /* gem_lua.c — GEM VDI (+ FreeType scalable text) bring-up on the desktop plane
  * and the `vdi` Lua table.  Defined in gem_lua.c (links the portable gem core). */
@@ -272,9 +275,7 @@ static u8 g_gp0 = 0x00;
  * keyboard-inject ($D4CF) + release ($D4CD), so typing in the terminal lands in
  * BASIC.  A literal '{' enters passthrough, '}' ends it — braces aren't on the
  * Atari keyboard, so they never collide with a pasted listing (even mid-line). */
-#define XT_KBD_INJECT   (XT_BLITTER_BASE + 0x1Fu)   /* $D4CF: KBCODE + keyboard IRQ */
-#define XT_KBD_RELEASE  (XT_BLITTER_BASE + 0x1Du)   /* $D4CD: all-keys-up (no auto-repeat) */
-#define XT_KBD_BREAK    (XT_BLITTER_BASE + 0x1Bu)   /* $D4CB: Atari BREAK (POKEY IRQST b7) */
+/* keyboard inject/release/break go through xtctl_kbd_* (GP0 CONTROL block). */
 static int      g_key_passthru = 0;
 static int      g_mouse_mode   = 0;   /* '\' toggles WM mouse-drive within passthrough */
 void gem_mouse_feed(int c);           /* gem_lua.c: cursor keys -> WM pointer */
@@ -428,7 +429,7 @@ static void desktop_init(void)
     for (uint32_t i = 0; i < DESK_H * DESK_STRIDE; i++) p[i] = 0x00000000u;
     Xil_DCacheFlushRange((INTPTR)DESK_BASE, (INTPTR)(DESK_H * DESK_STRIDE * 4u));
     g_gp0 = 0x00u;                              /* compositor (off bars) */
-    Xil_Out32(XT_BLITTER_BASE + 0x1Cu, (u32)g_gp0);
+    Xil_Out32(XT_CTRL_GP0, (u32)g_gp0);
 }
 
 static void lua_init(void)
@@ -601,7 +602,7 @@ static void repl_help(void)
  * frames) + the SiI9022's live HPD/RxSense/TCLK and measured input sync. */
 static void repl_status(void)
 {
-    uint32_t d = Xil_In32(XT_BLITTER_BASE + 0x1Cu);
+    uint32_t d = Xil_In32(XT_DIAG0);
     uint8_t  st = 0, tclk, hl = 0, hh = 0, vl = 0, vh = 0;
     (void)sii_read(0x3D, &st);
     tclk = sii_read_idx(0x72);
@@ -658,11 +659,11 @@ static u8 ascii_to_kbcode(int c)
  * key_paste_tick), so the UART RX FIFO is drained every pass and never overflows. */
 static void key_inject_ascii(int c)
 {
-    if (c == 0x03) { Xil_Out8(XT_KBD_BREAK, 0); return; }   /* Ctrl-C -> Atari BREAK */
+    if (c == 0x03) { xtctl_kbd_break(); return; }          /* Ctrl-C -> Atari BREAK */
     u8 kb = ascii_to_kbcode(c);
     if (kb == 0xFFu) return;
-    Xil_Out8(XT_KBD_INJECT,  kb);
-    Xil_Out8(XT_KBD_RELEASE, 0);
+    xtctl_kbd_inject(kb);
+    xtctl_kbd_release();
 }
 
 
@@ -801,15 +802,15 @@ static void repl_exec(char *cmd)
     if (!strcmp(argv[0], "speed")) {     /* SALLY clock_mult (DECIMAL) -> $D4CA */
         /* Bare `speed` just reports the current register (read-back @0x1E). */
         if (argc < 2) {
-            u8 cur = Xil_In8(XT_BLITTER_BASE + 0x1Eu);
+            u8 cur = xtctl_speed_get();
             xil_printf("  SALLY clock_mult = %u\r\n", (unsigned)cur);
             uart1_puts("  usage: speed <n>  (decimal; n = x real Atari; 1 = real/boot-safe)\r\n"
                        "  clean grades: 1 2 4 7 8 14 28 56 (56 = full turbo 100MHz; others fall back to 1x)\r\n");
             return;
         }
         unsigned n = strtoul(argv[1], NULL, 10);
-        Xil_Out8(XT_BLITTER_BASE + 0x1Au, (u8)n);          /* write $D4CA      */
-        u8 rb = Xil_In8(XT_BLITTER_BASE + 0x1Eu);          /* read it back     */
+        xtctl_speed_set((u8)n);                            /* write clock_mult */
+        u8 rb = xtctl_speed_get();                         /* read it back     */
         if (rb != (u8)n) {
             xil_printf("  SALLY clock_mult: wrote %u but read back %u — write did NOT take!\r\n",
                        n, (unsigned)rb);
@@ -952,16 +953,14 @@ static void repl_exec(char *cmd)
          * run" from "PL->DDR write broken": SEQ changes => FSM alive (so a fill
          * that didn't land means HP1->DDR is the problem); SEQ static => the
          * blitter isn't processing commands at all. */
-        uint8_t lo0 = xt_blitter_read8(XT_BL_SEQ_LO);
-        uint8_t hi0 = xt_blitter_read8(XT_BL_SEQ_HI);
-        uint8_t st  = xt_blitter_read8(XT_BL_STATUS);
+        uint16_t seq0 = xt_blitter_seq_counter();
+        uint8_t  st   = xt_blitter_status();
         xt_blitter_fire(0x07);
         usleep(2000);
-        uint8_t lo1 = xt_blitter_read8(XT_BL_SEQ_LO);
-        uint8_t hi1 = xt_blitter_read8(XT_BL_SEQ_HI);
-        xil_printf("  STATUS=%02x  SEQ %02x%02x -> %02x%02x  (%s)\r\n",
-                   st, hi0, lo0, hi1, lo1,
-                   (lo0 != lo1 || hi0 != hi1) ? "FSM ALIVE" : "FSM NOT RESPONDING");
+        uint16_t seq1 = xt_blitter_seq_counter();
+        xil_printf("  STATUS=%02x  SEQ %04x -> %04x  (%s)\r\n",
+                   st, seq0, seq1,
+                   (seq0 != seq1) ? "FSM ALIVE" : "FSM NOT RESPONDING");
         return;
     }
     if (!strcmp(argv[0], "prod")) {
@@ -969,7 +968,7 @@ static void repl_exec(char *cmd)
          * count, [15:8] HP3 writeback write-beat count.  Run a few times — if
          * ANTIC frames climb, the 6502+ANTIC are alive on silicon; if HP3 beats
          * climb, the writeback is DMA-ing pixels to DDR. */
-        uint32_t d2 = Xil_In32(XT_BLITTER_BASE + 0x18u);
+        uint32_t d2 = Xil_In32(XT_DIAG2);
         xil_printf("  ANTIC frames=%u  HP3 write-beats=%u  (run again; climbing = alive)\r\n",
                    (unsigned)(d2 & 0xFFu), (unsigned)((d2 >> 8) & 0xFFu));
         return;
@@ -981,7 +980,7 @@ static void repl_exec(char *cmd)
          *   AR climbs, R-beats DON'T => PS not returning read data (HP read ch);
          *   both climb but screen black => line-buf->pixel CDC drops it;
          *   AR static => plane_fetch never issues reads (line_start CDC / FSM). */
-        uint32_t d3 = Xil_In32(XT_BLITTER_BASE + 0x14u);
+        uint32_t d3 = Xil_In32(XT_DIAG3);
         xil_printf("  HP0(desk) AR=%u R-beats=%u   HP3(XL) AR=%u R-beats=%u  (run again)\r\n",
                    (unsigned)((d3 >> 24) & 0xFFu), (unsigned)((d3 >> 16) & 0xFFu),
                    (unsigned)((d3 >> 8) & 0xFFu),  (unsigned)(d3 & 0xFFu));
@@ -993,8 +992,8 @@ static void repl_exec(char *cmd)
          * silicon: HP3 ~3100xxxx/3110xxxx, HP0 ~3000xxxx.  Garbage/0 => an
          * addressing/startup bug; sane => the AR is well-formed and the hang
          * is in the PS read-data path. */
-        uint32_t xl   = Xil_In32(XT_BLITTER_BASE + 0x10u);
-        uint32_t desk = Xil_In32(XT_BLITTER_BASE + 0x0Cu);
+        uint32_t xl   = Xil_In32(XT_DIAG4);
+        uint32_t desk = Xil_In32(XT_DIAG5);
         xil_printf("  first AR addr: HP3(XL)=%08x  HP0(desk)=%08x  (sane ~3100xxxx / ~3000xxxx)\r\n",
                    (unsigned)xl, (unsigned)desk);
         return;
@@ -1012,8 +1011,8 @@ static void repl_exec(char *cmd)
          * succ1 climbs + succ8 frozen/to8 climbs => MULTI-BEAT reads are the
          * plane_fetch bug (single-beat works); both succ climbing => burst
          * length is not the cause (look at CDC/ping-pong). */
-        uint32_t s = Xil_In32(XT_BLITTER_BASE + 0x04u);
-        uint32_t d = Xil_In32(XT_BLITTER_BASE + 0x08u);
+        uint32_t s = Xil_In32(XT_DIAG6);
+        uint32_t d = Xil_In32(XT_DIAG7);
         xil_printf("  HP2 probe: 1-beat succ=%u to=%u   8-beat succ=%u to=%u   rdata=%08x  (run again)\r\n",
                    (unsigned)((s >> 24) & 0xFFu), (unsigned)((s >> 16) & 0xFFu),
                    (unsigned)((s >> 8) & 0xFFu),  (unsigned)(s & 0xFFu), (unsigned)d);
@@ -1041,7 +1040,7 @@ static void repl_exec(char *cmd)
         unsigned on = (argc >= 2) ? (unsigned)strtoul(argv[1], NULL, 16) : 1u;
         g_gp0 = (u8)((g_gp0 & ~0x01u) | (on ? 0x01u : 0x00u));  /* preserve scale bits */
         xil_printf("  writing gp0_ctrl=%02x (bars=%u) ...\r\n", g_gp0, on ? 1u : 0u);
-        Xil_Out32(XT_BLITTER_BASE + 0x1Cu, (u32)g_gp0);
+        Xil_Out32(XT_CTRL_GP0, (u32)g_gp0);
         uart1_puts("  ok\r\n");
         return;
     }
@@ -1056,7 +1055,7 @@ static void repl_exec(char *cmd)
         g_gp0 = (u8)((g_gp0 & ~0x0Eu) | ((n & 0x7u) << 1));    /* preserve bar bit */
         xil_printf("  writing gp0_ctrl=%02x (scale=%u, bars=%u) ...\r\n",
                    g_gp0, n, g_gp0 & 1u);
-        Xil_Out32(XT_BLITTER_BASE + 0x1Cu, (u32)g_gp0);
+        Xil_Out32(XT_CTRL_GP0, (u32)g_gp0);
         uart1_puts("  ok\r\n");
         return;
     }
@@ -1137,7 +1136,7 @@ static void repl_exec(char *cmd)
         unsigned on = (argc >= 2) ? (unsigned)strtoul(argv[1], NULL, 10) : 1u;
         g_gp0 = (u8)((g_gp0 & ~0x10u) | (on ? 0x10u : 0x00u));  /* preserve bars+scale */
         xil_printf("  writing gp0_ctrl=%02x (dmactl-honor=%u) ...\r\n", g_gp0, on ? 1u : 0u);
-        Xil_Out32(XT_BLITTER_BASE + 0x1Cu, (u32)g_gp0);
+        Xil_Out32(XT_CTRL_GP0, (u32)g_gp0);
         uart1_puts("  ok\r\n");
         return;
     }
@@ -1261,15 +1260,15 @@ int main(void)
         xil_printf("\r\n");
     }
 
-    /* PL diagnostic word over GP0 @ XT_BLITTER_BASE + 0x1C (built in
-     * fpga_xt_top).  Definitive clock-lock readout — no LED-colour guessing:
+    /* PL diagnostic word over GP0 @ XT_DIAG0 (built in fpga_xt_top).
+     * Definitive clock-lock readout — no LED-colour guessing:
      *   [0]     mmcm1_locked  (clk_sally/clk_sys MMCM)
      *   [1]     mmcm2_locked  (clk_pix MMCM)
      *   [15:8]  clk_pix-alive count — climbs while clk_pix toggles; STUCK
      *           between ticks => clk_pix dead (e.g. mmcm2 not locked)
      *   [23:16] mmcm2 unlock-event count — 0 => it never dropped lock */
     xil_printf("PL diag @0x%08x (m1/m2 lock, clk_pix-alive, m2-unlocks)\r\n",
-               (unsigned)(XT_BLITTER_BASE + 0x1Cu));
+               (unsigned)(XT_DIAG0));
 
     /* gp0_ctrl now resets to 0x00 in the bitstream = COMPOSITOR (desktop) — bars
      * are a debug option only (`bars 1`), never the default, even after a PS

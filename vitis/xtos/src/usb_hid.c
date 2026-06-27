@@ -18,7 +18,7 @@
 #include "xil_cache.h"
 #include "xil_io.h"          /* Xil_Out8 — keyboard inject through the GP0 bridge */
 #include "xil_printf.h"
-#include "xt_blitter.h"      /* XT_BLITTER_BASE (axi_blitter_bridge GP0 slave) */
+#include "xtctl.h"           /* xtctl_kbd_* keyboard inject (GP0 CONTROL block) */
 #include "xiltimer.h"        /* XTime_GetTime / COUNTS_PER_SECOND (this BSP uses xiltimer, not xtime_l.h) */
 #include "xscugic.h"         /* GIC — interrupt-driven USB (poll mode is timing-fragile on this core) */
 #include "xil_exception.h"
@@ -143,15 +143,10 @@ void tuh_hid_umount_cb(uint8_t dev_addr, uint8_t instance) {
 
 /* ---- USB HID keyboard -> Atari POKEY KBCODE ---------------------------
  * The PL pulses POKEY's kbd_event (loads KBCODE $D209 + raises the keyboard
- * IRQ) when the PS writes an Atari KBCODE byte to $D4CF through the GP0 blitter
- * bridge (axi_blitter_bridge -> bridge_bus_addr $D4CF, fpga_xt_top.sv:1496).
- * $D4CF = XT_BLITTER_BASE + 0x1F (awaddr[4]=1 -> $D4Cx page, low nibble F; the
- * bridge strobes bl_we and the FONT_CTRL alias is a harmless side-effect).  The
- * Atari KBCODE byte = {shift(b7), ctrl(b6), 6-bit key matrix code}; the XL OS
- * keyboard IRQ handler maps that (via its shift/ctrl tables) to ATASCII in CH. */
-#define XT_KBD_INJECT_ADDR   (XT_BLITTER_BASE + 0x1Fu)  /* $D4CF key-down: KBCODE + IRQ  */
-#define XT_KBD_RELEASE_ADDR  (XT_BLITTER_BASE + 0x1Du)  /* $D4CD all-keys-up: SKSTAT clear */
-#define XT_KBD_BREAK_ADDR    (XT_BLITTER_BASE + 0x1Bu)  /* $D4CB Atari BREAK (POKEY IRQ b7) */
+ * IRQ) when the PS injects an Atari KBCODE byte via xtctl_kbd_inject() (GP0
+ * CONTROL block -> $D4CF).  The KBCODE byte = {shift(b7), ctrl(b6), 6-bit key
+ * matrix code}; the XL OS keyboard IRQ handler maps that (via its shift/ctrl
+ * tables) to ATASCII in CH. */
 #define HID_KEY_F12          0x45u                       /* -> Atari BREAK */
 
 /* USB HID usage (0x04..0x39) -> Atari 6-bit KBCODE; 0xFF = no Atari key. */
@@ -195,7 +190,7 @@ void tuh_hid_report_received_cb(uint8_t dev_addr, uint8_t instance,
       uint8_t k = keys[i];
       bool const is_new = !kbd_key_held(k, s_prev_keys);
       if (k == HID_KEY_F12) {                                   /* F12 -> Atari BREAK */
-        if (is_new) { Xil_Out8(XT_KBD_BREAK_ADDR, 0); xil_printf("KBD BREAK\r\n"); }
+        if (is_new) { xtctl_kbd_break(); xil_printf("KBD BREAK\r\n"); }
         continue;
       }
       if (k < HID_KBCODE_FIRST || k > HID_KBCODE_LAST) continue; /* none/rollover/out-of-range */
@@ -205,13 +200,13 @@ void tuh_hid_report_received_cb(uint8_t dev_addr, uint8_t instance,
       if (!is_new) continue;                                    /* held, not a new press */
       /* Atari KBCODE: bit 6 = Shift, bit 7 = Ctrl (bits 5:0 = key matrix). */
       uint8_t code = (uint8_t)(kb | (shift ? 0x40u : 0u) | (ctrl ? 0x80u : 0u));
-      Xil_Out8(XT_KBD_INJECT_ADDR, code);                       /* -> $D4CF -> KBCODE + IRQ */
+      xtctl_kbd_inject(code);                                   /* -> $D4CF -> KBCODE + IRQ */
       xil_printf("KBD inject KBCODE=%02x (hid=%02x%s%s)\r\n", code, k,
                  shift ? " sh" : "", ctrl ? " ctl" : "");
     }
     /* When the last mapped key lifts, clear POKEY's SKSTAT key-down so the OS
      * auto-repeat stops (a held key keeps it set -> the OS repeats naturally). */
-    if (!any_mapped && s_any_key_down) Xil_Out8(XT_KBD_RELEASE_ADDR, 0);
+    if (!any_mapped && s_any_key_down) xtctl_kbd_release();
     s_any_key_down = any_mapped;
     for (int i = 0; i < 6; i++) s_prev_keys[i] = keys[i];
   } else if (proto == HID_ITF_PROTOCOL_MOUSE && len >= 3) {
