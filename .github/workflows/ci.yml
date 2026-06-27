@@ -1,0 +1,35 @@
+name: CI
+
+# Fast, build-host-free checks that gate every push / PR:
+#   - the iverilog RTL sim suite (make -C sim all)
+#   - generated-register-map drift (tools/gen_regmap.py --check)
+#   - the CDC lint (tools/cdc_lint.py)
+# The Vivado bitstream build + WNS timing gate live on the build host
+# (vivado/scripts/timing_gate.tcl) — too heavy for hosted CI.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  sim:
+    name: iverilog sim suite
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Icarus Verilog
+        run: sudo apt-get update && sudo apt-get install -y iverilog
+      - name: Run sim suite
+        run: make -C sim all
+
+  gen-lint:
+    name: regmap + CDC lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.x'
+      - name: Register-map drift + CDC lint
+        run: make -C tools check

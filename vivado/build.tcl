@@ -230,6 +230,24 @@ puts ">> synth complete"
 # ---- Implementation -----------------------------------------------------
 if {$flow eq "impl" || $flow eq "bit"} {
     opt_design
+
+    # ---- Incremental implementation (opt-in) --------------------------------
+    # Reuse a prior routed checkpoint as the placement/routing reference so that
+    # only the changed logic re-places/re-routes — deterministic ~minutes builds
+    # instead of a fresh full-die dice-roll (architecture-review §1.2).  Off by
+    # default (a fresh build ignores it); enable by pointing INCR_REF_DCP at a
+    # known-good post_route.dcp (typically build/post_route.dcp from the last
+    # green build).  Must run after opt_design, before place_design.
+    if {[info exists ::env(INCR_REF_DCP)] && $::env(INCR_REF_DCP) ne ""} {
+        set ref_dcp $::env(INCR_REF_DCP)
+        if {[file exists $ref_dcp]} {
+            puts ">> incremental impl: reference checkpoint $ref_dcp"
+            read_checkpoint -incremental $ref_dcp
+        } else {
+            puts ">> WARNING: INCR_REF_DCP=$ref_dcp not found — full (non-incremental) build"
+        }
+    }
+
     # ExtraTimingOpt: extra timing-driven placement effort.  The clk_sally
     # critical path (sally_mem BRAM -> CPU bank/ALU) is route-bound after the
     # cascade fix — the BRAMs drift away from their consuming logic inside the
@@ -316,6 +334,22 @@ if {$flow eq "impl" || $flow eq "bit"} {
     report_utilization -file [file join $out_dir post_route_util.rpt]
     report_timing_summary -file [file join $out_dir post_route_timing.rpt]
     report_drc -file [file join $out_dir post_route_drc.rpt]
+
+    # CDC report + timing gate: abort before write_bitstream on negative WNS
+    # (override with TIMING_GATE_ALLOW_NEG=1).  See vivado/scripts/timing_gate.tcl.
+    # A genuine negative-WNS result re-throws to fail the build; a missing/broken
+    # gate script only warns (never discard a routed design over gate plumbing).
+    set gate_tcl [file join [pwd] scripts timing_gate.tcl]
+    if {[file exists $gate_tcl]} {
+        source $gate_tcl
+        if {[catch {fpgaxt_timing_gate $out_dir} gate_err]} {
+            if {[string match {*timing gate FAILED*} $gate_err]} { error $gate_err }
+            puts ">> WARNING: timing gate plumbing error (ignored): $gate_err"
+        }
+    } else {
+        puts ">> WARNING: $gate_tcl not found — timing gate skipped."
+    }
+
     puts ">> impl complete"
 }
 

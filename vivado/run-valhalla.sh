@@ -35,6 +35,7 @@ rsync -az --delete "$REPO_ROOT/hdl/"                "$REMOTE:$REMOTE_DIR/hdl/"
 rsync -az --delete "$REPO_ROOT/vivado/constraints/" "$REMOTE:$REMOTE_DIR/constraints/"
 rsync -az --delete "$REPO_ROOT/vivado/bd/"          "$REMOTE:$REMOTE_DIR/bd/"
 rsync -az --delete "$REPO_ROOT/rsrc/"               "$REMOTE:$REMOTE_DIR/rsrc/"
+rsync -az --delete "$REPO_ROOT/vivado/scripts/"     "$REMOTE:$REMOTE_DIR/scripts/"
 rsync -az          "$REPO_ROOT/vivado/build.tcl"    "$REMOTE:$REMOTE_DIR/build.tcl"
 
 echo ">> vivado -mode batch (flow=$FLOW top=$TOP part=$PART, PLACE_DIRECTIVE=${PLACE_DIRECTIVE:-default})"

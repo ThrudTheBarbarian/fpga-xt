@@ -14,12 +14,48 @@ This is a tracker, so it intentionally carries forward-looking/historical contex
 
 ---
 
+## Architecture review (the "tock") — status
+
+Implementing `docs/Design/architecture-review.md`. Landed (sim/lint-verified, no
+build host needed):
+- **§4.1 Generated register map** — `hdl/regmap/xt_gp0.json` is the single source;
+  `tools/gen_regmap.py` renders `hdl/xt_gp0_pkg.sv` (imported by `xt_gp0_regs.sv`),
+  `vitis/xtos/src/xt_gp0_map.h`, and `docs/Design/gp0-register-map.md`.
+  `make -C tools regmap-check` gates drift. (Generated header proven bit-identical
+  to the old hand-written one.)
+- **§2 CDC discipline** — `hdl/cdc_flag_data.sv` (data+toggle multi-bit transfer,
+  the fix both the row-128 and cursor-flicker bugs needed) + `sim/tb_cdc_flag_data`
+  (in `make all`) + `docs/Design/cdc-guidelines.md` convention + `tools/cdc_lint.py`
+  (fails on unannotated multi-bit 2-FF crossings; existing safe crossings now carry
+  `// cdc-lint:` justifications).
+- **§4.2 CI** — `.github/workflows/ci.yml` runs `make -C sim all` + `make -C tools
+  check` per push/PR. Build-side **timing gate** (`vivado/scripts/timing_gate.tcl`)
+  + `report_cdc` wired into `build.tcl`: aborts before `write_bitstream` on negative
+  WNS (override `TIMING_GATE_ALLOW_NEG=1`).
+- **§1.2 Incremental impl** — opt-in `INCR_REF_DCP` plumbed into `build.tcl`.
+
+Remaining (build-host / Vivado iteration — see `docs/Design/floorplan.md`):
+- **§1.1 Floorplan** — generalize `pblock_sally`/`pblock_blitter` into `pb_antic`,
+  `pb_video`, PS-band pblocks (derive clock-region ranges from a placed run; don't
+  guess). `pb_sally` doubles as the partial-reconfig RP fence (§1.4, [[6502 §]]).
+- **§1.3 Pipeline** the ANTIC `pair_idx → col_presH` / CPU read-mux paths only if
+  floorplan can't buy the margin.
+- **§3.1 ACP coherency** (evaluate on GEM/desktop surfaces), **§3.2** SALLY mem
+  hierarchy → 120 MHz, **§3.3** HP-port budget doc — all deferred.
+- **SRC_BLIT red** (below) — a sim-model gap in a non-gating diagnostic, not on the
+  `make all` path; tracked, not fixed here.
+
+---
+
 ## Open Issues (tracked bugs)
 
 - The `make all` iverilog suite is green. Separately, **`make blitter_bridge` has a
   pre-existing `SRCBLIT FAIL` (3 mismatches)** — the bridge tb's blitter SRC_BLIT
   check; it fails on the committed bridge too (predates + unrelated to the
-  sprite-dedangle work). Triage: stale golden vs a real SRC_BLIT regression.
+  sprite-dedangle work). Triage: the bridge tb's coverage pixels come back all-zero
+  while SRC_BLIT works on HW → a **sim DDR/AXI-model gap** (the tb's `mem[]` model
+  not feeding the blitter the atlas), not an RTL regression. Non-gating (not in
+  `make all`); fix the tb model when next in the blitter.
 - The numbered issues #0001–#0007 are all resolved — see `docs/Issues/Fixed/`.
 
 ---
@@ -31,8 +67,8 @@ This is a tracker, so it intentionally carries forward-looking/historical contex
   serial `{ }` paste path — verify; src: former docs/TODO.txt)*
 - **GPIO LED MIO mapping** — `main.c` LED toggle waits on Z-Turn MIO confirmation.
   *(src: docs/bring-up.md)*
-- **CI smoke step** — run the iverilog `tb_sally_isa` suite per commit on GH Actions.
-  *(defer if no CI pressure; src: docs/bring-up.md)*
+- **CI smoke step** — DONE: `.github/workflows/ci.yml` runs the full `make -C sim
+  all` suite + `make -C tools check` per push/PR (architecture-review §4.2).
 
 ---
 

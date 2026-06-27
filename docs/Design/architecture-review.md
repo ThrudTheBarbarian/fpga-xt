@@ -116,11 +116,13 @@ cache-coherent — the flush dance disappears.
 ### 3.2 The SALLY memory hierarchy (bigger, optional)
 The registered-MAR read path is the `clk_sally` ceiling; the page cache / banking /
 screen RAM all interact. A fresh look could ask whether a different cache org relieves
-the binding path (ties into 1.3). Higher effort/risk — flag, don't rush.
+the binding path (ties into 1.3). Higher effort/risk — flag, don't rush. Getting SALLY back up to 120MHz is highly desirable, however.
 
 ### 3.3 HP-port headroom (cheap to bank)
 We use 4 HP; 2 S_AXI_GP + 1 ACP sit free. Worth documenting as the explicit budget so
 future masters (SDMA for the DSP56001 note, etc.) have a home plan. See [[hp_port_map]].
+
+Also worth documenting the direction (R/W) that we've currently used for each port since different directions can be used separately. Also worth mentioning the congestion-level and/or bandwidth use in each direction.
 
 **Effort:** 3.1 medium (BD change + driver). **Payoff:** removes the flush-bug class.
 
@@ -179,7 +181,6 @@ future change and is the dual-CPU-PR foundation.
 ## 7. Explicitly NOT now (scope discipline)
 
 - Don't rewrite the working video pipeline (§5).
-- Don't chase 120 MHz turbo as part of this (separate fmax task; we run 100/133 safely).
 - Don't ACP the high-bandwidth video (keep it on HP).
 - Don't let "tock" become "rewrite v1" — the goal is *cost-of-change*, not novelty.
 
