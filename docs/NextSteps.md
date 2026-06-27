@@ -14,75 +14,37 @@ This is a tracker, so it intentionally carries forward-looking/historical contex
 
 ---
 
-## Architecture review (the "tock") — status
+## Architecture review (the "tock") — open work
 
-Implementing `docs/Design/architecture-review.md`. Landed (sim/lint-verified, no
-build host needed):
-- **§4.1 Generated register map** — `hdl/regmap/xt_gp0.json` is the single source;
-  `tools/gen_regmap.py` renders `hdl/xt_gp0_pkg.sv` (imported by `xt_gp0_regs.sv`),
-  `vitis/xtos/src/xt_gp0_map.h`, and `docs/Design/gp0-register-map.md`.
-  `make -C tools regmap-check` gates drift. (Generated header proven bit-identical
-  to the old hand-written one.)
-- **§2 CDC discipline** — `hdl/cdc_flag_data.sv` (data+toggle multi-bit transfer,
-  the fix both the row-128 and cursor-flicker bugs needed) + `sim/tb_cdc_flag_data`
-  (in `make all`) + `docs/Design/cdc-guidelines.md` convention + `tools/cdc_lint.py`
-  (fails on unannotated multi-bit 2-FF crossings; existing safe crossings now carry
-  `// cdc-lint:` justifications).
-- **§4.2 CI** — `.github/workflows/ci.yml` runs `make -C sim all` + `make -C tools
-  check` per push/PR. Build-side **timing gate** (`vivado/scripts/timing_gate.tcl`)
-  + `report_cdc` wired into `build.tcl`: aborts before `write_bitstream` on negative
-  WNS (override `TIMING_GATE_ALLOW_NEG=1`).
-- **§1.1 Incremental P&R** — plumbed (`INCR_REF_DCP` in `build.tcl` + `run-valhalla.sh`)
-  and **validated on the routed design**: a one-module edit rebuilt in ~4.5 min vs ~25
-  (100% cell reuse) and reproduced the reference timing. This is the determinism cure.
+Tracking `docs/Design/architecture-review.md`; landed pieces are in the commit log.
+Remaining:
 
-Floorplan review outcome (evidence in `docs/Design/floorplan.md`, architecture-review §1):
-- **A full subsystem floorplan (`pb_antic`/`pb_video`) was evaluated and REJECTED** —
-  blocks are deeply intermixed + BRAM-bound, and incremental reuse overrides pblocks
-  anyway. Keep only `pb_sally`/`pb_blitter`; formalize `pb_sally` as the PR RP fence.
-- **§1.5 Pipeline (the real fmax/120 task)** — clk_sally is logic-depth-bound
-  (`stack_mem → page_cache/state_q`, 12 levels, cells already co-located), so floorplan
-  can't reach 120; needs logic restructuring. clk_sys levers: ANTIC compositor
-  `unit_idx → cmd_data` / `col_presH` depth + blitter `m_axi_araddr` addr-gen.
-  - **Blitter araddr — diagnosed 2026-06-27:** worst path `sx_step_q → m_axi_araddr[24]`,
-    17 levels / **12 CARRY4** (+0.015 ns). **DONE (commit d8bc7a8):** registered
-    column accumulator `sc_col_addr_q` replaces the combinational recompute in
-    SC_CALC + bilinear SC_BL_RD. Measured: `sx_step->araddr` +0.015 → +0.482,
-    clk_sally +0.166 → +0.309, clk_sys unchanged (now solely ANTIC-bound — the
-    remaining clk_sys lever). +2 non-zero-origin scaled sim tests. Desktop+text
-    HW-confirmed.
-  - **⚠ OPEN (separate, PRE-EXISTING): SCALED output is width-capped + mis-sourced
-    on HW for wide rows** — `vdi.scaletest` with large dims produces a ~32px narrow
-    vertical strip (instead of `dst_w`) sourced from the wrong spot. ROOT CAUSE
-    (RTL-confirmed 2026-06-27): the SC_ACCUM **burst-write path** — `burst_len` is
-    5-bit (16 beats × 2px = **32 px per burst**) and a wide scaled row writes only
-    one burst instead of continuing, plus the even/odd beat-half packing mis-aligns
-    the source. NOT addressing (matches BLOCK_BLIT, which works at 1920-wide), NOT
-    registers (16-bit latched fine), NOT the column accumulator (orthogonal; that
-    fixed src-address depth). This is the known scaled burst/Bresenham WRITE-path
-    rewrite ([[blitter_addrgen_consolidation]]: "human-in-the-loop FSM task, scaled
-    unused by gfx so it blocks nothing"). My earlier "FB_BASE/plane-identity"
-    hypothesis was WRONG — addressing is correct. **NOT FIXED / DEFERRED** because it
-    is a substantial SC_ACCUM burst+Bresenham WRITE-path FSM rewrite (5-bit burst →
-    multi-burst continuation + correct beat-half packing across wide rows) on a path
-    the desktop never exercises; banked the diagnosis, fix when scaled is actually used.
-- **§3.1 ACP coherency** (evaluate on GEM/desktop surfaces), **§3.2** SALLY mem
-  hierarchy → 120 MHz, **§3.3** HP-port budget doc — all deferred.
-- **SRC_BLIT red** (below) — a sim-model gap in a non-gating diagnostic, not on the
-  `make all` path; tracked, not fixed here.
+- **fmax / 120 MHz (deferred, deep).** Both binding paths are logic-depth-bound —
+  floorplan won't help (co-location tried, neutral):
+  - clk_sys: ANTIC GTIA/compositor colour-priority cone (`cur_mode → col_presH`,
+    14 levels) → needs a pipeline stage in the real-time pixel path.
+  - clk_sally: CPU/page-cache loop (11 levels) → read-pipeline already reverted;
+    residual levers = page_cache RLOC + LUTRAM ZP/stack tiers. Gates 120 turbo.
+  *(architecture-review §1.5; [[xt6502_clean_sheet]])*
+- **Partial-reconfig CPU swap.** RP region confirmed viable at X1Y2 (not the PS
+  corner — hard blocks there). Implement: `sally_subsystem` wrapper → exclusive RP
+  pblock → DFX static/RM flow → runtime PCAP swap. *(docs/Design/partial-reconfig.md)*
+- **SCALED blit burst-write rewrite (deferred — path unused by gfx).** Wide scaled
+  rows cap at one 32 px burst + beat-half mis-align (SC_ACCUM burst/Bresenham write
+  path); fix when scaled is actually used. *([[blitter_addrgen_consolidation]])*
+- **§3.1 ACP coherency** (evaluate on GEM/desktop surfaces), **§3.2 SALLY memory
+  hierarchy → 120 MHz**, **§3.3 HP-port budget doc** — deferred.
+- **Wallpaper-backed desktop follow-on** — the VDI default workstation leaks to a
+  window backing after `wintest` (direct `vdi.*` draws land in a window, not the
+  desktop); reset the current workstation to the desk after WM ops. *(this session)*
 
 ---
 
 ## Open Issues (tracked bugs)
 
-- The `make all` iverilog suite is green. Separately, **`make blitter_bridge` has a
-  pre-existing `SRCBLIT FAIL` (3 mismatches)** — the bridge tb's blitter SRC_BLIT
-  check; it fails on the committed bridge too (predates + unrelated to the
-  sprite-dedangle work). Triage: the bridge tb's coverage pixels come back all-zero
-  while SRC_BLIT works on HW → a **sim DDR/AXI-model gap** (the tb's `mem[]` model
-  not feeding the blitter the atlas), not an RTL regression. Non-gating (not in
-  `make all`); fix the tb model when next in the blitter.
-- The numbered issues #0001–#0007 are all resolved — see `docs/Issues/Fixed/`.
+- **`make blitter_bridge` `SRCBLIT FAIL` (3 mismatches)** — sim DDR/AXI-model gap
+  (coverage pixels read all-zero; SRC_BLIT works on HW), not an RTL regression.
+  Non-gating (not in `make all`); fix the tb model when next in the blitter.
 
 ---
 
@@ -93,8 +55,6 @@ Floorplan review outcome (evidence in `docs/Design/floorplan.md`, architecture-r
   serial `{ }` paste path — verify; src: former docs/TODO.txt)*
 - **GPIO LED MIO mapping** — `main.c` LED toggle waits on Z-Turn MIO confirmation.
   *(src: docs/bring-up.md)*
-- **CI smoke step** — DONE: `.github/workflows/ci.yml` runs the full `make -C sim
-  all` suite + `make -C tools check` per push/PR (architecture-review §4.2).
 
 ---
 
