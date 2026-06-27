@@ -73,10 +73,6 @@ This is a tracker, so it intentionally carries forward-looking/historical contex
 
 - **v1 `desktop.app` (ARM)** — blue fill + plane config + XL auto-start. *(src:
   former docs/TODO.txt, docs/video/video-architecture.md)*
-- **GP0 register re-partition + AXI-Lite decode rework + ARM driver** — clean device
-  decode (blitter/compositor/sprite/XL-control/ROM-loader) + ARM driver for
-  plane/sprite/window control. *(blocks adding register blocks; src: former docs/TODO.txt,
-  docs/video/video-architecture.md)*
 - **Sprite engine — refinements.** Core + the HW mouse cursor are done and on HW.
   Remaining: H/V flip + 2x exercised, palettised sprites, rotation (SW-first),
   collision-compositor (the set side is still tied to 0), and blitter→sprite-arena
@@ -360,6 +356,80 @@ This is a tracker, so it intentionally carries forward-looking/historical contex
   rather than one op at a time (the xtc backend targets it as a register machine).
   Same doorbell/mailbox as the GEM service; reuses the hwreg/CDC/GP0 plumbing.
   *(design ready, not built; src: docs/Design/math-coprocessor.md)*
+
+---
+
+## DSP56001 (Falcon DSP) in fabric (design option — gated on Falcon/m68k target)
+
+The Atari Falcon's Motorola **DSP56001** (24-bit, ~16 MIPS @ 32 MHz). Wanted if the
+Falcon becomes a target alongside the m68k. Conclusion of the design thread: build it
+**wide, in fabric** — *not* on the A9 and *not* serialised.
+
+- **Why fabric (not A9-emulated).** Both A9s are committed once Falcon is a target —
+  one runs GEM/graphics, the other the JIT 68030 ([[m68k_core_mmu_requirements]],
+  docs/MultiTasking/multitasking.md). No spare host for a Hatari-style DSP emulator, so
+  the "just emulate it" route (which would otherwise win on effort) is off the table.
+- **Loose coupling is the unlock.** The real Falcon Host Interface (HI) is an
+  **asynchronous mailbox** — the 68k uploads code/data, pokes a command, the DSP runs
+  independently on its own clock and replies through the same mailbox. So the fabric DSP
+  talks to the A9-JIT-68k through memory-mapped HI registers/FIFO **across a clock-domain
+  boundary, with no cycle-lockstep** (reuse the existing hwreg/CDC/GP0 plumbing, same as
+  the math coprocessor). The hardest coprocessor problem — keeping two engines in sync —
+  doesn't exist here by design.
+- **Microarchitecture: wide execute + multi-cycle *non-overlapped* decode.** Decouple
+  the **ISA-visible contract** (one emulated 56k instruction-cycle per "tick", which is
+  all the HI/SSI boundary + cycle-accuracy care about) from the **internal gate-level
+  timing** (as many fabric cycles, as deeply staged, as convenient):
+  - *Wide execute.* The 56k has only ~6–8 data-ALU registers (X1/X0/Y1/Y0/A/B) — make
+    them flip-flops → unlimited concurrent reads for free; replicate the two AGU adders;
+    give X and Y their own BRAMs (Harvard wants this anyway). The "many buses" become
+    wide combinational muxing in the **spare LUTs**. Bonus: doing the parallel moves
+    genuinely simultaneously makes the 56k's simultaneous-move semantics **bit-exact by
+    construction** — no operand-snapshot bookkeeping (which serialising would have forced).
+  - *Staged decode, one instruction in flight.* The dense 24-bit parallel-move encoding
+    needn't be one scary combinational step — stage it over 4–6 shallow fabric cycles.
+    With ~6–10× clock headroom over 16 MIPS, a **non-overlapped** multi-cycle FSM (only
+    one instruction in the machine at a time) still retires at real-time and has **zero
+    pipeline hazards** — no forwarding, no interlocks, no need to model the real 56k's own
+    pipeline restrictions. Stage purely for design simplicity + timing comfort, not speed.
+- **SDMA + connection matrix (crossbar) — required for audio compat.** Real Falcon DSP
+  audio almost never touches bulk memory directly: the **sound DMA streams blocks between
+  RAM and the DSP's SSI through the crossbar** (`$FFFF89xx` DMA-sound + matrix block), and
+  software runs an SSI-interrupt processing loop. So to run real binaries you need the
+  SDMA + crossbar **register models**, not just the HI. Well-aligned, reuse-heavy:
+  - The SDMA-equivalent is another HP-port AXI streamer — a sibling of the COVOX
+    `pokey_sample_dma` item — pushing/pulling a FIFO into the DSP SSI.
+  - The crossbar is a thin register-compatible mux over the audio-routing fabric already
+    being built (PCM1808 capture + codec + HDMI audio).
+  - **Coherency:** the SDMA reads/writes the DDR region holding *emulated Falcon RAM*,
+    which the A9-JIT-68k also touches → the usual PL↔PS shared-buffer coherency
+    (non-cached region / flush / ACP). Don't let it sneak up.
+  - **Pacing:** the SDMA→SSI→DSP→SSI→SDMA loop and the DSP's SSI interrupts run at the
+    **audio sample/frame rate**, not free-running.
+- **Two interfaces, opposite coupling.** To the 68k the DSP is **loosely** coupled (HI
+  mailbox, no lockstep, "upload and run"); to the audio subsystem it's **tightly** coupled
+  (SSI/SDMA/crossbar paced by the audio clock). So "runs independently" holds for *compute*
+  DSP use but not *streaming audio*, where it's a sample-paced interrupt loop. Clean
+  partition: **HI in the control/clock domain** (to the JIT-68k); **SSI + SDMA + crossbar
+  as an audio-clock-domain subsystem** next to the codec/PCM1808 fabric.
+- **Faithful-vs-turbo clock mode**, like the 6502: pace the tick to ~16 MIPS for
+  cycle-exact Falcon audio, or run faster for code that doesn't care. Lives next to the
+  audio fabric (SSI → PCM1808/codec clock domain).
+- **Resource / timing: not the constraint.** 24×24→56 MAC = 2–4 DSP48E1 of 220; X/Y/P
+  on-chip RAM + tables = a few BRAMs; decode/AGU/control = a few k LUTs. Fits the 7020
+  with room; ~zero fMax pressure (16 MIPS target). **Effort, not silicon, is the cost.**
+- **The genuine effort center (unchanged by any of the above): comprehension +
+  validation.** Transcribing every parallel-move format / addressing mode and the
+  bit-exact data ALU (56-bit extension, scaling, convergent rounding, saturation), plus
+  the HI + SSI peripheral models, bootstrap ROM, on-chip X/Y/P map, µ-law tables — then
+  proving it bit-exact. Staging makes the *gates* easy; it does **not** shrink the
+  spec-transcription work, where the months actually are.
+- **References, not blank-page:** **Suska** (experiment-s.de — open-source VHDL Falcon+,
+  crib the decode + bit-exact ALU) and **Hatari**'s `dsp.c` (mature, accurate Falcon DSP
+  emulator → golden co-sim model). Net risk profile: a *medium-complexity microcoded
+  coprocessor faithfully copying a well-documented spec*, not taming exotic silicon.
+- **Sequencing:** gated on the m68k JIT + Falcon target maturing; not near-term. *(design
+  option; no source doc yet — capture in a docs/Design/ note if it advances.)*
 
 ---
 
