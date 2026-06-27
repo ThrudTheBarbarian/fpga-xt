@@ -1,0 +1,66 @@
+# GEM desktop with live emulation windows + textured chrome
+
+Goal: boot to a GEM desktop showing icons (XL, later ST); double-click an icon
+opens a **moveable window whose content is the live emulation surface**. Replace
+today's stand-in skeleton windows with **blitter texture-mapped chrome** loaded
+from SD-card resources.
+
+## Architecture — the emulation surface is a hardware plane, not a blit
+
+The XL emulation is already a **compositor plane** (`plane_compositor`, 3 planes:
+desktop depth-0, drag-overlay depth-1, **XL depth-2**), with per-plane
+`origin_x/y`, `scale`, `depth`, and a `clip` rect — the compositor picks the
+front-most plane whose clip covers each output pixel. So a "live emulation window"
+is just: **the XL plane's origin/scale/clip = the GEM window's content rect.** The
+GEM window draws only the *chrome* (titlebar/border) on the desktop plane; the
+emulation shows through the content area via the HW plane. No per-frame copy.
+
+Today `origin/scale/clip` are derived in `fpga_xt_top` from the scale knob
+(`gp0_ctrl[3:1]`, auto-centered `(1920−320·s)/2`). Wiring-in = drive them from GP0
+so the A9/WM can point the plane at any rect.
+
+**z-order caveat:** a HW plane can't be occluded by a window drawn on the desktop
+plane (the XL plane is depth-2, above the desktop). For a single emulation window
+that's fine (it's effectively always-on-top within its clip). Multiple overlapping
+emulation windows, or a desktop window on top of the emulation, need either more
+planes or compositing the emulation into a backing store — out of scope for now.
+
+## What already exists (reuse, don't rebuild)
+
+- **Compositor**: positionable/scalable/clipped/z-ordered planes (`plane_compositor.sv`).
+- **XL plane**: runtime origin/scale/clip regs (`xl_org_x_r` … in `fpga_xt_top`).
+- **GP0 `0x5xx` block**: reserved "XL-CONTROL" (`hdl/xt_gp0_regs.sv`), generated map.
+- **AES**: event/form/menu/object/window (`gem/aes/`) + `aes_desktop_demo.c`.
+- **WM**: `gem_wm` — windows, drag, HW-sprite cursor, wallpaper-backed desktop.
+- **Blitter**: any-DDR `SRC_BLIT` coverage/texture blit (glyph path) + BLOCK_BLIT.
+- **PNG decode**: lodepng + the `screen.wallpaper` SD→DDR loader (`main.c`).
+
+## Milestones
+
+- **M1 — XL plane positionable via GP0 (RTL + GP0 + driver + Lua).** Add an
+  `0x5xx` XL-CONTROL reg set (origin_x, origin_y, scale, win_w, win_h, mode/enable);
+  decode in `xt_gp0_regs`; mux them into `xl_org_x_c`/etc. in `fpga_xt_top` (mode bit:
+  legacy-centered vs A9-positioned). Driver `xt_xl_window(...)` + Lua `xl_window(x,y,w,h,s)`.
+  **De-risk:** position the live XL emulation at an arbitrary rect on HW. Decision-free;
+  the keystone — build first.
+- **M2 — textured window chrome (A9, no RTL).** 9-slice chrome (corners + edges +
+  title fill + close/resize glyphs) from a PNG atlas on SD; loader (lodepng → a DDR
+  chrome surface, like the wallpaper); replace `gem_wm` `draw_frame`'s `vr_recfl`
+  skeleton with blitter blits of the 9 slices, stretched/tiled to the window rect.
+  **De-risk:** a window with real chrome instead of the blue-bar skeleton.
+- **M3 — live-surface GEM window.** A `gem_wm` window flavour backed by the XL plane
+  (not a DDR backing store): on open/move/resize the WM writes M1's regs (origin =
+  content-rect top-left, scale, clip = content rect); on close/hide, disable the plane.
+  Chrome from M2. **De-risk:** drag the XL emulation around in a real window.
+- **M4 — desktop at boot.** AES desktop with XL/ST icons (objects); double-click
+  (evnt_multi) → open the M3 window. Fix the **VDI-workstation leak** (direct `vdi.*`
+  after `wintest` draw into a window backing, not the desktop) so the desktop and its
+  icons render correctly. ST icon present but inert until the m68k host lands.
+
+## Open decisions (gate M2)
+
+1. **Chrome art source** — generate placeholder chrome PNGs procedurally (gradients +
+   simple corners) to unblock, or hand-authored art dropped on the SD?
+2. **Chrome model** — 9-slice (corners fixed, edges stretched/tiled, centre = content
+   hole) is the standard; confirm vs simple title-bar-only.
+3. **SD layout** — where the chrome atlas + icons live (e.g. `/OS/Theme/…`).
