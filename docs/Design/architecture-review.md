@@ -85,19 +85,29 @@ signals (NextSteps §6502, [[xt6502_clean_sheet]]). `pb_sally` already does this
 the floorplan investment worth making is exactly this one pblock, not a whole-design
 partition.
 
-### 1.5 fmax (120 MHz) is a pipelining problem, not a floorplan one
-Floorplan cannot buy back the fmax ceiling. The worst `clk_sally` path
-(`stack_mem → page_cache/state_q`, 12 levels, 9.5 ns) has its endpoints **already
-co-located in X0Y0** and is still 9.5 ns — logic-depth-bound, not route-bound; at
-120 MHz (8.33 ns) it is ≈ −1.2 ns. Reaching 120 needs **logic restructuring**,
-separately from determinism:
-- **clk_sally:** the page-cache state path (gates turbo; [[xt6502_clean_sheet]] —
-  treat carefully).
-- **clk_sys:** the ANTIC compositor `unit_idx → cmd_data` depth, and the blitter
-  `m_axi_araddr` address generation — the recovery loop fights it from −0.331 every
-  build; folding it onto the consolidated adder-based addr-gen is the real fix
-  ([[blitter_addrgen_consolidation]]). These are the genuine clk_sys levers, not
-  pblocks.
+### 1.5 The two long-poles (full-path review, 2026-06-27)
+Both binding paths are ~60% route, so the lever differs by *whether the route is a
+cross-region crossing (floorplan helps) or local congestion (logic restructure)*:
+
+- **clk_sys — GTIA/compositor colour-priority cone** (worst, +0.001, 14 levels):
+  `u_compositor/cur_mode → [compositor cmd_data logic] → u_gtia_regs cmd_data CARRY4
+  → missile_covers → col_presH_q`. **Both `u_compositor` and `u_gtia_regs` span
+  X0Y0 + X1Y0** — the cone crosses the X0↔X1 **column boundary**, which is the 60%
+  route. **Lever = floorplan: co-locate `u_compositor`+`u_gtia_regs` in one column**
+  to kill the crossing (RTL-free, the §1.3 "let floorplan localize it"). Pipelining
+  the col_presH cone is the fallback but it is the real-time pixel pipeline — a stage
+  shifts pixel timing, so try the co-location first.
+- **clk_sally — CPU memory loop** (+0.166–0.309, 11 levels): `sally_mem BRAM → IR/adl
+  /PC decode → page_cache tag-match (code_page_match) → state_q → data_flush_idx`.
+  Endpoints **already co-located in X0Y0** → the 60% route is *local congestion*, not
+  a crossing, so floorplan won't help. This is the registered-MAR/page-cache ceiling;
+  read-pipeline was tried & reverted ([[xt6502_clean_sheet]]). Residual levers:
+  page_cache RLOC + LUTRAM ZP/stack tiers — deep, treat carefully; gates 120 turbo.
+- **blitter `m_axi_araddr`** — was a clk_sys long-pole (+0.015, 12 CARRY4); **FIXED**
+  by the column-address accumulator (commit d8bc7a8): now +0.482.
+
+The RP fence (§1.4) and the clk_sally loop are the same `pb_sally` region — see
+docs/Design/partial-reconfig.md.
 
 **Effort:** incremental = low (done). RP-fence formalize = low. Pipelining = the real
 work, a dedicated fmax task. **Payoff:** determinism now (incremental), turbo later
