@@ -22,60 +22,86 @@ Diagnosis: the design is **one flat netlist placed fresh every build, with clk_s
 (133 MHz, the binding clock) closing at ~0 ns margin on paths scattered across the
 die**. Placement noise (±0.1–0.2 ns) then flips those paths positive/negative at
 random. The symptom is "the ANTIC compositor failed"; the disease is "no margin +
-no placement stability." Three cures, in increasing effort:
+no placement stability."
 
-1. **Floorplan (pblocks)** — localize placement so a change in one subsystem can't
-   move another.
-2. **Incremental implementation** — reuse P&R for untouched logic.
-3. **Pipeline the 2–3 genuinely-binding paths** — buy real margin so variance stops
-   mattering.
+**Measured 2026-06-27** (routed design; see §1 and docs/Design/floorplan.md): the
+disease is confirmed — clk_sys binds at **+0.019 ns** on
+`u_antic_top/u_compositor/unit_idx → cmd_data` (12 levels, 60% route; the original
+`pair_idx → col_presH` culprit has drifted), with the blitter `m_axi_araddr` paths a
+close second. Three candidate cures —
 
-This is the headline theme, and it pays a dividend we want anyway (Section 1.4).
+1. **Incremental implementation** — reuse P&R for untouched logic.
+2. **Floorplan (pblocks)** — localize placement so one subsystem can't move another.
+3. **Pipeline the 2–3 genuinely-binding paths** — buy real margin.
+
+— but once the data was in, the *ordering* changed (§1): lead with incremental,
+floorplan only the RP fence, and treat pipelining as a separate fmax task.
 
 ---
 
-## 1. Theme — build determinism: floorplan + incremental + pipeline
+## 1. Theme — build determinism: incremental first, RP-fence floorplan, then pipeline
 
-### 1.1 Floorplan the stable subsystems into pblocks
-Pin the big, stable blocks to regions:
-- **CPU + `sally_mem`** (the `clk_sally` critical loop: xt6502 + registered MAR +
-  read mux) — one pblock.
-- **ANTIC / GTIA / POKEY** legacy chiplets — one pblock.
-- **Video** (vbeam + plane_fetch ×N + plane_compositor + sprite_engine + writeback).
-- **PS-interface band** (GP0 regs, HP-port AXI logic, CDC) near the PS hard block.
+> **Revised 2026-06-27 from placement evidence.** This section originally led with a
+> full subsystem floorplan. Probing the routed design (and a validated incremental
+> build — data in docs/Design/floorplan.md) reordered it: the three cures address
+> *different* problems, and the data says lead with incremental, floorplan only the
+> RP fence, and treat fmax as a separate pipelining task.
 
-Payoff: editing the GP0 regs re-places only the PS band; the ANTIC compositor keeps
-its placement and its timing. The design already uses pblocks tactically (the sally
-pblock); this generalises that into a deliberate floorplan.
+### 1.1 Incremental implementation — the determinism cure (validated)
+Vivado incremental P&R (reference the last routed `.dcp`) pins unchanged logic to a
+known-good placement, so "an unrelated edit regressed a far path" cannot happen — and
+the build is far faster. Measured: a one-module edit rebuilt in **~4.5 min vs ~25**
+(100% cell / 99.95% net reuse) and the gate **reproduced** the reference timing
+(clk_sys +0.000 vs +0.019 fresh) instead of rolling fresh dice. Plumbed and usable:
+`INCR_REF_DCP=<routed.dcp> ./vivado/run-valhalla.sh bit`. **The single biggest
+determinism + quality-of-life win, at near-zero risk.**
 
-### 1.2 Incremental implementation
-Turn on Vivado incremental P&R (reference the last good `.dcp`). With pblocks, an
-edit to one module re-runs only that region → **~5-min, deterministic builds**
-instead of 35-min dice-rolls. Biggest single quality-of-life win in the whole review.
+### 1.2 A full subsystem floorplan is NOT worth it here
+The original plan (pin ANTIC / video / PS-band into their own pblocks) does not
+survive the placement data:
+- Everything is **deeply intermixed** — `u_antic_top`, `u_sprite_engine` and
+  `u_antic_writeback` each span all four populated clock regions; un-mixing them is
+  high churn against an already-working placement.
+- It's **BRAM-bound** (54% of 140 RAMB36, unevenly distributed across regions), so
+  the BRAM-heavy blocks can't be freely relocated.
+- **Incremental overrides pblocks anyway** — the incremental run reported *"Pblock
+  constraints were ignored for 101 of 14267 cells because the Pblock boundaries
+  conflict with the reused placement"*. Reuse wins, so elaborate pblocks become
+  partly fiction once incremental is on.
 
-### 1.3 Pipeline the binding paths (surgical)
-Two paths actually set the clk_sys/clk_sally ceiling:
-- **ANTIC compositor** `pair_idx → col_presH` (13 levels, route-dominated). Either
-  add a pipeline stage (split the 13 levels) or — since it's 58% routing — let the
-  floorplan localize it. Try floorplan first; pipeline if needed.
-- **CPU ↔ `sally_mem` read mux** (the registered-MAR ceiling, [[xt6502_clean_sheet]]).
-  Known territory; treat carefully (it gates turbo).
+Keep the two tactical pblocks (`pb_sally`, `pb_blitter`); do **not** add
+`pb_antic`/`pb_video`.
 
-Margin is what makes placer variance a non-event. Even +0.3 ns turns "every build is
-a gamble" into "every build closes."
+### 1.3 Floorplan only the sally loop — as the RP fence (§1.4)
+The one durable reason to floorplan is the partial-reconfig fence, and that needs
+only the `clk_sally` loop pinned. `pb_sally` already contains it (measured: 2 of 2611
+leaf cells stray), so the fence is ~free to formalize.
 
-### 1.4 The through-line: floorplan **is** the partial-reconfig substrate
+### 1.4 The RP fence is the sally pblock (unchanged)
 The CPU+`sally_mem` pblock is exactly the **Reconfigurable Partition** the dual-CPU
-swap needs. The fidelity-core analysis (NextSteps §6502) already found PR is only
-fMax-neutral if the RP **contains the entire `clk_sally` critical loop** (CPU +
-registered MAR + read mux) so the partition boundary carries only slow signals.
-So when we floorplan that loop for build-determinism, we're drawing the RP fence.
-**One investment → deterministic builds now + the turbo↔fidelity↔m68k cold-swap
-(desktop/video staying live) later.** This is the strongest reason to do the
-floorplan properly rather than as a one-off patch.
+swap needs. PR is fMax-neutral only if the RP **contains the entire `clk_sally`
+critical loop** (CPU + registered MAR + read mux) so the boundary carries only slow
+signals (NextSteps §6502, [[xt6502_clean_sheet]]). `pb_sally` already does this — so
+the floorplan investment worth making is exactly this one pblock, not a whole-design
+partition.
 
-**Effort:** medium-high. **Payoff:** the highest in the review — it compounds on
-every future change and unblocks a known long-term goal.
+### 1.5 fmax (120 MHz) is a pipelining problem, not a floorplan one
+Floorplan cannot buy back the fmax ceiling. The worst `clk_sally` path
+(`stack_mem → page_cache/state_q`, 12 levels, 9.5 ns) has its endpoints **already
+co-located in X0Y0** and is still 9.5 ns — logic-depth-bound, not route-bound; at
+120 MHz (8.33 ns) it is ≈ −1.2 ns. Reaching 120 needs **logic restructuring**,
+separately from determinism:
+- **clk_sally:** the page-cache state path (gates turbo; [[xt6502_clean_sheet]] —
+  treat carefully).
+- **clk_sys:** the ANTIC compositor `unit_idx → cmd_data` depth, and the blitter
+  `m_axi_araddr` address generation — the recovery loop fights it from −0.331 every
+  build; folding it onto the consolidated adder-based addr-gen is the real fix
+  ([[blitter_addrgen_consolidation]]). These are the genuine clk_sys levers, not
+  pblocks.
+
+**Effort:** incremental = low (done). RP-fence formalize = low. Pipelining = the real
+work, a dedicated fmax task. **Payoff:** determinism now (incremental), turbo later
+(pipelining) — decoupled, which is the correction to the original §1.
 
 ---
 
@@ -154,9 +180,9 @@ power-cycle, not after.
 
 The video path (plane_fetch ×N + compositor + writeback + sprite + overlay) grew
 organically and **works well on HW** (the display-artifact + cursor fixes landed). The
-ANTIC compositor being the binding path is better addressed by **pipelining/floorplan
-(Section 1)** than by a rearchitect. Recommendation: **do not rearchitect working
-video**; only revisit if Section 1 can't tame its path. Listed for completeness.
+ANTIC compositor being the binding path is better addressed by **pipelining its depth
+(§1.5)** than by a rearchitect. Recommendation: **do not rearchitect working video**;
+only revisit if §1.5 can't tame its path. Listed for completeness.
 
 ---
 
@@ -165,29 +191,35 @@ video**; only revisit if Section 1 can't tame its path. Listed for completeness.
 Front-load the cheap enablers (they make the big work safer), then the structural cure,
 then the quality-of-life track:
 
-1. **CI + timing gate + the sim suite** (§4.2) — cheap, immediate, makes every later
-   step safe to land. Fix the standing SRC_BLIT red while here.
-2. **CDC library + lint** (§2) — cheap, retires the most expensive recurring bug.
-3. **Floorplan + incremental implementation** (§1.1–1.2) — the headline determinism
-   cure; deterministic ~5-min builds; lays the PR fence (§1.4).
-4. **Pipeline the binding paths** (§1.3) only if floorplan alone doesn't give margin.
-5. **Generated register map** (§4.1) — once the map next needs to grow.
-6. **Selective ACP coherency** (§3.1) — evaluate on the GEM/desktop surfaces.
-7. **(Deferred)** memory-hierarchy rethink (§3.2), video rearchitect (§5).
+1. **CI + timing gate + the sim suite** (§4.2) — ✓ landed (GH Actions + Vivado WNS gate).
+2. **CDC library + lint** (§2) — ✓ landed.
+3. **Generated register map** (§4.1) — ✓ landed (HW-validated).
+4. **Incremental implementation** (§1.1) — ✓ plumbed + validated; the determinism cure
+   (~4.5-min reuse builds, deterministic timing).
+5. **Formalize `pb_sally` as the RP fence** (§1.3–1.4) — cheap; the *only* floorplan
+   worth doing (a full subsystem floorplan was evaluated and rejected, §1.2).
+6. **Pipeline the binding paths** (§1.5) — the real fmax/120 MHz task: clk_sally
+   page-cache path + clk_sys ANTIC-compositor depth + blitter `m_axi_araddr` addr-gen.
+7. **Selective ACP coherency** (§3.1) — evaluate on the GEM/desktop surfaces.
+8. **(Deferred)** memory-hierarchy rethink (§3.2), video rearchitect (§5).
 
-If only one thing gets done: **#3 (floorplan + incremental)** — it pays back on every
-future change and is the dual-CPU-PR foundation.
+If only one thing gets done: **#4 (incremental implementation)** — the biggest
+determinism + speed win at near-zero risk. (The original "do the big floorplan"
+recommendation is **retired** — see §1.2.)
 
 ## 7. Explicitly NOT now (scope discipline)
 
 - Don't rewrite the working video pipeline (§5).
+- Don't add a full subsystem floorplan (`pb_antic`/`pb_video`) — evaluated and
+  rejected (§1.2); incremental + the sally RP-fence is the play.
 - Don't ACP the high-bandwidth video (keep it on HP).
 - Don't let "tock" become "rewrite v1" — the goal is *cost-of-change*, not novelty.
 
 ---
 
 ## Through-lines (the reasons these compound)
-- **Floorplan once → build-determinism now + PR CPU-swap substrate later** (§1.4).
+- **Incremental P&R → build-determinism now; `pb_sally` → the PR CPU-swap substrate
+  later** (§1.1, §1.4). fmax/120 is a separate pipelining task (§1.5).
 - **CDC library → the row-128 / cursor-flicker bug class never returns** (§2).
 - **CI timing-gate → the "−0.185 surprise" becomes a red check, not a flashed board** (§4.2).
 - **Generated map + SSoT → no more hand-mirroring RTL↔C drift** (§4.1).

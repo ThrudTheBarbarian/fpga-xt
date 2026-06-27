@@ -32,14 +32,18 @@ build host needed):
   check` per push/PR. Build-side **timing gate** (`vivado/scripts/timing_gate.tcl`)
   + `report_cdc` wired into `build.tcl`: aborts before `write_bitstream` on negative
   WNS (override `TIMING_GATE_ALLOW_NEG=1`).
-- **§1.2 Incremental impl** — opt-in `INCR_REF_DCP` plumbed into `build.tcl`.
+- **§1.1 Incremental P&R** — plumbed (`INCR_REF_DCP` in `build.tcl` + `run-valhalla.sh`)
+  and **validated on the routed design**: a one-module edit rebuilt in ~4.5 min vs ~25
+  (100% cell reuse) and reproduced the reference timing. This is the determinism cure.
 
-Remaining (build-host / Vivado iteration — see `docs/Design/floorplan.md`):
-- **§1.1 Floorplan** — generalize `pblock_sally`/`pblock_blitter` into `pb_antic`,
-  `pb_video`, PS-band pblocks (derive clock-region ranges from a placed run; don't
-  guess). `pb_sally` doubles as the partial-reconfig RP fence (§1.4, [[6502 §]]).
-- **§1.3 Pipeline** the ANTIC `pair_idx → col_presH` / CPU read-mux paths only if
-  floorplan can't buy the margin.
+Floorplan review outcome (evidence in `docs/Design/floorplan.md`, architecture-review §1):
+- **A full subsystem floorplan (`pb_antic`/`pb_video`) was evaluated and REJECTED** —
+  blocks are deeply intermixed + BRAM-bound, and incremental reuse overrides pblocks
+  anyway. Keep only `pb_sally`/`pb_blitter`; formalize `pb_sally` as the PR RP fence.
+- **§1.5 Pipeline (the real fmax/120 task)** — clk_sally is logic-depth-bound
+  (`stack_mem → page_cache/state_q`, 12 levels, cells already co-located), so floorplan
+  can't reach 120; needs logic restructuring. clk_sys levers: ANTIC compositor
+  `unit_idx → cmd_data` depth + blitter `m_axi_araddr` addr-gen ([[blitter_addrgen]]).
 - **§3.1 ACP coherency** (evaluate on GEM/desktop surfaces), **§3.2** SALLY mem
   hierarchy → 120 MHz, **§3.3** HP-port budget doc — all deferred.
 - **SRC_BLIT red** (below) — a sim-model gap in a non-gating diagnostic, not on the
