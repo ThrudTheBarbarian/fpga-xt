@@ -3,8 +3,7 @@
 > **Status: design note, pinned for board layout.** Sibling to
 > [`expansion-options.md`](expansion-options.md); same philosophy (faithful 1× bus on the
 > outside, byte-level over a fast internal link). This is the truth for the SIO
-> port and the companion MCU — `docs/carrier/*` is an abandoned experiment, not
-> authoritative.
+> port and the companion MCU.
 
 ## 1. Roles
 

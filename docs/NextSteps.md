@@ -81,8 +81,7 @@ Remaining (build-host / Vivado iteration — see `docs/Design/floorplan.md`):
   3.072 MHz) and LRCK (÷256 = 48 kHz) from that *same* domain so SCKI/BCK/LRCK stay
   synchronous (else the ADC resync-mutes). Make that 12.288 MHz MMCM the single root
   for the SiI9022 BCLK/LRCLK too, so capture and playback are sample-locked. *(src:
-  docs/OS/pcm1808-audio-in.svg, docs/carrier/01-architecture.md "Root PCM1808 clocks
-  on FPGA SCKI")*
+  docs/OS/pcm1808-audio-in.svg)*
 - **Repoint `pcm1808_rx.sv` off `clk_bus`** — today it derives BCK/LRCK from
   `clk_bus` (fractional-N); move them to the 12.288 MHz MMCM dividers. Fix the stale
   header comments ("slave mode, no SCKI", "FMT0=0,FMT1=0" — PCM1808 has one FMT pin;
@@ -163,7 +162,7 @@ Remaining (build-host / Vivado iteration — see `docs/Design/floorplan.md`):
   targets the RP2354. Decide COMMAND treatment (dedicated GPIO vs SPI status byte) and
   SERIN-IRQ pacing policy. *(src: docs/OS/sio-bridge.md)*
 - **Retire PCAL9722 joystick RTL** — remove `joy_link.sv`/`joy_bridge.sv`; fold joy/
-  button fields into the peri SPI register map. *(src: docs/carrier/01-architecture.md)*
+  button fields into the peri SPI register map. *(src: docs/OS/sio-bridge.md)*
 - **PBI bridge (build steps 1-7)** — plumb M-PBI outputs to pads → bidir `D[7:0]`
   IOBUF → `/CARDSEL` decode → input syncs (/IRQ,/RDY,/HALT,/RST) → 1× bus-window FSM
   → `/MPD` shadow mux ($D800-$DFFF) → `pbi_active` dynamic slowdown. Blockers to
@@ -478,13 +477,3 @@ Falcon becomes a target alongside the m68k. Conclusion of the design thread: bui
 - **End-of-frame VCOUNT anomaly** — one-cycle `$83`/`$9C` VCOUNT transient on the last
   line. *(cosmetic; deferred; src: docs/Altirra/altirra-antic-audit.md)*
 
----
-
-## Carrier board (stale — revive before actioning)
-
-`docs/carrier/*` is an abandoned PCB-gen experiment and is **not authoritative**. If
-the carrier is revived, the open layout TODOs there (expansion-header pinout, CN1/CN2
-ball maps + XDC, PBI /CAS//RAS NC decision, SPI CS 3-vs-5-wire, placeholder symbol pin
-numbers, custom PBI edge-finger PcbLib) would need finishing. The two genuinely-current
-RTL/firmware items from that dir are captured above (retire PCAL9722 joy RTL; root
-PCM1808 clocks on FPGA SCKI).
