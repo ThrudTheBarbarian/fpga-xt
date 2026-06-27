@@ -40,6 +40,17 @@ static gfx_surface g_desk = {
     .w = DESK_W, .h = DESK_H, .stride = DESK_STRIDE,
     .px = (uint32_t *)(uintptr_t)DESK_BASE,
 };
+
+/* Persistent desktop wallpaper backdrop, captured once from the live plane (the
+ * boot wallpaper) so the WM can erase windows TO it instead of a solid fill.
+ * Lives in the free DDR gap between DRAG_END (0x33000000) and SPR_ARENA
+ * (0x34000000) — 16 MB, holds the ~8.8 MB desk-sized surface. */
+#define WALLPAPER_BASE 0x33000000u
+static gfx_surface g_wallpaper = {
+    .w = DESK_W, .h = DESK_H, .stride = DESK_STRIDE,
+    .px = (uint32_t *)(uintptr_t)WALLPAPER_BASE,
+};
+static int g_wallpaper_captured = 0;
 static int        g_vh  = 0;         /* VDI virtual workstation handle (0 = down) */
 static font_face *g_sys = NULL;      /* loaded system font (id 1)                 */
 static gem_wm     g_wm;              /* backing-store window manager (lazy init)  */
@@ -277,6 +288,14 @@ static int l_vdi_wintest(lua_State *L)
         gem_wm_init(&g_wm, &g_desk, GFX_RGB(0x20, 0x60, 0x90));
         gem_wm_set_font(&g_wm, g_sys);
         g_wm.no_cursor = 1;          /* the A9 owns the pointer (HW sprite, below) */
+        /* Snapshot the live plane (the boot wallpaper) into the persistent
+         * backdrop ONCE — before any window is drawn — then back the WM with it
+         * so windows erase to the wallpaper, not a solid blue fill. */
+        if (!g_wallpaper_captured) {
+            gfx_blit(&g_wallpaper, 0, 0, &g_desk, 0, 0, DESK_W, DESK_H);
+            g_wallpaper_captured = 1;
+        }
+        gem_wm_set_wallpaper(&g_wm, &g_wallpaper);
         g_wm_up = 1;
         cur_init();                  /* bring up the hardware-sprite cursor */
     }

@@ -45,7 +45,10 @@ typedef enum {
 
 typedef struct {
     gfx_surface *desk;                 // the single live desktop surface
-    uint32_t     desktop_color;
+    uint32_t     desktop_color;        // background fill when no wallpaper is set
+    gfx_surface *wallpaper;            // optional desktop backdrop (desk-sized); when
+                                       // set, windows erase TO it (copy) instead of
+                                       // a solid desktop_color fill.  NULL = solid.
     int          desk_vh;              // VDI workstation on the desktop (frames + blits)
     font_face   *title_face;           // window-title face (NULL = no titles)
     font        *title_font;           // that face sized for the title bar
@@ -65,6 +68,9 @@ typedef struct {
 
 // init also brings up the VDI on the desktop surface (vdi_init).
 void        gem_wm_init(gem_wm *wm, gfx_surface *desk, uint32_t desktop_color);
+// Set a desktop backdrop (desk-sized).  Windows then erase to it instead of the
+// solid desktop_color.  Pass NULL to revert to the solid fill.
+void        gem_wm_set_wallpaper(gem_wm *wm, gfx_surface *wallpaper);
 
 // Set the title face (also becomes the VDI default text face).  NULL disables
 // title text.  The WM does not own the face; the caller closes it.

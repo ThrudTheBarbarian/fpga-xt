@@ -195,12 +195,18 @@ void gfx_blit(gfx_surface *dst, int dx, int dy,
         return;
     }
 
-    // Software copy (tiny).
+    // Software copy (tiny rects, or any non-zero source offset the HW block-blit
+    // can't barrel-shift — e.g. the WM erasing a damage rect FROM the wallpaper).
+    // Cache-coherent: the source may be a blitter-written DDR surface (the
+    // wallpaper is filled by the HW block-blit above), so invalidate it before
+    // the CPU reads, and flush the dest after so the compositor/blitter sees it.
+    surface_flush_rect(src, sx, sy, w, h);     /* invalidate source (read fresh DDR) */
     for (int row = 0; row < h; row++) {
         const uint32_t *sp = src->px + (size_t)(sy + row) * src->stride + sx;
         uint32_t       *dp = dst->px + (size_t)(dy + row) * dst->stride + dx;
         memcpy(dp, sp, (size_t)w * sizeof(uint32_t));
     }
+    surface_flush_rect(dst, dx, dy, w, h);     /* push dest writes to DDR */
 }
 
 void gfx_line(gfx_surface *s, int x0, int y0, int x1, int y1, uint32_t rgba) {

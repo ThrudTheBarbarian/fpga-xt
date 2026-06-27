@@ -41,6 +41,7 @@ static void recompute_content(gem_window *win) {
 void gem_wm_init(gem_wm *wm, gfx_surface *desk, uint32_t desktop_color) {
     wm->desk          = desk;
     wm->desktop_color = desktop_color;
+    wm->wallpaper     = NULL;
     wm->nwin          = 0;
     wm->mx = wm->my   = 0;
     wm->drag_slot     = -1;
@@ -258,8 +259,22 @@ static void draw_pointer(gem_wm *wm) {
     }
 }
 
+void gem_wm_set_wallpaper(gem_wm *wm, gfx_surface *wallpaper) {
+    wm->wallpaper = wallpaper;
+}
+
+// Erase a desktop rect back to the backdrop: copy from the wallpaper (desk-sized,
+// same coords) when one is set, else a solid desktop_color fill.  This is what
+// keeps the textured background visible instead of painting it solid blue.
+static void wm_erase(gem_wm *wm, int x, int y, int w, int h) {
+    if (wm->wallpaper)
+        gfx_blit(wm->desk, x, y, wm->wallpaper, x, y, w, h);
+    else
+        gfx_fill_rect(wm->desk, x, y, w, h, wm->desktop_color);
+}
+
 void gem_wm_draw(gem_wm *wm) {
-    gfx_fill_rect(wm->desk, 0, 0, wm->desk->w, wm->desk->h, wm->desktop_color);
+    wm_erase(wm, 0, 0, wm->desk->w, wm->desk->h);
     for (int k = 0; k < wm->nwin; k++) {             // bottom..top
         gem_window *win = &wm->win[wm->z[k]];
         if (!win->used) continue;
@@ -287,7 +302,7 @@ void gem_wm_draw_rect(gem_wm *wm, int x0, int y0, int x1, int y1) {
     if (x1 > wm->desk->w - 1) x1 = wm->desk->w - 1;
     if (y1 > wm->desk->h - 1) y1 = wm->desk->h - 1;
     if (x1 < x0 || y1 < y0) return;
-    gfx_fill_rect(wm->desk, x0, y0, x1 - x0 + 1, y1 - y0 + 1, wm->desktop_color);
+    wm_erase(wm, x0, y0, x1 - x0 + 1, y1 - y0 + 1);
     int16_t clip[4] = { (int16_t)x0, (int16_t)y0, (int16_t)x1, (int16_t)y1 };
     vs_clip(wm->desk_vh, 1, clip);
     for (int k = 0; k < wm->nwin; k++) {             // bottom..top
