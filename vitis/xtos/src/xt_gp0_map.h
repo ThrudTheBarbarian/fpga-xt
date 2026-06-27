@@ -13,6 +13,7 @@
  *   0x200  COMP        drag-overlay config (A9-only, whole 32-bit words)
  *   0x300  CTRL        control plane (gp0_ctrl, SALLY speed, XT unlock, keyboard inject)
  *   0x400  DIAG        PL diagnostic words (A9-only, read-only, word-aligned)
+ *   0x500  XLCTL       XL compositor-plane window placement (A9-positioned emulation window)
  */
 #ifndef XT_GP0_MAP_H_
 #define XT_GP0_MAP_H_
@@ -27,6 +28,7 @@
 #define XT_BLK_COMP      (XT_GP0_BASE + 0x200u)
 #define XT_BLK_CTRL      (XT_GP0_BASE + 0x300u)
 #define XT_BLK_DIAG      (XT_GP0_BASE + 0x400u)
+#define XT_BLK_XLCTL     (XT_GP0_BASE + 0x500u)
 
 /* ---- BLITTER block --------------------------------------------------- */
 /*   0x00..0x18  W  blitter registers DST/PAT/CMD/SRC/FLAGS (bl_addr = offset); see blitter.h XT_BL_* */
@@ -62,5 +64,13 @@
 #define XT_DIAG5             (XT_BLK_DIAG + 0x10u)        /* R HP0 (desktop) first-AR address */
 #define XT_DIAG6             (XT_BLK_DIAG + 0x14u)        /* R HP2 read-probe status */
 #define XT_DIAG7             (XT_BLK_DIAG + 0x18u)        /* R HP2 read-probe last rdata */
+
+/* ---- XLCTL block --------------------------------------------------- */
+#define XT_XL_WIN_X          (XT_BLK_XLCTL + 0x00u)       /* W plane origin X on screen (12-bit) */
+#define XT_XL_WIN_Y          (XT_BLK_XLCTL + 0x04u)       /* W plane origin Y on screen (12-bit) */
+#define XT_XL_WIN_W          (XT_BLK_XLCTL + 0x08u)       /* W clip width  (12-bit; clip_x1 = X + W) */
+#define XT_XL_WIN_H          (XT_BLK_XLCTL + 0x0Cu)       /* W clip height (12-bit; clip_y1 = Y + H) */
+#define XT_XL_WIN_SCALE      (XT_BLK_XLCTL + 0x10u)       /* W integer scale 1..5 */
+#define XT_XL_WIN_EN         (XT_BLK_XLCTL + 0x14u)       /* W [0]=1: use these regs (A9-positioned); 0: legacy gp0_ctrl-scale centred */
 
 #endif /* XT_GP0_MAP_H_ */

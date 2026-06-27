@@ -66,3 +66,16 @@ PL diagnostic words (A9-only, read-only, word-aligned)
 | 0x10 | R | 32 | `XT_DIAG5` | `DIAG5` | HP0 (desktop) first-AR address |
 | 0x14 | R | 32 | `XT_DIAG6` | `DIAG6` | HP2 read-probe status |
 | 0x18 | R | 32 | `XT_DIAG7` | `DIAG7` | HP2 read-probe last rdata |
+
+## 0x500 — XLCTL  (`XT_BLK_XLCTL`)
+
+XL compositor-plane window placement (A9-positioned emulation window)
+
+| Offset | Acc | Width | C macro | SV | Meaning |
+|--------|-----|-------|---------|----|---------|
+| 0x00 | W | 12 | `XT_XL_WIN_X` | `XL_WIN_X` | plane origin X on screen (12-bit) |
+| 0x04 | W | 12 | `XT_XL_WIN_Y` | `XL_WIN_Y` | plane origin Y on screen (12-bit) |
+| 0x08 | W | 12 | `XT_XL_WIN_W` | `XL_WIN_W` | clip width  (12-bit; clip_x1 = X + W) |
+| 0x0C | W | 12 | `XT_XL_WIN_H` | `XL_WIN_H` | clip height (12-bit; clip_y1 = Y + H) |
+| 0x10 | W | 3 | `XT_XL_WIN_SCALE` | `XL_WIN_SCALE` | integer scale 1..5 |
+| 0x14 | W | 1 | `XT_XL_WIN_EN` | `XL_WIN_EN` | [0]=1: use these regs (A9-positioned); 0: legacy gp0_ctrl-scale centred |

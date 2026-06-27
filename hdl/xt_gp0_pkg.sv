@@ -13,6 +13,7 @@ package xt_gp0_pkg;
     localparam logic [3:0] BLK_COMP     = 4'h2;  // 0x200  COMP
     localparam logic [3:0] BLK_CTRL     = 4'h3;  // 0x300  CTRL
     localparam logic [3:0] BLK_DIAG     = 4'h4;  // 0x400  DIAG
+    localparam logic [3:0] BLK_XLCTL    = 4'h5;  // 0x500  XLCTL
 
     // ---- register offsets = addr[7:0] (per block) ----
     // BLITTER
@@ -47,6 +48,13 @@ package xt_gp0_pkg;
     localparam logic [7:0] DIAG5            = 8'h10;  // R HP0 (desktop) first-AR address
     localparam logic [7:0] DIAG6            = 8'h14;  // R HP2 read-probe status
     localparam logic [7:0] DIAG7            = 8'h18;  // R HP2 read-probe last rdata
+    // XLCTL
+    localparam logic [7:0] XL_WIN_X         = 8'h00;  // W plane origin X on screen (12-bit)
+    localparam logic [7:0] XL_WIN_Y         = 8'h04;  // W plane origin Y on screen (12-bit)
+    localparam logic [7:0] XL_WIN_W         = 8'h08;  // W clip width  (12-bit; clip_x1 = X + W)
+    localparam logic [7:0] XL_WIN_H         = 8'h0C;  // W clip height (12-bit; clip_y1 = Y + H)
+    localparam logic [7:0] XL_WIN_SCALE     = 8'h10;  // W integer scale 1..5
+    localparam logic [7:0] XL_WIN_EN        = 8'h14;  // W [0]=1: use these regs (A9-positioned); 0: legacy gp0_ctrl-scale centred
 
 endpackage
 `endif

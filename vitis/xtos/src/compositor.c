@@ -30,3 +30,18 @@ void xt_overlay_disable(void)
 {
     Xil_Out32(XT_OVL_EN, 0u);              /* disable + commit */
 }
+
+void xt_xl_window(uint16_t x, uint16_t y, uint16_t w, uint16_t h, uint8_t scale)
+{
+    Xil_Out32(XT_XL_WIN_X,     (uint32_t)(x & 0x0FFFu));
+    Xil_Out32(XT_XL_WIN_Y,     (uint32_t)(y & 0x0FFFu));
+    Xil_Out32(XT_XL_WIN_W,     (uint32_t)(w & 0x0FFFu));
+    Xil_Out32(XT_XL_WIN_H,     (uint32_t)(h & 0x0FFFu));
+    Xil_Out32(XT_XL_WIN_SCALE, (uint32_t)(scale & 0x7u));
+    Xil_Out32(XT_XL_WIN_EN,    1u);        /* EN write commits the whole rect */
+}
+
+void xt_xl_window_off(void)
+{
+    Xil_Out32(XT_XL_WIN_EN, 0u);           /* revert to legacy centred placement */
+}

@@ -29,4 +29,12 @@ void xt_overlay_enable(uint32_t base, uint16_t x, uint16_t y, uint16_t w, uint16
 void xt_overlay_move(uint16_t x, uint16_t y);   /* re-position only (keeps enabled) */
 void xt_overlay_disable(void);
 
+/* XL emulation plane placement (GP0 XLCTL block).  Position the live XL plane at an
+ * arbitrary on-screen rect (origin x,y; integer scale; clip = the w*h content rect)
+ * — the basis for hosting the emulation surface inside a GEM window.  The EN write
+ * commits the whole rect (PL adopts it via a clk_pix CDC).  xt_xl_window_off()
+ * reverts to the legacy gp0_ctrl-scale centred placement. */
+void xt_xl_window(uint16_t x, uint16_t y, uint16_t w, uint16_t h, uint8_t scale);
+void xt_xl_window_off(void);
+
 #endif /* COMPOSITOR_H_ */

@@ -420,6 +420,25 @@ static int l_screen_wallpaper(lua_State *L)
     return 1;
 }
 
+/* screen.xlwindow(x, y, w, h [, scale]) — place the live XL emulation plane at an
+ * on-screen rect (origin x,y; clip = w*h; integer scale, default 4).  Basis for the
+ * emulation-in-a-GEM-window; call with no args / screen.xloff() to revert. */
+static int l_screen_xlwindow(lua_State *L)
+{
+    int x = (int)luaL_checkinteger(L, 1), y = (int)luaL_checkinteger(L, 2);
+    int w = (int)luaL_checkinteger(L, 3), h = (int)luaL_checkinteger(L, 4);
+    int s = (lua_gettop(L) >= 5) ? (int)luaL_checkinteger(L, 5) : 4;
+    xt_xl_window((uint16_t)x, (uint16_t)y, (uint16_t)w, (uint16_t)h, (uint8_t)s);
+    return 0;
+}
+
+static int l_screen_xloff(lua_State *L)   /* revert to legacy centred placement */
+{
+    (void)L;
+    xt_xl_window_off();
+    return 0;
+}
+
 /* Clear the desktop plane to black + select the compositor (gp0_ctrl bit0=0).
  * Run once at repl_task start (scheduler up, well past the early-boot DDR window
  * that used to reset-loop), BEFORE boot scripts so they paint a clean field. */
@@ -450,6 +469,8 @@ static void lua_init(void)
         {"rect",      l_screen_rect},
         {"size",      l_screen_size},
         {"wallpaper", l_screen_wallpaper},
+        {"xlwindow",  l_screen_xlwindow},
+        {"xloff",     l_screen_xloff},
         {NULL, NULL}
     };
     luaL_newlib(g_L, screen_lib);

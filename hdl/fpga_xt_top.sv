@@ -1312,11 +1312,21 @@ module fpga_xt_top (
     reg  [11:0] xl_org_x_r = 12'(XL_ORIGIN_X), xl_org_y_r = 12'(XL_ORIGIN_Y);
     reg  [11:0] xl_clx1_r  = 12'(XL_CLIP_X1),  xl_cly1_r  = 12'(XL_CLIP_Y1);
     always_ff @(posedge clk_pix) begin
-        xl_scale_q <= xl_scale_c;
-        xl_org_x_r <= xl_org_x_c;
-        xl_org_y_r <= xl_org_y_c;
-        xl_clx1_r  <= xl_org_x_c + xl_win_w_c;
-        xl_cly1_r  <= xl_org_y_c + xl_win_h_c;
+        if (xl_win_en_p) begin
+            // A9-positioned emulation window: origin/scale/clip from the GP0 rect.
+            xl_scale_q <= (xl_win_scale_p == 3'd0) ? 3'd1 : xl_win_scale_p;
+            xl_org_x_r <= xl_win_x_p;
+            xl_org_y_r <= xl_win_y_p;
+            xl_clx1_r  <= xl_win_x_p + xl_win_w_p;
+            xl_cly1_r  <= xl_win_y_p + xl_win_h_p;
+        end else begin
+            // Legacy: gp0_ctrl-scale, centred (pillarbox).
+            xl_scale_q <= xl_scale_c;
+            xl_org_x_r <= xl_org_x_c;
+            xl_org_y_r <= xl_org_y_c;
+            xl_clx1_r  <= xl_org_x_c + xl_win_w_c;
+            xl_cly1_r  <= xl_org_y_c + xl_win_h_c;
+        end
     end
 
     // Scaled vertical prefetch (deferred from phase 1b-ii): plane_fetch needs
@@ -1557,6 +1567,31 @@ module fpga_xt_top (
     wire [31:0] overlay_base;
     wire [11:0] overlay_x, overlay_y, overlay_w, overlay_h;
     wire        overlay_en, overlay_commit;
+
+    // XL compositor-plane window placement (clk_sys), from u_axi_bridge (0x5xx).
+    // xl_win_en=1 -> A9 positions the XL plane at this rect (GEM emulation window);
+    // xl_win_en=0 -> legacy gp0_ctrl-scale centred placement below.
+    wire [11:0] xl_win_x, xl_win_y, xl_win_w, xl_win_h;
+    wire [2:0]  xl_win_scale;
+    wire        xl_win_en;
+    wire        xl_win_we;          // commit strobe (clk_sys)
+    // Cross the XL-window rect to clk_pix on the commit strobe — multi-bit, so a
+    // data+toggle transfer (cdc_flag_data), never a free-running 2-FF bus sync.
+    wire [51:0] xl_win_pix;         // {x[12],y[12],w[12],h[12],scale[3],en[1]}
+    cdc_flag_data #(.WIDTH(52)) u_xlwin_cdc (
+        .src_clk  (clk_sys),
+        .src_data ({xl_win_x, xl_win_y, xl_win_w, xl_win_h, xl_win_scale, xl_win_en}),
+        .src_valid(xl_win_we),
+        .dst_clk  (clk_pix),
+        .dst_data (xl_win_pix),
+        .dst_valid()
+    );
+    wire [11:0] xl_win_x_p     = xl_win_pix[51:40];
+    wire [11:0] xl_win_y_p     = xl_win_pix[39:28];
+    wire [11:0] xl_win_w_p     = xl_win_pix[27:16];
+    wire [11:0] xl_win_h_p     = xl_win_pix[15:4];
+    wire [2:0]  xl_win_scale_p = xl_win_pix[3:1];
+    wire        xl_win_en_p    = xl_win_pix[0];
     (* ASYNC_REG = "TRUE" *) reg [1:0] tp_en_sync = 2'b11;
     always_ff @(posedge clk_pix) tp_en_sync <= {tp_en_sync[0], gp0_ctrl[0]};
     wire test_pattern_pix = tp_en_sync[1];
@@ -2326,7 +2361,14 @@ module fpga_xt_top (
         .overlay_w       (overlay_w),
         .overlay_h       (overlay_h),
         .overlay_en      (overlay_en),
-        .overlay_commit  (overlay_commit)
+        .overlay_commit  (overlay_commit),
+        .xl_win_x        (xl_win_x),         // XL plane window placement (0x5xx)
+        .xl_win_y        (xl_win_y),
+        .xl_win_w        (xl_win_w),
+        .xl_win_h        (xl_win_h),
+        .xl_win_scale    (xl_win_scale),
+        .xl_win_en       (xl_win_en),
+        .xl_win_we       (xl_win_we)
     );
 
     // ROM-init AXI-Lite slave — see hdl/sally_rom_loader.sv.

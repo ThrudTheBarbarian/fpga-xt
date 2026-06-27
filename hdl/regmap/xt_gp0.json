@@ -119,6 +119,28 @@
         { "off": "0x18", "access": "R", "width": 32, "c": "XT_DIAG7", "sv": "DIAG7",
           "desc": "HP2 read-probe last rdata" }
       ]
+    },
+    {
+      "name": "XLCTL",
+      "sel": "0x5",
+      "base": "0x500",
+      "base_macro": "XT_BLK_XLCTL",
+      "sv_sel": "BLK_XLCTL",
+      "desc": "XL compositor-plane window placement (A9-positioned emulation window)",
+      "regs": [
+        { "off": "0x00", "access": "W", "width": 12, "c": "XT_XL_WIN_X",     "sv": "XL_WIN_X",
+          "desc": "plane origin X on screen (12-bit)" },
+        { "off": "0x04", "access": "W", "width": 12, "c": "XT_XL_WIN_Y",     "sv": "XL_WIN_Y",
+          "desc": "plane origin Y on screen (12-bit)" },
+        { "off": "0x08", "access": "W", "width": 12, "c": "XT_XL_WIN_W",     "sv": "XL_WIN_W",
+          "desc": "clip width  (12-bit; clip_x1 = X + W)" },
+        { "off": "0x0C", "access": "W", "width": 12, "c": "XT_XL_WIN_H",     "sv": "XL_WIN_H",
+          "desc": "clip height (12-bit; clip_y1 = Y + H)" },
+        { "off": "0x10", "access": "W", "width": 3,  "c": "XT_XL_WIN_SCALE", "sv": "XL_WIN_SCALE",
+          "desc": "integer scale 1..5" },
+        { "off": "0x14", "access": "W", "width": 1,  "c": "XT_XL_WIN_EN",    "sv": "XL_WIN_EN",
+          "desc": "[0]=1: use these regs (A9-positioned); 0: legacy gp0_ctrl-scale centred" }
+      ]
     }
   ]
 }

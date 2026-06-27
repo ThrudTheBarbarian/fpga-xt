@@ -133,7 +133,19 @@ module xt_gp0_regs (
     output reg  [11:0] overlay_w,
     output reg  [11:0] overlay_h,
     output reg         overlay_en,
-    output reg         overlay_commit      // toggles on each OVL_EN write
+    output reg         overlay_commit,     // toggles on each OVL_EN write
+
+    // ---- XL compositor-plane window placement (clk_sys) --------------------
+    // A9 positions the live XL emulation plane at an arbitrary rect (the GEM
+    // emulation window's content rect).  xl_win_en=0 -> fpga_xt_top keeps the
+    // legacy gp0_ctrl-scale centred placement.
+    output reg  [11:0] xl_win_x,
+    output reg  [11:0] xl_win_y,
+    output reg  [11:0] xl_win_w,
+    output reg  [11:0] xl_win_h,
+    output reg  [2:0]  xl_win_scale,
+    output reg         xl_win_en,
+    output reg         xl_win_we           // 1-cycle commit strobe (on XL_WIN_EN write)
 );
 
     // Block selectors (addr[11:8]) and register offsets (addr[7:0]) come from
@@ -187,6 +199,13 @@ module xt_gp0_regs (
             overlay_h      <= 12'd0;
             overlay_en     <= 1'b0;
             overlay_commit <= 1'b0;
+            xl_win_x       <= 12'd0;
+            xl_win_y       <= 12'd0;
+            xl_win_w       <= 12'd0;
+            xl_win_h       <= 12'd0;
+            xl_win_scale   <= 3'd1;
+            xl_win_en      <= 1'b0;
+            xl_win_we      <= 1'b0;
             spr_reg_addr   <= 8'h00;
             spr_reg_data   <= 8'h00;
             spr_reg_we     <= 1'b0;
@@ -196,6 +215,7 @@ module xt_gp0_regs (
             bl_we         <= 1'b0;
             xt_unlock_we  <= 1'b0;
             spr_reg_we    <= 1'b0;
+            xl_win_we     <= 1'b0;
 
             unique case (wstate)
                 WST_IDLE: begin
@@ -263,6 +283,21 @@ module xt_gp0_regs (
                                     CTRL_KBD_INJECT:  begin bl_addr <= 6'h1F; bl_we <= 1'b1; end // -> $D4CF
                                     CTRL_KBD_RELEASE: begin bl_addr <= 6'h1D; bl_we <= 1'b1; end // -> $D4CD
                                     CTRL_KBD_BREAK:   begin bl_addr <= 6'h1B; bl_we <= 1'b1; end // -> $D4CB
+                                    default: ;
+                                endcase
+                            end
+                            // ---- 0x5xx XL-CONTROL (whole words) -------------
+                            BLK_XLCTL: begin
+                                unique case (aw_off)
+                                    XL_WIN_X:     xl_win_x     <= w_data[11:0];
+                                    XL_WIN_Y:     xl_win_y     <= w_data[11:0];
+                                    XL_WIN_W:     xl_win_w     <= w_data[11:0];
+                                    XL_WIN_H:     xl_win_h     <= w_data[11:0];
+                                    XL_WIN_SCALE: xl_win_scale <= w_data[2:0];
+                                    XL_WIN_EN:    begin
+                                                      xl_win_en <= w_data[0];
+                                                      xl_win_we <= 1'b1;   // commit the rect
+                                                  end
                                     default: ;
                                 endcase
                             end
