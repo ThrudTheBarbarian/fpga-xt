@@ -62,7 +62,10 @@ Floorplan review outcome (evidence in `docs/Design/floorplan.md`, architecture-r
     fixed src-address depth). This is the known scaled burst/Bresenham WRITE-path
     rewrite ([[blitter_addrgen_consolidation]]: "human-in-the-loop FSM task, scaled
     unused by gfx so it blocks nothing"). My earlier "FB_BASE/plane-identity"
-    hypothesis was WRONG — addressing is correct. Low priority (unused path).
+    hypothesis was WRONG — addressing is correct. **NOT FIXED / DEFERRED** because it
+    is a substantial SC_ACCUM burst+Bresenham WRITE-path FSM rewrite (5-bit burst →
+    multi-burst continuation + correct beat-half packing across wide rows) on a path
+    the desktop never exercises; banked the diagnosis, fix when scaled is actually used.
 - **§3.1 ACP coherency** (evaluate on GEM/desktop surfaces), **§3.2** SALLY mem
   hierarchy → 120 MHz, **§3.3** HP-port budget doc — all deferred.
 - **SRC_BLIT red** (below) — a sim-model gap in a non-gating diagnostic, not on the
