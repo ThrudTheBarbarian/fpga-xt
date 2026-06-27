@@ -59,7 +59,7 @@ HDL_SRCS := \
 
 BUILD_DIR := build
 
-.PHONY: all smoke snoop read vbeam dl_parse prior nmi wsync palette dma_master mem_read_mux draw_regs pokey pokey_i2s sally sally_mem sally_arb bank_xlat hwreg_rd_cdc legacy_upscale plane_compositor plane_fetch axi_line_writer antic_writeback xl_buffer_ctrl antic_raster antic_seq antic_modes antic_display pia_regs peri_link joy_link joy_bridge peri_bridge os_rom_load klaus lint clean xt_blitter sally_stack sally_isa sprite_regs sprite_fetcher sprite_compositor xt6502 boot boot_trace plane_vscale disp_modef_wrap antic_dma_steal
+.PHONY: all smoke snoop read vbeam dl_parse prior nmi wsync palette dma_master mem_read_mux draw_regs pokey pokey_i2s sally sally_mem sally_arb bank_xlat cdc_flag_data hwreg_rd_cdc legacy_upscale plane_compositor plane_fetch axi_line_writer antic_writeback xl_buffer_ctrl antic_raster antic_seq antic_modes antic_display pia_regs peri_link joy_link joy_bridge peri_bridge os_rom_load klaus lint clean xt_blitter sally_stack sally_isa sprite_regs sprite_fetcher sprite_compositor xt6502 boot boot_trace plane_vscale disp_modef_wrap antic_dma_steal
 
 # Retired tests (2026-05-25): rp_bus, mode_f, char_modes, gfx_modes, pm, scroll,
 # dma_int, visual all instantiated the v1 rp_bus injection harness
@@ -70,7 +70,7 @@ BUILD_DIR := build
 # deleted too).  They drove ANTIC through the old serial-link mocks, superseded
 # by the compositor model.  Removed from the build rather than reviving
 # intentionally-deleted RTL.
-all: smoke snoop read vbeam dl_parse prior nmi wsync palette dma_master mem_read_mux draw_regs pokey pokey_i2s sally sally_mem sally_arb bank_xlat pia_regs peri_link joy_link joy_bridge peri_bridge os_rom_load pbi pcm1808_rx xt_blitter sprite_regs sprite_fetcher sprite_compositor antic_raster antic_seq antic_modes xt6502
+all: smoke snoop read vbeam dl_parse prior nmi wsync palette dma_master mem_read_mux draw_regs pokey pokey_i2s sally sally_mem sally_arb bank_xlat pia_regs peri_link joy_link joy_bridge peri_bridge os_rom_load pbi pcm1808_rx xt_blitter sprite_regs sprite_fetcher sprite_compositor antic_raster antic_seq antic_modes xt6502 cdc_flag_data hwreg_rd_cdc
 
 # `klaus` is NOT in `all` — Klaus Dormann's full test takes ~96 M
 # cycles (≥10 minutes of iverilog wall-clock). Run it manually with
@@ -312,9 +312,9 @@ blitter_bridge: $(BUILD_DIR)/tb_blitter_bridge.vvp
 	@echo "=== blitter_bridge ==="
 	@$(VVP) -N $< | tee $(BUILD_DIR)/tb_blitter_bridge.log
 
-$(BUILD_DIR)/tb_blitter_bridge.vvp: $(HDL_DIR)/xt_blitter.sv $(HDL_DIR)/xt_gp0_regs.sv tb_blitter_bridge.sv | $(BUILD_DIR)
+$(BUILD_DIR)/tb_blitter_bridge.vvp: $(HDL_DIR)/xt_blitter.sv $(HDL_DIR)/xt_gp0_pkg.sv $(HDL_DIR)/xt_gp0_regs.sv tb_blitter_bridge.sv | $(BUILD_DIR)
 	$(IVERILOG) $(SV_FLAGS) -o $@ -s tb_blitter_bridge \
-	    $(HDL_DIR)/xt_blitter.sv $(HDL_DIR)/xt_gp0_regs.sv tb_blitter_bridge.sv
+	    $(HDL_DIR)/xt_blitter.sv $(HDL_DIR)/xt_gp0_pkg.sv $(HDL_DIR)/xt_gp0_regs.sv tb_blitter_bridge.sv
 
 # ---- M17-2 — chiplet-ext DRAW register port ------------------------------
 draw_regs: $(BUILD_DIR)/tb_draw_regs.vvp
@@ -628,6 +628,17 @@ hwreg_rd_cdc: $(BUILD_DIR)/tb_hwreg_rd_cdc.vvp
 
 $(BUILD_DIR)/tb_hwreg_rd_cdc.vvp: $(HDL_DIR)/hwreg_rd_cdc.sv $(HDL_DIR)/cdc_sync_bit.sv tb_hwreg_rd_cdc.sv | $(BUILD_DIR)
 	$(IVERILOG) $(SV_FLAGS) -o $@ -s tb_hwreg_rd_cdc $(HDL_DIR)/hwreg_rd_cdc.sv $(HDL_DIR)/cdc_sync_bit.sv tb_hwreg_rd_cdc.sv
+
+# ---- cdc_flag_data — multi-bit data+toggle CDC primitive ----------------
+cdc_flag_data: $(BUILD_DIR)/tb_cdc_flag_data.vvp
+	@echo "=== cdc_flag_data — safe multi-bit CDC ==="
+	@$(VVP) -N $< | tee $(BUILD_DIR)/tb_cdc_flag_data.log
+	@grep -q 'PASS: tb_cdc_flag_data' $(BUILD_DIR)/tb_cdc_flag_data.log || \
+	    (echo "FAIL: tb_cdc_flag_data"; exit 1)
+	@echo "PASS: tb_cdc_flag_data"
+
+$(BUILD_DIR)/tb_cdc_flag_data.vvp: $(HDL_DIR)/cdc_flag_data.sv $(HDL_DIR)/cdc_sync_bit.sv tb_cdc_flag_data.sv | $(BUILD_DIR)
+	$(IVERILOG) $(SV_FLAGS) -o $@ -s tb_cdc_flag_data $(HDL_DIR)/cdc_flag_data.sv $(HDL_DIR)/cdc_sync_bit.sv tb_cdc_flag_data.sv
 
 # ---- legacy_upscale — 1080p pillarbox upscaler (boot gap 4b) ------------
 legacy_upscale: $(BUILD_DIR)/tb_legacy_upscale.vvp

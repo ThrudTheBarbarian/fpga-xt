@@ -864,6 +864,8 @@ module fpga_xt_top (
     wire nmi_n_antic, irq_n_antic, halt_n_antic, rdy_n_antic;
     wire nmi_n_sync, irq_n_sync;
 
+    // cdc-lint: independent-bits — nmi_n/irq_n are separate level lines, each
+    // sampled on its own 2-FF pair; no multi-bit value, so no torn-carry hazard.
     cdc_sync_bit #(.WIDTH(2)) u_sync_irq_nmi (
         .dst_clk (clk_sally),
         .src_sig ({nmi_n_antic, irq_n_antic}),
@@ -1847,6 +1849,8 @@ module fpga_xt_top (
     wire [15:0] bl_seq_gray_sally;
     logic [15:0] bl_seq_counter_sally;
 
+    // cdc-lint: gray-coded — bl_seq_gray changes one bit per increment, so each
+    // bit syncs independently and the result is always a valid (≤1-old) code.
     cdc_sync_bit #(.WIDTH(16)) u_sync_bl_seq (
         .dst_clk (clk_sally),
         .src_sig (bl_seq_gray),
