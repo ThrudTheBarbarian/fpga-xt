@@ -9,6 +9,11 @@
 //
 // Runs on clk_sys — same domain as the blitter, so no CDC for the register bus.
 //
+// The block selectors and register offsets below are NOT hand-written here: they
+// come from xt_gp0_pkg (generated from hdl/regmap/xt_gp0.json by
+// tools/gen_regmap.py, which also renders vitis/xtos/src/xt_gp0_map.h and
+// docs/Design/gp0-register-map.md).  Edit the JSON spec, never these constants.
+//
 // ====================================================================
 // ADDRESS MAP (byte offset from the GP0 base 0x43C0_0000).  Block = addr[11:8];
 // the slave claims 0x000..0xFFF (addr[15:12]==0).  ROM-loader lives at 0x1000+.
@@ -131,12 +136,9 @@ module xt_gp0_regs (
     output reg         overlay_commit      // toggles on each OVL_EN write
 );
 
-    // Block selectors (addr[11:8]) -------------------------------------------
-    localparam [3:0] BLK_BLITTER = 4'h0,
-                     BLK_SPRITE  = 4'h1,
-                     BLK_COMP    = 4'h2,
-                     BLK_CTRL    = 4'h3,
-                     BLK_DIAG    = 4'h4;
+    // Block selectors (addr[11:8]) and register offsets (addr[7:0]) come from
+    // the generated package — see the header comment / hdl/regmap/xt_gp0.json.
+    import xt_gp0_pkg::*;
 
     // ====================================================================
     // AXI4-Lite write transaction FSM.
@@ -223,15 +225,16 @@ module xt_gp0_regs (
                             // ---- 0x0xx BLITTER ------------------------------
                             // Genuine blitter registers map 1:1 to bl_addr.
                             BLK_BLITTER: begin
-                                if ((aw_off <= 8'h18) || (aw_off >= 8'h30 && aw_off <= 8'h3B)) begin
+                                if ((aw_off <= BLT_REG_HI) ||
+                                    (aw_off >= BLT_DESC_LO && aw_off <= BLT_DESC_HI)) begin
                                     bl_addr <= aw_off[5:0];
                                     bl_we   <= 1'b1;
                                 end
                             end
                             // ---- 0x1xx SPRITE -------------------------------
                             BLK_SPRITE: begin
-                                if      (aw_off == 8'h00) spr_reg_addr <= w_byte;
-                                else if (aw_off == 8'h04) begin
+                                if      (aw_off == SPR_IDX) spr_reg_addr <= w_byte;
+                                else if (aw_off == SPR_DATA) begin
                                     spr_reg_data <= w_byte;
                                     spr_reg_we   <= 1'b1;
                                 end
@@ -239,27 +242,27 @@ module xt_gp0_regs (
                             // ---- 0x2xx COMPOSITOR (overlay, whole words) ----
                             BLK_COMP: begin
                                 unique case (aw_off)
-                                    8'h00: begin
+                                    OVL_EN: begin
                                                overlay_en     <= w_data[0];
                                                overlay_commit <= ~overlay_commit;
                                            end
-                                    8'h04: overlay_base <= w_data;
-                                    8'h08: overlay_x    <= w_data[11:0];
-                                    8'h0C: overlay_y    <= w_data[11:0];
-                                    8'h10: overlay_w    <= w_data[11:0];
-                                    8'h14: overlay_h    <= w_data[11:0];
+                                    OVL_BASE: overlay_base <= w_data;
+                                    OVL_X:    overlay_x    <= w_data[11:0];
+                                    OVL_Y:    overlay_y    <= w_data[11:0];
+                                    OVL_W:    overlay_w    <= w_data[11:0];
+                                    OVL_H:    overlay_h    <= w_data[11:0];
                                     default: ;
                                 endcase
                             end
                             // ---- 0x3xx CONTROL ------------------------------
                             BLK_CTRL: begin
                                 unique case (aw_off)
-                                    8'h00: gp0_ctrl <= w_byte;                 // bars/scale/blank
-                                    8'h04: begin bl_addr <= 6'h1A; bl_we <= 1'b1; end // clock_mult -> $D4CA
-                                    8'h08: xt_unlock_we <= 1'b1;               // unlock (data on bl_data)
-                                    8'h0C: begin bl_addr <= 6'h1F; bl_we <= 1'b1; end // kbd inject  -> $D4CF
-                                    8'h10: begin bl_addr <= 6'h1D; bl_we <= 1'b1; end // kbd release -> $D4CD
-                                    8'h14: begin bl_addr <= 6'h1B; bl_we <= 1'b1; end // kbd break   -> $D4CB
+                                    CTRL_GP0:   gp0_ctrl <= w_byte;            // bars/scale/blank
+                                    CTRL_SPEED: begin bl_addr <= 6'h1A; bl_we <= 1'b1; end // clock_mult -> $D4CA
+                                    CTRL_UNLOCK: xt_unlock_we <= 1'b1;         // unlock (data on bl_data)
+                                    CTRL_KBD_INJECT:  begin bl_addr <= 6'h1F; bl_we <= 1'b1; end // -> $D4CF
+                                    CTRL_KBD_RELEASE: begin bl_addr <= 6'h1D; bl_we <= 1'b1; end // -> $D4CD
+                                    CTRL_KBD_BREAK:   begin bl_addr <= 6'h1B; bl_we <= 1'b1; end // -> $D4CB
                                     default: ;
                                 endcase
                             end
@@ -311,23 +314,23 @@ module xt_gp0_regs (
                         s_axi_rdata   <= 32'd0;
                         unique case (ar_blk)
                             BLK_BLITTER:
-                                if      (ar_off == 8'h40)
+                                if      (ar_off == BLT_STATUS)
                                     s_axi_rdata <= {29'd0, bl_pat_blocked, bl_queue_full, bl_busy};
-                                else if (ar_off == 8'h44)
+                                else if (ar_off == BLT_SEQ)
                                     s_axi_rdata <= {16'd0, bl_seq_counter};
                             BLK_CTRL:
-                                if      (ar_off == 8'h00) s_axi_rdata <= {24'd0, gp0_ctrl};
-                                else if (ar_off == 8'h04) s_axi_rdata <= {24'd0, clock_mult};
-                                else if (ar_off == 8'h08) s_axi_rdata <= {24'd0, xt_unlock_state};
+                                if      (ar_off == CTRL_GP0)    s_axi_rdata <= {24'd0, gp0_ctrl};
+                                else if (ar_off == CTRL_SPEED)  s_axi_rdata <= {24'd0, clock_mult};
+                                else if (ar_off == CTRL_UNLOCK) s_axi_rdata <= {24'd0, xt_unlock_state};
                             BLK_DIAG:
                                 unique case (ar_off)
-                                    8'h00: s_axi_rdata <= diag_word;
-                                    8'h04: s_axi_rdata <= diag2_word;
-                                    8'h08: s_axi_rdata <= diag3_word;
-                                    8'h0C: s_axi_rdata <= diag4_word;
-                                    8'h10: s_axi_rdata <= diag5_word;
-                                    8'h14: s_axi_rdata <= diag6_word;
-                                    8'h18: s_axi_rdata <= diag7_word;
+                                    DIAG0: s_axi_rdata <= diag_word;
+                                    DIAG2: s_axi_rdata <= diag2_word;
+                                    DIAG3: s_axi_rdata <= diag3_word;
+                                    DIAG4: s_axi_rdata <= diag4_word;
+                                    DIAG5: s_axi_rdata <= diag5_word;
+                                    DIAG6: s_axi_rdata <= diag6_word;
+                                    DIAG7: s_axi_rdata <= diag7_word;
                                     default: ;
                                 endcase
                             default: ;

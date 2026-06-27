@@ -1,0 +1,124 @@
+{
+  "_comment": [
+    "Single source of truth for the PL control-register map over PS GP0.",
+    "tools/gen_regmap.py renders this to:",
+    "  hdl/xt_gp0_pkg.sv          (SystemVerilog package, imported by xt_gp0_regs.sv)",
+    "  vitis/xtos/src/xt_gp0_map.h (A9-side C header)",
+    "  docs/Design/gp0-register-map.md (docs table)",
+    "Edit THIS file, then run `make -C tools regmap` (or tools/gen_regmap.py).",
+    "CI runs `gen_regmap.py --check` and fails on drift."
+  ],
+  "base": "0x43C00000",
+  "base_macro": "XT_GP0_BASE",
+  "sel_field": "addr[11:8]",
+  "off_field": "addr[7:0]",
+  "notes": [
+    "The slave claims 0x000..0xFFF (addr[15:12]==0); sally_rom_loader OR-muxes at 0x1000+.",
+    "Every register is 32-bit word-aligned (Xil_In32/Out32, no byte-lane tricks); reads never alias writes.",
+    "Runs on clk_sys (same domain as the blitter) — no CDC on the register bus."
+  ],
+  "blocks": [
+    {
+      "name": "BLITTER",
+      "sel": "0x0",
+      "base": "0x000",
+      "base_macro": "XT_BLK_BLITTER",
+      "sv_sel": "BLK_BLITTER",
+      "desc": "blit regs (offset = bl_addr) + STATUS/SEQ reads; dual-access 6502 $D4Bx/$D4Cx/$D4Ex under UNLK_BLIT",
+      "ranges": [
+        { "lo": "0x00", "hi": "0x18", "access": "W", "sv_lo": "BLT_REG_LO",  "sv_hi": "BLT_REG_HI",
+          "desc": "blitter registers DST/PAT/CMD/SRC/FLAGS (bl_addr = offset); see blitter.h XT_BL_*" },
+        { "lo": "0x30", "hi": "0x3B", "access": "W", "sv_lo": "BLT_DESC_LO", "sv_hi": "BLT_DESC_HI",
+          "desc": "SRC/DST DDR-surface descriptors / ROW0 bases (bl_addr = offset)" }
+      ],
+      "regs": [
+        { "off": "0x40", "access": "R", "width": 3,  "c": "XT_BLT_STATUS", "sv": "BLT_STATUS",
+          "desc": "{pat_blocked[2], queue_full[1], busy[0]}" },
+        { "off": "0x44", "access": "R", "width": 16, "c": "XT_BLT_SEQ",    "sv": "BLT_SEQ",
+          "desc": "seq_counter[15:0]" }
+      ]
+    },
+    {
+      "name": "SPRITE",
+      "sel": "0x1",
+      "base": "0x100",
+      "base_macro": "XT_BLK_SPRITE",
+      "sv_sel": "BLK_SPRITE",
+      "desc": "sprite-engine reg index/data port; dual-access 6502 $D4Ax/$D4Dx under UNLK_SPRITE",
+      "regs": [
+        { "off": "0x00", "access": "W", "width": 8, "c": "XT_SPR_IDX",  "sv": "SPR_IDX",
+          "desc": "latch sprite reg index" },
+        { "off": "0x04", "access": "W", "width": 8, "c": "XT_SPR_DATA", "sv": "SPR_DATA",
+          "desc": "sprite reg data + strobe (writes idx/data to engine)" }
+      ]
+    },
+    {
+      "name": "COMP",
+      "sel": "0x2",
+      "base": "0x200",
+      "base_macro": "XT_BLK_COMP",
+      "sv_sel": "BLK_COMP",
+      "desc": "drag-overlay config (A9-only, whole 32-bit words)",
+      "regs": [
+        { "off": "0x00", "access": "W", "width": 1,  "c": "XT_OVL_EN",   "sv": "OVL_EN",
+          "desc": "[0]=enable; also toggles the commit flag" },
+        { "off": "0x04", "access": "W", "width": 32, "c": "XT_OVL_BASE", "sv": "OVL_BASE",
+          "desc": "DDR byte address (32-bit)" },
+        { "off": "0x08", "access": "W", "width": 12, "c": "XT_OVL_X",    "sv": "OVL_X",
+          "desc": "on-screen X (12-bit)" },
+        { "off": "0x0C", "access": "W", "width": 12, "c": "XT_OVL_Y",    "sv": "OVL_Y",
+          "desc": "on-screen Y (12-bit)" },
+        { "off": "0x10", "access": "W", "width": 12, "c": "XT_OVL_W",    "sv": "OVL_W",
+          "desc": "width px (12-bit; stride = w<<2)" },
+        { "off": "0x14", "access": "W", "width": 12, "c": "XT_OVL_H",    "sv": "OVL_H",
+          "desc": "height px (12-bit)" }
+      ]
+    },
+    {
+      "name": "CTRL",
+      "sel": "0x3",
+      "base": "0x300",
+      "base_macro": "XT_BLK_CTRL",
+      "sv_sel": "BLK_CTRL",
+      "desc": "control plane (gp0_ctrl, SALLY speed, XT unlock, keyboard inject)",
+      "regs": [
+        { "off": "0x00", "access": "RW", "width": 8, "c": "XT_CTRL_GP0",         "sv": "CTRL_GP0",
+          "desc": "[0]=bars, [3:1]=XL scale, [4]=DMACTL-blank (A9-only); read = effective" },
+        { "off": "0x04", "access": "RW", "width": 8, "c": "XT_CTRL_SPEED",       "sv": "CTRL_SPEED",
+          "desc": "SALLY clock_mult (dual: 6502 $D4CA); read = effective. W -> bl_addr $D4CA" },
+        { "off": "0x08", "access": "RW", "width": 8, "c": "XT_CTRL_UNLOCK",      "sv": "CTRL_UNLOCK",
+          "desc": "XT register-unlock (dual: 6502 $D1DF); read = effective" },
+        { "off": "0x0C", "access": "W",  "width": 8, "c": "XT_CTRL_KBD_INJECT",  "sv": "CTRL_KBD_INJECT",
+          "desc": "KBCODE + POKEY IRQ (A9-only; emits $D4CF)" },
+        { "off": "0x10", "access": "W",  "width": 8, "c": "XT_CTRL_KBD_RELEASE", "sv": "CTRL_KBD_RELEASE",
+          "desc": "all-keys-up (A9-only; emits $D4CD)" },
+        { "off": "0x14", "access": "W",  "width": 8, "c": "XT_CTRL_KBD_BREAK",   "sv": "CTRL_KBD_BREAK",
+          "desc": "Atari BREAK (A9-only; emits $D4CB)" }
+      ]
+    },
+    {
+      "name": "DIAG",
+      "sel": "0x4",
+      "base": "0x400",
+      "base_macro": "XT_BLK_DIAG",
+      "sv_sel": "BLK_DIAG",
+      "desc": "PL diagnostic words (A9-only, read-only, word-aligned)",
+      "regs": [
+        { "off": "0x00", "access": "R", "width": 32, "c": "XT_DIAG0", "sv": "DIAG0",
+          "desc": "MMCM locks / clk_pix-alive / frame count" },
+        { "off": "0x04", "access": "R", "width": 32, "c": "XT_DIAG2", "sv": "DIAG2",
+          "desc": "production-chain counters" },
+        { "off": "0x08", "access": "R", "width": 32, "c": "XT_DIAG3", "sv": "DIAG3",
+          "desc": "read-path activity" },
+        { "off": "0x0C", "access": "R", "width": 32, "c": "XT_DIAG4", "sv": "DIAG4",
+          "desc": "HP3 (XL) first-AR address" },
+        { "off": "0x10", "access": "R", "width": 32, "c": "XT_DIAG5", "sv": "DIAG5",
+          "desc": "HP0 (desktop) first-AR address" },
+        { "off": "0x14", "access": "R", "width": 32, "c": "XT_DIAG6", "sv": "DIAG6",
+          "desc": "HP2 read-probe status" },
+        { "off": "0x18", "access": "R", "width": 32, "c": "XT_DIAG7", "sv": "DIAG7",
+          "desc": "HP2 read-probe last rdata" }
+      ]
+    }
+  ]
+}
