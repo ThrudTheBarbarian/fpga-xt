@@ -4,7 +4,11 @@
 # A file token may carry "@90/@180/@270" to rotate it (reuse arrows etc.).
 
 # --- window frame + titlebar -------------------------------------------------
-window              nine    window-standard-top-left window-standard-top-center window-standard-top-right window-standard-center-left window-standard-center-center window-standard-center-right window-standard-bottom-left window-standard-bottom-center window-standard-bottom-right
+# The window frame's TOP row IS the rounded titlebar (head), so the frame itself
+# is the flush, rounded-corner titled window — no separate inset titlebar needed.
+window              nine    window-standard-head-left window-standard-head-center window-standard-head-right window-standard-center-left window-standard-center-center window-standard-center-right window-standard-bottom-left window-standard-bottom-center window-standard-bottom-right
+window.inactive     nine    window-standard-head-inactive-left window-standard-head-inactive-center window-standard-head-inactive-right window-standard-center-left window-standard-center-center window-standard-center-right window-standard-bottom-left window-standard-bottom-center window-standard-bottom-right
+# Standalone titlebar strips (kept for the AES host demo / panels).
 titlebar            h3      window-standard-head-left window-standard-head-center window-standard-head-right
 titlebar.inactive   h3      window-standard-head-inactive-left window-standard-head-inactive-center window-standard-head-inactive-right
 close               sprite  window-standard-close-button

@@ -30,13 +30,15 @@ static int slot_of(const gem_wm *wm, const gem_window *win) { return (int)(win -
 
 // ---- Geometry helpers (must match draw_frame) -----------------------------
 static void close_box(const gem_window *win, int *x0, int *y0, int *x1, int *y1) {
-    *x0 = win->x + EDGE + CLOSE_M;       *y0 = win->y + EDGE + (TITLE_H - CLOSE_S) / 2;
+    *x0 = win->x + EDGE + CLOSE_M;       *y0 = win->y + (TITLE_H - CLOSE_S) / 2;
     *x1 = *x0 + CLOSE_S;                 *y1 = *y0 + CLOSE_S;
 }
 
 static void recompute_content(gem_window *win) {
-    win->cx = win->x + EDGE;          win->cy = win->y + EDGE + TITLE_H;
-    win->cw = win->w - 2 * EDGE;      win->ch = win->h - 2 * EDGE - TITLE_H;
+    // Title bar spans the full width at the very top (its caps are the rounded top
+    // corners); content sits below it with a side+bottom border only.
+    win->cx = win->x + EDGE;          win->cy = win->y + TITLE_H;
+    win->cw = win->w - 2 * EDGE;      win->ch = win->h - TITLE_H - EDGE;
 }
 
 // ---- Init / add -----------------------------------------------------------
@@ -198,10 +200,9 @@ static void draw_frame(gem_wm *wm, gem_window *win) {
     int vh = wm->desk_vh, x = win->x, y = win->y, w = win->w, h = win->h;
     int bx0, by0, bx1, by1; close_box(win, &bx0, &by0, &bx1, &by1);
     if (wm->th) {
-        // Themed 9-slice chrome (Aristo2): window border/body, title bar, close.
-        theme_draw(vh, wm->th, "window", x, y, w, h);
-        theme_draw(vh, wm->th, win->active ? "titlebar" : "titlebar.inactive",
-                   x + EDGE, y + EDGE, w - 2 * EDGE, TITLE_H);
+        // Themed chrome (Aristo2): one 9-slice whose top row IS the rounded titlebar
+        // (the "head"), so it's flush to the edges with rounded top+bottom corners.
+        theme_draw(vh, wm->th, win->active ? "window" : "window.inactive", x, y, w, h);
         const theme_slice *cs = theme_find(wm->th, "close");
         if (cs) theme_blit(vh, wm->th, cs, bx0, by0, cs->sw, cs->sh);
     } else {
@@ -211,19 +212,19 @@ static void draw_frame(gem_wm *wm, gem_window *win) {
         vsf_color(vh, PEN_EDGE);
         r[0]=x; r[1]=y; r[2]=x+w-1; r[3]=y+h-1; vr_recfl(vh, r);                 // outer edge
         vsf_color(vh, win->active ? PEN_TITLE_ACT : PEN_TITLE_INA);
-        r[0]=x+EDGE; r[1]=y+EDGE; r[2]=x+w-1-EDGE; r[3]=y+EDGE+TITLE_H-1; vr_recfl(vh, r); // title
+        r[0]=x; r[1]=y; r[2]=x+w-1; r[3]=y+TITLE_H-1; vr_recfl(vh, r);           // full-width title
         vsf_color(vh, PEN_BODY);                                                 // close box
         r[0]=bx0; r[1]=by0; r[2]=bx1; r[3]=by1; vr_recfl(vh, r);
     }
 
     if (wm->title_font && win->title) {                                     // centred title text
         int rl = bx1 + 8, rr = x + w - 1 - EDGE;                            // between close box + edge
-        int16_t tc[4] = { (int16_t)rl, (int16_t)(y+EDGE),
-                          (int16_t)rr, (int16_t)(y+EDGE+TITLE_H-1) };
+        int16_t tc[4] = { (int16_t)rl, (int16_t)y,
+                          (int16_t)rr, (int16_t)(y+TITLE_H-1) };
         vs_clip(vh, 1, tc);                                                 // keep text in the bar
         vst_color(vh, PEN_EDGE);
         vst_alignment(vh, VDI_TA_CENTER, VDI_TA_HALF, NULL, NULL);
-        v_gtext(vh, (rl + rr) / 2, y + EDGE + TITLE_H / 2, win->title);
+        v_gtext(vh, (rl + rr) / 2, y + TITLE_H / 2, win->title);
         vst_alignment(vh, VDI_TA_LEFT, VDI_TA_TOP, NULL, NULL);            // restore
         int16_t full[4] = { 0, 0, (int16_t)(wm->desk->w-1), (int16_t)(wm->desk->h-1) };
         vs_clip(vh, 0, full);                                              // restore
