@@ -29,9 +29,27 @@ static int readline(char *buf, int max)
         int c = sh_readc();
         if (c < 0) return n > 0 ? n : -1;      /* EOF */
         if (c == '\r') continue;
-        if (c == '\n') { buf[n] = 0; return n; }
-        if (c == 8 || c == 127) { if (n > 0) n--; continue; } /* backspace */
-        if (n < max - 1) buf[n++] = (char)c;
+        if (c == '\n') {
+#ifdef XT_HW_UART
+            puts0("\r\n");                     /* raw UART: echo the newline */
+#endif
+            buf[n] = 0; return n;
+        }
+        if (c == 8 || c == 127) {              /* backspace */
+            if (n > 0) {
+                n--;
+#ifdef XT_HW_UART
+                puts0("\b \b");                /* erase on the terminal */
+#endif
+            }
+            continue;
+        }
+        if (n < max - 1) {
+            buf[n++] = (char)c;
+#ifdef XT_HW_UART
+            char e[2] = { (char)c, 0 }; puts0(e);  /* echo typed char */
+#endif
+        }
     }
 }
 
@@ -74,7 +92,8 @@ static void shell_task(void *arg)
             frtos_waitpid(pid);
             pid = frtos_spawn_argv("/bin/vmtest", 2, b, &g_host);
             if (pid >= 0) frtos_waitpid(pid);
-            puts0("vmtest: both malloc'd the SAME address from a fresh heap -> per-process heaps\n");
+            puts0("vmtest: A and B should each print 0x10000008 (a private heap at the same VA\n"
+                  "        in separate spaces). Different/sequential addresses => NOT isolated.\n");
             continue;
         }
         if (!strcmp(argv[0], "demandtest")) {      /* T2-c: lazy (demand-zero) heap */

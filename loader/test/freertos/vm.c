@@ -108,6 +108,22 @@ void vm_switch(uint32_t *table, uint32_t asid)
     __asm__ volatile("isb");
     __asm__ volatile("mcr p15,0,%0,c13,c0,1" :: "r"(asid));          /* CONTEXTIDR = new ASID */
     __asm__ volatile("isb");
+
+    /* Drop stale GLOBAL TLB entries for libc's data VA when entering a process.
+     * The master table maps that region global+identity, and the kernel/shell
+     * touch it on every malloc (libc's arena). On real hardware that cached
+     * global entry SHADOWS this process's private (nG) copy installed by
+     * vm_space_create — so the process would see shared libc data. Invalidate
+     * just those few pages by MVA (all ASIDs); everything else keeps the
+     * ASID-tagged no-flush switch. (qemu's TLB model doesn't show the shadow.) */
+    if (asid && g_libc_wva && g_libc_wsize) {
+        uint32_t a = (uint32_t)g_libc_wva & ~0xFFFu;
+        uint32_t e = ((uint32_t)g_libc_wva + g_libc_wsize - 1u) & ~0xFFFu;
+        for (uint32_t v = a; v <= e; v += 0x1000u)
+            __asm__ volatile("mcr p15,0,%0,c8,c7,3" :: "r"(v));      /* TLBIMVAA */
+        __asm__ volatile("dsb");
+        __asm__ volatile("isb");
+    }
 }
 
 /* ---- T2-c demand paging ---------------------------------------------------

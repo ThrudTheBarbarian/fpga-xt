@@ -273,7 +273,8 @@ int frtos_spawn(const uint8_t *image, uint32_t len, int argc, char **argv,
     xtld_obj *obj = NULL; char err[64] = {0};
     int rc = xtld_load(image, len, host, &obj, err, sizeof err);
     if (rc != XTLD_OK) {
-        if (g_console) { g_console("  xtld_load err: ", 17); g_console(err, (int)strlen(err)); g_console("\n", 1); }
+        if (g_console) { g_console("  xtld_load err: ", 17); g_console(err, (int)strlen(err));
+            const char *s = xtld_strerror(rc); g_console(" rc=", 4); g_console(s, (int)strlen(s)); g_console("\n", 1); }
         return -1;
     }
     uintptr_t entry = xtld_sym(obj, "_app_entry");   /* C/asm programs */
