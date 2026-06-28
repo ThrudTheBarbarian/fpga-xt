@@ -90,7 +90,7 @@ FRCFLAGS := -marm -mcpu=cortex-a9 -mfloat-abi=softfp -mfpu=neon-vfpv3 -ffreestan
 FRSRC := $(FR)/tasks.c $(FR)/queue.c $(FR)/list.c $(FR)/timers.c $(FR)/event_groups.c \
          $(FR)/croutine.c $(FR)/stream_buffer.c $(FR)/portable/MemMang/heap_4.c \
          $(FRPORT)/port.c \
-         test/freertos/zynq.c test/freertos/bsp_shim.c test/freertos/frtos_os.c \
+         test/freertos/zynq.c test/freertos/bsp_shim.c test/freertos/mmu.c test/freertos/frtos_os.c \
          test/freertos/romfs.c test/freertos/syscalls.c test/freertos/main.c \
          test/qemu/bare_rt.c test/qemu/bare_libc.c xtld.c
 FRASM := test/freertos/xt_boot.S test/freertos/xt_vectors.S $(FRPORT)/portASM.S
@@ -127,14 +127,31 @@ $(BUILD)/usestr.so: test/freertos/progs/usestr.c $(BUILD)/libutil.so | $(BUILD)
 	$(ARMCC) $(PROGCFLAGS) -c $< -o $(BUILD)/usestr.o
 	$(LLD) -shared --hash-style=sysv -o $@ $(BUILD)/usestr.o $(BUILD)/libutil.so
 
-# libGEM.so — the VDI shared library; gemdemo links it
-$(BUILD)/libGEM.so: test/freertos/libs/gem.c | $(BUILD)
-	$(ARMCC) $(PROGCFLAGS) -Itest/freertos/libs -c $< -o $(BUILD)/gem.o
-	$(LLD) -shared --hash-style=sysv -soname libGEM.so -o $@ $(BUILD)/gem.o
+# libm.so — PIC newlib libm (FreeType/VDI need sin/cos/sqrt/atan2); needs libc.so
+$(BUILD)/libm.so: newlib-pic/libm.a $(BUILD)/libc.so | $(BUILD)
+	$(ARMCC) -mcpu=cortex-a9 -mfloat-abi=softfp -mfpu=neon-vfpv3 -shared -nostdlib \
+	    -Wl,--whole-archive newlib-pic/libm.a -Wl,--no-whole-archive \
+	    -Wl,-soname,libm.so $(BUILD)/libc.so -o $@
 
-$(BUILD)/gemdemo.so: test/freertos/progs/gemdemo.c $(BUILD)/libGEM.so | $(BUILD)
-	$(ARMCC) $(PROGCFLAGS) -Itest/freertos/libs -c $< -o $(BUILD)/gemdemo.o
-	$(LLD) -shared --hash-style=sysv -o $@ $(BUILD)/gemdemo.o $(BUILD)/libGEM.so
+# libGEM.so — the REAL portable GEM/VDI core + vendored FreeType (software
+# backend), as a shared lib that DT_NEEDEDs libc.so + libm.so. __aeabi_* stay
+# dynamic imports resolved by the kernel export table at load (libgcc isn't PIC).
+GEM := ../gem
+FT  := ../xtos/freetype
+GEMSRC := $(GEM)/gfx_soft.c $(GEM)/font.c $(wildcard $(GEM)/vdi/*.c) \
+          ../vitis/xtos/src/gem_pdf_stub.c test/freertos/libs/gem_stubs.c
+FTSRC  := $(wildcard $(FT)/tu/*.c)
+GEMINC := -Itest/freertos/libs/shim -I$(GEM) -I$(GEM)/vdi -I$(FT)/include -Inewlib-pic/include
+GEMCFLAGS := -marm -mcpu=cortex-a9 -mfloat-abi=softfp -mfpu=neon-vfpv3 -fpic -O2 $(GEMINC)
+
+$(BUILD)/libGEM.so: $(GEMSRC) $(FTSRC) $(BUILD)/libc.so $(BUILD)/libm.so | $(BUILD)
+	$(ARMCC) $(GEMCFLAGS) -shared -nostdlib -Wl,-soname,libGEM.so \
+	    $(GEMSRC) $(FTSRC) $(BUILD)/libc.so $(BUILD)/libm.so -o $@
+
+# gemtext — real-VDI client: open workstation, fill rect, FreeType text, ASCII dump
+$(BUILD)/gemtext.so: test/freertos/progs/gemtext.c $(BUILD)/libGEM.so $(BUILD)/libc.so | $(BUILD)
+	$(ARMCC) $(GEMCFLAGS) -c $< -o $(BUILD)/gemtext.o
+	$(LLD) -shared --hash-style=sysv -o $@ $(BUILD)/gemtext.o $(BUILD)/libGEM.so $(BUILD)/libc.so
 
 # a program that uses libc (DT_NEEDED libc.so), compiled against the PIC newlib headers
 $(BUILD)/libc_test.so: test/freertos/progs/libc_test.c $(BUILD)/libc.so | $(BUILD)
@@ -144,17 +161,20 @@ $(BUILD)/libc_test.so: test/freertos/progs/libc_test.c $(BUILD)/libc.so | $(BUIL
 $(BUILD)/mkromfs: tools/mkromfs.c | $(BUILD)
 	$(HOSTCC) -O2 -o $@ $<
 
-$(BUILD)/romfs.bin: $(BUILD)/mkromfs $(BUILD)/hello.so $(BUILD)/showmotd.so $(BUILD)/usestr.so $(BUILD)/echo.so $(BUILD)/gemdemo.so $(BUILD)/libc_test.so $(BUILD)/libutil.so $(BUILD)/libGEM.so $(BUILD)/libc.so test/freertos/motd.txt
+$(BUILD)/romfs.bin: $(BUILD)/mkromfs $(BUILD)/hello.so $(BUILD)/showmotd.so $(BUILD)/usestr.so $(BUILD)/echo.so $(BUILD)/libc_test.so $(BUILD)/gemtext.so $(BUILD)/libutil.so $(BUILD)/libGEM.so $(BUILD)/libm.so $(BUILD)/libc.so test/freertos/motd.txt
 	$(BUILD)/mkromfs $@ \
 	    /OS/Library/libc.so=$(BUILD)/libc.so \
+	    /OS/Library/libm.so=$(BUILD)/libm.so \
+	    /OS/Library/libGEM.so=$(BUILD)/libGEM.so \
+	    /OS/Library/libutil.so=$(BUILD)/libutil.so \
+	    /OS/Fonts/AovelSansRounded.ttf=$(GEM)/fonts/AovelSansRounded.ttf \
+	    /OS/Fonts/System.font=$(GEM)/fonts/System.font \
 	    /bin/libc_test=$(BUILD)/libc_test.so \
+	    /bin/gemtext=$(BUILD)/gemtext.so \
 	    /bin/hello=$(BUILD)/hello.so \
 	    /bin/showmotd=$(BUILD)/showmotd.so \
 	    /bin/usestr=$(BUILD)/usestr.so \
 	    /bin/echo=$(BUILD)/echo.so \
-	    /bin/gemdemo=$(BUILD)/gemdemo.so \
-	    /OS/Library/libutil.so=$(BUILD)/libutil.so \
-	    /OS/Library/libGEM.so=$(BUILD)/libGEM.so \
 	    /etc/motd=test/freertos/motd.txt
 
 $(BUILD)/romfs_blob.h: $(BUILD)/romfs.bin

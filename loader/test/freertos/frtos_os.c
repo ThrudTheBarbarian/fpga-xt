@@ -221,7 +221,7 @@ int frtos_spawn(const uint8_t *image, uint32_t len, int argc, char **argv,
     p->done = xSemaphoreCreateBinary();
     if (!p->done) return -1;
     p->used = 1;
-    if (xTaskCreate(app_main, "app", 2048, p, 3, &p->task) != pdPASS) {
+    if (xTaskCreate(app_main, "app", 16384, p, 3, &p->task) != pdPASS) {   /* 64KB: FreeType is stack-hungry */
         vSemaphoreDelete(p->done); p->used = 0; return -1;
     }
     return p->pid;
@@ -253,7 +253,7 @@ extern int regcomp(void*,const void*,int); extern int regexec(const void*,const 
 extern void regfree(void*); extern int sigprocmask(int,const void*,void*);
 K(__aeabi_idiv) K(__aeabi_uidiv) K(__aeabi_idivmod) K(__aeabi_uidivmod)
 K(__aeabi_ldivmod) K(__aeabi_uldivmod) K(__aeabi_d2lz) K(__aeabi_l2d)
-K(__aeabi_unwind_cpp_pr0) K(__ffsdi2)
+K(__aeabi_unwind_cpp_pr0) K(__ffsdi2) K(__aeabi_f2lz) K(__muldc3) K(__mulsc3)
 #undef K
 
 uintptr_t frtos_ksym(const char *name, void *u)
@@ -281,6 +281,7 @@ uintptr_t frtos_ksym(const char *name, void *u)
         {"__aeabi_ldivmod",(void*)__aeabi_ldivmod},{"__aeabi_uldivmod",(void*)__aeabi_uldivmod},
         {"__aeabi_d2lz",(void*)__aeabi_d2lz},{"__aeabi_l2d",(void*)__aeabi_l2d},
         {"__aeabi_unwind_cpp_pr0",(void*)__aeabi_unwind_cpp_pr0},{"__ffsdi2",(void*)__ffsdi2},
+        {"__aeabi_f2lz",(void*)__aeabi_f2lz},{"__muldc3",(void*)__muldc3},{"__mulsc3",(void*)__mulsc3},
     };
     for (unsigned i = 0; i < sizeof tab / sizeof tab[0]; i++)
         if (!strcmp(name, tab[i].n)) return (uintptr_t)tab[i].a;

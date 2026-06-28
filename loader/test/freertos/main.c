@@ -18,6 +18,7 @@
 #include "romfs_blob.h"
 
 extern void gic_init(void);
+extern void mmu_init(void);
 
 static xtld_host g_host;
 
@@ -51,7 +52,7 @@ static int split(char *line, char **argv, int max)
 static void shell_task(void *arg)
 {
     (void)arg;
-    puts0("\nXTOS shell  —  try: echo hello world | hello | showmotd | usestr | gemdemo | exit\n");
+    puts0("\nXTOS shell  —  try: echo hello world | hello | showmotd | usestr | libc_test | gemtext | exit\n");
     char line[128];
     char *argv[16];
     for (;;) {
@@ -62,7 +63,7 @@ static void shell_task(void *arg)
         if (argc == 0) continue;
         if (!strcmp(argv[0], "exit")) { puts0("bye\n"); sh_exit(0); }
         if (!strcmp(argv[0], "help")) {
-            puts0("builtins: help, exit. programs: /bin/{hello,showmotd,usestr,echo,gemdemo}\n");
+            puts0("builtins: help, exit. programs: /bin/{hello,showmotd,usestr,echo,libc_test,gemtext}\n");
             continue;
         }
         char path[72];
@@ -80,6 +81,7 @@ static void shell_task(void *arg)
 int main(void)
 {
     puts0("=== xtos: libc.so bring-up + shell (qemu zynq-a9, M6a) ===\n");
+    mmu_init();          /* flat map -> RAM is Normal memory (unaligned access ok) */
     gic_init();
     ksys_set_console(rt_write);
     romfs_mount(romfs_blob, romfs_blob_len);

@@ -108,14 +108,20 @@ types.
   `printf`/`malloc`/`strcpy` from it. The loader also learned **weak undefined
   symbols → 0** (for `libc.so`'s init-array markers).
 
-  **M5 (GEM, step A)** proves `libGEM.so` as a real shared library on XTOS:
-  `test/freertos/libs/gem.c` → `/OS/Library/libGEM.so` exports geometric VDI
-  primitives (`v_clear`/`v_bar`/`v_pline`/`v_circle`) on an RGBA-8888 surface;
-  `/bin/gemdemo` links it, draws a rect + circle + line, and dumps the surface as
-  ASCII (qemu has no display). The kernel export table also vends the EABI div
-  helpers (`__aeabi_idiv` …) since the A9 lacks hardware divide. Next: the real
-  `gem/` core + FreeType (heavier), and pixel-level visual work on the SDL
-  testbed / hardware.
+  **M6b** brings up the **real graphics stack** as shared libraries: the actual
+  portable `gem/` VDI core + `gfx_soft.c` + the vendored FreeType (`xtos/freetype/
+  tu/*.c`, 19 TUs) compiled `-fpic` into **`/OS/Library/libGEM.so`**, which
+  `DT_NEEDED`s `libc.so` + `libm.so` (also PIC newlib). `/bin/gemtext` opens a VDI
+  workstation on an RGBA surface, fills a rectangle, and draws a string with
+  **FreeType-rasterised antialiased glyphs** from a TTF loaded out of the romfs
+  via `fopen` (`/OS/Fonts/AovelSansRounded.ttf` via the `System.font` pointer) —
+  then ASCII-dumps the surface (the `@%#+=:.` ramp is glyph coverage). The
+  `__aeabi_*` libgcc helpers the libs need (incl. float/`__muldc3`) are vended by
+  the kernel export table; the dir-scan `dirent` path is shimmed (fonts load by
+  pointer file, not scan). A **flat identity MMU map** (`mmu.c`) marks DDR as
+  *Normal* memory so libc's NEON/word-tail `memcpy` can do unaligned access
+  (strongly-ordered memory — the MMU-off default — faults on those); caches stay
+  off for now. Spawned-task stacks went to 64 KB (FreeType is stack-hungry).
 
 Requires `arm-none-eabi-gcc`, `ld.lld`, and `qemu-system-arm` on `PATH` (all via
 Homebrew).
