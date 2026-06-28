@@ -5,52 +5,78 @@ controller. The PL accesses it through AXI HP slave ports (HP0..HP3),
 each visible to the PL as a 64-bit 32-bit-addressable AXI master
 endpoint.
 
-This document tracks **PL-visible** DDR3 regions: any block the PL
-fabric reads from or writes to via an HP port. Each region's base
-address is a parameter on its owning module, so the address values
-below are defaults — they can be overridden at instantiation time.
+This document is the canonical DDR map: the **PL-visible** regions (any
+block the PL fabric reads/writes via an HP port — planes, SALLY banks,
+the PL-visible heap) **and** the PS-side OS layout (kernel, heaps). Each
+fixed region's base address is a parameter on its owning module, so the
+values below are defaults — overridable at instantiation.
 
 ## Allocation map
 
 ```
 0x0000_0000 ┬─────────────────────────────────────────────────────────┐
-            │ (reserved — PS-side: FreeRTOS / Vitis BSP / heap)       │
-0x1C00_0000 ├─────────────────────────────────────────────────────────┤
-            │ 68000 "T" realm — RAM + ROM, 64 MB                      │
-            │ (Atari ST / STe / TT; emulated on the ARM PS)           │
+            │ reserved — exception vectors / FSBL / OCM mirror (1 MB)  │
+0x0010_0000 ├─────────────────────────────────────────────────────────┤
+            │ OS kernel image (text/rodata/data/bss) + FreeRTOS        │
+            │ heap_4 (task stacks, kernel objects) — ~31 MB           │
+0x0200_0000 ├─────────────────────────────────────────────────────────┤
+            │ OS heap (normal / CPU) — newlib malloc/realloc/free via  │
+            │ _sbrk. Program images (loader), FreeType internals, app  │
+            │ data. ~480 MB contiguous.                                │
 0x2000_0000 ├─────────────────────────────────────────────────────────┤
-            │ SALLY code-bank pages (DDR3_BANKED_BASE). $D5C0         │
-            │ selects a 16 KB page → CPU $6000-$9FFF; 256             │
-            │ pages = 4 MB.                                           │
-0x2040_0000 ├─────────────────────────────────────────────────────────┤
-            │ SALLY data-bank pages (DDR3_DATA_BASE). $D5C1           │
-            │ selects a 16 KB-strided page (12 KB used) → CPU         │
-            │ $A000-$CFFF; 256 pages; xtc heap maps on demand.        │
-            │ Both via sally_mem's banked-window cache.               │
+            │ SALLY banks (HDL params): code-bank $D5C0 @0x2000_0000 + │
+            │ data-bank $D5C1 @0x2040_0000 + video banks (future);     │
+            │ 256 × 16 KB each ≈ 12 MB used, 16 MB reserved.           │
+0x2100_0000 ├─────────────────────────────────────────────────────────┤
+            │ spare (~240 MB) — hosts the 68k "T" realm (ST/STe/TT     │
+            │ guest RAM, ~64 MB) when it's wired; remainder free for   │
+            │ OS-heap extension or guest growth.                       │
 0x3000_0000 ├─────────────────────────────────────────────────────────┤
-            │ Main framebuffer (FB_BASE) — compositor plane 0:        │
-            │ desktop / GEM / blitter output, RGBA-8888,              │
-            │ 1920×1080, stride 8192 B, ~8.44 MB; fb_scanout.         │
-0x3100_0000 ├─────────────────────────────────────────────────────────┤
-            │ XL window surface A (XL_BASE_A) — ANTIC writeback,      │
-            │ 320×192 RGBA-8888 (~240 KB); compositor plane 1.        │
-0x3110_0000 ├─────────────────────────────────────────────────────────┤
-            │ XL window surface B (XL_BASE_B) — 2nd buffer, 1 MB      │
-            │ apart; front_sel flips it on ANTIC vblank.              │
-0x3200_0000 ├─────────────────────────────────────────────────────────┤
-            │ (reserved — blitter scratch / extra planes /            │
-            │ desktop double-buffer — TBD)                            │
-0x3400_0000 ├─────────────────────────────────────────────────────────┤
-            │ Sprite arena (ARENA_BASE) — 64 MB; sprite_engine        │
-            │ image fetch (AXI master still dangled — see TODO).      │
+            │ Compositor planes (HDL params, PL-visible, WIRED):       │
+            │   FB_BASE       0x3000_0000  desktop/GEM/blitter (pl.0)  │
+            │   XL_BASE_A/B   0x3100_0000/0x3110_0000  ANTIC (pl.1)    │
+            │   (reserved     0x3200_0000  blitter scratch/dbl-buf)    │
+            │   ARENA_BASE    0x3400_0000  sprite arena (64 MB)        │
 0x3800_0000 ├─────────────────────────────────────────────────────────┤
-            │ (reserved — GEM heap, asset cache, font glyphs;         │
-            │ provisional, ~128 MB up to the 1 GB ceiling)            │
+            │ PL-visible heap (WIRED) — plv_alloc. Anything the PL     │
+            │ reads by physical address as an *allocation* (not a      │
+            │ fixed plane): GEM window backing surfaces, glyph         │
+            │ atlases, asset caches, DMA buffers. ~128 MB.             │
 0x4000_0000 └─────────────────────────────────────────────────────────┘
               (0x4000_0000 = top of 1 GB DDR3)
 ```
 
-The SALLY banked windows (`0x2000_0000` / `0x2040_0000`), the main framebuffer (`FB_BASE = 0x3000_0000`), the XL window surfaces (`XL_BASE_A/B = 0x3100_0000` / `0x3110_0000`), and the sprite arena (`ARENA_BASE = 0x3400_0000`) are all bound to HDL parameters. The 68k region and the GEM heap are **provisional** — chosen to fit the 1 GB ceiling, not yet wired. (The sprite arena's image-fetch AXI master is still dangled — see ../Design/sprite-engine.md and ../NextSteps.md.)
+The SALLY banked windows (`0x2000_0000` / `0x2040_0000`), the main framebuffer
+(`FB_BASE = 0x3000_0000`), the XL window surfaces (`XL_BASE_A/B = 0x3100_0000` /
+`0x3110_0000`), and the sprite arena (`ARENA_BASE = 0x3400_0000`) are all bound to
+HDL parameters; those bases are unchanged. The **68k "T" realm is provisional and
+not yet wired** — it now lives in the `0x2100_0000` spare block (was `0x1C00_0000`),
+which freed its 64 MB into the contiguous OS heap. SALLY's reservation was trimmed
+from 256 MB to 16 MB (it only needs ~12 MB), leaving the rest of `0x2100_0000`–
+`0x2FFF_FFFF` spare.
+
+## Heaps & allocators
+
+Two heaps, distinguished by **one question: does the PL read it?**
+
+- **`os_alloc`** — the normal CPU heap (`0x0200_0000`–`0x1FFF_FFFF`, newlib
+  `malloc`/`realloc`/`free` over `_sbrk`). Program images (so the loader's
+  `xtld_unload` really frees), FreeType internals, app data, anything CPU-only.
+- **`plv_alloc`** — the **PL-visible / wired** heap (`0x3800_0000`–`0x3FFF_FFFF`).
+  Anything the PL reads by physical address: GEM window surfaces, the hardware
+  glyph atlas (`SRC_BLIT`), asset caches, DMA buffers. **Never swapped or moved**
+  (the compositor/blitter/DMA see physical addresses) — see the wired-page rule in
+  [../OS/memory-protection.md](../OS/memory-protection.md) §4.
+
+So "asset cache / font glyphs" are **not** named regions — they are `plv_alloc`
+allocations. The fixed compositor planes (FB/XL/sprite) stay fixed because
+`plane_fetch` reads them at a known HDL-parameter base; *dynamic* PL-read buffers
+come from `plv_alloc`. CPU-only data (e.g. FreeType's font-file buffers and
+`FT_Face`) comes from `os_alloc`; only the blitter-consumed glyph atlas is
+`plv_alloc`.
+
+On qemu (`-M xilinx-zynq-a9`, no PL) `plv_alloc` is just RAM at `0x3800_0000` and
+the software backend (`gfx_soft`) renders straight into the `0x3000_0000` plane.
 
 ## Framebuffer layout (1080p RGBA-8888)
 
@@ -90,6 +116,7 @@ Per scan-out at 1080p60, 32 bpp:
 | Main framebuffer (0x3000_0000) | `fb_scanout` / compositor `plane_fetch` (read) + `xt_blitter` (write) | HP0 read / HP1 blitter |
 | XL window surface A/B (0x3100_0000 / 0x3110_0000) | `antic_writeback` (write) + compositor `plane_fetch` (read) | HP3 |
 | Sprite arena (0x3400_0000) | `sprite_engine` image fetch (master dangled) | HP0 (planned) |
+| PL-visible heap (0x3800_0000) | blitter (glyph atlas / asset reads) + GEM window surfaces + DMA | HP1 / various |
 
 Each owner declares its base address as a module parameter; the
 defaults above are what `fpga_xt_top` instantiates.
