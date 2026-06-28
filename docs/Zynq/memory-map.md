@@ -32,11 +32,14 @@ values below are defaults — overridable at instantiation.
             │ guest RAM, ~64 MB) when it's wired; remainder free for   │
             │ OS-heap extension or guest growth.                       │
 0x3000_0000 ├─────────────────────────────────────────────────────────┤
-            │ Compositor planes (HDL params, PL-visible, WIRED):       │
-            │   FB_BASE       0x3000_0000  desktop/GEM/blitter (pl.0)  │
-            │   XL_BASE_A/B   0x3100_0000/0x3110_0000  ANTIC (pl.1)    │
-            │   (reserved     0x3200_0000  blitter scratch/dbl-buf)    │
-            │   ARENA_BASE    0x3400_0000  sprite arena (64 MB)        │
+            │ Compositor planes (PL-visible, WIRED) — verified vs HDL/ │
+            │ PS 2026-06-28:                                           │
+            │   FB_BASE   0x3000_0000  desktop/GEM (8.44 MB, 1-buf)    │
+            │   XL slots  0x3100/0x3110/0x3120_0000  ANTIC TRIPLE-     │
+            │             buffer, 320×192 RGBA (~240 KB each)          │
+            │   DRAG_BASE 0x3200_0000  drag-overlay surface (16 MB)    │
+            │   WALLPAPER 0x3300_0000  WM backdrop (16 MB)             │
+            │   ARENA_BASE 0x3400_0000 sprite arena (64 MB)            │
 0x3800_0000 ├─────────────────────────────────────────────────────────┤
             │ PL-visible heap (WIRED) — plv_alloc. Anything the PL     │
             │ reads by physical address as an *allocation* (not a      │
@@ -46,10 +49,15 @@ values below are defaults — overridable at instantiation.
               (0x4000_0000 = top of 1 GB DDR3)
 ```
 
-The SALLY banked windows (`0x2000_0000` / `0x2040_0000`), the main framebuffer
-(`FB_BASE = 0x3000_0000`), the XL window surfaces (`XL_BASE_A/B = 0x3100_0000` /
-`0x3110_0000`), and the sprite arena (`ARENA_BASE = 0x3400_0000`) are all bound to
-HDL parameters; those bases are unchanged. The **68k "T" realm is provisional and
+Ground-truth sources (verified 2026-06-28): SALLY banks `DDR3_BANKED_BASE` /
+`DDR3_DATA_BASE` (hdl/sally_mem.sv:80-81); `FB_BASE` (hdl/xt_blitter.sv:171); the
+XL **triple** buffer `XL_BASE_0/1/2` = `0x3100_0000`/`0x3110_0000`/`0x3120_0000`
+(hdl/fpga_xt_top.sv:1054-1056, rotated by `antic_writeback`); `ARENA_BASE`
+(hdl/sprite_engine.sv:46). The drag-overlay (`DRAG_BASE 0x3200_0000`) and wallpaper
+(`WALLPAPER_BASE 0x3300_0000`) are **PS-allocated** (vitis/xtos/src/gem_lua.c:436/52),
+the overlay plane's base written to the compositor at runtime. So the whole
+`0x3000_0000`–`0x37FF_FFFF` window is occupied; `0x3800_0000`+ is free for
+`plv_alloc`. The **68k "T" realm is provisional and
 not yet wired** — it now lives in the `0x2100_0000` spare block (was `0x1C00_0000`),
 which freed its 64 MB into the contiguous OS heap. SALLY's reservation was trimmed
 from 256 MB to 16 MB (it only needs ~12 MB), leaving the rest of `0x2100_0000`–
@@ -114,7 +122,9 @@ Per scan-out at 1080p60, 32 bpp:
 |--------|-----------------|-------------|
 | SALLY banked window (0x2000_0000) | `sally_mem` (banked-window cache inside) | HP0 (existing `m_axi_*`) |
 | Main framebuffer (0x3000_0000) | `fb_scanout` / compositor `plane_fetch` (read) + `xt_blitter` (write) | HP0 read / HP1 blitter |
-| XL window surface A/B (0x3100_0000 / 0x3110_0000) | `antic_writeback` (write) + compositor `plane_fetch` (read) | HP3 |
+| XL triple-buffer (0x3100_0000 / 0x3110_0000 / 0x3120_0000) | `antic_writeback` (write, rotates 3 slots) + compositor `plane_fetch1` (read) | HP3 |
+| Drag-overlay surface (0x3200_0000) | `plane_fetch_overlay` (read; base written by PS at runtime) | HP2 |
+| Wallpaper / WM backdrop (0x3300_0000) | GEM WM (PS) — snapshot of the desktop plane | (PS write / plane read) |
 | Sprite arena (0x3400_0000) | `sprite_engine` image fetch (master dangled) | HP0 (planned) |
 | PL-visible heap (0x3800_0000) | blitter (glyph atlas / asset reads) + GEM window surfaces + DMA | HP1 / various |
 
