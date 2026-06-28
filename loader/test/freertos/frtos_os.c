@@ -290,7 +290,11 @@ int frtos_spawn(const uint8_t *image, uint32_t len, int argc, char **argv,
       p->l1 = vm_space_create((int)(p - g_proc)); p->asid = (uint32_t)(p - g_proc) + 1u;
       p->heap_brk = XTOS_HEAP_VA; p->heap_end = XTOS_HEAP_VA + XTOS_HEAP_SIZE; }    /* private heap */
     p->used = 1;
-    if (xTaskCreate(app_main, "app", 16384, p, 3, &p->task) != pdPASS) {   /* 64KB: FreeType is stack-hungry */
+    /* name the task after the program (basename of argv[0]) so fault reports and
+     * task listings identify it — FreeRTOS copies the name into the TCB. */
+    const char *nm = (argc > 0 && argv && argv[0]) ? argv[0] : "app";
+    for (const char *q = nm; *q; q++) if (*q == '/') nm = q + 1;
+    if (xTaskCreate(app_main, nm, 16384, p, 3, &p->task) != pdPASS) {   /* 64KB: FreeType is stack-hungry */
         vSemaphoreDelete(p->done); p->used = 0; return -1;
     }
     return p->pid;
