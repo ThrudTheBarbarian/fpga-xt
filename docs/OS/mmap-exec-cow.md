@@ -94,6 +94,14 @@ resident for reuse.
 - The demand pool is a bump allocator that is never reclaimed — fine for the
   testbed; a real page allocator (free list) is the follow-up that also unlocks
   reclaiming COW/heap pages on process exit.
+- **Per-process data is done for libc and the program, not yet for other shared
+  libraries.** libGEM / libm / FreeType still keep their global state in shared
+  (not per-process) data, so two GEM clients in sequence clash — e.g. `gemtext`
+  then `desktop`, or `desktop` twice, faults (a pre-existing limitation, present
+  before this work). The fix is the natural extension of step 2: register each
+  loaded library's writable range as a global COW range with a post-init pristine
+  source (needs an xtld hook to enumerate loaded objects' writable ranges). Each
+  GEM client running on its own once is fine.
 
 ## 6. Tests (all green on qemu — `make freertos`)
 
