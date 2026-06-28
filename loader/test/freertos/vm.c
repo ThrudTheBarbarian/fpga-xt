@@ -89,6 +89,7 @@ void vm_cow_init(void)
 static uintptr_t   g_libc_wva;
 static uint32_t    g_libc_wsize;
 static const void *g_libc_snap;
+static char       *g_libc_share;   /* the ONE shared pristine libc-data copy (COW source) */
 void vm_set_libc(uintptr_t wva, uint32_t wsize, const void *snapshot)
 { g_libc_wva = wva; g_libc_wsize = wsize; g_libc_snap = snapshot; }
 
@@ -104,23 +105,36 @@ uint32_t *vm_space_create(int idx)
     uint32_t  asid = (uint32_t)idx + 1u;
     memcpy(t, mmu_master_table(), 4096 * sizeof(uint32_t));
 
-    /* (a) private libc data/bss: copy the snapshot into fresh pages, map them via
-     * L2 at libc's data VA (only the data pages — ~16KB, not a 1MB section). */
+    /* (a) per-process libc data/bss via COPY-ON-WRITE: map libc's data pages
+     * shared READ-ONLY at one pristine copy; the first write (e.g. malloc updating
+     * its arena) faults -> a private page. No eager per-process copy.
+     *
+     * The shared pristine block is page-aligned with the data at its TRUE sub-page
+     * offset (libc's writable seg starts at a non-page-aligned VA, e.g. ...c58):
+     * mapping a page-aligned VA straight to snapshot[0] would shift every pointer/
+     * GOT entry and crash. Build it ONCE; all processes share it (the whole win). */
     if (g_libc_wva && g_libc_snap) {
         uint32_t first = (uint32_t)g_libc_wva & ~0xFFFu;
         uint32_t last  = ((uint32_t)g_libc_wva + g_libc_wsize - 1u) & ~0xFFFu;
         uint32_t npg   = (last - first) / 0x1000u + 1u;
-        char *blk = frtos_alloc(npg * 0x1000u, 0x1000, NULL);
-        if (blk) {
+        if (!g_libc_share) {
+            char *s = frtos_alloc(npg * 0x1000u, 0x1000, NULL);
+            if (s) {
+                memset(s, 0, npg * 0x1000u);
+                memcpy(s + ((uint32_t)g_libc_wva - first), g_libc_snap, g_libc_wsize);
+                g_libc_share = s;
+                vm_cow_register(first, npg * 0x1000u);
+            }
+        }
+        if (g_libc_share) {
             uint32_t sec = first >> 20;
-            memset(blk, 0, npg * 0x1000u);
-            memcpy(blk + ((uint32_t)g_libc_wva - first), g_libc_snap, g_libc_wsize);
             /* identity-map the whole section (it also holds the shared boot heap /
-             * program image / argv), then override ONLY libc's data pages private */
+             * program image / argv), then override ONLY libc's data pages RO. */
             for (uint32_t i = 0; i < 256; i++)
                 l2[i] = L2_PAGE((sec << 20) + i * 0x1000u);
             for (uint32_t p = 0; p < npg; p++)
-                l2[L2_IDX(first + p * 0x1000u)] = L2_PAGE((uint32_t)blk + p * 0x1000u);
+                l2[L2_IDX(first + p * 0x1000u)] =
+                    L2_PAGE_RO((uint32_t)g_libc_share + p * 0x1000u);
             t[sec] = L1_COARSE(l2);
         }
     }
