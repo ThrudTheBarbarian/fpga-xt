@@ -78,12 +78,17 @@ declare, not a consumer-side re-declaration.
 While xtc cross-compiles on a dev host, "present at compile time" means a host copy
 of the target's `.so`s in `$libDir` — a **sysroot**. Because the interface *is*
 the `.so`, the SDK is just that copy of `$libDir`; there is no separate headers or
-import-library package to assemble. The discipline: it must be the **same
-artifact** as deployed — one build of `libGEM.so`, copied to both the sysroot (for
-`#import`) and the device (for runtime), same `DT_SONAME` — or the host and device
-interfaces drift (the two-files problem, now across machines: compile against ABI
-v1, run against v2 → silent struct-offset corruption). `DT_SONAME`/a version stamp
-is the drift detector. No bootstrap circularity: the base libs (`libc.so`,
+import-library package to assemble. The discipline is lighter than "same exact
+file": dynamic linking binds **by name at runtime**, so only the **interface**
+(signatures + layouts) must agree between the sysroot copy the client compiled
+against and the device `.so` it runs against. Implementation drift is fine — a
+device `.so` recompiled with the same API still binds correctly (that is the whole
+value of shared libraries). What must not drift unversioned is the *interface* — a
+signature change or a struct-layout morph — and **`DT_SONAME` is the guard**: bump
+it on an incompatible change and the loader refuses a mismatched version rather
+than binding it. (The only route to silent struct-offset corruption is changing a
+layout while keeping the old soname *and* running an old client.) Shipping the same
+artifact to both places is just the trivially-safe case of that rule. No bootstrap circularity: the base libs (`libc.so`,
 `libm.so`) are C/newlib built by gcc, so they populate the sysroot without xtc.
 **Self-hosting dissolves the sysroot** — on-device, `#import` reads the `.so`s in
 place. (In this tree, `loader/build/*.so` already serve runtime + the `xtcrun`
