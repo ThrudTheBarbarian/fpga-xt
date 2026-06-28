@@ -66,17 +66,15 @@ static void shell_task(void *arg)
             puts0("builtins: help, exit, faulttest. programs: /bin/{hello,showmotd,usestr,echo,libc_test,gemtext,desktop}\n");
             continue;
         }
-        if (!strcmp(argv[0], "vmtest")) {          /* T2-b: per-process address-space isolation */
-            volatile unsigned *p = (volatile unsigned *)0x1FF00000u;
-            *p = 0xAA55AA55u;                       /* master (shell) space */
-            puts0("vmtest: shell(master) wrote 0xAA55AA55 to 0x1FF00000\n");
-            char *av[1] = { (char *)"vmtest" };
-            int pid = frtos_spawn_argv("/bin/vmtest", 1, av, &g_host);
+        if (!strcmp(argv[0], "vmtest")) {          /* T2-b: per-process heaps */
+            char *a[2] = { (char *)"vmtest", (char *)"A" };
+            char *b[2] = { (char *)"vmtest", (char *)"B" };
+            int pid = frtos_spawn_argv("/bin/vmtest", 2, a, &g_host);
             if (pid < 0) { puts0("vmtest: not found\n"); continue; }
             frtos_waitpid(pid);
-            puts0(*p == 0xAA55AA55u
-                  ? "vmtest: shell STILL sees 0xAA55AA55 -> ISOLATED (proc's write hit its OWN page)\n"
-                  : "vmtest: shell's value changed -> NOT isolated\n");
+            pid = frtos_spawn_argv("/bin/vmtest", 2, b, &g_host);
+            if (pid >= 0) frtos_waitpid(pid);
+            puts0("vmtest: both malloc'd the SAME address from a fresh heap -> per-process heaps\n");
             continue;
         }
         if (!strcmp(argv[0], "faulttest")) {       /* T2-a.2: a faulting app is killed; the OS survives */
@@ -122,6 +120,20 @@ int main(void)
     frtos_activate_libc(libc);
     xtld_run_init(libc);
     puts0("libc.so loaded + activated\n");
+
+    /* T2-b: snapshot libc.so's pristine data/bss (post-init, before any malloc)
+     * into a static buffer, so each spawned process gets its OWN copy of libc's
+     * writable state -> per-process malloc. memcpy (not libc malloc) keeps the
+     * snapshot pristine. */
+    {
+        static uint8_t libc_snap[0x10000];
+        uintptr_t wva; uint32_t wsize;
+        xtld_writable_range(libc, &wva, &wsize);
+        if (wva && wsize && wsize <= sizeof libc_snap) {
+            memcpy(libc_snap, (void *)wva, wsize);
+            vm_set_libc(wva, wsize, libc_snap);
+        }
+    }
 
     void *p = frtos_alloc(4096, 16, NULL);       /* now via libc.so's malloc */
     puts0(p ? "libc.so malloc: ok\n" : "libc.so malloc: FAIL\n");

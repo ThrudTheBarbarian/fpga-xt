@@ -76,6 +76,10 @@ uintptr_t xtld_base(const xtld_obj *obj);
 /* Span of the loaded image in bytes (for diagnostics / cache range). */
 size_t xtld_span(const xtld_obj *obj);
 
+/* The writable (data/bss) PT_LOAD segment's runtime VA + size — for per-process
+ * private-data mapping (each process gets its own copy of these pages). */
+void xtld_writable_range(const xtld_obj *obj, uintptr_t *va, uint32_t *size);
+
 /* Number of DT_INIT_ARRAY constructors discovered (diagnostics). */
 uint32_t xtld_init_count(const xtld_obj *obj);
 

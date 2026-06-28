@@ -122,6 +122,9 @@ struct xtld_obj {
 
     const char       *soname;     /* DT_SONAME — registry key, or NULL */
     int               refcount;
+
+    uintptr_t wseg_va;            /* writable (data/bss) PT_LOAD: runtime VA + size, */
+    uint32_t  wseg_size;          /* for per-process private-data mapping (vm.c) */
 };
 
 /* ---- loaded-object registry (for cross-module symbol resolution + dedup) -- */
@@ -211,7 +214,8 @@ int xtld_load(const uint8_t *image, size_t image_len,
     memset(base, 0, span);
     uintptr_t bias = (uintptr_t)base - lo;
 
-    /* 3. copy PT_LOAD segments (bss is already zero) */
+    /* 3. copy PT_LOAD segments (bss is already zero), noting the writable one */
+    uintptr_t wseg_va = 0; uint32_t wseg_size = 0;
     for (int i = 0; i < eh->e_phnum; i++) {
         const Elf32_Phdr *p = &ph[i];
         if (p->p_type != PT_LOAD) continue;
@@ -220,6 +224,7 @@ int xtld_load(const uint8_t *image, size_t image_len,
             return XTLD_E_TRUNCATED;
         }
         memcpy((void *)(bias + p->p_vaddr), image + p->p_offset, p->p_filesz);
+        if (p->p_flags & 0x2 /* PF_W */) { wseg_va = bias + p->p_vaddr; wseg_size = p->p_memsz; }
     }
 
     /* 4. parse PT_DYNAMIC (its contents now live in the loaded image) */
@@ -343,6 +348,8 @@ int xtld_load(const uint8_t *image, size_t image_len,
     obj->span       = span;
     obj->bias       = bias;
     obj->entry      = eh->e_entry;
+    obj->wseg_va    = wseg_va;
+    obj->wseg_size  = wseg_size;
     obj->symtab     = symtab;
     obj->strtab     = strtab;
     obj->symcount   = symcount;
@@ -386,6 +393,12 @@ uintptr_t xtld_entry(const xtld_obj *obj)
 
 uintptr_t xtld_base(const xtld_obj *obj) { return obj ? obj->bias : 0; }
 size_t    xtld_span(const xtld_obj *obj) { return obj ? obj->span : 0; }
+
+void xtld_writable_range(const xtld_obj *obj, uintptr_t *va, uint32_t *size)
+{
+    if (va)   *va   = obj ? obj->wseg_va : 0;
+    if (size) *size = obj ? obj->wseg_size : 0;
+}
 uint32_t  xtld_init_count(const xtld_obj *obj) { return obj ? obj->init_count : 0; }
 
 void xtld_unload(xtld_obj *obj)

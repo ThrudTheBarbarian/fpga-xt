@@ -4,6 +4,13 @@
 #include <stdint.h>
 #include <stddef.h>
 #include "xtld.h"
+
+/* T2-b: per-process heap window (mapped per-process to private physical by vm.c;
+ * libc's _sbrk hands out of it for the current process). 1 section for now. */
+#define XTOS_HEAP_VA   0x10000000u
+#define XTOS_HEAP_SIZE 0x00100000u
+void vm_set_libc(uintptr_t wva, uint32_t wsize, const void *snapshot);
+
 void ksys_set_console(void (*w)(const char *, int));
 void *frtos_alloc(size_t size, size_t align, void *user);
 void  frtos_free(void *p, void *user);

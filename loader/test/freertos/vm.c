@@ -23,8 +23,6 @@
 #include "frtos_os.h"
 
 #define NSPACE     8
-#define PRIV_VA    0x1FF00000u           /* top pool section, repurposed per-process */
-#define PRIV_SEC   (PRIV_VA >> 20)       /* L1 index 0x1FF */
 #define L2_IDX(va) (((va) >> 12) & 0xFF) /* L2 (4KB page) index within a section */
 
 /* L2 small-page (4KB) descriptor: Normal non-cacheable, AP=11 (full), nG=1
@@ -32,19 +30,28 @@
 #define L2_PAGE(phys) (((phys) & 0xFFFFF000u) | (1u<<11) | (3u<<4) | (1u<<6) | 0x2u)
 /* L1 coarse descriptor pointing at an L2 table (domain 0) */
 #define L1_COARSE(l2) (((uint32_t)(l2) & 0xFFFFFC00u) | 0x1u)
+/* per-process heap: a section mapped to private physical, non-global */
+#define SEC_NG(phys, attr) (((phys) & 0xFFF00000u) | (attr) | (1u<<17))
 
 extern uint32_t *mmu_master_table(void);
 
 static uint32_t  space_l1[NSPACE][4096] __attribute__((aligned(16384)));
-static uint32_t  space_l2[NSPACE][256]  __attribute__((aligned(1024)));  /* one L2 / space (private section) */
+static uint32_t  space_l2[NSPACE][256]  __attribute__((aligned(1024)));  /* libc data section, per space */
 static uint32_t *g_cur_table;            /* currently-active TTBR0 table */
 static uint32_t  g_cur_asid;
 
-/* Build space `idx`'s table (ASID = idx+1; 0 is the kernel/master): copy the
- * master, then map a single private 4 KB page at PRIV_VA via an L2 table — fine
- * (page) granularity is what real per-process libc data / heaps / guard pages
- * need. The page is non-global (ASID-tagged); the rest of the section faults.
- * Drop any stale TLB entries for this reused ASID. */
+/* libc.so's writable (data/bss) range + a pristine snapshot, set once at boot. */
+static uintptr_t   g_libc_wva;
+static uint32_t    g_libc_wsize;
+static const void *g_libc_snap;
+void vm_set_libc(uintptr_t wva, uint32_t wsize, const void *snapshot)
+{ g_libc_wva = wva; g_libc_wsize = wsize; g_libc_snap = snapshot; }
+
+/* Build space `idx`'s table (ASID = idx+1; 0 = kernel/master): copy the master,
+ * then give the process PRIVATE copies of (a) libc.so's data/bss pages — mapped
+ * at the same VA via an L2 table, 4KB-granular, seeded from the pristine snapshot
+ * so each process's malloc state is its own; and (b) a heap section at
+ * XTOS_HEAP_VA. All non-global (ASID-tagged). Drop stale TLB for the reused ASID. */
 uint32_t *vm_space_create(int idx)
 {
     uint32_t *t  = space_l1[idx];
@@ -52,13 +59,34 @@ uint32_t *vm_space_create(int idx)
     uint32_t  asid = (uint32_t)idx + 1u;
     memcpy(t, mmu_master_table(), 4096 * sizeof(uint32_t));
 
-    memset(l2, 0, 256 * sizeof(uint32_t));            /* all pages fault by default */
-    void *priv = frtos_alloc(0x1000, 0x1000, NULL);   /* one 4 KB private page */
-    if (priv) {
-        memset(priv, 0, 0x1000);
-        l2[L2_IDX(PRIV_VA)] = L2_PAGE((uint32_t)priv);
-        t[PRIV_SEC] = L1_COARSE(l2);                  /* section now an L2 (page) table */
+    /* (a) private libc data/bss: copy the snapshot into fresh pages, map them via
+     * L2 at libc's data VA (only the data pages — ~16KB, not a 1MB section). */
+    if (g_libc_wva && g_libc_snap) {
+        uint32_t first = (uint32_t)g_libc_wva & ~0xFFFu;
+        uint32_t last  = ((uint32_t)g_libc_wva + g_libc_wsize - 1u) & ~0xFFFu;
+        uint32_t npg   = (last - first) / 0x1000u + 1u;
+        char *blk = frtos_alloc(npg * 0x1000u, 0x1000, NULL);
+        if (blk) {
+            uint32_t sec = first >> 20;
+            memset(blk, 0, npg * 0x1000u);
+            memcpy(blk + ((uint32_t)g_libc_wva - first), g_libc_snap, g_libc_wsize);
+            /* identity-map the whole section (it also holds the shared boot heap /
+             * program image / argv), then override ONLY libc's data pages private */
+            for (uint32_t i = 0; i < 256; i++)
+                l2[i] = L2_PAGE((sec << 20) + i * 0x1000u);
+            for (uint32_t p = 0; p < npg; p++)
+                l2[L2_IDX(first + p * 0x1000u)] = L2_PAGE((uint32_t)blk + p * 0x1000u);
+            t[sec] = L1_COARSE(l2);
+        }
     }
+
+    /* (b) private heap: one section at XTOS_HEAP_VA -> fresh private physical. */
+    {
+        uint32_t attr = mmu_master_table()[XTOS_HEAP_VA >> 20] & 0x000FFFFFu;
+        void *hp = frtos_alloc(XTOS_HEAP_SIZE, 0x100000, NULL);
+        if (hp) { memset(hp, 0, XTOS_HEAP_SIZE); t[XTOS_HEAP_VA >> 20] = SEC_NG((uint32_t)hp, attr); }
+    }
+
     __asm__ volatile("mcr p15,0,%0,c8,c7,2" :: "r"(asid));   /* TLBIASID: clear stale */
     __asm__ volatile("dsb; isb");
     return t;

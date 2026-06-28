@@ -14,7 +14,9 @@
 static char *g_brk, *g_brk_end;
 void sbrk_set_base(void *base, void *end) { g_brk = base; g_brk_end = end; }
 
-void *_sbrk(int incr)
+/* the kernel/boot heap (shared pool above libc.so's image). libc.so's exported
+ * _sbrk (frtos_os.c) delegates here for the kernel; processes get a private heap. */
+void *kern_sbrk(int incr)
 {
     if (!g_brk || g_brk + incr > g_brk_end) return (void *)-1;
     char *p = g_brk; g_brk += incr; return p;

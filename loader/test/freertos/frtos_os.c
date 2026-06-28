@@ -43,6 +43,8 @@ typedef struct {
     fd_t              fd[NFD];
     uint32_t         *l1;             /* per-process address space (vm.c), NULL=master */
     uint32_t          asid;           /* its ASID (slot+1; 0 = kernel/master) */
+    uint32_t          heap_brk;       /* per-process heap (XTOS_HEAP_VA window) */
+    uint32_t          heap_end;
 } proc_t;
 
 static proc_t g_proc[MAXPROC];
@@ -102,6 +104,20 @@ void xtos_vm_on_switch(void)
     for (int i = 0; i < MAXPROC; i++)
         if (g_proc[i].used && g_proc[i].task == t) { table = g_proc[i].l1; asid = g_proc[i].asid; break; }
     vm_switch(table, asid);
+}
+
+/* libc.so's _sbrk — per-process: a process grows its OWN heap (XTOS_HEAP_VA
+ * window, mapped to private physical by vm.c); the kernel/boot libc uses
+ * kern_sbrk (the shared pool). So each process's malloc heap is its own. */
+void *_sbrk(int incr)
+{
+    proc_t *p = cur_proc();
+    if (p && p->heap_brk) {
+        if (p->heap_brk + (uint32_t)incr > p->heap_end) return (void *)-1;
+        void *r = (void *)p->heap_brk; p->heap_brk += (uint32_t)incr; return r;
+    }
+    extern void *kern_sbrk(int);
+    return kern_sbrk(incr);
 }
 
 /* runs in TASK (System-mode) context — safe to call yielding FreeRTOS APIs */
@@ -255,7 +271,8 @@ int frtos_spawn(const uint8_t *image, uint32_t len, int argc, char **argv,
     p->done = xSemaphoreCreateBinary();
     if (!p->done) return -1;
     { extern uint32_t *vm_space_create(int);                       /* T2-b: private address space */
-      p->l1 = vm_space_create((int)(p - g_proc)); p->asid = (uint32_t)(p - g_proc) + 1u; }
+      p->l1 = vm_space_create((int)(p - g_proc)); p->asid = (uint32_t)(p - g_proc) + 1u;
+      p->heap_brk = XTOS_HEAP_VA; p->heap_end = XTOS_HEAP_VA + XTOS_HEAP_SIZE; }    /* private heap */
     p->used = 1;
     if (xTaskCreate(app_main, "app", 16384, p, 3, &p->task) != pdPASS) {   /* 64KB: FreeType is stack-hungry */
         vSemaphoreDelete(p->done); p->used = 0; return -1;
@@ -281,7 +298,8 @@ int frtos_spawn_argv(const char *path, int argc, char **argv, const xtld_host *h
  * inline-syscall test programs that do not yet DT_NEEDED libc.so). It does NOT
  * grow per-library: libGEM and programs get libc from libc.so, not here. */
 #define K(sym) extern void sym(void);
-K(_sbrk) K(_write) K(_read) K(_exit) K(_close) K(_lseek) K(_fstat) K(_isatty)
+/* _sbrk is defined in this file (per-process), not external */
+K(_write) K(_read) K(_exit) K(_close) K(_lseek) K(_fstat) K(_isatty)
 K(_open) K(_stat) K(_kill) K(_getpid) K(_gettimeofday) K(_times) K(_link)
 K(_unlink) K(_fork) K(_execve) K(_fcntl) K(_getentropy) K(_mkdir)
 K(_init) K(_fini) K(_jp2uc_l) K(_uc2jp_l) K(_wait)

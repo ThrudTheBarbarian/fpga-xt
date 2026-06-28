@@ -1,16 +1,15 @@
-/* /bin/vmtest — T2-b isolation proof. Reads + writes the per-process private
- * window at 0x1FF00000. Run from the shell's `vmtest` builtin, which first writes
- * a sentinel there in the MASTER space: if isolated, this process sees its own
- * (zeroed) private page, not the sentinel, and its write won't touch the master's.
- */
+/* /bin/vmtest — T2-b per-process-heap proof. malloc from libc (now per-process:
+ * private libc data + private heap). Run twice: if each instance's malloc returns
+ * the SAME address from a fresh heap, the processes have separate heaps (a shared
+ * heap would hand the second run a different, higher address). */
 #include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
 void _app_entry(int argc, char **argv)
 {
-    (void)argc; (void)argv;
-    volatile unsigned *p = (volatile unsigned *)0x1FF00000u;
-    unsigned before = *p;
-    *p = 0xBB66BB66u;
-    printf("vmtest[proc]: priv@0x1FF00000 before=0x%08x (master wrote 0xAA55AA55), "
-           "wrote 0xBB66BB66, read back=0x%08x\n", before, *p);
+    const char *tag = argc > 1 ? argv[1] : "?";
+    char *p = malloc(64);
+    snprintf(p, 64, "owned by %s", tag);
+    printf("vmtest[%s]: malloc -> %p  contents=\"%s\"\n", tag, (void *)p, p);
     fflush(stdout);
 }
