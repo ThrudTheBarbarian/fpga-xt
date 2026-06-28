@@ -1,130 +1,111 @@
-# mmap-exec + COW — design, plan, and handoff
+# mmap-exec + copy-on-write
 
-> **Status: NOT BUILT — next-session task.** This is a working handoff doc for the
-> last big tier-2 piece (memory-protection.md §4). A first COW attempt was made
-> and reverted (§4); start from the plan in §5. Current tree is green at the W^X
-> checkpoint. See [memory-protection.md](memory-protection.md), [dynamic-loading.md](dynamic-loading.md).
+> **Status: BUILT and validated on qemu** (the last tier-2 / memory-protection.md
+> §4 piece). See [memory-protection.md](memory-protection.md),
+> [dynamic-loading.md](dynamic-loading.md).
 
-## 1. Goal
+## 1. What it does
 
-Two coupled capabilities from tier-2 (memory-protection.md §4):
+Two coupled capabilities, both layered on one copy-on-write (COW) mechanism:
 
-- **Demand-loaded / shared-text executables** — map a program's text pages
-  instead of `malloc`+`memcpy`-ing them, so spawn is cheaper and **text is shared
-  across instances** of the same program (one physical copy).
-- **Copy-on-write (COW)** — a writable page starts shared read-only and is copied
-  privately on first write. This is the **fork-ready mechanism** and the proper way
-  to give each process private data without an eager full copy.
+- **Shared-text executables (mmap-exec).** A program spawned N times is loaded
+  **once**. Its text / rodata / GOT are shared **read-only** — one physical copy
+  across all instances — and W^X (read-only + executable). Previously each spawn
+  re-loaded and relocated the whole image, duplicating text per instance.
+- **Copy-on-write data.** A writable page starts mapped shared read-only at a
+  pristine source and is copied privately on the first write. This gives each
+  process private data without an eager full copy, and is the **fork-ready**
+  mechanism. It backs per-process libc data, per-process program data/bss, and a
+  synthetic demo region.
 
-Both are *optimizations*: the current eager model (each spawn re-loads the whole
-image, relocates in place, and `vm_space_create` eagerly copies libc's data) is
-**correct**. So there is no correctness pressure — take the time to do it cleanly.
+## 2. The COW mechanism (`vm.c`)
 
-## 2. Current state (the checkpoint to build on)
+A COW page is mapped **read-only** (`L2_PAGE_RO`, AP=111) at a shared pristine
+source. A write permission-faults; the data-abort handler (`xt_vectors.S` →
+`xtos_demand_fault` → `vm_cow_map`) services it:
 
-Green at commit **`ec6129d`** (W^X). Tier-2 on qemu, all passing
-(`vmtest / demandtest / faulttest / stacktest / wxtest`, OS survives each):
+1. Gate: the faulting VA must be in a known COW range (else it's a genuine fault —
+   e.g. a write to read-only **text** under W^X — and stays fatal).
+2. Draw a fresh page from the pre-reserved kernel demand pool (`dpage()` — no libc
+   from the abort handler; it runs in the faulting process's address space).
+3. `memcpy` the shared page into it **through the still-valid RO mapping** (reads
+   are allowed), so the source needs no separate kernel VA.
+4. Rewrite the L2 entry to the private page, **clearing AP[2] (RO→RW) but keeping
+   every other attribute** — crucially XN, so a COW'd program-data page stays
+   execute-never (W^X).
+5. `TLBIMVAA` the page and return 1 to re-run the store into private memory.
 
-- per-process address spaces + ASIDs (`vm.c`, `vm_space_create`/`vm_switch`)
-- per-process malloc (eager libc-data copy, part (a) of `vm_space_create`)
-- demand-paged lazy heap (`vm_demand_map`, the `xtos_demand_fault` path)
-- guard pages (`stackguard.c`, emergency-stack kill)
-- W^X (`mmu_protect` in `mmu.c`, called per spawn)
+The write fault is distinguished from a read fault via `DFSR.WnR` (bit 11).
 
-Build/run: `cd loader && make build/freertos.elf` then pipe commands to
-`qemu-system-arm -M xilinx-zynq-a9 … -kernel build/freertos.elf` (see the Makefile
-`freertos` target / earlier sessions for the exact qemu line).
+### COW ranges
 
-## 3. The intended design
+`vm_space_create` builds each space from a copy of the master table, then installs
+per-process L2s for the ranges it needs to override:
 
-**In-memory romfs makes text-sharing elegant.** The ELF files already live in RAM
-(the embedded romfs blob), so:
+- **Global ranges** (libc data, the synthetic demo) live at the same VA in every
+  space and are mapped into all of them. Registered via `vm_cow_register`.
+- **The per-space program range** is the spawning program's own data: its VA is the
+  program's identity load address, so it belongs only to that space. Tracked in
+  `g_space_prog[idx]` and passed to `vm_space_create`.
 
-- **Text/rodata** (PIC, no relocations): map the **romfs's ELF text pages directly,
-  RO, shared** — *no copy*. PIC means it runs at the romfs address; every instance
-  and the file share one physical copy. Requires the segment to be page-aligned in
-  the file (it is, via `-z max-page-size`).
-- **Data/bss**: per-process, **COW** — shared RO from a pristine template until a
-  write faults → private copy + remap RW. `bss` = demand-zero.
+Each range carries a `src`: page `(va + k·0x1000)` maps RO to `(src + k·0x1000)`.
 
-**The VA≠PA wrinkle.** Sharing text between *instances of one program* works under
-identity mapping (same physical, same VA). But running **two different programs**
-each at their own fixed VA needs VA≠PA (the loader relocating for a runtime VA
-different from where the image physically sits). The testbed is all-identity so
-far. Decide early: (a) identity, one-program-family-at-a-time is enough for the
-demo; (b) go VA≠PA for the general case (a real loader change — `xtld` currently
-relocates for the alloc'd = physical address).
+L2s are **section-keyed** (`perproc_l2`): one per-process L2 per 1 MB section, seeded
+from the master so shared text/rodata/GOT pages in the same section keep their
+mapping while the COW pages are overridden. If a program and libc land in the same
+1 MB section they reuse **one** L2 (no clobber — the collision hazard from earlier
+notes is closed).
 
-## 4. The COW attempt that was reverted (READ THIS FIRST)
+## 3. The shared pristine source per feature
 
-Approach tried (then reverted to keep the tree green):
+- **Program data** — COW source is the **program image's own data pages**
+  (identity). The kernel never writes a loaded program's data, so the master image
+  stays pristine and serves every instance. No snapshot, no alignment fixup
+  (identity preserves the sub-page offset). Constructors (`.init_array`) run **per
+  process** in `app_main` (classic exec semantics), writing into each instance's
+  COW copy.
+- **libc data** — COW source is **one shared pristine block** built once in
+  `vm_set_libc`. libc's writable segment starts at a **non-page-aligned VA** (e.g.
+  `…c58`), so the block is page-aligned with the data seeded at its true sub-page
+  offset. Mapping a page-aligned VA straight to `snapshot[0]` would shift every
+  pointer/GOT entry by the offset and crash on the first libc call — the block
+  avoids that. The kernel mutates the *original* libc data (its own malloc arena);
+  processes COW from the pristine block.
+- **Synthetic demo** — COW source is a template page; `/bin/cowtest` proves the
+  mechanism in isolation.
 
-- `vm.c`: `#define L2_PAGE_RO(phys) (L2_PAGE(phys) | (1u<<9))` (AP[2]=read-only).
-  `vm_space_create` part (a) mapped libc's data pages **RO at the shared snapshot**
-  (`g_libc_snap`) instead of eager-copying to a private block.
-- `vm_cow(idx, va)`: on a write fault in the libc-data range to an RO page →
-  `dpage()` a private page, `memcpy` from the snapshot, remap `L2_PAGE` (RW),
-  `TLBIMVAA`, bump a counter.
-- `frtos_os.c` `xtos_demand_fault`: read `DFSR`, and if `WnR` (bit 11 = write) try
-  `vm_cow` before the heap demand-zero path.
+## 4. The program cache (`frtos_os.c`)
 
-**Failure (deterministic):** libc-using programs took an **UNDEF (undefined
-instruction) at `PC=0x0254620c`, `DFAR=0/DFSR=0` — BEFORE any COW write fault
-fired** (`vm_cow` count stayed 0; `vmtest`/`demandtest` produced no program
-output). So a libc **read** off the RO-snapshot mapping returned a bad
-pointer/instruction stream — the crash is upstream of the write path, in how the
-RO→snapshot mapping presents libc's data.
+`prog_get` keys on the romfs image pointer. On a miss it `xtld_load`s, applies W^X
+`mmu_protect` (text RO+X, writable RW+XN) **once**, and caches `{obj, entry,
+writable range}`. On a hit it reuses the object — no second load, no second
+relocation. `frtos_waitpid` reaps the process slot but leaves the cached image
+resident for reuse.
 
-**Leading suspects (to check next time):**
-1. `_impure_ptr` / the newlib `_reent` struct, or a self-pointer in libc's data,
-   read off the snapshot and dereferenced/called wrong.
-2. The snapshot physical/offset mapping is subtly wrong for some page (re-verify
-   `g_libc_wva` page-alignment vs `g_libc_snap + p*0x1000`; libc.so is
-   `-z max-page-size=0x100000`).
-3. The program executes a mis-mapped page (a GOT/PLT entry pointing into the
-   RO-mapped data region).
+## 5. Hardware notes (carried for the HW re-graduation)
 
-Disassembling the runtime image around `0x0254620c` (which loaded object + offset)
-is the fastest way in.
+- **Stale global TLB shadow.** The master maps RAM global+identity. A per-process
+  `nG` override is shadowed by a cached global TLB entry **only for VAs the kernel
+  actually touches** (libc's data arena). `vm_switch` flushes libc's data pages by
+  MVA on entry to a process. Program data and the synthetic/heap windows are never
+  touched by the kernel, so (like the heap) they need no extra flush. Any new
+  per-process override of a *kernel-touched* VA must add the same flush. (qemu's TLB
+  model hides this; it bites only on real silicon.)
+- The demand pool is a bump allocator that is never reclaimed — fine for the
+  testbed; a real page allocator (free list) is the follow-up that also unlocks
+  reclaiming COW/heap pages on process exit.
 
-## 5. Recommended plan (incremental — the hard lesson from guard pages)
+## 6. Tests (all green on qemu — `make freertos`)
 
-Do **one layer at a time, test each on qemu before the next.** A first attempt
-that did everything at once thrashed; the incremental retry succeeded.
+`cowtest` (synthetic COW + isolation), `sharetext` (1 load for 2 spawns, shared
+`&marker`, pristine-then-private `g_counter`), `vmtest` (per-process heaps),
+`libc_test` / `gemtext` / `desktop` (libc + libm + FreeType under COW),
+`demandtest`, `wxtest`, `stacktest`, `faulttest`.
 
-1. **COW mechanism on a SYNTHETIC isolated region** — not libc. Map a scratch VA
-   range RO→a known template, write to it, confirm `vm_cow` copies + remaps + the
-   store re-runs into private memory. This validates the mechanism away from
-   libc's reentrancy/GOT subtleties.
-2. **COW for libc data** — apply the validated mechanism to part (a); debug the §4
-   UNDEF with the mechanism already known-good.
-3. **Shared text from romfs** — the loader change: map text pages from the romfs
-   ELF (RO, shared) instead of copying; relocate only the per-process data. Decide
-   the VA≠PA question (§3) here.
-4. **Per-process program globals via COW** — today only libc data is per-process;
-   a program's own writable segment is still shared/re-copied. The same COW path
-   covers it.
-
-## 6. Gotchas carried from this session
-
-- **Static-task spawn race:** `xTaskCreateStatic` *returns* the handle (unlike
-  `xTaskCreate`'s pre-write out-param) and the child outranks the spawner, so set
-  `p->task` before it can run — `vTaskSuspendAll()` across creation (frtos_os.c).
-- **HW-only stale global TLB shadow:** the master maps regions global+identity;
-  per-process nG overrides are shadowed by cached global entries on real silicon
-  (qemu hides it). `vm_switch` flushes libc's data pages by MVA on entry to a
-  process. Any new per-process override of a kernel-touched VA needs the same.
-- **W^X + COW interaction:** `mmu_protect` converts a program's section to an L2 in
-  the master; `vm_space_create` part (a) overrides the libc-data section's L1 to a
-  per-process L2. If a program and libc share a 1 MB section these can collide —
-  check section disjointness when wiring shared-text.
-- **Don't thrash:** revert to the green checkpoint rather than stacking fixes on a
-  shaky base; bisect by isolating one layer.
-
-## 7. After it lands
+## 7. After this
 
 Per the user's plan: **re-graduate all of tier-2 to hardware**
 (`freertos-hw.elf` + `./vivado/jtag-valhalla.sh testbed`, user drives the JTAG
-load), **then turn caches on** (the testbed runs non-cacheable today —
-`mmu.c` sets the MMU on but leaves caches off; enabling them needs
-`xtld_host.sync_caches` wired for loaded code).
+load), **then turn caches on** (the testbed runs non-cacheable today — `mmu.c`
+sets the MMU on but leaves caches off; enabling them needs `xtld_host.sync_caches`
+wired for loaded code).

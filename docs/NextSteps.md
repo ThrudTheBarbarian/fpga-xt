@@ -248,7 +248,11 @@ Remaining:
   alloc, guard pages, **opt-in swap** — safe via the **PL-visible ⇒ wired** invariant
   (so the Atari surfaces are never swapped, for free). **DECIDED 2026-06-28: tier 2**
   (spawn primitive; vision P1 updated). fork (tier 3) deferred = possible later
-  single-threaded compat shim only. *(src: docs/OS/memory-protection.md)*
+  single-threaded compat shim only. **BUILT on qemu (loader testbed):** per-process
+  address spaces + ASIDs, per-process malloc, lazy/demand-zero heap, guard pages,
+  W^X, **mmap-exec (load-once shared text) + copy-on-write** (libc data, program
+  data, fork-ready mechanism). Next: re-graduate to HW + enable caches. *(src:
+  docs/OS/memory-protection.md, docs/OS/mmap-exec-cow.md)*
 - **Reserve-now (cheap to bake in early, expensive to retrofit)** — xtc PIC/relocatable
   ARM codegen; service-call indirection via interface tables (never globals);
   interface/registry + `ABIVER` from day one; directory-mapped drives as a first-class
