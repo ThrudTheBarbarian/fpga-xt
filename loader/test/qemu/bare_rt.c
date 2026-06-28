@@ -1,22 +1,8 @@
-/* bare_rt — see bare_rt.h. Freestanding; no libc. */
+/* bare_rt — ARM semihosting I/O for the qemu testbeds. (Freestanding libc bits
+ * + the bump allocator are in bare_libc.c, used only by the -nostdlib bare-metal
+ * tests; the FreeRTOS build uses newlib instead.) */
 #include "bare_rt.h"
 
-/* ---- freestanding libc bits the loader / kernel need ------------------- */
-void *memcpy(void *d, const void *s, size_t n)
-{ unsigned char *a = d; const unsigned char *b = s; while (n--) *a++ = *b++; return d; }
-void *memset(void *d, int c, size_t n)
-{ unsigned char *a = d; while (n--) *a++ = (unsigned char)c; return d; }
-void *memmove(void *d, const void *s, size_t n)
-{ unsigned char *a = d; const unsigned char *b = s;
-  if (a < b) while (n--) *a++ = *b++;
-  else { a += n; b += n; while (n--) *--a = *--b; } return d; }
-int strcmp(const char *a, const char *b)
-{ while (*a && *a == *b) { a++; b++; } return (unsigned char)*a - (unsigned char)*b; }
-int memcmp(const void *a, const void *b, size_t n)
-{ const unsigned char *x = a, *y = b; for (; n--; x++, y++) if (*x != *y) return *x - *y; return 0; }
-size_t strlen(const char *s) { const char *p = s; while (*p) p++; return (size_t)(p - s); }
-
-/* ---- ARM semihosting --------------------------------------------------- */
 static long sh(long op, void *arg)
 {
     register long r0 __asm__("r0") = op;
@@ -41,18 +27,4 @@ void rt_write(const char *b, int n)
     char t[256]; int i = 0;
     while (n-- > 0 && i < (int)sizeof(t) - 1) t[i++] = *b++;
     t[i] = 0; puts0(t);
-}
-
-/* ---- bump allocator over the linker-defined arena ---------------------- */
-extern char _heap_start[], _heap_end[];
-static char *g_hp;
-void *bump(size_t size, size_t align, void *u)
-{
-    (void)u;
-    if (!g_hp) g_hp = _heap_start;
-    uintptr_t a = ((uintptr_t)g_hp + align - 1) & ~(uintptr_t)(align - 1);
-    char *p = (char *)a;
-    if (p + size > _heap_end) return NULL;
-    g_hp = p + size;
-    return p;
 }

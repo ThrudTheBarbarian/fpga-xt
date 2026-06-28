@@ -11,6 +11,8 @@
  */
 #include <stdint.h>
 #include <string.h>
+#include <stdlib.h>
+#include <malloc.h>
 #include "FreeRTOS.h"
 #include "task.h"
 #include "semphr.h"
@@ -48,6 +50,11 @@ static int    g_next_pid = 1;
 static void (*g_console)(const char *, int);
 
 void ksys_set_console(void (*w)(const char *, int)) { g_console = w; }
+
+/* xtld_host.alloc/dealloc — the OS heap (newlib). Real free, so xtld_unload
+ * actually reclaims. */
+void *frtos_alloc(size_t size, size_t align, void *u) { (void)u; return memalign(align ? align : 16, size); }
+void  frtos_free(void *p, void *u) { (void)u; free(p); }
 
 static proc_t *cur_proc(void)
 {
@@ -225,6 +232,10 @@ uintptr_t frtos_ksym(const char *name, void *u)
     if (!strcmp(name, "memcmp"))  return (uintptr_t)memcmp;
     if (!strcmp(name, "strlen"))  return (uintptr_t)strlen;
     if (!strcmp(name, "strcmp"))  return (uintptr_t)strcmp;
+    if (!strcmp(name, "malloc"))  return (uintptr_t)malloc;
+    if (!strcmp(name, "free"))    return (uintptr_t)free;
+    if (!strcmp(name, "realloc")) return (uintptr_t)realloc;
+    if (!strcmp(name, "calloc"))  return (uintptr_t)calloc;
     if (!strcmp(name, "__aeabi_idiv"))     return (uintptr_t)__aeabi_idiv;
     if (!strcmp(name, "__aeabi_uidiv"))    return (uintptr_t)__aeabi_uidiv;
     if (!strcmp(name, "__aeabi_idivmod"))  return (uintptr_t)__aeabi_idivmod;

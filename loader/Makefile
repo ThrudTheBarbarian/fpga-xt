@@ -23,7 +23,7 @@ QEMUFLAGS := -M virt -cpu cortex-a15 -nographic -no-reboot \
              -semihosting-config enable=on,target=native
 # real FreeRTOS runs on the actual Zynq PS model. Semihosting I/O is bound to a
 # stdio chardev so the shell's stdin (SYS_READC) reads the terminal/pipe.
-QEMUZYNQ  := qemu-system-arm -M xilinx-zynq-a9 -display none -no-reboot -m 256M \
+QEMUZYNQ  := qemu-system-arm -M xilinx-zynq-a9 -display none -no-reboot -m 1024 \
              -chardev stdio,id=sh0 -semihosting-config enable=on,target=native,chardev=sh0
 BUILD := build
 BARECFLAGS := -marm -mcpu=cortex-a15 -ffreestanding -nostdlib -O0 -g \
@@ -57,9 +57,9 @@ $(BUILD)/testlib_so.h: $(BUILD)/testlib.so
 	   od -An -v -tx1 $< | sed -e 's/[0-9a-fA-F][0-9a-fA-F]/0x&,/g'; \
 	   printf '};\nunsigned int testlib_so_len = sizeof(testlib_so);\n'; } > $@
 
-$(BUILD)/bare.elf: test/qemu/startup.S test/qemu/bare_main.c test/qemu/bare_rt.c xtld.c test/qemu/bare.ld $(BUILD)/testlib_so.h | $(BUILD)
+$(BUILD)/bare.elf: test/qemu/startup.S test/qemu/bare_main.c test/qemu/bare_rt.c test/qemu/bare_libc.c xtld.c test/qemu/bare.ld $(BUILD)/testlib_so.h | $(BUILD)
 	$(ARMCC) $(BARECFLAGS) -T test/qemu/bare.ld \
-	    test/qemu/startup.S test/qemu/bare_main.c test/qemu/bare_rt.c xtld.c -o $@
+	    test/qemu/startup.S test/qemu/bare_main.c test/qemu/bare_rt.c test/qemu/bare_libc.c xtld.c -o $@
 
 # --- svc #1 gateway + spawn, executed under qemu ------------------------
 kernel: $(BUILD)/kernel.elf
@@ -75,7 +75,7 @@ $(BUILD)/app_so.h: $(BUILD)/app.so
 	   od -An -v -tx1 $< | sed -e 's/[0-9a-fA-F][0-9a-fA-F]/0x&,/g'; \
 	   printf '};\nunsigned int app_so_len = sizeof(app_so);\n'; } > $@
 
-KSRC := test/qemu/kmain.c test/qemu/bare_rt.c kernel/ksys.c xtld.c
+KSRC := test/qemu/kmain.c test/qemu/bare_rt.c test/qemu/bare_libc.c kernel/ksys.c xtld.c
 KASM := test/qemu/startup.S kernel/arch_arm.S
 
 $(BUILD)/kernel.elf: $(KASM) $(KSRC) test/qemu/bare.ld $(BUILD)/app_so.h kernel/ksys.h kernel/xtsys.h | $(BUILD)
@@ -86,12 +86,13 @@ FR     := ../third_party/freertos10_xilinx/src/Source
 FRPORT := $(FR)/portable/GCC/ARM_CA9
 FRINC  := -I. -I$(FR)/include -I$(FRPORT) -Itest/freertos -Itest/freertos/shim \
           -Itest/qemu -Ikernel -I$(BUILD)
-FRCFLAGS := -marm -mcpu=cortex-a9 -mfloat-abi=softfp -mfpu=neon-vfpv3 -ffreestanding -nostdlib -O2 -g $(FRINC)
+FRCFLAGS := -marm -mcpu=cortex-a9 -mfloat-abi=softfp -mfpu=neon-vfpv3 -ffreestanding -nostartfiles -O2 -g $(FRINC)
 FRSRC := $(FR)/tasks.c $(FR)/queue.c $(FR)/list.c $(FR)/timers.c $(FR)/event_groups.c \
          $(FR)/croutine.c $(FR)/stream_buffer.c $(FR)/portable/MemMang/heap_4.c \
          $(FRPORT)/port.c \
          test/freertos/zynq.c test/freertos/bsp_shim.c test/freertos/frtos_os.c \
-         test/freertos/romfs.c test/freertos/main.c test/qemu/bare_rt.c xtld.c
+         test/freertos/romfs.c test/freertos/syscalls.c test/freertos/main.c \
+         test/qemu/bare_rt.c xtld.c
 FRASM := test/freertos/xt_boot.S test/freertos/xt_vectors.S $(FRPORT)/portASM.S
 
 # Stage 2 + M2: loader + svc gateway + spawn-by-path + file syscalls, on real FreeRTOS.
@@ -100,7 +101,7 @@ freertos: $(BUILD)/freertos.elf
 	@$(QEMUZYNQ) -kernel $< ; echo "(qemu exited $$?)"
 
 $(BUILD)/freertos.elf: $(FRSRC) $(FRASM) test/freertos/freertos.ld test/freertos/FreeRTOSConfig.h $(BUILD)/romfs_blob.h | $(BUILD)
-	$(ARMCC) $(FRCFLAGS) -T test/freertos/freertos.ld $(FRASM) $(FRSRC) -lgcc -o $@
+	$(ARMCC) $(FRCFLAGS) -T test/freertos/freertos.ld $(FRASM) $(FRSRC) -lm -o $@
 
 # --- romfs: build the programs as .so, pack them into a blob, embed it ---
 PROGCFLAGS := $(ARMCFLAGS) -Itest/qemu

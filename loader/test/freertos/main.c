@@ -9,6 +9,7 @@
  */
 #include <stdint.h>
 #include <string.h>
+#include <stdlib.h>
 #include "FreeRTOS.h"
 #include "task.h"
 #include "bare_rt.h"
@@ -84,8 +85,12 @@ int main(void)
     ksys_set_console(rt_write);
     romfs_mount(romfs_blob, romfs_blob_len);
 
-    g_host = (xtld_host){ .alloc = bump, .dealloc = NULL, .sync_caches = NULL,
+    g_host = (xtld_host){ .alloc = frtos_alloc, .dealloc = frtos_free, .sync_caches = NULL,
                           .resolve = frtos_ksym, .open_lib = frtos_open_lib, .user = NULL };
+
+    void *probe = malloc(4096);                  /* newlib heap smoke test */
+    puts0(probe ? "newlib OS heap: ok\n" : "newlib OS heap: FAIL\n");
+    free(probe);
 
     if (xTaskCreate(shell_task, "sh", 2048, NULL, 2, NULL) != pdPASS) {
         puts0("shell create failed\n"); sh_exit(1);
