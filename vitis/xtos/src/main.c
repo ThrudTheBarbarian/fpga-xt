@@ -1186,10 +1186,10 @@ static void repl_exec(char *cmd)
         xtos_gem_demo();
         return;
     }
-    if (!strcmp(argv[0], "faulttest")) {              /* T2-a HW: trap a wild pointer */
-        printf("faulttest: writing 0xdead to unmapped 0x60000000 ...\r\n");
-        *(volatile unsigned *)0x60000000u = 0xdeadu;
-        printf("faulttest: SURVIVED (no fault?!)\r\n");
+    if (!strcmp(argv[0], "faulttest")) {              /* T2-a HW: a faulting task is killed; OS survives */
+        extern void xtos_fault_spawn(void);
+        printf("faulttest: spawning a task that derefs no-access memory...\r\n");
+        xtos_fault_spawn();
         return;
     }
     if (!strcmp(argv[0], "unlock")) {
