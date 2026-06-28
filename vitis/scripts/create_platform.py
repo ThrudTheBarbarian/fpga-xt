@@ -406,12 +406,16 @@ _ft_srcs  = [os.path.join(_ft_tu, f).replace("\\", "/")
              for f in sorted(os.listdir(_ft_tu)) if f.endswith(".c")]
 # POSIX <dirent.h> shim (xtos/compat) for the GEM font loader's opendir/readdir.
 _compat_inc = os.path.join(REPO_ROOT, "xtos", "compat").replace("\\", "/")
-_all_srcs = _app_srcs + _lua_srcs + _gem_srcs + _ft_srcs
+# Portable dynamic loader (REPO_ROOT/loader/xtld.c) — no OS deps; src/xtld_host.c
+# supplies the A9 callbacks (memalign/free, Xil cache ops, kernel export table).
+_loader_inc  = os.path.join(REPO_ROOT, "loader").replace("\\", "/")
+_loader_srcs = [os.path.join(REPO_ROOT, "loader", "xtld.c").replace("\\", "/")]
+_all_srcs = _app_srcs + _lua_srcs + _gem_srcs + _ft_srcs + _loader_srcs
 _user_cmake = os.path.join(WORKSPACE, "xtos", "src", "UserConfig.cmake")
 with open(_user_cmake, "a") as _f:
     _f.write("\n# --- fpga-xt: app sources (root) + vendored Lua + GEM VDI/FreeType; no USB ---\n")
-    _f.write('set(USER_INCLUDE_DIRECTORIES "%s" "${CMAKE_CURRENT_SOURCE_DIR}" "%s" "%s" "%s" "%s")\n'
-             % (_comp_root, _lua_inc, _gem_inc, _ft_inc, _compat_inc))
+    _f.write('set(USER_INCLUDE_DIRECTORIES "%s" "${CMAKE_CURRENT_SOURCE_DIR}" "%s" "%s" "%s" "%s" "%s")\n'
+             % (_comp_root, _lua_inc, _gem_inc, _ft_inc, _compat_inc, _loader_inc))
     _f.write("set(USER_COMPILE_SOURCES\n")
     for _s in _all_srcs:
         _f.write('  "%s"\n' % _s)

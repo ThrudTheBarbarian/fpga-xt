@@ -54,3 +54,4 @@ web/CLAUDE.md
 # refs/ copy is kept locally but not committed a second time.
 /refs/SIL9022a-programmer.pdf
 vitis/scripts/__pycache__
+vitis/xtos/ldtest/*.so

@@ -29,11 +29,14 @@ ssh "$REMOTE" "test -f $REMOTE_DIR/build/fpga_xt_top.xsa" || {
 
 # create_platform.py resolves gem/ + xtos/ from REPO_ROOT and APP_SRC from
 # vitis/xtos/src, so the remote needs the repo-root layout for all three.
-echo ">> syncing vitis/ gem/ xtos/ -> $REMOTE:$REMOTE_DIR/"
+echo ">> syncing vitis/ gem/ xtos/ loader/ -> $REMOTE:$REMOTE_DIR/"
 rsync -az --delete --exclude 'workspace/' --exclude 'build/' \
     "$REPO_ROOT/vitis/" "$REMOTE:$REMOTE_DIR/vitis/"
 rsync -az --delete "$REPO_ROOT/gem/"  "$REMOTE:$REMOTE_DIR/gem/"
 rsync -az --delete "$REPO_ROOT/xtos/" "$REMOTE:$REMOTE_DIR/xtos/"
+# loader/xtld.c is compiled into xtos.elf (dynamic loader); skip its build deps
+rsync -az --delete --exclude 'build/' --exclude 'newlib-pic/' \
+    "$REPO_ROOT/loader/" "$REMOTE:$REMOTE_DIR/loader/"
 
 echo ">> vitis -s $SCRIPT"
 ssh "$REMOTE" bash -l <<EOF

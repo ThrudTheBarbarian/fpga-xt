@@ -54,6 +54,7 @@
  * and the `vdi` Lua table.  Defined in gem_lua.c (links the portable gem core). */
 int  gem_init(void);
 void gem_lua_open(lua_State *L);
+void gem_lua_capture_wallpaper(void);  /* snapshot DESK_BASE as the clean WM backdrop */
 
 /* ---- SiI9022A HDMI transmitter over PS I2C0 (EMIO -> P15/P16) -------------
  * Replaces the old PL bit-bang.  7-bit address 0x3b (CI2CA strapped high).
@@ -415,6 +416,9 @@ static int l_screen_wallpaper(lua_State *L)
     }
     Xil_DCacheFlushRange((INTPTR)DESK_BASE, (INTPTR)(DESK_H * DESK_STRIDE * 4u));
     free(rgba);
+    /* Snapshot the just-loaded (clean) wallpaper as the WM backdrop NOW — before any
+     * window/demo draws to the plane — so the desktop never bakes plane junk in. */
+    gem_lua_capture_wallpaper();
     xil_printf("  wallpaper: %s -> %ux%u scaled to %ux%u\r\n", path, w, h, DESK_W, DESK_H);
     lua_pushboolean(L, 1);
     return 1;
@@ -1167,6 +1171,11 @@ static void repl_exec(char *cmd)
         return;
     }
     if (!strcmp(argv[0], "diag")) { repl_status(); return; }
+    if (!strcmp(argv[0], "ldtest")) {                 /* HW-1: dynamic loader on metal */
+        extern void xtos_ld_selftest(void);
+        xtos_ld_selftest();
+        return;
+    }
     if (!strcmp(argv[0], "unlock")) {
         /* XT register-unlock mask (docs/Zynq/register-unlock.md).  No arg =
          * read back the effective value; <hex> = set it.  bit0 ANTIC_CHIPLET,
