@@ -73,6 +73,22 @@ actual binary's interface — which is *why* it cannot drift), and the bootstrap
 `libc.xi` (§7) is just a temporary hand-transcription of what the `.so` would
 declare, not a consumer-side re-declaration.
 
+### The sysroot, until self-hosted
+
+While xtc cross-compiles on a dev host, "present at compile time" means a host copy
+of the target's `.so`s in `$libDir` — a **sysroot**. Because the interface *is*
+the `.so`, the SDK is just that copy of `$libDir`; there is no separate headers or
+import-library package to assemble. The discipline: it must be the **same
+artifact** as deployed — one build of `libGEM.so`, copied to both the sysroot (for
+`#import`) and the device (for runtime), same `DT_SONAME` — or the host and device
+interfaces drift (the two-files problem, now across machines: compile against ABI
+v1, run against v2 → silent struct-offset corruption). `DT_SONAME`/a version stamp
+is the drift detector. No bootstrap circularity: the base libs (`libc.so`,
+`libm.so`) are C/newlib built by gcc, so they populate the sysroot without xtc.
+**Self-hosting dissolves the sysroot** — on-device, `#import` reads the `.so`s in
+place. (In this tree, `loader/build/*.so` already serve runtime + the `xtcrun`
+harness; they are the sysroot too — one artifact, three uses.)
+
 ## 3. Decision: the library describes itself
 
 The interface is **derived from the `.so` itself**, on demand, from two things it
