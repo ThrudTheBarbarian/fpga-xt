@@ -363,11 +363,20 @@ This is complex (~200 lines of assembly) and the MiNT signal model is richer tha
 
 ---
 
-## 3. m68k: a real MiNT on fabric
+## 3. m68k: a real MiNT, JIT-hosted on the A9
+
+> The m68k runs as a **JIT on the spare A9** ([[m68k_core_mmu_requirements]]), not
+> a fabric soft-core, and **memory protection comes from the A9 MMU**, not a fabric
+> 68030 MMU — see [../OS/memory-protection.md](../OS/memory-protection.md) §2 for
+> the protection model (and why this lets us skip emulating the 030 MMU entirely).
+> The fabric-soft-core detail below is kept as reference for the OS/`Pexec`/GEMDOS
+> layering, which is transport-independent; the *core* is A9-JIT, not PL.
 
 ### Context
 
-An m68k soft-core in the PL (future) opens the door to running **real MiNT/EmuTOS** — the actual Atari-ST multitasking OS, not a reimplementation. This is a fundamentally different proposition from the 6502 case:
+Hosting m68k opens the door to running **real MiNT** — the actual Atari-ST
+multitasking OS, not a reimplementation. This is a fundamentally different
+proposition from the 6502 case:
 
 - EmuTOS is an actively-maintained, GPL-licensed MiNT distribution
 - It already supports multiple Atari machines (ST, STE, TT, Falcon)
@@ -442,16 +451,18 @@ The loader is ~1500 lines of C in EmuTOS, already debugged and working. You get 
 
 ### 3.4 MMU / memory protection
 
-EmuTOS can be compiled with or without MMU support:
+Memory protection is provided by the **A9 hardware MMU**, not a fabric 68030 MMU.
+Because the m68k is JIT-hosted, the guest's RAM is mapped into a guest-process A9
+address space with MiNT's protection attributes, and the A9 MMU enforces them on
+every translated access — so we **never emulate the 68030 MMU** (and never generate
+its bus-error continuation frame). MiNT's memory-protection layer is ported to an
+**A9-MMU backend** driven over a hypervisor syscall, in place of a 68030 PMMU
+driver. Full mechanism, caveats, and the format-B argument:
+[../OS/memory-protection.md](../OS/memory-protection.md) §2.
 
-| Build | Protection | Requires | Use case |
-|-------|-----------|----------|----------|
-| `MMU=0` | None — one flat address space | No MMU in core | Initial bring-up, simple workloads |
-| `MMU=1` | Full 4 KB page protection, per-process address spaces | MMU in the m68k core (68030-style) | Production multitasking |
-
-If the m68k soft-core includes an MMU (a translation lookaside buffer + supervisor/user modes — about 2000–3000 LUTs in fabric), EmuTOS will use it. The existing 68030 MMU driver in EmuTOS (`arch/m68k/mmu.c`, ~400 lines) would need adaptation to your core's MMU registers, but the logic (page tables, TLB miss handling) is the same.
-
-If the soft-core has no MMU, EmuTOS still runs — every process shares the flat address space and `Pexec()` loads at fixed addresses (like the 68000-vintage MiNT that ran on stock ST machines with no MMU). The MiNT kernel uses **base-page relocation**: each process is loaded at a fixed address in RAM, and a small `p_exec()` wrapper handles the relocation of absolute addresses at load time.
+A flat, no-protection bring-up build (MiNT's no-MMU mode, fixed-address `Pexec`
+with base-page relocation) remains available for early porting before the A9
+per-process MMU machinery lands.
 
 ### 3.5 How GEM maps onto the three-layer model
 

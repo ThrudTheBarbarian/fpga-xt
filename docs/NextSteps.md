@@ -234,15 +234,33 @@ Remaining:
   per-app profiles (SD VFS, image drives, SQLite-on-NAND, trashcan, shell); P4 dynamic
   ELF loader + interface/registry + `ABIVER`; P5 IDE + on-device xtc; P6 cross-core
   source-level debugger. *(src: docs/OS/xtos-vision.md)*
+- **Dynamic-loading / syscall ABI / bootstrap (Phase 4 spec)** — uClinux model
+  (spawn not fork); 3-tier ABI (`SVC #1` kernel syscalls + registry/ops-table services
+  + ELF-dynsym libraries); `ET_DYN` minimal-reloc loader; `init`/pid-1 bootstrap +
+  process table; **frozen syscall numbering + `r7`/`svc #1` convention**; MMU-readiness
+  rules. Vision P4 now references the `SVC #1` syscall tier. *(src:
+  docs/OS/dynamic-loading.md)*
+- **Memory protection / MMU / process-model tier** — A9 MMU is now **load-bearing**:
+  it lets the JIT-hosted m68k skip emulating the 68030 MMU (no format-B continuation
+  frame) by giving FreeMiNT's protection layer an A9-MMU backend. Reframes native:
+  tier 1 flat/spawn → **tier 2 MMU+protection+spawn** → tier 3 +fork().
+  Tier 2 = the **full useful MMU**: shared libs, mmap'd executables/files, lazy
+  alloc, guard pages, **opt-in swap** — safe via the **PL-visible ⇒ wired** invariant
+  (so the Atari surfaces are never swapped, for free). **DECIDED 2026-06-28: tier 2**
+  (spawn primitive; vision P1 updated). fork (tier 3) deferred = possible later
+  single-threaded compat shim only. *(src: docs/OS/memory-protection.md)*
 - **Reserve-now (cheap to bake in early, expensive to retrofit)** — xtc PIC/relocatable
   ARM codegen; service-call indirection via interface tables (never globals);
   interface/registry + `ABIVER` from day one; directory-mapped drives as a first-class
   VFS mode; xtc restricted-DWARF debug-info emission for all 3 backends. *(src:
   docs/OS/xtos-vision.md)*
-- **Open XTOS decisions** — debug ambition (single-frame locals vs full backtrace +
-  unwind info); full-screen front GEM plane (5th surface, deferred); ARM-native memory
-  protection (deferred); concrete DWARF profile spec; card-less boot from QSPI. *(src:
-  docs/OS/xtos-vision.md)*
+- **Open XTOS decisions** — none outstanding (DWARF subset now written:
+  docs/OS/dwarf-subset.md). *(DECIDED: memory protection = tier 2; debug = full
+  backtrace+unwind, all 3 backends, debug-build frames; libc = newlib; front GEM
+  plane = NOT building (close the emulator to run a GEM app full-desktop); boot =
+  SD-only (NAND holds the registry); **system language = xtc** (C deps
+  cross-compiled on host, on-device C deferred — no tcc). See memory-protection.md
+  / xtos-vision.md.)* *(src: docs/OS/xtos-vision.md)*
 - **Fonts** — confirm `xilffs` LFN config (`FF_USE_LFN`/`FF_MAX_LFN=255`); `opsz` axis
   tracks render pixel size; decide catalog/index on-disk format (`OS/Fonts/.index`);
   wire the `(file,coords)→FT_Face` registry into the `font_face`/`font` model; Font
@@ -258,7 +276,11 @@ Remaining:
 
 - **xtc ARM back-end (`XTARMLowering`)** — the critical missing compiler piece
   (~3,000 lines); gates ARM-native apps, the dynamic loader, and the GEM ARM client.
-  *(Phase 1; immediate next step if greenlit; src: docs/MultiTasking/self-hosting.md)*
+  Target = **Cortex-A9 / ARMv7-A / AArch32** (port *from* the arm64 backend — a real
+  ISA change, not a tweak). Consolidated port requirements (C-ABI/newlib interop,
+  PIC/ET_DYN minimal-reloc, `svc #1` syscall stubs, ARC + unmanaged subset, DWARF +
+  full backtrace) in **docs/OS/xtc-on-arm9.md**. *(Phase 1; immediate next step if
+  greenlit; src: docs/MultiTasking/self-hosting.md, docs/OS/xtc-on-arm9.md)*
 - **Port stdlib file I/O to the Zynq side** — SD/FAT32 driver via FreeRTOS exposed as
   a trap class (<200 lines). Then write `xtc.xt` in xtc (self-host bootstrap), feature
   parity (`-O1/2/3`, self-hosted 6502 back-end), benchmark a parse on the Zynq first.

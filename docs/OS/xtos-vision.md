@@ -44,11 +44,18 @@ the app/launch model, the **interface/registry** (P4), the input/event bus, and
 the settings/state store. Choosing FreeRTOS over Linux is the deliberate
 "bespoke machine" decision — it just means the OS layer is ours to build.
 
-**Memory protection is deferred** (§6 open decisions). The multi-CPU design
-gives fault isolation for *client* apps for free — a crashing 6502/m68k program
-only takes down its VM. ARM-native apps share one address space with no MMU
-protection for now; the seam that lets us add it later without an ABI break is
-the service-call indirection in P4.
+**Memory protection is committed — tier 2** (see
+[memory-protection.md](memory-protection.md)). The A9 MMU is *load-bearing*: it
+lets the JIT-hosted m68k get protection without emulating the 68030 MMU (and its
+bus-error continuation frame), so per-process address spaces are paid for and used
+natively too. XTOS uses the full MMU — per-process virtual address spaces,
+hardware protection, mmap'd executables/files, and demand paging with opt-in swap
+(PL-visible pages wired) — with **`spawn` as the process primitive** (not `fork`,
+which is thread-hostile; the safe subset of fork *is* spawn). The multi-CPU design
+still gives *client* fault-isolation on top — a crashing 6502/m68k program only
+takes down its VM. `fork()` may appear later (tier 3) purely as a
+single-threaded-legacy compat shim; the service-call indirection in P4 remains the
+seam that kept this ABI-compatible.
 
 ### P2 — The compositor: four surfaces, different by nature
 
@@ -74,9 +81,11 @@ nature, back-to-front:
   small-overlay / quarter-screen mechanism and float fine. Large GEM windows
   live in layer 0, **behind** the emulators — an accepted limitation, not a
   necessity to overcome.
-- **Optional escape hatch (deferred):** a full-screen **front GEM plane** (a 5th
-  surface, mostly transparent, dirty-region-cheap) would let large GEM windows
-  be raised *over* emulators. Nice-to-have; do **not** build it now.
+- **Front GEM plane — decided: not building it.** A full-screen 5th surface would
+  let large GEM windows be raised *over* emulators, but it isn't needed: emulator
+  windows are **closeable**, so the workflow is *close the emulator to run a GEM app
+  on the full desktop*. Large GEM windows stay in layer 0, behind the emulators —
+  an accepted limitation, not one to engineer around.
 - **Bandwidth:** dirty-region compositing keeps the GEM plane(s) cheap. Free on
   the 32-bit Z-Turn; on 16-bit-DDR budget boards keep plane reads dirty-bounded
   (see the board-tier notes in the README).
@@ -107,11 +116,21 @@ styles, one registry:
 - **Task-as-server (RPC)** — a service with its own thread/queue, for things
   that need async behaviour or future isolation.
 
+Beneath these *userland* bindings sits the **kernel syscall tier**: a numbered
+`SVC #1` gateway (full spec in [dynamic-loading.md](dynamic-loading.md)) for the
+irreducible mechanism only the kernel can provide (process, memory, file,
+blitter-submit) and the **convergence point for the three guest transports** —
+native `SVC`, 6502 doorbell, m68k `TRAP`-as-MiNT all dispatch into one routine.
+`registry_lookup` is itself a syscall, so the registry is the MMU-safe discovery
+seam. Services and libraries (above) are built *on* these syscalls; clients never
+call the kernel by symbol.
+
 Rules:
 
-- Apps reach **all** system services through this indirection — never by poking
-  kernel/desktop globals. That single discipline lets MMU protection be added
-  later as *enforcement*, with no ABI break (the deferral in P1 stays cheap).
+- Apps reach **all** system services through this indirection (and the kernel only
+  through the syscall gateway) — never by poking kernel/desktop globals. That
+  single discipline keeps the now-committed MMU protection (P1) an *enforcement*
+  detail with no ABI break.
 - **Every interface carries a version field** — the `ABIVER` house style (see
   the GEM doorbell's `GEM_ABIVER`). Fluid until 1.0, but always *detectable*.
 - This is a **public ecosystem ABI**: third parties will ship ARM-native
@@ -154,11 +173,12 @@ expects, driven by **per-app attributes** the desktop sets up and persists.
 
 | Medium | Size | Role |
 |--------|------|------|
-| **NAND** | 16 MB | **Permanent state** — SQLite attributes DB, settings, config. Survives SD swaps. Not for binaries. Needs a thin wear-aware layer under SQLite (raw NAND has no controller; writes are rare). |
+| **NAND** (QSPI-interfaced) | 16 MB | **Permanent state** — SQLite attributes DB, settings, config. Survives SD swaps. Not for binaries. Needs a thin wear-aware layer under SQLite (raw NAND has no controller; writes are rare). |
 | **SD card** | large | Binaries (system + apps), the software library, user data, disk images. |
 
 The "can't go away" guarantee covers **config/attributes**, not binaries.
-(Card-less boot — moving the boot image to QSPI — is an optional future, §6.)
+**Boot is SD-only** (decided) — far easier to field-upgrade by swapping the card;
+the on-board NAND holds the card-independent registry, not a boot image.
 
 ### P6 — Hardware-debuggable cores + flat-address debug
 
@@ -226,6 +246,11 @@ free. We own the debugger, so on the retro side "standard tools just work" is a
 bonus, not a requirement; the reader can be a library (gimli/libdwarf) or a
 small hand-rolled reader for our subset.
 
+> The precise emitter/reader contract — the DIE/attribute/location-opcode subset,
+> the `.debug_frame` CFI structure, the per-backend register numbering (incl. the
+> bespoke 6502 numbering), and the 6502 unwind specials — is
+> **[dwarf-subset.md](dwarf-subset.md)**.
+
 Per backend, xtc emits:
 
 1. **The logical-address contract** — the flat 32-bit `{bank}{offset}` address
@@ -250,9 +275,26 @@ Per backend, xtc emits:
 
    *We only ever emit these three, so the emitter is trivial and a hand-rolled
    reader stays tiny, while a stock DWARF reader handles them out of the box.*
-5. **Frame/unwind info** — *optional, gated on the §6 single-frame-vs-backtrace
-   fork*: per function, frame size + where the saved return-address and previous
-   frame base live, so the debugger can walk the call stack.
+5. **Frame/unwind info (DWARF CFI)** — **decided: full backtrace, all three
+   backends.** Per function, per-PC-range rules for the CFA + saved return-address
+   + previous frame base, so the debugger walks the call stack. **Debug builds keep
+   frame pointers / a regular convention** so the CFI stays mechanical (backtraces
+   through fully-optimised release code may be approximate). The **backtrace walk**
+   is uniform across all three (`CFA = SP + offset`, return address on the
+   hardware/call stack; in-frame locals emitted CFA-relative, so SP mobility is the
+   standard `.debug_frame` advance-row case, not 6502-special). The xt6502's
+   **stack-relative addressing** (an xt embellishment) makes its call frame a
+   normal SP-relative target, but it keeps a **separate software stack (SSP) in
+   flat RAM** for spills the hardware stack can't hold (signed-8-bit ±~119-byte SP
+   reach; SP mobility around calls). So 6502 **variable location is dual-base** —
+   CFA-relative for in-frame locals, `DW_OP_bregN(SSP)+offset` for spills — and
+   inspecting *outer*-frame spills needs the SSP recovered per frame: modelled as a
+   CFI-tracked register (`caller_SSP = callee_SSP + spill_size` for fixed frames; a
+   saved soft-FP for dynamic ones). 6502-specific residue otherwise: the `JSR` PC−1
+   return-address fixup and the IRQ/NMI/BRK frame layout (DWARF signal-frame).
+   Staged ARM/m68k-first; graceful per-backend degradation in the same format — a
+   backend can ship backtrace + current-frame locals (live SSP over the debug port)
+   before outer-frame spill recovery lands.
 6. **One format (DWARF), per-backend register vocabulary** — the debugger reads
    a single format; the per-target difference is just DWARF's target-defined
    register numbering (ARM AAPCS regs; 6502 A/X/Y/ZP/soft-stack; m68k regs/stack)
