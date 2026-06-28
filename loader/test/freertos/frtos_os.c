@@ -253,7 +253,10 @@ void k_syscall_dispatch(struct k_regs *regs)
     regs->r[0] = (uint32_t)do_syscall(num, regs->r[0], regs->r[1], regs->r[2]);
 }
 
-/* task body: run constructors + the loaded entry; finish here if it returns */
+/* task body: run constructors + the loaded entry; finish here if it returns. Init
+ * runs PER PROCESS (classic exec semantics): the image is shared/loaded once, but
+ * each instance's .init_array writes land in its own COW copy of the data, started
+ * from the pristine file-loaded image. */
 static void app_main(void *arg)
 {
     proc_t *p = (proc_t *)arg;
@@ -284,6 +287,56 @@ static char **copy_argv(int argc, char **argv, const xtld_host *host)
     return out;
 }
 
+/* ---- program cache: load an image ONCE, share it across spawns ------------
+ * The same program spawned N times keeps ONE relocated copy. Its text/rodata/GOT
+ * are shared READ-ONLY (W^X, one physical copy — "mmap-exec"); each instance gets
+ * its own data/bss via copy-on-write from the post-init pristine image. */
+typedef struct {
+    const uint8_t *image;     /* romfs bytes = cache key */
+    xtld_obj      *obj;
+    uintptr_t      entry;
+    uintptr_t      wva;       /* writable (data/bss) seg — COW per-process */
+    uint32_t       wsize;
+} prog_t;
+static prog_t   g_prog[MAXPROC];
+static int      g_prog_n;
+static uint32_t g_prog_loads;            /* distinct images actually loaded (vs spawns) */
+uint32_t frtos_prog_loads(void) { return g_prog_loads; }
+
+static prog_t *prog_get(const uint8_t *image, uint32_t len, const xtld_host *host)
+{
+    for (int i = 0; i < g_prog_n; i++) if (g_prog[i].image == image) return &g_prog[i];
+    if (g_prog_n >= MAXPROC) return NULL;
+
+    xtld_obj *obj = NULL; char err[64] = {0};
+    int rc = xtld_load(image, len, host, &obj, err, sizeof err);
+    if (rc != XTLD_OK) {
+        if (g_console) { g_console("  xtld_load err: ", 17); g_console(err, (int)strlen(err));
+            const char *s = xtld_strerror(rc); g_console(" rc=", 4); g_console(s, (int)strlen(s)); g_console("\n", 1); }
+        return NULL;
+    }
+    uintptr_t entry = xtld_sym(obj, "_app_entry");   /* C/asm programs */
+    if (!entry) entry = xtld_sym(obj, "main");        /* xtc / plain main(argc,argv) */
+    if (!entry) return NULL;
+
+    /* W^X (once): text/rodata/GOT -> read-only+executable, writable seg ->
+     * read-write+execute-never, in the master table. vm_space_create clones the
+     * master per process, so every space inherits the protection (and shares the
+     * RO text physical). Code can't be modified; data can't be executed. */
+    { extern void mmu_protect(uint32_t, uint32_t, int, int);
+      uintptr_t ibase = xtld_image_base(obj), wva; uint32_t wsz;
+      xtld_writable_range(obj, &wva, &wsz);
+      if (ibase && wva > ibase) mmu_protect((uint32_t)ibase, (uint32_t)(wva - ibase), 1, 0);  /* text: RO+X */
+      if (wva && wsz)           mmu_protect((uint32_t)wva, wsz, 0, 1);                          /* data: RW+XN */
+      /* NB: constructors run PER PROCESS in app_main, not here — so the cached
+       * image's data stays the pristine file-loaded COW template. */
+      prog_t *pr = &g_prog[g_prog_n++];
+      pr->image = image; pr->obj = obj; pr->entry = entry; pr->wva = wva; pr->wsize = wsz;
+      g_prog_loads++;
+      return pr;
+    }
+}
+
 int frtos_spawn(const uint8_t *image, uint32_t len, int argc, char **argv,
                 const xtld_host *host)
 {
@@ -292,36 +345,19 @@ int frtos_spawn(const uint8_t *image, uint32_t len, int argc, char **argv,
     if (slot < 0) return -1;
     proc_t *p = &g_proc[slot];
 
-    xtld_obj *obj = NULL; char err[64] = {0};
-    int rc = xtld_load(image, len, host, &obj, err, sizeof err);
-    if (rc != XTLD_OK) {
-        if (g_console) { g_console("  xtld_load err: ", 17); g_console(err, (int)strlen(err));
-            const char *s = xtld_strerror(rc); g_console(" rc=", 4); g_console(s, (int)strlen(s)); g_console("\n", 1); }
-        return -1;
-    }
-    uintptr_t entry = xtld_sym(obj, "_app_entry");   /* C/asm programs */
-    if (!entry) entry = xtld_sym(obj, "main");        /* xtc / plain main(argc,argv) */
-    if (!entry) return -1;
-
-    /* W^X: the image's text/rodata becomes read-only+executable and its writable
-     * (data/bss) segment becomes read-write+execute-never, in the master table —
-     * BEFORE vm_space_create clones it, so the process inherits the protection.
-     * Code can't be modified; data can't be executed. */
-    { extern void mmu_protect(uint32_t, uint32_t, int, int);
-      uintptr_t ibase = xtld_image_base(obj), wva; uint32_t wsz;
-      xtld_writable_range(obj, &wva, &wsz);
-      if (ibase && wva > ibase) mmu_protect((uint32_t)ibase, (uint32_t)(wva - ibase), 1, 0);  /* text: RO+X */
-      if (wva && wsz)           mmu_protect((uint32_t)wva, wsz, 0, 1);                          /* data: RW+XN */
-    }
+    prog_t *prog = prog_get(image, len, host);    /* load-once (shared text + COW data) */
+    if (!prog) return -1;
 
     for (int i = 0; i < NFD; i++) p->fd[i].open = 0;
-    p->obj = obj; p->entry = entry; p->exit_code = 0; p->pid = g_next_pid++;
+    p->obj = prog->obj; p->entry = prog->entry; p->exit_code = 0; p->pid = g_next_pid++;
     p->argc = argc; p->argv = copy_argv(argc, argv, host);
     p->done = xSemaphoreCreateBinary();
     if (!p->done) return -1;
-    { extern uint32_t *vm_space_create(int);                       /* T2-b: private address space */
-      p->l1 = vm_space_create((int)(p - g_proc)); p->asid = (uint32_t)(p - g_proc) + 1u;
-      p->heap_brk = XTOS_HEAP_VA; p->heap_end = XTOS_HEAP_VA + XTOS_HEAP_SIZE; }    /* private heap */
+    /* T2-b/c: private address space — demand heap + COW(libc data, synthetic, and
+     * this program's own data/bss at its identity load VA). */
+    p->l1 = vm_space_create(slot, (uint32_t)prog->wva, prog->wsize, (uint32_t)prog->wva);
+    p->asid = (uint32_t)slot + 1u;
+    p->heap_brk = XTOS_HEAP_VA; p->heap_end = XTOS_HEAP_VA + XTOS_HEAP_SIZE;    /* private heap */
     p->used = 1;
     /* name the task after the program (basename of argv[0]) so fault reports and
      * task listings identify it — FreeRTOS copies the name into the TCB. */

@@ -122,6 +122,21 @@ static void shell_task(void *arg)
                   "         (shared RO), then their own private copy => COW + isolation.\n");
             continue;
         }
+        if (!strcmp(argv[0], "sharetext")) {       /* T2-c: mmap-exec — shared text + COW data */
+            extern uint32_t frtos_prog_loads(void);
+            uint32_t lb = frtos_prog_loads();
+            char *a[2] = { (char *)"sharetext", (char *)"A" };
+            char *b[2] = { (char *)"sharetext", (char *)"B" };
+            int pid = frtos_spawn_argv("/bin/sharetext", 2, a, &g_host);
+            if (pid < 0) { puts0("sharetext: not found\n"); continue; }
+            frtos_waitpid(pid);
+            pid = frtos_spawn_argv("/bin/sharetext", 2, b, &g_host);
+            if (pid >= 0) frtos_waitpid(pid);
+            puts0("sharetext: program loaded "); putu(frtos_prog_loads() - lb);
+            puts0(" time(s) for 2 spawns (1 => text shared). Same &marker both runs\n"
+                  "           (shared text); g_counter starts at 100 in BOTH (private COW data).\n");
+            continue;
+        }
         if (!strcmp(argv[0], "stacktest")) {       /* T2-c: stack overflow -> guard page */
             puts0("stacktest: spawning /bin/stacktest (it overflows its stack)...\n");
             char *av[1] = { (char *)"stacktest" };

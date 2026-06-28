@@ -19,6 +19,7 @@ void vm_cow_register(uint32_t va, uint32_t size, uint32_t src);
 uint32_t vm_cow_count(void);
 int  vm_cow_map(int idx, uint32_t va);
 int  vm_demand_map(int idx, uint32_t va);
+uint32_t *vm_space_create(int idx, uint32_t prog_va, uint32_t prog_size, uint32_t prog_src);
 
 void ksys_set_console(void (*w)(const char *, int));
 void *frtos_alloc(size_t size, size_t align, void *user);
@@ -30,4 +31,5 @@ int  frtos_spawn_argv(const char *path, int argc, char **argv, const xtld_host *
 int  frtos_open_lib(const char *name, const uint8_t **data, uint32_t *len, void *user);
 uintptr_t frtos_ksym(const char *name, void *user);
 int  frtos_waitpid(int pid);
+uint32_t frtos_prog_loads(void);   /* distinct program images loaded (vs spawns) */
 #endif

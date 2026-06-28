@@ -54,14 +54,19 @@ static uint32_t  g_cur_asid;
  * A COW page starts mapped shared read-only at a pristine source; the first WRITE
  * permission-faults, and the handler makes a PRIVATE copy (read through the RO
  * mapping into a fresh page), remaps it RW, and re-runs the store. This is the
- * fork-ready mechanism. Pages are COW only inside REGISTERED ranges — so a write
- * to read-only TEXT (W^X) is NOT in any range and stays fatal.
+ * fork-ready mechanism. Pages are COW only inside known ranges — so a write to
+ * read-only TEXT (W^X) is NOT in any range and stays fatal.
  *
- * Range table: VAs are space-independent (the same VA is COW in every space; only
- * the backing physical differs per process). Membership-gate the fault path. */
-#define NCOW 8
-static struct { uint32_t va, end, src; } g_cow_rng[NCOW];
+ * Two kinds of range. GLOBAL ranges (libc data, the synthetic demo) live at the
+ * same VA in every space and are mapped into all of them. The PER-SPACE program
+ * range is the spawning program's own data: its VA is the program's identity load
+ * address (different programs -> different VAs), so it belongs only to that space.
+ * Each range carries `src`: page (va + k*0x1000) maps RO to (src + k*0x1000). */
+#define NCOW 4
+typedef struct { uint32_t va, end, src; } cow_rng;
+static cow_rng  g_cow_rng[NCOW];                 /* global ranges (libc, synthetic) */
 static int      g_cow_n;
+static cow_rng  g_space_prog[NSPACE];            /* the program data range of each space */
 static uint32_t g_cow_count;
 void vm_cow_register(uint32_t va, uint32_t size, uint32_t src)
 {
@@ -73,11 +78,11 @@ void vm_cow_register(uint32_t va, uint32_t size, uint32_t src)
     g_cow_rng[g_cow_n].src = src & ~0xFFFu;
     g_cow_n++;
 }
-static int cow_owns(uint32_t va)
+static int cow_owns(int idx, uint32_t va)
 {
     for (int i = 0; i < g_cow_n; i++)
         if (va >= g_cow_rng[i].va && va < g_cow_rng[i].end) return 1;
-    return 0;
+    return va >= g_space_prog[idx].va && va < g_space_prog[idx].end;
 }
 uint32_t vm_cow_count(void) { return g_cow_count; }
 
@@ -142,11 +147,26 @@ void vm_set_libc(uintptr_t wva, uint32_t wsize, const void *snapshot)
 }
 
 /* Build space `idx`'s table (ASID = idx+1; 0 = kernel/master): copy the master,
- * give the process (b) a demand-zero heap section and (a/c) per-process copies of
- * every registered COW range — libc data, the spawning program's data, and the
- * synthetic demo — mapped shared READ-ONLY at their pristine source until first
- * write. All non-global (ASID-tagged). Drop stale TLB for the reused ASID. */
-uint32_t *vm_space_create(int idx)
+ * give the process (b) a demand-zero heap section and per-process COW copies of
+ * the global ranges (libc data, the synthetic demo) plus (if any) the spawning
+ * program's own data range — mapped shared READ-ONLY at their pristine source
+ * until first write. All non-global (ASID-tagged). Drop stale TLB for the ASID. */
+static void map_cow_range(int idx, uint32_t *t, const cow_rng *r)
+{
+    /* build a per-process L2 for each 1 MB section the range spans (seeded from the
+     * master so shared text/rodata/GOT pages in the same section keep their mapping)
+     * and mark the range's pages READ-ONLY -> the shared source, preserving each
+     * page's XN bit (W^X for program data). */
+    for (uint32_t va = r->va; va < r->end; va += 0x1000u) {
+        uint32_t *l2 = perproc_l2(idx, t, va >> 20);
+        if (!l2) break;
+        uint32_t i  = L2_IDX(va);
+        uint32_t xn = l2[i] & 0x1u;                       /* keep XN from the master mapping */
+        l2[i] = (L2_PAGE_RO(r->src + (va - r->va)) & ~0x1u) | xn;
+    }
+}
+
+uint32_t *vm_space_create(int idx, uint32_t prog_va, uint32_t prog_size, uint32_t prog_src)
 {
     uint32_t *t    = space_l1[idx];
     uint32_t  asid = (uint32_t)idx + 1u;
@@ -161,19 +181,17 @@ uint32_t *vm_space_create(int idx)
         t[XTOS_HEAP_VA >> 20] = L1_COARSE(hl2);
     }
 
-    /* (a/c) COW ranges: for each registered range, build a per-process L2 for each
-     * 1 MB section it spans (seeded from the master so shared text/rodata/GOT pages
-     * in the same section keep their mapping) and mark the range's pages READ-ONLY
-     * -> the shared source. Preserve each page's XN bit (W^X for program data). */
-    for (int r = 0; r < g_cow_n; r++) {
-        uint32_t base = g_cow_rng[r].va, end = g_cow_rng[r].end, src = g_cow_rng[r].src;
-        for (uint32_t va = base; va < end; va += 0x1000u) {
-            uint32_t *l2 = perproc_l2(idx, t, va >> 20);
-            if (!l2) break;
-            uint32_t i  = L2_IDX(va);
-            uint32_t xn = l2[i] & 0x1u;                  /* keep XN from the master mapping */
-            l2[i] = (L2_PAGE_RO(src + (va - base)) & ~0x1u) | xn;
-        }
+    /* global COW ranges (libc data, synthetic demo) */
+    for (int r = 0; r < g_cow_n; r++) map_cow_range(idx, t, &g_cow_rng[r]);
+
+    /* the program's own data range (its identity load VA; COW source = the program
+     * image itself, which the kernel never writes so it stays pristine). */
+    g_space_prog[idx].va = g_space_prog[idx].end = g_space_prog[idx].src = 0;
+    if (prog_va && prog_size) {
+        g_space_prog[idx].va  = prog_va & ~0xFFFu;
+        g_space_prog[idx].end = (prog_va + prog_size + 0xFFFu) & ~0xFFFu;
+        g_space_prog[idx].src = (prog_src ? prog_src : prog_va) & ~0xFFFu;
+        map_cow_range(idx, t, &g_space_prog[idx]);
     }
 
     __asm__ volatile("mcr p15,0,%0,c8,c7,2" :: "r"(asid));   /* TLBIASID: clear stale */
@@ -257,7 +275,7 @@ int vm_demand_map(int idx, uint32_t va)
  * the live tables; uses the pre-reserved demand pool (no libc from the handler). */
 int vm_cow_map(int idx, uint32_t va)
 {
-    if (!cow_owns(va)) return 0;                 /* not COW (e.g. W^X text) -> fatal */
+    if (!cow_owns(idx, va)) return 0;            /* not COW (e.g. W^X text) -> fatal */
     uint32_t l1e = space_l1[idx][va >> 20];
     if ((l1e & 0x3u) != 0x1u) return 0;          /* section isn't a coarse L2 */
     uint32_t *l2 = (uint32_t *)(l1e & 0xFFFFFC00u);
