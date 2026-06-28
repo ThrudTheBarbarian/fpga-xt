@@ -35,13 +35,20 @@ takes by pointer. A type source the compiler can read is fundamentally required.
 
 The fix is two separable things:
 
-1. **A language feature** — an `import "libGEM"` statement: the source names a
-   library; the compiler loads it, reads its exported interface, and brings those
-   names + types into scope (qualified, e.g. `gem.v_opnvwk`, or flat — an xtc
-   naming choice). The source writes **no** signatures. Codegen emits the used
+1. **A language feature** — spelled with the existing **`#import`** directive
+   (which is `#include` + include-once, à la Objective-C). It is *extended* to
+   resolve over the union of search paths: **xtc source modules** in the
+   source-include paths (textual include, as today) **and `.so` libraries** in
+   the library paths (metadata import — read the `.so`'s interface). One directive,
+   dispatched on what the name resolves to. For a `.so` it brings the exported
+   names **and types** into scope (qualified, e.g. `gem.v_opnvwk`, or flat — an
+   xtc naming choice); the source writes **no** signatures. Codegen emits the used
    symbols as undefined-global references (default visibility) and records
-   `DT_NEEDED`. This is the compiler work, and it's a *module import*, not
-   per-symbol declarations.
+   `DT_NEEDED`. (`#import`'s include-once nature matches a `.so` import being
+   idempotent. The two behaviours behind the one directive are genuinely
+   different — textual inclusion vs. injecting types/symbols from binary metadata
+   — but the surface is uniform, and the resolver needs a defined precedence when
+   a name could match both a source module and a library.)
 2. **The interface data** — the names + types + struct layouts the import reads.
    This is content; §3 is where it comes from. Because of (1), it is owned by the
    library, never restated by the consumer.
@@ -83,6 +90,27 @@ anti-pattern. **Policy: ship `.so`s unstripped, DWARF embedded.** The cost is
 larger `.so`s; the mitigation, if it ever bites, keeps the single-file property —
 embed a *trimmed* DWARF (exported types only, per dwarf-subset.md), not full
 line-tables/locals.
+
+### Types materialise as native xtc types
+
+Importing a library brings in more than function symbols: the DWARF type DIEs for
+the exported API become **first-class xtc types**. `#import`ing libGEM makes
+`MFDB`, `gfx_surface`, `gem_window` declarable, nestable, and field-accessible in
+xtc source — a local `MFDB m`, `surf.px`, a `gem_window *`. The interface is types
+*and* symbols, not just symbols.
+
+The rule that makes it safe: synthesise each type **honouring the DWARF layout
+verbatim** — take `DW_AT_data_member_location` per member and `DW_AT_byte_size`
+for the whole — rather than re-running xtc's own struct-layout pass on the field
+types. The imported type is *layout-pinned* to what the library was actually built
+as: byte-identical by construction even if xtc's default packing ever differs from
+C's, and bitfield/alignment corner cases are *read*, not re-derived.
+
+Coverage: `DW_TAG_{structure,union,enumeration,typedef,pointer,array,base,
+subroutine}_type` map to the matching xtc constructs; a pointer to an incomplete
+type stays opaque (a handle, §6), a pointer to a laid-out type is shared. Type
+identity is by name + layout, so the same struct seen via two libraries (or via
+the program and a library) is **one** xtc type, not two.
 
 ## 4. Why DWARF (and not the alternatives)
 
