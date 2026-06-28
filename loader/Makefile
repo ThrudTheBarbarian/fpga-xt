@@ -21,9 +21,10 @@ ARMCFLAGS ?= -marm -fpic -Os -ffreestanding -fno-builtin
 QEMU      := qemu-system-arm
 QEMUFLAGS := -M virt -cpu cortex-a15 -nographic -no-reboot \
              -semihosting-config enable=on,target=native
-# real FreeRTOS runs on the actual Zynq PS model
-QEMUZYNQ  := qemu-system-arm -M xilinx-zynq-a9 -nographic -no-reboot -m 256M \
-             -semihosting-config enable=on,target=native
+# real FreeRTOS runs on the actual Zynq PS model. Semihosting I/O is bound to a
+# stdio chardev so the shell's stdin (SYS_READC) reads the terminal/pipe.
+QEMUZYNQ  := qemu-system-arm -M xilinx-zynq-a9 -display none -no-reboot -m 256M \
+             -chardev stdio,id=sh0 -semihosting-config enable=on,target=native,chardev=sh0
 BUILD := build
 BARECFLAGS := -marm -mcpu=cortex-a15 -ffreestanding -nostdlib -O0 -g \
               -I. -I$(BUILD) -Ikernel -Itest/qemu
@@ -121,11 +122,12 @@ $(BUILD)/usestr.so: test/freertos/progs/usestr.c $(BUILD)/libutil.so | $(BUILD)
 $(BUILD)/mkromfs: tools/mkromfs.c | $(BUILD)
 	$(HOSTCC) -O2 -o $@ $<
 
-$(BUILD)/romfs.bin: $(BUILD)/mkromfs $(BUILD)/hello.so $(BUILD)/showmotd.so $(BUILD)/usestr.so $(BUILD)/libutil.so test/freertos/motd.txt
+$(BUILD)/romfs.bin: $(BUILD)/mkromfs $(BUILD)/hello.so $(BUILD)/showmotd.so $(BUILD)/usestr.so $(BUILD)/echo.so $(BUILD)/libutil.so test/freertos/motd.txt
 	$(BUILD)/mkromfs $@ \
 	    /bin/hello=$(BUILD)/hello.so \
 	    /bin/showmotd=$(BUILD)/showmotd.so \
 	    /bin/usestr=$(BUILD)/usestr.so \
+	    /bin/echo=$(BUILD)/echo.so \
 	    /OS/Library/libutil.so=$(BUILD)/libutil.so \
 	    /etc/motd=test/freertos/motd.txt
 

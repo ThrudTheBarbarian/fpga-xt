@@ -38,6 +38,8 @@ typedef struct {
     uintptr_t         entry;
     SemaphoreHandle_t done;
     int               exit_code;
+    int               argc;
+    char            **argv;
     fd_t              fd[NFD];
 } proc_t;
 
@@ -138,12 +140,34 @@ static void app_main(void *arg)
 {
     proc_t *p = (proc_t *)arg;
     xtld_run_init(p->obj);
-    ((void (*)(void))p->entry)();
+    ((void (*)(int, char **))p->entry)(p->argc, p->argv);   /* argc/argv */
     if (p->done) xSemaphoreGive(p->done);
     vTaskDelete(NULL);
 }
 
-int frtos_spawn(const uint8_t *image, uint32_t len, const xtld_host *host)
+/* copy argv (strings + pointer array) into memory owned by the child, since the
+ * caller's buffer (e.g. the shell's line) is reused. Returns NULL for argc<=0. */
+static char **copy_argv(int argc, char **argv, const xtld_host *host)
+{
+    if (argc <= 0 || !argv) return NULL;
+    uint32_t total = (uint32_t)(argc + 1) * sizeof(char *);
+    for (int i = 0; i < argc; i++) total += (uint32_t)strlen(argv[i]) + 1;
+    char *block = host->alloc(total, sizeof(char *), host->user);
+    if (!block) return NULL;
+    char **out = (char **)block;
+    char *str = block + (uint32_t)(argc + 1) * sizeof(char *);
+    for (int i = 0; i < argc; i++) {
+        out[i] = str;
+        uint32_t n = (uint32_t)strlen(argv[i]) + 1;
+        memcpy(str, argv[i], n);
+        str += n;
+    }
+    out[argc] = NULL;
+    return out;
+}
+
+int frtos_spawn(const uint8_t *image, uint32_t len, int argc, char **argv,
+                const xtld_host *host)
 {
     int slot = -1;
     for (int i = 0; i < MAXPROC; i++) if (!g_proc[i].used) { slot = i; break; }
@@ -161,6 +185,7 @@ int frtos_spawn(const uint8_t *image, uint32_t len, const xtld_host *host)
 
     for (int i = 0; i < NFD; i++) p->fd[i].open = 0;
     p->obj = obj; p->entry = entry; p->exit_code = 0; p->pid = g_next_pid++;
+    p->argc = argc; p->argv = copy_argv(argc, argv, host);
     p->done = xSemaphoreCreateBinary();
     if (!p->done) return -1;
     p->used = 1;
@@ -172,9 +197,14 @@ int frtos_spawn(const uint8_t *image, uint32_t len, const xtld_host *host)
 
 int frtos_spawn_path(const char *path, const xtld_host *host)
 {
+    return frtos_spawn_argv(path, 0, NULL, host);
+}
+
+int frtos_spawn_argv(const char *path, int argc, char **argv, const xtld_host *host)
+{
     const uint8_t *data; uint32_t size;
     if (!romfs_lookup(path, &data, &size)) return -1;
-    return frtos_spawn(data, size, host);
+    return frtos_spawn(data, size, argc, argv, host);
 }
 
 /* xtld_host.resolve: the curated kernel export table — the libc-level symbols

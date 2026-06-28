@@ -1,9 +1,14 @@
 /*
- * main.c — M2: loader + syscall spine + a filesystem, on real FreeRTOS.
- * "init" mounts the embedded romfs and spawns programs BY PATH; the programs
- * issue real syscalls (incl. open/read of /etc/motd). Runs on qemu zynq-a9.
+ * main.c — M4: an interactive shell on real FreeRTOS.
+ * A kernel-resident shell task reads a command line (semihosting stdin), parses
+ * argv, and spawns /bin/<cmd> with arguments, waiting for each. Programs are
+ * loaded ET_DYNs (incl. shared-lib clients). Runs on qemu xilinx-zynq-a9.
+ *
+ * (The shell is kernel-resident for now — a userspace shell needs SYS_spawn/
+ * SYS_waitpid syscalls, which must run their blocking parts in task context.)
  */
 #include <stdint.h>
+#include <string.h>
 #include "FreeRTOS.h"
 #include "task.h"
 #include "bare_rt.h"
@@ -14,39 +19,76 @@
 
 extern void gic_init(void);
 
-static int run(const xtld_host *host, const char *path)
+static xtld_host g_host;
+
+static int readline(char *buf, int max)
 {
-    puts0("init: spawn "); puts0(path); puts0("\n");
-    int pid = frtos_spawn_path(path, host);
-    if (pid < 0) { puts0("init: spawn failed: "); puts0(path); puts0("\n"); return -1; }
-    int code = frtos_waitpid(pid);
-    puts0("init: "); puts0(path); puts0(" exited code "); putu((unsigned)code); puts0("\n");
-    return code;
+    int n = 0;
+    for (;;) {
+        int c = sh_readc();
+        if (c < 0) return n > 0 ? n : -1;      /* EOF */
+        if (c == '\r') continue;
+        if (c == '\n') { buf[n] = 0; return n; }
+        if (c == 8 || c == 127) { if (n > 0) n--; continue; } /* backspace */
+        if (n < max - 1) buf[n++] = (char)c;
+    }
 }
 
-static void init_task(void *arg)
+static int split(char *line, char **argv, int max)
+{
+    int argc = 0;
+    char *p = line;
+    while (*p && argc < max) {
+        while (*p == ' ') p++;
+        if (!*p) break;
+        argv[argc++] = p;
+        while (*p && *p != ' ') p++;
+        if (*p) *p++ = 0;
+    }
+    return argc;
+}
+
+static void shell_task(void *arg)
 {
     (void)arg;
-    xtld_host host = { .alloc = bump, .dealloc = NULL, .sync_caches = NULL,
-                       .resolve = frtos_ksym, .open_lib = frtos_open_lib, .user = NULL };
+    puts0("\nXTOS shell  —  try: echo hello world | hello | showmotd | usestr | help | exit\n");
+    char line[128];
+    char *argv[16];
+    for (;;) {
+        puts0("xtos$ ");
+        int n = readline(line, sizeof line);
+        if (n < 0) { puts0("\n[eof]\n"); sh_exit(0); }
+        int argc = split(line, argv, 16);
+        if (argc == 0) continue;
+        if (!strcmp(argv[0], "exit")) { puts0("bye\n"); sh_exit(0); }
+        if (!strcmp(argv[0], "help")) {
+            puts0("builtins: help, exit. programs: /bin/{hello,showmotd,usestr,echo}\n");
+            continue;
+        }
+        char path[72];
+        int i = 0; const char *pre = "/bin/";
+        while (pre[i]) { path[i] = pre[i]; i++; }
+        for (int j = 0; argv[0][j] && i < (int)sizeof(path) - 1; j++) path[i++] = argv[0][j];
+        path[i] = 0;
 
-    int a = run(&host, "/bin/hello");
-    int b = run(&host, "/bin/showmotd");
-    int c = run(&host, "/bin/usestr");      /* imports strrev from libutil.so */
-
-    if (a == 0 && b == 0 && c == 0) { puts0("RESULT: PASS\n"); sh_exit(0); }
-    puts0("RESULT: FAIL\n"); sh_exit(1);
+        int pid = frtos_spawn_argv(path, argc, argv, &g_host);
+        if (pid < 0) { puts0(argv[0]); puts0(": not found\n"); continue; }
+        frtos_waitpid(pid);
+    }
 }
 
 int main(void)
 {
-    puts0("=== xtos: programs from a filesystem on real FreeRTOS (qemu zynq-a9, M2) ===\n");
+    puts0("=== xtos: interactive shell on real FreeRTOS (qemu zynq-a9, M4) ===\n");
     gic_init();
     ksys_set_console(rt_write);
     romfs_mount(romfs_blob, romfs_blob_len);
 
-    if (xTaskCreate(init_task, "init", 1024, NULL, 2, NULL) != pdPASS) {
-        puts0("init create failed\n"); sh_exit(1);
+    g_host = (xtld_host){ .alloc = bump, .dealloc = NULL, .sync_caches = NULL,
+                          .resolve = frtos_ksym, .open_lib = frtos_open_lib, .user = NULL };
+
+    if (xTaskCreate(shell_task, "sh", 2048, NULL, 2, NULL) != pdPASS) {
+        puts0("shell create failed\n"); sh_exit(1);
     }
     vTaskStartScheduler();
     puts0("scheduler returned\n"); sh_exit(1);

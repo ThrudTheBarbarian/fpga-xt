@@ -25,6 +25,7 @@ static long sh(long op, void *arg)
     return r0;
 }
 void puts0(const char *s) { sh(0x04 /*SYS_WRITE0*/, (void *)s); }
+int  sh_readc(void) { return (int)sh(0x07 /*SYS_READC*/, (void *)0); }
 void sh_exit(int code) { long b[2] = { 0x20026, code }; sh(0x20 /*EXIT_EXTENDED*/, b); for (;;) {} }
 
 void putu(unsigned v)

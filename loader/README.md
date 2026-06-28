@@ -27,7 +27,7 @@ the `svc #1` syscall gateway + `spawn`. Spec:
 make test     # host verify: load a real arm32 .so, check relocated data
 make qemu     # bare-metal EXECUTION of loaded code under qemu-system-arm
 make kernel   # svc #1 gateway + spawn: a kernel spawns an app that syscalls
-make freertos # programs from a filesystem (spawn-by-path + file I/O) on real FreeRTOS
+make freertos # interactive shell on real FreeRTOS (qemu Zynq) — type commands
 make dump     # readelf -h -d -r on the test .so
 make clean
 ```
@@ -88,6 +88,14 @@ types.
   and falls back to a **curated kernel export table** (`frtos_ksym` — `memcpy`
   etc.). `/bin/usestr` imports `strrev` from `/OS/Library/libutil.so` and calls
   it across the module boundary.
+
+  **M4** adds an interactive shell: a stdin syscall (`sh_readc`, semihosting
+  `SYS_READC` bound to a stdio chardev), **argv** passing to spawned programs,
+  and a kernel-resident shell that reads a line, parses argv, and spawns
+  `/bin/<cmd> args…` (e.g. `/bin/echo` prints its arguments). Type commands at
+  the `xtos$` prompt, or pipe a script in. *(A userspace shell needs
+  `SYS_spawn`/`SYS_waitpid` syscalls whose blocking parts run in task context —
+  a follow-up.)*
 
 Requires `arm-none-eabi-gcc`, `ld.lld`, and `qemu-system-arm` on `PATH` (all via
 Homebrew).
