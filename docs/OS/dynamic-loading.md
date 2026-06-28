@@ -132,10 +132,15 @@ A9's L1 I-cache may hold stale lines for those addresses. Omit it and you get
 "relocation bugs" that are really cache bugs.
 
 **Symbol resolution order** for an undefined symbol:
-1. already-loaded libraries' `.dynsym` (so an app finds `v_gtext` in `libGEM`);
-2. the kernel's **curated export table** — a build-generated `{name,addr}` whitelist
-   of the symbols the kernel publishes to userland (these are the *libc-level*
-   symbols; the *syscalls* proper go through `SVC`, not symbol binding).
+1. already-loaded libraries' `.dynsym` (so an app finds `v_gtext` in `libGEM`, and
+   anything finds `malloc`/`printf`/… in **`libc.so`**);
+2. the kernel's **curated export table** — now just the **syscall-level
+   primitives** `libc.so` imports (`_sbrk`/`_write`/`_read`/…). It does **not**
+   publish a libc surface: libc is a real shared library (`/OS/Library/libc.so`,
+   newlib built `-fPIC`) that everything `DT_NEEDED`s, so libc resolves via #1.
+   *(Earlier POR had the kernel export the whole libc surface — retired once the
+   loadable-`.so` system made `libc.so` the clean answer; an ever-growing export
+   table is a kludge.)* The *syscalls* proper still go through `SVC`, not binding.
 
 Eager-bind every relocation at load, including `JUMP_SLOT`. An unresolved symbol =
 load failure with a clear message (`undefined symbol "foo" needed by X`).

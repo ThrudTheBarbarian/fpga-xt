@@ -20,17 +20,18 @@ values below are defaults — overridable at instantiation.
             │ OS kernel image (text/rodata/data/bss) + FreeRTOS        │
             │ heap_4 (task stacks, kernel objects) — ~31 MB           │
 0x0200_0000 ├─────────────────────────────────────────────────────────┤
-            │ OS heap (normal / CPU) — newlib malloc/realloc/free via  │
-            │ _sbrk. Program images (loader), FreeType internals, app  │
-            │ data. ~480 MB contiguous.                                │
+            │ OS heap (~480 MB, ONE contiguous pool). libc.so's own    │
+            │ image is bootstrap-pinned at the base; then THE          │
+            │ malloc/realloc/free (in libc.so, _sbrk above the image)  │
+            │ serves all other .so/program images AND runtime data,    │
+            │ freed on last ref (xtld_unload). FreeType caches, etc.   │
 0x2000_0000 ├─────────────────────────────────────────────────────────┤
             │ SALLY banks (HDL params): code-bank $D5C0 @0x2000_0000 + │
             │ data-bank $D5C1 @0x2040_0000 + video banks (future);     │
             │ 256 × 16 KB each ≈ 12 MB used, 16 MB reserved.           │
 0x2100_0000 ├─────────────────────────────────────────────────────────┤
-            │ spare (~240 MB) — hosts the 68k "T" realm (ST/STe/TT     │
-            │ guest RAM, ~64 MB) when it's wired; remainder free for   │
-            │ OS-heap extension or guest growth.                       │
+            │ spare (~240 MB) — 68k "T" realm (ST/STe/TT guest RAM,    │
+            │ ~64 MB) when wired; remainder free.                      │
 0x3000_0000 ├─────────────────────────────────────────────────────────┤
             │ Compositor planes (PL-visible, WIRED) — verified vs HDL/ │
             │ PS 2026-06-28:                                           │
@@ -65,11 +66,20 @@ from 256 MB to 16 MB (it only needs ~12 MB), leaving the rest of `0x2100_0000`�
 
 ## Heaps & allocators
 
-Two heaps, distinguished by **one question: does the PL read it?**
+One CPU heap (plus the PL-visible heap). The only wrinkle is bootstrap: the
+loader can't `malloc` the library that *contains* `malloc`.
 
-- **`os_alloc`** — the normal CPU heap (`0x0200_0000`–`0x1FFF_FFFF`, newlib
-  `malloc`/`realloc`/`free` over `_sbrk`). Program images (so the loader's
-  `xtld_unload` really frees), FreeType internals, app data, anything CPU-only.
+- **bootstrap allocator** — a tiny **one-shot** kernel allocator used *only* to
+  load `libc.so`, pinning its image at the base of the OS heap (`0x0200_0000`).
+- **`libc.so` malloc** — **the** `malloc`/`realloc`/`free` (in `libc.so`, over the
+  kernel's exported `_sbrk`, which starts just above `libc.so`'s pinned image). It
+  owns the whole `0x0200_0000`–`0x1FFF_FFFF` pool: **every other `.so`/program
+  image *and* all runtime data**, freed on last reference (`xtld_unload`). After
+  `libc.so` loads, the loader's `host.alloc`/`host.dealloc` simply *are* its
+  `memalign`/`free` (fetched via `xtld_sym`). FreeType caches, app data. The kernel
+  exports only the **syscall primitives** (`_sbrk`/`_write`/`_read`/…) `libc.so`
+  imports — **not** a libc surface (that was a pre-`libc.so` plan, now retired).
+  `libGEM.so` and programs `DT_NEEDED libc.so`.
 - **`plv_alloc`** — the **PL-visible / wired** heap (`0x3800_0000`–`0x3FFF_FFFF`).
   Anything the PL reads by physical address: GEM window surfaces, the hardware
   glyph atlas (`SRC_BLIT`), asset caches, DMA buffers. **Never swapped or moved**
