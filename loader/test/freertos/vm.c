@@ -25,28 +25,39 @@
 #define NSPACE     8
 #define PRIV_VA    0x1FF00000u           /* top pool section, repurposed per-process */
 #define PRIV_SEC   (PRIV_VA >> 20)       /* L1 index 0x1FF */
-#define SEC_NG     (1u << 17)            /* section descriptor nG bit (ASID-tagged) */
+#define L2_IDX(va) (((va) >> 12) & 0xFF) /* L2 (4KB page) index within a section */
+
+/* L2 small-page (4KB) descriptor: Normal non-cacheable, AP=11 (full), nG=1
+ * (ASID-tagged), XN=0. bits: nG[11] | AP[5:4]=11 | TEX[8:6]=001 | type=10 */
+#define L2_PAGE(phys) (((phys) & 0xFFFFF000u) | (1u<<11) | (3u<<4) | (1u<<6) | 0x2u)
+/* L1 coarse descriptor pointing at an L2 table (domain 0) */
+#define L1_COARSE(l2) (((uint32_t)(l2) & 0xFFFFFC00u) | 0x1u)
 
 extern uint32_t *mmu_master_table(void);
 
 static uint32_t  space_l1[NSPACE][4096] __attribute__((aligned(16384)));
+static uint32_t  space_l2[NSPACE][256]  __attribute__((aligned(1024)));  /* one L2 / space (private section) */
 static uint32_t *g_cur_table;            /* currently-active TTBR0 table */
 static uint32_t  g_cur_asid;
 
 /* Build space `idx`'s table (ASID = idx+1; 0 is the kernel/master): copy the
- * master, then point PRIV_VA at a fresh zeroed private 1 MB, marked non-global so
- * it is ASID-tagged. Drop any stale TLB entries for this reused ASID. */
+ * master, then map a single private 4 KB page at PRIV_VA via an L2 table — fine
+ * (page) granularity is what real per-process libc data / heaps / guard pages
+ * need. The page is non-global (ASID-tagged); the rest of the section faults.
+ * Drop any stale TLB entries for this reused ASID. */
 uint32_t *vm_space_create(int idx)
 {
-    uint32_t *t = space_l1[idx];
-    uint32_t *m = mmu_master_table();
+    uint32_t *t  = space_l1[idx];
+    uint32_t *l2 = space_l2[idx];
     uint32_t  asid = (uint32_t)idx + 1u;
-    memcpy(t, m, 4096 * sizeof(uint32_t));
+    memcpy(t, mmu_master_table(), 4096 * sizeof(uint32_t));
 
-    void *priv = frtos_alloc(0x100000, 0x100000, NULL);   /* 1 MB-aligned physical */
+    memset(l2, 0, 256 * sizeof(uint32_t));            /* all pages fault by default */
+    void *priv = frtos_alloc(0x1000, 0x1000, NULL);   /* one 4 KB private page */
     if (priv) {
-        memset(priv, 0, 0x100000);
-        t[PRIV_SEC] = ((uint32_t)priv & 0xFFF00000u) | (m[PRIV_SEC] & 0x000FFFFFu) | SEC_NG;
+        memset(priv, 0, 0x1000);
+        l2[L2_IDX(PRIV_VA)] = L2_PAGE((uint32_t)priv);
+        t[PRIV_SEC] = L1_COARSE(l2);                  /* section now an L2 (page) table */
     }
     __asm__ volatile("mcr p15,0,%0,c8,c7,2" :: "r"(asid));   /* TLBIASID: clear stale */
     __asm__ volatile("dsb; isb");
