@@ -13,6 +13,12 @@
  * first write). The kernel never touches it, so no global TLB shadow on HW. */
 #define XTOS_COW_VA    0x11000000u
 #define XTOS_COW_SIZE  0x00001000u
+/* TTBR0 cacheable-walk attributes (short descriptor): inner+outer Write-Back
+ * Write-Allocate, non-shared. OR'd into the table base whenever TTBR0 is written
+ * (mmu_init, vm_switch) so page-table walks go through the D-cache and stay
+ * coherent with our cacheable PTE writes. (IRGN[0]=bit6, RGN=bits[4:3].) */
+#define XTOS_TTBR_ATTR 0x48u
+void mmu_sync_caches(void *addr, unsigned long len, void *user);  /* xtld_host.sync_caches */
 void vm_set_libc(uintptr_t wva, uint32_t wsize, const void *snapshot);
 void vm_cow_init(void);
 void vm_cow_register(uint32_t va, uint32_t size, uint32_t src);

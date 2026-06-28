@@ -27,7 +27,8 @@
 
 /* L2 small-page (4KB) descriptor: Normal non-cacheable, AP=11 (full), nG=1
  * (ASID-tagged), XN=0. bits: nG[11] | AP[5:4]=11 | TEX[8:6]=001 | type=10 */
-#define L2_PAGE(phys) (((phys) & 0xFFFFF000u) | (1u<<11) | (3u<<4) | (1u<<6) | 0x2u)
+/* Normal WB-WA cacheable (TEX=001 C=1 B=1), AP=11 (full), nG=1, XN=0 */
+#define L2_PAGE(phys) (((phys) & 0xFFFFF000u) | (1u<<11) | (3u<<4) | (1u<<6) | (1u<<3) | (1u<<2) | 0x2u)
 /* same, but read-only (AP[2]=1 -> AP=111): a write faults (the COW trigger) */
 #define L2_PAGE_RO(phys) (L2_PAGE(phys) | (1u<<9))
 /* L1 coarse descriptor pointing at an L2 table (domain 0) */
@@ -209,7 +210,7 @@ void vm_switch(uint32_t *table, uint32_t asid)
     __asm__ volatile("dsb");
     __asm__ volatile("mcr p15,0,%0,c13,c0,1" :: "r"(0u));            /* CONTEXTIDR = reserved ASID 0 */
     __asm__ volatile("isb");
-    __asm__ volatile("mcr p15,0,%0,c2,c0,0"  :: "r"((uint32_t)table)); /* TTBR0 */
+    __asm__ volatile("mcr p15,0,%0,c2,c0,0"  :: "r"((uint32_t)table | XTOS_TTBR_ATTR)); /* TTBR0 (cacheable walks) */
     __asm__ volatile("isb");
     __asm__ volatile("mcr p15,0,%0,c13,c0,1" :: "r"(asid));          /* CONTEXTIDR = new ASID */
     __asm__ volatile("isb");

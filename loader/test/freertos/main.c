@@ -186,7 +186,7 @@ int main(void)
     ksys_set_console(rt_write);
     romfs_mount(romfs_blob, romfs_blob_len);
 
-    g_host = (xtld_host){ .alloc = frtos_alloc, .dealloc = frtos_free, .sync_caches = NULL,
+    g_host = (xtld_host){ .alloc = frtos_alloc, .dealloc = frtos_free, .sync_caches = mmu_sync_caches,
                           .resolve = frtos_ksym, .open_lib = frtos_open_lib, .user = NULL };
 
     /* bootstrap-load /OS/Library/libc.so, then route the loader's allocator

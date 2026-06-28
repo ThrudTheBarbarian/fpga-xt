@@ -110,10 +110,28 @@ resident for reuse.
 `libc_test` / `gemtext` / `desktop` (libc + libm + FreeType under COW),
 `demandtest`, `wxtest`, `stacktest`, `faulttest`.
 
-## 7. After this
+## 7. Caches (on)
 
-Per the user's plan: **re-graduate all of tier-2 to hardware**
-(`freertos-hw.elf` + `./vivado/jtag-valhalla.sh testbed`, user drives the JTAG
-load), **then turn caches on** (the testbed runs non-cacheable today — `mmu.c`
-sets the MMU on but leaves caches off; enabling them needs `xtld_host.sync_caches`
-wired for loaded code).
+Caches are **enabled** (`mmu.c`). The CPU's own RAM (everything below
+`0x2000_0000`: code, libc, heap, COW pages) is Normal **Write-Back Write-Allocate
+cacheable**, and page-table walks are cacheable (`XTOS_TTBR_ATTR`, OR'd into TTBR0
+in `mmu_init` and `vm_switch`) so walks stay coherent with our cacheable PTE
+writes — no explicit PTE cache-cleaning needed.
+
+- The loader makes freshly-copied code coherent for execution via
+  `xtld_host.sync_caches → mmu_sync_caches` (clean D to PoU + invalidate I by MVA +
+  BPIALL). COW/heap data pages are **XN**, so they need no I-side maintenance, and
+  Normal-cacheable keeps them coherent for data access.
+- `mmu_init` invalidates I- and D-caches (D by set/way) before enabling, since
+  cache contents are UNKNOWN out of reset.
+- **The PL-shared region (`0x2000_0000..0x3FFF_FFFF`: SALLY/planes/framebuffer at
+  `FB_BASE 0x3000_0000`) stays Normal NON-cacheable**, and peripherals stay Device:
+  the FPGA compositor and the CPU must see each other's writes without a cache
+  between them (the "PL-visible ⇒ wired/uncached" invariant).
+
+Validated on qemu (full suite green incl. framebuffer rendering). qemu models
+caches as coherent, so it exercises the **plumbing** (attribute encodings, the
+enable sequence, the set/way loop, `sync_caches` wiring) but not true cache
+*incoherency* — that, plus the SMP/SCU shareability bits (`XTOS_TTBR_ATTR` is
+currently non-shared), is the **HW re-graduation** step: `freertos-hw.elf` +
+`./vivado/jtag-valhalla.sh testbed`, user drives the JTAG load.
