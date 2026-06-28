@@ -36,19 +36,26 @@ takes by pointer. A type source the compiler can read is fundamentally required.
 The fix is two separable things:
 
 1. **A language feature** — spelled with the existing **`#import`** directive
-   (which is `#include` + include-once, à la Objective-C). It is *extended* to
-   resolve over the union of search paths: **xtc source modules** in the
-   source-include paths (textual include, as today) **and `.so` libraries** in
-   the library paths (metadata import — read the `.so`'s interface). One directive,
-   dispatched on what the name resolves to. For a `.so` it brings the exported
-   names **and types** into scope (qualified, e.g. `gem.v_opnvwk`, or flat — an
-   xtc naming choice); the source writes **no** signatures. Codegen emits the used
-   symbols as undefined-global references (default visibility) and records
-   `DT_NEEDED`. (`#import`'s include-once nature matches a `.so` import being
-   idempotent. The two behaviours behind the one directive are genuinely
-   different — textual inclusion vs. injecting types/symbols from binary metadata
-   — but the surface is uniform, and the resolver needs a defined precedence when
-   a name could match both a source module and a library.)
+   (which is `#include` + include-once, à la Objective-C), with the **bracket
+   style selecting the world** (mirroring C `<>` vs `""`), so there is no
+   ambiguity to resolve:
+   - **`#import <GEM>`** → a **library**: `$libDir/libGEM.so`. The `lib` prefix +
+     `.so` suffix are implied boilerplate (the `-lGEM` convention); the stem maps
+     verbatim to the filename after `lib` (`<c>`→`libc.so`, `<m>`→`libm.so`). This
+     is the metadata import — read the `.so`'s exported interface.
+   - **`#import "foo"`** → an **xtc source module** on the source-include path
+     (textual include, as today).
+
+   For a library it brings the exported names **and types** into scope (qualified,
+   e.g. `gem.v_opnvwk`, or flat — an xtc naming choice); the source writes **no**
+   signatures. Codegen emits the used symbols as undefined-global references
+   (default visibility) and records `DT_NEEDED` (soname from the `.so`).
+   `#import`'s include-once nature matches a `.so` import being idempotent.
+
+   The `lib*.so` naming also separates *importable libraries* from *spawnable
+   programs* (`desktop.so`) — you `#import` the former, `spawn` the latter.
+   Note the SD is FAT (case-insensitive): pick one casing per library; never let
+   two libraries differ only by case.
 2. **The interface data** — the names + types + struct layouts the import reads.
    This is content; §3 is where it comes from. Because of (1), it is owned by the
    library, never restated by the consumer.
