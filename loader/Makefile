@@ -90,7 +90,7 @@ FRCFLAGS := -marm -mcpu=cortex-a9 -mfloat-abi=softfp -mfpu=neon-vfpv3 -ffreestan
 FRSRC := $(FR)/tasks.c $(FR)/queue.c $(FR)/list.c $(FR)/timers.c $(FR)/event_groups.c \
          $(FR)/croutine.c $(FR)/stream_buffer.c $(FR)/portable/MemMang/heap_4.c \
          $(FRPORT)/port.c \
-         test/freertos/zynq.c test/freertos/bsp_shim.c test/freertos/mmu.c test/freertos/frtos_os.c \
+         test/freertos/zynq.c test/freertos/bsp_shim.c test/freertos/mmu.c test/freertos/gfxplane.c test/freertos/frtos_os.c \
          test/freertos/romfs.c test/freertos/syscalls.c test/freertos/main.c \
          test/qemu/bare_rt.c test/qemu/bare_libc.c xtld.c
 FRASM := test/freertos/xt_boot.S test/freertos/xt_vectors.S $(FRPORT)/portASM.S
@@ -150,7 +150,7 @@ $(BUILD)/libGEM.so: $(GEMSRC) $(FTSRC) $(BUILD)/libc.so $(BUILD)/libm.so | $(BUI
 
 # gemtext — real-VDI client: open workstation, fill rect, FreeType text, ASCII dump
 $(BUILD)/gemtext.so: test/freertos/progs/gemtext.c $(BUILD)/libGEM.so $(BUILD)/libc.so | $(BUILD)
-	$(ARMCC) $(GEMCFLAGS) -c $< -o $(BUILD)/gemtext.o
+	$(ARMCC) $(GEMCFLAGS) -Itest/qemu -c $< -o $(BUILD)/gemtext.o
 	$(LLD) -shared --hash-style=sysv -o $@ $(BUILD)/gemtext.o $(BUILD)/libGEM.so $(BUILD)/libc.so
 
 # a program that uses libc (DT_NEEDED libc.so), compiled against the PIC newlib headers

@@ -20,4 +20,9 @@
 #define SYS_write    0x303
 #define SYS_lseek    0x304
 
+/* graphics / display — block 0x400. The OS owns the display plane; apps query
+ * its descriptor and draw into it, then present (compositor on HW, ASCII on qemu) */
+#define SYS_fb_info    0x400   /* (struct os_fbinfo *) -> 0 */
+#define SYS_fb_present  0x401  /* () -> 0  (flush the plane to the display) */
+
 #endif

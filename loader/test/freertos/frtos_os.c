@@ -147,6 +147,14 @@ static long do_syscall(uint32_t num, long a0, long a1, long a2)
     case SYS_read:   return sys_read(p, (int)a0, (void *)a1, (uint32_t)a2);
     case SYS_close:  if (p && a0 >= 3 && a0 < NFD) p->fd[a0].open = 0; return 0;
     case SYS_lseek:  return sys_lseek(p, (int)a0, a1, (int)a2);
+    case SYS_fb_info: {                                      /* (struct os_fbinfo *) */
+        extern void fb_info(int *, int *, int *, uint32_t *);
+        struct { int w, h, stride; uint32_t addr; } *fi = (void *)a0;
+        if (!fi) return -1;
+        fb_info(&fi->w, &fi->h, &fi->stride, &fi->addr);
+        return 0;
+    }
+    case SYS_fb_present: { extern void fb_present(void); fb_present(); return 0; }
     default:         return -38;                             /* -ENOSYS */
     }
 }

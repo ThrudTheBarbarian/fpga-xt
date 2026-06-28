@@ -12,6 +12,11 @@
 #define SYS_read    0x302
 #define SYS_write   0x303
 #define SYS_lseek   0x304
+#define SYS_fb_info    0x400
+#define SYS_fb_present 0x401
+
+/* the OS display-plane descriptor (filled by SYS_fb_info) */
+struct os_fbinfo { int w, h, stride; unsigned long addr; };
 
 static inline long __syscall(long n, long a0, long a1, long a2)
 {
@@ -34,5 +39,7 @@ static inline long sys_read(int fd, void *buf, unsigned len)
 static inline long sys_close(int fd) { return __syscall(SYS_close, fd, 0, 0); }
 static inline long sys_lseek(int fd, long off, int whence)
 { return __syscall(SYS_lseek, fd, off, whence); }
+static inline long sys_fb_info(struct os_fbinfo *fi) { return __syscall(SYS_fb_info, (long)fi, 0, 0); }
+static inline long sys_fb_present(void) { return __syscall(SYS_fb_present, 0, 0, 0); }
 
 #endif

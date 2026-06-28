@@ -123,5 +123,13 @@ types.
   (strongly-ordered memory — the MMU-off default — faults on those); caches stay
   off for now. Spawned-task stacks went to 64 KB (FreeType is stack-hungry).
 
+  **M6c** gives the OS the **display plane**: it owns one RGBA plane at `FB_BASE`
+  (`0x3000_0000`, the hardware compositor-plane address; just RAM under qemu).
+  New gfx syscalls (`gfxplane.c`) — `SYS_fb_info` hands an app the plane
+  descriptor (`struct os_fbinfo`), `SYS_fb_present` pushes it (the compositor on
+  hardware; an ASCII dump under qemu). `/bin/gemtext` no longer allocates a
+  private surface: it wraps the OS plane in a `gfx_surface`, draws, and presents.
+  This is the seam the on-hardware compositor slots behind unchanged.
+
 Requires `arm-none-eabi-gcc`, `ld.lld`, and `qemu-system-arm` on `PATH` (all via
 Homebrew).
