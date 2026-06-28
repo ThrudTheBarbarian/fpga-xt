@@ -37,7 +37,7 @@ void vClearTickInterrupt(void);
 #define configUSE_COUNTING_SEMAPHORES  1
 #define configQUEUE_REGISTRY_SIZE      8
 #define configUSE_TASK_NOTIFICATIONS   1
-#define configSUPPORT_STATIC_ALLOCATION 0
+#define configSUPPORT_STATIC_ALLOCATION 1   /* spawned tasks use static stacks (stackguard.c) */
 #define configSUPPORT_DYNAMIC_ALLOCATION 1
 
 /* hooks / checks */

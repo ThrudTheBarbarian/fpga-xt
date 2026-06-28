@@ -45,6 +45,7 @@ typedef struct {
     uint32_t          asid;           /* its ASID (slot+1; 0 = kernel/master) */
     uint32_t          heap_brk;       /* per-process heap (XTOS_HEAP_VA window) */
     uint32_t          heap_end;
+    StaticTask_t      tcb;            /* static TCB (stack from stackguard.c) */
 } proc_t;
 
 static proc_t g_proc[MAXPROC];
@@ -294,9 +295,16 @@ int frtos_spawn(const uint8_t *image, uint32_t len, int argc, char **argv,
      * task listings identify it — FreeRTOS copies the name into the TCB. */
     const char *nm = (argc > 0 && argv && argv[0]) ? argv[0] : "app";
     for (const char *q = nm; *q; q++) if (*q == '/') nm = q + 1;
-    if (xTaskCreate(app_main, nm, 16384, p, 3, &p->task) != pdPASS) {   /* 64KB: FreeType is stack-hungry */
-        vSemaphoreDelete(p->done); p->used = 0; return -1;
-    }
+    { extern StackType_t *stackguard_stack(int, uint32_t *);
+      uint32_t depth; StackType_t *stk = stackguard_stack(slot, &depth);
+      /* xTaskCreateStatic returns the handle (unlike xTaskCreate's out-param), and
+       * the new task is higher priority than us — it would run (and look itself up
+       * via cur_proc) BEFORE p->task is assigned. Suspend the scheduler so the
+       * assignment lands first. */
+      vTaskSuspendAll();
+      p->task = xTaskCreateStatic(app_main, nm, depth, p, 3, stk, &p->tcb);
+      xTaskResumeAll();
+      if (!p->task) { vSemaphoreDelete(p->done); p->used = 0; return -1; } }
     return p->pid;
 }
 
