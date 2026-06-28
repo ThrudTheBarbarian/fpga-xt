@@ -57,6 +57,22 @@ references, and record `DT_NEEDED libGEM.so` (soname from `DT_SONAME`).
 There is **no separate interface file** in the steady state. The `.so` is the
 single source of truth for both its code and its interface.
 
+### One file, by invariant
+
+This is literally **one file**: both `.dynsym` and DWARF are ELF *sections inside*
+the `.so` (`.dynsym` reached via `PT_DYNAMIC`/`DT_SYMTAB`; DWARF in `.debug_*`).
+Nothing can drift out of sync because there is nothing else to sync — the property
+we want. `.dynsym` is mandatory for dynamic linking and cannot be stripped from a
+shared object, so the export-set half is always present.
+
+The single thing that would break the invariant is a deliberate toolchain step:
+**splitting debug info out** (`objcopy --only-keep-debug` + `.gnu_debuglink`, or
+`strip`) moves DWARF into a separate `foo.debug` — the two-files-that-drift
+anti-pattern. **Policy: ship `.so`s unstripped, DWARF embedded.** The cost is
+larger `.so`s; the mitigation, if it ever bites, keeps the single-file property —
+embed a *trimmed* DWARF (exported types only, per dwarf-subset.md), not full
+line-tables/locals.
+
 ## 4. Why DWARF (and not the alternatives)
 
 - **ABI-accurate by construction.** DWARF is literally what the compiler laid the
