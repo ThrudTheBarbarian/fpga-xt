@@ -45,6 +45,7 @@ xt_svc_dispatch:
     movs  pc, lr
 
     .extern fault_report
+    .extern xtos_task_fault_exit
 xt_undef: mov r0, #1
           mov r1, lr
           b   xt_fault
@@ -57,7 +58,13 @@ xt_dabt:  mov r0, #4
 xt_fiq:   mov r0, #7
           mov r1, lr
           b   xt_fault
-xt_fault: bl  fault_report
+/* report the fault, then RETURN INTO THE FAULTING TASK running the fault-exit
+ * thunk (movs restores SPSR_abt = the task's mode), so it deletes itself and the
+ * scheduler keeps running the rest of the OS. T2-a.2. */
+xt_fault: bl   fault_report
+          movw lr, #:lower16:xtos_task_fault_exit
+          movt lr, #:upper16:xtos_task_fault_exit
+          movs pc, lr
     .global xt_hang
 xt_hang:
     b     xt_hang

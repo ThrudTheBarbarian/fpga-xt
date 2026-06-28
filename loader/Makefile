@@ -166,8 +166,9 @@ $(BUILD)/libc_test.so: test/freertos/progs/libc_test.c $(BUILD)/libc.so | $(BUIL
 $(BUILD)/mkromfs: tools/mkromfs.c | $(BUILD)
 	$(HOSTCC) -O2 -o $@ $<
 
-$(BUILD)/romfs.bin: $(BUILD)/mkromfs $(BUILD)/hello.so $(BUILD)/showmotd.so $(BUILD)/usestr.so $(BUILD)/echo.so $(BUILD)/libc_test.so $(BUILD)/gemtext.so $(BUILD)/desktop.so $(BUILD)/libutil.so $(BUILD)/libGEM.so $(BUILD)/libm.so $(BUILD)/libc.so test/freertos/motd.txt
+$(BUILD)/romfs.bin: $(BUILD)/mkromfs $(BUILD)/hello.so $(BUILD)/showmotd.so $(BUILD)/usestr.so $(BUILD)/echo.so $(BUILD)/libc_test.so $(BUILD)/gemtext.so $(BUILD)/desktop.so $(BUILD)/faultprog.so $(BUILD)/libutil.so $(BUILD)/libGEM.so $(BUILD)/libm.so $(BUILD)/libc.so test/freertos/motd.txt
 	$(BUILD)/mkromfs $@ \
+	    /bin/faultprog=$(BUILD)/faultprog.so \
 	    /OS/Library/libc.so=$(BUILD)/libc.so \
 	    /OS/Library/libm.so=$(BUILD)/libm.so \
 	    /OS/Library/libGEM.so=$(BUILD)/libGEM.so \

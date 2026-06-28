@@ -66,10 +66,13 @@ static void shell_task(void *arg)
             puts0("builtins: help, exit, faulttest. programs: /bin/{hello,showmotd,usestr,echo,libc_test,gemtext,desktop}\n");
             continue;
         }
-        if (!strcmp(argv[0], "faulttest")) {       /* T2-a: prove the MMU traps a wild pointer */
-            puts0("faulttest: writing 0xdead to NULL ...\n");
-            *(volatile unsigned *)0 = 0xdeadu;
-            puts0("faulttest: SURVIVED (no protection?!)\n");
+        if (!strcmp(argv[0], "faulttest")) {       /* T2-a.2: a faulting app is killed; the OS survives */
+            puts0("faulttest: spawning /bin/faultprog (it derefs NULL)...\n");
+            char *av[1] = { (char *)"faultprog" };
+            int pid = frtos_spawn_argv("/bin/faultprog", 1, av, &g_host);
+            if (pid < 0) { puts0("faultprog: not found\n"); continue; }
+            frtos_waitpid(pid);
+            puts0("faulttest: faultprog was killed by the OS; the shell is still alive.\n");
             continue;
         }
         char path[72];

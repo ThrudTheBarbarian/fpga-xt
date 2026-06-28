@@ -98,6 +98,17 @@ static void task_exit_thunk(void)
     for (;;) {}
 }
 
+/* T2-a.2: the abort handler (xt_vectors.S) redirects a faulting task here — it
+ * runs in the task's own (System-mode) context, so it can give the waitpid
+ * semaphore (unblock the parent) and delete itself; the OS keeps running. */
+void xtos_task_fault_exit(void)
+{
+    proc_t *p = cur_proc();
+    if (p) { p->exit_code = -1; if (p->done) xSemaphoreGive(p->done); }   /* killed */
+    vTaskDelete(NULL);
+    for (;;) {}
+}
+
 /* ---- file syscalls (non-yielding; romfs is in memory) ------------------ */
 static long sys_open(proc_t *p, const char *path)
 {

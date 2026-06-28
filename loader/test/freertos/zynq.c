@@ -94,8 +94,8 @@ void fault_report(unsigned code, unsigned addr)
     puts0(" in task '"); puts0(tn ? tn : "?"); puts0("'\n");
     fr_hex("    PC=", addr);
     fr_hex("  DFAR=", dfar); fr_hex("  DFSR=", dfsr); fr_hex("  IFSR=", ifsr);
-    puts0("\n*** protection fault caught (T2-a) — halted ***\n");
-    for (;;) {}
+    puts0("\n*** killing the faulting task; OS continues (T2-a) ***\n");
+    /* returns to xt_vectors.S, which redirects the task into xtos_task_fault_exit */
 }
 
 void vAssertCalled(const char *file, int line)
