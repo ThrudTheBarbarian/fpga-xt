@@ -1186,6 +1186,12 @@ static void repl_exec(char *cmd)
         xtos_gem_demo();
         return;
     }
+    if (!strcmp(argv[0], "faulttest")) {              /* T2-a HW: trap a wild pointer */
+        printf("faulttest: writing 0xdead to unmapped 0x60000000 ...\r\n");
+        *(volatile unsigned *)0x60000000u = 0xdeadu;
+        printf("faulttest: SURVIVED (no fault?!)\r\n");
+        return;
+    }
     if (!strcmp(argv[0], "unlock")) {
         /* XT register-unlock mask (docs/Zynq/register-unlock.md).  No arg =
          * read back the effective value; <hex> = set it.  bit0 ANTIC_CHIPLET,
@@ -1374,6 +1380,9 @@ static void repl_task(void *arg)
      * (and falls back to polling if this fails). */
     if (xt_blitter_irq_init() != 0)
         uart1_puts("  [blit] IRQ init failed — wait_idle will poll\r\n");
+
+    /* T2-a on HW: catch data/prefetch aborts precisely (DFAR/DFSR + task) */
+    { extern void xtos_fault_handlers_init(void); xtos_fault_handlers_init(); }
 
     /* Clear plane-0 power-on garbage + select the compositor BEFORE running boot
      * scripts (which may paint the desktop and must not be wiped afterwards). */
