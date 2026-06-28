@@ -1176,6 +1176,11 @@ static void repl_exec(char *cmd)
         xtos_ld_selftest();
         return;
     }
+    if (!strcmp(argv[0], "libctest")) {               /* HW-2: libc.so from SD */
+        extern void xtos_libc_test(void);
+        xtos_libc_test();
+        return;
+    }
     if (!strcmp(argv[0], "unlock")) {
         /* XT register-unlock mask (docs/Zynq/register-unlock.md).  No arg =
          * read back the effective value; <hex> = set it.  bit0 ANTIC_CHIPLET,
