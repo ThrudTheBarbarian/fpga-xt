@@ -41,6 +41,7 @@ typedef struct {
     int               argc;
     char            **argv;
     fd_t              fd[NFD];
+    uint32_t         *l1;             /* per-process address space (vm.c), NULL=master */
 } proc_t;
 
 static proc_t g_proc[MAXPROC];
@@ -87,6 +88,19 @@ static proc_t *cur_proc(void)
     for (int i = 0; i < MAXPROC; i++)
         if (g_proc[i].used && g_proc[i].task == t) return &g_proc[i];
     return NULL;
+}
+
+/* T2-b: called from traceTASK_SWITCHED_IN on every context switch — point TTBR0
+ * at the incoming task's address space (its process's L1 table, or the master
+ * table for the kernel/shell/idle tasks). vm_switch only flushes on a change. */
+void xtos_vm_on_switch(void)
+{
+    extern void vm_switch(uint32_t *);
+    TaskHandle_t t = xTaskGetCurrentTaskHandle();
+    uint32_t *table = (uint32_t *)0;                 /* master (kernel) space */
+    for (int i = 0; i < MAXPROC; i++)
+        if (g_proc[i].used && g_proc[i].task == t) { table = g_proc[i].l1; break; }
+    vm_switch(table);
 }
 
 /* runs in TASK (System-mode) context — safe to call yielding FreeRTOS APIs */
@@ -239,6 +253,7 @@ int frtos_spawn(const uint8_t *image, uint32_t len, int argc, char **argv,
     p->argc = argc; p->argv = copy_argv(argc, argv, host);
     p->done = xSemaphoreCreateBinary();
     if (!p->done) return -1;
+    { extern uint32_t *vm_space_create(int); p->l1 = vm_space_create((int)(p - g_proc)); }  /* T2-b: private address space */
     p->used = 1;
     if (xTaskCreate(app_main, "app", 16384, p, 3, &p->task) != pdPASS) {   /* 64KB: FreeType is stack-hungry */
         vSemaphoreDelete(p->done); p->used = 0; return -1;

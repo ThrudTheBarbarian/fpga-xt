@@ -90,7 +90,7 @@ FRCFLAGS := -marm -mcpu=cortex-a9 -mfloat-abi=softfp -mfpu=neon-vfpv3 -ffreestan
 FRSRC := $(FR)/tasks.c $(FR)/queue.c $(FR)/list.c $(FR)/timers.c $(FR)/event_groups.c \
          $(FR)/croutine.c $(FR)/stream_buffer.c $(FR)/portable/MemMang/heap_4.c \
          $(FRPORT)/port.c \
-         test/freertos/zynq.c test/freertos/bsp_shim.c test/freertos/mmu.c test/freertos/gfxplane.c test/freertos/frtos_os.c \
+         test/freertos/zynq.c test/freertos/bsp_shim.c test/freertos/mmu.c test/freertos/vm.c test/freertos/gfxplane.c test/freertos/frtos_os.c \
          test/freertos/romfs.c test/freertos/syscalls.c test/freertos/main.c \
          test/qemu/bare_rt.c test/qemu/bare_libc.c xtld.c
 FRASM := test/freertos/xt_boot.S test/freertos/xt_vectors.S $(FRPORT)/portASM.S
@@ -163,12 +163,18 @@ $(BUILD)/libc_test.so: test/freertos/progs/libc_test.c $(BUILD)/libc.so | $(BUIL
 	$(ARMCC) $(PROGCFLAGS) -Inewlib-pic/include -c $< -o $(BUILD)/libc_test.o
 	$(LLD) -shared --hash-style=sysv -o $@ $(BUILD)/libc_test.o $(BUILD)/libc.so
 
+# vmtest — DT_NEEDED libc.so; touches the per-process private window (T2-b)
+$(BUILD)/vmtest.so: test/freertos/progs/vmtest.c $(BUILD)/libc.so | $(BUILD)
+	$(ARMCC) $(PROGCFLAGS) -Inewlib-pic/include -c $< -o $(BUILD)/vmtest.o
+	$(LLD) -shared --hash-style=sysv -o $@ $(BUILD)/vmtest.o $(BUILD)/libc.so
+
 $(BUILD)/mkromfs: tools/mkromfs.c | $(BUILD)
 	$(HOSTCC) -O2 -o $@ $<
 
-$(BUILD)/romfs.bin: $(BUILD)/mkromfs $(BUILD)/hello.so $(BUILD)/showmotd.so $(BUILD)/usestr.so $(BUILD)/echo.so $(BUILD)/libc_test.so $(BUILD)/gemtext.so $(BUILD)/desktop.so $(BUILD)/faultprog.so $(BUILD)/libutil.so $(BUILD)/libGEM.so $(BUILD)/libm.so $(BUILD)/libc.so test/freertos/motd.txt
+$(BUILD)/romfs.bin: $(BUILD)/mkromfs $(BUILD)/hello.so $(BUILD)/showmotd.so $(BUILD)/usestr.so $(BUILD)/echo.so $(BUILD)/libc_test.so $(BUILD)/gemtext.so $(BUILD)/desktop.so $(BUILD)/faultprog.so $(BUILD)/vmtest.so $(BUILD)/libutil.so $(BUILD)/libGEM.so $(BUILD)/libm.so $(BUILD)/libc.so test/freertos/motd.txt
 	$(BUILD)/mkromfs $@ \
 	    /bin/faultprog=$(BUILD)/faultprog.so \
+	    /bin/vmtest=$(BUILD)/vmtest.so \
 	    /OS/Library/libc.so=$(BUILD)/libc.so \
 	    /OS/Library/libm.so=$(BUILD)/libm.so \
 	    /OS/Library/libGEM.so=$(BUILD)/libGEM.so \

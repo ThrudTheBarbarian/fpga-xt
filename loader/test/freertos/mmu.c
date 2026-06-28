@@ -16,6 +16,10 @@
 
 static volatile uint32_t l1[4096] __attribute__((aligned(16384)));
 
+/* the master (kernel) translation table — per-process spaces (vm.c) start as
+ * copies of this so the kernel + wired regions are mapped in every space. */
+uint32_t *mmu_master_table(void) { return (uint32_t *)l1; }
+
 void mmu_init(void)
 {
     /* T2-a protection: domain 0 is a CLIENT (AP enforced, not bypassed). The

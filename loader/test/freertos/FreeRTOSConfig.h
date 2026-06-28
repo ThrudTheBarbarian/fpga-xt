@@ -66,4 +66,7 @@ void vClearTickInterrupt(void);
 extern void vAssertCalled(const char *file, int line);
 #define configASSERT(x) if ((x) == 0) vAssertCalled(__FILE__, __LINE__)
 
+/* T2-b: swap the per-process address space (TTBR0) on every context switch */
+#define traceTASK_SWITCHED_IN()  do { extern void xtos_vm_on_switch(void); xtos_vm_on_switch(); } while (0)
+
 #endif /* FREERTOS_CONFIG_H */
