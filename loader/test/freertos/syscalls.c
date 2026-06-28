@@ -5,7 +5,9 @@
  * via the kernel export table. No errno here — libc.so has its own; failures
  * just return -1.
  */
+#include <stdint.h>
 #include "bare_rt.h"
+#include "romfs.h"
 
 /* _sbrk hands out the OS heap; its base is set just above libc.so's pinned image
  * once libc.so is loaded (sbrk_set_base), its end is the top of the heap. */
@@ -28,24 +30,59 @@ int _write(int fd, char *buf, int len)
     return -1;
 }
 
+/* romfs-backed file descriptors for libc.so's fopen/fread/fseek (e.g. FreeType
+ * loading a font). fds 0/1/2 are the console; 3+ index this table. Read-only.
+ * _fstat stays a stub — newlib falls back to a default-size buffer. */
+#define SEEK_SET 0
+#define SEEK_CUR 1
+#define SEEK_END 2
+#define NFILES 8
+static struct { int used; const uint8_t *data; uint32_t size, pos; } g_fd[NFILES];
+static int fdx(int fd) { return (fd >= 3 && fd < 3 + NFILES && g_fd[fd - 3].used) ? fd - 3 : -1; }
+
+int _open(const char *path, int flags, int mode)
+{
+    (void)flags; (void)mode;
+    const uint8_t *d; uint32_t sz;
+    if (!romfs_lookup(path, &d, &sz)) return -1;
+    for (int i = 0; i < NFILES; i++)
+        if (!g_fd[i].used) { g_fd[i] = (typeof(g_fd[i])){1, d, sz, 0}; return 3 + i; }
+    return -1;
+}
+
 int _read(int fd, char *buf, int len)
 {
-    if (fd != 0) return -1;
-    int n = 0;
-    while (n < len) { int c = sh_readc(); if (c < 0) break; buf[n++] = (char)c; if (c == '\n') break; }
-    return n;
+    if (fd == 0) {                              /* stdin (semihosting) */
+        int n = 0;
+        while (n < len) { int c = sh_readc(); if (c < 0) break; buf[n++] = (char)c; if (c == '\n') break; }
+        return n;
+    }
+    int i = fdx(fd); if (i < 0) return -1;
+    uint32_t rem = g_fd[i].size - g_fd[i].pos;
+    uint32_t k = (uint32_t)len < rem ? (uint32_t)len : rem;
+    for (uint32_t j = 0; j < k; j++) buf[j] = (char)g_fd[i].data[g_fd[i].pos + j];
+    g_fd[i].pos += k;
+    return (int)k;
 }
+
+int _lseek(int fd, int off, int whence)
+{
+    int i = fdx(fd); if (i < 0) return -1;
+    long p = whence == SEEK_CUR ? (long)g_fd[i].pos + off
+           : whence == SEEK_END ? (long)g_fd[i].size + off : off;
+    if (p < 0) p = 0;
+    if (p > (long)g_fd[i].size) p = (long)g_fd[i].size;
+    g_fd[i].pos = (uint32_t)p;
+    return (int)p;
+}
+
+int _close(int fd) { int i = fdx(fd); if (i < 0) return -1; g_fd[i].used = 0; return 0; }
 
 void _exit(int code) { sh_exit(code); for (;;) {} }
 void abort(void) { sh_exit(99); for (;;) {} }   /* referenced by libgcc unwind */
 
-/* stubs libc.so references; romfs-backed _open/_read/_close/_lseek/_fstat for
- * fopen come in M6b */
-int _close(int fd) { (void)fd; return -1; }
-int _lseek(int fd, int off, int w) { (void)fd; (void)off; (void)w; return -1; }
 int _fstat(int fd, void *st) { (void)fd; (void)st; return -1; }
-int _isatty(int fd) { (void)fd; return 1; }
-int _open(const char *p, int f, int m) { (void)p; (void)f; (void)m; return -1; }
+int _isatty(int fd) { (void)fd; return fdx(fd) < 0 && fd < 3; }   /* console fds only */
 int _stat(const char *p, void *st) { (void)p; (void)st; return -1; }
 int _kill(int pid, int sig) { (void)pid; (void)sig; return -1; }
 int _getpid(void) { return 1; }
