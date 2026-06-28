@@ -52,7 +52,18 @@ xt_undef: mov r0, #1
 xt_pabt:  mov r0, #3
           sub r1, lr, #4
           b   xt_fault
-xt_dabt:  mov r0, #4
+/* data abort: try demand paging first (T2-c lazy heap). Save the task's
+ * caller-saved regs + lr_abt (the C call clobbers them; the task needs them on
+ * re-run); if serviced, re-run the faulting instruction; else fall to the kill. */
+xt_dabt:  stmfd sp!, {r0-r3, r12, lr}
+          mrc   p15, 0, r0, c6, c0, 0      /* r0 = DFAR (faulting data address) */
+          bl    xtos_demand_fault          /* r0 = 1 serviced, 0 fatal */
+          cmp   r0, #1
+          ldmfd sp!, {r0-r3, r12, lr}      /* restore (ldm preserves flags) */
+          bne   xt_dabt_fatal
+          subs  pc, lr, #8                 /* serviced: re-run, restore CPSR from SPSR */
+xt_dabt_fatal:
+          mov r0, #4
           sub r1, lr, #8
           b   xt_fault
 xt_fiq:   mov r0, #7

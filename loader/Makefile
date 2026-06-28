@@ -182,13 +182,18 @@ $(BUILD)/vmtest.so: test/freertos/progs/vmtest.c $(BUILD)/libc.so | $(BUILD)
 	$(ARMCC) $(PROGCFLAGS) -Inewlib-pic/include -c $< -o $(BUILD)/vmtest.o
 	$(LLD) -shared --hash-style=sysv -o $@ $(BUILD)/vmtest.o $(BUILD)/libc.so
 
+$(BUILD)/demandtest.so: test/freertos/progs/demandtest.c $(BUILD)/libc.so | $(BUILD)
+	$(ARMCC) $(PROGCFLAGS) -Inewlib-pic/include -c $< -o $(BUILD)/demandtest.o
+	$(LLD) -shared --hash-style=sysv -o $@ $(BUILD)/demandtest.o $(BUILD)/libc.so
+
 $(BUILD)/mkromfs: tools/mkromfs.c | $(BUILD)
 	$(HOSTCC) -O2 -o $@ $<
 
-$(BUILD)/romfs.bin: $(BUILD)/mkromfs $(BUILD)/hello.so $(BUILD)/showmotd.so $(BUILD)/usestr.so $(BUILD)/echo.so $(BUILD)/libc_test.so $(BUILD)/gemtext.so $(BUILD)/desktop.so $(BUILD)/faultprog.so $(BUILD)/vmtest.so $(BUILD)/libutil.so $(BUILD)/libGEM.so $(BUILD)/libm.so $(BUILD)/libc.so test/freertos/motd.txt
+$(BUILD)/romfs.bin: $(BUILD)/mkromfs $(BUILD)/hello.so $(BUILD)/showmotd.so $(BUILD)/usestr.so $(BUILD)/echo.so $(BUILD)/libc_test.so $(BUILD)/gemtext.so $(BUILD)/desktop.so $(BUILD)/faultprog.so $(BUILD)/vmtest.so $(BUILD)/demandtest.so $(BUILD)/libutil.so $(BUILD)/libGEM.so $(BUILD)/libm.so $(BUILD)/libc.so test/freertos/motd.txt
 	$(BUILD)/mkromfs $@ \
 	    /bin/faultprog=$(BUILD)/faultprog.so \
 	    /bin/vmtest=$(BUILD)/vmtest.so \
+	    /bin/demandtest=$(BUILD)/demandtest.so \
 	    $(if $(XTC_SO),/bin/xtcprog=$(XTC_SO)) \
 	    /OS/Library/libc.so=$(BUILD)/libc.so \
 	    /OS/Library/libm.so=$(BUILD)/libm.so \

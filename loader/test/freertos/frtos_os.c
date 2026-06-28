@@ -106,6 +106,20 @@ void xtos_vm_on_switch(void)
     vm_switch(table, asid);
 }
 
+/* T2-c: a data abort in the current process's heap window is a lazy page —
+ * map a zero-filled page on demand and resume. Returns 1 (serviced, re-run) or
+ * 0 (not a demand fault -> fatal, kill the task). Called from xt_vectors.S. */
+int xtos_demand_fault(uint32_t dfar)
+{
+    proc_t *p = cur_proc();
+    if (!p) return 0;
+    if (dfar >= XTOS_HEAP_VA && dfar < XTOS_HEAP_VA + XTOS_HEAP_SIZE) {
+        extern int vm_demand_map(int, uint32_t);
+        return vm_demand_map((int)(p - g_proc), dfar);
+    }
+    return 0;
+}
+
 /* libc.so's _sbrk — per-process: a process grows its OWN heap (XTOS_HEAP_VA
  * window, mapped to private physical by vm.c); the kernel/boot libc uses
  * kern_sbrk (the shared pool). So each process's malloc heap is its own. */

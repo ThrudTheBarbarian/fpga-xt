@@ -35,8 +35,9 @@
 
 extern uint32_t *mmu_master_table(void);
 
-static uint32_t  space_l1[NSPACE][4096] __attribute__((aligned(16384)));
-static uint32_t  space_l2[NSPACE][256]  __attribute__((aligned(1024)));  /* libc data section, per space */
+static uint32_t  space_l1[NSPACE][4096]   __attribute__((aligned(16384)));
+static uint32_t  space_l2[NSPACE][256]    __attribute__((aligned(1024)));  /* libc data section, per space */
+static uint32_t  space_l2_heap[NSPACE][256] __attribute__((aligned(1024)));/* heap section (demand-paged) */
 static uint32_t *g_cur_table;            /* currently-active TTBR0 table */
 static uint32_t  g_cur_asid;
 
@@ -80,11 +81,12 @@ uint32_t *vm_space_create(int idx)
         }
     }
 
-    /* (b) private heap: one section at XTOS_HEAP_VA -> fresh private physical. */
+    /* (b) private heap: an L2 with every page faulting -> zero-filled ON DEMAND
+     * (T2-c). Physical is consumed only for pages the process actually touches. */
     {
-        uint32_t attr = mmu_master_table()[XTOS_HEAP_VA >> 20] & 0x000FFFFFu;
-        void *hp = frtos_alloc(XTOS_HEAP_SIZE, 0x100000, NULL);
-        if (hp) { memset(hp, 0, XTOS_HEAP_SIZE); t[XTOS_HEAP_VA >> 20] = SEC_NG((uint32_t)hp, attr); }
+        uint32_t *hl2 = space_l2_heap[idx];
+        memset(hl2, 0, 256 * sizeof(uint32_t));
+        t[XTOS_HEAP_VA >> 20] = L1_COARSE(hl2);
     }
 
     __asm__ volatile("mcr p15,0,%0,c8,c7,2" :: "r"(asid));   /* TLBIASID: clear stale */
@@ -106,4 +108,37 @@ void vm_switch(uint32_t *table, uint32_t asid)
     __asm__ volatile("isb");
     __asm__ volatile("mcr p15,0,%0,c13,c0,1" :: "r"(asid));          /* CONTEXTIDR = new ASID */
     __asm__ volatile("isb");
+}
+
+/* ---- T2-c demand paging ---------------------------------------------------
+ * A kernel page pool (reserved once at boot from the libc pool) that the data-
+ * abort handler can draw from WITHOUT calling libc — the handler runs in the
+ * faulting process's address space, where libc's data is the process's private
+ * copy, so libc malloc there would be wrong. A plain bump over a pre-reserved
+ * region is safe from any space. */
+static char    *g_dpool, *g_dpool_end;
+static uint32_t g_demand_count;
+void vm_demand_pool_init(void *base, uint32_t size) { g_dpool = base; g_dpool_end = (char *)base + size; }
+uint32_t vm_demand_count(void) { return g_demand_count; }
+
+static void *dpage(void)
+{ if (!g_dpool || g_dpool + 0x1000 > g_dpool_end) return (void *)0; void *p = g_dpool; g_dpool += 0x1000; return p; }
+
+/* zero-fill-on-demand: map a fresh 4KB page at `va` in space `idx`'s heap L2.
+ * Called from the data-abort handler when a process touches an unmapped heap
+ * page. Returns 1 if mapped (resume), 0 if not ours / pool exhausted. */
+int vm_demand_map(int idx, uint32_t va)
+{
+    uint32_t *hl2 = space_l2_heap[idx];
+    uint32_t  i   = L2_IDX(va);
+    if (hl2[i]) return 1;                       /* already present (lost race) */
+    void *pg = dpage();
+    if (!pg) return 0;
+    memset(pg, 0, 0x1000);                      /* zero-fill */
+    hl2[i] = L2_PAGE((uint32_t)pg);
+    g_demand_count++;
+    __asm__ volatile("dsb");
+    __asm__ volatile("mcr p15,0,%0,c8,c7,3" :: "r"(va & 0xFFFFF000u));  /* TLBIMVAA */
+    __asm__ volatile("dsb; isb");
+    return 1;
 }

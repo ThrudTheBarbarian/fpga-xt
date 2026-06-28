@@ -77,6 +77,17 @@ static void shell_task(void *arg)
             puts0("vmtest: both malloc'd the SAME address from a fresh heap -> per-process heaps\n");
             continue;
         }
+        if (!strcmp(argv[0], "demandtest")) {      /* T2-c: lazy (demand-zero) heap */
+            extern unsigned vm_demand_count(void);
+            unsigned before = vm_demand_count();
+            char *av[1] = { (char *)"demandtest" };
+            int pid = frtos_spawn_argv("/bin/demandtest", 1, av, &g_host);
+            if (pid < 0) { puts0("demandtest: not found\n"); continue; }
+            frtos_waitpid(pid);
+            puts0("demandtest: "); putu(vm_demand_count() - before);
+            puts0(" heap pages were demand-mapped (zero-fill on touch)\n");
+            continue;
+        }
         if (!strcmp(argv[0], "faulttest")) {       /* T2-a.2: a faulting app is killed; the OS survives */
             puts0("faulttest: spawning /bin/faultprog (it derefs NULL)...\n");
             char *av[1] = { (char *)"faultprog" };
@@ -133,6 +144,14 @@ int main(void)
             memcpy(libc_snap, (void *)wva, wsize);
             vm_set_libc(wva, wsize, libc_snap);
         }
+    }
+
+    /* T2-c: reserve a kernel page pool for demand-zero heap pages — drawn from by
+     * the abort handler without libc (it runs in the faulting process's space). */
+    {
+        extern void vm_demand_pool_init(void *, uint32_t);
+        void *dp = frtos_alloc(0x400000, 0x1000, NULL);   /* 4 MB = 1024 pages */
+        if (dp) vm_demand_pool_init(dp, 0x400000);
     }
 
     void *p = frtos_alloc(4096, 16, NULL);       /* now via libc.so's malloc */
