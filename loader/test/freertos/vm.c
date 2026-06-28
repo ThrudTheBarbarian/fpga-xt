@@ -28,6 +28,8 @@
 /* L2 small-page (4KB) descriptor: Normal non-cacheable, AP=11 (full), nG=1
  * (ASID-tagged), XN=0. bits: nG[11] | AP[5:4]=11 | TEX[8:6]=001 | type=10 */
 #define L2_PAGE(phys) (((phys) & 0xFFFFF000u) | (1u<<11) | (3u<<4) | (1u<<6) | 0x2u)
+/* same, but read-only (AP[2]=1 -> AP=111): a write faults (the COW trigger) */
+#define L2_PAGE_RO(phys) (L2_PAGE(phys) | (1u<<9))
 /* L1 coarse descriptor pointing at an L2 table (domain 0) */
 #define L1_COARSE(l2) (((uint32_t)(l2) & 0xFFFFFC00u) | 0x1u)
 /* per-process heap: a section mapped to private physical, non-global */
@@ -38,8 +40,50 @@ extern uint32_t *mmu_master_table(void);
 static uint32_t  space_l1[NSPACE][4096]   __attribute__((aligned(16384)));
 static uint32_t  space_l2[NSPACE][256]    __attribute__((aligned(1024)));  /* libc data section, per space */
 static uint32_t  space_l2_heap[NSPACE][256] __attribute__((aligned(1024)));/* heap section (demand-paged) */
+static uint32_t  space_l2_cow[NSPACE][256] __attribute__((aligned(1024))); /* COW demo section, per space */
 static uint32_t *g_cur_table;            /* currently-active TTBR0 table */
 static uint32_t  g_cur_asid;
+
+/* ---- copy-on-write (T2-c) -------------------------------------------------
+ * A COW page starts mapped shared read-only at a pristine source; the first WRITE
+ * permission-faults, and the handler makes a PRIVATE copy (read through the RO
+ * mapping into a fresh page), remaps it RW, and re-runs the store. This is the
+ * fork-ready mechanism. Pages are COW only inside REGISTERED ranges — so a write
+ * to read-only TEXT (W^X) is NOT in any range and stays fatal.
+ *
+ * Range table: VAs are space-independent (the same VA is COW in every space; only
+ * the backing physical differs per process). Membership-gate the fault path. */
+#define NCOW 4
+static struct { uint32_t va, end; } g_cow_rng[NCOW];
+static int      g_cow_n;
+static uint32_t g_cow_count;
+void vm_cow_register(uint32_t va, uint32_t size)
+{
+    if (g_cow_n >= NCOW) return;
+    g_cow_rng[g_cow_n].va  = va & ~0xFFFu;
+    g_cow_rng[g_cow_n].end = (va + size + 0xFFFu) & ~0xFFFu;
+    g_cow_n++;
+}
+static int cow_owns(uint32_t va)
+{
+    for (int i = 0; i < g_cow_n; i++)
+        if (va >= g_cow_rng[i].va && va < g_cow_rng[i].end) return 1;
+    return 0;
+}
+uint32_t vm_cow_count(void) { return g_cow_count; }
+
+/* Synthetic COW demo: a pristine template page mapped shared-RO at XTOS_COW_VA in
+ * every space. cowtest reads the template, writes (faulting -> private copy), and
+ * reads back its own value; two instances stay isolated. The kernel never touches
+ * XTOS_COW_VA, so (like the heap window) no stale global TLB entry shadows the
+ * per-space mapping on real hardware — no extra vm_switch flush needed. */
+static uint8_t cow_template[0x1000] __attribute__((aligned(0x1000)));
+void vm_cow_init(void)
+{
+    for (int i = 0; i < 0x1000; i++) cow_template[i] = 0x5A;
+    cow_template[0] = 'C'; cow_template[1] = 'O'; cow_template[2] = 'W';
+    vm_cow_register(XTOS_COW_VA, XTOS_COW_SIZE);
+}
 
 /* libc.so's writable (data/bss) range + a pristine snapshot, set once at boot. */
 static uintptr_t   g_libc_wva;
@@ -87,6 +131,15 @@ uint32_t *vm_space_create(int idx)
         uint32_t *hl2 = space_l2_heap[idx];
         memset(hl2, 0, 256 * sizeof(uint32_t));
         t[XTOS_HEAP_VA >> 20] = L1_COARSE(hl2);
+    }
+
+    /* (c) synthetic COW page: map XTOS_COW_VA shared READ-ONLY at the pristine
+     * template. The first write faults -> vm_cow_map makes a private copy. */
+    {
+        uint32_t *cl2 = space_l2_cow[idx];
+        memset(cl2, 0, 256 * sizeof(uint32_t));
+        cl2[L2_IDX(XTOS_COW_VA)] = L2_PAGE_RO((uint32_t)cow_template);
+        t[XTOS_COW_VA >> 20] = L1_COARSE(cl2);
     }
 
     __asm__ volatile("mcr p15,0,%0,c8,c7,2" :: "r"(asid));   /* TLBIASID: clear stale */
@@ -153,6 +206,36 @@ int vm_demand_map(int idx, uint32_t va)
     memset(pg, 0, 0x1000);                      /* zero-fill */
     hl2[i] = L2_PAGE((uint32_t)pg);
     g_demand_count++;
+    __asm__ volatile("dsb");
+    __asm__ volatile("mcr p15,0,%0,c8,c7,3" :: "r"(va & 0xFFFFF000u));  /* TLBIMVAA */
+    __asm__ volatile("dsb; isb");
+    return 1;
+}
+
+/* copy-on-write fault: a WRITE permission-faulted at `va` in space `idx`. If `va`
+ * is in a registered COW range and its page is present + read-only, make a private
+ * copy (read the shared page through the still-valid RO mapping into a fresh page),
+ * remap it RW, and return 1 to re-run the store. Returns 0 (-> fatal) for any VA
+ * not under COW — so a write to read-only TEXT (W^X) is correctly killed.
+ *
+ * Reached only on a WRITE fault (the caller checks DFSR.WnR). Runs in the faulting
+ * process's address space, so `va` reads the shared source and space_l2_*[idx] are
+ * the live tables; uses the pre-reserved demand pool (no libc from the handler). */
+int vm_cow_map(int idx, uint32_t va)
+{
+    if (!cow_owns(va)) return 0;                 /* not COW (e.g. W^X text) -> fatal */
+    uint32_t l1e = space_l1[idx][va >> 20];
+    if ((l1e & 0x3u) != 0x1u) return 0;          /* section isn't a coarse L2 */
+    uint32_t *l2 = (uint32_t *)(l1e & 0xFFFFFC00u);
+    uint32_t  i  = L2_IDX(va);
+    uint32_t  e  = l2[i];
+    if ((e & 0x3u) == 0) return 0;               /* not present -> not a COW page */
+    if (!(e & (1u<<9))) return 1;                /* already RW (stale TLB) -> just re-run */
+    void *pg = dpage();
+    if (!pg) return 0;
+    memcpy(pg, (const void *)(va & 0xFFFFF000u), 0x1000);   /* read via the RO mapping */
+    l2[i] = L2_PAGE((uint32_t)pg);               /* private, RW */
+    g_cow_count++;
     __asm__ volatile("dsb");
     __asm__ volatile("mcr p15,0,%0,c8,c7,3" :: "r"(va & 0xFFFFF000u));  /* TLBIMVAA */
     __asm__ volatile("dsb; isb");

@@ -107,6 +107,21 @@ static void shell_task(void *arg)
             puts0(" heap pages were demand-mapped (zero-fill on touch)\n");
             continue;
         }
+        if (!strcmp(argv[0], "cowtest")) {         /* T2-c: copy-on-write (synthetic) */
+            extern uint32_t vm_cow_count(void);
+            uint32_t before = vm_cow_count();
+            char *a[2] = { (char *)"cowtest", (char *)"A" };
+            char *b[2] = { (char *)"cowtest", (char *)"B" };
+            int pid = frtos_spawn_argv("/bin/cowtest", 2, a, &g_host);
+            if (pid < 0) { puts0("cowtest: not found\n"); continue; }
+            frtos_waitpid(pid);
+            pid = frtos_spawn_argv("/bin/cowtest", 2, b, &g_host);
+            if (pid >= 0) frtos_waitpid(pid);
+            puts0("cowtest: "); putu(vm_cow_count() - before);
+            puts0(" page(s) copied on write. Both saw the pristine 'COW' template first\n"
+                  "         (shared RO), then their own private copy => COW + isolation.\n");
+            continue;
+        }
         if (!strcmp(argv[0], "stacktest")) {       /* T2-c: stack overflow -> guard page */
             puts0("stacktest: spawning /bin/stacktest (it overflows its stack)...\n");
             char *av[1] = { (char *)"stacktest" };
@@ -150,6 +165,7 @@ int main(void)
 {
     puts0("=== xtos: libc.so bring-up + shell (qemu zynq-a9, M6a) ===\n");
     mmu_init();          /* flat map -> RAM is Normal memory (unaligned access ok) */
+    vm_cow_init();       /* fill the synthetic COW template + register its range */
     { extern void stackguard_init(void); stackguard_init(); }   /* guarded stack arena */
     gic_init();
     ksys_set_console(rt_write);

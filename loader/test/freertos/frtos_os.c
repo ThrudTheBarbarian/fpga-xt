@@ -114,10 +114,17 @@ int xtos_demand_fault(uint32_t dfar)
 {
     proc_t *p = cur_proc();
     if (!p) return 0;
-    if (dfar >= XTOS_HEAP_VA && dfar < XTOS_HEAP_VA + XTOS_HEAP_SIZE) {
-        extern int vm_demand_map(int, uint32_t);
-        return vm_demand_map((int)(p - g_proc), dfar);
-    }
+    int idx = (int)(p - g_proc);
+    /* lazy heap: a not-present fault (read or write) in the heap window -> map a
+     * zero-filled page on demand. */
+    if (dfar >= XTOS_HEAP_VA && dfar < XTOS_HEAP_VA + XTOS_HEAP_SIZE)
+        return vm_demand_map(idx, dfar);
+    /* copy-on-write: a WRITE permission fault to a registered shared-RO page ->
+     * private copy. DFSR.WnR (bit 11) = 1 for a write. vm_cow_map gates on the COW
+     * range, so a write to read-only TEXT (W^X, not a COW range) returns 0 = fatal. */
+    uint32_t dfsr; __asm__ volatile("mrc p15,0,%0,c5,c0,0" : "=r"(dfsr));
+    if (dfsr & (1u << 11))
+        return vm_cow_map(idx, dfar);
     return 0;
 }
 
