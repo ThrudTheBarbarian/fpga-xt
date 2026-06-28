@@ -291,6 +291,8 @@ static char **copy_argv(int argc, char **argv, const xtld_host *host)
  * The same program spawned N times keeps ONE relocated copy. Its text/rodata/GOT
  * are shared READ-ONLY (W^X, one physical copy — "mmap-exec"); each instance gets
  * its own data/bss via copy-on-write from the post-init pristine image. */
+#define MAXPROG 32             /* distinct cached images (>= number of /bin programs;
+                                * not MAXPROC — many more programs than live processes) */
 typedef struct {
     const uint8_t *image;     /* romfs bytes = cache key */
     xtld_obj      *obj;
@@ -298,7 +300,7 @@ typedef struct {
     uintptr_t      wva;       /* writable (data/bss) seg — COW per-process */
     uint32_t       wsize;
 } prog_t;
-static prog_t   g_prog[MAXPROC];
+static prog_t   g_prog[MAXPROG];
 static int      g_prog_n;
 static uint32_t g_prog_loads;            /* distinct images actually loaded (vs spawns) */
 uint32_t frtos_prog_loads(void) { return g_prog_loads; }
@@ -306,7 +308,7 @@ uint32_t frtos_prog_loads(void) { return g_prog_loads; }
 static prog_t *prog_get(const uint8_t *image, uint32_t len, const xtld_host *host)
 {
     for (int i = 0; i < g_prog_n; i++) if (g_prog[i].image == image) return &g_prog[i];
-    if (g_prog_n >= MAXPROC) return NULL;
+    if (g_prog_n >= MAXPROG) return NULL;
 
     xtld_obj *obj = NULL; char err[64] = {0};
     int rc = xtld_load(image, len, host, &obj, err, sizeof err);
