@@ -27,7 +27,7 @@ the `svc #1` syscall gateway + `spawn`. Spec:
 make test     # host verify: load a real arm32 .so, check relocated data
 make qemu     # bare-metal EXECUTION of loaded code under qemu-system-arm
 make kernel   # svc #1 gateway + spawn: a kernel spawns an app that syscalls
-make freertos # loader + svc gateway + spawn on the REAL Xilinx FreeRTOS (qemu Zynq)
+make freertos # programs from a filesystem (spawn-by-path + file I/O) on real FreeRTOS
 make dump     # readelf -h -d -r on the test .so
 make clean
 ```
@@ -75,6 +75,12 @@ types.
   semaphore. An "init" task spawns the embedded app, which issues real
   `write`/`getpid`/`exit` syscalls; init reaps it and reports — the init/pid-1
   model on the genuine kernel.
+
+  **M2** adds a filesystem: an embedded read-only **romfs** (`tools/mkromfs.c`
+  packs the blob; `romfs.c` reads it), `spawn`-by-path (the loader reads the ELF
+  from the FS), and `open`/`read`/`close`/`lseek` syscalls over a **per-process fd
+  table**. `init` spawns `/bin/hello` and `/bin/showmotd` (the latter reads
+  `/etc/motd`) — programs loaded from a filesystem doing real file I/O.
 
 Requires `arm-none-eabi-gcc`, `ld.lld`, and `qemu-system-arm` on `PATH` (all via
 Homebrew).

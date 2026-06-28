@@ -90,16 +90,34 @@ FRSRC := $(FR)/tasks.c $(FR)/queue.c $(FR)/list.c $(FR)/timers.c $(FR)/event_gro
          $(FR)/croutine.c $(FR)/stream_buffer.c $(FR)/portable/MemMang/heap_4.c \
          $(FRPORT)/port.c \
          test/freertos/zynq.c test/freertos/bsp_shim.c test/freertos/frtos_os.c \
-         test/freertos/main.c test/qemu/bare_rt.c xtld.c
+         test/freertos/romfs.c test/freertos/main.c test/qemu/bare_rt.c xtld.c
 FRASM := test/freertos/xt_boot.S test/freertos/xt_vectors.S $(FRPORT)/portASM.S
 
-# Stage 2: loader + svc #1 gateway + spawn, on the REAL FreeRTOS kernel.
+# Stage 2 + M2: loader + svc gateway + spawn-by-path + file syscalls, on real FreeRTOS.
 freertos: $(BUILD)/freertos.elf
-	@echo "=== xtos spawn on real Xilinx FreeRTOS (qemu xilinx-zynq-a9) ==="
+	@echo "=== xtos: programs from a filesystem on real FreeRTOS (qemu xilinx-zynq-a9) ==="
 	@$(QEMUZYNQ) -kernel $< ; echo "(qemu exited $$?)"
 
-$(BUILD)/freertos.elf: $(FRSRC) $(FRASM) test/freertos/freertos.ld test/freertos/FreeRTOSConfig.h $(BUILD)/app_so.h | $(BUILD)
+$(BUILD)/freertos.elf: $(FRSRC) $(FRASM) test/freertos/freertos.ld test/freertos/FreeRTOSConfig.h $(BUILD)/romfs_blob.h | $(BUILD)
 	$(ARMCC) $(FRCFLAGS) -T test/freertos/freertos.ld $(FRASM) $(FRSRC) -lgcc -o $@
+
+# --- romfs: build the programs as .so, pack them into a blob, embed it ---
+PROGCFLAGS := $(ARMCFLAGS) -Itest/qemu
+
+$(BUILD)/%.so: test/freertos/progs/%.c | $(BUILD)
+	$(ARMCC) $(PROGCFLAGS) -c $< -o $(BUILD)/$*.o
+	$(LLD) -shared --hash-style=sysv -o $@ $(BUILD)/$*.o
+
+$(BUILD)/mkromfs: tools/mkromfs.c | $(BUILD)
+	$(HOSTCC) -O2 -o $@ $<
+
+$(BUILD)/romfs.bin: $(BUILD)/mkromfs $(BUILD)/hello.so $(BUILD)/showmotd.so test/freertos/motd.txt
+	$(BUILD)/mkromfs $@ /bin/hello=$(BUILD)/hello.so /bin/showmotd=$(BUILD)/showmotd.so /etc/motd=test/freertos/motd.txt
+
+$(BUILD)/romfs_blob.h: $(BUILD)/romfs.bin
+	@{ printf 'unsigned char romfs_blob[] = {\n'; \
+	   od -An -v -tx1 $< | sed -e 's/[0-9a-fA-F][0-9a-fA-F]/0x&,/g'; \
+	   printf '};\nunsigned int romfs_blob_len = sizeof(romfs_blob);\n'; } > $@
 
 $(BUILD):
 	@mkdir -p $(BUILD)

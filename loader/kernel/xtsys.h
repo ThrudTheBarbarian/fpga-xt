@@ -18,5 +18,6 @@
 #define SYS_close    0x301
 #define SYS_read     0x302
 #define SYS_write    0x303
+#define SYS_lseek    0x304
 
 #endif

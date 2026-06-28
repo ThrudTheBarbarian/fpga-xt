@@ -12,6 +12,8 @@ void *memmove(void *d, const void *s, size_t n)
   else { a += n; b += n; while (n--) *--a = *--b; } return d; }
 int strcmp(const char *a, const char *b)
 { while (*a && *a == *b) { a++; b++; } return (unsigned char)*a - (unsigned char)*b; }
+int memcmp(const void *a, const void *b, size_t n)
+{ const unsigned char *x = a, *y = b; for (; n--; x++, y++) if (*x != *y) return *x - *y; return 0; }
 size_t strlen(const char *s) { const char *p = s; while (*p) p++; return (size_t)(p - s); }
 
 /* ---- ARM semihosting --------------------------------------------------- */

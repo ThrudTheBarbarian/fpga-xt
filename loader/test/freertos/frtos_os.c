@@ -1,14 +1,13 @@
 /*
  * frtos_os.c — the XTOS syscall layer on the REAL FreeRTOS kernel.
  *
- * - svc #1 dispatch (called from the chained vector) with the exit-via-thunk
- *   trick: a yielding op (vTaskDelete) cannot run in the SVC handler (it would
- *   nest svc #0), so exit redirects the task's resume PC to task_exit_thunk,
- *   which runs in task (System-mode) context and deletes cleanly.
- * - spawn = load an ET_DYN (xtld) + xTaskCreate; the task runs _app_entry, whose
- *   svc #1 traps here. waitpid blocks on a per-process semaphore.
- *
- * This is the FreeRTOS counterpart of the bare-metal kernel/ksys.c.
+ * - svc #1 dispatch (from the chained vector) with the exit-via-thunk trick: a
+ *   yielding op (vTaskDelete) cannot run in the SVC handler (it would nest
+ *   svc #0), so exit redirects the task's resume PC to task_exit_thunk, which
+ *   runs in task (System-mode) context and deletes cleanly.
+ * - spawn (by image or by path via romfs) = load an ET_DYN (xtld) + xTaskCreate.
+ * - per-process fd table: stdio (0/1/2) + read-only romfs files (open/read/
+ *   close/lseek). waitpid blocks on a per-process semaphore.
  */
 #include <stdint.h>
 #include "FreeRTOS.h"
@@ -17,9 +16,19 @@
 #include "ksys.h"      /* struct k_regs */
 #include "xtsys.h"
 #include "xtld.h"
+#include "romfs.h"
 #include "frtos_os.h"
 
 #define MAXPROC 8
+#define NFD     8       /* per process; 0/1/2 are stdio */
+
+typedef struct {
+    int            open;
+    const uint8_t *data;
+    uint32_t       size;
+    uint32_t       pos;
+} fd_t;
+
 typedef struct {
     int               used;
     int               pid;
@@ -28,6 +37,7 @@ typedef struct {
     uintptr_t         entry;
     SemaphoreHandle_t done;
     int               exit_code;
+    fd_t              fd[NFD];
 } proc_t;
 
 static proc_t g_proc[MAXPROC];
@@ -53,13 +63,56 @@ static void task_exit_thunk(void)
     for (;;) {}
 }
 
-/* non-yielding syscalls return a value here; exit/spawn are handled in dispatch */
+/* ---- file syscalls (non-yielding; romfs is in memory) ------------------ */
+static long sys_open(proc_t *p, const char *path)
+{
+    const uint8_t *data; uint32_t size;
+    if (!p || !romfs_lookup(path, &data, &size)) return -1;
+    for (int fd = 3; fd < NFD; fd++) {
+        if (!p->fd[fd].open) {
+            p->fd[fd] = (fd_t){ .open = 1, .data = data, .size = size, .pos = 0 };
+            return fd;
+        }
+    }
+    return -1; /* -EMFILE */
+}
+
+static long sys_read(proc_t *p, int fd, void *buf, uint32_t n)
+{
+    if (fd == 0) return 0;                       /* stdin: EOF for now */
+    if (!p || fd < 3 || fd >= NFD || !p->fd[fd].open) return -1;
+    fd_t *f = &p->fd[fd];
+    uint32_t avail = f->size - f->pos;
+    if (n > avail) n = avail;
+    for (uint32_t i = 0; i < n; i++) ((uint8_t *)buf)[i] = f->data[f->pos + i];
+    f->pos += n;
+    return (long)n;
+}
+
+static long sys_lseek(proc_t *p, int fd, long off, int whence)
+{
+    if (!p || fd < 3 || fd >= NFD || !p->fd[fd].open) return -1;
+    fd_t *f = &p->fd[fd];
+    long base = (whence == 1) ? (long)f->pos : (whence == 2) ? (long)f->size : 0;
+    long np = base + off;
+    if (np < 0 || np > (long)f->size) return -1;
+    f->pos = (uint32_t)np;
+    return np;
+}
+
 static long do_syscall(uint32_t num, long a0, long a1, long a2)
 {
+    proc_t *p = cur_proc();
     switch (num) {
-    case SYS_write:  if (g_console && a1) g_console((const char *)a1, (int)a2); return a2;
-    case SYS_getpid: { proc_t *p = cur_proc(); return p ? p->pid : 0; }
-    default:         return -38; /* -ENOSYS */
+    case SYS_write:                                          /* (fd, buf, len) */
+        if ((a0 == 1 || a0 == 2) && g_console && a1) { g_console((const char *)a1, (int)a2); return a2; }
+        return -1;
+    case SYS_getpid: return p ? p->pid : 0;
+    case SYS_open:   return sys_open(p, (const char *)a0);   /* (path, flags) */
+    case SYS_read:   return sys_read(p, (int)a0, (void *)a1, (uint32_t)a2);
+    case SYS_close:  if (p && a0 >= 3 && a0 < NFD) p->fd[a0].open = 0; return 0;
+    case SYS_lseek:  return sys_lseek(p, (int)a0, a1, (int)a2);
+    default:         return -38;                             /* -ENOSYS */
     }
 }
 
@@ -73,14 +126,13 @@ void k_syscall_dispatch(struct k_regs *regs)
     if (num == SYS_exit) {
         proc_t *p = cur_proc();
         if (p) p->exit_code = (int)regs->r[0];
-        regs->lr = (uint32_t)(uintptr_t)task_exit_thunk;  /* resume in task ctx */
+        regs->lr = (uint32_t)(uintptr_t)task_exit_thunk;   /* resume in task ctx */
         return;
     }
     regs->r[0] = (uint32_t)do_syscall(num, regs->r[0], regs->r[1], regs->r[2]);
 }
 
-/* the task body: run constructors + the loaded entry; if it returns without
- * calling exit(), finish here (task context) */
+/* task body: run constructors + the loaded entry; finish here if it returns */
 static void app_main(void *arg)
 {
     proc_t *p = (proc_t *)arg;
@@ -102,6 +154,7 @@ int frtos_spawn(const uint8_t *image, uint32_t len, const xtld_host *host)
     uintptr_t entry = xtld_sym(obj, "_app_entry");
     if (!entry) return -1;
 
+    for (int i = 0; i < NFD; i++) p->fd[i].open = 0;
     p->obj = obj; p->entry = entry; p->exit_code = 0; p->pid = g_next_pid++;
     p->done = xSemaphoreCreateBinary();
     if (!p->done) return -1;
@@ -112,6 +165,13 @@ int frtos_spawn(const uint8_t *image, uint32_t len, const xtld_host *host)
     return p->pid;
 }
 
+int frtos_spawn_path(const char *path, const xtld_host *host)
+{
+    const uint8_t *data; uint32_t size;
+    if (!romfs_lookup(path, &data, &size)) return -1;
+    return frtos_spawn(data, size, host);
+}
+
 int frtos_waitpid(int pid)
 {
     proc_t *p = NULL;
@@ -119,9 +179,9 @@ int frtos_waitpid(int pid)
         if (g_proc[i].used && g_proc[i].pid == pid) { p = &g_proc[i]; break; }
     if (!p) return -1;
 
-    xSemaphoreTake(p->done, portMAX_DELAY);   /* yields via svc #0 until exit */
+    xSemaphoreTake(p->done, portMAX_DELAY);    /* yields via svc #0 until exit */
     int code = p->exit_code;
     vSemaphoreDelete(p->done);
-    p->used = 0;                                /* reap (image left in bump arena) */
+    p->used = 0;                                 /* reap (image left in bump arena) */
     return code;
 }

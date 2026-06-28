@@ -1,43 +1,48 @@
 /*
- * main.c — Stage 2: the loader + syscall spine on the REAL FreeRTOS kernel.
- * An "init" task (pid-1-style) spawns an embedded app as a real FreeRTOS task;
- * the app issues genuine svc #1 syscalls (write/getpid/exit); init waitpid()s on
- * its semaphore and reports the exit code. Runs on qemu xilinx-zynq-a9.
+ * main.c — M2: loader + syscall spine + a filesystem, on real FreeRTOS.
+ * "init" mounts the embedded romfs and spawns programs BY PATH; the programs
+ * issue real syscalls (incl. open/read of /etc/motd). Runs on qemu zynq-a9.
  */
 #include <stdint.h>
 #include "FreeRTOS.h"
 #include "task.h"
 #include "bare_rt.h"
 #include "frtos_os.h"
+#include "romfs.h"
 #include "xtld.h"
-#include "app_so.h"
+#include "romfs_blob.h"
 
 extern void gic_init(void);
+
+static int run(const xtld_host *host, const char *path)
+{
+    puts0("init: spawn "); puts0(path); puts0("\n");
+    int pid = frtos_spawn_path(path, host);
+    if (pid < 0) { puts0("init: spawn failed: "); puts0(path); puts0("\n"); return -1; }
+    int code = frtos_waitpid(pid);
+    puts0("init: "); puts0(path); puts0(" exited code "); putu((unsigned)code); puts0("\n");
+    return code;
+}
 
 static void init_task(void *arg)
 {
     (void)arg;
-    puts0("init: spawning app...\n");
-
     xtld_host host = { .alloc = bump, .dealloc = NULL, .sync_caches = NULL,
                        .resolve = NULL, .user = NULL };
-    int pid = frtos_spawn(app_so, app_so_len, &host);
-    if (pid < 0) { puts0("init: spawn failed\n"); sh_exit(1); }
-    puts0("init: spawned pid "); putu((unsigned)pid); puts0(", waiting...\n");
 
-    int code = frtos_waitpid(pid);
-    puts0("init: app pid "); putu((unsigned)pid);
-    puts0(" exited, code "); putu((unsigned)code); puts0("\n");
+    int a = run(&host, "/bin/hello");
+    int b = run(&host, "/bin/showmotd");
 
-    if (code == 42) { puts0("RESULT: PASS\n"); sh_exit(0); }
+    if (a == 0 && b == 0) { puts0("RESULT: PASS\n"); sh_exit(0); }
     puts0("RESULT: FAIL\n"); sh_exit(1);
 }
 
 int main(void)
 {
-    puts0("=== xtos: spawn on real FreeRTOS (qemu zynq-a9, Stage 2) ===\n");
+    puts0("=== xtos: programs from a filesystem on real FreeRTOS (qemu zynq-a9, M2) ===\n");
     gic_init();
     ksys_set_console(rt_write);
+    romfs_mount(romfs_blob, romfs_blob_len);
 
     if (xTaskCreate(init_task, "init", 1024, NULL, 2, NULL) != pdPASS) {
         puts0("init create failed\n"); sh_exit(1);
