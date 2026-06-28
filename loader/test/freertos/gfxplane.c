@@ -12,8 +12,8 @@
 #include "bare_rt.h"
 
 #define FB_BASE   0x30000000u
-#define FB_W      180
-#define FB_H      44
+#define FB_W      200
+#define FB_H      120
 
 void fb_info(int *w, int *h, int *stride, uint32_t *addr)
 {

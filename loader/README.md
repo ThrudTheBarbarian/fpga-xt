@@ -131,5 +131,14 @@ types.
   private surface: it wraps the OS plane in a `gfx_surface`, draws, and presents.
   This is the seam the on-hardware compositor slots behind unchanged.
 
+  **M6d** brings up the **GEM window manager** (`gem/wm.c` + `theme.c`, now in
+  `libGEM.so`) on the OS plane. `/bin/desktop` does `gem_wm_init` on the plane,
+  adds two overlapping windows (each with its own backing-store surface + VDI
+  workstation), gives them FreeType title + content text via redraw callbacks,
+  then `gem_wm_draw` composites the desktop (frames + `vro_cpyfm` window blits, in
+  z-order) and `SYS_fb_present`s it — a real multi-window desktop with antialiased
+  text. Mouse/drag (`gem_wm_mouse_*`) is wired in the WM, awaiting an input
+  source (next).
+
 Requires `arm-none-eabi-gcc`, `ld.lld`, and `qemu-system-arm` on `PATH` (all via
 Homebrew).

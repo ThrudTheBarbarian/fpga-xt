@@ -138,7 +138,7 @@ $(BUILD)/libm.so: newlib-pic/libm.a $(BUILD)/libc.so | $(BUILD)
 # dynamic imports resolved by the kernel export table at load (libgcc isn't PIC).
 GEM := ../gem
 FT  := ../xtos/freetype
-GEMSRC := $(GEM)/gfx_soft.c $(GEM)/font.c $(wildcard $(GEM)/vdi/*.c) \
+GEMSRC := $(GEM)/gfx_soft.c $(GEM)/font.c $(GEM)/wm.c $(GEM)/theme.c $(wildcard $(GEM)/vdi/*.c) \
           ../vitis/xtos/src/gem_pdf_stub.c test/freertos/libs/gem_stubs.c
 FTSRC  := $(wildcard $(FT)/tu/*.c)
 GEMINC := -Itest/freertos/libs/shim -I$(GEM) -I$(GEM)/vdi -I$(FT)/include -Inewlib-pic/include
@@ -153,6 +153,11 @@ $(BUILD)/gemtext.so: test/freertos/progs/gemtext.c $(BUILD)/libGEM.so $(BUILD)/l
 	$(ARMCC) $(GEMCFLAGS) -Itest/qemu -c $< -o $(BUILD)/gemtext.o
 	$(LLD) -shared --hash-style=sysv -o $@ $(BUILD)/gemtext.o $(BUILD)/libGEM.so $(BUILD)/libc.so
 
+# desktop — the GEM window manager on the OS plane
+$(BUILD)/desktop.so: test/freertos/progs/desktop.c $(BUILD)/libGEM.so $(BUILD)/libc.so | $(BUILD)
+	$(ARMCC) $(GEMCFLAGS) -Itest/qemu -c $< -o $(BUILD)/desktop.o
+	$(LLD) -shared --hash-style=sysv -o $@ $(BUILD)/desktop.o $(BUILD)/libGEM.so $(BUILD)/libc.so
+
 # a program that uses libc (DT_NEEDED libc.so), compiled against the PIC newlib headers
 $(BUILD)/libc_test.so: test/freertos/progs/libc_test.c $(BUILD)/libc.so | $(BUILD)
 	$(ARMCC) $(PROGCFLAGS) -Inewlib-pic/include -c $< -o $(BUILD)/libc_test.o
@@ -161,7 +166,7 @@ $(BUILD)/libc_test.so: test/freertos/progs/libc_test.c $(BUILD)/libc.so | $(BUIL
 $(BUILD)/mkromfs: tools/mkromfs.c | $(BUILD)
 	$(HOSTCC) -O2 -o $@ $<
 
-$(BUILD)/romfs.bin: $(BUILD)/mkromfs $(BUILD)/hello.so $(BUILD)/showmotd.so $(BUILD)/usestr.so $(BUILD)/echo.so $(BUILD)/libc_test.so $(BUILD)/gemtext.so $(BUILD)/libutil.so $(BUILD)/libGEM.so $(BUILD)/libm.so $(BUILD)/libc.so test/freertos/motd.txt
+$(BUILD)/romfs.bin: $(BUILD)/mkromfs $(BUILD)/hello.so $(BUILD)/showmotd.so $(BUILD)/usestr.so $(BUILD)/echo.so $(BUILD)/libc_test.so $(BUILD)/gemtext.so $(BUILD)/desktop.so $(BUILD)/libutil.so $(BUILD)/libGEM.so $(BUILD)/libm.so $(BUILD)/libc.so test/freertos/motd.txt
 	$(BUILD)/mkromfs $@ \
 	    /OS/Library/libc.so=$(BUILD)/libc.so \
 	    /OS/Library/libm.so=$(BUILD)/libm.so \
@@ -171,6 +176,7 @@ $(BUILD)/romfs.bin: $(BUILD)/mkromfs $(BUILD)/hello.so $(BUILD)/showmotd.so $(BU
 	    /OS/Fonts/System.font=$(GEM)/fonts/System.font \
 	    /bin/libc_test=$(BUILD)/libc_test.so \
 	    /bin/gemtext=$(BUILD)/gemtext.so \
+	    /bin/desktop=$(BUILD)/desktop.so \
 	    /bin/hello=$(BUILD)/hello.so \
 	    /bin/showmotd=$(BUILD)/showmotd.so \
 	    /bin/usestr=$(BUILD)/usestr.so \

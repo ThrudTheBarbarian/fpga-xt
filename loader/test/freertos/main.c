@@ -52,7 +52,7 @@ static int split(char *line, char **argv, int max)
 static void shell_task(void *arg)
 {
     (void)arg;
-    puts0("\nXTOS shell  —  try: echo hello world | hello | showmotd | usestr | libc_test | gemtext | exit\n");
+    puts0("\nXTOS shell  —  try: echo hello world | hello | showmotd | usestr | libc_test | gemtext | desktop | exit\n");
     char line[128];
     char *argv[16];
     for (;;) {
