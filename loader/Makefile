@@ -83,19 +83,22 @@ $(BUILD)/kernel.elf: $(KASM) $(KSRC) test/qemu/bare.ld $(BUILD)/app_so.h kernel/
 # --- the REAL Xilinx FreeRTOS kernel + CA9 port, on qemu's Zynq PS model -
 FR     := ../third_party/freertos10_xilinx/src/Source
 FRPORT := $(FR)/portable/GCC/ARM_CA9
-FRINC  := -I$(FR)/include -I$(FRPORT) -Itest/freertos -Itest/freertos/shim -Itest/qemu
+FRINC  := -I. -I$(FR)/include -I$(FRPORT) -Itest/freertos -Itest/freertos/shim \
+          -Itest/qemu -Ikernel -I$(BUILD)
 FRCFLAGS := -marm -mcpu=cortex-a9 -mfloat-abi=softfp -mfpu=neon-vfpv3 -ffreestanding -nostdlib -O2 -g $(FRINC)
 FRSRC := $(FR)/tasks.c $(FR)/queue.c $(FR)/list.c $(FR)/timers.c $(FR)/event_groups.c \
          $(FR)/croutine.c $(FR)/stream_buffer.c $(FR)/portable/MemMang/heap_4.c \
          $(FRPORT)/port.c \
-         test/freertos/zynq.c test/freertos/bsp_shim.c test/freertos/main.c test/qemu/bare_rt.c
+         test/freertos/zynq.c test/freertos/bsp_shim.c test/freertos/frtos_os.c \
+         test/freertos/main.c test/qemu/bare_rt.c xtld.c
 FRASM := test/freertos/xt_boot.S test/freertos/xt_vectors.S $(FRPORT)/portASM.S
 
+# Stage 2: loader + svc #1 gateway + spawn, on the REAL FreeRTOS kernel.
 freertos: $(BUILD)/freertos.elf
-	@echo "=== real Xilinx FreeRTOS under qemu xilinx-zynq-a9 ==="
+	@echo "=== xtos spawn on real Xilinx FreeRTOS (qemu xilinx-zynq-a9) ==="
 	@$(QEMUZYNQ) -kernel $< ; echo "(qemu exited $$?)"
 
-$(BUILD)/freertos.elf: $(FRSRC) $(FRASM) test/freertos/freertos.ld test/freertos/FreeRTOSConfig.h | $(BUILD)
+$(BUILD)/freertos.elf: $(FRSRC) $(FRASM) test/freertos/freertos.ld test/freertos/FreeRTOSConfig.h $(BUILD)/app_so.h | $(BUILD)
 	$(ARMCC) $(FRCFLAGS) -T test/freertos/freertos.ld $(FRASM) $(FRSRC) -lgcc -o $@
 
 $(BUILD):

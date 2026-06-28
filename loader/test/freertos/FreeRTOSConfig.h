@@ -60,6 +60,7 @@ void vClearTickInterrupt(void);
 #define INCLUDE_vTaskDelay             1
 #define INCLUDE_xTaskGetSchedulerState 1
 #define INCLUDE_eTaskGetState          1
+#define INCLUDE_xTaskGetCurrentTaskHandle 1
 
 /* assert */
 extern void vAssertCalled(const char *file, int line);

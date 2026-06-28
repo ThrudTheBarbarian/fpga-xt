@@ -27,7 +27,7 @@ the `svc #1` syscall gateway + `spawn`. Spec:
 make test     # host verify: load a real arm32 .so, check relocated data
 make qemu     # bare-metal EXECUTION of loaded code under qemu-system-arm
 make kernel   # svc #1 gateway + spawn: a kernel spawns an app that syscalls
-make freertos # the REAL Xilinx FreeRTOS kernel + CA9 port on qemu's Zynq model
+make freertos # loader + svc gateway + spawn on the REAL Xilinx FreeRTOS (qemu Zynq)
 make dump     # readelf -h -d -r on the test .so
 make clean
 ```
@@ -62,12 +62,19 @@ types.
   a functionally-identical GIC + A9-private-timer tick wired through the port's
   `configSETUP_TICK_INTERRUPT()` / `vApplicationIRQHandler()` seams (`zynq.c`),
   with no-op shims for the few BSP calls the port links (`bsp_shim.c`, `shim/`).
-  Two tasks preempt/alternate on the real scheduler + real tick. This is the
-  "real thing" testbed: the same kernel + port as the board, fast to iterate, with
-  gdb attach (`-s -S`) — so most kernel/syscall work happens here, not over JTAG.
-  PL peripherals (blitter/HDMI/ANTIC/compositor) aren't modelled and stay a
-  hardware concern. **Stage 2** chains the SVC vector (`svc #0`→FreeRTOS,
-  `svc #1`→the gateway) and rewires `spawn` onto `xTaskCreate`.
+  This is the "real thing" testbed: the same kernel + port as the board, fast to
+  iterate, with gdb attach (`-s -S`) — so most kernel/syscall work happens here,
+  not over JTAG. PL peripherals (blitter/HDMI/ANTIC/compositor) aren't modelled
+  and stay a hardware concern.
+
+  The loader + syscall spine run **on** this kernel (`frtos_os.c`): the SVC vector
+  is chained (`svc #0`→`FreeRTOS_SWI_Handler`, `svc #1`→`k_syscall_dispatch`),
+  `spawn` is `xTaskCreate` (the loaded `ET_DYN` runs as a real task whose `svc #1`
+  traps cleanly), `exit` redirects the task's resume PC to a task-context thunk so
+  `vTaskDelete` doesn't nest `svc`, and `waitpid` blocks on a per-process
+  semaphore. An "init" task spawns the embedded app, which issues real
+  `write`/`getpid`/`exit` syscalls; init reaps it and reports — the init/pid-1
+  model on the genuine kernel.
 
 Requires `arm-none-eabi-gcc`, `ld.lld`, and `qemu-system-arm` on `PATH` (all via
 Homebrew).

@@ -1,54 +1,48 @@
 /*
- * main.c — Stage 1: prove the REAL Xilinx FreeRTOS kernel + Cortex-A9 port run
- * under qemu-system-arm -M xilinx-zynq-a9 with our GIC/timer glue. Two tasks
- * alternate via vTaskDelay (real scheduler, real tick); after a few rounds it
- * declares PASS and exits.
+ * main.c — Stage 2: the loader + syscall spine on the REAL FreeRTOS kernel.
+ * An "init" task (pid-1-style) spawns an embedded app as a real FreeRTOS task;
+ * the app issues genuine svc #1 syscalls (write/getpid/exit); init waitpid()s on
+ * its semaphore and reports the exit code. Runs on qemu xilinx-zynq-a9.
  */
 #include <stdint.h>
 #include "FreeRTOS.h"
 #include "task.h"
-#include "bare_rt.h"   /* puts0/putu via semihosting */
+#include "bare_rt.h"
+#include "frtos_os.h"
+#include "xtld.h"
+#include "app_so.h"
 
 extern void gic_init(void);
 
-static volatile int a_count, b_count;
-
-static void taskA(void *p)
+static void init_task(void *arg)
 {
-    (void)p;
-    for (;;) {
-        puts0("  [A] tick "); putu((unsigned)++a_count); puts0("\n");
-        vTaskDelay(pdMS_TO_TICKS(100));
-    }
-}
+    (void)arg;
+    puts0("init: spawning app...\n");
 
-static void taskB(void *p)
-{
-    (void)p;
-    for (;;) {
-        vTaskDelay(pdMS_TO_TICKS(150));
-        puts0("  [B] tock "); putu((unsigned)++b_count); puts0("\n");
-        if (b_count >= 3 && a_count >= 3) {
-            puts0(a_count && b_count ? "RESULT: PASS\n" : "RESULT: FAIL\n");
-            sh_exit(0);
-        }
-    }
+    xtld_host host = { .alloc = bump, .dealloc = NULL, .sync_caches = NULL,
+                       .resolve = NULL, .user = NULL };
+    int pid = frtos_spawn(app_so, app_so_len, &host);
+    if (pid < 0) { puts0("init: spawn failed\n"); sh_exit(1); }
+    puts0("init: spawned pid "); putu((unsigned)pid); puts0(", waiting...\n");
+
+    int code = frtos_waitpid(pid);
+    puts0("init: app pid "); putu((unsigned)pid);
+    puts0(" exited, code "); putu((unsigned)code); puts0("\n");
+
+    if (code == 42) { puts0("RESULT: PASS\n"); sh_exit(0); }
+    puts0("RESULT: FAIL\n"); sh_exit(1);
 }
 
 int main(void)
 {
-    puts0("=== real Xilinx FreeRTOS on qemu xilinx-zynq-a9 (Stage 1) ===\n");
-
+    puts0("=== xtos: spawn on real FreeRTOS (qemu zynq-a9, Stage 2) ===\n");
     gic_init();
+    ksys_set_console(rt_write);
 
-    if (xTaskCreate(taskA, "A", configMINIMAL_STACK_SIZE, NULL, 2, NULL) != pdPASS ||
-        xTaskCreate(taskB, "B", configMINIMAL_STACK_SIZE, NULL, 2, NULL) != pdPASS) {
-        puts0("xTaskCreate failed\n"); sh_exit(1);
+    if (xTaskCreate(init_task, "init", 1024, NULL, 2, NULL) != pdPASS) {
+        puts0("init create failed\n"); sh_exit(1);
     }
-
-    puts0("starting scheduler...\n");
     vTaskStartScheduler();
-
-    puts0("scheduler returned (heap?)\n"); sh_exit(1);
+    puts0("scheduler returned\n"); sh_exit(1);
     return 0;
 }
