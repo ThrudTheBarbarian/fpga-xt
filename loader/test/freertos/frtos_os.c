@@ -11,8 +11,6 @@
  */
 #include <stdint.h>
 #include <string.h>
-#include <stdlib.h>
-#include <malloc.h>
 #include "FreeRTOS.h"
 #include "task.h"
 #include "semphr.h"
@@ -53,8 +51,35 @@ void ksys_set_console(void (*w)(const char *, int)) { g_console = w; }
 
 /* xtld_host.alloc/dealloc — the OS heap (newlib). Real free, so xtld_unload
  * actually reclaims. */
-void *frtos_alloc(size_t size, size_t align, void *u) { (void)u; return memalign(align ? align : 16, size); }
-void  frtos_free(void *p, void *u) { (void)u; free(p); }
+/* Allocation: a one-shot bootstrap bump (over the OS-heap base) loads libc.so;
+ * once libc.so is up we switch to its memalign/free. After that, every .so /
+ * program image comes from the one libc.so malloc and is freed on unload. */
+extern char _heap_start[];                       /* 0x0200_0000 (linker) */
+static char *g_boot;
+static void *(*g_libc_memalign)(size_t, size_t);
+static void  (*g_libc_free)(void *);
+
+void *frtos_alloc(size_t size, size_t align, void *u)
+{
+    (void)u;
+    if (g_libc_memalign) return g_libc_memalign(align ? align : 16, size);
+    if (!g_boot) g_boot = _heap_start;           /* bootstrap bump (libc.so only) */
+    uintptr_t a = ((uintptr_t)g_boot + (align - 1)) & ~(uintptr_t)(align - 1);
+    g_boot = (char *)a + size;
+    return (void *)a;
+}
+void frtos_free(void *p, void *u) { (void)u; if (g_libc_free) g_libc_free(p); }
+
+/* Called after the loader has loaded libc.so: grab its allocator, and point the
+ * kernel's _sbrk just above libc.so's (bootstrap-pinned) image. */
+void frtos_activate_libc(xtld_obj *libc)
+{
+    extern void sbrk_set_base(void *base, void *end);
+    g_libc_memalign = (void *(*)(size_t, size_t))xtld_sym(libc, "memalign");
+    g_libc_free     = (void (*)(void *))xtld_sym(libc, "free");
+    uintptr_t brk = ((uintptr_t)g_boot + 0xFFFu) & ~0xFFFu;   /* page-align past libc.so */
+    sbrk_set_base((void *)brk, (void *)0x20000000u);
+}
 
 static proc_t *cur_proc(void)
 {
@@ -214,32 +239,51 @@ int frtos_spawn_argv(const char *path, int argc, char **argv, const xtld_host *h
     return frtos_spawn(data, size, argc, argv, host);
 }
 
-/* xtld_host.resolve: the curated kernel export table — the libc-level symbols
- * the kernel publishes to loaded programs (e.g. gcc emits memcpy for array
- * init). Resolved after the loaded-library registry. */
-/* EABI runtime helpers from libgcc (the A9 has no hardware integer divide) */
-extern int      __aeabi_idiv(int, int);
-extern unsigned __aeabi_uidiv(unsigned, unsigned);
-extern void     __aeabi_idivmod(void);
-extern void     __aeabi_uidivmod(void);
+/* xtld_host.resolve: the BOUNDED kernel export table loaded modules resolve
+ * against — syscall primitives (for libc.so), libgcc runtime helpers (the A9 has
+ * no HW divide), and the kernel's own bare_libc mem/str fns (for the
+ * inline-syscall test programs that do not yet DT_NEEDED libc.so). It does NOT
+ * grow per-library: libGEM and programs get libc from libc.so, not here. */
+#define K(sym) extern void sym(void);
+K(_sbrk) K(_write) K(_read) K(_exit) K(_close) K(_lseek) K(_fstat) K(_isatty)
+K(_open) K(_stat) K(_kill) K(_getpid) K(_gettimeofday) K(_times) K(_link)
+K(_unlink) K(_fork) K(_execve) K(_fcntl) K(_getentropy) K(_mkdir)
+K(_init) K(_fini) K(_jp2uc_l) K(_uc2jp_l) K(_wait)
+extern int regcomp(void*,const void*,int); extern int regexec(const void*,const void*,unsigned,void*,int);
+extern void regfree(void*); extern int sigprocmask(int,const void*,void*);
+K(__aeabi_idiv) K(__aeabi_uidiv) K(__aeabi_idivmod) K(__aeabi_uidivmod)
+K(__aeabi_ldivmod) K(__aeabi_uldivmod) K(__aeabi_d2lz) K(__aeabi_l2d)
+K(__aeabi_unwind_cpp_pr0) K(__ffsdi2)
+#undef K
 
 uintptr_t frtos_ksym(const char *name, void *u)
 {
     (void)u;
-    if (!strcmp(name, "memcpy"))  return (uintptr_t)memcpy;
-    if (!strcmp(name, "memset"))  return (uintptr_t)memset;
-    if (!strcmp(name, "memmove")) return (uintptr_t)memmove;
-    if (!strcmp(name, "memcmp"))  return (uintptr_t)memcmp;
-    if (!strcmp(name, "strlen"))  return (uintptr_t)strlen;
-    if (!strcmp(name, "strcmp"))  return (uintptr_t)strcmp;
-    if (!strcmp(name, "malloc"))  return (uintptr_t)malloc;
-    if (!strcmp(name, "free"))    return (uintptr_t)free;
-    if (!strcmp(name, "realloc")) return (uintptr_t)realloc;
-    if (!strcmp(name, "calloc"))  return (uintptr_t)calloc;
-    if (!strcmp(name, "__aeabi_idiv"))     return (uintptr_t)__aeabi_idiv;
-    if (!strcmp(name, "__aeabi_uidiv"))    return (uintptr_t)__aeabi_uidiv;
-    if (!strcmp(name, "__aeabi_idivmod"))  return (uintptr_t)__aeabi_idivmod;
-    if (!strcmp(name, "__aeabi_uidivmod")) return (uintptr_t)__aeabi_uidivmod;
+    static const struct { const char *n; void *a; } tab[] = {
+        /* bare_libc (kernel's own) — for the inline-syscall test programs */
+        {"memcpy",(void*)memcpy},{"memset",(void*)memset},{"memmove",(void*)memmove},
+        {"memcmp",(void*)memcmp},{"strlen",(void*)strlen},{"strcmp",(void*)strcmp},
+        /* syscall primitives libc.so imports */
+        {"_sbrk",(void*)_sbrk},{"_write",(void*)_write},{"_read",(void*)_read},
+        {"_exit",(void*)_exit},{"_close",(void*)_close},{"_lseek",(void*)_lseek},
+        {"_fstat",(void*)_fstat},{"_isatty",(void*)_isatty},{"_open",(void*)_open},
+        {"_stat",(void*)_stat},{"_kill",(void*)_kill},{"_getpid",(void*)_getpid},
+        {"_gettimeofday",(void*)_gettimeofday},{"_times",(void*)_times},
+        {"_link",(void*)_link},{"_unlink",(void*)_unlink},{"_fork",(void*)_fork},
+        {"_execve",(void*)_execve},{"_fcntl",(void*)_fcntl},{"_getentropy",(void*)_getentropy},
+        {"_mkdir",(void*)_mkdir},{"_init",(void*)_init},{"_fini",(void*)_fini},
+        {"_jp2uc_l",(void*)_jp2uc_l},{"_uc2jp_l",(void*)_uc2jp_l},{"_wait",(void*)_wait},
+        {"regcomp",(void*)regcomp},{"regexec",(void*)regexec},
+        {"regfree",(void*)regfree},{"sigprocmask",(void*)sigprocmask},
+        /* libgcc runtime helpers */
+        {"__aeabi_idiv",(void*)__aeabi_idiv},{"__aeabi_uidiv",(void*)__aeabi_uidiv},
+        {"__aeabi_idivmod",(void*)__aeabi_idivmod},{"__aeabi_uidivmod",(void*)__aeabi_uidivmod},
+        {"__aeabi_ldivmod",(void*)__aeabi_ldivmod},{"__aeabi_uldivmod",(void*)__aeabi_uldivmod},
+        {"__aeabi_d2lz",(void*)__aeabi_d2lz},{"__aeabi_l2d",(void*)__aeabi_l2d},
+        {"__aeabi_unwind_cpp_pr0",(void*)__aeabi_unwind_cpp_pr0},{"__ffsdi2",(void*)__ffsdi2},
+    };
+    for (unsigned i = 0; i < sizeof tab / sizeof tab[0]; i++)
+        if (!strcmp(name, tab[i].n)) return (uintptr_t)tab[i].a;
     return 0;
 }
 

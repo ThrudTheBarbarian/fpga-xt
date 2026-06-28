@@ -97,6 +97,17 @@ types.
   `SYS_spawn`/`SYS_waitpid` syscalls whose blocking parts run in task context —
   a follow-up.)*
 
+  **M6a** brings up a real **`libc.so`** (PIC newlib — `tools/build-newlib-pic.sh`
+  → `newlib-pic/`, linked to `/OS/Library/libc.so`). The kernel is `-nostdlib`
+  (its own `bare_libc`) and **exports a bounded, fixed 40-symbol surface** the way
+  a real OS does: ~26 `_foo` syscall primitives + 10 libgcc helpers + 4 stubs
+  (`frtos_os.c`'s `frtos_ksym`; `syscalls.c`). At boot a one-shot bootstrap
+  allocator loads `libc.so` pinned at the heap base, then `_sbrk` runs above it
+  and the loader's allocator becomes `libc.so`'s `malloc`/`free`
+  (`frtos_activate_libc`). `/bin/libc_test` `DT_NEEDED`s `libc.so` and uses
+  `printf`/`malloc`/`strcpy` from it. The loader also learned **weak undefined
+  symbols → 0** (for `libc.so`'s init-array markers).
+
   **M5 (GEM, step A)** proves `libGEM.so` as a real shared library on XTOS:
   `test/freertos/libs/gem.c` → `/OS/Library/libGEM.so` exports geometric VDI
   primitives (`v_clear`/`v_bar`/`v_pline`/`v_circle`) on an RGBA-8888 surface;

@@ -86,13 +86,13 @@ FR     := ../third_party/freertos10_xilinx/src/Source
 FRPORT := $(FR)/portable/GCC/ARM_CA9
 FRINC  := -I. -I$(FR)/include -I$(FRPORT) -Itest/freertos -Itest/freertos/shim \
           -Itest/qemu -Ikernel -I$(BUILD)
-FRCFLAGS := -marm -mcpu=cortex-a9 -mfloat-abi=softfp -mfpu=neon-vfpv3 -ffreestanding -nostartfiles -O2 -g $(FRINC)
+FRCFLAGS := -marm -mcpu=cortex-a9 -mfloat-abi=softfp -mfpu=neon-vfpv3 -ffreestanding -nostdlib -O2 -g $(FRINC)
 FRSRC := $(FR)/tasks.c $(FR)/queue.c $(FR)/list.c $(FR)/timers.c $(FR)/event_groups.c \
          $(FR)/croutine.c $(FR)/stream_buffer.c $(FR)/portable/MemMang/heap_4.c \
          $(FRPORT)/port.c \
          test/freertos/zynq.c test/freertos/bsp_shim.c test/freertos/frtos_os.c \
          test/freertos/romfs.c test/freertos/syscalls.c test/freertos/main.c \
-         test/qemu/bare_rt.c xtld.c
+         test/qemu/bare_rt.c test/qemu/bare_libc.c xtld.c
 FRASM := test/freertos/xt_boot.S test/freertos/xt_vectors.S $(FRPORT)/portASM.S
 
 # Stage 2 + M2: loader + svc gateway + spawn-by-path + file syscalls, on real FreeRTOS.
@@ -101,7 +101,14 @@ freertos: $(BUILD)/freertos.elf
 	@$(QEMUZYNQ) -kernel $< ; echo "(qemu exited $$?)"
 
 $(BUILD)/freertos.elf: $(FRSRC) $(FRASM) test/freertos/freertos.ld test/freertos/FreeRTOSConfig.h $(BUILD)/romfs_blob.h | $(BUILD)
-	$(ARMCC) $(FRCFLAGS) -T test/freertos/freertos.ld $(FRASM) $(FRSRC) -lm -o $@
+	$(ARMCC) $(FRCFLAGS) -T test/freertos/freertos.ld $(FRASM) $(FRSRC) -lgcc -o $@
+
+# libc.so — PIC newlib (loader/newlib-pic/, built by tools/build-newlib-pic.sh)
+# linked into a loadable shared object; goes in the romfs at /OS/Library/libc.so
+$(BUILD)/libc.so: newlib-pic/libc.a | $(BUILD)
+	$(ARMCC) -mcpu=cortex-a9 -mfloat-abi=softfp -mfpu=neon-vfpv3 -shared -nostdlib \
+	    -Wl,--whole-archive newlib-pic/libc.a -Wl,--no-whole-archive \
+	    -Wl,-soname,libc.so -o $@
 
 # --- romfs: build the programs as .so, pack them into a blob, embed it ---
 PROGCFLAGS := $(ARMCFLAGS) -Itest/qemu
@@ -129,11 +136,18 @@ $(BUILD)/gemdemo.so: test/freertos/progs/gemdemo.c $(BUILD)/libGEM.so | $(BUILD)
 	$(ARMCC) $(PROGCFLAGS) -Itest/freertos/libs -c $< -o $(BUILD)/gemdemo.o
 	$(LLD) -shared --hash-style=sysv -o $@ $(BUILD)/gemdemo.o $(BUILD)/libGEM.so
 
+# a program that uses libc (DT_NEEDED libc.so), compiled against the PIC newlib headers
+$(BUILD)/libc_test.so: test/freertos/progs/libc_test.c $(BUILD)/libc.so | $(BUILD)
+	$(ARMCC) $(PROGCFLAGS) -Inewlib-pic/include -c $< -o $(BUILD)/libc_test.o
+	$(LLD) -shared --hash-style=sysv -o $@ $(BUILD)/libc_test.o $(BUILD)/libc.so
+
 $(BUILD)/mkromfs: tools/mkromfs.c | $(BUILD)
 	$(HOSTCC) -O2 -o $@ $<
 
-$(BUILD)/romfs.bin: $(BUILD)/mkromfs $(BUILD)/hello.so $(BUILD)/showmotd.so $(BUILD)/usestr.so $(BUILD)/echo.so $(BUILD)/gemdemo.so $(BUILD)/libutil.so $(BUILD)/libGEM.so test/freertos/motd.txt
+$(BUILD)/romfs.bin: $(BUILD)/mkromfs $(BUILD)/hello.so $(BUILD)/showmotd.so $(BUILD)/usestr.so $(BUILD)/echo.so $(BUILD)/gemdemo.so $(BUILD)/libc_test.so $(BUILD)/libutil.so $(BUILD)/libGEM.so $(BUILD)/libc.so test/freertos/motd.txt
 	$(BUILD)/mkromfs $@ \
+	    /OS/Library/libc.so=$(BUILD)/libc.so \
+	    /bin/libc_test=$(BUILD)/libc_test.so \
 	    /bin/hello=$(BUILD)/hello.so \
 	    /bin/showmotd=$(BUILD)/showmotd.so \
 	    /bin/usestr=$(BUILD)/usestr.so \

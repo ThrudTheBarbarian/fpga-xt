@@ -94,6 +94,8 @@ typedef struct {
 
 #define ELF32_R_SYM(i)  ((i) >> 8)
 #define ELF32_R_TYPE(i) ((i) & 0xff)
+#define ELF32_ST_BIND(i) ((i) >> 4)
+#define STB_WEAK 2
 
 #define R_ARM_ABS32     2
 #define R_ARM_GLOB_DAT  21
@@ -308,12 +310,12 @@ int xtld_load(const uint8_t *image, size_t image_len,
                      * then the kernel export table */
                     uintptr_t r2 = reg_resolve(name);
                     if (!r2 && host->resolve) r2 = host->resolve(name, host->user);
-                    if (!r2) {
+                    if (!r2 && ELF32_ST_BIND(s->st_info) != STB_WEAK) {
                         copy_err(errbuf, errlen, name);
                         if (host->dealloc) host->dealloc(base, host->user);
                         return XTLD_E_UNDEF;
                     }
-                    S = (uint32_t)r2;
+                    S = (uint32_t)r2;   /* weak unresolved -> 0 (allowed) */
                 }
                 /* ABS32 keeps the in-place addend. GLOB_DAT/JUMP_SLOT *set* the
                  * slot to S: their in-place value is not an addend — for

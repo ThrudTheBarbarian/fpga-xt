@@ -9,7 +9,6 @@
  */
 #include <stdint.h>
 #include <string.h>
-#include <stdlib.h>
 #include "FreeRTOS.h"
 #include "task.h"
 #include "bare_rt.h"
@@ -80,7 +79,7 @@ static void shell_task(void *arg)
 
 int main(void)
 {
-    puts0("=== xtos: interactive shell on real FreeRTOS (qemu zynq-a9, M4) ===\n");
+    puts0("=== xtos: libc.so bring-up + shell (qemu zynq-a9, M6a) ===\n");
     gic_init();
     ksys_set_console(rt_write);
     romfs_mount(romfs_blob, romfs_blob_len);
@@ -88,9 +87,21 @@ int main(void)
     g_host = (xtld_host){ .alloc = frtos_alloc, .dealloc = frtos_free, .sync_caches = NULL,
                           .resolve = frtos_ksym, .open_lib = frtos_open_lib, .user = NULL };
 
-    void *probe = malloc(4096);                  /* newlib heap smoke test */
-    puts0(probe ? "newlib OS heap: ok\n" : "newlib OS heap: FAIL\n");
-    free(probe);
+    /* bootstrap-load /OS/Library/libc.so, then route the loader's allocator
+     * through libc.so's malloc (frtos_activate_libc) */
+    const uint8_t *d; uint32_t n; char err[64] = {0};
+    if (!romfs_lookup("/OS/Library/libc.so", &d, &n)) { puts0("no libc.so in romfs\n"); sh_exit(1); }
+    xtld_obj *libc = NULL;
+    int rc = xtld_load(d, n, &g_host, &libc, err, sizeof err);
+    if (rc != XTLD_OK) { puts0("libc.so load FAILED: "); puts0(xtld_strerror(rc));
+        puts0(" ("); puts0(err); puts0(")\n"); sh_exit(1); }
+    frtos_activate_libc(libc);
+    xtld_run_init(libc);
+    puts0("libc.so loaded + activated\n");
+
+    void *p = frtos_alloc(4096, 16, NULL);       /* now via libc.so's malloc */
+    puts0(p ? "libc.so malloc: ok\n" : "libc.so malloc: FAIL\n");
+    frtos_free(p, NULL);
 
     if (xTaskCreate(shell_task, "sh", 2048, NULL, 2, NULL) != pdPASS) {
         puts0("shell create failed\n"); sh_exit(1);

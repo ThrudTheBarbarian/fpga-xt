@@ -19,7 +19,7 @@ SECTIONS
         *(.glue_7) *(.glue_7t)
     } > RAM
 
-    .ARM.exidx : { *(.ARM.exidx*) } > RAM
+    .ARM.exidx : { __exidx_start = .; *(.ARM.exidx*) __exidx_end = .; } > RAM
     .data : { *(.data*) } > RAM
 
     . = ALIGN(8);
