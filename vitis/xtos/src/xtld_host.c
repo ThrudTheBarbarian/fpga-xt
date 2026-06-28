@@ -183,3 +183,54 @@ void xtos_libc_test(void)
     entry(1, argv);
     xtld_unload(o);
 }
+
+/* ---- HW-3: load libGEM.so (real GEM/VDI + FreeType) and render to the live
+ * HDMI compositor plane at 0x3000_0000 (the kernel is the client; calls the
+ * loaded library via xtld_sym). libGEM pulls libm.so via open_lib and reuses the
+ * already-loaded libc.so. Proves the dynamic graphics stack on real pixels. */
+#define DESK_BASE   0x30000000u
+#define DESK_W      1920
+#define DESK_H      1080
+#define DESK_STRIDE 2048                         /* words/row (8192 B), per the map */
+
+void xtos_gem_demo(void)
+{
+    if (libc_up()) return;
+    const uint8_t *img; uint32_t len; char err[80] = {0};
+    if (!read_file("/OS/Library/libGEM.so", &img, &len)) { printf("libGEM.so not on SD\n"); return; }
+    xtld_obj *gem = NULL;
+    int rc = xtld_load(img, len, &g_host, &gem, err, sizeof err);   /* pulls libm.so + libc.so */
+    if (rc != XTLD_OK) { printf("libGEM.so load FAILED rc=%d (%s)\n", rc, err); return; }
+    xtld_run_init(gem);
+
+    void  (*vdi_init)(void *)                 = (void (*)(void *))xtld_sym(gem, "vdi_init");
+    void *(*font_face_open)(const char *)     = (void *(*)(const char *))xtld_sym(gem, "font_face_open");
+    void  (*vdi_set_face)(void *)             = (void (*)(void *))xtld_sym(gem, "vdi_set_face");
+    int   (*v_opnvwk)(void *)                 = (int (*)(void *))xtld_sym(gem, "v_opnvwk");
+    void  (*vsf_color)(int, int)              = (void (*)(int, int))xtld_sym(gem, "vsf_color");
+    void  (*vsf_interior)(int, int)           = (void (*)(int, int))xtld_sym(gem, "vsf_interior");
+    void  (*vr_recfl)(int, const short *)     = (void (*)(int, const short *))xtld_sym(gem, "vr_recfl");
+    void  (*vst_color)(int, int)              = (void (*)(int, int))xtld_sym(gem, "vst_color");
+    int   (*vst_height)(int, int, int *, int *, int *, int *) =
+          (int (*)(int, int, int *, int *, int *, int *))xtld_sym(gem, "vst_height");
+    void  (*v_gtext)(int, int, int, const char *) =
+          (void (*)(int, int, int, const char *))xtld_sym(gem, "v_gtext");
+    if (!vdi_init || !font_face_open || !v_opnvwk || !v_gtext) { printf("libGEM: symbols missing\n"); return; }
+
+    static struct { int w, h, stride; unsigned int *px; } desk;
+    desk.w = DESK_W; desk.h = DESK_H; desk.stride = DESK_STRIDE; desk.px = (unsigned int *)DESK_BASE;
+
+    vdi_init(&desk);
+    void *face = font_face_open("/OS/Fonts/AovelSansRounded.ttf");
+    if (!face) { printf("libGEM: font load FAILED (/OS/Fonts/AovelSansRounded.ttf)\n"); return; }
+    vdi_set_face(face);
+
+    int vh = v_opnvwk(&desk);
+    short bg[4]  = { 0, 0, DESK_W - 1, DESK_H - 1 };  vsf_color(vh, 0); vsf_interior(vh, 1); vr_recfl(vh, bg);
+    short box[4] = { 80, 80, 560, 400 };              vsf_color(vh, 1); vr_recfl(vh, box);
+    vst_color(vh, 1); vst_height(vh, 110, 0, 0, 0, 0);
+    v_gtext(vh, 640, 220, "Hello XTOS - from a loaded libGEM.so");
+
+    Xil_DCacheFlushRange((INTPTR)DESK_BASE, DESK_STRIDE * DESK_H * 4);   /* present to compositor */
+    printf("gemhw: rendered via loaded libGEM.so + FreeType -> HDMI plane\n");
+}

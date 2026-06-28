@@ -1181,6 +1181,11 @@ static void repl_exec(char *cmd)
         xtos_libc_test();
         return;
     }
+    if (!strcmp(argv[0], "gemhw")) {                  /* HW-3: loaded libGEM.so -> HDMI plane */
+        extern void xtos_gem_demo(void);
+        xtos_gem_demo();
+        return;
+    }
     if (!strcmp(argv[0], "unlock")) {
         /* XT register-unlock mask (docs/Zynq/register-unlock.md).  No arg =
          * read back the effective value; <hex> = set it.  bit0 ANTIC_CHIPLET,

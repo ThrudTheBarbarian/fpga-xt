@@ -181,7 +181,7 @@ $(BUILD)/romfs.bin: $(BUILD)/mkromfs $(BUILD)/hello.so $(BUILD)/showmotd.so $(BU
 	    /bin/showmotd=$(BUILD)/showmotd.so \
 	    /bin/usestr=$(BUILD)/usestr.so \
 	    /bin/echo=$(BUILD)/echo.so \
-	    /etc/motd=test/freertos/motd.txt
+	    /OS/etc/motd=test/freertos/motd.txt
 
 $(BUILD)/romfs_blob.h: $(BUILD)/romfs.bin
 	@{ printf 'unsigned char romfs_blob[] = {\n'; \
