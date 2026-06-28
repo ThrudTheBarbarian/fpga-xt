@@ -103,6 +103,13 @@ freertos: $(BUILD)/freertos.elf
 $(BUILD)/freertos.elf: $(FRSRC) $(FRASM) test/freertos/freertos.ld test/freertos/FreeRTOSConfig.h $(BUILD)/romfs_blob.h | $(BUILD)
 	$(ARMCC) $(FRCFLAGS) -T test/freertos/freertos.ld $(FRASM) $(FRSRC) -lgcc -o $@
 
+# HW variant: same kernel (incl. the full tier-2 MMU/VM), but real Zynq UART1 I/O
+# instead of semihosting (the testbed owns its SVC vector, so semihosting — which
+# qemu intercepts above the guest — isn't available on metal). JTAG-load with
+# ps7_init; run vmtest/demandtest/faulttest to exercise tier-2 on real silicon.
+$(BUILD)/freertos-hw.elf: $(FRSRC) $(FRASM) test/freertos/freertos.ld test/freertos/FreeRTOSConfig.h $(BUILD)/romfs_blob.h | $(BUILD)
+	$(ARMCC) $(FRCFLAGS) -DXT_HW_UART -T test/freertos/freertos.ld $(FRASM) $(FRSRC) -lgcc -o $@
+
 # Load + run an externally-built PIC .so (e.g. xtc output) on the real loader:
 #   make xtcrun XTC_SO=/path/to/foo.so
 # Embeds it in the romfs as /bin/xtcprog, builds the kernel, auto-spawns it under

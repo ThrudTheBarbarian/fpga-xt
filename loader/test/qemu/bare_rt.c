@@ -3,6 +3,20 @@
  * tests; the FreeRTOS build uses newlib instead.) */
 #include "bare_rt.h"
 
+#ifdef XT_HW_UART
+/* Real hardware: poll the Zynq UART1 FIFO (0xE0001000, configured by ps7_init).
+ * The testbed installs its own SVC vector, so ARM semihosting — which qemu
+ * intercepts ABOVE the guest — isn't available on metal; talk to the UART. */
+#define UART1_BASE 0xE0001000u
+#define UART_SR    (*(volatile unsigned int *)(UART1_BASE + 0x2Cu))
+#define UART_FIFO  (*(volatile unsigned int *)(UART1_BASE + 0x30u))
+#define SR_TXFULL  0x10u
+#define SR_RXEMPTY 0x02u
+static void u_putc(char c) { while (UART_SR & SR_TXFULL) { } UART_FIFO = (unsigned char)c; }
+void puts0(const char *s) { while (*s) { if (*s == '\n') u_putc('\r'); u_putc(*s++); } }
+int  sh_readc(void) { while (UART_SR & SR_RXEMPTY) { } return (int)(UART_FIFO & 0xFFu); }  /* blocking */
+void sh_exit(int code) { (void)code; puts0("\n[testbed halted — power-cycle]\n"); for (;;) { } }
+#else
 static long sh(long op, void *arg)
 {
     register long r0 __asm__("r0") = op;
@@ -13,6 +27,7 @@ static long sh(long op, void *arg)
 void puts0(const char *s) { sh(0x04 /*SYS_WRITE0*/, (void *)s); }
 int  sh_readc(void) { return (int)sh(0x07 /*SYS_READC*/, (void *)0); }
 void sh_exit(int code) { long b[2] = { 0x20026, code }; sh(0x20 /*EXIT_EXTENDED*/, b); for (;;) {} }
+#endif
 
 void putu(unsigned v)
 {

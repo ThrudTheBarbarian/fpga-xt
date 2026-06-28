@@ -10,6 +10,7 @@
 # Usage:
 #   ./jtag-valhalla.sh load     # full cold-load: bitstream + ps7_init + ELF
 #   ./jtag-valhalla.sh dow      # ELF-only reload (PL + clocks untouched)
+#   ./jtag-valhalla.sh testbed  # tier-2 testbed (loader/build/freertos-hw.elf) on metal, UART1 I/O
 #
 # Env: REMOTE=valhalla  REMOTE_DIR=fpga-xt-build  VITIS_PATH=/opt/xilinx/2025.2/Vitis
 
@@ -20,11 +21,16 @@ REMOTE_DIR="${REMOTE_DIR:-fpga-xt-build}"
 VITIS_PATH="${VITIS_PATH:-/opt/xilinx/2025.2/Vitis}"
 REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 
-echo ">> pushing jtag scripts + ELF$([ "$MODE" = load ] && echo ' + bitstream')"
-ssh "$REMOTE" "mkdir -p $REMOTE_DIR/vivado/scripts $REMOTE_DIR/vitis/workspace/xtos/build $REMOTE_DIR/build"
+echo ">> pushing jtag scripts + ELF + bitstream"
+ssh "$REMOTE" "mkdir -p $REMOTE_DIR/vivado/scripts $REMOTE_DIR/vitis/workspace/xtos/build $REMOTE_DIR/loader/build $REMOTE_DIR/build"
 rsync -az "$REPO_ROOT/vivado/scripts/" "$REMOTE:$REMOTE_DIR/vivado/scripts/"
-rsync -az "$REPO_ROOT/vitis/workspace/xtos/build/xtos.elf" "$REMOTE:$REMOTE_DIR/vitis/workspace/xtos/build/xtos.elf"
-[ "$MODE" = "load" ] && rsync -az "$REPO_ROOT/vivado/build/fpga_xt_top.bit" "$REMOTE:$REMOTE_DIR/build/fpga_xt_top.bit"
+if [ "$MODE" = "testbed" ]; then
+    rsync -az "$REPO_ROOT/loader/build/freertos-hw.elf" "$REMOTE:$REMOTE_DIR/loader/build/freertos-hw.elf"
+    rsync -az "$REPO_ROOT/vivado/build/fpga_xt_top.bit"  "$REMOTE:$REMOTE_DIR/build/fpga_xt_top.bit"
+else
+    rsync -az "$REPO_ROOT/vitis/workspace/xtos/build/xtos.elf" "$REMOTE:$REMOTE_DIR/vitis/workspace/xtos/build/xtos.elf"
+    [ "$MODE" = "load" ] && rsync -az "$REPO_ROOT/vivado/build/fpga_xt_top.bit" "$REMOTE:$REMOTE_DIR/build/fpga_xt_top.bit"
+fi
 
 echo ">> jtag $MODE on $REMOTE"
 ssh "$REMOTE" bash -l <<EOF
@@ -40,10 +46,11 @@ if ! ss -ltn 2>/dev/null | grep -q ':3121 '; then
     sleep 6
 fi
 case "$MODE" in
-  load)  xvfb-run -a xsct vivado/scripts/jtag_load.tcl build/fpga_xt_top.bit vitis/workspace/xtos/build/xtos.elf ;;
-  reset) xvfb-run -a xsct vivado/scripts/jtag_sysdow.tcl vitis/workspace/xtos/build/xtos.elf ;;  # rst -system, clean heap, no power-cycle
-  dow)   xvfb-run -a xsct vivado/scripts/jtag_dow.tcl vitis/workspace/xtos/build/xtos.elf ;;       # rst -processor (fast, may accumulate heap)
-  *)     echo "usage: $0 [load|reset|dow]" >&2; exit 1 ;;
+  load)    xvfb-run -a xsct vivado/scripts/jtag_load.tcl build/fpga_xt_top.bit vitis/workspace/xtos/build/xtos.elf ;;
+  reset)   xvfb-run -a xsct vivado/scripts/jtag_sysdow.tcl vitis/workspace/xtos/build/xtos.elf ;;  # rst -system, clean heap, no power-cycle
+  dow)     xvfb-run -a xsct vivado/scripts/jtag_dow.tcl vitis/workspace/xtos/build/xtos.elf ;;       # rst -processor (fast, may accumulate heap)
+  testbed) xvfb-run -a xsct vivado/scripts/jtag_load.tcl build/fpga_xt_top.bit loader/build/freertos-hw.elf ;;  # tier-2 testbed on metal (UART1 I/O)
+  *)       echo "usage: $0 [load|reset|dow|testbed]" >&2; exit 1 ;;
 esac
 EOF
 echo ">> done."
