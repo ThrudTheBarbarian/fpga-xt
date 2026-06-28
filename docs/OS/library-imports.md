@@ -36,20 +36,28 @@ takes by pointer. A type source the compiler can read is fundamentally required.
 The fix is two separable things:
 
 1. **A language feature** — spelled with the existing **`#import`** directive
-   (which is `#include` + include-once, à la Objective-C), with the **bracket
-   style selecting the world** (mirroring C `<>` vs `""`), so there is no
-   ambiguity to resolve:
-   - **`#import <GEM>`** → a **library**: `$libDir/libGEM.so`. The `lib` prefix +
-     `.so` suffix are implied boilerplate (the `-lGEM` convention); the stem maps
-     verbatim to the filename after `lib` (`<c>`→`libc.so`, `<m>`→`libm.so`). This
-     is the metadata import — read the `.so`'s exported interface.
-   - **`#import "foo"`** → an **xtc source module** on the source-include path
-     (textual include, as today).
+   (which is `#include` + include-once, à la Objective-C). The existing
+   bracket distinction is unchanged: **`<…>` searches the system locations,
+   `"…"` the local path** (as in C) — that selects *where* to look, not *what
+   kind* of thing is found. The directive is *extended* so the searched system
+   locations also include the **library paths** (`$libDir`), not just
+   source-include paths:
+   - in a **library path**, `<GEM>` resolves to `libGEM.so` — the `-lGEM`
+     convention: `lib` prefix + `.so` suffix implied, stem verbatim
+     (`<c>`→`libc.so`, `<m>`→`libm.so`). Found a `.so` → **metadata import** (read
+     its interface).
+   - in a **source-include path**, the name resolves to an xtc module → **textual
+     include**, as today.
 
-   For a library it brings the exported names **and types** into scope (qualified,
-   e.g. `gem.v_opnvwk`, or flat — an xtc naming choice); the source writes **no**
-   signatures. Codegen emits the used symbols as undefined-global references
-   (default visibility) and records `DT_NEEDED` (soname from the `.so`).
+   So the **dispatch (library vs source module) is by what the resolver finds**,
+   not by the bracket; the bracket only chooses system-vs-local, exactly as now.
+   Precedence is the search order across the configured paths. (So `#import <GEM>`
+   finds `$libDir/libGEM.so` because that's what lives there.)
+
+   For a library import it brings the exported names **and types** into scope
+   (qualified, e.g. `gem.v_opnvwk`, or flat — an xtc naming choice); the source
+   writes **no** signatures. Codegen emits the used symbols as undefined-global
+   references (default visibility) and records `DT_NEEDED` (soname from the `.so`).
    `#import`'s include-once nature matches a `.so` import being idempotent.
 
    The `lib*.so` naming also separates *importable libraries* from *spawnable
@@ -178,6 +186,41 @@ to `v_opnvwk`, and have `px`/`stride` read at the correct offsets**.
   struct test in §5 — `gfx_surface` fields at the correct offsets, driven from
   `import "libGEM"` reading the `.so`'s DWARF. libc working only proves the easy
   half.
+
+## 8. One `#import`, per-backend lowering
+
+xtc is multi-backend (6502, m68k, A9/ARM). **`#import <GEM>` is the same source
+construct on every backend; the backend chooses how a call is *lowered*:**
+
+- **A9 (native, in-process)** → a direct PIC call into the loaded `libGEM.so`
+  (the `DT_NEEDED` path, §1–§3).
+- **6502 / m68k (guests)** → they cannot run ARM code; `libGEM` runs as the A9
+  **GEM service** ([[gem_service_architecture]]), so the call lowers to marshalling
+  args into the shared param block (the VDI `contrl`/`intin`/`ptsin` convention)
+  and ringing the **doorbell**; the A9 service executes it and returns results.
+
+Same import, same types (`MFDB`, `gfx_surface`), same signatures — different
+codegen.
+
+**The interface is one source for all backends.** `libGEM.so`'s `.dynsym` ∩ DWARF
+is read by every backend: the A9 reads it *and executes* it; the 6502 reads it
+*purely as a description* — it can't run libGEM, but it reads the self-description
+to learn the signatures + `MFDB` layout, hence how to marshal. One interface, N
+lowerings, **all generated** — the GEM-service "thin bindings" stop being
+hand-written per call/per backend; they are derived from the same DWARF.
+
+**This is what unblocks native-A9 direct linking.** The service design deferred
+A9 client-linking only because there was no way to hand xtc the C interface — the
+DWARF import *is* that mechanism, so the blocker dissolves: native A9 can
+direct-call; guests keep the doorbell.
+
+**Stateful vs stateless.** Authoritative GEM state (the WM window list, AES) must
+live in one place ([memory-protection.md](memory-protection.md): behind the
+service, not per-process library globals). So even on the A9, the *stateful* parts
+(WM/AES) may lower to a doorbell-to-the-service while *stateless* per-workstation
+VDI drawing lowers to a direct call. Lowering can be **per-subsystem, not just
+per-backend** — `#import` stays uniform; the binding generator knows which symbols
+are service-routed.
 
 ## Related
 
