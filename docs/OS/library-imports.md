@@ -17,10 +17,14 @@ and records `DT_NEEDED`. At load time the XTOS loader resolves it across the
 registry of loaded objects (dynamic-loading.md §5). That path is proven — libc.so,
 libm.so, libGEM.so all load and link this way.
 
-What is missing is the **front-end** half: a way for xtc *source* to declare
-"this symbol exists, here is its signature, it is imported," so the compiler can
-type-check the call and emit it as an undefined reference at all. C does this with
-headers; xtc has no equivalent yet.
+What is missing is the **front-end** half: a way for xtc *source* to say "I want
+what `libGEM.so` provides" and have the compiler pull that library's exported
+names and types into scope — so it can type-check the calls and emit them as
+undefined references. This is the **module-import** model (Go/Rust/Python): the
+`.so` is the sole *declarer*, the source is a pure *consumer*. It is deliberately
+**not** the C-header model, where the consumer re-declares the interface in a
+separate file that can drift from the library — that drift is the whole thing we
+are designing out.
 
 And it cannot be auto-derived from the obvious place: **`.dynsym` carries names,
 not types.** It records that `printf` exists and is a `FUNC`; it says nothing about
@@ -31,14 +35,21 @@ takes by pointer. A type source the compiler can read is fundamentally required.
 
 The fix is two separable things:
 
-1. **A language feature** — an xtc `extern`/`import` declaration construct:
-   declare a symbol's signature, mark it imported. Codegen emits an
-   undefined-global reference (default visibility) and defines nothing locally.
-   This is the C-`extern` analogue and is the actual compiler work. It is needed
-   regardless of where the interface data comes from.
-2. **The interface data** — the declarations themselves (names + signatures +
-   struct layouts) for a library's exports. This is content, and §3 is where it
-   comes from.
+1. **A language feature** — an `import "libGEM"` statement: the source names a
+   library; the compiler loads it, reads its exported interface, and brings those
+   names + types into scope (qualified, e.g. `gem.v_opnvwk`, or flat — an xtc
+   naming choice). The source writes **no** signatures. Codegen emits the used
+   symbols as undefined-global references (default visibility) and records
+   `DT_NEEDED`. This is the compiler work, and it's a *module import*, not
+   per-symbol declarations.
+2. **The interface data** — the names + types + struct layouts the import reads.
+   This is content; §3 is where it comes from. Because of (1), it is owned by the
+   library, never restated by the consumer.
+
+Consequence: the library must be present at compile time (you compile against the
+actual binary's interface — which is *why* it cannot drift), and the bootstrap
+`libc.xi` (§7) is just a temporary hand-transcription of what the `.so` would
+declare, not a consumer-side re-declaration.
 
 ## 3. Decision: the library describes itself
 
