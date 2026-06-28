@@ -37,10 +37,16 @@
 
 extern uint32_t *mmu_master_table(void);
 
-static uint32_t  space_l1[NSPACE][4096]   __attribute__((aligned(16384)));
-static uint32_t  space_l2[NSPACE][256]    __attribute__((aligned(1024)));  /* libc data section, per space */
+static uint32_t  space_l1[NSPACE][4096]     __attribute__((aligned(16384)));
 static uint32_t  space_l2_heap[NSPACE][256] __attribute__((aligned(1024)));/* heap section (demand-paged) */
-static uint32_t  space_l2_cow[NSPACE][256] __attribute__((aligned(1024))); /* COW demo section, per space */
+/* a small per-space pool of L2 tables, one per 1 MB section the space overrides
+ * (libc data, program data, the synthetic demo). Section-keyed so a program and
+ * libc that happen to share a 1 MB section reuse ONE L2 (no clobber, the §6
+ * collision). */
+#define MAXSEC 6
+static uint32_t  space_l2pool[NSPACE][MAXSEC][256] __attribute__((aligned(1024)));
+static uint16_t  space_l2sec[NSPACE][MAXSEC];   /* section number each slot maps */
+static uint8_t   space_l2n[NSPACE];             /* slots used this space */
 static uint32_t *g_cur_table;            /* currently-active TTBR0 table */
 static uint32_t  g_cur_asid;
 
@@ -53,15 +59,18 @@ static uint32_t  g_cur_asid;
  *
  * Range table: VAs are space-independent (the same VA is COW in every space; only
  * the backing physical differs per process). Membership-gate the fault path. */
-#define NCOW 4
-static struct { uint32_t va, end; } g_cow_rng[NCOW];
+#define NCOW 8
+static struct { uint32_t va, end, src; } g_cow_rng[NCOW];
 static int      g_cow_n;
 static uint32_t g_cow_count;
-void vm_cow_register(uint32_t va, uint32_t size)
+void vm_cow_register(uint32_t va, uint32_t size, uint32_t src)
 {
+    uint32_t base = va & ~0xFFFu;
+    for (int i = 0; i < g_cow_n; i++) if (g_cow_rng[i].va == base) return;  /* dedup */
     if (g_cow_n >= NCOW) return;
-    g_cow_rng[g_cow_n].va  = va & ~0xFFFu;
+    g_cow_rng[g_cow_n].va  = base;
     g_cow_rng[g_cow_n].end = (va + size + 0xFFFu) & ~0xFFFu;
+    g_cow_rng[g_cow_n].src = src & ~0xFFFu;
     g_cow_n++;
 }
 static int cow_owns(uint32_t va)
@@ -71,6 +80,28 @@ static int cow_owns(uint32_t va)
     return 0;
 }
 uint32_t vm_cow_count(void) { return g_cow_count; }
+
+/* Get (or lazily create) space `idx`'s private L2 for 1 MB section `sec`, seeded
+ * from the master so pages we DON'T override (shared text/rodata/GOT in the same
+ * section) keep their master mapping. The master section is either a 1 MB section
+ * descriptor (synthesize an identity L2) or already a coarse L2 (copy it — e.g. a
+ * program's W^X section). Installs the coarse L1 entry in `t`. */
+static uint32_t *perproc_l2(int idx, uint32_t *t, uint32_t sec)
+{
+    for (int i = 0; i < space_l2n[idx]; i++)
+        if (space_l2sec[idx][i] == sec) return space_l2pool[idx][i];
+    if (space_l2n[idx] >= MAXSEC) return 0;
+    uint32_t *l2  = space_l2pool[idx][space_l2n[idx]];
+    uint32_t  ml1 = mmu_master_table()[sec];
+    if ((ml1 & 0x3u) == 0x1u)                                     /* master is coarse L2 */
+        memcpy(l2, (uint32_t *)(ml1 & 0xFFFFFC00u), 256 * sizeof(uint32_t));
+    else                                                          /* master is a 1 MB section */
+        for (uint32_t i = 0; i < 256; i++) l2[i] = L2_PAGE((sec << 20) + i * 0x1000u);
+    space_l2sec[idx][space_l2n[idx]] = (uint16_t)sec;
+    space_l2n[idx]++;
+    t[sec] = L1_COARSE(l2);
+    return l2;
+}
 
 /* Synthetic COW demo: a pristine template page mapped shared-RO at XTOS_COW_VA in
  * every space. cowtest reads the template, writes (faulting -> private copy), and
@@ -82,7 +113,7 @@ void vm_cow_init(void)
 {
     for (int i = 0; i < 0x1000; i++) cow_template[i] = 0x5A;
     cow_template[0] = 'C'; cow_template[1] = 'O'; cow_template[2] = 'W';
-    vm_cow_register(XTOS_COW_VA, XTOS_COW_SIZE);
+    vm_cow_register(XTOS_COW_VA, XTOS_COW_SIZE, (uint32_t)cow_template);
 }
 
 /* libc.so's writable (data/bss) range + a pristine snapshot, set once at boot. */
@@ -90,54 +121,37 @@ static uintptr_t   g_libc_wva;
 static uint32_t    g_libc_wsize;
 static const void *g_libc_snap;
 static char       *g_libc_share;   /* the ONE shared pristine libc-data copy (COW source) */
+/* Register libc.so's data/bss as COW. Build ONE shared pristine copy (page-aligned
+ * with the data at its TRUE sub-page offset — libc's writable seg starts at a
+ * non-page-aligned VA, e.g. ...c58, so mapping a page-aligned VA straight to
+ * snapshot[0] would shift every pointer/GOT entry and crash). All processes map
+ * this block shared-RO and COW on first write (malloc updating its arena, etc.). */
 void vm_set_libc(uintptr_t wva, uint32_t wsize, const void *snapshot)
-{ g_libc_wva = wva; g_libc_wsize = wsize; g_libc_snap = snapshot; }
+{
+    g_libc_wva = wva; g_libc_wsize = wsize; g_libc_snap = snapshot;
+    if (!wva || !snapshot) return;
+    uint32_t first = (uint32_t)wva & ~0xFFFu;
+    uint32_t last  = ((uint32_t)wva + wsize - 1u) & ~0xFFFu;
+    uint32_t npg   = (last - first) / 0x1000u + 1u;
+    char *s = frtos_alloc(npg * 0x1000u, 0x1000, NULL);
+    if (!s) return;
+    memset(s, 0, npg * 0x1000u);
+    memcpy(s + ((uint32_t)wva - first), snapshot, wsize);
+    g_libc_share = s;
+    vm_cow_register(first, npg * 0x1000u, (uint32_t)s);
+}
 
 /* Build space `idx`'s table (ASID = idx+1; 0 = kernel/master): copy the master,
- * then give the process PRIVATE copies of (a) libc.so's data/bss pages — mapped
- * at the same VA via an L2 table, 4KB-granular, seeded from the pristine snapshot
- * so each process's malloc state is its own; and (b) a heap section at
- * XTOS_HEAP_VA. All non-global (ASID-tagged). Drop stale TLB for the reused ASID. */
+ * give the process (b) a demand-zero heap section and (a/c) per-process copies of
+ * every registered COW range — libc data, the spawning program's data, and the
+ * synthetic demo — mapped shared READ-ONLY at their pristine source until first
+ * write. All non-global (ASID-tagged). Drop stale TLB for the reused ASID. */
 uint32_t *vm_space_create(int idx)
 {
-    uint32_t *t  = space_l1[idx];
-    uint32_t *l2 = space_l2[idx];
+    uint32_t *t    = space_l1[idx];
     uint32_t  asid = (uint32_t)idx + 1u;
     memcpy(t, mmu_master_table(), 4096 * sizeof(uint32_t));
-
-    /* (a) per-process libc data/bss via COPY-ON-WRITE: map libc's data pages
-     * shared READ-ONLY at one pristine copy; the first write (e.g. malloc updating
-     * its arena) faults -> a private page. No eager per-process copy.
-     *
-     * The shared pristine block is page-aligned with the data at its TRUE sub-page
-     * offset (libc's writable seg starts at a non-page-aligned VA, e.g. ...c58):
-     * mapping a page-aligned VA straight to snapshot[0] would shift every pointer/
-     * GOT entry and crash. Build it ONCE; all processes share it (the whole win). */
-    if (g_libc_wva && g_libc_snap) {
-        uint32_t first = (uint32_t)g_libc_wva & ~0xFFFu;
-        uint32_t last  = ((uint32_t)g_libc_wva + g_libc_wsize - 1u) & ~0xFFFu;
-        uint32_t npg   = (last - first) / 0x1000u + 1u;
-        if (!g_libc_share) {
-            char *s = frtos_alloc(npg * 0x1000u, 0x1000, NULL);
-            if (s) {
-                memset(s, 0, npg * 0x1000u);
-                memcpy(s + ((uint32_t)g_libc_wva - first), g_libc_snap, g_libc_wsize);
-                g_libc_share = s;
-                vm_cow_register(first, npg * 0x1000u);
-            }
-        }
-        if (g_libc_share) {
-            uint32_t sec = first >> 20;
-            /* identity-map the whole section (it also holds the shared boot heap /
-             * program image / argv), then override ONLY libc's data pages RO. */
-            for (uint32_t i = 0; i < 256; i++)
-                l2[i] = L2_PAGE((sec << 20) + i * 0x1000u);
-            for (uint32_t p = 0; p < npg; p++)
-                l2[L2_IDX(first + p * 0x1000u)] =
-                    L2_PAGE_RO((uint32_t)g_libc_share + p * 0x1000u);
-            t[sec] = L1_COARSE(l2);
-        }
-    }
+    space_l2n[idx] = 0;                        /* fresh per-space L2 pool */
 
     /* (b) private heap: an L2 with every page faulting -> zero-filled ON DEMAND
      * (T2-c). Physical is consumed only for pages the process actually touches. */
@@ -147,13 +161,19 @@ uint32_t *vm_space_create(int idx)
         t[XTOS_HEAP_VA >> 20] = L1_COARSE(hl2);
     }
 
-    /* (c) synthetic COW page: map XTOS_COW_VA shared READ-ONLY at the pristine
-     * template. The first write faults -> vm_cow_map makes a private copy. */
-    {
-        uint32_t *cl2 = space_l2_cow[idx];
-        memset(cl2, 0, 256 * sizeof(uint32_t));
-        cl2[L2_IDX(XTOS_COW_VA)] = L2_PAGE_RO((uint32_t)cow_template);
-        t[XTOS_COW_VA >> 20] = L1_COARSE(cl2);
+    /* (a/c) COW ranges: for each registered range, build a per-process L2 for each
+     * 1 MB section it spans (seeded from the master so shared text/rodata/GOT pages
+     * in the same section keep their mapping) and mark the range's pages READ-ONLY
+     * -> the shared source. Preserve each page's XN bit (W^X for program data). */
+    for (int r = 0; r < g_cow_n; r++) {
+        uint32_t base = g_cow_rng[r].va, end = g_cow_rng[r].end, src = g_cow_rng[r].src;
+        for (uint32_t va = base; va < end; va += 0x1000u) {
+            uint32_t *l2 = perproc_l2(idx, t, va >> 20);
+            if (!l2) break;
+            uint32_t i  = L2_IDX(va);
+            uint32_t xn = l2[i] & 0x1u;                  /* keep XN from the master mapping */
+            l2[i] = (L2_PAGE_RO(src + (va - base)) & ~0x1u) | xn;
+        }
     }
 
     __asm__ volatile("mcr p15,0,%0,c8,c7,2" :: "r"(asid));   /* TLBIASID: clear stale */
@@ -248,7 +268,10 @@ int vm_cow_map(int idx, uint32_t va)
     void *pg = dpage();
     if (!pg) return 0;
     memcpy(pg, (const void *)(va & 0xFFFFF000u), 0x1000);   /* read via the RO mapping */
-    l2[i] = L2_PAGE((uint32_t)pg);               /* private, RW */
+    /* private copy: new physical, clear AP[2] (RO->RW), keep all other attrs
+     * (XN, TEX, nG, ...) so a COW'd program-data page stays execute-never (W^X). */
+    l2[i] = ((uint32_t)pg & 0xFFFFF000u) | (e & 0xFFFu);
+    l2[i] &= ~(1u << 9);
     g_cow_count++;
     __asm__ volatile("dsb");
     __asm__ volatile("mcr p15,0,%0,c8,c7,3" :: "r"(va & 0xFFFFF000u));  /* TLBIMVAA */
