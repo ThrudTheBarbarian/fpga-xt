@@ -88,6 +88,7 @@ typedef struct {
 #define DT_PLTRELSZ      2
 #define DT_INIT_ARRAY   25
 #define DT_INIT_ARRAYSZ 27
+#define DT_SONAME       14
 
 #define SHN_UNDEF 0
 
@@ -116,7 +117,34 @@ struct xtld_obj {
 
     const Elf32_Addr *init_array;
     uint32_t          init_count;
+
+    const char       *soname;     /* DT_SONAME — registry key, or NULL */
+    int               refcount;
 };
+
+/* ---- loaded-object registry (for cross-module symbol resolution + dedup) -- */
+
+#define XTLD_MAX_OBJS 16
+static xtld_obj *g_objs[XTLD_MAX_OBJS];
+static int       g_nobjs;
+
+static xtld_obj *reg_find(const char *soname)
+{
+    if (!soname) return NULL;
+    for (int i = 0; i < g_nobjs; i++)
+        if (g_objs[i]->soname && strcmp(g_objs[i]->soname, soname) == 0)
+            return g_objs[i];
+    return NULL;
+}
+
+static uintptr_t reg_resolve(const char *name)
+{
+    for (int i = 0; i < g_nobjs; i++) {
+        uintptr_t a = xtld_sym(g_objs[i], name);
+        if (a) return a;
+    }
+    return 0;
+}
 
 /* ---- small helpers ----------------------------------------------------- */
 
@@ -201,6 +229,8 @@ int xtld_load(const uint8_t *image, size_t image_len,
     const Elf32_Rel *jmprel = NULL;    uint32_t jmprel_sz = 0;
     const Elf32_Addr *init_array = NULL; uint32_t init_sz = 0;
     const uint32_t  *hash = NULL;
+    uint32_t soname_off = 0; int have_soname = 0;
+    uint32_t needed_off[16]; int nneeded = 0;
 
     for (const Elf32_Dyn *d = dyn; d->d_tag != DT_NULL; d++) {
         switch (d->d_tag) {
@@ -214,6 +244,8 @@ int xtld_load(const uint8_t *image, size_t image_len,
         case DT_PLTRELSZ:      jmprel_sz = d->d_val; break;
         case DT_INIT_ARRAY:    init_array = (const Elf32_Addr *)(bias + d->d_val); break;
         case DT_INIT_ARRAYSZ:  init_sz = d->d_val; break;
+        case DT_SONAME:        soname_off = d->d_val; have_soname = 1; break;
+        case DT_NEEDED:        if (nneeded < 16) needed_off[nneeded++] = d->d_val; break;
         default: break;
         }
     }
@@ -224,6 +256,28 @@ int xtld_load(const uint8_t *image, size_t image_len,
     /* symbol count from the SysV hash table (nchain). Built with
      * --hash-style=sysv so DT_HASH is present. */
     uint32_t symcount = hash ? hash[1] /* nchain */ : 0;
+    const char *soname = have_soname ? (strtab + soname_off) : NULL;
+
+    /* 4b. load DT_NEEDED shared libraries BEFORE relocating, so this object's
+     * imports resolve against them. Each is loaded once (deduped by soname) and
+     * refcounted; a freshly-loaded dep is initialised before we use it. */
+    for (int k = 0; k < nneeded; k++) {
+        const char *depname = strtab + needed_off[k];
+        xtld_obj *dep = reg_find(depname);
+        if (dep) { dep->refcount++; continue; }
+        const uint8_t *dimg = NULL; uint32_t dlen = 0;
+        if (!host->open_lib || !host->open_lib(depname, &dimg, &dlen, host->user)) {
+            copy_err(errbuf, errlen, depname);
+            if (host->dealloc) host->dealloc(base, host->user);
+            return XTLD_E_UNDEF;
+        }
+        int drc = xtld_load(dimg, dlen, host, &dep, errbuf, errlen);
+        if (drc != XTLD_OK) {
+            if (host->dealloc) host->dealloc(base, host->user);
+            return drc;
+        }
+        xtld_run_init(dep);
+    }
 
     /* 5. apply relocations: DT_REL then DT_JMPREL (both Elf32_Rel) */
     const Elf32_Rel *tables[2] = { rel, jmprel };
@@ -250,7 +304,10 @@ int xtld_load(const uint8_t *image, size_t image_len,
                 if (s->st_shndx != SHN_UNDEF) {
                     S = (uint32_t)bias + s->st_value;   /* defined here */
                 } else {
-                    uintptr_t r2 = host->resolve ? host->resolve(name, host->user) : 0;
+                    /* loaded libraries first (NEEDED + everything resident),
+                     * then the kernel export table */
+                    uintptr_t r2 = reg_resolve(name);
+                    if (!r2 && host->resolve) r2 = host->resolve(name, host->user);
                     if (!r2) {
                         copy_err(errbuf, errlen, name);
                         if (host->dealloc) host->dealloc(base, host->user);
@@ -289,6 +346,9 @@ int xtld_load(const uint8_t *image, size_t image_len,
     obj->symcount   = symcount;
     obj->init_array = init_array;
     obj->init_count = init_array ? init_sz / sizeof(Elf32_Addr) : 0;
+    obj->soname     = soname;
+    obj->refcount   = 1;
+    if (g_nobjs < XTLD_MAX_OBJS) g_objs[g_nobjs++] = obj;   /* register for resolution + dedup */
     *out = obj;
     return XTLD_OK;
 }
@@ -325,6 +385,16 @@ uintptr_t xtld_entry(const xtld_obj *obj)
 uintptr_t xtld_base(const xtld_obj *obj) { return obj ? obj->bias : 0; }
 size_t    xtld_span(const xtld_obj *obj) { return obj ? obj->span : 0; }
 uint32_t  xtld_init_count(const xtld_obj *obj) { return obj ? obj->init_count : 0; }
+
+void xtld_unload(xtld_obj *obj)
+{
+    if (!obj) return;
+    if (--obj->refcount > 0) return;             /* still in use */
+    for (int i = 0; i < g_nobjs; i++)            /* drop from the registry */
+        if (g_objs[i] == obj) { g_objs[i] = g_objs[--g_nobjs]; break; }
+    /* (DT_FINI_ARRAY + transitive dep unload are follow-ups.) */
+    xtld_free(obj);
+}
 
 void xtld_free(xtld_obj *obj)
 {

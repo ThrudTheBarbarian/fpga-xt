@@ -82,5 +82,12 @@ types.
   table**. `init` spawns `/bin/hello` and `/bin/showmotd` (the latter reads
   `/etc/motd`) — programs loaded from a filesystem doing real file I/O.
 
+  **M3** adds shared libraries (the `libGEM.so` mechanism): the loader handles
+  `DT_NEEDED` (recursively loading deps from `/OS/Library/`), resolves undefined
+  symbols across a registry of loaded objects, dedups/refcounts by `DT_SONAME`,
+  and falls back to a **curated kernel export table** (`frtos_ksym` — `memcpy`
+  etc.). `/bin/usestr` imports `strrev` from `/OS/Library/libutil.so` and calls
+  it across the module boundary.
+
 Requires `arm-none-eabi-gcc`, `ld.lld`, and `qemu-system-arm` on `PATH` (all via
 Homebrew).

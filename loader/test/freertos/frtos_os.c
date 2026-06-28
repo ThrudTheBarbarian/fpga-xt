@@ -10,6 +10,7 @@
  *   close/lseek). waitpid blocks on a per-process semaphore.
  */
 #include <stdint.h>
+#include <string.h>
 #include "FreeRTOS.h"
 #include "task.h"
 #include "semphr.h"
@@ -150,7 +151,11 @@ int frtos_spawn(const uint8_t *image, uint32_t len, const xtld_host *host)
     proc_t *p = &g_proc[slot];
 
     xtld_obj *obj = NULL; char err[64] = {0};
-    if (xtld_load(image, len, host, &obj, err, sizeof err) != XTLD_OK) return -1;
+    int rc = xtld_load(image, len, host, &obj, err, sizeof err);
+    if (rc != XTLD_OK) {
+        if (g_console) { g_console("  xtld_load err: ", 17); g_console(err, (int)strlen(err)); g_console("\n", 1); }
+        return -1;
+    }
     uintptr_t entry = xtld_sym(obj, "_app_entry");
     if (!entry) return -1;
 
@@ -170,6 +175,35 @@ int frtos_spawn_path(const char *path, const xtld_host *host)
     const uint8_t *data; uint32_t size;
     if (!romfs_lookup(path, &data, &size)) return -1;
     return frtos_spawn(data, size, host);
+}
+
+/* xtld_host.resolve: the curated kernel export table — the libc-level symbols
+ * the kernel publishes to loaded programs (e.g. gcc emits memcpy for array
+ * init). Resolved after the loaded-library registry. */
+uintptr_t frtos_ksym(const char *name, void *u)
+{
+    (void)u;
+    if (!strcmp(name, "memcpy"))  return (uintptr_t)memcpy;
+    if (!strcmp(name, "memset"))  return (uintptr_t)memset;
+    if (!strcmp(name, "memmove")) return (uintptr_t)memmove;
+    if (!strcmp(name, "memcmp"))  return (uintptr_t)memcmp;
+    if (!strcmp(name, "strlen"))  return (uintptr_t)strlen;
+    if (!strcmp(name, "strcmp"))  return (uintptr_t)strcmp;
+    return 0;
+}
+
+/* xtld_host.open_lib: map a DT_NEEDED soname to /OS/Library/<name> in the romfs */
+int frtos_open_lib(const char *name, const uint8_t **data, uint32_t *len, void *u)
+{
+    (void)u;
+    char path[64];
+    const char *pfx = "/OS/Library/";
+    int i = 0;
+    while (pfx[i]) { path[i] = pfx[i]; i++; }
+    int j = 0;
+    while (name[j] && i < (int)sizeof(path) - 1) path[i++] = name[j++];
+    path[i] = 0;
+    return romfs_lookup(path, data, len);
 }
 
 int frtos_waitpid(int pid)

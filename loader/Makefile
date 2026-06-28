@@ -108,11 +108,26 @@ $(BUILD)/%.so: test/freertos/progs/%.c | $(BUILD)
 	$(ARMCC) $(PROGCFLAGS) -c $< -o $(BUILD)/$*.o
 	$(LLD) -shared --hash-style=sysv -o $@ $(BUILD)/$*.o
 
+# a shared library carries a soname (the registry/dedup key)
+$(BUILD)/libutil.so: test/freertos/libs/libutil.c | $(BUILD)
+	$(ARMCC) $(PROGCFLAGS) -c $< -o $(BUILD)/libutil.o
+	$(LLD) -shared --hash-style=sysv -soname libutil.so -o $@ $(BUILD)/libutil.o
+
+# a program that links against the .so gets a DT_NEEDED + an unresolved import
+$(BUILD)/usestr.so: test/freertos/progs/usestr.c $(BUILD)/libutil.so | $(BUILD)
+	$(ARMCC) $(PROGCFLAGS) -c $< -o $(BUILD)/usestr.o
+	$(LLD) -shared --hash-style=sysv -o $@ $(BUILD)/usestr.o $(BUILD)/libutil.so
+
 $(BUILD)/mkromfs: tools/mkromfs.c | $(BUILD)
 	$(HOSTCC) -O2 -o $@ $<
 
-$(BUILD)/romfs.bin: $(BUILD)/mkromfs $(BUILD)/hello.so $(BUILD)/showmotd.so test/freertos/motd.txt
-	$(BUILD)/mkromfs $@ /bin/hello=$(BUILD)/hello.so /bin/showmotd=$(BUILD)/showmotd.so /etc/motd=test/freertos/motd.txt
+$(BUILD)/romfs.bin: $(BUILD)/mkromfs $(BUILD)/hello.so $(BUILD)/showmotd.so $(BUILD)/usestr.so $(BUILD)/libutil.so test/freertos/motd.txt
+	$(BUILD)/mkromfs $@ \
+	    /bin/hello=$(BUILD)/hello.so \
+	    /bin/showmotd=$(BUILD)/showmotd.so \
+	    /bin/usestr=$(BUILD)/usestr.so \
+	    /OS/Library/libutil.so=$(BUILD)/libutil.so \
+	    /etc/motd=test/freertos/motd.txt
 
 $(BUILD)/romfs_blob.h: $(BUILD)/romfs.bin
 	@{ printf 'unsigned char romfs_blob[] = {\n'; \

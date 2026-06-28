@@ -28,12 +28,13 @@ static void init_task(void *arg)
 {
     (void)arg;
     xtld_host host = { .alloc = bump, .dealloc = NULL, .sync_caches = NULL,
-                       .resolve = NULL, .user = NULL };
+                       .resolve = frtos_ksym, .open_lib = frtos_open_lib, .user = NULL };
 
     int a = run(&host, "/bin/hello");
     int b = run(&host, "/bin/showmotd");
+    int c = run(&host, "/bin/usestr");      /* imports strrev from libutil.so */
 
-    if (a == 0 && b == 0) { puts0("RESULT: PASS\n"); sh_exit(0); }
+    if (a == 0 && b == 0 && c == 0) { puts0("RESULT: PASS\n"); sh_exit(0); }
     puts0("RESULT: FAIL\n"); sh_exit(1);
 }
 

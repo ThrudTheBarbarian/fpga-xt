@@ -33,8 +33,12 @@ typedef struct {
      * I-cache invalidate. No-op on the host. */
     void (*sync_caches)(void *addr, size_t len, void *user);
     /* Resolve an undefined symbol by name to its absolute address, or 0 if
-     * unknown (causes load to fail with XTLD_E_UNDEF). */
+     * unknown. Tried after the loaded-object registry; 0 here too = load fails
+     * with XTLD_E_UNDEF. This is the curated kernel export table. */
     uintptr_t (*resolve)(const char *name, void *user);
+    /* Open a DT_NEEDED shared library by name -> its ELF image bytes (e.g. from
+     * the filesystem). Return 1 on success. NULL = no shared-library support. */
+    int (*open_lib)(const char *name, const uint8_t **data, uint32_t *len, void *user);
     void *user;
 } xtld_host;
 
@@ -74,6 +78,11 @@ size_t xtld_span(const xtld_obj *obj);
 
 /* Number of DT_INIT_ARRAY constructors discovered (diagnostics). */
 uint32_t xtld_init_count(const xtld_obj *obj);
+
+/* Drop a reference; the object (and, transitively, nothing else for now) is
+ * freed when its refcount hits zero. Shared libraries are loaded once and
+ * refcounted across dependents. */
+void xtld_unload(xtld_obj *obj);
 
 void xtld_free(xtld_obj *obj);
 
