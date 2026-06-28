@@ -63,7 +63,13 @@ static void shell_task(void *arg)
         if (argc == 0) continue;
         if (!strcmp(argv[0], "exit")) { puts0("bye\n"); sh_exit(0); }
         if (!strcmp(argv[0], "help")) {
-            puts0("builtins: help, exit. programs: /bin/{hello,showmotd,usestr,echo,libc_test,gemtext}\n");
+            puts0("builtins: help, exit, faulttest. programs: /bin/{hello,showmotd,usestr,echo,libc_test,gemtext,desktop}\n");
+            continue;
+        }
+        if (!strcmp(argv[0], "faulttest")) {       /* T2-a: prove the MMU traps a wild pointer */
+            puts0("faulttest: writing 0xdead to NULL ...\n");
+            *(volatile unsigned *)0 = 0xdeadu;
+            puts0("faulttest: SURVIVED (no protection?!)\n");
             continue;
         }
         char path[72];

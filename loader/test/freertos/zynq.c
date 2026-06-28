@@ -68,19 +68,33 @@ void vApplicationIRQHandler(uint32_t ulICCIAR)
         FreeRTOS_Tick_Handler();
 }
 
-/* called from the exception vectors (xt_vectors.S) to localize a fault */
+static void fr_hex(const char *label, unsigned v)
+{
+    extern void puts0(const char *);
+    char hex[11] = "0x00000000";
+    for (int i = 0; i < 8; i++) { unsigned d = (v >> ((7 - i) * 4)) & 0xF; hex[2 + i] = (char)(d < 10 ? '0' + d : 'a' + d - 10); }
+    puts0(label); puts0(hex);
+}
+
+/* called from the exception vectors (xt_vectors.S) to localize a fault.
+ * T2-a: read the CP15 fault registers + the faulting task so a protection abort
+ * (NULL/wild pointer, W^X violation) is precisely diagnosable rather than a
+ * silent corruption or an anonymous hang. */
 void fault_report(unsigned code, unsigned addr)
 {
     extern void puts0(const char *);
+    unsigned dfar, dfsr, ifsr;
+    __asm__ volatile("mrc p15,0,%0,c6,c0,0" : "=r"(dfar));      /* data fault address */
+    __asm__ volatile("mrc p15,0,%0,c5,c0,0" : "=r"(dfsr));      /* data fault status  */
+    __asm__ volatile("mrc p15,0,%0,c5,c0,1" : "=r"(ifsr));      /* instr fault status */
     static const char *const names[8] =
         { "reset", "UNDEF", "svc", "PREFETCH-ABORT", "DATA-ABORT", "resv", "irq", "FIQ" };
-    char hex[11] = "0x00000000";
-    for (int i = 0; i < 8; i++) {
-        unsigned d = (addr >> ((7 - i) * 4)) & 0xF;
-        hex[2 + i] = (char)(d < 10 ? '0' + d : 'a' + d - 10);
-    }
-    puts0("\n*** FAULT: "); puts0(code < 8 ? names[code] : "?");
-    puts0(" at "); puts0(hex); puts0(" ***\n");
+    char *tn = pcTaskGetName(0);
+    puts0("\n*** "); puts0(code < 8 ? names[code] : "?");
+    puts0(" in task '"); puts0(tn ? tn : "?"); puts0("'\n");
+    fr_hex("    PC=", addr);
+    fr_hex("  DFAR=", dfar); fr_hex("  DFSR=", dfsr); fr_hex("  IFSR=", ifsr);
+    puts0("\n*** protection fault caught (T2-a) — halted ***\n");
     for (;;) {}
 }
 

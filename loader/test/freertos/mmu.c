@@ -18,12 +18,17 @@ static volatile uint32_t l1[4096] __attribute__((aligned(16384)));
 
 void mmu_init(void)
 {
+    /* T2-a protection: domain 0 is a CLIENT (AP enforced, not bypassed). The
+     * null/low section is a translation fault (NULL/wild-low pointer -> abort);
+     * code regions are executable, data regions XN (W^X at section grain). */
     for (uint32_t i = 0; i < 4096; i++) {
         uint32_t base = i << 20;                 /* 1 MB sections */
-        l1[i] = (i < 1024) ? (base | 0x1C02)     /* 0..1GB DDR: Normal non-cacheable, AP=11 */
-                           : (base | 0x0C06);    /* peripherals: Device, AP=11 */
+        if (i == 0)              l1[i] = 0;                    /* 0x00000000: fault (NULL trap) */
+        else if (i < 0x200)      l1[i] = base | 0x1C02;       /* 0x0010_0000..0x1FFF_FFFF: kernel+pool, Normal, AP=11, X */
+        else if (i < 1024)       l1[i] = base | 0x1C12;       /* 0x2000_0000..0x3FFF_FFFF: SALLY/spare/planes, Normal, XN */
+        else                     l1[i] = base | 0x0C16;       /* peripherals: Device, AP=11, XN */
     }
-    asm volatile("mcr p15,0,%0,c3,c0,0" :: "r"(0x3u));          /* DACR: domain 0 = manager */
+    asm volatile("mcr p15,0,%0,c3,c0,0" :: "r"(0x1u));          /* DACR: domain 0 = CLIENT (enforce AP) */
     asm volatile("mcr p15,0,%0,c2,c0,2" :: "r"(0u));            /* TTBCR = 0 (TTBR0 only) */
     asm volatile("mcr p15,0,%0,c2,c0,0" :: "r"((uint32_t)l1));  /* TTBR0 = L1 table */
     asm volatile("mcr p15,0,%0,c8,c7,0" :: "r"(0u));            /* invalidate unified TLB */
