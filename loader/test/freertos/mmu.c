@@ -44,3 +44,39 @@ void mmu_init(void)
     asm volatile("mcr p15,0,%0,c1,c0,0" :: "r"(sctlr));
     asm volatile("dsb; isb");
 }
+
+/* ---- W^X: per-page protection of loaded images (tier-2, T2-c) ----------
+ * Set a VA range read-only and/or execute-never in the master table, converting
+ * the (1 MB section) it lives in to a per-page L2 on first touch. Called on each
+ * loaded program's text (RO+X) and writable (RW+XN) segments BEFORE the process
+ * table is cloned from the master, so every space inherits W^X. */
+static uint32_t l2pool[32][256] __attribute__((aligned(1024)));
+static int      l2pool_next;
+
+#define PG_NORMAL ((3u << 4) | (1u << 6) | 0x2u)   /* AP=RW all, TEX=001, small page, executable */
+#define PG_RO     (1u << 9)                          /* AP[2]=1 -> read-only */
+#define PG_XN     0x1u                               /* execute-never */
+
+static uint32_t *l2_for_section(uint32_t sec)
+{
+    if ((l1[sec] & 0x3u) == 0x1u) return (uint32_t *)(l1[sec] & 0xFFFFFC00u);  /* already coarse */
+    if (l2pool_next >= 32) return 0;                                            /* pool exhausted */
+    uint32_t *l2 = l2pool[l2pool_next++];
+    uint32_t secbase = sec << 20;
+    for (uint32_t i = 0; i < 256; i++) l2[i] = (secbase + i * 0x1000u) | PG_NORMAL;  /* identity, RWX */
+    l1[sec] = ((uint32_t)l2 & 0xFFFFFC00u) | 0x1u;
+    return l2;
+}
+
+void mmu_protect(uint32_t va, uint32_t size, int ro, int xn)
+{
+    uint32_t end = (va + size + 0xFFFu) & ~0xFFFu;
+    for (uint32_t p = va & ~0xFFFu; p < end; p += 0x1000u) {
+        uint32_t *l2 = l2_for_section(p >> 20);
+        if (!l2) return;
+        l2[(p >> 12) & 0xFFu] = (p & 0xFFFFF000u) | PG_NORMAL | (ro ? PG_RO : 0u) | (xn ? PG_XN : 0u);
+    }
+    asm volatile("dsb");
+    asm volatile("mcr p15,0,%0,c8,c7,0" :: "r"(0u));   /* TLBIALL */
+    asm volatile("dsb; isb");
+}

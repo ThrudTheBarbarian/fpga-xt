@@ -296,6 +296,17 @@ int frtos_spawn(const uint8_t *image, uint32_t len, int argc, char **argv,
     if (!entry) entry = xtld_sym(obj, "main");        /* xtc / plain main(argc,argv) */
     if (!entry) return -1;
 
+    /* W^X: the image's text/rodata becomes read-only+executable and its writable
+     * (data/bss) segment becomes read-write+execute-never, in the master table —
+     * BEFORE vm_space_create clones it, so the process inherits the protection.
+     * Code can't be modified; data can't be executed. */
+    { extern void mmu_protect(uint32_t, uint32_t, int, int);
+      uintptr_t ibase = xtld_image_base(obj), wva; uint32_t wsz;
+      xtld_writable_range(obj, &wva, &wsz);
+      if (ibase && wva > ibase) mmu_protect((uint32_t)ibase, (uint32_t)(wva - ibase), 1, 0);  /* text: RO+X */
+      if (wva && wsz)           mmu_protect((uint32_t)wva, wsz, 0, 1);                          /* data: RW+XN */
+    }
+
     for (int i = 0; i < NFD; i++) p->fd[i].open = 0;
     p->obj = obj; p->entry = entry; p->exit_code = 0; p->pid = g_next_pid++;
     p->argc = argc; p->argv = copy_argv(argc, argv, host);

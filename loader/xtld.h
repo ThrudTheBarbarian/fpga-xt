@@ -76,6 +76,10 @@ uintptr_t xtld_base(const xtld_obj *obj);
 /* Span of the loaded image in bytes (for diagnostics / cache range). */
 size_t xtld_span(const xtld_obj *obj);
 
+/* Base address of the loaded image (runtime). text/rodata = [base, writable_va);
+ * used for W^X (mark text read-only, the writable segment execute-never). */
+uintptr_t xtld_image_base(const xtld_obj *obj);
+
 /* The writable (data/bss) PT_LOAD segment's runtime VA + size — for per-process
  * private-data mapping (each process gets its own copy of these pages). */
 void xtld_writable_range(const xtld_obj *obj, uintptr_t *va, uint32_t *size);

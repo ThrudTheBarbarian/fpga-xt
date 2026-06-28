@@ -393,6 +393,7 @@ uintptr_t xtld_entry(const xtld_obj *obj)
 
 uintptr_t xtld_base(const xtld_obj *obj) { return obj ? obj->bias : 0; }
 size_t    xtld_span(const xtld_obj *obj) { return obj ? obj->span : 0; }
+uintptr_t xtld_image_base(const xtld_obj *obj) { return obj ? (uintptr_t)obj->image : 0; }
 
 void xtld_writable_range(const xtld_obj *obj, uintptr_t *va, uint32_t *size)
 {

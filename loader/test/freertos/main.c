@@ -116,6 +116,15 @@ static void shell_task(void *arg)
             puts0("stacktest: overflow hit the guard page; OS survives.\n");
             continue;
         }
+        if (!strcmp(argv[0], "wxtest")) {          /* T2-c: W^X — writing to text faults */
+            puts0("wxtest: spawning /bin/wxtest (it writes to its own code)...\n");
+            char *av[1] = { (char *)"wxtest" };
+            int pid = frtos_spawn_argv("/bin/wxtest", 1, av, &g_host);
+            if (pid < 0) { puts0("wxtest: not found\n"); continue; }
+            frtos_waitpid(pid);
+            puts0("wxtest: the code write was blocked (RO text); OS survives.\n");
+            continue;
+        }
         if (!strcmp(argv[0], "faulttest")) {       /* T2-a.2: a faulting app is killed; the OS survives */
             puts0("faulttest: spawning /bin/faultprog (it derefs NULL)...\n");
             char *av[1] = { (char *)"faultprog" };
