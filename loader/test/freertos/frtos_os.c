@@ -144,6 +144,20 @@ static void task_exit_thunk(void)
     for (;;) {}
 }
 
+/* For a STACK OVERFLOW (DFAR in a guard page) the task's own stack is unusable,
+ * so xt_vectors.S points its SP at this per-process emergency stack before running
+ * the kill thunk. For any other fault the task's stack is fine -> return 0 (leave
+ * SP alone, use today's path). */
+uint32_t xtos_emerg_sp(void)
+{
+    uint32_t dfar; __asm__ volatile("mrc p15,0,%0,c6,c0,0" : "=r"(dfar));
+    extern int stackguard_is_guard(unsigned);
+    if (!stackguard_is_guard(dfar)) return 0;
+    extern uint32_t stackguard_emerg_top(int);
+    proc_t *p = cur_proc();
+    return p ? stackguard_emerg_top((int)(p - g_proc)) : 0;
+}
+
 /* T2-a.2: the abort handler (xt_vectors.S) redirects a faulting task here — it
  * runs in the task's own (System-mode) context, so it can give the waitpid
  * semaphore (unblock the parent) and delete itself; the OS keeps running. */

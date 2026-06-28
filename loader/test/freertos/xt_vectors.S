@@ -73,7 +73,13 @@ xt_fiq:   mov r0, #7
  * thunk (movs restores SPSR_abt = the task's mode), so it deletes itself and the
  * scheduler keeps running the rest of the OS. T2-a.2. */
 xt_fault: bl   fault_report
-          movw lr, #:lower16:xtos_task_fault_exit
+          bl   xtos_emerg_sp        @ r0 = emergency stack top, 0 if not a stack overflow
+          cmp  r0, #0
+          beq  1f
+          cps  #0x1f                @ System mode: replace the task's (overflowed) SP
+          mov  sp, r0               @   with the emergency stack so the kill thunk has
+          cps  #0x17                @   a valid stack to run on
+1:        movw lr, #:lower16:xtos_task_fault_exit
           movt lr, #:upper16:xtos_task_fault_exit
           movs pc, lr
     .global xt_hang

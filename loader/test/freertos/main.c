@@ -107,6 +107,15 @@ static void shell_task(void *arg)
             puts0(" heap pages were demand-mapped (zero-fill on touch)\n");
             continue;
         }
+        if (!strcmp(argv[0], "stacktest")) {       /* T2-c: stack overflow -> guard page */
+            puts0("stacktest: spawning /bin/stacktest (it overflows its stack)...\n");
+            char *av[1] = { (char *)"stacktest" };
+            int pid = frtos_spawn_argv("/bin/stacktest", 1, av, &g_host);
+            if (pid < 0) { puts0("stacktest: not found\n"); continue; }
+            frtos_waitpid(pid);
+            puts0("stacktest: overflow hit the guard page; OS survives.\n");
+            continue;
+        }
         if (!strcmp(argv[0], "faulttest")) {       /* T2-a.2: a faulting app is killed; the OS survives */
             puts0("faulttest: spawning /bin/faultprog (it derefs NULL)...\n");
             char *av[1] = { (char *)"faultprog" };
@@ -132,6 +141,7 @@ int main(void)
 {
     puts0("=== xtos: libc.so bring-up + shell (qemu zynq-a9, M6a) ===\n");
     mmu_init();          /* flat map -> RAM is Normal memory (unaligned access ok) */
+    { extern void stackguard_init(void); stackguard_init(); }   /* guarded stack arena */
     gic_init();
     ksys_set_console(rt_write);
     romfs_mount(romfs_blob, romfs_blob_len);

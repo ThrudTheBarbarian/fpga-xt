@@ -94,6 +94,8 @@ void fault_report(unsigned code, unsigned addr)
     puts0(" in task '"); puts0(tn ? tn : "?"); puts0("'\n");
     fr_hex("    PC=", addr);
     fr_hex("  DFAR=", dfar); fr_hex("  DFSR=", dfsr); fr_hex("  IFSR=", ifsr);
+    { extern int stackguard_is_guard(unsigned);
+      if (code == 4 && stackguard_is_guard(dfar)) puts0("\n*** STACK OVERFLOW (hit guard page)"); }
     puts0("\n*** killing the faulting task; OS continues (T2-a) ***\n");
     /* returns to xt_vectors.S, which redirects the task into xtos_task_fault_exit */
 }
