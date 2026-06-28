@@ -14,9 +14,13 @@
 #include <stdint.h>
 #include <string.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include "xil_cache.h"
 #include "xil_printf.h"
 #include "sprite.h"
+#include "lodepng.h"         /* PNG decode (desktop icons) */
+#include "FreeRTOS.h"        /* xTaskGetTickCount — double-click timing */
+#include "task.h"
 
 #include "lua.h"
 #include "lauxlib.h"
@@ -51,6 +55,16 @@ static gfx_surface g_wallpaper = {
     .px = (uint32_t *)(uintptr_t)WALLPAPER_BASE,
 };
 static int g_wallpaper_captured = 0;
+
+/* Snapshot the desktop plane (DESK_BASE) into the persistent WM backdrop.  Called by
+ * screen.wallpaper right after a clean wallpaper loads, so the backdrop is the
+ * wallpaper image and NOT whatever a later boot/demo script draws to the plane.
+ * Once captured here, wm_bringup will not re-snapshot. */
+void gem_lua_capture_wallpaper(void)
+{
+    gfx_blit(&g_wallpaper, 0, 0, &g_desk, 0, 0, DESK_W, DESK_H);
+    g_wallpaper_captured = 1;
+}
 
 /* Window-chrome theme (9-slice artwork), loaded once from the SD: /OS/Themes/Default
  * holds the active theme name (e.g. "Aristo2"); the art is /OS/Themes/<name>/1x/
@@ -307,25 +321,31 @@ static void win_content(gem_window *win, void *ud)
 
 static void cur_init(void);                 /* HW-sprite cursor (defined below) */
 
+/* Bring up the window manager on the desktop plane (once): theme, the boot
+ * wallpaper as the backdrop, and the HW-sprite cursor.  Shared by wintest and the
+ * desktop. */
+static void wm_bringup(void)
+{
+    if (g_wm_up) return;
+    gem_wm_init(&g_wm, &g_desk, GFX_RGB(0x20, 0x60, 0x90));
+    gem_wm_set_font(&g_wm, g_sys);
+    if (load_desktop_theme()) gem_wm_set_theme(&g_wm, &g_theme);  /* Aristo2 chrome */
+    g_wm.no_cursor = 1;          /* the A9 owns the pointer (HW sprite, below) */
+    /* Snapshot the live plane (the boot wallpaper) into the persistent backdrop
+     * ONCE — before any window is drawn — so windows erase to the wallpaper. */
+    if (!g_wallpaper_captured) {
+        gfx_blit(&g_wallpaper, 0, 0, &g_desk, 0, 0, DESK_W, DESK_H);
+        g_wallpaper_captured = 1;
+    }
+    gem_wm_set_wallpaper(&g_wm, &g_wallpaper);
+    g_wm_up = 1;
+    cur_init();                  /* bring up the hardware-sprite cursor */
+}
+
 static int l_vdi_wintest(lua_State *L)
 {
     if (!gem_ready(L)) return 0;
-    if (!g_wm_up) {
-        gem_wm_init(&g_wm, &g_desk, GFX_RGB(0x20, 0x60, 0x90));
-        gem_wm_set_font(&g_wm, g_sys);
-        if (load_desktop_theme()) gem_wm_set_theme(&g_wm, &g_theme);  /* Aristo2 chrome */
-        g_wm.no_cursor = 1;          /* the A9 owns the pointer (HW sprite, below) */
-        /* Snapshot the live plane (the boot wallpaper) into the persistent
-         * backdrop ONCE — before any window is drawn — then back the WM with it
-         * so windows erase to the wallpaper, not a solid blue fill. */
-        if (!g_wallpaper_captured) {
-            gfx_blit(&g_wallpaper, 0, 0, &g_desk, 0, 0, DESK_W, DESK_H);
-            g_wallpaper_captured = 1;
-        }
-        gem_wm_set_wallpaper(&g_wm, &g_wallpaper);
-        g_wm_up = 1;
-        cur_init();                  /* bring up the hardware-sprite cursor */
-    }
+    wm_bringup();
     gem_window *a = gem_wm_add(&g_wm, 220, 160, 380, 260, "Window One", 1);
     if (a) gem_wm_set_redraw(a, win_content, (void *)"Hello from window one");
     gem_window *b = gem_wm_add(&g_wm, 560, 380, 380, 260, "Window Two", 0);
@@ -513,11 +533,17 @@ static void drag_end(void)
  * points the plane at that window's content rect — call it whenever the window
  * moves, is rescaled, or closes (then the plane reverts). */
 static int g_emu_slot = -1;
+
+/* Hide the XL plane entirely (empty clip).  NOTE: xt_xl_window_off() reverts to the
+ * LEGACY centred full-screen emulation (still visible); on the desktop we want it
+ * GONE until a window is bound, so use a zero-size clip instead. */
+static void xl_hide(void) { xt_xl_window(0, 0, 0, 0, 1); }
+
 static void emu_track(void)
 {
     if (g_emu_slot < 0) return;
     gem_window *w = &g_wm.win[g_emu_slot];
-    if (!w->used || !w->emu_backed) { xt_xl_window_off(); g_emu_slot = -1; return; }
+    if (!w->used || !w->emu_backed) { xl_hide(); g_emu_slot = -1; return; }
     if (w->emu_target == GEM_EMU_XL)
         xt_xl_window((uint16_t)w->cx, (uint16_t)w->cy,
                      (uint16_t)w->cw, (uint16_t)w->ch, (uint8_t)w->emu_scale);
@@ -546,12 +572,9 @@ static void wm_pointer(int dx, int dy)
         cur_show(g_mx, g_my);                        /* HW cursor sprite tracks, on top of the overlay */
         DRAG_DBG("[drag] MOVE ptr=(%d,%d) win=(%d,%d) ovl=(%d,%d)\r\n",
                    g_mx, g_my, w->x, w->y, ox, oy);
-    } else if (g_mbtn) {                              /* button down, no window grabbed -> full */
-        s_cvis = 0;
-        g_mx = nx; g_my = ny;
-        gem_wm_mouse_move(&g_wm, nx, ny);
-        gem_wm_draw(&g_wm); desk_flush(); cur_show(nx, ny);
-    } else {                                          /* pure move -> cursor box only */
+    } else {                                          /* not dragging a window -> move the cursor
+                                                       * only (no full-screen recomposite, even
+                                                       * with the button held on the background) */
         cur_hide();
         g_mx = nx; g_my = ny;
         cur_show(nx, ny);
@@ -566,6 +589,138 @@ static gem_window *wm_active_window(void)
         if (w->used && w->active) return w;
     }
     return NULL;
+}
+
+/* ---- Desktop icons (M4) ---------------------------------------------------
+ * Two icons (XE = 8-bit XL, ST = 16/32-bit) baked into the wallpaper backdrop so
+ * the WM's erase preserves them; double-clicking one opens a window bound to that
+ * emulation plane (gem_wm_bind_emu).  Icon images are PNGs on the SD (/OS/Icons). */
+typedef struct { gfx_surface *img; int x, y, w, h; const char *title;
+                 gem_emu_target target; int scale; } desk_icon;
+static desk_icon g_icons[2];
+static int       g_nicons = 0, g_icons_baked = 0;
+static int       g_last_icon = -1;          /* double-click tracking */
+static TickType_t g_last_click = 0;
+static int       g_dark_icon = -1;          /* icon currently shown darkened, or -1 */
+
+static gfx_surface *load_icon_png(const char *path)
+{
+    FILE *f = fopen(path, "rb");
+    if (!f) { xil_printf("    icon: open %s FAILED\r\n", path); return NULL; }
+    fseek(f, 0, SEEK_END); long sz = ftell(f); fseek(f, 0, SEEK_SET);
+    if (sz <= 0) { fclose(f); return NULL; }
+    unsigned char *buf = malloc((size_t)sz);
+    if (!buf) { fclose(f); return NULL; }
+    size_t got = fread(buf, 1, (size_t)sz, f); fclose(f);
+    if (got != (size_t)sz) { free(buf); return NULL; }
+    unsigned char *rgba = NULL; unsigned w = 0, h = 0;
+    unsigned err = lodepng_decode32(&rgba, &w, &h, buf, got);
+    free(buf);
+    if (err) { xil_printf("    icon: decode %s err %u\r\n", path, err); return NULL; }
+    gfx_surface *s = gfx_surface_alloc((int)w, (int)h);     /* RGBA bytes -> 0xRRGGBBAA */
+    if (s) for (unsigned y = 0; y < h; y++) for (unsigned x = 0; x < w; x++) {
+        const unsigned char *p = &rgba[(y*w + x)*4];
+        s->px[y*s->stride + x] = ((uint32_t)p[0]<<24)|((uint32_t)p[1]<<16)|((uint32_t)p[2]<<8)|p[3];
+    }
+    free(rgba);
+    return s;
+}
+
+/* Alpha-blend an RGBA surface over the destination (both 0xRRGGBBAA words), with
+ * the source RGB scaled by mul/256 (256 = unchanged, 128 = darken to 50%). */
+static void blit_alpha(gfx_surface *d, int dx, int dy, const gfx_surface *s, int mul)
+{
+    for (int y = 0; y < s->h; y++) for (int x = 0; x < s->w; x++) {
+        uint32_t sp = s->px[y*s->stride + x];
+        unsigned a = sp & 0xFF;
+        if (!a) continue;
+        int X = dx + x, Y = dy + y;
+        if (X < 0 || X >= d->w || Y < 0 || Y >= d->h) continue;
+        unsigned sr = (((sp>>24)&0xFF) * mul) >> 8;
+        unsigned sg = (((sp>>16)&0xFF) * mul) >> 8;
+        unsigned sb = (((sp>> 8)&0xFF) * mul) >> 8;
+        uint32_t *dp = &d->px[Y*d->stride + X];
+        if (a == 0xFF) { *dp = (sr<<24)|(sg<<16)|(sb<<8)|0xFFu; continue; }
+        uint32_t q = *dp; unsigned na = 255 - a;
+        unsigned r = (sr*a + ((q>>24)&0xFF)*na)/255;
+        unsigned g = (sg*a + ((q>>16)&0xFF)*na)/255;
+        unsigned b = (sb*a + ((q>> 8)&0xFF)*na)/255;
+        *dp = (r<<24)|(g<<16)|(b<<8)|0xFFu;
+    }
+}
+
+/* Bring up the desktop: WM + icons baked into the backdrop (so the WM erase keeps
+ * them).  Idempotent — safe to call from a boot script. */
+static void desktop_setup(void)
+{
+    wm_bringup();
+    while (g_wm.nwin > 0)                              /* clean slate: close any leftover */
+        gem_wm_close(&g_wm, &g_wm.win[g_wm.z[g_wm.nwin - 1]]);  /* (e.g. boot/demo) windows */
+    g_emu_slot = -1;
+    xl_hide();                                         /* no emulation shown until an icon opens */
+    if (g_nicons == 0) {
+        gfx_surface *xe = load_icon_png("/OS/Icons/xe.png");
+        gfx_surface *st = load_icon_png("/OS/Icons/st.png");
+        int ix = 48, iy = 70, gap = 120;
+        if (xe) g_icons[g_nicons++] = (desk_icon){ xe, ix, iy,       xe->w, xe->h, "Atari XE", GEM_EMU_XL, 3 };
+        if (st) g_icons[g_nicons++] = (desk_icon){ st, ix, iy + gap, st->w, st->h, "Atari ST", GEM_EMU_ST, 2 };
+    }
+    if (!g_icons_baked && g_nicons) {                 /* bake icons + labels into the backdrop */
+        int lvh = v_opnvwk(&g_wallpaper);             /* a VDI ws to draw labels onto it */
+        for (int i = 0; i < g_nicons; i++)
+            blit_alpha(&g_wallpaper, g_icons[i].x, g_icons[i].y, g_icons[i].img, 256);
+        if (lvh > 0) {
+            vst_color(lvh, 0);                        /* pen 0 = white (readable on the wallpaper) */
+            vst_point(lvh, 9, NULL, NULL, NULL, NULL);
+            vst_alignment(lvh, VDI_TA_CENTER, VDI_TA_TOP, NULL, NULL);
+            for (int i = 0; i < g_nicons; i++)
+                if (g_icons[i].title)
+                    v_gtext(lvh, g_icons[i].x + g_icons[i].w/2,
+                                 g_icons[i].y + g_icons[i].h + 3, g_icons[i].title);
+            v_clsvwk(lvh);
+        }
+        g_icons_baked = 1;
+    }
+    gem_wm_draw(&g_wm); desk_flush(); cur_show(g_mx, g_my);
+}
+
+static int desktop_icon_at(int x, int y)
+{
+    for (int i = 0; i < g_nicons; i++) {
+        desk_icon *ic = &g_icons[i];
+        if (x >= ic->x && x < ic->x + ic->w && y >= ic->y && y < ic->y + ic->h) return i;
+    }
+    return -1;
+}
+
+/* Single-click feedback: darken the icon on the plane; restore copies the normal
+ * icon back from the (icon+label-baked) wallpaper backdrop. */
+static void darken_icon(int i)
+{
+    desk_icon *ic = &g_icons[i];
+    blit_alpha(&g_desk, ic->x, ic->y, ic->img, 128);
+    flush_rect(ic->x, ic->y, ic->w, ic->h);
+}
+static void undark(void)
+{
+    if (g_dark_icon < 0) return;
+    desk_icon *ic = &g_icons[g_dark_icon];
+    gfx_blit(&g_desk, ic->x, ic->y, &g_wallpaper, ic->x, ic->y, ic->w, ic->h);
+    flush_rect(ic->x, ic->y, ic->w, ic->h);
+    g_dark_icon = -1;
+}
+
+/* Open a window for icon `i` and bind it to its emulation plane. */
+static void desktop_open_icon(int i)
+{
+    desk_icon *ic = &g_icons[i];
+    gem_window *w = gem_wm_add(&g_wm, 200 + i*40, 120 + i*40, 400, 300, ic->title, 1);
+    if (!w) return;
+    gem_wm_bind_emu(&g_wm, w, ic->target, ic->scale);
+    if (ic->target == GEM_EMU_XL) g_emu_slot = (int)(w - g_wm.win);  /* XL plane tracks it */
+    gem_wm_draw(&g_wm); desk_flush();
+    emu_track();
+    cur_show(g_mx, g_my);
 }
 
 /* Toggle the left button at the pointer (space): grab a title to drag, or tap
@@ -584,12 +739,31 @@ static void wm_button_toggle(void)
             if (ns >= 1 && ns <= 5) {
                 gem_wm_bind_emu(&g_wm, w, (gem_emu_target)w->emu_target, ns);
                 g_emu_slot = slot;
+                for (int k = 0; k < g_nicons; k++)        /* remember scale for next open */
+                    if (g_icons[k].target == w->emu_target) g_icons[k].scale = ns;
                 gem_wm_draw(&g_wm); desk_flush(); emu_track();
             }
             g_mbtn = 0;                                /* consume the press — no drag */
             cur_show(g_mx, g_my);
             return;
         }
+        int ic = desktop_icon_at(g_mx, g_my);          /* a desktop icon? (double-click to open) */
+        if (ic >= 0) {
+            TickType_t now = xTaskGetTickCount();
+            if (ic == g_last_icon && (now - g_last_click) < pdMS_TO_TICKS(600)) {
+                g_dark_icon = -1;                      /* the open redraw restores the icon */
+                desktop_open_icon(ic);                 /* second click in time -> launch */
+                g_last_icon = -1;
+            } else {
+                undark();                              /* clear any previously darkened icon */
+                darken_icon(ic); g_dark_icon = ic;     /* single-click feedback */
+                g_last_icon = ic; g_last_click = now;
+            }
+            g_mbtn = 0;                                /* consume the press — no drag */
+            cur_show(g_mx, g_my);
+            return;
+        }
+        undark();                                      /* pressed off the icons -> un-darken */
     }
     gem_window *prev = wm_active_window();             /* who's active BEFORE the raise/focus */
     gem_wm_mouse_button(&g_wm, g_mx, g_my, g_mbtn);    /* press raises+focuses+grabs; release ends */
@@ -726,8 +900,27 @@ static int l_vdi_xlunbind(lua_State *L)
     return 0;
 }
 
+/* desktop.start() — bring up the GEM desktop: WM + the XE/ST icons, ready for a
+ * double-click to open an emulation window.  This is the boot entry point: a
+ * /OS/Boot script calls it today; when the app/launch framework lands it becomes
+ * the body of desktop.app started via os.launch("desktop") — same desktop logic,
+ * a different trigger.  Keep this self-contained so that migration is trivial. */
+static int l_desktop_start(lua_State *L)
+{
+    if (!gem_ready(L)) return 0;
+    desktop_setup();
+    return 0;
+}
+
 void gem_lua_open(lua_State *L)
 {
+    static const luaL_Reg desktop_lib[] = {
+        {"start", l_desktop_start},       /* boot entry; future = desktop.app main */
+        {NULL, NULL}
+    };
+    luaL_newlib(L, desktop_lib);
+    lua_setglobal(L, "desktop");
+
     static const luaL_Reg vdi_lib[] = {
         {"text",      l_vdi_text},
         {"point",     l_vdi_point},
