@@ -103,6 +103,19 @@ freertos: $(BUILD)/freertos.elf
 $(BUILD)/freertos.elf: $(FRSRC) $(FRASM) test/freertos/freertos.ld test/freertos/FreeRTOSConfig.h $(BUILD)/romfs_blob.h | $(BUILD)
 	$(ARMCC) $(FRCFLAGS) -T test/freertos/freertos.ld $(FRASM) $(FRSRC) -lgcc -o $@
 
+# Load + run an externally-built PIC .so (e.g. xtc output) on the real loader:
+#   make xtcrun XTC_SO=/path/to/foo.so
+# Embeds it in the romfs as /bin/xtcprog, builds the kernel, auto-spawns it under
+# qemu. Self-contained (semihosting) or libc.so-importing programs both work.
+.PHONY: xtcrun
+xtcrun:
+	@test -n "$(XTC_SO)" || { echo "usage: make xtcrun XTC_SO=path/to.so"; exit 1; }
+	@test -f "$(XTC_SO)" || { echo "no such file: $(XTC_SO)"; exit 1; }
+	rm -f $(BUILD)/romfs.bin $(BUILD)/romfs_blob.h $(BUILD)/freertos.elf
+	$(MAKE) $(BUILD)/freertos.elf XTC_SO=$(abspath $(XTC_SO))
+	@echo "=== running /bin/xtcprog on the XTOS loader (qemu) ==="
+	@printf 'xtcprog\nexit\n' | $(QEMUZYNQ) -kernel $(BUILD)/freertos.elf; echo "(qemu exited $$?)"
+
 # libc.so — PIC newlib (loader/newlib-pic/, built by tools/build-newlib-pic.sh)
 # linked into a loadable shared object; goes in the romfs at /OS/Library/libc.so
 $(BUILD)/libc.so: newlib-pic/libc.a | $(BUILD)
@@ -176,6 +189,7 @@ $(BUILD)/romfs.bin: $(BUILD)/mkromfs $(BUILD)/hello.so $(BUILD)/showmotd.so $(BU
 	$(BUILD)/mkromfs $@ \
 	    /bin/faultprog=$(BUILD)/faultprog.so \
 	    /bin/vmtest=$(BUILD)/vmtest.so \
+	    $(if $(XTC_SO),/bin/xtcprog=$(XTC_SO)) \
 	    /OS/Library/libc.so=$(BUILD)/libc.so \
 	    /OS/Library/libm.so=$(BUILD)/libm.so \
 	    /OS/Library/libGEM.so=$(BUILD)/libGEM.so \

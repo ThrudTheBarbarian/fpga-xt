@@ -262,7 +262,8 @@ int frtos_spawn(const uint8_t *image, uint32_t len, int argc, char **argv,
         if (g_console) { g_console("  xtld_load err: ", 17); g_console(err, (int)strlen(err)); g_console("\n", 1); }
         return -1;
     }
-    uintptr_t entry = xtld_sym(obj, "_app_entry");
+    uintptr_t entry = xtld_sym(obj, "_app_entry");   /* C/asm programs */
+    if (!entry) entry = xtld_sym(obj, "main");        /* xtc / plain main(argc,argv) */
     if (!entry) return -1;
 
     for (int i = 0; i < NFD; i++) p->fd[i].open = 0;
