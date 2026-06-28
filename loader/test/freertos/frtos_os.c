@@ -210,6 +210,12 @@ int frtos_spawn_argv(const char *path, int argc, char **argv, const xtld_host *h
 /* xtld_host.resolve: the curated kernel export table — the libc-level symbols
  * the kernel publishes to loaded programs (e.g. gcc emits memcpy for array
  * init). Resolved after the loaded-library registry. */
+/* EABI runtime helpers from libgcc (the A9 has no hardware integer divide) */
+extern int      __aeabi_idiv(int, int);
+extern unsigned __aeabi_uidiv(unsigned, unsigned);
+extern void     __aeabi_idivmod(void);
+extern void     __aeabi_uidivmod(void);
+
 uintptr_t frtos_ksym(const char *name, void *u)
 {
     (void)u;
@@ -219,6 +225,10 @@ uintptr_t frtos_ksym(const char *name, void *u)
     if (!strcmp(name, "memcmp"))  return (uintptr_t)memcmp;
     if (!strcmp(name, "strlen"))  return (uintptr_t)strlen;
     if (!strcmp(name, "strcmp"))  return (uintptr_t)strcmp;
+    if (!strcmp(name, "__aeabi_idiv"))     return (uintptr_t)__aeabi_idiv;
+    if (!strcmp(name, "__aeabi_uidiv"))    return (uintptr_t)__aeabi_uidiv;
+    if (!strcmp(name, "__aeabi_idivmod"))  return (uintptr_t)__aeabi_idivmod;
+    if (!strcmp(name, "__aeabi_uidivmod")) return (uintptr_t)__aeabi_uidivmod;
     return 0;
 }
 

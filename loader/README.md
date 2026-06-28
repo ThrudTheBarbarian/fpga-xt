@@ -97,5 +97,14 @@ types.
   `SYS_spawn`/`SYS_waitpid` syscalls whose blocking parts run in task context —
   a follow-up.)*
 
+  **M5 (GEM, step A)** proves `libGEM.so` as a real shared library on XTOS:
+  `test/freertos/libs/gem.c` → `/OS/Library/libGEM.so` exports geometric VDI
+  primitives (`v_clear`/`v_bar`/`v_pline`/`v_circle`) on an RGBA-8888 surface;
+  `/bin/gemdemo` links it, draws a rect + circle + line, and dumps the surface as
+  ASCII (qemu has no display). The kernel export table also vends the EABI div
+  helpers (`__aeabi_idiv` …) since the A9 lacks hardware divide. Next: the real
+  `gem/` core + FreeType (heavier), and pixel-level visual work on the SDL
+  testbed / hardware.
+
 Requires `arm-none-eabi-gcc`, `ld.lld`, and `qemu-system-arm` on `PATH` (all via
 Homebrew).

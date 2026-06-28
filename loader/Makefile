@@ -119,16 +119,27 @@ $(BUILD)/usestr.so: test/freertos/progs/usestr.c $(BUILD)/libutil.so | $(BUILD)
 	$(ARMCC) $(PROGCFLAGS) -c $< -o $(BUILD)/usestr.o
 	$(LLD) -shared --hash-style=sysv -o $@ $(BUILD)/usestr.o $(BUILD)/libutil.so
 
+# libGEM.so — the VDI shared library; gemdemo links it
+$(BUILD)/libGEM.so: test/freertos/libs/gem.c | $(BUILD)
+	$(ARMCC) $(PROGCFLAGS) -Itest/freertos/libs -c $< -o $(BUILD)/gem.o
+	$(LLD) -shared --hash-style=sysv -soname libGEM.so -o $@ $(BUILD)/gem.o
+
+$(BUILD)/gemdemo.so: test/freertos/progs/gemdemo.c $(BUILD)/libGEM.so | $(BUILD)
+	$(ARMCC) $(PROGCFLAGS) -Itest/freertos/libs -c $< -o $(BUILD)/gemdemo.o
+	$(LLD) -shared --hash-style=sysv -o $@ $(BUILD)/gemdemo.o $(BUILD)/libGEM.so
+
 $(BUILD)/mkromfs: tools/mkromfs.c | $(BUILD)
 	$(HOSTCC) -O2 -o $@ $<
 
-$(BUILD)/romfs.bin: $(BUILD)/mkromfs $(BUILD)/hello.so $(BUILD)/showmotd.so $(BUILD)/usestr.so $(BUILD)/echo.so $(BUILD)/libutil.so test/freertos/motd.txt
+$(BUILD)/romfs.bin: $(BUILD)/mkromfs $(BUILD)/hello.so $(BUILD)/showmotd.so $(BUILD)/usestr.so $(BUILD)/echo.so $(BUILD)/gemdemo.so $(BUILD)/libutil.so $(BUILD)/libGEM.so test/freertos/motd.txt
 	$(BUILD)/mkromfs $@ \
 	    /bin/hello=$(BUILD)/hello.so \
 	    /bin/showmotd=$(BUILD)/showmotd.so \
 	    /bin/usestr=$(BUILD)/usestr.so \
 	    /bin/echo=$(BUILD)/echo.so \
+	    /bin/gemdemo=$(BUILD)/gemdemo.so \
 	    /OS/Library/libutil.so=$(BUILD)/libutil.so \
+	    /OS/Library/libGEM.so=$(BUILD)/libGEM.so \
 	    /etc/motd=test/freertos/motd.txt
 
 $(BUILD)/romfs_blob.h: $(BUILD)/romfs.bin

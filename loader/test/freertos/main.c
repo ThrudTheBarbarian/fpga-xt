@@ -51,7 +51,7 @@ static int split(char *line, char **argv, int max)
 static void shell_task(void *arg)
 {
     (void)arg;
-    puts0("\nXTOS shell  —  try: echo hello world | hello | showmotd | usestr | help | exit\n");
+    puts0("\nXTOS shell  —  try: echo hello world | hello | showmotd | usestr | gemdemo | exit\n");
     char line[128];
     char *argv[16];
     for (;;) {
@@ -62,7 +62,7 @@ static void shell_task(void *arg)
         if (argc == 0) continue;
         if (!strcmp(argv[0], "exit")) { puts0("bye\n"); sh_exit(0); }
         if (!strcmp(argv[0], "help")) {
-            puts0("builtins: help, exit. programs: /bin/{hello,showmotd,usestr,echo}\n");
+            puts0("builtins: help, exit. programs: /bin/{hello,showmotd,usestr,echo,gemdemo}\n");
             continue;
         }
         char path[72];
