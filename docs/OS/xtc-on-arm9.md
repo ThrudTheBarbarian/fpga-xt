@@ -60,6 +60,21 @@ C-cross-compiled kernel and libraries.
   `-mfloat-abi`** (hard vs soft float, VFP/NEON variant) as that build, or FP
   arguments and the newlib it links against will not agree. Read the actual flags
   from the platform build (`create_platform.py` / the Vitis BSP) — do not assume.
+- **⚠ Three INDEPENDENT knobs — do not let the ABI knob gate the codegen knob:**
+  1. **FPU present** — the Cortex-A9's VFPv3+NEON is *always* there.
+  2. **FPU enabled at boot** — VFP is OFF at reset; the FSBL/standalone BSP (and
+     our `xt_boot.S` / the Tier-1 `crt0.s`) must enable it (CPACR CP10/CP11 +
+     `FPEXC.EN`) before the first FP instruction. Confirm on the real board.
+  3. **Float ABI** (`soft` / `softfp` / `hard`) — purely *how floats cross
+     function boundaries* (core regs vs VFP regs); a perf/compat choice, read
+     from the BSP. It is **not** a statement that the FPU is absent.
+  "soft float" in the BSP means the *ABI*, NOT "no FPU". The trap to avoid: xtc
+  reading `-mfloat-abi=soft` and concluding "no FPU" → emitting soft-float
+  *libcalls* for compute. For an A9-hosted FPU (e.g. serving the 6502), that is
+  the wrong path — **xtc must emit genuine VFP instructions for compute
+  regardless of the param-passing ABI**, with the FPU enabled at boot. `softfp`
+  (soft ABI + real VFP compute) is exactly what the qemu testbed runs
+  (`-mfloat-abi=softfp -mfpu=neon-vfpv3`).
 
 ## 3. C interoperability (mandatory, not optional)
 
@@ -195,7 +210,9 @@ The port is "done enough" when:
   A32 is simpler to emit first. Default to A32 for bring-up; revisit Thumb-2 for
   density once correct.
 - **Hard vs soft float** — *gated*: must match the newlib/BSP build, so it's read
-  from the platform, not chosen here.
+  from the platform, not chosen here. See §2 for the three-knobs nuance (the soft
+  ABI is *not* "no FPU"; xtc must emit VFP for compute regardless of the ABI —
+  matters for an A9-hosted FPU serving the 6502).
 - **NEON usage** — opportunistic vectorisation is a later optimisation; not a
   bring-up requirement.
 - **Direct-ELF vs object+linker** (§8) — implementation choice to pin during the
