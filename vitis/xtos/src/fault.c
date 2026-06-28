@@ -16,8 +16,16 @@
 #include <stdint.h>
 #include <stdio.h>
 #include "xil_exception.h"
+#include "xil_mmu.h"
 #include "FreeRTOS.h"
 #include "task.h"
+
+/* Zynq's FSBL/BSP translation table maps the whole 4 GB (DDR + PL + device +
+ * reserved), so there are no unmapped holes — a wild pointer doesn't fault by
+ * default. To get protection we must actively mark a section no-access. This
+ * carves one test section in the unused PL M_AXI_GP1 window; the full T2-a map
+ * (null-trap + W^X over the real regions) is the follow-on, same mechanism. */
+#define FAULT_TEST_ADDR 0x60000000u
 
 static void abort_handler(void *ref)
 {
@@ -38,4 +46,6 @@ void xtos_fault_handlers_init(void)
 {
     Xil_ExceptionRegisterHandler(XIL_EXCEPTION_ID_DATA_ABORT_INT,     abort_handler, (void *)"DATA-ABORT");
     Xil_ExceptionRegisterHandler(XIL_EXCEPTION_ID_PREFETCH_ABORT_INT, abort_handler, (void *)"PREFETCH-ABORT");
+    /* invalid descriptor (bits[1:0]=00) -> translation fault on access */
+    Xil_SetTlbAttributes(FAULT_TEST_ADDR, 0x0u);
 }
