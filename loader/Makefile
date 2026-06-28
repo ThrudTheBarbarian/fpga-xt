@@ -156,7 +156,9 @@ GEMSRC := $(GEM)/gfx_soft.c $(GEM)/font.c $(GEM)/wm.c $(GEM)/theme.c $(wildcard 
           ../vitis/xtos/src/gem_pdf_stub.c test/freertos/libs/gem_stubs.c
 FTSRC  := $(wildcard $(FT)/tu/*.c)
 GEMINC := -Itest/freertos/libs/shim -I$(GEM) -I$(GEM)/vdi -I$(FT)/include -Inewlib-pic/include
-GEMCFLAGS := -marm -mcpu=cortex-a9 -mfloat-abi=softfp -mfpu=neon-vfpv3 -fpic -O2 $(GEMINC)
+# -g: embed DWARF so libGEM.so is self-describing for xtc's #import (the .so IS
+# the interface — see docs/OS/library-imports.md). Ship unstripped.
+GEMCFLAGS := -marm -mcpu=cortex-a9 -mfloat-abi=softfp -mfpu=neon-vfpv3 -fpic -O2 -g $(GEMINC)
 
 $(BUILD)/libGEM.so: $(GEMSRC) $(FTSRC) $(BUILD)/libc.so $(BUILD)/libm.so | $(BUILD)
 	$(ARMCC) $(GEMCFLAGS) -shared -nostdlib -Wl,-soname,libGEM.so \
