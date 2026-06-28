@@ -119,13 +119,26 @@ Nothing can drift out of sync because there is nothing else to sync — the prop
 we want. `.dynsym` is mandatory for dynamic linking and cannot be stripped from a
 shared object, so the export-set half is always present.
 
-The single thing that would break the invariant is a deliberate toolchain step:
-**splitting debug info out** (`objcopy --only-keep-debug` + `.gnu_debuglink`, or
-`strip`) moves DWARF into a separate `foo.debug` — the two-files-that-drift
-anti-pattern. **Policy: ship `.so`s unstripped, DWARF embedded.** The cost is
-larger `.so`s; the mitigation, if it ever bites, keeps the single-file property —
-embed a *trimmed* DWARF (exported types only, per dwarf-subset.md), not full
-line-tables/locals.
+The anti-pattern to avoid is **`objcopy --only-keep-debug` + `.gnu_debuglink`**:
+one `.so` split into a stripped binary plus a separate *incomplete* `.debug` that
+pair by build-id and drift. That is *not* what the runtime/debug split below is.
+
+### Runtime vs debug builds
+
+Two **complete** builds of one source, by directory:
+
+- **`/OS/Library/libGEM.so`** — runtime: optimised, stripped (no DWARF). The
+  device only *runs* it; lean to load and on RAM/SD.
+- **`/OS/Library/Debug/libGEM.so`** — a complete DWARF-carrying build: the
+  compiler's `#import` source (the cross-build sysroot points here) *and* the
+  debugger's.
+
+Both are whole self-describing `.so`s with the same `DT_SONAME` — not a
+stripped-binary-plus-separate-`.debug` pair — so the single-file invariant holds
+for the debug build, and (binding is by soname/interface, §"The sysroot") it does
+not matter that the device runs the stripped sibling. Result: efficient runtime,
+full DWARF exactly where it is used (compile + debug), and the DWARF bulk lives
+only under `Debug/`.
 
 ### Types materialise as native xtc types
 
