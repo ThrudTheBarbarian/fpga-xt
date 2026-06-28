@@ -21,11 +21,14 @@ ARMCFLAGS ?= -marm -fpic -Os -ffreestanding -fno-builtin
 QEMU      := qemu-system-arm
 QEMUFLAGS := -M virt -cpu cortex-a15 -nographic -no-reboot \
              -semihosting-config enable=on,target=native
+# real FreeRTOS runs on the actual Zynq PS model
+QEMUZYNQ  := qemu-system-arm -M xilinx-zynq-a9 -nographic -no-reboot -m 256M \
+             -semihosting-config enable=on,target=native
 BUILD := build
 BARECFLAGS := -marm -mcpu=cortex-a15 -ffreestanding -nostdlib -O0 -g \
               -I. -I$(BUILD) -Ikernel -Itest/qemu
 
-.PHONY: test dump clean qemu kernel
+.PHONY: test dump clean qemu kernel freertos
 test: $(BUILD)/host_test $(BUILD)/testlib.so
 	@echo "=== running loader host test ==="
 	@$(BUILD)/host_test $(BUILD)/testlib.so
@@ -76,6 +79,24 @@ KASM := test/qemu/startup.S kernel/arch_arm.S
 
 $(BUILD)/kernel.elf: $(KASM) $(KSRC) test/qemu/bare.ld $(BUILD)/app_so.h kernel/ksys.h kernel/xtsys.h | $(BUILD)
 	$(ARMCC) $(BARECFLAGS) -T test/qemu/bare.ld $(KASM) $(KSRC) -o $@
+
+# --- the REAL Xilinx FreeRTOS kernel + CA9 port, on qemu's Zynq PS model -
+FR     := ../third_party/freertos10_xilinx/src/Source
+FRPORT := $(FR)/portable/GCC/ARM_CA9
+FRINC  := -I$(FR)/include -I$(FRPORT) -Itest/freertos -Itest/freertos/shim -Itest/qemu
+FRCFLAGS := -marm -mcpu=cortex-a9 -mfloat-abi=softfp -mfpu=neon-vfpv3 -ffreestanding -nostdlib -O2 -g $(FRINC)
+FRSRC := $(FR)/tasks.c $(FR)/queue.c $(FR)/list.c $(FR)/timers.c $(FR)/event_groups.c \
+         $(FR)/croutine.c $(FR)/stream_buffer.c $(FR)/portable/MemMang/heap_4.c \
+         $(FRPORT)/port.c \
+         test/freertos/zynq.c test/freertos/bsp_shim.c test/freertos/main.c test/qemu/bare_rt.c
+FRASM := test/freertos/xt_boot.S test/freertos/xt_vectors.S $(FRPORT)/portASM.S
+
+freertos: $(BUILD)/freertos.elf
+	@echo "=== real Xilinx FreeRTOS under qemu xilinx-zynq-a9 ==="
+	@$(QEMUZYNQ) -kernel $< ; echo "(qemu exited $$?)"
+
+$(BUILD)/freertos.elf: $(FRSRC) $(FRASM) test/freertos/freertos.ld test/freertos/FreeRTOSConfig.h | $(BUILD)
+	$(ARMCC) $(FRCFLAGS) -T test/freertos/freertos.ld $(FRASM) $(FRSRC) -lgcc -o $@
 
 $(BUILD):
 	@mkdir -p $(BUILD)

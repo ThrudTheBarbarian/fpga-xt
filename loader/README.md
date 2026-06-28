@@ -27,6 +27,7 @@ the `svc #1` syscall gateway + `spawn`. Spec:
 make test     # host verify: load a real arm32 .so, check relocated data
 make qemu     # bare-metal EXECUTION of loaded code under qemu-system-arm
 make kernel   # svc #1 gateway + spawn: a kernel spawns an app that syscalls
+make freertos # the REAL Xilinx FreeRTOS kernel + CA9 port on qemu's Zynq model
 make dump     # readelf -h -d -r on the test .so
 make clean
 ```
@@ -53,6 +54,20 @@ types.
   `svc #1` traps for `write`/`getpid`/`exit` — proving the full syscall spine
   (immediate-decoded gateway coexisting with semihosting's `svc 0x123456`,
   dispatch by `r7`, System↔Supervisor mode switch, exit via `longjmp`).
+- **`make freertos`** runs the **real Xilinx FreeRTOS** (`../third_party/
+  freertos10_xilinx`, the same `freertos10_xilinx` @ `xilinx_v2025.2` as the
+  hardware Vitis build) — the kernel + the Cortex-A9 port unmodified — under
+  `qemu-system-arm -M xilinx-zynq-a9` (a model of the actual Zynq PS). Only the
+  BSP board-glue is ours (`test/freertos/`): boot, the runtime vector table, and
+  a functionally-identical GIC + A9-private-timer tick wired through the port's
+  `configSETUP_TICK_INTERRUPT()` / `vApplicationIRQHandler()` seams (`zynq.c`),
+  with no-op shims for the few BSP calls the port links (`bsp_shim.c`, `shim/`).
+  Two tasks preempt/alternate on the real scheduler + real tick. This is the
+  "real thing" testbed: the same kernel + port as the board, fast to iterate, with
+  gdb attach (`-s -S`) — so most kernel/syscall work happens here, not over JTAG.
+  PL peripherals (blitter/HDMI/ANTIC/compositor) aren't modelled and stay a
+  hardware concern. **Stage 2** chains the SVC vector (`svc #0`→FreeRTOS,
+  `svc #1`→the gateway) and rewires `spawn` onto `xTaskCreate`.
 
 Requires `arm-none-eabi-gcc`, `ld.lld`, and `qemu-system-arm` on `PATH` (all via
 Homebrew).

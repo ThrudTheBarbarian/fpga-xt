@@ -1,0 +1,44 @@
+# Copyright (c) 2023 - 2024 Advanced Micro Devices, Inc. All Rights Reserved.
+# SPDX-License-Identifier: MIT
+%YAML 1.2
+---
+title: Bindings for freertos bsp
+
+maintainers:
+  - Appana Durga Kedareswara Rao <appanad.durga.rao@xilinx.com>
+
+type: os
+
+version: 1.14
+
+properties:
+  reg:
+    description: Physical base address and size of the controller register map
+
+depends_libs:
+    xiltimer: {}
+
+depends:
+    ttcps:
+        - reg
+        - interrupts
+    tmrctr:
+        - reg
+        - interrupts
+    scugic:
+        - reg
+    intc:
+        - reg
+    uartps:
+        - reg
+    uartpsv:
+        - reg
+    uartlite:
+        - reg
+    uartns550:
+        - reg
+    coresightps_dcc:
+        - reg
+    iomodule:
+        - reg
+...
