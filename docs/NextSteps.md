@@ -14,18 +14,6 @@ This is a tracker, so it intentionally carries forward-looking/historical contex
 - **`make blitter_bridge` `SRCBLIT FAIL` (3 mismatches)** — sim DDR/AXI-model gap
   (coverage pixels read all-zero; SRC_BLIT works on HW), not an RTL regression.
   Non-gating (not in `make all`); fix the tb model when next in the blitter.
-- **`ls` faults — `vfs_readdir` derefs a garbage `vdir[d].fs`** — pre-existing (not from
-  the GEM/VDI/fault work; `vfs.c`/`fdtab`/`fatfs_backend` untouched). A directory listing
-  data-aborts at `vfs.c:132` (`vdir[d].fs->dirnext`) with `vdir[d].fs == 0xfb140ea2`,
-  even though `vfs_opendir` set a valid `fs` (its `diropen` ran → `bh>=0`). The fd table
-  `fdtab[12]` sits exactly at `vdir[0]` in `.bss` (0x2892c4+144 = 0x289354), so a stray
-  `fdtab[12]` write would corrupt `vdir[0].fs` — but the fd indexing is bounds-checked,
-  so the actual corruptor isn't found by static analysis. **Next:** on-board — `vdi.peek`
-  `vdir` (0x289354) right after a clean boot and after each opendir/desktop step to catch
-  when `fs` goes bad; or add prints in `vfs_opendir`/`vfs_readdir`. Now that the fault
-  kills cleanly (no loop), it no longer masks itself — but it still kills the `repl` task
-  (the faulter), so the shell dies until reboot. Consider a `repl` respawn so a faulting
-  command can't take the shell down. *(vitis/xtos/src/vfs.c, fatfs_backend.c)*
 - **A loaded libGEM.so re-running `vdi_init` wipes the kernel's live VDI** — the
   `gemhw`/runhost demo (`xtld_host.c`) resolves `vdi_init` from the loaded `libGEM.so`
   and calls `vdi_init(&desk)`; because the kernel and libGEM share the symbol, that
