@@ -60,9 +60,13 @@ Remaining:
 ---
 ## Video / compositor / sprites / textures
 
-- **Banked screen RAM** — dual-bank screen-RAM design ($D5C2/$D5C3/$D5C4, CPU+ANTIC
-  caches, copy/reload engines); verify it's disjoint from $D5C0/$D5C1 windows and fits
-  the BRAM budget (7010 is tight). *(proposal; src: docs/video/screen-banking.md)*
+- **Banked screen RAM** — dual-bank screen-RAM design (CPU+ANTIC caches, copy/reload
+  engines). **Verified:** regs relocated to $D5C3/$D5C4/$D5C5 (off the reserved $D5C2
+  task-switch slot; disjoint from the live $D5C0/$D5C1 decode), and BRAM fits (~4 BRAM36
+  — trivial on 7020, ~3 spare on 7010). Remaining = implement: CPU 8 KB BRAM + copy
+  engine (dirty writeback/reload, $D5C5.ready), ANTIC 8 KB read cache + in-aperture
+  read reroute, and the $D5C4 VBI bank-value crossing as stable-data+synced-flag (not a
+  free-running multi-bit sync). *(proposal; src: docs/video/screen-banking.md)*
 - **Compositor polish (deferred)** — desktop-window-over-live-window occlusion
   (clip-rect → bitmap override); visible-span-only plane fetch (bandwidth); tear-free
   `front_sel` sampling at the compositor's own frame start; narrow/wide playfield
