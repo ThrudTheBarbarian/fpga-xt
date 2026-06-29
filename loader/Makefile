@@ -91,7 +91,7 @@ FRSRC := $(FR)/tasks.c $(FR)/queue.c $(FR)/list.c $(FR)/timers.c $(FR)/event_gro
          $(FR)/croutine.c $(FR)/stream_buffer.c $(FR)/portable/MemMang/heap_4.c \
          $(FRPORT)/port.c \
          test/freertos/zynq.c test/freertos/bsp_shim.c test/freertos/mmu.c test/freertos/vm.c test/freertos/stackguard.c test/freertos/gfxplane.c test/freertos/frtos_os.c \
-         test/freertos/romfs.c test/freertos/vfs.c test/freertos/syscalls.c test/freertos/main.c \
+         test/freertos/romfs.c test/freertos/syscalls.c test/freertos/main.c \
          test/qemu/bare_rt.c test/qemu/bare_libc.c xtld.c
 FRASM := test/freertos/xt_boot.S test/freertos/xt_vectors.S $(FRPORT)/portASM.S
 

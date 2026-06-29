@@ -14,7 +14,6 @@
 #include "bare_rt.h"
 #include "frtos_os.h"
 #include "romfs.h"
-#include "vfs.h"
 #include "xtld.h"
 #include "romfs_blob.h"
 
@@ -259,7 +258,6 @@ int main(void)
     gic_init();
     ksys_set_console(rt_write);
     romfs_mount(romfs_blob, romfs_blob_len);
-    vfs_mount("/", &romfs_ops, 0);       /* romfs is the read-only, mmap-able root fs */
 
     g_host = (xtld_host){ .alloc = frtos_alloc, .dealloc = frtos_free, .sync_caches = mmu_sync_caches,
                           .resolve = frtos_ksym, .open_lib = frtos_open_lib,
