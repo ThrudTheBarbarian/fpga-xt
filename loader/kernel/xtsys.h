@@ -21,6 +21,7 @@
 #define SYS_lseek    0x304
 #define SYS_mmap     0x305   /* (fd, len, off) -> VA: map a file RO + shared, demand-paged */
 #define SYS_munmap   0x306   /* (addr, len) -> 0 */
+#define SYS_sbrk     0x307   /* (incr) -> old break: grow the per-process heap (libc malloc) */
 
 /* graphics / display — block 0x400. The OS owns the display plane; apps query
  * its descriptor and draw into it, then present (compositor on HW, ASCII on qemu) */

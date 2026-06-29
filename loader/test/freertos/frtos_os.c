@@ -137,10 +137,11 @@ int xtos_demand_fault(uint32_t dfar)
     return 0;
 }
 
-/* libc.so's _sbrk — per-process: a process grows its OWN heap (XTOS_HEAP_VA
- * window, mapped to private physical by vm.c); the kernel/boot libc uses
- * kern_sbrk (the shared pool). So each process's malloc heap is its own. */
-void *_sbrk(int incr)
+/* sys_sbrk — the PL1 implementation behind SYS_sbrk (libc's _sbrk is an svc stub).
+ * Per-process: a process grows its OWN heap (XTOS_HEAP_VA window, mapped to private
+ * physical by vm.c); the kernel/boot libc uses kern_sbrk (the shared pool). So each
+ * process's malloc heap is its own. Runs at PL1 (in the svc handler). */
+void *sys_sbrk(int incr)
 {
     proc_t *p = cur_proc();
     if (p && p->heap_brk) {
@@ -234,6 +235,7 @@ static long do_syscall(uint32_t num, long a0, long a1, long a2)
     case SYS_read:   return sys_read(p, (int)a0, (void *)a1, (uint32_t)a2);
     case SYS_close:  if (p && a0 >= 3 && a0 < NFD) p->fd[a0].open = 0; return 0;
     case SYS_lseek:  return sys_lseek(p, (int)a0, a1, (int)a2);
+    case SYS_sbrk:   { extern void *sys_sbrk(int); return (long)sys_sbrk((int)a0); }  /* libc malloc */
     case SYS_mmap: {                                         /* (fd, len, off) -> VA, RO file map */
         int fd = (int)a0; uint32_t len = (uint32_t)a1, off = (uint32_t)a2;
         if (!p || fd < 3 || fd >= NFD || !p->fd[fd].open) return -1;
@@ -542,7 +544,8 @@ int frtos_spawn_argv(const char *path, int argc, char **argv, const xtld_host *h
  * inline-syscall test programs that do not yet DT_NEEDED libc.so). It does NOT
  * grow per-library: libGEM and programs get libc from libc.so, not here. */
 #define K(sym) extern void sym(void);
-/* _sbrk is defined in this file (per-process), not external */
+/* _sbrk is now an svc stub in syscalls.c (its impl is sys_sbrk, behind SYS_sbrk) */
+K(_sbrk)
 K(_write) K(_read) K(_exit) K(_close) K(_lseek) K(_fstat) K(_isatty)
 K(_open) K(_stat) K(_kill) K(_getpid) K(_gettimeofday) K(_times) K(_link)
 K(_unlink) K(_fork) K(_execve) K(_fcntl) K(_getentropy) K(_mkdir)

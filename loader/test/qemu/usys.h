@@ -14,6 +14,7 @@
 #define SYS_lseek   0x304
 #define SYS_mmap    0x305
 #define SYS_munmap  0x306
+#define SYS_sbrk    0x307
 #define SYS_fb_info    0x400
 #define SYS_fb_present 0x401
 

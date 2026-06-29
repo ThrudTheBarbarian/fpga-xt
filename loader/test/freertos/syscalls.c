@@ -38,85 +38,49 @@ void *kern_sbrk(int incr)
     return p;
 }
 
-/* _write is libc.so's console output. It runs in the calling program's context —
- * which is now USER mode (PL0) — so it must NOT do the semihosting/console write
- * directly (that has to happen privileged): trap to PL1 via svc #1, where
- * do_syscall(SYS_write) drives g_console. (The romfs file ops below don't touch
- * privileged state, so they stay direct calls.) */
-int _write(int fd, char *buf, int len)
+/* libc.so's syscall primitives. libc runs in the calling program's context — now
+ * USER mode (PL0) — so any call that touches kernel state (console, the fd table,
+ * the heap break) must TRAP to PL1 via svc #1, where do_syscall runs it privileged.
+ * (Once AP enforcement lands in 3c, a direct call into the kernel from PL0 would
+ * fault; these stubs are the user/kernel gateway.) Pure stubs that touch no kernel
+ * state stay plain functions. */
+static inline long sc(long n, long a0, long a1, long a2)
 {
-    register long r7 __asm__("r7") = SYS_write;
-    register long r0 __asm__("r0") = fd;
-    register long r1 __asm__("r1") = (long)buf;
-    register long r2 __asm__("r2") = len;
+    register long r7 __asm__("r7") = n;
+    register long r0 __asm__("r0") = a0;
+    register long r1 __asm__("r1") = a1;
+    register long r2 __asm__("r2") = a2;
     __asm__ volatile("svc #1" : "+r"(r0) : "r"(r7), "r"(r1), "r"(r2) : "memory");
-    return (int)r0;
+    return r0;
 }
 
-/* romfs-backed file descriptors for libc.so's fopen/fread/fseek (e.g. FreeType
- * loading a font). fds 0/1/2 are the console; 3+ index this table. Read-only.
- * _fstat stays a stub — newlib falls back to a default-size buffer. */
-#define SEEK_SET 0
-#define SEEK_CUR 1
-#define SEEK_END 2
-#define NFILES 8
-static struct { int used; const uint8_t *data; uint32_t size, pos; } g_fd[NFILES];
-static int fdx(int fd) { return (fd >= 3 && fd < 3 + NFILES && g_fd[fd - 3].used) ? fd - 3 : -1; }
+int   _write(int fd, char *buf, int len)         { return (int)sc(SYS_write, fd, (long)buf, len); }
+int   _read(int fd, char *buf, int len)          { return (int)sc(SYS_read, fd, (long)buf, len); }
+int   _open(const char *path, int flags, int m)  { (void)m; return (int)sc(SYS_open, (long)path, flags, 0); }
+int   _close(int fd)                             { return (int)sc(SYS_close, fd, 0, 0); }
+int   _lseek(int fd, int off, int whence)        { return (int)sc(SYS_lseek, fd, off, whence); }
+int   _getpid(void)                              { return (int)sc(SYS_getpid, 0, 0, 0); }
 
-int _open(const char *path, int flags, int mode)
+/* _sbrk is called by libc malloc from BOTH programs (PL0) and the kernel/boot
+ * (PL1 — main() runs in SVC mode, where a nested svc would clobber lr_svc). So
+ * trap to PL1 only when actually unprivileged; otherwise call the impl directly. */
+extern void *sys_sbrk(int incr);
+void *_sbrk(int incr)
 {
-    (void)flags; (void)mode;
-    const uint8_t *d; uint32_t sz;
-    if (!romfs_lookup(path, &d, &sz)) return -1;
-    for (int i = 0; i < NFILES; i++)
-        if (!g_fd[i].used) { g_fd[i] = (typeof(g_fd[i])){1, d, sz, 0}; return 3 + i; }
-    return -1;
+    unsigned m; __asm__ volatile("mrs %0, cpsr" : "=r"(m));
+    if ((m & 0x1fu) == 0x10u) return (void *)sc(SYS_sbrk, incr, 0, 0);  /* User mode -> trap */
+    return sys_sbrk(incr);                                              /* privileged -> direct */
 }
 
-int _read(int fd, char *buf, int len)
-{
-    if (fd == 0) {                              /* stdin (semihosting) */
-        int n = 0;
-        while (n < len) { int c = sh_readc(); if (c < 0) break; buf[n++] = (char)c; if (c == '\n') break; }
-        return n;
-    }
-    int i = fdx(fd); if (i < 0) return -1;
-    uint32_t rem = g_fd[i].size - g_fd[i].pos;
-    uint32_t k = (uint32_t)len < rem ? (uint32_t)len : rem;
-    for (uint32_t j = 0; j < k; j++) buf[j] = (char)g_fd[i].data[g_fd[i].pos + j];
-    g_fd[i].pos += k;
-    return (int)k;
-}
-
-int _lseek(int fd, int off, int whence)
-{
-    int i = fdx(fd); if (i < 0) return -1;
-    long p = whence == SEEK_CUR ? (long)g_fd[i].pos + off
-           : whence == SEEK_END ? (long)g_fd[i].size + off : off;
-    if (p < 0) p = 0;
-    if (p > (long)g_fd[i].size) p = (long)g_fd[i].size;
-    g_fd[i].pos = (uint32_t)p;
-    return (int)p;
-}
-
-int _close(int fd) { int i = fdx(fd); if (i < 0) return -1; g_fd[i].used = 0; return 0; }
-
-/* libc.so's exit path runs at PL0 — trap to PL1 (svc #1 SYS_exit), which deletes
- * the task. (sh_exit's semihosting would be a no-op from User mode.) */
-void _exit(int code)
-{
-    register long r7 __asm__("r7") = SYS_exit;
-    register long r0 __asm__("r0") = code;
-    __asm__ volatile("svc #1" : "+r"(r0) : "r"(r7) : "memory");
-    for (;;) {}
-}
+void _exit(int code) { sc(SYS_exit, code, 0, 0); for (;;) {} }
 void abort(void) { _exit(99); }   /* referenced by libgcc unwind */
 
-int _fstat(int fd, void *st) { (void)fd; (void)st; return -1; }
-int _isatty(int fd) { (void)fd; return fdx(fd) < 0 && fd < 3; }   /* console fds only */
+/* stubs that touch NO kernel state — safe to run at PL0 directly (they sit in
+ * kernel text, which stays PL0-executable; they never read kernel data). */
+int _fstat(int fd, void *st) { (void)fd; (void)st; return -1; }   /* newlib falls back to a default buffer */
+int _isatty(int fd) { return fd < 3; }                            /* 0/1/2 are the console */
 int _stat(const char *p, void *st) { (void)p; (void)st; return -1; }
 int _kill(int pid, int sig) { (void)pid; (void)sig; return -1; }
-int _getpid(void) { return 1; }
 int _gettimeofday(void *tv, void *tz) { (void)tv; (void)tz; return -1; }
 int _times(void *buf) { (void)buf; return -1; }
 int _link(const char *a, const char *b) { (void)a; (void)b; return -1; }
