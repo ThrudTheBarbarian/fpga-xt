@@ -131,6 +131,7 @@ export default defineConfig({
 					collapsed: true,
 					items: [
 						{ label: 'Overview', slug: 'os' },
+						{ label: 'Runtime: loading & memory protection', slug: 'os/runtime' },
 						{
 							label: 'Multitasking',
 							items: [

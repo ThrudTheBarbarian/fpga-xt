@@ -13,9 +13,9 @@ The ARM side runs FreeRTOS with everything statically linked into a single image
 - LVGL rendering
 - GEMDOS RPC mailbox service for the target CPU
 
-There are currently **no dynamically-loadable ARM executables**. Every FreeRTOS task is compiled into the same monolithic image at build time.
+Dynamic loading of ARM executables is **implemented** — programs are position-independent ELF `ET_DYN` objects loaded at runtime into protected, per-process address spaces. See **[Runtime: loading & memory protection](/os/runtime/)** for how the loader, process model, and MMU protection actually work today. The sections below record the design reasoning that led there.
 
-## What "loading a binary" would mean
+## What "loading a binary" means
 
 For ARM-side user apps (a launcher, a terminal, a developer utility) that live as `.elf` files on the SD card and are loaded on demand, we will need:
 
