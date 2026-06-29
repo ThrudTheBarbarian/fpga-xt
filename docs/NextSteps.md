@@ -21,30 +21,18 @@ This is a tracker, so it intentionally carries forward-looking/historical contex
 Tracking `docs/Design/architecture-review.md`; landed pieces are in the commit log.
 Remaining:
 ### Immediate Priorities:
-- **GEM desktop with live emulation windows** — M1 (XL plane positionable via GP0),
-  M2 (Aristo2 rounded-titlebar chrome), and M3 (bind any window to the XL plane via
-  `gem_wm_bind_emu` + `vdi.xlbind`, drag-tracking + titlebar ^/v scale arrows) done +
-  HW-validated. Remaining: **M4** desktop at boot + XL/ST icons + double-click (→
-  open a window, bind it). M4 also fixes the VDI-workstation leak (direct `vdi.*`
-  after `wintest` draws into a window backing, not the desktop). ST plane not wired
-  (the bind target enum is ST-ready). *(docs/OS/desktop-emulation-windows.md)*
+- **GEM desktop — remaining work.** M1–M4-core are done & HW-validated (desktop at boot,
+  XE/ST icons, double-click→open+bind the XL plane, outlined labels, tear-free
+  alpha-chrome drag). Still open: **distinct XE/ST icon art** (near-identical wedge
+  keyboards today — owner's art task); the **ST compositor plane** (bind enum ST-ready,
+  plane not wired); and verify/close the **VDI-workstation leak** (direct `vdi.*` after
+  `wintest` draws into a window backing, not the desktop). *(docs/OS/desktop-emulation-windows.md)*
 
-- **Drag-overlay alpha (compositor)** — **DONE, HW-confirmed.** The drag overlay used
-  to snapshot the *composited* desktop, carrying the wallpaper baked into a window's
-  rounded/AA chrome edges as a halo during a drag. Fixed both halves: (RTL)
-  `plane_compositor.sv` finds the top-2 covered planes and α-blends an alpha-enabled
-  winner over the runner (8-bit lerp; the multiply is its own pipeline stage — DSP
-  pre-adder does fg−bg — to close clk_pix @148, latency 3→4); per-plane `pl_alpha_en`;
-  only the drag overlay blends (over the desktop), gated by `gp0_ctrl[5]`. (SW)
-  `drag_build_surface` re-renders the window into the overlay with real per-pixel alpha
-  (`gem_wm_render_window_to` over a transparent buffer; α=0 outside the rounded shape)
-  and arms `gp0_ctrl[5]`; emu-backed windows render chrome only, the XL plane (depth 2,
-  emu_track'd) shows live content on top. Timing closed (clk_pix +0.132 / clk_sally
-  +0.275 / clk_sys +0.008). **Residual (accepted):** the rounded-corner AA ring reads
-  as a thin **black border** — `vr_transfer_bits` VR_OVER outputs partial pixels
-  opaque-darkened (blended toward the transparent buffer's black). Soft AA would need
-  an alpha-out OVER mode (keeps straight partial α) — deferred. *(hdl/plane_compositor.sv,
-  vitis/xtos/src/gem_lua.c, gem/wm.c gem_wm_render_window_to, [[drag_overlay_layer]])*
+- **Drag-overlay rounded-corner AA (optional polish).** The drag overlay alpha-blends
+  its chrome over the live desktop (done, HW-confirmed — no more wallpaper halo); the
+  rounded-corner AA ring currently reads as a thin **black border** (accepted). Softening
+  it needs an **alpha-out `VR_OVER`** mode (keeps straight partial α onto a transparent
+  dest) in `vr_transfer_bits`. *(gem/vdi/transfer_bits.c, [[drag_overlay_layer]])*
 
 ### Future:
 - **Partial-reconfig CPU swap.** RP region confirmed viable at X1Y2 (not the PS
@@ -256,30 +244,14 @@ Remaining:
   process table; **frozen syscall numbering + `r7`/`svc #1` convention**; MMU-readiness
   rules. Vision P4 now references the `SVC #1` syscall tier. *(src:
   docs/OS/dynamic-loading.md)*
-- **Memory protection / MMU / process-model tier** — A9 MMU is now **load-bearing**:
-  it lets the JIT-hosted m68k skip emulating the 68030 MMU (no format-B continuation
-  frame) by giving FreeMiNT's protection layer an A9-MMU backend. Reframes native:
-  tier 1 flat/spawn → **tier 2 MMU+protection+spawn** → tier 3 +fork().
-  Tier 2 = the **full useful MMU**: shared libs, mmap'd executables/files, lazy
-  alloc, guard pages, **opt-in swap** — safe via the **PL-visible ⇒ wired** invariant
-  (so the Atari surfaces are never swapped, for free). **DECIDED 2026-06-28: tier 2**
-  (spawn primitive; vision P1 updated). fork (tier 3) deferred = possible later
-  single-threaded compat shim only. **BUILT on qemu (loader testbed):** per-process
-  address spaces + ASIDs, per-process malloc, lazy/demand-zero heap, guard pages,
-  W^X, **mmap-exec (load-once shared text) + copy-on-write** (libc data, ALL shared
-  libraries, program data, fork-ready mechanism), caches ON, a DDR-backed page pool
-  with reclaim, and the complete loader teardown path (DT_FINI_ARRAY destructors +
-  transitive unload + program-cache eviction). **Ordered next** (docs/OS/mmap-exec-
-  cow.md §8): (1) **mmap'd files** — mechanism DONE (SYS_mmap/munmap, RO+shared+
-  demand-paged, page-aligned romfs, mmaptest); remaining = wire libGEM FreeType to
-  FT_New_Memory_Face on the mapped pointer (stop fread-ing fonts into malloc);
-  (2) **scrub pages on free** — DONE (vm_space_destroy zeroes private pages before
-  the pool free list); (3) **PL0 user/kernel split** — DONE (the real protection boundary, enforced):
-  today all tasks run privileged (System mode) with the identity DDR mapped RW in
-  every space, so isolation holds against honest programs but NOT hostile code (a
-  process can reach any physical RAM via its identity alias); fix = run user code in
-  User mode, kernel/identity sections no-access at PL0, harden SVC/abort entry. Then
-  re-graduate to HW. *(src: docs/OS/memory-protection.md, docs/OS/mmap-exec-cow.md)*
+- **Process model — opt-in swap + tier-3 fork (deferred).** Tier 2 is done & HW-validated
+  (per-process MMU spaces, shared libs, mmap-exec/files, COW, demand heap, guard pages,
+  W^X, DDR pool+reclaim+scrub, loader teardown, PL0 user/kernel split + per-process
+  stacks; site /os/runtime/) — the A9 MMU is load-bearing, giving the JIT-hosted m68k's
+  FreeMiNT protection layer its backend. Still open: **opt-in swap** (safe via the
+  PL-visible⇒wired invariant, so the Atari surfaces never page out — designed, not built)
+  and **tier-3 fork** (deferred; possible later as a single-threaded compat shim).
+  *(src: docs/OS/memory-protection.md, docs/OS/mmap-exec-cow.md)*
 - **Loadable filesystems + device drivers (as isolated PL0 services)** — DESIGNED,
   not a current priority; resume when wanted. Goal: drop a binary into
   `/OS/Filesystems/` or `/OS/Devices/` (plain basename = the type, no extension, e.g.
