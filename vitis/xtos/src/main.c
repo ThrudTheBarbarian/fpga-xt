@@ -1231,6 +1231,37 @@ static void repl_exec(char *cmd)
 
 static void repl_task(void *arg);
 
+/* ---- REPL supervisor: keep a shell alive even if a command faults ---------
+ * The interactive shell runs as the 'repl' task.  If a command faults, the fault
+ * handler kills that task (OS continues, no loop) — but that would leave us with
+ * no shell.  So the shell is owned by a supervisor that respawns it on death. */
+static TaskHandle_t g_repl_handle = NULL;
+static TaskHandle_t g_repl_super  = NULL;
+
+/* Called from the fault-kill path (fault.c weak hook) just before a task dies.
+ * If it's the shell, wake the supervisor to respawn it. */
+void xtos_task_killed(TaskHandle_t t)
+{
+    if (t && t == g_repl_handle && g_repl_super) {
+        g_repl_handle = NULL;
+        xTaskNotifyGive(g_repl_super);       /* latched; supervisor respawns */
+    }
+}
+
+static void repl_supervisor(void *arg)
+{
+    (void)arg;
+    for (;;) {
+        if (xTaskCreate(repl_task, "repl", 16384, NULL,   /* 64KB: Lua parser/VM C-stack */
+                        tskIDLE_PRIORITY + 1, &g_repl_handle) != pdPASS) {
+            uart1_raw_puts("[xtos] FATAL: could not create repl task\r\n");
+            g_repl_handle = NULL;
+        }
+        ulTaskNotifyTake(pdTRUE, portMAX_DELAY);          /* block until the shell dies */
+        xil_printf("\r\n  [xtos] shell faulted — respawning the REPL\r\n");
+    }
+}
+
 int main(void)
 {
     /* PS-software liveness LED, FIRST thing — before anything that could hang
@@ -1366,9 +1397,10 @@ int main(void)
      * input is the serial '{ }' passthrough; USB HID lives on the RP2354
      * companion, so there is no USB host here.) */
     xil_printf("[xtos] starting FreeRTOS scheduler\r\n");
-    if (xTaskCreate(repl_task, "repl", 16384, NULL,   /* 64KB: Lua parser/VM C-stack */
-                    tskIDLE_PRIORITY + 1, NULL) != pdPASS)
-        uart1_raw_puts("[xtos] FATAL: could not create repl task\r\n");
+    /* The supervisor creates + owns the repl task and respawns it if it faults. */
+    if (xTaskCreate(repl_supervisor, "repl-sup", 1024, NULL,
+                    tskIDLE_PRIORITY + 2, &g_repl_super) != pdPASS)
+        uart1_raw_puts("[xtos] FATAL: could not create repl supervisor\r\n");
 
     vTaskStartScheduler();
 

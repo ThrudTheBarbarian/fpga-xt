@@ -60,6 +60,11 @@ extern void xt_hw_install_vectors(void);
 static TaskHandle_t g_dying = NULL;
 static int          g_die_depth = 0;
 
+/* Notified just before a task is killed, so an owner can respawn it (e.g. the REPL
+ * supervisor relaunches the shell so a faulting command can't take it down).
+ * Weak no-op default keeps fault.c standalone; main.c provides the real one. */
+__attribute__((weak)) void xtos_task_killed(TaskHandle_t t) { (void)t; }
+
 /* called from xt_hw_fault (r0=exception code, r1=faulting PC) */
 void fault_report_hw(unsigned code, unsigned addr)
 {
@@ -117,6 +122,7 @@ void xtos_hw_reap(void)
         portDISABLE_INTERRUPTS();
         for (;;) {}
     }
+    xtos_task_killed(cur);                                   /* let an owner respawn it (REPL) */
     if (g_die_depth == 1) {
         vTaskDelete(NULL);                                   /* normal: clean delete + yield */
     } else {
