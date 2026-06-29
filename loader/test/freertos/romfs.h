@@ -9,4 +9,8 @@ void romfs_mount(const uint8_t *blob, uint32_t len);
 /* Look up a path; on success returns 1 and fills *data/*size, else 0. */
 int  romfs_lookup(const char *path, const uint8_t **data, uint32_t *size);
 
+/* romfs as a VFS filesystem (the read-only, in-RAM, mmap-able root). */
+struct fs_ops;
+extern const struct fs_ops romfs_ops;
+
 #endif

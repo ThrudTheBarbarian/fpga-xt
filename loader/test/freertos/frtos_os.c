@@ -18,16 +18,15 @@
 #include "xtsys.h"
 #include "xtld.h"
 #include "romfs.h"
+#include "vfs.h"
 #include "frtos_os.h"
 
 #define MAXPROC 8
 #define NFD     8       /* per process; 0/1/2 are stdio */
 
 typedef struct {
-    int            open;
-    const uint8_t *data;
-    uint32_t       size;
-    uint32_t       pos;
+    int          open;
+    struct vfile vf;        /* VFS open-file (fs + handle + size + pos) */
 } fd_t;
 
 typedef struct {
@@ -186,14 +185,14 @@ void xtos_task_fault_exit(void)
     for (;;) {}
 }
 
-/* ---- file syscalls (non-yielding; romfs is in memory) ------------------ */
+/* ---- file syscalls — dispatched through the VFS (romfs is the root mount) -- */
 static long sys_open(proc_t *p, const char *path)
 {
-    const uint8_t *data; uint32_t size;
-    if (!p || !romfs_lookup(path, &data, &size)) return -1;
+    if (!p) return -1;
     for (int fd = 3; fd < NFD; fd++) {
         if (!p->fd[fd].open) {
-            p->fd[fd] = (fd_t){ .open = 1, .data = data, .size = size, .pos = 0 };
+            if (vfs_open(path, 0, &p->fd[fd].vf) != 0) return -1;
+            p->fd[fd].open = 1;
             return fd;
         }
     }
@@ -204,23 +203,13 @@ static long sys_read(proc_t *p, int fd, void *buf, uint32_t n)
 {
     if (fd == 0) return 0;                       /* stdin: EOF for now */
     if (!p || fd < 3 || fd >= NFD || !p->fd[fd].open) return -1;
-    fd_t *f = &p->fd[fd];
-    uint32_t avail = f->size - f->pos;
-    if (n > avail) n = avail;
-    for (uint32_t i = 0; i < n; i++) ((uint8_t *)buf)[i] = f->data[f->pos + i];
-    f->pos += n;
-    return (long)n;
+    return vfs_read(&p->fd[fd].vf, buf, (long)n);
 }
 
 static long sys_lseek(proc_t *p, int fd, long off, int whence)
 {
     if (!p || fd < 3 || fd >= NFD || !p->fd[fd].open) return -1;
-    fd_t *f = &p->fd[fd];
-    long base = (whence == 1) ? (long)f->pos : (whence == 2) ? (long)f->size : 0;
-    long np = base + off;
-    if (np < 0 || np > (long)f->size) return -1;
-    f->pos = (uint32_t)np;
-    return np;
+    return vfs_lseek(&p->fd[fd].vf, off, whence);
 }
 
 static long do_syscall(uint32_t num, long a0, long a1, long a2)
@@ -233,18 +222,21 @@ static long do_syscall(uint32_t num, long a0, long a1, long a2)
     case SYS_getpid: return p ? p->pid : 0;
     case SYS_open:   return sys_open(p, (const char *)a0);   /* (path, flags) */
     case SYS_read:   return sys_read(p, (int)a0, (void *)a1, (uint32_t)a2);
-    case SYS_close:  if (p && a0 >= 3 && a0 < NFD) p->fd[a0].open = 0; return 0;
+    case SYS_close:  if (p && a0 >= 3 && a0 < NFD && p->fd[a0].open) {
+                         vfs_close(&p->fd[a0].vf); p->fd[a0].open = 0; } return 0;
     case SYS_lseek:  return sys_lseek(p, (int)a0, a1, (int)a2);
     case SYS_sbrk:   { extern void *sys_sbrk(int); return (long)sys_sbrk((int)a0); }  /* libc malloc */
     case SYS_mmap: {                                         /* (fd, len, off) -> VA, RO file map */
         int fd = (int)a0; uint32_t len = (uint32_t)a1, off = (uint32_t)a2;
         if (!p || fd < 3 || fd >= NFD || !p->fd[fd].open) return -1;
-        fd_t *f = &p->fd[fd];
+        struct vfile *f = &p->fd[fd].vf;
+        uint32_t mbase = vfs_mmap_base(f);                   /* 0 if the fs isn't mmap-able */
+        if (!mbase) return -1;
         if (off > f->size) return -1;
         if (len == 0) len = f->size - off;
         if (off + len > f->size) return -1;
-        uint32_t src = (uint32_t)(uintptr_t)f->data + off;   /* romfs physical (identity) */
-        if (src & 0xFFFu) return -1;                          /* file must be page-aligned */
+        uint32_t src = mbase + off;
+        if (src & 0xFFFu) return -1;                          /* must be page-aligned (romfs is) */
         return (long)vm_mmap((int)(p - g_proc), src, len);
     }
     case SYS_munmap:                                         /* (addr, len) */
