@@ -30,8 +30,11 @@ static uint32_t g_arena_l2[256]   __attribute__((aligned(1024)));
 static uint8_t  g_emerg[MAXSLOT][2048] __attribute__((aligned(8)));
 uint32_t stackguard_emerg_top(int slot) { return (uint32_t)g_emerg[slot] + sizeof g_emerg[slot]; }
 
-/* Normal non-cacheable, AP=11, XN, GLOBAL small page (kernel-owned stacks). */
+/* Normal non-cacheable, XN small page. AP under AFE=1: STK_PAGE = AP=01 (PL0+PL1
+ * RW) — a process's own stack; STK_NONE = AP=00 (PL1 RW, PL0 none) — another
+ * process's stack, unreachable from PL0. (AF=bit4 set in both.) */
 #define STK_PAGE(phys) (((phys) & 0xFFFFF000u) | (3u << 4) | (1u << 6) | 0x3u)
+#define STK_NONE(phys) (((phys) & 0xFFFFF000u) | (1u << 4) | (1u << 6) | 0x3u)
 
 void stackguard_init(void)
 {
@@ -44,6 +47,24 @@ void stackguard_init(void)
     __asm__ volatile("dsb");
     __asm__ volatile("mcr p15,0,%0,c8,c7,0" :: "r"(0u));        /* flush TLB (section changed) */
     __asm__ volatile("dsb; isb");
+}
+
+/* Build space `slot`'s PRIVATE view of the stack-arena section into `l2`: ONLY this
+ * slot's stack pages are PL0-RW, every other slot's pages are PL0-none, and the
+ * guard pages stay faulting. So a PL0 process can read/write its own stack and
+ * NOTHING else's — closing the cross-process stack read/write (a write into another
+ * task's saved context would otherwise be a privilege-escalation vector). Returns
+ * the arena's 1 MB section index (the caller installs the coarse L1 entry). The
+ * kernel/master keeps the full g_arena_l2 (PL1) for proc_launch's argv writes. */
+uint32_t stackguard_build_l2(int slot, uint32_t *l2)
+{
+    uint32_t sec = (uint32_t)g_arena >> 20;
+    for (uint32_t i = 0; i < 256; i++) l2[i] = STK_NONE((sec << 20) + i * 0x1000u);
+    uint32_t base = (uint32_t)slot * SLOT_SIZE + SLOT_GUARD;     /* this slot's stack */
+    for (uint32_t p = 0; p < SLOT_STACK; p += 0x1000u)
+        l2[(base + p) >> 12] = STK_PAGE((sec << 20) + base + p); /* -> PL0-RW */
+    l2[((uint32_t)slot * SLOT_SIZE) >> 12] = 0;                  /* this slot's guard: fault */
+    return sec;
 }
 
 /* the stack buffer for `slot` (the guard page sits immediately below it). */

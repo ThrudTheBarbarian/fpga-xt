@@ -236,6 +236,13 @@ currently non-shared), is the **HW re-graduation** step: `freertos-hw.elf` +
      identity VA is PL0-none, so freed/other-process memory is unreachable from PL0.
      **Verified: `/bin/badpoke` reading a kernel address is killed (no leak); the
      full suite, chained GEM, and runhost all run unprivileged.**
+   - **Per-process stacks:** each space maps only its OWN stack slot PL0-RW; every
+     other slot is PL0-none (`stackguard_build_l2`, installed per-space in
+     `vm_space_create`). Closes cross-process stack read **and write** — the latter
+     was a PL1-escalation vector (overwriting another task's saved context/SPSR).
+     The master keeps the full arena (PL1) for `proc_launch`'s argv write. Verified:
+     `/bin/stackpoke` reading another slot's stack is killed; own-stack guard-page
+     overflow detection still works.
 
    Historical note (pre-3c, now resolved): the whole identity-mapped DDR
    (`0x0010_0000–0x1FFF_FFFF`) is mapped **AP=11 (RW)** in every space, so the

@@ -45,6 +45,7 @@ extern uint32_t *mmu_master_table(void);
 static uint32_t  space_l1[NSPACE][4096]     __attribute__((aligned(16384)));
 static uint32_t  space_l2_heap[NSPACE][256] __attribute__((aligned(1024)));/* heap section (demand-paged) */
 static uint32_t  space_l2_mmap[NSPACE][256] __attribute__((aligned(1024)));/* mmap window (file-backed RO) */
+static uint32_t  space_l2_stk[NSPACE][256]  __attribute__((aligned(1024)));/* stack arena: own slot only */
 /* a small per-space pool of L2 tables, one per 1 MB section the space overrides
  * (libc data, program data, the synthetic demo). Section-keyed so a program and
  * libc that happen to share a 1 MB section reuse ONE L2 (no clobber, the §6
@@ -221,6 +222,16 @@ uint32_t *vm_space_create(int idx, uint32_t prog_va, uint32_t prog_size, uint32_
         t[XTOS_MMAP_VA >> 20] = L1_COARSE(ml2);
         g_space_nmaps[idx] = 0;
         g_space_mmap_brk[idx] = XTOS_MMAP_VA;
+    }
+
+    /* stack arena: a PRIVATE view exposing only THIS space's stack slot PL0-RW —
+     * every other slot is PL0-none, so a process can't read or write another's
+     * stack (a write into another task's saved context would be a PL1-escalation
+     * vector). Overrides the shared all-slots arena L2 the master clone provided. */
+    {
+        extern uint32_t stackguard_build_l2(int slot, uint32_t *l2);
+        uint32_t sec = stackguard_build_l2(idx, space_l2_stk[idx]);
+        t[sec] = L1_COARSE(space_l2_stk[idx]);
     }
 
     /* global COW ranges (libc data, synthetic demo) */
