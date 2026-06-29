@@ -293,17 +293,18 @@ static void app_main(void *arg)
     enter_user_and_run((void (*)(int, char **))p->entry, p->argc, p->argv);
 }
 
-/* copy argv (strings + pointer array) into memory owned by the child, since the
- * caller's buffer (e.g. the shell's line) is reused. Returns NULL for argc<=0. */
-static char **copy_argv(int argc, char **argv, const xtld_host *host)
+/* copy argv (pointer array + strings) into `buf` — which must be PL0-readable, so
+ * the program can read its own args at PL0. We use the top of the task's stack
+ * (stackguard arena, PL0-RW). Returns the argv array (= buf) or NULL (argc<=0 or
+ * doesn't fit). The caller's argv (the shell's line buffer) is read at PL1. */
+static char **copy_argv(int argc, char **argv, void *buf, uint32_t bufsz)
 {
     if (argc <= 0 || !argv) return NULL;
-    uint32_t total = (uint32_t)(argc + 1) * sizeof(char *);
-    for (int i = 0; i < argc; i++) total += (uint32_t)strlen(argv[i]) + 1;
-    char *block = host->alloc(total, sizeof(char *), host->user);
-    if (!block) return NULL;
-    char **out = (char **)block;
-    char *str = block + (uint32_t)(argc + 1) * sizeof(char *);
+    uint32_t need = (uint32_t)(argc + 1) * sizeof(char *);
+    for (int i = 0; i < argc; i++) need += (uint32_t)strlen(argv[i]) + 1;
+    if (need > bufsz) return NULL;
+    char **out = (char **)buf;
+    char *str = (char *)buf + (uint32_t)(argc + 1) * sizeof(char *);
     for (int i = 0; i < argc; i++) {
         out[i] = str;
         uint32_t n = (uint32_t)strlen(argv[i]) + 1;
@@ -408,17 +409,12 @@ static prog_t *prog_get(const uint8_t *image, uint32_t len, const xtld_host *hos
 
     register_lib_cow();   /* this load may have pulled in new shared libs -> COW their data */
 
-    /* W^X (once): text/rodata/GOT -> read-only+executable, writable seg ->
-     * read-write+execute-never, in the master table. vm_space_create clones the
-     * master per process, so every space inherits the protection (and shares the
-     * RO text physical). Code can't be modified; data can't be executed. */
-    { extern void mmu_protect(uint32_t, uint32_t, int, int);
-      uintptr_t ibase = xtld_image_base(obj), wva; uint32_t wsz;
-      xtld_writable_range(obj, &wva, &wsz);
-      if (ibase && wva > ibase) mmu_protect((uint32_t)ibase, (uint32_t)(wva - ibase), 1, 0);  /* text: RO+X */
-      if (wva && wsz)           mmu_protect((uint32_t)wva, wsz, 0, 1);                          /* data: RW+XN */
-      /* NB: constructors run PER PROCESS in app_main, not here — so the cached
-       * image's data stays the pristine file-loaded COW template. */
+    /* W^X + PL0 protection was applied by frtos_on_loaded (the xtld on_loaded hook)
+     * as the image was relocated: text RO+X (PL0-RX), writable seg RW+XN (PL0-none
+     * in the master; the owner gets PL0-RW per-process via COW). Constructors run
+     * PER PROCESS in app_main, so the cached image's data stays the pristine COW
+     * template. */
+    { uintptr_t wva; uint32_t wsz; xtld_writable_range(obj, &wva, &wsz);
       prog_t *pr = &g_prog[g_prog_n++];
       pr->image = image; pr->obj = obj; pr->entry = entry; pr->wva = wva; pr->wsize = wsz;
       pr->lru = ++g_prog_tick;
@@ -430,13 +426,13 @@ static prog_t *prog_get(const uint8_t *image, uint32_t len, const xtld_host *hos
 /* common tail: give slot `slot` a private address space for `obj` and start its
  * task. Shared by frtos_spawn (cached romfs programs) and frtos_spawn_host
  * (transient host-loaded ELFs). */
+#define ARGV_WORDS 256   /* reserved at the top of the task stack for argv (PL0-RW) */
 static int proc_launch(int slot, xtld_obj *obj, uintptr_t entry,
-                       uint32_t wva, uint32_t wsz, int argc, char **argv, const xtld_host *host)
+                       uint32_t wva, uint32_t wsz, int argc, char **argv)
 {
     proc_t *p = &g_proc[slot];
     for (int i = 0; i < NFD; i++) p->fd[i].open = 0;
     p->obj = obj; p->entry = entry; p->exit_code = 0; p->pid = g_next_pid++;
-    p->argc = argc; p->argv = copy_argv(argc, argv, host);
     p->done = xSemaphoreCreateBinary();
     if (!p->done) return -1;
     /* T2-b/c: private address space — demand heap + COW(libc data, synthetic, and
@@ -451,6 +447,12 @@ static int proc_launch(int slot, xtld_obj *obj, uintptr_t entry,
     for (const char *q = nm; *q; q++) if (*q == '/') nm = q + 1;
     extern StackType_t *stackguard_stack(int, uint32_t *);
     uint32_t depth; StackType_t *stk = stackguard_stack(slot, &depth);
+    /* carve argv out of the TOP of the task stack (PL0-RW) so the program can read
+     * its args at PL0; the rest of the stack stays the FreeRTOS-managed region. */
+    p->argc = argc;
+    if (argc > 0) { depth -= ARGV_WORDS;
+        p->argv = copy_argv(argc, argv, stk + depth, ARGV_WORDS * sizeof(StackType_t)); }
+    else p->argv = NULL;
     /* xTaskCreateStatic returns the handle (unlike xTaskCreate's out-param), and
      * the new task is higher priority than us — it would run (and look itself up via
      * cur_proc) BEFORE p->task is assigned. Suspend the scheduler so the assignment
@@ -472,8 +474,7 @@ int frtos_spawn(const uint8_t *image, uint32_t len, int argc, char **argv,
     prog_t *prog = prog_get(image, len, host);    /* load-once (shared text + COW data) */
     if (!prog) return -1;
     g_proc[slot].transient = 0; g_proc[slot].src = 0;
-    return proc_launch(slot, prog->obj, prog->entry, (uint32_t)prog->wva, prog->wsize,
-                       argc, argv, host);
+    return proc_launch(slot, prog->obj, prog->entry, (uint32_t)prog->wva, prog->wsize, argc, argv);
 }
 
 /* Load + run an ELF read from the HOST filesystem over semihosting (runhost) — for
@@ -509,18 +510,14 @@ int frtos_spawn_host(const char *hostpath, int argc, char **argv, const xtld_hos
     if (!entry) entry = xtld_sym(obj, "main");
     if (!entry) { xtld_unload(obj); host->dealloc(buf, host->user); return -1; }
     register_lib_cow();                          /* may have pulled in new shared libs */
-
-    uintptr_t ibase = xtld_image_base(obj), wva; uint32_t wsz;
-    extern void mmu_protect(uint32_t, uint32_t, int, int);
-    xtld_writable_range(obj, &wva, &wsz);
-    if (ibase && wva > ibase) mmu_protect((uint32_t)ibase, (uint32_t)(wva - ibase), 1, 0);
-    if (wva && wsz)           mmu_protect((uint32_t)wva, wsz, 0, 1);
+    /* W^X + PL0 protection already applied by frtos_on_loaded (xtld on_loaded hook). */
+    uintptr_t wva; uint32_t wsz; xtld_writable_range(obj, &wva, &wsz);
 
     g_proc[slot].transient = 1; g_proc[slot].src = buf;
-    int pid = proc_launch(slot, obj, entry, (uint32_t)wva, wsz, argc, argv, host);
+    int pid = proc_launch(slot, obj, entry, (uint32_t)wva, wsz, argc, argv);
     if (pid < 0) {                               /* launch failed: undo the load */
         extern void mmu_unprotect(uint32_t, uint32_t);
-        mmu_unprotect((uint32_t)ibase, (uint32_t)xtld_span(obj));
+        mmu_unprotect((uint32_t)xtld_image_base(obj), (uint32_t)xtld_span(obj));
         xtld_unload(obj); register_lib_cow(); host->dealloc(buf, host->user);
     }
     return pid;
@@ -589,6 +586,22 @@ uintptr_t frtos_ksym(const char *name, void *u)
     return 0;
 }
 
+/* xtld_host.on_loaded: apply W^X + PL0 protection to a freshly-relocated module,
+ * before its constructors run or anyone calls into it. Text/rodata/GOT -> RO+X
+ * (PL0-RX, so a PL0 program can execute it); writable seg -> RW+XN and PL0-none in
+ * the master (the owner process gets PL0-RW per-process via COW). Applies to libc,
+ * every shared library, and programs alike — they all live in the (PL0-none) heap
+ * region and would otherwise be execute-never / PL0-unreachable. */
+void frtos_on_loaded(xtld_obj *obj, void *u)
+{
+    (void)u;
+    extern void mmu_protect(uint32_t, uint32_t, int, int);
+    uintptr_t ibase = xtld_image_base(obj), wva; uint32_t wsz;
+    xtld_writable_range(obj, &wva, &wsz);
+    if (ibase && wva > ibase) mmu_protect((uint32_t)ibase, (uint32_t)(wva - ibase), 1, 0); /* text RO+X */
+    if (wva && wsz)           mmu_protect((uint32_t)wva, wsz, 0, 1);                         /* data RW+XN, PL0-none */
+}
+
 /* xtld_host.open_lib: map a DT_NEEDED soname to /OS/Library/<name> in the romfs */
 int frtos_open_lib(const char *name, const uint8_t **data, uint32_t *len, void *u)
 {
@@ -621,8 +634,7 @@ int frtos_waitpid(int pid)
         mmu_unprotect((uint32_t)xtld_image_base(p->obj), (uint32_t)xtld_span(p->obj));
         xtld_unload(p->obj);
         register_lib_cow();                      /* drop any now-freed library's COW range */
-        if (p->src)  { frtos_free(p->src, NULL);  p->src = 0; }
-        if (p->argv) { frtos_free(p->argv, NULL); p->argv = 0; }
+        if (p->src) { frtos_free(p->src, NULL); p->src = 0; }  /* argv lives on the task stack now */
         p->transient = 0;
     }
     p->used = 0;                                 /* reap the slot (cached image stays resident) */

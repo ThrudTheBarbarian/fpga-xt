@@ -220,14 +220,24 @@ currently non-shared), is the **HW re-graduation** step: `freertos-hw.elf` +
      stubs (semihosting from PL0 doesn't reach the console). `/bin/modetest` reports
      PL0; full suite + runhost run unprivileged. *AP unchanged*, so this isn't
      enforcing isolation yet — that's 3c.
-   - **3b (next):** route the rest of libc's syscall primitives through `svc` (so no
-     PL0→kernel direct calls remain), and put the user-side stubs + libgcc helpers
-     in PL0-reachable memory.
-   - **3c:** flip AP — kernel/identity PL0-none, per-page PL0-RX/RW for loaded
-     module text/data/heap/stack/mmap.
+   - **3b DONE:** libc's syscall primitives (`_open/_read/_close/_lseek/_sbrk/
+     _getpid/_write/_exit`) are `svc #1` stubs, unified on the `proc_t` fd table
+     (`g_fd` gone). `_sbrk` is dual-path (trap from PL0, direct from PL1 — boot
+     mallocs in SVC mode can't nest an svc).
+   - **3c DONE — the boundary is enforced.** The background identity map is now
+     **PL0-none** (`mmu.c`: kernel data/heap/pool/peripherals `AP=01`; section 1 is
+     a per-page L2 splitting kernel **text PL0-RX** from its data tail; planes stay
+     PL0-RW for the framebuffer). Loaded modules punch PL0 holes over it: every
+     module is W^X+PL0-protected by the **`on_loaded`** xtld hook the moment it's
+     relocated (text PL0-RX; writable seg PL0-none in the master — the owner gets
+     PL0-RW per-process via COW), so libraries are executable/reachable before their
+     constructors run. argv is copied to the **top of the task stack** (PL0-RW) so a
+     program can read its own args. Pages are scrubbed on free and the pool's
+     identity VA is PL0-none, so freed/other-process memory is unreachable from PL0.
+     **Verified: `/bin/badpoke` reading a kernel address is killed (no leak); the
+     full suite, chained GEM, and runhost all run unprivileged.**
 
-   Today (pre-3c) every task still reaches the identity-mapped DDR; the original
-   note follows. The whole identity-mapped DDR
+   Historical note (pre-3c, now resolved): the whole identity-mapped DDR
    (`0x0010_0000–0x1FFF_FFFF`) is mapped **AP=11 (RW)** in every space, so the
    per-process windows isolate *honest* programs but are **not a boundary against
    hostile code**: a process can read/write any physical RAM — other processes'

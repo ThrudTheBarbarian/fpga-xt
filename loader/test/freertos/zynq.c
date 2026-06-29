@@ -89,9 +89,10 @@ void fault_report(unsigned code, unsigned addr)
     __asm__ volatile("mrc p15,0,%0,c5,c0,1" : "=r"(ifsr));      /* instr fault status */
     static const char *const names[8] =
         { "reset", "UNDEF", "svc", "PREFETCH-ABORT", "DATA-ABORT", "resv", "irq", "FIQ" };
-    char *tn = pcTaskGetName(0);
+    /* pcTaskGetName asserts if no task is running (a fault during boot) — guard it */
+    char *tn = xTaskGetCurrentTaskHandle() ? pcTaskGetName(0) : 0;
     puts0("\n*** "); puts0(code < 8 ? names[code] : "?");
-    puts0(" in task '"); puts0(tn ? tn : "?"); puts0("'\n");
+    puts0(" in task '"); puts0(tn ? tn : "<boot/none>"); puts0("'\n");
     fr_hex("    PC=", addr);
     fr_hex("  DFAR=", dfar); fr_hex("  DFSR=", dfsr); fr_hex("  IFSR=", ifsr);
     { extern int stackguard_is_guard(unsigned);

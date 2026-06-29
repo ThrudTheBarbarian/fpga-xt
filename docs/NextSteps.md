@@ -258,7 +258,7 @@ Remaining:
   demand-paged, page-aligned romfs, mmaptest); remaining = wire libGEM FreeType to
   FT_New_Memory_Face on the mapped pointer (stop fread-ing fonts into malloc);
   (2) **scrub pages on free** — DONE (vm_space_destroy zeroes private pages before
-  the pool free list); (3) **PL0 user/kernel split** — the real protection boundary:
+  the pool free list); (3) **PL0 user/kernel split** — DONE (the real protection boundary, enforced):
   today all tasks run privileged (System mode) with the identity DDR mapped RW in
   every space, so isolation holds against honest programs but NOT hostile code (a
   process can reach any physical RAM via its identity alias); fix = run user code in

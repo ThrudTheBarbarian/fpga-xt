@@ -20,6 +20,13 @@ SECTIONS
     } > RAM
 
     .ARM.exidx : { __exidx_start = .; *(.ARM.exidx*) __exidx_end = .; } > RAM
+
+    /* end of kernel text+rodata, page-aligned: mmu_init maps [0x0010_0000,
+     * __ktext_end) PL0-RX and everything above PL0-none (the user/kernel boundary).
+     * Kernel text must stay below 0x0020_0000 (one 1 MB section) — it's ~60 KB. */
+    . = ALIGN(0x1000);
+    __ktext_end = .;
+
     .data : { *(.data*) } > RAM
 
     . = ALIGN(8);

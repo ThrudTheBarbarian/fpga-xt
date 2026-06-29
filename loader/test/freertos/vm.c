@@ -31,6 +31,10 @@
 #define L2_PAGE(phys) (((phys) & 0xFFFFF000u) | (1u<<11) | (3u<<4) | (1u<<6) | (1u<<3) | (1u<<2) | 0x2u)
 /* same, but read-only (AP[2]=1 -> AP=111): a write faults (the COW trigger) */
 #define L2_PAGE_RO(phys) (L2_PAGE(phys) | (1u<<9))
+/* PL0-NONE identity page (AP=01: PL1 RW, PL0 none), nG, XN, cacheable — the
+ * per-process background for an overridden section: pages a process must not reach
+ * at PL0 (only its COW/window pages, set separately, are PL0-accessible). */
+#define L2_KERN(phys) (((phys) & 0xFFFFF000u) | (1u<<11) | (1u<<4) | (1u<<6) | (1u<<3) | (1u<<2) | 0x1u | 0x2u)
 /* L1 coarse descriptor pointing at an L2 table (domain 0) */
 #define L1_COARSE(l2) (((uint32_t)(l2) & 0xFFFFFC00u) | 0x1u)
 /* per-process heap: a section mapped to private physical, non-global */
@@ -128,7 +132,7 @@ static uint32_t *perproc_l2(int idx, uint32_t *t, uint32_t sec)
     if ((ml1 & 0x3u) == 0x1u)                                     /* master is coarse L2 */
         memcpy(l2, (uint32_t *)(ml1 & 0xFFFFFC00u), 256 * sizeof(uint32_t));
     else                                                          /* master is a 1 MB section */
-        for (uint32_t i = 0; i < 256; i++) l2[i] = L2_PAGE((sec << 20) + i * 0x1000u);
+        for (uint32_t i = 0; i < 256; i++) l2[i] = L2_KERN((sec << 20) + i * 0x1000u);  /* PL0-none bg */
     space_l2sec[idx][space_l2n[idx]] = (uint16_t)sec;
     space_l2n[idx]++;
     t[sec] = L1_COARSE(l2);

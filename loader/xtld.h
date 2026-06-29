@@ -39,6 +39,10 @@ typedef struct {
     /* Open a DT_NEEDED shared library by name -> its ELF image bytes (e.g. from
      * the filesystem). Return 1 on success. NULL = no shared-library support. */
     int (*open_lib)(const char *name, const uint8_t **data, uint32_t *len, void *user);
+    /* Called once per object (deps first, then the top image) after it is fully
+     * relocated but BEFORE its constructors run — the host applies page protection
+     * here (e.g. W^X + make the text executable/PL0-RX). NULL = no-op. */
+    void (*on_loaded)(xtld_obj *obj, void *user);
     void *user;
 } xtld_host;
 

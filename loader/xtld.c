@@ -377,6 +377,9 @@ int xtld_load(const uint8_t *image, size_t image_len,
     for (int k = 0; k < ndeps; k++) obj->deps[k] = deps[k];   /* hold refs for transitive unload */
     obj->ndeps      = ndeps;
     if (g_nobjs < XTLD_MAX_OBJS) g_objs[g_nobjs++] = obj;   /* register for resolution + dedup */
+    /* let the host protect this object (W^X / executable / PL0) now that it's fully
+     * relocated, BEFORE anyone runs its constructors or calls into it. */
+    if (host->on_loaded) host->on_loaded(obj, host->user);
     *out = obj;
     return XTLD_OK;
 }

@@ -211,7 +211,8 @@ int main(void)
     romfs_mount(romfs_blob, romfs_blob_len);
 
     g_host = (xtld_host){ .alloc = frtos_alloc, .dealloc = frtos_free, .sync_caches = mmu_sync_caches,
-                          .resolve = frtos_ksym, .open_lib = frtos_open_lib, .user = NULL };
+                          .resolve = frtos_ksym, .open_lib = frtos_open_lib,
+                          .on_loaded = frtos_on_loaded, .user = NULL };
 
     /* bootstrap-load /OS/Library/libc.so, then route the loader's allocator
      * through libc.so's malloc (frtos_activate_libc) */

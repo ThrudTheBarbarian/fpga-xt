@@ -23,6 +23,24 @@
 
 static volatile uint32_t l1[4096] __attribute__((aligned(16384)));
 
+/* ---- PL0/PL1 access permissions (the user/kernel boundary) ----------------
+ * Programs run at PL0 (User mode). The background identity map is PL0-NONE so a
+ * process can't touch the kernel, the heap internals, the page pool, or another
+ * process's private memory by address; only its own regions are PL0-accessible:
+ * kernel + module TEXT is PL0-RX (so it can call the svc stubs / libgcc), and its
+ * own data/heap/stack/cow/mmap windows are granted PL0 access per-process (vm.c).
+ *
+ * AP encodings (domain client): 11 = RW all, 111 = RO all (PL0-RX for X pages),
+ * 01 = PL1 RW / PL0 none. All Normal WB-WA cacheable (TEX=001, C=1, B=1). */
+#define PGS_RX    ((1u<<9)|(3u<<4)|(1u<<6)|(1u<<3)|(1u<<2)|0x2u)        /* small: AP=111, X  */
+#define PGS_NONE  ((1u<<4)|(1u<<6)|(1u<<3)|(1u<<2)|0x1u|0x2u)           /* small: AP=01, XN  */
+#define SEC_KDATA 0x141Eu     /* section: AP=01 (PL1 RW, PL0 none), cacheable, XN */
+#define SEC_PLANE 0x1C12u     /* section: AP=11 (PL0 RW), Normal NON-cacheable, XN (PL-shared) */
+#define SEC_PERIPH 0x0416u    /* section: AP=01 (PL0 none), Device, XN */
+
+extern char __ktext_end[];    /* end of kernel text+rodata (linker, page-aligned) */
+static uint32_t boot_text_l2[256] __attribute__((aligned(1024)));   /* splits section 1 */
+
 /* ---- cache maintenance (CP15) ----------------------------------------------
  * Invalidate the entire L1 D-cache by set/way — required before enabling the
  * D-cache from reset, when its contents are UNKNOWN (an unclean line could evict
@@ -74,15 +92,24 @@ uint32_t *mmu_master_table(void) { return (uint32_t *)l1; }
 
 void mmu_init(void)
 {
-    /* T2-a protection: domain 0 is a CLIENT (AP enforced, not bypassed). The
-     * null/low section is a translation fault (NULL/wild-low pointer -> abort);
-     * code regions are executable, data regions XN (W^X at section grain). */
+    /* Domain 0 = CLIENT (AP enforced). The background identity map denies PL0:
+     * kernel/heap/pool sections are PL0-none (SEC_KDATA); section 1 (which holds the
+     * kernel text) is a per-page L2 so the text is PL0-RX and its data tail PL0-none;
+     * the PL-shared planes stay PL0-RW (programs draw the framebuffer); peripherals
+     * and the NULL section are PL0-none. Loaded modules + per-process windows punch
+     * PL0-accessible holes over this background (mmu_protect + vm_space_create). */
+    uint32_t ktend = (uint32_t)__ktext_end;          /* kernel text fits section 1 (<1 MB) */
+    for (uint32_t i = 0; i < 256; i++) {
+        uint32_t va = 0x00100000u + i * 0x1000u;
+        boot_text_l2[i] = (va & 0xFFFFF000u) | (va < ktend ? PGS_RX : PGS_NONE);
+    }
     for (uint32_t i = 0; i < 4096; i++) {
         uint32_t base = i << 20;                 /* 1 MB sections */
-        if (i == 0)              l1[i] = 0;                    /* 0x00000000: fault (NULL trap) */
-        else if (i < 0x200)      l1[i] = base | 0x1C0E;       /* 0x0010_0000..0x1FFF_FFFF: kernel+pool, Normal WB-WA cacheable, AP=11, X */
-        else if (i < 1024)       l1[i] = base | 0x1C12;       /* 0x2000_0000..0x3FFF_FFFF: SALLY/planes, Normal NON-cacheable (PL-shared), XN */
-        else                     l1[i] = base | 0x0C16;       /* peripherals: Device, AP=11, XN */
+        if (i == 0)              l1[i] = 0;                              /* NULL trap */
+        else if (i == 1)         l1[i] = ((uint32_t)boot_text_l2 & 0xFFFFFC00u) | 0x1u;  /* kernel text/data split */
+        else if (i < 0x200)      l1[i] = base | SEC_KDATA;              /* kernel data + heap + pool: PL0-none */
+        else if (i < 1024)       l1[i] = base | SEC_PLANE;             /* SALLY/planes: PL0-RW, non-cacheable */
+        else                     l1[i] = base | SEC_PERIPH;            /* peripherals: PL0-none, Device */
     }
     /* caches are UNKNOWN out of reset — invalidate before enabling, or a stale
      * dirty D-line could evict garbage over RAM once the D-cache turns on. */
@@ -124,7 +151,11 @@ static uint32_t *l2_for_section(uint32_t sec)
     if (l2pool_next >= 32) return 0;                                            /* pool exhausted */
     uint32_t *l2 = l2pool[l2pool_next++];
     uint32_t secbase = sec << 20;
-    for (uint32_t i = 0; i < 256; i++) l2[i] = (secbase + i * 0x1000u) | PG_NORMAL;  /* identity, RWX */
+    /* identity background = PL0-none (the non-module pages in this section: heap
+     * internals / other allocations a process must not reach). mmu_protect then
+     * punches the module's own text (PL0-RX) and data (PL0-none master; the owner
+     * gets PL0-RW via the per-process COW override in vm.c). */
+    for (uint32_t i = 0; i < 256; i++) l2[i] = (secbase + i * 0x1000u) | PGS_NONE;
     l1[sec] = ((uint32_t)l2 & 0xFFFFFC00u) | 0x1u;
     return l2;
 }
@@ -135,7 +166,11 @@ void mmu_protect(uint32_t va, uint32_t size, int ro, int xn)
     for (uint32_t p = va & ~0xFFFu; p < end; p += 0x1000u) {
         uint32_t *l2 = l2_for_section(p >> 20);
         if (!l2) return;
-        l2[(p >> 12) & 0xFFu] = (p & 0xFFFFF000u) | PG_NORMAL | (ro ? PG_RO : 0u) | (xn ? PG_XN : 0u);
+        /* text (ro): PL0-RX (AP=111 RO-all, executable). writable seg (!ro): PL0-NONE
+         * in the master (AP=01) — its owner process gets PL0-RW per-process via COW;
+         * other processes can't see it. (xn applies to the writable seg.) */
+        l2[(p >> 12) & 0xFFu] = (p & 0xFFFFF000u) |
+            (ro ? (PG_NORMAL | PG_RO) : (PGS_NONE | (xn ? PG_XN : 0u)));
     }
     asm volatile("dsb");
     asm volatile("mcr p15,0,%0,c8,c7,0" :: "r"(0u));   /* TLBIALL */
