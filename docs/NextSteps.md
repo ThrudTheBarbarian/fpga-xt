@@ -20,12 +20,7 @@ This is a tracker, so it intentionally carries forward-looking/historical contex
 
 Tracking `docs/Design/architecture-review.md`; landed pieces are in the commit log.
 Remaining:
-
-- **Partial-reconfig CPU swap.** RP region confirmed viable at X1Y2 (not the PS
-  corner — hard blocks there). Implement: `sally_subsystem` wrapper → exclusive RP
-  pblock → DFX static/RM flow → runtime PCAP swap. *(docs/Design/partial-reconfig.md)*
-- **§3.1 ACP coherency** (evaluate on GEM/desktop surfaces), **§3.2 SALLY memory
-  hierarchy → 120 MHz**, **§3.3 HP-port budget doc** — deferred.
+### Immediate Priorities:
 - **GEM desktop with live emulation windows** — M1 (XL plane positionable via GP0),
   M2 (Aristo2 rounded-titlebar chrome), and M3 (bind any window to the XL plane via
   `gem_wm_bind_emu` + `vdi.xlbind`, drag-tracking + titlebar ^/v scale arrows) done +
@@ -33,27 +28,41 @@ Remaining:
   open a window, bind it). M4 also fixes the VDI-workstation leak (direct `vdi.*`
   after `wintest` draws into a window backing, not the desktop). ST plane not wired
   (the bind target enum is ST-ready). *(docs/OS/desktop-emulation-windows.md)*
-- **Drag-overlay alpha (compositor)** — the HW drag-overlay snapshots the *composited*
-  desktop plane, so wallpaper baked into a window's translucent rounded/AA edges
-  travels with it during a drag (visible halo). **RTL DONE** (`plane_compositor.sv`,
-  commit on xtos-dynamic-loading): the compositor now finds the top-2 covered planes
-  and full-α-blends an alpha-enabled winner over the runner (8-bit lerp, +1 pipeline
-  stage); per-plane `pl_alpha_en`; only the drag-overlay blends (over the desktop),
-  gated by `gp0_ctrl[5]` (default off, inert until the PS opts in). `make
-  plane_compositor` green. **REMAINING (software):** `drag_build_surface` still copies
-  the composited desk FB; it must instead **render the window into the overlay buffer
-  with real per-pixel alpha** (α=0 outside the rounded shape, partial on AA edges,
-  255 opaque) — i.e. open a VDI workstation on the overlay surface, clear it
-  transparent, draw the themed frame + content into it (needs the theme/VDI blit to
-  write dest alpha on a transparent dest), then set `gp0_ctrl[5]`. Then one bitstream
-  → HW. *(hdl/plane_compositor.sv DONE; vitis/xtos/src/gem_lua.c drag_build_surface +
-  gem/wm.c draw_frame TODO, [[drag_overlay_layer]])*
+
+- **Drag-overlay alpha (compositor)** — **DONE, HW-confirmed.** The drag overlay used
+  to snapshot the *composited* desktop, carrying the wallpaper baked into a window's
+  rounded/AA chrome edges as a halo during a drag. Fixed both halves: (RTL)
+  `plane_compositor.sv` finds the top-2 covered planes and α-blends an alpha-enabled
+  winner over the runner (8-bit lerp; the multiply is its own pipeline stage — DSP
+  pre-adder does fg−bg — to close clk_pix @148, latency 3→4); per-plane `pl_alpha_en`;
+  only the drag overlay blends (over the desktop), gated by `gp0_ctrl[5]`. (SW)
+  `drag_build_surface` re-renders the window into the overlay with real per-pixel alpha
+  (`gem_wm_render_window_to` over a transparent buffer; α=0 outside the rounded shape)
+  and arms `gp0_ctrl[5]`; emu-backed windows render chrome only, the XL plane (depth 2,
+  emu_track'd) shows live content on top. Timing closed (clk_pix +0.132 / clk_sally
+  +0.275 / clk_sys +0.008). **Residual (accepted):** the rounded-corner AA ring reads
+  as a thin **black border** — `vr_transfer_bits` VR_OVER outputs partial pixels
+  opaque-darkened (blended toward the transparent buffer's black). Soft AA would need
+  an alpha-out OVER mode (keeps straight partial α) — deferred. *(hdl/plane_compositor.sv,
+  vitis/xtos/src/gem_lua.c, gem/wm.c gem_wm_render_window_to, [[drag_overlay_layer]])*
+
+### Future:
+- **Partial-reconfig CPU swap.** RP region confirmed viable at X1Y2 (not the PS
+  corner — hard blocks there). Implement: `sally_subsystem` wrapper → exclusive RP
+  pblock → DFX static/RM flow → runtime PCAP swap. *(docs/Design/partial-reconfig.md)*
+
+- **§3.1 ACP coherency** (evaluate on GEM/desktop surfaces), 
+
+### Some time, maybe:
+- **§3.2 SALLY memory hierarchy → 120 MHz**, 
+- **§3.3 HP-port budget doc** — deferred.
 
 
 ---
 
 ## HW / RTL bring-up
 
+### Future:
 - **Keyboard injection host source** — RTL path is done (GP0 → `$D4CF` → POKEY).
   Remaining: a host-side source + ASCII→KBCODE map. *(likely partly covered by the
   serial `{ }` paste path — verify; src: former docs/TODO.txt)*
