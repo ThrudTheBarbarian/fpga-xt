@@ -303,6 +303,10 @@ module fpga_xt_top (
     wire [7:0]  scrn_cpu_bank, scrn_antic_bank, scrn_bank_wval;
     wire        scrn_cpu_bank_we, scrn_antic_bank_we;
     wire        scrn_ready = 1'b1;
+    wire [12:0] scrn_cpu_addr;
+    wire        scrn_cpu_we;
+    wire [7:0]  scrn_cpu_wdata;
+    wire [7:0]  scrn_cpu_rdata = 8'h00;   // driven by screen_bank in a later stage
 
     // ANTIC-view bank registers ($D488-$D48B) are currently unused in the
     // Zynq build — ANTIC's DMA reaches RAM via bram_shim, not via
@@ -738,6 +742,10 @@ module fpga_xt_top (
         .scrn_antic_bank_we (scrn_antic_bank_we),
         .scrn_bank_wval     (scrn_bank_wval),
         .scrn_ready         (scrn_ready),
+        .scrn_cpu_addr      (scrn_cpu_addr),
+        .scrn_cpu_we        (scrn_cpu_we),
+        .scrn_cpu_wdata     (scrn_cpu_wdata),
+        .scrn_cpu_rdata     (scrn_cpu_rdata),
         .unlock_bank        (xt_unlock[UNLK_BANK]),
         .portb              (portb_q),
         .bus_mpd_n_in       (1'b1),         // no PBI

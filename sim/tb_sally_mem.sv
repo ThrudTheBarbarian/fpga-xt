@@ -91,6 +91,10 @@ module tb_sally_mem;
         .scrn_antic_bank_we (),
         .scrn_bank_wval     (),
         .scrn_ready         (1'b1),
+        .scrn_cpu_addr      (),
+        .scrn_cpu_we        (),
+        .scrn_cpu_wdata     (),
+        .scrn_cpu_rdata     (8'h00),
         .unlock_bank        (1'b1),
         .portb              (portb),
         .bus_mpd_n_in       (1'b1),    // M-PBI: /MPD inactive in unit-level sim

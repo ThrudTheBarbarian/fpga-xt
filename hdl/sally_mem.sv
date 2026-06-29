@@ -142,6 +142,12 @@ module sally_mem #(
     output wire        scrn_antic_bank_we, // 1-cycle strobe on a $D5C4 write
     output wire [7:0]  scrn_bank_wval,     // data being written (shared)
     input  wire        scrn_ready,         // $D5C5.0 — CPU-BRAM holds the requested bank
+    // CPU port to the screen_bank CPU-BRAM (clk_sally; only used when the CPU
+    // screen bank is non-zero — bank 0 stays the flat 64 KB shadow).
+    output wire [12:0] scrn_cpu_addr,      // byte address within the 8 KB aperture
+    output wire        scrn_cpu_we,        // write enable (banked aperture write)
+    output wire [7:0]  scrn_cpu_wdata,
+    input  wire [7:0]  scrn_cpu_rdata,     // registered read (aligned with bram_dout_q)
 
     // XT register-unlock: when 0 (locked / stock) the $D5C0/$D5C1 bank-select
     // writes are ignored, so a stock cart's own $D5xx CCTL bank-switching is
@@ -352,6 +358,17 @@ module sally_mem #(
     assign scrn_cpu_bank_q   = scrn_cpu_bank;
     assign scrn_antic_bank_q = scrn_antic_bank;
 
+    // ---- Screen aperture ($4000-$5FFF) CPU routing ----
+    // Bank 0 = the flat 64 KB shadow (today's behaviour, boot unchanged).
+    // Non-zero bank = the screen_bank CPU-BRAM: writes go to its CPU port (the
+    // harmless shadow write also lands, like hwreg/bank — see mem_we), and reads
+    // prefer scrn_cpu_rdata over bram_dout_q via the rare_dout path below.
+    wire is_scrn_aperture = (addr[15:13] == 3'b010);            // $4000-$5FFF
+    wire scrn_banked      = is_scrn_aperture && (scrn_cpu_bank != 8'h00);
+    assign scrn_cpu_addr  = addr[12:0];
+    assign scrn_cpu_we    = rdy && !rw && scrn_banked;
+    assign scrn_cpu_wdata = data_in;
+
     // ---- Bank translator -----------------------------------------
     wire [15:0] bank_id_w;
     wire [13:0] offset_in_block_w;
@@ -514,6 +531,7 @@ module sally_mem #(
     logic       was_cart_external_q;  // M-PBI #2: prev addr was cart-window AND RD asserted
     logic [7:0] ctlreg_dout_q;        // xtc bank-control read-back ($D5C0/$D5C1)
     logic       was_ctlreg_q;         // prev addr was an xtc control reg
+    logic       was_scrn_q;           // prev addr was a banked screen-aperture read
 
     // Main BRAM write port: clk-only (no reset), single write-enable +
     // address + data mux. Vivado BRAM inference requires this shape.
@@ -621,6 +639,7 @@ module sally_mem #(
             was_selftest_q       <= 1'b0;
             ctlreg_dout_q        <= 8'h00;
             was_ctlreg_q         <= 1'b0;
+            was_scrn_q           <= 1'b0;
         end else if (rdy) begin
             bram_dout_q          <= mem[mem_addr_w];
             stack_dout_q         <= stack_mem[stack_addr_rd];
@@ -639,6 +658,7 @@ module sally_mem #(
             // Locked (BANK group off) → don't shadow these; the read falls
             // through to the CCTL/cart path (open bus) like stock silicon.
             was_ctlreg_q         <= (is_ctlreg | is_scrn_reg) && unlock_bank_q;
+            was_scrn_q           <= scrn_banked;
             was_hwreg_q          <= is_hwreg_page;
             was_bank_q           <= is_in_window_w;
             was_stack_q          <= is_stack_access;
@@ -686,11 +706,12 @@ module sally_mem #(
     // blitter source is decoupled from the critical cpu_rdata mux.  The stall +
     // registered busy_n make the 1-cycle local register valid exactly when the
     // CPU samples it (this is NOT the old rdy-gated latch that read stale).
-    wire use_rare = was_selftest_q | was_ctlreg_q | was_hwreg_q | was_cart_external_q
+    wire use_rare = was_selftest_q | was_ctlreg_q | was_scrn_q | was_hwreg_q | was_cart_external_q
                   | (was_mpd_window_q & mpd_active)
                   | (~was_rom_override_q & (was_bank_q | was_stack_q));
     wire [7:0] rare_dout = was_selftest_q             ? selftest_dout_q
                          : was_ctlreg_q               ? ctlreg_dout_q
+                         : was_scrn_q                 ? scrn_cpu_rdata
                          : was_hwreg_q                ? hwreg_dout_q
                          : was_cart_external_q        ? bus_pbi_rdata
                          : (was_mpd_window_q & mpd_active) ? bus_pbi_rdata
