@@ -16,8 +16,9 @@
 /* register block pushed by the svc handler: r0..r12 then lr_svc */
 struct k_regs { uint32_t r[13]; uint32_t lr; };
 
-/* C dispatch called from the asm svc handler */
-void  k_syscall_dispatch(struct k_regs *regs);
+/* C dispatch called from the asm svc handler. Returns 1 if the resumed PC must run
+ * at PL1 (the FreeRTOS testbed uses this for the exit thunk of a PL0 task); 0 else. */
+int   k_syscall_dispatch(struct k_regs *regs);
 
 /* the syscall implementations */
 long  k_syscall(uint32_t num, long a0, long a1, long a2, long a3, long a4, long a5);

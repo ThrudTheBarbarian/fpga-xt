@@ -9,6 +9,7 @@
 #include "bare_rt.h"
 #include "romfs.h"
 #include "frtos_os.h"
+#include "xtsys.h"
 
 /* _sbrk hands out the OS heap; its base is set just above libc.so's pinned image
  * once libc.so is loaded (sbrk_set_base), its end is the top of the heap. */
@@ -37,14 +38,19 @@ void *kern_sbrk(int incr)
     return p;
 }
 
+/* _write is libc.so's console output. It runs in the calling program's context —
+ * which is now USER mode (PL0) — so it must NOT do the semihosting/console write
+ * directly (that has to happen privileged): trap to PL1 via svc #1, where
+ * do_syscall(SYS_write) drives g_console. (The romfs file ops below don't touch
+ * privileged state, so they stay direct calls.) */
 int _write(int fd, char *buf, int len)
 {
-    if (fd == 1 || fd == 2) {
-        int r = len; const char *p = buf;
-        while (r > 0) { int c = r > 200 ? 200 : r; rt_write(p, c); p += c; r -= c; }
-        return len;
-    }
-    return -1;
+    register long r7 __asm__("r7") = SYS_write;
+    register long r0 __asm__("r0") = fd;
+    register long r1 __asm__("r1") = (long)buf;
+    register long r2 __asm__("r2") = len;
+    __asm__ volatile("svc #1" : "+r"(r0) : "r"(r7), "r"(r1), "r"(r2) : "memory");
+    return (int)r0;
 }
 
 /* romfs-backed file descriptors for libc.so's fopen/fread/fseek (e.g. FreeType
@@ -95,8 +101,16 @@ int _lseek(int fd, int off, int whence)
 
 int _close(int fd) { int i = fdx(fd); if (i < 0) return -1; g_fd[i].used = 0; return 0; }
 
-void _exit(int code) { sh_exit(code); for (;;) {} }
-void abort(void) { sh_exit(99); for (;;) {} }   /* referenced by libgcc unwind */
+/* libc.so's exit path runs at PL0 — trap to PL1 (svc #1 SYS_exit), which deletes
+ * the task. (sh_exit's semihosting would be a no-op from User mode.) */
+void _exit(int code)
+{
+    register long r7 __asm__("r7") = SYS_exit;
+    register long r0 __asm__("r0") = code;
+    __asm__ volatile("svc #1" : "+r"(r0) : "r"(r7) : "memory");
+    for (;;) {}
+}
+void abort(void) { _exit(99); }   /* referenced by libgcc unwind */
 
 int _fstat(int fd, void *st) { (void)fd; (void)st; return -1; }
 int _isatty(int fd) { (void)fd; return fdx(fd) < 0 && fd < 3; }   /* console fds only */

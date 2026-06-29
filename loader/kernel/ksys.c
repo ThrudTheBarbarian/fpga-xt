@@ -27,20 +27,23 @@ long k_syscall(uint32_t num, long a0, long a1, long a2, long a3, long a4, long a
     }
 }
 
-/* called from the asm svc handler with a pointer to the saved register block */
-void k_syscall_dispatch(struct k_regs *regs)
+/* called from the asm svc handler with a pointer to the saved register block.
+ * Returns 1 if the resumed PC should run at PL1 (the FreeRTOS testbed uses this for
+ * the exit thunk); the bare kernel never needs it, so it always returns 0. */
+int k_syscall_dispatch(struct k_regs *regs)
 {
     /* the gateway is `svc #1`; decode the immediate from the trapping
      * instruction (svc #0 is the FreeRTOS port's, per dynamic-loading.md §7). */
     uint32_t insn = *((volatile uint32_t *)(regs->lr - 4));
     if ((insn & 0x00ffffff) != 1) {
         if (g_console) g_console("kernel: bad svc immediate\n", 26);
-        return;
+        return 0;
     }
     long ret = k_syscall(regs->r[7],
                          regs->r[0], regs->r[1], regs->r[2],
                          regs->r[3], regs->r[4], regs->r[5]);
     regs->r[0] = (uint32_t)ret;
+    return 0;
 }
 
 int k_spawn(const uint8_t *image, uint32_t len, const xtld_host *host)

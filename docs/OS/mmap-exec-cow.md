@@ -212,8 +212,22 @@ currently non-shared), is the **HW re-graduation** step: `freertos-hw.elf` +
    before returning it to the free list, so freed runtime data doesn't linger (the
    only non-zero word while free is the free-list link — a pool address, not user
    data). Defense-in-depth; fully meaningful once #3 lands.
-3. **PL0 user/kernel split — the real memory-protection boundary.** Today every
-   task runs **privileged (System mode)** and the whole identity-mapped DDR
+3. **PL0 user/kernel split — the real memory-protection boundary.**
+   - **3a DONE:** spawned programs now run at **PL0 (User mode)** — `app_main` drops
+     to User via `enter_user_and_run`, syscalls/IRQs/faults trap up to PL1, and the
+     exit + fault-kill thunks are resumed at PL1 (System) by `xt_vectors.S` so they
+     can call `vTaskDelete`. libc's console `_write` and `_exit` became `svc #1`
+     stubs (semihosting from PL0 doesn't reach the console). `/bin/modetest` reports
+     PL0; full suite + runhost run unprivileged. *AP unchanged*, so this isn't
+     enforcing isolation yet — that's 3c.
+   - **3b (next):** route the rest of libc's syscall primitives through `svc` (so no
+     PL0→kernel direct calls remain), and put the user-side stubs + libgcc helpers
+     in PL0-reachable memory.
+   - **3c:** flip AP — kernel/identity PL0-none, per-page PL0-RX/RW for loaded
+     module text/data/heap/stack/mmap.
+
+   Today (pre-3c) every task still reaches the identity-mapped DDR; the original
+   note follows. The whole identity-mapped DDR
    (`0x0010_0000–0x1FFF_FFFF`) is mapped **AP=11 (RW)** in every space, so the
    per-process windows isolate *honest* programs but are **not a boundary against
    hostile code**: a process can read/write any physical RAM — other processes'

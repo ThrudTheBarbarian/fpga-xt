@@ -259,33 +259,36 @@ static long do_syscall(uint32_t num, long a0, long a1, long a2)
     }
 }
 
-/* called from the chained SVC vector with the saved register block */
-void k_syscall_dispatch(struct k_regs *regs)
+/* called from the chained SVC vector with the saved register block. Returns 1 for
+ * the exit case (the vector then resumes task_exit_thunk at PL1 — see xt_vectors.S),
+ * 0 otherwise. */
+int k_syscall_dispatch(struct k_regs *regs)
 {
     uint32_t insn = *((volatile uint32_t *)(regs->lr - 4));
-    if ((insn & 0x00ffffff) != 1) { regs->r[0] = (uint32_t)-1; return; }
+    if ((insn & 0x00ffffff) != 1) { regs->r[0] = (uint32_t)-1; return 0; }
 
     uint32_t num = regs->r[7];
     if (num == SYS_exit) {
         proc_t *p = cur_proc();
         if (p) p->exit_code = (int)regs->r[0];
-        regs->lr = (uint32_t)(uintptr_t)task_exit_thunk;   /* resume in task ctx */
-        return;
+        regs->lr = (uint32_t)(uintptr_t)task_exit_thunk;   /* resume the thunk (at PL1) */
+        return 1;
     }
     regs->r[0] = (uint32_t)do_syscall(num, regs->r[0], regs->r[1], regs->r[2]);
+    return 0;
 }
 
-/* task body: run constructors + the loaded entry; finish here if it returns. Init
- * runs PER PROCESS (classic exec semantics): the image is shared/loaded once, but
- * each instance's .init_array writes land in its own COW copy of the data, started
- * from the pristine file-loaded image. */
+/* task body: run constructors (PL1), then drop to USER mode (PL0) and run the
+ * program entry. Init runs PER PROCESS (classic exec semantics): the image is
+ * shared/loaded once, but each instance's .init_array writes land in its own COW
+ * copy. enter_user_and_run never returns — when entry returns (or calls exit) it
+ * traps back via svc SYS_exit, which deletes the task (at PL1, see xt_vectors.S). */
 static void app_main(void *arg)
 {
     proc_t *p = (proc_t *)arg;
+    extern void enter_user_and_run(void (*)(int, char **), int, char **);
     xtld_run_init(p->obj);
-    ((void (*)(int, char **))p->entry)(p->argc, p->argv);   /* argc/argv */
-    if (p->done) xSemaphoreGive(p->done);
-    vTaskDelete(NULL);
+    enter_user_and_run((void (*)(int, char **))p->entry, p->argc, p->argv);
 }
 
 /* copy argv (strings + pointer array) into memory owned by the child, since the

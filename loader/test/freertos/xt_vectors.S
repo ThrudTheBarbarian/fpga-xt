@@ -40,9 +40,31 @@ xt_svc_dispatch:
     bne   FreeRTOS_SWI_Handler
     push  {r0-r12, lr}        /* struct k_regs { r0..r12, lr } */
     mov   r0, sp
-    bl    k_syscall_dispatch
-    pop   {r0-r12, lr}        /* lr may have been redirected (exit) */
+    bl    k_syscall_dispatch  /* returns 1 if exit: resume the thunk at PL1 (System) */
+    cmp   r0, #1              /* (r0 = C return, before the pop restores the user's r0) */
+    bne   1f
+    mrs   r0, spsr            /* exit: a PL0 task's thunk must run privileged to call */
+    bic   r0, r0, #0x1f       /*   vTaskDelete — force the resumed mode to System */
+    orr   r0, r0, #0x1f
+    msr   spsr_cxsf, r0
+1:  pop   {r0-r12, lr}        /* lr may have been redirected (exit thunk) */
     movs  pc, lr
+
+/* enter_user_and_run(entry, argc, argv): drop from System to USER mode (sharing
+ * the task's SP) and call the program entry at PL0; on return, exit via svc. The
+ * program runs unprivileged — syscalls/IRQs/faults all trap up to PL1. */
+    .global enter_user_and_run
+enter_user_and_run:
+    mov   r3, r0             /* entry */
+    mov   r0, r1             /* argc -> r0 */
+    mov   r1, r2             /* argv -> r1 */
+    cps   #0x10              /* -> User mode (User/System share SP+LR) */
+    isb
+    blx   r3                 /* entry(argc, argv) at PL0 */
+    movw  r7, #0x101         /* SYS_exit */
+    mov   r0, #0             /* exit code 0 (program returned) */
+    svc   #1
+2:  b     2b
 
     .extern fault_report
     .extern xtos_task_fault_exit
@@ -79,7 +101,11 @@ xt_fault: bl   fault_report
           cps  #0x1f                @ System mode: replace the task's (overflowed) SP
           mov  sp, r0               @   with the emergency stack so the kill thunk has
           cps  #0x17                @   a valid stack to run on
-1:        movw lr, #:lower16:xtos_task_fault_exit
+1:        mrs  r0, spsr             @ the fault-exit thunk calls vTaskDelete, so it must
+          bic  r0, r0, #0x1f        @   run privileged even if the faulting task was PL0:
+          orr  r0, r0, #0x1f        @   force the resumed mode to System
+          msr  spsr_cxsf, r0
+          movw lr, #:lower16:xtos_task_fault_exit
           movt lr, #:upper16:xtos_task_fault_exit
           movs pc, lr
     .global xt_hang
