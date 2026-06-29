@@ -254,7 +254,9 @@ Remaining:
   libraries, program data, fork-ready mechanism), caches ON, a DDR-backed page pool
   with reclaim, and the complete loader teardown path (DT_FINI_ARRAY destructors +
   transitive unload + program-cache eviction). **Ordered next** (docs/OS/mmap-exec-
-  cow.md §8): (1) **mmap'd files** (registry/fonts/assets demand-paged RO+shared);
+  cow.md §8): (1) **mmap'd files** — mechanism DONE (SYS_mmap/munmap, RO+shared+
+  demand-paged, page-aligned romfs, mmaptest); remaining = wire libGEM FreeType to
+  FT_New_Memory_Face on the mapped pointer (stop fread-ing fonts into malloc);
   (2) **scrub pages on free** (defense-in-depth — don't leave freed runtime data on
   the pool free list); (3) **PL0 user/kernel split** — the real protection boundary:
   today all tasks run privileged (System mode) with the identity DDR mapped RW in

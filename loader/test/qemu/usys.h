@@ -12,6 +12,8 @@
 #define SYS_read    0x302
 #define SYS_write   0x303
 #define SYS_lseek   0x304
+#define SYS_mmap    0x305
+#define SYS_munmap  0x306
 #define SYS_fb_info    0x400
 #define SYS_fb_present 0x401
 
@@ -39,6 +41,12 @@ static inline long sys_read(int fd, void *buf, unsigned len)
 static inline long sys_close(int fd) { return __syscall(SYS_close, fd, 0, 0); }
 static inline long sys_lseek(int fd, long off, int whence)
 { return __syscall(SYS_lseek, fd, off, whence); }
+/* mmap a romfs file read-only + shared (len=0 -> whole file from off). Returns a
+ * pointer to the file's bytes (no copy), or NULL. */
+static inline void *sys_mmap(int fd, unsigned len, unsigned off)
+{ long r = __syscall(SYS_mmap, fd, (long)len, (long)off); return r > 0 ? (void *)r : (void *)0; }
+static inline long sys_munmap(void *addr, unsigned len)
+{ return __syscall(SYS_munmap, (long)addr, (long)len, 0); }
 static inline long sys_fb_info(struct os_fbinfo *fi) { return __syscall(SYS_fb_info, (long)fi, 0, 0); }
 static inline long sys_fb_present(void) { return __syscall(SYS_fb_present, 0, 0, 0); }
 

@@ -5,7 +5,11 @@
  * Format (little-endian):
  *   magic "XRFS" (4), count (4)
  *   count x entry { char path[56]; u32 offset; u32 size; }   (64 bytes)
- *   ... file data (each at its offset from the start of the blob) ...
+ *   ... file data (each PAGE-ALIGNED from the start of the blob) ...
+ *
+ * File data is 4 KB-aligned so a file can be mmap'd zero-copy: with the embedded
+ * blob array page-aligned too (romfs_blob.h), each file's bytes land on a physical
+ * page boundary, mappable read-only straight into a process VA. See SYS_mmap.
  */
 #include <stdio.h>
 #include <stdlib.h>
@@ -32,6 +36,7 @@ int main(int argc, char **argv)
     unsigned char **data = calloc(n, sizeof *data);
     unsigned *sizes = calloc(n, sizeof *sizes);
 
+#define PAGE 0x1000u
     unsigned cursor = 8 + (unsigned)n * sizeof(ent_t);   /* header + table */
     for (int i = 0; i < n; i++) {
         char *spec = argv[2 + i];
@@ -41,9 +46,10 @@ int main(int argc, char **argv)
         if (strlen(spec) >= PATHLEN) { fprintf(stderr, "path too long: %s\n", spec); return 1; }
         strncpy(ents[i].path, spec, PATHLEN - 1);
         data[i] = slurp(eq + 1, &sizes[i]);
+        cursor = (cursor + PAGE - 1u) & ~(PAGE - 1u);     /* page-align each file (mmap) */
         ents[i].off = cursor;
         ents[i].size = sizes[i];
-        cursor += (sizes[i] + 3u) & ~3u;                 /* 4-byte align */
+        cursor += sizes[i];
     }
 
     FILE *out = fopen(argv[1], "wb");
@@ -51,10 +57,11 @@ int main(int argc, char **argv)
     fwrite("XRFS", 1, 4, out);
     unsigned cnt = (unsigned)n; fwrite(&cnt, 4, 1, out);
     fwrite(ents, sizeof(ent_t), n, out);
+    unsigned pos = 8 + (unsigned)n * sizeof(ent_t);
     for (int i = 0; i < n; i++) {
+        while (pos < ents[i].off) { fputc(0, out); pos++; }  /* pad to the file's page */
         fwrite(data[i], 1, sizes[i], out);
-        unsigned pad = ((sizes[i] + 3u) & ~3u) - sizes[i];
-        while (pad--) fputc(0, out);
+        pos += sizes[i];
     }
     fclose(out);
     fprintf(stderr, "mkromfs: %d files, %u bytes\n", n, cursor);

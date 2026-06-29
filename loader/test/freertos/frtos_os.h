@@ -13,6 +13,10 @@
  * first write). The kernel never touches it, so no global TLB shadow on HW. */
 #define XTOS_COW_VA    0x11000000u
 #define XTOS_COW_SIZE  0x00001000u
+/* per-process mmap window: files (romfs, page-aligned) mapped READ-ONLY + shared,
+ * demand-paged on first touch. One section; bump-allocated per process. */
+#define XTOS_MMAP_VA   0x12000000u
+#define XTOS_MMAP_SIZE 0x00100000u
 /* TTBR0 cacheable-walk attributes (short descriptor): inner+outer Write-Back
  * Write-Allocate, non-shared. OR'd into the table base whenever TTBR0 is written
  * (mmu_init, vm_switch) so page-table walks go through the D-cache and stay
@@ -34,6 +38,9 @@ void vm_cow_reset_dynamic(void);    /* drop library COW ranges (keep synthetic+l
 uint32_t vm_cow_count(void);
 int  vm_cow_map(int idx, uint32_t va);
 int  vm_demand_map(int idx, uint32_t va);
+uint32_t vm_mmap(int idx, uint32_t src, uint32_t size);   /* map a file RO+shared -> VA */
+int  vm_mmap_fault(int idx, uint32_t va);                 /* demand-page an mmap'd file page */
+int  vm_munmap(int idx, uint32_t va, uint32_t size);
 uint32_t *vm_space_create(int idx, uint32_t prog_va, uint32_t prog_size, uint32_t prog_src);
 void vm_space_destroy(int idx);     /* reclaim a dead space's private pages to the pool */
 void vm_phys_init(uint32_t top);    /* announce the arena top; page pool grows down from it */

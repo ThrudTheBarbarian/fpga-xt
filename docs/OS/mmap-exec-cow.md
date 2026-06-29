@@ -94,6 +94,27 @@ mapped. (Constructors run per process in `app_main`; destructors run once, at
 module unload — programs aren't unloaded per-exit, so a program's `fini` runs when
 its cached image is evicted.)
 
+## 4a. mmap'd files (`SYS_mmap`)
+
+A process can map a romfs file **read-only + shared + demand-paged** instead of
+`read()`-ing it into a malloc'd buffer: `SYS_mmap(fd, len, off)` returns a VA in a
+per-process window (`XTOS_MMAP_VA`, one section, bump-allocated). Nothing is mapped
+up front; on a read fault in the window `vm_mmap_fault` maps the page **RO + XN** to
+the file's physical romfs page. Since romfs is resident and page-aligned (`mkromfs`
+page-aligns each file; the embedded blob is `aligned(4096)`), this is **zero-copy**
+and **shared** — every mapper points at the one physical copy. A **write** to the
+mapping is fatal (it's read-only). `SYS_munmap` drops the descriptor (the shared
+romfs physical is left alone). On exit, the mmap window is just torn down — its
+pages are romfs, never pool pages, so reclaim ignores them.
+
+`/bin/mmaptest` proves it: mmap'd bytes equal a `read()` of the same file
+(zero-copy correctness), a multi-page font demand-pages first + last page, and
+`mmaptest ro` writes to the mapping and is killed (RO enforced), OS surviving.
+
+Follow-up: wire FreeType/asset loading to mmap (`FT_New_Memory_Face` on the mapped
+pointer in libGEM) so fonts stop being `fread` into per-process malloc buffers —
+the mechanism is in place; this is the libGEM-side change to use it.
+
 ## 5. Hardware notes (carried for the HW re-graduation)
 
 - **Stale global TLB shadow.** The master maps RAM global+identity. A per-process
@@ -136,7 +157,9 @@ its cached image is evicted.)
 `cowtest` (synthetic COW + isolation), `sharetext` (1 load for 2 spawns, shared
 `&marker`, pristine-then-private `g_counter`), `vmtest` (per-process heaps),
 `libc_test` / `gemtext` / `desktop` (libc + libm + FreeType under COW),
-`demandtest`, `wxtest`, `stacktest`, `faulttest`.
+`demandtest`, `wxtest`, `stacktest`, `faulttest`, `memtest` (DDR pool + reclaim),
+`finictor` (ctor/dtor — fini on eviction), `mmaptest` (zero-copy RO file map +
+multi-page demand + RO-enforced).
 
 ## 7. Caches (on)
 
@@ -166,9 +189,10 @@ currently non-shared), is the **HW re-graduation** step: `freertos-hw.elf` +
 
 ## 8. Roadmap (ordered)
 
-1. **mmap'd files** — map the registry / fonts / assets read-only + shared, demand-
-   paged through the existing fault path, instead of `read()`-ing them into malloc'd
-   buffers.
+1. **mmap'd files** — mechanism DONE (§4a: `SYS_mmap`/`SYS_munmap`, RO + shared +
+   demand-paged, page-aligned romfs). Remaining: wire FreeType/asset loading in
+   libGEM to use it (`FT_New_Memory_Face` on the mapped pointer) so fonts/assets
+   stop being `read()` into per-process malloc buffers.
 2. **Scrub pages on free** — zero a space's private pages in `vm_space_destroy`
    (not just on the next `dpage()` alloc), so freed runtime data doesn't linger on
    the pool free list. Defense-in-depth; only fully meaningful with #3.

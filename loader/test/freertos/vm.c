@@ -40,6 +40,7 @@ extern uint32_t *mmu_master_table(void);
 
 static uint32_t  space_l1[NSPACE][4096]     __attribute__((aligned(16384)));
 static uint32_t  space_l2_heap[NSPACE][256] __attribute__((aligned(1024)));/* heap section (demand-paged) */
+static uint32_t  space_l2_mmap[NSPACE][256] __attribute__((aligned(1024)));/* mmap window (file-backed RO) */
 /* a small per-space pool of L2 tables, one per 1 MB section the space overrides
  * (libc data, program data, the synthetic demo). Section-keyed so a program and
  * libc that happen to share a 1 MB section reuse ONE L2 (no clobber, the §6
@@ -77,6 +78,15 @@ static int      g_cow_n;
 static int      g_cow_perm = -1;                 /* count of PERMANENT ranges (synthetic+libc) */
 static cow_rng  g_space_prog[NSPACE];            /* the program data range of each space */
 static uint32_t g_cow_count;
+
+/* per-process mmap window: file-backed READ-ONLY mappings (romfs pages), demand-
+ * paged. Each descriptor maps [va,end) RO to the file's physical pages at `src`.
+ * VAs are bump-allocated in [XTOS_MMAP_VA, +SIZE); the backing is shared romfs
+ * (never pool pages), so teardown just drops the descriptors. */
+#define NMMAP 8
+static cow_rng  g_space_maps[NSPACE][NMMAP];     /* {va, end, src=file physical} */
+static int      g_space_nmaps[NSPACE];
+static uint32_t g_space_mmap_brk[NSPACE];        /* next free VA in the window */
 void vm_cow_register(uint32_t va, uint32_t size, uint32_t src)
 {
     uint32_t base = va & ~0xFFFu;
@@ -197,6 +207,16 @@ uint32_t *vm_space_create(int idx, uint32_t prog_va, uint32_t prog_size, uint32_
         uint32_t *hl2 = space_l2_heap[idx];
         memset(hl2, 0, 256 * sizeof(uint32_t));
         t[XTOS_HEAP_VA >> 20] = L1_COARSE(hl2);
+    }
+
+    /* mmap window: an empty L2 (every page faults -> file page mapped RO on demand
+     * by vm_mmap_fault). Bump + descriptors reset for the fresh space. */
+    {
+        uint32_t *ml2 = space_l2_mmap[idx];
+        memset(ml2, 0, 256 * sizeof(uint32_t));
+        t[XTOS_MMAP_VA >> 20] = L1_COARSE(ml2);
+        g_space_nmaps[idx] = 0;
+        g_space_mmap_brk[idx] = XTOS_MMAP_VA;
     }
 
     /* global COW ranges (libc data, synthetic demo) */
@@ -372,4 +392,62 @@ int vm_cow_map(int idx, uint32_t va)
     __asm__ volatile("mcr p15,0,%0,c8,c7,3" :: "r"(va & 0xFFFFF000u));  /* TLBIMVAA */
     __asm__ volatile("dsb; isb");
     return 1;
+}
+
+/* ---- mmap'd files (read-only, shared, demand-paged) -----------------------
+ * Reserve a VA window for a file: page (va+k) will map READ-ONLY to file physical
+ * (src+k) on first touch. The backing is the resident romfs (shared, one physical
+ * copy across all mappers) — no copy, unlike read()-into-malloc. `src` and `size`
+ * must be page-granular (romfs files are page-aligned). Returns the VA, or 0. */
+uint32_t vm_mmap(int idx, uint32_t src, uint32_t size)
+{
+    if (!size || (src & 0xFFFu)) return 0;                   /* need a page-aligned source */
+    uint32_t npg = (size + 0xFFFu) >> 12;
+    uint32_t va  = g_space_mmap_brk[idx];
+    if (va + npg * 0x1000u > XTOS_MMAP_VA + XTOS_MMAP_SIZE) return 0;   /* window full */
+    if (g_space_nmaps[idx] >= NMMAP) return 0;
+    g_space_maps[idx][g_space_nmaps[idx]].va  = va;
+    g_space_maps[idx][g_space_nmaps[idx]].end = va + npg * 0x1000u;
+    g_space_maps[idx][g_space_nmaps[idx]].src = src;
+    g_space_nmaps[idx]++;
+    g_space_mmap_brk[idx] = va + npg * 0x1000u;
+    return va;
+}
+
+/* fault in the mmap window: map the faulting page READ-ONLY + execute-never to its
+ * file physical page. Returns 1 (serviced) or 0 (no descriptor -> fatal). A WRITE
+ * to a mapped RO page is NOT a COW range, so it stays fatal (mmap is read-only). */
+int vm_mmap_fault(int idx, uint32_t va)
+{
+    for (int m = 0; m < g_space_nmaps[idx]; m++) {
+        cow_rng *r = &g_space_maps[idx][m];
+        if (va < r->va || va >= r->end) continue;
+        uint32_t *ml2 = space_l2_mmap[idx];
+        ml2[L2_IDX(va)] = L2_PAGE_RO(r->src + ((va & ~0xFFFu) - r->va)) | 0x1u;  /* RO + XN */
+        __asm__ volatile("dsb");
+        __asm__ volatile("mcr p15,0,%0,c8,c7,3" :: "r"(va & 0xFFFFF000u));  /* TLBIMVAA */
+        __asm__ volatile("dsb; isb");
+        return 1;
+    }
+    return 0;
+}
+
+/* drop a mapping: clear its L2 entries (the shared romfs physical is left alone)
+ * and remove the descriptor. The VA window is bump-only, so VAs aren't recycled
+ * until the space is rebuilt — fine for a testbed. */
+int vm_munmap(int idx, uint32_t va, uint32_t size)
+{
+    (void)size;
+    for (int m = 0; m < g_space_nmaps[idx]; m++) {
+        cow_rng *r = &g_space_maps[idx][m];
+        if (va != r->va) continue;
+        uint32_t *ml2 = space_l2_mmap[idx];
+        for (uint32_t p = r->va; p < r->end; p += 0x1000u) ml2[L2_IDX(p)] = 0;
+        __asm__ volatile("dsb");
+        __asm__ volatile("mcr p15,0,%0,c8,c7,0" :: "r"(0u));   /* TLBIALL (range cleared) */
+        __asm__ volatile("dsb; isb");
+        g_space_maps[idx][m] = g_space_maps[idx][--g_space_nmaps[idx]];   /* compact */
+        return 0;
+    }
+    return -1;
 }

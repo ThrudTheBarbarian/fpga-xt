@@ -117,15 +117,20 @@ int xtos_demand_fault(uint32_t dfar)
     proc_t *p = cur_proc();
     if (!p) return 0;
     int idx = (int)(p - g_proc);
+    uint32_t dfsr; __asm__ volatile("mrc p15,0,%0,c5,c0,0" : "=r"(dfsr));
+    int write = (dfsr >> 11) & 1u;                /* DFSR.WnR: 1 = write */
     /* lazy heap: a not-present fault (read or write) in the heap window -> map a
-     * zero-filled page on demand. */
+     * zero-filled (RW) page on demand. */
     if (dfar >= XTOS_HEAP_VA && dfar < XTOS_HEAP_VA + XTOS_HEAP_SIZE)
         return vm_demand_map(idx, dfar);
+    /* mmap'd file (read-only): a READ fault -> map the file page RO on demand. A
+     * WRITE to it is illegal (it's a read-only mapping) -> fatal. */
+    if (dfar >= XTOS_MMAP_VA && dfar < XTOS_MMAP_VA + XTOS_MMAP_SIZE)
+        return write ? 0 : vm_mmap_fault(idx, dfar);
     /* copy-on-write: a WRITE permission fault to a registered shared-RO page ->
-     * private copy. DFSR.WnR (bit 11) = 1 for a write. vm_cow_map gates on the COW
-     * range, so a write to read-only TEXT (W^X, not a COW range) returns 0 = fatal. */
-    uint32_t dfsr; __asm__ volatile("mrc p15,0,%0,c5,c0,0" : "=r"(dfsr));
-    if (dfsr & (1u << 11))
+     * private copy. vm_cow_map gates on the COW range, so a write to read-only TEXT
+     * (W^X, not a COW range) returns 0 = fatal. */
+    if (write)
         return vm_cow_map(idx, dfar);
     return 0;
 }
@@ -227,6 +232,19 @@ static long do_syscall(uint32_t num, long a0, long a1, long a2)
     case SYS_read:   return sys_read(p, (int)a0, (void *)a1, (uint32_t)a2);
     case SYS_close:  if (p && a0 >= 3 && a0 < NFD) p->fd[a0].open = 0; return 0;
     case SYS_lseek:  return sys_lseek(p, (int)a0, a1, (int)a2);
+    case SYS_mmap: {                                         /* (fd, len, off) -> VA, RO file map */
+        int fd = (int)a0; uint32_t len = (uint32_t)a1, off = (uint32_t)a2;
+        if (!p || fd < 3 || fd >= NFD || !p->fd[fd].open) return -1;
+        fd_t *f = &p->fd[fd];
+        if (off > f->size) return -1;
+        if (len == 0) len = f->size - off;
+        if (off + len > f->size) return -1;
+        uint32_t src = (uint32_t)(uintptr_t)f->data + off;   /* romfs physical (identity) */
+        if (src & 0xFFFu) return -1;                          /* file must be page-aligned */
+        return (long)vm_mmap((int)(p - g_proc), src, len);
+    }
+    case SYS_munmap:                                         /* (addr, len) */
+        return p ? vm_munmap((int)(p - g_proc), (uint32_t)a0, (uint32_t)a1) : -1;
     case SYS_fb_info: {                                      /* (struct os_fbinfo *) */
         extern void fb_info(int *, int *, int *, uint32_t *);
         struct { int w, h, stride; uint32_t addr; } *fi = (void *)a0;
