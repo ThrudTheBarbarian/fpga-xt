@@ -264,6 +264,45 @@ Remaining:
   process can reach any physical RAM via its identity alias); fix = run user code in
   User mode, kernel/identity sections no-access at PL0, harden SVC/abort entry. Then
   re-graduate to HW. *(src: docs/OS/memory-protection.md, docs/OS/mmap-exec-cow.md)*
+- **Loadable filesystems + device drivers (as isolated PL0 services)** — DESIGNED,
+  not a current priority; resume when wanted. Goal: drop a binary into
+  `/OS/Filesystems/` or `/OS/Devices/` (plain basename = the type, no extension, e.g.
+  `/OS/Filesystems/fat`) and have it extend the OS — MiNT XFS/XDD was the inspiration,
+  not the model. **Decided model: services, not in-kernel modules.** A filesystem/
+  driver is an ordinary PL0 program — gets the full `libc.so`/`libm` by DT_NEEDED,
+  `printf` debugging, blocking, FP, and crash isolation (a bad driver faults its own
+  task and is killed; the OS survives) — vs. an in-kernel module which would resolve
+  only against `frtos_ksym`, run privileged, and crash the kernel. Cheap despite
+  linking libc: libc text is one shared physical copy (mmap-exec), only its data is
+  per-process COW. **ABI:** `svc_register(kind, name)` announces a *type*; a separate
+  `mount(type, source, mountpoint)` creates each mount instance (so one `fat` service
+  serves many partitions — `mount fat /dev/sd0p1 /mnt/c` + `…p2 /mnt/d`); the kernel
+  installs a VFS mount whose `fs_ops` are IPC stubs carrying `{service, instance}`, and
+  a per-open `vfile` carries the service-assigned file handle. **Discovery:** boot-scan
+  `/OS/Filesystems/` + `/OS/Devices/` (romfs prefix-iterate), spawn each as a service,
+  each registers by basename. **Device drivers** = userspace-driver model: kernel
+  offers "map this device's MMIO into me" + "deliver IRQ N to me as an event," driver
+  does protocol/logic at PL0 — *but* DMA stays a trusted edge (no IOMMU/SMMU on the
+  Zynq-7020, so a DMA-capable driver can scribble anywhere regardless of PL0).
+  **Networking** = a device-driver service; in-fabric (PL) HDL blocks are device-driver
+  clients too. **Perf:** FUSE-class (one IPC round-trip + one copy per op); fine for
+  filesystems. Keep **romfs as the in-kernel root** (zero-copy `exec`/`mmap` live
+  there — a service-backed FS can't be mapped as cheaply without fault-forwarding);
+  services are for *mounted* filesystems; a kernel buffer/page cache hides per-op cost.
+  Caution: a FS service must use the **block-device interface** for storage, not libc
+  file I/O, or it recurses back through the VFS. **Staging:** (1) VFS dispatch layer
+  (mount table + `fs_ops` vtable, romfs as root, location-agnostic so an op can be a
+  direct call or an IPC stub) — *prototyped + working (transparent refactor, zero-copy
+  mmap via an `mmap_base` op), then reverted to keep main lean until prioritized*;
+  (2) **service framework — the crux:** synchronous IPC requires **blockable
+  syscalls**. Today `do_syscall` runs in the `svc #1` handler in SVC mode and can't
+  yield (a FreeRTOS block → nested `svc #0` clobbers `lr_svc`/`spsr_svc` — same hazard
+  as the `_sbrk` boot path). Fix = restructure the syscall path to run re-entrantly
+  (save the client resume state, run the body in System mode with IRQs on so a blocking
+  primitive context-switches the client out/back as a normal task); test with a trivial
+  `sleep(ms)` syscall *before* layering `svc_register`/`mount`/IPC on top; (3) block
+  layer + a real on-disk FS (RAM-disk driver → FAT) + the MMIO/IRQ conduit;
+  (4) devfs/ioctl/concurrency polish. *(src: docs/OS/xtos-vision.md P3 VFS; this entry)*
 - **Reserve-now (cheap to bake in early, expensive to retrofit)** — xtc PIC/relocatable
   ARM codegen; service-call indirection via interface tables (never globals);
   interface/registry + `ABIVER` from day one; directory-mapped drives as a first-class
