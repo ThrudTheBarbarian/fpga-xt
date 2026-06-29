@@ -67,10 +67,51 @@ static int split(char *line, char **argv, int max)
     return argc;
 }
 
+/* run the tier-2 battery once and report — for hardware bring-up: load, watch the
+ * UART, and confirm the cache/MMU/PL0 machinery behaves on real silicon. Loading +
+ * EXECUTING each program exercises I-cache coherency (xtld sync_caches); COW/demand
+ * exercise the D-cache + cacheable page-table walks; badpoke/stackpoke prove the
+ * PL0 boundary; the fault tests prove the OS survives. All pages must be reclaimed
+ * (in-use back to baseline) at the end. */
+static void run_selftest(void)
+{
+    extern uint32_t vm_pages_inuse(void);
+    static const struct { const char *path, *arg; } T[] = {
+        { "/bin/modetest",  0 },                     /* runs at PL0?                  */
+        { "/bin/vmtest",   "A" }, { "/bin/vmtest", "B" },  /* per-process heap (COW)  */
+        { "/bin/libc_test", 0 },                     /* libc: printf/malloc/fopen     */
+        { "/bin/mmaptest",  0 },                     /* mmap'd file (demand, RO)      */
+        { "/bin/demandtest",0 },                     /* 128 KB demand-zero heap       */
+        { "/bin/cowtest",  "A" }, { "/bin/cowtest", "B" }, /* copy-on-write           */
+        { "/bin/sharetext","A" }, { "/bin/sharetext","B"}, /* shared text (I-cache)   */
+        { "/bin/badpoke",   0 },                     /* read kernel mem -> KILLED     */
+        { "/bin/stackpoke", 0 },                     /* read other stack -> KILLED    */
+        { "/bin/wxtest",    0 },                     /* write own code  -> KILLED     */
+        { "/bin/stacktest", 0 },                     /* stack overflow  -> KILLED     */
+        { "/bin/faultprog", 0 },                     /* NULL deref      -> KILLED     */
+    };
+    uint32_t base = vm_pages_inuse();
+    puts0("\n==== XTOS tier-2 selftest (caches on, PL0 enforced) ====\n");
+    for (unsigned i = 0; i < sizeof T / sizeof T[0]; i++) {
+        char *av[2]; int ac = T[i].arg ? 2 : 1;
+        av[0] = (char *)T[i].path; av[1] = (char *)T[i].arg;
+        int pid = frtos_spawn_argv(T[i].path, ac, av, &g_host);
+        if (pid < 0) { puts0("  MISSING: "); puts0(T[i].path); puts0("\n"); continue; }
+        frtos_waitpid(pid);
+    }
+    uint32_t now = vm_pages_inuse();
+    puts0("==== selftest done; pages in use ");
+    putu(now); puts0(" (was "); putu(base); puts0(") — ");
+    puts0(now == base ? "reclaimed; OS alive ====\n" : "LEAK ====\n");
+}
+
 static void shell_task(void *arg)
 {
     (void)arg;
-    puts0("\nXTOS shell  —  try: echo hello world | hello | showmotd | usestr | libc_test | gemtext | desktop | exit\n");
+#ifdef XT_HW_UART
+    run_selftest();   /* hardware: auto-run the battery once at boot, then drop to the shell */
+#endif
+    puts0("\nXTOS shell  —  try: selftest | echo | hello | libc_test | gemtext | desktop | exit\n");
     char line[128];
     char *argv[16];
     for (;;) {
@@ -81,9 +122,13 @@ static void shell_task(void *arg)
         if (argc == 0) continue;
         if (!strcmp(argv[0], "exit")) { puts0("bye\n"); sh_exit(0); }
         if (!strcmp(argv[0], "help")) {
-            puts0("builtins: help, exit, faulttest. programs: /bin/{hello,showmotd,usestr,echo,libc_test,gemtext,desktop}\n");
+            puts0("builtins: selftest (run the tier-2 battery), vmtest, demandtest, cowtest,\n"
+                  "  sharetext, memtest, mmaptest, modetest, badpoke, stackpoke, wxtest,\n"
+                  "  stacktest, faulttest, runhost <path>, exit.  programs: /bin/{hello,\n"
+                  "  showmotd,usestr,echo,libc_test,gemtext,desktop}\n");
             continue;
         }
+        if (!strcmp(argv[0], "selftest")) { run_selftest(); continue; }
         if (!strcmp(argv[0], "vmtest")) {          /* T2-b: per-process heaps */
             char *a[2] = { (char *)"vmtest", (char *)"A" };
             char *b[2] = { (char *)"vmtest", (char *)"B" };
