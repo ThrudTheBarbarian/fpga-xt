@@ -41,20 +41,41 @@ struct font {                           // a face at one (width x height) px siz
 };
 
 struct font_face {
-    FT_Face ft;
-    int     tracking;                   // extra px added to each glyph advance
-    int     track_off;                  // vst_track_offset (extra letter-spacing)
-    int     kern;                       // vst_kern: apply pair kerning when the face has it
-    font   *sizes;                      // linked list of sized views
+    FT_Face     ft;
+    int         tracking;               // extra px added to each glyph advance
+    int         track_off;              // vst_track_offset (extra letter-spacing)
+    int         kern;                   // vst_kern: apply pair kerning when the face has it
+    const void *map;                    // mmap'd font file (or NULL if read by path)
+    unsigned long maplen;
+    font       *sizes;                  // linked list of sized views
 };
 
 static FT_Library g_ft;                 // shared, lazily initialised
+
+// Map a font file read-only + shared (zero-copy), or 0 if mapping is unavailable.
+// XTOS provides these (gem_stubs.c, via SYS_mmap); on the host the weak defaults
+// return 0 and font_face_open falls back to reading the file by path.
+__attribute__((weak)) const void *xt_font_map(const char *path, unsigned long *len)
+{ (void)path; (void)len; return 0; }
+__attribute__((weak)) void xt_font_unmap(const void *p, unsigned long len)
+{ (void)p; (void)len; }
 
 font_face *font_face_open(const char *path) {
     if (!g_ft && FT_Init_FreeType(&g_ft)) return NULL;
     font_face *face = calloc(1, sizeof(*face));
     if (!face) return NULL;
-    if (FT_New_Face(g_ft, path, 0, &face->ft)) { free(face); return NULL; }
+    // Prefer a zero-copy mmap of the file (FreeType reads glyphs straight from the
+    // shared, read-only mapping — demand-paged); fall back to reading by path.
+    unsigned long mlen = 0;
+    const void *m = xt_font_map(path, &mlen);
+    if (m) {
+        if (FT_New_Memory_Face(g_ft, m, (FT_Long)mlen, 0, &face->ft)) {
+            xt_font_unmap(m, mlen); free(face); return NULL;
+        }
+        face->map = m; face->maplen = mlen;
+    } else if (FT_New_Face(g_ft, path, 0, &face->ft)) {
+        free(face); return NULL;
+    }
     return face;
 }
 
@@ -68,7 +89,8 @@ void font_face_close(font_face *face) {
         free(f);
         f = next;
     }
-    FT_Done_Face(face->ft);
+    FT_Done_Face(face->ft);              // FreeType no longer touches the mapping
+    if (face->map) xt_font_unmap(face->map, face->maplen);
     free(face);
 }
 
