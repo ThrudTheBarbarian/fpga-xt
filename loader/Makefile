@@ -95,6 +95,15 @@ FRSRC := $(FR)/tasks.c $(FR)/queue.c $(FR)/list.c $(FR)/timers.c $(FR)/event_gro
          test/qemu/bare_rt.c test/qemu/bare_libc.c xtld.c
 FRASM := test/freertos/xt_boot.S test/freertos/xt_vectors.S $(FRPORT)/portASM.S
 
+# Build the kernel ELF(s) WITHOUT launching qemu — for rebuilding to pick up a new
+# romfs (e.g. after dropping a lib into romfs-overlay/) then flashing or running it
+# yourself.  `freertos-build` = qemu ELF; add `hw` for the JTAG-load HW ELF.
+.PHONY: freertos-build hw
+freertos-build: $(BUILD)/freertos.elf
+	@echo "built $< (no qemu) — run: make freertos | flash: vivado/jtag-valhalla.sh dow"
+hw: $(BUILD)/freertos-hw.elf
+	@echo "built $< — JTAG-load: vivado/jtag-valhalla.sh testbed"
+
 # Stage 2 + M2: loader + svc gateway + spawn-by-path + file syscalls, on real FreeRTOS.
 freertos: $(BUILD)/freertos.elf
 	@echo "=== xtos: programs from a filesystem on real FreeRTOS (qemu xilinx-zynq-a9) ==="
