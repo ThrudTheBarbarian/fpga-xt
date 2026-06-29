@@ -107,21 +107,21 @@ static void shell_task(void *arg)
             puts0(" heap pages were demand-mapped (zero-fill on touch)\n");
             continue;
         }
-        if (!strcmp(argv[0], "memtest")) {         /* T2-c: page reclaim on process exit */
-            extern uint32_t vm_pages_free(void);
-            uint32_t base = vm_pages_free();
-            puts0("memtest: "); putu(base); puts0(" pages free. Running demandtest x5 "
-                  "(~33 pages each)...\n");
+        if (!strcmp(argv[0], "memtest")) {         /* T2-c: DDR page pool + reclaim on exit */
+            uint32_t freep = vm_pages_free(), inuse0 = vm_pages_inuse();
+            puts0("memtest: pool has "); putu(freep); puts0(" pages free (~");
+            putu(freep / 256); puts0(" MB of DDR), "); putu(inuse0);
+            puts0(" in use. Running demandtest x5 (~33 pages each)...\n");
             char *av[1] = { (char *)"demandtest" };
             for (int k = 0; k < 5; k++) {
                 int pid = frtos_spawn_argv("/bin/demandtest", 1, av, &g_host);
                 if (pid < 0) { puts0("memtest: spawn failed\n"); break; }
                 frtos_waitpid(pid);
             }
-            uint32_t after = vm_pages_free();
-            puts0("memtest: "); putu(after); puts0(" pages free after 5 runs+exits. ");
-            puts0(after == base ? "Fully reclaimed (no leak).\n"
-                                : "LEAK: pages not reclaimed.\n");
+            uint32_t inuse1 = vm_pages_inuse();
+            puts0("memtest: "); putu(inuse1); puts0(" pages in use after 5 runs+exits. ");
+            puts0(inuse1 == inuse0 ? "Fully reclaimed (no leak).\n"
+                                   : "LEAK: pages not reclaimed.\n");
             continue;
         }
         if (!strcmp(argv[0], "cowtest")) {         /* T2-c: copy-on-write (synthetic) */
@@ -232,13 +232,11 @@ int main(void)
         }
     }
 
-    /* T2-c: reserve a kernel page pool for demand-zero heap pages — drawn from by
-     * the abort handler without libc (it runs in the faulting process's space). */
-    {
-        extern void vm_demand_pool_init(void *, uint32_t);
-        void *dp = frtos_alloc(0x400000, 0x1000, NULL);   /* 4 MB = 1024 pages */
-        if (dp) vm_demand_pool_init(dp, 0x400000);
-    }
+    /* T2-c: the physical page pool (demand-zero heap + COW pages) shares the one
+     * CPU heap arena: it grows DOWN from the top of DDR while libc malloc grows up,
+     * meeting in the middle. No fixed reservation — all of DDR is available to
+     * whichever needs it. The abort handler allocates from here without libc. */
+    vm_phys_init(0x20000000u);
 
     void *p = frtos_alloc(4096, 16, NULL);       /* now via libc.so's malloc */
     puts0(p ? "libc.so malloc: ok\n" : "libc.so malloc: FAIL\n");

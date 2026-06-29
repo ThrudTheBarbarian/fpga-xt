@@ -19,6 +19,14 @@
  * coherent with our cacheable PTE writes. (IRGN[0]=bit6, RGN=bits[4:3].) */
 #define XTOS_TTBR_ATTR 0x48u
 void mmu_sync_caches(void *addr, unsigned long len, void *user);  /* xtld_host.sync_caches */
+
+/* short critical section by masking IRQ — serialises the page allocator (abort
+ * context) against kern_sbrk (task context) on this single core. Save/restore the
+ * full control byte (read in the same mode) so it's safe from any context. */
+static inline unsigned xt_irq_save(void)
+{ unsigned f; __asm__ volatile("mrs %0,cpsr" : "=r"(f)); __asm__ volatile("cpsid i" ::: "memory"); return f; }
+static inline void xt_irq_restore(unsigned f)
+{ __asm__ volatile("msr cpsr_c,%0" :: "r"(f) : "memory"); }
 void vm_set_libc(uintptr_t wva, uint32_t wsize, const void *snapshot);
 void vm_cow_init(void);
 void vm_cow_register(uint32_t va, uint32_t size, uint32_t src);
@@ -27,8 +35,10 @@ int  vm_cow_map(int idx, uint32_t va);
 int  vm_demand_map(int idx, uint32_t va);
 uint32_t *vm_space_create(int idx, uint32_t prog_va, uint32_t prog_size, uint32_t prog_src);
 void vm_space_destroy(int idx);     /* reclaim a dead space's private pages to the pool */
-uint32_t vm_pages_free(void);
-uint32_t vm_pages_total(void);
+void vm_phys_init(uint32_t top);    /* announce the arena top; page pool grows down from it */
+uint32_t vm_page_floor(void);       /* page-pool frontier = libc sbrk ceiling */
+uint32_t vm_pages_free(void);       /* pages available now (free list + frontier gap) */
+uint32_t vm_pages_inuse(void);      /* pages currently handed out (reclaim metric) */
 
 void ksys_set_console(void (*w)(const char *, int));
 void *frtos_alloc(size_t size, size_t align, void *user);

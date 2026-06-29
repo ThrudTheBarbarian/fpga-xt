@@ -240,45 +240,59 @@ void vm_switch(uint32_t *table, uint32_t asid)
     }
 }
 
-/* ---- T2-c page pool -------------------------------------------------------
- * A kernel page pool (reserved once at boot from the libc pool) that the data-
- * abort handler draws from WITHOUT calling libc — the handler runs in the faulting
- * process's address space, where libc's data is the process's private copy, so
- * libc malloc there would be wrong. A free list (intrusive: each free page's first
- * word is the next pointer) gives O(1) alloc + free, so a space's private pages
- * (heap + COW) are RECLAIMED on exit (vm_space_destroy) — no steady-state leak.
+/* ---- T2-c physical page pool (DDR-backed) ---------------------------------
+ * The CPU heap is ONE arena [0x0200_0000, 0x2000_0000) (~480 MB, docs/Zynq/
+ * memory-map.md): libc malloc grows UP from the bottom via kern_sbrk; this page
+ * pool grows DOWN from the top (g_pfront), and the two meet in the middle — no
+ * fixed split, all of DDR available to whichever needs it. Reclaimed pages go on a
+ * free list (intrusive: each free page's first word is the next pointer), so
+ * dpage() prefers the list and only advances the frontier for genuinely new pages.
+ *
+ * The data-abort handler allocates from here WITHOUT calling libc (it runs in the
+ * faulting process's address space, where libc's data is the process's private
+ * copy). kern_sbrk (task context) and dpage (abort context) share the boundary, so
+ * each does its check+update under a short IRQ-masked critical section — single
+ * core, so masking IRQ fully serialises them (a data abort can't occur inside the
+ * allocator's own non-faulting code).
  *
  * No cache maintenance on reuse: the A9 L1 D-cache is PIPT, so the pool's identity
- * VA and a process's window VA share lines for the same physical, and every page
- * is re-initialised (zero-fill / COW memcpy) when handed out. */
-static void    *g_dfree;                 /* head of the free-page list */
+ * VA and a process's window VA share lines for one physical, and every page is
+ * re-initialised (zero-fill / COW memcpy) when handed out. */
+static void    *g_dfree;                 /* head of the reclaimed-page free list */
+static char    *g_pfront = (char *)0x20000000u;  /* frontier: grows DOWN; floor = heap top */
 static uint32_t g_demand_count;          /* heap pages mapped on demand (cumulative) */
-static uint32_t g_pages_free, g_pages_total;
+static uint32_t g_freelist_n;            /* pages currently on the free list */
+static uint32_t g_pages_inuse;           /* pages currently handed out (issued - freed) */
 
-/* (the per-space charge list g_space_pages / g_space_npages is declared up top, so
- * vm_space_create can reset it. Tracking the exact pages dpage() handed each space
- * is what makes reclaim correct — walking page tables would wrongly free the
- * identity mappings a per-process L2 inherits for the rest of its 1 MB section,
- * which can overlap the pool itself.) */
-void vm_demand_pool_init(void *base, uint32_t size)
-{
-    g_dfree = 0;
-    char *p = (char *)base;
-    uint32_t n = size / 0x1000u;
-    for (uint32_t i = 0; i < n; i++, p += 0x1000u) { *(void **)p = g_dfree; g_dfree = p; }
-    g_pages_total = g_pages_free = n;
-}
+extern uint32_t kern_heap_top(void);     /* libc heap's grow-up frontier (syscalls.c) */
+
+/* libc's sbrk ceiling = the page frontier. Until vm_phys_init, g_pfront is already
+ * the arena top, so the boot heap works before the pool is "announced". */
+uint32_t vm_page_floor(void) { return (uint32_t)g_pfront; }
+void vm_phys_init(uint32_t top) { g_pfront = (char *)top; }
+
 uint32_t vm_demand_count(void) { return g_demand_count; }
-uint32_t vm_pages_free(void)   { return g_pages_free; }
-uint32_t vm_pages_total(void)  { return g_pages_total; }
+uint32_t vm_pages_inuse(void)  { return g_pages_inuse; }
+/* pages available right now: reclaimed list + the unclaimed gap down to the heap */
+uint32_t vm_pages_free(void)
+{
+    uint32_t gap = ((uint32_t)g_pfront - kern_heap_top()) / 0x1000u;
+    return g_freelist_n + gap;
+}
 
 /* allocate a page from the pool and charge it to space `idx` (for reclaim) */
 static void *dpage(int idx)
 {
+    uint32_t f = xt_irq_save();
     void *p = g_dfree;
-    if (!p) return (void *)0;
-    g_dfree = *(void **)p;               /* pop */
-    g_pages_free--;
+    if (p) { g_dfree = *(void **)p; g_freelist_n--; }      /* reuse a reclaimed page */
+    else {                                                  /* else take from the frontier */
+        char *nf = g_pfront - 0x1000u;
+        if (nf < (char *)kern_heap_top()) { xt_irq_restore(f); return (void *)0; }  /* arena full */
+        g_pfront = nf; p = nf;
+    }
+    g_pages_inuse++;
+    xt_irq_restore(f);
     if (g_space_npages[idx] < MAXPP) g_space_pages[idx][g_space_npages[idx]++] = p;
     return p;
 }
@@ -291,9 +305,10 @@ void vm_space_destroy(int idx)
 {
     for (int i = 0; i < g_space_npages[idx]; i++) {
         void *p = g_space_pages[idx][i];
-        *(void **)p = g_dfree;           /* push */
-        g_dfree = p;
-        g_pages_free++;
+        uint32_t f = xt_irq_save();
+        *(void **)p = g_dfree; g_dfree = p;   /* push to free list */
+        g_freelist_n++; g_pages_inuse--;
+        xt_irq_restore(f);
     }
     g_space_npages[idx] = 0;
 }

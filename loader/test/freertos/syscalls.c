@@ -8,18 +8,33 @@
 #include <stdint.h>
 #include "bare_rt.h"
 #include "romfs.h"
+#include "frtos_os.h"
 
 /* _sbrk hands out the OS heap; its base is set just above libc.so's pinned image
  * once libc.so is loaded (sbrk_set_base), its end is the top of the heap. */
 static char *g_brk, *g_brk_end;
 void sbrk_set_base(void *base, void *end) { g_brk = base; g_brk_end = end; }
 
-/* the kernel/boot heap (shared pool above libc.so's image). libc.so's exported
- * _sbrk (frtos_os.c) delegates here for the kernel; processes get a private heap. */
+/* the kernel/boot heap. Grows UP from libc.so's image; its ceiling is the page
+ * pool's frontier (vm_page_floor), which grows DOWN from the top of DDR — the two
+ * meet in the middle, sharing one ~480 MB arena (docs/Zynq/memory-map.md). The
+ * check+update runs under a short IRQ-masked critical section so it can't race the
+ * page allocator running in a data-abort handler on the same core. libc.so's
+ * exported _sbrk (frtos_os.c) delegates here for the kernel; processes get a
+ * private heap. */
+uint32_t kern_heap_top(void) { return (uint32_t)g_brk; }
+
 void *kern_sbrk(int incr)
 {
-    if (!g_brk || g_brk + incr > g_brk_end) return (void *)-1;
-    char *p = g_brk; g_brk += incr; return p;
+    if (!g_brk) return (void *)-1;
+    uint32_t ceil = vm_page_floor();
+    if (g_brk_end && (uint32_t)g_brk_end < ceil) ceil = (uint32_t)g_brk_end;  /* absolute cap */
+    unsigned f = xt_irq_save();
+    char *p = g_brk;
+    if ((uint32_t)(p + incr) > ceil) { xt_irq_restore(f); return (void *)-1; }
+    g_brk = p + incr;
+    xt_irq_restore(f);
+    return p;
 }
 
 int _write(int fd, char *buf, int len)
