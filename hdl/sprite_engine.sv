@@ -124,18 +124,27 @@ module sprite_engine #(
     logic               global_enable;
 
     // Cross-product collision matrix ----------------------------------------
-    logic [N_SPRITES-1:0] collision     [0:N_SPRITES-1];
-    logic [N_SPRITES-1:0] collision_set [0:N_SPRITES-1];
+    // Detection runs in the compositor (clk_pix): s3_has_color is the per-pixel mask
+    // of opaque sprites; it's OR-accumulated per sprite over the frame into coll_acc,
+    // snapshot at frame_start into coll_snap (the VBI boundary), and crossed into
+    // clk_fetch by a toggle + commit-flag.  coll_snap is sampled on the synced toggle
+    // edge — by then it's been stable for a whole frame, so it is NOT bus-synced (same
+    // safe pattern as pix_next_vcount below; avoids the multi-bit free-running 2-FF sync
+    // trap).  The clk_fetch readback regs are RELOADED from coll_snap each frame, so
+    // collision[] reflects the last complete frame ("zeroed in the VBI + repopulated").
+    logic [N_SPRITES-1:0] collision [0:N_SPRITES-1];   // clk_fetch readback ($D4DA/$D4DB)
+    logic [N_SPRITES-1:0] coll_acc  [0:N_SPRITES-1];   // clk_pix, accumulating this frame
+    logic [N_SPRITES-1:0] coll_snap [0:N_SPRITES-1];   // clk_pix, last complete frame (stable bus)
+    logic                 coll_tgl;                     // clk_pix, flips each frame_start
 
-    // Collision detection not wired yet — drive the set side to zero. TODO: feed it
-    // from the compositor's per-pixel alpha-test results (the set of opaque sprites at
-    // each output pixel); for each si, collision_set[si] = that mask with si cleared.
-    genvar gi;
-    generate
-        for (gi = 0; gi < N_SPRITES; gi = gi + 1) begin : g_collision_set_tieoff
-            assign collision_set[gi] = '0;
-        end
-    endgenerate
+    wire fetch_coll_tgl;
+    cdc_sync_bit #(.WIDTH(1)) u_sync_coll_tog (
+        .dst_clk (clk_fetch),
+        .src_sig (coll_tgl),
+        .dst_sig (fetch_coll_tgl)
+    );
+    logic fetch_coll_tgl_d;
+    wire  coll_frame_pulse = fetch_coll_tgl ^ fetch_coll_tgl_d;   // 1 clk_fetch pulse / frame
 
     // ========================================================================
     // Register address decode
@@ -173,6 +182,7 @@ module sprite_engine #(
             sprite_sel     <= 4'd0;
             col_sel        <= 4'd0;
             global_enable  <= 1'b0;
+            fetch_coll_tgl_d <= 1'b0;
             for (si = 0; si < 7; si = si + 1)
                 shadow_b[si] <= 8'h00;
             for (si = 0; si < N_SPRITES; si = si + 1) begin
@@ -218,18 +228,25 @@ module sprite_engine #(
                 endcase
             end
 
+            fetch_coll_tgl_d <= fetch_coll_tgl;        // edge-detect the frame snapshot
+
+            // sprite_any_col: sticky "this sprite hit something since last cleared",
+            // set from the frame snapshot, W1C via $D4Ax bit7.
             for (si = 0; si < N_SPRITES; si = si + 1) begin
                 if (is_d4ax_write && (d4ax_idx == si[3:0]) && reg_wdata[7])
                     sprite_any_col[si] <= 1'b0;
-                else if (|collision_set[si])
+                else if (coll_frame_pulse && (|coll_snap[si]))
                     sprite_any_col[si] <= 1'b1;
             end
 
+            // collision[]: reload from the per-frame snapshot at the VBI commit
+            // (so it reflects the last complete frame); software W1C clears bits
+            // mid-frame via $D4DA/$D4DB until the next frame refreshes them.
             for (si = 0; si < N_SPRITES; si = si + 1) begin
-                if (col_sel == si[3:0])
-                    collision[si] <= (collision[si] & ~col_clear_mask) | collision_set[si];
-                else
-                    collision[si] <= collision[si] | collision_set[si];
+                if (coll_frame_pulse)
+                    collision[si] <= coll_snap[si];
+                else if (col_sel == si[3:0])
+                    collision[si] <= collision[si] & ~col_clear_mask;
             end
         end
     end
@@ -800,6 +817,35 @@ module sprite_engine #(
             assign s3_has_color[ga] = s2b_hit_q[ga] && (|cache_rd_data[ga][7:0]);
         end
     endgenerate
+
+    // Collision accumulate (clk_pix) -----------------------------------------
+    // s3_has_color is the set of sprites with an opaque pixel at this output
+    // position; every pair in it collides (priority/occlusion is irrelevant to
+    // collision, as on GTIA).  OR the mask (self-bit cleared) into each opaque
+    // sprite's row over the active frame; at frame_start snapshot the completed
+    // frame and reset for the next.  coll_tgl flags the snapshot to clk_fetch.
+    genvar gco;
+    generate
+        for (gco = 0; gco < N_SPRITES; gco = gco + 1) begin : g_coll_acc
+            always_ff @(posedge clk_pix) begin
+                if (rst) begin
+                    coll_acc[gco]  <= '0;
+                    coll_snap[gco] <= '0;
+                end else if (frame_start) begin
+                    coll_snap[gco] <= coll_acc[gco];
+                    coll_acc[gco]  <= '0;
+                end else if (s2b_fb_de_q && s3_has_color[gco]) begin
+                    coll_acc[gco]  <= coll_acc[gco]
+                                    | (s3_has_color & ~(N_SPRITES'(1) << gco));
+                end
+            end
+        end
+    endgenerate
+
+    always_ff @(posedge clk_pix) begin
+        if (rst)              coll_tgl <= 1'b0;
+        else if (frame_start) coll_tgl <= ~coll_tgl;
+    end
 
     // Level 1: 16 leaves → 8 pairs ------------------------------------------
     logic        l1_valid [0:7];

@@ -105,6 +105,19 @@ module tb_sprite_compositor;
         reg_we    = 1'b0;
     endtask
 
+    task automatic read_reg(input [7:0] addr, output [7:0] data);
+        @(posedge clk_fetch); #1;
+        reg_addr = addr;                 // reg_rdata is combinational
+        #1;
+        data = reg_rdata;
+    endtask
+
+    // Pulse frame_start for one clk_pix cycle (the VBI snapshot boundary).
+    task automatic pulse_frame_start;
+        @(posedge clk_pix); #1; frame_start = 1'b1;
+        @(posedge clk_pix); #1; frame_start = 1'b0;
+    endtask
+
     task automatic program_sprite(input [3:0] idx,
                                   input [4:0] prio,
                                   input [3:0] log2sz,
@@ -273,6 +286,59 @@ module tb_sprite_compositor;
 
         // h=290: outside sprite → pure red fb.
         check_rgb(12'd290, 5'd31, 6'd0, 5'd0, "C: outside sprite (red fb)");
+
+        // ------------------------------------------------------------------
+        // CASE D — collision detection.  Two overlapping opaque sprites must
+        // cross-register in the collision matrix after a frame boundary; a
+        // non-overlapping sprite must not.  Reads back via $D4D9 (col_sel) +
+        // $D4DA (collision[col_sel][7:0]).
+        //   sprite 1 at x=400, sprite 3 at x=405, both 16 wide, opaque →
+        //   overlap at x=405..415.  No other enabled sprite is in this sweep.
+        // ------------------------------------------------------------------
+        $display("[D] collision detection");
+        begin
+            logic [7:0] cdat;
+            pulse_frame_start();                 // clear accumulation from cases A-C
+            repeat (4) @(posedge clk_fetch);
+
+            program_sprite(.idx(4'd1), .prio(5'd3), .log2sz(4'd4),
+                           .screen_x(12'sd400), .screen_y(12'sd0));
+            program_sprite(.idx(4'd3), .prio(5'd4), .log2sz(4'd4),
+                           .screen_x(12'sd405), .screen_y(12'sd0));
+            for (int x = 0; x < 16; x = x + 1) begin
+                poke_cache(4'd1, x, 32'h00FF_00FF);   // green opaque
+                poke_cache(4'd3, x, 32'hFF00_00FF);   // red opaque
+            end
+
+            // Sweep across the overlap so the compositor accumulates collisions.
+            for (int hx = 398; hx <= 422; hx = hx + 1) begin
+                @(posedge clk_pix); #1; h_count = hx[11:0];
+            end
+            repeat (8) @(posedge clk_pix);       // flush the pipeline
+
+            pulse_frame_start();                 // snapshot the frame
+            repeat (8) @(posedge clk_fetch);     // let coll_tgl cross + load collision[]
+
+            read_reg(8'hD9, cdat);               // (dummy: ensure addr settles)
+            write_reg(8'hD9, 8'd1);              // col_sel = 1
+            read_reg(8'hDA, cdat);
+            if (!cdat[3]) begin
+                $display("FAIL: D sprite 1 should collide with sprite 3 (got %02x)", cdat);
+                errors = errors + 1;
+            end
+            write_reg(8'hD9, 8'd3);              // col_sel = 3
+            read_reg(8'hDA, cdat);
+            if (!cdat[1]) begin
+                $display("FAIL: D sprite 3 should collide with sprite 1 (got %02x)", cdat);
+                errors = errors + 1;
+            end
+            write_reg(8'hD9, 8'd2);              // col_sel = 2 (off in this sweep)
+            read_reg(8'hDA, cdat);
+            if (cdat !== 8'h00) begin
+                $display("FAIL: D sprite 2 should have no collisions (got %02x)", cdat);
+                errors = errors + 1;
+            end
+        end
 
         // ------------------------------------------------------------------
         // Summary
