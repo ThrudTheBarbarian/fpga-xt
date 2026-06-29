@@ -85,16 +85,16 @@ module tb_plane_compositor;
     end
     assign src_pixel_i = {p1, p0};
 
-    // ---- capture scoreboard (output is now 3 clk behind: read + 2 pipe) ---
-    logic [11:0] h_d1, h_d2, h_d3, v_d1, v_d2, v_d3;
+    // ---- capture scoreboard (output is now 4 clk behind: read + 3 pipe) ---
+    logic [11:0] h_d1, h_d2, h_d3, h_d4, v_d1, v_d2, v_d3, v_d4;
     always_ff @(posedge clk_pix) begin
-        h_d1 <= h_count; h_d2 <= h_d1; h_d3 <= h_d2;
-        v_d1 <= v_count; v_d2 <= v_d1; v_d3 <= v_d2;
+        h_d1 <= h_count; h_d2 <= h_d1; h_d3 <= h_d2; h_d4 <= h_d3;
+        v_d1 <= v_count; v_d2 <= v_d1; v_d3 <= v_d2; v_d4 <= v_d3;
     end
     logic [15:0] cap [0:23][0:39];
     always_ff @(posedge clk_pix) begin
-        if (de_o && v_d3 < 24 && h_d3 < 40)
-            cap[v_d3][h_d3] <= {rgb_r, rgb_g, rgb_b};
+        if (de_o && v_d4 < 24 && h_d4 < 40)
+            cap[v_d4][h_d4] <= {rgb_r, rgb_g, rgb_b};
     end
 
     // ---- src_row_next_o scoreboard: it must predict next line's src_row_o --

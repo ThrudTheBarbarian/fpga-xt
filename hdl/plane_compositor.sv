@@ -214,7 +214,7 @@ module plane_compositor #(
     wire [31:0] win_px = src_pixel_i[winner_q*32 +: 32];
     wire [31:0] beh_px = src_pixel_i[runner_q*32 +: 32];
 
-    // ---- Stage 2: latch fg/bg channels + alpha (isolates the multiply) ----
+    // ---- Stage 2: latch fg (winner) + bg (behind) channels + alpha --------
     logic [7:0] s2_a, s2_wr, s2_wg, s2_wb, s2_br, s2_bg, s2_bb;
     logic       s2_any, s2_blend, de_q2, hs_q2, vs_q2;
     always_ff @(posedge clk_pix or posedge rst_pix) begin
@@ -237,25 +237,47 @@ module plane_compositor #(
         end
     end
 
-    // 8-bit alpha lerp: out = bg + a*(fg-bg)/256, with a==0/255 exact endpoints.
-    function automatic [7:0] lerp8(input [7:0] a, input [7:0] fg, input [7:0] bg);
-        logic signed [10:0] diff;
-        logic signed [19:0] prod;
+    // ---- Stage 2b: the alpha multiply, ALONE on its own clk (the clk_pix path
+    // can't also do the bg-add + select).  prod = a*(fg-bg) maps to one DSP48
+    // (pre-adder does fg-bg) with registered in/out.  bg-add + endpoints in st3.
+    function automatic signed [19:0] amul(input [7:0] a, input [7:0] fg, input [7:0] bg);
+        amul = $signed({1'b0, a}) * ($signed({2'b00, fg}) - $signed({2'b00, bg}));
+    endfunction
+    logic        [7:0]  m_a, m_wr, m_wg, m_wb, m_br, m_bg, m_bb;
+    logic signed [19:0] m_pr, m_pg, m_pb;
+    logic               m_any, m_blend, de_qm, hs_qm, vs_qm;
+    always_ff @(posedge clk_pix or posedge rst_pix) begin
+        if (rst_pix) begin
+            m_a <= 8'd0; m_wr <= 8'd0; m_wg <= 8'd0; m_wb <= 8'd0;
+            m_br <= 8'd0; m_bg <= 8'd0; m_bb <= 8'd0;
+            m_pr <= 20'sd0; m_pg <= 20'sd0; m_pb <= 20'sd0;
+            m_any <= 1'b0; m_blend <= 1'b0; de_qm <= 1'b0; hs_qm <= 1'b0; vs_qm <= 1'b0;
+        end else begin
+            m_pr <= amul(s2_a, s2_wr, s2_br);
+            m_pg <= amul(s2_a, s2_wg, s2_bg);
+            m_pb <= amul(s2_a, s2_wb, s2_bb);
+            m_a  <= s2_a;
+            m_wr <= s2_wr; m_wg <= s2_wg; m_wb <= s2_wb;
+            m_br <= s2_br; m_bg <= s2_bg; m_bb <= s2_bb;
+            m_any <= s2_any; m_blend <= s2_blend;
+            de_qm <= de_q2; hs_qm <= hs_q2; vs_qm <= vs_q2;
+        end
+    end
+
+    // Stage 3 combine: out = bg + prod/256, with a==0/255 exact; opaque -> fg.
+    function automatic [7:0] combine(input [7:0] a, input [7:0] fg, input [7:0] bg,
+                                     input signed [19:0] prod);
         logic signed [11:0] res;
-        if (a == 8'h00)      lerp8 = bg;
-        else if (a == 8'hFF) lerp8 = fg;
+        if (a == 8'h00)      combine = bg;
+        else if (a == 8'hFF) combine = fg;
         else begin
-            diff  = $signed({3'b000, fg}) - $signed({3'b000, bg});
-            prod  = $signed({1'b0, a}) * diff;
-            res   = $signed({4'b0000, bg}) + (prod >>> 8);
-            lerp8 = res[7:0];
+            res = $signed({4'b0000, bg}) + (prod >>> 8);
+            combine = res[7:0];
         end
     endfunction
-
-    // Blended (alpha-enabled winner) or opaque (everyone else) winner channels.
-    wire [7:0] out_r = s2_blend ? lerp8(s2_a, s2_wr, s2_br) : s2_wr;
-    wire [7:0] out_g = s2_blend ? lerp8(s2_a, s2_wg, s2_bg) : s2_wg;
-    wire [7:0] out_b = s2_blend ? lerp8(s2_a, s2_wb, s2_bb) : s2_wb;
+    wire [7:0] out_r = m_blend ? combine(m_a, m_wr, m_br, m_pr) : m_wr;
+    wire [7:0] out_g = m_blend ? combine(m_a, m_wg, m_bg, m_pg) : m_wg;
+    wire [7:0] out_b = m_blend ? combine(m_a, m_wb, m_bb, m_pb) : m_wb;
 
     // ---- Stage 3: covered -> winner (blended/opaque) -> 565; else bg ------
     always_ff @(posedge clk_pix or posedge rst_pix) begin
@@ -263,9 +285,9 @@ module plane_compositor #(
             rgb_r <= 5'd0; rgb_g <= 6'd0; rgb_b <= 5'd0;
             de_o  <= 1'b0; hsync_o <= 1'b0; vsync_o <= 1'b0;
         end else begin
-            if (!de_q2) begin
+            if (!de_qm) begin
                 rgb_r <= 5'd0; rgb_g <= 6'd0; rgb_b <= 5'd0;
-            end else if (s2_any) begin
+            end else if (m_any) begin
                 rgb_r <= out_r[7:3];
                 rgb_g <= out_g[7:2];
                 rgb_b <= out_b[7:3];
@@ -274,9 +296,9 @@ module plane_compositor #(
                 rgb_g <= bg_color[15:10];
                 rgb_b <= bg_color[7:3];
             end
-            de_o    <= de_q2;
-            hsync_o <= hs_q2;
-            vsync_o <= vs_q2;
+            de_o    <= de_qm;
+            hsync_o <= hs_qm;
+            vsync_o <= vs_qm;
         end
     end
 
