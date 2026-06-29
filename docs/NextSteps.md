@@ -11,9 +11,6 @@ This is a tracker, so it intentionally carries forward-looking/historical contex
 
 ## Open Issues (tracked bugs)
 
-- **`make blitter_bridge` `SRCBLIT FAIL` (3 mismatches)** — sim DDR/AXI-model gap
-  (coverage pixels read all-zero; SRC_BLIT works on HW), not an RTL regression.
-  Non-gating (not in `make all`); fix the tb model when next in the blitter.
 - **A loaded libGEM.so re-running `vdi_init` wipes the kernel's live VDI** — the
   `gemhw`/runhost demo (`xtld_host.c`) resolves `vdi_init` from the loaded `libGEM.so`
   and calls `vdi_init(&desk)`; because the kernel and libGEM share the symbol, that
@@ -32,15 +29,15 @@ This is a tracker, so it intentionally carries forward-looking/historical contex
 Tracking `docs/Design/architecture-review.md`; landed pieces are in the commit log.
 Remaining:
 ### Immediate Priorities:
-- **GEM desktop — remaining work.** M1–M4-core are done & HW-validated 
-- Still open: the **ST compositor plane** (bind enum ST-ready,
-  plane not wired); and verify/close the **VDI-workstation leak** (direct `vdi.*` after
-  `wintest` draws into a window backing, not the desktop). *(docs/OS/desktop-emulation-windows.md)*
-
+- n/a
 ### Future:
 - **Partial-reconfig CPU swap.** RP region confirmed viable at X1Y2 (not the PS
   corner — hard blocks there). Implement: `sally_subsystem` wrapper → exclusive RP
   pblock → DFX static/RM flow → runtime PCAP swap. *(docs/Design/partial-reconfig.md)*
+  
+- Still open: the **ST compositor plane** (bind enum ST-ready,
+  plane not wired); and verify/close the **VDI-workstation leak** (direct `vdi.*` after
+  `wintest` draws into a window backing, not the desktop). *(docs/OS/desktop-emulation-windows.md)*
 
 - **§3.1 ACP coherency** (evaluate on GEM/desktop surfaces), 
 
@@ -63,14 +60,6 @@ Remaining:
 ---
 ## Video / compositor / sprites / textures
 
-- **Sprite engine — deferred/optional refinements.** Core, HW mouse cursor, H/V flip +
-  2× scale, the per-pixel compositor, and collision detection are all done and on HW.
-  Remaining (none currently blocking): palettised sprites, rotation (SW-first),
-  blitter→sprite-arena integration. *(src: hdl/sprite_engine.sv, docs/Design/sprite-engine.md)*
-- **Texture mapping (tiers)** — T1 affine point-sampled (~1 day) → T2 bilinear
-  (+½ day) → T3 textured triangles (+½–1 day) → T4 perspective-correct (several days);
-  plus `$D4D0..` TEX_* regs / `CMD=0x08` / `TEX_WRAP` wiring and a texture-cache
-  throughput upgrade (2×2 quad reads / BRAM tile cache). *(src: docs/video/texture-mapping.md)*
 - **Banked screen RAM** — dual-bank screen-RAM design ($D5C2/$D5C3/$D5C4, CPU+ANTIC
   caches, copy/reload engines); verify it's disjoint from $D5C0/$D5C1 windows and fits
   the BRAM budget (7010 is tight). *(proposal; src: docs/video/screen-banking.md)*
@@ -84,6 +73,15 @@ Remaining:
 - **Palette: PAL/NTSC runtime re-push** — page a non-default reference palette in via
   $D483-$D486 on region switch (bake-in is the default); plus more accurate reference
   tables. *(src: docs/HDMI/palette.md)*
+  
+### Some time, maybe:
+- **Sprite engine — deferred/optional refinements.** Core, HW mouse cursor, H/V flip + 2× scale, Remaining (none currently blocking): palettised sprites, rotation (SW-first),
+  blitter→sprite-arena integration. *(src: hdl/sprite_engine.sv, docs/Design/sprite-engine.md)*
+
+- **Texture mapping (tiers)** — T1 affine point-sampled (~1 day) → T2 bilinear
+  (+½ day) → T3 textured triangles (+½–1 day) → T4 perspective-correct (several days);
+  plus `$D4D0..` TEX_* regs / `CMD=0x08` / `TEX_WRAP` wiring and a texture-cache
+  throughput upgrade (2×2 quad reads / BRAM tile cache). *(src: docs/video/texture-mapping.md)*
 
 ---
 

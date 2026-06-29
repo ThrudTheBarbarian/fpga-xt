@@ -276,6 +276,8 @@ module tb_blitter_bridge;
             if (aw_pending && m_axi_wvalid && m_axi_wready) begin
                 logic [31:0] beat_addr;
                 beat_addr = aw_addr_q + w_beat_count * 8;
+                if (dbg_axi) $display("  [axi WR] addr=%08x strb=%02x data=%016x",
+                                      beat_addr, m_axi_wstrb, m_axi_wdata);
                 for (int b = 0; b < 8; b++) begin
                     if (m_axi_wstrb[b]) begin
                         int wi;
@@ -311,6 +313,8 @@ module tb_blitter_bridge;
             if (m_axi_arvalid && m_axi_arready) begin
                 m_axi_rvalid <= 1; m_axi_rlast <= 1;
                 m_axi_rdata  <= ar_rdata_w;
+                if (dbg_axi) $display("  [axi RD] araddr=%08x arlen=%0d -> %016x",
+                                      m_axi_araddr, m_axi_arlen, ar_rdata_w);
             end else if (m_axi_rvalid && m_axi_rready) begin
                 m_axi_rvalid <= 0; m_axi_rlast <= 0;
             end
@@ -535,6 +539,12 @@ module tb_blitter_bridge;
         axi_write8(6'h30, 8'h00); axi_write8(6'h31, 8'h00);
         axi_write8(6'h32, 8'h04); axi_write8(6'h33, 8'h30);       // SRC_BASE = 0x30040000
         axi_write8(6'h34, 8'd8);  axi_write8(6'h35, 8'd0);        // SRC_STRIDE = 8
+        // DST_BASE (= the dest "plane" surface — an explicit DST surface since the
+        // addr-gen consolidation) MUST be set here: without it the blit inherits the
+        // stale 0x32000000 from the DESC test, which is outside this tb's mem window.
+        axi_write8(6'h36, 8'h00); axi_write8(6'h37, 8'h00);
+        axi_write8(6'h38, 8'h00); axi_write8(6'h39, 8'h30);       // DST_BASE = 0x30000000 (FB_BASE)
+        axi_write8(6'h3A, 8'h00); axi_write8(6'h3B, 8'h10);       // DST_STRIDE = 0x1000
         axi_write8(6'h10, 8'd0);  axi_write8(6'h11, 8'd0);        // SRC_X = 0
         axi_write8(6'h12, 8'd0);  axi_write8(6'h13, 8'd0);        // SRC_Y = 0
         axi_write8(6'h00, 8'd0);  axi_write8(6'h01, 8'd0);        // DST_X = 0
