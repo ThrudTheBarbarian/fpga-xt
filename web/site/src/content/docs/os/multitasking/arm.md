@@ -123,6 +123,11 @@ int dl_load(const char *path, uint32_t priority, uint16_t stack_words) {
 }
 ```
 
-### When is this needed?
+### Where this landed
 
-The main reason would be to provide ARM-side developer tools (an on-device XT compiler, a file manager with an LVGL GUI) that are separate from the 6502/m68k workload. That's a plausible future desire but not a current requirement.
+This is now the foundation of XTOS: programs and the C library are loaded exactly this
+way, into protected per-process address spaces, and the same loader will host
+filesystem and device-driver services. The concrete implementation — copy-on-write,
+shared library text, demand paging, guard pages, W^X, and the PL0 user/kernel boundary
+on top of the loader sketched here — is described in **[Runtime: loading & memory
+protection](/os/runtime/)**.

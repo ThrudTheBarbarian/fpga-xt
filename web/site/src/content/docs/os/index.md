@@ -10,9 +10,12 @@ bank-switched windows.
 
 These pages cover the operating-system layer that bridges the two:
 
+- **[Runtime: loading & memory protection](/os/runtime/)** — how XTOS loads programs and protects
+  them: the `xtld` ELF loader, per-process address spaces, copy-on-write, mmap'd executables and
+  files, guard pages, W^X, and a real PL0 user/kernel boundary on the Cortex-A9.
 - **[Multitasking & executable loading](/os/multitasking/)** — one shared OS design across three
-  target CPUs: dynamic ELF loading on the ARM, bank-switched processes on the 6502, and a future
-  m68k soft core.
+  target CPUs: dynamic ELF loading on the ARM (implemented), bank-switched processes on the 6502,
+  and an m68k target emulated on the spare A9.
 - **[Banked-stack context switching](/os/multitasking/6502/context-switch/)** — switching 6502 tasks in a handful
   of cycles by holding several 4 KB stacks resident in BRAM instead of copying to DDR3.
 - **[GEM — VDI, AES & theming](/os/gem/)** — the clean-room GEM environment: a true-colour

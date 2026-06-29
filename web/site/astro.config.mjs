@@ -144,7 +144,7 @@ export default defineConfig({
 										{ label: 'XT multitasking', slug: 'os/multitasking/6502/xt-multitasking' },
 									],
 								},
-								{ label: 'm68k / EmuTOS', slug: 'os/multitasking/m68k' },
+								{ label: 'm68k / FreeMiNT', slug: 'os/multitasking/m68k' },
 							],
 						},
 						{
