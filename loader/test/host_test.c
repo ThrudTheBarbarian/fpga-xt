@@ -124,8 +124,9 @@ int main(int argc, char **argv)
           "exported fn add=%#lx within image [%#lx,%#lx)",
           (unsigned long)a_add, (unsigned long)base, (unsigned long)(base + span));
 
-    /* init_array discovered (the ctor) */
+    /* init_array / fini_array discovered (the ctor + dtor) */
     CHECK(xtld_init_count(obj) >= 1, "init_array discovered (count=%u)", xtld_init_count(obj));
+    CHECK(xtld_fini_count(obj) >= 1, "fini_array discovered (count=%u)", xtld_fini_count(obj));
 
     xtld_free(obj);
     free(image);

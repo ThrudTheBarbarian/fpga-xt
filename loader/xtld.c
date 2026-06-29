@@ -88,6 +88,8 @@ typedef struct {
 #define DT_PLTRELSZ      2
 #define DT_INIT_ARRAY   25
 #define DT_INIT_ARRAYSZ 27
+#define DT_FINI_ARRAY   26
+#define DT_FINI_ARRAYSZ 28
 #define DT_SONAME       14
 
 #define SHN_UNDEF 0
@@ -119,9 +121,16 @@ struct xtld_obj {
 
     const Elf32_Addr *init_array;
     uint32_t          init_count;
+    const Elf32_Addr *fini_array;   /* DT_FINI_ARRAY — destructors, run in reverse on unload */
+    uint32_t          fini_count;
 
     const char       *soname;     /* DT_SONAME — registry key, or NULL */
     int               refcount;
+
+    /* direct DT_NEEDED dependencies, one held reference each — released
+     * transitively on unload so a dep is freed when its last dependent goes. */
+    struct xtld_obj  *deps[16];
+    int               ndeps;
 
     uintptr_t wseg_va;            /* writable (data/bss) PT_LOAD: runtime VA + size, */
     uint32_t  wseg_size;          /* for per-process private-data mapping (vm.c) */
@@ -235,6 +244,7 @@ int xtld_load(const uint8_t *image, size_t image_len,
     const Elf32_Rel *rel = NULL;       uint32_t rel_sz = 0, rel_ent = sizeof(Elf32_Rel);
     const Elf32_Rel *jmprel = NULL;    uint32_t jmprel_sz = 0;
     const Elf32_Addr *init_array = NULL; uint32_t init_sz = 0;
+    const Elf32_Addr *fini_array = NULL; uint32_t fini_sz = 0;
     const uint32_t  *hash = NULL;
     uint32_t soname_off = 0; int have_soname = 0;
     uint32_t needed_off[16]; int nneeded = 0;
@@ -251,6 +261,8 @@ int xtld_load(const uint8_t *image, size_t image_len,
         case DT_PLTRELSZ:      jmprel_sz = d->d_val; break;
         case DT_INIT_ARRAY:    init_array = (const Elf32_Addr *)(bias + d->d_val); break;
         case DT_INIT_ARRAYSZ:  init_sz = d->d_val; break;
+        case DT_FINI_ARRAY:    fini_array = (const Elf32_Addr *)(bias + d->d_val); break;
+        case DT_FINI_ARRAYSZ:  fini_sz = d->d_val; break;
         case DT_SONAME:        soname_off = d->d_val; have_soname = 1; break;
         case DT_NEEDED:        if (nneeded < 16) needed_off[nneeded++] = d->d_val; break;
         default: break;
@@ -267,11 +279,13 @@ int xtld_load(const uint8_t *image, size_t image_len,
 
     /* 4b. load DT_NEEDED shared libraries BEFORE relocating, so this object's
      * imports resolve against them. Each is loaded once (deduped by soname) and
-     * refcounted; a freshly-loaded dep is initialised before we use it. */
+     * refcounted; a freshly-loaded dep is initialised before we use it. Record each
+     * dep here (one held reference) so unload can release them transitively. */
+    xtld_obj *deps[16]; int ndeps = 0;
     for (int k = 0; k < nneeded; k++) {
         const char *depname = strtab + needed_off[k];
         xtld_obj *dep = reg_find(depname);
-        if (dep) { dep->refcount++; continue; }
+        if (dep) { dep->refcount++; if (ndeps < 16) deps[ndeps++] = dep; continue; }
         const uint8_t *dimg = NULL; uint32_t dlen = 0;
         if (!host->open_lib || !host->open_lib(depname, &dimg, &dlen, host->user)) {
             copy_err(errbuf, errlen, depname);
@@ -284,6 +298,7 @@ int xtld_load(const uint8_t *image, size_t image_len,
             return drc;
         }
         xtld_run_init(dep);
+        if (ndeps < 16) deps[ndeps++] = dep;
     }
 
     /* 5. apply relocations: DT_REL then DT_JMPREL (both Elf32_Rel) */
@@ -355,8 +370,12 @@ int xtld_load(const uint8_t *image, size_t image_len,
     obj->symcount   = symcount;
     obj->init_array = init_array;
     obj->init_count = init_array ? init_sz / sizeof(Elf32_Addr) : 0;
+    obj->fini_array = fini_array;
+    obj->fini_count = fini_array ? fini_sz / sizeof(Elf32_Addr) : 0;
     obj->soname     = soname;
     obj->refcount   = 1;
+    for (int k = 0; k < ndeps; k++) obj->deps[k] = deps[k];   /* hold refs for transitive unload */
+    obj->ndeps      = ndeps;
     if (g_nobjs < XTLD_MAX_OBJS) g_objs[g_nobjs++] = obj;   /* register for resolution + dedup */
     *out = obj;
     return XTLD_OK;
@@ -386,6 +405,18 @@ void xtld_run_init(const xtld_obj *obj)
     }
 }
 
+/* Run DT_FINI_ARRAY destructors in REVERSE order (mirror of init). Called by
+ * xtld_unload when an object is actually destroyed (refcount hits zero). */
+void xtld_run_fini(const xtld_obj *obj)
+{
+    if (!obj || !obj->fini_array) return;
+    for (uint32_t i = obj->fini_count; i-- > 0; ) {
+        Elf32_Addr fn = obj->fini_array[i];   /* already absolute (R_ARM_RELATIVE) */
+        if (fn == 0 || fn == 0xffffffffu) continue;
+        ((void (*)(void))(uintptr_t)fn)();
+    }
+}
+
 uintptr_t xtld_entry(const xtld_obj *obj)
 {
     return (obj && obj->entry) ? obj->bias + obj->entry : 0;
@@ -401,6 +432,7 @@ void xtld_writable_range(const xtld_obj *obj, uintptr_t *va, uint32_t *size)
     if (size) *size = obj ? obj->wseg_size : 0;
 }
 uint32_t  xtld_init_count(const xtld_obj *obj) { return obj ? obj->init_count : 0; }
+uint32_t  xtld_fini_count(const xtld_obj *obj) { return obj ? obj->fini_count : 0; }
 
 int       xtld_object_count(void) { return g_nobjs; }
 xtld_obj *xtld_object_at(int i) { return (i >= 0 && i < g_nobjs) ? g_objs[i] : NULL; }
@@ -409,10 +441,13 @@ const char *xtld_soname(const xtld_obj *obj) { return obj ? obj->soname : NULL; 
 void xtld_unload(xtld_obj *obj)
 {
     if (!obj) return;
-    if (--obj->refcount > 0) return;             /* still in use */
+    if (--obj->refcount > 0) return;             /* still referenced by another module */
+    xtld_run_fini(obj);                          /* destructors, before its deps go */
     for (int i = 0; i < g_nobjs; i++)            /* drop from the registry */
         if (g_objs[i] == obj) { g_objs[i] = g_objs[--g_nobjs]; break; }
-    /* (DT_FINI_ARRAY + transitive dep unload are follow-ups.) */
+    /* release the references we held on our DT_NEEDED deps — each drops by one and
+     * is destroyed when its last dependent is gone (transitive, depth-first). */
+    for (int i = 0; i < obj->ndeps; i++) xtld_unload(obj->deps[i]);
     xtld_free(obj);
 }
 

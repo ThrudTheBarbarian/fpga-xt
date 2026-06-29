@@ -67,6 +67,10 @@ uintptr_t xtld_sym(const xtld_obj *obj, const char *name);
 /* Run DT_INIT_ARRAY constructors (call once, after load). */
 void xtld_run_init(const xtld_obj *obj);
 
+/* Run DT_FINI_ARRAY destructors in reverse order. Called by xtld_unload when the
+ * object is destroyed; exposed for hosts that run a module's fini explicitly. */
+void xtld_run_fini(const xtld_obj *obj);
+
 /* The image's entry point (e_entry + load bias), or 0 if e_entry==0. */
 uintptr_t xtld_entry(const xtld_obj *obj);
 
@@ -84,8 +88,9 @@ uintptr_t xtld_image_base(const xtld_obj *obj);
  * private-data mapping (each process gets its own copy of these pages). */
 void xtld_writable_range(const xtld_obj *obj, uintptr_t *va, uint32_t *size);
 
-/* Number of DT_INIT_ARRAY constructors discovered (diagnostics). */
+/* Number of DT_INIT_ARRAY constructors / DT_FINI_ARRAY destructors (diagnostics). */
 uint32_t xtld_init_count(const xtld_obj *obj);
+uint32_t xtld_fini_count(const xtld_obj *obj);
 
 /* Enumerate the loaded-object registry (libraries + programs). Lets the host give
  * each shared library per-process data (register its writable range for COW). */

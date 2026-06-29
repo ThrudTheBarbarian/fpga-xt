@@ -141,3 +141,21 @@ void mmu_protect(uint32_t va, uint32_t size, int ro, int xn)
     asm volatile("mcr p15,0,%0,c8,c7,0" :: "r"(0u));   /* TLBIALL */
     asm volatile("dsb; isb");
 }
+
+/* Undo mmu_protect over a range: restore identity RWX (cacheable) in the master,
+ * so memory freed by unloading an image is safe to re-use (otherwise its text
+ * pages stay read-only and a later write to the reused RAM would fault). The
+ * section's coarse L2 is kept (identity RWX is equivalent to the original section). */
+void mmu_unprotect(uint32_t va, uint32_t size)
+{
+    uint32_t end = (va + size + 0xFFFu) & ~0xFFFu;
+    for (uint32_t p = va & ~0xFFFu; p < end; p += 0x1000u) {
+        uint32_t sec = p >> 20;
+        if ((l1[sec] & 0x3u) != 0x1u) continue;          /* not coarse -> already plain identity */
+        uint32_t *l2 = (uint32_t *)(l1[sec] & 0xFFFFFC00u);
+        l2[(p >> 12) & 0xFFu] = (p & 0xFFFFF000u) | PG_NORMAL;   /* identity RWX */
+    }
+    asm volatile("dsb");
+    asm volatile("mcr p15,0,%0,c8,c7,0" :: "r"(0u));   /* TLBIALL */
+    asm volatile("dsb; isb");
+}

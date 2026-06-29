@@ -21,9 +21,12 @@ void (*g_logptr)(const char *) = host_log;      /* -> sym reloc (func)*/
 volatile unsigned *g_ctrptr = &host_counter;    /* -> sym reloc (data)*/
 const char g_msg[] = "hello from a loaded ARM ET_DYN";
 
-/* Runs only if executed (it isn't, on host). Proves init_array is discovered. */
+/* Run only if executed (they aren't, on host). Prove init_array/fini_array are
+ * discovered (the host checks the counts; it never runs ARM). */
 __attribute__((constructor))
 static void ctor(void) { g_value = 0xCAFE; }
+__attribute__((destructor))
+static void dtor(void) { g_value = 0xDEAD; }
 
 unsigned add(unsigned a, unsigned b) { return a + b; }  /* exported function */
 

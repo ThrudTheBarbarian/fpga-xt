@@ -293,19 +293,25 @@ static char **copy_argv(int argc, char **argv, const xtld_host *host)
  * The same program spawned N times keeps ONE relocated copy. Its text/rodata/GOT
  * are shared READ-ONLY (W^X, one physical copy — "mmap-exec"); each instance gets
  * its own data/bss via copy-on-write from the post-init pristine image. */
-#define MAXPROG 32             /* distinct cached images (>= number of /bin programs;
-                                * not MAXPROC — many more programs than live processes) */
+#ifndef MAXPROG
+#define MAXPROG 32             /* distinct cached images. > MAXPROC so an idle image is
+                                * always evictable; overridable (-DMAXPROG=N) for tests. */
+#endif
 typedef struct {
     const uint8_t *image;     /* romfs bytes = cache key */
     xtld_obj      *obj;
     uintptr_t      entry;
     uintptr_t      wva;       /* writable (data/bss) seg — COW per-process */
     uint32_t       wsize;
+    uint32_t       lru;       /* last-use tick (for eviction) */
 } prog_t;
 static prog_t   g_prog[MAXPROG];
 static int      g_prog_n;
 static uint32_t g_prog_loads;            /* distinct images actually loaded (vs spawns) */
+static uint32_t g_prog_tick;             /* monotonic use counter */
+static uint32_t g_prog_evicts;           /* images evicted (diagnostics) */
 uint32_t frtos_prog_loads(void) { return g_prog_loads; }
+uint32_t frtos_prog_evicts(void) { return g_prog_evicts; }
 
 /* Give every shared LIBRARY per-process data: register its writable (data/bss)
  * range for copy-on-write. A library's data is never written by the kernel, so the
@@ -313,9 +319,11 @@ uint32_t frtos_prog_loads(void) { return g_prog_loads; }
  * one-time load-init). libc is the exception: the kernel mutates its malloc arena,
  * so libc COWs from a boot snapshot (vm_set_libc) instead — skip it here. Programs
  * have no soname (their data is the per-space program range, not a global one).
- * Idempotent: re-scanned after each load; vm_cow_register dedups by base VA. */
+ * REBUILT from the live object list each call (after any load or unload), so a
+ * library freed by an eviction stops being a COW range. */
 static void register_lib_cow(void)
 {
+    vm_cow_reset_dynamic();                  /* keep synthetic+libc, drop the library ranges */
     int n = xtld_object_count();
     for (int i = 0; i < n; i++) {
         xtld_obj *o = xtld_object_at(i);
@@ -326,10 +334,41 @@ static void register_lib_cow(void)
     }
 }
 
+/* is this cached image backing a live process? (don't evict one that's running) */
+static int prog_in_use(const prog_t *pr)
+{
+    for (int i = 0; i < MAXPROC; i++)
+        if (g_proc[i].used && g_proc[i].obj == pr->obj) return 1;
+    return 0;
+}
+
+/* Evict the least-recently-used IDLE cached image to make room. xtld_unload runs
+ * its destructors and releases its DT_NEEDED libraries (a library freed when its
+ * last dependent goes); mmu_unprotect restores the freed image's pages to identity
+ * RWX so the RAM is safe to reuse; register_lib_cow drops any now-freed library's
+ * COW range. Returns 1 if an image was evicted. */
+static int prog_evict(void)
+{
+    int victim = -1; uint32_t best = 0xFFFFFFFFu;
+    for (int i = 0; i < g_prog_n; i++)
+        if (!prog_in_use(&g_prog[i]) && g_prog[i].lru < best) { best = g_prog[i].lru; victim = i; }
+    if (victim < 0) return 0;                /* every cached image is live (needs MAXPROG>MAXPROC) */
+
+    extern void mmu_unprotect(uint32_t, uint32_t);
+    xtld_obj *obj = g_prog[victim].obj;
+    mmu_unprotect((uint32_t)xtld_image_base(obj), (uint32_t)xtld_span(obj));
+    xtld_unload(obj);                        /* fini + transitive dep release + free image */
+    g_prog[victim] = g_prog[--g_prog_n];     /* compact the cache */
+    register_lib_cow();                      /* a transitively-freed library must leave the COW set */
+    g_prog_evicts++;
+    return 1;
+}
+
 static prog_t *prog_get(const uint8_t *image, uint32_t len, const xtld_host *host)
 {
-    for (int i = 0; i < g_prog_n; i++) if (g_prog[i].image == image) return &g_prog[i];
-    if (g_prog_n >= MAXPROG) return NULL;
+    for (int i = 0; i < g_prog_n; i++)
+        if (g_prog[i].image == image) { g_prog[i].lru = ++g_prog_tick; return &g_prog[i]; }
+    if (g_prog_n >= MAXPROG && !prog_evict()) return NULL;   /* full + nothing evictable */
 
     xtld_obj *obj = NULL; char err[64] = {0};
     int rc = xtld_load(image, len, host, &obj, err, sizeof err);
@@ -357,6 +396,7 @@ static prog_t *prog_get(const uint8_t *image, uint32_t len, const xtld_host *hos
        * image's data stays the pristine file-loaded COW template. */
       prog_t *pr = &g_prog[g_prog_n++];
       pr->image = image; pr->obj = obj; pr->entry = entry; pr->wva = wva; pr->wsize = wsz;
+      pr->lru = ++g_prog_tick;
       g_prog_loads++;
       return pr;
     }

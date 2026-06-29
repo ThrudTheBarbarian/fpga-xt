@@ -101,7 +101,7 @@ freertos: $(BUILD)/freertos.elf
 	@$(QEMUZYNQ) -kernel $< ; echo "(qemu exited $$?)"
 
 $(BUILD)/freertos.elf: $(FRSRC) $(FRASM) test/freertos/freertos.ld test/freertos/FreeRTOSConfig.h $(BUILD)/romfs_blob.h | $(BUILD)
-	$(ARMCC) $(FRCFLAGS) -T test/freertos/freertos.ld $(FRASM) $(FRSRC) -lgcc -o $@
+	$(ARMCC) $(FRCFLAGS) $(XTRACFLAGS) -T test/freertos/freertos.ld $(FRASM) $(FRSRC) -lgcc -o $@
 
 # HW variant: same kernel (incl. the full tier-2 MMU/VM), but real Zynq UART1 I/O
 # instead of semihosting (the testbed owns its SVC vector, so semihosting — which
@@ -211,10 +211,14 @@ $(BUILD)/sharetext.so: test/freertos/progs/sharetext.c $(BUILD)/libc.so | $(BUIL
 	$(ARMCC) $(PROGCFLAGS) -Inewlib-pic/include -c $< -o $(BUILD)/sharetext.o
 	$(LLD) -shared --hash-style=sysv -o $@ $(BUILD)/sharetext.o $(BUILD)/libc.so
 
+$(BUILD)/finictor.so: test/freertos/progs/finictor.c $(BUILD)/libc.so | $(BUILD)
+	$(ARMCC) $(PROGCFLAGS) -Inewlib-pic/include -c $< -o $(BUILD)/finictor.o
+	$(LLD) -shared --hash-style=sysv -o $@ $(BUILD)/finictor.o $(BUILD)/libc.so
+
 $(BUILD)/mkromfs: tools/mkromfs.c | $(BUILD)
 	$(HOSTCC) -O2 -o $@ $<
 
-$(BUILD)/romfs.bin: $(BUILD)/mkromfs $(BUILD)/hello.so $(BUILD)/showmotd.so $(BUILD)/usestr.so $(BUILD)/echo.so $(BUILD)/libc_test.so $(BUILD)/gemtext.so $(BUILD)/desktop.so $(BUILD)/faultprog.so $(BUILD)/vmtest.so $(BUILD)/demandtest.so $(BUILD)/stacktest.so $(BUILD)/wxtest.so $(BUILD)/cowtest.so $(BUILD)/sharetext.so $(BUILD)/libutil.so $(BUILD)/libGEM.so $(BUILD)/libm.so $(BUILD)/libc.so test/freertos/motd.txt
+$(BUILD)/romfs.bin: $(BUILD)/mkromfs $(BUILD)/hello.so $(BUILD)/showmotd.so $(BUILD)/usestr.so $(BUILD)/echo.so $(BUILD)/libc_test.so $(BUILD)/gemtext.so $(BUILD)/desktop.so $(BUILD)/faultprog.so $(BUILD)/vmtest.so $(BUILD)/demandtest.so $(BUILD)/stacktest.so $(BUILD)/wxtest.so $(BUILD)/cowtest.so $(BUILD)/sharetext.so $(BUILD)/finictor.so $(BUILD)/libutil.so $(BUILD)/libGEM.so $(BUILD)/libm.so $(BUILD)/libc.so test/freertos/motd.txt
 	$(BUILD)/mkromfs $@ \
 	    /bin/faultprog=$(BUILD)/faultprog.so \
 	    /bin/vmtest=$(BUILD)/vmtest.so \
@@ -223,6 +227,7 @@ $(BUILD)/romfs.bin: $(BUILD)/mkromfs $(BUILD)/hello.so $(BUILD)/showmotd.so $(BU
 	    /bin/wxtest=$(BUILD)/wxtest.so \
 	    /bin/cowtest=$(BUILD)/cowtest.so \
 	    /bin/sharetext=$(BUILD)/sharetext.so \
+	    /bin/finictor=$(BUILD)/finictor.so \
 	    $(if $(XTC_SO),/bin/xtcprog=$(XTC_SO)) \
 	    /OS/Library/libc.so=$(BUILD)/libc.so \
 	    /OS/Library/libm.so=$(BUILD)/libm.so \

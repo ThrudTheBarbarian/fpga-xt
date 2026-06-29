@@ -78,9 +78,21 @@ notes is closed).
 
 `prog_get` keys on the romfs image pointer. On a miss it `xtld_load`s, applies W^X
 `mmu_protect` (text RO+X, writable RW+XN) **once**, and caches `{obj, entry,
-writable range}`. On a hit it reuses the object — no second load, no second
-relocation. `frtos_waitpid` reaps the process slot but leaves the cached image
-resident for reuse.
+writable range, LRU tick}`. On a hit it reuses the object — no second load, no
+second relocation. `frtos_waitpid` reaps the process slot but leaves the cached
+image resident for reuse.
+
+When the cache is full (`MAXPROG`, default 32 — kept above `MAXPROC` so an idle
+image is always evictable), `prog_evict` drops the least-recently-used image that
+has **no live process**: it `mmu_unprotect`s the image's pages (back to identity
+RWX, so the freed RAM is safe to reuse), then `xtld_unload`s it. Unload runs the
+module's **`DT_FINI_ARRAY` destructors** (`xtld_run_fini`, reverse order) and
+**transitively releases its `DT_NEEDED` libraries** (each refcount drops; a library
+is freed only when its last dependent goes). If a library is freed this way,
+`register_lib_cow` rebuilds the COW range set so the gone library stops being
+mapped. (Constructors run per process in `app_main`; destructors run once, at
+module unload — programs aren't unloaded per-exit, so a program's `fini` runs when
+its cached image is evicted.)
 
 ## 5. Hardware notes (carried for the HW re-graduation)
 

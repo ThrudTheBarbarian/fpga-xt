@@ -30,6 +30,7 @@ static inline void xt_irq_restore(unsigned f)
 void vm_set_libc(uintptr_t wva, uint32_t wsize, const void *snapshot);
 void vm_cow_init(void);
 void vm_cow_register(uint32_t va, uint32_t size, uint32_t src);
+void vm_cow_reset_dynamic(void);    /* drop library COW ranges (keep synthetic+libc) for rebuild */
 uint32_t vm_cow_count(void);
 int  vm_cow_map(int idx, uint32_t va);
 int  vm_demand_map(int idx, uint32_t va);

@@ -72,8 +72,9 @@ static uint32_t  g_cur_asid;
  * Each range carries `src`: page (va + k*0x1000) maps RO to (src + k*0x1000). */
 #define NCOW 12
 typedef struct { uint32_t va, end, src; } cow_rng;
-static cow_rng  g_cow_rng[NCOW];                 /* global ranges (libc, synthetic) */
+static cow_rng  g_cow_rng[NCOW];                 /* global ranges (synthetic, libc, libraries) */
 static int      g_cow_n;
+static int      g_cow_perm = -1;                 /* count of PERMANENT ranges (synthetic+libc) */
 static cow_rng  g_space_prog[NSPACE];            /* the program data range of each space */
 static uint32_t g_cow_count;
 void vm_cow_register(uint32_t va, uint32_t size, uint32_t src)
@@ -85,6 +86,14 @@ void vm_cow_register(uint32_t va, uint32_t size, uint32_t src)
     g_cow_rng[g_cow_n].end = (va + size + 0xFFFu) & ~0xFFFu;
     g_cow_rng[g_cow_n].src = src & ~0xFFFu;
     g_cow_n++;
+}
+/* Drop the DYNAMIC (shared-library) ranges, keeping the permanent ones (synthetic +
+ * libc). The library set is then rebuilt from the live loaded-object list after a
+ * load or unload — so a library freed by an eviction stops being mapped COW. */
+void vm_cow_reset_dynamic(void)
+{
+    if (g_cow_perm < 0) g_cow_perm = g_cow_n;   /* first call: synthetic+libc are permanent */
+    g_cow_n = g_cow_perm;
 }
 static int cow_owns(int idx, uint32_t va)
 {
