@@ -127,7 +127,9 @@ module sprite_engine #(
     logic [N_SPRITES-1:0] collision     [0:N_SPRITES-1];
     logic [N_SPRITES-1:0] collision_set [0:N_SPRITES-1];
 
-    // No compositor yet — drive the set side to zero.
+    // Collision detection not wired yet — drive the set side to zero. TODO: feed it
+    // from the compositor's per-pixel alpha-test results (the set of opaque sprites at
+    // each output pixel); for each si, collision_set[si] = that mask with si cleared.
     genvar gi;
     generate
         for (gi = 0; gi < N_SPRITES; gi = gi + 1) begin : g_collision_set_tieoff

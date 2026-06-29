@@ -63,10 +63,15 @@ Remaining:
 ---
 ## Video / compositor / sprites / textures
 
-- **Sprite engine — refinements.** Core + the HW mouse cursor are done and on HW.
-  Remaining: H/V flip + 2x exercised, palettised sprites, rotation (SW-first),
-  collision-compositor (the set side is still tied to 0), and blitter→sprite-arena
-  integration. *(src: docs/Design/sprite-engine.md, docs/video/video-architecture.md)*
+- **Sprite engine — collision detection.** Core, HW mouse cursor, H/V flip + 2× scale,
+  and the per-pixel compositor (alpha-test → priority resolve → alpha-blend) are done
+  and on HW. Real remaining work: **collision detection** — the cross-product collision
+  matrix + `$D4Dx` readback exist, but `collision_set` is tied to 0 (the "no compositor
+  yet" was stale — there is one). Wire it by tapping the compositor's per-pixel
+  alpha-test mask (the set of opaque sprites at each output pixel) into
+  `collision_set[si]` (that mask with `si` cleared). Deferred/optional: palettised
+  sprites, rotation (SW-first), blitter→sprite-arena. *(src: hdl/sprite_engine.sv,
+  docs/Design/sprite-engine.md)*
 - **Texture mapping (tiers)** — T1 affine point-sampled (~1 day) → T2 bilinear
   (+½ day) → T3 textured triangles (+½–1 day) → T4 perspective-correct (several days);
   plus `$D4D0..` TEX_* regs / `CMD=0x08` / `TEX_WRAP` wiring and a texture-cache
