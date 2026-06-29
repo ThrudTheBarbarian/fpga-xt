@@ -193,16 +193,21 @@ if not os.environ.get("VITIS_NO_RTOS"):
     # ---- FAT filesystem (xilffs / FatFs) on the SD card ------------------
     # xtos mounts a FAT SD card for boot scripts + apps.  xsdps (the SD driver)
     # is pulled in automatically because SD0 is enabled in the PS.  Config is
-    # XILFFS_use_lfn=3 = long filenames via a HEAP work-buffer (reentrant-safe
-    # under FreeRTOS; the static =1 buffer is not).  xilffs has NO code-page
-    # parameter — FF_CODE_PAGE is hardcoded to 932 in the generated ffconf.h —
-    # so the 850 (Latin-1 / UK £) override is a post-generate patch + rebuild
-    # (see after platform.build()).
+    # XILFFS_use_lfn=2 = long filenames via a STACK work-buffer: thread-safe
+    # under FreeRTOS (each call gets its own (FF_MAX_LFN+1)*2 bytes on its own
+    # stack) AND independent of the shared heap.  =3 (heap work-buffer) was the
+    # prior setting and is the bug: every f_readdir/f_open does ff_memalloc()
+    # from the FreeRTOS heap, so under heap pressure/fragmentation it returns
+    # NULL -> LFN read fails (short-name fallback) and the call returns
+    # FR_NOT_ENOUGH_CORE -> directory enumeration breaks mid-listing (the
+    # recurring "/OS/Boot found only 1 of N scripts").  =1 (static buffer) is
+    # not re-entrant.  xilffs has NO code-page parameter — FF_CODE_PAGE is
+    # hardcoded to 932 in the generated ffconf.h.
     print(">> adding xilffs (FatFs) to the freertos domain ...")
     rtos_dom.set_lib(lib_name="xilffs")
     try:
-        rtos_dom.set_config("lib", "XILFFS_use_lfn", "3", lib_name="xilffs")
-        print(">> xilffs: set XILFFS_use_lfn -> 3 (LFN, heap work-buffer)")
+        rtos_dom.set_config("lib", "XILFFS_use_lfn", "2", lib_name="xilffs")
+        print(">> xilffs: set XILFFS_use_lfn -> 2 (LFN, stack work-buffer, heap-independent)")
     except Exception as e:  # noqa: BLE001 - tolerate param-name drift
         print(f">> WARNING: xilffs set_config(XILFFS_use_lfn) failed: {e}")
 
