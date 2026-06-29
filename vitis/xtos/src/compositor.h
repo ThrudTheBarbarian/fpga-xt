@@ -29,6 +29,13 @@ void xt_overlay_enable(uint32_t base, uint16_t x, uint16_t y, uint16_t w, uint16
 void xt_overlay_move(uint16_t x, uint16_t y);   /* re-position only (keeps enabled) */
 void xt_overlay_disable(void);
 
+/* Arm the HW drag-overlay alpha-blend (gp0_ctrl[5]).  The PS sets this ONLY when the
+ * overlay surface carries real per-pixel alpha (the window re-rendered with a=0
+ * outside its rounded shape); with it set the compositor blends the overlay over the
+ * desktop instead of replacing it (kills the rounded-edge wallpaper halo during a
+ * drag).  Off for an opaque FB-copy overlay. */
+void xt_overlay_alpha(int on);
+
 /* XL emulation plane placement (GP0 XLCTL block).  Position the live XL plane at an
  * arbitrary on-screen rect (origin x,y; integer scale; clip = the w*h content rect)
  * — the basis for hosting the emulation surface inside a GEM window.  The EN write

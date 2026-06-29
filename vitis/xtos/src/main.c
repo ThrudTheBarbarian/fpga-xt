@@ -455,6 +455,14 @@ static void desktop_init(void)
     Xil_Out32(XT_CTRL_GP0, (u32)g_gp0);
 }
 
+/* gp0_ctrl[5] — arm the HW drag-overlay alpha-blend (preserve the other ctrl bits).
+ * Declared in compositor.h; the WM sets it when the overlay carries real alpha. */
+void xt_overlay_alpha(int on)
+{
+    g_gp0 = (u8)((g_gp0 & ~0x20u) | (on ? 0x20u : 0x00u));
+    Xil_Out32(XT_CTRL_GP0, (u32)g_gp0);
+}
+
 static void lua_init(void)
 {
     g_L = luaL_newstate();                 /* uses newlib malloc (bumped heap) */

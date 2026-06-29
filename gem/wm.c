@@ -443,3 +443,34 @@ void gem_wm_draw_window(gem_wm *wm, int slot) {
                        (int16_t)(win->cx + win->cw - 1), (int16_t)(win->cy + win->ch - 1) };
     vro_cpyfm(wm->desk_vh, VRO_COPY, pxy, &src, &dst);
 }
+
+// Render ONE window into `target` (via VDI handle `target_vh`) at the surface origin.
+// We reuse the full themed draw path by temporarily pointing the WM at the target and
+// moving the window to (0,0) — so the chrome (theme 9-slice incl. rounded AA corners),
+// close box, title, and content land exactly as on screen, but composited over the
+// (caller-cleared, transparent) overlay so undrawn pixels keep alpha=0.  All WM state
+// is restored before returning.
+void gem_wm_render_window_to(gem_wm *wm, int slot, gfx_surface *target, int target_vh) {
+    gem_window *win = &wm->win[slot];
+    if (!win->used) return;
+    gfx_surface *save_desk = wm->desk;          // retarget the WM at the overlay
+    int          save_vh   = wm->desk_vh;
+    int          sx = win->x, sy = win->y;      // and place the window at the origin
+    wm->desk = target; wm->desk_vh = target_vh;
+    win->x = 0; win->y = 0; recompute_content(win);
+
+    if (win->dirty && win->redraw) { win->redraw(win, win->ud); win->dirty = 0; }
+    draw_frame(wm, win);
+    if (!win->emu_backed) {                      // composite the backing content
+        MFDB src, dst;
+        mfdb_from_surface(&src, win->backing);
+        mfdb_from_surface(&dst, target);
+        int16_t pxy[8] = { 0, 0, (int16_t)(win->cw - 1), (int16_t)(win->ch - 1),
+                           (int16_t)win->cx, (int16_t)win->cy,
+                           (int16_t)(win->cx + win->cw - 1), (int16_t)(win->cy + win->ch - 1) };
+        vro_cpyfm(target_vh, VRO_COPY, pxy, &src, &dst);
+    }
+
+    win->x = sx; win->y = sy; recompute_content(win);   // restore
+    wm->desk = save_desk; wm->desk_vh = save_vh;
+}

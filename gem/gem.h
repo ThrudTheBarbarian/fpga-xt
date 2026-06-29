@@ -125,6 +125,12 @@ void        gem_wm_invalidate(gem_window *win);   // request a redraw (WM_REDRAW
 void        gem_wm_draw(gem_wm *wm);
 void        gem_wm_draw_rect(gem_wm *wm, int x0, int y0, int x1, int y1);  // damage-rect redraw
 void        gem_wm_draw_window(gem_wm *wm, int slot);                      // one window, in place
+// Render ONE window (themed frame + content) into `target` via VDI handle `target_vh`,
+// with the window's top-left at the surface origin (0,0).  The caller clears the target
+// to transparent first; undrawn pixels (outside the rounded chrome) keep a=0, so the
+// result carries real per-pixel alpha (for the HW drag overlay).  Restores the WM's own
+// surface/position afterwards.
+void        gem_wm_render_window_to(gem_wm *wm, int slot, gfx_surface *target, int target_vh);
 
 // ---- Window stacking / lifecycle ------------------------------------------
 gem_window *gem_wm_top(gem_wm *wm);                  // frontmost window, or NULL

@@ -438,6 +438,11 @@ static void cur_hide(void) {
 static int g_drag_active = 0;
 static void emu_track(void);          /* defined below; XL plane follows a bound window */
 
+/* The drag-overlay surface (DRAG_BASE) wrapped as a VDI target, so a window can be
+ * re-rendered into it with real alpha (lazy-opened, sized per drag). */
+static gfx_surface g_overlay;
+static int         g_overlay_vh = 0;
+
 /* Flush a plane rectangle to DDR (row by row), clamped to the desktop — so a
  * damage-rect redraw only pushes its own area (not the whole 8 MB plane, which
  * would race the scanout and flicker every window). */
@@ -452,11 +457,42 @@ static void flush_rect(int x, int y, int w, int h)
         Xil_DCacheFlushRange((INTPTR)(pl + (size_t)(y+r)*DESK_STRIDE + x), (unsigned)w*4);
 }
 
-static void drag_build_surface(gem_window *w, int gx, int gy)
+/* Build the drag overlay for window `w`.  Returns 1 if the surface carries real
+ * per-pixel alpha (so the caller arms the HW alpha-blend), 0 if it's an opaque copy.
+ *
+ * Normal GEM windows are RE-RENDERED into the overlay with alpha: cleared transparent,
+ * then the themed frame + content drawn in — so the rounded/AA chrome edges keep a<255
+ * and the corners outside the rounding stay a=0.  The compositor then blends them over
+ * the *current* desktop instead of carrying the wallpaper baked in at grab (the halo).
+ *
+ * emu-backed windows (live XL/ST plane content, not in `backing`) can't be re-rendered
+ * that way, so they fall back to the opaque composited-FB snapshot (a=FF -> blend is a
+ * no-op, same as before). */
+static int drag_build_surface(gem_window *w, int gx, int gy)
 {
-    uint32_t *pl = (uint32_t *)(uintptr_t)DESK_BASE;
     uint32_t *ds = (uint32_t *)(uintptr_t)DRAG_BASE;
-    int W = w->w, H = w->h;                           /* surface uses OVL_STRIDE_W/row */
+    int W = w->w, H = w->h;                            /* surface uses OVL_STRIDE_W/row */
+    (void)gx; (void)gy;   /* cursor is a HW sprite on top of the overlay — no bake */
+
+    if (g_overlay_vh == 0) {                           /* lazy-open a VDI ws on the overlay */
+        g_overlay.px = (uint32_t *)(uintptr_t)DRAG_BASE;
+        g_overlay.stride = (int)OVL_STRIDE_W;
+        g_overlay.w = 1; g_overlay.h = 1;
+        g_overlay_vh = v_opnvwk(&g_overlay);
+    }
+
+    if (!w->emu_backed && g_overlay_vh > 0) {          /* re-render with real alpha */
+        for (int r = 0; r < H; r++)                    /* clear to transparent first */
+            for (int c = 0; c < W; c++) ds[(size_t)r*OVL_STRIDE_W + c] = 0u;
+        g_overlay.w = W; g_overlay.h = H;              /* size the VDI target to the window */
+        gem_wm_render_window_to(&g_wm, (int)(w - g_wm.win), &g_overlay, g_overlay_vh);
+        for (int r = 0; r < H; r++)
+            Xil_DCacheFlushRange((INTPTR)(ds + (size_t)r*OVL_STRIDE_W), (size_t)W*4u);
+        return 1;
+    }
+
+    /* emu-backed: opaque snapshot of the composited desktop rect. */
+    uint32_t *pl = (uint32_t *)(uintptr_t)DESK_BASE;
     for (int r = 0; r < H; r++) {
         int py = w->y + r;
         for (int c = 0; c < W; c++) {
@@ -465,9 +501,9 @@ static void drag_build_surface(gem_window *w, int gx, int gy)
                                 ? pl[(size_t)py*DESK_STRIDE + px] : 0;
         }
     }
-    (void)gx; (void)gy;   /* cursor is a HW sprite on top of the overlay — no bake */
-    for (int r = 0; r < H; r++)                       /* strided -> flush each row's W px */
+    for (int r = 0; r < H; r++)                        /* strided -> flush each row's W px */
         Xil_DCacheFlushRange((INTPTR)(ds + (size_t)r*OVL_STRIDE_W), (size_t)W*4u);
+    return 0;
 }
 
 /* Drag-path tracing.  These printfs sit in the per-move hot path; over the UART
@@ -496,10 +532,11 @@ static void drag_begin(void)
     int x0 = w->x, y0 = w->y;
     gem_wm_draw_rect(&g_wm, x0, y0, x0 + w->w - 1, y0 + w->h - 1);  /* window on top (raise) */
     flush_rect(x0, y0, w->w, w->h);                                /* — confined to its rect */
-    drag_build_surface(w, g_wm.drag_ox, g_wm.drag_oy);             /* copy the clean window  */
+    int alpha = drag_build_surface(w, g_wm.drag_ox, g_wm.drag_oy); /* clean window (with alpha) */
     int ox = w->x < 0 ? 0 : w->x, oy = w->y < 0 ? 0 : w->y;
     xt_overlay_enable(DRAG_BASE, (uint16_t)ox, (uint16_t)oy,       /* overlay coincident with */
                       (uint16_t)w->w, (uint16_t)w->h);             /* the still-drawn window  */
+    xt_overlay_alpha(alpha);                          /* HW blend over the desktop iff alpha'd */
     s_cvis = 0;                                       /* pointer now lives in the overlay */
     g_drag_active = 1;                                /* hide_slot stays -1 until first move */
     DRAG_DBG("[drag] GRAB slot=%d win=(%d,%d %dx%d) off=(%d,%d)\r\n",
@@ -524,6 +561,7 @@ static void drag_end(void)
         flush_rect(fx, fy, fw, fh);
     }
     cur_show(g_mx, g_my);                             /* restore the plane pointer        */
+    xt_overlay_alpha(0);                              /* disarm the HW alpha-blend         */
     xt_overlay_disable();                             /* retire the overlay (window already there) */
     g_drag_active = 0;
     emu_track();                                      /* settle a bound XL plane at the final spot */
