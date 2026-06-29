@@ -88,6 +88,10 @@ static uint8_t xt_die_stack[4096] __attribute__((aligned(8), used));
  * Switch to the dedicated stack FIRST (before any push, so a bad task SP can't
  * fault the kill), then run the C reaper. */
 __asm__(
+    "    .section .text,\"ax\",%progbits\n"   /* MUST force .text — the preceding .bss
+                                                array would otherwise leave this code in
+                                                .bss (zeroed at runtime -> jump to garbage) */
+    "    .balign 4\n"
     "    .global xtos_hw_task_die\n"
     "xtos_hw_task_die:\n"
     "    movw sp, #:lower16:(xt_die_stack + 4096)\n"
