@@ -55,9 +55,17 @@ __asm__(
 );
 extern void xt_hw_install_vectors(void);
 
+/* The task currently being killed + how many times its kill path has re-faulted,
+ * so the recovery is bounded — a kill that itself faults must never loop forever. */
+static TaskHandle_t g_dying = NULL;
+static int          g_die_depth = 0;
+
 /* called from xt_hw_fault (r0=exception code, r1=faulting PC) */
 void fault_report_hw(unsigned code, unsigned addr)
 {
+    /* Re-fault from inside the kill path for the SAME task: don't re-spam the
+     * report — xtos_hw_reap (below) bounds the actual recovery. */
+    if (g_dying && xTaskGetCurrentTaskHandle() == g_dying) return;
     static const char *const names[8] =
         { "reset", "UNDEF", "svc", "PREFETCH-ABORT", "DATA-ABORT", "resv", "irq", "FIQ" };
     uint32_t dfar, dfsr, ifsr;
@@ -71,8 +79,48 @@ void fault_report_hw(unsigned code, unsigned addr)
     printf("*** killing the faulting task; OS continues (T2-a HW) ***\r\n");
 }
 
-/* runs in the faulting task's own context (entered via movs pc) */
-void xtos_hw_task_die(void) { vTaskDelete(NULL); for (;;) {} }
+/* Dedicated kill stack: the faulting task's own SP may be corrupt (a stack
+ * overflow is a common fault cause), which is exactly why the kill path used to
+ * re-fault and loop.  `used` so it survives even though only asm references it. */
+static uint8_t xt_die_stack[4096] __attribute__((aligned(8), used));
+
+/* xtos_hw_task_die — entered (via `movs pc`) in the faulting task's own mode.
+ * Switch to the dedicated stack FIRST (before any push, so a bad task SP can't
+ * fault the kill), then run the C reaper. */
+__asm__(
+    "    .global xtos_hw_task_die\n"
+    "xtos_hw_task_die:\n"
+    "    movw sp, #:lower16:(xt_die_stack + 4096)\n"
+    "    movt sp, #:upper16:(xt_die_stack + 4096)\n"
+    "    b    xtos_hw_reap\n"
+);
+
+/* Bounded recovery (called from xtos_hw_task_die on the dedicated stack):
+ *   1st fault for a task -> delete it cleanly (OS continues);
+ *   its kill path re-faults -> park it (suspend) so the OS still continues;
+ *   even that re-faults -> stop, rather than spin reporting forever.
+ * g_dying tracks the task so a NEW task's fault restarts the count instead of
+ * being mistaken for a re-fault. */
+void xtos_hw_reap(void)
+{
+    TaskHandle_t cur = xTaskGetCurrentTaskHandle();
+    if (cur != g_dying) { g_dying = cur; g_die_depth = 0; }   /* fresh fault */
+    g_die_depth++;
+
+    if (g_die_depth >= 3) {                                   /* kill keeps faulting */
+        printf("*** kill path unrecoverable (x%d) — stopping to avoid a fault loop ***\r\n",
+               g_die_depth);
+        portDISABLE_INTERRUPTS();
+        for (;;) {}
+    }
+    if (g_die_depth == 1) {
+        vTaskDelete(NULL);                                   /* normal: clean delete + yield */
+    } else {
+        printf("*** kill path re-faulted — parking the task; OS continues ***\r\n");
+        if (cur) vTaskSuspend(cur);                          /* self-suspend -> yields away */
+    }
+    for (;;) {}
+}
 
 void xtos_fault_handlers_init(void)
 {
