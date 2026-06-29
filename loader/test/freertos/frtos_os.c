@@ -603,17 +603,38 @@ void frtos_on_loaded(xtld_obj *obj, void *u)
 }
 
 /* xtld_host.open_lib: map a DT_NEEDED soname to /OS/Library/<name> in the romfs */
+/* Loader library search path (LD_LIBRARY_PATH-style). Resolution is path-driven, not
+ * a hardcoded dir, so a debug session can later prepend a directory of -Og -g
+ * libraries (e.g. /OS/Library/Debug/) and have a debuggee's DT_NEEDED resolve there
+ * first. Entries must end in '/'; searched in order, first hit wins. Default is just
+ * the system library dir. (Per-process scoping arrives with the env/debugger work;
+ * for now this is the global hook — the indirection is what we're reserving.) */
+#define LIBPATH_MAX 4
+static const char *g_libpath[LIBPATH_MAX] = { "/OS/Library/" };
+static int         g_libpath_n = 1;
+
+void frtos_lib_path_set(const char *const *dirs, int n)
+{
+    if (n < 1) { g_libpath[0] = "/OS/Library/"; g_libpath_n = 1; return; }
+    if (n > LIBPATH_MAX) n = LIBPATH_MAX;
+    for (int i = 0; i < n; i++) g_libpath[i] = dirs[i];
+    g_libpath_n = n;
+}
+
 int frtos_open_lib(const char *name, const uint8_t **data, uint32_t *len, void *u)
 {
     (void)u;
-    char path[64];
-    const char *pfx = "/OS/Library/";
-    int i = 0;
-    while (pfx[i]) { path[i] = pfx[i]; i++; }
-    int j = 0;
-    while (name[j] && i < (int)sizeof(path) - 1) path[i++] = name[j++];
-    path[i] = 0;
-    return romfs_lookup(path, data, len);
+    char path[80];
+    for (int k = 0; k < g_libpath_n; k++) {
+        const char *pfx = g_libpath[k];
+        int i = 0;
+        while (pfx[i] && i < (int)sizeof(path) - 1) { path[i] = pfx[i]; i++; }
+        int j = 0;
+        while (name[j] && i < (int)sizeof(path) - 1) path[i++] = name[j++];
+        path[i] = 0;
+        if (romfs_lookup(path, data, len)) return 1;   /* search order: first hit wins */
+    }
+    return 0;
 }
 
 int frtos_waitpid(int pid)
