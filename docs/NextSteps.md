@@ -63,8 +63,6 @@ Remaining:
 ---
 ## Video / compositor / sprites / textures
 
-- **v1 `desktop.app` (ARM)** — blue fill + plane config + XL auto-start. *(src:
-  former docs/TODO.txt, docs/video/video-architecture.md)*
 - **Sprite engine — refinements.** Core + the HW mouse cursor are done and on HW.
   Remaining: H/V flip + 2x exercised, palettised sprites, rotation (SW-first),
   collision-compositor (the set side is still tied to 0), and blitter→sprite-arena
