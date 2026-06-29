@@ -1438,6 +1438,12 @@ module fpga_xt_top (
         // above the desktop but below the XL/ST windows so a dragged window
         // never jumps in front of them.
         .pl_enable   ({1'b1,       ov_en_d,  1'b1}),          // XL on, overlay gated, desktop on
+        .pl_alpha_en ({1'b0,       gp0_ctrl[5], 1'b0}),       // overlay alpha-blends over the desktop
+                                                              // when PS opts in (gp0_ctrl[5]); XL/desktop
+                                                              // always opaque. Off by default — the PS
+                                                              // sets it once it builds the overlay with
+                                                              // real per-pixel alpha (else FB-copy alpha
+                                                              // would blend wrong).
         .pl_origin_x ({xl_org_x_r, ov_x_d,   12'd0}),         // XL runtime-scaled (gp0_ctrl[3:1])
         .pl_origin_y ({xl_org_y_r, ov_y_d,   12'd0}),
         .pl_scale    ({xl_scale_q, 3'd1,     3'd1}),

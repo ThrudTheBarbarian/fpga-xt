@@ -41,6 +41,8 @@ module plane_compositor #(
 
     // ---- Per-plane config (flattened, clk_pix-stable) --------------------
     input  wire [N_PLANES-1:0]      pl_enable,
+    input  wire [N_PLANES-1:0]      pl_alpha_en,   // 1 = alpha-blend this plane over the one behind
+                                                   // (0 = opaque: emit RGB, ignore stored alpha)
     input  wire [N_PLANES*12-1:0]   pl_origin_x,   // screen x where src col 0 lands
     input  wire [N_PLANES*12-1:0]   pl_origin_y,   // screen y where src row 0 lands
     input  wire [N_PLANES*3-1:0]    pl_scale,      // integer 1..7 (0 -> treated as 1)
@@ -153,70 +155,128 @@ module plane_compositor #(
         end
     endgenerate
 
-    // ---- Coverage + priority (combinational, for the current pixel) ------
-    // winner = covered plane with the highest depth; any = at least one.
-    logic                       any_c;
-    logic [$clog2(N_PLANES>1?N_PLANES:2)-1:0] winner;
-    logic [3:0]                 best_depth;
+    // ---- Coverage + priority: top-2 covered planes by depth --------------
+    // winner = front-most covered plane; runner = the next one down — the plane
+    // an alpha-enabled winner blends OVER.  Depths are unique (spec).
+    localparam int WB = $clog2(N_PLANES>1?N_PLANES:2);
+    logic                       any_c, has_runner_c;
+    logic [WB-1:0]              winner, runner;
+    logic [3:0]                 best_depth, second_depth;
     integer pi;
     always_comb begin
-        any_c      = 1'b0;
-        winner     = '0;
-        best_depth = 4'd0;
+        any_c        = 1'b0;
+        has_runner_c = 1'b0;
+        winner       = '0;
+        runner       = '0;
+        best_depth   = 4'd0;
+        second_depth = 4'd0;
         for (pi = 0; pi < N_PLANES; pi = pi + 1) begin
             if (pl_enable[pi]
                 && de
                 && (h_count >= f12(pl_clip_x0, pi)) && (h_count < f12(pl_clip_x1, pi))
                 && (v_count >= f12(pl_clip_y0, pi)) && (v_count < f12(pl_clip_y1, pi))) begin
-                if (!any_c || (pl_depth[pi*4 +: 4] >= best_depth)) begin
-                    any_c      = 1'b1;
-                    winner     = pi[$bits(winner)-1:0];
-                    best_depth = pl_depth[pi*4 +: 4];
+                if (!any_c || (pl_depth[pi*4 +: 4] > best_depth)) begin
+                    has_runner_c = any_c;                 // old winner drops to runner
+                    runner       = winner;
+                    second_depth = best_depth;
+                    any_c        = 1'b1;
+                    winner       = pi[WB-1:0];
+                    best_depth   = pl_depth[pi*4 +: 4];
+                end else if (!has_runner_c || (pl_depth[pi*4 +: 4] > second_depth)) begin
+                    has_runner_c = 1'b1;
+                    runner       = pi[WB-1:0];
+                    second_depth = pl_depth[pi*4 +: 4];
                 end
             end
         end
     end
 
-    // ---- Pipeline to match the 1-cycle source read latency ---------------
-    logic                       any_q;
-    logic [$bits(winner)-1:0]   winner_q;
+    // ---- Stage 1: register the decision (aligns with the 1-clk source read).
+    logic                       any_q, has_runner_q, blend_q;
+    logic [WB-1:0]              winner_q, runner_q;
     logic                       de_q, hs_q, vs_q;
     always_ff @(posedge clk_pix or posedge rst_pix) begin
         if (rst_pix) begin
-            any_q <= 1'b0; winner_q <= '0;
+            any_q <= 1'b0; has_runner_q <= 1'b0; blend_q <= 1'b0;
+            winner_q <= '0; runner_q <= '0;
             de_q  <= 1'b0; hs_q <= 1'b0; vs_q <= 1'b0;
         end else begin
-            any_q <= any_c; winner_q <= winner;
+            any_q        <= any_c;
+            has_runner_q <= has_runner_c;
+            blend_q      <= any_c && pl_alpha_en[winner];   // winner wants blending
+            winner_q     <= winner;
+            runner_q     <= runner;
             de_q  <= de;    hs_q <= hsync; vs_q <= vsync;
         end
     end
 
-    // Winning plane's source pixel (now valid, 1 clk after its addr).
-    wire [31:0] win_pixel = src_pixel_i[winner_q*32 +: 32];
-    wire [7:0]  win_r = win_pixel[31:24];
-    wire [7:0]  win_g = win_pixel[23:16];
-    wire [7:0]  win_b = win_pixel[15:8];
+    // Winning + behind source pixels (now valid, 1 clk after their addr).
+    wire [31:0] win_px = src_pixel_i[winner_q*32 +: 32];
+    wire [31:0] beh_px = src_pixel_i[runner_q*32 +: 32];
 
-    // ---- Output: covered -> winning plane (RGBA->565); else background ----
+    // ---- Stage 2: latch fg/bg channels + alpha (isolates the multiply) ----
+    logic [7:0] s2_a, s2_wr, s2_wg, s2_wb, s2_br, s2_bg, s2_bb;
+    logic       s2_any, s2_blend, de_q2, hs_q2, vs_q2;
+    always_ff @(posedge clk_pix or posedge rst_pix) begin
+        if (rst_pix) begin
+            s2_a <= 8'd0; s2_wr <= 8'd0; s2_wg <= 8'd0; s2_wb <= 8'd0;
+            s2_br <= 8'd0; s2_bg <= 8'd0; s2_bb <= 8'd0;
+            s2_any <= 1'b0; s2_blend <= 1'b0; de_q2 <= 1'b0; hs_q2 <= 1'b0; vs_q2 <= 1'b0;
+        end else begin
+            s2_wr <= win_px[31:24]; s2_wg <= win_px[23:16];
+            s2_wb <= win_px[15:8];  s2_a  <= win_px[7:0];
+            // blend OVER the runner plane's RGB, or the background if there is none.
+            if (has_runner_q) begin
+                s2_br <= beh_px[31:24]; s2_bg <= beh_px[23:16]; s2_bb <= beh_px[15:8];
+            end else begin
+                s2_br <= bg_color[23:16]; s2_bg <= bg_color[15:8]; s2_bb <= bg_color[7:0];
+            end
+            s2_any   <= any_q;
+            s2_blend <= blend_q;
+            de_q2 <= de_q; hs_q2 <= hs_q; vs_q2 <= vs_q;
+        end
+    end
+
+    // 8-bit alpha lerp: out = bg + a*(fg-bg)/256, with a==0/255 exact endpoints.
+    function automatic [7:0] lerp8(input [7:0] a, input [7:0] fg, input [7:0] bg);
+        logic signed [10:0] diff;
+        logic signed [19:0] prod;
+        logic signed [11:0] res;
+        if (a == 8'h00)      lerp8 = bg;
+        else if (a == 8'hFF) lerp8 = fg;
+        else begin
+            diff  = $signed({3'b000, fg}) - $signed({3'b000, bg});
+            prod  = $signed({1'b0, a}) * diff;
+            res   = $signed({4'b0000, bg}) + (prod >>> 8);
+            lerp8 = res[7:0];
+        end
+    endfunction
+
+    // Blended (alpha-enabled winner) or opaque (everyone else) winner channels.
+    wire [7:0] out_r = s2_blend ? lerp8(s2_a, s2_wr, s2_br) : s2_wr;
+    wire [7:0] out_g = s2_blend ? lerp8(s2_a, s2_wg, s2_bg) : s2_wg;
+    wire [7:0] out_b = s2_blend ? lerp8(s2_a, s2_wb, s2_bb) : s2_wb;
+
+    // ---- Stage 3: covered -> winner (blended/opaque) -> 565; else bg ------
     always_ff @(posedge clk_pix or posedge rst_pix) begin
         if (rst_pix) begin
             rgb_r <= 5'd0; rgb_g <= 6'd0; rgb_b <= 5'd0;
             de_o  <= 1'b0; hsync_o <= 1'b0; vsync_o <= 1'b0;
         end else begin
-            if (!de_q) begin
+            if (!de_q2) begin
                 rgb_r <= 5'd0; rgb_g <= 6'd0; rgb_b <= 5'd0;
-            end else if (any_q) begin
-                rgb_r <= win_r[7:3];
-                rgb_g <= win_g[7:2];
-                rgb_b <= win_b[7:3];
+            end else if (s2_any) begin
+                rgb_r <= out_r[7:3];
+                rgb_g <= out_g[7:2];
+                rgb_b <= out_b[7:3];
             end else begin
                 rgb_r <= bg_color[23:19];
                 rgb_g <= bg_color[15:10];
                 rgb_b <= bg_color[7:3];
             end
-            de_o    <= de_q;
-            hsync_o <= hs_q;
-            vsync_o <= vs_q;
+            de_o    <= de_q2;
+            hsync_o <= hs_q2;
+            vsync_o <= vs_q2;
         end
     end
 

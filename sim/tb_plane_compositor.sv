@@ -42,6 +42,7 @@ module tb_plane_compositor;
     // ---- plane config (2 planes) -----------------------------------------
     localparam int N = 2;
     wire [N-1:0]      pl_enable   = 2'b11;
+    wire [N-1:0]      pl_alpha_en = 2'b10;   // plane 1 (window) alpha-blends; plane 0 opaque
     wire [N*12-1:0]   pl_origin_x = {12'd12, 12'd0};
     wire [N*12-1:0]   pl_origin_y = {12'd4,  12'd0};
     wire [N*3-1:0]    pl_scale    = {3'd2,   3'd1};
@@ -62,7 +63,7 @@ module tb_plane_compositor;
         .clk_pix (clk_pix), .rst_pix (rst_pix),
         .h_count (h_count), .v_count (v_count),
         .de (de), .hsync (hsync), .vsync (vsync), .line_start (line_start),
-        .pl_enable (pl_enable),
+        .pl_enable (pl_enable), .pl_alpha_en (pl_alpha_en),
         .pl_origin_x (pl_origin_x), .pl_origin_y (pl_origin_y),
         .pl_scale (pl_scale), .pl_depth (pl_depth),
         .pl_clip_x0 (pl_clip_x0), .pl_clip_y0 (pl_clip_y0),
@@ -84,16 +85,16 @@ module tb_plane_compositor;
     end
     assign src_pixel_i = {p1, p0};
 
-    // ---- capture scoreboard (tag output with h/v delayed by 2) -----------
-    logic [11:0] h_d1, h_d2, v_d1, v_d2;
+    // ---- capture scoreboard (output is now 3 clk behind: read + 2 pipe) ---
+    logic [11:0] h_d1, h_d2, h_d3, v_d1, v_d2, v_d3;
     always_ff @(posedge clk_pix) begin
-        h_d1 <= h_count; h_d2 <= h_d1;
-        v_d1 <= v_count; v_d2 <= v_d1;
+        h_d1 <= h_count; h_d2 <= h_d1; h_d3 <= h_d2;
+        v_d1 <= v_count; v_d2 <= v_d1; v_d3 <= v_d2;
     end
     logic [15:0] cap [0:23][0:39];
     always_ff @(posedge clk_pix) begin
-        if (de_o && v_d2 < 24 && h_d2 < 40)
-            cap[v_d2][h_d2] <= {rgb_r, rgb_g, rgb_b};
+        if (de_o && v_d3 < 24 && h_d3 < 40)
+            cap[v_d3][h_d3] <= {rgb_r, rgb_g, rgb_b};
     end
 
     // ---- src_row_next_o scoreboard: it must predict next line's src_row_o --
@@ -123,11 +124,13 @@ module tb_plane_compositor;
     initial begin
         for (int r = 0; r < 64; r++)
             for (int c = 0; c < 64; c++) begin
-                frame0[r][c] = 32'h00_00_F8_00;   // blue (R,G,B,A)
-                frame1[r][c] = 32'hF8_00_00_00;    // red (default window pixel)
+                frame0[r][c] = 32'h00_00_F8_00;   // blue (R,G,B,A); plane 0 opaque (alpha ignored)
+                frame1[r][c] = 32'hF8_00_00_FF;    // red, OPAQUE (a=FF) — default window pixel
             end
-        frame1[0][0] = 32'hFF_FF_FF_00;            // white  -> native (0,0)
-        frame1[7][7] = 32'h00_FF_00_00;            // green  -> native (7,7)
+        frame1[0][0] = 32'hFF_FF_FF_FF;            // white  -> native (0,0), opaque
+        frame1[7][7] = 32'h00_FF_00_FF;            // green  -> native (7,7), opaque
+        frame1[2][2] = 32'hF8_00_00_80;            // red @ a=0x80 -> blends over plane 0 blue
+        frame1[3][3] = 32'hF8_00_00_00;            // a=0 -> fully transparent, shows plane 0 blue
     end
 
     initial begin
@@ -142,7 +145,15 @@ module tb_plane_compositor;
         chk("win TL blk",  12'd13, 12'd5,  5'h1F, 6'h3F, 5'h1F);  // same 2x2 block
         chk("win BR",      12'd26, 12'd18, 5'h00, 6'h3F, 5'h00);  // green
         chk("win BR blk",  12'd27, 12'd19, 5'h00, 6'h3F, 5'h00);
-        chk("win mid",     12'd20, 12'd10, 5'h1F, 6'h00, 5'h00);  // native(4,3)=red
+        chk("win mid",     12'd20, 12'd10, 5'h1F, 6'h00, 5'h00);  // native(4,3)=red, opaque
+
+        // alpha-blend: native(2,2) red @ a=0x80 over plane-0 blue -> purple.
+        // r = 0 + 128*(248-0)/256 = 124 -> 565 [7:3]=0x0F; b = 248 + 128*(0-248)/256
+        // = 124 -> [7:3]=0x0F; g = 0.  Screen (16,8)..(17,9) (scale 2).
+        chk("blend",       12'd16, 12'd8,  5'h0F, 6'h00, 5'h0F);
+        chk("blend blk",   12'd17, 12'd9,  5'h0F, 6'h00, 5'h0F);
+        // fully transparent: native(3,3) a=0 -> plane-0 blue shows through.
+        chk("transparent", 12'd18, 12'd10, 5'h00, 6'h00, 5'h1F);
 
         // background (plane 0) outside the window + at the clip edges
         chk("bg origin",   12'd0,  12'd0,  5'h00, 6'h00, 5'h1F);  // blue

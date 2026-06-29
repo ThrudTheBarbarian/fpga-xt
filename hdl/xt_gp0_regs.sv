@@ -277,7 +277,7 @@ module xt_gp0_regs (
                             // ---- 0x3xx CONTROL ------------------------------
                             BLK_CTRL: begin
                                 unique case (aw_off)
-                                    CTRL_GP0:   gp0_ctrl <= w_byte;            // bars/scale/blank
+                                    CTRL_GP0:   gp0_ctrl <= w_byte;            // [0]bars/compositor [3:1]XL-scale [4]DMACTL-blank [5]drag-overlay alpha-blend
                                     CTRL_SPEED: begin bl_addr <= 6'h1A; bl_we <= 1'b1; end // clock_mult -> $D4CA
                                     CTRL_UNLOCK: xt_unlock_we <= 1'b1;         // unlock (data on bl_data)
                                     CTRL_KBD_INJECT:  begin bl_addr <= 6'h1F; bl_we <= 1'b1; end // -> $D4CF
