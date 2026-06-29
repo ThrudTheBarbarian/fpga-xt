@@ -248,6 +248,27 @@ static int l_vdi_flush(lua_State *L)  /* vdi.flush() — push the plane to the c
     return 0;
 }
 
+static int l_vdi_wscount(lua_State *L)  /* vdi.wscount() -> used, allocated (workstation slots) */
+{
+    extern void vdi_ws_stats(int *used, int *cap);
+    int used = 0, cap = 0;
+    vdi_ws_stats(&used, &cap);
+    lua_pushinteger(L, used);
+    lua_pushinteger(L, cap);
+    return 2;
+}
+
+/* vdi.peek(addr) -> the 32-bit word at a DDR address, read past the CPU cache so it
+ * reflects what the PL (blitter / compositor) actually sees.  Diagnostic — e.g. after
+ * a fill, read back DESK_BASE+y*8192+x*4 to check whether the blitter wrote it. */
+static int l_vdi_peek(lua_State *L)
+{
+    uint32_t addr = ((uint32_t)luaL_checkinteger(L, 1)) & ~0x3u;
+    Xil_DCacheInvalidateRange((INTPTR)addr, 32);     /* see DDR, not stale cache */
+    lua_pushinteger(L, (lua_Integer)(*(volatile uint32_t *)(uintptr_t)addr));
+    return 1;
+}
+
 static int l_vdi_font(lua_State *L)   /* name = vdi.font() — system font family */
 {
     if (!gem_ready(L)) return 0;
@@ -985,6 +1006,8 @@ void gem_lua_open(lua_State *L)
         {"line",      l_vdi_line},    /* 1px solid line — blitter LINE_DRAW */
         {"clear",     l_vdi_clear},
         {"flush",     l_vdi_flush},
+        {"wscount",   l_vdi_wscount},  /* used, allocated workstation slots (diag) */
+        {"peek",      l_vdi_peek},     /* read a DDR word past the cache (diag) */
         {"font",      l_vdi_font},
         {"hwfill",    l_vdi_hwfill},   /* blitter RECT_FILL — HW de-risk */
         {"srctest",   l_vdi_srctest},  /* SRC_BLIT coverage — HW de-risk */

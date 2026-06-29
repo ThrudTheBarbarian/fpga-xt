@@ -56,8 +56,9 @@ typedef struct {
 
 // ---- core.c: workstation table + clipped primitives + dispatch ------------
 vdi_ws     *vdi_ws_of(int handle);
-int         vdi_ws_alloc(void);                  // -> handle (>0), 0 = none free
+int         vdi_ws_alloc(void);                  // -> handle (>0), 0 = OOM (table grows on demand)
 void        vdi_ws_free(int handle);             // never frees the physical ws
+void        vdi_ws_stats(int *used, int *cap);   // diagnostics: open workstations / slots allocated
 void        vdi_ws_clip(const vdi_ws *w, int *x0, int *y0, int *x1, int *y1);
 void        vdi_fill_rect(const vdi_ws *w, int x0, int y0, int x1, int y1, int pen);
 // Masked fill: mask==NULL is solid, else a 16x16 pattern (bit 1<<(x&15) of row

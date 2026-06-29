@@ -6,36 +6,72 @@
 #include "vdi/internal.h"
 #include "vdi/printers/pdf_device.h"
 #include <stddef.h>
+#include <stdlib.h>
 #include <string.h>
 #include <math.h>
 
 // ---- Workstations ---------------------------------------------------------
-static vdi_ws   ws_tab[VDI_MAX_WS];
+// Dynamic table: a growable array of POINTERS to heap-allocated workstations.
+// The structs are allocated per slot and never move (the pointer array may grow),
+// which matters because op_opnbm stores &w->bm into the workstation itself.
+// Handle = slot index + 1; slot 0 is the physical workstation (handle 1).  There
+// is no fixed cap — it grows by VDI_MAX_WS slots on demand (an app doing off-screen
+// rendering wants ~2 workstations each, so 16 was never enough).
+static vdi_ws **ws_tab = NULL;
+static int      ws_cap = 0;
 static uint32_t pen_tab[256];
 
 vdi_ws *vdi_ws_of(int handle) {
-    if (handle < 1 || handle > VDI_MAX_WS) return NULL;
-    vdi_ws *w = &ws_tab[handle - 1];
-    return w->used ? w : NULL;
+    if (handle < 1 || handle > ws_cap) return NULL;
+    vdi_ws *w = ws_tab[handle - 1];
+    return (w && w->used) ? w : NULL;
 }
+
+static int ws_grow(void) {                       // add VDI_MAX_WS pointer slots
+    int n = ws_cap + VDI_MAX_WS;
+    vdi_ws **t = realloc(ws_tab, (size_t)n * sizeof(*t));
+    if (!t) return 0;
+    for (int i = ws_cap; i < n; i++) t[i] = NULL;
+    ws_tab = t; ws_cap = n;
+    return 1;
+}
+
+static void ws_defaults(vdi_ws *w) {             // initial workstation attributes
+    memset(w, 0, sizeof(*w));
+    w->used = 1; w->line_color = 1;
+    w->line_width = 1; w->line_type = 1; w->line_udsty = 0xFFFF;
+    w->fill_color = 1; w->text_color = 1; w->fill_interior = 1;
+    w->fill_style = 1; w->fill_perimeter = 1;
+    w->marker_type = 3; w->marker_height = 11; w->marker_color = 1;
+    w->wr_mode = VDI_MD_REPLACE;
+    w->text_font_id = 1; w->text_valign = VDI_TA_TOP;
+    w->text_bg_color = -1;                        // no opaque text bg
+}
+
 int vdi_ws_alloc(void) {
-    for (int i = 1; i < VDI_MAX_WS; i++) if (!ws_tab[i].used) {   // slot 0 = physical
-        memset(&ws_tab[i], 0, sizeof(ws_tab[i]));
-        ws_tab[i].used = 1; ws_tab[i].line_color = 1;
-        ws_tab[i].line_width = 1; ws_tab[i].line_type = 1; ws_tab[i].line_udsty = 0xFFFF;
-        ws_tab[i].fill_color = 1; ws_tab[i].text_color = 1; ws_tab[i].fill_interior = 1;
-        ws_tab[i].fill_style = 1; ws_tab[i].fill_perimeter = 1;
-        ws_tab[i].marker_type = 3; ws_tab[i].marker_height = 11; ws_tab[i].marker_color = 1;
-        ws_tab[i].wr_mode = VDI_MD_REPLACE;
-        ws_tab[i].text_font_id = 1; ws_tab[i].text_valign = VDI_TA_TOP;
-        ws_tab[i].text_bg_color = -1;                         // no opaque text bg
-        return i + 1;
+    int slot = -1;
+    for (int i = 1; i < ws_cap; i++)              // slot 0 = physical; reuse free/empty
+        if (!ws_tab[i] || !ws_tab[i]->used) { slot = i; break; }
+    if (slot < 0) {                               // none free -> grow the table
+        slot = (ws_cap < 1) ? 1 : ws_cap;
+        if (!ws_grow()) return 0;
     }
-    return 0;
+    if (!ws_tab[slot]) {                          // allocate the struct lazily (stable ptr)
+        ws_tab[slot] = calloc(1, sizeof(vdi_ws));
+        if (!ws_tab[slot]) return 0;
+    }
+    ws_defaults(ws_tab[slot]);
+    return slot + 1;
 }
 void vdi_ws_free(int handle) {
     vdi_ws *w = vdi_ws_of(handle);
-    if (w && (w - ws_tab) != 0) w->used = 0;
+    if (w && handle != 1) w->used = 0;            // never free the physical ws (handle 1)
+}
+void vdi_ws_stats(int *used, int *cap) {          // diagnostics: open count / slots
+    int u = 0;
+    for (int i = 0; i < ws_cap; i++) if (ws_tab[i] && ws_tab[i]->used) u++;
+    if (used) *used = u;
+    if (cap)  *cap  = ws_cap;
 }
 
 // Effective clip rect: ws clip ∩ surface, inclusive.
@@ -278,23 +314,20 @@ gfx_surface vdi_mfdb_surf(const MFDB *m, const vdi_ws *w) {
 
 // ---- Init + dispatch ------------------------------------------------------
 void vdi_init(gfx_surface *default_target) {
-    memset(ws_tab, 0, sizeof(ws_tab));
+    for (int i = 0; i < ws_cap; i++) { free(ws_tab[i]); ws_tab[i] = NULL; }  // reset (idempotent)
+    free(ws_tab); ws_tab = NULL; ws_cap = 0;
     pen_init();
-    ws_tab[0].used = 1; ws_tab[0].target = default_target;     // handle 1 = physical
-    ws_tab[0].line_color = 1; ws_tab[0].line_width = 1; ws_tab[0].line_type = 1; ws_tab[0].line_udsty = 0xFFFF;
-    ws_tab[0].fill_color = 1; ws_tab[0].text_color = 1; ws_tab[0].fill_interior = 1;
-    ws_tab[0].fill_style = 1; ws_tab[0].fill_perimeter = 1;
-    ws_tab[0].marker_type = 3; ws_tab[0].marker_height = 11; ws_tab[0].marker_color = 1;
-    ws_tab[0].wr_mode = VDI_MD_REPLACE;
-    ws_tab[0].text_font_id = 1; ws_tab[0].text_valign = VDI_TA_TOP;
-    ws_tab[0].text_bg_color = -1;                              // no opaque text bg
+    if (ws_grow() && (ws_tab[0] = calloc(1, sizeof(vdi_ws)))) {  // handle 1 = physical
+        ws_defaults(ws_tab[0]);
+        ws_tab[0]->target = default_target;
+    }
     g_hilite_color = 1; g_min_color = 1; g_max_color = 0; g_weight_color = 9;  // extended-raster colours
 }
 
 font_face *g_default_face;
 void vdi_set_face(font_face *face) { g_default_face = face; }
 
-gfx_surface *vdi_screen_target(void) { return ws_tab[0].target; }   // the desktop surface
+gfx_surface *vdi_screen_target(void) { return ws_tab[0] ? ws_tab[0]->target : NULL; }   // desktop surface
 
 // Fill a v_opnwk / v_opnvwk work_out capability array (intout[0..44] +
 // ptsout[0..11]).  Key field: intout[13] = number of simultaneous colours

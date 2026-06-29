@@ -14,6 +14,19 @@ This is a tracker, so it intentionally carries forward-looking/historical contex
 - **`make blitter_bridge` `SRCBLIT FAIL` (3 mismatches)** — sim DDR/AXI-model gap
   (coverage pixels read all-zero; SRC_BLIT works on HW), not an RTL regression.
   Non-gating (not in `make all`); fix the tb model when next in the blitter.
+- **A9 RECT_FILL to the desktop plane lands nothing on HW** — `vdi.bar`/`vdi.clear`/
+  `vdi.hwfill` (blitter `RECT_FILL`) produce no visible pixels on the desktop, while
+  `BLOCK_BLIT` to the same plane works (wallpaper/chrome/windows are fine) and `RECT_FILL`
+  into a *window backing* works (window content). **Sim is clean**: `make blitter_bridge`
+  shows `RECT_FILL` writing the correct DDR addresses (`PASS — orange pixel landed at the
+  expected address`), so the RTL addr-gen is right — it's a HW-only effect sim doesn't
+  reproduce (the old tb drives the retired `axi_blitter_bridge`; live path is
+  `xt_gp0_regs → xt_blitter`). Not blocking: GEM renders the desktop via blits, so only
+  direct fills onto the plane are affected (a dev/test affordance). **Next step:** use the
+  new `vdi.peek(addr)` to read back `DESK_BASE + y*8192 + x*4` right after a fill and see
+  whether the blitter actually wrote it (→ isolates GP0-path params vs an HP/AXI write vs
+  a coherency/compositor effect). *(hdl/xt_blitter.sv, vitis/xtos/src/gfx_a9.c
+  gfx_fill_rect, sim/tb_blitter_bridge.sv)*
 ---
 
 ## Architecture review (the "tock") — open work
@@ -21,18 +34,10 @@ This is a tracker, so it intentionally carries forward-looking/historical contex
 Tracking `docs/Design/architecture-review.md`; landed pieces are in the commit log.
 Remaining:
 ### Immediate Priorities:
-- **GEM desktop — remaining work.** M1–M4-core are done & HW-validated (desktop at boot,
-  XE/ST icons, double-click→open+bind the XL plane, outlined labels, tear-free
-  alpha-chrome drag). Still open: **distinct XE/ST icon art** (near-identical wedge
-  keyboards today — owner's art task); the **ST compositor plane** (bind enum ST-ready,
+- **GEM desktop — remaining work.** M1–M4-core are done & HW-validated 
+- Still open: the **ST compositor plane** (bind enum ST-ready,
   plane not wired); and verify/close the **VDI-workstation leak** (direct `vdi.*` after
   `wintest` draws into a window backing, not the desktop). *(docs/OS/desktop-emulation-windows.md)*
-
-- **Drag-overlay rounded-corner AA (optional polish).** The drag overlay alpha-blends
-  its chrome over the live desktop (done, HW-confirmed — no more wallpaper halo); the
-  rounded-corner AA ring currently reads as a thin **black border** (accepted). Softening
-  it needs an **alpha-out `VR_OVER`** mode (keeps straight partial α onto a transparent
-  dest) in `vr_transfer_bits`. *(gem/vdi/transfer_bits.c, [[drag_overlay_layer]])*
 
 ### Future:
 - **Partial-reconfig CPU swap.** RP region confirmed viable at X1Y2 (not the PS
