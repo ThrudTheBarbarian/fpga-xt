@@ -163,3 +163,23 @@ enable sequence, the set/way loop, `sync_caches` wiring) but not true cache
 *incoherency* — that, plus the SMP/SCU shareability bits (`XTOS_TTBR_ATTR` is
 currently non-shared), is the **HW re-graduation** step: `freertos-hw.elf` +
 `./vivado/jtag-valhalla.sh testbed`, user drives the JTAG load.
+
+## 8. Roadmap (ordered)
+
+1. **mmap'd files** — map the registry / fonts / assets read-only + shared, demand-
+   paged through the existing fault path, instead of `read()`-ing them into malloc'd
+   buffers.
+2. **Scrub pages on free** — zero a space's private pages in `vm_space_destroy`
+   (not just on the next `dpage()` alloc), so freed runtime data doesn't linger on
+   the pool free list. Defense-in-depth; only fully meaningful with #3.
+3. **PL0 user/kernel split — the real memory-protection boundary.** Today every
+   task runs **privileged (System mode)** and the whole identity-mapped DDR
+   (`0x0010_0000–0x1FFF_FFFF`) is mapped **AP=11 (RW)** in every space, so the
+   per-process windows isolate *honest* programs but are **not a boundary against
+   hostile code**: a process can read/write any physical RAM — other processes'
+   pages, the kernel, freed pool pages — directly at its identity address. The fix:
+   run user code in **User mode (PL0)**, mark kernel/identity sections **no-access
+   at PL0** (AP=01), and harden the SVC/abort entry paths for the privilege
+   transition (this is the "user ≠ kernel" goal in
+   [memory-protection.md](memory-protection.md) §4). With that in place, scrub-on-
+   alloc (and #2) close the page-reuse leak for the kernel's view too.

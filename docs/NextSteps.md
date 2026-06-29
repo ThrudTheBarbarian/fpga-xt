@@ -250,9 +250,18 @@ Remaining:
   (spawn primitive; vision P1 updated). fork (tier 3) deferred = possible later
   single-threaded compat shim only. **BUILT on qemu (loader testbed):** per-process
   address spaces + ASIDs, per-process malloc, lazy/demand-zero heap, guard pages,
-  W^X, **mmap-exec (load-once shared text) + copy-on-write** (libc data, program
-  data, fork-ready mechanism). Next: re-graduate to HW + enable caches. *(src:
-  docs/OS/memory-protection.md, docs/OS/mmap-exec-cow.md)*
+  W^X, **mmap-exec (load-once shared text) + copy-on-write** (libc data, ALL shared
+  libraries, program data, fork-ready mechanism), caches ON, a DDR-backed page pool
+  with reclaim, and the complete loader teardown path (DT_FINI_ARRAY destructors +
+  transitive unload + program-cache eviction). **Ordered next** (docs/OS/mmap-exec-
+  cow.md §8): (1) **mmap'd files** (registry/fonts/assets demand-paged RO+shared);
+  (2) **scrub pages on free** (defense-in-depth — don't leave freed runtime data on
+  the pool free list); (3) **PL0 user/kernel split** — the real protection boundary:
+  today all tasks run privileged (System mode) with the identity DDR mapped RW in
+  every space, so isolation holds against honest programs but NOT hostile code (a
+  process can reach any physical RAM via its identity alias); fix = run user code in
+  User mode, kernel/identity sections no-access at PL0, harden SVC/abort entry. Then
+  re-graduate to HW. *(src: docs/OS/memory-protection.md, docs/OS/mmap-exec-cow.md)*
 - **Reserve-now (cheap to bake in early, expensive to retrofit)** — xtc PIC/relocatable
   ARM codegen; service-call indirection via interface tables (never globals);
   interface/registry + `ABIVER` from day one; directory-mapped drives as a first-class
