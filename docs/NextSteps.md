@@ -303,11 +303,31 @@ Remaining:
   `sleep(ms)` syscall *before* layering `svc_register`/`mount`/IPC on top; (3) block
   layer + a real on-disk FS (RAM-disk driver → FAT) + the MMIO/IRQ conduit;
   (4) devfs/ioctl/concurrency polish. *(src: docs/OS/xtos-vision.md P3 VFS; this entry)*
+- **Library build variants (speed vs debug) + loader search path** — DESIGNED, deferred
+  (companion to the source-level debugger). Build each shared lib (libc/libm/libGEM, and
+  programs) in **two variants**: *speed* (`-O2`/`-Os`, the default, stripped) and *debug*
+  (`-Og -g`, unstripped) — a build switch, e.g. `VARIANT=debug`. Note today's libs are a
+  single `-O2 -g` build (symbols draped over optimized code: jumpy stepping, locals
+  `<optimized out>`) and programs are `-Os` with NO `-g` — neither is a true debug build.
+  **Distribution:** the *embedded boot romfs* (baked into the kernel ELF) stays
+  speed-only to keep the image lean; the **SD card ships BOTH** — speed at `/OS/Library/`,
+  debug at a parallel dir (e.g. `/OS/Library/Debug/` or `/Library/Debug/`). A debug `-O0`
+  libc is ~3 MB — trivial on SD, so no need to choose at deploy time. **Resolution:**
+  `xtld`'s `open_lib` consults a **loader search path** (an `LD_LIBRARY_PATH`-style env,
+  per-process): default → the speed dir; the debugger spawns the debuggee with the path
+  pointing at the Debug dir, so only the thing being debugged pulls the big `-Og` libs (+
+  step into a debug-built program directly). **Reserve-now piece:** make `xtld` library
+  resolution path-driven *now* — don't hardcode `/OS/Library/` (currently `frtos_open_lib`
+  does) — even before the debug variants/env exist; retrofitting the fixed path later is
+  the painful kind. The debug variants + env plumbing land with the debugger; the
+  search-path hook is the cheap bake-in. *(src: this entry; ties to the P6 debugger +
+  Reserve-now)*
 - **Reserve-now (cheap to bake in early, expensive to retrofit)** — xtc PIC/relocatable
   ARM codegen; service-call indirection via interface tables (never globals);
   interface/registry + `ABIVER` from day one; directory-mapped drives as a first-class
-  VFS mode; xtc restricted-DWARF debug-info emission for all 3 backends. *(src:
-  docs/OS/xtos-vision.md)*
+  VFS mode; xtc restricted-DWARF debug-info emission for all 3 backends; **`xtld`
+  library resolution via a search path (not a hardcoded dir)** — enables the speed/debug
+  library swap above. *(src: docs/OS/xtos-vision.md)*
 - **Open XTOS decisions** — none outstanding (DWARF subset now written:
   docs/OS/dwarf-subset.md). *(DECIDED: memory protection = tier 2; debug = full
   backtrace+unwind, all 3 backends, debug-build frames; libc = newlib; front GEM
