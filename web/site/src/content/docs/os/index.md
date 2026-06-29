@@ -4,7 +4,7 @@ description: The software half of Atari-XT — FreeRTOS on the Cortex-A9 PS, Ata
 ---
 
 Atari-XT's software stack spans both halves of the Zynq. The dual Cortex-A9 **PS** runs
-FreeRTOS and the modern services (USB HID, SD filesystem, GEM helpers); the **SALLY 6502** in
+FreeRTOS and the modern services (SD filesystem, GEM helpers, and USB-HID input via a companion MCU); the **SALLY 6502** in
 fabric runs the classic Atari OS and its software unchanged, with expanded RAM paged in through
 bank-switched windows.
 

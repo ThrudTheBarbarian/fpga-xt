@@ -791,7 +791,7 @@ PS submit > blitter consume rate, which is unusual).
 
 ### 21.2  Use cases
 
-- **LVGL widget redraw**: a single widget can emit dozens of small
+- **GEM/AES widget redraw**: a single widget can emit dozens of small
   rect fills + line draws + glyph rasters; pushing them all
   without intermediate polling cuts overhead.
 - **Polyline / polygon outline**: many CMD=0x02 calls with the

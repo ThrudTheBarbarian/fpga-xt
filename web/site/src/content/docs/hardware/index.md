@@ -8,7 +8,8 @@ description: "PL fabric module map, clock domains, and memory partitioning for t
 The PL (FPGA fabric) hosts an extended SALLY 6502, the
 ANTIC/GTIA/POKEY pipeline, a 2D blitter (`xt-blitter`), and the
 HDMI scan-out path.  The PS (dual Cortex-A9) hosts the modern half:
-FreeRTOS, USB HID, SD filesystem, GEM helpers.  System memory and
+FreeRTOS, SD filesystem, GEM helpers (USB-HID input comes from a
+companion MCU).  System memory and
 the framebuffer live in DDR3 reached through the PS's DDR
 controller via AXI HP ports.
 
@@ -35,7 +36,7 @@ The PS side:
 - Boot (FSBL out of QSPI), then loads the PL bitstream
 - FreeRTOS application; talks to xt_blitter through AXI-Lite
   register pokes (no kernel driver needed)
-- USB host (HID keyboard / mouse) via XUSBPS
+- HID keyboard / mouse via the STM32F411 companion MCU (the PS USB controller is not used for HID)
 - SD card via the PS's SDIO controller; FatFs handles the
   filesystem
 - I²C0 master for the SiI9022A HDMI transmitter (init at boot,

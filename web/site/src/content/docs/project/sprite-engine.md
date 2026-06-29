@@ -29,7 +29,7 @@ isn't wired yet, it says so.
 ## Motivation
 
 The legacy Atari ANTIC/GTIA pipeline renders into DDR3, and the 1080p60
-[plane compositor](/hardware/video/) mixes that (and any LVGL/desktop
+[plane compositor](/hardware/video/) mixes that (and any GEM/desktop
 planes) into the final frame. The sprite engine adds a hardware overlay on
 top of the composited image so modern UI elements, game sprites, and
 animated backgrounds can be drawn without CPU-driven framebuffer blits.
@@ -76,7 +76,7 @@ placement (a linear allocator or a build-time layout).
 ```
 DDR3 (PS, 1 GB)
   ANTIC render → writeback ─┐
-  desktop / LVGL FB ────────┤→ plane_fetch ×N → plane_compositor ─┐
+  desktop / GEM FB ─────────┤→ plane_fetch ×N → plane_compositor ─┐
   sprite arena (0x3400_0000)┘                                     │ RGB565
                                                                   ▼
   sprite arena ─→ sprite line fetcher (AXI HP0) → line cache → sprite_engine ─→ RGB565+sync → SiI9022A
@@ -234,8 +234,8 @@ build report for actuals.
 3. **Sprite rotation** — needs a line buffer + interpolation; for the first
    cut, software pre-rotates into the arena.
 4. **Blitter → arena** — point the [xt-blitter](/hardware/video/) at the
-   sprite arena so the CPU (or the PS, over its own AXI port for LVGL) can
-   render sprite surfaces without DMA.
+   sprite arena so the CPU (or the PS, over its own AXI port for the GEM
+   desktop) can render sprite surfaces without DMA.
 
 (Horizontal/vertical flip and 2× scaling, listed as future work in the
 original draft, are implemented — see the `$D4Ax` control byte.)

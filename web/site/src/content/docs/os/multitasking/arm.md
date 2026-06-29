@@ -8,9 +8,9 @@ description: "Dynamic ELF module loading on the Zynq PS Cortex-A9 under FreeRTOS
 The ARM side runs FreeRTOS with everything statically linked into a single image (see `zynq-architecture.md`). It provides:
 
 - FatFs over SDIO (file I/O)
-- USB HID (mouse/keyboard)
 - xt-blitter command ring (via AXI-Lite GP0 register pokes)
-- LVGL rendering
+- GEM/VDI rendering — the clean-room GEM environment (software VDI + FreeType) drawing through the blitter
+- keyboard/mouse input from the companion MCU (USB-HID host), not an A9 USB stack
 - GEMDOS RPC mailbox service for the target CPU
 
 Dynamic loading of ARM executables is **implemented** — programs are position-independent ELF `ET_DYN` objects loaded at runtime into protected, per-process address spaces. See **[Runtime: loading & memory protection](/os/runtime/)** for how the loader, process model, and MMU protection actually work today. The sections below record the design reasoning that led there.

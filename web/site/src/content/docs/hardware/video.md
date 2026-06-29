@@ -396,8 +396,8 @@ fetch is a later optimisation.
 
 - Desktop-window-over-live-window occlusion (clip-rect promotion, then bitmap
   mode, §4.4).
-- GEM-on-ARM, the windowing system, input routing (keyboard/mouse → focused
-  window), USB-HID.
+- GEM-on-ARM, the windowing system, input routing (keyboard/mouse from the
+  companion MCU → focused window).
 - STe/TT emulation on ARM core1 (software 68k); its DDR3 surface + plane.
 - Configurable boot-direct-to-XL (skip the desktop).
 - Visible-span-only plane fetch (bandwidth optimisation).

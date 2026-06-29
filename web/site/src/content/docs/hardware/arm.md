@@ -10,8 +10,8 @@ the substrate that ties Atari-XT together — not one of the named realms. ("XT"
 
 The PS hosts the modern half of the system:
 
-- **FreeRTOS** and the modern services — USB HID, the SD-card filesystem, and the GEM AES / VDI
-  helpers.
+- **FreeRTOS** and the modern services — the SD-card filesystem and the GEM AES / VDI
+  helpers. USB-HID input arrives from a companion MCU, not an A9 USB stack.
 - **The desktop and GEM**, drawing through the [`xt-blitter`](/hardware/blitter/) into the DDR3
   framebuffer.
 - **User-provided binaries** — once FreeRTOS gains dynamic ELF loading (see

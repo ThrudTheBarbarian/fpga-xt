@@ -33,7 +33,7 @@ The "X" machine's custom silicon is implemented in the FPGA fabric — a cycle-a
 
 The "T" machine, a 680x0-family STe/TT, is planned. Unlike the 6502, this will be a software implementation on one of the Cortex-A9 ARM processing system (PS) cores on the FPGA. The idea will be to use a JIT compiler to translate the 68k opcodes into ARM assembly and run the binary "natively". The resulting emulation is estimated at making it feel like a 50MHz+ 68030.
 
-Underlying both chipsets is the host that ties them together: Running on the boot-A9 core, is a FreeRTOS-based multi-tasking environment that offers USB HID, the SD filesystem, ethernet networking, HDMI out (with audio), and a desktop environment with vended UI services (eg: GEM, available to both 6502 and 68k)
+Underlying both chipsets is the host that ties them together: Running on the boot-A9 core, is a FreeRTOS-based multi-tasking environment that offers the SD filesystem, ethernet networking, HDMI out (with audio), USB-HID input (handled by a companion MCU), and a desktop environment with vended UI services (eg: GEM, available to both 6502 and 68k)
 
 The system runs unmodified Atari XL/XE software, but isn't bounded by 1979: expanded RAM is bank-switched into the 6502's address space, the display is an always-on 1080p60 compositor in which each machine is just a scalable window, and a custom language — **xtc** (repo: [`fpga-xtc`](https://github.com/ThrudTheBarbarian/fpga-xtc))— compiles modern, typed, class-based code straight to executables.
 
