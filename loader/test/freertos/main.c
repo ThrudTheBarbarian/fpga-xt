@@ -247,7 +247,11 @@ static void shell_task(void *arg)
 
 int main(void)
 {
-    puts0("=== xtos: libc.so bring-up + shell (qemu zynq-a9, M6a) ===\n");
+#ifdef XT_HW_UART
+    puts0("=== xtos: tier-2 testbed (Zynq-A9 on HARDWARE, UART1) ===\n");
+#else
+    puts0("=== xtos: tier-2 testbed (qemu zynq-a9, semihosting) ===\n");
+#endif
     mmu_init();          /* flat map -> RAM is Normal memory (unaligned access ok) */
     vm_cow_init();       /* fill the synthetic COW template + register its range */
     { extern void stackguard_init(void); stackguard_init(); }   /* guarded stack arena */
