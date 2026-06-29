@@ -63,14 +63,10 @@ Remaining:
 ---
 ## Video / compositor / sprites / textures
 
-- **Sprite engine — collision detection (HW-validate).** Implemented + sim-validated
-  (`make sprite_compositor` case D): the compositor's per-pixel opaque mask (`s3_has_color`)
-  is accumulated per sprite over the frame, snapshot at `frame_start`, crossed to clk_fetch
-  by a toggle+commit-flag, and loaded into the `collision[]` / `$D4DA`-`$D4DB` readback each
-  VBI (regs reflect the last frame; software W1C still clears mid-frame). Remaining: **HW
-  validation** — build, overlap two sprites on screen, read `$D4DA`. Deferred/optional:
-  palettised sprites, rotation (SW-first), blitter→sprite-arena. *(src: hdl/sprite_engine.sv,
-  vivado/constraints/cdc_sprite_collision.xdc)*
+- **Sprite engine — deferred/optional refinements.** Core, HW mouse cursor, H/V flip +
+  2× scale, the per-pixel compositor, and collision detection are all done and on HW.
+  Remaining (none currently blocking): palettised sprites, rotation (SW-first),
+  blitter→sprite-arena integration. *(src: hdl/sprite_engine.sv, docs/Design/sprite-engine.md)*
 - **Texture mapping (tiers)** — T1 affine point-sampled (~1 day) → T2 bilinear
   (+½ day) → T3 textured triangles (+½–1 day) → T4 perspective-correct (several days);
   plus `$D4D0..` TEX_* regs / `CMD=0x08` / `TEX_WRAP` wiring and a texture-cache
