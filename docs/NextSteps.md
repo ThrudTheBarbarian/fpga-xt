@@ -14,19 +14,17 @@ This is a tracker, so it intentionally carries forward-looking/historical contex
 - **`make blitter_bridge` `SRCBLIT FAIL` (3 mismatches)** — sim DDR/AXI-model gap
   (coverage pixels read all-zero; SRC_BLIT works on HW), not an RTL regression.
   Non-gating (not in `make all`); fix the tb model when next in the blitter.
-- **A9 RECT_FILL to the desktop plane lands nothing on HW** — `vdi.bar`/`vdi.clear`/
-  `vdi.hwfill` (blitter `RECT_FILL`) produce no visible pixels on the desktop, while
-  `BLOCK_BLIT` to the same plane works (wallpaper/chrome/windows are fine) and `RECT_FILL`
-  into a *window backing* works (window content). **Sim is clean**: `make blitter_bridge`
-  shows `RECT_FILL` writing the correct DDR addresses (`PASS — orange pixel landed at the
-  expected address`), so the RTL addr-gen is right — it's a HW-only effect sim doesn't
-  reproduce (the old tb drives the retired `axi_blitter_bridge`; live path is
-  `xt_gp0_regs → xt_blitter`). Not blocking: GEM renders the desktop via blits, so only
-  direct fills onto the plane are affected (a dev/test affordance). **Next step:** use the
-  new `vdi.peek(addr)` to read back `DESK_BASE + y*8192 + x*4` right after a fill and see
-  whether the blitter actually wrote it (→ isolates GP0-path params vs an HP/AXI write vs
-  a coherency/compositor effect). *(hdl/xt_blitter.sv, vitis/xtos/src/gfx_a9.c
-  gfx_fill_rect, sim/tb_blitter_bridge.sv)*
+- **A loaded libGEM.so re-running `vdi_init` wipes the kernel's live VDI** — the
+  `gemhw`/runhost demo (`xtld_host.c`) resolves `vdi_init` from the loaded `libGEM.so`
+  and calls `vdi_init(&desk)`; because the kernel and libGEM share the symbol, that
+  **resets the shared workstation table**, invalidating the desktop's `g_vh` and
+  overdrawing the desktop (lost wallpaper). Symptom: after the demo runs, `vdi.*` →
+  "vdi not initialised" and `vdi.wscount()` drops to 1. (NB: this — not any blitter
+  bug — was the cause of the earlier "`vdi.bar` draws nothing"; with a valid `g_vh`
+  fills work. Also note `dow` ELF-reloads accumulate this kind of stale VDI state — a
+  cold-load restores it.) Fix: the loaded GEM must not re-init the kernel's live VDI —
+  either guard `vdi_init` against clobbering an initialised table, or give the demo its
+  own workstation without resetting. *(vitis/xtos/src/xtld_host.c, gem/vdi/core.c)*
 ---
 
 ## Architecture review (the "tock") — open work
