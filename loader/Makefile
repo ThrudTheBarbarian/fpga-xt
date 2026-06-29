@@ -218,7 +218,16 @@ $(BUILD)/finictor.so: test/freertos/progs/finictor.c $(BUILD)/libc.so | $(BUILD)
 $(BUILD)/mkromfs: tools/mkromfs.c | $(BUILD)
 	$(HOSTCC) -O2 -o $@ $<
 
-$(BUILD)/romfs.bin: $(BUILD)/mkromfs $(BUILD)/hello.so $(BUILD)/showmotd.so $(BUILD)/usestr.so $(BUILD)/echo.so $(BUILD)/libc_test.so $(BUILD)/gemtext.so $(BUILD)/desktop.so $(BUILD)/faultprog.so $(BUILD)/vmtest.so $(BUILD)/demandtest.so $(BUILD)/stacktest.so $(BUILD)/wxtest.so $(BUILD)/cowtest.so $(BUILD)/sharetext.so $(BUILD)/finictor.so $(BUILD)/mmaptest.so $(BUILD)/modetest.so $(BUILD)/badpoke.so $(BUILD)/stackpoke.so $(BUILD)/libutil.so $(BUILD)/libGEM.so $(BUILD)/libm.so $(BUILD)/libc.so test/freertos/motd.txt
+# ---- drop-in romfs overlay -------------------------------------------------
+# Anything under $(ROMFS_OVERLAY)/ is packed into the romfs under /OS, mirroring
+# the subtree: $(ROMFS_OVERLAY)/Library/libfoo.so -> /OS/Library/libfoo.so. Just
+# drop a file in and rebuild (make freertos) — no Makefile edit needed. `make
+# overlay` creates the dirs + lists current contents.
+ROMFS_OVERLAY ?= romfs-overlay
+ROMFS_OVERLAY_FILES := $(shell find $(ROMFS_OVERLAY) -type f 2>/dev/null)
+ROMFS_OVERLAY_ARGS  := $(foreach f,$(ROMFS_OVERLAY_FILES),/OS/$(patsubst $(ROMFS_OVERLAY)/%,%,$(f))=$(f))
+
+$(BUILD)/romfs.bin: $(BUILD)/mkromfs $(BUILD)/hello.so $(BUILD)/showmotd.so $(BUILD)/usestr.so $(BUILD)/echo.so $(BUILD)/libc_test.so $(BUILD)/gemtext.so $(BUILD)/desktop.so $(BUILD)/faultprog.so $(BUILD)/vmtest.so $(BUILD)/demandtest.so $(BUILD)/stacktest.so $(BUILD)/wxtest.so $(BUILD)/cowtest.so $(BUILD)/sharetext.so $(BUILD)/finictor.so $(BUILD)/mmaptest.so $(BUILD)/modetest.so $(BUILD)/badpoke.so $(BUILD)/stackpoke.so $(BUILD)/libutil.so $(BUILD)/libGEM.so $(BUILD)/libm.so $(BUILD)/libc.so test/freertos/motd.txt $(ROMFS_OVERLAY_FILES)
 	$(BUILD)/mkromfs $@ \
 	    /bin/faultprog=$(BUILD)/faultprog.so \
 	    /bin/vmtest=$(BUILD)/vmtest.so \
@@ -246,7 +255,8 @@ $(BUILD)/romfs.bin: $(BUILD)/mkromfs $(BUILD)/hello.so $(BUILD)/showmotd.so $(BU
 	    /bin/showmotd=$(BUILD)/showmotd.so \
 	    /bin/usestr=$(BUILD)/usestr.so \
 	    /bin/echo=$(BUILD)/echo.so \
-	    /OS/etc/motd=test/freertos/motd.txt
+	    /OS/etc/motd=test/freertos/motd.txt \
+	    $(ROMFS_OVERLAY_ARGS)
 
 $(BUILD)/romfs_blob.h: $(BUILD)/romfs.bin
 	@{ printf '__attribute__((aligned(4096))) unsigned char romfs_blob[] = {\n'; \
@@ -255,6 +265,18 @@ $(BUILD)/romfs_blob.h: $(BUILD)/romfs.bin
 
 $(BUILD):
 	@mkdir -p $(BUILD)
+
+# Drop-in romfs overlay helper: create the dirs + show what will be packed.
+# Drop a pre-built .so into $(ROMFS_OVERLAY)/Library/ then `make freertos`.
+.PHONY: overlay
+overlay:
+	@mkdir -p $(ROMFS_OVERLAY)/Library $(ROMFS_OVERLAY)/Fonts $(ROMFS_OVERLAY)/etc
+	@echo "romfs overlay '$(ROMFS_OVERLAY)/' -> packed into the romfs under /OS:"
+	@echo "  e.g. $(ROMFS_OVERLAY)/Library/libfoo.so  ->  /OS/Library/libfoo.so"
+	@echo "then: make freertos   (qemu)   or   make build/freertos-hw.elf   (HW)"
+	@echo "current overlay files:"; \
+	  find $(ROMFS_OVERLAY) -type f 2>/dev/null | sed 's#^$(ROMFS_OVERLAY)/#  /OS/#' | sort; \
+	  [ -n "$(ROMFS_OVERLAY_FILES)" ] || echo "  (none)"
 
 clean:
 	rm -rf $(BUILD)
