@@ -35,12 +35,19 @@ Remaining:
   (the bind target enum is ST-ready). *(docs/OS/desktop-emulation-windows.md)*
 - **Drag-overlay alpha (compositor)** — the HW drag-overlay snapshots the *composited*
   desktop plane, so wallpaper baked into a window's translucent rounded/AA edges
-  travels with it during a drag (visible halo). `plane_compositor.sv` selects planes
-  by clip rect only — **no alpha test**. Fix = give the overlay plane an alpha test
-  (skip α==0 → show plane behind) or full α-blend, then re-render the window into the
-  overlay buffer with alpha (not a plane copy). RTL → bitstream. Until then, rounded
-  chrome halos only *while dragging*. *(hdl/plane_compositor.sv, vitis/xtos/src/gem_lua.c
-  drag_build_surface, [[drag_overlay_layer]])*
+  travels with it during a drag (visible halo). **RTL DONE** (`plane_compositor.sv`,
+  commit on xtos-dynamic-loading): the compositor now finds the top-2 covered planes
+  and full-α-blends an alpha-enabled winner over the runner (8-bit lerp, +1 pipeline
+  stage); per-plane `pl_alpha_en`; only the drag-overlay blends (over the desktop),
+  gated by `gp0_ctrl[5]` (default off, inert until the PS opts in). `make
+  plane_compositor` green. **REMAINING (software):** `drag_build_surface` still copies
+  the composited desk FB; it must instead **render the window into the overlay buffer
+  with real per-pixel alpha** (α=0 outside the rounded shape, partial on AA edges,
+  255 opaque) — i.e. open a VDI workstation on the overlay surface, clear it
+  transparent, draw the themed frame + content into it (needs the theme/VDI blit to
+  write dest alpha on a transparent dest), then set `gp0_ctrl[5]`. Then one bitstream
+  → HW. *(hdl/plane_compositor.sv DONE; vitis/xtos/src/gem_lua.c drag_build_surface +
+  gem/wm.c draw_frame TODO, [[drag_overlay_layer]])*
 
 
 ---
