@@ -460,14 +460,16 @@ static void flush_rect(int x, int y, int w, int h)
 /* Build the drag overlay for window `w`.  Returns 1 if the surface carries real
  * per-pixel alpha (so the caller arms the HW alpha-blend), 0 if it's an opaque copy.
  *
- * Normal GEM windows are RE-RENDERED into the overlay with alpha: cleared transparent,
- * then the themed frame + content drawn in — so the rounded/AA chrome edges keep a<255
- * and the corners outside the rounding stay a=0.  The compositor then blends them over
- * the *current* desktop instead of carrying the wallpaper baked in at grab (the halo).
+ * Windows are RE-RENDERED into the overlay with alpha: cleared transparent, then the
+ * themed frame (+ content for normal windows) drawn in — so the rounded/AA chrome edges
+ * keep a<255 and the corners outside the rounding stay a=0.  The compositor then blends
+ * them over the *current* desktop instead of carrying the wallpaper baked in at grab
+ * (the halo).  For emu-backed windows (live XL/ST plane, not in `backing`) only the
+ * chrome is drawn — the content area stays transparent and the XL plane (depth 2,
+ * tracked by emu_track during the drag) shows the live content on top of the overlay.
  *
- * emu-backed windows (live XL/ST plane content, not in `backing`) can't be re-rendered
- * that way, so they fall back to the opaque composited-FB snapshot (a=FF -> blend is a
- * no-op, same as before). */
+ * Returns 1 (alpha surface).  Falls back to an opaque composited-FB snapshot (returns 0)
+ * only if the overlay VDI workstation couldn't be opened. */
 static int drag_build_surface(gem_window *w, int gx, int gy)
 {
     uint32_t *ds = (uint32_t *)(uintptr_t)DRAG_BASE;
@@ -481,7 +483,7 @@ static int drag_build_surface(gem_window *w, int gx, int gy)
         g_overlay_vh = v_opnvwk(&g_overlay);
     }
 
-    if (!w->emu_backed && g_overlay_vh > 0) {          /* re-render with real alpha */
+    if (g_overlay_vh > 0) {                            /* re-render with real alpha */
         for (int r = 0; r < H; r++)                    /* clear to transparent first */
             for (int c = 0; c < W; c++) ds[(size_t)r*OVL_STRIDE_W + c] = 0u;
         g_overlay.w = W; g_overlay.h = H;              /* size the VDI target to the window */
@@ -491,7 +493,7 @@ static int drag_build_surface(gem_window *w, int gx, int gy)
         return 1;
     }
 
-    /* emu-backed: opaque snapshot of the composited desktop rect. */
+    /* fallback (no overlay ws): opaque snapshot of the composited desktop rect. */
     uint32_t *pl = (uint32_t *)(uintptr_t)DESK_BASE;
     for (int r = 0; r < H; r++) {
         int py = w->y + r;
@@ -723,7 +725,7 @@ static void desktop_setup(void)
         for (int i = 0; i < g_nicons; i++)
             blit_alpha(&g_wallpaper, g_icons[i].x, g_icons[i].y, g_icons[i].img, 256);
         if (lvh > 0) {
-            vst_point(lvh, 9, NULL, NULL, NULL, NULL);
+            vst_point(lvh, 14, NULL, NULL, NULL, NULL);  /* readable at 1080p (9 was tiny) */
             vst_alignment(lvh, VDI_TA_CENTER, VDI_TA_TOP, NULL, NULL);
             for (int i = 0; i < g_nicons; i++)        /* black-outlined white = readable on any wallpaper */
                 if (g_icons[i].title)
