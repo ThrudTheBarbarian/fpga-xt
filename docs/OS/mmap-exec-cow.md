@@ -111,9 +111,24 @@ pages are romfs, never pool pages, so reclaim ignores them.
 (zero-copy correctness), a multi-page font demand-pages first + last page, and
 `mmaptest ro` writes to the mapping and is killed (RO enforced), OS surviving.
 
-Follow-up: wire FreeType/asset loading to mmap (`FT_New_Memory_Face` on the mapped
-pointer in libGEM) so fonts stop being `fread` into per-process malloc buffers —
-the mechanism is in place; this is the libGEM-side change to use it.
+FreeType now uses it: `font_face_open` (gem/font.c) maps the font file and hands it
+to `FT_New_Memory_Face`, so glyphs are read straight from the shared RO mapping
+(demand-paged) instead of `fread` into a per-process malloc buffer. Portable via
+weak `xt_font_map`/`xt_font_unmap` hooks (XTOS overrides them in `gem_stubs.c`; the
+host falls back to `FT_New_Face(path)`).
+
+## 4b. Running host files (`runhost`) — test harness
+
+For iterating many libc-linked binaries without rebuilding the embedded romfs, the
+shell can load + run an ELF straight from the **host** filesystem over qemu ARM
+semihosting: `runhost <hostpath> [args]`. `hostfs_open/len/read/close` (bare_rt.c,
+`SYS_OPEN/FLEN/READ/CLOSE`) read the host file into a buffer; `frtos_spawn_host`
+runs it through the loader exactly like a romfs program — its `DT_NEEDED`
+(libc.so/libm/libGEM) still resolve from the embedded romfs. Host programs are
+**transient**: loaded fresh (not cached) and `xtld_unload`ed + buffer-freed when
+reaped, so a 300-file run doesn't accumulate (pool pages reclaimed; the libc heap
+high-water-marks but freed images are reused). On real metal semihosting is absent,
+so `hostfs_*` stub to failure. (e.g. `runhost build/vmtest.so A`.)
 
 ## 5. Hardware notes (carried for the HW re-graduation)
 

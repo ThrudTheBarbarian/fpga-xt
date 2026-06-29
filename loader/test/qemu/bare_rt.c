@@ -16,6 +16,11 @@ static void u_putc(char c) { while (UART_SR & SR_TXFULL) { } UART_FIFO = (unsign
 void puts0(const char *s) { while (*s) { if (*s == '\n') u_putc('\r'); u_putc(*s++); } }
 int  sh_readc(void) { while (UART_SR & SR_RXEMPTY) { } return (int)(UART_FIFO & 0xFFu); }  /* blocking */
 void sh_exit(int code) { (void)code; puts0("\n[testbed halted — power-cycle]\n"); for (;;) { } }
+/* host filesystem is a qemu-semihosting facility — unavailable on real metal. */
+long hostfs_open(const char *p) { (void)p; return -1; }
+long hostfs_len(long h) { (void)h; return -1; }
+long hostfs_read(long h, void *b, long n) { (void)h; (void)b; (void)n; return -1; }
+void hostfs_close(long h) { (void)h; }
 #else
 static long sh(long op, void *arg)
 {
@@ -27,6 +32,23 @@ static long sh(long op, void *arg)
 void puts0(const char *s) { sh(0x04 /*SYS_WRITE0*/, (void *)s); }
 int  sh_readc(void) { return (int)sh(0x07 /*SYS_READC*/, (void *)0); }
 void sh_exit(int code) { long b[2] = { 0x20026, code }; sh(0x20 /*EXIT_EXTENDED*/, b); for (;;) {} }
+
+/* host filesystem over ARM semihosting (qemu reads the HOST fs) — lets the test
+ * harness run binaries from a host folder without rebuilding the romfs. */
+long hostfs_open(const char *path)
+{
+    long n = 0; while (path[n]) n++;
+    long a[3] = { (long)path, 1 /*"rb"*/, n };
+    return sh(0x01 /*SYS_OPEN*/, a);
+}
+long hostfs_len(long h) { long a = h; return sh(0x0C /*SYS_FLEN*/, &a); }
+long hostfs_read(long h, void *buf, long len)
+{
+    long a[3] = { h, (long)buf, len };
+    long notread = sh(0x06 /*SYS_READ*/, a);     /* returns bytes NOT read (0 = all) */
+    return notread < 0 ? -1 : len - notread;
+}
+void hostfs_close(long h) { long a = h; sh(0x02 /*SYS_CLOSE*/, &a); }
 #endif
 
 void putu(unsigned v)

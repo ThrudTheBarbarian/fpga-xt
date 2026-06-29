@@ -55,6 +55,7 @@ void  frtos_activate_libc(xtld_obj *libc);   /* after the loader loads libc.so *
 int  frtos_spawn(const uint8_t *image, uint32_t len, int argc, char **argv, const xtld_host *host);
 int  frtos_spawn_path(const char *path, const xtld_host *host);
 int  frtos_spawn_argv(const char *path, int argc, char **argv, const xtld_host *host);
+int  frtos_spawn_host(const char *hostpath, int argc, char **argv, const xtld_host *host);
 int  frtos_open_lib(const char *name, const uint8_t **data, uint32_t *len, void *user);
 uintptr_t frtos_ksym(const char *name, void *user);
 int  frtos_waitpid(int pid);

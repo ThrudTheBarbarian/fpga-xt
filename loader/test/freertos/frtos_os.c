@@ -45,6 +45,8 @@ typedef struct {
     uint32_t          asid;           /* its ASID (slot+1; 0 = kernel/master) */
     uint32_t          heap_brk;       /* per-process heap (XTOS_HEAP_VA window) */
     uint32_t          heap_end;
+    int               transient;      /* loaded outside the cache (runhost) -> unload on reap */
+    void             *src;            /* the host ELF buffer to free on reap (transient) */
     StaticTask_t      tcb;            /* static TCB (stack from stackguard.c) */
 } proc_t;
 
@@ -420,25 +422,21 @@ static prog_t *prog_get(const uint8_t *image, uint32_t len, const xtld_host *hos
     }
 }
 
-int frtos_spawn(const uint8_t *image, uint32_t len, int argc, char **argv,
-                const xtld_host *host)
+/* common tail: give slot `slot` a private address space for `obj` and start its
+ * task. Shared by frtos_spawn (cached romfs programs) and frtos_spawn_host
+ * (transient host-loaded ELFs). */
+static int proc_launch(int slot, xtld_obj *obj, uintptr_t entry,
+                       uint32_t wva, uint32_t wsz, int argc, char **argv, const xtld_host *host)
 {
-    int slot = -1;
-    for (int i = 0; i < MAXPROC; i++) if (!g_proc[i].used) { slot = i; break; }
-    if (slot < 0) return -1;
     proc_t *p = &g_proc[slot];
-
-    prog_t *prog = prog_get(image, len, host);    /* load-once (shared text + COW data) */
-    if (!prog) return -1;
-
     for (int i = 0; i < NFD; i++) p->fd[i].open = 0;
-    p->obj = prog->obj; p->entry = prog->entry; p->exit_code = 0; p->pid = g_next_pid++;
+    p->obj = obj; p->entry = entry; p->exit_code = 0; p->pid = g_next_pid++;
     p->argc = argc; p->argv = copy_argv(argc, argv, host);
     p->done = xSemaphoreCreateBinary();
     if (!p->done) return -1;
     /* T2-b/c: private address space — demand heap + COW(libc data, synthetic, and
      * this program's own data/bss at its identity load VA). */
-    p->l1 = vm_space_create(slot, (uint32_t)prog->wva, prog->wsize, (uint32_t)prog->wva);
+    p->l1 = vm_space_create(slot, wva, wsz, wva);
     p->asid = (uint32_t)slot + 1u;
     p->heap_brk = XTOS_HEAP_VA; p->heap_end = XTOS_HEAP_VA + XTOS_HEAP_SIZE;    /* private heap */
     p->used = 1;
@@ -446,17 +444,81 @@ int frtos_spawn(const uint8_t *image, uint32_t len, int argc, char **argv,
      * task listings identify it — FreeRTOS copies the name into the TCB. */
     const char *nm = (argc > 0 && argv && argv[0]) ? argv[0] : "app";
     for (const char *q = nm; *q; q++) if (*q == '/') nm = q + 1;
-    { extern StackType_t *stackguard_stack(int, uint32_t *);
-      uint32_t depth; StackType_t *stk = stackguard_stack(slot, &depth);
-      /* xTaskCreateStatic returns the handle (unlike xTaskCreate's out-param), and
-       * the new task is higher priority than us — it would run (and look itself up
-       * via cur_proc) BEFORE p->task is assigned. Suspend the scheduler so the
-       * assignment lands first. */
-      vTaskSuspendAll();
-      p->task = xTaskCreateStatic(app_main, nm, depth, p, 3, stk, &p->tcb);
-      xTaskResumeAll();
-      if (!p->task) { vSemaphoreDelete(p->done); p->used = 0; return -1; } }
+    extern StackType_t *stackguard_stack(int, uint32_t *);
+    uint32_t depth; StackType_t *stk = stackguard_stack(slot, &depth);
+    /* xTaskCreateStatic returns the handle (unlike xTaskCreate's out-param), and
+     * the new task is higher priority than us — it would run (and look itself up via
+     * cur_proc) BEFORE p->task is assigned. Suspend the scheduler so the assignment
+     * lands first. */
+    vTaskSuspendAll();
+    p->task = xTaskCreateStatic(app_main, nm, depth, p, 3, stk, &p->tcb);
+    xTaskResumeAll();
+    if (!p->task) { vSemaphoreDelete(p->done); p->used = 0; return -1; }
     return p->pid;
+}
+
+int frtos_spawn(const uint8_t *image, uint32_t len, int argc, char **argv,
+                const xtld_host *host)
+{
+    int slot = -1;
+    for (int i = 0; i < MAXPROC; i++) if (!g_proc[i].used) { slot = i; break; }
+    if (slot < 0) return -1;
+
+    prog_t *prog = prog_get(image, len, host);    /* load-once (shared text + COW data) */
+    if (!prog) return -1;
+    g_proc[slot].transient = 0; g_proc[slot].src = 0;
+    return proc_launch(slot, prog->obj, prog->entry, (uint32_t)prog->wva, prog->wsize,
+                       argc, argv, host);
+}
+
+/* Load + run an ELF read from the HOST filesystem over semihosting (runhost) — for
+ * a test harness that drops many libc-linked binaries in a host folder without
+ * rebuilding the romfs. NOT cached: loaded fresh, and unloaded + the buffer freed
+ * when the process is reaped (frtos_waitpid), so 300 runs don't accumulate.
+ * DT_NEEDED libs (libc.so/libm/libGEM) still resolve from the embedded romfs. */
+int frtos_spawn_host(const char *hostpath, int argc, char **argv, const xtld_host *host)
+{
+    long h = hostfs_open(hostpath);
+    if (h < 0) { if (g_console) { g_console("runhost: cannot open ", 21);
+        g_console(hostpath, (int)strlen(hostpath)); g_console("\n", 1); } return -1; }
+    long len = hostfs_len(h);
+    if (len <= 0) { hostfs_close(h); return -1; }
+    uint8_t *buf = host->alloc((size_t)len, 16, host->user);
+    if (!buf) { hostfs_close(h); return -1; }
+    long got = hostfs_read(h, buf, len);
+    hostfs_close(h);
+    if (got != len) { host->dealloc(buf, host->user); return -1; }
+
+    int slot = -1;
+    for (int i = 0; i < MAXPROC; i++) if (!g_proc[i].used) { slot = i; break; }
+    if (slot < 0) { host->dealloc(buf, host->user); return -1; }
+
+    xtld_obj *obj = NULL; char err[64] = {0};
+    int rc = xtld_load(buf, (size_t)len, host, &obj, err, sizeof err);
+    if (rc != XTLD_OK) {
+        if (g_console) { g_console("  xtld_load err: ", 17); g_console(err, (int)strlen(err));
+            const char *s = xtld_strerror(rc); g_console(" rc=", 4); g_console(s, (int)strlen(s)); g_console("\n", 1); }
+        host->dealloc(buf, host->user); return -1;
+    }
+    uintptr_t entry = xtld_sym(obj, "_app_entry");
+    if (!entry) entry = xtld_sym(obj, "main");
+    if (!entry) { xtld_unload(obj); host->dealloc(buf, host->user); return -1; }
+    register_lib_cow();                          /* may have pulled in new shared libs */
+
+    uintptr_t ibase = xtld_image_base(obj), wva; uint32_t wsz;
+    extern void mmu_protect(uint32_t, uint32_t, int, int);
+    xtld_writable_range(obj, &wva, &wsz);
+    if (ibase && wva > ibase) mmu_protect((uint32_t)ibase, (uint32_t)(wva - ibase), 1, 0);
+    if (wva && wsz)           mmu_protect((uint32_t)wva, wsz, 0, 1);
+
+    g_proc[slot].transient = 1; g_proc[slot].src = buf;
+    int pid = proc_launch(slot, obj, entry, (uint32_t)wva, wsz, argc, argv, host);
+    if (pid < 0) {                               /* launch failed: undo the load */
+        extern void mmu_unprotect(uint32_t, uint32_t);
+        mmu_unprotect((uint32_t)ibase, (uint32_t)xtld_span(obj));
+        xtld_unload(obj); register_lib_cow(); host->dealloc(buf, host->user);
+    }
+    return pid;
 }
 
 int frtos_spawn_path(const char *path, const xtld_host *host)
@@ -546,6 +608,17 @@ int frtos_waitpid(int pid)
     int code = p->exit_code;
     vSemaphoreDelete(p->done);
     vm_space_destroy((int)(p - g_proc));         /* reclaim its private pages to the pool */
+    /* a transient (runhost) image isn't cached: unload it now (fini + transitive lib
+     * release), restore its master pages, and free the host ELF buffer + argv. */
+    if (p->transient) {
+        extern void mmu_unprotect(uint32_t, uint32_t);
+        mmu_unprotect((uint32_t)xtld_image_base(p->obj), (uint32_t)xtld_span(p->obj));
+        xtld_unload(p->obj);
+        register_lib_cow();                      /* drop any now-freed library's COW range */
+        if (p->src)  { frtos_free(p->src, NULL);  p->src = 0; }
+        if (p->argv) { frtos_free(p->argv, NULL); p->argv = 0; }
+        p->transient = 0;
+    }
     p->used = 0;                                 /* reap the slot (cached image stays resident) */
     return code;
 }

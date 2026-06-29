@@ -107,6 +107,13 @@ static void shell_task(void *arg)
             puts0(" heap pages were demand-mapped (zero-fill on touch)\n");
             continue;
         }
+        if (!strcmp(argv[0], "runhost")) {         /* load+run a .so/.elf from the HOST fs */
+            if (argc < 2) { puts0("usage: runhost <hostpath> [args...]\n"); continue; }
+            int pid = frtos_spawn_host(argv[1], argc - 1, argv + 1, &g_host);
+            if (pid < 0) { puts0("runhost: load failed\n"); continue; }
+            frtos_waitpid(pid);
+            continue;
+        }
         if (!strcmp(argv[0], "memtest")) {         /* T2-c: DDR page pool + reclaim on exit */
             uint32_t freep = vm_pages_free(), inuse0 = vm_pages_inuse();
             puts0("memtest: pool has "); putu(freep); puts0(" pages free (~");
