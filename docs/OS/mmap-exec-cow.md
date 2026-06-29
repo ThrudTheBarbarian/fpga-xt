@@ -91,9 +91,16 @@ resident for reuse.
   touched by the kernel, so (like the heap) they need no extra flush. Any new
   per-process override of a *kernel-touched* VA must add the same flush. (qemu's TLB
   model hides this; it bites only on real silicon.)
-- The demand pool is a bump allocator that is never reclaimed — fine for the
-  testbed; a real page allocator (free list) is the follow-up that also unlocks
-  reclaiming COW/heap pages on process exit.
+- The page pool is a **free-list allocator** (`vm.c`): `dpage(idx)` pops a page and
+  charges it to the space; `vm_space_destroy(idx)` (called from `frtos_waitpid`)
+  pushes the space's charged pages back on exit, so heap + COW pages are
+  **reclaimed** — no steady-state leak. Reclaim frees the *exact* pages a space was
+  charged (a per-space list), NOT every page-table entry in the pool range: a
+  per-process L2 inherits identity mappings for the rest of its 1 MB section, which
+  can overlap the pool, so walking the tables would mass-double-free the pool's own
+  pages. The A9 L1 D-cache is PIPT and every page is re-initialised on the next
+  `dpage()`, so reuse needs no cache maintenance. (`memtest` proves free pages
+  return to baseline across many spawn/exit cycles.)
 - **Per-process data covers libc, every shared library, and the program.** Each
   loaded library's writable (data/bss) range is registered as a global COW range
   (`register_lib_cow` in `frtos_os.c`, via `xtld_object_at`/`xtld_soname`). A

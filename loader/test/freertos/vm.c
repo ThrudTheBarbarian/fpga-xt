@@ -49,6 +49,12 @@ static uint32_t  space_l2_heap[NSPACE][256] __attribute__((aligned(1024)));/* he
 static uint32_t  space_l2pool[NSPACE][MAXSEC][256] __attribute__((aligned(1024)));
 static uint16_t  space_l2sec[NSPACE][MAXSEC];   /* section number each slot maps */
 static uint8_t   space_l2n[NSPACE];             /* slots used this space */
+/* per-space list of pool pages charged to a space (heap + COW), for reclaim on
+ * exit. MAXPP covers a full heap window (256) + COW pages; overflow stops tracking
+ * (extra pages leak, never double-freed). */
+#define MAXPP 320
+static void     *g_space_pages[NSPACE][MAXPP];
+static uint16_t  g_space_npages[NSPACE];
 static uint32_t *g_cur_table;            /* currently-active TTBR0 table */
 static uint32_t  g_cur_asid;
 
@@ -174,6 +180,7 @@ uint32_t *vm_space_create(int idx, uint32_t prog_va, uint32_t prog_size, uint32_
     uint32_t  asid = (uint32_t)idx + 1u;
     memcpy(t, mmu_master_table(), 4096 * sizeof(uint32_t));
     space_l2n[idx] = 0;                        /* fresh per-space L2 pool */
+    g_space_npages[idx] = 0;                   /* fresh private-page charge list */
 
     /* (b) private heap: an L2 with every page faulting -> zero-filled ON DEMAND
      * (T2-c). Physical is consumed only for pages the process actually touches. */
@@ -233,19 +240,63 @@ void vm_switch(uint32_t *table, uint32_t asid)
     }
 }
 
-/* ---- T2-c demand paging ---------------------------------------------------
+/* ---- T2-c page pool -------------------------------------------------------
  * A kernel page pool (reserved once at boot from the libc pool) that the data-
- * abort handler can draw from WITHOUT calling libc — the handler runs in the
- * faulting process's address space, where libc's data is the process's private
- * copy, so libc malloc there would be wrong. A plain bump over a pre-reserved
- * region is safe from any space. */
-static char    *g_dpool, *g_dpool_end;
-static uint32_t g_demand_count;
-void vm_demand_pool_init(void *base, uint32_t size) { g_dpool = base; g_dpool_end = (char *)base + size; }
-uint32_t vm_demand_count(void) { return g_demand_count; }
+ * abort handler draws from WITHOUT calling libc — the handler runs in the faulting
+ * process's address space, where libc's data is the process's private copy, so
+ * libc malloc there would be wrong. A free list (intrusive: each free page's first
+ * word is the next pointer) gives O(1) alloc + free, so a space's private pages
+ * (heap + COW) are RECLAIMED on exit (vm_space_destroy) — no steady-state leak.
+ *
+ * No cache maintenance on reuse: the A9 L1 D-cache is PIPT, so the pool's identity
+ * VA and a process's window VA share lines for the same physical, and every page
+ * is re-initialised (zero-fill / COW memcpy) when handed out. */
+static void    *g_dfree;                 /* head of the free-page list */
+static uint32_t g_demand_count;          /* heap pages mapped on demand (cumulative) */
+static uint32_t g_pages_free, g_pages_total;
 
-static void *dpage(void)
-{ if (!g_dpool || g_dpool + 0x1000 > g_dpool_end) return (void *)0; void *p = g_dpool; g_dpool += 0x1000; return p; }
+/* (the per-space charge list g_space_pages / g_space_npages is declared up top, so
+ * vm_space_create can reset it. Tracking the exact pages dpage() handed each space
+ * is what makes reclaim correct — walking page tables would wrongly free the
+ * identity mappings a per-process L2 inherits for the rest of its 1 MB section,
+ * which can overlap the pool itself.) */
+void vm_demand_pool_init(void *base, uint32_t size)
+{
+    g_dfree = 0;
+    char *p = (char *)base;
+    uint32_t n = size / 0x1000u;
+    for (uint32_t i = 0; i < n; i++, p += 0x1000u) { *(void **)p = g_dfree; g_dfree = p; }
+    g_pages_total = g_pages_free = n;
+}
+uint32_t vm_demand_count(void) { return g_demand_count; }
+uint32_t vm_pages_free(void)   { return g_pages_free; }
+uint32_t vm_pages_total(void)  { return g_pages_total; }
+
+/* allocate a page from the pool and charge it to space `idx` (for reclaim) */
+static void *dpage(int idx)
+{
+    void *p = g_dfree;
+    if (!p) return (void *)0;
+    g_dfree = *(void **)p;               /* pop */
+    g_pages_free--;
+    if (g_space_npages[idx] < MAXPP) g_space_pages[idx][g_space_npages[idx]++] = p;
+    return p;
+}
+
+/* Reclaim every page this space was charged (heap demand-zero + COW copies) back to
+ * the pool. Safe once the space's task is gone: its ASID isn't active, and
+ * vm_space_create TLBIASIDs + rebuilds the tables on slot reuse. The A9 L1 D-cache
+ * is PIPT and pages are re-initialised on the next dpage(), so no maintenance. */
+void vm_space_destroy(int idx)
+{
+    for (int i = 0; i < g_space_npages[idx]; i++) {
+        void *p = g_space_pages[idx][i];
+        *(void **)p = g_dfree;           /* push */
+        g_dfree = p;
+        g_pages_free++;
+    }
+    g_space_npages[idx] = 0;
+}
 
 /* zero-fill-on-demand: map a fresh 4KB page at `va` in space `idx`'s heap L2.
  * Called from the data-abort handler when a process touches an unmapped heap
@@ -255,7 +306,7 @@ int vm_demand_map(int idx, uint32_t va)
     uint32_t *hl2 = space_l2_heap[idx];
     uint32_t  i   = L2_IDX(va);
     if (hl2[i]) return 1;                       /* already present (lost race) */
-    void *pg = dpage();
+    void *pg = dpage(idx);
     if (!pg) return 0;
     memset(pg, 0, 0x1000);                      /* zero-fill */
     hl2[i] = L2_PAGE((uint32_t)pg);
@@ -285,7 +336,7 @@ int vm_cow_map(int idx, uint32_t va)
     uint32_t  e  = l2[i];
     if ((e & 0x3u) == 0) return 0;               /* not present -> not a COW page */
     if (!(e & (1u<<9))) return 1;                /* already RW (stale TLB) -> just re-run */
-    void *pg = dpage();
+    void *pg = dpage(idx);
     if (!pg) return 0;
     memcpy(pg, (const void *)(va & 0xFFFFF000u), 0x1000);   /* read via the RO mapping */
     /* private copy: new physical, clear AP[2] (RO->RW), keep all other attrs

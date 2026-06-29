@@ -26,6 +26,9 @@ uint32_t vm_cow_count(void);
 int  vm_cow_map(int idx, uint32_t va);
 int  vm_demand_map(int idx, uint32_t va);
 uint32_t *vm_space_create(int idx, uint32_t prog_va, uint32_t prog_size, uint32_t prog_src);
+void vm_space_destroy(int idx);     /* reclaim a dead space's private pages to the pool */
+uint32_t vm_pages_free(void);
+uint32_t vm_pages_total(void);
 
 void ksys_set_console(void (*w)(const char *, int));
 void *frtos_alloc(size_t size, size_t align, void *user);

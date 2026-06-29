@@ -107,6 +107,23 @@ static void shell_task(void *arg)
             puts0(" heap pages were demand-mapped (zero-fill on touch)\n");
             continue;
         }
+        if (!strcmp(argv[0], "memtest")) {         /* T2-c: page reclaim on process exit */
+            extern uint32_t vm_pages_free(void);
+            uint32_t base = vm_pages_free();
+            puts0("memtest: "); putu(base); puts0(" pages free. Running demandtest x5 "
+                  "(~33 pages each)...\n");
+            char *av[1] = { (char *)"demandtest" };
+            for (int k = 0; k < 5; k++) {
+                int pid = frtos_spawn_argv("/bin/demandtest", 1, av, &g_host);
+                if (pid < 0) { puts0("memtest: spawn failed\n"); break; }
+                frtos_waitpid(pid);
+            }
+            uint32_t after = vm_pages_free();
+            puts0("memtest: "); putu(after); puts0(" pages free after 5 runs+exits. ");
+            puts0(after == base ? "Fully reclaimed (no leak).\n"
+                                : "LEAK: pages not reclaimed.\n");
+            continue;
+        }
         if (!strcmp(argv[0], "cowtest")) {         /* T2-c: copy-on-write (synthetic) */
             extern uint32_t vm_cow_count(void);
             uint32_t before = vm_cow_count();

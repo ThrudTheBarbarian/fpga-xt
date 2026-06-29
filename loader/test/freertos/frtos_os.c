@@ -487,6 +487,7 @@ int frtos_waitpid(int pid)
     xSemaphoreTake(p->done, portMAX_DELAY);    /* yields via svc #0 until exit */
     int code = p->exit_code;
     vSemaphoreDelete(p->done);
-    p->used = 0;                                 /* reap (image left in bump arena) */
+    vm_space_destroy((int)(p - g_proc));         /* reclaim its private pages to the pool */
+    p->used = 0;                                 /* reap the slot (cached image stays resident) */
     return code;
 }
