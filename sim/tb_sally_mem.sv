@@ -85,6 +85,12 @@ module tb_sally_mem;
         .hwreg_dout (hwreg_dout),
         .cpu_code_bank_q    (cpu_code_bank_q),
         .cpu_data_bank_q    (cpu_data_bank_q),
+        .scrn_cpu_bank_q    (),
+        .scrn_antic_bank_q  (),
+        .scrn_cpu_bank_we   (),
+        .scrn_antic_bank_we (),
+        .scrn_bank_wval     (),
+        .scrn_ready         (1'b1),
         .unlock_bank        (1'b1),
         .portb              (portb),
         .bus_mpd_n_in       (1'b1),    // M-PBI: /MPD inactive in unit-level sim

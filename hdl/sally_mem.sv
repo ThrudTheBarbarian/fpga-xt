@@ -131,6 +131,18 @@ module sally_mem #(
     output wire [7:0]  cpu_code_bank_q,    // $D5C0 (XTC_CTL_BASE+0)
     output wire [7:0]  cpu_data_bank_q,    // $D5C1 (XTC_CTL_BASE+1)
 
+    // Banked screen RAM ($4000-$5FFF aperture) — screen_bank engine lives at the
+    // top (clk_sys/AXI).  sally_mem decodes the regs: $D5C3 = CPU screen bank,
+    // $D5C4 = ANTIC screen bank, $D5C5.0 = ready (read).  Strobes drive the
+    // engine; scrn_ready is read back.  scrn_*_bank_q are the latched values
+    // (for readback + the bank-0-vs-banked routing mux).
+    output wire [7:0]  scrn_cpu_bank_q,    // $D5C3 (XTC_CTL_BASE+3)
+    output wire [7:0]  scrn_antic_bank_q,  // $D5C4 (XTC_CTL_BASE+4)
+    output wire        scrn_cpu_bank_we,   // 1-cycle strobe on a $D5C3 write
+    output wire        scrn_antic_bank_we, // 1-cycle strobe on a $D5C4 write
+    output wire [7:0]  scrn_bank_wval,     // data being written (shared)
+    input  wire        scrn_ready,         // $D5C5.0 — CPU-BRAM holds the requested bank
+
     // XT register-unlock: when 0 (locked / stock) the $D5C0/$D5C1 bank-select
     // writes are ignored, so a stock cart's own $D5xx CCTL bank-switching is
     // undisturbed.  See docs/Zynq/register-unlock.md (BANK group).
@@ -313,6 +325,32 @@ module sally_mem #(
 
     assign cpu_code_bank_q = cpu_code_bank;
     assign cpu_data_bank_q = cpu_data_bank;
+
+    // ---- Banked screen RAM register decode ($D5C3/$D5C4/$D5C5) ----
+    // Separate from is_ctlreg so a $D5C3/$D5C4 write never lands in the
+    // code/data bank latch (which keys only on addr[0]).  Gated by the same
+    // BANK unlock group.
+    wire is_scrn_cpu   = (addr[15:0] == (XTC_CTL_BASE + 16'd3));   // $D5C3
+    wire is_scrn_antic = (addr[15:0] == (XTC_CTL_BASE + 16'd4));   // $D5C4
+    wire is_scrn_stat  = (addr[15:0] == (XTC_CTL_BASE + 16'd5));   // $D5C5
+    wire is_scrn_reg   = is_scrn_cpu | is_scrn_antic | is_scrn_stat;
+
+    assign scrn_cpu_bank_we   = rdy && !rw && is_scrn_cpu   && unlock_bank_q;
+    assign scrn_antic_bank_we = rdy && !rw && is_scrn_antic && unlock_bank_q;
+    assign scrn_bank_wval     = data_in;
+
+    logic [7:0] scrn_cpu_bank, scrn_antic_bank;
+    always_ff @(posedge clk or posedge rst) begin
+        if (rst) begin
+            scrn_cpu_bank   <= 8'h00;
+            scrn_antic_bank <= 8'h00;
+        end else begin
+            if (scrn_cpu_bank_we)   scrn_cpu_bank   <= data_in;
+            if (scrn_antic_bank_we) scrn_antic_bank <= data_in;
+        end
+    end
+    assign scrn_cpu_bank_q   = scrn_cpu_bank;
+    assign scrn_antic_bank_q = scrn_antic_bank;
 
     // ---- Bank translator -----------------------------------------
     wire [15:0] bank_id_w;
@@ -587,11 +625,20 @@ module sally_mem #(
             bram_dout_q          <= mem[mem_addr_w];
             stack_dout_q         <= stack_mem[stack_addr_rd];
             selftest_dout_q      <= selftest_rom[addr[10:0]];
-            // xtc control-reg read-back: addr[0]=0 -> code bank, =1 -> data bank.
-            ctlreg_dout_q        <= addr[0] ? cpu_data_bank : cpu_code_bank;
-            // Locked (BANK group off) → don't shadow $D5C0/$D5C1; the read falls
+            // xtc control-reg read-back (served through the one ctlreg slot):
+            //   $D5C0/$D5C1 = code/data bank; $D5C3/$D5C4 = screen banks;
+            //   $D5C5 = {7'b0, ready}.  addr[2:0] selects.
+            case (addr[2:0])
+                3'd0:    ctlreg_dout_q <= cpu_code_bank;
+                3'd1:    ctlreg_dout_q <= cpu_data_bank;
+                3'd3:    ctlreg_dout_q <= scrn_cpu_bank;
+                3'd4:    ctlreg_dout_q <= scrn_antic_bank;
+                3'd5:    ctlreg_dout_q <= {7'b0, scrn_ready};
+                default: ctlreg_dout_q <= 8'h00;
+            endcase
+            // Locked (BANK group off) → don't shadow these; the read falls
             // through to the CCTL/cart path (open bus) like stock silicon.
-            was_ctlreg_q         <= is_ctlreg && unlock_bank_q;
+            was_ctlreg_q         <= (is_ctlreg | is_scrn_reg) && unlock_bank_q;
             was_hwreg_q          <= is_hwreg_page;
             was_bank_q           <= is_in_window_w;
             was_stack_q          <= is_stack_access;

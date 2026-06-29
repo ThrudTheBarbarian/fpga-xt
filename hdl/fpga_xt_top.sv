@@ -297,6 +297,12 @@ module fpga_xt_top (
 
     // Bank-select state (from SALLY zero-page snoop)
     wire [7:0]  cpu_code_bank, cpu_data_bank;
+    // Banked screen RAM ($4000-$5FFF) — sally_mem decodes $D5C3/$D5C4/$D5C5;
+    // the screen_bank engine (clk_sys/AXI + ANTIC reload) is wired in a later
+    // stage.  Until then scrn_ready is tied high (banking writes are no-ops).
+    wire [7:0]  scrn_cpu_bank, scrn_antic_bank, scrn_bank_wval;
+    wire        scrn_cpu_bank_we, scrn_antic_bank_we;
+    wire        scrn_ready = 1'b1;
 
     // ANTIC-view bank registers ($D488-$D48B) are currently unused in the
     // Zynq build — ANTIC's DMA reaches RAM via bram_shim, not via
@@ -726,6 +732,12 @@ module fpga_xt_top (
         .hwreg_dout (hwreg_dout),
         .cpu_code_bank_q    (cpu_code_bank),
         .cpu_data_bank_q    (cpu_data_bank),
+        .scrn_cpu_bank_q    (scrn_cpu_bank),
+        .scrn_antic_bank_q  (scrn_antic_bank),
+        .scrn_cpu_bank_we   (scrn_cpu_bank_we),
+        .scrn_antic_bank_we (scrn_antic_bank_we),
+        .scrn_bank_wval     (scrn_bank_wval),
+        .scrn_ready         (scrn_ready),
         .unlock_bank        (xt_unlock[UNLK_BANK]),
         .portb              (portb_q),
         .bus_mpd_n_in       (1'b1),         // no PBI
