@@ -402,6 +402,10 @@ void xtld_writable_range(const xtld_obj *obj, uintptr_t *va, uint32_t *size)
 }
 uint32_t  xtld_init_count(const xtld_obj *obj) { return obj ? obj->init_count : 0; }
 
+int       xtld_object_count(void) { return g_nobjs; }
+xtld_obj *xtld_object_at(int i) { return (i >= 0 && i < g_nobjs) ? g_objs[i] : NULL; }
+const char *xtld_soname(const xtld_obj *obj) { return obj ? obj->soname : NULL; }
+
 void xtld_unload(xtld_obj *obj)
 {
     if (!obj) return;

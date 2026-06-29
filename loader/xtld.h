@@ -87,6 +87,15 @@ void xtld_writable_range(const xtld_obj *obj, uintptr_t *va, uint32_t *size);
 /* Number of DT_INIT_ARRAY constructors discovered (diagnostics). */
 uint32_t xtld_init_count(const xtld_obj *obj);
 
+/* Enumerate the loaded-object registry (libraries + programs). Lets the host give
+ * each shared library per-process data (register its writable range for COW). */
+int       xtld_object_count(void);
+xtld_obj *xtld_object_at(int i);
+
+/* DT_SONAME of an object, or NULL. Present on shared libraries (the registry/dedup
+ * key), absent on programs — so the host can tell a library from a program. */
+const char *xtld_soname(const xtld_obj *obj);
+
 /* Drop a reference; the object (and, transitively, nothing else for now) is
  * freed when its refcount hits zero. Shared libraries are loaded once and
  * refcounted across dependents. */

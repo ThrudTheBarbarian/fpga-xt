@@ -44,7 +44,8 @@ static uint32_t  space_l2_heap[NSPACE][256] __attribute__((aligned(1024)));/* he
  * (libc data, program data, the synthetic demo). Section-keyed so a program and
  * libc that happen to share a 1 MB section reuse ONE L2 (no clobber, the §6
  * collision). */
-#define MAXSEC 6
+#define MAXSEC 12       /* per-space overridden sections: libc + each shared lib's data
+                         * + synthetic + the program's data (libs are global ranges) */
 static uint32_t  space_l2pool[NSPACE][MAXSEC][256] __attribute__((aligned(1024)));
 static uint16_t  space_l2sec[NSPACE][MAXSEC];   /* section number each slot maps */
 static uint8_t   space_l2n[NSPACE];             /* slots used this space */
@@ -63,7 +64,7 @@ static uint32_t  g_cur_asid;
  * range is the spawning program's own data: its VA is the program's identity load
  * address (different programs -> different VAs), so it belongs only to that space.
  * Each range carries `src`: page (va + k*0x1000) maps RO to (src + k*0x1000). */
-#define NCOW 4
+#define NCOW 12
 typedef struct { uint32_t va, end, src; } cow_rng;
 static cow_rng  g_cow_rng[NCOW];                 /* global ranges (libc, synthetic) */
 static int      g_cow_n;

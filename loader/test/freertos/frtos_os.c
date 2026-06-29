@@ -63,6 +63,7 @@ extern char _heap_start[];                       /* 0x0200_0000 (linker) */
 static char *g_boot;
 static void *(*g_libc_memalign)(size_t, size_t);
 static void  (*g_libc_free)(void *);
+static xtld_obj *g_libc_obj;                      /* libc.so — COW'd via a snapshot, not identity */
 
 void *frtos_alloc(size_t size, size_t align, void *u)
 {
@@ -80,6 +81,7 @@ void frtos_free(void *p, void *u) { (void)u; if (g_libc_free) g_libc_free(p); }
 void frtos_activate_libc(xtld_obj *libc)
 {
     extern void sbrk_set_base(void *base, void *end);
+    g_libc_obj = libc;
     g_libc_memalign = (void *(*)(size_t, size_t))xtld_sym(libc, "memalign");
     g_libc_free     = (void (*)(void *))xtld_sym(libc, "free");
     uintptr_t brk = ((uintptr_t)g_boot + 0xFFFu) & ~0xFFFu;   /* page-align past libc.so */
@@ -305,6 +307,25 @@ static int      g_prog_n;
 static uint32_t g_prog_loads;            /* distinct images actually loaded (vs spawns) */
 uint32_t frtos_prog_loads(void) { return g_prog_loads; }
 
+/* Give every shared LIBRARY per-process data: register its writable (data/bss)
+ * range for copy-on-write. A library's data is never written by the kernel, so the
+ * COW source is the library image itself (identity — it stays pristine after its
+ * one-time load-init). libc is the exception: the kernel mutates its malloc arena,
+ * so libc COWs from a boot snapshot (vm_set_libc) instead — skip it here. Programs
+ * have no soname (their data is the per-space program range, not a global one).
+ * Idempotent: re-scanned after each load; vm_cow_register dedups by base VA. */
+static void register_lib_cow(void)
+{
+    int n = xtld_object_count();
+    for (int i = 0; i < n; i++) {
+        xtld_obj *o = xtld_object_at(i);
+        if (!o || o == g_libc_obj || !xtld_soname(o)) continue;   /* libc / program -> skip */
+        uintptr_t wva; uint32_t wsz;
+        xtld_writable_range(o, &wva, &wsz);
+        if (wva && wsz) vm_cow_register((uint32_t)wva, wsz, (uint32_t)wva);  /* identity src */
+    }
+}
+
 static prog_t *prog_get(const uint8_t *image, uint32_t len, const xtld_host *host)
 {
     for (int i = 0; i < g_prog_n; i++) if (g_prog[i].image == image) return &g_prog[i];
@@ -320,6 +341,8 @@ static prog_t *prog_get(const uint8_t *image, uint32_t len, const xtld_host *hos
     uintptr_t entry = xtld_sym(obj, "_app_entry");   /* C/asm programs */
     if (!entry) entry = xtld_sym(obj, "main");        /* xtc / plain main(argc,argv) */
     if (!entry) return NULL;
+
+    register_lib_cow();   /* this load may have pulled in new shared libs -> COW their data */
 
     /* W^X (once): text/rodata/GOT -> read-only+executable, writable seg ->
      * read-write+execute-never, in the master table. vm_space_create clones the

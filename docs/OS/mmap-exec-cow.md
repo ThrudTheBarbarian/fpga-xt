@@ -15,8 +15,8 @@ Two coupled capabilities, both layered on one copy-on-write (COW) mechanism:
 - **Copy-on-write data.** A writable page starts mapped shared read-only at a
   pristine source and is copied privately on the first write. This gives each
   process private data without an eager full copy, and is the **fork-ready**
-  mechanism. It backs per-process libc data, per-process program data/bss, and a
-  synthetic demo region.
+  mechanism. It backs per-process data for libc, every shared library, and the
+  program's own data/bss, plus a synthetic demo region.
 
 ## 2. The COW mechanism (`vm.c`)
 
@@ -94,14 +94,14 @@ resident for reuse.
 - The demand pool is a bump allocator that is never reclaimed — fine for the
   testbed; a real page allocator (free list) is the follow-up that also unlocks
   reclaiming COW/heap pages on process exit.
-- **Per-process data is done for libc and the program, not yet for other shared
-  libraries.** libGEM / libm / FreeType still keep their global state in shared
-  (not per-process) data, so two GEM clients in sequence clash — e.g. `gemtext`
-  then `desktop`, or `desktop` twice, faults (a pre-existing limitation, present
-  before this work). The fix is the natural extension of step 2: register each
-  loaded library's writable range as a global COW range with a post-init pristine
-  source (needs an xtld hook to enumerate loaded objects' writable ranges). Each
-  GEM client running on its own once is fine.
+- **Per-process data covers libc, every shared library, and the program.** Each
+  loaded library's writable (data/bss) range is registered as a global COW range
+  (`register_lib_cow` in `frtos_os.c`, via `xtld_object_at`/`xtld_soname`). A
+  library's data is never written by the kernel, so its COW source is the library
+  image itself (identity — pristine after its one-time load-init); only libc keeps
+  a boot snapshot (the kernel mutates its malloc arena). This dissolved the earlier
+  shared-library-globals clash: `gemtext`→`desktop`, `desktop` twice, etc. each get
+  their own FreeType/VDI/libGEM state and run clean.
 
 ## 6. Tests (all green on qemu — `make freertos`)
 
