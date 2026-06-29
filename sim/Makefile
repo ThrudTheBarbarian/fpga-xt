@@ -918,6 +918,23 @@ pbi: $(BUILD_DIR)/tb_pbi.vvp
 $(BUILD_DIR)/tb_pbi.vvp: $(HDL_SRCS) tb_pbi.sv | $(BUILD_DIR)
 	$(IVERILOG) $(SV_FLAGS) -o $@ -s tb_pbi $(HDL_SRCS) tb_pbi.sv
 
+# ---- screen_bank — dual CPU/ANTIC banked screen RAM -----------------------
+SCREEN_BANK_HDL := \
+    $(HDL_DIR)/cdc_sync_bit.sv \
+    $(HDL_DIR)/screen_bank.sv
+
+screen_bank: $(BUILD_DIR)/tb_screen_bank.vvp
+	@echo "=== screen_bank ==="
+	@$(VVP) -N $< | tee $(BUILD_DIR)/tb_screen_bank.log
+	@grep -q '\*\*\* SCREEN_BANK OK \*\*\*' $(BUILD_DIR)/tb_screen_bank.log || \
+	    (echo "FAIL: tb_screen_bank missing SCREEN_BANK OK"; exit 1)
+	@grep -q 'FATAL\|FAIL' $(BUILD_DIR)/tb_screen_bank.log && \
+	    (echo "FAIL: tb_screen_bank reported a failure"; exit 1) || true
+	@echo "PASS: tb_screen_bank"
+
+$(BUILD_DIR)/tb_screen_bank.vvp: $(SCREEN_BANK_HDL) tb_screen_bank.sv | $(BUILD_DIR)
+	$(IVERILOG) $(SV_FLAGS) -o $@ -s tb_screen_bank $(SCREEN_BANK_HDL) tb_screen_bank.sv
+
 # ---- sprite_regs — sprite_engine descriptor register file ----------------
 SPRITE_ENG_HDL := \
     $(HDL_DIR)/cdc_sync_bit.sv     \
