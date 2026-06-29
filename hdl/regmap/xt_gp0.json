@@ -49,7 +49,9 @@
         { "off": "0x00", "access": "W", "width": 8, "c": "XT_SPR_IDX",  "sv": "SPR_IDX",
           "desc": "latch sprite reg index" },
         { "off": "0x04", "access": "W", "width": 8, "c": "XT_SPR_DATA", "sv": "SPR_DATA",
-          "desc": "sprite reg data + strobe (writes idx/data to engine)" }
+          "desc": "sprite reg data + strobe (writes idx/data to engine)" },
+        { "off": "0x08", "access": "R", "width": 16, "c": "XT_SPR_COLL", "sv": "SPR_COLL",
+          "desc": "collision[col_sel] (set col_sel first via $D4D9); [15:0] = sprites this one hit" }
       ]
     },
     {

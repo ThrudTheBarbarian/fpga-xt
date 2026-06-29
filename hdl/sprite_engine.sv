@@ -66,6 +66,10 @@ module sprite_engine #(
     input  wire [7:0]  reg_wdata,
     output wire [7:0]  reg_rdata,
 
+    // collision[col_sel] exposed for the A9 GP0 readback (clk_fetch domain; the
+    // clk_pix->clk_fetch snapshot CDC is internal).  Set col_sel via $D4D9 first.
+    output wire [15:0] coll_sel_data,
+
     // ---- Framebuffer pixel input (from the plane compositor, clk_pix) ------
     input  wire [15:0] fb_pixel,            // {R[4:0], G[5:0], B[4:0]} RGB565
     input  wire        fb_de,
@@ -290,6 +294,10 @@ module sprite_engine #(
     assign reg_rdata = is_d4ax ? rdata_d4ax :
                        is_d4dx ? rdata_d4dx :
                        8'h00;
+
+    // Whole collision row for the selected sprite — A9 GP0 readback ($D4D9
+    // selects col_sel, the GP0 SPR_COLL reg returns this).
+    assign coll_sel_data = collision[col_sel];
 
     // ========================================================================
     // CDC: vbeam taps from clk_pix → clk_fetch

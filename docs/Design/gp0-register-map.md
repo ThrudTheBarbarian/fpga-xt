@@ -26,6 +26,7 @@ sprite-engine reg index/data port; dual-access 6502 $D4Ax/$D4Dx under UNLK_SPRIT
 |--------|-----|-------|---------|----|---------|
 | 0x00 | W | 8 | `XT_SPR_IDX` | `SPR_IDX` | latch sprite reg index |
 | 0x04 | W | 8 | `XT_SPR_DATA` | `SPR_DATA` | sprite reg data + strobe (writes idx/data to engine) |
+| 0x08 | R | 16 | `XT_SPR_COLL` | `SPR_COLL` | collision[col_sel] (set col_sel first via $D4D9); [15:0] = sprites this one hit |
 
 ## 0x200 — COMP  (`XT_BLK_COMP`)
 

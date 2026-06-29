@@ -98,6 +98,7 @@ module xt_gp0_regs (
     output reg  [7:0]  spr_reg_addr,
     output reg  [7:0]  spr_reg_data,
     output reg         spr_reg_we,         // 1-cycle write strobe
+    input  wire [15:0] spr_coll_data,      // collision[col_sel] readback (SPR_COLL)
 
     // ---- Blitter status (clk_sys) ------------------------------------------
     input  wire        bl_busy,
@@ -353,6 +354,9 @@ module xt_gp0_regs (
                                     s_axi_rdata <= {29'd0, bl_pat_blocked, bl_queue_full, bl_busy};
                                 else if (ar_off == BLT_SEQ)
                                     s_axi_rdata <= {16'd0, bl_seq_counter};
+                            BLK_SPRITE:
+                                if      (ar_off == SPR_COLL)
+                                    s_axi_rdata <= {16'd0, spr_coll_data};
                             BLK_CTRL:
                                 if      (ar_off == CTRL_GP0)    s_axi_rdata <= {24'd0, gp0_ctrl};
                                 else if (ar_off == CTRL_SPEED)  s_axi_rdata <= {24'd0, clock_mult};

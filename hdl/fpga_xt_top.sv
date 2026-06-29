@@ -1495,7 +1495,8 @@ module fpga_xt_top (
     wire       sprite_reg_we_mux    = spr_reg_we_a9 | sprite_reg_we;
     wire [7:0] sprite_reg_addr_mux  = spr_reg_we_a9 ? spr_reg_addr_a9 : bus_addr_antic_q[7:0];
     wire [7:0] sprite_reg_wdata_mux = spr_reg_we_a9 ? spr_reg_data_a9 : bus_data_in_antic_q;
-    wire [7:0] sprite_reg_rdata_unused;
+    wire [7:0]  sprite_reg_rdata_unused;
+    wire [15:0] spr_coll_data;            // collision[col_sel] -> GP0 SPR_COLL readback
 
     sprite_engine u_sprite_engine (
         .clk_fetch     (clk_sys),
@@ -1511,6 +1512,7 @@ module fpga_xt_top (
         .reg_addr      (sprite_reg_addr_mux),
         .reg_wdata     (sprite_reg_wdata_mux),
         .reg_rdata     (sprite_reg_rdata_unused),
+        .coll_sel_data (spr_coll_data),
 
         .fb_pixel      ({comp_rgb_r, comp_rgb_g, comp_rgb_b}),
         .fb_de         (comp_de),
@@ -2346,6 +2348,7 @@ module fpga_xt_top (
         .spr_reg_addr    (spr_reg_addr_a9),
         .spr_reg_data    (spr_reg_data_a9),
         .spr_reg_we      (spr_reg_we_a9),
+        .spr_coll_data   (spr_coll_data),
         .bl_busy         (bl_busy),
         .bl_queue_full   (bl_cq_full),
         .bl_pat_blocked  (bl_pat_blocked),

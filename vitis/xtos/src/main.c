@@ -49,6 +49,7 @@
 #include "compositor.h"
 #include "xtctl.h"
 #include "xt_gp0_map.h"
+#include "sprite.h"
 
 /* gem_lua.c — GEM VDI (+ FreeType scalable text) bring-up on the desktop plane
  * and the `vdi` Lua table.  Defined in gem_lua.c (links the portable gem core). */
@@ -614,6 +615,7 @@ static void repl_help(void)
       "  dmactl <0|1>     honour DMACTL screen-blank (gp0_ctrl[4]); 1=real Atari, 0=legacy\r\n"
       "  hdmi             re-run SiI9022 output init (sii_enable_output)\r\n"
       "  diag             decode GP0 diag word + measured H_RES/V_RES\r\n"
+      "  spritecoll       sprite collision self-test (two overlapping sprites)\r\n"
       "  { ... }          serial->Atari keyboard passthrough ('key' or '{' in, '}' out)\r\n"
       "  speed <n>        CPU speed = n x real Atari (DECIMAL); 1=real/boot-safe, 56=max turbo\r\n"
       "  mount            (re)mount the SD card FAT volume (0:)\r\n"
@@ -1179,6 +1181,26 @@ static void repl_exec(char *cmd)
         return;
     }
     if (!strcmp(argv[0], "diag")) { repl_status(); return; }
+    if (!strcmp(argv[0], "spritecoll")) {            /* sprite collision self-test */
+        static uint32_t sq[16 * 16];
+        for (int i = 0; i < 16 * 16; i++) sq[i] = 0xFFFFFFFFu;   /* opaque white */
+        sprite_load_rgba(0,  64, 16, 16, sq);        /* slot 1 image */
+        sprite_load_rgba(16, 64, 16, 16, sq);        /* slot 2 image */
+        sprite_set(1, 4, 4,  0, 64, 400, 300);       /* covers screen_x 400..415 */
+        sprite_set(2, 5, 4, 16, 64, 408, 300);       /* covers 408..423 -> overlap */
+        sprite_enable(1, 1);
+        sprite_enable(2, 1);
+        sprite_global_enable(1);
+        vTaskDelay(pdMS_TO_TICKS(50));               /* let a few frames snapshot */
+        uint16_t c1 = sprite_collision(1);
+        uint16_t c2 = sprite_collision(2);
+        uint16_t c3 = sprite_collision(3);           /* unused slot -> expect 0 */
+        xil_printf("spritecoll: s1=%04x s2=%04x s3=%04x\r\n", c1, c2, c3);
+        xil_printf("  expect s1 bit2=1, s2 bit1=1, s3=0000  ->  %s\r\n",
+                   ((c1 & (1u<<2)) && (c2 & (1u<<1)) && c3 == 0) ? "PASS" : "FAIL");
+        uart1_puts("  (sprites left on screen at ~400,300; move them apart to see it clear)\r\n");
+        return;
+    }
     if (!strcmp(argv[0], "ldtest")) {                 /* HW-1: dynamic loader on metal */
         extern void xtos_ld_selftest(void);
         xtos_ld_selftest();

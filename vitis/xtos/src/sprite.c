@@ -22,6 +22,7 @@
 #define R_SCREEN_HI   0xD7u   /* {screen_x[11:8], screen_y[11:8]}      */
 #define R_COMMIT      0xD8u   /* commit; data = screen_x[7:0]          */
 #define R_CTRL0       0xA0u   /* per-sprite control, slot 0 (+slot)   */
+#define R_COLSEL      0xD9u   /* select which sprite's collision row   */
 #define R_GLOBAL      0xDFu   /* global enable [0]                     */
 
 static inline void spr_reg(uint8_t idx, uint8_t val)
@@ -54,6 +55,14 @@ void sprite_enable(int slot, int format)
 void sprite_global_enable(int en)
 {
     spr_reg(R_GLOBAL, en ? 0x01u : 0x00u);
+}
+
+uint16_t sprite_collision(int slot)
+{
+    /* Point col_sel at this sprite, then read the GP0 SPR_COLL register —
+     * collision[slot]: bit N set => slot overlapped sprite N in the last frame. */
+    spr_reg(R_COLSEL, (uint8_t)(slot & 0x0F));
+    return (uint16_t)Xil_In32(XT_SPR_COLL);
 }
 
 void sprite_load_rgba(int arena_x, int arena_y, int w, int h, const uint32_t *img)

@@ -34,6 +34,10 @@ void sprite_enable(int slot, int format);
 /* Master enable for the whole engine. */
 void sprite_global_enable(int en);
 
+/* Read sprite `slot`'s collision row (from the last frame): bit N set means slot
+ * overlapped sprite N.  Refreshed every VBI; 0 = no current collisions. */
+uint16_t sprite_collision(int slot);
+
 /* Write a w×h RGBA-8888 image into the arena at (arena_x, arena_y) (format-1
  * layout), flushing it out to DDR for the fetcher. */
 void sprite_load_rgba(int arena_x, int arena_y, int w, int h, const uint32_t *img);

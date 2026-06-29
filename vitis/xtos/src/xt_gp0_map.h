@@ -39,6 +39,7 @@
 /* ---- SPRITE block --------------------------------------------------- */
 #define XT_SPR_IDX           (XT_BLK_SPRITE + 0x00u)      /* W latch sprite reg index */
 #define XT_SPR_DATA          (XT_BLK_SPRITE + 0x04u)      /* W sprite reg data + strobe (writes idx/data to engine) */
+#define XT_SPR_COLL          (XT_BLK_SPRITE + 0x08u)      /* R collision[col_sel] (set col_sel first via $D4D9); [15:0] = sprites this one hit */
 
 /* ---- COMP block --------------------------------------------------- */
 #define XT_OVL_EN            (XT_BLK_COMP + 0x00u)        /* W [0]=enable; also toggles the commit flag */

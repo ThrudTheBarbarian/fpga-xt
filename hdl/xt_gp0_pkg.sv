@@ -26,6 +26,7 @@ package xt_gp0_pkg;
     // SPRITE
     localparam logic [7:0] SPR_IDX          = 8'h00;  // W latch sprite reg index
     localparam logic [7:0] SPR_DATA         = 8'h04;  // W sprite reg data + strobe (writes idx/data to engine)
+    localparam logic [7:0] SPR_COLL         = 8'h08;  // R collision[col_sel] (set col_sel first via $D4D9); [15:0] = sprites this one hit
     // COMP
     localparam logic [7:0] OVL_EN           = 8'h00;  // W [0]=enable; also toggles the commit flag
     localparam logic [7:0] OVL_BASE         = 8'h04;  // W DDR byte address (32-bit)
