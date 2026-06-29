@@ -687,6 +687,21 @@ static void blit_alpha(gfx_surface *d, int dx, int dy, const gfx_surface *s, int
     }
 }
 
+/* Draw an icon label legibly over arbitrary wallpaper, without a background plate:
+ * a black outline (the glyph stamped at 8 one-pixel offsets) under a white fill.  The
+ * white AA edges then blend against the black halo (crisp white->black) instead of the
+ * wallpaper (washed out), so the anti-aliasing aids legibility rather than hurting it.
+ * vh must already have the point size + CENTER/TOP alignment set. */
+static void desk_label(int vh, int cx, int y, const char *s)
+{
+    static const int ox[8] = { -1, -1, -1,  0, 0,  1, 1, 1 };
+    static const int oy[8] = { -1,  0,  1, -1, 1, -1, 0, 1 };
+    vst_color(vh, 1);                                  /* pen 1 = black halo */
+    for (int k = 0; k < 8; k++) v_gtext(vh, cx + ox[k], y + oy[k], s);
+    vst_color(vh, 0);                                  /* pen 0 = white fill on top */
+    v_gtext(vh, cx, y, s);
+}
+
 /* Bring up the desktop: WM + icons baked into the backdrop (so the WM erase keeps
  * them).  Idempotent — safe to call from a boot script. */
 static void desktop_setup(void)
@@ -708,13 +723,12 @@ static void desktop_setup(void)
         for (int i = 0; i < g_nicons; i++)
             blit_alpha(&g_wallpaper, g_icons[i].x, g_icons[i].y, g_icons[i].img, 256);
         if (lvh > 0) {
-            vst_color(lvh, 0);                        /* pen 0 = white (readable on the wallpaper) */
             vst_point(lvh, 9, NULL, NULL, NULL, NULL);
             vst_alignment(lvh, VDI_TA_CENTER, VDI_TA_TOP, NULL, NULL);
-            for (int i = 0; i < g_nicons; i++)
+            for (int i = 0; i < g_nicons; i++)        /* black-outlined white = readable on any wallpaper */
                 if (g_icons[i].title)
-                    v_gtext(lvh, g_icons[i].x + g_icons[i].w/2,
-                                 g_icons[i].y + g_icons[i].h + 3, g_icons[i].title);
+                    desk_label(lvh, g_icons[i].x + g_icons[i].w/2,
+                                    g_icons[i].y + g_icons[i].h + 3, g_icons[i].title);
             v_clsvwk(lvh);
         }
         g_icons_baked = 1;
