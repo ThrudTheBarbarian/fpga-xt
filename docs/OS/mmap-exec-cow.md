@@ -208,9 +208,10 @@ currently non-shared), is the **HW re-graduation** step: `freertos-hw.elf` +
    demand-paged, page-aligned romfs). Remaining: wire FreeType/asset loading in
    libGEM to use it (`FT_New_Memory_Face` on the mapped pointer) so fonts/assets
    stop being `read()` into per-process malloc buffers.
-2. **Scrub pages on free** — zero a space's private pages in `vm_space_destroy`
-   (not just on the next `dpage()` alloc), so freed runtime data doesn't linger on
-   the pool free list. Defense-in-depth; only fully meaningful with #3.
+2. **Scrub pages on free** — DONE. `vm_space_destroy` zeroes each private page
+   before returning it to the free list, so freed runtime data doesn't linger (the
+   only non-zero word while free is the free-list link — a pool address, not user
+   data). Defense-in-depth; fully meaningful once #3 lands.
 3. **PL0 user/kernel split — the real memory-protection boundary.** Today every
    task runs **privileged (System mode)** and the whole identity-mapped DDR
    (`0x0010_0000–0x1FFF_FFFF`) is mapped **AP=11 (RW)** in every space, so the

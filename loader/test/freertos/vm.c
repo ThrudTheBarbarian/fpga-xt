@@ -327,15 +327,21 @@ static void *dpage(int idx)
 }
 
 /* Reclaim every page this space was charged (heap demand-zero + COW copies) back to
- * the pool. Safe once the space's task is gone: its ASID isn't active, and
+ * the pool. Each page is SCRUBBED (zeroed) before being freed so a dead process's
+ * runtime data doesn't linger on the free list — defense-in-depth for the window
+ * before the page is re-initialised on its next dpage(), and against a read of the
+ * page via its identity alias (until the PL0 split lands, all RAM is reachable that
+ * way). Only the free-list link word (a pool address, not user data) is then
+ * non-zero. Safe once the space's task is gone: its ASID isn't active, and
  * vm_space_create TLBIASIDs + rebuilds the tables on slot reuse. The A9 L1 D-cache
- * is PIPT and pages are re-initialised on the next dpage(), so no maintenance. */
+ * is PIPT, so the scrub via the pool's identity VA is coherent with any window VA. */
 void vm_space_destroy(int idx)
 {
     for (int i = 0; i < g_space_npages[idx]; i++) {
         void *p = g_space_pages[idx][i];
+        memset(p, 0, 0x1000);                 /* scrub the dead process's data */
         uint32_t f = xt_irq_save();
-        *(void **)p = g_dfree; g_dfree = p;   /* push to free list */
+        *(void **)p = g_dfree; g_dfree = p;   /* push to free list (link in word 0) */
         g_freelist_n++; g_pages_inuse--;
         xt_irq_restore(f);
     }

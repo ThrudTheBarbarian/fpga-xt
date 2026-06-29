@@ -257,7 +257,7 @@ Remaining:
   cow.md §8): (1) **mmap'd files** — mechanism DONE (SYS_mmap/munmap, RO+shared+
   demand-paged, page-aligned romfs, mmaptest); remaining = wire libGEM FreeType to
   FT_New_Memory_Face on the mapped pointer (stop fread-ing fonts into malloc);
-  (2) **scrub pages on free** (defense-in-depth — don't leave freed runtime data on
+  (2) **scrub pages on free** — DONE (vm_space_destroy zeroes private pages before
   the pool free list); (3) **PL0 user/kernel split** — the real protection boundary:
   today all tasks run privileged (System mode) with the identity DDR mapped RW in
   every space, so isolation holds against honest programs but NOT hostile code (a
