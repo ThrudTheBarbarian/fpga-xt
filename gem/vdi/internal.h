@@ -17,7 +17,8 @@ static inline uint32_t vdi_wrmix(int mode, uint32_t dst, uint32_t ink, uint32_t 
                   : mode == VDI_MD_ERASE   ? ink : dst;
 }
 
-#define VDI_MAX_WS 16
+#define VDI_MAX_WS 256   /* static workstation slots — generous headroom for off-screen
+                            rendering (~2 ws/app); .bss not heap (see core.c) */
 
 // A workstation: target surface + drawing attributes + clip rect.
 typedef struct {

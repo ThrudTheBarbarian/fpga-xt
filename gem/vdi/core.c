@@ -6,34 +6,23 @@
 #include "vdi/internal.h"
 #include "vdi/printers/pdf_device.h"
 #include <stddef.h>
-#include <stdlib.h>
 #include <string.h>
 #include <math.h>
 
 // ---- Workstations ---------------------------------------------------------
-// Dynamic table: a growable array of POINTERS to heap-allocated workstations.
-// The structs are allocated per slot and never move (the pointer array may grow),
-// which matters because op_opnbm stores &w->bm into the workstation itself.
-// Handle = slot index + 1; slot 0 is the physical workstation (handle 1).  There
-// is no fixed cap — it grows by VDI_MAX_WS slots on demand (an app doing off-screen
-// rendering wants ~2 workstations each, so 16 was never enough).
-static vdi_ws **ws_tab = NULL;
-static int      ws_cap = 0;
+// Static table, generously sized (VDI_MAX_WS) so off-screen rendering (~2
+// workstations per app + the shared Lua one) has plenty of headroom.  Kept in
+// .bss (NOT the heap) on purpose: a heap-backed table perturbed the allocator
+// enough to tip a latent FatFs-enumeration fragility on HW (boot only saw 1 of 3
+// scripts, ls faulted) — so we trade "unbounded" for reliability.  Handle = slot
+// index + 1; slot 0 is the physical workstation (handle 1).
+static vdi_ws   ws_tab[VDI_MAX_WS];
 static uint32_t pen_tab[256];
 
 vdi_ws *vdi_ws_of(int handle) {
-    if (handle < 1 || handle > ws_cap) return NULL;
-    vdi_ws *w = ws_tab[handle - 1];
-    return (w && w->used) ? w : NULL;
-}
-
-static int ws_grow(void) {                       // add VDI_MAX_WS pointer slots
-    int n = ws_cap + VDI_MAX_WS;
-    vdi_ws **t = realloc(ws_tab, (size_t)n * sizeof(*t));
-    if (!t) return 0;
-    for (int i = ws_cap; i < n; i++) t[i] = NULL;
-    ws_tab = t; ws_cap = n;
-    return 1;
+    if (handle < 1 || handle > VDI_MAX_WS) return NULL;
+    vdi_ws *w = &ws_tab[handle - 1];
+    return w->used ? w : NULL;
 }
 
 static void ws_defaults(vdi_ws *w) {             // initial workstation attributes
@@ -49,19 +38,9 @@ static void ws_defaults(vdi_ws *w) {             // initial workstation attribut
 }
 
 int vdi_ws_alloc(void) {
-    int slot = -1;
-    for (int i = 1; i < ws_cap; i++)              // slot 0 = physical; reuse free/empty
-        if (!ws_tab[i] || !ws_tab[i]->used) { slot = i; break; }
-    if (slot < 0) {                               // none free -> grow the table
-        slot = (ws_cap < 1) ? 1 : ws_cap;
-        if (!ws_grow()) return 0;
-    }
-    if (!ws_tab[slot]) {                          // allocate the struct lazily (stable ptr)
-        ws_tab[slot] = calloc(1, sizeof(vdi_ws));
-        if (!ws_tab[slot]) return 0;
-    }
-    ws_defaults(ws_tab[slot]);
-    return slot + 1;
+    for (int i = 1; i < VDI_MAX_WS; i++)          // slot 0 = physical
+        if (!ws_tab[i].used) { ws_defaults(&ws_tab[i]); return i + 1; }
+    return 0;
 }
 void vdi_ws_free(int handle) {
     vdi_ws *w = vdi_ws_of(handle);
@@ -69,9 +48,9 @@ void vdi_ws_free(int handle) {
 }
 void vdi_ws_stats(int *used, int *cap) {          // diagnostics: open count / slots
     int u = 0;
-    for (int i = 0; i < ws_cap; i++) if (ws_tab[i] && ws_tab[i]->used) u++;
+    for (int i = 0; i < VDI_MAX_WS; i++) if (ws_tab[i].used) u++;
     if (used) *used = u;
-    if (cap)  *cap  = ws_cap;
+    if (cap)  *cap  = VDI_MAX_WS;
 }
 
 // Effective clip rect: ws clip ∩ surface, inclusive.
@@ -314,20 +293,17 @@ gfx_surface vdi_mfdb_surf(const MFDB *m, const vdi_ws *w) {
 
 // ---- Init + dispatch ------------------------------------------------------
 void vdi_init(gfx_surface *default_target) {
-    for (int i = 0; i < ws_cap; i++) { free(ws_tab[i]); ws_tab[i] = NULL; }  // reset (idempotent)
-    free(ws_tab); ws_tab = NULL; ws_cap = 0;
+    memset(ws_tab, 0, sizeof(ws_tab));
     pen_init();
-    if (ws_grow() && (ws_tab[0] = calloc(1, sizeof(vdi_ws)))) {  // handle 1 = physical
-        ws_defaults(ws_tab[0]);
-        ws_tab[0]->target = default_target;
-    }
+    ws_defaults(&ws_tab[0]);                       // handle 1 = physical
+    ws_tab[0].target = default_target;
     g_hilite_color = 1; g_min_color = 1; g_max_color = 0; g_weight_color = 9;  // extended-raster colours
 }
 
 font_face *g_default_face;
 void vdi_set_face(font_face *face) { g_default_face = face; }
 
-gfx_surface *vdi_screen_target(void) { return ws_tab[0] ? ws_tab[0]->target : NULL; }   // desktop surface
+gfx_surface *vdi_screen_target(void) { return ws_tab[0].target; }   // the desktop surface
 
 // Fill a v_opnwk / v_opnvwk work_out capability array (intout[0..44] +
 // ptsout[0..11]).  Key field: intout[13] = number of simultaneous colours
