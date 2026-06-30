@@ -1154,8 +1154,9 @@ module fpga_xt_top (
     // Banked screen RAM engine (screen_bank).  CPU port = clk_sally (sally_mem);
     // ANTIC port + engine/AXI = clk_sys.  AXI master -> S_AXI_GP0 (PL->PS
     // general-purpose; the copies are ~MB/s + non-latency-critical, so no HP
-    // port / no contention with scan-out/blitter).  Chunk-stack @ 0x3800_0000
-    // (256 x 8 KB = 2 MB), clear of the plane/XL/drag/sprite-arena surfaces.
+    // port / no contention with scan-out/blitter).  Chunk-stack @ 0x2800_0000
+    // (256 x 8 KB = 2 MB) in the 0x2100-0x2FFF spare block — clear of the SALLY
+    // banks, the planes/XL/drag/sprite-arena, AND plv_alloc (0x3800_0000+).
     // ====================================================================
     wire [31:0] gp0m_araddr;  wire [3:0] gp0m_arlen;  wire [2:0] gp0m_arsize;
     wire [1:0]  gp0m_arburst; wire gp0m_arvalid, gp0m_arready;
@@ -1165,7 +1166,7 @@ module fpga_xt_top (
     wire [31:0] gp0m_wdata;   wire [3:0] gp0m_wstrb;  wire gp0m_wlast, gp0m_wvalid, gp0m_wready;
     wire        gp0m_bvalid,  gp0m_bready;
 
-    screen_bank #(.STACK_BASE(32'h3800_0000), .APERTURE_LOG2(13)) u_screen_bank (
+    screen_bank #(.STACK_BASE(32'h2800_0000), .APERTURE_LOG2(13)) u_screen_bank (
         .clk          (clk_sys),       .rst        (rst_sys),
         .clk_cpu      (clk_sally),
         .cpu_addr     (scrn_cpu_addr), .cpu_we     (scrn_cpu_we), .cpu_wdata (scrn_cpu_wdata),

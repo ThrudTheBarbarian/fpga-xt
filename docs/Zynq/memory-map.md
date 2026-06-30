@@ -1,9 +1,11 @@
 # DDR3 memory map (Zynq-7020 PS DDR)
 
 The Z-Turn full SOM ships with 1 GB DDR3L attached to the PS DDR
-controller. The PL accesses it through AXI HP slave ports (HP0..HP3),
-each visible to the PL as a 64-bit 32-bit-addressable AXI master
-endpoint.
+controller. The PL reaches it through the PS AXI slave ports — the four
+64-bit **HP** ports (HP0..HP3) for the bandwidth/latency-critical masters,
+plus one 32-bit **GP** slave port (S_AXI_GP0) for the low-rate banked-screen
+copier. The PS reaches PL registers the other way, through the GP **master**
+port (M_AXI_GP0). See [AXI port usage](#axi-port-usage) for the full map.
 
 This document is the canonical DDR map: the **PL-visible** regions (any
 block the PL fabric reads/writes via an HP port — planes, SALLY banks,
@@ -31,7 +33,9 @@ values below are defaults — overridable at instantiation.
             │ 256 × 16 KB each ≈ 12 MB used, 16 MB reserved.           │
 0x2100_0000 ├─────────────────────────────────────────────────────────┤
             │ spare (~240 MB) — 68k "T" realm (ST/STe/TT guest RAM,    │
-            │ ~64 MB) when wired; remainder free.                      │
+            │ ~64 MB) when wired; remainder free, incl:                │
+            │   SCRN_STACK 0x2800_0000  banked screen-RAM chunk-stack  │
+            │             (screen_bank, 256 × 8 KB = 2 MB, via GP0)    │
 0x3000_0000 ├─────────────────────────────────────────────────────────┤
             │ Compositor planes (PL-visible, WIRED) — verified vs HDL/ │
             │ PS 2026-06-28:                                           │
@@ -126,17 +130,47 @@ Per scan-out at 1080p60, 32 bpp:
 - 60 bursts/line × ~18 cycles = ~1080 cycles = **7.2 µs/line** — half
   the budget, leaves headroom for blitter writes on the same HP port.
 
-## Module ownership
+## AXI port usage
 
-| Region | Owner module(s) | AXI HP port |
-|--------|-----------------|-------------|
-| SALLY banked window (0x2000_0000) | `sally_mem` (banked-window cache inside) | HP0 (existing `m_axi_*`) |
-| Main framebuffer (0x3000_0000) | `fb_scanout` / compositor `plane_fetch` (read) + `xt_blitter` (write) | HP0 read / HP1 blitter |
-| XL triple-buffer (0x3100_0000 / 0x3110_0000 / 0x3120_0000) | `antic_writeback` (write, rotates 3 slots) + compositor `plane_fetch1` (read) | HP3 |
-| Drag-overlay surface (0x3200_0000) | `plane_fetch_overlay` (read; base written by PS at runtime) | HP2 |
-| Wallpaper / WM backdrop (0x3300_0000) | GEM WM (PS) — snapshot of the desktop plane | (PS write / plane read) |
-| Sprite arena (0x3400_0000) | `sprite_engine` image fetch (master dangled) | HP0 (planned) |
-| PL-visible heap (0x3800_0000) | blitter (glyph atlas / asset reads) + GEM window surfaces + DMA | HP1 / various |
+The Zynq-7020 PS exposes (to the PL) two 32-bit GP master ports, two 32-bit GP
+slave ports, four 64-bit HP slave ports, and one 64-bit coherent ACP port.
+What's wired today (audited against `hdl/fpga_xt_top.sv` 2026-06-30):
+
+| PS port | Width | Dir | Master / user | Region(s) served |
+|---------|-------|-----|---------------|------------------|
+| **M_AXI_GP0** | 32 | R+W | A9 → PL register bridge (`xt_gp0_regs`) | PL control regs (blitter / compositor / sprite / xtctl) — not DDR |
+| M_AXI_GP1 | 32 | — | **unused** | — |
+| **S_AXI_HP0** | 64 | **R** | `plane_fetch` | desktop/GEM plane read (`0x3000_0000`) |
+| **S_AXI_HP1** | 64 | **R+W** | `xt_blitter` | glyph-atlas/asset read + plane/surface write |
+| **S_AXI_HP2** | 64 | **R+W** | `antic_writeback` (W) + drag-overlay/sprite read-arbiter (R) | XL writeback write (`0x31xx`) + drag-overlay (`0x3200_0000`) & sprite-arena (`0x3400_0000`) read |
+| **S_AXI_HP3** | 64 | **R** | `plane_fetch1` | XL triple-buffer read (`0x3100/10/20_0000`) |
+| **S_AXI_GP0** | 32 | **R+W** | `screen_bank` (`m_axi_scrn`) | banked screen-RAM chunk-stack (`0x2800_0000`) |
+| S_AXI_GP1 | 32 | — | **unused** (free) | — |
+| S_AXI_ACP | 64 | — | **unused** (free) | coherent option — see architecture-review §3.1 |
+
+Notes:
+- **Direction is the PL master's view**: HP0/HP3 are read-only (scan-out fetch);
+  HP1/HP2/GP0 are read+write.
+- **`sally_mem`'s banked-window AXI master is tied off** (SALLY runs entirely from
+  BRAM; DDR-backed code/data banking is not wired — `fpga_xt_top.sv` ~line 322).
+  The `0x2000_0000` SALLY-bank region is therefore reserved-but-unused today.
+- **GP0 (not an HP port) for screen_bank on purpose**: its copies are ~MB/s and
+  non-latency-critical (CPU polls `$D5C5.ready`; the RGBA triple buffer keeps
+  scan-out tear-free), so it must not sit on — or arbitrate with — the
+  bandwidth/latency-critical HP masters. GP's ~600 MB/s is ~1000× headroom here.
+
+## Region → owner
+
+| Region | Owner module(s) | Port |
+|--------|-----------------|------|
+| SALLY banked window (`0x2000_0000`) | `sally_mem` banked cache | (AXI master tied off — unused) |
+| Screen chunk-stack (`0x2800_0000`) | `screen_bank` | S_AXI_GP0 (R+W) |
+| Desktop/GEM plane (`0x3000_0000`) | `plane_fetch` (read) + `xt_blitter` (write) | HP0 read / HP1 write |
+| XL triple-buffer (`0x3100/10/20_0000`) | `antic_writeback` (write, 3 slots) + `plane_fetch1` (read) | HP2 write / HP3 read |
+| Drag-overlay surface (`0x3200_0000`) | `plane_fetch_overlay` (read; PS sets base) | HP2 read (shared) |
+| Wallpaper / WM backdrop (`0x3300_0000`) | GEM WM (PS) — desktop-plane snapshot | PS write / plane read |
+| Sprite arena (`0x3400_0000`) | `sprite_engine` image fetch | HP2 read (shared) |
+| PL-visible heap (`0x3800_0000`) | blitter (glyph atlas / asset reads) + GEM window surfaces + DMA | HP1 / various |
 
 Each owner declares its base address as a module parameter; the
 defaults above are what `fpga_xt_top` instantiates.
