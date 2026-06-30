@@ -2,10 +2,11 @@
 
 The Z-Turn full SOM ships with 1 GB DDR3L attached to the PS DDR
 controller. The PL reaches it through the PS AXI slave ports — the four
-64-bit **HP** ports (HP0..HP3) for the bandwidth/latency-critical masters,
-plus one 32-bit **GP** slave port (S_AXI_GP0) for the low-rate banked-screen
-copier. The PS reaches PL registers the other way, through the GP **master**
-port (M_AXI_GP0). See [AXI port usage](#axi-port-usage) for the full map.
+64-bit **HP** ports (HP0..HP3) for the bandwidth/latency-critical video masters,
+the 32-bit **GP** slave port (S_AXI_GP0) for the low-rate banked-screen copier,
+and the 64-bit **ACP** port for the SALLY code/data page cache. The PS reaches
+PL registers the other way, through the GP **master** port (M_AXI_GP0). See
+[AXI port usage](#axi-port-usage) for the full map.
 
 This document is the canonical DDR map: the **PL-visible** regions (any
 block the PL fabric reads/writes via an HP port — planes, SALLY banks,
@@ -149,14 +150,17 @@ What's wired today (audited against `hdl/fpga_xt_top.sv` 2026-06-30):
 | **S_AXI_HP3** | 64 | **R** | `plane_fetch1` | XL triple-buffer read (`0x3100/10/20_0000`) |
 | **S_AXI_GP0** | 32 | **R+W** | `screen_bank` (`m_axi_scrn`) | banked screen-RAM chunk-stack (`0x2080_0000`) |
 | S_AXI_GP1 | 32 | — | **unused** (free) | — |
-| S_AXI_ACP | 64 | — | **unused** (free) | coherent option — see architecture-review §3.1 |
+| **S_AXI_ACP** | 64 | **R+W** | `sally_mem` `banked_page_cache` (`m_axi_sally`) | SALLY code/data bank demand-fill + dirty write-back (`0x2000`/`0x2040`) |
 
 Notes:
 - **Direction is the PL master's view**: HP0/HP3 are read-only (scan-out fetch);
-  HP1/HP2/GP0 are read+write.
-- **`sally_mem`'s banked-window AXI master is tied off** (SALLY runs entirely from
-  BRAM; DDR-backed code/data banking is not wired — `fpga_xt_top.sv` ~line 322).
-  The `0x2000_0000` SALLY-bank region is therefore reserved-but-unused today.
+  HP1/HP2/GP0/ACP are read+write.
+- **`sally_mem`'s `banked_page_cache` is on ACP** (64-bit, coherent-capable; driven
+  non-coherent today — `aruser/awuser=0`). The cache serves resident pages from BRAM
+  and demand-fills code/data banks from DDR on a `$D5C0`/`$D5C1` miss (+ dirty
+  write-back). Dormant until a non-zero bank is selected (SALLY otherwise runs from
+  the flat BRAM = bank 0). ACP (not HP) keeps all four HP ports for the video
+  datapath, and suits the latency-sensitive CPU fetch path.
 - **GP0 (not an HP port) for screen_bank on purpose**: its copies are ~MB/s and
   non-latency-critical (CPU polls `$D5C5.ready`; the RGBA triple buffer keeps
   scan-out tear-free), so it must not sit on — or arbitrate with — the
@@ -166,7 +170,7 @@ Notes:
 
 | Region | Owner module(s) | Port |
 |--------|-----------------|------|
-| SALLY banked window (`0x2000_0000`) | `sally_mem` banked cache | (AXI master tied off — unused) |
+| SALLY banked window (`0x2000_0000`) | `sally_mem` `banked_page_cache` | S_AXI_ACP (R+W) |
 | Screen chunk-stack (`0x2080_0000`) | `screen_bank` | S_AXI_GP0 (R+W) |
 | Desktop/GEM plane (`0x3000_0000`) | `plane_fetch` (read) + `xt_blitter` (write) | HP0 read / HP1 write |
 | XL triple-buffer (`0x3100/10/20_0000`) | `antic_writeback` (write, 3 slots) + `plane_fetch1` (read) | HP2 write / HP3 read |

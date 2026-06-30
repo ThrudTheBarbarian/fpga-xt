@@ -322,9 +322,10 @@ module fpga_xt_top (
     wire        hwreg_we;
     wire [7:0]  hwreg_dout;
 
-    // AXI bus to DDR3 (banked-window port) — tied off in Phase 2a/b since
-    // the SALLY core runs entirely from BRAM; banked_axi_reader is unused.
-    // Outputs from sally_mem left open; inputs tied to 0 (slave never ready).
+    // AXI bus to DDR3 (banked-window port) — banked_page_cache code/data
+    // demand-fill + dirty write-back, via S_AXI_ACP (PS BD port 'm_axi_sally').
+    // 64-bit; AXI4->AXI3 arlen truncation at the wrapper; ACP non-coherent
+    // (aruser/awuser tied 0).  Dormant until $D5C0/$D5C1 select a non-zero bank.
     wire [31:0] axi_araddr;
     wire [7:0]  axi_arlen;
     wire [2:0]  axi_arsize;
@@ -341,13 +342,13 @@ module fpga_xt_top (
     wire        axi_wlast;
     wire        axi_wvalid;
     wire        axi_bready;
-    wire        axi_arready = 1'b0;
-    wire [63:0] axi_rdata   = 64'd0;
-    wire        axi_rvalid  = 1'b0;
-    wire        axi_rlast   = 1'b0;
-    wire        axi_awready = 1'b0;
-    wire        axi_wready  = 1'b0;
-    wire        axi_bvalid  = 1'b0;
+    wire        axi_arready;   // <- ps_bd m_axi_sally (ACP)
+    wire [63:0] axi_rdata;
+    wire        axi_rvalid;
+    wire        axi_rlast;
+    wire        axi_awready;
+    wire        axi_wready;
+    wire        axi_bvalid;
 
     // ---- AXI HP port connections — routed through internal HP stub ---------
     // HP0 — plane_fetch (read-only AXI4 master → AXI3 slave)
@@ -2213,6 +2214,46 @@ module fpga_xt_top (
         .m_axi_scrn_wready  (gp0m_wready),
         .m_axi_scrn_wstrb   (gp0m_wstrb),
         .m_axi_scrn_wvalid  (gp0m_wvalid),
+
+        // ACP (S_AXI_ACP, 64-bit AXI3) — banked_page_cache code/data DDR master
+        .m_axi_sally_araddr  (axi_araddr[31:0]),
+        .m_axi_sally_arburst (axi_arburst[1:0]),
+        .m_axi_sally_arcache (4'd0),
+        .m_axi_sally_arid    (6'd0),
+        .m_axi_sally_arlen   (axi_arlen[3:0]),
+        .m_axi_sally_arlock  (2'd0),
+        .m_axi_sally_arprot  (3'd0),
+        .m_axi_sally_arqos   (4'd0),
+        .m_axi_sally_arready (axi_arready),
+        .m_axi_sally_arsize  (axi_arsize[2:0]),
+        .m_axi_sally_arvalid (axi_arvalid),
+        .m_axi_sally_awaddr  (axi_awaddr[31:0]),
+        .m_axi_sally_awburst (axi_awburst[1:0]),
+        .m_axi_sally_awcache (4'd0),
+        .m_axi_sally_awid    (6'd0),
+        .m_axi_sally_awlen   (axi_awlen[3:0]),
+        .m_axi_sally_awlock  (2'd0),
+        .m_axi_sally_awprot  (3'd0),
+        .m_axi_sally_awqos   (4'd0),
+        .m_axi_sally_awready (axi_awready),
+        .m_axi_sally_awsize  (axi_awsize[2:0]),
+        .m_axi_sally_awvalid (axi_awvalid),
+        .m_axi_sally_bid     (),
+        .m_axi_sally_bready  (axi_bready),
+        .m_axi_sally_bresp   (),
+        .m_axi_sally_bvalid  (axi_bvalid),
+        .m_axi_sally_rdata   (axi_rdata),
+        .m_axi_sally_rid     (),
+        .m_axi_sally_rlast   (axi_rlast),
+        .m_axi_sally_rready  (axi_rready),
+        .m_axi_sally_rresp   (),
+        .m_axi_sally_rvalid  (axi_rvalid),
+        .m_axi_sally_wdata   (axi_wdata),
+        .m_axi_sally_wid     (6'd0),
+        .m_axi_sally_wlast   (axi_wlast),
+        .m_axi_sally_wready  (axi_wready),
+        .m_axi_sally_wstrb   (axi_wstrb),
+        .m_axi_sally_wvalid  (axi_wvalid),
 
         // HP1 — xt_blitter (read/write) through pipeline registers
         .m_axi_hp1_araddr   (ps_hp1_araddr[31:0]),

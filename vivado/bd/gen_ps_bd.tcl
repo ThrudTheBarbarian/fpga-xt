@@ -47,7 +47,7 @@ set_property -dict [list \
     CONFIG.PCW_USE_M_AXI_GP0 {1} \
     CONFIG.PCW_USE_M_AXI_GP1 {0} \
     CONFIG.PCW_USE_S_AXI_GP0 {1} \
-    CONFIG.PCW_USE_S_AXI_ACP {0} \
+    CONFIG.PCW_USE_S_AXI_ACP {1} \
     CONFIG.PCW_EN_CLK0_PORT {1} \
     CONFIG.PCW_EN_CLK1_PORT {1} \
     CONFIG.PCW_EN_CLK2_PORT {0} \
@@ -129,6 +129,24 @@ if {$gp0s_iface ne ""} {
     puts ">> exported S_AXI_GP0 as external interface 'm_axi_scrn' (AXI3, 32-bit)"
 }
 
+# ---- Export S_AXI_ACP as an external AXI3 slave (64-bit) — SALLY code/data ---
+# The banked_page_cache demand-fill / dirty-writeback master (PL -> PS).  ACP
+# (64-bit, coherent-capable) suits the latency-sensitive CPU code/data path and
+# leaves all four HP ports for the video datapath.  Driven non-coherent for now
+# (aruser/awuser tied 0 in fpga_xt_top); flip to coherent later if wanted.
+set acp_iface [get_bd_intf_pins -quiet zynq_ps/S_AXI_ACP]
+if {$acp_iface ne ""} {
+    create_bd_intf_port -mode Slave \
+        -vlnv xilinx.com:interface:aximm_rtl:1.0 m_axi_sally
+    set_property -dict [list \
+        CONFIG.PROTOCOL {AXI3} \
+        CONFIG.DATA_WIDTH {64} \
+        CONFIG.FREQ_HZ {150000000} \
+    ] [get_bd_intf_ports m_axi_sally]
+    connect_bd_intf_net [get_bd_intf_ports m_axi_sally] $acp_iface
+    puts ">> exported S_AXI_ACP as external interface 'm_axi_sally' (AXI3, 64-bit)"
+}
+
 # ---- Export GP0 as external AXI3 master interface (32-bit, 150 MHz) ---------
 set gp0_iface [get_bd_intf_pins -quiet zynq_ps/M_AXI_GP0]
 if {$gp0_iface ne ""} {
@@ -176,6 +194,11 @@ if {$gp0s_aclk ne ""} {
     connect_bd_net [get_bd_ports s_axi_gp0_aclk] $gp0s_aclk
     puts ">> S_AXI_GP0_ACLK <- s_axi_gp0_aclk (clk_sys)"
 }
+set acp_aclk [get_bd_pins -quiet /zynq_ps/S_AXI_ACP_ACLK]
+if {$acp_aclk ne ""} {
+    connect_bd_net [get_bd_ports s_axi_gp0_aclk] $acp_aclk
+    puts ">> S_AXI_ACP_ACLK <- s_axi_gp0_aclk (clk_sys)"
+}
 
 # ---- Make FCLK reset external -----------------------------------------------
 make_bd_pins_external [get_bd_pins zynq_ps/FCLK_RESET0_N]
@@ -199,7 +222,7 @@ if {$fclk_port ne ""} {
 }
 set gp0clk_port [get_bd_ports s_axi_gp0_aclk]
 if {$gp0clk_port ne ""} {
-    set_property CONFIG.ASSOCIATED_BUSIF {m_axi_gp0 m_axi_hp0 m_axi_hp1 m_axi_hp2 m_axi_hp3 m_axi_scrn} $gp0clk_port
+    set_property CONFIG.ASSOCIATED_BUSIF {m_axi_gp0 m_axi_hp0 m_axi_hp1 m_axi_hp2 m_axi_hp3 m_axi_scrn m_axi_sally} $gp0clk_port
 }
 
 # ---- Assign HP address spaces to DDR ---------------------------------------
@@ -208,6 +231,7 @@ assign_bd_address [get_bd_addr_segs /zynq_ps/S_AXI_HP1/HP1_DDR_LOWOCM]
 assign_bd_address [get_bd_addr_segs /zynq_ps/S_AXI_HP2/HP2_DDR_LOWOCM]
 assign_bd_address [get_bd_addr_segs /zynq_ps/S_AXI_HP3/HP3_DDR_LOWOCM]
 assign_bd_address [get_bd_addr_segs /zynq_ps/S_AXI_GP0/GP0_DDR_LOWOCM]
+assign_bd_address [get_bd_addr_segs /zynq_ps/S_AXI_ACP/ACP_DDR_LOWOCM]
 
 # ---- Assign GP0 address range for PL register access -----------------------
 assign_bd_address [get_bd_addr_segs /m_axi_gp0/Reg]
