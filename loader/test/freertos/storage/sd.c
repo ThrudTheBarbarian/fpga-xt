@@ -84,6 +84,23 @@ void sd_init(void)
     puts0("[sd] read path OK\r\n");
 }
 
+/* enumerate files in an SD directory into out[] (NUL-terminated names, <=31 chars,
+ * subdirectories skipped). Returns the count, or -1 if the dir can't be opened.
+ * Used by the /OS/Boot auto-runner. Single-threaded (reuses the static DIR/FILINFO). */
+int sd_listdir(const char *dir, char out[][32], int max)
+{
+    if (f_opendir(&g_dir, dir) != FR_OK) return -1;
+    int n = 0;
+    while (n < max && f_readdir(&g_dir, &g_fno) == FR_OK && g_fno.fname[0]) {
+        if (g_fno.fattrib & AM_DIR) continue;
+        int i = 0; while (g_fno.fname[i] && i < 31) { out[n][i] = g_fno.fname[i]; i++; }
+        out[n][i] = 0; n++;
+    }
+    f_closedir(&g_dir);
+    return n;
+}
+
 #else  /* qemu: no SD card */
 void sd_init(void) { }
+int  sd_listdir(const char *dir, char out[][32], int max) { (void)dir; (void)out; (void)max; return -1; }
 #endif

@@ -105,6 +105,36 @@ static void run_selftest(void)
     puts0(now == base ? "reclaimed; OS alive ====\n" : "LEAK ====\n");
 }
 
+/* /OS/Boot auto-runner: for each /OS/Boot/NN-<slug> on the SD, in NN order, spawn
+ * /bin/<slug> DIRECTLY (no shell process per entry). This is how the desktop comes
+ * up at boot — drop a file like /OS/Boot/10-desktop on the card. Each program is
+ * run to completion in turn (frtos_spawn_argv waits), as run_selftest does. */
+static int lead_num(const char *s) { int v = 0; while (*s >= '0' && *s <= '9') v = v * 10 + (*s++ - '0'); return v; }
+
+static void boot_run(void)
+{
+    extern int sd_listdir(const char *, char (*)[32], int);
+    char nm[16][32];
+    int n = sd_listdir("0:/OS/Boot", nm, 16);
+    if (n <= 0) return;                              /* no /OS/Boot -> straight to the shell */
+    for (int i = 1; i < n; i++)                      /* insertion sort by the NN prefix */
+        for (int j = i; j > 0 && lead_num(nm[j]) < lead_num(nm[j - 1]); j--) {
+            char t[32]; for (int k = 0; k < 32; k++) { t[k] = nm[j][k]; nm[j][k] = nm[j-1][k]; nm[j-1][k] = t[k]; }
+        }
+    for (int i = 0; i < n; i++) {
+        const char *slug = nm[i];
+        while (*slug && *slug != '-') slug++;        /* skip "NN" */
+        if (*slug == '-') slug++;                    /* skip the '-' */
+        char path[40]; const char *pre = "/bin/"; int k = 0;
+        while (pre[k]) { path[k] = pre[k]; k++; }
+        for (int j = 0; slug[j] && k < 39; j++) path[k++] = slug[j];
+        path[k] = 0;
+        char *av[1] = { path };
+        puts0("[boot] "); puts0(nm[i]); puts0(" -> "); puts0(path); puts0("\n");
+        if (frtos_spawn_argv(path, 1, av, &g_host) < 0) { puts0("[boot]   MISSING "); puts0(path); puts0("\n"); }
+    }
+}
+
 static void shell_task(void *arg)
 {
     (void)arg;
@@ -112,6 +142,7 @@ static void shell_task(void *arg)
 #ifdef XT_HW_UART
     run_selftest();   /* hardware: auto-run the battery once at boot, then drop to the shell */
 #endif
+    boot_run();       /* /OS/Boot/NN-<slug> auto-runner (e.g. the desktop) */
     puts0("\nXTOS shell  —  try: selftest | echo | hello | libc_test | gemtext | desktop | exit\n");
     char line[128];
     char *argv[16];
