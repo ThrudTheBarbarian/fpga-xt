@@ -10,8 +10,9 @@ extern void putu(unsigned);
 
 #ifdef XT_HW
 
-static FATFS g_fs;
-static FIL   g_fil;
+static FATFS   g_fs;
+static DIR     g_dir;
+static FILINFO g_fno;
 
 void sd_init(void)
 {
@@ -23,15 +24,18 @@ void sd_init(void)
     }
     puts0("[sd] SD mounted (FatFs)\r\n");
 
-    /* read a known file to prove the read path end-to-end */
-    r = f_open(&g_fil, "0:/OS/etc/motd", FA_READ);
-    if (r != FR_OK) { puts0("[sd] open /OS/etc/motd rc="); putu((unsigned)r); puts0("\r\n"); return; }
-    char buf[96]; UINT n = 0;
-    f_read(&g_fil, buf, sizeof buf - 1, &n);
-    buf[n] = 0;
-    for (UINT i = 0; i < n; i++) if (buf[i] == '\n') { buf[i] = 0; break; }
-    puts0("[sd] /OS/etc/motd ("); putu((unsigned)n); puts0(" B): "); puts0(buf); puts0("\r\n");
-    f_close(&g_fil);
+    /* list the root directory: proves directory traversal + shows the card contents */
+    r = f_opendir(&g_dir, "0:/");
+    if (r != FR_OK) { puts0("[sd] opendir / rc="); putu((unsigned)r); puts0("\r\n"); return; }
+    puts0("[sd] 0:/ contents:\r\n");
+    for (;;) {
+        r = f_readdir(&g_dir, &g_fno);
+        if (r != FR_OK || g_fno.fname[0] == 0) break;
+        puts0("  "); puts0(g_fno.fname);
+        puts0((g_fno.fattrib & AM_DIR) ? "/\r\n" : "\r\n");
+    }
+    f_closedir(&g_dir);
+    puts0("[sd] read path OK\r\n");
 }
 
 #else  /* qemu: no SD card */
