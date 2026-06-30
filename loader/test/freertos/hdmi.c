@@ -55,6 +55,7 @@ static void gt_delay_us(uint32_t us)
 #define I2C_ISR  (*(volatile uint32_t *)(I2C_BASE + 0x10))   /* irq status (w1c) */
 #define I2C_TSR  (*(volatile uint32_t *)(I2C_BASE + 0x14))   /* transfer size    */
 #define I2C_TOR  (*(volatile uint32_t *)(I2C_BASE + 0x1C))   /* timeout (SCL periods) */
+#define I2C_IDR  (*(volatile uint32_t *)(I2C_BASE + 0x28))   /* interrupt disable */
 
 #define CR_DIV_A(n) ((uint32_t)(n) << 14)
 #define CR_DIV_B(n) ((uint32_t)(n) << 8)
@@ -84,18 +85,21 @@ static void i2c_wait_idle(void)
 
 static void i2c_init(void)
 {
-    I2C_CR  = CR_BASE | CR_CLRFIFO;
-    I2C_TOR = 0xFFu;             /* timeout (XIicPs sets this; omitting it can wedge) */
+    /* Full reset, mirroring XIicPs_Reset: clear CR, disable ALL interrupts (we
+     * poll), set the timeout, clear status — THEN set divider + master mode.
+     * (The bare driver previously skipped the interrupt-disable + CR reset.) */
+    I2C_CR  = 0;
+    I2C_IDR = 0x2FFu;           /* disable every interrupt source */
+    I2C_TOR = 0x1Fu;            /* XIicPs default timeout */
     I2C_ISR = I2C_ISR;          /* w1c: clear stale status */
+    I2C_CR  = CR_BASE | CR_CLRFIFO;   /* divider + master + ackEn + 7-bit, clear FIFO */
 }
 
 /* write n bytes to slave `addr` (single transaction, auto START..STOP). 0=ok */
 static int i2c_send(uint8_t addr, const uint8_t *buf, int n)
 {
     i2c_wait_idle();                         /* bus idle before START */
-    I2C_CR  = CR_BASE;                        /* write mode (FIFO already empty; do NOT
-                                              * strobe CLR_FIFO here — its flush runs over
-                                              * I2C-clock periods and eats the data byte) */
+    I2C_CR  = CR_BASE | CR_CLRFIFO;          /* write mode (matches XIicPs SetupMaster) */
     I2C_ISR = I2C_ISR;
     for (int i = 0; i < n; i++) I2C_DR = buf[i];   /* fifo depth 16 (we send <=14) */
     g_send_sr = I2C_SR;                        /* TXDV(bit6) here => data queued before START */
@@ -112,9 +116,9 @@ static int i2c_send(uint8_t addr, const uint8_t *buf, int n)
 static int i2c_recv(uint8_t addr, uint8_t *buf, int n)
 {
     i2c_wait_idle();                          /* bus idle before START */
-    I2C_CR  = CR_BASE | CR_RW;                /* read mode (no per-txn CLR_FIFO — see send) */
+    I2C_CR  = CR_BASE | CR_CLRFIFO | CR_RW;   /* read mode (matches XIicPs SetupMaster) */
     I2C_ISR = I2C_ISR;
-    I2C_TSR = (uint32_t)n;
+    I2C_TSR = (uint32_t)n;                     /* TSR before ADDR (XIicPs CR996440) */
     I2C_AR  = addr & 0x7Fu;                   /* address read -> START */
     int got = 0; uint32_t to = 2000000;
     while (got < n && --to) {
@@ -133,36 +137,12 @@ static int i2c_recv(uint8_t addr, uint8_t *buf, int n)
 #define SII_ADDR 0x3Bu
 static int sii_write(uint8_t reg, uint8_t val) { uint8_t b[2] = { reg, val }; return i2c_send(SII_ADDR, b, 2); }
 
-/* TPI random read via a REPEATED START: offset-write + read in ONE held
- * transaction (the I2C-correct sequence for a register read). stop-then-start
- * left the SiI's offset un-latched here (reads auto-incremented). */
+/* TPI register read: write the offset (STOP), then read 1 byte (START) — the
+ * XIicPs MasterSend + MasterRecv sequence (bus goes idle between, via i2c_*). */
 static int sii_read(uint8_t reg, uint8_t *val)
 {
-    i2c_wait_idle();
-    /* phase 1: address-FIRST, then data — write AR (START+addr, HOLD stretches
-     * SCL) BEFORE feeding the offset byte, in case the FIFO only accepts data
-     * once the transfer is armed. */
-    I2C_CR  = CR_BASE | CR_HOLD;
-    I2C_ISR = I2C_ISR;
-    I2C_AR  = SII_ADDR & 0x7Fu;       /* START + addr(W), bus held */
-    I2C_DR  = reg;                    /* offset byte (transfer now armed) */
-    gt_delay_us(1000);               /* let addr+offset clock out (bus held) */
-    g_send_isr = I2C_ISR; g_send_sr = I2C_SR; g_send_rc = 0;
-    /* phase 2: repeated START + addr(R), read 1 byte, drop HOLD -> STOP */
-    I2C_CR  = CR_BASE | CR_HOLD | CR_RW;
-    I2C_ISR = I2C_ISR;
-    I2C_TSR = 1u;
-    I2C_AR  = SII_ADDR & 0x7Fu;
-    I2C_CR &= ~CR_HOLD;                  /* release so STOP follows the 1 byte */
-    int got = 0; to = 2000000;
-    while (got < 1 && --to) {
-        if (I2C_SR & SR_RXDV) { *val = (uint8_t)I2C_DR; got = 1; }
-        if (I2C_ISR & ISR_NACK) break;
-    }
-    g_recv_isr = I2C_ISR; g_recv_sr = I2C_SR; g_recv_got = got;
-    g_recv_rc = got ? 0 : -1;
-    i2c_wait_idle();
-    return got ? 0 : -1;
+    if (i2c_send(SII_ADDR, &reg, 1)) return -1;
+    return i2c_recv(SII_ADDR, val, 1);
 }
 
 /* MIO[51] (GPIO bank1 bit19, MSW bit3) gates SiI9022 RESET#. Pulse LOW >=10 ms,
