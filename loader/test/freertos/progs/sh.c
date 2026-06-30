@@ -67,7 +67,7 @@ static void run_line(char *line)
     char path[96];
     if (argc > 0 && resolve_prog(argv[0], path, sizeof path)) {   /* command */
         argv[0] = path;
-        sys_spawn(path, argc, argv);                              /* fire-and-forget (waitpid TODO) */
+        sys_spawn(path, argc, argv);   /* fire-and-forget for now (waitpid pending the deferral wake fix) */
         return;
     }
     if (luaL_dostring(L, line) != LUA_OK) {                       /* otherwise: Lua */

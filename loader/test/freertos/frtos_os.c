@@ -37,6 +37,7 @@ typedef struct {
     uintptr_t         entry;
     SemaphoreHandle_t done;
     int               exit_code;
+    volatile int      exited;         /* set by the exit thunk; polled by frtos_waitpid */
     int               argc;
     char            **argv;
     fd_t              fd[NFD];
@@ -47,6 +48,12 @@ typedef struct {
     int               transient;      /* loaded outside the cache (runhost) -> unload on reap */
     void             *src;            /* the host ELF buffer to free on reap (transient) */
     StaticTask_t      tcb;            /* static TCB (stack from stackguard.c) */
+    /* blocking-syscall deferral: saved PL0 exception context so the blocking part can
+     * run in task context (PL1) and then sysret to PL0. dctx = {r0..r12, lr(=user PC),
+     * sp_usr, spsr}; dnum/da* = the deferred syscall + args. */
+    uint32_t          dctx[16];
+    uint32_t          dnum;
+    long              da0, da1, da2;
 } proc_t;
 
 static proc_t g_proc[MAXPROC];
@@ -173,6 +180,7 @@ void *sys_sbrk(int incr)
 static void task_exit_thunk(void)
 {
     proc_t *p = cur_proc();
+    if (p) p->exited = 1;             /* frtos_waitpid polls this */
     if (p && p->done) xSemaphoreGive(p->done);
     vTaskDelete(NULL);
     for (;;) {}
@@ -233,6 +241,54 @@ static long sys_lseek(proc_t *p, int fd, long off, int whence)
 }
 
 static const xtld_host *g_khost;   /* kernel loader host (frtos_set_host); used by SYS_spawn */
+
+/* ---- blocking-syscall deferral -------------------------------------------
+ * A blocking syscall (waitpid, stdin read) can't run in the SVC handler — its
+ * yield (svc #0) would nest inside svc #1. So k_syscall_dispatch saves the PL0
+ * caller's full exception frame in p->dctx and redirects the resume to
+ * deferral_thunk, which runs at PL1 (System) in TASK context (return 1, like the
+ * exit thunk). The thunk does the blocking work, then __sysret (svc #2) restores
+ * p->dctx with the result in r0 and returns to PL0. cur_dctx() hands the asm
+ * svc #2 path the saved frame ({r0..r12, lr=PC, sp_usr, spsr}). */
+void *cur_dctx(void) { proc_t *p = cur_proc(); return p ? p->dctx : (void *)0; }
+
+void deferral_thunk(void)                 /* PL1 (System), task context — DORMANT (see defer_syscall) */
+{
+    extern void __sysret(long);
+    extern int  sh_readc(void);
+    proc_t *p = cur_proc();
+    long r = -1;
+    if (p) switch (p->dnum) {
+        case SYS_spawn:   r = frtos_spawn_argv((const char *)p->da0, (int)p->da1, (char **)p->da2, g_khost); break;
+        case SYS_waitpid: r = frtos_waitpid((int)p->da0); break;
+        case SYS_read:    {                                /* fd 0 (stdin): one char from the console */
+            char *buf = (char *)p->da1;
+            if (p->da0 == 0 && buf && p->da2 > 0) { buf[0] = (char)sh_readc(); r = 1; }
+            else r = 0;
+            break;
+        }
+        default: r = -1;
+    }
+    __sysret(r);                          /* never returns */
+}
+
+/* defer the blocking syscalls; the rest run inline in do_syscall. Returns 1 to make
+ * the vector resume deferral_thunk at PL1 (System). */
+__attribute__((unused))                   /* DORMANT until the deferral-wake fix (see k_syscall_dispatch) */
+static int defer_syscall(struct k_regs *regs, uint32_t num)
+{
+    proc_t *p = cur_proc();
+    if (!p) { regs->r[0] = (uint32_t)-1; return 0; }       /* no proc -> can't defer */
+    for (int i = 0; i < 13; i++) p->dctx[i] = regs->r[i];
+    p->dctx[13] = regs->lr;                                /* user resume PC */
+    uint32_t spsr, spu;
+    __asm__ volatile("mrs %0, spsr" : "=r"(spsr));
+    __asm__ volatile("cps #0x1f\n\tmov %0, sp\n\tcps #0x13" : "=r"(spu) :: "memory"); /* read sp_usr */
+    p->dctx[14] = spu; p->dctx[15] = spsr;
+    p->dnum = num; p->da0 = regs->r[0]; p->da1 = regs->r[1]; p->da2 = regs->r[2];
+    regs->lr = (uint32_t)(uintptr_t)deferral_thunk;
+    return 1;
+}
 
 static long do_syscall(uint32_t num, long a0, long a1, long a2)
 {
@@ -309,6 +365,11 @@ int k_syscall_dispatch(struct k_regs *regs)
         regs->lr = (uint32_t)(uintptr_t)task_exit_thunk;   /* resume the thunk (at PL1) */
         return 1;
     }
+    /* NOTE: the syscall-deferral path (defer_syscall/deferral_thunk/__sysret, svc #2)
+     * is built + proven for NON-blocking deferred syscalls, but a cross-task wake does
+     * not reach a task blocked inside the thunk (FreeRTOS A9 port). So blocking PL0
+     * syscalls (waitpid, stdin read) are NOT wired here yet — interactive shell pending
+     * that fix. SYS_spawn runs inline (it's non-blocking and same-priority -> no yield). */
     regs->r[0] = (uint32_t)do_syscall(num, regs->r[0], regs->r[1], regs->r[2]);
     return 0;
 }
@@ -465,7 +526,7 @@ static int proc_launch(int slot, xtld_obj *obj, uintptr_t entry,
 {
     proc_t *p = &g_proc[slot];
     for (int i = 0; i < NFD; i++) p->fd[i].open = 0;
-    p->obj = obj; p->entry = entry; p->exit_code = 0; p->pid = g_next_pid++;
+    p->obj = obj; p->entry = entry; p->exit_code = 0; p->exited = 0; p->pid = g_next_pid++;
     p->done = xSemaphoreCreateBinary();
     if (!p->done) return -1;
     /* T2-b/c: private address space — demand heap + COW(libc data, synthetic, and
@@ -716,7 +777,7 @@ int frtos_waitpid(int pid)
         if (g_proc[i].used && g_proc[i].pid == pid) { p = &g_proc[i]; break; }
     if (!p) return -1;
 
-    xSemaphoreTake(p->done, portMAX_DELAY);    /* yields via svc #0 until exit */
+    xSemaphoreTake(p->done, portMAX_DELAY);    /* yields via svc #0 until exit (kernel-task waiters) */
     int code = p->exit_code;
     vSemaphoreDelete(p->done);
     vm_space_destroy((int)(p - g_proc));         /* reclaim its private pages to the pool */

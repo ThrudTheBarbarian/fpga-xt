@@ -31,24 +31,58 @@ _virq:  .word FreeRTOS_IRQ_Handler
  * The immediate is read via a stack-saved scratch so the svc #0 path reaches
  * FreeRTOS_SWI_Handler with pristine task state for its portSAVE_CONTEXT. */
     .global xt_svc_dispatch
+    .extern cur_dctx
 xt_svc_dispatch:
     push  {r0}
     ldr   r0, [lr, #-4]
     and   r0, r0, #0xff
     cmp   r0, #1
-    pop   {r0}                /* restore r0 + sp; flags from cmp preserved */
-    bne   FreeRTOS_SWI_Handler
+    beq   .Lsyscall          /* svc #1 = syscall gateway */
+    cmp   r0, #2
+    beq   .Lsysret           /* svc #2 = blocking-syscall return (sysret) */
+    pop   {r0}
+    b     FreeRTOS_SWI_Handler   /* svc #0 = FreeRTOS yield */
+.Lsyscall:
+    pop   {r0}                /* restore the user's r0 */
     push  {r0-r12, lr}        /* struct k_regs { r0..r12, lr } */
     mov   r0, sp
-    bl    k_syscall_dispatch  /* returns 1 if exit: resume the thunk at PL1 (System) */
-    cmp   r0, #1              /* (r0 = C return, before the pop restores the user's r0) */
+    bl    k_syscall_dispatch  /* 1 = resume a thunk at PL1 (exit OR a deferred blocking syscall) */
+    cmp   r0, #1
     bne   1f
-    mrs   r0, spsr            /* exit: a PL0 task's thunk must run privileged to call */
-    bic   r0, r0, #0x1f       /*   vTaskDelete — force the resumed mode to System */
+    mrs   r0, spsr            /* force the resumed mode to System (PL1) so the thunk can */
+    bic   r0, r0, #0x1f       /*   call yielding FreeRTOS APIs (vTaskDelete / xSemaphoreTake) */
     orr   r0, r0, #0x1f
     msr   spsr_cxsf, r0
-1:  pop   {r0-r12, lr}        /* lr may have been redirected (exit thunk) */
+1:  pop   {r0-r12, lr}        /* lr may have been redirected (exit / deferral thunk) */
     movs  pc, lr
+
+/* svc #2 — __sysret(result): a deferral thunk finished its blocking work in task
+ * context and wants to return to PL0. Restore the caller's saved exception frame
+ * (cur_proc()->dctx = {r0..r12, lr=PC, sp_usr, spsr}) with r0 = result, and resume. */
+.Lsysret:
+    pop   {r0}                /* r0 = result */
+    push  {r0}
+    bl    cur_dctx            /* r0 = &dctx (16 words) */
+    mov   lr, r0             /* lr = &dctx (ldm base; not in {r0-r12}) */
+    pop   {r0}              /* r0 = result */
+    str   r0, [lr, #0]       /* dctx[0] = result */
+    ldr   r2, [lr, #56]      /* dctx[14] = sp_usr */
+    cps   #0x1f              /* System: restore the banked user SP */
+    mov   sp, r2
+    cps   #0x13             /* back to SVC */
+    ldr   r2, [lr, #60]      /* dctx[15] = spsr (user mode) */
+    msr   spsr_cxsf, r2
+    ldr   r2, [lr, #52]      /* dctx[13] = user resume PC */
+    push  {r2}
+    ldm   lr, {r0-r12}       /* restore r0..r12 from dctx (r0 = result) */
+    pop   {lr}             /* lr = user PC */
+    movs  pc, lr            /* -> PL0 */
+
+/* __sysret(long result): re-enter the kernel via svc #2 to return to PL0. */
+    .global __sysret
+__sysret:
+    svc   #2
+    b     .
 
 /* enter_user_and_run(entry, argc, argv): drop from System to USER mode (sharing
  * the task's SP) and call the program entry at PL0; on return, exit via svc. The
