@@ -108,6 +108,7 @@ static void run_selftest(void)
 static void shell_task(void *arg)
 {
     (void)arg;
+    { extern void sd_init(void); sd_init(); }   /* mount SD here (task context — FatFs reentrancy needs the scheduler) */
 #ifdef XT_HW_UART
     run_selftest();   /* hardware: auto-run the battery once at boot, then drop to the shell */
 #endif
@@ -259,7 +260,6 @@ int main(void)
     { extern void gtimer_init(void); gtimer_init(); }   /* A9 global timer -> gettimeofday wall clock */
     { extern void hdmi_init(void); hdmi_init(); }        /* SiI9022 HDMI bring-up (HW build only; no-op on qemu) */
     { extern void gfxplane_init(void); gfxplane_init(); } /* clear the compositor plane (else scan-out shows uninit DDR) */
-    { extern void sd_init(void); sd_init(); }            /* mount SD via FatFs + xsdps (HW build) */
     ksys_set_console(rt_write);
     romfs_mount(romfs_blob, romfs_blob_len);
 
