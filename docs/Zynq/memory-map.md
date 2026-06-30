@@ -33,6 +33,8 @@ values below are defaults — overridable at instantiation.
             │   data-bank  0x2040_0000  $D5C1  256×16 KB (AXI tied off)│
             │   video bank 0x2080_0000  screen_bank chunk-stack:       │
             │     $D5C3/$D5C4  256×8 KB = 2 MB  via GP0  (WIRED)       │
+            │   (free)     0x20A0_0000  6 MB spare in the reservation  │
+            │              (4+4+2 = 10 MB used of 16 MB)               │
 0x2100_0000 ├─────────────────────────────────────────────────────────┤
             │ spare (~240 MB) — 68k "T" realm (ST/STe/TT guest RAM,    │
             │ ~64 MB) when wired; remainder free.                      │
@@ -65,7 +67,8 @@ the overlay plane's base written to the compositor at runtime. So the whole
 `plv_alloc`. The **68k "T" realm is provisional and
 not yet wired** — it now lives in the `0x2100_0000` spare block (was `0x1C00_0000`),
 which freed its 64 MB into the contiguous OS heap. SALLY's reservation was trimmed
-from 256 MB to 16 MB (it only needs ~12 MB), leaving the rest of `0x2100_0000`–
+from 256 MB to 16 MB (code 4 MB + data 4 MB + video/screen 2 MB = ~10 MB used,
+6 MB spare within the reservation), leaving the rest of `0x2100_0000`–
 `0x2FFF_FFFF` spare.
 
 ## Heaps & allocators
