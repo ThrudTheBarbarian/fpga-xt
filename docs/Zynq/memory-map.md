@@ -28,11 +28,11 @@ values below are defaults — overridable at instantiation.
             │ serves all other .so/program images AND runtime data,    │
             │ freed on last ref (xtld_unload). FreeType caches, etc.   │
 0x2000_0000 ├─────────────────────────────────────────────────────────┤
-            │ SALLY banks (HDL params): code-bank $D5C0 @0x2000_0000 + │
-            │ data-bank $D5C1 @0x2040_0000 (256 × 16 KB, AXI tied off  │
-            │ today) + the VIDEO banks: screen_bank chunk-stack        │
-            │ @0x2080_0000 ($D5C3/$D5C4, 256 × 8 KB = 2 MB, via GP0 —  │
-            │ WIRED); 16 MB reserved.                                  │
+            │ SALLY banks (HDL params; 16 MB reserved):                │
+            │   code-bank  0x2000_0000  $D5C0  256×16 KB (AXI tied off)│
+            │   data-bank  0x2040_0000  $D5C1  256×16 KB (AXI tied off)│
+            │   video bank 0x2080_0000  screen_bank chunk-stack:       │
+            │     $D5C3/$D5C4  256×8 KB = 2 MB  via GP0  (WIRED)       │
 0x2100_0000 ├─────────────────────────────────────────────────────────┤
             │ spare (~240 MB) — 68k "T" realm (ST/STe/TT guest RAM,    │
             │ ~64 MB) when wired; remainder free.                      │
