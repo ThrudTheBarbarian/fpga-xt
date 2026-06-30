@@ -139,16 +139,15 @@ static int sii_write(uint8_t reg, uint8_t val) { uint8_t b[2] = { reg, val }; re
 static int sii_read(uint8_t reg, uint8_t *val)
 {
     i2c_wait_idle();
-    /* phase 1: START + addr(W) + offset byte, bus HELD (no STOP) */
+    /* phase 1: address-FIRST, then data — write AR (START+addr, HOLD stretches
+     * SCL) BEFORE feeding the offset byte, in case the FIFO only accepts data
+     * once the transfer is armed. */
     I2C_CR  = CR_BASE | CR_HOLD;
     I2C_ISR = I2C_ISR;
-    I2C_DR  = reg;
-    I2C_AR  = SII_ADDR & 0x7Fu;
-    uint32_t to = 2000000;
-    while (!(I2C_ISR & (ISR_COMP | ISR_NACK)) && --to) { }
-    g_send_isr = I2C_ISR; g_send_sr = I2C_SR;
-    if (!to || (I2C_ISR & ISR_NACK)) { I2C_CR &= ~CR_HOLD; i2c_wait_idle(); g_send_rc = -1; return -1; }
-    g_send_rc = 0;
+    I2C_AR  = SII_ADDR & 0x7Fu;       /* START + addr(W), bus held */
+    I2C_DR  = reg;                    /* offset byte (transfer now armed) */
+    gt_delay_us(1000);               /* let addr+offset clock out (bus held) */
+    g_send_isr = I2C_ISR; g_send_sr = I2C_SR; g_send_rc = 0;
     /* phase 2: repeated START + addr(R), read 1 byte, drop HOLD -> STOP */
     I2C_CR  = CR_BASE | CR_HOLD | CR_RW;
     I2C_ISR = I2C_ISR;
