@@ -59,6 +59,7 @@ static void gt_delay_us(uint32_t us)
 #define CR_DIV_A(n) ((uint32_t)(n) << 14)
 #define CR_DIV_B(n) ((uint32_t)(n) << 8)
 #define CR_CLRFIFO  (1u << 6)
+#define CR_HOLD     (1u << 4)   /* hold bus (no STOP) -> repeated START */
 #define CR_ACKEN    (1u << 3)
 #define CR_NEA      (1u << 2)   /* normal 7-bit addressing */
 #define CR_MS       (1u << 1)   /* master */
@@ -131,7 +132,39 @@ static int i2c_recv(uint8_t addr, uint8_t *buf, int n)
 /* ---- SiI9022A TPI access (7-bit 0x3b, CI2CA=1) ---------------------------- */
 #define SII_ADDR 0x3Bu
 static int sii_write(uint8_t reg, uint8_t val) { uint8_t b[2] = { reg, val }; return i2c_send(SII_ADDR, b, 2); }
-static int sii_read(uint8_t reg, uint8_t *val) { if (i2c_send(SII_ADDR, &reg, 1)) return -1; return i2c_recv(SII_ADDR, val, 1); }
+
+/* TPI random read via a REPEATED START: offset-write + read in ONE held
+ * transaction (the I2C-correct sequence for a register read). stop-then-start
+ * left the SiI's offset un-latched here (reads auto-incremented). */
+static int sii_read(uint8_t reg, uint8_t *val)
+{
+    i2c_wait_idle();
+    /* phase 1: START + addr(W) + offset byte, bus HELD (no STOP) */
+    I2C_CR  = CR_BASE | CR_HOLD;
+    I2C_ISR = I2C_ISR;
+    I2C_DR  = reg;
+    I2C_AR  = SII_ADDR & 0x7Fu;
+    uint32_t to = 2000000;
+    while (!(I2C_ISR & (ISR_COMP | ISR_NACK)) && --to) { }
+    g_send_isr = I2C_ISR; g_send_sr = I2C_SR;
+    if (!to || (I2C_ISR & ISR_NACK)) { I2C_CR &= ~CR_HOLD; i2c_wait_idle(); g_send_rc = -1; return -1; }
+    g_send_rc = 0;
+    /* phase 2: repeated START + addr(R), read 1 byte, drop HOLD -> STOP */
+    I2C_CR  = CR_BASE | CR_HOLD | CR_RW;
+    I2C_ISR = I2C_ISR;
+    I2C_TSR = 1u;
+    I2C_AR  = SII_ADDR & 0x7Fu;
+    I2C_CR &= ~CR_HOLD;                  /* release so STOP follows the 1 byte */
+    int got = 0; to = 2000000;
+    while (got < 1 && --to) {
+        if (I2C_SR & SR_RXDV) { *val = (uint8_t)I2C_DR; got = 1; }
+        if (I2C_ISR & ISR_NACK) break;
+    }
+    g_recv_isr = I2C_ISR; g_recv_sr = I2C_SR; g_recv_got = got;
+    g_recv_rc = got ? 0 : -1;
+    i2c_wait_idle();
+    return got ? 0 : -1;
+}
 
 /* MIO[51] (GPIO bank1 bit19, MSW bit3) gates SiI9022 RESET#. Pulse LOW >=10 ms,
  * HIGH, then >=15 ms to stabilise (datasheet) — verbatim from vitis. */
