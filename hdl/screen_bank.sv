@@ -40,7 +40,7 @@ module screen_bank #(
     input  wire [APERTURE_LOG2-1:0] cpu_addr, // byte address within the aperture
     input  wire                   cpu_we,
     input  wire [7:0]             cpu_wdata,
-    output reg  [7:0]             cpu_rdata,   // registered (1-cycle BRAM read)
+    output wire [7:0]             cpu_rdata,   // 1-cycle BRAM read (registered word + byte mux)
     input  wire [7:0]             cpu_bank_wval,  // $D5C3 write value
     input  wire                   cpu_bank_we,    // $D5C3 write strobe (clk_cpu)
     output wire                   ready,          // $D5C5.0 (1 = CPU-BRAM holds the requested bank)
@@ -157,13 +157,23 @@ module screen_bank #(
     (* ram_style = "block" *) logic [63:0] cpu_bram   [0:WORDS-1];
     (* ram_style = "block" *) logic [63:0] antic_bram [0:WORDS-1];
 
-    // ---- CPU port A (clk_cpu): byte access ----
+    // ---- CPU port A (clk_cpu): byte write-enable + full-word read ----
+    // Per-lane write with a CONSTANT index (loop) so Vivado infers a true
+    // byte-write-enable BRAM (a variable [boff*8+:8] write is an unsupported
+    // RAM template).  Read the whole word + register boff; mux the byte after.
     wire [WORD_AW-1:0] cpu_word = cpu_addr[APERTURE_LOG2-1:3];
     wire [2:0]         cpu_boff = cpu_addr[2:0];
+    wire [63:0]        cpu_wdata64 = {8{cpu_wdata}};               // broadcast to all lanes
+    wire [7:0]         cpu_be = cpu_we ? (8'd1 << cpu_boff) : 8'd0; // one-hot byte enable
+    logic [63:0]       cpu_rd_word_q;
+    logic [2:0]        cpu_boff_q;
     always_ff @(posedge clk_cpu) begin
-        if (cpu_we) cpu_bram[cpu_word][cpu_boff*8 +: 8] <= cpu_wdata;
-        cpu_rdata <= cpu_bram[cpu_word][cpu_boff*8 +: 8];
+        for (int bb = 0; bb < 8; bb = bb + 1)
+            if (cpu_be[bb]) cpu_bram[cpu_word][bb*8 +: 8] <= cpu_wdata64[bb*8 +: 8];
+        cpu_rd_word_q <= cpu_bram[cpu_word];
+        cpu_boff_q    <= cpu_boff;
     end
+    assign cpu_rdata = cpu_rd_word_q[cpu_boff_q*8 +: 8];
 
     // ---- ANTIC port A (clk_antic): read only ----
     wire [WORD_AW-1:0] an_word = antic_addr[APERTURE_LOG2-1:3];
