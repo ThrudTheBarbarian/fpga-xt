@@ -16,6 +16,7 @@ void hdmi_init(void);
 #ifdef XT_HW
 
 extern void puts0(const char *);
+extern void putu(unsigned);
 
 static void puthex8(uint8_t v)
 {
@@ -24,6 +25,18 @@ static void puthex8(uint8_t v)
     s[2] = h[(v >> 4) & 0xF]; s[3] = h[v & 0xF];
     puts0(s);
 }
+
+static void puthex32(uint32_t v)
+{
+    static const char h[] = "0123456789abcdef";
+    char s[11] = "0x00000000";
+    for (int i = 0; i < 8; i++) s[2 + i] = h[(v >> ((7 - i) * 4)) & 0xF];
+    puts0(s);
+}
+
+/* last-transaction diagnostics (devid-FAIL localisation: NACK vs timeout) */
+static volatile uint32_t g_send_isr, g_recv_isr, g_recv_sr;
+static volatile int      g_send_rc, g_recv_rc, g_recv_got;
 
 /* ---- A9 global timer busy-wait (free-running at PERIPHCLK = CPU/2 = 333 MHz) -- */
 static void gt_delay_us(uint32_t us)
@@ -41,6 +54,7 @@ static void gt_delay_us(uint32_t us)
 #define I2C_DR   (*(volatile uint32_t *)(I2C_BASE + 0x0C))   /* data fifo        */
 #define I2C_ISR  (*(volatile uint32_t *)(I2C_BASE + 0x10))   /* irq status (w1c) */
 #define I2C_TSR  (*(volatile uint32_t *)(I2C_BASE + 0x14))   /* transfer size    */
+#define I2C_TOR  (*(volatile uint32_t *)(I2C_BASE + 0x1C))   /* timeout (SCL periods) */
 
 #define CR_DIV_A(n) ((uint32_t)(n) << 14)
 #define CR_DIV_B(n) ((uint32_t)(n) << 8)
@@ -60,7 +74,8 @@ static void gt_delay_us(uint32_t us)
 static void i2c_init(void)
 {
     I2C_CR  = CR_BASE | CR_CLRFIFO;
-    I2C_ISR = I2C_ISR;            /* w1c: clear stale status */
+    I2C_TOR = 0xFFu;             /* timeout (XIicPs sets this; omitting it can wedge) */
+    I2C_ISR = I2C_ISR;          /* w1c: clear stale status */
 }
 
 /* write n bytes to slave `addr` (single transaction, auto START..STOP). 0=ok */
@@ -72,7 +87,9 @@ static int i2c_send(uint8_t addr, const uint8_t *buf, int n)
     I2C_AR  = addr & 0x7Fu;                   /* address write -> START */
     uint32_t to = 2000000;
     while (!(I2C_ISR & (ISR_COMP | ISR_NACK)) && --to) { }
-    return (to && !(I2C_ISR & ISR_NACK)) ? 0 : -1;
+    g_send_isr = I2C_ISR;
+    g_send_rc  = (to && !(I2C_ISR & ISR_NACK)) ? 0 : -1;
+    return g_send_rc;
 }
 
 /* read n bytes from slave `addr` into buf. 0=ok */
@@ -85,9 +102,11 @@ static int i2c_recv(uint8_t addr, uint8_t *buf, int n)
     int got = 0; uint32_t to = 2000000;
     while (got < n && --to) {
         if (I2C_SR & SR_RXDV) { buf[got++] = (uint8_t)I2C_DR; to = 2000000; }
-        if (I2C_ISR & ISR_NACK) return -1;
+        if (I2C_ISR & ISR_NACK) break;
     }
-    return (got == n) ? 0 : -1;
+    g_recv_isr = I2C_ISR; g_recv_sr = I2C_SR; g_recv_got = got;
+    g_recv_rc  = (got == n) ? 0 : -1;
+    return g_recv_rc;
 }
 
 /* ---- SiI9022A TPI access (7-bit 0x3b, CI2CA=1) ---------------------------- */
@@ -148,6 +167,7 @@ void hdmi_init(void)
     puts0("[hdmi] SiI9022 bring-up (bare I2C0)...\r\n");
     sii9022_reset();
     i2c_init();
+    puts0("[hdmi] i2c CR(readback)="); puthex32(I2C_CR); puts0("\r\n");
     uint8_t devid = 0; int ok = 0;
     for (int i = 0; i < 50; i++) {                  /* poll TPI device-id 0x1B == 0xB0 */
         if (sii_read(0x1B, &devid) == 0 && devid == 0xB0) { ok = 1; break; }
@@ -155,7 +175,15 @@ void hdmi_init(void)
     }
     puts0("[hdmi] devid="); puthex8(devid);
     puts0(ok ? " (OK)\r\n" : " (FAIL — no SiI9022 ACK on I2C0)\r\n");
-    if (!ok) return;
+    if (!ok) {
+        puts0("[hdmi]   diag: send_rc=");  putu((unsigned)(g_send_rc & 0xFF));
+        puts0(" send_isr=");  puthex32(g_send_isr);
+        puts0("  recv_rc=");  putu((unsigned)(g_recv_rc & 0xFF));
+        puts0(" recv_isr=");  puthex32(g_recv_isr);
+        puts0(" recv_sr=");   puthex32(g_recv_sr);
+        puts0(" got=");       putu((unsigned)g_recv_got); puts0("\r\n");
+        return;
+    }
     sii_enable_output();
     puts0("[hdmi] output enabled (1080p60)\r\n");
 }
