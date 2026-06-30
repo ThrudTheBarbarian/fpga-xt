@@ -52,6 +52,7 @@ module screen_bank #(
     input  wire [7:0]             antic_bank_wval, // $D5C4 write value (clk_cpu-written, sampled at vbi)
     input  wire                   antic_bank_we,   // $D5C4 write strobe (clk_cpu)
     input  wire                   vbi,             // 1-cycle VBI pulse (clk_antic) — latches antic bank
+    output wire                   antic_banked,    // 1 = ANTIC effective bank != 0 (use ANTIC-BRAM)
 
     // ---- AXI4 master (clk) -------------------------------------------------
     output reg  [AXI_ADDR_W-1:0]  m_axi_araddr,
@@ -149,6 +150,7 @@ module screen_bank #(
     always_ff @(posedge clk_cpu)
         if (antic_bank_we) antic_bank_shadow <= antic_bank_wval;
     logic [7:0] antic_bank_eff = 8'd0;     // latched at VBI (clk_antic)
+    assign antic_banked = (antic_bank_eff != 8'd0);
     logic       antic_req_tgl  = 1'b0;
     always_ff @(posedge clk_antic)
         if (vbi && (antic_bank_eff != antic_bank_shadow)) begin

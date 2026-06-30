@@ -302,11 +302,13 @@ module fpga_xt_top (
     // stage.  Until then scrn_ready is tied high (banking writes are no-ops).
     wire [7:0]  scrn_cpu_bank, scrn_antic_bank, scrn_bank_wval;
     wire        scrn_cpu_bank_we, scrn_antic_bank_we;
-    wire        scrn_ready = 1'b1;
+    wire        scrn_ready;               // <- screen_bank
     wire [12:0] scrn_cpu_addr;
     wire        scrn_cpu_we;
     wire [7:0]  scrn_cpu_wdata;
-    wire [7:0]  scrn_cpu_rdata = 8'h00;   // driven by screen_bank in a later stage
+    wire [7:0]  scrn_cpu_rdata;           // <- screen_bank CPU port
+    wire [7:0]  scrn_antic_rdata;         // <- screen_bank ANTIC port
+    wire        scrn_antic_banked;        // <- screen_bank (ANTIC eff bank != 0)
 
     // ANTIC-view bank registers ($D488-$D48B) are currently unused in the
     // Zynq build — ANTIC's DMA reaches RAM via bram_shim, not via
@@ -468,6 +470,14 @@ module fpga_xt_top (
     // same state without a shadow memory.
     wire [15:0] antic_bram_addr;
     wire [7:0]  antic_bram_rdata;
+    // ANTIC read mux: sally_mem's flat-shadow read (scrn_shadow_rdata) vs the
+    // banked screen_bank ANTIC-BRAM (scrn_antic_rdata).  Select is registered to
+    // align with both registered read data (1-cycle, clk_sys).
+    wire [7:0]  scrn_shadow_rdata;
+    reg         scrn_antic_sel_q;
+    always_ff @(posedge clk_sys)
+        scrn_antic_sel_q <= (antic_bram_addr[15:13] == 3'b010) && scrn_antic_banked;
+    assign antic_bram_rdata = scrn_antic_sel_q ? scrn_antic_rdata : scrn_shadow_rdata;
 
     // PORTB ($D301) from PIA — controls ROM vs banked/BRAM visibility.
     wire [7:0]  portb_q;
@@ -780,7 +790,7 @@ module fpga_xt_top (
         .rom_we      (rom_load_we),
         .dma_clk     (clk_sys),       // ANTIC reads sally_mem's BRAM at clk_bus
         .dma_addr    (antic_bram_addr),
-        .dma_rdata   (antic_bram_rdata)
+        .dma_rdata   (scrn_shadow_rdata)   // muxed with screen_bank ANTIC-BRAM above
     );
 
     // ====================================================================
@@ -1139,6 +1149,43 @@ module fpga_xt_top (
         if (hp2_wvalid & hp2_wready) hp2_wbeat_cnt   <= hp2_wbeat_cnt   + 8'd1;
     end
     wire [31:0] diag2_word = {16'd0, hp2_wbeat_cnt, antic_frame_cnt};
+
+    // ====================================================================
+    // Banked screen RAM engine (screen_bank).  CPU port = clk_sally (sally_mem);
+    // ANTIC port + engine/AXI = clk_sys.  AXI master -> S_AXI_GP0 (PL->PS
+    // general-purpose; the copies are ~MB/s + non-latency-critical, so no HP
+    // port / no contention with scan-out/blitter).  Chunk-stack @ 0x3800_0000
+    // (256 x 8 KB = 2 MB), clear of the plane/XL/drag/sprite-arena surfaces.
+    // ====================================================================
+    wire [31:0] gp0m_araddr;  wire [7:0] gp0m_arlen;  wire [2:0] gp0m_arsize;
+    wire [1:0]  gp0m_arburst; wire gp0m_arvalid, gp0m_arready;
+    wire [63:0] gp0m_rdata;   wire gp0m_rvalid, gp0m_rlast, gp0m_rready;
+    wire [31:0] gp0m_awaddr;  wire [7:0] gp0m_awlen;  wire [2:0] gp0m_awsize;
+    wire [1:0]  gp0m_awburst; wire gp0m_awvalid, gp0m_awready;
+    wire [63:0] gp0m_wdata;   wire [7:0] gp0m_wstrb;  wire gp0m_wlast, gp0m_wvalid, gp0m_wready;
+    wire        gp0m_bvalid,  gp0m_bready;
+
+    screen_bank #(.STACK_BASE(32'h3800_0000), .APERTURE_LOG2(13)) u_screen_bank (
+        .clk          (clk_sys),       .rst        (rst_sys),
+        .clk_cpu      (clk_sally),
+        .cpu_addr     (scrn_cpu_addr), .cpu_we     (scrn_cpu_we), .cpu_wdata (scrn_cpu_wdata),
+        .cpu_rdata    (scrn_cpu_rdata),
+        .cpu_bank_wval(scrn_bank_wval),.cpu_bank_we(scrn_cpu_bank_we),
+        .ready        (scrn_ready),
+        .clk_antic    (clk_sys),
+        .antic_addr   (antic_bram_addr[12:0]), .antic_rdata (scrn_antic_rdata),
+        .antic_bank_wval(scrn_bank_wval), .antic_bank_we (scrn_antic_bank_we),
+        .vbi          (antic_wb_frame_done),   .antic_banked (scrn_antic_banked),
+        .m_axi_araddr (gp0m_araddr),  .m_axi_arlen (gp0m_arlen),  .m_axi_arsize (gp0m_arsize),
+        .m_axi_arburst(gp0m_arburst), .m_axi_arvalid(gp0m_arvalid),.m_axi_arready(gp0m_arready),
+        .m_axi_rdata  (gp0m_rdata),   .m_axi_rvalid(gp0m_rvalid),  .m_axi_rlast (gp0m_rlast),
+        .m_axi_rready (gp0m_rready),
+        .m_axi_awaddr (gp0m_awaddr),  .m_axi_awlen (gp0m_awlen),  .m_axi_awsize (gp0m_awsize),
+        .m_axi_awburst(gp0m_awburst), .m_axi_awvalid(gp0m_awvalid),.m_axi_awready(gp0m_awready),
+        .m_axi_wdata  (gp0m_wdata),   .m_axi_wstrb (gp0m_wstrb),  .m_axi_wlast (gp0m_wlast),
+        .m_axi_wvalid (gp0m_wvalid),  .m_axi_wready(gp0m_wready),
+        .m_axi_bvalid (gp0m_bvalid),  .m_axi_bready(gp0m_bready)
+    );
 
     // Read-path activity counters (clk_sys) — read via diag3_word at GP0 offset
     // 0x14.  The XL writeback proved PL->DDR *writes* work on silicon; these
