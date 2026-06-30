@@ -109,7 +109,7 @@ static void fr_hex(const char *label, unsigned v)
  * T2-a: read the CP15 fault registers + the faulting task so a protection abort
  * (NULL/wild pointer, W^X violation) is precisely diagnosable rather than a
  * silent corruption or an anonymous hang. */
-void fault_report(unsigned code, unsigned addr)
+void fault_report(unsigned code, unsigned addr, unsigned caller)
 {
     extern void puts0(const char *);
     unsigned dfar, dfsr, ifsr;
@@ -122,7 +122,7 @@ void fault_report(unsigned code, unsigned addr)
     char *tn = xTaskGetCurrentTaskHandle() ? pcTaskGetName(0) : 0;
     puts0("\n*** "); puts0(code < 8 ? names[code] : "?");
     puts0(" in task '"); puts0(tn ? tn : "<boot/none>"); puts0("'\n");
-    fr_hex("    PC=", addr);
+    fr_hex("    PC=", addr); fr_hex("  CALLER=", caller);
     fr_hex("  DFAR=", dfar); fr_hex("  DFSR=", dfsr); fr_hex("  IFSR=", ifsr);
     { extern int stackguard_is_guard(unsigned);
       if (code == 4 && stackguard_is_guard(dfar)) puts0("\n*** STACK OVERFLOW (hit guard page)"); }

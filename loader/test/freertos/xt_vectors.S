@@ -73,6 +73,9 @@ xt_undef: mov r0, #1
           b   xt_fault
 xt_pabt:  mov r0, #3
           sub r1, lr, #4
+          cps   #0x1f              @ System mode (the faulting task)
+          mov   r2, lr             @ r2 = caller's return addr (instr after the blx-to-NULL)
+          cps   #0x17              @ back to Abort mode
           b   xt_fault
 /* data abort: try demand paging first (T2-c lazy heap). Save the task's
  * caller-saved regs + lr_abt (the C call clobbers them; the task needs them on
