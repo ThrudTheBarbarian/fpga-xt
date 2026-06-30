@@ -39,8 +39,8 @@ void sd_init(void)
     { DWORD sc = 0; if (disk_ioctl(0, GET_SECTOR_COUNT, &sc) == RES_OK) sd0.block_count = (uint32_t)sc; }
     blkdev_register(&sd0);
     { extern void vfs_fatfs_init(void); extern int vfs_add_mount(const char *, const char *, void *);
-      vfs_fatfs_init(); vfs_add_mount("/sd", "fatfs", 0); }
-    puts0("[sd] blkdev sd0 + /sd (fatfs) registered\r\n");
+      vfs_fatfs_init(); vfs_add_mount("/", "fatfs", 0); }   /* SD = the root filesystem */
+    puts0("[sd] blkdev sd0 + / (fatfs root) registered\r\n");
 
     /* list the root directory: proves directory traversal + shows the card contents */
     r = f_opendir(&g_dir, "0:/");
@@ -65,10 +65,10 @@ void sd_init(void)
             puts0("[sd] blkdev sd0 read FAILED\r\n");
     }
 
-    /* prove the VFS dispatch: open /sd/README.txt (root of the card) via vfs_open */
+    /* prove the VFS dispatch: open /README.txt (SD root) via vfs_open */
     {
         vfs_file vf;
-        if (vfs_open("/sd/README.txt", &vf) == 0) {
+        if (vfs_open("/README.txt", &vf) == 0) {
             char b[80]; long n = vf.read ? vf.read(&vf, b, sizeof b - 1) : -1;
             if (n > 0) {
                 b[n] = 0;

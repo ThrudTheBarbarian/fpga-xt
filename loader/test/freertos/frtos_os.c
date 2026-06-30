@@ -619,12 +619,12 @@ void frtos_on_loaded(xtld_obj *obj, void *u)
  * the system library dir. (Per-process scoping arrives with the env/debugger work;
  * for now this is the global hook — the indirection is what we're reserving.) */
 #define LIBPATH_MAX 4
-static const char *g_libpath[LIBPATH_MAX] = { "/OS/Library/" };
+static const char *g_libpath[LIBPATH_MAX] = { "/Library/" };
 static int         g_libpath_n = 1;
 
 void frtos_lib_path_set(const char *const *dirs, int n)
 {
-    if (n < 1) { g_libpath[0] = "/OS/Library/"; g_libpath_n = 1; return; }
+    if (n < 1) { g_libpath[0] = "/Library/"; g_libpath_n = 1; return; }
     if (n > LIBPATH_MAX) n = LIBPATH_MAX;
     for (int i = 0; i < n; i++) g_libpath[i] = dirs[i];
     g_libpath_n = n;

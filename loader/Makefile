@@ -237,13 +237,13 @@ $(BUILD)/mkromfs: tools/mkromfs.c | $(BUILD)
 	$(HOSTCC) -O2 -o $@ $<
 
 # ---- drop-in romfs overlay -------------------------------------------------
-# Anything under $(ROMFS_OVERLAY)/ is packed into the romfs under /OS, mirroring
-# the subtree: $(ROMFS_OVERLAY)/Library/libfoo.so -> /OS/Library/libfoo.so. Just
+# Anything under $(ROMFS_OVERLAY)/ is packed into the romfs (mounted at /System),
+# mirroring the subtree: $(ROMFS_OVERLAY)/Library/libfoo.so -> /System/Library/libfoo.so. Just
 # drop a file in and rebuild (make freertos) — no Makefile edit needed. `make
 # overlay` creates the dirs + lists current contents.
 ROMFS_OVERLAY ?= romfs-overlay
 ROMFS_OVERLAY_FILES := $(shell find $(ROMFS_OVERLAY) -type f 2>/dev/null)
-ROMFS_OVERLAY_ARGS  := $(foreach f,$(ROMFS_OVERLAY_FILES),/OS/$(patsubst $(ROMFS_OVERLAY)/%,%,$(f))=$(f))
+ROMFS_OVERLAY_ARGS  := $(foreach f,$(ROMFS_OVERLAY_FILES),/$(patsubst $(ROMFS_OVERLAY)/%,%,$(f))=$(f))
 
 $(BUILD)/romfs.bin: $(BUILD)/mkromfs $(BUILD)/hello.so $(BUILD)/showmotd.so $(BUILD)/usestr.so $(BUILD)/echo.so $(BUILD)/libc_test.so $(BUILD)/gemtext.so $(BUILD)/desktop.so $(BUILD)/faultprog.so $(BUILD)/vmtest.so $(BUILD)/demandtest.so $(BUILD)/stacktest.so $(BUILD)/wxtest.so $(BUILD)/cowtest.so $(BUILD)/sharetext.so $(BUILD)/finictor.so $(BUILD)/mmaptest.so $(BUILD)/modetest.so $(BUILD)/badpoke.so $(BUILD)/stackpoke.so $(BUILD)/libutil.so $(BUILD)/libGEM.so $(BUILD)/libm.so $(BUILD)/libc.so test/freertos/motd.txt $(ROMFS_OVERLAY_FILES)
 	$(BUILD)/mkromfs $@ \
@@ -260,12 +260,12 @@ $(BUILD)/romfs.bin: $(BUILD)/mkromfs $(BUILD)/hello.so $(BUILD)/showmotd.so $(BU
 	    /bin/stackpoke=$(BUILD)/stackpoke.so \
 	    /bin/mmaptest=$(BUILD)/mmaptest.so \
 	    $(if $(XTC_SO),/bin/xtcprog=$(XTC_SO)) \
-	    /OS/Library/libc.so=$(BUILD)/libc.so \
-	    /OS/Library/libm.so=$(BUILD)/libm.so \
-	    /OS/Library/libGEM.so=$(BUILD)/libGEM.so \
-	    /OS/Library/libutil.so=$(BUILD)/libutil.so \
-	    /OS/Fonts/AovelSansRounded.ttf=$(GEM)/fonts/AovelSansRounded.ttf \
-	    /OS/Fonts/System.font=$(GEM)/fonts/System.font \
+	    /Library/libc.so=$(BUILD)/libc.so \
+	    /Library/libm.so=$(BUILD)/libm.so \
+	    /Library/libGEM.so=$(BUILD)/libGEM.so \
+	    /Library/libutil.so=$(BUILD)/libutil.so \
+	    /Fonts/AovelSansRounded.ttf=$(GEM)/fonts/AovelSansRounded.ttf \
+	    /Fonts/System.font=$(GEM)/fonts/System.font \
 	    /bin/libc_test=$(BUILD)/libc_test.so \
 	    /bin/gemtext=$(BUILD)/gemtext.so \
 	    /bin/desktop=$(BUILD)/desktop.so \
@@ -273,7 +273,7 @@ $(BUILD)/romfs.bin: $(BUILD)/mkromfs $(BUILD)/hello.so $(BUILD)/showmotd.so $(BU
 	    /bin/showmotd=$(BUILD)/showmotd.so \
 	    /bin/usestr=$(BUILD)/usestr.so \
 	    /bin/echo=$(BUILD)/echo.so \
-	    /OS/etc/motd=test/freertos/motd.txt \
+	    /etc/motd=test/freertos/motd.txt \
 	    $(ROMFS_OVERLAY_ARGS)
 
 $(BUILD)/romfs_blob.h: $(BUILD)/romfs.bin

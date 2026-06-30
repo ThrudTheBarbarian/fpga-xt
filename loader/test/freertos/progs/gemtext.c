@@ -18,7 +18,7 @@ void _app_entry(int argc, char **argv)
 
     gfx_surface surf = { fb.w, fb.h, fb.stride, (uint32_t *)fb.addr };
     vdi_init(&surf);
-    vdi_set_font_dir("/OS/Fonts");
+    vdi_set_font_dir("/System/Fonts");
     font_face *face = vdi_load_system_font();
     if (!face) { sys_write(2, "gemtext: system font load FAILED\n", 33); return; }
     vdi_set_face(face);

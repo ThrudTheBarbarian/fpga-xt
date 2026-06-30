@@ -15,7 +15,7 @@ void _app_entry(int argc, char **argv)
     (void)argc; (void)argv;
 
     /* small file: verify mmap bytes == read() bytes (zero-copy correctness) */
-    int fd = sys_open("/OS/etc/motd", 0);
+    int fd = sys_open("/System/etc/motd", 0);
     if (fd < 0) { put("mmaptest: open motd failed\n"); return; }
     long sz = sys_lseek(fd, 0, 2); sys_lseek(fd, 0, 0);
     const char *m = (const char *)sys_mmap(fd, 0, 0);
@@ -27,7 +27,7 @@ void _app_entry(int argc, char **argv)
     char line[80]; int i = 0;
     while (i < n && i < 79 && m[i] != '\n') { line[i] = m[i]; i++; }   /* read via the mapping */
     line[i] = 0;
-    put("mmaptest: mmap'd /OS/etc/motd, first line: \""); put(line); put("\"\n");
+    put("mmaptest: mmap'd /System/etc/motd, first line: \""); put(line); put("\"\n");
     put(eq(m, buf, n) ? "mmaptest: mmap bytes == read() bytes (zero-copy OK)\n"
                       : "mmaptest: MISMATCH\n");
     sys_munmap((void *)m, (unsigned)sz);
@@ -35,7 +35,7 @@ void _app_entry(int argc, char **argv)
 
     /* multi-page file: map the font, touch first + last byte to demand-page both
      * its first and a later page through the RO window (proves multi-page mmap). */
-    int ff = sys_open("/OS/Fonts/AovelSansRounded.ttf", 0);
+    int ff = sys_open("/System/Fonts/AovelSansRounded.ttf", 0);
     if (ff >= 0) {
         long fsz = sys_lseek(ff, 0, 2);
         const volatile unsigned char *fp = (const volatile unsigned char *)sys_mmap(ff, 0, 0);
@@ -50,7 +50,7 @@ void _app_entry(int argc, char **argv)
     /* "mmaptest ro": prove the mapping is READ-ONLY — writing to it faults and the
      * OS kills us (so the final line should NOT print). */
     if (argc > 1 && argv[1][0] == 'r') {
-        int wf = sys_open("/OS/etc/motd", 0);
+        int wf = sys_open("/System/etc/motd", 0);
         char *w = (char *)sys_mmap(wf, 0, 0);
         if (w) {
             put("mmaptest: writing to the RO mapping (expect a kill)...\n");

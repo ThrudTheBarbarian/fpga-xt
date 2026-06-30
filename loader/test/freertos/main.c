@@ -292,7 +292,7 @@ int main(void)
     { extern void hdmi_init(void); hdmi_init(); }        /* SiI9022 HDMI bring-up (HW build only; no-op on qemu) */
     { extern void gfxplane_init(void); gfxplane_init(); } /* clear the compositor plane (else scan-out shows uninit DDR) */
     { extern void vfs_romfs_init(void); extern int vfs_add_mount(const char *, const char *, void *);
-      vfs_romfs_init(); vfs_add_mount("/", "romfs", 0); }  /* VFS: romfs at / ; SD adds /sd at mount time */
+      vfs_romfs_init(); vfs_add_mount("/System", "romfs", 0); }  /* romfs = /System (embedded, RO); SD = / at mount time */
     ksys_set_console(rt_write);
     romfs_mount(romfs_blob, romfs_blob_len);
 
@@ -300,10 +300,10 @@ int main(void)
                           .resolve = frtos_ksym, .open_lib = frtos_open_lib,
                           .on_loaded = frtos_on_loaded, .user = NULL };
 
-    /* bootstrap-load /OS/Library/libc.so, then route the loader's allocator
-     * through libc.so's malloc (frtos_activate_libc) */
+    /* bootstrap-load /System/Library/libc.so (romfs-internal /Library), then route
+     * the loader's allocator through libc.so's malloc (frtos_activate_libc) */
     const uint8_t *d; uint32_t n; char err[64] = {0};
-    if (!romfs_lookup("/OS/Library/libc.so", &d, &n)) { puts0("no libc.so in romfs\n"); sh_exit(1); }
+    if (!romfs_lookup("/Library/libc.so", &d, &n)) { puts0("no libc.so in romfs\n"); sh_exit(1); }
     xtld_obj *libc = NULL;
     int rc = xtld_load(d, n, &g_host, &libc, err, sizeof err);
     if (rc != XTLD_OK) { puts0("libc.so load FAILED: "); puts0(xtld_strerror(rc));
