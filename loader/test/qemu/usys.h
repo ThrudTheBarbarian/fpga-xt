@@ -5,18 +5,7 @@
 #ifndef USYS_H
 #define USYS_H
 
-#define SYS_exit    0x101
-#define SYS_getpid  0x103
-#define SYS_open    0x300
-#define SYS_close   0x301
-#define SYS_read    0x302
-#define SYS_write   0x303
-#define SYS_lseek   0x304
-#define SYS_mmap    0x305
-#define SYS_munmap  0x306
-#define SYS_sbrk    0x307
-#define SYS_fb_info    0x400
-#define SYS_fb_present 0x401
+#include "xtsys.h"   /* syscall numbers — one source of truth (frozen ABI) */
 
 /* the OS display-plane descriptor (filled by SYS_fb_info) */
 struct os_fbinfo { int w, h, stride; unsigned long addr; };

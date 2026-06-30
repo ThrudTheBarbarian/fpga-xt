@@ -227,6 +227,7 @@ static long do_syscall(uint32_t num, long a0, long a1, long a2)
 {
     proc_t *p = cur_proc();
     switch (num) {
+    case SYS_abi_version: return XTOS_ABI_VERSION;           /* () -> frozen-ABI version */
     case SYS_write:                                          /* (fd, buf, len) */
         if ((a0 == 1 || a0 == 2) && g_console && a1) { g_console((const char *)a1, (int)a2); return a2; }
         return -1;

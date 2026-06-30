@@ -11,11 +11,7 @@ int            closedir(DIR *d)        { (void)d; return 0; }
  * file READ-ONLY + shared (zero-copy) so FreeType reads glyphs straight from the
  * one resident romfs copy, demand-paged, instead of fread-ing it into a private
  * malloc buffer. Reaches the kernel directly via svc #1 (SYS_open/lseek/mmap). */
-#define SYS_open   0x300
-#define SYS_close  0x301
-#define SYS_lseek  0x304
-#define SYS_mmap   0x305
-#define SYS_munmap 0x306
+#include "xtsys.h"   /* one source of truth for the syscall numbers (no local copy) */
 
 static long sc(long n, long a0, long a1, long a2)
 {

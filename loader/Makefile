@@ -16,7 +16,7 @@ LLD     := ld.lld
 READELF := readelf
 
 CFLAGS  ?= -Wall -Wextra -O0 -g -I.
-ARMCFLAGS ?= -marm -fpic -Os -ffreestanding -fno-builtin
+ARMCFLAGS ?= -marm -fpic -Os -ffreestanding -fno-builtin -Ikernel   # -Ikernel: usys.h -> xtsys.h (frozen syscall numbers)
 
 QEMU      := qemu-system-arm
 QEMUFLAGS := -M virt -cpu cortex-a15 -nographic -no-reboot \
@@ -141,7 +141,7 @@ $(BUILD)/libc.so: newlib-pic/libc.a | $(BUILD)
 	    -Wl,-soname,libc.so -o $@
 
 # --- romfs: build the programs as .so, pack them into a blob, embed it ---
-PROGCFLAGS := $(ARMCFLAGS) -Itest/qemu
+PROGCFLAGS := $(ARMCFLAGS) -Itest/qemu -Ikernel   # -Ikernel: usys.h pulls syscall numbers from xtsys.h (one source of truth)
 
 $(BUILD)/%.so: test/freertos/progs/%.c | $(BUILD)
 	$(ARMCC) $(PROGCFLAGS) -c $< -o $(BUILD)/$*.o
@@ -171,7 +171,7 @@ FT  := ../xtos/freetype
 GEMSRC := $(GEM)/gfx_soft.c $(GEM)/font.c $(GEM)/wm.c $(GEM)/theme.c $(wildcard $(GEM)/vdi/*.c) \
           ../vitis/xtos/src/gem_pdf_stub.c test/freertos/libs/gem_stubs.c
 FTSRC  := $(wildcard $(FT)/tu/*.c)
-GEMINC := -Itest/freertos/libs/shim -I$(GEM) -I$(GEM)/vdi -I$(FT)/include -Inewlib-pic/include
+GEMINC := -Itest/freertos/libs/shim -I$(GEM) -I$(GEM)/vdi -I$(FT)/include -Inewlib-pic/include -Ikernel
 # -g: embed DWARF so libGEM.so is self-describing for xtc's #import (the .so IS
 # the interface — see docs/OS/library-imports.md). Ship unstripped.
 GEMCFLAGS := -marm -mcpu=cortex-a9 -mfloat-abi=softfp -mfpu=neon-vfpv3 -fpic -O2 -g $(GEMINC)
