@@ -1,89 +1,22 @@
 # Next Steps / Open Work — consolidated
 
-Single rolled-up list of the open "things to do" scattered across `docs/`.
-Grouped by theme, not by source file; each item points back to its source doc.
-This is a tracker, so it intentionally carries forward-looking/historical context
-(unlike the design docs, which describe only current behaviour).
 
-> HDMI artifacts fixed), so it is not listed below.
 
----
+# Immediate targets
 
 ## Open Issues (tracked bugs)
+- none
 
-- **A loaded libGEM.so re-running `vdi_init` wipes the kernel's live VDI** — the
-  `gemhw`/runhost demo (`xtld_host.c`) resolves `vdi_init` from the loaded `libGEM.so`
-  and calls `vdi_init(&desk)`; because the kernel and libGEM share the symbol, that
-  **resets the shared workstation table**, invalidating the desktop's `g_vh` and
-  overdrawing the desktop (lost wallpaper). Symptom: after the demo runs, `vdi.*` →
-  "vdi not initialised" and `vdi.wscount()` drops to 1. (NB: this — not any blitter
-  bug — was the cause of the earlier "`vdi.bar` draws nothing"; with a valid `g_vh`
-  fills work. Also note `dow` ELF-reloads accumulate this kind of stale VDI state — a
-  cold-load restores it.) Fix: the loaded GEM must not re-init the kernel's live VDI —
-  either guard `vdi_init` against clobbering an initialised table, or give the demo its
-  own workstation without resetting. *(vitis/xtos/src/xtld_host.c, gem/vdi/core.c)*
----
-
-## Architecture review (the "tock") — open work
-
-Tracking `docs/Design/architecture-review.md`; landed pieces are in the commit log.
-Remaining:
-### Immediate Priorities:
-- n/a
-### Future:
-- **Partial-reconfig CPU swap.** RP region confirmed viable at X1Y2 (not the PS
-  corner — hard blocks there). Implement: `sally_subsystem` wrapper → exclusive RP
-  pblock → DFX static/RM flow → runtime PCAP swap. *(docs/Design/partial-reconfig.md)*
-  
-- Still open: the **ST compositor plane** (bind enum ST-ready,
-  plane not wired); and verify/close the **VDI-workstation leak** (direct `vdi.*` after
-  `wintest` draws into a window backing, not the desktop). *(docs/OS/desktop-emulation-windows.md)*
-
-- **§3.1 ACP coherency** (evaluate on GEM/desktop surfaces), 
-
-### Some time, maybe:
-- **§3.2 SALLY memory hierarchy → 120 MHz**, 
-- **§3.3 HP-port budget doc** — deferred.
-
-
----
+## Post-architecture-review
+- none
 
 ## HW / RTL bring-up
+- none
 
-### Future:
-- **Keyboard injection host source** — RTL path is done (GP0 → `$D4CF` → POKEY).
-  Remaining: a host-side source + ASCII→KBCODE map. *(likely partly covered by the
-  serial `{ }` paste path — verify; src: former docs/TODO.txt)*
-- **GPIO LED MIO mapping** — `main.c` LED toggle waits on Z-Turn MIO confirmation.
-  *(src: docs/bring-up.md)*
-
----
 ## Video / compositor / sprites / textures
-
-- **Compositor polish (deferred)** — desktop-window-over-live-window occlusion
-  (clip-rect → bitmap override); visible-span-only plane fetch (bandwidth); tear-free
-  `front_sel` sampling at the compositor's own frame start; narrow/wide playfield
-  `src_w` tracking. *(src: docs/video/video-architecture.md, former docs/TODO.txt)*
-- **PL-only test-pattern mux in `plane_compositor`** — build-param gradient/colour-bar
-  bypass of plane_fetch reads (old `SCANOUT_TEST_PATTERN` lived only in orphaned
-  `fb_scanout.sv`). *(src: docs/bring-up.md)*
-- **Palette: PAL/NTSC runtime re-push** — page a non-default reference palette in via
-  $D483-$D486 on region switch (bake-in is the default); plus more accurate reference
-  tables. *(src: docs/HDMI/palette.md)*
-  
-### Some time, maybe:
-- **Sprite engine — deferred/optional refinements.** Core, HW mouse cursor, H/V flip + 2× scale, Remaining (none currently blocking): palettised sprites, rotation (SW-first),
-  blitter→sprite-arena integration. *(src: hdl/sprite_engine.sv, docs/Design/sprite-engine.md)*
-
-- **Texture mapping (tiers)** — T1 affine point-sampled (~1 day) → T2 bilinear
-  (+½ day) → T3 textured triangles (+½–1 day) → T4 perspective-correct (several days);
-  plus `$D4D0..` TEX_* regs / `CMD=0x08` / `TEX_WRAP` wiring and a texture-cache
-  throughput upgrade (2×2 quad reads / BRAM tile cache). *(src: docs/video/texture-mapping.md)*
-
----
+- none
 
 ## Audio (PCM1808 capture + HDMI audio)
-
 - **FPGA SCKI for the PCM1808 (the carrier's one new audio clock)** — the SiI9022A
   is MCLK-less (takes only BCLK/LRCLK/DATA), so no master clock exists in the design
   today. The PCM1808 *requires* a 256 fs SCKI. **Generate 12.288 MHz in the FPGA
@@ -102,40 +35,11 @@ Remaining:
 - **HDMI audio islands** — route the POKEY I²S stream out over the SiI9022A's audio
   islands (BCLK/LRCLK/DATA path; MCLK-less). *(desired; not on critical path; src:
   docs/HDMI/hdmi.md, docs/Zynq/FPGA.md)*
-- **COVOX-style DMA sample playback** — `pokey_sample_dma` streaming DDR buffers to
-  the mixer (8-bit mono + 16-bit stereo, EOS IRQ). *(deferred to M22+; src:
-  docs/Design/aux-audio-and-reservations.md)*
-- **Analog-audio fidelity (Altirra App. E)** — post-mixer DSP: channel-DAC bit
-  weights, non-linear saturation, AC coupling, DC bias. *(skip until a "purist" mode
-  is wanted; src: docs/Design/aux-audio-and-reservations.md, docs/Altirra/altirra-pokey-audit.md)*
-- **RS-232 via second POKEY** — rear-panel RS-232 off the unused 2nd-POKEY serial
-  port: MAX232/SP3232 footprint + 2 peri pads (PCB), `peri_bridge.sv` 2nd serial
-  channel + companion software-UART firmware. *(M-serial; src: docs/Design/aux-audio-and-reservations.md)*
-
----
-
-
+  
 ## Memory / banking (DDR3 banked window — parallel track, not on boot path)
-
-- **Banked page cache (`"PAGE"`) — fmax pass.** `banked_page_cache` (resident pages +
-  write-back) is the better backend once banking is heavy, but it adds ~0.5 ns to
-  SALLY's 1-cycle mem loop (clk_sally −0.495, ~54% routing) — needs a floorplan
-  (`pb_sally` + `screen_bank` CPU-BRAM co-location) and/or read-path depth reduction
-  before it can replace LINE. Also: its **write-back/reload path is incomplete** — a
-  code/data-bank write does not persist across a swap (code-bank write is a no-op; data
-  write-back fails too). Exposed by `tb_sally_mem` A.4c — run `make sally_mem_page` (the
-  PAGE variant skips A.4c via `-D PAGE_BACKEND`; remove that gate once fixed).
-  *(src: docs/Design/banked-page-cache.md, sim/tb_sally_mem.sv)*
-- **Reserve + validate the DDR3 region** — 0x2000_0000 code / 0x2040_0000 data; keep
-  PS out of 0x2000_0000-0x207F_FFFF; validate with an explicit $D5C0/$D5C1 bank-switch
-  test (boot won't exercise DDR3). *(src: former docs/TODO.txt)*
-- **Provisional memory regions not yet wired** — 68k "T" realm (0x1C00_0000), GEM
-  heap/asset cache (0x3800_0000), sprite arena (0x3400_0000). *(src: docs/Zynq/memory-map.md)*
-
----
+- none
 
 ## SIO / PBI / cartridge / companion MCU
-
 - **SIO: PIA CA1/CA2/CB1/CB2 control lines** — PROCEED/MOTOR/INTERRUPT/COMMAND in
   `pia_regs.sv` store bits but drive nothing; implement + add the pad/GPIO path.
   *(main remaining SIO RTL; src: docs/OS/sio-bridge.md)*
@@ -169,32 +73,7 @@ Remaining:
   take read data from the cart, route $D5xx out /CCTL for bank-switching. *(same Tier-B
   work as /MPD shadow; src: docs/OS/expansion-options.md)*
 
----
-
-## App launch (desktop → XL realm)
-
-- **Launch an 8-bit app from the desktop** — the A9 reads the file, looks up its
-  prefs (a namespace in the single SQLite registry), serves it as a **virtual disk**
-  (ATR direct; XEX wrapped in a synthesized boot disk; cart via the cart window) and
-  **cold-boots** the fabric 6502 (the A9 serves sectors, the XL OS does the load —
-  no 6502 PC control needed). Two app classes by XEX header: `$FFFF`/ATR/CAR =
-  **classic** (emulator surface, scale 1–5 / fullscreen-with-pillarbox, mouse-move
-  chrome + `[Home]` to close, raw input to POKEY/PIA); `$FFFE` = **GEM app** (a 6502
-  GEM client → A9 GEM service → a desktop window, AES input + window close-box, the
-  emulator surface hidden/debug). Cold-boot per launch now → **"launch task"** once
-  multitasking lands (→ multiple GEM windows). *(design ready, not built; src:
-  docs/OS/app-launch.md)*
-
----
-
 ## GEM (VDI + AES) / desktop
-
-- **Wallpaper-backed desktop (drop the solid-blue fill)** — `gem_wm_draw()` fills the
-  whole desktop with `wm->desktop_color` (solid blue, `gem/wm.c:262/290`), painting
-  over the textured boot wallpaper. Back the WM with the wallpaper surface and erase
-  windows *to it* (copy-from-wallpaper) instead of fill-solid. More correct, and it
-  stops masking wrong-source/offset bugs (it hid the scaled-blit HW bug — see
-  [[hw_test_fidelity_textured_bg]] / §1.5). *(src: this session)*
 - **VDI dispatch layer (Phase 1, keystone)** — opcode wire format + 6502-side VDI
   library + N6 DRAW dispatcher + palette expansion + inquiry RPCs. *(highest priority;
   everything depends on it; src: docs/GEM/GEM-implementation.md)*
@@ -222,6 +101,353 @@ Remaining:
   clipped `WM_REDRAW` (foundation); (2) `wind_scroll(win,dy)` HW backing-store move;
   (3) plane-body-move fast-path. Optional RTL (4): odd-X horizontal lane mux +
   reverse-direction BLOCK_BLIT. *(src: docs/OS/desktop-redraw.md)*
+
+## App launch (desktop → XL realm)
+
+- **Launch an 8-bit app from the desktop** — the A9 reads the file, looks up its
+  prefs (a namespace in the single SQLite registry), serves it as a **virtual disk**
+  (ATR direct; XEX wrapped in a synthesized boot disk; cart via the cart window) and
+  **cold-boots** the fabric 6502 (the A9 serves sectors, the XL OS does the load —
+  no 6502 PC control needed). Two app classes by XEX header: `$FFFF`/ATR/CAR =
+  **classic** (emulator surface, scale 1–5 / fullscreen-with-pillarbox, mouse-move
+  chrome + `[Home]` to close, raw input to POKEY/PIA); `$FFFE` = **GEM app** (a 6502
+  GEM client → A9 GEM service → a desktop window, AES input + window close-box, the
+  emulator surface hidden/debug). Cold-boot per launch now → **"launch task"** once
+  multitasking lands (→ multiple GEM windows). *(design ready, not built; src:
+  docs/OS/app-launch.md)*
+
+## Multitasking / self-hosting / compiler
+- **xtc ARM back-end (`XTARMLowering`)** — the critical missing compiler piece
+  (~3,000 lines); gates ARM-native apps, the dynamic loader, and the GEM ARM client.
+  Target = **Cortex-A9 / ARMv7-A / AArch32** (port *from* the arm64 backend — a real
+  ISA change, not a tweak). Consolidated port requirements (C-ABI/newlib interop,
+  PIC/ET_DYN minimal-reloc, `svc #1` syscall stubs, ARC + unmanaged subset, DWARF +
+  full backtrace) in **docs/OS/xtc-on-arm9.md**. *(Phase 1; immediate next step if
+  greenlit; src: docs/MultiTasking/self-hosting.md, docs/OS/xtc-on-arm9.md)*
+- **Port stdlib file I/O to the Zynq side** — SD/FAT32 driver via FreeRTOS exposed as
+  a trap class (<200 lines). Then write `xtc.xt` in xtc (self-host bootstrap), feature
+  parity (`-O1/2/3`, self-hosted 6502 back-end), benchmark a parse on the Zynq first.
+  *(src: docs/MultiTasking/self-hosting.md)*
+- **6502 (SALLY) multitasking kernel** — scheduler + loader + syscall/BRK handler +
+  GEMDOS proxy (~10-14 days; HW foundations exist). v1 stubs MiNT signals to ENOSYS
+  except kill/wait/exit; true memory protection needs a fabric MPU (~1500 LUTs, no
+  exception model today). *(src: docs/MultiTasking/multitasking.md)*
+- **SALLY tasking HW (decide early)** — SP_BANK/ZP_BANK per-task registers (~50 LUTs,
+  fmax-neutral); optional tick IRQ + atomic CAS (preemption); HW context-switch
+  instruction (~100 LUTs); wider 11-bit SP + stack-relative addressing (fmax-risky,
+  needs xtc compiler hooks); cheap IRQ auto-push A/X/Y. *(src: docs/GEM/GEM-implementation.md,
+  docs/MultiTasking/banked-stack-context-switch.md)*
+- **ARM-A9 dynamic ELF loading** — feasible (~1-2 weeks) but deferred until a concrete
+  ARM user-app use case; main risk is `-fPIE` `r9` PIC ABI vs the FreeRTOS BSP. *(src:
+  docs/MultiTasking/multitasking.md)*
+- **m68k EmuTOS/MiNT port** — ~480-line board-support port; blocked on the m68k soft-
+  core / JIT existing first. *(src: docs/MultiTasking/multitasking.md)*
+
+## 6502 / xt embellishments
+
+- **$x2 SP-relative opcodes** — `AND/ORA/EOR d,SP` in the spare `$82/$C2/$E2` slots.
+- **$x3 SP-indirect family** — twelve free `$x3` slots for SP-indirect variants.
+- **65C02 `$80` BRA / `$89` BIT #imm** — trivial; harmless NOP on NMOS.
+- **Dual-port stack BRAM speedup** — PSH/PLL 8/9 → 5 cycles via dual-port (or 16-bit)
+  stack BRAM in `sally_mem`. *(optimisation; src: docs/6502/6502-embellishments.md)*
+
+- **NMOS illegal opcodes for software compat** — `xt6502` passes Klaus but Klaus is
+  documented-only, so it currently decodes **none** of the undocumented opcodes (they
+  fall through to `default`). Real A8 software needs them: **Prince of Persia** (A8 port)
+  executes `ANC $0B`, `SAX $87/$97`, `LAX $A7` — confirmed by an instrumented-atari800
+  trace (see memory `pop_illegal_opcodes`, reproduce via `scratchpad/atari800-src` cpu.c
+  hook). Without them the PoP intro breaks exactly like it does on a 65C816 (Rapidus).
+  - **Scope.** Implement the *stable* set: `LAX SAX DCP ISC SLO RLA SRE RRA ANC ALR ARR
+    SBX` + the undoc-NOPs. Skip the *unstable* group (`ANE LXA TAS SHA SHX SHY LAS`) —
+    analog-magic-constant behaviour, and no real software depends on it (PoP doesn't).
+  - **Decode is free, datapath is the risk.** The decoder is off the `clk_sally`
+    critical path (ALU carry chain + `sally_mem` read mux + routing is the ceiling), so
+    extra opcode patterns cost LUTs, not MHz — in *both* decode modes (one decoder, one
+    clock; STA already times the worst case). The fMax trap is implementing the heavy RMW
+    combos (`SLO/RLA/SRE/RRA/DCP/ISC`) as single-cycle fused ALU ops — do them as
+    **multi-cycle micro-sequences reusing existing ALU primitives** (extra FSM states,
+    zero new combinational depth), like the embellishments already do.
+  - PoP's three are all shallow anyway: `LAX` = load fan-out to A+X (no ALU), `SAX` =
+    store `A&X` (one AND, no flags), `ANC` = `AND` then bit7→C/N (a wire). Effectively
+    free even on the binding constraint.
+  - **cc=11 coexistence.** The `$x3` embellishments overlap NMOS `SLO/RLA` (`$03/$13/$23/$33`),
+    but the native-decode gate muxes *meaning* per mode — compat decode keeps NMOS-illegal
+    semantics, native decode emits the embellishments. It's a correctness switch, not a
+    speed switch (no per-mode clock difference). PoP uses `$x7/$xB`, not `$x3`, so no
+    clash with the chosen embellishment slots regardless.
+
+- **Dedicated "fidelity / 1× purist" 6502 core (design option)** — a
+  *second* CPU optimised for **correctness, not speed**, run at 1× with ~50× timing
+  slack. It's the clean home for the things the turbo core architecturally *can't* do
+  (and shouldn't be contorted to): cycle-exact dummy reads / exact bus-cycle pattern
+  (turbo is registered-MAR, 1 fabric clk/op, no round-trip), the **unstable** opcode
+  group, exact NMOS decimal flags, RMW double-write timing — i.e. the same fidelity the
+  **position-exact-raster stretch** wants (see memory `sally_halt_not_modeled`:
+  ACID800 / RastaConverter, CPU↔ANTIC phi2 phase-lock). Bonus: a fabric cycle-exact
+  core doubles as an on-chip co-sim oracle for the turbo core (hardware analogue of the
+  golden-trace `cosim_diff.py` flow).
+  - **Not for the common case.** Stable illegals on the turbo core already cover PoP +
+    ~99% of software far more cheaply. Only build this for a genuine *cycle-exact
+    faithful mode* feature.
+  - **Switch is cold, at app launch** — no live A↔B state hand-off (machine resets and
+    reloads the app either way). Shared RAM (ZP/stack/screen) lives in the memory
+    subsystem both cores reach; only one core is active at a time.
+  - **Area is cheap, integration is the cost.** A 6502 is a few k LUT/FF and ~zero extra
+    BRAM (BRAM hogs are screen + page cache), so a small LUT bump and barely a touch on
+    the binding BRAM budget. The real cost is the bus/boundary into `sally_mem` + 2×
+    verification surface, not area.
+  - **Three implementation options:**
+    - **(A) Both cores resident + 2:1 bus mux.** Simplest build; instant switch; all
+      subsystems stay live. Cost: the mux lands on the binding `clk_sally` CPU↔`sally_mem`
+      path (~0.3–0.5 ns ≈ 1 LUT level). Current operating point is **100 MHz** (`clk_sally`
+      100 / `clk_sys` 133 / `clk_pix` 148; 120 no longer closes off-the-shelf), so there's
+      more headroom than the old 120 target — but it still eats margin on the binding
+      family, so gate any build on `clk_sally` WNS ≥ 0.
+    - **(B) Partial Reconfiguration** — CPU in a Reconfigurable Partition, swap the core
+      via a small partial bitstream over PCAP from the A9 (sub-ms, invisible at launch),
+      **HDMI/ANTIC/compositor/PS-links stay live**. Removes the 2:1 mux. *Catch:* the RP
+      boundary is a hard fence — if the CPU is in the RP and `sally_mem` is static, the
+      binding CPU↔memory path crosses the boundary through fixed partition pins and can
+      gain delay (trades the mux penalty for a boundary penalty). **fMax-neutral only if
+      the RP is floorplanned to contain the entire `clk_sally`-critical loop** (CPU +
+      registered MAR + `sally_mem` read mux); boundary then carries only slow signals.
+      Keep all RAM static so it survives the swap (trivial for cold-launch). The RP needs
+      a Pblock — familiar ground (the design already floorplans with pblocks, e.g. the
+      sally pblock), but PR layers a *hard boundary* constraint on top of the usual
+      placement-only pblock. Adds the Vivado PR flow (RP + per-core Reconfigurable Modules,
+      Pblock sized for the larger fidelity core, decoupler, post-load reset). PR is
+      license-free on 7-series.
+    - **(C) Two full bitstreams, PS loads at launch** — cleanest per-core timing (flat
+      builds, no mux, no boundary), but a full reload **blanks the whole display + re-syncs
+      PS↔PL** every launch (bad UX). Rejected unless the display teardown becomes
+      acceptable.
+  - **Recommendation:** (B) is the architecturally correct answer for "swap the CPU while
+    the desktop/video stays alive" — *provided* the RP is floorplanned around the
+    CPU↔memory critical loop. Sequence it **after** stable illegals land, and only when
+    cycle-exact faithful mode is actually wanted.
+
+> See also the parked branch `xt-embellishment-relocate` (opcode relocation to free
+> the cc=11 undoc territory; ISA-correct but costs ~150 ps — cherry-pick after fmax
+> levers land).
+
+---
+
+
+
+# Future targets
+## Open Issues (tracked bugs)
+- **A loaded libGEM.so re-running `vdi_init` wipes the kernel's live VDI** — the
+  `gemhw`/runhost demo (`xtld_host.c`) resolves `vdi_init` from the loaded `libGEM.so`
+  and calls `vdi_init(&desk)`; because the kernel and libGEM share the symbol, that
+  **resets the shared workstation table**, invalidating the desktop's `g_vh` and
+  overdrawing the desktop (lost wallpaper). Symptom: after the demo runs, `vdi.*` →
+  "vdi not initialised" and `vdi.wscount()` drops to 1. (NB: this — not any blitter
+  bug — was the cause of the earlier "`vdi.bar` draws nothing"; with a valid `g_vh`
+  fills work. Also note `dow` ELF-reloads accumulate this kind of stale VDI state — a
+  cold-load restores it.) Fix: the loaded GEM must not re-init the kernel's live VDI —
+  either guard `vdi_init` against clobbering an initialised table, or give the demo its
+  own workstation without resetting. *(vitis/xtos/src/xtld_host.c, gem/vdi/core.c)*
+
+## Post-architecture-review
+ (Tracking `docs/Design/architecture-review.md`)
+- **Partial-reconfig CPU swap.** RP region confirmed viable at X1Y2 (not the PS
+  corner — hard blocks there). Implement: `sally_subsystem` wrapper → exclusive RP
+  pblock → DFX static/RM flow → runtime PCAP swap. *(docs/Design/partial-reconfig.md)*
+  
+- Still open: the **ST compositor plane** (bind enum ST-ready,
+  plane not wired); and verify/close the **VDI-workstation leak** (direct `vdi.*` after
+  `wintest` draws into a window backing, not the desktop). *(docs/OS/desktop-emulation-windows.md)*
+
+- **§3.1 ACP coherency** (evaluate on GEM/desktop surfaces), 
+
+## HW / RTL bring-up
+- **Keyboard injection host source** — RTL path is done (GP0 → `$D4CF` → POKEY).
+  Remaining: a host-side source + ASCII→KBCODE map. *(likely partly covered by the
+  serial `{ }` paste path — verify; src: former docs/TODO.txt)*
+- **GPIO LED MIO mapping** — `main.c` LED toggle waits on Z-Turn MIO confirmation.
+  *(src: docs/bring-up.md)*
+
+## Video / compositor / sprites / textures
+- **Palette: PAL/NTSC runtime re-push** — page a non-default reference palette in via
+  $D483-$D486 on region switch (bake-in is the default); plus more accurate reference
+  tables. *(src: docs/HDMI/palette.md)*
+
+## Audio (PCM1808 capture + HDMI audio)
+- **Analog-audio fidelity (Altirra App. E)** — post-mixer DSP: channel-DAC bit
+  weights, non-linear saturation, AC coupling, DC bias. *(skip until a "purist" mode
+  is wanted; src: docs/Design/aux-audio-and-reservations.md, docs/Altirra/altirra-pokey-audit.md)*
+
+## Memory / banking (DDR3 banked window — parallel track, not on boot path)
+- **Reserve + validate the DDR3 region** — 0x2000_0000 code / 0x2040_0000 data; keep
+  PS out of 0x2000_0000-0x207F_FFFF; validate with an explicit $D5C0/$D5C1 bank-switch
+  test (boot won't exercise DDR3). *(src: former docs/TODO.txt)*
+- **Provisional memory regions not yet wired** — 68k "T" realm (0x1C00_0000), GEM
+  heap/asset cache (0x3800_0000), sprite arena (0x3400_0000). *(src: docs/Zynq/memory-map.md)*
+
+## Filesystems (VFS + block-device layer — loader foundations landed)
+- **Swap** — VM page-out/in over the `blkdev` layer: a dedicated swap partition exposed as a
+  `blkdev`, or the pager calling `blkdev_write/read` on `sd0`. Revives the parked demand-paging
+  work; needs MBR partition parsing (`sd0p1…`) for a swap partition. *(src: loader blkdev/VFS)*
+- **MinixFS** — a `vfs_fs` driver reading blocks via `blkdev_read(sd0,…)`, mounted with
+  `vfs_add_mount`; needs no syscall/fd changes (the VFS dispatch is filesystem-agnostic).
+  *(src: loader blkdev/VFS)*
+
+## SIO / PBI / cartridge / companion MCU
+- none
+
+## GEM (VDI + AES) / desktop
+- none
+
+
+## Math coprocessor (A9-offloaded FPU + integer)
+
+- **A9-offloaded math coprocessor** — memory-mapped FPU + integer unit: the 6502
+  writes operands into per-task register banks, picks an op, and a spare Cortex-A9
+  core does the math (native VFP + libm + integer) and writes the result back.
+  Replaces software FP with IEEE-754 single/double + full libm + integer mul/div,
+  ~15–100× faster and **flat cost** (a transcendental costs the same as an add).
+  Key feature: ops name source/dest slots, so the 6502 offloads whole *expressions*
+  rather than one op at a time (the xtc backend targets it as a register machine).
+  Same doorbell/mailbox as the GEM service; reuses the hwreg/CDC/GP0 plumbing.
+  *(design ready, not built; src: docs/Design/math-coprocessor.md)*
+
+---
+
+## DSP56001 (Falcon DSP) in fabric (design option — gated on Falcon/m68k target)
+
+The Atari Falcon's Motorola **DSP56001** (24-bit, ~16 MIPS @ 32 MHz). Wanted if the
+Falcon becomes a target alongside the m68k. Conclusion of the design thread: build it
+**wide, in fabric** — *not* on the A9 and *not* serialised.
+
+- **Why fabric (not A9-emulated).** Both A9s are committed once Falcon is a target —
+  one runs GEM/graphics, the other the JIT 68030 ([[m68k_core_mmu_requirements]],
+  docs/MultiTasking/multitasking.md). No spare host for a Hatari-style DSP emulator, so
+  the "just emulate it" route (which would otherwise win on effort) is off the table.
+- **Loose coupling is the unlock.** The real Falcon Host Interface (HI) is an
+  **asynchronous mailbox** — the 68k uploads code/data, pokes a command, the DSP runs
+  independently on its own clock and replies through the same mailbox. So the fabric DSP
+  talks to the A9-JIT-68k through memory-mapped HI registers/FIFO **across a clock-domain
+  boundary, with no cycle-lockstep** (reuse the existing hwreg/CDC/GP0 plumbing, same as
+  the math coprocessor). The hardest coprocessor problem — keeping two engines in sync —
+  doesn't exist here by design.
+- **Microarchitecture: wide execute + multi-cycle *non-overlapped* decode.** Decouple
+  the **ISA-visible contract** (one emulated 56k instruction-cycle per "tick", which is
+  all the HI/SSI boundary + cycle-accuracy care about) from the **internal gate-level
+  timing** (as many fabric cycles, as deeply staged, as convenient):
+  - *Wide execute.* The 56k has only ~6–8 data-ALU registers (X1/X0/Y1/Y0/A/B) — make
+    them flip-flops → unlimited concurrent reads for free; replicate the two AGU adders;
+    give X and Y their own BRAMs (Harvard wants this anyway). The "many buses" become
+    wide combinational muxing in the **spare LUTs**. Bonus: doing the parallel moves
+    genuinely simultaneously makes the 56k's simultaneous-move semantics **bit-exact by
+    construction** — no operand-snapshot bookkeeping (which serialising would have forced).
+  - *Staged decode, one instruction in flight.* The dense 24-bit parallel-move encoding
+    needn't be one scary combinational step — stage it over 4–6 shallow fabric cycles.
+    With ~6–10× clock headroom over 16 MIPS, a **non-overlapped** multi-cycle FSM (only
+    one instruction in the machine at a time) still retires at real-time and has **zero
+    pipeline hazards** — no forwarding, no interlocks, no need to model the real 56k's own
+    pipeline restrictions. Stage purely for design simplicity + timing comfort, not speed.
+- **SDMA + connection matrix (crossbar) — required for audio compat.** Real Falcon DSP
+  audio almost never touches bulk memory directly: the **sound DMA streams blocks between
+  RAM and the DSP's SSI through the crossbar** (`$FFFF89xx` DMA-sound + matrix block), and
+  software runs an SSI-interrupt processing loop. So to run real binaries you need the
+  SDMA + crossbar **register models**, not just the HI. Well-aligned, reuse-heavy:
+  - The SDMA-equivalent is another HP-port AXI streamer — a sibling of the COVOX
+    `pokey_sample_dma` item — pushing/pulling a FIFO into the DSP SSI.
+  - The crossbar is a thin register-compatible mux over the audio-routing fabric already
+    being built (PCM1808 capture + codec + HDMI audio).
+  - **Coherency:** the SDMA reads/writes the DDR region holding *emulated Falcon RAM*,
+    which the A9-JIT-68k also touches → the usual PL↔PS shared-buffer coherency
+    (non-cached region / flush / ACP). Don't let it sneak up.
+  - **Pacing:** the SDMA→SSI→DSP→SSI→SDMA loop and the DSP's SSI interrupts run at the
+    **audio sample/frame rate**, not free-running.
+- **Two interfaces, opposite coupling.** To the 68k the DSP is **loosely** coupled (HI
+  mailbox, no lockstep, "upload and run"); to the audio subsystem it's **tightly** coupled
+  (SSI/SDMA/crossbar paced by the audio clock). So "runs independently" holds for *compute*
+  DSP use but not *streaming audio*, where it's a sample-paced interrupt loop. Clean
+  partition: **HI in the control/clock domain** (to the JIT-68k); **SSI + SDMA + crossbar
+  as an audio-clock-domain subsystem** next to the codec/PCM1808 fabric.
+- **Faithful-vs-turbo clock mode**, like the 6502: pace the tick to ~16 MIPS for
+  cycle-exact Falcon audio, or run faster for code that doesn't care. Lives next to the
+  audio fabric (SSI → PCM1808/codec clock domain).
+- **Resource / timing: not the constraint.** 24×24→56 MAC = 2–4 DSP48E1 of 220; X/Y/P
+  on-chip RAM + tables = a few BRAMs; decode/AGU/control = a few k LUTs. Fits the 7020
+  with room; ~zero fMax pressure (16 MIPS target). **Effort, not silicon, is the cost.**
+- **The genuine effort center (unchanged by any of the above): comprehension +
+  validation.** Transcribing every parallel-move format / addressing mode and the
+  bit-exact data ALU (56-bit extension, scaling, convergent rounding, saturation), plus
+  the HI + SSI peripheral models, bootstrap ROM, on-chip X/Y/P map, µ-law tables — then
+  proving it bit-exact. Staging makes the *gates* easy; it does **not** shrink the
+  spec-transcription work, where the months actually are.
+- **References, not blank-page:** **Suska** (experiment-s.de — open-source VHDL Falcon+,
+  crib the decode + bit-exact ALU) and **Hatari**'s `dsp.c` (mature, accurate Falcon DSP
+  emulator → golden co-sim model). Net risk profile: a *medium-complexity microcoded
+  coprocessor faithfully copying a well-documented spec*, not taming exotic silicon.
+- **Sequencing:** gated on the m68k JIT + Falcon target maturing; not near-term. *(design
+  option; no source doc yet — capture in a docs/Design/ note if it advances.)*
+
+
+---
+
+# Sometime / Maybe
+## Open Issues (tracked bugs)
+- none
+
+## Post-architecture-review
+- **§3.2 SALLY memory hierarchy → 120 MHz**, 
+
+## HW / RTL bring-up
+- none
+
+## Video / compositor / sprites / textures
+- **Compositor polish (deferred)** — desktop-window-over-live-window occlusion
+  (clip-rect → bitmap override); visible-span-only plane fetch (bandwidth); tear-free
+  `front_sel` sampling at the compositor's own frame start; narrow/wide playfield
+  `src_w` tracking. *(src: docs/video/video-architecture.md, former docs/TODO.txt)*
+  
+- **PL-only test-pattern mux in `plane_compositor`** — build-param gradient/colour-bar
+  bypass of plane_fetch reads (old `SCANOUT_TEST_PATTERN` lived only in orphaned
+  `fb_scanout.sv`). *(src: docs/bring-up.md)*
+  
+- **Sprite engine — deferred/optional refinements.** Core, HW mouse cursor, H/V flip + 2× scale, Remaining (none currently blocking): palettised sprites, rotation (SW-first),
+  blitter→sprite-arena integration. *(src: hdl/sprite_engine.sv, docs/Design/sprite-engine.md)*
+
+- **Texture mapping (tiers)** — T1 affine point-sampled (~1 day) → T2 bilinear
+  (+½ day) → T3 textured triangles (+½–1 day) → T4 perspective-correct (several days);
+  plus `$D4D0..` TEX_* regs / `CMD=0x08` / `TEX_WRAP` wiring and a texture-cache
+  throughput upgrade (2×2 quad reads / BRAM tile cache). *(src: docs/video/texture-mapping.md)*
+
+## Audio (PCM1808 capture + HDMI audio)
+
+- **COVOX-style DMA sample playback** — `pokey_sample_dma` streaming DDR buffers to
+  the mixer (8-bit mono + 16-bit stereo, EOS IRQ). *(deferred to M22+; src:
+  docs/Design/aux-audio-and-reservations.md)*
+- **RS-232 via second POKEY** — rear-panel RS-232 off the unused 2nd-POKEY serial
+  port: MAX232/SP3232 footprint + 2 peri pads (PCB), `peri_bridge.sv` 2nd serial
+  channel + companion software-UART firmware. *(M-serial; src: docs/Design/aux-audio-and-reservations.md)*
+
+## Memory / banking (DDR3 banked window — parallel track, not on boot path)
+
+- **Banked page cache (`"PAGE"`) — fmax pass.** `banked_page_cache` (resident pages +
+  write-back) is the better backend once banking is heavy, but it adds ~0.5 ns to
+  SALLY's 1-cycle mem loop (clk_sally −0.495, ~54% routing) — needs a floorplan
+  (`pb_sally` + `screen_bank` CPU-BRAM co-location) and/or read-path depth reduction
+  before it can replace LINE. Also: its **write-back/reload path is incomplete** — a
+  code/data-bank write does not persist across a swap (code-bank write is a no-op; data
+  write-back fails too). Exposed by `tb_sally_mem` A.4c — run `make sally_mem_page` (the
+  PAGE variant skips A.4c via `-D PAGE_BACKEND`; remove that gate once fixed).
+  *(src: docs/Design/banked-page-cache.md, sim/tb_sally_mem.sv)*
+
+## SIO / PBI / cartridge / companion MCU
+- none
+
+## GEM (VDI + AES) / desktop
+- none
+
+## Multitasking / self-hosting / compiler
+- none
+
+
+
 
 ---
 
@@ -328,212 +554,6 @@ Remaining:
 
 ---
 
-## Multitasking / self-hosting / compiler
-
-- **xtc ARM back-end (`XTARMLowering`)** — the critical missing compiler piece
-  (~3,000 lines); gates ARM-native apps, the dynamic loader, and the GEM ARM client.
-  Target = **Cortex-A9 / ARMv7-A / AArch32** (port *from* the arm64 backend — a real
-  ISA change, not a tweak). Consolidated port requirements (C-ABI/newlib interop,
-  PIC/ET_DYN minimal-reloc, `svc #1` syscall stubs, ARC + unmanaged subset, DWARF +
-  full backtrace) in **docs/OS/xtc-on-arm9.md**. *(Phase 1; immediate next step if
-  greenlit; src: docs/MultiTasking/self-hosting.md, docs/OS/xtc-on-arm9.md)*
-- **Port stdlib file I/O to the Zynq side** — SD/FAT32 driver via FreeRTOS exposed as
-  a trap class (<200 lines). Then write `xtc.xt` in xtc (self-host bootstrap), feature
-  parity (`-O1/2/3`, self-hosted 6502 back-end), benchmark a parse on the Zynq first.
-  *(src: docs/MultiTasking/self-hosting.md)*
-- **6502 (SALLY) multitasking kernel** — scheduler + loader + syscall/BRK handler +
-  GEMDOS proxy (~10-14 days; HW foundations exist). v1 stubs MiNT signals to ENOSYS
-  except kill/wait/exit; true memory protection needs a fabric MPU (~1500 LUTs, no
-  exception model today). *(src: docs/MultiTasking/multitasking.md)*
-- **SALLY tasking HW (decide early)** — SP_BANK/ZP_BANK per-task registers (~50 LUTs,
-  fmax-neutral); optional tick IRQ + atomic CAS (preemption); HW context-switch
-  instruction (~100 LUTs); wider 11-bit SP + stack-relative addressing (fmax-risky,
-  needs xtc compiler hooks); cheap IRQ auto-push A/X/Y. *(src: docs/GEM/GEM-implementation.md,
-  docs/MultiTasking/banked-stack-context-switch.md)*
-- **ARM-A9 dynamic ELF loading** — feasible (~1-2 weeks) but deferred until a concrete
-  ARM user-app use case; main risk is `-fPIE` `r9` PIC ABI vs the FreeRTOS BSP. *(src:
-  docs/MultiTasking/multitasking.md)*
-- **m68k EmuTOS/MiNT port** — ~480-line board-support port; blocked on the m68k soft-
-  core / JIT existing first. *(src: docs/MultiTasking/multitasking.md)*
-
----
-
-## 6502 / xt embellishments
-
-- **$x2 SP-relative opcodes** — `AND/ORA/EOR d,SP` in the spare `$82/$C2/$E2` slots.
-- **$x3 SP-indirect family** — twelve free `$x3` slots for SP-indirect variants.
-- **65C02 `$80` BRA / `$89` BIT #imm** — trivial; harmless NOP on NMOS.
-- **Dual-port stack BRAM speedup** — PSH/PLL 8/9 → 5 cycles via dual-port (or 16-bit)
-  stack BRAM in `sally_mem`. *(optimisation; src: docs/6502/6502-embellishments.md)*
-
-- **NMOS illegal opcodes for software compat** — `xt6502` passes Klaus but Klaus is
-  documented-only, so it currently decodes **none** of the undocumented opcodes (they
-  fall through to `default`). Real A8 software needs them: **Prince of Persia** (A8 port)
-  executes `ANC $0B`, `SAX $87/$97`, `LAX $A7` — confirmed by an instrumented-atari800
-  trace (see memory `pop_illegal_opcodes`, reproduce via `scratchpad/atari800-src` cpu.c
-  hook). Without them the PoP intro breaks exactly like it does on a 65C816 (Rapidus).
-  - **Scope.** Implement the *stable* set: `LAX SAX DCP ISC SLO RLA SRE RRA ANC ALR ARR
-    SBX` + the undoc-NOPs. Skip the *unstable* group (`ANE LXA TAS SHA SHX SHY LAS`) —
-    analog-magic-constant behaviour, and no real software depends on it (PoP doesn't).
-  - **Decode is free, datapath is the risk.** The decoder is off the `clk_sally`
-    critical path (ALU carry chain + `sally_mem` read mux + routing is the ceiling), so
-    extra opcode patterns cost LUTs, not MHz — in *both* decode modes (one decoder, one
-    clock; STA already times the worst case). The fMax trap is implementing the heavy RMW
-    combos (`SLO/RLA/SRE/RRA/DCP/ISC`) as single-cycle fused ALU ops — do them as
-    **multi-cycle micro-sequences reusing existing ALU primitives** (extra FSM states,
-    zero new combinational depth), like the embellishments already do.
-  - PoP's three are all shallow anyway: `LAX` = load fan-out to A+X (no ALU), `SAX` =
-    store `A&X` (one AND, no flags), `ANC` = `AND` then bit7→C/N (a wire). Effectively
-    free even on the binding constraint.
-  - **cc=11 coexistence.** The `$x3` embellishments overlap NMOS `SLO/RLA` (`$03/$13/$23/$33`),
-    but the native-decode gate muxes *meaning* per mode — compat decode keeps NMOS-illegal
-    semantics, native decode emits the embellishments. It's a correctness switch, not a
-    speed switch (no per-mode clock difference). PoP uses `$x7/$xB`, not `$x3`, so no
-    clash with the chosen embellishment slots regardless.
-
-- **Dedicated "fidelity / 1× purist" 6502 core (design option)** — a
-  *second* CPU optimised for **correctness, not speed**, run at 1× with ~50× timing
-  slack. It's the clean home for the things the turbo core architecturally *can't* do
-  (and shouldn't be contorted to): cycle-exact dummy reads / exact bus-cycle pattern
-  (turbo is registered-MAR, 1 fabric clk/op, no round-trip), the **unstable** opcode
-  group, exact NMOS decimal flags, RMW double-write timing — i.e. the same fidelity the
-  **position-exact-raster stretch** wants (see memory `sally_halt_not_modeled`:
-  ACID800 / RastaConverter, CPU↔ANTIC phi2 phase-lock). Bonus: a fabric cycle-exact
-  core doubles as an on-chip co-sim oracle for the turbo core (hardware analogue of the
-  golden-trace `cosim_diff.py` flow).
-  - **Not for the common case.** Stable illegals on the turbo core already cover PoP +
-    ~99% of software far more cheaply. Only build this for a genuine *cycle-exact
-    faithful mode* feature.
-  - **Switch is cold, at app launch** — no live A↔B state hand-off (machine resets and
-    reloads the app either way). Shared RAM (ZP/stack/screen) lives in the memory
-    subsystem both cores reach; only one core is active at a time.
-  - **Area is cheap, integration is the cost.** A 6502 is a few k LUT/FF and ~zero extra
-    BRAM (BRAM hogs are screen + page cache), so a small LUT bump and barely a touch on
-    the binding BRAM budget. The real cost is the bus/boundary into `sally_mem` + 2×
-    verification surface, not area.
-  - **Three implementation options:**
-    - **(A) Both cores resident + 2:1 bus mux.** Simplest build; instant switch; all
-      subsystems stay live. Cost: the mux lands on the binding `clk_sally` CPU↔`sally_mem`
-      path (~0.3–0.5 ns ≈ 1 LUT level). Current operating point is **100 MHz** (`clk_sally`
-      100 / `clk_sys` 133 / `clk_pix` 148; 120 no longer closes off-the-shelf), so there's
-      more headroom than the old 120 target — but it still eats margin on the binding
-      family, so gate any build on `clk_sally` WNS ≥ 0.
-    - **(B) Partial Reconfiguration** — CPU in a Reconfigurable Partition, swap the core
-      via a small partial bitstream over PCAP from the A9 (sub-ms, invisible at launch),
-      **HDMI/ANTIC/compositor/PS-links stay live**. Removes the 2:1 mux. *Catch:* the RP
-      boundary is a hard fence — if the CPU is in the RP and `sally_mem` is static, the
-      binding CPU↔memory path crosses the boundary through fixed partition pins and can
-      gain delay (trades the mux penalty for a boundary penalty). **fMax-neutral only if
-      the RP is floorplanned to contain the entire `clk_sally`-critical loop** (CPU +
-      registered MAR + `sally_mem` read mux); boundary then carries only slow signals.
-      Keep all RAM static so it survives the swap (trivial for cold-launch). The RP needs
-      a Pblock — familiar ground (the design already floorplans with pblocks, e.g. the
-      sally pblock), but PR layers a *hard boundary* constraint on top of the usual
-      placement-only pblock. Adds the Vivado PR flow (RP + per-core Reconfigurable Modules,
-      Pblock sized for the larger fidelity core, decoupler, post-load reset). PR is
-      license-free on 7-series.
-    - **(C) Two full bitstreams, PS loads at launch** — cleanest per-core timing (flat
-      builds, no mux, no boundary), but a full reload **blanks the whole display + re-syncs
-      PS↔PL** every launch (bad UX). Rejected unless the display teardown becomes
-      acceptable.
-  - **Recommendation:** (B) is the architecturally correct answer for "swap the CPU while
-    the desktop/video stays alive" — *provided* the RP is floorplanned around the
-    CPU↔memory critical loop. Sequence it **after** stable illegals land, and only when
-    cycle-exact faithful mode is actually wanted.
-
-> See also the parked branch `xt-embellishment-relocate` (opcode relocation to free
-> the cc=11 undoc territory; ISA-correct but costs ~150 ps — cherry-pick after fmax
-> levers land).
-
----
-
-## Math coprocessor (A9-offloaded FPU + integer)
-
-- **A9-offloaded math coprocessor** — memory-mapped FPU + integer unit: the 6502
-  writes operands into per-task register banks, picks an op, and a spare Cortex-A9
-  core does the math (native VFP + libm + integer) and writes the result back.
-  Replaces software FP with IEEE-754 single/double + full libm + integer mul/div,
-  ~15–100× faster and **flat cost** (a transcendental costs the same as an add).
-  Key feature: ops name source/dest slots, so the 6502 offloads whole *expressions*
-  rather than one op at a time (the xtc backend targets it as a register machine).
-  Same doorbell/mailbox as the GEM service; reuses the hwreg/CDC/GP0 plumbing.
-  *(design ready, not built; src: docs/Design/math-coprocessor.md)*
-
----
-
-## DSP56001 (Falcon DSP) in fabric (design option — gated on Falcon/m68k target)
-
-The Atari Falcon's Motorola **DSP56001** (24-bit, ~16 MIPS @ 32 MHz). Wanted if the
-Falcon becomes a target alongside the m68k. Conclusion of the design thread: build it
-**wide, in fabric** — *not* on the A9 and *not* serialised.
-
-- **Why fabric (not A9-emulated).** Both A9s are committed once Falcon is a target —
-  one runs GEM/graphics, the other the JIT 68030 ([[m68k_core_mmu_requirements]],
-  docs/MultiTasking/multitasking.md). No spare host for a Hatari-style DSP emulator, so
-  the "just emulate it" route (which would otherwise win on effort) is off the table.
-- **Loose coupling is the unlock.** The real Falcon Host Interface (HI) is an
-  **asynchronous mailbox** — the 68k uploads code/data, pokes a command, the DSP runs
-  independently on its own clock and replies through the same mailbox. So the fabric DSP
-  talks to the A9-JIT-68k through memory-mapped HI registers/FIFO **across a clock-domain
-  boundary, with no cycle-lockstep** (reuse the existing hwreg/CDC/GP0 plumbing, same as
-  the math coprocessor). The hardest coprocessor problem — keeping two engines in sync —
-  doesn't exist here by design.
-- **Microarchitecture: wide execute + multi-cycle *non-overlapped* decode.** Decouple
-  the **ISA-visible contract** (one emulated 56k instruction-cycle per "tick", which is
-  all the HI/SSI boundary + cycle-accuracy care about) from the **internal gate-level
-  timing** (as many fabric cycles, as deeply staged, as convenient):
-  - *Wide execute.* The 56k has only ~6–8 data-ALU registers (X1/X0/Y1/Y0/A/B) — make
-    them flip-flops → unlimited concurrent reads for free; replicate the two AGU adders;
-    give X and Y their own BRAMs (Harvard wants this anyway). The "many buses" become
-    wide combinational muxing in the **spare LUTs**. Bonus: doing the parallel moves
-    genuinely simultaneously makes the 56k's simultaneous-move semantics **bit-exact by
-    construction** — no operand-snapshot bookkeeping (which serialising would have forced).
-  - *Staged decode, one instruction in flight.* The dense 24-bit parallel-move encoding
-    needn't be one scary combinational step — stage it over 4–6 shallow fabric cycles.
-    With ~6–10× clock headroom over 16 MIPS, a **non-overlapped** multi-cycle FSM (only
-    one instruction in the machine at a time) still retires at real-time and has **zero
-    pipeline hazards** — no forwarding, no interlocks, no need to model the real 56k's own
-    pipeline restrictions. Stage purely for design simplicity + timing comfort, not speed.
-- **SDMA + connection matrix (crossbar) — required for audio compat.** Real Falcon DSP
-  audio almost never touches bulk memory directly: the **sound DMA streams blocks between
-  RAM and the DSP's SSI through the crossbar** (`$FFFF89xx` DMA-sound + matrix block), and
-  software runs an SSI-interrupt processing loop. So to run real binaries you need the
-  SDMA + crossbar **register models**, not just the HI. Well-aligned, reuse-heavy:
-  - The SDMA-equivalent is another HP-port AXI streamer — a sibling of the COVOX
-    `pokey_sample_dma` item — pushing/pulling a FIFO into the DSP SSI.
-  - The crossbar is a thin register-compatible mux over the audio-routing fabric already
-    being built (PCM1808 capture + codec + HDMI audio).
-  - **Coherency:** the SDMA reads/writes the DDR region holding *emulated Falcon RAM*,
-    which the A9-JIT-68k also touches → the usual PL↔PS shared-buffer coherency
-    (non-cached region / flush / ACP). Don't let it sneak up.
-  - **Pacing:** the SDMA→SSI→DSP→SSI→SDMA loop and the DSP's SSI interrupts run at the
-    **audio sample/frame rate**, not free-running.
-- **Two interfaces, opposite coupling.** To the 68k the DSP is **loosely** coupled (HI
-  mailbox, no lockstep, "upload and run"); to the audio subsystem it's **tightly** coupled
-  (SSI/SDMA/crossbar paced by the audio clock). So "runs independently" holds for *compute*
-  DSP use but not *streaming audio*, where it's a sample-paced interrupt loop. Clean
-  partition: **HI in the control/clock domain** (to the JIT-68k); **SSI + SDMA + crossbar
-  as an audio-clock-domain subsystem** next to the codec/PCM1808 fabric.
-- **Faithful-vs-turbo clock mode**, like the 6502: pace the tick to ~16 MIPS for
-  cycle-exact Falcon audio, or run faster for code that doesn't care. Lives next to the
-  audio fabric (SSI → PCM1808/codec clock domain).
-- **Resource / timing: not the constraint.** 24×24→56 MAC = 2–4 DSP48E1 of 220; X/Y/P
-  on-chip RAM + tables = a few BRAMs; decode/AGU/control = a few k LUTs. Fits the 7020
-  with room; ~zero fMax pressure (16 MIPS target). **Effort, not silicon, is the cost.**
-- **The genuine effort center (unchanged by any of the above): comprehension +
-  validation.** Transcribing every parallel-move format / addressing mode and the
-  bit-exact data ALU (56-bit extension, scaling, convergent rounding, saturation), plus
-  the HI + SSI peripheral models, bootstrap ROM, on-chip X/Y/P map, µ-law tables — then
-  proving it bit-exact. Staging makes the *gates* easy; it does **not** shrink the
-  spec-transcription work, where the months actually are.
-- **References, not blank-page:** **Suska** (experiment-s.de — open-source VHDL Falcon+,
-  crib the decode + bit-exact ALU) and **Hatari**'s `dsp.c` (mature, accurate Falcon DSP
-  emulator → golden co-sim model). Net risk profile: a *medium-complexity microcoded
-  coprocessor faithfully copying a well-documented spec*, not taming exotic silicon.
-- **Sequencing:** gated on the m68k JIT + Falcon target maturing; not near-term. *(design
-  option; no source doc yet — capture in a docs/Design/ note if it advances.)*
-
----
 
 ## Fidelity / Altirra audit (mostly deferred — need cycle-accurate bus model)
 
