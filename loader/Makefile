@@ -93,13 +93,15 @@ FRSRC := $(FR)/tasks.c $(FR)/queue.c $(FR)/list.c $(FR)/timers.c $(FR)/event_gro
          $(FRPORT)/port.c \
          test/freertos/zynq.c test/freertos/bsp_shim.c test/freertos/mmu.c test/freertos/vm.c test/freertos/stackguard.c test/freertos/gfxplane.c test/freertos/hdmi.c test/freertos/frtos_os.c \
          test/freertos/romfs.c test/freertos/syscalls.c test/freertos/main.c \
+         test/freertos/blkdev.c test/freertos/vfs.c test/freertos/vfs_romfs.c \
          test/qemu/bare_rt.c test/qemu/bare_libc.c xtld.c \
          test/freertos/storage/ff.c test/freertos/storage/ffsystem.c \
          test/freertos/storage/ffunicode.c test/freertos/storage/diskio.c \
          test/freertos/storage/xsdps.c test/freertos/storage/xsdps_card.c \
          test/freertos/storage/xsdps_host.c test/freertos/storage/xsdps_options.c \
          test/freertos/storage/xsdps_sinit.c test/freertos/storage/xsdps_g.c \
-         test/freertos/storage/xil_shim.c test/freertos/storage/sd.c
+         test/freertos/storage/xil_shim.c test/freertos/storage/sd.c \
+         test/freertos/storage/vfs_fatfs.c
 FRASM := test/freertos/xt_boot.S test/freertos/xt_vectors.S $(FRPORT)/portASM.S
 
 # Build the kernel ELF(s) WITHOUT launching qemu — for rebuilding to pick up a new

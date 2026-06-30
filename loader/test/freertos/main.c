@@ -260,6 +260,8 @@ int main(void)
     { extern void gtimer_init(void); gtimer_init(); }   /* A9 global timer -> gettimeofday wall clock */
     { extern void hdmi_init(void); hdmi_init(); }        /* SiI9022 HDMI bring-up (HW build only; no-op on qemu) */
     { extern void gfxplane_init(void); gfxplane_init(); } /* clear the compositor plane (else scan-out shows uninit DDR) */
+    { extern void vfs_romfs_init(void); extern int vfs_add_mount(const char *, const char *, void *);
+      vfs_romfs_init(); vfs_add_mount("/", "romfs", 0); }  /* VFS: romfs at / ; SD adds /sd at mount time */
     ksys_set_console(rt_write);
     romfs_mount(romfs_blob, romfs_blob_len);
 
