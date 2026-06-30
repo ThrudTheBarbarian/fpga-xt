@@ -15,8 +15,8 @@ static gem_wm wm;
 static void win_redraw(gem_window *win, void *ud)
 {
     vst_color(win->vh, 1);                 /* black */
-    vst_height(win->vh, 16, 0, 0, 0, 0);
-    v_gtext(win->vh, 6, 4, (const char *)ud);
+    vst_height(win->vh, 36, 0, 0, 0, 0);   /* readable on the 1920x1080 plane */
+    v_gtext(win->vh, 24, 48, (const char *)ud);
 }
 
 void _app_entry(int argc, char **argv)
@@ -33,9 +33,9 @@ void _app_entry(int argc, char **argv)
     gem_wm_init(&wm, &desk, GFX_RGB(0x30, 0x50, 0x78));   /* desktop blue */
     gem_wm_set_font(&wm, face);
 
-    gem_window *w1 = gem_wm_add(&wm, 8, 6, 110, 46, "Hello", 1);
+    gem_window *w1 = gem_wm_add(&wm, 120, 90, 720, 480, "Hello", 1);
     gem_wm_set_redraw(w1, win_redraw, (void *)"XTOS");
-    gem_window *w2 = gem_wm_add(&wm, 70, 40, 120, 56, "Window 2", 0);
+    gem_window *w2 = gem_wm_add(&wm, 980, 420, 760, 520, "Window 2", 0);
     gem_wm_set_redraw(w2, win_redraw, (void *)"GEM desktop");
 
     gem_wm_draw(&wm);          /* redraw dirty windows, frames, composite */
