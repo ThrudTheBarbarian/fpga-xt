@@ -264,6 +264,29 @@ v1 entries (the rest of each block reserved):
 | `0x0900` | debug | `dbg_attach` · `dbg_mem_read` · `dbg_mem_write` · `dbg_bp_set` · `dbg_bp_clear` · `dbg_task_list` |
 | `0x1_0000` | guest mgmt | `env_create` · `env_map_service` |
 
+**Frozen + implemented today** (the table above is the planned superset; this is what
+exists and what xtc targets *now*). Source of truth = `loader/kernel/xtsys.h`; `usys.h`
+and `gem_stubs.c` `#include` it — never copy these numbers.
+
+| Num | `SYS_*` | Signature → return |
+|-----|---------|--------------------|
+| `0x000` | `abi_version` | `()` → 1 |
+| `0x100` | `spawn` | `(path, argc, argv)` → pid |
+| `0x101` | `exit` | `(code)` → ⊥ |
+| `0x102` | `waitpid` | `(pid)` → exit_code |
+| `0x103` | `getpid` | `()` → pid |
+| `0x200` | `mmap` | `(fd, len, off)` → VA (file RO+shared, demand-paged) |
+| `0x201` | `munmap` | `(addr, len)` → 0 |
+| `0x202` | `sbrk` | `(incr)` → old break |
+| `0x300` | `open` | `(path, flags)` → fd |
+| `0x301` | `close` | `(fd)` → 0 |
+| `0x302` | `read` | `(fd, buf, len)` → n |
+| `0x303` | `write` | `(fd, buf, len)` → n |
+| `0x304` | `lseek` | `(fd, off, whence)` → pos |
+| `0x400` | `gettimeofday` | `(struct timeval *)` → 0 |
+| `0x600` | `fb_info` | `(struct os_fbinfo *)` → 0 |
+| `0x601` | `fb_present` | `()` → 0 |
+
 Design choices worth the eye:
 
 - **Graphics syscalls are coarse on purpose** — `gfx_submit(descriptor)`, not
