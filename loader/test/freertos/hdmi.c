@@ -196,38 +196,20 @@ static void sii_enable_output(void)
 
 void hdmi_init(void)
 {
-    puts0("[hdmi] SiI9022 bring-up (bare I2C0)...\r\n");
     sii9022_reset();
     i2c_init();
     sii_write(0xC7, 0x00);       /* enter TPI mode — SiI9022 powers up in non-TPI/DDC
                                   * pass-through; without this, TPI reads auto-increment
                                   * the wrong space (vitis main.c "step 1"). */
     gt_delay_us(1000);
-    puts0("[hdmi] i2c CR(readback)="); puthex32(I2C_CR); puts0("\r\n");
-    { uint8_t rr[3] = { 0xEE, 0xEE, 0xEE };     /* vitis: 1B=B0 1C=02 1D=03 */
-      sii_read(0x1B, &rr[0]); sii_read(0x1C, &rr[1]); sii_read(0x1D, &rr[2]);
-      puts0("[hdmi] dump 1B/1C/1D="); puthex8(rr[0]); puts0(" "); puthex8(rr[1]);
-      puts0(" "); puthex8(rr[2]);
-      puts0("  send_sr="); puthex32(g_send_sr);
-      puts0(" send_tsr="); puthex32(g_send_tsr); puts0(" (TX bytes queued; want 1)\r\n"); }
     uint8_t devid = 0; int ok = 0;
     for (int i = 0; i < 50; i++) {                  /* poll TPI device-id 0x1B == 0xB0 */
         if (sii_read(0x1B, &devid) == 0 && devid == 0xB0) { ok = 1; break; }
         gt_delay_us(2000);
     }
-    puts0("[hdmi] devid="); puthex8(devid);
-    puts0(ok ? " (OK)\r\n" : " (FAIL — no SiI9022 ACK on I2C0)\r\n");
-    if (!ok) {
-        puts0("[hdmi]   diag: send_rc=");  putu((unsigned)(g_send_rc & 0xFF));
-        puts0(" send_isr=");  puthex32(g_send_isr);
-        puts0("  recv_rc=");  putu((unsigned)(g_recv_rc & 0xFF));
-        puts0(" recv_isr=");  puthex32(g_recv_isr);
-        puts0(" recv_sr=");   puthex32(g_recv_sr);
-        puts0(" got=");       putu((unsigned)g_recv_got); puts0("\r\n");
-        return;
-    }
+    if (!ok) { puts0("[hdmi] SiI9022 not responding (devid != 0xB0)\r\n"); return; }
     sii_enable_output();
-    puts0("[hdmi] output enabled (1080p60)\r\n");
+    puts0("[hdmi] SiI9022 devid=0xB0, 1080p60 enabled\r\n");
 }
 
 #else  /* qemu: no SiI9022/I2C modelled */
