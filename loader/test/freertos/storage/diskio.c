@@ -309,7 +309,9 @@ DSTATUS disk_initialize (
 #endif
 #endif
 
+	{ extern void puts0(const char *); puts0("[sd] di:enter\r\n"); }
 	s = disk_status(pdrv);
+	{ extern void puts0(const char *); puts0("[sd] di:status\r\n"); }
 	if ((s & STA_NODISK) != 0U) {
 		return s;
 	}
@@ -353,16 +355,19 @@ DSTATUS disk_initialize (
 			return s;
 		}
 
+		{ extern void puts0(const char *); puts0("[sd] di:cfgfound\r\n"); }
 		SdInstance[pdrv].IsReady = 0U;
 
 		Status = XSdPs_CfgInitialize(&SdInstance[pdrv], SdConfig,
 						 SdConfig->BaseAddress);
+		{ extern void puts0(const char *); puts0("[sd] di:cfginit\r\n"); }
 		if (Status != XST_SUCCESS) {
 			s |= STA_NOINIT;
 			return s;
 		}
 
 		Status = XSdPs_CardInitialize(&SdInstance[pdrv]);
+		{ extern void puts0(const char *); puts0("[sd] di:cardinit\r\n"); }
 		if (Status != XST_SUCCESS) {
 			s |= STA_NOINIT;
 			return s;
