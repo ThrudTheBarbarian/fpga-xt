@@ -92,7 +92,9 @@ static void i2c_init(void)
 static int i2c_send(uint8_t addr, const uint8_t *buf, int n)
 {
     i2c_wait_idle();                         /* bus idle before START */
-    I2C_CR  = CR_BASE | CR_CLRFIFO;          /* write mode */
+    I2C_CR  = CR_BASE;                        /* write mode (FIFO already empty; do NOT
+                                              * strobe CLR_FIFO here — its flush runs over
+                                              * I2C-clock periods and eats the data byte) */
     I2C_ISR = I2C_ISR;
     for (int i = 0; i < n; i++) I2C_DR = buf[i];   /* fifo depth 16 (we send <=14) */
     g_send_sr = I2C_SR;                        /* TXDV(bit6) here => data queued before START */
@@ -109,7 +111,7 @@ static int i2c_send(uint8_t addr, const uint8_t *buf, int n)
 static int i2c_recv(uint8_t addr, uint8_t *buf, int n)
 {
     i2c_wait_idle();                          /* bus idle before START */
-    I2C_CR  = CR_BASE | CR_CLRFIFO | CR_RW;   /* read mode */
+    I2C_CR  = CR_BASE | CR_RW;                /* read mode (no per-txn CLR_FIFO — see send) */
     I2C_ISR = I2C_ISR;
     I2C_TSR = (uint32_t)n;
     I2C_AR  = addr & 0x7Fu;                   /* address read -> START */
