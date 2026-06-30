@@ -90,7 +90,7 @@ FRCFLAGS := -marm -mcpu=cortex-a9 -mfloat-abi=softfp -mfpu=neon-vfpv3 -ffreestan
 FRSRC := $(FR)/tasks.c $(FR)/queue.c $(FR)/list.c $(FR)/timers.c $(FR)/event_groups.c \
          $(FR)/croutine.c $(FR)/stream_buffer.c $(FR)/portable/MemMang/heap_4.c \
          $(FRPORT)/port.c \
-         test/freertos/zynq.c test/freertos/bsp_shim.c test/freertos/mmu.c test/freertos/vm.c test/freertos/stackguard.c test/freertos/gfxplane.c test/freertos/frtos_os.c \
+         test/freertos/zynq.c test/freertos/bsp_shim.c test/freertos/mmu.c test/freertos/vm.c test/freertos/stackguard.c test/freertos/gfxplane.c test/freertos/hdmi.c test/freertos/frtos_os.c \
          test/freertos/romfs.c test/freertos/syscalls.c test/freertos/main.c \
          test/qemu/bare_rt.c test/qemu/bare_libc.c xtld.c
 FRASM := test/freertos/xt_boot.S test/freertos/xt_vectors.S $(FRPORT)/portASM.S
@@ -117,7 +117,7 @@ $(BUILD)/freertos.elf: $(FRSRC) $(FRASM) test/freertos/freertos.ld test/freertos
 # qemu intercepts above the guest — isn't available on metal). JTAG-load with
 # ps7_init; run vmtest/demandtest/faulttest to exercise tier-2 on real silicon.
 $(BUILD)/freertos-hw.elf: $(FRSRC) $(FRASM) test/freertos/freertos.ld test/freertos/FreeRTOSConfig.h $(BUILD)/romfs_blob.h | $(BUILD)
-	$(ARMCC) $(FRCFLAGS) -DXT_HW_UART -T test/freertos/freertos.ld $(FRASM) $(FRSRC) -lgcc -o $@
+	$(ARMCC) $(FRCFLAGS) -DXT_HW_UART -DXT_HW -T test/freertos/freertos.ld $(FRASM) $(FRSRC) -lgcc -o $@
 
 # Load + run an externally-built PIC .so (e.g. xtc output) on the real loader:
 #   make xtcrun XTC_SO=/path/to/foo.so

@@ -257,6 +257,7 @@ int main(void)
     { extern void stackguard_init(void); stackguard_init(); }   /* guarded stack arena */
     gic_init();
     { extern void gtimer_init(void); gtimer_init(); }   /* A9 global timer -> gettimeofday wall clock */
+    { extern void hdmi_init(void); hdmi_init(); }        /* SiI9022 HDMI bring-up (HW build only; no-op on qemu) */
     ksys_set_console(rt_write);
     romfs_mount(romfs_blob, romfs_blob_len);
 
