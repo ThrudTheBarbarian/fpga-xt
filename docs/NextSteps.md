@@ -117,15 +117,6 @@ Remaining:
 
 ## Memory / banking (DDR3 banked window — parallel track, not on boot path)
 
-- **Code/data banking — functional validation.** The DDR path is now WIRED + timing-
-  closed: `sally_mem`'s `banked_axi_reader` (LINE) on **S_AXI_ACP** (`clk_sally`, AXI4→
-  AXI3), clk_sally +0.006. ($D5C0/$D5C1 banking was MIA before — the AXI was tied off,
-  so the cache was dead-code-eliminated; only bank 0 = flat BRAM ever worked.) Remaining:
-  (1) **fill testbench** — extend `tb_sally_mem` with a DDR model on the ACP side +
-  exercise a non-zero code/data bank read/write (the fill/write-through path has never
-  been functionally sim'd); (2) **HW test** — 6502 code reading/running from a non-zero
-  bank (needs the A9 to place code into the DDR bank + a cache flush, since ACP is driven
-  non-coherent). *(src: hdl/banked_axi_reader.sv, hdl/sally_mem.sv)*
 - **Banked page cache (`"PAGE"`) — fmax pass.** `banked_page_cache` (resident pages +
   write-back) is the better backend once banking is heavy, but it adds ~0.5 ns to
   SALLY's 1-cycle mem loop (clk_sally −0.495, ~54% routing) — needs a floorplan
