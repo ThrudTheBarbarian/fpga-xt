@@ -130,8 +130,11 @@ Remaining:
   write-back) is the better backend once banking is heavy, but it adds ~0.5 ns to
   SALLY's 1-cycle mem loop (clk_sally −0.495, ~54% routing) — needs a floorplan
   (`pb_sally` + `screen_bank` CPU-BRAM co-location) and/or read-path depth reduction
-  before it can replace LINE. Also: make its code cache read-write (dirty write-back on
-  swap; today a code-bank write is a no-op). *(src: docs/Design/banked-page-cache.md)*
+  before it can replace LINE. Also: its **write-back/reload path is incomplete** — a
+  code/data-bank write does not persist across a swap (code-bank write is a no-op; data
+  write-back fails too). Exposed by `tb_sally_mem` A.4c — run `make sally_mem_page` (the
+  PAGE variant skips A.4c via `-D PAGE_BACKEND`; remove that gate once fixed).
+  *(src: docs/Design/banked-page-cache.md, sim/tb_sally_mem.sv)*
 - **Reserve + validate the DDR3 region** — 0x2000_0000 code / 0x2040_0000 data; keep
   PS out of 0x2000_0000-0x207F_FFFF; validate with an explicit $D5C0/$D5C1 bank-switch
   test (boot won't exercise DDR3). *(src: former docs/TODO.txt)*

@@ -59,7 +59,7 @@ HDL_SRCS := \
 
 BUILD_DIR := build
 
-.PHONY: all smoke snoop read vbeam dl_parse prior nmi wsync palette dma_master mem_read_mux draw_regs pokey pokey_i2s sally sally_mem sally_arb bank_xlat cdc_flag_data hwreg_rd_cdc legacy_upscale plane_compositor plane_fetch axi_line_writer antic_writeback xl_buffer_ctrl antic_raster antic_seq antic_modes antic_display pia_regs peri_link joy_link joy_bridge peri_bridge os_rom_load klaus lint clean xt_blitter sally_stack sally_isa sprite_regs sprite_fetcher sprite_compositor xt6502 boot boot_trace plane_vscale disp_modef_wrap antic_dma_steal
+.PHONY: all smoke snoop read vbeam dl_parse prior nmi wsync palette dma_master mem_read_mux draw_regs pokey pokey_i2s sally sally_mem sally_mem_page sally_arb bank_xlat cdc_flag_data hwreg_rd_cdc legacy_upscale plane_compositor plane_fetch axi_line_writer antic_writeback xl_buffer_ctrl antic_raster antic_seq antic_modes antic_display pia_regs peri_link joy_link joy_bridge peri_bridge os_rom_load klaus lint clean xt_blitter sally_stack sally_isa sprite_regs sprite_fetcher sprite_compositor xt6502 boot boot_trace plane_vscale disp_modef_wrap antic_dma_steal
 
 # Retired tests (2026-05-25): rp_bus, mode_f, char_modes, gfx_modes, pm, scroll,
 # dma_int, visual all instantiated the v1 rp_bus injection harness
@@ -70,7 +70,7 @@ BUILD_DIR := build
 # deleted too).  They drove ANTIC through the old serial-link mocks, superseded
 # by the compositor model.  Removed from the build rather than reviving
 # intentionally-deleted RTL.
-all: smoke snoop read vbeam dl_parse prior nmi wsync palette dma_master mem_read_mux draw_regs pokey pokey_i2s sally sally_mem sally_arb bank_xlat pia_regs peri_link joy_link joy_bridge peri_bridge os_rom_load pbi pcm1808_rx xt_blitter sprite_regs sprite_fetcher sprite_compositor antic_raster antic_seq antic_modes xt6502 cdc_flag_data hwreg_rd_cdc
+all: smoke snoop read vbeam dl_parse prior nmi wsync palette dma_master mem_read_mux draw_regs pokey pokey_i2s sally sally_mem sally_mem_page sally_arb bank_xlat pia_regs peri_link joy_link joy_bridge peri_bridge os_rom_load pbi pcm1808_rx xt_blitter sprite_regs sprite_fetcher sprite_compositor antic_raster antic_seq antic_modes xt6502 cdc_flag_data hwreg_rd_cdc
 
 # `klaus` is NOT in `all` — Klaus Dormann's full test takes ~96 M
 # cycles (≥10 minutes of iverilog wall-clock). Run it manually with
@@ -583,6 +583,18 @@ SALLY_MEM_HDL := \
 
 $(BUILD_DIR)/tb_sally_mem.vvp: $(SALLY_MEM_HDL) tb_sally_mem.sv axi_slave_mem.sv | $(BUILD_DIR)
 	$(IVERILOG) $(SV_FLAGS) -o $@ -s tb_sally_mem $(SALLY_MEM_HDL) axi_slave_mem.sv tb_sally_mem.sv
+
+# Same testbench, PAGE backend (banked_page_cache) instead of the default LINE.
+# Validates the page-cache fill path (the future backend; doesn't close timing yet).
+sally_mem_page: $(BUILD_DIR)/tb_sally_mem_page.vvp
+	@echo "=== sally_mem (PAGE backend) ==="
+	@$(VVP) -N $< | tee $(BUILD_DIR)/tb_sally_mem_page.log
+	@grep -q '\*\*\* SALLY_MEM OK \*\*\*' $(BUILD_DIR)/tb_sally_mem_page.log || \
+	    (echo "FAIL: tb_sally_mem (PAGE) missing SALLY_MEM OK"; exit 1)
+	@echo "PASS: tb_sally_mem (PAGE)"
+
+$(BUILD_DIR)/tb_sally_mem_page.vvp: $(SALLY_MEM_HDL) tb_sally_mem.sv axi_slave_mem.sv | $(BUILD_DIR)
+	$(IVERILOG) $(SV_FLAGS) -D SALLY_BANK_MODE='"PAGE"' -D PAGE_BACKEND -o $@ -s tb_sally_mem $(SALLY_MEM_HDL) axi_slave_mem.sv tb_sally_mem.sv
 
 # ---- M24-5 — SALLY bus arbitration -------------------------------------
 sally_arb: $(BUILD_DIR)/tb_sally_arbitration.vvp

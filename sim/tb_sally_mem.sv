@@ -15,6 +15,13 @@
 
 `timescale 1ns / 1ps
 
+// Banked-window backend under test.  Defaults to LINE (banked_axi_reader) — the
+// backend wired on HW (S_AXI_ACP); it's shallow enough to close clk_sally.
+// Build with -D SALLY_BANK_MODE='"PAGE"' to exercise banked_page_cache instead.
+`ifndef SALLY_BANK_MODE
+ `define SALLY_BANK_MODE "LINE"
+`endif
+
 module tb_sally_mem;
 
     logic clk = 1'b0;
@@ -69,7 +76,8 @@ module tb_sally_mem;
 
     sally_mem #(
         .DDR3_BANKED_BASE (32'h0000_0000),  // code base
-        .DDR3_DATA_BASE   (32'h0008_0000)   // data base = +512 KB (within the 1 MiB slave)
+        .DDR3_DATA_BASE   (32'h0008_0000),  // data base = +512 KB (within the 1 MiB slave)
+        .BANKED_CACHE     (`SALLY_BANK_MODE) // LINE (HW backend) by default; PAGE via -D
     ) u_mem (
         .clk        (clk),
         .rst        (rst),
@@ -341,6 +349,33 @@ module tb_sally_mem;
             do_read (16'hA000, v);
             expect_eq("A.4b data bank0 intact[$A000]", v, 8'h55);
         end
+
+        // A.4c: data-window WRITE-THROUGH to a DDR bank.  The LINE reader is
+        // write-through + buffer-invalidate, so writing to a non-zero data bank
+        // then reading it back must round-trip through DDR — proving the write
+        // path reaches the chunk-stack (not just a stale local buffer).
+        // (LINE only: the PAGE backend's write-back/reload path is incomplete —
+        // a code/data-bank write does not yet persist across a swap; tracked in
+        // NextSteps.  PAGE isn't the HW backend, so we skip this there.)
+`ifndef PAGE_BACKEND
+        $display("[A.4c] data window write-through to a DDR bank");
+        begin
+            logic [7:0] v;
+            do_write(16'hD5C1, 8'h03);          // data bank 3 -> DDR
+            do_write(16'hA010, 8'h5C);          // write-through: AXI write to DDR[bank 3]
+            do_read (16'hA010, v);              // buffer invalidated -> re-fetch from DDR
+            expect_eq("A.4c data bank3 write-through round-trip", v, 8'h5C);
+            // a SECOND DDR bank keeps its own write (no cross-bank bleed)
+            do_write(16'hD5C1, 8'h05);          // data bank 5
+            do_write(16'hA010, 8'hC3);          // write-through to DDR[bank 5]
+            do_read (16'hA010, v);
+            expect_eq("A.4c data bank5 write-through", v, 8'hC3);
+            do_write(16'hD5C1, 8'h03);          // back to bank 3 -> its byte persists
+            do_read (16'hA010, v);
+            expect_eq("A.4c data bank3 persists after bank5 write", v, 8'h5C);
+            do_write(16'hD5C1, 8'h00);          // restore bank 0
+        end
+`endif
 
         // A.5: OS-high BRAM ($D800-$FFFF) — direct BRAM, outside any
         // banked window.  Round-trip works regardless of PORTB.
