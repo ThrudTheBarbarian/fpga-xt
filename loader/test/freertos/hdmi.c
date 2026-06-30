@@ -68,8 +68,18 @@ static void gt_delay_us(uint32_t us)
 #define CR_BASE (CR_DIV_A(0) | CR_DIV_B(63) | CR_ACKEN | CR_NEA | CR_MS)
 
 #define SR_RXDV  (1u << 5)
+#define SR_BA    (1u << 8)   /* bus active */
 #define ISR_COMP (1u << 0)
 #define ISR_NACK (1u << 2)
+
+/* wait for the bus to go idle (STOP completed) — MUST run between transactions,
+ * else a new START fires while the previous STOP is in flight and the transfer
+ * is corrupted (vitis does this via XIicPs_BusIsBusy). */
+static void i2c_wait_idle(void)
+{
+    uint32_t to = 2000000;
+    while ((I2C_SR & SR_BA) && --to) { }
+}
 
 static void i2c_init(void)
 {
@@ -81,6 +91,7 @@ static void i2c_init(void)
 /* write n bytes to slave `addr` (single transaction, auto START..STOP). 0=ok */
 static int i2c_send(uint8_t addr, const uint8_t *buf, int n)
 {
+    i2c_wait_idle();                         /* bus idle before START */
     I2C_CR  = CR_BASE | CR_CLRFIFO;          /* write mode */
     I2C_ISR = I2C_ISR;
     for (int i = 0; i < n; i++) I2C_DR = buf[i];   /* fifo depth 16 (we send <=14) */
@@ -89,12 +100,14 @@ static int i2c_send(uint8_t addr, const uint8_t *buf, int n)
     while (!(I2C_ISR & (ISR_COMP | ISR_NACK)) && --to) { }
     g_send_isr = I2C_ISR;
     g_send_rc  = (to && !(I2C_ISR & ISR_NACK)) ? 0 : -1;
+    i2c_wait_idle();                         /* let STOP finish before next txn */
     return g_send_rc;
 }
 
 /* read n bytes from slave `addr` into buf. 0=ok */
 static int i2c_recv(uint8_t addr, uint8_t *buf, int n)
 {
+    i2c_wait_idle();                          /* bus idle before START */
     I2C_CR  = CR_BASE | CR_CLRFIFO | CR_RW;   /* read mode */
     I2C_ISR = I2C_ISR;
     I2C_TSR = (uint32_t)n;
@@ -104,8 +117,11 @@ static int i2c_recv(uint8_t addr, uint8_t *buf, int n)
         if (I2C_SR & SR_RXDV) { buf[got++] = (uint8_t)I2C_DR; to = 2000000; }
         if (I2C_ISR & ISR_NACK) break;
     }
+    uint32_t t2 = 2000000;                     /* wait for transfer completion */
+    while (!(I2C_ISR & (ISR_COMP | ISR_NACK)) && --t2) { }
     g_recv_isr = I2C_ISR; g_recv_sr = I2C_SR; g_recv_got = got;
     g_recv_rc  = (got == n) ? 0 : -1;
+    i2c_wait_idle();
     return g_recv_rc;
 }
 
