@@ -2130,6 +2130,7 @@ module fpga_xt_top (
         .FCLK_CLK1_0        (fclk_50),   // 50 MHz PL reference -> both MMCMs
         .IRQ_F2P_0          (bl_blit_irq), // PL->PS: blitter completion (GIC ID 61); needs FORCE=1 BD regen
         .s_axi_gp0_aclk     (clk_sys),
+        .s_axi_acp_aclk     (clk_sally),   // ACP (sally_mem page cache) runs on clk_sally
         .iic_0_scl_i        (i2c_scl_i),
         .iic_0_scl_o        (i2c_scl_o),
         .iic_0_scl_t        (i2c_scl_t),

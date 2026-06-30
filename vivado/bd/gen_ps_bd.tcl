@@ -194,10 +194,16 @@ if {$gp0s_aclk ne ""} {
     connect_bd_net [get_bd_ports s_axi_gp0_aclk] $gp0s_aclk
     puts ">> S_AXI_GP0_ACLK <- s_axi_gp0_aclk (clk_sys)"
 }
+# ACP is clocked by clk_SALLY (not clk_sys): its master is sally_mem's
+# banked_page_cache, which lives in the clk_sally domain.  A separate PL clock
+# port (s_axi_acp_aclk, driven by clk_sally in fpga_xt_top) keeps the ACP AXI
+# synchronous to that master — no clk_sally<->clk_sys crossing on the bus.
 set acp_aclk [get_bd_pins -quiet /zynq_ps/S_AXI_ACP_ACLK]
 if {$acp_aclk ne ""} {
-    connect_bd_net [get_bd_ports s_axi_gp0_aclk] $acp_aclk
-    puts ">> S_AXI_ACP_ACLK <- s_axi_gp0_aclk (clk_sys)"
+    create_bd_port -dir I -type clk -freq_hz 100000000 s_axi_acp_aclk
+    connect_bd_net [get_bd_ports s_axi_acp_aclk] $acp_aclk
+    set_property CONFIG.ASSOCIATED_BUSIF {m_axi_sally} [get_bd_ports s_axi_acp_aclk]
+    puts ">> S_AXI_ACP_ACLK <- s_axi_acp_aclk (clk_sally, 100 MHz)"
 }
 
 # ---- Make FCLK reset external -----------------------------------------------
@@ -222,7 +228,7 @@ if {$fclk_port ne ""} {
 }
 set gp0clk_port [get_bd_ports s_axi_gp0_aclk]
 if {$gp0clk_port ne ""} {
-    set_property CONFIG.ASSOCIATED_BUSIF {m_axi_gp0 m_axi_hp0 m_axi_hp1 m_axi_hp2 m_axi_hp3 m_axi_scrn m_axi_sally} $gp0clk_port
+    set_property CONFIG.ASSOCIATED_BUSIF {m_axi_gp0 m_axi_hp0 m_axi_hp1 m_axi_hp2 m_axi_hp3 m_axi_scrn} $gp0clk_port
 }
 
 # ---- Assign HP address spaces to DDR ---------------------------------------
