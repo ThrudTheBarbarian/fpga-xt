@@ -24,6 +24,7 @@
 
 #define NSPACE     8
 #define L2_IDX(va) (((va) >> 12) & 0xFF) /* L2 (4KB page) index within a section */
+#define HEAP_SECS  (XTOS_HEAP_SIZE >> 20) /* heap spans this many 1 MB sections */
 
 /* L2 small-page (4KB) descriptor: Normal non-cacheable, AP=11 (full), nG=1
  * (ASID-tagged), XN=0. bits: nG[11] | AP[5:4]=11 | TEX[8:6]=001 | type=10 */
@@ -43,7 +44,7 @@
 extern uint32_t *mmu_master_table(void);
 
 static uint32_t  space_l1[NSPACE][4096]     __attribute__((aligned(16384)));
-static uint32_t  space_l2_heap[NSPACE][256] __attribute__((aligned(1024)));/* heap section (demand-paged) */
+static uint32_t  space_l2_heap[NSPACE][HEAP_SECS][256] __attribute__((aligned(1024)));/* heap: HEAP_SECS sections, demand-paged */
 static uint32_t  space_l2_mmap[NSPACE][256] __attribute__((aligned(1024)));/* mmap window (file-backed RO) */
 static uint32_t  space_l2_stk[NSPACE][256]  __attribute__((aligned(1024)));/* stack arena: own slot only */
 /* a small per-space pool of L2 tables, one per 1 MB section the space overrides
@@ -208,10 +209,10 @@ uint32_t *vm_space_create(int idx, uint32_t prog_va, uint32_t prog_size, uint32_
 
     /* (b) private heap: an L2 with every page faulting -> zero-filled ON DEMAND
      * (T2-c). Physical is consumed only for pages the process actually touches. */
-    {
-        uint32_t *hl2 = space_l2_heap[idx];
+    for (uint32_t s = 0; s < HEAP_SECS; s++) {     /* HEAP_SECS contiguous demand-paged sections */
+        uint32_t *hl2 = space_l2_heap[idx][s];
         memset(hl2, 0, 256 * sizeof(uint32_t));
-        t[XTOS_HEAP_VA >> 20] = L1_COARSE(hl2);
+        t[(XTOS_HEAP_VA >> 20) + s] = L1_COARSE(hl2);
     }
 
     /* mmap window: an empty L2 (every page faults -> file page mapped RO on demand
@@ -368,7 +369,8 @@ void vm_space_destroy(int idx)
  * page. Returns 1 if mapped (resume), 0 if not ours / pool exhausted. */
 int vm_demand_map(int idx, uint32_t va)
 {
-    uint32_t *hl2 = space_l2_heap[idx];
+    uint32_t  sec = (va - XTOS_HEAP_VA) >> 20;  /* which heap section (0..HEAP_SECS-1) */
+    uint32_t *hl2 = space_l2_heap[idx][sec];
     uint32_t  i   = L2_IDX(va);
     if (hl2[i]) return 1;                       /* already present (lost race) */
     void *pg = dpage(idx);

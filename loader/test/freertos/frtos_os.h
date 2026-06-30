@@ -8,7 +8,7 @@
 /* T2-b: per-process heap window (mapped per-process to private physical by vm.c;
  * libc's _sbrk hands out of it for the current process). 1 section for now. */
 #define XTOS_HEAP_VA   0x10000000u
-#define XTOS_HEAP_SIZE 0x00100000u
+#define XTOS_HEAP_SIZE 0x00800000u   /* 8 MB: GUI procs need several MB of backing surfaces */
 /* T2-c: synthetic copy-on-write demo window (one page, shared-RO -> private on
  * first write). The kernel never touches it, so no global TLB shadow on HW. */
 #define XTOS_COW_VA    0x11000000u

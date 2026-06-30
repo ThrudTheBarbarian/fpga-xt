@@ -34,9 +34,11 @@ void _app_entry(int argc, char **argv)
     gem_wm_set_font(&wm, face);
 
     gem_window *w1 = gem_wm_add(&wm, 120, 90, 720, 480, "Hello", 1);
-    gem_wm_set_redraw(w1, win_redraw, (void *)"XTOS");
+    if (w1) gem_wm_set_redraw(w1, win_redraw, (void *)"XTOS");
+    else    sys_write(2, "desktop: window 1 alloc failed (heap/vwk)\n", 42);
     gem_window *w2 = gem_wm_add(&wm, 980, 420, 760, 520, "Window 2", 0);
-    gem_wm_set_redraw(w2, win_redraw, (void *)"GEM desktop");
+    if (w2) gem_wm_set_redraw(w2, win_redraw, (void *)"GEM desktop");
+    else    sys_write(2, "desktop: window 2 alloc failed (heap/vwk)\n", 42);
 
     gem_wm_draw(&wm);          /* redraw dirty windows, frames, composite */
     sys_fb_present();          /* push the plane to the display */
