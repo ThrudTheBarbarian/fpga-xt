@@ -54,46 +54,101 @@ module screen_bank #(
     input  wire                   vbi,             // 1-cycle VBI pulse (clk_antic) — latches antic bank
     output wire                   antic_banked,    // 1 = ANTIC effective bank != 0 (use ANTIC-BRAM)
 
-    // ---- AXI4 master (clk) -------------------------------------------------
-    output reg  [AXI_ADDR_W-1:0]  m_axi_araddr,
-    output reg  [7:0]             m_axi_arlen,
-    output wire [2:0]             m_axi_arsize,
-    output wire [1:0]             m_axi_arburst,
-    output reg                    m_axi_arvalid,
-    input  wire                   m_axi_arready,
-    input  wire [63:0]            m_axi_rdata,
-    input  wire                   m_axi_rvalid,
-    input  wire                   m_axi_rlast,
-    output wire                   m_axi_rready,
+    // ---- AXI3 master, 32-bit (clk) -> S_AXI_GP0.  The FSM below drives an
+    // internal 64-bit AXI (m_axi_*); a serialiser maps it to this 32-bit port. --
+    output wire [AXI_ADDR_W-1:0]  e_axi_araddr,
+    output wire [3:0]             e_axi_arlen,    // AXI3: 4-bit len
+    output wire [2:0]             e_axi_arsize,
+    output wire [1:0]             e_axi_arburst,
+    output wire                   e_axi_arvalid,
+    input  wire                   e_axi_arready,
+    input  wire [31:0]            e_axi_rdata,
+    input  wire                   e_axi_rvalid,
+    input  wire                   e_axi_rlast,
+    output wire                   e_axi_rready,
 
-    output reg  [AXI_ADDR_W-1:0]  m_axi_awaddr,
-    output reg  [7:0]             m_axi_awlen,
-    output wire [2:0]             m_axi_awsize,
-    output wire [1:0]             m_axi_awburst,
-    output reg                    m_axi_awvalid,
-    input  wire                   m_axi_awready,
-    output reg  [63:0]            m_axi_wdata,
-    output wire [7:0]             m_axi_wstrb,
-    output reg                    m_axi_wlast,
-    output reg                    m_axi_wvalid,
-    input  wire                   m_axi_wready,
-    input  wire                   m_axi_bvalid,
-    output wire                   m_axi_bready
+    output wire [AXI_ADDR_W-1:0]  e_axi_awaddr,
+    output wire [3:0]             e_axi_awlen,
+    output wire [2:0]             e_axi_awsize,
+    output wire [1:0]             e_axi_awburst,
+    output wire                   e_axi_awvalid,
+    input  wire                   e_axi_awready,
+    output wire [31:0]            e_axi_wdata,
+    output wire [3:0]             e_axi_wstrb,
+    output wire                   e_axi_wlast,
+    output wire                   e_axi_wvalid,
+    input  wire                   e_axi_wready,
+    input  wire                   e_axi_bvalid,
+    output wire                   e_axi_bready
 );
     // ---- geometry ----------------------------------------------------------
     localparam int WORDS      = (1 << APERTURE_LOG2) / 8;   // 1024 64-bit words
     localparam int WORD_AW    = APERTURE_LOG2 - 3;          // 10
-    localparam int BURST      = 16;                          // beats per burst (128 B)
-    localparam int NBURST     = WORDS / BURST;               // 64 bursts per chunk
-    localparam int BURST_AW   = $clog2(NBURST);             // 6
+    localparam int BURST      = 8;        // 64-bit words per burst (-> 16 AXI3 32-bit beats, 64 B)
+    localparam int NBURST     = WORDS / BURST;               // 128 bursts per chunk
+    localparam int BURST_AW   = $clog2(NBURST);             // 7
 
-    assign m_axi_arsize  = 3'b011;   // 8 bytes/beat
-    assign m_axi_awsize  = 3'b011;
-    assign m_axi_arburst = 2'b01;    // INCR
-    assign m_axi_awburst = 2'b01;
-    assign m_axi_wstrb   = 8'hFF;
-    assign m_axi_rready  = 1'b1;
-    assign m_axi_bready  = 1'b1;
+    // Internal 64-bit AXI driven by the FSM (a serialiser below maps it to the
+    // 32-bit e_axi_* port).  Same names/semantics as the original 64-bit master,
+    // so the FSM is unchanged.
+    logic [AXI_ADDR_W-1:0] m_axi_araddr;  logic [7:0] m_axi_arlen;
+    logic                  m_axi_arvalid; logic m_axi_arready;
+    logic [63:0]           m_axi_rdata;   logic m_axi_rvalid, m_axi_rlast;  wire m_axi_rready;
+    logic [AXI_ADDR_W-1:0] m_axi_awaddr;  logic [7:0] m_axi_awlen;
+    logic                  m_axi_awvalid; logic m_axi_awready;
+    logic [63:0]           m_axi_wdata;   logic m_axi_wlast, m_axi_wvalid, m_axi_wready;
+    logic                  m_axi_bvalid;  wire  m_axi_bready;
+    assign m_axi_rready = 1'b1;
+    assign m_axi_bready = 1'b1;
+
+    // ---- 64<->32 serialiser (internal 64-bit AXI  <->  e_axi_* 32-bit AXI3) --
+    // AR/AW: same addr; double the beat count (each 64-bit word = 2 x 32-bit).
+    assign e_axi_araddr  = m_axi_araddr;
+    assign e_axi_arlen   = (({4'd0, m_axi_arlen} + 4'd1) << 1) - 4'd1;  // 8 words ->16 beats: 15
+    assign e_axi_arsize  = 3'b010;   // 4 bytes/beat
+    assign e_axi_arburst = 2'b01;
+    assign e_axi_arvalid = m_axi_arvalid;
+    assign m_axi_arready = e_axi_arready;
+    assign e_axi_awaddr  = m_axi_awaddr;
+    assign e_axi_awlen   = (({4'd0, m_axi_awlen} + 4'd1) << 1) - 4'd1;
+    assign e_axi_awsize  = 3'b010;
+    assign e_axi_awburst = 2'b01;
+    assign e_axi_awvalid = m_axi_awvalid;
+    assign m_axi_awready = e_axi_awready;
+    assign e_axi_bready  = m_axi_bready;
+    assign m_axi_bvalid  = e_axi_bvalid;
+
+    // Read deserialise: collect 2 x 32-bit -> 1 x 64-bit, pulse m_axi_rvalid.
+    logic        rdes_phase = 1'b0;
+    logic [31:0] rdes_lo;
+    assign e_axi_rready = 1'b1;
+    always_ff @(posedge clk) begin
+        if (rst) begin rdes_phase <= 1'b0; m_axi_rvalid <= 1'b0; m_axi_rlast <= 1'b0; end
+        else begin
+            m_axi_rvalid <= 1'b0;
+            if (e_axi_rvalid) begin
+                if (!rdes_phase) begin rdes_lo <= e_axi_rdata; rdes_phase <= 1'b1; end
+                else begin
+                    m_axi_rdata  <= {e_axi_rdata, rdes_lo};
+                    m_axi_rvalid <= 1'b1;
+                    m_axi_rlast  <= e_axi_rlast;
+                    rdes_phase   <= 1'b0;
+                end
+            end
+        end
+    end
+
+    // Write serialise: emit each 64-bit m_axi_wdata as lo then hi 32-bit beats.
+    logic wser_phase = 1'b0;
+    assign e_axi_wdata  = wser_phase ? m_axi_wdata[63:32] : m_axi_wdata[31:0];
+    assign e_axi_wstrb  = 4'hF;
+    assign e_axi_wvalid = m_axi_wvalid;
+    assign e_axi_wlast  = m_axi_wlast & wser_phase;       // external last = hi beat of last word
+    assign m_axi_wready = e_axi_wready & wser_phase;      // FSM advances after the hi beat
+    always_ff @(posedge clk) begin
+        if (rst) wser_phase <= 1'b0;
+        else if (e_axi_wvalid & e_axi_wready) wser_phase <= ~wser_phase;
+    end
 
     // ====================================================================
     // BRAMs — true dual port.  Port A = CPU/ANTIC side, Port B = engine.

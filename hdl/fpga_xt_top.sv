@@ -1157,12 +1157,12 @@ module fpga_xt_top (
     // port / no contention with scan-out/blitter).  Chunk-stack @ 0x3800_0000
     // (256 x 8 KB = 2 MB), clear of the plane/XL/drag/sprite-arena surfaces.
     // ====================================================================
-    wire [31:0] gp0m_araddr;  wire [7:0] gp0m_arlen;  wire [2:0] gp0m_arsize;
+    wire [31:0] gp0m_araddr;  wire [3:0] gp0m_arlen;  wire [2:0] gp0m_arsize;
     wire [1:0]  gp0m_arburst; wire gp0m_arvalid, gp0m_arready;
-    wire [63:0] gp0m_rdata;   wire gp0m_rvalid, gp0m_rlast, gp0m_rready;
-    wire [31:0] gp0m_awaddr;  wire [7:0] gp0m_awlen;  wire [2:0] gp0m_awsize;
+    wire [31:0] gp0m_rdata;   wire gp0m_rvalid, gp0m_rlast, gp0m_rready;
+    wire [31:0] gp0m_awaddr;  wire [3:0] gp0m_awlen;  wire [2:0] gp0m_awsize;
     wire [1:0]  gp0m_awburst; wire gp0m_awvalid, gp0m_awready;
-    wire [63:0] gp0m_wdata;   wire [7:0] gp0m_wstrb;  wire gp0m_wlast, gp0m_wvalid, gp0m_wready;
+    wire [31:0] gp0m_wdata;   wire [3:0] gp0m_wstrb;  wire gp0m_wlast, gp0m_wvalid, gp0m_wready;
     wire        gp0m_bvalid,  gp0m_bready;
 
     screen_bank #(.STACK_BASE(32'h3800_0000), .APERTURE_LOG2(13)) u_screen_bank (
@@ -1176,15 +1176,15 @@ module fpga_xt_top (
         .antic_addr   (antic_bram_addr[12:0]), .antic_rdata (scrn_antic_rdata),
         .antic_bank_wval(scrn_bank_wval), .antic_bank_we (scrn_antic_bank_we),
         .vbi          (antic_wb_frame_done),   .antic_banked (scrn_antic_banked),
-        .m_axi_araddr (gp0m_araddr),  .m_axi_arlen (gp0m_arlen),  .m_axi_arsize (gp0m_arsize),
-        .m_axi_arburst(gp0m_arburst), .m_axi_arvalid(gp0m_arvalid),.m_axi_arready(gp0m_arready),
-        .m_axi_rdata  (gp0m_rdata),   .m_axi_rvalid(gp0m_rvalid),  .m_axi_rlast (gp0m_rlast),
-        .m_axi_rready (gp0m_rready),
-        .m_axi_awaddr (gp0m_awaddr),  .m_axi_awlen (gp0m_awlen),  .m_axi_awsize (gp0m_awsize),
-        .m_axi_awburst(gp0m_awburst), .m_axi_awvalid(gp0m_awvalid),.m_axi_awready(gp0m_awready),
-        .m_axi_wdata  (gp0m_wdata),   .m_axi_wstrb (gp0m_wstrb),  .m_axi_wlast (gp0m_wlast),
-        .m_axi_wvalid (gp0m_wvalid),  .m_axi_wready(gp0m_wready),
-        .m_axi_bvalid (gp0m_bvalid),  .m_axi_bready(gp0m_bready)
+        .e_axi_araddr (gp0m_araddr),  .e_axi_arlen (gp0m_arlen),  .e_axi_arsize (gp0m_arsize),
+        .e_axi_arburst(gp0m_arburst), .e_axi_arvalid(gp0m_arvalid),.e_axi_arready(gp0m_arready),
+        .e_axi_rdata  (gp0m_rdata),   .e_axi_rvalid(gp0m_rvalid),  .e_axi_rlast (gp0m_rlast),
+        .e_axi_rready (gp0m_rready),
+        .e_axi_awaddr (gp0m_awaddr),  .e_axi_awlen (gp0m_awlen),  .e_axi_awsize (gp0m_awsize),
+        .e_axi_awburst(gp0m_awburst), .e_axi_awvalid(gp0m_awvalid),.e_axi_awready(gp0m_awready),
+        .e_axi_wdata  (gp0m_wdata),   .e_axi_wstrb (gp0m_wstrb),  .e_axi_wlast (gp0m_wlast),
+        .e_axi_wvalid (gp0m_wvalid),  .e_axi_wready(gp0m_wready),
+        .e_axi_bvalid (gp0m_bvalid),  .e_axi_bready(gp0m_bready)
     );
 
     // Read-path activity counters (clk_sys) — read via diag3_word at GP0 offset
@@ -2172,6 +2172,46 @@ module fpga_xt_top (
         .m_axi_hp0_wready   (hp0_wready),
         .m_axi_hp0_wstrb    (hp0_wstrb),
         .m_axi_hp0_wvalid   (hp0_wvalid),
+
+        // GP0 (S_AXI_GP0, 32-bit AXI3) — screen_bank chunk-stack DDR master
+        .m_axi_scrn_araddr  (gp0m_araddr[31:0]),
+        .m_axi_scrn_arburst (gp0m_arburst[1:0]),
+        .m_axi_scrn_arcache (4'd0),
+        .m_axi_scrn_arid    (6'd0),
+        .m_axi_scrn_arlen   (gp0m_arlen[3:0]),
+        .m_axi_scrn_arlock  (2'd0),
+        .m_axi_scrn_arprot  (3'd0),
+        .m_axi_scrn_arqos   (4'd0),
+        .m_axi_scrn_arready (gp0m_arready),
+        .m_axi_scrn_arsize  (gp0m_arsize[2:0]),
+        .m_axi_scrn_arvalid (gp0m_arvalid),
+        .m_axi_scrn_awaddr  (gp0m_awaddr[31:0]),
+        .m_axi_scrn_awburst (gp0m_awburst[1:0]),
+        .m_axi_scrn_awcache (4'd0),
+        .m_axi_scrn_awid    (6'd0),
+        .m_axi_scrn_awlen   (gp0m_awlen[3:0]),
+        .m_axi_scrn_awlock  (2'd0),
+        .m_axi_scrn_awprot  (3'd0),
+        .m_axi_scrn_awqos   (4'd0),
+        .m_axi_scrn_awready (gp0m_awready),
+        .m_axi_scrn_awsize  (gp0m_awsize[2:0]),
+        .m_axi_scrn_awvalid (gp0m_awvalid),
+        .m_axi_scrn_bid     (),
+        .m_axi_scrn_bready  (gp0m_bready),
+        .m_axi_scrn_bresp   (),
+        .m_axi_scrn_bvalid  (gp0m_bvalid),
+        .m_axi_scrn_rdata   (gp0m_rdata),
+        .m_axi_scrn_rid     (),
+        .m_axi_scrn_rlast   (gp0m_rlast),
+        .m_axi_scrn_rready  (gp0m_rready),
+        .m_axi_scrn_rresp   (),
+        .m_axi_scrn_rvalid  (gp0m_rvalid),
+        .m_axi_scrn_wdata   (gp0m_wdata),
+        .m_axi_scrn_wid     (6'd0),
+        .m_axi_scrn_wlast   (gp0m_wlast),
+        .m_axi_scrn_wready  (gp0m_wready),
+        .m_axi_scrn_wstrb   (gp0m_wstrb),
+        .m_axi_scrn_wvalid  (gp0m_wvalid),
 
         // HP1 — xt_blitter (read/write) through pipeline registers
         .m_axi_hp1_araddr   (ps_hp1_araddr[31:0]),

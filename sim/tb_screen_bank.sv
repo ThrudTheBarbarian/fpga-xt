@@ -24,10 +24,11 @@ module tb_screen_bank;
     logic [APE-1:0] antic_addr=0; wire [7:0] antic_rdata;
     logic [7:0] antic_bank_wval=0; logic antic_bank_we=0; logic vbi=0;
 
-    wire [31:0] araddr; wire [7:0] arlen; wire [2:0] arsize; wire [1:0] arburst;
-    wire arvalid; logic arready; logic [63:0] rdata; logic rvalid; logic rlast; wire rready;
-    wire [31:0] awaddr; wire [7:0] awlen; wire [2:0] awsize; wire [1:0] awburst;
-    wire awvalid; logic awready; wire [63:0] wdata; wire [7:0] wstrb; wire wlast; wire wvalid;
+    // 32-bit AXI3 (e_axi_*)
+    wire [31:0] araddr; wire [3:0] arlen; wire [2:0] arsize; wire [1:0] arburst;
+    wire arvalid; logic arready; logic [31:0] rdata; logic rvalid; logic rlast; wire rready;
+    wire [31:0] awaddr; wire [3:0] awlen; wire [2:0] awsize; wire [1:0] awburst;
+    wire awvalid; logic awready; wire [31:0] wdata; wire [3:0] wstrb; wire wlast; wire wvalid;
     logic wready; logic bvalid; wire bready;
 
     screen_bank #(.STACK_BASE(STACK_BASE), .APERTURE_LOG2(APE)) dut (
@@ -37,21 +38,21 @@ module tb_screen_bank;
         .ready(ready),
         .clk_antic(clk_antic), .antic_addr(antic_addr), .antic_rdata(antic_rdata),
         .antic_bank_wval(antic_bank_wval), .antic_bank_we(antic_bank_we), .vbi(vbi),
-        .m_axi_araddr(araddr), .m_axi_arlen(arlen), .m_axi_arsize(arsize), .m_axi_arburst(arburst),
-        .m_axi_arvalid(arvalid), .m_axi_arready(arready), .m_axi_rdata(rdata),
-        .m_axi_rvalid(rvalid), .m_axi_rlast(rlast), .m_axi_rready(rready),
-        .m_axi_awaddr(awaddr), .m_axi_awlen(awlen), .m_axi_awsize(awsize), .m_axi_awburst(awburst),
-        .m_axi_awvalid(awvalid), .m_axi_awready(awready), .m_axi_wdata(wdata), .m_axi_wstrb(wstrb),
-        .m_axi_wlast(wlast), .m_axi_wvalid(wvalid), .m_axi_wready(wready),
-        .m_axi_bvalid(bvalid), .m_axi_bready(bready)
+        .e_axi_araddr(araddr), .e_axi_arlen(arlen), .e_axi_arsize(arsize), .e_axi_arburst(arburst),
+        .e_axi_arvalid(arvalid), .e_axi_arready(arready), .e_axi_rdata(rdata),
+        .e_axi_rvalid(rvalid), .e_axi_rlast(rlast), .e_axi_rready(rready),
+        .e_axi_awaddr(awaddr), .e_axi_awlen(awlen), .e_axi_awsize(awsize), .e_axi_awburst(awburst),
+        .e_axi_awvalid(awvalid), .e_axi_awready(awready), .e_axi_wdata(wdata), .e_axi_wstrb(wstrb),
+        .e_axi_wlast(wlast), .e_axi_wvalid(wvalid), .e_axi_wready(wready),
+        .e_axi_bvalid(bvalid), .e_axi_bready(bready)
     );
 
-    // ---- DDR burst-slave model (4 chunks = 4096 words) ----
+    // ---- DDR burst-slave model: 32-bit beats over a 64-bit backing store ----
     localparam int MEMW = 4*WORDS;
     logic [63:0] mem [0:MEMW-1];
     function automatic int midx(input [31:0] a); midx = (a - STACK_BASE) >> 3; endfunction
 
-    // read burst
+    // read burst (32-bit beats; addr[2] picks the 64-bit half)
     logic        rbusy=0; logic [31:0] rcur; logic [8:0] rcnt;
     always_ff @(posedge clk) begin
         if (rst) begin arready<=0; rvalid<=0; rlast<=0; rbusy<=0; end
@@ -59,15 +60,15 @@ module tb_screen_bank;
             arready <= !rbusy;
             if (arvalid && arready) begin rbusy<=1; rcur<=araddr; rcnt<=arlen+1; arready<=0; end
             if (rbusy && (!rvalid || rready)) begin
-                rdata  <= mem[midx(rcur)];
+                rdata  <= rcur[2] ? mem[midx(rcur)][63:32] : mem[midx(rcur)][31:0];
                 rvalid <= 1; rlast <= (rcnt==1);
-                rcur   <= rcur+8; rcnt <= rcnt-1;
+                rcur   <= rcur+4; rcnt <= rcnt-1;
                 if (rcnt==1) rbusy<=0;
             end else if (rvalid && rready) begin rvalid<=0; rlast<=0; end
         end
     end
 
-    // write burst
+    // write burst (32-bit beats; addr[2] picks the 64-bit half)
     logic        wbusy=0; logic [31:0] wcur;
     always_ff @(posedge clk) begin
         if (rst) begin awready<=0; wready<=0; bvalid<=0; wbusy<=0; end
@@ -76,8 +77,9 @@ module tb_screen_bank;
             if (awvalid && awready) begin wbusy<=1; wcur<=awaddr; awready<=0; end
             wready <= wbusy;
             if (wbusy && wvalid && wready) begin
-                for (int b=0;b<8;b++) if (wstrb[b]) mem[midx(wcur)][b*8+:8] <= wdata[b*8+:8];
-                wcur <= wcur+8;
+                for (int b=0;b<4;b++) if (wstrb[b])
+                    mem[midx(wcur)][(wcur[2]*32)+b*8 +: 8] <= wdata[b*8+:8];
+                wcur <= wcur+4;
                 if (wlast) begin wbusy<=0; wready<=0; bvalid<=1; end
             end
             if (bvalid && bready) bvalid<=0;
