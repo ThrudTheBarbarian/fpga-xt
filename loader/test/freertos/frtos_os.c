@@ -66,16 +66,29 @@ static void *(*g_libc_memalign)(size_t, size_t);
 static void  (*g_libc_free)(void *);
 static xtld_obj *g_libc_obj;                      /* libc.so — COW'd via a snapshot, not identity */
 
+/* The loader allocates program/.so IMAGES from the KERNEL heap (kern_sbrk) — NOT via
+ * libc malloc. libc's arena lives in libc.so's data, which is COW'd per-process; a PL0
+ * spawn runs in the CALLER's space, so libc malloc would use the caller's arena + its
+ * private heap VA, and the image would be shadowed in the child's space -> XN fault on
+ * exec. kern_sbrk is global + identity-mapped (SEC_KDATA, capped below the per-process
+ * windows) so images are space-independent + executable everywhere. Bump-only (no
+ * per-image free); images are cached/long-lived, so that's fine for now. */
 void *frtos_alloc(size_t size, size_t align, void *u)
 {
     (void)u;
-    if (g_libc_memalign) return g_libc_memalign(align ? align : 16, size);
-    if (!g_boot) g_boot = _heap_start;           /* bootstrap bump (libc.so only) */
+    if (align < 16) align = 16;
+    if (g_libc_memalign) {                           /* post-bootstrap: the kernel heap */
+        extern void *kern_sbrk(int);
+        char *base = (char *)kern_sbrk((int)(size + align));
+        if (base == (char *)-1) return 0;
+        return (void *)(((uintptr_t)base + (align - 1)) & ~(uintptr_t)(align - 1));
+    }
+    if (!g_boot) g_boot = _heap_start;               /* bootstrap bump (libc.so itself) */
     uintptr_t a = ((uintptr_t)g_boot + (align - 1)) & ~(uintptr_t)(align - 1);
     g_boot = (char *)a + size;
     return (void *)a;
 }
-void frtos_free(void *p, void *u) { (void)u; if (g_libc_free) g_libc_free(p); }
+void frtos_free(void *p, void *u) { (void)p; (void)u; }  /* bump kernel heap: images are long-lived */
 
 /* Called after the loader has loaded libc.so: grab its allocator, and point the
  * kernel's _sbrk just above libc.so's (bootstrap-pinned) image. */
@@ -86,7 +99,12 @@ void frtos_activate_libc(xtld_obj *libc)
     g_libc_memalign = (void *(*)(size_t, size_t))xtld_sym(libc, "memalign");
     g_libc_free     = (void (*)(void *))xtld_sym(libc, "free");
     uintptr_t brk = ((uintptr_t)g_boot + 0xFFFu) & ~0xFFFu;   /* page-align past libc.so */
-    sbrk_set_base((void *)brk, (void *)0x20000000u);
+    /* Cap the kernel heap (where libc.so loads program/.so images) BELOW the per-process
+     * VA windows (heap 0x1000_0000+, cow/mmap above). Those windows are overridden
+     * per-process, so any .so loaded at >=0x1000_0000 would be SHADOWED by a process's
+     * private heap and fault (XN) when executed. The page pool (per-process physical)
+     * still owns 0x1000_0000-0x2000_0000 from the top down. */
+    sbrk_set_base((void *)brk, (void *)XTOS_HEAP_VA);
 }
 
 static proc_t *cur_proc(void)
@@ -214,7 +232,7 @@ static long sys_lseek(proc_t *p, int fd, long off, int whence)
     return vf->lseek ? vf->lseek(vf, off, whence) : -1;
 }
 
-static void boot_spawn_record(const char *path);   /* defined with the spawn helpers below */
+static const xtld_host *g_khost;   /* kernel loader host (frtos_set_host); used by SYS_spawn */
 
 static long do_syscall(uint32_t num, long a0, long a1, long a2)
 {
@@ -255,9 +273,10 @@ static long do_syscall(uint32_t num, long a0, long a1, long a2)
         return 0;
     }
     case SYS_fb_present: { extern void fb_present(void); fb_present(); return 0; }
-    case SYS_spawn:                                          /* (path,argc,argv) — boot runner */
-        boot_spawn_record((const char *)a0);                /* deferred: shell_task drains it */
-        return 0;
+    case SYS_spawn:                                          /* (path, argc, argv) -> pid */
+        /* Safe from the SVC handler: the caller is a proc (priority 3) and proc_launch
+         * makes the child the SAME priority, so xTaskCreate does not yield (no svc nest). */
+        return frtos_spawn_argv((const char *)a0, (int)a1, (char **)a2, g_khost);
     case SYS_gettimeofday: {                                 /* (struct timeval *tv) */
         extern void gtimer_timeofday(uint32_t *, uint32_t *);
         /* newlib timeval: 64-bit time_t tv_sec @0, 32-bit suseconds_t tv_usec @8.
@@ -557,22 +576,9 @@ int frtos_spawn_argv(const char *path, int argc, char **argv, const xtld_host *h
     return frtos_spawn(data, size, argc, argv, host);
 }
 
-/* /OS/Boot deferred spawns: SYS_spawn from PL0 (the Lua boot runner) records the
- * program path here — SVC-safe (no FreeRTOS call). shell_task drains it in task
- * context after the boot program exits (proc_launch's xTaskCreate/yield must not
- * run in the SVC handler). */
-#define BOOT_SPAWN_MAX 16
-static char g_boot_spawn[BOOT_SPAWN_MAX][64];
-static int  g_boot_spawn_n;
-static void boot_spawn_record(const char *path)
-{
-    if (!path || g_boot_spawn_n >= BOOT_SPAWN_MAX) return;
-    int i = 0; while (path[i] && i < 63) { g_boot_spawn[g_boot_spawn_n][i] = path[i]; i++; }
-    g_boot_spawn[g_boot_spawn_n][i] = 0; g_boot_spawn_n++;
-}
-int         frtos_boot_spawn_count(void)   { return g_boot_spawn_n; }
-const char *frtos_boot_spawn_at(int i)     { return (i >= 0 && i < g_boot_spawn_n) ? g_boot_spawn[i] : 0; }
-void        frtos_boot_spawn_reset(void)   { g_boot_spawn_n = 0; }
+/* g_khost (declared above do_syscall) is the kernel loader host — set by main once
+ * built, so SYS_spawn from PL0 launches programs with the same host (libc/libgcc/...). */
+void frtos_set_host(const xtld_host *h) { g_khost = h; }
 
 /* xtld_host.resolve: the BOUNDED kernel export table loaded modules resolve
  * against — syscall primitives (for libc.so), libgcc runtime helpers (the A9 has

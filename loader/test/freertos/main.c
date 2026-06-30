@@ -105,33 +105,27 @@ static void run_selftest(void)
     puts0(now == base ? "reclaimed; OS alive ====\n" : "LEAK ====\n");
 }
 
-/* /OS/Boot auto-runner. The boot entries on the SD are Lua scripts (/OS/Boot/NN-<slug>,
- * numeric order). We spawn ONE PL0 program (/System/bin/boot, the embedded Lua runner)
- * with the sorted script paths as argv; it runs each in its own fresh lua_State (no
- * shared globals). The scripts' spawn() calls are recorded by the kernel (SYS_spawn,
- * deferred) and launched HERE once boot exits — proc_launch's xTaskCreate must run in
- * task context, not the SVC handler. Drop e.g. /OS/Boot/10-desktop containing
- * `spawn("desktop")` on the card and the desktop comes up at boot. */
+/* Bring up /System/bin/init — the first program under multitasking (PL0, full libc).
+ * The kernel enumerates /OS/Boot (init can't readdir yet) and hands init the sorted
+ * script paths; init reads each script's #! line and spawns the interpreter
+ * (#!/bin/sh -> /System/bin/sh, the Lua shell) — one process per script, so they get
+ * variable separation for free. We just waitpid init. */
 static int lead_num(const char *s) { int v = 0; while (*s >= '0' && *s <= '9') v = v * 10 + (*s++ - '0'); return v; }
 
 static void boot_run(void)
 {
-    extern int  sd_listdir(const char *, char (*)[32], int);
-    extern int  frtos_boot_spawn_count(void);
-    extern const char *frtos_boot_spawn_at(int);
-    extern void frtos_boot_spawn_reset(void);
-
+    extern int sd_listdir(const char *, char (*)[32], int);
     char nm[16][32];
     int n = sd_listdir("0:/OS/Boot", nm, 16);
-    if (n <= 0) return;                              /* no /OS/Boot -> straight to the shell */
+    if (n < 0) n = 0;                                /* no /OS/Boot -> init runs with no scripts */
     for (int i = 1; i < n; i++)                      /* insertion sort by the NN prefix */
         for (int j = i; j > 0 && lead_num(nm[j]) < lead_num(nm[j - 1]); j--) {
             char t[32]; for (int k = 0; k < 32; k++) { t[k] = nm[j][k]; nm[j][k] = nm[j-1][k]; nm[j-1][k] = t[k]; }
         }
-    /* argv = { "/System/bin/boot", "/OS/Boot/<name>", ... } */
+    /* argv = { "/System/bin/init", "/OS/Boot/<name>", ... } */
     static char paths[16][48];
     char *av[17];
-    av[0] = "/System/bin/boot";
+    av[0] = "/System/bin/init";
     int ac = 1;
     for (int i = 0; i < n && ac < 17; i++) {
         const char *pre = "/OS/Boot/"; int k = 0;
@@ -140,18 +134,9 @@ static void boot_run(void)
         paths[i][k] = 0;
         av[ac++] = paths[i];
     }
-    frtos_boot_spawn_reset();
-    puts0("[boot] running "); putu((unsigned)n); puts0(" script(s) via Lua\n");
-    int pid = frtos_spawn_argv("/System/bin/boot", ac, av, &g_host);
-    if (pid < 0) { puts0("[boot] /System/bin/boot MISSING\n"); return; }
-    frtos_waitpid(pid);                              /* let it run all scripts + record spawns */
-    int m = frtos_boot_spawn_count();               /* now launch what they asked for */
-    for (int i = 0; i < m; i++) {
-        const char *p = frtos_boot_spawn_at(i);
-        char *sa[1] = { (char *)p };
-        puts0("[boot] launch "); puts0(p); puts0("\n");
-        if (frtos_spawn_argv(p, 1, sa, &g_host) < 0) { puts0("[boot]   MISSING "); puts0(p); puts0("\n"); }
-    }
+    int pid = frtos_spawn_argv("/System/bin/init", ac, av, &g_host);
+    if (pid < 0) { puts0("[boot] /System/bin/init MISSING\n"); return; }
+    frtos_waitpid(pid);
 }
 
 static void shell_task(void *arg)
@@ -318,6 +303,7 @@ int main(void)
     g_host = (xtld_host){ .alloc = frtos_alloc, .dealloc = frtos_free, .sync_caches = mmu_sync_caches,
                           .resolve = frtos_ksym, .open_lib = frtos_open_lib,
                           .on_loaded = frtos_on_loaded, .user = NULL };
+    { extern void frtos_set_host(const xtld_host *); frtos_set_host(&g_host); }  /* PL0 SYS_spawn uses it */
 
     /* bootstrap-load /System/Library/libc.so (romfs-internal /Library), then route
      * the loader's allocator through libc.so's malloc (frtos_activate_libc) */
