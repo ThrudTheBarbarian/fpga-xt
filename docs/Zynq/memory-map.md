@@ -29,13 +29,13 @@ values below are defaults — overridable at instantiation.
             │ freed on last ref (xtld_unload). FreeType caches, etc.   │
 0x2000_0000 ├─────────────────────────────────────────────────────────┤
             │ SALLY banks (HDL params): code-bank $D5C0 @0x2000_0000 + │
-            │ data-bank $D5C1 @0x2040_0000 + video banks (future);     │
-            │ 256 × 16 KB each ≈ 12 MB used, 16 MB reserved.           │
+            │ data-bank $D5C1 @0x2040_0000 (256 × 16 KB, AXI tied off  │
+            │ today) + the VIDEO banks: screen_bank chunk-stack        │
+            │ @0x2080_0000 ($D5C3/$D5C4, 256 × 8 KB = 2 MB, via GP0 —  │
+            │ WIRED); 16 MB reserved.                                  │
 0x2100_0000 ├─────────────────────────────────────────────────────────┤
             │ spare (~240 MB) — 68k "T" realm (ST/STe/TT guest RAM,    │
-            │ ~64 MB) when wired; remainder free, incl:                │
-            │   SCRN_STACK 0x2800_0000  banked screen-RAM chunk-stack  │
-            │             (screen_bank, 256 × 8 KB = 2 MB, via GP0)    │
+            │ ~64 MB) when wired; remainder free.                      │
 0x3000_0000 ├─────────────────────────────────────────────────────────┤
             │ Compositor planes (PL-visible, WIRED) — verified vs HDL/ │
             │ PS 2026-06-28:                                           │
@@ -144,7 +144,7 @@ What's wired today (audited against `hdl/fpga_xt_top.sv` 2026-06-30):
 | **S_AXI_HP1** | 64 | **R+W** | `xt_blitter` | glyph-atlas/asset read + plane/surface write |
 | **S_AXI_HP2** | 64 | **R+W** | `antic_writeback` (W) + drag-overlay/sprite read-arbiter (R) | XL writeback write (`0x31xx`) + drag-overlay (`0x3200_0000`) & sprite-arena (`0x3400_0000`) read |
 | **S_AXI_HP3** | 64 | **R** | `plane_fetch1` | XL triple-buffer read (`0x3100/10/20_0000`) |
-| **S_AXI_GP0** | 32 | **R+W** | `screen_bank` (`m_axi_scrn`) | banked screen-RAM chunk-stack (`0x2800_0000`) |
+| **S_AXI_GP0** | 32 | **R+W** | `screen_bank` (`m_axi_scrn`) | banked screen-RAM chunk-stack (`0x2080_0000`) |
 | S_AXI_GP1 | 32 | — | **unused** (free) | — |
 | S_AXI_ACP | 64 | — | **unused** (free) | coherent option — see architecture-review §3.1 |
 
@@ -164,7 +164,7 @@ Notes:
 | Region | Owner module(s) | Port |
 |--------|-----------------|------|
 | SALLY banked window (`0x2000_0000`) | `sally_mem` banked cache | (AXI master tied off — unused) |
-| Screen chunk-stack (`0x2800_0000`) | `screen_bank` | S_AXI_GP0 (R+W) |
+| Screen chunk-stack (`0x2080_0000`) | `screen_bank` | S_AXI_GP0 (R+W) |
 | Desktop/GEM plane (`0x3000_0000`) | `plane_fetch` (read) + `xt_blitter` (write) | HP0 read / HP1 write |
 | XL triple-buffer (`0x3100/10/20_0000`) | `antic_writeback` (write, 3 slots) + `plane_fetch1` (read) | HP2 write / HP3 read |
 | Drag-overlay surface (`0x3200_0000`) | `plane_fetch_overlay` (read; PS sets base) | HP2 read (shared) |
