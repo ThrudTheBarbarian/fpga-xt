@@ -53,6 +53,17 @@ void gfxplane_init(void)
         volatile uint32_t *x = (volatile uint32_t *)(XL_BASE0 + (uint32_t)b * XL_SLOT);
         for (uint32_t i = 0; i < XL_WORDS; i++) x[i] = 0x000000FFu;
     }
+    /* Hide the always-on XL emulation plane (no emulator running): the XLCTL GP0
+     * block lets the A9 place plane 1 at an arbitrary rect — put it 1x1 off-screen.
+     * EN=1 adopts these regs; EN=0 would be the legacy centred placement that
+     * composited over the middle of the desktop. (GP0 @0x43C0_0000 = Device.) */
+    {
+        volatile uint32_t *xl = (volatile uint32_t *)0x43C00500u;  /* XT_BLK_XLCTL */
+        xl[0] = 1920; xl[1] = 1080;     /* X,Y: off the bottom-right corner */
+        xl[2] = 1;    xl[3] = 1;        /* W,H: 1x1 */
+        xl[4] = 1;                      /* scale */
+        xl[5] = 1;                      /* EN: commit the rect (clk_pix CDC) */
+    }
     __asm__ volatile("dsb");
 }
 
