@@ -117,17 +117,21 @@ Remaining:
 
 ## Memory / banking (DDR3 banked window — parallel track, not on boot path)
 
-- **Connect `sally_mem`'s AXI master to a real HP port** — hard tied-off today
-  (`fpga_xt_top.sv:322-327`); add HP2 on the PS BD, clock it at clk_sally, with the
-  AXI4→AXI3 burst-len handling the blitter already does. *(src: former docs/TODO.txt)*
-- **Make the code page-cache read-write** — `banked_page_cache` code cache is
-  read-only (a code write is a no-op); add dirty-bit write-back on page swap like the
-  data cache, or extended code-bank writes silently vanish. *(src: former docs/TODO.txt,
-  docs/Design/banked-page-cache.md)*
-- **Implement the resident page cache** — `banked_page_cache.sv` (code 16 KB RO→RW +
-  data 12 KB RW, demand-fill, dirty write-back), parameter-selectable vs the line
-  cache, + `tb_sally_mem` verification. Settle write-miss policy (read-allocate),
-  fill (demand), dirty granularity (per-line). *(src: docs/Design/banked-page-cache.md)*
+- **Code/data banking — functional validation.** The DDR path is now WIRED + timing-
+  closed: `sally_mem`'s `banked_axi_reader` (LINE) on **S_AXI_ACP** (`clk_sally`, AXI4→
+  AXI3), clk_sally +0.006. ($D5C0/$D5C1 banking was MIA before — the AXI was tied off,
+  so the cache was dead-code-eliminated; only bank 0 = flat BRAM ever worked.) Remaining:
+  (1) **fill testbench** — extend `tb_sally_mem` with a DDR model on the ACP side +
+  exercise a non-zero code/data bank read/write (the fill/write-through path has never
+  been functionally sim'd); (2) **HW test** — 6502 code reading/running from a non-zero
+  bank (needs the A9 to place code into the DDR bank + a cache flush, since ACP is driven
+  non-coherent). *(src: hdl/banked_axi_reader.sv, hdl/sally_mem.sv)*
+- **Banked page cache (`"PAGE"`) — fmax pass.** `banked_page_cache` (resident pages +
+  write-back) is the better backend once banking is heavy, but it adds ~0.5 ns to
+  SALLY's 1-cycle mem loop (clk_sally −0.495, ~54% routing) — needs a floorplan
+  (`pb_sally` + `screen_bank` CPU-BRAM co-location) and/or read-path depth reduction
+  before it can replace LINE. Also: make its code cache read-write (dirty write-back on
+  swap; today a code-bank write is a no-op). *(src: docs/Design/banked-page-cache.md)*
 - **Reserve + validate the DDR3 region** — 0x2000_0000 code / 0x2040_0000 data; keep
   PS out of 0x2000_0000-0x207F_FFFF; validate with an explicit $D5C0/$D5C1 bank-switch
   test (boot won't exercise DDR3). *(src: former docs/TODO.txt)*
