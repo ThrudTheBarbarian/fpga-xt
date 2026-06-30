@@ -60,6 +60,35 @@ void vClearTickInterrupt(void)
     REG(PT_ISR) = 1;                       /* write-1-to-clear the event flag */
 }
 
+/* Cortex-A9 GLOBAL timer (64-bit, shared by both cores, free-running at
+ * PERIPHCLK = CPU/2). Separate from the private timer above (which is the
+ * FreeRTOS tick). This is our wall clock for gettimeofday — monotonic, ~µs
+ * resolution, epoch = boot (the board has no RTC). */
+#define GTIMER_BASE 0xF8F00200UL
+#define GT_LO   (GTIMER_BASE + 0x00)
+#define GT_HI   (GTIMER_BASE + 0x04)
+#define GT_CTRL (GTIMER_BASE + 0x08)
+
+void gtimer_init(void)
+{
+    REG(GT_CTRL) = 0;                      /* disable so the counter can be zeroed */
+    REG(GT_LO)   = 0;
+    REG(GT_HI)   = 0;
+    REG(GT_CTRL) = 1;                      /* enable, prescaler 0 -> ticks at PERIPHCLK */
+}
+
+/* fill tv_sec / tv_usec (since boot). Read the 64-bit counter atomically by
+ * re-reading the high word to catch a low-word rollover between the two reads. */
+void gtimer_timeofday(uint32_t *sec, uint32_t *usec)
+{
+    uint32_t hi, lo;
+    do { hi = REG(GT_HI); lo = REG(GT_LO); } while (hi != REG(GT_HI));
+    uint64_t t = ((uint64_t)hi << 32) | lo;
+    uint64_t f = (uint64_t)(configCPU_CLOCK_HZ / 2);   /* PERIPHCLK Hz */
+    *sec  = (uint32_t)(t / f);
+    *usec = (uint32_t)(((t % f) * 1000000ULL) / f);
+}
+
 /* Called by FreeRTOS_IRQ_Handler (portASM.S) with the acked interrupt id. */
 void vApplicationIRQHandler(uint32_t ulICCIAR)
 {

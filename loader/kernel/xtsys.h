@@ -28,4 +28,8 @@
 #define SYS_fb_info    0x400   /* (struct os_fbinfo *) -> 0 */
 #define SYS_fb_present  0x401  /* () -> 0  (flush the plane to the display) */
 
+/* time / clock — block 0x500. Peripherals are PL1-only, so libc's _gettimeofday
+ * traps here; the kernel reads the A9 global timer (wall clock since boot — no RTC). */
+#define SYS_gettimeofday 0x500 /* (struct timeval *tv) -> 0: fills {tv_sec, tv_usec} */
+
 #endif

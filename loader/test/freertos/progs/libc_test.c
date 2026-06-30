@@ -4,6 +4,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/time.h>
 void _app_entry(int argc, char **argv)
 {
     (void)argc; (void)argv;
@@ -23,5 +24,18 @@ void _app_entry(int argc, char **argv)
     } else {
         printf("libc_test: fopen(/OS/etc/motd) FAILED\n");
     }
+
+    /* gettimeofday: must return a real, advancing wall clock (A9 global timer),
+     * not the old always-zero stub. */
+    struct timeval t0, t1;
+    int g0 = gettimeofday(&t0, NULL);
+    volatile unsigned spin = 0; for (unsigned i = 0; i < 3000000u; i++) spin++;
+    int g1 = gettimeofday(&t1, NULL);
+    int advanced = (t1.tv_sec > t0.tv_sec) ||
+                   (t1.tv_sec == t0.tv_sec && t1.tv_usec > t0.tv_usec);
+    printf("libc_test: gettimeofday rc=%d/%d  t0=%ld.%06ld  t1=%ld.%06ld  -> %s\n",
+           g0, g1, (long)t0.tv_sec, (long)t0.tv_usec, (long)t1.tv_sec, (long)t1.tv_usec,
+           (g0 == 0 && g1 == 0 && advanced) ? "ADVANCING (OK)" : "FAIL");
+
     fflush(stdout);
 }

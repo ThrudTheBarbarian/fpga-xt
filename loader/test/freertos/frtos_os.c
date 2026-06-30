@@ -257,6 +257,19 @@ static long do_syscall(uint32_t num, long a0, long a1, long a2)
         return 0;
     }
     case SYS_fb_present: { extern void fb_present(void); fb_present(); return 0; }
+    case SYS_gettimeofday: {                                 /* (struct timeval *tv) */
+        extern void gtimer_timeofday(uint32_t *, uint32_t *);
+        /* newlib timeval: 64-bit time_t tv_sec @0, 32-bit suseconds_t tv_usec @8.
+         * Write tv_sec as a full 64-bit value (high word 0 — uptime fits 32 bits). */
+        uint32_t *tv = (uint32_t *)a0;
+        uint32_t sec, usec;
+        if (!tv) return -1;
+        gtimer_timeofday(&sec, &usec);
+        tv[0] = sec;    /* tv_sec  low  */
+        tv[1] = 0;      /* tv_sec  high */
+        tv[2] = usec;   /* tv_usec @ byte offset 8 */
+        return 0;
+    }
     default:         return -38;                             /* -ENOSYS */
     }
 }

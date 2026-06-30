@@ -81,7 +81,7 @@ int _fstat(int fd, void *st) { (void)fd; (void)st; return -1; }   /* newlib fall
 int _isatty(int fd) { return fd < 3; }                            /* 0/1/2 are the console */
 int _stat(const char *p, void *st) { (void)p; (void)st; return -1; }
 int _kill(int pid, int sig) { (void)pid; (void)sig; return -1; }
-int _gettimeofday(void *tv, void *tz) { (void)tv; (void)tz; return -1; }
+int _gettimeofday(void *tv, void *tz) { (void)tz; return tv ? (int)sc(SYS_gettimeofday, (long)tv, 0, 0) : -1; }
 int _times(void *buf) { (void)buf; return -1; }
 int _link(const char *a, const char *b) { (void)a; (void)b; return -1; }
 int _unlink(const char *p) { (void)p; return -1; }

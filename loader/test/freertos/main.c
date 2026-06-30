@@ -256,6 +256,7 @@ int main(void)
     vm_cow_init();       /* fill the synthetic COW template + register its range */
     { extern void stackguard_init(void); stackguard_init(); }   /* guarded stack arena */
     gic_init();
+    { extern void gtimer_init(void); gtimer_init(); }   /* A9 global timer -> gettimeofday wall clock */
     ksys_set_console(rt_write);
     romfs_mount(romfs_blob, romfs_blob_len);
 
