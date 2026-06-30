@@ -199,6 +199,10 @@ void hdmi_init(void)
     puts0("[hdmi] SiI9022 bring-up (bare I2C0)...\r\n");
     sii9022_reset();
     i2c_init();
+    sii_write(0xC7, 0x00);       /* enter TPI mode — SiI9022 powers up in non-TPI/DDC
+                                  * pass-through; without this, TPI reads auto-increment
+                                  * the wrong space (vitis main.c "step 1"). */
+    gt_delay_us(1000);
     puts0("[hdmi] i2c CR(readback)="); puthex32(I2C_CR); puts0("\r\n");
     { uint8_t rr[3] = { 0xEE, 0xEE, 0xEE };     /* vitis: 1B=B0 1C=02 1D=03 */
       sii_read(0x1B, &rr[0]); sii_read(0x1C, &rr[1]); sii_read(0x1D, &rr[2]);
