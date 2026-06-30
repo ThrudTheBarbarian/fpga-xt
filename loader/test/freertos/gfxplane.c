@@ -34,11 +34,25 @@ void fb_present(void)
     __asm__ volatile("dsb");           /* order the plane writes; compositor scans DDR */
 }
 
+/* The XL plane (plane 1) is a HARDWIRED centred overlay the compositor always
+ * composites, reading the ANTIC->DDR writeback triple-buffer (HP3). With no
+ * emulator running those buffers are uninitialised, so the overlay scans garbage
+ * (visible on a cold SD boot; a warm JTAG reload masked it with stale pixels).
+ * The compositor is alpha-blind, so clear them to opaque black -> clean overlay.
+ * Mirrors hdl/fpga_xt_top.sv: XL_BASE_{0,1,2} 1 MB apart, 320x192 RGBA. */
+#define XL_BASE0   0x31000000u
+#define XL_SLOT    0x00100000u         /* buffers 1 MB apart */
+#define XL_WORDS   (320u * 192u)       /* XL_SRC_W * XL_SRC_H, RGBA words */
+
 /* clear to opaque black (compositor uses bits [31:8] as RGB). Pre-scheduler. */
 void gfxplane_init(void)
 {
     volatile uint32_t *p = (volatile uint32_t *)FB_BASE;
     for (uint32_t i = 0; i < (uint32_t)FB_H * FB_STRIDE; i++) p[i] = 0x000000FFu;
+    for (int b = 0; b < 3; b++) {      /* the XL writeback triple-buffer */
+        volatile uint32_t *x = (volatile uint32_t *)(XL_BASE0 + (uint32_t)b * XL_SLOT);
+        for (uint32_t i = 0; i < XL_WORDS; i++) x[i] = 0x000000FFu;
+    }
     __asm__ volatile("dsb");
 }
 
