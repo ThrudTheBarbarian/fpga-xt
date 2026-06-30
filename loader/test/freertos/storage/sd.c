@@ -15,6 +15,7 @@ static FIL   g_fil;
 
 void sd_init(void)
 {
+    puts0("[sd] mounting...\r\n");
     FRESULT r = f_mount(&g_fs, "0:", 1);          /* opt=1: mount now (forces card init) */
     if (r != FR_OK) {
         puts0("[sd] f_mount FAILED rc="); putu((unsigned)r); puts0("\r\n");

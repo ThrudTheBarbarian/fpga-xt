@@ -303,7 +303,7 @@ int main(void)
     puts0(p ? "libc.so malloc: ok\n" : "libc.so malloc: FAIL\n");
     frtos_free(p, NULL);
 
-    if (xTaskCreate(shell_task, "sh", 2048, NULL, 2, NULL) != pdPASS) {
+    if (xTaskCreate(shell_task, "sh", 8192, NULL, 2, NULL) != pdPASS) {  /* 32KB: xsdps+FatFs init is stack-hungry */
         puts0("shell create failed\n"); sh_exit(1);
     }
     vTaskStartScheduler();
