@@ -27,8 +27,23 @@ void Xil_DCacheFlushRange(INTPTR adr, u32 len)
 }
 void Xil_DCacheInvalidateRange(INTPTR adr, u32 len)
 {
-    UINTPTR a = (UINTPTR)adr & ~31u, e = (UINTPTR)adr + len;
-    for (; a < e; a += 32u) __asm__ volatile("mcr p15,0,%0,c7,c6,1" :: "r"(a));   /* DCIMVAC inval */
+    if (len == 0u) return;
+    UINTPTR a = (UINTPTR)adr, end = (UINTPTR)adr + len;
+    /* Unaligned head/tail lines hold bytes OUTSIDE [adr,end) that may be dirty
+     * (e.g. saved return addresses on the stack). Plain invalidate would discard
+     * them -> corruption. clean+invalidate those partial lines (preserves them);
+     * invalidate only the fully-covered middle. (Matches Xilinx Xil_DCacheInvalidateRange.) */
+    if (a & 31u) {
+        UINTPTR la = a & ~31u;
+        __asm__ volatile("mcr p15,0,%0,c7,c14,1" :: "r"(la));    /* DCCIMVAC clean+inval */
+        a = la + 32u;
+    }
+    if (end & 31u) {
+        UINTPTR le = end & ~31u;
+        __asm__ volatile("mcr p15,0,%0,c7,c14,1" :: "r"(le));    /* DCCIMVAC clean+inval */
+        end = le;
+    }
+    for (; a < end; a += 32u) __asm__ volatile("mcr p15,0,%0,c7,c6,1" :: "r"(a));  /* DCIMVAC inval */
     __asm__ volatile("dsb");
 }
 
