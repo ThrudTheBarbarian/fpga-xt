@@ -214,6 +214,8 @@ static long sys_lseek(proc_t *p, int fd, long off, int whence)
     return vf->lseek ? vf->lseek(vf, off, whence) : -1;
 }
 
+static void boot_spawn_record(const char *path);   /* defined with the spawn helpers below */
+
 static long do_syscall(uint32_t num, long a0, long a1, long a2)
 {
     proc_t *p = cur_proc();
@@ -253,6 +255,9 @@ static long do_syscall(uint32_t num, long a0, long a1, long a2)
         return 0;
     }
     case SYS_fb_present: { extern void fb_present(void); fb_present(); return 0; }
+    case SYS_spawn:                                          /* (path,argc,argv) — boot runner */
+        boot_spawn_record((const char *)a0);                /* deferred: shell_task drains it */
+        return 0;
     case SYS_gettimeofday: {                                 /* (struct timeval *tv) */
         extern void gtimer_timeofday(uint32_t *, uint32_t *);
         /* newlib timeval: 64-bit time_t tv_sec @0, 32-bit suseconds_t tv_usec @8.
@@ -537,12 +542,37 @@ int frtos_spawn_path(const char *path, const xtld_host *host)
     return frtos_spawn_argv(path, 0, NULL, host);
 }
 
+static int has_prefix(const char *s, const char *p) { while (*p) if (*s++ != *p++) return 0; return 1; }
+
 int frtos_spawn_argv(const char *path, int argc, char **argv, const xtld_host *host)
 {
     const uint8_t *data; uint32_t size;
-    if (!romfs_lookup(path, &data, &size)) return -1;
+    /* programs live in the romfs (mounted at /System); accept a /System/bin/x path
+     * (-> romfs-internal /bin/x) as well as a bare romfs-internal path. (/OS/bin on
+     * the SD is a Stage-3 search target once SD .so loading lands.) */
+    if (!romfs_lookup(path, &data, &size)) {
+        if (!has_prefix(path, "/System/") || !romfs_lookup(path + 7, &data, &size))
+            return -1;
+    }
     return frtos_spawn(data, size, argc, argv, host);
 }
+
+/* /OS/Boot deferred spawns: SYS_spawn from PL0 (the Lua boot runner) records the
+ * program path here — SVC-safe (no FreeRTOS call). shell_task drains it in task
+ * context after the boot program exits (proc_launch's xTaskCreate/yield must not
+ * run in the SVC handler). */
+#define BOOT_SPAWN_MAX 16
+static char g_boot_spawn[BOOT_SPAWN_MAX][64];
+static int  g_boot_spawn_n;
+static void boot_spawn_record(const char *path)
+{
+    if (!path || g_boot_spawn_n >= BOOT_SPAWN_MAX) return;
+    int i = 0; while (path[i] && i < 63) { g_boot_spawn[g_boot_spawn_n][i] = path[i]; i++; }
+    g_boot_spawn[g_boot_spawn_n][i] = 0; g_boot_spawn_n++;
+}
+int         frtos_boot_spawn_count(void)   { return g_boot_spawn_n; }
+const char *frtos_boot_spawn_at(int i)     { return (i >= 0 && i < g_boot_spawn_n) ? g_boot_spawn[i] : 0; }
+void        frtos_boot_spawn_reset(void)   { g_boot_spawn_n = 0; }
 
 /* xtld_host.resolve: the BOUNDED kernel export table loaded modules resolve
  * against — syscall primitives (for libc.so), libgcc runtime helpers (the A9 has
@@ -561,6 +591,15 @@ extern void regfree(void*); extern int sigprocmask(int,const void*,void*);
 K(__aeabi_idiv) K(__aeabi_uidiv) K(__aeabi_idivmod) K(__aeabi_uidivmod)
 K(__aeabi_ldivmod) K(__aeabi_uldivmod) K(__aeabi_d2lz) K(__aeabi_l2d)
 K(__aeabi_unwind_cpp_pr0) K(__ffsdi2) K(__aeabi_f2lz) K(__muldc3) K(__mulsc3)
+/* soft-double/float runtime — Lua (lua_Number = double) leans on these heavily */
+K(__aeabi_dadd) K(__aeabi_dsub) K(__aeabi_dmul) K(__aeabi_ddiv) K(__aeabi_dneg)
+K(__aeabi_dcmpeq) K(__aeabi_dcmplt) K(__aeabi_dcmple) K(__aeabi_dcmpge) K(__aeabi_dcmpgt) K(__aeabi_dcmpun)
+K(__aeabi_d2iz) K(__aeabi_d2uiz) K(__aeabi_i2d) K(__aeabi_ui2d) K(__aeabi_d2f) K(__aeabi_f2d)
+K(__aeabi_ul2d) K(__aeabi_d2ulz)
+K(__aeabi_fadd) K(__aeabi_fsub) K(__aeabi_fmul) K(__aeabi_fdiv)
+K(__aeabi_fcmpeq) K(__aeabi_fcmplt) K(__aeabi_fcmple) K(__aeabi_fcmpge) K(__aeabi_fcmpgt)
+K(__aeabi_f2iz) K(__aeabi_i2f) K(__aeabi_ui2f) K(__aeabi_f2uiz)
+K(__aeabi_l2f) K(__aeabi_ul2f) K(__aeabi_f2ulz)
 #undef K
 
 uintptr_t frtos_ksym(const char *name, void *u)
@@ -589,6 +628,24 @@ uintptr_t frtos_ksym(const char *name, void *u)
         {"__aeabi_d2lz",(void*)__aeabi_d2lz},{"__aeabi_l2d",(void*)__aeabi_l2d},
         {"__aeabi_unwind_cpp_pr0",(void*)__aeabi_unwind_cpp_pr0},{"__ffsdi2",(void*)__ffsdi2},
         {"__aeabi_f2lz",(void*)__aeabi_f2lz},{"__muldc3",(void*)__muldc3},{"__mulsc3",(void*)__mulsc3},
+        {"__aeabi_dadd",(void*)__aeabi_dadd},{"__aeabi_dsub",(void*)__aeabi_dsub},
+        {"__aeabi_dmul",(void*)__aeabi_dmul},{"__aeabi_ddiv",(void*)__aeabi_ddiv},{"__aeabi_dneg",(void*)__aeabi_dneg},
+        {"__aeabi_dcmpeq",(void*)__aeabi_dcmpeq},{"__aeabi_dcmplt",(void*)__aeabi_dcmplt},
+        {"__aeabi_dcmple",(void*)__aeabi_dcmple},{"__aeabi_dcmpge",(void*)__aeabi_dcmpge},
+        {"__aeabi_dcmpgt",(void*)__aeabi_dcmpgt},{"__aeabi_dcmpun",(void*)__aeabi_dcmpun},
+        {"__aeabi_d2iz",(void*)__aeabi_d2iz},{"__aeabi_d2uiz",(void*)__aeabi_d2uiz},
+        {"__aeabi_i2d",(void*)__aeabi_i2d},{"__aeabi_ui2d",(void*)__aeabi_ui2d},
+        {"__aeabi_d2f",(void*)__aeabi_d2f},{"__aeabi_f2d",(void*)__aeabi_f2d},
+        {"__aeabi_ul2d",(void*)__aeabi_ul2d},{"__aeabi_d2ulz",(void*)__aeabi_d2ulz},
+        {"__aeabi_fadd",(void*)__aeabi_fadd},{"__aeabi_fsub",(void*)__aeabi_fsub},
+        {"__aeabi_fmul",(void*)__aeabi_fmul},{"__aeabi_fdiv",(void*)__aeabi_fdiv},
+        {"__aeabi_fcmpeq",(void*)__aeabi_fcmpeq},{"__aeabi_fcmplt",(void*)__aeabi_fcmplt},
+        {"__aeabi_fcmple",(void*)__aeabi_fcmple},{"__aeabi_fcmpge",(void*)__aeabi_fcmpge},
+        {"__aeabi_fcmpgt",(void*)__aeabi_fcmpgt},
+        {"__aeabi_f2iz",(void*)__aeabi_f2iz},{"__aeabi_i2f",(void*)__aeabi_i2f},
+        {"__aeabi_ui2f",(void*)__aeabi_ui2f},{"__aeabi_f2uiz",(void*)__aeabi_f2uiz},
+        {"__aeabi_l2f",(void*)__aeabi_l2f},{"__aeabi_ul2f",(void*)__aeabi_ul2f},
+        {"__aeabi_f2ulz",(void*)__aeabi_f2ulz},
     };
     for (unsigned i = 0; i < sizeof tab / sizeof tab[0]; i++)
         if (!strcmp(name, tab[i].n)) return (uintptr_t)tab[i].a;

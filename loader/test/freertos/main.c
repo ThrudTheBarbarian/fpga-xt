@@ -105,15 +105,22 @@ static void run_selftest(void)
     puts0(now == base ? "reclaimed; OS alive ====\n" : "LEAK ====\n");
 }
 
-/* /OS/Boot auto-runner: for each /OS/Boot/NN-<slug> on the SD, in NN order, spawn
- * /bin/<slug> DIRECTLY (no shell process per entry). This is how the desktop comes
- * up at boot — drop a file like /OS/Boot/10-desktop on the card. Each program is
- * run to completion in turn (frtos_spawn_argv waits), as run_selftest does. */
+/* /OS/Boot auto-runner. The boot entries on the SD are Lua scripts (/OS/Boot/NN-<slug>,
+ * numeric order). We spawn ONE PL0 program (/System/bin/boot, the embedded Lua runner)
+ * with the sorted script paths as argv; it runs each in its own fresh lua_State (no
+ * shared globals). The scripts' spawn() calls are recorded by the kernel (SYS_spawn,
+ * deferred) and launched HERE once boot exits — proc_launch's xTaskCreate must run in
+ * task context, not the SVC handler. Drop e.g. /OS/Boot/10-desktop containing
+ * `spawn("desktop")` on the card and the desktop comes up at boot. */
 static int lead_num(const char *s) { int v = 0; while (*s >= '0' && *s <= '9') v = v * 10 + (*s++ - '0'); return v; }
 
 static void boot_run(void)
 {
-    extern int sd_listdir(const char *, char (*)[32], int);
+    extern int  sd_listdir(const char *, char (*)[32], int);
+    extern int  frtos_boot_spawn_count(void);
+    extern const char *frtos_boot_spawn_at(int);
+    extern void frtos_boot_spawn_reset(void);
+
     char nm[16][32];
     int n = sd_listdir("0:/OS/Boot", nm, 16);
     if (n <= 0) return;                              /* no /OS/Boot -> straight to the shell */
@@ -121,17 +128,29 @@ static void boot_run(void)
         for (int j = i; j > 0 && lead_num(nm[j]) < lead_num(nm[j - 1]); j--) {
             char t[32]; for (int k = 0; k < 32; k++) { t[k] = nm[j][k]; nm[j][k] = nm[j-1][k]; nm[j-1][k] = t[k]; }
         }
-    for (int i = 0; i < n; i++) {
-        const char *slug = nm[i];
-        while (*slug && *slug != '-') slug++;        /* skip "NN" */
-        if (*slug == '-') slug++;                    /* skip the '-' */
-        char path[40]; const char *pre = "/bin/"; int k = 0;
-        while (pre[k]) { path[k] = pre[k]; k++; }
-        for (int j = 0; slug[j] && k < 39; j++) path[k++] = slug[j];
-        path[k] = 0;
-        char *av[1] = { path };
-        puts0("[boot] "); puts0(nm[i]); puts0(" -> "); puts0(path); puts0("\n");
-        if (frtos_spawn_argv(path, 1, av, &g_host) < 0) { puts0("[boot]   MISSING "); puts0(path); puts0("\n"); }
+    /* argv = { "/System/bin/boot", "/OS/Boot/<name>", ... } */
+    static char paths[16][48];
+    char *av[17];
+    av[0] = "/System/bin/boot";
+    int ac = 1;
+    for (int i = 0; i < n && ac < 17; i++) {
+        const char *pre = "/OS/Boot/"; int k = 0;
+        while (pre[k]) { paths[i][k] = pre[k]; k++; }
+        for (int j = 0; nm[i][j] && k < 47; j++) paths[i][k++] = nm[i][j];
+        paths[i][k] = 0;
+        av[ac++] = paths[i];
+    }
+    frtos_boot_spawn_reset();
+    puts0("[boot] running "); putu((unsigned)n); puts0(" script(s) via Lua\n");
+    int pid = frtos_spawn_argv("/System/bin/boot", ac, av, &g_host);
+    if (pid < 0) { puts0("[boot] /System/bin/boot MISSING\n"); return; }
+    frtos_waitpid(pid);                              /* let it run all scripts + record spawns */
+    int m = frtos_boot_spawn_count();               /* now launch what they asked for */
+    for (int i = 0; i < m; i++) {
+        const char *p = frtos_boot_spawn_at(i);
+        char *sa[1] = { (char *)p };
+        puts0("[boot] launch "); puts0(p); puts0("\n");
+        if (frtos_spawn_argv(p, 1, sa, &g_host) < 0) { puts0("[boot]   MISSING "); puts0(p); puts0("\n"); }
     }
 }
 
@@ -266,7 +285,7 @@ static void shell_task(void *arg)
             continue;
         }
         char path[72];
-        int i = 0; const char *pre = "/bin/";
+        int i = 0; const char *pre = "/System/bin/";
         while (pre[i]) { path[i] = pre[i]; i++; }
         for (int j = 0; argv[0][j] && i < (int)sizeof(path) - 1; j++) path[i++] = argv[0][j];
         path[i] = 0;

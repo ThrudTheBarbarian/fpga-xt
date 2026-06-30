@@ -23,6 +23,8 @@ static inline long __syscall(long n, long a0, long a1, long a2)
 static inline long sys_write(int fd, const void *buf, unsigned len)
 { return __syscall(SYS_write, fd, (long)buf, (long)len); }
 static inline long sys_getpid(void) { return __syscall(SYS_getpid, 0, 0, 0); }
+static inline long sys_spawn(const char *path, int argc, char **argv)
+{ return __syscall(SYS_spawn, (long)path, argc, (long)argv); }
 static inline void sys_exit(int code) { __syscall(SYS_exit, code, 0, 0); for (;;) {} }
 static inline long sys_open(const char *path, int flags)
 { return __syscall(SYS_open, (long)path, flags, 0); }
