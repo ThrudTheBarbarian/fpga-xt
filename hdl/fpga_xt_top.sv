@@ -729,7 +729,12 @@ module fpga_xt_top (
         .OS_ROM_HEX_PATH ("rsrc/sally-boot.hex"),
         .SELFTEST_HEX_PATH ("rsrc/selftest.hex"),  // XL self-test ROM ($5000-$57FF via PORTB[7])
         .DDR3_BANKED_BASE (32'h2000_0000),
-        .DDR3_DATA_BASE   (32'h2040_0000)
+        .DDR3_DATA_BASE   (32'h2040_0000),
+        // LINE (banked_axi_reader, shallow) not PAGE (banked_page_cache, deep): the
+        // page cache's read path blew clk_sally -0.495 in SALLY's 1-cycle mem loop.
+        // LINE makes code/data DDR banking functional at a closeable fmax (trades the
+        // page cache's residency/write-back for per-line demand reads).
+        .BANKED_CACHE     ("LINE")
     ) u_sally_mem (
         .clk        (clk_sally),
         .rst        (rst_sally),

@@ -150,17 +150,19 @@ What's wired today (audited against `hdl/fpga_xt_top.sv` 2026-06-30):
 | **S_AXI_HP3** | 64 | **R** | `plane_fetch1` | XL triple-buffer read (`0x3100/10/20_0000`) |
 | **S_AXI_GP0** | 32 | **R+W** | `screen_bank` (`m_axi_scrn`) | banked screen-RAM chunk-stack (`0x2080_0000`) |
 | S_AXI_GP1 | 32 | — | **unused** (free) | — |
-| **S_AXI_ACP** | 64 | **R+W** | `sally_mem` `banked_page_cache` (`m_axi_sally`) | SALLY code/data bank demand-fill + dirty write-back (`0x2000`/`0x2040`) |
+| **S_AXI_ACP** | 64 | **R+W** | `sally_mem` `banked_axi_reader` (`m_axi_sally`, LINE) | SALLY code/data bank demand reads + write-through (`0x2000`/`0x2040`) |
 
 Notes:
 - **Direction is the PL master's view**: HP0/HP3 are read-only (scan-out fetch);
   HP1/HP2/GP0/ACP are read+write.
-- **`sally_mem`'s `banked_page_cache` is on ACP** (64-bit, coherent-capable; driven
-  non-coherent today — `aruser/awuser=0`). The cache serves resident pages from BRAM
-  and demand-fills code/data banks from DDR on a `$D5C0`/`$D5C1` miss (+ dirty
-  write-back). Dormant until a non-zero bank is selected (SALLY otherwise runs from
-  the flat BRAM = bank 0). ACP (not HP) keeps all four HP ports for the video
-  datapath, and suits the latency-sensitive CPU fetch path.
+- **`sally_mem` code/data banking is on ACP** (64-bit, coherent-capable; driven
+  non-coherent today — `aruser/awuser=0`), using the **shallow `banked_axi_reader`
+  (`BANKED_CACHE="LINE"`)**: per-line demand reads + write-through. The deeper
+  **`banked_page_cache` (`"PAGE"`)** — resident pages + write-back — does **not** close
+  `clk_sally` (it added 0.5 ns of logic in SALLY's 1-cycle mem round-trip loop, mostly
+  routing; needs a floorplan/RTL fmax pass before it can be the backend). Dormant until
+  a non-zero bank is selected (SALLY otherwise runs from the flat BRAM = bank 0). ACP
+  (not HP) keeps all four HP ports for the video datapath.
 - **GP0 (not an HP port) for screen_bank on purpose**: its copies are ~MB/s and
   non-latency-critical (CPU polls `$D5C5.ready`; the RGBA triple buffer keeps
   scan-out tear-free), so it must not sit on — or arbitrate with — the
@@ -170,7 +172,7 @@ Notes:
 
 | Region | Owner module(s) | Port |
 |--------|-----------------|------|
-| SALLY banked window (`0x2000_0000`) | `sally_mem` `banked_page_cache` | S_AXI_ACP (R+W) |
+| SALLY banked window (`0x2000_0000`) | `sally_mem` `banked_axi_reader` (LINE) | S_AXI_ACP (R+W) |
 | Screen chunk-stack (`0x2080_0000`) | `screen_bank` | S_AXI_GP0 (R+W) |
 | Desktop/GEM plane (`0x3000_0000`) | `plane_fetch` (read) + `xt_blitter` (write) | HP0 read / HP1 write |
 | XL triple-buffer (`0x3100/10/20_0000`) | `antic_writeback` (write, 3 slots) + `plane_fetch1` (read) | HP2 write / HP3 read |
