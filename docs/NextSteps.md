@@ -60,13 +60,16 @@ Remaining:
 ---
 ## Video / compositor / sprites / textures
 
-- **Banked screen RAM** — dual-bank screen-RAM design (CPU+ANTIC caches, copy/reload
-  engines). **Verified:** regs relocated to $D5C3/$D5C4/$D5C5 (off the reserved $D5C2
-  task-switch slot; disjoint from the live $D5C0/$D5C1 decode), and BRAM fits (~4 BRAM36
-  — trivial on 7020, ~3 spare on 7010). Remaining = implement: CPU 8 KB BRAM + copy
-  engine (dirty writeback/reload, $D5C5.ready), ANTIC 8 KB read cache + in-aperture
-  read reroute, and the $D5C4 VBI bank-value crossing as stable-data+synced-flag (not a
-  free-running multi-bit sync). *(proposal; src: docs/video/screen-banking.md)*
+- **Banked screen RAM — HW-validate.** Implemented + sim-validated end-to-end:
+  `screen_bank` engine (CPU 8 KB byte-write BRAM + copy/flush/reload + ready, `make
+  screen_bank` ✓), `sally_mem` `$D5C3/$D5C4/$D5C5` decode + CPU `$4000-$5FFF` routing
+  (boot→READY ✓), ANTIC read mux, 32-bit AXI on **S_AXI_GP0** (`m_axi_scrn`, chunk-stack
+  @`0x2080_0000`). Bitstream closes timing but **`clk_sally` is razor-thin (+0.001 ns)**
+  — the CPU-port `rare_dout` splice is the path to optimise if HW boot is flaky.
+  Remaining: (1) flash + confirm boot stability at +0.001 `clk_sally`; (2) a small
+  **6502 program** to drive `$D5C3`/poll `$D5C5`/set `$D5C4` for the live page-flip
+  (the A9 can't reach the SALLY `$D5xx` bus). *(src: hdl/screen_bank.sv,
+  docs/video/screen-banking.md)*
 - **Compositor polish (deferred)** — desktop-window-over-live-window occlusion
   (clip-rect → bitmap override); visible-span-only plane fetch (bandwidth); tear-free
   `front_sel` sampling at the compositor's own frame start; narrow/wide playfield
