@@ -34,8 +34,8 @@ static void puthex32(uint32_t v)
     puts0(s);
 }
 
-/* last-transaction diagnostics (devid-FAIL localisation: NACK vs timeout) */
-static volatile uint32_t g_send_isr, g_recv_isr, g_recv_sr;
+/* last-transaction diagnostics (devid-FAIL localisation) */
+static volatile uint32_t g_send_isr, g_recv_isr, g_recv_sr, g_send_sr;
 static volatile int      g_send_rc, g_recv_rc, g_recv_got;
 
 /* ---- A9 global timer busy-wait (free-running at PERIPHCLK = CPU/2 = 333 MHz) -- */
@@ -95,6 +95,7 @@ static int i2c_send(uint8_t addr, const uint8_t *buf, int n)
     I2C_CR  = CR_BASE | CR_CLRFIFO;          /* write mode */
     I2C_ISR = I2C_ISR;
     for (int i = 0; i < n; i++) I2C_DR = buf[i];   /* fifo depth 16 (we send <=14) */
+    g_send_sr = I2C_SR;                        /* TXDV(bit6) here => data queued before START */
     I2C_AR  = addr & 0x7Fu;                   /* address write -> START */
     uint32_t to = 2000000;
     while (!(I2C_ISR & (ISR_COMP | ISR_NACK)) && --to) { }
@@ -184,6 +185,11 @@ void hdmi_init(void)
     sii9022_reset();
     i2c_init();
     puts0("[hdmi] i2c CR(readback)="); puthex32(I2C_CR); puts0("\r\n");
+    { uint8_t rr[3] = { 0xEE, 0xEE, 0xEE };     /* vitis: 1B=B0 1C=02 1D=03 */
+      sii_read(0x1B, &rr[0]); sii_read(0x1C, &rr[1]); sii_read(0x1D, &rr[2]);
+      puts0("[hdmi] dump 1B/1C/1D="); puthex8(rr[0]); puts0(" "); puthex8(rr[1]);
+      puts0(" "); puthex8(rr[2]);
+      puts0("  send_sr(after fill)="); puthex32(g_send_sr); puts0("\r\n"); }
     uint8_t devid = 0; int ok = 0;
     for (int i = 0; i < 50; i++) {                  /* poll TPI device-id 0x1B == 0xB0 */
         if (sii_read(0x1B, &devid) == 0 && devid == 0xB0) { ok = 1; break; }
