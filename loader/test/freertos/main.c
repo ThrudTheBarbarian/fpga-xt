@@ -292,6 +292,9 @@ int main(void)
     vm_cow_init();       /* fill the synthetic COW template + register its range */
     { extern void stackguard_init(void); stackguard_init(); }   /* guarded stack arena */
     gic_init();
+#ifdef XT_HW_UART
+    { extern void uart1_rx_init(void); uart1_rx_init(); }   /* interrupt-driven console RX (blocking sh_readc) */
+#endif
     { extern void gtimer_init(void); gtimer_init(); }   /* A9 global timer -> gettimeofday wall clock */
     { extern void hdmi_init(void); hdmi_init(); }        /* SiI9022 HDMI bring-up (HW build only; no-op on qemu) */
     { extern void gfxplane_init(void); gfxplane_init(); } /* clear the compositor plane (else scan-out shows uninit DDR) */

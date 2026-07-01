@@ -95,6 +95,9 @@ void vApplicationIRQHandler(uint32_t ulICCIAR)
     uint32_t id = ulICCIAR & 0x3FF;
     if (id == PT_IRQ_ID)
         FreeRTOS_Tick_Handler();
+#ifdef XT_HW_UART
+    else if (id == 82) { extern void uart1_rx_isr(void); uart1_rx_isr(); }   /* UART1 receive */
+#endif
 }
 
 static void fr_hex(const char *label, unsigned v)

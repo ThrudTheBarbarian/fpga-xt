@@ -14,7 +14,7 @@
 #define SR_RXEMPTY 0x02u
 static void u_putc(char c) { while (UART_SR & SR_TXFULL) { } UART_FIFO = (unsigned char)c; }
 void puts0(const char *s) { while (*s) { if (*s == '\n') u_putc('\r'); u_putc(*s++); } }
-int  sh_readc(void) { while (UART_SR & SR_RXEMPTY) { } return (int)(UART_FIFO & 0xFFu); }  /* blocking */
+/* sh_readc lives in uart1_rx.c on HW: interrupt-driven + blocking (no busy-wait). */
 void sh_exit(int code) { (void)code; puts0("\n[testbed halted — power-cycle]\n"); for (;;) { } }
 /* host filesystem is a qemu-semihosting facility — unavailable on real metal. */
 long hostfs_open(const char *p) { (void)p; return -1; }
