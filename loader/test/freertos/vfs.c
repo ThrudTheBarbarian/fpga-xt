@@ -1,22 +1,17 @@
 /* vfs.c — mount table + open dispatch (see vfs.h). */
 #include "vfs.h"
-#include "FreeRTOS.h"
-#include "semphr.h"
 
 #define MAXFS  6
 #define MAXMNT 6
 static vfs_fs   *g_fs[MAXFS];   static int g_nfs;
 static vfs_mount g_mnt[MAXMNT]; static int g_nmnt;
 
-/* ONE lock shared by every serialized (backing-store) filesystem, so fatfs + minixfs
- * + swap on the same block device serialize together. Reentrant filesystems (romfs)
- * never take it. Created at first driver registration (boot, pre-scheduler). Callers
- * only ever hit it in task context — sys_* defers serialized-fd ops off the SVC
- * handler — so taking a (possibly blocking) mutex here is safe. */
-static SemaphoreHandle_t g_vfs_mtx;
-static void vfs_lock(void)   { if (g_vfs_mtx) xSemaphoreTake(g_vfs_mtx, portMAX_DELAY); }
-static void vfs_unlock(void) { if (g_vfs_mtx) xSemaphoreGive(g_vfs_mtx); }
-
+/* No lock here: the fs service task is the SOLE driver of every backing-store
+ * filesystem — clients route read/write/open/close/mmap through it, and the two
+ * remaining kernel callers (open_lib_sd, sd_listdir) go through its kernel mailbox — so
+ * FatFs is serialized STRUCTURALLY, not by a mutex (the interim g_vfs_mtx retired in fs
+ * page-cache step 3c-4). sd_init's one-time mount runs at boot before the task serves
+ * any request. romfs/ramfs are reentrant/in-memory. See docs/OS/fs-pagecache.md. */
 static int streq(const char *a, const char *b)
 {
     while (*a && *a == *b) { a++; b++; }
@@ -26,7 +21,6 @@ static int streq(const char *a, const char *b)
 int vfs_register_fs(vfs_fs *fs)
 {
     if (!fs || g_nfs >= MAXFS) return -1;
-    if (!g_vfs_mtx) g_vfs_mtx = xSemaphoreCreateMutex();   /* first driver creates the shared lock */
     g_fs[g_nfs++] = fs;
     return 0;
 }
@@ -80,49 +74,27 @@ int vfs_open(const char *path, int flags, vfs_file *f)
     if (!m) return -1;
     f->read = 0; f->write = 0; f->lseek = 0; f->close = 0;
     f->size = 0; f->pos = 0; f->data = 0; f->priv = 0; f->mnt = m;
-    int ser = m->fs->serialized;
-    if (ser) vfs_lock();
-    int r = m->fs->open(m, rel, flags, f);
-    if (ser) vfs_unlock();
-    return r;
+    return m->fs->open(m, rel, flags, f);
 }
 
-/* op wrappers: take the shared lock only for serialized filesystems. */
+/* op wrappers: plain dispatch — serialization is structural (the fs task is the sole
+ * driver of every backing-store fs; see the header note). */
 long vfs_read(vfs_file *f, void *buf, uint32_t n)
 {
-    if (!f->read) return -1;
-    int ser = f->mnt && f->mnt->fs->serialized;
-    if (ser) vfs_lock();
-    long r = f->read(f, buf, n);
-    if (ser) vfs_unlock();
-    return r;
+    return f->read ? f->read(f, buf, n) : -1;
 }
 
 long vfs_write(vfs_file *f, const void *buf, uint32_t n)
 {
-    if (!f->write) return -1;                            /* read-only fd */
-    int ser = f->mnt && f->mnt->fs->serialized;
-    if (ser) vfs_lock();
-    long r = f->write(f, buf, n);
-    if (ser) vfs_unlock();
-    return r;
+    return f->write ? f->write(f, buf, n) : -1;          /* -1 if read-only */
 }
 
 long vfs_lseek(vfs_file *f, long off, int whence)
 {
-    if (!f->lseek) return -1;
-    int ser = f->mnt && f->mnt->fs->serialized;
-    if (ser) vfs_lock();
-    long r = f->lseek(f, off, whence);
-    if (ser) vfs_unlock();
-    return r;
+    return f->lseek ? f->lseek(f, off, whence) : -1;
 }
 
 void vfs_close(vfs_file *f)
 {
-    if (!f->close) return;
-    int ser = f->mnt && f->mnt->fs->serialized;
-    if (ser) vfs_lock();
-    f->close(f);
-    if (ser) vfs_unlock();
+    if (f->close) f->close(f);
 }

@@ -466,15 +466,87 @@ static long fs_serve(int slot)
     }
 }
 
+/* ---- kernel FatFs requests (open_lib_sd, sd_listdir) ----------------------
+ * These KERNEL callers (no proc slot, so no per-slot control page) route their FatFs
+ * through the fs task too, so it is the SOLE FatFs driver and g_vfs_mtx can retire. A
+ * single mailbox serialized by g_kfs_mtx (the path is rare: a lib missing from the romfs,
+ * or the boot dir listing). READFILE opens+allocates+reads a whole file; LISTDIR lists a
+ * directory into the caller's buffer. The doorbell carries FS_KERNEL_JOB instead of a
+ * slot. */
+enum { KFS_READFILE, KFS_LISTDIR };
+#define FS_KERNEL_JOB (-1)
+static struct {
+    int          op;
+    const char  *path;
+    void        *buf;      /* READFILE: fs task sets it (allocated); LISTDIR: caller's array */
+    uint32_t     len;      /* LISTDIR: max entries */
+    long         result;
+    TaskHandle_t waiter;
+} g_kfs;
+static SemaphoreHandle_t g_kfs_mtx;    /* serialize kernel callers of the single mailbox */
+
+static long kfs_serve(void)
+{
+    switch (g_kfs.op) {
+    case KFS_READFILE: {                                /* open + alloc + read a whole file */
+        vfs_file f;
+        g_kfs.buf = 0;
+        if (vfs_open(g_kfs.path, 0, &f) != 0) return -1;
+        if (f.size == 0 || !f.read) { if (f.close) f.close(&f); return -1; }
+        void *buf = frtos_alloc(f.size, 16, NULL);
+        if (!buf) { if (f.close) f.close(&f); return -1; }
+        long got = f.read(&f, buf, f.size);
+        if (f.close) f.close(&f);
+        if (got != (long)f.size) return -1;            /* buf leaks (rare); kernel heap is bump anyway */
+        g_kfs.buf = buf;
+        return (long)f.size;
+    }
+    case KFS_LISTDIR: {
+        extern int sd_listdir_raw(const char *, char (*)[32], int);
+        return sd_listdir_raw(g_kfs.path, (char (*)[32])g_kfs.buf, (int)g_kfs.len);
+    }
+    }
+    return -1;
+}
+
 static void fs_task(void *arg)
 {
     (void)arg;
     for (;;) {
         int slot;
         if (xQueueReceive(g_fs_q, &slot, portMAX_DELAY) != pdTRUE) continue;
-        g_fs_ctl[slot]->result = fs_serve(slot);
-        xTaskNotifyGive(g_fs_waiter[slot]);    /* wake the parked client */
+        if (slot == FS_KERNEL_JOB) {                   /* kernel mailbox request */
+            g_kfs.result = kfs_serve();
+            xTaskNotifyGive(g_kfs.waiter);
+        } else {
+            g_fs_ctl[slot]->result = fs_serve(slot);
+            xTaskNotifyGive(g_fs_waiter[slot]);        /* wake the parked client */
+        }
     }
+}
+
+/* kernel-side entry: post a FatFs request to the fs task and block. Serialized by
+ * g_kfs_mtx; for READFILE the allocated buffer comes back via *out_buf (read before the
+ * mutex is dropped). Callable from any task context (shell_task, a spawn deferral). */
+static long kfs_call(int op, const char *path, void *buf, uint32_t len, void **out_buf)
+{
+    if (!g_fs_q || !g_kfs_mtx) return -1;
+    xSemaphoreTake(g_kfs_mtx, portMAX_DELAY);
+    g_kfs.op = op; g_kfs.path = path; g_kfs.buf = buf; g_kfs.len = len; g_kfs.result = -1;
+    g_kfs.waiter = xTaskGetCurrentTaskHandle();
+    int job = FS_KERNEL_JOB;
+    xQueueSend(g_fs_q, &job, portMAX_DELAY);
+    ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
+    long r = g_kfs.result;
+    if (out_buf) *out_buf = g_kfs.buf;
+    xSemaphoreGive(g_kfs_mtx);
+    return r;
+}
+
+/* boot dir listing -> the fs task (sd_listdir_raw is the raw FatFs enumerate in sd.c). */
+int sd_listdir(const char *dir, char out[][32], int max)
+{
+    return (int)kfs_call(KFS_LISTDIR, dir, out, (uint32_t)max, 0);
 }
 
 /* deferral_thunk (client TASK context) -> hand a routed metadata op to the fs task.
@@ -623,8 +695,10 @@ void frtos_fs_start(void)
         g_fs_ctl[s] = (id >= 0) ? (fs_ctl *)vm_shm_kaddr(id) : 0;
         if (!g_fs_ctl[s]) { if (g_console) g_console("[fs] shm ctl alloc failed\n", 26); return; }
     }
-    g_fs_q = xQueueCreate(MAXPROC, sizeof(int));
+    g_fs_q = xQueueCreate(MAXPROC + 2, sizeof(int));   /* client slots + a kernel job */
     if (!g_fs_q) { if (g_console) g_console("[fs] queue create failed\n", 25); return; }
+    g_kfs_mtx = xSemaphoreCreateMutex();
+    if (!g_kfs_mtx) { if (g_console) g_console("[fs] kfs mutex failed\n", 22); vQueueDelete(g_fs_q); g_fs_q = 0; return; }
     if (xTaskCreate(fs_task, "fs", 8192, NULL, 4, NULL) != pdPASS) {
         if (g_console) g_console("[fs] task create failed\n", 24);
         vQueueDelete(g_fs_q); g_fs_q = 0;
@@ -1228,15 +1302,11 @@ static int open_lib_sd(const char *name, const uint8_t **data, uint32_t *len)
     for (int j = 0; name[j] && i < (int)sizeof(path) - 1; j++) path[i++] = name[j];
     path[i] = 0;
 
-    vfs_file f;
-    if (vfs_open(path, 0, &f) != 0) return 0;              /* not on the SD (or no SD); read-only */
-    if (f.size == 0 || !f.read) { if (f.close) f.close(&f); return 0; }
-    uint8_t *buf = frtos_alloc(f.size, 16, NULL);
-    if (!buf) { if (f.close) f.close(&f); return 0; }
-    long got = f.read(&f, buf, f.size);
-    if (f.close) f.close(&f);
-    if (got != (long)f.size) return 0;
-    *data = buf; *len = f.size;
+    /* the fs task opens+allocs+reads the file (so it stays the sole FatFs driver). */
+    void *buf = 0;
+    long sz = kfs_call(KFS_READFILE, path, 0, 0, &buf);
+    if (sz <= 0 || !buf) return 0;                         /* not on the SD (or no SD) */
+    *data = (const uint8_t *)buf; *len = (uint32_t)sz;
     return 1;
 }
 

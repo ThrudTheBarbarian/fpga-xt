@@ -154,9 +154,10 @@ Each step is qemu-testable except the SD leaf (qemu has no SD backend — `sd.c`
    them; serialized-fd ops are always deferred off the SVC handler so the mutex is only
    taken in task context.
 
-3. **page store — IN PROGRESS.** The dedicated `fs` TASK + shm control channel, and
-   read/write/mmap unified over demand-paged write-back pages (this section, above). The
-   task earns its keep here (owns cached pages: fill / flush / extend). Three sub-steps:
+3. **page store — DONE (a, b, c-1..c-4), qemu-validated.** The dedicated `fs` TASK + shm
+   control channel, and read/write/mmap unified over demand-paged write-back pages (this
+   section, above). The task owns the cached pages (fill / flush / extend) and is now the
+   SOLE FatFs driver — the interim `g_vfs_mtx` retired. Sub-steps:
 
    * **(a) fs task — DONE, qemu-validated.** An `fs` FreeRTOS task (`fs_task`, priority
      4) owns the VFS metadata path. `frtos_fs_start` (from `main`, pre-scheduler) stands
@@ -234,8 +235,18 @@ Each step is qemu-testable except the SD leaf (qemu has no SD backend — `sd.c`
      **and** untouched bytes survived. Limitation (first cut): write-back happens at
      `munmap` via the still-open fd — close-before-munmap of a writable mapping drops
      unflushed writes (a later version holds an independent file ref). SD is the HW leaf.
-   * **(c-4) retire `g_vfs_mtx`.** Route `open_lib_sd` + `sd_listdir` through the service
-     so one task owns FatFs, then drop the lock (structural serialization).
+   * **(c-4) retire `g_vfs_mtx` — DONE, qemu-validated.** The two remaining non-fs-task
+     FatFs callers now route through the service too, so it is the SOLE FatFs driver and
+     the interim lock is gone. They're KERNEL callers (no proc slot -> no per-slot control
+     page), so they use a small **kernel mailbox** (one request, serialized among kernel
+     callers by `g_kfs_mtx` — the path is rare: a lib missing from the romfs, or the boot
+     dir listing) posted to the fs task via a `FS_KERNEL_JOB` doorbell: `KFS_READFILE`
+     (open+alloc+read a whole file — `open_lib_sd`) and `KFS_LISTDIR` (`sd_listdir` ->
+     `sd_listdir_raw`). `g_vfs_mtx` + `vfs_lock`/`unlock` deleted; `vfs_*` are plain
+     dispatch now. `sd_init`'s one-time `f_mount` stays in shell_task — it completes before
+     the fs task ever touches FatFs (happens-before), so it needs no lock. Validated: boot
+     + read/write/mmap/shm all healthy with the lock gone; the mailbox round-trip runs on
+     qemu via `sd_listdir` (READFILE success + true concurrent FatFs are the HW/SD leaf).
 
 Later: multi-page per-fd cache + eviction (LRU), `(file,page)` cross-fd dedup, and moving
 GEM's param block onto the shm primitive.
