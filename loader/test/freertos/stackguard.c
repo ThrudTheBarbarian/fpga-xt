@@ -30,11 +30,20 @@ static uint32_t g_arena_l2[256]   __attribute__((aligned(1024)));
 static uint8_t  g_emerg[MAXSLOT][2048] __attribute__((aligned(8)));
 uint32_t stackguard_emerg_top(int slot) { return (uint32_t)g_emerg[slot] + sizeof g_emerg[slot]; }
 
-/* Normal non-cacheable, XN small page. AP under AFE=1: STK_PAGE = AP=01 (PL0+PL1
- * RW) — a process's own stack; STK_NONE = AP=00 (PL1 RW, PL0 none) — another
- * process's stack, unreachable from PL0. (AF=bit4 set in both.) */
-#define STK_PAGE(phys) (((phys) & 0xFFFFF000u) | (3u << 4) | (1u << 6) | 0x3u)
-#define STK_NONE(phys) (((phys) & 0xFFFFF000u) | (1u << 4) | (1u << 6) | 0x3u)
+/* Normal non-cacheable, XN small page, nG=1 (ASID-tagged). AP under AFE=1:
+ * STK_PAGE = AP=01 (PL0+PL1 RW) — a process's own stack; STK_NONE = AP=00 (PL1 RW,
+ * PL0 none) — another process's stack, unreachable from PL0. (AF=bit4 set in both.)
+ *
+ * nG (bit 11) is REQUIRED: proc_launch's copy_argv writes the CHILD's stack while
+ * the SPAWNER's space is active (a PL0 spawn runs the SVC handler in the parent's
+ * space, where the child's slot is STK_NONE = PL0-none). Were these pages global,
+ * that walk would cache a GLOBAL TLB entry carrying the parent's restrictive perms,
+ * which then SHADOWS the child's own PL0-RW mapping on real hardware -> the child
+ * faults writing its own stack. qemu's TLB model doesn't show the shadow, so it only
+ * bit on metal. ASID-tagging keeps each space's view separate — matches vm.c's
+ * L2_PAGE, which is nG for exactly this reason. */
+#define STK_PAGE(phys) (((phys) & 0xFFFFF000u) | (1u << 11) | (3u << 4) | (1u << 6) | 0x3u)
+#define STK_NONE(phys) (((phys) & 0xFFFFF000u) | (1u << 11) | (1u << 4) | (1u << 6) | 0x3u)
 
 void stackguard_init(void)
 {
