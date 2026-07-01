@@ -39,6 +39,7 @@ typedef struct {
     int               exit_code;
     volatile int      exited;         /* set by the exit thunk */
     volatile int      waited;         /* a waitpid registered -> that caller will reap it */
+    volatile int      reaping;        /* teardown claimed (one reaper only; slot not reusable yet) */
     TaskHandle_t      waiter;         /* PL0 waitpid task to notify on exit (0 = none/kernel waiter) */
     int               argc;
     char            **argv;
@@ -611,16 +612,32 @@ static int proc_launch(int slot, xtld_obj *obj, uintptr_t entry,
 
 static void reap_orphans(void);
 
+/* Atomically claim a free proc slot: mark it used + running (exited/waited/reaping
+ * cleared) so a concurrent reap_orphans/spawn can't grab or reap it mid-setup. The
+ * spawn fills the rest; proc_launch clears the slot again on failure. Returns -1 if
+ * the table is full. */
+static int alloc_slot(void)
+{
+    int slot = -1;
+    taskENTER_CRITICAL();
+    for (int i = 0; i < MAXPROC; i++)
+        if (!g_proc[i].used) {
+            g_proc[i].used = 1; g_proc[i].exited = 0; g_proc[i].waited = 0; g_proc[i].reaping = 0;
+            slot = i; break;
+        }
+    taskEXIT_CRITICAL();
+    return slot;
+}
+
 int frtos_spawn(const uint8_t *image, uint32_t len, int argc, char **argv,
                 const xtld_host *host)
 {
     reap_orphans();                              /* clean up exited '&'/orphan children first */
-    int slot = -1;
-    for (int i = 0; i < MAXPROC; i++) if (!g_proc[i].used) { slot = i; break; }
+    int slot = alloc_slot();
     if (slot < 0) return -1;
 
     prog_t *prog = prog_get(image, len, host);    /* load-once (shared text + COW data) */
-    if (!prog) return -1;
+    if (!prog) { g_proc[slot].used = 0; return -1; }
     g_proc[slot].transient = 0; g_proc[slot].src = 0;
     return proc_launch(slot, prog->obj, prog->entry, (uint32_t)prog->wva, prog->wsize, argc, argv);
 }
@@ -644,8 +661,7 @@ int frtos_spawn_host(const char *hostpath, int argc, char **argv, const xtld_hos
     if (got != len) { host->dealloc(buf, host->user); return -1; }
 
     reap_orphans();                              /* clean up exited '&'/orphan children first */
-    int slot = -1;
-    for (int i = 0; i < MAXPROC; i++) if (!g_proc[i].used) { slot = i; break; }
+    int slot = alloc_slot();
     if (slot < 0) { host->dealloc(buf, host->user); return -1; }
 
     xtld_obj *obj = NULL; char err[64] = {0};
@@ -867,12 +883,22 @@ static proc_t *proc_by_pid(int pid)
 /* reap an exited child: reclaim its resources + slot, return its exit code. Runs in
  * the WAITER's context (never the child's), so vTaskDelete(child) here is a non-self
  * delete -> prvDeleteTCB runs inline and fully unlinks the child from every FreeRTOS
- * list before its static TCB/stack can be reused by the next spawn. */
+ * list before its static TCB/stack can be reused by the next spawn.
+ *
+ * CONCURRENCY: a waiter (waitpid) and reap_orphans (any spawner) can target the same
+ * proc; without a guard both would vSemaphoreDelete(p->done) -> heap double-free. Claim
+ * the teardown atomically via `reaping`; the loser returns. The slot stays used==1 (not
+ * reusable) until teardown finishes, so a concurrent slot-search can't grab it either. */
 static int frtos_reap(proc_t *p)
 {
+    taskENTER_CRITICAL();
+    if (!p->used || p->reaping) { taskEXIT_CRITICAL(); return -1; }   /* someone else has it */
+    p->reaping = 1;
+    taskEXIT_CRITICAL();
+
     int code = p->exit_code;
     if (p->task) { vTaskDelete(p->task); p->task = 0; }   /* the child parked in vTaskSuspend */
-    vSemaphoreDelete(p->done);
+    if (p->done) { vSemaphoreDelete(p->done); p->done = 0; }
     vm_space_destroy((int)(p - g_proc));         /* reclaim its private pages to the pool */
     if (p->transient) {
         extern void mmu_unprotect(uint32_t, uint32_t);
@@ -882,7 +908,7 @@ static int frtos_reap(proc_t *p)
         if (p->src) { frtos_free(p->src, NULL); p->src = 0; }
         p->transient = 0;
     }
-    p->used = 0;
+    p->used = 0; p->reaping = 0;
     return code;
 }
 

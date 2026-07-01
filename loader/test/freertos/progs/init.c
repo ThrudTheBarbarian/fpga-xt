@@ -46,7 +46,9 @@ void _app_entry(int argc, char **argv)
         }
 
         char *av[3] = { interp, (char *)script, 0 };
-        sys_spawn(interp, 2, av);     /* separate process per script (fire-and-forget) */
+        long pid = sys_spawn(interp, 2, av);   /* separate process per script (variable separation) */
+        if (pid >= 0) sys_waitpid((int)pid);   /* run boot scripts to completion, IN ORDER (NN-sorted); */
+                                               /* a long-running daemon in a script uses `&` to detach */
     }
     sys_exit(0);
 }
