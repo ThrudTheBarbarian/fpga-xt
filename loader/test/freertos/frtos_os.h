@@ -58,6 +58,7 @@ void     vm_page_free(void *p);                   /* return a vm_page_alloc page
 void     vm_shm_drop_space(int idx);              /* drop all shm refs a space held (reap) */
 uint32_t *vm_space_create(int idx, uint32_t prog_va, uint32_t prog_size, uint32_t prog_src);
 void vm_space_destroy(int idx);     /* reclaim a dead space's private pages to the pool */
+void vm_sync_loaded_sections(void); /* adopt master section splits into every space L1 (post-load) */
 void vm_phys_init(uint32_t top);    /* announce the arena top; page pool grows down from it */
 uint32_t vm_page_floor(void);       /* page-pool frontier = libc sbrk ceiling */
 uint32_t vm_pages_free(void);       /* pages available now (free list + frontier gap) */

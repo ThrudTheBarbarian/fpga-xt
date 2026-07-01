@@ -275,6 +275,31 @@ uint32_t *vm_space_create(int idx, uint32_t prog_va, uint32_t prog_size, uint32_
     return t;
 }
 
+/* Propagate master section SPLITS into every space's L1. When a library/program loads,
+ * mmu_protect splits its 1 MB SECTION (SEC_KDATA) in the MASTER into a coarse L2 (per-page
+ * RO+X for the text). But a process whose L1 was copied from the master BEFORE that split
+ * still maps the region as a 1 MB SECTION (PL0-none, global). While such a process runs,
+ * the A9 can cache — even speculatively — a GLOBAL section-level TLB entry for that region;
+ * because it's global it survives the context switch into the process that DID link the
+ * library, shadows that library's correct per-page RO+X mapping, and takes a PL0 prefetch-
+ * abort on the freshly-loaded code (HW only — qemu doesn't speculate; deterministic).
+ * Adopting the master's split (only where a space still holds the stale SECTION; the shared
+ * split L2 is the master's, so no per-process override is touched) removes the 1 MB mapping
+ * everywhere, so no stale global section entry can be cached. Call after each load. */
+void vm_sync_loaded_sections(void)
+{
+    uint32_t *m = mmu_master_table();
+    for (int idx = 0; idx < NSPACE; idx++) {
+        uint32_t *t = space_l1[idx];
+        for (uint32_t sec = 0; sec < 4096; sec++)
+            if ((m[sec] & 0x3u) == 0x1u && (t[sec] & 0x3u) == 0x2u)   /* master coarse, space still SECTION */
+                t[sec] = m[sec];                                       /* adopt the shared split L2 */
+    }
+    __asm__ volatile("dsb");
+    __asm__ volatile("mcr p15,0,%0,c8,c7,0" :: "r"(0u));    /* TLBIALL: drop any stale section entries */
+    __asm__ volatile("dsb; isb");
+}
+
 /* Point TTBR0 at `table` with `asid` (NULL/0 = master). ARM-recommended sequence:
  * park on the reserved ASID, change TTBR0, then set the new ASID — no flush. */
 void vm_switch(uint32_t *table, uint32_t asid)

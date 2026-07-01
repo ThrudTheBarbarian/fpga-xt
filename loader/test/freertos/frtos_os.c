@@ -1265,6 +1265,27 @@ void frtos_on_loaded(xtld_obj *obj, void *u)
     xtld_writable_range(obj, &wva, &wsz);
     if (ibase && wva > ibase) mmu_protect((uint32_t)ibase, (uint32_t)(wva - ibase), 1, 0); /* text RO+X */
     if (wva && wsz)           mmu_protect((uint32_t)wva, wsz, 0, 1);                         /* data RW+XN, PL0-none */
+    vm_sync_loaded_sections();   /* adopt the section splits into every space so no stale
+                                  * global SECTION entry can shadow this module's code (HW) */
+
+    /* DIAG (temporary): print each module's load base/span/writable so a fault PC in the
+     * loaded-library region can be mapped to a .so + offset (objdump). */
+    if (g_console) {
+        const char *nm = xtld_soname(obj); if (!nm) nm = "(prog)";
+        char line[96]; int i = 0;
+        const char *pfx = "[load] "; while (pfx[i]) { line[i] = pfx[i]; i++; }
+        static const char hx[] = "0123456789abcdef";
+        uint32_t vals[3] = { (uint32_t)ibase, (uint32_t)xtld_span(obj), (uint32_t)wva };
+        const char *lbl[3] = { " base=0x", " span=0x", " wva=0x" };
+        for (int v = 0; v < 3; v++) {
+            for (int k = 0; lbl[v][k]; k++) line[i++] = lbl[v][k];
+            for (int s = 28; s >= 0; s -= 4) line[i++] = hx[(vals[v] >> s) & 0xF];
+        }
+        line[i++] = ' ';
+        for (int k = 0; nm[k] && i < 90; k++) line[i++] = nm[k];
+        line[i++] = '\n';
+        g_console(line, i);
+    }
 }
 
 /* xtld_host.open_lib: map a DT_NEEDED soname to /OS/Library/<name> in the romfs */
