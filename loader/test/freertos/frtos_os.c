@@ -250,15 +250,13 @@ static long sys_read(proc_t *p, int fd, void *buf, uint32_t n)
 {
     if (fd == 0) return 0;                       /* stdin: EOF for now */
     if (!p || fd < 3 || fd >= NFD || !p->fd[fd].open) return -1;
-    vfs_file *vf = &p->fd[fd].vf;
-    return vf->read ? vf->read(vf, buf, n) : -1;
+    return vfs_read(&p->fd[fd].vf, buf, n);       /* vfs_* take the backing-store lock */
 }
 
 static long sys_lseek(proc_t *p, int fd, long off, int whence)
 {
     if (!p || fd < 3 || fd >= NFD || !p->fd[fd].open) return -1;
-    vfs_file *vf = &p->fd[fd].vf;
-    return vf->lseek ? vf->lseek(vf, off, whence) : -1;
+    return vfs_lseek(&p->fd[fd].vf, off, whence);
 }
 
 static const xtld_host *g_khost;   /* kernel loader host (frtos_set_host); used by SYS_spawn */
@@ -328,7 +326,7 @@ static long do_syscall(uint32_t num, long a0, long a1, long a2)
     case SYS_open:   return sys_open(p, (const char *)a0);   /* (path, flags) */
     case SYS_read:   return sys_read(p, (int)a0, (void *)a1, (uint32_t)a2);
     case SYS_close:  if (p && a0 >= 3 && a0 < NFD && p->fd[a0].open) {
-                         vfs_file *vf = &p->fd[a0].vf; if (vf->close) vf->close(vf);
+                         vfs_close(&p->fd[a0].vf);
                          p->fd[a0].open = 0;
                      } return 0;
     case SYS_lseek:  return sys_lseek(p, (int)a0, a1, (int)a2);

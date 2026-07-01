@@ -16,6 +16,9 @@ typedef struct vfs_fs {
     const char *name;                                   /* "romfs", "fatfs", ... */
     /* open: path is RELATIVE to the mount prefix (leading '/'); fill *f. 0=ok, <0=err */
     int (*open)(vfs_mount *m, const char *path, vfs_file *f);
+    int serialized;   /* 1: a backing-store driver (non-reentrant / shares the block
+                       * device) -> vfs takes ONE shared lock across all such drivers so
+                       * fatfs+minixfs+swap serialize together. 0: reentrant (romfs). */
 } vfs_fs;
 
 /* an open file (lives inside the per-process fd table) */
@@ -40,5 +43,11 @@ int      vfs_register_fs(vfs_fs *fs);
 vfs_fs  *vfs_find_fs(const char *name);
 int      vfs_add_mount(const char *prefix, const char *fsname, void *priv);  /* 0=ok */
 int      vfs_open(const char *path, vfs_file *f);                          /* 0=ok, <0=err */
+/* op wrappers that take the shared backing-store lock for serialized filesystems
+ * (a no-op passthrough for reentrant ones like romfs). Callers use these, not the
+ * vfs_file function pointers directly, so all on-disk access serializes. */
+long     vfs_read (vfs_file *f, void *buf, uint32_t n);
+long     vfs_lseek(vfs_file *f, long off, int whence);
+void     vfs_close(vfs_file *f);
 
 #endif
