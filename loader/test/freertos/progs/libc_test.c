@@ -64,6 +64,26 @@ void _app_entry(int argc, char **argv)
         printf("libc_test: fopen(font) FAILED\n");
     }
 
+    /* Writable /tmp (ramfs) over the page store: create a file, write a multi-page
+     * deterministic pattern (crosses 4 KB flush boundaries), close, reopen, read it
+     * back, compare byte-for-byte. Exercises open-CREATE, the write loop (RMW/growth),
+     * dirty flush-on-evict + on-close, and read-back — fs-pagecache step 3c-2. */
+    {
+        enum { N = 10000 };                        /* > 2 pages: forces flush-on-evict mid-write */
+        unsigned char *wb = malloc(N), *rb = malloc(N);
+        for (int i = 0; i < N; i++) wb[i] = (unsigned char)(i * 7 + 3);
+        FILE *w = fopen("/tmp/scratch", "w");
+        size_t wn = w ? fwrite(wb, 1, N, w) : 0;
+        if (w) fclose(w);
+        FILE *r = fopen("/tmp/scratch", "r");
+        size_t rn = r ? fread(rb, 1, N, r) : 0;
+        if (r) fclose(r);
+        int ok = (wn == (size_t)N && rn == (size_t)N && memcmp(wb, rb, N) == 0);
+        printf("libc_test: /tmp write+readback %d bytes (wrote %u read %u) -> %s (ramfs page store)\n",
+               N, (unsigned)wn, (unsigned)rn, ok ? "OK" : "FAIL");
+        free(wb); free(rb);
+    }
+
     /* gettimeofday: must return a real, advancing wall clock (A9 global timer),
      * not the old always-zero stub. */
     struct timeval t0, t1;

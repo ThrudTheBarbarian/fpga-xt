@@ -73,16 +73,16 @@ static vfs_mount *resolve(const char *path, const char **rel)
     return best;
 }
 
-int vfs_open(const char *path, vfs_file *f)
+int vfs_open(const char *path, int flags, vfs_file *f)
 {
     const char *rel;
     vfs_mount *m = resolve(path, &rel);
     if (!m) return -1;
-    f->read = 0; f->lseek = 0; f->close = 0;
+    f->read = 0; f->write = 0; f->lseek = 0; f->close = 0;
     f->size = 0; f->pos = 0; f->data = 0; f->priv = 0; f->mnt = m;
     int ser = m->fs->serialized;
     if (ser) vfs_lock();
-    int r = m->fs->open(m, rel, f);
+    int r = m->fs->open(m, rel, flags, f);
     if (ser) vfs_unlock();
     return r;
 }
@@ -94,6 +94,16 @@ long vfs_read(vfs_file *f, void *buf, uint32_t n)
     int ser = f->mnt && f->mnt->fs->serialized;
     if (ser) vfs_lock();
     long r = f->read(f, buf, n);
+    if (ser) vfs_unlock();
+    return r;
+}
+
+long vfs_write(vfs_file *f, const void *buf, uint32_t n)
+{
+    if (!f->write) return -1;                            /* read-only fd */
+    int ser = f->mnt && f->mnt->fs->serialized;
+    if (ser) vfs_lock();
+    long r = f->write(f, buf, n);
     if (ser) vfs_unlock();
     return r;
 }

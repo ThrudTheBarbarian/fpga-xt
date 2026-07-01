@@ -68,7 +68,7 @@ void sd_init(void)
     /* prove the VFS dispatch: open /README.txt (SD root) via vfs_open */
     {
         vfs_file vf;
-        if (vfs_open("/README.txt", &vf) == 0) {
+        if (vfs_open("/README.txt", 0, &vf) == 0) {
             char b[80]; long n = vf.read ? vf.read(&vf, b, sizeof b - 1) : -1;
             if (n > 0) {
                 b[n] = 0;

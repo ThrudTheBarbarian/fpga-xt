@@ -23,6 +23,16 @@ static long ff_rd(vfs_file *f, void *buf, uint32_t n)
     return (long)br;
 }
 
+static long ff_wr(vfs_file *f, const void *buf, uint32_t n)
+{
+    FIL *fp = (FIL *)f->priv;
+    UINT bw = 0;
+    if (f_write(fp, buf, n, &bw) != FR_OK) return -1;
+    f->pos = (uint32_t)f_tell(fp);
+    if (f->pos > f->size) f->size = f->pos;
+    return (long)bw;
+}
+
 static long ff_sk(vfs_file *f, long off, int whence)
 {
     FIL *fp = (FIL *)f->priv;
@@ -42,7 +52,7 @@ static void ff_cl(vfs_file *f)
     for (int i = 0; i < NFIL; i++) if (&pool[i] == fp) { used[i] = 0; break; }
 }
 
-static int ff_open(vfs_mount *m, const char *path, vfs_file *f)
+static int ff_open(vfs_mount *m, const char *path, int flags, vfs_file *f)
 {
     (void)m;
     int h = -1;
@@ -54,12 +64,22 @@ static int ff_open(vfs_mount *m, const char *path, vfs_file *f)
     int i = 0;
     while (path[i] && i < (int)sizeof p - 3) { p[2 + i] = path[i]; i++; }
     p[2 + i] = 0;
-    if (f_open(&pool[h], p, FA_READ) != FR_OK) return -1;
+    /* map VFS open flags -> FatFs mode */
+    BYTE mode;
+    if (!(flags & VFS_O_ACCMODE)) mode = FA_READ;                         /* read-only */
+    else {
+        mode = FA_READ | FA_WRITE;
+        if (flags & VFS_O_TRUNC)      mode |= FA_CREATE_ALWAYS;           /* create/truncate */
+        else if (flags & VFS_O_CREAT) mode |= FA_OPEN_ALWAYS;             /* create if absent */
+        else                          mode |= FA_OPEN_EXISTING;
+    }
+    if (f_open(&pool[h], p, mode) != FR_OK) return -1;
     used[h] = 1;
     f->priv = &pool[h];
     f->size = (uint32_t)f_size(&pool[h]);
     f->pos = 0; f->data = 0;
-    f->read = ff_rd; f->lseek = ff_sk; f->close = ff_cl;
+    f->read = ff_rd; f->write = (flags & VFS_O_ACCMODE) ? ff_wr : 0;
+    f->lseek = ff_sk; f->close = ff_cl;
     return 0;
 }
 

@@ -24,13 +24,14 @@ static long ro_lseek(vfs_file *f, long off, int whence)
 
 static void ro_close(vfs_file *f) { (void)f; }
 
-static int ro_open(vfs_mount *m, const char *path, vfs_file *f)
+static int ro_open(vfs_mount *m, const char *path, int flags, vfs_file *f)
 {
     (void)m;
+    if (flags & VFS_O_ACCMODE) return -1;               /* romfs is read-only */
     const uint8_t *d; uint32_t sz;
     if (!romfs_lookup(path, &d, &sz)) return -1;
     f->data = d; f->size = sz; f->pos = 0;
-    f->read = ro_read; f->lseek = ro_lseek; f->close = ro_close;
+    f->read = ro_read; f->write = 0; f->lseek = ro_lseek; f->close = ro_close;
     return 0;
 }
 

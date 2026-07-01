@@ -196,9 +196,19 @@ Each step is qemu-testable except the SD leaf (qemu has no SD backend — `sd.c`
      bytes; the SD fill is the HW-only leaf. **`g_vfs_mtx` does NOT retire yet** —
      `open_lib_sd` / `sd_listdir` are still non-fs-task FatFs callers; the fs task's fills
      take the lock alongside them. Lock retirement waits on migrating those (c-4).
-   * **(c-2) write + write-back — NEXT.** `write` ensures the page resident (RMW for a
-     partial write), `memcpy`s client buf → cache page, marks it dirty; flush dirty pages
-     on close (`f_write`); append allocates fresh pages + extends on flush. Single-writer.
+   * **(c-2) write + write-back — DONE, qemu-validated.** The VFS `open` gained a flags
+     arg (`VFS_O_*`) and a `write` op; `fatfs` maps flags → `FA_*` (+ `ff_wr` = `f_write`),
+     `romfs` rejects write intent. `write` is a page loop in the client's deferral thunk
+     (client space, `buf` mapped): `fs_getpage(forwrite)` makes the page resident (RMW for
+     an existing page, a fresh zero page past EOF for growth), `memcpy`s buf → page, marks
+     the fd dirty; the fs task flushes a dirty page on eviction (single-page window) and on
+     `close`, and growth bumps the logical size. `lseek` past EOF is allowed for grow.
+     Since qemu has no writable backend (romfs RO, SD HW-only), a small **ramfs** (`/tmp`,
+     files = pool-page lists) is the writable backing — a real backing-store driver, so
+     writes exercise the *same* fill/flush path SD will (minus the `f_write` leaf).
+     Validated: `libc_test` writes a 10 000-byte (3-page) pattern to `/tmp/scratch`, closes,
+     reopens, reads it back byte-for-byte (flush-on-evict at each boundary + flush-on-close).
+     Single-writer; per-fd cache pages freed (and flushed) on close/reap.
    * **(c-3) mmap over SD-backed pages + dirty-via-fault.** `mmap` an SD file (fill pool
      pages, map into the client window); RW maps clean-but-RO, a write-fault marks dirty
      (reuse `vm_cow_map`) and flips RW; write back only dirty pages.
