@@ -62,6 +62,7 @@ static uint8_t   space_l2n[NSPACE];             /* slots used this space */
 #define MAXPP 320
 static void     *g_space_pages[NSPACE][MAXPP];
 static uint16_t  g_space_npages[NSPACE];
+static uint32_t  g_space_shm[NSPACE];            /* bitmap: which shm ids each space mapped (for reap) */
 static uint32_t *g_cur_table;            /* currently-active TTBR0 table */
 static uint32_t  g_cur_asid;
 
@@ -206,6 +207,7 @@ uint32_t *vm_space_create(int idx, uint32_t prog_va, uint32_t prog_size, uint32_
     memcpy(t, mmu_master_table(), 4096 * sizeof(uint32_t));
     space_l2n[idx] = 0;                        /* fresh per-space L2 pool */
     g_space_npages[idx] = 0;                   /* fresh private-page charge list */
+    g_space_shm[idx] = 0;                      /* fresh shm-mapping set (reap dropped the old refs) */
 
     /* (b) private heap: an L2 with every page faulting -> zero-filled ON DEMAND
      * (T2-c). Physical is consumed only for pages the process actually touches. */
@@ -333,8 +335,9 @@ uint32_t vm_pages_free(void)
     return g_freelist_n + gap;
 }
 
-/* allocate a page from the pool and charge it to space `idx` (for reclaim) */
-static void *dpage(int idx)
+/* allocate a raw page from the pool (NOT charged to any space). Used for shm, whose
+ * pages are refcount-owned by the shm object, not a space. */
+static void *dpage_raw(void)
 {
     uint32_t f = xt_irq_save();
     void *p = g_dfree;
@@ -346,7 +349,23 @@ static void *dpage(int idx)
     }
     g_pages_inuse++;
     xt_irq_restore(f);
-    if (g_space_npages[idx] < MAXPP) g_space_pages[idx][g_space_npages[idx]++] = p;
+    return p;
+}
+
+/* scrub + return a raw page to the pool (undoes dpage_raw). */
+static void dfree_raw(void *p)
+{
+    memset(p, 0, 0x1000);
+    uint32_t f = xt_irq_save();
+    *(void **)p = g_dfree; g_dfree = p; g_freelist_n++; g_pages_inuse--;
+    xt_irq_restore(f);
+}
+
+/* allocate a page from the pool and charge it to space `idx` (for reclaim) */
+static void *dpage(int idx)
+{
+    void *p = dpage_raw();
+    if (p && g_space_npages[idx] < MAXPP) g_space_pages[idx][g_space_npages[idx]++] = p;
     return p;
 }
 
@@ -361,6 +380,7 @@ static void *dpage(int idx)
  * is PIPT, so the scrub via the pool's identity VA is coherent with any window VA. */
 void vm_space_destroy(int idx)
 {
+    vm_shm_drop_space(idx);                    /* release this space's shm refs (free at last mapper) */
     for (int i = 0; i < g_space_npages[idx]; i++) {
         void *p = g_space_pages[idx][i];
         memset(p, 0, 0x1000);                 /* scrub the dead process's data */
@@ -481,4 +501,77 @@ int vm_munmap(int idx, uint32_t va, uint32_t size)
         return 0;
     }
     return -1;
+}
+
+/* ---- shared memory (fs-pagecache IPC substrate) --------------------------
+ * Pool-backed pages, refcounted by mappers, mapped PL0-RW into a space's SHM window
+ * at a per-id 1 MB VA slot (same VA in every mapper -> portable pointers). The fs
+ * service reaches the same pages by their pool IDENTITY address (no map needed on the
+ * service side); only clients map. Cacheable + single-core PIPT -> the two views are
+ * coherent with no maintenance. See docs/OS/fs-pagecache.md. */
+#define NSHM      16
+#define SHM_SLOT  (XTOS_SHM_SIZE / NSHM)     /* VA bytes per id (1 MB) */
+#define SHM_MAXPG (SHM_SLOT >> 12)           /* max pages per shm (256) */
+#define L2_SHM(phys) (L2_PAGE(phys) | 0x1u)  /* cacheable RW nG small page, execute-never */
+
+typedef struct { void *pages[SHM_MAXPG]; uint32_t npages; int nref; int used; } shm_t;
+static shm_t    g_shm[NSHM];                  /* g_space_shm[] declared up top (used by vm_space_create) */
+
+/* allocate an shm of `size` bytes -> id, or -1. nref starts 0 (a mapper adds one). */
+int vm_shm_create(uint32_t size)
+{
+    uint32_t np = (size + 0xFFFu) >> 12; if (!np) np = 1;
+    if (np > SHM_MAXPG) return -1;
+    uint32_t f = xt_irq_save();
+    int id = -1;
+    for (int i = 0; i < NSHM; i++) if (!g_shm[i].used) { g_shm[i].used = 1; id = i; break; }
+    xt_irq_restore(f);
+    if (id < 0) return -1;
+    for (uint32_t k = 0; k < np; k++) {
+        void *pg = dpage_raw();
+        if (!pg) { for (uint32_t j = 0; j < k; j++) dfree_raw(g_shm[id].pages[j]);
+                   g_shm[id].used = 0; return -1; }
+        g_shm[id].pages[k] = pg;                       /* dpage_raw zeroes on free; scrub-on-create too */
+        memset(pg, 0, 0x1000);
+    }
+    g_shm[id].npages = np; g_shm[id].nref = 0;
+    return id;
+}
+
+/* map shm `id` PL0-RW into space idx's SHM window -> VA (0 on failure). Idempotent per
+ * space (a re-map doesn't double-count). Caller runs in space idx (its own), so the
+ * TLBIALL clears any stale window entry for the freshly-installed pages. */
+uint32_t vm_shm_map(int idx, int id)
+{
+    if (id < 0 || id >= NSHM || !g_shm[id].used) return 0;
+    uint32_t va  = XTOS_SHM_VA + (uint32_t)id * SHM_SLOT;
+    uint32_t *l2 = perproc_l2(idx, space_l1[idx], va >> 20);
+    if (!l2) return 0;
+    for (uint32_t k = 0; k < g_shm[id].npages; k++)
+        l2[L2_IDX(va + k * 0x1000u)] = L2_SHM((uint32_t)g_shm[id].pages[k]);
+    uint32_t f = xt_irq_save();
+    if (!(g_space_shm[idx] & (1u << id))) { g_space_shm[idx] |= (1u << id); g_shm[id].nref++; }
+    xt_irq_restore(f);
+    __asm__ volatile("dsb");
+    __asm__ volatile("mcr p15,0,%0,c8,c7,0" :: "r"(0u));   /* TLBIALL (window pages installed) */
+    __asm__ volatile("dsb; isb");
+    return va;
+}
+
+/* reap hook: drop every shm this space held; free an shm's pages when its last mapper
+ * goes (nref -> 0). The space's L2s + bitmap are reset by vm_space_create on reuse. */
+void vm_shm_drop_space(int idx)
+{
+    uint32_t f = xt_irq_save();
+    uint32_t bits = g_space_shm[idx]; g_space_shm[idx] = 0;
+    xt_irq_restore(f);
+    for (int id = 0; id < NSHM; id++) {
+        if (!(bits & (1u << id))) continue;
+        f = xt_irq_save();
+        int free_now = (g_shm[id].nref > 0 && --g_shm[id].nref == 0);
+        if (free_now) g_shm[id].used = 0;
+        xt_irq_restore(f);
+        if (free_now) { for (uint32_t k = 0; k < g_shm[id].npages; k++) dfree_raw(g_shm[id].pages[k]);
+                        g_shm[id].npages = 0; }
+    }
 }

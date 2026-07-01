@@ -347,6 +347,8 @@ static long do_syscall(uint32_t num, long a0, long a1, long a2)
     }
     case SYS_munmap:                                         /* (addr, len) */
         return p ? vm_munmap((int)(p - g_proc), (uint32_t)a0, (uint32_t)a1) : -1;
+    case SYS_shm_create: return vm_shm_create((uint32_t)a0);            /* (size) -> id */
+    case SYS_shm_map:    return p ? (long)vm_shm_map((int)(p - g_proc), (int)a0) : 0;  /* (id) -> VA */
     case SYS_fb_info: {                                      /* (struct os_fbinfo *) */
         extern void fb_info(int *, int *, int *, uint32_t *);
         struct { int w, h, stride; uint32_t addr; } *fi = (void *)a0;

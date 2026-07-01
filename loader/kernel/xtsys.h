@@ -28,6 +28,8 @@
 #define SYS_mmap     0x200   /* (fd, len, off) -> VA: map a file RO + shared, demand-paged */
 #define SYS_munmap   0x201   /* (addr, len) -> 0 */
 #define SYS_sbrk     0x202   /* (incr) -> old break: grow the per-process heap (libc malloc) */
+#define SYS_shm_create 0x203 /* (size) -> id: allocate a shared-memory object */
+#define SYS_shm_map    0x204 /* (id) -> VA: map an shm object PL0-RW into this process */
 
 /* filesystem / VFS — block 0x300 */
 #define SYS_open     0x300   /* (path, flags) -> fd */
