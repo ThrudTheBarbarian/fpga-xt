@@ -66,6 +66,29 @@ void _app_entry(int argc, char **argv)
         if (rf >= 0) sys_close(rf);
     }
 
+    /* RW mmap write-back (dirty-via-fault): create an 8000-byte (2-page) file, mmap it
+     * WRITABLE, store into two pages through the mapping (each store faults RO->RW and
+     * marks that page dirty), munmap (writes only the dirty pages back), then reopen and
+     * confirm the writes persisted AND untouched bytes survived — fs-pagecache 3c-3b. */
+    {
+        static unsigned char z[8000], rr[8000];
+        for (int i = 0; i < 8000; i++) z[i] = (unsigned char)i;
+        int cf = sys_open("/tmp/rw", 0x601);            /* O_WRONLY|O_CREAT|O_TRUNC */
+        if (cf >= 0) { sys_write(cf, z, 8000); sys_close(cf); }
+        int mf = sys_open("/tmp/rw", 2);                /* O_RDWR -> writable mapping */
+        unsigned char *w = mf >= 0 ? (unsigned char *)sys_mmap(mf, 0, 0) : 0;
+        int ok = (w != 0);
+        if (w) { w[10] = 0xAA; w[5000] = 0xBB; sys_munmap(w, 8000); }   /* dirty page 0 + page 1 */
+        if (mf >= 0) sys_close(mf);
+        int vf = sys_open("/tmp/rw", 0);
+        long got = vf >= 0 ? sys_read(vf, rr, 8000) : 0;
+        if (vf >= 0) sys_close(vf);
+        ok = ok && got == 8000 && rr[10] == 0xAA && rr[5000] == 0xBB
+                && rr[11] == (unsigned char)11 && rr[4999] == (unsigned char)4999;   /* untouched survived */
+        put(ok ? "mmaptest: /tmp RW mmap write-back (dirty-via-fault) -> OK\n"
+               : "mmaptest: /tmp RW mmap FAIL\n");
+    }
+
     /* "mmaptest ro": prove the mapping is READ-ONLY — writing to it faults and the
      * OS kills us (so the final line should NOT print). */
     if (argc > 1 && argv[1][0] == 'r') {

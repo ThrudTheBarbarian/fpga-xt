@@ -45,7 +45,9 @@ uint32_t vm_cow_count(void);
 int  vm_cow_map(int idx, uint32_t va);
 int  vm_demand_map(int idx, uint32_t va);
 uint32_t vm_mmap(int idx, uint32_t src, uint32_t size);   /* map a romfs file RO+shared -> VA */
-uint32_t vm_mmap_install(int idx, void **pages, uint32_t npg, int writable);  /* eager backing-store mmap -> VA */
+uint32_t vm_mmap_install(int idx, void **pages, uint32_t npg, int writable, uint32_t fd, uint32_t foff);
+int      vm_mmap_write_fault(int idx, uint32_t va);   /* RW mmap write-fault: flip RW + mark dirty */
+int      vm_mmap_dirty_plan(int idx, uint32_t va, uint32_t *fd, void **pages, uint32_t *foffs, int max);
 int  vm_mmap_fault(int idx, uint32_t va);                 /* demand-page an mmap'd file page */
 int  vm_munmap(int idx, uint32_t va, uint32_t size);
 int      vm_shm_create(uint32_t size);            /* alloc pool pages for an shm -> id (-1 fail) */

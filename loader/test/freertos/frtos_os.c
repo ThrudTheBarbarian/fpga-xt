@@ -157,10 +157,11 @@ int xtos_demand_fault(uint32_t dfar)
      * zero-filled (RW) page on demand. */
     if (dfar >= XTOS_HEAP_VA && dfar < XTOS_HEAP_VA + XTOS_HEAP_SIZE)
         return vm_demand_map(idx, dfar);
-    /* mmap'd file (read-only): a READ fault -> map the file page RO on demand. A
-     * WRITE to it is illegal (it's a read-only mapping) -> fatal. */
+    /* mmap window: a READ fault demand-maps a romfs page RO; a WRITE fault flips a
+     * WRITABLE backing-store page RW + marks it dirty (dirty-via-fault), else it's a
+     * write to a read-only mapping -> fatal. Both are synchronous (no FatFs). */
     if (dfar >= XTOS_MMAP_VA && dfar < XTOS_MMAP_VA + XTOS_MMAP_SIZE)
-        return write ? 0 : vm_mmap_fault(idx, dfar);
+        return write ? vm_mmap_write_fault(idx, dfar) : vm_mmap_fault(idx, dfar);
     /* copy-on-write: a WRITE permission fault to a registered shared-RO page ->
      * private copy. vm_cow_map gates on the COW range, so a write to read-only TEXT
      * (W^X, not a COW range) returns 0 = fatal. */
@@ -296,6 +297,7 @@ static const xtld_host *g_khost;   /* kernel loader host (frtos_set_host); used 
 #define FS_PATH_MAX 256
 #define FS_OP_GETPAGE 0x100          /* internal (not a SYS_ number): fill+return a file page */
 #define FS_OP_MMAP    0x101          /* internal: eager-fill + map a backing-store file region */
+#define FS_OP_MUNMAP  0x102          /* internal: write back dirty mmap pages, then unmap */
 typedef struct {
     uint32_t          op;            /* SYS_open / SYS_close / FS_OP_GETPAGE / FS_OP_MMAP */
     uint32_t          fd;            /* close/getpage/mmap target */
@@ -405,10 +407,38 @@ static long fd_mmap(int slot)
         if ((uint32_t)got < 0x1000u) memset((uint8_t *)pages[k] + got, 0, 0x1000u - (uint32_t)got);
     }
     if (k < npg) { for (uint32_t j = 0; j < k; j++) vm_page_free(pages[j]); return -1; }  /* pool exhausted */
-    uint32_t va = vm_mmap_install(slot, pages, npg, 0 /* RO */);
+    /* a writable fd -> a writable mapping (dirty-via-fault); else RO. fd + off recorded so
+     * dirty pages can be written back at munmap. */
+    int writable = fdp->vf.write != 0;
+    uint32_t va = vm_mmap_install(slot, pages, npg, writable, (uint32_t)fd, off);
     if (!va) { for (k = 0; k < npg; k++) vm_page_free(pages[k]); return -1; }
     c->page_addr = va;
     return 0;
+}
+
+/* unmap a mmap region (fs task): if it's a WRITABLE backing-store mapping, write its
+ * DIRTY pages back through the backing fd first (only the pages the client actually
+ * wrote — dirty-via-fault), then vm_munmap frees the pool pages + clears the window. A
+ * RO or romfs mapping has no dirty plan -> just unmapped. The write-back needs the fd
+ * still open; a partial last page writes only up to the file size. */
+static long fd_munmap(int slot)
+{
+    fs_ctl *c = g_fs_ctl[slot];
+    proc_t *p = &g_proc[slot];
+    uint32_t va = c->off, len = c->len, fd = 0;
+    void    *pages[MMAP_MAXPG]; uint32_t foffs[MMAP_MAXPG];
+    int nd = vm_mmap_dirty_plan(slot, va, &fd, pages, foffs, MMAP_MAXPG);
+    if (nd > 0 && fd >= 3 && fd < NFD && p->fd[fd].open && p->fd[fd].vf.write) {
+        uint32_t size = p->fd[fd].vf.size;
+        for (int i = 0; i < nd; i++) {
+            uint32_t n = (size > foffs[i]) ? (size - foffs[i]) : 0;   /* clamp last page to EOF */
+            if (n > 0x1000u) n = 0x1000u;
+            if (!n) continue;
+            vfs_lseek(&p->fd[fd].vf, (long)foffs[i], 0);
+            vfs_write(&p->fd[fd].vf, pages[i], n);
+        }
+    }
+    return vm_munmap(slot, va, len);
 }
 
 static long fs_serve(int slot)
@@ -430,7 +460,8 @@ static long fs_serve(int slot)
         c->page_addr = (uint32_t)(uintptr_t)pg; c->valid = valid;
         return pg ? 0 : -1;
     }
-    case FS_OP_MMAP: return fd_mmap(slot);
+    case FS_OP_MMAP:   return fd_mmap(slot);
+    case FS_OP_MUNMAP: return fd_munmap(slot);
     default:        return -1;
     }
 }
@@ -565,6 +596,21 @@ static long fs_mmap(proc_t *p)
     return (c->result == 0) ? (long)c->page_addr : -1;
 }
 
+/* munmap -> fs task (it may need to write dirty pages back through FatFs). RO/romfs
+ * mappings just get unmapped there. Fallback (no fs task) unmaps inline, no write-back. */
+static long fs_munmap(proc_t *p)
+{
+    int     slot = (int)(p - g_proc);
+    fs_ctl *c = (slot >= 0 && slot < MAXPROC) ? g_fs_ctl[slot] : 0;
+    if (!g_fs_q || !c) return vm_munmap(slot, (uint32_t)p->da0, (uint32_t)p->da1);
+    c->op = FS_OP_MUNMAP; c->off = (uint32_t)p->da0; c->len = (uint32_t)p->da1;
+    c->result = -1;
+    g_fs_waiter[slot] = xTaskGetCurrentTaskHandle();
+    xQueueSend(g_fs_q, &slot, portMAX_DELAY);
+    ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
+    return c->result;
+}
+
 /* stand up the fs service: per-slot shm control pages (the IPC substrate — one page
  * each, kept for the system's life), the doorbell queue, and the owning task. From main
  * before the scheduler, so it's ready before any PL0 open. Priority 4 (> procs at 3) so
@@ -626,6 +672,9 @@ void deferral_thunk(void)                 /* PL1 (System), task context */
         } else if (p->dnum == SYS_mmap) {
             /* mmap a backing-store file: the fs task eager-fills + maps it into our space. */
             r = fs_mmap(p);
+        } else if (p->dnum == SYS_munmap) {
+            /* munmap: the fs task writes back dirty pages (if any) then unmaps. */
+            r = fs_munmap(p);
         } else {
             r = do_syscall(p->dnum, p->da0, p->da1, p->da2);
         }
@@ -739,7 +788,8 @@ static int needs_task_ctx(struct k_regs *regs, uint32_t num)
     case SYS_write:   return fd >= 3 && fd < NFD;   /* file write -> page store (console 1/2 inline) */
     case SYS_close:   return fd_is_sd(fd);          /* backing-store close -> task ctx (romfs inline) */
     case SYS_mmap:    return fd_is_sd(fd);          /* backing-store mmap -> fs task eager-fill (romfs inline) */
-    default:          return 0;                    /* lseek (inline)/getpid/sbrk/munmap/fb/gettimeofday */
+    case SYS_munmap:  return 1;                     /* may write dirty pages back (FatFs) -> task ctx */
+    default:          return 0;                    /* lseek (inline)/getpid/sbrk/fb/gettimeofday */
     }
 }
 

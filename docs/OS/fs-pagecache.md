@@ -221,9 +221,19 @@ Each step is qemu-testable except the SD leaf (qemu has no SD backend — `sd.c`
      (inline, shared physical, demand-paged). Validated: `mmaptest` writes a 9 000-byte
      file to `/tmp`, mmaps it RO, and reads it back through the mapping byte-for-byte
      (repeatable, no page leak); the SD fill is the HW-only leaf.
-   * **(c-3b) RW mmap + dirty-via-fault — NEXT.** Map writable pages clean-but-RO; a
-     write-fault marks the page dirty + flips it RW (reuse `vm_cow_map` machinery); write
-     back only dirty pages on `munmap`/close (via the fs task).
+   * **(c-3b) RW mmap + dirty-via-fault — DONE, qemu-validated.** mmap of a *writable* fd
+     (`vf.write != NULL`) is a writable mapping, but still installed **clean-but-RO**: the
+     first store to a page faults, and `vm_mmap_write_fault` (in the abort handler —
+     synchronous, just an L2 flip + a bit) flips it RW and sets a per-page dirty bit
+     (ARMv7 short descriptors have no HW dirty bit here). `munmap` is deferred to the fs
+     task, which writes back **only the dirty pages** through the backing fd
+     (`vm_mmap_dirty_plan` returns the pool page + file offset for each), a partial last
+     page clamped to EOF, then `vm_munmap` frees. The mmap descriptor became a struct
+     (`va/end/src/owned/writable/fd/foff/dirty`). Validated: `mmaptest` maps `/tmp/rw`
+     writable, stores into two pages, munmaps, reopens and confirms the writes persisted
+     **and** untouched bytes survived. Limitation (first cut): write-back happens at
+     `munmap` via the still-open fd — close-before-munmap of a writable mapping drops
+     unflushed writes (a later version holds an independent file ref). SD is the HW leaf.
    * **(c-4) retire `g_vfs_mtx`.** Route `open_lib_sd` + `sd_listdir` through the service
      so one task owns FatFs, then drop the lock (structural serialization).
 

@@ -91,13 +91,21 @@ static uint32_t g_cow_count;
  * VAs are bump-allocated in [XTOS_MMAP_VA, +SIZE); the backing is shared romfs
  * (never pool pages), so teardown just drops the descriptors. */
 #define NMMAP 8
-static cow_rng  g_space_maps[NSPACE][NMMAP];     /* {va, end, src=file physical} */
-static int      g_space_nmaps[NSPACE];
-static uint32_t g_space_mmap_brk[NSPACE];        /* next free VA in the window */
-/* 1 = this mapping's pages are POOL pages OWNED by the mapping (backing-store mmap,
- * eager-filled) -> free them on munmap/reap. 0 = shared romfs physical (demand-paged,
- * never freed here). */
-static uint8_t  g_space_map_owned[NSPACE][NMMAP];
+/* one mmap descriptor. va/end/src match cow_rng so the shared demand-fault logic reads
+ * them the same way; the rest is backing-store (owned) + writable (dirty-via-fault) state.
+ * owned: pages are POOL pages owned by the mapping (free on munmap/reap) vs shared romfs
+ * physical. writable: a write-fault may flip the page RW + mark it dirty (else fatal RO).
+ * fd/foff: the backing fd + file offset, for writing dirty pages back at munmap. dirty:
+ * per-page dirty bitmap (bit k = page k written; capped at 64 pages = MMAP_MAXPG). */
+typedef struct {
+    uint32_t va, end, src;
+    uint8_t  owned, writable;
+    uint32_t fd, foff;
+    uint64_t dirty;
+} mmap_desc;
+static mmap_desc g_space_maps[NSPACE][NMMAP];
+static int       g_space_nmaps[NSPACE];
+static uint32_t  g_space_mmap_brk[NSPACE];       /* next free VA in the window */
 void vm_cow_register(uint32_t va, uint32_t size, uint32_t src)
 {
     uint32_t base = va & ~0xFFFu;
@@ -394,7 +402,7 @@ void vm_space_destroy(int idx)
     vm_shm_drop_space(idx);                    /* release this space's shm refs (free at last mapper) */
     /* free pool pages owned by backing-store mmaps (uncharged, so not in g_space_pages) */
     for (int m = 0; m < g_space_nmaps[idx]; m++) {
-        if (!g_space_map_owned[idx][m]) continue;
+        if (!g_space_maps[idx][m].owned) continue;
         uint32_t *ml2 = space_l2_mmap[idx];
         for (uint32_t p = g_space_maps[idx][m].va; p < g_space_maps[idx][m].end; p += 0x1000u) {
             uint32_t e = ml2[L2_IDX(p)];
@@ -478,11 +486,9 @@ uint32_t vm_mmap(int idx, uint32_t src, uint32_t size)
     uint32_t va  = g_space_mmap_brk[idx];
     if (va + npg * 0x1000u > XTOS_MMAP_VA + XTOS_MMAP_SIZE) return 0;   /* window full */
     if (g_space_nmaps[idx] >= NMMAP) return 0;
-    g_space_maps[idx][g_space_nmaps[idx]].va  = va;
-    g_space_maps[idx][g_space_nmaps[idx]].end = va + npg * 0x1000u;
-    g_space_maps[idx][g_space_nmaps[idx]].src = src;
-    g_space_map_owned[idx][g_space_nmaps[idx]] = 0;      /* shared romfs physical, demand-paged */
-    g_space_nmaps[idx]++;
+    mmap_desc *d = &g_space_maps[idx][g_space_nmaps[idx]++];
+    d->va = va; d->end = va + npg * 0x1000u; d->src = src;
+    d->owned = 0; d->writable = 0; d->fd = 0; d->foff = 0; d->dirty = 0;  /* shared romfs, demand-paged */
     g_space_mmap_brk[idx] = va + npg * 0x1000u;
     return va;
 }
@@ -494,23 +500,71 @@ uint32_t vm_mmap(int idx, uint32_t src, uint32_t size)
  * handler — which can't drive FatFs — is never involved. Runs in the fs task (any space):
  * it writes space idx's L2 directly; the VA is fresh (bump) so no client TLB shadow, a dsb
  * makes the new descriptors visible before the client resumes. Returns the VA, or 0. */
-uint32_t vm_mmap_install(int idx, void **pages, uint32_t npg, int writable)
+uint32_t vm_mmap_install(int idx, void **pages, uint32_t npg, int writable, uint32_t fd, uint32_t foff)
 {
     if (!npg) return 0;
     uint32_t va = g_space_mmap_brk[idx];
     if (va + npg * 0x1000u > XTOS_MMAP_VA + XTOS_MMAP_SIZE) return 0;
     if (g_space_nmaps[idx] >= NMMAP) return 0;
     uint32_t *ml2 = space_l2_mmap[idx];
-    for (uint32_t k = 0; k < npg; k++) {
-        uint32_t phys = (uint32_t)pages[k];
-        ml2[L2_IDX(va + k * 0x1000u)] = (writable ? L2_PAGE(phys) : L2_PAGE_RO(phys)) | 0x1u;  /* +XN */
-    }
-    int m = g_space_nmaps[idx]++;
-    g_space_maps[idx][m].va = va; g_space_maps[idx][m].end = va + npg * 0x1000u; g_space_maps[idx][m].src = 0;
-    g_space_map_owned[idx][m] = 1;
+    /* install CLEAN-but-RO even for a writable mapping: the first store faults, so
+     * vm_mmap_write_fault flips it RW + marks the page dirty (dirty-via-fault — ARMv7
+     * short descriptors have no HW dirty bit here). Only dirty pages get written back. */
+    for (uint32_t k = 0; k < npg; k++)
+        ml2[L2_IDX(va + k * 0x1000u)] = L2_PAGE_RO((uint32_t)pages[k]) | 0x1u;  /* RO + XN */
+    mmap_desc *d = &g_space_maps[idx][g_space_nmaps[idx]++];
+    d->va = va; d->end = va + npg * 0x1000u; d->src = 0;
+    d->owned = 1; d->writable = writable ? 1 : 0; d->fd = fd; d->foff = foff; d->dirty = 0;
     g_space_mmap_brk[idx] = va + npg * 0x1000u;
     __asm__ volatile("dsb; isb");
     return va;
+}
+
+/* WRITE fault in the mmap window: if `va` is in a WRITABLE owned mapping, flip that page
+ * RW and mark it dirty (dirty-via-fault), then re-run the store. Returns 1 (serviced) or
+ * 0 (RO mapping / not found -> fatal). Synchronous (L2 edit + a bit) — safe in the abort
+ * handler; the actual write-back happens later at munmap (needs FatFs). */
+int vm_mmap_write_fault(int idx, uint32_t va)
+{
+    for (int m = 0; m < g_space_nmaps[idx]; m++) {
+        mmap_desc *d = &g_space_maps[idx][m];
+        if (va < d->va || va >= d->end || !d->owned || !d->writable) continue;
+        uint32_t *ml2 = space_l2_mmap[idx];
+        uint32_t  i   = L2_IDX(va);
+        ml2[i] &= ~(1u << 9);                                   /* clear AP[2]: RO -> RW */
+        d->dirty |= (uint64_t)1 << ((va - d->va) >> 12);        /* mark this page dirty */
+        __asm__ volatile("dsb");
+        __asm__ volatile("mcr p15,0,%0,c8,c7,3" :: "r"(va & 0xFFFFF000u));  /* TLBIMVAA */
+        __asm__ volatile("dsb; isb");
+        return 1;
+    }
+    return 0;
+}
+
+/* Collect the dirty pages of the mapping at `va` for write-back: fills pages[]/foffs[]
+ * (pool page + its file offset) for each dirty page, and *fd = the backing fd. Returns
+ * the dirty count, or -1 if `va` isn't a writable owned mapping. The caller (fs task)
+ * writes them back through the fd, then calls vm_munmap. */
+int vm_mmap_dirty_plan(int idx, uint32_t va, uint32_t *fd, void **pages, uint32_t *foffs, int max)
+{
+    for (int m = 0; m < g_space_nmaps[idx]; m++) {
+        mmap_desc *d = &g_space_maps[idx][m];
+        if (d->va != va || !d->owned || !d->writable) continue;
+        uint32_t *ml2 = space_l2_mmap[idx];
+        int n = 0;
+        for (uint32_t p = d->va; p < d->end && n < max; p += 0x1000u) {
+            uint32_t k = (p - d->va) >> 12;
+            if (!(d->dirty & ((uint64_t)1 << k))) continue;
+            uint32_t e = ml2[L2_IDX(p)];
+            if (!(e & 0x3u)) continue;
+            pages[n] = (void *)(e & 0xFFFFF000u);
+            foffs[n] = d->foff + (p - d->va);
+            n++;
+        }
+        *fd = d->fd;
+        return n;
+    }
+    return -1;
 }
 
 /* fault in the mmap window: map the faulting page READ-ONLY + execute-never to its
@@ -519,9 +573,9 @@ uint32_t vm_mmap_install(int idx, void **pages, uint32_t npg, int writable)
 int vm_mmap_fault(int idx, uint32_t va)
 {
     for (int m = 0; m < g_space_nmaps[idx]; m++) {
-        cow_rng *r = &g_space_maps[idx][m];
+        mmap_desc *r = &g_space_maps[idx][m];
         if (va < r->va || va >= r->end) continue;
-        if (g_space_map_owned[idx][m]) continue;   /* eager/backing: pages pre-installed, not demand-filled */
+        if (r->owned) continue;                    /* eager/backing: pages pre-installed, not demand-filled */
         uint32_t *ml2 = space_l2_mmap[idx];
         ml2[L2_IDX(va)] = L2_PAGE_RO(r->src + ((va & ~0xFFFu) - r->va)) | 0x1u;  /* RO + XN */
         __asm__ volatile("dsb");
@@ -539,11 +593,11 @@ int vm_munmap(int idx, uint32_t va, uint32_t size)
 {
     (void)size;
     for (int m = 0; m < g_space_nmaps[idx]; m++) {
-        cow_rng *r = &g_space_maps[idx][m];
+        mmap_desc *r = &g_space_maps[idx][m];
         if (va != r->va) continue;
         uint32_t *ml2 = space_l2_mmap[idx];
         for (uint32_t p = r->va; p < r->end; p += 0x1000u) {
-            if (g_space_map_owned[idx][m]) {                   /* backing-store: free the pool page */
+            if (r->owned) {                                    /* backing-store: free the pool page */
                 uint32_t e = ml2[L2_IDX(p)];
                 if (e & 0x3u) dfree_raw((void *)(e & 0xFFFFF000u));
             }
@@ -552,9 +606,7 @@ int vm_munmap(int idx, uint32_t va, uint32_t size)
         __asm__ volatile("dsb");
         __asm__ volatile("mcr p15,0,%0,c8,c7,0" :: "r"(0u));   /* TLBIALL (range cleared) */
         __asm__ volatile("dsb; isb");
-        int last = --g_space_nmaps[idx];                        /* compact both parallel arrays */
-        g_space_maps[idx][m] = g_space_maps[idx][last];
-        g_space_map_owned[idx][m] = g_space_map_owned[idx][last];
+        g_space_maps[idx][m] = g_space_maps[idx][--g_space_nmaps[idx]];   /* compact */
         return 0;
     }
     return -1;
