@@ -131,20 +131,38 @@ can of worms we don't need yet.
 * **Cross-fd/client dedup.** A true cache keys pages by `(file-id, page-index)` so two
   openers share one copy. Start with **per-fd** pages; add keyed dedup later.
 
-## Build order
+## Build order + status (2026-07-01)
 
-Each step is qemu-testable except the SD leaf (qemu has no SD backend; romfs exercises
-the client side of everything).
+Each step is qemu-testable except the SD leaf (qemu has no SD backend — `sd.c` is
+`#ifdef XT_HW`; romfs exercises the client side of everything).
 
-1. **shm core** — `shm_create` / `shm_map` (into a client) / `shm_ref` / `shm_drop`,
-   the `XTOS_SHM_VA` window, and the `frtos_reap` drop hook. Test: two procs map one
-   shm, one writes, the other reads.
-2. **fs service + control channel** — the task owns FatFs; clients post + park, the
-   service serves + wakes. Test on qemu against **romfs** (proves the protocol and the
-   serialization).
-3. **page store** — per-fd demand-paged, write-back pages; `read`/`write`/`mmap` as the
-   three entry points; service = fill / flush / extend; single-writer; growth explicit.
-   SD is the HW-only leaf; the romfs path exercises the client side.
+1. **shm core — DONE (commit 2084687), qemu-validated.** `vm_shm_create` / `vm_shm_map`
+   / `vm_shm_drop_space` in vm.c; `XTOS_SHM_VA` window (0x1300_0000, 16×1 MB id slots,
+   id-derived VA -> portable pointers); pool-backed via `dpage_raw`/`dfree_raw`
+   (un-charged, owned by the shm); refcount = mappers, freed at 0; reap hook in
+   `vm_space_destroy` (crashed mapper still releases). `SYS_shm_create`/`SYS_shm_map`
+   (0x203/0x204), `sys_shm_create`/`sys_shm_map` in usys.h. Test `/bin/shmtest`: parent
+   create+map+write, child maps same id -> shared read AND write, both directions; id 0
+   reused across runs (no leak). Cacheable + single-core PIPT = coherent, no maintenance.
 
-Later: dirty-via-fault, eviction, `(file,page)` dedup, and moving GEM's param block
-onto the shm primitive.
+2. **Serialization — DONE (commit a32590c), qemu-validated.** NOT a task — a lock, per
+   the concurrency model. Moved from a FatFs-specific mutex up to the VFS layer: `vfs_fs`
+   has a `serialized` flag; `vfs.c` has one shared `g_vfs_mtx` that every serialized
+   (backing-store) driver takes, so fatfs + future minixfs/swap on the same SD serialize
+   TOGETHER. romfs (reentrant, RO) = serialized 0, lock-free inline. New
+   `vfs_read`/`vfs_lseek`/`vfs_close` wrappers lock per-driver; `sys_*` route through
+   them; serialized-fd ops are always deferred off the SVC handler so the mutex is only
+   taken in task context.
+
+3. **page store — NEXT (not started).** The dedicated `fs` TASK + shm control channel,
+   and read/write/mmap unified over demand-paged write-back pages (this section, above).
+   The task earns its keep here (owns cached pages: fill / flush / extend). Concrete
+   first moves: (a) an `fs` FreeRTOS task owning VFS access, (b) a per-client control
+   channel (an shm page: `{op,path-off,fd,count,off,result,status}`) — clients post +
+   park (reuse the waitpid block/wake primitive), service serves + wakes; (c) route
+   `read`/`write`/`mmap` for backing-store fds to the service. Test on qemu against
+   **romfs** (protocol + serialization); SD is the HW-only leaf. Single-writer; growth
+   explicit; the interim `g_vfs_mtx` can retire once one task owns FatFs.
+
+Later: dirty-via-fault (reuse `vm_cow_map`), eviction (LRU), `(file,page)` dedup, and
+moving GEM's param block onto the shm primitive.
