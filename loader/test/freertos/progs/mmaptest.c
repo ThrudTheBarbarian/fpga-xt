@@ -47,6 +47,25 @@ void _app_entry(int argc, char **argv)
         }
         sys_close(ff);
     }
+    /* backing-store mmap (ramfs, /tmp): create a >4 KB file, then mmap it RO and read it
+     * through the mapping. Unlike romfs (already resident), an SD/ramfs file is EAGER-
+     * filled into pool pages at mmap() time by the fs task — fs-pagecache step 3c-3. */
+    {
+        static unsigned char pat[9000];
+        for (int i = 0; i < 9000; i++) pat[i] = (unsigned char)(i * 5 + 1);
+        int wf = sys_open("/tmp/mm", 0x601);            /* O_WRONLY|O_CREAT|O_TRUNC */
+        if (wf >= 0) { sys_write(wf, pat, 9000); sys_close(wf); }
+        int rf = sys_open("/tmp/mm", 0);
+        long msz = rf >= 0 ? sys_lseek(rf, 0, 2) : -1;
+        const unsigned char *mm = rf >= 0 ? (const unsigned char *)sys_mmap(rf, 0, 0) : 0;
+        int ok = (mm && msz == 9000);
+        if (mm) for (int i = 0; i < 9000; i++) if (mm[i] != (unsigned char)(i * 5 + 1)) { ok = 0; break; }
+        put(ok ? "mmaptest: /tmp mmap (ramfs eager-fill) bytes match -> OK\n"
+               : "mmaptest: /tmp mmap FAIL\n");
+        if (mm) sys_munmap((void *)mm, (unsigned)msz);
+        if (rf >= 0) sys_close(rf);
+    }
+
     /* "mmaptest ro": prove the mapping is READ-ONLY — writing to it faults and the
      * OS kills us (so the final line should NOT print). */
     if (argc > 1 && argv[1][0] == 'r') {

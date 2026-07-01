@@ -209,9 +209,21 @@ Each step is qemu-testable except the SD leaf (qemu has no SD backend — `sd.c`
      Validated: `libc_test` writes a 10 000-byte (3-page) pattern to `/tmp/scratch`, closes,
      reopens, reads it back byte-for-byte (flush-on-evict at each boundary + flush-on-close).
      Single-writer; per-fd cache pages freed (and flushed) on close/reap.
-   * **(c-3) mmap over SD-backed pages + dirty-via-fault.** `mmap` an SD file (fill pool
-     pages, map into the client window); RW maps clean-but-RO, a write-fault marks dirty
-     (reuse `vm_cow_map`) and flips RW; write back only dirty pages.
+   * **(c-3a) RO mmap over backing-store files — DONE, qemu-validated.** `mmap` of an
+     SD/ramfs file (`vf.data == NULL`) is **eager**, not demand: the fs task
+     (`FS_OP_MMAP`) fills each page of the region into a fresh pool page via the backing
+     driver, then `vm_mmap_install` maps them RO+XN into the client's window at a fresh
+     bump VA. Eager because the **abort handler can't drive FatFs** (mmap-fault must be
+     synchronous) — so pages are resident before first touch; it also makes
+     close-after-mmap safe. The pages are OWNED by the mapping: `vm_munmap` and
+     `vm_space_destroy` (reap) free them (they're raw/uncharged pool pages).
+     `vm_mmap_fault` skips owned ranges (nothing to demand-fill). romfs mmap is unchanged
+     (inline, shared physical, demand-paged). Validated: `mmaptest` writes a 9 000-byte
+     file to `/tmp`, mmaps it RO, and reads it back through the mapping byte-for-byte
+     (repeatable, no page leak); the SD fill is the HW-only leaf.
+   * **(c-3b) RW mmap + dirty-via-fault — NEXT.** Map writable pages clean-but-RO; a
+     write-fault marks the page dirty + flips it RW (reuse `vm_cow_map` machinery); write
+     back only dirty pages on `munmap`/close (via the fs task).
    * **(c-4) retire `g_vfs_mtx`.** Route `open_lib_sd` + `sd_listdir` through the service
      so one task owns FatFs, then drop the lock (structural serialization).
 

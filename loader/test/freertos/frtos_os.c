@@ -295,15 +295,18 @@ static const xtld_host *g_khost;   /* kernel loader host (frtos_set_host); used 
  * shm substrate and lets the lock retire. */
 #define FS_PATH_MAX 256
 #define FS_OP_GETPAGE 0x100          /* internal (not a SYS_ number): fill+return a file page */
+#define FS_OP_MMAP    0x101          /* internal: eager-fill + map a backing-store file region */
 typedef struct {
-    uint32_t          op;            /* SYS_open / SYS_close / FS_OP_GETPAGE */
-    uint32_t          fd;            /* close/getpage target */
+    uint32_t          op;            /* SYS_open / SYS_close / FS_OP_GETPAGE / FS_OP_MMAP */
+    uint32_t          fd;            /* close/getpage/mmap target */
     uint32_t          flags;         /* open: VFS_O_* flags */
     uint32_t          page;          /* getpage: file page index */
     uint32_t          wr;            /* getpage: 1 = for write (RMW/grow + flush-on-evict) */
-    uint32_t          page_addr;     /* getpage: resident page identity addr (service -> client) */
+    uint32_t          off;           /* mmap: file offset (page-aligned) */
+    uint32_t          len;           /* mmap: length (0 = to EOF) */
+    uint32_t          page_addr;     /* getpage: resident page addr / mmap: mapped VA (service -> client) */
     uint32_t          valid;         /* getpage: valid bytes in the page (service -> client) */
-    volatile int32_t  result;        /* service -> client */
+    volatile int32_t  result;        /* service -> client (0 ok, <0 err) */
     char              path[FS_PATH_MAX];   /* open: marshalled path (identity-reachable) */
 } fs_ctl;
 
@@ -370,6 +373,44 @@ static void *fd_getpage(int slot, int fd, uint32_t pi, uint32_t *valid, int forw
 
 /* serve one request in the FS TASK: explicit proc (cur_proc() here is the fs task, not
  * the client), path/args read from the slot's identity-mapped control page. */
+/* mmap a backing-store (SD/ramfs) file region (fs task): EAGER-fill each page of
+ * [off,off+len) into a fresh pool page (via the backing driver), then map them RO into
+ * the client's window (vm_mmap_install). Eager, not demand, because the abort handler
+ * can't drive FatFs — so the pages must be resident before the client touches them; it
+ * also makes close-after-mmap safe (the data is copied). Sets c->page_addr = VA. Returns
+ * 0 (ok) / -1. RW mmap (dirty-via-fault + write-back) is 3c-3b. */
+#define MMAP_MAXPG 64                                        /* 256 KB cap per mmap for now */
+static long fd_mmap(int slot)
+{
+    fs_ctl *c = g_fs_ctl[slot];
+    proc_t *p = &g_proc[slot];
+    int     fd = (int)c->fd;
+    if (fd < 3 || fd >= NFD || !p->fd[fd].open) return -1;
+    fd_t    *fdp = &p->fd[fd];
+    if (fdp->vf.data) return -1;                             /* in-memory handled inline (do_syscall) */
+    uint32_t off = c->off, len = c->len, size = fdp->vf.size;
+    if (off > size || (off & 0xFFFu)) return -1;             /* page-aligned offset, in bounds */
+    if (len == 0) len = size - off;
+    if (off + len > size || len == 0) return -1;
+    uint32_t npg = (len + 0xFFFu) >> 12;
+    if (npg > MMAP_MAXPG) return -1;
+    void    *pages[MMAP_MAXPG];
+    uint32_t k;
+    for (k = 0; k < npg; k++) {
+        pages[k] = vm_page_alloc();
+        if (!pages[k]) break;
+        vfs_lseek(&fdp->vf, (long)(off + k * 0x1000u), 0);
+        long got = vfs_read(&fdp->vf, pages[k], 0x1000);
+        if (got < 0) got = 0;
+        if ((uint32_t)got < 0x1000u) memset((uint8_t *)pages[k] + got, 0, 0x1000u - (uint32_t)got);
+    }
+    if (k < npg) { for (uint32_t j = 0; j < k; j++) vm_page_free(pages[j]); return -1; }  /* pool exhausted */
+    uint32_t va = vm_mmap_install(slot, pages, npg, 0 /* RO */);
+    if (!va) { for (k = 0; k < npg; k++) vm_page_free(pages[k]); return -1; }
+    c->page_addr = va;
+    return 0;
+}
+
 static long fs_serve(int slot)
 {
     proc_t *p = &g_proc[slot];
@@ -389,6 +430,7 @@ static long fs_serve(int slot)
         c->page_addr = (uint32_t)(uintptr_t)pg; c->valid = valid;
         return pg ? 0 : -1;
     }
+    case FS_OP_MMAP: return fd_mmap(slot);
     default:        return -1;
     }
 }
@@ -507,6 +549,22 @@ static long fs_write(proc_t *p)
     return (long)done;
 }
 
+/* mmap of a backing-store (SD/ramfs) file -> hand to the fs task, which eager-fills the
+ * region into pool pages and maps them into THIS client's window (by slot/idx). Deferred
+ * because the fill needs FatFs + must not race the fs task's page cache. Returns the VA. */
+static long fs_mmap(proc_t *p)
+{
+    int     slot = (int)(p - g_proc);
+    fs_ctl *c = (slot >= 0 && slot < MAXPROC) ? g_fs_ctl[slot] : 0;
+    if (!g_fs_q || !c) return -1;
+    c->op = FS_OP_MMAP; c->fd = (uint32_t)p->da0; c->len = (uint32_t)p->da1; c->off = (uint32_t)p->da2;
+    c->page_addr = 0; c->result = -1;
+    g_fs_waiter[slot] = xTaskGetCurrentTaskHandle();
+    xQueueSend(g_fs_q, &slot, portMAX_DELAY);
+    ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
+    return (c->result == 0) ? (long)c->page_addr : -1;
+}
+
 /* stand up the fs service: per-slot shm control pages (the IPC substrate — one page
  * each, kept for the system's life), the doorbell queue, and the owning task. From main
  * before the scheduler, so it's ready before any PL0 open. Priority 4 (> procs at 3) so
@@ -565,6 +623,9 @@ void deferral_thunk(void)                 /* PL1 (System), task context */
         } else if (p->dnum == SYS_open || p->dnum == SYS_close) {
             /* metadata ops (no client data buffer) -> the fs service task owns them. */
             r = fs_call(p);
+        } else if (p->dnum == SYS_mmap) {
+            /* mmap a backing-store file: the fs task eager-fills + maps it into our space. */
+            r = fs_mmap(p);
         } else {
             r = do_syscall(p->dnum, p->da0, p->da1, p->da2);
         }
@@ -677,7 +738,8 @@ static int needs_task_ctx(struct k_regs *regs, uint32_t num)
     case SYS_read:    return fd == 0 || (fd >= 3 && fd < NFD);  /* stdin blocks; file read -> page store */
     case SYS_write:   return fd >= 3 && fd < NFD;   /* file write -> page store (console 1/2 inline) */
     case SYS_close:   return fd_is_sd(fd);          /* backing-store close -> task ctx (romfs inline) */
-    default:          return 0;                    /* lseek (inline)/getpid/sbrk/mmap/munmap/fb/gettimeofday */
+    case SYS_mmap:    return fd_is_sd(fd);          /* backing-store mmap -> fs task eager-fill (romfs inline) */
+    default:          return 0;                    /* lseek (inline)/getpid/sbrk/munmap/fb/gettimeofday */
     }
 }
 
