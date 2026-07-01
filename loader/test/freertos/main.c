@@ -128,6 +128,7 @@ static void boot_run(void)
     av[0] = "/System/bin/init";
     int ac = 1;
     for (int i = 0; i < n && ac < 17; i++) {
+        if (nm[i][0] == '.') continue;              /* skip dotfiles: ._* AppleDouble, .DS_Store, ... */
         const char *pre = "/OS/Boot/"; int k = 0;
         while (pre[k]) { paths[i][k] = pre[k]; k++; }
         for (int j = 0; nm[i][j] && k < 47; j++) paths[i][k++] = nm[i][j];
