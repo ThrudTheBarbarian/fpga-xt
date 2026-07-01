@@ -538,6 +538,17 @@ int vm_shm_create(uint32_t size)
     return id;
 }
 
+/* the shm's first page by its pool IDENTITY address — how the fs service (and any PL1
+ * agent, e.g. the deferral thunk marshalling a request) reaches an shm WITHOUT mapping
+ * it into a space: the pool is identity-mapped and global, so this pointer is valid at
+ * PL1 in every space. Returns 0 for an unused id. Used by the fs control channel
+ * (docs/OS/fs-pagecache.md step 3b). */
+void *vm_shm_kaddr(int id)
+{
+    if (id < 0 || id >= NSHM || !g_shm[id].used || !g_shm[id].npages) return 0;
+    return g_shm[id].pages[0];
+}
+
 /* map shm `id` PL0-RW into space idx's SHM window -> VA (0 on failure). Idempotent per
  * space (a re-map doesn't double-count). Caller runs in space idx (its own), so the
  * TLBIALL clears any stale window entry for the freshly-installed pages. */

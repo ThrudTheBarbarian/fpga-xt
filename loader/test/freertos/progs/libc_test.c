@@ -25,6 +25,26 @@ void _app_entry(int argc, char **argv)
         printf("libc_test: fopen(/System/etc/motd) FAILED\n");
     }
 
+    /* Same open, but the PATH lives in a malloc'd (per-process heap) buffer, not a
+     * rodata literal. The fs service runs in the kernel's master space; it can only
+     * read this path if the OS marshalled it into an identity-reachable control page
+     * (fs-pagecache step 3b) — a private-heap VA read straight from master space would
+     * resolve to the wrong physical and silently open the wrong file (or fail). */
+    char *p = malloc(64);
+    strcpy(p, "/System/etc/motd");
+    FILE *g = fopen(p, "r");
+    if (g) {
+        char b[80];
+        size_t k = fread(b, 1, sizeof b - 1, g);
+        b[k] = 0;
+        for (size_t i = 0; i < k; i++) if (b[i] == '\n') { b[i] = 0; break; }
+        printf("libc_test: fopen(heap path %p) read %d bytes, first line: \"%s\"\n", (void *)p, (int)k, b);
+        fclose(g);
+    } else {
+        printf("libc_test: fopen(heap path) FAILED\n");
+    }
+    free(p);
+
     /* gettimeofday: must return a real, advancing wall clock (A9 global timer),
      * not the old always-zero stub. */
     struct timeval t0, t1;

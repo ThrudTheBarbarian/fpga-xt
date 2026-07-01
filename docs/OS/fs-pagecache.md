@@ -158,21 +158,30 @@ Each step is qemu-testable except the SD leaf (qemu has no SD backend — `sd.c`
    read/write/mmap unified over demand-paged write-back pages (this section, above). The
    task earns its keep here (owns cached pages: fill / flush / extend). Three sub-steps:
 
-   * **(a) fs task + request channel — DONE, qemu-validated.** An `fs` FreeRTOS task
-     (`fs_task`, priority 4) owns the VFS metadata path, behind a skeleton request
-     channel: a kernel queue of `fs_req*` + a per-call task-notification wake. A client
-     builds the `fs_req` on its OWN stack (it stays parked, so the frame is live), posts
-     to `g_fs_q`, and blocks; the task serves with the client's proc as the *explicit*
-     context (not `cur_proc`, which is the task itself) and notifies it. `frtos_fs_start`
-     (from `main`, pre-scheduler) stands it up. The deferral thunk routes **open / lseek
-     / close** here — metadata ops with NO client data buffer, so the task (in the
-     master space) never touches a client PL0 VA. `read` (SD) STAYS in the caller's
-     deferral thunk, where the user buffer VA is mapped, under `g_vfs_mtx`. On qemu every
-     romfs `open` (already unconditionally deferred — the path's fs isn't known until it
-     resolves) exercises the channel: `libc_test` fopen, `mmaptest`, boot-script reads.
-   * **(b) shm control channel — NEXT.** Replace the kernel-queue transport with the
-     per-client shm page `{op,path-off,fd,count,off,result,status}` from §1, so a client
-     posts + parks over shm rather than a kernel struct pointer.
+   * **(a) fs task — DONE, qemu-validated.** An `fs` FreeRTOS task (`fs_task`, priority
+     4) owns the VFS metadata path. `frtos_fs_start` (from `main`, pre-scheduler) stands
+     it up. The deferral thunk routes **open / lseek / close** to it — metadata ops with
+     NO client data buffer, so the task (in the kernel's master space) never touches a
+     client PL0 VA. It serves with the client's proc as the *explicit* context (not
+     `cur_proc`, which is the task itself). `read` (SD) STAYS in the caller's deferral
+     thunk, where the user buffer VA is mapped, under `g_vfs_mtx`. On qemu every romfs
+     `open` (already unconditionally deferred — the path's fs isn't known until it
+     resolves) exercises the path: `libc_test` fopen, `mmaptest`, boot-script reads.
+   * **(b) shm control channel — DONE, qemu-validated.** The request travels over the §1
+     shm primitive: one control page per proc SLOT (`fs_ctl` = `{op, fd, off, whence,
+     result, path[256]}`), allocated once at `frtos_fs_start` via `vm_shm_create` and kept
+     for the system's life (no per-request alloc/free → leak-free without an unmapped-shm
+     free path). The client's deferral thunk (PL1, in the CLIENT's space) marshals the
+     request in — **copying the path string** out of client memory — then rings the
+     doorbell (a kernel queue carrying just the slot index) and parks on a task
+     notification; the fs task reaches the page by its pool IDENTITY address (new
+     `vm_shm_kaddr`, no map) and serves from the copy. This closes a latent 3(a) hole: a
+     path in a **malloc'd (per-process-heap) buffer** was read by the fs task as
+     master-space identity — wrong physical, silently. `libc_test` now opens a heap-path
+     (VA `0x10…`) to prove it. The control page is PL1-identity-only for now (not
+     PL0-mapped; mapping it PL0 is the later syscall-less-IPC path). Cost: 8 of 16 `NSHM`
+     ids reserved for control pages (`shmtest` lands on id 8+; it uses a dynamic id, so
+     unaffected).
    * **(c) read/write/mmap over the page store.** Route the *data* path to the service:
      demand-paged write-back file pages (fill / flush / extend). This is what lets the
      data-carrying ops leave the caller's space — and lets the interim `g_vfs_mtx` retire

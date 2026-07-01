@@ -49,6 +49,7 @@ int  vm_mmap_fault(int idx, uint32_t va);                 /* demand-page an mmap
 int  vm_munmap(int idx, uint32_t va, uint32_t size);
 int      vm_shm_create(uint32_t size);            /* alloc pool pages for an shm -> id (-1 fail) */
 uint32_t vm_shm_map(int idx, int id);             /* map shm `id` PL0-RW into space idx -> VA (0 fail) */
+void    *vm_shm_kaddr(int id);                    /* shm's first page by pool IDENTITY addr (PL1, no map) */
 void     vm_shm_drop_space(int idx);              /* drop all shm refs a space held (reap) */
 uint32_t *vm_space_create(int idx, uint32_t prog_va, uint32_t prog_size, uint32_t prog_src);
 void vm_space_destroy(int idx);     /* reclaim a dead space's private pages to the pool */

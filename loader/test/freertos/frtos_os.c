@@ -262,40 +262,50 @@ static long sys_lseek(proc_t *p, int fd, long off, int whence)
 
 static const xtld_host *g_khost;   /* kernel loader host (frtos_set_host); used by SYS_spawn */
 
-/* ---- fs service task (step 3a: docs/OS/fs-pagecache.md) -------------------
- * One task owns the VFS metadata path. A client posts an fs_req (built on its OWN
- * stack — it stays parked, so the stack is alive) to g_fs_q and blocks on a task
- * notification; the fs task serves the op with the client's proc as the explicit
- * context and wakes it. This is the skeleton request channel — a kernel queue +
- * per-call notify; the shm control page (step 3b) replaces the transport later.
+/* ---- fs service task (step 3b: docs/OS/fs-pagecache.md) -------------------
+ * One task owns the VFS metadata path, behind a per-client shm CONTROL CHANNEL (the §1
+ * shm primitive — the reusable IPC substrate). Each proc SLOT gets one control page,
+ * allocated once at startup and reused for the slot's life (no per-request alloc). The
+ * client's deferral thunk (PL1, in the CLIENT's space) marshals the request into it —
+ * crucially COPYING the path string out of client memory, which is mapped there but NOT
+ * in the fs task's master space (a per-process-heap path would otherwise resolve to the
+ * wrong physical). The fs task reaches the page by its pool IDENTITY address
+ * (vm_shm_kaddr) and serves from the copy. The kernel queue is now just the DOORBELL
+ * (carries the slot); the request DATA lives in shm.
  *
- * SCOPE (3a): only open/lseek/close route here — metadata ops with NO client data
- * buffer, so the fs task (running in the master/kernel space) never has to touch a
- * client PL0 VA. read/write stay in the caller's deferral thunk (its own space, where
- * the user buffer is mapped) under g_vfs_mtx until the demand-paged page store (3c)
- * unifies the data path and lets the lock retire. */
+ * SCOPE (3b): open/lseek/close route here — metadata ops. read/write stay in the
+ * caller's deferral thunk (its own space, where the user buffer is mapped) under
+ * g_vfs_mtx until the demand-paged page store (3c) unifies the data path over the same
+ * shm substrate and lets the lock retire. */
+#define FS_PATH_MAX 256
 typedef struct {
-    uint32_t     op;                 /* SYS_open / SYS_lseek / SYS_close */
-    proc_t      *proc;               /* the requesting process (explicit ctx, not cur_proc) */
-    long         a0, a1, a2;         /* op args (path / fd / off / whence) */
-    volatile long result;
-    TaskHandle_t waiter;             /* the client task to notify on completion */
-} fs_req;
+    uint32_t          op;            /* SYS_open / SYS_lseek / SYS_close */
+    uint32_t          fd;            /* lseek/close target */
+    int32_t           off;           /* lseek offset */
+    int32_t           whence;        /* lseek whence */
+    volatile int32_t  result;        /* service -> client */
+    char              path[FS_PATH_MAX];   /* open: marshalled path (identity-reachable) */
+} fs_ctl;
 
-static QueueHandle_t g_fs_q;         /* fs_req* mailbox; NULL until frtos_fs_start() */
+static QueueHandle_t g_fs_q;                 /* doorbell: slot indices; NULL until frtos_fs_start() */
+static fs_ctl       *g_fs_ctl[MAXPROC];      /* per-slot control page (pool identity addr) */
+static TaskHandle_t  g_fs_waiter[MAXPROC];   /* client task parked on each slot's request */
 
-/* run one metadata op with an EXPLICIT proc (the fs task's cur_proc() is itself, not
- * the client) — so it can't share do_syscall, which resolves the proc via cur_proc. */
-static long fs_serve(fs_req *rq)
+static long do_syscall(uint32_t num, long a0, long a1, long a2);   /* fallback (caller ctx) */
+
+/* serve one request in the FS TASK: explicit proc (cur_proc() here is the fs task, not
+ * the client), path/args read from the slot's identity-mapped control page. */
+static long fs_serve(int slot)
 {
-    proc_t *p = rq->proc;
-    switch (rq->op) {
-    case SYS_open:  return sys_open(p, (const char *)rq->a0);
-    case SYS_lseek: return sys_lseek(p, (int)rq->a0, rq->a1, (int)rq->a2);
+    proc_t *p = &g_proc[slot];
+    fs_ctl *c = g_fs_ctl[slot];
+    switch (c->op) {
+    case SYS_open:  return sys_open(p, c->path);           /* path copied into the shm page */
+    case SYS_lseek: return sys_lseek(p, (int)c->fd, c->off, (int)c->whence);
     case SYS_close:
-        if (p && rq->a0 >= 3 && rq->a0 < NFD && p->fd[rq->a0].open) {
-            vfs_close(&p->fd[rq->a0].vf);
-            p->fd[rq->a0].open = 0;
+        if (p && c->fd >= 3 && c->fd < NFD && p->fd[c->fd].open) {
+            vfs_close(&p->fd[c->fd].vf);
+            p->fd[c->fd].open = 0;
         }
         return 0;
     default:        return -1;
@@ -306,36 +316,51 @@ static void fs_task(void *arg)
 {
     (void)arg;
     for (;;) {
-        fs_req *rq;
-        if (xQueueReceive(g_fs_q, &rq, portMAX_DELAY) != pdTRUE) continue;
-        rq->result = fs_serve(rq);
-        xTaskNotifyGive(rq->waiter);           /* wake the parked client */
+        int slot;
+        if (xQueueReceive(g_fs_q, &slot, portMAX_DELAY) != pdTRUE) continue;
+        g_fs_ctl[slot]->result = fs_serve(slot);
+        xTaskNotifyGive(g_fs_waiter[slot]);    /* wake the parked client */
     }
 }
 
-/* called from deferral_thunk (client TASK context) for a routed metadata op: hand it
- * to the fs task and park until served. The req lives on this task's stack, which stays
- * valid while we're blocked. Falls back to inline execution if the fs task isn't up
- * (host_test / pre-start) so nothing depends on it existing. */
+/* deferral_thunk (client TASK context) -> hand a routed metadata op to the fs task.
+ * Marshal into the slot's control page (copying the path out of client memory, mapped
+ * HERE), ring the doorbell, park. Fallback (fs task not up) runs the op inline via
+ * do_syscall — cur_proc() is the client here, so that's still correct. */
 static long fs_call(proc_t *p)
 {
-    if (!g_fs_q) return fs_serve(&(fs_req){ .op = p->dnum, .proc = p,
-                                            .a0 = p->da0, .a1 = p->da1, .a2 = p->da2 });
-    fs_req rq = { .op = p->dnum, .proc = p, .a0 = p->da0, .a1 = p->da1, .a2 = p->da2,
-                  .result = -1, .waiter = xTaskGetCurrentTaskHandle() };
-    fs_req *pr = &rq;
-    xQueueSend(g_fs_q, &pr, portMAX_DELAY);
+    int     slot = (int)(p - g_proc);
+    fs_ctl *c = (slot >= 0 && slot < MAXPROC) ? g_fs_ctl[slot] : 0;
+    if (!g_fs_q || !c) return do_syscall(p->dnum, p->da0, p->da1, p->da2);
+    c->op = p->dnum;
+    if (p->dnum == SYS_open) {
+        const char *src = (const char *)p->da0;   /* client PL0 path — reachable in this space */
+        int i = 0;
+        if (src) while (src[i] && i < FS_PATH_MAX - 1) { c->path[i] = src[i]; i++; }
+        c->path[i] = 0;
+    } else {
+        c->fd = (uint32_t)p->da0; c->off = (int32_t)p->da1; c->whence = (int32_t)p->da2;
+    }
+    c->result = -1;
+    g_fs_waiter[slot] = xTaskGetCurrentTaskHandle();
+    xQueueSend(g_fs_q, &slot, portMAX_DELAY);
     ulTaskNotifyTake(pdTRUE, portMAX_DELAY);   /* index 0: free here (not a waitpid waiter) */
-    return rq.result;
+    return c->result;
 }
 
-/* stand up the fs service: the request mailbox + the owning task. Called from main
- * before the scheduler starts, so the task exists before any PL0 open. Priority 4 (>
- * procs at 3) so a queued request is served promptly, then it blocks again. 8192-word
- * stack: FatFs/xsdps metadata walks are stack-hungry, like the shell task. */
+/* stand up the fs service: per-slot shm control pages (the IPC substrate — one page
+ * each, kept for the system's life), the doorbell queue, and the owning task. From main
+ * before the scheduler, so it's ready before any PL0 open. Priority 4 (> procs at 3) so
+ * a queued request is served promptly, then it blocks again. 8192-word stack:
+ * FatFs/xsdps metadata walks are stack-hungry, like the shell task. */
 void frtos_fs_start(void)
 {
-    g_fs_q = xQueueCreate(8, sizeof(fs_req *));
+    for (int s = 0; s < MAXPROC; s++) {
+        int id = vm_shm_create(sizeof(fs_ctl));
+        g_fs_ctl[s] = (id >= 0) ? (fs_ctl *)vm_shm_kaddr(id) : 0;
+        if (!g_fs_ctl[s]) { if (g_console) g_console("[fs] shm ctl alloc failed\n", 26); return; }
+    }
+    g_fs_q = xQueueCreate(MAXPROC, sizeof(int));
     if (!g_fs_q) { if (g_console) g_console("[fs] queue create failed\n", 25); return; }
     if (xTaskCreate(fs_task, "fs", 8192, NULL, 4, NULL) != pdPASS) {
         if (g_console) g_console("[fs] task create failed\n", 24);
