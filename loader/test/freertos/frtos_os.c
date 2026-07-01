@@ -37,7 +37,9 @@ typedef struct {
     uintptr_t         entry;
     SemaphoreHandle_t done;
     int               exit_code;
-    volatile int      exited;         /* set by the exit thunk; polled by frtos_waitpid */
+    volatile int      exited;         /* set by the exit thunk */
+    volatile int      waited;         /* a waitpid registered -> that caller will reap it */
+    TaskHandle_t      waiter;         /* PL0 waitpid task to notify on exit (0 = none/kernel waiter) */
     int               argc;
     char            **argv;
     fd_t              fd[NFD];
@@ -176,14 +178,27 @@ void *sys_sbrk(int incr)
     return kern_sbrk(incr);
 }
 
-/* runs in TASK (System-mode) context — safe to call yielding FreeRTOS APIs */
+/* runs in TASK (System-mode) context — safe to call yielding FreeRTOS APIs.
+ *
+ * The task does NOT delete itself. Self-delete (vTaskDelete(NULL)) only marks the TCB
+ * for deferred teardown by the IDLE task, so its lists aren't unlinked yet — but the
+ * `done`/notify wake lets the waiter reap the proc slot and REUSE the static TCB/stack
+ * immediately, while the old task is still linked in FreeRTOS's ready/termination
+ * lists. That cross-links the lists (a reused TCB in two lists at once) and corrupts
+ * scheduling. Instead the task marks itself exited, wakes the waiter, and SUSPENDS
+ * itself. The waiter (frtos_reap) then calls vTaskDelete on THIS handle from another
+ * task, which runs prvDeleteTCB inline — fully unlinking it from every list — before
+ * the slot is freed. No self-delete, no IDLE teardown, no reuse-before-unlink. */
 static void task_exit_thunk(void)
 {
     proc_t *p = cur_proc();
-    if (p) p->exited = 1;             /* frtos_waitpid polls this */
-    if (p && p->done) xSemaphoreGive(p->done);
-    vTaskDelete(NULL);
-    for (;;) {}
+    if (p) {
+        p->exited = 1;
+        if (p->waiter) xTaskNotifyGive(p->waiter);   /* wake a PL0 waitpid (task notification) */
+        if (p->done)   xSemaphoreGive(p->done);      /* wake a kernel-task waitpid (shell_task) */
+    }
+    vTaskSuspend(NULL);                              /* park; the waiter deletes us via frtos_reap */
+    for (;;) vTaskSuspend(NULL);                     /* never resumed */
 }
 
 /* For a STACK OVERFLOW (DFAR in a guard page) the task's own stack is unusable,
@@ -206,9 +221,14 @@ uint32_t xtos_emerg_sp(void)
 void xtos_task_fault_exit(void)
 {
     proc_t *p = cur_proc();
-    if (p) { p->exit_code = -1; if (p->done) xSemaphoreGive(p->done); }   /* killed */
-    vTaskDelete(NULL);
-    for (;;) {}
+    if (p) {                                        /* killed by a fault */
+        p->exit_code = -1;
+        p->exited = 1;
+        if (p->waiter) xTaskNotifyGive(p->waiter);  /* wake a PL0 waitpid */
+        if (p->done)   xSemaphoreGive(p->done);     /* wake a kernel-task waitpid */
+    }
+    vTaskSuspend(NULL);                             /* park; the waiter reaps us (see task_exit_thunk) */
+    for (;;) vTaskSuspend(NULL);
 }
 
 /* ---- file syscalls (dispatch through the VFS: romfs / fatfs / ...) ------ */
@@ -252,7 +272,7 @@ static const xtld_host *g_khost;   /* kernel loader host (frtos_set_host); used 
  * svc #2 path the saved frame ({r0..r12, lr=PC, sp_usr, spsr}). */
 void *cur_dctx(void) { proc_t *p = cur_proc(); return p ? p->dctx : (void *)0; }
 
-void deferral_thunk(void)                 /* PL1 (System), task context — DORMANT (see defer_syscall) */
+void deferral_thunk(void)                 /* PL1 (System), task context */
 {
     extern void __sysret(long);
     extern int  sh_readc(void);
@@ -260,7 +280,7 @@ void deferral_thunk(void)                 /* PL1 (System), task context — DORM
     long r = -1;
     if (p) switch (p->dnum) {
         case SYS_spawn:   r = frtos_spawn_argv((const char *)p->da0, (int)p->da1, (char **)p->da2, g_khost); break;
-        case SYS_waitpid: r = frtos_waitpid((int)p->da0); break;
+        case SYS_waitpid: { extern int frtos_waitpid_notify(int); r = frtos_waitpid_notify((int)p->da0); break; }
         case SYS_read:    {                                /* fd 0 (stdin): one char from the console */
             char *buf = (char *)p->da1;
             if (p->da0 == 0 && buf && p->da2 > 0) { buf[0] = (char)sh_readc(); r = 1; }
@@ -274,7 +294,6 @@ void deferral_thunk(void)                 /* PL1 (System), task context — DORM
 
 /* defer the blocking syscalls; the rest run inline in do_syscall. Returns 1 to make
  * the vector resume deferral_thunk at PL1 (System). */
-__attribute__((unused))                   /* DORMANT until the deferral-wake fix (see k_syscall_dispatch) */
 static int defer_syscall(struct k_regs *regs, uint32_t num)
 {
     proc_t *p = cur_proc();
@@ -365,11 +384,10 @@ int k_syscall_dispatch(struct k_regs *regs)
         regs->lr = (uint32_t)(uintptr_t)task_exit_thunk;   /* resume the thunk (at PL1) */
         return 1;
     }
-    /* NOTE: the syscall-deferral path (defer_syscall/deferral_thunk/__sysret, svc #2)
-     * is built + proven for NON-blocking deferred syscalls, but a cross-task wake does
-     * not reach a task blocked inside the thunk (FreeRTOS A9 port). So blocking PL0
-     * syscalls (waitpid, stdin read) are NOT wired here yet — interactive shell pending
-     * that fix. SYS_spawn runs inline (it's non-blocking and same-priority -> no yield). */
+    /* waitpid blocks -> run in task context via the deferral thunk (which uses a
+     * latched task NOTIFICATION, not the semaphore event-list, to wake). SYS_spawn is
+     * non-blocking + same-priority (no yield) so it stays inline. */
+    if (num == SYS_waitpid) return defer_syscall(regs, num);
     regs->r[0] = (uint32_t)do_syscall(num, regs->r[0], regs->r[1], regs->r[2]);
     return 0;
 }
@@ -526,7 +544,7 @@ static int proc_launch(int slot, xtld_obj *obj, uintptr_t entry,
 {
     proc_t *p = &g_proc[slot];
     for (int i = 0; i < NFD; i++) p->fd[i].open = 0;
-    p->obj = obj; p->entry = entry; p->exit_code = 0; p->exited = 0; p->pid = g_next_pid++;
+    p->obj = obj; p->entry = entry; p->exit_code = 0; p->exited = 0; p->waited = 0; p->waiter = 0; p->pid = g_next_pid++;
     p->done = xSemaphoreCreateBinary();
     if (!p->done) return -1;
     /* T2-b/c: private address space — demand heap + COW(libc data, synthetic, and
@@ -558,9 +576,12 @@ static int proc_launch(int slot, xtld_obj *obj, uintptr_t entry,
     return p->pid;
 }
 
+static void reap_orphans(void);
+
 int frtos_spawn(const uint8_t *image, uint32_t len, int argc, char **argv,
                 const xtld_host *host)
 {
+    reap_orphans();                              /* clean up exited '&'/orphan children first */
     int slot = -1;
     for (int i = 0; i < MAXPROC; i++) if (!g_proc[i].used) { slot = i; break; }
     if (slot < 0) return -1;
@@ -589,6 +610,7 @@ int frtos_spawn_host(const char *hostpath, int argc, char **argv, const xtld_hos
     hostfs_close(h);
     if (got != len) { host->dealloc(buf, host->user); return -1; }
 
+    reap_orphans();                              /* clean up exited '&'/orphan children first */
     int slot = -1;
     for (int i = 0; i < MAXPROC; i++) if (!g_proc[i].used) { slot = i; break; }
     if (slot < 0) { host->dealloc(buf, host->user); return -1; }
@@ -770,27 +792,71 @@ int frtos_open_lib(const char *name, const uint8_t **data, uint32_t *len, void *
     return 0;
 }
 
-int frtos_waitpid(int pid)
+static proc_t *proc_by_pid(int pid)
 {
-    proc_t *p = NULL;
     for (int i = 0; i < MAXPROC; i++)
-        if (g_proc[i].used && g_proc[i].pid == pid) { p = &g_proc[i]; break; }
-    if (!p) return -1;
+        if (g_proc[i].used && g_proc[i].pid == pid) return &g_proc[i];
+    return NULL;
+}
 
-    xSemaphoreTake(p->done, portMAX_DELAY);    /* yields via svc #0 until exit (kernel-task waiters) */
+/* reap an exited child: reclaim its resources + slot, return its exit code. Runs in
+ * the WAITER's context (never the child's), so vTaskDelete(child) here is a non-self
+ * delete -> prvDeleteTCB runs inline and fully unlinks the child from every FreeRTOS
+ * list before its static TCB/stack can be reused by the next spawn. */
+static int frtos_reap(proc_t *p)
+{
     int code = p->exit_code;
+    if (p->task) { vTaskDelete(p->task); p->task = 0; }   /* the child parked in vTaskSuspend */
     vSemaphoreDelete(p->done);
     vm_space_destroy((int)(p - g_proc));         /* reclaim its private pages to the pool */
-    /* a transient (runhost) image isn't cached: unload it now (fini + transitive lib
-     * release), restore its master pages, and free the host ELF buffer + argv. */
     if (p->transient) {
         extern void mmu_unprotect(uint32_t, uint32_t);
         mmu_unprotect((uint32_t)xtld_image_base(p->obj), (uint32_t)xtld_span(p->obj));
         xtld_unload(p->obj);
-        register_lib_cow();                      /* drop any now-freed library's COW range */
-        if (p->src) { frtos_free(p->src, NULL); p->src = 0; }  /* argv lives on the task stack now */
+        register_lib_cow();
+        if (p->src) { frtos_free(p->src, NULL); p->src = 0; }
         p->transient = 0;
     }
-    p->used = 0;                                 /* reap the slot (cached image stays resident) */
+    p->used = 0;
     return code;
 }
+
+/* Reap any exited child that nobody will waitpid (a backgrounded '&' command, or an
+ * orphan whose parent exited). Swept lazily at spawn time — those children parked
+ * themselves in vTaskSuspend on exit and would otherwise leak their slot + static TCB.
+ * `waited` is set by a waitpid caller, so a foreground child mid-wait is left alone.
+ * Runs yield-free (vTaskDelete of a non-current task), so it's safe from the spawn
+ * path even when that path is the inline SYS_spawn in the SVC handler. */
+static void reap_orphans(void)
+{
+    for (int i = 0; i < MAXPROC; i++)
+        if (g_proc[i].used && g_proc[i].exited && !g_proc[i].waited)
+            frtos_reap(&g_proc[i]);
+}
+
+/* PL0 waitpid, driven by the syscall-deferral thunk (System-mode task context). A real
+ * block on a task notification: the child (task_exit_thunk) marks itself exited, sends
+ * the notification, and parks in vTaskSuspend; we wake, then reap it (which deletes its
+ * parked task). The child never self-deletes, so its FreeRTOS lists are unlinked before
+ * its static TCB/stack is reused — see task_exit_thunk + frtos_reap. */
+int frtos_waitpid_notify(int pid)
+{
+    proc_t *p = proc_by_pid(pid);
+    if (!p) return -1;
+    p->waited = 1;
+    p->waiter = xTaskGetCurrentTaskHandle();      /* task_exit_thunk notifies this task */
+    while (!p->exited) ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
+    return frtos_reap(p);
+}
+
+/* waitpid for a KERNEL task waiter (shell_task) — blocks on the child's `done`
+ * semaphore rather than a task notification. */
+int frtos_waitpid(int pid)
+{
+    proc_t *p = proc_by_pid(pid);
+    if (!p) return -1;
+    p->waited = 1;
+    xSemaphoreTake(p->done, portMAX_DELAY);    /* yields via svc #0 until exit */
+    return frtos_reap(p);
+}
+

@@ -5,8 +5,10 @@
  * evaluated as Lua (`x = 5`, `for ...`, `print(...)`, `spawn("...")`). One persistent
  * lua_State per sh, so script-local Lua variables persist across lines.
  *
- * `sh <script>` runs a script and exits (each /OS/Boot/NN-* is a separate sh process,
- * so scripts share no state). Interactive REPL = TODO (needs blocking stdin + waitpid).
+ * A foreground command runs to completion (waitpid) before the script continues;
+ * a trailing '&' launches it in the background. `sh <script>` runs a script and exits
+ * (each /OS/Boot/NN-* is a separate sh process, so scripts share no state). Interactive
+ * REPL = TODO (still needs blocking stdin; command waitpid works).
  *
  * Embeds the real Lua 5.4 core, linked against libc.so/libm.so.
  */
@@ -64,10 +66,14 @@ static void run_line(char *line)
     for (char *t = strtok(tmp, " \t"); t && argc < 15; t = strtok(NULL, " \t")) argv[argc++] = t;
     argv[argc] = 0;
 
+    int bg = 0;                                  /* trailing '&' -> run in the background */
+    if (argc > 0 && !strcmp(argv[argc - 1], "&")) { argv[--argc] = 0; bg = 1; }
+
     char path[96];
     if (argc > 0 && resolve_prog(argv[0], path, sizeof path)) {   /* command */
         argv[0] = path;
-        sys_spawn(path, argc, argv);   /* fire-and-forget for now (waitpid pending the deferral wake fix) */
+        long pid = sys_spawn(path, argc, argv);
+        if (pid >= 0 && !bg) sys_waitpid((int)pid);   /* foreground: run to completion, then continue */
         return;
     }
     if (luaL_dostring(L, line) != LUA_OK) {                       /* otherwise: Lua */
