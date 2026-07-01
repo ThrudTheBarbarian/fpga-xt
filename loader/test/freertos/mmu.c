@@ -146,10 +146,20 @@ static int      l2pool_next;
 #define PG_RO     (1u << 9)                          /* AP[2]=1 -> read-only */
 #define PG_XN     0x1u                               /* execute-never */
 
+/* Split a 1MB section into a coarse L2 (or return the existing one). The check +
+ * pool-claim + background-fill + L1 install must be ATOMIC: two tasks loading images
+ * concurrently (an interactive spawn while a background daemon loads a lib) would
+ * otherwise both see the section as un-split, claim two pool entries, and race the
+ * L1 write — orphaning one L2 and corrupting the mapping. Guard with an IRQ-masked
+ * critical section (short: at most a 256-entry fill, only at image load). */
 static uint32_t *l2_for_section(uint32_t sec)
 {
-    if ((l1[sec] & 0x3u) == 0x1u) return (uint32_t *)(l1[sec] & 0xFFFFFC00u);  /* already coarse */
-    if (l2pool_next >= L2POOL_N) {                                              /* pool exhausted */
+    unsigned f = xt_irq_save();
+    if ((l1[sec] & 0x3u) == 0x1u) {                                            /* already coarse */
+        uint32_t *l2 = (uint32_t *)(l1[sec] & 0xFFFFFC00u); xt_irq_restore(f); return l2;
+    }
+    if (l2pool_next >= L2POOL_N) {                                             /* pool exhausted */
+        xt_irq_restore(f);
         extern void puts0(const char *); extern void putu(unsigned);
         puts0("*** mmu: split-pool EXHAUSTED at section "); putu(sec);
         puts0(" (loaded code there will NOT be PL0-executable)\n");
@@ -163,6 +173,7 @@ static uint32_t *l2_for_section(uint32_t sec)
      * gets PL0-RW via the per-process COW override in vm.c). */
     for (uint32_t i = 0; i < 256; i++) l2[i] = (secbase + i * 0x1000u) | PGS_NONE;
     l1[sec] = ((uint32_t)l2 & 0xFFFFFC00u) | 0x1u;
+    xt_irq_restore(f);
     return l2;
 }
 
