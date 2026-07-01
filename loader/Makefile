@@ -107,11 +107,16 @@ FRASM := test/freertos/xt_boot.S test/freertos/xt_vectors.S $(FRPORT)/portASM.S
 # Build the kernel ELF(s) WITHOUT launching qemu — for rebuilding to pick up a new
 # romfs (e.g. after dropping a lib into romfs-overlay/) then flashing or running it
 # yourself.  `freertos-build` = qemu ELF; add `hw` for the JTAG-load HW ELF.
-.PHONY: freertos-build hw
+.PHONY: freertos-build hw hosttest
 freertos-build: $(BUILD)/freertos.elf
 	@echo "built $< (no qemu) — run: make freertos | flash: vivado/jtag-valhalla.sh dow"
 hw: $(BUILD)/freertos-hw.elf
 	@echo "built $< — JTAG-load: vivado/jtag-valhalla.sh testbed"
+# Toolchain testbed: boots straight into the kernel menu (skips the PL0 login sh), which
+# owns `runhost` — load + run a host-filesystem .so over semihosting. The compiler drives
+# it non-interactively:  printf 'runhost <hostpath>\nexit\n' | make hosttest-run
+hosttest: $(BUILD)/freertos-hosttest.elf
+	@echo "built $< — testbed: printf 'runhost <hostpath>\\nexit\\n' | $(QEMUZYNQ) -kernel $<"
 
 # Stage 2 + M2: loader + svc gateway + spawn-by-path + file syscalls, on real FreeRTOS.
 freertos: $(BUILD)/freertos.elf
@@ -127,6 +132,10 @@ $(BUILD)/freertos.elf: $(FRSRC) $(FRASM) test/freertos/freertos.ld test/freertos
 # ps7_init; run vmtest/demandtest/faulttest to exercise tier-2 on real silicon.
 $(BUILD)/freertos-hw.elf: $(FRSRC) $(FRASM) test/freertos/freertos.ld test/freertos/FreeRTOSConfig.h $(BUILD)/romfs_blob.h | $(BUILD)
 	$(ARMCC) $(FRCFLAGS) -DXT_HW_UART -DXT_HW -T test/freertos/freertos.ld $(FRASM) $(FRSRC) -lgcc -o $@
+
+# Kernel-menu (runhost) testbed ELF for the toolchain — same sources, -DXT_KERNEL_SHELL.
+$(BUILD)/freertos-hosttest.elf: $(FRSRC) $(FRASM) test/freertos/freertos.ld test/freertos/FreeRTOSConfig.h $(BUILD)/romfs_blob.h | $(BUILD)
+	$(ARMCC) $(FRCFLAGS) $(XTRACFLAGS) -DXT_KERNEL_SHELL -T test/freertos/freertos.ld $(FRASM) $(FRSRC) -lgcc -o $@
 
 # Load + run an externally-built PIC .so (e.g. xtc output) on the real loader:
 #   make xtcrun XTC_SO=/path/to/foo.so

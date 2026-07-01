@@ -149,13 +149,21 @@ static void shell_task(void *arg)
     /* Login shell: the interactive PL0 sh owns the console; respawn it when it exits
      * (like init respawning a getty — `exit` just logs back in). If it can't launch
      * (sh.so missing / spawn fails) fall through to the kernel test menu below, which
-     * stays as the PL1 safety net + the tier-2 battery. */
+     * stays as the PL1 safety net + the tier-2 battery.
+     *
+     * XT_KERNEL_SHELL skips the login sh and boots straight into the kernel menu below,
+     * which owns `runhost` (load + run a host-filesystem .so over semihosting). That's
+     * the non-interactive testbed the toolchain drives: `printf 'runhost <hostpath>\n
+     * exit\n' | qemu ...` — the PL0 Lua sh would parse `runhost ...` as Lua. Build it
+     * with `make hosttest` (-> freertos-hosttest.elf). */
+#ifndef XT_KERNEL_SHELL
     for (;;) {
         char *av[1] = { (char *)"/System/bin/sh" };
         int pid = frtos_spawn_argv("/System/bin/sh", 1, av, &g_host);
         if (pid < 0) { puts0("[login] sh unavailable — dropping to the kernel menu\n"); break; }
         frtos_waitpid(pid);
     }
+#endif
 
     puts0("\nXTOS shell  —  try: selftest | echo | hello | libc_test | gemtext | desktop | exit\n");
     char line[128];
