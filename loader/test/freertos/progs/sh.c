@@ -7,8 +7,9 @@
  *
  * A foreground command runs to completion (waitpid) before the script continues;
  * a trailing '&' launches it in the background. `sh <script>` runs a script and exits
- * (each /OS/Boot/NN-* is a separate sh process, so scripts share no state). Interactive
- * REPL = TODO (still needs blocking stdin; command waitpid works).
+ * (each /OS/Boot/NN-* is a separate sh process, so scripts share no state). `sh` with no
+ * argument is an interactive REPL: it reads lines from stdin (blocking read, fd 0) and
+ * runs each; `exit`/`quit` (or EOF) leaves the shell.
  *
  * Embeds the real Lua 5.4 core, linked against libc.so/libm.so.
  */
@@ -66,6 +67,9 @@ static void run_line(char *line)
     for (char *t = strtok(tmp, " \t"); t && argc < 15; t = strtok(NULL, " \t")) argv[argc++] = t;
     argv[argc] = 0;
 
+    if (argc > 0 && (!strcmp(argv[0], "exit") || !strcmp(argv[0], "quit")))  /* builtin */
+        { lua_close(L); sys_exit(0); }
+
     int bg = 0;                                  /* trailing '&' -> run in the background */
     if (argc > 0 && !strcmp(argv[argc - 1], "&")) { argv[--argc] = 0; bg = 1; }
 
@@ -90,7 +94,23 @@ void _app_entry(int argc, char **argv)
     open_libs(L);
     lua_register(L, "spawn", l_spawn);
 
-    if (argc < 2) { sys_write(2, "sh: interactive REPL not yet implemented\n", 41); lua_close(L); sys_exit(1); }
+    if (argc < 2) {                                   /* interactive REPL */
+        char line[256];
+        for (;;) {
+            sys_write(1, "sh$ ", 4);
+            int n = 0;                                /* read a line via blocking stdin (fd 0) */
+            for (;;) {
+                char c;
+                if (sys_read(0, &c, 1) != 1) { if (n == 0) { sys_write(1, "\n", 1); lua_close(L); sys_exit(0); } break; }
+                if (c == '\r') continue;
+                if (c == '\n') break;
+                if ((c == 8 || c == 127)) { if (n > 0) n--; continue; }   /* backspace */
+                if (n < (int)sizeof line - 1) line[n++] = c;
+            }
+            line[n] = 0;
+            run_line(line);
+        }
+    }
 
     FILE *f = fopen(argv[1], "r");
     if (!f) { sys_write(2, "sh: cannot open ", 16); sys_write(2, argv[1], strlen(argv[1])); sys_write(2, "\n", 1);

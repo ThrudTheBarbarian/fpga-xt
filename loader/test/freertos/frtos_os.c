@@ -283,8 +283,11 @@ void deferral_thunk(void)                 /* PL1 (System), task context */
         case SYS_waitpid: { extern int frtos_waitpid_notify(int); r = frtos_waitpid_notify((int)p->da0); break; }
         case SYS_read:    {                                /* fd 0 (stdin): one char from the console */
             char *buf = (char *)p->da1;
-            if (p->da0 == 0 && buf && p->da2 > 0) { buf[0] = (char)sh_readc(); r = 1; }
-            else r = 0;
+            if (p->da0 == 0 && buf && p->da2 > 0) {
+                int c = sh_readc();                        /* blocks until a char; <0 at EOF */
+                if (c < 0) r = 0;                          /* EOF -> 0 bytes read */
+                else { buf[0] = (char)c; r = 1; }
+            } else r = 0;
             break;
         }
         default: r = -1;
@@ -384,10 +387,13 @@ int k_syscall_dispatch(struct k_regs *regs)
         regs->lr = (uint32_t)(uintptr_t)task_exit_thunk;   /* resume the thunk (at PL1) */
         return 1;
     }
-    /* waitpid blocks -> run in task context via the deferral thunk (which uses a
-     * latched task NOTIFICATION, not the semaphore event-list, to wake). SYS_spawn is
-     * non-blocking + same-priority (no yield) so it stays inline. */
+    /* Blocking syscalls run in task context via the deferral thunk (which can yield):
+     *   - waitpid: blocks until the child exits.
+     *   - read(fd 0): blocks until a console character arrives.
+     * A read of a regular file (fd >= 3) is non-blocking, so it stays inline. SYS_spawn
+     * is non-blocking + same-priority (no yield) so it stays inline too. */
     if (num == SYS_waitpid) return defer_syscall(regs, num);
+    if (num == SYS_read && regs->r[0] == 0) return defer_syscall(regs, num);
     regs->r[0] = (uint32_t)do_syscall(num, regs->r[0], regs->r[1], regs->r[2]);
     return 0;
 }
