@@ -272,31 +272,28 @@ static const xtld_host *g_khost;   /* kernel loader host (frtos_set_host); used 
  * svc #2 path the saved frame ({r0..r12, lr=PC, sp_usr, spsr}). */
 void *cur_dctx(void) { proc_t *p = cur_proc(); return p ? p->dctx : (void *)0; }
 
+static long do_syscall(uint32_t num, long a0, long a1, long a2);   /* run the normal handler in task ctx */
+
 void deferral_thunk(void)                 /* PL1 (System), task context */
 {
     extern void __sysret(long);
     extern int  sh_readc(void);
     proc_t *p = cur_proc();
     long r = -1;
-    if (p) switch (p->dnum) {
-        case SYS_spawn:   r = frtos_spawn_argv((const char *)p->da0, (int)p->da1, (char **)p->da2, g_khost); break;
-        case SYS_waitpid: { extern int frtos_waitpid_notify(int); r = frtos_waitpid_notify((int)p->da0); break; }
-        case SYS_open:    r = sys_open(p, (const char *)p->da0); break;   /* FatFs path-walk in task ctx */
-        case SYS_lseek:   r = sys_lseek(p, (int)p->da0, (long)p->da1, (int)p->da2); break;
-        case SYS_read:    {
+    if (p) {
+        if (p->dnum == SYS_spawn) {                        /* may load libs from the SD (FatFs) */
+            r = frtos_spawn_argv((const char *)p->da0, (int)p->da1, (char **)p->da2, g_khost);
+        } else if (p->dnum == SYS_waitpid) {               /* blocks until the child exits */
+            extern int frtos_waitpid_notify(int); r = frtos_waitpid_notify((int)p->da0);
+        } else if (p->dnum == SYS_read && p->da0 == 0) {   /* stdin: one blocking console char */
             char *buf = (char *)p->da1;
-            if (p->da0 == 0) {                             /* fd 0 (stdin): one console char */
-                if (buf && p->da2 > 0) {
-                    int c = sh_readc();                    /* blocks until a char; <0 at EOF */
-                    if (c < 0) r = 0;                      /* EOF -> 0 bytes read */
-                    else { buf[0] = (char)c; r = 1; }
-                } else r = 0;
-            } else {                                       /* fd>=3 FatFs file read in task ctx */
-                r = sys_read(p, (int)p->da0, buf, (uint32_t)p->da2);
-            }
-            break;
+            if (buf && p->da2 > 0) { int c = sh_readc(); if (c < 0) r = 0; else { buf[0] = (char)c; r = 1; } }
+            else r = 0;
+        } else {
+            /* open / read / write / lseek / close of a file — the SAME handler that runs
+             * inline for console/romfs, but now in task context so it can drive FatFs. */
+            r = do_syscall(p->dnum, p->da0, p->da1, p->da2);
         }
-        default: r = -1;
     }
     __sysret(r);                          /* never returns */
 }
@@ -378,6 +375,36 @@ static long do_syscall(uint32_t num, long a0, long a1, long a2)
     }
 }
 
+/* An open fd whose VFS backing is NOT in memory (vf.data == NULL) is an SD/FatFs file:
+ * its I/O must run in task context. Console fds (0/1/2) and in-memory romfs files stay
+ * inline. */
+static int fd_is_sd(uint32_t fd)
+{
+    proc_t *p = cur_proc();
+    return p && fd >= 3 && fd < NFD && p->fd[fd].open && !p->fd[fd].vf.data;
+}
+
+/* POLICY — does this syscall have to run in TASK context (via the deferral thunk)
+ * rather than inline in the SVC handler? A syscall can't run inline if it BLOCKS (its
+ * svc-#0 yield would nest inside this svc) or if it drives FatFs/SD, whose polled
+ * transfers only work with IRQs enabled and the scheduler live (the context sd_init
+ * runs in — inline we're in an exception with IRQs masked). Everything the deferral
+ * covers is centralized here, so a new filesystem syscall is one line, not a new bug. */
+static int needs_task_ctx(struct k_regs *regs, uint32_t num)
+{
+    uint32_t fd = regs->r[0];
+    switch (num) {
+    case SYS_waitpid: return 1;                    /* blocks on the child */
+    case SYS_spawn:   return 1;                    /* may load a DT_NEEDED lib from the SD */
+    case SYS_open:    return 1;                    /* may walk a FatFs directory path */
+    case SYS_read:    return fd == 0 || fd_is_sd(fd);   /* stdin blocks; SD file -> task ctx */
+    case SYS_write:
+    case SYS_lseek:
+    case SYS_close:   return fd_is_sd(fd);         /* SD file op -> task ctx (console/romfs inline) */
+    default:          return 0;                    /* getpid/sbrk/mmap/munmap/fb/gettimeofday */
+    }
+}
+
 /* called from the chained SVC vector with the saved register block. Returns 1 for
  * the exit case (the vector then resumes task_exit_thunk at PL1 — see xt_vectors.S),
  * 0 otherwise. */
@@ -393,27 +420,7 @@ int k_syscall_dispatch(struct k_regs *regs)
         regs->lr = (uint32_t)(uintptr_t)task_exit_thunk;   /* resume the thunk (at PL1) */
         return 1;
     }
-    /* Some syscalls must run in TASK context (the deferral thunk), not inline in this
-     * SVC handler where IRQs are masked and we're on the exception stack:
-     *   - waitpid: blocks until the child exits.
-     *   - read(fd 0): blocks until a console character arrives.
-     *   - open, and read of an SD file: drive FatFs/xsdps, whose polled transfers need
-     *     the task context that sd_init runs in (IRQs on, scheduler live). In-memory
-     *     romfs reads (vf.data != NULL) are safe inline, so only FatFs reads defer.
-     * SYS_spawn is non-blocking + same-priority (no yield) so it stays inline. */
-    if (num == SYS_waitpid) return defer_syscall(regs, num);
-    if (num == SYS_open)    return defer_syscall(regs, num);
-    if (num == SYS_read) {
-        if (regs->r[0] == 0) return defer_syscall(regs, num);         /* stdin */
-        proc_t *pp = cur_proc(); int fd = (int)regs->r[0];
-        if (pp && fd >= 3 && fd < NFD && pp->fd[fd].open && !pp->fd[fd].vf.data)
-            return defer_syscall(regs, num);                          /* SD file -> task ctx */
-    }
-    if (num == SYS_lseek) {                                            /* SD file seek -> task ctx */
-        proc_t *pp = cur_proc(); int fd = (int)regs->r[0];
-        if (pp && fd >= 3 && fd < NFD && pp->fd[fd].open && !pp->fd[fd].vf.data)
-            return defer_syscall(regs, num);
-    }
+    if (needs_task_ctx(regs, num)) return defer_syscall(regs, num);   /* run in task ctx */
     regs->r[0] = (uint32_t)do_syscall(num, regs->r[0], regs->r[1], regs->r[2]);
     return 0;
 }
