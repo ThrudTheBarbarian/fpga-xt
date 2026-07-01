@@ -146,8 +146,7 @@ void fault_report(unsigned code, unsigned addr, unsigned caller)
 void vAssertCalled(const char *file, int line)
 {
     extern void puts0(const char *); extern void putu(unsigned);
-    (void)file;
-    puts0("ASSERT at line "); putu((unsigned)line); puts0("\n");
+    puts0("ASSERT at "); puts0(file ? file : "?"); puts0(":"); putu((unsigned)line); puts0("\n");
     taskDISABLE_INTERRUPTS();
     for (;;) {}
 }
