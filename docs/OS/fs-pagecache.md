@@ -182,11 +182,28 @@ Each step is qemu-testable except the SD leaf (qemu has no SD backend — `sd.c`
      PL0-mapped; mapping it PL0 is the later syscall-less-IPC path). Cost: 8 of 16 `NSHM`
      ids reserved for control pages (`shmtest` lands on id 8+; it uses a dynamic id, so
      unaffected).
-   * **(c) read/write/mmap over the page store.** Route the *data* path to the service:
-     demand-paged write-back file pages (fill / flush / extend). This is what lets the
-     data-carrying ops leave the caller's space — and lets the interim `g_vfs_mtx` retire
-     once one task owns the whole FatFs path. Test on qemu against **romfs** (protocol +
-     serialization); SD is the HW-only leaf. Single-writer; growth explicit.
+   * **(c-1) read over the page store — DONE, qemu-validated.** Each fd gets a logical
+     read cursor (`fd.pos`) and a single-page cache window (`cpi`+`cpage`); `read` becomes
+     a page loop in the client's deferral thunk (in the CLIENT's space, where `buf` is
+     mapped) — one `memcpy` per page straight from the resident page to the user buffer. An
+     in-memory (romfs) fd resolves the page to `vf.data+base` inline (no fs-task hop, no
+     pool page); an SD fd calls the fs task (`FS_OP_GETPAGE`), which fills one pooled cache
+     page via the backing driver (`vfs_read`) and returns its identity address — a re-touch
+     of the same page is a hit, else refill. `lseek` collapses to inline arithmetic on
+     `fd.pos`+size (no I/O, no fs task). Cache pages freed on close/reap (`vm_page_alloc`/
+     `vm_page_free`). Validated on romfs: `libc_test` streams a 106 KB font in 1000-byte
+     chunks straddling 4 KB boundaries (26 pages, exact byte count) and `read()`==`mmap`
+     bytes; the SD fill is the HW-only leaf. **`g_vfs_mtx` does NOT retire yet** —
+     `open_lib_sd` / `sd_listdir` are still non-fs-task FatFs callers; the fs task's fills
+     take the lock alongside them. Lock retirement waits on migrating those (c-4).
+   * **(c-2) write + write-back — NEXT.** `write` ensures the page resident (RMW for a
+     partial write), `memcpy`s client buf → cache page, marks it dirty; flush dirty pages
+     on close (`f_write`); append allocates fresh pages + extends on flush. Single-writer.
+   * **(c-3) mmap over SD-backed pages + dirty-via-fault.** `mmap` an SD file (fill pool
+     pages, map into the client window); RW maps clean-but-RO, a write-fault marks dirty
+     (reuse `vm_cow_map`) and flips RW; write back only dirty pages.
+   * **(c-4) retire `g_vfs_mtx`.** Route `open_lib_sd` + `sd_listdir` through the service
+     so one task owns FatFs, then drop the lock (structural serialization).
 
-Later: dirty-via-fault (reuse `vm_cow_map`), eviction (LRU), `(file,page)` dedup, and
-moving GEM's param block onto the shm primitive.
+Later: multi-page per-fd cache + eviction (LRU), `(file,page)` cross-fd dedup, and moving
+GEM's param block onto the shm primitive.

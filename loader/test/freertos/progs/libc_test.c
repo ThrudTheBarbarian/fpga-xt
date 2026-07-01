@@ -45,6 +45,25 @@ void _app_entry(int argc, char **argv)
     }
     free(p);
 
+    /* Multi-page read + lseek: stream a >4 KB file (a font) in odd-sized chunks that
+     * straddle 4 KB page boundaries, and confirm the total equals the file size found
+     * via fseek(END)/ftell. Exercises the page-store loop across page transitions and
+     * the logical-cursor lseek — the core of fs-pagecache step 3c. */
+    FILE *ff = fopen("/System/Fonts/AovelSansRounded.ttf", "r");
+    if (ff) {
+        fseek(ff, 0, SEEK_END);
+        long fsz = ftell(ff);
+        fseek(ff, 0, SEEK_SET);
+        char chunk[1000];               /* 1000-byte chunks vs 4096 pages -> boundaries cross mid-chunk */
+        long total = 0; size_t r;
+        while ((r = fread(chunk, 1, sizeof chunk, ff)) > 0) total += (long)r;
+        printf("libc_test: streamed font %ld/%ld bytes -> %s (multi-page read+lseek)\n",
+               total, fsz, (fsz > 4096 && total == fsz) ? "OK" : "FAIL");
+        fclose(ff);
+    } else {
+        printf("libc_test: fopen(font) FAILED\n");
+    }
+
     /* gettimeofday: must return a real, advancing wall clock (A9 global timer),
      * not the old always-zero stub. */
     struct timeval t0, t1;

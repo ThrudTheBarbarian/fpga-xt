@@ -361,6 +361,13 @@ static void dfree_raw(void *p)
     xt_irq_restore(f);
 }
 
+/* raw pool page alloc/free for kernel subsystems that own their pages outside any
+ * space (the fs page cache — docs/OS/fs-pagecache.md step 3c). Identity-mapped and
+ * global, so a page is reachable at PL1 in every space (the fs task fills it, the
+ * client copies from it). Not charged to a space: the owner frees explicitly. */
+void *vm_page_alloc(void) { return dpage_raw(); }
+void  vm_page_free(void *p) { if (p) dfree_raw(p); }
+
 /* allocate a page from the pool and charge it to space `idx` (for reclaim) */
 static void *dpage(int idx)
 {

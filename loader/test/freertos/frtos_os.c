@@ -27,6 +27,9 @@
 
 typedef struct {
     int      open;
+    uint32_t pos;    /* logical read cursor (page store); the driver's vf.pos is fill scratch */
+    uint32_t cpi;    /* cached page index (~0u = none) — SD only; in-memory fds read vf.data */
+    void    *cpage;  /* the one cached page (pool identity addr), or NULL */
     vfs_file vf;     /* VFS-backed: romfs / fatfs / minixfs-later */
 } fd_t;
 
@@ -240,6 +243,7 @@ static long sys_open(proc_t *p, const char *path)
     for (int fd = 3; fd < NFD; fd++) {
         if (!p->fd[fd].open) {
             if (vfs_open(path, &p->fd[fd].vf) != 0) return -1;
+            p->fd[fd].pos = 0; p->fd[fd].cpi = ~0u; p->fd[fd].cpage = 0;   /* page store: empty */
             p->fd[fd].open = 1;
             return fd;
         }
@@ -247,17 +251,27 @@ static long sys_open(proc_t *p, const char *path)
     return -1; /* -EMFILE */
 }
 
+/* non-deferred read fallback: valid file reads (fd>=3) go through the page store
+ * (fs_read, deferred); this only ever sees stdin (fd 0, non-deferred path -> EOF) or
+ * the unreadable stdio writers (fd 1/2) / bad fds. */
 static long sys_read(proc_t *p, int fd, void *buf, uint32_t n)
 {
-    if (fd == 0) return 0;                       /* stdin: EOF for now */
-    if (!p || fd < 3 || fd >= NFD || !p->fd[fd].open) return -1;
-    return vfs_read(&p->fd[fd].vf, buf, n);       /* vfs_* take the backing-store lock */
+    (void)p; (void)buf; (void)n;
+    return (fd == 0) ? 0 : -1;
 }
 
+/* lseek is pure arithmetic on the LOGICAL cursor (fd.pos) + the file size captured at
+ * open — no backing I/O, no fs task. The page store fills by page index independently,
+ * so the driver's own position is irrelevant between fills. Runs inline (any context). */
 static long sys_lseek(proc_t *p, int fd, long off, int whence)
 {
     if (!p || fd < 3 || fd >= NFD || !p->fd[fd].open) return -1;
-    return vfs_lseek(&p->fd[fd].vf, off, whence);
+    fd_t *fdp = &p->fd[fd];
+    long base = (whence == 1) ? (long)fdp->pos : (whence == 2) ? (long)fdp->vf.size : 0;
+    long np = base + off;
+    if (np < 0 || np > (long)fdp->vf.size) return -1;
+    fdp->pos = (uint32_t)np;
+    return np;
 }
 
 static const xtld_host *g_khost;   /* kernel loader host (frtos_set_host); used by SYS_spawn */
@@ -278,11 +292,15 @@ static const xtld_host *g_khost;   /* kernel loader host (frtos_set_host); used 
  * g_vfs_mtx until the demand-paged page store (3c) unifies the data path over the same
  * shm substrate and lets the lock retire. */
 #define FS_PATH_MAX 256
+#define FS_OP_GETPAGE 0x100          /* internal (not a SYS_ number): fill+return a file page */
 typedef struct {
-    uint32_t          op;            /* SYS_open / SYS_lseek / SYS_close */
-    uint32_t          fd;            /* lseek/close target */
-    int32_t           off;           /* lseek offset */
-    int32_t           whence;        /* lseek whence */
+    uint32_t          op;            /* SYS_open / SYS_close / FS_OP_GETPAGE */
+    uint32_t          fd;            /* close/getpage target */
+    int32_t           off;           /* (reserved) */
+    int32_t           whence;        /* (reserved) */
+    uint32_t          page;          /* getpage: file page index */
+    uint32_t          page_addr;     /* getpage: resident page identity addr (service -> client) */
+    uint32_t          valid;         /* getpage: valid bytes in the page (service -> client) */
     volatile int32_t  result;        /* service -> client */
     char              path[FS_PATH_MAX];   /* open: marshalled path (identity-reachable) */
 } fs_ctl;
@@ -293,6 +311,38 @@ static TaskHandle_t  g_fs_waiter[MAXPROC];   /* client task parked on each slot'
 
 static long do_syscall(uint32_t num, long a0, long a1, long a2);   /* fallback (caller ctx) */
 
+/* free an fd's cached page back to the pool (close / evict / reap). */
+static void fd_drop_cache(fd_t *fdp)
+{
+    if (fdp->cpage) { vm_page_free(fdp->cpage); fdp->cpage = 0; }
+    fdp->cpi = ~0u;
+}
+
+/* PAGE STORE (fs task): make file page `pi` of `slot`'s fd resident and return its
+ * identity address + valid byte count. In-memory (romfs) fds resolve to vf.data with no
+ * pool page; SD-backed fds fill one pooled cache page (single-page window: a re-touch of
+ * the same page is a hit, else refill). Fills go through vfs_lseek/vfs_read, which still
+ * take g_vfs_mtx (open_lib_sd / sd_listdir are non-fs-task FatFs callers until they too
+ * migrate — then the lock retires). Returns 0 past EOF or on pool exhaustion. */
+static void *fd_getpage(int slot, int fd, uint32_t pi, uint32_t *valid)
+{
+    *valid = 0;
+    if (fd < 3 || fd >= NFD || !g_proc[slot].fd[fd].open) return 0;
+    fd_t    *fdp  = &g_proc[slot].fd[fd];
+    uint32_t size = fdp->vf.size, base = pi << 12;
+    if (base >= size) return 0;                                     /* wholly past EOF */
+    *valid = (size - base < 0x1000u) ? (size - base) : 0x1000u;
+    if (fdp->vf.data) return (uint8_t *)fdp->vf.data + base;        /* in-memory: already resident */
+    if (fdp->cpage && fdp->cpi == pi) return fdp->cpage;            /* SD cache hit */
+    if (!fdp->cpage) { fdp->cpage = vm_page_alloc(); if (!fdp->cpage) { *valid = 0; return 0; } }
+    vfs_lseek(&fdp->vf, (long)base, 0);                             /* fill via the backing driver */
+    long got = vfs_read(&fdp->vf, fdp->cpage, 0x1000);
+    if (got < 0) got = 0;
+    if ((uint32_t)got < 0x1000u) memset((uint8_t *)fdp->cpage + got, 0, 0x1000u - (uint32_t)got);
+    fdp->cpi = pi;
+    return fdp->cpage;
+}
+
 /* serve one request in the FS TASK: explicit proc (cur_proc() here is the fs task, not
  * the client), path/args read from the slot's identity-mapped control page. */
 static long fs_serve(int slot)
@@ -301,13 +351,19 @@ static long fs_serve(int slot)
     fs_ctl *c = g_fs_ctl[slot];
     switch (c->op) {
     case SYS_open:  return sys_open(p, c->path);           /* path copied into the shm page */
-    case SYS_lseek: return sys_lseek(p, (int)c->fd, c->off, (int)c->whence);
     case SYS_close:
         if (p && c->fd >= 3 && c->fd < NFD && p->fd[c->fd].open) {
+            fd_drop_cache(&p->fd[c->fd]);
             vfs_close(&p->fd[c->fd].vf);
             p->fd[c->fd].open = 0;
         }
         return 0;
+    case FS_OP_GETPAGE: {
+        uint32_t valid = 0;
+        void *pg = fd_getpage(slot, (int)c->fd, c->page, &valid);
+        c->page_addr = (uint32_t)(uintptr_t)pg; c->valid = valid;
+        return pg ? 0 : -1;
+    }
     default:        return -1;
     }
 }
@@ -346,6 +402,55 @@ static long fs_call(proc_t *p)
     xQueueSend(g_fs_q, &slot, portMAX_DELAY);
     ulTaskNotifyTake(pdTRUE, portMAX_DELAY);   /* index 0: free here (not a waitpid waiter) */
     return c->result;
+}
+
+/* client side of the page store (deferral thunk = client TASK context): ask the fs task
+ * to make file page `pi` resident and hand back its identity address + valid bytes.
+ * Fallback (no fs task) fills inline via fd_getpage — correct in any context. */
+static const uint8_t *fs_getpage(int slot, int fd, uint32_t pi, uint32_t *valid)
+{
+    fs_ctl *c = (slot >= 0 && slot < MAXPROC) ? g_fs_ctl[slot] : 0;
+    if (!g_fs_q || !c) return (const uint8_t *)fd_getpage(slot, fd, pi, valid);
+    c->op = FS_OP_GETPAGE; c->fd = (uint32_t)fd; c->page = pi;
+    c->page_addr = 0; c->valid = 0;
+    g_fs_waiter[slot] = xTaskGetCurrentTaskHandle();
+    xQueueSend(g_fs_q, &slot, portMAX_DELAY);
+    ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
+    *valid = c->valid;
+    return (const uint8_t *)(uintptr_t)c->page_addr;
+}
+
+/* read over the page store (deferral thunk, in the CLIENT's space -> buf is mapped
+ * HERE). One memcpy per page straight from the resident page to the user buffer. An
+ * in-memory fd copies from vf.data with no fs-task hop; an SD fd fetches each page from
+ * the service. The logical cursor fd.pos advances by bytes delivered. */
+static long fs_read(proc_t *p)
+{
+    int      slot = (int)(p - g_proc);
+    int      fd   = (int)p->da0;
+    uint8_t *buf  = (uint8_t *)p->da1;
+    uint32_t n    = (uint32_t)p->da2;
+    if (fd < 3 || fd >= NFD || !p->fd[fd].open) return -1;
+    fd_t    *fdp  = &p->fd[fd];
+    uint32_t size = fdp->vf.size, pos = fdp->pos, done = 0;
+    while (done < n && pos < size) {
+        uint32_t pi = pos >> 12, off = pos & 0xFFFu, valid;
+        const uint8_t *page;
+        if (fdp->vf.data) {                                    /* in-memory: inline, no fs task */
+            uint32_t base = pi << 12;
+            valid = (size - base < 0x1000u) ? (size - base) : 0x1000u;
+            page  = (const uint8_t *)fdp->vf.data + base;
+        } else {
+            page = fs_getpage(slot, fd, pi, &valid);
+            if (!page) break;
+        }
+        if (off >= valid) break;
+        uint32_t want = valid - off; if (want > n - done) want = n - done;
+        memcpy(buf + done, page + off, want);
+        done += want; pos += want;
+    }
+    fdp->pos = pos;
+    return (long)done;
 }
 
 /* stand up the fs service: per-slot shm control pages (the IPC substrate — one page
@@ -395,12 +500,14 @@ void deferral_thunk(void)                 /* PL1 (System), task context */
             char *buf = (char *)p->da1;
             if (buf && p->da2 > 0) { int c = sh_readc(); if (c < 0) r = 0; else { buf[0] = (char)c; r = 1; } }
             else r = 0;
-        } else if (p->dnum == SYS_open || p->dnum == SYS_lseek || p->dnum == SYS_close) {
+        } else if (p->dnum == SYS_read) {
+            /* file read over the page store, in the CLIENT's space (buf is mapped here);
+             * pages are filled by the fs task, copied out one memcpy each. */
+            r = fs_read(p);
+        } else if (p->dnum == SYS_open || p->dnum == SYS_close) {
             /* metadata ops (no client data buffer) -> the fs service task owns them. */
             r = fs_call(p);
         } else {
-            /* read (SD file) — must run in the CALLER's space, where the user buffer VA
-             * is mapped; the fs task can't reach it yet (page store = step 3c). */
             r = do_syscall(p->dnum, p->da0, p->da1, p->da2);
         }
     }
@@ -436,6 +543,7 @@ static long do_syscall(uint32_t num, long a0, long a1, long a2)
     case SYS_open:   return sys_open(p, (const char *)a0);   /* (path, flags) */
     case SYS_read:   return sys_read(p, (int)a0, (void *)a1, (uint32_t)a2);
     case SYS_close:  if (p && a0 >= 3 && a0 < NFD && p->fd[a0].open) {
+                         fd_drop_cache(&p->fd[a0]);
                          vfs_close(&p->fd[a0].vf);
                          p->fd[a0].open = 0;
                      } return 0;
@@ -508,11 +616,10 @@ static int needs_task_ctx(struct k_regs *regs, uint32_t num)
     case SYS_waitpid: return 1;                    /* blocks on the child */
     case SYS_spawn:   return 1;                    /* may load a DT_NEEDED lib from the SD */
     case SYS_open:    return 1;                    /* may walk a FatFs directory path */
-    case SYS_read:    return fd == 0 || fd_is_sd(fd);   /* stdin blocks; SD file -> task ctx */
+    case SYS_read:    return fd == 0 || (fd >= 3 && fd < NFD);  /* stdin blocks; file read -> page store */
     case SYS_write:
-    case SYS_lseek:
     case SYS_close:   return fd_is_sd(fd);         /* SD file op -> task ctx (console/romfs inline) */
-    default:          return 0;                    /* getpid/sbrk/mmap/munmap/fb/gettimeofday */
+    default:          return 0;                    /* lseek (inline)/getpid/sbrk/mmap/munmap/fb/gettimeofday */
     }
 }
 
@@ -1007,6 +1114,8 @@ static int frtos_reap(proc_t *p)
     taskEXIT_CRITICAL();
 
     int code = p->exit_code;
+    for (int fd = 3; fd < NFD; fd++)                       /* free any page-cache pages the fds held */
+        if (p->fd[fd].open) fd_drop_cache(&p->fd[fd]);
     if (p->task) { vTaskDelete(p->task); p->task = 0; }   /* the child parked in vTaskSuspend */
     if (p->done) { vSemaphoreDelete(p->done); p->done = 0; }
     vm_space_destroy((int)(p - g_proc));         /* reclaim its private pages to the pool */
