@@ -144,6 +144,18 @@ static void shell_task(void *arg)
     (void)arg;
     { extern void sd_init(void); sd_init(); }   /* mount SD here (task context — FatFs reentrancy needs the scheduler) */
     boot_run();       /* /OS/Boot/NN-<slug> auto-runner (e.g. the desktop) */
+
+    /* Login shell: the interactive PL0 sh owns the console; respawn it when it exits
+     * (like init respawning a getty — `exit` just logs back in). If it can't launch
+     * (sh.so missing / spawn fails) fall through to the kernel test menu below, which
+     * stays as the PL1 safety net + the tier-2 battery. */
+    for (;;) {
+        char *av[1] = { (char *)"/System/bin/sh" };
+        int pid = frtos_spawn_argv("/System/bin/sh", 1, av, &g_host);
+        if (pid < 0) { puts0("[login] sh unavailable — dropping to the kernel menu\n"); break; }
+        frtos_waitpid(pid);
+    }
+
     puts0("\nXTOS shell  —  try: selftest | echo | hello | libc_test | gemtext | desktop | exit\n");
     char line[128];
     char *argv[16];
