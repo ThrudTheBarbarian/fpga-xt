@@ -272,7 +272,7 @@ $(BUILD)/romfs.bin: $(BUILD)/mkromfs $(BUILD)/hello.so $(BUILD)/showmotd.so $(BU
 	    /Library/libc.so=$(BUILD)/libc.so \
 	    /Library/libm.so=$(BUILD)/libm.so \
 	    /Library/libGEM.so=$(BUILD)/libGEM.so \
-	    /Library/libutil.so=$(BUILD)/libutil.so \
+	    $(if $(SD_TEST),,/Library/libutil.so=$(BUILD)/libutil.so) \
 	    /Fonts/AovelSansRounded.ttf=$(GEM)/fonts/AovelSansRounded.ttf \
 	    /Fonts/System.font=$(GEM)/fonts/System.font \
 	    /bin/libc_test=$(BUILD)/libc_test.so \

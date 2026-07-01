@@ -782,6 +782,38 @@ void frtos_lib_path_set(const char *const *dirs, int n)
     g_libpath_n = n;
 }
 
+/* Read /OS/Library/<name> off the SD (FatFs) into a persistent kernel-heap buffer.
+ * The loader COPIES segments out of this buffer during xtld_load, so it's only
+ * needed for the load; but a library is loaded once (deduped by soname) and never
+ * unloaded, so we don't free it — matching the cached-image model (frtos_free is a
+ * no-op). Returns 1 with *data/*len on success, 0 otherwise. Runs only when a lib
+ * misses in the romfs, so the common case (libc/libm from /System/Library) never
+ * touches the SD. */
+static int open_lib_sd(const char *name, const uint8_t **data, uint32_t *len)
+{
+    char path[96];
+    const char *pfx = "/OS/Library/";
+    int i = 0;
+    while (pfx[i] && i < (int)sizeof(path) - 1) { path[i] = pfx[i]; i++; }
+    for (int j = 0; name[j] && i < (int)sizeof(path) - 1; j++) path[i++] = name[j];
+    path[i] = 0;
+
+    vfs_file f;
+    if (vfs_open(path, &f) != 0) return 0;                 /* not on the SD (or no SD) */
+    if (f.size == 0 || !f.read) { if (f.close) f.close(&f); return 0; }
+    uint8_t *buf = frtos_alloc(f.size, 16, NULL);
+    if (!buf) { if (f.close) f.close(&f); return 0; }
+    long got = f.read(&f, buf, f.size);
+    if (f.close) f.close(&f);
+    if (got != (long)f.size) return 0;
+    *data = buf; *len = f.size;
+    return 1;
+}
+
+/* Resolve a DT_NEEDED soname: search /System/Library (romfs, in-memory, used in
+ * place) first via g_libpath, then /OS/Library on the SD (read into RAM). System
+ * libraries win so a stray .so on the card can't shadow libc; the card is for
+ * ADDING libraries, not overriding the base system. */
 int frtos_open_lib(const char *name, const uint8_t **data, uint32_t *len, void *u)
 {
     (void)u;
@@ -795,7 +827,7 @@ int frtos_open_lib(const char *name, const uint8_t **data, uint32_t *len, void *
         path[i] = 0;
         if (romfs_lookup(path, data, len)) return 1;   /* search order: first hit wins */
     }
-    return 0;
+    return open_lib_sd(name, data, len);               /* fall back to /OS/Library on the SD */
 }
 
 static proc_t *proc_by_pid(int pid)
