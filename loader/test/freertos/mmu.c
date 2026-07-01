@@ -138,7 +138,8 @@ void mmu_init(void)
  * the (1 MB section) it lives in to a per-page L2 on first touch. Called on each
  * loaded program's text (RO+X) and writable (RW+XN) segments BEFORE the process
  * table is cloned from the master, so every space inherits W^X. */
-static uint32_t l2pool[32][256] __attribute__((aligned(1024)));
+#define L2POOL_N 64
+static uint32_t l2pool[L2POOL_N][256] __attribute__((aligned(1024)));
 static int      l2pool_next;
 
 #define PG_NORMAL ((3u << 4) | (1u << 6) | (1u << 3) | (1u << 2) | 0x2u) /* AP=RW all, TEX=001 C=1 B=1 (WB-WA cacheable), small page, executable */
@@ -148,7 +149,12 @@ static int      l2pool_next;
 static uint32_t *l2_for_section(uint32_t sec)
 {
     if ((l1[sec] & 0x3u) == 0x1u) return (uint32_t *)(l1[sec] & 0xFFFFFC00u);  /* already coarse */
-    if (l2pool_next >= 32) return 0;                                            /* pool exhausted */
+    if (l2pool_next >= L2POOL_N) {                                              /* pool exhausted */
+        extern void puts0(const char *); extern void putu(unsigned);
+        puts0("*** mmu: split-pool EXHAUSTED at section "); putu(sec);
+        puts0(" (loaded code there will NOT be PL0-executable)\n");
+        return 0;
+    }
     uint32_t *l2 = l2pool[l2pool_next++];
     uint32_t secbase = sec << 20;
     /* identity background = PL0-none (the non-module pages in this section: heap

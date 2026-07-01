@@ -129,6 +129,16 @@ void fault_report(unsigned code, unsigned addr, unsigned caller)
     fr_hex("  DFAR=", dfar); fr_hex("  DFSR=", dfsr); fr_hex("  IFSR=", ifsr);
     { extern int stackguard_is_guard(unsigned);
       if (code == 4 && stackguard_is_guard(dfar)) puts0("\n*** STACK OVERFLOW (hit guard page)"); }
+    /* DIAG: walk the LIVE tables (current TTBR0) for the faulting address — shows
+     * whether the MMU sees the section as split (coarse L2) or a plain SEC_KDATA
+     * section, and the page's permission bits. */
+    { unsigned va = (code == 3) ? addr : dfar;              /* prefetch: PC; data: DFAR */
+      unsigned ttbr; __asm__ volatile("mrc p15,0,%0,c2,c0,0" : "=r"(ttbr));
+      unsigned *l1 = (unsigned *)(ttbr & 0xFFFFC000u);
+      unsigned l1e = l1[va >> 20];
+      fr_hex("\n    TTBR0=", ttbr); fr_hex("  L1[sec]=", l1e);
+      if ((l1e & 3u) == 1u) { unsigned *l2 = (unsigned *)(l1e & 0xFFFFFC00u);
+                              fr_hex("  L2[pg]=", l2[(va >> 12) & 0xFFu]); } }
     puts0("\n*** killing the faulting task; OS continues (T2-a) ***\n");
     /* returns to xt_vectors.S, which redirects the task into xtos_task_fault_exit */
 }

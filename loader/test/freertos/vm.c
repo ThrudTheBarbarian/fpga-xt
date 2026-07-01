@@ -248,7 +248,15 @@ uint32_t *vm_space_create(int idx, uint32_t prog_va, uint32_t prog_size, uint32_
         map_cow_range(idx, t, &g_space_prog[idx]);
     }
 
-    __asm__ volatile("mcr p15,0,%0,c8,c7,2" :: "r"(asid));   /* TLBIASID: clear stale */
+    /* TLBIALL, not TLBIASID: loading the image ran in the SPAWNER's space, whose L1
+     * may still map the target sections as GLOBAL SEC_KDATA sections (they were split
+     * in the master only). Those accesses cache stale GLOBAL section-level TLB entries
+     * (PL0-none) that TLBIASID can't clear (they aren't ASID-tagged) and that would
+     * shadow this process's correct coarse+PL0-RX mapping -> a section-level prefetch
+     * abort on its first instruction (HW only; qemu doesn't model the shadow). A full
+     * flush here (after the load, before the process runs) clears them. */
+    (void)asid;
+    __asm__ volatile("mcr p15,0,%0,c8,c7,0" :: "r"(0u));     /* TLBIALL: clear stale global + ASID entries */
     __asm__ volatile("dsb; isb");
     return t;
 }
