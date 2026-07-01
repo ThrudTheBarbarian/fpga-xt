@@ -143,9 +143,6 @@ static void shell_task(void *arg)
 {
     (void)arg;
     { extern void sd_init(void); sd_init(); }   /* mount SD here (task context — FatFs reentrancy needs the scheduler) */
-#ifdef XT_HW_UART
-    run_selftest();   /* hardware: auto-run the battery once at boot, then drop to the shell */
-#endif
     boot_run();       /* /OS/Boot/NN-<slug> auto-runner (e.g. the desktop) */
     puts0("\nXTOS shell  —  try: selftest | echo | hello | libc_test | gemtext | desktop | exit\n");
     char line[128];
