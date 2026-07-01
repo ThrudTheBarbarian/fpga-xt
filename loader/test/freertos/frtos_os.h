@@ -70,5 +70,6 @@ void frtos_lib_path_set(const char *const *dirs, int n);  /* loader lib search p
 void frtos_on_loaded(xtld_obj *obj, void *user);   /* xtld_host.on_loaded: W^X + PL0 */
 uintptr_t frtos_ksym(const char *name, void *user);
 int  frtos_waitpid(int pid);
+void frtos_fs_start(void);          /* stand up the fs service task + request channel */
 uint32_t frtos_prog_loads(void);   /* distinct program images loaded (vs spawns) */
 #endif

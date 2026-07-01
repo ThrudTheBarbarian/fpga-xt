@@ -14,6 +14,7 @@
 #include "FreeRTOS.h"
 #include "task.h"
 #include "semphr.h"
+#include "queue.h"
 #include "ksys.h"      /* struct k_regs */
 #include "xtsys.h"
 #include "xtld.h"
@@ -261,6 +262,87 @@ static long sys_lseek(proc_t *p, int fd, long off, int whence)
 
 static const xtld_host *g_khost;   /* kernel loader host (frtos_set_host); used by SYS_spawn */
 
+/* ---- fs service task (step 3a: docs/OS/fs-pagecache.md) -------------------
+ * One task owns the VFS metadata path. A client posts an fs_req (built on its OWN
+ * stack — it stays parked, so the stack is alive) to g_fs_q and blocks on a task
+ * notification; the fs task serves the op with the client's proc as the explicit
+ * context and wakes it. This is the skeleton request channel — a kernel queue +
+ * per-call notify; the shm control page (step 3b) replaces the transport later.
+ *
+ * SCOPE (3a): only open/lseek/close route here — metadata ops with NO client data
+ * buffer, so the fs task (running in the master/kernel space) never has to touch a
+ * client PL0 VA. read/write stay in the caller's deferral thunk (its own space, where
+ * the user buffer is mapped) under g_vfs_mtx until the demand-paged page store (3c)
+ * unifies the data path and lets the lock retire. */
+typedef struct {
+    uint32_t     op;                 /* SYS_open / SYS_lseek / SYS_close */
+    proc_t      *proc;               /* the requesting process (explicit ctx, not cur_proc) */
+    long         a0, a1, a2;         /* op args (path / fd / off / whence) */
+    volatile long result;
+    TaskHandle_t waiter;             /* the client task to notify on completion */
+} fs_req;
+
+static QueueHandle_t g_fs_q;         /* fs_req* mailbox; NULL until frtos_fs_start() */
+
+/* run one metadata op with an EXPLICIT proc (the fs task's cur_proc() is itself, not
+ * the client) — so it can't share do_syscall, which resolves the proc via cur_proc. */
+static long fs_serve(fs_req *rq)
+{
+    proc_t *p = rq->proc;
+    switch (rq->op) {
+    case SYS_open:  return sys_open(p, (const char *)rq->a0);
+    case SYS_lseek: return sys_lseek(p, (int)rq->a0, rq->a1, (int)rq->a2);
+    case SYS_close:
+        if (p && rq->a0 >= 3 && rq->a0 < NFD && p->fd[rq->a0].open) {
+            vfs_close(&p->fd[rq->a0].vf);
+            p->fd[rq->a0].open = 0;
+        }
+        return 0;
+    default:        return -1;
+    }
+}
+
+static void fs_task(void *arg)
+{
+    (void)arg;
+    for (;;) {
+        fs_req *rq;
+        if (xQueueReceive(g_fs_q, &rq, portMAX_DELAY) != pdTRUE) continue;
+        rq->result = fs_serve(rq);
+        xTaskNotifyGive(rq->waiter);           /* wake the parked client */
+    }
+}
+
+/* called from deferral_thunk (client TASK context) for a routed metadata op: hand it
+ * to the fs task and park until served. The req lives on this task's stack, which stays
+ * valid while we're blocked. Falls back to inline execution if the fs task isn't up
+ * (host_test / pre-start) so nothing depends on it existing. */
+static long fs_call(proc_t *p)
+{
+    if (!g_fs_q) return fs_serve(&(fs_req){ .op = p->dnum, .proc = p,
+                                            .a0 = p->da0, .a1 = p->da1, .a2 = p->da2 });
+    fs_req rq = { .op = p->dnum, .proc = p, .a0 = p->da0, .a1 = p->da1, .a2 = p->da2,
+                  .result = -1, .waiter = xTaskGetCurrentTaskHandle() };
+    fs_req *pr = &rq;
+    xQueueSend(g_fs_q, &pr, portMAX_DELAY);
+    ulTaskNotifyTake(pdTRUE, portMAX_DELAY);   /* index 0: free here (not a waitpid waiter) */
+    return rq.result;
+}
+
+/* stand up the fs service: the request mailbox + the owning task. Called from main
+ * before the scheduler starts, so the task exists before any PL0 open. Priority 4 (>
+ * procs at 3) so a queued request is served promptly, then it blocks again. 8192-word
+ * stack: FatFs/xsdps metadata walks are stack-hungry, like the shell task. */
+void frtos_fs_start(void)
+{
+    g_fs_q = xQueueCreate(8, sizeof(fs_req *));
+    if (!g_fs_q) { if (g_console) g_console("[fs] queue create failed\n", 25); return; }
+    if (xTaskCreate(fs_task, "fs", 8192, NULL, 4, NULL) != pdPASS) {
+        if (g_console) g_console("[fs] task create failed\n", 24);
+        vQueueDelete(g_fs_q); g_fs_q = 0;
+    }
+}
+
 /* ---- blocking-syscall deferral -------------------------------------------
  * A blocking syscall (waitpid, stdin read) can't run in the SVC handler — its
  * yield (svc #0) would nest inside svc #1. So k_syscall_dispatch saves the PL0
@@ -288,9 +370,12 @@ void deferral_thunk(void)                 /* PL1 (System), task context */
             char *buf = (char *)p->da1;
             if (buf && p->da2 > 0) { int c = sh_readc(); if (c < 0) r = 0; else { buf[0] = (char)c; r = 1; } }
             else r = 0;
+        } else if (p->dnum == SYS_open || p->dnum == SYS_lseek || p->dnum == SYS_close) {
+            /* metadata ops (no client data buffer) -> the fs service task owns them. */
+            r = fs_call(p);
         } else {
-            /* open / read / write / lseek / close of a file — the SAME handler that runs
-             * inline for console/romfs, but now in task context so it can drive FatFs. */
+            /* read (SD file) — must run in the CALLER's space, where the user buffer VA
+             * is mapped; the fs task can't reach it yet (page store = step 3c). */
             r = do_syscall(p->dnum, p->da0, p->da1, p->da2);
         }
     }

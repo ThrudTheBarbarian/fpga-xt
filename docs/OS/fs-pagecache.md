@@ -154,15 +154,30 @@ Each step is qemu-testable except the SD leaf (qemu has no SD backend — `sd.c`
    them; serialized-fd ops are always deferred off the SVC handler so the mutex is only
    taken in task context.
 
-3. **page store — NEXT (not started).** The dedicated `fs` TASK + shm control channel,
-   and read/write/mmap unified over demand-paged write-back pages (this section, above).
-   The task earns its keep here (owns cached pages: fill / flush / extend). Concrete
-   first moves: (a) an `fs` FreeRTOS task owning VFS access, (b) a per-client control
-   channel (an shm page: `{op,path-off,fd,count,off,result,status}`) — clients post +
-   park (reuse the waitpid block/wake primitive), service serves + wakes; (c) route
-   `read`/`write`/`mmap` for backing-store fds to the service. Test on qemu against
-   **romfs** (protocol + serialization); SD is the HW-only leaf. Single-writer; growth
-   explicit; the interim `g_vfs_mtx` can retire once one task owns FatFs.
+3. **page store — IN PROGRESS.** The dedicated `fs` TASK + shm control channel, and
+   read/write/mmap unified over demand-paged write-back pages (this section, above). The
+   task earns its keep here (owns cached pages: fill / flush / extend). Three sub-steps:
+
+   * **(a) fs task + request channel — DONE, qemu-validated.** An `fs` FreeRTOS task
+     (`fs_task`, priority 4) owns the VFS metadata path, behind a skeleton request
+     channel: a kernel queue of `fs_req*` + a per-call task-notification wake. A client
+     builds the `fs_req` on its OWN stack (it stays parked, so the frame is live), posts
+     to `g_fs_q`, and blocks; the task serves with the client's proc as the *explicit*
+     context (not `cur_proc`, which is the task itself) and notifies it. `frtos_fs_start`
+     (from `main`, pre-scheduler) stands it up. The deferral thunk routes **open / lseek
+     / close** here — metadata ops with NO client data buffer, so the task (in the
+     master space) never touches a client PL0 VA. `read` (SD) STAYS in the caller's
+     deferral thunk, where the user buffer VA is mapped, under `g_vfs_mtx`. On qemu every
+     romfs `open` (already unconditionally deferred — the path's fs isn't known until it
+     resolves) exercises the channel: `libc_test` fopen, `mmaptest`, boot-script reads.
+   * **(b) shm control channel — NEXT.** Replace the kernel-queue transport with the
+     per-client shm page `{op,path-off,fd,count,off,result,status}` from §1, so a client
+     posts + parks over shm rather than a kernel struct pointer.
+   * **(c) read/write/mmap over the page store.** Route the *data* path to the service:
+     demand-paged write-back file pages (fill / flush / extend). This is what lets the
+     data-carrying ops leave the caller's space — and lets the interim `g_vfs_mtx` retire
+     once one task owns the whole FatFs path. Test on qemu against **romfs** (protocol +
+     serialization); SD is the HW-only leaf. Single-writer; growth explicit.
 
 Later: dirty-via-fault (reuse `vm_cow_map`), eviction (LRU), `(file,page)` dedup, and
 moving GEM's param block onto the shm primitive.
