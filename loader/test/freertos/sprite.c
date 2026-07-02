@@ -8,8 +8,8 @@
  */
 #include <stdint.h>
 #include "xtsys.h"                /* struct os_event, OS_EV_* */
-extern int sh_readc(void);
-extern int sh_readc_timeout(int ms);
+extern int desk_readc(void);         /* console bytes routed to the desktop (focus=desktop) */
+extern int desk_readc_timeout(int ms);
 
 #ifdef XT_HW
 
@@ -102,12 +102,12 @@ static int s_pend_up;
 int input_next_event(struct os_event *ev, int timeout_ms) {
     ev->shift = 0; ev->key = 0;
     if (s_pend_up) { s_pend_up = 0; ev->type = OS_EV_BTN_UP; ev->button = 0; cursor_pos(&ev->mx, &ev->my); return 0; }
-    int c = sh_readc_timeout(timeout_ms);
+    int c = desk_readc_timeout(timeout_ms);
     if (c < 0) { ev->type = OS_EV_TIMER; ev->button = 0; cursor_pos(&ev->mx, &ev->my); return 0; }
     if (c == 0x1b) {                                  /* ESC: an arrow CSI or a bare Escape */
-        int c1 = sh_readc_timeout(30);
+        int c1 = desk_readc_timeout(30);
         if (c1 == '[') {
-            int c2 = sh_readc(), x, y; cursor_pos(&x, &y);
+            int c2 = desk_readc(), x, y; cursor_pos(&x, &y);
             if      (c2 == 'A') y -= CUR_STEP;
             else if (c2 == 'B') y += CUR_STEP;
             else if (c2 == 'C') x += CUR_STEP;

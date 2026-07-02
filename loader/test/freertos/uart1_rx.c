@@ -38,9 +38,25 @@
 #define UART1_IRQ_ID 82u
 
 #define RING_SZ 256
-static volatile uint8_t  ring[RING_SZ];
-static volatile uint32_t r_head, r_tail;          /* ISR writes tail, reader writes head */
-static SemaphoreHandle_t rx_sem;                  /* count == bytes waiting in the ring */
+/* Two input queues + a focus flag: the console byte stream is routed to the shell
+ * (sh_readc) or the desktop (desk_readc) by g_focus; the FOCUS_TOGGLE key flips it
+ * (intercepted in the ISR, never forwarded) so the desktop and shell coexist —
+ * like the vitis {/}/\ diversion, one key.  Default = shell. */
+typedef struct { volatile uint8_t buf[RING_SZ]; volatile uint32_t head, tail; SemaphoreHandle_t sem; } rxq;
+static rxq sh_q, dk_q;
+static volatile int g_focus;                      /* 0 = shell, 1 = desktop */
+#define FOCUS_TOGGLE 0x60                          /* backtick '`' */
+
+static void q_push(rxq *q, uint8_t c, BaseType_t *woken) {
+    uint32_t nt = (q->tail + 1u) % RING_SZ;
+    if (nt != q->head) { q->buf[q->tail] = c; q->tail = nt; xSemaphoreGiveFromISR(q->sem, woken); }
+}
+static int q_read(rxq *q, int ms) {
+    TickType_t t = (ms < 0) ? portMAX_DELAY : pdMS_TO_TICKS((uint32_t)ms);
+    if (xSemaphoreTake(q->sem, t) != pdTRUE) return -1;
+    uint8_t c = q->buf[q->head]; q->head = (q->head + 1u) % RING_SZ;
+    return (int)c;
+}
 
 /* Called from vApplicationIRQHandler (zynq.c) when the acked id is UART1_IRQ_ID. */
 void uart1_rx_isr(void)
@@ -49,12 +65,8 @@ void uart1_rx_isr(void)
     REG(UART_ISR) = REG(UART_ISR);                /* write-1-to-clear the pending status */
     while (!(REG(UART_SR) & SR_RXEMPTY)) {        /* drain every buffered byte */
         uint8_t c = (uint8_t)REG(UART_FIFO);
-        uint32_t nt = (r_tail + 1u) % RING_SZ;
-        if (nt != r_head) {                       /* space? (else drop — keyboard never overruns) */
-            ring[r_tail] = c;
-            r_tail = nt;
-            xSemaphoreGiveFromISR(rx_sem, &woken);
-        }
+        if (c == FOCUS_TOGGLE) { g_focus ^= 1; continue; }        /* flip focus, don't forward */
+        q_push(g_focus ? &dk_q : &sh_q, c, &woken);
     }
     portYIELD_FROM_ISR(woken);
 }
@@ -64,8 +76,8 @@ void uart1_rx_isr(void)
  * interrupts enabled, so early bytes just sit in the FIFO). */
 void uart1_rx_init(void)
 {
-    rx_sem = xSemaphoreCreateCounting(RING_SZ, 0);
-    r_head = r_tail = 0;
+    sh_q.sem = xSemaphoreCreateCounting(RING_SZ, 0); sh_q.head = sh_q.tail = 0;
+    dk_q.sem = xSemaphoreCreateCounting(RING_SZ, 0); dk_q.head = dk_q.tail = 0;
 
     REG(UART_IDR) = 0xFFFFFFFFu;                  /* mask all UART irqs while configuring */
     REG(UART_ISR) = 0xFFFFFFFFu;                  /* clear any stale status */
@@ -78,27 +90,10 @@ void uart1_rx_init(void)
     REG(UART_IER) = IXR_RTRIG | IXR_RTOUT;        /* rx trigger + rx timeout */
 }
 
-/* Blocking read of one console byte. count(rx_sem) == bytes in the ring, so a take
- * both waits for and accounts one byte. Returns the byte (never <0 on HW: the UART
- * has no EOF). */
-int sh_readc(void)
-{
-    xSemaphoreTake(rx_sem, portMAX_DELAY);        /* one token == one buffered byte */
-    uint8_t c = ring[r_head];
-    r_head = (r_head + 1u) % RING_SZ;
-    return (int)c;
-}
-
-/* Blocking read with a timeout (ms < 0 = forever) — returns the byte, or -1 on
- * timeout.  Used by the input driver for the double-click / escape-sequence windows. */
-int sh_readc_timeout(int ms)
-{
-    TickType_t t = (ms < 0) ? portMAX_DELAY : pdMS_TO_TICKS((uint32_t)ms);
-    if (xSemaphoreTake(rx_sem, t) != pdTRUE) return -1;
-    uint8_t c = ring[r_head];
-    r_head = (r_head + 1u) % RING_SZ;
-    return (int)c;
-}
+int sh_readc(void)             { return q_read(&sh_q, -1); }  /* shell console byte (blocking) */
+int sh_readc_timeout(int ms)   { return q_read(&sh_q, ms); }
+int desk_readc(void)           { return q_read(&dk_q, -1); }  /* desktop input byte (focus=desktop) */
+int desk_readc_timeout(int ms) { return q_read(&dk_q, ms); }
 #else
 typedef int uart1_rx_translation_unit_not_empty;  /* keep ISO C happy on qemu builds */
 #endif
