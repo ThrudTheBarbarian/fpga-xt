@@ -24,6 +24,7 @@
 
 #define MAXPROC 8
 #define NFD     8       /* per process; 0/1/2 are stdio */
+#define FD_PATH_MAX 96  /* retained open path (for a writable mmap's independent write-back handle) */
 
 typedef struct {
     int      open;
@@ -31,6 +32,7 @@ typedef struct {
     uint32_t cpi;    /* cached page index (~0u = none) — backing-store only; in-memory fds read vf.data */
     void    *cpage;  /* the one cached page (pool identity addr), or NULL */
     int      cdirty; /* the cached page has unflushed writes */
+    char     path[FD_PATH_MAX];  /* the path this fd was opened with */
     vfs_file vf;     /* VFS-backed: romfs / fatfs / ramfs / ... */
 } fd_t;
 
@@ -247,6 +249,9 @@ static long sys_open(proc_t *p, const char *path, int flags)
             if (vfs_open(path, flags, &p->fd[fd].vf) != 0) return -1;
             p->fd[fd].pos = 0; p->fd[fd].cpi = ~0u; p->fd[fd].cpage = 0;   /* page store: empty */
             p->fd[fd].cdirty = 0;
+            int k = 0;                                                    /* retain path for mmap write-back */
+            for (; path[k] && k < FD_PATH_MAX - 1; k++) p->fd[fd].path[k] = path[k];
+            p->fd[fd].path[k] = 0;
             p->fd[fd].open = 1;
             return fd;
         }
@@ -382,6 +387,34 @@ static void *fd_getpage(int slot, int fd, uint32_t pi, uint32_t *valid, int forw
  * also makes close-after-mmap safe (the data is copied). Sets c->page_addr = VA. Returns
  * 0 (ok) / -1. RW mmap (dirty-via-fault + write-back) is 3c-3b. */
 #define MMAP_MAXPG 64                                        /* 256 KB cap per mmap for now */
+
+/* Writable-mapping registry: a MAP_SHARED writable mmap must have its dirty pages written
+ * back even if the client CLOSES the fd before munmap (POSIX: the mapping holds its own
+ * reference). We can't lean on the client's fd, so record the file PATH per writable
+ * mapping and re-open an INDEPENDENT handle at write-back time. Keyed by (slot, va). */
+#define FS_MAXMAP 8   /* writable-mapping registry slots per proc; mirror vm.c NMMAP */
+static struct { uint32_t va; uint8_t used; char path[FD_PATH_MAX]; } g_wrmap[MAXPROC][FS_MAXMAP];
+
+/* write a writable mapping's DIRTY pages back to its file via a FRESH handle (independent
+ * of any client fd). fs-task context. A partial last page is clamped to the file size. */
+static void wrmap_flush(int slot, uint32_t va, const char *path)
+{
+    void    *pages[MMAP_MAXPG]; uint32_t foffs[MMAP_MAXPG]; uint32_t fd = 0;
+    int nd = vm_mmap_dirty_plan(slot, va, &fd, pages, foffs, MMAP_MAXPG);
+    if (nd <= 0) return;
+    vfs_file f;
+    if (vfs_open(path, VFS_O_WRONLY, &f) != 0) return;        /* open existing for write (no trunc) */
+    uint32_t size = f.size;
+    for (int i = 0; i < nd; i++) {
+        uint32_t n = (size > foffs[i]) ? (size - foffs[i]) : 0;
+        if (n > 0x1000u) n = 0x1000u;
+        if (!n) continue;
+        vfs_lseek(&f, (long)foffs[i], 0);
+        vfs_write(&f, pages[i], n);
+    }
+    vfs_close(&f);
+}
+
 static long fd_mmap(int slot)
 {
     fs_ctl *c = g_fs_ctl[slot];
@@ -412,32 +445,33 @@ static long fd_mmap(int slot)
     int writable = fdp->vf.write != 0;
     uint32_t va = vm_mmap_install(slot, pages, npg, writable, (uint32_t)fd, off);
     if (!va) { for (k = 0; k < npg; k++) vm_page_free(pages[k]); return -1; }
+    if (writable) {                                          /* record path so munmap can re-open (fd-independent) */
+        for (int i = 0; i < FS_MAXMAP; i++)
+            if (!g_wrmap[slot][i].used) {
+                g_wrmap[slot][i].va = va; g_wrmap[slot][i].used = 1;
+                int j = 0; for (; fdp->path[j] && j < FD_PATH_MAX - 1; j++) g_wrmap[slot][i].path[j] = fdp->path[j];
+                g_wrmap[slot][i].path[j] = 0;
+                break;
+            }
+    }
     c->page_addr = va;
     return 0;
 }
 
-/* unmap a mmap region (fs task): if it's a WRITABLE backing-store mapping, write its
- * DIRTY pages back through the backing fd first (only the pages the client actually
- * wrote — dirty-via-fault), then vm_munmap frees the pool pages + clears the window. A
- * RO or romfs mapping has no dirty plan -> just unmapped. The write-back needs the fd
- * still open; a partial last page writes only up to the file size. */
+/* unmap a mmap region (fs task): if it's a WRITABLE mapping, write its DIRTY pages back
+ * first — via a FRESH handle re-opened from the recorded path, so it works even if the
+ * client already closed the fd (POSIX MAP_SHARED). Then vm_munmap frees the pool pages +
+ * clears the window. RO / romfs mappings have no registry entry -> just unmapped. */
 static long fd_munmap(int slot)
 {
-    fs_ctl *c = g_fs_ctl[slot];
-    proc_t *p = &g_proc[slot];
-    uint32_t va = c->off, len = c->len, fd = 0;
-    void    *pages[MMAP_MAXPG]; uint32_t foffs[MMAP_MAXPG];
-    int nd = vm_mmap_dirty_plan(slot, va, &fd, pages, foffs, MMAP_MAXPG);
-    if (nd > 0 && fd >= 3 && fd < NFD && p->fd[fd].open && p->fd[fd].vf.write) {
-        uint32_t size = p->fd[fd].vf.size;
-        for (int i = 0; i < nd; i++) {
-            uint32_t n = (size > foffs[i]) ? (size - foffs[i]) : 0;   /* clamp last page to EOF */
-            if (n > 0x1000u) n = 0x1000u;
-            if (!n) continue;
-            vfs_lseek(&p->fd[fd].vf, (long)foffs[i], 0);
-            vfs_write(&p->fd[fd].vf, pages[i], n);
+    fs_ctl  *c  = g_fs_ctl[slot];
+    uint32_t va = c->off, len = c->len;
+    for (int i = 0; i < FS_MAXMAP; i++)
+        if (g_wrmap[slot][i].used && g_wrmap[slot][i].va == va) {
+            wrmap_flush(slot, va, g_wrmap[slot][i].path);
+            g_wrmap[slot][i].used = 0;
+            break;
         }
-    }
     return vm_munmap(slot, va, len);
 }
 
@@ -500,6 +534,14 @@ static void fs_close_all(int slot)
         vfs_close(&p->fd[fd].vf);
         p->fd[fd].open = 0;
     }
+    /* process termination is an implicit munmap -> flush any still-active writable
+     * mapping's dirty pages (POSIX MAP_SHARED). Runs before vm_space_destroy, so the
+     * mmap descriptors are still live for the dirty plan. */
+    for (int i = 0; i < FS_MAXMAP; i++)
+        if (g_wrmap[slot][i].used) {
+            wrmap_flush(slot, g_wrmap[slot][i].va, g_wrmap[slot][i].path);
+            g_wrmap[slot][i].used = 0;
+        }
 }
 
 static long kfs_serve(void)
@@ -1380,6 +1422,7 @@ static int frtos_reap(proc_t *p)
      * check (no FatFs). Direct fallback when the fs task isn't up (host_test). */
     { int slot = (int)(p - g_proc), any = 0;
       for (int fd = 3; fd < NFD; fd++) if (p->fd[fd].open) { any = 1; break; }
+      for (int i = 0; !any && i < FS_MAXMAP; i++) if (g_wrmap[slot][i].used) any = 1;  /* writable map, fd maybe closed */
       if (any) { if (g_fs_q) kfs_call(KFS_CLOSEALL, 0, 0, (uint32_t)slot, 0);
                  else        fs_close_all(slot); } }
     if (p->task) { vTaskDelete(p->task); p->task = 0; }   /* the child parked in vTaskSuspend */

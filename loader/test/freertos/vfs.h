@@ -14,6 +14,8 @@ typedef struct vfs_mount vfs_mount;
 /* open-flag subset (newlib O_*, sys/_default_fcntl.h) the drivers interpret. Write
  * intent = (flags & VFS_O_ACCMODE) != 0. */
 #define VFS_O_ACCMODE 0x0003   /* WRONLY(1) | RDWR(2); RDONLY = 0 */
+#define VFS_O_WRONLY  0x0001
+#define VFS_O_RDWR    0x0002
 #define VFS_O_APPEND  0x0008
 #define VFS_O_CREAT   0x0200
 #define VFS_O_TRUNC   0x0400

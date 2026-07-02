@@ -227,14 +227,15 @@ Each step is qemu-testable except the SD leaf (qemu has no SD backend — `sd.c`
      first store to a page faults, and `vm_mmap_write_fault` (in the abort handler —
      synchronous, just an L2 flip + a bit) flips it RW and sets a per-page dirty bit
      (ARMv7 short descriptors have no HW dirty bit here). `munmap` is deferred to the fs
-     task, which writes back **only the dirty pages** through the backing fd
-     (`vm_mmap_dirty_plan` returns the pool page + file offset for each), a partial last
-     page clamped to EOF, then `vm_munmap` frees. The mmap descriptor became a struct
-     (`va/end/src/owned/writable/fd/foff/dirty`). Validated: `mmaptest` maps `/tmp/rw`
-     writable, stores into two pages, munmaps, reopens and confirms the writes persisted
-     **and** untouched bytes survived. Limitation (first cut): write-back happens at
-     `munmap` via the still-open fd — close-before-munmap of a writable mapping drops
-     unflushed writes (a later version holds an independent file ref). SD is the HW leaf.
+     task, which writes back **only the dirty pages** (`vm_mmap_dirty_plan` returns the pool
+     page + file offset for each), a partial last page clamped to EOF, then `vm_munmap`
+     frees. Write-back is **independent of the client fd** (POSIX MAP_SHARED): each
+     writable mapping records the file path (`g_wrmap`, keyed by VA) and the write-back
+     re-opens a fresh handle by that path — so it persists even if the fd was closed
+     before munmap, and process termination (reap) is treated as an implicit munmap that
+     flushes. Validated: `mmaptest` maps `/tmp/rw` writable, **closes the fd**, writes two
+     pages through the mapping, munmaps, reopens and confirms the writes persisted **and**
+     untouched bytes survived. SD is the HW leaf.
    * **(c-4) retire `g_vfs_mtx` — DONE, qemu-validated.** The two remaining non-fs-task
      FatFs callers now route through the service too, so it is the SOLE FatFs driver and
      the interim lock is gone. They're KERNEL callers (no proc slot -> no per-slot control

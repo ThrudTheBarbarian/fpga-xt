@@ -66,10 +66,12 @@ void _app_entry(int argc, char **argv)
         if (rf >= 0) sys_close(rf);
     }
 
-    /* RW mmap write-back (dirty-via-fault): create an 8000-byte (2-page) file, mmap it
-     * WRITABLE, store into two pages through the mapping (each store faults RO->RW and
-     * marks that page dirty), munmap (writes only the dirty pages back), then reopen and
-     * confirm the writes persisted AND untouched bytes survived — fs-pagecache 3c-3b. */
+    /* RW mmap write-back (dirty-via-fault) with CLOSE-BEFORE-MUNMAP: create an 8000-byte
+     * (2-page) file, mmap it WRITABLE, close the fd FIRST, then store into two pages
+     * through the mapping and munmap. POSIX: the mapping keeps its own reference, so the
+     * writes must persist even though the fd is closed — the write-back re-opens the file
+     * by its recorded path (fs-pagecache 3c-3b). Reopen and confirm writes persisted AND
+     * untouched bytes survived. */
     {
         static unsigned char z[8000], rr[8000];
         for (int i = 0; i < 8000; i++) z[i] = (unsigned char)i;
@@ -78,8 +80,8 @@ void _app_entry(int argc, char **argv)
         int mf = sys_open("/tmp/rw", 2);                /* O_RDWR -> writable mapping */
         unsigned char *w = mf >= 0 ? (unsigned char *)sys_mmap(mf, 0, 0) : 0;
         int ok = (w != 0);
+        if (mf >= 0) sys_close(mf);                     /* close BEFORE writing/munmap (the hard case) */
         if (w) { w[10] = 0xAA; w[5000] = 0xBB; sys_munmap(w, 8000); }   /* dirty page 0 + page 1 */
-        if (mf >= 0) sys_close(mf);
         int vf = sys_open("/tmp/rw", 0);
         long got = vf >= 0 ? sys_read(vf, rr, 8000) : 0;
         if (vf >= 0) sys_close(vf);
