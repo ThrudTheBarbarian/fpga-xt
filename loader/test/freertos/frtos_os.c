@@ -241,9 +241,14 @@ void xtos_task_fault_exit(void)
 }
 
 /* ---- file syscalls (dispatch through the VFS: romfs / fatfs / ...) ------ */
+/* task id of the open in flight — opens run in the fs task, so a reentrant driver
+ * (lockfs) that needs the *caller's* identity reads it here rather than cur-task. */
+int g_fs_client = -1;
+
 static long sys_open(proc_t *p, const char *path, int flags)
 {
     if (!p) return -1;
+    g_fs_client = (int)(p - g_proc);                                  /* holder id for lockfs */
     for (int fd = 3; fd < NFD; fd++) {
         if (!p->fd[fd].open) {
             if (vfs_open(path, flags, &p->fd[fd].vf) != 0) return -1;
