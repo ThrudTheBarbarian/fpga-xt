@@ -110,6 +110,22 @@ $(BUILD)/gem_desktop: $(DESK_OBJ)
 desktop: $(BUILD)/gem_desktop
 	./$(BUILD)/gem_desktop
 
+# xtdesk — the XTOS desktop: themed AES desktop + wallpaper + the two drive icons
+# (G_CICON, click to select, double-click to open).  Loads assets from an OS dir
+# (arg, default the mounted SD /Volumes/XTOS/OS).  `make xtdesk-ppm` = one headless
+# frame to /tmp/xtdesk.ppm.
+SQLITE_CFLAGS := $(shell pkg-config --cflags sqlite3 2>/dev/null)
+SQLITE_LIBS   := $(shell pkg-config --libs sqlite3 2>/dev/null || echo -lsqlite3)
+XTDESK_OBJ := $(addprefix $(BUILD)/,gfx_soft.o font.o theme.o img.o registry.o xtdesk.o $(VDI_SRC:.c=.o) $(AES_SRC:.c=.o))
+$(BUILD)/registry.o: registry.c | $(BUILD)
+	$(CC) $(CFLAGS) $(SQLITE_CFLAGS) -MMD -MP -c $< -o $@
+$(BUILD)/gem_xtdesk: $(XTDESK_OBJ)
+	$(CC) $(XTDESK_OBJ) $(LDLIBS) $(SQLITE_LIBS) -o $@
+xtdesk: $(BUILD)/gem_xtdesk
+	./$(BUILD)/gem_xtdesk
+xtdesk-ppm: $(BUILD)/gem_xtdesk
+	./$(BUILD)/gem_xtdesk --ppm && echo "wrote /tmp/xtdesk.ppm"
+
 # Bake the Aristo2 atlas (needs ImageMagick + the Cappuccino resources).
 ARISTO2 ?= $(HOME)/src/cappuccino/cappuccino/AppKit/Themes/Aristo2/Resources
 $(BUILD)/themepack: tools/themepack.c | $(BUILD)
