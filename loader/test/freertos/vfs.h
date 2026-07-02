@@ -7,9 +7,18 @@
 #ifndef VFS_H
 #define VFS_H
 #include <stdint.h>
+#include "xtsys.h"           /* struct xt_stat + XT_S_IF* file-type bits */
 
 typedef struct vfs_file  vfs_file;
 typedef struct vfs_mount vfs_mount;
+
+/* On-disk symlink (Cygwin-style, survives Mac/Windows): a regular file with the
+ * FAT SYSTEM attribute set, whose content is XT_SLNK_MAGIC ("XTLK") + '\0' + the
+ * target path. The magic is one aligned uint32 compare; the SYSTEM bit is a fast
+ * reject so only system files get content-peeked. */
+#define XT_SLNK_MAGIC 0x4B4C5458u   /* "XTLK" little-endian */
+#define VFS_PATH_MAX  256
+#define VFS_SYMLOOP_MAX 40
 
 /* open-flag subset (newlib O_*, sys/_default_fcntl.h) the drivers interpret. Write
  * intent = (flags & VFS_O_ACCMODE) != 0. */
@@ -29,6 +38,12 @@ typedef struct vfs_fs {
     int serialized;   /* 1: a backing-store driver (non-reentrant / shares the block
                        * device) -> vfs takes ONE shared lock across all such drivers so
                        * fatfs+minixfs+swap serialize together. 0: reentrant (romfs, ramfs). */
+    /* metadata ops — all OPTIONAL (NULL = unsupported; the vfs_* wrappers degrade
+     * gracefully). paths are relative to the mount prefix, like open(). */
+    int (*readlink)(vfs_mount *m, const char *path, char *buf, int sz);  /* >=0 len, <0 not-a-link/err */
+    int (*stat)(vfs_mount *m, const char *path, struct xt_stat *st);     /* 0 ok, <0 err */
+    int (*unlink)(vfs_mount *m, const char *path);                       /* 0 ok, <0 err */
+    int (*symlink)(vfs_mount *m, const char *target, const char *path);  /* 0 ok, <0 err */
 } vfs_fs;
 
 /* an open file (lives inside the per-process fd table) */
@@ -61,5 +76,15 @@ long     vfs_read (vfs_file *f, void *buf, uint32_t n);
 long     vfs_write(vfs_file *f, const void *buf, uint32_t n);   /* -1 if the fd is read-only */
 long     vfs_lseek(vfs_file *f, long off, int whence);
 void     vfs_close(vfs_file *f);
+
+/* metadata + symlinks. vfs_open/vfs_stat FOLLOW symlinks (leaf included); the l*
+ * variants and unlink/symlink operate on the link itself. vfs_resolve is the mount-
+ * aware namei loop that expands symlinks in a path (follow_leaf: also the final one). */
+long     vfs_readlink(const char *path, char *buf, int sz);    /* >=0 target len, <0 err */
+long     vfs_stat (const char *path, struct xt_stat *st);      /* follows symlinks */
+long     vfs_lstat(const char *path, struct xt_stat *st);      /* the link itself */
+long     vfs_unlink(const char *path);
+long     vfs_symlink(const char *target, const char *linkpath);
+int      vfs_resolve(const char *in, char *out, int outsz, int follow_leaf); /* 0 ok, <0 ELOOP */
 
 #endif

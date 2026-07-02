@@ -37,6 +37,18 @@
 #define SYS_read     0x302   /* (fd, buf, len) -> n */
 #define SYS_write    0x303   /* (fd, buf, len) -> n */
 #define SYS_lseek    0x304   /* (fd, off, whence) -> pos */
+#define SYS_stat     0x305   /* (path, struct xt_stat *) -> 0: follows symlinks */
+#define SYS_lstat    0x306   /* (path, struct xt_stat *) -> 0: does NOT follow (the link itself) */
+#define SYS_readlink 0x307   /* (path, buf, size) -> len: symlink target (no follow) */
+#define SYS_symlink  0x308   /* (target, linkpath) -> 0: create a symlink */
+#define SYS_unlink   0x309   /* (path) -> 0: remove a file/symlink */
+
+/* stat result (SYS_stat / SYS_lstat). mode carries the file-type bits below. */
+struct xt_stat { unsigned mode, size, mtime; };
+#define XT_S_IFMT  0xF000u   /* type mask */
+#define XT_S_IFREG 0x8000u   /* regular file */
+#define XT_S_IFDIR 0x4000u   /* directory */
+#define XT_S_IFLNK 0xA000u   /* symbolic link */
 
 /* time / timers — block 0x400. Peripherals are PL1-only, so libc's _gettimeofday
  * traps here; the kernel reads the A9 global timer (wall clock since boot — no RTC). */

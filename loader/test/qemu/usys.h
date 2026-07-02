@@ -34,6 +34,17 @@ static inline long sys_read(int fd, void *buf, unsigned len)
 static inline long sys_close(int fd) { return __syscall(SYS_close, fd, 0, 0); }
 static inline long sys_lseek(int fd, long off, int whence)
 { return __syscall(SYS_lseek, fd, off, whence); }
+/* metadata + symlinks (block 0x300). stat follows symlinks, lstat does not. */
+static inline long sys_stat(const char *path, struct xt_stat *st)
+{ return __syscall(SYS_stat, (long)path, (long)st, 0); }
+static inline long sys_lstat(const char *path, struct xt_stat *st)
+{ return __syscall(SYS_lstat, (long)path, (long)st, 0); }
+static inline long sys_readlink(const char *path, char *buf, unsigned size)
+{ return __syscall(SYS_readlink, (long)path, (long)buf, (long)size); }
+static inline long sys_symlink(const char *target, const char *linkpath)
+{ return __syscall(SYS_symlink, (long)target, (long)linkpath, 0); }
+static inline long sys_unlink(const char *path)
+{ return __syscall(SYS_unlink, (long)path, 0, 0); }
 /* mmap a romfs file read-only + shared (len=0 -> whole file from off). Returns a
  * pointer to the file's bytes (no copy), or NULL. */
 static inline void *sys_mmap(int fd, unsigned len, unsigned off)

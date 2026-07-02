@@ -21,7 +21,7 @@
 #define FILE_SYSTEM_USE_MKFS  
 /* #undef FILE_SYSTEM_USE_TRIM */
 /* #undef FILE_SYSTEM_MULTI_PARTITION */
-/* #undef FILE_SYSTEM_USE_CHMOD */
+#define FILE_SYSTEM_USE_CHMOD   /* f_chmod/f_utime: set the SYSTEM attr on symlinks */
 #define FILE_SYSTEM_NUM_LOGIC_VOL 35
 #define FILE_SYSTEM_WORD_ACCESS  
 /* #undef FILE_SYSTEM_USE_STRFUNC */

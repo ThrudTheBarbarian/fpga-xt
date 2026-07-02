@@ -22,6 +22,7 @@ extern void  vm_page_free(void *p);
 
 typedef struct {
     int      used;
+    int      islink;                      /* 1: a symlink (content = target path) */
     char     name[NAME_MAX];              /* rel path within the mount, e.g. "/foo" */
     uint32_t size;
     void    *pg[RAMFS_PAGES];             /* page-indexed content (NULL = hole -> zero) */
@@ -104,7 +105,7 @@ static int rf_open(vfs_mount *m, const char *path, int flags, vfs_file *f)
         if (!(flags & VFS_O_CREAT)) return -1;                           /* not found, no create */
         for (int i = 0; i < RAMFS_FILES; i++) if (!g_rn[i].used) { nd = &g_rn[i]; break; }
         if (!nd) return -1;                                              /* table full */
-        nd->used = 1; nd->size = 0;
+        nd->used = 1; nd->size = 0; nd->islink = 0;
         for (int i = 0; i < RAMFS_PAGES; i++) nd->pg[i] = 0;
         int j = 0; while (path[j] && j < NAME_MAX - 1) { nd->name[j] = path[j]; j++; } nd->name[j] = 0;
     } else if (flags & VFS_O_TRUNC) {
@@ -116,6 +117,56 @@ static int rf_open(vfs_mount *m, const char *path, int flags, vfs_file *f)
     return 0;
 }
 
-static vfs_fs ramfs_fs = { "ramfs", rf_open, 0 /* reentrant: fs-task-serialized, no block device */ };
+/* symlinks (so the resolver + metadata syscalls are testable on qemu, where there is
+ * no SD/fatfs). A link's node holds the target path as its content; islink flags it. */
+static int rf_symlink(vfs_mount *m, const char *target, const char *path)
+{
+    (void)m;
+    rnode *nd = find(path);
+    if (nd) free_pages(nd);
+    else {
+        for (int i = 0; i < RAMFS_FILES; i++) if (!g_rn[i].used) { nd = &g_rn[i]; break; }
+        if (!nd) return -1;
+        nd->used = 1;
+        for (int i = 0; i < RAMFS_PAGES; i++) nd->pg[i] = 0;
+        int j = 0; while (path[j] && j < NAME_MAX - 1) { nd->name[j] = path[j]; j++; } nd->name[j] = 0;
+    }
+    nd->size = 0; nd->islink = 1;
+    vfs_file f; f.priv = nd; f.pos = 0;                       /* reuse rf_write to store the target */
+    rf_write(&f, target, (uint32_t)strlen(target));
+    return 0;
+}
+static int rf_readlink(vfs_mount *m, const char *path, char *buf, int sz)
+{
+    (void)m;
+    rnode *nd = find(path);
+    if (!nd || !nd->islink) return -1;
+    uint32_t n = nd->size; if (sz > 0 && n > (uint32_t)(sz - 1)) n = (uint32_t)(sz - 1);
+    vfs_file f; f.priv = nd; f.pos = 0;
+    long r = rf_read(&f, buf, n); if (r < 0) r = 0;
+    buf[r] = 0;
+    return (int)r;
+}
+static int rf_stat(vfs_mount *m, const char *path, struct xt_stat *st)
+{
+    (void)m;
+    if (path[0] == 0 || (path[0] == '/' && path[1] == 0)) { st->mode = XT_S_IFDIR; st->size = 0; st->mtime = 0; return 0; }
+    rnode *nd = find(path);
+    if (!nd) return -1;
+    st->mode = nd->islink ? XT_S_IFLNK : XT_S_IFREG;
+    st->size = nd->size; st->mtime = 0;
+    return 0;
+}
+static int rf_unlink(vfs_mount *m, const char *path)
+{
+    (void)m;
+    rnode *nd = find(path);
+    if (!nd) return -1;
+    free_pages(nd); nd->used = 0; nd->islink = 0;
+    return 0;
+}
+
+static vfs_fs ramfs_fs = { "ramfs", rf_open, 0 /* reentrant: fs-task-serialized, no block device */,
+                           rf_readlink, rf_stat, rf_unlink, rf_symlink };
 
 void vfs_ramfs_init(void) { vfs_register_fs(&ramfs_fs); }

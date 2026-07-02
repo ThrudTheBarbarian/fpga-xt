@@ -319,7 +319,9 @@ typedef struct {
     uint32_t          page_addr;     /* getpage: resident page addr / mmap: mapped VA (service -> client) */
     uint32_t          valid;         /* getpage: valid bytes in the page (service -> client) */
     volatile int32_t  result;        /* service -> client (0 ok, <0 err) */
-    char              path[FS_PATH_MAX];   /* open: marshalled path (identity-reachable) */
+    char              path[FS_PATH_MAX];   /* open/stat/...: marshalled path (identity-reachable) */
+    char              path2[FS_PATH_MAX];  /* symlink target (in) / readlink target (out) */
+    uint32_t          st[3];               /* stat/lstat result: mode, size, mtime */
 } fs_ctl;
 
 static QueueHandle_t g_fs_q;                 /* doorbell: slot indices; NULL until frtos_fs_start() */
@@ -493,6 +495,15 @@ static long fs_serve(int slot)
             p->fd[c->fd].open = 0;
         }
         return 0;
+    case SYS_stat: case SYS_lstat: {                          /* path -> xt_stat (in st[]) */
+        struct xt_stat s;
+        long r = (c->op == SYS_stat) ? vfs_stat(c->path, &s) : vfs_lstat(c->path, &s);
+        if (r == 0) { c->st[0] = s.mode; c->st[1] = s.size; c->st[2] = s.mtime; }
+        return r;
+    }
+    case SYS_readlink: return vfs_readlink(c->path, c->path2, (int)c->len);   /* target -> path2 */
+    case SYS_symlink:  return vfs_symlink(c->path2, c->path);                 /* (target, linkpath) */
+    case SYS_unlink:   return vfs_unlink(c->path);
     case FS_OP_GETPAGE: {
         uint32_t valid = 0;
         void *pg = fd_getpage(slot, (int)c->fd, c->page, &valid, (int)c->wr);
@@ -637,6 +648,50 @@ static long fs_call(proc_t *p)
     g_fs_waiter[slot] = xTaskGetCurrentTaskHandle();
     xQueueSend(g_fs_q, &slot, portMAX_DELAY);
     ulTaskNotifyTake(pdTRUE, portMAX_DELAY);   /* index 0: free here (not a waitpid waiter) */
+    return c->result;
+}
+
+/* copy a client PL0 string into an fs-ctl path field (mapped here in the deferral). */
+static void cp_path(char *dst, const char *src)
+{
+    int i = 0;
+    if (src) while (src[i] && i < FS_PATH_MAX - 1) { dst[i] = src[i]; i++; }
+    dst[i] = 0;
+}
+
+/* deferral (client TASK ctx) -> route a path-based metadata op (stat/lstat/readlink/
+ * symlink/unlink) to the fs task. Marshal input paths out of client memory, ring, park,
+ * then copy the stat struct / readlink target back into the client's buffer (mapped here). */
+static long fs_meta(proc_t *p)
+{
+    int     slot = (int)(p - g_proc);
+    fs_ctl *c = (slot >= 0 && slot < MAXPROC) ? g_fs_ctl[slot] : 0;
+    if (!g_fs_q || !c) return do_syscall(p->dnum, p->da0, p->da1, p->da2);
+    c->op = p->dnum;
+    if (p->dnum == SYS_symlink) {
+        cp_path(c->path,  (const char *)p->da1);              /* linkpath */
+        cp_path(c->path2, (const char *)p->da0);              /* target   */
+    } else {
+        cp_path(c->path, (const char *)p->da0);               /* primary path */
+        if (p->dnum == SYS_readlink) {
+            uint32_t sz = (uint32_t)p->da2; if (sz > FS_PATH_MAX) sz = FS_PATH_MAX;
+            c->len = sz;                                      /* clamp target buffer to path2 */
+        }
+    }
+    c->result = -1;
+    g_fs_waiter[slot] = xTaskGetCurrentTaskHandle();
+    xQueueSend(g_fs_q, &slot, portMAX_DELAY);
+    ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
+    if (c->result >= 0) {                                     /* results -> client memory */
+        if (p->dnum == SYS_stat || p->dnum == SYS_lstat) {
+            struct xt_stat *u = (struct xt_stat *)p->da1;
+            if (u) { u->mode = c->st[0]; u->size = c->st[1]; u->mtime = c->st[2]; }
+        } else if (p->dnum == SYS_readlink) {
+            char *ub = (char *)p->da1; uint32_t usz = (uint32_t)p->da2;
+            long n = c->result; if (n > (long)usz) n = (long)usz;
+            for (long i = 0; i < n; i++) ub[i] = c->path2[i];
+        }
+    }
     return c->result;
 }
 
@@ -808,6 +863,10 @@ void deferral_thunk(void)                 /* PL1 (System), task context */
         } else if (p->dnum == SYS_open || p->dnum == SYS_close) {
             /* metadata ops (no client data buffer) -> the fs service task owns them. */
             r = fs_call(p);
+        } else if (p->dnum == SYS_stat || p->dnum == SYS_lstat || p->dnum == SYS_readlink ||
+                   p->dnum == SYS_symlink || p->dnum == SYS_unlink) {
+            /* path metadata + symlinks: fs task walks FatFs; results copied back here. */
+            r = fs_meta(p);
         } else if (p->dnum == SYS_mmap) {
             /* mmap a backing-store file: the fs task eager-fills + maps it into our space. */
             r = fs_mmap(p);
@@ -860,6 +919,11 @@ static long do_syscall(uint32_t num, long a0, long a1, long a2)
                          p->fd[a0].open = 0;
                      } return 0;
     case SYS_lseek:  return sys_lseek(p, (int)a0, a1, (int)a2);
+    case SYS_stat:     return vfs_stat((const char *)a0, (struct xt_stat *)a1);      /* follows symlinks */
+    case SYS_lstat:    return vfs_lstat((const char *)a0, (struct xt_stat *)a1);     /* the link itself */
+    case SYS_readlink: return vfs_readlink((const char *)a0, (char *)a1, (int)a2);
+    case SYS_symlink:  return vfs_symlink((const char *)a0, (const char *)a1);
+    case SYS_unlink:   return vfs_unlink((const char *)a0);
     case SYS_sbrk:   { extern void *sys_sbrk(int); return (long)sys_sbrk((int)a0); }  /* libc malloc */
     case SYS_mmap: {                                         /* (fd, len, off) -> VA, RO file map */
         int fd = (int)a0; uint32_t len = (uint32_t)a1, off = (uint32_t)a2;
@@ -941,6 +1005,8 @@ static int needs_task_ctx(struct k_regs *regs, uint32_t num)
     case SYS_mmap:    return fd_is_sd(fd);          /* backing-store mmap -> fs task eager-fill (romfs inline) */
     case SYS_munmap:  return 1;                     /* may write dirty pages back (FatFs) -> task ctx */
     case SYS_input:   return 1;                     /* blocks on the serial ring for the next event */
+    case SYS_stat: case SYS_lstat: case SYS_readlink:
+    case SYS_symlink: case SYS_unlink: return 1;    /* path metadata -> FatFs -> fs task */
     default:          return 0;                    /* lseek (inline)/getpid/sbrk/fb/gettimeofday */
     }
 }
