@@ -177,6 +177,24 @@ long vfs_readdir(const char *path, int index, char *name, int nsz, unsigned *mod
     if (!m || !m->fs->readdir) return -1;
     return m->fs->readdir(m, rel, index, name, nsz, mode);
 }
+long vfs_mkdir(const char *path)
+{
+    char rp[VFS_PATH_MAX];
+    if (vfs_resolve(path, rp, sizeof rp, 0) != 0) return -1;    /* create the leaf itself */
+    const char *rel; vfs_mount *m = resolve(rp, &rel);
+    if (!m || !m->fs->mkdir) return -1;
+    return m->fs->mkdir(m, rel);
+}
+long vfs_rename(const char *oldp, const char *newp)
+{
+    char ro[VFS_PATH_MAX], rn[VFS_PATH_MAX];
+    if (vfs_resolve(oldp, ro, sizeof ro, 0) != 0) return -1;
+    if (vfs_resolve(newp, rn, sizeof rn, 0) != 0) return -1;
+    const char *rel_o; vfs_mount *mo = resolve(ro, &rel_o);
+    const char *rel_n; vfs_mount *mn = resolve(rn, &rel_n);
+    if (!mo || !mn || mo != mn || !mo->fs->rename) return -1;   /* same mount only */
+    return mo->fs->rename(mo, rel_o, rel_n);
+}
 
 int vfs_open(const char *path, int flags, vfs_file *f)
 {

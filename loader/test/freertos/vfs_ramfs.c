@@ -23,6 +23,7 @@ extern void  vm_page_free(void *p);
 typedef struct {
     int      used;
     int      islink;                      /* 1: a symlink (content = target path) */
+    int      isdir;                       /* 1: a directory (flat namespace, for cwd tests) */
     char     name[NAME_MAX];              /* rel path within the mount, e.g. "/foo" */
     uint32_t size;
     void    *pg[RAMFS_PAGES];             /* page-indexed content (NULL = hole -> zero) */
@@ -105,7 +106,7 @@ static int rf_open(vfs_mount *m, const char *path, int flags, vfs_file *f)
         if (!(flags & VFS_O_CREAT)) return -1;                           /* not found, no create */
         for (int i = 0; i < RAMFS_FILES; i++) if (!g_rn[i].used) { nd = &g_rn[i]; break; }
         if (!nd) return -1;                                              /* table full */
-        nd->used = 1; nd->size = 0; nd->islink = 0;
+        nd->used = 1; nd->size = 0; nd->islink = 0; nd->isdir = 0;
         for (int i = 0; i < RAMFS_PAGES; i++) nd->pg[i] = 0;
         int j = 0; while (path[j] && j < NAME_MAX - 1) { nd->name[j] = path[j]; j++; } nd->name[j] = 0;
     } else if (flags & VFS_O_TRUNC) {
@@ -153,8 +154,28 @@ static int rf_stat(vfs_mount *m, const char *path, struct xt_stat *st)
     if (path[0] == 0 || (path[0] == '/' && path[1] == 0)) { st->mode = XT_S_IFDIR; st->size = 0; st->mtime = 0; return 0; }
     rnode *nd = find(path);
     if (!nd) return -1;
-    st->mode = nd->islink ? XT_S_IFLNK : XT_S_IFREG;
+    st->mode = nd->isdir ? XT_S_IFDIR : nd->islink ? XT_S_IFLNK : XT_S_IFREG;
     st->size = nd->size; st->mtime = 0;
+    return 0;
+}
+static int rf_mkdir(vfs_mount *m, const char *path)
+{
+    (void)m;
+    if (find(path)) return -1;                               /* exists */
+    rnode *nd = 0;
+    for (int i = 0; i < RAMFS_FILES; i++) if (!g_rn[i].used) { nd = &g_rn[i]; break; }
+    if (!nd) return -1;
+    nd->used = 1; nd->size = 0; nd->islink = 0; nd->isdir = 1;
+    for (int i = 0; i < RAMFS_PAGES; i++) nd->pg[i] = 0;
+    int j = 0; while (path[j] && j < NAME_MAX - 1) { nd->name[j] = path[j]; j++; } nd->name[j] = 0;
+    return 0;
+}
+static int rf_rename(vfs_mount *m, const char *oldp, const char *newp)
+{
+    (void)m;
+    rnode *nd = find(oldp);
+    if (!nd || find(newp)) return -1;
+    int j = 0; while (newp[j] && j < NAME_MAX - 1) { nd->name[j] = newp[j]; j++; } nd->name[j] = 0;
     return 0;
 }
 static int rf_unlink(vfs_mount *m, const char *path)
@@ -185,6 +206,7 @@ static int rf_readdir(vfs_mount *m, const char *path, int index, char *name, int
 }
 
 static vfs_fs ramfs_fs = { "ramfs", rf_open, 0 /* reentrant: fs-task-serialized, no block device */,
-                           rf_readlink, rf_stat, rf_unlink, rf_symlink, rf_readdir };
+                           rf_readlink, rf_stat, rf_unlink, rf_symlink, rf_readdir,
+                           rf_mkdir, rf_rename };
 
 void vfs_ramfs_init(void) { vfs_register_fs(&ramfs_fs); }

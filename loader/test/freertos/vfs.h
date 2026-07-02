@@ -46,6 +46,8 @@ typedef struct vfs_fs {
     int (*symlink)(vfs_mount *m, const char *target, const char *path);  /* 0 ok, <0 err */
     /* enumerate: fill name/mode of the index-th entry -> 1 filled, 0 end, -1 err */
     int (*readdir)(vfs_mount *m, const char *path, int index, char *name, int nsz, unsigned *mode);
+    int (*mkdir)(vfs_mount *m, const char *path);                            /* 0 ok, <0 err */
+    int (*rename)(vfs_mount *m, const char *oldp, const char *newp);         /* 0 ok, <0 err */
 } vfs_fs;
 
 /* an open file (lives inside the per-process fd table) */
@@ -88,6 +90,8 @@ long     vfs_lstat(const char *path, struct xt_stat *st);      /* the link itsel
 long     vfs_unlink(const char *path);
 long     vfs_symlink(const char *target, const char *linkpath);
 long     vfs_readdir(const char *path, int index, char *name, int nsz, unsigned *mode);
+long     vfs_mkdir(const char *path);
+long     vfs_rename(const char *oldp, const char *newp);
 int      vfs_resolve(const char *in, char *out, int outsz, int follow_leaf); /* 0 ok, <0 ELOOP */
 
 #endif

@@ -191,7 +191,19 @@ static int ff_open(vfs_mount *m, const char *path, int flags, vfs_file *f)
     return 0;
 }
 
+static int ff_mkdir(vfs_mount *m, const char *path)
+{
+    (void)m; char p[256]; ffpath(p, path);
+    return (f_mkdir(p) == FR_OK) ? 0 : -1;
+}
+static int ff_rename(vfs_mount *m, const char *oldp, const char *newp)
+{
+    (void)m; char a[256], b[256]; ffpath(a, oldp); ffpath(b, newp);
+    return (f_rename(a, b) == FR_OK) ? 0 : -1;
+}
+
 static vfs_fs fatfs_fs = { "fatfs", ff_open, 1 /* serialized: backing-store */,
-                           ff_readlink, ff_stat, ff_unlink, ff_symlink, ff_readdir };
+                           ff_readlink, ff_stat, ff_unlink, ff_symlink, ff_readdir,
+                           ff_mkdir, ff_rename };
 
 void vfs_fatfs_init(void) { vfs_register_fs(&fatfs_fs); }

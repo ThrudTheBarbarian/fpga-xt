@@ -43,6 +43,10 @@
 #define SYS_symlink  0x308   /* (target, linkpath) -> 0: create a symlink */
 #define SYS_unlink   0x309   /* (path) -> 0: remove a file/symlink */
 #define SYS_readdir  0x30A   /* (path, index, struct xt_dirent *) -> 1 filled / 0 end / -1 err */
+#define SYS_mkdir    0x30B   /* (path, mode) -> 0: create a directory */
+#define SYS_chdir    0x30C   /* (path) -> 0: set the process cwd (must be a dir) */
+#define SYS_getcwd   0x30D   /* (buf, size) -> len: the process cwd (absolute) */
+#define SYS_rename   0x30E   /* (oldpath, newpath) -> 0 */
 
 /* stat result (SYS_stat / SYS_lstat). mode carries the file-type bits below. */
 struct xt_stat { unsigned mode, size, mtime; };

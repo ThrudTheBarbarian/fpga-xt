@@ -64,6 +64,7 @@ typedef struct {
     uint32_t          dctx[16];
     uint32_t          dnum;
     long              da0, da1, da2;
+    char              cwd[256];       /* current working dir (absolute); relative paths resolve here */
 } proc_t;
 
 static proc_t g_proc[MAXPROC];
@@ -329,6 +330,7 @@ static fs_ctl       *g_fs_ctl[MAXPROC];      /* per-slot control page (pool iden
 static TaskHandle_t  g_fs_waiter[MAXPROC];   /* client task parked on each slot's request */
 
 static long do_syscall(uint32_t num, long a0, long a1, long a2);   /* fallback (caller ctx) */
+static void abspath(proc_t *p, const char *in, char *out);        /* cwd-relative -> absolute */
 
 /* flush the fd's cached page to the backing if it has unwritten data (close / evict).
  * Writes the page's logical byte extent (a partial last page writes only up to size). */
@@ -510,6 +512,16 @@ static long fs_serve(int slot)
         c->st[0] = mode;
         return r;
     }
+    case SYS_mkdir:   return vfs_mkdir(c->path);
+    case SYS_rename:  return vfs_rename(c->path, c->path2);   /* (old, new) both absolutized */
+    case SYS_chdir: {                                         /* canonicalize + verify dir, set cwd */
+        char canon[FS_PATH_MAX]; struct xt_stat s;
+        if (vfs_resolve(c->path, canon, FS_PATH_MAX, 1) != 0) return -1;
+        if (vfs_stat(canon, &s) != 0 || (s.mode & XT_S_IFMT) != XT_S_IFDIR) return -1;
+        int i = 0; while (canon[i] && i < (int)sizeof g_proc[slot].cwd - 1) { g_proc[slot].cwd[i] = canon[i]; i++; }
+        g_proc[slot].cwd[i] = 0;
+        return 0;
+    }
     case FS_OP_GETPAGE: {
         uint32_t valid = 0;
         void *pg = fd_getpage(slot, (int)c->fd, c->page, &valid, (int)c->wr);
@@ -642,12 +654,9 @@ static long fs_call(proc_t *p)
     if (!g_fs_q || !c) return do_syscall(p->dnum, p->da0, p->da1, p->da2);
     c->op = p->dnum;
     if (p->dnum == SYS_open) {
-        const char *src = (const char *)p->da0;   /* client PL0 path — reachable in this space */
-        int i = 0;
-        if (src) while (src[i] && i < FS_PATH_MAX - 1) { c->path[i] = src[i]; i++; }
-        c->path[i] = 0;
-        c->flags = (uint32_t)p->da1;              /* open flags (VFS_O_*) */
-    } else {                                      /* close */
+        abspath(p, (const char *)p->da0, c->path);   /* resolve relative paths against cwd */
+        c->flags = (uint32_t)p->da1;                 /* open flags (VFS_O_*) */
+    } else {                                         /* close */
         c->fd = (uint32_t)p->da0;
     }
     c->result = -1;
@@ -665,6 +674,23 @@ static void cp_path(char *dst, const char *src)
     dst[i] = 0;
 }
 
+/* absolutize a client path against the process cwd: absolute paths pass through,
+ * relative ones become cwd + "/" + path. Normalisation (./..) is done by the VFS
+ * resolver, so this just concatenates. */
+static void abspath(proc_t *p, const char *in, char *out)
+{
+    int o = 0;
+    if (!in) in = "";
+    if (in[0] != '/' && p) {
+        const char *c = p->cwd;
+        while (c[o] && o < FS_PATH_MAX - 2) { out[o] = c[o]; o++; }
+        if (o == 0 || out[o-1] != '/') out[o++] = '/';
+    }
+    int i = 0; while (in[i] && o < FS_PATH_MAX - 1) { out[o++] = in[i++]; }
+    out[o] = 0;
+    if (o == 0) { out[0] = '/'; out[1] = 0; }
+}
+
 /* deferral (client TASK ctx) -> route a path-based metadata op (stat/lstat/readlink/
  * symlink/unlink) to the fs task. Marshal input paths out of client memory, ring, park,
  * then copy the stat struct / readlink target back into the client's buffer (mapped here). */
@@ -675,10 +701,13 @@ static long fs_meta(proc_t *p)
     if (!g_fs_q || !c) return do_syscall(p->dnum, p->da0, p->da1, p->da2);
     c->op = p->dnum;
     if (p->dnum == SYS_symlink) {
-        cp_path(c->path,  (const char *)p->da1);              /* linkpath */
-        cp_path(c->path2, (const char *)p->da0);              /* target   */
+        abspath(p, (const char *)p->da1, c->path);            /* linkpath (where to create) */
+        cp_path(c->path2, (const char *)p->da0);              /* target (stored verbatim) */
+    } else if (p->dnum == SYS_rename) {
+        abspath(p, (const char *)p->da0, c->path);            /* oldpath */
+        abspath(p, (const char *)p->da1, c->path2);           /* newpath */
     } else {
-        cp_path(c->path, (const char *)p->da0);               /* primary path */
+        abspath(p, (const char *)p->da0, c->path);            /* primary path (cwd-relative) */
         if (p->dnum == SYS_readlink) {
             uint32_t sz = (uint32_t)p->da2; if (sz > FS_PATH_MAX) sz = FS_PATH_MAX;
             c->len = sz;                                      /* clamp target buffer to path2 */
@@ -876,8 +905,9 @@ void deferral_thunk(void)                 /* PL1 (System), task context */
             /* metadata ops (no client data buffer) -> the fs service task owns them. */
             r = fs_call(p);
         } else if (p->dnum == SYS_stat || p->dnum == SYS_lstat || p->dnum == SYS_readlink ||
-                   p->dnum == SYS_symlink || p->dnum == SYS_unlink || p->dnum == SYS_readdir) {
-            /* path metadata + symlinks + dir enumeration: fs task walks FatFs; results back here. */
+                   p->dnum == SYS_symlink || p->dnum == SYS_unlink || p->dnum == SYS_readdir ||
+                   p->dnum == SYS_mkdir || p->dnum == SYS_chdir || p->dnum == SYS_rename) {
+            /* path metadata + symlinks + dir enumeration + mkdir/chdir/rename: fs task walks FatFs. */
             r = fs_meta(p);
         } else if (p->dnum == SYS_mmap) {
             /* mmap a backing-store file: the fs task eager-fills + maps it into our space. */
@@ -942,6 +972,22 @@ static long do_syscall(uint32_t num, long a0, long a1, long a2)
         long r = vfs_readdir((const char *)a0, (int)a1, o ? o->name : 0, 256, &mode);
         if (o && r == 1) o->mode = mode;
         return r;
+    }
+    case SYS_getcwd: {                                       /* inline: just reads the process cwd */
+        char *buf = (char *)a0; uint32_t sz = (uint32_t)a1;
+        if (!p || !buf || sz == 0) return -1;
+        int i = 0; while (p->cwd[i] && i < (int)sz - 1) { buf[i] = p->cwd[i]; i++; } buf[i] = 0;
+        return i;
+    }
+    case SYS_mkdir:  { char ap[FS_PATH_MAX]; abspath(p, (const char *)a0, ap); return vfs_mkdir(ap); }
+    case SYS_rename: { char a[FS_PATH_MAX], b[FS_PATH_MAX]; abspath(p, (const char *)a0, a); abspath(p, (const char *)a1, b); return vfs_rename(a, b); }
+    case SYS_chdir:  {                                       /* fallback (no fs task): stat + set cwd */
+        char ap[FS_PATH_MAX], canon[FS_PATH_MAX]; struct xt_stat s;
+        abspath(p, (const char *)a0, ap);
+        if (!p || vfs_resolve(ap, canon, FS_PATH_MAX, 1) != 0) return -1;
+        if (vfs_stat(canon, &s) != 0 || (s.mode & XT_S_IFMT) != XT_S_IFDIR) return -1;
+        int i = 0; while (canon[i] && i < (int)sizeof p->cwd - 1) { p->cwd[i] = canon[i]; i++; } p->cwd[i] = 0;
+        return 0;
     }
     case SYS_sbrk:   { extern void *sys_sbrk(int); return (long)sys_sbrk((int)a0); }  /* libc malloc */
     case SYS_mmap: {                                         /* (fd, len, off) -> VA, RO file map */
@@ -1025,7 +1071,9 @@ static int needs_task_ctx(struct k_regs *regs, uint32_t num)
     case SYS_munmap:  return 1;                     /* may write dirty pages back (FatFs) -> task ctx */
     case SYS_input:   return 1;                     /* blocks on the serial ring for the next event */
     case SYS_stat: case SYS_lstat: case SYS_readlink:
-    case SYS_symlink: case SYS_unlink: case SYS_readdir: return 1;    /* path metadata -> FatFs -> fs task */
+    case SYS_symlink: case SYS_unlink: case SYS_readdir:
+    case SYS_mkdir: case SYS_chdir: case SYS_rename: return 1;    /* path metadata -> FatFs -> fs task */
+    /* SYS_getcwd falls through to inline (default 0) — it only reads the process cwd */
     default:          return 0;                    /* lseek (inline)/getpid/sbrk/fb/gettimeofday */
     }
 }
@@ -1203,6 +1251,7 @@ static int proc_launch(int slot, xtld_obj *obj, uintptr_t entry,
     proc_t *p = &g_proc[slot];
     for (int i = 0; i < NFD; i++) p->fd[i].open = 0;
     p->obj = obj; p->entry = entry; p->exit_code = 0; p->exited = 0; p->waited = 0; p->waiter = 0; p->pid = g_next_pid++;
+    p->cwd[0] = '/'; p->cwd[1] = 0;                         /* new process starts at the root */
     p->done = xSemaphoreCreateBinary();
     if (!p->done) return -1;
     /* T2-b/c: private address space — demand heap + COW(libc data, synthetic, and

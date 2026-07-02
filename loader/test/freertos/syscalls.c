@@ -84,12 +84,12 @@ int _kill(int pid, int sig) { (void)pid; (void)sig; return -1; }
 int _gettimeofday(void *tv, void *tz) { (void)tz; return tv ? (int)sc(SYS_gettimeofday, (long)tv, 0, 0) : -1; }
 int _times(void *buf) { (void)buf; return -1; }
 int _link(const char *a, const char *b) { (void)a; (void)b; return -1; }
-int _unlink(const char *p) { (void)p; return -1; }
+int _unlink(const char *p) { return (int)sc(SYS_unlink, (long)p, 0, 0); }
 int _fork(void) { return -1; }
 int _execve(const char *p, char *const a[], char *const e[]) { (void)p; (void)a; (void)e; return -1; }
 int _fcntl(int fd, int cmd, int arg) { (void)fd; (void)cmd; (void)arg; return -1; }
 int _getentropy(void *buf, unsigned n) { (void)buf; (void)n; return -1; }
-int _mkdir(const char *p, int m) { (void)p; (void)m; return -1; }
+int _mkdir(const char *p, int m) { return (int)sc(SYS_mkdir, (long)p, m, 0); }
 void _init(void) {}
 void _fini(void) {}
 int _jp2uc_l(int c, void *l) { (void)l; return c; }   /* JIS<->Unicode: no-op */
