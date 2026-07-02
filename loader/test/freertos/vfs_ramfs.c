@@ -165,8 +165,26 @@ static int rf_unlink(vfs_mount *m, const char *path)
     free_pages(nd); nd->used = 0; nd->islink = 0;
     return 0;
 }
+/* flat namespace: only the mount root enumerates, returning every live node. */
+static int rf_readdir(vfs_mount *m, const char *path, int index, char *name, int nsz, unsigned *mode)
+{
+    (void)m;
+    if (!(path[0] == 0 || (path[0] == '/' && path[1] == 0))) return 0;   /* no subdirs */
+    int k = 0;
+    for (int i = 0; i < RAMFS_FILES; i++) {
+        if (!g_rn[i].used) continue;
+        if (k == index) {
+            const char *nm = g_rn[i].name; if (nm[0] == '/') nm++;
+            int j = 0; while (nm[j] && j < nsz - 1) { name[j] = nm[j]; j++; } name[j] = 0;
+            *mode = g_rn[i].islink ? XT_S_IFLNK : XT_S_IFREG;
+            return 1;
+        }
+        k++;
+    }
+    return 0;   /* past the end */
+}
 
 static vfs_fs ramfs_fs = { "ramfs", rf_open, 0 /* reentrant: fs-task-serialized, no block device */,
-                           rf_readlink, rf_stat, rf_unlink, rf_symlink };
+                           rf_readlink, rf_stat, rf_unlink, rf_symlink, rf_readdir };
 
 void vfs_ramfs_init(void) { vfs_register_fs(&ramfs_fs); }

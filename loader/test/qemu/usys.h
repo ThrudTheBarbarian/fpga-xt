@@ -45,6 +45,9 @@ static inline long sys_symlink(const char *target, const char *linkpath)
 { return __syscall(SYS_symlink, (long)target, (long)linkpath, 0); }
 static inline long sys_unlink(const char *path)
 { return __syscall(SYS_unlink, (long)path, 0, 0); }
+/* enumerate a directory: index 0,1,2,... -> 1 (filled), 0 (end), -1 (err) */
+static inline long sys_readdir(const char *path, int index, struct xt_dirent *ent)
+{ return __syscall(SYS_readdir, (long)path, index, (long)ent); }
 /* mmap a romfs file read-only + shared (len=0 -> whole file from off). Returns a
  * pointer to the file's bytes (no copy), or NULL. */
 static inline void *sys_mmap(int fd, unsigned len, unsigned off)

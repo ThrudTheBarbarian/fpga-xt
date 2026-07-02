@@ -118,6 +118,37 @@ static int ff_unlink(vfs_mount *m, const char *path)
     return (f_unlink(p) == FR_OK) ? 0 : -1;
 }
 
+static int ffeq(const char *a, const char *b)
+{ while (*a && *a == *b) { a++; b++; } return *a == 0 && *b == 0; }
+
+/* One open DIR cursor caches the last enumeration position, so sequential readdir
+ * (index 0,1,2,...) is O(N); a non-sequential index re-opens + skips. Stateless API,
+ * no per-fd/handle/reap machinery — and serialized in the fs task, so one cursor is safe. */
+static DIR  g_rdir;
+static char g_rdir_path[256];
+static int  g_rdir_open, g_rdir_next;
+
+static int ff_readdir(vfs_mount *m, const char *path, int index, char *name, int nsz, unsigned *mode)
+{
+    (void)m; char p[256]; ffpath(p, path);
+    if (!(g_rdir_open && g_rdir_next == index && ffeq(g_rdir_path, p))) {
+        if (g_rdir_open) { f_closedir(&g_rdir); g_rdir_open = 0; }
+        if (f_opendir(&g_rdir, p) != FR_OK) return -1;
+        int i = 0; while (p[i] && i < 255) { g_rdir_path[i] = p[i]; i++; } g_rdir_path[i] = 0;
+        g_rdir_open = 1; g_rdir_next = 0;
+        for (int k = 0; k < index; k++) {                     /* skip to the requested index */
+            if (f_readdir(&g_rdir, &g_mfno) != FR_OK || !g_mfno.fname[0]) break;
+            g_rdir_next++;
+        }
+    }
+    if (f_readdir(&g_rdir, &g_mfno) != FR_OK) { f_closedir(&g_rdir); g_rdir_open = 0; return -1; }
+    g_rdir_next++;
+    if (!g_mfno.fname[0]) { f_closedir(&g_rdir); g_rdir_open = 0; return 0; }   /* end of dir */
+    int i = 0; while (g_mfno.fname[i] && i < nsz - 1) { name[i] = g_mfno.fname[i]; i++; } name[i] = 0;
+    *mode = (g_mfno.fattrib & AM_DIR) ? XT_S_IFDIR : XT_S_IFREG;   /* type hint; lstat for the truth */
+    return 1;
+}
+
 static int ff_symlink(vfs_mount *m, const char *target, const char *path)
 {
     (void)m; char p[256]; ffpath(p, path);
@@ -161,6 +192,6 @@ static int ff_open(vfs_mount *m, const char *path, int flags, vfs_file *f)
 }
 
 static vfs_fs fatfs_fs = { "fatfs", ff_open, 1 /* serialized: backing-store */,
-                           ff_readlink, ff_stat, ff_unlink, ff_symlink };
+                           ff_readlink, ff_stat, ff_unlink, ff_symlink, ff_readdir };
 
 void vfs_fatfs_init(void) { vfs_register_fs(&fatfs_fs); }

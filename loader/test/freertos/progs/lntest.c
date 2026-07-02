@@ -94,19 +94,24 @@ void _app_entry(int argc, char **argv) {
     check("symlink(self loop)", sys_symlink("loop.txt", ll) == 0);
     check("open(loop) refused (ELOOP)", sys_open(ll, O_RDONLY) < 0);
 
-    /* --- mini `ls -l`: name -> target for links ------------------------------ */
-    put("  --- ls -l "); put(B); put(" ---\n");
-    const char *names[] = { tf, lf, la, lc, ld, ll, 0 };
-    for (int i = 0; names[i]; i++) {
+    /* --- real `ls -l` via readdir + lstat + readlink -------------------------- */
+    put("  --- ls -l "); put(B); put(" (via readdir) ---\n");
+    struct xt_dirent ent; int ntotal = 0, nlinks = 0;
+    for (int i = 0; ; i++) {
+        long r = sys_readdir(B, i, &ent);
+        if (r <= 0) break;                                     /* 0 = end, -1 = err */
+        ntotal++;
+        char *full = J(B, ent.name);
         struct xt_stat s;
-        if (sys_lstat(names[i], &s) != 0) continue;
-        put("    "); put(names[i]);
-        if ((s.mode & XT_S_IFMT) == XT_S_IFLNK) {
-            char t[128]; int m = (int)sys_readlink(names[i], t, sizeof t);
-            if (m > 0) { t[m] = 0; put(" -> "); put(t); }
+        put("    "); put(ent.name);
+        if (sys_lstat(full, &s) == 0 && (s.mode & XT_S_IFMT) == XT_S_IFLNK) {
+            char t[128]; int m = (int)sys_readlink(full, t, sizeof t);
+            if (m > 0 && m < (int)sizeof t) { t[m] = 0; put(" -> "); put(t); nlinks++; }
         }
         put("\n");
     }
+    check("readdir enumerated the entries", ntotal >= 6);       /* our 6 files (+ any others) */
+    check("readdir + lstat found the 5 links", nlinks >= 5);
 
     put(fails ? "lntest: FAIL\n" : "lntest: all PASS\n");
 }

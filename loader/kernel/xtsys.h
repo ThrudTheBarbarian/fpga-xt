@@ -42,6 +42,7 @@
 #define SYS_readlink 0x307   /* (path, buf, size) -> len: symlink target (no follow) */
 #define SYS_symlink  0x308   /* (target, linkpath) -> 0: create a symlink */
 #define SYS_unlink   0x309   /* (path) -> 0: remove a file/symlink */
+#define SYS_readdir  0x30A   /* (path, index, struct xt_dirent *) -> 1 filled / 0 end / -1 err */
 
 /* stat result (SYS_stat / SYS_lstat). mode carries the file-type bits below. */
 struct xt_stat { unsigned mode, size, mtime; };
@@ -49,6 +50,11 @@ struct xt_stat { unsigned mode, size, mtime; };
 #define XT_S_IFREG 0x8000u   /* regular file */
 #define XT_S_IFDIR 0x4000u   /* directory */
 #define XT_S_IFLNK 0xA000u   /* symbolic link */
+
+/* one directory entry (SYS_readdir). Enumerate index = 0,1,2,... until it returns 0.
+ * mode's type bits are a hint (dir vs not); lstat the entry for the authoritative type
+ * (readdir doesn't magic-check every entry). */
+struct xt_dirent { unsigned mode; char name[256]; };
 
 /* time / timers — block 0x400. Peripherals are PL1-only, so libc's _gettimeofday
  * traps here; the kernel reads the A9 global timer (wall clock since boot — no RTC). */

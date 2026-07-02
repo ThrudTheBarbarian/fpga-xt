@@ -169,6 +169,14 @@ long vfs_symlink(const char *target, const char *linkpath)
     if (!m || !m->fs->symlink) return -1;
     return m->fs->symlink(m, target, rel);
 }
+long vfs_readdir(const char *path, int index, char *name, int nsz, unsigned *mode)
+{
+    char rp[VFS_PATH_MAX];
+    if (vfs_resolve(path, rp, sizeof rp, 1) != 0) return -1;    /* follow to the real dir */
+    const char *rel; vfs_mount *m = resolve(rp, &rel);
+    if (!m || !m->fs->readdir) return -1;
+    return m->fs->readdir(m, rel, index, name, nsz, mode);
+}
 
 int vfs_open(const char *path, int flags, vfs_file *f)
 {

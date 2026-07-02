@@ -504,6 +504,12 @@ static long fs_serve(int slot)
     case SYS_readlink: return vfs_readlink(c->path, c->path2, (int)c->len);   /* target -> path2 */
     case SYS_symlink:  return vfs_symlink(c->path2, c->path);                 /* (target, linkpath) */
     case SYS_unlink:   return vfs_unlink(c->path);
+    case SYS_readdir: {                                       /* entry name -> path2, type -> st[0] */
+        unsigned mode = 0;
+        long r = vfs_readdir(c->path, (int)c->off, c->path2, FS_PATH_MAX, &mode);
+        c->st[0] = mode;
+        return r;
+    }
     case FS_OP_GETPAGE: {
         uint32_t valid = 0;
         void *pg = fd_getpage(slot, (int)c->fd, c->page, &valid, (int)c->wr);
@@ -676,6 +682,8 @@ static long fs_meta(proc_t *p)
         if (p->dnum == SYS_readlink) {
             uint32_t sz = (uint32_t)p->da2; if (sz > FS_PATH_MAX) sz = FS_PATH_MAX;
             c->len = sz;                                      /* clamp target buffer to path2 */
+        } else if (p->dnum == SYS_readdir) {
+            c->off = (uint32_t)p->da1;                        /* entry index */
         }
     }
     c->result = -1;
@@ -690,6 +698,10 @@ static long fs_meta(proc_t *p)
             char *ub = (char *)p->da1; uint32_t usz = (uint32_t)p->da2;
             long n = c->result; if (n > (long)usz) n = (long)usz;
             for (long i = 0; i < n; i++) ub[i] = c->path2[i];
+        } else if (p->dnum == SYS_readdir && c->result == 1) {
+            struct xt_dirent *u = (struct xt_dirent *)p->da2;
+            if (u) { u->mode = c->st[0];
+                     int i = 0; while (c->path2[i] && i < 255) { u->name[i] = c->path2[i]; i++; } u->name[i] = 0; }
         }
     }
     return c->result;
@@ -864,8 +876,8 @@ void deferral_thunk(void)                 /* PL1 (System), task context */
             /* metadata ops (no client data buffer) -> the fs service task owns them. */
             r = fs_call(p);
         } else if (p->dnum == SYS_stat || p->dnum == SYS_lstat || p->dnum == SYS_readlink ||
-                   p->dnum == SYS_symlink || p->dnum == SYS_unlink) {
-            /* path metadata + symlinks: fs task walks FatFs; results copied back here. */
+                   p->dnum == SYS_symlink || p->dnum == SYS_unlink || p->dnum == SYS_readdir) {
+            /* path metadata + symlinks + dir enumeration: fs task walks FatFs; results back here. */
             r = fs_meta(p);
         } else if (p->dnum == SYS_mmap) {
             /* mmap a backing-store file: the fs task eager-fills + maps it into our space. */
@@ -924,6 +936,13 @@ static long do_syscall(uint32_t num, long a0, long a1, long a2)
     case SYS_readlink: return vfs_readlink((const char *)a0, (char *)a1, (int)a2);
     case SYS_symlink:  return vfs_symlink((const char *)a0, (const char *)a1);
     case SYS_unlink:   return vfs_unlink((const char *)a0);
+    case SYS_readdir: {
+        struct xt_dirent *o = (struct xt_dirent *)a2;
+        unsigned mode = 0;
+        long r = vfs_readdir((const char *)a0, (int)a1, o ? o->name : 0, 256, &mode);
+        if (o && r == 1) o->mode = mode;
+        return r;
+    }
     case SYS_sbrk:   { extern void *sys_sbrk(int); return (long)sys_sbrk((int)a0); }  /* libc malloc */
     case SYS_mmap: {                                         /* (fd, len, off) -> VA, RO file map */
         int fd = (int)a0; uint32_t len = (uint32_t)a1, off = (uint32_t)a2;
@@ -1006,7 +1025,7 @@ static int needs_task_ctx(struct k_regs *regs, uint32_t num)
     case SYS_munmap:  return 1;                     /* may write dirty pages back (FatFs) -> task ctx */
     case SYS_input:   return 1;                     /* blocks on the serial ring for the next event */
     case SYS_stat: case SYS_lstat: case SYS_readlink:
-    case SYS_symlink: case SYS_unlink: return 1;    /* path metadata -> FatFs -> fs task */
+    case SYS_symlink: case SYS_unlink: case SYS_readdir: return 1;    /* path metadata -> FatFs -> fs task */
     default:          return 0;                    /* lseek (inline)/getpid/sbrk/fb/gettimeofday */
     }
 }
