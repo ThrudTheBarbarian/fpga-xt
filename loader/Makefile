@@ -186,7 +186,9 @@ $(BUILD)/libm.so: newlib-pic/libm.a $(BUILD)/libc.so | $(BUILD)
 # dynamic imports resolved by the kernel export table at load (libgcc isn't PIC).
 GEM := ../gem
 FT  := ../xtos/freetype
-GEMSRC := $(GEM)/gfx_soft.c $(GEM)/font.c $(GEM)/wm.c $(GEM)/theme.c $(wildcard $(GEM)/vdi/*.c) \
+# Desktop artwork (theme, icons, wallpaper) is user content on the SD — /OS/Themes,
+# /OS/Icons, /OS/Wallpaper, each selected by a `Default` file — not baked in.
+GEMSRC := $(GEM)/gfx_soft.c $(GEM)/font.c $(GEM)/wm.c $(GEM)/theme.c $(GEM)/img.c $(wildcard $(GEM)/vdi/*.c) \
           ../vitis/xtos/src/gem_pdf_stub.c test/freertos/libs/gem_stubs.c
 FTSRC  := $(wildcard $(FT)/tu/*.c)
 GEMINC := -Itest/freertos/libs/shim -I$(GEM) -I$(GEM)/vdi -I$(FT)/include -Inewlib-pic/include -Ikernel
