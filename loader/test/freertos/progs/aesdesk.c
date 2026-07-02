@@ -10,6 +10,7 @@
  */
 #include "aes/aes.h"
 #include "img.h"
+#include "registry.h"
 #include "font.h"
 #include "usys.h"
 #include <stdint.h>
@@ -17,10 +18,16 @@
 #include <string.h>
 
 #define ICON_SZ 48
+#define ICON_CW 100
+#define ICON_CH (ICON_SZ + 26)
+#define MAX_ICONS 32
 static int    HV, PW, PH;
 static theme  TH;
-static CICON  ci[2];
-static OBJECT desk[3];
+static CICON  ci[MAX_ICONS];
+static gfx_surface *isurf[MAX_ICONS];
+static reg_desktop_icon rows[MAX_ICONS];
+static OBJECT desk[1 + MAX_ICONS];
+static int    n_icons;
 
 static int read_default(const char *dir, char *out, int n) {
     char p[160]; snprintf(p, sizeof p, "%s/Default", dir);
@@ -45,10 +52,21 @@ static gfx_surface *load_icon(const char *path) {
     return ic;
 }
 
-static void build_tree(void) {
-    desk[0] = (OBJECT){ NIL, 1, 2, G_IBOX,  OF_NONE,                 OS_NORMAL, 0, 0, 0, (int16_t)PW, (int16_t)PH };
-    desk[1] = (OBJECT){ 2,   NIL, NIL, G_CICON, OF_SELECTABLE,           OS_NORMAL, &ci[0],  40, (int16_t)(PH-150), 100, 74 };
-    desk[2] = (OBJECT){ 0,   NIL, NIL, G_CICON, OF_SELECTABLE|OF_LASTOB, OS_SELECTED, &ci[1], 150, (int16_t)(PH-150), 100, 74 };
+// Build the desktop object tree from the registry's desktopIcons (x,y,path,name).
+static void build_desktop(void) {
+    n_icons = registry_desktop_icons(rows, MAX_ICONS);
+    if (n_icons < 0) n_icons = 0;
+    desk[0] = (OBJECT){ NIL, n_icons ? 1 : NIL, n_icons ? n_icons : NIL,
+                        G_IBOX, OF_NONE, OS_NORMAL, 0, 0, 0, (int16_t)PW, (int16_t)PH };
+    for (int i = 0; i < n_icons; i++) {
+        isurf[i]   = load_icon(rows[i].path);
+        ci[i].img  = isurf[i];
+        ci[i].text = rows[i].displayName[0] ? rows[i].displayName : NULL;
+        int oi = 1 + i, last = (i == n_icons - 1);
+        desk[oi] = (OBJECT){ (int16_t)(last ? 0 : oi+1), NIL, NIL, G_CICON,
+                             (uint16_t)(OF_SELECTABLE | (last ? OF_LASTOB : 0)), OS_NORMAL,
+                             &ci[i], (int16_t)rows[i].x, (int16_t)rows[i].y, ICON_CW, ICON_CH };
+    }
 }
 
 static void deskcontent(int hd, int wx, int wy, int ww, int wh, void *ud) {
@@ -100,9 +118,9 @@ void _app_entry(int argc, char **argv) {
     aes_init(HV, &TH); appl_init();
     wind_set_desktop(0x30507800u);
 
-    ci[0].img = load_icon("retro/xe.pam"); ci[0].text = "6502";
-    ci[1].img = load_icon("retro/st.pam"); ci[1].text = "m68k";
-    build_tree();
+    if (registry_open("/OS/Etc/Registry.db") != 0)
+        sys_write(2, "aesdesk: no registry (/OS/Etc/Registry.db)\n", 43);
+    build_desktop();
     wind_set_desktop_content(deskcontent, NULL);
 
     int w = wind_create(W_NAME|W_CLOSER|W_MOVER|W_SIZER|W_FULLER|W_INFO, 360, 240, 760, 480);

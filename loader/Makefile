@@ -227,9 +227,9 @@ $(BUILD)/desktop.so: test/freertos/progs/desktop.c $(BUILD)/libGEM.so $(BUILD)/l
 	$(ARMCC) $(GEMCFLAGS) -Itest/qemu -c $< -o $(BUILD)/desktop.o
 	$(LLD) -shared --hash-style=sysv -o $@ $(BUILD)/desktop.o $(BUILD)/libGEM.so $(BUILD)/libc.so
 
-$(BUILD)/aesdesk.so: test/freertos/progs/aesdesk.c $(BUILD)/libGEM.so $(BUILD)/libc.so | $(BUILD)
-	$(ARMCC) $(GEMCFLAGS) -Itest/qemu -c $< -o $(BUILD)/aesdesk.o
-	$(LLD) -shared --hash-style=sysv -o $@ $(BUILD)/aesdesk.o $(BUILD)/libGEM.so $(BUILD)/libc.so
+$(BUILD)/aesdesk.so: test/freertos/progs/aesdesk.c $(BUILD)/registry.o $(BUILD)/sqlite3.o $(BUILD)/sqlite_vfs.o $(BUILD)/libGEM.so $(BUILD)/libc.so $(BUILD)/libm.so | $(BUILD)
+	$(ARMCC) $(GEMCFLAGS) -I$(SQLITE) -Itest/qemu -c $< -o $(BUILD)/aesdesk.o
+	$(LLD) -shared --hash-style=sysv -o $@ $(BUILD)/aesdesk.o $(BUILD)/registry.o $(BUILD)/sqlite3.o $(BUILD)/sqlite_vfs.o $(BUILD)/libGEM.so $(BUILD)/libc.so $(BUILD)/libm.so
 
 # sh.so — /System/bin/sh: the Lua interpreter (real Lua 5.4 core from xtos/lua + sh.c,
 # linked against libc.so/libm.so). One gcc call (compile + link), like libGEM.so.
