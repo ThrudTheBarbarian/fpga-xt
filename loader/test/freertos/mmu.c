@@ -36,6 +36,9 @@ static volatile uint32_t l1[4096] __attribute__((aligned(16384)));
 #define PGS_NONE  ((1u<<4)|(1u<<6)|(1u<<3)|(1u<<2)|0x1u|0x2u)           /* small: AP=01, XN  */
 #define SEC_KDATA 0x141Eu     /* section: AP=01 (PL1 RW, PL0 none), cacheable, XN */
 #define SEC_PLANE 0x1C12u     /* section: AP=11 (PL0 RW), Normal NON-cacheable, XN (PL-shared) */
+#define SEC_PLANE_C (SEC_PLANE | 0xCu) /* 0x1C1E: as SEC_PLANE but Normal cacheable WB-WA —
+                                        * CPU-only graphics scratch (WM back-buffer); no PL
+                                        * master reads it, so no coherency vs the compositor */
 #define SEC_PERIPH 0x0416u    /* section: AP=01 (PL0 none), Device, XN */
 
 extern char __ktext_end[];    /* end of kernel text+rodata (linker, page-aligned) */
@@ -108,6 +111,8 @@ void mmu_init(void)
         if (i == 0)              l1[i] = 0;                              /* NULL trap */
         else if (i == 1)         l1[i] = ((uint32_t)boot_text_l2 & 0xFFFFFC00u) | 0x1u;  /* kernel text/data split */
         else if (i < 0x200)      l1[i] = base | SEC_KDATA;              /* kernel data + heap + pool: PL0-none */
+        else if (i >= 0x330 && i < 0x340) l1[i] = base | SEC_PLANE_C;  /* WALLPAPER_BASE 16 MB: PL0-RW cacheable
+                                                                        * WM/desktop back-buffer (CPU-only) */
         else if (i < 1024)       l1[i] = base | SEC_PLANE;             /* SALLY/planes: PL0-RW, non-cacheable */
         else                     l1[i] = base | SEC_PERIPH;            /* peripherals: PL0-none, Device */
     }

@@ -78,11 +78,15 @@ void _app_entry(int argc, char **argv) {
     if (sys_fb_info(&fb) != 0) { sys_write(2, "aesdesk: no display plane\n", 26); return; }
     PW = fb.w; PH = fb.h;
 
-    /* Render into a packed, CACHEABLE back-buffer (fast alpha compositing in the
-     * D-cache) and blit it to the strided, non-cacheable plane once on present —
-     * drawing straight onto the plane is a slow read-modify-write per pixel. */
-    gfx_surface *bb = gfx_surface_alloc(fb.w, fb.h);
-    if (!bb) { sys_write(2, "aesdesk: back-buffer alloc FAILED\n", 34); return; }
+    /* Composite into the reserved, cacheable WM back-buffer region (SYS_fb_wallpaper
+     * -> WALLPAPER_BASE, mapped Normal-WB in the MMU) — fast alpha blending in the
+     * D-cache — then blit it to the strided, non-cacheable plane once on present.
+     * Drawing straight onto the plane is a slow read-modify-write per pixel. */
+    struct os_fbinfo wp;
+    if (sys_fb_wallpaper(&wp) != 0 || !wp.addr) { sys_write(2, "aesdesk: no back-buffer\n", 24); return; }
+    static gfx_surface bb_s;
+    bb_s.w = wp.w; bb_s.h = wp.h; bb_s.stride = wp.stride; bb_s.px = (uint32_t *)wp.addr;
+    gfx_surface *bb = &bb_s;
 
     font_face *face = font_face_open("/System/Fonts/AovelSansRounded.ttf");
     if (!face) { sys_write(2, "aesdesk: font load FAILED\n", 26); return; }
