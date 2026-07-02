@@ -53,6 +53,10 @@ void aes_init(int vdi_handle, const theme *th);
 void objc_offset(OBJECT *tree, int obj, int *x, int *y);
 // Draw `tree` from `start` down `depth` levels, clipped to (clx,cly,clw,clh).
 void objc_draw(OBJECT *tree, int start, int depth, int clx, int cly, int clw, int clh);
+// G_CICON label style: 1 = dark backdrop (desktop) -> white text, white-on-black
+// selection; 0 = light window -> black text, black-on-white selection.  Set it
+// before objc_draw for the container being drawn.
+void aes_icon_label_style(int dark_bg);
 // Topmost drawable object under (mx,my) within `depth` levels of `start`; -1 none.
 int  objc_find(OBJECT *tree, int start, int depth, int mx, int my);
 
@@ -134,6 +138,8 @@ enum { WC_BORDER=0, WC_WORK=1 };                    // wind_calc direction
 
 typedef void (*wind_draw_fn)(int handle, int wx, int wy, int ww, int wh, void *ud);
 
+#define AES_INFO_H 24     // height of the W_INFO chrome line (under the title bar)
+
 int  wind_create(int kind, int x, int y, int w, int h);   // -> handle (0 = none)
 void wind_open(int handle, int x, int y, int w, int h);
 void wind_close(int handle);
@@ -144,7 +150,15 @@ void wind_set(int handle, int field, int a, int b, int c, int d);
 void wind_calc(int dir, int kind, int x,int y,int w,int h, int *ox,int *oy,int *ow,int *oh);
 int  wind_find(int x, int y);                       // topmost window at point (0 = desktop)
 void wind_content(int handle, wind_draw_fn fn, void *ud);
+// Optional W_INFO chrome line under the title bar (full inner width, like the
+// title): fn draws its contents (count/path/toolbar); the work area shrinks by
+// AES_INFO_H.  Only used when the window was created with W_INFO.
+void wind_info(int handle, wind_draw_fn fn, void *ud);
 void wind_set_desktop(uint32_t rgba);               // desktop background colour
+// Optional desktop-content drawer — invoked by wind_redraw after the background
+// fill and before any windows, so a wallpaper + desktop icons draw under every
+// window.  Called as fn(0, x,y,w,h, ud) over the whole screen.  NULL clears it.
+void wind_set_desktop_content(wind_draw_fn fn, void *ud);
 void wind_redraw(void);                             // redraw desktop + all windows (AES owns it)
 // The desktop work area windows are clamped to (so a window can't be dragged out
 // of reach).  Defaults to the screen minus the menu bar; Desktop.app can reserve

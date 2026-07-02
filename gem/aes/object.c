@@ -22,6 +22,12 @@ void aes_init(int vh, const theme *th) {
 int          aes_handle(void) { return g_vh; }
 const theme *aes_theme(void)  { return g_th; }
 
+// G_CICON label style: 1 = over a dark backdrop (desktop/wallpaper) -> white text
+// + shadow, selection = white-on-black; 0 = over a light window -> black text,
+// selection = black-on-white.  The container sets this before objc_draw.
+static int g_icon_dark = 1;
+void aes_icon_label_style(int dark_bg) { g_icon_dark = dark_bg; }
+
 // Iterate the children of `parent` (stops after ob_tail, whose ob_next is the
 // parent again).
 #define EACH_CHILD(t, parent, c) \
@@ -53,6 +59,24 @@ static void centered(const char *s, int x, int y, int w, int h, int pen, int bol
     vst_alignment(g_vh, VDI_TA_CENTER, VDI_TA_HALF, 0,0);
     v_gtext(g_vh, x + w/2, y + h/2, s);
     vst_alignment(g_vh, VDI_TA_LEFT, VDI_TA_TOP, 0,0); vst_effects(g_vh, 0);
+}
+
+// A tinted copy of an icon for the selected state: RGB scaled by num/den (< 1
+// darkens, > 1 brightens) only where the alpha mask is set, so the effect follows
+// the icon silhouette.  Returns a static scratch surface (blit it immediately).
+static gfx_surface *icon_tint(const gfx_surface *s, int num, int den) {
+    static uint32_t buf[128*128];
+    static gfx_surface t;
+    if (s->w <= 0 || s->h <= 0 || s->w > 128 || s->h > 128) return (gfx_surface *)s;
+    t.w = s->w; t.h = s->h; t.stride = s->w; t.px = buf;
+    for (int yy = 0; yy < s->h; yy++)
+        for (int xx = 0; xx < s->w; xx++) {
+            uint32_t p = s->px[(size_t)yy*s->stride + xx], a = p & 0xFF;
+            uint32_t r = ((p>>24)&0xFF)*num/den, g = ((p>>16)&0xFF)*num/den, b = ((p>>8)&0xFF)*num/den;
+            if (r>255) r=255; if (g>255) g=255; if (b>255) b=255;
+            buf[(size_t)yy*t.stride + xx] = (r<<24)|(g<<16)|(b<<8)|a;
+        }
+    return &t;
 }
 
 static void draw_obj(OBJECT *o, int x, int y) {
@@ -101,24 +125,43 @@ static void draw_obj(OBJECT *o, int x, int y) {
         case G_CICON: {          // ob_spec = CICON* : RGBA bitmap + label under it
             CICON *ci = (CICON *)o->ob_spec;
             if (!ci) break;
-            if (st & OS_SELECTED) {                          // selection highlight
-                vsf_color(g_vh, PEN_SEL); vsf_interior(g_vh, VDI_FIS_SOLID); vsf_perimeter(g_vh, 0);
-                int16_t r[4] = { (int16_t)x, (int16_t)y, (int16_t)(x+w-1), (int16_t)(y+h-1) };
-                vr_recfl(g_vh, r);
-            }
-            int ih = 0;
-            if (ci->img) {                                   // icon, centred at the top
-                int iw = ci->img->w; ih = ci->img->h;
+            int sel = st & OS_SELECTED, ih = 0;
+            if (ci->img) {                                   // icon, centred at the top;
+                gfx_surface *src = sel ? icon_tint(ci->img, 3, 5) : ci->img;   // darkened when selected
+                int iw = src->w; ih = src->h;
                 int ix = x + (w - iw)/2, iy = y;
-                MFDB m; mfdb_from_surface(&m, ci->img);
+                MFDB m; mfdb_from_surface(&m, src);
                 int16_t pxy[8] = { 0, 0, (int16_t)(iw-1), (int16_t)(ih-1),
                                    (int16_t)ix, (int16_t)iy, (int16_t)(ix+iw-1), (int16_t)(iy+ih-1) };
                 vr_transfer_bits(g_vh, &m, NULL, pxy, VR_OVER);
             }
-            if (ci->text) {                                  // label, centred beneath
-                vst_color(g_vh, 1); vst_height(g_vh, 12, 0,0,0,0);
+            if (ci->text) {                                  // label, centred beneath the icon
+                int tcx = x + w/2, ly = y + ih + 2;
+                int barpen = g_icon_dark ? 1 : 0;            // bar : black (desktop) / white (window)
+                int txtpen = g_icon_dark ? 0 : 1;            // text: white (desktop) / black (window)
+                vst_height(g_vh, 12, 0,0,0,0);
                 vst_alignment(g_vh, VDI_TA_CENTER, VDI_TA_TOP, 0,0);
-                v_gtext(g_vh, x + w/2, y + ih + 2, ci->text);
+                if (sel) {                                   // label bar sized to the text
+                    int16_t ext[8]; vqt_extent(g_vh, ci->text, ext);
+                    int tw = ext[2]-ext[0]; if (tw < 0) tw = -tw;
+                    int th = ext[1]-ext[7]; if (th < 0) th = -th;
+                    int16_t r[4] = { (int16_t)(tcx-tw/2-3), (int16_t)(ly-1),
+                                     (int16_t)(tcx+tw/2+2), (int16_t)(ly+th+1) };
+                    vsf_color(g_vh, barpen); vsf_interior(g_vh, VDI_FIS_SOLID); vsf_perimeter(g_vh, 0);
+                    vr_recfl(g_vh, r);
+                    if (!g_icon_dark) {                      // outline so a white bar reads on a light window
+                        vsl_color(g_vh, PEN_BORDER); vsl_width(g_vh, 1);
+                        int16_t o[10] = { r[0],r[1], r[2],r[1], r[2],r[3], r[0],r[3], r[0],r[1] };
+                        v_pline(g_vh, 5, o);
+                    }
+                    vst_color(g_vh, txtpen);
+                    v_gtext(g_vh, tcx, ly, ci->text);
+                } else if (g_icon_dark) {                    // white + shadow -> readable over a wallpaper
+                    vst_color(g_vh, 1); v_gtext(g_vh, tcx+1, ly+1, ci->text);
+                    vst_color(g_vh, 0); v_gtext(g_vh, tcx,   ly,   ci->text);
+                } else {                                     // black on the light window
+                    vst_color(g_vh, 1); v_gtext(g_vh, tcx, ly, ci->text);
+                }
                 vst_alignment(g_vh, VDI_TA_LEFT, VDI_TA_TOP, 0,0);
             }
             break;

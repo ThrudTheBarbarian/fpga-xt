@@ -17,6 +17,7 @@ typedef struct {
     int used, kind, x, y, w, h, px,py,pw,ph;   // full rect (+ previous)
     char name[64];
     wind_draw_fn draw; void *ud;
+    wind_draw_fn info; void *infoud;           // W_INFO chrome line
 } awin;
 
 static awin g_w[MAXW];          // slot 0 unused (handles are 1-based)
@@ -40,9 +41,9 @@ static int bw(void){ const theme_slice*s=theme_find(aes_theme(),"window"); retur
 static int tbh(void){ const theme_slice*s=theme_find(aes_theme(),"titlebar"); return s?s->sh:22; }
 
 void wind_calc(int dir,int kind,int x,int y,int w,int h,int*ox,int*oy,int*ow,int*oh){
-    (void)kind; int b=bw(), th=tbh();
-    if(dir==WC_BORDER){ *ox=x-b; *oy=y-b-th; *ow=w+2*b; *oh=h+2*b+th; }   // work -> full
-    else              { *ox=x+b; *oy=y+b+th; *ow=w-2*b; *oh=h-2*b-th; }   // full -> work
+    int b=bw(), th=tbh(), inf=(kind&W_INFO)?AES_INFO_H:0;
+    if(dir==WC_BORDER){ *ox=x-b; *oy=y-th-inf; *ow=w+2*b; *oh=h+th+inf+b; }   // work -> full (flush header)
+    else              { *ox=x+b; *oy=y+th+inf; *ow=w-2*b; *oh=h-th-inf-b; }   // full -> work
 }
 
 static void spr(const char*n,int x,int y){ const theme_slice*s=theme_find(aes_theme(),n); if(s) theme_blit(H(),aes_theme(),s,x,y,s->sw,s->sh); }
@@ -62,14 +63,23 @@ static void clamp_win(awin *W){
 static void draw_one(int hd, int active){
     awin*W=&g_w[hd]; int b=bw(), th=tbh();
     theme_draw(H(),aes_theme(),"window", W->x,W->y,W->w,W->h);
-    theme_draw(H(),aes_theme(), active?"titlebar":"titlebar.inactive", W->x+b, W->y+b, W->w-2*b, th);
-    int cy = W->y+b+(th-16)/2;
-    if(W->kind & W_CLOSER) spr("close",    W->x+b+8,  cy);
-    if(W->kind & W_FULLER) spr("maximize", W->x+b+28, cy);
+    theme_draw(H(),aes_theme(), active?"titlebar":"titlebar.inactive", W->x, W->y, W->w, th);  // flush top
+    int cy = W->y+(th-16)/2;
+    if(W->kind & W_CLOSER) spr("close",    W->x+8,  cy);
+    if(W->kind & W_FULLER) spr("maximize", W->x+28, cy);
     if(W->kind & W_NAME){ vst_color(H(),1); vst_height(H(),15,0,0,0,0);
         vst_alignment(H(),VDI_TA_CENTER,VDI_TA_HALF,0,0);
-        v_gtext(H(), W->x+W->w/2, W->y+b+th/2, W->name);
+        v_gtext(H(), W->x+W->w/2, W->y+th/2, W->name);
         vst_alignment(H(),VDI_TA_LEFT,VDI_TA_TOP,0,0); }
+    if(W->kind & W_INFO){          // W_INFO chrome line under the title; tuck 2px inside the
+        int ix=W->x+2, iy=W->y+th, iw=W->w-4;   // rounded frame corners (the flat fill can't self-round)
+        vsf_color(H(),248); vsf_interior(H(),VDI_FIS_SOLID); vsf_perimeter(H(),0);   // PEN_DLG (object.c): light chrome
+        int16_t ir[4]={(int16_t)ix,(int16_t)iy,(int16_t)(ix+iw-1),(int16_t)(iy+AES_INFO_H-1)}; vr_recfl(H(),ir);
+        vsl_color(H(),249); vsl_width(H(),1);                                        // PEN_BORDER: bottom divider
+        int16_t il[4]={(int16_t)ix,(int16_t)(iy+AES_INFO_H-1),(int16_t)(ix+iw-1),(int16_t)(iy+AES_INFO_H-1)}; v_pline(H(),2,il);
+        if(W->info){ int16_t ic[4]={(int16_t)ix,(int16_t)iy,(int16_t)(ix+iw-1),(int16_t)(iy+AES_INFO_H-1)};
+            vs_clip(H(),1,ic); W->info(hd,ix,iy,iw,AES_INFO_H,W->infoud); vs_clip(H(),0,ic); }
+    }
     // work area + content (clipped)
     int wx,wy,ww,wh; wind_calc(WC_WORK,W->kind,W->x,W->y,W->w,W->h,&wx,&wy,&ww,&wh);
     if(W->draw){ int16_t clip[4]={(int16_t)wx,(int16_t)wy,(int16_t)(wx+ww-1),(int16_t)(wy+wh-1)};
@@ -78,9 +88,13 @@ static void draw_one(int hd, int active){
 
 void wind_set_desktop(uint32_t bg){ g_deskbg = bg; }
 
+static wind_draw_fn g_deskcontent; static void *g_deskcontent_ud;
+void wind_set_desktop_content(wind_draw_fn fn, void *ud){ g_deskcontent=fn; g_deskcontent_ud=ud; }
+
 void wind_redraw(void){
     gfx_surface *d = vdi_screen_target();
     if(d){ uint32_t bg=g_deskbg; for(int i=0;i<d->w*d->h;i++) d->px[i]=bg; }
+    if(g_deskcontent && d) g_deskcontent(0, 0,0, d->w,d->h, g_deskcontent_ud);  // wallpaper + icons
     for(int i=0;i<g_nz;i++) draw_one(g_z[i], i==g_nz-1);
     menu_redraw();                 // the menu bar sits above every window
 }
@@ -104,6 +118,7 @@ void wind_close(int hd){ zremove(hd); wind_redraw(); }
 void wind_delete(int hd){ if(hd>=1&&hd<MAXW){ zremove(hd); g_w[hd].used=0; } }
 void wind_set_name(int hd,const char*n){ if(hd>=1&&hd<MAXW){ snprintf(g_w[hd].name,sizeof g_w[hd].name,"%s",n?n:""); } }
 void wind_content(int hd,wind_draw_fn fn,void*ud){ if(hd>=1&&hd<MAXW){ g_w[hd].draw=fn; g_w[hd].ud=ud; } }
+void wind_info(int hd,wind_draw_fn fn,void*ud){ if(hd>=1&&hd<MAXW){ g_w[hd].info=fn; g_w[hd].infoud=ud; } }
 
 void wind_get(int hd,int field,int*a,int*b,int*c,int*d){
     if(hd==0){ int x,y,w,h; work_area(&x,&y,&w,&h); if(a)*a=x; if(b)*b=y; if(c)*c=w; if(d)*d=h; return; }  // desktop
@@ -133,8 +148,8 @@ int wind_handle_click(int mx,int my){
     if(!hd) return 0;
     awin*W=&g_w[hd];
     if(g_z[g_nz-1]!=hd){ raise(hd); wind_redraw(); post(WM_TOPPED,hd,0,0,0,0); return 1; }
-    int b=bw(), th=tbh();
-    int tx=W->x+b, ty=W->y+b, tw=W->w-2*b;
+    int th=tbh();
+    int tx=W->x, ty=W->y, tw=W->w;               // flush title bar
     // close box
     if((W->kind&W_CLOSER) && mx>=tx+8 && mx<tx+8+16 && my>=ty && my<ty+th){ post(WM_CLOSED,hd,0,0,0,0); return 1; }
     // title bar -> drag (live move)
