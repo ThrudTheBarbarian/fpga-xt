@@ -1,0 +1,26 @@
+# toybox-xtos.miniconfig — the XTOS toy set, applied over allnoconfig
+# (KCONFIG_ALLCONFIG + scripts/genconfig.sh -n, same flow as toybox's own
+# macos_defconfig). Everything not listed stays off. tools/build-toybox.sh
+# drives the build; the loader Makefile links the objects into
+# /System/bin/toybox (a PIC .so, DT_NEEDED libc.so).
+#
+# Shape notes:
+# - TOYBOX_FORCE_NOMMU: no fork on the loader; toysh's child paths become
+#   vfork+re-exec, which the posix shim maps onto SYS_spawn.
+# - toysh (CONFIG_SH) lives in toys/pending/ but is the standard toybox shell.
+
+CONFIG_TOYBOX=y
+CONFIG_TOYBOX_FORCE_NOMMU=y
+
+# shell
+CONFIG_SH=y
+
+# the minimal coreutils set
+CONFIG_CAT=y
+CONFIG_ECHO=y
+CONFIG_LS=y
+CONFIG_CP=y
+CONFIG_MV=y
+CONFIG_RM=y
+CONFIG_MKDIR=y
+CONFIG_PWD=y
