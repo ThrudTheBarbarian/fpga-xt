@@ -18,6 +18,7 @@
 #include <stdio.h>
 #include <string.h>
 #include <stdlib.h>
+#include <ctype.h>
 #include <dirent.h>
 #include <sys/stat.h>
 #include <SDL2/SDL.h>
@@ -144,29 +145,69 @@ static void deskcontent(int hd, int wx, int wy, int ww, int wh, void *ud) {
 static void desk_click(int mx, int my);   // fwd
 
 // ---- emulator window: a frame that envelops the emulation plane -------------
+// On the A9 the work area is the compositor's emulation plane; here it's a stub
+// that shows the machine + what was booted into it.
+#define MAXEMU 6
+typedef struct { int used, win; char name[48], boot[96]; } emuwin;
+static emuwin EMU[MAXEMU];
 static int g_ex = 380, g_ey = 130;
+
+static emuwin *emu_of_window(int win) {
+    for (int i = 0; i < MAXEMU; i++) if (EMU[i].used && EMU[i].win == win) return &EMU[i];
+    return NULL;
+}
+static const char *emu_machine(int type) { return type == ICT_EMU_1632 ? "m68k" : "6502"; }
+
 static void emu_draw(int hd, int wx, int wy, int ww, int wh, void *ud) {
-    (void)hd;
-    vsf_color(HV, 1); vsf_interior(HV, VDI_FIS_SOLID); vsf_perimeter(HV, 0);   // the plane (black)
+    (void)hd; emuwin *e = ud;
+    vsf_color(HV, 1); vsf_interior(HV, VDI_FIS_SOLID); vsf_perimeter(HV, 0);   // the emulation plane (black)
     int16_t r[4] = { (int16_t)wx, (int16_t)wy, (int16_t)(wx+ww-1), (int16_t)(wy+wh-1) };
     vr_recfl(HV, r);
-    vst_color(HV, 3); vst_height(HV, 18, 0,0,0,0);
-    vst_alignment(HV, VDI_TA_CENTER, VDI_TA_HALF, 0,0);
-    v_gtext(HV, wx+ww/2, wy+wh/2, (const char *)ud);           // where the emulation plane composites
+    vst_color(HV, 3); vst_alignment(HV, VDI_TA_CENTER, VDI_TA_HALF, 0,0);
+    vst_height(HV, 22, 0,0,0,0);
+    v_gtext(HV, wx+ww/2, wy+wh/2-16, e->name);                 // the machine
+    vst_height(HV, 15, 0,0,0,0);
+    v_gtext(HV, wx+ww/2, wy+wh/2+14, e->boot[0] ? e->boot : "READY.");   // what it booted
     vst_alignment(HV, VDI_TA_LEFT, VDI_TA_TOP, 0,0);
 }
-static void open_emulator(const char *name, int type) {
+// Open an emulator window for `type` (ICT_EMU_*), optionally booted with `media`
+// (the boot method already resolved into `boot`, e.g. "D1: game.atr").
+static void open_emulator(int type, const char *media, const char *boot) {
+    int s = -1; for (int i = 0; i < MAXEMU; i++) if (!EMU[i].used) { s = i; break; }
+    if (s < 0) return;
+    emuwin *e = &EMU[s]; memset(e, 0, sizeof *e); e->used = 1;
+    snprintf(e->name, sizeof e->name, "%s", emu_machine(type));
+    if (boot) snprintf(e->boot, sizeof e->boot, "%s", boot);
     int pw = (type == ICT_EMU_8BIT) ? 672 : 640;              // work area = the emulation plane
     int ph = (type == ICT_EMU_8BIT) ? 480 : 400;
     int bx, by, bw, bh;
     wind_calc(WC_BORDER, W_NAME|W_CLOSER|W_MOVER, g_ex, g_ey, pw, ph, &bx, &by, &bw, &bh);
-    int h = wind_create(W_NAME|W_CLOSER|W_MOVER, bx, by, bw, bh);
-    if (!h) return;
-    static char title[16][40]; int t = h & 15;
-    snprintf(title[t], sizeof title[t], "%s emulator", name);
-    wind_set_name(h, title[t]); wind_content(h, emu_draw, title[t]);
-    wind_open(h, bx, by, bw, bh);
+    e->win = wind_create(W_NAME|W_CLOSER|W_MOVER, bx, by, bw, bh);
+    if (!e->win) { e->used = 0; return; }
+    char title[96];
+    if (media) snprintf(title, sizeof title, "%s \xE2\x80\x94 %s", e->name, media);
+    else       snprintf(title, sizeof title, "%s", e->name);
+    wind_set_name(e->win, title); wind_content(e->win, emu_draw, e);
+    wind_open(e->win, bx, by, bw, bh);
     g_ex += 34; g_ey += 30; if (g_ey > WIN_H-320) { g_ex = 380; g_ey = 130; }
+}
+// Launch a media file: pick the emulator by the browser's media type, and the
+// boot method by extension (disk -> D1:/A:, cartridge -> CART, executable -> a
+// dummy-env RUN), then open the emulator window loaded with it.
+static void desk_launch(const char *name, int media_type) {
+    int emu = (media_type == ICT_MEDIA_1632) ? ICT_EMU_1632 : ICT_EMU_8BIT;
+    char ext[8] = ""; const char *dot = strrchr(name, '.');
+    if (dot) { int i = 0; for (const char *p = dot+1; *p && i < 7; p++) ext[i++] = (char)tolower((unsigned char)*p); ext[i] = 0; }
+    char boot[96];
+    if (emu == ICT_EMU_8BIT) {
+        if (!strcmp(ext,"atr")||!strcmp(ext,"atx")||!strcmp(ext,"xfd")) snprintf(boot,sizeof boot,"D1: %s",name);
+        else if (!strcmp(ext,"rom")||!strcmp(ext,"car")||!strcmp(ext,"bin")) snprintf(boot,sizeof boot,"CART %s",name);
+        else snprintf(boot,sizeof boot,"RUN %s",name);        // xex/exe -> dummy env
+    } else {
+        if (!strcmp(ext,"st")||!strcmp(ext,"msa")||!strcmp(ext,"dim")) snprintf(boot,sizeof boot,"A: %s",name);
+        else snprintf(boot,sizeof boot,"RUN %s",name);        // prg/tos/app
+    }
+    open_emulator(emu, name, boot);
 }
 
 // ---- rooted folder browser -------------------------------------------------
@@ -299,9 +340,8 @@ static void br_click(browser *b, int mx, int my) {
                 int n = (int)strlen(b->rel);
                 snprintf(b->rel + n, sizeof b->rel - n, "%s%s", b->rel[0] ? "/" : "", b->ent[i].name);
                 br_list(b); br_settitle(b); wind_redraw();
-            } else {                                         // launch (stub)
-                char m[300]; snprintf(m, sizeof m, "[1][Launch %s?|(emulator hook \xE2\x80\x94 coming next)][OK]", b->ent[i].name);
-                form_alert(1, m); wind_redraw();
+            } else {                                         // launch the file in its emulator
+                desk_launch(b->ent[i].name, b->media_type);
             }
             return;
         }
@@ -338,7 +378,7 @@ static void open_icon(int obj) {
         case ICT_MEDIA_8BIT: open_browser("/Media/6502", ICT_MEDIA_8BIT); break;
         case ICT_MEDIA_1632: open_browser("/Media/m68k", ICT_MEDIA_1632); break;
         case ICT_EMU_8BIT: case ICT_EMU_1632:
-        default:             open_emulator(ri->displayName[0] ? ri->displayName : "XT", ri->type); break;
+        default:             open_emulator(ri->type ? ri->type : ICT_EMU_8BIT, NULL, NULL); break;
     }
 }
 
@@ -398,6 +438,7 @@ int main(int argc, char **argv) {
         if      (!strcmp(argv[i], "--ppm")) ppm = 1;
         else if (!strcmp(argv[i], "--sel")) sel = 1;      // headless: pre-select the first icon
         else if (!strcmp(argv[i], "--browse")) browse = 1;// headless: open the 8-bit browser
+        else if (!strcmp(argv[i], "--launch")) browse = 2;// headless: browser + a launched game
         else snprintf(base, sizeof base, "%s", argv[i]);
     }
 
@@ -417,6 +458,7 @@ int main(int argc, char **argv) {
     wind_set_desktop_content(deskcontent, NULL);
     if (sel && n_icons) desk[1].ob_state |= OS_SELECTED;
     if (browse) { open_browser("/Media/6502/Games", ICT_MEDIA_8BIT); if (sel) BR[0].sel = 0; }
+    if (browse == 2) desk_launch("River Raid.atr", ICT_MEDIA_8BIT);
     wind_redraw();
 
     if (ppm) { dump_ppm("/tmp/xtdesk.ppm"); registry_close(); return 0; }
@@ -434,6 +476,7 @@ int main(int argc, char **argv) {
         if (r & MU_QUIT) break;
         if (r & MU_MESAG && msg[0]==WM_CLOSED) {
             browser *b = br_of_window(msg[3]); if (b) { br_free_icons(b); b->used = 0; }
+            emuwin *e = emu_of_window(msg[3]); if (e) e->used = 0;
             wind_close(msg[3]);
         }
         if (r & MU_BUTTON) {
