@@ -473,17 +473,34 @@ static long fs_serve(int slot)
  * or the boot dir listing). READFILE opens+allocates+reads a whole file; LISTDIR lists a
  * directory into the caller's buffer. The doorbell carries FS_KERNEL_JOB instead of a
  * slot. */
-enum { KFS_READFILE, KFS_LISTDIR };
+enum { KFS_READFILE, KFS_LISTDIR, KFS_CLOSEALL };
 #define FS_KERNEL_JOB (-1)
 static struct {
     int          op;
     const char  *path;
     void        *buf;      /* READFILE: fs task sets it (allocated); LISTDIR: caller's array */
-    uint32_t     len;      /* LISTDIR: max entries */
+    uint32_t     len;      /* LISTDIR: max entries / CLOSEALL: proc slot */
     long         result;
     TaskHandle_t waiter;
 } g_kfs;
 static SemaphoreHandle_t g_kfs_mtx;    /* serialize kernel callers of the single mailbox */
+
+/* Tear down every open fd of a dead proc: flush its dirty cache page, close the backing
+ * file (free the FIL), free the cache page. MUST run in the fs task (the sole FatFs
+ * driver post-3c-4), so reap routes here via KFS_CLOSEALL rather than doing FatFs from the
+ * reaper's context. A killed proc's unflushed writes are still flushed here (harmless, and
+ * more correct than dropping them). */
+static void fs_close_all(int slot)
+{
+    if (slot < 0 || slot >= MAXPROC) return;
+    proc_t *p = &g_proc[slot];
+    for (int fd = 3; fd < NFD; fd++) {
+        if (!p->fd[fd].open) continue;
+        fd_drop_cache(&p->fd[fd]);       /* flush dirty page (if any) + free the cache page */
+        vfs_close(&p->fd[fd].vf);
+        p->fd[fd].open = 0;
+    }
+}
 
 static long kfs_serve(void)
 {
@@ -505,6 +522,7 @@ static long kfs_serve(void)
         extern int sd_listdir_raw(const char *, char (*)[32], int);
         return sd_listdir_raw(g_kfs.path, (char (*)[32])g_kfs.buf, (int)g_kfs.len);
     }
+    case KFS_CLOSEALL: fs_close_all((int)g_kfs.len); return 0;   /* reap: close a dead proc's fds */
     }
     return -1;
 }
@@ -1356,8 +1374,14 @@ static int frtos_reap(proc_t *p)
     taskEXIT_CRITICAL();
 
     int code = p->exit_code;
-    for (int fd = 3; fd < NFD; fd++)                       /* free any page-cache pages the fds held */
-        if (p->fd[fd].open) fd_drop_cache(&p->fd[fd]);
+    /* Close any fd the dead proc left open (abnormal exit — a normal exit already fclosed
+     * them). Route through the fs task, the sole FatFs driver (3c-4): doing the flush /
+     * f_close from the reaper's context would race it. Reading .open here is just a flag
+     * check (no FatFs). Direct fallback when the fs task isn't up (host_test). */
+    { int slot = (int)(p - g_proc), any = 0;
+      for (int fd = 3; fd < NFD; fd++) if (p->fd[fd].open) { any = 1; break; }
+      if (any) { if (g_fs_q) kfs_call(KFS_CLOSEALL, 0, 0, (uint32_t)slot, 0);
+                 else        fs_close_all(slot); } }
     if (p->task) { vTaskDelete(p->task); p->task = 0; }   /* the child parked in vTaskSuspend */
     if (p->done) { vSemaphoreDelete(p->done); p->done = 0; }
     vm_space_destroy((int)(p - g_proc));         /* reclaim its private pages to the pool */

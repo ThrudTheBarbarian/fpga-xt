@@ -100,5 +100,10 @@ void _app_entry(int argc, char **argv)
             put("mmaptest: ERROR — write to RO mapping SUCCEEDED\n");
         }
     }
+    /* leave an fd open on purpose: on exit the OS must tear it down on reap (routed to
+     * the fs task via KFS_CLOSEALL, not done from the reaper's context) — proves that
+     * path survives + doesn't race/leak. */
+    (void)sys_open("/tmp/mm", 0);   /* intentionally never closed */
+
     put("mmaptest: done\n");
 }
