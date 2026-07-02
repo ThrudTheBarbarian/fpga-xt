@@ -2,15 +2,20 @@
  *
  * SQLite routes all I/O through a registered sqlite3_vfs; on a non-POSIX target
  * it ships none, so we provide one over the loader's file syscalls (sys_open/
- * read/write/lseek/close).  The READ path is complete (open/read/filesize/access
- * + no-op locking — a single read-only connection needs no cross-process lock);
- * the WRITE path works for plain writes, but xDelete/xTruncate/xSync need
- * unlink/truncate/fsync syscalls (added in the write-hardening step) — until then
- * they are benign no-ops, which is correct as long as nothing writes the DB.
+ * read/write/lseek/close).  The READ path is complete; the WRITE path works for
+ * plain writes, but xDelete/xTruncate/xSync need unlink/truncate/fsync syscalls
+ * (the write-hardening step) — until then they are benign no-ops, correct as
+ * long as nothing writes the DB.
+ *
+ * Cross-process locking is real: xLock/xUnlock/xCheckReservedLock take a whole-
+ * file advisory lock in the lockfs (/OS/Var/Locks) by opening a lock "file" named
+ * after the DB — O_CREAT succeeds for the first holder, fails (-> SQLITE_BUSY) for
+ * the rest.  Coarse (SHARED serialises with EXCLUSIVE) but corruption-safe, and a
+ * crashed holder's lock frees itself when reap closes its lockfd.  So the config
+ * DB (/OS/Etc/Registry.db) is a living, multi-writer store.
  *
  * Config: journal mode only (no WAL -> no shared-memory VFS), TEMP_STORE=memory
- * (no temp files), single-threaded.  Cross-process locking arrives with the lock
- * service (lockfs @ /OS/Var/Locks).
+ * (no temp files), single-threaded.
  */
 #include "sqlite3.h"
 #include "usys.h"
@@ -25,13 +30,26 @@
 
 typedef struct xt_file {
     sqlite3_file base;
-    int fd;
-    int lock;                 /* current SQLite lock level (NONE..EXCLUSIVE) */
+    int  fd;
+    int  lock;                /* current SQLite lock level (NONE..EXCLUSIVE) */
+    int  lockfd;              /* held lock file in /OS/Var/Locks (-1 = none) */
+    char lockpath[192];       /* this DB's lock-file path (flattened DB path) */
 } xt_file;
+
+/* /OS/Etc/Registry.db -> /OS/Var/Locks/OS_Etc_Registry.db (flat lockfs namespace,
+ * so DBs with the same basename in different dirs don't share a lock). */
+static void build_lockpath(char *dst, const char *name) {
+    static const char pfx[] = "/OS/Var/Locks/";
+    int i = 0; while (pfx[i]) { dst[i] = pfx[i]; i++; }
+    while (*name == '/') name++;
+    for (; *name && i < 190; name++) dst[i++] = (*name == '/') ? '_' : *name;
+    dst[i] = 0;
+}
 
 /* ---- per-file I/O methods ------------------------------------------------- */
 static int xtClose(sqlite3_file *f) {
     xt_file *p = (xt_file *)f;
+    if (p->lockfd >= 0) { sys_close(p->lockfd); p->lockfd = -1; }   /* drop a stray lock */
     if (p->fd >= 0) { sys_close(p->fd); p->fd = -1; }
     return SQLITE_OK;
 }
@@ -63,11 +81,35 @@ static int xtFileSize(sqlite3_file *f, sqlite3_int64 *pSize) {
     *pSize = (sqlite3_int64)end;
     return SQLITE_OK;
 }
-/* Single-process locking for now: track the level, always grant.  Correct for a
- * lone connection; cross-process arbitration comes with the lock service. */
-static int xtLock(sqlite3_file *f, int level)   { ((xt_file *)f)->lock = level; return SQLITE_OK; }
-static int xtUnlock(sqlite3_file *f, int level) { ((xt_file *)f)->lock = level; return SQLITE_OK; }
-static int xtCheckReservedLock(sqlite3_file *f, int *pOut) { (void)f; *pOut = 0; return SQLITE_OK; }
+/* Whole-file advisory lock via the lockfs: the first level >= SHARED opens (creates)
+ * the lock file, later upgrades just track the level, and dropping to NONE closes it
+ * (releasing the lock).  A create that fails means another connection holds it -> BUSY,
+ * which SQLite's busy handler retries. */
+static int xtLock(sqlite3_file *f, int level) {
+    xt_file *p = (xt_file *)f;
+    if (p->lock >= level) { p->lock = level; return SQLITE_OK; }        /* already at/above */
+    if (p->lock == SQLITE_LOCK_NONE) {                                  /* NONE -> acquire */
+        p->lockfd = (int)sys_open(p->lockpath, O_CREAT | O_WRONLY);
+        if (p->lockfd < 0) return SQLITE_BUSY;                          /* held elsewhere */
+    }
+    p->lock = level;
+    return SQLITE_OK;
+}
+static int xtUnlock(sqlite3_file *f, int level) {
+    xt_file *p = (xt_file *)f;
+    if (level < p->lock) {
+        if (level == SQLITE_LOCK_NONE && p->lockfd >= 0) { sys_close(p->lockfd); p->lockfd = -1; }
+        p->lock = level;
+    }
+    return SQLITE_OK;
+}
+static int xtCheckReservedLock(sqlite3_file *f, int *pOut) {
+    xt_file *p = (xt_file *)f;
+    if (p->lock >= SQLITE_LOCK_RESERVED) { *pOut = 1; return SQLITE_OK; }   /* we hold it */
+    int fd = (int)sys_open(p->lockpath, O_RDONLY);                          /* exists => held */
+    *pOut = (fd >= 0); if (fd >= 0) sys_close(fd);
+    return SQLITE_OK;
+}
 static int xtFileControl(sqlite3_file *f, int op, void *arg) { (void)f; (void)op; (void)arg; return SQLITE_NOTFOUND; }
 static int xtSectorSize(sqlite3_file *f) { (void)f; return 512; }
 static int xtDeviceCharacteristics(sqlite3_file *f) { (void)f; return 0; }
@@ -83,10 +125,11 @@ static const sqlite3_io_methods xt_io = {
 static int xtOpen(sqlite3_vfs *vfs, const char *name, sqlite3_file *f, int flags, int *pOut) {
     (void)vfs;
     xt_file *p = (xt_file *)f;
-    memset(p, 0, sizeof *p); p->fd = -1;
+    memset(p, 0, sizeof *p); p->fd = -1; p->lockfd = -1;
+    if (!name) return SQLITE_IOERR;                        /* no anonymous temp files */
+    build_lockpath(p->lockpath, name);
     int of = (flags & SQLITE_OPEN_READWRITE) ? O_RDWR : O_RDONLY;
     if (flags & SQLITE_OPEN_CREATE) of |= O_CREAT;
-    if (!name) return SQLITE_IOERR;                        /* no anonymous temp files */
     long fd = sys_open(name, of);
     if (fd < 0 && (of & O_RDWR)) { of = O_RDONLY; fd = sys_open(name, of); }  /* fall back RO */
     if (fd < 0) return SQLITE_CANTOPEN;
