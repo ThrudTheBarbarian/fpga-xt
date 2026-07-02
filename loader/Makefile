@@ -245,6 +245,21 @@ $(BUILD)/libc_test.so: test/freertos/progs/libc_test.c $(BUILD)/libc.so | $(BUIL
 	$(ARMCC) $(PROGCFLAGS) -Inewlib-pic/include -c $< -o $(BUILD)/libc_test.o
 	$(LLD) -shared --hash-style=sysv -o $@ $(BUILD)/libc_test.o $(BUILD)/libc.so
 
+# toybox.so — /System/bin/toybox: the unix userland + shell (vendored
+# third_party/toybox, 0BSD; tools/build-toybox.sh cross-compiles it and
+# collects the objects) linked with the posix shim (POSIX surface over the
+# XTOS syscalls) against libc.so. Run `toybox sh` for a shell, or any applet
+# via `toybox NAME ...`. Refresh after toybox/config changes with:
+#   tools/build-toybox.sh && make freertos-build
+$(BUILD)/toybox/objects.list:
+	tools/build-toybox.sh
+$(BUILD)/posix_shim.o: test/freertos/libs/posix_shim.c kernel/xtsys.h test/qemu/usys.h | $(BUILD)
+	$(ARMCC) -marm -mcpu=cortex-a9 -mfloat-abi=softfp -mfpu=neon-vfpv3 -fpic -Os -fno-builtin \
+	    -D_GNU_SOURCE -Ilibc-compat -Inewlib-pic/include -Itest/qemu -Ikernel -c $< -o $@
+$(BUILD)/toybox.so: $(BUILD)/toybox/objects.list $(BUILD)/posix_shim.o $(BUILD)/libc.so
+	$(LLD) -shared --hash-style=sysv -o $@ $(BUILD)/posix_shim.o \
+	    $$(cat $(BUILD)/toybox/objects.list) $(BUILD)/libc.so
+
 # vmtest — DT_NEEDED libc.so; touches the per-process private window (T2-b)
 $(BUILD)/vmtest.so: test/freertos/progs/vmtest.c $(BUILD)/libc.so | $(BUILD)
 	$(ARMCC) $(PROGCFLAGS) -Inewlib-pic/include -c $< -o $(BUILD)/vmtest.o
@@ -291,7 +306,7 @@ ROMFS_OVERLAY ?= romfs-overlay
 ROMFS_OVERLAY_FILES := $(shell find $(ROMFS_OVERLAY) -type f 2>/dev/null)
 ROMFS_OVERLAY_ARGS  := $(foreach f,$(ROMFS_OVERLAY_FILES),/$(patsubst $(ROMFS_OVERLAY)/%,%,$(f))=$(f))
 
-$(BUILD)/romfs.bin: $(BUILD)/mkromfs $(BUILD)/hello.so $(BUILD)/showmotd.so $(BUILD)/usestr.so $(BUILD)/echo.so $(BUILD)/libc_test.so $(BUILD)/gemtext.so $(BUILD)/desktop.so $(BUILD)/aesdesk.so $(BUILD)/regtest.so $(BUILD)/locktest.so $(BUILD)/lntest.so $(BUILD)/fstest.so $(BUILD)/sh.so $(BUILD)/init.so $(BUILD)/faultprog.so $(BUILD)/vmtest.so $(BUILD)/demandtest.so $(BUILD)/stacktest.so $(BUILD)/wxtest.so $(BUILD)/cowtest.so $(BUILD)/sharetext.so $(BUILD)/shmtest.so $(BUILD)/finictor.so $(BUILD)/mmaptest.so $(BUILD)/modetest.so $(BUILD)/badpoke.so $(BUILD)/stackpoke.so $(BUILD)/libutil.so $(BUILD)/libGEM.so $(BUILD)/libm.so $(BUILD)/libc.so test/freertos/motd.txt test/freertos/hello.lua test/freertos/Registry.db $(ROMFS_OVERLAY_FILES)
+$(BUILD)/romfs.bin: $(BUILD)/mkromfs $(BUILD)/toybox.so $(BUILD)/hello.so $(BUILD)/showmotd.so $(BUILD)/usestr.so $(BUILD)/echo.so $(BUILD)/libc_test.so $(BUILD)/gemtext.so $(BUILD)/desktop.so $(BUILD)/aesdesk.so $(BUILD)/regtest.so $(BUILD)/locktest.so $(BUILD)/lntest.so $(BUILD)/fstest.so $(BUILD)/sh.so $(BUILD)/init.so $(BUILD)/faultprog.so $(BUILD)/vmtest.so $(BUILD)/demandtest.so $(BUILD)/stacktest.so $(BUILD)/wxtest.so $(BUILD)/cowtest.so $(BUILD)/sharetext.so $(BUILD)/shmtest.so $(BUILD)/finictor.so $(BUILD)/mmaptest.so $(BUILD)/modetest.so $(BUILD)/badpoke.so $(BUILD)/stackpoke.so $(BUILD)/libutil.so $(BUILD)/libGEM.so $(BUILD)/libm.so $(BUILD)/libc.so test/freertos/motd.txt test/freertos/hello.lua test/freertos/Registry.db $(ROMFS_OVERLAY_FILES)
 	$(BUILD)/mkromfs $@ \
 	    /bin/faultprog=$(BUILD)/faultprog.so \
 	    /bin/vmtest=$(BUILD)/vmtest.so \
@@ -323,6 +338,15 @@ $(BUILD)/romfs.bin: $(BUILD)/mkromfs $(BUILD)/hello.so $(BUILD)/showmotd.so $(BU
 	    /bin/fstest=$(BUILD)/fstest.so \
 	    /Etc/Registry.db=test/freertos/Registry.db \
 	    /bin/sh=$(BUILD)/sh.so \
+	    /bin/toybox=$(BUILD)/toybox.so \
+	    /bin/cat=$(BUILD)/toybox.so \
+	    /bin/cp=$(BUILD)/toybox.so \
+	    /bin/ls=$(BUILD)/toybox.so \
+	    /bin/mkdir=$(BUILD)/toybox.so \
+	    /bin/mv=$(BUILD)/toybox.so \
+	    /bin/pwd=$(BUILD)/toybox.so \
+	    /bin/rm=$(BUILD)/toybox.so \
+	    /bin/[=$(BUILD)/toybox.so \
 	    /bin/init=$(BUILD)/init.so \
 	    /bin/hello=$(BUILD)/hello.so \
 	    /bin/showmotd=$(BUILD)/showmotd.so \
