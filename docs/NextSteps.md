@@ -496,21 +496,20 @@ Falcon becomes a target alongside the m68k. Conclusion of the design thread: bui
   clients too. **Perf:** FUSE-class (one IPC round-trip + one copy per op); fine for
   filesystems. Keep **romfs as the in-kernel root** (zero-copy `exec`/`mmap` live
   there — a service-backed FS can't be mapped as cheaply without fault-forwarding);
-  services are for *mounted* filesystems; a kernel buffer/page cache hides per-op cost.
-  Caution: a FS service must use the **block-device interface** for storage, not libc
-  file I/O, or it recurses back through the VFS. **Staging:** (1) VFS dispatch layer
-  (mount table + `fs_ops` vtable, romfs as root, location-agnostic so an op can be a
-  direct call or an IPC stub) — *prototyped + working (transparent refactor, zero-copy
-  mmap via an `mmap_base` op), then reverted to keep main lean until prioritized*;
-  (2) **service framework — the crux:** synchronous IPC requires **blockable
-  syscalls**. Today `do_syscall` runs in the `svc #1` handler in SVC mode and can't
-  yield (a FreeRTOS block → nested `svc #0` clobbers `lr_svc`/`spsr_svc` — same hazard
-  as the `_sbrk` boot path). Fix = restructure the syscall path to run re-entrantly
-  (save the client resume state, run the body in System mode with IRQs on so a blocking
-  primitive context-switches the client out/back as a normal task); test with a trivial
-  `sleep(ms)` syscall *before* layering `svc_register`/`mount`/IPC on top; (3) block
-  layer + a real on-disk FS (RAM-disk driver → FAT) + the MMIO/IRQ conduit;
-  (4) devfs/ioctl/concurrency polish. *(src: docs/OS/xtos-vision.md P3 VFS; this entry)*
+  services are for *mounted* filesystems; the fs task's kernel page cache hides per-op
+  cost. Caution: a FS service must use the **block-device interface** for storage, not
+  libc file I/O, or it recurses back through the VFS. **Staging:** (1) VFS dispatch layer
+  (mount table + per-driver ops, romfs root, location-agnostic) — **LANDED** (romfs +
+  fatfs + ramfs; `read`/`write`/`mmap` unified over the page cache). (2) **blockable
+  syscalls + in-kernel fs service — LANDED** (this was the crux): the syscall path defers
+  a blocking op off the `svc #1` handler — saves the client's resume frame and runs the
+  body in System mode as a task, so it can block and context-switch the client out/back
+  (`deferral_thunk`); the fs task owns FatFs behind a per-client **shm control channel**,
+  the reusable IPC substrate. Remaining OPEN: (3) package fs drivers as **PL0 services**
+  over that substrate — `svc_register`/`mount` ABI, spawn a driver per `/OS/Filesystems/`
+  binary, a real on-disk FS beyond the in-kernel fatfs, and the MMIO/IRQ conduit for
+  device drivers; (4) devfs/ioctl/concurrency polish.
+  *(src: docs/OS/xtos-vision.md P3 VFS; docs/OS/fs-pagecache.md; this entry)*
 - **Library build variants (speed vs debug) + loader search path** — DESIGNED, deferred
   (companion to the source-level debugger). Build each shared lib (libc/libm/libGEM, and
   programs) in **two variants**: *speed* (`-O2`/`-Os`, the default, stripped) and *debug*
