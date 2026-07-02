@@ -15,6 +15,7 @@
 #include "task.h"
 #include "semphr.h"
 #include "queue.h"
+#include "stream_buffer.h"
 #include "ksys.h"      /* struct k_regs */
 #include "xtsys.h"
 #include "xtld.h"
@@ -23,11 +24,15 @@
 #include "frtos_os.h"
 
 #define MAXPROC 8
-#define NFD     8       /* per process; 0/1/2 are stdio */
+#define NFD     16      /* per process; 0/1/2 are stdio (a shell juggling pipeline +
+                         * subshell-state pipes holds ~6 pipe ends at once) */
 #define FD_PATH_MAX 96  /* retained open path (for a writable mmap's independent write-back handle) */
 
 typedef struct {
     int      open;
+    int      pipei;  /* pipe fd: g_pipes index+1 (0 = not a pipe); pwrite = which end */
+    int      pwrite;
+    int      con;    /* console alias (a shell's saved stdio parked on a high fd) */
     uint32_t pos;    /* logical read/write cursor (page store); the driver's vf.pos is fill scratch */
     uint32_t cpi;    /* cached page index (~0u = none) — backing-store only; in-memory fds read vf.data */
     void    *cpage;  /* the one cached page (pool identity addr), or NULL */
@@ -35,6 +40,22 @@ typedef struct {
     char     path[FD_PATH_MAX];  /* the path this fd was opened with */
     vfs_file vf;     /* VFS-backed: romfs / fatfs / ramfs / ... */
 } fd_t;
+
+/* ---- kernel pipes (SYS_pipe / SYS_spawn_fd) --------------------------------
+ * A pipe is a FreeRTOS stream buffer (single-reader/single-writer ring — the
+ * shell-pipeline shape) plus end refcounts. The fds holding an end live in
+ * process fd tables (a child's stdio can be a pipe end via SYS_spawn_fd), so a
+ * crashed process's ends release on reap and EOF/EPIPE propagate for free.
+ * All pipe ops run in task context (they block / take the FreeRTOS heap). */
+#define MAXPIPE     8
+#define PIPE_BUF_SZ 4096
+typedef struct {
+    int used;
+    volatile int readers, writers;
+    StreamBufferHandle_t sb;
+} kpipe_t;
+static kpipe_t g_pipes[MAXPIPE];
+static void k_pipe_close_end(fd_t *f);   /* impl below with the other pipe ops */
 
 typedef struct {
     int               used;
@@ -199,10 +220,21 @@ void *sys_sbrk(int incr)
  * itself. The waiter (frtos_reap) then calls vTaskDelete on THIS handle from another
  * task, which runs prvDeleteTCB inline — fully unlinking it from every list — before
  * the slot is freed. No self-delete, no IDLE teardown, no reuse-before-unlink. */
+/* Release a dying process's pipe ends NOW (task context, before anyone waits):
+ * EOF/EPIPE must reach the peer immediately — a pipeline reader blocks for EOF
+ * BEFORE it waitpids, so leaving this to the reap would deadlock. File fds keep
+ * waiting for the reap (they need the fs task). Idempotent vs fs_close_all. */
+static void pipes_release(proc_t *p)
+{
+    for (int fd = 0; fd < NFD; fd++)
+        if (p->fd[fd].open && p->fd[fd].pipei) k_pipe_close_end(&p->fd[fd]);
+}
+
 static void task_exit_thunk(void)
 {
     proc_t *p = cur_proc();
     if (p) {
+        pipes_release(p);                            /* EOF to pipeline peers first */
         p->exited = 1;
         if (p->waiter) xTaskNotifyGive(p->waiter);   /* wake a PL0 waitpid (task notification) */
         if (p->done)   xSemaphoreGive(p->done);      /* wake a kernel-task waitpid (shell_task) */
@@ -232,6 +264,7 @@ void xtos_task_fault_exit(void)
 {
     proc_t *p = cur_proc();
     if (p) {                                        /* killed by a fault */
+        pipes_release(p);                           /* EOF to pipeline peers first */
         p->exit_code = -1;
         p->exited = 1;
         if (p->waiter) xTaskNotifyGive(p->waiter);  /* wake a PL0 waitpid */
@@ -255,6 +288,7 @@ static long sys_open(proc_t *p, const char *path, int flags)
             if (vfs_open(path, flags, &p->fd[fd].vf) != 0) return -1;
             p->fd[fd].pos = 0; p->fd[fd].cpi = ~0u; p->fd[fd].cpage = 0;   /* page store: empty */
             p->fd[fd].cdirty = 0;
+            p->fd[fd].pipei = 0; p->fd[fd].pwrite = 0; p->fd[fd].con = 0;  /* slot may have held a pipe/alias */
             int k = 0;                                                    /* retain path for mmap write-back */
             for (; path[k] && k < FD_PATH_MAX - 1; k++) p->fd[fd].path[k] = path[k];
             p->fd[fd].path[k] = 0;
@@ -274,12 +308,127 @@ static long sys_read(proc_t *p, int fd, void *buf, uint32_t n)
     return (fd == 0) ? 0 : -1;
 }
 
+/* ---- pipe ops (task context only: they block / take the FreeRTOS heap) ---- */
+static int fd_is_pipe(uint32_t fd)
+{
+    proc_t *p = cur_proc();
+    return p && fd < NFD && p->fd[fd].open && p->fd[fd].pipei;
+}
+
+static long k_pipe_create(proc_t *p, int *out)
+{
+    if (!p || !out) return -1;
+    int fda = -1, fdb = -1;
+    for (int fd = 3; fd < NFD; fd++)
+        if (!p->fd[fd].open) { if (fda < 0) fda = fd; else { fdb = fd; break; } }
+    if (fdb < 0) return -1;                                 /* -EMFILE */
+    int pi = -1;
+    for (int i = 0; i < MAXPIPE; i++) if (!g_pipes[i].used) { pi = i; break; }
+    if (pi < 0) return -1;
+    g_pipes[pi].sb = xStreamBufferCreate(PIPE_BUF_SZ, 1);
+    if (!g_pipes[pi].sb) return -1;
+    g_pipes[pi].readers = 1; g_pipes[pi].writers = 1; g_pipes[pi].used = 1;
+    memset(&p->fd[fda], 0, sizeof(fd_t));
+    memset(&p->fd[fdb], 0, sizeof(fd_t));
+    p->fd[fda].open = 1; p->fd[fda].pipei = pi + 1; p->fd[fda].pwrite = 0;
+    p->fd[fdb].open = 1; p->fd[fdb].pipei = pi + 1; p->fd[fdb].pwrite = 1;
+    out[0] = fda; out[1] = fdb;
+    return 0;
+}
+
+static void k_pipe_close_end(fd_t *f)
+{
+    kpipe_t *pp = &g_pipes[f->pipei - 1];
+    int dead;
+    taskENTER_CRITICAL();
+    if (f->pwrite) { if (pp->writers > 0) pp->writers--; }
+    else           { if (pp->readers > 0) pp->readers--; }
+    dead = pp->used && pp->readers <= 0 && pp->writers <= 0;
+    if (dead) pp->used = 0;
+    taskEXIT_CRITICAL();
+    f->open = 0; f->pipei = 0; f->pwrite = 0;
+    if (dead) { vStreamBufferDelete(pp->sb); pp->sb = 0; }
+}
+
+/* blocking read: data if any, 0 (EOF) once all writers are gone and the ring is
+ * drained. The timed receive doubles as the writer-exit wakeup (no wait queues). */
+static long k_pipe_read(proc_t *p, int fd, char *buf, uint32_t n)
+{
+    kpipe_t *pp = &g_pipes[p->fd[fd].pipei - 1];
+    if (!buf || !n) return 0;
+    for (;;) {
+        size_t got = xStreamBufferReceive(pp->sb, buf, n, pdMS_TO_TICKS(20));
+        if (got > 0) return (long)got;
+        if (pp->writers <= 0) {
+            got = xStreamBufferReceive(pp->sb, buf, n, 0);  /* final drain */
+            return (long)got;
+        }
+    }
+}
+
+/* blocking write: park while the ring is full; error once no reader remains */
+static long k_pipe_write(proc_t *p, int fd, const char *buf, uint32_t n)
+{
+    kpipe_t *pp = &g_pipes[p->fd[fd].pipei - 1];
+    uint32_t sent = 0;
+    if (!buf) return -1;
+    while (sent < n) {
+        if (pp->readers <= 0) return sent ? (long)sent : -1;    /* EPIPE-ish */
+        sent += xStreamBufferSend(pp->sb, buf + sent, n - sent, pdMS_TO_TICKS(20));
+    }
+    return (long)sent;
+}
+
+/* dup2 for PIPE ends and the CONSOLE (the shell's save/restore-around-redirect
+ * dance): copy the end onto a chosen slot, refcounted. A console source makes
+ * the target a console alias; restoring an alias onto 0/1/2 just clears the
+ * slot (closed stdio IS the console). File fds are not duplicable. */
+static long k_dup2(proc_t *p, int oldfd, int newfd)
+{
+    if (!p || oldfd < 0 || oldfd >= NFD || newfd < 0 || newfd >= NFD) return -1;
+    if (oldfd == newfd) return newfd;
+    int old_con = (oldfd < 3 && !p->fd[oldfd].open) ||
+                  (p->fd[oldfd].open && p->fd[oldfd].con);
+    if (!old_con && (!p->fd[oldfd].open || !p->fd[oldfd].pipei)) return -1;
+    if (p->fd[newfd].open) {
+        if (p->fd[newfd].pipei) k_pipe_close_end(&p->fd[newfd]);
+        else if (p->fd[newfd].con) memset(&p->fd[newfd], 0, sizeof(fd_t));
+        else return -1;                             /* won't displace a file fd */
+    }
+    if (old_con) {
+        memset(&p->fd[newfd], 0, sizeof(fd_t));
+        if (newfd >= 3) { p->fd[newfd].open = 1; p->fd[newfd].con = 1; }
+        /* newfd < 3: leave closed — that IS the console */
+        return newfd;
+    }
+    kpipe_t *pp = &g_pipes[p->fd[oldfd].pipei - 1];
+    p->fd[newfd] = p->fd[oldfd];
+    taskENTER_CRITICAL();
+    if (p->fd[newfd].pwrite) pp->writers++; else pp->readers++;
+    taskEXIT_CRITICAL();
+    return newfd;
+}
+
+/* fd metadata: enough for "is this a pipe/tty/file" probes (S_ISFIFO etc.)
+ * and for "is this fd free" (the shell's high-fd allocator) — closed fds >= 3
+ * FAIL here on purpose. */
+static long k_fstat(proc_t *p, int fd, struct xt_stat *st)
+{
+    if (!p || fd < 0 || fd >= NFD || !st) return -1;
+    if (p->fd[fd].open && p->fd[fd].pipei) { st->mode = XT_S_IFIFO; st->size = 0; st->mtime = 0; return 0; }
+    if (p->fd[fd].open && p->fd[fd].con) { st->mode = XT_S_IFCHR; st->size = 0; st->mtime = 0; return 0; }
+    if (p->fd[fd].open) { st->mode = XT_S_IFREG; st->size = p->fd[fd].vf.size; st->mtime = 0; return 0; }
+    if (fd < 3) { st->mode = XT_S_IFCHR; st->size = 0; st->mtime = 0; return 0; }  /* console */
+    return -1;
+}
+
 /* lseek is pure arithmetic on the LOGICAL cursor (fd.pos) + the file size captured at
  * open — no backing I/O, no fs task. The page store fills by page index independently,
  * so the driver's own position is irrelevant between fills. Runs inline (any context). */
 static long sys_lseek(proc_t *p, int fd, long off, int whence)
 {
     if (!p || fd < 3 || fd >= NFD || !p->fd[fd].open) return -1;
+    if (p->fd[fd].pipei || p->fd[fd].con) return -1;    /* ESPIPE */
     fd_t *fdp = &p->fd[fd];
     long base = (whence == 1) ? (long)fdp->pos : (whence == 2) ? (long)fdp->vf.size : 0;
     long np = base + off;
@@ -562,8 +711,11 @@ static void fs_close_all(int slot)
 {
     if (slot < 0 || slot >= MAXPROC) return;
     proc_t *p = &g_proc[slot];
-    for (int fd = 3; fd < NFD; fd++) {
+    for (int fd = 0; fd < NFD; fd++) {   /* from 0: a child's stdio can be pipe ends */
         if (!p->fd[fd].open) continue;
+        if (p->fd[fd].pipei) { k_pipe_close_end(&p->fd[fd]); continue; }  /* EOF/EPIPE propagate */
+        if (p->fd[fd].con) { p->fd[fd].open = 0; p->fd[fd].con = 0; continue; }
+        if (fd < 3) { p->fd[fd].open = 0; continue; }
         fd_drop_cache(&p->fd[fd]);       /* flush dirty page (if any) + free the cache page */
         vfs_close(&p->fd[fd].vf);
         p->fd[fd].open = 0;
@@ -887,9 +1039,27 @@ void deferral_thunk(void)                 /* PL1 (System), task context */
     if (p) {
         if (p->dnum == SYS_spawn) {                        /* may load libs from the SD (FatFs) */
             r = frtos_spawn_argv((const char *)p->da0, (int)p->da1, (char **)p->da2, g_khost);
+        } else if (p->dnum == SYS_spawn_fd) {              /* spawn + wire child stdio to pipe ends */
+            char **av = (char **)p->da1; int ac = 0;
+            while (av && av[ac]) ac++;
+            r = frtos_spawn_argv_fds((const char *)p->da0, ac, av, g_khost, (const int *)p->da2);
+        } else if (p->dnum == SYS_pipe) {                  /* allocate a pipe + two end fds */
+            r = k_pipe_create(p, (int *)p->da0);
+        } else if ((p->dnum == SYS_read || p->dnum == SYS_write) &&
+                   p->da0 < NFD && p->fd[p->da0].open && p->fd[p->da0].pipei) {
+            r = (p->dnum == SYS_read)
+                ? k_pipe_read(p, (int)p->da0, (char *)p->da1, (uint32_t)p->da2)
+                : k_pipe_write(p, (int)p->da0, (const char *)p->da1, (uint32_t)p->da2);
+        } else if (p->dnum == SYS_close &&
+                   p->da0 < NFD && p->fd[p->da0].open && p->fd[p->da0].pipei) {
+            k_pipe_close_end(&p->fd[p->da0]); r = 0;
+        } else if (p->dnum == SYS_dup2) {                  /* pipe-end duplication */
+            r = k_dup2(p, (int)p->da0, (int)p->da1);
         } else if (p->dnum == SYS_waitpid) {               /* blocks until the child exits */
             extern int frtos_waitpid_notify(int); r = frtos_waitpid_notify((int)p->da0);
-        } else if (p->dnum == SYS_read && p->da0 == 0) {   /* stdin: one blocking console char */
+        } else if (p->dnum == SYS_read &&
+                   (p->da0 == 0 || (p->da0 < NFD && p->fd[p->da0].open && p->fd[p->da0].con))) {
+            /* stdin (or a console alias): one blocking console char */
             char *buf = (char *)p->da1;
             if (buf && p->da2 > 0) { int c = sh_readc(); if (c < 0) r = 0; else { buf[0] = (char)c; r = 1; } }
             else r = 0;
@@ -950,17 +1120,22 @@ static long do_syscall(uint32_t num, long a0, long a1, long a2)
     switch (num) {
     case SYS_abi_version: return XTOS_ABI_VERSION;           /* () -> frozen-ABI version */
     case SYS_write:                                          /* (fd, buf, len) */
-        if ((a0 == 1 || a0 == 2) && g_console && a1) { g_console((const char *)a1, (int)a2); return a2; }
+        if (g_console && a1 &&
+            ((a0 == 1 || a0 == 2) ||
+             (p && a0 >= 3 && a0 < NFD && p->fd[a0].open && p->fd[a0].con)))
+        { g_console((const char *)a1, (int)a2); return a2; }
         return -1;
     case SYS_getpid: return p ? p->pid : 0;
     case SYS_open:   return sys_open(p, (const char *)a0, (int)a1);   /* (path, flags) */
     case SYS_read:   return sys_read(p, (int)a0, (void *)a1, (uint32_t)a2);
-    case SYS_close:  if (p && a0 >= 3 && a0 < NFD && p->fd[a0].open) {
-                         fd_drop_cache(&p->fd[a0]);
+    case SYS_close:  if (p && a0 >= 3 && a0 < NFD && p->fd[a0].open && !p->fd[a0].pipei) {
+                         if (p->fd[a0].con) { p->fd[a0].open = 0; p->fd[a0].con = 0; return 0; }
+                         fd_drop_cache(&p->fd[a0]);        /* pipe fds close via the deferred path */
                          vfs_close(&p->fd[a0].vf);
                          p->fd[a0].open = 0;
                      } return 0;
     case SYS_lseek:  return sys_lseek(p, (int)a0, a1, (int)a2);
+    case SYS_fstat:  return k_fstat(p, (int)a0, (struct xt_stat *)a1);   /* inline: table read */
     case SYS_stat:     return vfs_stat((const char *)a0, (struct xt_stat *)a1);      /* follows symlinks */
     case SYS_lstat:    return vfs_lstat((const char *)a0, (struct xt_stat *)a1);     /* the link itself */
     case SYS_readlink: return vfs_readlink((const char *)a0, (char *)a1, (int)a2);
@@ -1048,7 +1223,14 @@ static long do_syscall(uint32_t num, long a0, long a1, long a2)
 static int fd_is_sd(uint32_t fd)
 {
     proc_t *p = cur_proc();
-    return p && fd >= 3 && fd < NFD && p->fd[fd].open && !p->fd[fd].vf.data;
+    return p && fd >= 3 && fd < NFD && p->fd[fd].open && !p->fd[fd].vf.data
+        && !p->fd[fd].pipei && !p->fd[fd].con;   /* pipes/aliases have no backing store */
+}
+
+static int fd_is_con(uint32_t fd)
+{
+    proc_t *p = cur_proc();
+    return p && fd < NFD && p->fd[fd].open && p->fd[fd].con;
 }
 
 /* POLICY — does this syscall have to run in TASK context (via the deferral thunk)
@@ -1063,10 +1245,16 @@ static int needs_task_ctx(struct k_regs *regs, uint32_t num)
     switch (num) {
     case SYS_waitpid: return 1;                    /* blocks on the child */
     case SYS_spawn:   return 1;                    /* may load a DT_NEEDED lib from the SD */
+    case SYS_spawn_fd: return 1;                   /* spawn + pipe-end refcounts */
+    case SYS_pipe:    return 1;                    /* takes the FreeRTOS heap (stream buffer) */
     case SYS_open:    return 1;                    /* may walk a FatFs directory path */
-    case SYS_read:    return fd == 0 || (fd >= 3 && fd < NFD);  /* stdin blocks; file read -> page store */
-    case SYS_write:   return fd >= 3 && fd < NFD;   /* file write -> page store (console 1/2 inline) */
-    case SYS_close:   return fd_is_sd(fd);          /* backing-store close -> task ctx (romfs inline) */
+    case SYS_read:    return fd == 0 || (fd >= 3 && fd < NFD) || fd_is_pipe(fd);
+                                                    /* stdin + pipes block; file read -> page store */
+    case SYS_write:   if (fd_is_con(fd)) return 0;  /* console alias: inline like fd 1/2 */
+                      return (fd >= 3 && fd < NFD) || fd_is_pipe(fd);
+                                                    /* file write -> page store; pipe blocks (console 1/2 inline) */
+    case SYS_close:   return fd_is_sd(fd) || fd_is_pipe(fd);  /* backing-store/pipe close -> task ctx */
+    case SYS_dup2:    return 1;                    /* may close a displaced pipe end */
     case SYS_mmap:    return fd_is_sd(fd);          /* backing-store mmap -> fs task eager-fill (romfs inline) */
     case SYS_munmap:  return 1;                     /* may write dirty pages back (FatFs) -> task ctx */
     case SYS_input:   return 1;                     /* blocks on the serial ring for the next event */
@@ -1246,10 +1434,36 @@ static prog_t *prog_get(const uint8_t *image, uint32_t len, const xtld_host *hos
  * (transient host-loaded ELFs). */
 #define ARGV_WORDS 256   /* reserved at the top of the task stack for argv (PL0-RW) */
 static int proc_launch(int slot, xtld_obj *obj, uintptr_t entry,
-                       uint32_t wva, uint32_t wsz, int argc, char **argv)
+                       uint32_t wva, uint32_t wsz, int argc, char **argv,
+                       const int *stdfds)
 {
     proc_t *p = &g_proc[slot];
-    for (int i = 0; i < NFD; i++) p->fd[i].open = 0;
+    for (int i = 0; i < NFD; i++) { p->fd[i].open = 0; p->fd[i].pipei = 0; }
+    /* SYS_spawn_fd: wire the child's stdio to the spawner's pipe ends, and
+     * inherit the spawner's OTHER pipe fds at the same slots unless masked
+     * out (stdfds[3] = do-not-inherit bitmask — the cloexec analogue; the
+     * subshell-state fd relies on surviving exec). Copies share the pipe
+     * object; each end is refcounted so EOF tracks every holder. */
+    if (stdfds) {
+        proc_t *par = cur_proc();
+        unsigned nomask = (unsigned)stdfds[3];
+        for (int i = 0; par && i < NFD; i++) {
+            /* stdio: explicit parent fd, or -1 = inherit the parent's CURRENT
+             * slot i (a shell that redirected its own stdin passes that on —
+             * exec semantics); others: same-slot inherit unless masked out */
+            int pfd = (i < 3) ? (stdfds[i] >= 0 ? stdfds[i] : i)
+                              : ((nomask & (1u << i)) ? -1 : i);
+            if (pfd >= 0 && pfd < NFD && par->fd[pfd].open && par->fd[pfd].pipei) {
+                kpipe_t *pp = &g_pipes[par->fd[pfd].pipei - 1];
+                p->fd[i] = par->fd[pfd];
+                taskENTER_CRITICAL();
+                if (p->fd[i].pwrite) pp->writers++; else pp->readers++;
+                taskEXIT_CRITICAL();
+            }
+            /* console / console-alias / closed sources all mean: leave the
+             * child's slot closed (stdio falls back to the console) */
+        }
+    }
     p->obj = obj; p->entry = entry; p->exit_code = 0; p->exited = 0; p->waited = 0; p->waiter = 0; p->pid = g_next_pid++;
     /* inherit the spawner's cwd (a shell's children run where the shell is);
      * a spawn from kernel context starts at the root */
@@ -1310,8 +1524,8 @@ static int alloc_slot(void)
     return slot;
 }
 
-int frtos_spawn(const uint8_t *image, uint32_t len, int argc, char **argv,
-                const xtld_host *host)
+static int frtos_spawn_fds(const uint8_t *image, uint32_t len, int argc, char **argv,
+                           const xtld_host *host, const int *stdfds)
 {
     reap_orphans();                              /* clean up exited '&'/orphan children first */
     int slot = alloc_slot();
@@ -1320,7 +1534,13 @@ int frtos_spawn(const uint8_t *image, uint32_t len, int argc, char **argv,
     prog_t *prog = prog_get(image, len, host);    /* load-once (shared text + COW data) */
     if (!prog) { g_proc[slot].used = 0; return -1; }
     g_proc[slot].transient = 0; g_proc[slot].src = 0;
-    return proc_launch(slot, prog->obj, prog->entry, (uint32_t)prog->wva, prog->wsize, argc, argv);
+    return proc_launch(slot, prog->obj, prog->entry, (uint32_t)prog->wva, prog->wsize, argc, argv, stdfds);
+}
+
+int frtos_spawn(const uint8_t *image, uint32_t len, int argc, char **argv,
+                const xtld_host *host)
+{
+    return frtos_spawn_fds(image, len, argc, argv, host, 0);
 }
 
 /* Load + run an ELF read from the HOST filesystem over semihosting (runhost) — for
@@ -1360,7 +1580,7 @@ int frtos_spawn_host(const char *hostpath, int argc, char **argv, const xtld_hos
     uintptr_t wva; uint32_t wsz; xtld_writable_range(obj, &wva, &wsz);
 
     g_proc[slot].transient = 1; g_proc[slot].src = buf;
-    int pid = proc_launch(slot, obj, entry, (uint32_t)wva, wsz, argc, argv);
+    int pid = proc_launch(slot, obj, entry, (uint32_t)wva, wsz, argc, argv, 0);
     if (pid < 0) {                               /* launch failed: undo the load */
         extern void mmu_unprotect(uint32_t, uint32_t);
         mmu_unprotect((uint32_t)xtld_image_base(obj), (uint32_t)xtld_span(obj));
@@ -1376,7 +1596,8 @@ int frtos_spawn_path(const char *path, const xtld_host *host)
 
 static int has_prefix(const char *s, const char *p) { while (*p) if (*s++ != *p++) return 0; return 1; }
 
-int frtos_spawn_argv(const char *path, int argc, char **argv, const xtld_host *host)
+int frtos_spawn_argv_fds(const char *path, int argc, char **argv,
+                         const xtld_host *host, const int *stdfds)
 {
     const uint8_t *data; uint32_t size;
     /* programs live in the romfs (mounted at /System); accept a /System/bin/x path
@@ -1386,7 +1607,12 @@ int frtos_spawn_argv(const char *path, int argc, char **argv, const xtld_host *h
         if (!has_prefix(path, "/System/") || !romfs_lookup(path + 7, &data, &size))
             return -1;
     }
-    return frtos_spawn(data, size, argc, argv, host);
+    return frtos_spawn_fds(data, size, argc, argv, host, stdfds);
+}
+
+int frtos_spawn_argv(const char *path, int argc, char **argv, const xtld_host *host)
+{
+    return frtos_spawn_argv_fds(path, argc, argv, host, 0);
 }
 
 /* g_khost (declared above do_syscall) is the kernel loader host — set by main once

@@ -23,6 +23,9 @@
 #define SYS_exit     0x101   /* (code) -> no return */
 #define SYS_waitpid  0x102   /* (pid) -> exit_code */
 #define SYS_getpid   0x103   /* () -> pid */
+#define SYS_spawn_fd 0x104   /* (path, argv, int fds[3]) -> pid: argv is NULL-terminated
+                              * (argc counted kernel-side); the child's fd 0/1/2 come
+                              * from the parent's fds (pipe ends; -1 = inherit console) */
 
 /* memory — block 0x200 */
 #define SYS_mmap     0x200   /* (fd, len, off) -> VA: map a file RO + shared, demand-paged */
@@ -47,13 +50,23 @@
 #define SYS_chdir    0x30C   /* (path) -> 0: set the process cwd (must be a dir) */
 #define SYS_getcwd   0x30D   /* (buf, size) -> len: the process cwd (absolute) */
 #define SYS_rename   0x30E   /* (oldpath, newpath) -> 0 */
+#define SYS_pipe     0x30F   /* (int fd[2]) -> 0: kernel ring-buffer pipe; fd[0]=read
+                              * end, fd[1]=write end. Read blocks until data or all
+                              * writers close (then 0 = EOF); write blocks while full,
+                              * fails when all readers are gone. */
+#define SYS_dup2     0x310   /* (oldfd, newfd) -> newfd: duplicate a PIPE end onto a
+                              * chosen slot (refcounted); newfd must be free or a pipe */
+#define SYS_fstat    0x311   /* (fd, struct xt_stat *) -> 0: fd metadata — pipes report
+                              * XT_S_IFIFO, console 0/1/2 XT_S_IFCHR, files IFREG+size */
 
-/* stat result (SYS_stat / SYS_lstat). mode carries the file-type bits below. */
+/* stat result (SYS_stat / SYS_lstat / SYS_fstat). mode carries the type bits below. */
 struct xt_stat { unsigned mode, size, mtime; };
 #define XT_S_IFMT  0xF000u   /* type mask */
 #define XT_S_IFREG 0x8000u   /* regular file */
 #define XT_S_IFDIR 0x4000u   /* directory */
 #define XT_S_IFLNK 0xA000u   /* symbolic link */
+#define XT_S_IFIFO 0x1000u   /* pipe (SYS_fstat only) */
+#define XT_S_IFCHR 0x2000u   /* character device / console (SYS_fstat only) */
 
 /* one directory entry (SYS_readdir). Enumerate index = 0,1,2,... until it returns 0.
  * mode's type bits are a hint (dir vs not); lstat the entry for the authoritative type

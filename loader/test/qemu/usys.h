@@ -55,6 +55,18 @@ static inline long sys_getcwd(char *buf, unsigned size)
 { return __syscall(SYS_getcwd, (long)buf, (long)size, 0); }
 static inline long sys_rename(const char *oldp, const char *newp)
 { return __syscall(SYS_rename, (long)oldp, (long)newp, 0); }
+/* kernel pipe: fd[0]=read end, fd[1]=write end (see xtsys.h for semantics) */
+static inline long sys_pipe(int fd[2]) { return __syscall(SYS_pipe, (long)fd, 0, 0); }
+/* spawn with the child's stdio wired to parent fds (argv NULL-terminated; -1 = console).
+ * fds[3] = do-NOT-inherit bitmask for the parent's other pipe fds (cloexec analogue);
+ * pipe fds not masked out are inherited by the child at the SAME slot. */
+static inline long sys_spawn_fd(const char *path, char **argv, const int fds[4])
+{ return __syscall(SYS_spawn_fd, (long)path, (long)argv, (long)fds); }
+/* duplicate a pipe end onto a chosen fd slot (refcounted) */
+static inline long sys_dup2(int oldfd, int newfd)
+{ return __syscall(SYS_dup2, oldfd, newfd, 0); }
+static inline long sys_fstat(int fd, struct xt_stat *st)
+{ return __syscall(SYS_fstat, fd, (long)st, 0); }
 /* mmap a romfs file read-only + shared (len=0 -> whole file from off). Returns a
  * pointer to the file's bytes (no copy), or NULL. */
 static inline void *sys_mmap(int fd, unsigned len, unsigned off)
