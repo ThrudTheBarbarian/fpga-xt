@@ -268,16 +268,65 @@ int open(const char *path, int flags, ...)
     return fd;
 }
 
+/* fd bookkeeping between vfork and exec — the "child" is still this process:
+ * - dup2 onto 0/1/2 is RECORDED (g_redir) and becomes SYS_spawn_fd's stdio map
+ * - close() in the fake child is a NO-OP on the parent's table (in real vfork
+ *   the child closes its own copy); it just marks the fd not-inherited
+ * - fcntl FD_CLOEXEC is tracked here and merged into the same mask
+ * The kernel inherits every unmasked parent pipe fd >=3 at the same slot. */
+static unsigned g_vfork_regs[11];        /* defined with the vfork asm below */
+#define g_vfork_armed (g_vfork_regs[10])
+static int g_redir[3] = { -1, -1, -1 };
+static unsigned g_child_closed;          /* fds the fake child "closed" */
+static unsigned g_cloexec;               /* fds marked close-on-exec */
+
+static void redir_reset(void)
+{
+    for (int i = 0; i < 3; i++) g_redir[i] = -1;
+    g_child_closed = 0;
+}
+
 /* close/fstat/dup must understand pseudo-fds; real fds go to the kernel */
 int close(int fd)
 {
     int i = fd - XT_PFD_BASE;
     if (i >= 0 && i < XT_PFD_MAX) { g_pfd[i].used = 0; return 0; }
+    if (g_vfork_armed && fd >= 0 && fd < 16) {   /* fake child: parent's table untouched */
+        g_child_closed |= 1u << fd;
+        return 0;
+    }
+    if (fd >= 0 && fd < 16) g_cloexec &= ~(1u << fd);
     return _close(fd);
+}
+
+int fcntl(int fd, int cmd, ...)
+{
+    va_list ap;
+    long arg;
+    va_start(ap, cmd);
+    arg = va_arg(ap, long);
+    va_end(ap);
+    if (fd < 0 || fd >= 16) { errno = EBADF; return -1; }
+    switch (cmd) {
+    case 1 /*F_GETFD*/: return (g_cloexec >> fd) & 1;
+    case 2 /*F_SETFD*/:
+        if (arg & 1) g_cloexec |= 1u << fd; else g_cloexec &= ~(1u << fd);
+        return 0;
+    case 3 /*F_GETFL*/: {                /* doubles as the "is this fd free" probe */
+        struct xt_stat xs;
+        if (sys_fstat(fd, &xs) == 0) return 0;
+        errno = EBADF;
+        return -1;
+    }
+    case 4 /*F_SETFL*/: return 0;
+    }
+    errno = EINVAL;
+    return -1;
 }
 
 int fstat(int fd, struct stat *st)
 {
+    struct xt_stat xs;
     if (pfd_path(fd)) {
         memset(st, 0, sizeof *st);
         st->st_mode = S_IFDIR | 0755;
@@ -286,15 +335,18 @@ int fstat(int fd, struct stat *st)
         return 0;
     }
     memset(st, 0, sizeof *st);
-    if (fd < 3) { st->st_mode = S_IFCHR | 0620; return 0; }  /* console */
-    long pos = sys_lseek(fd, 0, 1 /*SEEK_CUR*/);
-    long end = sys_lseek(fd, 0, 2 /*SEEK_END*/);
-    if (pos >= 0 && end >= 0) sys_lseek(fd, pos, 0 /*SEEK_SET*/);
-    st->st_mode = S_IFREG | 0644;
-    st->st_size = end >= 0 ? end : 0;
-    st->st_nlink = 1;
-    st->st_blksize = 4096;
-    return 0;
+    if (sys_fstat(fd, &xs) == 0) {       /* kernel knows pipes/console/files */
+        unsigned t = xs.mode & XT_S_IFMT;
+        st->st_mode = (t == XT_S_IFIFO) ? (S_IFIFO | 0600)
+                    : (t == XT_S_IFCHR) ? (S_IFCHR | 0620)
+                    : (S_IFREG | 0644);
+        st->st_size = xs.size;
+        st->st_nlink = 1;
+        st->st_blksize = 4096;
+        return 0;
+    }
+    errno = EBADF;
+    return -1;
 }
 
 int dup(int fd)
@@ -309,15 +361,20 @@ int dup(int fd)
 int dup2(int oldfd, int newfd)
 {
     if (oldfd == newfd) return newfd;
-    errno = ENOSYS;                      /* Phase B: kernel dup/spawn_fd */
-    return -1;
+    if (g_vfork_armed && newfd >= 0 && newfd < 3) {
+        g_redir[newfd] = oldfd;
+        return newfd;
+    }
+    long r = sys_dup2(oldfd, newfd);     /* parent context: real pipe-end duplication */
+    if (r < 0) { errno = EBADF; return -1; }
+    g_cloexec &= ~(1u << newfd);
+    return (int)r;
 }
 
 int pipe(int fd[2])
 {
-    (void)fd;
-    errno = ENOSYS;                      /* Phase B: SYS_pipe */
-    return -1;
+    if (sys_pipe(fd) < 0) { errno = EMFILE; return -1; }
+    return 0;
 }
 
 /* ---- the *at family ------------------------------------------------------
@@ -343,6 +400,15 @@ int faccessat(int dirfd, const char *path, int mode, int flags)
     struct stat st;
     (void)mode; (void)flags;
     return fstatat(dirfd, path, &st, 0);
+}
+
+/* the kernel's _isatty is a blind fd<3 — a child whose stdio is a pipe end
+ * must answer honestly or ls/grep columnize into the pipeline */
+int isatty(int fd)
+{
+    struct xt_stat xs;
+    if (sys_fstat(fd, &xs) == 0) return (xs.mode & XT_S_IFMT) == XT_S_IFCHR;
+    return fd < 3;
 }
 
 /* newlib's access() would bounce off the kernel's _stat stub */
@@ -492,9 +558,7 @@ ssize_t writev(int fd, const struct iovec *iov, int cnt)
  * See the file comment. The register snapshot is {r4-r11, sp, lr}; slot 10
  * is the armed flag (set by vfork, cleared by execve before restoring).
  * Addressing is PC-relative — this object links into a PIC .so. */
-static unsigned g_vfork_regs[11];
 __asm__(".local g_vfork_regs");   /* asm below names it; keep it non-preemptible */
-#define g_vfork_armed (g_vfork_regs[10])
 #define MAX_KIDS 8
 static int g_kids[MAX_KIDS];
 
@@ -544,6 +608,7 @@ void _exit(int code)
 {
     if (g_vfork_armed) {
         g_vfork_armed = 0;
+        redir_reset();                   /* drop recorded redirects + deferred closes */
         int pid = GHOST_BASE + (g_ghost_seq++ & 0x3fff);
         for (int i = 0; i < MAX_KIDS; i++)
             if (!g_ghosts[i].pid) { g_ghosts[i].pid = pid; g_ghosts[i].code = code; break; }
@@ -562,14 +627,21 @@ int execve(const char *path, char *const argv[], char *const envp[])
     if (!strcmp(path, "/proc/self/exe")) path = "/System/bin/toybox";
 
     while (argv[argc]) argc++;
-    pid = sys_spawn(path, argc, (char **)argv);
+    (void)argc;
+    /* spawn_fd always: stdio from the dup2 record, other pipe fds inherited
+     * at the same slots minus what the fake child closed / marked cloexec */
+    int fds[4] = { g_redir[0], g_redir[1], g_redir[2],
+                   (int)(g_child_closed | g_cloexec) };
+    pid = sys_spawn_fd(path, (char **)argv, fds);
     if (pid < 0) { errno = ENOENT; return -1; }
 
     if (g_vfork_armed) {                 /* "child" side of a vfork pair */
         g_vfork_armed = 0;
+        redir_reset();                   /* child owns copies now; flush deferred closes */
         kids_add((int)pid);
         vfork_return((int)pid);          /* no return */
     }
+    redir_reset();
     /* exec without vfork = process replacement: relay the child's exit */
     sys_exit((int)sys_waitpid((int)pid));
     return -1;                           /* unreachable */
@@ -815,6 +887,77 @@ char *xt_basename(char *path)
     while (p > path + 1 && p[-1] == '/') *--p = 0;   /* strip trailing / */
     p = strrchr(path, '/');
     return (p && p[1]) ? p + 1 : (p ? path : path);
+}
+
+/* fnmatch — newlib ships the header but no implementation. Handles * ? [set]
+ * (ranges, ^/! negation), backslash escapes, FNM_PATHNAME/PERIOD/CASEFOLD. */
+#include <fnmatch.h>
+#include <ctype.h>
+
+static int fnm_one(const char *pat, const char *str, int flags, int at_start)
+{
+    while (*pat) {
+        char pc = *pat;
+        if (pc == '*') {
+            while (*pat == '*') pat++;
+            if (!*pat) {                 /* trailing *: match rest (bar / with PATHNAME) */
+                if (flags & FNM_PATHNAME)
+                    for (const char *s = str; *s; s++) if (*s == '/') return FNM_NOMATCH;
+                return 0;
+            }
+            for (const char *s = str; ; s++) {
+                if (!fnm_one(pat, s, flags & ~FNM_PERIOD, 0)) return 0;
+                if (!*s) return FNM_NOMATCH;
+                if ((flags & FNM_PATHNAME) && *s == '/') return FNM_NOMATCH;
+            }
+        }
+        if (!*str) return FNM_NOMATCH;
+        if ((flags & FNM_PERIOD) && at_start && *str == '.' && pc != '.')
+            return FNM_NOMATCH;
+        if (pc == '?') {
+            if ((flags & FNM_PATHNAME) && *str == '/') return FNM_NOMATCH;
+        } else if (pc == '[') {
+            const char *p = pat + 1;
+            int neg = (*p == '!' || *p == '^');
+            if (neg) p++;
+            int hit = 0;
+            char sc = (flags & FNM_CASEFOLD) ? (char)tolower((unsigned char)*str) : *str;
+            while (*p && !(*p == ']' && p != pat + 1 + neg)) {
+                char lo = *p;
+                if (lo == '\\' && !(flags & FNM_NOESCAPE) && p[1]) lo = *++p;
+                if ((flags & FNM_CASEFOLD)) lo = (char)tolower((unsigned char)lo);
+                if (p[1] == '-' && p[2] && p[2] != ']') {
+                    char hi = p[2];
+                    if ((flags & FNM_CASEFOLD)) hi = (char)tolower((unsigned char)hi);
+                    if (sc >= lo && sc <= hi) hit = 1;
+                    p += 3;
+                } else {
+                    if (sc == lo) hit = 1;
+                    p++;
+                }
+            }
+            if (!*p) return FNM_NOMATCH; /* unterminated set */
+            if (hit == neg) return FNM_NOMATCH;
+            if ((flags & FNM_PATHNAME) && *str == '/') return FNM_NOMATCH;
+            pat = p;                     /* at ']' */
+        } else {
+            if (pc == '\\' && !(flags & FNM_NOESCAPE) && pat[1]) pc = *++pat;
+            char sc = *str;
+            if (flags & FNM_CASEFOLD) {
+                pc = (char)tolower((unsigned char)pc);
+                sc = (char)tolower((unsigned char)sc);
+            }
+            if (pc != sc) return FNM_NOMATCH;
+        }
+        at_start = ((flags & FNM_PATHNAME) && *str == '/');
+        pat++; str++;
+    }
+    return *str ? FNM_NOMATCH : 0;
+}
+
+int fnmatch(const char *pat, const char *str, int flags)
+{
+    return fnm_one(pat, str, flags, 1);
 }
 
 size_t regerror(int code, const regex_t *re, char *buf, size_t len)

@@ -453,6 +453,10 @@ GLOBALS(
 
 #define DEBUG 0
 
+// XTOS: the nommu subshell-state pipe rides a fixed high fd across exec.
+// Upstream uses 254; the XTOS loader has a 16-slot fd table, so use 13.
+#define SUBSHELL_FD 13
+
 static void debug_show_fds(char *who)
 {
   int x = 0, fd = open("/proc/self/fd", O_RDONLY);
@@ -1492,7 +1496,7 @@ if (DEBUG) { dprintf(2, "%d run_subshell %.*s\n", getpid(), len, str); debug_sho
     struct sh_vars **vv;
 
     // open pipe to child
-    if (pipe(pipes) || 254 != dup2(pipes[0], 254)) return 1;
+    if (pipe(pipes) || SUBSHELL_FD != dup2(pipes[0], SUBSHELL_FD)) return 1;
     close(pipes[0]);
     fcntl(pipes[1], F_SETFD, FD_CLOEXEC);
 
@@ -1508,7 +1512,7 @@ if (DEBUG) { dprintf(2, "%d run_subshell %.*s\n", getpid(), len, str); debug_sho
     environ = oldenv;
 
     // marshall context to child
-    close(254);
+    close(SUBSHELL_FD);
     // TODO: need ff->name and ff->source's lineno
     dprintf(pipes[1], "%lld %u %ld %u %u\n", TT.SECONDS,
       TT.options, get_lineno(0), TT.pid, TT.bangpid);
@@ -4381,7 +4385,7 @@ static void nommu_reentry(void)
   char *s = 0;
 
   // Sanity check
-  if (!fstat(254, &st) && S_ISFIFO(st.st_mode)) {
+  if (!fstat(SUBSHELL_FD, &st) && S_ISFIFO(st.st_mode)) {
     for (ii = len = 0; (s = environ[ii]); ii++) {
       if (*s!='@') continue;
       sscanf(s, "@%u,%u%n", &pid, &ppid, &len);
@@ -4391,7 +4395,7 @@ static void nommu_reentry(void)
   if (!s || s[len] || pid!=getpid() || ppid!=getppid()) error_exit(0);
 
   // NOMMU subshell commands come from pipe from parent
-  TT.ff->source = fdopen(254, "r");
+  TT.ff->source = fdopen(SUBSHELL_FD, "r");
 
   // But first, we have to marshall context across the pipe into child
 

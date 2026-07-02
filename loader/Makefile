@@ -306,7 +306,7 @@ ROMFS_OVERLAY ?= romfs-overlay
 ROMFS_OVERLAY_FILES := $(shell find $(ROMFS_OVERLAY) -type f 2>/dev/null)
 ROMFS_OVERLAY_ARGS  := $(foreach f,$(ROMFS_OVERLAY_FILES),/$(patsubst $(ROMFS_OVERLAY)/%,%,$(f))=$(f))
 
-$(BUILD)/romfs.bin: $(BUILD)/mkromfs $(BUILD)/toybox.so $(BUILD)/hello.so $(BUILD)/showmotd.so $(BUILD)/usestr.so $(BUILD)/echo.so $(BUILD)/libc_test.so $(BUILD)/gemtext.so $(BUILD)/desktop.so $(BUILD)/aesdesk.so $(BUILD)/regtest.so $(BUILD)/locktest.so $(BUILD)/lntest.so $(BUILD)/fstest.so $(BUILD)/sh.so $(BUILD)/init.so $(BUILD)/faultprog.so $(BUILD)/vmtest.so $(BUILD)/demandtest.so $(BUILD)/stacktest.so $(BUILD)/wxtest.so $(BUILD)/cowtest.so $(BUILD)/sharetext.so $(BUILD)/shmtest.so $(BUILD)/finictor.so $(BUILD)/mmaptest.so $(BUILD)/modetest.so $(BUILD)/badpoke.so $(BUILD)/stackpoke.so $(BUILD)/libutil.so $(BUILD)/libGEM.so $(BUILD)/libm.so $(BUILD)/libc.so test/freertos/motd.txt test/freertos/hello.lua test/freertos/Registry.db $(ROMFS_OVERLAY_FILES)
+$(BUILD)/romfs.bin: $(BUILD)/mkromfs $(BUILD)/toybox.so $(BUILD)/pipetest.so $(BUILD)/hello.so $(BUILD)/showmotd.so $(BUILD)/usestr.so $(BUILD)/echo.so $(BUILD)/libc_test.so $(BUILD)/gemtext.so $(BUILD)/desktop.so $(BUILD)/aesdesk.so $(BUILD)/regtest.so $(BUILD)/locktest.so $(BUILD)/lntest.so $(BUILD)/fstest.so $(BUILD)/sh.so $(BUILD)/init.so $(BUILD)/faultprog.so $(BUILD)/vmtest.so $(BUILD)/demandtest.so $(BUILD)/stacktest.so $(BUILD)/wxtest.so $(BUILD)/cowtest.so $(BUILD)/sharetext.so $(BUILD)/shmtest.so $(BUILD)/finictor.so $(BUILD)/mmaptest.so $(BUILD)/modetest.so $(BUILD)/badpoke.so $(BUILD)/stackpoke.so $(BUILD)/libutil.so $(BUILD)/libGEM.so $(BUILD)/libm.so $(BUILD)/libc.so test/freertos/motd.txt test/freertos/hello.lua test/freertos/Registry.db $(ROMFS_OVERLAY_FILES)
 	$(BUILD)/mkromfs $@ \
 	    /bin/faultprog=$(BUILD)/faultprog.so \
 	    /bin/vmtest=$(BUILD)/vmtest.so \
@@ -336,6 +336,7 @@ $(BUILD)/romfs.bin: $(BUILD)/mkromfs $(BUILD)/toybox.so $(BUILD)/hello.so $(BUIL
 	    /bin/locktest=$(BUILD)/locktest.so \
 	    /bin/lntest=$(BUILD)/lntest.so \
 	    /bin/fstest=$(BUILD)/fstest.so \
+	    /bin/pipetest=$(BUILD)/pipetest.so \
 	    /Etc/Registry.db=test/freertos/Registry.db \
 	    /bin/sh=$(BUILD)/sh.so \
 	    /bin/toybox=$(BUILD)/toybox.so \
@@ -347,6 +348,13 @@ $(BUILD)/romfs.bin: $(BUILD)/mkromfs $(BUILD)/toybox.so $(BUILD)/hello.so $(BUIL
 	    /bin/pwd=$(BUILD)/toybox.so \
 	    /bin/rm=$(BUILD)/toybox.so \
 	    /bin/[=$(BUILD)/toybox.so \
+	    /bin/grep=$(BUILD)/toybox.so \
+	    /bin/egrep=$(BUILD)/toybox.so \
+	    /bin/fgrep=$(BUILD)/toybox.so \
+	    /bin/head=$(BUILD)/toybox.so \
+	    /bin/tail=$(BUILD)/toybox.so \
+	    /bin/wc=$(BUILD)/toybox.so \
+	    /bin/sort=$(BUILD)/toybox.so \
 	    /bin/init=$(BUILD)/init.so \
 	    /bin/hello=$(BUILD)/hello.so \
 	    /bin/showmotd=$(BUILD)/showmotd.so \
