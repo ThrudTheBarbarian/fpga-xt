@@ -76,13 +76,17 @@ void _app_entry(int argc, char **argv) {
 
     struct os_fbinfo fb;
     if (sys_fb_info(&fb) != 0) { sys_write(2, "aesdesk: no display plane\n", 26); return; }
-    static gfx_surface desk_s;
-    desk_s.w = fb.w; desk_s.h = fb.h; desk_s.stride = fb.stride; desk_s.px = (uint32_t *)fb.addr;
     PW = fb.w; PH = fb.h;
+
+    /* Render into a packed, CACHEABLE back-buffer (fast alpha compositing in the
+     * D-cache) and blit it to the strided, non-cacheable plane once on present —
+     * drawing straight onto the plane is a slow read-modify-write per pixel. */
+    gfx_surface *bb = gfx_surface_alloc(fb.w, fb.h);
+    if (!bb) { sys_write(2, "aesdesk: back-buffer alloc FAILED\n", 34); return; }
 
     font_face *face = font_face_open("/System/Fonts/AovelSansRounded.ttf");
     if (!face) { sys_write(2, "aesdesk: font load FAILED\n", 26); return; }
-    vdi_init(&desk_s); HV = v_opnvwk(&desk_s);
+    vdi_init(bb); HV = v_opnvwk(bb);
     font_face_set_tracking(face, 1); vdi_set_face(face);
 
     char tn[64], td[160];
@@ -105,5 +109,10 @@ void _app_entry(int argc, char **argv) {
         wind_open(w, 360, 240, 760, 480);
     }
     wind_redraw();
+
+    /* blit the packed back-buffer to the strided plane, row by row */
+    uint32_t *plane = (uint32_t *)fb.addr;
+    for (int y = 0; y < fb.h; y++)
+        memcpy(plane + (size_t)y * fb.stride, bb->px + (size_t)y * bb->stride, (size_t)fb.w * 4);
     sys_fb_present();
 }
