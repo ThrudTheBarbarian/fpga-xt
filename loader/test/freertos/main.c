@@ -316,6 +316,9 @@ int main(void)
     { extern void gtimer_init(void); gtimer_init(); }   /* A9 global timer -> gettimeofday wall clock */
     { extern void hdmi_init(void); hdmi_init(); }        /* SiI9022 HDMI bring-up (HW build only; no-op on qemu) */
     { extern void gfxplane_init(void); gfxplane_init(); } /* clear the compositor plane (else scan-out shows uninit DDR) */
+#ifdef XT_HW
+    { extern void cursor_init(void); cursor_init(); }    /* GEM arrow cursor (HW sprite slot 0, on top of all planes) */
+#endif
     { extern void vfs_romfs_init(void); extern void vfs_ramfs_init(void);
       extern int vfs_add_mount(const char *, const char *, void *);
       vfs_romfs_init(); vfs_add_mount("/System", "romfs", 0);   /* romfs = /System (embedded, RO); SD = / at mount time */
