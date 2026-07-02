@@ -44,7 +44,9 @@
 
 /* graphics / compositor — block 0x600. The OS owns the display plane; apps query
  * its descriptor and draw into it, then present (compositor on HW, ASCII on qemu). */
-#define SYS_fb_info    0x600   /* (struct os_fbinfo *) -> 0 */
-#define SYS_fb_present 0x601   /* () -> 0  (present the plane) */
+#define SYS_fb_info      0x600 /* (struct os_fbinfo *) -> 0 */
+#define SYS_fb_present   0x601 /* () -> 0  (present the plane) */
+#define SYS_fb_wallpaper 0x602 /* (struct os_fbinfo *) -> 0: OS-owned desk-sized WM
+                                * backdrop buffer (WALLPAPER_BASE); no heap cost */
 
 #endif

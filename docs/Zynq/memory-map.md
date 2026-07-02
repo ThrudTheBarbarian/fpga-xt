@@ -62,8 +62,10 @@ Ground-truth sources (verified 2026-06-28): SALLY banks `DDR3_BANKED_BASE` /
 XL **triple** buffer `XL_BASE_0/1/2` = `0x3100_0000`/`0x3110_0000`/`0x3120_0000`
 (hdl/fpga_xt_top.sv:1054-1056, rotated by `antic_writeback`); `ARENA_BASE`
 (hdl/sprite_engine.sv:46). The drag-overlay (`DRAG_BASE 0x3200_0000`) and wallpaper
-(`WALLPAPER_BASE 0x3300_0000`) are **PS-allocated** (vitis/xtos/src/gem_lua.c:436/52),
-the overlay plane's base written to the compositor at runtime. So the whole
+(`WALLPAPER_BASE 0x3300_0000`) are **PS-allocated**; the OS hands the wallpaper
+region to the desktop app via `SYS_fb_wallpaper` (gfxplane.c) so a 1080p backdrop
+surface stays out of the 8 MB per-process heap, and the overlay plane's base is
+written to the compositor at runtime. So the whole
 `0x3000_0000`–`0x37FF_FFFF` window is occupied; `0x3800_0000`+ is free for
 `plv_alloc`. The **68k "T" realm is provisional and
 not yet wired** — it now lives in the `0x2100_0000` spare block (was `0x1C00_0000`),

@@ -17,6 +17,11 @@
 #include "bare_rt.h"
 
 #define FB_BASE   0x30000000u
+/* WM backdrop buffer — the reserved 16 MB wallpaper region in the PL0-RW graphics
+ * window (docs/Zynq/memory-map.md). The desktop decodes the wallpaper into it and
+ * hands it to gem_wm as a desk-sized surface; keeping it out of the 8 MB per-process
+ * heap (a 1080p surface is ~8 MB on its own). Packed stride (= width). */
+#define WALLPAPER_BASE 0x33000000u
 
 #ifdef XT_HW
 
@@ -27,6 +32,11 @@
 void fb_info(int *w, int *h, int *stride, uint32_t *addr)
 {
     *w = FB_W; *h = FB_H; *stride = FB_STRIDE; *addr = FB_BASE;
+}
+
+void fb_wallpaper_info(int *w, int *h, int *stride, uint32_t *addr)
+{
+    *w = FB_W; *h = FB_H; *stride = FB_W; *addr = WALLPAPER_BASE;
 }
 
 void fb_present(void)
@@ -75,6 +85,11 @@ void gfxplane_init(void)
 void fb_info(int *w, int *h, int *stride, uint32_t *addr)
 {
     *w = FB_W; *h = FB_H; *stride = FB_W; *addr = FB_BASE;
+}
+
+void fb_wallpaper_info(int *w, int *h, int *stride, uint32_t *addr)
+{
+    *w = FB_W; *h = FB_H; *stride = FB_W; *addr = WALLPAPER_BASE;
 }
 
 void gfxplane_init(void) { }

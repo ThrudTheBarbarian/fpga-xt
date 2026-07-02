@@ -875,6 +875,13 @@ static long do_syscall(uint32_t num, long a0, long a1, long a2)
         return 0;
     }
     case SYS_fb_present: { extern void fb_present(void); fb_present(); return 0; }
+    case SYS_fb_wallpaper: {                                 /* (struct os_fbinfo *) */
+        extern void fb_wallpaper_info(int *, int *, int *, uint32_t *);
+        struct { int w, h, stride; uint32_t addr; } *fi = (void *)a0;
+        if (!fi) return -1;
+        fb_wallpaper_info(&fi->w, &fi->h, &fi->stride, &fi->addr);
+        return 0;
+    }
     case SYS_spawn:                                          /* (path, argc, argv) -> pid */
         /* Safe from the SVC handler: the caller is a proc (priority 3) and proc_launch
          * makes the child the SAME priority, so xTaskCreate does not yield (no svc nest). */
