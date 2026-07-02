@@ -65,6 +65,7 @@ void _app_entry(int argc, char **argv) {
     /* --- create + readlink --------------------------------------------------- */
     check("symlink(relative)", sys_symlink("target.txt", lf) == 0);
     int n = (int)sys_readlink(lf, buf, sizeof buf);
+    if (n >= 0 && n < (int)sizeof buf) buf[n] = 0;   /* readlink does NOT NUL-terminate (POSIX) */
     check("readlink returns target", n > 0 && streq(buf, "target.txt"));
 
     /* --- lstat vs stat: the link is a link; through it, a regular file -------- */
