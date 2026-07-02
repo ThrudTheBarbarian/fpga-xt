@@ -809,6 +809,11 @@ void deferral_thunk(void)                 /* PL1 (System), task context */
         } else if (p->dnum == SYS_munmap) {
             /* munmap: the fs task writes back dirty pages (if any) then unmaps. */
             r = fs_munmap(p);
+        } else if (p->dnum == SYS_input) {
+            /* block for the next input event (serial mouse/keyboard); cursor moves
+             * kernel-side.  Runs here in task context so sh_readc may block. */
+            extern int input_next_event(void *, int);
+            r = input_next_event((void *)p->da0, (int)p->da1);
         } else {
             r = do_syscall(p->dnum, p->da0, p->da1, p->da2);
         }

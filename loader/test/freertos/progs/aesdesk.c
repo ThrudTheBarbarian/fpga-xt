@@ -89,6 +89,56 @@ static void info_draw(int hd, int ix, int iy, int iw, int ih, void *ud) {
     vst_alignment(HV, VDI_TA_LEFT, VDI_TA_TOP, 0,0);
 }
 
+// ---- interactivity: A9 event source (SYS_input) + click handling -----------
+static struct os_fbinfo g_fb;
+static gfx_surface *g_bb;
+
+static void present(void) {                        // blit the back-buffer to the plane
+    uint32_t *plane = (uint32_t *)g_fb.addr;
+    for (int y = 0; y < g_fb.h; y++)
+        memcpy(plane + (size_t)y * g_fb.stride, g_bb->px + (size_t)y * g_bb->stride, (size_t)g_fb.w * 4);
+    sys_fb_present();
+}
+// the AES event source: block for the next kernel input event (the cursor is a HW
+// sprite moved kernel-side, so motion needs no present — only real actions do).
+static int a9_events(aes_event *ev, int timeout_ms) {
+    struct os_event oe;
+    sys_input(&oe, timeout_ms);
+    ev->type = oe.type; ev->mx = oe.mx; ev->my = oe.my;
+    ev->button = oe.button; ev->key = oe.key; ev->shift = oe.shift;
+    return ev->type;
+}
+static int g_nx = 300, g_ny = 180;
+static void stub_draw(int hd, int wx, int wy, int ww, int wh, void *ud) {
+    (void)hd; (void)ww; (void)wh;
+    vst_color(HV, 1); vst_height(HV, 18, 0,0,0,0);
+    v_gtext(HV, wx+18, wy+26, (const char *)ud);
+    vst_height(HV, 14, 0,0,0,0);
+    v_gtext(HV, wx+18, wy+56, "(browser / emulator \342\200\224 coming next)");
+}
+static void open_window(int obj) {
+    const char *title = rows[obj-1].displayName[0] ? rows[obj-1].displayName : rows[obj-1].path;
+    int h = wind_create(W_NAME|W_CLOSER|W_MOVER|W_SIZER|W_FULLER, g_nx, g_ny, 620, 380);
+    if (!h) return;
+    wind_set_name(h, title); wind_content(h, stub_draw, (void *)title);
+    wind_open(h, g_nx, g_ny, 620, 380);
+    g_nx += 30; g_ny += 26; if (g_ny > PH-260) { g_nx = 300; g_ny = 180; }
+}
+static void clear_sel(void) { for (int i = 1; i <= n_icons; i++) desk[i].ob_state &= ~OS_SELECTED; }
+static void desk_click(int mx, int my) {
+    int obj = objc_find(desk, 0, 2, mx, my);
+    if (obj <= 0) { clear_sel(); wind_redraw(); present(); return; }
+    int was = desk[obj].ob_state & OS_SELECTED;
+    clear_sel(); desk[obj].ob_state |= OS_SELECTED; wind_redraw(); present();
+    int mx2, my2; int16_t m2[8];
+    int r = evnt_multi(MU_BUTTON|MU_TIMER, 2,1,1, 0,0,0,0,0, 0,0,0,0,0, m2, 340, 0, &mx2, &my2, 0, 0, 0, 0);
+    if (r & MU_BUTTON) {
+        if (objc_find(desk, 0, 2, mx2, my2) == obj) { open_window(obj); wind_redraw(); present(); return; }
+        desk_click(mx2, my2); return;
+    }
+    if (was) { desk[obj].ob_state &= ~OS_SELECTED; wind_redraw(); present(); }
+}
+
 void _app_entry(int argc, char **argv) {
     (void)argc; (void)argv;
 
@@ -130,11 +180,17 @@ void _app_entry(int argc, char **argv) {
         wind_info(w, info_draw, NULL);
         wind_open(w, 360, 240, 760, 480);
     }
-    wind_redraw();
+    g_fb = fb; g_bb = bb;
+    aes_set_events(a9_events);
+    wind_redraw(); present();                       // initial frame
 
-    /* blit the packed back-buffer to the strided plane, row by row */
-    uint32_t *plane = (uint32_t *)fb.addr;
-    for (int y = 0; y < fb.h; y++)
-        memcpy(plane + (size_t)y * fb.stride, bb->px + (size_t)y * bb->stride, (size_t)fb.w * 4);
-    sys_fb_present();
+    for (;;) {                                       // interactive loop
+        int mx, my, mb, ks, key, nc; int16_t msg[8];
+        int r = evnt_multi(MU_MESAG|MU_KEYBD|MU_BUTTON, 2,1,1, 0,0,0,0,0, 0,0,0,0,0, msg, 0,0,
+                           &mx, &my, &mb, &ks, &key, &nc);
+        if ((r & MU_KEYBD) && key == 0x1b) break;                              // Esc quits
+        if ((r & MU_MESAG) && msg[0] == WM_CLOSED) { wind_close(msg[3]); wind_redraw(); present(); }
+        if (r & MU_BUTTON) desk_click(mx, my);
+    }
+    registry_close();
 }

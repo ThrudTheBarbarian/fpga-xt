@@ -88,6 +88,17 @@ int sh_readc(void)
     r_head = (r_head + 1u) % RING_SZ;
     return (int)c;
 }
+
+/* Blocking read with a timeout (ms < 0 = forever) — returns the byte, or -1 on
+ * timeout.  Used by the input driver for the double-click / escape-sequence windows. */
+int sh_readc_timeout(int ms)
+{
+    TickType_t t = (ms < 0) ? portMAX_DELAY : pdMS_TO_TICKS((uint32_t)ms);
+    if (xSemaphoreTake(rx_sem, t) != pdTRUE) return -1;
+    uint8_t c = ring[r_head];
+    r_head = (r_head + 1u) % RING_SZ;
+    return (int)c;
+}
 #else
 typedef int uart1_rx_translation_unit_not_empty;  /* keep ISO C happy on qemu builds */
 #endif

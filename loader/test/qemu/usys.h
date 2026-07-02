@@ -49,5 +49,8 @@ static inline long sys_fb_present(void) { return __syscall(SYS_fb_present, 0, 0,
 /* OS-owned desk-sized WM backdrop buffer (WALLPAPER_BASE region — no process-heap
  * cost); wrap fi->addr as a gfx_surface and decode the wallpaper into it. */
 static inline long sys_fb_wallpaper(struct os_fbinfo *fi) { return __syscall(SYS_fb_wallpaper, (long)fi, 0, 0); }
+/* Block for the next input event (mouse/keyboard); timeout_ms < 0 = forever.  The
+ * cursor sprite is moved kernel-side; `ev` is filled with the event. */
+static inline long sys_input(struct os_event *ev, int timeout_ms) { return __syscall(SYS_input, (long)ev, timeout_ms, 0); }
 
 #endif

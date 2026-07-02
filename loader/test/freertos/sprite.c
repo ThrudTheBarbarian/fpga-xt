@@ -6,8 +6,12 @@
  * NON-cacheable here (SEC_PLANE), so a dsb — not a cache flush — orders the arena
  * writes before the fetcher (HP2) reads them.
  */
-#ifdef XT_HW
 #include <stdint.h>
+#include "xtsys.h"                /* struct os_event, OS_EV_* */
+extern int sh_readc(void);
+extern int sh_readc_timeout(int ms);
+
+#ifdef XT_HW
 
 #define GP0_BASE     0x43C00000u
 #define SPR_IDX      (GP0_BASE + 0x100u)     /* W: latch sprite reg index */
@@ -89,6 +93,40 @@ void cursor_move(int x, int y) {
 }
 void cursor_pos(int *x, int *y) { *x = cur_x; *y = cur_y; }
 
-#else
-typedef int sprite_translation_unit_not_empty;        /* qemu: no sprite engine */
+/* Serial "mouse": cursor keys move the pointer (CSI arrows), Space/Enter = a left
+ * click (button-down now, button-up on the next call), other keys = key events.
+ * Runs kernel-side in the deferral thunk (task context) so sh_readc may block. */
+#define CUR_STEP 16
+static int s_pend_up;
+
+int input_next_event(struct os_event *ev, int timeout_ms) {
+    ev->shift = 0; ev->key = 0;
+    if (s_pend_up) { s_pend_up = 0; ev->type = OS_EV_BTN_UP; ev->button = 0; cursor_pos(&ev->mx, &ev->my); return 0; }
+    int c = sh_readc_timeout(timeout_ms);
+    if (c < 0) { ev->type = OS_EV_TIMER; ev->button = 0; cursor_pos(&ev->mx, &ev->my); return 0; }
+    if (c == 0x1b) {                                  /* ESC: an arrow CSI or a bare Escape */
+        int c1 = sh_readc_timeout(30);
+        if (c1 == '[') {
+            int c2 = sh_readc(), x, y; cursor_pos(&x, &y);
+            if      (c2 == 'A') y -= CUR_STEP;
+            else if (c2 == 'B') y += CUR_STEP;
+            else if (c2 == 'C') x += CUR_STEP;
+            else if (c2 == 'D') x -= CUR_STEP;
+            if (x < 0) x = 0; if (x > 1919) x = 1919;
+            if (y < 0) y = 0; if (y > 1079) y = 1079;
+            cursor_move(x, y);
+            ev->type = OS_EV_MOTION; ev->mx = x; ev->my = y; ev->button = 0; return 0;
+        }
+        ev->type = OS_EV_KEY; ev->key = 0x1b; ev->button = 0; cursor_pos(&ev->mx, &ev->my); return 0;
+    }
+    if (c == '\r' || c == '\n' || c == ' ') {         /* click: down now, up next call */
+        ev->type = OS_EV_BTN_DOWN; ev->button = 1; s_pend_up = 1; cursor_pos(&ev->mx, &ev->my); return 0;
+    }
+    ev->type = OS_EV_KEY; ev->key = c; ev->button = 0; cursor_pos(&ev->mx, &ev->my); return 0;
+}
+
+#else   /* qemu: no sprite engine / input */
+int input_next_event(struct os_event *ev, int timeout_ms) {
+    (void)timeout_ms; ev->type = OS_EV_TIMER; ev->button = 0; ev->mx = ev->my = 0; return 0;
+}
 #endif

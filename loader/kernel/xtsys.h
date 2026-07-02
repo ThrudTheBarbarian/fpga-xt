@@ -49,4 +49,13 @@
 #define SYS_fb_wallpaper 0x602 /* (struct os_fbinfo *) -> 0: OS-owned desk-sized WM
                                 * backdrop buffer (WALLPAPER_BASE); no heap cost */
 
+/* input / events — block 0x700. The kernel owns the HW cursor sprite + the serial
+ * mouse; the desktop blocks here for the next event and the cursor moves kernel-side. */
+#define SYS_input        0x700 /* (struct os_event *, timeout_ms) -> 0; blocks (<0 = forever) */
+
+/* one input event (SYS_input); type values match the AES aes_event enum. */
+struct os_event { int type, mx, my, button, key, shift; };
+enum { OS_EV_NONE = 0, OS_EV_BTN_DOWN = 1, OS_EV_BTN_UP = 2, OS_EV_KEY = 3,
+       OS_EV_MOTION = 5, OS_EV_TIMER = 6 };
+
 #endif
