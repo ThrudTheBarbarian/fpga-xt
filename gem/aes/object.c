@@ -8,13 +8,16 @@
 static int g_vh;
 static const theme *g_th;
 
-// scratch pens for box fill / border (set from the theme at init)
-enum { PEN_DLG = 248, PEN_BORDER = 249 };
+// scratch pens for box fill / border / icon-selection (set from the theme at init)
+enum { PEN_DLG = 248, PEN_BORDER = 249, PEN_SEL = 250 };
 
 void aes_init(int vh, const theme *th) {
     g_vh = vh; g_th = th;
     v_setrgb(vh, PEN_DLG, 236, 238, 240);
-    if (th) v_setrgb(vh, PEN_BORDER, (th->border>>24)&0xFF, (th->border>>16)&0xFF, (th->border>>8)&0xFF);
+    if (th) {
+        v_setrgb(vh, PEN_BORDER, (th->border>>24)&0xFF, (th->border>>16)&0xFF, (th->border>>8)&0xFF);
+        v_setrgb(vh, PEN_SEL,    (th->sel_bg>>24)&0xFF, (th->sel_bg>>16)&0xFF, (th->sel_bg>>8)&0xFF);
+    }
 }
 int          aes_handle(void) { return g_vh; }
 const theme *aes_theme(void)  { return g_th; }
@@ -95,6 +98,31 @@ static void draw_obj(OBJECT *o, int x, int y) {
         case G_IMAGE:           // ob_spec = a theme element name (e.g. an alert icon)
             if (txt) theme_draw(g_vh, g_th, txt, x, y, w, h);
             break;
+        case G_CICON: {          // ob_spec = CICON* : RGBA bitmap + label under it
+            CICON *ci = (CICON *)o->ob_spec;
+            if (!ci) break;
+            if (st & OS_SELECTED) {                          // selection highlight
+                vsf_color(g_vh, PEN_SEL); vsf_interior(g_vh, VDI_FIS_SOLID); vsf_perimeter(g_vh, 0);
+                int16_t r[4] = { (int16_t)x, (int16_t)y, (int16_t)(x+w-1), (int16_t)(y+h-1) };
+                vr_recfl(g_vh, r);
+            }
+            int ih = 0;
+            if (ci->img) {                                   // icon, centred at the top
+                int iw = ci->img->w; ih = ci->img->h;
+                int ix = x + (w - iw)/2, iy = y;
+                MFDB m; mfdb_from_surface(&m, ci->img);
+                int16_t pxy[8] = { 0, 0, (int16_t)(iw-1), (int16_t)(ih-1),
+                                   (int16_t)ix, (int16_t)iy, (int16_t)(ix+iw-1), (int16_t)(iy+ih-1) };
+                vr_transfer_bits(g_vh, &m, NULL, pxy, VR_OVER);
+            }
+            if (ci->text) {                                  // label, centred beneath
+                vst_color(g_vh, 1); vst_height(g_vh, 12, 0,0,0,0);
+                vst_alignment(g_vh, VDI_TA_CENTER, VDI_TA_TOP, 0,0);
+                v_gtext(g_vh, x + w/2, y + ih + 2, ci->text);
+                vst_alignment(g_vh, VDI_TA_LEFT, VDI_TA_TOP, 0,0);
+            }
+            break;
+        }
         case G_STRING: case G_TITLE:
             if (txt) { vst_color(g_vh, (st & OS_DISABLED) ? 9 : 1); vst_height(g_vh,14,0,0,0,0);
                        v_gtext(g_vh, x, y + h/2 - 7, txt); }

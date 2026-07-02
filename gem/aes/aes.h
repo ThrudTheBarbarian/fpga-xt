@@ -27,8 +27,15 @@ typedef struct {
 enum { G_BOX=20, G_TEXT=21, G_BOXTEXT=22, G_IMAGE=23, G_USERDEF=24, G_IBOX=25,
        G_BUTTON=26, G_BOXCHAR=27, G_STRING=28, G_FTEXT=29, G_FBOXTEXT=30,
        G_ICON=31, G_TITLE=32,
-       // our themed extensions (checkbox / radio / popup), drawn via the theme
-       G_CHECKBOX=40, G_RADIO=41, G_POPUP=42, G_FIELD=43 };
+       // our themed extensions (checkbox / radio / popup / colour icon), drawn
+       // via the theme + the software gfx backend
+       G_CHECKBOX=40, G_RADIO=41, G_POPUP=42, G_FIELD=43, G_CICON=44 };
+
+// ob_spec for G_CICON — our colour desktop/file icon: a pre-scaled RGBA bitmap
+// blitted src-over, centred at the top of the object rect, with `text` centred
+// beneath it.  OS_SELECTED paints a highlight behind both.  (Classic monochrome
+// G_ICON / ICONBLK is left for m68k-app compatibility, implemented separately.)
+typedef struct { gfx_surface *img; const char *text; } CICON;
 
 enum { OF_NONE=0x00, OF_SELECTABLE=0x01, OF_DEFAULT=0x02, OF_EXIT=0x04,
        OF_EDITABLE=0x08, OF_RBUTTON=0x10, OF_LASTOB=0x20, OF_TOUCHEXIT=0x40,
