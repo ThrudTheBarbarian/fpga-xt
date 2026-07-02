@@ -197,6 +197,22 @@ GEMINC := -Itest/freertos/libs/shim -I$(GEM) -I$(GEM)/vdi -I$(FT)/include -Inewl
 # the interface — see docs/OS/library-imports.md). Ship unstripped.
 GEMCFLAGS := -marm -mcpu=cortex-a9 -mfloat-abi=softfp -mfpu=neon-vfpv3 -fpic -O2 -g $(GEMINC)
 
+# Vendored SQLite (amalgamation) for the A9 registry — built with our own VFS
+# (SQLITE_OS_OTHER, sqlite_vfs.c over the loader file API), single-threaded,
+# memory temp store, no WAL/dlopen used.
+SQLITE      := ../third_party/sqlite
+SQLITE_DEFS := -DSQLITE_OS_OTHER=1 -DSQLITE_THREADSAFE=0 -DSQLITE_TEMP_STORE=3 -DNDEBUG
+$(BUILD)/sqlite3.o: $(SQLITE)/sqlite3.c | $(BUILD)
+	$(ARMCC) -marm -mcpu=cortex-a9 -mfloat-abi=softfp -mfpu=neon-vfpv3 -fpic -Os -ffreestanding \
+	    -Inewlib-pic/include -I$(SQLITE) $(SQLITE_DEFS) -c $< -o $@
+$(BUILD)/sqlite_vfs.o: test/freertos/libs/sqlite_vfs.c | $(BUILD)
+	$(ARMCC) $(GEMCFLAGS) -I$(SQLITE) -Itest/qemu -c $< -o $@
+$(BUILD)/registry.o: $(GEM)/registry.c | $(BUILD)
+	$(ARMCC) $(GEMCFLAGS) -I$(SQLITE) -c $< -o $@
+$(BUILD)/regtest.so: test/freertos/progs/regtest.c $(BUILD)/registry.o $(BUILD)/sqlite3.o $(BUILD)/sqlite_vfs.o $(BUILD)/libc.so $(BUILD)/libm.so | $(BUILD)
+	$(ARMCC) $(GEMCFLAGS) -I$(SQLITE) -Itest/qemu -c $< -o $(BUILD)/regtest.o
+	$(LLD) -shared --hash-style=sysv -o $@ $(BUILD)/regtest.o $(BUILD)/registry.o $(BUILD)/sqlite3.o $(BUILD)/sqlite_vfs.o $(BUILD)/libc.so $(BUILD)/libm.so
+
 $(BUILD)/libGEM.so: $(GEMSRC) $(FTSRC) $(BUILD)/libc.so $(BUILD)/libm.so | $(BUILD)
 	$(ARMCC) $(GEMCFLAGS) -shared -nostdlib -Wl,-soname,libGEM.so \
 	    $(GEMSRC) $(FTSRC) $(BUILD)/libc.so $(BUILD)/libm.so -o $@
@@ -275,7 +291,7 @@ ROMFS_OVERLAY ?= romfs-overlay
 ROMFS_OVERLAY_FILES := $(shell find $(ROMFS_OVERLAY) -type f 2>/dev/null)
 ROMFS_OVERLAY_ARGS  := $(foreach f,$(ROMFS_OVERLAY_FILES),/$(patsubst $(ROMFS_OVERLAY)/%,%,$(f))=$(f))
 
-$(BUILD)/romfs.bin: $(BUILD)/mkromfs $(BUILD)/hello.so $(BUILD)/showmotd.so $(BUILD)/usestr.so $(BUILD)/echo.so $(BUILD)/libc_test.so $(BUILD)/gemtext.so $(BUILD)/desktop.so $(BUILD)/aesdesk.so $(BUILD)/sh.so $(BUILD)/init.so $(BUILD)/faultprog.so $(BUILD)/vmtest.so $(BUILD)/demandtest.so $(BUILD)/stacktest.so $(BUILD)/wxtest.so $(BUILD)/cowtest.so $(BUILD)/sharetext.so $(BUILD)/shmtest.so $(BUILD)/finictor.so $(BUILD)/mmaptest.so $(BUILD)/modetest.so $(BUILD)/badpoke.so $(BUILD)/stackpoke.so $(BUILD)/libutil.so $(BUILD)/libGEM.so $(BUILD)/libm.so $(BUILD)/libc.so test/freertos/motd.txt test/freertos/hello.lua $(ROMFS_OVERLAY_FILES)
+$(BUILD)/romfs.bin: $(BUILD)/mkromfs $(BUILD)/hello.so $(BUILD)/showmotd.so $(BUILD)/usestr.so $(BUILD)/echo.so $(BUILD)/libc_test.so $(BUILD)/gemtext.so $(BUILD)/desktop.so $(BUILD)/aesdesk.so $(BUILD)/regtest.so $(BUILD)/sh.so $(BUILD)/init.so $(BUILD)/faultprog.so $(BUILD)/vmtest.so $(BUILD)/demandtest.so $(BUILD)/stacktest.so $(BUILD)/wxtest.so $(BUILD)/cowtest.so $(BUILD)/sharetext.so $(BUILD)/shmtest.so $(BUILD)/finictor.so $(BUILD)/mmaptest.so $(BUILD)/modetest.so $(BUILD)/badpoke.so $(BUILD)/stackpoke.so $(BUILD)/libutil.so $(BUILD)/libGEM.so $(BUILD)/libm.so $(BUILD)/libc.so test/freertos/motd.txt test/freertos/hello.lua test/freertos/Registry.db $(ROMFS_OVERLAY_FILES)
 	$(BUILD)/mkromfs $@ \
 	    /bin/faultprog=$(BUILD)/faultprog.so \
 	    /bin/vmtest=$(BUILD)/vmtest.so \
@@ -301,6 +317,8 @@ $(BUILD)/romfs.bin: $(BUILD)/mkromfs $(BUILD)/hello.so $(BUILD)/showmotd.so $(BU
 	    /bin/gemtext=$(BUILD)/gemtext.so \
 	    /bin/desktop=$(BUILD)/desktop.so \
 	    /bin/aesdesk=$(BUILD)/aesdesk.so \
+	    /bin/regtest=$(BUILD)/regtest.so \
+	    /Etc/Registry.db=test/freertos/Registry.db \
 	    /bin/sh=$(BUILD)/sh.so \
 	    /bin/init=$(BUILD)/init.so \
 	    /bin/hello=$(BUILD)/hello.so \
