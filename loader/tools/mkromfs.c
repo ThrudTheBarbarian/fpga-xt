@@ -37,6 +37,7 @@ int main(int argc, char **argv)
     unsigned *sizes = calloc(n, sizeof *sizes);
 
 #define PAGE 0x1000u
+    char **srcs = calloc(n, sizeof *srcs);
     unsigned cursor = 8 + (unsigned)n * sizeof(ent_t);   /* header + table */
     for (int i = 0; i < n; i++) {
         char *spec = argv[2 + i];
@@ -45,6 +46,18 @@ int main(int argc, char **argv)
         *eq = 0;
         if (strlen(spec) >= PATHLEN) { fprintf(stderr, "path too long: %s\n", spec); return 1; }
         strncpy(ents[i].path, spec, PATHLEN - 1);
+        srcs[i] = eq + 1;
+        /* same source file as an earlier entry -> alias its data (this is how
+         * the toybox applet names all point at one blob, unix-hardlink style) */
+        int dup = -1;
+        for (int j = 0; j < i; j++)
+            if (!strcmp(srcs[j], srcs[i])) { dup = j; break; }
+        if (dup >= 0) {
+            data[i] = 0;
+            ents[i].off = ents[dup].off;
+            ents[i].size = ents[dup].size;
+            continue;
+        }
         data[i] = slurp(eq + 1, &sizes[i]);
         cursor = (cursor + PAGE - 1u) & ~(PAGE - 1u);     /* page-align each file (mmap) */
         ents[i].off = cursor;
@@ -59,6 +72,7 @@ int main(int argc, char **argv)
     fwrite(ents, sizeof(ent_t), n, out);
     unsigned pos = 8 + (unsigned)n * sizeof(ent_t);
     for (int i = 0; i < n; i++) {
+        if (!data[i]) continue;                              /* alias of an earlier file */
         while (pos < ents[i].off) { fputc(0, out); pos++; }  /* pad to the file's page */
         fwrite(data[i], 1, sizes[i], out);
         pos += sizes[i];

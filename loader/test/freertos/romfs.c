@@ -30,3 +30,13 @@ int romfs_lookup(const char *path, const uint8_t **data, uint32_t *size)
     }
     return 0;
 }
+
+/* flat enumeration (for the VFS driver's stat/readdir): entry i's path+size,
+ * 1 while valid, 0 past the end */
+int romfs_entry(uint32_t i, const char **path, uint32_t *size)
+{
+    if (!g_blob || i >= g_count) return 0;
+    *path = g_ents[i].path;
+    *size = g_ents[i].size;
+    return 1;
+}

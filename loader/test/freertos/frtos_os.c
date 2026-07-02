@@ -1251,7 +1251,15 @@ static int proc_launch(int slot, xtld_obj *obj, uintptr_t entry,
     proc_t *p = &g_proc[slot];
     for (int i = 0; i < NFD; i++) p->fd[i].open = 0;
     p->obj = obj; p->entry = entry; p->exit_code = 0; p->exited = 0; p->waited = 0; p->waiter = 0; p->pid = g_next_pid++;
-    p->cwd[0] = '/'; p->cwd[1] = 0;                         /* new process starts at the root */
+    /* inherit the spawner's cwd (a shell's children run where the shell is);
+     * a spawn from kernel context starts at the root */
+    proc_t *parent = cur_proc();
+    if (parent && parent != p) {
+        int i = 0;
+        while (parent->cwd[i] && i < (int)sizeof p->cwd - 1) { p->cwd[i] = parent->cwd[i]; i++; }
+        p->cwd[i] = 0;
+        if (!p->cwd[0]) { p->cwd[0] = '/'; p->cwd[1] = 0; }
+    } else { p->cwd[0] = '/'; p->cwd[1] = 0; }
     p->done = xSemaphoreCreateBinary();
     if (!p->done) return -1;
     /* T2-b/c: private address space — demand heap + COW(libc data, synthetic, and

@@ -61,7 +61,10 @@ void putu(unsigned v)
 
 void rt_write(const char *b, int n)
 {
-    char t[256]; int i = 0;
-    while (n-- > 0 && i < (int)sizeof(t) - 1) t[i++] = *b++;
-    t[i] = 0; puts0(t);
+    char t[256];
+    while (n > 0) {                     /* chunk: SYS_WRITE0 wants NUL-termination */
+        int i = 0;
+        while (n > 0 && i < (int)sizeof(t) - 1) { t[i++] = *b++; n--; }
+        t[i] = 0; puts0(t);
+    }
 }

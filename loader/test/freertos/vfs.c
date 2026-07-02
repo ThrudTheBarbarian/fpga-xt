@@ -137,20 +137,34 @@ int vfs_resolve(const char *in, char *out, int outsz, int follow_leaf)
     return -1;                                                  /* too many links -> ELOOP */
 }
 
+/* "/" belongs to no mount (it is pure namespace) and a mount root always
+ * exists — both stat as plain directories without asking a driver. */
+static int synth_dir(struct xt_stat *st)
+{
+    st->mode = XT_S_IFDIR; st->size = 0; st->mtime = 0;
+    return 0;
+}
+
 long vfs_stat(const char *path, struct xt_stat *st)
 {
     char rp[VFS_PATH_MAX];
     if (vfs_resolve(path, rp, sizeof rp, 1) != 0) return -1;    /* follow the leaf */
+    if (rp[0] == '/' && !rp[1]) return synth_dir(st);
     const char *rel; vfs_mount *m = resolve(rp, &rel);
-    if (!m || !m->fs->stat) return -1;
+    if (!m) return -1;
+    if (rel[0] == '/' && !rel[1]) return synth_dir(st);         /* mount root */
+    if (!m->fs->stat) return -1;
     return m->fs->stat(m, rel, st);
 }
 long vfs_lstat(const char *path, struct xt_stat *st)
 {
     char rp[VFS_PATH_MAX];
     if (vfs_resolve(path, rp, sizeof rp, 0) != 0) return -1;    /* the link itself */
+    if (rp[0] == '/' && !rp[1]) return synth_dir(st);
     const char *rel; vfs_mount *m = resolve(rp, &rel);
-    if (!m || !m->fs->stat) return -1;
+    if (!m) return -1;
+    if (rel[0] == '/' && !rel[1]) return synth_dir(st);         /* mount root */
+    if (!m->fs->stat) return -1;
     return m->fs->stat(m, rel, st);
 }
 long vfs_unlink(const char *path)
@@ -169,10 +183,41 @@ long vfs_symlink(const char *target, const char *linkpath)
     if (!m || !m->fs->symlink) return -1;
     return m->fs->symlink(m, target, rel);
 }
+/* enumerating "/" = the unique first components of the mount prefixes
+ * ("/OS/Var/Locks" and "/OS" both contribute just "OS") */
+static long root_readdir(int index, char *name, int nsz, unsigned *mode)
+{
+    int emitted = 0;
+    for (int i = 0; i < g_nmnt; i++) {
+        const char *p = g_mnt[i].prefix + 1;
+        int n = 0; while (p[n] && p[n] != '/') n++;
+        if (!n) continue;                                       /* the "/" mount */
+        int dup = 0;
+        for (int j = 0; j < i && !dup; j++) {
+            const char *q = g_mnt[j].prefix + 1;
+            int k = 0; while (q[k] && q[k] != '/') k++;
+            if (k == n) {
+                dup = 1;
+                for (int t = 0; t < n; t++) if (p[t] != q[t]) { dup = 0; break; }
+            }
+        }
+        if (dup) continue;
+        if (emitted++ == index) {
+            int t = 0;
+            while (t < n && t < nsz - 1) { name[t] = p[t]; t++; }
+            name[t] = 0;
+            if (mode) *mode = XT_S_IFDIR;
+            return 1;
+        }
+    }
+    return 0;
+}
+
 long vfs_readdir(const char *path, int index, char *name, int nsz, unsigned *mode)
 {
     char rp[VFS_PATH_MAX];
     if (vfs_resolve(path, rp, sizeof rp, 1) != 0) return -1;    /* follow to the real dir */
+    if (rp[0] == '/' && !rp[1]) return root_readdir(index, name, nsz, mode);
     const char *rel; vfs_mount *m = resolve(rp, &rel);
     if (!m || !m->fs->readdir) return -1;
     return m->fs->readdir(m, rel, index, name, nsz, mode);
