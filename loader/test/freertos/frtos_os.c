@@ -935,6 +935,7 @@ static int needs_task_ctx(struct k_regs *regs, uint32_t num)
     case SYS_close:   return fd_is_sd(fd);          /* backing-store close -> task ctx (romfs inline) */
     case SYS_mmap:    return fd_is_sd(fd);          /* backing-store mmap -> fs task eager-fill (romfs inline) */
     case SYS_munmap:  return 1;                     /* may write dirty pages back (FatFs) -> task ctx */
+    case SYS_input:   return 1;                     /* blocks on the serial ring for the next event */
     default:          return 0;                    /* lseek (inline)/getpid/sbrk/fb/gettimeofday */
     }
 }

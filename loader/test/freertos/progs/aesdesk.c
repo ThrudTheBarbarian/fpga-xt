@@ -102,7 +102,7 @@ static void present(void) {                        // blit the back-buffer to th
 // the AES event source: block for the next kernel input event (the cursor is a HW
 // sprite moved kernel-side, so motion needs no present — only real actions do).
 static int a9_events(aes_event *ev, int timeout_ms) {
-    struct os_event oe;
+    struct os_event oe = { OS_EV_TIMER, 0, 0, 0, 0, 0 };   // default if the syscall fails
     sys_input(&oe, timeout_ms);
     ev->type = oe.type; ev->mx = oe.mx; ev->my = oe.my;
     ev->button = oe.button; ev->key = oe.key; ev->shift = oe.shift;
