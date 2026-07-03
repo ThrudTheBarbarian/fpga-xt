@@ -683,7 +683,27 @@ pid_t waitpid(pid_t pid, int *status, int options)
             g_ghosts[i].pid = 0;
             return gp;
         }
-    if (options & WNOHANG) return 0;     /* can't poll; nothing changed */
+    if (options & WNOHANG) {             /* poll: kernel checks the exited flag */
+        if (pid > 0) {
+            long code = sys_waitpid_nb((int)pid);
+            if (code == -11) return 0;   /* still running */
+            for (i = 0; i < MAX_KIDS; i++) if (g_kids[i] == pid) g_kids[i] = 0;
+            if (code < 0) { errno = ECHILD; return -1; }
+            if (status) *status = (int)((code & 0xff) << 8);
+            return pid;
+        }
+        for (i = 0; i < MAX_KIDS; i++) { /* wait-any: poll each live child */
+            if (!g_kids[i]) continue;
+            long code = sys_waitpid_nb(g_kids[i]);
+            if (code == -11) continue;
+            int gp = g_kids[i];
+            g_kids[i] = 0;
+            if (code < 0) continue;      /* vanished: swept elsewhere; keep looking */
+            if (status) *status = (int)((code & 0xff) << 8);
+            return gp;
+        }
+        return 0;                        /* nothing exited yet */
+    }
     if (pid <= 0) {                      /* wait-any: oldest live child */
         for (i = 0; i < MAX_KIDS; i++) if (g_kids[i]) { pid = g_kids[i]; break; }
         if (i == MAX_KIDS || pid <= 0) { errno = ECHILD; return -1; }

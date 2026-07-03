@@ -102,6 +102,24 @@ void _app_entry(int argc, char **argv)
         sys_unlink("/tmp/pt_redir2");
     }
 
+    /* 5: non-blocking waitpid (WNOHANG): a child parked reading an empty pipe
+     * polls as running; after EOF it exits and the poll reaps it */
+    {
+        int pfd[2];
+        sys_pipe(pfd);
+        char *av[] = { "cat", 0 };
+        int fds[4] = { pfd[0], -1, -1, ~0 };
+        long pid = sys_spawn_fd("/System/bin/cat", av, fds);
+        sys_close(pfd[0]);
+        check(sys_waitpid_nb((int)pid) == -11, "poll: child blocked on the pipe = still running");
+        sys_close(pfd[1]);                 /* EOF -> cat exits */
+        long code = -11;
+        for (int spin = 0; spin < 1000000 && code == -11; spin++)
+            code = sys_waitpid_nb((int)pid);
+        check(code == 0, "poll: reaped the exited child, code 0");
+        check(sys_waitpid_nb((int)pid) == -1, "poll: already-reaped pid is gone");
+    }
+
     put(fails ? "pipetest: FAILURES\n" : "pipetest: all PASS\n");
     sys_exit(fails);
 }

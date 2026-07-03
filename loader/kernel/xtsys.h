@@ -21,7 +21,10 @@
 /* process / task — block 0x100 */
 #define SYS_spawn    0x100   /* (path, argc, argv) -> pid */
 #define SYS_exit     0x101   /* (code) -> no return */
-#define SYS_waitpid  0x102   /* (pid) -> exit_code */
+#define SYS_waitpid  0x102   /* (pid, flags) -> exit_code. flags bit0 = poll (WNOHANG):
+                              * child still running -> -11 (-EAGAIN), no blocking;
+                              * exited -> reap + exit_code as usual */
+#define XT_WAIT_NB   1       /* the poll flag */
 #define SYS_getpid   0x103   /* () -> pid */
 #define SYS_spawn_fd 0x104   /* (path, argv, int fds[3]) -> pid: argv is NULL-terminated
                               * (argc counted kernel-side); the child's fd 0/1/2 come

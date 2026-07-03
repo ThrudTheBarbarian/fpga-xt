@@ -1105,6 +1105,8 @@ void deferral_thunk(void)                 /* PL1 (System), task context */
             k_pipe_close_end(&p->fd[p->da0]); r = 0;
         } else if (p->dnum == SYS_dup2) {                  /* pipe-end duplication */
             r = k_dup2(p, (int)p->da0, (int)p->da1);
+        } else if (p->dnum == SYS_waitpid && (p->da1 & 1)) {   /* poll (WNOHANG) */
+            extern int frtos_waitpid_poll(int); r = frtos_waitpid_poll((int)p->da0);
         } else if (p->dnum == SYS_waitpid) {               /* blocks until the child exits */
             extern int frtos_waitpid_notify(int); r = frtos_waitpid_notify((int)p->da0);
         } else if (p->dnum == SYS_read &&
@@ -1913,6 +1915,19 @@ int frtos_waitpid_notify(int pid)
     p->waited = 1;
     p->waiter = xTaskGetCurrentTaskHandle();      /* task_exit_thunk notifies this task */
     while (!p->exited) ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
+    return frtos_reap(p);
+}
+
+/* the non-blocking form (WNOHANG): the exit thunk set p->exited before waking
+ * anyone, so "is it still running" is just that flag. Marking it waited on the
+ * first poll reserves the slot — the lazy orphan sweep (reap_orphans) skips
+ * waited children, so the exit status survives until the poller collects it. */
+int frtos_waitpid_poll(int pid)
+{
+    proc_t *p = proc_by_pid(pid);
+    if (!p) return -1;                            /* no such child (or already reaped) */
+    p->waited = 1;
+    if (!p->exited) return -11;                   /* -EAGAIN: still running */
     return frtos_reap(p);
 }
 
