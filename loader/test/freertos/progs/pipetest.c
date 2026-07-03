@@ -7,6 +7,17 @@
 
 static void put(const char *s) { unsigned n = 0; while (s[n]) n++; sys_write(1, s, n); }
 
+static void putn(const char *tag, long v)
+{
+    char t[12]; int n = 0;
+    put(tag);
+    if (v < 0) { put("-"); v = -v; }
+    if (!v) t[n++] = '0';
+    while (v) { t[n++] = (char)('0' + v % 10); v /= 10; }
+    while (n) sys_write(1, &t[--n], 1);
+    put("\n");
+}
+
 static int fails;
 static void check(int ok, const char *what)
 {
@@ -52,6 +63,43 @@ void _app_entry(int argc, char **argv)
         check(total > 50, "captured ls output through the pipe");
         sys_close(pfd[0]);
         if (pid > 0) sys_waitpid((int)pid);
+    }
+
+    /* 3: file-redirected stdio — child echo writes into fd1 = a ramfs file */
+    {
+        long ffd = sys_open("/tmp/pt_redir", 0x0601 /* WRONLY|CREAT|TRUNC */);
+        check(ffd >= 3, "open /tmp/pt_redir for writing");
+        char *av[] = { "echo", "filetest", 0 };
+        int fds[4] = { -1, (int)ffd, -1, ~0 };
+        long pid = sys_spawn_fd("/System/bin/echo", av, fds);
+        check(pid > 0, "spawn echo with stdout = file fd");
+        if (pid > 0) putn("  (echo exit=", sys_waitpid((int)pid));
+        struct xt_stat xs;
+        if (sys_stat("/tmp/pt_redir", &xs) == 0) putn("  (post-wait size=", (long)xs.size);
+        sys_close((int)ffd);
+        char buf[64]; long n = -1;
+        long rfd = sys_open("/tmp/pt_redir", 0);
+        if (rfd >= 0) { n = sys_read((int)rfd, buf, sizeof buf); sys_close((int)rfd); }
+        check(n == 9, "file holds echo's 9 bytes (filetest\\n)");
+        if (n != 9) putn("  (got n=", n);
+        /* 4: parent-side dup2 of a file onto stdout, write silently, restore */
+        ffd = sys_open("/tmp/pt_redir2", 0x0601);
+        long sfd = sys_dup2(1, 10);                    /* save console at 10 */
+        long d1 = sys_dup2((int)ffd, 1);
+        long w1 = sys_write(1, "direct\n", 7);         /* -> the file */
+        long d2 = sys_dup2(10, 1);                     /* restore console */
+        sys_close(10);
+        check(sfd == 10, "dup2 saved console stdout at fd 10");
+        check(d1 == 1, "dup2 file onto stdout");
+        check(w1 == 7, "write through redirected stdout");
+        check(d2 == 1, "restore console stdout");
+        rfd = sys_open("/tmp/pt_redir2", 0);
+        n = -1;
+        if (rfd >= 0) { n = sys_read((int)rfd, buf, sizeof buf); sys_close((int)rfd); }
+        check(n == 7, "file holds the 7 dup2-redirected bytes");
+        if (n != 7) putn("  (got n=", n);
+        sys_unlink("/tmp/pt_redir");     /* don't exhaust the ramfs node table */
+        sys_unlink("/tmp/pt_redir2");
     }
 
     put(fails ? "pipetest: FAILURES\n" : "pipetest: all PASS\n");

@@ -16,7 +16,7 @@
 extern void *vm_page_alloc(void);        /* raw pool page (frtos_os.h) */
 extern void  vm_page_free(void *p);
 
-#define RAMFS_FILES 8
+#define RAMFS_FILES 16                    /* a shell session accumulates redirect targets */
 #define RAMFS_PAGES 16                    /* 64 KB max per file — ample for tests */
 #define NAME_MAX    64
 

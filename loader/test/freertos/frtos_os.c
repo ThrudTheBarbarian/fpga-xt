@@ -33,6 +33,7 @@ typedef struct {
     int      pipei;  /* pipe fd: g_pipes index+1 (0 = not a pipe); pwrite = which end */
     int      pwrite;
     int      con;    /* console alias (a shell's saved stdio parked on a high fd) */
+    int      oflags; /* the VFS_O_* this fd was opened with (for reopen-by-path) */
     uint32_t pos;    /* logical read/write cursor (page store); the driver's vf.pos is fill scratch */
     uint32_t cpi;    /* cached page index (~0u = none) — backing-store only; in-memory fds read vf.data */
     void    *cpage;  /* the one cached page (pool identity addr), or NULL */
@@ -56,6 +57,27 @@ typedef struct {
 } kpipe_t;
 static kpipe_t g_pipes[MAXPIPE];
 static void k_pipe_close_end(fd_t *f);   /* impl below with the other pipe ops */
+
+/* kernel-mailbox fs ops (impls with the fs task, below): file-fd redirection
+ * (dup2/spawn inheritance) must open/close through the SOLE FatFs driver */
+enum { KFS_READFILE, KFS_LISTDIR, KFS_CLOSEALL, KFS_OPENFD, KFS_CLOSEFD };
+static long kfs_call(int op, const char *path, void *buf, uint32_t len, void **out_buf);
+
+/* Independent reopen of a file fd (child stdio inheritance, dup-onto-slot):
+ * same path, O_TRUNC stripped — the truncation already happened at the
+ * original open — and the cursor carried over (so >> appends resume). */
+static int fd_reopen(fd_t *dst, const fd_t *src)
+{
+    int fl = src->oflags & ~VFS_O_TRUNC;
+    memset(dst, 0, sizeof *dst);
+    if (kfs_call(KFS_OPENFD, src->path, dst, (uint32_t)fl, 0) != 0) return -1;
+    for (int i = 0; i < FD_PATH_MAX; i++) { dst->path[i] = src->path[i]; if (!src->path[i]) break; }
+    dst->oflags = fl;
+    dst->pos = src->pos;
+    dst->cpi = ~0u; dst->cpage = 0; dst->cdirty = 0;
+    dst->open = 1;
+    return 0;
+}
 
 typedef struct {
     int               used;
@@ -286,8 +308,11 @@ static long sys_open(proc_t *p, const char *path, int flags)
     for (int fd = 3; fd < NFD; fd++) {
         if (!p->fd[fd].open) {
             if (vfs_open(path, flags, &p->fd[fd].vf) != 0) return -1;
-            p->fd[fd].pos = 0; p->fd[fd].cpi = ~0u; p->fd[fd].cpage = 0;   /* page store: empty */
+            /* O_APPEND: the logical cursor starts at EOF (single-writer append) */
+            p->fd[fd].pos = (flags & VFS_O_APPEND) ? p->fd[fd].vf.size : 0;
+            p->fd[fd].cpi = ~0u; p->fd[fd].cpage = 0;                      /* page store: empty */
             p->fd[fd].cdirty = 0;
+            p->fd[fd].oflags = flags;                                      /* retained for reopen-by-path */
             p->fd[fd].pipei = 0; p->fd[fd].pwrite = 0; p->fd[fd].con = 0;  /* slot may have held a pipe/alias */
             int k = 0;                                                    /* retain path for mmap write-back */
             for (; path[k] && k < FD_PATH_MAX - 1; k++) p->fd[fd].path[k] = path[k];
@@ -389,16 +414,26 @@ static long k_dup2(proc_t *p, int oldfd, int newfd)
     if (oldfd == newfd) return newfd;
     int old_con = (oldfd < 3 && !p->fd[oldfd].open) ||
                   (p->fd[oldfd].open && p->fd[oldfd].con);
-    if (!old_con && (!p->fd[oldfd].open || !p->fd[oldfd].pipei)) return -1;
-    if (p->fd[newfd].open) {
+    int old_pipe = p->fd[oldfd].open && p->fd[oldfd].pipei;
+    int old_file = p->fd[oldfd].open && !p->fd[oldfd].pipei && !p->fd[oldfd].con;
+    if (!old_con && !old_pipe && !old_file) return -1;
+    if (p->fd[newfd].open) {                        /* displace whatever holds the slot */
         if (p->fd[newfd].pipei) k_pipe_close_end(&p->fd[newfd]);
         else if (p->fd[newfd].con) memset(&p->fd[newfd], 0, sizeof(fd_t));
-        else return -1;                             /* won't displace a file fd */
+        else kfs_call(KFS_CLOSEFD, 0, &p->fd[newfd], 0, 0);   /* file: flush + close */
     }
     if (old_con) {
         memset(&p->fd[newfd], 0, sizeof(fd_t));
         if (newfd >= 3) { p->fd[newfd].open = 1; p->fd[newfd].con = 1; }
         /* newfd < 3: leave closed — that IS the console */
+        return newfd;
+    }
+    if (old_file) {
+        /* MOVE the descriptor (page cache and driver state can't be shared);
+         * the shell's redirect dance never needs two live copies, and its
+         * follow-up close() of the source is a tolerated no-op */
+        p->fd[newfd] = p->fd[oldfd];
+        memset(&p->fd[oldfd], 0, sizeof(fd_t));
         return newfd;
     }
     kpipe_t *pp = &g_pipes[p->fd[oldfd].pipei - 1];
@@ -515,7 +550,9 @@ static void fd_drop_cache(fd_t *fdp)
 static void *fd_getpage(int slot, int fd, uint32_t pi, uint32_t *valid, int forwrite)
 {
     *valid = 0;
-    if (fd < 3 || fd >= NFD || !g_proc[slot].fd[fd].open) return 0;
+    if (fd < 0 || fd >= NFD || !g_proc[slot].fd[fd].open ||
+        g_proc[slot].fd[fd].pipei || g_proc[slot].fd[fd].con)
+        return 0;                        /* fd<3 allowed: file-redirected stdio */
     fd_t    *fdp  = &g_proc[slot].fd[fd];
     uint32_t size = fdp->vf.size, base = pi << 12;
     if (!forwrite && base >= size) return 0;                       /* read wholly past EOF */
@@ -690,7 +727,7 @@ static long fs_serve(int slot)
  * or the boot dir listing). READFILE opens+allocates+reads a whole file; LISTDIR lists a
  * directory into the caller's buffer. The doorbell carries FS_KERNEL_JOB instead of a
  * slot. */
-enum { KFS_READFILE, KFS_LISTDIR, KFS_CLOSEALL };
+/* (the KFS op enum lives up with the pipe/fd helpers that use it) */
 #define FS_KERNEL_JOB (-1)
 static struct {
     int          op;
@@ -715,7 +752,7 @@ static void fs_close_all(int slot)
         if (!p->fd[fd].open) continue;
         if (p->fd[fd].pipei) { k_pipe_close_end(&p->fd[fd]); continue; }  /* EOF/EPIPE propagate */
         if (p->fd[fd].con) { p->fd[fd].open = 0; p->fd[fd].con = 0; continue; }
-        if (fd < 3) { p->fd[fd].open = 0; continue; }
+        /* fd<3 falls through too: file-redirected stdio must flush + close */
         fd_drop_cache(&p->fd[fd]);       /* flush dirty page (if any) + free the cache page */
         vfs_close(&p->fd[fd].vf);
         p->fd[fd].open = 0;
@@ -751,6 +788,17 @@ static long kfs_serve(void)
         return sd_listdir_raw(g_kfs.path, (char (*)[32])g_kfs.buf, (int)g_kfs.len);
     }
     case KFS_CLOSEALL: fs_close_all((int)g_kfs.len); return 0;   /* reap: close a dead proc's fds */
+    case KFS_OPENFD: {                                  /* open a path into a caller's fd_t */
+        fd_t *d = (fd_t *)g_kfs.buf;
+        return vfs_open(g_kfs.path, (int)g_kfs.len, &d->vf) == 0 ? 0 : -1;
+    }
+    case KFS_CLOSEFD: {                                 /* flush + close a caller's fd_t */
+        fd_t *d = (fd_t *)g_kfs.buf;
+        fd_drop_cache(d);
+        vfs_close(&d->vf);
+        memset(d, 0, sizeof *d);
+        return 0;
+    }
     }
     return -1;
 }
@@ -914,7 +962,8 @@ static long fs_read(proc_t *p)
     int      fd   = (int)p->da0;
     uint8_t *buf  = (uint8_t *)p->da1;
     uint32_t n    = (uint32_t)p->da2;
-    if (fd < 3 || fd >= NFD || !p->fd[fd].open) return -1;
+    if (fd < 0 || fd >= NFD || !p->fd[fd].open || p->fd[fd].pipei || p->fd[fd].con)
+        return -1;                       /* fd<3 allowed: `< file` redirected stdin */
     fd_t    *fdp  = &p->fd[fd];
     uint32_t size = fdp->vf.size, pos = fdp->pos, done = 0;
     while (done < n && pos < size) {
@@ -947,7 +996,8 @@ static long fs_write(proc_t *p)
     int            fd   = (int)p->da0;
     const uint8_t *buf  = (const uint8_t *)p->da1;
     uint32_t       n    = (uint32_t)p->da2;
-    if (fd < 3 || fd >= NFD || !p->fd[fd].open) return -1;
+    if (fd < 0 || fd >= NFD || !p->fd[fd].open || p->fd[fd].pipei || p->fd[fd].con)
+        return -1;                       /* fd<3 allowed: `> file` redirected stdout */
     fd_t *fdp = &p->fd[fd];
     if (!fdp->vf.write) return -1;                         /* read-only fd (romfs / RO open) */
     uint32_t pos = fdp->pos, done = 0;
@@ -1058,7 +1108,8 @@ void deferral_thunk(void)                 /* PL1 (System), task context */
         } else if (p->dnum == SYS_waitpid) {               /* blocks until the child exits */
             extern int frtos_waitpid_notify(int); r = frtos_waitpid_notify((int)p->da0);
         } else if (p->dnum == SYS_read &&
-                   (p->da0 == 0 || (p->da0 < NFD && p->fd[p->da0].open && p->fd[p->da0].con))) {
+                   ((p->da0 == 0 && !p->fd[0].open) ||   /* fd0 open = redirected file stdin */
+                    (p->da0 < NFD && p->fd[p->da0].open && p->fd[p->da0].con))) {
             /* stdin (or a console alias): one blocking console char */
             char *buf = (char *)p->da1;
             if (buf && p->da2 > 0) { int c = sh_readc(); if (c < 0) r = 0; else { buf[0] = (char)c; r = 1; } }
@@ -1248,11 +1299,17 @@ static int needs_task_ctx(struct k_regs *regs, uint32_t num)
     case SYS_spawn_fd: return 1;                   /* spawn + pipe-end refcounts */
     case SYS_pipe:    return 1;                    /* takes the FreeRTOS heap (stream buffer) */
     case SYS_open:    return 1;                    /* may walk a FatFs directory path */
-    case SYS_read:    return fd == 0 || (fd >= 3 && fd < NFD) || fd_is_pipe(fd);
-                                                    /* stdin + pipes block; file read -> page store */
-    case SYS_write:   if (fd_is_con(fd)) return 0;  /* console alias: inline like fd 1/2 */
-                      return (fd >= 3 && fd < NFD) || fd_is_pipe(fd);
-                                                    /* file write -> page store; pipe blocks (console 1/2 inline) */
+    case SYS_read: {                               /* stdin + pipes block; files -> page store */
+        if (fd_is_con(fd)) return 1;               /* console alias: sh_readc path */
+        proc_t *q = cur_proc();
+        if (q && fd < NFD && q->fd[fd].open) return 1;   /* pipe or file, any slot (incl. `< file` stdin) */
+        return fd == 0;                            /* raw console stdin */
+    }
+    case SYS_write: {
+        if (fd_is_con(fd)) return 0;               /* console alias: inline like fd 1/2 */
+        proc_t *q = cur_proc();
+        return q && fd < NFD && q->fd[fd].open;    /* pipe or file, any slot (incl. `> file` stdout) */
+    }
     case SYS_close:   return fd_is_sd(fd) || fd_is_pipe(fd);  /* backing-store/pipe close -> task ctx */
     case SYS_dup2:    return 1;                    /* may close a displaced pipe end */
     case SYS_mmap:    return fd_is_sd(fd);          /* backing-store mmap -> fs task eager-fill (romfs inline) */
@@ -1459,6 +1516,11 @@ static int proc_launch(int slot, xtld_obj *obj, uintptr_t entry,
                 taskENTER_CRITICAL();
                 if (p->fd[i].pwrite) pp->writers++; else pp->readers++;
                 taskEXIT_CRITICAL();
+            } else if (i < 3 && pfd >= 0 && pfd < NFD && par->fd[pfd].open &&
+                       !par->fd[pfd].con) {
+                /* file-redirected stdio (`cmd > file`): the child gets an
+                 * INDEPENDENT reopen (own page cache/cursor) of the same path */
+                fd_reopen(&p->fd[i], &par->fd[pfd]);
             }
             /* console / console-alias / closed sources all mean: leave the
              * child's slot closed (stdio falls back to the console) */
@@ -1807,7 +1869,7 @@ static int frtos_reap(proc_t *p)
      * f_close from the reaper's context would race it. Reading .open here is just a flag
      * check (no FatFs). Direct fallback when the fs task isn't up (host_test). */
     { int slot = (int)(p - g_proc), any = 0;
-      for (int fd = 3; fd < NFD; fd++) if (p->fd[fd].open) { any = 1; break; }
+      for (int fd = 0; fd < NFD; fd++) if (p->fd[fd].open) { any = 1; break; }   /* from 0: redirected stdio */
       for (int i = 0; !any && i < FS_MAXMAP; i++) if (g_wrmap[slot][i].used) any = 1;  /* writable map, fd maybe closed */
       if (any) { if (g_fs_q) kfs_call(KFS_CLOSEALL, 0, 0, (uint32_t)slot, 0);
                  else        fs_close_all(slot); } }
