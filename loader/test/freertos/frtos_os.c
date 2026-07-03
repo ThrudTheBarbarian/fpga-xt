@@ -855,15 +855,23 @@ static long kfs_serve(void)
 {
     switch (g_kfs.op) {
     case KFS_READFILE: {                                /* open + alloc + read a whole file */
+        extern void puts0(const char *); extern void putu(unsigned);
         vfs_file f;
         g_kfs.buf = 0;
-        if (vfs_open(g_kfs.path, 0, &f) != 0) return -1;
-        if (f.size == 0 || !f.read) { if (f.close) f.close(&f); return -1; }
+        if (vfs_open(g_kfs.path, 0, &f) != 0)
+            { puts0("[fs] READFILE open FAIL\n"); return -1; }
+        if (f.size == 0 || !f.read)
+            { puts0("[fs] READFILE empty/unreadable\n"); if (f.close) f.close(&f); return -1; }
         void *buf = frtos_alloc(f.size, 16, NULL);
-        if (!buf) { if (f.close) f.close(&f); return -1; }
+        if (!buf) { puts0("[fs] READFILE: kernel heap exhausted\n");
+                    if (f.close) f.close(&f); return -1; }
         long got = f.read(&f, buf, f.size);
         if (f.close) f.close(&f);
-        if (got != (long)f.size) return -1;            /* buf leaks (rare); kernel heap is bump anyway */
+        if (got != (long)f.size) {                     /* buf leaks (rare); kernel heap is bump anyway */
+            puts0("[fs] READFILE short read "); putu((unsigned)got);
+            puts0("/"); putu(f.size); puts0("\n");
+            return -1;
+        }
         g_kfs.buf = buf;
         return (long)f.size;
     }
@@ -904,8 +912,19 @@ static void fs_task(void *arg)
  * mutex is dropped). Callable from any task context (shell_task, a spawn deferral). */
 static long kfs_call(int op, const char *path, void *buf, uint32_t len, void **out_buf)
 {
+    /* the fs task runs in the MASTER space: a path in CLIENT memory (e.g. the
+     * exec path of an SD program spawn, marshalled in the client's deferral)
+     * is mapped HERE but resolves to the wrong physical THERE — copy it into
+     * this kernel-global buffer (serialized by g_kfs_mtx) like fs_meta does. */
+    static char kpath[128];
     if (!g_fs_q || !g_kfs_mtx) return -1;
     xSemaphoreTake(g_kfs_mtx, portMAX_DELAY);
+    if (path) {
+        int i = 0;
+        for (; path[i] && i < (int)sizeof kpath - 1; i++) kpath[i] = path[i];
+        kpath[i] = 0;
+        path = kpath;
+    }
     g_kfs.op = op; g_kfs.path = path; g_kfs.buf = buf; g_kfs.len = len; g_kfs.result = -1;
     g_kfs.waiter = xTaskGetCurrentTaskHandle();
     int job = FS_KERNEL_JOB;
@@ -1899,9 +1918,12 @@ static int sd_prog_lookup(const char *path, const uint8_t **data, uint32_t *len)
         while (*a && *a == *b) { a++; b++; }
         if (*a == 0 && *b == 0) { *data = g_sdprog[i].data; *len = g_sdprog[i].len; return 1; }
     }
+    extern void puts0(const char *); extern void putu(unsigned);
+    puts0("[spawn] SD "); puts0(path);
     void *buf = 0;
     long sz = kfs_call(KFS_READFILE, path, 0, 0, &buf);
-    if (sz <= 0 || !buf) return 0;                     /* not on the SD (or no SD) */
+    if (sz <= 0 || !buf) { puts0(" — miss\n"); return 0; }   /* not on the SD (or no SD) */
+    puts0(" ("); putu((unsigned)sz); puts0(" bytes)\n");
     if (g_nsdprog < SDPROG_MAX) {
         int i = 0;
         for (; path[i] && i < 63; i++) g_sdprog[g_nsdprog].path[i] = path[i];
@@ -2079,9 +2101,12 @@ static int open_lib_sd(const char *name, const uint8_t **data, uint32_t *len)
     path[i] = 0;
 
     /* the fs task opens+allocs+reads the file (so it stays the sole FatFs driver). */
+    extern void puts0(const char *); extern void putu(unsigned);
+    puts0("[lib] SD "); puts0(path);
     void *buf = 0;
     long sz = kfs_call(KFS_READFILE, path, 0, 0, &buf);
-    if (sz <= 0 || !buf) return 0;                         /* not on the SD (or no SD) */
+    if (sz <= 0 || !buf) { puts0(" — miss\n"); return 0; }  /* not on the SD (or no SD) */
+    puts0(" ("); putu((unsigned)sz); puts0(" bytes)\n");
     *data = (const uint8_t *)buf; *len = (uint32_t)sz;
     return 1;
 }
