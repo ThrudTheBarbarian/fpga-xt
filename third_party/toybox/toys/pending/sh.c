@@ -3880,6 +3880,14 @@ static char *get_next_line(FILE *fp, int prompt)
     char ps[16];
 
     sprintf(ps, "PS%d", prompt);
+    // XTOS: interactive tty lines come from the line editor (linenoise —
+    // history + TAB completion over the kernel raw-mode tty); scripts and
+    // pipes keep the plain getc path below.
+    if (fp==stdin && isatty(0)) {
+      extern char *xt_line_input(char *ps, int continuation);
+
+      return xt_line_input(getvar(ps), prompt==2);
+    }
     do_prompt(getvar(ps));
   }
 

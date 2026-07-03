@@ -283,8 +283,17 @@ REGEX_OBJS  := $(foreach r,$(REGEX_NAMES),$(BUILD)/regex_$(r).o)
 $(BUILD)/regex_%.o: test/freertos/libs/regex/%.c | $(BUILD)
 	$(ARMCC) -marm -mcpu=cortex-a9 -mfloat-abi=softfp -mfpu=neon-vfpv3 -fpic -Os -fno-builtin \
 	    -D_GNU_SOURCE -Itest/freertos/libs/regex -Inewlib-pic/include -c $< -o $@
-$(BUILD)/toybox.so: $(BUILD)/toybox/objects.list $(BUILD)/posix_shim.o $(REGEX_OBJS) $(BUILD)/libc.so
-	$(LLD) -shared --hash-style=sysv -o $@ $(BUILD)/posix_shim.o $(REGEX_OBJS) \
+# linenoise (vendored, BSD-2) + the toysh glue: interactive line editing
+# (history + TAB completion) over the kernel raw-mode tty
+LINEEDIT_OBJS := $(BUILD)/linenoise.o $(BUILD)/sh_lineedit.o
+$(BUILD)/linenoise.o: test/freertos/libs/linenoise/linenoise.c test/freertos/libs/linenoise/linenoise.h | $(BUILD)
+	$(ARMCC) -marm -mcpu=cortex-a9 -mfloat-abi=softfp -mfpu=neon-vfpv3 -fpic -Os -fno-builtin \
+	    -D_GNU_SOURCE -Ilibc-compat -Inewlib-pic/include -c $< -o $@
+$(BUILD)/sh_lineedit.o: test/freertos/libs/sh_lineedit.c test/freertos/libs/linenoise/linenoise.h | $(BUILD)
+	$(ARMCC) -marm -mcpu=cortex-a9 -mfloat-abi=softfp -mfpu=neon-vfpv3 -fpic -Os -fno-builtin \
+	    -D_GNU_SOURCE -Ilibc-compat -Inewlib-pic/include -Itest/freertos/libs/linenoise -c $< -o $@
+$(BUILD)/toybox.so: $(BUILD)/toybox/objects.list $(BUILD)/posix_shim.o $(REGEX_OBJS) $(LINEEDIT_OBJS) $(BUILD)/libc.so
+	$(LLD) -shared --hash-style=sysv -o $@ $(BUILD)/posix_shim.o $(REGEX_OBJS) $(LINEEDIT_OBJS) \
 	    $$(cat $(BUILD)/toybox/objects.list) $(BUILD)/libc.so
 
 # vmtest — DT_NEEDED libc.so; touches the per-process private window (T2-b)
