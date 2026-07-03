@@ -1117,7 +1117,7 @@ void deferral_thunk(void)                 /* PL1 (System), task context */
              * HERE, once, for every program (a shell expects a cooked tty).
              * One console = one line buffer; reads drain it, empty refills. */
             static char lbuf[256];
-            static int  lpos, llen;
+            static int  lpos, llen, sawcr;
             char *buf = (char *)p->da1;
             if (!buf || p->da2 == 0) r = 0;
             else {
@@ -1126,7 +1126,11 @@ void deferral_thunk(void)                 /* PL1 (System), task context */
                     for (;;) {
                         int c = sh_readc();
                         if (c < 0) break;                 /* EOF (qemu pipe drained) */
-                        if (c == '\r') c = '\n';          /* real terminals send CR */
+                        if (sawcr) {                      /* CRLF: the CR already became NL */
+                            sawcr = 0;
+                            if (c == '\n') continue;
+                        }
+                        if (c == '\r') { sawcr = 1; c = '\n'; }   /* terminals send CR (or CRLF) */
                         if (c == 8 || c == 127) {         /* backspace/DEL: erase */
                             if (llen > 0) { llen--; if (g_console) g_console("\b \b", 3); }
                             continue;
