@@ -924,19 +924,23 @@ void cfmakeraw(struct termios *t)
 
 int ioctl(int fd, unsigned long req, ...)
 {
-    (void)fd;
+    va_list ap;
+    va_start(ap, req);
+    void *arg = va_arg(ap, void *);         /* by-value requests (I2C_SLAVE) ride the same slot */
+    va_end(ap);
     if (req == TIOCGWINSZ) {
-        va_list ap;
-        va_start(ap, req);
-        struct winsize *ws = va_arg(ap, struct winsize *);
-        va_end(ap);
+        struct winsize *ws = (struct winsize *)arg;
         ws->ws_row = 24;
         ws->ws_col = 80;
         ws->ws_xpixel = ws->ws_ypixel = 0;
         return 0;
     }
-    errno = ENOTTY;
-    return -1;
+    /* everything else goes to the kernel: char-device controls (i2c-dev, ...);
+     * non-device fds, unsupported requests and failed transfers (i2c NACK)
+     * all come back -1 — EIO reads truthfully for the common case */
+    long r = sys_ioctl(fd, (unsigned)req, arg);
+    if (r < 0) { errno = EIO; return -1; }
+    return (int)r;
 }
 
 /* toybox's lib.h declares xpoll (impl lives in the excluded lib/net.o);
@@ -1006,7 +1010,7 @@ int nanosleep(const struct timespec *req, struct timespec *rem)
 
 /* ---- host identity --------------------------------------------------------- */
 #include <sys/sysinfo.h>
-/* pull "<label>: N kB" out of /OS/Proc/meminfo (the kernel's real pool view) */
+/* pull "<label>: N kB" out of /OS/proc/meminfo (the kernel's real pool view) */
 static unsigned long meminfo_kb(const char *text, const char *label)
 {
     const char *p = strstr(text, label);
@@ -1027,7 +1031,7 @@ int sysinfo(struct sysinfo *info)
     info->uptime = tv.tv_sec;            /* wall clock IS boot time here */
     info->mem_unit = 1;
     info->procs = 8;
-    long fd = sys_open("/OS/Proc/meminfo", 0);
+    long fd = sys_open("/OS/proc/meminfo", 0);
     if (fd >= 0) {
         long n = sys_read((int)fd, mi, sizeof mi - 1);
         sys_close((int)fd);

@@ -12,6 +12,8 @@
 #include <stdint.h>
 
 void hdmi_init(void);
+int  xt_i2c_send(uint8_t addr, const uint8_t *buf, int n);   /* 0=ok (see /OS/dev/i2c-0) */
+int  xt_i2c_recv(uint8_t addr, uint8_t *buf, int n);         /* 0=ok */
 
 #ifdef XT_HW
 
@@ -212,6 +214,16 @@ void hdmi_init(void)
     puts0("[hdmi] SiI9022 devid=0xB0, 1080p60 enabled\r\n");
 }
 
+/* PS-I2C0 access for /OS/dev/i2c-0 (vfs_devfs.c). hdmi_init is the only other
+ * bus user and runs once pre-scheduler, so post-boot the fs task (the sole
+ * caller of devfs ioctls) owns the bus — no lock needed. */
+int xt_i2c_send(uint8_t addr, const uint8_t *buf, int n) { return i2c_send(addr, buf, n); }
+int xt_i2c_recv(uint8_t addr, uint8_t *buf, int n)       { return i2c_recv(addr, buf, n); }
+
 #else  /* qemu: no SiI9022/I2C modelled */
 void hdmi_init(void) { }
+int xt_i2c_send(uint8_t addr, const uint8_t *buf, int n)
+{ (void)addr; (void)buf; (void)n; return -1; }
+int xt_i2c_recv(uint8_t addr, uint8_t *buf, int n)
+{ (void)addr; (void)buf; (void)n; return -1; }
 #endif

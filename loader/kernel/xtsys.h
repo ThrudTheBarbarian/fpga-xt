@@ -64,6 +64,9 @@
                               * chosen slot (refcounted); newfd must be free or a pipe */
 #define SYS_fstat    0x311   /* (fd, struct xt_stat *) -> 0: fd metadata — pipes report
                               * XT_S_IFIFO, console 0/1/2 XT_S_IFCHR, files IFREG+size */
+#define SYS_ioctl    0x312   /* (fd, req, argp) -> device-specific: char-device controls
+                              * (Linux request codes, e.g. i2c-dev I2C_SLAVE/I2C_SMBUS);
+                              * -1 on a non-device fd or an unsupported request */
 
 /* stat result (SYS_stat / SYS_lstat / SYS_fstat). mode carries the type bits below. */
 struct xt_stat { unsigned mode, size, mtime; };

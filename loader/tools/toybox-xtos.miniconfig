@@ -49,6 +49,12 @@ CONFIG_CAL=y
 CONFIG_WHICH=y
 CONFIG_GETOPT=y
 CONFIG_TIME=y
+# i2c tools drive /OS/dev/i2c-0 via the Linux i2c-dev ioctls (SYS_ioctl).
+# i2ctransfer stays out: it needs I2C_RDWR message arrays, not implemented.
+CONFIG_I2CDETECT=y
+CONFIG_I2CDUMP=y
+CONFIG_I2CGET=y
+CONFIG_I2CSET=y
 CONFIG_ARCH=y
 CONFIG_UNAME=y
 

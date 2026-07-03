@@ -71,6 +71,9 @@ static inline long sys_dup2(int oldfd, int newfd)
 static inline long sys_kill(int pid, int sig) { return __syscall(SYS_kill, pid, sig, 0); }
 static inline long sys_fstat(int fd, struct xt_stat *st)
 { return __syscall(SYS_fstat, fd, (long)st, 0); }
+/* char-device controls (Linux request codes; see xtsys.h) */
+static inline long sys_ioctl(int fd, unsigned req, void *argp)
+{ return __syscall(SYS_ioctl, fd, (long)req, (long)argp); }
 /* mmap a romfs file read-only + shared (len=0 -> whole file from off). Returns a
  * pointer to the file's bytes (no copy), or NULL. */
 static inline void *sys_mmap(int fd, unsigned len, unsigned off)

@@ -305,7 +305,7 @@ static long sys_open(proc_t *p, const char *path, int flags)
     for (int fd = 3; fd < NFD; fd++) {
         if (!p->fd[fd].open) {
             if (vfs_open(path, flags, &p->fd[fd].vf) != 0) return -1;
-            if (p->fd[fd].vf.chr == VFS_CHR_TTY) {      /* /OS/Dev/tty: the console itself */
+            if (p->fd[fd].vf.chr == VFS_CHR_TTY) {      /* /OS/dev/tty: the console itself */
                 memset(&p->fd[fd], 0, sizeof(fd_t));
                 p->fd[fd].open = 1; p->fd[fd].con = 1;  /* console alias — existing routing */
                 return fd;
@@ -1119,6 +1119,10 @@ void deferral_thunk(void)                 /* PL1 (System), task context */
                 r = cf->vf.read ? cf->vf.read(&cf->vf, (void *)p->da1, (uint32_t)p->da2) : -1;
             else
                 r = cf->vf.write ? cf->vf.write(&cf->vf, (const void *)p->da1, (uint32_t)p->da2) : -1;
+        } else if (p->dnum == SYS_ioctl) {                 /* char-device controls (i2c, ...) */
+            fd_t *cf = (p->da0 < NFD && p->fd[p->da0].open) ? &p->fd[p->da0] : 0;
+            r = (cf && cf->vf.chr && cf->vf.ioctl)
+                ? cf->vf.ioctl(&cf->vf, (unsigned)p->da1, (void *)p->da2) : -1;
         } else if (p->dnum == SYS_close &&
                    p->da0 < NFD && p->fd[p->da0].open && p->fd[p->da0].pipei) {
             k_pipe_close_end(&p->fd[p->da0]); r = 0;
@@ -1371,6 +1375,7 @@ static int needs_task_ctx(struct k_regs *regs, uint32_t num)
         return q && fd < NFD && q->fd[fd].open;    /* pipe or file, any slot (incl. `> file` stdout) */
     }
     case SYS_close:   return fd_is_sd(fd) || fd_is_pipe(fd);  /* backing-store/pipe close -> task ctx */
+    case SYS_ioctl:   return 1;                    /* device controls may poll HW for ms (i2c) */
     case SYS_dup2:    return 1;                    /* may close a displaced pipe end */
     case SYS_mmap:    return fd_is_sd(fd);          /* backing-store mmap -> fs task eager-fill (romfs inline) */
     case SYS_munmap:  return 1;                     /* may write dirty pages back (FatFs) -> task ctx */
@@ -1645,7 +1650,7 @@ static int proc_launch(int slot, xtld_obj *obj, uintptr_t entry,
 static void reap_orphans(void);
 
 /* procfs snapshot: fill slot idx's identity (best-effort — the table can
- * mutate underneath; /OS/Proc content is a moment-in-time view anyway).
+ * mutate underneath; /OS/proc content is a moment-in-time view anyway).
  * Returns the pid, or 0 if the slot is free. */
 int frtos_proc_snap(int idx, char *comm, int commsz, char *cmdl, int cmdsz,
                     int *cmdlen, int *state)
@@ -1878,10 +1883,10 @@ void frtos_on_loaded(xtld_obj *obj, void *u)
                                   * global SECTION entry can shadow this module's code (HW) */
 }
 
-/* xtld_host.open_lib: map a DT_NEEDED soname to /OS/Library/<name> in the romfs */
+/* xtld_host.open_lib: map a DT_NEEDED soname to /OS/library/<name> in the romfs */
 /* Loader library search path (LD_LIBRARY_PATH-style). Resolution is path-driven, not
  * a hardcoded dir, so a debug session can later prepend a directory of -Og -g
- * libraries (e.g. /OS/Library/Debug/) and have a debuggee's DT_NEEDED resolve there
+ * libraries (e.g. /OS/library/Debug/) and have a debuggee's DT_NEEDED resolve there
  * first. Entries must end in '/'; searched in order, first hit wins. Default is just
  * the system library dir. (Per-process scoping arrives with the env/debugger work;
  * for now this is the global hook — the indirection is what we're reserving.) */
@@ -1897,7 +1902,7 @@ void frtos_lib_path_set(const char *const *dirs, int n)
     g_libpath_n = n;
 }
 
-/* Read /OS/Library/<name> off the SD (FatFs) into a persistent kernel-heap buffer.
+/* Read /OS/library/<name> off the SD (FatFs) into a persistent kernel-heap buffer.
  * The loader COPIES segments out of this buffer during xtld_load, so it's only
  * needed for the load; but a library is loaded once (deduped by soname) and never
  * unloaded, so we don't free it — matching the cached-image model (frtos_free is a
@@ -1907,7 +1912,7 @@ void frtos_lib_path_set(const char *const *dirs, int n)
 static int open_lib_sd(const char *name, const uint8_t **data, uint32_t *len)
 {
     char path[96];
-    const char *pfx = "/OS/Library/";
+    const char *pfx = "/OS/library/";
     int i = 0;
     while (pfx[i] && i < (int)sizeof(path) - 1) { path[i] = pfx[i]; i++; }
     for (int j = 0; name[j] && i < (int)sizeof(path) - 1; j++) path[i++] = name[j];
@@ -1922,7 +1927,7 @@ static int open_lib_sd(const char *name, const uint8_t **data, uint32_t *len)
 }
 
 /* Resolve a DT_NEEDED soname: search /System/Library (romfs, in-memory, used in
- * place) first via g_libpath, then /OS/Library on the SD (read into RAM). System
+ * place) first via g_libpath, then /OS/library on the SD (read into RAM). System
  * libraries win so a stray .so on the card can't shadow libc; the card is for
  * ADDING libraries, not overriding the base system. */
 int frtos_open_lib(const char *name, const uint8_t **data, uint32_t *len, void *u)
@@ -1938,7 +1943,7 @@ int frtos_open_lib(const char *name, const uint8_t **data, uint32_t *len, void *
         path[i] = 0;
         if (romfs_lookup(path, data, len)) return 1;   /* search order: first hit wins */
     }
-    return open_lib_sd(name, data, len);               /* fall back to /OS/Library on the SD */
+    return open_lib_sd(name, data, len);               /* fall back to /OS/library on the SD */
 }
 
 static proc_t *proc_by_pid(int pid)

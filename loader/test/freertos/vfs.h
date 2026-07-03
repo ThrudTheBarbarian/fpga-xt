@@ -56,6 +56,8 @@ struct vfs_file {
     long      (*write)(vfs_file *f, const void *buf, uint32_t n);   /* NULL on a read-only fd */
     long      (*lseek)(vfs_file *f, long off, int whence);
     void      (*close)(vfs_file *f);
+    long      (*ioctl)(vfs_file *f, unsigned req, void *arg);  /* char devices only
+                           * (SYS_ioctl); NULL = no device controls */
     uint32_t    size;
     uint32_t    pos;
     const void *data;     /* in-memory backing (romfs) -> enables identity mmap; NULL otherwise */
