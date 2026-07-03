@@ -858,8 +858,7 @@ static long kfs_serve(void)
         extern void puts0(const char *); extern void putu(unsigned);
         vfs_file f;
         g_kfs.buf = 0;
-        if (vfs_open(g_kfs.path, 0, &f) != 0)
-            { puts0("[fs] READFILE open FAIL\n"); return -1; }
+        if (vfs_open(g_kfs.path, 0, &f) != 0) return -1;   /* routine: spawn probes miss here */
         if (f.size == 0 || !f.read)
             { puts0("[fs] READFILE empty/unreadable\n"); if (f.close) f.close(&f); return -1; }
         void *buf = frtos_alloc(f.size, 16, NULL);
@@ -1918,11 +1917,11 @@ static int sd_prog_lookup(const char *path, const uint8_t **data, uint32_t *len)
         while (*a && *a == *b) { a++; b++; }
         if (*a == 0 && *b == 0) { *data = g_sdprog[i].data; *len = g_sdprog[i].len; return 1; }
     }
-    extern void puts0(const char *); extern void putu(unsigned);
-    puts0("[spawn] SD "); puts0(path);
     void *buf = 0;
     long sz = kfs_call(KFS_READFILE, path, 0, 0, &buf);
-    if (sz <= 0 || !buf) { puts0(" — miss\n"); return 0; }   /* not on the SD (or no SD) */
+    if (sz <= 0 || !buf) return 0;                     /* not on the SD (or no SD) */
+    extern void puts0(const char *); extern void putu(unsigned);
+    puts0("[spawn] SD "); puts0(path);                 /* one line per image: first load only */
     puts0(" ("); putu((unsigned)sz); puts0(" bytes)\n");
     if (g_nsdprog < SDPROG_MAX) {
         int i = 0;
@@ -2101,11 +2100,11 @@ static int open_lib_sd(const char *name, const uint8_t **data, uint32_t *len)
     path[i] = 0;
 
     /* the fs task opens+allocs+reads the file (so it stays the sole FatFs driver). */
-    extern void puts0(const char *); extern void putu(unsigned);
-    puts0("[lib] SD "); puts0(path);
     void *buf = 0;
     long sz = kfs_call(KFS_READFILE, path, 0, 0, &buf);
-    if (sz <= 0 || !buf) { puts0(" — miss\n"); return 0; }  /* not on the SD (or no SD) */
+    if (sz <= 0 || !buf) return 0;                          /* not on the SD (or no SD) */
+    extern void puts0(const char *); extern void putu(unsigned);
+    puts0("[lib] SD "); puts0(path);                        /* loaded once, cached by soname */
     puts0(" ("); putu((unsigned)sz); puts0(" bytes)\n");
     *data = (const uint8_t *)buf; *len = (uint32_t)sz;
     return 1;
