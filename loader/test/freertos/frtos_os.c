@@ -1320,13 +1320,35 @@ void deferral_thunk(void)                 /* PL1 (System), task context */
                         if (c < 0) { g_con_eof = 1; break; }   /* EOF (qemu pipe drained) */
                         if (c == 3 || c == 26) {          /* ^C kills / ^Z stops the fg job;
                                                            * either drops the pending line */
-                            if (c == 3) frtos_tty_sigint();     /* no-ops if the ISR already fired */
-                            else        frtos_tty_sigtstp();
                             g_llen = 0;
                             if (g_console) g_console(c == 3 ? "^C\n" : "^Z\n", 3);
-                            g_lbuf[g_llen++] = '\n';      /* empty line -> the reader reprompts */
+                            if (c == 3) {
+                                frtos_tty_sigint();       /* no-ops if the ISR already fired */
+                                if (p->killed)            /* WE are the target: die here — a
+                                                           * phantom line must not escape the
+                                                           * dying read */
+                                    proc_exit_self(p, 137);
+                            } else {
+                                frtos_tty_sigtstp();
+                                if (p->stopped) {         /* WE are the target: park INSIDE the
+                                                           * read; after fg it keeps reading —
+                                                           * no phantom empty line (sqlite's
+                                                           * REPL would take it as input) */
+                                    stop_park(p);
+                                    continue;
+                                }
+                            }
+                            g_lbuf[g_llen++] = '\n';      /* not the target (idle prompt):
+                                                           * empty line -> the reader reprompts */
                             break;
                         }
+                        if (c == 4 && g_llen == 0)        /* ^D at line start: EOF for THIS
+                                                           * read (r = 0) — cooked readers
+                                                           * (sqlite, cat) exit cleanly; the
+                                                           * raw linenoise prompt handles its
+                                                           * own ^D. Not sticky (g_con_eof
+                                                           * stays clear). */
+                            break;
                         if (g_lsawcr) {                   /* CRLF: the CR already became NL */
                             g_lsawcr = 0;
                             if (c == '\n') continue;

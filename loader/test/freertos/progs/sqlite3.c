@@ -85,11 +85,19 @@ int main(int argc, char **argv)
     for (;;) {
         printf(slen ? "   ...> " : "sqlite> ");
         fflush(stdout);
-        if (!fgets(line, sizeof line, stdin)) break;              /* EOF */
+        if (!fgets(line, sizeof line, stdin)) break;              /* EOF (^D) */
         if (!slen && line[0] == '.') {                            /* dot command */
             line[strcspn(line, "\r\n")] = 0;
             if (line[1]) dot_command(line);
             continue;
+        }
+        if (!slen) {                                              /* bare quit/exit work too */
+            char w[8];
+            int n = (int)strcspn(line, " \t\r\n");
+            if (n > 0 && n < 8) {
+                memcpy(w, line, (size_t)n); w[n] = 0;
+                if (!strcmp(w, "quit") || !strcmp(w, "exit")) break;
+            }
         }
         int ll = (int)strlen(line);
         if (slen + ll >= (int)sizeof stmt - 1) { fprintf(stderr, "statement too long\n"); slen = 0; continue; }
