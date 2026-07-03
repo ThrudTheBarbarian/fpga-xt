@@ -91,7 +91,7 @@ FRINC  := -I. -I$(FR)/include -I$(FRPORT) -Itest/freertos -Itest/freertos/shim \
           -Itest/freertos/net -I$(LWIP)/src/include -I$(LWIP)/contrib/ports/freertos/include
 # lwIP core (BSD) + the FreeRTOS sys_arch + our GEM0 netif — the network stack
 # (DHCP + the tftp file drop; TCP compiled in for the phase-2 console/sockets)
-LWIPSRC := $(addprefix $(LWIP)/src/core/, init.c def.c inet_chksum.c ip.c mem.c memp.c \
+LWIPSRC := $(addprefix $(LWIP)/src/core/, init.c def.c dns.c inet_chksum.c ip.c mem.c memp.c \
              netif.c pbuf.c stats.c sys.c tcp.c tcp_in.c tcp_out.c timeouts.c udp.c \
              altcp.c altcp_alloc.c altcp_tcp.c) \
            $(addprefix $(LWIP)/src/core/ipv4/, acd.c dhcp.c etharp.c icmp.c ip4.c \
@@ -99,13 +99,14 @@ LWIPSRC := $(addprefix $(LWIP)/src/core/, init.c def.c inet_chksum.c ip.c mem.c 
            $(LWIP)/src/netif/ethernet.c $(LWIP)/src/api/tcpip.c \
            $(LWIP)/src/apps/tftp/tftp.c \
            $(LWIP)/src/apps/mdns/mdns.c $(LWIP)/src/apps/mdns/mdns_out.c \
-           $(LWIP)/src/apps/mdns/mdns_domain.c \
+           $(LWIP)/src/apps/mdns/mdns_domain.c $(LWIP)/src/apps/sntp/sntp.c \
            $(LWIP)/contrib/ports/freertos/sys_arch.c
 NETSRC  := test/freertos/net/xemacps.c test/freertos/net/xemacps_control.c \
            test/freertos/net/xemacps_bdring.c test/freertos/net/xemacps_pcs.c \
            test/freertos/net/xemacps_hw.c \
            test/freertos/net/xemacps_g.c test/freertos/net/net_libc.c \
-           test/freertos/net/xemacpsif.c test/freertos/net/net.c test/freertos/net/tftpd.c
+           test/freertos/net/xemacpsif.c test/freertos/net/net.c test/freertos/net/tftpd.c \
+           test/freertos/net/netcon.c test/freertos/net/wallclock.c
 FRCFLAGS := -marm -mcpu=cortex-a9 -mfloat-abi=softfp -mfpu=neon-vfpv3 -ffreestanding -nostdlib -O2 -g -DSDT $(FRINC)
 FRSRC := $(FR)/tasks.c $(FR)/queue.c $(FR)/list.c $(FR)/timers.c $(FR)/event_groups.c \
          $(FR)/croutine.c $(FR)/stream_buffer.c $(FR)/portable/MemMang/heap_4.c \

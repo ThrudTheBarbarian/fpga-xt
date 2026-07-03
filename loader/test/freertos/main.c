@@ -341,7 +341,8 @@ int main(void)
         vfs_devfs_init(); vfs_add_mount("/OS/dev", "devfs", 0); }      /* char devices */
       { extern void vfs_procfs_init(void);
         vfs_procfs_init(); vfs_add_mount("/OS/proc", "procfs", 0); } } /* the proc table */
-    ksys_set_console(rt_write);
+    { extern void con_write_tee(const char *, int);
+      ksys_set_console(con_write_tee); }      /* UART + a mirror to the TCP console (netcon) */
     romfs_mount(romfs_blob, romfs_blob_len);
 
     g_host = (xtld_host){ .alloc = frtos_alloc, .dealloc = frtos_free, .sync_caches = mmu_sync_caches,

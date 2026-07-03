@@ -86,7 +86,7 @@ void sd_init(void)
 
 /* enumerate files in an SD directory into out[] (NUL-terminated names, <=31 chars,
  * subdirectories skipped). Returns the count, or -1 if the dir can't be opened.
- * Used by the /OS/Boot auto-runner. Single-threaded (reuses the static DIR/FILINFO). */
+ * Used by the /OS/boot auto-runner. Single-threaded (reuses the static DIR/FILINFO). */
 int sd_listdir_raw(const char *dir, char out[][32], int max)
 {
     if (f_opendir(&g_dir, dir) != FR_OK) return -1;

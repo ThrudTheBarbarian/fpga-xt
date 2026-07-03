@@ -81,7 +81,7 @@ int  frtos_proc_snap(int idx, char *comm, int commsz, char *cmdl, int cmdsz,
                      int *cmdlen, int *state);
 int  frtos_spawn_host(const char *hostpath, int argc, char **argv, const xtld_host *host);
 int  frtos_open_lib(const char *name, const uint8_t **data, uint32_t *len, void *user);
-void frtos_lib_path_set(const char *const *dirs, int n);  /* loader lib search path (default /OS/Library/) */
+void frtos_lib_path_set(const char *const *dirs, int n);  /* loader lib search path (default /OS/library/) */
 void frtos_on_loaded(xtld_obj *obj, void *user);   /* xtld_host.on_loaded: W^X + PL0 */
 uintptr_t frtos_ksym(const char *name, void *user);
 int  frtos_waitpid(int pid);

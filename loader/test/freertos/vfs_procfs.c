@@ -1,13 +1,13 @@
-/* vfs_procfs.c — the process table as files, mounted /OS/Proc.
+/* vfs_procfs.c — the process table as files, mounted /OS/proc.
  *
  * Layout (a Linux-shaped subset — enough for toybox ps/top/killall, whose
- * /proc literals are patched to /OS/Proc):
- *   /OS/Proc/<pid>/stat      the do_task_stat line (real pid/comm/state,
+ * /proc literals are patched to /OS/proc):
+ *   /OS/proc/<pid>/stat      the do_task_stat line (real pid/comm/state,
  *                            plausible zeros for the accounting fields)
- *   /OS/Proc/<pid>/status    Name/State/Pid/Uid/Gid, tab-separated
- *   /OS/Proc/<pid>/cmdline   argv, NUL-joined
- *   /OS/Proc/uptime          wall clock since boot
- *   /OS/Proc/meminfo         static totals (tools want it to exist)
+ *   /OS/proc/<pid>/status    Name/State/Pid/Uid/Gid, tab-separated
+ *   /OS/proc/<pid>/cmdline   argv, NUL-joined
+ *   /OS/proc/uptime          wall clock since boot
+ *   /OS/proc/meminfo         static totals (tools want it to exist)
  *
  * Content is generated at OPEN into an allocated buffer (a moment-in-time
  * snapshot; the fd then reads in-memory via vf.data), freed at close. Opens

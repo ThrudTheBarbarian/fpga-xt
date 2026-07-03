@@ -7,7 +7,7 @@
  *
  * A foreground command runs to completion (waitpid) before the script
  * continues; a trailing '&' launches it in the background. `lua <script>` runs
- * a script and exits — a Lua /OS/Boot/NN-* script declares `#!/bin/lua` and
+ * a script and exits — a Lua /OS/boot/NN-* script declares `#!/bin/lua` and
  * runs as its own process (no shared state). `lua` with no argument is an
  * interactive REPL: it reads lines from stdin (blocking read, fd 0) and runs
  * each; `exit`/`quit` (or EOF) leaves it. The login shell is toysh (/bin/sh).

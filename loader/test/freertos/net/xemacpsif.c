@@ -287,7 +287,9 @@ err_t xemacpsif_init(struct netif *nif)
      * link+aneg immediately, HW in a second or two) */
     XEmacPs_SetOperatingSpeed(&g_emac, 100);
     XEmacPs_Start(&g_emac);
+#ifndef XT_NET_NOIRQ
     gem0_irq_enable();
+#endif
 
     nif->name[0] = 'e'; nif->name[1] = '0';
     nif->output     = etharp_output;

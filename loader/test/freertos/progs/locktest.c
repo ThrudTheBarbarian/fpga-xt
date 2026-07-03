@@ -1,4 +1,4 @@
-/* /bin/locktest — prove the lockfs (advisory locks-as-files @ /OS/Var/Locks).
+/* /bin/locktest — prove the lockfs (advisory locks-as-files @ /OS/var/locks).
  *
  * Exercises the whole mechanism from user space: acquire, refuse-while-held,
  * read-back the holder id, release, re-acquire, and refuse-to-read once free.
@@ -21,8 +21,8 @@ static void check(const char *what, int ok) {
 
 void _app_entry(int argc, char **argv) {
     (void)argc; (void)argv;
-    const char *L = "/OS/Var/Locks/locktest";
-    put("locktest: lockfs @ /OS/Var/Locks\n");
+    const char *L = "/OS/var/locks/locktest";
+    put("locktest: lockfs @ /OS/var/locks\n");
 
     long a = sys_open(L, O_CREAT | O_WRONLY);          /* acquire */
     check("acquire lock", a >= 0);

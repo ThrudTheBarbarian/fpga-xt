@@ -24,7 +24,8 @@
 #define LWIP_DHCP                  1
 #define LWIP_DHCP_DOES_ACD_CHECK   0     /* bind on ACK (no multi-second ARP probe dance) */
 #define LWIP_AUTOIP                0
-#define LWIP_DNS                   0
+#define LWIP_DNS                   1     /* sntp resolves pool.ntp.org */
+#define LWIP_DHCP_PROVIDE_DNS_SERVERS 1  /* DHCP option 6 -> dns_setserver */
 #define LWIP_IGMP                  1     /* mDNS joins 224.0.0.251 */
 #define LWIP_RAW                   0
 
@@ -42,11 +43,13 @@
 #define MEM_ALIGNMENT              4
 #define MEM_SIZE                   (64 * 1024)
 #define MEMP_NUM_PBUF              32
-#define MEMP_NUM_UDP_PCB           10
+#define MEMP_NUM_UDP_PCB           12
 #define MEMP_NUM_TCP_PCB           8
 #define MEMP_NUM_TCP_PCB_LISTEN    4
 #define MEMP_NUM_TCP_SEG           32
-#define MEMP_NUM_SYS_TIMEOUT       12
+#define MEMP_NUM_SYS_TIMEOUT       24    /* dhcp+arp+tcp+dns+mdns+sntp+tftp cyclic + one-
+                                          * shots; an EXHAUSTED pool spins the tcpip thread
+                                          * at prio 3 = a whole-system wedge */
 #define PBUF_POOL_SIZE             32
 #define PBUF_POOL_BUFSIZE          1600
 
@@ -57,7 +60,8 @@
 #define LWIP_CHECKSUM_CTRL_PER_NETIF 0   /* software checksums everywhere (no offload) */
 
 #define TCPIP_THREAD_NAME          "lwip"
-#define TCPIP_THREAD_STACKSIZE     2048      /* words */
+#define LWIP_FREERTOS_THREAD_STACKSIZE_IS_STACKWORDS 1   /* sizes below are WORDS */
+#define TCPIP_THREAD_STACKSIZE     2048      /* words = 8 KB (dns/sntp/mdns run here) */
 #define TCPIP_THREAD_PRIO          3
 #define TCPIP_MBOX_SIZE            16
 #define DEFAULT_UDP_RECVMBOX_SIZE  8
@@ -67,6 +71,11 @@
 
 #define LWIP_STATS                 0
 #define LWIP_DEBUG                 0
+
+/* SNTP: resolves pool.ntp.org, hands the unix epoch to the kernel wall clock */
+#define SNTP_SERVER_DNS            1
+#define SNTP_SET_SYSTEM_TIME(sec)  do { extern void xt_wallclock_set(unsigned); xt_wallclock_set((unsigned)(sec)); } while (0)
+#define SNTP_UPDATE_DELAY          3600000   /* re-sync hourly */
 
 /* the TFTP file drop (apps/tftp/tftp.c) */
 #define TFTP_MAX_FILENAME_LEN      128

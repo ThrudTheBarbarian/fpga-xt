@@ -2,10 +2,10 @@
  *
  * Brings up gem_wm with a themed 9-slice window chrome, a wallpaper backdrop, and
  * desktop icons — all user content on the SD, each selected by a `Default` file:
- *   - theme:     /OS/Themes/<Default>/1x     (SD, baked .tex — no PNG decode)
- *   - wallpaper: /OS/Wallpaper/<Default>     (SD, user-swappable PPM; a procedural
+ *   - theme:     /OS/themes/<Default>/1x     (SD, baked .tex — no PNG decode)
+ *   - wallpaper: /OS/wallpaper/<Default>     (SD, user-swappable PPM; a procedural
  *                gradient is drawn instead when the SD file is absent/unreadable)
- *   - icons:     /OS/Icons/*.pam             (SD, user-swappable RGBA; scaled to ICON_SZ)
+ *   - icons:     /OS/icons/*.pam             (SD, user-swappable RGBA; scaled to ICON_SZ)
  *
  * The wallpaper is decoded straight into the OS-owned WALLPAPER_BASE DDR buffer
  * (SYS_fb_wallpaper) — a 1080p surface is ~8 MB, too big for the per-process heap.
@@ -72,14 +72,14 @@ static int read_default(const char *dir, char *out, int n)
     return out[0] != 0;
 }
 
-/* Decode the user's wallpaper (named by /OS/Wallpaper/Default) into the backdrop
+/* Decode the user's wallpaper (named by /OS/wallpaper/Default) into the backdrop
  * buffer; fall back to a gradient if the SD isn't there or the file won't parse
  * (e.g. not a P6/P7 image, or not exactly plane-sized). */
 static void load_wallpaper(gfx_surface *wp)
 {
     char name[128], path[192];
-    if (read_default("/OS/Wallpaper", name, sizeof name)) {
-        snprintf(path, sizeof path, "/OS/Wallpaper/%s", name);
+    if (read_default("/OS/wallpaper", name, sizeof name)) {
+        snprintf(path, sizeof path, "/OS/wallpaper/%s", name);
         if (img_load(path, wp)) return;
     }
     gradient(wp);
@@ -122,8 +122,8 @@ static void build_backdrop(gfx_surface *wp)
     load_wallpaper(wp);
     int wvh = v_opnvwk(wp);                 /* a workstation on the backdrop, for labels */
     int cx = 24 + ICON_SZ / 2, top = 32;    /* left column */
-    place_icon(wp, wvh, "/OS/Icons/xe.pam", "XE", cx, top);
-    place_icon(wp, wvh, "/OS/Icons/st.pam", "ST", cx, top + ICON_CELL);
+    place_icon(wp, wvh, "/OS/icons/xe.pam", "XE", cx, top);
+    place_icon(wp, wvh, "/OS/icons/st.pam", "ST", cx, top + ICON_CELL);
     if (wvh > 0) v_clsvwk(wvh);
 }
 
@@ -135,20 +135,20 @@ void _app_entry(int argc, char **argv)
     if (sys_fb_info(&fb) != 0) { sys_write(2, "desktop: no display plane\n", 26); return; }
     gfx_surface desk = { fb.w, fb.h, fb.stride, (uint32_t *)fb.addr };
 
-    font_face *face = font_face_open("/OS/Fonts/AovelSansRounded.ttf");
+    font_face *face = font_face_open("/OS/fonts/AovelSansRounded.ttf");
     if (!face) { sys_write(2, "desktop: font load FAILED\n", 26); return; }
 
     gem_wm_init(&wm, &desk, GFX_RGB(0x30, 0x50, 0x78));   /* desktop blue fallback */
     gem_wm_set_font(&wm, face);
 
-    /* theme from SD: /OS/Themes/<Default>/1x (baked .tex atlas + slices + ini) */
+    /* theme from SD: /OS/themes/<Default>/1x (baked .tex atlas + slices + ini) */
     char tname[64], tdir[160];
-    if (read_default("/OS/Themes", tname, sizeof tname)) {
-        snprintf(tdir, sizeof tdir, "/OS/Themes/%s/1x", tname);
+    if (read_default("/OS/themes", tname, sizeof tname)) {
+        snprintf(tdir, sizeof tdir, "/OS/themes/%s/1x", tname);
         if (theme_load(&th, tdir) == 0) { gem_wm_set_theme(&wm, &th); have_theme = 1; }
     }
     if (!have_theme) {
-        const char *m = "desktop: no SD theme in /OS/Themes; skeleton chrome\n";
+        const char *m = "desktop: no SD theme in /OS/themes; skeleton chrome\n";
         sys_write(2, m, (unsigned)strlen(m));
     }
 

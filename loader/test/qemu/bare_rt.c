@@ -35,6 +35,8 @@ int  sh_readc(void) { return (int)sh(0x07 /*SYS_READC*/, (void *)0); }
  * the piped stdin correctly anyway (the honest versions live in uart1_rx.c) */
 int  sh_avail(void) { return -1; }
 int  sh_wait(int ms) { (void)ms; return 1; }
+/* no input ring on qemu -> the TCP console is output-only there */
+void sh_inject(unsigned char c) { (void)c; }
 void sh_exit(int code) { long b[2] = { 0x20026, code }; sh(0x20 /*EXIT_EXTENDED*/, b); for (;;) {} }
 
 /* host filesystem over ARM semihosting (qemu reads the HOST fs) — lets the test

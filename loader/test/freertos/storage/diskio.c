@@ -700,6 +700,23 @@ DRESULT disk_ioctl (
 
 DWORD get_fattime (void)
 {
+	/* real time once SNTP has synced the wall clock (wallclock.c); the fixed
+	 * 2010-01-01 stamp remains the unsynced/offline fallback */
+	extern unsigned xt_wallclock_unix(void);
+	unsigned t = xt_wallclock_unix();
+	if (t) {
+		unsigned days = t / 86400u, rem = t % 86400u;
+		unsigned z = days + 719468u;
+		unsigned era = z / 146097u, doe = z % 146097u;
+		unsigned yoe = (doe - doe / 1460u + doe / 36524u - doe / 146096u) / 365u;
+		unsigned y = yoe + era * 400u, doy = doe - (365u * yoe + yoe / 4u - yoe / 100u);
+		unsigned mp = (5u * doy + 2u) / 153u, d = doy - (153u * mp + 2u) / 5u + 1u;
+		unsigned m = mp < 10u ? mp + 3u : mp - 9u;
+		if (m <= 2u) y++;
+		return ((DWORD)(y - 1980u) << 25) | ((DWORD)m << 21) | ((DWORD)d << 16)
+		     | ((DWORD)(rem / 3600u) << 11) | ((DWORD)((rem / 60u) % 60u) << 5)
+		     | ((DWORD)(rem % 60u) >> 1);
+	}
 	return	((DWORD)(2010U - 1980U) << 25U)	/* Fixed to Jan. 1, 2010 */
 		| ((DWORD)1 << 21)
 		| ((DWORD)1 << 16)

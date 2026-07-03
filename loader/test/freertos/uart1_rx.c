@@ -99,6 +99,22 @@ void uart1_rx_init(void)
     REG(UART_IER) = IXR_RTRIG | IXR_RTOUT;        /* rx trigger + rx timeout */
 }
 
+/* network-console input (netcon.c, task context): a received byte enters the
+ * SAME shell stream as UART keystrokes — line discipline, ^C/^Z and the raw
+ * editor behave identically over TCP. */
+void sh_inject(unsigned char c)
+{
+    extern int frtos_tty_sigint(void);
+    extern int frtos_tty_sigtstp(void);
+    if (c == 3)  frtos_tty_sigint();          /* like the ISR fast path */
+    if (c == 26) frtos_tty_sigtstp();
+    uint32_t nt = (sh_q.tail + 1u) % RING_SZ;
+    if (nt != sh_q.head) {
+        sh_q.buf[sh_q.tail] = c; sh_q.tail = nt;
+        xSemaphoreGive(sh_q.sem);
+    }
+}
+
 int sh_readc(void)             { return q_read(&sh_q, -1); }  /* shell console byte (blocking) */
 int sh_readc_timeout(int ms)   { return q_read(&sh_q, ms); }
 /* bytes buffered for the shell (raw-mode burst drain + XT_TTY_NREAD) */

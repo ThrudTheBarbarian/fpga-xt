@@ -89,6 +89,18 @@ void gtimer_timeofday(uint32_t *sec, uint32_t *usec)
     *usec = (uint32_t)(((t % f) * 1000000ULL) / f);
 }
 
+/* stack-overflow hook (configCHECK_FOR_STACK_OVERFLOW=2): name the task LOUDLY —
+ * a silent overflow shows up as nondeterministic early wedges (HW-learned). */
+void vApplicationStackOverflowHook(TaskHandle_t task, char *name)
+{
+    (void)task;
+    extern void puts0(const char *);
+    puts0("\n*** STACK OVERFLOW in task '");
+    puts0(name ? name : "?");
+    puts0("' ***\n");
+    for (;;) { }
+}
+
 /* Called by FreeRTOS_IRQ_Handler (portASM.S) with the acked interrupt id. */
 void vApplicationIRQHandler(uint32_t ulICCIAR)
 {

@@ -7,6 +7,7 @@
 #include "lwip/netif.h"
 #include "lwip/dhcp.h"
 #include "lwip/apps/mdns.h"
+#include "lwip/apps/sntp.h"
 #include "FreeRTOS.h"
 #include "task.h"
 
@@ -18,6 +19,7 @@ int   xemacpsif_poll(struct netif *nif);
 int   xemacpsif_link_poll(void);
 void  xemacpsif_wait(int ms);
 void  tftpd_init(void);
+void  netcon_init(void);
 
 static struct netif g_nif;
 static volatile int g_lwip_ready;
@@ -49,6 +51,14 @@ static void net_status(struct netif *nif)
     }
 }
 
+void sntp_start_cb(void *arg)              /* lwIP thread: SNTP fires once DNS arrives */
+{
+    (void)arg;
+    sntp_setoperatingmode(SNTP_OPMODE_POLL);
+    sntp_setservername(0, "pool.ntp.org");
+    sntp_init();
+}
+
 static void net_task(void *arg)
 {
     (void)arg;
@@ -73,6 +83,12 @@ static void net_task(void *arg)
     UNLOCK_TCPIP_CORE();
 
     tftpd_init();
+#ifndef XT_NO_NETCON
+    netcon_init();
+#endif
+#ifndef XT_NO_SNTP
+    { extern void sntp_start_cb(void *); tcpip_callback(sntp_start_cb, 0); }
+#endif
 
     TickType_t lastlink = 0;
     for (;;) {                                           /* the RX pump */
@@ -90,5 +106,5 @@ static void net_task(void *arg)
 
 void net_init(void)
 {
-    xTaskCreate(net_task, "net", 1024, 0, 2, 0);
+    xTaskCreate(net_task, "net", 2048, 0, 2, 0);   /* words = 8 KB: netif/mdns/dns init runs here */
 }
