@@ -1,6 +1,6 @@
 // xtdesk.c — the XTOS desktop on the SDL host testbed.  A themed AES desktop with
 // a wallpaper and desktop icons driven entirely by the registry
-// (/OS/Etc/Registry.db, desktopIcons): each row gives a position, an iconTypes id,
+// (/OS/etc/registry.db, desktopIcons): each row gives a position, an iconTypes id,
 // an icon bitmap and a displayName.  Icons are clickable G_CICON objects —
 // single-click selects/toggles the highlight, double-click opens a (stub) window.
 // Everything runs through the real AES, so this is the same logic that will run on
@@ -451,7 +451,7 @@ int main(int argc, char **argv) {
     aes_init(HV, &TH); appl_init();
     wind_set_desktop(0x30507800u);
 
-    { char dbp[320]; snprintf(dbp, sizeof dbp, "%s/OS/Etc/Registry.db", base);
+    { char dbp[320]; snprintf(dbp, sizeof dbp, "%s/OS/etc/registry.db", base);
       if (registry_open(dbp) != 0) fprintf(stderr, "xtdesk: no registry at %s\n", dbp); }
     load_wall();
     build_desktop();

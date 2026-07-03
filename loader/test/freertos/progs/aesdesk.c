@@ -14,7 +14,7 @@
  * back-buffer and blitted to the plane on present(), and directories are read
  * with sys_readdir/sys_stat (no opendir here — that's the toybox shim's).
  * Assets from the SD: theme /OS/themes/<Default>/1x, icons /OS/icons/*.pam,
- * registry /OS/etc/Registry.db; the font from /OS/fonts.
+ * registry /OS/etc/registry.db; the font from /OS/fonts.
  */
 #include "aes/aes.h"
 #include "img.h"
@@ -399,8 +399,8 @@ void _app_entry(int argc, char **argv) {
     aes_init(HV, &TH); appl_init();
     wind_set_desktop(0x30507800u);
 
-    if (registry_open("/OS/etc/Registry.db") != 0)
-        sys_write(2, "aesdesk: no registry (/OS/etc/Registry.db)\n", 43);
+    if (registry_open("/OS/etc/registry.db") != 0)
+        sys_write(2, "aesdesk: no registry (/OS/etc/registry.db)\n", 43);
     build_desktop();
     wind_set_desktop_content(deskcontent, NULL);
 

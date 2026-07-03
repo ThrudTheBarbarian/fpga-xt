@@ -1,17 +1,17 @@
-/* vfs_lockfs.c — advisory lock filesystem, mounted /OS/Var/Locks.
+/* vfs_lockfs.c — advisory lock filesystem, mounted /OS/var/locks.
  *
  * A lock IS a file.  open(name, O_CREAT) acquires an exclusive advisory lock on
  * <name>; if another holder has it the open fails (-> SQLITE_BUSY at the caller).
  * close() releases it.  A plain open (no O_CREAT) succeeds only when the lock is
- * held and reads back the holder's task id, so `cat /OS/Var/Locks/Registry.db`
- * says who owns it and `ls /OS/Var/Locks` (later) lists the live locks.
+ * held and reads back the holder's task id, so `cat /OS/var/locks/OS_etc_registry.db`
+ * says who owns it and `ls /OS/var/locks` (later) lists the live locks.
  *
  * Reap-safe by construction: the acquiring fd lives in the holder's fd table, so
  * a crashed or killed holder's lock frees itself — reap closes its fds, which
  * calls our close and drops the lock.  No stale .lock files to garbage-collect.
  *
  * Backs SQLite's cross-process VFS locking (sqlite_vfs.c) so the config DB
- * (/OS/Etc/Registry.db) can be a living, multi-writer store.  Coarse by design:
+ * (/OS/etc/registry.db) can be a living, multi-writer store.  Coarse by design:
  * every lock level maps to one whole-file exclusive lock, so a SHARED reader
  * serialises against an EXCLUSIVE writer.  Fine for an occasionally-touched
  * config DB; a shared/exclusive split can follow if a hot DB ever needs it.
