@@ -130,8 +130,8 @@ $(BUILD)/freertos.elf: $(FRSRC) $(FRASM) test/freertos/freertos.ld test/freertos
 # instead of semihosting (the testbed owns its SVC vector, so semihosting — which
 # qemu intercepts above the guest — isn't available on metal). JTAG-load with
 # ps7_init; run vmtest/demandtest/faulttest to exercise tier-2 on real silicon.
-$(BUILD)/freertos-hw.elf: $(FRSRC) $(FRASM) test/freertos/freertos.ld test/freertos/FreeRTOSConfig.h $(BUILD)/romfs_blob.h | $(BUILD)
-	$(ARMCC) $(FRCFLAGS) -DXT_HW_UART -DXT_HW -T test/freertos/freertos.ld $(FRASM) $(FRSRC) -lgcc -o $@
+$(BUILD)/freertos-hw.elf: $(FRSRC) $(FRASM) test/freertos/freertos.ld test/freertos/FreeRTOSConfig.h $(BUILD)/hwromfs/romfs_blob.h | $(BUILD)
+	$(ARMCC) -I$(BUILD)/hwromfs $(FRCFLAGS) -DXT_HW_UART -DXT_HW -T test/freertos/freertos.ld $(FRASM) $(FRSRC) -lgcc -o $@
 
 # Kernel-menu (runhost) testbed ELF for the toolchain — same sources, -DXT_KERNEL_SHELL.
 $(BUILD)/freertos-hosttest.elf: $(FRSRC) $(FRASM) test/freertos/freertos.ld test/freertos/FreeRTOSConfig.h $(BUILD)/romfs_blob.h | $(BUILD)
@@ -212,6 +212,14 @@ $(BUILD)/registry.o: $(GEM)/registry.c | $(BUILD)
 $(BUILD)/regtest.so: test/freertos/progs/regtest.c $(BUILD)/registry.o $(BUILD)/sqlite3.o $(BUILD)/sqlite_vfs.o $(BUILD)/libc.so $(BUILD)/libm.so | $(BUILD)
 	$(ARMCC) $(GEMCFLAGS) -I$(SQLITE) -Itest/qemu -c $< -o $(BUILD)/regtest.o
 	$(LLD) -shared --hash-style=sysv -o $@ $(BUILD)/regtest.o $(BUILD)/registry.o $(BUILD)/sqlite3.o $(BUILD)/sqlite_vfs.o $(BUILD)/libc.so $(BUILD)/libm.so
+
+# sqlite3 — the interactive SQL shell (compact REPL, not the upstream shell.c),
+# same SQLite + xt VFS as the registry: its locks are lockfs files, visible in
+# /OS/var/locks while held. Lives on the SD (/OS/bin) on HW; in the qemu romfs
+# for the test suite.
+$(BUILD)/sqlite3.so: test/freertos/progs/sqlite3.c $(BUILD)/sqlite3.o $(BUILD)/sqlite_vfs.o $(BUILD)/libc.so $(BUILD)/libm.so | $(BUILD)
+	$(ARMCC) $(GEMCFLAGS) -I$(SQLITE) -Itest/qemu -c $< -o $(BUILD)/sqlite3sh.o
+	$(LLD) -shared --hash-style=sysv -o $@ $(BUILD)/sqlite3sh.o $(BUILD)/sqlite3.o $(BUILD)/sqlite_vfs.o $(BUILD)/libc.so $(BUILD)/libm.so
 
 $(BUILD)/libGEM.so: $(GEMSRC) $(FTSRC) $(BUILD)/libc.so $(BUILD)/libm.so | $(BUILD)
 	$(ARMCC) $(GEMCFLAGS) -shared -nostdlib -Wl,-soname,libGEM.so \
@@ -325,7 +333,7 @@ ROMFS_OVERLAY ?= romfs-overlay
 ROMFS_OVERLAY_FILES := $(shell find $(ROMFS_OVERLAY) -type f 2>/dev/null)
 ROMFS_OVERLAY_ARGS  := $(foreach f,$(ROMFS_OVERLAY_FILES),/$(patsubst $(ROMFS_OVERLAY)/%,%,$(f))=$(f))
 
-$(BUILD)/romfs.bin: $(BUILD)/mkromfs $(BUILD)/toybox.so $(BUILD)/pipetest.so $(BUILD)/hello.so $(BUILD)/motd.so $(BUILD)/usestr.so $(BUILD)/echo.so $(BUILD)/libc_test.so $(BUILD)/gemtext.so $(BUILD)/desktop.so $(BUILD)/aesdesk.so $(BUILD)/regtest.so $(BUILD)/locktest.so $(BUILD)/lntest.so $(BUILD)/fstest.so $(BUILD)/lua.so $(BUILD)/init.so $(BUILD)/faultprog.so $(BUILD)/vmtest.so $(BUILD)/demandtest.so $(BUILD)/stacktest.so $(BUILD)/wxtest.so $(BUILD)/cowtest.so $(BUILD)/sharetext.so $(BUILD)/shmtest.so $(BUILD)/finictor.so $(BUILD)/mmaptest.so $(BUILD)/modetest.so $(BUILD)/ttytest.so $(BUILD)/badpoke.so $(BUILD)/stackpoke.so $(BUILD)/libutil.so $(BUILD)/libGEM.so $(BUILD)/libm.so $(BUILD)/libc.so test/freertos/Registry.db $(ROMFS_OVERLAY_FILES)
+$(BUILD)/romfs.bin: $(BUILD)/mkromfs $(BUILD)/toybox.so $(BUILD)/sqlite3.so $(BUILD)/pipetest.so $(BUILD)/hello.so $(BUILD)/motd.so $(BUILD)/usestr.so $(BUILD)/echo.so $(BUILD)/libc_test.so $(BUILD)/gemtext.so $(BUILD)/desktop.so $(BUILD)/aesdesk.so $(BUILD)/regtest.so $(BUILD)/locktest.so $(BUILD)/lntest.so $(BUILD)/fstest.so $(BUILD)/lua.so $(BUILD)/init.so $(BUILD)/faultprog.so $(BUILD)/vmtest.so $(BUILD)/demandtest.so $(BUILD)/stacktest.so $(BUILD)/wxtest.so $(BUILD)/cowtest.so $(BUILD)/sharetext.so $(BUILD)/shmtest.so $(BUILD)/finictor.so $(BUILD)/mmaptest.so $(BUILD)/modetest.so $(BUILD)/ttytest.so $(BUILD)/badpoke.so $(BUILD)/stackpoke.so $(BUILD)/libutil.so $(BUILD)/libGEM.so $(BUILD)/libm.so $(BUILD)/libc.so test/freertos/Registry.db $(ROMFS_OVERLAY_FILES)
 	$(BUILD)/mkromfs $@ \
 	    /bin/faultprog=$(BUILD)/faultprog.so \
 	    /bin/vmtest=$(BUILD)/vmtest.so \
@@ -358,6 +366,7 @@ $(BUILD)/romfs.bin: $(BUILD)/mkromfs $(BUILD)/toybox.so $(BUILD)/pipetest.so $(B
 	    /test/Registry.db=test/freertos/Registry.db \
 	    /bin/sh=$(BUILD)/toybox.so \
 	    /bin/lua=$(BUILD)/lua.so \
+	    /bin/sqlite3=$(BUILD)/sqlite3.so \
 	    $(TOYBOX_ALIASES) \
 	    /bin/init=$(BUILD)/init.so \
 	    /bin/hello=$(BUILD)/hello.so \
@@ -369,6 +378,72 @@ $(BUILD)/romfs_blob.h: $(BUILD)/romfs.bin
 	@{ printf '__attribute__((aligned(4096))) unsigned char romfs_blob[] = {\n'; \
 	   od -An -v -tx1 $< | sed -e 's/[0-9a-fA-F][0-9a-fA-F]/0x&,/g'; \
 	   printf '};\nunsigned int romfs_blob_len = sizeof(romfs_blob);\n'; } > $@
+
+# ---- HW romfs: slim ----------------------------------------------------------
+# The SD carries toybox + sqlite3 + the GEM stack (`make sdstage` -> copy onto
+# the card); the romfs keeps only what must exist without/before the SD: the
+# base libraries every spawn needs (libc/libm), init + lua (the boot runner and
+# its #!/bin/lua scripts), motd, and the tier-2 test battery. ~6 MB of RAM back
+# vs the full image. qemu keeps the full romfs (no SD there).
+$(BUILD)/romfs-hw.bin: $(BUILD)/mkromfs $(BUILD)/pipetest.so $(BUILD)/hello.so $(BUILD)/motd.so $(BUILD)/usestr.so $(BUILD)/libc_test.so $(BUILD)/locktest.so $(BUILD)/lntest.so $(BUILD)/fstest.so $(BUILD)/lua.so $(BUILD)/init.so $(BUILD)/faultprog.so $(BUILD)/vmtest.so $(BUILD)/demandtest.so $(BUILD)/stacktest.so $(BUILD)/wxtest.so $(BUILD)/cowtest.so $(BUILD)/sharetext.so $(BUILD)/shmtest.so $(BUILD)/finictor.so $(BUILD)/mmaptest.so $(BUILD)/modetest.so $(BUILD)/ttytest.so $(BUILD)/badpoke.so $(BUILD)/stackpoke.so $(BUILD)/libutil.so $(BUILD)/libm.so $(BUILD)/libc.so $(ROMFS_OVERLAY_FILES)
+	$(BUILD)/mkromfs $@ \
+	    /bin/faultprog=$(BUILD)/faultprog.so \
+	    /bin/vmtest=$(BUILD)/vmtest.so \
+	    /bin/demandtest=$(BUILD)/demandtest.so \
+	    /bin/stacktest=$(BUILD)/stacktest.so \
+	    /bin/wxtest=$(BUILD)/wxtest.so \
+	    /bin/cowtest=$(BUILD)/cowtest.so \
+	    /bin/sharetext=$(BUILD)/sharetext.so \
+	    /bin/shmtest=$(BUILD)/shmtest.so \
+	    /bin/finictor=$(BUILD)/finictor.so \
+	    /bin/modetest=$(BUILD)/modetest.so \
+	    /bin/badpoke=$(BUILD)/badpoke.so \
+	    /bin/stackpoke=$(BUILD)/stackpoke.so \
+	    /bin/mmaptest=$(BUILD)/mmaptest.so \
+	    $(if $(XTC_SO),/bin/xtcprog=$(XTC_SO)) \
+	    /Library/libc.so=$(BUILD)/libc.so \
+	    /Library/libm.so=$(BUILD)/libm.so \
+	    /Library/libutil.so=$(BUILD)/libutil.so \
+	    /bin/libc_test=$(BUILD)/libc_test.so \
+	    /bin/locktest=$(BUILD)/locktest.so \
+	    /bin/lntest=$(BUILD)/lntest.so \
+	    /bin/fstest=$(BUILD)/fstest.so \
+	    /bin/pipetest=$(BUILD)/pipetest.so \
+	    /bin/ttytest=$(BUILD)/ttytest.so \
+	    /bin/lua=$(BUILD)/lua.so \
+	    /bin/init=$(BUILD)/init.so \
+	    /bin/hello=$(BUILD)/hello.so \
+	    /bin/motd=$(BUILD)/motd.so \
+	    /bin/usestr=$(BUILD)/usestr.so \
+	    $(ROMFS_OVERLAY_ARGS)
+
+$(BUILD)/hwromfs/romfs_blob.h: $(BUILD)/romfs-hw.bin
+	@mkdir -p $(BUILD)/hwromfs
+	@{ printf '__attribute__((aligned(4096))) unsigned char romfs_blob[] = {\n'; \
+	   od -An -v -tx1 $< | sed -e 's/[0-9a-fA-F][0-9a-fA-F]/0x&,/g'; \
+	   printf '};\nunsigned int romfs_blob_len = sizeof(romfs_blob);\n'; } > $@
+
+# ---- SD staging: the card's /OS additions for the slim HW image --------------
+# Copy build/sdstage/OS/* onto the card, then run ONCE on XTOS:
+#   sh /OS/bin/install-links.sh
+# (creates the toybox applet symlinks; sh ships as a full copy of toybox so the
+# login shell exists before the links do)
+SDSTAGE := $(BUILD)/sdstage
+.PHONY: sdstage
+sdstage: $(BUILD)/toybox.so $(BUILD)/sqlite3.so $(BUILD)/libGEM.so $(BUILD)/aesdesk.so $(BUILD)/desktop.so $(BUILD)/gemtext.so $(BUILD)/regtest.so
+	@rm -rf $(SDSTAGE)
+	@mkdir -p $(SDSTAGE)/OS/bin $(SDSTAGE)/OS/library
+	cp $(BUILD)/toybox.so  $(SDSTAGE)/OS/bin/toybox
+	cp $(BUILD)/toybox.so  $(SDSTAGE)/OS/bin/sh
+	cp $(BUILD)/sqlite3.so $(SDSTAGE)/OS/bin/sqlite3
+	cp $(BUILD)/aesdesk.so $(SDSTAGE)/OS/bin/aesdesk
+	cp $(BUILD)/desktop.so $(SDSTAGE)/OS/bin/desktop
+	cp $(BUILD)/gemtext.so $(SDSTAGE)/OS/bin/gemtext
+	cp $(BUILD)/regtest.so $(SDSTAGE)/OS/bin/regtest
+	cp $(BUILD)/libGEM.so  $(SDSTAGE)/OS/library/libGEM.so
+	@printf 'for i in %s; do /OS/bin/toybox ln -sf toybox /OS/bin/$$i; done\necho "applet links installed"\n' \
+	    "$(filter-out toybox,$(TOYBOX_APPLETS))" > $(SDSTAGE)/OS/bin/install-links.sh
+	@echo "staged -> $(SDSTAGE)/OS; copy onto the card, then run: sh /OS/bin/install-links.sh"
 
 $(BUILD):
 	@mkdir -p $(BUILD)

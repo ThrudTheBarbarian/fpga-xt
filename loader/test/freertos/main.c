@@ -106,7 +106,7 @@ static void run_selftest(void)
 }
 
 /* Bring up /System/bin/init — the first program under multitasking (PL0, full libc).
- * The kernel enumerates /OS/Boot (init can't readdir yet) and hands init the sorted
+ * The kernel enumerates /OS/boot (init can't readdir yet) and hands init the sorted
  * script paths; init reads each script's #! line and spawns the interpreter
  * (#!/bin/sh -> toysh; #!/bin/lua -> the Lua interpreter) — one process per
  * script, so they get variable separation for free. We just waitpid init. */
@@ -116,20 +116,20 @@ static void boot_run(void)
 {
     extern int sd_listdir(const char *, char (*)[32], int);
     char nm[16][32];
-    int n = sd_listdir("0:/OS/Boot", nm, 16);
-    if (n < 0) n = 0;                                /* no /OS/Boot -> init runs with no scripts */
+    int n = sd_listdir("0:/OS/boot", nm, 16);
+    if (n < 0) n = 0;                                /* no /OS/boot -> init runs with no scripts */
     for (int i = 1; i < n; i++)                      /* insertion sort by the NN prefix */
         for (int j = i; j > 0 && lead_num(nm[j]) < lead_num(nm[j - 1]); j--) {
             char t[32]; for (int k = 0; k < 32; k++) { t[k] = nm[j][k]; nm[j][k] = nm[j-1][k]; nm[j-1][k] = t[k]; }
         }
-    /* argv = { "/System/bin/init", "/OS/Boot/<name>", ... } */
+    /* argv = { "/System/bin/init", "/OS/boot/<name>", ... } */
     static char paths[16][48];
     char *av[17];
     av[0] = "/System/bin/init";
     int ac = 1;
     for (int i = 0; i < n && ac < 17; i++) {
         if (nm[i][0] == '.') continue;              /* skip dotfiles: ._* AppleDouble, .DS_Store, ... */
-        const char *pre = "/OS/Boot/"; int k = 0;
+        const char *pre = "/OS/boot/"; int k = 0;
         while (pre[k]) { paths[i][k] = pre[k]; k++; }
         for (int j = 0; nm[i][j] && k < 47; j++) paths[i][k++] = nm[i][j];
         paths[i][k] = 0;
@@ -144,7 +144,7 @@ static void shell_task(void *arg)
 {
     (void)arg;
     { extern void sd_init(void); sd_init(); }   /* mount SD here (task context — FatFs reentrancy needs the scheduler) */
-    boot_run();       /* /OS/Boot/NN-<slug> auto-runner (e.g. the desktop) */
+    boot_run();       /* /OS/boot/NN-<slug> auto-runner (e.g. the desktop) */
 
     /* Login shell: /System/bin/sh is toysh (toybox) — the interactive PL0 shell
      * owns the console; respawn it when it exits (like init respawning a getty —
@@ -158,8 +158,14 @@ static void shell_task(void *arg)
      * exit\n' | qemu ...` — build it with `make hosttest` (-> freertos-hosttest.elf). */
 #ifndef XT_KERNEL_SHELL
     for (;;) {
-        char *av[1] = { (char *)"/System/bin/sh" };
-        int pid = frtos_spawn_argv("/System/bin/sh", 1, av, &g_host);
+        /* the SD toysh first (the slim HW romfs carries no shell), then the
+         * romfs one (qemu / full image) */
+        static const char *const shells[] = { "/OS/bin/sh", "/System/bin/sh" };
+        int pid = -1;
+        for (int s = 0; pid < 0 && s < 2; s++) {
+            char *av[1] = { (char *)shells[s] };
+            pid = frtos_spawn_argv(shells[s], 1, av, &g_host);
+        }
         if (pid < 0) { puts0("[login] sh unavailable — dropping to the kernel menu\n"); break; }
         int code = frtos_waitpid(pid);
         /* `exit 66` at the login shell = power off the testbed (piped qemu
@@ -329,11 +335,11 @@ int main(void)
       extern int vfs_add_mount(const char *, const char *, void *);
       vfs_romfs_init(); vfs_add_mount("/System", "romfs", 0);   /* romfs = /System (embedded, RO); SD = / at mount time */
       vfs_ramfs_init(); vfs_add_mount("/tmp", "ramfs", 0);      /* ramfs = /tmp (writable, in-memory) */
-      vfs_lockfs_init(); vfs_add_mount("/OS/Var/Locks", "lockfs", 0);   /* advisory locks as files */
+      vfs_lockfs_init(); vfs_add_mount("/OS/var/locks", "lockfs", 0);   /* advisory locks as files */
       { extern void vfs_devfs_init(void);
-        vfs_devfs_init(); vfs_add_mount("/OS/Dev", "devfs", 0); }      /* char devices */
+        vfs_devfs_init(); vfs_add_mount("/OS/dev", "devfs", 0); }      /* char devices */
       { extern void vfs_procfs_init(void);
-        vfs_procfs_init(); vfs_add_mount("/OS/Proc", "procfs", 0); } } /* the proc table */
+        vfs_procfs_init(); vfs_add_mount("/OS/proc", "procfs", 0); } } /* the proc table */
     ksys_set_console(rt_write);
     romfs_mount(romfs_blob, romfs_blob_len);
 

@@ -71,7 +71,7 @@ extern int _close(int fd);
  * getenv/setenv; both must see the SAME array, and libc.so's newlib getenv
  * would read newlib's own (empty) environ — so the whole family lives here. */
 static char *g_env0[] = {
-    "PATH=/System/bin:/bin",
+    "PATH=/System/bin:/OS/bin:/bin",
     "HOME=/",
     "TERM=vt102",
     "_=/System/bin/toybox",     /* toybox's nommu re-exec fallback path */

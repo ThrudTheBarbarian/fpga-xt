@@ -548,7 +548,10 @@ static long sys_lseek(proc_t *p, int fd, long off, int whence)
     fd_t *fdp = &p->fd[fd];
     long base = (whence == 1) ? (long)fdp->pos : (whence == 2) ? (long)fdp->vf.size : 0;
     long np = base + off;
-    if (np < 0 || np > (long)fdp->vf.size) return -1;
+    if (np < 0) return -1;
+    /* seeking PAST EOF is legal (POSIX): a write there grows the file with
+     * zero pages (fs_write), a read there returns 0 (EOF). SQLite grows its
+     * db exactly this way — write page N at N*4096 into a shorter file. */
     fdp->pos = (uint32_t)np;
     return np;
 }
@@ -1879,16 +1882,58 @@ int frtos_spawn_path(const char *path, const xtld_host *host)
 
 static int has_prefix(const char *s, const char *p) { while (*p) if (*s++ != *p++) return 0; return 1; }
 
+/* SD program images, cached by path: a program that misses the romfs is read
+ * whole off the card (KFS_READFILE resolves symlinks — the /OS/bin applet links
+ * point at one toybox) into the kernel heap ONCE and kept — the heap is a bump
+ * allocator (no free) and xtld copies segments at load, so one resident image
+ * serves every subsequent spawn. A binary updated on the card is picked up at
+ * the next boot. */
+#define SDPROG_MAX 24
+static struct { char path[64]; const uint8_t *data; uint32_t len; } g_sdprog[SDPROG_MAX];
+static int g_nsdprog;
+
+static int sd_prog_lookup(const char *path, const uint8_t **data, uint32_t *len)
+{
+    for (int i = 0; i < g_nsdprog; i++) {
+        const char *a = g_sdprog[i].path, *b = path;
+        while (*a && *a == *b) { a++; b++; }
+        if (*a == 0 && *b == 0) { *data = g_sdprog[i].data; *len = g_sdprog[i].len; return 1; }
+    }
+    void *buf = 0;
+    long sz = kfs_call(KFS_READFILE, path, 0, 0, &buf);
+    if (sz <= 0 || !buf) return 0;                     /* not on the SD (or no SD) */
+    if (g_nsdprog < SDPROG_MAX) {
+        int i = 0;
+        for (; path[i] && i < 63; i++) g_sdprog[g_nsdprog].path[i] = path[i];
+        g_sdprog[g_nsdprog].path[i] = 0;
+        g_sdprog[g_nsdprog].data = (const uint8_t *)buf;
+        g_sdprog[g_nsdprog].len  = (uint32_t)sz;
+        g_nsdprog++;
+    }
+    *data = (const uint8_t *)buf; *len = (uint32_t)sz;
+    return 1;
+}
+
 int frtos_spawn_argv_fds(const char *path, int argc, char **argv,
                          const xtld_host *host, const int *stdfds)
 {
     const uint8_t *data; uint32_t size;
-    /* programs live in the romfs (mounted at /System); accept a /System/bin/x path
-     * (-> romfs-internal /bin/x) as well as a bare romfs-internal path. (/OS/bin on
-     * the SD is a Stage-3 search target once SD .so loading lands.) */
-    if (!romfs_lookup(path, &data, &size)) {
-        if (!has_prefix(path, "/System/") || !romfs_lookup(path + 7, &data, &size))
-            return -1;
+    /* search order: the romfs (mounted at /System; accept /System/bin/x for the
+     * romfs-internal /bin/x), then the SD by full path (/OS/bin/x), then the
+     * /bin/x -> /OS/bin/x convention (a #!/bin/sh shebang finds the SD toysh
+     * when the romfs carries no shell). System programs win so a stray .so on
+     * the card can't shadow them. */
+    if (!romfs_lookup(path, &data, &size) &&
+        !(has_prefix(path, "/System/") && romfs_lookup(path + 7, &data, &size)) &&
+        !sd_prog_lookup(path, &data, &size)) {
+        char alt[64];
+        if (!has_prefix(path, "/bin/")) return -1;
+        int i = 0;
+        const char *pfx = "/OS";
+        while (pfx[i]) { alt[i] = pfx[i]; i++; }
+        for (int j = 0; path[j] && i < 63; j++) alt[i++] = path[j];
+        alt[i] = 0;
+        if (!sd_prog_lookup(alt, &data, &size)) return -1;
     }
     return frtos_spawn_fds(data, size, argc, argv, host, stdfds);
 }

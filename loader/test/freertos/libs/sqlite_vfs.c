@@ -2,17 +2,17 @@
  *
  * SQLite routes all I/O through a registered sqlite3_vfs; on a non-POSIX target
  * it ships none, so we provide one over the loader's file syscalls (sys_open/
- * read/write/lseek/close).  The READ path is complete; the WRITE path works for
- * plain writes, but xDelete/xTruncate/xSync need unlink/truncate/fsync syscalls
- * (the write-hardening step) — until then they are benign no-ops, correct as
- * long as nothing writes the DB.
+ * read/write/lseek/close/unlink).  Reads and journaled writes both work
+ * (xDelete really unlinks — commit removes the rollback journal); xSync stays a
+ * no-op (no fsync syscall; the fs task flushes dirty pages on close) and
+ * xTruncate too (DELETE journal mode never truncates).
  *
  * Cross-process locking is real: xLock/xUnlock/xCheckReservedLock take a whole-
- * file advisory lock in the lockfs (/OS/Var/Locks) by opening a lock "file" named
+ * file advisory lock in the lockfs (/OS/var/locks) by opening a lock "file" named
  * after the DB — O_CREAT succeeds for the first holder, fails (-> SQLITE_BUSY) for
  * the rest.  Coarse (SHARED serialises with EXCLUSIVE) but corruption-safe, and a
  * crashed holder's lock frees itself when reap closes its lockfd.  So the config
- * DB (/OS/Etc/Registry.db) is a living, multi-writer store.
+ * DB (/OS/etc/Registry.db) is a living, multi-writer store.
  *
  * Config: journal mode only (no WAL -> no shared-memory VFS), TEMP_STORE=memory
  * (no temp files), single-threaded.
@@ -32,14 +32,14 @@ typedef struct xt_file {
     sqlite3_file base;
     int  fd;
     int  lock;                /* current SQLite lock level (NONE..EXCLUSIVE) */
-    int  lockfd;              /* held lock file in /OS/Var/Locks (-1 = none) */
+    int  lockfd;              /* held lock file in /OS/var/locks (-1 = none) */
     char lockpath[192];       /* this DB's lock-file path (flattened DB path) */
 } xt_file;
 
-/* /OS/Etc/Registry.db -> /OS/Var/Locks/OS_Etc_Registry.db (flat lockfs namespace,
+/* /OS/etc/Registry.db -> /OS/var/locks/OS_Etc_Registry.db (flat lockfs namespace,
  * so DBs with the same basename in different dirs don't share a lock). */
 static void build_lockpath(char *dst, const char *name) {
-    static const char pfx[] = "/OS/Var/Locks/";
+    static const char pfx[] = "/OS/var/locks/";
     int i = 0; while (pfx[i]) { dst[i] = pfx[i]; i++; }
     while (*name == '/') name++;
     for (; *name && i < 190; name++) dst[i++] = (*name == '/') ? '_' : *name;
@@ -138,7 +138,11 @@ static int xtOpen(sqlite3_vfs *vfs, const char *name, sqlite3_file *f, int flags
     return SQLITE_OK;
 }
 static int xtDelete(sqlite3_vfs *vfs, const char *name, int sync) {
-    (void)vfs; (void)name; (void)sync; return SQLITE_OK;   /* TODO: SYS_unlink */
+    /* journal removal at commit — without it every later access sees a stale
+     * "hot" journal and fails. Deleting a file that's already gone is fine. */
+    (void)vfs; (void)sync;
+    sys_unlink(name);
+    return SQLITE_OK;
 }
 static int xtAccess(sqlite3_vfs *vfs, const char *name, int flags, int *pOut) {
     (void)vfs; (void)flags;
