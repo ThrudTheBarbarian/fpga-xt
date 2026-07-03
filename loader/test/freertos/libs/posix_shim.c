@@ -1006,16 +1006,38 @@ int nanosleep(const struct timespec *req, struct timespec *rem)
 
 /* ---- host identity --------------------------------------------------------- */
 #include <sys/sysinfo.h>
+/* pull "<label>: N kB" out of /OS/Proc/meminfo (the kernel's real pool view) */
+static unsigned long meminfo_kb(const char *text, const char *label)
+{
+    const char *p = strstr(text, label);
+    if (!p) return 0;
+    p += strlen(label);
+    while (*p == ':' || *p == ' ' || *p == '\t') p++;
+    unsigned long v = 0;
+    while (*p >= '0' && *p <= '9') v = v * 10 + (unsigned long)(*p++ - '0');
+    return v;
+}
+
 int sysinfo(struct sysinfo *info)
 {
     struct timeval tv;
+    char mi[512];
     memset(info, 0, sizeof *info);
     gettimeofday(&tv, 0);
     info->uptime = tv.tv_sec;            /* wall clock IS boot time here */
-    info->totalram = 512u * 1024 * 1024;
-    info->freeram = 256u * 1024 * 1024;
-    info->procs = 8;
     info->mem_unit = 1;
+    info->procs = 8;
+    long fd = sys_open("/OS/Proc/meminfo", 0);
+    if (fd >= 0) {
+        long n = sys_read((int)fd, mi, sizeof mi - 1);
+        sys_close((int)fd);
+        if (n > 0) {
+            mi[n] = 0;
+            info->totalram = meminfo_kb(mi, "MemTotal") * 1024ul;
+            info->freeram  = meminfo_kb(mi, "MemFree") * 1024ul;
+        }
+    }
+    if (!info->totalram) { info->totalram = 512u << 20; info->freeram = 256u << 20; }
     return 0;
 }
 

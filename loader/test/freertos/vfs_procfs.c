@@ -121,10 +121,17 @@ static int pf_gen_uptime(char *buf, int sz)
 
 static int pf_gen_meminfo(char *buf, int sz)
 {
+    /* the DDR arena truth: pool pages handed out vs available (heap grows up,
+     * page frontier grows down — free includes the unclaimed gap between) */
+    extern uint32_t vm_pages_free(void), vm_pages_inuse(void);
+    uint32_t freek  = vm_pages_free()  * 4u;
+    uint32_t usedk  = vm_pages_inuse() * 4u;
     pfb o = { buf, 0, sz };
-    pfb_s(&o, "MemTotal:       524288 kB\nMemFree:        262144 kB\n"
-              "MemAvailable:   262144 kB\nBuffers:             0 kB\n"
-              "Cached:              0 kB\nSwapTotal:           0 kB\nSwapFree:            0 kB\n");
+    pfb_s(&o, "MemTotal:       "); pfb_d(&o, (int)(freek + usedk)); pfb_s(&o, " kB\n");
+    pfb_s(&o, "MemFree:        "); pfb_d(&o, (int)freek); pfb_s(&o, " kB\n");
+    pfb_s(&o, "MemAvailable:   "); pfb_d(&o, (int)freek); pfb_s(&o, " kB\n");
+    pfb_s(&o, "Buffers:             0 kB\nCached:              0 kB\n"
+              "SwapTotal:           0 kB\nSwapFree:            0 kB\n");
     return o.n;
 }
 
