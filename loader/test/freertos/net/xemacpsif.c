@@ -91,7 +91,11 @@ static int phy_link_speed(void)
 /* ---- BD rings --------------------------------------------------------------- */
 static void rx_arm_bd(XEmacPs_Bd *bd, u32 buf)
 {
-    XEmacPs_BdSetAddressRx(bd, buf);                       /* clears the used bit */
+    /* SetAddressRx PRESERVES the low addr bits — the new/used bit must be
+     * cleared explicitly or the GEM's completed BD replays the same frame to
+     * FromHwRx forever (HW-found: an infinite loop of the last RRQ) */
+    XEmacPs_BdSetAddressRx(bd, buf);
+    XEmacPs_BdClearRxNew(bd);
     XEmacPs_BdSetStatus(bd, 0);
 }
 
