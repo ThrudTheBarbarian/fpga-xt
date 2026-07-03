@@ -95,12 +95,39 @@ static void vfs_normalize(const char *in, char *out, int outsz)
     out[oi] = 0;
 }
 
+/* ---- root aliases ---------------------------------------------------------
+ * Synthetic symlinks in "/" giving the traditional Unix names while the real
+ * trees stay segregated under /OS. They behave as symlinks everywhere:
+ * readlink/lstat see the link, everything else follows it. */
+static const struct { const char *name; const char *target; } g_alias[] = {
+    { "/etc",  "/OS/etc"          },
+    { "/boot", "/OS/boot"         },
+    { "/dev",  "/OS/dev"          },
+    { "/proc", "/OS/proc"         },
+    { "/var",  "/OS/var"          },
+    { "/lib",  "/OS/library"      },
+};
+#define NALIAS ((int)(sizeof g_alias / sizeof g_alias[0]))
+
+static int alias_find(const char *np)
+{
+    for (int i = 0; i < NALIAS; i++)
+        if (streq(np, g_alias[i].name)) return i;
+    return -1;
+}
+
 long vfs_readlink(const char *path, char *buf, int sz)
 {
     /* normalize like every other entry point: "/OS/./x" must reach the
      * driver as "/x" (FatFs has no rpath support — "." components fail) */
     char np[VFS_PATH_MAX];
     vfs_normalize(path, np, sizeof np);
+    int a = alias_find(np);
+    if (a >= 0) {
+        const char *t = g_alias[a].target;
+        int n = 0; while (t[n] && n < sz) { buf[n] = t[n]; n++; }
+        return n;
+    }
     const char *rel; vfs_mount *m = resolve(np, &rel);
     if (!m || !m->fs->readlink) return -1;
     return m->fs->readlink(m, rel, buf, sz);
@@ -165,6 +192,11 @@ long vfs_lstat(const char *path, struct xt_stat *st)
     char rp[VFS_PATH_MAX];
     if (vfs_resolve(path, rp, sizeof rp, 0) != 0) return -1;    /* the link itself */
     if (rp[0] == '/' && !rp[1]) return synth_dir(st);
+    int a = alias_find(rp);
+    if (a >= 0) {                                               /* root alias = symlink */
+        st->mode = XT_S_IFLNK; st->size = (unsigned)vlen(g_alias[a].target); st->mtime = 0;
+        return 0;
+    }
     const char *rel; vfs_mount *m = resolve(rp, &rel);
     if (!m) return -1;
     if (rel[0] == '/' && !rel[1]) return synth_dir(st);         /* mount root */
@@ -187,30 +219,10 @@ long vfs_symlink(const char *target, const char *linkpath)
     if (!m || !m->fs->symlink) return -1;
     return m->fs->symlink(m, target, rel);
 }
-/* case-insensitive name-vs-mount-first-component check (FAT preserves but
- * doesn't distinguish case; a mount shadows the real dir either way) */
-static int is_mount_component(const char *name)
-{
-    for (int i = 0; i < g_nmnt; i++) {
-        const char *p = g_mnt[i].prefix + 1;
-        int n = 0; while (p[n] && p[n] != '/') n++;
-        if (!n) continue;
-        int ok = 1;
-        for (int t = 0; t < n && ok; t++) {
-            char a = name[t], b = p[t];
-            if (a >= 'A' && a <= 'Z') a += 32;
-            if (b >= 'A' && b <= 'Z') b += 32;
-            if (a != b) ok = 0;
-        }
-        if (ok && !name[n]) return 1;
-    }
-    return 0;
-}
-
 /* enumerating "/" = the unique first components of the mount prefixes
- * ("/OS/var/locks" and "/OS" both contribute just "OS"), THEN the real
- * entries of the "/" mount (the SD root: BOOT.BIN etc.), minus any the
- * mounts shadow. */
+ * ("/OS/var/locks" and "/OS" both contribute just "OS"), then the root
+ * aliases as symlinks. The "/" mount's own files (BOOT.BIN, boot images)
+ * are deliberately NOT listed — reachable by exact path, invisible to ls. */
 static long root_readdir(int index, char *name, int nsz, unsigned *mode)
 {
     int emitted = 0;
@@ -236,18 +248,14 @@ static long root_readdir(int index, char *name, int nsz, unsigned *mode)
             return 1;
         }
     }
-    /* past the mounts: the "/" filesystem's own root entries */
-    vfs_mount *root = 0;
-    for (int i = 0; i < g_nmnt; i++)
-        if (g_mnt[i].prefix[0] == '/' && !g_mnt[i].prefix[1]) { root = &g_mnt[i]; break; }
-    if (!root || !root->fs->readdir) return 0;
-    int want = index - emitted;
-    for (int di = 0, served = 0; ; di++) {
-        int r = root->fs->readdir(root, "/", di, name, nsz, mode);
-        if (r != 1) return r;                                   /* end / error */
-        if (is_mount_component(name)) continue;                 /* shadowed by a mount */
-        if (served++ == want) return 1;
+    for (int i = 0; i < NALIAS; i++) {                          /* then the root aliases */
+        if (emitted++ == index) {
+            vcpy(name, g_alias[i].name + 1, nsz);
+            if (mode) *mode = XT_S_IFLNK;
+            return 1;
+        }
     }
+    return 0;
 }
 
 long vfs_readdir(const char *path, int index, char *name, int nsz, unsigned *mode)
