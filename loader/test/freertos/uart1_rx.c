@@ -59,6 +59,7 @@ static int q_read(rxq *q, int ms) {
 }
 
 extern int frtos_tty_sigint(void);   /* ^C: kill the foreground job (cooked mode only) */
+extern int frtos_tty_sigtstp(void);  /* ^Z: stop it (fg/bg resume it) */
 
 /* Called from vApplicationIRQHandler (zynq.c) when the acked id is UART1_IRQ_ID. */
 void uart1_rx_isr(void)
@@ -73,6 +74,7 @@ void uart1_rx_isr(void)
                                                        * its next syscall gate. The byte still
                                                        * queues — the discipline drops the
                                                        * line + echoes. Raw mode: no-op. */
+        if (c == 26 && !g_focus) frtos_tty_sigtstp(); /* ^Z likewise: stop at the next gate */
         q_push(g_focus ? &dk_q : &sh_q, c, &woken);
     }
     portYIELD_FROM_ISR(woken);

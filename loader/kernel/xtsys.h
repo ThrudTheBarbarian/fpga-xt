@@ -29,6 +29,14 @@
 #define SYS_spawn_fd 0x104   /* (path, argv, int fds[3]) -> pid: argv is NULL-terminated
                               * (argc counted kernel-side); the child's fd 0/1/2 come
                               * from the parent's fds (pipe ends; -1 = inherit console) */
+/* SYS_kill signal values with non-kill semantics (Linux numbers). Everything
+ * else (9, 15, ...) kills at the target's next syscall boundary. */
+#define XT_SIGCONT 18        /* resume a stopped process */
+#define XT_SIGSTOP 19        /* park it at its next syscall boundary */
+#define XT_SIGTSTP 20        /* ditto (what ^Z sends) */
+/* SYS_waitpid: the child stopped (^Z/SIGSTOP) rather than exited — it is NOT
+ * reaped; wait it again after XT_SIGCONT (that's what fg does). */
+#define XT_WAIT_STOPPED (-12)
 #define SYS_kill     0x105   /* (pid, sig) -> 0: sig 0 = existence probe; any other sig
                               * marks the process killed — it dies at its next syscall
                               * or blocking-wait tick (no handlers; soft-signal system) */

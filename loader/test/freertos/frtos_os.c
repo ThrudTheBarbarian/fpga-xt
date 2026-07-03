@@ -73,6 +73,8 @@ typedef struct {
     int               exit_code;
     volatile int      exited;         /* set by the exit thunk */
     volatile int      killed;         /* SYS_kill: die at the next syscall / blocking tick */
+    volatile int      stopped;        /* SIGSTOP/SIGTSTP (^Z): park at the next syscall /
+                                       * blocking tick until SIGCONT clears it (stop_park) */
     volatile int      waited;         /* a waitpid registered -> that caller will reap it */
     volatile int      reaping;        /* teardown claimed (one reaper only; slot not reusable yet) */
     TaskHandle_t      waiter;         /* PL0 waitpid task to notify on exit (0 = none/kernel waiter) */
@@ -112,24 +114,47 @@ void ksys_set_console(void (*w)(const char *, int)) { g_console = w; }
 static struct { volatile unsigned canon, echo; } g_tty = { 1, 1 };
 static volatile int g_tty_owner;                     /* pid of the last mode-setter */
 
-/* ---- ^C (ISIG): the foreground job ----------------------------------------
- * No process groups; "foreground" = the chain of blocking waitpids (the shell
- * waits vi, vi waits its :!cmd — a stack, pushed/popped in the waitpid family).
- * ^C in cooked mode kills the TOP (the deepest job): its waiter's waitpid
- * returns and THAT decides what happens next (a shell reprompts, vi survives
- * its subcommand). Raw mode delivers the byte instead. Called from the uart
- * ISR (so a compute loop dies at its next syscall gate, not at its next
- * console read) and from the line discipline (flag writes only: ISR-safe,
- * idempotent). */
-static volatile int g_fg[MAXPROC];
-static volatile int g_nfg;
+/* ---- ^C / ^Z (ISIG): the foreground job -----------------------------------
+ * No process groups; "foreground" = the LEAF of the live wait chain (the shell
+ * waits vi, vi waits its :!cmd — the leaf is the :!cmd), derived from the
+ * p->waiter links on each signal. NOT a push/pop stack: a parent's waitpid and
+ * its child's own waitpid race (fg CONTs + waits the job before the shell's
+ * waitpid-of-fg lands), so push ORDER lies — the waiter links don't. The login
+ * shell is waited by a KERNEL task over a semaphore (waiter = 0), so it is
+ * never a candidate: ^C at an idle prompt just clears the line, and ^Z cannot
+ * strand the console. Flag writes only: callable from the uart ISR (a compute
+ * loop dies/parks at its next syscall gate, not at its next console read) and
+ * from the line discipline; idempotent. */
+static proc_t *fg_leaf(void)
+{
+    for (int i = 0; i < MAXPROC; i++) {
+        proc_t *c = &g_proc[i];
+        if (!c->used || c->exited || !c->waiter) continue;
+        int waits_another = 0;                 /* c waits a live proc itself -> not the leaf */
+        for (int j = 0; j < MAXPROC && !waits_another; j++) {
+            proc_t *o = &g_proc[j];
+            if (o != c && o->used && !o->exited && o->waiter == c->task) waits_another = 1;
+        }
+        if (!waits_another) return c;
+    }
+    return 0;
+}
 
 int frtos_tty_sigint(void)
 {
-    if (!g_tty.canon || !g_nfg) return 0;
-    proc_t *t = proc_by_pid(g_fg[g_nfg - 1]);
-    if (!t || t->exited) return 0;
+    if (!g_tty.canon) return 0;
+    proc_t *t = fg_leaf();
+    if (!t) return 0;
     t->killed = 1;
+    return 1;
+}
+
+int frtos_tty_sigtstp(void)
+{
+    if (!g_tty.canon) return 0;
+    proc_t *t = fg_leaf();
+    if (!t) return 0;
+    t->stopped = 1;
     return 1;
 }
 
@@ -335,6 +360,18 @@ static void task_exit_thunk(void)
     proc_exit_self(p, p ? p->exit_code : 0);
 }
 
+/* SIGSTOP/SIGTSTP park (task context: the deferral thunk or a blocking-loop
+ * tick). Wakes a blocked waitpid first — it reports "stopped" to the shell —
+ * then polls the flag (no suspend/resume: a poll can't lose the SIGCONT race).
+ * A SYS_kill that lands while stopped kills without needing a SIGCONT. */
+static void stop_park(proc_t *p)
+{
+    if (!p || !p->stopped) return;
+    if (p->waiter) xTaskNotifyGive(p->waiter);
+    while (p->stopped && !p->killed) vTaskDelay(pdMS_TO_TICKS(20));
+    if (p->killed) proc_exit_self(p, 137);          /* no return */
+}
+
 /* For a STACK OVERFLOW (DFAR in a guard page) the task's own stack is unusable,
  * so xt_vectors.S points its SP at this per-process emergency stack before running
  * the kill thunk. For any other fault the task's stack is fine -> return 0 (leave
@@ -461,6 +498,7 @@ static long k_pipe_read(proc_t *p, int fd, char *buf, uint32_t n)
     if (!buf || !n) return 0;
     for (;;) {
         if (p->killed) proc_exit_self(p, 137);              /* SYS_kill lands here */
+        stop_park(p);                                       /* ^Z lands here too */
         size_t got = xStreamBufferReceive(pp->sb, buf, n, pdMS_TO_TICKS(20));
         if (got > 0) return (long)got;
         if (pp->writers <= 0) {
@@ -478,6 +516,7 @@ static long k_pipe_write(proc_t *p, int fd, const char *buf, uint32_t n)
     if (!buf) return -1;
     while (sent < n) {
         if (p->killed) proc_exit_self(p, 137);                  /* SYS_kill lands here */
+        stop_park(p);                                           /* ^Z lands here too */
         if (pp->readers <= 0) return sent ? (long)sent : -1;    /* EPIPE-ish */
         sent += xStreamBufferSend(pp->sb, buf + sent, n - sent, pdMS_TO_TICKS(20));
     }
@@ -1187,6 +1226,8 @@ void deferral_thunk(void)                 /* PL1 (System), task context */
     proc_t *p = cur_proc();
     long r = -1;
     if (p) {
+        stop_park(p);                                      /* ^Z/SIGSTOP: park before dispatch;
+                                                            * the syscall runs after SIGCONT */
         if (p->dnum == SYS_spawn) {                        /* may load libs from the SD (FatFs) */
             r = frtos_spawn_argv((const char *)p->da0, (int)p->da1, (char **)p->da2, g_khost);
         } else if (p->dnum == SYS_spawn_fd) {              /* spawn + wire child stdio to pipe ends */
@@ -1277,11 +1318,12 @@ void deferral_thunk(void)                 /* PL1 (System), task context */
                     for (;;) {
                         int c = sh_readc();
                         if (c < 0) { g_con_eof = 1; break; }   /* EOF (qemu pipe drained) */
-                        if (c == 3) {                     /* ^C (ISIG): kill the fg job,
-                                                           * drop the pending line */
-                            frtos_tty_sigint();           /* no-op if the ISR already fired */
+                        if (c == 3 || c == 26) {          /* ^C kills / ^Z stops the fg job;
+                                                           * either drops the pending line */
+                            if (c == 3) frtos_tty_sigint();     /* no-ops if the ISR already fired */
+                            else        frtos_tty_sigtstp();
                             g_llen = 0;
-                            if (g_console) g_console("^C\n", 3);
+                            if (g_console) g_console(c == 3 ? "^C\n" : "^Z\n", 3);
                             g_lbuf[g_llen++] = '\n';      /* empty line -> the reader reprompts */
                             break;
                         }
@@ -1311,9 +1353,12 @@ void deferral_thunk(void)                 /* PL1 (System), task context */
             /* file read over the page store, in the CLIENT's space (buf is mapped here);
              * pages are filled by the fs task, copied out one memcpy each. */
             r = fs_read(p);
-        } else if (p->dnum == SYS_write) {
+        } else if (p->dnum == SYS_write && p->da0 < NFD &&
+                   p->fd[p->da0].open && !p->fd[p->da0].con) {
             /* file write over the page store (client space, buf mapped here); pages are
-             * dirtied in place and flushed by the fs task on evict/close. */
+             * dirtied in place and flushed by the fs task on evict/close. CONSOLE
+             * writes fall through to do_syscall — normally inline, they only land
+             * here when the stop gate (^Z) force-defers every syscall. */
             r = fs_write(p);
         } else if (p->dnum == SYS_open || p->dnum == SYS_close) {
             /* metadata ops (no client data buffer) -> the fs service task owns them. */
@@ -1370,10 +1415,13 @@ static long do_syscall(uint32_t num, long a0, long a1, long a2)
         { g_console((const char *)a1, (int)a2); return a2; }
         return -1;
     case SYS_getpid: return p ? p->pid : 0;
-    case SYS_kill: {                                         /* (pid, sig): flag only — inline-safe */
+    case SYS_kill: {                                         /* (pid, sig): flags only — inline-safe */
         proc_t *t = proc_by_pid((int)a0);
         if (!t || t->exited) return -1;                      /* ESRCH-ish */
-        if (a1 != 0) t->killed = 1;                          /* sig 0 = existence probe */
+        if (a1 == 0) return 0;                               /* existence probe */
+        if (a1 == XT_SIGCONT) { t->stopped = 0; return 0; }  /* resume (stop_park polls) */
+        if (a1 == XT_SIGSTOP || a1 == XT_SIGTSTP) { t->stopped = 1; return 0; }
+        t->killed = 1;                                       /* every other signal kills */
         return 0;
     }
     case SYS_open:   return sys_open(p, (const char *)a0, (int)a1);   /* (path, flags) */
@@ -1541,6 +1589,11 @@ int k_syscall_dispatch(struct k_regs *regs)
             regs->lr = (uint32_t)(uintptr_t)task_exit_thunk;
             return 1;
         }
+        /* stopped (^Z / SIGSTOP): force the syscall through the deferral so it
+         * parks in task context (stop_park at the thunk's top), then runs the
+         * syscall normally after SIGCONT */
+        if (kp && kp->stopped && num != SYS_exit)
+            return defer_syscall(regs, num);
     }
     if (num == SYS_exit) {
         proc_t *p = cur_proc();
@@ -1743,6 +1796,7 @@ static int proc_launch(int slot, xtld_obj *obj, uintptr_t entry,
     }
     p->obj = obj; p->entry = entry; p->exit_code = 0; p->exited = 0; p->waited = 0; p->waiter = 0; p->pid = g_next_pid++;
     p->killed = 0;                       /* slot reuse must not inherit a SYS_kill */
+    p->stopped = 0;                      /* ...nor a SIGSTOP */
     /* inherit the spawner's cwd (a shell's children run where the shell is);
      * a spawn from kernel context starts at the root */
     proc_t *parent = cur_proc();
@@ -1805,7 +1859,7 @@ int frtos_proc_snap(int idx, char *comm, int commsz, char *cmdl, int cmdsz,
         while (s && *s && c < cmdsz - 1) cmdl[c++] = *s++;
         if (c < cmdsz - 1) cmdl[c++] = 0;                          /* NUL-joined */
     }
-    if (state) *state = p->exited ? 'Z' : 'S';
+    if (state) *state = p->exited ? 'Z' : (p->stopped ? 'T' : 'S');
     if (cmdsz > 0 && c == 0) cmdl[c++] = 0;
     if (cmdlen) *cmdlen = c;
     return pid ? pid : -1;
@@ -2196,10 +2250,13 @@ int frtos_waitpid_notify(int pid)
     if (!p) return -1;
     p->waited = 1;
     p->waiter = xTaskGetCurrentTaskHandle();      /* task_exit_thunk notifies this task */
-    int fgi = -1;                                 /* the waited child is now foreground (^C) */
-    if (g_nfg < MAXPROC) { fgi = g_nfg; g_fg[g_nfg++] = pid; }
-    while (!p->exited) ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
-    if (fgi >= 0 && g_nfg > fgi) g_nfg = fgi;     /* leave the fg stack (+ anything stale above) */
+    while (!p->exited && !p->stopped) ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
+    if (!p->exited) {                             /* stopped, not dead: report it, don't reap —
+                                                   * fg waits it again after SIGCONT */
+        p->waiter = 0;
+        p->waited = 0;
+        return XT_WAIT_STOPPED;
+    }
     return frtos_reap(p);
 }
 
@@ -2223,10 +2280,7 @@ int frtos_waitpid(int pid)
     proc_t *p = proc_by_pid(pid);
     if (!p) return -1;
     p->waited = 1;
-    int fgi = -1;                                 /* foreground for ^C, like the PL0 form */
-    if (g_nfg < MAXPROC) { fgi = g_nfg; g_fg[g_nfg++] = pid; }
     xSemaphoreTake(p->done, portMAX_DELAY);    /* yields via svc #0 until exit */
-    if (fgi >= 0 && g_nfg > fgi) g_nfg = fgi;
     return frtos_reap(p);
 }
 

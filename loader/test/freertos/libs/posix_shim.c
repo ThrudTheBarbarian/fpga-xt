@@ -817,6 +817,13 @@ pid_t waitpid(pid_t pid, int *status, int options)
         if (i == MAX_KIDS || pid <= 0) { errno = ECHILD; return -1; }
     }
     long code = sys_waitpid((int)pid);
+    if (code == XT_WAIT_STOPPED) {       /* ^Z: the job stopped, not exited. toysh has no
+                                          * job table, so report exit(148) = 128+SIGTSTP
+                                          * (it reprompts); fg/bg pick the job up later. */
+        for (i = 0; i < MAX_KIDS; i++) if (g_kids[i] == pid) g_kids[i] = 0;
+        if (status) *status = 148 << 8;
+        return pid;
+    }
     for (i = 0; i < MAX_KIDS; i++) if (g_kids[i] == pid) g_kids[i] = 0;
     if (status) *status = (int)((code & 0xff) << 8);   /* WIFEXITED shape */
     return pid;
