@@ -231,14 +231,15 @@ $(BUILD)/aesdesk.so: test/freertos/progs/aesdesk.c $(BUILD)/registry.o $(BUILD)/
 	$(ARMCC) $(GEMCFLAGS) -I$(SQLITE) -Itest/qemu -c $< -o $(BUILD)/aesdesk.o
 	$(LLD) -shared --hash-style=sysv -o $@ $(BUILD)/aesdesk.o $(BUILD)/registry.o $(BUILD)/sqlite3.o $(BUILD)/sqlite_vfs.o $(BUILD)/libGEM.so $(BUILD)/libc.so $(BUILD)/libm.so
 
-# sh.so — /System/bin/sh: the Lua interpreter (real Lua 5.4 core from xtos/lua + sh.c,
-# linked against libc.so/libm.so). One gcc call (compile + link), like libGEM.so.
+# lua.so — /System/bin/lua: the Lua interpreter/REPL (real Lua 5.4 core from
+# xtos/lua + lua.c, linked against libc.so/libm.so). Boot scripts that are Lua
+# use `#!/bin/lua`; /bin/sh is toysh (toybox). One gcc call, like libGEM.so.
 LUA     := ../xtos/lua
 LUACORE := $(filter-out $(LUA)/lua.c $(LUA)/luac.c $(LUA)/onelua.c,$(wildcard $(LUA)/*.c))
-$(BUILD)/sh.so: test/freertos/progs/sh.c $(LUACORE) $(BUILD)/libc.so $(BUILD)/libm.so | $(BUILD)
+$(BUILD)/lua.so: test/freertos/progs/lua.c $(LUACORE) $(BUILD)/libc.so $(BUILD)/libm.so | $(BUILD)
 	$(ARMCC) $(PROGCFLAGS) -I$(LUA) -Inewlib-pic/include -fpic -shared -nostdlib \
-	    -Wl,--hash-style=sysv -Wl,-soname,sh.so \
-	    test/freertos/progs/sh.c $(LUACORE) $(BUILD)/libc.so $(BUILD)/libm.so -o $@
+	    -Wl,--hash-style=sysv -Wl,-soname,lua.so \
+	    test/freertos/progs/lua.c $(LUACORE) $(BUILD)/libc.so $(BUILD)/libm.so -o $@
 
 # a program that uses libc (DT_NEEDED libc.so), compiled against the PIC newlib headers
 $(BUILD)/libc_test.so: test/freertos/progs/libc_test.c $(BUILD)/libc.so | $(BUILD)
@@ -306,7 +307,7 @@ ROMFS_OVERLAY ?= romfs-overlay
 ROMFS_OVERLAY_FILES := $(shell find $(ROMFS_OVERLAY) -type f 2>/dev/null)
 ROMFS_OVERLAY_ARGS  := $(foreach f,$(ROMFS_OVERLAY_FILES),/$(patsubst $(ROMFS_OVERLAY)/%,%,$(f))=$(f))
 
-$(BUILD)/romfs.bin: $(BUILD)/mkromfs $(BUILD)/toybox.so $(BUILD)/pipetest.so $(BUILD)/hello.so $(BUILD)/showmotd.so $(BUILD)/usestr.so $(BUILD)/echo.so $(BUILD)/libc_test.so $(BUILD)/gemtext.so $(BUILD)/desktop.so $(BUILD)/aesdesk.so $(BUILD)/regtest.so $(BUILD)/locktest.so $(BUILD)/lntest.so $(BUILD)/fstest.so $(BUILD)/sh.so $(BUILD)/init.so $(BUILD)/faultprog.so $(BUILD)/vmtest.so $(BUILD)/demandtest.so $(BUILD)/stacktest.so $(BUILD)/wxtest.so $(BUILD)/cowtest.so $(BUILD)/sharetext.so $(BUILD)/shmtest.so $(BUILD)/finictor.so $(BUILD)/mmaptest.so $(BUILD)/modetest.so $(BUILD)/badpoke.so $(BUILD)/stackpoke.so $(BUILD)/libutil.so $(BUILD)/libGEM.so $(BUILD)/libm.so $(BUILD)/libc.so test/freertos/motd.txt test/freertos/hello.lua test/freertos/Registry.db $(ROMFS_OVERLAY_FILES)
+$(BUILD)/romfs.bin: $(BUILD)/mkromfs $(BUILD)/toybox.so $(BUILD)/pipetest.so $(BUILD)/hello.so $(BUILD)/showmotd.so $(BUILD)/usestr.so $(BUILD)/echo.so $(BUILD)/libc_test.so $(BUILD)/gemtext.so $(BUILD)/desktop.so $(BUILD)/aesdesk.so $(BUILD)/regtest.so $(BUILD)/locktest.so $(BUILD)/lntest.so $(BUILD)/fstest.so $(BUILD)/lua.so $(BUILD)/init.so $(BUILD)/faultprog.so $(BUILD)/vmtest.so $(BUILD)/demandtest.so $(BUILD)/stacktest.so $(BUILD)/wxtest.so $(BUILD)/cowtest.so $(BUILD)/sharetext.so $(BUILD)/shmtest.so $(BUILD)/finictor.so $(BUILD)/mmaptest.so $(BUILD)/modetest.so $(BUILD)/badpoke.so $(BUILD)/stackpoke.so $(BUILD)/libutil.so $(BUILD)/libGEM.so $(BUILD)/libm.so $(BUILD)/libc.so test/freertos/motd.txt test/freertos/hello.lua test/freertos/Registry.db $(ROMFS_OVERLAY_FILES)
 	$(BUILD)/mkromfs $@ \
 	    /bin/faultprog=$(BUILD)/faultprog.so \
 	    /bin/vmtest=$(BUILD)/vmtest.so \
@@ -338,7 +339,8 @@ $(BUILD)/romfs.bin: $(BUILD)/mkromfs $(BUILD)/toybox.so $(BUILD)/pipetest.so $(B
 	    /bin/fstest=$(BUILD)/fstest.so \
 	    /bin/pipetest=$(BUILD)/pipetest.so \
 	    /Etc/Registry.db=test/freertos/Registry.db \
-	    /bin/sh=$(BUILD)/sh.so \
+	    /bin/sh=$(BUILD)/toybox.so \
+	    /bin/lua=$(BUILD)/lua.so \
 	    /bin/toybox=$(BUILD)/toybox.so \
 	    /bin/cat=$(BUILD)/toybox.so \
 	    /bin/cp=$(BUILD)/toybox.so \

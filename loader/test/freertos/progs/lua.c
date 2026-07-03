@@ -1,15 +1,16 @@
 /*
- * sh.c — /System/bin/sh: a shell that uses Lua as its scripting language. Per line,
- * COMMAND-FIRST: split into words; if word 0 names a program (in /System/bin or
- * /OS/bin) the line is run as a command (`desktop arg1 ...`); otherwise the line is
- * evaluated as Lua (`x = 5`, `for ...`, `print(...)`, `spawn("...")`). One persistent
- * lua_State per sh, so script-local Lua variables persist across lines.
+ * lua.c — /System/bin/lua: the Lua 5.4 interpreter. Per line, COMMAND-FIRST:
+ * split into words; if word 0 names a program (in /System/bin or /OS/bin) the
+ * line is run as a command (`desktop arg1 ...`); otherwise the line is
+ * evaluated as Lua (`x = 5`, `for ...`, `print(...)`, `spawn("...")`). One
+ * persistent lua_State, so script-local Lua variables persist across lines.
  *
- * A foreground command runs to completion (waitpid) before the script continues;
- * a trailing '&' launches it in the background. `sh <script>` runs a script and exits
- * (each /OS/Boot/NN-* is a separate sh process, so scripts share no state). `sh` with no
- * argument is an interactive REPL: it reads lines from stdin (blocking read, fd 0) and
- * runs each; `exit`/`quit` (or EOF) leaves the shell.
+ * A foreground command runs to completion (waitpid) before the script
+ * continues; a trailing '&' launches it in the background. `lua <script>` runs
+ * a script and exits — a Lua /OS/Boot/NN-* script declares `#!/bin/lua` and
+ * runs as its own process (no shared state). `lua` with no argument is an
+ * interactive REPL: it reads lines from stdin (blocking read, fd 0) and runs
+ * each; `exit`/`quit` (or EOF) leaves it. The login shell is toysh (/bin/sh).
  *
  * Embeds the real Lua 5.4 core, linked against libc.so/libm.so.
  */
@@ -97,7 +98,7 @@ void _app_entry(int argc, char **argv)
     if (argc < 2) {                                   /* interactive REPL */
         char line[256];
         for (;;) {
-            sys_write(1, "sh$ ", 4);
+            sys_write(1, "lua> ", 5);
             int n = 0;                                /* read a line via blocking stdin (fd 0) */
             for (;;) {                                /* raw UART -> echo locally */
                 char c;

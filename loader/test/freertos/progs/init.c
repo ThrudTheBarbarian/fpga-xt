@@ -1,9 +1,10 @@
 /*
  * init.c — /System/bin/init: the first program under multitasking (PL0). The kernel
  * hands it the boot-script paths (argv, sorted by NN). For each, init reads the
- * script's "#!" line to find the interpreter (#!/bin/sh -> /bin/sh, the Lua shell,
- * which the kernel resolves to the romfs) and spawns "interp script". One process per
- * script -> variable separation. Bare usys.h (no libc) so it's tiny + fast.
+ * script's "#!" line to find the interpreter (#!/bin/sh -> toysh, #!/bin/lua ->
+ * the Lua interpreter; the kernel resolves either to the romfs) and spawns
+ * "interp script". One process per script -> variable separation. Bare usys.h
+ * (no libc) so it's tiny + fast.
  */
 #include "usys.h"
 

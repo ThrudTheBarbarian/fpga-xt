@@ -108,8 +108,8 @@ static void run_selftest(void)
 /* Bring up /System/bin/init — the first program under multitasking (PL0, full libc).
  * The kernel enumerates /OS/Boot (init can't readdir yet) and hands init the sorted
  * script paths; init reads each script's #! line and spawns the interpreter
- * (#!/bin/sh -> /System/bin/sh, the Lua shell) — one process per script, so they get
- * variable separation for free. We just waitpid init. */
+ * (#!/bin/sh -> toysh; #!/bin/lua -> the Lua interpreter) — one process per
+ * script, so they get variable separation for free. We just waitpid init. */
 static int lead_num(const char *s) { int v = 0; while (*s >= '0' && *s <= '9') v = v * 10 + (*s++ - '0'); return v; }
 
 static void boot_run(void)
@@ -146,16 +146,16 @@ static void shell_task(void *arg)
     { extern void sd_init(void); sd_init(); }   /* mount SD here (task context — FatFs reentrancy needs the scheduler) */
     boot_run();       /* /OS/Boot/NN-<slug> auto-runner (e.g. the desktop) */
 
-    /* Login shell: the interactive PL0 sh owns the console; respawn it when it exits
-     * (like init respawning a getty — `exit` just logs back in). If it can't launch
-     * (sh.so missing / spawn fails) fall through to the kernel test menu below, which
-     * stays as the PL1 safety net + the tier-2 battery.
+    /* Login shell: /System/bin/sh is toysh (toybox) — the interactive PL0 shell
+     * owns the console; respawn it when it exits (like init respawning a getty —
+     * `exit` just logs back in). If it can't launch (toybox.so missing / spawn
+     * fails) fall through to the kernel test menu below, which stays as the PL1
+     * safety net + the tier-2 battery.
      *
      * XT_KERNEL_SHELL skips the login sh and boots straight into the kernel menu below,
      * which owns `runhost` (load + run a host-filesystem .so over semihosting). That's
      * the non-interactive testbed the toolchain drives: `printf 'runhost <hostpath>\n
-     * exit\n' | qemu ...` — the PL0 Lua sh would parse `runhost ...` as Lua. Build it
-     * with `make hosttest` (-> freertos-hosttest.elf). */
+     * exit\n' | qemu ...` — build it with `make hosttest` (-> freertos-hosttest.elf). */
 #ifndef XT_KERNEL_SHELL
     for (;;) {
         char *av[1] = { (char *)"/System/bin/sh" };
