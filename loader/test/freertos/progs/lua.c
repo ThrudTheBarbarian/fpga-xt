@@ -99,14 +99,13 @@ void _app_entry(int argc, char **argv)
         char line[256];
         for (;;) {
             sys_write(1, "lua> ", 5);
-            int n = 0;                                /* read a line via blocking stdin (fd 0) */
-            for (;;) {                                /* raw UART -> echo locally */
+            int n = 0;                                /* read a line via blocking stdin (fd 0);
+                                                       * echo/erase are the kernel tty's job */
+            for (;;) {
                 char c;
                 if (sys_read(0, &c, 1) != 1) { if (n == 0) { sys_write(1, "\n", 1); lua_close(L); sys_exit(0); } break; }
-                if (c == '\r') continue;
-                if (c == '\n') { sys_write(1, "\r\n", 2); break; }
-                if ((c == 8 || c == 127)) { if (n > 0) { n--; sys_write(1, "\b \b", 3); } continue; }
-                if (n < (int)sizeof line - 1) { line[n++] = c; sys_write(1, &c, 1); }
+                if (c == '\n') break;
+                if (n < (int)sizeof line - 1) line[n++] = c;
             }
             line[n] = 0;
             run_line(line);

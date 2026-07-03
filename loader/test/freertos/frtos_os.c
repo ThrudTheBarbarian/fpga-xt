@@ -1112,10 +1112,38 @@ void deferral_thunk(void)                 /* PL1 (System), task context */
         } else if (p->dnum == SYS_read &&
                    ((p->da0 == 0 && !p->fd[0].open) ||   /* fd0 open = redirected file stdin */
                     (p->da0 < NFD && p->fd[p->da0].open && p->fd[p->da0].con))) {
-            /* stdin (or a console alias): one blocking console char */
+            /* stdin (or a console alias): cooked-tty line discipline — the
+             * console is a raw UART, so ECHO / backspace-erase / CR->NL live
+             * HERE, once, for every program (a shell expects a cooked tty).
+             * One console = one line buffer; reads drain it, empty refills. */
+            static char lbuf[256];
+            static int  lpos, llen;
             char *buf = (char *)p->da1;
-            if (buf && p->da2 > 0) { int c = sh_readc(); if (c < 0) r = 0; else { buf[0] = (char)c; r = 1; } }
-            else r = 0;
+            if (!buf || p->da2 == 0) r = 0;
+            else {
+                if (lpos >= llen) {                       /* refill: read+echo a line */
+                    lpos = llen = 0;
+                    for (;;) {
+                        int c = sh_readc();
+                        if (c < 0) break;                 /* EOF (qemu pipe drained) */
+                        if (c == '\r') c = '\n';          /* real terminals send CR */
+                        if (c == 8 || c == 127) {         /* backspace/DEL: erase */
+                            if (llen > 0) { llen--; if (g_console) g_console("\b \b", 3); }
+                            continue;
+                        }
+                        if (llen < (int)sizeof lbuf) {
+                            char ec = (char)c;
+                            lbuf[llen++] = ec;
+                            if (g_console) g_console(&ec, 1);
+                        }
+                        if (c == '\n') break;
+                    }
+                }
+                uint32_t avail = (uint32_t)(llen - lpos);
+                uint32_t n = (uint32_t)p->da2 < avail ? (uint32_t)p->da2 : avail;
+                if (n) { memcpy(buf, lbuf + lpos, n); lpos += (int)n; }
+                r = (long)n;                              /* 0 = EOF */
+            }
         } else if (p->dnum == SYS_read) {
             /* file read over the page store, in the CLIENT's space (buf is mapped here);
              * pages are filled by the fs task, copied out one memcpy each. */
