@@ -17,6 +17,7 @@ mkdir -p "$WORK"; cd "$WORK"
 [ -d "newlib-$VER" ] || tar xzf newlib.tar.gz
 rm -rf b && mkdir b && cd b
 "../newlib-$VER/configure" --target=arm-none-eabi --disable-newlib-supplied-syscalls --disable-nls \
+  --enable-newlib-io-long-long --enable-newlib-io-c99-formats \
   CFLAGS_FOR_TARGET="-g -O2 -fPIC -ffunction-sections -fdata-sections"
 make all-target-newlib -j4
 ML=arm-none-eabi/thumb/v7-a+simd/softfp/newlib            # cortex-a9 softfp multilib
