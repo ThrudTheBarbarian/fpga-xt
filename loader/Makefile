@@ -249,16 +249,33 @@ $(BUILD)/libc_test.so: test/freertos/progs/libc_test.c $(BUILD)/libc.so | $(BUIL
 # toybox.so — /System/bin/toybox: the unix userland + shell (vendored
 # third_party/toybox, 0BSD; tools/build-toybox.sh cross-compiles it and
 # collects the objects) linked with the posix shim (POSIX surface over the
-# XTOS syscalls) against libc.so. Run `toybox sh` for a shell, or any applet
-# via `toybox NAME ...`. Refresh after toybox/config changes with:
+# XTOS syscalls) against libc.so. Refresh after toybox/config changes with:
 #   tools/build-toybox.sh && make freertos-build
+#
+# Every applet gets a /bin name (hardlink-style: mkromfs aliases them all to
+# the ONE toybox blob). Keep this list in step with tools/toybox-xtos.miniconfig.
+TOYBOX_APPLETS := toybox [ arch ascii base32 base64 basename bunzip2 bzcat \
+    cal cat cksum clear cmp count cp crc32 cut date df dirname dos2unix du \
+    echo egrep env expand false fgrep file find fold getopt grep gunzip head \
+    help ln ls md5sum mkdir mktemp mv nice nl od patch printenv printf pwd \
+    readlink realpath rm rmdir sed sha1sum sha224sum sha256sum sha384sum \
+    sha512sum sleep sort split stat strings tac tail tar tee test time touch \
+    true ts uname uniq unix2dos unlink uudecode uuencode uuidgen wc which zcat
+TOYBOX_ALIASES := $(foreach a,$(TOYBOX_APPLETS),/bin/$(a)=$(BUILD)/toybox.so)
 $(BUILD)/toybox/objects.list:
 	tools/build-toybox.sh
 $(BUILD)/posix_shim.o: test/freertos/libs/posix_shim.c kernel/xtsys.h test/qemu/usys.h | $(BUILD)
 	$(ARMCC) -marm -mcpu=cortex-a9 -mfloat-abi=softfp -mfpu=neon-vfpv3 -fpic -Os -fno-builtin \
 	    -D_GNU_SOURCE -Ilibc-compat -Inewlib-pic/include -Itest/qemu -Ikernel -c $< -o $@
-$(BUILD)/toybox.so: $(BUILD)/toybox/objects.list $(BUILD)/posix_shim.o $(BUILD)/libc.so
-	$(LLD) -shared --hash-style=sysv -o $@ $(BUILD)/posix_shim.o \
+# the Spencer regex (libs/regex, from the newlib source tree; engine.c is
+# #included by regexec.c) — sed/grep need a real regcomp
+REGEX_NAMES := regcomp regexec regfree regerror collcmp
+REGEX_OBJS  := $(foreach r,$(REGEX_NAMES),$(BUILD)/regex_$(r).o)
+$(BUILD)/regex_%.o: test/freertos/libs/regex/%.c | $(BUILD)
+	$(ARMCC) -marm -mcpu=cortex-a9 -mfloat-abi=softfp -mfpu=neon-vfpv3 -fpic -Os -fno-builtin \
+	    -D_GNU_SOURCE -Itest/freertos/libs/regex -Inewlib-pic/include -c $< -o $@
+$(BUILD)/toybox.so: $(BUILD)/toybox/objects.list $(BUILD)/posix_shim.o $(REGEX_OBJS) $(BUILD)/libc.so
+	$(LLD) -shared --hash-style=sysv -o $@ $(BUILD)/posix_shim.o $(REGEX_OBJS) \
 	    $$(cat $(BUILD)/toybox/objects.list) $(BUILD)/libc.so
 
 # vmtest — DT_NEEDED libc.so; touches the per-process private window (T2-b)
@@ -341,22 +358,7 @@ $(BUILD)/romfs.bin: $(BUILD)/mkromfs $(BUILD)/toybox.so $(BUILD)/pipetest.so $(B
 	    /Etc/Registry.db=test/freertos/Registry.db \
 	    /bin/sh=$(BUILD)/toybox.so \
 	    /bin/lua=$(BUILD)/lua.so \
-	    /bin/toybox=$(BUILD)/toybox.so \
-	    /bin/cat=$(BUILD)/toybox.so \
-	    /bin/cp=$(BUILD)/toybox.so \
-	    /bin/ls=$(BUILD)/toybox.so \
-	    /bin/mkdir=$(BUILD)/toybox.so \
-	    /bin/mv=$(BUILD)/toybox.so \
-	    /bin/pwd=$(BUILD)/toybox.so \
-	    /bin/rm=$(BUILD)/toybox.so \
-	    /bin/[=$(BUILD)/toybox.so \
-	    /bin/grep=$(BUILD)/toybox.so \
-	    /bin/egrep=$(BUILD)/toybox.so \
-	    /bin/fgrep=$(BUILD)/toybox.so \
-	    /bin/head=$(BUILD)/toybox.so \
-	    /bin/tail=$(BUILD)/toybox.so \
-	    /bin/wc=$(BUILD)/toybox.so \
-	    /bin/sort=$(BUILD)/toybox.so \
+	    $(TOYBOX_ALIASES) \
 	    /bin/init=$(BUILD)/init.so \
 	    /bin/hello=$(BUILD)/hello.so \
 	    /bin/showmotd=$(BUILD)/showmotd.so \

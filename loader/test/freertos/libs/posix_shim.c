@@ -49,6 +49,7 @@
 #include <sys/utsname.h>
 #include <sys/mman.h>
 #include <sys/uio.h>
+#include <sys/resource.h>
 
 #include "usys.h"   /* raw svc #1 wrappers + xtsys.h syscall numbers */
 
@@ -135,8 +136,17 @@ int putenv(char *str)
 
 /* ---- stat family ---------------------------------------------------------
  * struct xt_stat carries {mode,size,mtime}; everything else is synthesized
- * (single-user system: root owns the world, permissions are decorative). */
-static void st_from_xt(struct stat *st, const struct xt_stat *xs)
+ * (single-user system: root owns the world, permissions are decorative).
+ * st_ino is a hash of the path — stable, distinct-enough identity so
+ * same-file checks (tar's input==archive, cp's src==dst) work. */
+static unsigned path_ino(const char *path)
+{
+    unsigned h = 2166136261u;
+    while (*path) { h ^= (unsigned char)*path++; h *= 16777619u; }
+    return h ? h : 1;
+}
+
+static void st_from_xt(struct stat *st, const struct xt_stat *xs, const char *path)
 {
     memset(st, 0, sizeof *st);
     st->st_mode = (xs->mode & XT_S_IFMT) |
@@ -144,6 +154,8 @@ static void st_from_xt(struct stat *st, const struct xt_stat *xs)
     st->st_size = xs->size;
     st->st_mtime = st->st_atime = st->st_ctime = xs->mtime;
     st->st_nlink = 1;
+    st->st_dev = 1;
+    st->st_ino = path ? path_ino(path) : 0;
     st->st_blksize = 4096;
     st->st_blocks = (xs->size + 511) / 512;
 }
@@ -152,7 +164,7 @@ int stat(const char *__restrict path, struct stat *__restrict st)
 {
     struct xt_stat xs;
     if (sys_stat(path, &xs) < 0) { errno = ENOENT; return -1; }
-    st_from_xt(st, &xs);
+    st_from_xt(st, &xs, path);
     return 0;
 }
 
@@ -160,7 +172,7 @@ int lstat(const char *__restrict path, struct stat *__restrict st)
 {
     struct xt_stat xs;
     if (sys_lstat(path, &xs) < 0) { errno = ENOENT; return -1; }
-    st_from_xt(st, &xs);
+    st_from_xt(st, &xs, path);
     return 0;
 }
 
@@ -442,10 +454,15 @@ int mkdirat(int dirfd, const char *path, mode_t mode)
 ssize_t readlinkat(int dirfd, const char *path, char *out, size_t size)
 {
     char buf[600];
+    struct xt_stat xs;
     const char *p = at_join(dirfd, path, buf, sizeof buf);
     if (!p) return -1;
     long n = sys_readlink(p, out, size);
-    if (n < 0) { errno = EINVAL; return -1; }
+    if (n < 0) {
+        /* callers (xabspath) branch on WHY: not-a-symlink vs doesn't-exist */
+        errno = (sys_lstat(p, &xs) == 0) ? EINVAL : ENOENT;
+        return -1;
+    }
     return n;
 }
 
@@ -486,8 +503,11 @@ int fchownat(int dirfd, const char *path, uid_t o, gid_t g, int flags)
 
 int utimensat(int dirfd, const char *path, const struct timespec *ts, int fl)
 {
-    (void)dirfd; (void)path; (void)ts; (void)fl;
-    return 0;
+    /* no stored timestamps, but existence must be honest — touch relies on
+     * ENOENT here to know it has to create the file */
+    struct stat st;
+    (void)ts; (void)fl;
+    return fstatat(dirfd, path, &st, 0);
 }
 
 int futimens(int fd, const struct timespec *ts)
@@ -518,9 +538,75 @@ char *getcwd(char *buf, size_t size)
 
 ssize_t readlink(const char *__restrict path, char *__restrict buf, size_t size)
 {
+    struct xt_stat xs;
     long n = sys_readlink(path, buf, size);
-    if (n < 0) { errno = EINVAL; return -1; }
+    if (n < 0) {
+        errno = (sys_lstat(path, &xs) == 0) ? EINVAL : ENOENT;
+        return -1;
+    }
     return n;
+}
+
+int mkdir(const char *path, mode_t mode)
+{
+    if (sys_mkdir(path, (int)mode) < 0) { errno = EEXIST; return -1; }
+    return 0;
+}
+
+int symlink(const char *target, const char *linkpath)
+{
+    if (sys_symlink(target, linkpath) < 0) { errno = EEXIST; return -1; }
+    return 0;
+}
+
+int fchdir(int fd)
+{
+    const char *p = pfd_path(fd);
+    if (!p) { errno = EBADF; return -1; }
+    return chdir(p);
+}
+
+int ftruncate(int fd, off_t length)
+{
+    (void)fd; (void)length;
+    errno = ENOSYS;                      /* no truncate in the VFS yet */
+    return -1;
+}
+
+long pathconf(const char *path, int name)
+{
+    (void)path;
+    switch (name) {
+    case 4 /*_PC_NAME_MAX*/: return 255;
+    case 5 /*_PC_PATH_MAX*/: return 512;
+    }
+    return -1;
+}
+
+int rmdir(const char *path)
+{
+    struct xt_stat xs;
+    if (sys_unlink(path) == 0) return 0;         /* drivers remove empty dirs */
+    if (sys_lstat(path, &xs) < 0) errno = ENOENT;
+    else if ((xs.mode & XT_S_IFMT) != XT_S_IFDIR) errno = ENOTDIR;
+    else errno = ENOTEMPTY;
+    return -1;
+}
+
+/* honest unlink (the kernel primitive doesn't set errno) */
+int unlink(const char *path)
+{
+    struct xt_stat xs;
+    if (sys_unlink(path) == 0) return 0;
+    errno = (sys_lstat(path, &xs) == 0) ? EPERM : ENOENT;
+    return -1;
+}
+
+int mknod(const char *path, mode_t mode, dev_t dev)
+{
+    (void)path; (void)mode; (void)dev;
+    errno = EPERM;                       /* no device nodes / FIFOs on the VFS */
+    return -1;
 }
 
 int chmod(const char *path, mode_t mode) { (void)path; (void)mode; return 0; }
@@ -716,6 +802,33 @@ pid_t waitpid(pid_t pid, int *status, int options)
 
 pid_t wait(int *status) { return waitpid(-1, status, 0); }
 
+/* the rusage-carrying waits: no accounting on XTOS — zero-filled */
+pid_t wait4(pid_t pid, int *status, int options, struct rusage *ru)
+{
+    if (ru) memset(ru, 0, sizeof *ru);
+    return waitpid(pid, status, options);
+}
+
+pid_t wait3(int *status, int options, struct rusage *ru)
+{
+    return wait4(-1, status, options, ru);
+}
+
+int getrusage(int who, struct rusage *ru)
+{
+    (void)who;
+    if (ru) memset(ru, 0, sizeof *ru);
+    return 0;
+}
+
+int getpriority(int which, id_t who) { (void)which; (void)who; return 0; }
+int setpriority(int which, id_t who, int prio)
+{
+    (void)which; (void)who; (void)prio;
+    return 0;                            /* one priority class; politeness accepted */
+}
+int nice(int incr) { (void)incr; return 0; }
+
 /* ---- identity: single-user system, everyone is root ----------------------- */
 uid_t getuid(void) { return 0; }
 uid_t geteuid(void) { return 0; }
@@ -854,6 +967,13 @@ int killpg(int pgrp, int sig) { (void)pgrp; (void)sig; return 0; }
 int sigisemptyset(const sigset_t *set) { return !*set; }
 
 /* ---- time ------------------------------------------------------------------ */
+int settimeofday(const struct timeval *tv, const struct timezone *tz)
+{
+    (void)tv; (void)tz;
+    errno = EPERM;                       /* the wall clock is the A9 timer since boot */
+    return -1;
+}
+
 int clock_gettime(clockid_t id, struct timespec *tp)
 {
     struct timeval tv;
@@ -980,11 +1100,10 @@ int fnmatch(const char *pat, const char *str, int flags)
     return fnm_one(pat, str, flags, 1);
 }
 
-size_t regerror(int code, const regex_t *re, char *buf, size_t len)
-{
-    (void)re;
-    return snprintf(buf, len, "regex error %d", code);
-}
+/* regcomp/regexec/regfree/regerror come from the vendored Spencer regex
+ * (libs/regex, lifted from the newlib source tree); it wants the locale
+ * collation loader's error flag — no locales here, so "not loaded" */
+int __collate_load_error = 1;
 
 int statvfs(const char *path, struct statvfs *sv)
 {
@@ -997,6 +1116,32 @@ int statvfs(const char *path, struct statvfs *sv)
     sv->f_ffree = sv->f_favail = 32768;
     sv->f_namemax = 255;
     return 0;
+}
+
+int statfs(const char *path, struct statfs *sf)
+{
+    (void)path;
+    memset(sf, 0, sizeof *sf);
+    sf->f_bsize = sf->f_frsize = 4096;
+    sf->f_blocks = 65536;
+    sf->f_bfree = sf->f_bavail = 32768;
+    sf->f_files = 65536;
+    sf->f_ffree = 32768;
+    sf->f_namelen = 255;
+    return 0;
+}
+
+char *dirname(char *path)
+{
+    char *p;
+    if (!path || !*path) return ".";
+    p = path + strlen(path);
+    while (p > path + 1 && p[-1] == '/') *--p = 0;   /* strip trailing / */
+    p = strrchr(path, '/');
+    if (!p) return ".";
+    if (p == path) return p[1] ? (*(p + 1) = 0, path) : path;   /* "/x" -> "/" */
+    *p = 0;
+    return path;
 }
 
 FILE *setmntent(const char *file, const char *mode)
@@ -1026,6 +1171,46 @@ void syslog(int pri, const char *fmt, ...)
     va_end(ap);
 }
 
+/* entropy: no hardware RNG surfaced yet — timer-seeded xorshift (uuidgen,
+ * mktemp randomness; NOT cryptographic) */
+int getentropy(void *buf, size_t len)
+{
+    static unsigned s;
+    unsigned char *b = buf;
+    if (!s) {
+        struct timeval tv;
+        gettimeofday(&tv, 0);
+        s = (unsigned)tv.tv_usec ^ ((unsigned)tv.tv_sec << 12) ^ ((unsigned)sys_getpid() << 24) ^ 0x9e3779b9u;
+    }
+    for (size_t i = 0; i < len; i++) {
+        s ^= s << 13; s ^= s >> 17; s ^= s << 5;
+        b[i] = (unsigned char)s;
+    }
+    return 0;
+}
+
+/* newlib's mkstemp probes candidates through the kernel's _stat stub; do the
+ * X-substitution ourselves over honest sys_stat + sys_open(O_CREAT) */
+int mkstemp(char *template)
+{
+    int n = strlen(template);
+    if (n < 6 || strcmp(template + n - 6, "XXXXXX")) { errno = EINVAL; return -1; }
+    for (int tries = 0; tries < 100; tries++) {
+        unsigned r;
+        getentropy(&r, sizeof r);
+        for (int i = n - 6; i < n; i++) {
+            template[i] = (char)('a' + (r % 26));
+            r /= 26;
+        }
+        struct xt_stat xs;
+        if (sys_stat(template, &xs) == 0) continue;       /* exists: next candidate */
+        long fd = sys_open(template, 0x0601 /* WRONLY|CREAT|TRUNC */);
+        if (fd >= 0) return (int)fd;
+    }
+    errno = EEXIST;
+    return -1;
+}
+
 int inotify_init(void) { errno = ENOSYS; return -1; }
 int inotify_add_watch(int fd, const char *path, uint32_t mask)
 {
@@ -1034,15 +1219,29 @@ int inotify_add_watch(int fd, const char *path, uint32_t mask)
     return -1;
 }
 
+/* anonymous mmaps are malloc-backed; remember them so munmap can free */
+#define ANON_MAPS 8
+static void *g_anon_map[ANON_MAPS];
+
 void *mmap(void *addr, size_t len, int prot, int flags, int fd, off_t off)
 {
     (void)addr; (void)prot;
     if (flags & MAP_ANONYMOUS) {
         void *p = calloc(1, len);
-        return p ? p : MAP_FAILED;
+        if (!p) return MAP_FAILED;
+        for (int i = 0; i < ANON_MAPS; i++)
+            if (!g_anon_map[i]) { g_anon_map[i] = p; break; }
+        return p;
     }
     void *p = sys_mmap(fd, len, off);    /* romfs RO file mapping */
     return p ? p : MAP_FAILED;
+}
+
+int munmap(void *addr, size_t len)
+{
+    for (int i = 0; i < ANON_MAPS; i++)
+        if (g_anon_map[i] == addr) { g_anon_map[i] = 0; free(addr); return 0; }
+    return (int)sys_munmap(addr, len);
 }
 
 /* ---- entry ------------------------------------------------------------------ */

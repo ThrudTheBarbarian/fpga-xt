@@ -12,6 +12,12 @@
 #ifndef CLOCK_MONOTONIC
 # define CLOCK_MONOTONIC 1
 #endif
+#ifndef UTIME_NOW
+# define UTIME_NOW  0x3fffffff
+#endif
+#ifndef UTIME_OMIT
+# define UTIME_OMIT 0x3ffffffe
+#endif
 
 #ifdef __cplusplus
 extern "C" {
