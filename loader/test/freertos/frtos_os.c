@@ -32,6 +32,7 @@ typedef struct {
     int      open;
     int      pipei;  /* pipe fd: g_pipes index+1 (0 = not a pipe); pwrite = which end */
     int      pwrite;
+    int      sock;   /* socket fd: net/sockets.c index+1 (0 = not a socket) */
     int      con;    /* console alias (a shell's saved stdio parked on a high fd) */
     int      oflags; /* the VFS_O_* this fd was opened with (for reopen-by-path) */
     uint32_t pos;    /* logical read/write cursor (page store); the driver's vf.pos is fill scratch */
@@ -454,6 +455,89 @@ static int fd_is_pipe(uint32_t fd)
     return p && fd < NFD && p->fd[fd].open && p->fd[fd].pipei;
 }
 
+static int fd_is_sock(uint32_t fd)
+{
+    proc_t *p = cur_proc();
+    return p && fd < NFD && p->fd[fd].open && p->fd[fd].sock;
+}
+
+/* ---- the socket syscall family (deferral ctx; netconn work in net/sockets.c).
+ * fd wrapping/unwrapping lives here; blocking ops tick so kill/^C/^Z land. */
+static int sock_tick(void *vp)
+{
+    proc_t *p = (proc_t *)vp;
+    if (p->killed) proc_exit_self(p, 137);           /* no return */
+    stop_park(p);
+    return 0;
+}
+
+static int sock_fd_new(proc_t *p, int si)
+{
+    for (int fd = 3; fd < NFD; fd++)
+        if (!p->fd[fd].open) {
+            memset(&p->fd[fd], 0, sizeof(fd_t));
+            p->fd[fd].open = 1;
+            p->fd[fd].sock = si + 1;
+            return fd;
+        }
+    return -1;
+}
+
+static long k_socket_call(proc_t *p)
+{
+    extern int  xt_sock_new(int);
+    extern void xt_sock_close(int);
+    extern int  xt_sock_connect(int, unsigned, unsigned);
+    extern int  xt_sock_bind(int, unsigned, unsigned);
+    extern int  xt_sock_listen(int, int);
+    extern int  xt_sock_accept(int, unsigned *, unsigned *, int (*)(void *), void *);
+    extern int  xt_sock_resolve(const char *, unsigned *);
+    uint32_t fd = p->da0;
+    switch (p->dnum) {
+    case SYS_socket: {
+        int si = xt_sock_new((int)p->da0);
+        if (si < 0) return -1;
+        int nfd = sock_fd_new(p, si);
+        if (nfd < 0) { xt_sock_close(si); return -1; }
+        return nfd;
+    }
+    case SYS_connect:
+    case SYS_bind:
+        if (fd >= NFD || !p->fd[fd].open || !p->fd[fd].sock) return -1;
+        return (p->dnum == SYS_connect)
+             ? xt_sock_connect(p->fd[fd].sock - 1, (unsigned)p->da1, (unsigned)p->da2)
+             : xt_sock_bind(p->fd[fd].sock - 1, (unsigned)p->da1, (unsigned)p->da2);
+    case SYS_listen:
+        if (fd >= NFD || !p->fd[fd].open || !p->fd[fd].sock) return -1;
+        return xt_sock_listen(p->fd[fd].sock - 1, (int)p->da1);
+    case SYS_accept: {
+        if (fd >= NFD || !p->fd[fd].open || !p->fd[fd].sock) return -1;
+        unsigned peer[2] = { 0, 0 };
+        int si = xt_sock_accept(p->fd[fd].sock - 1, &peer[0], &peer[1], sock_tick, p);
+        if (si < 0) return -1;
+        int nfd = sock_fd_new(p, si);
+        if (nfd < 0) { xt_sock_close(si); return -1; }
+        if (p->da1) { unsigned *out = (unsigned *)p->da1; out[0] = peer[0]; out[1] = peer[1]; }
+        return nfd;
+    }
+    case SYS_resolve: {
+        /* the resolver runs in the LWIP THREAD: the name must live in kernel-
+         * global memory, never client space (the kfs-path lesson) */
+        static char nm[128];
+        const char *s = (const char *)p->da0;
+        if (!s || !p->da1) return -1;
+        int i = 0;
+        for (; s[i] && i < 127; i++) nm[i] = s[i];
+        nm[i] = 0;
+        unsigned ip = 0;
+        if (xt_sock_resolve(nm, &ip) != 0) return -1;
+        *(unsigned *)p->da1 = ip;
+        return 0;
+    }
+    }
+    return -1;
+}
+
 static long k_pipe_create(proc_t *p, int *out)
 {
     if (!p || !out) return -1;
@@ -571,6 +655,7 @@ static long k_fstat(proc_t *p, int fd, struct xt_stat *st)
 {
     if (!p || fd < 0 || fd >= NFD || !st) return -1;
     if (p->fd[fd].open && p->fd[fd].pipei) { st->mode = XT_S_IFIFO; st->size = 0; st->mtime = 0; return 0; }
+    if (p->fd[fd].open && p->fd[fd].sock)  { st->mode = XT_S_IFSOCK; st->size = 0; st->mtime = 0; return 0; }
     if (p->fd[fd].open && (p->fd[fd].con || p->fd[fd].vf.chr))
         { st->mode = XT_S_IFCHR; st->size = 0; st->mtime = 0; return 0; }
     if (p->fd[fd].open) { st->mode = XT_S_IFREG; st->size = p->fd[fd].vf.size; st->mtime = 0; return 0; }
@@ -875,6 +960,9 @@ static void fs_close_all(int slot)
     for (int fd = 0; fd < NFD; fd++) {   /* from 0: a child's stdio can be pipe ends */
         if (!p->fd[fd].open) continue;
         if (p->fd[fd].pipei) { k_pipe_close_end(&p->fd[fd]); continue; }  /* EOF/EPIPE propagate */
+        if (p->fd[fd].sock) { extern void xt_sock_close(int);             /* netconn teardown */
+                              xt_sock_close(p->fd[fd].sock - 1);
+                              p->fd[fd].open = 0; p->fd[fd].sock = 0; continue; }
         if (p->fd[fd].con) { p->fd[fd].open = 0; p->fd[fd].con = 0; continue; }
         /* fd<3 falls through too: file-redirected stdio must flush + close */
         fd_drop_cache(&p->fd[fd]);       /* flush dirty page (if any) + free the cache page */
@@ -1287,6 +1375,28 @@ void deferral_thunk(void)                 /* PL1 (System), task context */
                 r = cf->vf.read ? cf->vf.read(&cf->vf, (void *)p->da1, (uint32_t)p->da2) : -1;
             else
                 r = cf->vf.write ? cf->vf.write(&cf->vf, (const void *)p->da1, (uint32_t)p->da2) : -1;
+        } else if (p->dnum >= SYS_socket && p->dnum <= SYS_resolve) {
+            r = k_socket_call(p);                          /* the socket family (net/sockets.c) */
+        } else if ((p->dnum == SYS_read || p->dnum == SYS_write) &&
+                   p->da0 < NFD && p->fd[p->da0].open && p->fd[p->da0].sock) {
+            extern long xt_sock_recv(int, void *, unsigned, int (*)(void *), void *);
+            extern long xt_sock_send(int, const void *, unsigned);
+            int si = p->fd[p->da0].sock - 1;
+            if (p->dnum == SYS_read)
+                r = xt_sock_recv(si, (void *)p->da1, (unsigned)p->da2, sock_tick, p);
+            else
+                r = xt_sock_send(si, (const void *)p->da1, (unsigned)p->da2);
+        } else if (p->dnum == SYS_close &&
+                   p->da0 < NFD && p->fd[p->da0].open && p->fd[p->da0].sock) {
+            extern void xt_sock_close(int);
+            xt_sock_close(p->fd[p->da0].sock - 1);
+            p->fd[p->da0].open = 0; p->fd[p->da0].sock = 0;
+            r = 0;
+        } else if (p->dnum == SYS_ioctl && p->da0 < NFD &&
+                   p->fd[p->da0].open && p->fd[p->da0].sock) {
+            extern long xt_sock_avail(int);                /* FIONREAD = poll readability */
+            r = (p->da1 == XT_FIONREAD && p->da2)
+              ? (*(int *)p->da2 = (int)xt_sock_avail(p->fd[p->da0].sock - 1), 0) : -1;
         } else if (p->dnum == SYS_ioctl) {                 /* device controls (tty modes, i2c, ...) */
             uint32_t ifd = p->da0;
             int is_con = (ifd < 3 && !(ifd < NFD && p->fd[ifd].open)) ||   /* raw console stdio */
@@ -1614,8 +1724,12 @@ static int needs_task_ctx(struct k_regs *regs, uint32_t num)
         proc_t *q = cur_proc();
         return q && fd < NFD && q->fd[fd].open;    /* pipe or file, any slot (incl. `> file` stdout) */
     }
-    case SYS_close:   return fd_is_sd(fd) || fd_is_pipe(fd);  /* backing-store/pipe close -> task ctx */
+    case SYS_close:   return fd_is_sd(fd) || fd_is_pipe(fd) || fd_is_sock(fd);
+                                                   /* backing-store/pipe/socket close -> task ctx */
     case SYS_ioctl:   return 1;                    /* device controls may poll HW for ms (i2c) */
+    case SYS_socket: case SYS_connect: case SYS_bind:
+    case SYS_listen: case SYS_accept: case SYS_resolve:
+        return 1;                                  /* netconn calls block in lwIP */
     case SYS_dup2:    return 1;                    /* may close a displaced pipe end */
     case SYS_mmap:    return fd_is_sd(fd);          /* backing-store mmap -> fs task eager-fill (romfs inline) */
     case SYS_munmap:  return 1;                     /* may write dirty pages back (FatFs) -> task ctx */

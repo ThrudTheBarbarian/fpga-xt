@@ -980,41 +980,58 @@ int ioctl(int fd, unsigned long req, ...)
     return (int)r;
 }
 
-/* toybox's lib.h declares xpoll (impl lives in the excluded lib/net.o).
- * The console gets HONEST readability (the kernel waits on the uart ring via
- * XT_TTY_INWAIT — vi's escape-sequence disambiguation depends on a real
- * timeout); everything else reports ready, since reads on pipes/files block
- * correctly in the kernel anyway. */
-int xpoll(struct pollfd *fds, int nfds, int timeout)
+/* poll: HONEST readability for consoles (XT_TTY_NREAD) and sockets
+ * (FIONREAD); pipes/files report ready (kernel reads block correctly).
+ * xpoll lives in toybox's lib/net.c now and calls down to this. POLLOUT is
+ * optimistic — socket sends block briefly at worst. */
+static int poll_probe(struct pollfd *f)
 {
-    int ready = 0, coni = -1;
-    for (int i = 0; i < nfds; i++) {
-        fds[i].revents = 0;
-        if ((fds[i].events & POLLIN) && coni < 0 && isatty(fds[i].fd)) {
-            coni = i;                                /* the console entry: ask the kernel */
-            continue;
-        }
-        fds[i].revents = fds[i].events;
-        if (fds[i].revents) ready++;
-    }
-    if (coni >= 0) {
-        long w;
-        if (ready) {                                 /* others ready: just probe, don't wait */
+    f->revents = 0;
+    if (f->fd < 0) return 0;
+    struct xt_stat xs;
+    int kind = (sys_fstat(f->fd, &xs) == 0) ? (int)(xs.mode & XT_S_IFMT) : 0;
+    if (f->events & POLLOUT) f->revents |= POLLOUT;
+    if (f->events & POLLIN) {
+        if (kind == XT_S_IFSOCK) {
             int n = 0;
-            w = (sys_ioctl(fds[coni].fd, XT_TTY_NREAD, &n) == 0) ? (n > 0) : 1;
-        } else
-            w = sys_ioctl(fds[coni].fd, XT_TTY_INWAIT, (void *)(long)timeout);
-        if (w != 0) {                                /* ready (or a non-tty -1: fail ready) */
-            fds[coni].revents = POLLIN;
-            ready++;
+            if (sys_ioctl(f->fd, XT_FIONREAD, &n) == 0 && n > 0) f->revents |= POLLIN;
+        } else if (kind == XT_S_IFCHR) {
+            int n = 0;
+            if (sys_ioctl(f->fd, XT_TTY_NREAD, &n) != 0 || n > 0) f->revents |= POLLIN;
+        } else {
+            f->revents |= POLLIN;                    /* pipes/files: reads block correctly */
         }
     }
-    return ready;
+    return f->revents != 0;
 }
 
 int poll(struct pollfd *fds, nfds_t nfds, int timeout)
 {
-    return xpoll(fds, (int)nfds, timeout);
+    struct timeval t0;
+    gettimeofday(&t0, 0);
+    for (;;) {
+        int ready = 0;
+        for (nfds_t i = 0; i < nfds; i++) ready += poll_probe(&fds[i]);
+        if (ready || timeout == 0) return ready;
+        if (timeout > 0) {
+            struct timeval t1;
+            gettimeofday(&t1, 0);
+            long el = (t1.tv_sec - t0.tv_sec) * 1000 + (t1.tv_usec - t0.tv_usec) / 1000;
+            if (el >= timeout) return 0;
+        }
+        /* nothing ready: if the ONLY interesting fd is the console, let the
+         * kernel block properly; else nap-and-recheck */
+        if (nfds == 1 && (fds[0].events & POLLIN)) {
+            struct xt_stat xs;
+            if (sys_fstat(fds[0].fd, &xs) == 0 && (xs.mode & XT_S_IFMT) == XT_S_IFCHR) {
+                long w = sys_ioctl(fds[0].fd, XT_TTY_INWAIT,
+                                   (void *)(long)(timeout > 0 ? 50 : 200));
+                if (w > 0) { fds[0].revents = POLLIN; return 1; }
+                continue;
+            }
+        }
+        usleep(20000);
+    }
 }
 
 /* ---- signals: soft only (never delivered asynchronously) ------------------ */
@@ -1115,6 +1132,16 @@ long sysconf(int name)
     case _SC_OPEN_MAX:           return 16;
     }
     return -1;
+}
+
+/* netcat's -W/-q timers; no async signals to deliver, so a no-op alarm is
+ * honest enough (its poll timeouts do the real limiting) */
+unsigned alarm(unsigned sec) { (void)sec; return 0; }
+
+int usleep(useconds_t us)
+{
+    struct timespec ts = { (time_t)(us / 1000000u), (long)(us % 1000000u) * 1000 };
+    return nanosleep(&ts, 0);
 }
 
 unsigned sleep(unsigned sec)

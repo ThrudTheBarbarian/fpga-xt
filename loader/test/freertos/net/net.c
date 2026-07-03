@@ -5,11 +5,16 @@
  * Prints one line when the address arrives:  [net] up 192.168.x.y  */
 #include "lwip/tcpip.h"
 #include "lwip/netif.h"
+#include <string.h>
 #include "lwip/dhcp.h"
 #include "lwip/apps/mdns.h"
 #include "lwip/apps/sntp.h"
+#include "lwip/dns.h"
 #include "FreeRTOS.h"
 #include "task.h"
+
+/* kernel whole-file read (frtos_os.c) — for /OS/etc/resolv.conf */
+long frtos_net_readfile(const char *path, const void **data);
 
 extern void puts0(const char *);
 extern void putu(unsigned);
@@ -80,6 +85,23 @@ static void net_task(void *arg)
     mdns_resp_init();
     mdns_resp_add_netif(&g_nif, "xtos");             /* xtos.local */
     dhcp_start(&g_nif);
+    /* static DNS from /OS/etc/resolv.conf ("nameserver a.b.c.d" lines) —
+     * indices 0..1, so DHCP's DNS (also set here) fills the rest */
+    { const char *txt = 0; long n = frtos_net_readfile("/OS/etc/resolv.conf", (const void **)&txt);
+      int idx = 0;
+      for (long i = 0; txt && i < n && idx < 2; ) {
+        while (i < n && (txt[i] == ' ' || txt[i] == '\t' || txt[i] == '\n' || txt[i] == '\r')) i++;
+        if (i + 10 < n && txt[i] == 'n' && !memcmp(txt + i, "nameserver", 10)) {
+          i += 10; while (i < n && (txt[i] == ' ' || txt[i] == '\t')) i++;
+          char ips[20]; int k = 0;
+          while (i < n && k < 19 && (txt[i] == '.' || (txt[i] >= '0' && txt[i] <= '9'))) ips[k++] = txt[i++];
+          ips[k] = 0;
+          ip_addr_t a;
+          if (k && ipaddr_aton(ips, &a)) dns_setserver((u8_t)idx++, &a);
+        }
+        while (i < n && txt[i] != '\n') i++;
+      }
+    }
     UNLOCK_TCPIP_CORE();
 
     tftpd_init();

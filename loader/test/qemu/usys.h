@@ -74,6 +74,17 @@ static inline long sys_fstat(int fd, struct xt_stat *st)
 /* char-device controls (Linux request codes; see xtsys.h) */
 static inline long sys_ioctl(int fd, unsigned req, void *argp)
 { return __syscall(SYS_ioctl, fd, (long)req, (long)argp); }
+/* sockets (IPv4; ip = be32, port = host order; see xtsys.h block 0x320) */
+static inline long sys_socket(int type) { return __syscall(SYS_socket, type, 0, 0); }
+static inline long sys_connect(int fd, unsigned ip_be, unsigned port)
+{ return __syscall(SYS_connect, fd, (long)ip_be, (long)port); }
+static inline long sys_bind(int fd, unsigned ip_be, unsigned port)
+{ return __syscall(SYS_bind, fd, (long)ip_be, (long)port); }
+static inline long sys_listen(int fd, int backlog) { return __syscall(SYS_listen, fd, backlog, 0); }
+static inline long sys_accept(int fd, unsigned peer[2])
+{ return __syscall(SYS_accept, fd, (long)peer, 0); }
+static inline long sys_resolve(const char *name, unsigned *ip_be)
+{ return __syscall(SYS_resolve, (long)name, (long)ip_be, 0); }
 /* mmap a romfs file read-only + shared (len=0 -> whole file from off). Returns a
  * pointer to the file's bytes (no copy), or NULL. */
 static inline void *sys_mmap(int fd, unsigned len, unsigned off)

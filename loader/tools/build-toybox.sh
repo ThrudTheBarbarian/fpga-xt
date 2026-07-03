@@ -46,7 +46,7 @@ if ! scripts/make.sh > "$OUT/make.log" 2>&1; then
     fi
 fi
 
-# lib_net.o compiles (full compat decl surface) but nothing implements
+# lib_net.o is linked now: the socket shim (net_shim.c) implements the calls
 # sockets — keep it out of the .so so no dangling relocations reach xtld
-ls "$TB"/generated/unstripped/obj/*.o | grep -v '/lib_net\.o$' > "$OUT/objects.list"
+ls "$TB"/generated/unstripped/obj/*.o > "$OUT/objects.list"
 echo "toybox objects ready: $(wc -l < "$OUT/objects.list" | tr -d ' ') files (see $OUT/objects.list)"

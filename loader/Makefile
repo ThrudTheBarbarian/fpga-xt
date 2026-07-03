@@ -97,6 +97,7 @@ LWIPSRC := $(addprefix $(LWIP)/src/core/, init.c def.c dns.c inet_chksum.c ip.c 
            $(addprefix $(LWIP)/src/core/ipv4/, acd.c dhcp.c etharp.c icmp.c ip4.c \
              ip4_addr.c ip4_frag.c igmp.c) \
            $(LWIP)/src/netif/ethernet.c $(LWIP)/src/api/tcpip.c \
+           $(LWIP)/src/api/api_lib.c $(LWIP)/src/api/api_msg.c $(LWIP)/src/api/netbuf.c \
            $(LWIP)/src/apps/tftp/tftp.c \
            $(LWIP)/src/apps/mdns/mdns.c $(LWIP)/src/apps/mdns/mdns_out.c \
            $(LWIP)/src/apps/mdns/mdns_domain.c $(LWIP)/src/apps/sntp/sntp.c \
@@ -106,7 +107,7 @@ NETSRC  := test/freertos/net/xemacps.c test/freertos/net/xemacps_control.c \
            test/freertos/net/xemacps_hw.c \
            test/freertos/net/xemacps_g.c test/freertos/net/net_libc.c \
            test/freertos/net/xemacpsif.c test/freertos/net/net.c test/freertos/net/tftpd.c \
-           test/freertos/net/netcon.c test/freertos/net/wallclock.c
+           test/freertos/net/netcon.c test/freertos/net/wallclock.c test/freertos/net/sockets.c
 FRCFLAGS := -marm -mcpu=cortex-a9 -mfloat-abi=softfp -mfpu=neon-vfpv3 -ffreestanding -nostdlib -O2 -g -DSDT $(FRINC)
 FRSRC := $(FR)/tasks.c $(FR)/queue.c $(FR)/list.c $(FR)/timers.c $(FR)/event_groups.c \
          $(FR)/croutine.c $(FR)/stream_buffer.c $(FR)/portable/MemMang/heap_4.c \
@@ -287,9 +288,9 @@ TOYBOX_APPLETS := toybox [ arch ascii base32 base64 basename bunzip2 bzcat \
     cal cat cksum clear cmp count cp crc32 cut date df dirname dos2unix du \
     echo egrep env expand false fgrep file find fold getopt grep gunzip head \
     help hexedit i2cdetect i2cdump i2cget i2cset \
-    kill killall ln ls md5sum mkdir mktemp mv nice nl od patch printenv printf ps pwd \
+    kill killall ln ls  md5sum mkdir mktemp mv nice nl od patch printenv printf ps pwd \
     readlink realpath rm rmdir sed sha1sum sha224sum sha256sum sha384sum \
-    sha512sum sleep sort split stat strings tac tail tar tee test time \
+    nc netcat sha512sum sleep sort split stat strings tac tail tar tee test time wget \
     top touch true ts uname uniq unix2dos unlink uudecode uuencode uuidgen vi wc which zcat
 TOYBOX_ALIASES := $(foreach a,$(TOYBOX_APPLETS),/bin/$(a)=$(BUILD)/toybox.so)
 $(BUILD)/toybox/objects.list:
@@ -310,11 +311,14 @@ LINEEDIT_OBJS := $(BUILD)/linenoise.o $(BUILD)/sh_lineedit.o
 $(BUILD)/linenoise.o: test/freertos/libs/linenoise/linenoise.c test/freertos/libs/linenoise/linenoise.h | $(BUILD)
 	$(ARMCC) -marm -mcpu=cortex-a9 -mfloat-abi=softfp -mfpu=neon-vfpv3 -fpic -Os -fno-builtin \
 	    -D_GNU_SOURCE -Ilibc-compat -Inewlib-pic/include -c $< -o $@
+$(BUILD)/net_shim.o: test/freertos/libs/net_shim.c kernel/xtsys.h test/qemu/usys.h | $(BUILD)
+	$(ARMCC) -marm -mcpu=cortex-a9 -mfloat-abi=softfp -mfpu=neon-vfpv3 -fpic -Os -fno-builtin \
+	    -D_GNU_SOURCE -Ilibc-compat -Inewlib-pic/include -Itest/qemu -Ikernel -c $< -o $@
 $(BUILD)/sh_lineedit.o: test/freertos/libs/sh_lineedit.c test/freertos/libs/linenoise/linenoise.h | $(BUILD)
 	$(ARMCC) -marm -mcpu=cortex-a9 -mfloat-abi=softfp -mfpu=neon-vfpv3 -fpic -Os -fno-builtin \
 	    -D_GNU_SOURCE -Ilibc-compat -Inewlib-pic/include -Itest/freertos/libs/linenoise -c $< -o $@
-$(BUILD)/toybox.so: $(BUILD)/toybox/objects.list $(BUILD)/posix_shim.o $(REGEX_OBJS) $(LINEEDIT_OBJS) $(BUILD)/libc.so
-	$(LLD) -shared --hash-style=sysv -o $@ $(BUILD)/posix_shim.o $(REGEX_OBJS) $(LINEEDIT_OBJS) \
+$(BUILD)/toybox.so: $(BUILD)/toybox/objects.list $(BUILD)/posix_shim.o $(BUILD)/net_shim.o $(REGEX_OBJS) $(LINEEDIT_OBJS) $(BUILD)/libc.so
+	$(LLD) -shared --hash-style=sysv -o $@ $(BUILD)/posix_shim.o $(BUILD)/net_shim.o $(REGEX_OBJS) $(LINEEDIT_OBJS) \
 	    $$(cat $(BUILD)/toybox/objects.list) $(BUILD)/libc.so
 
 # vmtest — DT_NEEDED libc.so; touches the per-process private window (T2-b)
@@ -468,7 +472,7 @@ SDSTAGE := $(BUILD)/sdstage
 .PHONY: sdstage
 sdstage: $(BUILD)/toybox.so $(BUILD)/sqlite3.so $(BUILD)/libGEM.so $(BUILD)/aesdesk.so $(BUILD)/desktop.so $(BUILD)/gemtext.so $(BUILD)/regtest.so
 	@rm -rf $(SDSTAGE)
-	@mkdir -p $(SDSTAGE)/OS/bin $(SDSTAGE)/OS/library
+	@mkdir -p $(SDSTAGE)/OS/bin $(SDSTAGE)/OS/library $(SDSTAGE)/OS/etc
 	cp $(BUILD)/toybox.so  $(SDSTAGE)/OS/bin/toybox
 	cp $(BUILD)/toybox.so  $(SDSTAGE)/OS/bin/sh
 	cp $(BUILD)/sqlite3.so $(SDSTAGE)/OS/bin/sqlite3
@@ -477,6 +481,8 @@ sdstage: $(BUILD)/toybox.so $(BUILD)/sqlite3.so $(BUILD)/libGEM.so $(BUILD)/aesd
 	cp $(BUILD)/gemtext.so $(SDSTAGE)/OS/bin/gemtext
 	cp $(BUILD)/regtest.so $(SDSTAGE)/OS/bin/regtest
 	cp $(BUILD)/libGEM.so  $(SDSTAGE)/OS/library/libGEM.so
+	@printf '# XTOS /OS/etc/hosts — static name -> address (checked before DNS)\n127.0.0.1\tlocalhost xtos\n' > $(SDSTAGE)/OS/etc/hosts
+	@printf '# XTOS /OS/etc/resolv.conf — static DNS (supplements DHCP option 6).\n# Uncomment to force a resolver.\n#nameserver 1.1.1.1\n' > $(SDSTAGE)/OS/etc/resolv.conf
 	@printf 'for i in %s; do /OS/bin/toybox ln -sf toybox /OS/bin/$$i; done\necho "applet links installed"\n' \
 	    "$(filter-out toybox,$(TOYBOX_APPLETS))" > $(SDSTAGE)/OS/bin/install-links.sh
 	@echo "staged -> $(SDSTAGE)/OS; copy onto the card, then run: sh /OS/bin/install-links.sh"

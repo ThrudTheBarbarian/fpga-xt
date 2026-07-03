@@ -12,7 +12,14 @@
 #define LWIP_TCPIP_CORE_LOCKING    1
 
 #define LWIP_SOCKET                0
-#define LWIP_NETCONN               0
+#define LWIP_NETCONN               1     /* the PL0 socket ABI bridges to netconn */
+#define LWIP_SO_RCVTIMEO           1     /* blocking recv ticks for kill/^C/^Z */
+#define LWIP_SO_RCVBUF             1     /* recv_avail -> FIONREAD/poll */
+#define LWIP_NETIF_LOOPBACK        1     /* 127.0.0.1 (the slirp-free test rig) */
+#define LWIP_HAVE_LOOPIF           1
+#define MEMP_NUM_NETCONN           16
+#define MEMP_NUM_NETBUF            16
+#define MEMP_NUM_TCPIP_MSG_API     16
 #define LWIP_NETIF_API             0
 
 #define LWIP_IPV4                  1

@@ -72,6 +72,20 @@
                               * chosen slot (refcounted); newfd must be free or a pipe */
 #define SYS_fstat    0x311   /* (fd, struct xt_stat *) -> 0: fd metadata — pipes report
                               * XT_S_IFIFO, console 0/1/2 XT_S_IFCHR, files IFREG+size */
+/* sockets — block 0x320 (IPv4, netconn-backed; addresses are be32 ip + host-order
+ * port, no sockaddr marshalling at the syscall boundary — the libc shim owns
+ * struct sockaddr). read/write/close/fstat work on socket fds; SYS_ioctl
+ * FIONREAD polls readability. */
+#define SYS_socket   0x320   /* (type: 1 = TCP, 2 = UDP) -> fd */
+#define SYS_connect  0x321   /* (fd, ip_be32, port) -> 0 */
+#define SYS_bind     0x322   /* (fd, ip_be32, port) -> 0 */
+#define SYS_listen   0x323   /* (fd, backlog) -> 0 */
+#define SYS_accept   0x324   /* (fd, u32 peer[2] out: ip_be32 + port) -> new fd */
+#define SYS_resolve  0x325   /* (name, u32 *ip_be32) -> 0: DNS via the kernel (lwIP) */
+#define XT_SOCK_TCP 1
+#define XT_SOCK_UDP 2
+#define XT_FIONREAD  0x541Bu /* SYS_ioctl on a socket fd: bytes readable now */
+
 #define SYS_ioctl    0x312   /* (fd, req, argp) -> device-specific: char-device controls
                               * (Linux request codes, e.g. i2c-dev I2C_SLAVE/I2C_SMBUS)
                               * and the console tty modes below; -1 on a non-device fd
@@ -96,6 +110,7 @@ struct xt_stat { unsigned mode, size, mtime; };
 #define XT_S_IFLNK 0xA000u   /* symbolic link */
 #define XT_S_IFIFO 0x1000u   /* pipe (SYS_fstat only) */
 #define XT_S_IFCHR 0x2000u   /* character device / console (SYS_fstat only) */
+#define XT_S_IFSOCK 0xC000u  /* socket (SYS_fstat only) */
 
 /* one directory entry (SYS_readdir). Enumerate index = 0,1,2,... until it returns 0.
  * mode's type bits are a hint (dir vs not); lstat the entry for the authoritative type
