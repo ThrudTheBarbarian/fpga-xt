@@ -29,6 +29,9 @@
 #define SYS_spawn_fd 0x104   /* (path, argv, int fds[3]) -> pid: argv is NULL-terminated
                               * (argc counted kernel-side); the child's fd 0/1/2 come
                               * from the parent's fds (pipe ends; -1 = inherit console) */
+#define SYS_kill     0x105   /* (pid, sig) -> 0: sig 0 = existence probe; any other sig
+                              * marks the process killed — it dies at its next syscall
+                              * or blocking-wait tick (no handlers; soft-signal system) */
 
 /* memory — block 0x200 */
 #define SYS_mmap     0x200   /* (fd, len, off) -> VA: map a file RO + shared, demand-paged */

@@ -161,7 +161,13 @@ static void shell_task(void *arg)
         char *av[1] = { (char *)"/System/bin/sh" };
         int pid = frtos_spawn_argv("/System/bin/sh", 1, av, &g_host);
         if (pid < 0) { puts0("[login] sh unavailable — dropping to the kernel menu\n"); break; }
-        frtos_waitpid(pid);
+        int code = frtos_waitpid(pid);
+        /* `exit 66` at the login shell = power off the testbed (piped qemu
+         * runs end promptly instead of respawn-spinning until the harness
+         * timeout; sh_readc never sees EOF — a drained pipe just blocks) */
+        if (code == 66) { puts0("[poweroff]\n"); sh_exit(0); }
+        { extern int frtos_console_eof(void);
+          if (frtos_console_eof()) break; }
     }
 #endif
 
@@ -325,7 +331,9 @@ int main(void)
       vfs_ramfs_init(); vfs_add_mount("/tmp", "ramfs", 0);      /* ramfs = /tmp (writable, in-memory) */
       vfs_lockfs_init(); vfs_add_mount("/OS/Var/Locks", "lockfs", 0);   /* advisory locks as files */
       { extern void vfs_devfs_init(void);
-        vfs_devfs_init(); vfs_add_mount("/OS/Dev", "devfs", 0); } }     /* char devices */
+        vfs_devfs_init(); vfs_add_mount("/OS/Dev", "devfs", 0); }      /* char devices */
+      { extern void vfs_procfs_init(void);
+        vfs_procfs_init(); vfs_add_mount("/OS/Proc", "procfs", 0); } } /* the proc table */
     ksys_set_console(rt_write);
     romfs_mount(romfs_blob, romfs_blob_len);
 

@@ -106,16 +106,16 @@ void kill_main(void)
 
     sid = getsid(pid = getpid());
 
-    if (!(dp = opendir("/proc"))) {
+    if (!(dp = opendir("/OS/Proc"))) {
       free(olist);
-      perror_exit("/proc");
+      perror_exit("/OS/Proc");
     }
     while ((entry = readdir(dp))) {
       int count, procpid, procsid;
 
       if (!(procpid = atoi(entry->d_name))) continue;
 
-      snprintf(toybuf, sizeof(toybuf), "/proc/%d/stat", procpid);
+      snprintf(toybuf, sizeof(toybuf), "/OS/Proc/%d/stat", procpid);
       if (!readfile(toybuf, toybuf, sizeof(toybuf))) continue;
       // command name can have embedded space and/or )
       if (!(tmp = strrchr(toybuf, ')'))
@@ -123,7 +123,7 @@ void kill_main(void)
       if (pid == procpid || sid == procsid || procpid == 1) continue;
 
       // Check for kernel threads.
-      snprintf(toybuf, sizeof(toybuf), "/proc/%d/cmdline", procpid);
+      snprintf(toybuf, sizeof(toybuf), "/OS/Proc/%d/cmdline", procpid);
       if (!readfile(toybuf, toybuf, sizeof(toybuf)) || !*toybuf) continue;
 
       // Check with omit list.

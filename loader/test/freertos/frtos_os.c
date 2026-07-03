@@ -72,6 +72,7 @@ typedef struct {
     SemaphoreHandle_t done;
     int               exit_code;
     volatile int      exited;         /* set by the exit thunk */
+    volatile int      killed;         /* SYS_kill: die at the next syscall / blocking tick */
     volatile int      waited;         /* a waitpid registered -> that caller will reap it */
     volatile int      reaping;        /* teardown claimed (one reaper only; slot not reusable yet) */
     TaskHandle_t      waiter;         /* PL0 waitpid task to notify on exit (0 = none/kernel waiter) */
@@ -94,9 +95,13 @@ typedef struct {
     char              cwd[256];       /* current working dir (absolute); relative paths resolve here */
 } proc_t;
 
+static proc_t *proc_by_pid(int pid);     /* impl below with the waitpid family */
+
 static proc_t g_proc[MAXPROC];
 static int    g_next_pid = 1;
 static void (*g_console)(const char *, int);
+static volatile int g_con_eof;           /* console hit EOF (drained qemu pipe) */
+int frtos_console_eof(void) { return g_con_eof; }
 
 void ksys_set_console(void (*w)(const char *, int)) { g_console = w; }
 
@@ -374,11 +379,14 @@ static void k_pipe_close_end(fd_t *f)
 
 /* blocking read: data if any, 0 (EOF) once all writers are gone and the ring is
  * drained. The timed receive doubles as the writer-exit wakeup (no wait queues). */
+static void proc_exit_self(proc_t *p, int code);   /* fwd (task-context death) */
+
 static long k_pipe_read(proc_t *p, int fd, char *buf, uint32_t n)
 {
     kpipe_t *pp = &g_pipes[p->fd[fd].pipei - 1];
     if (!buf || !n) return 0;
     for (;;) {
+        if (p->killed) proc_exit_self(p, 137);              /* SYS_kill lands here */
         size_t got = xStreamBufferReceive(pp->sb, buf, n, pdMS_TO_TICKS(20));
         if (got > 0) return (long)got;
         if (pp->writers <= 0) {
@@ -395,6 +403,7 @@ static long k_pipe_write(proc_t *p, int fd, const char *buf, uint32_t n)
     uint32_t sent = 0;
     if (!buf) return -1;
     while (sent < n) {
+        if (p->killed) proc_exit_self(p, 137);                  /* SYS_kill lands here */
         if (pp->readers <= 0) return sent ? (long)sent : -1;    /* EPIPE-ish */
         sent += xStreamBufferSend(pp->sb, buf + sent, n - sent, pdMS_TO_TICKS(20));
     }
@@ -1135,7 +1144,7 @@ void deferral_thunk(void)                 /* PL1 (System), task context */
                     lpos = llen = 0;
                     for (;;) {
                         int c = sh_readc();
-                        if (c < 0) break;                 /* EOF (qemu pipe drained) */
+                        if (c < 0) { g_con_eof = 1; break; }   /* EOF (qemu pipe drained) */
                         if (sawcr) {                      /* CRLF: the CR already became NL */
                             sawcr = 0;
                             if (c == '\n') continue;
@@ -1221,6 +1230,12 @@ static long do_syscall(uint32_t num, long a0, long a1, long a2)
         { g_console((const char *)a1, (int)a2); return a2; }
         return -1;
     case SYS_getpid: return p ? p->pid : 0;
+    case SYS_kill: {                                         /* (pid, sig): flag only — inline-safe */
+        proc_t *t = proc_by_pid((int)a0);
+        if (!t || t->exited) return -1;                      /* ESRCH-ish */
+        if (a1 != 0) t->killed = 1;                          /* sig 0 = existence probe */
+        return 0;
+    }
     case SYS_open:   return sys_open(p, (const char *)a0, (int)a1);   /* (path, flags) */
     case SYS_read:   return sys_read(p, (int)a0, (void *)a1, (uint32_t)a2);
     case SYS_close:  if (p && a0 >= 3 && a0 < NFD && p->fd[a0].open && !p->fd[a0].pipei) {
@@ -1377,6 +1392,15 @@ int k_syscall_dispatch(struct k_regs *regs)
     if ((insn & 0x00ffffff) != 1) { regs->r[0] = (uint32_t)-1; return 0; }
 
     uint32_t num = regs->r[7];
+    /* SYS_kill: a marked process dies at its next syscall, whatever it was */
+    {
+        proc_t *kp = cur_proc();
+        if (kp && kp->killed && num != SYS_exit) {
+            kp->exit_code = 137;                           /* 128 + SIGKILL */
+            regs->lr = (uint32_t)(uintptr_t)task_exit_thunk;
+            return 1;
+        }
+    }
     if (num == SYS_exit) {
         proc_t *p = cur_proc();
         if (p) p->exit_code = (int)regs->r[0];
@@ -1577,6 +1601,7 @@ static int proc_launch(int slot, xtld_obj *obj, uintptr_t entry,
         }
     }
     p->obj = obj; p->entry = entry; p->exit_code = 0; p->exited = 0; p->waited = 0; p->waiter = 0; p->pid = g_next_pid++;
+    p->killed = 0;                       /* slot reuse must not inherit a SYS_kill */
     /* inherit the spawner's cwd (a shell's children run where the shell is);
      * a spawn from kernel context starts at the root */
     proc_t *parent = cur_proc();
@@ -1618,6 +1643,32 @@ static int proc_launch(int slot, xtld_obj *obj, uintptr_t entry,
 }
 
 static void reap_orphans(void);
+
+/* procfs snapshot: fill slot idx's identity (best-effort — the table can
+ * mutate underneath; /OS/Proc content is a moment-in-time view anyway).
+ * Returns the pid, or 0 if the slot is free. */
+int frtos_proc_snap(int idx, char *comm, int commsz, char *cmdl, int cmdsz,
+                    int *cmdlen, int *state)
+{
+    if (idx < 0 || idx >= MAXPROC || !g_proc[idx].used) return 0;
+    proc_t *p = &g_proc[idx];
+    int pid = p->pid;
+    const char *nm = (p->argc > 0 && p->argv && p->argv[0]) ? p->argv[0] : "?";
+    for (const char *q = nm; *q; q++) if (*q == '/') nm = q + 1;   /* basename */
+    int i = 0;
+    while (nm[i] && i < commsz - 1) { comm[i] = nm[i]; i++; }
+    comm[i] = 0;
+    int c = 0;
+    for (int a = 0; a < p->argc && p->argv && c < cmdsz - 1; a++) {
+        const char *s = p->argv[a];
+        while (s && *s && c < cmdsz - 1) cmdl[c++] = *s++;
+        if (c < cmdsz - 1) cmdl[c++] = 0;                          /* NUL-joined */
+    }
+    if (state) *state = p->exited ? 'Z' : 'S';
+    if (cmdsz > 0 && c == 0) cmdl[c++] = 0;
+    if (cmdlen) *cmdlen = c;
+    return pid ? pid : -1;
+}
 
 /* Atomically claim a free proc slot: mark it used + running (exited/waited/reaping
  * cleared) so a concurrent reap_orphans/spawn can't grab or reap it mid-setup. The

@@ -198,6 +198,10 @@ int personality(int);
 // they aren't compatible.
 #include <sys/xattr.h>
 #endif
+// XTOS: sysinfo comes from the libc-compat header (the posix shim answers);
+// upstream only includes it under __linux__ above.
+#include <sys/sysinfo.h>
+
 // XTOS: no <sys/xattr.h>; the posix shim stubs these (no xattrs on the VFS),
 // so declare unconditionally rather than only for macOS/Linux.
 ssize_t xattr_get(const char *, const char *, void *, size_t);

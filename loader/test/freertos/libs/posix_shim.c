@@ -838,6 +838,7 @@ pid_t getppid(void) { return 1; }
 int setuid(uid_t u) { (void)u; return 0; }
 int setgid(gid_t g) { (void)g; return 0; }
 pid_t setsid(void) { return (pid_t)sys_getpid(); }
+pid_t getsid(pid_t pid) { (void)pid; return 1; }   /* one session: the console's */
 int initgroups(const char *user, gid_t g) { (void)user; (void)g; return 0; }
 int chroot(const char *path) { (void)path; errno = EPERM; return -1; }
 
@@ -963,6 +964,12 @@ int sigaction(int sig, const struct sigaction *act, struct sigaction *old)
     return 0;
 }
 
+int kill(pid_t pid, int sig)
+{
+    if (sys_kill((int)pid, sig) < 0) { errno = ESRCH; return -1; }
+    return 0;
+}
+
 int killpg(int pgrp, int sig) { (void)pgrp; (void)sig; return 0; }
 int sigisemptyset(const sigset_t *set) { return !*set; }
 
@@ -998,6 +1005,39 @@ int nanosleep(const struct timespec *req, struct timespec *rem)
 }
 
 /* ---- host identity --------------------------------------------------------- */
+#include <sys/sysinfo.h>
+int sysinfo(struct sysinfo *info)
+{
+    struct timeval tv;
+    memset(info, 0, sizeof *info);
+    gettimeofday(&tv, 0);
+    info->uptime = tv.tv_sec;            /* wall clock IS boot time here */
+    info->totalram = 512u * 1024 * 1024;
+    info->freeram = 256u * 1024 * 1024;
+    info->procs = 8;
+    info->mem_unit = 1;
+    return 0;
+}
+
+long sysconf(int name)
+{
+    switch (name) {
+    case _SC_CLK_TCK:            return 100;
+    case _SC_PAGESIZE:           return 4096;
+    case _SC_NPROCESSORS_CONF:
+    case _SC_NPROCESSORS_ONLN:   return 1;
+    case _SC_OPEN_MAX:           return 16;
+    }
+    return -1;
+}
+
+unsigned sleep(unsigned sec)
+{
+    struct timespec ts = { (time_t)sec, 0 };
+    nanosleep(&ts, 0);
+    return 0;
+}
+
 int gethostname(char *buf, size_t len)
 {
     strncpy(buf, "xtos", len);

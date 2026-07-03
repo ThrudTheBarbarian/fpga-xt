@@ -856,10 +856,10 @@ static int get_ps(struct dirtree *new)
 
   // Do we need Android scheduling policy?
   if (TT.bits&_PS_PCY) {
-    // Find the cpuset line in "/proc/$pid/cgroup", extract the final field,
+    // Find the cpuset line in "/OS/Proc/$pid/cgroup", extract the final field,
     // and translate it to one of Android's traditional 2-char names.
     // TODO: if other Linux systems start using cgroups, conditionalize this.
-    sprintf(buf, "/proc/%lld/cgroup", slot[SLOT_tid]);
+    sprintf(buf, "/OS/Proc/%lld/cgroup", slot[SLOT_tid]);
     if ((fp = fopen(buf, "re"))) {
       char *s, *line;
       while ((line = xgetline(fp))) {
@@ -951,7 +951,7 @@ static int get_ps(struct dirtree *new)
         if (i == 3) {
           int tty_major = 0, maj = dev_major(rdev), min = dev_minor(rdev);
 
-          if ((fp = fopen("/proc/tty/drivers", "r"))) {
+          if ((fp = fopen("/OS/Proc/tty/drivers", "r"))) {
             while (fscanf(fp, "%*s %256s %d %*s %*s", buf, &tty_major) == 2) {
               // TODO: we could parse the minor range too.
               if (tty_major == maj) {
@@ -1044,7 +1044,7 @@ static int get_threads(struct dirtree *new)
   // Recurse down into tasks, retaining thread groups.
   // Disable show_process at least until we can calculate tcount
   kcount = TT.kcount;
-  sprintf(toybuf, "/proc/%u/task", pid);
+  sprintf(toybuf, "/OS/Proc/%u/task", pid);
   new->child = dirtree_flagread(toybuf, DIRTREE_SHUTUP|DIRTREE_PROC, get_ps);
   if (new->child == DIRTREE_ABORTVAL) new->child = 0;
   TT.threadparent = 0;
@@ -1324,7 +1324,7 @@ static void common_setup(void)
     if (!fstat(i, &st)) TT.tty = st.st_rdev;
   }
 
-  if (readfile("/proc/sys/kernel/pid_max", buf, 128))
+  if (readfile("/OS/Proc/sys/kernel/pid_max", buf, 128))
     while (isdigit(buf[TT.pidlen])) TT.pidlen++;
   else TT.pidlen = 6;
 }
@@ -1399,7 +1399,7 @@ void ps_main(void)
     printf("%.*s\n", TT.width, toybuf);
   if (!(FLAG(k)||FLAG(M))) TT.show_process = show_ps;
   TT.match_process = ps_match_process;
-  dt = dirtree_flagread("/proc", DIRTREE_SHUTUP|DIRTREE_PROC,
+  dt = dirtree_flagread("/OS/Proc", DIRTREE_SHUTUP|DIRTREE_PROC,
     (FLAG(T) || (TT.bits&(_PS_TID|_PS_TCNT)))
       ? get_threads : get_ps);
 
@@ -1561,13 +1561,13 @@ static void top_common(
     plold = plist+(tock++&1);
     plnew = plist+(tock&1);
     plnew->whence = millitime();
-    dt = dirtree_flagread("/proc", DIRTREE_SHUTUP|DIRTREE_PROC,
+    dt = dirtree_flagread("/OS/Proc", DIRTREE_SHUTUP|DIRTREE_PROC,
       (FLAG(H) || (TT.bits&(_PS_TID|_PS_TCNT))) ? get_threads : get_ps);
     if (dt == DIRTREE_ABORTVAL) error_exit("no /proc");
     plnew->tb = collate(plnew->count = TT.kcount, dt);
     TT.kcount = 0;
 
-    if (readfile("/proc/stat", pos = toybuf, sizeof(toybuf))) {
+    if (readfile("/OS/Proc/stat", pos = toybuf, sizeof(toybuf))) {
       long long *st = stats+8*(tock&1);
 
       // user nice system idle iowait irq softirq host
@@ -1653,7 +1653,7 @@ static void top_common(
             run[0], run[2]+run[3], run[4]);
           lines = header_line(lines, 0);
 
-          if (readfile("/proc/meminfo", toybuf+256, sizeof(toybuf)-256)) {
+          if (readfile("/OS/Proc/meminfo", toybuf+256, sizeof(toybuf)-256)) {
             for (i = 0; i<6; i++) {
               j = i%3;
               pos = strafter(toybuf+256, (char *[]){"MemTotal:","\nMemFree:",
@@ -1981,7 +1981,7 @@ void pgrep_main(void)
   // pgrep should return failure if there are no matches.
   toys.exitval = 1;
 
-  dirtree_flagread("/proc", DIRTREE_SHUTUP|DIRTREE_PROC, get_ps);
+  dirtree_flagread("/OS/Proc", DIRTREE_SHUTUP|DIRTREE_PROC, get_ps);
   if (FLAG(c)) printf("%d\n", TT.sortpos);
   if (TT.pgrep.snapshot) {
     do_pgk(TT.pgrep.snapshot);

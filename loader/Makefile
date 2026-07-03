@@ -93,7 +93,7 @@ FRSRC := $(FR)/tasks.c $(FR)/queue.c $(FR)/list.c $(FR)/timers.c $(FR)/event_gro
          $(FRPORT)/port.c \
          test/freertos/zynq.c test/freertos/bsp_shim.c test/freertos/mmu.c test/freertos/vm.c test/freertos/stackguard.c test/freertos/gfxplane.c test/freertos/hdmi.c test/freertos/frtos_os.c test/freertos/uart1_rx.c test/freertos/sprite.c \
          test/freertos/romfs.c test/freertos/syscalls.c test/freertos/main.c \
-         test/freertos/blkdev.c test/freertos/vfs.c test/freertos/vfs_romfs.c test/freertos/vfs_ramfs.c test/freertos/vfs_lockfs.c test/freertos/vfs_devfs.c \
+         test/freertos/blkdev.c test/freertos/vfs.c test/freertos/vfs_romfs.c test/freertos/vfs_ramfs.c test/freertos/vfs_lockfs.c test/freertos/vfs_devfs.c test/freertos/vfs_procfs.c \
          test/qemu/bare_rt.c test/qemu/bare_libc.c xtld.c \
          test/freertos/storage/ff.c test/freertos/storage/ffsystem.c \
          test/freertos/storage/ffunicode.c test/freertos/storage/diskio.c \
@@ -257,10 +257,10 @@ $(BUILD)/libc_test.so: test/freertos/progs/libc_test.c $(BUILD)/libc.so | $(BUIL
 TOYBOX_APPLETS := toybox [ arch ascii base32 base64 basename bunzip2 bzcat \
     cal cat cksum clear cmp count cp crc32 cut date df dirname dos2unix du \
     echo egrep env expand false fgrep file find fold getopt grep gunzip head \
-    help ln ls md5sum mkdir mktemp mv nice nl od patch printenv printf pwd \
+    help kill killall ln ls md5sum mkdir mktemp mv nice nl od patch printenv printf ps pwd \
     readlink realpath rm rmdir sed sha1sum sha224sum sha256sum sha384sum \
-    sha512sum sleep sort split stat strings tac tail tar tee test time touch \
-    true ts uname uniq unix2dos unlink uudecode uuencode uuidgen wc which zcat
+    sha512sum sleep sort split stat strings tac tail tar tee test time \
+    top touch true ts uname uniq unix2dos unlink uudecode uuencode uuidgen wc which zcat
 TOYBOX_ALIASES := $(foreach a,$(TOYBOX_APPLETS),/bin/$(a)=$(BUILD)/toybox.so)
 $(BUILD)/toybox/objects.list:
 	tools/build-toybox.sh

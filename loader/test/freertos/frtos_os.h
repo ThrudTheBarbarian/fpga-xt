@@ -76,6 +76,9 @@ int  frtos_spawn_argv(const char *path, int argc, char **argv, const xtld_host *
 /* SYS_spawn_fd: stdfds[3] = spawner fds for the child's 0/1/2 (pipe ends; -1 = console) */
 int  frtos_spawn_argv_fds(const char *path, int argc, char **argv, const xtld_host *host,
                           const int *stdfds);
+/* procfs: snapshot proc-table slot idx (0 = free; else the pid) */
+int  frtos_proc_snap(int idx, char *comm, int commsz, char *cmdl, int cmdsz,
+                     int *cmdlen, int *state);
 int  frtos_spawn_host(const char *hostpath, int argc, char **argv, const xtld_host *host);
 int  frtos_open_lib(const char *name, const uint8_t **data, uint32_t *len, void *user);
 void frtos_lib_path_set(const char *const *dirs, int n);  /* loader lib search path (default /OS/Library/) */

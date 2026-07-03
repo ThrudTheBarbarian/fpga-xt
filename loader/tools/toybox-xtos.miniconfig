@@ -102,6 +102,14 @@ CONFIG_ZCAT=y
 CONFIG_BUNZIP2=y
 CONFIG_BZCAT=y
 
+# process tools (need /OS/Proc + SYS_kill). timeout stays out: it is built
+# around ASYNC SIGCHLD delivery (handler + siglongjmp), which the soft-signal
+# system cannot drive.
+CONFIG_KILL=y
+CONFIG_KILLALL=y
+CONFIG_PS=y
+CONFIG_TOP=y
+
 # the multiplexer's help
 CONFIG_TOYBOX_HELP=y
 CONFIG_TOYBOX_HELP_DASHDASH=y

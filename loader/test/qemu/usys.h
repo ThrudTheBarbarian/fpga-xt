@@ -67,6 +67,8 @@ static inline long sys_spawn_fd(const char *path, char **argv, const int fds[4])
 /* duplicate a pipe end onto a chosen fd slot (refcounted) */
 static inline long sys_dup2(int oldfd, int newfd)
 { return __syscall(SYS_dup2, oldfd, newfd, 0); }
+/* sig 0 probes existence; anything else kills at the next syscall boundary */
+static inline long sys_kill(int pid, int sig) { return __syscall(SYS_kill, pid, sig, 0); }
 static inline long sys_fstat(int fd, struct xt_stat *st)
 { return __syscall(SYS_fstat, fd, (long)st, 0); }
 /* mmap a romfs file read-only + shared (len=0 -> whole file from off). Returns a
