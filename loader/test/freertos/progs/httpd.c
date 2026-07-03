@@ -40,7 +40,9 @@ static void wrs(int fd, const char *s) { wr(fd, s, slen(s)); }
 static void head(int fd, int code, const char *status, const char *type, long len)
 {
     char h[256], *p = h;
-    p = sapp(p, "HTTP/1.0 "); p = iapp(p, code); *p++=' '; p = sapp(p, status);
+    /* HTTP/1.1 in the status line (with Connection: close below, so it's really
+     * 1.0 semantics) — toybox wget only accepts a "HTTP/1.1 " status prefix */
+    p = sapp(p, "HTTP/1.1 "); p = iapp(p, code); *p++=' '; p = sapp(p, status);
     p = sapp(p, "\r\nServer: xtos\r\nContent-Type: "); p = sapp(p, type);
     p = sapp(p, "\r\nConnection: close\r\n");
     if (len >= 0) { p = sapp(p, "Content-Length: "); p = iapp(p, len); p = sapp(p, "\r\n"); }

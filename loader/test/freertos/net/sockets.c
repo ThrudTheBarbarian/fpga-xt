@@ -122,10 +122,25 @@ long xt_sock_send(int si, const void *buf, unsigned len)
         netbuf_delete(nb);
         return e == ERR_OK ? (long)len : -1;
     }
-    size_t done = 0;
-    err_t e = netconn_write_partly(s->conn, buf, len, NETCONN_COPY, &done);
-    if (e != ERR_OK && done == 0) return -1;
-    return (long)done;
+    /* non-blocking + retry (like recv): a blocking netconn_write on a big
+     * transfer waits for the window inside the netconn op, which mixed with the
+     * raw-API netcon flusher contending the core lock could wedge. DONTBLOCK
+     * returns ERR_WOULDBLOCK when the send buffer is full; nap and retry so the
+     * tcpip thread drains ACKs meanwhile. */
+    size_t total = 0;
+    while (total < len) {
+        size_t done = 0;
+        err_t e = netconn_write_partly(s->conn, (const char *)buf + total, len - total,
+                                       NETCONN_COPY | NETCONN_DONTBLOCK, &done);
+        total += done;
+        if (e == ERR_OK || e == ERR_WOULDBLOCK) {
+            if (total >= len) break;
+            if (done == 0) vTaskDelay(pdMS_TO_TICKS(5));   /* buffer full: let it drain */
+            continue;
+        }
+        return total ? (long)total : -1;                  /* real error (reset/closed) */
+    }
+    return (long)total;
 }
 
 /* blocking read (ticking); 0 = orderly close / EOF */

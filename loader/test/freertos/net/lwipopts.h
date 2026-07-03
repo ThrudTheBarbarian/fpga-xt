@@ -49,15 +49,15 @@
 #define MEMP_MEM_MALLOC            0
 #define MEM_ALIGNMENT              4
 #define MEM_SIZE                   (64 * 1024)
-#define MEMP_NUM_PBUF              32
+#define MEMP_NUM_PBUF              48
 #define MEMP_NUM_UDP_PCB           12
 #define MEMP_NUM_TCP_PCB           8
 #define MEMP_NUM_TCP_PCB_LISTEN    4
-#define MEMP_NUM_TCP_SEG           32
+#define MEMP_NUM_TCP_SEG           48
 #define MEMP_NUM_SYS_TIMEOUT       24    /* dhcp+arp+tcp+dns+mdns+sntp+tftp cyclic + one-
                                           * shots; an EXHAUSTED pool spins the tcpip thread
                                           * at prio 3 = a whole-system wedge */
-#define PBUF_POOL_SIZE             32
+#define PBUF_POOL_SIZE             48
 #define PBUF_POOL_BUFSIZE          1600
 
 #define TCP_MSS                    1460
