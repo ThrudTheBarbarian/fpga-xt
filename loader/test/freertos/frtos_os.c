@@ -60,7 +60,8 @@ static void k_pipe_close_end(fd_t *f);   /* impl below with the other pipe ops *
 
 /* kernel-mailbox fs ops (impls with the fs task, below): displacing an open
  * file fd (dup2 restore) must flush + close through the SOLE FatFs driver */
-enum { KFS_READFILE, KFS_LISTDIR, KFS_CLOSEALL, KFS_CLOSEFD };
+enum { KFS_READFILE, KFS_LISTDIR, KFS_CLOSEALL, KFS_CLOSEFD,
+       KFS_WRITEOPEN, KFS_WRITEBLOCK, KFS_WRITECLOSE };
 static long kfs_call(int op, const char *path, void *buf, uint32_t len, void **out_buf);
 
 typedef struct {
@@ -890,6 +891,8 @@ static void fs_close_all(int slot)
         }
 }
 
+static vfs_file *g_kfs_wf;             /* the net file drop's open upload (fs task only) */
+
 static long kfs_serve(void)
 {
     switch (g_kfs.op) {
@@ -918,6 +921,20 @@ static long kfs_serve(void)
         return sd_listdir_raw(g_kfs.path, (char (*)[32])g_kfs.buf, (int)g_kfs.len);
     }
     case KFS_CLOSEALL: fs_close_all((int)g_kfs.len); return 0;   /* reap: close a dead proc's fds */
+    case KFS_WRITEOPEN: {                               /* net file drop: streamed whole-file write */
+        static vfs_file wf;                             /* ONE upload at a time (tftp's model too) */
+        if (g_kfs_wf) { vfs_close(g_kfs_wf); g_kfs_wf = 0; }   /* stale half-finished upload */
+        if (vfs_open(g_kfs.path, VFS_O_WRONLY | VFS_O_CREAT | VFS_O_TRUNC, &wf) != 0) return -1;
+        if (!wf.write) { vfs_close(&wf); return -1; }
+        g_kfs_wf = &wf;
+        return 0;
+    }
+    case KFS_WRITEBLOCK:
+        if (!g_kfs_wf) return -1;
+        return vfs_write(g_kfs_wf, g_kfs.buf, g_kfs.len);
+    case KFS_WRITECLOSE:
+        if (g_kfs_wf) { vfs_close(g_kfs_wf); g_kfs_wf = 0; }
+        return 0;
     case KFS_CLOSEFD: {                                 /* flush + close a caller's fd_t */
         fd_t *d = (fd_t *)g_kfs.buf;
         fd_drop_cache(d);
@@ -978,6 +995,21 @@ static long kfs_call(int op, const char *path, void *buf, uint32_t len, void **o
 int sd_listdir(const char *dir, char out[][32], int max)
 {
     return (int)kfs_call(KFS_LISTDIR, dir, out, (uint32_t)max, 0);
+}
+
+/* the net file drop (tftpd.c): streamed writes + whole-file reads through the
+ * fs task. Kernel-task callers only (the lwIP thread). */
+long frtos_net_writeopen(const char *path) { return kfs_call(KFS_WRITEOPEN, path, 0, 0, 0); }
+long frtos_net_writeblock(const void *buf, unsigned len)
+{ return kfs_call(KFS_WRITEBLOCK, 0, (void *)buf, len, 0); }
+long frtos_net_writeclose(void) { return kfs_call(KFS_WRITECLOSE, 0, 0, 0, 0); }
+long frtos_net_readfile(const char *path, const void **data)
+{
+    void *buf = 0;
+    long sz = kfs_call(KFS_READFILE, path, 0, 0, &buf);
+    if (sz < 0 || !buf) return -1;
+    *data = buf;
+    return sz;
 }
 
 /* deferral_thunk (client TASK context) -> hand a routed metadata op to the fs task.

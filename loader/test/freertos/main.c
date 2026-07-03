@@ -144,6 +144,7 @@ static void shell_task(void *arg)
 {
     (void)arg;
     { extern void sd_init(void); sd_init(); }   /* mount SD here (task context — FatFs reentrancy needs the scheduler) */
+    { extern void net_init(void); net_init(); } /* GEM0 + lwIP + DHCP + the tftp file drop (async; quiet if no link) */
     boot_run();       /* /OS/boot/NN-<slug> auto-runner (e.g. the desktop) */
 
     /* Login shell: /System/bin/sh is toysh (toybox) — the interactive PL0 shell

@@ -84,9 +84,25 @@ $(BUILD)/kernel.elf: $(KASM) $(KSRC) test/qemu/bare.ld $(BUILD)/app_so.h kernel/
 # --- the REAL Xilinx FreeRTOS kernel + CA9 port, on qemu's Zynq PS model -
 FR     := ../third_party/freertos10_xilinx/src/Source
 FRPORT := $(FR)/portable/GCC/ARM_CA9
+LWIP  := ../third_party/lwip
 FRINC  := -I. -I$(FR)/include -I$(FRPORT) -Itest/freertos -Itest/freertos/shim \
           -Itest/qemu -Ikernel -I$(BUILD) \
-          -Itest/freertos/storage -Itest/freertos/storage/shim   # FatFs + xsdps (SD)
+          -Itest/freertos/storage -Itest/freertos/storage/shim \
+          -Itest/freertos/net -I$(LWIP)/src/include -I$(LWIP)/contrib/ports/freertos/include
+# lwIP core (BSD) + the FreeRTOS sys_arch + our GEM0 netif — the network stack
+# (DHCP + the tftp file drop; TCP compiled in for the phase-2 console/sockets)
+LWIPSRC := $(addprefix $(LWIP)/src/core/, init.c def.c inet_chksum.c ip.c mem.c memp.c \
+             netif.c pbuf.c stats.c sys.c tcp.c tcp_in.c tcp_out.c timeouts.c udp.c \
+             altcp.c altcp_alloc.c altcp_tcp.c) \
+           $(addprefix $(LWIP)/src/core/ipv4/, acd.c dhcp.c etharp.c icmp.c ip4.c \
+             ip4_addr.c ip4_frag.c) \
+           $(LWIP)/src/netif/ethernet.c $(LWIP)/src/api/tcpip.c \
+           $(LWIP)/src/apps/tftp/tftp.c $(LWIP)/contrib/ports/freertos/sys_arch.c
+NETSRC  := test/freertos/net/xemacps.c test/freertos/net/xemacps_control.c \
+           test/freertos/net/xemacps_bdring.c test/freertos/net/xemacps_pcs.c \
+           test/freertos/net/xemacps_hw.c \
+           test/freertos/net/xemacps_g.c test/freertos/net/net_libc.c \
+           test/freertos/net/xemacpsif.c test/freertos/net/net.c test/freertos/net/tftpd.c
 FRCFLAGS := -marm -mcpu=cortex-a9 -mfloat-abi=softfp -mfpu=neon-vfpv3 -ffreestanding -nostdlib -O2 -g -DSDT $(FRINC)
 FRSRC := $(FR)/tasks.c $(FR)/queue.c $(FR)/list.c $(FR)/timers.c $(FR)/event_groups.c \
          $(FR)/croutine.c $(FR)/stream_buffer.c $(FR)/portable/MemMang/heap_4.c \
@@ -101,7 +117,8 @@ FRSRC := $(FR)/tasks.c $(FR)/queue.c $(FR)/list.c $(FR)/timers.c $(FR)/event_gro
          test/freertos/storage/xsdps_host.c test/freertos/storage/xsdps_options.c \
          test/freertos/storage/xsdps_sinit.c test/freertos/storage/xsdps_g.c \
          test/freertos/storage/xil_shim.c test/freertos/storage/sd.c \
-         test/freertos/storage/vfs_fatfs.c
+         test/freertos/storage/vfs_fatfs.c \
+         $(NETSRC) $(LWIPSRC)
 FRASM := test/freertos/xt_boot.S test/freertos/xt_vectors.S $(FRPORT)/portASM.S
 
 # Build the kernel ELF(s) WITHOUT launching qemu — for rebuilding to pick up a new
