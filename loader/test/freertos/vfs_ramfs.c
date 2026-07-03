@@ -178,7 +178,11 @@ static int rf_rename(vfs_mount *m, const char *oldp, const char *newp)
 {
     (void)m;
     rnode *nd = find(oldp);
-    if (!nd || find(newp)) return -1;
+    if (!nd) return -1;
+    rnode *ex = find(newp);
+    if (ex && ex != nd) {                /* POSIX rename REPLACES the target */
+        free_pages(ex); ex->used = 0; ex->islink = 0;
+    }
     int j = 0; while (newp[j] && j < NAME_MAX - 1) { nd->name[j] = newp[j]; j++; } nd->name[j] = 0;
     return 0;
 }

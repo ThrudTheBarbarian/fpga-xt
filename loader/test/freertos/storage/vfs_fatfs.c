@@ -199,7 +199,16 @@ static int ff_mkdir(vfs_mount *m, const char *path)
 static int ff_rename(vfs_mount *m, const char *oldp, const char *newp)
 {
     (void)m; char a[256], b[256]; ffpath(a, oldp); ffpath(b, newp);
-    return (f_rename(a, b) == FR_OK) ? 0 : -1;
+    FRESULT r = f_rename(a, b);
+    if (r == FR_EXIST) {                 /* POSIX rename REPLACES the target (vi's
+                                          * .swp->file save, mv onto an existing file);
+                                          * FatFs refuses, so unlink + retry. Not atomic
+                                          * — FAT can't do better. A non-empty dir target
+                                          * fails the unlink, correctly. */
+        if (f_unlink(b) != FR_OK) return -1;
+        r = f_rename(a, b);
+    }
+    return (r == FR_OK) ? 0 : -1;
 }
 
 static vfs_fs fatfs_fs = { "fatfs", ff_open, 1 /* serialized: backing-store */,

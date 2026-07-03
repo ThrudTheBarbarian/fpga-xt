@@ -105,6 +105,34 @@ int frtos_console_eof(void) { return g_con_eof; }
 
 void ksys_set_console(void (*w)(const char *, int)) { g_console = w; }
 
+/* ---- console tty mode (ONE console, like the line discipline) -------------
+ * cooked+echo by default; raw mode is set per-request (XT_TTY_SETMODE — vi,
+ * hexedit, ...). The setter becomes the mode's owner: if it dies without
+ * restoring, the console must not stay raw, so its exit puts cooked back. */
+static struct { volatile unsigned canon, echo; } g_tty = { 1, 1 };
+static volatile int g_tty_owner;                     /* pid of the last mode-setter */
+
+/* ---- ^C (ISIG): the foreground job ----------------------------------------
+ * No process groups; "foreground" = the chain of blocking waitpids (the shell
+ * waits vi, vi waits its :!cmd — a stack, pushed/popped in the waitpid family).
+ * ^C in cooked mode kills the TOP (the deepest job): its waiter's waitpid
+ * returns and THAT decides what happens next (a shell reprompts, vi survives
+ * its subcommand). Raw mode delivers the byte instead. Called from the uart
+ * ISR (so a compute loop dies at its next syscall gate, not at its next
+ * console read) and from the line discipline (flag writes only: ISR-safe,
+ * idempotent). */
+static volatile int g_fg[MAXPROC];
+static volatile int g_nfg;
+
+int frtos_tty_sigint(void)
+{
+    if (!g_tty.canon || !g_nfg) return 0;
+    proc_t *t = proc_by_pid(g_fg[g_nfg - 1]);
+    if (!t || t->exited) return 0;
+    t->killed = 1;
+    return 1;
+}
+
 /* xtld_host.alloc/dealloc — the OS heap (newlib). Real free, so xtld_unload
  * actually reclaims. */
 /* Allocation: a one-shot bootstrap bump (over the OS-heap base) loads libc.so;
@@ -240,13 +268,6 @@ static void pipes_release(proc_t *p)
     for (int fd = 0; fd < NFD; fd++)
         if (p->fd[fd].open && p->fd[fd].pipei) k_pipe_close_end(&p->fd[fd]);
 }
-
-/* ---- console tty mode (ONE console, like the line discipline) -------------
- * cooked+echo by default; raw mode is set per-request (XT_TTY_SETMODE — vi,
- * hexedit, ...). The setter becomes the mode's owner: if it dies without
- * restoring, the console must not stay raw, so its exit puts cooked back. */
-static struct { volatile unsigned canon, echo; } g_tty = { 1, 1 };
-static volatile int g_tty_owner;                     /* pid of the last mode-setter */
 
 static void tty_release(proc_t *p)
 {
@@ -1230,6 +1251,14 @@ void deferral_thunk(void)                 /* PL1 (System), task context */
                     for (;;) {
                         int c = sh_readc();
                         if (c < 0) { g_con_eof = 1; break; }   /* EOF (qemu pipe drained) */
+                        if (c == 3) {                     /* ^C (ISIG): kill the fg job,
+                                                           * drop the pending line */
+                            frtos_tty_sigint();           /* no-op if the ISR already fired */
+                            g_llen = 0;
+                            if (g_console) g_console("^C\n", 3);
+                            g_lbuf[g_llen++] = '\n';      /* empty line -> the reader reprompts */
+                            break;
+                        }
                         if (g_lsawcr) {                   /* CRLF: the CR already became NL */
                             g_lsawcr = 0;
                             if (c == '\n') continue;
@@ -2099,7 +2128,10 @@ int frtos_waitpid_notify(int pid)
     if (!p) return -1;
     p->waited = 1;
     p->waiter = xTaskGetCurrentTaskHandle();      /* task_exit_thunk notifies this task */
+    int fgi = -1;                                 /* the waited child is now foreground (^C) */
+    if (g_nfg < MAXPROC) { fgi = g_nfg; g_fg[g_nfg++] = pid; }
     while (!p->exited) ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
+    if (fgi >= 0 && g_nfg > fgi) g_nfg = fgi;     /* leave the fg stack (+ anything stale above) */
     return frtos_reap(p);
 }
 
@@ -2123,7 +2155,10 @@ int frtos_waitpid(int pid)
     proc_t *p = proc_by_pid(pid);
     if (!p) return -1;
     p->waited = 1;
+    int fgi = -1;                                 /* foreground for ^C, like the PL0 form */
+    if (g_nfg < MAXPROC) { fgi = g_nfg; g_fg[g_nfg++] = pid; }
     xSemaphoreTake(p->done, portMAX_DELAY);    /* yields via svc #0 until exit */
+    if (fgi >= 0 && g_nfg > fgi) g_nfg = fgi;
     return frtos_reap(p);
 }
 
