@@ -187,8 +187,30 @@ long vfs_symlink(const char *target, const char *linkpath)
     if (!m || !m->fs->symlink) return -1;
     return m->fs->symlink(m, target, rel);
 }
+/* case-insensitive name-vs-mount-first-component check (FAT preserves but
+ * doesn't distinguish case; a mount shadows the real dir either way) */
+static int is_mount_component(const char *name)
+{
+    for (int i = 0; i < g_nmnt; i++) {
+        const char *p = g_mnt[i].prefix + 1;
+        int n = 0; while (p[n] && p[n] != '/') n++;
+        if (!n) continue;
+        int ok = 1;
+        for (int t = 0; t < n && ok; t++) {
+            char a = name[t], b = p[t];
+            if (a >= 'A' && a <= 'Z') a += 32;
+            if (b >= 'A' && b <= 'Z') b += 32;
+            if (a != b) ok = 0;
+        }
+        if (ok && !name[n]) return 1;
+    }
+    return 0;
+}
+
 /* enumerating "/" = the unique first components of the mount prefixes
- * ("/OS/Var/Locks" and "/OS" both contribute just "OS") */
+ * ("/OS/var/locks" and "/OS" both contribute just "OS"), THEN the real
+ * entries of the "/" mount (the SD root: BOOT.BIN etc.), minus any the
+ * mounts shadow. */
 static long root_readdir(int index, char *name, int nsz, unsigned *mode)
 {
     int emitted = 0;
@@ -214,7 +236,18 @@ static long root_readdir(int index, char *name, int nsz, unsigned *mode)
             return 1;
         }
     }
-    return 0;
+    /* past the mounts: the "/" filesystem's own root entries */
+    vfs_mount *root = 0;
+    for (int i = 0; i < g_nmnt; i++)
+        if (g_mnt[i].prefix[0] == '/' && !g_mnt[i].prefix[1]) { root = &g_mnt[i]; break; }
+    if (!root || !root->fs->readdir) return 0;
+    int want = index - emitted;
+    for (int di = 0, served = 0; ; di++) {
+        int r = root->fs->readdir(root, "/", di, name, nsz, mode);
+        if (r != 1) return r;                                   /* end / error */
+        if (is_mount_component(name)) continue;                 /* shadowed by a mount */
+        if (served++ == want) return 1;
+    }
 }
 
 long vfs_readdir(const char *path, int index, char *name, int nsz, unsigned *mode)
