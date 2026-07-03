@@ -95,9 +95,12 @@ LWIPSRC := $(addprefix $(LWIP)/src/core/, init.c def.c inet_chksum.c ip.c mem.c 
              netif.c pbuf.c stats.c sys.c tcp.c tcp_in.c tcp_out.c timeouts.c udp.c \
              altcp.c altcp_alloc.c altcp_tcp.c) \
            $(addprefix $(LWIP)/src/core/ipv4/, acd.c dhcp.c etharp.c icmp.c ip4.c \
-             ip4_addr.c ip4_frag.c) \
+             ip4_addr.c ip4_frag.c igmp.c) \
            $(LWIP)/src/netif/ethernet.c $(LWIP)/src/api/tcpip.c \
-           $(LWIP)/src/apps/tftp/tftp.c $(LWIP)/contrib/ports/freertos/sys_arch.c
+           $(LWIP)/src/apps/tftp/tftp.c \
+           $(LWIP)/src/apps/mdns/mdns.c $(LWIP)/src/apps/mdns/mdns_out.c \
+           $(LWIP)/src/apps/mdns/mdns_domain.c \
+           $(LWIP)/contrib/ports/freertos/sys_arch.c
 NETSRC  := test/freertos/net/xemacps.c test/freertos/net/xemacps_control.c \
            test/freertos/net/xemacps_bdring.c test/freertos/net/xemacps_pcs.c \
            test/freertos/net/xemacps_hw.c \

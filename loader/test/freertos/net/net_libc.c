@@ -46,3 +46,34 @@ const char _ctype_[257] = {
 /* xemacps_pcs.c's USX error path (never taken on a Zynq-7000 GEM — no
  * high-speed PCS) calls exit(); satisfy the link. */
 void exit(int code) { (void)code; for (;;) ; }
+
+/* minimal snprintf for mdns's conflict-rename ("%s-%d"): %s %d %u %c only */
+int snprintf(char *out, size_t cap, const char *fmt, ...)
+{
+    __builtin_va_list ap;
+    __builtin_va_start(ap, fmt);
+    size_t o = 0;
+    for (; *fmt; fmt++) {
+        if (*fmt != '%') { if (o + 1 < cap) out[o] = *fmt; o++; continue; }
+        fmt++;
+        if (*fmt == 's') {
+            const char *s = __builtin_va_arg(ap, const char *);
+            for (; s && *s; s++) { if (o + 1 < cap) out[o] = *s; o++; }
+        } else if (*fmt == 'd' || *fmt == 'u') {
+            int v = __builtin_va_arg(ap, int);
+            unsigned u = (unsigned)v;
+            char t[12]; int i = 0;
+            if (*fmt == 'd' && v < 0) { if (o + 1 < cap) out[o] = '-'; o++; u = (unsigned)-v; }
+            do { t[i++] = (char)('0' + u % 10); u /= 10; } while (u);
+            while (i) { if (o + 1 < cap) out[o] = t[--i]; o++; }
+        } else if (*fmt == 'c') {
+            char c = (char)__builtin_va_arg(ap, int);
+            if (o + 1 < cap) out[o] = c; o++;
+        } else {
+            if (o + 1 < cap) out[o] = *fmt; o++;
+        }
+    }
+    if (cap) out[o < cap ? o : cap - 1] = 0;
+    __builtin_va_end(ap);
+    return (int)o;
+}

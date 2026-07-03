@@ -25,10 +25,14 @@
 #define LWIP_DHCP_DOES_ACD_CHECK   0     /* bind on ACK (no multi-second ARP probe dance) */
 #define LWIP_AUTOIP                0
 #define LWIP_DNS                   0
-#define LWIP_IGMP                  0
+#define LWIP_IGMP                  1     /* mDNS joins 224.0.0.251 */
 #define LWIP_RAW                   0
 
 #define LWIP_NETIF_HOSTNAME        1
+#define LWIP_MDNS_RESPONDER        1     /* xtos.local */
+#define LWIP_NUM_NETIF_CLIENT_DATA 1
+#define MDNS_MAX_SERVICES          1
+#define LWIP_NETIF_EXT_STATUS_CALLBACK 1 /* mdns re-announces on address change */
 #define LWIP_NETIF_STATUS_CALLBACK 1
 #define LWIP_NETIF_LINK_CALLBACK   1
 
@@ -38,7 +42,7 @@
 #define MEM_ALIGNMENT              4
 #define MEM_SIZE                   (64 * 1024)
 #define MEMP_NUM_PBUF              32
-#define MEMP_NUM_UDP_PCB           8
+#define MEMP_NUM_UDP_PCB           10
 #define MEMP_NUM_TCP_PCB           8
 #define MEMP_NUM_TCP_PCB_LISTEN    4
 #define MEMP_NUM_TCP_SEG           32
@@ -66,5 +70,6 @@
 
 /* the TFTP file drop (apps/tftp/tftp.c) */
 #define TFTP_MAX_FILENAME_LEN      128
+#define LWIP_TFTP_MODE_SERVER_ONLY 1
 
 #endif

@@ -166,6 +166,46 @@ static err_t low_level_output(struct netif *nif, struct pbuf *p)
     return ERR_OK;
 }
 
+/* ---- RX interrupt: wake the pump the moment a frame lands ------------------
+ * The ISR just acks the GEM and gives a semaphore; all real work stays in the
+ * pump task. The pump ALSO wakes on a 10 ms timeout as a safety net (TX
+ * reclaim, any missed edge), so a lost interrupt degrades to slow, not dead. */
+#include "FreeRTOS.h"
+#include "semphr.h"
+static SemaphoreHandle_t g_rx_sem;
+
+void gem0_isr(void)
+{
+    UINTPTR base = g_emac.Config.BaseAddress;
+    if (!base) return;
+    u32 isr = XEmacPs_ReadReg(base, XEMACPS_ISR_OFFSET);
+    XEmacPs_WriteReg(base, XEMACPS_ISR_OFFSET, isr);            /* w1c: ack everything */
+    if (g_rx_sem) {
+        BaseType_t woken = pdFALSE;
+        xSemaphoreGiveFromISR(g_rx_sem, &woken);
+        portYIELD_FROM_ISR(woken);
+    }
+}
+
+/* block until RX work is likely (frame IRQ or the safety-net timeout) */
+void xemacpsif_wait(int ms)
+{
+    if (g_rx_sem) xSemaphoreTake(g_rx_sem, pdMS_TO_TICKS(ms));
+}
+
+static void gem0_irq_enable(void)
+{
+    g_rx_sem = xSemaphoreCreateBinary();
+    /* route GIC id 54 to CPU0 at API-callable priority, enable RX-complete */
+    volatile uint8_t  *prio = (volatile uint8_t  *)(0xF8F01400u + 54);
+    volatile uint32_t *targ = (volatile uint32_t *)(0xF8F01800u + (54 / 4) * 4);
+    volatile uint32_t *enab = (volatile uint32_t *)(0xF8F01100u + (54 / 32) * 4);
+    *prio = 0xA0;
+    *targ = (*targ & ~(0xFFu << ((54 % 4) * 8))) | (0x01u << ((54 % 4) * 8));
+    *enab = 1u << (54 % 32);
+    XEmacPs_IntEnable(&g_emac, XEMACPS_IXR_FRAMERX_MASK);
+}
+
 /* drain received frames into lwIP (called from the poll task; netif->input is
  * tcpip_input, which posts to the lwIP thread — safe from here) */
 int xemacpsif_poll(struct netif *nif)
@@ -234,7 +274,8 @@ err_t xemacpsif_init(struct netif *nif)
     unsigned char mac[6] = { 0x02, 0x78, 0x74, 0x6F, 0x73, 0x01 };   /* locally administered, "xtos" */
     XEmacPs_SetMacAddress(&g_emac, mac, 1);
     XEmacPs_SetMdioDivisor(&g_emac, MDC_DIV_224);
-    XEmacPs_SetOptions(&g_emac, XEMACPS_FCS_STRIP_OPTION | XEMACPS_BROADCAST_OPTION);
+    XEmacPs_SetOptions(&g_emac, XEMACPS_FCS_STRIP_OPTION | XEMACPS_BROADCAST_OPTION |
+                                XEMACPS_MULTICAST_OPTION);   /* mDNS (224.0.0.251) */
 
     if (rings_init() != 0) return ERR_IF;
 
@@ -246,6 +287,7 @@ err_t xemacpsif_init(struct netif *nif)
      * link+aneg immediately, HW in a second or two) */
     XEmacPs_SetOperatingSpeed(&g_emac, 100);
     XEmacPs_Start(&g_emac);
+    gem0_irq_enable();
 
     nif->name[0] = 'e'; nif->name[1] = '0';
     nif->output     = etharp_output;
@@ -253,6 +295,7 @@ err_t xemacpsif_init(struct netif *nif)
     nif->mtu        = 1500;
     nif->hwaddr_len = 6;
     memcpy(nif->hwaddr, mac, 6);
-    nif->flags = NETIF_FLAG_BROADCAST | NETIF_FLAG_ETHARP | NETIF_FLAG_LINK_UP;
+    nif->flags = NETIF_FLAG_BROADCAST | NETIF_FLAG_ETHARP | NETIF_FLAG_LINK_UP |
+                 NETIF_FLAG_IGMP;
     return ERR_OK;
 }

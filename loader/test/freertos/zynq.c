@@ -98,6 +98,7 @@ void vApplicationIRQHandler(uint32_t ulICCIAR)
 #ifdef XT_HW_UART
     else if (id == 82) { extern void uart1_rx_isr(void); uart1_rx_isr(); }   /* UART1 receive */
 #endif
+    else if (id == 54) { extern void gem0_isr(void); gem0_isr(); }           /* GEM0 (net RX) */
 }
 
 static void fr_hex(const char *label, unsigned v)

@@ -57,7 +57,9 @@
 #include "lwip/timeouts.h"
 #include "lwip/debug.h"
 
-#define TFTP_MAX_PAYLOAD_SIZE 512
+#define TFTP_MAX_PAYLOAD_SIZE 1428  /* XTOS: negotiated cap (RFC 2348 blksize) */
+#define TFTP_DEF_PAYLOAD_SIZE 512
+#define TFTP_OACK  6                /* XTOS: option acknowledgement */
 #define TFTP_HEADER_LENGTH    4
 
 #define TFTP_RRQ   1
@@ -91,6 +93,7 @@ struct tftp_state {
   u8_t retries;
   u8_t mode_write;
   u8_t tftp_mode;
+  u16_t blksize;                    /* XTOS: negotiated payload size (512 default) */
 };
 
 static struct tftp_state tftp_state;
@@ -101,6 +104,7 @@ static void
 close_handle(void)
 {
   tftp_state.port = 0;
+  tftp_state.blksize = TFTP_DEF_PAYLOAD_SIZE;      /* XTOS */
   ip_addr_set_any(0, &tftp_state.addr);
 
   if (tftp_state.last_data != NULL) {
@@ -221,14 +225,14 @@ send_data(const ip_addr_t *addr, u16_t port)
     pbuf_free(tftp_state.last_data);
   }
 
-  tftp_state.last_data = init_packet(TFTP_DATA, tftp_state.blknum, TFTP_MAX_PAYLOAD_SIZE);
+  tftp_state.last_data = init_packet(TFTP_DATA, tftp_state.blknum, tftp_state.blksize);
   if (tftp_state.last_data == NULL) {
     return;
   }
 
   payload = (u16_t *) tftp_state.last_data->payload;
 
-  ret = tftp_state.ctx->read(tftp_state.handle, &payload[2], TFTP_MAX_PAYLOAD_SIZE);
+  ret = tftp_state.ctx->read(tftp_state.handle, &payload[2], tftp_state.blksize);
   if (ret < 0) {
     send_error(addr, port, TFTP_ERROR_ACCESS_VIOLATION, "Error occurred while reading the file.");
     close_handle();
@@ -297,6 +301,30 @@ tftp_recv(void *arg, struct udp_pcb *upcb, struct pbuf *p, const ip_addr_t *addr
       }
       pbuf_copy_partial(p, mode, mode_end_offset - filename_end_offset, filename_end_offset + 1);
 
+      /* XTOS: RFC 2348 blksize — scan the option list that may follow mode */
+      tftp_state.blksize = TFTP_DEF_PAYLOAD_SIZE;
+      {
+        u16_t oname = mode_end_offset + 1;
+        while (oname < p->tot_len) {
+          char on[12], ov[8];
+          u16_t oname_end = pbuf_memfind(p, &tftp_null, sizeof(tftp_null), oname);
+          if (oname_end == 0xFFFF || (u16_t)(oname_end - oname) >= sizeof(on)) break;
+          pbuf_copy_partial(p, on, (u16_t)(oname_end - oname + 1), oname);
+          u16_t oval = oname_end + 1;
+          u16_t oval_end = pbuf_memfind(p, &tftp_null, sizeof(tftp_null), oval);
+          if (oval_end == 0xFFFF || (u16_t)(oval_end - oval) >= sizeof(ov)) break;
+          pbuf_copy_partial(p, ov, (u16_t)(oval_end - oval + 1), oval);
+          if (!lwip_stricmp(on, "blksize")) {
+            int v = atoi(ov);
+            if (v >= 8) {
+              if (v > TFTP_MAX_PAYLOAD_SIZE) v = TFTP_MAX_PAYLOAD_SIZE;
+              tftp_state.blksize = (u16_t)v;
+            }
+          }
+          oname = oval_end + 1;
+        }
+      }
+
       tftp_state.handle = tftp_state.ctx->open(filename, mode, opcode == PP_HTONS(TFTP_WRQ));
       tftp_state.blknum = 1;
 
@@ -312,11 +340,24 @@ tftp_recv(void *arg, struct udp_pcb *upcb, struct pbuf *p, const ip_addr_t *addr
       ip_addr_copy(tftp_state.addr, *addr);
       tftp_state.port = port;
 
-      if (opcode == PP_HTONS(TFTP_WRQ)) {
-        tftp_state.mode_write = 1;
+      tftp_state.mode_write = (opcode == PP_HTONS(TFTP_WRQ)) ? 1 : 0;
+      if (tftp_state.blksize != TFTP_DEF_PAYLOAD_SIZE) {
+        /* XTOS: OACK "blksize" <n>; a WRQ client answers with DATA 1, an RRQ
+         * client with ACK 0 (handled in the TFTP_ACK case) */
+        char bs[8]; int bl = 0, v = tftp_state.blksize;
+        { char t[8]; int i = 0; do { t[i++] = (char)('0' + v % 10); v /= 10; } while (v);
+          while (i) bs[bl++] = t[--i]; bs[bl] = 0; }
+        struct pbuf *op = init_packet(TFTP_OACK, 0, (u16_t)(8 + bl + 1 - 2));
+        if (op) {
+          char *pay = (char *)op->payload;
+          MEMCPY(pay + 2, "blksize", 8);
+          MEMCPY(pay + 2 + 8, bs, (size_t)bl + 1);
+          udp_sendto(tftp_state.upcb, op, addr, port);
+          pbuf_free(op);
+        }
+      } else if (tftp_state.mode_write) {
         send_ack(addr, port, 0);
       } else {
-        tftp_state.mode_write = 0;
         send_data(addr, port);
       }
 
@@ -349,7 +390,7 @@ tftp_recv(void *arg, struct udp_pcb *upcb, struct pbuf *p, const ip_addr_t *addr
           send_ack(addr, port, blknum);
         }
 
-        if (p->tot_len < TFTP_MAX_PAYLOAD_SIZE) {
+        if (p->tot_len < tftp_state.blksize) {
           close_handle();
         } else {
           tftp_state.blknum++;
@@ -378,6 +419,10 @@ tftp_recv(void *arg, struct udp_pcb *upcb, struct pbuf *p, const ip_addr_t *addr
       }
 
       blknum = lwip_ntohs(sbuf[1]);
+      if (blknum == 0 && tftp_state.blknum == 1 && tftp_state.last_data == NULL) {
+        send_data(addr, port);           /* XTOS: OACK acknowledged -> first block */
+        break;
+      }
       if (blknum != tftp_state.blknum) {
         send_error(addr, port, TFTP_ERROR_UNKNOWN_TRFR_ID, "Wrong block number");
         break;
@@ -386,7 +431,7 @@ tftp_recv(void *arg, struct udp_pcb *upcb, struct pbuf *p, const ip_addr_t *addr
       lastpkt = 0;
 
       if (tftp_state.last_data != NULL) {
-        lastpkt = tftp_state.last_data->tot_len != (TFTP_MAX_PAYLOAD_SIZE + TFTP_HEADER_LENGTH);
+        lastpkt = tftp_state.last_data->tot_len != (tftp_state.blksize + TFTP_HEADER_LENGTH);
       }
 
       if (!lastpkt) {
@@ -462,6 +507,7 @@ tftp_init_common(u8_t mode, const struct tftp_context *ctx)
 
   tftp_state.handle    = NULL;
   tftp_state.port      = 0;
+  tftp_state.blksize   = TFTP_DEF_PAYLOAD_SIZE;   /* XTOS */
   tftp_state.ctx       = ctx;
   tftp_state.timer     = 0;
   tftp_state.last_data = NULL;

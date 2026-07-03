@@ -6,6 +6,7 @@
 #include "lwip/tcpip.h"
 #include "lwip/netif.h"
 #include "lwip/dhcp.h"
+#include "lwip/apps/mdns.h"
 #include "FreeRTOS.h"
 #include "task.h"
 
@@ -15,6 +16,7 @@ extern void putu(unsigned);
 err_t xemacpsif_init(struct netif *nif);
 int   xemacpsif_poll(struct netif *nif);
 int   xemacpsif_link_poll(void);
+void  xemacpsif_wait(int ms);
 void  tftpd_init(void);
 
 static struct netif g_nif;
@@ -65,20 +67,24 @@ static void net_task(void *arg)
     netif_set_hostname(&g_nif, "xtos");
     netif_set_status_callback(&g_nif, net_status);
     netif_set_up(&g_nif);
+    mdns_resp_init();
+    mdns_resp_add_netif(&g_nif, "xtos");             /* xtos.local */
     dhcp_start(&g_nif);
     UNLOCK_TCPIP_CORE();
 
     tftpd_init();
 
-    int ticks = 0;
+    TickType_t lastlink = 0;
     for (;;) {                                           /* the RX pump */
         xemacpsif_poll(&g_nif);
-        if (++ticks >= 500) {                            /* link watch, every ~500 ms */
-            ticks = 0;
+        TickType_t now = xTaskGetTickCount();
+        if (now - lastlink >= pdMS_TO_TICKS(500)) {      /* link watch, every ~500 ms */
+            lastlink = now;
             int sp = xemacpsif_link_poll();
             if (sp) { puts0("[net] link "); putu((unsigned)sp); puts0(" Mb/s\n"); }
         }
-        vTaskDelay(1);                                   /* 1 tick (1 ms) */
+        xemacpsif_wait(10);                              /* RX IRQ wakes us instantly;
+                                                          * 10 ms safety-net timeout */
     }
 }
 
