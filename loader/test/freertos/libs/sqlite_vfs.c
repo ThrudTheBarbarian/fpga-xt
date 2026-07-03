@@ -12,7 +12,7 @@
  * after the DB — O_CREAT succeeds for the first holder, fails (-> SQLITE_BUSY) for
  * the rest.  Coarse (SHARED serialises with EXCLUSIVE) but corruption-safe, and a
  * crashed holder's lock frees itself when reap closes its lockfd.  So the config
- * DB (/OS/etc/registry.db) is a living, multi-writer store.
+ * DB (/OS/var/registry.db) is a living, multi-writer store.
  *
  * Config: journal mode only (no WAL -> no shared-memory VFS), TEMP_STORE=memory
  * (no temp files), single-threaded.
@@ -36,7 +36,7 @@ typedef struct xt_file {
     char lockpath[192];       /* this DB's lock-file path (flattened DB path) */
 } xt_file;
 
-/* /OS/etc/registry.db -> /OS/var/locks/OS_etc_registry.db (flat lockfs namespace,
+/* /OS/var/registry.db -> /OS/var/locks/OS_var_registry.db (flat lockfs namespace,
  * so DBs with the same basename in different dirs don't share a lock). */
 static void build_lockpath(char *dst, const char *name) {
     static const char pfx[] = "/OS/var/locks/";
