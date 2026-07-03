@@ -1224,22 +1224,27 @@ void deferral_thunk(void)                 /* PL1 (System), task context */
             char *buf = (char *)p->da1;
             if (!buf || p->da2 == 0) r = 0;
             else if (!g_tty.canon) {
-                /* raw: bytes verbatim as they arrive — no line buffer, no CR
-                 * mapping, no erase. Serve cooked leftover first; else block
-                 * for one byte, then drain what's already buffered so escape
+                /* raw: bytes verbatim as they arrive — no line buffer, no erase.
+                 * ONE mapping survives: this console's Enter is CRLF, so a \n
+                 * directly after a \r is swallowed (else every Enter inserts two
+                 * lines in vi). The CR-seen flag is g_lsawcr, SHARED with the
+                 * cooked path: vi eats the \r of its final :wq raw, exits, and
+                 * the trailing \n must not become an empty line at the shell.
+                 * Serve cooked leftover first; else block until one deliverable
+                 * byte arrives, then drain what's already buffered so escape
                  * sequences arrive in one read where possible. */
                 uint32_t want = (uint32_t)p->da2, k = 0;
                 while (k < want && g_lpos < g_llen) buf[k++] = g_lbuf[g_lpos++];
-                if (!k) {
+                while (!k && !g_con_eof) {
                     int c = sh_readc();
-                    if (c < 0) g_con_eof = 1;             /* EOF (qemu pipe drained) */
-                    else {
-                        buf[k++] = (char)c;
-                        while (k < want && sh_avail() > 0) {
-                            c = sh_readc();
-                            if (c < 0) { g_con_eof = 1; break; }
-                            buf[k++] = (char)c;
-                        }
+                    if (c < 0) { g_con_eof = 1; break; }  /* EOF (qemu pipe drained) */
+                    for (;;) {
+                        int swallow = (g_lsawcr && c == '\n');
+                        g_lsawcr = (c == '\r');
+                        if (!swallow) buf[k++] = (char)c;
+                        if (k >= want || sh_avail() <= 0) break;
+                        c = sh_readc();
+                        if (c < 0) { g_con_eof = 1; break; }
                     }
                 }
                 if (k && g_tty.echo && g_console) g_console(buf, (int)k);

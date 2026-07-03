@@ -613,6 +613,17 @@ int rename(const char *oldp, const char *newp)
     return -1;
 }
 
+/* glibc-compatible wcwidth: -1 for control chars, not newlib's 0 — toybox vi's
+ * cursor clamp relies on the truthiness of -1 to let the cursor rest on a
+ * newline, so with 0 every EMPTY LINE was unreachable (the cursor slid back to
+ * the previous line). Defined here so it overrides the libc.so import. */
+int wcwidth(wchar_t wc)
+{
+    if (wc == 0) return 0;
+    if (wc < 32 || (wc >= 0x7f && wc < 0xa0)) return -1;
+    return 1;                            /* no double-width ranges on this console */
+}
+
 int mknod(const char *path, mode_t mode, dev_t dev)
 {
     (void)path; (void)mode; (void)dev;
