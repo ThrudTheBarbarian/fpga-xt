@@ -602,6 +602,17 @@ int unlink(const char *path)
     return -1;
 }
 
+/* newlib has no _rename glue here, so its rename() is ENOSYS — override it with
+ * the real syscall (vi's .swp->file save, mv). The kernel replaces an existing
+ * target, POSIX-style. */
+int rename(const char *oldp, const char *newp)
+{
+    struct xt_stat xs;
+    if (sys_rename(oldp, newp) == 0) return 0;
+    errno = (sys_lstat(oldp, &xs) == 0) ? EACCES : ENOENT;
+    return -1;
+}
+
 int mknod(const char *path, mode_t mode, dev_t dev)
 {
     (void)path; (void)mode; (void)dev;
