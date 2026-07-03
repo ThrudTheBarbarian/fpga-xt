@@ -2086,7 +2086,9 @@ char *linenoiseEditFeed(struct linenoiseState *l) {
 void linenoiseEditStop(struct linenoiseState *l) {
     if (!isatty(l->ifd) && !getenv("LINENOISE_ASSUME_TTY")) return;
     disableRawMode(l->ifd);
-    printf("\n");
+    /* XTOS: an unbuffered write, not printf — the shell's stdio buffer would
+     * hold the newline while the spawned command's output races past it. */
+    write(l->ofd, "\n", 1);
 }
 
 /* This just implements a blocking loop for the multiplexed API.
