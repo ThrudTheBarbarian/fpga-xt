@@ -1130,7 +1130,7 @@ void names_to_pid(char **names, int (*callback)(pid_t pid, char *name),
   DIR *dp;
   struct dirent *entry;
 
-  if (!(dp = opendir("/OS/Proc"))) perror_exit("no /proc");
+  if (!(dp = opendir("/OS/proc"))) perror_exit("no /proc");
 
   while ((entry = readdir(dp))) {
     unsigned u = atoi(entry->d_name);
@@ -1142,7 +1142,7 @@ void names_to_pid(char **names, int (*callback)(pid_t pid, char *name),
     // Comm is original name of executable (argv[0] could be #! interpreter)
     // but it's limited to 15 characters
     if (scripts) {
-      sprintf(libbuf, "/OS/Proc/%u/comm", u);
+      sprintf(libbuf, "/OS/proc/%u/comm", u);
       len = sizeof(libbuf);
       if (!(comm = readfileat(AT_FDCWD, libbuf, libbuf, &len)) || !len)
         continue;
@@ -1163,14 +1163,14 @@ void names_to_pid(char **names, int (*callback)(pid_t pid, char *name),
       if (bb!=*cur && !stat(*cur, &st1)) {
         char buf[32];
 
-        sprintf(buf, "/OS/Proc/%u/exe", u);
+        sprintf(buf, "/OS/proc/%u/exe", u);
         if (stat(buf, &st2) || !same_file(&st1, &st2)) continue;
         goto match;
       }
 
       // Nope, gotta read command line to confirm
       if (!cmd) {
-        sprintf(cmd = libbuf+16, "/OS/Proc/%u/cmdline", u);
+        sprintf(cmd = libbuf+16, "/OS/proc/%u/cmdline", u);
         len = sizeof(libbuf)-17;
         if (!(cmd = readfileat(AT_FDCWD, cmd, cmd, &len))) continue;
         // readfile only guarantees one null terminator and we need two
