@@ -1,2 +1,0 @@
-Welcome to XTOS.
-This text was read from /etc/motd via real file syscalls.

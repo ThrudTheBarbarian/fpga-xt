@@ -1,6 +1,6 @@
 /* /bin/regtest — Phase-2 read-path check: open Registry.db through the vendored
  * SQLite + the XTOS VFS and dump the desktopIcons rows.  On qemu the DB is a
- * romfs fixture (/System/Etc/Registry.db); on HW point it at the SD (/OS/Etc). */
+ * romfs fixture (/System/test/Registry.db); on HW point it at the SD (/OS/Etc). */
 #include "registry.h"
 #include "usys.h"
 #include <stdio.h>
@@ -9,7 +9,7 @@
 static void put(const char *s) { sys_write(1, s, (unsigned)strlen(s)); }
 
 void _app_entry(int argc, char **argv) {
-    const char *db = (argc > 1) ? argv[1] : "/System/Etc/Registry.db";
+    const char *db = (argc > 1) ? argv[1] : "/System/test/Registry.db";
     if (registry_open(db) != 0) { put("regtest: open FAILED: "); put(db); put("\n"); return; }
 
     reg_desktop_icon rows[32];

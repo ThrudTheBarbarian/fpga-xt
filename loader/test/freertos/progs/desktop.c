@@ -135,7 +135,7 @@ void _app_entry(int argc, char **argv)
     if (sys_fb_info(&fb) != 0) { sys_write(2, "desktop: no display plane\n", 26); return; }
     gfx_surface desk = { fb.w, fb.h, fb.stride, (uint32_t *)fb.addr };
 
-    font_face *face = font_face_open("/System/Fonts/AovelSansRounded.ttf");
+    font_face *face = font_face_open("/OS/Fonts/AovelSansRounded.ttf");
     if (!face) { sys_write(2, "desktop: font load FAILED\n", 26); return; }
 
     gem_wm_init(&wm, &desk, GFX_RGB(0x30, 0x50, 0x78));   /* desktop blue fallback */

@@ -179,7 +179,7 @@ static void shell_task(void *arg)
             puts0("builtins: selftest (run the tier-2 battery), vmtest, demandtest, cowtest,\n"
                   "  sharetext, memtest, mmaptest, modetest, badpoke, stackpoke, wxtest,\n"
                   "  stacktest, faulttest, runhost <path>, exit.  programs: /bin/{hello,\n"
-                  "  showmotd,usestr,echo,libc_test,gemtext,desktop}\n");
+                  "  usestr,echo,libc_test,gemtext,desktop}\n");
             continue;
         }
         if (!strcmp(argv[0], "selftest")) { run_selftest(); continue; }

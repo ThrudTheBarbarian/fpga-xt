@@ -6,7 +6,7 @@
  * hardware.  libGEM.so (aes + wm + VDI + theme + img + FreeType) -> libc.so/libm.so.
  *
  * Assets come from the SD (fatfs root): theme /OS/Themes/<Default>/1x, icons
- * /OS/Icons/*.pam; the font from the embedded romfs (/System/Fonts).
+ * /OS/Icons/*.pam; the font from the embedded romfs (/OS/Fonts).
  */
 #include "aes/aes.h"
 #include "img.h"
@@ -156,7 +156,7 @@ void _app_entry(int argc, char **argv) {
     bb_s.w = wp.w; bb_s.h = wp.h; bb_s.stride = wp.stride; bb_s.px = (uint32_t *)wp.addr;
     gfx_surface *bb = &bb_s;
 
-    font_face *face = font_face_open("/System/Fonts/AovelSansRounded.ttf");
+    font_face *face = font_face_open("/OS/Fonts/AovelSansRounded.ttf");
     if (!face) { sys_write(2, "aesdesk: font load FAILED\n", 26); return; }
     vdi_init(bb); HV = v_opnvwk(bb);
     font_face_set_tracking(face, 1); vdi_set_face(face);

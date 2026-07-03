@@ -324,7 +324,7 @@ ROMFS_OVERLAY ?= romfs-overlay
 ROMFS_OVERLAY_FILES := $(shell find $(ROMFS_OVERLAY) -type f 2>/dev/null)
 ROMFS_OVERLAY_ARGS  := $(foreach f,$(ROMFS_OVERLAY_FILES),/$(patsubst $(ROMFS_OVERLAY)/%,%,$(f))=$(f))
 
-$(BUILD)/romfs.bin: $(BUILD)/mkromfs $(BUILD)/toybox.so $(BUILD)/pipetest.so $(BUILD)/hello.so $(BUILD)/showmotd.so $(BUILD)/usestr.so $(BUILD)/echo.so $(BUILD)/libc_test.so $(BUILD)/gemtext.so $(BUILD)/desktop.so $(BUILD)/aesdesk.so $(BUILD)/regtest.so $(BUILD)/locktest.so $(BUILD)/lntest.so $(BUILD)/fstest.so $(BUILD)/lua.so $(BUILD)/init.so $(BUILD)/faultprog.so $(BUILD)/vmtest.so $(BUILD)/demandtest.so $(BUILD)/stacktest.so $(BUILD)/wxtest.so $(BUILD)/cowtest.so $(BUILD)/sharetext.so $(BUILD)/shmtest.so $(BUILD)/finictor.so $(BUILD)/mmaptest.so $(BUILD)/modetest.so $(BUILD)/badpoke.so $(BUILD)/stackpoke.so $(BUILD)/libutil.so $(BUILD)/libGEM.so $(BUILD)/libm.so $(BUILD)/libc.so test/freertos/motd.txt test/freertos/hello.lua test/freertos/Registry.db $(ROMFS_OVERLAY_FILES)
+$(BUILD)/romfs.bin: $(BUILD)/mkromfs $(BUILD)/toybox.so $(BUILD)/pipetest.so $(BUILD)/hello.so $(BUILD)/usestr.so $(BUILD)/echo.so $(BUILD)/libc_test.so $(BUILD)/gemtext.so $(BUILD)/desktop.so $(BUILD)/aesdesk.so $(BUILD)/regtest.so $(BUILD)/locktest.so $(BUILD)/lntest.so $(BUILD)/fstest.so $(BUILD)/lua.so $(BUILD)/init.so $(BUILD)/faultprog.so $(BUILD)/vmtest.so $(BUILD)/demandtest.so $(BUILD)/stacktest.so $(BUILD)/wxtest.so $(BUILD)/cowtest.so $(BUILD)/sharetext.so $(BUILD)/shmtest.so $(BUILD)/finictor.so $(BUILD)/mmaptest.so $(BUILD)/modetest.so $(BUILD)/badpoke.so $(BUILD)/stackpoke.so $(BUILD)/libutil.so $(BUILD)/libGEM.so $(BUILD)/libm.so $(BUILD)/libc.so test/freertos/Registry.db $(ROMFS_OVERLAY_FILES)
 	$(BUILD)/mkromfs $@ \
 	    /bin/faultprog=$(BUILD)/faultprog.so \
 	    /bin/vmtest=$(BUILD)/vmtest.so \
@@ -344,8 +344,6 @@ $(BUILD)/romfs.bin: $(BUILD)/mkromfs $(BUILD)/toybox.so $(BUILD)/pipetest.so $(B
 	    /Library/libm.so=$(BUILD)/libm.so \
 	    /Library/libGEM.so=$(BUILD)/libGEM.so \
 	    $(if $(SD_TEST),,/Library/libutil.so=$(BUILD)/libutil.so) \
-	    /Fonts/AovelSansRounded.ttf=$(GEM)/fonts/AovelSansRounded.ttf \
-	    /Fonts/System.font=$(GEM)/fonts/System.font \
 	    /bin/libc_test=$(BUILD)/libc_test.so \
 	    /bin/gemtext=$(BUILD)/gemtext.so \
 	    /bin/desktop=$(BUILD)/desktop.so \
@@ -355,17 +353,13 @@ $(BUILD)/romfs.bin: $(BUILD)/mkromfs $(BUILD)/toybox.so $(BUILD)/pipetest.so $(B
 	    /bin/lntest=$(BUILD)/lntest.so \
 	    /bin/fstest=$(BUILD)/fstest.so \
 	    /bin/pipetest=$(BUILD)/pipetest.so \
-	    /Etc/Registry.db=test/freertos/Registry.db \
+	    /test/Registry.db=test/freertos/Registry.db \
 	    /bin/sh=$(BUILD)/toybox.so \
 	    /bin/lua=$(BUILD)/lua.so \
 	    $(TOYBOX_ALIASES) \
 	    /bin/init=$(BUILD)/init.so \
 	    /bin/hello=$(BUILD)/hello.so \
-	    /bin/showmotd=$(BUILD)/showmotd.so \
 	    /bin/usestr=$(BUILD)/usestr.so \
-	    /bin/echo=$(BUILD)/echo.so \
-	    /etc/motd=test/freertos/motd.txt \
-	    /etc/hello.lua=test/freertos/hello.lua \
 	    $(ROMFS_OVERLAY_ARGS)
 
 $(BUILD)/romfs_blob.h: $(BUILD)/romfs.bin

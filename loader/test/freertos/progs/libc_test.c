@@ -13,16 +13,15 @@ void _app_entry(int argc, char **argv)
     printf("libc_test: %s (strlen=%d, malloc=%p)\n", s, (int)strlen(s), (void *)s);
     free(s);
 
-    FILE *f = fopen("/System/etc/motd", "r");
+    FILE *f = fopen("/System/bin/hello", "r");
     if (f) {
-        char buf[80];
-        size_t k = fread(buf, 1, sizeof buf - 1, f);
-        buf[k] = 0;
-        for (size_t i = 0; i < k; i++) if (buf[i] == '\n') { buf[i] = 0; break; }
-        printf("libc_test: fopen(/System/etc/motd) read %d bytes, first line: \"%s\"\n", (int)k, buf);
+        unsigned char buf[16];
+        size_t k = fread(buf, 1, sizeof buf, f);
+        printf("libc_test: fopen(/System/bin/hello) read %d bytes, ELF magic %s\n",
+               (int)k, (k >= 4 && buf[0] == 0x7f && buf[1] == 'E') ? "OK" : "WRONG");
         fclose(f);
     } else {
-        printf("libc_test: fopen(/System/etc/motd) FAILED\n");
+        printf("libc_test: fopen(/System/bin/hello) FAILED\n");
     }
 
     /* Same open, but the PATH lives in a malloc'd (per-process heap) buffer, not a
@@ -31,14 +30,13 @@ void _app_entry(int argc, char **argv)
      * (fs-pagecache step 3b) — a private-heap VA read straight from master space would
      * resolve to the wrong physical and silently open the wrong file (or fail). */
     char *p = malloc(64);
-    strcpy(p, "/System/etc/motd");
+    strcpy(p, "/System/bin/hello");
     FILE *g = fopen(p, "r");
     if (g) {
-        char b[80];
-        size_t k = fread(b, 1, sizeof b - 1, g);
-        b[k] = 0;
-        for (size_t i = 0; i < k; i++) if (b[i] == '\n') { b[i] = 0; break; }
-        printf("libc_test: fopen(heap path %p) read %d bytes, first line: \"%s\"\n", (void *)p, (int)k, b);
+        unsigned char b[16];
+        size_t k = fread(b, 1, sizeof b, g);
+        printf("libc_test: fopen(heap path %p) read %d bytes, ELF magic %s\n",
+               (void *)p, (int)k, (k >= 4 && b[0] == 0x7f && b[1] == 'E') ? "OK" : "WRONG");
         fclose(g);
     } else {
         printf("libc_test: fopen(heap path) FAILED\n");
@@ -49,7 +47,7 @@ void _app_entry(int argc, char **argv)
      * straddle 4 KB page boundaries, and confirm the total equals the file size found
      * via fseek(END)/ftell. Exercises the page-store loop across page transitions and
      * the logical-cursor lseek — the core of fs-pagecache step 3c. */
-    FILE *ff = fopen("/System/Fonts/AovelSansRounded.ttf", "r");
+    FILE *ff = fopen("/System/bin/toybox", "r");
     if (ff) {
         fseek(ff, 0, SEEK_END);
         long fsz = ftell(ff);
@@ -57,11 +55,11 @@ void _app_entry(int argc, char **argv)
         char chunk[1000];               /* 1000-byte chunks vs 4096 pages -> boundaries cross mid-chunk */
         long total = 0; size_t r;
         while ((r = fread(chunk, 1, sizeof chunk, ff)) > 0) total += (long)r;
-        printf("libc_test: streamed font %ld/%ld bytes -> %s (multi-page read+lseek)\n",
+        printf("libc_test: streamed big binary %ld/%ld bytes -> %s (multi-page read+lseek)\n",
                total, fsz, (fsz > 4096 && total == fsz) ? "OK" : "FAIL");
         fclose(ff);
     } else {
-        printf("libc_test: fopen(font) FAILED\n");
+        printf("libc_test: fopen(/System/bin/toybox) FAILED\n");
     }
 
     /* Writable /tmp (ramfs) over the page store: create a file, write a multi-page
