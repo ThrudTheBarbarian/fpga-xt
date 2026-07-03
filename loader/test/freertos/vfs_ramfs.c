@@ -17,7 +17,7 @@ extern void *vm_page_alloc(void);        /* raw pool page (frtos_os.h) */
 extern void  vm_page_free(void *p);
 
 #define RAMFS_FILES 16                    /* a shell session accumulates redirect targets */
-#define RAMFS_PAGES 16                    /* 64 KB max per file — ample for tests */
+#define RAMFS_PAGES 256                   /* 1 MB max per file (tar archives of real dirs) */
 #define NAME_MAX    64
 
 typedef struct {
@@ -59,8 +59,10 @@ static long rf_read(vfs_file *f, void *buf, uint32_t n)
     while (done < n) {
         uint32_t pi = pos >> 12, off = pos & 0xFFFu, want = 0x1000u - off;
         if (want > n - done) want = n - done;
-        if (nd->pg[pi]) memcpy((uint8_t *)buf + done, (uint8_t *)nd->pg[pi] + off, want);
-        else            memset((uint8_t *)buf + done, 0, want);           /* sparse hole */
+        if (pi < RAMFS_PAGES && nd->pg[pi])
+            memcpy((uint8_t *)buf + done, (uint8_t *)nd->pg[pi] + off, want);
+        else
+            memset((uint8_t *)buf + done, 0, want);                       /* sparse hole */
         done += want; pos += want;
     }
     f->pos = pos;
@@ -82,7 +84,9 @@ static long rf_write(vfs_file *f, const void *buf, uint32_t n)
         done += want; pos += want;
     }
     f->pos = pos;
-    if (pos > nd->size) nd->size = pos;
+    /* only bytes actually stored extend the size — a cap-refused write must
+     * NOT grow it (readers index pages by size; phantom size = wild pointers) */
+    if (done && pos > nd->size) nd->size = pos;
     return (long)done;
 }
 
