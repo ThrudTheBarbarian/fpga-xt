@@ -255,6 +255,12 @@ static long root_readdir(int index, char *name, int nsz, unsigned *mode)
             return 1;
         }
     }
+    if (emitted++ == index) {           /* /media: user-facing SD dir, listed by name
+                                         * (the "/" mount's other files stay unlisted) */
+        vcpy(name, "media", nsz);
+        if (mode) *mode = XT_S_IFDIR;
+        return 1;
+    }
     return 0;
 }
 
