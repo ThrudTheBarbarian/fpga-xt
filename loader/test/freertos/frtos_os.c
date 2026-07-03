@@ -1920,9 +1920,6 @@ static int sd_prog_lookup(const char *path, const uint8_t **data, uint32_t *len)
     void *buf = 0;
     long sz = kfs_call(KFS_READFILE, path, 0, 0, &buf);
     if (sz <= 0 || !buf) return 0;                     /* not on the SD (or no SD) */
-    extern void puts0(const char *); extern void putu(unsigned);
-    puts0("[spawn] SD "); puts0(path);                 /* one line per image: first load only */
-    puts0(" ("); putu((unsigned)sz); puts0(" bytes)\n");
     if (g_nsdprog < SDPROG_MAX) {
         int i = 0;
         for (; path[i] && i < 63; i++) g_sdprog[g_nsdprog].path[i] = path[i];
@@ -2103,9 +2100,6 @@ static int open_lib_sd(const char *name, const uint8_t **data, uint32_t *len)
     void *buf = 0;
     long sz = kfs_call(KFS_READFILE, path, 0, 0, &buf);
     if (sz <= 0 || !buf) return 0;                          /* not on the SD (or no SD) */
-    extern void puts0(const char *); extern void putu(unsigned);
-    puts0("[lib] SD "); puts0(path);                        /* loaded once, cached by soname */
-    puts0(" ("); putu((unsigned)sz); puts0(" bytes)\n");
     *data = (const uint8_t *)buf; *len = (uint32_t)sz;
     return 1;
 }
