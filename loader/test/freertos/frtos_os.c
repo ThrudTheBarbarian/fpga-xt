@@ -236,10 +236,12 @@ static void pipes_release(proc_t *p)
         if (p->fd[fd].open && p->fd[fd].pipei) k_pipe_close_end(&p->fd[fd]);
 }
 
-static void task_exit_thunk(void)
+/* mark this process exited and park (task context only — the exit thunk, or
+ * a deferral that must die in place, e.g. the SIGPIPE emulation) */
+static void proc_exit_self(proc_t *p, int code)
 {
-    proc_t *p = cur_proc();
     if (p) {
+        p->exit_code = code;
         pipes_release(p);                            /* EOF to pipeline peers first */
         p->exited = 1;
         if (p->waiter) xTaskNotifyGive(p->waiter);   /* wake a PL0 waitpid (task notification) */
@@ -247,6 +249,12 @@ static void task_exit_thunk(void)
     }
     vTaskSuspend(NULL);                              /* park; the waiter deletes us via frtos_reap */
     for (;;) vTaskSuspend(NULL);                     /* never resumed */
+}
+
+static void task_exit_thunk(void)
+{
+    proc_t *p = cur_proc();
+    proc_exit_self(p, p ? p->exit_code : 0);
 }
 
 /* For a STACK OVERFLOW (DFAR in a guard page) the task's own stack is unusable,
@@ -292,6 +300,11 @@ static long sys_open(proc_t *p, const char *path, int flags)
     for (int fd = 3; fd < NFD; fd++) {
         if (!p->fd[fd].open) {
             if (vfs_open(path, flags, &p->fd[fd].vf) != 0) return -1;
+            if (p->fd[fd].vf.chr == VFS_CHR_TTY) {      /* /OS/Dev/tty: the console itself */
+                memset(&p->fd[fd], 0, sizeof(fd_t));
+                p->fd[fd].open = 1; p->fd[fd].con = 1;  /* console alias — existing routing */
+                return fd;
+            }
             /* O_APPEND: the logical cursor starts at EOF (single-writer append) */
             p->fd[fd].pos = (flags & VFS_O_APPEND) ? p->fd[fd].vf.size : 0;
             p->fd[fd].cpi = ~0u; p->fd[fd].cpage = 0;                      /* page store: empty */
@@ -435,7 +448,8 @@ static long k_fstat(proc_t *p, int fd, struct xt_stat *st)
 {
     if (!p || fd < 0 || fd >= NFD || !st) return -1;
     if (p->fd[fd].open && p->fd[fd].pipei) { st->mode = XT_S_IFIFO; st->size = 0; st->mtime = 0; return 0; }
-    if (p->fd[fd].open && p->fd[fd].con) { st->mode = XT_S_IFCHR; st->size = 0; st->mtime = 0; return 0; }
+    if (p->fd[fd].open && (p->fd[fd].con || p->fd[fd].vf.chr))
+        { st->mode = XT_S_IFCHR; st->size = 0; st->mtime = 0; return 0; }
     if (p->fd[fd].open) { st->mode = XT_S_IFREG; st->size = p->fd[fd].vf.size; st->mtime = 0; return 0; }
     if (fd < 3) { st->mode = XT_S_IFCHR; st->size = 0; st->mtime = 0; return 0; }  /* console */
     return -1;
@@ -447,7 +461,7 @@ static long k_fstat(proc_t *p, int fd, struct xt_stat *st)
 static long sys_lseek(proc_t *p, int fd, long off, int whence)
 {
     if (!p || fd < 3 || fd >= NFD || !p->fd[fd].open) return -1;
-    if (p->fd[fd].pipei || p->fd[fd].con) return -1;    /* ESPIPE */
+    if (p->fd[fd].pipei || p->fd[fd].con || p->fd[fd].vf.chr) return -1;    /* ESPIPE */
     fd_t *fdp = &p->fd[fd];
     long base = (whence == 1) ? (long)fdp->pos : (whence == 2) ? (long)fdp->vf.size : 0;
     long np = base + off;
@@ -942,7 +956,8 @@ static long fs_read(proc_t *p)
     int      fd   = (int)p->da0;
     uint8_t *buf  = (uint8_t *)p->da1;
     uint32_t n    = (uint32_t)p->da2;
-    if (fd < 0 || fd >= NFD || !p->fd[fd].open || p->fd[fd].pipei || p->fd[fd].con)
+    if (fd < 0 || fd >= NFD || !p->fd[fd].open || p->fd[fd].pipei || p->fd[fd].con ||
+        p->fd[fd].vf.chr)
         return -1;                       /* fd<3 allowed: `< file` redirected stdin */
     fd_t    *fdp  = &p->fd[fd];
     uint32_t size = fdp->vf.size, pos = fdp->pos, done = 0;
@@ -976,7 +991,8 @@ static long fs_write(proc_t *p)
     int            fd   = (int)p->da0;
     const uint8_t *buf  = (const uint8_t *)p->da1;
     uint32_t       n    = (uint32_t)p->da2;
-    if (fd < 0 || fd >= NFD || !p->fd[fd].open || p->fd[fd].pipei || p->fd[fd].con)
+    if (fd < 0 || fd >= NFD || !p->fd[fd].open || p->fd[fd].pipei || p->fd[fd].con ||
+        p->fd[fd].vf.chr)
         return -1;                       /* fd<3 allowed: `> file` redirected stdout */
     fd_t *fdp = &p->fd[fd];
     if (!fdp->vf.write) return -1;                         /* read-only fd (romfs / RO open) */
@@ -1077,9 +1093,23 @@ void deferral_thunk(void)                 /* PL1 (System), task context */
             r = k_pipe_create(p, (int *)p->da0);
         } else if ((p->dnum == SYS_read || p->dnum == SYS_write) &&
                    p->da0 < NFD && p->fd[p->da0].open && p->fd[p->da0].pipei) {
-            r = (p->dnum == SYS_read)
-                ? k_pipe_read(p, (int)p->da0, (char *)p->da1, (uint32_t)p->da2)
-                : k_pipe_write(p, (int)p->da0, (const char *)p->da1, (uint32_t)p->da2);
+            if (p->dnum == SYS_read)
+                r = k_pipe_read(p, (int)p->da0, (char *)p->da1, (uint32_t)p->da2);
+            else {
+                r = k_pipe_write(p, (int)p->da0, (const char *)p->da1, (uint32_t)p->da2);
+                /* SIGPIPE semantics: writing a pipe with no readers kills the
+                 * writer (128+13). stdio-buffered writers never check errors —
+                 * without this, `yes | head` style pipelines spin forever. */
+                if (r < 0) proc_exit_self(p, 141);    /* no return */
+            }
+        } else if ((p->dnum == SYS_read || p->dnum == SYS_write) &&
+                   p->da0 < NFD && p->fd[p->da0].open && p->fd[p->da0].vf.chr) {
+            /* char device: unbounded stream — the driver directly, no page store */
+            fd_t *cf = &p->fd[p->da0];
+            if (p->dnum == SYS_read)
+                r = cf->vf.read ? cf->vf.read(&cf->vf, (void *)p->da1, (uint32_t)p->da2) : -1;
+            else
+                r = cf->vf.write ? cf->vf.write(&cf->vf, (const void *)p->da1, (uint32_t)p->da2) : -1;
         } else if (p->dnum == SYS_close &&
                    p->da0 < NFD && p->fd[p->da0].open && p->fd[p->da0].pipei) {
             k_pipe_close_end(&p->fd[p->da0]); r = 0;
@@ -1289,7 +1319,8 @@ static int fd_is_sd(uint32_t fd)
 {
     proc_t *p = cur_proc();
     return p && fd >= 3 && fd < NFD && p->fd[fd].open && !p->fd[fd].vf.data
-        && !p->fd[fd].pipei && !p->fd[fd].con;   /* pipes/aliases have no backing store */
+        && !p->fd[fd].pipei && !p->fd[fd].con && !p->fd[fd].vf.chr;
+        /* pipes/aliases/char devices have no backing store */
 }
 
 static int fd_is_con(uint32_t fd)

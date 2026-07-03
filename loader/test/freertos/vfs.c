@@ -253,7 +253,7 @@ int vfs_open(const char *path, int flags, vfs_file *f)
     vfs_mount *m = resolve(rp, &rel);
     if (!m) return -1;
     f->read = 0; f->write = 0; f->lseek = 0; f->close = 0;
-    f->size = 0; f->pos = 0; f->data = 0; f->priv = 0; f->mnt = m;
+    f->size = 0; f->pos = 0; f->data = 0; f->priv = 0; f->mnt = m; f->chr = 0;
     return m->fs->open(m, rel, flags, f);
 }
 

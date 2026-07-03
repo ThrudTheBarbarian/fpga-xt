@@ -4285,6 +4285,10 @@ do_then:
     // Three cases: 1) background & 2) pipeline | 3) last process in pipeline ;
     // If we ran a process and didn't pipe output, background or wait for exit
     if (pplist && TT.ff->blk->pout == -1) {
+      // XTOS: release our own pipe-end copies BEFORE waiting — holding the
+      // read end while blocked in wait deadlocks `infinite | head` (the
+      // writer can never see reader-count zero and take its SIGPIPE).
+      unredirect(&TT.ff->blk->urd);
       if (ctl && !strcmp(ctl, "&")) {
         if (!TT.jobs.c) TT.jobcnt = 0;
         pplist->job = ++TT.jobcnt;

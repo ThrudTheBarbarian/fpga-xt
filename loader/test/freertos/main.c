@@ -323,7 +323,9 @@ int main(void)
       extern int vfs_add_mount(const char *, const char *, void *);
       vfs_romfs_init(); vfs_add_mount("/System", "romfs", 0);   /* romfs = /System (embedded, RO); SD = / at mount time */
       vfs_ramfs_init(); vfs_add_mount("/tmp", "ramfs", 0);      /* ramfs = /tmp (writable, in-memory) */
-      vfs_lockfs_init(); vfs_add_mount("/OS/Var/Locks", "lockfs", 0); }  /* advisory locks as files */
+      vfs_lockfs_init(); vfs_add_mount("/OS/Var/Locks", "lockfs", 0);   /* advisory locks as files */
+      { extern void vfs_devfs_init(void);
+        vfs_devfs_init(); vfs_add_mount("/OS/Dev", "devfs", 0); } }     /* char devices */
     ksys_set_console(rt_write);
     romfs_mount(romfs_blob, romfs_blob_len);
 
