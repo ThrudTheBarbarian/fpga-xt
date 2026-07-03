@@ -367,7 +367,7 @@ ROMFS_OVERLAY ?= romfs-overlay
 ROMFS_OVERLAY_FILES := $(shell find $(ROMFS_OVERLAY) -type f 2>/dev/null)
 ROMFS_OVERLAY_ARGS  := $(foreach f,$(ROMFS_OVERLAY_FILES),/$(patsubst $(ROMFS_OVERLAY)/%,%,$(f))=$(f))
 
-$(BUILD)/romfs.bin: $(BUILD)/mkromfs $(BUILD)/toybox.so $(BUILD)/sqlite3.so $(BUILD)/pipetest.so $(BUILD)/hello.so $(BUILD)/motd.so $(BUILD)/usestr.so $(BUILD)/echo.so $(BUILD)/libc_test.so $(BUILD)/gemtext.so $(BUILD)/desktop.so $(BUILD)/aesdesk.so $(BUILD)/regtest.so $(BUILD)/locktest.so $(BUILD)/lntest.so $(BUILD)/fstest.so $(BUILD)/lua.so $(BUILD)/init.so $(BUILD)/faultprog.so $(BUILD)/vmtest.so $(BUILD)/demandtest.so $(BUILD)/stacktest.so $(BUILD)/wxtest.so $(BUILD)/cowtest.so $(BUILD)/sharetext.so $(BUILD)/shmtest.so $(BUILD)/finictor.so $(BUILD)/mmaptest.so $(BUILD)/modetest.so $(BUILD)/ttytest.so $(BUILD)/jobctl.so $(BUILD)/socktest.so $(BUILD)/badpoke.so $(BUILD)/stackpoke.so $(BUILD)/libutil.so $(BUILD)/libGEM.so $(BUILD)/libm.so $(BUILD)/libc.so test/freertos/Registry.db $(ROMFS_OVERLAY_FILES)
+$(BUILD)/romfs.bin: $(BUILD)/mkromfs $(BUILD)/toybox.so $(BUILD)/sqlite3.so $(BUILD)/pipetest.so $(BUILD)/hello.so $(BUILD)/motd.so $(BUILD)/usestr.so $(BUILD)/echo.so $(BUILD)/libc_test.so $(BUILD)/gemtext.so $(BUILD)/desktop.so $(BUILD)/aesdesk.so $(BUILD)/regtest.so $(BUILD)/locktest.so $(BUILD)/lntest.so $(BUILD)/fstest.so $(BUILD)/lua.so $(BUILD)/init.so $(BUILD)/faultprog.so $(BUILD)/vmtest.so $(BUILD)/demandtest.so $(BUILD)/stacktest.so $(BUILD)/wxtest.so $(BUILD)/cowtest.so $(BUILD)/sharetext.so $(BUILD)/shmtest.so $(BUILD)/finictor.so $(BUILD)/mmaptest.so $(BUILD)/modetest.so $(BUILD)/ttytest.so $(BUILD)/jobctl.so $(BUILD)/socktest.so $(BUILD)/httpd.so $(BUILD)/badpoke.so $(BUILD)/stackpoke.so $(BUILD)/libutil.so $(BUILD)/libGEM.so $(BUILD)/libm.so $(BUILD)/libc.so test/freertos/Registry.db $(ROMFS_OVERLAY_FILES)
 	$(BUILD)/mkromfs $@ \
 	    /bin/faultprog=$(BUILD)/faultprog.so \
 	    /bin/vmtest=$(BUILD)/vmtest.so \
@@ -401,6 +401,7 @@ $(BUILD)/romfs.bin: $(BUILD)/mkromfs $(BUILD)/toybox.so $(BUILD)/sqlite3.so $(BU
 	    /bin/bg=$(BUILD)/jobctl.so \
 	    /bin/jobs=$(BUILD)/jobctl.so \
 	    /bin/socktest=$(BUILD)/socktest.so \
+	    /bin/httpd=$(BUILD)/httpd.so \
 	    /test/Registry.db=test/freertos/Registry.db \
 	    /bin/sh=$(BUILD)/toybox.so \
 	    /bin/lua=$(BUILD)/lua.so \
@@ -423,7 +424,7 @@ $(BUILD)/romfs_blob.h: $(BUILD)/romfs.bin
 # base libraries every spawn needs (libc/libm), init + lua (the boot runner and
 # its #!/bin/lua scripts), motd, and the tier-2 test battery. ~6 MB of RAM back
 # vs the full image. qemu keeps the full romfs (no SD there).
-$(BUILD)/romfs-hw.bin: $(BUILD)/mkromfs $(BUILD)/pipetest.so $(BUILD)/hello.so $(BUILD)/motd.so $(BUILD)/usestr.so $(BUILD)/libc_test.so $(BUILD)/locktest.so $(BUILD)/lntest.so $(BUILD)/fstest.so $(BUILD)/lua.so $(BUILD)/init.so $(BUILD)/faultprog.so $(BUILD)/vmtest.so $(BUILD)/demandtest.so $(BUILD)/stacktest.so $(BUILD)/wxtest.so $(BUILD)/cowtest.so $(BUILD)/sharetext.so $(BUILD)/shmtest.so $(BUILD)/finictor.so $(BUILD)/mmaptest.so $(BUILD)/modetest.so $(BUILD)/ttytest.so $(BUILD)/jobctl.so $(BUILD)/socktest.so $(BUILD)/badpoke.so $(BUILD)/stackpoke.so $(BUILD)/libutil.so $(BUILD)/libm.so $(BUILD)/libc.so $(ROMFS_OVERLAY_FILES)
+$(BUILD)/romfs-hw.bin: $(BUILD)/mkromfs $(BUILD)/pipetest.so $(BUILD)/hello.so $(BUILD)/motd.so $(BUILD)/usestr.so $(BUILD)/libc_test.so $(BUILD)/locktest.so $(BUILD)/lntest.so $(BUILD)/fstest.so $(BUILD)/lua.so $(BUILD)/init.so $(BUILD)/faultprog.so $(BUILD)/vmtest.so $(BUILD)/demandtest.so $(BUILD)/stacktest.so $(BUILD)/wxtest.so $(BUILD)/cowtest.so $(BUILD)/sharetext.so $(BUILD)/shmtest.so $(BUILD)/finictor.so $(BUILD)/mmaptest.so $(BUILD)/modetest.so $(BUILD)/ttytest.so $(BUILD)/jobctl.so $(BUILD)/socktest.so $(BUILD)/httpd.so $(BUILD)/badpoke.so $(BUILD)/stackpoke.so $(BUILD)/libutil.so $(BUILD)/libm.so $(BUILD)/libc.so $(ROMFS_OVERLAY_FILES)
 	$(BUILD)/mkromfs $@ \
 	    /bin/faultprog=$(BUILD)/faultprog.so \
 	    /bin/vmtest=$(BUILD)/vmtest.so \
@@ -452,6 +453,7 @@ $(BUILD)/romfs-hw.bin: $(BUILD)/mkromfs $(BUILD)/pipetest.so $(BUILD)/hello.so $
 	    /bin/bg=$(BUILD)/jobctl.so \
 	    /bin/jobs=$(BUILD)/jobctl.so \
 	    /bin/socktest=$(BUILD)/socktest.so \
+	    /bin/httpd=$(BUILD)/httpd.so \
 	    /bin/lua=$(BUILD)/lua.so \
 	    /bin/init=$(BUILD)/init.so \
 	    /bin/hello=$(BUILD)/hello.so \
@@ -482,6 +484,7 @@ sdstage: $(BUILD)/toybox.so $(BUILD)/sqlite3.so $(BUILD)/libGEM.so $(BUILD)/aesd
 	cp $(BUILD)/desktop.so $(SDSTAGE)/OS/bin/desktop
 	cp $(BUILD)/gemtext.so $(SDSTAGE)/OS/bin/gemtext
 	cp $(BUILD)/regtest.so $(SDSTAGE)/OS/bin/regtest
+	cp $(BUILD)/httpd.so   $(SDSTAGE)/OS/bin/httpd
 	cp $(BUILD)/libGEM.so  $(SDSTAGE)/OS/library/libGEM.so
 	@printf '# XTOS /OS/etc/hosts — static name -> address (checked before DNS)\n127.0.0.1\tlocalhost xtos\n' > $(SDSTAGE)/OS/etc/hosts
 	@printf '# XTOS /OS/etc/resolv.conf — static DNS (supplements DHCP option 6).\n# Uncomment to force a resolver.\n#nameserver 1.1.1.1\n' > $(SDSTAGE)/OS/etc/resolv.conf

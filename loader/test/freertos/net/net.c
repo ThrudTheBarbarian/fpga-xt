@@ -105,12 +105,8 @@ static void net_task(void *arg)
     UNLOCK_TCPIP_CORE();
 
     tftpd_init();
-#ifndef XT_NO_NETCON
     netcon_init();
-#endif
-#ifndef XT_NO_SNTP
     { extern void sntp_start_cb(void *); tcpip_callback(sntp_start_cb, 0); }
-#endif
 
     TickType_t lastlink = 0;
     for (;;) {                                           /* the RX pump */

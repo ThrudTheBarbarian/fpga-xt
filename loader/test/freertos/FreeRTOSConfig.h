@@ -41,7 +41,7 @@ void vClearTickInterrupt(void);
 #define configSUPPORT_DYNAMIC_ALLOCATION 1
 
 /* hooks / checks */
-#define configCHECK_FOR_STACK_OVERFLOW 0
+#define configCHECK_FOR_STACK_OVERFLOW 2
 #define configUSE_MALLOC_FAILED_HOOK   0
 #define configGENERATE_RUN_TIME_STATS  0
 
