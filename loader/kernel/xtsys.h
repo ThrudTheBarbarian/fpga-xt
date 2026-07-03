@@ -65,8 +65,20 @@
 #define SYS_fstat    0x311   /* (fd, struct xt_stat *) -> 0: fd metadata — pipes report
                               * XT_S_IFIFO, console 0/1/2 XT_S_IFCHR, files IFREG+size */
 #define SYS_ioctl    0x312   /* (fd, req, argp) -> device-specific: char-device controls
-                              * (Linux request codes, e.g. i2c-dev I2C_SLAVE/I2C_SMBUS);
-                              * -1 on a non-device fd or an unsupported request */
+                              * (Linux request codes, e.g. i2c-dev I2C_SLAVE/I2C_SMBUS)
+                              * and the console tty modes below; -1 on a non-device fd
+                              * or an unsupported request */
+
+/* console tty controls (SYS_ioctl on stdin/a console-alias fd). The line
+ * discipline is kernel-side; these switch it. Cooked (canon=1) = line-buffered
+ * with echo/erase/CR->NL; raw (canon=0) = bytes as they arrive, verbatim.
+ * The kernel restores cooked+echo if the mode-setting process dies. */
+#define XT_TTY_GETMODE 0x7401 /* (struct xt_ttymode *) -> 0 */
+#define XT_TTY_SETMODE 0x7402 /* (struct xt_ttymode *) -> 0 */
+#define XT_TTY_NREAD   0x7403 /* (int *) -> 0: bytes immediately readable */
+#define XT_TTY_INWAIT  0x7404 /* (timeout_ms BY VALUE; <0 = forever) -> 1 input
+                               * ready / 0 timeout — poll(2) for the console */
+struct xt_ttymode { unsigned canon, echo; };
 
 /* stat result (SYS_stat / SYS_lstat / SYS_fstat). mode carries the type bits below. */
 struct xt_stat { unsigned mode, size, mtime; };

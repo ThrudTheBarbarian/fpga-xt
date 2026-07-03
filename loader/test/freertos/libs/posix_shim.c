@@ -888,10 +888,11 @@ int getgrnam_r(const char *n, struct group *gr, char *buf, size_t len,
     return 0;
 }
 
-/* ---- terminal: the UART console pretends to be a fixed 80x24 vt102 -------- */
+/* ---- terminal: a fixed 80x24 vt102 over the UART console ------------------
+ * The line discipline is kernel-side; ICANON/ECHO are REAL (routed over
+ * SYS_ioctl XT_TTY_*), the rest of the termios struct is decorative. */
 int tcgetattr(int fd, struct termios *t)
 {
-    (void)fd;
     memset(t, 0, sizeof *t);
     t->c_iflag = ICRNL | IXON;
     t->c_oflag = OPOST | ONLCR;
@@ -900,12 +901,19 @@ int tcgetattr(int fd, struct termios *t)
     t->c_cc[VINTR] = 3;
     t->c_cc[VEOF] = 4;
     t->c_cc[VMIN] = 1;
+    struct xt_ttymode m;
+    if (sys_ioctl(fd, XT_TTY_GETMODE, &m) == 0) {   /* the kernel's live mode */
+        if (!m.canon) t->c_lflag &= ~(tcflag_t)ICANON;
+        if (!m.echo)  t->c_lflag &= ~(tcflag_t)ECHO;
+    }
     return 0;
 }
 
 int tcsetattr(int fd, int act, const struct termios *t)
 {
-    (void)fd; (void)act; (void)t;
+    (void)act;                                       /* NOW/DRAIN/FLUSH: no output queue */
+    struct xt_ttymode m = { (t->c_lflag & ICANON) != 0, (t->c_lflag & ECHO) != 0 };
+    sys_ioctl(fd, XT_TTY_SETMODE, &m);               /* non-tty fd: kernel says -1, harmless */
     return 0;
 }
 
@@ -943,13 +951,36 @@ int ioctl(int fd, unsigned long req, ...)
     return (int)r;
 }
 
-/* toybox's lib.h declares xpoll (impl lives in the excluded lib/net.o);
- * console reads block in the kernel, so "ready" is always the right answer */
+/* toybox's lib.h declares xpoll (impl lives in the excluded lib/net.o).
+ * The console gets HONEST readability (the kernel waits on the uart ring via
+ * XT_TTY_INWAIT — vi's escape-sequence disambiguation depends on a real
+ * timeout); everything else reports ready, since reads on pipes/files block
+ * correctly in the kernel anyway. */
 int xpoll(struct pollfd *fds, int nfds, int timeout)
 {
-    (void)timeout;
-    for (int i = 0; i < nfds; i++) fds[i].revents = fds[i].events;
-    return nfds;
+    int ready = 0, coni = -1;
+    for (int i = 0; i < nfds; i++) {
+        fds[i].revents = 0;
+        if ((fds[i].events & POLLIN) && coni < 0 && isatty(fds[i].fd)) {
+            coni = i;                                /* the console entry: ask the kernel */
+            continue;
+        }
+        fds[i].revents = fds[i].events;
+        if (fds[i].revents) ready++;
+    }
+    if (coni >= 0) {
+        long w;
+        if (ready) {                                 /* others ready: just probe, don't wait */
+            int n = 0;
+            w = (sys_ioctl(fds[coni].fd, XT_TTY_NREAD, &n) == 0) ? (n > 0) : 1;
+        } else
+            w = sys_ioctl(fds[coni].fd, XT_TTY_INWAIT, (void *)(long)timeout);
+        if (w != 0) {                                /* ready (or a non-tty -1: fail ready) */
+            fds[coni].revents = POLLIN;
+            ready++;
+        }
+    }
+    return ready;
 }
 
 int poll(struct pollfd *fds, nfds_t nfds, int timeout)

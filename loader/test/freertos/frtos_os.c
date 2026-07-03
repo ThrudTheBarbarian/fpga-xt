@@ -241,6 +241,57 @@ static void pipes_release(proc_t *p)
         if (p->fd[fd].open && p->fd[fd].pipei) k_pipe_close_end(&p->fd[fd]);
 }
 
+/* ---- console tty mode (ONE console, like the line discipline) -------------
+ * cooked+echo by default; raw mode is set per-request (XT_TTY_SETMODE — vi,
+ * hexedit, ...). The setter becomes the mode's owner: if it dies without
+ * restoring, the console must not stay raw, so its exit puts cooked back. */
+static struct { volatile unsigned canon, echo; } g_tty = { 1, 1 };
+static volatile int g_tty_owner;                     /* pid of the last mode-setter */
+
+static void tty_release(proc_t *p)
+{
+    if (p && g_tty_owner && p->pid == g_tty_owner) {
+        g_tty.canon = 1; g_tty.echo = 1;
+        g_tty_owner = 0;
+    }
+}
+
+/* the cooked line buffer (shared: the read discipline fills/drains it; the tty
+ * ioctls count its leftover as pending input) */
+static char g_lbuf[256];
+static int  g_lpos, g_llen, g_lsawcr;
+
+extern int sh_avail(void);   /* buffered console bytes (uart1_rx.c; qemu -1 = unknown) */
+extern int sh_wait(int ms);  /* wait for console input WITHOUT consuming (qemu: always 1) */
+
+static long k_tty_ioctl(proc_t *p, unsigned req, void *arg)
+{
+    struct xt_ttymode *m = (struct xt_ttymode *)arg;
+    switch (req) {
+    case XT_TTY_GETMODE:
+        if (!m) return -1;
+        m->canon = g_tty.canon; m->echo = g_tty.echo;
+        return 0;
+    case XT_TTY_SETMODE:
+        if (!m) return -1;
+        g_tty.canon = m->canon ? 1u : 0u;
+        g_tty.echo  = m->echo  ? 1u : 0u;
+        g_tty_owner = p ? p->pid : 0;
+        return 0;
+    case XT_TTY_NREAD: {
+        if (!arg) return -1;
+        int n = g_llen - g_lpos;
+        int a = sh_avail();
+        *(int *)arg = n + (a > 0 ? a : 0);
+        return 0;
+    }
+    case XT_TTY_INWAIT:                                  /* arg = timeout ms BY VALUE */
+        if (g_llen - g_lpos > 0) return 1;
+        return sh_wait((int)(intptr_t)arg);
+    default: return -1;
+    }
+}
+
 /* mark this process exited and park (task context only — the exit thunk, or
  * a deferral that must die in place, e.g. the SIGPIPE emulation) */
 static void proc_exit_self(proc_t *p, int code)
@@ -248,6 +299,7 @@ static void proc_exit_self(proc_t *p, int code)
     if (p) {
         p->exit_code = code;
         pipes_release(p);                            /* EOF to pipeline peers first */
+        tty_release(p);                              /* raw-mode owner dies -> cooked */
         p->exited = 1;
         if (p->waiter) xTaskNotifyGive(p->waiter);   /* wake a PL0 waitpid (task notification) */
         if (p->done)   xSemaphoreGive(p->done);      /* wake a kernel-task waitpid (shell_task) */
@@ -284,6 +336,7 @@ void xtos_task_fault_exit(void)
     proc_t *p = cur_proc();
     if (p) {                                        /* killed by a fault */
         pipes_release(p);                           /* EOF to pipeline peers first */
+        tty_release(p);                             /* raw-mode owner dies -> cooked */
         p->exit_code = -1;
         p->exited = 1;
         if (p->waiter) xTaskNotifyGive(p->waiter);  /* wake a PL0 waitpid */
@@ -1119,10 +1172,17 @@ void deferral_thunk(void)                 /* PL1 (System), task context */
                 r = cf->vf.read ? cf->vf.read(&cf->vf, (void *)p->da1, (uint32_t)p->da2) : -1;
             else
                 r = cf->vf.write ? cf->vf.write(&cf->vf, (const void *)p->da1, (uint32_t)p->da2) : -1;
-        } else if (p->dnum == SYS_ioctl) {                 /* char-device controls (i2c, ...) */
-            fd_t *cf = (p->da0 < NFD && p->fd[p->da0].open) ? &p->fd[p->da0] : 0;
-            r = (cf && cf->vf.chr && cf->vf.ioctl)
-                ? cf->vf.ioctl(&cf->vf, (unsigned)p->da1, (void *)p->da2) : -1;
+        } else if (p->dnum == SYS_ioctl) {                 /* device controls (tty modes, i2c, ...) */
+            uint32_t ifd = p->da0;
+            int is_con = (ifd < 3 && !(ifd < NFD && p->fd[ifd].open)) ||   /* raw console stdio */
+                         (ifd < NFD && p->fd[ifd].open && p->fd[ifd].con); /* console alias */
+            if (is_con)
+                r = k_tty_ioctl(p, (unsigned)p->da1, (void *)p->da2);
+            else {
+                fd_t *cf = (ifd < NFD && p->fd[ifd].open) ? &p->fd[ifd] : 0;
+                r = (cf && cf->vf.chr && cf->vf.ioctl)
+                    ? cf->vf.ioctl(&cf->vf, (unsigned)p->da1, (void *)p->da2) : -1;
+            }
         } else if (p->dnum == SYS_close &&
                    p->da0 < NFD && p->fd[p->da0].open && p->fd[p->da0].pipei) {
             k_pipe_close_end(&p->fd[p->da0]); r = 0;
@@ -1135,40 +1195,61 @@ void deferral_thunk(void)                 /* PL1 (System), task context */
         } else if (p->dnum == SYS_read &&
                    ((p->da0 == 0 && !p->fd[0].open) ||   /* fd0 open = redirected file stdin */
                     (p->da0 < NFD && p->fd[p->da0].open && p->fd[p->da0].con))) {
-            /* stdin (or a console alias): cooked-tty line discipline — the
-             * console is a raw UART, so ECHO / backspace-erase / CR->NL live
-             * HERE, once, for every program (a shell expects a cooked tty).
-             * One console = one line buffer; reads drain it, empty refills. */
-            static char lbuf[256];
-            static int  lpos, llen, sawcr;
+            /* stdin (or a console alias): the tty line discipline — the console
+             * is a raw UART, so ECHO / backspace-erase / CR->NL live HERE, once,
+             * for every program (a shell expects a cooked tty). One console =
+             * one line buffer; reads drain it, empty refills. Raw mode
+             * (XT_TTY_SETMODE canon=0 — vi, hexedit) bypasses all of it. */
             char *buf = (char *)p->da1;
             if (!buf || p->da2 == 0) r = 0;
+            else if (!g_tty.canon) {
+                /* raw: bytes verbatim as they arrive — no line buffer, no CR
+                 * mapping, no erase. Serve cooked leftover first; else block
+                 * for one byte, then drain what's already buffered so escape
+                 * sequences arrive in one read where possible. */
+                uint32_t want = (uint32_t)p->da2, k = 0;
+                while (k < want && g_lpos < g_llen) buf[k++] = g_lbuf[g_lpos++];
+                if (!k) {
+                    int c = sh_readc();
+                    if (c < 0) g_con_eof = 1;             /* EOF (qemu pipe drained) */
+                    else {
+                        buf[k++] = (char)c;
+                        while (k < want && sh_avail() > 0) {
+                            c = sh_readc();
+                            if (c < 0) { g_con_eof = 1; break; }
+                            buf[k++] = (char)c;
+                        }
+                    }
+                }
+                if (k && g_tty.echo && g_console) g_console(buf, (int)k);
+                r = (long)k;                              /* 0 = EOF */
+            }
             else {
-                if (lpos >= llen) {                       /* refill: read+echo a line */
-                    lpos = llen = 0;
+                if (g_lpos >= g_llen) {                   /* refill: read+echo a line */
+                    g_lpos = g_llen = 0;
                     for (;;) {
                         int c = sh_readc();
                         if (c < 0) { g_con_eof = 1; break; }   /* EOF (qemu pipe drained) */
-                        if (sawcr) {                      /* CRLF: the CR already became NL */
-                            sawcr = 0;
+                        if (g_lsawcr) {                   /* CRLF: the CR already became NL */
+                            g_lsawcr = 0;
                             if (c == '\n') continue;
                         }
-                        if (c == '\r') { sawcr = 1; c = '\n'; }   /* terminals send CR (or CRLF) */
+                        if (c == '\r') { g_lsawcr = 1; c = '\n'; }   /* terminals send CR (or CRLF) */
                         if (c == 8 || c == 127) {         /* backspace/DEL: erase */
-                            if (llen > 0) { llen--; if (g_console) g_console("\b \b", 3); }
+                            if (g_llen > 0) { g_llen--; if (g_console) g_console("\b \b", 3); }
                             continue;
                         }
-                        if (llen < (int)sizeof lbuf) {
+                        if (g_llen < (int)sizeof g_lbuf) {
                             char ec = (char)c;
-                            lbuf[llen++] = ec;
+                            g_lbuf[g_llen++] = ec;
                             if (g_console) g_console(&ec, 1);
                         }
                         if (c == '\n') break;
                     }
                 }
-                uint32_t avail = (uint32_t)(llen - lpos);
+                uint32_t avail = (uint32_t)(g_llen - g_lpos);
                 uint32_t n = (uint32_t)p->da2 < avail ? (uint32_t)p->da2 : avail;
-                if (n) { memcpy(buf, lbuf + lpos, n); lpos += (int)n; }
+                if (n) { memcpy(buf, g_lbuf + g_lpos, n); g_lpos += (int)n; }
                 r = (long)n;                              /* 0 = EOF */
             }
         } else if (p->dnum == SYS_read) {

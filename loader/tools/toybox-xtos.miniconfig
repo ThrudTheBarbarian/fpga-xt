@@ -55,6 +55,10 @@ CONFIG_I2CDETECT=y
 CONFIG_I2CDUMP=y
 CONFIG_I2CGET=y
 CONFIG_I2CSET=y
+# full-screen tools: the kernel tty has a real raw mode (XT_TTY_SETMODE via
+# tcsetattr) and poll() waits honestly on console input, so these are usable.
+CONFIG_VI=y
+CONFIG_HEXEDIT=y
 CONFIG_ARCH=y
 CONFIG_UNAME=y
 

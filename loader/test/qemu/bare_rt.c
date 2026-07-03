@@ -31,6 +31,10 @@ static long sh(long op, void *arg)
 }
 void puts0(const char *s) { sh(0x04 /*SYS_WRITE0*/, (void *)s); }
 int  sh_readc(void) { return (int)sh(0x07 /*SYS_READC*/, (void *)0); }
+/* semihosting has no input poll: report unknown / always-ready — reads block on
+ * the piped stdin correctly anyway (the honest versions live in uart1_rx.c) */
+int  sh_avail(void) { return -1; }
+int  sh_wait(int ms) { (void)ms; return 1; }
 void sh_exit(int code) { long b[2] = { 0x20026, code }; sh(0x20 /*EXIT_EXTENDED*/, b); for (;;) {} }
 
 /* host filesystem over ARM semihosting (qemu reads the HOST fs) — lets the test

@@ -92,6 +92,19 @@ void uart1_rx_init(void)
 
 int sh_readc(void)             { return q_read(&sh_q, -1); }  /* shell console byte (blocking) */
 int sh_readc_timeout(int ms)   { return q_read(&sh_q, ms); }
+/* bytes buffered for the shell (raw-mode burst drain + XT_TTY_NREAD) */
+int sh_avail(void)             { return (int)((sh_q.tail + RING_SZ - sh_q.head) % RING_SZ); }
+/* block until shell input is available or the timeout lapses, WITHOUT consuming
+ * (XT_TTY_INWAIT = poll(2)): take the counting semaphore, then give it straight
+ * back so the byte's token survives for the eventual read. */
+int sh_wait(int ms)
+{
+    if (sh_avail() > 0) return 1;
+    TickType_t t = (ms < 0) ? portMAX_DELAY : pdMS_TO_TICKS((uint32_t)ms);
+    if (xSemaphoreTake(sh_q.sem, t) != pdTRUE) return 0;
+    xSemaphoreGive(sh_q.sem);
+    return 1;
+}
 int desk_readc(void)           { return q_read(&dk_q, -1); }  /* desktop input byte (focus=desktop) */
 int desk_readc_timeout(int ms) { return q_read(&dk_q, ms); }
 #else
