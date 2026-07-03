@@ -97,7 +97,11 @@ static void vfs_normalize(const char *in, char *out, int outsz)
 
 long vfs_readlink(const char *path, char *buf, int sz)
 {
-    const char *rel; vfs_mount *m = resolve(path, &rel);
+    /* normalize like every other entry point: "/OS/./x" must reach the
+     * driver as "/x" (FatFs has no rpath support — "." components fail) */
+    char np[VFS_PATH_MAX];
+    vfs_normalize(path, np, sizeof np);
+    const char *rel; vfs_mount *m = resolve(np, &rel);
     if (!m || !m->fs->readlink) return -1;
     return m->fs->readlink(m, rel, buf, sz);
 }

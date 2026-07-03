@@ -58,26 +58,10 @@ typedef struct {
 static kpipe_t g_pipes[MAXPIPE];
 static void k_pipe_close_end(fd_t *f);   /* impl below with the other pipe ops */
 
-/* kernel-mailbox fs ops (impls with the fs task, below): file-fd redirection
- * (dup2/spawn inheritance) must open/close through the SOLE FatFs driver */
-enum { KFS_READFILE, KFS_LISTDIR, KFS_CLOSEALL, KFS_OPENFD, KFS_CLOSEFD };
+/* kernel-mailbox fs ops (impls with the fs task, below): displacing an open
+ * file fd (dup2 restore) must flush + close through the SOLE FatFs driver */
+enum { KFS_READFILE, KFS_LISTDIR, KFS_CLOSEALL, KFS_CLOSEFD };
 static long kfs_call(int op, const char *path, void *buf, uint32_t len, void **out_buf);
-
-/* Independent reopen of a file fd (child stdio inheritance, dup-onto-slot):
- * same path, O_TRUNC stripped — the truncation already happened at the
- * original open — and the cursor carried over (so >> appends resume). */
-static int fd_reopen(fd_t *dst, const fd_t *src)
-{
-    int fl = src->oflags & ~VFS_O_TRUNC;
-    memset(dst, 0, sizeof *dst);
-    if (kfs_call(KFS_OPENFD, src->path, dst, (uint32_t)fl, 0) != 0) return -1;
-    for (int i = 0; i < FD_PATH_MAX; i++) { dst->path[i] = src->path[i]; if (!src->path[i]) break; }
-    dst->oflags = fl;
-    dst->pos = src->pos;
-    dst->cpi = ~0u; dst->cpage = 0; dst->cdirty = 0;
-    dst->open = 1;
-    return 0;
-}
 
 typedef struct {
     int               used;
@@ -788,10 +772,6 @@ static long kfs_serve(void)
         return sd_listdir_raw(g_kfs.path, (char (*)[32])g_kfs.buf, (int)g_kfs.len);
     }
     case KFS_CLOSEALL: fs_close_all((int)g_kfs.len); return 0;   /* reap: close a dead proc's fds */
-    case KFS_OPENFD: {                                  /* open a path into a caller's fd_t */
-        fd_t *d = (fd_t *)g_kfs.buf;
-        return vfs_open(g_kfs.path, (int)g_kfs.len, &d->vf) == 0 ? 0 : -1;
-    }
     case KFS_CLOSEFD: {                                 /* flush + close a caller's fd_t */
         fd_t *d = (fd_t *)g_kfs.buf;
         fd_drop_cache(d);
@@ -1552,9 +1532,14 @@ static int proc_launch(int slot, xtld_obj *obj, uintptr_t entry,
                 taskEXIT_CRITICAL();
             } else if (i < 3 && pfd >= 0 && pfd < NFD && par->fd[pfd].open &&
                        !par->fd[pfd].con) {
-                /* file-redirected stdio (`cmd > file`): the child gets an
-                 * INDEPENDENT reopen (own page cache/cursor) of the same path */
-                fd_reopen(&p->fd[i], &par->fd[pfd]);
+                /* file-redirected stdio (`cmd > file`): MOVE the descriptor —
+                 * FIL, cursor and cache page travel with it. Two live handles
+                 * would race at close (FatFs rewrites the dir entry from each
+                 * FIL's view; the parent's stale post-truncate state closing
+                 * last wiped the child's output). The parent's restore step
+                 * only re-points its stdio at the console anyway. */
+                p->fd[i] = par->fd[pfd];
+                memset(&par->fd[pfd], 0, sizeof(fd_t));
             }
             /* console / console-alias / closed sources all mean: leave the
              * child's slot closed (stdio falls back to the console) */
