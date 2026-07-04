@@ -266,9 +266,78 @@ static const char *at_join(int dirfd, const char *path, char *buf, int len)
     return buf;
 }
 
+/* ---- directory snapshot cache (SYS_getdents fast path) --------------------
+ * A tree walk (du/ls/find, via toybox dirtree) opens a directory, reads its
+ * entries, and fstatat()s each child against the open dir fd. Rather than a
+ * readdir + a stat syscall per entry (thousands of kernel round-trips for a big
+ * tree), slurp a whole directory once with SYS_getdents (entries WITH metadata)
+ * and serve both readdir and fstatat from the snapshot with no further syscalls.
+ * Keyed by directory path (LRU, a handful kept); dropped on any write we issue,
+ * so a process never sees its own stale listing. Read-only walks are the case
+ * that matters and are always self-consistent. */
+#define DSNAP_N 6
+struct dsnap_ent { unsigned mode, size, mtime; char name[256]; };
+static struct dsnap {
+    char              dir[512];
+    struct dsnap_ent *e;
+    int               n, valid;
+    unsigned          seq;
+} g_dsnap[DSNAP_N];
+static unsigned g_dsnap_seq;
+
+static void dsnap_free(struct dsnap *s) { free(s->e); s->e = 0; s->n = 0; s->valid = 0; s->dir[0] = 0; }
+
+/* return a loaded snapshot for `dir`, loading it via SYS_getdents on a miss; NULL if the
+ * directory isn't batch-enumerable (an old kernel, or a non-cacheable fs) so the caller
+ * falls back to per-entry readdir/stat syscalls. */
+static struct dsnap *dsnap_load(const char *dir)
+{
+    for (int i = 0; i < DSNAP_N; i++)
+        if (g_dsnap[i].valid && !strcmp(g_dsnap[i].dir, dir)) { g_dsnap[i].seq = ++g_dsnap_seq; return &g_dsnap[i]; }
+
+    static char buf[4096];                 /* one getdents in flight (single-threaded per process) */
+    int idx = 0, n = 0, cap = 0;
+    struct dsnap_ent *arr = 0;
+    for (;;) {
+        long cnt = sys_getdents(dir, idx, buf);
+        if (cnt < 0) { free(arr); return 0; }         /* not enumerable -> fall back */
+        if (cnt == 0) break;
+        unsigned char *b = (unsigned char *)buf;
+        for (long k = 0; k < cnt; k++) {
+            unsigned reclen = *(unsigned short *)(b + 12);
+            unsigned nl     = *(unsigned short *)(b + 14);
+            if (n == cap) {
+                int nc = cap ? cap * 2 : 64;
+                struct dsnap_ent *na = realloc(arr, nc * sizeof *arr);
+                if (!na) { free(arr); return 0; }
+                arr = na; cap = nc;
+            }
+            arr[n].mode  = *(unsigned *)(b + 0);
+            arr[n].size  = *(unsigned *)(b + 4);
+            arr[n].mtime = *(unsigned *)(b + 8);
+            if (nl > sizeof arr[n].name - 1) nl = sizeof arr[n].name - 1;
+            memcpy(arr[n].name, b + 16, nl); arr[n].name[nl] = 0;
+            n++;
+            b += reclen;
+        }
+        idx += cnt;
+    }
+    struct dsnap *s = &g_dsnap[0];         /* victim: a free slot, else LRU */
+    for (int i = 0; i < DSNAP_N; i++) { if (!g_dsnap[i].valid) { s = &g_dsnap[i]; break; } if (g_dsnap[i].seq < s->seq) s = &g_dsnap[i]; }
+    dsnap_free(s);
+    s->e = arr; s->n = n; s->valid = 1; s->seq = ++g_dsnap_seq;
+    strncpy(s->dir, dir, sizeof s->dir - 1); s->dir[sizeof s->dir - 1] = 0;
+    return s;
+}
+
+/* invalidate every snapshot — called on any write this process issues, so a later
+ * readdir/stat re-reads. Blunt but cheap (a few slots) and writes are rare next to the
+ * read-heavy walks the cache is for. */
+static void dsnap_flush(void) { for (int i = 0; i < DSNAP_N; i++) if (g_dsnap[i].valid) dsnap_free(&g_dsnap[i]); }
+
 struct __xt_DIR {
     int pfd;                 /* pseudo-fd owning the path (closed on closedir) */
-    int idx;                 /* SYS_readdir cursor */
+    int idx;                 /* readdir cursor (into the snapshot / SYS_readdir) */
     struct dirent de;
 };
 
@@ -294,9 +363,19 @@ DIR *opendir(const char *path)
 
 struct dirent *readdir(DIR *d)
 {
-    struct xt_dirent xe;
     const char *path = d ? pfd_path(d->pfd) : 0;
     if (!path) return 0;
+    struct dsnap *s = dsnap_load(path);            /* one batch read serves the whole loop */
+    if (s) {
+        if (d->idx >= s->n) return 0;
+        struct dsnap_ent *e = &s->e[d->idx++];
+        memset(&d->de, 0, sizeof d->de);
+        d->de.d_ino = d->idx;
+        d->de.d_type = IFTODT(e->mode & XT_S_IFMT);
+        strncpy(d->de.d_name, e->name, sizeof d->de.d_name - 1);
+        return &d->de;
+    }
+    struct xt_dirent xe;                            /* fallback: per-entry readdir syscall */
     if (sys_readdir(path, d->idx, &xe) != 1) return 0;
     d->idx++;
     memset(&d->de, 0, sizeof d->de);
@@ -322,6 +401,7 @@ int closedir(DIR *d)
  * listfiles, dirtree's openat) — a directory open yields a pseudo-fd */
 int open(const char *path, int flags, ...)
 {
+    if (flags & (O_WRONLY | O_RDWR | O_CREAT | O_TRUNC)) dsnap_flush();   /* our own write: drop stale */
     struct xt_stat xs;
     if (sys_stat(path, &xs) == 0 && (xs.mode & XT_S_IFMT) == XT_S_IFDIR)
         return pfd_alloc(path);
@@ -451,6 +531,23 @@ int openat(int dirfd, const char *path, int flags, ...)
 
 int fstatat(int dirfd, const char *path, struct stat *st, int flags)
 {
+    /* fast path: a simple child of an open directory -> serve from its snapshot, no syscall.
+     * This is the tree-walk hot path (dirtree fstatat's each entry against the parent fd). */
+    if (dirfd != AT_FDCWD && path && !strchr(path, '/')) {
+        const char *parent = pfd_path(dirfd);
+        struct dsnap *s = parent ? dsnap_load(parent) : 0;
+        if (s) for (int i = 0; i < s->n; i++)
+            if (!strcmp(s->e[i].name, path)) {
+                unsigned m = s->e[i].mode;
+                if ((flags & AT_SYMLINK_NOFOLLOW) || (m & XT_S_IFMT) != XT_S_IFLNK) {
+                    struct xt_stat xs = { m, s->e[i].size, s->e[i].mtime };
+                    char full[600]; snprintf(full, sizeof full, "%s/%s", parent, path);
+                    st_from_xt(st, &xs, full);       /* st_ino from the full path */
+                    return 0;
+                }
+                break;                               /* follow a symlink: resolve for real below */
+            }
+    }
     char buf[600];
     const char *p = at_join(dirfd, path, buf, sizeof buf);
     if (!p) return -1;
@@ -486,6 +583,7 @@ int unlinkat(int dirfd, const char *path, int flags)
 {
     char buf[600];
     (void)flags;
+    dsnap_flush();
     const char *p = at_join(dirfd, path, buf, sizeof buf);
     if (!p) return -1;
     if (sys_unlink(p) < 0) { errno = ENOENT; return -1; }
@@ -495,6 +593,7 @@ int unlinkat(int dirfd, const char *path, int flags)
 int mkdirat(int dirfd, const char *path, mode_t mode)
 {
     char buf[600];
+    dsnap_flush();
     const char *p = at_join(dirfd, path, buf, sizeof buf);
     if (!p) return -1;
     if (sys_mkdir(p, mode) < 0) { errno = EEXIST; return -1; }
@@ -519,6 +618,7 @@ ssize_t readlinkat(int dirfd, const char *path, char *out, size_t size)
 int symlinkat(const char *target, int dirfd, const char *path)
 {
     char buf[600];
+    dsnap_flush();
     const char *p = at_join(dirfd, path, buf, sizeof buf);
     if (!p) return -1;
     if (sys_symlink(target, p) < 0) { errno = EEXIST; return -1; }
@@ -599,12 +699,14 @@ ssize_t readlink(const char *__restrict path, char *__restrict buf, size_t size)
 
 int mkdir(const char *path, mode_t mode)
 {
+    dsnap_flush();
     if (sys_mkdir(path, (int)mode) < 0) { errno = EEXIST; return -1; }
     return 0;
 }
 
 int symlink(const char *target, const char *linkpath)
 {
+    dsnap_flush();
     if (sys_symlink(target, linkpath) < 0) { errno = EEXIST; return -1; }
     return 0;
 }
@@ -636,6 +738,7 @@ long pathconf(const char *path, int name)
 int rmdir(const char *path)
 {
     struct xt_stat xs;
+    dsnap_flush();
     if (sys_unlink(path) == 0) return 0;         /* drivers remove empty dirs */
     if (sys_lstat(path, &xs) < 0) errno = ENOENT;
     else if ((xs.mode & XT_S_IFMT) != XT_S_IFDIR) errno = ENOTDIR;
@@ -647,6 +750,7 @@ int rmdir(const char *path)
 int unlink(const char *path)
 {
     struct xt_stat xs;
+    dsnap_flush();
     if (sys_unlink(path) == 0) return 0;
     errno = (sys_lstat(path, &xs) == 0) ? EPERM : ENOENT;
     return -1;
@@ -658,6 +762,7 @@ int unlink(const char *path)
 int rename(const char *oldp, const char *newp)
 {
     struct xt_stat xs;
+    dsnap_flush();
     if (sys_rename(oldp, newp) == 0) return 0;
     errno = (sys_lstat(oldp, &xs) == 0) ? EACCES : ENOENT;
     return -1;

@@ -78,6 +78,13 @@
 #define SYS_statfs   0x313   /* (path, u32 out[3]) -> 0: filesystem capacity for df/statvfs.
                               * out[0] = total sectors, out[1] = free sectors, out[2] = sector
                               * bytes (FatFs f_getfree). -1 where there's no sized fs (qemu). */
+#define SYS_getdents 0x314   /* (path, index, buf) -> count: batch directory read WITH metadata,
+                              * so a tree walk (du/ls/find) fetches a whole directory in one
+                              * syscall instead of a readdir + a stat per entry. Fills buf (>= 4096
+                              * bytes) with `count` packed records from entry `index` onward;
+                              * 0 = end, -1 = not batch-enumerable (caller falls back to readdir).
+                              * Each record (4-byte aligned): u32 mode, u32 size, u32 mtime,
+                              * u16 reclen (whole record), u16 namelen, char name[namelen] + NUL. */
 /* sockets — block 0x320 (IPv4, netconn-backed; addresses are be32 ip + host-order
  * port, no sockaddr marshalling at the syscall boundary — the libc shim owns
  * struct sockaddr). read/write/close/fstat work on socket fds; SYS_ioctl

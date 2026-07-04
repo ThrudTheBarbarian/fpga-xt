@@ -723,6 +723,8 @@ typedef struct {
 
 static QueueHandle_t g_fs_q;                 /* doorbell: slot indices; NULL until frtos_fs_start() */
 static fs_ctl       *g_fs_ctl[MAXPROC];      /* per-slot control page (pool identity addr) */
+static uint8_t      *g_fs_batch[MAXPROC];    /* per-slot SYS_getdents packing page (4 KB) */
+#define FS_BATCH_BYTES 4096
 static TaskHandle_t  g_fs_waiter[MAXPROC];   /* client task parked on each slot's request */
 
 static long do_syscall(uint32_t num, long a0, long a1, long a2);   /* fallback (caller ctx) */
@@ -1043,6 +1045,31 @@ static long fs_serve(int slot)
         long r = vfs_readdir(c->path, (int)c->off, c->path2, FS_PATH_MAX, &mode);
         c->st[0] = mode;
         return r;
+    }
+    case SYS_getdents: {                                     /* batch: entries+meta -> g_fs_batch */
+        dcache_t *dc = dcache_find(c->path);
+        if (!dc) dc = dcache_fill(c->path);
+        if (!dc) return -1;                                 /* not enumerable -> shim falls back */
+        dc->lru = ++g_dcache_tick;
+        uint8_t *b = g_fs_batch[slot];
+        uint32_t off = 0, count = 0, idx = c->off;
+        for (; idx < dc->nents; idx++) {
+            const char *nm = dc->e[idx].name;
+            uint32_t nl = 0; while (nm[nl]) nl++;
+            uint32_t reclen = (16 + nl + 1 + 3) & ~3u;      /* header(16) + name + NUL, 4-aligned */
+            if (off + reclen > FS_BATCH_BYTES) break;       /* page full: the shim asks for more */
+            *(uint32_t *)(b + off + 0)  = dc->e[idx].mode;
+            *(uint32_t *)(b + off + 4)  = dc->e[idx].size;
+            *(uint32_t *)(b + off + 8)  = dc->e[idx].mtime;
+            *(uint16_t *)(b + off + 12) = (uint16_t)reclen;
+            *(uint16_t *)(b + off + 14) = (uint16_t)nl;
+            for (uint32_t k = 0; k < nl; k++) b[off + 16 + k] = nm[k];
+            b[off + 16 + nl] = 0;
+            off += reclen; count++;
+        }
+        c->st[0] = count;                                   /* records packed */
+        c->st[1] = off;                                     /* bytes packed */
+        return (long)count;
     }
     case SYS_mkdir:   dcache_drop_parent(c->path);           /* new dir appears in its parent */
                       return vfs_mkdir(c->path);
@@ -1393,6 +1420,29 @@ static long fs_meta(proc_t *p)
     return c->result;
 }
 
+/* deferral (client TASK ctx) -> SYS_getdents: the fs task packs a directory slice (from
+ * its cached snapshot) into the slot's batch page; here (client space) we copy that page
+ * into the caller's buffer. Returns the record count (0 = end, -1 = not batch-enumerable). */
+static long fs_getdents(proc_t *p)
+{
+    int     slot = (int)(p - g_proc);
+    fs_ctl *c = (slot >= 0 && slot < MAXPROC) ? g_fs_ctl[slot] : 0;
+    if (!g_fs_q || !c) return -1;                        /* no fs task -> shim uses readdir/stat */
+    c->op = p->dnum;
+    abspath(p, (const char *)p->da0, c->path);           /* directory (cwd-relative -> absolute) */
+    c->off = (uint32_t)p->da1;                           /* start entry index */
+    c->result = -1;
+    g_fs_waiter[slot] = xTaskGetCurrentTaskHandle();
+    xQueueSend(g_fs_q, &slot, portMAX_DELAY);
+    ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
+    if (c->result < 0) return -1;
+    uint8_t *ub = (uint8_t *)p->da2;                     /* caller's buffer (>= FS_BATCH_BYTES) */
+    uint32_t bytes = c->st[1];
+    if (bytes > FS_BATCH_BYTES) bytes = FS_BATCH_BYTES;
+    if (ub) for (uint32_t i = 0; i < bytes; i++) ub[i] = g_fs_batch[slot][i];
+    return c->result;                                    /* record count */
+}
+
 /* client side of the page store (deferral thunk = client TASK context): ask the fs task
  * to make file page `pi` resident (for read, or `forwrite` = RMW/grow) and hand back its
  * identity address + valid bytes. Fallback (no fs task) fills inline — correct in any ctx. */
@@ -1519,6 +1569,8 @@ void frtos_fs_start(void)
     for (int s = 0; s < MAXPROC; s++) {
         g_fs_ctl[s] = (fs_ctl *)vm_page_alloc();
         if (!g_fs_ctl[s]) { if (g_console) g_console("[fs] ctl page alloc failed\n", 27); return; }
+        g_fs_batch[s] = (uint8_t *)vm_page_alloc();      /* SYS_getdents packing page (4 KB) */
+        if (!g_fs_batch[s]) { if (g_console) g_console("[fs] batch page alloc failed\n", 29); return; }
     }
     g_fs_q = xQueueCreate(MAXPROC + 2, sizeof(int));   /* client slots + a kernel job */
     if (!g_fs_q) { if (g_console) g_console("[fs] queue create failed\n", 25); return; }
@@ -1750,6 +1802,8 @@ void deferral_thunk(void)                 /* PL1 (System), task context */
                    p->dnum == SYS_statfs) {
             /* path metadata + symlinks + dir enumeration + mkdir/chdir/rename: fs task walks FatFs. */
             r = fs_meta(p);
+        } else if (p->dnum == SYS_getdents) {              /* batch dir read (entries + metadata) */
+            r = fs_getdents(p);
         } else if (p->dnum == SYS_mmap) {
             /* mmap a backing-store file: the fs task eager-fills + maps it into our space. */
             r = fs_mmap(p);
@@ -1825,6 +1879,7 @@ static long do_syscall(uint32_t num, long a0, long a1, long a2)
     case SYS_lseek:  return sys_lseek(p, (int)a0, a1, (int)a2);
     case SYS_fstat:  return k_fstat(p, (int)a0, (struct xt_stat *)a1);   /* inline: table read */
     case SYS_statfs:   return k_statfs((uint32_t *)a1);                              /* FatFs f_getfree (HW) */
+    case SYS_getdents: return -1;                     /* always deferred to fs_getdents; no inline path */
     case SYS_stat:     return vfs_stat((const char *)a0, (struct xt_stat *)a1);      /* follows symlinks */
     case SYS_lstat:    return vfs_lstat((const char *)a0, (struct xt_stat *)a1);     /* the link itself */
     case SYS_readlink: return vfs_readlink((const char *)a0, (char *)a1, (int)a2);
@@ -1970,6 +2025,7 @@ static int needs_task_ctx(struct k_regs *regs, uint32_t num)
         return 1;                                  /* netconn calls block in lwIP */
     case SYS_nanosleep: return 1;                  /* vTaskDelay must run in task ctx */
     case SYS_statfs:  return 1;                    /* fs task queries FatFs f_getfree */
+    case SYS_getdents: return 1;                   /* fs task packs the dir batch page */
     case SYS_dup2:    return 1;                    /* may close a displaced pipe end */
     case SYS_mmap:    return fd_is_sd(fd);          /* backing-store mmap -> fs task eager-fill (romfs inline) */
     case SYS_munmap:  return 1;                     /* may write dirty pages back (FatFs) -> task ctx */
