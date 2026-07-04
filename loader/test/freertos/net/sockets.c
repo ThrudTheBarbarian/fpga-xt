@@ -24,6 +24,9 @@ typedef struct {
     struct netbuf  *rb;         /* partially-consumed receive buffer */
     unsigned        rb_off;
     int             listening;
+    ip_addr_t       peer;       /* RAW: send target (we DON'T netconn_connect a raw */
+    u16_t           peer_port;  /* pcb — that sets RAW_FLAGS_CONNECTED, whose input */
+    u8_t            has_peer;   /* source-filter would drop replies; sendto instead) */
 } xt_sock;
 
 #define MAXSOCK 48         /* listeners + live connections across all procs */
@@ -64,6 +67,12 @@ int xt_sock_connect(int si, unsigned ip_be, unsigned port)
     if (!s) return -1;
     ip_addr_t a;
     ip_addr_set_ip4_u32_val(a, ip_be);
+    if (NETCONNTYPE_GROUP(netconn_type(s->conn)) == NETCONN_RAW) {
+        /* stash the target; leave the pcb UNCONNECTED so raw_input applies no
+         * source filter and every ICMP reply reaches us (ping). */
+        s->peer = a; s->peer_port = (u16_t)port; s->has_peer = 1;
+        return 0;
+    }
     return netconn_connect(s->conn, &a, (u16_t)port) == ERR_OK ? 0 : -1;
 }
 
@@ -134,12 +143,18 @@ long xt_sock_send(int si, const void *buf, unsigned len)
          * kernel owns the ICMP checksum. lwIP raw doesn't compute it for IPv4,
          * and toybox ping ships a throwaway value, so (re)compute it over the
          * ICMP message here — otherwise every host drops the bad-checksum echo. */
-        if (grp == NETCONN_RAW && len >= 4 && nb->p && nb->p->len >= 4) {
-            u16_t *ck = (u16_t *)((u8_t *)nb->p->payload + 2);
-            *ck = 0;
-            *ck = inet_chksum(nb->p->payload, (u16_t)len);
+        err_t e;
+        if (grp == NETCONN_RAW) {
+            if (len >= 4 && nb->p && nb->p->len >= 4) {   /* fix ping's throwaway checksum */
+                u16_t *ck = (u16_t *)((u8_t *)nb->p->payload + 2);
+                *ck = 0;
+                *ck = inet_chksum(nb->p->payload, (u16_t)len);
+            }
+            e = s->has_peer ? netconn_sendto(s->conn, nb, &s->peer, s->peer_port)
+                            : netconn_send(s->conn, nb);   /* unconnected: no input src filter */
+        } else {
+            e = netconn_send(s->conn, nb);             /* connected UDP */
         }
-        err_t e = netconn_send(s->conn, nb);       /* connected UDP / RAW ICMP -> target */
         netbuf_delete(nb);
         return e == ERR_OK ? (long)len : -1;
     }
