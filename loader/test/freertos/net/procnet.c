@@ -148,6 +148,14 @@ static int gen_stats(char *buf, int cap)
     stat_row(&o, "icmp",   &lwip_stats.icmp);
     stat_row(&o, "udp",    &lwip_stats.udp);
     stat_row(&o, "tcp",    &lwip_stats.tcp);
+    /* socket receive-path probe (see sockets.c) */
+    extern unsigned xt_sock_rxdbg[5];
+    nb_s(&o, "sockrx:\tavail=");   nb_d(&o, xt_sock_rxdbg[0]);
+    nb_s(&o, " avail_hit=");       nb_d(&o, xt_sock_rxdbg[1]);
+    nb_s(&o, " recvfrom=");        nb_d(&o, xt_sock_rxdbg[2]);
+    nb_s(&o, " got=");             nb_d(&o, xt_sock_rxdbg[3]);
+    nb_s(&o, " timeouts=");        nb_d(&o, xt_sock_rxdbg[4]);
+    nb_c(&o, '\n');
     return o.n;
 }
 

@@ -32,6 +32,11 @@ typedef struct {
 #define MAXSOCK 48         /* listeners + live connections across all procs */
 static xt_sock g_socks[MAXSOCK];
 
+/* receive-path diagnostics, shown at /OS/proc/net/stats (sockdbg row):
+ * [0] xt_sock_avail calls  [1] avail returned >0  [2] recvfrom calls
+ * [3] recvfrom got a packet  [4] recvfrom timeouts (tick loops) */
+unsigned xt_sock_rxdbg[5];
+
 static xt_sock *slot_of(int si) { return (si >= 0 && si < MAXSOCK && g_socks[si].conn) ? &g_socks[si] : 0; }
 
 /* -> socket index (NOT an fd — frtos_os wraps it), or -1 */
@@ -212,14 +217,17 @@ long xt_sock_recvfrom(int si, void *buf, unsigned len,
 {
     xt_sock *s = slot_of(si);
     if (!s) return -1;
+    xt_sock_rxdbg[2]++;
     struct netbuf *nb = 0;
     for (;;) {
         err_t e = netconn_recv(s->conn, &nb);
         if (e == ERR_OK) break;
         if (e == ERR_CLSD) return 0;
         if (e != ERR_TIMEOUT) return -1;
+        xt_sock_rxdbg[4]++;
         if (tick && tick(proc)) return -1;                 /* killed/stopped */
     }
+    xt_sock_rxdbg[3]++;
     if (src_ip)   *src_ip   = ip_addr_get_ip4_u32(netbuf_fromaddr(nb));
     if (src_port) *src_port = netbuf_fromport(nb);
     unsigned skip = 0;
@@ -241,6 +249,7 @@ long xt_sock_avail(int si)
 {
     xt_sock *s = slot_of(si);
     if (!s) return -1;
+    xt_sock_rxdbg[0]++;
     unsigned n = s->rb ? (netbuf_len(s->rb) - s->rb_off) : 0;
 #if LWIP_SO_RCVBUF
     if (!n) {
@@ -249,6 +258,7 @@ long xt_sock_avail(int si)
         if (a > 0) n = (unsigned)a;
     }
 #endif
+    if (n) xt_sock_rxdbg[1]++;
     return (long)n;
 }
 
