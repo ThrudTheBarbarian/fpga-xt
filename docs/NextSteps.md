@@ -464,6 +464,19 @@ Falcon becomes a target alongside the m68k. Conclusion of the design thread: bui
   process table; **frozen syscall numbering + `r7`/`svc #1` convention**; MMU-readiness
   rules. Vision P4 now references the `SVC #1` syscall tier. *(src:
   docs/OS/dynamic-loading.md)*
+- **Process limit — dynamic per-space allocation (raise the 64/255 ceiling).** MAXPROC is
+  64 (was 8). All per-process resources are **static `[NSPACE]` arrays** — the 16 KB L1
+  page table, the L2 tables, `proc_t`, and the multi-section stack arena — so the kernel
+  reserves the full 64-process footprint (~10 MB BSS) always, even idle, and 64 is near
+  the ceiling of the 31 MB kernel RAM region. Two hard limits block going higher as-is:
+  (1) **ARM 8-bit ASID** — `asid = idx+1` written to CONTEXTIDR[7:0], so 255 is the max
+  and 256 aliases the reserved kernel ASID 0 (would corrupt); (2) the **static-array RAM
+  tax**. To reach hundreds: allocate the per-space tables + stacks from the DDR pool **on
+  spawn** (freed on reap) so RAM tracks *live* processes, not the max; **cap at 255** (or
+  add ASID recycling for non-running spaces); and **split stack sizes** (small default,
+  opt-in large only for FreeType/GUI procs — 64 KB × N is the arena's main cost). The
+  MAXPROC=64 bump already flushed the stale hardcoded-8 caps (procfs `PF_MAXPROC`, shim
+  `MAX_KIDS`, and fs_ctl-as-shm vs. `NSHM`); a dynamic rework is the real fix.
 - **Process model — opt-in swap + tier-3 fork (deferred).** Tier 2 is done & HW-validated
   (per-process MMU spaces, shared libs, mmap-exec/files, COW, demand heap, guard pages,
   W^X, DDR pool+reclaim+scrub, loader teardown, PL0 user/kernel split + per-process
