@@ -79,7 +79,11 @@ static char *g_env0[] = {
     "_=/System/bin/toybox",     /* toybox's nommu re-exec fallback path */
     0,
 };
-char **environ = g_env0;
+/* Use libc.so's `environ`, NOT a private one — newlib's time code (localtime/
+ * tzset) and getenv read libc.so's environ; a separate toybox-side array would
+ * be invisible to them (date would never see TZ). Point it at g_env0 at load. */
+extern char **environ;
+__attribute__((constructor)) static void _xt_env_init(void) { environ = g_env0; }
 
 /* Resolve the system timezone the first time TZ is looked up (by tzset): read
  * the zone NAME from /OS/etc/timezone, map it to a POSIX TZ string via
