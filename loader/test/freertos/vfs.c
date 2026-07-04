@@ -46,6 +46,24 @@ int vfs_add_mount(const char *prefix, const char *fsname, void *priv)
     return 0;
 }
 
+/* /proc/mounts (and df): one "dev  mountpoint  fstype  opts 0 0" line per mount */
+int vfs_mounts_str(char *out, int cap)
+{
+    int o = 0;
+    for (int i = 0; i < g_nmnt && o < cap - 96; i++) {
+        const char *dev = g_mnt[i].fs->name, *mp = g_mnt[i].prefix, *fs = g_mnt[i].fs->name;
+        for (const char *s = dev; *s && o < cap-1; s++) out[o++] = *s;
+        out[o++] = ' ';
+        for (const char *s = mp; *s && o < cap-1; s++) out[o++] = *s;
+        out[o++] = ' ';
+        for (const char *s = fs; *s && o < cap-1; s++) out[o++] = *s;
+        const char *tail = " rw,relatime 0 0\n";
+        for (const char *s = tail; *s && o < cap-1; s++) out[o++] = *s;
+    }
+    out[o] = 0;
+    return o;
+}
+
 /* longest-prefix match; *rel = path relative to the chosen mount (leading '/'). */
 static vfs_mount *resolve(const char *path, const char **rel)
 {

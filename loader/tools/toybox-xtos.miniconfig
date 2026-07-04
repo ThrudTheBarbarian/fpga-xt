@@ -60,6 +60,15 @@ CONFIG_NETCAT=y
 CONFIG_WGET=y
 # full-screen tools: the kernel tty has a real raw mode (XT_TTY_SETMODE via
 # tcsetattr) and poll() waits honestly on console input, so these are usable.
+# handy extras + network clients (sockets/DNS we now have)
+CONFIG_FREE=y
+CONFIG_XXD=y
+CONFIG_INSTALL=y
+CONFIG_RESET=y
+CONFIG_HOSTNAME=y
+CONFIG_DNSDOMAINNAME=y
+CONFIG_FTPGET=y
+CONFIG_FTPPUT=y
 CONFIG_VI=y
 CONFIG_HEXEDIT=y
 CONFIG_ARCH=y

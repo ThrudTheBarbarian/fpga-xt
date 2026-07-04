@@ -1,0 +1,56 @@
+# XTOS /OS/etc/tz.tab — zone name -> POSIX TZ string (what newlib's tzset uses).
+# Put your zone's NAME in /OS/etc/timezone (e.g. "Europe/London"); the shell
+# resolves it here at first use. A name not listed is used verbatim, so you can
+# also drop a POSIX TZ string straight into /OS/etc/timezone.
+# Format: <name><whitespace><POSIX TZ>.  DST rules are the current ones.
+UTC			GMT0
+Etc/UTC			GMT0
+# --- Europe ---
+Europe/London		GMT0BST,M3.5.0/1,M10.5.0
+Europe/Dublin		GMT0IST,M3.5.0/1,M10.5.0
+Europe/Lisbon		WET0WEST,M3.5.0/1,M10.5.0
+Europe/Paris		CET-1CEST,M3.5.0,M10.5.0/3
+Europe/Berlin		CET-1CEST,M3.5.0,M10.5.0/3
+Europe/Madrid		CET-1CEST,M3.5.0,M10.5.0/3
+Europe/Rome		CET-1CEST,M3.5.0,M10.5.0/3
+Europe/Amsterdam	CET-1CEST,M3.5.0,M10.5.0/3
+Europe/Athens		EET-2EEST,M3.5.0/3,M10.5.0/4
+Europe/Helsinki		EET-2EEST,M3.5.0/3,M10.5.0/4
+Europe/Moscow		MSK-3
+Europe/Istanbul		<+03>-3
+# --- Americas ---
+America/New_York	EST5EDT,M3.2.0,M11.1.0
+America/Chicago		CST6CDT,M3.2.0,M11.1.0
+America/Denver		MST7MDT,M3.2.0,M11.1.0
+America/Phoenix		MST7
+America/Los_Angeles	PST8PDT,M3.2.0,M11.1.0
+America/Anchorage	AKST9AKDT,M3.2.0,M11.1.0
+America/Halifax		AST4ADT,M3.2.0,M11.1.0
+America/Sao_Paulo	<-03>3
+America/Argentina/Buenos_Aires	<-03>3
+America/Mexico_City	CST6
+America/Bogota		<-05>5
+# --- Asia ---
+Asia/Jerusalem		IST-2IDT,M3.4.4/26,M10.5.0
+Asia/Dubai		<+04>-4
+Asia/Karachi		PKT-5
+Asia/Kolkata		IST-5:30
+Asia/Kathmandu		<+0545>-5:45
+Asia/Dhaka		<+06>-6
+Asia/Bangkok		<+07>-7
+Asia/Shanghai		CST-8
+Asia/Singapore		<+08>-8
+Asia/Hong_Kong		HKT-8
+Asia/Tokyo		JST-9
+Asia/Seoul		KST-9
+# --- Africa ---
+Africa/Cairo		EET-2EEST,M4.5.5/0,M10.5.4/24
+Africa/Johannesburg	SAST-2
+Africa/Lagos		WAT-1
+Africa/Nairobi		EAT-3
+# --- Oceania ---
+Australia/Perth		AWST-8
+Australia/Adelaide	ACST-9:30ACDT,M10.1.0,M4.1.0/3
+Australia/Sydney	AEST-10AEDT,M10.1.0,M4.1.0/3
+Pacific/Auckland	NZST-12NZDT,M9.5.0,M4.1.0/3
+Pacific/Honolulu	HST10

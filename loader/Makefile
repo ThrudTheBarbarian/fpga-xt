@@ -288,10 +288,10 @@ TOYBOX_APPLETS := toybox [ arch ascii base32 base64 basename bunzip2 bzcat \
     cal cat cksum clear cmp count cp crc32 cut date df dirname dos2unix du \
     echo egrep env expand false fgrep file find fold getopt grep gunzip head \
     help hexedit i2cdetect i2cdump i2cget i2cset \
-    kill killall ln ls  md5sum mkdir mktemp mv nice nl od patch printenv printf ps pwd \
+    free hostname dnsdomainname ftpget ftpput install kill killall ln ls  md5sum mkdir mktemp mv nice nl od patch printenv printf ps pwd \
     readlink realpath rm rmdir sed sha1sum sha224sum sha256sum sha384sum \
     nc netcat sha512sum sleep sort split stat strings tac tail tar tee test time wget \
-    top touch true ts uname uniq unix2dos unlink uudecode uuencode uuidgen vi wc which zcat
+    top touch true ts uname uniq reset xxd unix2dos unlink uudecode uuencode uuidgen vi wc which zcat
 TOYBOX_ALIASES := $(foreach a,$(TOYBOX_APPLETS),/bin/$(a)=$(BUILD)/toybox.so)
 $(BUILD)/toybox/objects.list:
 	tools/build-toybox.sh
@@ -491,6 +491,8 @@ sdstage: $(BUILD)/toybox.so $(BUILD)/sqlite3.so $(BUILD)/libGEM.so $(BUILD)/aesd
 	cp $(BUILD)/httpd.so   $(SDSTAGE)/OS/bin/httpd
 	cp $(BUILD)/libGEM.so  $(SDSTAGE)/OS/library/libGEM.so
 	@printf '# XTOS /OS/etc/hosts — static name -> address (checked before DNS)\n127.0.0.1\tlocalhost xtos\n' > $(SDSTAGE)/OS/etc/hosts
+	cp tools/tz.tab $(SDSTAGE)/OS/etc/tz.tab
+	@printf 'Europe/London\n' > $(SDSTAGE)/OS/etc/timezone
 	@printf '# XTOS /OS/etc/resolv.conf — static DNS (supplements DHCP option 6).\n# Uncomment to force a resolver.\n#nameserver 1.1.1.1\n' > $(SDSTAGE)/OS/etc/resolv.conf
 	@printf 'for i in %s; do /OS/bin/toybox ln -sf toybox /OS/bin/$$i; done\necho "applet links installed"\n' \
 	    "$(filter-out toybox,$(TOYBOX_APPLETS))" > $(SDSTAGE)/OS/bin/install-links.sh

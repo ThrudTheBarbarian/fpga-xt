@@ -177,6 +177,7 @@ static int pf_open(vfs_mount *m, const char *rel, int flags, vfs_file *f)
     int len = -1, pid, k;
     if (!strcmp(rel, "/uptime"))       len = pf_gen_uptime(buf, PF_BUF);
     else if (!strcmp(rel, "/meminfo")) len = pf_gen_meminfo(buf, PF_BUF);
+    else if (!strcmp(rel, "/mounts"))  { extern int vfs_mounts_str(char *, int); len = vfs_mounts_str(buf, PF_BUF); }
     else if (rel[0] == '/' && (k = pf_num(rel + 1, &pid)) > 0) {
         const char *leaf = rel + 1 + k;
         if (!strcmp(leaf, "/stat"))         len = pf_gen_stat(pid, buf, PF_BUF);
@@ -198,7 +199,7 @@ static int pf_stat(vfs_mount *m, const char *rel, struct xt_stat *st)
     int pid, k, cst;
     st->size = 0; st->mtime = 0;
     if (rel[0] == 0 || (rel[0] == '/' && rel[1] == 0)) { st->mode = XT_S_IFDIR; return 0; }
-    if (!strcmp(rel, "/uptime") || !strcmp(rel, "/meminfo") || !strcmp(rel, "/kmsg")) { st->mode = XT_S_IFREG; return 0; }
+    if (!strcmp(rel, "/uptime") || !strcmp(rel, "/meminfo") || !strcmp(rel, "/kmsg") || !strcmp(rel, "/mounts")) { st->mode = XT_S_IFREG; return 0; }
     if (rel[0] == '/' && (k = pf_num(rel + 1, &pid)) > 0) {
         const char *leaf = rel + 1 + k;
         if (pf_slot(pid, comm, sizeof comm, cmdl, sizeof cmdl, 0, &cst) < 0) return -1;
@@ -230,7 +231,7 @@ static int pf_readdir(vfs_mount *m, const char *rel, int index,
                 return 1;
             }
         }
-        const char *fixed[] = { "uptime", "meminfo", "kmsg" };
+        const char *fixed[] = { "uptime", "meminfo", "kmsg", "mounts" };
         int fi = index - emitted;
         if (fi >= 0 && fi < 2) {
             pfb o = { name, 0, nsz };

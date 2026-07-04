@@ -223,6 +223,10 @@ const char *gai_strerror(int e)
     return e == EAI_NONAME ? "name not known" : e == EAI_MEMORY ? "out of memory" : "resolver error";
 }
 
+int h_errno;                                  /* legacy resolver error (gethostbyname) */
+const char *hstrerror(int e) { (void)e; return "resolver error"; }
+void herror(const char *s) { if (s && *s) { fprintf(stderr, "%s: ", s); } fprintf(stderr, "resolver error\n"); }
+
 struct hostent *gethostbyname(const char *name)
 {
     static struct hostent he;

@@ -72,15 +72,51 @@ extern int _close(int fd);
  * would read newlib's own (empty) environ — so the whole family lives here. */
 static char *g_env0[] = {
     "PATH=/System/bin:/OS/bin:/bin",
-    "HOME=/",
+    "HOME=/media/home",         /* login scripts, ssh config, ~ expansion live here */
     "TERM=vt102",
+    "TZ=GMT0",                  /* UTC fallback; /OS/etc/timezone overrides at first use */
     "_=/System/bin/toybox",     /* toybox's nommu re-exec fallback path */
     0,
 };
 char **environ = g_env0;
 
+/* Resolve the system timezone the first time TZ is looked up (by tzset): read
+ * the zone NAME from /OS/etc/timezone, map it to a POSIX TZ string via
+ * /OS/etc/tz.tab ("name  POSIX-TZ" lines), and setenv it. A name not in the
+ * table is used verbatim (so an advanced user can put a POSIX string straight
+ * into /OS/etc/timezone). No files -> the GMT0 default stands. newlib's tzset
+ * understands POSIX TZ only (no zoneinfo db), which is why the table exists. */
+static void load_tz(void)
+{
+    FILE *tf = fopen("/OS/etc/timezone", "r");
+    if (!tf) return;
+    char zone[64];
+    if (!fgets(zone, sizeof zone, tf)) { fclose(tf); return; }
+    fclose(tf);
+    zone[strcspn(zone, "\r\n")] = 0;
+    while (*zone && (zone[strlen(zone)-1] == ' ' || zone[strlen(zone)-1] == '\t'))
+        zone[strlen(zone)-1] = 0;
+    if (!zone[0]) return;
+
+    FILE *tab = fopen("/OS/etc/tz.tab", "r");
+    if (tab) {
+        char line[160];
+        while (fgets(line, sizeof line, tab)) {
+            if (line[0] == '#') continue;
+            char *nm = strtok(line, " \t\r\n");
+            char *tz = nm ? strtok(NULL, "\r\n") : 0;
+            if (tz) { while (*tz == ' ' || *tz == '\t') tz++; }
+            if (nm && tz && *tz && !strcmp(nm, zone)) { setenv("TZ", tz, 1); fclose(tab); return; }
+        }
+        fclose(tab);
+    }
+    setenv("TZ", zone, 1);                    /* not in the table: take it verbatim */
+}
+
 char *getenv(const char *name)
 {
+    static int tz_done = 0;                   /* /OS/etc/timezone -> TZ, once, on first TZ lookup */
+    if (!tz_done && name[0] == 'T' && name[1] == 'Z' && !name[2]) { tz_done = 1; load_tz(); }
     int n = strlen(name);
     for (char **e = environ; e && *e; e++)
         if (!strncmp(*e, name, n) && (*e)[n] == '=') return *e + n + 1;
@@ -1157,6 +1193,11 @@ int gethostname(char *buf, size_t len)
     return 0;
 }
 
+int sethostname(const char *name, size_t len)   /* single fixed hostname (xtos.local) */
+{ (void)name; (void)len; return 0; }
+int getdomainname(char *buf, size_t len) { if (len) buf[0] = 0; return 0; }
+int setdomainname(const char *name, size_t len) { (void)name; (void)len; return 0; }
+
 int uname(struct utsname *u)
 {
     memset(u, 0, sizeof *u);
@@ -1297,14 +1338,44 @@ char *dirname(char *path)
     return path;
 }
 
+/* real mount enumeration over /proc/mounts (df/mount want it): setmntent opens
+ * the file, getmntent parses one "dev dir type opts freq passno" line into a
+ * static mntent (fields point into a static line buffer). */
 FILE *setmntent(const char *file, const char *mode)
 {
-    (void)file; (void)mode;
-    return 0;                            /* no mount table */
+    return fopen(file, mode && *mode ? mode : "r");
 }
 
-struct mntent *getmntent(FILE *f) { (void)f; return 0; }
-int endmntent(FILE *f) { (void)f; return 1; }
+struct mntent *getmntent(FILE *f)
+{
+    static char line[256];
+    static struct mntent me;
+    if (!f) return 0;
+    while (fgets(line, sizeof line, f)) {
+        if (line[0] == '#' || line[0] == '\n') continue;
+        char *sp[6] = { 0, 0, 0, 0, 0, 0 };
+        int k = 0;
+        for (char *t = strtok(line, " \t\r\n"); t && k < 6; t = strtok(0, " \t\r\n")) sp[k++] = t;
+        if (k < 3) continue;                 /* need at least dev dir type */
+        me.mnt_fsname = sp[0];
+        me.mnt_dir    = sp[1];
+        me.mnt_type   = sp[2];
+        me.mnt_opts   = sp[3] ? sp[3] : (char *)"rw";
+        me.mnt_freq   = sp[4] ? atoi(sp[4]) : 0;
+        me.mnt_passno = sp[5] ? atoi(sp[5]) : 0;
+        return &me;
+    }
+    return 0;
+}
+struct mntent *getmntent_r(FILE *f, struct mntent *m, char *buf, int len)
+{
+    struct mntent *s = getmntent(f);
+    if (!s || !m) return 0;
+    (void)buf; (void)len;
+    *m = *s;                                 /* fields still point at getmntent's static line */
+    return m;
+}
+int endmntent(FILE *f) { if (f) fclose(f); return 1; }
 
 void openlog(const char *ident, int opt, int fac) { (void)ident; (void)opt; (void)fac; }
 void closelog(void) {}
