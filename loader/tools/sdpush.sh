@@ -21,13 +21,24 @@ BLK=1428
 [ -d "$STAGE/OS" ] || { echo "sdpush: no $STAGE/OS — run 'make sdstage' first" >&2; exit 1; }
 command -v curl >/dev/null || { echo "sdpush: curl not found" >&2; exit 1; }
 
+# Resolve the board name to an IP ONCE and push to the IP. Each
+# `curl tftp://xtos.local/...` otherwise re-does an mDNS lookup, and macOS
+# multicast DNS costs seconds per call — the difference between a snappy push
+# and ~5 s/file. If BOARD is already an IP, use it as-is.
+case "$BOARD" in
+    *[!0-9.]*)   # contains a non-digit/dot -> a hostname: resolve it
+        IP=$(ping -c1 -t2 "$BOARD" 2>/dev/null | sed -n 's/^PING[^(]*(\([0-9.]*\)).*/\1/p' | head -1)
+        [ -n "$IP" ] || { echo "sdpush: can't resolve $BOARD — is the board up? (mDNS may be cold; retry)" >&2; exit 1; }
+        echo "sdpush: $BOARD -> $IP"
+        ;;
+    *) IP="$BOARD" ;;
+esac
+
 # reachability: a quick TFTP GET of a file that always exists
-echo "sdpush: probing $BOARD ..."
-if ! curl -s --connect-timeout 5 --max-time 8 "tftp://$BOARD/OS/bin/toybox" -o /dev/null 2>/dev/null; then
-    # a GET of a maybe-absent file still proves the server answered; only a
-    # total failure (no route / not booted) trips this
-    if ! curl -s --connect-timeout 5 --max-time 8 "tftp://$BOARD/OS/" -o /dev/null 2>/dev/null; then
-        echo "sdpush: $BOARD not reachable — is the board booted with the network up?" >&2
+echo "sdpush: probing $IP ..."
+if ! curl -s --connect-timeout 5 --max-time 8 "tftp://$IP/OS/bin/toybox" -o /dev/null 2>/dev/null; then
+    if ! curl -s --connect-timeout 5 --max-time 8 "tftp://$IP/OS/" -o /dev/null 2>/dev/null; then
+        echo "sdpush: $IP not reachable — is the board booted with the network up?" >&2
         echo "        (try: ping $BOARD ; or pass an IP: make sdpush BOARD=192.168.x.y)" >&2
         exit 1
     fi
@@ -56,7 +67,7 @@ echo "sdpush: $nchanged changed file(s) -> $BOARD"
 fail=0
 while IFS= read -r rel; do
     printf '  -> /%s ... ' "$rel"
-    if curl -s --tftp-blksize "$BLK" --max-time 60 -T "$STAGE/$rel" "tftp://$BOARD/$rel"; then
+    if curl -s --tftp-blksize "$BLK" --max-time 60 -T "$STAGE/$rel" "tftp://$IP/$rel"; then
         echo ok
     else
         echo FAILED; fail=1
