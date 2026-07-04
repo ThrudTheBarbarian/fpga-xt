@@ -141,19 +141,32 @@ hw: $(BUILD)/freertos-hw.elf
 hosttest: $(BUILD)/freertos-hosttest.elf
 	@echo "built $< — testbed: printf 'runhost <hostpath>\\nexit\\n' | $(QEMUZYNQ) -kernel $<"
 
+# build fingerprint: git SHA (+ -dirty) baked into the kernel so the boot banner /
+# dmesg can confirm which build is actually running (JTAG testbed vs a stale SD
+# BOOT.BIN). Regenerated every make, but rewritten (mtime bumped) only when the
+# value changes, so it doesn't force a needless full recompile.
+BUILD_SHA   := $(shell git rev-parse --short HEAD 2>/dev/null || echo unknown)
+BUILD_DIRTY := $(shell git diff --quiet HEAD 2>/dev/null || echo -dirty)
+BUILD_ID    := $(BUILD_SHA)$(BUILD_DIRTY)
+.PHONY: force_build_id
+force_build_id: ;
+$(BUILD)/build_id.h: force_build_id | $(BUILD)
+	@echo '#define XT_BUILD_ID "$(BUILD_ID)"' > $@.tmp
+	@if cmp -s $@.tmp $@ 2>/dev/null; then rm -f $@.tmp; else mv $@.tmp $@; echo "build id: $(BUILD_ID)"; fi
+
 # Stage 2 + M2: loader + svc gateway + spawn-by-path + file syscalls, on real FreeRTOS.
 freertos: $(BUILD)/freertos.elf
 	@echo "=== xtos: programs from a filesystem on real FreeRTOS (qemu xilinx-zynq-a9) ==="
 	@$(QEMUZYNQ) -kernel $< ; echo "(qemu exited $$?)"
 
-$(BUILD)/freertos.elf: $(FRSRC) $(FRASM) test/freertos/freertos.ld test/freertos/FreeRTOSConfig.h test/freertos/net/lwipopts.h $(BUILD)/romfs_blob.h | $(BUILD)
+$(BUILD)/freertos.elf: $(FRSRC) $(FRASM) test/freertos/freertos.ld test/freertos/FreeRTOSConfig.h test/freertos/net/lwipopts.h $(BUILD)/build_id.h $(BUILD)/romfs_blob.h | $(BUILD)
 	$(ARMCC) $(FRCFLAGS) $(XTRACFLAGS) -T test/freertos/freertos.ld $(FRASM) $(FRSRC) -lgcc -o $@
 
 # HW variant: same kernel (incl. the full tier-2 MMU/VM), but real Zynq UART1 I/O
 # instead of semihosting (the testbed owns its SVC vector, so semihosting — which
 # qemu intercepts above the guest — isn't available on metal). JTAG-load with
 # ps7_init; run vmtest/demandtest/faulttest to exercise tier-2 on real silicon.
-$(BUILD)/freertos-hw.elf: $(FRSRC) $(FRASM) test/freertos/freertos.ld test/freertos/FreeRTOSConfig.h test/freertos/net/lwipopts.h $(BUILD)/hwromfs/romfs_blob.h | $(BUILD)
+$(BUILD)/freertos-hw.elf: $(FRSRC) $(FRASM) test/freertos/freertos.ld test/freertos/FreeRTOSConfig.h test/freertos/net/lwipopts.h $(BUILD)/build_id.h $(BUILD)/hwromfs/romfs_blob.h | $(BUILD)
 	$(ARMCC) -I$(BUILD)/hwromfs $(FRCFLAGS) -DXT_HW_UART -DXT_HW -T test/freertos/freertos.ld $(FRASM) $(FRSRC) -lgcc -o $@
 
 # Kernel-menu (runhost) testbed ELF for the toolchain — same sources, -DXT_KERNEL_SHELL.
