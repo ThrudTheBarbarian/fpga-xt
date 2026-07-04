@@ -169,7 +169,7 @@ raw_input(struct pbuf *p, struct netif *inp)
   /* loop through all raw pcbs until the packet is eaten by one */
   /* this allows multiple pcbs to match against the packet by design */
   while (pcb != NULL) {
-    if (proto == 1 && pcb->protocol == 1) xt_raw_dbg[1]++;
+    if (proto == 1) { xt_raw_dbg[3]++; if (pcb->protocol == 1) xt_raw_dbg[1]++; }
     if ((pcb->protocol == proto) && raw_input_local_match(pcb, broadcast) &&
         (((pcb->flags & RAW_FLAGS_CONNECTED) == 0) ||
          ip_addr_eq(&pcb->remote_ip, ip_current_src_addr()))) {

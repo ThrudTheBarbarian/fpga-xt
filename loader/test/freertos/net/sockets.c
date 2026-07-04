@@ -36,9 +36,11 @@ static xt_sock g_socks[MAXSOCK];
  * [0] xt_sock_avail calls  [1] avail returned >0  [2] recvfrom calls
  * [3] recvfrom got a packet  [4] recvfrom timeouts (tick loops) */
 unsigned xt_sock_rxdbg[5];
-/* raw_input delivery probe (incremented in lwIP raw.c): [0] ICMP pkts into
- * raw_input, [1] ICMP raw pcbs matched by protocol, [2] full matches (recv run) */
-unsigned xt_raw_dbg[3];
+/* raw_input delivery probe. [0..2] set in lwIP raw.c: ICMP pkts into raw_input,
+ * ICMP raw pcbs seen, full matches (recv run). [3] total raw pcbs seen (any
+ * proto) — 0 = list empty. [4] raw netconns xt_sock_new created. [5] created
+ * conn's NETCONNTYPE_GROUP (0x40 = NETCONN_RAW). */
+unsigned xt_raw_dbg[6];
 
 static xt_sock *slot_of(int si) { return (si >= 0 && si < MAXSOCK && g_socks[si].conn) ? &g_socks[si] : 0; }
 
@@ -52,6 +54,7 @@ int xt_sock_new(int type)
             ? netconn_new_with_proto_and_callback(NETCONN_RAW, IP_PROTO_ICMP, 0)
             : netconn_new(type == 2 ? NETCONN_UDP : NETCONN_TCP);
         if (!c) return -1;
+        if (type == 3) { xt_raw_dbg[4]++; xt_raw_dbg[5] = NETCONNTYPE_GROUP(netconn_type(c)); }
         netconn_set_recvtimeout(c, 200);           /* the kill/stop tick */
         g_socks[i] = (xt_sock){ c, 0, 0, 0 };
         return i;
