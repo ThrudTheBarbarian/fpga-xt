@@ -25,6 +25,20 @@ static int sd0_write(blkdev_t *d, uint32_t lba, uint32_t cnt, const void *buf)
 { (void)d; return disk_write(0, (const BYTE *)buf, lba, cnt) == RES_OK ? 0 : -1; }
 static blkdev_t sd0 = { "sd0", 512, 0, sd0_read, sd0_write, 0 };
 
+/* filesystem capacity for statfs/df: f_getfree scans the FAT for free clusters, and the
+ * mounted volume geometry (data clusters * sectors-per-cluster) gives the total. out =
+ * { total_sectors, free_sectors, sector_bytes }. SD sectors are 512 bytes. */
+int sd_statfs_raw(uint32_t out[3])
+{
+    FATFS *fs = 0;
+    DWORD  nclst = 0;
+    if (f_getfree("0:", &nclst, &fs) != FR_OK || !fs) return -1;
+    out[0] = (uint32_t)(fs->n_fatent - 2) * fs->csize;   /* total data sectors */
+    out[1] = (uint32_t)nclst * fs->csize;                /* free sectors */
+    out[2] = 512;
+    return 0;
+}
+
 void sd_init(void)
 {
     klog("[sd] mounting...\r\n");

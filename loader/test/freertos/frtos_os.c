@@ -882,6 +882,19 @@ static long fd_munmap(int slot)
     return vm_munmap(slot, va, len);
 }
 
+/* real filesystem capacity for statfs/df: FatFs f_getfree on HW (out = {total_sectors,
+ * free_sectors, sector_bytes}); unavailable on qemu (romfs/ramfs has no fixed size) ->
+ * -1, and the libc shim keeps its sensible defaults. */
+static int k_statfs(uint32_t out[3])
+{
+#ifdef XT_HW
+    extern int sd_statfs_raw(uint32_t[3]);
+    return sd_statfs_raw(out);
+#else
+    (void)out; return -1;
+#endif
+}
+
 static long fs_serve(int slot)
 {
     proc_t *p = &g_proc[slot];
@@ -901,6 +914,7 @@ static long fs_serve(int slot)
         if (r == 0) { c->st[0] = s.mode; c->st[1] = s.size; c->st[2] = s.mtime; }
         return r;
     }
+    case SYS_statfs:   return k_statfs(c->st);                                /* total/free sectors -> st[] */
     case SYS_readlink: return vfs_readlink(c->path, c->path2, (int)c->len);   /* target -> path2 */
     case SYS_symlink:  return vfs_symlink(c->path2, c->path);                 /* (target, linkpath) */
     case SYS_unlink:   return vfs_unlink(c->path);
@@ -1248,6 +1262,9 @@ static long fs_meta(proc_t *p)
             struct xt_dirent *u = (struct xt_dirent *)p->da2;
             if (u) { u->mode = c->st[0];
                      int i = 0; while (c->path2[i] && i < 255) { u->name[i] = c->path2[i]; i++; } u->name[i] = 0; }
+        } else if (p->dnum == SYS_statfs) {           /* total/free sectors + sector size -> client u32[3] */
+            uint32_t *u = (uint32_t *)p->da1;
+            if (u) { u[0] = c->st[0]; u[1] = c->st[1]; u[2] = c->st[2]; }
         }
     }
     return c->result;
@@ -1606,7 +1623,8 @@ void deferral_thunk(void)                 /* PL1 (System), task context */
             r = fs_call(p);
         } else if (p->dnum == SYS_stat || p->dnum == SYS_lstat || p->dnum == SYS_readlink ||
                    p->dnum == SYS_symlink || p->dnum == SYS_unlink || p->dnum == SYS_readdir ||
-                   p->dnum == SYS_mkdir || p->dnum == SYS_chdir || p->dnum == SYS_rename) {
+                   p->dnum == SYS_mkdir || p->dnum == SYS_chdir || p->dnum == SYS_rename ||
+                   p->dnum == SYS_statfs) {
             /* path metadata + symlinks + dir enumeration + mkdir/chdir/rename: fs task walks FatFs. */
             r = fs_meta(p);
         } else if (p->dnum == SYS_mmap) {
@@ -1683,6 +1701,7 @@ static long do_syscall(uint32_t num, long a0, long a1, long a2)
                      } return 0;
     case SYS_lseek:  return sys_lseek(p, (int)a0, a1, (int)a2);
     case SYS_fstat:  return k_fstat(p, (int)a0, (struct xt_stat *)a1);   /* inline: table read */
+    case SYS_statfs:   return k_statfs((uint32_t *)a1);                              /* FatFs f_getfree (HW) */
     case SYS_stat:     return vfs_stat((const char *)a0, (struct xt_stat *)a1);      /* follows symlinks */
     case SYS_lstat:    return vfs_lstat((const char *)a0, (struct xt_stat *)a1);     /* the link itself */
     case SYS_readlink: return vfs_readlink((const char *)a0, (char *)a1, (int)a2);
@@ -1827,6 +1846,7 @@ static int needs_task_ctx(struct k_regs *regs, uint32_t num)
     case SYS_recvfrom:
         return 1;                                  /* netconn calls block in lwIP */
     case SYS_nanosleep: return 1;                  /* vTaskDelay must run in task ctx */
+    case SYS_statfs:  return 1;                    /* fs task queries FatFs f_getfree */
     case SYS_dup2:    return 1;                    /* may close a displaced pipe end */
     case SYS_mmap:    return fd_is_sd(fd);          /* backing-store mmap -> fs task eager-fill (romfs inline) */
     case SYS_munmap:  return 1;                     /* may write dirty pages back (FatFs) -> task ctx */

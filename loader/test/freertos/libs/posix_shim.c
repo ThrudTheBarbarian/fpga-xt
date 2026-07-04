@@ -1339,15 +1339,28 @@ int fnmatch(const char *pat, const char *str, int flags)
  * collation loader's error flag — no locales here, so "not loaded" */
 int __collate_load_error = 1;
 
+/* Ask the kernel for the real filesystem geometry (FatFs f_getfree): sectors total/free
+ * + sector size. Returns 1 and fills bs/tot/free on success; 0 where there's no sized
+ * fs (qemu ramfs, or an old kernel without SYS_statfs) so the caller keeps its defaults. */
+static int fs_capacity(unsigned long *bs, unsigned long *tot, unsigned long *free)
+{
+    unsigned o[3] = { 0, 0, 0 };
+    if (sys_statfs("/", o) != 0 || !o[0] || !o[2]) return 0;
+    *bs = o[2]; *tot = o[0]; *free = o[1];
+    return 1;
+}
+
 int statvfs(const char *path, struct statvfs *sv)
 {
     (void)path;
+    unsigned long bs = 4096, tot = 65536, fr = 32768;   /* defaults (qemu / old kernel) */
+    fs_capacity(&bs, &tot, &fr);
     memset(sv, 0, sizeof *sv);
-    sv->f_bsize = sv->f_frsize = 4096;
-    sv->f_blocks = 65536;
-    sv->f_bfree = sv->f_bavail = 32768;
-    sv->f_files = 65536;
-    sv->f_ffree = sv->f_favail = 32768;
+    sv->f_bsize = sv->f_frsize = bs;
+    sv->f_blocks = tot;
+    sv->f_bfree = sv->f_bavail = fr;
+    sv->f_files = tot;                        /* no inode accounting: mirror the block count */
+    sv->f_ffree = sv->f_favail = fr;
     sv->f_namemax = 255;
     return 0;
 }
@@ -1355,12 +1368,14 @@ int statvfs(const char *path, struct statvfs *sv)
 int statfs(const char *path, struct statfs *sf)
 {
     (void)path;
+    unsigned long bs = 4096, tot = 65536, fr = 32768;
+    fs_capacity(&bs, &tot, &fr);
     memset(sf, 0, sizeof *sf);
-    sf->f_bsize = sf->f_frsize = 4096;
-    sf->f_blocks = 65536;
-    sf->f_bfree = sf->f_bavail = 32768;
-    sf->f_files = 65536;
-    sf->f_ffree = 32768;
+    sf->f_bsize = sf->f_frsize = bs;
+    sf->f_blocks = tot;
+    sf->f_bfree = sf->f_bavail = fr;
+    sf->f_files = tot;
+    sf->f_ffree = fr;
     sf->f_namelen = 255;
     return 0;
 }

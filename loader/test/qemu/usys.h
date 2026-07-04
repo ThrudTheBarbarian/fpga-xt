@@ -80,6 +80,9 @@ static inline char **sys_envp(void) { return (char **)__syscall(SYS_envp, 0, 0, 
 static inline long sys_reboot(int cmd) { return __syscall(SYS_reboot, cmd, 0, 0); }
 static inline long sys_fstat(int fd, struct xt_stat *st)
 { return __syscall(SYS_fstat, fd, (long)st, 0); }
+/* filesystem capacity: out[0]=total sectors, out[1]=free sectors, out[2]=sector bytes */
+static inline long sys_statfs(const char *path, unsigned out[3])
+{ return __syscall(SYS_statfs, (long)path, (long)out, 0); }
 /* char-device controls (Linux request codes; see xtsys.h) */
 static inline long sys_ioctl(int fd, unsigned req, void *argp)
 { return __syscall(SYS_ioctl, fd, (long)req, (long)argp); }

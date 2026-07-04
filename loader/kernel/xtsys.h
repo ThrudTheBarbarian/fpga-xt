@@ -75,6 +75,9 @@
                               * chosen slot (refcounted); newfd must be free or a pipe */
 #define SYS_fstat    0x311   /* (fd, struct xt_stat *) -> 0: fd metadata — pipes report
                               * XT_S_IFIFO, console 0/1/2 XT_S_IFCHR, files IFREG+size */
+#define SYS_statfs   0x313   /* (path, u32 out[3]) -> 0: filesystem capacity for df/statvfs.
+                              * out[0] = total sectors, out[1] = free sectors, out[2] = sector
+                              * bytes (FatFs f_getfree). -1 where there's no sized fs (qemu). */
 /* sockets — block 0x320 (IPv4, netconn-backed; addresses are be32 ip + host-order
  * port, no sockaddr marshalling at the syscall boundary — the libc shim owns
  * struct sockaddr). read/write/close/fstat work on socket fds; SYS_ioctl
