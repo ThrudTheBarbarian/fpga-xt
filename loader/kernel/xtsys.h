@@ -130,6 +130,9 @@ struct xt_dirent { unsigned mode; char name[256]; };
 /* time / timers — block 0x400. Peripherals are PL1-only, so libc's _gettimeofday
  * traps here; the kernel reads the A9 global timer (wall clock since boot — no RTC). */
 #define SYS_gettimeofday 0x400 /* (struct timeval *tv) -> 0: fills {tv_sec, tv_usec} */
+#define SYS_nanosleep    0x402 /* (usec) -> 0: block the caller ~usec via vTaskDelay — a REAL
+                                * scheduler yield, not a busy-spin, so other tasks (esp. the
+                                * network RX pump) run while a process sleeps/polls. */
 #define SYS_settime      0x401 /* (unix_sec) -> 0: set the wall clock (sntp -s / clock_settime).
                                 * The hourly kernel SNTP re-sync will overwrite it at its next
                                 * poll — this is a manual nudge, not a persistent RTC. */

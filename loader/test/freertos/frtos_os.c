@@ -1763,6 +1763,11 @@ static long do_syscall(uint32_t num, long a0, long a1, long a2)
         xt_wallclock_set((uint32_t)a0);     /* sntp -s / clock_settime; hourly SNTP re-sync wins later */
         return 0;
     }
+    case SYS_nanosleep: {                                   /* (usec) — real yield, not a spin */
+        TickType_t ticks = pdMS_TO_TICKS((uint32_t)a0 / 1000u);
+        vTaskDelay(ticks ? ticks : 1);      /* >=1 tick so other tasks (net RX pump) run */
+        return 0;
+    }
     default:         return -38;                             /* -ENOSYS */
     }
 }
@@ -1817,6 +1822,7 @@ static int needs_task_ctx(struct k_regs *regs, uint32_t num)
     case SYS_listen: case SYS_accept: case SYS_resolve:
     case SYS_recvfrom:
         return 1;                                  /* netconn calls block in lwIP */
+    case SYS_nanosleep: return 1;                  /* vTaskDelay must run in task ctx */
     case SYS_dup2:    return 1;                    /* may close a displaced pipe end */
     case SYS_mmap:    return fd_is_sd(fd);          /* backing-store mmap -> fs task eager-fill (romfs inline) */
     case SYS_munmap:  return 1;                     /* may write dirty pages back (FatFs) -> task ctx */

@@ -1131,14 +1131,16 @@ int adjtimex(struct timex *tx)
 
 int nanosleep(const struct timespec *req, struct timespec *rem)
 {
-    /* no sleep syscall yet: spin on the wall clock (sleep/usleep are rare
-     * in a shell; a kernel timed-wait can replace this when needed) */
-    struct timeval t0, t1;
+    /* real scheduler yield (vTaskDelay) — NOT a busy-spin. A spinning sleep
+     * starves same/lower-priority kernel tasks; notably it froze the network
+     * RX pump during ping's poll loop, so replies were never taken in. */
     long long want = req->tv_sec * 1000000ll + req->tv_nsec / 1000;
     (void)rem;
-    gettimeofday(&t0, 0);
-    do gettimeofday(&t1, 0);
-    while ((t1.tv_sec - t0.tv_sec) * 1000000ll + (t1.tv_usec - t0.tv_usec) < want);
+    while (want > 0) {
+        unsigned chunk = want > 1000000 ? 1000000u : (unsigned)want;  /* cap per call */
+        sys_nanosleep(chunk);
+        want -= chunk;
+    }
     return 0;
 }
 
