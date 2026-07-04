@@ -62,6 +62,7 @@ CONFIG_WGET=y
 # tcsetattr) and poll() waits honestly on console input, so these are usable.
 # handy extras + network clients (sockets/DNS we now have)
 CONFIG_FREE=y
+CONFIG_REBOOT=y
 CONFIG_XXD=y
 CONFIG_INSTALL=y
 CONFIG_RESET=y

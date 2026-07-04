@@ -1641,6 +1641,13 @@ static long do_syscall(uint32_t num, long a0, long a1, long a2)
         { g_console((const char *)a1, (int)a2); return a2; }
         return -1;
     case SYS_getpid: return p ? p->pid : 0;
+    case SYS_reboot: {                                       /* (cmd) -> no return: PS soft reset */
+        volatile uint32_t *slcr = (volatile uint32_t *)0xF8000000u;
+        __asm__ volatile("cpsid if");                        /* mask interrupts */
+        slcr[0x008 / 4] = 0xDF0Du;                            /* SLCR unlock */
+        slcr[0x200 / 4] = 0x1u;                              /* PSS_RST_CTRL: soft reboot */
+        for (;;) { }                                         /* the reset lands here */
+    }
     case SYS_kill: {                                         /* (pid, sig): flags only — inline-safe */
         proc_t *t = proc_by_pid((int)a0);
         if (!t || t->exited) return -1;                      /* ESRCH-ish */

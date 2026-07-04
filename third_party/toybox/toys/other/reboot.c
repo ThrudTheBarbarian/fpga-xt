@@ -21,7 +21,16 @@ config REBOOT
 
 #define FOR_reboot
 #include "toys.h"
-#include <sys/reboot.h>
+/* XTOS has no <sys/reboot.h>; the constants are all reboot() takes here and
+ * they all resolve to the same warm PS reset (SLCR) kernel-side. There is no
+ * init to signal for a graceful shutdown, so reboot/halt/poweroff all reset
+ * directly (the -f "reboot directly" path is the only path we have). */
+#ifndef RB_AUTOBOOT
+#define RB_AUTOBOOT    0x01234567
+#define RB_HALT_SYSTEM 0xcdef0123
+#define RB_POWER_OFF   0x4321fedc
+#endif
+int reboot(int cmd);
 
 GLOBALS(
   char *d;
@@ -30,8 +39,7 @@ GLOBALS(
 void reboot_main(void)
 {
   struct timespec ts;
-  int types[] = {RB_AUTOBOOT, RB_HALT_SYSTEM, RB_POWER_OFF},
-      sigs[] = {SIGTERM, SIGUSR1, SIGUSR2}, idx;
+  int types[] = {RB_AUTOBOOT, RB_HALT_SYSTEM, RB_POWER_OFF}, idx;
 
   if (TT.d) {
     xparsetimespec(TT.d, &ts);
@@ -41,6 +49,5 @@ void reboot_main(void)
   if (!FLAG(n)) sync();
 
   idx = stridx("hp", *toys.which->name)+1;
-  if (FLAG(f)) toys.exitval = reboot(types[idx]);
-  else toys.exitval = kill(1, sigs[idx]);
+  toys.exitval = reboot(types[idx]);
 }

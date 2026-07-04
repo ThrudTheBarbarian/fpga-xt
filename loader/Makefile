@@ -291,7 +291,7 @@ TOYBOX_APPLETS := toybox [ arch ascii base32 base64 basename bunzip2 bzcat \
     free hostname dnsdomainname ftpget ftpput install kill killall ln ls  md5sum mkdir mktemp mv nice nl od patch printenv printf ps pwd \
     readlink realpath rm rmdir sed sha1sum sha224sum sha256sum sha384sum \
     nc netcat sha512sum sleep sort split stat strings tac tail tar tee test time wget \
-    top touch true ts uname uniq reset xxd unix2dos unlink uudecode uuencode uuidgen vi wc which zcat
+    reboot top touch true ts uname uniq reset xxd unix2dos unlink uudecode uuencode uuidgen vi wc which zcat
 TOYBOX_ALIASES := $(foreach a,$(TOYBOX_APPLETS),/bin/$(a)=$(BUILD)/toybox.so)
 $(BUILD)/toybox/objects.list:
 	tools/build-toybox.sh
@@ -320,6 +320,10 @@ $(BUILD)/sh_lineedit.o: test/freertos/libs/sh_lineedit.c test/freertos/libs/line
 $(BUILD)/toybox.so: $(BUILD)/toybox/objects.list $(BUILD)/posix_shim.o $(BUILD)/net_shim.o $(REGEX_OBJS) $(LINEEDIT_OBJS) $(BUILD)/libc.so
 	$(LLD) -shared --hash-style=sysv -o $@ $(BUILD)/posix_shim.o $(BUILD)/net_shim.o $(REGEX_OBJS) $(LINEEDIT_OBJS) \
 	    $$(cat $(BUILD)/toybox/objects.list) $(BUILD)/libc.so
+	@# guard: an enabled applet whose .o failed to compile is dropped silently by
+	@# the --shared link, leaving a dangling <applet>_main that only bites at load.
+	@u=$$(arm-none-eabi-nm -u $@ | awk '/ U .*_main$$/{print $$2}'); \
+	  if [ -n "$$u" ]; then echo "toybox.so: dropped applet object(s), undefined:" $$u >&2; exit 1; fi
 
 # vmtest — DT_NEEDED libc.so; touches the per-process private window (T2-b)
 $(BUILD)/vmtest.so: test/freertos/progs/vmtest.c $(BUILD)/libc.so | $(BUILD)

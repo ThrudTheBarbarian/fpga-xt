@@ -86,6 +86,11 @@
 #define XT_SOCK_UDP 2
 #define XT_FIONREAD  0x541Bu /* SYS_ioctl on a socket fd: bytes readable now */
 
+#define SYS_reboot   0x106   /* (cmd) -> no return: Zynq PS soft reset (SLCR). cmd is the
+                              * Linux RB_* value; all map to a warm PS reset here. On a
+                              * JTAG-loaded image the boot ROM then waits per the boot-mode
+                              * pins (needs a re-load); an SD/BOOT.BIN image re-boots. */
+
 #define SYS_ioctl    0x312   /* (fd, req, argp) -> device-specific: char-device controls
                               * (Linux request codes, e.g. i2c-dev I2C_SLAVE/I2C_SMBUS)
                               * and the console tty modes below; -1 on a non-device fd

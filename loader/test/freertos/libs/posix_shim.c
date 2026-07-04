@@ -1195,6 +1195,8 @@ int gethostname(char *buf, size_t len)
 
 int sethostname(const char *name, size_t len)   /* single fixed hostname (xtos.local) */
 { (void)name; (void)len; return 0; }
+int reboot(int cmd) { return (int)sys_reboot(cmd); }   /* Zynq PS soft reset (no return on success) */
+void sync(void) { }   /* fs is write-through (FatFs f_sync per write) — nothing to flush */
 int getdomainname(char *buf, size_t len) { if (len) buf[0] = 0; return 0; }
 int setdomainname(const char *name, size_t len) { (void)name; (void)len; return 0; }
 
