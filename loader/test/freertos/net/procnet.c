@@ -8,6 +8,7 @@
  * inet_ntop() unchanged (no byte-swap here). Ports print in host order. */
 #include "lwip/opt.h"
 #include "lwip/stats.h"
+#include "lwip/memp.h"
 #include "lwip/tcpip.h"
 #include "lwip/tcp.h"
 #include "lwip/udp.h"
@@ -148,6 +149,23 @@ static int gen_stats(char *buf, int cap)
     stat_row(&o, "icmp",   &lwip_stats.icmp);
     stat_row(&o, "udp",    &lwip_stats.udp);
     stat_row(&o, "tcp",    &lwip_stats.tcp);
+    /* heap + pool exhaustion — recv_raw drops a reply silently if it can't get a
+     * NETBUF or a PBUF_RAM clone, so a climbing err here == lost ping replies */
+    nb_s(&o, "heap:\tused=");   nb_d(&o, (unsigned)lwip_stats.mem.used);
+    nb_s(&o, " max=");          nb_d(&o, (unsigned)lwip_stats.mem.max);
+    nb_s(&o, " avail=");        nb_d(&o, (unsigned)lwip_stats.mem.avail);
+    nb_s(&o, " err=");          nb_d(&o, (unsigned)lwip_stats.mem.err);
+    nb_c(&o, '\n');
+    { struct stats_mem *nbf = lwip_stats.memp[MEMP_NETBUF];
+      struct stats_mem *ppl = lwip_stats.memp[MEMP_PBUF_POOL];
+      nb_s(&o, "netbuf:\tused="); nb_d(&o, (unsigned)nbf->used);
+      nb_s(&o, " max=");          nb_d(&o, (unsigned)nbf->max);
+      nb_s(&o, " err=");          nb_d(&o, (unsigned)nbf->err);
+      nb_s(&o, "\npbufpool: used="); nb_d(&o, (unsigned)ppl->used);
+      nb_s(&o, " max=");          nb_d(&o, (unsigned)ppl->max);
+      nb_s(&o, " err=");          nb_d(&o, (unsigned)ppl->err);
+      nb_c(&o, '\n');
+    }
     /* socket receive-path probe (see sockets.c) */
     extern unsigned xt_sock_rxdbg[5];
     nb_s(&o, "sockrx:\tavail=");   nb_d(&o, xt_sock_rxdbg[0]);
