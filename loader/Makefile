@@ -92,7 +92,7 @@ FRINC  := -I. -I$(FR)/include -I$(FRPORT) -Itest/freertos -Itest/freertos/shim \
 # lwIP core (BSD) + the FreeRTOS sys_arch + our GEM0 netif — the network stack
 # (DHCP + the tftp file drop; TCP compiled in for the phase-2 console/sockets)
 LWIPSRC := $(addprefix $(LWIP)/src/core/, init.c def.c dns.c inet_chksum.c ip.c mem.c memp.c \
-             netif.c pbuf.c stats.c sys.c tcp.c tcp_in.c tcp_out.c timeouts.c udp.c \
+             netif.c pbuf.c raw.c stats.c sys.c tcp.c tcp_in.c tcp_out.c timeouts.c udp.c \
              altcp.c altcp_alloc.c altcp_tcp.c) \
            $(addprefix $(LWIP)/src/core/ipv4/, acd.c dhcp.c etharp.c icmp.c ip4.c \
              ip4_addr.c ip4_frag.c igmp.c) \
@@ -146,18 +146,18 @@ freertos: $(BUILD)/freertos.elf
 	@echo "=== xtos: programs from a filesystem on real FreeRTOS (qemu xilinx-zynq-a9) ==="
 	@$(QEMUZYNQ) -kernel $< ; echo "(qemu exited $$?)"
 
-$(BUILD)/freertos.elf: $(FRSRC) $(FRASM) test/freertos/freertos.ld test/freertos/FreeRTOSConfig.h $(BUILD)/romfs_blob.h | $(BUILD)
+$(BUILD)/freertos.elf: $(FRSRC) $(FRASM) test/freertos/freertos.ld test/freertos/FreeRTOSConfig.h test/freertos/net/lwipopts.h $(BUILD)/romfs_blob.h | $(BUILD)
 	$(ARMCC) $(FRCFLAGS) $(XTRACFLAGS) -T test/freertos/freertos.ld $(FRASM) $(FRSRC) -lgcc -o $@
 
 # HW variant: same kernel (incl. the full tier-2 MMU/VM), but real Zynq UART1 I/O
 # instead of semihosting (the testbed owns its SVC vector, so semihosting — which
 # qemu intercepts above the guest — isn't available on metal). JTAG-load with
 # ps7_init; run vmtest/demandtest/faulttest to exercise tier-2 on real silicon.
-$(BUILD)/freertos-hw.elf: $(FRSRC) $(FRASM) test/freertos/freertos.ld test/freertos/FreeRTOSConfig.h $(BUILD)/hwromfs/romfs_blob.h | $(BUILD)
+$(BUILD)/freertos-hw.elf: $(FRSRC) $(FRASM) test/freertos/freertos.ld test/freertos/FreeRTOSConfig.h test/freertos/net/lwipopts.h $(BUILD)/hwromfs/romfs_blob.h | $(BUILD)
 	$(ARMCC) -I$(BUILD)/hwromfs $(FRCFLAGS) -DXT_HW_UART -DXT_HW -T test/freertos/freertos.ld $(FRASM) $(FRSRC) -lgcc -o $@
 
 # Kernel-menu (runhost) testbed ELF for the toolchain — same sources, -DXT_KERNEL_SHELL.
-$(BUILD)/freertos-hosttest.elf: $(FRSRC) $(FRASM) test/freertos/freertos.ld test/freertos/FreeRTOSConfig.h $(BUILD)/romfs_blob.h | $(BUILD)
+$(BUILD)/freertos-hosttest.elf: $(FRSRC) $(FRASM) test/freertos/freertos.ld test/freertos/FreeRTOSConfig.h test/freertos/net/lwipopts.h $(BUILD)/romfs_blob.h | $(BUILD)
 	$(ARMCC) $(FRCFLAGS) $(XTRACFLAGS) -DXT_KERNEL_SHELL -T test/freertos/freertos.ld $(FRASM) $(FRSRC) -lgcc -o $@
 
 # Load + run an externally-built PIC .so (e.g. xtc output) on the real loader:
@@ -291,7 +291,7 @@ TOYBOX_APPLETS := toybox [ arch ascii base32 base64 basename bunzip2 bzcat \
     help hexedit i2cdetect i2cdump i2cget i2cset \
     free hostname dnsdomainname ftpget ftpput install kill killall ln ls  md5sum mkdir mktemp mv nice nl od patch printenv printf ps pwd \
     readlink realpath rm rmdir sed sha1sum sha224sum sha256sum sha384sum \
-    ifconfig nc netcat netstat sntp sha512sum sleep sort split stat strings tac tail tar tee test time wget \
+    ifconfig nc netcat netstat ping ping6 sntp sha512sum sleep sort split stat strings tac tail tar tee test time wget \
     reboot top touch true ts uname uniq reset xxd unix2dos unlink uudecode uuencode uuidgen vi wc which zcat
 TOYBOX_ALIASES := $(foreach a,$(TOYBOX_APPLETS),/bin/$(a)=$(BUILD)/toybox.so)
 $(BUILD)/toybox/objects.list:

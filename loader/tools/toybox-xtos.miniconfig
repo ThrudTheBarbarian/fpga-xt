@@ -60,6 +60,7 @@ CONFIG_NETCAT=y
 CONFIG_SNTP=y
 CONFIG_NETSTAT=y
 CONFIG_IFCONFIG=y
+CONFIG_PING=y
 CONFIG_WGET=y
 # full-screen tools: the kernel tty has a real raw mode (XT_TTY_SETMODE via
 # tcsetattr) and poll() waits honestly on console input, so these are usable.

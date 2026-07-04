@@ -55,6 +55,8 @@ struct sockaddr_in6 {
 #define IP_MULTICAST_LOOP  34
 #define IP_ADD_MEMBERSHIP  35
 #define IP_DROP_MEMBERSHIP 36
+#define SOL_IP             0     /* == IPPROTO_IP */
+#define IPV6_UNICAST_HOPS  16
 
 struct ip_mreq {
     struct in_addr imr_multiaddr;

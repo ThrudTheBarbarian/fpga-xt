@@ -29,6 +29,30 @@ struct msghdr {
     int        msg_flags;
 };
 
+struct cmsghdr {
+    socklen_t cmsg_len;
+    int       cmsg_level;
+    int       cmsg_type;
+};
+
+/* ancillary-data walkers. XTOS recvmsg never returns control data
+ * (msg_controllen == 0), so CMSG_FIRSTHDR yields NULL and the walk is empty —
+ * these exist so TTL-reading code compiles. */
+#define CMSG_ALIGN(len)  (((len) + sizeof(long) - 1) & ~(sizeof(long) - 1))
+#define CMSG_SPACE(len)  (CMSG_ALIGN(sizeof(struct cmsghdr)) + CMSG_ALIGN(len))
+#define CMSG_LEN(len)    (CMSG_ALIGN(sizeof(struct cmsghdr)) + (len))
+#define CMSG_DATA(cmsg)  ((unsigned char *)((struct cmsghdr *)(cmsg) + 1))
+#define CMSG_FIRSTHDR(m) ((m)->msg_controllen >= sizeof(struct cmsghdr) \
+                          ? (struct cmsghdr *)(m)->msg_control : (struct cmsghdr *)0)
+static inline struct cmsghdr *__cmsg_nxthdr(struct msghdr *m, struct cmsghdr *c)
+{
+    unsigned char *n = (unsigned char *)c + CMSG_ALIGN(c->cmsg_len);
+    if (n + sizeof(struct cmsghdr) > (unsigned char *)m->msg_control + m->msg_controllen)
+        return (struct cmsghdr *)0;
+    return (struct cmsghdr *)n;
+}
+#define CMSG_NXTHDR(m, c) __cmsg_nxthdr((m), (c))
+
 #define AF_UNSPEC 0
 #define AF_UNIX   1
 #define AF_LOCAL  1
@@ -55,6 +79,7 @@ struct msghdr {
 #define SO_PEERCRED  17
 #define SO_RCVTIMEO  20
 #define SO_SNDTIMEO  21
+#define SO_MARK      36
 
 #define SHUT_RD   0
 #define SHUT_WR   1

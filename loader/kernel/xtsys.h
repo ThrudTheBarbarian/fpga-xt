@@ -82,8 +82,13 @@
 #define SYS_listen   0x323   /* (fd, backlog) -> 0 */
 #define SYS_accept   0x324   /* (fd, u32 peer[2] out: ip_be32 + port) -> new fd */
 #define SYS_resolve  0x325   /* (name, u32 *ip_be32) -> 0: DNS via the kernel (lwIP) */
+#define SYS_recvfrom 0x326   /* (fd, buf, u32 a[3]) -> n: datagram recv with source.
+                              * a[0] = buflen (in); a[1] = src ip_be32 (out);
+                              * a[2] = src port host-order (out). RAW/ICMP sockets get
+                              * the IP header stripped (payload at offset 0). */
 #define XT_SOCK_TCP 1
 #define XT_SOCK_UDP 2
+#define XT_SOCK_RAW 3
 #define XT_FIONREAD  0x541Bu /* SYS_ioctl on a socket fd: bytes readable now */
 
 #define SYS_reboot   0x106   /* (cmd) -> no return: Zynq PS soft reset (SLCR). cmd is the

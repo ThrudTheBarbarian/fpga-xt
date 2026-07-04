@@ -1448,6 +1448,13 @@ void deferral_thunk(void)                 /* PL1 (System), task context */
                 r = xt_sock_recv(si, (void *)p->da1, (unsigned)p->da2, sock_tick, p);
             else
                 r = xt_sock_send(si, (const void *)p->da1, (unsigned)p->da2);
+        } else if (p->dnum == SYS_recvfrom &&
+                   p->da0 < NFD && p->fd[p->da0].open && p->fd[p->da0].sock) {
+            extern long xt_sock_recvfrom(int, void *, unsigned, unsigned *, unsigned *,
+                                         int (*)(void *), void *);
+            unsigned *a = (unsigned *)p->da2;              /* a[0]=len in, a[1]=ip, a[2]=port out */
+            r = a ? xt_sock_recvfrom(p->fd[p->da0].sock - 1, (void *)p->da1, a[0],
+                                     &a[1], &a[2], sock_tick, p) : -1;
         } else if (p->dnum == SYS_close &&
                    p->da0 < NFD && p->fd[p->da0].open && p->fd[p->da0].sock) {
             extern void xt_sock_close(int);
@@ -1808,6 +1815,7 @@ static int needs_task_ctx(struct k_regs *regs, uint32_t num)
     case SYS_ioctl:   return 1;                    /* device controls may poll HW for ms (i2c) */
     case SYS_socket: case SYS_connect: case SYS_bind:
     case SYS_listen: case SYS_accept: case SYS_resolve:
+    case SYS_recvfrom:
         return 1;                                  /* netconn calls block in lwIP */
     case SYS_dup2:    return 1;                    /* may close a displaced pipe end */
     case SYS_mmap:    return fd_is_sd(fd);          /* backing-store mmap -> fs task eager-fill (romfs inline) */

@@ -34,7 +34,7 @@
 #define LWIP_DNS                   1     /* sntp resolves pool.ntp.org */
 #define LWIP_DHCP_PROVIDE_DNS_SERVERS 1  /* DHCP option 6 -> dns_setserver */
 #define LWIP_IGMP                  1     /* mDNS joins 224.0.0.251 */
-#define LWIP_RAW                   0
+#define LWIP_RAW                   1    /* raw ICMP sockets — ping */
 
 #define LWIP_NETIF_HOSTNAME        1
 #define LWIP_MDNS_RESPONDER        1     /* xtos.local */
@@ -75,6 +75,7 @@
 #define TCPIP_MBOX_SIZE            16
 #define DEFAULT_UDP_RECVMBOX_SIZE  8
 #define DEFAULT_TCP_RECVMBOX_SIZE  8
+#define DEFAULT_RAW_RECVMBOX_SIZE  8    /* ping's ICMP raw netconn */
 #define DEFAULT_ACCEPTMBOX_SIZE    4
 #define DEFAULT_THREAD_STACKSIZE   1024
 

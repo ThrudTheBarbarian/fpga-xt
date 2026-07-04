@@ -11,9 +11,11 @@
 #include <stdio.h>
 #include <errno.h>
 #include <sys/socket.h>
+#include <sys/uio.h>
 #include <netinet/in.h>
 #include <arpa/inet.h>
 #include <netdb.h>
+#include <ifaddrs.h>
 #include "usys.h"
 
 /* ---- inet_* ----------------------------------------------------------------- */
@@ -78,9 +80,12 @@ static int sin_of(const struct sockaddr *sa, unsigned *ip_be, unsigned *port)
 
 int socket(int domain, int type, int protocol)
 {
-    (void)protocol;
     if (domain != AF_INET) { errno = EAFNOSUPPORT; return -1; }
-    int t = (type & 0xFF) == SOCK_DGRAM ? XT_SOCK_UDP : XT_SOCK_TCP;
+    int st = type & 0xFF, t;
+    if (protocol == IPPROTO_ICMP || st == SOCK_RAW)  /* ping: DGRAM/RAW + ICMP */
+        t = XT_SOCK_RAW;
+    else
+        t = (st == SOCK_DGRAM) ? XT_SOCK_UDP : XT_SOCK_TCP;
     long fd = sys_socket(t);
     if (fd < 0) { errno = EMFILE; return -1; }
     return (int)fd;
@@ -138,11 +143,41 @@ ssize_t sendto(int fd, const void *buf, size_t n, int flags,
     (void)flags;
     return (ssize_t)sys_write(fd, buf, (unsigned)n);
 }
+/* fill *sa (if provided) from the (ip,port) a datagram recv reported */
+static void set_srcaddr(struct sockaddr *sa, socklen_t *len, unsigned ip, unsigned port)
+{
+    if (!sa) return;
+    struct sockaddr_in *in = (struct sockaddr_in *)sa;
+    memset(in, 0, sizeof *in);
+    in->sin_family = AF_INET;
+    in->sin_addr.s_addr = ip;
+    in->sin_port = htons((uint16_t)port);
+    if (len) *len = sizeof *in;
+}
 ssize_t recvfrom(int fd, void *buf, size_t n, int flags, struct sockaddr *sa, socklen_t *len)
 {
     (void)flags;
-    if (sa && len && *len >= sizeof(struct sockaddr_in)) memset(sa, 0, sizeof(struct sockaddr_in));
-    return (ssize_t)sys_read(fd, buf, (unsigned)n);
+    unsigned a[3] = { (unsigned)n, 0, 0 };
+    long r = sys_recvfrom(fd, buf, a);
+    if (r >= 0) set_srcaddr(sa, len, a[1], a[2]);
+    return (ssize_t)r;
+}
+/* single-iov datagram recv (ping). No ancillary data: msg_controllen -> 0, so
+ * the IP_TTL cmsg is absent and callers show ttl 0. */
+ssize_t recvmsg(int fd, struct msghdr *msg, int flags)
+{
+    (void)flags;
+    if (!msg || !msg->msg_iov || msg->msg_iovlen < 1) { errno = EINVAL; return -1; }
+    struct iovec *iov = (struct iovec *)msg->msg_iov;
+    unsigned a[3] = { (unsigned)iov[0].iov_len, 0, 0 };
+    long r = sys_recvfrom(fd, iov[0].iov_base, a);
+    if (r < 0) return -1;
+    if (msg->msg_name && msg->msg_namelen >= (socklen_t)sizeof(struct sockaddr_in))
+        set_srcaddr((struct sockaddr *)msg->msg_name, &msg->msg_namelen, a[1], a[2]);
+    else if (msg->msg_name) msg->msg_namelen = 0;
+    msg->msg_controllen = 0;
+    msg->msg_flags = 0;
+    return (ssize_t)r;
 }
 
 int setsockopt(int fd, int level, int opt, const void *val, socklen_t len)
@@ -229,6 +264,11 @@ const char *hstrerror(int e) { (void)e; return "resolver error"; }
 /* no /etc/services db: port-name lookups return NULL, so netstat/nc fall back
  * to numeric ports (which is what we want on a headless box anyway) */
 struct servent *getservbyport(int port, const char *proto) { (void)port; (void)proto; return 0; }
+
+/* interface enumeration is via /OS/proc/net + SIOCGIF* (ifconfig), not this
+ * BSD API; ping only calls it for a named -I source, which we don't support. */
+int  getifaddrs(struct ifaddrs **ifap) { if (ifap) *ifap = 0; errno = ENOSYS; return -1; }
+void freeifaddrs(struct ifaddrs *ifa)  { (void)ifa; }
 
 /* no reverse DNS: always the numeric form (as if NI_NUMERICHOST|NI_NUMERICSERV) */
 int getnameinfo(const struct sockaddr *sa, socklen_t salen, char *host, socklen_t hostlen,

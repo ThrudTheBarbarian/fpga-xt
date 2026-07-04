@@ -11,6 +11,7 @@
  * free the moment we return. */
 #include "lwip/api.h"
 #include "lwip/dns.h"
+#include "lwip/prot/ip.h"   /* IP_PROTO_ICMP */
 #include "FreeRTOS.h"
 #include "task.h"
 
@@ -30,11 +31,14 @@ static xt_sock g_socks[MAXSOCK];
 static xt_sock *slot_of(int si) { return (si >= 0 && si < MAXSOCK && g_socks[si].conn) ? &g_socks[si] : 0; }
 
 /* -> socket index (NOT an fd — frtos_os wraps it), or -1 */
+/* type: 1 = TCP, 2 = UDP, 3 = RAW/ICMP (ping) */
 int xt_sock_new(int type)
 {
     for (int i = 0; i < MAXSOCK; i++) {
         if (g_socks[i].conn) continue;
-        struct netconn *c = netconn_new(type == 2 ? NETCONN_UDP : NETCONN_TCP);
+        struct netconn *c = (type == 3)
+            ? netconn_new_with_proto_and_callback(NETCONN_RAW, IP_PROTO_ICMP, 0)
+            : netconn_new(type == 2 ? NETCONN_UDP : NETCONN_TCP);
         if (!c) return -1;
         netconn_set_recvtimeout(c, 200);           /* the kill/stop tick */
         g_socks[i] = (xt_sock){ c, 0, 0, 0 };
@@ -120,11 +124,12 @@ long xt_sock_send(int si, const void *buf, unsigned len)
 {
     xt_sock *s = slot_of(si);
     if (!s) return -1;
-    if (NETCONNTYPE_GROUP(netconn_type(s->conn)) == NETCONN_UDP) {
+    u8_t grp = NETCONNTYPE_GROUP(netconn_type(s->conn));
+    if (grp == NETCONN_UDP || grp == NETCONN_RAW) {
         struct netbuf *nb = netbuf_new();
         if (!nb || !netbuf_alloc(nb, (u16_t)len)) { if (nb) netbuf_delete(nb); return -1; }
         netbuf_take(nb, buf, (u16_t)len);
-        err_t e = netconn_send(s->conn, nb);       /* connected UDP */
+        err_t e = netconn_send(s->conn, nb);       /* connected UDP / RAW ICMP -> target */
         netbuf_delete(nb);
         return e == ERR_OK ? (long)len : -1;
     }
@@ -170,6 +175,39 @@ long xt_sock_recv(int si, void *buf, unsigned len, xt_sock_tick tick, void *proc
     netbuf_copy_partial(s->rb, buf, (u16_t)want, (u16_t)s->rb_off);
     s->rb_off += want;
     if (s->rb_off >= total) { netbuf_delete(s->rb); s->rb = 0; s->rb_off = 0; }
+    return (long)want;
+}
+
+/* datagram recv returning the source address (UDP recvfrom / RAW ICMP for ping).
+ * One datagram per call (no partial caching). For a RAW socket lwIP delivers the
+ * full IP packet, so we skip the IP header — the caller then sees the ICMP/UDP
+ * payload at offset 0, matching Linux's SOCK_DGRAM+IPPROTO_ICMP ping sockets. */
+long xt_sock_recvfrom(int si, void *buf, unsigned len,
+                      unsigned *src_ip, unsigned *src_port, xt_sock_tick tick, void *proc)
+{
+    xt_sock *s = slot_of(si);
+    if (!s) return -1;
+    struct netbuf *nb = 0;
+    for (;;) {
+        err_t e = netconn_recv(s->conn, &nb);
+        if (e == ERR_OK) break;
+        if (e == ERR_CLSD) return 0;
+        if (e != ERR_TIMEOUT) return -1;
+        if (tick && tick(proc)) return -1;                 /* killed/stopped */
+    }
+    if (src_ip)   *src_ip   = ip_addr_get_ip4_u32(netbuf_fromaddr(nb));
+    if (src_port) *src_port = netbuf_fromport(nb);
+    unsigned skip = 0;
+    if (NETCONNTYPE_GROUP(netconn_type(s->conn)) == NETCONN_RAW) {
+        u8_t vhl = 0x45;
+        netbuf_copy_partial(nb, &vhl, 1, 0);               /* IPv4 version+IHL */
+        skip = (unsigned)(vhl & 0x0f) * 4u;
+    }
+    unsigned total = netbuf_len(nb);
+    unsigned want = total > skip ? total - skip : 0;
+    if (want > len) want = len;
+    if (want) netbuf_copy_partial(nb, buf, (u16_t)want, (u16_t)skip);
+    netbuf_delete(nb);
     return (long)want;
 }
 

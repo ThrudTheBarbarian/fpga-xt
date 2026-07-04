@@ -89,6 +89,9 @@ static inline long sys_accept_nb(int fd, unsigned peer[2])
 { return __syscall(SYS_accept, fd, (long)peer, 1); }
 static inline long sys_resolve(const char *name, unsigned *ip_be)
 { return __syscall(SYS_resolve, (long)name, (long)ip_be, 0); }
+/* datagram recv with source: a[0]=buflen in, a[1]=src ip_be out, a[2]=src port out */
+static inline long sys_recvfrom(int fd, void *buf, unsigned a[3])
+{ return __syscall(SYS_recvfrom, fd, (long)buf, (long)a); }
 /* mmap a romfs file read-only + shared (len=0 -> whole file from off). Returns a
  * pointer to the file's bytes (no copy), or NULL. */
 static inline void *sys_mmap(int fd, unsigned len, unsigned off)
