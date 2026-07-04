@@ -25,6 +25,10 @@
 #define LWIP_IPV4                  1
 #define LWIP_IPV6                  0
 #define LWIP_ARP                   1
+#define ARP_QUEUEING               1     /* queue the pkt while ARP resolves (else the
+                                          * first packet to an unresolved MAC is DROPPED,
+                                          * so the board can't initiate its own resolution) */
+#define ARP_QUEUE_LEN              10
 #define LWIP_ICMP                  1
 #define LWIP_UDP                   1
 #define LWIP_TCP                   1

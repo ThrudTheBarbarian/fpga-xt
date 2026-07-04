@@ -166,6 +166,12 @@ static int gen_stats(char *buf, int cap)
       nb_s(&o, " err=");          nb_d(&o, (unsigned)ppl->err);
       nb_c(&o, '\n');
     }
+    /* raw_input delivery probe (lwIP raw.c) */
+    extern unsigned xt_raw_dbg[3];
+    nb_s(&o, "rawin:\ticmp_pkts="); nb_d(&o, xt_raw_dbg[0]);
+    nb_s(&o, " icmp_pcbs=");        nb_d(&o, xt_raw_dbg[1]);
+    nb_s(&o, " matched=");          nb_d(&o, xt_raw_dbg[2]);
+    nb_c(&o, '\n');
     /* socket receive-path probe (see sockets.c) */
     extern unsigned xt_sock_rxdbg[5];
     nb_s(&o, "sockrx:\tavail=");   nb_d(&o, xt_sock_rxdbg[0]);

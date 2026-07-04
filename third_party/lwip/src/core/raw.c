@@ -159,14 +159,21 @@ raw_input(struct pbuf *p, struct netif *inp)
   }
 #endif /* LWIP_IPV4 */
 
+  /* XTOS diag: [0] ICMP pkts into raw_input, [1] ICMP raw pcbs seen,
+   * [2] full matches (recv about to run). Surfaced at /OS/proc/net/stats. */
+  extern unsigned xt_raw_dbg[3];
+  if (proto == 1) xt_raw_dbg[0]++;   /* IP_PROTO_ICMP */
+
   prev = NULL;
   pcb = raw_pcbs;
   /* loop through all raw pcbs until the packet is eaten by one */
   /* this allows multiple pcbs to match against the packet by design */
   while (pcb != NULL) {
+    if (proto == 1 && pcb->protocol == 1) xt_raw_dbg[1]++;
     if ((pcb->protocol == proto) && raw_input_local_match(pcb, broadcast) &&
         (((pcb->flags & RAW_FLAGS_CONNECTED) == 0) ||
          ip_addr_eq(&pcb->remote_ip, ip_current_src_addr()))) {
+      if (proto == 1) xt_raw_dbg[2]++;
       /* receive callback function available? */
       if (pcb->recv != NULL) {
         u8_t eaten;
