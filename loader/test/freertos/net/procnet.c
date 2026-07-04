@@ -138,3 +138,73 @@ int xt_procnet(const char *leaf, char *buf, int cap)
 
 /* the leaves that exist under /OS/proc/net (for readdir + stat) */
 const char *const xt_procnet_leaves[] = { "tcp", "udp", "raw", "route", "dev", "unix", 0 };
+
+/* ---- SIOCGIF* ioctls on a socket fd (read-only ifconfig) ------------------
+ * Fills the caller's struct ifreq/ifconf (Linux 32-bit layout: a 16-byte name
+ * then a 16-byte union). PL0 shares the address space, so the arg pointer is
+ * dereferenced directly. Only the getters ifconfig's display path needs are
+ * handled; setters and unknown requests return -1. */
+struct k_sockaddr { uint16_t family; uint8_t data[14]; };
+struct k_ifreq { char name[16]; union { struct k_sockaddr sa; int16_t flags; int32_t ival; uint8_t raw[16]; } u; };
+struct k_ifconf { int32_t len; struct k_ifreq *buf; };
+
+#define K_SIOCGIFCONF    0x8912
+#define K_SIOCGIFFLAGS   0x8913
+#define K_SIOCGIFADDR    0x8915
+#define K_SIOCGIFDSTADDR 0x8917
+#define K_SIOCGIFBRDADDR 0x8919
+#define K_SIOCGIFNETMASK 0x891b
+#define K_SIOCGIFMETRIC  0x891d
+#define K_SIOCGIFMTU     0x8921
+#define K_SIOCGIFHWADDR  0x8927
+#define K_SIOCGIFINDEX   0x8933
+#define K_SIOCGIFTXQLEN  0x8942
+#define K_SIOCGIFMAP     0x8970
+#define K_ARPHRD_ETHER   1
+#define K_AF_INET        2
+
+static void set_sin(struct k_ifreq *r, uint32_t ip)   /* sockaddr_in into the union */
+{
+    memset(&r->u, 0, sizeof r->u);
+    *(uint16_t *)&r->u.raw[0] = K_AF_INET;             /* sin_family */
+    *(uint32_t *)&r->u.raw[4] = ip;                    /* sin_addr (already net-order-as-LE-int) */
+}
+
+int xt_ifreq_ioctl(unsigned req, void *arg)
+{
+    struct xt_ifinfo ni;
+    if (!arg) return -1;
+
+    if (req == K_SIOCGIFCONF) {                        /* enumerate interfaces */
+        struct k_ifconf *c = (struct k_ifconf *)arg;
+        int cap = c->len / (int)sizeof(struct k_ifreq), n = 0;
+        if (cap >= 1 && c->buf && xt_netif_info(&ni)) {
+            memset(&c->buf[0], 0, sizeof c->buf[0]);
+            memcpy(c->buf[0].name, ni.name, sizeof ni.name);   /* null-padded "e0" */
+            set_sin(&c->buf[0], ni.ip);
+            n = 1;
+        }
+        c->len = n * (int)sizeof(struct k_ifreq);
+        return 0;
+    }
+
+    if (!xt_netif_info(&ni)) return -1;
+    struct k_ifreq *r = (struct k_ifreq *)arg;         /* name pre-filled by the caller */
+    switch (req) {
+    case K_SIOCGIFFLAGS:   r->u.flags = (int16_t)ni.flags; return 0;
+    case K_SIOCGIFADDR:    set_sin(r, ni.ip);              return 0;
+    case K_SIOCGIFNETMASK: set_sin(r, ni.netmask);         return 0;
+    case K_SIOCGIFBRDADDR: set_sin(r, ni.ip | ~ni.netmask); return 0;
+    case K_SIOCGIFMTU:     r->u.ival = (int32_t)ni.mtu;    return 0;
+    case K_SIOCGIFMETRIC:  r->u.ival = 0;                  return 0;
+    case K_SIOCGIFTXQLEN:  r->u.ival = 1000;               return 0;
+    case K_SIOCGIFINDEX:   r->u.ival = 1;                  return 0;
+    case K_SIOCGIFMAP:     memset(&r->u, 0, sizeof r->u);  return 0;
+    case K_SIOCGIFHWADDR:
+        memset(&r->u, 0, sizeof r->u);
+        r->u.sa.family = K_ARPHRD_ETHER;
+        memcpy(r->u.sa.data, ni.mac, 6);
+        return 0;
+    default: return -1;                                 /* setters / unknown */
+    }
+}

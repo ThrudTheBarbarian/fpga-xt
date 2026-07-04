@@ -36,9 +36,8 @@ int xt_netif_info(struct xt_ifinfo *out)
 {
     memset(out, 0, sizeof *out);
     if (!g_lwip_ready) return 0;
-    /* netif name is 2 chars ("en"/"e0") + num; report as "e0" */
-    out->name[0] = g_nif.name[0]; out->name[1] = g_nif.name[1];
-    out->name[2] = (char)('0' + g_nif.num); out->name[3] = 0;
+    /* the driver's 2-char name ("e0") is already the full interface name */
+    out->name[0] = g_nif.name[0]; out->name[1] = g_nif.name[1]; out->name[2] = 0;
     memcpy(out->mac, g_nif.hwaddr, 6);
     out->ip      = ip4_addr_get_u32(netif_ip4_addr(&g_nif));
     out->netmask = ip4_addr_get_u32(netif_ip4_netmask(&g_nif));

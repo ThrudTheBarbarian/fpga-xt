@@ -1457,8 +1457,13 @@ void deferral_thunk(void)                 /* PL1 (System), task context */
         } else if (p->dnum == SYS_ioctl && p->da0 < NFD &&
                    p->fd[p->da0].open && p->fd[p->da0].sock) {
             extern long xt_sock_avail(int);                /* FIONREAD = poll readability */
-            r = (p->da1 == XT_FIONREAD && p->da2)
-              ? (*(int *)p->da2 = (int)xt_sock_avail(p->fd[p->da0].sock - 1), 0) : -1;
+            extern int  xt_ifreq_ioctl(unsigned, void *);  /* SIOCGIF* = ifconfig display */
+            if (p->da1 == XT_FIONREAD && p->da2)
+                r = (*(int *)p->da2 = (int)xt_sock_avail(p->fd[p->da0].sock - 1), 0);
+            else if ((p->da1 & 0xFF00u) == 0x8900u)        /* SIOCGIF* interface queries */
+                r = xt_ifreq_ioctl((unsigned)p->da1, (void *)p->da2);
+            else
+                r = -1;
         } else if (p->dnum == SYS_ioctl) {                 /* device controls (tty modes, i2c, ...) */
             uint32_t ifd = p->da0;
             int is_con = (ifd < 3 && !(ifd < NFD && p->fd[ifd].open)) ||   /* raw console stdio */
