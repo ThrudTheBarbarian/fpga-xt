@@ -7,6 +7,7 @@
  * exactly what /proc/net uses, so the value round-trips through the parser's
  * inet_ntop() unchanged (no byte-swap here). Ports print in host order. */
 #include "lwip/opt.h"
+#include "lwip/stats.h"
 #include "lwip/tcpip.h"
 #include "lwip/tcp.h"
 #include "lwip/udp.h"
@@ -121,8 +122,38 @@ static int gen_dev(char *buf, int cap)
     return o.n;
 }
 
+/* per-protocol lwIP counters (LWIP_STATS) — cat before/after traffic to see
+ * what moves: e.g. icmp.recv/chkerr on a ping, ip.drop, link.recv. */
+static void stat_row(nb *o, const char *name, const struct stats_proto *s)
+{
+    nb_s(o, name);
+    nb_s(o, ":\txmit="); nb_d(o, (unsigned)s->xmit);
+    nb_s(o, " recv=");  nb_d(o, (unsigned)s->recv);
+    nb_s(o, " drop=");  nb_d(o, (unsigned)s->drop);
+    nb_s(o, " chkerr=");nb_d(o, (unsigned)s->chkerr);
+    nb_s(o, " lenerr=");nb_d(o, (unsigned)s->lenerr);
+    nb_s(o, " memerr=");nb_d(o, (unsigned)s->memerr);
+    nb_s(o, " rterr="); nb_d(o, (unsigned)s->rterr);
+    nb_s(o, " proterr=");nb_d(o, (unsigned)s->proterr);
+    nb_s(o, " err=");   nb_d(o, (unsigned)s->err);
+    nb_c(o, '\n');
+}
+
+static int gen_stats(char *buf, int cap)
+{
+    nb o = { buf, 0, cap };
+    stat_row(&o, "link",   &lwip_stats.link);
+    stat_row(&o, "etharp", &lwip_stats.etharp);
+    stat_row(&o, "ip",     &lwip_stats.ip);
+    stat_row(&o, "icmp",   &lwip_stats.icmp);
+    stat_row(&o, "udp",    &lwip_stats.udp);
+    stat_row(&o, "tcp",    &lwip_stats.tcp);
+    return o.n;
+}
+
 int xt_procnet(const char *leaf, char *buf, int cap)
 {
+    if (!strcmp(leaf, "stats")) return gen_stats(buf, cap);
     if (!strcmp(leaf, "tcp"))   return gen_tcp(buf, cap);
     if (!strcmp(leaf, "udp"))   return gen_udp(buf, cap);
     if (!strcmp(leaf, "route")) return gen_route(buf, cap);
@@ -137,7 +168,7 @@ int xt_procnet(const char *leaf, char *buf, int cap)
 }
 
 /* the leaves that exist under /OS/proc/net (for readdir + stat) */
-const char *const xt_procnet_leaves[] = { "tcp", "udp", "raw", "route", "dev", "unix", 0 };
+const char *const xt_procnet_leaves[] = { "tcp", "udp", "raw", "route", "dev", "unix", "stats", 0 };
 
 /* ---- SIOCGIF* ioctls on a socket fd (read-only ifconfig) ------------------
  * Fills the caller's struct ifreq/ifconf (Linux 32-bit layout: a 16-byte name

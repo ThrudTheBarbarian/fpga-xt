@@ -79,7 +79,8 @@
 #define DEFAULT_ACCEPTMBOX_SIZE    4
 #define DEFAULT_THREAD_STACKSIZE   1024
 
-#define LWIP_STATS                 0
+#define LWIP_STATS                 1   /* per-proto counters -> /OS/proc/net/stats */
+#define LWIP_STATS_DISPLAY         0   /* no stats_display() (we format in procnet) */
 #define LWIP_DEBUG                 0
 
 /* SNTP: resolves pool.ntp.org, hands the unix epoch to the kernel wall clock */
