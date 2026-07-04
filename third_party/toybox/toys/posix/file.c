@@ -245,6 +245,15 @@ static void do_regular_file(int fd, char *name)
     xprintf("GIF image data, version %3.3s, %d x %d\n",
       s-3, (int)peek_le(s, 2), (int)peek_le(s+2, 2));
 
+  // XTOS: netpbm (PNM/PAM) — P1..P6 = PBM/PGM/PPM (ASCII/raw), P7 = PAM.
+  // Our icons/images ship as .pam/.pnm, so name them.
+  else if (len>2 && s[0]=='P' && s[1]>='1' && s[1]<='7' &&
+           (s[2]==' '||s[2]=='\t'||s[2]=='\n'||s[2]=='\r'||s[2]=='#')) {
+    static const char *kind[] = {"PBM","PGM","PPM","PBM","PGM","PPM","PAM"};
+    xprintf("Netpbm %s image data%s\n", kind[s[1]-'1'],
+            (s[1]>='1'&&s[1]<='3') ? ", ASCII text" : (s[1]=='7' ? "" : ", raw"));
+  }
+
   // https://en.wikipedia.org/wiki/JPEG#Syntax_and_structure
   else if (len>32 && !smemcmp(s, "\xff\xd8", 2)) {
     char *types[] = {"baseline", "extended sequential", "progressive"};

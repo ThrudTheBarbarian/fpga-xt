@@ -45,6 +45,14 @@ if ! scripts/make.sh > "$OUT/make.log" 2>&1; then
         exit 1
     fi
 fi
+# canary: 'true' is always enabled, so a missing true.o means the compile
+# stopped partway (a real error masked by the surviving objects) — fail loudly
+# rather than shipping a toybox.so with dangling *_main symbols.
+if [ ! -f generated/unstripped/obj/true.o ]; then
+    echo "toybox compile INCOMPLETE (no true.o) — a source error stopped the build:" >&2
+    grep -iE " error:" "$OUT/make.log" | head >&2
+    exit 1
+fi
 
 # lib_net.o is linked now: the socket shim (net_shim.c) implements the calls
 # sockets — keep it out of the .so so no dangling relocations reach xtld
