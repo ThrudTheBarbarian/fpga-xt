@@ -133,8 +133,9 @@ static void show_ip(char *fname)
   char *state_label[] = {"", "ESTABLISHED", "SYN_SENT", "SYN_RECV", "FIN_WAIT1",
                          "FIN_WAIT2", "TIME_WAIT", "CLOSE", "CLOSE_WAIT",
                          "LAST_ACK", "LISTEN", "CLOSING", "UNKNOWN"};
-  FILE *fp = xfopen(fname, "r");
+  FILE *fp = fopen(fname, "r");
 
+  if (!fp) return;   /* family not present (XTOS is IPv4-only) */
   // Skip header.
   (void)fgets(toybuf, sizeof(toybuf), fp);
 
@@ -203,7 +204,7 @@ static void show_unix_sockets(void)
        *states[] = {"","LISTENING","CONNECTING","CONNECTED","DISCONNECTING"},
        *filename = 0;
   unsigned long refcount, flags, type, state, inode;
-  FILE *fp = xfopen("/proc/net/unix", "r");
+  FILE *fp = xfopen("/OS/proc/net/unix", "r");
 
   // Skip header.
   (void)fgets(toybuf, sizeof(toybuf), fp);
@@ -251,7 +252,7 @@ static int scan_pids(struct dirtree *node)
   if (!node->parent) return DIRTREE_RECURSE;
   if (!(pid = atol(node->name))) return 0;
 
-  sprintf(toybuf, "/proc/%d/cmdline", pid);
+  sprintf(toybuf, "/OS/proc/%d/cmdline", pid);
   if (!(readfile(toybuf, toybuf, 256))) return 0;
 
   sprintf(s, "%d/fd", pid);
@@ -284,7 +285,7 @@ static void display_routes(void)
   int flags, ref, use, metric, mss, win, irtt;
   char *out = toybuf, *flag_val;
   char iface[64]={0};
-  FILE *fp = xfopen("/proc/net/route", "r");
+  FILE *fp = xfopen("/OS/proc/net/route", "r");
 
   // Skip header.
   (void)fgets(toybuf, sizeof(toybuf), fp);
@@ -346,7 +347,7 @@ void netstat_main(void)
   if (FLAG(a)) type = "servers and established";
   else if (FLAG(l)) type = "only servers";
 
-  if (FLAG(p)) dirtree_read("/proc", scan_pids);
+  if (FLAG(p)) dirtree_read("/OS/proc", scan_pids);
 
   if (toys.optflags&(FLAG_t|FLAG_u|FLAG_w)) {
     printf("Active Internet connections (%s)\n", type);
@@ -357,16 +358,16 @@ void netstat_main(void)
     xputc('\n');
 
     if (FLAG(t)) {
-      show_ip("/proc/net/tcp");
-      show_ip("/proc/net/tcp6");
+      show_ip("/OS/proc/net/tcp");
+      show_ip("/OS/proc/net/tcp6");
     }
     if (FLAG(u)) {
-      show_ip("/proc/net/udp");
-      show_ip("/proc/net/udp6");
+      show_ip("/OS/proc/net/udp");
+      show_ip("/OS/proc/net/udp6");
     }
     if (FLAG(w)) {
-      show_ip("/proc/net/raw");
-      show_ip("/proc/net/raw6");
+      show_ip("/OS/proc/net/raw");
+      show_ip("/OS/proc/net/raw6");
     }
   }
 

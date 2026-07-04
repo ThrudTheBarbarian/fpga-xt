@@ -22,12 +22,34 @@ extern void klog_u(unsigned);
 err_t xemacpsif_init(struct netif *nif);
 int   xemacpsif_poll(struct netif *nif);
 int   xemacpsif_link_poll(void);
+int   xemacpsif_speed(void);
 void  xemacpsif_wait(int ms);
 void  tftpd_init(void);
 void  netcon_init(void);
 
 static struct netif g_nif;
 static volatile int g_lwip_ready;
+
+/* interface snapshot for procfs (/OS/proc/net/*) + the ifconfig ioctl path */
+#include "netinfo.h"
+int xt_netif_info(struct xt_ifinfo *out)
+{
+    memset(out, 0, sizeof *out);
+    if (!g_lwip_ready) return 0;
+    /* netif name is 2 chars ("en"/"e0") + num; report as "e0" */
+    out->name[0] = g_nif.name[0]; out->name[1] = g_nif.name[1];
+    out->name[2] = (char)('0' + g_nif.num); out->name[3] = 0;
+    memcpy(out->mac, g_nif.hwaddr, 6);
+    out->ip      = ip4_addr_get_u32(netif_ip4_addr(&g_nif));
+    out->netmask = ip4_addr_get_u32(netif_ip4_netmask(&g_nif));
+    out->gw      = ip4_addr_get_u32(netif_ip4_gw(&g_nif));
+    out->mtu     = g_nif.mtu;
+    out->flags   = XT_IFF_UP | XT_IFF_BROADCAST | XT_IFF_MULTICAST |
+                   (netif_is_link_up(&g_nif) ? XT_IFF_RUNNING : 0);
+    out->link_up = netif_is_link_up(&g_nif);
+    out->speed_mbps = xemacpsif_speed();
+    return 1;
+}
 
 /* xorshift for lwIP (ARP/DHCP jitter — not cryptographic) */
 unsigned xt_net_rand(void)

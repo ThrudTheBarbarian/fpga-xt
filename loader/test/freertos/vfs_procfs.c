@@ -25,6 +25,9 @@ extern int   _gettimeofday(void *tv, void *tz);
 #define PF_MAXPROC 64      /* must match MAXPROC (frtos_os.c); frtos_proc_snap
                             * bounds-checks the index, so over-iterating is safe */
 #define PF_BUF     768
+#define PF_NETBUF  4096    /* /net/* connection tables can be long */
+
+extern const char *const xt_procnet_leaves[];   /* NULL-terminated leaf names under /net */
 
 /* ---- path parsing: "/<pid>/leaf", "/<pid>", "/uptime", ... ---------------- */
 static int pf_num(const char *s, int *out)
@@ -172,12 +175,15 @@ static int pf_open(vfs_mount *m, const char *rel, int flags, vfs_file *f)
         f->read = pf_read; f->write = 0; f->lseek = pf_lseek; f->close = pf_close;
         return 0;
     }
-    char *buf = (char *)frtos_alloc(PF_BUF, 16, 0);
+    /* /net/* can list many connections — give those generators a bigger buffer */
+    int cap = (!strncmp(rel, "/net/", 5)) ? PF_NETBUF : PF_BUF;
+    char *buf = (char *)frtos_alloc(cap, 16, 0);
     if (!buf) return -1;
     int len = -1, pid, k;
     if (!strcmp(rel, "/uptime"))       len = pf_gen_uptime(buf, PF_BUF);
     else if (!strcmp(rel, "/meminfo")) len = pf_gen_meminfo(buf, PF_BUF);
     else if (!strcmp(rel, "/mounts"))  { extern int vfs_mounts_str(char *, int); len = vfs_mounts_str(buf, PF_BUF); }
+    else if (!strncmp(rel, "/net/", 5)) { extern int xt_procnet(const char *, char *, int); len = xt_procnet(rel + 5, buf, cap); }
     else if (rel[0] == '/' && (k = pf_num(rel + 1, &pid)) > 0) {
         const char *leaf = rel + 1 + k;
         if (!strcmp(leaf, "/stat"))         len = pf_gen_stat(pid, buf, PF_BUF);
@@ -200,6 +206,12 @@ static int pf_stat(vfs_mount *m, const char *rel, struct xt_stat *st)
     st->size = 0; st->mtime = 0;
     if (rel[0] == 0 || (rel[0] == '/' && rel[1] == 0)) { st->mode = XT_S_IFDIR; return 0; }
     if (!strcmp(rel, "/uptime") || !strcmp(rel, "/meminfo") || !strcmp(rel, "/kmsg") || !strcmp(rel, "/mounts")) { st->mode = XT_S_IFREG; return 0; }
+    if (!strcmp(rel, "/net")) { st->mode = XT_S_IFDIR; return 0; }
+    if (!strncmp(rel, "/net/", 5)) {
+        for (int i = 0; xt_procnet_leaves[i]; i++)
+            if (!strcmp(rel + 5, xt_procnet_leaves[i])) { st->mode = XT_S_IFREG; return 0; }
+        return -1;
+    }
     if (rel[0] == '/' && (k = pf_num(rel + 1, &pid)) > 0) {
         const char *leaf = rel + 1 + k;
         if (pf_slot(pid, comm, sizeof comm, cmdl, sizeof cmdl, 0, &cst) < 0) return -1;
@@ -233,13 +245,28 @@ static int pf_readdir(vfs_mount *m, const char *rel, int index,
         }
         const char *fixed[] = { "uptime", "meminfo", "kmsg", "mounts" };
         int fi = index - emitted;
-        if (fi >= 0 && fi < 2) {
+        if (fi >= 0 && fi < (int)(sizeof fixed / sizeof fixed[0])) {
             pfb o = { name, 0, nsz };
             pfb_s(&o, fixed[fi]);
             if (mode) *mode = XT_S_IFREG;
             return 1;
         }
+        fi -= (int)(sizeof fixed / sizeof fixed[0]);
+        if (fi == 0) {                                   /* the net/ subdir */
+            pfb o = { name, 0, nsz };
+            pfb_s(&o, "net");
+            if (mode) *mode = XT_S_IFDIR;
+            return 1;
+        }
         return 0;
+    }
+    if (!strcmp(rel, "/net")) {                          /* /net leaves */
+        int c = 0; while (xt_procnet_leaves[c]) c++;
+        if (index < 0 || index >= c) return 0;
+        pfb o = { name, 0, nsz };
+        pfb_s(&o, xt_procnet_leaves[index]);
+        if (mode) *mode = XT_S_IFREG;
+        return 1;
     }
     if (rel[0] == '/' && (k = pf_num(rel + 1, &pid)) > 0 && !rel[1 + k]) {
         const char *leaf[] = { "stat", "status", "cmdline", "comm" };

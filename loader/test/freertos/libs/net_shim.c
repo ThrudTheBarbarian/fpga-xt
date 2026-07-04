@@ -225,6 +225,35 @@ const char *gai_strerror(int e)
 
 int h_errno;                                  /* legacy resolver error (gethostbyname) */
 const char *hstrerror(int e) { (void)e; return "resolver error"; }
+
+/* no /etc/services db: port-name lookups return NULL, so netstat/nc fall back
+ * to numeric ports (which is what we want on a headless box anyway) */
+struct servent *getservbyport(int port, const char *proto) { (void)port; (void)proto; return 0; }
+
+/* no reverse DNS: always the numeric form (as if NI_NUMERICHOST|NI_NUMERICSERV) */
+int getnameinfo(const struct sockaddr *sa, socklen_t salen, char *host, socklen_t hostlen,
+                char *serv, socklen_t servlen, int flags)
+{
+    (void)salen; (void)flags;
+    if (!sa) return EAI_FAIL;
+    if (host && hostlen) {
+        if (sa->sa_family == AF_INET6) {
+            if (!inet_ntop(AF_INET6, &((const struct sockaddr_in6 *)sa)->sin6_addr, host, hostlen))
+                return EAI_FAIL;
+        } else if (!inet_ntop(AF_INET, &((const struct sockaddr_in *)sa)->sin_addr, host, hostlen))
+            return EAI_FAIL;
+    }
+    if (serv && servlen) {
+        unsigned p = ntohs(sa->sa_family == AF_INET6
+                           ? ((const struct sockaddr_in6 *)sa)->sin6_port
+                           : ((const struct sockaddr_in *)sa)->sin_port);
+        char t[8]; int k = 0, i;
+        do { t[k++] = (char)('0' + p % 10); p /= 10; } while (p);
+        for (i = 0; k && i < (int)servlen - 1; ) serv[i++] = t[--k];
+        serv[i] = 0;
+    }
+    return 0;
+}
 void herror(const char *s) { if (s && *s) { fprintf(stderr, "%s: ", s); } fprintf(stderr, "resolver error\n"); }
 
 struct hostent *gethostbyname(const char *name)

@@ -250,6 +250,8 @@ int xemacpsif_poll(struct netif *nif)
 
 /* watch the link; on first link-up program the MAC + SLCR for the speed.
  * Returns the speed when newly up, 0 otherwise. */
+int xemacpsif_speed(void) { return g_link_speed; }   /* last known link speed (Mb/s), 0 = down */
+
 int xemacpsif_link_poll(void)
 {
     if (g_phy < 0) return 0;
