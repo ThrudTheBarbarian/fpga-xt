@@ -88,7 +88,9 @@ extern char **environ;
 __attribute__((constructor)) static void _xt_env_init(void)
 {
     char **inherited = sys_envp();
-    environ = (inherited && inherited[0]) ? inherited : g_env0;
+    /* (long)>0 guards a kernel without SYS_envp (returns -ENOSYS, not a pointer),
+     * so a new toybox.so on an old kernel falls back to g_env0 instead of faulting */
+    environ = ((long)inherited > 0 && inherited[0]) ? inherited : g_env0;
 }
 
 /* Resolve the system timezone the first time TZ is looked up (by tzset): read
