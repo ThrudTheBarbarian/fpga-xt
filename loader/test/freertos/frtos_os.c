@@ -83,6 +83,7 @@ typedef struct {
     TaskHandle_t      waiter;         /* PL0 waitpid task to notify on exit (0 = none/kernel waiter) */
     int               argc;
     char            **argv;
+    char            **envp;           /* inherited environment (copied into this proc), or NULL */
     fd_t              fd[NFD];
     uint32_t         *l1;             /* per-process address space (vm.c), NULL=master */
     uint32_t          asid;           /* its ASID (slot+1; 0 = kernel/master) */
@@ -1415,7 +1416,9 @@ void deferral_thunk(void)                 /* PL1 (System), task context */
         } else if (p->dnum == SYS_spawn_fd) {              /* spawn + wire child stdio to pipe ends */
             char **av = (char **)p->da1; int ac = 0;
             while (av && av[ac]) ac++;
-            r = frtos_spawn_argv_fds((const char *)p->da0, ac, av, g_khost, (const int *)p->da2);
+            const int *aux = (const int *)p->da2;          /* struct xt_spawn_aux {int fds[4]; char **envp;} */
+            char **envp = aux ? *(char ***)(aux + 4) : NULL;
+            r = frtos_spawn_argv_fds((const char *)p->da0, ac, av, envp, g_khost, aux);
         } else if (p->dnum == SYS_pipe) {                  /* allocate a pipe + two end fds */
             r = k_pipe_create(p, (int *)p->da0);
         } else if ((p->dnum == SYS_read || p->dnum == SYS_write) &&
@@ -1653,6 +1656,7 @@ static long do_syscall(uint32_t num, long a0, long a1, long a2)
         { g_console((const char *)a1, (int)a2); return a2; }
         return -1;
     case SYS_getpid: return p ? p->pid : 0;
+    case SYS_envp:   return p ? (long)(uintptr_t)p->envp : 0;   /* inherited env (shim seeds environ) */
     case SYS_reboot: {                                       /* (cmd) -> no return: PS soft reset */
         volatile uint32_t *slcr = (volatile uint32_t *)0xF8000000u;
         __asm__ volatile("cpsid if");                        /* mask interrupts */
@@ -2018,7 +2022,7 @@ static prog_t *prog_get(const uint8_t *image, uint32_t len, const xtld_host *hos
 #define ARGV_WORDS 256   /* reserved at the top of the task stack for argv (PL0-RW) */
 static int proc_launch(int slot, xtld_obj *obj, uintptr_t entry,
                        uint32_t wva, uint32_t wsz, int argc, char **argv,
-                       const int *stdfds)
+                       char **envp, const int *stdfds)
 {
     proc_t *p = &g_proc[slot];
     for (int i = 0; i < NFD; i++) { p->fd[i].open = 0; p->fd[i].pipei = 0; }
@@ -2089,6 +2093,14 @@ static int proc_launch(int slot, xtld_obj *obj, uintptr_t entry,
     if (argc > 0) { depth -= ARGV_WORDS;
         p->argv = copy_argv(argc, argv, stk + depth, ARGV_WORDS * sizeof(StackType_t)); }
     else p->argv = NULL;
+    /* copy the inherited environment into another PL0-RW stack slab so the child
+     * reads it at PL0 (SYS_envp); the shim seeds `environ` from it at load. */
+    p->envp = NULL;
+    if (envp && envp[0]) {
+        int envc = 0; while (envp[envc]) envc++;
+        depth -= ARGV_WORDS;
+        p->envp = copy_argv(envc, envp, stk + depth, ARGV_WORDS * sizeof(StackType_t));
+    }
     /* xTaskCreateStatic returns the handle (unlike xTaskCreate's out-param), and
      * the new task is higher priority than us — it would run (and look itself up via
      * cur_proc) BEFORE p->task is assigned. Suspend the scheduler so the assignment
@@ -2146,7 +2158,7 @@ static int alloc_slot(void)
 }
 
 static int frtos_spawn_fds(const uint8_t *image, uint32_t len, int argc, char **argv,
-                           const xtld_host *host, const int *stdfds)
+                           char **envp, const xtld_host *host, const int *stdfds)
 {
     reap_orphans();                              /* clean up exited '&'/orphan children first */
     int slot = alloc_slot();
@@ -2155,13 +2167,13 @@ static int frtos_spawn_fds(const uint8_t *image, uint32_t len, int argc, char **
     prog_t *prog = prog_get(image, len, host);    /* load-once (shared text + COW data) */
     if (!prog) { g_proc[slot].used = 0; return -1; }
     g_proc[slot].transient = 0; g_proc[slot].src = 0;
-    return proc_launch(slot, prog->obj, prog->entry, (uint32_t)prog->wva, prog->wsize, argc, argv, stdfds);
+    return proc_launch(slot, prog->obj, prog->entry, (uint32_t)prog->wva, prog->wsize, argc, argv, envp, stdfds);
 }
 
 int frtos_spawn(const uint8_t *image, uint32_t len, int argc, char **argv,
                 const xtld_host *host)
 {
-    return frtos_spawn_fds(image, len, argc, argv, host, 0);
+    return frtos_spawn_fds(image, len, argc, argv, NULL, host, 0);
 }
 
 /* Load + run an ELF read from the HOST filesystem over semihosting (runhost) — for
@@ -2201,7 +2213,7 @@ int frtos_spawn_host(const char *hostpath, int argc, char **argv, const xtld_hos
     uintptr_t wva; uint32_t wsz; xtld_writable_range(obj, &wva, &wsz);
 
     g_proc[slot].transient = 1; g_proc[slot].src = buf;
-    int pid = proc_launch(slot, obj, entry, (uint32_t)wva, wsz, argc, argv, 0);
+    int pid = proc_launch(slot, obj, entry, (uint32_t)wva, wsz, argc, argv, NULL, 0);
     if (pid < 0) {                               /* launch failed: undo the load */
         extern void mmu_unprotect(uint32_t, uint32_t);
         mmu_unprotect((uint32_t)xtld_image_base(obj), (uint32_t)xtld_span(obj));
@@ -2250,7 +2262,7 @@ static int sd_prog_lookup(const char *path, const uint8_t **data, uint32_t *len)
 }
 
 int frtos_spawn_argv_fds(const char *path, int argc, char **argv,
-                         const xtld_host *host, const int *stdfds)
+                         char **envp, const xtld_host *host, const int *stdfds)
 {
     const uint8_t *data; uint32_t size;
     /* search order: the romfs (mounted at /System; accept /System/bin/x for the
@@ -2270,12 +2282,12 @@ int frtos_spawn_argv_fds(const char *path, int argc, char **argv,
         alt[i] = 0;
         if (!sd_prog_lookup(alt, &data, &size)) return -1;
     }
-    return frtos_spawn_fds(data, size, argc, argv, host, stdfds);
+    return frtos_spawn_fds(data, size, argc, argv, envp, host, stdfds);
 }
 
 int frtos_spawn_argv(const char *path, int argc, char **argv, const xtld_host *host)
 {
-    return frtos_spawn_argv_fds(path, argc, argv, host, 0);
+    return frtos_spawn_argv_fds(path, argc, argv, NULL, host, 0);
 }
 
 /* g_khost (declared above do_syscall) is the kernel loader host — set by main once

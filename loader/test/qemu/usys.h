@@ -10,6 +10,10 @@
 /* the OS display-plane descriptor (filled by SYS_fb_info) */
 struct os_fbinfo { int w, h, stride; unsigned long addr; };
 
+/* spawn_fd aux: the fds[4] the kernel already reads, plus the env array to hand
+ * the child (SYS_spawn_fd's da2 points here — kernel reads envp at offset 16) */
+struct xt_spawn_aux { int fds[4]; char **envp; };
+
 static inline long __syscall(long n, long a0, long a1, long a2)
 {
     register long r7 __asm__("r7") = n;
@@ -62,13 +66,17 @@ static inline long sys_pipe(int fd[2]) { return __syscall(SYS_pipe, (long)fd, 0,
 /* spawn with the child's stdio wired to parent fds (argv NULL-terminated; -1 = console).
  * fds[3] = do-NOT-inherit bitmask for the parent's other pipe fds (cloexec analogue);
  * pipe fds not masked out are inherited by the child at the SAME slot. */
-static inline long sys_spawn_fd(const char *path, char **argv, const int fds[4])
-{ return __syscall(SYS_spawn_fd, (long)path, (long)argv, (long)fds); }
+static inline long sys_spawn_fd(const char *path, char **argv, const int fds[4], char **envp)
+{
+    struct xt_spawn_aux aux = { { fds[0], fds[1], fds[2], fds[3] }, envp };
+    return __syscall(SYS_spawn_fd, (long)path, (long)argv, (long)&aux);
+}
 /* duplicate a pipe end onto a chosen fd slot (refcounted) */
 static inline long sys_dup2(int oldfd, int newfd)
 { return __syscall(SYS_dup2, oldfd, newfd, 0); }
 /* sig 0 probes existence; anything else kills at the next syscall boundary */
 static inline long sys_kill(int pid, int sig) { return __syscall(SYS_kill, pid, sig, 0); }
+static inline char **sys_envp(void) { return (char **)__syscall(SYS_envp, 0, 0, 0); }
 static inline long sys_reboot(int cmd) { return __syscall(SYS_reboot, cmd, 0, 0); }
 static inline long sys_fstat(int fd, struct xt_stat *st)
 { return __syscall(SYS_fstat, fd, (long)st, 0); }

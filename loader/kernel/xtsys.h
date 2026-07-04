@@ -40,6 +40,9 @@
 #define SYS_kill     0x105   /* (pid, sig) -> 0: sig 0 = existence probe; any other sig
                               * marks the process killed — it dies at its next syscall
                               * or blocking-wait tick (no handlers; soft-signal system) */
+#define SYS_envp     0x107   /* () -> char **: the environment array the parent handed us at
+                              * spawn (copied into this process's memory, NULL-terminated), or
+                              * 0 if none. The libc shim seeds `environ` from it at load. */
 
 /* memory — block 0x200 */
 #define SYS_mmap     0x200   /* (fd, len, off) -> VA: map a file RO + shared, demand-paged */

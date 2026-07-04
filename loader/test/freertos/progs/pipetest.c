@@ -41,7 +41,7 @@ void _app_entry(int argc, char **argv)
         check(sys_write(pfd[1], msg, mlen) == (long)mlen, "write into the pipe");
         char *av[] = { "cat", 0 };
         int fds[4] = { pfd[0], -1, -1, ~0 };   /* mask all: only stdio passes */
-        long pid = sys_spawn_fd("/System/bin/cat", av, fds);
+        long pid = sys_spawn_fd("/System/bin/cat", av, fds, 0);
         check(pid > 0, "spawn cat with stdin = pipe read end");
         sys_close(pfd[0]);
         sys_close(pfd[1]);                 /* last writer -> cat sees EOF, exits */
@@ -54,7 +54,7 @@ void _app_entry(int argc, char **argv)
         check(sys_pipe(pfd) == 0, "second pipe");
         char *av[] = { "ls", "/System/bin", 0 };
         int fds[4] = { -1, pfd[1], -1, ~0 };   /* mask all: only stdio passes */
-        long pid = sys_spawn_fd("/System/bin/ls", av, fds);
+        long pid = sys_spawn_fd("/System/bin/ls", av, fds, 0);
         check(pid > 0, "spawn ls with stdout = pipe write end");
         sys_close(pfd[1]);                 /* parent's write end: EOF comes from ls exiting */
         char buf[256]; long n, total = 0;
@@ -71,7 +71,7 @@ void _app_entry(int argc, char **argv)
         check(ffd >= 3, "open /tmp/pt_redir for writing");
         char *av[] = { "echo", "filetest", 0 };
         int fds[4] = { -1, (int)ffd, -1, ~0 };
-        long pid = sys_spawn_fd("/System/bin/echo", av, fds);
+        long pid = sys_spawn_fd("/System/bin/echo", av, fds, 0);
         check(pid > 0, "spawn echo with stdout = file fd");
         if (pid > 0) putn("  (echo exit=", sys_waitpid((int)pid));
         struct xt_stat xs;
@@ -109,7 +109,7 @@ void _app_entry(int argc, char **argv)
         sys_pipe(pfd);
         char *av[] = { "cat", 0 };
         int fds[4] = { pfd[0], -1, -1, ~0 };
-        long pid = sys_spawn_fd("/System/bin/cat", av, fds);
+        long pid = sys_spawn_fd("/System/bin/cat", av, fds, 0);
         sys_close(pfd[0]);
         check(sys_waitpid_nb((int)pid) == -11, "poll: child blocked on the pipe = still running");
         sys_close(pfd[1]);                 /* EOF -> cat exits */

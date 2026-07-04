@@ -81,9 +81,15 @@ static char *g_env0[] = {
 };
 /* Use libc.so's `environ`, NOT a private one — newlib's time code (localtime/
  * tzset) and getenv read libc.so's environ; a separate toybox-side array would
- * be invisible to them (date would never see TZ). Point it at g_env0 at load. */
+ * be invisible to them (date would never see TZ). Seed it at load from the env
+ * the parent handed us at spawn (SYS_envp); the built-in g_env0 defaults apply
+ * only to a process the kernel spawned with no parent env (the first shell). */
 extern char **environ;
-__attribute__((constructor)) static void _xt_env_init(void) { environ = g_env0; }
+__attribute__((constructor)) static void _xt_env_init(void)
+{
+    char **inherited = sys_envp();
+    environ = (inherited && inherited[0]) ? inherited : g_env0;
+}
 
 /* Resolve the system timezone the first time TZ is looked up (by tzset): read
  * the zone NAME from /OS/etc/timezone, map it to a POSIX TZ string via
@@ -770,7 +776,6 @@ int execve(const char *path, char *const argv[], char *const envp[])
 {
     int argc = 0;
     long pid;
-    (void)envp;                          /* spawn doesn't carry an env yet */
 
     /* toybox's nommu re-exec target */
     if (!strcmp(path, "/proc/self/exe")) path = "/System/bin/toybox";
@@ -778,10 +783,11 @@ int execve(const char *path, char *const argv[], char *const envp[])
     while (argv[argc]) argc++;
     (void)argc;
     /* spawn_fd always: stdio from the dup2 record, other pipe fds inherited
-     * at the same slots minus what the fake child closed / marked cloexec */
+     * at the same slots minus what the fake child closed / marked cloexec;
+     * envp is carried so the child inherits our environment. */
     int fds[4] = { g_redir[0], g_redir[1], g_redir[2],
                    (int)(g_child_closed | g_cloexec) };
-    pid = sys_spawn_fd(path, (char **)argv, fds);
+    pid = sys_spawn_fd(path, (char **)argv, fds, (char **)(envp ? envp : environ));
     if (pid < 0) { errno = ENOENT; return -1; }
 
     if (g_vfork_armed) {                 /* "child" side of a vfork pair */
