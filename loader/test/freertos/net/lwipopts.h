@@ -75,7 +75,9 @@
 #define TCPIP_THREAD_NAME          "lwip"
 #define LWIP_FREERTOS_THREAD_STACKSIZE_IS_STACKWORDS 1   /* sizes below are WORDS */
 #define TCPIP_THREAD_STACKSIZE     2048      /* words = 8 KB (dns/sntp/mdns run here) */
-#define TCPIP_THREAD_PRIO          3
+#define TCPIP_THREAD_PRIO          4         /* above PL0 processes (3): packet processing
+                                              * (ip4_input/raw_input) must not be starved by a
+                                              * busy app; pairs with net_task at 4 */
 #define TCPIP_MBOX_SIZE            16
 #define DEFAULT_UDP_RECVMBOX_SIZE  8
 #define DEFAULT_TCP_RECVMBOX_SIZE  8

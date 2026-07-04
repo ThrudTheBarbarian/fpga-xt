@@ -145,5 +145,10 @@ static void net_task(void *arg)
 
 void net_init(void)
 {
-    xTaskCreate(net_task, "net", 2048, 0, 2, 0);   /* words = 8 KB: netif/mdns/dns init runs here */
+    /* priority 4 — ABOVE PL0 processes (3) and the tcpip thread (4): the GEM RX
+     * pump must preempt apps to service the hardware, else a busy/polling process
+     * starves receive (packets sit in the MAC until the app blocks). It blocks in
+     * xemacpsif_wait when idle, so a high priority costs nothing when there's no
+     * traffic. */
+    xTaskCreate(net_task, "net", 2048, 0, 4, 0);   /* words = 8 KB: netif/mdns/dns init runs here */
 }
