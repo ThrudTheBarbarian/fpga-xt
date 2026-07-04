@@ -149,6 +149,42 @@ static int ff_readdir(vfs_mount *m, const char *path, int index, char *name, int
     return 1;
 }
 
+/* Metadata enumeration for the dir cache: its own cursor (g_mdir), separate from
+ * ff_readdir's, so a stat-triggered cache fill doesn't disturb an in-flight name-only
+ * readdir on the same dir (both would otherwise thrash one shared DIR). Every field
+ * comes straight from the FILINFO f_readdir already fills — no per-entry re-walk, and a
+ * symlink's target length is fsize-5 (only ff_symlink sets AM_SYS, so the bit is enough;
+ * no need to open + read the magic here). */
+static DIR  g_mdir;
+static char g_mdir_path[256];
+static int  g_mdir_open, g_mdir_next;
+
+static int ff_readdir_meta(vfs_mount *m, const char *path, int index, struct vfs_dent *out)
+{
+    (void)m; char p[256]; ffpath(p, path);
+    if (!(g_mdir_open && g_mdir_next == index && ffeq(g_mdir_path, p))) {
+        if (g_mdir_open) { f_closedir(&g_mdir); g_mdir_open = 0; }
+        if (f_opendir(&g_mdir, p) != FR_OK) return -1;
+        int i = 0; while (p[i] && i < 255) { g_mdir_path[i] = p[i]; i++; } g_mdir_path[i] = 0;
+        g_mdir_open = 1; g_mdir_next = 0;
+        for (int k = 0; k < index; k++) {
+            if (f_readdir(&g_mdir, &g_mfno) != FR_OK || !g_mfno.fname[0]) break;
+            g_mdir_next++;
+        }
+    }
+    if (f_readdir(&g_mdir, &g_mfno) != FR_OK) { f_closedir(&g_mdir); g_mdir_open = 0; return -1; }
+    g_mdir_next++;
+    if (!g_mfno.fname[0]) { f_closedir(&g_mdir); g_mdir_open = 0; return 0; }   /* end of dir */
+    int i = 0; while (g_mfno.fname[i] && i < (int)sizeof out->name - 1) { out->name[i] = g_mfno.fname[i]; i++; } out->name[i] = 0;
+    uint32_t size = (uint32_t)g_mfno.fsize;
+    if (g_mfno.fattrib & AM_DIR)      out->mode = XT_S_IFDIR;
+    else if (g_mfno.fattrib & AM_SYS) { out->mode = XT_S_IFLNK; size = size > 5 ? size - 5 : 0; }
+    else                              out->mode = XT_S_IFREG;
+    out->size  = size;
+    out->mtime = ((uint32_t)g_mfno.fdate << 16) | g_mfno.ftime;
+    return 1;
+}
+
 static int ff_symlink(vfs_mount *m, const char *target, const char *path)
 {
     (void)m; char p[256]; ffpath(p, path);
@@ -213,6 +249,6 @@ static int ff_rename(vfs_mount *m, const char *oldp, const char *newp)
 
 static vfs_fs fatfs_fs = { "fatfs", ff_open, 1 /* serialized: backing-store */,
                            ff_readlink, ff_stat, ff_unlink, ff_symlink, ff_readdir,
-                           ff_mkdir, ff_rename };
+                           ff_mkdir, ff_rename, ff_readdir_meta };
 
 void vfs_fatfs_init(void) { vfs_register_fs(&fatfs_fs); }

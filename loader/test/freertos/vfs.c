@@ -291,6 +291,15 @@ long vfs_readdir(const char *path, int index, char *name, int nsz, unsigned *mod
     if (!m || !m->fs->readdir) return -1;
     return m->fs->readdir(m, rel, index, name, nsz, mode);
 }
+long vfs_readdir_meta(const char *path, int index, struct vfs_dent *out)
+{
+    char rp[VFS_PATH_MAX];
+    if (vfs_resolve(path, rp, sizeof rp, 1) != 0) return -1;   /* follow to the real dir */
+    if (rp[0] == '/' && !rp[1]) return -2;                     /* root: synthetic, not cacheable */
+    const char *rel; vfs_mount *m = resolve(rp, &rel);
+    if (!m || !m->fs->readdir_meta) return -2;                 /* fs opts out -> caller falls back */
+    return m->fs->readdir_meta(m, rel, index, out);
+}
 long vfs_mkdir(const char *path)
 {
     char rp[VFS_PATH_MAX];

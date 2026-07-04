@@ -29,6 +29,12 @@ typedef struct vfs_mount vfs_mount;
 #define VFS_O_CREAT   0x0200
 #define VFS_O_TRUNC   0x0400
 
+/* one directory entry with its metadata (readdir_meta / the dir cache). mode/size/mtime
+ * match vfs_stat's xt_stat; name is the leaf, NUL-terminated (over-long names truncate,
+ * so a lookup of them misses the cache and falls back to a real stat). */
+#define VFS_DENT_NAME 64
+struct vfs_dent { unsigned mode, size, mtime; char name[VFS_DENT_NAME]; };
+
 /* a filesystem driver */
 typedef struct vfs_fs {
     const char *name;                                   /* "romfs", "fatfs", "ramfs", ... */
@@ -48,6 +54,11 @@ typedef struct vfs_fs {
     int (*readdir)(vfs_mount *m, const char *path, int index, char *name, int nsz, unsigned *mode);
     int (*mkdir)(vfs_mount *m, const char *path);                            /* 0 ok, <0 err */
     int (*rename)(vfs_mount *m, const char *oldp, const char *newp);         /* 0 ok, <0 err */
+    /* enumerate WITH metadata in one pass: fill *out for the index-th entry -> 1 filled,
+     * 0 end, -1 err. OPTIONAL (NULL = not metadata-enumerable: the dir cache skips this fs,
+     * which is fine for in-RAM mounts that stat cheaply anyway). The win is for backing-
+     * store filesystems where a per-file stat re-walks the path. */
+    int (*readdir_meta)(vfs_mount *m, const char *path, int index, struct vfs_dent *out);
 } vfs_fs;
 
 /* an open file (lives inside the per-process fd table) */
@@ -98,6 +109,8 @@ long     vfs_lstat(const char *path, struct xt_stat *st);      /* the link itsel
 long     vfs_unlink(const char *path);
 long     vfs_symlink(const char *target, const char *linkpath);
 long     vfs_readdir(const char *path, int index, char *name, int nsz, unsigned *mode);
+/* enumerate WITH metadata (fills *out): 1 entry / 0 end / -1 err / -2 fs has no readdir_meta */
+long     vfs_readdir_meta(const char *path, int index, struct vfs_dent *out);
 long     vfs_mkdir(const char *path);
 long     vfs_rename(const char *oldp, const char *newp);
 int      vfs_resolve(const char *in, char *out, int outsz, int follow_leaf); /* 0 ok, <0 ELOOP */

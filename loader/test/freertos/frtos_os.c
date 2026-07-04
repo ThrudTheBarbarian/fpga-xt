@@ -882,6 +882,112 @@ static long fd_munmap(int slot)
     return vm_munmap(slot, va, len);
 }
 
+/* ---- directory metadata cache --------------------------------------------
+ * du/ls/find walk a tree by readdir + a stat per entry, and each stat re-walks the
+ * FatFs path from root (reading SD directory sectors per component) — O(files x depth)
+ * of the slowest operation there is. Cache the last few directories' full listings
+ * (every entry's mode/size/mtime, which readdir_meta gets FREE from one enumeration
+ * pass), and serve stat/lstat of a file from its parent dir's snapshot: the first stat
+ * in a directory fills the cache (one sequential enumeration, no per-file walk), every
+ * stat after is a memory hit. Invalidated per-directory on any write there. Lives in
+ * (and is only touched by) the fs task, so it needs no locking. */
+#define DCACHE_N     6           /* directories kept (LRU) */
+#define DCACHE_ENTS  320         /* entries cached per dir; a bigger dir caches its first
+                                  * DCACHE_ENTS and marks !full so misses fall through */
+typedef struct {
+    char            dir[FS_PATH_MAX];   /* absolute dir path, no trailing '/' (root = "/") */
+    uint16_t        nents;
+    uint8_t         valid;
+    uint8_t         full;               /* 1 = whole dir fit; 0 = truncated (misses fall back) */
+    uint32_t        lru;
+    struct vfs_dent e[DCACHE_ENTS];
+} dcache_t;
+static dcache_t  g_dcache[DCACHE_N];
+static uint32_t  g_dcache_tick;
+
+static int dstr_eq(const char *a, const char *b) { while (*a && *a == *b) { a++; b++; } return *a == *b; }
+
+/* split an absolute path into parent dir (no trailing '/', root stays "/") + leaf name.
+ * 0 ok; -1 if there's no leaf to look up (root, empty, or a bare relative name). */
+static int path_split(const char *path, char *dir, int dsz, const char **leaf)
+{
+    int n = 0; while (path[n]) n++;
+    while (n > 0 && path[n-1] == '/') n--;                 /* trim trailing slashes */
+    if (n == 0) return -1;                                 /* "" or "/" -> no leaf */
+    int s = n; while (s > 0 && path[s-1] != '/') s--;      /* s = index just past the last '/' */
+    if (s == 0) return -1;                                 /* no directory component */
+    int dl = (s == 1) ? 1 : s - 1;                         /* parent length (root keeps its '/') */
+    if (dl >= dsz) return -1;
+    int i = 0; for (; i < dl; i++) dir[i] = path[i]; dir[i] = 0;
+    *leaf = path + s;
+    return 0;
+}
+
+static dcache_t *dcache_find(const char *dir)
+{
+    for (int i = 0; i < DCACHE_N; i++)
+        if (g_dcache[i].valid && dstr_eq(g_dcache[i].dir, dir)) return &g_dcache[i];
+    return 0;
+}
+static void dcache_drop(const char *dir)
+{
+    for (int i = 0; i < DCACHE_N; i++)
+        if (g_dcache[i].valid && dstr_eq(g_dcache[i].dir, dir)) g_dcache[i].valid = 0;
+}
+/* a create/delete/rename/size-change at `path` makes its parent dir's snapshot stale */
+static void dcache_drop_parent(const char *path)
+{
+    char dir[FS_PATH_MAX]; const char *leaf;
+    if (path_split(path, dir, sizeof dir, &leaf) == 0) dcache_drop(dir);
+}
+static dcache_t *dcache_slot(void)      /* a free slot, else the LRU one */
+{
+    dcache_t *v = &g_dcache[0];
+    for (int i = 0; i < DCACHE_N; i++) {
+        if (!g_dcache[i].valid) return &g_dcache[i];
+        if (g_dcache[i].lru < v->lru) v = &g_dcache[i];
+    }
+    return v;
+}
+/* enumerate `dir` (metadata) into a slot; 0 if the fs has no readdir_meta or dir isn't a
+ * directory (caller then falls back to a real stat). */
+static dcache_t *dcache_fill(const char *dir)
+{
+    struct vfs_dent d;
+    long r = vfs_readdir_meta(dir, 0, &d);
+    if (r < 0) return 0;                                   /* -2 unsupported / -1 not-a-dir */
+    dcache_t *c = dcache_slot();
+    c->valid = 0;                                          /* unusable while (re)filling */
+    int i = 0; while (dir[i] && i < FS_PATH_MAX - 1) { c->dir[i] = dir[i]; i++; } c->dir[i] = 0;
+    c->nents = 0; c->full = 1;
+    for (int idx = 0; r == 1; r = vfs_readdir_meta(dir, ++idx, &d)) {
+        if (c->nents >= DCACHE_ENTS) { c->full = 0; break; }
+        c->e[c->nents++] = d;
+    }
+    c->lru = ++g_dcache_tick;
+    c->valid = 1;
+    return c;
+}
+/* serve stat/lstat from the parent dir's cached snapshot. 0 = filled *st; -1 = dir is
+ * fully cached and has no such entry (ENOENT); -2 = not answerable -> caller must use
+ * vfs_stat/vfs_lstat (root, uncacheable fs, truncated dir, or following a symlink). */
+static int k_dstat(const char *path, int follow, struct xt_stat *st)
+{
+    char dir[FS_PATH_MAX]; const char *leaf;
+    if (path_split(path, dir, sizeof dir, &leaf) != 0) return -2;
+    dcache_t *c = dcache_find(dir);
+    if (!c) c = dcache_fill(dir);
+    if (!c) return -2;
+    c->lru = ++g_dcache_tick;
+    for (int i = 0; i < c->nents; i++)
+        if (dstr_eq(c->e[i].name, leaf)) {
+            if (follow && (c->e[i].mode & XT_S_IFMT) == XT_S_IFLNK) return -2;   /* resolve target */
+            st->mode = c->e[i].mode; st->size = c->e[i].size; st->mtime = c->e[i].mtime;
+            return 0;
+        }
+    return c->full ? -1 : -2;                              /* full miss = ENOENT; truncated = unknown */
+}
+
 /* real filesystem capacity for statfs/df: FatFs f_getfree on HW (out = {total_sectors,
  * free_sectors, sector_bytes}); unavailable on qemu (romfs/ramfs has no fixed size) ->
  * -1, and the libc shim keeps its sensible defaults. */
@@ -900,9 +1006,14 @@ static long fs_serve(int slot)
     proc_t *p = &g_proc[slot];
     fs_ctl *c = g_fs_ctl[slot];
     switch (c->op) {
-    case SYS_open:  return sys_open(p, c->path, (int)c->flags);   /* path copied into the shm page */
+    case SYS_open:
+        if (c->flags & (VFS_O_WRONLY | VFS_O_RDWR | VFS_O_CREAT | VFS_O_TRUNC))
+            dcache_drop_parent(c->path);                  /* create/truncate changes the dir listing */
+        return sys_open(p, c->path, (int)c->flags);       /* path copied into the shm page */
     case SYS_close:
         if (p && c->fd >= 3 && c->fd < NFD && p->fd[c->fd].open) {
+            if (p->fd[c->fd].oflags & (VFS_O_WRONLY | VFS_O_RDWR))
+                dcache_drop_parent(p->fd[c->fd].path);    /* a written file's size/mtime changed */
             fd_drop_cache(&p->fd[c->fd]);                 /* flush (if dirty) + free the cache page */
             vfs_close(&p->fd[c->fd].vf);
             p->fd[c->fd].open = 0;
@@ -910,22 +1021,30 @@ static long fs_serve(int slot)
         return 0;
     case SYS_stat: case SYS_lstat: {                          /* path -> xt_stat (in st[]) */
         struct xt_stat s;
-        long r = (c->op == SYS_stat) ? vfs_stat(c->path, &s) : vfs_lstat(c->path, &s);
+        int hit = k_dstat(c->path, c->op == SYS_stat, &s);   /* parent-dir snapshot fast path */
+        long r = (hit == 0) ? 0
+               : (hit == -1) ? -1                            /* cached dir: no such entry */
+               : (c->op == SYS_stat) ? vfs_stat(c->path, &s) : vfs_lstat(c->path, &s);
         if (r == 0) { c->st[0] = s.mode; c->st[1] = s.size; c->st[2] = s.mtime; }
         return r;
     }
     case SYS_statfs:   return k_statfs(c->st);                                /* total/free sectors -> st[] */
     case SYS_readlink: return vfs_readlink(c->path, c->path2, (int)c->len);   /* target -> path2 */
-    case SYS_symlink:  return vfs_symlink(c->path2, c->path);                 /* (target, linkpath) */
-    case SYS_unlink:   return vfs_unlink(c->path);
+    case SYS_symlink:  dcache_drop_parent(c->path);                          /* new link in its dir */
+                       return vfs_symlink(c->path2, c->path);                /* (target, linkpath) */
+    case SYS_unlink:   dcache_drop_parent(c->path);                          /* entry removed */
+                       return vfs_unlink(c->path);
     case SYS_readdir: {                                       /* entry name -> path2, type -> st[0] */
         unsigned mode = 0;
         long r = vfs_readdir(c->path, (int)c->off, c->path2, FS_PATH_MAX, &mode);
         c->st[0] = mode;
         return r;
     }
-    case SYS_mkdir:   return vfs_mkdir(c->path);
-    case SYS_rename:  return vfs_rename(c->path, c->path2);   /* (old, new) both absolutized */
+    case SYS_mkdir:   dcache_drop_parent(c->path);           /* new dir appears in its parent */
+                      return vfs_mkdir(c->path);
+    case SYS_rename:  dcache_drop_parent(c->path);           /* entry leaves the old dir... */
+                      dcache_drop_parent(c->path2);          /* ...and appears in the new one */
+                      return vfs_rename(c->path, c->path2);  /* (old, new) both absolutized */
     case SYS_chdir: {                                         /* canonicalize + verify dir, set cwd */
         char canon[FS_PATH_MAX]; struct xt_stat s;
         if (vfs_resolve(c->path, canon, FS_PATH_MAX, 1) != 0) return -1;
