@@ -22,7 +22,8 @@
 #include <string.h>
 #include "frtos_os.h"
 
-#define NSPACE     8
+#define NSPACE     64      /* must match MAXPROC (frtos_os.c) */
+#define STK_ARENA_MAXSECS 8 /* must match stackguard.c ceiling */
 #define L2_IDX(va) (((va) >> 12) & 0xFF) /* L2 (4KB page) index within a section */
 #define HEAP_SECS  (XTOS_HEAP_SIZE >> 20) /* heap spans this many 1 MB sections */
 
@@ -46,7 +47,7 @@ extern uint32_t *mmu_master_table(void);
 static uint32_t  space_l1[NSPACE][4096]     __attribute__((aligned(16384)));
 static uint32_t  space_l2_heap[NSPACE][HEAP_SECS][256] __attribute__((aligned(1024)));/* heap: HEAP_SECS sections, demand-paged */
 static uint32_t  space_l2_mmap[NSPACE][256] __attribute__((aligned(1024)));/* mmap window (file-backed RO) */
-static uint32_t  space_l2_stk[NSPACE][256]  __attribute__((aligned(1024)));/* stack arena: own slot only */
+static uint32_t  space_l2_stk[NSPACE][STK_ARENA_MAXSECS][256] __attribute__((aligned(1024)));/* stack arena (per section): own slot only */
 /* a small per-space pool of L2 tables, one per 1 MB section the space overrides
  * (libc data, program data, the synthetic demo). Section-keyed so a program and
  * libc that happen to share a 1 MB section reuse ONE L2 (no clobber, the §6
@@ -244,9 +245,8 @@ uint32_t *vm_space_create(int idx, uint32_t prog_va, uint32_t prog_size, uint32_
      * stack (a write into another task's saved context would be a PL1-escalation
      * vector). Overrides the shared all-slots arena L2 the master clone provided. */
     {
-        extern uint32_t stackguard_build_l2(int slot, uint32_t *l2);
-        uint32_t sec = stackguard_build_l2(idx, space_l2_stk[idx]);
-        t[sec] = L1_COARSE(space_l2_stk[idx]);
+        extern void stackguard_build_l2(int slot, uint32_t (*l2)[256], uint32_t *l1);
+        stackguard_build_l2(idx, space_l2_stk[idx], t);   /* installs the arena L1 entries too */
     }
 
     /* global COW ranges (libc data, synthetic demo) */

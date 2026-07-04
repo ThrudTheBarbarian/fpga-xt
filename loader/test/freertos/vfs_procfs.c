@@ -22,7 +22,8 @@ extern void *frtos_alloc(size_t, size_t, void *);
 extern void  frtos_free(void *, void *);
 extern int   _gettimeofday(void *tv, void *tz);
 
-#define PF_MAXPROC 8
+#define PF_MAXPROC 64      /* must match MAXPROC (frtos_os.c); frtos_proc_snap
+                            * bounds-checks the index, so over-iterating is safe */
 #define PF_BUF     768
 
 /* ---- path parsing: "/<pid>/leaf", "/<pid>", "/uptime", ... ---------------- */

@@ -23,7 +23,7 @@
 #include "vfs.h"
 #include "frtos_os.h"
 
-#define MAXPROC 8
+#define MAXPROC 64
 #define NFD     32      /* per process; 0/1/2 are stdio (a shell juggling pipeline +
                          * subshell-state pipes holds ~6 pipe ends at once; a network
                          * server multiplexing listeners + live connections wants more) */
@@ -1314,10 +1314,13 @@ static long fs_munmap(proc_t *p)
  * FatFs/xsdps metadata walks are stack-hungry, like the shell task. */
 void frtos_fs_start(void)
 {
+    /* one control page per slot. These are reached ONLY by identity address —
+     * the client's deferral thunk (PL1, client space) and the fs task (master)
+     * both use g_fs_ctl[slot] directly, never a per-space VA mapping — so they
+     * take plain pool pages, NOT scarce shm slots (NSHM). fs_ctl is < 1 page. */
     for (int s = 0; s < MAXPROC; s++) {
-        int id = vm_shm_create(sizeof(fs_ctl));
-        g_fs_ctl[s] = (id >= 0) ? (fs_ctl *)vm_shm_kaddr(id) : 0;
-        if (!g_fs_ctl[s]) { if (g_console) g_console("[fs] shm ctl alloc failed\n", 26); return; }
+        g_fs_ctl[s] = (fs_ctl *)vm_page_alloc();
+        if (!g_fs_ctl[s]) { if (g_console) g_console("[fs] ctl page alloc failed\n", 27); return; }
     }
     g_fs_q = xQueueCreate(MAXPROC + 2, sizeof(int));   /* client slots + a kernel job */
     if (!g_fs_q) { if (g_console) g_console("[fs] queue create failed\n", 25); return; }

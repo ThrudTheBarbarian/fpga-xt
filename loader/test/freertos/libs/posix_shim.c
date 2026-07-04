@@ -667,7 +667,7 @@ ssize_t writev(int fd, const struct iovec *iov, int cnt)
  * is the armed flag (set by vfork, cleared by execve before restoring).
  * Addressing is PC-relative — this object links into a PIC .so. */
 __asm__(".local g_vfork_regs");   /* asm below names it; keep it non-preemptible */
-#define MAX_KIDS 8
+#define MAX_KIDS 64   /* concurrent children one process can track (waitpid/jobs) */
 static int g_kids[MAX_KIDS];
 
 __attribute__((naked)) pid_t vfork(void)

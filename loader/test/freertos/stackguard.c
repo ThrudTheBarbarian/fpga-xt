@@ -15,14 +15,22 @@
 
 extern uint32_t *mmu_master_table(void);
 
-#define MAXSLOT     8                       /* must match MAXPROC */
+#define MAXSLOT     64                      /* must match MAXPROC */
 #define SLOT_GUARD  0x1000u                 /* 4 KB guard (unmapped) */
 #define SLOT_STACK  0x10000u                /* 64 KB stack (FreeType is stack-hungry) */
 #define SLOT_SIZE   (SLOT_GUARD + SLOT_STACK)
+/* the arena spans as many 1 MB sections as MAXSLOT slots need (a slot may
+ * straddle a section boundary — every arena page is identity-mapped, only the
+ * per-slot guard holes are punched, so straddling is fine). STK_ARENA_MAXSECS
+ * is the ceiling vm.c sizes its per-space stack-view tables to; keep it >=
+ * ARENA_SECS. */
+#define ARENA_SECS  (((MAXSLOT * SLOT_SIZE) + 0xFFFFFu) >> 20)
+#define STK_ARENA_MAXSECS 8
 
-/* one 1 MB section (owns the whole section so the guard holes hit only us) */
-static uint8_t  g_arena[0x100000] __attribute__((aligned(0x100000)));
-static uint32_t g_arena_l2[256]   __attribute__((aligned(1024)));
+/* the stack arena — ARENA_SECS contiguous 1 MB sections (owns whole sections so
+ * the guard holes hit only us), one coarse L2 per section. */
+static uint8_t  g_arena[ARENA_SECS * 0x100000] __attribute__((aligned(0x100000)));
+static uint32_t g_arena_l2[ARENA_SECS][256]    __attribute__((aligned(1024)));
 
 /* per-slot emergency stack: on a stack OVERFLOW the task's own stack is the
  * casualty, so the fault handler points its SP here before running the kill thunk
@@ -47,14 +55,19 @@ uint32_t stackguard_emerg_top(int slot) { return (uint32_t)g_emerg[slot] + sizeo
 
 void stackguard_init(void)
 {
-    uint32_t sec = (uint32_t)g_arena >> 20;
-    for (uint32_t i = 0; i < 256; i++)
-        g_arena_l2[i] = STK_PAGE((sec << 20) + i * 0x1000u);    /* identity-map the section */
-    for (int s = 0; s < MAXSLOT; s++)
-        g_arena_l2[(s * SLOT_SIZE) >> 12] = 0;                  /* punch a guard hole per slot */
-    mmu_master_table()[sec] = ((uint32_t)g_arena_l2 & 0xFFFFFC00u) | 0x1u;  /* L1 -> coarse L2 */
+    uint32_t sec0 = (uint32_t)g_arena >> 20;
+    uint32_t abase = (uint32_t)g_arena;
+    for (int k = 0; k < ARENA_SECS; k++)
+        for (uint32_t i = 0; i < 256; i++)                     /* identity-map every arena page */
+            g_arena_l2[k][i] = STK_PAGE(abase + (uint32_t)k * 0x100000u + i * 0x1000u);
+    for (int s = 0; s < MAXSLOT; s++) {                        /* punch a guard hole per slot */
+        uint32_t off = (uint32_t)s * SLOT_SIZE;
+        g_arena_l2[off >> 20][(off & 0xFFFFFu) >> 12] = 0;
+    }
+    for (int k = 0; k < ARENA_SECS; k++)                       /* L1 -> each section's coarse L2 */
+        mmu_master_table()[sec0 + k] = ((uint32_t)g_arena_l2[k] & 0xFFFFFC00u) | 0x1u;
     __asm__ volatile("dsb");
-    __asm__ volatile("mcr p15,0,%0,c8,c7,0" :: "r"(0u));        /* flush TLB (section changed) */
+    __asm__ volatile("mcr p15,0,%0,c8,c7,0" :: "r"(0u));        /* flush TLB (sections changed) */
     __asm__ volatile("dsb; isb");
 }
 
@@ -65,15 +78,25 @@ void stackguard_init(void)
  * task's saved context would otherwise be a privilege-escalation vector). Returns
  * the arena's 1 MB section index (the caller installs the coarse L1 entry). The
  * kernel/master keeps the full g_arena_l2 (PL1) for proc_launch's argv writes. */
-uint32_t stackguard_build_l2(int slot, uint32_t *l2)
+/* Build space `slot`'s PRIVATE view across ALL arena sections into l2[][256]
+ * (this slot's stack pages PL0-RW, every other page PL0-none, guards faulting)
+ * and install the coarse L1 entry for each arena section into `l1`. */
+void stackguard_build_l2(int slot, uint32_t (*l2)[256], uint32_t *l1)
 {
-    uint32_t sec = (uint32_t)g_arena >> 20;
-    for (uint32_t i = 0; i < 256; i++) l2[i] = STK_NONE((sec << 20) + i * 0x1000u);
+    uint32_t sec0 = (uint32_t)g_arena >> 20;
+    uint32_t abase = (uint32_t)g_arena;
+    for (int k = 0; k < ARENA_SECS; k++)
+        for (uint32_t i = 0; i < 256; i++)
+            l2[k][i] = STK_NONE(abase + (uint32_t)k * 0x100000u + i * 0x1000u);
     uint32_t base = (uint32_t)slot * SLOT_SIZE + SLOT_GUARD;     /* this slot's stack */
-    for (uint32_t p = 0; p < SLOT_STACK; p += 0x1000u)
-        l2[(base + p) >> 12] = STK_PAGE((sec << 20) + base + p); /* -> PL0-RW */
-    l2[((uint32_t)slot * SLOT_SIZE) >> 12] = 0;                  /* this slot's guard: fault */
-    return sec;
+    for (uint32_t p = 0; p < SLOT_STACK; p += 0x1000u) {
+        uint32_t off = base + p;
+        l2[off >> 20][(off & 0xFFFFFu) >> 12] = STK_PAGE(abase + off);   /* -> PL0-RW */
+    }
+    uint32_t goff = (uint32_t)slot * SLOT_SIZE;                  /* this slot's guard: fault */
+    l2[goff >> 20][(goff & 0xFFFFFu) >> 12] = 0;
+    for (int k = 0; k < ARENA_SECS; k++)
+        l1[sec0 + k] = ((uint32_t)l2[k] & 0xFFFFFC00u) | 0x1u;
 }
 
 /* the stack buffer for `slot` (the guard page sits immediately below it). */
@@ -87,8 +110,10 @@ StackType_t *stackguard_stack(int slot, uint32_t *words_out)
 int stackguard_is_guard(uint32_t va)
 {
     uint32_t a = (uint32_t)g_arena;
-    if (va < a || va >= a + 0x100000u) return 0;
-    return ((va - a) % SLOT_SIZE) < SLOT_GUARD;
+    if (va < a || va >= a + (uint32_t)ARENA_SECS * 0x100000u) return 0;
+    uint32_t off = va - a;
+    if (off >= (uint32_t)MAXSLOT * SLOT_SIZE) return 0;         /* arena tail past the last slot */
+    return (off % SLOT_SIZE) < SLOT_GUARD;
 }
 
 /* --- static-allocation plumbing (required once STATIC_ALLOCATION is on) --- */
