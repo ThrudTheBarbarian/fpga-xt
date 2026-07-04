@@ -494,6 +494,16 @@ sdstage: $(BUILD)/toybox.so $(BUILD)/sqlite3.so $(BUILD)/libGEM.so $(BUILD)/aesd
 	    "$(filter-out toybox,$(TOYBOX_APPLETS))" > $(SDSTAGE)/OS/bin/install-links.sh
 	@echo "staged -> $(SDSTAGE)/OS; copy onto the card, then run: sh /OS/bin/install-links.sh"
 
+# Push the staged /OS tree to a RUNNING board over TFTP (no card eject) — only
+# files that changed since the last push. Then cold-load the kernel to pick up
+# the changes.  Board defaults to xtos.local (mDNS); override with BOARD=<ip>.
+#   make sdpush                 # -> xtos.local
+#   make sdpush BOARD=192.168.1.9
+.PHONY: sdpush
+BOARD ?= xtos.local
+sdpush: sdstage
+	tools/sdpush.sh $(SDSTAGE) $(BOARD)
+
 $(BUILD):
 	@mkdir -p $(BUILD)
 
