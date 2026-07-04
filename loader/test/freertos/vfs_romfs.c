@@ -133,6 +133,7 @@ static int ro_readdir_meta(vfs_mount *m, const char *rel, int index, struct vfs_
         if (dup) continue;
         if (emitted++ == index) {
             int t = 0; while (t < cn && t < (int)sizeof out->name - 1) { out->name[t] = comp[t]; t++; } out->name[t] = 0;
+            if (t < cn) out->name[0] = 0;   /* name didn't fit -> mark uncacheable (dir cache skips it) */
             int isdir = (comp[cn] == '/');
             out->mode  = isdir ? XT_S_IFDIR : XT_S_IFREG;
             out->size  = isdir ? 0 : esz;

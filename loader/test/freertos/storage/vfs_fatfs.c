@@ -176,6 +176,7 @@ static int ff_readdir_meta(vfs_mount *m, const char *path, int index, struct vfs
     g_mdir_next++;
     if (!g_mfno.fname[0]) { f_closedir(&g_mdir); g_mdir_open = 0; return 0; }   /* end of dir */
     int i = 0; while (g_mfno.fname[i] && i < (int)sizeof out->name - 1) { out->name[i] = g_mfno.fname[i]; i++; } out->name[i] = 0;
+    if (g_mfno.fname[i]) out->name[0] = 0;   /* name didn't fit -> mark uncacheable (dir cache skips it) */
     uint32_t size = (uint32_t)g_mfno.fsize;
     if (g_mfno.fattrib & AM_DIR)      out->mode = XT_S_IFDIR;
     else if (g_mfno.fattrib & AM_SYS) { out->mode = XT_S_IFLNK; size = size > 5 ? size - 5 : 0; }

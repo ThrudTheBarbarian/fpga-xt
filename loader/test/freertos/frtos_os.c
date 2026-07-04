@@ -898,7 +898,6 @@ typedef struct {
     char            dir[FS_PATH_MAX];   /* absolute dir path, no trailing '/' (root = "/") */
     uint16_t        nents;
     uint8_t         valid;
-    uint8_t         full;               /* 1 = whole dir fit; 0 = truncated (misses fall back) */
     uint32_t        lru;
     struct vfs_dent e[DCACHE_ENTS];
 } dcache_t;
@@ -959,22 +958,28 @@ static dcache_t *dcache_fill(const char *dir)
     dcache_t *c = dcache_slot();
     c->valid = 0;                                          /* unusable while (re)filling */
     int i = 0; while (dir[i] && i < FS_PATH_MAX - 1) { c->dir[i] = dir[i]; i++; } c->dir[i] = 0;
-    c->nents = 0; c->full = 1;
+    c->nents = 0;
     for (int idx = 0; r == 1; r = vfs_readdir_meta(dir, ++idx, &d)) {
-        if (c->nents >= DCACHE_ENTS) { c->full = 0; break; }
+        if (!d.name[0]) continue;                          /* over-long name: uncacheable, skip */
+        if (c->nents >= DCACHE_ENTS) break;                /* dir bigger than the cache: the rest
+                                                            * just miss -> a real stat, still correct */
         c->e[c->nents++] = d;
     }
     c->lru = ++g_dcache_tick;
     c->valid = 1;
     return c;
 }
-/* serve stat/lstat from the parent dir's cached snapshot. 0 = filled *st; -1 = dir is
- * fully cached and has no such entry (ENOENT); -2 = not answerable -> caller must use
- * vfs_stat/vfs_lstat (root, uncacheable fs, truncated dir, or following a symlink). */
+/* serve stat/lstat from the parent dir's cached snapshot. 0 = filled *st; -2 = not
+ * answerable -> caller MUST fall back to vfs_stat/vfs_lstat. A miss NEVER means "no such
+ * file" — the raw path may be "." / ".." / an over-long (uncached) name / a non-canonical
+ * form the cache never keyed, so an authoritative ENOENT here would wrongly hide real
+ * files. Only an exact-name hit on a fully-cached entry is served; everything else falls
+ * through to the real (correct) stat. */
 static int k_dstat(const char *path, int follow, struct xt_stat *st)
 {
     char dir[FS_PATH_MAX]; const char *leaf;
     if (path_split(path, dir, sizeof dir, &leaf) != 0) return -2;
+    if (leaf[0] == '.' && (!leaf[1] || (leaf[1] == '.' && !leaf[2]))) return -2;  /* "." / ".." */
     dcache_t *c = dcache_find(dir);
     if (!c) c = dcache_fill(dir);
     if (!c) return -2;
@@ -985,7 +990,7 @@ static int k_dstat(const char *path, int follow, struct xt_stat *st)
             st->mode = c->e[i].mode; st->size = c->e[i].size; st->mtime = c->e[i].mtime;
             return 0;
         }
-    return c->full ? -1 : -2;                              /* full miss = ENOENT; truncated = unknown */
+    return -2;                                             /* miss -> real stat decides existence */
 }
 
 /* real filesystem capacity for statfs/df: FatFs f_getfree on HW (out = {total_sectors,
@@ -1022,8 +1027,7 @@ static long fs_serve(int slot)
     case SYS_stat: case SYS_lstat: {                          /* path -> xt_stat (in st[]) */
         struct xt_stat s;
         int hit = k_dstat(c->path, c->op == SYS_stat, &s);   /* parent-dir snapshot fast path */
-        long r = (hit == 0) ? 0
-               : (hit == -1) ? -1                            /* cached dir: no such entry */
+        long r = (hit == 0) ? 0                              /* miss -> the real stat decides */
                : (c->op == SYS_stat) ? vfs_stat(c->path, &s) : vfs_lstat(c->path, &s);
         if (r == 0) { c->st[0] = s.mode; c->st[1] = s.size; c->st[2] = s.mtime; }
         return r;
