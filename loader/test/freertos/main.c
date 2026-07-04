@@ -315,11 +315,13 @@ static void shell_task(void *arg)
 
 int main(void)
 {
+    { extern void klog(const char *);            /* boot banner -> the log, not the console */
 #ifdef XT_HW_UART
-    puts0("=== xtos: tier-2 testbed (Zynq-A9 on HARDWARE, UART1) ===\n");
+      klog("=== xtos: tier-2 testbed (Zynq-A9 on HARDWARE, UART1) ===\n");
 #else
-    puts0("=== xtos: tier-2 testbed (qemu zynq-a9, semihosting) ===\n");
+      klog("=== xtos: tier-2 testbed (qemu zynq-a9, semihosting) ===\n");
 #endif
+    }
     mmu_init();          /* flat map -> RAM is Normal memory (unaligned access ok) */
     vm_cow_init();       /* fill the synthetic COW template + register its range */
     { extern void stackguard_init(void); stackguard_init(); }   /* guarded stack arena */
@@ -361,7 +363,7 @@ int main(void)
         puts0(" ("); puts0(err); puts0(")\n"); sh_exit(1); }
     frtos_activate_libc(libc);
     xtld_run_init(libc);
-    puts0("libc.so loaded + activated\n");
+    { extern void klog(const char *); klog("libc.so loaded + activated\n"); }
 
     /* T2-b: snapshot libc.so's pristine data/bss (post-init, before any malloc)
      * into a static buffer, so each spawned process gets its OWN copy of libc's
@@ -384,7 +386,9 @@ int main(void)
     vm_phys_init(0x20000000u);
 
     void *p = frtos_alloc(4096, 16, NULL);       /* now via libc.so's malloc */
-    puts0(p ? "libc.so malloc: ok\n" : "libc.so malloc: FAIL\n");
+    { extern void klog(const char *);
+      if (p) klog("libc.so malloc: ok\n");
+      else   puts0("libc.so malloc: FAIL\n"); }   /* a fatal one stays on the console */
     frtos_free(p, NULL);
 
     frtos_fs_start();    /* fs service task + request channel (must exist before any PL0 open) */
