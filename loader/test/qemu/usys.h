@@ -83,6 +83,9 @@ static inline long sys_bind(int fd, unsigned ip_be, unsigned port)
 static inline long sys_listen(int fd, int backlog) { return __syscall(SYS_listen, fd, backlog, 0); }
 static inline long sys_accept(int fd, unsigned peer[2])
 { return __syscall(SYS_accept, fd, (long)peer, 0); }
+/* non-blocking accept (the select primitive): -2 = none pending right now */
+static inline long sys_accept_nb(int fd, unsigned peer[2])
+{ return __syscall(SYS_accept, fd, (long)peer, 1); }
 static inline long sys_resolve(const char *name, unsigned *ip_be)
 { return __syscall(SYS_resolve, (long)name, (long)ip_be, 0); }
 /* mmap a romfs file read-only + shared (len=0 -> whole file from off). Returns a

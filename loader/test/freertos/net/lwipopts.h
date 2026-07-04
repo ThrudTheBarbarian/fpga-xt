@@ -17,9 +17,9 @@
 #define LWIP_SO_RCVBUF             1     /* recv_avail -> FIONREAD/poll */
 #define LWIP_NETIF_LOOPBACK        1     /* 127.0.0.1 (the slirp-free test rig) */
 #define LWIP_HAVE_LOOPIF           1
-#define MEMP_NUM_NETCONN           16
-#define MEMP_NUM_NETBUF            16
-#define MEMP_NUM_TCPIP_MSG_API     16
+#define MEMP_NUM_NETCONN           48
+#define MEMP_NUM_NETBUF            32
+#define MEMP_NUM_TCPIP_MSG_API     32
 #define LWIP_NETIF_API             0
 
 #define LWIP_IPV4                  1
@@ -51,8 +51,10 @@
 #define MEM_SIZE                   (64 * 1024)
 #define MEMP_NUM_PBUF              48
 #define MEMP_NUM_UDP_PCB           12
-#define MEMP_NUM_TCP_PCB           8
-#define MEMP_NUM_TCP_PCB_LISTEN    4
+#define MEMP_NUM_TCP_PCB           48   /* active + TIME_WAIT: rapid short connections
+                                          * leave PCBs in TIME_WAIT (2*MSL); a small pool
+                                          * exhausts under churn -> connect/accept fail */
+#define MEMP_NUM_TCP_PCB_LISTEN    16   /* a multi-port server wants many listeners */
 #define MEMP_NUM_TCP_SEG           48
 #define MEMP_NUM_SYS_TIMEOUT       24    /* dhcp+arp+tcp+dns+mdns+sntp+tftp cyclic + one-
                                           * shots; an EXHAUSTED pool spins the tcpip thread

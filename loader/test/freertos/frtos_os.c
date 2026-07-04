@@ -24,8 +24,9 @@
 #include "frtos_os.h"
 
 #define MAXPROC 8
-#define NFD     16      /* per process; 0/1/2 are stdio (a shell juggling pipeline +
-                         * subshell-state pipes holds ~6 pipe ends at once) */
+#define NFD     32      /* per process; 0/1/2 are stdio (a shell juggling pipeline +
+                         * subshell-state pipes holds ~6 pipe ends at once; a network
+                         * server multiplexing listeners + live connections wants more) */
 #define FD_PATH_MAX 96  /* retained open path (for a writable mmap's independent write-back handle) */
 
 typedef struct {
@@ -490,7 +491,7 @@ static long k_socket_call(proc_t *p)
     extern int  xt_sock_connect(int, unsigned, unsigned);
     extern int  xt_sock_bind(int, unsigned, unsigned);
     extern int  xt_sock_listen(int, int);
-    extern int  xt_sock_accept(int, unsigned *, unsigned *, int (*)(void *), void *);
+    extern int  xt_sock_accept(int, unsigned *, unsigned *, int (*)(void *), void *, int);
     extern int  xt_sock_resolve(const char *, unsigned *);
     uint32_t fd = p->da0;
     switch (p->dnum) {
@@ -513,7 +514,8 @@ static long k_socket_call(proc_t *p)
     case SYS_accept: {
         if (fd >= NFD || !p->fd[fd].open || !p->fd[fd].sock) return -1;
         unsigned peer[2] = { 0, 0 };
-        int si = xt_sock_accept(p->fd[fd].sock - 1, &peer[0], &peer[1], sock_tick, p);
+        int si = xt_sock_accept(p->fd[fd].sock - 1, &peer[0], &peer[1], sock_tick, p, (int)p->da2);
+        if (si == -2) return -2;                   /* da2=1 nonblock, none pending (EAGAIN) */
         if (si < 0) return -1;
         int nfd = sock_fd_new(p, si);
         if (nfd < 0) { xt_sock_close(si); return -1; }

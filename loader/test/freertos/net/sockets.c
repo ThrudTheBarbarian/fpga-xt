@@ -24,7 +24,7 @@ typedef struct {
     int             listening;
 } xt_sock;
 
-#define MAXSOCK 16
+#define MAXSOCK 48         /* listeners + live connections across all procs */
 static xt_sock g_socks[MAXSOCK];
 
 static xt_sock *slot_of(int si) { return (si >= 0 && si < MAXSOCK && g_socks[si].conn) ? &g_socks[si] : 0; }
@@ -76,13 +76,17 @@ int xt_sock_listen(int si, int backlog)
     xt_sock *s = slot_of(si);
     if (!s) return -1;
     if (netconn_listen_with_backlog(s->conn, (u8_t)(backlog > 0 ? backlog : 4)) != ERR_OK) return -1;
+    netconn_set_nonblocking(s->conn, 1);           /* accept polls; blocking accept naps+ticks */
     s->listening = 1;
     return 0;
 }
 
-/* blocks (ticking) until a client arrives; -> new socket index + peer addr */
+/* accept a pending connection -> new socket index + peer addr. Blocking (ticks
+ * for kill/^C/^Z); nonblock=1 returns -2 immediately when none is pending (the
+ * select/poll primitive — a multi-port server round-robins non-blocking accepts). */
+#define XT_SOCK_WOULDBLOCK (-2)
 int xt_sock_accept(int si, unsigned *peer_ip, unsigned *peer_port,
-                   xt_sock_tick tick, void *proc)
+                   xt_sock_tick tick, void *proc, int nonblock)
 {
     xt_sock *s = slot_of(si);
     if (!s || !s->listening) return -1;
@@ -90,8 +94,10 @@ int xt_sock_accept(int si, unsigned *peer_ip, unsigned *peer_port,
     for (;;) {
         err_t e = netconn_accept(s->conn, &nc);
         if (e == ERR_OK) break;
-        if (e != ERR_TIMEOUT) return -1;
+        if (e != ERR_TIMEOUT && e != ERR_WOULDBLOCK) return -1;
+        if (nonblock) return XT_SOCK_WOULDBLOCK;   /* select primitive: none pending */
         if (tick && tick(proc)) return -1;         /* killed/stopped */
+        vTaskDelay(pdMS_TO_TICKS(15));             /* the listen conn is nonblocking; nap */
     }
     for (int i = 0; i < MAXSOCK; i++) {
         if (g_socks[i].conn) continue;
