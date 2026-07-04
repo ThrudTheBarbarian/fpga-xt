@@ -39,8 +39,10 @@ unsigned xt_sock_rxdbg[5];
 /* raw_input delivery probe. [0..2] set in lwIP raw.c: ICMP pkts into raw_input,
  * ICMP raw pcbs seen, full matches (recv run). [3] total raw pcbs seen (any
  * proto) — 0 = list empty. [4] raw netconns xt_sock_new created. [5] created
- * conn's NETCONNTYPE_GROUP (0x40 = NETCONN_RAW). */
-unsigned xt_raw_dbg[6];
+ * conn's NETCONNTYPE_GROUP (0x40 = NETCONN_RAW). [6] ICMP raw pcbs added to
+ * raw_pcbs, [7] ICMP raw pcbs removed (raw_remove) — added>removed means one
+ * should still be live. */
+unsigned xt_raw_dbg[8];
 
 static xt_sock *slot_of(int si) { return (si >= 0 && si < MAXSOCK && g_socks[si].conn) ? &g_socks[si] : 0; }
 

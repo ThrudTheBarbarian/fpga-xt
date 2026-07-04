@@ -161,7 +161,7 @@ raw_input(struct pbuf *p, struct netif *inp)
 
   /* XTOS diag: [0] ICMP pkts into raw_input, [1] ICMP raw pcbs seen,
    * [2] full matches (recv about to run). Surfaced at /OS/proc/net/stats. */
-  extern unsigned xt_raw_dbg[3];
+  extern unsigned xt_raw_dbg[8];
   if (proto == 1) xt_raw_dbg[0]++;   /* IP_PROTO_ICMP */
 
   prev = NULL;
@@ -570,6 +570,7 @@ raw_remove(struct raw_pcb *pcb)
 {
   struct raw_pcb *pcb2;
   LWIP_ASSERT_CORE_LOCKED();
+  { extern unsigned xt_raw_dbg[8]; if (pcb->protocol == 1) xt_raw_dbg[7]++; }  /* ICMP pcb removed */
   /* pcb to be removed is first in list? */
   if (raw_pcbs == pcb) {
     /* make list start at 2nd pcb */
@@ -620,6 +621,7 @@ raw_new(u8_t proto)
     pcb_tci_init(pcb);
     pcb->next = raw_pcbs;
     raw_pcbs = pcb;
+    { extern unsigned xt_raw_dbg[8]; if (proto == 1) xt_raw_dbg[6]++; }  /* ICMP pcb added */
   }
   return pcb;
 }
