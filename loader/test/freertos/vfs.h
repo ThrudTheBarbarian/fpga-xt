@@ -32,7 +32,9 @@ typedef struct vfs_mount vfs_mount;
 /* one directory entry with its metadata (readdir_meta / the dir cache). mode/size/mtime
  * match vfs_stat's xt_stat; name is the leaf, NUL-terminated (over-long names truncate,
  * so a lookup of them misses the cache and falls back to a real stat). */
-#define VFS_DENT_NAME 64
+#define VFS_DENT_NAME 160    /* covers long real-world names (e.g. freedesktop mimetype
+                              * icons); a rarer over-long name is marked uncacheable and
+                              * falls back to a normal stat */
 struct vfs_dent { unsigned mode, size, mtime; char name[VFS_DENT_NAME]; };
 
 /* a filesystem driver */

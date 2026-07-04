@@ -892,8 +892,8 @@ static long fd_munmap(int slot)
  * stat after is a memory hit. Invalidated per-directory on any write there. Lives in
  * (and is only touched by) the fs task, so it needs no locking. */
 #define DCACHE_N     6           /* directories kept (LRU) */
-#define DCACHE_ENTS  320         /* entries cached per dir; a bigger dir caches its first
-                                  * DCACHE_ENTS and marks !full so misses fall through */
+#define DCACHE_ENTS  384         /* entries cached per dir; a bigger dir caches its first
+                                  * DCACHE_ENTS and the rest just miss -> a real stat */
 typedef struct {
     char            dir[FS_PATH_MAX];   /* absolute dir path, no trailing '/' (root = "/") */
     uint16_t        nents;
