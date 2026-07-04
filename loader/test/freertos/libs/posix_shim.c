@@ -1067,7 +1067,9 @@ int poll(struct pollfd *fds, nfds_t nfds, int timeout)
                 continue;
             }
         }
-        usleep(20000);
+        usleep(2000);    /* 2 ms recheck for socket/pipe fds: fine-grained enough that
+                          * ping RTT reads true (not quantized to a coarse nap), cheap now
+                          * that usleep really yields */
     }
 }
 

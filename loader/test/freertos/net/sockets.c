@@ -32,17 +32,6 @@ typedef struct {
 #define MAXSOCK 48         /* listeners + live connections across all procs */
 static xt_sock g_socks[MAXSOCK];
 
-/* receive-path diagnostics, shown at /OS/proc/net/stats (sockdbg row):
- * [0] xt_sock_avail calls  [1] avail returned >0  [2] recvfrom calls
- * [3] recvfrom got a packet  [4] recvfrom timeouts (tick loops) */
-unsigned xt_sock_rxdbg[5];
-/* raw_input delivery probe. [0..2] set in lwIP raw.c: ICMP pkts into raw_input,
- * ICMP raw pcbs seen, full matches (recv run). [3] total raw pcbs seen (any
- * proto) — 0 = list empty. [4] raw netconns xt_sock_new created. [5] created
- * conn's NETCONNTYPE_GROUP (0x40 = NETCONN_RAW). [6] ICMP raw pcbs added to
- * raw_pcbs, [7] ICMP raw pcbs removed (raw_remove) — added>removed means one
- * should still be live. */
-unsigned xt_raw_dbg[8];
 
 static xt_sock *slot_of(int si) { return (si >= 0 && si < MAXSOCK && g_socks[si].conn) ? &g_socks[si] : 0; }
 
@@ -56,7 +45,6 @@ int xt_sock_new(int type)
             ? netconn_new_with_proto_and_callback(NETCONN_RAW, IP_PROTO_ICMP, 0)
             : netconn_new(type == 2 ? NETCONN_UDP : NETCONN_TCP);
         if (!c) return -1;
-        if (type == 3) { xt_raw_dbg[4]++; xt_raw_dbg[5] = NETCONNTYPE_GROUP(netconn_type(c)); }
         netconn_set_recvtimeout(c, 200);           /* the kill/stop tick */
         g_socks[i] = (xt_sock){ c, 0, 0, 0 };
         return i;
@@ -225,17 +213,14 @@ long xt_sock_recvfrom(int si, void *buf, unsigned len,
 {
     xt_sock *s = slot_of(si);
     if (!s) return -1;
-    xt_sock_rxdbg[2]++;
     struct netbuf *nb = 0;
     for (;;) {
         err_t e = netconn_recv(s->conn, &nb);
         if (e == ERR_OK) break;
         if (e == ERR_CLSD) return 0;
         if (e != ERR_TIMEOUT) return -1;
-        xt_sock_rxdbg[4]++;
         if (tick && tick(proc)) return -1;                 /* killed/stopped */
     }
-    xt_sock_rxdbg[3]++;
     if (src_ip)   *src_ip   = ip_addr_get_ip4_u32(netbuf_fromaddr(nb));
     if (src_port) *src_port = netbuf_fromport(nb);
     unsigned skip = 0;
@@ -257,7 +242,6 @@ long xt_sock_avail(int si)
 {
     xt_sock *s = slot_of(si);
     if (!s) return -1;
-    xt_sock_rxdbg[0]++;
     unsigned n = s->rb ? (netbuf_len(s->rb) - s->rb_off) : 0;
 #if LWIP_SO_RCVBUF
     if (!n) {
@@ -266,7 +250,6 @@ long xt_sock_avail(int si)
         if (a > 0) n = (unsigned)a;
     }
 #endif
-    if (n) xt_sock_rxdbg[1]++;
     return (long)n;
 }
 
