@@ -63,7 +63,7 @@ static void k_pipe_close_end(fd_t *f);   /* impl below with the other pipe ops *
 /* kernel-mailbox fs ops (impls with the fs task, below): displacing an open
  * file fd (dup2 restore) must flush + close through the SOLE FatFs driver */
 enum { KFS_READFILE, KFS_LISTDIR, KFS_CLOSEALL, KFS_CLOSEFD,
-       KFS_WRITEOPEN, KFS_WRITEBLOCK, KFS_WRITECLOSE };
+       KFS_WRITEOPEN, KFS_WRITEBLOCK, KFS_WRITECLOSE, KFS_LOGWRITE };
 static long kfs_call(int op, const char *path, void *buf, uint32_t len, void **out_buf);
 
 typedef struct {
@@ -983,6 +983,54 @@ static void fs_close_all(int slot)
 
 static vfs_file *g_kfs_wf;             /* the net file drop's open upload (fs task only) */
 
+/* ---- kernel diagnostic log (klog) -----------------------------------------
+ * The [sd]/[net]/[tftp]/[hdmi] boot chatter goes HERE, not the console: klog
+ * appends to a RAM buffer (works pre-scheduler too), and a low-priority logger
+ * task flushes it to /OS/var/log/system.log (fresh each boot) once the SD is
+ * mounted. Keeps the console clean for the [ OK ]/[FAIL] boot-script status. */
+#define KLOG_CAP 32768
+static char          g_klog[KLOG_CAP];
+static volatile int  g_klog_len;
+static volatile int  g_klog_flushed;
+
+void klog(const char *s)
+{
+    unsigned f = xt_irq_save();               /* frtos_os.h (static inline) */
+    while (*s && g_klog_len < KLOG_CAP - 1) g_klog[g_klog_len++] = *s++;
+    xt_irq_restore(f);
+}
+void klog_u(unsigned v)
+{
+    char b[12]; int n = 0;
+    if (!v) { klog("0"); return; }
+    while (v && n < 11) { b[n++] = (char)('0' + v % 10); v /= 10; }
+    char o[12]; int k = 0;
+    while (n) o[k++] = b[--n];
+    o[k] = 0; klog(o);
+}
+
+/* flush the accumulated log to the SD (truncate+rewrite; the buffer holds the
+ * whole session, well under KLOG_CAP for a boot). Fails silently until the SD
+ * mount exists, so the logger just retries. */
+static void klog_sync(void)
+{
+    int len = g_klog_len;                         /* snapshot */
+    if (len <= g_klog_flushed) return;            /* nothing new */
+    if (kfs_call(KFS_LOGWRITE, 0, g_klog, (uint32_t)len, 0) == (long)len)
+        g_klog_flushed = len;
+}
+
+static void logger_task(void *arg)
+{
+    (void)arg;
+    for (;;) { klog_sync(); vTaskDelay(pdMS_TO_TICKS(1000)); }
+}
+
+/* the live diagnostic buffer -> /OS/proc/kmsg (dmesg); works even with no SD */
+int klog_snapshot(const char **p) { *p = g_klog; return g_klog_len; }
+
+void klog_start(void) { xTaskCreate(logger_task, "logd", 512, 0, 1, 0); }
+
 static long kfs_serve(void)
 {
     switch (g_kfs.op) {
@@ -1025,6 +1073,15 @@ static long kfs_serve(void)
     case KFS_WRITECLOSE:
         if (g_kfs_wf) { vfs_close(g_kfs_wf); g_kfs_wf = 0; }
         return 0;
+    case KFS_LOGWRITE: {                                /* rewrite /OS/var/log/system.log (fs task) */
+        vfs_mkdir("/OS/var/log");                       /* idempotent; sole-driver context */
+        vfs_file lf;
+        if (vfs_open("/OS/var/log/system.log", VFS_O_WRONLY | VFS_O_CREAT | VFS_O_TRUNC, &lf) != 0)
+            return -1;
+        long w = lf.write ? vfs_write(&lf, g_kfs.buf, g_kfs.len) : -1;
+        vfs_close(&lf);
+        return w;
+    }
     case KFS_CLOSEFD: {                                 /* flush + close a caller's fd_t */
         fd_t *d = (fd_t *)g_kfs.buf;
         fd_drop_cache(d);

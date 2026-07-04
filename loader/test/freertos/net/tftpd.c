@@ -15,7 +15,7 @@
 #include "lwip/pbuf.h"
 #include "lwip/tcpip.h"
 
-extern void puts0(const char *);
+extern void klog(const char *);      /* -> /OS/var/log/system.log (not console) */
 long frtos_net_writeopen(const char *path);
 long frtos_net_writeblock(const void *buf, unsigned len);
 long frtos_net_writeclose(void);
@@ -38,7 +38,7 @@ static void *tf_open(const char *fname, const char *mode, u8_t write)
     for (int j = 0; fname[j] && i < (int)sizeof path - 1; j++) path[i++] = fname[j];
     path[i] = 0;
 
-    puts0("[tftp] open "); puts0(path); puts0(write ? " (put)\n" : " (get)\n");
+    klog("[tftp] open "); klog(path); klog(write ? " (put)\n" : " (get)\n");
     if (write)
         return frtos_net_writeopen(path) == 0 ? H_WRITE : 0;
 
@@ -88,8 +88,8 @@ static const struct tftp_context g_tftp = {
 static void do_init(void *arg)
 {
     (void)arg;
-    if (tftp_init_server(&g_tftp) != ERR_OK) puts0("[net] tftpd init failed\n");
-    else puts0("[net] tftpd listening\n");
+    if (tftp_init_server(&g_tftp) != ERR_OK) klog("[net] tftpd init failed\n");
+    else klog("[net] tftpd listening\n");
 }
 
 void tftpd_init(void)

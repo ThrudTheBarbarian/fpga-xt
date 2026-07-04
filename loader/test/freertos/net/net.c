@@ -16,8 +16,8 @@
 /* kernel whole-file read (frtos_os.c) — for /OS/etc/resolv.conf */
 long frtos_net_readfile(const char *path, const void **data);
 
-extern void puts0(const char *);
-extern void putu(unsigned);
+extern void klog(const char *);      /* -> /OS/var/log/system.log (not console) */
+extern void klog_u(unsigned);
 
 err_t xemacpsif_init(struct netif *nif);
 int   xemacpsif_poll(struct netif *nif);
@@ -48,11 +48,11 @@ static void net_status(struct netif *nif)
     if (netif_is_up(nif) && !ip4_addr_isany_val(*netif_ip4_addr(nif))) {
         const ip4_addr_t *a = netif_ip4_addr(nif);
         unsigned ip = lwip_ntohl(ip4_addr_get_u32(a));
-        puts0("[net] up ");
-        putu((ip >> 24) & 255); puts0(".");
-        putu((ip >> 16) & 255); puts0(".");
-        putu((ip >> 8) & 255);  puts0(".");
-        putu(ip & 255);         puts0("  (tftp ready)\n");
+        klog("[net] up ");
+        klog_u((ip >> 24) & 255); klog(".");
+        klog_u((ip >> 16) & 255); klog(".");
+        klog_u((ip >> 8) & 255);  klog(".");
+        klog_u(ip & 255);         klog("  (tftp ready)\n");
     }
 }
 
@@ -74,7 +74,7 @@ static void net_task(void *arg)
     if (!netif_add(&g_nif, IP4_ADDR_ANY4, IP4_ADDR_ANY4, IP4_ADDR_ANY4,
                    0, xemacpsif_init, tcpip_input)) {
         UNLOCK_TCPIP_CORE();
-        puts0("[net] GEM init failed\n");
+        klog("[net] GEM init failed\n");
         vTaskDelete(0);
         return;
     }
@@ -115,7 +115,7 @@ static void net_task(void *arg)
         if (now - lastlink >= pdMS_TO_TICKS(500)) {      /* link watch, every ~500 ms */
             lastlink = now;
             int sp = xemacpsif_link_poll();
-            if (sp) { puts0("[net] link "); putu((unsigned)sp); puts0(" Mb/s\n"); }
+            if (sp) { klog("[net] link "); klog_u((unsigned)sp); klog(" Mb/s\n"); }
         }
         xemacpsif_wait(10);                              /* RX IRQ wakes us instantly;
                                                           * 10 ms safety-net timeout */

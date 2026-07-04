@@ -17,7 +17,7 @@
 #include "task.h"
 #include <string.h>
 
-extern void puts0(const char *);
+extern void klog(const char *);      /* -> /OS/var/log/system.log (not console) */
 extern void sh_inject(unsigned char c);       /* uart1_rx.c (HW) / no-op (qemu) */
 
 static struct tcp_pcb *g_client;
@@ -144,7 +144,7 @@ static void do_listen(void *arg)
     l = tcp_listen(l);
     if (!l) return;
     tcp_accept(l, nc_accept);
-    puts0("[net] console on tcp/23\n");
+    klog("[net] console on tcp/23\n");
 }
 
 void netcon_init(void)

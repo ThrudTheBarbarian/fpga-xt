@@ -17,7 +17,7 @@ int  xt_i2c_recv(uint8_t addr, uint8_t *buf, int n);         /* 0=ok */
 
 #ifdef XT_HW
 
-extern void puts0(const char *);
+extern void klog(const char *);   /* -> /OS/var/log/system.log */
 extern void putu(unsigned);
 
 static void puthex8(uint8_t v)
@@ -25,7 +25,7 @@ static void puthex8(uint8_t v)
     static const char h[] = "0123456789abcdef";
     char s[5] = "0x00";
     s[2] = h[(v >> 4) & 0xF]; s[3] = h[v & 0xF];
-    puts0(s);
+    klog(s);
 }
 
 static void puthex32(uint32_t v)
@@ -33,7 +33,7 @@ static void puthex32(uint32_t v)
     static const char h[] = "0123456789abcdef";
     char s[11] = "0x00000000";
     for (int i = 0; i < 8; i++) s[2 + i] = h[(v >> ((7 - i) * 4)) & 0xF];
-    puts0(s);
+    klog(s);
 }
 
 /* last-transaction diagnostics (devid-FAIL localisation) */
@@ -190,10 +190,10 @@ static void sii_enable_output(void)
     { uint8_t t = 0; sii_read(0xBE, &t); sii_write(0xBE, (uint8_t)(t | 0x01)); }
     sii_write(0x1A, 0x01);                          /* HDMI, TMDS ON (last)       */
 
-    puts0("[hdmi] post-cfg 1A/1E/60/61=");
+    klog("[hdmi] post-cfg 1A/1E/60/61=");
     { uint8_t a = 0, p = 0, s = 0, sp = 0;
       sii_read(0x1A, &a); sii_read(0x1E, &p); sii_read(0x60, &s); sii_read(0x61, &sp);
-      puthex8(a); puts0(" "); puthex8(p); puts0(" "); puthex8(s); puts0(" "); puthex8(sp); puts0("\r\n"); }
+      puthex8(a); klog(" "); puthex8(p); klog(" "); puthex8(s); klog(" "); puthex8(sp); klog("\r\n"); }
 }
 
 void hdmi_init(void)
@@ -209,9 +209,9 @@ void hdmi_init(void)
         if (sii_read(0x1B, &devid) == 0 && devid == 0xB0) { ok = 1; break; }
         gt_delay_us(2000);
     }
-    if (!ok) { puts0("[hdmi] SiI9022 not responding (devid != 0xB0)\r\n"); return; }
+    if (!ok) { klog("[hdmi] SiI9022 not responding (devid != 0xB0)\r\n"); return; }
     sii_enable_output();
-    puts0("[hdmi] SiI9022 devid=0xB0, 1080p60 enabled\r\n");
+    klog("[hdmi] SiI9022 devid=0xB0, 1080p60 enabled\r\n");
 }
 
 /* PS-I2C0 access for /OS/dev/i2c-0 (vfs_devfs.c). hdmi_init is the only other

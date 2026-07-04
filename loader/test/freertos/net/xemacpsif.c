@@ -19,8 +19,8 @@
 #include "netif/ethernet.h"
 #include "xemacps.h"
 
-extern void puts0(const char *);
-extern void putu(unsigned);
+extern void klog(const char *);      /* -> /OS/var/log/system.log (not console) */
+extern void klog_u(unsigned);
 
 #define NET_DMA_BASE  0x3F000000u          /* 1 MB inside the non-cacheable window */
 #define RXBD_CNT      32
@@ -281,7 +281,7 @@ err_t xemacpsif_init(struct netif *nif)
 
     g_phy = phy_find();
     if (g_phy >= 0) phy_start();
-    else puts0("[net] no PHY found on MDIO\n");
+    else klog("[net] no PHY found on MDIO\n");
 
     /* provisional speed: 100 until the link resolves (qemu's model reports
      * link+aneg immediately, HW in a second or two) */

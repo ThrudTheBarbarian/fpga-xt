@@ -164,6 +164,14 @@ static int pf_open(vfs_mount *m, const char *rel, int flags, vfs_file *f)
 {
     (void)m;
     if (flags & VFS_O_ACCMODE) return -1;                 /* read-only fs */
+    if (!strcmp(rel, "/kmsg")) {                          /* dmesg: the live klog buffer, in place */
+        extern int klog_snapshot(const char **);
+        const char *lp; int klen = klog_snapshot(&lp);
+        f->data = (void *)lp; f->priv = 0;                /* static kernel buffer — don't free */
+        f->size = (uint32_t)klen; f->pos = 0;
+        f->read = pf_read; f->write = 0; f->lseek = pf_lseek; f->close = pf_close;
+        return 0;
+    }
     char *buf = (char *)frtos_alloc(PF_BUF, 16, 0);
     if (!buf) return -1;
     int len = -1, pid, k;
@@ -190,7 +198,7 @@ static int pf_stat(vfs_mount *m, const char *rel, struct xt_stat *st)
     int pid, k, cst;
     st->size = 0; st->mtime = 0;
     if (rel[0] == 0 || (rel[0] == '/' && rel[1] == 0)) { st->mode = XT_S_IFDIR; return 0; }
-    if (!strcmp(rel, "/uptime") || !strcmp(rel, "/meminfo")) { st->mode = XT_S_IFREG; return 0; }
+    if (!strcmp(rel, "/uptime") || !strcmp(rel, "/meminfo") || !strcmp(rel, "/kmsg")) { st->mode = XT_S_IFREG; return 0; }
     if (rel[0] == '/' && (k = pf_num(rel + 1, &pid)) > 0) {
         const char *leaf = rel + 1 + k;
         if (pf_slot(pid, comm, sizeof comm, cmdl, sizeof cmdl, 0, &cst) < 0) return -1;
@@ -222,7 +230,7 @@ static int pf_readdir(vfs_mount *m, const char *rel, int index,
                 return 1;
             }
         }
-        const char *fixed[] = { "uptime", "meminfo" };
+        const char *fixed[] = { "uptime", "meminfo", "kmsg" };
         int fi = index - emitted;
         if (fi >= 0 && fi < 2) {
             pfb o = { name, 0, nsz };

@@ -26,6 +26,25 @@ static void set_default(char *interp)
     while (d[i]) { interp[i] = d[i]; i++; } interp[i] = 0;
 }
 
+static void w(const char *s) { unsigned n = 0; while (s[n]) n++; sys_write(1, s, n); }
+
+/* one boot-script status line:  "  <name> .......... [ OK ]"  (green) or [FAIL] (red).
+ * name = the script basename with any leading "NN-" order prefix stripped. */
+static void status(const char *script, int ok)
+{
+    const char *base = script;
+    for (const char *p = script; *p; p++) if (*p == '/') base = p + 1;
+    if (base[0] >= '0' && base[0] <= '9') {              /* strip an NN- order prefix */
+        const char *q = base; while (*q >= '0' && *q <= '9') q++;
+        if (*q == '-') base = q + 1;
+    }
+    w("  ");
+    int col = 2;
+    for (const char *p = base; *p; p++) { char c[2] = { *p, 0 }; w(c); col++; }
+    while (col < 40) { w("."); col++; }
+    w(ok ? " \033[32m[ OK ]\033[0m\n" : " \033[31m[FAIL]\033[0m\n");
+}
+
 void _app_entry(int argc, char **argv)
 {
     for (int a = 1; a < argc; a++) {
@@ -48,8 +67,10 @@ void _app_entry(int argc, char **argv)
 
         char *av[3] = { interp, (char *)script, 0 };
         long pid = sys_spawn(interp, 2, av);   /* separate process per script (variable separation) */
-        if (pid >= 0) sys_waitpid((int)pid);   /* run boot scripts to completion, IN ORDER (NN-sorted); */
-                                               /* a long-running daemon in a script uses `&` to detach */
+        long code = -1;
+        if (pid >= 0) code = sys_waitpid((int)pid);  /* run boot scripts to completion, IN ORDER (NN-sorted); */
+                                                     /* a long-running daemon in a script uses `&` to detach */
+        status(script, pid >= 0 && code == 0);       /* [ OK ] / [FAIL] per script */
     }
     sys_exit(0);
 }
