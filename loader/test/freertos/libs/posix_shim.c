@@ -32,6 +32,7 @@
 #include <stdarg.h>
 #include <sys/stat.h>
 #include <sys/time.h>
+#include <sys/timex.h>
 #include <time.h>
 #include <dirent.h>
 #include <termios.h>
@@ -1093,9 +1094,9 @@ int sigisemptyset(const sigset_t *set) { return !*set; }
 /* ---- time ------------------------------------------------------------------ */
 int settimeofday(const struct timeval *tv, const struct timezone *tz)
 {
-    (void)tv; (void)tz;
-    errno = EPERM;                       /* the wall clock is the A9 timer since boot */
-    return -1;
+    (void)tz;
+    if (!tv) { errno = EINVAL; return -1; }
+    return (int)sys_settime((unsigned)tv->tv_sec);   /* wall clock = A9 timer + offset */
 }
 
 int clock_gettime(clockid_t id, struct timespec *tp)
@@ -1106,6 +1107,26 @@ int clock_gettime(clockid_t id, struct timespec *tp)
     tp->tv_sec = tv.tv_sec;
     tp->tv_nsec = tv.tv_usec * 1000;
     return 0;
+}
+
+int clock_settime(clockid_t id, const struct timespec *tp)
+{
+    (void)id;
+    if (!tp) { errno = EINVAL; return -1; }
+    return (int)sys_settime((unsigned)tp->tv_sec);
+}
+
+/* No slewing clock here: a single-shot offset is applied immediately; other
+ * modes are accepted and ignored (returns TIME_OK). */
+int adjtimex(struct timex *tx)
+{
+    if (!tx) { errno = EINVAL; return -1; }
+    if (tx->modes & ADJ_OFFSET) {
+        struct timeval now;
+        gettimeofday(&now, 0);
+        sys_settime((unsigned)(now.tv_sec + tx->offset / 1000000L));
+    }
+    return 0;                            /* TIME_OK */
 }
 
 int nanosleep(const struct timespec *req, struct timespec *rem)

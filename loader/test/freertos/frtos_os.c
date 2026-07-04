@@ -1746,6 +1746,11 @@ static long do_syscall(uint32_t num, long a0, long a1, long a2)
         tv[2] = usec;   /* tv_usec @ byte offset 8 */
         return 0;
     }
+    case SYS_settime: {                                     /* (unix_sec) */
+        extern void xt_wallclock_set(uint32_t);
+        xt_wallclock_set((uint32_t)a0);     /* sntp -s / clock_settime; hourly SNTP re-sync wins later */
+        return 0;
+    }
     default:         return -38;                             /* -ENOSYS */
     }
 }

@@ -99,6 +99,7 @@ static inline long sys_munmap(void *addr, unsigned len)
  * Same VA in every mapper, so the id is enough to share; freed when the last mapper exits. */
 static inline int   sys_shm_create(unsigned size) { return (int)__syscall(SYS_shm_create, (long)size, 0, 0); }
 static inline void *sys_shm_map(int id) { long r = __syscall(SYS_shm_map, id, 0, 0); return r ? (void *)r : (void *)0; }
+static inline long sys_settime(unsigned unix_sec) { return __syscall(SYS_settime, (long)unix_sec, 0, 0); }
 static inline long sys_fb_info(struct os_fbinfo *fi) { return __syscall(SYS_fb_info, (long)fi, 0, 0); }
 static inline long sys_fb_present(void) { return __syscall(SYS_fb_present, 0, 0, 0); }
 /* OS-owned desk-sized WM backdrop buffer (WALLPAPER_BASE region — no process-heap

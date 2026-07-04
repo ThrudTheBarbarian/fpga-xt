@@ -290,7 +290,7 @@ TOYBOX_APPLETS := toybox [ arch ascii base32 base64 basename bunzip2 bzcat \
     help hexedit i2cdetect i2cdump i2cget i2cset \
     free hostname dnsdomainname ftpget ftpput install kill killall ln ls  md5sum mkdir mktemp mv nice nl od patch printenv printf ps pwd \
     readlink realpath rm rmdir sed sha1sum sha224sum sha256sum sha384sum \
-    nc netcat sha512sum sleep sort split stat strings tac tail tar tee test time wget \
+    nc netcat sntp sha512sum sleep sort split stat strings tac tail tar tee test time wget \
     reboot top touch true ts uname uniq reset xxd unix2dos unlink uudecode uuencode uuidgen vi wc which zcat
 TOYBOX_ALIASES := $(foreach a,$(TOYBOX_APPLETS),/bin/$(a)=$(BUILD)/toybox.so)
 $(BUILD)/toybox/objects.list:

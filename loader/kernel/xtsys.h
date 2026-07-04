@@ -125,6 +125,9 @@ struct xt_dirent { unsigned mode; char name[256]; };
 /* time / timers — block 0x400. Peripherals are PL1-only, so libc's _gettimeofday
  * traps here; the kernel reads the A9 global timer (wall clock since boot — no RTC). */
 #define SYS_gettimeofday 0x400 /* (struct timeval *tv) -> 0: fills {tv_sec, tv_usec} */
+#define SYS_settime      0x401 /* (unix_sec) -> 0: set the wall clock (sntp -s / clock_settime).
+                                * The hourly kernel SNTP re-sync will overwrite it at its next
+                                * poll — this is a manual nudge, not a persistent RTC. */
 
 /* graphics / compositor — block 0x600. The OS owns the display plane; apps query
  * its descriptor and draw into it, then present (compositor on HW, ASCII on qemu). */

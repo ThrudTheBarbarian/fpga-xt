@@ -57,6 +57,7 @@ CONFIG_I2CGET=y
 CONFIG_I2CSET=y
 # network clients over the PL0 socket ABI (netcat is nc's full name here)
 CONFIG_NETCAT=y
+CONFIG_SNTP=y
 CONFIG_WGET=y
 # full-screen tools: the kernel tty has a real raw mode (XT_TTY_SETMODE via
 # tcsetattr) and poll() waits honestly on console input, so these are usable.
