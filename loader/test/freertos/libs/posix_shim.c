@@ -75,15 +75,18 @@ static char *g_env0[] = {
     "PATH=/System/bin:/OS/bin:/bin",
     "HOME=/media/home",         /* login scripts, ssh config, ~ expansion live here */
     "TERM=vt102",
-    "TZ=GMT0",                  /* UTC fallback; /OS/etc/timezone overrides at first use */
     "_=/System/bin/toybox",     /* toybox's nommu re-exec fallback path */
-    0,
+    0,                          /* (no TZ here — resolved from /OS/etc/timezone below) */
 };
+static void load_tz(void);      /* resolves the system zone into TZ (defined below) */
+
 /* Use libc.so's `environ`, NOT a private one — newlib's time code (localtime/
  * tzset) and getenv read libc.so's environ; a separate toybox-side array would
  * be invisible to them (date would never see TZ). Seed it at load from the env
  * the parent handed us at spawn (SYS_envp); the built-in g_env0 defaults apply
- * only to a process the kernel spawned with no parent env (the first shell). */
+ * only to a process the kernel spawned with no parent env (the first shell).
+ * Then resolve the system timezone EAGERLY if TZ wasn't inherited/set — newlib's
+ * tzset reads environ directly (never our getenv), so a lazy hook never fires. */
 extern char **environ;
 __attribute__((constructor)) static void _xt_env_init(void)
 {
@@ -91,14 +94,14 @@ __attribute__((constructor)) static void _xt_env_init(void)
     /* (long)>0 guards a kernel without SYS_envp (returns -ENOSYS, not a pointer),
      * so a new toybox.so on an old kernel falls back to g_env0 instead of faulting */
     environ = ((long)inherited > 0 && inherited[0]) ? inherited : g_env0;
+    if (!getenv("TZ")) load_tz();          /* no TZ inherited/set -> use the system zone */
 }
 
-/* Resolve the system timezone the first time TZ is looked up (by tzset): read
- * the zone NAME from /OS/etc/timezone, map it to a POSIX TZ string via
- * /OS/etc/tz.tab ("name  POSIX-TZ" lines), and setenv it. A name not in the
- * table is used verbatim (so an advanced user can put a POSIX string straight
- * into /OS/etc/timezone). No files -> the GMT0 default stands. newlib's tzset
- * understands POSIX TZ only (no zoneinfo db), which is why the table exists. */
+/* Resolve the system timezone: read the zone NAME from /OS/etc/timezone, map it
+ * to a POSIX TZ string via /OS/etc/tz.tab ("name  POSIX-TZ" lines), and setenv
+ * it (what newlib's tzset understands — no zoneinfo db, hence the table). A name
+ * not in the table is used verbatim (drop a POSIX string straight into the file);
+ * no file -> TZ stays unset -> newlib defaults to UTC. */
 static void load_tz(void)
 {
     FILE *tf = fopen("/OS/etc/timezone", "r");
@@ -128,8 +131,6 @@ static void load_tz(void)
 
 char *getenv(const char *name)
 {
-    static int tz_done = 0;                   /* /OS/etc/timezone -> TZ, once, on first TZ lookup */
-    if (!tz_done && name[0] == 'T' && name[1] == 'Z' && !name[2]) { tz_done = 1; load_tz(); }
     int n = strlen(name);
     for (char **e = environ; e && *e; e++)
         if (!strncmp(*e, name, n) && (*e)[n] == '=') return *e + n + 1;
