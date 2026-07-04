@@ -76,6 +76,21 @@ done < "$changed"
 
 if [ "$fail" = 0 ]; then
     mv "$new" "$MANIFEST"          # commit the manifest only if every push succeeded
+    # If the applet set changed (toybox rebuilt / new install-links.sh), recreate
+    # the /OS/bin symlinks on the RUNNING board over the netcon console (port 23,
+    # telnet). New applets then resolve immediately — no reboot, no boot-time cost.
+    # curl drives the telnet transport; netcon strips its IAC negotiation and
+    # injects the rest into the shell as if typed. --max-time bounds the console
+    # stream so we don't hang on the (never-closing) mirror.
+    if grep -qxE 'OS/bin/(toybox|install-links\.sh)' "$changed" 2>/dev/null; then
+        printf 'sdpush: refreshing /OS/bin applet links on %s (netcon :23) ... ' "$IP"
+        if printf 'sh /OS/bin/install-links.sh\n' \
+             | curl -s --max-time 8 "telnet://$IP:23" >/dev/null 2>&1; then
+            echo done
+        else
+            echo "no console (run 'sh /OS/bin/install-links.sh' on the board)"
+        fi
+    fi
     echo "sdpush: done. Cold-load the kernel (jumpers=JTAG, power-cycle) to pick up changes."
 else
     rm -f "$new"                   # a failure -> next run retries everything unpushed
