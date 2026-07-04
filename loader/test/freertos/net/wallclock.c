@@ -5,8 +5,8 @@
 #include <stdint.h>
 
 extern void gtimer_timeofday(uint32_t *sec, uint32_t *usec);
-extern void puts0(const char *);
-extern void putu(unsigned);
+extern void klog(const char *);   /* -> /OS/var/log/system.log */
+extern void klog_u(unsigned);
 
 static volatile uint32_t g_wall_off;      /* unix_sec - uptime_sec; 0 = unsynced */
 
@@ -27,8 +27,8 @@ void xt_wallclock_set(uint32_t unix_sec)
         uint32_t mp = (5u * doy + 2u) / 153u, d = doy - (153u * mp + 2u) / 5u + 1u;
         uint32_t m = mp < 10u ? mp + 3u : mp - 9u;
         if (m <= 2u) y++;
-        puts0("[net] time "); putu(y); puts0("-"); putu(m); puts0("-"); putu(d);
-        puts0(" "); putu(rem / 3600u); puts0(":"); putu((rem / 60u) % 60u); puts0(" UTC\n");
+        klog("[net] time "); klog_u(y); klog("-"); klog_u(m); klog("-"); klog_u(d);
+        klog(" "); klog_u(rem / 3600u); klog(":"); klog_u((rem / 60u) % 60u); klog(" UTC\n");
     }
 }
 
