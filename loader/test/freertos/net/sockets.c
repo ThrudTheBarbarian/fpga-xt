@@ -12,6 +12,7 @@
 #include "lwip/api.h"
 #include "lwip/dns.h"
 #include "lwip/prot/ip.h"   /* IP_PROTO_ICMP */
+#include "lwip/inet_chksum.h"   /* inet_chksum — recompute ping's ICMP checksum */
 #include "FreeRTOS.h"
 #include "task.h"
 
@@ -129,6 +130,15 @@ long xt_sock_send(int si, const void *buf, unsigned len)
         struct netbuf *nb = netbuf_new();
         if (!nb || !netbuf_alloc(nb, (u16_t)len)) { if (nb) netbuf_delete(nb); return -1; }
         netbuf_take(nb, buf, (u16_t)len);
+        /* Linux ping-socket semantics: on a SOCK_DGRAM/IPPROTO_ICMP socket the
+         * kernel owns the ICMP checksum. lwIP raw doesn't compute it for IPv4,
+         * and toybox ping ships a throwaway value, so (re)compute it over the
+         * ICMP message here — otherwise every host drops the bad-checksum echo. */
+        if (grp == NETCONN_RAW && len >= 4 && nb->p && nb->p->len >= 4) {
+            u16_t *ck = (u16_t *)((u8_t *)nb->p->payload + 2);
+            *ck = 0;
+            *ck = inet_chksum(nb->p->payload, (u16_t)len);
+        }
         err_t e = netconn_send(s->conn, nb);       /* connected UDP / RAW ICMP -> target */
         netbuf_delete(nb);
         return e == ERR_OK ? (long)len : -1;
