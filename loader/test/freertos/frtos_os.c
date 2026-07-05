@@ -36,6 +36,7 @@ typedef struct {
     int      sock;   /* socket fd: net/sockets.c index+1 (0 = not a socket) */
     int      con;    /* console alias (a shell's saved stdio parked on a high fd) */
     int      oflags; /* the VFS_O_* this fd was opened with (for reopen-by-path) */
+    int      nonblock; /* O_NONBLOCK (via FIONBIO): a read that would block returns -EAGAIN */
     uint32_t pos;    /* logical read/write cursor (page store); the driver's vf.pos is fill scratch */
     uint32_t cpi;    /* cached page index (~0u = none) — backing-store only; in-memory fds read vf.data */
     void    *cpage;  /* the one cached page (pool identity addr), or NULL */
@@ -593,6 +594,7 @@ static long k_pipe_read(proc_t *p, int fd, char *buf, uint32_t n)
             got = xStreamBufferReceive(pp->sb, buf, n, 0);  /* final drain */
             return (long)got;
         }
+        if (p->fd[fd].nonblock) return -11;                 /* O_NONBLOCK, empty -> -EAGAIN */
     }
 }
 
@@ -1656,6 +1658,20 @@ void deferral_thunk(void)                 /* PL1 (System), task context */
             xt_sock_close(p->fd[p->da0].sock - 1);
             p->fd[p->da0].open = 0; p->fd[p->da0].sock = 0;
             r = 0;
+        } else if (p->dnum == SYS_ioctl && p->da0 < NFD && p->fd[p->da0].open &&
+                   (p->da1 == XT_FIONBIO || (p->da1 == XT_FIONREAD && p->fd[p->da0].pipei))) {
+            /* FIONBIO on any fd: set/clear O_NONBLOCK. FIONREAD on a pipe: buffered bytes
+             * (accurate poll — an empty pipe is NOT readable, unlike the always-ready
+             * fallback). */
+            fd_t *cf = &p->fd[p->da0];
+            if (p->da1 == XT_FIONBIO) {
+                cf->nonblock = (p->da2 && *(int *)p->da2) ? 1 : 0;
+                r = 0;
+            } else {
+                kpipe_t *pp = &g_pipes[cf->pipei - 1];
+                if (p->da2) *(int *)p->da2 = (int)xStreamBufferBytesAvailable(pp->sb);
+                r = 0;
+            }
         } else if (p->dnum == SYS_ioctl && p->da0 < NFD &&
                    p->fd[p->da0].open && p->fd[p->da0].sock) {
             extern long xt_sock_avail(int);                /* FIONREAD = poll readability */

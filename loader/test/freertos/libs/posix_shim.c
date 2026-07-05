@@ -452,6 +452,7 @@ static unsigned g_vfork_regs[11];        /* defined with the vfork asm below */
 static int g_redir[3] = { -1, -1, -1 };
 static unsigned g_child_closed;          /* fds the fake child "closed" */
 static unsigned g_cloexec;               /* fds marked close-on-exec */
+static unsigned g_nonblock;              /* fds marked O_NONBLOCK (fcntl F_SETFL) */
 
 static void redir_reset(void)
 {
@@ -496,11 +497,15 @@ int fcntl(int fd, int cmd, ...)
         return 0;
     case 3 /*F_GETFL*/: {                /* doubles as the "is this fd free" probe */
         struct xt_stat xs;
-        if (sys_fstat(fd, &xs) == 0) return 0;
-        errno = EBADF;
-        return -1;
+        if (sys_fstat(fd, &xs) != 0) { errno = EBADF; return -1; }
+        return (g_nonblock >> fd) & 1 ? O_NONBLOCK : 0;
     }
-    case 4 /*F_SETFL*/: return 0;
+    case 4 /*F_SETFL*/: {                /* only O_NONBLOCK is meaningful here */
+        int nb = (arg & O_NONBLOCK) ? 1 : 0;
+        if (nb) g_nonblock |= 1u << fd; else g_nonblock &= ~(1u << fd);
+        sys_ioctl(fd, XT_FIONBIO, &nb);  /* tell the kernel: nonblock reads -> EAGAIN */
+        return 0;
+    }
     }
     errno = EINVAL;
     return -1;
@@ -1196,7 +1201,8 @@ static int poll_probe(struct pollfd *f)
             int n = 0;
             if (sys_ioctl(f->fd, XT_TTY_NREAD, &n) != 0 || n > 0) f->revents |= POLLIN;
         } else {
-            f->revents |= POLLIN;                    /* pipes/files: reads block correctly */
+            f->revents |= POLLIN;                    /* pipes/files: reads block correctly (a
+                                                      * nonblock reader gets EAGAIN in the kernel) */
         }
     }
     return f->revents != 0;

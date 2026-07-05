@@ -102,7 +102,11 @@
 #define XT_SOCK_TCP 1
 #define XT_SOCK_UDP 2
 #define XT_SOCK_RAW 3
-#define XT_FIONREAD  0x541Bu /* SYS_ioctl on a socket fd: bytes readable now */
+#define XT_FIONREAD  0x541Bu /* SYS_ioctl: bytes readable now (socket or pipe fd) */
+#define XT_FIONBIO   0x5421u /* SYS_ioctl: set/clear the fd's non-blocking flag (argp = int*;
+                              * nonzero = O_NONBLOCK). A nonblock read that would block
+                              * returns -EAGAIN instead. The libc shim maps fcntl(F_SETFL,
+                              * O_NONBLOCK) onto this. */
 
 #define SYS_reboot   0x106   /* (cmd) -> no return: Zynq PS soft reset (SLCR). cmd is the
                               * Linux RB_* value; all map to a warm PS reset here. On a
