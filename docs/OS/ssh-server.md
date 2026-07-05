@@ -111,13 +111,20 @@ Packaging done: `dropbear.so` → `/bin/dropbear` in the romfs (alongside `/bin/
 Built the inetd launcher `sshd.c` (`/bin/sshd`, bare usys, modelled on httpd.c): binds the
 port, accepts, and `SYS_spawn_fd`s `dropbear -i` with the socket as the child's fd 0/1/2.
 It RUNS and listens ("sshd: listening for ssh"). But a host `ssh` still times out at banner
-exchange, and `dropbear -i` in isolation (console stdin) emits no banner. Two causes found:
-- **`SYS_spawn_fd` is pipe-oriented** ("wire the child's stdio to the spawner's PIPE ends")
-  — it does NOT inherit a **socket** fd to the child, so `dropbear -i`'s fd 0/1 aren't the
-  connection socket. **This is the key next item: make socket fds inheritable through
-  SYS_spawn_fd** (kernel). Then the launcher hands a live socket to dropbear -i.
-- dropbear queues its banner (svr-session.c:194) and the session loop flushes it via
-  select/write — verify our `select`-over-poll + the socket fd poll actually fire writable.
+exchange. The frontier is a cluster of I/O-integration issues to work through, in order:
+
+1. **Session-loop banner flush (primary).** `dropbear -i` in isolation (fd 0/1 = console)
+   emits NO banner — not even to the console. Dropbear queues the banner
+   (svr-session.c:194 `send_session_identification`) and the session loop flushes the
+   writequeue via `select` + write. So our **`select`-over-`poll`** (dropbear_glue.c) and/or
+   the writequeue flush isn't firing writable. Debug this FIRST (it blocks everything, and
+   is testable without a connection): trace whether dropbear reaches the write, and whether
+   `select` reports fd 1 writable.
+2. **Socket-fd inheritance through `SYS_spawn_fd`.** The fd-wiring (frtos_os.c ~2240) MOVES a
+   non-console stdio fd to the child's slot — so a socket passed as fds[0..2]=cfd lands only
+   on child fd 0 (fd 1/2 fall back to console). For inetd dropbear needs the socket on BOTH
+   fd 0 (in) and fd 1 (out): wire a socket fd to multiple child slots and refcount the
+   netconn on close (or make main_inetd use one fd for in+out). Needed for the real link.
 
 Test harness note: qemu with `-nic user,hostfwd=tcp::2222-:22` works; **foreground shows
 guest output, background does NOT** (qemu buffers stdout to a file). Use foreground for
