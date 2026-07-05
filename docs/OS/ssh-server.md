@@ -75,20 +75,31 @@ no-ops (`chown`, `set[e]uid/gid`, `get/setrlimit`, `utimes`, `gethost*/getserv*`
 Everything else resolves from `libc.so`; the only load-time unresolved is `_close` (a
 kernel-export primitive, same as toybox.so). `dropbearkey.o` is excluded (its own `main`).
 
-## Remaining work — all runtime/kernel now
+## Runtime — decisions + status
 
-1. **fork model** — `fork()` resolves (libc.so stub) but XTOS has no real fork; the server
-   forks a child per connection. Options: Dropbear's `-i`/inetd single-connection mode, its
-   `DROPBEAR_VFORK` nommu path, or route child creation through `SYS_spawn`. Decide before
-   first connection.
-2. **`/dev/urandom`** (kernel char device): seed a CSPRNG (jitter + packet timing + global
-   timer; PL ring-oscillator TRNG later). *Dev-grade entropy until a real TRNG lands.*
-3. **`/dev/ptmx` pty** (kernel): master/slave pair + line discipline + `TIOCSWINSZ`/
-   `TIOCSCTTY`/`TIOCGPTN`/`TIOCSPTLCK`. The big new primitive; needed only for the
-   interactive shell — `ssh board 'cmd'` (exec) and scp land before it.
-4. **host key** — package `dropbearkey` (separate `.so`, or dbmulti argv[0] dispatch), gen
-   an ed25519 key → `/OS/etc/dropbear/`; authorized_keys under `/OS/etc/dropbear/`.
+**`/dev/urandom` — DONE.** Already exists in `vfs_devfs.c` (`dv_rand_rd`, per-open
+clock-seeded xorshift), mounted at `/OS/dev`, reachable as `/dev/urandom` via the `/dev`
+root alias — exactly Dropbear's default `DROPBEAR_URANDOM_DEV`. Dev-grade (weak clock seed);
+the fabric TRNG later just repoints `dv_rand_rd` at a PL register. No changes needed.
+
+**fork model — DECIDED.** Dropbear forks in two places; XTOS maps both onto what it has:
+- *Per-connection* (`svr-main.c main_noinetd` `fork()` at ~308): use **inetd mode**
+  (`main_inetd`, one connection on stdin/stdout). A small XTOS sshd listener binds :22,
+  accepts, and `SYS_spawn_fd`s `dropbear -i` with the connection socket as fd 0/1 — our
+  existing spawn + fd inheritance, no fork.
+- *Shell launch* (`spawn_command` in svr-chansession) forks+execs the login shell → adapt
+  to `SYS_spawn` (or the shim vfork path toybox already uses).
+
+## Remaining work, in order
+
+1. **XTOS sshd listener** + `localoptions.h` for inetd/no-fork; wire `dropbear -i`.
+2. **`spawn_command`** → XTOS spawn (verify the shim fork/vfork path or route to `SYS_spawn`).
+3. **host key** — package `dropbearkey` (separate `.so`, or dbmulti argv[0] dispatch); gen
+   an ed25519 key → `/OS/etc/dropbear/`; authorized_keys there too.
+4. **`/dev/ptmx` pty** (kernel): master/slave + line discipline + `TIOCSWINSZ`/`TIOCSCTTY`/
+   `TIOCGPTN`/`TIOCSPTLCK`. Only for the interactive shell — exec + scp land before it.
 5. **bring-up order**: transport → KEX → pubkey auth → exec (no pty) → scp → pty + shell.
+   (Steps 3-4 touch the kernel — coordinate with in-flight kernel work.)
 
 ## Deploy
 Server binary builds to a PIC `.so` (like toybox) → **sdpush**; anything needing the kernel
