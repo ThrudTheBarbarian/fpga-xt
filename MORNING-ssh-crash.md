@@ -1,87 +1,71 @@
-# Morning: the Ctrl-D session-teardown crash
+# Morning: the ssh session-teardown hang/crash
 
-**Status:** not yet fixed. I could not reproduce it in qemu (it needs the real
-FatFs SD, which qemu doesn't have), so instead I built a **diagnostic HW image
-that will name the faulting function on the next Ctrl-D**. One JTAG load + one
-Ctrl-D + one `objdump` command tells us exactly where it dies.
+**Status: root cause localized, NOT fixed.** Big update from last night — I
+reproduced the hang in qemu (it needs no HW), and the "crash" and the "hang" are
+the same bug seen two ways.
 
-## Do this first (5 minutes → exact location)
+## What it actually is
 
-1. Power-cycle, then from the worktree:
-   ```
-   cd /Users/simon/src/fpga-xt-ssh && ./vivado/jtag-valhalla.sh testbed
-   ```
-2. `ssh xtos.local`, then press **Ctrl-D**. You'll get a crash dump, now with
-   `[prog+0x…]` / `[libc+0x…]` after PC and CALLER, e.g.:
-   ```
-   PC=0x028e1904 [prog+0x0003bXXX]  CALLER=0x000f4240 [??+0x…]
-   ```
-3. Read me the two `[...]` tags. If CALLER (or PC) shows `[prog+0xNNNN]`, the
-   function is:
-   ```
-   arm-none-eabi-objdump -d loader/build/dropbear.so | grep -B40 'NNNN:' | grep '>:' | tail -1
-   ```
-   (or just paste the offset — do NOT rebuild dropbear first, or the offsets
-   shift. `build/dropbear.so` from 21:04 matches the loaded image.)
+An interactive `ssh -tt` session **hangs when the shell exits** — on `exit`
+*or* Ctrl-D (my earlier "exit works" belief was wrong; those tests piped stdin,
+which closed the connection and masked it). On the board, after hanging, dropbear
+eventually crashes; the crash PC symbolized to **`nanosleep`** — dropbear spinning
+in its `select`→`poll`→`usleep` loop, i.e. the hang, not a separate fault.
 
-## Two quick A/B experiments (narrow it further)
+**Two distinct defects feed the hang:**
 
-- **Is it the logfile fd?** Start sshd WITHOUT a logfile: at the console run
-  `sshd 22 /OS/etc/ssh/ed25519_host_key` (no 4th arg), then ssh in and Ctrl-D.
-  No crash ⇒ it's the FatFs logfile-as-stderr. Crash ⇒ not the logfile.
-- **Is it EOF-specific?** ssh in and type `exit` instead of Ctrl-D. Clean ⇒
-  EOF/teardown-order specific; crash ⇒ any session exit.
+1. **dropbear never reaps the exited shell.** dropbear closes a pty session only
+   after it reaps the child (sets `chansess->exit.exitpid`) via
+   `waitpid(-1, WNOHANG)` in its select-loop handler. On XTOS that `waitpid`
+   returns nothing: `sys_waitpid_nb(pid)` returns **-11 (still running)** for the
+   shell's pid — the one the shim's `g_kids` holds and `kadd` logged — even
+   though `ps` (from a 2nd connection) shows the shell **gone**. So there's a
+   **pid / `p->exited` tracking discrepancy** for a child spawned through the
+   fake-vfork → `execve` → `SYS_spawn_fd` path. That's the thing to chase:
+   - `frtos_waitpid_poll(pid)` returns -11 because `proc_by_pid(pid)->exited==0`.
+   - But the shell process ended. So either the shell exits via a path that never
+     sets `p->exited` (blocked in its own teardown?), or `g_kids`'s pid ≠ the
+     shell's actual kernel pid.
+   - Next step: trace, in the shell's own exit path, whether `p->exited` gets set
+     for that pid; and log the pid `SYS_spawn_fd` returns vs the pid `ps` shows.
 
-## What I already know
+2. **Ctrl-D specifically doesn't exit the shell** (independent of #1). linenoise
+   correctly reads 0x04 at an empty line and returns EOF (`errno=ENOENT`), and
+   `xt_line_input` returns 0 (EOF) — verified by tracing. But **toysh doesn't act
+   on that EOF** (doesn't exit, doesn't re-prompt). A toysh line-input
+   integration gap, almost certainly pre-existing (Ctrl-D was never tested before).
 
-- It's **return-address / function-pointer corruption in sshd-session's own
-  context** (not the fs task): `IFSR=0x0f` is a *permission* fault — the CPU
-  jumped into the execute-never **data** segment (a corrupted pointer pointing
-  at data). `CALLER=0x000f4240` = exactly 1,000,000, a garbage value sitting
-  where a code pointer belongs.
-- **Not** a plain stack overflow (the guard page wasn't hit — no "STACK
-  OVERFLOW" line), and **not a stack-buffer overflow** either: I rebuilt
-  dropbear with `-fstack-protector-all` and ran Ctrl-D in qemu — the canary
-  never fired. So it's a **wild-pointer write / use-after-free / type
-  confusion**, which is exactly what the symbolized `CALLER` pinpoints (the
-  function that made the bad call stays in `.text`).
-- **HW-only.** qemu has no FatFs SD; I replicated the *logical* conditions
-  (session cwd `/media/home`, `~/.ssh` authorized_keys, logfile on a real fs
-  via a ramfs `/media`) and it did **not** crash. So the trigger is specific to
-  the FatFs code path or HW memory/timing.
-- **Prime suspect:** the fake-vfork `execchild` path (pty sessions only; the
-  non-pty `ssh host cmd` path uses a *simple* vfork child and doesn't crash).
-  On XTOS there's no real fork — `vfork()` is a register snapshot and exec does
-  NOT replace the image, so everything `execchild`/`run_command` do before exec
-  runs in **dropbear's own process** and persists: it wipes `environ`, rewrites
-  it, calls `signal()` (now routed to the shim's g_sigact), closes fds 3..maxfd
-  (my deferred-close protects those), chdirs. Any of that could plant a bad
-  pointer that's dereferenced at teardown. The symbolized CALLER will tell us
-  which function actually makes the bad call.
+## What I fixed (committed, correct, but incomplete — 897e5bf)
 
-## What's safe and done (committed, on ssh-server)
+Verified in qemu; they're right regardless of the remaining bug:
+- `pipes_release` releases pty-slave (char-device) fds immediately on exit →
+  slave open-count drops 3→0 when the shell exits (was leaked until reap).
+- `xt_pty_nread` reports readable at EOF so a poll wakes the master reader.
+- `poll()` caps its wait at 200 ms when the caller has children, so dropbear's
+  reap runs promptly instead of after its ~1 h `select` timeout (no async
+  SIGCHLD on XTOS to wake `select`).
 
-- **Console log fix you asked for** (commit 877c058): `netup` and `sshd`'s
-  "listening" line now go to **dmesg** (SYS_klog → /proc/kmsg + system.log),
-  not the console. The console keeps only init's `[ OK ]/[FAIL]`. sshd's line
-  still also lands in its own sshd.log.
-- The diagnostic **fault symbolization** (same commit).
+These get `sopen→0`, the master poll-readable, and dropbear's select returning
+every 200 ms — all confirmed — but the session still hangs because of defect #1
+(the reap sees the child as not-exited).
 
-The HW image `loader/build/freertos-hw.elf` (21:30) has all of this. It is safe
-to run — the crash is unchanged, but now it's diagnosable.
+## Reproduce in qemu (no HW needed)
 
-## Secondary lead (only if the symbolized PC lands in .data)
+```
+cd /Users/simon/src/fpga-xt-ssh/loader && make build/freertos.elf
+( printf 'netup\nmkdir /media/home\nmkdir /media/home/.ssh\ncp /System/etc/ssh/authorized_keys /media/home/.ssh/authorized_keys\nssh-keygen -t ed25519 -f /tmp/hk >/dev/null 2>&1\nsshd 22 /tmp/hk\n'; sleep 600 ) | \
+  qemu-system-arm -M xilinx-zynq-a9 -display none -no-reboot -m 1024 \
+  -chardev stdio,id=sh0 -semihosting-config enable=on,target=native,chardev=sh0 \
+  -kernel build/freertos.elf -nic user,hostfwd=tcp::2222-:22
+```
+Then from the Mac, an interactive `ssh -tt -p 2222 … root@127.0.0.1`, type
+`exit` → the client hangs. (A ramfs `/media` is mounted only in the qemu build so
+`/media/home` exists — HW has it from the SD.) A Python `pty.fork` harness that
+sends `exit\r` then `waitpid(WNOHANG)` on the ssh client is the cleanest
+pass/fail; I left `/tmp/h4.py` shaped like that.
 
-I found a real but probably-unrelated loader bug: `xtld_writable_range`
-(loader/xtld.c:236) tracks the writable PT_LOAD segment with "last wins", but
-dropbear.so AND toybox.so each have **two** writable segments (RELRO/.data at
-vaddr 0x5cdf0, .bss at 0x6d4f0). So it reports only `.bss`, and
-`frtos_on_loaded` then marks the first writable segment (.data/.got) as RO+X and
-doesn't COW it. Analysis says this is NOT the crash (it only makes `.data`
-read-only → that'd be a *data* abort if written; all of `.text` stays correctly
-executable; both binaries work, so they don't write `.data` post-load). I did
-NOT fix it tonight — changing the loader's W^X for every `.so` unverified could
-brick the boot. If the morning symbolize puts PC in dropbear's `.data` range
-(vaddr ~0x5cdf0–0x5e000) rather than `.bss` (~0x6d4f0+) or `.text`
-(0x1ee80–0x4cdf0), revisit this — the fix is to make wseg_va the *first*
-writable segment and span wseg_size through the last.
+## The board build is fine to run
+
+`loader/build/freertos-hw.elf` is a clean rebuild with the partial fixes + the
+fault symbolization. Interactive login still works; only session *exit* hangs
+(power-cycle out of it). Everything is committed on `ssh-server`.
