@@ -1286,19 +1286,35 @@ static int poll_probe(struct pollfd *f)
     return f->revents != 0;
 }
 
+/* Does the caller have live children (spawned via vfork+exec)? Used to bound a
+ * blocking poll: a server like dropbear reaps exited children in its select
+ * loop's handler, but it relies on SIGCHLD waking select — and XTOS delivers no
+ * async SIGCHLD. So when a child exits, nothing wakes a long select() and the
+ * loop (hence the reap) stalls for the full timeout (dropbear's is ~1h rekey),
+ * which reads as a hang. Capping the poll wait lets the caller's loop run — and
+ * reap — within CHILD_POLL_MS of the child's exit. */
+static int have_children(void)
+{
+    for (int i = 0; i < MAX_KIDS; i++) if (g_kids[i]) return 1;
+    return 0;
+}
+#define CHILD_POLL_MS 200
+
 int poll(struct pollfd *fds, nfds_t nfds, int timeout)
 {
     struct timeval t0;
     gettimeofday(&t0, 0);
+    int cap = have_children() ? CHILD_POLL_MS : -1;
     for (;;) {
         int ready = 0;
         for (nfds_t i = 0; i < nfds; i++) ready += poll_probe(&fds[i]);
         if (ready || timeout == 0) return ready;
-        if (timeout > 0) {
+        if (timeout > 0 || cap >= 0) {
             struct timeval t1;
             gettimeofday(&t1, 0);
             long el = (t1.tv_sec - t0.tv_sec) * 1000 + (t1.tv_usec - t0.tv_usec) / 1000;
-            if (el >= timeout) return 0;
+            if (timeout > 0 && el >= timeout) return 0;
+            if (cap >= 0 && el >= cap) return 0;   /* let the caller reap children */
         }
         /* nothing ready: if the ONLY interesting fd is the console, let the
          * kernel block properly; else nap-and-recheck */

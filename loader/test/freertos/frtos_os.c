@@ -313,8 +313,23 @@ void *sys_sbrk(int incr)
  * waiting for the reap (they need the fs task). Idempotent vs fs_close_all. */
 static void pipes_release(proc_t *p)
 {
-    for (int fd = 0; fd < NFD; fd++)
-        if (p->fd[fd].open && p->fd[fd].pipei) k_pipe_close_end(&p->fd[fd]);
+    for (int fd = 0; fd < NFD; fd++) {
+        if (!p->fd[fd].open) continue;
+        if (p->fd[fd].pipei) { k_pipe_close_end(&p->fd[fd]); continue; }
+        /* pty slave (char device): release NOW too, for the same reason. When an
+         * interactive ssh shell exits, dropbear blocks reading the pty MASTER for
+         * EOF — which only arrives once the slave's open count hits 0. If we left
+         * that to the reap (fs_close_all), the reap would never run: it needs the
+         * parent's waitpid, but the parent is blocked on the master. Deadlock →
+         * the session (and the ssh client) hang. The pty close is a pure in-memory
+         * refcount (dv_pty_close), safe in the dying task's context — unlike a
+         * file, whose flush needs the fs task, so files still wait for the reap. */
+        if (!p->fd[fd].con && !p->fd[fd].sock &&
+            p->fd[fd].vf.chr && p->fd[fd].vf.close) {
+            p->fd[fd].vf.close(&p->fd[fd].vf);
+            p->fd[fd].open = 0;
+        }
+    }
 }
 
 static void tty_release(proc_t *p)
@@ -733,7 +748,18 @@ long xt_pty_write(int i, int master, const void *buf, uint32_t n)
 int xt_pty_nread(int i, int master)
 {
     if (i < 0 || i >= NPTY || !g_pty[i].m2s) return 0;
-    return (int)xStreamBufferBytesAvailable(master ? g_pty[i].s2m : g_pty[i].m2s);
+    int avail = (int)xStreamBufferBytesAvailable(master ? g_pty[i].s2m : g_pty[i].m2s);
+    if (avail) return avail;
+    /* EOF is "readable" for poll/select: once the other end has fully closed, a
+     * read returns 0 (EOF) — report 1 pending byte so a poll wakes the reader to
+     * collect it. Without this, dropbear's select never marks the pty master
+     * readable after the shell exits, so it never reads the EOF and spins in its
+     * poll loop forever (the session hangs). Mirrors the pipe FIONREAD at
+     * writerless-EOF. The other end is "closed" only after it was opened (the
+     * child holds the slave before dropbear's session loop polls), so this can't
+     * fire a spurious EOF during setup. */
+    if (master ? (g_pty[i].sopen == 0) : (g_pty[i].mopen == 0)) return 1;
+    return 0;
 }
 long xt_pty_ioctl(int i, unsigned req, void *arg)
 {
