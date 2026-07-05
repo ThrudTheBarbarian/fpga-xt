@@ -106,7 +106,25 @@ connection; the interactive session then needs `spawn_command`→spawn + the pty
 
 Packaging done: `dropbear.so` → `/bin/dropbear` in the romfs (alongside `/bin/dropbearkey`).
 
-## Launcher built; next blocker = socket-fd inheritance through spawn
+## MILESTONE: real SSH handshake to XTOS (KEX + host key + cipher) ✅
+
+A host OpenSSH client completes the FULL handshake with Dropbear on XTOS over a real TCP
+link (qemu `-nic user,hostfwd=tcp::2222-:22`, `sshd` running the inetd launcher):
+banner (`dropbear_2025.88`), KEX (`sntrup761x25519-sha512`), ed25519 host key,
+chacha20-poly1305 cipher, then pubkey auth offered — "Permission denied (publickey)" only
+because no `authorized_keys` is set up yet. The whole crypto transport works.
+
+Two things made it work: (1) the **pipe O_NONBLOCK fix** (dropbear's signal-pipe drain no
+longer deadlocks the session loop); (2) `dropbear -i` uses fd 0 for BOTH directions
+(`common_session_init(sock, sock)`), so `SYS_spawn_fd` moving the socket onto child fd 0 is
+exactly right — no socket-multi-slot work needed after all.
+
+**Remaining for a full login:** (a) pubkey auth — drop a client key in the user's
+authorized_keys (getpwnam home + `/.ssh/authorized_keys`); (b) the interactive session —
+`spawn_command`→`SYS_spawn` + the `/dev/ptmx` pty. A non-interactive `ssh board 'cmd'` (exec)
+lands before the pty.
+
+## (superseded) earlier launcher notes
 
 Built the inetd launcher `sshd.c` (`/bin/sshd`, bare usys, modelled on httpd.c): binds the
 port, accepts, and `SYS_spawn_fd`s `dropbear -i` with the socket as the child's fd 0/1/2.
