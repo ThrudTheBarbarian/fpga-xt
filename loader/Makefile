@@ -339,6 +339,21 @@ $(BUILD)/toybox.so: $(BUILD)/toybox/objects.list $(BUILD)/posix_shim.o $(BUILD)/
 	@u=$$(arm-none-eabi-nm -u $@ | awk '/ U .*_main$$/{print $$2}'); \
 	  if [ -n "$$u" ]; then echo "toybox.so: dropped applet object(s), undefined:" $$u >&2; exit 1; fi
 
+# dropbear.so — the SSH server (third_party/dropbear submodule, MIT). build-dropbear.sh
+# compiles the server object set + libtomcrypt/libtommath archives out-of-tree (submodule
+# stays pristine); the link mirrors toybox.so (posix/net shim + dropbear_glue over libc.so).
+# __aeabi_*/libc stay undefined = kernel-resolved dynamic imports. dropbearkey.o is excluded
+# (its own main; the key generator is packaged separately).
+$(BUILD)/dropbear/objects.list:
+	tools/build-dropbear.sh
+$(BUILD)/dropbear_glue.o: test/freertos/libs/dropbear_glue.c | $(BUILD)
+	$(ARMCC) -marm -mcpu=cortex-a9 -mfloat-abi=softfp -mfpu=neon-vfpv3 -fpic -Os -fno-builtin \
+	    -D_GNU_SOURCE -Ilibc-compat -Inewlib-pic/include -Itest/qemu -Ikernel -c $< -o $@
+$(BUILD)/dropbear.so: $(BUILD)/dropbear/objects.list $(BUILD)/dropbear_glue.o $(BUILD)/posix_shim.o $(BUILD)/net_shim.o $(BUILD)/libc.so
+	$(LLD) -shared --hash-style=sysv -o $@ $(BUILD)/posix_shim.o $(BUILD)/net_shim.o $(BUILD)/dropbear_glue.o \
+	    $$(grep -v dropbearkey.o $(BUILD)/dropbear/objects.list) \
+	    $(BUILD)/dropbear/libtomcrypt.a $(BUILD)/dropbear/libtommath.a $(BUILD)/libc.so
+
 # vmtest — DT_NEEDED libc.so; touches the per-process private window (T2-b)
 $(BUILD)/vmtest.so: test/freertos/progs/vmtest.c $(BUILD)/libc.so | $(BUILD)
 	$(ARMCC) $(PROGCFLAGS) -Inewlib-pic/include -c $< -o $(BUILD)/vmtest.o

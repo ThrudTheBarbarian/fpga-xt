@@ -62,19 +62,33 @@ pty and entropy through `open()`/`read()` on **`/dev/ptmx`** and **`/dev/urandom
 and entropy are **kernel *device* work at runtime, not libc functions.** That's the real
 substance of the remaining port, and it's cleanly separated from the (small) symbol layer.
 
-## Remaining work, in order
+## Build + link: DONE
 
-1. **build-dropbear.sh** + loader Makefile target: compile the server + libtom subset into
-   objects, link the PIC `.so` (mirror `toybox.so`).
-2. **Symbol layer** (shim): `select` over the netconn poll; the trivial single-user stubs;
-   `sys/endian.h` macros.
-3. **`/dev/urandom`** (kernel char device): seed a CSPRNG (jitter + packet timing + global
+`tools/build-dropbear.sh` compiles the 65-object server set + libtomcrypt.a + libtommath.a
+out-of-tree (~35 s cold), and `make build/dropbear.so` links a **335 KB PIC `.so`** —
+mirroring `toybox.so` (posix/net shim + `dropbear_glue.o` over `libc.so`). Split flag note:
+Dropbear's own files build WITHOUT `-DLTC_SOURCE` (that's libtomcrypt-internal and clashes
+its math macros against libtommath); the libtomcrypt archive builds WITH it.
+
+`dropbear_glue.c` supplies the small libc surface: `select()` over `poll()`, and single-user
+no-ops (`chown`, `set[e]uid/gid`, `get/setrlimit`, `utimes`, `gethost*/getserv*`).
+Everything else resolves from `libc.so`; the only load-time unresolved is `_close` (a
+kernel-export primitive, same as toybox.so). `dropbearkey.o` is excluded (its own `main`).
+
+## Remaining work — all runtime/kernel now
+
+1. **fork model** — `fork()` resolves (libc.so stub) but XTOS has no real fork; the server
+   forks a child per connection. Options: Dropbear's `-i`/inetd single-connection mode, its
+   `DROPBEAR_VFORK` nommu path, or route child creation through `SYS_spawn`. Decide before
+   first connection.
+2. **`/dev/urandom`** (kernel char device): seed a CSPRNG (jitter + packet timing + global
    timer; PL ring-oscillator TRNG later). *Dev-grade entropy until a real TRNG lands.*
-4. **`/dev/ptmx` pty** (kernel): master/slave pair + line discipline + `TIOCSWINSZ`/
+3. **`/dev/ptmx` pty** (kernel): master/slave pair + line discipline + `TIOCSWINSZ`/
    `TIOCSCTTY`/`TIOCGPTN`/`TIOCSPTLCK`. The big new primitive; needed only for the
    interactive shell — `ssh board 'cmd'` (exec) and scp land before it.
-5. **Runtime**: `dropbearkey` ed25519 host key → `/OS/etc/dropbear/`; authorized_keys;
-   bring-up order transport → KEX → pubkey auth → exec → scp → pty + interactive shell.
+4. **host key** — package `dropbearkey` (separate `.so`, or dbmulti argv[0] dispatch), gen
+   an ed25519 key → `/OS/etc/dropbear/`; authorized_keys under `/OS/etc/dropbear/`.
+5. **bring-up order**: transport → KEX → pubkey auth → exec (no pty) → scp → pty + shell.
 
 ## Deploy
 Server binary builds to a PIC `.so` (like toybox) → **sdpush**; anything needing the kernel
