@@ -629,6 +629,7 @@ static struct {
     StreamBufferHandle_t m2s, s2m;
     uint16_t rows, cols;
     uint8_t  canon, echo, mopen, sopen;
+    uint8_t  winch;              /* window size changed since the last slave read */
 } g_pty[NPTY];
 
 static int pty_ensure(int i)
@@ -669,6 +670,12 @@ long xt_pty_read(int i, int master, void *buf, uint32_t n, int nonblock)
     for (;;) {
         if (p && p->killed) proc_exit_self(p, 137);
         if (p) stop_park(p);
+        if (!master && g_pty[i].winch) {
+            /* SIGWINCH, XTOS-style: wake the blocked reader with -EINTR; the
+             * libc shim runs the registered handler (or transparently retries) */
+            g_pty[i].winch = 0;
+            return -4;                                     /* -EINTR */
+        }
         size_t got = xStreamBufferReceive(sb, buf, n, pdMS_TO_TICKS(20));
         if (got > 0) return (long)got;
         if (!(master ? g_pty[i].sopen : g_pty[i].mopen)) return 0;   /* other end closed -> EOF */
@@ -716,7 +723,9 @@ long xt_pty_ioctl(int i, unsigned req, void *arg)
     switch (req) {
     case XT_TTY_GETMODE: { struct xt_ttymode *m = arg; if (m) { m->canon = g_pty[i].canon; m->echo = g_pty[i].echo; } return 0; }
     case XT_TTY_SETMODE: { struct xt_ttymode *m = arg; if (m) { g_pty[i].canon = m->canon ? 1 : 0; g_pty[i].echo = m->echo ? 1 : 0; } return 0; }
-    case 0x5414u /*TIOCSWINSZ*/: { uint16_t *w = arg; if (w) { g_pty[i].rows = w[0]; g_pty[i].cols = w[1]; } return 0; }
+    case 0x5414u /*TIOCSWINSZ*/: { uint16_t *w = arg; if (w) {
+        if (w[0] != g_pty[i].rows || w[1] != g_pty[i].cols) g_pty[i].winch = 1;
+        g_pty[i].rows = w[0]; g_pty[i].cols = w[1]; } return 0; }
     case 0x5413u /*TIOCGWINSZ*/: { uint16_t *w = arg; if (w) { w[0] = g_pty[i].rows; w[1] = g_pty[i].cols; w[2] = w[3] = 0; } return 0; }
     case 0x540Eu /*TIOCSCTTY*/: return 0;
     default: return -1;

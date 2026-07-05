@@ -878,11 +878,20 @@ static inline int vfork_redir_fd(int fd)
     return fd;
 }
 
+static int winch_dispatch(void);   /* fwd (defined with the signal table below):
+                                    * runs a registered SIGWINCH handler; 1 = ran */
+
 ssize_t read(int fd, void *buf, size_t n)
 {
-    long r = sys_read(vfork_redir_fd(fd), buf, (unsigned)n);
-    if (r < 0) { errno = (r == -11) ? EAGAIN : (r < -1 && r > -134) ? (int)-r : EIO; return -1; }
-    return r;
+    for (;;) {
+        long r = sys_read(vfork_redir_fd(fd), buf, (unsigned)n);
+        if (r == -4) {                 /* pty winch wakeup (window size changed) */
+            if (winch_dispatch()) { errno = EINTR; return -1; }   /* POSIX EINTR */
+            continue;                  /* no handler installed: transparent retry */
+        }
+        if (r < 0) { errno = (r == -11) ? EAGAIN : (r < -1 && r > -134) ? (int)-r : EIO; return -1; }
+        return r;
+    }
 }
 
 ssize_t write(int fd, const void *buf, size_t n)
@@ -1228,6 +1237,9 @@ int ioctl(int fd, unsigned long req, ...)
     va_end(ap);
     if (req == TIOCGWINSZ) {
         struct winsize *ws = (struct winsize *)arg;
+        /* a pty slave knows its real size (TIOCSWINSZ from the ssh client);
+         * everything else (console) reports the classic 24x80 */
+        if (sys_ioctl(fd, (unsigned)req, arg) == 0) return 0;
         ws->ws_row = 24;
         ws->ws_col = 80;
         ws->ws_xpixel = ws->ws_ypixel = 0;
@@ -1308,12 +1320,39 @@ int poll(struct pollfd *fds, nfds_t nfds, int timeout)
 /* ---- signals: soft only (never delivered asynchronously) ------------------ */
 static struct sigaction g_sigact[32];
 
+#ifndef SIGWINCH
+#define SIGWINCH 28
+#endif
+/* SIGWINCH delivery point: a blocked pty-slave read wakes with -EINTR when the
+ * window size changes (TIOCSWINSZ from the ssh client); read() calls here. The
+ * handler runs synchronously in the reader's own context — the only signal
+ * delivery XTOS does. Apps see fresh TIOCGWINSZ values inside the handler. */
+static int winch_dispatch(void)
+{
+    void (*h)(int) = g_sigact[SIGWINCH].sa_handler;
+    if (!h || h == SIG_IGN || h == SIG_DFL) return 0;
+    h(SIGWINCH);
+    return 1;
+}
+
 int sigaction(int sig, const struct sigaction *act, struct sigaction *old)
 {
     if (sig < 0 || sig >= 32) { errno = EINVAL; return -1; }
     if (old) *old = g_sigact[sig];
     if (act) g_sigact[sig] = *act;
     return 0;
+}
+
+/* signal(): route into g_sigact so soft-signal delivery (SIGWINCH) finds the
+ * handler. newlib's own signal() keeps its handler in a PRIVATE table the shim
+ * can't see, so programs that install SIGWINCH via signal() (toysh, vi, less)
+ * would never be woken — this override (the shim links before libc.so) fixes it. */
+_sig_func_ptr signal(int sig, _sig_func_ptr h)
+{
+    if (sig < 0 || sig >= 32) { errno = EINVAL; return SIG_ERR; }
+    _sig_func_ptr prev = g_sigact[sig].sa_handler;
+    g_sigact[sig].sa_handler = h;
+    return prev;
 }
 
 int kill(pid_t pid, int sig)
