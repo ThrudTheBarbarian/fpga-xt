@@ -14,6 +14,7 @@
  *   0x300  CTRL        control plane (gp0_ctrl, SALLY speed, XT unlock, keyboard inject)
  *   0x400  DIAG        PL diagnostic words (A9-only, read-only, word-aligned)
  *   0x500  XLCTL       XL compositor-plane window placement (A9-positioned emulation window)
+ *   0x600  MATH        math-coprocessor mailbox (A9-only); 6502 side = $D5C6-$D5C8 + the $4000-$5FFF math page
  */
 #ifndef XT_GP0_MAP_H_
 #define XT_GP0_MAP_H_
@@ -29,6 +30,7 @@
 #define XT_BLK_CTRL      (XT_GP0_BASE + 0x300u)
 #define XT_BLK_DIAG      (XT_GP0_BASE + 0x400u)
 #define XT_BLK_XLCTL     (XT_GP0_BASE + 0x500u)
+#define XT_BLK_MATH      (XT_GP0_BASE + 0x600u)
 
 /* ---- BLITTER block --------------------------------------------------- */
 /*   0x00..0x18  W  blitter registers DST/PAT/CMD/SRC/FLAGS (bl_addr = offset); see blitter.h XT_BL_* */
@@ -73,5 +75,10 @@
 #define XT_XL_WIN_H          (XT_BLK_XLCTL + 0x0Cu)       /* W clip height (12-bit; clip_y1 = Y + H) */
 #define XT_XL_WIN_SCALE      (XT_BLK_XLCTL + 0x10u)       /* W integer scale 1..5 */
 #define XT_XL_WIN_EN         (XT_BLK_XLCTL + 0x14u)       /* W [0]=1: use these regs (A9-positioned); 0: legacy gp0_ctrl-scale centred */
+
+/* ---- MATH block --------------------------------------------------- */
+#define XT_MATH_EVT          (XT_BLK_MATH + 0x00u)        /* R doorbell event pop: [8]=valid, [7:0]=chunk index; a read consumes one event; IRQ_F2P[1] level = FIFO non-empty */
+#define XT_MATH_DONE         (XT_BLK_MATH + 0x04u)        /* W completion: [7:0]=chunk, [15:8]=result-span first line (64 B lines), [23:16]=line count; reloads the span into the math page if that chunk is resident, then raises $D5C7 done */
+#define XT_MATH_STAT         (XT_BLK_MATH + 0x08u)        /* R [0]=engine busy, [1]=chunk resident/ready, [2]=evt FIFO non-empty, [15:8]=resident chunk, [23:16]=evt FIFO fill */
 
 #endif /* XT_GP0_MAP_H_ */

@@ -310,6 +310,17 @@ module fpga_xt_top (
     wire [7:0]  scrn_antic_rdata;         // <- screen_bank ANTIC port
     wire        scrn_antic_banked;        // <- screen_bank (ANTIC eff bank != 0)
 
+    // Math-coprocessor page (math_cop engine, $D5C6-$D5C8 decoded in sally_mem).
+    // Shares scrn_cpu_addr/scrn_cpu_wdata for the aperture byte port and
+    // scrn_bank_wval for the $D5C8 chunk value.
+    wire        math_map;                 // $D5C6.0 (CPU aperture overlay)
+    wire        math_exec_we;             // $D5C7 write strobe (doorbell)
+    wire        math_chunk_we;            // $D5C8 write strobe
+    wire        math_done, math_busy, math_chunk_ready;   // <- math_cop status
+    wire        math_cpu_we;
+    wire [7:0]  math_cpu_rdata;           // <- math_cop CPU port
+    wire        math_irq;                 // <- math_cop event FIFO non-empty -> IRQ_F2P[1]
+
     // ANTIC-view bank registers ($D488-$D48B) are currently unused in the
     // Zynq build — ANTIC's DMA reaches RAM via bram_shim, not via
     // sally_mem's CPU bus, so sally_mem never needs to switch to the
@@ -762,6 +773,15 @@ module fpga_xt_top (
         .scrn_cpu_we        (scrn_cpu_we),
         .scrn_cpu_wdata     (scrn_cpu_wdata),
         .scrn_cpu_rdata     (scrn_cpu_rdata),
+        .math_map_q         (math_map),
+        .math_chunk_q       (),                  // engine takes the write value directly
+        .math_exec_we       (math_exec_we),
+        .math_chunk_we      (math_chunk_we),
+        .math_done          (math_done),
+        .math_busy          (math_busy),
+        .math_chunk_ready   (math_chunk_ready),
+        .math_cpu_we        (math_cpu_we),
+        .math_cpu_rdata     (math_cpu_rdata),
         .unlock_bank        (xt_unlock[UNLK_BANK]),
         .portb              (portb_q),
         .bus_mpd_n_in       (1'b1),         // no PBI
@@ -1172,6 +1192,23 @@ module fpga_xt_top (
     wire [31:0] gp0m_wdata;   wire [3:0] gp0m_wstrb;  wire gp0m_wlast, gp0m_wvalid, gp0m_wready;
     wire        gp0m_bvalid,  gp0m_bready;
 
+    // screen_bank and math_cop share S_AXI_GP0 through gp0_axi_mux (transaction-
+    // granular arbitration, math priority — see gp0_axi_mux.sv header).
+    wire [31:0] sb_araddr;  wire [3:0] sb_arlen;  wire [2:0] sb_arsize;
+    wire [1:0]  sb_arburst; wire sb_arvalid, sb_arready;
+    wire [31:0] sb_rdata;   wire sb_rvalid, sb_rlast, sb_rready;
+    wire [31:0] sb_awaddr;  wire [3:0] sb_awlen;  wire [2:0] sb_awsize;
+    wire [1:0]  sb_awburst; wire sb_awvalid, sb_awready;
+    wire [31:0] sb_wdata;   wire [3:0] sb_wstrb;  wire sb_wlast, sb_wvalid, sb_wready;
+    wire        sb_bvalid,  sb_bready;
+    wire [31:0] mc_araddr;  wire [3:0] mc_arlen;  wire [2:0] mc_arsize;
+    wire [1:0]  mc_arburst; wire mc_arvalid, mc_arready;
+    wire [31:0] mc_rdata;   wire mc_rvalid, mc_rlast, mc_rready;
+    wire [31:0] mc_awaddr;  wire [3:0] mc_awlen;  wire [2:0] mc_awsize;
+    wire [1:0]  mc_awburst; wire mc_awvalid, mc_awready;
+    wire [31:0] mc_wdata;   wire [3:0] mc_wstrb;  wire mc_wlast, mc_wvalid, mc_wready;
+    wire        mc_bvalid,  mc_bready;
+
     screen_bank #(.STACK_BASE(32'h2080_0000), .APERTURE_LOG2(13)) u_screen_bank (
         .clk          (clk_sys),       .rst        (rst_sys),
         .clk_cpu      (clk_sally),
@@ -1183,15 +1220,88 @@ module fpga_xt_top (
         .antic_addr   (antic_bram_addr[12:0]), .antic_rdata (scrn_antic_rdata),
         .antic_bank_wval(scrn_bank_wval), .antic_bank_we (scrn_antic_bank_we),
         .vbi          (antic_wb_frame_done),   .antic_banked (scrn_antic_banked),
-        .e_axi_araddr (gp0m_araddr),  .e_axi_arlen (gp0m_arlen),  .e_axi_arsize (gp0m_arsize),
-        .e_axi_arburst(gp0m_arburst), .e_axi_arvalid(gp0m_arvalid),.e_axi_arready(gp0m_arready),
-        .e_axi_rdata  (gp0m_rdata),   .e_axi_rvalid(gp0m_rvalid),  .e_axi_rlast (gp0m_rlast),
-        .e_axi_rready (gp0m_rready),
-        .e_axi_awaddr (gp0m_awaddr),  .e_axi_awlen (gp0m_awlen),  .e_axi_awsize (gp0m_awsize),
-        .e_axi_awburst(gp0m_awburst), .e_axi_awvalid(gp0m_awvalid),.e_axi_awready(gp0m_awready),
-        .e_axi_wdata  (gp0m_wdata),   .e_axi_wstrb (gp0m_wstrb),  .e_axi_wlast (gp0m_wlast),
-        .e_axi_wvalid (gp0m_wvalid),  .e_axi_wready(gp0m_wready),
-        .e_axi_bvalid (gp0m_bvalid),  .e_axi_bready(gp0m_bready)
+        .e_axi_araddr (sb_araddr),  .e_axi_arlen (sb_arlen),  .e_axi_arsize (sb_arsize),
+        .e_axi_arburst(sb_arburst), .e_axi_arvalid(sb_arvalid),.e_axi_arready(sb_arready),
+        .e_axi_rdata  (sb_rdata),   .e_axi_rvalid(sb_rvalid),  .e_axi_rlast (sb_rlast),
+        .e_axi_rready (sb_rready),
+        .e_axi_awaddr (sb_awaddr),  .e_axi_awlen (sb_awlen),  .e_axi_awsize (sb_awsize),
+        .e_axi_awburst(sb_awburst), .e_axi_awvalid(sb_awvalid),.e_axi_awready(sb_awready),
+        .e_axi_wdata  (sb_wdata),   .e_axi_wstrb (sb_wstrb),  .e_axi_wlast (sb_wlast),
+        .e_axi_wvalid (sb_wvalid),  .e_axi_wready(sb_wready),
+        .e_axi_bvalid (sb_bvalid),  .e_axi_bready(sb_bready)
+    );
+
+    // ---- math_cop: resident 8 KB math page + doorbell mailbox --------------
+    // GP0-side wires (evt/done/stat) run to xt_gp0_regs (same clk_sys domain).
+    // Like the blitter-bridge wires, the A9-driven strobes exist only in PS BD
+    // builds; the OOC/sim path ties them off (testbenches drive math_cop's
+    // GP0-side ports directly on their own instance).
+    wire [8:0]  math_evt_data;
+    wire [31:0] math_stat_word;
+`ifdef USE_PS_BD
+    wire        math_evt_pop;        // driven by u_axi_bridge
+    wire [23:0] math_done_word;
+    wire        math_done_we;
+`else
+    wire        math_evt_pop   = 1'b0;
+    wire [23:0] math_done_word = 24'd0;
+    wire        math_done_we   = 1'b0;
+`endif
+
+    math_cop #(.STACK_BASE(32'h2080_0000), .APERTURE_LOG2(13)) u_math_cop (
+        .clk          (clk_sys),       .rst        (rst_sys),
+        .clk_cpu      (clk_sally),
+        .cpu_addr     (scrn_cpu_addr), .cpu_we     (math_cpu_we), .cpu_wdata (scrn_cpu_wdata),
+        .cpu_rdata    (math_cpu_rdata),
+        .exec_we      (math_exec_we),
+        .chunk_wval   (scrn_bank_wval), .chunk_we  (math_chunk_we),
+        .math_done    (math_done),
+        .math_busy    (math_busy),
+        .chunk_ready  (math_chunk_ready),
+        .evt_data     (math_evt_data),  .evt_pop   (math_evt_pop),
+        .evt_irq      (math_irq),
+        .done_word    (math_done_word), .done_we   (math_done_we),
+        .stat_word    (math_stat_word),
+        .e_axi_araddr (mc_araddr),  .e_axi_arlen (mc_arlen),  .e_axi_arsize (mc_arsize),
+        .e_axi_arburst(mc_arburst), .e_axi_arvalid(mc_arvalid),.e_axi_arready(mc_arready),
+        .e_axi_rdata  (mc_rdata),   .e_axi_rvalid(mc_rvalid),  .e_axi_rlast (mc_rlast),
+        .e_axi_rready (mc_rready),
+        .e_axi_awaddr (mc_awaddr),  .e_axi_awlen (mc_awlen),  .e_axi_awsize (mc_awsize),
+        .e_axi_awburst(mc_awburst), .e_axi_awvalid(mc_awvalid),.e_axi_awready(mc_awready),
+        .e_axi_wdata  (mc_wdata),   .e_axi_wstrb (mc_wstrb),  .e_axi_wlast (mc_wlast),
+        .e_axi_wvalid (mc_wvalid),  .e_axi_wready(mc_wready),
+        .e_axi_bvalid (mc_bvalid),  .e_axi_bready(mc_bready)
+    );
+
+    gp0_axi_mux u_gp0_axi_mux (
+        .clk        (clk_sys),      .rst        (rst_sys),
+        .m0_araddr  (sb_araddr),    .m0_arlen   (sb_arlen),   .m0_arsize (sb_arsize),
+        .m0_arburst (sb_arburst),   .m0_arvalid (sb_arvalid), .m0_arready(sb_arready),
+        .m0_rdata   (sb_rdata),     .m0_rvalid  (sb_rvalid),  .m0_rlast  (sb_rlast),
+        .m0_rready  (sb_rready),
+        .m0_awaddr  (sb_awaddr),    .m0_awlen   (sb_awlen),   .m0_awsize (sb_awsize),
+        .m0_awburst (sb_awburst),   .m0_awvalid (sb_awvalid), .m0_awready(sb_awready),
+        .m0_wdata   (sb_wdata),     .m0_wstrb   (sb_wstrb),   .m0_wlast  (sb_wlast),
+        .m0_wvalid  (sb_wvalid),    .m0_wready  (sb_wready),
+        .m0_bvalid  (sb_bvalid),    .m0_bready  (sb_bready),
+        .m1_araddr  (mc_araddr),    .m1_arlen   (mc_arlen),   .m1_arsize (mc_arsize),
+        .m1_arburst (mc_arburst),   .m1_arvalid (mc_arvalid), .m1_arready(mc_arready),
+        .m1_rdata   (mc_rdata),     .m1_rvalid  (mc_rvalid),  .m1_rlast  (mc_rlast),
+        .m1_rready  (mc_rready),
+        .m1_awaddr  (mc_awaddr),    .m1_awlen   (mc_awlen),   .m1_awsize (mc_awsize),
+        .m1_awburst (mc_awburst),   .m1_awvalid (mc_awvalid), .m1_awready(mc_awready),
+        .m1_wdata   (mc_wdata),     .m1_wstrb   (mc_wstrb),   .m1_wlast  (mc_wlast),
+        .m1_wvalid  (mc_wvalid),    .m1_wready  (mc_wready),
+        .m1_bvalid  (mc_bvalid),    .m1_bready  (mc_bready),
+        .s_araddr   (gp0m_araddr),  .s_arlen    (gp0m_arlen), .s_arsize  (gp0m_arsize),
+        .s_arburst  (gp0m_arburst), .s_arvalid  (gp0m_arvalid),.s_arready (gp0m_arready),
+        .s_rdata    (gp0m_rdata),   .s_rvalid   (gp0m_rvalid), .s_rlast   (gp0m_rlast),
+        .s_rready   (gp0m_rready),
+        .s_awaddr   (gp0m_awaddr),  .s_awlen    (gp0m_awlen), .s_awsize  (gp0m_awsize),
+        .s_awburst  (gp0m_awburst), .s_awvalid  (gp0m_awvalid),.s_awready (gp0m_awready),
+        .s_wdata    (gp0m_wdata),   .s_wstrb    (gp0m_wstrb), .s_wlast   (gp0m_wlast),
+        .s_wvalid   (gp0m_wvalid),  .s_wready   (gp0m_wready),
+        .s_bvalid   (gp0m_bvalid),  .s_bready   (gp0m_bready)
     );
 
     // Read-path activity counters (clk_sys) — read via diag3_word at GP0 offset
@@ -2133,7 +2243,7 @@ module fpga_xt_top (
         .FIXED_IO_ps_srstb (),
         .FCLK_RESET0_N_0   (),
         .FCLK_CLK1_0        (fclk_50),   // 50 MHz PL reference -> both MMCMs
-        .IRQ_F2P_0          (bl_blit_irq), // PL->PS: blitter completion (GIC ID 61); needs FORCE=1 BD regen
+        .IRQ_F2P_0          ({math_irq, bl_blit_irq}), // PL->PS: [0] blitter completion (GIC 61), [1] math doorbell (GIC 62); needs FORCE=1 BD regen
         .s_axi_gp0_aclk     (clk_sys),
         .s_axi_acp_aclk     (clk_sally),   // ACP (sally_mem page cache) runs on clk_sally
         .iic_0_scl_i        (i2c_scl_i),
@@ -2532,7 +2642,12 @@ module fpga_xt_top (
         .xl_win_h        (xl_win_h),
         .xl_win_scale    (xl_win_scale),
         .xl_win_en       (xl_win_en),
-        .xl_win_we       (xl_win_we)
+        .xl_win_we       (xl_win_we),
+        .math_evt_data   (math_evt_data),    // math-coprocessor mailbox (0x6xx)
+        .math_evt_pop    (math_evt_pop),
+        .math_done_word  (math_done_word),
+        .math_done_we    (math_done_we),
+        .math_stat_word  (math_stat_word)
     );
 
     // ROM-init AXI-Lite slave — see hdl/sally_rom_loader.sv.

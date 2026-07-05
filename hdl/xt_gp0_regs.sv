@@ -50,7 +50,12 @@
 //     R 0x00 diag_word   R 0x04 diag2   R 0x08 diag3   R 0x0C diag4
 //     R 0x10 diag5       R 0x14 diag6   R 0x18 diag7
 //
-//   0x5xx  XL-CONTROL  reserved (XL scale/blank still ride in GP0_CTRL for now)
+//   0x5xx  XL-CONTROL  XL compositor-plane window placement (A9-positioned)
+//
+//   0x6xx  MATH (A9-only) — math-coprocessor mailbox (see hdl/math_cop.sv)
+//     R 0x00         MATH_EVT   {valid[8], chunk[7:0]} — read consumes one event
+//     W 0x04         MATH_DONE  {count[23:16], first-line[15:8], chunk[7:0]}
+//     R 0x08         MATH_STAT  engine busy / resident chunk / evt FIFO fill
 //
 // The blitter registers, keyboard inject and clock_mult all leave on the SAME
 // bl_addr/bl_data/bl_we bus (reconstructed to $D4xx in fpga_xt_top and merged
@@ -146,7 +151,14 @@ module xt_gp0_regs (
     output reg  [11:0] xl_win_h,
     output reg  [2:0]  xl_win_scale,
     output reg         xl_win_en,
-    output reg         xl_win_we           // 1-cycle commit strobe (on XL_WIN_EN write)
+    output reg         xl_win_we,          // 1-cycle commit strobe (on XL_WIN_EN write)
+
+    // ---- Math-coprocessor mailbox (clk_sys, wired to math_cop) --------------
+    input  wire [8:0]  math_evt_data,      // {valid, chunk} — event FIFO head
+    output reg         math_evt_pop,       // 1-cycle strobe on a MATH_EVT read
+    output reg  [23:0] math_done_word,     // {count, first-line, chunk}
+    output reg         math_done_we,       // 1-cycle strobe on a MATH_DONE write
+    input  wire [31:0] math_stat_word      // MATH_STAT readback
 );
 
     // Block selectors (addr[11:8]) and register offsets (addr[7:0]) come from
@@ -210,6 +222,8 @@ module xt_gp0_regs (
             spr_reg_addr   <= 8'h00;
             spr_reg_data   <= 8'h00;
             spr_reg_we     <= 1'b0;
+            math_done_word <= 24'd0;
+            math_done_we   <= 1'b0;
         end else begin
             s_axi_awready <= 1'b0;
             s_axi_wready  <= 1'b0;
@@ -217,6 +231,7 @@ module xt_gp0_regs (
             xt_unlock_we  <= 1'b0;
             spr_reg_we    <= 1'b0;
             xl_win_we     <= 1'b0;
+            math_done_we  <= 1'b0;
 
             unique case (wstate)
                 WST_IDLE: begin
@@ -302,6 +317,13 @@ module xt_gp0_regs (
                                     default: ;
                                 endcase
                             end
+                            // ---- 0x6xx MATH (whole words) -------------------
+                            BLK_MATH: begin
+                                if (aw_off == MATH_DONE) begin
+                                    math_done_word <= w_data[23:0];
+                                    math_done_we   <= 1'b1;
+                                end
+                            end
                             default: ; // 0x4xx diag is read-only; others no-op
                         endcase
                         s_axi_bresp  <= 2'b00;
@@ -340,8 +362,10 @@ module xt_gp0_regs (
             s_axi_rdata   <= 32'd0;
             s_axi_rresp   <= 2'b00;
             s_axi_rvalid  <= 1'b0;
+            math_evt_pop  <= 1'b0;
         end else begin
             s_axi_arready <= 1'b0;
+            math_evt_pop  <= 1'b0;
 
             unique case (rstate)
                 RST_IDLE: begin
@@ -372,6 +396,13 @@ module xt_gp0_regs (
                                     DIAG7: s_axi_rdata <= diag7_word;
                                     default: ;
                                 endcase
+                            BLK_MATH:
+                                if (ar_off == MATH_EVT) begin
+                                    // read-to-pop: this read consumes the head event
+                                    s_axi_rdata  <= {23'd0, math_evt_data};
+                                    math_evt_pop <= 1'b1;
+                                end
+                                else if (ar_off == MATH_STAT) s_axi_rdata <= math_stat_word;
                             default: ;
                         endcase
                         s_axi_rresp  <= 2'b00;

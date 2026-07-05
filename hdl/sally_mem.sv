@@ -149,6 +149,22 @@ module sally_mem #(
     output wire [7:0]  scrn_cpu_wdata,
     input  wire [7:0]  scrn_cpu_rdata,     // registered read (aligned with bram_dout_q)
 
+    // Math-coprocessor page (math_cop engine at the top) — $D5C6/$D5C7/$D5C8.
+    // $D5C6.0 (MAP) overlays the resident math page onto the CPU's view of the
+    // $4000-$5FFF aperture: a register flip, no copy, and it wins over the
+    // screen bank ($D5C3) without disturbing it.  ANTIC never sees the math
+    // page.  The math page shares scrn_cpu_addr/scrn_cpu_wdata; only the write
+    // enable and read-data legs are its own.
+    output wire        math_map_q,         // $D5C6.0 latched (aperture overlay on)
+    output wire [7:0]  math_chunk_q,       // $D5C8 latched (backing chunk index)
+    output wire        math_exec_we,       // 1-cycle strobe on a $D5C7 write (doorbell)
+    output wire        math_chunk_we,      // 1-cycle strobe on a $D5C8 write
+    input  wire        math_done,          // $D5C7.0 — results reloaded into the page
+    input  wire        math_busy,          // $D5C7.1 — engine flushing/filling
+    input  wire        math_chunk_ready,   // $D5C7.2 — page holds the requested chunk
+    output wire        math_cpu_we,        // aperture write -> math page
+    input  wire [7:0]  math_cpu_rdata,     // registered read (aligned with bram_dout_q)
+
     // XT register-unlock: when 0 (locked / stock) the $D5C0/$D5C1 bank-select
     // writes are ignored, so a stock cart's own $D5xx CCTL bank-switching is
     // undisturbed.  See docs/Zynq/register-unlock.md (BANK group).
@@ -345,6 +361,30 @@ module sally_mem #(
     assign scrn_antic_bank_we = rdy && !rw && is_scrn_antic && unlock_bank_q;
     assign scrn_bank_wval     = data_in;
 
+    // ---- Math-coprocessor register decode ($D5C6/$D5C7/$D5C8) ----
+    // Same CCTL-gap family and BANK unlock group as the screen-bank regs.
+    wire is_math_ctl   = (addr[15:0] == (XTC_CTL_BASE + 16'd6));   // $D5C6
+    wire is_math_exec  = (addr[15:0] == (XTC_CTL_BASE + 16'd7));   // $D5C7
+    wire is_math_chunk = (addr[15:0] == (XTC_CTL_BASE + 16'd8));   // $D5C8
+    wire is_math_reg   = is_math_ctl | is_math_exec | is_math_chunk;
+
+    assign math_exec_we  = rdy && !rw && is_math_exec  && unlock_bank_q;
+    assign math_chunk_we = rdy && !rw && is_math_chunk && unlock_bank_q;
+
+    logic       math_map;
+    logic [7:0] math_chunk;
+    always_ff @(posedge clk or posedge rst) begin
+        if (rst) begin
+            math_map   <= 1'b0;
+            math_chunk <= 8'h00;
+        end else if (rdy && !rw && unlock_bank_q) begin
+            if (is_math_ctl)   math_map   <= data_in[0];
+            if (is_math_chunk) math_chunk <= data_in;
+        end
+    end
+    assign math_map_q   = math_map;
+    assign math_chunk_q = math_chunk;
+
     logic [7:0] scrn_cpu_bank, scrn_antic_bank;
     always_ff @(posedge clk or posedge rst) begin
         if (rst) begin
@@ -363,11 +403,15 @@ module sally_mem #(
     // Non-zero bank = the screen_bank CPU-BRAM: writes go to its CPU port (the
     // harmless shadow write also lands, like hwreg/bank — see mem_we), and reads
     // prefer scrn_cpu_rdata over bram_dout_q via the rare_dout path below.
+    // math_map ($D5C6.0) overlays the math page on the CPU view and wins over
+    // the screen bank; the screen CPU-BRAM keeps its chunk untouched underneath.
     wire is_scrn_aperture = (addr[15:13] == 3'b010);            // $4000-$5FFF
-    wire scrn_banked      = is_scrn_aperture && (scrn_cpu_bank != 8'h00);
+    wire math_mapped      = is_scrn_aperture && math_map;
+    wire scrn_banked      = is_scrn_aperture && (scrn_cpu_bank != 8'h00) && !math_map;
     assign scrn_cpu_addr  = addr[12:0];
     assign scrn_cpu_we    = rdy && !rw && scrn_banked;
     assign scrn_cpu_wdata = data_in;
+    assign math_cpu_we    = rdy && !rw && math_mapped;
 
     // ---- Bank translator -----------------------------------------
     wire [15:0] bank_id_w;
@@ -532,6 +576,7 @@ module sally_mem #(
     logic [7:0] ctlreg_dout_q;        // xtc bank-control read-back ($D5C0/$D5C1)
     logic       was_ctlreg_q;         // prev addr was an xtc control reg
     logic       was_scrn_q;           // prev addr was a banked screen-aperture read
+    logic       was_math_q;           // prev addr was a math-page aperture read
 
     // Main BRAM write port: clk-only (no reset), single write-enable +
     // address + data mux. Vivado BRAM inference requires this shape.
@@ -640,25 +685,32 @@ module sally_mem #(
             ctlreg_dout_q        <= 8'h00;
             was_ctlreg_q         <= 1'b0;
             was_scrn_q           <= 1'b0;
+            was_math_q           <= 1'b0;
         end else if (rdy) begin
             bram_dout_q          <= mem[mem_addr_w];
             stack_dout_q         <= stack_mem[stack_addr_rd];
             selftest_dout_q      <= selftest_rom[addr[10:0]];
             // xtc control-reg read-back (served through the one ctlreg slot):
             //   $D5C0/$D5C1 = code/data bank; $D5C3/$D5C4 = screen banks;
-            //   $D5C5 = {7'b0, ready}.  addr[2:0] selects.
-            case (addr[2:0])
-                3'd0:    ctlreg_dout_q <= cpu_code_bank;
-                3'd1:    ctlreg_dout_q <= cpu_data_bank;
-                3'd3:    ctlreg_dout_q <= scrn_cpu_bank;
-                3'd4:    ctlreg_dout_q <= scrn_antic_bank;
-                3'd5:    ctlreg_dout_q <= {7'b0, scrn_ready};
+            //   $D5C5 = {7'b0, ready}; $D5C6 = {7'b0, map};
+            //   $D5C7 = {5'b0, chunk_ready, busy, done}; $D5C8 = math chunk.
+            //   addr[3:0] selects within $D5C0-$D5CF.
+            case (addr[3:0])
+                4'd0:    ctlreg_dout_q <= cpu_code_bank;
+                4'd1:    ctlreg_dout_q <= cpu_data_bank;
+                4'd3:    ctlreg_dout_q <= scrn_cpu_bank;
+                4'd4:    ctlreg_dout_q <= scrn_antic_bank;
+                4'd5:    ctlreg_dout_q <= {7'b0, scrn_ready};
+                4'd6:    ctlreg_dout_q <= {7'b0, math_map};
+                4'd7:    ctlreg_dout_q <= {5'b0, math_chunk_ready, math_busy, math_done};
+                4'd8:    ctlreg_dout_q <= math_chunk;
                 default: ctlreg_dout_q <= 8'h00;
             endcase
             // Locked (BANK group off) → don't shadow these; the read falls
             // through to the CCTL/cart path (open bus) like stock silicon.
-            was_ctlreg_q         <= (is_ctlreg | is_scrn_reg) && unlock_bank_q;
+            was_ctlreg_q         <= (is_ctlreg | is_scrn_reg | is_math_reg) && unlock_bank_q;
             was_scrn_q           <= scrn_banked;
+            was_math_q           <= math_mapped;
             was_hwreg_q          <= is_hwreg_page;
             was_bank_q           <= is_in_window_w;
             was_stack_q          <= is_stack_access;
@@ -706,11 +758,13 @@ module sally_mem #(
     // blitter source is decoupled from the critical cpu_rdata mux.  The stall +
     // registered busy_n make the 1-cycle local register valid exactly when the
     // CPU samples it (this is NOT the old rdy-gated latch that read stale).
-    wire use_rare = was_selftest_q | was_ctlreg_q | was_scrn_q | was_hwreg_q | was_cart_external_q
+    wire use_rare = was_selftest_q | was_ctlreg_q | was_math_q | was_scrn_q | was_hwreg_q
+                  | was_cart_external_q
                   | (was_mpd_window_q & mpd_active)
                   | (~was_rom_override_q & (was_bank_q | was_stack_q));
     wire [7:0] rare_dout = was_selftest_q             ? selftest_dout_q
                          : was_ctlreg_q               ? ctlreg_dout_q
+                         : was_math_q                 ? math_cpu_rdata
                          : was_scrn_q                 ? scrn_cpu_rdata
                          : was_hwreg_q                ? hwreg_dout_q
                          : was_cart_external_q        ? bus_pbi_rdata

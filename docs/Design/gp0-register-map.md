@@ -80,3 +80,13 @@ XL compositor-plane window placement (A9-positioned emulation window)
 | 0x0C | W | 12 | `XT_XL_WIN_H` | `XL_WIN_H` | clip height (12-bit; clip_y1 = Y + H) |
 | 0x10 | W | 3 | `XT_XL_WIN_SCALE` | `XL_WIN_SCALE` | integer scale 1..5 |
 | 0x14 | W | 1 | `XT_XL_WIN_EN` | `XL_WIN_EN` | [0]=1: use these regs (A9-positioned); 0: legacy gp0_ctrl-scale centred |
+
+## 0x600 — MATH  (`XT_BLK_MATH`)
+
+math-coprocessor mailbox (A9-only); 6502 side = $D5C6-$D5C8 + the $4000-$5FFF math page
+
+| Offset | Acc | Width | C macro | SV | Meaning |
+|--------|-----|-------|---------|----|---------|
+| 0x00 | R | 9 | `XT_MATH_EVT` | `MATH_EVT` | doorbell event pop: [8]=valid, [7:0]=chunk index; a read consumes one event; IRQ_F2P[1] level = FIFO non-empty |
+| 0x04 | W | 24 | `XT_MATH_DONE` | `MATH_DONE` | completion: [7:0]=chunk, [15:8]=result-span first line (64 B lines), [23:16]=line count; reloads the span into the math page if that chunk is resident, then raises $D5C7 done |
+| 0x08 | R | 32 | `XT_MATH_STAT` | `MATH_STAT` | [0]=engine busy, [1]=chunk resident/ready, [2]=evt FIFO non-empty, [15:8]=resident chunk, [23:16]=evt FIFO fill |

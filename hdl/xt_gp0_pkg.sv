@@ -14,6 +14,7 @@ package xt_gp0_pkg;
     localparam logic [3:0] BLK_CTRL     = 4'h3;  // 0x300  CTRL
     localparam logic [3:0] BLK_DIAG     = 4'h4;  // 0x400  DIAG
     localparam logic [3:0] BLK_XLCTL    = 4'h5;  // 0x500  XLCTL
+    localparam logic [3:0] BLK_MATH     = 4'h6;  // 0x600  MATH
 
     // ---- register offsets = addr[7:0] (per block) ----
     // BLITTER
@@ -56,6 +57,10 @@ package xt_gp0_pkg;
     localparam logic [7:0] XL_WIN_H         = 8'h0C;  // W clip height (12-bit; clip_y1 = Y + H)
     localparam logic [7:0] XL_WIN_SCALE     = 8'h10;  // W integer scale 1..5
     localparam logic [7:0] XL_WIN_EN        = 8'h14;  // W [0]=1: use these regs (A9-positioned); 0: legacy gp0_ctrl-scale centred
+    // MATH
+    localparam logic [7:0] MATH_EVT         = 8'h00;  // R doorbell event pop: [8]=valid, [7:0]=chunk index; a read consumes one event; IRQ_F2P[1] level = FIFO non-empty
+    localparam logic [7:0] MATH_DONE        = 8'h04;  // W completion: [7:0]=chunk, [15:8]=result-span first line (64 B lines), [23:16]=line count; reloads the span into the math page if that chunk is resident, then raises $D5C7 done
+    localparam logic [7:0] MATH_STAT        = 8'h08;  // R [0]=engine busy, [1]=chunk resident/ready, [2]=evt FIFO non-empty, [15:8]=resident chunk, [23:16]=evt FIFO fill
 
 endpackage
 `endif

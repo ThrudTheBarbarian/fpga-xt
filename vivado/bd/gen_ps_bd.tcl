@@ -61,7 +61,7 @@ set_property -dict [list \
     CONFIG.PCW_EN_RST3_PORT {0} \
     CONFIG.PCW_USE_FABRIC_INTERRUPT {1} \
     CONFIG.PCW_IRQ_F2P_MODE {DIRECT} \
-    CONFIG.PCW_IRQ_F2P_INTR {1} \
+    CONFIG.PCW_IRQ_F2P_INTR {2} \
     CONFIG.PCW_EN_EMIO_GPIO {0} \
     CONFIG.PCW_GPIO_EMIO_GPIO_ENABLE {0} \
     CONFIG.PCW_EN_EMIO_I2C0 {1} \
@@ -81,16 +81,18 @@ set_property -dict [list \
 # is one clock domain.  The connection is made after that port is created (the
 # "GP0 / HP clock" block below).
 
-# ---- Export IRQ_F2P[0] as an external port (PL completion interrupts -> GIC) -
-# 1-bit ([0:0]), DIRECT mode: bit 0 = blitter completion IRQ -> GIC SPI ID 61.
-# PCW_IRQ_F2P_INTR=1 (config above) creates the zynq_ps/IRQ_F2P pin; we make the
+# ---- Export IRQ_F2P[1:0] as an external port (PL interrupts -> GIC) ---------
+# 2-bit ([1:0]), DIRECT mode: bit 0 = blitter completion IRQ -> GIC SPI ID 61,
+# bit 1 = math-coprocessor doorbell (event FIFO non-empty) -> GIC SPI ID 62.
+# PCW_IRQ_F2P_INTR=2 (config above) creates the zynq_ps/IRQ_F2P pin; we make the
 # external port explicitly so it has the deterministic name 'IRQ_F2P_0' that
 # fpga_xt_top connects (make_bd_pins_external's auto-name is not guaranteed).
+# NOTE: widening from 1 needs FORCE=1 (BD regen) on the build host.
 set irq_pin [get_bd_pins -quiet zynq_ps/IRQ_F2P]
 if {$irq_pin ne ""} {
-    create_bd_port -dir I -from 0 -to 0 IRQ_F2P_0
+    create_bd_port -dir I -from 1 -to 0 IRQ_F2P_0
     connect_bd_net [get_bd_ports IRQ_F2P_0] $irq_pin
-    puts ">> created external port IRQ_F2P_0 -> zynq_ps/IRQ_F2P (1-bit, GIC 61)"
+    puts ">> created external port IRQ_F2P_0 -> zynq_ps/IRQ_F2P (2-bit, GIC 61/62)"
 } else {
     puts ">> WARNING: zynq_ps/IRQ_F2P pin not found — fabric IRQ not exported"
 }

@@ -143,6 +143,22 @@
         { "off": "0x14", "access": "W", "width": 1,  "c": "XT_XL_WIN_EN",    "sv": "XL_WIN_EN",
           "desc": "[0]=1: use these regs (A9-positioned); 0: legacy gp0_ctrl-scale centred" }
       ]
+    },
+    {
+      "name": "MATH",
+      "sel": "0x6",
+      "base": "0x600",
+      "base_macro": "XT_BLK_MATH",
+      "sv_sel": "BLK_MATH",
+      "desc": "math-coprocessor mailbox (A9-only); 6502 side = $D5C6-$D5C8 + the $4000-$5FFF math page",
+      "regs": [
+        { "off": "0x00", "access": "R", "width": 9,  "c": "XT_MATH_EVT",  "sv": "MATH_EVT",
+          "desc": "doorbell event pop: [8]=valid, [7:0]=chunk index; a read consumes one event; IRQ_F2P[1] level = FIFO non-empty" },
+        { "off": "0x04", "access": "W", "width": 24, "c": "XT_MATH_DONE", "sv": "MATH_DONE",
+          "desc": "completion: [7:0]=chunk, [15:8]=result-span first line (64 B lines), [23:16]=line count; reloads the span into the math page if that chunk is resident, then raises $D5C7 done" },
+        { "off": "0x08", "access": "R", "width": 32, "c": "XT_MATH_STAT", "sv": "MATH_STAT",
+          "desc": "[0]=engine busy, [1]=chunk resident/ready, [2]=evt FIFO non-empty, [15:8]=resident chunk, [23:16]=evt FIFO fill" }
+      ]
     }
   ]
 }

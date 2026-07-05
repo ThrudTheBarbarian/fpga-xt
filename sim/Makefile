@@ -947,6 +947,23 @@ screen_bank: $(BUILD_DIR)/tb_screen_bank.vvp
 $(BUILD_DIR)/tb_screen_bank.vvp: $(SCREEN_BANK_HDL) tb_screen_bank.sv | $(BUILD_DIR)
 	$(IVERILOG) $(SV_FLAGS) -o $@ -s tb_screen_bank $(SCREEN_BANK_HDL) tb_screen_bank.sv
 
+# ---- math_cop — math-coprocessor mailbox page ------------------------------
+MATHCOP_HDL := \
+    $(HDL_DIR)/cdc_sync_bit.sv \
+    $(HDL_DIR)/math_cop.sv
+
+mathcop: $(BUILD_DIR)/tb_mathcop.vvp
+	@echo "=== mathcop ==="
+	@$(VVP) -N $< | tee $(BUILD_DIR)/tb_mathcop.log
+	@grep -q '\*\*\* MATHCOP OK \*\*\*' $(BUILD_DIR)/tb_mathcop.log || \
+	    (echo "FAIL: tb_mathcop missing MATHCOP OK"; exit 1)
+	@grep -q 'FATAL\|FAIL' $(BUILD_DIR)/tb_mathcop.log && \
+	    (echo "FAIL: tb_mathcop reported a failure"; exit 1) || true
+	@echo "PASS: tb_mathcop"
+
+$(BUILD_DIR)/tb_mathcop.vvp: $(MATHCOP_HDL) tb_mathcop.sv | $(BUILD_DIR)
+	$(IVERILOG) $(SV_FLAGS) -o $@ -s tb_mathcop $(MATHCOP_HDL) tb_mathcop.sv
+
 # ---- sprite_regs — sprite_engine descriptor register file ----------------
 SPRITE_ENG_HDL := \
     $(HDL_DIR)/cdc_sync_bit.sv     \
