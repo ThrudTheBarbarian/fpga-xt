@@ -31,25 +31,33 @@ int *__errno(void) { static int mc_errno; return &mc_errno; }
 #define REG32(a)            (*(volatile uint32_t *)(a))
 #define GICD_BASE           0xF8F01000UL
 #define GICD_ISENABLER(n)   (*(volatile uint32_t *)(GICD_BASE + 0x100u + 4u * (n)))
+#define GICD_ICENABLER(n)   (*(volatile uint32_t *)(GICD_BASE + 0x180u + 4u * (n)))
 #define GICD_IPRIORITYR(id) (*(volatile uint8_t  *)(GICD_BASE + 0x400u + (id)))
 #define GICD_ITARGETSR(id)  (*(volatile uint8_t  *)(GICD_BASE + 0x800u + (id)))
 
 /* ---- ISR -> worker ring (matches the PL FIFO depth) ---------------------- */
 static volatile uint8_t mc_ring[16];
 static volatile uint8_t mc_head, mc_tail;
+static volatile uint8_t mc_irq_masked;
 static TaskHandle_t     mc_task;
 
 /* Integer-only: dispatched from vApplicationIRQHandler (zynq.c) on ID 62.
- * Each MATH_EVT read pops one event; the level IRQ drops once drained. */
+ * Each MATH_EVT read pops one event; the level IRQ drops once drained.  If
+ * the ring is full (worker lagging), stop popping and MASK the IRQ — a level
+ * interrupt with events left would re-fire forever — and let the worker
+ * unmask after it drains. */
 void mathcop_isr(void)
 {
     BaseType_t woken = pdFALSE;
-    for (;;) {
+    while ((uint8_t)(mc_head - mc_tail) < 16u) {
         uint32_t evt = REG32(MC_GP0_EVT);
-        if (!(evt & 0x100u)) break;
+        if (!(evt & 0x100u)) goto notify;
         mc_ring[mc_head & 15u] = (uint8_t)evt;
         mc_head++;
     }
+    mc_irq_masked = 1;
+    GICD_ICENABLER(MC_GIC_IRQ_ID / 32u) = 1u << (MC_GIC_IRQ_ID % 32u);
+notify:
     if (mc_task) vTaskNotifyGiveFromISR(mc_task, &woken);
     portYIELD_FROM_ISR(woken);
 }
@@ -370,6 +378,10 @@ static void mc_worker(void *arg)
         while (mc_tail != mc_head) {
             mc_run_chunk(mc_ring[mc_tail & 15u]);
             mc_tail++;
+        }
+        if (mc_irq_masked) {           /* ring was full: resume the level IRQ */
+            mc_irq_masked = 0;
+            GICD_ISENABLER(MC_GIC_IRQ_ID / 32u) = 1u << (MC_GIC_IRQ_ID % 32u);
         }
     }
 }
