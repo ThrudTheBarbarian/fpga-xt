@@ -88,6 +88,24 @@ to the final name, falling back to a plain write only on EPERM/EACCES/ENOSYS —
 `link()` returning EPERM. (Build note: build sequentially — interleaving build-dropbear.sh
 with `make` produced a corrupt toybox.so once.)
 
+## MILESTONE: server starts, listens, accepts (fork blocker confirmed)
+
+`dropbear -F -r <key> -p <port>` runs on qemu: parses args, "Not backgrounding", binds and
+listens — the server `.so` executes. qemu has working networking (SLIRP, `e0`/10.0.2.15), so
+with `-nic user,hostfwd=tcp::2222-:22` a host `ssh -p 2222 root@127.0.0.1` reaches it: TCP
+connects and dropbear ACCEPTS (not refused), but the client times out "during banner
+exchange" — no banner comes back. Root cause CONFIRMED empirically: `svr-main.c:308`
+`fork()`s a child per connection to send the banner + run KEX, and XTOS has no fork
+(`posix_shim.c`: "there is no fork"), so the handler never runs. Exactly the predicted gap.
+(Also: drop `-E` — syslog is disabled, so stderr is already the log and `-E` is unknown.)
+
+So the transport is one launcher away: **inetd mode + an XTOS sshd listener** that binds :22,
+accepts, and `SYS_spawn_fd`s `dropbear -i` with the socket as fd 0/1 (model on `httpd.so`,
+which already does listen/accept). That gets KEX + pubkey auth working over a real
+connection; the interactive session then needs `spawn_command`→spawn + the pty.
+
+Packaging done: `dropbear.so` → `/bin/dropbear` in the romfs (alongside `/bin/dropbearkey`).
+
 ## Runtime — decisions + status
 
 **`/dev/urandom` — DONE.** Already exists in `vfs_devfs.c` (`dv_rand_rd`, per-open
