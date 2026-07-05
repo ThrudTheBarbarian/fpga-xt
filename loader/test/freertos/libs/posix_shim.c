@@ -1109,9 +1109,12 @@ int chroot(const char *path) { (void)path; errno = EPERM; return -1; }
 static char *g_grmem[] = { 0 };
 static struct passwd g_pw = {
     .pw_name = "root", .pw_passwd = "", .pw_uid = 0, .pw_gid = 0,
-    .pw_gecos = "root", .pw_dir = "/media/home", .pw_shell = "/System/bin/sh",
+    .pw_gecos = "root", .pw_dir = "/media/home", .pw_shell = "/bin/sh",
     /* pw_dir matches g_env0's HOME: sshd derives the session HOME, the login
-     * chdir and the default authorized_keys path (~/.ssh) from here */
+     * chdir and the default authorized_keys path (~/.ssh) from here.
+     * pw_shell must be /bin/sh — the one shell path that resolves on BOTH
+     * targets (qemu romfs maps /bin/sh directly; the HW romfs carries no
+     * shell and spawn's /bin/x -> /OS/bin/x fallback finds the SD toysh). */
 };
 static struct group g_gr = {
     .gr_name = "root", .gr_passwd = "", .gr_gid = 0, .gr_mem = g_grmem,
