@@ -124,9 +124,18 @@ The fixes that got from handshake to login:
    `HAVE_FORK` from config.h so sysoptions.h selects `DROPBEAR_VFORK=1`; `spawn_command` then
    uses vfork (the shim's snapshot trick, as toybox's XVFORK) and the command runs.
 
-**Remaining: interactive shell** — `ssh root@xtos` (no command) opens a pty session; XTOS
-needs a `/dev/ptmx` pty (kernel). Non-interactive exec works now, so scp-style transfers are
-gated only on an scp binary on the guest (dropbear execs the system scp; toybox has none).
+**Interactive shell — pty subsystem BUILT, I/O pump is the last mile.** `ssh -tt root@xtos`
+reaches full auth, dropbear allocates a pty (BSD `/dev/ptyp` scan), sets up the controlling
+tty, and **the shell IS spawned** (`/System/bin/sh`). But dropbear's I/O pump hangs — the
+shell's output never reaches the client. The pty itself is done: pass-through pairs
+`/dev/ptyp[0-3]`+`/dev/ttyp[0-3]` (vfs_devfs.c + frtos_os.c `xt_pty_*`), refcounted opens
+(`vf.ondup`), mode/winsize ioctls, O_NONBLOCK read (`vf.nonblock`); `spawn_fd` COPIES a
+char-device stdio fd so the pty child's `dup2(slave→0/1/2)` wires all three. Remaining
+suspects: (1) the kernel `-EAGAIN` from the nonblock master read may not map to
+`errno=EAGAIN` for dropbear's channel read; (2) dropbear's complex pty vfork child
+(`pty_make_controlling_tty`) vs our snapshot-vfork (the simple non-pty exec child works).
+Next: trace `xt_pty_*` during a live session to see where data stops. Non-interactive exec
+works fully; scp needs an scp binary on the guest (dropbear execs the system scp; toybox has none).
 
 ## (earlier) real SSH handshake to XTOS (KEX + host key + cipher)
 
