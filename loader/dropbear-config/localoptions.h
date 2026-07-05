@@ -25,4 +25,8 @@
 /* the shell search path on XTOS */
 #define DEFAULT_PATH "/System/bin:/OS/bin:/bin"
 
+/* accepted login shells (dropbear's getusershell falls back to this list when /etc/shells
+ * is absent). XTOS's shell is /System/bin/sh — without this, login is "invalid shell". */
+#define COMPAT_USER_SHELLS "/System/bin/sh", "/OS/bin/sh", "/bin/sh"
+
 #endif

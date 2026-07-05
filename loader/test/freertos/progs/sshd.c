@@ -18,6 +18,7 @@ void _app_entry(int argc, char **argv)
     int port = (argc > 1) ? atoin(argv[1]) : 22;
     if (port <= 0) port = 22;
     const char *keyfile = (argc > 2) ? argv[2] : "/OS/etc/dropbear/ed25519_host_key";
+    const char *authdir = (argc > 3) ? argv[3] : 0;   /* dropbear -D: authorized_keys dir */
 
     int ls = (int)sys_socket(XT_SOCK_TCP);
     if (ls < 0) { wrs(2, "sshd: socket failed\n"); sys_exit(1); }
@@ -33,10 +34,13 @@ void _app_entry(int argc, char **argv)
         if (cfd < 0) continue;
         wrs(2, "sshd: connection -> dropbear -i\n");
         /* hand the connection to a fresh dropbear in inetd mode: the socket becomes the
-         * child's fd 0/1/2, so dropbear reads/writes the SSH protocol on it. fds[3]=0:
-         * inherit no other parent fds. */
-        char *av[]  = { "dropbear", "-i", "-r", (char *)keyfile, 0 };
-        int   fds[4] = { cfd, cfd, cfd, 0 };
+         * child's fd 0 (dropbear uses one fd for both directions). fds[3]=0: inherit no
+         * other parent fds. */
+        char *av[8]; int ac = 0;
+        av[ac++] = "dropbear"; av[ac++] = "-i"; av[ac++] = "-r"; av[ac++] = (char *)keyfile;
+        if (authdir) { av[ac++] = "-D"; av[ac++] = (char *)authdir; }
+        av[ac] = 0;
+        int fds[4] = { cfd, cfd, cfd, 0 };
         if (sys_spawn_fd("/bin/dropbear", av, fds, 0) < 0)
             wrs(2, "sshd: spawn dropbear failed\n");
         sys_close(cfd);          /* the child owns the socket now */

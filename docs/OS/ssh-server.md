@@ -106,7 +106,29 @@ connection; the interactive session then needs `spawn_command`→spawn + the pty
 
 Packaging done: `dropbear.so` → `/bin/dropbear` in the romfs (alongside `/bin/dropbearkey`).
 
-## MILESTONE: real SSH handshake to XTOS (KEX + host key + cipher) ✅
+## MILESTONE: `ssh root@xtos 'cmd'` WORKS — full non-interactive SSH login ✅✅✅
+
+A host runs a command on XTOS over SSH end to end: connect → KEX → **pubkey auth succeeds**
+→ **exec → command output returned**. `ssh -i key root@127.0.0.1 'echo hi; pwd'` prints
+`hi` / `/`. The whole thing: real crypto transport, RSA pubkey auth, and command execution.
+
+The fixes that got from handshake to login:
+1. **pipe O_NONBLOCK** (kernel) — dropbear's signal-pipe drain no longer deadlocks (see below).
+2. **`COMPAT_USER_SHELLS`** (localoptions) = "/System/bin/sh",... — dropbear validates the
+   login shell against this list when /etc/shells is absent; without it, "invalid shell".
+3. **authorized_keys** — dropbear reads `<-D dir>/authorized_keys`; `sshd` passes `-D`; on qemu
+   test it's baked at `/System/etc/dropbear/authorized_keys` (romfs-overlay, gitignored — a
+   personal test key). On HW it lives on the SD (`/OS/etc/dropbear/`).
+4. **DROPBEAR_VFORK** — XTOS has no fork; configure saw newlib's nosys fork stub and defined
+   HAVE_FORK (→ dropbear used fork() → "exec request failed"). build-dropbear.sh now strips
+   `HAVE_FORK` from config.h so sysoptions.h selects `DROPBEAR_VFORK=1`; `spawn_command` then
+   uses vfork (the shim's snapshot trick, as toybox's XVFORK) and the command runs.
+
+**Remaining: interactive shell** — `ssh root@xtos` (no command) opens a pty session; XTOS
+needs a `/dev/ptmx` pty (kernel). Non-interactive exec works now, so scp-style transfers are
+gated only on an scp binary on the guest (dropbear execs the system scp; toybox has none).
+
+## (earlier) real SSH handshake to XTOS (KEX + host key + cipher)
 
 A host OpenSSH client completes the FULL handshake with Dropbear on XTOS over a real TCP
 link (qemu `-nic user,hostfwd=tcp::2222-:22`, `sshd` running the inetd launcher):
