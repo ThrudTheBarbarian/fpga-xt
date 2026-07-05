@@ -412,12 +412,17 @@ static void fdpath_set(int fd, const char *p, int flags)
 }
 static void fdpath_clear(int fd) { if (fd >= 0 && fd < FDPATH_N) g_fdpath[fd].path[0] = 0; }
 
-/* dup a regular-file fd by reopening its path (access mode only — no O_CREAT/O_TRUNC). */
+/* dup a regular-file fd by reopening its path (access mode only — no O_CREAT/O_TRUNC),
+ * then seek the new fd to the original's current offset so the duplicate starts where the
+ * original is (proper dup-time semantics; the offset isn't shared ONGOING — that would
+ * need kernel-side fd aliasing — but matching at dup time covers the real callers). */
 static int fd_reopen_dup(int fd)
 {
     if (fd < 0 || fd >= FDPATH_N || !g_fdpath[fd].path[0]) return -1;
     long nf = sys_open(g_fdpath[fd].path, g_fdpath[fd].amode);
     if (nf < 0) return -1;
+    long pos = sys_lseek(fd, 0, 1);                  /* SEEK_CUR: original's current offset */
+    if (pos > 0) sys_lseek((int)nf, pos, 0);         /* SEEK_SET: start the dup there */
     fdpath_set((int)nf, g_fdpath[fd].path, g_fdpath[fd].amode);
     return (int)nf;
 }
