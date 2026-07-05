@@ -75,6 +75,19 @@ no-ops (`chown`, `set[e]uid/gid`, `get/setrlimit`, `utimes`, `gethost*/getserv*`
 Everything else resolves from `libc.so`; the only load-time unresolved is `_close` (a
 kernel-export primitive, same as toybox.so). `dropbearkey.o` is excluded (its own `main`).
 
+## MILESTONE: dropbearkey RUNS on XTOS
+
+`dropbearkey -t ed25519 -f <file>` runs on qemu and generates a valid ed25519 host key,
+writes it, and re-reads it identically (`-y`) — proving the `.so` loads and executes, the
+full crypto (libtomcrypt/libtommath ed25519) works at runtime, `/dev/urandom` seeds it, and
+file I/O round-trips. Built by `make` (`dropbearkey.so` target → `/bin/dropbearkey` in the
+romfs); its objects are the COMMON set + dropbearkey compiled NEUTRAL (no `DROPBEAR_SERVER`).
+One fix needed: XTOS has no hard links, and dropbearkey writes a temp file then `link()`s it
+to the final name, falling back to a plain write only on EPERM/EACCES/ENOSYS — newlib's
+`link()` failed with errno 0, skipping the fallback, so `dropbear_glue.c` now provides
+`link()` returning EPERM. (Build note: build sequentially — interleaving build-dropbear.sh
+with `make` produced a corrupt toybox.so once.)
+
 ## Runtime — decisions + status
 
 **`/dev/urandom` — DONE.** Already exists in `vfs_devfs.c` (`dv_rand_rd`, per-open

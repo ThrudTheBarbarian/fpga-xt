@@ -63,6 +63,19 @@ for f in $COMMON $CLISVR $SVR $KEYGEN; do
     echo "$o" >> "$BUILD/objects.list"
 done
 
+# dropbearkey applet: the COMMON set + dropbearkey, compiled NEUTRAL (no DROPBEAR_SERVER
+# -- it is neither server nor client). Its own object dir + list so the .so links cleanly.
+echo "[dropbear] compiling dropbearkey (neutral) objects..."
+KOBJ="$OBJ/key"; mkdir -p "$KOBJ"
+KCFLAGS="-marm -mcpu=cortex-a9 -mfloat-abi=softfp -mfpu=neon-vfpv3 -fpic -fno-builtin \
+ -DLOCALOPTIONS_H_EXISTS -Os"
+: > "$BUILD/keyobjects.list"
+for f in $COMMON $KEYGEN; do
+    o="$KOBJ/$f.o"
+    $CC $KCFLAGS $INC -c "$DB/src/$f.c" -o "$o"
+    echo "$o" >> "$BUILD/keyobjects.list"
+done
+
 # ---- crypto archives: libtomcrypt + libtommath (linker pulls only referenced members) ---
 build_archive() {   # $1 = src dir, $2 = archive name, $3 = obj prefix, $4 = extra CFLAGS
     a="$BUILD/$2"
