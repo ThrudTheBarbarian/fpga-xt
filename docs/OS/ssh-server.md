@@ -279,17 +279,41 @@ XTOS provides 4: `/dev/ptyp[0-3]` (master) + `/dev/ttyp[0-3]` (slave).
 - qemu harness only: keep the guest's stdin open (`sleep`) and expect the guest log to
   flush in bursts.
 
+## Boot integration + polish (qemu-verified)
+
+- **Networking is a boot-script decision**, not kernel magic: `/boot/20-Networking`
+  runs `/bin/netup` (SYS_net_up → `net_init`, idempotent). The kernel no longer
+  auto-starts the stack. Headless: run `netup` at the console.
+- **`/boot/22-SecureShell`** starts sshd only if `~/.ssh/authorized_keys` exists,
+  logging to `/var/log/sshd.log` — truncated each boot (a fresh log per boot; every
+  writer opens its own O_APPEND fd, session children get one as stderr). Boot scripts
+  are versioned in `loader/sd/boot/` and staged by `make sdstage`.
+- **Real peer IPs in the log** (`Child connection from 10.0.2.2:63089`): the
+  `XT_SIOCGPEER`/`XT_SIOCGNAME` socket ioctls (`netconn_peer`/`netconn_addr`) back
+  honest `getpeername`/`getsockname` in the shim.
+- **scp** (`/bin/scp`) works both directions (Mac↔XTOS). Server mode (`scp -t/-f`,
+  spawned by the session) is pure stdio+fs; client mode (`scp f host:path` on XTOS)
+  execs `/bin/ssh` via the fake-vfork path. Needed three fixes: zero-length pipe
+  write returns 0 (was a SIGPIPE kill), honest pipe `poll` (readable = buffered OR
+  writerless-EOF; the always-ready lie made dropbear close the channel), and
+  `ftruncate` succeeds when the file is already the target size.
+- **ssh client** (`/bin/ssh`, dbclient): the board can ssh/scp OUT (pubkey only —
+  no password-prompt tty plumbing). `DROPBEAR_PATH_SSH_PROGRAM` points scp at
+  `/bin/ssh`.
+- **SIGWINCH**: a per-pty winch flag (set on a real TIOCSWINSZ change) wakes the
+  blocked slave read with -EINTR; the shim runs the app's handler synchronously
+  (added `signal()` to the shim — newlib's keeps handlers in a private table) then
+  returns EINTR. The handler-bearing app must be shim-linked (toysh/vi/less are).
+
 ## Remaining work
 
-1. **HW deploy**: `make hw` + JTAG (everything — kernel, shim and the ssh binaries —
-   is baked into the hw romfs). First-time setup on the board:
-   `mkdir -p /OS/etc/ssh && ssh-keygen -t ed25519 -f /OS/etc/ssh/ed25519_host_key`,
-   put the client's public key in `~/.ssh/authorized_keys` (= `/media/home/.ssh/`),
-   then `sshd 22`. Validate the `~/.ssh` default on HW (qemu has no SD, so it always
-   uses the `-D` override).
-2. **scp/sftp** — untested; scp needs a `scp` applet on PATH, sftp a server binary.
-3. **Window-size propagation** — TIOCSWINSZ is stored per-pair but nothing forwards
-   SIGWINCH to the shell (no async signals); linenoise re-queries on each prompt.
+1. **HW re-validation** of the above (all qemu-verified; login itself HW-confirmed).
+   First-time board setup: `mkdir -p /OS/etc/ssh && ssh-keygen -t ed25519 -f
+   /OS/etc/ssh/ed25519_host_key`, put the client pubkey in `~/.ssh/authorized_keys`
+   (`/media/home/.ssh/`), then reboot (22-SecureShell auto-starts it) or `sshd 22`.
+2. **sftp** — no server binary yet (scp covers transfers).
+3. **lwIP has no loopback** — the board can't ssh/scp to `127.0.0.1` (no `lo`
+   netif; the connection wedges the stack). Outbound to real peers is fine.
 
 ## Deploy
 Server binary builds to a PIC `.so` (like toybox) → **sdpush**; anything needing the kernel
