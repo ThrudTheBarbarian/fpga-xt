@@ -106,6 +106,23 @@ connection; the interactive session then needs `spawn_command`→spawn + the pty
 
 Packaging done: `dropbear.so` → `/bin/dropbear` in the romfs (alongside `/bin/dropbearkey`).
 
+## Launcher built; next blocker = socket-fd inheritance through spawn
+
+Built the inetd launcher `sshd.c` (`/bin/sshd`, bare usys, modelled on httpd.c): binds the
+port, accepts, and `SYS_spawn_fd`s `dropbear -i` with the socket as the child's fd 0/1/2.
+It RUNS and listens ("sshd: listening for ssh"). But a host `ssh` still times out at banner
+exchange, and `dropbear -i` in isolation (console stdin) emits no banner. Two causes found:
+- **`SYS_spawn_fd` is pipe-oriented** ("wire the child's stdio to the spawner's PIPE ends")
+  — it does NOT inherit a **socket** fd to the child, so `dropbear -i`'s fd 0/1 aren't the
+  connection socket. **This is the key next item: make socket fds inheritable through
+  SYS_spawn_fd** (kernel). Then the launcher hands a live socket to dropbear -i.
+- dropbear queues its banner (svr-session.c:194) and the session loop flushes it via
+  select/write — verify our `select`-over-poll + the socket fd poll actually fire writable.
+
+Test harness note: qemu with `-nic user,hostfwd=tcp::2222-:22` works; **foreground shows
+guest output, background does NOT** (qemu buffers stdout to a file). Use foreground for
+guest-side debugging; the host `ssh -v` shows the handshake either way.
+
 ## Runtime — decisions + status
 
 **`/dev/urandom` — DONE.** Already exists in `vfs_devfs.c` (`dv_rand_rd`, per-open
