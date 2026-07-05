@@ -80,7 +80,7 @@ kernel-export primitive, same as toybox.so). `dropbearkey.o` is excluded (its ow
 `dropbearkey -t ed25519 -f <file>` runs on qemu and generates a valid ed25519 host key,
 writes it, and re-reads it identically (`-y`) — proving the `.so` loads and executes, the
 full crypto (libtomcrypt/libtommath ed25519) works at runtime, `/dev/urandom` seeds it, and
-file I/O round-trips. Built by `make` (`dropbearkey.so` target → `/bin/dropbearkey` in the
+file I/O round-trips. Built by `make` (`dropbearkey.so` target → `/bin/ssh-keygen` in the
 romfs); its objects are the COMMON set + dropbearkey compiled NEUTRAL (no `DROPBEAR_SERVER`).
 One fix needed: XTOS has no hard links, and dropbearkey writes a temp file then `link()`s it
 to the final name, falling back to a plain write only on EPERM/EACCES/ENOSYS — newlib's
@@ -104,7 +104,7 @@ accepts, and `SYS_spawn_fd`s `dropbear -i` with the socket as fd 0/1 (model on `
 which already does listen/accept). That gets KEX + pubkey auth working over a real
 connection; the interactive session then needs `spawn_command`→spawn + the pty.
 
-Packaging done: `dropbear.so` → `/bin/dropbear` in the romfs (alongside `/bin/dropbearkey`).
+Packaging done: `dropbear.so` → `/bin/sshd-session` in the romfs (alongside `/bin/ssh-keygen`).
 
 ## MILESTONE: `ssh root@xtos 'cmd'` WORKS — full non-interactive SSH login ✅✅✅
 
@@ -116,9 +116,10 @@ The fixes that got from handshake to login:
 1. **pipe O_NONBLOCK** (kernel) — dropbear's signal-pipe drain no longer deadlocks (see below).
 2. **`COMPAT_USER_SHELLS`** (localoptions) = "/System/bin/sh",... — dropbear validates the
    login shell against this list when /etc/shells is absent; without it, "invalid shell".
-3. **authorized_keys** — dropbear reads `<-D dir>/authorized_keys`; `sshd` passes `-D`; on qemu
-   test it's baked at `/System/etc/dropbear/authorized_keys` (romfs-overlay, gitignored — a
-   personal test key). On HW it lives on the SD (`/OS/etc/dropbear/`).
+3. **authorized_keys** — default `~/.ssh/authorized_keys` (pw_dir = `/media/home`); an
+   explicit dir can be forced via `sshd`'s third arg (`-D`). The qemu harness bakes a test
+   key at `/System/etc/ssh/authorized_keys` (romfs-overlay, gitignored — personal key) and
+   passes `-D /System/etc/ssh` because `/media/home` lives on the SD.
 4. **DROPBEAR_VFORK** — XTOS has no fork; configure saw newlib's nosys fork stub and defined
    HAVE_FORK (→ dropbear used fork() → "exec request failed"). build-dropbear.sh now strips
    `HAVE_FORK` from config.h so sysoptions.h selects `DROPBEAR_VFORK=1`; `spawn_command` then
@@ -208,6 +209,25 @@ All session shapes pass in the qemu harness, repeatably and back-to-back on one 
 - `ssh -tt root@xtos` — full interactive login shell: prompt, linenoise editing/echo,
   applets resolve via PATH, clean `exit`
 
+### User-facing names + key locations
+
+The Dropbear name is an implementation detail; the runtime binaries use the standard
+ssh names (romfs mappings in the loader Makefile):
+
+- `/bin/sshd` — the XTOS listener (binds, accepts, spawns a session process per
+  connection). `sshd [port] [hostkeyfile] [authkeysdir]`.
+- `/bin/sshd-session` — the per-connection server (Dropbear `svr-main` in inetd mode;
+  same name OpenSSH ≥9.8 uses for this role). Spawned by sshd, never run by hand.
+- `/bin/ssh-keygen` — the host-key generator (Dropbear dropbearkey; same `-t`/`-f`
+  flags: `ssh-keygen -t ed25519 -f /OS/etc/ssh/ed25519_host_key`).
+
+Key locations follow the usual conventions:
+- **host key**: `/OS/etc/ssh/ed25519_host_key` (sshd's default; override as argv[2])
+- **authorized keys**: `~/.ssh/authorized_keys` — the shim's passwd entry sets
+  `pw_dir = /media/home` (matching `HOME`), and dropbear resolves `~` from pw_dir.
+  An explicit dir can still be forced with sshd's third arg (`-D`); the qemu harness
+  does that (`/System/etc/ssh`, romfs-overlay) because `/media/home` lives on the SD.
+
 ### The pty subsystem (kernel + devfs)
 
 Dropbear's `sshpty.c` finds no `/dev/ptmx` and falls back to scanning BSD-style pairs;
@@ -259,9 +279,12 @@ XTOS provides 4: `/dev/ptyp[0-3]` (master) + `/dev/ttyp[0-3]` (slave).
 
 ## Remaining work
 
-1. **HW deploy**: kernel (pty, spawn_fd copy, zero-write) → `make hw` + JTAG;
-   `toybox.so` (shim) + `dropbear.so`/`sshd` → SD. Host key + authorized_keys live at
-   `/OS/etc/dropbear/` on the SD (the romfs-overlay copy is only for the qemu harness).
+1. **HW deploy**: `make hw` + JTAG (everything — kernel, shim and the ssh binaries —
+   is baked into the hw romfs). First-time setup on the board:
+   `mkdir -p /OS/etc/ssh && ssh-keygen -t ed25519 -f /OS/etc/ssh/ed25519_host_key`,
+   put the client's public key in `~/.ssh/authorized_keys` (= `/media/home/.ssh/`),
+   then `sshd 22`. Validate the `~/.ssh` default on HW (qemu has no SD, so it always
+   uses the `-D` override).
 2. **scp/sftp** — untested; scp needs a `scp` applet on PATH, sftp a server binary.
 3. **Window-size propagation** — TIOCSWINSZ is stored per-pair but nothing forwards
    SIGWINCH to the shell (no async signals); linenoise re-queries on each prompt.

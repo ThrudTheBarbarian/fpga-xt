@@ -421,8 +421,8 @@ $(BUILD)/romfs.bin: $(BUILD)/mkromfs $(BUILD)/toybox.so $(BUILD)/sqlite3.so $(BU
 	    /bin/badpoke=$(BUILD)/badpoke.so \
 	    /bin/stackpoke=$(BUILD)/stackpoke.so \
 	    /bin/mmaptest=$(BUILD)/mmaptest.so \
-	    /bin/dropbearkey=$(BUILD)/dropbearkey.so \
-	    /bin/dropbear=$(BUILD)/dropbear.so \
+	    /bin/ssh-keygen=$(BUILD)/dropbearkey.so \
+	    /bin/sshd-session=$(BUILD)/dropbear.so \
 	    /bin/sshd=$(BUILD)/sshd.so \
 	    $(if $(XTC_SO),/bin/xtcprog=$(XTC_SO)) \
 	    /Library/libc.so=$(BUILD)/libc.so \
@@ -483,8 +483,8 @@ $(BUILD)/romfs-hw.bin: $(BUILD)/mkromfs $(BUILD)/pipetest.so $(BUILD)/hello.so $
 	    /bin/badpoke=$(BUILD)/badpoke.so \
 	    /bin/stackpoke=$(BUILD)/stackpoke.so \
 	    /bin/mmaptest=$(BUILD)/mmaptest.so \
-	    /bin/dropbearkey=$(BUILD)/dropbearkey.so \
-	    /bin/dropbear=$(BUILD)/dropbear.so \
+	    /bin/ssh-keygen=$(BUILD)/dropbearkey.so \
+	    /bin/sshd-session=$(BUILD)/dropbear.so \
 	    /bin/sshd=$(BUILD)/sshd.so \
 	    $(if $(XTC_SO),/bin/xtcprog=$(XTC_SO)) \
 	    /Library/libc.so=$(BUILD)/libc.so \
