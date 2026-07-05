@@ -857,16 +857,26 @@ int fsync(int fd) { (void)fd; return 0; }   /* page cache flushes on close */
  * STALE errno — dropbear's channel pump checks errno == EAGAIN on a negative
  * return and treats anything else as a dead fd. newlib stdio bypasses these
  * (it calls _read/_write directly), which is fine — it never uses O_NONBLOCK. */
+/* In the fake-vfork child, stdio I/O must honor the RECORDED dup2 map — the
+ * dup2s aren't applied to the (shared) table until exec, but a real vfork
+ * child writing fd 1 after dup2(x,1) writes to x. Dropbear's pty child prints
+ * the motd this way; without the remap it lands on the parent's console. */
+static inline int vfork_redir_fd(int fd)
+{
+    if (g_vfork_armed && fd >= 0 && fd < 3 && g_redir[fd] >= 0) return g_redir[fd];
+    return fd;
+}
+
 ssize_t read(int fd, void *buf, size_t n)
 {
-    long r = sys_read(fd, buf, (unsigned)n);
+    long r = sys_read(vfork_redir_fd(fd), buf, (unsigned)n);
     if (r < 0) { errno = (r == -11) ? EAGAIN : (r < -1 && r > -134) ? (int)-r : EIO; return -1; }
     return r;
 }
 
 ssize_t write(int fd, const void *buf, size_t n)
 {
-    long r = sys_write(fd, buf, (unsigned)n);
+    long r = sys_write(vfork_redir_fd(fd), buf, (unsigned)n);
     if (r < 0) { errno = (r == -11) ? EAGAIN : (r < -1 && r > -134) ? (int)-r : EIO; return -1; }
     return r;
 }
