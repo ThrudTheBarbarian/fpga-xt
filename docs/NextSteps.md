@@ -299,17 +299,25 @@
 - none
 
 
-## Math coprocessor (A9-offloaded FPU + integer)
+## Math coprocessor (A9-offloaded FPU + integer + SIMD)
 
-- **A9-offloaded math coprocessor** — memory-mapped FPU + integer unit: the 6502
-  writes operands into per-task register banks, picks an op, and a spare Cortex-A9
-  core does the math (native VFP + libm + integer) and writes the result back.
-  Replaces software FP with IEEE-754 single/double + full libm + integer mul/div,
-  ~15–100× faster and **flat cost** (a transcendental costs the same as an add).
-  Key feature: ops name source/dest slots, so the 6502 offloads whole *expressions*
-  rather than one op at a time (the xtc backend targets it as a register machine).
-  Same doorbell/mailbox as the GEM service; reuses the hwreg/CDC/GP0 plumbing.
-  *(design ready, not built; src: docs/Design/math-coprocessor.md)*
+Built: PL math page + doorbell (sim-validated, `make mathcop`) and the A9
+service (ISR + FPU worker + scalar/vector op interpreter, in the kernel).
+See docs/Design/math-coprocessor.md.  Open:
+
+- **HW validation** — flash the IRQ_F2P[1] bitstream, run a 6502-side test
+  program (Horner + 4×4 matmul + per-op-class goldens vs A9-computed values),
+  measure the real round-trip µs and record it in the design doc.
+- **6502-side include** — hand-written `.inc` (or generated from mathcop.h)
+  with the register/opcode constants for asm clients.
+- **OS chunk allocation** — allocate math chunks per task out of the
+  screen_bank chunk stack + `$D5C8` retarget on context switch (and the
+  completion-while-preempted notification path, chunk→task in the service).
+- **xtc lowering** — target the slot file as a register machine; lower array
+  expressions to the vector ops.
+- **$D800 FP ROM patch** — route Atari BASIC's floating point through the
+  coprocessor transparently (the visible payoff demo).
+- Deferred fast paths: ACP-coherent chunk traffic; NEON in the worker.
 
 ---
 

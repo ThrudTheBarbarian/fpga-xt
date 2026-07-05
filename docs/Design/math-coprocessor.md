@@ -1,215 +1,193 @@
-# Math coprocessor (A9-offloaded FPU + integer)
+# Math coprocessor (A9-offloaded FPU + integer + SIMD)
 
-> **Proposed design — not built.** A memory-mapped math coprocessor for the 6502
-> (and the xtc runtime / other backends) that offloads the actual arithmetic to a
-> spare Cortex-A9 core. Same doorbell/mailbox pattern as the GEM service.
+A memory-mapped math coprocessor for the 6502 (and the xtc runtime): operands
+and a short op *program* go into an 8 KB **math page**, one doorbell write runs
+the whole program on the A9 (native VFP + libm), and the results come back into
+the same page.  Replaces bespoke software floating point with hardware IEEE-754
+single + double, the full libm, integer mul/div, and vector (SIMD) ops — at
+**one round-trip per expression**, not per operation.
 
-## Concept
-
-Write operands to register slots, select an operation, and a spare A9 core does
-the math on its native VFP/NEON (+ libm) and writes the result back. Replaces
-bespoke software floating point with hardware-accelerated **IEEE-754 single +
-double**, the **full libm** (sqrt, trig, log, exp, pow…), and **integer mul/div**
-(the 6502 has no hardware multiply). Fits the project's "PS does the compute, PL
-is plumbing + register hooks" split.
+Status: PL sim-validated (`make mathcop` + full regressions), PS service built
+into the FreeRTOS kernel; on-hardware validation pending.
 
 ## Why offload to the A9 (not build FP in fabric)
 
 The A9 already has a hardware FPU, so IEEE-754 + libm come essentially free;
-building float IP in the PL would reinvent that at fabric cost. And it is fast:
-6502 software FP runs hundreds of cycles (add) to thousands (mul/div) to tens of
-thousands (transcendentals); the A9 round-trip is ~2–4 µs on the naïve MMIO path,
-dropping toward sub-µs with a burst or OCM mailbox (see *Latency budget*). Net ≈
-10× (mul) to ~100× (transcendental) at the ~100 MHz turbo, and far more at
-real-Atari speed. Crucially it is **flat cost** — the math itself is nanoseconds,
-so a transcendental costs the same as an add; the round-trip dominates everything.
+building float IP in the PL would reinvent that at fabric cost.  6502 software
+FP runs hundreds of cycles (add) to tens of thousands (transcendentals); the
+mailbox round-trip is a few µs and **flat** — the math itself is nanoseconds,
+so a transcendental costs the same as an add, and a whole batched expression
+costs about the same as one op.
 
 ## Both FPU-less realms benefit
 
-Neither emulated CPU has a hardware FPU — the 6502 never did, and the base
-ST/STe 68000 doesn't either (FP there is slow software). On the Atari-XT both get
-the A9's hardware VFP + libm, by different routes:
+- **6502 (X realm)** runs in fabric and reaches the A9 through this mailbox.
+- **m68k (T realm)** runs *on* the A9 (JIT), so 68881/68882 instructions map
+  1:1 onto VFP with no mailbox at all — a shorter path to the same silicon.
 
-- **6502 (X realm)** runs in fabric, so it reaches the A9 through this
-  memory-mapped mailbox — the doorbell round-trip described here.
-- **m68k (T realm)** already runs *on* the A9 (JIT), so it gets fast FP with **no
-  fabric round-trip at all**: 68881/68882 FPU instructions map 1:1 onto A9 VFP, and
-  68000 soft-float library calls can be high-level-emulated straight onto native
-  FP. So the m68k doesn't use this mailbox — it has a shorter path to the same
-  silicon.
+## Architecture
 
-Same underlying win — fast FP for two CPUs that never had it — just two paths to
-the A9's FP unit.
+```
+6502                     PL (fabric)                         A9 (FreeRTOS)
+----                     -----------                         -------------
+$D5C6.0=1  ── map ──►  math page (8 KB BRAM, resident)
+store slots/program       │  CPU byte port on the $4000-$5FFF aperture
+$D5C7 write (EXEC) ──►  flush DIRTY 64 B lines ──► DDR chunk (0x2080_0000+)
+                          │                            ▲ Normal-NC = coherent
+                        event FIFO ──► IRQ_F2P[1] ──► ISR ──► worker task
+poll $D5C7.0 (done)                                    runs program (VFP+libm)
+read result slots  ◄── reload result span ◄── MATH_DONE ◄── results+STATUS
+```
 
-## Register model
+- **The math page is a dedicated, always-resident 8 KB BRAM** overlaid on the
+  CPU's view of the `$4000-$5FFF` aperture by `$D5C6.0` — a register flip, no
+  copy, so entering/leaving the page costs nothing in a hot loop.  The screen
+  bank (`$D5C3`) keeps its chunk untouched underneath, ANTIC never sees the
+  math page, and an in-flight video page-flip carries on concurrently.
+- **Per-task banks are DDR chunks** in the screen_bank stack (`0x2080_0000`,
+  8 KB × 256): the OS allocates one chunk per math-using task and retargets
+  the page with `$D5C8` on context switch (spill dirty lines to the old chunk,
+  fill all of the new — tens of µs, on the context-switch path, never per
+  call).  Chunk 0 = none.  A task preempted mid-batch just leaves its state in
+  its own chunk; results land there and arrive with the chunk's next fill.
+- **The chunk is the mailbox.**  EXEC flushes only the page's dirty lines
+  (128-bit line bitmap) to the chunk over screen_bank's S_AXI_GP0 port (shared
+  through `gp0_axi_mux`, math priority), then pushes the chunk index into a
+  16-deep event FIFO whose non-empty level is **IRQ_F2P[1] (GIC SPI 62)**.
+  The chunk stack is Normal non-cacheable on the A9 (the PL-shared mmu.c
+  invariant), so the service needs no cache maintenance.
+- **The A9 service** (`loader/test/freertos/mathcop.{c,h}`): an integer-only
+  ISR drains the FIFO and notifies a top-priority FPU worker task (this port
+  does not save VFP state on the IRQ path), which interprets the program
+  against a cached local copy (bulk op fetch, demand slot loads, dirty-only
+  writeback), writes results + STATUS into the chunk, and pokes `MATH_DONE`;
+  the PL reloads the result span into the page (if that chunk is still
+  resident) and raises `$D5C7.0`.
 
-- **Per-task banks.** Each task gets its own register bank in the top bank-page
-  MMIO region (same mechanism as GEM / the `$D5C0`/`$D5C1` bank-select). Solves
-  multitasking reentrancy with no save/restore and no locking — the cost is just
-  address space, which is the cheap resource here.
-- **Uniform 8-byte operand slots.** Every slot is 8 bytes; a float uses the low 4
-  (upper 4 don't-care), a double uses all 8. The 6502 writes 4 bytes (float) or 8
-  (double).
-- **A register file, not a single X/Y/Z** — multiple operand slots (`S0..Sn`) per task.
-- **A command buffer + an execute/op register + a status register** per bank — the
-  6502 writes a short *program* of ops into the command buffer (a single op is just
-  a 1-op program; see *Expression-level amortization*).
-- Byte order LSB-first (matches the A9; the 6502 writes low byte first).
+## 6502 registers (CCTL gap, BANK unlock group)
+
+| Reg | Access | Meaning |
+|-----|--------|---------|
+| `$D5C6` | RW | bit 0 = MAP: overlay the math page on `$4000-$5FFF` (CPU view) |
+| `$D5C7` | W  | EXEC doorbell — every write fires (strobe, not value-change) |
+| `$D5C7` | R  | bit 0 = done, bit 1 = busy (informational), bit 2 = chunk ready |
+| `$D5C8` | RW | backing chunk index; write = spill/fill (poll bit 2) |
+
+Protocol: fill slots + program, write the op count, strobe `$D5C7`, poll
+`$D5C7.0`, read results.  **Between EXEC and done the page must not be
+touched** — it *is* the in-flight mailbox (this quiescence is also what makes
+the dirty-bitmap clock crossing safe).  `done` clears on EXEC/`$D5C8` writes
+with no stale window (the PL masks the CDC round-trip on the CPU side).
+
+## Page layout (8 KB — the ABI in `loader/test/freertos/mathcop.h`)
+
+| Offset | Contents |
+|--------|----------|
+| `0x0000` | u16 op count (32-bit words used; a vector op counts as 2) |
+| `0x0002` | u8 ABI version |
+| `0x0003` | u8 STATUS (A9-written: OK / DIV0 / INVALID / BADOP / RANGE) |
+| `0x0040` | slots S0..S255, 8 bytes each (2 KB) — also the vector memory |
+| `0x0840` | op words, 4 bytes each, up to 1024 (4 KB) |
+| `0x1840` | reserved / scratch (never touched by the A9) |
+
+A slot holds one scalar in its low bytes (f32/i32 in bytes 0-3, f64/i64 in
+0-7), LSB-first (matches both the 6502 and the A9).
 
 ## Operation encoding
 
-The op byte carries a **2-bit type field** — `float / double / int32 / int64` —
-plus ~6 bits of operation (≈64 ops): `+ − × ÷`, sqrt / neg / abs / compare, the
-libm transcendentals (sin, cos, tan, atan2, exp, log, log10, pow), integer
-mul/div/mod, and int↔float↔double conversions.
+**Scalar op word** (4 bytes): byte 0 = 2-bit element type
+(`f32`/`f64`/`i32`/`i64`) + 6-bit operation; bytes 1-3 = `src1`, `src2`, `dst`
+slot indices — 3-address form, `dst = op(src1, src2)`.  A result left in a
+slot feeds a later op without leaving the A9, so a compound expression is one
+program and one round-trip:
 
-Ops **name their source and destination slots** (`X = slot a`, `Y = slot b`,
-`Z → slot c`). This is the key feature — see *Expression-level amortization*.
+```
+; y = a·x² + b·x + c   (S0=a S1=b S2=c S3=x — Horner form)
+MUL S0,S3 -> S4
+ADD S4,S1 -> S4
+MUL S4,S3 -> S4
+ADD S4,S2 -> S4        ; y in S4 — four ops, ONE doorbell, one result read
+```
 
-## Handshake / doorbell
+Ops: `+ − × ÷`, neg/abs/sqrt/min/max/cmp/rem, the libm transcendentals
+(sin cos tan asin acos atan atan2 exp log log10 pow floor ceil round trunc —
+FP types only), int↔float↔double conversions (type field = destination,
+src2[1:0] = source type), and integer and/or/xor/not/shl/shr/sar.
 
-- The doorbell is a **write-strobe on the op register** — *every* write fires,
-  even if the value is unchanged, so a loop of identical ops each fire (not "on
-  value change").
-- The strobe sets the bank's bit in a **global pending bitmap** (one bit per
-  task-bank). The A9 polls that single word, then services whichever banks are
-  flagged — no N-bank polling. (A small event FIFO is an alternative.)
-- The A9 reads the flagged bank as **one AXI burst** (lay the bank out
-  contiguous), does the op, writes the result, then sets `STATUS = done` last. The
-  6502 polls `STATUS`, then reads the result slot.
-- **Coherency:** the op-write is last through the ordered CDC FIFO, so the A9
-  always sees a consistent operand snapshot. The A9 reaches every bank over AXI
-  regardless of which bank the 6502 currently has mapped — the per-task
-  bank-select is purely the 6502's view and never races the A9.
-- **Servicing: interrupt, not a dedicated poll.** The 2nd A9 core runs the TT/m68k
-  emulator, so it can't babysit the mailbox. The doorbell instead raises a **PL→PS
-  interrupt** (one of the `IRQ_F2P` lines via the GIC), pinned by **GIC affinity to
-  the OS core (core 0)** so the emulator core (core 1) runs undisturbed. The handler
-  is a short, self-contained ISR — read the pending bitmap, burst-read the flagged
-  bank(s), do the math, write back, set `done` — inline, no task deferral (the work
-  is nanoseconds). The **pending bitmap coalesces**: one IRQ drains every flagged
-  bank, so concurrent ops from several tasks don't storm the core. (The mailbox
-  traffic is purely the fabric 6502's — the m68k reaches the A9's FP a shorter way,
-  see *Both FPU-less realms benefit* — which is another reason the OS core is its
-  natural home.)
-- **Exceptions:** div-by-zero / NaN / overflow / inexact surface in `STATUS` from
-  the A9's `fpscr`.
+**Vector (SIMD) op — two consecutive op words.**  Word 0 is the scalar form
+(op in the vector range; the slot bytes become *base* slots); word 1 packs the
+lane geometry:
 
-## Latency budget
-
-The round-trip is **not** limited by the interrupt or by A9 compute. At ~860 MHz:
-
-- **IRQ entry** (GIC ack → vector → context save) is a few hundred cycles —
-  ~0.1–0.3 µs bare-metal, sub-µs under an RTOS. Not the bottleneck.
-- **The math** is nanoseconds — negligible.
-- **The cost is AXI/MMIO access** — the A9 *stalls* reaching into PL registers. A
-  non-cacheable read from the A9 through the GP port to a fabric register is
-  ~0.3–0.5 µs *each* (L1/L2 miss → AXI interconnect → PL → clock-domain crossing →
-  back), and single AXI-Lite reads don't pipeline. Reading two operands + op +
-  status as individual reads ≈ 6 × ~0.3 µs ≈ ~2 µs of pure stall. That, plus the
-  CDC hops and the 6502-side byte shuffling, is the ~2–4 µs — i.e. ~3400 *stalled*
-  cycles, not compute.
-
-Cutting it:
-
-- **Burst-read the whole bank in one transaction** — a contiguous bank read over an
-  **HP port as a single AXI burst** is one ~0.3–0.5 µs transaction for the entire
-  bank instead of N single GP reads.
-- **Or skip MMIO entirely** — have the PL drop the operands into **OCM (or a DDR
-  mailbox)** that the A9 reads as *cacheable* memory; a cache-line fill is ~tens of
-  ns, not a fabric round-trip. Likewise for writing the result back.
-
-Either drops the round-trip toward **sub-µs**, and the expression batching below
-amortises whatever's left over many ops.
-
-## Expression-level amortization (the point)
-
-Ops are **3-address**: each names a source-1 slot, a source-2 slot and a
-destination slot — `dst = op(src1, src2)` — over the per-task slot file
-(`S0..Sn`). A result left in a slot feeds a later op *without ever leaving the
-A9*, so the 6502 issues a whole expression as one program and reads back only the
-final slot.
-
-### Op word
-
-A program is a list of fixed-width op words — one byte-addressable layout
-(6502-friendly):
-
-| byte | field |
+| word 1 byte | field |
 |------|-------|
-| 0 | opcode — 2-bit type (`float`/`double`/`int32`/`int64`) + 6-bit operation |
-| 1 | `src1` slot index |
-| 2 | `src2` slot index |
-| 3 | `dst` slot index |
+| 0 | lane count (0 means 256) |
+| 1 | src1 stride  — signed, in **elements**; |
+| 2 | src2 stride  — 0 on a source = broadcast that one element |
+| 3 | dst stride |
 
-Constants and variables are just slot data — the 6502 writes the leaf values into
-slots first, then the op list references them. (Unary ops ignore `src2`.) A
-**single op is simply a 1-op program** — there's no separate "one-shot" path.
+Elements are packed from the base slot's byte offset (element *i* of a vector
+based at slot *B* with stride *s* is at byte `B*8 + i*s*esize`) and must stay
+inside the slot region.  Ops: vadd vsub vmul vdiv vmin vmax vabs vneg vsqrt,
+vmla (`dst[i] += s1[i]*s2[i]`), vcopy (gather/scatter/broadcast), **vdot** and
+**vsum** (reductions into a single slot), vcvt.
 
-### Submission
-
-1. 6502 writes the leaf values into slots (`S0=a`, `S1=x`, …).
-2. 6502 writes the op list into the bank's **command buffer**, plus the op count.
-3. 6502 strobes the **execute** doorbell (the op-register write).
-4. One IRQ → the A9 burst-reads the bank (slots + program), runs the **whole
-   program** against a local copy of the slots (each op = one native A9
-   instruction), writes the touched slots back, sets `STATUS = done` last.
-5. 6502 polls `done`, reads the result slot.
-
-→ **one round-trip per expression**, not per operation.
-
-### Worked example — `y = a·x² + b·x + c` (Horner form)
-
-Slots `S0=a, S1=b, S2=c, S3=x`; program:
-
-```
-MUL S0,S3 -> S4    ; a·x
-ADD S4,S1 -> S4    ; a·x + b
-MUL S4,S3 -> S4    ; (a·x + b)·x
-ADD S4,S2 -> S4    ; … + c   → y in S4
-```
-
-Four ops, **one** doorbell/IRQ, **one** result read. ~8 µs of per-op round-trips
-collapses to ~one.
+This is the 6502-side win for bulk math: a 32-element multiply is **one
+8-byte op pair** instead of 32 scalar ops, and a 4×4 matrix multiply is 16
+VDOTs (row stride 1, column stride 4) instead of 112 scalar ops.  Strides make
+matrix columns, interleaved buffers and reversals addressable without any
+CPU-side reshuffling; stride-0 broadcast gives scale/axpy forms via vmla.
 
 ### xtc lowering
 
-This is exactly what a compiler back-end already emits: the xtc expression tree
-lowers to 3-address ops, and the register allocator targets the **slot file**
-(`S0..Sn`) instead of CPU registers — so a float/integer expression compiles
-directly into a coprocessor program, emitting only "read the result slot" at the
-end. Compound expressions become multi-op programs = single round-trips.
+The op stream is exactly what a compiler back-end emits: the xtc expression
+tree lowers to 3-address ops with the register allocator targeting the slot
+file, and array expressions lower to vector ops.  A float/integer expression
+compiles into a coprocessor program, emitting only "read the result slot".
 
-### Bounds & batching
+## A9-side interface (GP0 `MATH` block, `0x43C00600`)
 
-The command buffer holds up to *K* ops and the file *N* slots (both just address
-space — size them generously). An expression larger than *K*/*N* splits into
-back-to-back batches: leave the partial result in a slot and run the next batch —
-the 6502 waits only at batch boundaries, not per op. Register pressure beyond *N*
-spills to 6502 memory (rare for typical expressions).
+| Offset | Access | Meaning |
+|--------|--------|---------|
+| `0x00` | R | `MATH_EVT` {valid[8], chunk[7:0]} — a read pops one doorbell event |
+| `0x04` | W | `MATH_DONE` {line count[23:16], first line[15:8], chunk[7:0]} |
+| `0x08` | R | `MATH_STAT` engine busy / resident chunk / FIFO fill / diag |
 
-### Semantics within a batch
+`IRQ_F2P[1]` (GIC SPI 62) is level = event FIFO non-empty; one ISR pass drains
+every queued doorbell, so concurrent tasks' ops coalesce into one interrupt.
 
-IEEE NaN/Inf propagate through later ops, so a faulting FP op needn't stop the
-program — the sticky exception flags accumulate in `STATUS`, which the 6502 reads
-once after `done`. Integer divide-by-zero sets a status flag (define the result —
-0 or all-ones).
+## Latency budget (as built)
+
+- EXEC dirty flush: ~2-3 µs for a typical ~1 KB of dirty lines over 32-bit GP0
+  (dominant, scales with dirty bytes; worst case +1 in-flight screen-flip
+  burst on the shared port — the mux re-arbitrates per burst).
+- IRQ → worker-task wakeup: ~1 µs class.
+- Program: nanoseconds of math; interpreter overhead ~0.1-0.3 µs/op plus
+  ~0.3 µs per first-touch slot (non-cacheable demand loads).
+- Result writeback + span reload + done: ~1-2 µs.
+
+≈ **4-6 µs per batch**, amortized over up to 1024 op words — ~50 ns/op for a
+matmul-sized program, against hundreds (add) to tens of thousands
+(transcendental) of 6502 cycles per software-FP op.  Fast-path headroom if
+ever needed: ACP-coherent chunk traffic, NEON in the worker.
 
 ## Caveats
 
-- Per-op round-trips are great for scalar / occasional math. For **bulk** FP (DSP,
-  3D inner loops) hand the A9 the whole array/kernel instead of round-tripping per
-  element.
-- Reentrancy is handled by the per-task banks; a task preempted mid-batch just
-  leaves its state in its own bank.
+- Per-batch round-trips suit scalar/expression math and small-vector work.
+  For **bulk** DSP over big arrays, hand the A9 the array (it's all DDR) —
+  the page is an 8 KB window, not a streaming interface.
+- `$D5C7.0` done is a fast-path convenience for the not-preempted case; a task
+  rescheduled after completion learns of it from the OS (the service knows
+  chunk→task) and finds its results in its chunk.
+- The doorbell is ignored (sticky diag bit in `MATH_STAT`) when no chunk is
+  mapped (`$D5C8` = 0).
 
-## Effort
+## Implementation map
 
-- **PL:** a register block in the hwreg decode (per bank: N × 8-byte slots, op,
-  status) + the write-strobe doorbell + the pending bitmap + the result-writeback
-  path — reusing the existing hwreg / CDC / GP0 patterns — plus sim. ~1–2 days.
-- **PS:** an A9 handler — poll the bitmap, burst-read the bank, switch on the op
-  via native float / libm / integer, write back. ~hours.
-- **Generalize:** it is the same doorbell/mailbox as GEM, so a clean "PS
-  coprocessor mailbox" built once carries the FPU, the integer unit, and any
-  future accelerator.
+- PL: `hdl/math_cop.sv` (page BRAM + dirty bitmap + flush/fill FSM + event
+  FIFO), `hdl/gp0_axi_mux.sv`, decode in `sally_mem.sv`, GP0 block in
+  `xt_gp0_regs.sv` / `hdl/regmap/xt_gp0.json`; `sim/tb_mathcop.sv`
+  (`make mathcop`).
+- PS: `loader/test/freertos/mathcop.{c,h}` (+ IRQ 62 dispatch in `zynq.c`,
+  init in `main.c`, newlib libm in the kernel link).
+- BD: `IRQ_F2P` widened via xlconcat in `gen_ps_bd.tcl` (blitter = GIC 61,
+  math = GIC 62).
