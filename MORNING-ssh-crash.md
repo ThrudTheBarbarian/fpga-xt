@@ -69,3 +69,19 @@ Ctrl-D + one `objdump` command tells us exactly where it dies.
 
 The HW image `loader/build/freertos-hw.elf` (21:30) has all of this. It is safe
 to run — the crash is unchanged, but now it's diagnosable.
+
+## Secondary lead (only if the symbolized PC lands in .data)
+
+I found a real but probably-unrelated loader bug: `xtld_writable_range`
+(loader/xtld.c:236) tracks the writable PT_LOAD segment with "last wins", but
+dropbear.so AND toybox.so each have **two** writable segments (RELRO/.data at
+vaddr 0x5cdf0, .bss at 0x6d4f0). So it reports only `.bss`, and
+`frtos_on_loaded` then marks the first writable segment (.data/.got) as RO+X and
+doesn't COW it. Analysis says this is NOT the crash (it only makes `.data`
+read-only → that'd be a *data* abort if written; all of `.text` stays correctly
+executable; both binaries work, so they don't write `.data` post-load). I did
+NOT fix it tonight — changing the loader's W^X for every `.so` unverified could
+brick the boot. If the morning symbolize puts PC in dropbear's `.data` range
+(vaddr ~0x5cdf0–0x5e000) rather than `.bss` (~0x6d4f0+) or `.text`
+(0x1ee80–0x4cdf0), revisit this — the fix is to make wseg_va the *first*
+writable segment and span wseg_size through the last.
