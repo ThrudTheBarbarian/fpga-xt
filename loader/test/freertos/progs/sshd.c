@@ -63,7 +63,9 @@ void _app_entry(int argc, char **argv)
         wrs(2, "sshd: bind failed (port busy?)\n"); sys_exit(1);
     }
     if (sys_listen(ls, 4) != 0) { wrs(2, "sshd: listen failed\n"); sys_exit(1); }
-    wrs(1, "sshd: listening for ssh\n");
+    /* to dmesg + the sshd logfile, NOT the console (init's "SecureShell [ OK ]"
+     * is the user-visible boot line) */
+    sys_klog("sshd: listening for ssh\n", 24);
     logline("sshd: listening for ssh\n");
 
     for (;;) {

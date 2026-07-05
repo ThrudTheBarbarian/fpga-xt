@@ -26,6 +26,10 @@ static inline long __syscall(long n, long a0, long a1, long a2)
 
 static inline long sys_write(int fd, const void *buf, unsigned len)
 { return __syscall(SYS_write, fd, (long)buf, (long)len); }
+/* append to the kernel diagnostic log (dmesg / /proc/kmsg + system.log) — for
+ * boot daemons that shouldn't clutter the console */
+static inline long sys_klog(const void *buf, unsigned len)
+{ return __syscall(SYS_klog, (long)buf, (long)len, 0); }
 static inline long sys_getpid(void) { return __syscall(SYS_getpid, 0, 0, 0); }
 static inline long sys_spawn(const char *path, int argc, char **argv)
 { return __syscall(SYS_spawn, (long)path, argc, (long)argv); }

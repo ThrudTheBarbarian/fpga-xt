@@ -153,6 +153,9 @@ struct xt_dirent { unsigned mode; char name[256]; };
 #define SYS_settime      0x401 /* (unix_sec) -> 0: set the wall clock (sntp -s / clock_settime).
                                 * The hourly kernel SNTP re-sync will overwrite it at its next
                                 * poll — this is a manual nudge, not a persistent RTC. */
+#define SYS_klog         0x403 /* (buf, len) -> bytes: append to the kernel diagnostic log
+                                * (dmesg / /proc/kmsg + /OS/var/log/system.log). Lets PL0
+                                * boot daemons log without cluttering the console. */
 
 /* networking control — block 0x800. Bringing the stack up is a BOOT-SCRIPT decision
  * (/boot/20-Networking runs /bin/netup), not kernel magic. */

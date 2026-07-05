@@ -200,6 +200,24 @@ void frtos_free(void *p, void *u) { (void)p; (void)u; }  /* bump kernel heap: im
 
 /* Called after the loader has loaded libc.so: grab its allocator, and point the
  * kernel's _sbrk just above libc.so's (bootstrap-pinned) image. */
+/* fault diagnostics: which loaded object (and offset) an address falls in, so a
+ * PC/return-addr in a crash dump maps to <object>+<hex offset> — feed that to
+ * `arm-none-eabi-addr2line -e build/<object>` (or objdump) to name the function. */
+static proc_t *cur_proc(void);   /* fwd (defined below) */
+void fault_symbolize(unsigned addr, void (*emit)(const char *, unsigned))
+{
+    proc_t *p = cur_proc();
+    if (p && p->obj) {
+        uintptr_t b = xtld_base(p->obj); size_t s = xtld_span(p->obj);
+        if (addr >= b && addr < b + s) { emit(" [prog+", (unsigned)(addr - b)); return; }
+    }
+    if (g_libc_obj) {
+        uintptr_t b = xtld_base(g_libc_obj); size_t s = xtld_span(g_libc_obj);
+        if (addr >= b && addr < b + s) { emit(" [libc+", (unsigned)(addr - b)); return; }
+    }
+    emit(" [??+", addr);
+}
+
 void frtos_activate_libc(xtld_obj *libc)
 {
     extern void sbrk_set_base(void *base, void *end);
@@ -1285,6 +1303,17 @@ void klog(const char *s)
     while (*s && g_klog_len < KLOG_CAP - 1) g_klog[g_klog_len++] = *s++;
     xt_irq_restore(f);
 }
+/* bounded append (SYS_klog from PL0): copy exactly `n` bytes, no NUL scan of a
+ * user pointer. Returns bytes accepted (clamped to the ring's remaining space). */
+long klog_write(const char *s, uint32_t n)
+{
+    if (!s) return -1;
+    unsigned f = xt_irq_save();
+    uint32_t i = 0;
+    while (i < n && g_klog_len < KLOG_CAP - 1) g_klog[g_klog_len++] = s[i++];
+    xt_irq_restore(f);
+    return (long)i;
+}
 void klog_u(unsigned v)
 {
     char b[12]; int n = 0;
@@ -2114,6 +2143,10 @@ static long do_syscall(uint32_t num, long a0, long a1, long a2)
         extern void xt_wallclock_set(uint32_t);
         xt_wallclock_set((uint32_t)a0);     /* sntp -s / clock_settime; hourly SNTP re-sync wins later */
         return 0;
+    }
+    case SYS_klog: {                                        /* (buf, len) -> dmesg ring */
+        extern long klog_write(const char *, uint32_t);
+        return klog_write((const char *)a0, (uint32_t)a1);
     }
     case SYS_nanosleep: {                                   /* (usec) — real yield, not a spin */
         TickType_t ticks = pdMS_TO_TICKS((uint32_t)a0 / 1000u);

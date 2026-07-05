@@ -139,6 +139,10 @@ void fault_report(unsigned code, unsigned addr, unsigned caller)
     puts0("\n*** "); puts0(code < 8 ? names[code] : "?");
     puts0(" in task '"); puts0(tn ? tn : "<boot/none>"); puts0("'\n");
     fr_hex("    PC=", addr); fr_hex("  CALLER=", caller);
+    /* map PC + CALLER to <object>+offset so the crash names a function offline */
+    { extern void fault_symbolize(unsigned, void (*)(const char *, unsigned));
+      fault_symbolize(addr, fr_hex); puts0("]");
+      fault_symbolize(caller, fr_hex); puts0("]"); }
     fr_hex("  DFAR=", dfar); fr_hex("  DFSR=", dfsr); fr_hex("  IFSR=", ifsr);
     { extern int stackguard_is_guard(unsigned);
       if (code == 4 && stackguard_is_guard(dfar)) puts0("\n*** STACK OVERFLOW (hit guard page)"); }
