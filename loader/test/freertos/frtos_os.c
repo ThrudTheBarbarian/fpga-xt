@@ -681,14 +681,26 @@ long xt_pty_write(int i, int master, const void *buf, uint32_t n)
     if (!buf) return -1;
     StreamBufferHandle_t sb = master ? g_pty[i].m2s : g_pty[i].s2m;
     if (!(master ? g_pty[i].sopen : g_pty[i].mopen)) return (long)n;  /* reader gone: drop */
-    uint32_t sent = 0;
-    proc_t *p = cur_proc();
-    while (sent < n) {
-        if (p && p->killed) proc_exit_self(p, 137);
-        sent += xStreamBufferSend(sb, (const char *)buf + sent, n - sent, pdMS_TO_TICKS(20));
+    const char *p = buf;
+    uint32_t done = 0;
+    proc_t *pr = cur_proc();
+    while (done < n) {
+        if (pr && pr->killed) proc_exit_self(pr, 137);
         if (!(master ? g_pty[i].sopen : g_pty[i].mopen)) break;
+        if (!master && p[done] == '\n') {
+            /* ONLCR — the one output-discipline rule an interactive terminal
+             * needs: shell/program output writes bare \n, the ssh client's
+             * terminal is raw, so \n must leave the slave as \r\n. Everything
+             * else stays pass-through. */
+            if (xStreamBufferSend(sb, "\r\n", 2, pdMS_TO_TICKS(20)) == 2) done++;
+            continue;
+        }
+        uint32_t seg = n - done;
+        if (!master)
+            for (seg = 0; done + seg < n && p[done + seg] != '\n'; seg++) ;
+        done += xStreamBufferSend(sb, p + done, seg, pdMS_TO_TICKS(20));
     }
-    return (long)sent;
+    return (long)done;
 }
 int xt_pty_nread(int i, int master)
 {

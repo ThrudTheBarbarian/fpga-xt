@@ -234,7 +234,9 @@ Dropbear's `sshpty.c` finds no `/dev/ptmx` and falls back to scanning BSD-style 
 XTOS provides 4: `/dev/ptyp[0-3]` (master) + `/dev/ttyp[0-3]` (slave).
 
 - **Core** — `frtos_os.c` `xt_pty_*`: each pair = two FreeRTOS StreamBuffers, `m2s`
-  (keystrokes) and `s2m` (shell output). PASS-THROUGH — no kernel line discipline; the
+  (keystrokes) and `s2m` (shell output). Near-pass-through: the ONE output-discipline
+  rule is ONLCR (slave-side writes translate `\n` to `\r\n` — program output writes
+  bare newlines and the ssh client's terminal is raw). No input discipline; the
   shell's linenoise sets raw mode and echoes itself. `mopen`/`sopen` are open COUNTS
   (spawn copies refcount via `ondup`). A fresh master open resets both buffers (a dead
   session must not replay into the next). Zero-length write returns 0 (dropbear probes
