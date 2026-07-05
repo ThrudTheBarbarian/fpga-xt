@@ -111,6 +111,7 @@ void vApplicationIRQHandler(uint32_t ulICCIAR)
     else if (id == 82) { extern void uart1_rx_isr(void); uart1_rx_isr(); }   /* UART1 receive */
 #endif
     else if (id == 54) { extern void gem0_isr(void); gem0_isr(); }           /* GEM0 (net RX) */
+    else if (id == 62) { extern void mathcop_isr(void); mathcop_isr(); }     /* math-cop doorbell (IRQ_F2P[1]) */
 }
 
 static void fr_hex(const char *label, unsigned v)

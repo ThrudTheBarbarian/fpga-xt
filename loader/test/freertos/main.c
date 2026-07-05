@@ -342,6 +342,7 @@ int main(void)
 #ifdef XT_HW
     { extern void cursor_init(void); cursor_init(); }    /* GEM arrow cursor (HW sprite slot 0, on top of all planes) */
 #endif
+    { extern void mathcop_init(void); mathcop_init(); }  /* math-coprocessor doorbell (IRQ 62) + worker task */
     { extern void vfs_romfs_init(void); extern void vfs_ramfs_init(void); extern void vfs_lockfs_init(void);
       extern int vfs_add_mount(const char *, const char *, void *);
       vfs_romfs_init(); vfs_add_mount("/System", "romfs", 0);   /* romfs = /System (embedded, RO); SD = / at mount time */
