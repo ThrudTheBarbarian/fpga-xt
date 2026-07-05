@@ -2243,7 +2243,8 @@ module fpga_xt_top (
         .FIXED_IO_ps_srstb (),
         .FCLK_RESET0_N_0   (),
         .FCLK_CLK1_0        (fclk_50),   // 50 MHz PL reference -> both MMCMs
-        .IRQ_F2P_0          ({math_irq, bl_blit_irq}), // PL->PS: [0] blitter completion (GIC 61), [1] math doorbell (GIC 62); needs FORCE=1 BD regen
+        .IRQ_F2P_0          (bl_blit_irq), // PL->PS: blitter completion (GIC 61)
+        .IRQ_F2P_1          (math_irq),    // PL->PS: math-cop doorbell (GIC 62)
         .s_axi_gp0_aclk     (clk_sys),
         .s_axi_acp_aclk     (clk_sally),   // ACP (sally_mem page cache) runs on clk_sally
         .iic_0_scl_i        (i2c_scl_i),

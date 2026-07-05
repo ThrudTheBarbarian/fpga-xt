@@ -61,7 +61,7 @@ set_property -dict [list \
     CONFIG.PCW_EN_RST3_PORT {0} \
     CONFIG.PCW_USE_FABRIC_INTERRUPT {1} \
     CONFIG.PCW_IRQ_F2P_MODE {DIRECT} \
-    CONFIG.PCW_IRQ_F2P_INTR {2} \
+    CONFIG.PCW_IRQ_F2P_INTR {1} \
     CONFIG.PCW_EN_EMIO_GPIO {0} \
     CONFIG.PCW_GPIO_EMIO_GPIO_ENABLE {0} \
     CONFIG.PCW_EN_EMIO_I2C0 {1} \
@@ -81,18 +81,25 @@ set_property -dict [list \
 # is one clock domain.  The connection is made after that port is created (the
 # "GP0 / HP clock" block below).
 
-# ---- Export IRQ_F2P[1:0] as an external port (PL interrupts -> GIC) ---------
-# 2-bit ([1:0]), DIRECT mode: bit 0 = blitter completion IRQ -> GIC SPI ID 61,
-# bit 1 = math-coprocessor doorbell (event FIFO non-empty) -> GIC SPI ID 62.
-# PCW_IRQ_F2P_INTR=2 (config above) creates the zynq_ps/IRQ_F2P pin; we make the
-# external port explicitly so it has the deterministic name 'IRQ_F2P_0' that
-# fpga_xt_top connects (make_bd_pins_external's auto-name is not guaranteed).
-# NOTE: widening from 1 needs FORCE=1 (BD regen) on the build host.
+# ---- Export IRQ_F2P[1:0] as external ports (PL interrupts -> GIC) -----------
+# DIRECT mode: bit 0 = blitter completion IRQ -> GIC SPI ID 61,
+#              bit 1 = math-coprocessor doorbell (event FIFO non-empty) -> 62.
+# PCW_IRQ_F2P_INTR is a boolean ENABLE (a non-1 value silently drops the pin),
+# and connecting a wide external port directly leaves the PS pin 1-bit (only
+# [0] lands).  The IPI-sanctioned way to widen IRQ_F2P is an xlconcat feeding
+# the pin — C_NUM_F2P_INTR_INPUTS sizes from the concat — with one 1-bit
+# external port per interrupt (deterministic names IRQ_F2P_0 / IRQ_F2P_1 that
+# fpga_xt_top connects).
 set irq_pin [get_bd_pins -quiet zynq_ps/IRQ_F2P]
 if {$irq_pin ne ""} {
-    create_bd_port -dir I -from 1 -to 0 IRQ_F2P_0
-    connect_bd_net [get_bd_ports IRQ_F2P_0] $irq_pin
-    puts ">> created external port IRQ_F2P_0 -> zynq_ps/IRQ_F2P (2-bit, GIC 61/62)"
+    set irq_cat [create_bd_cell -type ip -vlnv xilinx.com:ip:xlconcat:2.1 irq_f2p_concat]
+    set_property CONFIG.NUM_PORTS 2 $irq_cat
+    create_bd_port -dir I IRQ_F2P_0
+    create_bd_port -dir I IRQ_F2P_1
+    connect_bd_net [get_bd_ports IRQ_F2P_0] [get_bd_pins irq_f2p_concat/In0]
+    connect_bd_net [get_bd_ports IRQ_F2P_1] [get_bd_pins irq_f2p_concat/In1]
+    connect_bd_net [get_bd_pins irq_f2p_concat/dout] $irq_pin
+    puts ">> created external ports IRQ_F2P_0/IRQ_F2P_1 -> xlconcat -> zynq_ps/IRQ_F2P (GIC 61/62)"
 } else {
     puts ">> WARNING: zynq_ps/IRQ_F2P pin not found — fabric IRQ not exported"
 }
