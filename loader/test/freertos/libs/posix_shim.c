@@ -397,6 +397,31 @@ int closedir(DIR *d)
     return 0;
 }
 
+/* Remember each open file fd's path + access mode, so dup()/F_DUPFD can duplicate a
+ * regular-file fd (the kernel has no fd-dup for files) by reopening it — enough for the
+ * common case (xxd fdopens xdup(fd) to read a file through a private FILE). The reopened
+ * fd has its own offset starting at 0, which is what those readers expect. */
+#define FDPATH_N 32
+static struct { char path[512]; int amode; } g_fdpath[FDPATH_N];
+static void fdpath_set(int fd, const char *p, int flags)
+{
+    if (fd < 0 || fd >= FDPATH_N) return;
+    strncpy(g_fdpath[fd].path, p, sizeof g_fdpath[fd].path - 1);
+    g_fdpath[fd].path[sizeof g_fdpath[fd].path - 1] = 0;
+    g_fdpath[fd].amode = flags & O_ACCMODE;
+}
+static void fdpath_clear(int fd) { if (fd >= 0 && fd < FDPATH_N) g_fdpath[fd].path[0] = 0; }
+
+/* dup a regular-file fd by reopening its path (access mode only — no O_CREAT/O_TRUNC). */
+static int fd_reopen_dup(int fd)
+{
+    if (fd < 0 || fd >= FDPATH_N || !g_fdpath[fd].path[0]) return -1;
+    long nf = sys_open(g_fdpath[fd].path, g_fdpath[fd].amode);
+    if (nf < 0) return -1;
+    fdpath_set((int)nf, g_fdpath[fd].path, g_fdpath[fd].amode);
+    return (int)nf;
+}
+
 /* open must be dir-aware (toybox opens directories to walk them: ls's
  * listfiles, dirtree's openat) — a directory open yields a pseudo-fd */
 int open(const char *path, int flags, ...)
@@ -407,6 +432,7 @@ int open(const char *path, int flags, ...)
         return pfd_alloc(path);
     long fd = sys_open(path, flags & 0xfff);   /* strip O_CLOEXEC and friends */
     if (fd < 0) { errno = ENOENT; return -1; }
+    fdpath_set((int)fd, path, flags);          /* so dup() can reopen it */
     return fd;
 }
 
@@ -438,6 +464,7 @@ int close(int fd)
         return 0;
     }
     if (fd >= 0 && fd < 16) g_cloexec &= ~(1u << fd);
+    fdpath_clear(fd);
     return _close(fd);
 }
 
@@ -450,6 +477,14 @@ int fcntl(int fd, int cmd, ...)
     va_end(ap);
     if (fd < 0 || fd >= 16) { errno = EBADF; return -1; }
     switch (cmd) {
+    case 0 /*F_DUPFD*/: {                /* duplicate (>= arg ignored: kernel picks lowest free) */
+        const char *pp = pfd_path(fd);
+        if (pp) return pfd_alloc(pp);
+        if (fd < 3) return fd;
+        int nf = fd_reopen_dup(fd);
+        if (nf >= 0) return nf;
+        errno = EBADF; return -1;
+    }
     case 1 /*F_GETFD*/: return (g_cloexec >> fd) & 1;
     case 2 /*F_SETFD*/:
         if (arg & 1) g_cloexec |= 1u << fd; else g_cloexec &= ~(1u << fd);
@@ -496,6 +531,8 @@ int dup(int fd)
     const char *p = pfd_path(fd);
     if (p) return pfd_alloc(p);
     if (fd >= 0 && fd < 3) return fd;   /* console: same endpoint anyway */
+    int nf = fd_reopen_dup(fd);         /* regular file: reopen its path */
+    if (nf >= 0) return nf;
     errno = ENOSYS;
     return -1;
 }
