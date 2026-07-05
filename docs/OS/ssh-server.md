@@ -113,13 +113,18 @@ port, accepts, and `SYS_spawn_fd`s `dropbear -i` with the socket as the child's 
 It RUNS and listens ("sshd: listening for ssh"). But a host `ssh` still times out at banner
 exchange. The frontier is a cluster of I/O-integration issues to work through, in order:
 
-1. **Session-loop banner flush (primary).** `dropbear -i` in isolation (fd 0/1 = console)
-   emits NO banner — not even to the console. Dropbear queues the banner
-   (svr-session.c:194 `send_session_identification`) and the session loop flushes the
-   writequeue via `select` + write. So our **`select`-over-`poll`** (dropbear_glue.c) and/or
-   the writequeue flush isn't firing writable. Debug this FIRST (it blocks everything, and
-   is testable without a connection): trace whether dropbear reaches the write, and whether
-   `select` reports fd 1 writable.
+1. **Session-loop banner flush — ROOT CAUSE FOUND (fix this first).** dropbear
+   (common-session.c:95-99) makes a signal self-pipe and `setnonblocking()`s it via
+   `fcntl(F_SETFL, O_NONBLOCK)`. The shim's `fcntl(F_SETFL)` is a **NO-OP**, so the pipe
+   stays BLOCKING. Each loop iteration adds `signal_pipe[0]` to the read set (line 183),
+   `poll_probe` reports pipes as always-readable (empty or not), so `select` returns it
+   "readable"; dropbear's drain `while (read(signal_pipe[0],&x,1) > 0)` (line 236) then
+   **blocks on the empty pipe → hangs before the banner flushes.** Fix = real pipe
+   **O_NONBLOCK**: shim `fcntl(F_SETFL)` records a per-fd nonblock flag (like `g_cloexec`),
+   and a nonblock pipe `read()` returns `-1/EAGAIN` when empty instead of blocking (needs a
+   "pipe has data" path in the kernel/shim). Shared infra — verify no toybox regression
+   (fstest, pipelines). Testable without a connection: `dropbear -i -r key` should then
+   print its `SSH-2.0-dropbear...` banner immediately.
 2. **Socket-fd inheritance through `SYS_spawn_fd`.** The fd-wiring (frtos_os.c ~2240) MOVES a
    non-console stdio fd to the child's slot — so a socket passed as fds[0..2]=cfd lands only
    on child fd 0 (fd 1/2 fall back to console). For inetd dropbear needs the socket on BOTH
