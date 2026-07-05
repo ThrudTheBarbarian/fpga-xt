@@ -613,6 +613,90 @@ static long k_pipe_write(proc_t *p, int fd, const char *buf, uint32_t n)
     return (long)sent;
 }
 
+/* ---- pseudoterminals (pty) — SSH interactive sessions ---------------------
+ * A pty pair is two byte streams: master->slave (dropbear -> shell keystrokes) and
+ * slave->master (shell output -> dropbear). PASS-THROUGH: no kernel line discipline; an
+ * interactive shell (linenoise) sets raw mode and echoes/edits itself. Fixed BSD-style
+ * pairs /dev/ptyp[0-3] (master) + /dev/ttyp[0-3] (slave) — the method dropbear's sshpty.c
+ * falls back to with no /dev/ptmx. devfs exposes the nodes and calls these. canon/echo is
+ * tracked for tcgetattr/tcsetattr but not enforced (pass-through). */
+#define NPTY 4
+#define PTY_BUF_SZ 4096
+static struct {
+    StreamBufferHandle_t m2s, s2m;
+    uint16_t rows, cols;
+    uint8_t  canon, echo, mopen, sopen;
+} g_pty[NPTY];
+
+static int pty_ensure(int i)
+{
+    if (i < 0 || i >= NPTY) return -1;
+    if (!g_pty[i].m2s) g_pty[i].m2s = xStreamBufferCreate(PTY_BUF_SZ, 1);
+    if (!g_pty[i].s2m) g_pty[i].s2m = xStreamBufferCreate(PTY_BUF_SZ, 1);
+    if (!g_pty[i].rows) { g_pty[i].rows = 24; g_pty[i].cols = 80; g_pty[i].canon = 1; g_pty[i].echo = 1; }
+    return (g_pty[i].m2s && g_pty[i].s2m) ? 0 : -1;
+}
+
+/* mopen/sopen are OPEN COUNTS, not flags: an SSH pty child dup2's the slave onto 0/1/2 and
+ * dropbear closes its own slave copy, so the slave END is "closed" (EOF to the master) only
+ * when every holder has closed. Each fd inheriting the pty (spawn copy) bumps the count via
+ * ondup -> xt_pty_open. */
+void xt_pty_open(int i, int master)
+{
+    if (pty_ensure(i) != 0) return;
+    if (master) g_pty[i].mopen++; else g_pty[i].sopen++;
+}
+void xt_pty_close(int i, int master)
+{
+    if (i < 0 || i >= NPTY) return;
+    if (master) { if (g_pty[i].mopen) g_pty[i].mopen--; }
+    else        { if (g_pty[i].sopen) g_pty[i].sopen--; }
+}
+long xt_pty_read(int i, int master, void *buf, uint32_t n)
+{
+    if (pty_ensure(i) != 0 || !buf || !n) return 0;
+    StreamBufferHandle_t sb = master ? g_pty[i].s2m : g_pty[i].m2s;
+    proc_t *p = cur_proc();
+    for (;;) {
+        if (p && p->killed) proc_exit_self(p, 137);
+        if (p) stop_park(p);
+        size_t got = xStreamBufferReceive(sb, buf, n, pdMS_TO_TICKS(20));
+        if (got > 0) return (long)got;
+        if (!(master ? g_pty[i].sopen : g_pty[i].mopen)) return 0;   /* other end closed -> EOF */
+    }
+}
+long xt_pty_write(int i, int master, const void *buf, uint32_t n)
+{
+    if (pty_ensure(i) != 0 || !buf) return -1;
+    StreamBufferHandle_t sb = master ? g_pty[i].m2s : g_pty[i].s2m;
+    if (!(master ? g_pty[i].sopen : g_pty[i].mopen)) return (long)n;  /* reader gone: drop */
+    uint32_t sent = 0;
+    proc_t *p = cur_proc();
+    while (sent < n) {
+        if (p && p->killed) proc_exit_self(p, 137);
+        sent += xStreamBufferSend(sb, (const char *)buf + sent, n - sent, pdMS_TO_TICKS(20));
+        if (!(master ? g_pty[i].sopen : g_pty[i].mopen)) break;
+    }
+    return (long)sent;
+}
+int xt_pty_nread(int i, int master)
+{
+    if (i < 0 || i >= NPTY || !g_pty[i].m2s) return 0;
+    return (int)xStreamBufferBytesAvailable(master ? g_pty[i].s2m : g_pty[i].m2s);
+}
+long xt_pty_ioctl(int i, unsigned req, void *arg)
+{
+    if (i < 0 || i >= NPTY) return -1;
+    switch (req) {
+    case XT_TTY_GETMODE: { struct xt_ttymode *m = arg; if (m) { m->canon = g_pty[i].canon; m->echo = g_pty[i].echo; } return 0; }
+    case XT_TTY_SETMODE: { struct xt_ttymode *m = arg; if (m) { g_pty[i].canon = m->canon ? 1 : 0; g_pty[i].echo = m->echo ? 1 : 0; } return 0; }
+    case 0x5414u /*TIOCSWINSZ*/: { uint16_t *w = arg; if (w) { g_pty[i].rows = w[0]; g_pty[i].cols = w[1]; } return 0; }
+    case 0x5413u /*TIOCGWINSZ*/: { uint16_t *w = arg; if (w) { w[0] = g_pty[i].rows; w[1] = g_pty[i].cols; w[2] = w[3] = 0; } return 0; }
+    case 0x540Eu /*TIOCSCTTY*/: return 0;
+    default: return -1;
+    }
+}
+
 /* dup2 for PIPE ends and the CONSOLE (the shell's save/restore-around-redirect
  * dance): copy the end onto a chosen slot, refcounted. A console source makes
  * the target a console alias; restoring an alias onto 0/1/2 just clears the
@@ -2261,6 +2345,15 @@ static int proc_launch(int slot, xtld_obj *obj, uintptr_t entry,
                 taskENTER_CRITICAL();
                 if (p->fd[i].pwrite) pp->writers++; else pp->readers++;
                 taskEXIT_CRITICAL();
+            } else if (i < 3 && pfd >= 0 && pfd < NFD && par->fd[pfd].open &&
+                       !par->fd[pfd].con && par->fd[pfd].vf.chr) {
+                /* char device (pty slave, /dev/*): COPY, don't move — an SSH pty child
+                 * dup2's the SAME slave onto 0/1/2, so several child slots must point at
+                 * it (a char device has no page cache to race, unlike a FIL). Notify the
+                 * driver of the extra reference so its open count (pty EOF tracking) stays
+                 * right. The parent keeps its copy and closes it after the spawn. */
+                p->fd[i] = par->fd[pfd];
+                if (p->fd[i].vf.ondup) p->fd[i].vf.ondup(&p->fd[i].vf);
             } else if (i < 3 && pfd >= 0 && pfd < NFD && par->fd[pfd].open &&
                        !par->fd[pfd].con) {
                 /* file-redirected stdio (`cmd > file`): MOVE the descriptor —

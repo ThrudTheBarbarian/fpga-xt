@@ -69,6 +69,9 @@ struct vfs_file {
     long      (*write)(vfs_file *f, const void *buf, uint32_t n);   /* NULL on a read-only fd */
     long      (*lseek)(vfs_file *f, long off, int whence);
     void      (*close)(vfs_file *f);
+    void      (*ondup)(vfs_file *f);  /* char devices: a spawn inherited this fd (extra
+                                       * reference) — bump the driver's open count (pty EOF).
+                                       * NULL for everything else. */
     long      (*ioctl)(vfs_file *f, unsigned req, void *arg);  /* char devices only
                            * (SYS_ioctl); NULL = no device controls */
     uint32_t    size;
