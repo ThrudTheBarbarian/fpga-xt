@@ -235,6 +235,15 @@
 
 
 # Future targets
+## SSH server (interactive login HW-confirmed; docs/OS/ssh-server.md)
+- **scp/sftp** — untested; scp needs an `scp` applet on PATH, sftp a server binary.
+  *(src: docs/OS/ssh-server.md)*
+- **SIGWINCH / window-size propagation** — TIOCSWINSZ is stored per-pty-pair but no
+  async signal reaches the shell; linenoise re-queries per prompt. *(src: docs/OS/ssh-server.md)*
+- **mDNS dropped off mid-session during ssh bring-up** (IP networking stayed up; fine
+  after reload) — watch for recurrence; loader-networking, not ssh.
+- **Merge `ssh-server` → `main`** once soak-tested on HW.
+
 ## Open Issues (tracked bugs)
 - **A loaded libGEM.so re-running `vdi_init` wipes the kernel's live VDI** — the
   `gemhw`/runhost demo (`xtld_host.c`) resolves `vdi_init` from the loaded `libGEM.so`
