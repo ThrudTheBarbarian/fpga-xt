@@ -644,6 +644,12 @@ static int pty_ensure(int i)
 void xt_pty_open(int i, int master)
 {
     if (pty_ensure(i) != 0) return;
+    if (master && !g_pty[i].mopen) {
+        /* fresh master = a new session claiming the pair: drop anything a dead
+         * session left in the streams, or it replays into the new session */
+        xStreamBufferReset(g_pty[i].m2s);
+        xStreamBufferReset(g_pty[i].s2m);
+    }
     if (master) g_pty[i].mopen++; else g_pty[i].sopen++;
 }
 void xt_pty_close(int i, int master)
@@ -668,7 +674,11 @@ long xt_pty_read(int i, int master, void *buf, uint32_t n, int nonblock)
 }
 long xt_pty_write(int i, int master, const void *buf, uint32_t n)
 {
-    if (pty_ensure(i) != 0 || !buf) return -1;
+    if (pty_ensure(i) != 0) return -1;
+    if (!n) return 0;              /* zero-length write is a no-op, not an error
+                                    * (dropbear's writechannel probes with len 0
+                                    * and a NULL buffer when its ring is empty) */
+    if (!buf) return -1;
     StreamBufferHandle_t sb = master ? g_pty[i].m2s : g_pty[i].s2m;
     if (!(master ? g_pty[i].sopen : g_pty[i].mopen)) return (long)n;  /* reader gone: drop */
     uint32_t sent = 0;

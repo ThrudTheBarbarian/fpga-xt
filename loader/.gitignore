@@ -1,4 +1,4 @@
 build/
-newlib-pic/
+newlib-pic
 # drop-in romfs content (binaries); `make overlay` recreates the dirs
 romfs-overlay/

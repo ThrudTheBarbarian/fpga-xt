@@ -63,11 +63,26 @@ SVR="svr-kex svr-auth sshpty svr-authpasswd svr-authpubkey svr-authpubkeyoptions
 # host-key generator, built into the same .so as the 'dropbearkey' applet
 KEYGEN="dropbearkey"
 
+# XTOS pty half-close: a pty master is ONE bidirectional fd, like the BSD-style
+# ptys Dropbear's sshpty.c fallback scans. Upstream e28ba1b set ptycommand's
+# bidir_fd=0 ("don't shutdown() a pty"), so a client half-close (CHANNEL_EOF —
+# e.g. `ssh -tt host cmd < /dev/null`) close()es the master outright and any
+# not-yet-drained shell output is lost. Our shutdown() is a no-op, so the
+# pre-e28ba1b behaviour is the correct one here: EOF only marks the write side;
+# the master really closes once both directions are done. Patched out-of-tree —
+# the submodule stays pristine.
+sed '/ses.maxfd = MAX(ses.maxfd, chansess->master);/{n;s/channel->bidir_fd = 0;/channel->bidir_fd = 1;/;}' \
+    "$DB/src/svr-chansession.c" > "$BUILD/svr-chansession-xtos.c"
+grep -q 'channel->bidir_fd = 1;' "$BUILD/svr-chansession-xtos.c" || {
+    echo "build-dropbear.sh: bidir_fd patch no longer applies to svr-chansession.c" >&2; exit 1; }
+
 echo "[dropbear] compiling server objects..."
 : > "$BUILD/objects.list"
 for f in $COMMON $CLISVR $SVR $KEYGEN; do
     o="$OBJ/$f.o"
-    $CC $CFLAGS $INC -c "$DB/src/$f.c" -o "$o"
+    src="$DB/src/$f.c"
+    [ "$f" = svr-chansession ] && src="$BUILD/svr-chansession-xtos.c"
+    $CC $CFLAGS $INC -c "$src" -o "$o"
     echo "$o" >> "$BUILD/objects.list"
 done
 

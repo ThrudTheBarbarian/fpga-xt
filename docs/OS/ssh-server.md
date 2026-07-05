@@ -199,16 +199,72 @@ the fabric TRNG later just repoints `dv_rand_rd` at a PL register. No changes ne
 - *Shell launch* (`spawn_command` in svr-chansession) forks+execs the login shell → adapt
   to `SYS_spawn` (or the shim vfork path toybox already uses).
 
-## Remaining work, in order
+## MILESTONE: interactive `ssh root@xtos` WORKS — pty login shell ✅✅✅
 
-1. **XTOS sshd listener** + `localoptions.h` for inetd/no-fork; wire `dropbear -i`.
-2. **`spawn_command`** → XTOS spawn (verify the shim fork/vfork path or route to `SYS_spawn`).
-3. **host key** — package `dropbearkey` (separate `.so`, or dbmulti argv[0] dispatch); gen
-   an ed25519 key → `/OS/etc/dropbear/`; authorized_keys there too.
-4. **`/dev/ptmx` pty** (kernel): master/slave + line discipline + `TIOCSWINSZ`/`TIOCSCTTY`/
-   `TIOCGPTN`/`TIOCSPTLCK`. Only for the interactive shell — exec + scp land before it.
-5. **bring-up order**: transport → KEX → pubkey auth → exec (no pty) → scp → pty + shell.
-   (Steps 3-4 touch the kernel — coordinate with in-flight kernel work.)
+All session shapes pass in the qemu harness, repeatably and back-to-back on one boot:
+- `ssh root@xtos 'cmd'` — non-pty exec, output + exit status
+- `ssh -tt root@xtos 'cmd'` — forced-pty exec, works even when the client's stdin
+  EOFs immediately (`< /dev/null`)
+- `ssh -tt root@xtos` — full interactive login shell: prompt, linenoise editing/echo,
+  applets resolve via PATH, clean `exit`
+
+### The pty subsystem (kernel + devfs)
+
+Dropbear's `sshpty.c` finds no `/dev/ptmx` and falls back to scanning BSD-style pairs;
+XTOS provides 4: `/dev/ptyp[0-3]` (master) + `/dev/ttyp[0-3]` (slave).
+
+- **Core** — `frtos_os.c` `xt_pty_*`: each pair = two FreeRTOS StreamBuffers, `m2s`
+  (keystrokes) and `s2m` (shell output). PASS-THROUGH — no kernel line discipline; the
+  shell's linenoise sets raw mode and echoes itself. `mopen`/`sopen` are open COUNTS
+  (spawn copies refcount via `ondup`). A fresh master open resets both buffers (a dead
+  session must not replay into the next). Zero-length write returns 0 (dropbear probes
+  with len 0/NULL when its ring is empty). Nonblock read of an empty stream returns
+  `-EAGAIN`. ioctls: XT_TTY_GETMODE/SETMODE, TIOCSWINSZ/TIOCGWINSZ, TIOCSCTTY (no-op),
+  XT_TTY_NREAD (honest poll).
+- **Device nodes** — `vfs_devfs.c`: thin routers (`dv_ptym_*`/`dv_ptys_*`/`dv_pty_*`);
+  `f->priv` packs pair index + slave flag.
+- **`spawn_fd` copies (not moves) a char-device stdio fd** — the pty child dup2's the
+  SAME slave onto 0/1/2; each inherited copy bumps the refcount via `ondup`. Sockets
+  still move (the inetd `dropbear -i` uses one fd).
+
+### POSIX-shaping in the shim (`posix_shim.c`)
+
+- `read()`/`write()` wrappers map the kernel's raw `-errno` returns to `-1` + `errno`
+  (`-11` → `EAGAIN`). Dropbear's channel pump checks `errno == EAGAIN` on negative
+  returns and treats anything else as a dead fd — a stale errno there kills the session.
+  `readv`/`writev` use the wrappers and skip zero-length iovs. (newlib stdio calls
+  `_read`/`_write` directly and never uses O_NONBLOCK — unaffected.)
+- **Fake-vfork child opens really close**: `close()` in the armed-vfork window of an fd
+  the child itself opened (`g_child_opened`) closes it for real — real vfork shares the
+  fd table, so child open+close is net zero. Without this every pty session leaked its
+  by-name slave open (`pty_make_controlling_tty`) and the slave never reached EOF.
+
+### Dropbear deviations (all out-of-tree, submodule pristine)
+
+- `localoptions.h`: `DEFAULT_PATH` **and** `DEFAULT_ROOT_PATH` =
+  `/System/bin:/OS/bin:/bin` (XTOS logins are root; dropbear picks ROOT_PATH for uid 0).
+- `build-dropbear.sh` compiles a sed-patched copy of `svr-chansession.c` with
+  ptycommand's `channel->bidir_fd = 1` (pre-e28ba1b behaviour): a pty master is one
+  bidirectional fd, and with `bidir_fd = 0` a client half-close (`ssh -tt host cmd
+  < /dev/null` sends CHANNEL_EOF immediately) `close()`s the master before the shell's
+  output is drained. Our `shutdown()` is a no-op, so EOF just marks the write side.
+
+### Known quirks
+
+- The **first connection right after boot** can die with "Timeout before auth": SNTP
+  sets the wallclock mid-session and dropbear sees `now - connect_time` exceed the auth
+  timeout. Harmless — reconnect. (Fix would be a monotonic time source for dropbear.)
+- qemu harness only: keep the guest's stdin open (`sleep`) and expect the guest log to
+  flush in bursts.
+
+## Remaining work
+
+1. **HW deploy**: kernel (pty, spawn_fd copy, zero-write) → `make hw` + JTAG;
+   `toybox.so` (shim) + `dropbear.so`/`sshd` → SD. Host key + authorized_keys live at
+   `/OS/etc/dropbear/` on the SD (the romfs-overlay copy is only for the qemu harness).
+2. **scp/sftp** — untested; scp needs a `scp` applet on PATH, sftp a server binary.
+3. **Window-size propagation** — TIOCSWINSZ is stored per-pair but nothing forwards
+   SIGWINCH to the shell (no async signals); linenoise re-queries on each prompt.
 
 ## Deploy
 Server binary builds to a PIC `.so` (like toybox) → **sdpush**; anything needing the kernel

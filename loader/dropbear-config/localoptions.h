@@ -22,8 +22,11 @@
 #define DROPBEAR_SVR_REMOTETCPFWD  0
 #define DROPBEAR_X11FWD            0
 
-/* the shell search path on XTOS */
+/* the shell search path on XTOS (ROOT_PATH too: XTOS logins are root, and
+ * dropbear picks DEFAULT_ROOT_PATH for uid 0 — without it the session PATH
+ * is the stock /usr/sbin:... and no applet resolves) */
 #define DEFAULT_PATH "/System/bin:/OS/bin:/bin"
+#define DEFAULT_ROOT_PATH "/System/bin:/OS/bin:/bin"
 
 /* accepted login shells (dropbear's getusershell falls back to this list when /etc/shells
  * is absent). XTOS's shell is /System/bin/sh — without this, login is "invalid shell". */

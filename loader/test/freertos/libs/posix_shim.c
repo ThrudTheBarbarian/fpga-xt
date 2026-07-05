@@ -427,6 +427,31 @@ static int fd_reopen_dup(int fd)
     return (int)nf;
 }
 
+/* fd bookkeeping between vfork and exec — the "child" is still this process:
+ * - dup2 onto 0/1/2 is RECORDED (g_redir) and becomes SYS_spawn_fd's stdio map
+ * - close() in the fake child of a PRE-vfork fd is a NO-OP on the parent's table
+ *   (in real vfork the child closes its own copy); it just marks the fd
+ *   not-inherited. An fd the fake child OPENED itself (g_child_opened) really
+ *   closes — in real vfork open+close in the child is net zero in the shared
+ *   table, and without this every pty session leaks its by-name slave open
+ *   (sshpty's pty_make_controlling_tty), so the slave never reaches EOF.
+ * - fcntl FD_CLOEXEC is tracked here and merged into the same mask
+ * The kernel inherits every unmasked parent pipe fd >=3 at the same slot. */
+static unsigned g_vfork_regs[11];        /* defined with the vfork asm below */
+#define g_vfork_armed (g_vfork_regs[10])
+static int g_redir[3] = { -1, -1, -1 };
+static unsigned g_child_closed;          /* fds the fake child "closed" */
+static unsigned g_child_opened;          /* fds the fake child really opened */
+static unsigned g_cloexec;               /* fds marked close-on-exec */
+static unsigned g_nonblock;              /* fds marked O_NONBLOCK (fcntl F_SETFL) */
+
+static void redir_reset(void)
+{
+    for (int i = 0; i < 3; i++) g_redir[i] = -1;
+    g_child_closed = 0;
+    g_child_opened = 0;
+}
+
 /* open must be dir-aware (toybox opens directories to walk them: ls's
  * listfiles, dirtree's openat) — a directory open yields a pseudo-fd */
 int open(const char *path, int flags, ...)
@@ -437,27 +462,9 @@ int open(const char *path, int flags, ...)
         return pfd_alloc(path);
     long fd = sys_open(path, flags & 0xfff);   /* strip O_CLOEXEC and friends */
     if (fd < 0) { errno = ENOENT; return -1; }
+    if (g_vfork_armed && fd < 16) g_child_opened |= 1u << fd;
     fdpath_set((int)fd, path, flags);          /* so dup() can reopen it */
     return fd;
-}
-
-/* fd bookkeeping between vfork and exec — the "child" is still this process:
- * - dup2 onto 0/1/2 is RECORDED (g_redir) and becomes SYS_spawn_fd's stdio map
- * - close() in the fake child is a NO-OP on the parent's table (in real vfork
- *   the child closes its own copy); it just marks the fd not-inherited
- * - fcntl FD_CLOEXEC is tracked here and merged into the same mask
- * The kernel inherits every unmasked parent pipe fd >=3 at the same slot. */
-static unsigned g_vfork_regs[11];        /* defined with the vfork asm below */
-#define g_vfork_armed (g_vfork_regs[10])
-static int g_redir[3] = { -1, -1, -1 };
-static unsigned g_child_closed;          /* fds the fake child "closed" */
-static unsigned g_cloexec;               /* fds marked close-on-exec */
-static unsigned g_nonblock;              /* fds marked O_NONBLOCK (fcntl F_SETFL) */
-
-static void redir_reset(void)
-{
-    for (int i = 0; i < 3; i++) g_redir[i] = -1;
-    g_child_closed = 0;
 }
 
 /* close/fstat/dup must understand pseudo-fds; real fds go to the kernel */
@@ -465,8 +472,13 @@ int close(int fd)
 {
     int i = fd - XT_PFD_BASE;
     if (i >= 0 && i < XT_PFD_MAX) { g_pfd[i].used = 0; return 0; }
-    if (g_vfork_armed && fd >= 0 && fd < 16) {   /* fake child: parent's table untouched */
-        g_child_closed |= 1u << fd;
+    if (g_vfork_armed && fd >= 0 && fd < 16) {
+        if (g_child_opened & (1u << fd)) {       /* the fake child's own open: really close */
+            g_child_opened &= ~(1u << fd);
+            fdpath_clear(fd);
+            return _close(fd);
+        }
+        g_child_closed |= 1u << fd;              /* parent's fd: table untouched */
         return 0;
     }
     if (fd >= 0 && fd < 16) g_cloexec &= ~(1u << fd);
@@ -840,12 +852,32 @@ int lchown(const char *p, uid_t o, gid_t g) { (void)p; (void)o; (void)g; return 
 mode_t umask(mode_t mask) { (void)mask; return 022; }
 int fsync(int fd) { (void)fd; return 0; }   /* page cache flushes on close */
 
+/* read/write: POSIX-shape the kernel's raw -errno returns (-1 + errno). Without
+ * this a nonblocking read of an empty pty/pipe surfaces as read() == -11 with a
+ * STALE errno — dropbear's channel pump checks errno == EAGAIN on a negative
+ * return and treats anything else as a dead fd. newlib stdio bypasses these
+ * (it calls _read/_write directly), which is fine — it never uses O_NONBLOCK. */
+ssize_t read(int fd, void *buf, size_t n)
+{
+    long r = sys_read(fd, buf, (unsigned)n);
+    if (r < 0) { errno = (r == -11) ? EAGAIN : (r < -1 && r > -134) ? (int)-r : EIO; return -1; }
+    return r;
+}
+
+ssize_t write(int fd, const void *buf, size_t n)
+{
+    long r = sys_write(fd, buf, (unsigned)n);
+    if (r < 0) { errno = (r == -11) ? EAGAIN : (r < -1 && r > -134) ? (int)-r : EIO; return -1; }
+    return r;
+}
+
 ssize_t readv(int fd, const struct iovec *iov, int cnt)
 {
     ssize_t total = 0;
     for (int i = 0; i < cnt; i++) {
-        long n = sys_read(fd, iov[i].iov_base, iov[i].iov_len);
-        if (n < 0) return total ? total : -1;
+        if (!iov[i].iov_len) continue;
+        ssize_t n = read(fd, iov[i].iov_base, iov[i].iov_len);
+        if (n < 0) return total ? total : -1;    /* errno set by read() */
         total += n;
         if ((size_t)n < iov[i].iov_len) break;
     }
@@ -856,8 +888,9 @@ ssize_t writev(int fd, const struct iovec *iov, int cnt)
 {
     ssize_t total = 0;
     for (int i = 0; i < cnt; i++) {
-        long n = sys_write(fd, iov[i].iov_base, iov[i].iov_len);
-        if (n < 0) return total ? total : -1;
+        if (!iov[i].iov_len) continue;
+        ssize_t n = write(fd, iov[i].iov_base, iov[i].iov_len);
+        if (n < 0) return total ? total : -1;    /* errno set by write() */
         total += n;
         if ((size_t)n < iov[i].iov_len) break;
     }
