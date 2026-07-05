@@ -154,6 +154,14 @@ struct xt_dirent { unsigned mode; char name[256]; };
                                 * The hourly kernel SNTP re-sync will overwrite it at its next
                                 * poll — this is a manual nudge, not a persistent RTC. */
 
+/* networking control — block 0x800. Bringing the stack up is a BOOT-SCRIPT decision
+ * (/boot/20-Networking runs /bin/netup), not kernel magic. */
+#define SYS_net_up       0x800 /* () -> 0: start GEM0 + lwIP + DHCP/mDNS/SNTP (idempotent);
+                                * async — DHCP/link come up in the background */
+/* socket peer/name queries (SYS_ioctl on a socket fd; arg = u32[2] out: ip_be32, port) */
+#define XT_SIOCGPEER 0x8901u   /* remote address (getpeername) */
+#define XT_SIOCGNAME 0x8902u   /* local address (getsockname) */
+
 /* graphics / compositor — block 0x600. The OS owns the display plane; apps query
  * its descriptor and draw into it, then present (compositor on HW, ASCII on qemu). */
 #define SYS_fb_info      0x600 /* (struct os_fbinfo *) -> 0 */

@@ -99,6 +99,35 @@ for f in $COMMON $KEYGEN; do
     echo "$o" >> "$BUILD/keyobjects.list"
 done
 
+# dbclient (/bin/ssh): COMMON + CLISVR + CLI compiled as CLIENT (its own object dir —
+# the server set above is compiled -DDROPBEAR_SERVER=1/-DDROPBEAR_CLIENT=0 and the two
+# can't share objects).
+CLI="cli-main cli-auth cli-authpasswd cli-kex cli-session cli-runopts cli-chansession \
+ cli-authpubkey cli-tcpfwd cli-channel cli-authinteract cli-agentfwd cli-readconf"
+echo "[dropbear] compiling client (dbclient) objects..."
+COBJ="$OBJ/cli"; mkdir -p "$COBJ"
+CCFLAGS="-marm -mcpu=cortex-a9 -mfloat-abi=softfp -mfpu=neon-vfpv3 -fpic -fno-builtin \
+ -DLOCALOPTIONS_H_EXISTS -DDROPBEAR_SERVER=0 -DDROPBEAR_CLIENT=1 -Os"
+: > "$BUILD/cliobjects.list"
+for f in $COMMON $CLISVR $CLI; do
+    o="$COBJ/$f.o"
+    $CC $CCFLAGS $INC -c "$DB/src/$f.c" -o "$o"
+    echo "$o" >> "$BUILD/cliobjects.list"
+done
+
+# scp (/bin/scp): standalone, neutral. Client mode (`scp file host:path` on XTOS)
+# vfork+execs /bin/ssh (do_cmd's DROPBEAR_VFORK path = the shim's fake-vfork pattern);
+# server mode (`scp -t/-f`, run by sshd-session for pushes/pulls) is pure stdio + fs.
+SCP="scp progressmeter atomicio scpmisc compat"
+echo "[dropbear] compiling scp objects..."
+SOBJ="$OBJ/scp"; mkdir -p "$SOBJ"
+: > "$BUILD/scpobjects.list"
+for f in $SCP; do
+    o="$SOBJ/$f.o"
+    $CC $KCFLAGS $INC -c "$DB/src/$f.c" -o "$o"
+    echo "$o" >> "$BUILD/scpobjects.list"
+done
+
 # ---- crypto archives: libtomcrypt + libtommath (linker pulls only referenced members) ---
 build_archive() {   # $1 = src dir, $2 = archive name, $3 = obj prefix, $4 = extra CFLAGS
     a="$BUILD/$2"

@@ -1,0 +1,5 @@
+#!/bin/sh
+# 20-Networking — bring up the network stack (GEM0 + lwIP).
+# Async: DHCP, mDNS (xtos.local) and SNTP finish in the background as the
+# link comes up. Remove this script to boot without networking.
+netup

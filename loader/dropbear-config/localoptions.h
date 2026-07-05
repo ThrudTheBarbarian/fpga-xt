@@ -22,6 +22,18 @@
 #define DROPBEAR_SVR_REMOTETCPFWD  0
 #define DROPBEAR_X11FWD            0
 
+/* scp's client mode execs the ssh client here (default /usr/bin/dbclient) */
+#define DROPBEAR_PATH_SSH_PROGRAM "/bin/ssh"
+
+/* client (dbclient = /bin/ssh): pubkey only — XTOS has no getpass()/echo-off tty
+ * plumbing for password prompts; generate an identity with ssh-keygen and use -i
+ * (default identity: ~/.ssh/id_dropbear) */
+#define DROPBEAR_CLI_PASSWORD_AUTH 0
+#define DROPBEAR_CLI_INTERACT_AUTH 0
+#define DROPBEAR_CLI_AGENTFWD      0
+#define DROPBEAR_CLI_LOCALTCPFWD   0
+#define DROPBEAR_CLI_REMOTETCPFWD  0
+
 /* the shell search path on XTOS (ROOT_PATH too: XTOS logins are root, and
  * dropbear picks DEFAULT_ROOT_PATH for uid 0 — without it the session PATH
  * is the stock /usr/sbin:... and no applet resolves) */

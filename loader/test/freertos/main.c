@@ -149,7 +149,9 @@ static void shell_task(void *arg)
     (void)arg;
     { extern void klog_start(void); klog_start(); } /* logger: flush kernel diagnostics to /OS/var/log/system.log */
     { extern void sd_init(void); sd_init(); }   /* mount SD here (task context — FatFs reentrancy needs the scheduler) */
-    { extern void net_init(void); net_init(); } /* GEM0 + lwIP + DHCP + the tftp file drop (async; quiet if no link) */
+    /* networking is NOT started here: /boot/20-Networking runs /bin/netup
+     * (SYS_net_up) — stack bring-up is an explicit boot-script decision.
+     * Headless/qemu: run `netup` at the console. */
     boot_run();       /* /OS/boot/NN-<slug> auto-runner (e.g. the desktop) */
 
     /* Login shell: /System/bin/sh is toysh (toybox) — the interactive PL0 shell

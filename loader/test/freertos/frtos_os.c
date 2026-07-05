@@ -603,6 +603,9 @@ static long k_pipe_write(proc_t *p, int fd, const char *buf, uint32_t n)
 {
     kpipe_t *pp = &g_pipes[p->fd[fd].pipei - 1];
     uint32_t sent = 0;
+    if (!n) return 0;      /* zero-length write is a no-op, not EPIPE — dropbear's
+                            * writechannel probes with len 0 + NULL buf, and a -1
+                            * here trips the SIGPIPE kill below */
     if (!buf) return -1;
     while (sent < n) {
         if (p->killed) proc_exit_self(p, 137);                  /* SYS_kill lands here */
@@ -1775,16 +1778,28 @@ void deferral_thunk(void)                 /* PL1 (System), task context */
                 cf->nonblock = cf->vf.nonblock = (p->da2 && *(int *)p->da2) ? 1 : 0;
                 r = 0;
             } else {
+                /* FIONREAD on a pipe: buffered bytes; returns 1 (not 0) when the
+                 * pipe is drained AND writerless — poll must report READABLE then
+                 * (the read gives EOF), or a select()-driven reader never learns
+                 * the writer went away. */
                 kpipe_t *pp = &g_pipes[cf->pipei - 1];
-                if (p->da2) *(int *)p->da2 = (int)xStreamBufferBytesAvailable(pp->sb);
-                r = 0;
+                int avail = (int)xStreamBufferBytesAvailable(pp->sb);
+                if (p->da2) *(int *)p->da2 = avail;
+                r = (!avail && pp->writers <= 0) ? 1 : 0;
             }
         } else if (p->dnum == SYS_ioctl && p->da0 < NFD &&
                    p->fd[p->da0].open && p->fd[p->da0].sock) {
             extern long xt_sock_avail(int);                /* FIONREAD = poll readability */
             extern int  xt_ifreq_ioctl(unsigned, void *);  /* SIOCGIF* = ifconfig display */
+            extern int  xt_sock_endpoint(int, int, unsigned *, unsigned *);
             if (p->da1 == XT_FIONREAD && p->da2)
                 r = (*(int *)p->da2 = (int)xt_sock_avail(p->fd[p->da0].sock - 1), 0);
+            else if ((p->da1 == XT_SIOCGPEER || p->da1 == XT_SIOCGNAME) && p->da2) {
+                /* getpeername/getsockname: u32[2] out = {ip_be32, port} */
+                unsigned *o = (unsigned *)p->da2;
+                r = xt_sock_endpoint(p->fd[p->da0].sock - 1,
+                                     p->da1 == XT_SIOCGPEER, &o[0], &o[1]);
+            }
             else if ((p->da1 & 0xFF00u) == 0x8900u)        /* SIOCGIF* interface queries */
                 r = xt_ifreq_ioctl((unsigned)p->da1, (void *)p->da2);
             else
@@ -1800,6 +1815,10 @@ void deferral_thunk(void)                 /* PL1 (System), task context */
                 r = (cf && cf->vf.chr && cf->vf.ioctl)
                     ? cf->vf.ioctl(&cf->vf, (unsigned)p->da1, (void *)p->da2) : -1;
             }
+        } else if (p->dnum == SYS_net_up) {
+            /* boot-script networking bring-up (/bin/netup); idempotent */
+            extern void net_init(void);
+            net_init(); r = 0;
         } else if (p->dnum == SYS_close &&
                    p->da0 < NFD && p->fd[p->da0].open && p->fd[p->da0].pipei) {
             k_pipe_close_end(&p->fd[p->da0]); r = 0;
@@ -2147,6 +2166,7 @@ static int needs_task_ctx(struct k_regs *regs, uint32_t num)
     case SYS_recvfrom:
         return 1;                                  /* netconn calls block in lwIP */
     case SYS_nanosleep: return 1;                  /* vTaskDelay must run in task ctx */
+    case SYS_net_up:  return 1;                    /* xTaskCreate (kernel heap) -> task ctx */
     case SYS_statfs:  return 1;                    /* fs task queries FatFs f_getfree */
     case SYS_getdents: return 1;                   /* fs task packs the dir batch page */
     case SYS_dup2:    return 1;                    /* may close a displaced pipe end */

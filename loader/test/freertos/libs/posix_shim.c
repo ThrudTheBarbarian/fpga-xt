@@ -473,12 +473,18 @@ int close(int fd)
     int i = fd - XT_PFD_BASE;
     if (i >= 0 && i < XT_PFD_MAX) { g_pfd[i].used = 0; return 0; }
     if (g_vfork_armed && fd >= 0 && fd < 16) {
-        if (g_child_opened & (1u << fd)) {       /* the fake child's own open: really close */
+        /* the fake child's own open, with NO recorded dup2 referencing it: really
+         * close (real vfork: open+close in the child nets zero — e.g. sshpty's
+         * by-name slave open, which otherwise leaks and defeats pty EOF). An fd
+         * that IS in g_redir stays open — spawn_fd moves it into the child, which
+         * is also how it leaves this table. */
+        int redir_ref = (g_redir[0] == fd || g_redir[1] == fd || g_redir[2] == fd);
+        if ((g_child_opened & (1u << fd)) && !redir_ref) {
             g_child_opened &= ~(1u << fd);
             fdpath_clear(fd);
             return _close(fd);
         }
-        g_child_closed |= 1u << fd;              /* parent's fd: table untouched */
+        g_child_closed |= 1u << fd;              /* deferred: table untouched */
         return 0;
     }
     if (fd >= 0 && fd < 16) g_cloexec &= ~(1u << fd);
@@ -779,8 +785,13 @@ int fchdir(int fd)
 
 int ftruncate(int fd, off_t length)
 {
-    (void)fd; (void)length;
-    errno = ENOSYS;                      /* no truncate in the VFS yet */
+    /* the VFS has no shrink-in-place; report success when the file is already
+     * the requested size — the only live caller is scp, which opens O_TRUNC,
+     * writes exactly `length` bytes, then ftruncate(length)s as a no-op. A real
+     * shrink (length != current size) still says ENOSYS honestly. */
+    struct xt_stat xs;
+    if (sys_fstat(fd, &xs) == 0 && (off_t)xs.size == length) return 0;
+    errno = ENOSYS;
     return -1;
 }
 
@@ -1248,9 +1259,16 @@ static int poll_probe(struct pollfd *f)
         } else if (kind == XT_S_IFCHR) {
             int n = 0;
             if (sys_ioctl(f->fd, XT_TTY_NREAD, &n) != 0 || n > 0) f->revents |= POLLIN;
+        } else if (kind == XT_S_IFIFO) {
+            /* HONEST pipe readability: data buffered, or EOF (drained + writerless;
+             * the kernel FIONREAD returns 1 then). An always-ready lie makes a
+             * select()-driven nonblock reader (dropbear's channel loop) see EAGAIN
+             * after select said readable — which it treats as a dead fd. */
+            int n = 0;
+            long rc = sys_ioctl(f->fd, XT_FIONREAD, &n);
+            if (rc < 0 || rc == 1 || n > 0) f->revents |= POLLIN;
         } else {
-            f->revents |= POLLIN;                    /* pipes/files: reads block correctly (a
-                                                      * nonblock reader gets EAGAIN in the kernel) */
+            f->revents |= POLLIN;                    /* files: reads never block long */
         }
     }
     return f->revents != 0;
