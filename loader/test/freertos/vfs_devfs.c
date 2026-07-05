@@ -48,16 +48,16 @@ static void dv_close(vfs_file *f) { (void)f; }
  * routers. f->priv packs the pair index (low bits) + a slave flag (0x100). */
 extern void xt_pty_open(int i, int master);
 extern void xt_pty_close(int i, int master);
-extern long xt_pty_read(int i, int master, void *buf, uint32_t n);
+extern long xt_pty_read(int i, int master, void *buf, uint32_t n, int nonblock);
 extern long xt_pty_write(int i, int master, const void *buf, uint32_t n);
 extern int  xt_pty_nread(int i, int master);
 extern long xt_pty_ioctl(int i, unsigned req, void *arg);
 #define PTY_IDX(f)  ((int)((uintptr_t)(f)->priv & 0xff))
 #define PTY_MASTER(f) (((uintptr_t)(f)->priv & 0x100) == 0)
 
-static long dv_ptym_rd(vfs_file *f, void *buf, uint32_t n) { return xt_pty_read(PTY_IDX(f), 1, buf, n); }
+static long dv_ptym_rd(vfs_file *f, void *buf, uint32_t n) { return xt_pty_read(PTY_IDX(f), 1, buf, n, f->nonblock); }
 static long dv_ptym_wr(vfs_file *f, const void *buf, uint32_t n) { return xt_pty_write(PTY_IDX(f), 1, buf, n); }
-static long dv_ptys_rd(vfs_file *f, void *buf, uint32_t n) { return xt_pty_read(PTY_IDX(f), 0, buf, n); }
+static long dv_ptys_rd(vfs_file *f, void *buf, uint32_t n) { return xt_pty_read(PTY_IDX(f), 0, buf, n, f->nonblock); }
 static long dv_ptys_wr(vfs_file *f, const void *buf, uint32_t n) { return xt_pty_write(PTY_IDX(f), 0, buf, n); }
 static long dv_pty_ioctl(vfs_file *f, unsigned req, void *arg)
 {
@@ -211,7 +211,7 @@ static int dv_open(vfs_mount *m, const char *rel, int flags, vfs_file *f)
     const devnode *d = dv_find(rel);
     if (!d) return -1;
     f->read = d->rd; f->write = d->wr; f->lseek = 0; f->close = dv_close;
-    f->ioctl = d->ioc; f->ondup = 0;
+    f->ioctl = d->ioc; f->ondup = 0; f->nonblock = 0;
     f->size = 0; f->pos = 0; f->data = 0; f->mnt = 0;
     f->chr = d->chr;
     if (d->rd == dv_ptym_rd || d->rd == dv_ptys_rd) {   /* pty: idx from the trailing digit */

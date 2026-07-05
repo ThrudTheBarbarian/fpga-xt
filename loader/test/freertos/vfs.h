@@ -79,6 +79,8 @@ struct vfs_file {
     const void *data;     /* in-memory backing (romfs) -> enables identity mmap; NULL otherwise */
     void       *priv;     /* fs-private (FIL*, rnode*, ...) */
     vfs_mount  *mnt;
+    int         nonblock; /* O_NONBLOCK (FIONBIO): a char-device read that would block
+                           * returns -EAGAIN instead (dropbear sets its pty master nonblock) */
     int         chr;      /* char device: 0 = regular file; VFS_CHR_DEV = unbounded stream
                            * (read/write called directly, no page store, no lseek);
                            * VFS_CHR_TTY = the console (the kernel turns the fd into a

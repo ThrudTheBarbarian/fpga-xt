@@ -652,7 +652,7 @@ void xt_pty_close(int i, int master)
     if (master) { if (g_pty[i].mopen) g_pty[i].mopen--; }
     else        { if (g_pty[i].sopen) g_pty[i].sopen--; }
 }
-long xt_pty_read(int i, int master, void *buf, uint32_t n)
+long xt_pty_read(int i, int master, void *buf, uint32_t n, int nonblock)
 {
     if (pty_ensure(i) != 0 || !buf || !n) return 0;
     StreamBufferHandle_t sb = master ? g_pty[i].s2m : g_pty[i].m2s;
@@ -663,6 +663,7 @@ long xt_pty_read(int i, int master, void *buf, uint32_t n)
         size_t got = xStreamBufferReceive(sb, buf, n, pdMS_TO_TICKS(20));
         if (got > 0) return (long)got;
         if (!(master ? g_pty[i].sopen : g_pty[i].mopen)) return 0;   /* other end closed -> EOF */
+        if (nonblock) return -11;                                    /* O_NONBLOCK, empty -> EAGAIN */
     }
 }
 long xt_pty_write(int i, int master, const void *buf, uint32_t n)
@@ -1749,7 +1750,7 @@ void deferral_thunk(void)                 /* PL1 (System), task context */
              * fallback). */
             fd_t *cf = &p->fd[p->da0];
             if (p->da1 == XT_FIONBIO) {
-                cf->nonblock = (p->da2 && *(int *)p->da2) ? 1 : 0;
+                cf->nonblock = cf->vf.nonblock = (p->da2 && *(int *)p->da2) ? 1 : 0;
                 r = 0;
             } else {
                 kpipe_t *pp = &g_pipes[cf->pipei - 1];
