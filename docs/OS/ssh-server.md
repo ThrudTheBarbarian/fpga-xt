@@ -32,37 +32,49 @@ Gotchas found: `--specs=nosys.specs` must appear in CFLAGS **only** (in LDFLAGS 
 **`-DLOCALOPTIONS_H_EXISTS`**; compile flags do **not** want `-D_GNU_SOURCE` (it drags in
 GNU `basename` — see below).
 
-## Compile-map: porting surface (in dependency order)
+## Compile-map: COMPLETE
 
-**Done**
-- Build harness: configure (nosys.specs), guard-header generation, `-DLOCALOPTIONS_H_EXISTS`.
-- `loader/dropbear-config/localoptions.h`: server, pubkey-only, no fwd/agent/X11, XTOS `DEFAULT_PATH`.
-- Missing-header stubs in `dropbear-config/`: `netinet/ip.h`, `netinet/in_systm.h`,
-  `sys/endian.h`, `sys/prctl.h`, `sys/random.h`, `sys/un.h` (minimal; flesh out as used).
+**Everything compiles for the target.** 69/69 Dropbear server sources compile clean, and
+the bundled crypto (libtomcrypt, libtommath) compiles clean too. Config + stubs live in
+`loader/dropbear-config/` (submodule untouched):
+- `localoptions.h`: server, pubkey-only, no fwd/agent/X11, XTOS `DEFAULT_PATH`.
+- `libgen.h` shim: our newlib `string.h` declares GNU `basename(const char*)`, which
+  collides with newlib `libgen.h`'s XPG `basename(char*)`; the shim provides `dirname` and
+  defers `basename` to `string.h` (shadows newlib's — `-Idropbear-config` is first).
+- header stubs: `netinet/ip.h`, `netinet/in_systm.h`, `sys/{endian,prctl,random}.h`, and
+  `sys/un.h` (minimal `sockaddr_un` + `PF_UNIX` so the unused unix-socket paths compile).
+- build flags: `-DDROPBEAR_SERVER=1 -DDROPBEAR_CLIENT=0` (both default 0, `#ifndef`-guarded),
+  no `-D_GNU_SOURCE` at compile (drags in GNU `basename`).
 
-**Next — header reconciliation**
-- `libgen.h` vs `string.h`: our newlib-pic `string.h` declares GNU `basename(const char*)`,
-  which collides with `libgen.h`'s XPG `basename(char*)` → `conflicting types for
-  __xpg_basename`. Fix: a small `dropbear-config/libgen.h` shim (declare `dirname`, defer
-  `basename` to string.h) — shadows newlib's since `-Idropbear-config` is first.
-- `svr_ses undeclared` in svr-auth/svr-chansession/svr-authpubkey: a Dropbear-internal
-  config gate (the `extern struct serversession svr_ses` decl isn't visible under our
-  option set) — resolve once the header layer compiles cleanly.
+## Link surface (88 unmet symbols, categorised)
 
-**Then — link layer (missing functions to provide in the shim/kernel)**
-- **Entropy** — Dropbear seeds its CSPRNG from `/dev/urandom` / `getrandom`. Provide a seed
-  source (jitter + packet timing + global timer; a PL ring-oscillator TRNG later). *Security
-  caveat: dev-grade until a real TRNG lands.*
-- **pty** — the big new kernel primitive. `sshpty.c` wants `openpty`/`login_tty`
-  semantics: master/slave pair, line discipline, `TIOCSWINSZ`/`TIOCSCTTY`. Needed for the
-  interactive shell; a non-interactive `ssh board 'cmd'` and scp can land first without it.
-- Smaller stubs likely: `getpwnam`/`getpwuid` (single-user root), signals, `getgrouplist`,
-  `clearenv`, `prctl` (no-op).
+- **~60 crypto** (`chacha_*`, `sha256/384/512_*`, `poly1305_*`, `ecc_*`, `hmac_*`, `mp_*`,
+  `ltc_*`, `register_*`, `find_cipher/hash`) → satisfied by compiling the libtomcrypt/
+  libtommath subset into the link. Build work, not porting.
+- **~8 `__aeabi_*` + `_GLOBAL_OFFSET_TABLE_`** → libgcc + PIC linker. Free.
+- **2 endian macros** `htole64`/`le64toh` → flesh out `dropbear-config/sys/endian.h`.
+- **The real libc surface is tiny:** `select` (main-loop multiplexing — implement over the
+  netconn/poll layer), plus single-user no-op/trivial stubs: `chown`, `setegid`, `seteuid`,
+  `getrlimit`, `setrlimit`, `utimes`, `gethostbyaddr`, `getservbyname`.
 
-**Runtime bring-up**
-- Host key: `dropbearkey` (ed25519) → `/OS/etc/dropbear/`.
-- authorized_keys under `/OS/etc/dropbear/` (or a user home).
-- Phase order: transport + KEX + pubkey auth + `exec` (no pty) → scp-in → pty + interactive shell.
+**Key finding:** `openpty` and `getrandom` are NOT missing symbols — Dropbear reaches the
+pty and entropy through `open()`/`read()` on **`/dev/ptmx`** and **`/dev/urandom`**. So pty
+and entropy are **kernel *device* work at runtime, not libc functions.** That's the real
+substance of the remaining port, and it's cleanly separated from the (small) symbol layer.
+
+## Remaining work, in order
+
+1. **build-dropbear.sh** + loader Makefile target: compile the server + libtom subset into
+   objects, link the PIC `.so` (mirror `toybox.so`).
+2. **Symbol layer** (shim): `select` over the netconn poll; the trivial single-user stubs;
+   `sys/endian.h` macros.
+3. **`/dev/urandom`** (kernel char device): seed a CSPRNG (jitter + packet timing + global
+   timer; PL ring-oscillator TRNG later). *Dev-grade entropy until a real TRNG lands.*
+4. **`/dev/ptmx` pty** (kernel): master/slave pair + line discipline + `TIOCSWINSZ`/
+   `TIOCSCTTY`/`TIOCGPTN`/`TIOCSPTLCK`. The big new primitive; needed only for the
+   interactive shell — `ssh board 'cmd'` (exec) and scp land before it.
+5. **Runtime**: `dropbearkey` ed25519 host key → `/OS/etc/dropbear/`; authorized_keys;
+   bring-up order transport → KEX → pubkey auth → exec → scp → pty + interactive shell.
 
 ## Deploy
 Server binary builds to a PIC `.so` (like toybox) → **sdpush**; anything needing the kernel
