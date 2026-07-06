@@ -1123,6 +1123,23 @@ void XSdPs_Setup32ADMA2DescTbl(XSdPs *InstancePtr, u32 BlkCnt, const u8 *Buff)
 	Xil_DCacheFlushRange((INTPTR) & (InstancePtr->Adma2_DescrTbl32[0]),
 				(INTPTR)sizeof(XSdPs_Adma2Descriptor32) * (INTPTR)32U);
 #endif
+	/* DEBUG (scp/SD corruption): verify what the ADMA engine will actually read from
+	 * DRAM matches the buffer we handed it, and that it isn't a live process COW frame.
+	 * Invalidate our cached copy so the read hits DRAM (what the controller sees). */
+	{
+		extern void klog(const char *); extern void klog_u(unsigned);
+		extern int  vm_page_charged(void *);
+		Xil_DCacheInvalidateRange((INTPTR) & (InstancePtr->Adma2_DescrTbl32[0]),
+					  (INTPTR)sizeof(XSdPs_Adma2Descriptor32) * (INTPTR)32U);
+		u32 dram = InstancePtr->Adma2_DescrTbl32[0].Address;
+		if (dram != (u32)(UINTPTR)Buff) {
+			klog("*** ADMA desc DRAM mismatch buff="); klog_u((unsigned)(UINTPTR)Buff);
+			klog(" dram="); klog_u((unsigned)dram); klog("\r\n");
+		}
+		int o = vm_page_charged((void *)(UINTPTR)dram);
+		if (o) { klog("*** ADMA target is LIVE COW page space="); klog_u((unsigned)o);
+			 klog(" addr="); klog_u((unsigned)dram); klog(" buff="); klog_u((unsigned)(UINTPTR)Buff); klog("\r\n"); }
+	}
 }
 
 /*****************************************************************************/
