@@ -222,14 +222,9 @@ void fault_symbolize(unsigned addr, void (*emit)(const char *, unsigned))
 void frtos_activate_libc(xtld_obj *libc)
 {
     extern void sbrk_set_base(void *base, void *end);
-    extern int mmu_cow_source_ro;
     g_libc_obj = libc;
     g_libc_memalign = (void *(*)(size_t, size_t))xtld_sym(libc, "memalign");
     g_libc_free     = (void (*)(void *))xtld_sym(libc, "free");
-    /* libc is up: from now on protect every module's COW-source writable segment
-     * PL1-read-only, so a stray write to a shared image faults (with the writer's
-     * PC) instead of silently corrupting it. libc itself was protected RW above. */
-    mmu_cow_source_ro = 1;
     uintptr_t brk = ((uintptr_t)g_boot + 0xFFFu) & ~0xFFFu;   /* page-align past libc.so */
     /* Cap the kernel heap (where libc.so loads program/.so images) BELOW the per-process
      * VA windows (heap 0x1000_0000+, cow/mmap above). Those windows are overridden
