@@ -242,6 +242,18 @@ static proc_t *cur_proc(void)
     return NULL;
 }
 
+/* DEBUG (scp/SD corruption hunt): is `pg` currently an open fd's page-cache frame?
+ * Called from vm_cow_map — a COW frame must never also be a live fd-cache page.
+ * Returns the owning pid or 0. */
+int frtos_cpage_live(void *pg)
+{
+    for (int s = 0; s < MAXPROC; s++)
+        if (g_proc[s].used)
+            for (int fd = 0; fd < NFD; fd++)
+                if (g_proc[s].fd[fd].open && g_proc[s].fd[fd].cpage == pg) return g_proc[s].pid;
+    return 0;
+}
+
 /* T2-b: called from traceTASK_SWITCHED_IN on every context switch — point TTBR0
  * at the incoming task's address space (its process's L1 table, or the master
  * table for the kernel/shell/idle tasks). vm_switch only flushes on a change. */
@@ -974,6 +986,10 @@ static void *fd_getpage(int slot, int fd, uint32_t pi, uint32_t *valid, int forw
     fd_flush(fdp);                                                 /* evict: don't lose the old page */
     if (!fdp->cpage) {
         fdp->cpage = vm_page_alloc(); if (!fdp->cpage) { *valid = 0; return 0; }
+        /* DEBUG: an fd page-cache frame must never already be a live COW/heap page */
+        { extern int vm_page_charged(void *); int o = vm_page_charged(fdp->cpage);
+          if (o) { klog("*** COLLISION: fd-cache frame is live COW page of space "); klog_u((unsigned)o);
+                   klog(" phys="); klog_u((unsigned)(uintptr_t)fdp->cpage); klog(" ***\r\n"); } }
         /* TRIPWIRE: this page is filled by the CLIENT via its identity VA (fs_write);
          * if that VA lands in a per-process window band it's shadowed in the client's
          * space and the fill would corrupt the wrong page (see XTOS_POOL_FLOOR). The

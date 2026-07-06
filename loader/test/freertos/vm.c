@@ -63,6 +63,18 @@ static uint8_t   space_l2n[NSPACE];             /* slots used this space */
 #define MAXPP 320
 static void     *g_space_pages[NSPACE][MAXPP];
 static uint16_t  g_space_npages[NSPACE];
+
+/* DEBUG (scp/SD corruption hunt): is `p` currently charged (COW/heap page) to ANY
+ * space? A page handed to the fd page-cache / SD DMA must NEVER also be a live COW
+ * page — that's the corruption. Returns space idx+1 (the owner) or 0. Linear but
+ * rare-path (called at fd-cache alloc). */
+int vm_page_charged(void *p)
+{
+    for (int s = 0; s < NSPACE; s++)
+        for (int i = 0; i < g_space_npages[s]; i++)
+            if (g_space_pages[s][i] == p) return s + 1;
+    return 0;
+}
 static uint32_t  g_space_shm[NSPACE];            /* bitmap: which shm ids each space mapped (for reap) */
 static uint32_t *g_cur_table;            /* currently-active TTBR0 table */
 static uint32_t  g_cur_asid;
@@ -515,6 +527,11 @@ int vm_cow_map(int idx, uint32_t va)
      * (XN, TEX, nG, ...) so a COW'd program-data page stays execute-never (W^X). */
     l2[i] = ((uint32_t)pg & 0xFFFFF000u) | (e & 0xFFFu);
     l2[i] &= ~(1u << 9);
+    /* DEBUG: a COW frame must never already be a live fd page-cache page */
+    { extern int frtos_cpage_live(void *); extern void klog(const char *); extern void klog_u(unsigned);
+      int pid = frtos_cpage_live(pg);
+      if (pid) { klog("*** COLLISION: COW frame is live fd-cache page of pid "); klog_u((unsigned)pid);
+                 klog(" phys="); klog_u((unsigned)pg); klog(" ***\r\n"); } }
     g_cow_count++;
     __asm__ volatile("dsb");
     __asm__ volatile("mcr p15,0,%0,c8,c7,3" :: "r"(va & 0xFFFFF000u));  /* TLBIMVAA */
