@@ -385,65 +385,17 @@ uint32_t vm_pages_free(void)
     return g_freelist_n + gap;
 }
 
-/* ===== DEBUG (scp GOT-corruption hunt): live-COW-page double-issue detector =====
- * Every COW private page is tracked here while live. If dpage_raw ever hands out a
- * page that's still tracked (never freed through dfree_raw / vm_space_destroy), some
- * path is re-issuing a live page — e.g. the fd page-cache (vm_page_alloc, scp's SD
- * writes) stealing dropbear's COW'd .got.plt page. Logged to dmesg with the victim
- * space. Small + linear so it barely shifts .bss; remove once root-caused. */
-extern void klog(const char *); extern void klog_u(unsigned);
-#define DBG_COW_MAX 1024
-static struct { void *p; int idx; } g_dbgcow[DBG_COW_MAX];
-static int g_dbgcow_n;
-static void dbgcow_add(void *p, int idx)
-{
-    uint32_t f = xt_irq_save();
-    for (int i = 0; i < g_dbgcow_n; i++) if (g_dbgcow[i].p == p) { g_dbgcow[i].idx = idx; xt_irq_restore(f); return; }
-    if (g_dbgcow_n < DBG_COW_MAX) { g_dbgcow[g_dbgcow_n].p = p; g_dbgcow[g_dbgcow_n].idx = idx; g_dbgcow_n++; }
-    xt_irq_restore(f);
-}
-static void dbgcow_del(void *p)   /* caller already holds the pool IRQ lock or races benignly */
-{
-    for (int i = 0; i < g_dbgcow_n; i++) if (g_dbgcow[i].p == p) { g_dbgcow[i] = g_dbgcow[--g_dbgcow_n]; return; }
-}
-static int dbgcow_find(void *p)
-{
-    for (int i = 0; i < g_dbgcow_n; i++) if (g_dbgcow[i].p == p) return g_dbgcow[i].idx;
-    return -1;
-}
-
-/* DEBUG: report a collision to the CONSOLE (visible amid the fault flood), latched
- * so the probe itself doesn't flood; details also go to dmesg. */
-extern void puts0(const char *); extern void fr_hex(const char *, unsigned);
-static int g_dbg_hits;
-static void dbg_report(void *p, int owner)
-{
-    if (g_dbg_hits++ < 8) {
-        puts0("*** POOL: LIVE COW page on free-list (skipped)");
-        fr_hex(" space=", (unsigned)owner); fr_hex(" phys=", (unsigned)p); puts0("\r\n");
-    }
-    klog("*** POOL live-COW-on-freelist space="); klog_u((unsigned)owner);
-    klog(" phys="); klog_u((unsigned)p); klog("\r\n");
-}
-
 /* allocate a raw page from the pool (NOT charged to any space). Used for shm, whose
  * pages are refcount-owned by the shm object, not a space. */
 static void *dpage_raw(void)
 {
     uint32_t f = xt_irq_save();
-    void *p;
-    for (;;) {
-        p = g_dfree;
-        if (p) {                                           /* reuse a reclaimed page */
-            g_dfree = *(void **)p; g_freelist_n--;
-            int o = dbgcow_find(p);                        /* DEBUG: still a LIVE COW page? */
-            if (o >= 0) { dbg_report(p, o); continue; }    /* leak it (it's in use); take the next */
-        } else {                                           /* else take from the frontier */
-            char *nf = g_pfront - 0x1000u;
-            if (nf < (char *)kern_heap_top()) { xt_irq_restore(f); return (void *)0; }  /* arena full */
-            g_pfront = nf; p = nf;
-        }
-        break;
+    void *p = g_dfree;
+    if (p) { g_dfree = *(void **)p; g_freelist_n--; }      /* reuse a reclaimed page */
+    else {                                                  /* else take from the frontier */
+        char *nf = g_pfront - 0x1000u;
+        if (nf < (char *)kern_heap_top()) { xt_irq_restore(f); return (void *)0; }  /* arena full */
+        g_pfront = nf; p = nf;
     }
     g_pages_inuse++;
     xt_irq_restore(f);
@@ -455,7 +407,6 @@ static void dfree_raw(void *p)
 {
     memset(p, 0, 0x1000);
     uint32_t f = xt_irq_save();
-    dbgcow_del(p);                                          /* DEBUG: no longer live */
     *(void **)p = g_dfree; g_dfree = p; g_freelist_n++; g_pages_inuse--;
     xt_irq_restore(f);
 }
@@ -501,7 +452,6 @@ void vm_space_destroy(int idx)
         void *p = g_space_pages[idx][i];
         memset(p, 0, 0x1000);                 /* scrub the dead process's data */
         uint32_t f = xt_irq_save();
-        dbgcow_del(p);                        /* DEBUG: reclaimed, no longer live */
         *(void **)p = g_dfree; g_dfree = p;   /* push to free list (link in word 0) */
         g_freelist_n++; g_pages_inuse--;
         xt_irq_restore(f);
@@ -555,7 +505,6 @@ int vm_cow_map(int idx, uint32_t va)
      * (XN, TEX, nG, ...) so a COW'd program-data page stays execute-never (W^X). */
     l2[i] = ((uint32_t)pg & 0xFFFFF000u) | (e & 0xFFFu);
     l2[i] &= ~(1u << 9);
-    dbgcow_add(pg, idx);                        /* DEBUG: this COW page is now live in space idx */
     g_cow_count++;
     __asm__ volatile("dsb");
     __asm__ volatile("mcr p15,0,%0,c8,c7,3" :: "r"(va & 0xFFFFF000u));  /* TLBIMVAA */

@@ -475,8 +475,6 @@ DRESULT disk_read (
 		if (Status != XST_SUCCESS) {
 			return RES_ERROR;
 		}
-		{ extern int frtos_watch_check(const char *, unsigned, const void *);   /* DEBUG */
-		  frtos_watch_check("read", (unsigned)LocSector, buff); }
 #endif
 	} else {
 #ifdef XPAR_XUFSPSXC_NUM_INSTANCES
@@ -780,8 +778,6 @@ DRESULT disk_write (
 		if (Status != XST_SUCCESS) {
 			return RES_ERROR;
 		}
-		{ extern int frtos_watch_check(const char *, unsigned, const void *);   /* DEBUG */
-		  frtos_watch_check("write", (unsigned)LocSector, buff); }
 #endif
 	} else {
 #ifdef XPAR_XUFSPSXC_NUM_INSTANCES
