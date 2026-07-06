@@ -182,6 +182,15 @@ static uint32_t *l2_for_section(uint32_t sec)
     return l2;
 }
 
+/* Once set (after libc bootstrap, frtos_activate_libc), a module's writable segment
+ * is protected PL1-READ-ONLY too (AP=101), not just PL1-RW/PL0-none. The master
+ * writable seg is the pristine COW SOURCE — never legitimately written after load
+ * (per-process writes go to private COW copies; constructors run per-process). So a
+ * write to it is a bug; RO makes a stray CPU write FAULT (with the writer's PC) rather
+ * than silently corrupting the shared image. libc is exempt: its master .data IS
+ * written during boot bootstrap, before this gate flips. */
+int mmu_cow_source_ro = 0;
+
 void mmu_protect(uint32_t va, uint32_t size, int ro, int xn)
 {
     uint32_t end = (va + size + 0xFFFu) & ~0xFFFu;
@@ -189,10 +198,11 @@ void mmu_protect(uint32_t va, uint32_t size, int ro, int xn)
         uint32_t *l2 = l2_for_section(p >> 20);
         if (!l2) return;
         /* text (ro): PL0-RX (AP=111 RO-all, executable). writable seg (!ro): PL0-NONE
-         * in the master (AP=01) — its owner process gets PL0-RW per-process via COW;
-         * other processes can't see it. (xn applies to the writable seg.) */
+         * in the master (AP=01, or AP=101 PL1-RO once the COW-source gate is on) — its
+         * owner process gets PL0-RW per-process via COW. (xn applies to the writable seg.) */
         l2[(p >> 12) & 0xFFu] = (p & 0xFFFFF000u) |
-            (ro ? (PG_NORMAL | PG_RO) : (PGS_NONE | (xn ? PG_XN : 0u)));
+            (ro ? (PG_NORMAL | PG_RO)
+                : (PGS_NONE | (xn ? PG_XN : 0u) | (mmu_cow_source_ro ? PG_RO : 0u)));
     }
     asm volatile("dsb");
     asm volatile("mcr p15,0,%0,c8,c7,0" :: "r"(0u));   /* TLBIALL */
