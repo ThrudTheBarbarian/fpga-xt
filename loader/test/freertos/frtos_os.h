@@ -25,6 +25,13 @@
  * pages (docs/OS/fs-pagecache.md). NSHM ids, one 1 MB VA slot each. */
 #define XTOS_SHM_VA    0x13000000u
 #define XTOS_SHM_SIZE  0x01000000u   /* 16 MB window = NSHM * 1 MB slots */
+/* The page pool is IDENTITY-mapped, but the per-process windows above (0x1000_0000..
+ * 0x1400_0000) OVERRIDE those VAs per-process. So a pool page whose physical falls in
+ * the window range is reachable by its identity VA ONLY in the master space — in a
+ * process's space that VA is its private window, not the pool page. The fd page-cache
+ * fill runs in the CLIENT space and would write the wrong page (corrupting the file AND
+ * spraying data into that process). The pool must therefore stay ABOVE the windows. */
+#define XTOS_POOL_FLOOR (XTOS_SHM_VA + XTOS_SHM_SIZE)   /* 0x1400_0000 */
 /* TTBR0 cacheable-walk attributes (short descriptor): inner+outer Write-Back
  * Write-Allocate, non-shared. OR'd into the table base whenever TTBR0 is written
  * (mmu_init, vm_switch) so page-table walks go through the D-cache and stay

@@ -394,6 +394,16 @@ static void *dpage_raw(void)
     if (p) { g_dfree = *(void **)p; g_freelist_n--; }      /* reuse a reclaimed page */
     else {                                                  /* else take from the frontier */
         char *nf = g_pfront - 0x1000u;
+        /* SKIP the per-process window VA band [XTOS_HEAP_VA, XTOS_POOL_FLOOR): a pool
+         * page whose identity VA lands there is shadowed per-process, so the fd
+         * page-cache fill (CLIENT space) would write the wrong page — corrupting the
+         * file AND spraying data into that process (root cause of the scp zero-data +
+         * crashes). Pages above and below the band are safe, so jump the frontier past
+         * it and keep descending toward the image-heap top.
+         * TEMPORARY: reserves a 64 MB VA band. The real fix is a physical page map /
+         * dynamic paging so the pool can use those frames at a non-window VA. */
+        if (nf < (char *)XTOS_POOL_FLOOR && nf >= (char *)XTOS_HEAP_VA)
+            nf = (char *)XTOS_HEAP_VA - 0x1000u;             /* hop below the window band */
         if (nf < (char *)kern_heap_top()) { xt_irq_restore(f); return (void *)0; }  /* arena full */
         g_pfront = nf; p = nf;
     }

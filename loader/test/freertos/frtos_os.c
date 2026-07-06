@@ -936,9 +936,6 @@ static void fd_flush(fd_t *fdp)
     uint32_t base = fdp->cpi << 12;
     uint32_t n = (fdp->vf.size > base) ? (fdp->vf.size - base) : 0;
     if (n > 0x1000u) n = 0x1000u;
-    if (fdp->cpi <= 3) { klog("[flush cpi="); klog_u(fdp->cpi); klog(" n="); klog_u(n);
-                  klog(" cpg="); klog_u((unsigned)(uintptr_t)fdp->cpage);
-                  klog(" w0="); klog_u(*(volatile uint32_t *)fdp->cpage); klog("]\r\n"); }
     vfs_lseek(&fdp->vf, (long)base, 0);
     vfs_write(&fdp->vf, fdp->cpage, n);
     fdp->cdirty = 0;
@@ -1758,8 +1755,6 @@ static long fs_write(proc_t *p)
         if (!page) break;
         uint32_t want = 0x1000u - off; if (want > n - done) want = n - done;
         memcpy(page + off, buf + done, want);
-        if (pi <= 3) { klog("[fill pi="); klog_u(pi); klog(" cpg="); klog_u((unsigned)(uintptr_t)page);
-                       klog(" w0="); klog_u(*(volatile uint32_t *)page); klog("]\r\n"); }
         done += want; pos += want;
         if (pos > fdp->vf.size) fdp->vf.size = pos;        /* growth: extend logical size */
         fdp->cdirty = 1;                                   /* the fs task flushes on evict/close */
