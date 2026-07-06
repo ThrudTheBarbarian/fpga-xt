@@ -5,24 +5,27 @@
 # Immediate targets
 
 ## Open Issues (tracked bugs)
-- **Retire the per-switch `TLBIALL` sledgehammer (stale image-region TLB shadow).**
-  `vm_switch` currently does a full `TLBIALL` on every process switch to fix HW scp/ssh
-  crashes (stale cross-context TLB entries over the image region: scp took a recurring
-  PL0-none section-shadow prefetch-fault storm; dropbear silently read its private nG
-  GOT copy through a stale entry → PLT jump to garbage). This WORKS and is robust
-  (16× 19 MB scp verified, zero faults) but taxes **every** context switch system-wide
-  with a cold-TLB refill — negligible for long-running jobs like scp, but potentially
-  **10–25 %** for high-switch-rate workloads (shell pipelines, many short-lived
-  programs, chatty IPC). *Root fix (removes the flush entirely, wins for all
-  workloads):* invalidate at the **mutation point** — most likely the shared
-  section-`0x29` L2 being re-backgrounded to PL0-none during module load/unload churn
-  (sshd-session spawns per connection in that section) without a TLB invalidate — or
-  stop mapping the image region as global `SEC_KDATA` 1 MB sections (mmu.c) so there's
-  nothing to shadow. Instrument the section-L2 mutations (mmu_protect / l2_for_section
-  / mmu_unprotect / vm_sync_loaded_sections) to catch a live page re-backgrounded
-  without invalidation. Kept supporting fixes are correct regardless: `vm_exec_fault`
-  `TLBIMVAA` (no ping-pong), `vm_cow_map` copy-from-template, klog→/tmp. *(src:
-  loader/test/freertos/vm.c `vm_switch`; branch ssh-server)*
+- **Retire the per-switch `TLBIALL` sledgehammer (residual stale image-region TLB entry).**
+  `vm_switch` does a full `TLBIALL` on every process switch as a robust backstop for HW
+  scp/ssh crashes (conflicting/stale TLB entries over image-region section `0x29`: scp
+  takes a recurring PL0-none prefetch-fault storm; dropbear reads its GOT through a stale
+  entry → PLT jump to ~`0xffffffff`). Robust (16× 19 MB scp, zero faults) but taxes every
+  context switch with a cold-TLB refill (negligible for long jobs; up to ~10–25 % for
+  high-switch-rate workloads — shell pipelines, many short-lived programs, chatty IPC).
+  **Investigated (ssh-server):** the crash values cluster at ~`0xFFFFFFFF` = the fingerprint
+  of an A9 **conflicting TLB entry** from a **break-before-make violation** — live remaps
+  wrote a new valid descriptor over a live valid one. Fixed BBM at `vm_cow_map`,
+  `vm_cow_read_fault` reseed, and `perproc_l2`'s L1 swap: this **materially helped**
+  (dropbear crash went immediate→rare, and the GOT read went silent→a *serviceable*
+  permission fault) but did **not** fully eliminate it — a residual conflicting-entry path
+  survives (suspect: section-`0x29` **code**-page entries, given scp's `[pabt]` storm
+  persists through BBM + the `perproc_l2` TLBIALL). So BBM is KEPT (correct + reduces the
+  problem) and the sledgehammer STAYS as backstop. Next: chase the residual — likely a
+  code-page remap/speculation in section `0x29` not yet going through BBM, or eliminate the
+  global `SEC_KDATA` 1 MB sections over the image region (mmu.c) so nothing can conflict.
+  RULED OUT: `perproc_l2` missing-invalidation alone; MAXSEC exhaustion (dropbear needs
+  only libc); the `cowdiv` scanner (false positives — flags legit large `.data` values).
+  *(src: loader/test/freertos/vm.c `vm_switch` + the BBM sites; branch ssh-server)*
 - **Strip ssh-server debug scaffolding before merge to main** — per-SD-op klog
   (diskio.c), `[pabt]`/`[cowrd]`/`vm_dump_cow_divergence` (vm.c), GUARD-TRIP klog
   (frtos_os.c), ADMA descriptor-verify (xsdps_host.c). Left in to aid the root-cause

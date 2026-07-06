@@ -225,7 +225,15 @@ static uint32_t *perproc_l2(int idx, uint32_t *t, uint32_t sec)
         for (uint32_t i = 0; i < 256; i++) l2[i] = L2_KERN((sec << 20) + i * 0x1000u);  /* PL0-none bg */
     space_l2sec[idx][space_l2n[idx]] = (uint16_t)sec;
     space_l2n[idx]++;
+    /* Swapping this section's L1 from the shared master L2 to a fresh private L2 is a
+     * live valid->valid change over a 1 MB range: the TLB still holds page entries from
+     * the OLD L2 for every page in the section. Flush after installing (like mmu_protect)
+     * so no stale/conflicting entry lingers. Infrequent (first COW fault per section per
+     * process), so a full TLBIALL is cheap. */
     t[sec] = L1_COARSE(l2);
+    __asm__ volatile("dsb");
+    __asm__ volatile("mcr p15,0,%0,c8,c7,0" :: "r"(0u));    /* TLBIALL */
+    __asm__ volatile("dsb; isb");
     return l2;
 }
 
@@ -389,16 +397,12 @@ void vm_switch(uint32_t *table, uint32_t asid)
     __asm__ volatile("mcr p15,0,%0,c13,c0,1" :: "r"(asid));          /* CONTEXTIDR = new ASID */
     __asm__ volatile("isb");
 
-    /* Full TLB flush on every process switch. This is a deliberate SLEDGEHAMMER: the
-     * image region suffers stale cross-context TLB entries — a PL0-none section shadow
-     * over split code (scp: recurring prefetch-fault storm) AND a stale entry over a
-     * process's private nG program-data copy (dropbear: a silent non-faulting GOT read
-     * -> PLT jump to garbage). A per-range MVA flush was tried (program COW range only):
-     * it fixed dropbear but left scp's CODE-page fault storm, which measured SLOWER than
-     * this full flush (per-fault exception cost > the flush). So flush everything: zero
-     * faults, robust, and faster in practice. Subsumes the libc-data flush below.
-     * Proper long-term fix = eliminate the stale-section-shadow source (mmu.c global
-     * SEC_KDATA sections over the image region), then this flush can go. */
+    /* Full TLB flush on every process switch (SLEDGEHAMMER, belt-and-suspenders with the
+     * break-before-make fixes at the remap sites). BBM alone materially reduced the stale
+     * conflicting-entry crashes (immediate -> rare; silent garbage read -> serviceable
+     * fault) but did NOT eliminate them, so this stays as the robust backstop until the
+     * residual source is found. Proven: 16x 19MB scp, zero faults. Subsumes the libc-data
+     * flush below. (Cost: cold-TLB refill per switch — workload-dependent, see NextSteps.) */
     if (asid) {
         __asm__ volatile("dsb");
         __asm__ volatile("mcr p15,0,%0,c8,c7,0" :: "r"(0u));            /* TLBIALL */
@@ -596,17 +600,25 @@ int vm_cow_map(int idx, uint32_t va)
     memcpy(pg, (const void *)(csrc ? csrc : (va & 0xFFFFF000u)), 0x1000);
     /* private copy: new physical, clear AP[2] (RO->RW), keep all other attrs
      * (XN, TEX, nG, ...) so a COW'd program-data page stays execute-never (W^X). */
-    l2[i] = ((uint32_t)pg & 0xFFFFF000u) | (e & 0xFFFu);
-    l2[i] &= ~(1u << 9);
+    uint32_t ne = (((uint32_t)pg & 0xFFFFF000u) | (e & 0xFFFu)) & ~(1u << 9);
+    /* BREAK-BEFORE-MAKE (ARMv7): the page is currently a LIVE valid mapping (RO ->
+     * template). Writing the new valid descriptor straight over it (valid->valid) lets
+     * the A9 cache a CONFLICTING/amalgamated TLB entry — architecturally UNPREDICTABLE
+     * -> silent garbage reads (dropbear's GOT -> PLT jump to ~0xffffffff), which a
+     * post-hoc TLBIMVAA can't undo. So: invalidate the descriptor, flush the VA, THEN
+     * install the new mapping. */
+    l2[i] = 0;                                                         /* break */
+    __asm__ volatile("dsb");
+    __asm__ volatile("mcr p15,0,%0,c8,c7,3" :: "r"(va & 0xFFFFF000u));  /* TLBIMVAA */
+    __asm__ volatile("dsb");
+    l2[i] = ne;                                                        /* make */
+    __asm__ volatile("dsb; isb");
     /* DEBUG: a COW frame must never already be a live fd page-cache page */
     { extern int frtos_cpage_live(void *); extern void klog(const char *); extern void klog_u(unsigned);
       int pid = frtos_cpage_live(pg);
       if (pid) { klog("*** COLLISION: COW frame is live fd-cache page of pid "); klog_u((unsigned)pid);
                  klog(" phys="); klog_u((unsigned)pg); klog(" ***\r\n"); } }
     g_cow_count++;
-    __asm__ volatile("dsb");
-    __asm__ volatile("mcr p15,0,%0,c8,c7,3" :: "r"(va & 0xFFFFF000u));  /* TLBIMVAA */
-    __asm__ volatile("dsb; isb");
     return 1;
 }
 
@@ -636,6 +648,12 @@ int vm_cow_read_fault(int idx, uint32_t va)
     if (((e >> 4) & 0x3u) == 0x1u && !(e & (1u<<9))) {   /* AP=001: master PL0-none writable */
         uint32_t xn = e & 0x1u;                          /* keep the page's XN (W^X) */
         seeded = (L2_PAGE_RO(src) & ~0x1u) | xn;
+        /* break-before-make: valid PL0-none -> valid RO is a LIVE remap; go via invalid
+         * + TLBI so the A9 can't cache a conflicting entry (see vm_cow_map). */
+        l2[i] = 0;
+        __asm__ volatile("dsb");
+        __asm__ volatile("mcr p15,0,%0,c8,c7,3" :: "r"(va & 0xFFFFF000u));  /* TLBIMVAA */
+        __asm__ volatile("dsb");
         l2[i] = seeded;                                  /* seed RO to the shared source */
     }
     /* DEBUG (dropbear GOT): watch the read-fault service for the program COW range.
