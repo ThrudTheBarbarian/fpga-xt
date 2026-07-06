@@ -113,7 +113,7 @@ void vApplicationIRQHandler(uint32_t ulICCIAR)
     else if (id == 54) { extern void gem0_isr(void); gem0_isr(); }           /* GEM0 (net RX) */
 }
 
-static void fr_hex(const char *label, unsigned v)
+void fr_hex(const char *label, unsigned v)   /* non-static: vm.c's debug probe prints to console too */
 {
     extern void puts0(const char *);
     char hex[11] = "0x00000000";
@@ -128,6 +128,14 @@ static void fr_hex(const char *label, unsigned v)
 void fault_report(unsigned code, unsigned addr, unsigned caller)
 {
     extern void puts0(const char *);
+    /* A fault STORM (e.g. a corrupted server respawning + re-faulting) must not wedge
+     * the console — the task still gets killed (xt_vectors.S), we just stop printing
+     * after a cap so the board stays usable for diagnosis. */
+    static unsigned g_faultn;
+    if (++g_faultn > 24u) {
+        if (g_faultn == 25u) puts0("\n*** fault storm: suppressing further reports (tasks still killed) ***\n");
+        return;
+    }
     unsigned dfar, dfsr, ifsr;
     __asm__ volatile("mrc p15,0,%0,c6,c0,0" : "=r"(dfar));      /* data fault address */
     __asm__ volatile("mrc p15,0,%0,c5,c0,0" : "=r"(dfsr));      /* data fault status  */

@@ -412,22 +412,40 @@ static int dbgcow_find(void *p)
     return -1;
 }
 
+/* DEBUG: report a collision to the CONSOLE (visible amid the fault flood), latched
+ * so the probe itself doesn't flood; details also go to dmesg. */
+extern void puts0(const char *); extern void fr_hex(const char *, unsigned);
+static int g_dbg_hits;
+static void dbg_report(void *p, int owner)
+{
+    if (g_dbg_hits++ < 8) {
+        puts0("*** POOL: LIVE COW page on free-list (skipped)");
+        fr_hex(" space=", (unsigned)owner); fr_hex(" phys=", (unsigned)p); puts0("\r\n");
+    }
+    klog("*** POOL live-COW-on-freelist space="); klog_u((unsigned)owner);
+    klog(" phys="); klog_u((unsigned)p); klog("\r\n");
+}
+
 /* allocate a raw page from the pool (NOT charged to any space). Used for shm, whose
  * pages are refcount-owned by the shm object, not a space. */
 static void *dpage_raw(void)
 {
     uint32_t f = xt_irq_save();
-    void *p = g_dfree;
-    if (p) { g_dfree = *(void **)p; g_freelist_n--; }      /* reuse a reclaimed page */
-    else {                                                  /* else take from the frontier */
-        char *nf = g_pfront - 0x1000u;
-        if (nf < (char *)kern_heap_top()) { xt_irq_restore(f); return (void *)0; }  /* arena full */
-        g_pfront = nf; p = nf;
+    void *p;
+    for (;;) {
+        p = g_dfree;
+        if (p) {                                           /* reuse a reclaimed page */
+            g_dfree = *(void **)p; g_freelist_n--;
+            int o = dbgcow_find(p);                        /* DEBUG: still a LIVE COW page? */
+            if (o >= 0) { dbg_report(p, o); continue; }    /* leak it (it's in use); take the next */
+        } else {                                           /* else take from the frontier */
+            char *nf = g_pfront - 0x1000u;
+            if (nf < (char *)kern_heap_top()) { xt_irq_restore(f); return (void *)0; }  /* arena full */
+            g_pfront = nf; p = nf;
+        }
+        break;
     }
     g_pages_inuse++;
-    { int o = dbgcow_find(p);                               /* DEBUG: re-issued a LIVE COW page? */
-      if (o >= 0) { klog("*** POOL re-issued LIVE COW page space="); klog_u((unsigned)o);
-                    klog(" phys="); klog_u((unsigned)p); klog(" ***\r\n"); dbgcow_del(p); } }
     xt_irq_restore(f);
     return p;
 }
