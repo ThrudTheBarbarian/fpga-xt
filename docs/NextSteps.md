@@ -237,9 +237,12 @@
 # Future targets
 ## SSH (interactive login HW-confirmed; docs/OS/ssh-server.md)
 Server + client + scp all work in qemu (login, exec, scp both ways, boot-script
-start, per-boot /var/log/sshd.log with real peer IPs, SIGWINCH). Open:
-- **HW re-validation of the polish batch** — boot scripts, sshd.log, scp, SIGWINCH
-  are qemu-verified; re-confirm on the board (login itself is HW-confirmed).
+start, per-boot /var/log/sshd.log with real peer IPs, SIGWINCH). The session-exit
+hang (interactive `exit`/Ctrl-D used to hang, then crash on HW) is FIXED — it was
+dropbear's SIGCHLD-gated reap + the fake-vfork wiping the SIGCHLD handler; now
+synchronous SIGCHLD delivery + a vfork-armed guard on signal()/sigaction(). Open:
+- **HW re-validation** — the whole batch (boot scripts, sshd.log, scp, SIGWINCH,
+  the exit-hang fix) is qemu-verified; re-confirm on the board.
 - **sftp** — no server binary yet (scp covers file transfer).
 - **lwIP loopback** — the board can't ssh/scp to 127.0.0.1 (no `lo` netif; the
   connection wedges the stack). Outbound to real peers is fine. *(loader-networking)*
