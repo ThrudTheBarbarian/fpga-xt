@@ -463,11 +463,16 @@ uint32_t xtos_emerg_sp(void)
 void xtos_task_fault_exit(void)
 {
     proc_t *p = cur_proc();
-    if (p) {                                        /* killed by a fault */
+    if (p && !p->exited) {                          /* FIRST fault for this task */
+        /* Mark exited BEFORE the cleanup below. If the task's state is corrupt enough
+         * that pipes_release/tty_release themselves fault, the abort handler redirects
+         * us straight back here — and now `exited` is set, so we skip the cleanup and
+         * fall through to the park instead of re-running it forever (the loop that grew
+         * the stack until the guard tripped, wedging the box). */
+        p->exited = 1;
+        p->exit_code = -1;
         pipes_release(p);                           /* EOF to pipeline peers first */
         tty_release(p);                             /* raw-mode owner dies -> cooked */
-        p->exit_code = -1;
-        p->exited = 1;
         if (p->waiter) xTaskNotifyGive(p->waiter);  /* wake a PL0 waitpid */
         if (p->done)   xSemaphoreGive(p->done);     /* wake a kernel-task waitpid */
     }
