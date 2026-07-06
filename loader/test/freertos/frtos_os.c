@@ -1324,7 +1324,7 @@ static vfs_file *g_kfs_wf;             /* the net file drop's open upload (fs ta
  * (which is usually what you want — the tail before a hang/crash). The wrap logic
  * lives in klog_put; klog_snapshot linearizes the ring into read order so procfs
  * (/proc/kmsg) and the SD flush stay simple single-segment readers. */
-#define KLOG_CAP 65536
+#define KLOG_CAP 32768
 static char           g_klog[KLOG_CAP];
 static volatile uint32_t g_klog_head;         /* next write index (wraps) */
 static volatile int      g_klog_wrapped;      /* has it wrapped at least once? */
