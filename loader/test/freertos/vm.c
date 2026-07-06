@@ -43,7 +43,6 @@
 #define SEC_NG(phys, attr) (((phys) & 0xFFF00000u) | (attr) | (1u<<17))
 
 extern uint32_t *mmu_master_table(void);
-extern void klog(const char *s); extern void klog_u(unsigned v);   /* diagnostic log -> /tmp */
 
 static uint32_t  space_l1[NSPACE][4096]     __attribute__((aligned(16384)));
 static uint32_t  space_l2_heap[NSPACE][HEAP_SECS][256] __attribute__((aligned(1024)));/* heap: HEAP_SECS sections, demand-paged */
@@ -65,17 +64,6 @@ static uint8_t   space_l2n[NSPACE];             /* slots used this space */
 static void     *g_space_pages[NSPACE][MAXPP];
 static uint16_t  g_space_npages[NSPACE];
 
-/* DEBUG (scp/SD corruption hunt): is `p` currently charged (COW/heap page) to ANY
- * space? A page handed to the fd page-cache / SD DMA must NEVER also be a live COW
- * page — that's the corruption. Returns space idx+1 (the owner) or 0. Linear but
- * rare-path (called at fd-cache alloc). */
-int vm_page_charged(void *p)
-{
-    for (int s = 0; s < NSPACE; s++)
-        for (int i = 0; i < g_space_npages[s]; i++)
-            if (g_space_pages[s][i] == p) return s + 1;
-    return 0;
-}
 static uint32_t  g_space_shm[NSPACE];            /* bitmap: which shm ids each space mapped (for reap) */
 static uint32_t *g_cur_table;            /* currently-active TTBR0 table */
 static uint32_t  g_cur_asid;
@@ -158,54 +146,6 @@ static uint32_t cow_src_for(int idx, uint32_t va)
     return 0;
 }
 uint32_t vm_cow_count(void) { return g_cow_count; }
-
-/* DEBUG (dropbear GOT jump-to-garbage): on a fatal fault, scan every COW range of
- * space `idx` and compare each mapped page's PROCESS-VISIBLE physical (walked from
- * space_l1[idx]) against the pristine identity template (cow_src_for). Report any
- * page whose process copy holds a wild pointer (0xff-high / 0xfffffffa) the template
- * does NOT — that's the corrupted COW frame. `PRIV` = the L2 points at a private
- * copy (COW'd); `SHARED` = still the RO template (so a mismatch there means a stale
- * TLB read from a 3rd physical, since the tables agree with the template). Runs at
- * PL1 in the abort path; logs to /tmp (safe). */
-void vm_dump_cow_divergence(int idx)
-{
-    if (idx < 0 || idx >= NSPACE) return;
-    /* build the list of ranges to scan: global lib COW ranges + this space's program */
-    for (int r = -1; r < g_cow_n; r++) {
-        uint32_t rva, rend;
-        if (r < 0) { rva = g_space_prog[idx].va; rend = g_space_prog[idx].end; }
-        else       { rva = g_cow_rng[r].va;      rend = g_cow_rng[r].end;      }
-        if (rva == rend) continue;
-        for (uint32_t va = rva; va < rend; va += 0x1000u) {
-            uint32_t l1e = space_l1[idx][va >> 20];
-            if ((l1e & 0x3u) != 0x1u) continue;
-            uint32_t *l2 = (uint32_t *)(l1e & 0xFFFFFC00u);
-            uint32_t  e  = l2[L2_IDX(va)];
-            if ((e & 0x3u) == 0) continue;
-            uint32_t phys = e & 0xFFFFF000u;
-            uint32_t src  = cow_src_for(idx, va) & 0xFFFFF000u;
-            if (!src) continue;
-            volatile uint32_t *pp = (volatile uint32_t *)phys;   /* identity, PL1-readable */
-            volatile uint32_t *tp = (volatile uint32_t *)src;
-            int bad = 0, firstw = -1;
-            for (int w = 0; w < 1024; w++) {
-                uint32_t a = pp[w], b = tp[w];
-                if (a != b && (a == 0xfffffffau || (a & 0xFFF00000u) == 0xFFF00000u)) {
-                    if (firstw < 0) firstw = w; bad++;
-                }
-            }
-            if (bad) {
-                klog("[cowdiv va="); klog_u(va); klog(" phys="); klog_u(phys);
-                klog(" src="); klog_u(src);
-                klog(phys != src ? " PRIV" : " SHARED");
-                klog(" bad="); klog_u((unsigned)bad);
-                klog(" @+"); klog_u((unsigned)(firstw * 4));
-                klog(" pp="); klog_u(pp[firstw]);
-                klog(" tp="); klog_u(tp[firstw]); klog("]\r\n");
-            }
-        }
-    }
-}
 
 /* Get (or lazily create) space `idx`'s private L2 for 1 MB section `sec`, seeded
  * from the master so pages we DON'T override (shared text/rodata/GOT in the same
@@ -613,11 +553,6 @@ int vm_cow_map(int idx, uint32_t va)
     __asm__ volatile("dsb");
     l2[i] = ne;                                                        /* make */
     __asm__ volatile("dsb; isb");
-    /* DEBUG: a COW frame must never already be a live fd page-cache page */
-    { extern int frtos_cpage_live(void *); extern void klog(const char *); extern void klog_u(unsigned);
-      int pid = frtos_cpage_live(pg);
-      if (pid) { klog("*** COLLISION: COW frame is live fd-cache page of pid "); klog_u((unsigned)pid);
-                 klog(" phys="); klog_u((unsigned)pg); klog(" ***\r\n"); } }
     g_cow_count++;
     return 1;
 }
@@ -644,7 +579,7 @@ int vm_cow_read_fault(int idx, uint32_t va)
     if (!l2) return 0;
     uint32_t i = L2_IDX(va), e = l2[i];
     if ((e & 0x3u) == 0) return 0;                  /* genuinely not present -> fatal */
-    uint32_t before = e, seeded = e;
+    uint32_t seeded = e;
     if (((e >> 4) & 0x3u) == 0x1u && !(e & (1u<<9))) {   /* AP=001: master PL0-none writable */
         uint32_t xn = e & 0x1u;                          /* keep the page's XN (W^X) */
         seeded = (L2_PAGE_RO(src) & ~0x1u) | xn;
@@ -655,16 +590,6 @@ int vm_cow_read_fault(int idx, uint32_t va)
         __asm__ volatile("mcr p15,0,%0,c8,c7,3" :: "r"(va & 0xFFFFF000u));  /* TLBIMVAA */
         __asm__ volatile("dsb");
         l2[i] = seeded;                                  /* seed RO to the shared source */
-    }
-    /* DEBUG (dropbear GOT): watch the read-fault service for the program COW range.
-     * Shows va, the src it seeds from, the L2 before/after, and the WORD the re-run
-     * will read at va from both the seeded physical and the template. -> /tmp. */
-    if (va >= g_space_prog[idx].va && va < g_space_prog[idx].end) {
-        volatile uint32_t *sp = (volatile uint32_t *)((seeded & 0xFFFFF000u) | (va & 0xFFCu));
-        volatile uint32_t *tp = (volatile uint32_t *)((src   & 0xFFFFF000u) | (va & 0xFFCu));
-        klog("[cowrd va="); klog_u(va); klog(" src="); klog_u(src);
-        klog(" e0="); klog_u(before); klog(" e1="); klog_u(seeded);
-        klog(" @va: seeded="); klog_u(*sp); klog(" tmpl="); klog_u(*tp); klog("]\r\n");
     }
     __asm__ volatile("dsb");
     __asm__ volatile("mcr p15,0,%0,c8,c7,3" :: "r"(va & 0xFFFFF000u));  /* TLBIMVAA */
@@ -677,24 +602,14 @@ int vm_cow_read_fault(int idx, uint32_t va)
  * page tables, so the fault is a STALE global 1 MB SECTION TLB entry (PL0-none)
  * shadowing the split coarse RO+X mapping — the same class vm_sync_loaded_sections
  * eliminates, re-exposed whenever a layout shift changes which task cached the
- * pre-split section. TLBIALL (drop every global + ASID entry; the tables are
- * already correct so nothing re-caches the section) and re-run. Returns 1
- * (serviced) or 0 (page not present / XN=1 genuine W^X or wild fetch -> fatal). */
+ * pre-split section. TLBIMVAA the faulting page (clears the covering section entry
+ * for that MVA, all ASIDs, WITHOUT flushing sibling code pages) and re-run. Returns
+ * 1 (serviced) or 0 (page not present / XN=1 genuine W^X or wild fetch -> fatal). */
 int vm_exec_fault(int idx, uint32_t va)
 {
     uint32_t l1e = space_l1[idx][va >> 20];
     uint32_t *l2 = (uint32_t *)(l1e & 0xFFFFFC00u);
     uint32_t  e  = ((l1e & 0x3u) == 0x1u) ? l2[L2_IDX(va)] : 0xFFFFFFFFu;
-    { /* DEBUG (scp desktop-dependent pabt): does space_l1[idx] match the active TTBR0,
-       * and what does vm_exec_fault see? Logs to /tmp — safe. One line per invocation:
-       * count of lines at the SAME va reveals guard-trip (many) vs wrong-table (one). */
-      extern void klog(const char *); extern void klog_u(unsigned);
-      uint32_t ttbr; __asm__ volatile("mrc p15,0,%0,c2,c0,0" : "=r"(ttbr));
-      klog("[pabt idx="); klog_u((unsigned)idx);
-      klog(" va="); klog_u(va);
-      klog(" ttbr="); klog_u(ttbr & 0xFFFFC000u);
-      klog(" tbl="); klog_u((unsigned)(uintptr_t)space_l1[idx]);
-      klog(" l1="); klog_u(l1e); klog(" l2="); klog_u(e); klog("]\r\n"); }
     if ((l1e & 0x3u) != 0x1u) return 0;             /* section isn't a coarse L2 -> fatal */
     if ((e & 0x3u) == 0) return 0;                  /* not present -> fatal */
     if (e & 0x1u)        return 0;                  /* XN=1: not executable -> fatal (real W^X) */

@@ -244,18 +244,6 @@ static proc_t *cur_proc(void)
     return NULL;
 }
 
-/* DEBUG (scp/SD corruption hunt): is `pg` currently an open fd's page-cache frame?
- * Called from vm_cow_map — a COW frame must never also be a live fd-cache page.
- * Returns the owning pid or 0. */
-int frtos_cpage_live(void *pg)
-{
-    for (int s = 0; s < MAXPROC; s++)
-        if (g_proc[s].used)
-            for (int fd = 0; fd < NFD; fd++)
-                if (g_proc[s].fd[fd].open && g_proc[s].fd[fd].cpage == pg) return g_proc[s].pid;
-    return 0;
-}
-
 /* T2-b: called from traceTASK_SWITCHED_IN on every context switch — point TTBR0
  * at the incoming task's address space (its process's L1 table, or the master
  * table for the kernel/shell/idle tasks). vm_switch only flushes on a change. */
@@ -316,15 +304,9 @@ int xtos_prefetch_fault(uint32_t pc)
     int idx = (int)(p - g_proc);
     uint32_t ifsr; __asm__ volatile("mrc p15,0,%0,c5,c0,1" : "=r"(ifsr));
     uint32_t fs = (((ifsr >> 10) & 1u) << 4) | (ifsr & 0xfu);   /* combined fault status */
-    if (fs != 0x0fu) {                               /* not a page-perm stale-TLB fault */
-        { extern void vm_dump_cow_divergence(int); vm_dump_cow_divergence(idx); }  /* DEBUG: dropbear GOT */
-        return 0;                                    /* wild jump / section fault -> fatal */
-    }
+    if (fs != 0x0fu) return 0;   /* not a page-perm stale-TLB fault (wild jump / section) -> fatal */
     static uint32_t last_pc; static int repeat;      /* livelock guard (rare path) */
-    if (pc == last_pc) { if (++repeat > 8) {
-        { extern void klog(const char *); extern void klog_u(unsigned);   /* DEBUG */
-          klog("[pabt GUARD-TRIP pc="); klog_u(pc); klog(" -> fatal]\r\n"); }
-        repeat = 0; return 0; } }
+    if (pc == last_pc) { if (++repeat > 8) { repeat = 0; return 0; } }
     else { last_pc = pc; repeat = 0; }
     return vm_exec_fault(idx, pc);
 }
@@ -994,10 +976,6 @@ static void *fd_getpage(int slot, int fd, uint32_t pi, uint32_t *valid, int forw
     fd_flush(fdp);                                                 /* evict: don't lose the old page */
     if (!fdp->cpage) {
         fdp->cpage = vm_page_alloc(); if (!fdp->cpage) { *valid = 0; return 0; }
-        /* DEBUG: an fd page-cache frame must never already be a live COW/heap page */
-        { extern int vm_page_charged(void *); int o = vm_page_charged(fdp->cpage);
-          if (o) { klog("*** COLLISION: fd-cache frame is live COW page of space "); klog_u((unsigned)o);
-                   klog(" phys="); klog_u((unsigned)(uintptr_t)fdp->cpage); klog(" ***\r\n"); } }
         /* TRIPWIRE: this page is filled by the CLIENT via its identity VA (fs_write);
          * if that VA lands in a per-process window band it's shadowed in the client's
          * space and the fill would corrupt the wrong page (see XTOS_POOL_FLOOR). The

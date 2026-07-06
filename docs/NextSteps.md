@@ -26,11 +26,6 @@
   RULED OUT: `perproc_l2` missing-invalidation alone; MAXSEC exhaustion (dropbear needs
   only libc); the `cowdiv` scanner (false positives — flags legit large `.data` values).
   *(src: loader/test/freertos/vm.c `vm_switch` + the BBM sites; branch ssh-server)*
-- **Strip ssh-server debug scaffolding before merge to main** — per-SD-op klog
-  (diskio.c), `[pabt]`/`[cowrd]`/`vm_dump_cow_divergence` (vm.c), GUARD-TRIP klog
-  (frtos_os.c), ADMA descriptor-verify (xsdps_host.c). Left in to aid the root-cause
-  hunt above; they never fire in clean runs but add hot-path overhead. `klog→/tmp`
-  and the `vivado/scripts/jtag_{inspect,walk,catch,recover}.tcl` tools STAY.
 
 ## Post-architecture-review
 - none
