@@ -91,6 +91,7 @@ typedef struct {
     uint32_t          heap_brk;       /* per-process heap (XTOS_HEAP_VA window) */
     uint32_t          heap_end;
     int               transient;      /* loaded outside the cache (runhost) -> unload on reap */
+    int               strace;         /* log this proc's syscalls to klog (SYS_strace / name match) */
     void             *src;            /* the host ELF buffer to free on reap (transient) */
     StaticTask_t      tcb;            /* static TCB (stack from stackguard.c) */
     /* blocking-syscall deferral: saved PL0 exception context so the blocking part can
@@ -1318,27 +1319,38 @@ static vfs_file *g_kfs_wf;             /* the net file drop's open upload (fs ta
  * appends to a RAM buffer (works pre-scheduler too), and a low-priority logger
  * task flushes it to /OS/var/log/system.log (fresh each boot) once the SD is
  * mounted. Keeps the console clean for the [ OK ]/[FAIL] boot-script status. */
-#define KLOG_CAP 32768
-static char          g_klog[KLOG_CAP];
-static volatile int  g_klog_len;
-static volatile int  g_klog_flushed;
+/* CIRCULAR diagnostic buffer: keeps the LATEST KLOG_CAP bytes, so a long-running
+ * or high-volume producer (e.g. strace) doesn't lose the most recent output
+ * (which is usually what you want — the tail before a hang/crash). The wrap logic
+ * lives in klog_put; klog_snapshot linearizes the ring into read order so procfs
+ * (/proc/kmsg) and the SD flush stay simple single-segment readers. */
+#define KLOG_CAP 65536
+static char           g_klog[KLOG_CAP];
+static volatile uint32_t g_klog_head;         /* next write index (wraps) */
+static volatile int      g_klog_wrapped;      /* has it wrapped at least once? */
+static char           g_klog_lin[KLOG_CAP];   /* linearized snapshot for readers */
+
+static inline void klog_put(char c)
+{
+    g_klog[g_klog_head++] = c;
+    if (g_klog_head >= KLOG_CAP) { g_klog_head = 0; g_klog_wrapped = 1; }
+}
 
 void klog(const char *s)
 {
     unsigned f = xt_irq_save();               /* frtos_os.h (static inline) */
-    while (*s && g_klog_len < KLOG_CAP - 1) g_klog[g_klog_len++] = *s++;
+    while (*s) klog_put(*s++);
     xt_irq_restore(f);
 }
 /* bounded append (SYS_klog from PL0): copy exactly `n` bytes, no NUL scan of a
- * user pointer. Returns bytes accepted (clamped to the ring's remaining space). */
+ * user pointer. Returns bytes accepted (the ring never rejects — it wraps). */
 long klog_write(const char *s, uint32_t n)
 {
     if (!s) return -1;
     unsigned f = xt_irq_save();
-    uint32_t i = 0;
-    while (i < n && g_klog_len < KLOG_CAP - 1) g_klog[g_klog_len++] = s[i++];
+    for (uint32_t i = 0; i < n; i++) klog_put(s[i]);
     xt_irq_restore(f);
-    return (long)i;
+    return (long)n;
 }
 void klog_u(unsigned v)
 {
@@ -1350,15 +1362,36 @@ void klog_u(unsigned v)
     o[k] = 0; klog(o);
 }
 
-/* flush the accumulated log to the SD (truncate+rewrite; the buffer holds the
- * whole session, well under KLOG_CAP for a boot). Fails silently until the SD
- * mount exists, so the logger just retries. */
+/* the live diagnostic buffer -> /OS/proc/kmsg (dmesg) and the SD flush. Linearize
+ * the ring into read order (oldest→newest) in g_klog_lin. Works even with no SD. */
+int klog_snapshot(const char **p)
+{
+    unsigned f = xt_irq_save();
+    int len;
+    if (!g_klog_wrapped) {
+        for (uint32_t i = 0; i < g_klog_head; i++) g_klog_lin[i] = g_klog[i];
+        len = (int)g_klog_head;
+    } else {
+        uint32_t tail = KLOG_CAP - g_klog_head, k = 0;
+        for (uint32_t i = 0; i < tail; i++) g_klog_lin[k++] = g_klog[g_klog_head + i];
+        for (uint32_t i = 0; i < g_klog_head; i++) g_klog_lin[k++] = g_klog[i];
+        len = KLOG_CAP;
+    }
+    xt_irq_restore(f);
+    *p = g_klog_lin;
+    return len;
+}
+
+/* flush the whole ring to the SD (truncate+rewrite each pass — the ring holds the
+ * latest KLOG_CAP bytes). Fails silently until the SD mount exists, so it retries. */
+static int g_klog_flushed_seq = -1;
 static void klog_sync(void)
 {
-    int len = g_klog_len;                         /* snapshot */
-    if (len <= g_klog_flushed) return;            /* nothing new */
-    if (kfs_call(KFS_LOGWRITE, 0, g_klog, (uint32_t)len, 0) == (long)len)
-        g_klog_flushed = len;
+    int seq = (int)(g_klog_head + (g_klog_wrapped ? KLOG_CAP : 0));  /* changed? */
+    if (seq == g_klog_flushed_seq) return;
+    const char *p; int len = klog_snapshot(&p);
+    if (kfs_call(KFS_LOGWRITE, 0, (void *)p, (uint32_t)len, 0) == (long)len)
+        g_klog_flushed_seq = seq;
 }
 
 static void logger_task(void *arg)
@@ -1367,8 +1400,6 @@ static void logger_task(void *arg)
     for (;;) { klog_sync(); vTaskDelay(pdMS_TO_TICKS(1000)); }
 }
 
-/* the live diagnostic buffer -> /OS/proc/kmsg (dmesg); works even with no SD */
-int klog_snapshot(const char **p) { *p = g_klog; return g_klog_len; }
 
 void klog_start(void) { xTaskCreate(logger_task, "logd", 512, 0, 1, 0); }
 
@@ -1888,6 +1919,8 @@ void deferral_thunk(void)                 /* PL1 (System), task context */
             k_pipe_close_end(&p->fd[p->da0]); r = 0;
         } else if (p->dnum == SYS_dup2) {                  /* pipe-end duplication */
             r = k_dup2(p, (int)p->da0, (int)p->da1);
+        } else if (p->dnum == SYS_waitpid && (p->da1 & XT_WAIT_PEEK)) {  /* peek: no reap */
+            extern int frtos_waitpid_peek(int); r = frtos_waitpid_peek((int)p->da0);
         } else if (p->dnum == SYS_waitpid && (p->da1 & 1)) {   /* poll (WNOHANG) */
             extern int frtos_waitpid_poll(int); r = frtos_waitpid_poll((int)p->da0);
         } else if (p->dnum == SYS_waitpid) {               /* blocks until the child exits */
@@ -2025,6 +2058,7 @@ void deferral_thunk(void)                 /* PL1 (System), task context */
             r = do_syscall(p->dnum, p->da0, p->da1, p->da2);
         }
     }
+    if (p && p->strace) { extern void strace_ret(uint32_t, long); strace_ret(p->dnum, r); }
     __sysret(r);                          /* never returns */
 }
 
@@ -2252,12 +2286,45 @@ static int needs_task_ctx(struct k_regs *regs, uint32_t num)
 /* called from the chained SVC vector with the saved register block. Returns 1 for
  * the exit case (the vector then resumes task_exit_thunk at PL1 — see xt_vectors.S),
  * 0 otherwise. */
+/* ---- strace: log a traced process's syscalls to klog (dmesg) --------------
+ * A single chokepoint (this dispatcher) makes it cheap. Enable per process by
+ * name via g_strace_name (matched at spawn -> p->strace), or globally. The line
+ * is "strace pid sys<hex> <a0> <a1> <a2>"; returns are logged by the inline and
+ * deferred paths. Read it with `dmesg` / /proc/kmsg. */
+const char *g_strace_name;                /* substring of argv0 basename to trace; NULL = off */
+static void strace_hex(char *b, int *k, uint32_t v)
+{
+    for (int i = 7; i >= 0; i--) { unsigned d = (v >> (i * 4)) & 0xF; b[(*k)++] = (char)(d < 10 ? '0' + d : 'a' + d - 10); }
+}
+static void strace_log(int pid, const char *tag, uint32_t num, uint32_t a0, uint32_t a1, uint32_t a2)
+{
+    char b[80]; int k = 0;
+    for (const char *t = "strace "; *t; t++) b[k++] = *t;
+    for (const char *t = tag; *t; t++) b[k++] = *t;
+    b[k++] = ' '; { unsigned v = (unsigned)pid; char d[8]; int n = 0; do { d[n++] = (char)('0' + v % 10); v /= 10; } while (v && n < 7); while (n) b[k++] = d[--n]; }
+    b[k++] = ' '; strace_hex(b, &k, num);
+    b[k++] = ' '; strace_hex(b, &k, a0);
+    b[k++] = ' '; strace_hex(b, &k, a1);
+    b[k++] = ' '; strace_hex(b, &k, a2);
+    b[k++] = '\n'; b[k] = 0;
+    klog(b);
+}
+/* called from the deferred-syscall thunk tail to log the (possibly blocking) return */
+void strace_ret(uint32_t num, long r)
+{
+    proc_t *p = cur_proc();
+    if (p && p->strace) { char b[48]; int k = 0; for (const char *t = "strace  ret "; *t; t++) b[k++] = *t;
+        strace_hex(b, &k, num); b[k++] = '='; strace_hex(b, &k, (uint32_t)r); b[k++] = '\n'; b[k] = 0; klog(b); }
+}
+
 int k_syscall_dispatch(struct k_regs *regs)
 {
     uint32_t insn = *((volatile uint32_t *)(regs->lr - 4));
     if ((insn & 0x00ffffff) != 1) { regs->r[0] = (uint32_t)-1; return 0; }
 
     uint32_t num = regs->r[7];
+    { proc_t *tp = cur_proc();
+      if (tp && tp->strace) strace_log(tp->pid, "sys", num, regs->r[0], regs->r[1], regs->r[2]); }
     /* SYS_kill: a marked process dies at its next syscall, whatever it was */
     {
         proc_t *kp = cur_proc();
@@ -2280,6 +2347,8 @@ int k_syscall_dispatch(struct k_regs *regs)
     }
     if (needs_task_ctx(regs, num)) return defer_syscall(regs, num);   /* run in task ctx */
     regs->r[0] = (uint32_t)do_syscall(num, regs->r[0], regs->r[1], regs->r[2]);
+    { proc_t *tp = cur_proc();
+      if (tp && tp->strace) strace_ret(num, (long)(int)regs->r[0]); }
     return 0;
 }
 
@@ -2504,6 +2573,11 @@ static int proc_launch(int slot, xtld_obj *obj, uintptr_t entry,
      * task listings identify it — FreeRTOS copies the name into the TCB. */
     const char *nm = (argc > 0 && argv && argv[0]) ? argv[0] : "app";
     for (const char *q = nm; *q; q++) if (*q == '/') nm = q + 1;
+    /* strace: trace this proc if its basename matches g_strace_name (substring) */
+    p->strace = 0;
+    if (g_strace_name) { extern const char *g_strace_name;
+        for (const char *a = nm; *a; a++) { const char *x = a, *y = g_strace_name;
+            while (*x && *y && *x == *y) { x++; y++; } if (!*y) { p->strace = 1; break; } } }
     extern StackType_t *stackguard_stack(int, uint32_t *);
     uint32_t depth; StackType_t *stk = stackguard_stack(slot, &depth);
     /* carve argv out of the TOP of the task stack (PL0-RW) so the program can read
@@ -2965,6 +3039,18 @@ int frtos_waitpid_poll(int pid)
     p->waited = 1;
     if (!p->exited) return -11;                   /* -EAGAIN: still running */
     return frtos_reap(p);
+}
+
+/* non-reaping peek (XT_WAIT_PEEK): does this child exist and has it exited? Used
+ * by the shim's synchronous-SIGCHLD probe — it must NOT reap (dropbear reaps to
+ * collect the status). Marks `waited` so reap_orphans won't steal the zombie
+ * before dropbear's own waitpid runs. 1 = exited, 0 = running, -1 = gone. */
+int frtos_waitpid_peek(int pid)
+{
+    proc_t *p = proc_by_pid(pid);
+    if (!p) return -1;
+    p->waited = 1;
+    return p->exited ? 1 : 0;
 }
 
 /* waitpid for a KERNEL task waiter (shell_task) — blocks on the child's `done`

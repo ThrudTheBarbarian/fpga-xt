@@ -25,6 +25,8 @@
                               * child still running -> -11 (-EAGAIN), no blocking;
                               * exited -> reap + exit_code as usual */
 #define XT_WAIT_NB   1       /* the poll flag */
+#define XT_WAIT_PEEK 2       /* with NB: report exited (1) / running (0) / gone (-1) WITHOUT
+                              * reaping — for a synchronous SIGCHLD "did a child exit?" probe */
 #define SYS_getpid   0x103   /* () -> pid */
 #define SYS_spawn_fd 0x104   /* (path, argv, int fds[3]) -> pid: argv is NULL-terminated
                               * (argc counted kernel-side); the child's fd 0/1/2 come

@@ -966,7 +966,7 @@ __attribute__((naked)) static void vfork_return(int pid)
 static void kids_add(int pid)
 {
     for (int i = 0; i < MAX_KIDS; i++)
-        if (!g_kids[i]) { g_kids[i] = pid; return; }
+        if (!g_kids[i]) { g_kids[i] = pid; break; }
 }
 
 /* A fake vfork child that _exits without ever reaching a successful exec
@@ -1298,6 +1298,7 @@ static int have_children(void)
     for (int i = 0; i < MAX_KIDS; i++) if (g_kids[i]) return 1;
     return 0;
 }
+static int sigchld_dispatch(void);   /* fwd (defined with the signal table below) */
 #define CHILD_POLL_MS 200
 
 int poll(struct pollfd *fds, nfds_t nfds, int timeout)
@@ -1314,7 +1315,13 @@ int poll(struct pollfd *fds, nfds_t nfds, int timeout)
             gettimeofday(&t1, 0);
             long el = (t1.tv_sec - t0.tv_sec) * 1000 + (t1.tv_usec - t0.tv_usec) / 1000;
             if (timeout > 0 && el >= timeout) return 0;
-            if (cap >= 0 && el >= cap) return 0;   /* let the caller reap children */
+            if (cap >= 0 && el >= cap) {
+                /* a tracked child exited -> deliver SIGCHLD (writes the server's
+                 * self-pipe), then re-probe so this poll reports that pipe
+                 * readable and select wakes to reap. Otherwise just time out. */
+                if (sigchld_dispatch()) { gettimeofday(&t0, 0); continue; }
+                return 0;
+            }
         }
         /* nothing ready: if the ONLY interesting fd is the console, let the
          * kernel block properly; else nap-and-recheck */
@@ -1351,23 +1358,49 @@ static int winch_dispatch(void)
     return 1;
 }
 
+#ifndef SIGCHLD
+#define SIGCHLD 20      /* arm newlib */
+#endif
+/* SIGCHLD delivery point: XTOS has no async signals, so a server that relies on
+ * SIGCHLD waking select (e.g. dropbear's self-pipe) never learns a child exited
+ * and hangs. When a tracked child has actually exited (a non-reaping peek), run
+ * the registered SIGCHLD handler synchronously — it typically writes a self-pipe
+ * / sets a flag that wakes the caller's next select, which then reaps the child.
+ * This is the same shim-side checkpoint idea as winch_dispatch; the two will fold
+ * into one deliver_signals() pass. Returns 1 if a handler ran. */
+static int sigchld_dispatch(void)
+{
+    void (*h)(int) = g_sigact[SIGCHLD].sa_handler;
+    if (!h || h == SIG_IGN || h == SIG_DFL) return 0;
+    for (int i = 0; i < MAX_KIDS; i++)
+        if (g_kids[i] && sys_waitpid_peek(g_kids[i]) == 1) { h(SIGCHLD); return 1; }
+    return 0;
+}
+
+/* In the armed fake-vfork window, signal-disposition changes are for the
+ * about-to-exec CHILD, whose new image starts with default handlers anyway — so
+ * they must NOT touch the parent's table. Real vfork lets exec replace the child;
+ * XTOS's snapshot-vfork keeps the parent running, so without this guard the
+ * child's `signal(SIGCHLD, SIG_DFL)` (dropbear's execchild "back to normal
+ * sigchld") wipes the PARENT's SIGCHLD handler — and the parent then never
+ * delivers SIGCHLD, so it can't reap the exited shell (the session hangs). */
 int sigaction(int sig, const struct sigaction *act, struct sigaction *old)
 {
     if (sig < 0 || sig >= 32) { errno = EINVAL; return -1; }
     if (old) *old = g_sigact[sig];
-    if (act) g_sigact[sig] = *act;
+    if (act && !g_vfork_armed) g_sigact[sig] = *act;
     return 0;
 }
 
-/* signal(): route into g_sigact so soft-signal delivery (SIGWINCH) finds the
- * handler. newlib's own signal() keeps its handler in a PRIVATE table the shim
+/* signal(): route into g_sigact so soft-signal delivery (SIGWINCH/SIGCHLD) finds
+ * the handler. newlib's own signal() keeps its handler in a PRIVATE table the shim
  * can't see, so programs that install SIGWINCH via signal() (toysh, vi, less)
  * would never be woken — this override (the shim links before libc.so) fixes it. */
 _sig_func_ptr signal(int sig, _sig_func_ptr h)
 {
     if (sig < 0 || sig >= 32) { errno = EINVAL; return SIG_ERR; }
     _sig_func_ptr prev = g_sigact[sig].sa_handler;
-    g_sigact[sig].sa_handler = h;
+    if (!g_vfork_armed) g_sigact[sig].sa_handler = h;   /* see sigaction: don't corrupt the parent */
     return prev;
 }
 
