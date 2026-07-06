@@ -471,6 +471,13 @@ DRESULT disk_read (
 			LocSector *= (DWORD)XSDPS_BLK_SIZE_512_MASK;
 		}
 
+		/* DEBUG: log every SD read (buff/count/lba) — a read DMA into a pool frame that
+		 * writes count*512 > 4096 overruns into the next frame (corrupting whatever the
+		 * layout put there). Rate-limited; count>8 (>4KB) is the overrun red flag. */
+		{ extern void klog(const char *); extern void klog_u(unsigned); static unsigned g_rdn;
+		  if (count > 8u || g_rdn++ < 400u) {
+		      klog(count > 8u ? "[BIG SD rd buff=" : "[sd rd buff="); klog_u((unsigned)(UINTPTR)buff);
+		      klog(" cnt="); klog_u((unsigned)count); klog(" lba="); klog_u((unsigned)LocSector); klog("]\r\n"); } }
 		Status  = XSdPs_ReadPolled(&SdInstance[pdrv], (u32)LocSector, count, buff);
 		if (Status != XST_SUCCESS) {
 			return RES_ERROR;
@@ -774,6 +781,10 @@ DRESULT disk_write (
 			LocSector *= (DWORD)XSDPS_BLK_SIZE_512_MASK;
 		}
 
+		{ extern void klog(const char *); extern void klog_u(unsigned); static unsigned g_wrn;   /* DEBUG */
+		  if (count > 8u || g_wrn++ < 400u) {
+		      klog(count > 8u ? "[BIG SD wr buff=" : "[sd wr buff="); klog_u((unsigned)(UINTPTR)buff);
+		      klog(" cnt="); klog_u((unsigned)count); klog(" lba="); klog_u((unsigned)LocSector); klog("]\r\n"); } }
 		Status  = XSdPs_WritePolled(&SdInstance[pdrv], (u32)LocSector, count, buff);
 		if (Status != XST_SUCCESS) {
 			return RES_ERROR;
