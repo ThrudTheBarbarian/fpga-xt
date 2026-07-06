@@ -38,6 +38,8 @@ static inline long sys_waitpid(int pid) { return __syscall(SYS_waitpid, pid, 0, 
 static inline long sys_waitpid_nb(int pid) { return __syscall(SYS_waitpid, pid, XT_WAIT_NB, 0); }
 /* non-reaping "did this child exit?" probe: 1 exited, 0 running, -1 gone */
 static inline long sys_waitpid_peek(int pid) { return __syscall(SYS_waitpid, pid, XT_WAIT_PEEK, 0); }
+/* set/clear this process's syscall-trace flag (children inherit) -> dmesg */
+static inline long sys_strace(int on) { return __syscall(SYS_strace, on, 0, 0); }
 static inline void sys_exit(int code) { __syscall(SYS_exit, code, 0, 0); for (;;) {} }
 static inline long sys_open(const char *path, int flags)
 { return __syscall(SYS_open, (long)path, flags, 0); }

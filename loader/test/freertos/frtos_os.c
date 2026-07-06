@@ -2208,6 +2208,7 @@ static long do_syscall(uint32_t num, long a0, long a1, long a2)
         extern long klog_write(const char *, uint32_t);
         return klog_write((const char *)a0, (uint32_t)a1);
     }
+    case SYS_strace: { if (p) p->strace = a0 ? 1 : 0; return 0; }   /* /bin/strace */
     case SYS_nanosleep: {                                   /* (usec) — real yield, not a spin */
         TickType_t ticks = pdMS_TO_TICKS((uint32_t)a0 / 1000u);
         vTaskDelay(ticks ? ticks : 1);      /* >=1 tick so other tasks (net RX pump) run */
@@ -2296,25 +2297,55 @@ static void strace_hex(char *b, int *k, uint32_t v)
 {
     for (int i = 7; i >= 0; i--) { unsigned d = (v >> (i * 4)) & 0xF; b[(*k)++] = (char)(d < 10 ? '0' + d : 'a' + d - 10); }
 }
+/* map a syscall number to a short name for readable traces (common ones; others
+ * print as sys<hex>). Keep in step with xtsys.h. */
+static const char *strace_name(uint32_t n)
+{
+    switch (n) {
+    case SYS_write: return "write";     case SYS_read: return "read";
+    case SYS_open: return "open";       case SYS_close: return "close";
+    case SYS_lseek: return "lseek";     case SYS_ioctl: return "ioctl";
+    case SYS_fstat: return "fstat";     case SYS_stat: return "stat";
+    case SYS_waitpid: return "waitpid"; case SYS_spawn: return "spawn";
+    case SYS_spawn_fd: return "spawn_fd"; case SYS_exit: return "exit";
+    case SYS_getpid: return "getpid";   case SYS_pipe: return "pipe";
+    case SYS_dup2: return "dup2";       case SYS_kill: return "kill";
+    case SYS_nanosleep: return "nanosleep"; case SYS_gettimeofday: return "gettimeofday";
+    case SYS_klog: return "klog";       case SYS_getcwd: return "getcwd";
+    case SYS_socket: return "socket";   case SYS_accept: return "accept";
+    case SYS_recvfrom: return "recvfrom"; case SYS_readdir: return "readdir";
+    case SYS_envp: return "envp";       case SYS_strace: return "strace";
+    case SYS_connect: return "connect"; case SYS_bind: return "bind";
+    case SYS_listen: return "listen";
+    default: return 0;
+    }
+}
 static void strace_log(int pid, const char *tag, uint32_t num, uint32_t a0, uint32_t a1, uint32_t a2)
 {
-    char b[80]; int k = 0;
+    char b[96]; int k = 0;
     for (const char *t = "strace "; *t; t++) b[k++] = *t;
     for (const char *t = tag; *t; t++) b[k++] = *t;
     b[k++] = ' '; { unsigned v = (unsigned)pid; char d[8]; int n = 0; do { d[n++] = (char)('0' + v % 10); v /= 10; } while (v && n < 7); while (n) b[k++] = d[--n]; }
-    b[k++] = ' '; strace_hex(b, &k, num);
-    b[k++] = ' '; strace_hex(b, &k, a0);
-    b[k++] = ' '; strace_hex(b, &k, a1);
-    b[k++] = ' '; strace_hex(b, &k, a2);
-    b[k++] = '\n'; b[k] = 0;
+    b[k++] = ' ';
+    const char *nm = strace_name(num);
+    if (nm) { for (const char *t = nm; *t; t++) b[k++] = *t; }
+    else { for (const char *t = "sys"; *t; t++) b[k++] = *t; strace_hex(b, &k, num); }
+    b[k++] = '('; strace_hex(b, &k, a0);
+    b[k++] = ','; strace_hex(b, &k, a1);
+    b[k++] = ','; strace_hex(b, &k, a2);
+    b[k++] = ')'; b[k++] = '\n'; b[k] = 0;
     klog(b);
 }
 /* called from the deferred-syscall thunk tail to log the (possibly blocking) return */
 void strace_ret(uint32_t num, long r)
 {
     proc_t *p = cur_proc();
-    if (p && p->strace) { char b[48]; int k = 0; for (const char *t = "strace  ret "; *t; t++) b[k++] = *t;
-        strace_hex(b, &k, num); b[k++] = '='; strace_hex(b, &k, (uint32_t)r); b[k++] = '\n'; b[k] = 0; klog(b); }
+    if (!p || !p->strace) return;
+    char b[64]; int k = 0; for (const char *t = "strace  = "; *t; t++) b[k++] = *t;
+    const char *nm = strace_name(num);
+    if (nm) { for (const char *t = nm; *t; t++) b[k++] = *t; } else { strace_hex(b, &k, num); }
+    b[k++] = ' '; if (r < 0) { b[k++] = '-'; strace_hex(b, &k, (uint32_t)(-r)); } else strace_hex(b, &k, (uint32_t)r);
+    b[k++] = '\n'; b[k] = 0; klog(b);
 }
 
 int k_syscall_dispatch(struct k_regs *regs)
@@ -2573,9 +2604,10 @@ static int proc_launch(int slot, xtld_obj *obj, uintptr_t entry,
      * task listings identify it — FreeRTOS copies the name into the TCB. */
     const char *nm = (argc > 0 && argv && argv[0]) ? argv[0] : "app";
     for (const char *q = nm; *q; q++) if (*q == '/') nm = q + 1;
-    /* strace: trace this proc if its basename matches g_strace_name (substring) */
-    p->strace = 0;
-    if (g_strace_name) { extern const char *g_strace_name;
+    /* strace: trace this proc if a parent is traced (children inherit -> `strace
+     * sshd` covers sshd-session + the shell) or its basename matches g_strace_name. */
+    { proc_t *par = cur_proc(); p->strace = (par && par->strace) ? 1 : 0; }
+    if (!p->strace && g_strace_name) {
         for (const char *a = nm; *a; a++) { const char *x = a, *y = g_strace_name;
             while (*x && *y && *x == *y) { x++; y++; } if (!*y) { p->strace = 1; break; } } }
     extern StackType_t *stackguard_stack(int, uint32_t *);

@@ -31,6 +31,9 @@
 #define SYS_spawn_fd 0x104   /* (path, argv, int fds[3]) -> pid: argv is NULL-terminated
                               * (argc counted kernel-side); the child's fd 0/1/2 come
                               * from the parent's fds (pipe ends; -1 = inherit console) */
+#define SYS_strace   0x108   /* (on) -> 0: set/clear this process's syscall-trace flag;
+                              * children inherit it. Traced syscalls go to the kernel log
+                              * (dmesg / /proc/kmsg). Used by /bin/strace. */
 /* SYS_kill signal values with non-kill semantics (Linux numbers). Everything
  * else (9, 15, ...) kills at the target's next syscall boundary. */
 #define XT_SIGCONT 18        /* resume a stopped process */
