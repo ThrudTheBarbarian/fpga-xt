@@ -2953,6 +2953,16 @@ static void frtos_watch_add(uint32_t va, uint32_t sz)
 }
 int frtos_watch_check(const char *tag, unsigned lba, const void *buf)   /* -> 1 if a seg changed */
 {
+    /* Ignore boot: pre-scheduler sd_init reads + the early .data init of libc et al
+     * (baseline was at load, before constructors) produce false hits. Re-baseline ONCE
+     * the scheduler is up, so only post-boot corruption (scp) is flagged. */
+    if (xTaskGetSchedulerState() != taskSCHEDULER_RUNNING) return 0;
+    static int primed;
+    if (!primed) {
+        for (int i = 0; i < g_watch_n; i++) g_watch[i].sum = watch_sum(g_watch[i].va, g_watch[i].words);
+        primed = 1;
+        return 0;
+    }
     int hit = 0;
     for (int i = 0; i < g_watch_n; i++) {
         uint32_t s = watch_sum(g_watch[i].va, g_watch[i].words);
