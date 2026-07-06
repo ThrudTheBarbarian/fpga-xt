@@ -147,7 +147,7 @@ static void boot_run(void)
 static void shell_task(void *arg)
 {
     (void)arg;
-    { extern void klog_start(void); klog_start(); } /* logger: flush kernel diagnostics to /OS/var/log/system.log */
+    { extern void klog_start(void); klog_start(); } /* logger: flush kernel diagnostics to /tmp/system.log (ramfs) */
     { extern void sd_init(void); sd_init(); }   /* mount SD here (task context — FatFs reentrancy needs the scheduler) */
     /* networking is NOT started here: /boot/20-Networking runs /bin/netup
      * (SYS_net_up) — stack bring-up is an explicit boot-script decision.

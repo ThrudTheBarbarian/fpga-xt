@@ -471,9 +471,10 @@ DRESULT disk_read (
 			LocSector *= (DWORD)XSDPS_BLK_SIZE_512_MASK;
 		}
 
-		/* DEBUG: log every SD read (buff/count/lba) — a read DMA into a pool frame that
-		 * writes count*512 > 4096 overruns into the next frame (corrupting whatever the
-		 * layout put there). Rate-limited; count>8 (>4KB) is the overrun red flag. */
+		/* DEBUG: log every SD read (buff/count/lba). Safe now that klog -> /tmp (ramfs):
+		 * SD ops no longer write the boot disk, so this can't feed the log-flush loop.
+		 * A read of count*512 > 4096 into a pool frame overruns the next frame; count>8
+		 * (>4KB) is the overrun red flag. Rate-limited on the small reads. */
 		{ extern void klog(const char *); extern void klog_u(unsigned); static unsigned g_rdn;
 		  if (count > 8u || g_rdn++ < 400u) {
 		      klog(count > 8u ? "[BIG SD rd buff=" : "[sd rd buff="); klog_u((unsigned)(UINTPTR)buff);
@@ -781,7 +782,8 @@ DRESULT disk_write (
 			LocSector *= (DWORD)XSDPS_BLK_SIZE_512_MASK;
 		}
 
-		{ extern void klog(const char *); extern void klog_u(unsigned); static unsigned g_wrn;   /* DEBUG */
+		/* DEBUG: log every SD write (buff/count/lba). Safe with klog -> /tmp (ramfs). */
+		{ extern void klog(const char *); extern void klog_u(unsigned); static unsigned g_wrn;
 		  if (count > 8u || g_wrn++ < 400u) {
 		      klog(count > 8u ? "[BIG SD wr buff=" : "[sd wr buff="); klog_u((unsigned)(UINTPTR)buff);
 		      klog(" cnt="); klog_u((unsigned)count); klog(" lba="); klog_u((unsigned)LocSector); klog("]\r\n"); } }

@@ -170,6 +170,8 @@ int frtos_tty_sigtstp(void)
  * once libc.so is up we switch to its memalign/free. After that, every .so /
  * program image comes from the one libc.so malloc and is freed on unload. */
 extern char _heap_start[];                       /* 0x0200_0000 (linker) */
+void klog(const char *s); void klog_u(unsigned v);  /* defined below; fwd-decl so the */
+                                                    /* diagnostic klogs above the def compile */
 static char *g_boot;
 static void *(*g_libc_memalign)(size_t, size_t);
 static void  (*g_libc_free)(void *);
@@ -314,9 +316,15 @@ int xtos_prefetch_fault(uint32_t pc)
     int idx = (int)(p - g_proc);
     uint32_t ifsr; __asm__ volatile("mrc p15,0,%0,c5,c0,1" : "=r"(ifsr));
     uint32_t fs = (((ifsr >> 10) & 1u) << 4) | (ifsr & 0xfu);   /* combined fault status */
-    if (fs != 0x0fu) return 0;                       /* only permission fault (page) */
+    if (fs != 0x0fu) {                               /* not a page-perm stale-TLB fault */
+        { extern void vm_dump_cow_divergence(int); vm_dump_cow_divergence(idx); }  /* DEBUG: dropbear GOT */
+        return 0;                                    /* wild jump / section fault -> fatal */
+    }
     static uint32_t last_pc; static int repeat;      /* livelock guard (rare path) */
-    if (pc == last_pc) { if (++repeat > 8) { repeat = 0; return 0; } }
+    if (pc == last_pc) { if (++repeat > 8) {
+        { extern void klog(const char *); extern void klog_u(unsigned);   /* DEBUG */
+          klog("[pabt GUARD-TRIP pc="); klog_u(pc); klog(" -> fatal]\r\n"); }
+        repeat = 0; return 0; } }
     else { last_pc = pc; repeat = 0; }
     return vm_exec_fault(idx, pc);
 }
@@ -1379,8 +1387,10 @@ static vfs_file *g_kfs_wf;             /* the net file drop's open upload (fs ta
 /* ---- kernel diagnostic log (klog) -----------------------------------------
  * The [sd]/[net]/[tftp]/[hdmi] boot chatter goes HERE, not the console: klog
  * appends to a RAM buffer (works pre-scheduler too), and a low-priority logger
- * task flushes it to /OS/var/log/system.log (fresh each boot) once the SD is
- * mounted. Keeps the console clean for the [ OK ]/[FAIL] boot-script status. */
+ * task flushes it to /tmp/system.log (ramfs, fresh each boot) once /tmp is
+ * mounted. RAM-backed on purpose: logging must never write the SD, or an
+ * SD-op diagnostic line would re-trigger the flush and self-sustain a storm.
+ * Keeps the console clean for the [ OK ]/[FAIL] boot-script status. */
 /* CIRCULAR diagnostic buffer: keeps the LATEST KLOG_CAP bytes, so a long-running
  * or high-volume producer (e.g. strace) doesn't lose the most recent output
  * (which is usually what you want — the tail before a hang/crash). The wrap logic
@@ -1507,10 +1517,10 @@ static long kfs_serve(void)
     case KFS_WRITECLOSE:
         if (g_kfs_wf) { vfs_close(g_kfs_wf); g_kfs_wf = 0; }
         return 0;
-    case KFS_LOGWRITE: {                                /* rewrite /OS/var/log/system.log (fs task) */
-        vfs_mkdir("/OS/var/log");                       /* idempotent; sole-driver context */
-        vfs_file lf;
-        if (vfs_open("/OS/var/log/system.log", VFS_O_WRONLY | VFS_O_CREAT | VFS_O_TRUNC, &lf) != 0)
+    case KFS_LOGWRITE: {                                /* rewrite /tmp/system.log (ramfs — no SD churn) */
+        vfs_file lf;                                    /* RAM-backed: logging never touches the boot disk,
+                                                         * so SD-op diagnostics can't feed back into the flush */
+        if (vfs_open("/tmp/system.log", VFS_O_WRONLY | VFS_O_CREAT | VFS_O_TRUNC, &lf) != 0)
             return -1;
         long w = lf.write ? vfs_write(&lf, g_kfs.buf, g_kfs.len) : -1;
         vfs_close(&lf);

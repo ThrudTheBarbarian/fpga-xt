@@ -5,7 +5,29 @@
 # Immediate targets
 
 ## Open Issues (tracked bugs)
-- none
+- **Retire the per-switch `TLBIALL` sledgehammer (stale image-region TLB shadow).**
+  `vm_switch` currently does a full `TLBIALL` on every process switch to fix HW scp/ssh
+  crashes (stale cross-context TLB entries over the image region: scp took a recurring
+  PL0-none section-shadow prefetch-fault storm; dropbear silently read its private nG
+  GOT copy through a stale entry → PLT jump to garbage). This WORKS and is robust
+  (16× 19 MB scp verified, zero faults) but taxes **every** context switch system-wide
+  with a cold-TLB refill — negligible for long-running jobs like scp, but potentially
+  **10–25 %** for high-switch-rate workloads (shell pipelines, many short-lived
+  programs, chatty IPC). *Root fix (removes the flush entirely, wins for all
+  workloads):* invalidate at the **mutation point** — most likely the shared
+  section-`0x29` L2 being re-backgrounded to PL0-none during module load/unload churn
+  (sshd-session spawns per connection in that section) without a TLB invalidate — or
+  stop mapping the image region as global `SEC_KDATA` 1 MB sections (mmu.c) so there's
+  nothing to shadow. Instrument the section-L2 mutations (mmu_protect / l2_for_section
+  / mmu_unprotect / vm_sync_loaded_sections) to catch a live page re-backgrounded
+  without invalidation. Kept supporting fixes are correct regardless: `vm_exec_fault`
+  `TLBIMVAA` (no ping-pong), `vm_cow_map` copy-from-template, klog→/tmp. *(src:
+  loader/test/freertos/vm.c `vm_switch`; branch ssh-server)*
+- **Strip ssh-server debug scaffolding before merge to main** — per-SD-op klog
+  (diskio.c), `[pabt]`/`[cowrd]`/`vm_dump_cow_divergence` (vm.c), GUARD-TRIP klog
+  (frtos_os.c), ADMA descriptor-verify (xsdps_host.c). Left in to aid the root-cause
+  hunt above; they never fire in clean runs but add hot-path overhead. `klog→/tmp`
+  and the `vivado/scripts/jtag_{inspect,walk,catch,recover}.tcl` tools STAY.
 
 ## Post-architecture-review
 - none
