@@ -152,6 +152,11 @@ xt_fault: bl   fault_report
 1:        mrs  r0, spsr             @ the fault-exit thunk calls vTaskDelete, so it must
           bic  r0, r0, #0x1f        @   run privileged even if the faulting task was PL0:
           orr  r0, r0, #0x1f        @   force the resumed mode to System
+          bic  r0, r0, #0x20        @   CLEAR Thumb (T): xtos_task_fault_exit is ARM code.
+          bic  r0, r0, #(1<<24)     @   CLEAR Jazelle (J) too. If the faulting task was in
+                                    @   Thumb (or its CPSR got corrupted with T=1), resuming
+                                    @   an ARM thunk in Thumb state = garbage/UNDEF, and it
+                                    @   re-faults forever (the fault loop that wedged aesdesk).
           msr  spsr_cxsf, r0
           movw lr, #:lower16:xtos_task_fault_exit
           movt lr, #:upper16:xtos_task_fault_exit
