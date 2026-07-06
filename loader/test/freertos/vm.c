@@ -131,6 +131,19 @@ static int cow_owns(int idx, uint32_t va)
         if (va >= g_cow_rng[i].va && va < g_cow_rng[i].end) return 1;
     return va >= g_space_prog[idx].va && va < g_space_prog[idx].end;
 }
+/* COW source page backing `va` (the pristine RO template), or 0 if `va` isn't in a
+ * COW range. Mirrors cow_owns' search order (global lib ranges, then this space's
+ * program range) so a read fault seeds from the same source map_cow_range used. */
+static uint32_t cow_src_for(int idx, uint32_t va)
+{
+    uint32_t pg = va & ~0xFFFu;
+    for (int i = 0; i < g_cow_n; i++)
+        if (va >= g_cow_rng[i].va && va < g_cow_rng[i].end)
+            return g_cow_rng[i].src + (pg - g_cow_rng[i].va);
+    if (va >= g_space_prog[idx].va && va < g_space_prog[idx].end)
+        return g_space_prog[idx].src + (pg - g_space_prog[idx].va);
+    return 0;
+}
 uint32_t vm_cow_count(void) { return g_cow_count; }
 
 /* Get (or lazily create) space `idx`'s private L2 for 1 MB section `sec`, seeded
@@ -493,6 +506,38 @@ int vm_cow_map(int idx, uint32_t va)
     l2[i] = ((uint32_t)pg & 0xFFFFF000u) | (e & 0xFFFu);
     l2[i] &= ~(1u << 9);
     g_cow_count++;
+    __asm__ volatile("dsb");
+    __asm__ volatile("mcr p15,0,%0,c8,c7,3" :: "r"(va & 0xFFFFF000u));  /* TLBIMVAA */
+    __asm__ volatile("dsb; isb");
+    return 1;
+}
+
+/* READ permission fault at `va` in a COW range (HW-only; qemu doesn't model it).
+ * The demand handler only calls vm_cow_map on WRITES, so before this a READ that
+ * permission-faulted here was fatal. Two causes, both non-fatal:
+ *  (a) the per-process page is already PL0-readable (RO seed or a private RW copy)
+ *      but a STALE TLB entry — typically a lingering GLOBAL 1 MB section mapping
+ *      (PL0-none) that survived a context switch, the same class vm_sync_loaded_
+ *      sections fights — shadows it. Invalidate the VA and re-run. This is what
+ *      bit dropbear's exec path: reading its .got.plt (every memcpy/strlen PLT
+ *      call) fataled even though the table mapped the page RW.
+ *  (b) the page still holds the master's PL0-none writable descriptor (its section
+ *      L2 was created fresh from the master and never seeded) — seed it RO to the
+ *      COW source, then re-run. No private copy is made (that's the WRITE path).
+ * Returns 1 (serviced, re-run) or 0 (not a COW range / not present -> fatal, so a
+ * genuine wild read still dies). Runs in the abort handler: only L2 edits + TLB ops. */
+int vm_cow_read_fault(int idx, uint32_t va)
+{
+    uint32_t src = cow_src_for(idx, va);
+    if (!src) return 0;                              /* not COW (e.g. W^X text) -> fatal */
+    uint32_t *l2 = perproc_l2(idx, space_l1[idx], va >> 20);  /* own L2 (seeds from master if new) */
+    if (!l2) return 0;
+    uint32_t i = L2_IDX(va), e = l2[i];
+    if ((e & 0x3u) == 0) return 0;                  /* genuinely not present -> fatal */
+    if (((e >> 4) & 0x3u) == 0x1u && !(e & (1u<<9))) {   /* AP=001: master PL0-none writable */
+        uint32_t xn = e & 0x1u;                          /* keep the page's XN (W^X) */
+        l2[i] = (L2_PAGE_RO(src) & ~0x1u) | xn;          /* seed RO to the shared source */
+    }
     __asm__ volatile("dsb");
     __asm__ volatile("mcr p15,0,%0,c8,c7,3" :: "r"(va & 0xFFFFF000u));  /* TLBIMVAA */
     __asm__ volatile("dsb; isb");

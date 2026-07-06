@@ -279,7 +279,13 @@ int xtos_demand_fault(uint32_t dfar)
      * (W^X, not a COW range) returns 0 = fatal. */
     if (write)
         return vm_cow_map(idx, dfar);
-    return 0;
+    /* READ permission fault in a COW range: a stale-TLB shadow (a lingering global
+     * section entry over a page the table maps PL0-readable) or an unseeded page —
+     * re-seed/invalidate and re-run instead of killing the task. HW-only; qemu never
+     * takes this path. Returns 0 for a genuine wild read (not COW) -> stays fatal.
+     * This is what crashed dropbear's exec path (scp / `ssh host cmd`) on a .got.plt
+     * read even though the page was mapped RW. */
+    return vm_cow_read_fault(idx, dfar);
 }
 
 /* sys_sbrk — the PL1 implementation behind SYS_sbrk (libc's _sbrk is an svc stub).
