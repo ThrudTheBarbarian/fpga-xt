@@ -223,14 +223,15 @@ int xtld_load(const uint8_t *image, size_t image_len,
     memset(base, 0, span);
     uintptr_t bias = (uintptr_t)base - lo;
 
-    /* 3. copy PT_LOAD segments (bss is already zero), spanning ALL writable ones.
-     * A .so can have TWO writable PT_LOADs (GNU_RELRO splits .data.rel.ro/.got off
-     * from .data/.got.plt/.bss). We must report the whole writable span [first
-     * writable VA, last writable end) — not just one segment — so W^X/COW covers
-     * every writable page. With "last wins" the first writable segment (holding
-     * .got) was left inside the RO+X text range and never COW'd, so a PLT/GOT
-     * access permission-faulted (crashed aesdesk et al). */
-    uintptr_t wseg_va = 0, wseg_end = 0;
+    /* 3. copy PT_LOAD segments (bss is already zero), noting the writable one.
+     * A .so linked with GNU_RELRO has TWO writable PT_LOADs — .data.rel.ro/.got
+     * (read-only after relocation) then .data/.got.plt/.bss. We report only the
+     * LAST (the genuinely mutable one) as the COW range; the RELRO segment stays
+     * in the RO+X text range, which matches its read-only-after-load intent. Do
+     * NOT fold the RELRO segment into the COW range — making it PL0-none/COW
+     * regressed dropbear (a GOT read in the second segment then stale-TLB-faulted
+     * fatally). See loader-wx-multi-segment memory note. */
+    uintptr_t wseg_va = 0; uint32_t wseg_size = 0;
     for (int i = 0; i < eh->e_phnum; i++) {
         const Elf32_Phdr *p = &ph[i];
         if (p->p_type != PT_LOAD) continue;
@@ -239,13 +240,8 @@ int xtld_load(const uint8_t *image, size_t image_len,
             return XTLD_E_TRUNCATED;
         }
         memcpy((void *)(bias + p->p_vaddr), image + p->p_offset, p->p_filesz);
-        if (p->p_flags & 0x2 /* PF_W */) {
-            uintptr_t v = bias + p->p_vaddr, e = v + p->p_memsz;
-            if (!wseg_va || v < wseg_va) wseg_va = v;
-            if (e > wseg_end) wseg_end = e;
-        }
+        if (p->p_flags & 0x2 /* PF_W */) { wseg_va = bias + p->p_vaddr; wseg_size = p->p_memsz; }
     }
-    uint32_t wseg_size = wseg_va ? (uint32_t)(wseg_end - wseg_va) : 0;
 
     /* 4. parse PT_DYNAMIC (its contents now live in the loaded image) */
     const Elf32_Dyn *dyn = (const Elf32_Dyn *)(bias + dyn_vaddr);
