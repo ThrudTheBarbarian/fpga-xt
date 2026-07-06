@@ -2930,6 +2930,47 @@ uintptr_t frtos_ksym(const char *name, void *u)
  * the master (the owner process gets PL0-RW per-process via COW). Applies to libc,
  * every shared library, and programs alike — they all live in the (PL0-none) heap
  * region and would otherwise be execute-never / PL0-unreachable. */
+/* ===== DEBUG (scp GOT-corruption hunt): watch resident .so writable segments =====
+ * A module's master writable segment is the pristine COW SOURCE — never written after
+ * load (per-process writes go to private COW copies). We checksum it at load; if it
+ * EVER changes, something wrote a rogue value into the resident image. frtos_watch_check
+ * (called from the SD path after each sector op) pins WHEN and which SD op did it. */
+#define WATCH_MAX 24
+static struct { uint32_t va, words, sum; } g_watch[WATCH_MAX];
+static int g_watch_n;
+static uint32_t watch_sum(uint32_t va, uint32_t words)
+{
+    uint32_t s = 0; const volatile uint32_t *p = (const volatile uint32_t *)va;
+    for (uint32_t i = 0; i < words; i++) s = s * 31u + p[i];
+    return s;
+}
+static void frtos_watch_add(uint32_t va, uint32_t sz)
+{
+    if (g_watch_n >= WATCH_MAX || !va || !sz) return;
+    uint32_t words = sz >> 2; if (words > 4096) words = 4096;   /* scan up to 16KB/seg */
+    g_watch[g_watch_n].va = va; g_watch[g_watch_n].words = words;
+    g_watch[g_watch_n].sum = watch_sum(va, words); g_watch_n++;
+}
+int frtos_watch_check(const char *tag, unsigned lba, const void *buf)   /* -> 1 if a seg changed */
+{
+    int hit = 0;
+    for (int i = 0; i < g_watch_n; i++) {
+        uint32_t s = watch_sum(g_watch[i].va, g_watch[i].words);
+        if (s != g_watch[i].sum) {
+            extern void puts0(const char *); extern void fr_hex(const char *, unsigned);
+            puts0("\r\n*** IMAGE CORRUPTED during SD "); puts0(tag);
+            fr_hex(" seg-va=", g_watch[i].va); fr_hex(" lba=", lba);
+            fr_hex(" dma-buf=", (unsigned)buf);
+            fr_hex(" word0=", *(volatile uint32_t *)g_watch[i].va); puts0("\r\n");
+            klog("*** IMAGE CORRUPTED "); klog(tag); klog(" va="); klog_u(g_watch[i].va);
+            klog(" lba="); klog_u(lba); klog(" buf="); klog_u((unsigned)buf); klog("\r\n");
+            g_watch[i].sum = s;                 /* re-baseline: log each change once */
+            hit = 1;
+        }
+    }
+    return hit;
+}
+
 void frtos_on_loaded(xtld_obj *obj, void *u)
 {
     (void)u;
@@ -2938,6 +2979,7 @@ void frtos_on_loaded(xtld_obj *obj, void *u)
     xtld_writable_range(obj, &wva, &wsz);
     if (ibase && wva > ibase) mmu_protect((uint32_t)ibase, (uint32_t)(wva - ibase), 1, 0); /* text RO+X */
     if (wva && wsz)           mmu_protect((uint32_t)wva, wsz, 0, 1);                         /* data RW+XN, PL0-none */
+    if (wva && wsz)           frtos_watch_add((uint32_t)wva, wsz);   /* DEBUG: watch the COW source */
     vm_sync_loaded_sections();   /* adopt the section splits into every space so no stale
                                   * global SECTION entry can shadow this module's code (HW) */
 }
