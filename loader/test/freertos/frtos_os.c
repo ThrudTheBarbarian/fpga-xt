@@ -972,7 +972,21 @@ static void *fd_getpage(int slot, int fd, uint32_t pi, uint32_t *valid, int forw
     if (fdp->vf.data) return forwrite ? 0 : (uint8_t *)fdp->vf.data + base;  /* in-memory (RO) */
     if (fdp->cpage && fdp->cpi == pi) return fdp->cpage;           /* cache hit */
     fd_flush(fdp);                                                 /* evict: don't lose the old page */
-    if (!fdp->cpage) { fdp->cpage = vm_page_alloc(); if (!fdp->cpage) { *valid = 0; return 0; } }
+    if (!fdp->cpage) {
+        fdp->cpage = vm_page_alloc(); if (!fdp->cpage) { *valid = 0; return 0; }
+        /* TRIPWIRE: this page is filled by the CLIENT via its identity VA (fs_write);
+         * if that VA lands in a per-process window band it's shadowed in the client's
+         * space and the fill would corrupt the wrong page (see XTOS_POOL_FLOOR). The
+         * pool is kept out of the band, but once frames come from arbitrary RAM (raised
+         * process limit / dynamic paging) that no longer holds — so FAIL LOUD and refuse
+         * the write rather than silently corrupt a file + smash another process. */
+        if ((uintptr_t)fdp->cpage >= XTOS_HEAP_VA && (uintptr_t)fdp->cpage < XTOS_POOL_FLOOR) {
+            klog("*** FATAL: fd page-cache page in the per-process window band ");
+            klog_u((unsigned)(uintptr_t)fdp->cpage);
+            klog(" — refusing the write (would corrupt) ***\r\n");
+            vm_page_free(fdp->cpage); fdp->cpage = 0; *valid = 0; return 0;
+        }
+    }
     if (base < size) {                                            /* RMW: existing content */
         vfs_lseek(&fdp->vf, (long)base, 0);
         long got = vfs_read(&fdp->vf, fdp->cpage, 0x1000);
