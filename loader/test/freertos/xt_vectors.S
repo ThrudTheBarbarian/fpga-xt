@@ -105,7 +105,18 @@ enter_user_and_run:
 xt_undef: mov r0, #1
           mov r1, lr
           b   xt_fault
-xt_pabt:  mov r0, #3
+/* prefetch abort: try to service a stale-section-shadow permission fault first
+ * (TLBIALL + re-run), mirroring xt_dabt. Save the task's caller-saved regs +
+ * lr_abt (the C call clobbers them; a serviced re-run needs them). */
+xt_pabt:  stmfd sp!, {r0-r3, r12, lr}
+          sub   r0, lr, #4                @ r0 = faulting PC (lr_abt - 4)
+          bl    xtos_prefetch_fault       @ r0 = 1 serviced, 0 fatal
+          cmp   r0, #1
+          ldmfd sp!, {r0-r3, r12, lr}      @ restore (ldm preserves flags)
+          bne   xt_pabt_fatal
+          subs  pc, lr, #4                 @ serviced: re-run the faulting instr, restore CPSR
+xt_pabt_fatal:
+          mov r0, #3
           sub r1, lr, #4
           cps   #0x1f              @ System mode (the faulting task)
           mov   r2, lr             @ r2 = caller's return addr (instr after the blx-to-NULL)

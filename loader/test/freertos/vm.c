@@ -544,6 +544,28 @@ int vm_cow_read_fault(int idx, uint32_t va)
     return 1;
 }
 
+/* PREFETCH (instruction-fetch) permission fault at `va`. If the current space's
+ * table maps that page present + EXECUTABLE (XN=0), the fetch is legal per the
+ * page tables, so the fault is a STALE global 1 MB SECTION TLB entry (PL0-none)
+ * shadowing the split coarse RO+X mapping — the same class vm_sync_loaded_sections
+ * eliminates, re-exposed whenever a layout shift changes which task cached the
+ * pre-split section. TLBIALL (drop every global + ASID entry; the tables are
+ * already correct so nothing re-caches the section) and re-run. Returns 1
+ * (serviced) or 0 (page not present / XN=1 genuine W^X or wild fetch -> fatal). */
+int vm_exec_fault(int idx, uint32_t va)
+{
+    uint32_t l1e = space_l1[idx][va >> 20];
+    if ((l1e & 0x3u) != 0x1u) return 0;             /* section isn't a coarse L2 -> fatal */
+    uint32_t *l2 = (uint32_t *)(l1e & 0xFFFFFC00u);
+    uint32_t  e  = l2[L2_IDX(va)];
+    if ((e & 0x3u) == 0) return 0;                  /* not present -> fatal */
+    if (e & 0x1u)        return 0;                  /* XN=1: not executable -> fatal (real W^X) */
+    __asm__ volatile("dsb");
+    __asm__ volatile("mcr p15,0,%0,c8,c7,0" :: "r"(0u));  /* TLBIALL */
+    __asm__ volatile("dsb; isb");
+    return 1;
+}
+
 /* ---- mmap'd files (read-only, shared, demand-paged) -----------------------
  * Reserve a VA window for a file: page (va+k) will map READ-ONLY to file physical
  * (src+k) on first touch. The backing is the resident romfs (shared, one physical

@@ -46,6 +46,7 @@ void vm_cow_reset_dynamic(void);    /* drop library COW ranges (keep synthetic+l
 uint32_t vm_cow_count(void);
 int  vm_cow_map(int idx, uint32_t va);
 int  vm_cow_read_fault(int idx, uint32_t va);   /* READ permission fault in a COW range: stale-TLB / unseeded page */
+int  vm_exec_fault(int idx, uint32_t va);       /* PREFETCH permission fault: stale-section-shadow -> TLBIALL + re-run */
 int  vm_demand_map(int idx, uint32_t va);
 uint32_t vm_mmap(int idx, uint32_t src, uint32_t size);   /* map a romfs file RO+shared -> VA */
 uint32_t vm_mmap_install(int idx, void **pages, uint32_t npg, int writable, uint32_t fd, uint32_t foff);

@@ -288,6 +288,27 @@ int xtos_demand_fault(uint32_t dfar)
     return vm_cow_read_fault(idx, dfar);
 }
 
+/* PREFETCH-abort service (called from xt_vectors.S before the fatal path, mirroring
+ * xt_dabt). A permission fault on an instruction fetch whose page the tables map
+ * present + executable is a stale global SECTION TLB entry shadowing the split
+ * coarse text mapping (see stale-section-tlb-shadow) — TLBIALL + re-run. A livelock
+ * guard bails to fatal if the SAME PC keeps faulting (so a genuine unresolvable
+ * fault still dies rather than spinning). Non-permission faults and not-executable
+ * pages return 0 = fatal, so real W^X violations / wild jumps still get killed. */
+int xtos_prefetch_fault(uint32_t pc)
+{
+    proc_t *p = cur_proc();
+    if (!p) return 0;
+    int idx = (int)(p - g_proc);
+    uint32_t ifsr; __asm__ volatile("mrc p15,0,%0,c5,c0,1" : "=r"(ifsr));
+    uint32_t fs = (((ifsr >> 10) & 1u) << 4) | (ifsr & 0xfu);   /* combined fault status */
+    if (fs != 0x0fu) return 0;                       /* only permission fault (page) */
+    static uint32_t last_pc; static int repeat;      /* livelock guard (rare path) */
+    if (pc == last_pc) { if (++repeat > 8) { repeat = 0; return 0; } }
+    else { last_pc = pc; repeat = 0; }
+    return vm_exec_fault(idx, pc);
+}
+
 /* sys_sbrk — the PL1 implementation behind SYS_sbrk (libc's _sbrk is an svc stub).
  * Per-process: a process grows its OWN heap (XTOS_HEAP_VA window, mapped to private
  * physical by vm.c); the kernel/boot libc uses kern_sbrk (the shared pool). So each
