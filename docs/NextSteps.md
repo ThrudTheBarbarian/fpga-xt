@@ -246,6 +246,22 @@ handler; fix = synchronous SIGCHLD delivery + a vfork-armed guard on signal()/
 sigaction(). (A late loader-COW misstep during this work — folding the RELRO
 segment into COW — briefly crashed sshd-session on connect; reverted, see
 loader-wx-multi-segment.) Open:
+- **scp crashes on HW during the SD file write** (interactive + non-pty exec +
+  1.2 MB bulk channel transfer ALL work HW-validated; scp is the lone failure).
+  sshd-session takes a wild-jump PREFETCH-ABORT: a PLT stub reads dropbear's
+  memcpy .got.plt slot and finds GARBAGE (`0x5c7bdab4`), so dropbear's private
+  COW copy of that GOT page is corrupted mid-transfer. Bisected: `ssh host 'cmd'`
+  and `ssh host 'cat /System/bin/*' | wc -c` (1.2 MB, no SD) both pass → it is
+  specifically the scp **SD-write** path, not exec or bulk crypto. Ruled out:
+  DMA unaligned-edge invalidate (Xil_DCacheInvalidateRange clean+invalidates
+  edges correctly), the shared page pool double-allocating (dpage_raw is
+  IRQ-critical-section safe). Leading theory: a page-lifetime / DMA-coherency
+  interaction between the fs-task SD writes and dropbear's cached GOT page (the
+  fd page-cache and COW pages share dpage_raw's pool; PIPT, no cache maintenance
+  on reuse). Needs ON-BOARD instrumentation (log/catch the writer of the GOT
+  physical page during a transfer) — not fixable by code-reading. Two kernel
+  hardening fixes DID land here and stay: vm_cow_read_fault + vm_exec_fault
+  (service stale-section-TLB read/prefetch faults instead of killing the task).
 - **sftp** — no server binary yet (scp covers file transfer).
 - **lwIP loopback** — the board can't ssh/scp to 127.0.0.1 (no `lo` netif; the
   connection wedges the stack). Outbound to real peers is fine. *(loader-networking)*
