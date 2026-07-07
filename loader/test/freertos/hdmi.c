@@ -10,6 +10,9 @@
  * no SiI9022/I2C, so hdmi_init() is a no-op there. Runs at PL1, pre-scheduler.
  */
 #include <stdint.h>
+#include "FreeRTOS.h"
+#include "task.h"
+#include "semphr.h"
 
 void hdmi_init(void);
 int  xt_i2c_send(uint8_t addr, const uint8_t *buf, int n);   /* 0=ok (see /OS/dev/i2c-0) */
@@ -214,26 +217,72 @@ void hdmi_init(void)
     klog("[hdmi] SiI9022 devid=0xB0, 1080p60 enabled\r\n");
 }
 
-/* PS-I2C0 access for /OS/dev/i2c-0 (vfs_devfs.c). hdmi_init is the only other
- * bus user and runs once pre-scheduler, so post-boot the fs task (the sole
- * caller of devfs ioctls) owns the bus — no lock needed. */
-int xt_i2c_send(uint8_t addr, const uint8_t *buf, int n) { return i2c_send(addr, buf, n); }
-int xt_i2c_recv(uint8_t addr, uint8_t *buf, int n)       { return i2c_recv(addr, buf, n); }
+/* ---- post-boot I2C sharing --------------------------------------------------
+ * Post-scheduler bus users: the fs task (devfs ioctls + /OS/proc/video reads)
+ * and the HPD watcher task below.  One mutex serialises them (hdmi_init runs
+ * pre-scheduler and needs none). */
+static SemaphoreHandle_t s_i2c_mtx;
+static void i2c_lock(void)   { if (s_i2c_mtx) xSemaphoreTake(s_i2c_mtx, portMAX_DELAY); }
+static void i2c_unlock(void) { if (s_i2c_mtx) xSemaphoreGive(s_i2c_mtx); }
+
+/* PS-I2C0 access for /OS/dev/i2c-0 (vfs_devfs.c). */
+int xt_i2c_send(uint8_t addr, const uint8_t *buf, int n)
+{ int r; i2c_lock(); r = i2c_send(addr, buf, n); i2c_unlock(); return r; }
+int xt_i2c_recv(uint8_t addr, uint8_t *buf, int n)
+{ int r; i2c_lock(); r = i2c_recv(addr, buf, n); i2c_unlock(); return r; }
 
 /* one SiI9022 register for /OS/proc/video (-1 = read failed) */
 int hdmi_sii_read(int reg)
 {
-    uint8_t v;
-    return sii_read((uint8_t)reg, &v) == 0 ? (int)v : -1;
+    uint8_t v; int r;
+    i2c_lock(); r = sii_read((uint8_t)reg, &v); i2c_unlock();
+    return r == 0 ? (int)v : -1;
 }
 
-/* re-run the transmitter bring-up on a live system (the boot-time init is the
- * only other path).  Lets a no-signal state be re-kicked from the shell to
- * separate "SiI9022 dropped its config" from "the PL stopped making video". */
+/* Soft REPLUG: a bare config rewrite doesn't recover a monitor that has given
+ * up on the link (verified on HW — /OS/proc/video-kick did nothing while a
+ * physical replug recovered).  Take TMDS down long enough for the sink to see
+ * real signal loss, then bring the whole output back up (config + InfoFrame +
+ * TMDS) so it re-acquires exactly as it would on a cable insert. */
 void hdmi_reinit(void)
 {
+    i2c_lock();
+    sii_write(0x1A, 0x11);                /* HDMI mode, TMDS OFF               */
+    gt_delay_us(500000);                  /* 500 ms of dark — a real unplug    */
     sii_enable_output();
-    klog("[hdmi] transmitter re-enabled\r\n");
+    i2c_unlock();
+    klog("[hdmi] soft-replug: TMDS cycled + output re-enabled\r\n");
+}
+
+/* ---- HPD / receiver-sense watcher -------------------------------------------
+ * The SiI9022 latches link events in TPI 0x3D (bit0 = hotplug event, bit1 =
+ * receiver-sense event, bit2 = sink attached).  The boot-time init is one-shot
+ * and nothing serviced these, so a monitor renegotiation (or a marginal
+ * cable/connector bounce) left the link down until a physical replug.  Poll
+ * once a second: log every event (dmesg shows the drop cadence — root-cause
+ * data), clear the latch, and when a sink is attached after an event, run the
+ * soft-replug to re-acquire. */
+static void hdmi_watch_task(void *arg)
+{
+    (void)arg;
+    for (;;) {
+        vTaskDelay(pdMS_TO_TICKS(1000));
+        uint8_t st = 0;
+        i2c_lock();
+        int rd = sii_read(0x3D, &st);
+        if (rd == 0 && (st & 0x03)) sii_write(0x3D, st);   /* W1C the events */
+        i2c_unlock();
+        if (rd != 0 || !(st & 0x03)) continue;
+        klog("[hdmi] link event 0x3D="); puthex8(st);
+        klog(st & 0x04 ? " (sink attached)\r\n" : " (sink absent)\r\n");
+        if (st & 0x04) hdmi_reinit();                      /* re-acquire the sink */
+    }
+}
+
+void hdmi_watch_init(void)
+{
+    s_i2c_mtx = xSemaphoreCreateMutex();
+    xTaskCreate(hdmi_watch_task, "hdmiwatch", 512, 0, 1, 0);
 }
 
 #else  /* qemu: no SiI9022/I2C modelled */
@@ -244,4 +293,5 @@ int xt_i2c_recv(uint8_t addr, uint8_t *buf, int n)
 { (void)addr; (void)buf; (void)n; return -1; }
 int hdmi_sii_read(int reg) { (void)reg; return -1; }
 void hdmi_reinit(void) { }
+void hdmi_watch_init(void) { }
 #endif

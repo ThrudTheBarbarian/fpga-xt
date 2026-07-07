@@ -143,7 +143,7 @@ static int pf_gen_video(char *buf, int sz)
     uint32_t b = *diag;
     pfb_s(&o, "mmcm1_lock:    "); pfb_d(&o, (int)(b & 1)); pfb_c(&o, '\n');
     pfb_s(&o, "mmcm2_lock:    "); pfb_d(&o, (int)((b >> 1) & 1)); pfb_s(&o, "  (clk_pix)\n");
-    pfb_s(&o, "hdmi_cfg:      "); pfb_d(&o, (int)((b >> 2) & 1)); pfb_c(&o, '\n');
+    pfb_s(&o, "hdmi_cfg:      "); pfb_d(&o, (int)((b >> 2) & 1)); pfb_s(&o, "  (dead bit: PL configurator retired, ties 0)\n");
     pfb_s(&o, "mmcm2_unlocks: "); pfb_d(&o, (int)((b >> 16) & 0xFF)); pfb_c(&o, '\n');
     pfb_s(&o, "pix_alive:     "); pfb_d(&o, (int)((a >> 8) & 0xFF));
     pfb_s(&o, " -> ");            pfb_d(&o, (int)((b >> 8) & 0xFF)); pfb_s(&o, "  (50ms)\n");
