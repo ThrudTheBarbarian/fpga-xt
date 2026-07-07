@@ -276,7 +276,10 @@ static void hdmi_watch_task(void *arg)
         i2c_unlock();
         if (rd != 0 || !(st & 0x03)) continue;             /* healthy: no log, no action */
         int attached = st & 0x04, sensing = st & 0x08;
-        klog("[hdmi] link event 0x3D="); puthex8(st);
+        { extern void gtimer_timeofday(uint32_t *, uint32_t *);   /* uptime stamp: drop */
+          extern void klog_u(unsigned);                           /* cadence is the data */
+          uint32_t s, u; gtimer_timeofday(&s, &u);
+          klog("[hdmi] t+"); klog_u(s); klog("s link event 0x3D="); puthex8(st); }
         klog(!attached ? " (sink absent)\r\n"
                        : sensing ? " (link still up — no action)\r\n"
                                  : " (sink lost TMDS — soft-replug)\r\n");
