@@ -192,6 +192,8 @@ static void sii_enable_output(void)
     sii_write(0xBC, 0x01); sii_write(0xBD, 0x82);   /* source termination on      */
     { uint8_t t = 0; sii_read(0xBE, &t); sii_write(0xBE, (uint8_t)(t | 0x01)); }
     sii_write(0x1A, 0x01);                          /* HDMI, TMDS ON (last)       */
+    sii_write(0x3D, 0x03);                          /* clear any latched HPD/RSEN events — start
+                                                     * the service loop clean (datasheet step 1) */
 
     klog("[hdmi] post-cfg 1A/1E/60/61=");
     { uint8_t a = 0, p = 0, s = 0, sp = 0;
@@ -254,36 +256,40 @@ void hdmi_reinit(void)
     klog("[hdmi] soft-replug: TMDS cycled + output re-enabled\r\n");
 }
 
-/* ---- HPD / receiver-sense watcher -------------------------------------------
- * The SiI9022 latches link events in TPI 0x3D (bit0 = hotplug event, bit1 =
- * receiver-sense event) alongside the LIVE states (bit2 = sink attached,
- * bit3 = receiver sensing our TMDS).  The boot-time init is one-shot and
- * nothing serviced these, so one monitor renegotiation left the link down
- * until a physical replug.  Poll once a second, silent while healthy:
- *  - a latched event gets ONE dmesg line (drop-cadence data) + a W1C clear;
- *  - the soft-replug runs only when the sink is attached but has actually
- *    STOPPED sensing TMDS — benign latched events (HDCP probes, sink power
- *    management) must not cost a gratuitous 2 s blink. */
+/* ---- receiver-sense watcher ------------------------------------------------
+ * HPD is NOT reliably wired on this board: TPI 0x3D bit2 (Hot-Plug pin state)
+ * reads LOW even with a live, powered sink — confirmed against RxSense=1 and the
+ * SiI9022 TPI programmer's ref (bit2 = "display attached / EDID readable"; ours
+ * is stuck 0 with the monitor plainly present).  So we IGNORE HPD and trust
+ * RxSense (bit3, "TMDS lines pulled to 3.3 V by a powered receiver") as the only
+ * honest sink-present signal.
+ *
+ * Per the TPI ref a real UNPLUG needs BOTH bits low (0x3D[3:2]==00); HPD-low with
+ * RxSense-high is "connection instability", to be ignored — NOT a sink loss.  That
+ * matters because with HPD stuck low, a DDR-burst power transient that briefly dips
+ * RxSense would otherwise read as a confirmed unplug.  We DEBOUNCE RxSense-low so a
+ * momentary dip never costs a gratuitous soft-replug; only a sustained loss (a real
+ * unplug) re-acquires.  Poll once a second, silent while healthy. */
 static void hdmi_watch_task(void *arg)
 {
     (void)arg;
+    int lost = 0;                                          /* consecutive 1s polls with RxSense low */
     for (;;) {
         vTaskDelay(pdMS_TO_TICKS(1000));
         uint8_t st = 0;
         i2c_lock();
         int rd = sii_read(0x3D, &st);
-        if (rd == 0 && (st & 0x03)) sii_write(0x3D, st);   /* W1C the events */
+        if (rd == 0 && (st & 0x03)) sii_write(0x3D, (uint8_t)(st & 0x03));   /* W1C the latched events */
         i2c_unlock();
-        if (rd != 0 || !(st & 0x03)) continue;             /* healthy: no log, no action */
-        int attached = st & 0x04, sensing = st & 0x08;
-        { extern void gtimer_timeofday(uint32_t *, uint32_t *);   /* uptime stamp: drop */
-          extern void klog_u(unsigned);                           /* cadence is the data */
-          uint32_t s, u; gtimer_timeofday(&s, &u);
-          klog("[hdmi] t+"); klog_u(s); klog("s link event 0x3D="); puthex8(st); }
-        klog(!attached ? " (sink absent)\r\n"
-                       : sensing ? " (link still up — no action)\r\n"
-                                 : " (sink lost TMDS — soft-replug)\r\n");
-        if (attached && !sensing) hdmi_reinit();           /* re-acquire the sink */
+        if (rd != 0) continue;                             /* I2C hiccup: skip this tick */
+        if (st & 0x08) { lost = 0; continue; }             /* RxSense high = receiver present -> healthy */
+        if (++lost < 3) continue;                          /* RxSense low <3 s: transient (DDR burst) — ride it out */
+        if (lost == 3) {                                   /* 3 s of RxSense-low = a genuine unplug: re-acquire once */
+            extern void gtimer_timeofday(uint32_t *, uint32_t *); extern void klog_u(unsigned);
+            uint32_t s, u; gtimer_timeofday(&s, &u);
+            klog("[hdmi] t+"); klog_u(s); klog("s receiver gone (RxSense low 3 s) — soft-replug\r\n");
+            hdmi_reinit();
+        }
     }
 }
 
