@@ -40,6 +40,10 @@ module screen_bank #(
     input  wire [APERTURE_LOG2-1:0] cpu_addr, // byte address within the aperture
     input  wire                   cpu_we,
     input  wire [7:0]             cpu_wdata,
+    input  wire                   cpu_rden,    // read-strobe (= sally_rdy): freeze the read reg
+                                               // during CPU stalls so it can't chase the advanced
+                                               // address bus (else a stalled banked-page read returns
+                                               // a neighbour word — mirror of the math_cop fix)
     output wire [7:0]             cpu_rdata,   // 1-cycle BRAM read (registered word + byte mux)
     input  wire [7:0]             cpu_bank_wval,  // $D5C3 write value
     input  wire                   cpu_bank_we,    // $D5C3 write strobe (clk_cpu)
@@ -170,8 +174,10 @@ module screen_bank #(
     always_ff @(posedge clk_cpu) begin
         for (int bb = 0; bb < 8; bb = bb + 1)
             if (cpu_be[bb]) cpu_bram[cpu_word][bb*8 +: 8] <= cpu_wdata64[bb*8 +: 8];
-        cpu_rd_word_q <= cpu_bram[cpu_word];
-        cpu_boff_q    <= cpu_boff;
+        if (cpu_rden) begin                    // freeze during stalls (aligned with was_scrn_q)
+            cpu_rd_word_q <= cpu_bram[cpu_word];
+            cpu_boff_q    <= cpu_boff;
+        end
     end
     assign cpu_rdata = cpu_rd_word_q[cpu_boff_q*8 +: 8];
 

@@ -40,7 +40,7 @@ module tb_mathcop;
     math_cop #(.STACK_BASE(STACK_BASE), .APERTURE_LOG2(APE)) dut (
         .clk(clk), .rst(rst),
         .clk_cpu(clk_cpu), .cpu_addr(cpu_addr), .cpu_we(cpu_we), .cpu_wdata(cpu_wdata),
-        .cpu_rdata(cpu_rdata),
+        .cpu_rden(1'b1), .cpu_rdata(cpu_rdata),
         .exec_we(exec_we), .chunk_wval(chunk_wval), .chunk_we(chunk_we),
         .math_done(math_done), .math_busy(math_busy), .chunk_ready(chunk_ready),
         .evt_data(evt_data), .evt_pop(evt_pop), .evt_irq(evt_irq),

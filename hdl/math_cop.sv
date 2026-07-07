@@ -51,6 +51,10 @@ module math_cop #(
     input  wire [APERTURE_LOG2-1:0] cpu_addr, // byte address within the page
     input  wire                   cpu_we,
     input  wire [7:0]             cpu_wdata,
+    input  wire                   cpu_rden,   // CPU-side read clock-enable (= SALLY rdy):
+                                              // freezes the read register while the CPU is
+                                              // stalled so cpu_rdata stays aligned with the
+                                              // rdy-gated select in sally_mem (see below).
     output wire [7:0]             cpu_rdata,  // 1-cycle BRAM read (registered word + byte mux)
     input  wire                   exec_we,    // $D5C7 write strobe (doorbell)
     input  wire [7:0]             chunk_wval, // $D5C8 write value
@@ -171,11 +175,23 @@ module math_cop #(
     wire [7:0]         cpu_be = cpu_we ? (8'd1 << cpu_boff) : 8'd0;
     logic [63:0]       cpu_rd_word_q;
     logic [2:0]        cpu_boff_q;
+    // The write leg is inherently step-gated: cpu_we (= math_cpu_we in sally_mem)
+    // only asserts on an rdy=1 CPU bus cycle, so a stalled CPU never re-writes.
+    // The READ leg must be gated the SAME way (cpu_rden = rdy): sally_mem's
+    // was_math_q select and its BRAM shadow (bram_dout_q) are BOTH rdy-gated —
+    // they FREEZE while the CPU is stalled.  If this read register free-ran, it
+    // would chase the address bus as the CPU's MAR advances to the next fetch
+    // during the stall, so by the time the CPU samples cpu_rdata it would hold a
+    // NEIGHBOURING page word — the read returns stale data even though the write
+    // landed correctly.  Gating on cpu_rden makes cpu_rd_word_q track bram_dout_q
+    // exactly (same freeze, same 1-cycle latency, aligned with was_math_q).
     always_ff @(posedge clk_cpu) begin
         for (int bb = 0; bb < 8; bb = bb + 1)
             if (cpu_be[bb]) page_bram[cpu_word][bb*8 +: 8] <= cpu_wdata64[bb*8 +: 8];
-        cpu_rd_word_q <= page_bram[cpu_word];
-        cpu_boff_q    <= cpu_boff;
+        if (cpu_rden) begin
+            cpu_rd_word_q <= page_bram[cpu_word];
+            cpu_boff_q    <= cpu_boff;
+        end
     end
     assign cpu_rdata = cpu_rd_word_q[cpu_boff_q*8 +: 8];
 

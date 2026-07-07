@@ -34,7 +34,7 @@ module tb_screen_bank;
     screen_bank #(.STACK_BASE(STACK_BASE), .APERTURE_LOG2(APE)) dut (
         .clk(clk), .rst(rst),
         .clk_cpu(clk_cpu), .cpu_addr(cpu_addr), .cpu_we(cpu_we), .cpu_wdata(cpu_wdata),
-        .cpu_rdata(cpu_rdata), .cpu_bank_wval(cpu_bank_wval), .cpu_bank_we(cpu_bank_we),
+        .cpu_rden(1'b1), .cpu_rdata(cpu_rdata), .cpu_bank_wval(cpu_bank_wval), .cpu_bank_we(cpu_bank_we),
         .ready(ready),
         .clk_antic(clk_antic), .antic_addr(antic_addr), .antic_rdata(antic_rdata),
         .antic_bank_wval(antic_bank_wval), .antic_bank_we(antic_bank_we), .vbi(vbi),

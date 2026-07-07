@@ -964,6 +964,58 @@ mathcop: $(BUILD_DIR)/tb_mathcop.vvp
 $(BUILD_DIR)/tb_mathcop.vvp: $(MATHCOP_HDL) tb_mathcop.sv | $(BUILD_DIR)
 	$(IVERILOG) $(SV_FLAGS) -o $@ -s tb_mathcop $(MATHCOP_HDL) tb_mathcop.sv
 
+# ---- gp0_mux — math_cop + screen_bank sharing S_AXI_GP0 (integration) -------
+GP0MUX_HDL := \
+    $(HDL_DIR)/cdc_sync_bit.sv \
+    $(HDL_DIR)/math_cop.sv \
+    $(HDL_DIR)/screen_bank.sv \
+    $(HDL_DIR)/gp0_axi_mux.sv
+
+gp0_mux: $(BUILD_DIR)/tb_gp0_mux.vvp
+	@echo "=== gp0_mux ==="
+	@$(VVP) -N $< | tee $(BUILD_DIR)/tb_gp0_mux.log
+	@grep -q '\*\*\* GP0MUX OK \*\*\*' $(BUILD_DIR)/tb_gp0_mux.log || \
+	    (echo "FAIL: tb_gp0_mux missing GP0MUX OK"; exit 1)
+	@grep -q 'FATAL\|FAIL' $(BUILD_DIR)/tb_gp0_mux.log && \
+	    (echo "FAIL: tb_gp0_mux reported a failure"; exit 1) || true
+	@echo "PASS: tb_gp0_mux"
+
+$(BUILD_DIR)/tb_gp0_mux.vvp: $(GP0MUX_HDL) tb_gp0_mux.sv | $(BUILD_DIR)
+	$(IVERILOG) $(SV_FLAGS) -o $@ -s tb_gp0_mux $(GP0MUX_HDL) tb_gp0_mux.sv
+
+# ---- sally_math_overlay — sally_mem + real math_cop overlay READ round-trip -
+# Integration TB for the math-page overlay on $4000-$5FFF: exercises the
+# rdy-gated read-after-write pipeline WITH stall cycles (the case tb_mathcop and
+# tb_gp0_mux never hit).  `make sally_math_overlay_bug` builds the repro variant
+# (cpu_rden tied high = the old free-running read) to demonstrate the HW failure.
+SALLY_MATH_OVL_HDL := \
+    $(HDL_DIR)/bank_xlat.sv \
+    $(HDL_DIR)/banked_axi_reader.sv \
+    $(HDL_DIR)/banked_page_cache.sv \
+    $(HDL_DIR)/sally_mem.sv \
+    $(HDL_DIR)/cdc_sync_bit.sv \
+    $(HDL_DIR)/math_cop.sv
+
+sally_math_overlay: $(BUILD_DIR)/tb_sally_math_overlay.vvp
+	@echo "=== sally_math_overlay ==="
+	@$(VVP) -N $< | tee $(BUILD_DIR)/tb_sally_math_overlay.log
+	@grep -q '\*\*\* SALLY_MATH_OVERLAY OK \*\*\*' $(BUILD_DIR)/tb_sally_math_overlay.log || \
+	    (echo "FAIL: tb_sally_math_overlay missing SALLY_MATH_OVERLAY OK"; exit 1)
+	@grep -q 'FATAL\|FAIL' $(BUILD_DIR)/tb_sally_math_overlay.log && \
+	    (echo "FAIL: tb_sally_math_overlay reported a failure"; exit 1) || true
+	@echo "PASS: tb_sally_math_overlay"
+
+$(BUILD_DIR)/tb_sally_math_overlay.vvp: $(SALLY_MATH_OVL_HDL) tb_sally_math_overlay.sv axi_slave_mem.sv | $(BUILD_DIR)
+	$(IVERILOG) $(SV_FLAGS) -o $@ -s tb_sally_math_overlay $(SALLY_MATH_OVL_HDL) axi_slave_mem.sv tb_sally_math_overlay.sv
+
+# Repro build: cpu_rden hard-tied high (== the pre-fix free-running read).  The
+# stalled read returns the stale neighbour word, so the repro assertion fires.
+sally_math_overlay_bug: $(SALLY_MATH_OVL_HDL) tb_sally_math_overlay.sv axi_slave_mem.sv | $(BUILD_DIR)
+	@echo "=== sally_math_overlay (BUG REPRO) ==="
+	$(IVERILOG) $(SV_FLAGS) -D MATH_RDEN_FREE -o $(BUILD_DIR)/tb_sally_math_overlay_bug.vvp \
+	    -s tb_sally_math_overlay $(SALLY_MATH_OVL_HDL) axi_slave_mem.sv tb_sally_math_overlay.sv
+	@$(VVP) -N $(BUILD_DIR)/tb_sally_math_overlay_bug.vvp | tee $(BUILD_DIR)/tb_sally_math_overlay_bug.log
+
 # ---- sprite_regs — sprite_engine descriptor register file ----------------
 SPRITE_ENG_HDL := \
     $(HDL_DIR)/cdc_sync_bit.sv     \

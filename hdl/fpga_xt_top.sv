@@ -1213,7 +1213,7 @@ module fpga_xt_top (
         .clk          (clk_sys),       .rst        (rst_sys),
         .clk_cpu      (clk_sally),
         .cpu_addr     (scrn_cpu_addr), .cpu_we     (scrn_cpu_we), .cpu_wdata (scrn_cpu_wdata),
-        .cpu_rdata    (scrn_cpu_rdata),
+        .cpu_rden     (sally_rdy),     .cpu_rdata  (scrn_cpu_rdata),
         .cpu_bank_wval(scrn_bank_wval),.cpu_bank_we(scrn_cpu_bank_we),
         .ready        (scrn_ready),
         .clk_antic    (clk_sys),
@@ -1252,6 +1252,7 @@ module fpga_xt_top (
         .clk          (clk_sys),       .rst        (rst_sys),
         .clk_cpu      (clk_sally),
         .cpu_addr     (scrn_cpu_addr), .cpu_we     (math_cpu_we), .cpu_wdata (scrn_cpu_wdata),
+        .cpu_rden     (sally_rdy),     // freeze the page read register while the CPU stalls
         .cpu_rdata    (math_cpu_rdata),
         .exec_we      (math_exec_we),
         .chunk_wval   (scrn_bank_wval), .chunk_we  (math_chunk_we),
