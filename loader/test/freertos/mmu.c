@@ -113,6 +113,11 @@ void mmu_init(void)
         else if (i < 0x200)      l1[i] = base | SEC_KDATA;              /* kernel data + heap + pool: PL0-none */
         else if (i >= 0x330 && i < 0x340) l1[i] = base | SEC_PLANE_C;  /* WALLPAPER_BASE 16 MB: PL0-RW cacheable
                                                                         * WM/desktop back-buffer (CPU-only) */
+        else if (i == 0x208 || i == 0x209) l1[i] = base | SEC_PLANE_C; /* math/screen chunk stack 0x2080_0000 (2 MB):
+                                                                        * cacheable DMA buffer — the math-cop worker
+                                                                        * clean/invalidates it around the PL round-trip
+                                                                        * (mathcop.c); a bare barrier over non-cacheable
+                                                                        * didn't drain A9 writes to DDR before the reload */
         else if (i < 1024)       l1[i] = base | SEC_PLANE;             /* SALLY/planes: PL0-RW, non-cacheable */
         else                     l1[i] = base | SEC_PERIPH;            /* peripherals: PL0-none, Device */
     }

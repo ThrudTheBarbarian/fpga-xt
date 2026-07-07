@@ -8,11 +8,14 @@
  * chunk, and pokes MATH_DONE so the PL reloads the result span into the math
  * page and raises $D5C7.0 for the 6502.
  *
- * The chunk stack (0x2080_0000) is in the PL-shared region = Normal
- * NON-cacheable (mmu.c invariant), so there is no cache maintenance here —
- * but per-access it is slow, so the interpreter works on a local (cached)
- * copy: op words are copied in bulk, slots are demand-loaded per 8-byte slot
- * (bulk for vector ranges), and only dirty slots are written back.
+ * The chunk stack (0x2080_0000) is a cacheable DMA buffer (mmu.c sections
+ * 0x208/0x209, Normal WB-WA), so this file does PS<->PL cache maintenance around
+ * the round-trip: INVALIDATE the chunk before reading (the PL just flushed fresh
+ * operands into DDR) and CLEAN the result span to the point of coherency before
+ * ringing MATH_DONE (else the PL reload reads stale DDR).  A bare `dsb` over a
+ * non-cacheable chunk did NOT drain the A9's writes to DDR ahead of the PL read
+ * (HW-confirmed: results came back as uninitialised DDR poison).  The interpreter
+ * still works on a local copy (bulk op-word copy, per-slot demand load).
  */
 
 #include <stdint.h>
@@ -34,6 +37,33 @@ int *__errno(void) { static int mc_errno; return &mc_errno; }
 #define GICD_ICENABLER(n)   (*(volatile uint32_t *)(GICD_BASE + 0x180u + 4u * (n)))
 #define GICD_IPRIORITYR(id) (*(volatile uint8_t  *)(GICD_BASE + 0x400u + (id)))
 #define GICD_ITARGETSR(id)  (*(volatile uint8_t  *)(GICD_BASE + 0x800u + (id)))
+
+/* ---- PS<->PL DMA cache maintenance for the cacheable chunk buffer ----------
+ * The chunk is Normal WB-WA cacheable (mmu.c 0x208/0x209).  L1 ops are to the
+ * Point of Coherency (DDR): DCIMVAC invalidate, DCCMVAC clean — NOT the loader's
+ * PoU-only mmu_sync_caches.  PL310 L2 is not enabled in this port, but its
+ * CACHE_SYNC still drains the store-buffer pass-through, so we ring it after the
+ * clean as cheap insurance.  All spans here are 8 KB / 64 B aligned, so the
+ * line-granular loop never touches a neighbour. */
+#define MC_CLINE 32u
+#define L2CC_CACHE_SYNC     (*(volatile uint32_t *)0xF8F02730u)
+
+static inline void mc_dcache_inval(const volatile void *p, uint32_t len)  /* discard stale, then read fresh DDR */
+{
+    uint32_t a = (uint32_t)p & ~(MC_CLINE - 1u);
+    uint32_t e = ((uint32_t)p + len + MC_CLINE - 1u) & ~(MC_CLINE - 1u);
+    for (; a < e; a += MC_CLINE) __asm__ volatile("mcr p15,0,%0,c7,c6,1" :: "r"(a) : "memory"); /* DCIMVAC */
+    __asm__ volatile("dsb" ::: "memory");
+}
+static inline void mc_dcache_clean(const volatile void *p, uint32_t len)  /* push results to DDR */
+{
+    uint32_t a = (uint32_t)p & ~(MC_CLINE - 1u);
+    uint32_t e = ((uint32_t)p + len + MC_CLINE - 1u) & ~(MC_CLINE - 1u);
+    for (; a < e; a += MC_CLINE) __asm__ volatile("mcr p15,0,%0,c7,c10,1" :: "r"(a) : "memory"); /* DCCMVAC */
+    __asm__ volatile("dsb" ::: "memory");
+    L2CC_CACHE_SYNC = 0u;                                     /* drain PL310 store buffer */
+    __asm__ volatile("dsb" ::: "memory");
+}
 
 /* ---- ISR -> worker ring (matches the PL FIFO depth) ---------------------- */
 static volatile uint8_t mc_ring[16];
@@ -239,6 +269,10 @@ static void mc_run_chunk(uint8_t chunk)
         (volatile uint8_t *)(MC_CHUNK_BASE + (uint32_t)chunk * MC_CHUNK_SIZE);
     uint8_t st = 0;
 
+    /* The PL flushed this chunk's fresh operands into DDR; drop any stale cached
+     * copy from a prior run so the interpreter reads DDR, not L1. */
+    mc_dcache_inval(page, MC_CHUNK_SIZE);
+
     unsigned op_count = page[MC_OFF_OPCOUNT] | ((unsigned)page[MC_OFF_OPCOUNT + 1] << 8);
     if (op_count > MC_MAX_OPS) { op_count = MC_MAX_OPS; st |= MC_ST_RANGE; }
 
@@ -364,7 +398,9 @@ static void mc_run_chunk(uint8_t chunk)
     if (max_slot >= 0)
         last_line = (unsigned)(MC_OFF_SLOTS + max_slot * 8 + 7) >> 6;
 
-    __asm__ volatile ("dsb" ::: "memory");   /* chunk writes land before DONE */
+    /* Clean the result span to DDR so the PL reload reads the A9's writes, not
+     * stale memory — this is the release barrier the doorbell relies on. */
+    mc_dcache_clean(page, (last_line + 1u) * 64u);
     REG32(MC_GP0_DONE) = ((last_line + 1u) << 16) | (0u << 8) | chunk;
 }
 
