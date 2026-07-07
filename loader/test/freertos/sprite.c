@@ -200,7 +200,11 @@ static void mouse_rearm(void) {
     int g = desk_focus_gen();
     if (g == s_mouse_gen) return;
     s_mouse_gen = g;
-    puts0("\x1b[?1002h\x1b[?1006h");    /* button-event tracking, SGR encoding */
+    /* ?1000 = press/release (the floor every mouse-capable terminal has);
+     * ?1002 = + motion while a button is held (what DRAG needs) — layered so a
+     * terminal without 1002 still reports clicks; ?1006 = SGR encoding (we
+     * decode legacy X10 too, for terminals that ignore 1006). */
+    puts0("\x1b[?1000h\x1b[?1002h\x1b[?1006h");
     puts0("\x1b[18t");                  /* -> ESC [ 8 ; rows ; cols t */
     klog("mouse: reporting armed (gen "); klog_u((unsigned)g); klog(")\r\n");
 }
