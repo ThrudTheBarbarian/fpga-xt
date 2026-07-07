@@ -1,0 +1,44 @@
+10 REM ===== XT MATH-COPROCESSOR SMOKE TEST (Atari BASIC) =====
+20 REM One program, one doorbell: i32 MUL + f64 SQRT + a 4-lane
+30 REM i32 vector MUL, computed by the A9 (VFP+libm), results
+40 REM read back from the math page.  See docs/Design/math-coprocessor.md.
+50 REM   $D5C6=54726 MAP  $D5C7=54727 EXEC/STATUS  $D5C8=54728 CHUNK
+60 REM   page: opcount@16384, status@16387, slots@16448 (S(n)=16448+8*n),
+70 REM   op words@18496.  Chunk 200 keeps clear of the video-bank tests.
+100 POKE 53727,255 : REM $D1DF: unlock all XT groups
+110 POKE 54728,200 : GOSUB 500 : REM back the page with chunk 200, wait ready
+120 POKE 54726,1 : REM map the math page over $4000 (CPU view only)
+130 REM ---- operands ----
+140 POKE 16448,6 : POKE 16449,0 : POKE 16450,0 : POKE 16451,0 : REM S0 = 6 (i32)
+150 POKE 16456,7 : POKE 16457,0 : POKE 16458,0 : POKE 16459,0 : REM S1 = 7 (i32)
+160 FOR I=0 TO 6 : POKE 16472+I,0 : NEXT I : POKE 16479,64 : REM S3 = 2.0 (f64)
+170 FOR I=0 TO 3 : REM vector A = 1,2,3,4 @ slot 8; B = 5,6,7,8 @ slot 10
+180 POKE 16512+4*I,I+1 : POKE 16513+4*I,0 : POKE 16514+4*I,0 : POKE 16515+4*I,0
+190 POKE 16528+4*I,I+5 : POKE 16529+4*I,0 : POKE 16530+4*I,0 : POKE 16531+4*I,0
+200 NEXT I
+210 REM ---- program: 4 op words ----
+220 POKE 18496,131 : POKE 18497,0 : POKE 18498,1 : POKE 18499,2 : REM i32 MUL S0,S1 -> S2
+230 POKE 18500,71 : POKE 18501,3 : POKE 18502,0 : POKE 18503,4 : REM f64 SQRT S3 -> S4
+240 POKE 18504,178 : POKE 18505,8 : POKE 18506,10 : POKE 18507,12 : REM i32 VMUL base 8,10 -> 12
+250 POKE 18508,4 : POKE 18509,1 : POKE 18510,1 : POKE 18511,1 : REM   4 lanes, strides 1,1,1
+260 POKE 16384,4 : POKE 16385,0 : REM op count = 4
+270 REM ---- doorbell + wait done ----
+280 POKE 54727,0 : GOSUB 600
+290 REM ---- results ----
+300 E=0
+310 PRINT "STATUS=";PEEK(16387);" (WANT 1)" : IF PEEK(16387)<>1 THEN E=1
+320 PRINT "6*7=";PEEK(16464);" (WANT 42)" : IF PEEK(16464)<>42 THEN E=1
+330 REM sqrt(2.0) f64 = ...9E A0 F6 3F: check the top 3 bytes
+340 IF PEEK(16485)<>160 OR PEEK(16486)<>246 OR PEEK(16487)<>63 THEN E=1
+350 PRINT "SQRT(2) BYTES ";PEEK(16485);" ";PEEK(16486);" ";PEEK(16487);" (WANT 160 246 63)"
+360 FOR I=0 TO 3 : V=PEEK(16544+4*I) : W=(I+1)*(I+5)
+370 PRINT "VMUL[";I;"]=";V;" (WANT ";W;")" : IF V<>W THEN E=1
+380 NEXT I
+390 IF E=0 THEN PRINT "*** MATH-COP OK ***" : END
+400 PRINT "*** MATH-COP FAIL ***" : END
+500 REM -- wait chunk ready ($D5C7 bit2) --
+510 IF (PEEK(54727) AND 4)=0 THEN 510
+520 RETURN
+600 REM -- wait done ($D5C7 bit0) --
+610 IF (PEEK(54727) AND 1)=0 THEN 610
+620 RETURN
