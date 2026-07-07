@@ -136,14 +136,45 @@ static uint8_t ascii_to_kbcode(int c)
     }
 }
 
-int kbd_6502_ascii(int c)
+/* Keyboard injection into the 6502 is split into a PACE step and an INJECT step
+ * so the meter delay lands BEFORE the key it protects.  POKEY's KBCODE is a
+ * single latch the Atari OS reads once per VBLANK (with KEYDEL debounce), so
+ * injecting at serial ring-drain speed overwrites keys before the 6502 reads
+ * them — a fast paste loses almost everything.  Pace values ported from the
+ * vitis serial-paste bridge, then halved in rate for margin: ~40 ms base
+ * (~25 cps), 120 ms before a REPEATED key (beat the KEYDEL debounce, else the
+ * second identical char is dropped, e.g. PEEK -> PEK), 200 ms after Return (let
+ * BASIC tokenize the line).  The repeat/
+ * tokenize gaps must PRECEDE the key, so they key off the PREVIOUS char — a
+ * lookahead like the vitis peek, done as look-behind since we get one char at a
+ * time.  The SYS_kbd_6502 handler waits kbd_6502_pace() ms, then calls
+ * kbd_6502_inject(); the wait blocks the desktop task, back-pressuring the ring
+ * drain.  CR/LF collapse: terminals send \r\n (or \n\r) per line and BOTH map to
+ * Return, so the pace step swallows the second half of a pair — else every Enter
+ * injects two Returns (the old debounce used to hide the duplicate; correct
+ * pacing exposes it). */
+int kbd_6502_pace(int c)                 /* ms to wait BEFORE this key; -1 = no Atari key */
 {
-    if (c == 0x03) { *(volatile uint8_t *)KBD_BREAK = 0; return 0; }
+    static uint8_t prev_kb = 0xFF;       /* previous injected KBCODE (0xFF = none) */
+    static int     prev_ret;             /* previous key was Return */
+    static int     prev_eol;             /* CR/LF collapse: 0 none, 1 saw CR, 2 saw LF */
+    if (c == 0x03) { prev_kb = 0xFF; prev_ret = 0; prev_eol = 0; return 40; }  /* Ctrl-C = BREAK */
+    if (c == '\r')      { if (prev_eol == 2) { prev_eol = 0; return -1; } prev_eol = 1; }  /* \n\r pair */
+    else if (c == '\n') { if (prev_eol == 1) { prev_eol = 0; return -1; } prev_eol = 2; }  /* \r\n pair */
+    else                  prev_eol = 0;
     uint8_t kb = ascii_to_kbcode(c);
     if (kb == 0xFFu) return -1;
+    int ms = prev_ret ? 200 : (kb == prev_kb) ? 120 : 40;
+    prev_kb = kb; prev_ret = (c == '\r' || c == '\n');
+    return ms;
+}
+void kbd_6502_inject(int c)              /* the actual POKEY write, after the pace wait */
+{
+    if (c == 0x03) { *(volatile uint8_t *)KBD_BREAK = 0; return; }
+    uint8_t kb = ascii_to_kbcode(c);
+    if (kb == 0xFFu) return;
     *(volatile uint8_t *)KBD_INJECT  = kb;
     *(volatile uint8_t *)KBD_RELEASE = 0;
-    return 0;
 }
 
 /* Serial "mouse", two sources:
@@ -314,5 +345,6 @@ int input_next_event(struct os_event *ev, int timeout_ms, int raw) {
 int input_next_event(struct os_event *ev, int timeout_ms, int raw) {
     (void)timeout_ms; (void)raw; ev->type = OS_EV_TIMER; ev->button = 0; ev->mx = ev->my = 0; return 0;
 }
-int kbd_6502_ascii(int c) { (void)c; return -1; }
+int  kbd_6502_pace(int c)   { (void)c; return -1; }
+void kbd_6502_inject(int c) { (void)c; }
 #endif

@@ -37,7 +37,12 @@
 #define GICD_ITARGETSR(id)   (*(volatile uint8_t  *)(GICD_BASE + 0x800u + (id)))
 #define UART1_IRQ_ID 82u
 
-#define RING_SZ 256
+/* 8 KB: the desktop meters keys into the 6502 at ~50 cps (single KBCODE latch,
+ * see kbd_6502_ascii), far slower than a host paste arrives (~11 k cps at
+ * 115200), so the ring must hold a whole pasted BASIC listing while it drains.
+ * A smaller ring silently drops the paste tail. (sh_q shares the size — a bigger
+ * shell paste buffer is a harmless bonus.) */
+#define RING_SZ 8192
 /* Two input queues + a focus flag: the console byte stream is routed to the shell
  * (sh_readc) or the desktop (desk_readc) by g_focus; the FOCUS_TOGGLE key flips it
  * (intercepted in the ISR, never forwarded) so the desktop and shell coexist —

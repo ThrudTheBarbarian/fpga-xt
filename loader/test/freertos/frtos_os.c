@@ -2237,8 +2237,19 @@ static long do_syscall(uint32_t num, long a0, long a1, long a2)
         return 0;
     }
     case SYS_kbd_6502: {                                     /* (ascii) -> keystroke to POKEY */
-        extern int kbd_6502_ascii(int);
-        return kbd_6502_ascii((int)a0);
+        extern int  kbd_6502_pace(int);
+        extern void kbd_6502_inject(int);
+        int pace = kbd_6502_pace((int)a0);    /* >=0: ms to meter BEFORE the key; -1: no Atari key */
+        if (pace < 0) return -1;
+        if (pace) {                           /* meter to keyboard pace (single KBCODE latch, no FIFO);
+                                               * blocks THIS task -> back-pressures the paste ring drain.
+                                               * The gap PRECEDES the key so a doubled char clears the
+                                               * KEYDEL debounce before its repeat is injected. */
+            TickType_t t = pdMS_TO_TICKS((uint32_t)pace);
+            vTaskDelay(t ? t : 1);
+        }
+        kbd_6502_inject((int)a0);
+        return 0;
     }
     case SYS_fb_wallpaper: {                                 /* (struct os_fbinfo *) */
         extern void fb_wallpaper_info(int *, int *, int *, uint32_t *);
