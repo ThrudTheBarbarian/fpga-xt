@@ -2229,6 +2229,10 @@ static long do_syscall(uint32_t num, long a0, long a1, long a2)
                       (int)((uint32_t)a1 >> 16), (int)(a1 & 0xFFFF), (int)a2);
         return 0;
     }
+    case SYS_kbd_6502: {                                     /* (ascii) -> keystroke to POKEY */
+        extern int kbd_6502_ascii(int);
+        return kbd_6502_ascii((int)a0);
+    }
     case SYS_fb_wallpaper: {                                 /* (struct os_fbinfo *) */
         extern void fb_wallpaper_info(int *, int *, int *, uint32_t *);
         struct { int w, h, stride; uint32_t addr; } *fi = (void *)a0;

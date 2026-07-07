@@ -184,6 +184,8 @@ struct xt_dirent { unsigned mode; char name[256]; };
 /* input / events — block 0x700. The kernel owns the HW cursor sprite + the serial
  * mouse; the desktop blocks here for the next event and the cursor moves kernel-side. */
 #define SYS_input        0x700 /* (struct os_event *, timeout_ms) -> 0; blocks (<0 = forever) */
+#define SYS_kbd_6502     0x701 /* (ascii) -> 0 / -1 no such Atari key: inject one keystroke
+                                * into the 6502's POKEY (KBCODE down + release; ^C = BREAK) */
 
 /* one input event (SYS_input); type values match the AES aes_event enum. */
 struct os_event { int type, mx, my, button, key, shift; };

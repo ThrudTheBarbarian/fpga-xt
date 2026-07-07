@@ -141,5 +141,7 @@ static inline long sys_xl_window(int x, int y, int w, int h, int scale) {
 /* Block for the next input event (mouse/keyboard); timeout_ms < 0 = forever.  The
  * cursor sprite is moved kernel-side; `ev` is filled with the event. */
 static inline long sys_input(struct os_event *ev, int timeout_ms) { return __syscall(SYS_input, (long)ev, timeout_ms, 0); }
+/* Inject one ASCII keystroke into the 6502's POKEY (Ctrl-C = Atari BREAK). */
+static inline long sys_kbd_6502(int c) { return __syscall(SYS_kbd_6502, c, 0, 0); }
 
 #endif

@@ -31,7 +31,7 @@
 #define ICON_CW 100
 #define ICON_CH (ICON_SZ + 26)
 #define MAX_ICONS 32
-#define DCLICK_MS 320
+#define DCLICK_MS 500   /* generous: serial Enter-Enter / Space-toggle need more than a real mouse */
 
 static int    HV, PW, PH;
 static theme  TH;
@@ -113,7 +113,7 @@ static int g_ex = 380, g_ey = 130;
 // kernel places plane 1 over that window's work area (SYS_xl_window), and we
 // re-place it whenever the window moves/resizes, hide it on close.  m68k
 // windows stay placeholders (no core hosted yet).
-#define XL_SCALE 2                      // 320x192 writeback -> 640x384 in the 672x480 work area
+#define XL_SCALE 2                      // 320x192 writeback -> a 640x384 work area
 static int g_xlwin;                     // window handle owning the plane (0 = none)
 
 static void xl_sync(void) {
@@ -154,8 +154,11 @@ static void open_emulator(int type, const char *media, const char *boot) {
     emuwin *e = &EMU[s]; memset(e, 0, sizeof *e); e->used = 1;
     snprintf(e->name, sizeof e->name, "%s", emu_machine(type));
     if (boot) snprintf(e->boot, sizeof e->boot, "%s", boot);
-    int pw = (type == ICT_EMU_8BIT) ? 672 : 640;              // work area = the emulation plane
-    int ph = (type == ICT_EMU_8BIT) ? 480 : 400;
+    // work area = the emulation plane, EXACTLY: the XL writeback is 320x192, so
+    // at XL_SCALE=2 the plane covers 640x384 — a larger work area would scan
+    // DDR garbage beyond the buffer into the window.
+    int pw = (type == ICT_EMU_8BIT) ? 320*XL_SCALE : 640;
+    int ph = (type == ICT_EMU_8BIT) ? 192*XL_SCALE : 400;
     int bx, by, bw, bh;
     wind_calc(WC_BORDER, W_NAME|W_CLOSER|W_MOVER, g_ex, g_ey, pw, ph, &bx, &by, &bw, &bh);
     e->win = wind_create(W_NAME|W_CLOSER|W_MOVER, bx, by, bw, bh);
@@ -443,6 +446,9 @@ void _app_entry(int argc, char **argv) {
         int mx, my, mb, ks, key, nc; int16_t msg[8];
         int r = evnt_multi(MU_MESAG|MU_KEYBD|MU_BUTTON, 2,1,1, 0,0,0,0,0, 0,0,0,0,0, msg, 0,0,
                            &mx, &my, &mb, &ks, &key, &nc);
+        // Keyboard goes to the ATARI while an emulator window is topped (the
+        // kernel injects it into POKEY); otherwise Esc quits the desktop.
+        if ((r & MU_KEYBD) && emu_of_window(wind_top())) { sys_kbd_6502(key); continue; }
         if ((r & MU_KEYBD) && key == 0x1b) break;                              // Esc quits
         if ((r & MU_MESAG) && msg[0] == WM_CLOSED) {
             browser *b = br_of_window(msg[3]); if (b) { br_free_icons(b); b->used = 0; }

@@ -93,6 +93,59 @@ void cursor_move(int x, int y) {
 }
 void cursor_pos(int *x, int *y) { *x = cur_x; *y = cur_y; }
 
+/* ---- keyboard -> the 6502 (POKEY inject, GP0 CTRL block) -------------------
+ * ASCII -> Atari KBCODE (bit6 = Shift, bit7 = Ctrl); 0xFF = no Atari key.
+ * Letters map to the unshifted key so the Atari's power-on caps gives uppercase
+ * (BASIC-friendly).  Injection = KBCODE down then all-keys-up (the release
+ * stops the OS auto-repeat); Ctrl-C = the Atari BREAK key.  The desktop routes
+ * keys here (SYS_kbd_6502) while an emulator window is topped. */
+#define KBD_INJECT  (GP0_BASE + 0x30Cu)     /* W: KBCODE + POKEY IRQ  */
+#define KBD_RELEASE (GP0_BASE + 0x310u)     /* W: all keys up         */
+#define KBD_BREAK   (GP0_BASE + 0x314u)     /* W: Atari BREAK         */
+
+static uint8_t ascii_to_kbcode(int c)
+{
+    static const uint8_t LET[26] = {  /* A..Z key codes */
+      0x3F,0x15,0x12,0x3A,0x2A,0x38,0x3D,0x39,0x0D,0x01,0x05,0x00,0x25,
+      0x23,0x08,0x0A,0x2F,0x28,0x3E,0x2D,0x0B,0x10,0x2E,0x16,0x2B,0x17 };
+    static const uint8_t DIG[10] = {  /* 0..9 unshifted */
+      0x32,0x1F,0x1E,0x1A,0x18,0x1D,0x1B,0x33,0x35,0x30 };
+    if (c >= 'a' && c <= 'z') return LET[c - 'a'];
+    if (c >= 'A' && c <= 'Z') return LET[c - 'A'];   /* both -> uppercase */
+    if (c >= '0' && c <= '9') return DIG[c - '0'];
+    switch (c) {
+      case ' ':  return 0x21;
+      case '\r': case '\n': return 0x0C;             /* Return */
+      case 0x08: case 0x7F: return 0x34;             /* Backspace/Delete */
+      case '\t': return 0x2C;                        /* Tab */
+      case 0x1B: return 0x1C;                        /* Esc */
+      case '-': return 0x0E;  case '=': return 0x0F;  case ';': return 0x02;
+      case ',': return 0x20;  case '.': return 0x22;  case '/': return 0x26;
+      case '+': return 0x06;  case '*': return 0x07;  case '<': return 0x36;
+      case '>': return 0x37;
+      case '!': return 0x1F|0x40;  case '"': return 0x1E|0x40;
+      case '#': return 0x1A|0x40;  case '$': return 0x18|0x40;
+      case '%': return 0x1D|0x40;  case '&': return 0x1B|0x40;
+      case '\'':return 0x33|0x40;  case '@': return 0x35|0x40;
+      case '(': return 0x30|0x40;  case ')': return 0x32|0x40;
+      case ':': return 0x02|0x40;  case '?': return 0x26|0x40;
+      case '[': return 0x20|0x40;  case ']': return 0x22|0x40;
+      case '_': return 0x0E|0x40;  case '|': return 0x0F|0x40;
+      case '\\':return 0x06|0x40;  case '^': return 0x07|0x40;
+      default:  return 0xFF;
+    }
+}
+
+int kbd_6502_ascii(int c)
+{
+    if (c == 0x03) { *(volatile uint8_t *)KBD_BREAK = 0; return 0; }
+    uint8_t kb = ascii_to_kbcode(c);
+    if (kb == 0xFFu) return -1;
+    *(volatile uint8_t *)KBD_INJECT  = kb;
+    *(volatile uint8_t *)KBD_RELEASE = 0;
+    return 0;
+}
+
 /* Serial "mouse", two sources:
  *
  * 1. The TERMINAL'S mouse via xterm SGR reporting: on the first call we switch
@@ -212,8 +265,9 @@ int input_next_event(struct os_event *ev, int timeout_ms) {
     }
 }
 
-#else   /* qemu: no sprite engine / input */
+#else   /* qemu: no sprite engine / input / POKEY */
 int input_next_event(struct os_event *ev, int timeout_ms) {
     (void)timeout_ms; ev->type = OS_EV_TIMER; ev->button = 0; ev->mx = ev->my = 0; return 0;
 }
+int kbd_6502_ascii(int c) { (void)c; return -1; }
 #endif
