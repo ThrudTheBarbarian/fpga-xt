@@ -366,7 +366,9 @@ module sally_mem #(
     wire is_math_ctl   = (addr[15:0] == (XTC_CTL_BASE + 16'd6));   // $D5C6
     wire is_math_exec  = (addr[15:0] == (XTC_CTL_BASE + 16'd7));   // $D5C7
     wire is_math_chunk = (addr[15:0] == (XTC_CTL_BASE + 16'd8));   // $D5C8
-    wire is_math_reg   = is_math_ctl | is_math_exec | is_math_chunk;
+    wire is_math_lat   = (addr[15:4] == XTC_CTL_BASE[15:4])        // $D5C9-$D5CC: op-latency counter
+                       && (addr[3:0] >= 4'd9) && (addr[3:0] <= 4'd12);
+    wire is_math_reg   = is_math_ctl | is_math_exec | is_math_chunk | is_math_lat;
 
     assign math_exec_we  = rdy && !rw && is_math_exec  && unlock_bank_q;
     assign math_chunk_we = rdy && !rw && is_math_chunk && unlock_bank_q;
@@ -384,6 +386,37 @@ module sally_mem #(
     end
     assign math_map_q   = math_map;
     assign math_chunk_q = math_chunk;
+
+    // ---- math-op latency counter (clk_sally = the 6502's own clock) ---------
+    // Times the intrinsic round-trip the 6502 experiences: START on the $D5C7
+    // EXEC write ("ring the doorbell"), STOP on the rising edge of math_done
+    // ("answer ready").  math_done is masked low by the engine on EXEC, so we
+    // wait to SEE it low (sawlow) before accepting the completion edge — never
+    // latch a stale done left over from the previous op.  The 32-bit count is
+    // readable at $D5C9-$D5CC (LE); at 100 MHz clk_sally, count/100 = microsec.
+    // Static between ops, so the 4-byte 6502 read is coherent without a latch.
+    logic [31:0] math_lat_run, math_lat_q;
+    logic        math_lat_active, math_lat_sawlow, math_done_d;
+    always_ff @(posedge clk or posedge rst) begin
+        if (rst) begin
+            math_lat_run <= 32'd0; math_lat_q <= 32'd0;
+            math_lat_active <= 1'b0; math_lat_sawlow <= 1'b0; math_done_d <= 1'b0;
+        end else begin
+            math_done_d <= math_done;
+            if (math_exec_we) begin                 // doorbell -> start
+                math_lat_run    <= 32'd0;
+                math_lat_active <= 1'b1;
+                math_lat_sawlow <= 1'b0;
+            end else if (math_lat_active) begin
+                math_lat_run <= math_lat_run + 32'd1;
+                if (!math_done) math_lat_sawlow <= 1'b1;
+                if (math_lat_sawlow && math_done && !math_done_d) begin
+                    math_lat_q      <= math_lat_run; // answer ready -> latch cycles
+                    math_lat_active <= 1'b0;
+                end
+            end
+        end
+    end
 
     logic [7:0] scrn_cpu_bank, scrn_antic_bank;
     always_ff @(posedge clk or posedge rst) begin
@@ -704,6 +737,10 @@ module sally_mem #(
                 4'd6:    ctlreg_dout_q <= {7'b0, math_map};
                 4'd7:    ctlreg_dout_q <= {5'b0, math_chunk_ready, math_busy, math_done};
                 4'd8:    ctlreg_dout_q <= math_chunk;
+                4'd9:    ctlreg_dout_q <= math_lat_q[7:0];    // op-latency cycles, LE ($D5C9-$D5CC)
+                4'hA:    ctlreg_dout_q <= math_lat_q[15:8];
+                4'hB:    ctlreg_dout_q <= math_lat_q[23:16];
+                4'hC:    ctlreg_dout_q <= math_lat_q[31:24];
                 default: ctlreg_dout_q <= 8'h00;
             endcase
             // Locked (BANK group off) → don't shadow these; the read falls
