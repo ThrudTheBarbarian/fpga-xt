@@ -2255,12 +2255,17 @@ module fpga_xt_top (
         .iic_0_sda_t        (i2c_sda_t),
         .m_axi_hp0_araddr   (hp0_araddr[31:0]),
         .m_axi_hp0_arburst  (hp0_arburst[1:0]),
-        .m_axi_hp0_arcache  (4'b0011),   // read-path expt: bufferable+modifiable (was 0000)
+        .m_axi_hp0_arcache  (4'b0000),   // scan-out reads: Device/non-bufferable, in-order & urgent.
+                                         // The 0011 (bufferable+MODIFIABLE) experiment let the
+                                         // interconnect reorder/merge these reads behind write
+                                         // bursts -> compositor plane-fetch underran -> HDMI blanked
+                                         // on any DDR burst (present/SD DMA). Reverted to known-good.
         .m_axi_hp0_arid     (6'd0),
         .m_axi_hp0_arlen    (hp0_arlen[3:0]),
         .m_axi_hp0_arlock   (2'd0),
         .m_axi_hp0_arprot   (3'd0),
-        .m_axi_hp0_arqos    (4'd0),
+        .m_axi_hp0_arqos    (4'd0),   // (ARQOS is inert on this DDRC without HPR arb config;
+                                      // the real fix was the arcache revert above)
         .m_axi_hp0_arready  (hp0_arready),
         .m_axi_hp0_arsize   (hp0_arsize[2:0]),
         .m_axi_hp0_arvalid  (hp0_arvalid),
