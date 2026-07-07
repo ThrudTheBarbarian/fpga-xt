@@ -43,6 +43,31 @@ static long dv_rand_rd(vfs_file *f, void *buf, uint32_t n)
 
 static void dv_close(vfs_file *f) { (void)f; }
 
+/* ---- pseudoterminals: /dev/ptyp[0-3] (master) + /dev/ttyp[0-3] (slave) -----
+ * The pty core (buffers, blocking, ioctls) lives in frtos_os.c; these are thin
+ * routers. f->priv packs the pair index (low bits) + a slave flag (0x100). */
+extern void xt_pty_open(int i, int master);
+extern void xt_pty_close(int i, int master);
+extern long xt_pty_read(int i, int master, void *buf, uint32_t n, int nonblock);
+extern long xt_pty_write(int i, int master, const void *buf, uint32_t n);
+extern int  xt_pty_nread(int i, int master);
+extern long xt_pty_ioctl(int i, unsigned req, void *arg);
+#define PTY_IDX(f)  ((int)((uintptr_t)(f)->priv & 0xff))
+#define PTY_MASTER(f) (((uintptr_t)(f)->priv & 0x100) == 0)
+
+static long dv_ptym_rd(vfs_file *f, void *buf, uint32_t n) { return xt_pty_read(PTY_IDX(f), 1, buf, n, f->nonblock); }
+static long dv_ptym_wr(vfs_file *f, const void *buf, uint32_t n) { return xt_pty_write(PTY_IDX(f), 1, buf, n); }
+static long dv_ptys_rd(vfs_file *f, void *buf, uint32_t n) { return xt_pty_read(PTY_IDX(f), 0, buf, n, f->nonblock); }
+static long dv_ptys_wr(vfs_file *f, const void *buf, uint32_t n) { return xt_pty_write(PTY_IDX(f), 0, buf, n); }
+static long dv_pty_ioctl(vfs_file *f, unsigned req, void *arg)
+{
+    int i = PTY_IDX(f), m = PTY_MASTER(f);
+    if (req == 0x7403u /*XT_TTY_NREAD*/) { if (arg) *(int *)arg = xt_pty_nread(i, m); return 0; }
+    return xt_pty_ioctl(i, req, arg);
+}
+static void dv_pty_close(vfs_file *f) { xt_pty_close(PTY_IDX(f), PTY_MASTER(f)); }
+static void dv_pty_dup(vfs_file *f)   { xt_pty_open(PTY_IDX(f), PTY_MASTER(f)); }  /* +1 ref on spawn */
+
 /* ---- i2c-0: the PS-I2C0 master, Linux i2c-dev semantics -------------------
  * The slave address is per-open state (set by I2C_SLAVE, kept in f->pos);
  * read()/write() are raw transfers to it, ioctl(I2C_SMBUS) the SMBus ops.
@@ -159,6 +184,14 @@ static const devnode g_nodes[] = {
     { "/tty",     VFS_CHR_TTY, 0, 0, 0 },
     { "/console", VFS_CHR_TTY, 0, 0, 0 },
     { "/i2c-0",   VFS_CHR_DEV, dv_i2c_rd, dv_i2c_wr, dv_i2c_ioctl },
+    { "/ptyp0",   VFS_CHR_DEV, dv_ptym_rd, dv_ptym_wr, dv_pty_ioctl },
+    { "/ptyp1",   VFS_CHR_DEV, dv_ptym_rd, dv_ptym_wr, dv_pty_ioctl },
+    { "/ptyp2",   VFS_CHR_DEV, dv_ptym_rd, dv_ptym_wr, dv_pty_ioctl },
+    { "/ptyp3",   VFS_CHR_DEV, dv_ptym_rd, dv_ptym_wr, dv_pty_ioctl },
+    { "/ttyp0",   VFS_CHR_DEV, dv_ptys_rd, dv_ptys_wr, dv_pty_ioctl },
+    { "/ttyp1",   VFS_CHR_DEV, dv_ptys_rd, dv_ptys_wr, dv_pty_ioctl },
+    { "/ttyp2",   VFS_CHR_DEV, dv_ptys_rd, dv_ptys_wr, dv_pty_ioctl },
+    { "/ttyp3",   VFS_CHR_DEV, dv_ptys_rd, dv_ptys_wr, dv_pty_ioctl },
 };
 #define NDEV ((int)(sizeof g_nodes / sizeof g_nodes[0]))
 
@@ -178,9 +211,19 @@ static int dv_open(vfs_mount *m, const char *rel, int flags, vfs_file *f)
     const devnode *d = dv_find(rel);
     if (!d) return -1;
     f->read = d->rd; f->write = d->wr; f->lseek = 0; f->close = dv_close;
-    f->ioctl = d->ioc;
+    f->ioctl = d->ioc; f->ondup = 0; f->nonblock = 0;
     f->size = 0; f->pos = 0; f->data = 0; f->mnt = 0;
     f->chr = d->chr;
+    if (d->rd == dv_ptym_rd || d->rd == dv_ptys_rd) {   /* pty: idx from the trailing digit */
+        int slave = (d->rd == dv_ptys_rd);
+        int k = 0; while (rel[k]) k++;                   /* index = the trailing digit */
+        int idx = (k > 0) ? (rel[k-1] - '0') : 0;
+        f->priv = (void *)(uintptr_t)((idx & 0xff) | (slave ? 0x100 : 0));
+        f->close = dv_pty_close;
+        f->ondup = dv_pty_dup;           /* spawn-inherited copies bump the open count */
+        xt_pty_open(idx, !slave);
+        return 0;
+    }
     if (d->rd == dv_rand_rd) {           /* per-open xorshift state, clock-seeded */
         struct { long sec, usec; } tv = { 0, 0 };
         _gettimeofday(&tv, 0);

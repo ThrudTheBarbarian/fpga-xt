@@ -190,10 +190,26 @@ int getsockopt(int fd, int level, int opt, void *val, socklen_t *len)
     return -1;
 }
 int shutdown(int fd, int how) { (void)fd; (void)how; return 0; }
+/* peer/local endpoint of a kernel socket (XT_SIOCGPEER/XT_SIOCGNAME -> u32[2]
+ * {ip_be32, port}); dropbear logs the result ("Child connection from a.b.c.d"). */
+static int sock_endpoint(int fd, unsigned req, struct sockaddr *sa, socklen_t *len)
+{
+    if (!sa || !len || *len < (socklen_t)sizeof(struct sockaddr_in)) { errno = EINVAL; return -1; }
+    struct sockaddr_in *sin = (struct sockaddr_in *)sa;
+    memset(sin, 0, sizeof *sin);
+    sin->sin_family = AF_INET;
+    unsigned e[2] = { 0, 0 };
+    if (sys_ioctl(fd, req, e) == 0) {           /* on failure leave 0.0.0.0:0 */
+        sin->sin_addr.s_addr = e[0];            /* kernel hands it back big-endian */
+        sin->sin_port = htons((unsigned short)e[1]);
+    }
+    *len = sizeof *sin;
+    return 0;
+}
 int getpeername(int fd, struct sockaddr *sa, socklen_t *len)
-{ (void)fd; if (sa && len && *len >= sizeof(struct sockaddr_in)) { memset(sa, 0, sizeof(struct sockaddr_in)); ((struct sockaddr_in*)sa)->sin_family = AF_INET; *len = sizeof(struct sockaddr_in); } return 0; }
+{ return sock_endpoint(fd, XT_SIOCGPEER, sa, len); }
 int getsockname(int fd, struct sockaddr *sa, socklen_t *len)
-{ return getpeername(fd, sa, len); }
+{ return sock_endpoint(fd, XT_SIOCGNAME, sa, len); }
 
 /* ---- name resolution --------------------------------------------------------- */
 /* /OS/etc/hosts: "a.b.c.d  name [alias...]" */

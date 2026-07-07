@@ -36,6 +36,7 @@ typedef struct {
     int      sock;   /* socket fd: net/sockets.c index+1 (0 = not a socket) */
     int      con;    /* console alias (a shell's saved stdio parked on a high fd) */
     int      oflags; /* the VFS_O_* this fd was opened with (for reopen-by-path) */
+    int      nonblock; /* O_NONBLOCK (via FIONBIO): a read that would block returns -EAGAIN */
     uint32_t pos;    /* logical read/write cursor (page store); the driver's vf.pos is fill scratch */
     uint32_t cpi;    /* cached page index (~0u = none) — backing-store only; in-memory fds read vf.data */
     void    *cpage;  /* the one cached page (pool identity addr), or NULL */
@@ -90,6 +91,7 @@ typedef struct {
     uint32_t          heap_brk;       /* per-process heap (XTOS_HEAP_VA window) */
     uint32_t          heap_end;
     int               transient;      /* loaded outside the cache (runhost) -> unload on reap */
+    int               strace;         /* log this proc's syscalls to klog (SYS_strace / name match) */
     void             *src;            /* the host ELF buffer to free on reap (transient) */
     StaticTask_t      tcb;            /* static TCB (stack from stackguard.c) */
     /* blocking-syscall deferral: saved PL0 exception context so the blocking part can
@@ -168,6 +170,8 @@ int frtos_tty_sigtstp(void)
  * once libc.so is up we switch to its memalign/free. After that, every .so /
  * program image comes from the one libc.so malloc and is freed on unload. */
 extern char _heap_start[];                       /* 0x0200_0000 (linker) */
+void klog(const char *s); void klog_u(unsigned v);  /* defined below; fwd-decl so the */
+                                                    /* diagnostic klogs above the def compile */
 static char *g_boot;
 static void *(*g_libc_memalign)(size_t, size_t);
 static void  (*g_libc_free)(void *);
@@ -199,6 +203,24 @@ void frtos_free(void *p, void *u) { (void)p; (void)u; }  /* bump kernel heap: im
 
 /* Called after the loader has loaded libc.so: grab its allocator, and point the
  * kernel's _sbrk just above libc.so's (bootstrap-pinned) image. */
+/* fault diagnostics: which loaded object (and offset) an address falls in, so a
+ * PC/return-addr in a crash dump maps to <object>+<hex offset> — feed that to
+ * `arm-none-eabi-addr2line -e build/<object>` (or objdump) to name the function. */
+static proc_t *cur_proc(void);   /* fwd (defined below) */
+void fault_symbolize(unsigned addr, void (*emit)(const char *, unsigned))
+{
+    proc_t *p = cur_proc();
+    if (p && p->obj) {
+        uintptr_t b = xtld_base(p->obj); size_t s = xtld_span(p->obj);
+        if (addr >= b && addr < b + s) { emit(" [prog+", (unsigned)(addr - b)); return; }
+    }
+    if (g_libc_obj) {
+        uintptr_t b = xtld_base(g_libc_obj); size_t s = xtld_span(g_libc_obj);
+        if (addr >= b && addr < b + s) { emit(" [libc+", (unsigned)(addr - b)); return; }
+    }
+    emit(" [??+", addr);
+}
+
 void frtos_activate_libc(xtld_obj *libc)
 {
     extern void sbrk_set_base(void *base, void *end);
@@ -259,7 +281,34 @@ int xtos_demand_fault(uint32_t dfar)
      * (W^X, not a COW range) returns 0 = fatal. */
     if (write)
         return vm_cow_map(idx, dfar);
-    return 0;
+    /* READ permission fault in a COW range: a stale-TLB shadow (a lingering global
+     * section entry over a page the table maps PL0-readable) or an unseeded page —
+     * re-seed/invalidate and re-run instead of killing the task. HW-only; qemu never
+     * takes this path. Returns 0 for a genuine wild read (not COW) -> stays fatal.
+     * This is what crashed dropbear's exec path (scp / `ssh host cmd`) on a .got.plt
+     * read even though the page was mapped RW. */
+    return vm_cow_read_fault(idx, dfar);
+}
+
+/* PREFETCH-abort service (called from xt_vectors.S before the fatal path, mirroring
+ * xt_dabt). A permission fault on an instruction fetch whose page the tables map
+ * present + executable is a stale global SECTION TLB entry shadowing the split
+ * coarse text mapping (see stale-section-tlb-shadow) — TLBIALL + re-run. A livelock
+ * guard bails to fatal if the SAME PC keeps faulting (so a genuine unresolvable
+ * fault still dies rather than spinning). Non-permission faults and not-executable
+ * pages return 0 = fatal, so real W^X violations / wild jumps still get killed. */
+int xtos_prefetch_fault(uint32_t pc)
+{
+    proc_t *p = cur_proc();
+    if (!p) return 0;
+    int idx = (int)(p - g_proc);
+    uint32_t ifsr; __asm__ volatile("mrc p15,0,%0,c5,c0,1" : "=r"(ifsr));
+    uint32_t fs = (((ifsr >> 10) & 1u) << 4) | (ifsr & 0xfu);   /* combined fault status */
+    if (fs != 0x0fu) return 0;   /* not a page-perm stale-TLB fault (wild jump / section) -> fatal */
+    static uint32_t last_pc; static int repeat;      /* livelock guard (rare path) */
+    if (pc == last_pc) { if (++repeat > 8) { repeat = 0; return 0; } }
+    else { last_pc = pc; repeat = 0; }
+    return vm_exec_fault(idx, pc);
 }
 
 /* sys_sbrk — the PL1 implementation behind SYS_sbrk (libc's _sbrk is an svc stub).
@@ -294,8 +343,23 @@ void *sys_sbrk(int incr)
  * waiting for the reap (they need the fs task). Idempotent vs fs_close_all. */
 static void pipes_release(proc_t *p)
 {
-    for (int fd = 0; fd < NFD; fd++)
-        if (p->fd[fd].open && p->fd[fd].pipei) k_pipe_close_end(&p->fd[fd]);
+    for (int fd = 0; fd < NFD; fd++) {
+        if (!p->fd[fd].open) continue;
+        if (p->fd[fd].pipei) { k_pipe_close_end(&p->fd[fd]); continue; }
+        /* pty slave (char device): release NOW too, for the same reason. When an
+         * interactive ssh shell exits, dropbear blocks reading the pty MASTER for
+         * EOF — which only arrives once the slave's open count hits 0. If we left
+         * that to the reap (fs_close_all), the reap would never run: it needs the
+         * parent's waitpid, but the parent is blocked on the master. Deadlock →
+         * the session (and the ssh client) hang. The pty close is a pure in-memory
+         * refcount (dv_pty_close), safe in the dying task's context — unlike a
+         * file, whose flush needs the fs task, so files still wait for the reap. */
+        if (!p->fd[fd].con && !p->fd[fd].sock &&
+            p->fd[fd].vf.chr && p->fd[fd].vf.close) {
+            p->fd[fd].vf.close(&p->fd[fd].vf);
+            p->fd[fd].open = 0;
+        }
+    }
 }
 
 static void tty_release(proc_t *p)
@@ -396,11 +460,16 @@ uint32_t xtos_emerg_sp(void)
 void xtos_task_fault_exit(void)
 {
     proc_t *p = cur_proc();
-    if (p) {                                        /* killed by a fault */
+    if (p && !p->exited) {                          /* FIRST fault for this task */
+        /* Mark exited BEFORE the cleanup below. If the task's state is corrupt enough
+         * that pipes_release/tty_release themselves fault, the abort handler redirects
+         * us straight back here — and now `exited` is set, so we skip the cleanup and
+         * fall through to the park instead of re-running it forever (the loop that grew
+         * the stack until the guard tripped, wedging the box). */
+        p->exited = 1;
+        p->exit_code = -1;
         pipes_release(p);                           /* EOF to pipeline peers first */
         tty_release(p);                             /* raw-mode owner dies -> cooked */
-        p->exit_code = -1;
-        p->exited = 1;
         if (p->waiter) xTaskNotifyGive(p->waiter);  /* wake a PL0 waitpid */
         if (p->done)   xSemaphoreGive(p->done);     /* wake a kernel-task waitpid */
     }
@@ -593,6 +662,7 @@ static long k_pipe_read(proc_t *p, int fd, char *buf, uint32_t n)
             got = xStreamBufferReceive(pp->sb, buf, n, 0);  /* final drain */
             return (long)got;
         }
+        if (p->fd[fd].nonblock) return -11;                 /* O_NONBLOCK, empty -> -EAGAIN */
     }
 }
 
@@ -601,6 +671,9 @@ static long k_pipe_write(proc_t *p, int fd, const char *buf, uint32_t n)
 {
     kpipe_t *pp = &g_pipes[p->fd[fd].pipei - 1];
     uint32_t sent = 0;
+    if (!n) return 0;      /* zero-length write is a no-op, not EPIPE — dropbear's
+                            * writechannel probes with len 0 + NULL buf, and a -1
+                            * here trips the SIGPIPE kill below */
     if (!buf) return -1;
     while (sent < n) {
         if (p->killed) proc_exit_self(p, 137);                  /* SYS_kill lands here */
@@ -609,6 +682,133 @@ static long k_pipe_write(proc_t *p, int fd, const char *buf, uint32_t n)
         sent += xStreamBufferSend(pp->sb, buf + sent, n - sent, pdMS_TO_TICKS(20));
     }
     return (long)sent;
+}
+
+/* ---- pseudoterminals (pty) — SSH interactive sessions ---------------------
+ * A pty pair is two byte streams: master->slave (dropbear -> shell keystrokes) and
+ * slave->master (shell output -> dropbear). PASS-THROUGH: no kernel line discipline; an
+ * interactive shell (linenoise) sets raw mode and echoes/edits itself. Fixed BSD-style
+ * pairs /dev/ptyp[0-3] (master) + /dev/ttyp[0-3] (slave) — the method dropbear's sshpty.c
+ * falls back to with no /dev/ptmx. devfs exposes the nodes and calls these. canon/echo is
+ * tracked for tcgetattr/tcsetattr but not enforced (pass-through). */
+#define NPTY 4
+#define PTY_BUF_SZ 4096
+static struct {
+    StreamBufferHandle_t m2s, s2m;
+    uint16_t rows, cols;
+    uint8_t  canon, echo, mopen, sopen;
+    uint8_t  winch;              /* window size changed since the last slave read */
+} g_pty[NPTY];
+
+static int pty_ensure(int i)
+{
+    if (i < 0 || i >= NPTY) return -1;
+    if (!g_pty[i].m2s) g_pty[i].m2s = xStreamBufferCreate(PTY_BUF_SZ, 1);
+    if (!g_pty[i].s2m) g_pty[i].s2m = xStreamBufferCreate(PTY_BUF_SZ, 1);
+    if (!g_pty[i].rows) { g_pty[i].rows = 24; g_pty[i].cols = 80; g_pty[i].canon = 1; g_pty[i].echo = 1; }
+    return (g_pty[i].m2s && g_pty[i].s2m) ? 0 : -1;
+}
+
+/* mopen/sopen are OPEN COUNTS, not flags: an SSH pty child dup2's the slave onto 0/1/2 and
+ * dropbear closes its own slave copy, so the slave END is "closed" (EOF to the master) only
+ * when every holder has closed. Each fd inheriting the pty (spawn copy) bumps the count via
+ * ondup -> xt_pty_open. */
+void xt_pty_open(int i, int master)
+{
+    if (pty_ensure(i) != 0) return;
+    if (master && !g_pty[i].mopen) {
+        /* fresh master = a new session claiming the pair: drop anything a dead
+         * session left in the streams, or it replays into the new session */
+        xStreamBufferReset(g_pty[i].m2s);
+        xStreamBufferReset(g_pty[i].s2m);
+    }
+    if (master) g_pty[i].mopen++; else g_pty[i].sopen++;
+}
+void xt_pty_close(int i, int master)
+{
+    if (i < 0 || i >= NPTY) return;
+    if (master) { if (g_pty[i].mopen) g_pty[i].mopen--; }
+    else        { if (g_pty[i].sopen) g_pty[i].sopen--; }
+}
+long xt_pty_read(int i, int master, void *buf, uint32_t n, int nonblock)
+{
+    if (pty_ensure(i) != 0 || !buf || !n) return 0;
+    StreamBufferHandle_t sb = master ? g_pty[i].s2m : g_pty[i].m2s;
+    proc_t *p = cur_proc();
+    for (;;) {
+        if (p && p->killed) proc_exit_self(p, 137);
+        if (p) stop_park(p);
+        if (!master && g_pty[i].winch) {
+            /* SIGWINCH, XTOS-style: wake the blocked reader with -EINTR; the
+             * libc shim runs the registered handler (or transparently retries) */
+            g_pty[i].winch = 0;
+            return -4;                                     /* -EINTR */
+        }
+        size_t got = xStreamBufferReceive(sb, buf, n, pdMS_TO_TICKS(20));
+        if (got > 0) return (long)got;
+        if (!(master ? g_pty[i].sopen : g_pty[i].mopen)) return 0;   /* other end closed -> EOF */
+        if (nonblock) return -11;                                    /* O_NONBLOCK, empty -> EAGAIN */
+    }
+}
+long xt_pty_write(int i, int master, const void *buf, uint32_t n)
+{
+    if (pty_ensure(i) != 0) return -1;
+    if (!n) return 0;              /* zero-length write is a no-op, not an error
+                                    * (dropbear's writechannel probes with len 0
+                                    * and a NULL buffer when its ring is empty) */
+    if (!buf) return -1;
+    StreamBufferHandle_t sb = master ? g_pty[i].m2s : g_pty[i].s2m;
+    if (!(master ? g_pty[i].sopen : g_pty[i].mopen)) return (long)n;  /* reader gone: drop */
+    const char *p = buf;
+    uint32_t done = 0;
+    proc_t *pr = cur_proc();
+    while (done < n) {
+        if (pr && pr->killed) proc_exit_self(pr, 137);
+        if (!(master ? g_pty[i].sopen : g_pty[i].mopen)) break;
+        if (!master && p[done] == '\n') {
+            /* ONLCR — the one output-discipline rule an interactive terminal
+             * needs: shell/program output writes bare \n, the ssh client's
+             * terminal is raw, so \n must leave the slave as \r\n. Everything
+             * else stays pass-through. */
+            if (xStreamBufferSend(sb, "\r\n", 2, pdMS_TO_TICKS(20)) == 2) done++;
+            continue;
+        }
+        uint32_t seg = n - done;
+        if (!master)
+            for (seg = 0; done + seg < n && p[done + seg] != '\n'; seg++) ;
+        done += xStreamBufferSend(sb, p + done, seg, pdMS_TO_TICKS(20));
+    }
+    return (long)done;
+}
+int xt_pty_nread(int i, int master)
+{
+    if (i < 0 || i >= NPTY || !g_pty[i].m2s) return 0;
+    int avail = (int)xStreamBufferBytesAvailable(master ? g_pty[i].s2m : g_pty[i].m2s);
+    if (avail) return avail;
+    /* EOF is "readable" for poll/select: once the other end has fully closed, a
+     * read returns 0 (EOF) — report 1 pending byte so a poll wakes the reader to
+     * collect it. Without this, dropbear's select never marks the pty master
+     * readable after the shell exits, so it never reads the EOF and spins in its
+     * poll loop forever (the session hangs). Mirrors the pipe FIONREAD at
+     * writerless-EOF. The other end is "closed" only after it was opened (the
+     * child holds the slave before dropbear's session loop polls), so this can't
+     * fire a spurious EOF during setup. */
+    if (master ? (g_pty[i].sopen == 0) : (g_pty[i].mopen == 0)) return 1;
+    return 0;
+}
+long xt_pty_ioctl(int i, unsigned req, void *arg)
+{
+    if (i < 0 || i >= NPTY) return -1;
+    switch (req) {
+    case XT_TTY_GETMODE: { struct xt_ttymode *m = arg; if (m) { m->canon = g_pty[i].canon; m->echo = g_pty[i].echo; } return 0; }
+    case XT_TTY_SETMODE: { struct xt_ttymode *m = arg; if (m) { g_pty[i].canon = m->canon ? 1 : 0; g_pty[i].echo = m->echo ? 1 : 0; } return 0; }
+    case 0x5414u /*TIOCSWINSZ*/: { uint16_t *w = arg; if (w) {
+        if (w[0] != g_pty[i].rows || w[1] != g_pty[i].cols) g_pty[i].winch = 1;
+        g_pty[i].rows = w[0]; g_pty[i].cols = w[1]; } return 0; }
+    case 0x5413u /*TIOCGWINSZ*/: { uint16_t *w = arg; if (w) { w[0] = g_pty[i].rows; w[1] = g_pty[i].cols; w[2] = w[3] = 0; } return 0; }
+    case 0x540Eu /*TIOCSCTTY*/: return 0;
+    default: return -1;
+    }
 }
 
 /* dup2 for PIPE ends and the CONSOLE (the shell's save/restore-around-redirect
@@ -774,7 +974,21 @@ static void *fd_getpage(int slot, int fd, uint32_t pi, uint32_t *valid, int forw
     if (fdp->vf.data) return forwrite ? 0 : (uint8_t *)fdp->vf.data + base;  /* in-memory (RO) */
     if (fdp->cpage && fdp->cpi == pi) return fdp->cpage;           /* cache hit */
     fd_flush(fdp);                                                 /* evict: don't lose the old page */
-    if (!fdp->cpage) { fdp->cpage = vm_page_alloc(); if (!fdp->cpage) { *valid = 0; return 0; } }
+    if (!fdp->cpage) {
+        fdp->cpage = vm_page_alloc(); if (!fdp->cpage) { *valid = 0; return 0; }
+        /* TRIPWIRE: this page is filled by the CLIENT via its identity VA (fs_write);
+         * if that VA lands in a per-process window band it's shadowed in the client's
+         * space and the fill would corrupt the wrong page (see XTOS_POOL_FLOOR). The
+         * pool is kept out of the band, but once frames come from arbitrary RAM (raised
+         * process limit / dynamic paging) that no longer holds — so FAIL LOUD and refuse
+         * the write rather than silently corrupt a file + smash another process. */
+        if ((uintptr_t)fdp->cpage >= XTOS_HEAP_VA && (uintptr_t)fdp->cpage < XTOS_POOL_FLOOR) {
+            klog("*** FATAL: fd page-cache page in the per-process window band ");
+            klog_u((unsigned)(uintptr_t)fdp->cpage);
+            klog(" — refusing the write (would corrupt) ***\r\n");
+            vm_page_free(fdp->cpage); fdp->cpage = 0; *valid = 0; return 0;
+        }
+    }
     if (base < size) {                                            /* RMW: existing content */
         vfs_lseek(&fdp->vf, (long)base, 0);
         long got = vfs_read(&fdp->vf, fdp->cpage, 0x1000);
@@ -1151,18 +1365,42 @@ static vfs_file *g_kfs_wf;             /* the net file drop's open upload (fs ta
 /* ---- kernel diagnostic log (klog) -----------------------------------------
  * The [sd]/[net]/[tftp]/[hdmi] boot chatter goes HERE, not the console: klog
  * appends to a RAM buffer (works pre-scheduler too), and a low-priority logger
- * task flushes it to /OS/var/log/system.log (fresh each boot) once the SD is
- * mounted. Keeps the console clean for the [ OK ]/[FAIL] boot-script status. */
+ * task flushes it to /tmp/system.log (ramfs, fresh each boot) once /tmp is
+ * mounted. RAM-backed on purpose: logging must never write the SD, or an
+ * SD-op diagnostic line would re-trigger the flush and self-sustain a storm.
+ * Keeps the console clean for the [ OK ]/[FAIL] boot-script status. */
+/* CIRCULAR diagnostic buffer: keeps the LATEST KLOG_CAP bytes, so a long-running
+ * or high-volume producer (e.g. strace) doesn't lose the most recent output
+ * (which is usually what you want — the tail before a hang/crash). The wrap logic
+ * lives in klog_put; klog_snapshot linearizes the ring into read order so procfs
+ * (/proc/kmsg) and the SD flush stay simple single-segment readers. */
 #define KLOG_CAP 32768
-static char          g_klog[KLOG_CAP];
-static volatile int  g_klog_len;
-static volatile int  g_klog_flushed;
+static char           g_klog[KLOG_CAP];
+static volatile uint32_t g_klog_head;         /* next write index (wraps) */
+static volatile int      g_klog_wrapped;      /* has it wrapped at least once? */
+static char           g_klog_lin[KLOG_CAP];   /* linearized snapshot for readers */
+
+static inline void klog_put(char c)
+{
+    g_klog[g_klog_head++] = c;
+    if (g_klog_head >= KLOG_CAP) { g_klog_head = 0; g_klog_wrapped = 1; }
+}
 
 void klog(const char *s)
 {
     unsigned f = xt_irq_save();               /* frtos_os.h (static inline) */
-    while (*s && g_klog_len < KLOG_CAP - 1) g_klog[g_klog_len++] = *s++;
+    while (*s) klog_put(*s++);
     xt_irq_restore(f);
+}
+/* bounded append (SYS_klog from PL0): copy exactly `n` bytes, no NUL scan of a
+ * user pointer. Returns bytes accepted (the ring never rejects — it wraps). */
+long klog_write(const char *s, uint32_t n)
+{
+    if (!s) return -1;
+    unsigned f = xt_irq_save();
+    for (uint32_t i = 0; i < n; i++) klog_put(s[i]);
+    xt_irq_restore(f);
+    return (long)n;
 }
 void klog_u(unsigned v)
 {
@@ -1174,15 +1412,36 @@ void klog_u(unsigned v)
     o[k] = 0; klog(o);
 }
 
-/* flush the accumulated log to the SD (truncate+rewrite; the buffer holds the
- * whole session, well under KLOG_CAP for a boot). Fails silently until the SD
- * mount exists, so the logger just retries. */
+/* the live diagnostic buffer -> /OS/proc/kmsg (dmesg) and the SD flush. Linearize
+ * the ring into read order (oldest→newest) in g_klog_lin. Works even with no SD. */
+int klog_snapshot(const char **p)
+{
+    unsigned f = xt_irq_save();
+    int len;
+    if (!g_klog_wrapped) {
+        for (uint32_t i = 0; i < g_klog_head; i++) g_klog_lin[i] = g_klog[i];
+        len = (int)g_klog_head;
+    } else {
+        uint32_t tail = KLOG_CAP - g_klog_head, k = 0;
+        for (uint32_t i = 0; i < tail; i++) g_klog_lin[k++] = g_klog[g_klog_head + i];
+        for (uint32_t i = 0; i < g_klog_head; i++) g_klog_lin[k++] = g_klog[i];
+        len = KLOG_CAP;
+    }
+    xt_irq_restore(f);
+    *p = g_klog_lin;
+    return len;
+}
+
+/* flush the whole ring to the SD (truncate+rewrite each pass — the ring holds the
+ * latest KLOG_CAP bytes). Fails silently until the SD mount exists, so it retries. */
+static int g_klog_flushed_seq = -1;
 static void klog_sync(void)
 {
-    int len = g_klog_len;                         /* snapshot */
-    if (len <= g_klog_flushed) return;            /* nothing new */
-    if (kfs_call(KFS_LOGWRITE, 0, g_klog, (uint32_t)len, 0) == (long)len)
-        g_klog_flushed = len;
+    int seq = (int)(g_klog_head + (g_klog_wrapped ? KLOG_CAP : 0));  /* changed? */
+    if (seq == g_klog_flushed_seq) return;
+    const char *p; int len = klog_snapshot(&p);
+    if (kfs_call(KFS_LOGWRITE, 0, (void *)p, (uint32_t)len, 0) == (long)len)
+        g_klog_flushed_seq = seq;
 }
 
 static void logger_task(void *arg)
@@ -1191,8 +1450,6 @@ static void logger_task(void *arg)
     for (;;) { klog_sync(); vTaskDelay(pdMS_TO_TICKS(1000)); }
 }
 
-/* the live diagnostic buffer -> /OS/proc/kmsg (dmesg); works even with no SD */
-int klog_snapshot(const char **p) { *p = g_klog; return g_klog_len; }
 
 void klog_start(void) { xTaskCreate(logger_task, "logd", 512, 0, 1, 0); }
 
@@ -1238,10 +1495,10 @@ static long kfs_serve(void)
     case KFS_WRITECLOSE:
         if (g_kfs_wf) { vfs_close(g_kfs_wf); g_kfs_wf = 0; }
         return 0;
-    case KFS_LOGWRITE: {                                /* rewrite /OS/var/log/system.log (fs task) */
-        vfs_mkdir("/OS/var/log");                       /* idempotent; sole-driver context */
-        vfs_file lf;
-        if (vfs_open("/OS/var/log/system.log", VFS_O_WRONLY | VFS_O_CREAT | VFS_O_TRUNC, &lf) != 0)
+    case KFS_LOGWRITE: {                                /* rewrite /tmp/system.log (ramfs — no SD churn) */
+        vfs_file lf;                                    /* RAM-backed: logging never touches the boot disk,
+                                                         * so SD-op diagnostics can't feed back into the flush */
+        if (vfs_open("/tmp/system.log", VFS_O_WRONLY | VFS_O_CREAT | VFS_O_TRUNC, &lf) != 0)
             return -1;
         long w = lf.write ? vfs_write(&lf, g_kfs.buf, g_kfs.len) : -1;
         vfs_close(&lf);
@@ -1656,12 +1913,38 @@ void deferral_thunk(void)                 /* PL1 (System), task context */
             xt_sock_close(p->fd[p->da0].sock - 1);
             p->fd[p->da0].open = 0; p->fd[p->da0].sock = 0;
             r = 0;
+        } else if (p->dnum == SYS_ioctl && p->da0 < NFD && p->fd[p->da0].open &&
+                   (p->da1 == XT_FIONBIO || (p->da1 == XT_FIONREAD && p->fd[p->da0].pipei))) {
+            /* FIONBIO on any fd: set/clear O_NONBLOCK. FIONREAD on a pipe: buffered bytes
+             * (accurate poll — an empty pipe is NOT readable, unlike the always-ready
+             * fallback). */
+            fd_t *cf = &p->fd[p->da0];
+            if (p->da1 == XT_FIONBIO) {
+                cf->nonblock = cf->vf.nonblock = (p->da2 && *(int *)p->da2) ? 1 : 0;
+                r = 0;
+            } else {
+                /* FIONREAD on a pipe: buffered bytes; returns 1 (not 0) when the
+                 * pipe is drained AND writerless — poll must report READABLE then
+                 * (the read gives EOF), or a select()-driven reader never learns
+                 * the writer went away. */
+                kpipe_t *pp = &g_pipes[cf->pipei - 1];
+                int avail = (int)xStreamBufferBytesAvailable(pp->sb);
+                if (p->da2) *(int *)p->da2 = avail;
+                r = (!avail && pp->writers <= 0) ? 1 : 0;
+            }
         } else if (p->dnum == SYS_ioctl && p->da0 < NFD &&
                    p->fd[p->da0].open && p->fd[p->da0].sock) {
             extern long xt_sock_avail(int);                /* FIONREAD = poll readability */
             extern int  xt_ifreq_ioctl(unsigned, void *);  /* SIOCGIF* = ifconfig display */
+            extern int  xt_sock_endpoint(int, int, unsigned *, unsigned *);
             if (p->da1 == XT_FIONREAD && p->da2)
                 r = (*(int *)p->da2 = (int)xt_sock_avail(p->fd[p->da0].sock - 1), 0);
+            else if ((p->da1 == XT_SIOCGPEER || p->da1 == XT_SIOCGNAME) && p->da2) {
+                /* getpeername/getsockname: u32[2] out = {ip_be32, port} */
+                unsigned *o = (unsigned *)p->da2;
+                r = xt_sock_endpoint(p->fd[p->da0].sock - 1,
+                                     p->da1 == XT_SIOCGPEER, &o[0], &o[1]);
+            }
             else if ((p->da1 & 0xFF00u) == 0x8900u)        /* SIOCGIF* interface queries */
                 r = xt_ifreq_ioctl((unsigned)p->da1, (void *)p->da2);
             else
@@ -1677,11 +1960,17 @@ void deferral_thunk(void)                 /* PL1 (System), task context */
                 r = (cf && cf->vf.chr && cf->vf.ioctl)
                     ? cf->vf.ioctl(&cf->vf, (unsigned)p->da1, (void *)p->da2) : -1;
             }
+        } else if (p->dnum == SYS_net_up) {
+            /* boot-script networking bring-up (/bin/netup); idempotent */
+            extern void net_init(void);
+            net_init(); r = 0;
         } else if (p->dnum == SYS_close &&
                    p->da0 < NFD && p->fd[p->da0].open && p->fd[p->da0].pipei) {
             k_pipe_close_end(&p->fd[p->da0]); r = 0;
         } else if (p->dnum == SYS_dup2) {                  /* pipe-end duplication */
             r = k_dup2(p, (int)p->da0, (int)p->da1);
+        } else if (p->dnum == SYS_waitpid && (p->da1 & XT_WAIT_PEEK)) {  /* peek: no reap */
+            extern int frtos_waitpid_peek(int); r = frtos_waitpid_peek((int)p->da0);
         } else if (p->dnum == SYS_waitpid && (p->da1 & 1)) {   /* poll (WNOHANG) */
             extern int frtos_waitpid_poll(int); r = frtos_waitpid_poll((int)p->da0);
         } else if (p->dnum == SYS_waitpid) {               /* blocks until the child exits */
@@ -1819,6 +2108,7 @@ void deferral_thunk(void)                 /* PL1 (System), task context */
             r = do_syscall(p->dnum, p->da0, p->da1, p->da2);
         }
     }
+    if (p && p->strace) { extern void strace_ret(uint32_t, long); strace_ret(p->dnum, r); }
     __sysret(r);                          /* never returns */
 }
 
@@ -1964,6 +2254,11 @@ static long do_syscall(uint32_t num, long a0, long a1, long a2)
         xt_wallclock_set((uint32_t)a0);     /* sntp -s / clock_settime; hourly SNTP re-sync wins later */
         return 0;
     }
+    case SYS_klog: {                                        /* (buf, len) -> dmesg ring */
+        extern long klog_write(const char *, uint32_t);
+        return klog_write((const char *)a0, (uint32_t)a1);
+    }
+    case SYS_strace: { if (p) p->strace = a0 ? 1 : 0; return 0; }   /* /bin/strace */
     case SYS_nanosleep: {                                   /* (usec) — real yield, not a spin */
         TickType_t ticks = pdMS_TO_TICKS((uint32_t)a0 / 1000u);
         vTaskDelay(ticks ? ticks : 1);      /* >=1 tick so other tasks (net RX pump) run */
@@ -2024,6 +2319,7 @@ static int needs_task_ctx(struct k_regs *regs, uint32_t num)
     case SYS_recvfrom:
         return 1;                                  /* netconn calls block in lwIP */
     case SYS_nanosleep: return 1;                  /* vTaskDelay must run in task ctx */
+    case SYS_net_up:  return 1;                    /* xTaskCreate (kernel heap) -> task ctx */
     case SYS_statfs:  return 1;                    /* fs task queries FatFs f_getfree */
     case SYS_getdents: return 1;                   /* fs task packs the dir batch page */
     case SYS_dup2:    return 1;                    /* may close a displaced pipe end */
@@ -2041,12 +2337,75 @@ static int needs_task_ctx(struct k_regs *regs, uint32_t num)
 /* called from the chained SVC vector with the saved register block. Returns 1 for
  * the exit case (the vector then resumes task_exit_thunk at PL1 — see xt_vectors.S),
  * 0 otherwise. */
+/* ---- strace: log a traced process's syscalls to klog (dmesg) --------------
+ * A single chokepoint (this dispatcher) makes it cheap. Enable per process by
+ * name via g_strace_name (matched at spawn -> p->strace), or globally. The line
+ * is "strace pid sys<hex> <a0> <a1> <a2>"; returns are logged by the inline and
+ * deferred paths. Read it with `dmesg` / /proc/kmsg. */
+const char *g_strace_name;                /* substring of argv0 basename to trace; NULL = off */
+static void strace_hex(char *b, int *k, uint32_t v)
+{
+    for (int i = 7; i >= 0; i--) { unsigned d = (v >> (i * 4)) & 0xF; b[(*k)++] = (char)(d < 10 ? '0' + d : 'a' + d - 10); }
+}
+/* map a syscall number to a short name for readable traces (common ones; others
+ * print as sys<hex>). Keep in step with xtsys.h. */
+static const char *strace_name(uint32_t n)
+{
+    switch (n) {
+    case SYS_write: return "write";     case SYS_read: return "read";
+    case SYS_open: return "open";       case SYS_close: return "close";
+    case SYS_lseek: return "lseek";     case SYS_ioctl: return "ioctl";
+    case SYS_fstat: return "fstat";     case SYS_stat: return "stat";
+    case SYS_waitpid: return "waitpid"; case SYS_spawn: return "spawn";
+    case SYS_spawn_fd: return "spawn_fd"; case SYS_exit: return "exit";
+    case SYS_getpid: return "getpid";   case SYS_pipe: return "pipe";
+    case SYS_dup2: return "dup2";       case SYS_kill: return "kill";
+    case SYS_nanosleep: return "nanosleep"; case SYS_gettimeofday: return "gettimeofday";
+    case SYS_klog: return "klog";       case SYS_getcwd: return "getcwd";
+    case SYS_socket: return "socket";   case SYS_accept: return "accept";
+    case SYS_recvfrom: return "recvfrom"; case SYS_readdir: return "readdir";
+    case SYS_envp: return "envp";       case SYS_strace: return "strace";
+    case SYS_connect: return "connect"; case SYS_bind: return "bind";
+    case SYS_listen: return "listen";
+    default: return 0;
+    }
+}
+static void strace_log(int pid, const char *tag, uint32_t num, uint32_t a0, uint32_t a1, uint32_t a2)
+{
+    char b[96]; int k = 0;
+    for (const char *t = "strace "; *t; t++) b[k++] = *t;
+    for (const char *t = tag; *t; t++) b[k++] = *t;
+    b[k++] = ' '; { unsigned v = (unsigned)pid; char d[8]; int n = 0; do { d[n++] = (char)('0' + v % 10); v /= 10; } while (v && n < 7); while (n) b[k++] = d[--n]; }
+    b[k++] = ' ';
+    const char *nm = strace_name(num);
+    if (nm) { for (const char *t = nm; *t; t++) b[k++] = *t; }
+    else { for (const char *t = "sys"; *t; t++) b[k++] = *t; strace_hex(b, &k, num); }
+    b[k++] = '('; strace_hex(b, &k, a0);
+    b[k++] = ','; strace_hex(b, &k, a1);
+    b[k++] = ','; strace_hex(b, &k, a2);
+    b[k++] = ')'; b[k++] = '\n'; b[k] = 0;
+    klog(b);
+}
+/* called from the deferred-syscall thunk tail to log the (possibly blocking) return */
+void strace_ret(uint32_t num, long r)
+{
+    proc_t *p = cur_proc();
+    if (!p || !p->strace) return;
+    char b[64]; int k = 0; for (const char *t = "strace  = "; *t; t++) b[k++] = *t;
+    const char *nm = strace_name(num);
+    if (nm) { for (const char *t = nm; *t; t++) b[k++] = *t; } else { strace_hex(b, &k, num); }
+    b[k++] = ' '; if (r < 0) { b[k++] = '-'; strace_hex(b, &k, (uint32_t)(-r)); } else strace_hex(b, &k, (uint32_t)r);
+    b[k++] = '\n'; b[k] = 0; klog(b);
+}
+
 int k_syscall_dispatch(struct k_regs *regs)
 {
     uint32_t insn = *((volatile uint32_t *)(regs->lr - 4));
     if ((insn & 0x00ffffff) != 1) { regs->r[0] = (uint32_t)-1; return 0; }
 
     uint32_t num = regs->r[7];
+    { proc_t *tp = cur_proc();
+      if (tp && tp->strace) strace_log(tp->pid, "sys", num, regs->r[0], regs->r[1], regs->r[2]); }
     /* SYS_kill: a marked process dies at its next syscall, whatever it was */
     {
         proc_t *kp = cur_proc();
@@ -2069,6 +2428,8 @@ int k_syscall_dispatch(struct k_regs *regs)
     }
     if (needs_task_ctx(regs, num)) return defer_syscall(regs, num);   /* run in task ctx */
     regs->r[0] = (uint32_t)do_syscall(num, regs->r[0], regs->r[1], regs->r[2]);
+    { proc_t *tp = cur_proc();
+      if (tp && tp->strace) strace_ret(num, (long)(int)regs->r[0]); }
     return 0;
 }
 
@@ -2246,6 +2607,15 @@ static int proc_launch(int slot, xtld_obj *obj, uintptr_t entry,
                 if (p->fd[i].pwrite) pp->writers++; else pp->readers++;
                 taskEXIT_CRITICAL();
             } else if (i < 3 && pfd >= 0 && pfd < NFD && par->fd[pfd].open &&
+                       !par->fd[pfd].con && par->fd[pfd].vf.chr) {
+                /* char device (pty slave, /dev/*): COPY, don't move — an SSH pty child
+                 * dup2's the SAME slave onto 0/1/2, so several child slots must point at
+                 * it (a char device has no page cache to race, unlike a FIL). Notify the
+                 * driver of the extra reference so its open count (pty EOF tracking) stays
+                 * right. The parent keeps its copy and closes it after the spawn. */
+                p->fd[i] = par->fd[pfd];
+                if (p->fd[i].vf.ondup) p->fd[i].vf.ondup(&p->fd[i].vf);
+            } else if (i < 3 && pfd >= 0 && pfd < NFD && par->fd[pfd].open &&
                        !par->fd[pfd].con) {
                 /* file-redirected stdio (`cmd > file`): MOVE the descriptor —
                  * FIL, cursor and cache page travel with it. Two live handles
@@ -2284,6 +2654,12 @@ static int proc_launch(int slot, xtld_obj *obj, uintptr_t entry,
      * task listings identify it — FreeRTOS copies the name into the TCB. */
     const char *nm = (argc > 0 && argv && argv[0]) ? argv[0] : "app";
     for (const char *q = nm; *q; q++) if (*q == '/') nm = q + 1;
+    /* strace: trace this proc if a parent is traced (children inherit -> `strace
+     * sshd` covers sshd-session + the shell) or its basename matches g_strace_name. */
+    { proc_t *par = cur_proc(); p->strace = (par && par->strace) ? 1 : 0; }
+    if (!p->strace && g_strace_name) {
+        for (const char *a = nm; *a; a++) { const char *x = a, *y = g_strace_name;
+            while (*x && *y && *x == *y) { x++; y++; } if (!*y) { p->strace = 1; break; } } }
     extern StackType_t *stackguard_stack(int, uint32_t *);
     uint32_t depth; StackType_t *stk = stackguard_stack(slot, &depth);
     /* carve argv out of the TOP of the task stack (PL0-RW) so the program can read
@@ -2745,6 +3121,18 @@ int frtos_waitpid_poll(int pid)
     p->waited = 1;
     if (!p->exited) return -11;                   /* -EAGAIN: still running */
     return frtos_reap(p);
+}
+
+/* non-reaping peek (XT_WAIT_PEEK): does this child exist and has it exited? Used
+ * by the shim's synchronous-SIGCHLD probe — it must NOT reap (dropbear reaps to
+ * collect the status). Marks `waited` so reap_orphans won't steal the zombie
+ * before dropbear's own waitpid runs. 1 = exited, 0 = running, -1 = gone. */
+int frtos_waitpid_peek(int pid)
+{
+    proc_t *p = proc_by_pid(pid);
+    if (!p) return -1;
+    p->waited = 1;
+    return p->exited ? 1 : 0;
 }
 
 /* waitpid for a KERNEL task waiter (shell_task) — blocks on the child's `done`

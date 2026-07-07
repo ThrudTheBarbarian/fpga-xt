@@ -387,7 +387,11 @@ void _app_entry(int argc, char **argv) {
     bb_s.w = wp.w; bb_s.h = wp.h; bb_s.stride = wp.stride; bb_s.px = (uint32_t *)wp.addr;
     g_fb = fb; g_bb = &bb_s;
 
+    /* Prefer the SD font (/OS, user-overridable); fall back to the one bundled in
+     * romfs (/System, always present — lets aesdesk run in qemu / on a card with no
+     * fonts installed, instead of aborting at boot). */
     font_face *face = font_face_open("/OS/fonts/AovelSansRounded.ttf");
+    if (!face) face = font_face_open("/System/fonts/AovelSansRounded.ttf");
     if (!face) { sys_write(2, "aesdesk: font load FAILED\n", 26); return; }
     vdi_init(g_bb); HV = v_opnvwk(g_bb);
     font_face_set_tracking(face, 1); vdi_set_face(face);
@@ -395,7 +399,12 @@ void _app_entry(int argc, char **argv) {
     char tn[64], td[160];
     if (read_default("/OS/themes", tn, sizeof tn)) snprintf(td, sizeof td, "/OS/themes/%s/1x", tn);
     else                                           snprintf(td, sizeof td, "/OS/themes/Aristo2/1x");
-    if (theme_load(&TH, td) != 0) { sys_write(2, "aesdesk: theme load FAILED\n", 27); return; }
+    /* SD theme first (user-overridable); fall back to the Aristo2 pack bundled in
+     * romfs so aesdesk runs in qemu / on a card with no themes installed. */
+    if (theme_load(&TH, td) != 0 &&
+        theme_load(&TH, "/System/themes/Aristo2/1x") != 0) {
+        sys_write(2, "aesdesk: theme load FAILED\n", 27); return;
+    }
     aes_init(HV, &TH); appl_init();
     wind_set_desktop(0x30507800u);
 

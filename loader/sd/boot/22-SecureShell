@@ -1,0 +1,9 @@
+#!/bin/sh
+# 22-SecureShell — start the SSH server, but only if the admin has installed
+# keys (~/.ssh/authorized_keys). Logs to /var/log/sshd.log — a fresh log each
+# boot. Runs in the background so boot continues (sshd never exits).
+#
+#   sshd <port> <hostkey> <authkeysdir|-> <logfile>
+if [ -f "$HOME/.ssh/authorized_keys" ]; then
+  sshd 22 /OS/etc/ssh/ed25519_host_key - /var/log/sshd.log &
+fi

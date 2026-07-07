@@ -25,10 +25,15 @@
                               * child still running -> -11 (-EAGAIN), no blocking;
                               * exited -> reap + exit_code as usual */
 #define XT_WAIT_NB   1       /* the poll flag */
+#define XT_WAIT_PEEK 2       /* with NB: report exited (1) / running (0) / gone (-1) WITHOUT
+                              * reaping — for a synchronous SIGCHLD "did a child exit?" probe */
 #define SYS_getpid   0x103   /* () -> pid */
 #define SYS_spawn_fd 0x104   /* (path, argv, int fds[3]) -> pid: argv is NULL-terminated
                               * (argc counted kernel-side); the child's fd 0/1/2 come
                               * from the parent's fds (pipe ends; -1 = inherit console) */
+#define SYS_strace   0x108   /* (on) -> 0: set/clear this process's syscall-trace flag;
+                              * children inherit it. Traced syscalls go to the kernel log
+                              * (dmesg / /proc/kmsg). Used by /bin/strace. */
 /* SYS_kill signal values with non-kill semantics (Linux numbers). Everything
  * else (9, 15, ...) kills at the target's next syscall boundary. */
 #define XT_SIGCONT 18        /* resume a stopped process */
@@ -102,7 +107,11 @@
 #define XT_SOCK_TCP 1
 #define XT_SOCK_UDP 2
 #define XT_SOCK_RAW 3
-#define XT_FIONREAD  0x541Bu /* SYS_ioctl on a socket fd: bytes readable now */
+#define XT_FIONREAD  0x541Bu /* SYS_ioctl: bytes readable now (socket or pipe fd) */
+#define XT_FIONBIO   0x5421u /* SYS_ioctl: set/clear the fd's non-blocking flag (argp = int*;
+                              * nonzero = O_NONBLOCK). A nonblock read that would block
+                              * returns -EAGAIN instead. The libc shim maps fcntl(F_SETFL,
+                              * O_NONBLOCK) onto this. */
 
 #define SYS_reboot   0x106   /* (cmd) -> no return: Zynq PS soft reset (SLCR). cmd is the
                               * Linux RB_* value; all map to a warm PS reset here. On a
@@ -149,6 +158,17 @@ struct xt_dirent { unsigned mode; char name[256]; };
 #define SYS_settime      0x401 /* (unix_sec) -> 0: set the wall clock (sntp -s / clock_settime).
                                 * The hourly kernel SNTP re-sync will overwrite it at its next
                                 * poll — this is a manual nudge, not a persistent RTC. */
+#define SYS_klog         0x403 /* (buf, len) -> bytes: append to the kernel diagnostic log
+                                * (dmesg / /proc/kmsg + /OS/var/log/system.log). Lets PL0
+                                * boot daemons log without cluttering the console. */
+
+/* networking control — block 0x800. Bringing the stack up is a BOOT-SCRIPT decision
+ * (/boot/20-Networking runs /bin/netup), not kernel magic. */
+#define SYS_net_up       0x800 /* () -> 0: start GEM0 + lwIP + DHCP/mDNS/SNTP (idempotent);
+                                * async — DHCP/link come up in the background */
+/* socket peer/name queries (SYS_ioctl on a socket fd; arg = u32[2] out: ip_be32, port) */
+#define XT_SIOCGPEER 0x8901u   /* remote address (getpeername) */
+#define XT_SIOCGNAME 0x8902u   /* local address (getsockname) */
 
 /* graphics / compositor — block 0x600. The OS owns the display plane; apps query
  * its descriptor and draw into it, then present (compositor on HW, ASCII on qemu). */

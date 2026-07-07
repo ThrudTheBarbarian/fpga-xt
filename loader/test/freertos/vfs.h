@@ -69,6 +69,9 @@ struct vfs_file {
     long      (*write)(vfs_file *f, const void *buf, uint32_t n);   /* NULL on a read-only fd */
     long      (*lseek)(vfs_file *f, long off, int whence);
     void      (*close)(vfs_file *f);
+    void      (*ondup)(vfs_file *f);  /* char devices: a spawn inherited this fd (extra
+                                       * reference) — bump the driver's open count (pty EOF).
+                                       * NULL for everything else. */
     long      (*ioctl)(vfs_file *f, unsigned req, void *arg);  /* char devices only
                            * (SYS_ioctl); NULL = no device controls */
     uint32_t    size;
@@ -76,6 +79,8 @@ struct vfs_file {
     const void *data;     /* in-memory backing (romfs) -> enables identity mmap; NULL otherwise */
     void       *priv;     /* fs-private (FIL*, rnode*, ...) */
     vfs_mount  *mnt;
+    int         nonblock; /* O_NONBLOCK (FIONBIO): a char-device read that would block
+                           * returns -EAGAIN instead (dropbear sets its pty master nonblock) */
     int         chr;      /* char device: 0 = regular file; VFS_CHR_DEV = unbounded stream
                            * (read/write called directly, no page store, no lseek);
                            * VFS_CHR_TTY = the console (the kernel turns the fd into a

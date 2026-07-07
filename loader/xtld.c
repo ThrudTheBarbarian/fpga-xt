@@ -223,7 +223,14 @@ int xtld_load(const uint8_t *image, size_t image_len,
     memset(base, 0, span);
     uintptr_t bias = (uintptr_t)base - lo;
 
-    /* 3. copy PT_LOAD segments (bss is already zero), noting the writable one */
+    /* 3. copy PT_LOAD segments (bss is already zero), noting the writable one.
+     * A .so linked with GNU_RELRO has TWO writable PT_LOADs — .data.rel.ro/.got
+     * (read-only after relocation) then .data/.got.plt/.bss. We report only the
+     * LAST (the genuinely mutable one) as the COW range; the RELRO segment stays
+     * in the RO+X text range, which matches its read-only-after-load intent. Do
+     * NOT fold the RELRO segment into the COW range — making it PL0-none/COW
+     * regressed dropbear (a GOT read in the second segment then stale-TLB-faulted
+     * fatally). See loader-wx-multi-segment memory note. */
     uintptr_t wseg_va = 0; uint32_t wseg_size = 0;
     for (int i = 0; i < eh->e_phnum; i++) {
         const Elf32_Phdr *p = &ph[i];

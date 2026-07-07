@@ -105,7 +105,18 @@ enter_user_and_run:
 xt_undef: mov r0, #1
           mov r1, lr
           b   xt_fault
-xt_pabt:  mov r0, #3
+/* prefetch abort: try to service a stale-section-shadow permission fault first
+ * (TLBIALL + re-run), mirroring xt_dabt. Save the task's caller-saved regs +
+ * lr_abt (the C call clobbers them; a serviced re-run needs them). */
+xt_pabt:  stmfd sp!, {r0-r3, r12, lr}
+          sub   r0, lr, #4                @ r0 = faulting PC (lr_abt - 4)
+          bl    xtos_prefetch_fault       @ r0 = 1 serviced, 0 fatal
+          cmp   r0, #1
+          ldmfd sp!, {r0-r3, r12, lr}      @ restore (ldm preserves flags)
+          bne   xt_pabt_fatal
+          subs  pc, lr, #4                 @ serviced: re-run the faulting instr, restore CPSR
+xt_pabt_fatal:
+          mov r0, #3
           sub r1, lr, #4
           cps   #0x1f              @ System mode (the faulting task)
           mov   r2, lr             @ r2 = caller's return addr (instr after the blx-to-NULL)
@@ -141,6 +152,11 @@ xt_fault: bl   fault_report
 1:        mrs  r0, spsr             @ the fault-exit thunk calls vTaskDelete, so it must
           bic  r0, r0, #0x1f        @   run privileged even if the faulting task was PL0:
           orr  r0, r0, #0x1f        @   force the resumed mode to System
+          bic  r0, r0, #0x20        @   CLEAR Thumb (T): xtos_task_fault_exit is ARM code.
+          bic  r0, r0, #(1<<24)     @   CLEAR Jazelle (J) too. If the faulting task was in
+                                    @   Thumb (or its CPSR got corrupted with T=1), resuming
+                                    @   an ARM thunk in Thumb state = garbage/UNDEF, and it
+                                    @   re-faults forever (the fault loop that wedged aesdesk).
           msr  spsr_cxsf, r0
           movw lr, #:lower16:xtos_task_fault_exit
           movt lr, #:upper16:xtos_task_fault_exit

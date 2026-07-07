@@ -237,6 +237,21 @@ long xt_sock_recvfrom(int si, void *buf, unsigned len,
     return (long)want;
 }
 
+/* socket endpoint query (XT_SIOCGPEER / XT_SIOCGNAME -> the shim's
+ * getpeername/getsockname): remote or local {ip_be32, port}. */
+int xt_sock_endpoint(int si, int remote, unsigned *ip, unsigned *port)
+{
+    xt_sock *s = slot_of(si);
+    if (!s || !s->conn) return -1;
+    ip_addr_t a; u16_t p16;
+    err_t e = remote ? netconn_peer(s->conn, &a, &p16)
+                     : netconn_addr(s->conn, &a, &p16);
+    if (e != ERR_OK) return -1;
+    if (ip)   *ip   = ip_addr_get_ip4_u32(&a);
+    if (port) *port = p16;
+    return 0;
+}
+
 /* bytes readable without blocking (FIONREAD / the shim's poll) */
 long xt_sock_avail(int si)
 {

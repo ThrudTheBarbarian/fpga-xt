@@ -147,9 +147,11 @@ static void boot_run(void)
 static void shell_task(void *arg)
 {
     (void)arg;
-    { extern void klog_start(void); klog_start(); } /* logger: flush kernel diagnostics to /OS/var/log/system.log */
+    { extern void klog_start(void); klog_start(); } /* logger: flush kernel diagnostics to /tmp/system.log (ramfs) */
     { extern void sd_init(void); sd_init(); }   /* mount SD here (task context — FatFs reentrancy needs the scheduler) */
-    { extern void net_init(void); net_init(); } /* GEM0 + lwIP + DHCP + the tftp file drop (async; quiet if no link) */
+    /* networking is NOT started here: /boot/20-Networking runs /bin/netup
+     * (SYS_net_up) — stack bring-up is an explicit boot-script decision.
+     * Headless/qemu: run `netup` at the console. */
     boot_run();       /* /OS/boot/NN-<slug> auto-runner (e.g. the desktop) */
 
     /* Login shell: /System/bin/sh is toysh (toybox) — the interactive PL0 shell
@@ -347,6 +349,12 @@ int main(void)
       extern int vfs_add_mount(const char *, const char *, void *);
       vfs_romfs_init(); vfs_add_mount("/System", "romfs", 0);   /* romfs = /System (embedded, RO); SD = / at mount time */
       vfs_ramfs_init(); vfs_add_mount("/tmp", "ramfs", 0);      /* ramfs = /tmp (writable, in-memory) */
+#ifndef XT_HW
+      vfs_add_mount("/media", "ramfs", 0);   /* qemu has no SD: a ramfs /media so /media/home
+                                              * (HOME) can exist for ssh testing — the ~/.ssh
+                                              * authorized_keys default + dropbear's login chdir
+                                              * work like HW (where /media is the FatFs SD) */
+#endif
       vfs_lockfs_init(); vfs_add_mount("/OS/var/locks", "lockfs", 0);   /* advisory locks as files */
       { extern void vfs_devfs_init(void);
         vfs_devfs_init(); vfs_add_mount("/OS/dev", "devfs", 0); }      /* char devices */

@@ -5,7 +5,27 @@
 # Immediate targets
 
 ## Open Issues (tracked bugs)
-- none
+- **Retire the per-switch `TLBIALL` sledgehammer (residual stale image-region TLB entry).**
+  `vm_switch` does a full `TLBIALL` on every process switch as a robust backstop for HW
+  scp/ssh crashes (conflicting/stale TLB entries over image-region section `0x29`: scp
+  takes a recurring PL0-none prefetch-fault storm; dropbear reads its GOT through a stale
+  entry → PLT jump to ~`0xffffffff`). Robust (16× 19 MB scp, zero faults) but taxes every
+  context switch with a cold-TLB refill (negligible for long jobs; up to ~10–25 % for
+  high-switch-rate workloads — shell pipelines, many short-lived programs, chatty IPC).
+  **Investigated (ssh-server):** the crash values cluster at ~`0xFFFFFFFF` = the fingerprint
+  of an A9 **conflicting TLB entry** from a **break-before-make violation** — live remaps
+  wrote a new valid descriptor over a live valid one. Fixed BBM at `vm_cow_map`,
+  `vm_cow_read_fault` reseed, and `perproc_l2`'s L1 swap: this **materially helped**
+  (dropbear crash went immediate→rare, and the GOT read went silent→a *serviceable*
+  permission fault) but did **not** fully eliminate it — a residual conflicting-entry path
+  survives (suspect: section-`0x29` **code**-page entries, given scp's `[pabt]` storm
+  persists through BBM + the `perproc_l2` TLBIALL). So BBM is KEPT (correct + reduces the
+  problem) and the sledgehammer STAYS as backstop. Next: chase the residual — likely a
+  code-page remap/speculation in section `0x29` not yet going through BBM, or eliminate the
+  global `SEC_KDATA` 1 MB sections over the image region (mmu.c) so nothing can conflict.
+  RULED OUT: `perproc_l2` missing-invalidation alone; MAXSEC exhaustion (dropbear needs
+  only libc); the `cowdiv` scanner (false positives — flags legit large `.data` values).
+  *(src: loader/test/freertos/vm.c `vm_switch` + the BBM sites; branch ssh-server)*
 
 ## Post-architecture-review
 - none
@@ -235,6 +255,40 @@
 
 
 # Future targets
+## SSH (HW-VALIDATED end-to-end; docs/OS/ssh-server.md)
+Server + client + scp all work — HW-confirmed: clean boot (Networking/SecureShell/
+Desktop all [OK]), `ssh xtos.local` login, exec, scp both ways, boot-script start,
+per-boot /var/log/sshd.log with real peer IPs, SIGWINCH. The session-exit hang
+(interactive `exit`/Ctrl-D used to hang, then crash on HW) is FIXED and confirmed
+on the board — `ps` after Ctrl-D shows sshd-session + login shell cleanly reaped.
+Root cause was dropbear's SIGCHLD-gated reap + the fake-vfork wiping the SIGCHLD
+handler; fix = synchronous SIGCHLD delivery + a vfork-armed guard on signal()/
+sigaction(). (A late loader-COW misstep during this work — folding the RELRO
+segment into COW — briefly crashed sshd-session on connect; reverted, see
+loader-wx-multi-segment.) Open:
+- **scp crashes on HW during the SD file write** (interactive + non-pty exec +
+  1.2 MB bulk channel transfer ALL work HW-validated; scp is the lone failure).
+  sshd-session takes a wild-jump PREFETCH-ABORT: a PLT stub reads dropbear's
+  memcpy .got.plt slot and finds GARBAGE (`0x5c7bdab4`), so dropbear's private
+  COW copy of that GOT page is corrupted mid-transfer. Bisected: `ssh host 'cmd'`
+  and `ssh host 'cat /System/bin/*' | wc -c` (1.2 MB, no SD) both pass → it is
+  specifically the scp **SD-write** path, not exec or bulk crypto. Ruled out:
+  DMA unaligned-edge invalidate (Xil_DCacheInvalidateRange clean+invalidates
+  edges correctly), the shared page pool double-allocating (dpage_raw is
+  IRQ-critical-section safe). Leading theory: a page-lifetime / DMA-coherency
+  interaction between the fs-task SD writes and dropbear's cached GOT page (the
+  fd page-cache and COW pages share dpage_raw's pool; PIPT, no cache maintenance
+  on reuse). Needs ON-BOARD instrumentation (log/catch the writer of the GOT
+  physical page during a transfer) — not fixable by code-reading. Two kernel
+  hardening fixes DID land here and stay: vm_cow_read_fault + vm_exec_fault
+  (service stale-section-TLB read/prefetch faults instead of killing the task).
+- **sftp** — no server binary yet (scp covers file transfer).
+- **lwIP loopback** — the board can't ssh/scp to 127.0.0.1 (no `lo` netif; the
+  connection wedges the stack). Outbound to real peers is fine. *(loader-networking)*
+- **mDNS dropped off mid-session once during bring-up** (IP stayed up; fine after
+  reload) — watch for recurrence; loader-networking, not ssh.
+- **Merge `ssh-server` → `main`** once soak-tested on HW.
+
 ## Open Issues (tracked bugs)
 - **A loaded libGEM.so re-running `vdi_init` wipes the kernel's live VDI** — the
   `gemhw`/runhost demo (`xtld_host.c`) resolves `vdi_init` from the loaded `libGEM.so`

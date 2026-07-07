@@ -427,6 +427,31 @@ static int fd_reopen_dup(int fd)
     return (int)nf;
 }
 
+/* fd bookkeeping between vfork and exec — the "child" is still this process:
+ * - dup2 onto 0/1/2 is RECORDED (g_redir) and becomes SYS_spawn_fd's stdio map
+ * - close() in the fake child of a PRE-vfork fd is a NO-OP on the parent's table
+ *   (in real vfork the child closes its own copy); it just marks the fd
+ *   not-inherited. An fd the fake child OPENED itself (g_child_opened) really
+ *   closes — in real vfork open+close in the child is net zero in the shared
+ *   table, and without this every pty session leaks its by-name slave open
+ *   (sshpty's pty_make_controlling_tty), so the slave never reaches EOF.
+ * - fcntl FD_CLOEXEC is tracked here and merged into the same mask
+ * The kernel inherits every unmasked parent pipe fd >=3 at the same slot. */
+static unsigned g_vfork_regs[11];        /* defined with the vfork asm below */
+#define g_vfork_armed (g_vfork_regs[10])
+static int g_redir[3] = { -1, -1, -1 };
+static unsigned g_child_closed;          /* fds the fake child "closed" */
+static unsigned g_child_opened;          /* fds the fake child really opened */
+static unsigned g_cloexec;               /* fds marked close-on-exec */
+static unsigned g_nonblock;              /* fds marked O_NONBLOCK (fcntl F_SETFL) */
+
+static void redir_reset(void)
+{
+    for (int i = 0; i < 3; i++) g_redir[i] = -1;
+    g_child_closed = 0;
+    g_child_opened = 0;
+}
+
 /* open must be dir-aware (toybox opens directories to walk them: ls's
  * listfiles, dirtree's openat) — a directory open yields a pseudo-fd */
 int open(const char *path, int flags, ...)
@@ -437,26 +462,9 @@ int open(const char *path, int flags, ...)
         return pfd_alloc(path);
     long fd = sys_open(path, flags & 0xfff);   /* strip O_CLOEXEC and friends */
     if (fd < 0) { errno = ENOENT; return -1; }
+    if (g_vfork_armed && fd < 16) g_child_opened |= 1u << fd;
     fdpath_set((int)fd, path, flags);          /* so dup() can reopen it */
     return fd;
-}
-
-/* fd bookkeeping between vfork and exec — the "child" is still this process:
- * - dup2 onto 0/1/2 is RECORDED (g_redir) and becomes SYS_spawn_fd's stdio map
- * - close() in the fake child is a NO-OP on the parent's table (in real vfork
- *   the child closes its own copy); it just marks the fd not-inherited
- * - fcntl FD_CLOEXEC is tracked here and merged into the same mask
- * The kernel inherits every unmasked parent pipe fd >=3 at the same slot. */
-static unsigned g_vfork_regs[11];        /* defined with the vfork asm below */
-#define g_vfork_armed (g_vfork_regs[10])
-static int g_redir[3] = { -1, -1, -1 };
-static unsigned g_child_closed;          /* fds the fake child "closed" */
-static unsigned g_cloexec;               /* fds marked close-on-exec */
-
-static void redir_reset(void)
-{
-    for (int i = 0; i < 3; i++) g_redir[i] = -1;
-    g_child_closed = 0;
 }
 
 /* close/fstat/dup must understand pseudo-fds; real fds go to the kernel */
@@ -464,8 +472,19 @@ int close(int fd)
 {
     int i = fd - XT_PFD_BASE;
     if (i >= 0 && i < XT_PFD_MAX) { g_pfd[i].used = 0; return 0; }
-    if (g_vfork_armed && fd >= 0 && fd < 16) {   /* fake child: parent's table untouched */
-        g_child_closed |= 1u << fd;
+    if (g_vfork_armed && fd >= 0 && fd < 16) {
+        /* the fake child's own open, with NO recorded dup2 referencing it: really
+         * close (real vfork: open+close in the child nets zero — e.g. sshpty's
+         * by-name slave open, which otherwise leaks and defeats pty EOF). An fd
+         * that IS in g_redir stays open — spawn_fd moves it into the child, which
+         * is also how it leaves this table. */
+        int redir_ref = (g_redir[0] == fd || g_redir[1] == fd || g_redir[2] == fd);
+        if ((g_child_opened & (1u << fd)) && !redir_ref) {
+            g_child_opened &= ~(1u << fd);
+            fdpath_clear(fd);
+            return _close(fd);
+        }
+        g_child_closed |= 1u << fd;              /* deferred: table untouched */
         return 0;
     }
     if (fd >= 0 && fd < 16) g_cloexec &= ~(1u << fd);
@@ -496,11 +515,15 @@ int fcntl(int fd, int cmd, ...)
         return 0;
     case 3 /*F_GETFL*/: {                /* doubles as the "is this fd free" probe */
         struct xt_stat xs;
-        if (sys_fstat(fd, &xs) == 0) return 0;
-        errno = EBADF;
-        return -1;
+        if (sys_fstat(fd, &xs) != 0) { errno = EBADF; return -1; }
+        return (g_nonblock >> fd) & 1 ? O_NONBLOCK : 0;
     }
-    case 4 /*F_SETFL*/: return 0;
+    case 4 /*F_SETFL*/: {                /* only O_NONBLOCK is meaningful here */
+        int nb = (arg & O_NONBLOCK) ? 1 : 0;
+        if (nb) g_nonblock |= 1u << fd; else g_nonblock &= ~(1u << fd);
+        sys_ioctl(fd, XT_FIONBIO, &nb);  /* tell the kernel: nonblock reads -> EAGAIN */
+        return 0;
+    }
     }
     errno = EINVAL;
     return -1;
@@ -762,8 +785,13 @@ int fchdir(int fd)
 
 int ftruncate(int fd, off_t length)
 {
-    (void)fd; (void)length;
-    errno = ENOSYS;                      /* no truncate in the VFS yet */
+    /* the VFS has no shrink-in-place; report success when the file is already
+     * the requested size — the only live caller is scp, which opens O_TRUNC,
+     * writes exactly `length` bytes, then ftruncate(length)s as a no-op. A real
+     * shrink (length != current size) still says ENOSYS honestly. */
+    struct xt_stat xs;
+    if (sys_fstat(fd, &xs) == 0 && (off_t)xs.size == length) return 0;
+    errno = ENOSYS;
     return -1;
 }
 
@@ -835,12 +863,51 @@ int lchown(const char *p, uid_t o, gid_t g) { (void)p; (void)o; (void)g; return 
 mode_t umask(mode_t mask) { (void)mask; return 022; }
 int fsync(int fd) { (void)fd; return 0; }   /* page cache flushes on close */
 
+/* read/write: POSIX-shape the kernel's raw -errno returns (-1 + errno). Without
+ * this a nonblocking read of an empty pty/pipe surfaces as read() == -11 with a
+ * STALE errno — dropbear's channel pump checks errno == EAGAIN on a negative
+ * return and treats anything else as a dead fd. newlib stdio bypasses these
+ * (it calls _read/_write directly), which is fine — it never uses O_NONBLOCK. */
+/* In the fake-vfork child, stdio I/O must honor the RECORDED dup2 map — the
+ * dup2s aren't applied to the (shared) table until exec, but a real vfork
+ * child writing fd 1 after dup2(x,1) writes to x. Dropbear's pty child prints
+ * the motd this way; without the remap it lands on the parent's console. */
+static inline int vfork_redir_fd(int fd)
+{
+    if (g_vfork_armed && fd >= 0 && fd < 3 && g_redir[fd] >= 0) return g_redir[fd];
+    return fd;
+}
+
+static int winch_dispatch(void);   /* fwd (defined with the signal table below):
+                                    * runs a registered SIGWINCH handler; 1 = ran */
+
+ssize_t read(int fd, void *buf, size_t n)
+{
+    for (;;) {
+        long r = sys_read(vfork_redir_fd(fd), buf, (unsigned)n);
+        if (r == -4) {                 /* pty winch wakeup (window size changed) */
+            if (winch_dispatch()) { errno = EINTR; return -1; }   /* POSIX EINTR */
+            continue;                  /* no handler installed: transparent retry */
+        }
+        if (r < 0) { errno = (r == -11) ? EAGAIN : (r < -1 && r > -134) ? (int)-r : EIO; return -1; }
+        return r;
+    }
+}
+
+ssize_t write(int fd, const void *buf, size_t n)
+{
+    long r = sys_write(vfork_redir_fd(fd), buf, (unsigned)n);
+    if (r < 0) { errno = (r == -11) ? EAGAIN : (r < -1 && r > -134) ? (int)-r : EIO; return -1; }
+    return r;
+}
+
 ssize_t readv(int fd, const struct iovec *iov, int cnt)
 {
     ssize_t total = 0;
     for (int i = 0; i < cnt; i++) {
-        long n = sys_read(fd, iov[i].iov_base, iov[i].iov_len);
-        if (n < 0) return total ? total : -1;
+        if (!iov[i].iov_len) continue;
+        ssize_t n = read(fd, iov[i].iov_base, iov[i].iov_len);
+        if (n < 0) return total ? total : -1;    /* errno set by read() */
         total += n;
         if ((size_t)n < iov[i].iov_len) break;
     }
@@ -851,8 +918,9 @@ ssize_t writev(int fd, const struct iovec *iov, int cnt)
 {
     ssize_t total = 0;
     for (int i = 0; i < cnt; i++) {
-        long n = sys_write(fd, iov[i].iov_base, iov[i].iov_len);
-        if (n < 0) return total ? total : -1;
+        if (!iov[i].iov_len) continue;
+        ssize_t n = write(fd, iov[i].iov_base, iov[i].iov_len);
+        if (n < 0) return total ? total : -1;    /* errno set by write() */
         total += n;
         if ((size_t)n < iov[i].iov_len) break;
     }
@@ -898,7 +966,7 @@ __attribute__((naked)) static void vfork_return(int pid)
 static void kids_add(int pid)
 {
     for (int i = 0; i < MAX_KIDS; i++)
-        if (!g_kids[i]) { g_kids[i] = pid; return; }
+        if (!g_kids[i]) { g_kids[i] = pid; break; }
 }
 
 /* A fake vfork child that _exits without ever reaching a successful exec
@@ -1071,7 +1139,12 @@ int chroot(const char *path) { (void)path; errno = EPERM; return -1; }
 static char *g_grmem[] = { 0 };
 static struct passwd g_pw = {
     .pw_name = "root", .pw_passwd = "", .pw_uid = 0, .pw_gid = 0,
-    .pw_gecos = "root", .pw_dir = "/", .pw_shell = "/System/bin/sh",
+    .pw_gecos = "root", .pw_dir = "/media/home", .pw_shell = "/bin/sh",
+    /* pw_dir matches g_env0's HOME: sshd derives the session HOME, the login
+     * chdir and the default authorized_keys path (~/.ssh) from here.
+     * pw_shell must be /bin/sh — the one shell path that resolves on BOTH
+     * targets (qemu romfs maps /bin/sh directly; the HW romfs carries no
+     * shell and spawn's /bin/x -> /OS/bin/x fallback finds the SD toysh). */
 };
 static struct group g_gr = {
     .gr_name = "root", .gr_passwd = "", .gr_gid = 0, .gr_mem = g_grmem,
@@ -1164,6 +1237,9 @@ int ioctl(int fd, unsigned long req, ...)
     va_end(ap);
     if (req == TIOCGWINSZ) {
         struct winsize *ws = (struct winsize *)arg;
+        /* a pty slave knows its real size (TIOCSWINSZ from the ssh client);
+         * everything else (console) reports the classic 24x80 */
+        if (sys_ioctl(fd, (unsigned)req, arg) == 0) return 0;
         ws->ws_row = 24;
         ws->ws_col = 80;
         ws->ws_xpixel = ws->ws_ypixel = 0;
@@ -1195,26 +1271,57 @@ static int poll_probe(struct pollfd *f)
         } else if (kind == XT_S_IFCHR) {
             int n = 0;
             if (sys_ioctl(f->fd, XT_TTY_NREAD, &n) != 0 || n > 0) f->revents |= POLLIN;
+        } else if (kind == XT_S_IFIFO) {
+            /* HONEST pipe readability: data buffered, or EOF (drained + writerless;
+             * the kernel FIONREAD returns 1 then). An always-ready lie makes a
+             * select()-driven nonblock reader (dropbear's channel loop) see EAGAIN
+             * after select said readable — which it treats as a dead fd. */
+            int n = 0;
+            long rc = sys_ioctl(f->fd, XT_FIONREAD, &n);
+            if (rc < 0 || rc == 1 || n > 0) f->revents |= POLLIN;
         } else {
-            f->revents |= POLLIN;                    /* pipes/files: reads block correctly */
+            f->revents |= POLLIN;                    /* files: reads never block long */
         }
     }
     return f->revents != 0;
 }
 
+/* Does the caller have live children (spawned via vfork+exec)? Used to bound a
+ * blocking poll: a server like dropbear reaps exited children in its select
+ * loop's handler, but it relies on SIGCHLD waking select — and XTOS delivers no
+ * async SIGCHLD. So when a child exits, nothing wakes a long select() and the
+ * loop (hence the reap) stalls for the full timeout (dropbear's is ~1h rekey),
+ * which reads as a hang. Capping the poll wait lets the caller's loop run — and
+ * reap — within CHILD_POLL_MS of the child's exit. */
+static int have_children(void)
+{
+    for (int i = 0; i < MAX_KIDS; i++) if (g_kids[i]) return 1;
+    return 0;
+}
+static int sigchld_dispatch(void);   /* fwd (defined with the signal table below) */
+#define CHILD_POLL_MS 200
+
 int poll(struct pollfd *fds, nfds_t nfds, int timeout)
 {
     struct timeval t0;
     gettimeofday(&t0, 0);
+    int cap = have_children() ? CHILD_POLL_MS : -1;
     for (;;) {
         int ready = 0;
         for (nfds_t i = 0; i < nfds; i++) ready += poll_probe(&fds[i]);
         if (ready || timeout == 0) return ready;
-        if (timeout > 0) {
+        if (timeout > 0 || cap >= 0) {
             struct timeval t1;
             gettimeofday(&t1, 0);
             long el = (t1.tv_sec - t0.tv_sec) * 1000 + (t1.tv_usec - t0.tv_usec) / 1000;
-            if (el >= timeout) return 0;
+            if (timeout > 0 && el >= timeout) return 0;
+            if (cap >= 0 && el >= cap) {
+                /* a tracked child exited -> deliver SIGCHLD (writes the server's
+                 * self-pipe), then re-probe so this poll reports that pipe
+                 * readable and select wakes to reap. Otherwise just time out. */
+                if (sigchld_dispatch()) { gettimeofday(&t0, 0); continue; }
+                return 0;
+            }
         }
         /* nothing ready: if the ONLY interesting fd is the console, let the
          * kernel block properly; else nap-and-recheck */
@@ -1236,12 +1343,65 @@ int poll(struct pollfd *fds, nfds_t nfds, int timeout)
 /* ---- signals: soft only (never delivered asynchronously) ------------------ */
 static struct sigaction g_sigact[32];
 
+#ifndef SIGWINCH
+#define SIGWINCH 28
+#endif
+/* SIGWINCH delivery point: a blocked pty-slave read wakes with -EINTR when the
+ * window size changes (TIOCSWINSZ from the ssh client); read() calls here. The
+ * handler runs synchronously in the reader's own context — the only signal
+ * delivery XTOS does. Apps see fresh TIOCGWINSZ values inside the handler. */
+static int winch_dispatch(void)
+{
+    void (*h)(int) = g_sigact[SIGWINCH].sa_handler;
+    if (!h || h == SIG_IGN || h == SIG_DFL) return 0;
+    h(SIGWINCH);
+    return 1;
+}
+
+#ifndef SIGCHLD
+#define SIGCHLD 20      /* arm newlib */
+#endif
+/* SIGCHLD delivery point: XTOS has no async signals, so a server that relies on
+ * SIGCHLD waking select (e.g. dropbear's self-pipe) never learns a child exited
+ * and hangs. When a tracked child has actually exited (a non-reaping peek), run
+ * the registered SIGCHLD handler synchronously — it typically writes a self-pipe
+ * / sets a flag that wakes the caller's next select, which then reaps the child.
+ * This is the same shim-side checkpoint idea as winch_dispatch; the two will fold
+ * into one deliver_signals() pass. Returns 1 if a handler ran. */
+static int sigchld_dispatch(void)
+{
+    void (*h)(int) = g_sigact[SIGCHLD].sa_handler;
+    if (!h || h == SIG_IGN || h == SIG_DFL) return 0;
+    for (int i = 0; i < MAX_KIDS; i++)
+        if (g_kids[i] && sys_waitpid_peek(g_kids[i]) == 1) { h(SIGCHLD); return 1; }
+    return 0;
+}
+
+/* In the armed fake-vfork window, signal-disposition changes are for the
+ * about-to-exec CHILD, whose new image starts with default handlers anyway — so
+ * they must NOT touch the parent's table. Real vfork lets exec replace the child;
+ * XTOS's snapshot-vfork keeps the parent running, so without this guard the
+ * child's `signal(SIGCHLD, SIG_DFL)` (dropbear's execchild "back to normal
+ * sigchld") wipes the PARENT's SIGCHLD handler — and the parent then never
+ * delivers SIGCHLD, so it can't reap the exited shell (the session hangs). */
 int sigaction(int sig, const struct sigaction *act, struct sigaction *old)
 {
     if (sig < 0 || sig >= 32) { errno = EINVAL; return -1; }
     if (old) *old = g_sigact[sig];
-    if (act) g_sigact[sig] = *act;
+    if (act && !g_vfork_armed) g_sigact[sig] = *act;
     return 0;
+}
+
+/* signal(): route into g_sigact so soft-signal delivery (SIGWINCH/SIGCHLD) finds
+ * the handler. newlib's own signal() keeps its handler in a PRIVATE table the shim
+ * can't see, so programs that install SIGWINCH via signal() (toysh, vi, less)
+ * would never be woken — this override (the shim links before libc.so) fixes it. */
+_sig_func_ptr signal(int sig, _sig_func_ptr h)
+{
+    if (sig < 0 || sig >= 32) { errno = EINVAL; return SIG_ERR; }
+    _sig_func_ptr prev = g_sigact[sig].sa_handler;
+    if (!g_vfork_armed) g_sigact[sig].sa_handler = h;   /* see sigaction: don't corrupt the parent */
+    return prev;
 }
 
 int kill(pid_t pid, int sig)

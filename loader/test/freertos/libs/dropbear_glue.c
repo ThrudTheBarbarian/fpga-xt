@@ -51,6 +51,12 @@ int select(int nfds, fd_set *rd, fd_set *wr, fd_set *ex, struct timeval *tv)
     return count;
 }
 
+/* XTOS has no hard links. Dropbear writes a key to a temp file then link()s it to the
+ * final name for atomicity, and falls back to a plain write ONLY on EPERM/EACCES/ENOSYS.
+ * newlib's link() stub fails with errno 0 ("Success"), which skips that fallback and makes
+ * dropbearkey report "Failed moving key file" — so fail explicitly with EPERM. */
+int link(const char *oldp, const char *newp)    { (void)oldp; (void)newp; errno = EPERM; return -1; }
+
 /* ---- single-user no-ops (XTOS is root; ownership/limits/priv-drop are decorative) ---- */
 int chown(const char *path, uid_t o, gid_t g)   { (void)path; (void)o; (void)g; return 0; }
 int setegid(gid_t g)                            { (void)g; return 0; }

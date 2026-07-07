@@ -75,6 +75,116 @@ no-ops (`chown`, `set[e]uid/gid`, `get/setrlimit`, `utimes`, `gethost*/getserv*`
 Everything else resolves from `libc.so`; the only load-time unresolved is `_close` (a
 kernel-export primitive, same as toybox.so). `dropbearkey.o` is excluded (its own `main`).
 
+## MILESTONE: dropbearkey RUNS on XTOS
+
+`dropbearkey -t ed25519 -f <file>` runs on qemu and generates a valid ed25519 host key,
+writes it, and re-reads it identically (`-y`) — proving the `.so` loads and executes, the
+full crypto (libtomcrypt/libtommath ed25519) works at runtime, `/dev/urandom` seeds it, and
+file I/O round-trips. Built by `make` (`dropbearkey.so` target → `/bin/ssh-keygen` in the
+romfs); its objects are the COMMON set + dropbearkey compiled NEUTRAL (no `DROPBEAR_SERVER`).
+One fix needed: XTOS has no hard links, and dropbearkey writes a temp file then `link()`s it
+to the final name, falling back to a plain write only on EPERM/EACCES/ENOSYS — newlib's
+`link()` failed with errno 0, skipping the fallback, so `dropbear_glue.c` now provides
+`link()` returning EPERM. (Build note: build sequentially — interleaving build-dropbear.sh
+with `make` produced a corrupt toybox.so once.)
+
+## MILESTONE: server starts, listens, accepts (fork blocker confirmed)
+
+`dropbear -F -r <key> -p <port>` runs on qemu: parses args, "Not backgrounding", binds and
+listens — the server `.so` executes. qemu has working networking (SLIRP, `e0`/10.0.2.15), so
+with `-nic user,hostfwd=tcp::2222-:22` a host `ssh -p 2222 root@127.0.0.1` reaches it: TCP
+connects and dropbear ACCEPTS (not refused), but the client times out "during banner
+exchange" — no banner comes back. Root cause CONFIRMED empirically: `svr-main.c:308`
+`fork()`s a child per connection to send the banner + run KEX, and XTOS has no fork
+(`posix_shim.c`: "there is no fork"), so the handler never runs. Exactly the predicted gap.
+(Also: drop `-E` — syslog is disabled, so stderr is already the log and `-E` is unknown.)
+
+So the transport is one launcher away: **inetd mode + an XTOS sshd listener** that binds :22,
+accepts, and `SYS_spawn_fd`s `dropbear -i` with the socket as fd 0/1 (model on `httpd.so`,
+which already does listen/accept). That gets KEX + pubkey auth working over a real
+connection; the interactive session then needs `spawn_command`→spawn + the pty.
+
+Packaging done: `dropbear.so` → `/bin/sshd-session` in the romfs (alongside `/bin/ssh-keygen`).
+
+## MILESTONE: `ssh root@xtos 'cmd'` WORKS — full non-interactive SSH login ✅✅✅
+
+A host runs a command on XTOS over SSH end to end: connect → KEX → **pubkey auth succeeds**
+→ **exec → command output returned**. `ssh -i key root@127.0.0.1 'echo hi; pwd'` prints
+`hi` / `/`. The whole thing: real crypto transport, RSA pubkey auth, and command execution.
+
+The fixes that got from handshake to login:
+1. **pipe O_NONBLOCK** (kernel) — dropbear's signal-pipe drain no longer deadlocks (see below).
+2. **`COMPAT_USER_SHELLS`** (localoptions) = "/System/bin/sh",... — dropbear validates the
+   login shell against this list when /etc/shells is absent; without it, "invalid shell".
+3. **authorized_keys** — default `~/.ssh/authorized_keys` (pw_dir = `/media/home`); an
+   explicit dir can be forced via `sshd`'s third arg (`-D`). The qemu harness bakes a test
+   key at `/System/etc/ssh/authorized_keys` (romfs-overlay, gitignored — personal key) and
+   passes `-D /System/etc/ssh` because `/media/home` lives on the SD.
+4. **DROPBEAR_VFORK** — XTOS has no fork; configure saw newlib's nosys fork stub and defined
+   HAVE_FORK (→ dropbear used fork() → "exec request failed"). build-dropbear.sh now strips
+   `HAVE_FORK` from config.h so sysoptions.h selects `DROPBEAR_VFORK=1`; `spawn_command` then
+   uses vfork (the shim's snapshot trick, as toybox's XVFORK) and the command runs.
+
+**Interactive shell — pty subsystem BUILT, I/O pump is the last mile.** `ssh -tt root@xtos`
+reaches full auth, dropbear allocates a pty (BSD `/dev/ptyp` scan), sets up the controlling
+tty, and **the shell IS spawned** (`/System/bin/sh`). But dropbear's I/O pump hangs — the
+shell's output never reaches the client. The pty itself is done: pass-through pairs
+`/dev/ptyp[0-3]`+`/dev/ttyp[0-3]` (vfs_devfs.c + frtos_os.c `xt_pty_*`), refcounted opens
+(`vf.ondup`), mode/winsize ioctls, O_NONBLOCK read (`vf.nonblock`); `spawn_fd` COPIES a
+char-device stdio fd so the pty child's `dup2(slave→0/1/2)` wires all three. Remaining
+suspects: (1) the kernel `-EAGAIN` from the nonblock master read may not map to
+`errno=EAGAIN` for dropbear's channel read; (2) dropbear's complex pty vfork child
+(`pty_make_controlling_tty`) vs our snapshot-vfork (the simple non-pty exec child works).
+Next: trace `xt_pty_*` during a live session to see where data stops. Non-interactive exec
+works fully; scp needs an scp binary on the guest (dropbear execs the system scp; toybox has none).
+
+## (earlier) real SSH handshake to XTOS (KEX + host key + cipher)
+
+A host OpenSSH client completes the FULL handshake with Dropbear on XTOS over a real TCP
+link (qemu `-nic user,hostfwd=tcp::2222-:22`, `sshd` running the inetd launcher):
+banner (`dropbear_2025.88`), KEX (`sntrup761x25519-sha512`), ed25519 host key,
+chacha20-poly1305 cipher, then pubkey auth offered — "Permission denied (publickey)" only
+because no `authorized_keys` is set up yet. The whole crypto transport works.
+
+Two things made it work: (1) the **pipe O_NONBLOCK fix** (dropbear's signal-pipe drain no
+longer deadlocks the session loop); (2) `dropbear -i` uses fd 0 for BOTH directions
+(`common_session_init(sock, sock)`), so `SYS_spawn_fd` moving the socket onto child fd 0 is
+exactly right — no socket-multi-slot work needed after all.
+
+**Remaining for a full login:** (a) pubkey auth — drop a client key in the user's
+authorized_keys (getpwnam home + `/.ssh/authorized_keys`); (b) the interactive session —
+`spawn_command`→`SYS_spawn` + the `/dev/ptmx` pty. A non-interactive `ssh board 'cmd'` (exec)
+lands before the pty.
+
+## (superseded) earlier launcher notes
+
+Built the inetd launcher `sshd.c` (`/bin/sshd`, bare usys, modelled on httpd.c): binds the
+port, accepts, and `SYS_spawn_fd`s `dropbear -i` with the socket as the child's fd 0/1/2.
+It RUNS and listens ("sshd: listening for ssh"). But a host `ssh` still times out at banner
+exchange. The frontier is a cluster of I/O-integration issues to work through, in order:
+
+1. **Session-loop banner flush — ROOT CAUSE FOUND (fix this first).** dropbear
+   (common-session.c:95-99) makes a signal self-pipe and `setnonblocking()`s it via
+   `fcntl(F_SETFL, O_NONBLOCK)`. The shim's `fcntl(F_SETFL)` is a **NO-OP**, so the pipe
+   stays BLOCKING. Each loop iteration adds `signal_pipe[0]` to the read set (line 183),
+   `poll_probe` reports pipes as always-readable (empty or not), so `select` returns it
+   "readable"; dropbear's drain `while (read(signal_pipe[0],&x,1) > 0)` (line 236) then
+   **blocks on the empty pipe → hangs before the banner flushes.** Fix = real pipe
+   **O_NONBLOCK**: shim `fcntl(F_SETFL)` records a per-fd nonblock flag (like `g_cloexec`),
+   and a nonblock pipe `read()` returns `-1/EAGAIN` when empty instead of blocking (needs a
+   "pipe has data" path in the kernel/shim). Shared infra — verify no toybox regression
+   (fstest, pipelines). Testable without a connection: `dropbear -i -r key` should then
+   print its `SSH-2.0-dropbear...` banner immediately.
+2. **Socket-fd inheritance through `SYS_spawn_fd`.** The fd-wiring (frtos_os.c ~2240) MOVES a
+   non-console stdio fd to the child's slot — so a socket passed as fds[0..2]=cfd lands only
+   on child fd 0 (fd 1/2 fall back to console). For inetd dropbear needs the socket on BOTH
+   fd 0 (in) and fd 1 (out): wire a socket fd to multiple child slots and refcount the
+   netconn on close (or make main_inetd use one fd for in+out). Needed for the real link.
+
+Test harness note: qemu with `-nic user,hostfwd=tcp::2222-:22` works; **foreground shows
+guest output, background does NOT** (qemu buffers stdout to a file). Use foreground for
+guest-side debugging; the host `ssh -v` shows the handshake either way.
+
 ## Runtime — decisions + status
 
 **`/dev/urandom` — DONE.** Already exists in `vfs_devfs.c` (`dv_rand_rd`, per-open
@@ -90,16 +200,120 @@ the fabric TRNG later just repoints `dv_rand_rd` at a PL register. No changes ne
 - *Shell launch* (`spawn_command` in svr-chansession) forks+execs the login shell → adapt
   to `SYS_spawn` (or the shim vfork path toybox already uses).
 
-## Remaining work, in order
+## MILESTONE: interactive `ssh root@xtos` WORKS — pty login shell ✅✅✅
 
-1. **XTOS sshd listener** + `localoptions.h` for inetd/no-fork; wire `dropbear -i`.
-2. **`spawn_command`** → XTOS spawn (verify the shim fork/vfork path or route to `SYS_spawn`).
-3. **host key** — package `dropbearkey` (separate `.so`, or dbmulti argv[0] dispatch); gen
-   an ed25519 key → `/OS/etc/dropbear/`; authorized_keys there too.
-4. **`/dev/ptmx` pty** (kernel): master/slave + line discipline + `TIOCSWINSZ`/`TIOCSCTTY`/
-   `TIOCGPTN`/`TIOCSPTLCK`. Only for the interactive shell — exec + scp land before it.
-5. **bring-up order**: transport → KEX → pubkey auth → exec (no pty) → scp → pty + shell.
-   (Steps 3-4 touch the kernel — coordinate with in-flight kernel work.)
+All session shapes pass in the qemu harness, repeatably and back-to-back on one boot:
+- `ssh root@xtos 'cmd'` — non-pty exec, output + exit status
+- `ssh -tt root@xtos 'cmd'` — forced-pty exec, works even when the client's stdin
+  EOFs immediately (`< /dev/null`)
+- `ssh -tt root@xtos` — full interactive login shell: prompt, linenoise editing/echo,
+  applets resolve via PATH, clean `exit`
+
+### User-facing names + key locations
+
+The Dropbear name is an implementation detail; the runtime binaries use the standard
+ssh names (romfs mappings in the loader Makefile):
+
+- `/bin/sshd` — the XTOS listener (binds, accepts, spawns a session process per
+  connection). `sshd [port] [hostkeyfile] [authkeysdir]`.
+- `/bin/sshd-session` — the per-connection server (Dropbear `svr-main` in inetd mode;
+  same name OpenSSH ≥9.8 uses for this role). Spawned by sshd, never run by hand.
+- `/bin/ssh-keygen` — the host-key generator (Dropbear dropbearkey; same `-t`/`-f`
+  flags: `ssh-keygen -t ed25519 -f /OS/etc/ssh/ed25519_host_key`).
+
+Key locations follow the usual conventions:
+- **host key**: `/OS/etc/ssh/ed25519_host_key` (sshd's default; override as argv[2])
+- **authorized keys**: `~/.ssh/authorized_keys` — the shim's passwd entry sets
+  `pw_dir = /media/home` (matching `HOME`), and dropbear resolves `~` from pw_dir.
+  An explicit dir can still be forced with sshd's third arg (`-D`); the qemu harness
+  does that (`/System/etc/ssh`, romfs-overlay) because `/media/home` lives on the SD.
+
+### The pty subsystem (kernel + devfs)
+
+Dropbear's `sshpty.c` finds no `/dev/ptmx` and falls back to scanning BSD-style pairs;
+XTOS provides 4: `/dev/ptyp[0-3]` (master) + `/dev/ttyp[0-3]` (slave).
+
+- **Core** — `frtos_os.c` `xt_pty_*`: each pair = two FreeRTOS StreamBuffers, `m2s`
+  (keystrokes) and `s2m` (shell output). Near-pass-through: the ONE output-discipline
+  rule is ONLCR (slave-side writes translate `\n` to `\r\n` — program output writes
+  bare newlines and the ssh client's terminal is raw). No input discipline; the
+  shell's linenoise sets raw mode and echoes itself. `mopen`/`sopen` are open COUNTS
+  (spawn copies refcount via `ondup`). A fresh master open resets both buffers (a dead
+  session must not replay into the next). Zero-length write returns 0 (dropbear probes
+  with len 0/NULL when its ring is empty). Nonblock read of an empty stream returns
+  `-EAGAIN`. ioctls: XT_TTY_GETMODE/SETMODE, TIOCSWINSZ/TIOCGWINSZ, TIOCSCTTY (no-op),
+  XT_TTY_NREAD (honest poll).
+- **Device nodes** — `vfs_devfs.c`: thin routers (`dv_ptym_*`/`dv_ptys_*`/`dv_pty_*`);
+  `f->priv` packs pair index + slave flag.
+- **`spawn_fd` copies (not moves) a char-device stdio fd** — the pty child dup2's the
+  SAME slave onto 0/1/2; each inherited copy bumps the refcount via `ondup`. Sockets
+  still move (the inetd `dropbear -i` uses one fd).
+
+### POSIX-shaping in the shim (`posix_shim.c`)
+
+- `read()`/`write()` wrappers map the kernel's raw `-errno` returns to `-1` + `errno`
+  (`-11` → `EAGAIN`). Dropbear's channel pump checks `errno == EAGAIN` on negative
+  returns and treats anything else as a dead fd — a stale errno there kills the session.
+  `readv`/`writev` use the wrappers and skip zero-length iovs. (newlib stdio calls
+  `_read`/`_write` directly and never uses O_NONBLOCK — unaffected.)
+- **Fake-vfork child opens really close**: `close()` in the armed-vfork window of an fd
+  the child itself opened (`g_child_opened`) closes it for real — real vfork shares the
+  fd table, so child open+close is net zero. Without this every pty session leaked its
+  by-name slave open (`pty_make_controlling_tty`) and the slave never reached EOF.
+
+### Dropbear deviations (all out-of-tree, submodule pristine)
+
+- `localoptions.h`: `DEFAULT_PATH` **and** `DEFAULT_ROOT_PATH` =
+  `/System/bin:/OS/bin:/bin` (XTOS logins are root; dropbear picks ROOT_PATH for uid 0).
+- `build-dropbear.sh` compiles a sed-patched copy of `svr-chansession.c` with
+  ptycommand's `channel->bidir_fd = 1` (pre-e28ba1b behaviour): a pty master is one
+  bidirectional fd, and with `bidir_fd = 0` a client half-close (`ssh -tt host cmd
+  < /dev/null` sends CHANNEL_EOF immediately) `close()`s the master before the shell's
+  output is drained. Our `shutdown()` is a no-op, so EOF just marks the write side.
+
+### Known quirks
+
+- The **first connection right after boot** can die with "Timeout before auth": SNTP
+  sets the wallclock mid-session and dropbear sees `now - connect_time` exceed the auth
+  timeout. Harmless — reconnect. (Fix would be a monotonic time source for dropbear.)
+- qemu harness only: keep the guest's stdin open (`sleep`) and expect the guest log to
+  flush in bursts.
+
+## Boot integration + polish (qemu-verified)
+
+- **Networking is a boot-script decision**, not kernel magic: `/boot/20-Networking`
+  runs `/bin/netup` (SYS_net_up → `net_init`, idempotent). The kernel no longer
+  auto-starts the stack. Headless: run `netup` at the console.
+- **`/boot/22-SecureShell`** starts sshd only if `~/.ssh/authorized_keys` exists,
+  logging to `/var/log/sshd.log` — truncated each boot (a fresh log per boot; every
+  writer opens its own O_APPEND fd, session children get one as stderr). Boot scripts
+  are versioned in `loader/sd/boot/` and staged by `make sdstage`.
+- **Real peer IPs in the log** (`Child connection from 10.0.2.2:63089`): the
+  `XT_SIOCGPEER`/`XT_SIOCGNAME` socket ioctls (`netconn_peer`/`netconn_addr`) back
+  honest `getpeername`/`getsockname` in the shim.
+- **scp** (`/bin/scp`) works both directions (Mac↔XTOS). Server mode (`scp -t/-f`,
+  spawned by the session) is pure stdio+fs; client mode (`scp f host:path` on XTOS)
+  execs `/bin/ssh` via the fake-vfork path. Needed three fixes: zero-length pipe
+  write returns 0 (was a SIGPIPE kill), honest pipe `poll` (readable = buffered OR
+  writerless-EOF; the always-ready lie made dropbear close the channel), and
+  `ftruncate` succeeds when the file is already the target size.
+- **ssh client** (`/bin/ssh`, dbclient): the board can ssh/scp OUT (pubkey only —
+  no password-prompt tty plumbing). `DROPBEAR_PATH_SSH_PROGRAM` points scp at
+  `/bin/ssh`.
+- **SIGWINCH**: a per-pty winch flag (set on a real TIOCSWINSZ change) wakes the
+  blocked slave read with -EINTR; the shim runs the app's handler synchronously
+  (added `signal()` to the shim — newlib's keeps handlers in a private table) then
+  returns EINTR. The handler-bearing app must be shim-linked (toysh/vi/less are).
+
+## Remaining work
+
+1. **HW re-validation** of the above (all qemu-verified; login itself HW-confirmed).
+   First-time board setup: `mkdir -p /OS/etc/ssh && ssh-keygen -t ed25519 -f
+   /OS/etc/ssh/ed25519_host_key`, put the client pubkey in `~/.ssh/authorized_keys`
+   (`/media/home/.ssh/`), then reboot (22-SecureShell auto-starts it) or `sshd 22`.
+2. **sftp** — no server binary yet (scp covers transfers).
+3. **lwIP has no loopback** — the board can't ssh/scp to `127.0.0.1` (no `lo`
+   netif; the connection wedges the stack). Outbound to real peers is fine.
 
 ## Deploy
 Server binary builds to a PIC `.so` (like toybox) → **sdpush**; anything needing the kernel

@@ -26,12 +26,20 @@ static inline long __syscall(long n, long a0, long a1, long a2)
 
 static inline long sys_write(int fd, const void *buf, unsigned len)
 { return __syscall(SYS_write, fd, (long)buf, (long)len); }
+/* append to the kernel diagnostic log (dmesg / /proc/kmsg + system.log) — for
+ * boot daemons that shouldn't clutter the console */
+static inline long sys_klog(const void *buf, unsigned len)
+{ return __syscall(SYS_klog, (long)buf, (long)len, 0); }
 static inline long sys_getpid(void) { return __syscall(SYS_getpid, 0, 0, 0); }
 static inline long sys_spawn(const char *path, int argc, char **argv)
 { return __syscall(SYS_spawn, (long)path, argc, (long)argv); }
 static inline long sys_waitpid(int pid) { return __syscall(SYS_waitpid, pid, 0, 0); }
 /* poll (WNOHANG): -11 = still running, else reaps + returns the exit code */
 static inline long sys_waitpid_nb(int pid) { return __syscall(SYS_waitpid, pid, XT_WAIT_NB, 0); }
+/* non-reaping "did this child exit?" probe: 1 exited, 0 running, -1 gone */
+static inline long sys_waitpid_peek(int pid) { return __syscall(SYS_waitpid, pid, XT_WAIT_PEEK, 0); }
+/* set/clear this process's syscall-trace flag (children inherit) -> dmesg */
+static inline long sys_strace(int on) { return __syscall(SYS_strace, on, 0, 0); }
 static inline void sys_exit(int code) { __syscall(SYS_exit, code, 0, 0); for (;;) {} }
 static inline long sys_open(const char *path, int flags)
 { return __syscall(SYS_open, (long)path, flags, 0); }

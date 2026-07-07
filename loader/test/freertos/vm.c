@@ -63,6 +63,7 @@ static uint8_t   space_l2n[NSPACE];             /* slots used this space */
 #define MAXPP 320
 static void     *g_space_pages[NSPACE][MAXPP];
 static uint16_t  g_space_npages[NSPACE];
+
 static uint32_t  g_space_shm[NSPACE];            /* bitmap: which shm ids each space mapped (for reap) */
 static uint32_t *g_cur_table;            /* currently-active TTBR0 table */
 static uint32_t  g_cur_asid;
@@ -131,6 +132,19 @@ static int cow_owns(int idx, uint32_t va)
         if (va >= g_cow_rng[i].va && va < g_cow_rng[i].end) return 1;
     return va >= g_space_prog[idx].va && va < g_space_prog[idx].end;
 }
+/* COW source page backing `va` (the pristine RO template), or 0 if `va` isn't in a
+ * COW range. Mirrors cow_owns' search order (global lib ranges, then this space's
+ * program range) so a read fault seeds from the same source map_cow_range used. */
+static uint32_t cow_src_for(int idx, uint32_t va)
+{
+    uint32_t pg = va & ~0xFFFu;
+    for (int i = 0; i < g_cow_n; i++)
+        if (va >= g_cow_rng[i].va && va < g_cow_rng[i].end)
+            return g_cow_rng[i].src + (pg - g_cow_rng[i].va);
+    if (va >= g_space_prog[idx].va && va < g_space_prog[idx].end)
+        return g_space_prog[idx].src + (pg - g_space_prog[idx].va);
+    return 0;
+}
 uint32_t vm_cow_count(void) { return g_cow_count; }
 
 /* Get (or lazily create) space `idx`'s private L2 for 1 MB section `sec`, seeded
@@ -151,7 +165,15 @@ static uint32_t *perproc_l2(int idx, uint32_t *t, uint32_t sec)
         for (uint32_t i = 0; i < 256; i++) l2[i] = L2_KERN((sec << 20) + i * 0x1000u);  /* PL0-none bg */
     space_l2sec[idx][space_l2n[idx]] = (uint16_t)sec;
     space_l2n[idx]++;
+    /* Swapping this section's L1 from the shared master L2 to a fresh private L2 is a
+     * live valid->valid change over a 1 MB range: the TLB still holds page entries from
+     * the OLD L2 for every page in the section. Flush after installing (like mmu_protect)
+     * so no stale/conflicting entry lingers. Infrequent (first COW fault per section per
+     * process), so a full TLBIALL is cheap. */
     t[sec] = L1_COARSE(l2);
+    __asm__ volatile("dsb");
+    __asm__ volatile("mcr p15,0,%0,c8,c7,0" :: "r"(0u));    /* TLBIALL */
+    __asm__ volatile("dsb; isb");
     return l2;
 }
 
@@ -315,6 +337,18 @@ void vm_switch(uint32_t *table, uint32_t asid)
     __asm__ volatile("mcr p15,0,%0,c13,c0,1" :: "r"(asid));          /* CONTEXTIDR = new ASID */
     __asm__ volatile("isb");
 
+    /* Full TLB flush on every process switch (SLEDGEHAMMER, belt-and-suspenders with the
+     * break-before-make fixes at the remap sites). BBM alone materially reduced the stale
+     * conflicting-entry crashes (immediate -> rare; silent garbage read -> serviceable
+     * fault) but did NOT eliminate them, so this stays as the robust backstop until the
+     * residual source is found. Proven: 16x 19MB scp, zero faults. Subsumes the libc-data
+     * flush below. (Cost: cold-TLB refill per switch — workload-dependent, see NextSteps.) */
+    if (asid) {
+        __asm__ volatile("dsb");
+        __asm__ volatile("mcr p15,0,%0,c8,c7,0" :: "r"(0u));            /* TLBIALL */
+        __asm__ volatile("dsb; isb");
+    }
+
     /* Drop stale GLOBAL TLB entries for libc's data VA when entering a process.
      * The master table maps that region global+identity, and the kernel/shell
      * touch it on every malloc (libc's arena). On real hardware that cached
@@ -381,6 +415,16 @@ static void *dpage_raw(void)
     if (p) { g_dfree = *(void **)p; g_freelist_n--; }      /* reuse a reclaimed page */
     else {                                                  /* else take from the frontier */
         char *nf = g_pfront - 0x1000u;
+        /* SKIP the per-process window VA band [XTOS_HEAP_VA, XTOS_POOL_FLOOR): a pool
+         * page whose identity VA lands there is shadowed per-process, so the fd
+         * page-cache fill (CLIENT space) would write the wrong page — corrupting the
+         * file AND spraying data into that process (root cause of the scp zero-data +
+         * crashes). Pages above and below the band are safe, so jump the frontier past
+         * it and keep descending toward the image-heap top.
+         * TEMPORARY: reserves a 64 MB VA band. The real fix is a physical page map /
+         * dynamic paging so the pool can use those frames at a non-window VA. */
+        if (nf < (char *)XTOS_POOL_FLOOR && nf >= (char *)XTOS_HEAP_VA)
+            nf = (char *)XTOS_HEAP_VA - 0x1000u;             /* hop below the window band */
         if (nf < (char *)kern_heap_top()) { xt_irq_restore(f); return (void *)0; }  /* arena full */
         g_pfront = nf; p = nf;
     }
@@ -487,13 +531,94 @@ int vm_cow_map(int idx, uint32_t va)
     if (!(e & (1u<<9))) return 1;                /* already RW (stale TLB) -> just re-run */
     void *pg = dpage(idx);
     if (!pg) return 0;
-    memcpy(pg, (const void *)(va & 0xFFFFF000u), 0x1000);   /* read via the RO mapping */
+    /* Copy from the pristine identity TEMPLATE (stable PL1 identity map), NOT via the
+     * process's RO `va` mapping: under load that va can be stale-TLB-shadowed and read a
+     * WRONG physical, seeding the private copy — including the loader-resolved .got.plt
+     * slots — with garbage (the dropbear PLT jump-to-0xffffffff). cow_src_for gives the
+     * template physical; fall back to va only if it isn't a known COW range. */
+    uint32_t csrc = cow_src_for(idx, va);
+    memcpy(pg, (const void *)(csrc ? csrc : (va & 0xFFFFF000u)), 0x1000);
     /* private copy: new physical, clear AP[2] (RO->RW), keep all other attrs
      * (XN, TEX, nG, ...) so a COW'd program-data page stays execute-never (W^X). */
-    l2[i] = ((uint32_t)pg & 0xFFFFF000u) | (e & 0xFFFu);
-    l2[i] &= ~(1u << 9);
-    g_cow_count++;
+    uint32_t ne = (((uint32_t)pg & 0xFFFFF000u) | (e & 0xFFFu)) & ~(1u << 9);
+    /* BREAK-BEFORE-MAKE (ARMv7): the page is currently a LIVE valid mapping (RO ->
+     * template). Writing the new valid descriptor straight over it (valid->valid) lets
+     * the A9 cache a CONFLICTING/amalgamated TLB entry — architecturally UNPREDICTABLE
+     * -> silent garbage reads (dropbear's GOT -> PLT jump to ~0xffffffff), which a
+     * post-hoc TLBIMVAA can't undo. So: invalidate the descriptor, flush the VA, THEN
+     * install the new mapping. */
+    l2[i] = 0;                                                         /* break */
     __asm__ volatile("dsb");
+    __asm__ volatile("mcr p15,0,%0,c8,c7,3" :: "r"(va & 0xFFFFF000u));  /* TLBIMVAA */
+    __asm__ volatile("dsb");
+    l2[i] = ne;                                                        /* make */
+    __asm__ volatile("dsb; isb");
+    g_cow_count++;
+    return 1;
+}
+
+/* READ permission fault at `va` in a COW range (HW-only; qemu doesn't model it).
+ * The demand handler only calls vm_cow_map on WRITES, so before this a READ that
+ * permission-faulted here was fatal. Two causes, both non-fatal:
+ *  (a) the per-process page is already PL0-readable (RO seed or a private RW copy)
+ *      but a STALE TLB entry — typically a lingering GLOBAL 1 MB section mapping
+ *      (PL0-none) that survived a context switch, the same class vm_sync_loaded_
+ *      sections fights — shadows it. Invalidate the VA and re-run. This is what
+ *      bit dropbear's exec path: reading its .got.plt (every memcpy/strlen PLT
+ *      call) fataled even though the table mapped the page RW.
+ *  (b) the page still holds the master's PL0-none writable descriptor (its section
+ *      L2 was created fresh from the master and never seeded) — seed it RO to the
+ *      COW source, then re-run. No private copy is made (that's the WRITE path).
+ * Returns 1 (serviced, re-run) or 0 (not a COW range / not present -> fatal, so a
+ * genuine wild read still dies). Runs in the abort handler: only L2 edits + TLB ops. */
+int vm_cow_read_fault(int idx, uint32_t va)
+{
+    uint32_t src = cow_src_for(idx, va);
+    if (!src) return 0;                              /* not COW (e.g. W^X text) -> fatal */
+    uint32_t *l2 = perproc_l2(idx, space_l1[idx], va >> 20);  /* own L2 (seeds from master if new) */
+    if (!l2) return 0;
+    uint32_t i = L2_IDX(va), e = l2[i];
+    if ((e & 0x3u) == 0) return 0;                  /* genuinely not present -> fatal */
+    uint32_t seeded = e;
+    if (((e >> 4) & 0x3u) == 0x1u && !(e & (1u<<9))) {   /* AP=001: master PL0-none writable */
+        uint32_t xn = e & 0x1u;                          /* keep the page's XN (W^X) */
+        seeded = (L2_PAGE_RO(src) & ~0x1u) | xn;
+        /* break-before-make: valid PL0-none -> valid RO is a LIVE remap; go via invalid
+         * + TLBI so the A9 can't cache a conflicting entry (see vm_cow_map). */
+        l2[i] = 0;
+        __asm__ volatile("dsb");
+        __asm__ volatile("mcr p15,0,%0,c8,c7,3" :: "r"(va & 0xFFFFF000u));  /* TLBIMVAA */
+        __asm__ volatile("dsb");
+        l2[i] = seeded;                                  /* seed RO to the shared source */
+    }
+    __asm__ volatile("dsb");
+    __asm__ volatile("mcr p15,0,%0,c8,c7,3" :: "r"(va & 0xFFFFF000u));  /* TLBIMVAA */
+    __asm__ volatile("dsb; isb");
+    return 1;
+}
+
+/* PREFETCH (instruction-fetch) permission fault at `va`. If the current space's
+ * table maps that page present + EXECUTABLE (XN=0), the fetch is legal per the
+ * page tables, so the fault is a STALE global 1 MB SECTION TLB entry (PL0-none)
+ * shadowing the split coarse RO+X mapping — the same class vm_sync_loaded_sections
+ * eliminates, re-exposed whenever a layout shift changes which task cached the
+ * pre-split section. TLBIMVAA the faulting page (clears the covering section entry
+ * for that MVA, all ASIDs, WITHOUT flushing sibling code pages) and re-run. Returns
+ * 1 (serviced) or 0 (page not present / XN=1 genuine W^X or wild fetch -> fatal). */
+int vm_exec_fault(int idx, uint32_t va)
+{
+    uint32_t l1e = space_l1[idx][va >> 20];
+    uint32_t *l2 = (uint32_t *)(l1e & 0xFFFFFC00u);
+    uint32_t  e  = ((l1e & 0x3u) == 0x1u) ? l2[L2_IDX(va)] : 0xFFFFFFFFu;
+    if ((l1e & 0x3u) != 0x1u) return 0;             /* section isn't a coarse L2 -> fatal */
+    if ((e & 0x3u) == 0) return 0;                  /* not present -> fatal */
+    if (e & 0x1u)        return 0;                  /* XN=1: not executable -> fatal (real W^X) */
+    __asm__ volatile("dsb");
+    /* Invalidate ONLY this page's stale section-shadow (TLBIMVAA clears the covering
+     * global section entry for the MVA, all ASIDs). NOT TLBIALL: that also flushed the
+     * sibling code page's freshly-serviced good entry, so two code pages branching to
+     * each other ping-ponged into an ENDLESS prefetch-fault livelock (HW-observed: scp
+     * stuck alternating two PCs in one section, no forward progress). */
     __asm__ volatile("mcr p15,0,%0,c8,c7,3" :: "r"(va & 0xFFFFF000u));  /* TLBIMVAA */
     __asm__ volatile("dsb; isb");
     return 1;
