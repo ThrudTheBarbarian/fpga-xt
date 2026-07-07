@@ -2230,6 +2230,12 @@ static long do_syscall(uint32_t num, long a0, long a1, long a2)
                       (int)((uint32_t)a1 >> 16), (int)(a1 & 0xFFFF), (int)a2);
         return 0;
     }
+    case SYS_overlay: {                                     /* (x<<16|y, w<<16|h, en) -> drag-overlay */
+        extern void overlay_set(int, int, int, int, int);
+        overlay_set((int)a2, (int)((uint32_t)a0 >> 16), (int)(a0 & 0xFFFF),
+                    (int)((uint32_t)a1 >> 16), (int)(a1 & 0xFFFF));
+        return 0;
+    }
     case SYS_kbd_6502: {                                     /* (ascii) -> keystroke to POKEY */
         extern int kbd_6502_ascii(int);
         return kbd_6502_ascii((int)a0);
@@ -2268,6 +2274,11 @@ static long do_syscall(uint32_t num, long a0, long a1, long a2)
     case SYS_klog: {                                        /* (buf, len) -> dmesg ring */
         extern long klog_write(const char *, uint32_t);
         return klog_write((const char *)a0, (uint32_t)a1);
+    }
+    case SYS_devmem: {                                      /* (addr, val, write) -> word: DEBUG peek/poke */
+        volatile uint32_t *p = (volatile uint32_t *)(unsigned long)a0;
+        if (a2) *p = (uint32_t)a1;                          /* poke */
+        return (long)(uint32_t)*p;                          /* read back / peek */
     }
     case SYS_strace: { if (p) p->strace = a0 ? 1 : 0; return 0; }   /* /bin/strace */
     case SYS_nanosleep: {                                   /* (usec) — real yield, not a spin */
@@ -2372,7 +2383,8 @@ static const char *strace_name(uint32_t n)
     case SYS_getpid: return "getpid";   case SYS_pipe: return "pipe";
     case SYS_dup2: return "dup2";       case SYS_kill: return "kill";
     case SYS_nanosleep: return "nanosleep"; case SYS_gettimeofday: return "gettimeofday";
-    case SYS_klog: return "klog";       case SYS_getcwd: return "getcwd";
+    case SYS_klog: return "klog";       case SYS_devmem: return "devmem";
+    case SYS_getcwd: return "getcwd";
     case SYS_socket: return "socket";   case SYS_accept: return "accept";
     case SYS_recvfrom: return "recvfrom"; case SYS_readdir: return "readdir";
     case SYS_envp: return "envp";       case SYS_strace: return "strace";

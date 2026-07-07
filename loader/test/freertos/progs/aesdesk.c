@@ -84,6 +84,26 @@ static void icon_dirty(int obj, int *x,int *y,int *w,int *h) {
 }
 static int desk_sel(void) { for (int i = 1; i <= n_icons; i++) if (desk[i].ob_state & OS_SELECTED) return i; return 0; }
 
+/* HW drag-overlay ops (registered with wind_set_overlay): the AES title-bar drag
+ * lifts the window into the overlay plane and moves it by register write — no
+ * per-motion redraw, tear-free. begin copies the window rect from the cached
+ * back-buffer into the DRAG_BASE overlay buffer. */
+#define DRAG_BASE 0x32000000u
+static int g_ovl_w, g_ovl_h;
+static int ovl_begin(int x, int y, int w, int h) {
+    if (w <= 0 || h <= 0) return 0;
+    if (x < 0 || y < 0 || x + w > g_fb.w || y + h > g_fb.h) return 0;   // off-screen edge -> classic drag
+    uint32_t *dst = (uint32_t *)DRAG_BASE;              // COMP plane reads a FIXED 2048-word (8192 B)
+    for (int r = 0; r < h; r++)                         // row stride (hdl/fpga_xt_top.sv stride_bytes=8192),
+        memcpy(dst + (size_t)r * g_fb.stride,           // NOT packed — OVL_W only bounds the displayed width
+               g_bb->px + (size_t)(y + r) * g_bb->stride + x, (size_t)w * 4);
+    g_ovl_w = w; g_ovl_h = h;
+    sys_overlay(x, y, w, h, 1);
+    return 1;
+}
+static void ovl_move(int x, int y) { sys_overlay(x, y, g_ovl_w, g_ovl_h, 1); }
+static void ovl_end(void)          { sys_overlay(1920, 1080, 1, 1, 1); }  /* park off-screen; EN stays 1 (no glitch) */
+
 static int read_default(const char *dir, char *out, int n) {
     char p[160]; snprintf(p, sizeof p, "%s/Default", dir);
     FILE *f = fopen(p, "r"); out[0] = 0;
@@ -496,6 +516,7 @@ void _app_entry(int argc, char **argv) {
     wind_set_desktop_content(deskcontent, NULL);
 
     aes_set_events(a9_events);
+    wind_set_overlay(ovl_begin, ovl_move, ovl_end, present_rect);   // tear-free HW-overlay window drag
     repaint();                                       // initial frame
 
     for (;;) {                                       // interactive loop

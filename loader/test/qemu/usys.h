@@ -30,6 +30,9 @@ static inline long sys_write(int fd, const void *buf, unsigned len)
  * boot daemons that shouldn't clutter the console */
 static inline long sys_klog(const void *buf, unsigned len)
 { return __syscall(SYS_klog, (long)buf, (long)len, 0); }
+/* DEBUG peek/poke of a 32-bit physical word (kernel does the access) — /bin/mem */
+static inline long sys_devmem(unsigned long addr, unsigned long val, int write)
+{ return __syscall(SYS_devmem, (long)addr, (long)val, (long)write); }
 static inline long sys_getpid(void) { return __syscall(SYS_getpid, 0, 0, 0); }
 static inline long sys_spawn(const char *path, int argc, char **argv)
 { return __syscall(SYS_spawn, (long)path, argc, (long)argv); }
@@ -137,6 +140,12 @@ static inline long sys_fb_wallpaper(struct os_fbinfo *fi) { return __syscall(SYS
 static inline long sys_xl_window(int x, int y, int w, int h, int scale) {
     return __syscall(SYS_xl_window, ((long)x << 16) | (uint16_t)y,
                      ((long)w << 16) | (uint16_t)h, scale);
+}
+/* Place/hide the drag-overlay plane (pixels pre-copied into DRAG_BASE by the
+ * client).  Move a lifted window by re-calling with new x/y — no redraw. en=0 hides. */
+static inline long sys_overlay(int x, int y, int w, int h, int en) {
+    return __syscall(SYS_overlay, ((long)x << 16) | (uint16_t)y,
+                     ((long)w << 16) | (uint16_t)h, en);
 }
 /* Block for the next input event (mouse/keyboard); timeout_ms < 0 = forever.  The
  * cursor sprite is moved kernel-side; `ev` is filled with the event. */

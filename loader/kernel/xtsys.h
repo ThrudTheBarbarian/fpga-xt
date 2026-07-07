@@ -161,6 +161,9 @@ struct xt_dirent { unsigned mode; char name[256]; };
 #define SYS_klog         0x403 /* (buf, len) -> bytes: append to the kernel diagnostic log
                                 * (dmesg / /proc/kmsg + /OS/var/log/system.log). Lets PL0
                                 * boot daemons log without cluttering the console. */
+#define SYS_devmem       0x404 /* (addr, val, write) -> word: peek/poke a 32-bit physical
+                                * word (kernel MMU is identity-mapped, reaches GP0/DDR/periph).
+                                * DEBUG poke tool (/bin/mem) — no bounds check, by design. */
 
 /* networking control — block 0x800. Bringing the stack up is a BOOT-SCRIPT decision
  * (/boot/20-Networking runs /bin/netup), not kernel magic. */
@@ -180,6 +183,9 @@ struct xt_dirent { unsigned mode; char name[256]; };
                                 * emulation plane at an on-screen rect (the desktop
                                 * frames the live emulation in a window's work
                                 * area); scale = 1..5 integer zoom, 0 = hide */
+#define SYS_overlay      0x604 /* (x<<16|y, w<<16|h, en) -> 0: place/hide the drag-overlay
+                                * plane (pixels = DRAG_BASE, client-filled). Move = re-call
+                                * with new x/y — no plane redraw. Tear-free window drag. */
 
 /* input / events — block 0x700. The kernel owns the HW cursor sprite + the serial
  * mouse; the desktop blocks here for the next event and the cursor moves kernel-side. */

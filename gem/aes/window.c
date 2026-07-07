@@ -15,6 +15,7 @@ gfx_surface *vdi_screen_target(void);   // the physical workstation's surface (V
 #define MAXW 16
 typedef struct {
     int used, kind, x, y, w, h, px,py,pw,ph;   // full rect (+ previous)
+    int hidden;                                // lifted into the HW drag-overlay: skip in redraw
     char name[64];
     wind_draw_fn draw; void *ud;
     wind_draw_fn info; void *infoud;           // W_INFO chrome line
@@ -62,6 +63,7 @@ static void clamp_win(awin *W){
 
 static void draw_one(int hd, int active){
     awin*W=&g_w[hd]; int b=bw(), th=tbh();
+    if(W->hidden) return;                        // lifted into the HW drag-overlay
     theme_draw(H(),aes_theme(),"window", W->x,W->y,W->w,W->h);
     theme_draw(H(),aes_theme(), active?"titlebar":"titlebar.inactive", W->x, W->y, W->w, th);  // flush top
     int cy = W->y+(th-16)/2;
@@ -90,6 +92,18 @@ void wind_set_desktop(uint32_t bg){ g_deskbg = bg; }
 
 static wind_draw_fn g_deskcontent; static void *g_deskcontent_ud;
 void wind_set_desktop_content(wind_draw_fn fn, void *ud){ g_deskcontent=fn; g_deskcontent_ud=ud; }
+
+/* HW drag-overlay hooks (A9 only): begin() lifts the window rect into the overlay
+ * plane, move() repositions it with NO redraw, end() drops it; present() pushes a
+ * plane rect. All NULL on the SDL host -> classic redraw-per-motion drag. */
+static int  (*g_ovl_begin)(int x,int y,int w,int h);
+static void (*g_ovl_move)(int x,int y);
+static void (*g_ovl_end)(void);
+static void (*g_ovl_present)(int x,int y,int w,int h);
+void wind_set_overlay(int(*begin)(int,int,int,int), void(*move)(int,int),
+                      void(*end)(void), void(*present)(int,int,int,int)){
+    g_ovl_begin=begin; g_ovl_move=move; g_ovl_end=end; g_ovl_present=present;
+}
 
 void wind_redraw(void){
     gfx_surface *d = vdi_screen_target();
@@ -162,9 +176,21 @@ int wind_handle_click(int mx,int my){
     // title bar -> drag (live move)
     if((W->kind&W_MOVER) && my>=ty && my<ty+th && mx>=tx && mx<tx+tw){
         int gx=mx-W->x, gy=my-W->y;
-        for(;;){ aes_event e; int t=aes_wait(&e,-1); if(t==AES_QUIT)break;
-            if(t==AES_MOTION){ W->x=e.mx-gx; W->y=e.my-gy; clamp_win(W); wind_redraw(); }
-            if(t==AES_BTN_UP) break; }
+        if(g_ovl_begin && g_ovl_begin(W->x,W->y,W->w,W->h)){    // A9: lift window into the HW overlay
+            int ox=W->x, oy=W->y, ow=W->w, oh=W->h;            // vacated rect
+            W->hidden=1; wind_redraw();                        // erase from the plane (overlay still covers it)...
+            if(g_ovl_present) g_ovl_present(ox,oy,ow,oh);      // ...push the now-behind pixels
+            for(;;){ aes_event e; int t=aes_wait(&e,-1); if(t==AES_QUIT)break;
+                if(t==AES_MOTION){ W->x=e.mx-gx; W->y=e.my-gy; clamp_win(W); g_ovl_move(W->x,W->y); } // register write, no redraw
+                if(t==AES_BTN_UP) break; }
+            W->hidden=0; wind_redraw();                        // paint the window at its new home (under the overlay)...
+            if(g_ovl_present){ g_ovl_present(ox,oy,ow,oh); g_ovl_present(W->x,W->y,W->w,W->h); }
+            g_ovl_end();                                       // ...then drop the overlay -> seamless
+        } else {                                               // SDL host: classic redraw-per-motion
+            for(;;){ aes_event e; int t=aes_wait(&e,-1); if(t==AES_QUIT)break;
+                if(t==AES_MOTION){ W->x=e.mx-gx; W->y=e.my-gy; clamp_win(W); wind_redraw(); }
+                if(t==AES_BTN_UP) break; }
+        }
         post(WM_MOVED,hd,W->x,W->y,W->w,W->h); return 1;
     }
     // size box (bottom-right corner)

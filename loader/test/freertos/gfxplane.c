@@ -22,6 +22,9 @@
  * hands it to gem_wm as a desk-sized surface; keeping it out of the 8 MB per-process
  * heap (a 1080p surface is ~8 MB on its own). Packed stride (= width). */
 #define WALLPAPER_BASE 0x33000000u
+/* drag-overlay pixel buffer — reserved 16 MB (docs/Zynq/memory-map.md); the
+ * desktop copies the window being dragged here and the COMP plane composites it. */
+#define DRAG_BASE 0x32000000u
 
 #ifdef XT_HW
 
@@ -54,6 +57,8 @@ void fb_present(void)
 #define XL_SLOT    0x00100000u         /* buffers 1 MB apart */
 #define XL_WORDS   (320u * 192u)       /* XL_SRC_W * XL_SRC_H, RGBA words */
 
+void overlay_set(int en, int x, int y, int w, int h);   /* defined below; used in init */
+
 /* clear to opaque black (compositor uses bits [31:8] as RGB). Pre-scheduler. */
 void gfxplane_init(void)
 {
@@ -68,6 +73,10 @@ void gfxplane_init(void)
      * EN=1 adopts these regs; EN=0 would be the legacy centred placement that
      * composited over the middle of the desktop. (GP0 @0x43C0_0000 = Device.) */
     xl_window_set(0, 0, 0, 0, 0);
+    overlay_set(1, 1920, 1080, 1, 1);  /* overlay ALWAYS enabled, parked 1x1 off-screen. Toggling
+                                        * EN 0<->1 per grab/release glitched the compositor (link
+                                        * drop); grab/release now just MOVE it, like the smooth
+                                        * drag motion.  Mirrors the always-on XL plane above. */
     __asm__ volatile("dsb");
 }
 
@@ -86,6 +95,22 @@ void xl_window_set(int x, int y, int w, int h, int scale)
     xl[3] = (uint32_t)h & 0x0FFFu;
     xl[4] = (uint32_t)scale & 0x7u;
     xl[5] = 1;                          /* EN: commit the rect (clk_pix CDC) */
+    __asm__ volatile("dsb");
+}
+
+/* Drag-overlay plane (COMP GP0 block @0x43C0_0200): composite a w*h RGBA patch
+ * from DRAG_BASE (packed, stride = w<<2 bytes) at on-screen (x,y).  Used for
+ * tear-free window drag — the client copies the window into DRAG_BASE once, then
+ * MOVES it by rewriting X/Y (no plane redraw).  en=0 hides it. */
+void overlay_set(int en, int x, int y, int w, int h)
+{
+    volatile uint32_t *ovl = (volatile uint32_t *)0x43C00200u;  /* XT_BLK_COMP */
+    ovl[1] = DRAG_BASE;                 /* OVL_BASE (0x04) */
+    ovl[2] = (uint32_t)x & 0x0FFFu;     /* OVL_X    (0x08) */
+    ovl[3] = (uint32_t)y & 0x0FFFu;     /* OVL_Y    (0x0C) */
+    ovl[4] = (uint32_t)w & 0x0FFFu;     /* OVL_W    (0x10; stride = w<<2) */
+    ovl[5] = (uint32_t)h & 0x0FFFu;     /* OVL_H    (0x14) */
+    ovl[0] = en ? 1u : 0u;              /* OVL_EN   (0x00) — commits the config */
     __asm__ volatile("dsb");
 }
 
@@ -110,6 +135,10 @@ void gfxplane_init(void) { }
 void xl_window_set(int x, int y, int w, int h, int scale)
 {
     (void)x; (void)y; (void)w; (void)h; (void)scale;
+}
+void overlay_set(int en, int x, int y, int w, int h)
+{
+    (void)en; (void)x; (void)y; (void)w; (void)h;
 }
 
 void fb_present(void)
