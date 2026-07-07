@@ -113,10 +113,11 @@ void cursor_pos(int *x, int *y) { *x = cur_x; *y = cur_y; }
 #define CUR_STEP 16
 static int s_pend_up;
 static int s_btn;                       /* space-toggle / SGR button state */
-static int s_mouse_init;
+static int s_mouse_gen = -1;            /* focus generation the enable was sent under */
 static int s_cols = 80, s_rows = 24;    /* terminal text area (CSI 18t reply) */
 
 extern void puts0(const char *);
+extern int  desk_focus_gen(void);       /* uart1_rx.c: bumps on each flip TO the desktop */
 
 /* read a decimal int from the desktop queue; returns the terminating char
  * (or -1 on timeout) with the value in *v */
@@ -137,11 +138,16 @@ static int cell2px(int cell, int cells, int span) {
 }
 
 int input_next_event(struct os_event *ev, int timeout_ms) {
-    if (!s_mouse_init) {                /* focus is on the desktop: hook the terminal */
-        s_mouse_init = 1;
-        puts0("\x1b[?1002h\x1b[?1006h"); /* button-event tracking, SGR encoding */
-        puts0("\x1b[18t");               /* -> ESC [ 8 ; rows ; cols t */
-    }
+    /* (Re-)hook the terminal every time console focus lands on the desktop: the
+     * mouse-report and size-query REPLIES only reach our queue while the desktop
+     * HAS focus, so an enable sent before the user's first backtick (the desktop
+     * is boot-spawned; focus defaults to the shell) was lost to the shell queue. */
+    { int g = desk_focus_gen();
+      if (g != s_mouse_gen) {
+          s_mouse_gen = g;
+          puts0("\x1b[?1002h\x1b[?1006h"); /* button-event tracking, SGR encoding */
+          puts0("\x1b[18t");               /* -> ESC [ 8 ; rows ; cols t */
+      } }
     ev->shift = 0; ev->key = 0;
     if (s_pend_up) { s_pend_up = 0; s_btn = 0; ev->type = OS_EV_BTN_UP; ev->button = 0; cursor_pos(&ev->mx, &ev->my); return 0; }
 

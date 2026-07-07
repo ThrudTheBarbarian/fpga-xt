@@ -45,7 +45,14 @@
 typedef struct { volatile uint8_t buf[RING_SZ]; volatile uint32_t head, tail; SemaphoreHandle_t sem; } rxq;
 static rxq sh_q, dk_q;
 static volatile int g_focus;                      /* 0 = shell, 1 = desktop */
+static volatile int g_focus_gen;                  /* bumps on every flip TO the desktop —
+                                                   * the input layer re-arms terminal mouse
+                                                   * reporting when it sees a new generation
+                                                   * (the enable/size-query replies only reach
+                                                   * the desktop queue while it has focus) */
 #define FOCUS_TOGGLE 0x60                          /* backtick '`' */
+
+int desk_focus_gen(void) { return g_focus_gen; }
 
 static void q_push(rxq *q, uint8_t c, BaseType_t *woken) {
     uint32_t nt = (q->tail + 1u) % RING_SZ;
@@ -68,7 +75,7 @@ void uart1_rx_isr(void)
     REG(UART_ISR) = REG(UART_ISR);                /* write-1-to-clear the pending status */
     while (!(REG(UART_SR) & SR_RXEMPTY)) {        /* drain every buffered byte */
         uint8_t c = (uint8_t)REG(UART_FIFO);
-        if (c == FOCUS_TOGGLE) { g_focus ^= 1; continue; }        /* flip focus, don't forward */
+        if (c == FOCUS_TOGGLE) { g_focus ^= 1; if (g_focus) g_focus_gen++; continue; }  /* flip focus, don't forward */
         if (c == 3 && !g_focus) frtos_tty_sigint();   /* ^C HERE, not at the eventual read:
                                                        * a compute-looping fg job must die at
                                                        * its next syscall gate. The byte still
