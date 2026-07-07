@@ -391,11 +391,18 @@ static void desk_click(int mx, int my) {
 // ---- A9 event source: block for the next kernel input event ----------------
 // (the cursor is a HW sprite moved kernel-side, so motion needs no present —
 // only real actions repaint).
+// The emulator keyboard GRAB: while a topped emu window holds it, every key
+// types into the machine — so Ctrl-] (not an Atari key) releases it, giving
+// Enter/Space back to the desktop (close box, icons) without a mouse.  Topping
+// an emu window again re-grabs.
+static int g_kbd_grab = 1;
+static int g_last_top;
+
 static int a9_events(aes_event *ev, int timeout_ms) {
     struct os_event oe = { OS_EV_TIMER, 0, 0, 0, 0, 0 };   // default if the syscall fails
-    // raw keys while an emulator window is topped: Enter/Space TYPE into the
-    // machine instead of clicking (the mouse still clicks/drags either way)
-    sys_input(&oe, timeout_ms, emu_of_window(wind_top()) != NULL);
+    // raw keys while an emulator window is topped AND grabbed: Enter/Space TYPE
+    // into the machine instead of clicking (the mouse clicks/drags either way)
+    sys_input(&oe, timeout_ms, g_kbd_grab && emu_of_window(wind_top()) != NULL);
     ev->type = oe.type; ev->mx = oe.mx; ev->my = oe.my;
     ev->button = oe.button; ev->key = oe.key; ev->shift = oe.shift;
     return ev->type;
@@ -450,9 +457,13 @@ void _app_entry(int argc, char **argv) {
         int mx, my, mb, ks, key, nc; int16_t msg[8];
         int r = evnt_multi(MU_MESAG|MU_KEYBD|MU_BUTTON, 2,1,1, 0,0,0,0,0, 0,0,0,0,0, msg, 0,0,
                            &mx, &my, &mb, &ks, &key, &nc);
-        // Keyboard goes to the ATARI while an emulator window is topped (the
-        // kernel injects it into POKEY); otherwise Esc quits the desktop.
-        if ((r & MU_KEYBD) && emu_of_window(wind_top())) { sys_kbd_6502(key); continue; }
+        { int top = wind_top();                          // (re-)grab on topping an emu window
+          if (top != g_last_top) { g_last_top = top; if (emu_of_window(top)) g_kbd_grab = 1; } }
+        // Keyboard goes to the ATARI while a topped emulator window holds the
+        // grab (kernel injects into POKEY); Ctrl-] releases the grab; with no
+        // grab, keys act on the desktop and Esc quits it.
+        if ((r & MU_KEYBD) && key == 0x1D) { g_kbd_grab = !g_kbd_grab; continue; }  // Ctrl-]
+        if ((r & MU_KEYBD) && g_kbd_grab && emu_of_window(wind_top())) { sys_kbd_6502(key); continue; }
         if ((r & MU_KEYBD) && key == 0x1b) break;                              // Esc quits
         if ((r & MU_MESAG) && msg[0] == WM_CLOSED) {
             browser *b = br_of_window(msg[3]); if (b) { br_free_icons(b); b->used = 0; }

@@ -149,10 +149,26 @@ static int pf_gen_video(char *buf, int sz)
     pfb_s(&o, " -> ");            pfb_d(&o, (int)((b >> 8) & 0xFF)); pfb_s(&o, "  (50ms)\n");
     pfb_s(&o, "frames:        "); pfb_d(&o, (int)((a >> 24) & 0xFF));
     pfb_s(&o, " -> ");            pfb_d(&o, (int)((b >> 24) & 0xFF)); pfb_s(&o, "  (50ms, ~+3)\n");
+    pfb_s(&o, "(SiI9022 regs moved to /OS/proc/video-sii — I2C reads are a\n"
+              " blank-trigger suspect and must not ride along with the PL diag)\n");
+#else
+    pfb_s(&o, "no video pipeline on qemu\n");
+#endif
+    return o.n;
+}
+
+/* /OS/proc/video-sii — the transmitter's registers, SEPARATE from the PL diag:
+ * reading the SiI over I2C is itself a suspect for triggering the 2 s monitor
+ * re-acquire, so it must be possible to read one without the other. */
+static int pf_gen_video_sii(char *buf, int sz)
+{
+    pfb o = { buf, 0, sz };
+#ifdef XT_HW
+    extern int hdmi_sii_read(int);
     pfb_s(&o, "sii[0x1A]:     "); pfb_d(&o, hdmi_sii_read(0x1A)); pfb_s(&o, "  (want 1: HDMI out, TMDS on)\n");
     pfb_s(&o, "sii[0x3D]:     "); pfb_d(&o, hdmi_sii_read(0x3D)); pfb_s(&o, "  (irq/hotplug status)\n");
 #else
-    pfb_s(&o, "no video pipeline on qemu\n");
+    pfb_s(&o, "no SiI9022 on qemu\n");
 #endif
     return o.n;
 }
@@ -229,6 +245,7 @@ static int pf_open(vfs_mount *m, const char *rel, int flags, vfs_file *f)
     if (!strcmp(rel, "/uptime"))       len = pf_gen_uptime(buf, PF_BUF);
     else if (!strcmp(rel, "/meminfo")) len = pf_gen_meminfo(buf, PF_BUF);
     else if (!strcmp(rel, "/video"))   len = pf_gen_video(buf, PF_BUF);
+    else if (!strcmp(rel, "/video-sii")) len = pf_gen_video_sii(buf, PF_BUF);
     else if (!strcmp(rel, "/video-kick")) len = pf_gen_video_kick(buf, PF_BUF);
     else if (!strcmp(rel, "/mounts"))  { extern int vfs_mounts_str(char *, int); len = vfs_mounts_str(buf, PF_BUF); }
     else if (!strncmp(rel, "/net/", 5)) { extern int xt_procnet(const char *, char *, int); len = xt_procnet(rel + 5, buf, cap); }
@@ -254,7 +271,7 @@ static int pf_stat(vfs_mount *m, const char *rel, struct xt_stat *st)
     st->size = 0; st->mtime = 0;
     if (rel[0] == 0 || (rel[0] == '/' && rel[1] == 0)) { st->mode = XT_S_IFDIR; return 0; }
     if (!strcmp(rel, "/uptime") || !strcmp(rel, "/meminfo") || !strcmp(rel, "/kmsg") || !strcmp(rel, "/mounts") ||
-        !strcmp(rel, "/video")  || !strcmp(rel, "/video-kick")) { st->mode = XT_S_IFREG; return 0; }
+        !strcmp(rel, "/video")  || !strcmp(rel, "/video-sii") || !strcmp(rel, "/video-kick")) { st->mode = XT_S_IFREG; return 0; }
     if (!strcmp(rel, "/net")) { st->mode = XT_S_IFDIR; return 0; }
     if (!strncmp(rel, "/net/", 5)) {
         for (int i = 0; xt_procnet_leaves[i]; i++)
@@ -292,7 +309,7 @@ static int pf_readdir(vfs_mount *m, const char *rel, int index,
                 return 1;
             }
         }
-        const char *fixed[] = { "uptime", "meminfo", "kmsg", "mounts", "video", "video-kick" };
+        const char *fixed[] = { "uptime", "meminfo", "kmsg", "mounts", "video", "video-sii", "video-kick" };
         int fi = index - emitted;
         if (fi >= 0 && fi < (int)(sizeof fixed / sizeof fixed[0])) {
             pfb o = { name, 0, nsz };
