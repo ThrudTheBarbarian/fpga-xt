@@ -149,6 +149,8 @@ static void emu_draw(int hd, int wx, int wy, int ww, int wh, void *ud) {
 // Open an emulator window for `type` (ICT_EMU_*), optionally booted with `media`
 // (the boot method already resolved into `boot`, e.g. "D1: game.atr").
 static void open_emulator(int type, const char *media, const char *boot) {
+    // one 6502 core, one 6502 window: a second open raises the existing one
+    if (type == ICT_EMU_8BIT && g_xlwin) { wind_raise(g_xlwin); return; }
     int s = -1; for (int i = 0; i < MAXEMU; i++) if (!EMU[i].used) { s = i; break; }
     if (s < 0) return;
     emuwin *e = &EMU[s]; memset(e, 0, sizeof *e); e->used = 1;
@@ -391,7 +393,9 @@ static void desk_click(int mx, int my) {
 // only real actions repaint).
 static int a9_events(aes_event *ev, int timeout_ms) {
     struct os_event oe = { OS_EV_TIMER, 0, 0, 0, 0, 0 };   // default if the syscall fails
-    sys_input(&oe, timeout_ms);
+    // raw keys while an emulator window is topped: Enter/Space TYPE into the
+    // machine instead of clicking (the mouse still clicks/drags either way)
+    sys_input(&oe, timeout_ms, emu_of_window(wind_top()) != NULL);
     ev->type = oe.type; ev->mx = oe.mx; ev->my = oe.my;
     ev->button = oe.button; ev->key = oe.key; ev->shift = oe.shift;
     return ev->type;

@@ -150,6 +150,7 @@ void wind_set(int handle, int field, int a, int b, int c, int d);
 void wind_calc(int dir, int kind, int x,int y,int w,int h, int *ox,int *oy,int *ow,int *oh);
 int  wind_find(int x, int y);                       // topmost window at point (0 = desktop)
 int  wind_top(void);                                // topmost open window (0 = none)
+void wind_raise(int handle);                        // bring an open window to the top
 void wind_content(int handle, wind_draw_fn fn, void *ud);
 // Optional W_INFO chrome line under the title bar (full inner width, like the
 // title): fn draws its contents (count/path/toolbar); the work area shrinks by

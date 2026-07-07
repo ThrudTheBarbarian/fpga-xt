@@ -75,7 +75,18 @@ void uart1_rx_isr(void)
     REG(UART_ISR) = REG(UART_ISR);                /* write-1-to-clear the pending status */
     while (!(REG(UART_SR) & SR_RXEMPTY)) {        /* drain every buffered byte */
         uint8_t c = (uint8_t)REG(UART_FIFO);
-        if (c == FOCUS_TOGGLE) { g_focus ^= 1; if (g_focus) g_focus_gen++; continue; }  /* flip focus, don't forward */
+        if (c == FOCUS_TOGGLE) {                                  /* flip focus, don't forward */
+            g_focus ^= 1;
+            if (g_focus) {
+                g_focus_gen++;
+                q_push(&dk_q, 0, &woken);   /* wake sentinel: the desktop blocks in
+                                             * desk_readc; byte 0 (swallowed by the
+                                             * input layer) unblocks it so the mouse
+                                             * re-arm goes out NOW, not at the next
+                                             * keypress */
+            }
+            continue;
+        }
         if (c == 3 && !g_focus) frtos_tty_sigint();   /* ^C HERE, not at the eventual read:
                                                        * a compute-looping fg job must die at
                                                        * its next syscall gate. The byte still

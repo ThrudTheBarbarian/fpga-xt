@@ -140,6 +140,11 @@ int wind_find(int x,int y){
 
 int wind_top(void){ return g_nz ? g_z[g_nz-1] : 0; }
 
+void wind_raise(int hd){
+    if(hd<1||hd>=MAXW) return;
+    for(int i=0;i<g_nz;i++) if(g_z[i]==hd){ zremove(hd); g_z[g_nz++]=hd; wind_redraw(); return; }
+}
+
 static void post(int type,int hd,int a,int b,int c,int d){
     int16_t m[8]={(int16_t)type,1,0,(int16_t)hd,(int16_t)a,(int16_t)b,(int16_t)c,(int16_t)d}; appl_write(0,16,m);
 }
