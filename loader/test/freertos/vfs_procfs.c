@@ -123,6 +123,52 @@ static int pf_gen_uptime(char *buf, int sz)
     return o.n;
 }
 
+/* /OS/proc/video — the display-pipeline health word (PL DIAG0 over GP0) + the
+ * SiI9022's live registers.  DIAG0: [0]=mmcm1 lock (clk_sally/clk_sys),
+ * [1]=mmcm2 lock (clk_pix), [2]=hdmi cfg done, [15:8]=clk_pix-alive counter,
+ * [23:16]=mmcm2 UNLOCK EVENT count (falling lock edges — climbing = the pixel
+ * clock is dropping out), [31:24]=vbeam frame counter.  Sampled twice ~50 ms
+ * apart so the counters show motion in one cat. */
+static int pf_gen_video(char *buf, int sz)
+{
+    pfb o = { buf, 0, sz };
+#ifdef XT_HW
+    extern int hdmi_sii_read(int);
+    volatile uint32_t *diag = (volatile uint32_t *)0x43C00400u;   /* XT_BLK_DIAG */
+    uint32_t a = *diag;
+    struct { long sec, usec; } t0, t1;
+    _gettimeofday(&t0, 0);
+    do { _gettimeofday(&t1, 0); }
+    while ((t1.sec - t0.sec) * 1000000 + (t1.usec - t0.usec) < 50000);
+    uint32_t b = *diag;
+    pfb_s(&o, "mmcm1_lock:    "); pfb_d(&o, (int)(b & 1)); pfb_c(&o, '\n');
+    pfb_s(&o, "mmcm2_lock:    "); pfb_d(&o, (int)((b >> 1) & 1)); pfb_s(&o, "  (clk_pix)\n");
+    pfb_s(&o, "hdmi_cfg:      "); pfb_d(&o, (int)((b >> 2) & 1)); pfb_c(&o, '\n');
+    pfb_s(&o, "mmcm2_unlocks: "); pfb_d(&o, (int)((b >> 16) & 0xFF)); pfb_c(&o, '\n');
+    pfb_s(&o, "pix_alive:     "); pfb_d(&o, (int)((a >> 8) & 0xFF));
+    pfb_s(&o, " -> ");            pfb_d(&o, (int)((b >> 8) & 0xFF)); pfb_s(&o, "  (50ms)\n");
+    pfb_s(&o, "frames:        "); pfb_d(&o, (int)((a >> 24) & 0xFF));
+    pfb_s(&o, " -> ");            pfb_d(&o, (int)((b >> 24) & 0xFF)); pfb_s(&o, "  (50ms, ~+3)\n");
+    pfb_s(&o, "sii[0x1A]:     "); pfb_d(&o, hdmi_sii_read(0x1A)); pfb_s(&o, "  (want 1: HDMI out, TMDS on)\n");
+    pfb_s(&o, "sii[0x3D]:     "); pfb_d(&o, hdmi_sii_read(0x3D)); pfb_s(&o, "  (irq/hotplug status)\n");
+#else
+    pfb_s(&o, "no video pipeline on qemu\n");
+#endif
+    return o.n;
+}
+
+/* /OS/proc/video-kick — reading it re-runs the SiI9022 output enable: if the
+ * picture comes back, the transmitter had dropped its config; if not, look at
+ * /OS/proc/video's mmcm/frame counters (the PL side). */
+static int pf_gen_video_kick(char *buf, int sz)
+{
+    extern void hdmi_reinit(void);
+    hdmi_reinit();
+    pfb o = { buf, 0, sz };
+    pfb_s(&o, "SiI9022 output re-enabled\n");
+    return o.n;
+}
+
 static int pf_gen_meminfo(char *buf, int sz)
 {
     /* the DDR arena truth: pool pages handed out vs available (heap grows up,
@@ -182,6 +228,8 @@ static int pf_open(vfs_mount *m, const char *rel, int flags, vfs_file *f)
     int len = -1, pid, k;
     if (!strcmp(rel, "/uptime"))       len = pf_gen_uptime(buf, PF_BUF);
     else if (!strcmp(rel, "/meminfo")) len = pf_gen_meminfo(buf, PF_BUF);
+    else if (!strcmp(rel, "/video"))   len = pf_gen_video(buf, PF_BUF);
+    else if (!strcmp(rel, "/video-kick")) len = pf_gen_video_kick(buf, PF_BUF);
     else if (!strcmp(rel, "/mounts"))  { extern int vfs_mounts_str(char *, int); len = vfs_mounts_str(buf, PF_BUF); }
     else if (!strncmp(rel, "/net/", 5)) { extern int xt_procnet(const char *, char *, int); len = xt_procnet(rel + 5, buf, cap); }
     else if (rel[0] == '/' && (k = pf_num(rel + 1, &pid)) > 0) {
@@ -205,7 +253,8 @@ static int pf_stat(vfs_mount *m, const char *rel, struct xt_stat *st)
     int pid, k, cst;
     st->size = 0; st->mtime = 0;
     if (rel[0] == 0 || (rel[0] == '/' && rel[1] == 0)) { st->mode = XT_S_IFDIR; return 0; }
-    if (!strcmp(rel, "/uptime") || !strcmp(rel, "/meminfo") || !strcmp(rel, "/kmsg") || !strcmp(rel, "/mounts")) { st->mode = XT_S_IFREG; return 0; }
+    if (!strcmp(rel, "/uptime") || !strcmp(rel, "/meminfo") || !strcmp(rel, "/kmsg") || !strcmp(rel, "/mounts") ||
+        !strcmp(rel, "/video")  || !strcmp(rel, "/video-kick")) { st->mode = XT_S_IFREG; return 0; }
     if (!strcmp(rel, "/net")) { st->mode = XT_S_IFDIR; return 0; }
     if (!strncmp(rel, "/net/", 5)) {
         for (int i = 0; xt_procnet_leaves[i]; i++)
@@ -243,7 +292,7 @@ static int pf_readdir(vfs_mount *m, const char *rel, int index,
                 return 1;
             }
         }
-        const char *fixed[] = { "uptime", "meminfo", "kmsg", "mounts" };
+        const char *fixed[] = { "uptime", "meminfo", "kmsg", "mounts", "video", "video-kick" };
         int fi = index - emitted;
         if (fi >= 0 && fi < (int)(sizeof fixed / sizeof fixed[0])) {
             pfb o = { name, 0, nsz };

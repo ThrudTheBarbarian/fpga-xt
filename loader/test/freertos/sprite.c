@@ -200,6 +200,9 @@ static void mouse_rearm(void) {
     int g = desk_focus_gen();
     if (g == s_mouse_gen) return;
     s_mouse_gen = g;
+    if (g == 0) return;   /* boot-time arm: focus is still the shell — the
+                           * terminal's replies would land there as garbage
+                           * ("22;80t" at the prompt); wait for the backtick */
     /* ?1000 = press/release (the floor every mouse-capable terminal has);
      * ?1002 = + motion while a button is held (what DRAG needs) — layered so a
      * terminal without 1002 still reports clicks; ?1006 = SGR encoding (we

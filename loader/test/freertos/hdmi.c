@@ -220,10 +220,28 @@ void hdmi_init(void)
 int xt_i2c_send(uint8_t addr, const uint8_t *buf, int n) { return i2c_send(addr, buf, n); }
 int xt_i2c_recv(uint8_t addr, uint8_t *buf, int n)       { return i2c_recv(addr, buf, n); }
 
+/* one SiI9022 register for /OS/proc/video (-1 = read failed) */
+int hdmi_sii_read(int reg)
+{
+    uint8_t v;
+    return sii_read((uint8_t)reg, &v) == 0 ? (int)v : -1;
+}
+
+/* re-run the transmitter bring-up on a live system (the boot-time init is the
+ * only other path).  Lets a no-signal state be re-kicked from the shell to
+ * separate "SiI9022 dropped its config" from "the PL stopped making video". */
+void hdmi_reinit(void)
+{
+    sii_enable_output();
+    klog("[hdmi] transmitter re-enabled\r\n");
+}
+
 #else  /* qemu: no SiI9022/I2C modelled */
 void hdmi_init(void) { }
 int xt_i2c_send(uint8_t addr, const uint8_t *buf, int n)
 { (void)addr; (void)buf; (void)n; return -1; }
 int xt_i2c_recv(uint8_t addr, uint8_t *buf, int n)
 { (void)addr; (void)buf; (void)n; return -1; }
+int hdmi_sii_read(int reg) { (void)reg; return -1; }
+void hdmi_reinit(void) { }
 #endif
