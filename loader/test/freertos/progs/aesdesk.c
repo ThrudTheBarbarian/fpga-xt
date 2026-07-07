@@ -44,13 +44,45 @@ static int    n_icons;
 static struct os_fbinfo g_fb;
 static gfx_surface *g_bb;
 
-static void present(void) {                        // blit the back-buffer to the plane
+/* Push only the changed rectangle from the cached back-buffer to the scanned
+ * plane.  wind_redraw regenerates ALL of g_bb (cheap — cached, no plane traffic),
+ * but the plane write is the only thing that contends with the free-running
+ * compositor's DDR reads.  A full-plane blit is ~8 MB and starved the compositor
+ * hard enough to briefly drop the HDMI link (SiI read the sink as absent) on
+ * every repaint; presenting just the touched region keeps an icon highlight to a
+ * few KB.  g_bb is always fully correct and the plane already matches outside the
+ * rect, so a partial push stays in sync. */
+static void present_rect(int x, int y, int w, int h) {
+    if (x < 0) { w += x; x = 0; }
+    if (y < 0) { h += y; y = 0; }
+    if (x + w > g_fb.w) w = g_fb.w - x;
+    if (y + h > g_fb.h) h = g_fb.h - y;
+    if (w <= 0 || h <= 0) return;
     uint32_t *plane = (uint32_t *)g_fb.addr;
-    for (int y = 0; y < g_fb.h; y++)
-        memcpy(plane + (size_t)y * g_fb.stride, g_bb->px + (size_t)y * g_bb->stride, (size_t)g_fb.w * 4);
+    for (int r = y; r < y + h; r++)
+        memcpy(plane + (size_t)r * g_fb.stride + x,
+               g_bb->px + (size_t)r * g_bb->stride + x, (size_t)w * 4);
     sys_fb_present();
 }
+static void present(void) { present_rect(0, 0, g_fb.w, g_fb.h); }
 static void repaint(void) { wind_redraw(); present(); }
+static void repaint_rect(int x, int y, int w, int h) { wind_redraw(); present_rect(x, y, w, h); }
+
+/* dirty-rect helpers: union two rects, and the on-screen bounds of a desktop
+ * icon (padded to cover the G_CICON label below the bitmap + selection chrome). */
+#define ICON_PAD 24
+static void rect_union(int *x,int *y,int *w,int *h, int x2,int y2,int w2,int h2) {
+    if (*w <= 0) { *x = x2; *y = y2; *w = w2; *h = h2; return; }
+    int ax = *x + *w, ay = *y + *h, bx = x2 + w2, by = y2 + h2;
+    if (x2 < *x) *x = x2; if (y2 < *y) *y = y2;
+    *w = (ax > bx ? ax : bx) - *x; *h = (ay > by ? ay : by) - *y;
+}
+static void icon_dirty(int obj, int *x,int *y,int *w,int *h) {
+    int ox, oy; objc_offset(desk, obj, &ox, &oy);
+    *x = ox - ICON_PAD; *y = oy - ICON_PAD;
+    *w = desk[obj].ob_w + 2*ICON_PAD; *h = desk[obj].ob_h + 2*ICON_PAD;
+}
+static int desk_sel(void) { for (int i = 1; i <= n_icons; i++) if (desk[i].ob_state & OS_SELECTED) return i; return 0; }
 
 static int read_default(const char *dir, char *out, int n) {
     char p[160]; snprintf(p, sizeof p, "%s/Default", dir);
@@ -175,6 +207,7 @@ static void open_emulator(int type, const char *media, const char *boot) {
         g_xlwin = e->win;
         xl_sync();
     }
+    repaint_rect(bx, by, bw, bh);             // push just the new window, not the whole plane
 }
 // Launch a media file: pick the emulator by the browser's media type, and the
 // boot method by extension (disk -> D1:/A:, cartridge -> CART, executable -> a
@@ -356,6 +389,7 @@ static void open_browser(const char *logical, int media_type) {
     wind_info(b->win, br_infobar, b);
     wind_open(b->win, bx, by, bw, bh);
     g_bx += 34; g_by += 30; if (g_by > PH-320) { g_bx = 380; g_by = 130; }
+    repaint_rect(bx, by, bw, bh);             // push just the new window, not the whole plane
 }
 
 // Dispatch a desktop icon by its registry type: emulators -> an emulator window,
@@ -373,19 +407,28 @@ static void open_icon(int obj) {
 // A desktop click (window frames were already handled inside evnt_multi).
 static void desk_click(int mx, int my) {
     int obj = objc_find(desk, 0, 2, mx, my);
-    if (obj <= 0) { clear_sel(); repaint(); return; }            // empty desktop
+    if (obj <= 0) {                                              // empty desktop -> drop any selection
+        int old = desk_sel(); clear_sel();
+        if (old) { int x,y,w,h; icon_dirty(old,&x,&y,&w,&h); repaint_rect(x,y,w,h); }
+        return;
+    }
     int was_sel = desk[obj].ob_state & OS_SELECTED;
-    clear_sel(); desk[obj].ob_state |= OS_SELECTED; repaint();   // immediate select
+    int old = desk_sel();
+    clear_sel(); desk[obj].ob_state |= OS_SELECTED;              // immediate select
+    { int x,y,w,h; icon_dirty(obj,&x,&y,&w,&h);
+      if (old && old != obj) { int ox,oy,ow,oh; icon_dirty(old,&ox,&oy,&ow,&oh); rect_union(&x,&y,&w,&h,ox,oy,ow,oh); }
+      repaint_rect(x,y,w,h); }
 
     int mx2, my2, nc2; int16_t m2[8];
     int r = evnt_multi(MU_BUTTON|MU_TIMER, 2,1,1, 0,0,0,0,0, 0,0,0,0,0, m2, DCLICK_MS, 0,
                        &mx2, &my2, NULL, NULL, NULL, &nc2);
     if (r & MU_BUTTON) {
         int obj2 = objc_find(desk, 0, 2, mx2, my2);
-        if (obj2 == obj) { open_icon(obj); repaint(); return; }  // double-click -> open
+        if (obj2 == obj) { open_icon(obj); return; }             // double-click -> open (opener self-presents)
         desk_click(mx2, my2); return;                            // 2nd click elsewhere
     }
-    if (was_sel) { desk[obj].ob_state &= ~OS_SELECTED; repaint(); }  // toggle off
+    if (was_sel) { desk[obj].ob_state &= ~OS_SELECTED;           // toggle off
+                   int x,y,w,h; icon_dirty(obj,&x,&y,&w,&h); repaint_rect(x,y,w,h); }
 }
 
 // ---- A9 event source: block for the next kernel input event ----------------
@@ -394,7 +437,9 @@ static void desk_click(int mx, int my) {
 // The emulator keyboard GRAB: while a topped emu window holds it, every key
 // types into the machine — so Ctrl-] (not an Atari key) releases it, giving
 // Enter/Space back to the desktop (close box, icons) without a mouse.  Topping
-// an emu window again re-grabs.
+// an emu window again re-grabs.  The grab CANNOT eat the arrow keys (pointer
+// motion) or Tab (a click): those bypass raw in the input layer, so you can
+// always steer to a grabbed emu window's close box and Tab it shut.
 static int g_kbd_grab = 1;
 static int g_last_top;
 
@@ -466,10 +511,11 @@ void _app_entry(int argc, char **argv) {
         if ((r & MU_KEYBD) && g_kbd_grab && emu_of_window(wind_top())) { sys_kbd_6502(key); continue; }
         if ((r & MU_KEYBD) && key == 0x1b) break;                              // Esc quits
         if ((r & MU_MESAG) && msg[0] == WM_CLOSED) {
+            int cx,cy,cw,ch; wind_get(msg[3], WF_CURRXYWH, &cx,&cy,&cw,&ch);   // area the close reveals
             browser *b = br_of_window(msg[3]); if (b) { br_free_icons(b); b->used = 0; }
             emuwin *e = emu_of_window(msg[3]); if (e) e->used = 0;
             xl_unbind(msg[3]);
-            wind_close(msg[3]); repaint();
+            wind_close(msg[3]); repaint_rect(cx,cy,cw,ch);
         }
         if ((r & MU_MESAG) && (msg[0] == WM_MOVED || msg[0] == WM_SIZED) && msg[3] == g_xlwin)
             xl_sync();                                   // keep the plane on the work area

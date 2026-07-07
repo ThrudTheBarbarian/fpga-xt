@@ -222,6 +222,12 @@ static int mouse_event(struct os_event *ev, int x, int y, int kind /*0=up 1=down
     return 0;
 }
 
+/* one full left-click at the cursor: down now, up on the next call (Enter/Tab) */
+static int click_event(struct os_event *ev) {
+    ev->type = OS_EV_BTN_DOWN; ev->button = 1; s_btn = 1; s_pend_up = 1;
+    cursor_pos(&ev->mx, &ev->my); return 0;
+}
+
 int input_next_event(struct os_event *ev, int timeout_ms, int raw) {
     ev->shift = 0; ev->key = 0;
     if (s_pend_up) { s_pend_up = 0; s_btn = 0; ev->type = OS_EV_BTN_UP; ev->button = 0; cursor_pos(&ev->mx, &ev->my); return 0; }
@@ -286,15 +292,20 @@ int input_next_event(struct os_event *ev, int timeout_ms, int raw) {
                 ev->type = OS_EV_MOTION; ev->mx = x; ev->my = y; ev->button = s_btn; return 0;
             }
         }
-        if (!raw && c == ' ') {                       /* Space: press-and-hold toggle */
+        if (c == 0x09) return click_event(ev);        /* Tab: click — a single clean byte,
+                                                       * fires even while the emu holds the
+                                                       * grab (unlike Enter/Space) and can't
+                                                       * be swallowed/mis-parsed like End was */
+        if (c == '\\' || (!raw && c == ' ')) {        /* press-and-hold toggle (drag): '\' is a
+                                                       * non-Atari key so it works even while an
+                                                       * emu window holds the grab (Space can't);
+                                                       * toggle down -> arrow-move -> toggle up */
             cursor_pos(&ev->mx, &ev->my);
             if (!s_btn) { s_btn = 1; ev->type = OS_EV_BTN_DOWN; ev->button = 1; }
             else        { s_btn = 0; ev->type = OS_EV_BTN_UP;   ev->button = 0; }
             return 0;
         }
-        if (!raw && (c == '\r' || c == '\n')) {       /* Enter: click (down, up next call) */
-            ev->type = OS_EV_BTN_DOWN; ev->button = 1; s_btn = 1; s_pend_up = 1; cursor_pos(&ev->mx, &ev->my); return 0;
-        }
+        if (!raw && (c == '\r' || c == '\n')) return click_event(ev);   /* Enter: click */
         ev->type = OS_EV_KEY; ev->key = c; ev->button = s_btn; cursor_pos(&ev->mx, &ev->my); return 0;
     }
 }
