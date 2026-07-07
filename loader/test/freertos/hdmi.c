@@ -256,12 +256,14 @@ void hdmi_reinit(void)
 
 /* ---- HPD / receiver-sense watcher -------------------------------------------
  * The SiI9022 latches link events in TPI 0x3D (bit0 = hotplug event, bit1 =
- * receiver-sense event, bit2 = sink attached).  The boot-time init is one-shot
- * and nothing serviced these, so a monitor renegotiation (or a marginal
- * cable/connector bounce) left the link down until a physical replug.  Poll
- * once a second: log every event (dmesg shows the drop cadence — root-cause
- * data), clear the latch, and when a sink is attached after an event, run the
- * soft-replug to re-acquire. */
+ * receiver-sense event) alongside the LIVE states (bit2 = sink attached,
+ * bit3 = receiver sensing our TMDS).  The boot-time init is one-shot and
+ * nothing serviced these, so one monitor renegotiation left the link down
+ * until a physical replug.  Poll once a second, silent while healthy:
+ *  - a latched event gets ONE dmesg line (drop-cadence data) + a W1C clear;
+ *  - the soft-replug runs only when the sink is attached but has actually
+ *    STOPPED sensing TMDS — benign latched events (HDCP probes, sink power
+ *    management) must not cost a gratuitous 2 s blink. */
 static void hdmi_watch_task(void *arg)
 {
     (void)arg;
@@ -272,10 +274,13 @@ static void hdmi_watch_task(void *arg)
         int rd = sii_read(0x3D, &st);
         if (rd == 0 && (st & 0x03)) sii_write(0x3D, st);   /* W1C the events */
         i2c_unlock();
-        if (rd != 0 || !(st & 0x03)) continue;
+        if (rd != 0 || !(st & 0x03)) continue;             /* healthy: no log, no action */
+        int attached = st & 0x04, sensing = st & 0x08;
         klog("[hdmi] link event 0x3D="); puthex8(st);
-        klog(st & 0x04 ? " (sink attached)\r\n" : " (sink absent)\r\n");
-        if (st & 0x04) hdmi_reinit();                      /* re-acquire the sink */
+        klog(!attached ? " (sink absent)\r\n"
+                       : sensing ? " (link still up — no action)\r\n"
+                                 : " (sink lost TMDS — soft-replug)\r\n");
+        if (attached && !sensing) hdmi_reinit();           /* re-acquire the sink */
     }
 }
 
