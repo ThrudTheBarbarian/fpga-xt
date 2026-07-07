@@ -109,6 +109,25 @@ typedef struct { int used, win; char name[48], boot[96]; } emuwin;
 static emuwin EMU[MAXEMU];
 static int g_ex = 380, g_ey = 130;
 
+// The live XL compositor plane binds to ONE 6502 window (first opened): the
+// kernel places plane 1 over that window's work area (SYS_xl_window), and we
+// re-place it whenever the window moves/resizes, hide it on close.  m68k
+// windows stay placeholders (no core hosted yet).
+#define XL_SCALE 2                      // 320x192 writeback -> 640x384 in the 672x480 work area
+static int g_xlwin;                     // window handle owning the plane (0 = none)
+
+static void xl_sync(void) {
+    if (!g_xlwin) return;
+    int x, y, w, h;
+    wind_get(g_xlwin, WF_WORKXYWH, &x, &y, &w, &h);
+    sys_xl_window(x, y, w, h, XL_SCALE);
+}
+static void xl_unbind(int win) {
+    if (win != g_xlwin || !g_xlwin) return;
+    sys_xl_window(0, 0, 0, 0, 0);       // hide the plane
+    g_xlwin = 0;
+}
+
 static emuwin *emu_of_window(int win) {
     for (int i = 0; i < MAXEMU; i++) if (EMU[i].used && EMU[i].win == win) return &EMU[i];
     return NULL;
@@ -147,6 +166,10 @@ static void open_emulator(int type, const char *media, const char *boot) {
     wind_set_name(e->win, title); wind_content(e->win, emu_draw, e);
     wind_open(e->win, bx, by, bw, bh);
     g_ex += 34; g_ey += 30; if (g_ey > PH-320) { g_ex = 380; g_ey = 130; }
+    if (type == ICT_EMU_8BIT && !g_xlwin) {   // frame the live 6502 plane here
+        g_xlwin = e->win;
+        xl_sync();
+    }
 }
 // Launch a media file: pick the emulator by the browser's media type, and the
 // boot method by extension (disk -> D1:/A:, cartridge -> CART, executable -> a
@@ -424,8 +447,11 @@ void _app_entry(int argc, char **argv) {
         if ((r & MU_MESAG) && msg[0] == WM_CLOSED) {
             browser *b = br_of_window(msg[3]); if (b) { br_free_icons(b); b->used = 0; }
             emuwin *e = emu_of_window(msg[3]); if (e) e->used = 0;
+            xl_unbind(msg[3]);
             wind_close(msg[3]); repaint();
         }
+        if ((r & MU_MESAG) && (msg[0] == WM_MOVED || msg[0] == WM_SIZED) && msg[3] == g_xlwin)
+            xl_sync();                                   // keep the plane on the work area
         if (r & MU_BUTTON) {
             int wh = wind_find(mx, my); browser *b = wh ? br_of_window(wh) : NULL;
             if (b) br_click(b, mx, my); else desk_click(mx, my);

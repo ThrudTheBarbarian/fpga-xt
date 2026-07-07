@@ -67,13 +67,25 @@ void gfxplane_init(void)
      * block lets the A9 place plane 1 at an arbitrary rect — put it 1x1 off-screen.
      * EN=1 adopts these regs; EN=0 would be the legacy centred placement that
      * composited over the middle of the desktop. (GP0 @0x43C0_0000 = Device.) */
-    {
-        volatile uint32_t *xl = (volatile uint32_t *)0x43C00500u;  /* XT_BLK_XLCTL */
-        xl[0] = 1920; xl[1] = 1080;     /* X,Y: off the bottom-right corner */
-        xl[2] = 1;    xl[3] = 1;        /* W,H: 1x1 */
-        xl[4] = 1;                      /* scale */
-        xl[5] = 1;                      /* EN: commit the rect (clk_pix CDC) */
-    }
+    xl_window_set(0, 0, 0, 0, 0);
+    __asm__ volatile("dsb");
+}
+
+/* Place the XL emulation plane at an on-screen rect (the desktop frames the live
+ * emulation inside a GEM window's work area — SYS_xl_window).  scale = integer
+ * pixel zoom 1..5; scale <= 0 hides the plane (1x1 off-screen — EN stays 1 so
+ * the legacy centred placement never comes back). */
+void xl_window_set(int x, int y, int w, int h, int scale)
+{
+    volatile uint32_t *xl = (volatile uint32_t *)0x43C00500u;  /* XT_BLK_XLCTL */
+    if (scale <= 0) { x = 1920; y = 1080; w = 1; h = 1; scale = 1; }
+    if (scale > 5) scale = 5;
+    xl[0] = (uint32_t)x & 0x0FFFu;
+    xl[1] = (uint32_t)y & 0x0FFFu;
+    xl[2] = (uint32_t)w & 0x0FFFu;
+    xl[3] = (uint32_t)h & 0x0FFFu;
+    xl[4] = (uint32_t)scale & 0x7u;
+    xl[5] = 1;                          /* EN: commit the rect (clk_pix CDC) */
     __asm__ volatile("dsb");
 }
 
@@ -93,6 +105,12 @@ void fb_wallpaper_info(int *w, int *h, int *stride, uint32_t *addr)
 }
 
 void gfxplane_init(void) { }
+
+/* no XL compositor plane on qemu — accept and ignore */
+void xl_window_set(int x, int y, int w, int h, int scale)
+{
+    (void)x; (void)y; (void)w; (void)h; (void)scale;
+}
 
 void fb_present(void)
 {

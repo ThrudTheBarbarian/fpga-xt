@@ -176,6 +176,10 @@ struct xt_dirent { unsigned mode; char name[256]; };
 #define SYS_fb_present   0x601 /* () -> 0  (present the plane) */
 #define SYS_fb_wallpaper 0x602 /* (struct os_fbinfo *) -> 0: OS-owned desk-sized WM
                                 * backdrop buffer (WALLPAPER_BASE); no heap cost */
+#define SYS_xl_window    0x603 /* (x<<16|y, w<<16|h, scale) -> 0: place the XL
+                                * emulation plane at an on-screen rect (the desktop
+                                * frames the live emulation in a window's work
+                                * area); scale = 1..5 integer zoom, 0 = hide */
 
 /* input / events — block 0x700. The kernel owns the HW cursor sprite + the serial
  * mouse; the desktop blocks here for the next event and the cursor moves kernel-side. */

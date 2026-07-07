@@ -93,36 +93,117 @@ void cursor_move(int x, int y) {
 }
 void cursor_pos(int *x, int *y) { *x = cur_x; *y = cur_y; }
 
-/* Serial "mouse": cursor keys move the pointer (CSI arrows), Space/Enter = a left
- * click (button-down now, button-up on the next call), other keys = key events.
- * Runs kernel-side in the deferral thunk (task context) so sh_readc may block. */
+/* Serial "mouse", two sources:
+ *
+ * 1. The TERMINAL'S mouse via xterm SGR reporting: on the first call we switch
+ *    the terminal into button-event tracking (CSI ?1002h: press/release + motion
+ *    while a button is held) with SGR encoding (CSI ?1006h, unambiguous + >223
+ *    cols), and query the text-area size (CSI 18t -> CSI 8;rows;cols t) to map
+ *    terminal cells onto the 1920x1080 desktop.  This gives real point/click/drag
+ *    with the mouse in the user's terminal window.
+ * 2. Keyboard fallback: cursor keys move the pointer; Enter = a click (down now,
+ *    up on the next call — a double-click is Enter Enter); SPACE toggles the
+ *    button (press-hold-release), which is what makes window DRAG possible
+ *    without terminal mouse support: point at the title bar, Space, arrows,
+ *    Space.
+ *
+ * Runs kernel-side in the deferral thunk (task context) so sh_readc may block.
+ * (Terminal caveat: mouse reporting stays on while the desktop runs; if focus
+ * is toggled to the shell, mousing spews CSI bytes at it — known cosmetic.) */
 #define CUR_STEP 16
 static int s_pend_up;
+static int s_btn;                       /* space-toggle / SGR button state */
+static int s_mouse_init;
+static int s_cols = 80, s_rows = 24;    /* terminal text area (CSI 18t reply) */
+
+extern void puts0(const char *);
+
+/* read a decimal int from the desktop queue; returns the terminating char
+ * (or -1 on timeout) with the value in *v */
+static int rd_int(int *v) {
+    int n = 0, c;
+    for (;;) {
+        c = desk_readc_timeout(50);
+        if (c < '0' || c > '9') break;
+        n = n * 10 + (c - '0');
+    }
+    *v = n;
+    return c;
+}
+static int cell2px(int cell, int cells, int span) {
+    int p = (cell - 1) * span / (cells > 0 ? cells : 80) + span / (2 * (cells > 0 ? cells : 80));
+    if (p < 0) p = 0; if (p > span - 1) p = span - 1;
+    return p;
+}
 
 int input_next_event(struct os_event *ev, int timeout_ms) {
+    if (!s_mouse_init) {                /* focus is on the desktop: hook the terminal */
+        s_mouse_init = 1;
+        puts0("\x1b[?1002h\x1b[?1006h"); /* button-event tracking, SGR encoding */
+        puts0("\x1b[18t");               /* -> ESC [ 8 ; rows ; cols t */
+    }
     ev->shift = 0; ev->key = 0;
-    if (s_pend_up) { s_pend_up = 0; ev->type = OS_EV_BTN_UP; ev->button = 0; cursor_pos(&ev->mx, &ev->my); return 0; }
-    int c = desk_readc_timeout(timeout_ms);
-    if (c < 0) { ev->type = OS_EV_TIMER; ev->button = 0; cursor_pos(&ev->mx, &ev->my); return 0; }
-    if (c == 0x1b) {                                  /* ESC: an arrow CSI or a bare Escape */
-        int c1 = desk_readc_timeout(30);
-        if (c1 == '[') {
-            int c2 = desk_readc(), x, y; cursor_pos(&x, &y);
-            if      (c2 == 'A') y -= CUR_STEP;
-            else if (c2 == 'B') y += CUR_STEP;
-            else if (c2 == 'C') x += CUR_STEP;
-            else if (c2 == 'D') x -= CUR_STEP;
-            if (x < 0) x = 0; if (x > 1919) x = 1919;
-            if (y < 0) y = 0; if (y > 1079) y = 1079;
-            cursor_move(x, y);
-            ev->type = OS_EV_MOTION; ev->mx = x; ev->my = y; ev->button = 0; return 0;
+    if (s_pend_up) { s_pend_up = 0; s_btn = 0; ev->type = OS_EV_BTN_UP; ev->button = 0; cursor_pos(&ev->mx, &ev->my); return 0; }
+
+    for (;;) {
+        int c = desk_readc_timeout(timeout_ms);
+        if (c < 0) { ev->type = OS_EV_TIMER; ev->button = s_btn; cursor_pos(&ev->mx, &ev->my); return 0; }
+
+        if (c == 0x1b) {                              /* ESC: CSI or a bare Escape */
+            int c1 = desk_readc_timeout(30);
+            if (c1 != '[') { ev->type = OS_EV_KEY; ev->key = 0x1b; ev->button = s_btn; cursor_pos(&ev->mx, &ev->my); return 0; }
+            int c2 = desk_readc_timeout(50);
+
+            if (c2 == '<') {                          /* SGR mouse: <b;x;yM / <b;x;ym */
+                int b, cx, cy, t;
+                if (rd_int(&b) != ';') continue;
+                if (rd_int(&cx) != ';') continue;
+                t = rd_int(&cy);
+                if (t != 'M' && t != 'm') continue;
+                if (b & 64) continue;                 /* wheel: ignore */
+                int x = cell2px(cx, s_cols, 1920), y = cell2px(cy, s_rows, 1080);
+                cursor_move(x, y);
+                ev->mx = x; ev->my = y;
+                if (t == 'm')            { s_btn = 0; ev->type = OS_EV_BTN_UP;   ev->button = 0; }
+                else if (b & 32)         {            ev->type = OS_EV_MOTION;   ev->button = s_btn; }
+                else                     { s_btn = 1; ev->type = OS_EV_BTN_DOWN; ev->button = 1; }
+                return 0;
+            }
+            if (c2 >= '0' && c2 <= '9') {             /* CSI n... — the 18t size reply */
+                int n1 = c2 - '0', n2, n3, t;
+                for (;;) { t = desk_readc_timeout(50);
+                           if (t < '0' || t > '9') break; n1 = n1 * 10 + (t - '0'); }
+                if (t == ';' && n1 == 8) {
+                    if (rd_int(&n2) == ';' && rd_int(&n3) == 't' && n2 > 0 && n3 > 0) {
+                        s_rows = n2; s_cols = n3;
+                    }
+                }
+                continue;                             /* consumed, no event */
+            }
+            {                                         /* arrows move the pointer */
+                int x, y; cursor_pos(&x, &y);
+                if      (c2 == 'A') y -= CUR_STEP;
+                else if (c2 == 'B') y += CUR_STEP;
+                else if (c2 == 'C') x += CUR_STEP;
+                else if (c2 == 'D') x -= CUR_STEP;
+                else continue;                        /* unknown CSI: swallow */
+                if (x < 0) x = 0; if (x > 1919) x = 1919;
+                if (y < 0) y = 0; if (y > 1079) y = 1079;
+                cursor_move(x, y);
+                ev->type = OS_EV_MOTION; ev->mx = x; ev->my = y; ev->button = s_btn; return 0;
+            }
         }
-        ev->type = OS_EV_KEY; ev->key = 0x1b; ev->button = 0; cursor_pos(&ev->mx, &ev->my); return 0;
+        if (c == ' ') {                               /* Space: press-and-hold toggle */
+            cursor_pos(&ev->mx, &ev->my);
+            if (!s_btn) { s_btn = 1; ev->type = OS_EV_BTN_DOWN; ev->button = 1; }
+            else        { s_btn = 0; ev->type = OS_EV_BTN_UP;   ev->button = 0; }
+            return 0;
+        }
+        if (c == '\r' || c == '\n') {                 /* Enter: click (down, up next call) */
+            ev->type = OS_EV_BTN_DOWN; ev->button = 1; s_btn = 1; s_pend_up = 1; cursor_pos(&ev->mx, &ev->my); return 0;
+        }
+        ev->type = OS_EV_KEY; ev->key = c; ev->button = s_btn; cursor_pos(&ev->mx, &ev->my); return 0;
     }
-    if (c == '\r' || c == '\n' || c == ' ') {         /* click: down now, up next call */
-        ev->type = OS_EV_BTN_DOWN; ev->button = 1; s_pend_up = 1; cursor_pos(&ev->mx, &ev->my); return 0;
-    }
-    ev->type = OS_EV_KEY; ev->key = c; ev->button = 0; cursor_pos(&ev->mx, &ev->my); return 0;
 }
 
 #else   /* qemu: no sprite engine / input */

@@ -2223,6 +2223,12 @@ static long do_syscall(uint32_t num, long a0, long a1, long a2)
         return 0;
     }
     case SYS_fb_present: { extern void fb_present(void); fb_present(); return 0; }
+    case SYS_xl_window: {                                    /* (x<<16|y, w<<16|h, scale) */
+        extern void xl_window_set(int, int, int, int, int);
+        xl_window_set((int)((uint32_t)a0 >> 16), (int)(a0 & 0xFFFF),
+                      (int)((uint32_t)a1 >> 16), (int)(a1 & 0xFFFF), (int)a2);
+        return 0;
+    }
     case SYS_fb_wallpaper: {                                 /* (struct os_fbinfo *) */
         extern void fb_wallpaper_info(int *, int *, int *, uint32_t *);
         struct { int w, h, stride; uint32_t addr; } *fi = (void *)a0;
