@@ -198,6 +198,33 @@ worker to cut the IRQ→task handoff.
 - The doorbell is ignored (sticky diag bit in `MATH_STAT`) when no chunk is
   mapped (`$D5C8` = 0).
 
+## Deferred (v2): stored / named programs
+
+v1 uploads the op-word program inline on every call — for a repeated kernel the
+6502 spends thousands of cycles re-`POKE`ing the same up-to-4 KB program each
+doorbell.  The intended v2 lets a program be **registered once under an id** and
+then invoked by reference:
+
+- **`begin-program(id)` … op words … `end-program`** stores the op-word stream
+  under `id` in an A9-side table (keyed by id; the program is the 4-byte op
+  stream, no operand data).
+- **Predefined kernels ship as negative ids** — matrix multiply, Horner
+  (polynomial eval), and similar — compiled into the worker so they cost no
+  upload at all.  Positive ids are caller-defined.
+- **`run(id)`** executes the stored program with the inputs already in the
+  chunk's slots and leaves results in the slots — the 6502 stages only the
+  operand data, not the program.
+
+This does not shrink the ~23 µs FreeRTOS round-trip floor, but it removes the
+large **6502-side** per-call cost of restaging the program — the decisive win
+for tight loops of one kernel (matmul, FIR/`VMLA`, Horner over a coefficient
+table), which is exactly where offload pays off.
+
+Fits the existing ABI as a program-id path alongside inline op words: e.g. a
+program-id field in the page header (0 = run the inline op words as today,
+non-zero = run stored program), with `begin`/`end`/`run` carried on a control
+register or reserved op-count encodings.  Left for v2; v1 is inline-only.
+
 ## Implementation map
 
 - PL: `hdl/math_cop.sv` (page BRAM + dirty bitmap + flush/fill FSM + event
