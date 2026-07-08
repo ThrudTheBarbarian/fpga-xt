@@ -1,0 +1,36 @@
+10 REM ===== XT MATH-COP v2 STORED-PROGRAM TEST (Atari BASIC) =====
+20 REM Define program 1 (i32 MUL S0,S1->S2), call it in the same doorbell,
+30 REM then CALL-only with fresh inputs to prove the stored program runs
+40 REM without re-uploading its op words.  ABI: opcount@16384 status@16387
+50 REM   S(n)@16448+8*n  op words@18496 (4 bytes each, little-endian).
+60 REM Control ops: DEF=34 END=35 CALL=33; i32 MUL byte0 = (2<<6)|3 = 131.
+100 POKE 53727,255 : REM $D1DF: unlock all XT groups
+110 POKE 54728,200 : GOSUB 500 : REM chunk 200, wait ready ($D5C7 bit2)
+120 POKE 54726,1 : REM map the math page over $4000
+130 REM ---- inputs S0=6 S1=7 (i32) ----
+140 POKE 16448,6 : POKE 16449,0 : POKE 16450,0 : POKE 16451,0
+150 POKE 16456,7 : POKE 16457,0 : POKE 16458,0 : POKE 16459,0
+160 REM ---- program stream: [DEF 1][MUL i32 S0,S1->S2][END][CALL 1] ----
+170 POKE 18496,34 : POKE 18497,1 : POKE 18498,0 : POKE 18499,0 : REM DEF id=1
+180 POKE 18500,131: POKE 18501,0 : POKE 18502,1 : POKE 18503,2 : REM i32 MUL S0,S1->S2
+190 POKE 18504,35 : POKE 18505,0 : POKE 18506,0 : POKE 18507,0 : REM END
+200 POKE 18508,33 : POKE 18509,1 : POKE 18510,0 : POKE 18511,0 : REM CALL id=1
+210 POKE 16384,4 : POKE 16385,0 : REM op count = 4
+220 POKE 54727,0 : GOSUB 600 : REM doorbell + wait done
+230 E=0
+240 PRINT "DEFINE+CALL 6*7=";PEEK(16464);" (WANT 42)" : IF PEEK(16464)<>42 THEN E=1
+250 PRINT "STATUS=";PEEK(16387);" (WANT 1)" : IF PEEK(16387)<>1 THEN E=1
+260 REM ---- CALL-only, fresh inputs S0=8 S1=9 — no re-upload of the program ----
+270 POKE 16448,8 : POKE 16456,9
+280 POKE 18496,33 : POKE 18497,1 : POKE 18498,0 : POKE 18499,0 : REM CALL id=1
+290 POKE 16384,1 : POKE 16385,0 : REM op count = 1
+300 POKE 54727,0 : GOSUB 600
+310 PRINT "CALL-ONLY 8*9=";PEEK(16464);" (WANT 72)" : IF PEEK(16464)<>72 THEN E=1
+320 IF E=0 THEN PRINT "*** MATH-COP V2 OK ***" : END
+330 PRINT "*** MATH-COP V2 FAIL ***" : END
+500 REM -- wait chunk ready ($D5C7 bit2) --
+510 IF (PEEK(54727) AND 4)=0 THEN 510
+520 RETURN
+600 REM -- wait done ($D5C7 bit0) --
+610 IF (PEEK(54727) AND 1)=0 THEN 610
+620 RETURN

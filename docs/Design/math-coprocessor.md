@@ -269,12 +269,15 @@ builtin:     set A,B,dims ; [CALL -1(f64),b=0]          matmul, zero upload ever
 
 ### Implementation status
 
-Scaffolded in `mathcop.{c,h}` (builds, v1 regressions green): the full ABI, the
-per-task table (`mc_prog_store/find/free`, doubling), and control-op dispatch —
-**`DEF`/`END`/`UNDEF` (program storage) work**.  Stubbed: **`CALL` (run)** —
-needs `mc_run_chunk`'s op loop factored into a reusable `run(ops,nops)` entry so
-`CALL` can recurse — and the five **builtin kernels**.  A v2 stream that `CALL`s
-reports `NOPROG` until those land.
+Implemented in `mathcop.{c,h}` (`MC_ABI_VERSION` = 2): the full ABI, the per-task
+table (`mc_prog_store/find/free`, doubling), the interpreter factored into a
+reusable `mc_run_ops(page, ops, nops, st, depth)`, and control-op dispatch.
+**`DEF`/`END`/`UNDEF` and `CALL` of a user program (id>0) all work** — `CALL`
+recurses into `mc_run_ops` against the shared slots, guarded to depth 8, so
+programs compose.  Still stubbed: the five **native builtins** (`CALL` id<0
+returns `NOPROG`).  Program storage is currently one global table — keying it by
+owning task (chunk→task) is a TODO.  **v1 is unchanged**: a stream with no
+control ops runs inline exactly as before — you never have to store a program.
 
 ## Implementation map
 

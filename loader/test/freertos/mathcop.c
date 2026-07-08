@@ -328,44 +328,165 @@ static uint8_t mc_builtin(int16_t id, uint8_t b, uint8_t type, volatile uint8_t 
     return MC_ST_NOPROG;   /* not implemented yet */
 }
 
-/* Handle one control op word at mc_ops[*pc]; may advance *pc past a DEF body.
- * Returns status bits.  DEF/END/UNDEF work; CALL is stubbed to NOPROG. */
-static uint8_t mc_ctl_op(volatile uint8_t *page, unsigned op_count, unsigned *pc)
+static void mc_run_ops(volatile uint8_t *page, const uint32_t *ops, unsigned nops,
+                       uint8_t *st, int depth);      /* fwd: control ops recurse into it */
+
+/* Handle one control op word at ops[*pc]; may advance *pc past a DEF body and
+ * (for CALL) recurse into mc_run_ops.  Accumulates status into *st.  User-program
+ * CALL uses the program's absolute slot indices — the byte-3 arg base applies to
+ * builtins only.  Redefining/undefining a program that is on the call stack is a
+ * caller error (its op buffer may be freed mid-run). */
+static void mc_ctl_op(volatile uint8_t *page, const uint32_t *ops, unsigned nops,
+                      unsigned *pc, uint8_t *st, int depth)
 {
-    uint32_t w    = mc_ops[*pc];
+    uint32_t w    = ops[*pc];
     uint8_t  op   = w & 0x3F;
     uint8_t  type = (w >> 6) & 3;
     int16_t  id   = (int16_t)((w >> 8) & 0xFFFFu);      /* bytes 1-2 */
-    uint8_t  base = (uint8_t)(w >> 24);                 /* byte 3 (CALL arg base) */
+    uint8_t  base = (uint8_t)(w >> 24);                 /* byte 3 (CALL arg base, builtins) */
 
     switch (op) {
     case MC_OP_DEF: {                                   /* capture [body..END-1], store under id */
-        if (id <= 0) return MC_ST_BADOP;                /* only positive ids are user-definable */
+        if (id <= 0) { *st |= MC_ST_BADOP; return; }    /* only positive ids are user-definable */
         unsigned body = *pc + 1, e = body;
-        while (e < op_count && (mc_ops[e] & 0x3F) != MC_OP_END) {
-            if ((mc_ops[e] & 0x3F) == MC_OP_DEF) return MC_ST_BADOP;   /* no nesting */
+        while (e < nops && (ops[e] & 0x3F) != MC_OP_END) {
+            if ((ops[e] & 0x3F) == MC_OP_DEF) { *st |= MC_ST_BADOP; return; }  /* no nesting */
             e++;
         }
-        if (e >= op_count) return MC_ST_BADOP;                         /* unterminated */
-        if (mc_prog_store(id, &mc_ops[body], (uint16_t)(e - body)) != 0)
-            return MC_ST_PROGFULL;
+        if (e >= nops) { *st |= MC_ST_BADOP; return; }                         /* unterminated */
+        if (mc_prog_store(id, &ops[body], (uint16_t)(e - body)) != 0) *st |= MC_ST_PROGFULL;
         *pc = e;                                        /* loop's pc++ then steps past END */
-        return 0;
+        return;
     }
     case MC_OP_END:                                     /* stray END (not consumed by a DEF) */
-        return MC_ST_BADOP;
+        *st |= MC_ST_BADOP;
+        return;
     case MC_OP_UNDEF:
         if (id > 0) mc_prog_free(id);
-        return 0;
-    case MC_OP_CALL:
-        /* TODO(v2): run the program against the current slots — id>0 interprets
-         * mc_prog_find(id)->ops (needs the recursion refactor), id<0 dispatches
-         * mc_builtin.  Stubbed to NOPROG so a v2 caller sees "not live yet". */
-        if (id < 0) return mc_builtin(id, base, type, page);
-        (void)mc_prog_find(id);
-        return MC_ST_NOPROG;
+        return;
+    case MC_OP_CALL: {                                  /* run stored program / builtin vs slots */
+        if (id < 0)  { *st |= mc_builtin(id, base, type, page); return; }
+        if (id == 0) { *st |= MC_ST_NOPROG; return; }
+        mc_prog *p = mc_prog_find(id);
+        if (!p)                              *st |= MC_ST_NOPROG;
+        else if (depth >= MC_CALL_DEPTH_MAX) *st |= MC_ST_BADOP;   /* recursion / cycle guard */
+        else                                 mc_run_ops(page, p->ops, p->nops, st, depth + 1);
+        return;
+    }
     default:
-        return MC_ST_BADOP;
+        *st |= MC_ST_BADOP;
+        return;
+    }
+}
+
+/* Interpret `nops` op words from `ops` against `page`'s slots (the shared
+ * mc_slots demand-cache + dirty map), accumulating status into *st.  Factored
+ * out of mc_run_chunk so CALL can recurse (depth-guarded): a CALL shares the one
+ * slot file, so a stored program runs as an inline expansion against the same
+ * inputs/outputs. */
+static void mc_run_ops(volatile uint8_t *page, const uint32_t *ops, unsigned nops,
+                       uint8_t *st, int depth)
+{
+    for (unsigned pc = 0; pc < nops && !(*st & (MC_ST_BADOP | MC_ST_RANGE)); pc++) {
+        uint32_t w    = ops[pc];
+        uint8_t  op   = w & 0x3F;
+        uint8_t  type = (w >> 6) & 3;
+        uint8_t  s1   = (w >> 8)  & 0xFF;
+        uint8_t  s2   = (w >> 16) & 0xFF;
+        uint8_t  dst  = (w >> 24) & 0xFF;
+
+        if (op >= MC_OP_CTLBASE && op <= MC_OP_CTLTOP) {   /* v2 control ops (define/call) */
+            mc_ctl_op(page, ops, nops, &pc, st, depth);
+            continue;
+        }
+        if (op < MC_OP_VECBASE) {
+            /* ---- scalar ---- */
+            mcval_t a, b, r;
+            if (op == MC_OP_CVT) {
+                uint8_t src_t = s2 & 3;
+                a = load_elem(page, s1 * 8, mc_esize(src_t));
+                r = mc_convert(type, src_t, a);
+            } else {
+                a = load_elem(page, s1 * 8, mc_esize(type));
+                b = load_elem(page, s2 * 8, mc_esize(type));
+                r = mc_scalar(op, type, a, b, st);
+            }
+            store_elem(page, dst * 8, (op == MC_OP_CMP) ? 4 : mc_esize(type), r);
+        } else {
+            /* ---- vector: consume the second word ---- */
+            if (op > MC_OP_VECTOP || pc + 1 >= nops) { *st |= MC_ST_BADOP; break; }
+            uint32_t w1   = ops[++pc];
+            unsigned n    = w1 & 0xFF; if (n == 0) n = 256;
+            int      st1  = (int8_t)(w1 >> 8);
+            int      st2  = (int8_t)(w1 >> 16);
+            int      stD  = (int8_t)(w1 >> 24);
+            int      es   = mc_esize(type);
+            uint8_t  sop  = vec_to_scalar(op);
+            double   facc = 0.0;
+            int64_t  iacc = 0;
+            int      isf  = (type == MC_T_F32 || type == MC_T_F64);
+
+            for (unsigned i = 0; i < n; i++) {
+                int o1 = elem_off(s1, (int)i, st1, es, st);
+                if (o1 < 0) break;
+                mcval_t a = load_elem(page, o1, es);
+                mcval_t b; b.u = 0;
+                mcval_t r;
+
+                if (op == MC_OP_VCOPY) { r = a; }
+                else if (op == MC_OP_VCVT) {
+                    uint8_t src_t = s2 & 3;
+                    int     ses   = mc_esize(src_t);
+                    int o1s = elem_off(s1, (int)i, st1, ses, st);
+                    if (o1s < 0) break;
+                    r = mc_convert(type, src_t, load_elem(page, o1s, ses));
+                }
+                else if (op == MC_OP_VSUM) {
+                    if (isf) facc += as_double(a, type); else iacc += as_int64(a, type);
+                    continue;
+                }
+                else if (op == MC_OP_VDOT || op == MC_OP_VMLA ||
+                         (op != MC_OP_VABS && op != MC_OP_VNEG && op != MC_OP_VSQRT)) {
+                    int o2 = elem_off(s2, (int)i, st2, es, st);
+                    if (o2 < 0) break;
+                    b = load_elem(page, o2, es);
+                    if (op == MC_OP_VDOT) {
+                        if (isf) facc += as_double(a, type) * as_double(b, type);
+                        else     iacc += as_int64(a, type) * as_int64(b, type);
+                        continue;
+                    }
+                    if (op == MC_OP_VMLA) {
+                        int oD = elem_off(dst, (int)i, stD, es, st);
+                        if (oD < 0) break;
+                        mcval_t c = load_elem(page, oD, es);
+                        mcval_t p = mc_scalar(MC_OP_MUL, type, a, b, st);
+                        r = mc_scalar(MC_OP_ADD, type, c, p, st);
+                        store_elem(page, oD, es, r);
+                        continue;
+                    }
+                    r = mc_scalar(sop, type, a, b, st);
+                }
+                else {
+                    r = mc_scalar(sop, type, a, b, st);   /* unary */
+                }
+
+                int oD = elem_off(dst, (int)i, stD, es, st);
+                if (oD < 0) break;
+                store_elem(page, oD, es, r);
+            }
+
+            if (op == MC_OP_VDOT || op == MC_OP_VSUM) {
+                mcval_t r; r.u = 0;
+                switch (type) {
+                case MC_T_F32: r.f = (float)facc; break;
+                case MC_T_F64: r.d = facc;        break;
+                case MC_T_I32: r.i = (int32_t)iacc; break;
+                default:       r.l = iacc;        break;
+                }
+                if (isf && (isnan(facc) || isinf(facc))) *st |= MC_ST_INVALID;
+                store_elem(page, dst * 8, es, r);
+            }
+        }
     }
 }
 
@@ -387,107 +508,7 @@ static void mc_run_chunk(uint8_t chunk)
     memset(mc_valid, 0, sizeof mc_valid);
     memset(mc_dirty, 0, sizeof mc_dirty);
 
-    for (unsigned pc = 0; pc < op_count && !(st & (MC_ST_BADOP | MC_ST_RANGE)); pc++) {
-        uint32_t w    = mc_ops[pc];
-        uint8_t  op   = w & 0x3F;
-        uint8_t  type = (w >> 6) & 3;
-        uint8_t  s1   = (w >> 8)  & 0xFF;
-        uint8_t  s2   = (w >> 16) & 0xFF;
-        uint8_t  dst  = (w >> 24) & 0xFF;
-
-        if (op >= MC_OP_CTLBASE && op <= MC_OP_CTLTOP) {   /* v2 control ops (define/call) */
-            st |= mc_ctl_op(page, op_count, &pc);
-            continue;
-        }
-        if (op < MC_OP_VECBASE) {
-            /* ---- scalar ---- */
-            mcval_t a, b, r;
-            if (op == MC_OP_CVT) {
-                uint8_t src_t = s2 & 3;
-                a = load_elem(page, s1 * 8, mc_esize(src_t));
-                r = mc_convert(type, src_t, a);
-            } else {
-                a = load_elem(page, s1 * 8, mc_esize(type));
-                b = load_elem(page, s2 * 8, mc_esize(type));
-                r = mc_scalar(op, type, a, b, &st);
-            }
-            store_elem(page, dst * 8, (op == MC_OP_CMP) ? 4 : mc_esize(type), r);
-        } else {
-            /* ---- vector: consume the second word ---- */
-            if (op > MC_OP_VECTOP || pc + 1 >= op_count) { st |= MC_ST_BADOP; break; }
-            uint32_t w1   = mc_ops[++pc];
-            unsigned n    = w1 & 0xFF; if (n == 0) n = 256;
-            int      st1  = (int8_t)(w1 >> 8);
-            int      st2  = (int8_t)(w1 >> 16);
-            int      stD  = (int8_t)(w1 >> 24);
-            int      es   = mc_esize(type);
-            uint8_t  sop  = vec_to_scalar(op);
-            double   facc = 0.0;
-            int64_t  iacc = 0;
-            int      isf  = (type == MC_T_F32 || type == MC_T_F64);
-
-            for (unsigned i = 0; i < n; i++) {
-                int o1 = elem_off(s1, (int)i, st1, es, &st);
-                if (o1 < 0) break;
-                mcval_t a = load_elem(page, o1, es);
-                mcval_t b; b.u = 0;
-                mcval_t r;
-
-                if (op == MC_OP_VCOPY) { r = a; }
-                else if (op == MC_OP_VCVT) {
-                    uint8_t src_t = s2 & 3;
-                    int     ses   = mc_esize(src_t);
-                    int o1s = elem_off(s1, (int)i, st1, ses, &st);
-                    if (o1s < 0) break;
-                    r = mc_convert(type, src_t, load_elem(page, o1s, ses));
-                }
-                else if (op == MC_OP_VSUM) {
-                    if (isf) facc += as_double(a, type); else iacc += as_int64(a, type);
-                    continue;
-                }
-                else if (op == MC_OP_VDOT || op == MC_OP_VMLA ||
-                         (op != MC_OP_VABS && op != MC_OP_VNEG && op != MC_OP_VSQRT)) {
-                    int o2 = elem_off(s2, (int)i, st2, es, &st);
-                    if (o2 < 0) break;
-                    b = load_elem(page, o2, es);
-                    if (op == MC_OP_VDOT) {
-                        if (isf) facc += as_double(a, type) * as_double(b, type);
-                        else     iacc += as_int64(a, type) * as_int64(b, type);
-                        continue;
-                    }
-                    if (op == MC_OP_VMLA) {
-                        int oD = elem_off(dst, (int)i, stD, es, &st);
-                        if (oD < 0) break;
-                        mcval_t c = load_elem(page, oD, es);
-                        mcval_t p = mc_scalar(MC_OP_MUL, type, a, b, &st);
-                        r = mc_scalar(MC_OP_ADD, type, c, p, &st);
-                        store_elem(page, oD, es, r);
-                        continue;
-                    }
-                    r = mc_scalar(sop, type, a, b, &st);
-                }
-                else {
-                    r = mc_scalar(sop, type, a, b, &st);   /* unary */
-                }
-
-                int oD = elem_off(dst, (int)i, stD, es, &st);
-                if (oD < 0) break;
-                store_elem(page, oD, es, r);
-            }
-
-            if (op == MC_OP_VDOT || op == MC_OP_VSUM) {
-                mcval_t r; r.u = 0;
-                switch (type) {
-                case MC_T_F32: r.f = (float)facc; break;
-                case MC_T_F64: r.d = facc;        break;
-                case MC_T_I32: r.i = (int32_t)iacc; break;
-                default:       r.l = iacc;        break;
-                }
-                if (isf && (isnan(facc) || isinf(facc))) st |= MC_ST_INVALID;
-                store_elem(page, dst * 8, es, r);
-            }
-        }
-    }
+    mc_run_ops(page, mc_ops, op_count, &st, 0);
 
     if (!(st & (MC_ST_BADOP | MC_ST_RANGE))) st |= MC_ST_OK;
 

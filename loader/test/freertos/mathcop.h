@@ -45,7 +45,8 @@
 
 #include <stdint.h>
 
-#define MC_ABI_VERSION      1
+#define MC_ABI_VERSION      2       /* v2: stored programs (CALL of user programs live;
+                                     * native builtins id<0 still return NOPROG) */
 
 /* page layout */
 #define MC_PAGE_SIZE        8192
