@@ -248,7 +248,11 @@ static void xadc_init_once(void)
     if (done) return;
     done = 1;
     XADC_MCTL = 0x00000000u;                               /* release reset */
-    XADC_CFG  = 0x80000000u | (0xFu << 20) | (0xFu << 16); /* ENABLE | CFIFOTH | DFIFOTH */
+    /* ENABLE | CFIFOTH=F | DFIFOTH=F | WEDGE | REDGE | TCKRATE=11 (DCLK=PCLK/16,
+     * not the /2 floor which is far too fast for the DRP) | IGAP=0x14.  A wrong
+     * interface clock/edge/gap latches every DRP read one bit off. */
+    XADC_CFG  = 0x80000000u | (0xFu << 20) | (0xFu << 16)
+              | (1u << 13) | (1u << 12) | (3u << 8) | 0x14u;
     for (volatile int i = 0; i < 100000; i++) { }
     xadc_wr(0x42, 0x0400u);        /* CFR2: ADCCLK = DCLK / 4 (reset floor was 0) */
     for (volatile int i = 0; i < 800000; i++) { }          /* settle + conversions */
@@ -258,13 +262,7 @@ static int xadc_temp_milliC(void)
     xadc_init_once();
     unsigned code = xadc_rd(0x00);                     /* DRP 0x00 = on-chip temperature */
     if (!code) return -1000000;                        /* 0 = not sampling */
-    /* Every DRP read on this XADCIF path comes back right-shifted by one bit —
-     * PROVEN by a write/read-back: CFR2 written 0x0400 reads 0x0200 (exactly /2),
-     * and temp/Vccint/Vccaux all match at *2 (Vccint 1.0 V, Vccaux 1.8 V).  It's
-     * a uniform read-path shift, not bipolar/averaging (cfr0/cfr1 read 0), so
-     * <<1 recovers the true code losslessly (the ADC's 12-bit result lives in
-     * [15:4], so bit 0 is always 0). */
-    return (int)(((int64_t)(code << 1) * 503975) / 65536) - 273150;
+    return (int)(((int64_t)code * 503975) / 65536) - 273150;   /* T = code*503.975/65536 - 273.15 */
 }
 #endif
 
