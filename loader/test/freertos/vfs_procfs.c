@@ -211,57 +211,68 @@ static void pfb_milliC(pfb *o, int m)
     pfb_c(o, (char)('0' + (f / 10) % 10));
     pfb_c(o, (char)('0' + f % 10));
 }
+/* pad with spaces until the field started at `start_n` fills `w` columns */
+static void pfb_pad(pfb *o, int start_n, int w) { while (o->n - start_n < w) pfb_c(o, ' '); }
 
 #ifdef XT_HW
-/* Zynq PS XADC die temperature via the devcfg XADCIF FIFO (UG585 B.34, regs per
- * xadcps_hw.h).  ps7_init leaves the on-chip system monitor sampling the sensors
- * into DRP status regs (0x00 = temperature); pop any stale result, push a READ
- * of DRP 0x00 + a NOP to flush the 1-deep pipeline, read the 16-bit code, and
- * convert: T(C) = code*503.975/65536 - 273.15.  Returns milli-C or -1000000. */
-#define XADC_MSTS   (*(volatile uint32_t *)0xF800710Cu)
+/* Zynq PS XADC die temperature via the devcfg XADCIF FIFO (UG585 B.16 / UG480).
+ * ps7_init leaves the interface disabled and the XADC in reset, so enable it
+ * once: release the reset (MCTL=0) and turn on the arbiter with full FIFO
+ * thresholds (CFG).  The XADC's default mode then samples temp + supplies into
+ * the DRP status regs.  Read is SPI-like — data only advances when the command
+ * FIFO is written — so push a READ of DRP 0x00 + a NOOP, discard the first
+ * result and keep the second.  T(C) = code*503.975/65536 - 273.15. */
+#define XADC_CFG    (*(volatile uint32_t *)0xF8007100u)
 #define XADC_CMDF   (*(volatile uint32_t *)0xF8007110u)
 #define XADC_RDF    (*(volatile uint32_t *)0xF8007114u)
-#define XADC_DFIFOE 0x00000400u        /* MSTS: read (data) FIFO empty */
+#define XADC_MCTL   (*(volatile uint32_t *)0xF8007118u)
+static void xadc_init_once(void)
+{
+    static int done = 0;
+    if (done) return;
+    done = 1;
+    XADC_MCTL = 0x00000000u;                               /* release XADC reset      */
+    XADC_CFG  = 0x80000000u | (0xFu << 20) | (0xFu << 16); /* ENABLE | CFIFOTH | DFIFOTH */
+    for (volatile int i = 0; i < 200000; i++) { }          /* let default-mode sampling start */
+}
 static int xadc_temp_milliC(void)
 {
-    uint32_t to = 100000;
-    while (!(XADC_MSTS & XADC_DFIFOE) && --to) (void)XADC_RDF;   /* drain stale */
-    XADC_CMDF = (1u << 26) | (0x00u << 16);                      /* READ DRP 0x00 (temp) */
-    XADC_CMDF = 0u;                                              /* NOP: flush pipeline  */
-    to = 100000;
-    while ((XADC_MSTS & XADC_DFIFOE) && --to) { }               /* wait for a result */
-    if (XADC_MSTS & XADC_DFIFOE) return -1000000;               /* no data */
-    uint32_t code = XADC_RDF & 0xFFFFu;
-    return (int)(((int64_t)code * 503975) / 65536) - 273150;    /* -> milli-C */
+    xadc_init_once();
+    XADC_CMDF = 0x04000000u;                          /* READ DRP 0x00 (temperature) */
+    XADC_CMDF = 0x00000000u;                          /* NOOP: advance the result FIFO */
+    for (volatile int i = 0; i < 20000; i++) { }      /* let the serialized cmds drain */
+    (void)XADC_RDF;                                   /* first pop = stale/NOOP word  */
+    uint32_t code = XADC_RDF & 0xFFFFu;               /* second pop = DRP 0x00        */
+    if (code && code < 0x1000u) code <<= 4;           /* normalise LSB- -> MSB-justified */
+    return (int)(((int64_t)code * 503975) / 65536) - 273150;
 }
 #endif
 
-/* /OS/proc/temp — board (I2C 0x49) and die (PS XADC) temperatures with a boot
- * timestamp, so a `while : ; do cat /OS/proc/temp; sleep 1; done` log can be
- * correlated against HDMI drops. */
+/* /OS/proc/temp — board (I2C 0x49) + die (PS XADC) temps with a boot timestamp,
+ * so a `while : ; do cat /OS/proc/temp; sleep 1; done` log lines up with HDMI
+ * drops.  Columns aligned: labels to the ':' , values to the '('. */
 static int pf_gen_temp(char *buf, int sz)
 {
     pfb o = { buf, 0, sz };
     struct { long sec, usec; } tv = { 0, 0 };
     _gettimeofday(&tv, 0);
-    int cs = (int)(tv.usec / 10000);
-    pfb_s(&o, "time:     "); pfb_d(&o, (int)tv.sec); pfb_c(&o, '.');
+    int cs = (int)(tv.usec / 10000), p;
+    pfb_s(&o, "time    : "); p = o.n;
+    pfb_d(&o, (int)tv.sec); pfb_c(&o, '.');
     pfb_c(&o, (char)('0' + cs / 10)); pfb_c(&o, (char)('0' + cs % 10));
-    pfb_s(&o, "  (s since boot)\n");
+    pfb_pad(&o, p, 12); pfb_s(&o, "(s since boot)\n");
 #ifdef XT_HW
     extern int hdmi_temp_i2c(void);
     int ie = hdmi_temp_i2c();
     int di = xadc_temp_milliC();
-    pfb_s(&o, "i2c_ext:  ");
-    if (ie <= -1000000) pfb_s(&o, "n/a (I2C error)");
-    else { pfb_milliC(&o, ie); pfb_s(&o, " C   (sensor 0x49, board)"); }
-    pfb_c(&o, '\n');
-    pfb_s(&o, "xadc_int: ");
-    if (di <= -1000000) pfb_s(&o, "n/a (XADC no data)");
-    else { pfb_milliC(&o, di); pfb_s(&o, " C   (PS die)"); }
-    pfb_c(&o, '\n');
+    pfb_s(&o, "i2c_ext : "); p = o.n;
+    if (ie <= -1000000) pfb_s(&o, "n/a"); else { pfb_milliC(&o, ie); pfb_s(&o, " C"); }
+    pfb_pad(&o, p, 12); pfb_s(&o, "(sensor 0x49, board)\n");
+    pfb_s(&o, "xadc_int: "); p = o.n;
+    if (di <= -1000000) pfb_s(&o, "n/a"); else { pfb_milliC(&o, di); pfb_s(&o, " C"); }
+    pfb_pad(&o, p, 12); pfb_s(&o, "(PS die)\n");
 #else
-    (void)cs; pfb_s(&o, "no sensors on qemu\n");
+    pfb_s(&o, "no sensors on qemu\n");
 #endif
     return o.n;
 }
