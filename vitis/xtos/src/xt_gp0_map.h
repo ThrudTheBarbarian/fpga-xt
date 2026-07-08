@@ -15,6 +15,7 @@
  *   0x400  DIAG        PL diagnostic words (A9-only, read-only, word-aligned)
  *   0x500  XLCTL       XL compositor-plane window placement (A9-positioned emulation window)
  *   0x600  MATH        math-coprocessor mailbox (A9-only); 6502 side = $D5C6-$D5C8 + the $4000-$5FFF math page
+ *   0x700  TRNG        hardware entropy (ring-oscillator TRNG in the PL; A9-only, read-only)
  */
 #ifndef XT_GP0_MAP_H_
 #define XT_GP0_MAP_H_
@@ -31,6 +32,7 @@
 #define XT_BLK_DIAG      (XT_GP0_BASE + 0x400u)
 #define XT_BLK_XLCTL     (XT_GP0_BASE + 0x500u)
 #define XT_BLK_MATH      (XT_GP0_BASE + 0x600u)
+#define XT_BLK_TRNG      (XT_GP0_BASE + 0x700u)
 
 /* ---- BLITTER block --------------------------------------------------- */
 /*   0x00..0x18  W  blitter registers DST/PAT/CMD/SRC/FLAGS (bl_addr = offset); see blitter.h XT_BL_* */
@@ -52,7 +54,7 @@
 #define XT_OVL_H             (XT_BLK_COMP + 0x14u)        /* W height px (12-bit) */
 
 /* ---- CTRL block --------------------------------------------------- */
-#define XT_CTRL_GP0          (XT_BLK_CTRL + 0x00u)        /* RW [0]=bars, [3:1]=XL scale, [4]=DMACTL-blank (A9-only); read = effective */
+#define XT_CTRL_GP0          (XT_BLK_CTRL + 0x00u)        /* RW [0]=bars, [3:1]=XL scale, [4]=DMACTL-blank, [5]=video-sleep (gate clk_pix off) (A9-only); read = effective */
 #define XT_CTRL_SPEED        (XT_BLK_CTRL + 0x04u)        /* RW SALLY clock_mult (dual: 6502 $D4CA); read = effective. W -> bl_addr $D4CA */
 #define XT_CTRL_UNLOCK       (XT_BLK_CTRL + 0x08u)        /* RW XT register-unlock (dual: 6502 $D1DF); read = effective */
 #define XT_CTRL_KBD_INJECT   (XT_BLK_CTRL + 0x0Cu)        /* W KBCODE + POKEY IRQ (A9-only; emits $D4CF) */
@@ -80,5 +82,8 @@
 #define XT_MATH_EVT          (XT_BLK_MATH + 0x00u)        /* R doorbell event pop: [8]=valid, [7:0]=chunk index; a read consumes one event; IRQ_F2P[1] level = FIFO non-empty */
 #define XT_MATH_DONE         (XT_BLK_MATH + 0x04u)        /* W completion: [7:0]=chunk, [15:8]=result-span first line (64 B lines), [23:16]=line count; reloads the span into the math page if that chunk is resident, then raises $D5C7 done */
 #define XT_MATH_STAT         (XT_BLK_MATH + 0x08u)        /* R [0]=engine busy, [1]=chunk resident/ready, [2]=evt FIFO non-empty, [15:8]=resident chunk, [23:16]=evt FIFO fill */
+
+/* ---- TRNG block --------------------------------------------------- */
+#define XT_TRNG_RND          (XT_BLK_TRNG + 0x00u)        /* R whitened 32-bit entropy word (free-running pool snapshot); read repeatedly for fresh words. Entropy SOURCE for the OS pool, not raw crypto output */
 
 #endif /* XT_GP0_MAP_H_ */

@@ -173,7 +173,15 @@ module fpga_xt_top (
     );
 
     BUFG u_bufg_fb2 (.I(mmcm2_fb_out),  .O(mmcm2_fb_in));
-    BUFG u_bufg_pix (.I(clk_pix_unbuf), .O(clk_pix));
+    // clk_pix rides a BUFGCE (not a plain BUFG) so the video-sleep bit
+    // (gp0_ctrl[5]) can gate the WHOLE pixel domain — compositor + the ODDR that
+    // forwards the pixel clock to the SiI — for a low-power display-off.  MMCM #2
+    // keeps running (its feedback is u_bufg_fb2, independent of clk_pix), so it
+    // stays locked and clk_pix resumes cleanly on wake (SiI re-acquire via
+    // /OS/proc/video-kick).  CE defaults HIGH (run); driven from clk_sys reg
+    // gp0_ctrl below, so wake works even though clk_pix itself was stopped.
+    wire pix_clk_ce;                                   // 1 = run, 0 = sleep
+    BUFGCE u_bufg_pix (.I(clk_pix_unbuf), .CE(pix_clk_ce), .O(clk_pix));
 
     // ---- Per-domain reset synchronisers ---------------------------------
     // Async-assert / sync-deassert, each domain gated on ITS OWN MMCM's lock.
@@ -1756,6 +1764,7 @@ module fpga_xt_top (
     // board still boots showing bars; the PS clears it to show the live
     // compositor — no bitstream rebuild to toggle (config belongs in PS sw).
     wire [7:0] gp0_ctrl;                              // driven by u_axi_bridge
+    assign pix_clk_ce = ~gp0_ctrl[5];                // video-sleep: gp0_ctrl[5]=1 gates clk_pix off (BUFGCE)
     // Drag-overlay config (clk_sys), driven by u_axi_bridge (offsets 0x21-0x2F).
     wire [31:0] overlay_base;
     wire [11:0] overlay_x, overlay_y, overlay_w, overlay_h;
@@ -2591,6 +2600,18 @@ module fpga_xt_top (
     assign gp0_rresp   = bl_rvalid  ? bl_rresp  : rom_rresp;
     assign gp0_rdata   = bl_rvalid  ? bl_rdata  : rom_rdata;
 
+    // ---- Hardware entropy: ring-oscillator TRNG (clk_sys) ------------------
+    // 24 free-running ring oscillators, sampled + von-Neumann debiased + LFSR-
+    // whitened into a 32-bit word, read at GP0 0x7xx (TRNG_RND).  The OS stirs it
+    // into /dev/urandom.  clk_sys is always-on (unlike clk_pix, which the new
+    // video-sleep bit can gate), so entropy keeps flowing with the display asleep.
+    wire [31:0] trng_word;
+    xt_trng #(.N_RO(24), .STAGES(3)) u_trng (
+        .clk   (clk_sys),
+        .rst_n (rst_sys_n),
+        .rnd   (trng_word)
+    );
+
     xt_gp0_regs u_axi_bridge (
         .clk             (clk_sys),
         .rst             (rst_sys),
@@ -2632,6 +2653,7 @@ module fpga_xt_top (
         .diag5_word      (diag5_word),
         .diag6_word      (diag6_word),
         .diag7_word      (diag7_word),
+        .trng_word       (trng_word),        // ring-oscillator entropy (0x7xx)
         .clock_mult      (eff_clock_mult_sys), // effective $D4CA speed, read back at GP0 offset 0x1E
         .gp0_ctrl        (gp0_ctrl),
         .xt_unlock_we    (xt_unlock_we),     // A9 unlock write strobe (offset 0x20)

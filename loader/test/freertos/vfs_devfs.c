@@ -8,15 +8,23 @@
  * discipline and the console writer.
  *
  * Nodes: null (read EOF, write sink), zero (endless zeros), urandom/random
- * (xorshift stream — NOT cryptographic; reseeded from the wall clock at
- * every open), tty + console (the console), i2c-0 (the PS-I2C0 bus, Linux
- * i2c-dev ioctl surface — the toybox i2c tools speak it).
+ * (xorshift stream re-stirred every 32 bits with genuine hardware entropy from
+ * the PL ring-oscillator TRNG at GP0 0x7xx — clock-seeded fallback on qemu),
+ * tty + console (the console), i2c-0 (the PS-I2C0 bus, Linux i2c-dev ioctl
+ * surface — the toybox i2c tools speak it).
  */
 #include "vfs.h"
 #include <stdint.h>
 #include <string.h>
 
 extern int _gettimeofday(void *tv, void *tz);   /* kernel syscall primitive (syscalls.c) */
+
+#ifdef XT_HW
+/* PL ring-oscillator TRNG whitened word (xt_trng → GP0 TRNG_RND).  Reads return
+ * fresh entropy — the fabric pool free-runs at clk_sys.  Used to keep /dev/urandom
+ * genuinely unpredictable rather than a bare clock-seeded PRNG. */
+static inline uint32_t hw_entropy(void) { return *(volatile uint32_t *)0x43C00700u; }
+#endif
 extern int xt_i2c_send(uint8_t addr, const uint8_t *buf, int n);   /* hdmi.c (0=ok; qemu: -1) */
 extern int xt_i2c_recv(uint8_t addr, uint8_t *buf, int n);
 
@@ -34,6 +42,9 @@ static long dv_rand_rd(vfs_file *f, void *buf, uint32_t n)
     uint32_t s = (uint32_t)(uintptr_t)f->priv;
     uint8_t *b = (uint8_t *)buf;
     for (uint32_t i = 0; i < n; i++) {
+#ifdef XT_HW
+        if ((i & 3u) == 0) s ^= hw_entropy();   /* re-stir with fresh HW entropy each 32-bit word */
+#endif
         s ^= s << 13; s ^= s >> 17; s ^= s << 5;
         b[i] = (uint8_t)s;
     }
@@ -228,6 +239,9 @@ static int dv_open(vfs_mount *m, const char *rel, int flags, vfs_file *f)
         struct { long long sec, usec; } tv = { 0, 0 };   /* time_t is 64-bit here — must not undersize */
         _gettimeofday(&tv, 0);
         uint32_t s = (uint32_t)tv.usec ^ ((uint32_t)tv.sec << 12) ^ 0x9e3779b9u;
+#ifdef XT_HW
+        s ^= hw_entropy();               /* mix in hardware entropy at open */
+#endif
         f->priv = (void *)(uintptr_t)(s ? s : 1);
     } else f->priv = 0;
     return 0;

@@ -85,7 +85,7 @@
       "desc": "control plane (gp0_ctrl, SALLY speed, XT unlock, keyboard inject)",
       "regs": [
         { "off": "0x00", "access": "RW", "width": 8, "c": "XT_CTRL_GP0",         "sv": "CTRL_GP0",
-          "desc": "[0]=bars, [3:1]=XL scale, [4]=DMACTL-blank (A9-only); read = effective" },
+          "desc": "[0]=bars, [3:1]=XL scale, [4]=DMACTL-blank, [5]=video-sleep (gate clk_pix off) (A9-only); read = effective" },
         { "off": "0x04", "access": "RW", "width": 8, "c": "XT_CTRL_SPEED",       "sv": "CTRL_SPEED",
           "desc": "SALLY clock_mult (dual: 6502 $D4CA); read = effective. W -> bl_addr $D4CA" },
         { "off": "0x08", "access": "RW", "width": 8, "c": "XT_CTRL_UNLOCK",      "sv": "CTRL_UNLOCK",
@@ -158,6 +158,18 @@
           "desc": "completion: [7:0]=chunk, [15:8]=result-span first line (64 B lines), [23:16]=line count; reloads the span into the math page if that chunk is resident, then raises $D5C7 done" },
         { "off": "0x08", "access": "R", "width": 32, "c": "XT_MATH_STAT", "sv": "MATH_STAT",
           "desc": "[0]=engine busy, [1]=chunk resident/ready, [2]=evt FIFO non-empty, [15:8]=resident chunk, [23:16]=evt FIFO fill" }
+      ]
+    },
+    {
+      "name": "TRNG",
+      "sel": "0x7",
+      "base": "0x700",
+      "base_macro": "XT_BLK_TRNG",
+      "sv_sel": "BLK_TRNG",
+      "desc": "hardware entropy (ring-oscillator TRNG in the PL; A9-only, read-only)",
+      "regs": [
+        { "off": "0x00", "access": "R", "width": 32, "c": "XT_TRNG_RND", "sv": "TRNG_RND",
+          "desc": "whitened 32-bit entropy word (free-running pool snapshot); read repeatedly for fresh words. Entropy SOURCE for the OS pool, not raw crypto output" }
       ]
     }
   ]

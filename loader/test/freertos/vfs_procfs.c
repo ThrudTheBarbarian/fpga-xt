@@ -185,6 +185,30 @@ static int pf_gen_video_kick(char *buf, int sz)
     return o.n;
 }
 
+/* /OS/proc/video-sleep — toggle the clk_pix BUFGCE gate (gp0_ctrl[5]).  Reading
+ * it flips display power: awake → gate clk_pix off (the whole pixel domain +
+ * DDR scan-out idles; screen dark); asleep → clk_pix back on + SiI re-acquire.
+ * MMCM #2 stays locked throughout, so wake is clean. */
+static int pf_gen_video_sleep(char *buf, int sz)
+{
+    pfb o = { buf, 0, sz };
+#ifdef XT_HW
+    volatile uint32_t *ctrl = (volatile uint32_t *)0x43C00300u;   /* GP0 CTRL_GP0 */
+    if (*ctrl & 0x20u) {                              /* asleep -> wake */
+        *ctrl &= ~0x20u; __asm__ volatile("dsb");
+        extern void hdmi_reinit(void);
+        hdmi_reinit();                                /* clk_pix back -> SiI re-acquire */
+        pfb_s(&o, "clk_pix running — display awake (SiI re-enabled)\n");
+    } else {                                          /* awake -> sleep */
+        *ctrl |= 0x20u; __asm__ volatile("dsb");
+        pfb_s(&o, "clk_pix gated — display asleep (pixel domain + scan-out idle)\n");
+    }
+#else
+    pfb_s(&o, "no video plane on qemu\n");
+#endif
+    return o.n;
+}
+
 static int pf_gen_meminfo(char *buf, int sz)
 {
     /* the DDR arena truth: pool pages handed out vs available (heap grows up,
@@ -377,6 +401,7 @@ static int pf_open(vfs_mount *m, const char *rel, int flags, vfs_file *f)
     else if (!strcmp(rel, "/video"))   len = pf_gen_video(buf, PF_BUF);
     else if (!strcmp(rel, "/video-sii")) len = pf_gen_video_sii(buf, PF_BUF);
     else if (!strcmp(rel, "/video-kick")) len = pf_gen_video_kick(buf, PF_BUF);
+    else if (!strcmp(rel, "/video-sleep")) len = pf_gen_video_sleep(buf, PF_BUF);
     else if (!strcmp(rel, "/temp"))    len = pf_gen_temp(buf, PF_BUF);
     else if (!strcmp(rel, "/mounts"))  { extern int vfs_mounts_str(char *, int); len = vfs_mounts_str(buf, PF_BUF); }
     else if (!strncmp(rel, "/net/", 5)) { extern int xt_procnet(const char *, char *, int); len = xt_procnet(rel + 5, buf, cap); }
@@ -403,6 +428,7 @@ static int pf_stat(vfs_mount *m, const char *rel, struct xt_stat *st)
     if (rel[0] == 0 || (rel[0] == '/' && rel[1] == 0)) { st->mode = XT_S_IFDIR; return 0; }
     if (!strcmp(rel, "/uptime") || !strcmp(rel, "/meminfo") || !strcmp(rel, "/kmsg") || !strcmp(rel, "/mounts") ||
         !strcmp(rel, "/video")  || !strcmp(rel, "/video-sii") || !strcmp(rel, "/video-kick") ||
+        !strcmp(rel, "/video-sleep") ||
         !strcmp(rel, "/temp")) { st->mode = XT_S_IFREG; return 0; }
     if (!strcmp(rel, "/net")) { st->mode = XT_S_IFDIR; return 0; }
     if (!strncmp(rel, "/net/", 5)) {
@@ -441,7 +467,7 @@ static int pf_readdir(vfs_mount *m, const char *rel, int index,
                 return 1;
             }
         }
-        const char *fixed[] = { "uptime", "meminfo", "kmsg", "mounts", "video", "video-sii", "video-kick", "temp" };
+        const char *fixed[] = { "uptime", "meminfo", "kmsg", "mounts", "video", "video-sii", "video-kick", "video-sleep", "temp" };
         int fi = index - emitted;
         if (fi >= 0 && fi < (int)(sizeof fixed / sizeof fixed[0])) {
             pfb o = { name, 0, nsz };

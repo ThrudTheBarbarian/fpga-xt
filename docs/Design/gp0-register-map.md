@@ -47,7 +47,7 @@ control plane (gp0_ctrl, SALLY speed, XT unlock, keyboard inject)
 
 | Offset | Acc | Width | C macro | SV | Meaning |
 |--------|-----|-------|---------|----|---------|
-| 0x00 | RW | 8 | `XT_CTRL_GP0` | `CTRL_GP0` | [0]=bars, [3:1]=XL scale, [4]=DMACTL-blank (A9-only); read = effective |
+| 0x00 | RW | 8 | `XT_CTRL_GP0` | `CTRL_GP0` | [0]=bars, [3:1]=XL scale, [4]=DMACTL-blank, [5]=video-sleep (gate clk_pix off) (A9-only); read = effective |
 | 0x04 | RW | 8 | `XT_CTRL_SPEED` | `CTRL_SPEED` | SALLY clock_mult (dual: 6502 $D4CA); read = effective. W -> bl_addr $D4CA |
 | 0x08 | RW | 8 | `XT_CTRL_UNLOCK` | `CTRL_UNLOCK` | XT register-unlock (dual: 6502 $D1DF); read = effective |
 | 0x0C | W | 8 | `XT_CTRL_KBD_INJECT` | `CTRL_KBD_INJECT` | KBCODE + POKEY IRQ (A9-only; emits $D4CF) |
@@ -90,3 +90,11 @@ math-coprocessor mailbox (A9-only); 6502 side = $D5C6-$D5C8 + the $4000-$5FFF ma
 | 0x00 | R | 9 | `XT_MATH_EVT` | `MATH_EVT` | doorbell event pop: [8]=valid, [7:0]=chunk index; a read consumes one event; IRQ_F2P[1] level = FIFO non-empty |
 | 0x04 | W | 24 | `XT_MATH_DONE` | `MATH_DONE` | completion: [7:0]=chunk, [15:8]=result-span first line (64 B lines), [23:16]=line count; reloads the span into the math page if that chunk is resident, then raises $D5C7 done |
 | 0x08 | R | 32 | `XT_MATH_STAT` | `MATH_STAT` | [0]=engine busy, [1]=chunk resident/ready, [2]=evt FIFO non-empty, [15:8]=resident chunk, [23:16]=evt FIFO fill |
+
+## 0x700 — TRNG  (`XT_BLK_TRNG`)
+
+hardware entropy (ring-oscillator TRNG in the PL; A9-only, read-only)
+
+| Offset | Acc | Width | C macro | SV | Meaning |
+|--------|-----|-------|---------|----|---------|
+| 0x00 | R | 32 | `XT_TRNG_RND` | `TRNG_RND` | whitened 32-bit entropy word (free-running pool snapshot); read repeatedly for fresh words. Entropy SOURCE for the OS pool, not raw crypto output |

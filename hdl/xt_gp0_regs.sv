@@ -119,6 +119,8 @@ module xt_gp0_regs (
     input  wire [31:0] diag5_word,
     input  wire [31:0] diag6_word,
     input  wire [31:0] diag7_word,
+    // ---- hardware entropy (clk_sys) — read in the 0x7xx block --------------
+    input  wire [31:0] trng_word,
 
     // ---- SALLY speed/clock_mult read-back (clk_sys) ------------------------
     input  wire [7:0]  clock_mult,
@@ -403,6 +405,8 @@ module xt_gp0_regs (
                                     math_evt_pop <= 1'b1;
                                 end
                                 else if (ar_off == MATH_STAT) s_axi_rdata <= math_stat_word;
+                            BLK_TRNG:
+                                if (ar_off == TRNG_RND) s_axi_rdata <= trng_word;
                             default: ;
                         endcase
                         s_axi_rresp  <= 2'b00;

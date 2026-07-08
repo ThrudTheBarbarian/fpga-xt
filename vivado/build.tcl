@@ -211,6 +211,7 @@ set_param general.maxThreads $max_threads
 # Verilog define: USE_PS_BD (real PS BD, bit flow only).
 set synth_defines {}
 if {$flow eq "bit"} { lappend synth_defines USE_PS_BD }
+lappend synth_defines TRNG_SYNTH   ;# xt_trng: real ring oscillators (sim uses the LFSR stand-in)
 if {$flow eq "bit"} {
     synth_design -top $top -part $part -include_dirs $include_dirs \
                  -verilog_define $synth_defines

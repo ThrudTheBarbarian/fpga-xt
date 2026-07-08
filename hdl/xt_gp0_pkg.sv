@@ -15,6 +15,7 @@ package xt_gp0_pkg;
     localparam logic [3:0] BLK_DIAG     = 4'h4;  // 0x400  DIAG
     localparam logic [3:0] BLK_XLCTL    = 4'h5;  // 0x500  XLCTL
     localparam logic [3:0] BLK_MATH     = 4'h6;  // 0x600  MATH
+    localparam logic [3:0] BLK_TRNG     = 4'h7;  // 0x700  TRNG
 
     // ---- register offsets = addr[7:0] (per block) ----
     // BLITTER
@@ -36,7 +37,7 @@ package xt_gp0_pkg;
     localparam logic [7:0] OVL_W            = 8'h10;  // W width px (12-bit; stride = w<<2)
     localparam logic [7:0] OVL_H            = 8'h14;  // W height px (12-bit)
     // CTRL
-    localparam logic [7:0] CTRL_GP0         = 8'h00;  // RW [0]=bars, [3:1]=XL scale, [4]=DMACTL-blank (A9-only); read = effective
+    localparam logic [7:0] CTRL_GP0         = 8'h00;  // RW [0]=bars, [3:1]=XL scale, [4]=DMACTL-blank, [5]=video-sleep (gate clk_pix off) (A9-only); read = effective
     localparam logic [7:0] CTRL_SPEED       = 8'h04;  // RW SALLY clock_mult (dual: 6502 $D4CA); read = effective. W -> bl_addr $D4CA
     localparam logic [7:0] CTRL_UNLOCK      = 8'h08;  // RW XT register-unlock (dual: 6502 $D1DF); read = effective
     localparam logic [7:0] CTRL_KBD_INJECT  = 8'h0C;  // W KBCODE + POKEY IRQ (A9-only; emits $D4CF)
@@ -61,6 +62,8 @@ package xt_gp0_pkg;
     localparam logic [7:0] MATH_EVT         = 8'h00;  // R doorbell event pop: [8]=valid, [7:0]=chunk index; a read consumes one event; IRQ_F2P[1] level = FIFO non-empty
     localparam logic [7:0] MATH_DONE        = 8'h04;  // W completion: [7:0]=chunk, [15:8]=result-span first line (64 B lines), [23:16]=line count; reloads the span into the math page if that chunk is resident, then raises $D5C7 done
     localparam logic [7:0] MATH_STAT        = 8'h08;  // R [0]=engine busy, [1]=chunk resident/ready, [2]=evt FIFO non-empty, [15:8]=resident chunk, [23:16]=evt FIFO fill
+    // TRNG
+    localparam logic [7:0] TRNG_RND         = 8'h00;  // R whitened 32-bit entropy word (free-running pool snapshot); read repeatedly for fresh words. Entropy SOURCE for the OS pool, not raw crypto output
 
 endpackage
 `endif
