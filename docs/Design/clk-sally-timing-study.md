@@ -172,9 +172,38 @@ the effort into the *logic-depth* levers below, which the directive **cannot**
 touch (placement can't shorten a 14-level combinational path). The path is 47 %
 logic (4.731 ns) — that is the addressable-by-restructuring headroom.
 
-## Recommended sequence (revised)
+## Build result — Lever B tested (2026-07-08)
 
-**A is done-by-directive.** Real work is B then C.
+Lever B landed and is equivalence-clean (tb_sally_math_overlay / sally / sally_isa
+/ boot all pass). It did exactly what it was designed to: the worst clk_sally path
+went **14 → 10 logic levels, logic 4.731 → 3.635 ns** (−1.1 ns) and the path length
+10.066 → 9.258 ns. **But the slack barely moved: +0.023 → +0.025 ns**, because the
+binding path is now **61 % route** (5.623 ns) — it flipped to
+`u_math_cop/page_bram → u_sally_mem/…/WEA`, i.e. the **free-floating overlay BRAM
+hauling across the die**. Logic reduction cannot move a route-bound path.
+
+**Empirical conclusion: clk_sally is routing-dominated, exactly as the fmax memory
+predicted.** The remaining lever is genuinely the *route* — get the overlay BRAMs
+physically next to `sally_mem` — NOT more logic (so Lever C, also logic-only, would
+likewise not move a route-bound path; keep it as a tidy-up, not a margin play). The
+coarse-pblock attempt (X0Y2) failed because it's too far; the route only shortens
+if the overlay BRAM lands *in/adjacent to* the sally region — which is the same
+static-memory-block floorplan the **PR effort** requires anyway (CPU in a top-right
+reconfigurable partition, memory static beside it). So the right home for the
+aggressive floorplan is the PR design, done deliberately, not incremental pblock
+pokes now.
+
+**Net:** Lever B is banked as a durable *structural* win (shallower read path,
+PR-friendlier, robust to the next overlay someone bolts on) even though it didn't
+buy margin on this routing-bound build. Real clk_sally margin waits on the
+memory-block floorplan (PR work).
+
+## Recommended sequence (revised twice)
+
+**A: done-by-directive** (ExtraTimingOpt) for the monolithic build; becomes a
+*deliberate static-memory floorplan* under PR. **B: done** — structural, banked.
+**C: deprioritised** — logic-only, won't move a route-bound path; do it only as
+cleanup or once the route is fixed and logic re-binds.
 
 
 1. **A (floorplan)** — one XDC, one build. Highest ROI, zero RTL risk, removes the
