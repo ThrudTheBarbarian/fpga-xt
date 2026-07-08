@@ -225,7 +225,7 @@ static int dv_open(vfs_mount *m, const char *rel, int flags, vfs_file *f)
         return 0;
     }
     if (d->rd == dv_rand_rd) {           /* per-open xorshift state, clock-seeded */
-        struct { long sec, usec; } tv = { 0, 0 };
+        struct { long long sec, usec; } tv = { 0, 0 };   /* time_t is 64-bit here — must not undersize */
         _gettimeofday(&tv, 0);
         uint32_t s = (uint32_t)tv.usec ^ ((uint32_t)tv.sec << 12) ^ 0x9e3779b9u;
         f->priv = (void *)(uintptr_t)(s ? s : 1);

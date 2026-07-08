@@ -111,7 +111,7 @@ static int pf_gen_comm(int pid, char *buf, int sz)
 
 static int pf_gen_uptime(char *buf, int sz)
 {
-    struct { long sec, usec; } tv = { 0, 0 };
+    struct { long long sec, usec; } tv = { 0, 0 };   /* time_t is 64-bit here — must not undersize */
     _gettimeofday(&tv, 0);
     int cs = (int)(tv.usec / 10000);
     pfb o = { buf, 0, sz };
@@ -136,7 +136,7 @@ static int pf_gen_video(char *buf, int sz)
     extern int hdmi_sii_read(int);
     volatile uint32_t *diag = (volatile uint32_t *)0x43C00400u;   /* XT_BLK_DIAG */
     uint32_t a = *diag;
-    struct { long sec, usec; } t0, t1;
+    struct { long long sec, usec; } t0, t1;          /* time_t is 64-bit here — must not undersize */
     _gettimeofday(&t0, 0);
     do { _gettimeofday(&t1, 0); }
     while ((t1.sec - t0.sec) * 1000000 + (t1.usec - t0.usec) < 50000);
@@ -216,53 +216,44 @@ static void pfb_pad(pfb *o, int start_n, int w) { while (o->n - start_n < w) pfb
 
 #ifdef XT_HW
 /* Zynq PS XADC die temperature via the devcfg XADCIF FIFO (UG585 B.16 / UG480).
- * ps7_init leaves the interface disabled and the XADC in reset, so enable it
- * once: release the reset (MCTL=0) and turn on the arbiter with full FIFO
- * thresholds (CFG).  The XADC's default mode then samples temp + supplies into
- * the DRP status regs.  Read is SPI-like — data only advances when the command
- * FIFO is written — so push a READ of DRP 0x00 + a NOOP, discard the first
- * result and keep the second.  T(C) = code*503.975/65536 - 273.15. */
+ * ps7_init leaves the interface disabled and the XADC in reset, so enable it once
+ * (release reset, turn on the arbiter with full FIFO thresholds); the XADC's
+ * default mode then samples temp + supplies into the DRP status regs.  DRP 0x00
+ * = temperature; T(C) = code*503.975/65536 - 273.15. */
 #define XADC_CFG    (*(volatile uint32_t *)0xF8007100u)
-#define XADC_MSTS   (*(volatile uint32_t *)0xF800710Cu)
 #define XADC_CMDF   (*(volatile uint32_t *)0xF8007110u)
 #define XADC_RDF    (*(volatile uint32_t *)0xF8007114u)
 #define XADC_MCTL   (*(volatile uint32_t *)0xF8007118u)
-static void xadc_wr(unsigned addr, unsigned data)    /* DRP write (cmd=2) */
-{
-    XADC_CMDF = (2u << 26) | ((addr & 0x3FFu) << 16) | (data & 0xFFFFu);
-    XADC_CMDF = 0u;                                   /* NOOP pushes it through */
-    for (volatile int i = 0; i < 4000; i++) { }
-    (void)XADC_RDF; (void)XADC_RDF;                   /* keep the read FIFO balanced */
-}
-static unsigned xadc_rd(unsigned addr)               /* DRP read: keep the 2nd pop */
-{
-    XADC_CMDF = (1u << 26) | ((addr & 0x3FFu) << 16); /* READ addr */
-    XADC_CMDF = 0u;                                   /* NOOP advances the result */
-    for (volatile int i = 0; i < 4000; i++) { }
-    (void)XADC_RDF;
-    return XADC_RDF & 0xFFFFu;
-}
 static void xadc_init_once(void)
 {
     static int done = 0;
     if (done) return;
     done = 1;
-    XADC_MCTL = 0x00000000u;                               /* release XADC reset      */
+    XADC_MCTL = 0x00000000u;                               /* release reset (default mode converts temp) */
     XADC_CFG  = 0x80000000u | (0xFu << 20) | (0xFu << 16); /* ENABLE | CFIFOTH | DFIFOTH */
-    for (volatile int i = 0; i < 50000; i++) { }
-    xadc_wr(0x40, 0x0000u);        /* CFR0: no averaging, unipolar        */
-    xadc_wr(0x41, 0x0000u);        /* CFR1: default mode (auto temp+supply)*/
-    xadc_wr(0x42, 0x0800u);        /* CFR2: ADCCLK = DCLK / 8             */
-    for (volatile int i = 0; i < 800000; i++) { }         /* let the sequence convert */
+    for (volatile int i = 0; i < 800000; i++) { }          /* settle + first conversions */
+}
+/* Read one DRP register: issue exactly 3 commands (READ, READ, NOOP) and pop
+ * exactly 3 results — never popping an empty FIFO (which SLVERRs -> external
+ * abort).  Reading the address twice settles the SPI-like command pipeline, so
+ * the 3rd result is this register's value regardless of prior FIFO state. */
+static unsigned xadc_rd(unsigned addr)
+{
+    unsigned c = (1u << 26) | ((addr & 0x3FFu) << 16);
+    XADC_CMDF = c; XADC_CMDF = c; XADC_CMDF = 0u;
+    for (volatile int i = 0; i < 20000; i++) { }
+    (void)XADC_RDF; (void)XADC_RDF;                    /* discard the first two */
+    return XADC_RDF & 0xFFFFu;                          /* 3rd = addr's settled value */
 }
 static int xadc_temp_milliC(void)
 {
     xadc_init_once();
-    uint32_t code = xadc_rd(0x00);                    /* DRP 0x00 = on-chip temperature */
-    if (!code) return -1000000;                       /* 0 = not sampling */
-    /* The XADCIF presents the 12-bit result one bit low vs UG480's [15:4]
-     * alignment (verified empirically: raw*2 gives the right temp AND the
-     * correct Vccint 1.0 V / Vccaux 1.8 V), so scale up by one bit. */
+    unsigned code = xadc_rd(0x00);                     /* DRP 0x00 = on-chip temperature */
+    if (!code) return -1000000;                        /* 0 = not sampling */
+    /* This XADCIF path presents every channel at exactly half scale — verified
+     * on HW: raw*2 gives the die temp AND the correct Vccint (1.0 V) / Vccaux
+     * (1.8 V), and the config regs read all-zero (so it is NOT bipolar or
+     * averaging).  The 12-bit result sits one bit low, so scale up by one bit. */
     return (int)(((int64_t)(code << 1) * 503975) / 65536) - 273150;
 }
 #endif
@@ -273,7 +264,7 @@ static int xadc_temp_milliC(void)
 static int pf_gen_temp(char *buf, int sz)
 {
     pfb o = { buf, 0, sz };
-    struct { long sec, usec; } tv = { 0, 0 };
+    struct { long long sec, usec; } tv = { 0, 0 };   /* time_t is 64-bit here — must not undersize */
     _gettimeofday(&tv, 0);
     int cs = (int)(tv.usec / 10000), p;
     pfb_s(&o, "time    : "); p = o.n;
