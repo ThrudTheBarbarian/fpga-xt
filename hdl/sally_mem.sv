@@ -776,41 +776,46 @@ module sally_mem #(
     //   8. was_stack_q              -> stack_dout_q    (hidden stack alias)
     //   9. default                  -> bram_dout_q
     wire mpd_active = ~bus_mpd_n_in;
-    // Common-case-fast factoring: bram_dout_q (the BRAM output reg,
-    // ~2.1 ns clk-to-out and the LATEST-arriving input) stays on a single final
-    // 2:1 mux; EVERY other source is a fast fabric FF, gathered into rare_dout
-    // (computed in parallel, ready well before bram_dout_q).  The boot-bringup
-    // work briefly broke this by stacking was_selftest_q/was_ctlreg_q 2:1 muxes
-    // IN FRONT of bram_dout_q — re-deepening the common read on xt6502's
-    // single-cycle mem-round-trip loop (clk_sally -12.6 ns @120 MHz).  Fold
-    // selftest + ctlreg back into rare_dout so bram_dout_q is shallow again.
+    // Common-case-fast factoring, with the LATE BRAM-class sources split out from
+    // the rare cascade (clk_sally timing study, docs/Design/clk-sally-timing-study.md).
+    // Three sources arrive LATE (~2.1 ns BRAM clk-to-out): bram_dout_q (default
+    // RAM), and the two $4000-$5FFF overlays math_cpu_rdata / scrn_cpu_rdata
+    // ("registered read, aligned with bram_dout_q").  The overlays USED to sit
+    // mid-way down the deep rare_dout priority cascade — so a screen-bank read =
+    // latest arrival + deepest logic, the binding 10.066 ns clk_sally path.
     //
-    // Priority (top wins): selftest > ctlreg > hwreg > cart > mpd > rom_override
-    // > bank > stack > default.  rom_override and default both resolve to
-    // bram_dout_q (use_rare=0); the (~was_rom_override_q & (bank|stack)) term
-    // makes rom_override outrank bank/stack exactly as before.  $D5C0/$D5C1
-    // (was_ctlreg_q) and the self-test ROM (was_selftest_q, PORTB[7]=0) are
-    // served locally.  hwreg reads use hwreg_dout_q — a LOCAL free-running
-    // register of hwreg_dout (see the always_ff above) — so the far ANTIC-CDC /
-    // blitter source is decoupled from the critical cpu_rdata mux.  The stall +
-    // registered busy_n make the 1-cycle local register valid exactly when the
-    // CPU samples it (this is NOT the old rdy-gated latch that read stale).
-    wire use_rare = was_selftest_q | was_ctlreg_q | was_math_q | was_scrn_q | was_hwreg_q
-                  | was_cart_external_q
-                  | (was_mpd_window_q & mpd_active)
-                  | (~was_rom_override_q & (was_bank_q | was_stack_q));
+    // Fix: resolve the three late sources in one 3-way TAIL instead.  The overlays
+    // are ADDRESS-DISJOINT ($4000-$5FFF) from every early source EXCEPT the
+    // self-test ROM ($5000-$57FF, which OUTRANKS them and stays in rare_dout via
+    // use_early), so `use_early ? rare_dout : overlay_active ? overlay_dout :
+    // bram_dout_q` is priority-EQUIVALENT to the old cascade (selftest > ctlreg >
+    // math > scrn > hwreg > cart > mpd > rom_override > bank > stack > default).
+    // The 3:1 (2 selects, ≤5 inputs/bit) fits one LUT6/bit: bram_dout_q KEEPS its
+    // single-level depth (common path untouched) while the overlays drop from ~4
+    // mux levels to 2 (their own 2:1 + the tail).  rom_override/default both land
+    // on bram_dout_q; the (~was_rom_override_q & (bank|stack)) term preserves
+    // rom_override outranking bank/stack.  hwreg uses the LOCAL hwreg_dout_q flop
+    // (far ANTIC-CDC source decoupled), valid exactly when the CPU samples it.
+    wire use_early = was_selftest_q | was_ctlreg_q | was_hwreg_q
+                   | was_cart_external_q
+                   | (was_mpd_window_q & mpd_active)
+                   | (~was_rom_override_q & (was_bank_q | was_stack_q));
     wire [7:0] rare_dout = was_selftest_q             ? selftest_dout_q
                          : was_ctlreg_q               ? ctlreg_dout_q
-                         : was_math_q                 ? math_cpu_rdata
-                         : was_scrn_q                 ? scrn_cpu_rdata
                          : was_hwreg_q                ? hwreg_dout_q
                          : was_cart_external_q        ? bus_pbi_rdata
                          : (was_mpd_window_q & mpd_active) ? bus_pbi_rdata
                          : was_bank_q                 ? axi_rdata_q
                          :                              stack_dout_q;  // was_stack_q
+    // Late overlay group ($4000-$5FFF): math and scrn are mutually exclusive
+    // (scrn_banked carries !math_map), so a plain 2:1 with the early-latched select.
+    wire       overlay_active = was_math_q | was_scrn_q;
+    wire [7:0] overlay_dout   = was_math_q ? math_cpu_rdata : scrn_cpu_rdata;
     // Cap fanout so the read-data driver replicates near the ~140 CPU loads
     // (the cpu_din net was ~0.9 ns of route at fo=141 on the critical path).
-    (* max_fanout = 24 *) wire [7:0] cpu_rdata = use_rare ? rare_dout : bram_dout_q;
+    (* max_fanout = 24 *) wire [7:0] cpu_rdata = use_early      ? rare_dout
+                                               : overlay_active ? overlay_dout
+                                               : bram_dout_q;
     assign data_out = cpu_rdata;
 
     // ---- Hardware-register write passthrough ----------------------
