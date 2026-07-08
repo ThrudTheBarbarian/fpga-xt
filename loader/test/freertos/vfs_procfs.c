@@ -224,36 +224,46 @@ static void pfb_pad(pfb *o, int start_n, int w) { while (o->n - start_n < w) pfb
 #define XADC_CMDF   (*(volatile uint32_t *)0xF8007110u)
 #define XADC_RDF    (*(volatile uint32_t *)0xF8007114u)
 #define XADC_MCTL   (*(volatile uint32_t *)0xF8007118u)
-static void xadc_init_once(void)
-{
-    static int done = 0;
-    if (done) return;
-    done = 1;
-    XADC_MCTL = 0x00000000u;                               /* release reset (default mode converts temp) */
-    XADC_CFG  = 0x80000000u | (0xFu << 20) | (0xFu << 16); /* ENABLE | CFIFOTH | DFIFOTH */
-    for (volatile int i = 0; i < 800000; i++) { }          /* settle + first conversions */
-}
-/* Read one DRP register: issue exactly 3 commands (READ, READ, NOOP) and pop
- * exactly 3 results — never popping an empty FIFO (which SLVERRs -> external
- * abort).  Reading the address twice settles the SPI-like command pipeline, so
- * the 3rd result is this register's value regardless of prior FIFO state. */
+/* Read one DRP register: 3 commands (READ, READ, NOOP), pop 3 — never an empty
+ * FIFO (which SLVERRs).  Read twice to settle the SPI-like pipeline. */
 static unsigned xadc_rd(unsigned addr)
 {
     unsigned c = (1u << 26) | ((addr & 0x3FFu) << 16);
     XADC_CMDF = c; XADC_CMDF = c; XADC_CMDF = 0u;
     for (volatile int i = 0; i < 20000; i++) { }
-    (void)XADC_RDF; (void)XADC_RDF;                    /* discard the first two */
-    return XADC_RDF & 0xFFFFu;                          /* 3rd = addr's settled value */
+    (void)XADC_RDF; (void)XADC_RDF;
+    return XADC_RDF & 0xFFFFu;
+}
+/* Write one DRP register: WRITE + NOOP = 2 commands, pop 2 (balanced). */
+static void xadc_wr(unsigned addr, unsigned data)
+{
+    XADC_CMDF = (2u << 26) | ((addr & 0x3FFu) << 16) | (data & 0xFFFFu);
+    XADC_CMDF = 0u;
+    for (volatile int i = 0; i < 20000; i++) { }
+    (void)XADC_RDF; (void)XADC_RDF;
+}
+static void xadc_init_once(void)
+{
+    static int done = 0;
+    if (done) return;
+    done = 1;
+    XADC_MCTL = 0x00000000u;                               /* release reset */
+    XADC_CFG  = 0x80000000u | (0xFu << 20) | (0xFu << 16); /* ENABLE | CFIFOTH | DFIFOTH */
+    for (volatile int i = 0; i < 100000; i++) { }
+    xadc_wr(0x42, 0x0400u);        /* CFR2: ADCCLK = DCLK / 4 (reset floor was 0) */
+    for (volatile int i = 0; i < 800000; i++) { }          /* settle + conversions */
 }
 static int xadc_temp_milliC(void)
 {
     xadc_init_once();
     unsigned code = xadc_rd(0x00);                     /* DRP 0x00 = on-chip temperature */
     if (!code) return -1000000;                        /* 0 = not sampling */
-    /* This XADCIF path presents every channel at exactly half scale — verified
-     * on HW: raw*2 gives the die temp AND the correct Vccint (1.0 V) / Vccaux
-     * (1.8 V), and the config regs read all-zero (so it is NOT bipolar or
-     * averaging).  The 12-bit result sits one bit low, so scale up by one bit. */
+    /* Every DRP read on this XADCIF path comes back right-shifted by one bit —
+     * PROVEN by a write/read-back: CFR2 written 0x0400 reads 0x0200 (exactly /2),
+     * and temp/Vccint/Vccaux all match at *2 (Vccint 1.0 V, Vccaux 1.8 V).  It's
+     * a uniform read-path shift, not bipolar/averaging (cfr0/cfr1 read 0), so
+     * <<1 recovers the true code losslessly (the ADC's 12-bit result lives in
+     * [15:4], so bit 0 is always 0). */
     return (int)(((int64_t)(code << 1) * 503975) / 65536) - 273150;
 }
 #endif
