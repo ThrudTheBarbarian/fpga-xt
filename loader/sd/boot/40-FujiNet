@@ -1,0 +1,8 @@
+#!/bin/sh
+# 40-FujiNet — start the FujiNet/TNFS daemon on the loopback control port
+# (16385). The desktop and tools drive TNFS servers through its line
+# protocol (ping/ls/stat/df/get) — try it: nc 127.0.0.1 16385
+# Kill/restart is always safe (sessions are disposable):
+#   killall fujinetd; fujinetd 16385 /var/log/fujinetd.log &
+# Remove this script to boot without it. Needs 20-Networking.
+fujinetd 16385 /var/log/fujinetd.log &

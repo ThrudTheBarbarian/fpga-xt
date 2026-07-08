@@ -23,16 +23,22 @@ SHFLAGS := -shared -Wl,-soname,libfujinet.so
 RPATH   := -Wl,-rpath,'$$ORIGIN'
 endif
 
-LIBSRC := src/tnfs.c src/tnfs_udp_posix.c src/tnfs_tcp_posix.c
+LIBSRC := src/tnfs.c src/tnfs_udp_posix.c src/tnfs_tcp_posix.c src/tnfs_connect.c
 HDRS   := include/fujinet/tnfs.h
 
-all: $(SHLIB) $(BUILD)/tnfsh
+all: $(SHLIB) $(BUILD)/tnfsh $(BUILD)/fujinetd $(BUILD)/fuji
 
 $(SHLIB): $(LIBSRC) $(HDRS) | $(BUILD)
 	$(CC) $(CFLAGS) $(CPPFLAGS) $(SHFLAGS) -o $@ $(LIBSRC)
 
 $(BUILD)/tnfsh: shell/tnfsh.c $(SHLIB) $(HDRS) | $(BUILD)
 	$(CC) $(CFLAGS) $(CPPFLAGS) -o $@ shell/tnfsh.c -L$(BUILD) -lfujinet $(RPATH)
+
+$(BUILD)/fujinetd: daemon/fujinetd.c $(SHLIB) $(HDRS) | $(BUILD)
+	$(CC) $(CFLAGS) $(CPPFLAGS) -o $@ daemon/fujinetd.c -L$(BUILD) -lfujinet -lsqlite3 $(RPATH)
+
+$(BUILD)/fuji: cli/fuji.c | $(BUILD)
+	$(CC) $(CFLAGS) $(CPPFLAGS) -o $@ cli/fuji.c
 
 $(BUILD):
 	mkdir -p $@

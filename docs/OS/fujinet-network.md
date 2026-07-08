@@ -68,6 +68,23 @@ Verified: mock server (`fujinet/tools/mock_tnfsd.py`, UDP+TCP, lossy mode
 for the retry path) and live — `tnfs.fujinet.online` (UDP, proto 1.2) and
 `apps.irata.online` (TCP-only, proto 1.3), downloads bit-exact.
 
+### 1b. fujinetd — the daemon  ✅ built
+
+`fujinetd [port] [logfile] [registry.db]` (`fujinet/daemon/fujinetd.c` —
+portable, host-testable): a loopback TCP control port (default 16385)
+speaking a line protocol (`ping` / `servers` / `ls` / `stat` / `df` /
+`get` with `+progress` events and `.part`+rename atomic downloads),
+holding a small pool of live server sessions so repeated requests reuse
+mounts. `<server>` arguments resolve against the registry's `fujinet`
+table (id / displayName / host → row's port + transport) with literal
+`host[:port]` fallback — the daemon owns registry access (and will own
+`fujiCache` updates). Kill/restart is always safe. Lives on the **SD**
+(`/OS/bin/fujinetd`), enabled by the SD boot script `/OS/boot/40-FujiNet`
+(source: `loader/sd/boot/40-FujiNet`) — user-editable, no rebuild to
+disable. **`fuji`** (`fujinet/cli/fuji.c`, `/OS/bin/fuji`) is the CLI
+client: `fuji servers`, `fuji ls Irata /`, `fuji fetch 1 /path/game.xex`;
+the desktop's netcache layer drives the same protocol.
+
 ### 2. `vfs_tnfs` — mount the network at `/Network`  ⬜ proposed
 
 A VFS backend alongside `vfs_fatfs` etc. (`loader/test/freertos/vfs.c` is
@@ -132,12 +149,18 @@ construction, since nothing at `/` shows unless explicitly registered.
 
 ### 4. Desktop integration  ⬜ proposed (mostly registry entries)
 
-- `desktopIcons` row for **Network** (new `ICT_NETWORK` icon type) opening
-  a folder window on `/Network`; servers render via a new `ICT_SERVER`
-  type. Browsing inside a server is the stock folder window over the VFS —
-  no network-aware UI code.
-- **Add Server…** dialog writes the registry row. Later: mDNS/broadcast
-  discovery pre-filling candidates.
+- The **Fujinet desktop icon already exists** (`desktopIcons` row,
+  `devices/network-nfs.pam`); double-click opens the servers window.
+- Files/folders inside a server window use the **same `windowIcons` glob
+  mapping as normal SD browsing** — network-ness shows only as draw
+  state: ghosts (uncached) render at reduced alpha with a grey label,
+  cached entries draw normally.
+- **Server / Add Server icons exist**: `iconTypes` 9 (`Server`,
+  `actions/document-open-remote.pam` — label = the server's
+  displayName) and 10 (`Add Server`, `actions/folder-new-7.pam` — the
+  action icon opening the Add Server… dialog that writes the `fujinet`
+  row), each with a `windowIcons` mapping so client code fetches them by
+  type. Later: mDNS/broadcast discovery pre-filling candidates.
 
 ### 4. Launch  ⬜ proposed (depends on [app-launch](app-launch.md))
 

@@ -375,6 +375,42 @@ $(BUILD)/scp.so: $(BUILD)/dropbear/objects.list $(BUILD)/dropbear_glue.o $(BUILD
 	    $$(cat $(BUILD)/dropbear/scpobjects.list) \
 	    $(BUILD)/libc.so
 
+# tnfs.so — /bin/tnfs: the TNFS client shell (libfujinet, ../fujinet — the
+# SAME portable sources as the Mac tnfsh build) over the posix/net shims +
+# libc.so. Step 1 of docs/OS/fujinet-network.md layer 2: proves TNFS over
+# the XTOS socket surface before vfs_tnfs consumes the core in-kernel.
+FUJINET  := ../fujinet
+FUJILIB  := $(BUILD)/fuji_core.o $(BUILD)/fuji_udp.o $(BUILD)/fuji_tcp.o $(BUILD)/fuji_connect.o
+FUJICFLAGS := -marm -mcpu=cortex-a9 -mfloat-abi=softfp -mfpu=neon-vfpv3 -fpic -Os -fno-builtin \
+    -D_GNU_SOURCE -Ilibc-compat -Inewlib-pic/include -Itest/qemu -Ikernel -I$(FUJINET)/include
+$(BUILD)/fuji_core.o: $(FUJINET)/src/tnfs.c $(FUJINET)/include/fujinet/tnfs.h | $(BUILD)
+	$(ARMCC) $(FUJICFLAGS) -c $< -o $@
+$(BUILD)/fuji_udp.o: $(FUJINET)/src/tnfs_udp_posix.c $(FUJINET)/include/fujinet/tnfs.h | $(BUILD)
+	$(ARMCC) $(FUJICFLAGS) -c $< -o $@
+$(BUILD)/fuji_tcp.o: $(FUJINET)/src/tnfs_tcp_posix.c $(FUJINET)/include/fujinet/tnfs.h | $(BUILD)
+	$(ARMCC) $(FUJICFLAGS) -c $< -o $@
+$(BUILD)/fuji_connect.o: $(FUJINET)/src/tnfs_connect.c $(FUJINET)/include/fujinet/tnfs.h | $(BUILD)
+	$(ARMCC) $(FUJICFLAGS) -c $< -o $@
+$(BUILD)/fuji_shell.o: $(FUJINET)/shell/tnfsh.c $(FUJINET)/include/fujinet/tnfs.h | $(BUILD)
+	$(ARMCC) $(FUJICFLAGS) -c $< -o $@
+$(BUILD)/fuji_daemon.o: $(FUJINET)/daemon/fujinetd.c $(FUJINET)/include/fujinet/tnfs.h | $(BUILD)
+	$(ARMCC) $(FUJICFLAGS) -I$(SQLITE) -c $< -o $@
+$(BUILD)/fuji_cli.o: $(FUJINET)/cli/fuji.c | $(BUILD)
+	$(ARMCC) $(FUJICFLAGS) -c $< -o $@
+# fuji — the CLI client of fujinetd (ping/servers/ls/stat/df/fetch)
+$(BUILD)/fuji.so: $(BUILD)/fuji_cli.o $(BUILD)/posix_shim.o $(BUILD)/net_shim.o $(BUILD)/libc.so
+	$(LLD) -shared --hash-style=sysv -o $@ $(BUILD)/fuji_cli.o \
+	    $(BUILD)/posix_shim.o $(BUILD)/net_shim.o $(BUILD)/libc.so
+$(BUILD)/tnfs.so: $(FUJILIB) $(BUILD)/fuji_shell.o $(BUILD)/posix_shim.o $(BUILD)/net_shim.o $(BUILD)/libc.so
+	$(LLD) -shared --hash-style=sysv -o $@ $(FUJILIB) $(BUILD)/fuji_shell.o \
+	    $(BUILD)/posix_shim.o $(BUILD)/net_shim.o $(BUILD)/libc.so
+# fujinetd — the FujiNet daemon (loopback control port; started by the SD
+# boot script sd/boot/40-FujiNet; kill/restart-safe)
+$(BUILD)/fujinetd.so: $(FUJILIB) $(BUILD)/fuji_daemon.o $(BUILD)/sqlite3.o $(BUILD)/sqlite_vfs.o $(BUILD)/posix_shim.o $(BUILD)/net_shim.o $(BUILD)/libc.so $(BUILD)/libm.so
+	$(LLD) -shared --hash-style=sysv -o $@ $(FUJILIB) $(BUILD)/fuji_daemon.o \
+	    $(BUILD)/sqlite3.o $(BUILD)/sqlite_vfs.o \
+	    $(BUILD)/posix_shim.o $(BUILD)/net_shim.o $(BUILD)/libc.so $(BUILD)/libm.so
+
 # vmtest — DT_NEEDED libc.so; touches the per-process private window (T2-b)
 $(BUILD)/vmtest.so: test/freertos/progs/vmtest.c $(BUILD)/libc.so | $(BUILD)
 	$(ARMCC) $(PROGCFLAGS) -Inewlib-pic/include -c $< -o $(BUILD)/vmtest.o
@@ -433,7 +469,7 @@ ROMFS_ASSET_ARGS := /fonts/AovelSansRounded.ttf=../gem/fonts/AovelSansRounded.tt
                     /themes/Aristo2/1x/locations.txt=../gem/themes/Aristo2/1x/locations.txt \
                     /themes/Aristo2/1x/theme.ini=../gem/themes/Aristo2/1x/theme.ini
 
-$(BUILD)/romfs.bin: $(BUILD)/mkromfs $(BUILD)/toybox.so $(BUILD)/sqlite3.so $(BUILD)/pipetest.so $(BUILD)/hello.so $(BUILD)/motd.so $(BUILD)/usestr.so $(BUILD)/echo.so $(BUILD)/libc_test.so $(BUILD)/gemtext.so $(BUILD)/desktop.so $(BUILD)/aesdesk.so $(BUILD)/regtest.so $(BUILD)/locktest.so $(BUILD)/lntest.so $(BUILD)/fstest.so $(BUILD)/lua.so $(BUILD)/init.so $(BUILD)/faultprog.so $(BUILD)/vmtest.so $(BUILD)/demandtest.so $(BUILD)/stacktest.so $(BUILD)/wxtest.so $(BUILD)/cowtest.so $(BUILD)/sharetext.so $(BUILD)/shmtest.so $(BUILD)/finictor.so $(BUILD)/mmaptest.so $(BUILD)/modetest.so $(BUILD)/ttytest.so $(BUILD)/jobctl.so $(BUILD)/socktest.so $(BUILD)/httpd.so $(BUILD)/nstress.so $(BUILD)/dmesg.so $(BUILD)/mem.so $(BUILD)/badpoke.so $(BUILD)/stackpoke.so $(BUILD)/dropbearkey.so $(BUILD)/dropbear.so $(BUILD)/sshd.so $(BUILD)/netup.so $(BUILD)/ssh.so $(BUILD)/scp.so $(BUILD)/strace.so $(BUILD)/libutil.so $(BUILD)/libGEM.so $(BUILD)/libm.so $(BUILD)/libc.so test/freertos/Registry.db $(ROMFS_OVERLAY_FILES) $(ROMFS_ASSET_FILES)
+$(BUILD)/romfs.bin: $(BUILD)/mkromfs $(BUILD)/tnfs.so $(BUILD)/fujinetd.so $(BUILD)/fuji.so $(BUILD)/toybox.so $(BUILD)/sqlite3.so $(BUILD)/pipetest.so $(BUILD)/hello.so $(BUILD)/motd.so $(BUILD)/usestr.so $(BUILD)/echo.so $(BUILD)/libc_test.so $(BUILD)/gemtext.so $(BUILD)/desktop.so $(BUILD)/aesdesk.so $(BUILD)/regtest.so $(BUILD)/locktest.so $(BUILD)/lntest.so $(BUILD)/fstest.so $(BUILD)/lua.so $(BUILD)/init.so $(BUILD)/faultprog.so $(BUILD)/vmtest.so $(BUILD)/demandtest.so $(BUILD)/stacktest.so $(BUILD)/wxtest.so $(BUILD)/cowtest.so $(BUILD)/sharetext.so $(BUILD)/shmtest.so $(BUILD)/finictor.so $(BUILD)/mmaptest.so $(BUILD)/modetest.so $(BUILD)/ttytest.so $(BUILD)/jobctl.so $(BUILD)/socktest.so $(BUILD)/httpd.so $(BUILD)/nstress.so $(BUILD)/dmesg.so $(BUILD)/mem.so $(BUILD)/badpoke.so $(BUILD)/stackpoke.so $(BUILD)/dropbearkey.so $(BUILD)/dropbear.so $(BUILD)/sshd.so $(BUILD)/netup.so $(BUILD)/ssh.so $(BUILD)/scp.so $(BUILD)/strace.so $(BUILD)/libutil.so $(BUILD)/libGEM.so $(BUILD)/libm.so $(BUILD)/libc.so test/freertos/Registry.db $(ROMFS_OVERLAY_FILES) $(ROMFS_ASSET_FILES)
 	$(BUILD)/mkromfs $@ \
 	    /bin/faultprog=$(BUILD)/faultprog.so \
 	    /bin/vmtest=$(BUILD)/vmtest.so \
@@ -478,6 +514,9 @@ $(BUILD)/romfs.bin: $(BUILD)/mkromfs $(BUILD)/toybox.so $(BUILD)/sqlite3.so $(BU
 	    /bin/nstress=$(BUILD)/nstress.so \
 	    /bin/dmesg=$(BUILD)/dmesg.so \
 	    /bin/mem=$(BUILD)/mem.so \
+	    /bin/tnfs=$(BUILD)/tnfs.so \
+	    /bin/fujinetd=$(BUILD)/fujinetd.so \
+	    /bin/fuji=$(BUILD)/fuji.so \
 	    /test/Registry.db=test/freertos/Registry.db \
 	    /bin/sh=$(BUILD)/toybox.so \
 	    /bin/lua=$(BUILD)/lua.so \
@@ -562,7 +601,7 @@ $(BUILD)/hwromfs/romfs_blob.h: $(BUILD)/romfs-hw.bin
 # login shell exists before the links do)
 SDSTAGE := $(BUILD)/sdstage
 .PHONY: sdstage
-sdstage: $(BUILD)/toybox.so $(BUILD)/sqlite3.so $(BUILD)/libGEM.so $(BUILD)/aesdesk.so $(BUILD)/desktop.so $(BUILD)/gemtext.so $(BUILD)/regtest.so
+sdstage: $(BUILD)/toybox.so $(BUILD)/sqlite3.so $(BUILD)/libGEM.so $(BUILD)/aesdesk.so $(BUILD)/desktop.so $(BUILD)/gemtext.so $(BUILD)/regtest.so $(BUILD)/tnfs.so $(BUILD)/fujinetd.so $(BUILD)/fuji.so
 	@rm -rf $(SDSTAGE)
 	@mkdir -p $(SDSTAGE)/OS/bin $(SDSTAGE)/OS/library $(SDSTAGE)/OS/etc $(SDSTAGE)/OS/boot
 	cp sd/boot/* $(SDSTAGE)/OS/boot/
@@ -574,6 +613,9 @@ sdstage: $(BUILD)/toybox.so $(BUILD)/sqlite3.so $(BUILD)/libGEM.so $(BUILD)/aesd
 	cp $(BUILD)/gemtext.so $(SDSTAGE)/OS/bin/gemtext
 	cp $(BUILD)/regtest.so $(SDSTAGE)/OS/bin/regtest
 	cp $(BUILD)/httpd.so   $(SDSTAGE)/OS/bin/httpd
+	cp $(BUILD)/tnfs.so    $(SDSTAGE)/OS/bin/tnfs
+	cp $(BUILD)/fujinetd.so $(SDSTAGE)/OS/bin/fujinetd
+	cp $(BUILD)/fuji.so    $(SDSTAGE)/OS/bin/fuji
 	cp $(BUILD)/libGEM.so  $(SDSTAGE)/OS/library/libGEM.so
 	@printf '# XTOS /OS/etc/hosts — static name -> address (checked before DNS)\n127.0.0.1\tlocalhost xtos\n' > $(SDSTAGE)/OS/etc/hosts
 	cp tools/tz.tab $(SDSTAGE)/OS/etc/tz.tab

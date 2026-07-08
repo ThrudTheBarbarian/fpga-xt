@@ -104,33 +104,11 @@ static void cmd_close(void)
     snprintf(g_cwd, sizeof g_cwd, "/");
 }
 
-/* connect + mount over one transport; returns TNFS status / local error */
-static int try_mount(const char *host, uint16_t port, const char *mountpath,
-                     int use_tcp, int probe)
-{
-    tnfs_transport io;
-    int rc = use_tcp ? tnfs_tcp_transport(&io, host, port)
-                     : tnfs_udp_transport(&io, host, port);
-    if (rc < 0)
-        return rc;
-
-    /* probe = short timeout/few attempts, for the UDP leg of auto mode */
-    g_session.timeout_ms = probe ? 700 : 0;
-    g_session.retries = probe ? 2 : 0;
-
-    rc = tnfs_mount(&g_session, &io, mountpath, "", "");
-    if (rc != TNFS_OK && io.close)
-        io.close(io.ctx);
-    g_session.timeout_ms = 0;
-    g_session.retries = 0;
-    return rc;
-}
-
 static void cmd_open(const char *hostspec, const char *mountpath)
 {
     char host[128];
     uint16_t port = TNFS_PORT;
-    int scheme = 0;                     /* 0 auto, 1 udp only, 2 tcp only */
+    int transport = TNFS_T_AUTO;
 
     if (!hostspec) {
         printf("usage: open <[udp://|tcp://]host[:port]> [mountpath]\n");
@@ -138,8 +116,8 @@ static void cmd_open(const char *hostspec, const char *mountpath)
     }
     cmd_close();
 
-    if (strncmp(hostspec, "udp://", 6) == 0) { scheme = 1; hostspec += 6; }
-    else if (strncmp(hostspec, "tcp://", 6) == 0) { scheme = 2; hostspec += 6; }
+    if (strncmp(hostspec, "udp://", 6) == 0) { transport = TNFS_T_UDP; hostspec += 6; }
+    else if (strncmp(hostspec, "tcp://", 6) == 0) { transport = TNFS_T_TCP; hostspec += 6; }
 
     snprintf(host, sizeof host, "%s", hostspec);
     char *colon = strrchr(host, ':');
@@ -150,13 +128,7 @@ static void cmd_open(const char *hostspec, const char *mountpath)
     if (!mountpath)
         mountpath = "/";
 
-    int used_tcp = (scheme == 2);
-    int rc = try_mount(host, port, mountpath, used_tcp, scheme == 0);
-    if (rc != TNFS_OK && scheme == 0) {
-        printf("no UDP response, trying TCP...\n");
-        used_tcp = 1;
-        rc = try_mount(host, port, mountpath, 1, 0);
-    }
+    int rc = tnfs_connect(&g_session, host, port, transport, mountpath);
     if (rc != TNFS_OK) {
         report("mount", rc);
         return;
@@ -165,7 +137,8 @@ static void cmd_open(const char *hostspec, const char *mountpath)
     g_connected = 1;
     snprintf(g_host, sizeof g_host, "%s", host);
     printf("mounted %s:%u%s over %s (server protocol %u.%u, min retry %u ms)\n",
-           host, port, mountpath, used_tcp ? "tcp" : "udp",
+           host, port, mountpath,
+           g_session.io.stream ? "tcp" : "udp",
            g_session.server_version >> 8, g_session.server_version & 0xff,
            g_session.min_retry_ms);
 }

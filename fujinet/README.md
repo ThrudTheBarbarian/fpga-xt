@@ -10,7 +10,10 @@ include/fujinet/tnfs.h   public API
 src/tnfs.c               protocol core — transport-agnostic, no OS deps
 src/tnfs_udp_posix.c     BSD-socket UDP transport (macOS / Linux hosts)
 src/tnfs_tcp_posix.c     BSD-socket TCP transport (for TCP-only servers)
+src/tnfs_connect.c       transport-policy connect (udp / tcp / auto-fallback)
 shell/tnfsh.c            interactive shell (links libfujinet)
+daemon/fujinetd.c        the FujiNet daemon (loopback control port 16385)
+cli/fuji.c               fuji — CLI client of the daemon
 ```
 
 ## Build & run (host)
@@ -42,6 +45,36 @@ concurrent mounts as you like, one command in flight per session.
 `tnfs_download`/`tnfs_upload` are whole-file helpers that own the chunk
 loop and report through a `tnfs_progress_cb` (return nonzero to cancel
 — that's the hook for a UI progress bar / cancel button).
+`tnfs_connect` applies transport policy: `TNFS_T_UDP`/`TNFS_T_TCP`
+force one, `TNFS_T_AUTO` probes UDP and falls back to TCP (ids match
+the registry's `fujiTransport` rows).
+
+## fujinetd
+
+`fujinetd [port] [logfile] [registry.db]` (default 16385) is the daemon
+the desktop talks to: a loopback TCP control port speaking a line
+protocol — `ping`, `servers`, `ls <server> <path>`, `stat <server>
+<path>`, `df <server>`, `get <server> <remote> <local>` (emits
+`+progress <done> <total>` events; downloads via `.part` + rename so a
+kill mid-fetch never leaves a half-file that looks cached). It keeps a
+small pool of live sessions so repeated requests reuse mounts.
+Kill/restart any time — sessions are disposable.
+
+`<server>` resolves against the registry's `fujinet` table (numeric id,
+displayName, or host — the row supplies port + transport), falling back
+to a literal `[udp://|tcp://]host[:port]`. The registry is found at
+`/OS/var/registry.db` (SD), `/test/Registry.db` (qemu romfs), or the
+explicit argv path; without one, `servers`/name-resolution are simply
+unavailable.
+
+**`fuji`** is the CLI client: `fuji ping | servers | ls <server> [path]
+| stat <server> <path> | df <server> | fetch <server> <remote> [local]`.
+Raw access works too: `printf 'ping\nquit\n' | nc 127.0.0.1 16385`.
+
+On XTOS both live on the SD (`/OS/bin/fujinetd`, `/OS/bin/fuji`); the
+daemon is started by the boot script `sd/boot/40-FujiNet` →
+`/OS/boot/40-FujiNet` — edit or remove that file on the card to
+reconfigure/disable; no rebuild needed.
 
 Porting to XTOS = supplying a transport built on the `net_shim` BSD
 socket API (the POSIX one here should compile nearly unchanged) and

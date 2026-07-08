@@ -199,6 +199,17 @@ const char *tnfs_strerror(int rc);
 int tnfs_udp_transport(tnfs_transport *out, const char *host, uint16_t port);
 int tnfs_tcp_transport(tnfs_transport *out, const char *host, uint16_t port);
 
+/*
+ * Transport-policy connect + mount (tnfs_connect.c): TNFS_T_UDP / TNFS_T_TCP
+ * force a transport; TNFS_T_AUTO probes UDP (short timeout) and falls back
+ * to TCP. Ids match the registry's fujiTransport rows.
+ */
+#define TNFS_T_UDP  1
+#define TNFS_T_TCP  2
+#define TNFS_T_AUTO 3
+int tnfs_connect(tnfs_session *s, const char *host, uint16_t port,
+                 int transport, const char *mountpath);
+
 #ifdef __cplusplus
 }
 #endif
