@@ -11,6 +11,9 @@ sim/test_data/*.hex
 *.vcd
 *.fst
 
+# icon source
+iconSrc/
+
 # Efinity synth artefacts (~55 MB; reproducible from sources via
 # efinity/run.sh).
 efinity/build/
