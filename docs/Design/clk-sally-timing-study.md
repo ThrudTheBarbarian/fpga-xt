@@ -260,3 +260,27 @@ starts to reopen the road toward 120.
   (5-way distributed read net + decode FSM) is *real* but is **not** what's
   binding today — the overlay regression is. These levers recover the margin the
   overlays cost; they don't claim to break the documented wall.
+
+## Build result — clk_sys lever WORKS: governing margin +0.003 → +0.039 (2026-07-08)
+
+Registered atari-x as a +2 counter (compositor.sv) so the GTIA pm_presence cone
+starts from a flop. Equivalence-proven (contiguous atari-x; tb_antic_modes/
+writeback/raster + boot pass; antic_display's pre-existing 6 fails are identical
+with/without). ExtraTimingOpt build:
+
+| domain | Lever B baseline | + clk_sys lever |
+|--------|-----------------:|----------------:|
+| clk_sys   | +0.003 | **+0.039** |
+| clk_sally | +0.025 | +0.053 |
+| clk_pix   | +0.206 | +0.382 |
+| **min (governs)** | **+0.003** | **+0.039** |
+
+The compositor path CLOSED with margin (pm_presence-from-a-register met timing
+as its own comment promised) and the register localized the 61% route — so unlike
+Lever B (pure logic-depth cut, route-bound, no slack gain) this moved the number.
+The binding clk_sys path MOVED off the compositor to the blitter
+(u_xt_blitter/cmd_fifo -> beat_lo_filled, +0.039). No collateral: clk_sally and
+clk_pix both improved. **First change this session to lift the GOVERNING margin
+(13x).** LESSON: a pipeline/counter register that localizes ROUTE beats a pure
+logic-depth cut on a route-bound path — the difference between this and Lever B.
+Next binding domain if ever wanted: the blitter cmd_fifo path (+0.039).
