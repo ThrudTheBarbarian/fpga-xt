@@ -198,6 +198,39 @@ PR-friendlier, robust to the next overlay someone bolts on) even though it didn'
 buy margin on this routing-bound build. Real clk_sally margin waits on the
 memory-block floorplan (PR work).
 
+## Build result — co-location sweep, and the real binding domain (2026-07-08)
+
+Pushed the co-location properly (folded into pblock_sally.xdc — a separate augment
+file failed: the constraint glob is unsorted, so it ran before pb_sally existed).
+Expanded pb_sally to `{X0Y0,X0Y1,X0Y2}` with both overlay engines as members, and
+swept two route-focused directives in parallel on valhalla:
+
+| domain | Lever B (no co-loc) | co-loc ExtraTimingOpt | co-loc ExtraNetDelay_high |
+|--------|--------------------:|---------------------:|--------------------------:|
+| clk_sally | +0.025 | **+0.077** | −0.230 (fail) |
+| clk_sys   | **+0.003** | +0.000 | +0.010 |
+| clk_pix   | +0.206 | +0.309 | +0.066 |
+| **min (governs the build)** | **+0.003** | +0.000 | fail |
+
+The co-location DID shorten the clk_sally route (5.623 → 4.867 ns, slack +0.025 →
++0.077) — but expanding into X0Y2 **robbed clk_sys** (the ANTIC compositor lives
+there): +0.003 → +0.000.  The governing *minimum* margin went from +0.003 to
++0.000 — a net loss.  Balloon-squeezing on a near-full 7020, exactly as the fmax
+memory warned: the overlay route is genuinely shortenable, but the SPACE it claims
+isn't free.  **Reverted.**
+
+**The real finding: clk_sally was never the binding domain — clk_sys is.** With the
+right directive (ExtraTimingOpt) clk_sally sits at +0.025..+0.077; the design's
+governing margin is **clk_sys +0.003** (the ANTIC-compositor `cur_mode → col_presL`
+path, out of scope of this sally study).  clk_sally only *fails* under the wrong
+directive (Explore −0.347) — which is what the TRNG change first exposed.  So:
+- **Lever B is the keeper** — it made clk_sally structurally shallower (durable,
+  PR-friendly) without touching clk_sys; it's banked.
+- **Incremental floorplan is a dead end here** — zero-sum on a full die.  The route
+  belongs to the PR whole-die refloor (deliberate, not a squeeze).
+- **If more OVERALL margin is wanted, the target is clk_sys** (a different domain /
+  a separate study), not clk_sally.
+
 ## Recommended sequence (revised twice)
 
 **A: done-by-directive** (ExtraTimingOpt) for the monolithic build; becomes a
