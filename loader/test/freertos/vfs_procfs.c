@@ -201,6 +201,71 @@ static int pf_gen_meminfo(char *buf, int sz)
     return o.n;
 }
 
+/* print milli-degrees C as "[-]DD.DDD" */
+static void pfb_milliC(pfb *o, int m)
+{
+    if (m < 0) { pfb_c(o, '-'); m = -m; }
+    pfb_d(o, m / 1000); pfb_c(o, '.');
+    int f = m % 1000;
+    pfb_c(o, (char)('0' + f / 100));
+    pfb_c(o, (char)('0' + (f / 10) % 10));
+    pfb_c(o, (char)('0' + f % 10));
+}
+
+#ifdef XT_HW
+/* Zynq PS XADC die temperature via the devcfg XADCIF FIFO (UG585 B.34, regs per
+ * xadcps_hw.h).  ps7_init leaves the on-chip system monitor sampling the sensors
+ * into DRP status regs (0x00 = temperature); pop any stale result, push a READ
+ * of DRP 0x00 + a NOP to flush the 1-deep pipeline, read the 16-bit code, and
+ * convert: T(C) = code*503.975/65536 - 273.15.  Returns milli-C or -1000000. */
+#define XADC_MSTS   (*(volatile uint32_t *)0xF800710Cu)
+#define XADC_CMDF   (*(volatile uint32_t *)0xF8007110u)
+#define XADC_RDF    (*(volatile uint32_t *)0xF8007114u)
+#define XADC_DFIFOE 0x00000400u        /* MSTS: read (data) FIFO empty */
+static int xadc_temp_milliC(void)
+{
+    uint32_t to = 100000;
+    while (!(XADC_MSTS & XADC_DFIFOE) && --to) (void)XADC_RDF;   /* drain stale */
+    XADC_CMDF = (1u << 26) | (0x00u << 16);                      /* READ DRP 0x00 (temp) */
+    XADC_CMDF = 0u;                                              /* NOP: flush pipeline  */
+    to = 100000;
+    while ((XADC_MSTS & XADC_DFIFOE) && --to) { }               /* wait for a result */
+    if (XADC_MSTS & XADC_DFIFOE) return -1000000;               /* no data */
+    uint32_t code = XADC_RDF & 0xFFFFu;
+    return (int)(((int64_t)code * 503975) / 65536) - 273150;    /* -> milli-C */
+}
+#endif
+
+/* /OS/proc/temp — board (I2C 0x49) and die (PS XADC) temperatures with a boot
+ * timestamp, so a `while : ; do cat /OS/proc/temp; sleep 1; done` log can be
+ * correlated against HDMI drops. */
+static int pf_gen_temp(char *buf, int sz)
+{
+    pfb o = { buf, 0, sz };
+    struct { long sec, usec; } tv = { 0, 0 };
+    _gettimeofday(&tv, 0);
+    int cs = (int)(tv.usec / 10000);
+    pfb_s(&o, "time:     "); pfb_d(&o, (int)tv.sec); pfb_c(&o, '.');
+    pfb_c(&o, (char)('0' + cs / 10)); pfb_c(&o, (char)('0' + cs % 10));
+    pfb_s(&o, "  (s since boot)\n");
+#ifdef XT_HW
+    extern int hdmi_temp_i2c(void);
+    int ie = hdmi_temp_i2c();
+    int di = xadc_temp_milliC();
+    pfb_s(&o, "i2c_ext:  ");
+    if (ie <= -1000000) pfb_s(&o, "n/a (I2C error)");
+    else { pfb_milliC(&o, ie); pfb_s(&o, " C   (sensor 0x49, board)"); }
+    pfb_c(&o, '\n');
+    pfb_s(&o, "xadc_int: ");
+    if (di <= -1000000) pfb_s(&o, "n/a (XADC no data)");
+    else { pfb_milliC(&o, di); pfb_s(&o, " C   (PS die)"); }
+    pfb_c(&o, '\n');
+#else
+    (void)cs; pfb_s(&o, "no sensors on qemu\n");
+#endif
+    return o.n;
+}
+
 /* ---- driver ops ------------------------------------------------------------ */
 static long pf_read(vfs_file *f, void *buf, uint32_t n)
 {
@@ -247,6 +312,7 @@ static int pf_open(vfs_mount *m, const char *rel, int flags, vfs_file *f)
     else if (!strcmp(rel, "/video"))   len = pf_gen_video(buf, PF_BUF);
     else if (!strcmp(rel, "/video-sii")) len = pf_gen_video_sii(buf, PF_BUF);
     else if (!strcmp(rel, "/video-kick")) len = pf_gen_video_kick(buf, PF_BUF);
+    else if (!strcmp(rel, "/temp"))    len = pf_gen_temp(buf, PF_BUF);
     else if (!strcmp(rel, "/mounts"))  { extern int vfs_mounts_str(char *, int); len = vfs_mounts_str(buf, PF_BUF); }
     else if (!strncmp(rel, "/net/", 5)) { extern int xt_procnet(const char *, char *, int); len = xt_procnet(rel + 5, buf, cap); }
     else if (rel[0] == '/' && (k = pf_num(rel + 1, &pid)) > 0) {
@@ -271,7 +337,8 @@ static int pf_stat(vfs_mount *m, const char *rel, struct xt_stat *st)
     st->size = 0; st->mtime = 0;
     if (rel[0] == 0 || (rel[0] == '/' && rel[1] == 0)) { st->mode = XT_S_IFDIR; return 0; }
     if (!strcmp(rel, "/uptime") || !strcmp(rel, "/meminfo") || !strcmp(rel, "/kmsg") || !strcmp(rel, "/mounts") ||
-        !strcmp(rel, "/video")  || !strcmp(rel, "/video-sii") || !strcmp(rel, "/video-kick")) { st->mode = XT_S_IFREG; return 0; }
+        !strcmp(rel, "/video")  || !strcmp(rel, "/video-sii") || !strcmp(rel, "/video-kick") ||
+        !strcmp(rel, "/temp")) { st->mode = XT_S_IFREG; return 0; }
     if (!strcmp(rel, "/net")) { st->mode = XT_S_IFDIR; return 0; }
     if (!strncmp(rel, "/net/", 5)) {
         for (int i = 0; xt_procnet_leaves[i]; i++)
@@ -309,7 +376,7 @@ static int pf_readdir(vfs_mount *m, const char *rel, int index,
                 return 1;
             }
         }
-        const char *fixed[] = { "uptime", "meminfo", "kmsg", "mounts", "video", "video-sii", "video-kick" };
+        const char *fixed[] = { "uptime", "meminfo", "kmsg", "mounts", "video", "video-sii", "video-kick", "temp" };
         int fi = index - emitted;
         if (fi >= 0 && fi < (int)(sizeof fixed / sizeof fixed[0])) {
             pfb o = { name, 0, nsz };

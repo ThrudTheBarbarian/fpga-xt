@@ -241,6 +241,24 @@ int hdmi_sii_read(int reg)
     return r == 0 ? (int)v : -1;
 }
 
+/* Board temp sensor (LM75-family) on I2C0 at 0x49.  Read reg 0x00 as 2 bytes =
+ * signed Q8.8 degrees C (MSB = integer C as `i2cget 0 0x49 0x00` returns; LSB =
+ * fraction, bit7 = 0.5C, lower bits finer if the part supports it).  Returns
+ * milli-degrees C, or -1000000 on I2C error.  Shares the bus with the SiI9022
+ * (0x3B) — a clean read to 0x49 doesn't touch it, but I2C traffic is a suspect
+ * for the HDMI re-acquire (see /OS/proc/video-sii), hence a separate node. */
+int hdmi_temp_i2c(void)
+{
+    uint8_t reg = 0x00, b[2]; int r;
+    i2c_lock();
+    r = i2c_send(0x49, &reg, 1);
+    if (r == 0) r = i2c_recv(0x49, b, 2);
+    i2c_unlock();
+    if (r) return -1000000;
+    int16_t raw = (int16_t)(((uint16_t)b[0] << 8) | b[1]);
+    return (int)raw * 1000 / 256;               /* Q8.8 -> milli-C */
+}
+
 /* Soft REPLUG: a bare config rewrite doesn't recover a monitor that has given
  * up on the link (verified on HW — /OS/proc/video-kick did nothing while a
  * physical replug recovered).  Take TMDS down long enough for the sink to see
@@ -306,6 +324,7 @@ int xt_i2c_send(uint8_t addr, const uint8_t *buf, int n)
 int xt_i2c_recv(uint8_t addr, uint8_t *buf, int n)
 { (void)addr; (void)buf; (void)n; return -1; }
 int hdmi_sii_read(int reg) { (void)reg; return -1; }
+int hdmi_temp_i2c(void) { return -1000000; }
 void hdmi_reinit(void) { }
 void hdmi_watch_init(void) { }
 #endif
