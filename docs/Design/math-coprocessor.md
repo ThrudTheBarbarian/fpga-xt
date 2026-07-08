@@ -180,10 +180,17 @@ math (which are sub-µs / nanoseconds):
 Because the floor is per-*doorbell*, not per-op, **batch aggressively** — pack
 many op words into one EXEC and the ~23 µs amortizes toward zero-per-op.  The
 floor is real wall-clock (the counter is turbo-independent), so the
-inline-vs-offload decision is **speed-dependent**: at 1× it is ~42 6502 cycles
-(a lone MUL ~breaks even), at 56× turbo it is ~1000+ 6502 instructions, so only
-heavy unrolled batches (vectors / matrices / transcendentals) pay off — the xtc
-cost model must take the target `CLOCK_MULT` as an input.  Fast-path headroom if
+inline-vs-offload decision is **speed-dependent**, and the comparison is against
+the *software* cycle cost of the op, not its instruction count.  At 1× the floor
+is only ~42 6502 cycles — below almost any real op (a software 32-bit MUL is
+~1-2k cycles, a 32-bit DIV ~2-3k, any float op thousands), so at 1× nearly
+everything wins, floats by orders of magnitude.  At the 56× top turbo tier the
+floor is ~2300 6502 cycles (~700-odd instructions): *cheap* integer work (adds, a
+single narrow multiply) is now quicker inline, but a divide, a short expression
+like `y = x/b*c` (~4k cycles), or any float op still favour offload even at the
+top tier — it does **not** take vector/matrix batches to win; those are just where
+the margin is widest.  The xtc cost model must take the target `CLOCK_MULT` as an
+input.  Fast-path headroom if
 ever needed: ACP-coherent chunk traffic, NEON in the worker, a spin-polling
 worker to cut the IRQ→task handoff.
 
@@ -198,21 +205,21 @@ worker to cut the IRQ→task handoff.
 - The doorbell is ignored (sticky diag bit in `MATH_STAT`) when no chunk is
   mapped (`$D5C8` = 0).
 
-## Deferred (v2): stored / named programs
+## Stored / named programs
 
-v1 uploads the op-word program inline on every call — for a repeated kernel the
-6502 spends thousands of cycles re-`POKE`ing the same up-to-4 KB program each
-doorbell.  v2 lets a program be **registered once under an id** and invoked by
-reference, so a repeat call is just one op word plus the operand slots.  This
-does not shrink the ~23 µs FreeRTOS round-trip floor, but it removes the large
-**6502-side** restaging cost — the decisive win for tight loops of one kernel
-(matmul, FIR/`VMLA`, Horner), exactly where offload pays off.  It also flushes
-less: a run-by-id only dirties the slot lines, so the EXEC flush carries
-operands, not the program.
+A program can be uploaded inline on every call (id 0), or **registered once under
+an id** and invoked by reference, so a repeat call is just one op word plus the
+operand slots.  Uploading inline re-`POKE`s the same up-to-4 KB program each
+doorbell — thousands of 6502 cycles for a repeated kernel; a stored program pays
+that once.  This does not shrink the ~23 µs FreeRTOS round-trip floor, but it
+removes the large **6502-side** restaging cost — the decisive win for tight loops
+of one kernel (matmul, FIR/`VMLA`, Horner), exactly where offload pays off.  It
+also flushes less: a run-by-id only dirties the slot lines, so the EXEC flush
+carries operands, not the program.
 
 **Entirely A9-side — no fabric change.**  The PL treats op words as opaque data;
-all interpretation is in the worker, so v2 is a `mathcop.{c,h}` release shipped
-by rebuilding the ELF, not a bitstream respin.
+all interpretation is in the worker, so this rides in the `mathcop.{c,h}` build
+(rebuild the ELF), not a bitstream respin.
 
 ### Commands are control ops in the op stream
 
@@ -233,7 +240,7 @@ just an op word, a stored program can call another — **composition falls out**
 
 ### ID space & storage
 
-`0` = inline (v1, unchanged); `>0` = user program (interpreted op-word stream);
+`0` = inline (unchanged); `>0` = user program (interpreted op-word stream);
 `<0` = predefined builtin (native C).  User programs live in a **per-task**
 table (worker knows chunk→task), a growable heap array that **doubles** on
 growth (no fixed cap — a linear-scan lookup and one-time copy into the
@@ -257,7 +264,7 @@ header at `S[b]` then float data in the following slots, element-typed by the
 ### Status additions
 
 `NOPROG 0x20` (CALL of an unknown id), `PROGFULL 0x40` (DEF out of memory) —
-both keep bit 7 clear.  `MC_ABI_VERSION` bumps to 2 when the run path is live.
+both keep bit 7 clear.  `MC_ABI_VERSION` is **2** with the stored-program run path live.
 
 ### Idioms
 
@@ -276,8 +283,8 @@ reusable `mc_run_ops(page, ops, nops, st, depth)`, and control-op dispatch.
 recurses into `mc_run_ops` against the shared slots, guarded to depth 8, so
 programs compose.  Still stubbed: the five **native builtins** (`CALL` id<0
 returns `NOPROG`).  Program storage is currently one global table — keying it by
-owning task (chunk→task) is a TODO.  **v1 is unchanged**: a stream with no
-control ops runs inline exactly as before — you never have to store a program.
+owning task (chunk→task) is a TODO.  **Inline mode is unchanged**: a stream with
+no control ops runs inline exactly as before — you never have to store a program.
 
 ## Implementation map
 
