@@ -151,7 +151,31 @@ adder-Z).
 
 ---
 
-## Recommended sequence
+## Build result — Lever A tested, and what it revealed (2026-07-08)
+
+A coarse clock-region pblock pinning the overlays to `CLOCKREGION_X0Y2` (the only
+region adjacent to sally that doesn't *overlap* `pb_sally`) **regressed** clk_sally
+from +0.023 to **−0.583 ns**. The lesson is the useful part: **`ExtraTimingOpt`
+already floorplans the overlays near-optimally** — that is precisely why it closes
+at +0.023 where `Explore` misses at −0.347. The "free-floating BRAM hauls across
+the die" failure is an *`Explore`* artifact; `ExtraTimingOpt`'s timing-driven
+placement pulls the BRAM near the mux on its own. Forcing X0Y2 dragged it *farther*
+than the directive's own choice.
+
+So **Lever A is effectively subsumed by the build's default directive**
+(`ExtraTimingOpt`, already the `build.tcl` default): the placement half of the
+problem is handled without an explicit pblock, and a disjoint pblock can't beat it
+(X0Y2 is too far; X0Y1 — right next to the mux — is inside `pb_sally`, so a
+separate pblock there would overlap and risk the phys_opt crash). **Recommendation
+change: don't chase an explicit overlay floorplan.** Keep `ExtraTimingOpt` and put
+the effort into the *logic-depth* levers below, which the directive **cannot**
+touch (placement can't shorten a 14-level combinational path). The path is 47 %
+logic (4.731 ns) — that is the addressable-by-restructuring headroom.
+
+## Recommended sequence (revised)
+
+**A is done-by-directive.** Real work is B then C.
+
 
 1. **A (floorplan)** — one XDC, one build. Highest ROI, zero RTL risk, removes the
    directive-luck dependency. Measure; this alone may be enough to make the design
