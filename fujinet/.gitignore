@@ -1,0 +1,4 @@
+build/
+*.atr
+*.xex
+*.tap
