@@ -36,6 +36,7 @@ export default defineConfig({
 							items: [
 								{ label: 'ARM — Cortex-A9 PS', slug: 'hardware/arm' },
 								{ label: 'Blitter (xt-blitter)', slug: 'hardware/blitter' },
+								{ label: 'Math co-processor (MECH)', slug: 'hardware/mech' },
 								{ label: 'Display & compositor', slug: 'hardware/video' },
 								{ label: 'HDMI output', slug: 'hardware/hdmi' },
 								{ label: 'Audio', slug: 'hardware/audio' },
