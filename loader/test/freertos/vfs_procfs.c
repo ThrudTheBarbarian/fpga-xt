@@ -213,6 +213,27 @@ static void pfb_milliC(pfb *o, int m)
 }
 /* pad with spaces until the field started at `start_n` fills `w` columns */
 static void pfb_pad(pfb *o, int start_n, int w) { while (o->n - start_n < w) pfb_c(o, ' '); }
+static void pfb_2d(pfb *o, int v) { pfb_c(o, (char)('0' + (v / 10) % 10)); pfb_c(o, (char)('0' + v % 10)); }
+/* Unix epoch (s) -> "YYYY-MM-DD HH:MM:SS UTC".  Self-contained civil-from-days
+ * (Hinnant) so we need no libc time/tz support, which this minimal libc lacks. */
+static void pfb_datetime(pfb *o, long long epoch)
+{
+    long long days = epoch / 86400;
+    int tod = (int)(epoch % 86400);
+    long long z = days + 719468;
+    long long era = (z >= 0 ? z : z - 146096) / 146097;
+    unsigned doe = (unsigned)(z - era * 146097);                       /* [0, 146096] */
+    unsigned yoe = (doe - doe / 1460 + doe / 36524 - doe / 146096) / 365; /* [0, 399] */
+    long long y = (long long)yoe + era * 400;
+    unsigned doy = doe - (365 * yoe + yoe / 4 - yoe / 100);            /* [0, 365] */
+    unsigned mp = (5 * doy + 2) / 153;                                 /* [0, 11] */
+    unsigned d = doy - (153 * mp + 2) / 5 + 1;                         /* [1, 31] */
+    unsigned m = mp < 10 ? mp + 3 : mp - 9;                            /* [1, 12] */
+    y += (m <= 2);
+    pfb_d(o, (int)y); pfb_c(o, '-'); pfb_2d(o, (int)m); pfb_c(o, '-'); pfb_2d(o, (int)d);
+    pfb_c(o, ' '); pfb_2d(o, tod / 3600); pfb_c(o, ':');
+    pfb_2d(o, (tod / 60) % 60); pfb_c(o, ':'); pfb_2d(o, tod % 60); pfb_s(o, " UTC");
+}
 
 #ifdef XT_HW
 /* Zynq PS XADC die temperature via the devcfg XADCIF FIFO (UG585 B.16 / UG480).
@@ -257,7 +278,7 @@ static void xadc_init_once(void)
     xadc_wr(0x42, 0x0400u);        /* CFR2: ADCCLK = DCLK / 4 (reset floor was 0) */
     for (volatile int i = 0; i < 800000; i++) { }          /* settle + conversions */
 }
-static int xadc_temp_milliC(void)
+int xadc_temp_milliC(void)                             /* called by the temp-monitor task */
 {
     xadc_init_once();
     unsigned code = xadc_rd(0x00);                     /* DRP 0x00 = on-chip temperature */
@@ -265,6 +286,13 @@ static int xadc_temp_milliC(void)
     return (int)(((int64_t)code * 503975) / 65536) - 273150;   /* T = code*503.975/65536 - 273.15 */
 }
 #endif
+
+/* Peak-hold temperatures in milli-C, sampled by the temp-monitor task (main.c)
+ * so excursions are caught even when nobody is watching /OS/proc/temp.
+ * -1000000 = no sample yet.  Plain ints: aligned 32-bit r/w is atomic on the A9,
+ * and a momentary skew between a value and its peak is harmless here. */
+int g_temp_brd = -1000000, g_temp_brd_peak = -1000000;   /* I2C 0x49 (board) */
+int g_temp_die = -1000000, g_temp_die_peak = -1000000;   /* PS XADC (die)   */
 
 /* /OS/proc/temp — board (I2C 0x49) + die (PS XADC) temps with a boot timestamp,
  * so a `while : ; do cat /OS/proc/temp; sleep 1; done` log lines up with HDMI
@@ -274,21 +302,29 @@ static int pf_gen_temp(char *buf, int sz)
     pfb o = { buf, 0, sz };
     struct { long long sec, usec; } tv = { 0, 0 };   /* time_t is 64-bit here — must not undersize */
     _gettimeofday(&tv, 0);
-    int cs = (int)(tv.usec / 10000), p;
+    int p;
     pfb_s(&o, "time    : "); p = o.n;
-    pfb_d(&o, (int)tv.sec); pfb_c(&o, '.');
-    pfb_c(&o, (char)('0' + cs / 10)); pfb_c(&o, (char)('0' + cs % 10));
-    pfb_pad(&o, p, 14); pfb_s(&o, "(unix time, s)\n");
+    if (tv.sec > 1000000000LL) {                     /* real epoch (clock synced) -> human date */
+        pfb_datetime(&o, tv.sec);
+        pfb_pad(&o, p, 28); pfb_s(&o, "(wall clock)\n");
+    } else {                                         /* pre-sync: seconds since boot */
+        int cs = (int)(tv.usec / 10000);
+        pfb_d(&o, (int)tv.sec); pfb_c(&o, '.');
+        pfb_c(&o, (char)('0' + cs / 10)); pfb_c(&o, (char)('0' + cs % 10));
+        pfb_pad(&o, p, 28); pfb_s(&o, "(s since boot)\n");
+    }
 #ifdef XT_HW
-    extern int hdmi_temp_i2c(void);
-    int ie = hdmi_temp_i2c();
+    extern int g_temp_brd, g_temp_brd_peak, g_temp_die, g_temp_die_peak;
     pfb_s(&o, "i2c_ext : "); p = o.n;
-    if (ie <= -1000000) pfb_s(&o, "n/a"); else { pfb_milliC(&o, ie); pfb_s(&o, " C"); }
-    pfb_pad(&o, p, 14); pfb_s(&o, "(sensor 0x49, board)\n");
-    int di = xadc_temp_milliC();
+    if (g_temp_brd <= -1000000) pfb_s(&o, "n/a");
+    else { pfb_milliC(&o, g_temp_brd); pfb_s(&o, " C   peak ");
+           pfb_milliC(&o, g_temp_brd_peak); pfb_s(&o, " C"); }
+    pfb_pad(&o, p, 28); pfb_s(&o, "(sensor 0x49, board)\n");
     pfb_s(&o, "xadc_int: "); p = o.n;
-    if (di <= -1000000) pfb_s(&o, "n/a"); else { pfb_milliC(&o, di); pfb_s(&o, " C"); }
-    pfb_pad(&o, p, 14); pfb_s(&o, "(PS die)\n");
+    if (g_temp_die <= -1000000) pfb_s(&o, "n/a");
+    else { pfb_milliC(&o, g_temp_die); pfb_s(&o, " C   peak ");
+           pfb_milliC(&o, g_temp_die_peak); pfb_s(&o, " C"); }
+    pfb_pad(&o, p, 28); pfb_s(&o, "(PS die)\n");
 #else
     pfb_s(&o, "no sensors on qemu\n");
 #endif

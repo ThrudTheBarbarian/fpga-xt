@@ -26,6 +26,31 @@ extern void mmu_init(void);
 
 static xtld_host g_host;
 
+#ifdef XT_HW
+/* Poll die (PS XADC) + board (I2C 0x49) temps into peak-hold globals, so a
+ * transient (e.g. during an overlay-plane test) can't slip between /OS/proc/temp
+ * reads.  Sole reader of the XADCIF FIFO — procfs reads the cached globals, so no
+ * FIFO contention.  Die every 2 s (bus-free); board every ~8 s to stay light on
+ * the I2C0 bus shared with the SiI9022. */
+static void temp_mon_task(void *arg)
+{
+    (void)arg;
+    extern int xadc_temp_milliC(void);
+    extern int hdmi_temp_i2c(void);
+    extern int g_temp_die, g_temp_die_peak, g_temp_brd, g_temp_brd_peak;
+    for (unsigned n = 0; ; n++) {
+        int d = xadc_temp_milliC();
+        if (d > -1000000) { g_temp_die = d; if (d > g_temp_die_peak) g_temp_die_peak = d; }
+        if ((n & 3) == 0) {
+            int b = hdmi_temp_i2c();
+            if (b > -1000000) { g_temp_brd = b; if (b > g_temp_brd_peak) g_temp_brd_peak = b; }
+        }
+        vTaskDelay(pdMS_TO_TICKS(2000));
+    }
+}
+void temp_mon_init(void) { xTaskCreate(temp_mon_task, "tempmon", 1024, NULL, tskIDLE_PRIORITY + 1, NULL); }
+#endif
+
 static int readline(char *buf, int max)
 {
     int n = 0;
@@ -361,6 +386,9 @@ int main(void)
         vfs_devfs_init(); vfs_add_mount("/OS/dev", "devfs", 0); }      /* char devices */
       { extern void vfs_procfs_init(void);
         vfs_procfs_init(); vfs_add_mount("/OS/proc", "procfs", 0); } } /* the proc table */
+#ifdef XT_HW
+    { extern void temp_mon_init(void); temp_mon_init(); }   /* poll die+board temps, hold peaks */
+#endif
     { extern void con_write_tee(const char *, int);
       ksys_set_console(con_write_tee); }      /* UART + a mirror to the TCP console (netcon) */
     romfs_mount(romfs_blob, romfs_blob_len);
