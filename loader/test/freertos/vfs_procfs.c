@@ -223,9 +223,25 @@ static void pfb_pad(pfb *o, int start_n, int w) { while (o->n - start_n < w) pfb
  * FIFO is written — so push a READ of DRP 0x00 + a NOOP, discard the first
  * result and keep the second.  T(C) = code*503.975/65536 - 273.15. */
 #define XADC_CFG    (*(volatile uint32_t *)0xF8007100u)
+#define XADC_MSTS   (*(volatile uint32_t *)0xF800710Cu)
 #define XADC_CMDF   (*(volatile uint32_t *)0xF8007110u)
 #define XADC_RDF    (*(volatile uint32_t *)0xF8007114u)
 #define XADC_MCTL   (*(volatile uint32_t *)0xF8007118u)
+static void xadc_wr(unsigned addr, unsigned data)    /* DRP write (cmd=2) */
+{
+    XADC_CMDF = (2u << 26) | ((addr & 0x3FFu) << 16) | (data & 0xFFFFu);
+    XADC_CMDF = 0u;                                   /* NOOP pushes it through */
+    for (volatile int i = 0; i < 4000; i++) { }
+    (void)XADC_RDF; (void)XADC_RDF;                   /* keep the read FIFO balanced */
+}
+static unsigned xadc_rd(unsigned addr)               /* DRP read: keep the 2nd pop */
+{
+    XADC_CMDF = (1u << 26) | ((addr & 0x3FFu) << 16); /* READ addr */
+    XADC_CMDF = 0u;                                   /* NOOP advances the result */
+    for (volatile int i = 0; i < 4000; i++) { }
+    (void)XADC_RDF;
+    return XADC_RDF & 0xFFFFu;
+}
 static void xadc_init_once(void)
 {
     static int done = 0;
@@ -233,18 +249,21 @@ static void xadc_init_once(void)
     done = 1;
     XADC_MCTL = 0x00000000u;                               /* release XADC reset      */
     XADC_CFG  = 0x80000000u | (0xFu << 20) | (0xFu << 16); /* ENABLE | CFIFOTH | DFIFOTH */
-    for (volatile int i = 0; i < 200000; i++) { }          /* let default-mode sampling start */
+    for (volatile int i = 0; i < 50000; i++) { }
+    xadc_wr(0x40, 0x0000u);        /* CFR0: no averaging, unipolar        */
+    xadc_wr(0x41, 0x0000u);        /* CFR1: default mode (auto temp+supply)*/
+    xadc_wr(0x42, 0x0800u);        /* CFR2: ADCCLK = DCLK / 8             */
+    for (volatile int i = 0; i < 800000; i++) { }         /* let the sequence convert */
 }
 static int xadc_temp_milliC(void)
 {
     xadc_init_once();
-    XADC_CMDF = 0x04000000u;                          /* READ DRP 0x00 (temperature) */
-    XADC_CMDF = 0x00000000u;                          /* NOOP: advance the result FIFO */
-    for (volatile int i = 0; i < 20000; i++) { }      /* let the serialized cmds drain */
-    (void)XADC_RDF;                                   /* first pop = stale/NOOP word  */
-    uint32_t code = XADC_RDF & 0xFFFFu;               /* second pop = DRP 0x00        */
-    if (code && code < 0x1000u) code <<= 4;           /* normalise LSB- -> MSB-justified */
-    return (int)(((int64_t)code * 503975) / 65536) - 273150;
+    uint32_t code = xadc_rd(0x00);                    /* DRP 0x00 = on-chip temperature */
+    if (!code) return -1000000;                       /* 0 = not sampling */
+    /* The XADCIF presents the 12-bit result one bit low vs UG480's [15:4]
+     * alignment (verified empirically: raw*2 gives the right temp AND the
+     * correct Vccint 1.0 V / Vccaux 1.8 V), so scale up by one bit. */
+    return (int)(((int64_t)(code << 1) * 503975) / 65536) - 273150;
 }
 #endif
 
@@ -260,17 +279,17 @@ static int pf_gen_temp(char *buf, int sz)
     pfb_s(&o, "time    : "); p = o.n;
     pfb_d(&o, (int)tv.sec); pfb_c(&o, '.');
     pfb_c(&o, (char)('0' + cs / 10)); pfb_c(&o, (char)('0' + cs % 10));
-    pfb_pad(&o, p, 12); pfb_s(&o, "(s since boot)\n");
+    pfb_pad(&o, p, 14); pfb_s(&o, "(unix time, s)\n");
 #ifdef XT_HW
     extern int hdmi_temp_i2c(void);
     int ie = hdmi_temp_i2c();
-    int di = xadc_temp_milliC();
     pfb_s(&o, "i2c_ext : "); p = o.n;
     if (ie <= -1000000) pfb_s(&o, "n/a"); else { pfb_milliC(&o, ie); pfb_s(&o, " C"); }
-    pfb_pad(&o, p, 12); pfb_s(&o, "(sensor 0x49, board)\n");
+    pfb_pad(&o, p, 14); pfb_s(&o, "(sensor 0x49, board)\n");
+    int di = xadc_temp_milliC();
     pfb_s(&o, "xadc_int: "); p = o.n;
     if (di <= -1000000) pfb_s(&o, "n/a"); else { pfb_milliC(&o, di); pfb_s(&o, " C"); }
-    pfb_pad(&o, p, 12); pfb_s(&o, "(PS die)\n");
+    pfb_pad(&o, p, 14); pfb_s(&o, "(PS die)\n");
 #else
     pfb_s(&o, "no sensors on qemu\n");
 #endif
