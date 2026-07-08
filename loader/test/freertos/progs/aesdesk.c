@@ -84,12 +84,23 @@ static void icon_dirty(int obj, int *x,int *y,int *w,int *h) {
 }
 static int desk_sel(void) { for (int i = 1; i <= n_icons; i++) if (desk[i].ob_state & OS_SELECTED) return i; return 0; }
 
+/* The live XL compositor plane (emulator video) binds to ONE 6502 window: the
+ * kernel places plane 1 over that window's work area (SYS_xl_window).  Declared
+ * here because the drag-overlay hooks below track it during a drag. */
+#define XL_SCALE 2                      // 320x192 XL writeback -> a 640x384 work area
+static int g_xlwin;                     // window handle owning the plane (0 = none)
+
 /* HW drag-overlay ops (registered with wind_set_overlay): the AES title-bar drag
  * lifts the window into the overlay plane and moves it by register write — no
  * per-motion redraw, tear-free. begin copies the window rect from the cached
- * back-buffer into the DRAG_BASE overlay buffer. */
+ * back-buffer into the DRAG_BASE overlay buffer.  The back-buffer holds only the
+ * chrome + a black work area, though — the emulator's live picture is a SEPARATE
+ * compositor plane (XL, depth 2, above this overlay).  So when the lifted window
+ * is the emu window, move the XL plane in lock-step with the overlay: the live
+ * picture then rides on top of the dragged frame instead of staying pinned. */
 #define DRAG_BASE 0x32000000u
 static int g_ovl_w, g_ovl_h;
+static int g_drag_xl, g_drag_dx, g_drag_dy, g_drag_ww, g_drag_wh;   // XL plane tracks this drag
 static int ovl_begin(int x, int y, int w, int h) {
     if (w <= 0 || h <= 0) return 0;
     if (x < 0 || y < 0 || x + w > g_fb.w || y + h > g_fb.h) return 0;   // off-screen edge -> classic drag
@@ -98,11 +109,26 @@ static int ovl_begin(int x, int y, int w, int h) {
         memcpy(dst + (size_t)r * g_fb.stride,           // NOT packed — OVL_W only bounds the displayed width
                g_bb->px + (size_t)(y + r) * g_bb->stride + x, (size_t)w * 4);
     g_ovl_w = w; g_ovl_h = h;
+    g_drag_xl = 0;                                      // does this drag carry the emu window?
+    if (g_xlwin) {
+        int fx, fy, fw, fh;
+        wind_get(g_xlwin, WF_CURRXYWH, &fx, &fy, &fw, &fh);
+        if (fx == x && fy == y && fw == w && fh == h) { // yes — capture its work-area inset + size
+            int wx, wy, ww, wh;
+            wind_get(g_xlwin, WF_WORKXYWH, &wx, &wy, &ww, &wh);
+            g_drag_dx = wx - fx; g_drag_dy = wy - fy;
+            g_drag_ww = ww; g_drag_wh = wh; g_drag_xl = 1;
+        }
+    }
     sys_overlay(x, y, w, h, 1);
     return 1;
 }
-static void ovl_move(int x, int y) { sys_overlay(x, y, g_ovl_w, g_ovl_h, 1); }
-static void ovl_end(void)          { sys_overlay(1920, 1080, 1, 1, 1); }  /* park off-screen; EN stays 1 (no glitch) */
+static void ovl_move(int x, int y) {
+    sys_overlay(x, y, g_ovl_w, g_ovl_h, 1);
+    if (g_drag_xl)                                      // live video follows the frame (XL plane sits on top)
+        sys_xl_window(x + g_drag_dx, y + g_drag_dy, g_drag_ww, g_drag_wh, XL_SCALE);
+}
+static void ovl_end(void) { sys_overlay(1920, 1080, 1, 1, 1); g_drag_xl = 0; }  /* park off-screen; EN stays 1 */
 
 static int read_default(const char *dir, char *out, int n) {
     char p[160]; snprintf(p, sizeof p, "%s/Default", dir);
@@ -164,10 +190,8 @@ static int g_ex = 380, g_ey = 130;
 // The live XL compositor plane binds to ONE 6502 window (first opened): the
 // kernel places plane 1 over that window's work area (SYS_xl_window), and we
 // re-place it whenever the window moves/resizes, hide it on close.  m68k
-// windows stay placeholders (no core hosted yet).
-#define XL_SCALE 2                      // 320x192 writeback -> a 640x384 work area
-static int g_xlwin;                     // window handle owning the plane (0 = none)
-
+// windows stay placeholders (no core hosted yet).  (XL_SCALE / g_xlwin are
+// declared up by the drag-overlay hooks, which track the plane during a drag.)
 static void xl_sync(void) {
     if (!g_xlwin) return;
     int x, y, w, h;
