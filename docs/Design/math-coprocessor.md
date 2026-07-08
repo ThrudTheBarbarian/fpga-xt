@@ -7,8 +7,10 @@ the same page.  Replaces bespoke software floating point with hardware IEEE-754
 single + double, the full libm, integer mul/div, and vector (SIMD) ops — at
 **one round-trip per expression**, not per operation.
 
-Status: PL sim-validated (`make mathcop` + full regressions), PS service built
-into the FreeRTOS kernel; on-hardware validation pending.
+Status: HW-validated — the full smoke test (`docs/video/math-cop-test.bas`:
+i32 MUL + f64 SQRT + 4-lane VMUL) passes on hardware, and the doorbell → answer
+round-trip measures ~23 µs (see Latency budget).  PL sim-validated (`make
+mathcop` / `gp0_mux` / `sally_math_overlay` + full regressions).
 
 ## Why offload to the A9 (not build FP in fabric)
 
@@ -54,8 +56,12 @@ read result slots  ◄── reload result span ◄── MATH_DONE ◄── re
   (128-bit line bitmap) to the chunk over screen_bank's S_AXI_GP0 port (shared
   through `gp0_axi_mux`, math priority), then pushes the chunk index into a
   16-deep event FIFO whose non-empty level is **IRQ_F2P[1] (GIC SPI 62)**.
-  The chunk stack is Normal non-cacheable on the A9 (the PL-shared mmu.c
-  invariant), so the service needs no cache maintenance.
+  The chunk stack is a cacheable DMA buffer on the A9 (`mmu.c` sections
+  `0x208`/`0x209`, Normal WB-WA): the service invalidates the chunk before
+  reading the PL-flushed operands and cleans the result span to the point of
+  coherency (DCCMVAC) before the doorbell, so the PL and A9 stay coherent across
+  the round-trip.  The clean is what makes the A9's results visible to the PL's
+  DDR read — a barrier alone does not order writes across the two master ports.
 - **The A9 service** (`loader/test/freertos/mathcop.{c,h}`): an integer-only
   ISR drains the FIFO and notifies a top-priority FPU worker task (this port
   does not save VFP state on the IRQ path), which interprets the program
@@ -72,6 +78,7 @@ read result slots  ◄── reload result span ◄── MATH_DONE ◄── re
 | `$D5C7` | W  | EXEC doorbell — every write fires (strobe, not value-change) |
 | `$D5C7` | R  | bit 0 = done, bit 1 = busy (informational), bit 2 = chunk ready |
 | `$D5C8` | RW | backing chunk index; write = spill/fill (poll bit 2) |
+| `$D5C9-$D5CC` | R | op-latency counter (LE u32): `clk_sally` cycles from the EXEC write to `done` rising; latched, static between ops. Raw 100 MHz fabric cycles (not step-gated) so it is turbo-independent — `count/100` = µs |
 
 Protocol: fill slots + program, write the op count, strobe `$D5C7`, poll
 `$D5C7.0`, read results.  **Between EXEC and done the page must not be
@@ -157,18 +164,28 @@ every queued doorbell, so concurrent tasks' ops coalesce into one interrupt.
 
 ## Latency budget (as built)
 
-- EXEC dirty flush: ~2-3 µs for a typical ~1 KB of dirty lines over 32-bit GP0
-  (dominant, scales with dirty bytes; worst case +1 in-flight screen-flip
-  burst on the shared port — the mux re-arbitrates per burst).
-- IRQ → worker-task wakeup: ~1 µs class.
-- Program: nanoseconds of math; interpreter overhead ~0.1-0.3 µs/op plus
-  ~0.3 µs per first-touch slot (non-cacheable demand loads).
+**HW-measured** (`$D5C9` counter, doorbell → answer ready) ≈ **23 µs** for a
+3-op batch (i32 MUL + f64 SQRT + 4-lane VMUL).  The cost is a fixed
+**per-doorbell floor** dominated by the FreeRTOS round-trip — GIC IRQ latency +
+notify + context-switch into the FPU worker and back — *not* the flush or the
+math (which are sub-µs / nanoseconds):
+
+- IRQ → worker-task wakeup + FPU-worker switch: the bulk of the floor.
+- EXEC dirty flush: ~sub-µs, scales with dirty bytes (worst case +1 in-flight
+  screen-flip burst on the shared port — the mux re-arbitrates per burst).
+- Program: nanoseconds of math; interpreter overhead ~0.1-0.3 µs/op plus a
+  cacheable demand load per first-touch slot.
 - Result writeback + span reload + done: ~1-2 µs.
 
-≈ **4-6 µs per batch**, amortized over up to 1024 op words — ~50 ns/op for a
-matmul-sized program, against hundreds (add) to tens of thousands
-(transcendental) of 6502 cycles per software-FP op.  Fast-path headroom if
-ever needed: ACP-coherent chunk traffic, NEON in the worker.
+Because the floor is per-*doorbell*, not per-op, **batch aggressively** — pack
+many op words into one EXEC and the ~23 µs amortizes toward zero-per-op.  The
+floor is real wall-clock (the counter is turbo-independent), so the
+inline-vs-offload decision is **speed-dependent**: at 1× it is ~42 6502 cycles
+(a lone MUL ~breaks even), at 56× turbo it is ~1000+ 6502 instructions, so only
+heavy unrolled batches (vectors / matrices / transcendentals) pay off — the xtc
+cost model must take the target `CLOCK_MULT` as an input.  Fast-path headroom if
+ever needed: ACP-coherent chunk traffic, NEON in the worker, a spin-polling
+worker to cut the IRQ→task handoff.
 
 ## Caveats
 
