@@ -262,6 +262,113 @@ static uint8_t vec_to_scalar(uint8_t vop)
     }
 }
 
+/* ===== v2 stored/named programs (mathcop.h ABI) ===========================
+ * Program-storage layer (DEF/END/UNDEF) is functional; the run layer (CALL of
+ * a stored program or a builtin) is stubbed — running a stored program needs
+ * mc_run_chunk's op loop factored into a reusable run(ops,nops) entry so CALL
+ * can recurse (depth <= MC_CALL_DEPTH_MAX).  Until then CALL reports NOPROG.
+ * TODO: key the table by owning task (chunk->task via the OS) so ids are
+ * per-task; one global table is a placeholder.  Grows by doubling (decision 3).
+ * ========================================================================== */
+typedef struct { int16_t id; uint16_t nops; uint32_t *ops; } mc_prog;
+static struct { mc_prog *v; int n, cap; } mc_ptab;
+
+static mc_prog *mc_prog_find(int16_t id)
+{
+    for (int i = 0; i < mc_ptab.n; i++)
+        if (mc_ptab.v[i].id == id) return &mc_ptab.v[i];
+    return 0;
+}
+/* store/overwrite program `id` from [ops,nops]; 0 ok / -1 OOM. */
+static int mc_prog_store(int16_t id, const uint32_t *ops, uint16_t nops)
+{
+    mc_prog *p = mc_prog_find(id);
+    if (!p) {
+        if (mc_ptab.n == mc_ptab.cap) {
+            int nc = mc_ptab.cap ? mc_ptab.cap * 2 : 8;
+            mc_prog *nv = pvPortMalloc((size_t)nc * sizeof *nv);
+            if (!nv) return -1;
+            for (int i = 0; i < mc_ptab.n; i++) nv[i] = mc_ptab.v[i];
+            vPortFree(mc_ptab.v);                       /* vPortFree(NULL) is a no-op */
+            mc_ptab.v = nv; mc_ptab.cap = nc;
+        }
+        p = &mc_ptab.v[mc_ptab.n++];
+        p->id = id; p->ops = 0; p->nops = 0;
+    }
+    uint32_t *buf = pvPortMalloc((size_t)nops * 4u);
+    if (!buf) return -1;
+    for (uint16_t i = 0; i < nops; i++) buf[i] = ops[i];
+    vPortFree(p->ops);
+    p->ops = buf; p->nops = nops;
+    return 0;
+}
+static void mc_prog_free(int16_t id)
+{
+    for (int i = 0; i < mc_ptab.n; i++)
+        if (mc_ptab.v[i].id == id) {
+            vPortFree(mc_ptab.v[i].ops);
+            mc_ptab.v[i] = mc_ptab.v[--mc_ptab.n];      /* swap-remove */
+            return;
+        }
+}
+
+/* Native builtin kernels (CALL id<0).  STUB — dispatch is wired, kernels TODO.
+ * All slot-only from arg base `b`, element-typed by `type`; layouts in mathcop.h. */
+static uint8_t mc_builtin(int16_t id, uint8_t b, uint8_t type, volatile uint8_t *page)
+{
+    (void)b; (void)type; (void)page;
+    switch (id) {
+    case MC_PROG_MATMUL: /* TODO C[M*N]=A[M*K].B[K*N], dims i32 @ S[b]       */ break;
+    case MC_PROG_FFT:    /* TODO N-pt complex FFT in-place, {N,dir} @ S[b]   */ break;
+    case MC_PROG_CONV:   /* TODO conv sig[L]*kern[K] -> out[L+K-1]           */ break;
+    case MC_PROG_CROSS:  /* TODO 3-vec cross a x b -> c                      */ break;
+    case MC_PROG_QROOTS: /* TODO roots of a.x^2 + b.x + c (f64)              */ break;
+    default:                                                                    break;
+    }
+    return MC_ST_NOPROG;   /* not implemented yet */
+}
+
+/* Handle one control op word at mc_ops[*pc]; may advance *pc past a DEF body.
+ * Returns status bits.  DEF/END/UNDEF work; CALL is stubbed to NOPROG. */
+static uint8_t mc_ctl_op(volatile uint8_t *page, unsigned op_count, unsigned *pc)
+{
+    uint32_t w    = mc_ops[*pc];
+    uint8_t  op   = w & 0x3F;
+    uint8_t  type = (w >> 6) & 3;
+    int16_t  id   = (int16_t)((w >> 8) & 0xFFFFu);      /* bytes 1-2 */
+    uint8_t  base = (uint8_t)(w >> 24);                 /* byte 3 (CALL arg base) */
+
+    switch (op) {
+    case MC_OP_DEF: {                                   /* capture [body..END-1], store under id */
+        if (id <= 0) return MC_ST_BADOP;                /* only positive ids are user-definable */
+        unsigned body = *pc + 1, e = body;
+        while (e < op_count && (mc_ops[e] & 0x3F) != MC_OP_END) {
+            if ((mc_ops[e] & 0x3F) == MC_OP_DEF) return MC_ST_BADOP;   /* no nesting */
+            e++;
+        }
+        if (e >= op_count) return MC_ST_BADOP;                         /* unterminated */
+        if (mc_prog_store(id, &mc_ops[body], (uint16_t)(e - body)) != 0)
+            return MC_ST_PROGFULL;
+        *pc = e;                                        /* loop's pc++ then steps past END */
+        return 0;
+    }
+    case MC_OP_END:                                     /* stray END (not consumed by a DEF) */
+        return MC_ST_BADOP;
+    case MC_OP_UNDEF:
+        if (id > 0) mc_prog_free(id);
+        return 0;
+    case MC_OP_CALL:
+        /* TODO(v2): run the program against the current slots — id>0 interprets
+         * mc_prog_find(id)->ops (needs the recursion refactor), id<0 dispatches
+         * mc_builtin.  Stubbed to NOPROG so a v2 caller sees "not live yet". */
+        if (id < 0) return mc_builtin(id, base, type, page);
+        (void)mc_prog_find(id);
+        return MC_ST_NOPROG;
+    default:
+        return MC_ST_BADOP;
+    }
+}
+
 /* ---- run one chunk's program --------------------------------------------- */
 static void mc_run_chunk(uint8_t chunk)
 {
@@ -288,6 +395,10 @@ static void mc_run_chunk(uint8_t chunk)
         uint8_t  s2   = (w >> 16) & 0xFF;
         uint8_t  dst  = (w >> 24) & 0xFF;
 
+        if (op >= MC_OP_CTLBASE && op <= MC_OP_CTLTOP) {   /* v2 control ops (define/call) */
+            st |= mc_ctl_op(page, op_count, &pc);
+            continue;
+        }
         if (op < MC_OP_VECBASE) {
             /* ---- scalar ---- */
             mcval_t a, b, r;

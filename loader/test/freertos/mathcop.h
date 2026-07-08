@@ -128,6 +128,39 @@
 #define MC_OP_VCVT          0x3D        /* dst type = type field; src type = word0 byte2 [1:0] */
 #define MC_OP_VECTOP        0x3D        /* highest defined vector op */
 
+/* ========================================================================
+ * v2 — stored / named programs.  ABI defined here; the mathcop.c interpreter
+ * scaffold is PARTIAL: DEF/END/UNDEF (program storage) work, CALL (run) and
+ * the builtins are stubbed.  MC_ABI_VERSION stays 1 until those are live.
+ * All additive — a v1 stream (no control ops) is unaffected.  Full spec in
+ * docs/Design/math-coprocessor.md.
+ * ======================================================================== */
+
+/* Control ops (single word; occupy the free 0x21-0x24 block between CVT and
+ * the integer bitwise ops).  byte0 [7:6] = element type (used by CALL),
+ * [5:0] = op; bytes 1-2 = s16 program id; byte 3 = CALL arg base slot. */
+#define MC_OP_CTLBASE       0x21
+#define MC_OP_CALL          0x21   /* run stored (id>0) / builtin (id<0) vs current slots; nestable */
+#define MC_OP_DEF           0x22   /* begin capturing ops under id (id>0) until MC_OP_END */
+#define MC_OP_END           0x23   /* close a MC_OP_DEF capture */
+#define MC_OP_UNDEF         0x24   /* free a user program (id>0) */
+#define MC_OP_CTLTOP        0x24
+
+/* Predefined builtin program ids (negative; CALL id<0 -> native worker kernel).
+ * Slot-only: CALL byte3 = arg base slot `b`; each layout is element-typed by the
+ * CALL type field.  (Dot product is already MC_OP_VDOT — no builtin needed.) */
+#define MC_PROG_MATMUL      (-1)   /* S[b]=i32{M,K,N}; A[M*K],B[K*N] follow; C[M*N] after */
+#define MC_PROG_FFT         (-2)   /* S[b]=i32{N,dir}; N complex (re,im) in-place; N<=128 */
+#define MC_PROG_CONV        (-3)   /* S[b]=i32{L,K}; sig[L],kern[K] follow; out[L+K-1] after */
+#define MC_PROG_CROSS       (-4)   /* 3-vec: a=S[b..b+2], b=S[b+3..b+5] -> c=S[b+6..b+8] */
+#define MC_PROG_QROOTS      (-5)   /* a,b,c=S[b..b+2] -> (re1,im1,re2,im2)=S[b+3..b+6], f64 */
+
+/* Status additions (bit 7 stays clear — the A9 never writes 0x80). */
+#define MC_ST_NOPROG        0x20   /* CALL of an undefined/unknown id (also: not-yet-implemented) */
+#define MC_ST_PROGFULL      0x40   /* DEF allocation failed */
+
+#define MC_CALL_DEPTH_MAX   8      /* CALL nesting guard (cycle/runaway) */
+
 /* ---- 6502-side registers (CCTL gap, BANK unlock group) ------------------ */
 #define MC_REG_CTL          0xD5C6      /* bit 0 = map the math page over $4000 */
 #define MC_REG_EXEC         0xD5C7      /* W: doorbell; R: {chunk_ready,busy,done} */

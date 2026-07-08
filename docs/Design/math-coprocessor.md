@@ -202,28 +202,79 @@ worker to cut the IRQ→task handoff.
 
 v1 uploads the op-word program inline on every call — for a repeated kernel the
 6502 spends thousands of cycles re-`POKE`ing the same up-to-4 KB program each
-doorbell.  The intended v2 lets a program be **registered once under an id** and
-then invoked by reference:
+doorbell.  v2 lets a program be **registered once under an id** and invoked by
+reference, so a repeat call is just one op word plus the operand slots.  This
+does not shrink the ~23 µs FreeRTOS round-trip floor, but it removes the large
+**6502-side** restaging cost — the decisive win for tight loops of one kernel
+(matmul, FIR/`VMLA`, Horner), exactly where offload pays off.  It also flushes
+less: a run-by-id only dirties the slot lines, so the EXEC flush carries
+operands, not the program.
 
-- **`begin-program(id)` … op words … `end-program`** stores the op-word stream
-  under `id` in an A9-side table (keyed by id; the program is the 4-byte op
-  stream, no operand data).
-- **Predefined kernels ship as negative ids** — matrix multiply, Horner
-  (polynomial eval), and similar — compiled into the worker so they cost no
-  upload at all.  Positive ids are caller-defined.
-- **`run(id)`** executes the stored program with the inputs already in the
-  chunk's slots and leaves results in the slots — the 6502 stages only the
-  operand data, not the program.
+**Entirely A9-side — no fabric change.**  The PL treats op words as opaque data;
+all interpretation is in the worker, so v2 is a `mathcop.{c,h}` release shipped
+by rebuilding the ELF, not a bitstream respin.
 
-This does not shrink the ~23 µs FreeRTOS round-trip floor, but it removes the
-large **6502-side** per-call cost of restaging the program — the decisive win
-for tight loops of one kernel (matmul, FIR/`VMLA`, Horner over a coefficient
-table), which is exactly where offload pays off.
+### Commands are control ops in the op stream
 
-Fits the existing ABI as a program-id path alongside inline op words: e.g. a
-program-id field in the page header (0 = run the inline op words as today,
-non-zero = run stored program), with `begin`/`end`/`run` carried on a control
-register or reserved op-count encodings.  Left for v2; v1 is inline-only.
+No new registers or header fields.  Commands ride the op stream as control ops,
+using the free `0x21-0x24` block (`0x20` is `CVT`, `0x28-0x2E` the integer
+bitwise ops).  Byte 0 `[7:6]` = element type (live on `CALL`), `[5:0]` = op;
+bytes 1-2 = `s16` id; byte 3 = `CALL` arg-base slot.
+
+| op | id | effect |
+|----|----|--------|
+| `CALL` `0x21` | `>0` user / `<0` builtin | run the program against the current slots (nestable, depth ≤ 8) |
+| `DEF` `0x22` | `>0` | begin capturing op words under `id` … |
+| `END` `0x23` | — | … until here; store the captured body |
+| `UNDEF` `0x24` | `>0` | free a user program |
+
+`id = 0` on `CALL` is illegal (`NOPROG`).  `DEF`s don't nest.  Because `CALL` is
+just an op word, a stored program can call another — **composition falls out**.
+
+### ID space & storage
+
+`0` = inline (v1, unchanged); `>0` = user program (interpreted op-word stream);
+`<0` = predefined builtin (native C).  User programs live in a **per-task**
+table (worker knows chunk→task), a growable heap array that **doubles** on
+growth (no fixed cap — a linear-scan lookup and one-time copy into the
+interpreter's local buffer make static no faster).
+
+### Builtins (negative ids, native C, slot-only)
+
+`CALL` passes an arg-base slot `b` in byte 3; each builtin reads an `i32` param
+header at `S[b]` then float data in the following slots, element-typed by the
+`CALL` type field, all within the 256-slot region.  Dot product is already
+`VDOT`, so no builtin for it.
+
+| id | kernel | slot layout (from base `b`) |
+|----|--------|------------------------------|
+| `MATMUL` `-1` | `C = A·B` | `S[b]=i32{M,K,N}`; `A[M*K]`, `B[K*N]` follow; `C[M*N]` after |
+| `FFT` `-2` | N-pt complex, in-place | `S[b]=i32{N,dir}`; `N` complex `(re,im)` follow; N ≤ 128 |
+| `CONV` `-3` | convolution | `S[b]=i32{L,K}`; `sig[L]`, `kern[K]` follow; `out[L+K-1]` after |
+| `CROSS` `-4` | 3-vector `a×b` | `a=S[b..b+2]`, `b=S[b+3..b+5]` → `c=S[b+6..b+8]` |
+| `QROOTS` `-5` | roots of `a·x²+b·x+c` | `a,b,c=S[b..b+2]` → `(re₁,im₁,re₂,im₂)=S[b+3..b+6]`, f64 |
+
+### Status additions
+
+`NOPROG 0x20` (CALL of an unknown id), `PROGFULL 0x40` (DEF out of memory) —
+both keep bit 7 clear.  `MC_ABI_VERSION` bumps to 2 when the run path is live.
+
+### Idioms
+
+```
+first use:   [DEF 5][ …kernel ops… ][END][CALL 5,b=0]   define + run, one doorbell
+thereafter:  set input slots ; [CALL 5,b=0]             one op word, no restage
+builtin:     set A,B,dims ; [CALL -1(f64),b=0]          matmul, zero upload ever
+```
+
+### Implementation status
+
+Scaffolded in `mathcop.{c,h}` (builds, v1 regressions green): the full ABI, the
+per-task table (`mc_prog_store/find/free`, doubling), and control-op dispatch —
+**`DEF`/`END`/`UNDEF` (program storage) work**.  Stubbed: **`CALL` (run)** —
+needs `mc_run_chunk`'s op loop factored into a reusable `run(ops,nops)` entry so
+`CALL` can recurse — and the five **builtin kernels**.  A v2 stream that `CALL`s
+reports `NOPROG` until those land.
 
 ## Implementation map
 
