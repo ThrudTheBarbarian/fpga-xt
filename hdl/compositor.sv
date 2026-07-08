@@ -195,6 +195,14 @@ module compositor #(
     logic [5:0]  unit_idx;            // source-unit index (0..MAX_UNITS-1)
     logic [3:0]  pair_idx;            // 0..15 for mode 8/9; 0..7 for 16-px modes; 0..3 for 8-px modes
     logic [8:0]  blank_col;           // S_BLANK_FILL pair counter (0..BLANK_PAIRS)
+    // Running on-screen atari-x of the current pair's LOW pixel.  Equals
+    // unit_offset+pair_offset but is maintained as a REGISTER (+2 per emitted
+    // pair, contiguous across units — HSCROL shifts only the source fetch, never
+    // the destination).  This pulls the unit_idx*width multiply + pair add OUT of
+    // the clk_sys-critical unit_idx -> pm_presence -> col_presH cone (the module's
+    // own note: pm_presence from a register meets 150 MHz).  No latency change:
+    // the counter holds the CURRENT pair's x, so the emit stays same-cycle.
+    logic [9:0]  atari_x_lo_q;
 
     // Active playfield is 384 px = 192 pairs (matches the antic_top render-tap
     // LB_WIDTH).  A blank/unsupported row issues this many COLBK pairs.
@@ -848,8 +856,9 @@ module compositor #(
     wire [FB_ADDR_W-1:0] unit_offset = unit_idx * unit_width_atari(cur_mode);
     wire [FB_ADDR_W-1:0] pair_offset = {pair_idx, 1'b0};        // 2 atari px / pair
     wire [FB_ADDR_W-1:0] set_addr    = row_base + unit_offset + pair_offset;
-    // Atari-x of the LOW byte of the current pair (within the row).
-    wire [9:0]           pair_atari_x_lo = unit_offset[9:0] + pair_offset[9:0];
+    // On-screen atari-x of the current pair's low pixel is now the registered
+    // counter atari_x_lo_q (declared above) — it replaces the old combinational
+    // (unit_offset+pair_offset) so the pm_presence/overlay cone starts from a FF.
 
     // P/M shape addresses with 1-line / 2-line resolution + VDELAY.
     // 1-line (DMACTL[4]=1):
@@ -924,6 +933,7 @@ module compositor #(
             cur_sub_row     <= 4'h0;
             unit_idx        <= 6'd0;
             pair_idx  <= 4'd0;
+            atari_x_lo_q    <= 10'd0;
             cur_byte        <= 8'h0;
             cur_code        <= 8'h0;
             cur_code_bit7   <= 1'b0;
@@ -987,6 +997,7 @@ module compositor #(
                     cur_sub_row <= meta_sub_row;
                     unit_idx    <= 6'd0;
                     pair_idx    <= 4'd0;
+                    atari_x_lo_q<= 10'd0;         // row start: first pair's LOW px is atari-x 0
                     pm_fetch_idx<= 3'd0;
                     // M11 / M11c / M11d HSCROL state. atari px shift =
                     // 2*hscrol = 0..30. The byte_offset / sub_atari split
@@ -1081,12 +1092,13 @@ module compositor #(
                     pair_idx  <= 4'd0;
                     cmd_tag   <= `BUS_TAG_SET;
                     cmd_addr  <= set_addr;
-                    cmd_data  <= apply_pm_overlay(raw_f, pair_atari_x_lo);
+                    cmd_data  <= apply_pm_overlay(raw_f, atari_x_lo_q);
                     cmd_valid <= 1'b1;
                     col_raw_q   <= raw_f;           // combined + accumulated next cycle
-                    col_presL_q <= pm_presence(pair_atari_x_lo);
-                    col_presH_q <= pm_presence(pair_atari_x_lo + 10'd1);
+                    col_presL_q <= pm_presence(atari_x_lo_q);
+                    col_presH_q <= pm_presence(atari_x_lo_q + 10'd1);
                     col_valid_q <= 1'b1;
+                    atari_x_lo_q<= atari_x_lo_q + 10'd2;   // advance to the next pair's low px
                     state     <= S_ISSUE_SET;
                 end
 
@@ -1134,12 +1146,13 @@ module compositor #(
                     pair_idx  <= 4'd0;
                     cmd_tag   <= `BUS_TAG_SET;
                     cmd_addr  <= set_addr;
-                    cmd_data  <= apply_pm_overlay(idx_h, pair_atari_x_lo);
+                    cmd_data  <= apply_pm_overlay(idx_h, atari_x_lo_q);
                     cmd_valid <= 1'b1;
                     col_raw_q   <= raw_h;           // combined + accumulated next cycle
-                    col_presL_q <= pm_presence(pair_atari_x_lo);
-                    col_presH_q <= pm_presence(pair_atari_x_lo + 10'd1);
+                    col_presL_q <= pm_presence(atari_x_lo_q);
+                    col_presH_q <= pm_presence(atari_x_lo_q + 10'd1);
                     col_valid_q <= 1'b1;
+                    atari_x_lo_q<= atari_x_lo_q + 10'd2;   // advance to the next pair's low px
                     state     <= S_ISSUE_SET;
                 end
 
@@ -1247,12 +1260,13 @@ module compositor #(
                         pair_idx  <= 4'd0;
                         cmd_tag   <= `BUS_TAG_SET;
                         cmd_addr  <= set_addr;
-                        cmd_data  <= apply_pm_overlay(raw_t, pair_atari_x_lo);
+                        cmd_data  <= apply_pm_overlay(raw_t, atari_x_lo_q);
                         cmd_valid <= 1'b1;
                         col_raw_q   <= raw_t;           // combined + accumulated next cycle
-                        col_presL_q <= pm_presence(pair_atari_x_lo);
-                        col_presH_q <= pm_presence(pair_atari_x_lo + 10'd1);
+                        col_presL_q <= pm_presence(atari_x_lo_q);
+                        col_presH_q <= pm_presence(atari_x_lo_q + 10'd1);
                         col_valid_q <= 1'b1;
+                        atari_x_lo_q<= atari_x_lo_q + 10'd2;   // advance to the next pair's low px
                         state     <= S_ISSUE_SET;
                     end
                 end
@@ -1299,10 +1313,10 @@ module compositor #(
                         end else begin : sblk_issue_advance
                             logic [15:0] raw_a;       // PF-bit form (collision)
                             logic [15:0] idx_a;       // stored value
-                            logic [9:0]  next_x_lo;
                             logic [3:0]  next_p;
                             next_p    = pair_idx + 4'd1;
-                            next_x_lo = unit_offset[9:0] + {next_p, 1'b0};
+                            // atari_x_lo_q already holds THIS emit's low-px x (it was
+                            // advanced +2 by the previous emit) — no recompute needed.
                             // Byte-source modes use the windowed packer;
                             // char modes use either the windowed text
                             // packer (HSCROL) or legacy pack_pair (no HSCROL).
@@ -1337,11 +1351,12 @@ module compositor #(
                             pair_idx <= next_p;
                             cmd_addr <= row_base + unit_offset
                                       + {next_p, 1'b0};
-                            cmd_data <= apply_pm_overlay(idx_a, next_x_lo);
+                            cmd_data <= apply_pm_overlay(idx_a, atari_x_lo_q);
                             col_raw_q   <= raw_a;           // combined + accumulated next cycle
-                            col_presL_q <= pm_presence(next_x_lo);
-                            col_presH_q <= pm_presence(next_x_lo + 10'd1);
+                            col_presL_q <= pm_presence(atari_x_lo_q);
+                            col_presH_q <= pm_presence(atari_x_lo_q + 10'd1);
                             col_valid_q <= 1'b1;
+                            atari_x_lo_q<= atari_x_lo_q + 10'd2;   // advance to the next pair's low px
                         end
                     end
                 end
