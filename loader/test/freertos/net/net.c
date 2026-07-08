@@ -143,13 +143,18 @@ static void net_task(void *arg)
     }
 }
 
+/* set once by net_init; sockets.c gates the PL0 socket ABI on it — lwIP's
+ * core lock doesn't exist until the stack starts, so touching it before
+ * netup is a hard assert (kernel death), not an error return */
+static volatile int g_net_started;
+int net_is_up(void) { return g_net_started; }
+
 void net_init(void)
 {
     /* idempotent: SYS_net_up (the /boot/20-Networking script) may run more than
      * once; the stack starts exactly once per boot */
-    static int net_started;
-    if (net_started) return;
-    net_started = 1;
+    if (g_net_started) return;
+    g_net_started = 1;
     /* priority 4 — ABOVE PL0 processes (3) and the tcpip thread (4): the GEM RX
      * pump must preempt apps to service the hardware, else a busy/polling process
      * starves receive (packets sit in the MAC until the app blocks). It blocks in

@@ -11,6 +11,7 @@
  * free the moment we return. */
 #include "lwip/api.h"
 #include "lwip/dns.h"
+#include "lwip/ip.h"        /* SOF_REUSEADDR */
 #include "lwip/prot/ip.h"   /* IP_PROTO_ICMP */
 #include "lwip/inet_chksum.h"   /* inet_chksum — recompute ping's ICMP checksum */
 #include "FreeRTOS.h"
@@ -35,10 +36,17 @@ static xt_sock g_socks[MAXSOCK];
 
 static xt_sock *slot_of(int si) { return (si >= 0 && si < MAXSOCK && g_socks[si].conn) ? &g_socks[si] : 0; }
 
+/* the stack starts only when netup runs (net_init); every ABI entry that
+ * could touch lwIP before then must fail politely instead of tripping the
+ * missing-core-lock assert. Sockets can only exist via xt_sock_new, so
+ * gating it (plus the socketless resolve path) covers the whole surface. */
+extern int net_is_up(void);
+
 /* -> socket index (NOT an fd — frtos_os wraps it), or -1 */
 /* type: 1 = TCP, 2 = UDP, 3 = RAW/ICMP (ping) */
 int xt_sock_new(int type)
 {
+    if (!net_is_up()) return -1;
     for (int i = 0; i < MAXSOCK; i++) {
         if (g_socks[i].conn) continue;
         struct netconn *c = (type == 3)
@@ -83,6 +91,12 @@ int xt_sock_bind(int si, unsigned ip_be, unsigned port)
     if (!s) return -1;
     ip_addr_t a;
     ip_addr_set_ip4_u32_val(a, ip_be);
+    /* every XTOS bind is a server socket, and a restarted server must be able
+     * to rebind a port whose old accepted connections sit in TIME_WAIT (the
+     * PL0 shim's SO_REUSEADDR is a no-op) — so set SOF_REUSEADDR here,
+     * unconditionally. Without it a killed daemon can't restart for 2*MSL. */
+    if (s->conn->pcb.ip)
+        ip_set_option(s->conn->pcb.ip, SOF_REUSEADDR);
     return netconn_bind(s->conn, ip_be ? &a : IP_ANY_TYPE, (u16_t)port) == ERR_OK ? 0 : -1;
 }
 
@@ -272,6 +286,7 @@ long xt_sock_avail(int si)
 int xt_sock_resolve(const char *name, unsigned *ip_be)
 {
     ip_addr_t a;
+    if (!net_is_up()) return -1;
     if (netconn_gethostbyname(name, &a) != ERR_OK) return -1;
     *ip_be = ip_addr_get_ip4_u32(&a);
     return 0;

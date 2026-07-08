@@ -15,6 +15,9 @@
 #define LWIP_NETCONN               1     /* the PL0 socket ABI bridges to netconn */
 #define LWIP_SO_RCVTIMEO           1     /* blocking recv ticks for kill/^C/^Z */
 #define LWIP_SO_RCVBUF             1     /* recv_avail -> FIONREAD/poll */
+#define SO_REUSE                   1     /* honour SOF_REUSEADDR: a restarted
+                                          * server rebinds over TIME_WAIT pcbs
+                                          * (sockets.c sets it on every bind) */
 #define LWIP_NETIF_LOOPBACK        1     /* 127.0.0.1 (the slirp-free test rig) */
 #define LWIP_HAVE_LOOPIF           1
 #define MEMP_NUM_NETCONN           48
