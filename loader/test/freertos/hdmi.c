@@ -311,10 +311,74 @@ static void hdmi_watch_task(void *arg)
     }
 }
 
+/* ---- HDMI PL-side diagnostic monitor --------------------------------------
+ * Samples the GP0 DIAG counters fast (GP0 ONLY — no I2C, which is itself a
+ * blank-trigger suspect; no XADCIF read either — uses the cached die temp so it
+ * never contends with the temp task's FIFO) and klogs a one-line event the
+ * INSTANT a plane-fetch overrun/abort, a clk_pix MMCM unlock, or a pixel-clock /
+ * frame STALL appears — with the die temp at that moment.  Turns "HDMI dropped"
+ * into "OVERRUN die=78C frm=.." so the cause + thermal context are captured AT
+ * the event, not inferred from after-the-fact aggregates.  Correlate its kmsg
+ * lines with hdmi_watch's RxSense-loss lines: a PL event = pipeline starvation /
+ * clock dropout; an RxSense loss with NO PL event = the sink/electrical path.
+ * DIAG layout (see fpga_xt_top diag_word/diag6/diag7): d0[1]=clk_pix lock,
+ * [15:8]=pix-alive (wraps fast), [23:16]=mmcm2 unlock count, [31:24]=frame count;
+ * d6={xl_abort[31:16],desk_abort[15:0]}; d7={desk_overrun[31:16],xl_overrun[15:0]}. */
+#define DIAG_WORD(off) (*(volatile uint32_t *)(0x43C00400u + (off)))
+static void hdmi_diag_mon_task(void *arg)
+{
+    (void)arg;
+    extern void klog(const char *); extern void klog_u(unsigned);
+    extern int  g_temp_die;                          /* cached XADC die milli-C (temp task) */
+    uint32_t d0p = DIAG_WORD(0x00), d6p = DIAG_WORD(0x14), d7p = DIAG_WORD(0x18);
+    unsigned  alv_p = (d0p >> 8) & 0xFF, frm_p = (d0p >> 24) & 0xFF, frm_stall = 0;
+    TickType_t last_evt = 0;
+    for (;;) {
+        vTaskDelay(pdMS_TO_TICKS(15));
+        uint32_t d0 = DIAG_WORD(0x00), d3 = DIAG_WORD(0x08),
+                 d6 = DIAG_WORD(0x14), d7 = DIAG_WORD(0x18);
+        int      lk2   = (d0 >> 1) & 1;
+        unsigned alv   = (d0 >> 8) & 0xFF, unlk = (d0 >> 16) & 0xFF, frm = (d0 >> 24) & 0xFF;
+        unsigned d_abt = d6 & 0xFFFF, x_abt = d6 >> 16, d_ovr = d7 >> 16, x_ovr = d7 & 0xFFFF;
+
+        unsigned pix_stall = (alv == alv_p);         /* 8-bit @148 MHz wraps in µs; unchanged/15 ms = stopped */
+        if (frm == frm_p) frm_stall++; else frm_stall = 0;
+
+        int fire = (!lk2)
+                 | (unlk  != ((d0p >> 16) & 0xFF))
+                 | (d_ovr != (d7p >> 16)) | (x_ovr != (d7p & 0xFFFF))
+                 | (d_abt != (d6p & 0xFFFF)) | (x_abt != (d6p >> 16))
+                 | pix_stall | (frm_stall >= 3);
+        if (fire) {
+            TickType_t now = xTaskGetTickCount();
+            if ((now - last_evt) >= pdMS_TO_TICKS(50)) {          /* coalesce bursts */
+                last_evt = now;
+                klog("[hdmi-mon] ");
+                if (!lk2)                                  klog("CLKPIX-UNLOCKED ");
+                if (unlk  != ((d0p >> 16) & 0xFF))         klog("mmcm2-unlk+ ");
+                if (d_ovr != (d7p >> 16) || x_ovr != (d7p & 0xFFFF)) klog("OVERRUN ");
+                if (d_abt != (d6p & 0xFFFF) || x_abt != (d6p >> 16)) klog("abort ");
+                if (pix_stall)                             klog("PIXCLK-STALL ");
+                if (frm_stall >= 3)                        klog("FRAME-STALL ");
+                klog("die="); klog_u(g_temp_die > -1000000 ? (unsigned)(g_temp_die / 1000) : 0); klog("C");
+                klog(" lk2="); klog_u((unsigned)lk2);
+                klog(" frm=");  klog_u(frm);
+                klog(" unlk="); klog_u(unlk);
+                klog(" ovr(d/x)="); klog_u(d_ovr); klog("/"); klog_u(x_ovr);
+                klog(" abt(d/x)="); klog_u(d_abt); klog("/"); klog_u(x_abt);
+                klog(" hp="); klog_u(d3);                          /* HP0/HP3 AR+beat activity (diag3) */
+                klog("\r\n");
+            }
+        }
+        d0p = d0; d6p = d6; d7p = d7; alv_p = alv; frm_p = frm;
+    }
+}
+
 void hdmi_watch_init(void)
 {
     s_i2c_mtx = xSemaphoreCreateMutex();
-    xTaskCreate(hdmi_watch_task, "hdmiwatch", 512, 0, 1, 0);
+    xTaskCreate(hdmi_watch_task,    "hdmiwatch", 512, 0, 1, 0);
+    xTaskCreate(hdmi_diag_mon_task, "hdmimon",   768, 0, 1, 0);   /* PL-side drop diagnostics */
 }
 
 #else  /* qemu: no SiI9022/I2C modelled */
