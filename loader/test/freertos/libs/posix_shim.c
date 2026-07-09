@@ -445,6 +445,37 @@ static unsigned g_child_opened;          /* fds the fake child really opened */
 static unsigned g_cloexec;               /* fds marked close-on-exec */
 static unsigned g_nonblock;              /* fds marked O_NONBLOCK (fcntl F_SETFL) */
 
+/* vfork window keeps the child's env + cwd OFF the parent. Between vfork() and
+ * exec() a fake child (e.g. dropbear's execchild) does `environ[0]=NULL` + setenv
+ * and `chdir(pw_dir)`; on the old model those mutated the PARENT (sshd-session) and
+ * derailed it before it ever reached execve. Now: vfork() points `environ` at a
+ * shallow copy the child may freely mutate, and chdir is RECORDED not applied.
+ * execve hands both to the child via xt_spawn_aux; the parent's environ is restored
+ * on the way back out (vfork_return via execve/_exit). */
+static char **g_env_orig;                /* parent environ, restored on child-return */
+static char **g_env_scratch;             /* the copy the fake child mutates */
+static char g_child_cwd[256];            /* recorded chdir target ("" = none) */
+
+/* called from the vfork asm (before the register snapshot) — set up the env scratch
+ * so the child's environ writes never touch the parent. `used`: only the asm refs it. */
+__attribute__((used)) static void vfork_prep(void)
+{
+    g_child_cwd[0] = 0;
+    g_env_orig = environ;
+    int n = 0; if (environ) while (environ[n]) n++;
+    g_env_scratch = (char **)malloc((n + 1) * sizeof(char *));
+    if (g_env_scratch) {
+        for (int i = 0; i < n; i++) g_env_scratch[i] = environ[i];
+        g_env_scratch[n] = 0;
+        environ = g_env_scratch;         /* child mutates the copy; parent's is safe */
+    }
+}
+
+static void vfork_env_restore(void)      /* parent resumes with its own environ */
+{
+    if (g_env_scratch) { environ = g_env_orig; free(g_env_scratch); g_env_scratch = 0; }
+}
+
 static void redir_reset(void)
 {
     for (int i = 0; i < 3; i++) g_redir[i] = -1;
@@ -734,6 +765,19 @@ int futimens(int fd, const struct timespec *ts)
 /* ---- plain-path fs calls newlib routes nowhere ---------------------------- */
 int chdir(const char *path)
 {
+    if (g_vfork_armed) {
+        /* record the child's cwd; do NOT move the parent. Only accept a real
+         * directory so a caller's fallback (dropbear: chdir("/") on failure) still
+         * fires on a bad target — matching real chdir semantics. */
+        struct xt_stat xs;
+        if (path && sys_stat(path, &xs) == 0 && (xs.mode & XT_S_IFMT) == XT_S_IFDIR) {
+            int i = 0;
+            while (path[i] && i < (int)sizeof g_child_cwd - 1) { g_child_cwd[i] = path[i]; i++; }
+            g_child_cwd[i] = 0;
+            return 0;
+        }
+        errno = ENOENT; return -1;
+    }
     if (sys_chdir(path) < 0) { errno = ENOENT; return -1; }
     return 0;
 }
@@ -938,6 +982,9 @@ static int g_kids[MAX_KIDS];
 __attribute__((naked)) pid_t vfork(void)
 {
     __asm__ volatile(
+        "push  {lr}              \n"   /* set up the env scratch before snapshotting; */
+        "bl    vfork_prep        \n"   /* vfork_prep preserves r4-r11 (C ABI), r0-r3 dead */
+        "pop   {lr}              \n"
         "ldr   r0, 1f            \n"
         "2: add r0, pc, r0       \n"
         "stmia r0, {r4-r11}      \n"
@@ -981,6 +1028,7 @@ void _exit(int code)
 {
     if (g_vfork_armed) {
         g_vfork_armed = 0;
+        vfork_env_restore();             /* parent gets its environ back (child never exec'd) */
         redir_reset();                   /* drop recorded redirects + deferred closes */
         int pid = GHOST_BASE + (g_ghost_seq++ & 0x3fff);
         for (int i = 0; i < MAX_KIDS; i++)
@@ -1005,11 +1053,13 @@ int execve(const char *path, char *const argv[], char *const envp[])
      * envp is carried so the child inherits our environment. */
     int fds[4] = { g_redir[0], g_redir[1], g_redir[2],
                    (int)(g_child_closed | g_cloexec) };
-    pid = sys_spawn_fd(path, (char **)argv, fds, (char **)(envp ? envp : environ));
-    if (pid < 0) { errno = ENOENT; return -1; }
+    const char *cwd = g_child_cwd[0] ? g_child_cwd : (const char *)0;
+    pid = sys_spawn_fd_cwd(path, (char **)argv, fds, (char **)(envp ? envp : environ), cwd);
+    if (pid < 0) { errno = ENOENT; return -1; }   /* _exit's armed path restores environ */
 
     if (g_vfork_armed) {                 /* "child" side of a vfork pair */
         g_vfork_armed = 0;
+        vfork_env_restore();             /* child took its env copy; parent gets its own back */
         redir_reset();                   /* child owns copies now; flush deferred closes */
         kids_add((int)pid);
         vfork_return((int)pid);          /* no return */

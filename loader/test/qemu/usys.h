@@ -11,8 +11,10 @@
 struct os_fbinfo { int w, h, stride; unsigned long addr; };
 
 /* spawn_fd aux: the fds[4] the kernel already reads, plus the env array to hand
- * the child (SYS_spawn_fd's da2 points here — kernel reads envp at offset 16) */
-struct xt_spawn_aux { int fds[4]; char **envp; };
+ * the child (SYS_spawn_fd's da2 points here — kernel reads envp at offset 16) and
+ * an optional cwd for the child (offset 20 — set by a vfork-window chdir; NULL =
+ * inherit the spawner's cwd). Keeps the child's cwd/env off the PARENT. */
+struct xt_spawn_aux { int fds[4]; char **envp; const char *cwd; };
 
 static inline long __syscall(long n, long a0, long a1, long a2)
 {
@@ -77,11 +79,16 @@ static inline long sys_pipe(int fd[2]) { return __syscall(SYS_pipe, (long)fd, 0,
 /* spawn with the child's stdio wired to parent fds (argv NULL-terminated; -1 = console).
  * fds[3] = do-NOT-inherit bitmask for the parent's other pipe fds (cloexec analogue);
  * pipe fds not masked out are inherited by the child at the SAME slot. */
-static inline long sys_spawn_fd(const char *path, char **argv, const int fds[4], char **envp)
+static inline long sys_spawn_fd_cwd(const char *path, char **argv, const int fds[4],
+                                    char **envp, const char *cwd)
 {
-    struct xt_spawn_aux aux = { { fds[0], fds[1], fds[2], fds[3] }, envp };
+    struct xt_spawn_aux aux = { { fds[0], fds[1], fds[2], fds[3] }, envp, cwd };
     return __syscall(SYS_spawn_fd, (long)path, (long)argv, (long)&aux);
 }
+/* cwd=NULL (inherit the spawner's) — the common case; the vfork/exec path uses
+ * sys_spawn_fd_cwd to hand the child a recorded chdir target. */
+static inline long sys_spawn_fd(const char *path, char **argv, const int fds[4], char **envp)
+{ return sys_spawn_fd_cwd(path, argv, fds, envp, (const char *)0); }
 /* duplicate a pipe end onto a chosen fd slot (refcounted) */
 static inline long sys_dup2(int oldfd, int newfd)
 { return __syscall(SYS_dup2, oldfd, newfd, 0); }

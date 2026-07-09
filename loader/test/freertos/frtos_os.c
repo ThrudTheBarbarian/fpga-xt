@@ -51,7 +51,7 @@ typedef struct {
  * process fd tables (a child's stdio can be a pipe end via SYS_spawn_fd), so a
  * crashed process's ends release on reap and EOF/EPIPE propagate for free.
  * All pipe ops run in task context (they block / take the FreeRTOS heap). */
-#define MAXPIPE     8
+#define MAXPIPE     256
 #define PIPE_BUF_SZ 4096
 typedef struct {
     int used;
@@ -2676,6 +2676,13 @@ static int proc_launch(int slot, xtld_obj *obj, uintptr_t entry,
         p->cwd[i] = 0;
         if (!p->cwd[0]) { p->cwd[0] = '/'; p->cwd[1] = 0; }
     } else { p->cwd[0] = '/'; p->cwd[1] = 0; }
+    /* an explicit spawn-spec cwd (xt_spawn_aux.cwd, offset 20 = word 5) overrides
+     * inheritance: a vfork-window chdir records the child's intended cwd there
+     * instead of moving the PARENT. NULL = inherit (above). */
+    if (stdfds) {
+        const char *scwd = *(const char *const *)((const int *)stdfds + 5);
+        if (scwd) { int i = 0; while (scwd[i] && i < (int)sizeof p->cwd - 1) { p->cwd[i] = scwd[i]; i++; } p->cwd[i] = 0; }
+    }
     p->done = xSemaphoreCreateBinary();
     if (!p->done) return -1;
     /* T2-b/c: private address space — demand heap + COW(libc data, synthetic, and

@@ -348,7 +348,14 @@ $(BUILD)/toybox.so: $(BUILD)/toybox/objects.list $(BUILD)/posix_shim.o $(BUILD)/
 # stays pristine); the link mirrors toybox.so (posix/net shim + dropbear_glue over libc.so).
 # __aeabi_*/libc stay undefined = kernel-resolved dynamic imports. dropbearkey.o is excluded
 # (its own main; the key generator is packaged separately).
-$(BUILD)/dropbear/objects.list:
+# Rebuild the dropbear objects whenever the submodule sources, the port config, or
+# the build script change — build-dropbear.sh recompiles the whole set. Without these
+# deps the objects only rebuilt when objects.list was MISSING, so a submodule bump or
+# config edit left stale .o's linked in (this exact staleness masked a fixed ssh-exec
+# bug: dropbear ran an old exec dispatch until a forced recompile). See docs/Design.
+$(BUILD)/dropbear/objects.list: tools/build-dropbear.sh \
+    $(wildcard ../third_party/dropbear/src/*.c) $(wildcard ../third_party/dropbear/src/*.h) \
+    $(wildcard dropbear-config/*.h)
 	tools/build-dropbear.sh
 $(BUILD)/dropbear_glue.o: test/freertos/libs/dropbear_glue.c | $(BUILD)
 	$(ARMCC) -marm -mcpu=cortex-a9 -mfloat-abi=softfp -mfpu=neon-vfpv3 -fpic -Os -fno-builtin \
