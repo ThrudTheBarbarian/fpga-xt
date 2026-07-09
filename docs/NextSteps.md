@@ -402,6 +402,29 @@ loader-wx-multi-segment.) Open:
 - none
 
 
+## Thermal / cooling (closed-loop fan)
+
+- **Closed-loop fan control (A9 curve → STM32 PWM/tach, failsafe-to-100%).** HW
+  outlet added on the motherboard (5V / GND / Tach / PWM); Tach+PWM wired to the
+  STM32 companion. Planned fan: **Noctua NF-A4x20 5V PWM**, mounted in the case
+  next to the Zynq for direct heatsink impingement — the heatsink is
+  convection-limited (a *breath* moved the die ~1 °C; the fix that took it 78→66 °C
+  was passive), so steady airflow should pull the ~66 °C sustained-load temp well
+  into the 50s. Design follows PS-does-config / companion-does-plumbing: the **A9
+  reads the XADC junction temp** (the real silicon, ~20 °C above the I2C board
+  sensor — the honest input) and runs a **tunable fan curve** (quiet floor below
+  ~55 °C, ramp toward ~70), pushing a duty byte to the STM32 over the companion
+  SPI link each period; the **STM32 makes 25 kHz PWM + reads tach** (input
+  capture) and reports RPM back. **Non-negotiable failsafe on the STM32:** spin
+  **100 %** at power-up and whenever the A9 update goes silent past a short
+  watchdog (hang / reboot / cold-load) — the safe failure of a thermal loop is
+  LOUD, not off; a crashed controller must never be able to cook the chip. Surface
+  tach RPM + current target in `/proc` (extend `/OS/proc/temp` or add
+  `/OS/proc/fan`) next to the die/board temps + peak-hold, so a `cat` shows the
+  loop converging. *(gating: needs the case/enclosure to physically mount the fan
+  + the motherboard to exist; src: STM32F411 companion — docs/OS/sio-bridge.md;
+  XADC die temp in /OS/proc/temp; "PS does config, PL/companion = plumbing")*
+
 ## Math coprocessor (A9-offloaded FPU + integer + SIMD)
 
 Built: PL math page + doorbell (sim-validated, `make mathcop`) and the A9
