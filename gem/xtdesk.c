@@ -291,7 +291,7 @@ static void net_list(browser *b) {                    // entries from `lsc <serv
     char path[300]; snprintf(path, sizeof path, "/%s", b->rel);
     int fd = fuji_connect();
     char ln[640];
-    if (fd >= 0 && fuji_cmd(fd, "lsc %d %s", b->server_id, path) == 0 &&
+    if (fd >= 0 && fuji_cmd(fd, "lsc %d \"%s\"", b->server_id, path) == 0 &&
         fuji_readline(fd, ln, sizeof ln) == 1 && ln[0] == '+') {
         while (fuji_readline(fd, ln, sizeof ln) == 1 && strcmp(ln, ".")) {
             if (b->nent >= MAXENT || ln[0] == '-') continue;
@@ -440,7 +440,7 @@ static void net_fetch(browser *b, const char *remote, const char *name) {
     int fd = fuji_connect(), ok = 0;
     char ln[640] = "";
     if (fd < 0) { form_alert(1, "[3][FujiNet daemon not running|(boot script 40-FujiNet)][OK]"); return; }
-    if (fuji_cmd(fd, "fetch %d %s", b->server_id, remote) == 0) {
+    if (fuji_cmd(fd, "fetch %d \"%s\"", b->server_id, remote) == 0) {
         net_progress(name, 0, 0);
         while (fuji_readline(fd, ln, sizeof ln) == 1) {
             if (!strncmp(ln, "+progress ", 10)) {

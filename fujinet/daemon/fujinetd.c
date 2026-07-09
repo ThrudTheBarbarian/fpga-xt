@@ -31,6 +31,8 @@
  *   del-server <id>                       -> +ok  (drops its cache rows too)
  *   quit                                  -> +bye (closes the connection)
  *
+ * Arguments containing spaces are quoted: "like this" (or <like this>).
+ *
  * <server> is a registry id / displayName / host from the `fujinet` table
  * (which supplies port + transport), or a literal
  * "[udp://|tcp://]host[:port]" for unregistered servers (fetch/lsc state
@@ -655,6 +657,8 @@ static void cmd_fetch(const char *spec, const char *remote)
 
 /* --------------------------------------------------------------- server */
 
+/* whitespace split with quoting: "two words" or <two words> arrive as one
+   argument (paths on public TNFS servers really do contain spaces) */
 static int split(char *line, char *argv[], int max)
 {
     int argc = 0;
@@ -664,9 +668,17 @@ static int split(char *line, char *argv[], int max)
             p++;
         if (!*p)
             break;
+        char close = 0;
+        if (*p == '"')      { close = '"'; p++; }
+        else if (*p == '<') { close = '>'; p++; }
         argv[argc++] = p;
-        while (*p && *p != ' ' && *p != '\t')
-            p++;
+        if (close) {
+            while (*p && *p != close)
+                p++;
+        } else {
+            while (*p && *p != ' ' && *p != '\t')
+                p++;
+        }
         if (*p)
             *p++ = '\0';
     }

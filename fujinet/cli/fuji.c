@@ -175,28 +175,33 @@ int main(int argc, char **argv)
         rc = send_line("servers");
     else if ((strcmp(cmd, "ls") == 0 || strcmp(cmd, "lsc") == 0) &&
              (argc == 3 || argc == 4))
-        rc = send_line("%s %s %s", cmd, argv[2], argc == 4 ? argv[3] : "/");
+        rc = send_line("%s \"%s\" \"%s\"", cmd, argv[2],
+                       argc == 4 ? argv[3] : "/");
     else if (strcmp(cmd, "stat") == 0 && argc == 4)
-        rc = send_line("stat %s %s", argv[2], argv[3]);
+        rc = send_line("stat \"%s\" \"%s\"", argv[2], argv[3]);
     else if (strcmp(cmd, "df") == 0 && argc == 3)
-        rc = send_line("df %s", argv[2]);
+        rc = send_line("df \"%s\"", argv[2]);
     else if (strcmp(cmd, "fetch") == 0 && argc == 4) {
         progress = 1;
-        rc = send_line("fetch %s %s", argv[2], argv[3]);
+        rc = send_line("fetch \"%s\" \"%s\"", argv[2], argv[3]);
     }
     else if (strcmp(cmd, "get") == 0 && (argc == 4 || argc == 5)) {
         const char *local = argc == 5 ? argv[4] : path_basename(argv[3]);
         progress = 1;
-        rc = send_line("get %s %s %s", argv[2], argv[3], local);
+        rc = send_line("get \"%s\" \"%s\" \"%s\"", argv[2], argv[3], local);
     }
     else if (strcmp(cmd, "add-server") == 0 && argc >= 3) {
-        char extra[256] = "";
-        for (int i = 3; i < argc && strlen(extra) < 200; i++) {
-            strncat(extra, " ", sizeof extra - strlen(extra) - 1);
-            strncat(extra, argv[i], sizeof extra - strlen(extra) - 1);
+        /* fuji add-server <host[:port]> [udp|tcp|auto] [mountpath] [name…] */
+        const char *transport = argc > 3 ? argv[3] : "auto";
+        const char *mount = argc > 4 ? argv[4] : "/";
+        char name[192] = "";
+        for (int i = 5; i < argc && strlen(name) < 160; i++) {
+            if (name[0])
+                strncat(name, " ", sizeof name - strlen(name) - 1);
+            strncat(name, argv[i], sizeof name - strlen(name) - 1);
         }
-        rc = send_line("add-server %s%s%s", argv[2],
-                       argc > 3 ? "" : " auto /", extra);
+        rc = send_line("add-server \"%s\" %s \"%s\" \"%s\"",
+                       argv[2], transport, mount, name);
     }
     else if (strcmp(cmd, "del-server") == 0 && argc == 3)
         rc = send_line("del-server %s", argv[2]);

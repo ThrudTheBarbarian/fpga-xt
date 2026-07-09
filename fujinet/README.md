@@ -78,6 +78,9 @@ unavailable.
 get <server> <remote> [local] | add-server <host[:port]> <udp|tcp|auto>
 [mountpath] [name…] | del-server <id>`.
 Raw access works too: `printf 'ping\nquit\n' | nc 127.0.0.1 16385`.
+Protocol arguments containing spaces are quoted — `"like this"` or
+`<like this>` — and every client quotes what it sends; public TNFS
+archives really do have paths with spaces in them.
 
 On XTOS both live on the SD (`/OS/bin/fujinetd`, `/OS/bin/fuji`); the
 daemon is started by the boot script `sd/boot/40-FujiNet` →
