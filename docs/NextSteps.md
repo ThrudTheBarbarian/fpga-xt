@@ -47,36 +47,18 @@
      sole provider or defers to libc, never both; `xtld` binds with deterministic
      precedence (single global libc, `RTLD_LOCAL` for the standalone `.so`). Kills
      the ambiguity even before touching signals.
-  2. **Kernel-delivered signals (the real answer).** Move the disposition table +
-     delivery into the kernel: an `rt_sigaction` syscall (one authoritative table),
-     kernel builds a signal frame on the **target task's** user stack at a safe
-     point (syscall-return / preemption) and **EINTRs** any blocked syscall, and a
-     `sigreturn` syscall restores. This dissolves the `read`↔signal coupling —
-     `read()` becomes a *single* thin `svc SYS_read` stub (the duplication just
-     disappears) and signals have one home. **Irreducibly user-side:** only the
-     tiny **sigreturn trampoline** (the handler runs in user context on the user
-     stack) — keep it as a *hidden* libc stub, not a public colliding symbol.
-     - **This also upgrades signals from synchronous → ASYNC (do it).** Today's
-       "deliver at the next syscall" means a CPU-bound loop with no syscalls never
-       sees the signal. Async delivery = run the check-pending-and-inject on the
-       **return-to-PL0 path from the timer tick / preemption**, not only from
-       syscalls. FreeRTOS is already preemptive, so the async *trigger exists* —
-       just wire the same frame-injection into the port's "resume user task" path.
-       Two triggers, one mechanism: CPU-bound task → inject on tick-return (true
-       async); task blocked in a syscall → EINTR + inject on syscall-return. Safe
-       + free because injection only ever happens on the transition **to** user
-       mode (no kernel lock / half-syscall state live). Same as Linux `do_signal()`
-       on both syscall-exit and IRQ-exit — the IRQ-exit hook is what makes it async.
-       The synchronous-only scheme is just this minus the tick-return hook.
-     - **Concrete motivating case: aesdesk can't be killed.** The desktop parks in
-       `aes_wait(&ev, -1)` → `input_next_event`, a blocking input read with no
-       timeout. `SYS_kill` only fires at *syscall entry* (frtos_os.c:2446), and a
-       task asleep in an unchecked infinite wait never reaches another entry — so
-       `killed` sits unhonoured and the ONLY way to restart the desktop is a board
-       reboot (defeats the SD hot-swap workflow — see [[desktop_runs_from_sd]]).
-       Async delivery on the tick-return path reaches it; the sync scheme never can.
-       (Cheap interim if ever needed before the full rework: give the desktop's
-       `aes_wait` a finite timeout so it re-enters a syscall periodically.)
+  2. **Kernel-delivered signals — DONE (2026-07-10, commit 9aba845).** Real
+     per-process disposition table in the kernel + rt_sigaction/rt_sigprocmask/
+     sigreturn/sig_async syscalls + a hidden sigreturn trampoline. All three
+     delivery paths qemu-validated (`/bin/sigtest` 3/3): sync at syscall-return,
+     ASYNC into a CPU-bound loop (tick-return hook), and EINTR of a blocked syscall.
+     **aesdesk-can't-kill is FIXED** — it blocks in `aes_wait` (a syscall), so EINTR
+     now delivers. Full design + ABI: docs/Design/process-signal-model.md.
+     Remaining (staged, gated on HW/dropbear testing): kernel SIGCHLD-on-exit +
+     SIGWINCH, then delete the `g_sigact` soft-dispatch (dual-write today keeps
+     dropbear's SIGCHLD reaping working); symbol dedup (localize newlib
+     read/signal/kill/execve); SA_RESTART. **HW-validate**: cold-load
+     `build/freertos-hw.elf`, run `/bin/sigtest`, confirm aesdesk is killable.
   The shim still has a legit job afterwards (the POSIX *shape* newlib lacks —
   `opendir`/`readdir` over `getdents`, stdio buffering, `spawn`/`wait`, termios —
   none of it `read`-coupled). Cost/why-not-done-first: real frame-injection
