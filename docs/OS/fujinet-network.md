@@ -104,12 +104,20 @@ should port nearly unchanged).
   TCP, as `tnfsh` does). `path` is the TNFS mount point requested from
   that server.
 
-### 3. netcache — cache-authoritative downloads  ⬜ proposed
+### 3. netcache — cache-authoritative downloads  ◐ daemon half built
 
 TNFS is slow (~1 RTT per 512 B), so the network is for *browsing and
 fetching*, never for launching. Fetched files live in **`/Cache`**, a
-plain directory at the top level of the SD (a peer to `OS`) — invisible by
-construction, since nothing at `/` shows unless explicitly registered.
+plain directory at the top level of the SD (a peer to `OS`; the SD is
+mounted at `/`) — invisible by construction, since nothing at `/` shows
+unless explicitly registered.
+
+The daemon side is **built**: `fetch` performs the mirrored,
+`.part`-atomic, `fujiCache`-tracked download; `lsc` returns listings
+with the per-entry state column the ghost/solid view draws from;
+`add-server`/`del-server` give the daemon ownership of all registry
+writes. What remains of this layer is desktop-side: calling it, and
+boot-time reconcile of orphaned `fetching` rows.
 
 - **Mirror layout**: `/Network/<server>/path/to/file` caches as
   `/Cache/<server-id>/path/to/file`, keyed by the `fujinet` row id —

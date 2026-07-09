@@ -4,9 +4,13 @@
  *   fuji ping                              daemon alive?
  *   fuji servers                           list registry servers
  *   fuji ls    <server> [path]             list a directory
+ *   fuji lsc   <server> [path]             ls + cache state column
  *   fuji stat  <server> <path>             file details
  *   fuji df    <server>                    filesystem size/free
- *   fuji fetch <server> <remote> [local]   download (progress shown)
+ *   fuji fetch <server> <remote>           netcache download -> /Cache mirror
+ *   fuji get   <server> <remote> [local]   plain download to a path
+ *   fuji add-server <host[:port]> <udp|tcp|auto> [mountpath] [name…]
+ *   fuji del-server <id>
  *
  * <server> = registry id / displayName / host, or a literal
  * [udp://|tcp://]host[:port]. Talks to fujinetd on 127.0.0.1:16385
@@ -146,8 +150,11 @@ static const char *path_basename(const char *p)
 static void usage(void)
 {
     fprintf(stderr,
-        "usage: fuji ping | servers | ls <server> [path] | stat <server> <path>\n"
-        "            | df <server> | fetch <server> <remote> [local]\n");
+        "usage: fuji ping | servers | ls|lsc <server> [path]\n"
+        "            | stat <server> <path> | df <server>\n"
+        "            | fetch <server> <remote> | get <server> <remote> [local]\n"
+        "            | add-server <host[:port]> <udp|tcp|auto> [mountpath] [name...]\n"
+        "            | del-server <id>\n");
 }
 
 int main(int argc, char **argv)
@@ -166,17 +173,34 @@ int main(int argc, char **argv)
         rc = send_line("ping");
     else if (strcmp(cmd, "servers") == 0 && argc == 2)
         rc = send_line("servers");
-    else if (strcmp(cmd, "ls") == 0 && (argc == 3 || argc == 4))
-        rc = send_line("ls %s %s", argv[2], argc == 4 ? argv[3] : "/");
+    else if ((strcmp(cmd, "ls") == 0 || strcmp(cmd, "lsc") == 0) &&
+             (argc == 3 || argc == 4))
+        rc = send_line("%s %s %s", cmd, argv[2], argc == 4 ? argv[3] : "/");
     else if (strcmp(cmd, "stat") == 0 && argc == 4)
         rc = send_line("stat %s %s", argv[2], argv[3]);
     else if (strcmp(cmd, "df") == 0 && argc == 3)
         rc = send_line("df %s", argv[2]);
-    else if (strcmp(cmd, "fetch") == 0 && (argc == 4 || argc == 5)) {
+    else if (strcmp(cmd, "fetch") == 0 && argc == 4) {
+        progress = 1;
+        rc = send_line("fetch %s %s", argv[2], argv[3]);
+    }
+    else if (strcmp(cmd, "get") == 0 && (argc == 4 || argc == 5)) {
         const char *local = argc == 5 ? argv[4] : path_basename(argv[3]);
         progress = 1;
         rc = send_line("get %s %s %s", argv[2], argv[3], local);
-    } else {
+    }
+    else if (strcmp(cmd, "add-server") == 0 && argc >= 3) {
+        char extra[256] = "";
+        for (int i = 3; i < argc && strlen(extra) < 200; i++) {
+            strncat(extra, " ", sizeof extra - strlen(extra) - 1);
+            strncat(extra, argv[i], sizeof extra - strlen(extra) - 1);
+        }
+        rc = send_line("add-server %s%s%s", argv[2],
+                       argc > 3 ? "" : " auto /", extra);
+    }
+    else if (strcmp(cmd, "del-server") == 0 && argc == 3)
+        rc = send_line("del-server %s", argv[2]);
+    else {
         usage();
         close(g_fd);
         return 2;

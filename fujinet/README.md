@@ -51,14 +51,20 @@ the registry's `fujiTransport` rows).
 
 ## fujinetd
 
-`fujinetd [port] [logfile] [registry.db]` (default 16385) is the daemon
-the desktop talks to: a loopback TCP control port speaking a line
-protocol — `ping`, `servers`, `ls <server> <path>`, `stat <server>
-<path>`, `df <server>`, `get <server> <remote> <local>` (emits
-`+progress <done> <total>` events; downloads via `.part` + rename so a
-kill mid-fetch never leaves a half-file that looks cached). It keeps a
-small pool of live sessions so repeated requests reuse mounts.
-Kill/restart any time — sessions are disposable.
+`fujinetd [port] [logfile] [registry.db] [cacheroot]` (default 16385,
+`/Cache`) is the daemon the desktop talks to: a loopback TCP control
+port speaking a line protocol — `ping`, `servers`, `ls`/`lsc <server>
+<path>` (`lsc` adds a netcache state column: g ghost / f fetching /
+c cached / u updateAvailable), `stat`, `df`, `get <server> <remote>
+<local>` (plain download), and the netcache verbs: `fetch <server>
+<remote>` (mirrors to `<cacheroot>/<server-id><remote>`, upserts the
+`fujiCache` row fetching→cached with size/remoteMtime/fetchedAt),
+`add-server` / `del-server` (the daemon owns all registry writes; a
+deleted server drops its cache rows). Downloads emit `+progress <done>
+<total>` events and go via `.part` + rename, so a kill mid-fetch never
+leaves a half-file that looks cached. It keeps a small pool of live
+sessions so repeated requests reuse mounts. Kill/restart any time —
+sessions are disposable.
 
 `<server>` resolves against the registry's `fujinet` table (numeric id,
 displayName, or host — the row supplies port + transport), falling back
@@ -67,8 +73,10 @@ to a literal `[udp://|tcp://]host[:port]`. The registry is found at
 explicit argv path; without one, `servers`/name-resolution are simply
 unavailable.
 
-**`fuji`** is the CLI client: `fuji ping | servers | ls <server> [path]
-| stat <server> <path> | df <server> | fetch <server> <remote> [local]`.
+**`fuji`** is the CLI client: `fuji ping | servers | ls|lsc <server>
+[path] | stat <server> <path> | df <server> | fetch <server> <remote> |
+get <server> <remote> [local] | add-server <host[:port]> <udp|tcp|auto>
+[mountpath] [name…] | del-server <id>`.
 Raw access works too: `printf 'ping\nquit\n' | nc 127.0.0.1 16385`.
 
 On XTOS both live on the SD (`/OS/bin/fujinetd`, `/OS/bin/fuji`); the
