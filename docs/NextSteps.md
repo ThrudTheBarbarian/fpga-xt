@@ -27,6 +27,43 @@
   only libc); the `cowdiv` scanner (false positives — flags legit large `.data` values).
   *(src: loader/test/freertos/vm.c `vm_switch` + the BBM sites; branch ssh-server)*
 
+- **Signals belong in the kernel, not the user-space shim (fixes the ambiguous
+  `read`/`signal`/`sigaction` bind).** A standalone `.so` that references
+  `read`/`signal`/`sigaction` can bind them **ambiguously across the libc/shim
+  boundary and fault**. Root cause: `libs/posix_shim.c` implements POSIX signals
+  in **user space** with **synchronous delivery** (handlers in a user-side table;
+  delivery happens inside the shim's *wrapped* `read`/`wait`/… at syscall
+  boundaries), while the kernel's only signal primitive is a `SYS_kill` **flag**
+  checked at the next syscall/blocking tick. That couples the three — `read()` has
+  to be the shim's version to be a delivery point — so when the dynamic loader
+  binds the **shim's `sigaction`** but **libc's `read`** (or a test `.so` brings
+  its own), the register-side and deliver-side desync → handler never fires, or a
+  wrapped `read` touches shim state libc never set up → fault. **This is the whole
+  SSH SIGCHLD/fake-vfork saga's root class** (synchronous user-space signals are
+  fragile because delivery is smeared across every blocking wrapper). Two
+  independent fixes, do BOTH:
+  1. **Symbol hygiene (immediate, cheap).** One definition per symbol in the
+     global dynsym scope: shim internals `hidden`/local; the shim is either the
+     sole provider or defers to libc, never both; `xtld` binds with deterministic
+     precedence (single global libc, `RTLD_LOCAL` for the standalone `.so`). Kills
+     the ambiguity even before touching signals.
+  2. **Kernel-delivered signals (the real answer).** Move the disposition table +
+     delivery into the kernel: an `rt_sigaction` syscall (one authoritative table),
+     kernel builds a signal frame on the **target task's** user stack at a safe
+     point (syscall-return / preemption) and **EINTRs** any blocked syscall, and a
+     `sigreturn` syscall restores. This dissolves the `read`↔signal coupling —
+     `read()` becomes a *single* thin `svc SYS_read` stub (the duplication just
+     disappears) and signals have one home. **Irreducibly user-side:** only the
+     tiny **sigreturn trampoline** (the handler runs in user context on the user
+     stack) — keep it as a *hidden* libc stub, not a public colliding symbol.
+  The shim still has a legit job afterwards (the POSIX *shape* newlib lacks —
+  `opendir`/`readdir` over `getdents`, stdio buffering, `spawn`/`wait`, termios —
+  none of it `read`-coupled). Cost/why-not-done-first: real frame-injection
+  delivery (EINTR-ing a blocked FreeRTOS task + sigreturn) is more work than the
+  user-space synchronous shim that got toysh/dropbear up. *(src:
+  loader/test/freertos/libs/posix_shim.c; frtos_os.c `SYS_kill` kill-flag;
+  branch ssh-server — the SIGCHLD/vfork fixes are symptoms of this)*
+
 ## Post-architecture-review
 - none
 
