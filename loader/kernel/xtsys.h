@@ -49,6 +49,48 @@
                               * spawn (copied into this process's memory, NULL-terminated), or
                               * 0 if none. The libc shim seeds `environ` from it at load. */
 
+/* ---- real signals (kernel-authoritative disposition + async delivery) ------
+ * One disposition table per process in the kernel; SYS_kill marks a signal
+ * pending; the kernel builds a frame on the target's user stack and vectors it
+ * to the handler at the next return-to-PL0 (syscall-return OR timer-tick =
+ * async), then a hidden sigreturn trampoline restores the interrupted context.
+ * Signal numbers are the Linux ones (SIGKILL 9, SIGUSR1 10, SIGUSR2 12, SIGPIPE
+ * 13, SIGCHLD 17, plus the STOP/CONT/TSTP above). SIGKILL(9)/SIGSTOP(19) are
+ * uncatchable. */
+#define SYS_rt_sigaction   0x109  /* (sig, const xt_sigaction *act, xt_sigaction *old) -> 0 */
+#define SYS_rt_sigprocmask 0x10A  /* (how, const u32 *set, u32 *old) -> 0; how: 0=BLOCK 1=UNBLOCK 2=SET */
+#define SYS_sigreturn      0x10B  /* (xt_sigframe *) -> no return: restore the saved context */
+#define SYS_sig_async      0x10C  /* () -> no return: deliver from the async-captured context
+                                   * (the __sig_trap stub the tick-return hook redirects to) */
+
+#define XT_NSIG      32
+#define XT_SIG_DFL   0            /* default disposition (kill / ignore per signal) */
+#define XT_SIG_IGN   1            /* ignore */
+#define XT_SA_RESTART   0x10000000 /* restart the interrupted syscall instead of EINTR */
+#define XT_SA_NODEFER   0x40000000 /* don't auto-block the signal during its handler */
+#define XT_SIG_BLOCK 0
+#define XT_SIG_UNBLOCK 1
+#define XT_SIG_SETMASK 2
+
+/* kernel-ABI disposition (the shim maps POSIX struct sigaction to/from this).
+ * restorer = the userland sigreturn trampoline the kernel vectors the handler's
+ * return to (Linux SA_RESTORER style); trap = the __sig_trap stub the async
+ * (tick-return) path redirects a preempted PL0 task to. The shim fills both. */
+struct xt_sigaction { unsigned long handler; unsigned int mask; unsigned int flags; unsigned long restorer; unsigned long trap; };
+
+/* the frame the kernel pushes on the target's user stack before vectoring to a
+ * handler; SYS_sigreturn (from the trampoline) restores from it. r[0..14] =
+ * r0..r14 of the interrupted context, pc = r15, then cpsr; signo is the handler
+ * arg (also delivered in r0); saved_mask is the sig_blocked to restore. */
+struct xt_sigframe {
+    unsigned int r[15];      /* r0..r14 */
+    unsigned int pc;         /* r15 resume PC */
+    unsigned int cpsr;
+    unsigned int signo;
+    unsigned int saved_mask;
+    unsigned int _pad[2];    /* keep the frame 8-byte aligned */
+};
+
 /* memory — block 0x200 */
 #define SYS_mmap     0x200   /* (fd, len, off) -> VA: map a file RO + shared, demand-paged */
 #define SYS_munmap   0x201   /* (addr, len) -> 0 */

@@ -98,6 +98,13 @@
     LDR     R1, [R0]
     LDR     SP, [R1]
 
+    /* XTOS async signal delivery: if the task being resumed is a PL0 process with
+    a pending signal, capture its context and redirect its resume PC to __sig_trap.
+    R0/R1 are reloaded just below and R14 is restored by the POP, so the C call's
+    clobbers are safe here. */
+    MOV     R0, SP
+    BL      xt_sig_async_hook
+
     /* Is there a floating point context to restore?  If the restored
     ulPortTaskHasFPUContext is zero then no. */
     LDR     R0, ulPortTaskHasFPUContextConst

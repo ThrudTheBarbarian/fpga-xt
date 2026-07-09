@@ -929,9 +929,11 @@ ssize_t read(int fd, void *buf, size_t n)
 {
     for (;;) {
         long r = sys_read(vfork_redir_fd(fd), buf, (unsigned)n);
-        if (r == -4) {                 /* pty winch wakeup (window size changed) */
-            if (winch_dispatch()) { errno = EINTR; return -1; }   /* POSIX EINTR */
-            continue;                  /* no handler installed: transparent retry */
+        if (r == -4) {                 /* interrupted by a signal: the kernel already
+                                        * ran the handler (deferred delivery); report
+                                        * EINTR so the caller decides to retry or not. */
+            winch_dispatch();          /* legacy SIGWINCH soft path (harmless if none) */
+            errno = EINTR; return -1;
         }
         if (r < 0) { errno = (r == -11) ? EAGAIN : (r < -1 && r > -134) ? (int)-r : EIO; return -1; }
         return r;
@@ -1434,23 +1436,60 @@ static int sigchld_dispatch(void)
  * child's `signal(SIGCHLD, SIG_DFL)` (dropbear's execchild "back to normal
  * sigchld") wipes the PARENT's SIGCHLD handler — and the parent then never
  * delivers SIGCHLD, so it can't reap the exited shell (the session hangs). */
+/* The hidden sigreturn trampoline: the kernel vectors a signal handler's RETURN
+ * here (via xt_sigaction.restorer). On entry sp points at the kernel-built
+ * xt_sigframe; SYS_sigreturn restores the interrupted context from it and never
+ * returns. `used` — only referenced by address. */
+__attribute__((naked, used)) static void __xt_sigreturn(void)
+{
+    __asm__ volatile(
+        "mov  r0, sp        \n"   /* r0 = frame ptr (handler returned with sp = frame) */
+        "movw r7, #0x10B    \n"   /* SYS_sigreturn */
+        "svc  #1            \n"
+        "b    .             \n");
+}
+
+/* The async-delivery entry: the tick-return hook redirects a preempted PL0 task's
+ * resume PC here; SYS_sig_async then delivers from the kernel-captured context and
+ * never returns to this stub. */
+__attribute__((naked, used)) static void __xt_sig_trap(void)
+{
+    __asm__ volatile(
+        "movw r7, #0x10C    \n"   /* SYS_sig_async */
+        "svc  #1            \n"
+        "b    .             \n");
+}
+
+/* sigaction(): install the disposition in the KERNEL (real, async-deliverable)
+ * AND mirror into g_sigact so the legacy SIGCHLD/SIGWINCH soft-dispatch still
+ * finds handlers during the transition. The g_vfork_armed guard stands: a
+ * disposition change in the fake-vfork window is for the about-to-exec child, so
+ * it must touch neither the parent's kernel table nor g_sigact. */
 int sigaction(int sig, const struct sigaction *act, struct sigaction *old)
 {
-    if (sig < 0 || sig >= 32) { errno = EINVAL; return -1; }
+    if (sig <= 0 || sig >= 32) { errno = EINVAL; return -1; }
     if (old) *old = g_sigact[sig];
-    if (act && !g_vfork_armed) g_sigact[sig] = *act;
+    if (act && !g_vfork_armed) {
+        g_sigact[sig] = *act;
+        struct xt_sigaction ka;
+        ka.handler  = (unsigned long)act->sa_handler;
+        ka.mask     = 0;
+        ka.flags    = (act->sa_flags & SA_NODEFER) ? XT_SA_NODEFER : 0;
+        ka.restorer = (unsigned long)&__xt_sigreturn;
+        ka.trap     = (unsigned long)&__xt_sig_trap;
+        __syscall(SYS_rt_sigaction, sig, (long)&ka, 0);
+    }
     return 0;
 }
 
-/* signal(): route into g_sigact so soft-signal delivery (SIGWINCH/SIGCHLD) finds
- * the handler. newlib's own signal() keeps its handler in a PRIVATE table the shim
- * can't see, so programs that install SIGWINCH via signal() (toysh, vi, less)
- * would never be woken — this override (the shim links before libc.so) fixes it. */
+/* signal(): thin wrapper over sigaction so the kernel disposition + g_sigact both
+ * get set (and the vfork guard applies once). */
 _sig_func_ptr signal(int sig, _sig_func_ptr h)
 {
-    if (sig < 0 || sig >= 32) { errno = EINVAL; return SIG_ERR; }
+    if (sig <= 0 || sig >= 32) { errno = EINVAL; return SIG_ERR; }
     _sig_func_ptr prev = g_sigact[sig].sa_handler;
-    if (!g_vfork_armed) g_sigact[sig].sa_handler = h;   /* see sigaction: don't corrupt the parent */
+    struct sigaction sa; memset(&sa, 0, sizeof sa); sa.sa_handler = h;
+    sigaction(sig, &sa, 0);
     return prev;
 }
 

@@ -111,3 +111,40 @@ special-case. Dissolves the original read/signal/sigaction bind ambiguity.
 3. **Part 2** — kernel signals: rt_sigaction + sync-at-syscall-return + EINTR first
    (covers most cases), then async-on-tick delivery (the ARM-asm hook) last.
 4. **Part 4** — flip `read` to the thin stub once Part 2 supplies EINTR.
+
+## Status (2026-07-10) — Part 2 IMPLEMENTED + qemu-validated
+
+**Kernel signals are real and working; all three delivery paths pass on qemu**
+(`/bin/sigtest`, 3/3): sync self-deliver, **async into a pure CPU-bound loop**
+(the tick-return hook), and **EINTR of a blocked syscall**. Frozen ABI:
+`SYS_rt_sigaction 0x109`, `SYS_rt_sigprocmask 0x10A`, `SYS_sigreturn 0x10B`,
+`SYS_sig_async 0x10C`; `struct xt_sigaction {handler,mask,flags,restorer,trap}`;
+`struct xt_sigframe` (r0-15,cpsr,signo,saved_mask). Pieces:
+- `proc_t`: `sigact[32]`, `sig_pending`, `sig_blocked`, `sig_trap`, `async_ctx[16]`.
+- `deliver_signals()` builds the frame on the user stack + vectors to the handler;
+  the shim's hidden `__xt_sigreturn` runs the handler then `SYS_sigreturn` restores.
+- Sync: `deliver_inline` at the inline syscall-return; deferred: `deliver_deferred`
+  on the `__sysret`/`.Lsysret` path (which now also restores r14 and no longer
+  clobbers `dctx[0]`). EINTR (`-4`) added to the pipe/pty blocking loops; the shim's
+  `read()` now returns EINTR on `-4` instead of transparently retrying.
+- Async: `xt_sig_async_hook` (called from `portRESTORE_CONTEXT`) captures a preempted
+  PL0 task's context and redirects its resume PC to the shim's `__xt_sig_trap`, which
+  traps into `SYS_sig_async` to deliver from the captured context. Safe no-op for
+  kernel tasks / nothing pending / non-PL0.
+- shim `signal`/`sigaction` install the kernel disposition **and** mirror into
+  `g_sigact` (dual-write) so the legacy SIGCHLD/SIGWINCH soft-dispatch keeps working.
+
+**This fixes aesdesk-can't-kill**: aesdesk blocks in `aes_wait` (a syscall) → EINTR
+delivers, so it's now signalable/killable. (docs/NextSteps.md motivating case.)
+
+### Remaining (deliberately staged, not started — gated on HW/dropbear testing)
+- **Kernel SIGCHLD-on-exit + SIGWINCH**, then delete the `g_sigact` soft-dispatch
+  (`winch_dispatch`/`sigchld_dispatch`) and the dual-write. Needs a `ppid` in proc_t
+  and delivery from `proc_exit_self`; must be validated against dropbear's SIGCHLD
+  reaping on HW before removing the soft path.
+- **Part 3 symbol dedup** (localize newlib `read/signal/kill/execve` in libc.so).
+  Signals work WITHOUT it (shim-linked programs bind the shim's copies locally via
+  xtld's no-interposition rule); it's defensive hygiene. Deferred to avoid risking
+  program-load resolution at 3am; do it with the kernel-export-table robustness
+  variant + a full boot/ssh smoke test.
+- `SA_RESTART` (currently every interrupted syscall is EINTR, never auto-restart).

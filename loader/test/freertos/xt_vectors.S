@@ -60,21 +60,22 @@ xt_svc_dispatch:
  * context and wants to return to PL0. Restore the caller's saved exception frame
  * (cur_proc()->dctx = {r0..r12, lr=PC, sp_usr, spsr}) with r0 = result, and resume. */
 .Lsysret:
-    pop   {r0}                /* r0 = result */
-    push  {r0}
-    bl    cur_dctx            /* r0 = &dctx (16 words) */
+    pop   {r0}                /* balance the svc-entry push {r0}; dctx[0] is pre-set
+                               * by the thunk (so signal delivery can put signo there) */
+    bl    cur_dctx            /* r0 = &dctx (17 words) */
     mov   lr, r0             /* lr = &dctx (ldm base; not in {r0-r12}) */
-    pop   {r0}              /* r0 = result */
-    str   r0, [lr, #0]       /* dctx[0] = result */
     ldr   r2, [lr, #56]      /* dctx[14] = sp_usr */
-    cps   #0x1f              /* System: restore the banked user SP */
+    ldr   r3, [lr, #64]      /* dctx[16] = r14_usr (needed so a delivered handler's
+                               * return-to-restorer works) */
+    cps   #0x1f              /* System: restore banked user SP + LR */
     mov   sp, r2
-    cps   #0x13             /* back to SVC */
+    mov   lr, r3
+    cps   #0x13             /* back to SVC (lr_svc = &dctx, preserved) */
     ldr   r2, [lr, #60]      /* dctx[15] = spsr (user mode) */
     msr   spsr_cxsf, r2
     ldr   r2, [lr, #52]      /* dctx[13] = user resume PC */
     push  {r2}
-    ldm   lr, {r0-r12}       /* restore r0..r12 from dctx (r0 = result) */
+    ldm   lr, {r0-r12}       /* restore r0..r12 from dctx */
     pop   {lr}             /* lr = user PC */
     movs  pc, lr            /* -> PL0 */
 

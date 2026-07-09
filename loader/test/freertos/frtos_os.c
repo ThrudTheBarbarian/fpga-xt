@@ -96,14 +96,28 @@ typedef struct {
     StaticTask_t      tcb;            /* static TCB (stack from stackguard.c) */
     /* blocking-syscall deferral: saved PL0 exception context so the blocking part can
      * run in task context (PL1) and then sysret to PL0. dctx = {r0..r12, lr(=user PC),
-     * sp_usr, spsr}; dnum/da* = the deferred syscall + args. */
-    uint32_t          dctx[16];
+     * sp_usr, spsr, r14_usr}; dnum/da* = the deferred syscall + args. dctx[16]=r14_usr
+     * is used only by signal delivery (to save/restore the full interrupted context). */
+    uint32_t          dctx[17];
     uint32_t          dnum;
     long              da0, da1, da2;
     char              cwd[256];       /* current working dir (absolute); relative paths resolve here */
+    /* real signals: one authoritative disposition table + pending/blocked bitsets.
+     * SYS_kill sets a pending bit; the kernel vectors it to sigact[].handler at the
+     * next return-to-PL0 (see deliver_signals). killed/stopped above stay as the
+     * uncatchable SIGKILL/SIGSTOP fast path. */
+    struct xt_sigaction sigact[XT_NSIG];
+    volatile uint32_t sig_pending;    /* signals raised, awaiting delivery */
+    uint32_t          sig_blocked;    /* masked signals (rt_sigprocmask) */
+    uint32_t          sig_trap;       /* userland __sig_trap stub (async delivery entry) */
+    uint32_t          async_ctx[16];  /* r0..r15 of a PL0 task preempted with a signal pending */
+    uint32_t          async_cpsr;     /* its CPSR (captured by the tick-return hook) */
 } proc_t;
 
 static proc_t *proc_by_pid(int pid);     /* impl below with the waitpid family */
+/* a deliverable signal is pending -> a blocking syscall should unwind with -EINTR
+ * (-4) so the kernel can vector the handler on the deferred return (deliver_deferred). */
+static inline int sig_ready(proc_t *p) { return p && ((p->sig_pending & ~p->sig_blocked) != 0); }
 
 static proc_t g_proc[MAXPROC];
 static int    g_next_pid = 1;
@@ -655,6 +669,7 @@ static long k_pipe_read(proc_t *p, int fd, char *buf, uint32_t n)
     if (!buf || !n) return 0;
     for (;;) {
         if (p->killed) proc_exit_self(p, 137);              /* SYS_kill lands here */
+        if (sig_ready(p)) return -4;                        /* -EINTR: caught signal pending */
         stop_park(p);                                       /* ^Z lands here too */
         size_t got = xStreamBufferReceive(pp->sb, buf, n, pdMS_TO_TICKS(20));
         if (got > 0) return (long)got;
@@ -677,6 +692,7 @@ static long k_pipe_write(proc_t *p, int fd, const char *buf, uint32_t n)
     if (!buf) return -1;
     while (sent < n) {
         if (p->killed) proc_exit_self(p, 137);                  /* SYS_kill lands here */
+        if (sig_ready(p)) return sent ? (long)sent : -4;        /* -EINTR (or short write) */
         stop_park(p);                                           /* ^Z lands here too */
         if (pp->readers <= 0) return sent ? (long)sent : -1;    /* EPIPE-ish */
         sent += xStreamBufferSend(pp->sb, buf + sent, n - sent, pdMS_TO_TICKS(20));
@@ -737,6 +753,7 @@ long xt_pty_read(int i, int master, void *buf, uint32_t n, int nonblock)
     proc_t *p = cur_proc();
     for (;;) {
         if (p && p->killed) proc_exit_self(p, 137);
+        if (sig_ready(p)) return -4;                       /* -EINTR: caught signal pending */
         if (p) stop_park(p);
         if (!master && g_pty[i].winch) {
             /* SIGWINCH, XTOS-style: wake the blocked reader with -EINTR; the
@@ -764,6 +781,7 @@ long xt_pty_write(int i, int master, const void *buf, uint32_t n)
     proc_t *pr = cur_proc();
     while (done < n) {
         if (pr && pr->killed) proc_exit_self(pr, 137);
+        if (sig_ready(pr)) return done ? (long)done : -4;   /* -EINTR (or short write) */
         if (!(master ? g_pty[i].sopen : g_pty[i].mopen)) break;
         if (!master && p[done] == '\n') {
             /* ONLCR — the one output-discipline rule an interactive terminal
@@ -2110,6 +2128,11 @@ void deferral_thunk(void)                 /* PL1 (System), task context */
         }
     }
     if (p && p->strace) { extern void strace_ret(uint32_t, long); strace_ret(p->dnum, r); }
+    if (p) {
+        p->dctx[0] = (uint32_t)r;         /* result into dctx[0] (.Lsysret no longer stores it) */
+        extern void deliver_deferred(proc_t *);
+        if (p->sig_pending & ~p->sig_blocked) deliver_deferred(p);   /* inject a pending handler */
+    }
     __sysret(r);                          /* never returns */
 }
 
@@ -2121,10 +2144,10 @@ static int defer_syscall(struct k_regs *regs, uint32_t num)
     if (!p) { regs->r[0] = (uint32_t)-1; return 0; }       /* no proc -> can't defer */
     for (int i = 0; i < 13; i++) p->dctx[i] = regs->r[i];
     p->dctx[13] = regs->lr;                                /* user resume PC */
-    uint32_t spsr, spu;
+    uint32_t spsr, spu, lru;
     __asm__ volatile("mrs %0, spsr" : "=r"(spsr));
-    __asm__ volatile("cps #0x1f\n\tmov %0, sp\n\tcps #0x13" : "=r"(spu) :: "memory"); /* read sp_usr */
-    p->dctx[14] = spu; p->dctx[15] = spsr;
+    __asm__ volatile("cps #0x1f\n\tmov %0, sp\n\tmov %1, lr\n\tcps #0x13" : "=r"(spu), "=r"(lru) :: "memory"); /* sp_usr + r14_usr */
+    p->dctx[14] = spu; p->dctx[15] = spsr; p->dctx[16] = lru;
     p->dnum = num; p->da0 = regs->r[0]; p->da1 = regs->r[1]; p->da2 = regs->r[2];
     regs->lr = (uint32_t)(uintptr_t)deferral_thunk;
     return 1;
@@ -2153,10 +2176,42 @@ static long do_syscall(uint32_t num, long a0, long a1, long a2)
     case SYS_kill: {                                         /* (pid, sig): flags only — inline-safe */
         proc_t *t = proc_by_pid((int)a0);
         if (!t || t->exited) return -1;                      /* ESRCH-ish */
-        if (a1 == 0) return 0;                               /* existence probe */
-        if (a1 == XT_SIGCONT) { t->stopped = 0; return 0; }  /* resume (stop_park polls) */
-        if (a1 == XT_SIGSTOP || a1 == XT_SIGTSTP) { t->stopped = 1; return 0; }
-        t->killed = 1;                                       /* every other signal kills */
+        int sig = (int)a1;
+        if (sig == 0) return 0;                              /* existence probe */
+        if (sig == XT_SIGCONT) { t->stopped = 0; return 0; } /* resume (stop_park polls) */
+        if (sig == XT_SIGSTOP || sig == XT_SIGTSTP) { t->stopped = 1; return 0; }
+        /* catchable signal with a real handler installed -> mark pending; the
+         * kernel vectors it to the handler at the target's next return-to-PL0
+         * (syscall-return / timer-tick). SIGKILL(9) is never catchable. */
+        if (sig > 0 && sig < XT_NSIG && sig != 9 && t->sigact[sig].handler != XT_SIG_DFL) {
+            if (t->sigact[sig].handler == XT_SIG_IGN) return 0;   /* ignored */
+            t->sig_pending |= (1u << sig);
+            return 0;
+        }
+        t->killed = 1;                                       /* default disposition = terminate */
+        return 0;
+    }
+    case SYS_rt_sigaction: {                                 /* (sig, const act, old) */
+        if (!p) return -1;
+        int sig = (int)a0;
+        if (sig <= 0 || sig >= XT_NSIG || sig == 9 || sig == XT_SIGSTOP) return -1;
+        struct xt_sigaction *old = (struct xt_sigaction *)a2;
+        if (old) *old = p->sigact[sig];
+        const struct xt_sigaction *act = (const struct xt_sigaction *)a1;
+        if (act) { p->sigact[sig] = *act; if (act->trap) p->sig_trap = (uint32_t)act->trap; }
+        return 0;
+    }
+    case SYS_rt_sigprocmask: {                               /* (how, const set, old) */
+        if (!p) return -1;
+        uint32_t *old = (uint32_t *)a2;
+        if (old) *old = p->sig_blocked;
+        const uint32_t *set = (const uint32_t *)a1;
+        if (set) {
+            if (a0 == XT_SIG_BLOCK)        p->sig_blocked |= *set;
+            else if (a0 == XT_SIG_UNBLOCK) p->sig_blocked &= ~*set;
+            else                           p->sig_blocked = *set;   /* SETMASK */
+            p->sig_blocked &= ~((1u << 9) | (1u << XT_SIGSTOP));     /* KILL/STOP unblockable */
+        }
         return 0;
     }
     case SYS_open:   return sys_open(p, (const char *)a0, (int)a1);   /* (path, flags) */
@@ -2432,6 +2487,111 @@ void strace_ret(uint32_t num, long r)
     b[k++] = '\n'; b[k] = 0; klog(b);
 }
 
+/* ---- real signal delivery -------------------------------------------------
+ * deliver_signals() takes a normalized snapshot of the interrupted user context
+ * (r[0..15], *cpsr), and if a deliverable signal is pending with a real handler,
+ * pushes an xt_sigframe on the user stack and re-points r[]/cpsr to enter the
+ * handler; the caller writes the modified r[]/cpsr back to its return frame. The
+ * hidden userland trampoline (sa.restorer) runs the handler then SYS_sigreturn,
+ * which restores the saved frame. Called at BOTH the syscall-return path (sync +
+ * EINTR) and the timer-tick return (async). */
+static int deliver_signals(proc_t *p, uint32_t r[16], uint32_t *cpsr)
+{
+    if (!p) return 0;
+    uint32_t deliverable = p->sig_pending & ~p->sig_blocked;
+    if (!deliverable) return 0;
+    int sig = __builtin_ctz(deliverable);
+    struct xt_sigaction *sa = &p->sigact[sig];
+    if (sa->handler == XT_SIG_DFL || sa->handler == XT_SIG_IGN || !sa->restorer)
+        { p->sig_pending &= ~(1u << sig); return 0; }   /* no catchable handler here */
+    p->sig_pending &= ~(1u << sig);
+    uint32_t sp = (r[13] - (uint32_t)sizeof(struct xt_sigframe)) & ~7u;
+    struct xt_sigframe *f = (struct xt_sigframe *)(uintptr_t)sp;
+    for (int i = 0; i < 15; i++) f->r[i] = r[i];
+    f->pc = r[15]; f->cpsr = *cpsr; f->signo = (uint32_t)sig; f->saved_mask = p->sig_blocked;
+    p->sig_blocked |= sa->mask;
+    if (!(sa->flags & XT_SA_NODEFER)) p->sig_blocked |= (1u << sig);
+    r[0] = (uint32_t)sig; r[13] = sp; r[14] = (uint32_t)sa->restorer; r[15] = (uint32_t)sa->handler;
+    *cpsr &= ~0x20u;                                     /* ARM state for the handler */
+    return 1;
+}
+
+/* SVC-mode helpers: read/write the banked User/System sp+lr. Safe only from a
+ * PL1 exception mode (SVC/IRQ) whose banked sp differs from the user's. */
+static inline void rd_usr_sp_lr(uint32_t *sp, uint32_t *lr)
+{ __asm__ volatile("cps #0x1f\n\tmov %0, sp\n\tmov %1, lr\n\tcps #0x13" : "=r"(*sp), "=r"(*lr) :: "memory"); }
+static inline void wr_usr_sp_lr(uint32_t sp, uint32_t lr)
+{ __asm__ volatile("cps #0x1f\n\tmov sp, %0\n\tmov lr, %1\n\tcps #0x13" :: "r"(sp), "r"(lr) : "memory"); }
+
+/* inline syscall-return delivery: context = regs (r0..r12, lr=PC) + banked sp/lr + SPSR */
+static void deliver_inline(proc_t *p, struct k_regs *regs)
+{
+    uint32_t r[16], cpsr;
+    for (int i = 0; i < 13; i++) r[i] = regs->r[i];
+    r[15] = regs->lr;
+    rd_usr_sp_lr(&r[13], &r[14]);
+    __asm__ volatile("mrs %0, spsr" : "=r"(cpsr));
+    if (deliver_signals(p, r, &cpsr)) {
+        for (int i = 0; i < 13; i++) regs->r[i] = r[i];
+        regs->lr = r[15];
+        wr_usr_sp_lr(r[13], r[14]);
+        __asm__ volatile("msr spsr_cxsf, %0" :: "r"(cpsr));
+    }
+}
+
+/* deferred (blocking) syscall-return delivery: context lives in p->dctx. dctx[0]
+ * must already hold the syscall result (the frame saves it as r0 for sigreturn). */
+void deliver_deferred(proc_t *p)
+{
+    uint32_t r[16], cpsr;
+    for (int i = 0; i < 13; i++) r[i] = p->dctx[i];
+    r[13] = p->dctx[14]; r[14] = p->dctx[16]; r[15] = p->dctx[13]; cpsr = p->dctx[15];
+    if (deliver_signals(p, r, &cpsr)) {
+        for (int i = 0; i < 13; i++) p->dctx[i] = r[i];
+        p->dctx[13] = r[15]; p->dctx[14] = r[13]; p->dctx[16] = r[14]; p->dctx[15] = cpsr;
+    }
+}
+
+/* async delivery (task #9): called from portRESTORE_CONTEXT for the task about to
+ * resume. If it's a PL0 proc with a pending deliverable signal, capture its full
+ * interrupted context (from the portSAVE_CONTEXT frame) into async_ctx and redirect
+ * its resume PC to the userland __sig_trap stub, which traps into SYS_sig_async to
+ * run the handler. This is what delivers a signal into a pure CPU-bound loop that
+ * never makes a syscall. Safe no-op for kernel tasks / nothing pending / non-PL0.
+ * Frame layout (portASM.S portSAVE/RESTORE_CONTEXT): [FPUflag][opt FPU 65w]
+ * [nesting][r0-r12,r14][PC][CPSR]. */
+void xt_sig_async_hook(uint32_t *sp)
+{
+    proc_t *p = cur_proc();
+    if (!p || !p->sig_trap) return;
+    if (!(p->sig_pending & ~p->sig_blocked)) return;
+    uint32_t off = 1;                        /* FPU flag word */
+    if (sp[0]) off += 65;                    /* FPSCR(1) + D16-31(32) + D0-15(32) */
+    off += 1;                                /* critical nesting */
+    uint32_t *rg = &sp[off];                 /* r0..r12 (13), then r14 */
+    uint32_t cpsr = sp[off + 15];
+    if ((cpsr & 0x1f) != 0x10) return;       /* not User(PL0) mode -> leave it */
+    uint32_t fwords = off + 16;              /* whole frame size (words), through CPSR */
+    for (int i = 0; i < 13; i++) p->async_ctx[i] = rg[i];
+    p->async_ctx[13] = (uint32_t)(uintptr_t)(sp + fwords);  /* r13/sp (implicit in the frame) */
+    p->async_ctx[14] = rg[13];               /* r14 */
+    p->async_ctx[15] = sp[off + 14];         /* r15/PC */
+    p->async_cpsr = cpsr;
+    sp[off + 14] = p->sig_trap;              /* resume at __sig_trap instead of the real PC */
+}
+
+/* SYS_sigreturn (inline): restore the interrupted context from the frame the
+ * trampoline hands us; the normal .Lsyscall `movs pc, lr` resumes it. */
+static void do_sigreturn(proc_t *p, struct k_regs *regs, long frameptr)
+{
+    const struct xt_sigframe *f = (const struct xt_sigframe *)(uintptr_t)frameptr;
+    for (int i = 0; i < 13; i++) regs->r[i] = f->r[i];
+    regs->lr = f->pc;
+    wr_usr_sp_lr(f->r[13], f->r[14]);
+    __asm__ volatile("msr spsr_cxsf, %0" :: "r"(f->cpsr));
+    if (p) p->sig_blocked = f->saved_mask;
+}
+
 int k_syscall_dispatch(struct k_regs *regs)
 {
     uint32_t insn = *((volatile uint32_t *)(regs->lr - 4));
@@ -2460,10 +2620,31 @@ int k_syscall_dispatch(struct k_regs *regs)
         regs->lr = (uint32_t)(uintptr_t)task_exit_thunk;   /* resume the thunk (at PL1) */
         return 1;
     }
+    if (num == SYS_sigreturn) {                            /* restore the interrupted context */
+        do_sigreturn(cur_proc(), regs, (long)regs->r[0]);
+        return 0;
+    }
+    if (num == SYS_sig_async) {                            /* deliver from the captured PL0 ctx */
+        proc_t *p = cur_proc();
+        if (p) {
+            uint32_t r[16], cpsr;
+            for (int i = 0; i < 16; i++) r[i] = p->async_ctx[i];
+            cpsr = p->async_cpsr;
+            deliver_signals(p, r, &cpsr);                  /* -> handler, or unchanged = resume as-is */
+            for (int i = 0; i < 13; i++) regs->r[i] = r[i];
+            regs->lr = r[15];
+            wr_usr_sp_lr(r[13], r[14]);
+            __asm__ volatile("msr spsr_cxsf, %0" :: "r"(cpsr));
+        }
+        return 0;
+    }
     if (needs_task_ctx(regs, num)) return defer_syscall(regs, num);   /* run in task ctx */
     regs->r[0] = (uint32_t)do_syscall(num, regs->r[0], regs->r[1], regs->r[2]);
     { proc_t *tp = cur_proc();
       if (tp && tp->strace) strace_ret(num, (long)(int)regs->r[0]); }
+    /* deliver a pending signal on the way back to PL0 (sync path) */
+    { proc_t *dp = cur_proc();
+      if (dp && (dp->sig_pending & ~dp->sig_blocked)) deliver_inline(dp, regs); }
     return 0;
 }
 
@@ -2667,6 +2848,8 @@ static int proc_launch(int slot, xtld_obj *obj, uintptr_t entry,
     p->obj = obj; p->entry = entry; p->exit_code = 0; p->exited = 0; p->waited = 0; p->waiter = 0; p->pid = g_next_pid++;
     p->killed = 0;                       /* slot reuse must not inherit a SYS_kill */
     p->stopped = 0;                      /* ...nor a SIGSTOP */
+    p->sig_pending = 0; p->sig_blocked = 0; p->sig_trap = 0;   /* exec resets signal state */
+    for (int si = 0; si < XT_NSIG; si++) { p->sigact[si].handler = XT_SIG_DFL; p->sigact[si].mask = 0; p->sigact[si].flags = 0; p->sigact[si].restorer = 0; p->sigact[si].trap = 0; }
     /* inherit the spawner's cwd (a shell's children run where the shell is);
      * a spawn from kernel context starts at the root */
     proc_t *parent = cur_proc();

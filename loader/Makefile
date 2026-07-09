@@ -203,6 +203,13 @@ $(BUILD)/%.so: test/freertos/progs/%.c | $(BUILD)
 	$(ARMCC) $(PROGCFLAGS) -c $< -o $(BUILD)/$*.o
 	$(LLD) -shared --hash-style=sysv -o $@ $(BUILD)/$*.o
 
+# sigtest links the posix shim (real signal/kill/vfork over the kernel) like a
+# real program (toybox/dropbear do); the generic rule above would bind it to
+# newlib's non-kernel stubs. Own rule so `make` picks it up.
+$(BUILD)/sigtest.so: test/freertos/progs/sigtest.c $(BUILD)/posix_shim.o $(BUILD)/net_shim.o $(BUILD)/libc.so | $(BUILD)
+	$(ARMCC) $(PROGCFLAGS) -c $< -o $(BUILD)/sigtest.o
+	$(LLD) -shared --hash-style=sysv -o $@ $(BUILD)/sigtest.o $(BUILD)/posix_shim.o $(BUILD)/net_shim.o $(BUILD)/libc.so
+
 # a shared library carries a soname (the registry/dedup key)
 $(BUILD)/libutil.so: test/freertos/libs/libutil.c | $(BUILD)
 	$(ARMCC) $(PROGCFLAGS) -c $< -o $(BUILD)/libutil.o
@@ -478,7 +485,7 @@ ROMFS_ASSET_ARGS := /fonts/AovelSansRounded.ttf=../gem/fonts/AovelSansRounded.tt
                     /themes/Aristo2/1x/locations.txt=../gem/themes/Aristo2/1x/locations.txt \
                     /themes/Aristo2/1x/theme.ini=../gem/themes/Aristo2/1x/theme.ini
 
-$(BUILD)/romfs.bin: $(BUILD)/mkromfs $(BUILD)/tnfs.so $(BUILD)/fujinetd.so $(BUILD)/fuji.so $(BUILD)/toybox.so $(BUILD)/sqlite3.so $(BUILD)/pipetest.so $(BUILD)/hello.so $(BUILD)/motd.so $(BUILD)/usestr.so $(BUILD)/echo.so $(BUILD)/libc_test.so $(BUILD)/gemtext.so $(BUILD)/desktop.so $(BUILD)/aesdesk.so $(BUILD)/regtest.so $(BUILD)/locktest.so $(BUILD)/lntest.so $(BUILD)/fstest.so $(BUILD)/lua.so $(BUILD)/init.so $(BUILD)/faultprog.so $(BUILD)/vmtest.so $(BUILD)/demandtest.so $(BUILD)/stacktest.so $(BUILD)/wxtest.so $(BUILD)/cowtest.so $(BUILD)/sharetext.so $(BUILD)/shmtest.so $(BUILD)/finictor.so $(BUILD)/mmaptest.so $(BUILD)/modetest.so $(BUILD)/ttytest.so $(BUILD)/jobctl.so $(BUILD)/socktest.so $(BUILD)/httpd.so $(BUILD)/nstress.so $(BUILD)/dmesg.so $(BUILD)/mem.so $(BUILD)/badpoke.so $(BUILD)/stackpoke.so $(BUILD)/dropbearkey.so $(BUILD)/dropbear.so $(BUILD)/sshd.so $(BUILD)/netup.so $(BUILD)/ssh.so $(BUILD)/scp.so $(BUILD)/strace.so $(BUILD)/libutil.so $(BUILD)/libGEM.so $(BUILD)/libm.so $(BUILD)/libc.so test/freertos/Registry.db $(ROMFS_OVERLAY_FILES) $(ROMFS_ASSET_FILES)
+$(BUILD)/romfs.bin: $(BUILD)/mkromfs $(BUILD)/tnfs.so $(BUILD)/fujinetd.so $(BUILD)/fuji.so $(BUILD)/toybox.so $(BUILD)/sqlite3.so $(BUILD)/pipetest.so $(BUILD)/hello.so $(BUILD)/motd.so $(BUILD)/usestr.so $(BUILD)/echo.so $(BUILD)/libc_test.so $(BUILD)/gemtext.so $(BUILD)/desktop.so $(BUILD)/aesdesk.so $(BUILD)/regtest.so $(BUILD)/locktest.so $(BUILD)/lntest.so $(BUILD)/fstest.so $(BUILD)/lua.so $(BUILD)/init.so $(BUILD)/faultprog.so $(BUILD)/vmtest.so $(BUILD)/demandtest.so $(BUILD)/stacktest.so $(BUILD)/wxtest.so $(BUILD)/cowtest.so $(BUILD)/sharetext.so $(BUILD)/shmtest.so $(BUILD)/finictor.so $(BUILD)/mmaptest.so $(BUILD)/modetest.so $(BUILD)/ttytest.so $(BUILD)/jobctl.so $(BUILD)/socktest.so $(BUILD)/httpd.so $(BUILD)/nstress.so $(BUILD)/dmesg.so $(BUILD)/mem.so $(BUILD)/badpoke.so $(BUILD)/stackpoke.so $(BUILD)/dropbearkey.so $(BUILD)/dropbear.so $(BUILD)/sshd.so $(BUILD)/netup.so $(BUILD)/ssh.so $(BUILD)/scp.so $(BUILD)/strace.so $(BUILD)/sigtest.so $(BUILD)/libutil.so $(BUILD)/libGEM.so $(BUILD)/libm.so $(BUILD)/libc.so test/freertos/Registry.db $(ROMFS_OVERLAY_FILES) $(ROMFS_ASSET_FILES)
 	$(BUILD)/mkromfs $@ \
 	    /bin/faultprog=$(BUILD)/faultprog.so \
 	    /bin/vmtest=$(BUILD)/vmtest.so \
@@ -500,6 +507,7 @@ $(BUILD)/romfs.bin: $(BUILD)/mkromfs $(BUILD)/tnfs.so $(BUILD)/fujinetd.so $(BUI
 	    /bin/ssh=$(BUILD)/ssh.so \
 	    /bin/scp=$(BUILD)/scp.so \
 	    /bin/strace=$(BUILD)/strace.so \
+	    /bin/sigtest=$(BUILD)/sigtest.so \
 	    $(if $(XTC_SO),/bin/xtcprog=$(XTC_SO)) \
 	    /Library/libc.so=$(BUILD)/libc.so \
 	    /Library/libm.so=$(BUILD)/libm.so \
@@ -549,7 +557,7 @@ $(BUILD)/romfs_blob.h: $(BUILD)/romfs.bin
 # base libraries every spawn needs (libc/libm), init + lua (the boot runner and
 # its #!/bin/lua scripts), motd, and the tier-2 test battery. ~6 MB of RAM back
 # vs the full image. qemu keeps the full romfs (no SD there).
-$(BUILD)/romfs-hw.bin: $(BUILD)/mkromfs $(BUILD)/pipetest.so $(BUILD)/hello.so $(BUILD)/motd.so $(BUILD)/usestr.so $(BUILD)/libc_test.so $(BUILD)/locktest.so $(BUILD)/lntest.so $(BUILD)/fstest.so $(BUILD)/lua.so $(BUILD)/init.so $(BUILD)/faultprog.so $(BUILD)/vmtest.so $(BUILD)/demandtest.so $(BUILD)/stacktest.so $(BUILD)/wxtest.so $(BUILD)/cowtest.so $(BUILD)/sharetext.so $(BUILD)/shmtest.so $(BUILD)/finictor.so $(BUILD)/mmaptest.so $(BUILD)/modetest.so $(BUILD)/ttytest.so $(BUILD)/jobctl.so $(BUILD)/socktest.so $(BUILD)/httpd.so $(BUILD)/nstress.so $(BUILD)/dmesg.so $(BUILD)/mem.so $(BUILD)/badpoke.so $(BUILD)/stackpoke.so $(BUILD)/dropbearkey.so $(BUILD)/dropbear.so $(BUILD)/sshd.so $(BUILD)/netup.so $(BUILD)/ssh.so $(BUILD)/scp.so $(BUILD)/strace.so $(BUILD)/libutil.so $(BUILD)/libm.so $(BUILD)/libc.so $(ROMFS_OVERLAY_FILES) $(ROMFS_ASSET_FILES)
+$(BUILD)/romfs-hw.bin: $(BUILD)/mkromfs $(BUILD)/pipetest.so $(BUILD)/hello.so $(BUILD)/motd.so $(BUILD)/usestr.so $(BUILD)/libc_test.so $(BUILD)/locktest.so $(BUILD)/lntest.so $(BUILD)/fstest.so $(BUILD)/lua.so $(BUILD)/init.so $(BUILD)/faultprog.so $(BUILD)/vmtest.so $(BUILD)/demandtest.so $(BUILD)/stacktest.so $(BUILD)/wxtest.so $(BUILD)/cowtest.so $(BUILD)/sharetext.so $(BUILD)/shmtest.so $(BUILD)/finictor.so $(BUILD)/mmaptest.so $(BUILD)/modetest.so $(BUILD)/ttytest.so $(BUILD)/jobctl.so $(BUILD)/socktest.so $(BUILD)/httpd.so $(BUILD)/nstress.so $(BUILD)/dmesg.so $(BUILD)/mem.so $(BUILD)/badpoke.so $(BUILD)/stackpoke.so $(BUILD)/dropbearkey.so $(BUILD)/dropbear.so $(BUILD)/sshd.so $(BUILD)/netup.so $(BUILD)/ssh.so $(BUILD)/scp.so $(BUILD)/strace.so $(BUILD)/sigtest.so $(BUILD)/libutil.so $(BUILD)/libm.so $(BUILD)/libc.so $(ROMFS_OVERLAY_FILES) $(ROMFS_ASSET_FILES)
 	$(BUILD)/mkromfs $@ \
 	    /bin/faultprog=$(BUILD)/faultprog.so \
 	    /bin/vmtest=$(BUILD)/vmtest.so \
@@ -571,6 +579,7 @@ $(BUILD)/romfs-hw.bin: $(BUILD)/mkromfs $(BUILD)/pipetest.so $(BUILD)/hello.so $
 	    /bin/ssh=$(BUILD)/ssh.so \
 	    /bin/scp=$(BUILD)/scp.so \
 	    /bin/strace=$(BUILD)/strace.so \
+	    /bin/sigtest=$(BUILD)/sigtest.so \
 	    $(if $(XTC_SO),/bin/xtcprog=$(XTC_SO)) \
 	    /Library/libc.so=$(BUILD)/libc.so \
 	    /Library/libm.so=$(BUILD)/libm.so \
