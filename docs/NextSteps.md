@@ -68,6 +68,15 @@
        mode (no kernel lock / half-syscall state live). Same as Linux `do_signal()`
        on both syscall-exit and IRQ-exit — the IRQ-exit hook is what makes it async.
        The synchronous-only scheme is just this minus the tick-return hook.
+     - **Concrete motivating case: aesdesk can't be killed.** The desktop parks in
+       `aes_wait(&ev, -1)` → `input_next_event`, a blocking input read with no
+       timeout. `SYS_kill` only fires at *syscall entry* (frtos_os.c:2446), and a
+       task asleep in an unchecked infinite wait never reaches another entry — so
+       `killed` sits unhonoured and the ONLY way to restart the desktop is a board
+       reboot (defeats the SD hot-swap workflow — see [[desktop_runs_from_sd]]).
+       Async delivery on the tick-return path reaches it; the sync scheme never can.
+       (Cheap interim if ever needed before the full rework: give the desktop's
+       `aes_wait` a finite timeout so it re-enters a syscall periodically.)
   The shim still has a legit job afterwards (the POSIX *shape* newlib lacks —
   `opendir`/`readdir` over `getdents`, stdio buffering, `spawn`/`wait`, termios —
   none of it `read`-coupled). Cost/why-not-done-first: real frame-injection
