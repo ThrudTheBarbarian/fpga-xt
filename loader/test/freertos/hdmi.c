@@ -301,7 +301,20 @@ static void hdmi_watch_task(void *arg)
         i2c_unlock();
         if (rd != 0) continue;                             /* I2C hiccup: skip this tick */
         if (st & 0x08) { lost = 0; continue; }             /* RxSense high = receiver present -> healthy */
-        if (++lost < 3) continue;                          /* RxSense low <3 s: transient (DDR burst) — ride it out */
+        if (++lost < 3) {                                  /* RxSense low <3 s: transient (DDR burst) — ride it out,
+                                                            * but LOG it WITH the die temp: the debounced dips are
+                                                            * otherwise silent, so this builds the thermal-correlation
+                                                            * dataset (do they cluster above a temp threshold? do they
+                                                            * vanish once the fan lands?). See [[hdmi_blank...]]. */
+            extern int g_temp_die;                          /* cached XADC die milli-C (temp task) */
+            extern void klog_u(unsigned);
+            int mc = g_temp_die;
+            klog("[hdmi] RxSense dip "); klog_u((unsigned)lost); klog("/3 die=");
+            if (mc > -270000) { klog_u((unsigned)(mc / 1000)); klog(".");
+                                klog_u((unsigned)((mc / 100) % 10)); klog("C\r\n"); }
+            else klog("?\r\n");
+            continue;
+        }
         if (lost == 3) {                                   /* 3 s of RxSense-low = a genuine unplug: re-acquire once */
             extern void gtimer_timeofday(uint32_t *, uint32_t *); extern void klog_u(unsigned);
             uint32_t s, u; gtimer_timeofday(&s, &u);
