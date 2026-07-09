@@ -155,7 +155,7 @@ boot-time reconcile of orphaned `fetching` rows.
 - **Eviction**: none in v1 — a Flush action plus a cache-size readout.
   LRU later, using the table's `fetched_at`/last-launch bookkeeping.
 
-### 4. Desktop integration  ⬜ proposed (mostly registry entries)
+### 4. Desktop integration  ◐ browse/fetch built (Add-Server dialog + refresh pending)
 
 - The **Fujinet desktop icon already exists** (`desktopIcons` row,
   `devices/network-nfs.pam`); double-click opens the servers window.

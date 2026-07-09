@@ -116,7 +116,7 @@ desktop: $(BUILD)/gem_desktop
 # frame to /tmp/xtdesk.ppm.
 SQLITE_CFLAGS := $(shell pkg-config --cflags sqlite3 2>/dev/null)
 SQLITE_LIBS   := $(shell pkg-config --libs sqlite3 2>/dev/null || echo -lsqlite3)
-XTDESK_OBJ := $(addprefix $(BUILD)/,gfx_soft.o font.o theme.o img.o registry.o xtdesk.o $(VDI_SRC:.c=.o) $(AES_SRC:.c=.o))
+XTDESK_OBJ := $(addprefix $(BUILD)/,gfx_soft.o font.o theme.o img.o registry.o fujiclient.o xtdesk.o $(VDI_SRC:.c=.o) $(AES_SRC:.c=.o))
 $(BUILD)/registry.o: registry.c | $(BUILD)
 	$(CC) $(CFLAGS) $(SQLITE_CFLAGS) -MMD -MP -c $< -o $@
 $(BUILD)/gem_xtdesk: $(XTDESK_OBJ)

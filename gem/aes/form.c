@@ -31,7 +31,12 @@ static void do_radio(OBJECT *t, int o) {
     if (p >= 0) EACH_CHILD(t, p, c) if (t[c].ob_flags & OF_RBUTTON) t[c].ob_state &= ~OS_SELECTED;
     t[o].ob_state |= OS_SELECTED;
 }
-static void draw(OBJECT *t) { objc_draw(t, 0, DEPTH, 0, 0, BIG, BIG); }
+// draw + push the dialog rect (aes_flush_rect: A9 back-buffer targets need an
+// explicit present for draws outside wind_redraw; a no-op on the SDL host).
+static void draw(OBJECT *t) {
+    objc_draw(t, 0, DEPTH, 0, 0, BIG, BIG);
+    aes_flush_rect(t[0].ob_x, t[0].ob_y, t[0].ob_w, t[0].ob_h);
+}
 
 int form_do(OBJECT *t, int start) {
     (void)start;
@@ -127,6 +132,7 @@ int form_alert(int defbtn, const char *s) {
     int r=form_do(o,0);
     int16_t rp[8]={0,0,(int16_t)(box_w-1),(int16_t)(box_h-1),(int16_t)o[0].ob_x,(int16_t)o[0].ob_y,(int16_t)(o[0].ob_x+box_w-1),(int16_t)(o[0].ob_y+box_h-1)};
     vro_cpyfm(H,VRO_COPY,rp,&m,&scr); gfx_surface_free(sav);
+    aes_flush_rect(o[0].ob_x,o[0].ob_y,box_w,box_h);            // push the restored background
 
     return (r>=firstbtn && r<firstbtn+nb) ? (r-firstbtn+1) : defbtn;
 }

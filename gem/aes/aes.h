@@ -57,6 +57,9 @@ void objc_draw(OBJECT *tree, int start, int depth, int clx, int cly, int clw, in
 // selection; 0 = light window -> black text, black-on-white selection.  Set it
 // before objc_draw for the container being drawn.
 void aes_icon_label_style(int dark_bg);
+// A ghosted (alpha-dimmed) copy of an icon surface for uncached network
+// entries — pre-bake one per entry; the caller owns (and frees) the copy.
+gfx_surface *icon_ghost(const gfx_surface *s);
 // Topmost drawable object under (mx,my) within `depth` levels of `start`; -1 none.
 int  objc_find(OBJECT *tree, int start, int depth, int mx, int my);
 
@@ -166,6 +169,9 @@ void wind_redraw(void);                             // redraw desktop + all wind
 // overlay plane and moves it by register write (no redraw). NULL -> classic drag.
 void wind_set_overlay(int(*begin)(int,int,int,int), void(*move)(int,int),
                       void(*end)(void), void(*present)(int,int,int,int));
+// Push a just-drawn screen rect through the overlay present hook (visibility
+// for modal draws outside wind_redraw); no-op when no hook is registered.
+void aes_flush_rect(int x, int y, int w, int h);
 // The desktop work area windows are clamped to (so a window can't be dragged out
 // of reach).  Defaults to the screen minus the menu bar; Desktop.app can reserve
 // more (dock/sidebar).  wind_get(0, WF_WORKXYWH, …) reports it.

@@ -79,6 +79,21 @@ static gfx_surface *icon_tint(const gfx_surface *s, int num, int den) {
     return &t;
 }
 
+// A ghosted copy of an icon for uncached network entries: alpha scaled to 2/5
+// so the silhouette shows dimmed over whatever is behind it.  Unlike icon_tint
+// this is a real allocation (pre-baked per entry, not per-frame) — the caller
+// owns the returned surface.
+gfx_surface *icon_ghost(const gfx_surface *s) {
+    gfx_surface *t = gfx_surface_alloc(s->w, s->h);
+    if (!t) return NULL;
+    for (int yy = 0; yy < s->h; yy++)
+        for (int xx = 0; xx < s->w; xx++) {
+            uint32_t p = s->px[(size_t)yy*s->stride + xx];
+            t->px[(size_t)yy*t->stride + xx] = (p & ~0xFFu) | ((p & 0xFF)*2/5);
+        }
+    return t;
+}
+
 static void draw_obj(OBJECT *o, int x, int y) {
     int w = o->ob_w, h = o->ob_h, st = o->ob_state, fl = o->ob_flags;
     const char *txt = (const char *)o->ob_spec;
@@ -159,8 +174,8 @@ static void draw_obj(OBJECT *o, int x, int y) {
                 } else if (g_icon_dark) {                    // white + shadow -> readable over a wallpaper
                     vst_color(g_vh, 1); v_gtext(g_vh, tcx+1, ly+1, ci->text);
                     vst_color(g_vh, 0); v_gtext(g_vh, tcx,   ly,   ci->text);
-                } else {                                     // black on the light window
-                    vst_color(g_vh, 1); v_gtext(g_vh, tcx, ly, ci->text);
+                } else {                                     // black on the light window (grey when ghosted)
+                    vst_color(g_vh, (st & OS_DISABLED) ? 9 : 1); v_gtext(g_vh, tcx, ly, ci->text);
                 }
                 vst_alignment(g_vh, VDI_TA_LEFT, VDI_TA_TOP, 0,0);
             }

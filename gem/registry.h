@@ -14,7 +14,8 @@
 
 // iconTypes ids (see the SQL seed).
 enum { ICT_EMU_8BIT = 1, ICT_EMU_1632 = 2, ICT_MEDIA_8BIT = 3,
-       ICT_MEDIA_1632 = 4, ICT_BIN = 5, ICT_FOLDER = 6, ICT_FILE = 7 };
+       ICT_MEDIA_1632 = 4, ICT_BIN = 5, ICT_FOLDER = 6, ICT_FILE = 7,
+       ICT_FUJINET = 8, ICT_SERVER = 9, ICT_ADD_SERVER = 10 };
 
 typedef struct {
     int  x, y, type;

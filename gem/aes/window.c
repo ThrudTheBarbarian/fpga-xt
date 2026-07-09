@@ -104,6 +104,11 @@ void wind_set_overlay(int(*begin)(int,int,int,int), void(*move)(int,int),
                       void(*end)(void), void(*present)(int,int,int,int)){
     g_ovl_begin=begin; g_ovl_move=move; g_ovl_end=end; g_ovl_present=present;
 }
+/* Push a just-drawn screen rect through the registered present hook, so code
+ * that draws outside wind_redraw (modal dialogs, progress boxes) is visible on
+ * targets that composite into a back-buffer (A9).  No-op when no hook is set
+ * (the SDL host presents inside its event source). */
+void aes_flush_rect(int x,int y,int w,int h){ if(g_ovl_present) g_ovl_present(x,y,w,h); }
 
 void wind_redraw(void){
     gfx_surface *d = vdi_screen_target();

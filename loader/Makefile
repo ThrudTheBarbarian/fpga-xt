@@ -273,9 +273,11 @@ $(BUILD)/desktop.so: test/freertos/progs/desktop.c $(BUILD)/libGEM.so $(BUILD)/l
 	$(ARMCC) $(GEMCFLAGS) -Itest/qemu -c $< -o $(BUILD)/desktop.o
 	$(LLD) -shared --hash-style=sysv -o $@ $(BUILD)/desktop.o $(BUILD)/libGEM.so $(BUILD)/libc.so
 
-$(BUILD)/aesdesk.so: test/freertos/progs/aesdesk.c $(BUILD)/registry.o $(BUILD)/sqlite3.o $(BUILD)/sqlite_vfs.o $(BUILD)/libGEM.so $(BUILD)/libc.so $(BUILD)/libm.so | $(BUILD)
+$(BUILD)/fujiclient.o: $(GEM)/fujiclient.c $(GEM)/fujiclient.h | $(BUILD)
+	$(ARMCC) $(GEMCFLAGS) -Ilibc-compat -Itest/qemu -c $< -o $@
+$(BUILD)/aesdesk.so: test/freertos/progs/aesdesk.c $(BUILD)/registry.o $(BUILD)/fujiclient.o $(BUILD)/net_shim.o $(BUILD)/sqlite3.o $(BUILD)/sqlite_vfs.o $(BUILD)/libGEM.so $(BUILD)/libc.so $(BUILD)/libm.so | $(BUILD)
 	$(ARMCC) $(GEMCFLAGS) -I$(SQLITE) -Itest/qemu -c $< -o $(BUILD)/aesdesk.o
-	$(LLD) -shared --hash-style=sysv -o $@ $(BUILD)/aesdesk.o $(BUILD)/registry.o $(BUILD)/sqlite3.o $(BUILD)/sqlite_vfs.o $(BUILD)/libGEM.so $(BUILD)/libc.so $(BUILD)/libm.so
+	$(LLD) -shared --hash-style=sysv -o $@ $(BUILD)/aesdesk.o $(BUILD)/registry.o $(BUILD)/fujiclient.o $(BUILD)/net_shim.o $(BUILD)/sqlite3.o $(BUILD)/sqlite_vfs.o $(BUILD)/libGEM.so $(BUILD)/libc.so $(BUILD)/libm.so
 
 # lua.so — /System/bin/lua: the Lua interpreter/REPL (real Lua 5.4 core from
 # xtos/lua + lua.c, linked against libc.so/libm.so). Boot scripts that are Lua

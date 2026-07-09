@@ -19,6 +19,7 @@
 #include "aes/aes.h"
 #include "img.h"
 #include "registry.h"
+#include "fujiclient.h"
 #include "font.h"
 #include "usys.h"
 #include <stdint.h>
@@ -273,11 +274,16 @@ static void desk_launch(const char *name, int media_type) {
 }
 
 // ---- rooted folder browser -------------------------------------------------
+// Three flavours share the struct + window plumbing: net=0 a local directory,
+// net=1 the FujiNet servers window (one tile per registry server + "Add
+// server"), net=2 a network browser over fujinetd (rel = the remote path).
 #define MAXBR   6
 #define MAXENT  96
-typedef struct { char name[128], label[128]; int dir; long size; } bent;
+typedef struct { char name[128], label[128]; int dir; long size;
+                 char state; int srvid; } bent;     // state: lsc cache column; srvid: servers row (-1 = Add server)
 typedef struct {
     int used, win, media_type, sel;
+    int net, server_id;                               // net browser flavour (see above)
     char logical_root[128], fs_root[160], rel[256];   // rel = "" at the (rooted) top
     int nent, nfiles; long total;
     bent ent[MAXENT];
@@ -308,9 +314,80 @@ static int ent_cmp(const void *a, const void *c) {
     if (x->dir != y->dir) return y->dir - x->dir;     // folders first
     return strcasecmp(x->name, y->name);
 }
+// ---- FujiNet listings (fujiclient.c talks to fujinetd; the daemon does the
+// TNFS + registry/netcache work) -----------------------------------------------
+static void srv_list(browser *b) {                    // one tile per `servers` row + "Add server"
+    br_free_icons(b);
+    b->nent = 0; b->nfiles = 0; b->total = 0; b->sel = -1;
+    int fd = fuji_connect();
+    char ln[640];
+    if (fd >= 0 && fuji_cmd(fd, "servers") == 0 &&
+        fuji_readline(fd, ln, sizeof ln) == 1 && ln[0] == '+') {
+        while (fuji_readline(fd, ln, sizeof ln) == 1 && strcmp(ln, ".")) {
+            if (b->nent >= MAXENT-1 || ln[0] == '-') continue;
+            int sid, off = 0; char tr[16], hp[160], pa[160];   // "<id> <udp|tcp|auto> <host>:<port> <path> <name…>"
+            if (sscanf(ln, "%d %15s %159s %159s %n", &sid, tr, hp, pa, &off) < 4) continue;
+            bent *e = &b->ent[b->nent++];
+            snprintf(e->name, sizeof e->name, "%s", ln[off] ? ln + off : hp);
+            e->dir = 1; e->size = 0; e->state = 0; e->srvid = sid;
+        }
+    }
+    if (fd >= 0) fuji_close(fd);
+    bent *a = &b->ent[b->nent++];                     // trailing "Add server" tile
+    snprintf(a->name, sizeof a->name, "Add server");
+    a->dir = 0; a->size = 0; a->state = 0; a->srvid = -1;
+    for (int i = 0; i < b->nent; i++) {
+        bent *e = &b->ent[i];
+        char ip[REG_PATH_MAX] = "", id[REG_NAME_MAX] = "";
+        if (!registry_match(e->srvid < 0 ? "Add server" : "Server",
+                            e->srvid < 0 ? ICT_ADD_SERVER : ICT_SERVER,
+                            ip, sizeof ip, id, sizeof id)) ip[0] = 0;
+        b->isurf[i] = ip[0] ? load_icon(ip) : NULL;
+        snprintf(e->label, sizeof e->label, "%s", e->name);
+        b->cic[i].img = b->isurf[i]; b->cic[i].text = e->label;
+    }
+}
+static void net_list(browser *b) {                    // entries from `lsc <server> <path>`
+    br_free_icons(b);
+    b->nent = 0; b->nfiles = 0; b->total = 0; b->sel = -1;
+    char path[300]; snprintf(path, sizeof path, "/%s", b->rel);
+    int fd = fuji_connect();
+    char ln[640];
+    if (fd >= 0 && fuji_cmd(fd, "lsc %d %s", b->server_id, path) == 0 &&
+        fuji_readline(fd, ln, sizeof ln) == 1 && ln[0] == '+') {
+        while (fuji_readline(fd, ln, sizeof ln) == 1 && strcmp(ln, ".")) {
+            if (b->nent >= MAXENT || ln[0] == '-') continue;
+            char kind, cs; long size; int off = 0;    // "d <size> - <name>" | "f <size> <g|f|c|u> <name>"
+            if (sscanf(ln, " %c %ld %c %n", &kind, &size, &cs, &off) < 3 || !ln[off]) continue;
+            bent *e = &b->ent[b->nent++];
+            snprintf(e->name, sizeof e->name, "%s", ln + off);
+            e->dir = (kind == 'd'); e->size = size;
+            e->state = e->dir ? 0 : cs; e->srvid = 0;
+        }
+    }
+    if (fd >= 0) fuji_close(fd);
+    qsort(b->ent, b->nent, sizeof(bent), ent_cmp);
+    for (int i = 0; i < b->nent; i++) {
+        bent *e = &b->ent[i];
+        if (!e->dir) { b->nfiles++; b->total += e->size; }
+        char ip[REG_PATH_MAX] = "", id[REG_NAME_MAX] = "";
+        int t = e->dir ? ICT_FOLDER : b->media_type;
+        if (!registry_match(e->name, t, ip, sizeof ip, id, sizeof id))
+            if (e->dir || !registry_match(e->name, ICT_FILE, ip, sizeof ip, id, sizeof id)) ip[0] = 0;
+        b->isurf[i] = ip[0] ? load_icon(ip) : NULL;
+        if (b->isurf[i] && (e->state == 'g' || e->state == 'f')) {   // uncached -> ghosted icon
+            gfx_surface *gs = icon_ghost(b->isurf[i]);
+            if (gs) { gfx_surface_free(b->isurf[i]); b->isurf[i] = gs; }
+        }
+        snprintf(e->label, sizeof e->label, "%s", id[0] ? id : e->name);
+        b->cic[i].img = b->isurf[i]; b->cic[i].text = e->label;
+    }
+}
 // List the browser's current directory over the kernel VFS (sys_readdir gives
 // the type; sys_stat only for file sizes).
 static void br_list(browser *b) {
+    if (b->net == 1) { srv_list(b); return; }         // FujiNet flavours
+    if (b->net == 2) { net_list(b); return; }
     br_free_icons(b);
     b->nent = 0; b->nfiles = 0; b->total = 0; b->sel = -1;
     char dir[420];
@@ -322,7 +399,7 @@ static void br_list(browser *b) {
         bent *e = &b->ent[b->nent];
         snprintf(e->name, sizeof e->name, "%s", de.name);
         e->dir = (de.mode & XT_S_IFMT) == XT_S_IFDIR;
-        e->size = 0;
+        e->size = 0; e->state = 0; e->srvid = 0;
         if (!e->dir) {
             char full[560]; struct xt_stat st;
             snprintf(full, sizeof full, "%s/%s", dir, de.name);
@@ -352,9 +429,10 @@ static void br_layout(browser *b) {
         int oi = 1+i, last = (i == b->nent-1);
         int cx = pad + (i % cols) * ICON_CW;
         int cy = pad + (i / cols) * ICON_CH;
+        int ghost = (b->ent[i].state == 'g' || b->ent[i].state == 'f');   // uncached net entry
         b->tree[oi] = (OBJECT){ (int16_t)(last?0:oi+1), NIL, NIL, G_CICON,
                                 (uint16_t)(OF_SELECTABLE | (last?OF_LASTOB:0)),
-                                (uint16_t)(i == b->sel ? OS_SELECTED : OS_NORMAL),
+                                (uint16_t)((i == b->sel ? OS_SELECTED : OS_NORMAL) | (ghost ? OS_DISABLED : 0)),
                                 &b->cic[i], (int16_t)cx, (int16_t)cy, ICON_CW, ICON_CH };
     }
 }
@@ -370,7 +448,14 @@ static void br_infobar(int hd, int ix, int iy, int iw, int ih, void *ud) {
     vst_height(HV, 14, 0,0,0,0);
     vst_color(HV, upc); vst_alignment(HV, VDI_TA_LEFT, VDI_TA_HALF, 0,0);
     v_gtext(HV, ax+18, ay, "Up");
-    char info[64]; snprintf(info, sizeof info, "%d files, %ld KB", b->nfiles, (b->total+1023)/1024);
+    char info[96];
+    if (b->net == 1)                                          // servers window (minus the Add tile)
+        snprintf(info, sizeof info, "%d servers", b->nent ? b->nent-1 : 0);
+    else if (b->net == 2)
+        snprintf(info, sizeof info, "%d files, %ld KB \xE2\x80\x94 %s",
+                 b->nfiles, (b->total+1023)/1024, b->logical_root);
+    else
+        snprintf(info, sizeof info, "%d files, %ld KB", b->nfiles, (b->total+1023)/1024);
     vst_color(HV, 1); vst_alignment(HV, VDI_TA_RIGHT, VDI_TA_HALF, 0,0);
     v_gtext(HV, ix+iw-12, ay, info);
     vst_alignment(HV, VDI_TA_LEFT, VDI_TA_TOP, 0,0);
@@ -384,6 +469,76 @@ static void br_content(int hd, int wax, int way, int waw, int wah, void *ud) {
 }
 static int br_up_hit(browser *b, int mx, int my) {
     return b->rel[0] && mx >= b->infox+8 && mx < b->infox+70 && my >= b->infoy && my < b->infoy+b->infoh;
+}
+static void open_fuji_browser(int server_id, const char *name);   // fwd
+// Fetch-progress box: filename + a bar, drawn straight to the screen (the next
+// repaint draws over it); aes_flush_rect (-> present_rect) makes it visible
+// mid-loop.
+static void net_progress(const char *name, unsigned done, unsigned total) {
+    int W = 360, H = 64, wx, wy, ww, wh;
+    wind_get(0, WF_WORKXYWH, &wx, &wy, &ww, &wh);
+    int x = wx + (ww-W)/2, y = wy + (wh-H)/2;
+    vsf_interior(HV, VDI_FIS_SOLID); vsf_perimeter(HV, 0); vsf_color(HV, 0);
+    int16_t bx[4] = { (int16_t)x, (int16_t)y, (int16_t)(x+W-1), (int16_t)(y+H-1) };
+    vr_recfl(HV, bx);
+    vsl_color(HV, 1); vsl_width(HV, 1);
+    int16_t o[10] = { (int16_t)x,(int16_t)y, (int16_t)(x+W-1),(int16_t)y,
+                      (int16_t)(x+W-1),(int16_t)(y+H-1), (int16_t)x,(int16_t)(y+H-1),
+                      (int16_t)x,(int16_t)y };
+    v_pline(HV, 5, o);
+    vst_color(HV, 1); vst_height(HV, 13, 0,0,0,0); vst_alignment(HV, VDI_TA_LEFT, VDI_TA_HALF, 0,0);
+    v_gtext(HV, x+12, y+17, name);
+    vst_alignment(HV, VDI_TA_LEFT, VDI_TA_TOP, 0,0);
+    int tw = W-24, fill = total ? (int)((long long)tw * done / total) : 0;
+    if (fill > tw) fill = tw;
+    int16_t tr[4] = { (int16_t)(x+12), (int16_t)(y+34), (int16_t)(x+12+tw-1), (int16_t)(y+49) };
+    vsf_color(HV, 9); vr_recfl(HV, tr);                       // trough
+    if (fill > 0) {
+        int16_t fr[4] = { tr[0], tr[1], (int16_t)(x+12+fill-1), tr[3] };
+        vsf_color(HV, 1); vr_recfl(HV, fr);                   // done so far
+    }
+    aes_flush_rect(x, y, W, H);
+}
+// Modal netcache fetch: stream `fetch` progress into the box, then re-list so
+// the entry solidifies (or reverts on error).  No cancel in v1.
+static void net_fetch(browser *b, const char *remote, const char *name) {
+    int fd = fuji_connect(), ok = 0;
+    char ln[640] = "";
+    if (fd < 0) { form_alert(1, "[3][FujiNet daemon not running|(boot script 40-FujiNet)][OK]"); return; }
+    if (fuji_cmd(fd, "fetch %d %s", b->server_id, remote) == 0) {
+        net_progress(name, 0, 0);
+        while (fuji_readline(fd, ln, sizeof ln) == 1) {
+            if (!strncmp(ln, "+progress ", 10)) {
+                unsigned done = 0, total = 0;
+                sscanf(ln + 10, "%u %u", &done, &total);
+                net_progress(name, done, total);
+            }
+            else if (!strncmp(ln, "+ok", 3)) { ok = 1; break; }
+            else if (ln[0] == '-') break;
+        }
+    }
+    fuji_close(fd);
+    if (!ok) {
+        char msg[120];
+        for (char *p = ln; *p; p++) if (*p=='['||*p==']'||*p=='|') *p = ' ';   // keep form_alert parsable
+        snprintf(msg, sizeof msg, "[3][Fetch failed|%.60s][OK]", ln[0] == '-' ? ln+1 : "daemon connection lost");
+        form_alert(1, msg);
+    }
+    br_list(b); repaint();
+}
+// Open a network file: cached -> launch its /Cache mirror; ghost (or a cache
+// row whose file went missing) -> modal fetch first.
+static void net_open(browser *b, int i) {
+    bent *e = &b->ent[i];
+    char remote[420];
+    if (b->rel[0]) snprintf(remote, sizeof remote, "/%s/%s", b->rel, e->name);
+    else           snprintf(remote, sizeof remote, "/%s", e->name);
+    if (e->state == 'c' || e->state == 'u') {
+        char local[560]; struct xt_stat st;                   // /Cache/<id><remote> (the daemon's mirror)
+        snprintf(local, sizeof local, "/Cache/%d%s", b->server_id, remote);
+        if (sys_stat(local, &st) == 0) { desk_launch(e->name, b->media_type); repaint(); return; }
+    }
+    net_fetch(b, remote, e->name);
 }
 static void br_click(browser *b, int mx, int my) {
     if (br_up_hit(b, mx, my)) {                               // ascend (never above the root)
@@ -400,10 +555,16 @@ static void br_click(browser *b, int mx, int my) {
     if (r & MU_BUTTON) {
         int w2 = wind_find(mx2, my2);
         if (w2 == b->win && objc_find(b->tree, 0, 2, mx2, my2) == oi) {   // double-click
-            if (b->ent[i].dir) {                             // descend
+            if (b->net == 1) {                               // servers window
+                if (b->ent[i].srvid < 0)                     // "Add server": v1 points at the CLI
+                    form_alert(1, "[1][To add a server, run:|fuji add-server host udp/tcp/auto|path name][OK]");
+                else open_fuji_browser(b->ent[i].srvid, b->ent[i].label);
+            } else if (b->ent[i].dir) {                      // descend
                 int n = (int)strlen(b->rel);
                 snprintf(b->rel + n, sizeof b->rel - n, "%s%s", b->rel[0] ? "/" : "", b->ent[i].name);
                 br_list(b); br_settitle(b); repaint();
+            } else if (b->net == 2) {                        // network file: launch cached / fetch ghost
+                net_open(b, i);
             } else {                                         // launch the file in its emulator
                 desk_launch(b->ent[i].name, b->media_type);
                 repaint();
@@ -416,11 +577,12 @@ static void br_click(browser *b, int mx, int my) {
     }
     if (was) { b->sel = -1; repaint(); }                     // toggle off
 }
-static void open_browser(const char *logical, int media_type) {
+static void open_browser_win(const char *logical, int media_type, int net, int server_id) {
     int s = -1; for (int i = 0; i < MAXBR; i++) if (!BR[i].used) { s = i; break; }
     if (s < 0) return;
     browser *b = &BR[s]; memset(b, 0, sizeof *b);
     b->used = 1; b->media_type = media_type; b->sel = -1;
+    b->net = net; b->server_id = server_id;
     snprintf(b->logical_root, sizeof b->logical_root, "%s", logical);
     snprintf(b->fs_root, sizeof b->fs_root, "%s", logical);   // logical IS the SD path here
     int kind = W_NAME|W_CLOSER|W_MOVER|W_SIZER|W_FULLER|W_INFO;
@@ -435,6 +597,19 @@ static void open_browser(const char *logical, int media_type) {
     g_bx += 34; g_by += 30; if (g_by > PH-320) { g_bx = 380; g_by = 130; }
     repaint_rect(bx, by, bw, bh);             // push just the new window, not the whole plane
 }
+static void open_browser(const char *logical, int media_type) {
+    open_browser_win(logical, media_type, 0, 0);
+}
+// FujiNet: the servers window, then per-server network browsers rooted at "/".
+static void open_fuji_browser(int server_id, const char *name) {
+    open_browser_win(name, ICT_MEDIA_8BIT, 2, server_id);
+}
+static void open_fuji_servers(void) {
+    int fd = fuji_connect();
+    if (fd < 0) { form_alert(1, "[3][FujiNet daemon not running|(boot script 40-FujiNet)][OK]"); return; }
+    fuji_close(fd);
+    open_browser_win("FujiNet", ICT_MEDIA_8BIT, 1, 0);
+}
 
 // Dispatch a desktop icon by its registry type: emulators -> an emulator window,
 // media -> a rooted browser at the matching /media volume (lowercase SD layout).
@@ -443,6 +618,7 @@ static void open_icon(int obj) {
     switch (ri->type) {
         case ICT_MEDIA_8BIT: open_browser("/media/6502", ICT_MEDIA_8BIT); break;
         case ICT_MEDIA_1632: open_browser("/media/m68k", ICT_MEDIA_1632); break;
+        case ICT_FUJINET:    open_fuji_servers(); break;
         case ICT_EMU_8BIT: case ICT_EMU_1632:
         default:             open_emulator(ri->type ? ri->type : ICT_EMU_8BIT, NULL, NULL); break;
     }
