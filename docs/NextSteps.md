@@ -56,6 +56,18 @@
      disappears) and signals have one home. **Irreducibly user-side:** only the
      tiny **sigreturn trampoline** (the handler runs in user context on the user
      stack) — keep it as a *hidden* libc stub, not a public colliding symbol.
+     - **This also upgrades signals from synchronous → ASYNC (do it).** Today's
+       "deliver at the next syscall" means a CPU-bound loop with no syscalls never
+       sees the signal. Async delivery = run the check-pending-and-inject on the
+       **return-to-PL0 path from the timer tick / preemption**, not only from
+       syscalls. FreeRTOS is already preemptive, so the async *trigger exists* —
+       just wire the same frame-injection into the port's "resume user task" path.
+       Two triggers, one mechanism: CPU-bound task → inject on tick-return (true
+       async); task blocked in a syscall → EINTR + inject on syscall-return. Safe
+       + free because injection only ever happens on the transition **to** user
+       mode (no kernel lock / half-syscall state live). Same as Linux `do_signal()`
+       on both syscall-exit and IRQ-exit — the IRQ-exit hook is what makes it async.
+       The synchronous-only scheme is just this minus the tick-return hook.
   The shim still has a legit job afterwards (the POSIX *shape* newlib lacks —
   `opendir`/`readdir` over `getdents`, stdio buffering, `spawn`/`wait`, termios —
   none of it `read`-coupled). Cost/why-not-done-first: real frame-injection
