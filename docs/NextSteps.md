@@ -171,6 +171,45 @@
   (3) plane-body-move fast-path. Optional RTL (4): odd-X horizontal lane mux +
   reverse-direction BLOCK_BLIT. *(src: docs/OS/desktop-redraw.md)*
 
+- **Opaque window movement — Geneva message model OVER the HW overlay (design
+  decided).** Adopt Geneva-style opaque dragging (all windows move with content,
+  continuous `WM_MOVED`) but layered on our HW drag-overlay, NOT Geneva's software
+  repaint — the overlay stays the rendering engine so we NEVER reintroduce
+  per-motion plane writes (that DDR-burst starvation is what drops the SiI9022 HDMI
+  link — the whole reason the overlay exists). Bottom-up (needs the rectangle list
+  from item (1): the AES enum stops at `WF_FULLXYWH`, no `WF_FIRSTXYWH`/
+  `WF_NEXTXYWH`, so no per-window visible-rect clipping today):
+  - **Continuous `WM_MOVED`** (per-motion, not one-shot-at-release like stock TOS /
+    our current `window.c`). The real work is making `wind_drag()` NON-BLOCKING
+    (main-loop-driven, feeding `WM_MOVED` concurrently) instead of the current
+    nested blocking loop — and it's in the SHARED `gem/aes/window.c` (retest the SDL
+    host too).
+  - **Message discipline (HDMI-safe by construction):** `WM_MOVED` → update coords
+    (`wind_set WF_CURRXYWH`) + reposition any LIVE plane the app owns (emulator:
+    `xl_sync`, a register write) — NEVER redraw. `WM_REDRAW` → the ONLY place a GEM
+    app paints, ONE-SHOT at the drop, dirty-rect clipped. Nothing but register
+    writes is per-motion → no plane-write storm.
+  - **Capture-correctness guard (NOT just an optimization):** at drag-start the
+    dragged window's rectangle-list count is the branch. `nrects==1` = fully visible
+    = the back-buffer already holds ITS content at its rect → capture into the
+    overlay as-is, zero pre-redraw. `nrects>1` = partially covered = the back-buffer
+    holds the COVERING window's pixels in the covered sub-rects → MUST raise+redraw
+    first, else the overlay drags foreign pixels (visible corruption). So:
+    `nrects==1 ? capture_now : raise_redraw_then_capture`.
+  - **Z-order = raise-and-keep** (drag promotes to top; standard, and the drop
+    redraw is then just the window's new area + the vacated region clipped to the
+    underlying windows' newly-visible rects). Restore-original-z is possible but
+    costs a stack recomposite + `WM_REDRAW` to every window that should re-occlude
+    the drop — skip unless stacking-preserving drag is specifically wanted.
+  - **Already shipped (today, without the rect list):** the HW overlay + the
+    per-motion `ovl_move → xl_sync` hook already give opaque drag + live XL-plane
+    tracking (commit a02204c); capture-correctness is handled crudely by the
+    two-click "top-then-drag" (first click raises + full-redraws → forces fully
+    visible before the second click captures). The Geneva model replaces that with
+    one gesture + the `nrects==1` fast path once the rectangle list lands.
+  *(src: docs/OS/desktop-redraw.md; Geneva `WM_MOVED`/`WM_REDRAW` packet layout;
+  depends on item (1) rectangle-list foundation)*
+
 ## App launch (desktop → XL realm)
 
 - **Launch an 8-bit app from the desktop** — the A9 reads the file, looks up its
