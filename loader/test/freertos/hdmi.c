@@ -354,8 +354,12 @@ static void hdmi_diag_mon_task(void *arg)
         unsigned alv   = (d0 >> 8) & 0xFF, unlk = (d0 >> 16) & 0xFF, frm = (d0 >> 24) & 0xFF;
         unsigned d_abt = d6 & 0xFFFF, x_abt = d6 >> 16, d_ovr = d7 >> 16, x_ovr = d7 & 0xFFFF;
 
-        unsigned pix_stall = (alv == alv_p);         /* 8-bit @148 MHz wraps in µs; unchanged/15 ms = stopped */
-        if (frm == frm_p) frm_stall++; else frm_stall = 0;
+        /* display-sleep (CTRL_GP0 bit5) gates clk_pix ON PURPOSE: the pixel clock
+         * stops and frames freeze — that's the intended state, not a fault. Suppress
+         * the stall detectors while asleep (MMCM/overrun/abort stay armed). */
+        int asleep = (*(volatile uint32_t *)0x43C00300u) & 0x20u;
+        unsigned pix_stall = !asleep && (alv == alv_p);   /* 8-bit @148 MHz wraps in µs; unchanged/15 ms = stopped */
+        if (asleep || frm != frm_p) frm_stall = 0; else frm_stall++;
 
         int fire = (!lk2)
                  | (unlk  != ((d0p >> 16) & 0xFF))
