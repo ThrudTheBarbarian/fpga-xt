@@ -90,6 +90,7 @@ static int desk_sel(void) { for (int i = 1; i <= n_icons; i++) if (desk[i].ob_st
  * here because the drag-overlay hooks below track it during a drag. */
 #define XL_SCALE 2                      // 320x192 XL writeback -> a 640x384 work area
 static int g_xlwin;                     // window handle owning the plane (0 = none)
+static void xl_sync(void);              // fwd: re-place the plane on g_xlwin's work area
 
 /* HW drag-overlay ops (registered with wind_set_overlay): the AES title-bar drag
  * lifts the window into the overlay plane and moves it by register write — no
@@ -101,7 +102,6 @@ static int g_xlwin;                     // window handle owning the plane (0 = n
  * picture then rides on top of the dragged frame instead of staying pinned. */
 #define DRAG_BASE 0x32000000u
 static int g_ovl_w, g_ovl_h;
-static int g_drag_xl, g_drag_dx, g_drag_dy, g_drag_ww, g_drag_wh;   // XL plane tracks this drag
 static int ovl_begin(int x, int y, int w, int h) {
     if (w <= 0 || h <= 0) return 0;
     if (x < 0 || y < 0 || x + w > g_fb.w || y + h > g_fb.h) return 0;   // off-screen edge -> classic drag
@@ -110,26 +110,23 @@ static int ovl_begin(int x, int y, int w, int h) {
         memcpy(dst + (size_t)r * g_fb.stride,           // NOT packed — OVL_W only bounds the displayed width
                g_bb->px + (size_t)(y + r) * g_bb->stride + x, (size_t)w * 4);
     g_ovl_w = w; g_ovl_h = h;
-    g_drag_xl = 0;                                      // does this drag carry the emu window?
-    if (g_xlwin) {
-        int fx, fy, fw, fh;
-        wind_get(g_xlwin, WF_CURRXYWH, &fx, &fy, &fw, &fh);
-        if (fx == x && fy == y && fw == w && fh == h) { // yes — capture its work-area inset + size
-            int wx, wy, ww, wh;
-            wind_get(g_xlwin, WF_WORKXYWH, &wx, &wy, &ww, &wh);
-            g_drag_dx = wx - fx; g_drag_dy = wy - fy;
-            g_drag_ww = ww; g_drag_wh = wh; g_drag_xl = 1;
-        }
-    }
     sys_overlay(x, y, w, h, 1);
     return 1;
 }
+// The emulator's live picture is a SEPARATE compositor plane (XL, depth 2, above
+// this drag overlay).  WM_MOVED is one-shot at drag-END (classic GEM), so it can
+// only SNAP the plane, never track it — the continuous follow must ride the
+// per-motion overlay hook.  xl_sync() re-reads g_xlwin's LIVE work area (window.c
+// updates W->x/W->y before calling ovl_move), so the plane steps with the drag
+// and settles on release.  A no-op when the dragged window isn't the emu window
+// (g_xlwin's work area is unchanged → same placement), so it's safe to call
+// unconditionally without a per-drag bind check (the old g_drag_xl arming, which
+// never fired reliably).
 static void ovl_move(int x, int y) {
     sys_overlay(x, y, g_ovl_w, g_ovl_h, 1);
-    if (g_drag_xl)                                      // live video follows the frame (XL plane sits on top)
-        sys_xl_window(x + g_drag_dx, y + g_drag_dy, g_drag_ww, g_drag_wh, XL_SCALE);
+    xl_sync();                                          // XL plane follows the emu window each step
 }
-static void ovl_end(void) { sys_overlay(1920, 1080, 1, 1, 1); g_drag_xl = 0; }  /* park off-screen; EN stays 1 */
+static void ovl_end(void) { sys_overlay(1920, 1080, 1, 1, 1); xl_sync(); }  /* park overlay; settle the plane */
 
 static int read_default(const char *dir, char *out, int n) {
     char p[160]; snprintf(p, sizeof p, "%s/Default", dir);
