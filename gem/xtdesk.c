@@ -634,7 +634,12 @@ int main(int argc, char **argv) {
 
     g_desk = gfx_surface_alloc(WIN_W, WIN_H);
     vdi_init(g_desk); HV = v_opnvwk(g_desk);
-    font_face *ff = font_face_open("fonts/AovelSansRounded.ttf");
+    // label font: the SD layout first (mirrors aesdesk's /OS/fonts), then the
+    // repo copy so a bare dev tree still has text — regardless of cwd
+    char fontp[320]; snprintf(fontp, sizeof fontp, "%s/OS/fonts/AovelSansRounded.ttf", base);
+    font_face *ff = font_face_open(fontp);
+    if (!ff) ff = font_face_open("fonts/AovelSansRounded.ttf");
+    if (!ff) fprintf(stderr, "xtdesk: no label font (%s) — icon text will be missing\n", fontp);
     if (ff) font_face_set_tracking(ff, 1);
     vdi_set_face(ff);
     if (!load_theme()) { fprintf(stderr, "xtdesk: theme load failed (make themepack, or pass an OS dir)\n"); return 1; }
