@@ -1416,7 +1416,8 @@ int sigaction(int sig, const struct sigaction *act, struct sigaction *old)
     if (act) {
         ka.handler  = (unsigned long)act->sa_handler;
         ka.mask     = 0;
-        ka.flags    = (act->sa_flags & SA_NODEFER) ? XT_SA_NODEFER : 0;
+        ka.flags    = ((act->sa_flags & SA_NODEFER) ? XT_SA_NODEFER : 0)
+                    | ((act->sa_flags & SA_RESTART) ? XT_SA_RESTART : 0);
         ka.restorer = (unsigned long)&__xt_sigreturn;
         ka.trap     = (unsigned long)&__xt_sig_trap;
     }

@@ -159,14 +159,19 @@ delivers, so it's now signalable/killable. (docs/NextSteps.md motivating case.)
 - Fixed a latent build bug it surfaced: usys.h now `#include <stdint.h>` (the
   `uint16_t` in sys_xl_window/sys_overlay assumed the includer pulled stdint).
 
+### DONE (2026-07-10) — SA_RESTART
+- The flag was defined (`XT_SA_RESTART`) but never consulted; every interrupted
+  syscall EINTR'd. Now: `deliver_signals(…, syscall_ret)` — on the **deferred**
+  (blocked-syscall) return only, if the delivering handler has `SA_RESTART` and the
+  syscall made no progress (saved `r0 == -EINTR`), it restores `XT_ERESTARTSYS`
+  (`-514`) instead. The single `__syscall` chokepoint (usys.h) loops on that
+  sentinel and re-issues the `svc` — the handler has already run at deferred return,
+  so ordering is handler-then-restart. No PC-rewind/Thumb fragility; transparent to
+  every wrapper. The shim's `sigaction` now forwards `SA_RESTART` (was dropping it;
+  `SA_RESTART == XT_SA_RESTART == 0x10000000` by construction).
+- `sigtest` **5/5** (adds test 5: SA_RESTART — the handler writes a byte to the pipe
+  the parent is blocked reading; the read *restarts* and returns `'x'` rather than
+  EINTR). Plain `signal()`-installed handlers still EINTR (no SA_RESTART) — test 3.
+
 ### Remaining
-- **`SA_RESTART`** — today every interrupted syscall is EINTR, never auto-restart.
-- Newlib provenance: no STAMP/submodule for the checked-in `newlib-pic/{libc.a,
-  libm.a}` prebuilts (mystery-blob footgun class). Proposed: a STAMP recording
-  version + config-hash + artifact sha256 + validated marker; submodule optional
-  (no source patches today; the dedup is loader-side, not a newlib change).
-  Signals work WITHOUT it (shim-linked programs bind the shim's copies locally via
-  xtld's no-interposition rule); it's defensive hygiene. Deferred to avoid risking
-  program-load resolution at 3am; do it with the kernel-export-table robustness
-  variant + a full boot/ssh smoke test.
-- `SA_RESTART` (currently every interrupted syscall is EINTR, never auto-restart).
+- (none — signals feature-complete: sync, async, EINTR, SA_RESTART, SIGCHLD/SIGWINCH.)

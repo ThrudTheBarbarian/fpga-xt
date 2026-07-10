@@ -2523,7 +2523,7 @@ void strace_ret(uint32_t num, long r)
  * hidden userland trampoline (sa.restorer) runs the handler then SYS_sigreturn,
  * which restores the saved frame. Called at BOTH the syscall-return path (sync +
  * EINTR) and the timer-tick return (async). */
-static int deliver_signals(proc_t *p, uint32_t r[16], uint32_t *cpsr)
+static int deliver_signals(proc_t *p, uint32_t r[16], uint32_t *cpsr, int syscall_ret)
 {
     if (!p) return 0;
     uint32_t deliverable = p->sig_pending & ~p->sig_blocked;
@@ -2536,6 +2536,13 @@ static int deliver_signals(proc_t *p, uint32_t r[16], uint32_t *cpsr)
     uint32_t sp = (r[13] - (uint32_t)sizeof(struct xt_sigframe)) & ~7u;
     struct xt_sigframe *f = (struct xt_sigframe *)(uintptr_t)sp;
     for (int i = 0; i < 15; i++) f->r[i] = r[i];
+    /* SA_RESTART: if this delivery interrupts a blocking syscall that made no
+     * progress (its saved r0 == -EINTR marker), restore XT_ERESTARTSYS instead so
+     * userland __syscall re-issues the svc once the handler returns (POSIX restart).
+     * Only on the deferred syscall-return path (syscall_ret); async/tick delivery of
+     * a CPU-bound loop has a real r0 we must never touch. */
+    if (syscall_ret && (sa->flags & XT_SA_RESTART) && f->r[0] == (uint32_t)-4)
+        f->r[0] = (uint32_t)XT_ERESTARTSYS;
     f->pc = r[15]; f->cpsr = *cpsr; f->signo = (uint32_t)sig; f->saved_mask = p->sig_blocked;
     p->sig_blocked |= sa->mask;
     if (!(sa->flags & XT_SA_NODEFER)) p->sig_blocked |= (1u << sig);
@@ -2559,7 +2566,7 @@ static void deliver_inline(proc_t *p, struct k_regs *regs)
     r[15] = regs->lr;
     rd_usr_sp_lr(&r[13], &r[14]);
     __asm__ volatile("mrs %0, spsr" : "=r"(cpsr));
-    if (deliver_signals(p, r, &cpsr)) {
+    if (deliver_signals(p, r, &cpsr, 0)) {             /* sync return: not a blocked-syscall restart */
         for (int i = 0; i < 13; i++) regs->r[i] = r[i];
         regs->lr = r[15];
         wr_usr_sp_lr(r[13], r[14]);
@@ -2574,7 +2581,7 @@ void deliver_deferred(proc_t *p)
     uint32_t r[16], cpsr;
     for (int i = 0; i < 13; i++) r[i] = p->dctx[i];
     r[13] = p->dctx[14]; r[14] = p->dctx[16]; r[15] = p->dctx[13]; cpsr = p->dctx[15];
-    if (deliver_signals(p, r, &cpsr)) {
+    if (deliver_signals(p, r, &cpsr, 1)) {             /* blocked-syscall return: eligible for SA_RESTART */
         for (int i = 0; i < 13; i++) p->dctx[i] = r[i];
         p->dctx[13] = r[15]; p->dctx[14] = r[13]; p->dctx[16] = r[14]; p->dctx[15] = cpsr;
     }
@@ -2658,7 +2665,7 @@ int k_syscall_dispatch(struct k_regs *regs)
             uint32_t r[16], cpsr;
             for (int i = 0; i < 16; i++) r[i] = p->async_ctx[i];
             cpsr = p->async_cpsr;
-            deliver_signals(p, r, &cpsr);                  /* -> handler, or unchanged = resume as-is */
+            deliver_signals(p, r, &cpsr, 0);               /* -> handler, or unchanged = resume as-is */
             for (int i = 0; i < 13; i++) regs->r[i] = r[i];
             regs->lr = r[15];
             wr_usr_sp_lr(r[13], r[14]);

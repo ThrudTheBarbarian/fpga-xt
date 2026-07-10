@@ -9,13 +9,21 @@
 #include <stdlib.h>
 #include <string.h>
 
+#ifndef SA_RESTART
+#define SA_RESTART 0x10000000    /* == XT_SA_RESTART; sigtest.c doesn't see libc-compat */
+#endif
+
 static volatile sig_atomic_t got_usr1;
 static volatile sig_atomic_t got_usr2;
 static volatile sig_atomic_t got_chld;
+static int g_restart_wfd = -1;   /* the SA_RESTART handler writes one byte here */
 
 static void on_usr1(int s) { (void)s; got_usr1 = 1; }
 static void on_usr2(int s) { (void)s; got_usr2 = 1; }
 static void on_chld(int s) { (void)s; got_chld = 1; }
+/* on delivery, unblock the pipe the parent is blocked reading: proves the read
+ * RESTARTED (returned the byte) rather than failing EINTR. */
+static void on_usr1_feed(int s) { (void)s; got_usr1 = 1; if (g_restart_wfd >= 0) write(g_restart_wfd, "x", 1); }
 
 /* spawn a real child (vfork+exec, which works now) that signals us later */
 static void spawn_sender(pid_t target, int sig, int delay_ms)
@@ -74,6 +82,29 @@ int main(int argc, char **argv)
     for (int i = 0; i < 60 && !got_chld; i++) usleep(10000);   /* usleep = a delivery point */
     if (got_chld) { pass++; printf("sigtest: [4] SIGCHLD on exit    PASS\n"); }
     else            printf("sigtest: [4] SIGCHLD on exit    FAIL\n");
+
+    /* ---- 5. SA_RESTART: an interrupted blocked read is re-issued, not EINTR'd ---- */
+    total++;
+    got_usr1 = 0;
+    signal(SIGCHLD, SIG_DFL);                              /* our sender exits -> SIGCHLD(20) sorts below
+                                                            * SIGUSR1(30); disarm it so it can't interrupt
+                                                            * the read first and mask the SA_RESTART path */
+    int rf[2];
+    if (pipe(rf) == 0) {
+        g_restart_wfd = rf[1];                             /* handler will drop a byte in here */
+        struct sigaction sa;
+        memset(&sa, 0, sizeof sa);
+        sa.sa_handler = on_usr1_feed;
+        sa.sa_flags   = SA_RESTART;
+        sigaction(SIGUSR1, &sa, 0);
+        spawn_sender(getpid(), SIGUSR1, 60);
+        char c = 0; long r = read(rf[0], &c, 1);           /* blocks; signal fires -> handler writes 'x';
+                                                            * with SA_RESTART the read RESTARTS and returns it */
+        if (got_usr1 && r == 1 && c == 'x') { pass++; printf("sigtest: [5] SA_RESTART restart PASS (read=%ld '%c')\n", r, c); }
+        else printf("sigtest: [5] SA_RESTART restart FAIL (got=%d read=%ld c=%d)\n", (int)got_usr1, r, (int)c);
+        signal(SIGUSR1, on_usr1);                          /* leave disposition as the others expect */
+        g_restart_wfd = -1;
+    } else printf("sigtest: [5] SA_RESTART restart SKIP (pipe failed)\n");
 
     printf("sigtest: %d/%d passed\n", pass, total);
     return pass == total ? 0 : 1;

@@ -72,6 +72,11 @@
 #define XT_SIG_IGN   1            /* ignore */
 #define XT_SA_RESTART   0x10000000 /* restart the interrupted syscall instead of EINTR */
 #define XT_SA_NODEFER   0x40000000 /* don't auto-block the signal during its handler */
+/* Transient result the kernel restores as r0 when an SA_RESTART handler interrupts
+ * a blocked syscall: __syscall() (usys.h) loops on it and re-issues the svc AFTER
+ * the handler has run. Never reaches a caller (the loop eats it) and, being outside
+ * the small -errno range, can't be mistaken for one if it ever leaked. */
+#define XT_ERESTARTSYS  (-514)
 #define XT_SIG_BLOCK 0
 #define XT_SIG_UNBLOCK 1
 #define XT_SIG_SETMASK 2

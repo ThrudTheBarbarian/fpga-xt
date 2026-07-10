@@ -54,12 +54,13 @@
      ASYNC into a CPU-bound loop (tick-return hook), and EINTR of a blocked syscall.
      **aesdesk-can't-kill is FIXED** — it blocks in `aes_wait` (a syscall), so EINTR
      now delivers. Full design + ABI: docs/Design/process-signal-model.md.
-     Kernel SIGCHLD-on-exit + SIGWINCH + soft-dispatch removal DONE (ed61752), and
-     symbol dedup DONE (fc6fe7d, libc-hide.map). Signals HW-validated (sigtest 4/4,
-     kill, ssh reaping clean). Remaining: SA_RESTART (every interrupted syscall is
-     EINTR today); and newlib-pic provenance — the checked-in libc.a/libm.a have no
-     STAMP recording version+config+hash+validated (mystery-blob footgun); a submodule
-     is optional (no source patches; the dedup is loader-side).
+     Kernel SIGCHLD-on-exit + SIGWINCH + soft-dispatch removal DONE (ed61752),
+     symbol dedup DONE (fc6fe7d, libc-hide.map), and SA_RESTART DONE (2026-07-10 —
+     kernel returns XT_ERESTARTSYS, __syscall re-issues; sigtest 5/5). Signals are
+     feature-complete (sync/async/EINTR/SA_RESTART/SIGCHLD/SIGWINCH); HW-validated
+     for the 4/4 battery — the SA_RESTART case (test 5) is qemu-only, add it to the
+     next cold-load pass. newlib-pic provenance DONE: newlib-pic.stamp golden +
+     `make newlib-check` + `make newlib` version-upgrade path (085e5bf, 735d87f).
   The shim still has a legit job afterwards (the POSIX *shape* newlib lacks —
   `opendir`/`readdir` over `getdents`, stdio buffering, `spawn`/`wait`, termios —
   none of it `read`-coupled). Cost/why-not-done-first: real frame-injection

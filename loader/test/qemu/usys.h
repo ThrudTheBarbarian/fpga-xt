@@ -19,12 +19,20 @@ struct xt_spawn_aux { int fds[4]; char **envp; const char *cwd; };
 
 static inline long __syscall(long n, long a0, long a1, long a2)
 {
-    register long r7 __asm__("r7") = n;
-    register long r0 __asm__("r0") = a0;
-    register long r1 __asm__("r1") = a1;
-    register long r2 __asm__("r2") = a2;
-    __asm__ volatile("svc #1" : "+r"(r0) : "r"(r7), "r"(r1), "r"(r2) : "memory");
-    return r0;
+    long ret;
+    do {
+        register long r7 __asm__("r7") = n;
+        register long r0 __asm__("r0") = a0;
+        register long r1 __asm__("r1") = a1;
+        register long r2 __asm__("r2") = a2;
+        __asm__ volatile("svc #1" : "+r"(r0) : "r"(r7), "r"(r1), "r"(r2) : "memory");
+        ret = r0;
+        /* SA_RESTART: the kernel ran the handler on this return and asks us to
+         * re-issue the interrupted syscall. Only ever seen when the delivered
+         * handler set SA_RESTART, so plain (non-restart) EINTR still falls
+         * through as -4. */
+    } while (ret == XT_ERESTARTSYS);
+    return ret;
 }
 
 static inline long sys_write(int fd, const void *buf, unsigned len)
