@@ -29,6 +29,11 @@ void registry_close(void);
 // Fill up to `max` desktop icons (ordered by id); returns the count, <0 on error.
 int  registry_desktop_icons(reg_desktop_icon *out, int max);
 
+// Read a deskPrefs value by `key` into `out` (NUL-terminated, <=osz).  Returns 1
+// when the key exists; otherwise copies `deflt` (may be NULL) and returns 0.  Used
+// for the desktop view defaults (e.g. 'viewMode' 1=icons/2=single/3=multi).
+int  registry_pref(const char *key, const char *deflt, char *out, int osz);
+
 // Pick the window icon for an entry named `name` of iconTypes id `type`: the
 // most-specific matching windowIcons.match wins ('%' = one char, '*' = a run;
 // case-insensitive).  Fills path/displayName (displayName may be "" -> caller

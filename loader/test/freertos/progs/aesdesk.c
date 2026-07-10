@@ -31,6 +31,9 @@
 #define ICON_SZ 48
 #define ICON_CW 100
 #define ICON_CH (ICON_SZ + 26)
+#define TEXT_ROWH 20         // text-view row height (single/multi column)
+#define TEXT_COLW 220        // multi-column text: target column width
+#define BR_TEXT_SEL 250      // theme selection background (aes object.c PEN_SEL)
 #define MAX_ICONS 32
 #define DCLICK_MS 500   /* generous: serial Enter-Enter / Space-toggle need more than a real mouse */
 
@@ -300,6 +303,8 @@ typedef struct {
     int infox, infoy, infow, infoh;                    // last W_INFO chrome rect
     int retryx, retryw;                                // Retry button rect in the info bar (error state)
     int fitx, fitw;                                    // Fit button rect in the info bar (path windows)
+    int viewx, vieww;                                  // View button rect (cycles the view mode)
+    int viewmode;                                      // 1=icons grid, 2=single-col text, 3=multi-col text
     int ncrumb;                                        // breadcrumb span count (0 = none drawn)
     int crumbx[MAX_CRUMB], crumbw[MAX_CRUMB];          // per-segment hit rects (info bar left)
     int crumbcut[MAX_CRUMB];                           // strlen to truncate b->rel to on a segment click
@@ -322,6 +327,12 @@ static void ensure_doticon(void) {
 static browser *br_of_window(int win) {
     for (int i = 0; i < MAXBR; i++) if (BR[i].used && BR[i].win == win) return &BR[i];
     return NULL;
+}
+// The default view mode for a new browser window: deskPrefs 'viewMode' (1=icons,
+// 2=single-col text, 3=multi-col text), falling back to icons.
+static int default_viewmode(void) {
+    char v[16]; registry_pref("viewMode", "1", v, sizeof v);
+    int m = atoi(v); return (m >= 1 && m <= 3) ? m : 1;
 }
 static void br_free_icons(browser *b) {
     for (int i = 0; i < b->nent; i++) if (b->isurf[i]) { gfx_surface_free(b->isurf[i]); b->isurf[i] = NULL; }
@@ -502,6 +513,77 @@ static void br_layout(browser *b) {
                                 &b->cic[i], (int16_t)cx, (int16_t)cy, ICON_CW, ICON_CH };
     }
 }
+static int br_textw(const char *s);                   // fwd (defined with the info-bar helpers)
+// Compact human-readable size ("512", "13K", "4M") for the text-view size column.
+static void br_fmt_size(long sz, char *out, int cap) {
+    if (sz < 1000)           snprintf(out, cap, "%ld", sz);
+    else if (sz < 1000*1000) snprintf(out, cap, "%ldK", (sz + 512) / 1024);
+    else                     snprintf(out, cap, "%ldM", (sz + 524288) / (1024*1024));
+}
+// Text-view geometry (viewmode 2/3): columns (single=1; multi=work_width/COLW,
+// min 1 — recomputed every call so a resize reflows), rows-per-column (newspaper
+// flow: fill a column top-to-bottom then step right), and the per-column pixel
+// width.  ntile counts the synthetic ".." tile.  cols/rpc/colw/ntile are optional.
+static void br_text_grid(browser *b, int *cols, int *rpc, int *colw, int *ntile) {
+    int pad = 14, dd = b->rel[0] ? 1 : 0, nt = b->nent + dd;
+    int avail = b->waw - 2*pad; if (avail < 40) avail = 40;
+    int c = 1;
+    if (b->viewmode == 3) { c = avail / TEXT_COLW; if (c < 1) c = 1; }
+    int rows = ((nt < 1 ? 1 : nt) + c - 1) / c; if (rows < 1) rows = 1;
+    if (cols)  *cols  = c;
+    if (rpc)   *rpc   = rows;
+    if (colw)  *colw  = avail / c;
+    if (ntile) *ntile = nt;
+}
+// Pixel cell rect for text-view tile `slot` (0..ntile-1, slot 0 = ".." when present).
+static void br_text_cell(browser *b, int slot, int *x, int *y, int *w, int *h) {
+    int pad = 14, cols, rpc, colw, nt; br_text_grid(b, &cols, &rpc, &colw, &nt);
+    int col = slot / rpc, row = slot % rpc;
+    *x = b->wax + pad + col * colw;
+    *y = b->way + pad + row * TEXT_ROWH;
+    *w = colw; *h = TEXT_ROWH;
+}
+// Reverse of br_text_cell: the tile slot under (mx,my), or -1 for a miss.
+static int br_text_hit(browser *b, int mx, int my) {
+    int pad = 14, cols, rpc, colw, nt; br_text_grid(b, &cols, &rpc, &colw, &nt);
+    if (nt <= 0) return -1;
+    int lx = mx - (b->wax + pad), ly = my - (b->way + pad);
+    if (lx < 0 || ly < 0) return -1;
+    int col = lx / colw, row = ly / TEXT_ROWH;
+    if (col < 0 || col >= cols || row < 0 || row >= rpc) return -1;
+    int slot = col * rpc + row;
+    return (slot >= 0 && slot < nt) ? slot : -1;
+}
+// Draw the entries as one-line text rows (viewmode 2 single / 3 multi): name left,
+// size right-aligned per cell (dirs / ".." -> "<dir>").  The selected row gets a
+// PEN_SEL fill.  Geometry mirrors br_text_cell so br_click resolves the same slot.
+static void br_draw_text(browser *b) {
+    int dd = b->rel[0] ? 1 : 0, nt = b->nent + dd;
+    vst_height(HV, 14, 0,0,0,0);
+    for (int slot = 0; slot < nt; slot++) {
+        int cx, cy, cw, ch; br_text_cell(b, slot, &cx, &cy, &cw, &ch);
+        int isdot = (dd && slot == 0), i = slot - dd;
+        int sel   = (!isdot && i == b->sel);
+        int ghost = (!isdot && (b->ent[i].state == 'g' || b->ent[i].state == 'f'));
+        if (sel) {                                          // selection highlight bar
+            vsf_color(HV, BR_TEXT_SEL); vsf_interior(HV, VDI_FIS_SOLID); vsf_perimeter(HV, 0);
+            int16_t r[4] = { (int16_t)cx, (int16_t)cy, (int16_t)(cx+cw-2), (int16_t)(cy+ch-1) };
+            vr_recfl(HV, r);
+        }
+        const char *nm = isdot ? ".." : (b->ent[i].label[0] ? b->ent[i].label : b->ent[i].name);
+        char szbuf[24];
+        if (isdot || b->ent[i].dir) snprintf(szbuf, sizeof szbuf, "<dir>");
+        else                        br_fmt_size(b->ent[i].size, szbuf, sizeof szbuf);
+        int szw = br_textw(szbuf), pen = ghost ? 9 : 1;
+        char lbl[128];
+        aes_label_fit(HV, nm, cw - szw - 18, lbl, sizeof lbl);   // leave room for the size
+        vst_color(HV, pen); vst_alignment(HV, VDI_TA_LEFT, VDI_TA_HALF, 0,0);
+        v_gtext(HV, cx + 6, cy + ch/2, lbl);
+        vst_alignment(HV, VDI_TA_RIGHT, VDI_TA_HALF, 0,0);
+        v_gtext(HV, cx + cw - 8, cy + ch/2, szbuf);
+    }
+    vst_alignment(HV, VDI_TA_LEFT, VDI_TA_TOP, 0,0);
+}
 // Graphical progress indicator drawn straight into the info bar — the old
 // (removed) net_progress modal box style, relocated: a grey track (disabled
 // pen 9) with a solid fill (pen 1) and a thin outline.  Determinate fills
@@ -623,6 +705,7 @@ static void br_infobar(int hd, int ix, int iy, int iw, int ih, void *ud) {
     int irx = ix+iw-12;                                      // right edge of the info text
     b->retryx = 0; b->retryw = 0;                            // no Retry button unless in the error state
     b->fitx = 0; b->fitw = 0; b->ncrumb = 0;                // Fit / breadcrumb recorded only when drawn
+    b->viewx = 0; b->vieww = 0;                             // View button recorded only when drawn
     int drewbar = 0, drewcrumbs = 0;                        // active states draw a graphical bar + left label
     int pw = 120, pbh = 10;                                  // progress track: 120x10, vertically centred
     int pby = iy + (ih - pbh)/2;
@@ -635,6 +718,17 @@ static void br_infobar(int hd, int ix, int iy, int iw, int ih, void *ud) {
         vst_color(HV, 1); vst_alignment(HV, VDI_TA_LEFT, VDI_TA_HALF, 0,0);
         v_gtext(HV, b->fitx + 7, ay, "Fit");
         irx = b->fitx - 12;                                  // keep other content clear of the button
+    }
+    // View button (all browsers incl. servers; hidden while a request owns the
+    // right side): cycles icons -> single -> multi.  Sits left of Fit.
+    if (b->req_fd < 0) {
+        const char *vl = b->viewmode == 2 ? "View: List"
+                       : b->viewmode == 3 ? "View: Cols" : "View: Icons";
+        vst_height(HV, 14, 0,0,0,0);
+        b->vieww = br_textw(vl) + 14; b->viewx = irx - b->vieww;
+        vst_color(HV, 1); vst_alignment(HV, VDI_TA_LEFT, VDI_TA_HALF, 0,0);
+        v_gtext(HV, b->viewx + 7, ay, vl);
+        irx = b->viewx - 12;                                 // keep other content clear of the button
     }
     if (b->req_fd >= 0 && b->req_kind == RQ_FETCH) {          // fetch in flight: label + determinate bar
         unsigned pc = b->prog_total
@@ -684,8 +778,9 @@ static void br_content(int hd, int wax, int way, int waw, int wah, void *ud) {
     // A listing lays out the partial/empty list as it fills (rows arrive live);
     // the info bar carries the single contacting -> progress indicator.  A fetch
     // keeps the existing list on screen and shows progress in the info bar too.
-    br_layout(b);
     aes_icon_label_style(0);                       // browser: over the light window
+    if (b->viewmode == 2 || b->viewmode == 3) { br_draw_text(b); return; }
+    br_layout(b);                                  // viewmode 1: the icon grid
     objc_draw(b->tree, 0, 2, wax, way, waw, wah);
 }
 // Repaint ONLY the info bar (per fetch-progress line): chrome fill + divider +
@@ -894,6 +989,14 @@ static void net_pump(void) {
         }
     }
 }
+// Unified tile hit-test: returns a tile slot (0..ntile-1, slot 0 = ".." when
+// present) or -1.  Icon view goes through the OBJECT tree (objc_find, tree[1] =
+// slot 0); the text views mirror br_text_cell's row/column math.
+static int br_hit_slot(browser *b, int mx, int my) {
+    if (b->viewmode == 2 || b->viewmode == 3) return br_text_hit(b, mx, my);
+    int oi = objc_find(b->tree, 0, 2, mx, my);
+    return oi <= 0 ? -1 : oi - 1;
+}
 static void br_click(browser *b, int mx, int my) {
     if (b->req_fd >= 0) return;                               // request in flight: ignore clicks
     for (int c = 0; c < b->ncrumb; c++)                       // breadcrumb: jump to a path level
@@ -919,18 +1022,24 @@ static void br_click(browser *b, int mx, int my) {
         if (b->net == 1) srv_list_start(b); else net_list_start(b);
         repaint(); return;
     }
-    int oi = objc_find(b->tree, 0, 2, mx, my);
-    if (oi <= 0) { b->sel = -1; repaint(); return; }
+    if (b->vieww > 0 &&                                      // View button: cycle icons/single/multi
+        mx >= b->viewx && mx < b->viewx + b->vieww &&
+        my >= b->infoy && my < b->infoy + b->infoh) {
+        b->viewmode = b->viewmode >= 3 ? 1 : b->viewmode + 1;
+        b->sel = -1; repaint(); return;
+    }
+    int slot = br_hit_slot(b, mx, my);
+    if (slot < 0) { b->sel = -1; repaint(); return; }
     int dd = b->rel[0] ? 1 : 0;
-    int isdot = (dd && oi == 1);                             // synthetic ".." up-tile
-    int i = oi-1-dd, was = (!isdot && b->sel == i);
+    int isdot = (dd && slot == 0);                          // synthetic ".." up-tile
+    int i = slot-dd, was = (!isdot && b->sel == i);
     b->sel = isdot ? -1 : i; repaint();
     int mx2, my2, nc2; int16_t m2[8];
     int r = evnt_multi(MU_BUTTON|MU_TIMER, 2,1,1, 0,0,0,0,0, 0,0,0,0,0, m2, DCLICK_MS, 0,
                        &mx2, &my2, NULL, NULL, NULL, &nc2);
     if (r & MU_BUTTON) {
         int w2 = wind_find(mx2, my2);
-        if (w2 == b->win && objc_find(b->tree, 0, 2, mx2, my2) == oi) {   // double-click
+        if (w2 == b->win && br_hit_slot(b, mx2, my2) == slot) {   // double-click
             if (isdot) {                                     // ".." : ascend one level (like Up)
                 char *s = strrchr(b->rel, '/'); if (s) *s = 0; else b->rel[0] = 0;
                 br_list(b); br_settitle(b); repaint();
@@ -971,6 +1080,7 @@ static void open_browser_win(const char *logical, int media_type, int net, int s
     browser *b = &BR[s]; memset(b, 0, sizeof *b);
     b->used = 1; b->media_type = media_type; b->sel = -1; b->req_fd = -1;
     b->net = net; b->server_id = server_id;
+    b->viewmode = default_viewmode();
     snprintf(b->logical_root, sizeof b->logical_root, "%s", logical);
     snprintf(b->fs_root, sizeof b->fs_root, "%s", logical);   // logical IS the SD path here
     int kind = BR_WKIND;

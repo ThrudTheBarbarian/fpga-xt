@@ -36,6 +36,22 @@ int registry_desktop_icons(reg_desktop_icon *out, int max) {
     return n;
 }
 
+int registry_pref(const char *key, const char *deflt, char *out, int osz) {
+    if (out && osz > 0) snprintf(out, osz, "%s", deflt ? deflt : "");
+    if (!g_db) return 0;
+    sqlite3_stmt *st;
+    const char *sql = "SELECT value FROM deskPrefs WHERE key=?";
+    if (sqlite3_prepare_v2(g_db, sql, -1, &st, NULL) != SQLITE_OK) return 0;
+    sqlite3_bind_text(st, 1, key, -1, SQLITE_TRANSIENT);
+    int found = 0;
+    if (sqlite3_step(st) == SQLITE_ROW) {
+        const char *v = (const char *)sqlite3_column_text(st, 0);
+        if (v) { if (out && osz > 0) snprintf(out, osz, "%s", v); found = 1; }
+    }
+    sqlite3_finalize(st);
+    return found;
+}
+
 // Glob match: '%' = exactly one char, '*' = zero or more, case-insensitive.
 static int pmatch(const char *p, const char *s) {
     if (*p == '\0') return *s == '\0';
