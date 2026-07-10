@@ -36,9 +36,13 @@
                               * (dmesg / /proc/kmsg). Used by /bin/strace. */
 /* SYS_kill signal values with non-kill semantics (Linux numbers). Everything
  * else (9, 15, ...) kills at the target's next syscall boundary. */
-#define XT_SIGCONT 18        /* resume a stopped process */
-#define XT_SIGSTOP 19        /* park it at its next syscall boundary */
-#define XT_SIGTSTP 20        /* ditto (what ^Z sends) */
+/* NOTE: these MUST match newlib's arm signal.h — the shim passes newlib numbers
+ * straight to SYS_kill. (Were Linux 18/19/20; that mis-mapped kill -STOP/-CONT.) */
+#define XT_SIGSTOP 17        /* park it at its next syscall boundary (uncatchable) */
+#define XT_SIGTSTP 18        /* stop from tty (what ^Z sends) */
+#define XT_SIGCONT 19        /* resume a stopped process */
+#define XT_SIGCHLD 20        /* to the parent on child exit */
+#define XT_SIGWINCH 28       /* controlling terminal size changed */
 /* SYS_waitpid: the child stopped (^Z/SIGSTOP) rather than exited — it is NOT
  * reaped; wait it again after XT_SIGCONT (that's what fg does). */
 #define XT_WAIT_STOPPED (-12)

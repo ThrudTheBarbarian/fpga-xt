@@ -922,17 +922,13 @@ static inline int vfork_redir_fd(int fd)
     return fd;
 }
 
-static int winch_dispatch(void);   /* fwd (defined with the signal table below):
-                                    * runs a registered SIGWINCH handler; 1 = ran */
 
 ssize_t read(int fd, void *buf, size_t n)
 {
     for (;;) {
         long r = sys_read(vfork_redir_fd(fd), buf, (unsigned)n);
-        if (r == -4) {                 /* interrupted by a signal: the kernel already
-                                        * ran the handler (deferred delivery); report
-                                        * EINTR so the caller decides to retry or not. */
-            winch_dispatch();          /* legacy SIGWINCH soft path (harmless if none) */
+        if (r == -4) {                 /* interrupted by a signal: the kernel already ran
+                                        * the handler (deferred delivery). POSIX EINTR. */
             errno = EINTR; return -1;
         }
         if (r < 0) { errno = (r == -11) ? EAGAIN : (r < -1 && r > -134) ? (int)-r : EIO; return -1; }
@@ -1338,43 +1334,23 @@ static int poll_probe(struct pollfd *f)
     return f->revents != 0;
 }
 
-/* Does the caller have live children (spawned via vfork+exec)? Used to bound a
- * blocking poll: a server like dropbear reaps exited children in its select
- * loop's handler, but it relies on SIGCHLD waking select — and XTOS delivers no
- * async SIGCHLD. So when a child exits, nothing wakes a long select() and the
- * loop (hence the reap) stalls for the full timeout (dropbear's is ~1h rekey),
- * which reads as a hang. Capping the poll wait lets the caller's loop run — and
- * reap — within CHILD_POLL_MS of the child's exit. */
-static int have_children(void)
-{
-    for (int i = 0; i < MAX_KIDS; i++) if (g_kids[i]) return 1;
-    return 0;
-}
-static int sigchld_dispatch(void);   /* fwd (defined with the signal table below) */
-#define CHILD_POLL_MS 200
-
 int poll(struct pollfd *fds, nfds_t nfds, int timeout)
 {
     struct timeval t0;
     gettimeofday(&t0, 0);
-    int cap = have_children() ? CHILD_POLL_MS : -1;
     for (;;) {
         int ready = 0;
         for (nfds_t i = 0; i < nfds; i++) ready += poll_probe(&fds[i]);
         if (ready || timeout == 0) return ready;
-        if (timeout > 0 || cap >= 0) {
+        if (timeout > 0) {
             struct timeval t1;
             gettimeofday(&t1, 0);
             long el = (t1.tv_sec - t0.tv_sec) * 1000 + (t1.tv_usec - t0.tv_usec) / 1000;
-            if (timeout > 0 && el >= timeout) return 0;
-            if (cap >= 0 && el >= cap) {
-                /* a tracked child exited -> deliver SIGCHLD (writes the server's
-                 * self-pipe), then re-probe so this poll reports that pipe
-                 * readable and select wakes to reap. Otherwise just time out. */
-                if (sigchld_dispatch()) { gettimeofday(&t0, 0); continue; }
-                return 0;
-            }
+            if (el >= timeout) return 0;
         }
+        /* nothing ready: a child exiting raises SIGCHLD (async) whose handler runs
+         * on the usleep() return below and wakes a server's select via its
+         * self-pipe — no poll-cap needed. */
         /* nothing ready: if the ONLY interesting fd is the console, let the
          * kernel block properly; else nap-and-recheck */
         if (nfds == 1 && (fds[0].events & POLLIN)) {
@@ -1392,50 +1368,13 @@ int poll(struct pollfd *fds, nfds_t nfds, int timeout)
     }
 }
 
-/* ---- signals: soft only (never delivered asynchronously) ------------------ */
-static struct sigaction g_sigact[32];
+/* ---- signals: kernel-authoritative (real async delivery + EINTR) ----------
+ * Disposition lives in ONE kernel table (SYS_rt_sigaction); signal()/sigaction()
+ * below are thin wrappers. The kernel delivers on syscall-return, tick-return
+ * (async) and via EINTR of a blocked syscall, and raises SIGCHLD-on-exit /
+ * SIGWINCH itself — so the old g_sigact soft-dispatch (winch/sigchld, poll-cap)
+ * is gone. */
 
-#ifndef SIGWINCH
-#define SIGWINCH 28
-#endif
-/* SIGWINCH delivery point: a blocked pty-slave read wakes with -EINTR when the
- * window size changes (TIOCSWINSZ from the ssh client); read() calls here. The
- * handler runs synchronously in the reader's own context — the only signal
- * delivery XTOS does. Apps see fresh TIOCGWINSZ values inside the handler. */
-static int winch_dispatch(void)
-{
-    void (*h)(int) = g_sigact[SIGWINCH].sa_handler;
-    if (!h || h == SIG_IGN || h == SIG_DFL) return 0;
-    h(SIGWINCH);
-    return 1;
-}
-
-#ifndef SIGCHLD
-#define SIGCHLD 20      /* arm newlib */
-#endif
-/* SIGCHLD delivery point: XTOS has no async signals, so a server that relies on
- * SIGCHLD waking select (e.g. dropbear's self-pipe) never learns a child exited
- * and hangs. When a tracked child has actually exited (a non-reaping peek), run
- * the registered SIGCHLD handler synchronously — it typically writes a self-pipe
- * / sets a flag that wakes the caller's next select, which then reaps the child.
- * This is the same shim-side checkpoint idea as winch_dispatch; the two will fold
- * into one deliver_signals() pass. Returns 1 if a handler ran. */
-static int sigchld_dispatch(void)
-{
-    void (*h)(int) = g_sigact[SIGCHLD].sa_handler;
-    if (!h || h == SIG_IGN || h == SIG_DFL) return 0;
-    for (int i = 0; i < MAX_KIDS; i++)
-        if (g_kids[i] && sys_waitpid_peek(g_kids[i]) == 1) { h(SIGCHLD); return 1; }
-    return 0;
-}
-
-/* In the armed fake-vfork window, signal-disposition changes are for the
- * about-to-exec CHILD, whose new image starts with default handlers anyway — so
- * they must NOT touch the parent's table. Real vfork lets exec replace the child;
- * XTOS's snapshot-vfork keeps the parent running, so without this guard the
- * child's `signal(SIGCHLD, SIG_DFL)` (dropbear's execchild "back to normal
- * sigchld") wipes the PARENT's SIGCHLD handler — and the parent then never
- * delivers SIGCHLD, so it can't reap the exited shell (the session hangs). */
 /* The hidden sigreturn trampoline: the kernel vectors a signal handler's RETURN
  * here (via xt_sigaction.restorer). On entry sp points at the kernel-built
  * xt_sigframe; SYS_sigreturn restores the interrupted context from it and never
@@ -1460,37 +1399,39 @@ __attribute__((naked, used)) static void __xt_sig_trap(void)
         "b    .             \n");
 }
 
-/* sigaction(): install the disposition in the KERNEL (real, async-deliverable)
- * AND mirror into g_sigact so the legacy SIGCHLD/SIGWINCH soft-dispatch still
- * finds handlers during the transition. The g_vfork_armed guard stands: a
- * disposition change in the fake-vfork window is for the about-to-exec child, so
+/* sigaction(): install the disposition in the KERNEL (the single authoritative
+ * table; real async delivery). The g_vfork_armed guard stands: a disposition
+ * change in the fake-vfork window is for the about-to-exec child, so
  * it must touch neither the parent's kernel table nor g_sigact. */
 int sigaction(int sig, const struct sigaction *act, struct sigaction *old)
 {
     if (sig <= 0 || sig >= 32) { errno = EINVAL; return -1; }
-    if (old) *old = g_sigact[sig];
-    if (act && !g_vfork_armed) {
-        g_sigact[sig] = *act;
-        struct xt_sigaction ka;
+    if (g_vfork_armed) {                 /* fake-vfork child: the change is for the
+                                          * about-to-exec child (default handlers) —
+                                          * must NOT touch the parent's kernel table. */
+        if (old) memset(old, 0, sizeof *old);
+        return 0;
+    }
+    struct xt_sigaction ka, ko;
+    if (act) {
         ka.handler  = (unsigned long)act->sa_handler;
         ka.mask     = 0;
         ka.flags    = (act->sa_flags & SA_NODEFER) ? XT_SA_NODEFER : 0;
         ka.restorer = (unsigned long)&__xt_sigreturn;
         ka.trap     = (unsigned long)&__xt_sig_trap;
-        __syscall(SYS_rt_sigaction, sig, (long)&ka, 0);
     }
+    __syscall(SYS_rt_sigaction, sig, act ? (long)&ka : 0, old ? (long)&ko : 0);
+    if (old) { memset(old, 0, sizeof *old); old->sa_handler = (_sig_func_ptr)(uintptr_t)ko.handler; }
     return 0;
 }
 
-/* signal(): thin wrapper over sigaction so the kernel disposition + g_sigact both
- * get set (and the vfork guard applies once). */
+/* signal(): thin wrapper over sigaction (kernel disposition; prev from the kernel). */
 _sig_func_ptr signal(int sig, _sig_func_ptr h)
 {
     if (sig <= 0 || sig >= 32) { errno = EINVAL; return SIG_ERR; }
-    _sig_func_ptr prev = g_sigact[sig].sa_handler;
-    struct sigaction sa; memset(&sa, 0, sizeof sa); sa.sa_handler = h;
-    sigaction(sig, &sa, 0);
-    return prev;
+    struct sigaction sa, old; memset(&sa, 0, sizeof sa); sa.sa_handler = h;
+    if (sigaction(sig, &sa, &old) < 0) return SIG_ERR;
+    return old.sa_handler;
 }
 
 int kill(pid_t pid, int sig)

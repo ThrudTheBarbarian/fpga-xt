@@ -70,6 +70,7 @@ static long kfs_call(int op, const char *path, void *buf, uint32_t len, void **o
 typedef struct {
     int               used;
     int               pid;
+    int               ppid;            /* spawner's pid (for SIGCHLD-on-exit) */
     TaskHandle_t      task;
     xtld_obj         *obj;
     uintptr_t         entry;
@@ -118,6 +119,17 @@ static proc_t *proc_by_pid(int pid);     /* impl below with the waitpid family *
 /* a deliverable signal is pending -> a blocking syscall should unwind with -EINTR
  * (-4) so the kernel can vector the handler on the deferred return (deliver_deferred). */
 static inline int sig_ready(proc_t *p) { return p && ((p->sig_pending & ~p->sig_blocked) != 0); }
+
+/* raise a signal on a process from kernel context (SIGCHLD-on-exit, SIGWINCH):
+ * mark it pending only if a real handler is installed (default/ignored = no-op;
+ * SIGCHLD's default disposition is ignore, and waitpid has its own wakeup). It's
+ * delivered at the target's next return-to-PL0 / EINTR of a blocked syscall. */
+static inline void sig_raise(proc_t *t, int sig)
+{
+    if (!t || t->exited || sig <= 0 || sig >= XT_NSIG) return;
+    unsigned long h = t->sigact[sig].handler;
+    if (h != XT_SIG_DFL && h != XT_SIG_IGN) t->sig_pending |= (1u << sig);
+}
 
 static proc_t g_proc[MAXPROC];
 static int    g_next_pid = 1;
@@ -429,6 +441,7 @@ static void proc_exit_self(proc_t *p, int code)
         pipes_release(p);                            /* EOF to pipeline peers first */
         tty_release(p);                              /* raw-mode owner dies -> cooked */
         p->exited = 1;
+        sig_raise(proc_by_pid(p->ppid), XT_SIGCHLD); /* notify the parent (real async SIGCHLD) */
         if (p->waiter) xTaskNotifyGive(p->waiter);   /* wake a PL0 waitpid (task notification) */
         if (p->done)   xSemaphoreGive(p->done);      /* wake a kernel-task waitpid (shell_task) */
     }
@@ -495,6 +508,7 @@ void xtos_task_fault_exit(void)
          * the stack until the guard tripped, wedging the box). */
         p->exited = 1;
         p->exit_code = -1;
+        sig_raise(proc_by_pid(p->ppid), XT_SIGCHLD);/* notify the parent (crashed child) */
         pipes_release(p);                           /* EOF to pipeline peers first */
         tty_release(p);                             /* raw-mode owner dies -> cooked */
         if (p->waiter) xTaskNotifyGive(p->waiter);  /* wake a PL0 waitpid */
@@ -769,9 +783,10 @@ long xt_pty_read(int i, int master, void *buf, uint32_t n, int nonblock)
         if (sig_ready(p)) return -4;                       /* -EINTR: caught signal pending */
         if (p) stop_park(p);
         if (!master && g_pty[i].winch) {
-            /* SIGWINCH, XTOS-style: wake the blocked reader with -EINTR; the
-             * libc shim runs the registered handler (or transparently retries) */
+            /* terminal size changed: raise SIGWINCH on the reader (real signal) and
+             * unwind with -EINTR; the deferred return then vectors its handler. */
             g_pty[i].winch = 0;
+            sig_raise(cur_proc(), XT_SIGWINCH);
             return -4;                                     /* -EINTR */
         }
         size_t got = xStreamBufferReceive(sb, buf, n, pdMS_TO_TICKS(20));
@@ -2866,6 +2881,7 @@ static int proc_launch(int slot, xtld_obj *obj, uintptr_t entry,
     /* inherit the spawner's cwd (a shell's children run where the shell is);
      * a spawn from kernel context starts at the root */
     proc_t *parent = cur_proc();
+    p->ppid = (parent && parent != p) ? parent->pid : 0;   /* for SIGCHLD-on-exit */
     if (parent && parent != p) {
         int i = 0;
         while (parent->cwd[i] && i < (int)sizeof p->cwd - 1) { p->cwd[i] = parent->cwd[i]; i++; }

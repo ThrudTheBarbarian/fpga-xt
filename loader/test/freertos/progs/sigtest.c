@@ -11,9 +11,11 @@
 
 static volatile sig_atomic_t got_usr1;
 static volatile sig_atomic_t got_usr2;
+static volatile sig_atomic_t got_chld;
 
 static void on_usr1(int s) { (void)s; got_usr1 = 1; }
 static void on_usr2(int s) { (void)s; got_usr2 = 1; }
+static void on_chld(int s) { (void)s; got_chld = 1; }
 
 /* spawn a real child (vfork+exec, which works now) that signals us later */
 static void spawn_sender(pid_t target, int sig, int delay_ms)
@@ -63,6 +65,15 @@ int main(int argc, char **argv)
         if (got_usr1) { pass++; printf("sigtest: [3] EINTR blocked read  PASS (read=%ld)\n", r); }
         else            printf("sigtest: [3] EINTR blocked read  FAIL\n");
     } else printf("sigtest: [3] EINTR blocked read  SKIP (pipe failed)\n");
+
+    /* ---- 4. kernel SIGCHLD-on-exit: a child dying signals the parent ---- */
+    total++;
+    got_chld = 0;
+    signal(SIGCHLD, on_chld);
+    spawn_sender(getpid(), 0, 0);                          /* child: kill(pid,0) then exit -> SIGCHLD */
+    for (int i = 0; i < 60 && !got_chld; i++) usleep(10000);   /* usleep = a delivery point */
+    if (got_chld) { pass++; printf("sigtest: [4] SIGCHLD on exit    PASS\n"); }
+    else            printf("sigtest: [4] SIGCHLD on exit    FAIL\n");
 
     printf("sigtest: %d/%d passed\n", pass, total);
     return pass == total ? 0 : 1;
