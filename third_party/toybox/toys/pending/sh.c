@@ -3719,10 +3719,13 @@ static char *show_job(struct sh_process *pp, char dash)
   if (pp->exit<0) s = "Stop";
   else if (pp->exit>126) s = "Kill";
   else if (pp->exit>0) s = "Done";
-  for (i = len = len2 = 0;; i++) {
-    len += snprintf(buf, len2, "[%d]%c  %-6s", pp->job, dash, s);
+  // XTOS: advance the write cursor (buf+len, len2-len) — the original wrote every
+  // piece at buf[0], so `jobs` showed only the last argv token. len must reset per
+  // pass, so the header uses '=' not '+='.
+  for (i = 0, len2 = 0;; i++) {
+    len = snprintf(buf, len2, "[%d]%c  %-6s", pp->job, dash, s);
     for (j = 0; j<pp->raw->c; j++)
-      len += snprintf(buf, len2, " %s"+!j, pp->raw->v[j]);
+      len += snprintf(buf ? buf+len : 0, buf ? len2-len : 0, " %s"+!j, pp->raw->v[j]);
     if (!i) buf = xmalloc(len2 = len+1);
     else break;
   }
