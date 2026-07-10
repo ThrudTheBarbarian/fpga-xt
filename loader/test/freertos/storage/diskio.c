@@ -471,6 +471,12 @@ DRESULT disk_read (
 	DWORD LocSector = sector;
 #endif
 
+	/* Card absent: fail FAST. disk_status() below would otherwise spin
+	 * usleep(10ms)x500 = 5s per call while the card is out, hanging every
+	 * command that touches the SD (spawn/PATH-stat). sd_card_present is one
+	 * register read. */
+	if (!sd_card_present()) return RES_NOTRDY;
+
 	s = disk_status(pdrv);
 
 	if ((s & STA_NOINIT) != 0U) {
@@ -774,6 +780,8 @@ DRESULT disk_write (
 	s32 Status = XST_FAILURE;
 	DWORD LocSector = sector;
 #endif
+
+	if (!sd_card_present()) return RES_NOTRDY;	/* card absent: fail fast (see disk_read) */
 
 	s = disk_status(pdrv);
 	if ((s & STA_NOINIT) != 0U) {
