@@ -1,0 +1,23 @@
+/* Localize the POSIX symbols the XTOS posix shim owns so newlib's libc.so does
+ * NOT also export them — otherwise the same name is defined in both libc.so and
+ * every shim-linked program, and which one a call binds to is loader-order-
+ * dependent (the read/signal/execve "ambiguous binding" footgun).
+ *
+ * These four are the ONLY names newlib's libc.so defines that the shim
+ * (posix_shim.o) also defines. Making them local drops them from libc.so's
+ * .dynsym (so xtld_sym/reg_resolve can't return libc.so's copies), while they
+ * stay defined + resolvable INSIDE libc.so for newlib's own internal users
+ * (e.g. the db hash routines' `read`) — those bindings were fixed at static-link
+ * time and are unaffected by localization. `exit()->_exit` is untouched (_exit is
+ * already an undefined kernel-resolved import in libc.so, not a definition here).
+ *
+ * Result: exactly one resolvable definition of each — the shim's (in shim-linked
+ * programs) — with no competing libc.so export. */
+{
+  global: *;
+  local:
+    read;
+    signal;
+    kill;
+    execve;
+};

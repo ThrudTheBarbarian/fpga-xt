@@ -190,9 +190,10 @@ xtcrun:
 
 # libc.so — PIC newlib (loader/newlib-pic/, built by tools/build-newlib-pic.sh)
 # linked into a loadable shared object; goes in the romfs at /OS/Library/libc.so
-$(BUILD)/libc.so: newlib-pic/libc.a | $(BUILD)
+$(BUILD)/libc.so: newlib-pic/libc.a libc-hide.map | $(BUILD)
 	$(ARMCC) -mcpu=cortex-a9 -mfloat-abi=softfp -mfpu=neon-vfpv3 -shared -nostdlib \
 	    -Wl,-z,max-page-size=0x100000 \
+	    -Wl,--version-script=libc-hide.map \
 	    -Wl,--whole-archive newlib-pic/libc.a -Wl,--no-whole-archive \
 	    -Wl,-soname,libc.so -o $@
 

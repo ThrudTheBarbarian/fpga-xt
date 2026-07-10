@@ -5,6 +5,7 @@
 #ifndef USYS_H
 #define USYS_H
 
+#include <stdint.h>  /* uint16_t etc. — some wrappers pack args; be self-contained */
 #include "xtsys.h"   /* syscall numbers — one source of truth (frozen ABI) */
 
 /* the OS display-plane descriptor (filled by SYS_fb_info) */
