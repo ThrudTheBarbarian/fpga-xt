@@ -8,8 +8,8 @@
  */
 #include <stdint.h>
 #include "xtsys.h"                /* struct os_event, OS_EV_* */
-extern int desk_readc(void);         /* console bytes routed to the desktop (focus=desktop) */
-extern int desk_readc_timeout(int ms);
+extern int con_gui_readc(void);         /* console bytes routed to the desktop (focus=desktop) */
+extern int con_gui_readc_timeout(int ms);
 
 #ifdef XT_HW
 
@@ -194,7 +194,7 @@ void kbd_6502_inject(int c)              /* the actual POKEY write, after the pa
  * topped) disables the Enter/Space button synthesis so those characters TYPE
  * into the emulated machine; the mouse and the arrow keys still work.
  *
- * Runs kernel-side in the deferral thunk (task context) so sh_readc may block.
+ * Runs kernel-side in the deferral thunk (task context) so con_tty_readc may block.
  * klog markers ("mouse: ...") make the handshake visible in dmesg.
  * (Terminal caveat: mouse reporting stays on while the desktop runs; if focus
  * is toggled to the shell, mousing spews CSI bytes at it — known cosmetic.) */
@@ -206,7 +206,7 @@ static int s_cols = 80, s_rows = 24;    /* terminal text area (CSI 18t reply) */
 static int s_saw_report;                /* first mouse report logged once */
 
 extern void puts0(const char *);
-extern int  desk_focus_gen(void);       /* uart1_rx.c: bumps on each flip TO the desktop */
+extern int  con_focus_gen(void);       /* uart1_rx.c: bumps on each flip TO the desktop */
 extern void klog(const char *);         /* frtos_os.c: kernel log -> dmesg */
 extern void klog_u(unsigned);
 
@@ -215,7 +215,7 @@ extern void klog_u(unsigned);
 static int rd_int(int *v) {
     int n = 0, c;
     for (;;) {
-        c = desk_readc_timeout(50);
+        c = con_gui_readc_timeout(50);
         if (c < '0' || c > '9') break;
         n = n * 10 + (c - '0');
     }
@@ -228,7 +228,7 @@ static int cell2px(int cell, int cells, int span) {
     return p;
 }
 static void mouse_rearm(void) {
-    int g = desk_focus_gen();
+    int g = con_focus_gen();
     if (g == s_mouse_gen) return;
     s_mouse_gen = g;
     if (g == 0) return;   /* boot-time arm: focus is still the shell — the
@@ -270,14 +270,14 @@ int input_next_event(struct os_event *ev, int timeout_ms, int raw) {
          * is boot-spawned; focus defaults to the shell, so the boot-time enable
          * was answered into the shell's queue). */
         mouse_rearm();
-        int c = desk_readc_timeout(timeout_ms);
+        int c = con_gui_readc_timeout(timeout_ms);
         if (c < 0) { ev->type = OS_EV_TIMER; ev->button = s_btn; cursor_pos(&ev->mx, &ev->my); return 0; }
         if (c == 0)  continue;                        /* focus-flip wake sentinel */
 
         if (c == 0x1b) {                              /* ESC: CSI or a bare Escape */
-            int c1 = desk_readc_timeout(30);
+            int c1 = con_gui_readc_timeout(30);
             if (c1 != '[') { ev->type = OS_EV_KEY; ev->key = 0x1b; ev->button = s_btn; cursor_pos(&ev->mx, &ev->my); return 0; }
-            int c2 = desk_readc_timeout(50);
+            int c2 = con_gui_readc_timeout(50);
 
             if (c2 == '<') {                          /* SGR mouse: <b;x;yM / <b;x;ym */
                 int b, cx, cy, t;
@@ -290,7 +290,7 @@ int input_next_event(struct os_event *ev, int timeout_ms, int raw) {
                                    (t == 'm') ? 0 : (b & 32) ? 2 : 1);
             }
             if (c2 == 'M') {                          /* legacy X10 mouse: M b x y (byte-32) */
-                int b = desk_readc_timeout(50), cx = desk_readc_timeout(50), cy = desk_readc_timeout(50);
+                int b = con_gui_readc_timeout(50), cx = con_gui_readc_timeout(50), cy = con_gui_readc_timeout(50);
                 if (b < 0 || cx < 0 || cy < 0) continue;
                 b -= 32; cx -= 32; cy -= 32;
                 if (b & 64) continue;                 /* wheel: ignore */
@@ -299,7 +299,7 @@ int input_next_event(struct os_event *ev, int timeout_ms, int raw) {
             }
             if (c2 >= '0' && c2 <= '9') {             /* CSI n... — the 18t size reply */
                 int n1 = c2 - '0', n2, n3, t;
-                for (;;) { t = desk_readc_timeout(50);
+                for (;;) { t = con_gui_readc_timeout(50);
                            if (t < '0' || t > '9') break; n1 = n1 * 10 + (t - '0'); }
                 if (t == ';' && n1 == 8) {
                     if (rd_int(&n2) == ';' && rd_int(&n3) == 't' && n2 > 0 && n3 > 0) {

@@ -55,7 +55,7 @@ static int readline(char *buf, int max)
 {
     int n = 0;
     for (;;) {
-        int c = sh_readc();
+        int c = con_tty_readc();
         if (c < 0) return n > 0 ? n : -1;      /* EOF */
         if (c == '\r') continue;
         if (c == '\n') {
@@ -204,7 +204,7 @@ static void shell_task(void *arg)
         int code = frtos_waitpid(pid);
         /* `exit 66` at the login shell = power off the testbed (piped qemu
          * runs end promptly instead of respawn-spinning until the harness
-         * timeout; sh_readc never sees EOF — a drained pipe just blocks) */
+         * timeout; con_tty_readc never sees EOF — a drained pipe just blocks) */
         if (code == 66) { puts0("[poweroff]\n"); sh_exit(0); }
         { extern int frtos_console_eof(void);
           if (frtos_console_eof()) break; }
@@ -362,7 +362,7 @@ int main(void)
     { extern void stackguard_init(void); stackguard_init(); }   /* guarded stack arena */
     gic_init();
 #ifdef XT_HW_UART
-    { extern void uart1_rx_init(void); uart1_rx_init(); }   /* interrupt-driven console RX (blocking sh_readc) */
+    { extern void uart1_rx_init(void); uart1_rx_init(); }   /* interrupt-driven console RX (blocking con_tty_readc) */
 #endif
     { extern void gtimer_init(void); gtimer_init(); }   /* A9 global timer -> gettimeofday wall clock */
     { extern void hdmi_init(void); hdmi_init(); }        /* SiI9022 HDMI bring-up (HW build only; no-op on qemu) */

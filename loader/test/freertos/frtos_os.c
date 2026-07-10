@@ -389,8 +389,8 @@ static void tty_release(proc_t *p)
 static char g_lbuf[256];
 static int  g_lpos, g_llen, g_lsawcr;
 
-extern int sh_avail(void);   /* buffered console bytes (uart1_rx.c; qemu -1 = unknown) */
-extern int sh_wait(int ms);  /* wait for console input WITHOUT consuming (qemu: always 1) */
+extern int con_tty_avail(void);   /* buffered console bytes (uart1_rx.c; qemu -1 = unknown) */
+extern int con_tty_wait(int ms);  /* wait for console input WITHOUT consuming (qemu: always 1) */
 
 static long k_tty_ioctl(proc_t *p, unsigned req, void *arg)
 {
@@ -409,13 +409,13 @@ static long k_tty_ioctl(proc_t *p, unsigned req, void *arg)
     case XT_TTY_NREAD: {
         if (!arg) return -1;
         int n = g_llen - g_lpos;
-        int a = sh_avail();
+        int a = con_tty_avail();
         *(int *)arg = n + (a > 0 ? a : 0);
         return 0;
     }
     case XT_TTY_INWAIT:                                  /* arg = timeout ms BY VALUE */
         if (g_llen - g_lpos > 0) return 1;
-        return sh_wait((int)(intptr_t)arg);
+        return con_tty_wait((int)(intptr_t)arg);
     default: return -1;
     }
 }
@@ -1885,7 +1885,7 @@ static long do_syscall(uint32_t num, long a0, long a1, long a2);   /* run the no
 void deferral_thunk(void)                 /* PL1 (System), task context */
 {
     extern void __sysret(long);
-    extern int  sh_readc(void);
+    extern int  con_tty_readc(void);
     proc_t *p = cur_proc();
     long r = -1;
     if (p) {
@@ -2029,14 +2029,14 @@ void deferral_thunk(void)                 /* PL1 (System), task context */
                 uint32_t want = (uint32_t)p->da2, k = 0;
                 while (k < want && g_lpos < g_llen) buf[k++] = g_lbuf[g_lpos++];
                 while (!k && !g_con_eof) {
-                    int c = sh_readc();
+                    int c = con_tty_readc();
                     if (c < 0) { g_con_eof = 1; break; }  /* EOF (qemu pipe drained) */
                     for (;;) {
                         int swallow = (g_lsawcr && c == '\n');
                         g_lsawcr = (c == '\r');
                         if (!swallow) buf[k++] = (char)c;
-                        if (k >= want || sh_avail() <= 0) break;
-                        c = sh_readc();
+                        if (k >= want || con_tty_avail() <= 0) break;
+                        c = con_tty_readc();
                         if (c < 0) { g_con_eof = 1; break; }
                     }
                 }
@@ -2047,7 +2047,7 @@ void deferral_thunk(void)                 /* PL1 (System), task context */
                 if (g_lpos >= g_llen) {                   /* refill: read+echo a line */
                     g_lpos = g_llen = 0;
                     for (;;) {
-                        int c = sh_readc();
+                        int c = con_tty_readc();
                         if (c < 0) { g_con_eof = 1; break; }   /* EOF (qemu pipe drained) */
                         if (c == 3 || c == 26) {          /* ^C kills / ^Z stops the fg job;
                                                            * either drops the pending line */
@@ -2132,7 +2132,7 @@ void deferral_thunk(void)                 /* PL1 (System), task context */
             r = fs_munmap(p);
         } else if (p->dnum == SYS_input) {
             /* block for the next input event (serial mouse/keyboard); cursor moves
-             * kernel-side.  Runs here in task context so sh_readc may block.
+             * kernel-side.  Runs here in task context so con_tty_readc may block.
              * da2 = raw-keys mode (typing into an emulator window). */
             extern int input_next_event(void *, int, int);
             r = input_next_event((void *)p->da0, (int)p->da1, (int)p->da2);
@@ -2402,7 +2402,7 @@ static int needs_task_ctx(struct k_regs *regs, uint32_t num)
     case SYS_pipe:    return 1;                    /* takes the FreeRTOS heap (stream buffer) */
     case SYS_open:    return 1;                    /* may walk a FatFs directory path */
     case SYS_read: {                               /* stdin + pipes block; files -> page store */
-        if (fd_is_con(fd)) return 1;               /* console alias: sh_readc path */
+        if (fd_is_con(fd)) return 1;               /* console alias: con_tty_readc path */
         proc_t *q = cur_proc();
         if (q && fd < NFD && q->fd[fd].open) return 1;   /* pipe or file, any slot (incl. `< file` stdin) */
         return fd == 0;                            /* raw console stdin */

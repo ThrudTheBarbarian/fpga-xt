@@ -1,15 +1,15 @@
 /*
  * uart1_rx.c — interrupt-driven Zynq UART1 receive (HW build only, -DXT_HW_UART).
  *
- * Replaces the busy-wait sh_readc (which spun on the UART status register, burning
+ * Replaces the busy-wait con_tty_readc (which spun on the UART status register, burning
  * a task's whole time-slice and starving the idle task / equal-priority daemons
  * while a REPL waited for a keystroke) with a BLOCKING read: the RX interrupt drains
- * the FIFO into a ring and gives a counting semaphore; sh_readc blocks on it. A shell
+ * the FIFO into a ring and gives a counting semaphore; con_tty_readc blocks on it. A shell
  * waiting for input now consumes zero CPU (the idle task can WFI), and background
  * tasks run full-speed. TX (puts0) stays a brief poll in bare_rt.c — it only waits
  * for FIFO space, it never blocks on external input.
  *
- * On qemu (no XT_HW_UART) this file is empty; sh_readc comes from bare_rt.c's
+ * On qemu (no XT_HW_UART) this file is empty; con_tty_readc comes from bare_rt.c's
  * semihosting path (SYS_READC), which is a blocking host call by nature.
  */
 #ifdef XT_HW_UART
@@ -40,16 +40,20 @@
 /* 8 KB: the desktop meters keys into the 6502 at ~50 cps (single KBCODE latch,
  * see kbd_6502_ascii), far slower than a host paste arrives (~11 k cps at
  * 115200), so the ring must hold a whole pasted BASIC listing while it drains.
- * A smaller ring silently drops the paste tail. (sh_q shares the size — a bigger
+ * A smaller ring silently drops the paste tail. (g_tty_q shares the size — a bigger
  * shell paste buffer is a harmless bonus.) */
 #define RING_SZ 8192
-/* Two input queues + a focus flag: the console byte stream is routed to the shell
- * (sh_readc) or the desktop (desk_readc) by g_focus; the FOCUS_TOGGLE key flips it
- * (intercepted in the ISR, never forwarded) so the desktop and shell coexist —
- * like the vitis {/}/\ diversion, one key.  Default = shell. */
+/* Two console input lanes + a focus flag: the UART byte stream is routed to the
+ * interactive TTY (con_tty_readc) or the GUI/desktop (con_gui_readc) by g_focus;
+ * the FOCUS_TOGGLE key flips it (intercepted in the ISR, never forwarded) so the
+ * two coexist — like the vitis {/}/\ diversion, one key.  Default = TTY.
+ * NOTE: the GUI lane is TRANSITIONAL — the desktop only reads console bytes here
+ * because its mouse/keyboard currently arrive over the serial terminal. Once the
+ * STM32F411 companion feeds real HID, the GUI lane + the focus toggle go away and
+ * only the TTY lane remains. */
 typedef struct { volatile uint8_t buf[RING_SZ]; volatile uint32_t head, tail; SemaphoreHandle_t sem; } rxq;
-static rxq sh_q, dk_q;
-static volatile int g_focus;                      /* 0 = shell, 1 = desktop */
+static rxq g_tty_q, g_gui_q;                      /* lane 0 = tty console, lane 1 = gui (transitional) */
+static volatile int g_focus;                      /* 0 = tty (con_tty), 1 = gui (con_gui) */
 static volatile int g_focus_gen;                  /* bumps on every flip TO the desktop —
                                                    * the input layer re-arms terminal mouse
                                                    * reporting when it sees a new generation
@@ -57,7 +61,7 @@ static volatile int g_focus_gen;                  /* bumps on every flip TO the 
                                                    * the desktop queue while it has focus) */
 #define FOCUS_TOGGLE 0x60                          /* backtick '`' */
 
-int desk_focus_gen(void) { return g_focus_gen; }
+int con_focus_gen(void) { return g_focus_gen; }
 
 static void q_push(rxq *q, uint8_t c, BaseType_t *woken) {
     uint32_t nt = (q->tail + 1u) % RING_SZ;
@@ -93,8 +97,8 @@ void uart1_rx_isr(void)
             g_focus ^= 1;
             if (g_focus) {
                 g_focus_gen++;
-                q_push(&dk_q, 0, &woken);   /* wake sentinel: the desktop blocks in
-                                             * desk_readc; byte 0 (swallowed by the
+                q_push(&g_gui_q, 0, &woken);   /* wake sentinel: the desktop blocks in
+                                             * con_gui_readc; byte 0 (swallowed by the
                                              * input layer) unblocks it so the mouse
                                              * re-arm goes out NOW, not at the next
                                              * keypress */
@@ -107,7 +111,7 @@ void uart1_rx_isr(void)
                                                        * queues — the discipline drops the
                                                        * line + echoes. Raw mode: no-op. */
         if (c == 26 && !g_focus) frtos_tty_sigtstp(); /* ^Z likewise: stop at the next gate */
-        q_push(g_focus ? &dk_q : &sh_q, c, &woken);
+        q_push(g_focus ? &g_gui_q : &g_tty_q, c, &woken);
     }
     portYIELD_FROM_ISR(woken);
 }
@@ -117,8 +121,8 @@ void uart1_rx_isr(void)
  * interrupts enabled, so early bytes just sit in the FIFO). */
 void uart1_rx_init(void)
 {
-    sh_q.sem = xSemaphoreCreateCounting(RING_SZ, 0); sh_q.head = sh_q.tail = 0;
-    dk_q.sem = xSemaphoreCreateCounting(RING_SZ, 0); dk_q.head = dk_q.tail = 0;
+    g_tty_q.sem = xSemaphoreCreateCounting(RING_SZ, 0); g_tty_q.head = g_tty_q.tail = 0;
+    g_gui_q.sem = xSemaphoreCreateCounting(RING_SZ, 0); g_gui_q.head = g_gui_q.tail = 0;
 
     REG(UART_IDR) = 0xFFFFFFFFu;                  /* mask all UART irqs while configuring */
     REG(UART_ISR) = 0xFFFFFFFFu;                  /* clear any stale status */
@@ -140,30 +144,30 @@ void sh_inject(unsigned char c)
     extern int frtos_tty_sigtstp(void);
     if (c == 3)  frtos_tty_sigint();          /* like the ISR fast path */
     if (c == 26) frtos_tty_sigtstp();
-    uint32_t nt = (sh_q.tail + 1u) % RING_SZ;
-    if (nt != sh_q.head) {
-        sh_q.buf[sh_q.tail] = c; sh_q.tail = nt;
-        xSemaphoreGive(sh_q.sem);
+    uint32_t nt = (g_tty_q.tail + 1u) % RING_SZ;
+    if (nt != g_tty_q.head) {
+        g_tty_q.buf[g_tty_q.tail] = c; g_tty_q.tail = nt;
+        xSemaphoreGive(g_tty_q.sem);
     }
 }
 
-int sh_readc(void)             { return q_read(&sh_q, -1); }  /* shell console byte (blocking) */
-int sh_readc_timeout(int ms)   { return q_read(&sh_q, ms); }
+int con_tty_readc(void)             { return q_read(&g_tty_q, -1); }  /* shell console byte (blocking) */
+int con_tty_readc_timeout(int ms)   { return q_read(&g_tty_q, ms); }
 /* bytes buffered for the shell (raw-mode burst drain + XT_TTY_NREAD) */
-int sh_avail(void)             { return (int)((sh_q.tail + RING_SZ - sh_q.head) % RING_SZ); }
+int con_tty_avail(void)             { return (int)((g_tty_q.tail + RING_SZ - g_tty_q.head) % RING_SZ); }
 /* block until shell input is available or the timeout lapses, WITHOUT consuming
  * (XT_TTY_INWAIT = poll(2)): take the counting semaphore, then give it straight
  * back so the byte's token survives for the eventual read. */
-int sh_wait(int ms)
+int con_tty_wait(int ms)
 {
-    if (sh_avail() > 0) return 1;
+    if (con_tty_avail() > 0) return 1;
     TickType_t t = (ms < 0) ? portMAX_DELAY : pdMS_TO_TICKS((uint32_t)ms);
-    if (xSemaphoreTake(sh_q.sem, t) != pdTRUE) return 0;
-    xSemaphoreGive(sh_q.sem);
+    if (xSemaphoreTake(g_tty_q.sem, t) != pdTRUE) return 0;
+    xSemaphoreGive(g_tty_q.sem);
     return 1;
 }
-int desk_readc(void)           { return q_read(&dk_q, -1); }  /* desktop input byte (focus=desktop) */
-int desk_readc_timeout(int ms) { return q_read(&dk_q, ms); }
+int con_gui_readc(void)           { return q_read(&g_gui_q, -1); }  /* desktop input byte (focus=desktop) */
+int con_gui_readc_timeout(int ms) { return q_read(&g_gui_q, ms); }
 #else
 typedef int uart1_rx_translation_unit_not_empty;  /* keep ISO C happy on qemu builds */
 #endif

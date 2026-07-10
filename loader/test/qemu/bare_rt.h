@@ -7,7 +7,7 @@
 
 void puts0(const char *s);          /* semihosting SYS_WRITE0 (NUL-terminated) */
 void putu(unsigned v);              /* decimal */
-int  sh_readc(void);               /* semihosting SYS_READC; <0 at EOF */
+int  con_tty_readc(void);               /* semihosting SYS_READC; <0 at EOF */
 void rt_write(const char *b, int n);/* length-bounded write (-> puts0) */
 void sh_exit(int code);            /* semihosting exit, sets qemu status */
 
