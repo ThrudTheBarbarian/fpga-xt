@@ -12,6 +12,7 @@
 #include "lwip/api.h"
 #include "lwip/dns.h"
 #include "lwip/ip.h"        /* SOF_REUSEADDR */
+#include "lwip/tcp.h"       /* tcp_pcb state — peer-close detection for poll */
 #include "lwip/prot/ip.h"   /* IP_PROTO_ICMP */
 #include "lwip/inet_chksum.h"   /* inet_chksum — recompute ping's ICMP checksum */
 #include "FreeRTOS.h"
@@ -304,6 +305,17 @@ long xt_sock_avail(int si)
         if (a > 0) n = (unsigned)a;
     }
 #endif
+    /* A peer that closed with no pending data leaves recv_avail == 0, so a
+       poll()ed socket would never read as readable and the server never sees
+       the hangup (its recv would return EOF) — the client slot leaks. Report
+       a FIN'd/closing TCP connection as readable so the read returns 0. */
+    if (!n && NETCONNTYPE_GROUP(netconn_type(s->conn)) == NETCONN_TCP) {
+        struct tcp_pcb *pcb = s->conn->pcb.tcp;
+        if (!pcb || pcb->state == CLOSE_WAIT || pcb->state == CLOSING ||
+            pcb->state == LAST_ACK || pcb->state == TIME_WAIT ||
+            pcb->state == CLOSED)
+            return 1;
+    }
     return (long)n;
 }
 

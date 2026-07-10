@@ -499,10 +499,11 @@ static void br_infobar(int hd, int ix, int iy, int iw, int ih, void *ud) {
             for (int i = 0; i < 10; i++) bar[i] = (unsigned)i < (pc + 9) / 10 ? '#' : ' ';
             bar[10] = 0;
             snprintf(info, sizeof info, "Listing %d/%d  [%s]", b->nent, b->req_total, bar);
-        } else {                                             // indeterminate: barber-pole
-            int p = (int)(b->prog_phase % 10);
+        } else {                                             // indeterminate: a bouncing block
+            int ph = (int)(b->prog_phase % 14);              // 0..7..0 triangle
+            int pos = ph < 7 ? ph : 14 - ph;                 // block sweeps + returns
             for (int i = 0; i < 10; i++)
-                bar[i] = (i == p || i == (p+3)%10 || i == (p+6)%10) ? '#' : ' ';
+                bar[i] = (i >= pos && i < pos + 3) ? '#' : ' ';
             bar[10] = 0;
             snprintf(info, sizeof info, "Listing %d  [%s]", b->nent, bar);
         }
