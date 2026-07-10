@@ -1511,13 +1511,28 @@ static unsigned long meminfo_kb(const char *text, const char *label)
     return v;
 }
 
+/* monotonic seconds since boot from /OS/proc/uptime (field 1). NOT gettimeofday:
+ * once SNTP sets the wall clock, gettimeofday jumps to real epoch and would report
+ * a ~1.7-billion-second "uptime". /proc/uptime is the raw global timer. */
+static long uptime_secs(void)
+{
+    char b[64];
+    long fd = sys_open("/OS/proc/uptime", 0);
+    if (fd < 0) return 0;
+    long n = sys_read((int)fd, b, sizeof b - 1);
+    sys_close((int)fd);
+    if (n <= 0) return 0;
+    b[n] = 0;
+    long s = 0; const char *p = b;
+    while (*p >= '0' && *p <= '9') s = s * 10 + (*p++ - '0');
+    return s;
+}
+
 int sysinfo(struct sysinfo *info)
 {
-    struct timeval tv;
     char mi[512];
     memset(info, 0, sizeof *info);
-    gettimeofday(&tv, 0);
-    info->uptime = tv.tv_sec;            /* wall clock IS boot time here */
+    info->uptime = uptime_secs();        /* monotonic — SNTP-proof (was wall clock) */
     info->mem_unit = 1;
     info->procs = 8;
     long fd = sys_open("/OS/proc/meminfo", 0);

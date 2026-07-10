@@ -78,6 +78,7 @@ CONFIG_VI=y
 CONFIG_HEXEDIT=y
 CONFIG_ARCH=y
 CONFIG_UNAME=y
+CONFIG_UPTIME=y
 
 # text / pipeline filters
 CONFIG_GREP=y

@@ -111,12 +111,18 @@ static int pf_gen_comm(int pid, char *buf, int sz)
 
 static int pf_gen_uptime(char *buf, int sz)
 {
-    struct { long long sec, usec; } tv = { 0, 0 };   /* time_t is 64-bit here — must not undersize */
-    _gettimeofday(&tv, 0);
-    int cs = (int)(tv.usec / 10000);
+    /* MONOTONIC since boot — the raw global timer WITHOUT xt_wallclock_off(), so
+     * SNTP setting the wall clock (gettimeofday jumping to real epoch) doesn't move
+     * uptime. Linux /proc/uptime format: "<uptime> <idle>", both in seconds to 2dp.
+     * We don't meter idle time; report it equal to uptime (a mostly-idle dev board)
+     * — field 1 is the one every tool reads. */
+    extern void gtimer_timeofday(uint32_t *, uint32_t *);
+    uint32_t sec = 0, usec = 0;
+    gtimer_timeofday(&sec, &usec);
+    int cs = (int)(usec / 10000);
     pfb o = { buf, 0, sz };
     for (int i = 0; i < 2; i++) {
-        pfb_d(&o, (int)tv.sec); pfb_c(&o, '.');
+        pfb_d(&o, (int)sec); pfb_c(&o, '.');
         pfb_c(&o, (char)('0' + cs / 10)); pfb_c(&o, (char)('0' + cs % 10));
         pfb_c(&o, i ? '\n' : ' ');
     }
@@ -238,6 +244,15 @@ static void pfb_milliC(pfb *o, int m)
 /* pad with spaces until the field started at `start_n` fills `w` columns */
 static void pfb_pad(pfb *o, int start_n, int w) { while (o->n - start_n < w) pfb_c(o, ' '); }
 static void pfb_2d(pfb *o, int v) { pfb_c(o, (char)('0' + (v / 10) % 10)); pfb_c(o, (char)('0' + v % 10)); }
+/* monotonic seconds -> "[Nd ]HH:MM:SS" */
+static void pfb_uptime_hms(pfb *o, uint32_t sec)
+{
+    uint32_t d = sec / 86400; sec %= 86400;
+    uint32_t h = sec / 3600;  sec %= 3600;
+    uint32_t m = sec / 60,    s = sec % 60;
+    if (d) { pfb_d(o, (int)d); pfb_s(o, "d "); }
+    pfb_2d(o, (int)h); pfb_c(o, ':'); pfb_2d(o, (int)m); pfb_c(o, ':'); pfb_2d(o, (int)s);
+}
 /* Unix epoch (s) -> "YYYY-MM-DD HH:MM:SS UTC".  Self-contained civil-from-days
  * (Hinnant) so we need no libc time/tz support, which this minimal libc lacks. */
 static void pfb_datetime(pfb *o, long long epoch)
@@ -337,6 +352,13 @@ static int pf_gen_temp(char *buf, int sz)
         pfb_c(&o, (char)('0' + cs / 10)); pfb_c(&o, (char)('0' + cs % 10));
         pfb_pad(&o, p, 28); pfb_s(&o, "(s since boot)\n");
     }
+    /* Always-monotonic uptime (independent of the wall-clock/SNTP line above) so a
+     * temp log still shows how long the board has been up after the clock syncs. */
+    { extern void gtimer_timeofday(uint32_t *, uint32_t *);
+      uint32_t up_s = 0, up_u = 0; gtimer_timeofday(&up_s, &up_u);
+      pfb_s(&o, "uptime  : "); p = o.n;
+      pfb_uptime_hms(&o, up_s);
+      pfb_pad(&o, p, 28); pfb_s(&o, "(since boot, monotonic)\n"); }
 #ifdef XT_HW
     extern int g_temp_brd, g_temp_brd_peak, g_temp_die, g_temp_die_peak;
     pfb_s(&o, "i2c_ext : "); p = o.n;
