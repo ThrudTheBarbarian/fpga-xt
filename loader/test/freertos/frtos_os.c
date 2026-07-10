@@ -442,6 +442,19 @@ static void task_exit_thunk(void)
     proc_exit_self(p, p ? p->exit_code : 0);
 }
 
+/* Kernel blocking primitives OUTSIDE the pipe/pty loops (the UART ring q_read,
+ * etc.) call this each poll so a kill/signal is honoured even though the task is
+ * parked at PL1 (async-tick delivery can't reach a kernel-blocked task — it only
+ * fires on return-to-PL0). Returns -4 (-EINTR) if a catchable signal is pending
+ * (the caller unwinds; the deferral thunk then delivers the handler), never
+ * returns on kill (proc_exit_self). Task context only. */
+int xt_block_check(void)
+{
+    proc_t *p = cur_proc();
+    if (p && p->killed) proc_exit_self(p, 137);   /* SIGKILL/default-terminate: die here */
+    return sig_ready(p) ? -4 : 0;
+}
+
 /* SIGSTOP/SIGTSTP park (task context: the deferral thunk or a blocking-loop
  * tick). Wakes a blocked waitpid first — it reports "stopped" to the shell —
  * then polls the flag (no suspend/resume: a poll can't lose the SIGCONT race).

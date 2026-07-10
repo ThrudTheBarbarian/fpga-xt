@@ -64,8 +64,17 @@ static void q_push(rxq *q, uint8_t c, BaseType_t *woken) {
     if (nt != q->head) { q->buf[q->tail] = c; q->tail = nt; xSemaphoreGiveFromISR(q->sem, woken); }
 }
 static int q_read(rxq *q, int ms) {
-    TickType_t t = (ms < 0) ? portMAX_DELAY : pdMS_TO_TICKS((uint32_t)ms);
-    if (xSemaphoreTake(q->sem, t) != pdTRUE) return -1;
+    extern int xt_block_check(void);      /* honour kill/signals while parked at PL1 */
+    if (ms < 0) {                         /* block "forever": poll so kill/signals are seen */
+        for (;;) {
+            if (xSemaphoreTake(q->sem, pdMS_TO_TICKS(50)) == pdTRUE) {
+                uint8_t c = q->buf[q->head]; q->head = (q->head + 1u) % RING_SZ;
+                return (int)c;
+            }
+            if (xt_block_check() == -4) return -4;   /* -EINTR (a kill exits inside the check) */
+        }
+    }
+    if (xSemaphoreTake(q->sem, pdMS_TO_TICKS((uint32_t)ms)) != pdTRUE) return -1;
     uint8_t c = q->buf[q->head]; q->head = (q->head + 1u) % RING_SZ;
     return (int)c;
 }
