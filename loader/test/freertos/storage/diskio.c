@@ -273,6 +273,23 @@ Label:
 }
 
 /*-----------------------------------------------------------------------*/
+/* Fast card-present probe for the hot-plug watcher (sd_hotplug_poll).    */
+/* ONE present-state register read — NONE of disk_status's up-to-5-second */
+/* absent-card debounce spin, so it's safe to poll from the fs task.      */
+/* Returns 1 = card in slot, 0 = removed. Valid after disk_initialize.    */
+/*-----------------------------------------------------------------------*/
+int sd_card_present (void)
+{
+#if defined(FILE_SYSTEM_INTERFACE_SD) && defined(XPAR_XSDPS_NUM_INSTANCES)
+	if (BaseAddress[0] == 0U) return 1;		/* not brought up yet -> assume present */
+	return (XSdPs_GetPresentStatusReg(BaseAddress[0]) &
+		XSDPS_PSR_CARD_INSRT_MASK) ? 1 : 0;
+#else
+	return 1;
+#endif
+}
+
+/*-----------------------------------------------------------------------*/
 /* Initialize Disk Drive						 */
 /*-----------------------------------------------------------------------*/
 /*****************************************************************************/

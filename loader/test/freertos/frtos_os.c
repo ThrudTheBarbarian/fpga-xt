@@ -1242,6 +1242,8 @@ static void dcache_drop(const char *dir)
     for (int i = 0; i < DCACHE_N; i++)
         if (g_dcache[i].valid && dstr_eq(g_dcache[i].dir, k)) g_dcache[i].valid = 0;
 }
+/* drop EVERY cached listing — SD hot-plug (a card swap invalidates all of them) */
+void dcache_flush_all(void) { for (int i = 0; i < DCACHE_N; i++) g_dcache[i].valid = 0; }
 /* a create/delete/rename/size-change at `path` makes its parent dir's snapshot stale */
 static void dcache_drop_parent(const char *path)
 {
@@ -1613,7 +1615,11 @@ static void fs_task(void *arg)
     (void)arg;
     for (;;) {
         int slot;
-        if (xQueueReceive(g_fs_q, &slot, portMAX_DELAY) != pdTRUE) continue;
+        if (xQueueReceive(g_fs_q, &slot, pdMS_TO_TICKS(500)) != pdTRUE) {
+            extern void sd_hotplug_poll(void);         /* idle: watch for SD removal/insert */
+            sd_hotplug_poll();
+            continue;
+        }
         if (slot == FS_KERNEL_JOB) {                   /* kernel mailbox request */
             g_kfs.result = kfs_serve();
             xTaskNotifyGive(g_kfs.waiter);

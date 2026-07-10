@@ -114,7 +114,34 @@ int sd_listdir_raw(const char *dir, char out[][32], int max)
     return n;
 }
 
+/* ---- SD hot-plug watcher --------------------------------------------------
+ * The fs task calls this ~every 500 ms while idle (it is the SOLE FatFs owner,
+ * so f_mount here is serialized + safe). Detects card removal/insertion via the
+ * FAST present-state probe (sd_card_present has none of disk_status's up-to-5s
+ * absent-card debounce spin) and remounts on reinsert. Either transition drops
+ * every cached dir listing so a swapped card never shows the old one's files. */
+extern int  sd_card_present(void);       /* diskio.c: one register read, no wait */
+extern void dcache_flush_all(void);      /* frtos_os.c */
+static int  g_sd_present = 1;            /* mounted at boot */
+
+void sd_hotplug_poll(void)
+{
+    int present = sd_card_present();
+    if (present == g_sd_present) return;            /* no transition */
+    if (!present) {
+        g_sd_present = 0;
+        dcache_flush_all();                         /* stale listings must not survive a swap */
+        klog("[sd] card REMOVED\r\n");
+    } else {
+        FRESULT r = f_mount(&g_fs, "0:", 1);        /* opt=1: re-init now (a different card is fine) */
+        dcache_flush_all();
+        if (r == FR_OK) { g_sd_present = 1; klog("[sd] card inserted (remounted)\r\n"); }
+        else            { klog("[sd] card inserted, remount FAILED rc="); klog_u((unsigned)r); klog("\r\n"); }
+    }
+}
+
 #else  /* qemu: no SD card */
 void sd_init(void) { }
 int  sd_listdir_raw(const char *dir, char out[][32], int max) { (void)dir; (void)out; (void)max; return -1; }
+void sd_hotplug_poll(void) { }
 #endif
