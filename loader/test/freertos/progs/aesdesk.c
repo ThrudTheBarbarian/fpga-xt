@@ -283,6 +283,10 @@ typedef struct {
     int net, server_id;                               // net browser flavour (see above)
     char logical_root[128], fs_root[160], rel[256];   // rel = "" at the (rooted) top
     int nent, nfiles; long total;
+    int req_fd, req_kind, req_hdr;                     // async fujinetd request (req_fd < 0 = idle)
+    unsigned prog_done, prog_total;                    // fetch progress (pump-updated)
+    char prog_name[64];                                // fetch display name
+    char req_err[96];                                  // last async error (shown in the info bar)
     bent ent[MAXENT];
     gfx_surface *isurf[MAXENT];
     CICON  cic[MAXENT];
@@ -312,24 +316,26 @@ static int ent_cmp(const void *a, const void *c) {
     return strcasecmp(x->name, y->name);
 }
 // ---- FujiNet listings (fujiclient.c talks to fujinetd; the daemon does the
-// TNFS + registry/netcache work) -----------------------------------------------
-static void srv_list(browser *b) {                    // one tile per `servers` row + "Add server"
-    br_free_icons(b);
-    b->nent = 0; b->nfiles = 0; b->total = 0; b->sel = -1;
-    int fd = fuji_connect();
-    char ln[640];
-    if (fd >= 0 && fuji_cmd(fd, "servers") == 0 &&
-        fuji_readline(fd, ln, sizeof ln) == 1 && ln[0] == '+') {
-        while (fuji_readline(fd, ln, sizeof ln) == 1 && strcmp(ln, ".")) {
-            if (b->nent >= MAXENT-1 || ln[0] == '-') continue;
-            int sid, off = 0; char tr[16], hp[160], pa[160];   // "<id> <udp|tcp|auto> <host>:<port> <path> <name…>"
-            if (sscanf(ln, "%d %15s %159s %159s %n", &sid, tr, hp, pa, &off) < 4) continue;
-            bent *e = &b->ent[b->nent++];
-            snprintf(e->name, sizeof e->name, "%s", ln[off] ? ln + off : hp);
-            e->dir = 1; e->size = 0; e->state = 0; e->srvid = sid;
-        }
-    }
-    if (fd >= 0) fuji_close(fd);
+// TNFS + registry/netcache work).  All daemon I/O is ASYNC: *_start sends the
+// command on a non-blocking fd and returns; net_pump() (driven from the event
+// loop) feeds reply lines back in as they arrive, so the UI never blocks on
+// the daemon (single-threaded, one client at a time — a reply can sit behind
+// another window's transfer for minutes). ------------------------------------
+enum { RQ_NONE = 0, RQ_SRV, RQ_LSC, RQ_FETCH };       // browser.req_kind
+
+static void net_req_close(browser *b) {               // idle the request slot (also = cancel)
+    if (b->req_fd >= 0) fuji_close(b->req_fd);
+    b->req_fd = -1; b->req_kind = RQ_NONE;
+}
+static void srv_row(browser *b, const char *ln) {     // one `servers` reply row -> a tile
+    if (b->nent >= MAXENT-1 || ln[0] == '-') return;
+    int sid, off = 0; char tr[16], hp[160], pa[160];   // "<id> <udp|tcp|auto> <host>:<port> <path> <name…>"
+    if (sscanf(ln, "%d %15s %159s %159s %n", &sid, tr, hp, pa, &off) < 4) return;
+    bent *e = &b->ent[b->nent++];
+    snprintf(e->name, sizeof e->name, "%s", ln[off] ? ln + off : hp);
+    e->dir = 1; e->size = 0; e->state = 0; e->srvid = sid;
+}
+static void srv_finish(browser *b) {                  // rows all in: Add tile + icons
     bent *a = &b->ent[b->nent++];                     // trailing "Add server" tile
     snprintf(a->name, sizeof a->name, "Add server");
     a->dir = 0; a->size = 0; a->state = 0; a->srvid = -1;
@@ -344,29 +350,32 @@ static void srv_list(browser *b) {                    // one tile per `servers` 
         b->cic[i].img = b->isurf[i]; b->cic[i].text = e->label;
     }
 }
-static void desk_busy(const char *msg);   // fwd
-
-static void net_list(browser *b) {                    // entries from `lsc <server> <path>`
-    { char m[160]; snprintf(m, sizeof m, "Contacting %s ...", b->logical_root);
-      desk_busy(m); }
+static void srv_list_start(browser *b) {              // one tile per `servers` row + "Add server"
     br_free_icons(b);
     b->nent = 0; b->nfiles = 0; b->total = 0; b->sel = -1;
-    char path[300]; snprintf(path, sizeof path, "/%s", b->rel);
+    b->req_err[0] = 0; b->req_hdr = 0;
     int fd = fuji_connect();
-    char ln[640];
-    if (fd >= 0 && fuji_cmd(fd, "lsc %d \"%s\"", b->server_id, path) == 0 &&
-        fuji_readline(fd, ln, sizeof ln) == 1 && ln[0] == '+') {
-        while (fuji_readline(fd, ln, sizeof ln) == 1 && strcmp(ln, ".")) {
-            if (b->nent >= MAXENT || ln[0] == '-') continue;
-            char kind, cs; long size; int off = 0;    // "d <size> - <name>" | "f <size> <g|f|c|u> <name>"
-            if (sscanf(ln, " %c %ld %c %n", &kind, &size, &cs, &off) < 3 || !ln[off]) continue;
-            bent *e = &b->ent[b->nent++];
-            snprintf(e->name, sizeof e->name, "%s", ln + off);
-            e->dir = (kind == 'd'); e->size = size;
-            e->state = e->dir ? 0 : cs; e->srvid = 0;
-        }
+    if (fd < 0 || fuji_cmd(fd, "servers") != 0) {     // no daemon: just the Add tile
+        if (fd >= 0) fuji_close(fd);
+        snprintf(b->req_err, sizeof b->req_err, "daemon not running");
+        srv_finish(b);
+        return;
     }
-    if (fd >= 0) fuji_close(fd);
+    fuji_set_nonblock(fd);
+    b->req_fd = fd; b->req_kind = RQ_SRV;             // net_pump takes it from here
+}
+static void desk_busy(const char *msg);   // fwd
+
+static void net_row(browser *b, const char *ln) {     // one `lsc` reply row -> an entry
+    if (b->nent >= MAXENT || ln[0] == '-') return;
+    char kind, cs; long size; int off = 0;            // "d <size> - <name>" | "f <size> <g|f|c|u> <name>"
+    if (sscanf(ln, " %c %ld %c %n", &kind, &size, &cs, &off) < 3 || !ln[off]) return;
+    bent *e = &b->ent[b->nent++];
+    snprintf(e->name, sizeof e->name, "%s", ln + off);
+    e->dir = (kind == 'd'); e->size = size;
+    e->state = e->dir ? 0 : cs; e->srvid = 0;
+}
+static void net_finish(browser *b) {                  // rows all in: sort + icons
     qsort(b->ent, b->nent, sizeof(bent), ent_cmp);
     for (int i = 0; i < b->nent; i++) {
         bent *e = &b->ent[i];
@@ -384,11 +393,28 @@ static void net_list(browser *b) {                    // entries from `lsc <serv
         b->cic[i].img = b->isurf[i]; b->cic[i].text = e->label;
     }
 }
+static void net_list_start(browser *b) {              // entries from `lsc <server> <path>`
+    { char m[160]; snprintf(m, sizeof m, "Contacting %s ...", b->logical_root);
+      desk_busy(m); }                                 // click-instant feedback (non-blocking)
+    br_free_icons(b);
+    b->nent = 0; b->nfiles = 0; b->total = 0; b->sel = -1;
+    b->req_err[0] = 0; b->req_hdr = 0;
+    char path[300]; snprintf(path, sizeof path, "/%s", b->rel);
+    int fd = fuji_connect();
+    if (fd < 0 || fuji_cmd(fd, "lsc %d \"%s\"", b->server_id, path) != 0) {
+        if (fd >= 0) fuji_close(fd);
+        snprintf(b->req_err, sizeof b->req_err, "daemon not running");
+        net_finish(b);
+        return;
+    }
+    fuji_set_nonblock(fd);
+    b->req_fd = fd; b->req_kind = RQ_LSC;             // net_pump takes it from here
+}
 // List the browser's current directory over the kernel VFS (sys_readdir gives
 // the type; sys_stat only for file sizes).
 static void br_list(browser *b) {
-    if (b->net == 1) { srv_list(b); return; }         // FujiNet flavours
-    if (b->net == 2) { net_list(b); return; }
+    if (b->net == 1) { srv_list_start(b); return; }   // FujiNet flavours (async)
+    if (b->net == 2) { net_list_start(b); return; }
     br_free_icons(b);
     b->nent = 0; b->nfiles = 0; b->total = 0; b->sel = -1;
     char dir[420];
@@ -450,7 +476,18 @@ static void br_infobar(int hd, int ix, int iy, int iw, int ih, void *ud) {
     vst_color(HV, upc); vst_alignment(HV, VDI_TA_LEFT, VDI_TA_HALF, 0,0);
     v_gtext(HV, ax+18, ay, "Up");
     char info[96];
-    if (b->net == 1)                                          // servers window (minus the Add tile)
+    if (b->req_fd >= 0 && b->req_kind == RQ_FETCH) {          // fetch in flight: text + bar
+        char bar[12];
+        unsigned pc = b->prog_total
+                    ? (unsigned)((unsigned long long)b->prog_done * 100 / b->prog_total) : 0;
+        if (pc > 100) pc = 100;
+        for (int i = 0; i < 10; i++) bar[i] = (unsigned)i < pc/10 ? '#' : ' ';
+        bar[10] = 0;
+        snprintf(info, sizeof info, "Fetching %.40s  [%s] %u%%", b->prog_name, bar, pc);
+    }
+    else if (b->req_err[0])                                   // last async request failed
+        snprintf(info, sizeof info, "Error: %.80s", b->req_err);
+    else if (b->net == 1)                                     // servers window (minus the Add tile)
         snprintf(info, sizeof info, "%d servers", b->nent ? b->nent-1 : 0);
     else if (b->net == 2)
         snprintf(info, sizeof info, "%d files, %ld KB \xE2\x80\x94 %s",
@@ -464,19 +501,40 @@ static void br_infobar(int hd, int ix, int iy, int iw, int ih, void *ud) {
 static void br_content(int hd, int wax, int way, int waw, int wah, void *ud) {
     (void)hd; browser *b = ud;
     b->wax = wax; b->way = way; b->waw = waw; b->wah = wah;
+    if (b->req_fd >= 0 && b->req_kind != RQ_FETCH) {          // list still in flight
+        char m[160]; snprintf(m, sizeof m, "Contacting %s ...", b->logical_root);
+        vst_color(HV, 1); vst_height(HV, 15, 0,0,0,0);
+        vst_alignment(HV, VDI_TA_CENTER, VDI_TA_HALF, 0,0);
+        v_gtext(HV, wax+waw/2, way+wah/2, m);
+        vst_alignment(HV, VDI_TA_LEFT, VDI_TA_TOP, 0,0);
+        return;
+    }
     br_layout(b);
     aes_icon_label_style(0);                       // browser: over the light window
     objc_draw(b->tree, 0, 2, wax, way, waw, wah);
+}
+// Repaint ONLY the info bar (per fetch-progress line): chrome fill + divider +
+// br_infobar + flush — no full-window redraw per tick.  Drawn straight to the
+// back-buffer like desk_busy; the next full redraw repaints it anyway.
+static void br_info_redraw(browser *b) {
+    if (!b->used || b->infow <= 0) return;
+    int ix = b->infox, iy = b->infoy, iw = b->infow, ih = b->infoh;
+    vsf_color(HV, 248); vsf_interior(HV, VDI_FIS_SOLID); vsf_perimeter(HV, 0);   // PEN_DLG chrome
+    int16_t ir[4] = { (int16_t)ix, (int16_t)iy, (int16_t)(ix+iw-1), (int16_t)(iy+ih-1) };
+    vr_recfl(HV, ir);
+    vsl_color(HV, 249); vsl_width(HV, 1);                                        // PEN_BORDER divider
+    int16_t il[4] = { (int16_t)ix, (int16_t)(iy+ih-1), (int16_t)(ix+iw-1), (int16_t)(iy+ih-1) };
+    v_pline(HV, 2, il);
+    br_infobar(HV, ix, iy, iw, ih, b);
+    aes_flush_rect(ix, iy, iw, ih);
 }
 static int br_up_hit(browser *b, int mx, int my) {
     return b->rel[0] && mx >= b->infox+8 && mx < b->infox+70 && my >= b->infoy && my < b->infoy+b->infoh;
 }
 static void open_fuji_browser(int server_id, const char *name);   // fwd
-// Fetch-progress box: filename + a bar, drawn straight to the screen (the next
-// repaint draws over it); aes_flush_rect (-> present_rect) makes it visible
-// mid-loop.
-/* immediate "working..." box — network round-trips take seconds; wiped by
- * the next full redraw */
+/* immediate "working..." box — click-instant feedback, drawn straight to the
+ * screen (aes_flush_rect -> present_rect makes it visible mid-loop) and wiped
+ * by the next full redraw; it never blocks */
 static void desk_busy(const char *msg) {
     int W = 360, H = 40, wx, wy, ww, wh;
     wind_get(0, WF_WORKXYWH, &wx, &wy, &ww, &wh);
@@ -495,60 +553,27 @@ static void desk_busy(const char *msg) {
     aes_flush_rect(x, y, W, H);
 }
 
-static void net_progress(const char *name, unsigned done, unsigned total) {
-    int W = 360, H = 64, wx, wy, ww, wh;
-    wind_get(0, WF_WORKXYWH, &wx, &wy, &ww, &wh);
-    int x = wx + (ww-W)/2, y = wy + (wh-H)/2;
-    vsf_interior(HV, VDI_FIS_SOLID); vsf_perimeter(HV, 0); vsf_color(HV, 0);
-    int16_t bx[4] = { (int16_t)x, (int16_t)y, (int16_t)(x+W-1), (int16_t)(y+H-1) };
-    vr_recfl(HV, bx);
-    vsl_color(HV, 1); vsl_width(HV, 1);
-    int16_t o[10] = { (int16_t)x,(int16_t)y, (int16_t)(x+W-1),(int16_t)y,
-                      (int16_t)(x+W-1),(int16_t)(y+H-1), (int16_t)x,(int16_t)(y+H-1),
-                      (int16_t)x,(int16_t)y };
-    v_pline(HV, 5, o);
-    vst_color(HV, 1); vst_height(HV, 13, 0,0,0,0); vst_alignment(HV, VDI_TA_LEFT, VDI_TA_HALF, 0,0);
-    v_gtext(HV, x+12, y+17, name);
-    vst_alignment(HV, VDI_TA_LEFT, VDI_TA_TOP, 0,0);
-    int tw = W-24, fill = total ? (int)((long long)tw * done / total) : 0;
-    if (fill > tw) fill = tw;
-    int16_t tr[4] = { (int16_t)(x+12), (int16_t)(y+34), (int16_t)(x+12+tw-1), (int16_t)(y+49) };
-    vsf_color(HV, 9); vr_recfl(HV, tr);                       // trough
-    if (fill > 0) {
-        int16_t fr[4] = { tr[0], tr[1], (int16_t)(x+12+fill-1), tr[3] };
-        vsf_color(HV, 1); vr_recfl(HV, fr);                   // done so far
-    }
-    aes_flush_rect(x, y, W, H);
-}
-// Modal netcache fetch: stream `fetch` progress into the box, then re-list so
-// the entry solidifies (or reverts on error).  No cancel in v1.
-static void net_fetch(browser *b, const char *remote, const char *name) {
-    int fd = fuji_connect(), ok = 0;
-    char ln[640] = "";
+// Async netcache fetch: send `fetch` and return; the pump streams "+progress"
+// into the info bar, "+ok" triggers an async re-list (the entry solidifies)
+// and "-err" alerts (the re-list reverts the entry).  Closing the window
+// cancels: the daemon sees the dead socket and aborts the transfer.
+static void net_fetch_start(browser *b, const char *remote, const char *name) {
+    int fd = fuji_connect();
     if (fd < 0) { form_alert(1, "[3][FujiNet daemon not running|(boot script 40-FujiNet)][OK]"); return; }
-    if (fuji_cmd(fd, "fetch %d \"%s\"", b->server_id, remote) == 0) {
-        net_progress(name, 0, 0);
-        while (fuji_readline(fd, ln, sizeof ln) == 1) {
-            if (!strncmp(ln, "+progress ", 10)) {
-                unsigned done = 0, total = 0;
-                sscanf(ln + 10, "%u %u", &done, &total);
-                net_progress(name, done, total);
-            }
-            else if (!strncmp(ln, "+ok", 3)) { ok = 1; break; }
-            else if (ln[0] == '-') break;
-        }
+    if (fuji_cmd(fd, "fetch %d \"%s\"", b->server_id, remote) != 0) {
+        fuji_close(fd);
+        form_alert(1, "[3][Fetch failed|daemon connection lost][OK]");
+        return;
     }
-    fuji_close(fd);
-    if (!ok) {
-        char msg[120];
-        for (char *p = ln; *p; p++) if (*p=='['||*p==']'||*p=='|') *p = ' ';   // keep form_alert parsable
-        snprintf(msg, sizeof msg, "[3][Fetch failed|%.60s][OK]", ln[0] == '-' ? ln+1 : "daemon connection lost");
-        form_alert(1, msg);
-    }
-    br_list(b); repaint();
+    fuji_set_nonblock(fd);
+    b->req_fd = fd; b->req_kind = RQ_FETCH; b->req_hdr = 0;
+    b->prog_done = 0; b->prog_total = 0;
+    snprintf(b->prog_name, sizeof b->prog_name, "%s", name);
+    b->req_err[0] = 0;
+    br_info_redraw(b);                                        // instant "Fetching ..." feedback
 }
 // Open a network file: cached -> launch its /Cache mirror; ghost (or a cache
-// row whose file went missing) -> modal fetch first.
+// row whose file went missing) -> async fetch first.
 static void net_open(browser *b, int i) {
     bent *e = &b->ent[i];
     char remote[420];
@@ -559,9 +584,74 @@ static void net_open(browser *b, int i) {
         snprintf(local, sizeof local, "/Cache/%d%s", b->server_id, remote);
         if (sys_stat(local, &st) == 0) { desk_launch(e->name, b->media_type); repaint(); return; }
     }
-    net_fetch(b, remote, e->name);
+    net_fetch_start(b, remote, e->name);
+}
+// ---- async pump: feed arrived reply lines back into the owning browser -----
+static void net_req_fail(browser *b, const char *msg) {
+    int kind = b->req_kind;
+    net_req_close(b);
+    if (kind == RQ_FETCH) {                                   // fetch: alert + re-list (entry reverts)
+        char e[80], m[120];
+        snprintf(e, sizeof e, "%s", msg);
+        for (char *p = e; *p; p++) if (*p=='['||*p==']'||*p=='|') *p = ' ';   // keep form_alert parsable
+        snprintf(m, sizeof m, "[3][Fetch failed|%.60s][OK]", e);
+        form_alert(1, m);
+        net_list_start(b); repaint();
+        return;
+    }
+    snprintf(b->req_err, sizeof b->req_err, "%s", msg);       // lists: empty + error in the info bar
+    if (kind == RQ_SRV) srv_finish(b); else net_finish(b);
+    repaint();
+}
+static void net_req_line(browser *b, char *ln) {              // dispatch one reply line
+    if (b->req_kind == RQ_FETCH) {
+        if (!strncmp(ln, "+progress ", 10)) {
+            sscanf(ln + 10, "%u %u", &b->prog_done, &b->prog_total);
+            br_info_redraw(b);                                // ONLY the info bar repaints
+        } else if (!strncmp(ln, "+ok", 3)) {
+            net_req_close(b);
+            net_list_start(b); repaint();                     // async re-list: entry solidifies
+        } else if (ln[0] == '-') {
+            net_req_fail(b, ln + 1);
+        }
+        return;
+    }
+    if (!b->req_hdr) {                                        // list header: +ok / -err
+        if (ln[0] == '+') { b->req_hdr = 1; return; }
+        net_req_fail(b, ln[0] == '-' ? ln + 1 : ln);
+        return;
+    }
+    if (!strcmp(ln, ".")) {                                   // list complete: finalize + redraw
+        int kind = b->req_kind;
+        net_req_close(b);
+        if (kind == RQ_SRV) srv_finish(b); else net_finish(b);
+        repaint();
+        return;
+    }
+    if (b->req_kind == RQ_SRV) srv_row(b, ln); else net_row(b, ln);
+}
+static int net_pending(void) {                                // any request in flight?
+    for (int i = 0; i < MAXBR; i++) if (BR[i].used && BR[i].req_fd >= 0) return 1;
+    return 0;
+}
+// Called from the event loop (after every event, plus a 40ms tick while a
+// request is pending): drain the reply lines that have arrived, bounded per
+// browser per call so a firehose of rows can't starve input.
+static void net_pump(void) {
+    char ln[640];
+    for (int i = 0; i < MAXBR; i++) {
+        browser *b = &BR[i];
+        if (!b->used) continue;
+        for (int n = 0; n < 64 && b->req_fd >= 0; n++) {
+            int r = fuji_poll_line(b->req_fd, ln, sizeof ln);
+            if (r == 0) break;                                // no complete line yet
+            if (r < 0) { net_req_fail(b, "daemon connection lost"); break; }
+            net_req_line(b, ln);
+        }
+    }
 }
 static void br_click(browser *b, int mx, int my) {
+    if (b->req_fd >= 0) return;                               // request in flight: ignore clicks
     if (br_up_hit(b, mx, my)) {                               // ascend (never above the root)
         char *s = strrchr(b->rel, '/'); if (s) *s = 0; else b->rel[0] = 0;
         br_list(b); br_settitle(b); repaint(); return;
@@ -611,7 +701,7 @@ static void open_browser_win(const char *logical, int media_type, int net, int s
     int s = -1; for (int i = 0; i < MAXBR; i++) if (!BR[i].used) { s = i; break; }
     if (s < 0) return;
     browser *b = &BR[s]; memset(b, 0, sizeof *b);
-    b->used = 1; b->media_type = media_type; b->sel = -1;
+    b->used = 1; b->media_type = media_type; b->sel = -1; b->req_fd = -1;
     b->net = net; b->server_id = server_id;
     snprintf(b->logical_root, sizeof b->logical_root, "%s", logical);
     snprintf(b->fs_root, sizeof b->fs_root, "%s", logical);   // logical IS the SD path here
@@ -751,8 +841,10 @@ void _app_entry(int argc, char **argv) {
 
     for (;;) {                                       // interactive loop
         int mx, my, mb, ks, key, nc; int16_t msg[8];
-        int r = evnt_multi(MU_MESAG|MU_KEYBD|MU_BUTTON, 2,1,1, 0,0,0,0,0, 0,0,0,0,0, msg, 0,0,
+        int pend = net_pending();                    // net I/O in flight: tick to pump it
+        int r = evnt_multi(MU_MESAG|MU_KEYBD|MU_BUTTON|(pend?MU_TIMER:0), 2,1,1, 0,0,0,0,0, 0,0,0,0,0, msg, pend?40:0, 0,
                            &mx, &my, &mb, &ks, &key, &nc);
+        net_pump();                                  // drain any arrived reply lines
         { int top = wind_top();                          // (re-)grab on topping an emu window
           if (top != g_last_top) { g_last_top = top; if (emu_of_window(top)) g_kbd_grab = 1; } }
         // Keyboard goes to the ATARI while a topped emulator window holds the
@@ -763,7 +855,8 @@ void _app_entry(int argc, char **argv) {
         if ((r & MU_KEYBD) && key == 0x1b) break;                              // Esc quits
         if ((r & MU_MESAG) && msg[0] == WM_CLOSED) {
             int cx,cy,cw,ch; wind_get(msg[3], WF_CURRXYWH, &cx,&cy,&cw,&ch);   // area the close reveals
-            browser *b = br_of_window(msg[3]); if (b) { br_free_icons(b); b->used = 0; }
+            browser *b = br_of_window(msg[3]);       // close cancels any in-flight request
+            if (b) { net_req_close(b); br_free_icons(b); b->used = 0; }
             emuwin *e = emu_of_window(msg[3]); if (e) e->used = 0;
             xl_unbind(msg[3]);
             wind_close(msg[3]); repaint_rect(cx,cy,cw,ch);

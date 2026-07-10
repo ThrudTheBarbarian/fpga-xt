@@ -51,6 +51,7 @@
 #include <string.h>
 #include <ctype.h>
 #include <time.h>
+#include <signal.h>
 #include <unistd.h>
 #include <sys/stat.h>
 #include <sys/socket.h>
@@ -211,6 +212,7 @@ static void session_check(pool_entry *e, int rc)
 /* ------------------------------------------------------------ client io */
 
 static int g_client = -1;
+static int g_client_dead;   /* a say() failed: the client hung up mid-command */
 
 static void say(const char *fmt, ...)
 {
@@ -224,7 +226,11 @@ static void say(const char *fmt, ...)
     if (n > (int)sizeof line - 2)
         n = (int)sizeof line - 2;
     line[n] = '\n';
-    send(g_client, line, (size_t)n + 1, 0);
+    /* a failed send means the client closed on us (SIGPIPE is ignored in
+       main); flag it so long transfers abort instead of streaming to a dead
+       socket for minutes */
+    if (send(g_client, line, (size_t)n + 1, 0) != (ssize_t)(n + 1))
+        g_client_dead = 1;
 }
 
 typedef struct {
@@ -544,13 +550,15 @@ typedef struct {
 static int get_progress_cb(void *user, uint32_t done, uint32_t total)
 {
     get_progress *gp = user;
+    if (g_client_dead)          /* client hung up: cancel the transfer (the */
+        return 1;               /* -err path then drops .part + cache row)  */
     if (done && done == gp->last)
         return 0;
     if (done - gp->last >= 16384 || done == total) {
         gp->last = done;
         say("+progress %u %u", done, total);
     }
-    return 0;
+    return g_client_dead;
 }
 
 static int file_sink(void *user, const void *buf, size_t len)
@@ -691,7 +699,10 @@ static void serve(int client)
     char line[LINE_MAX_LEN];
 
     g_client = client;
+    g_client_dead = 0;
     for (;;) {
+        if (g_client_dead)
+            break;
         int n = read_line(&r, line, sizeof line);
         if (n <= 0)
             break;
@@ -747,6 +758,8 @@ int main(int argc, char **argv)
         g_registry = argv[3];
     if (argc > 4)
         g_cacheroot = argv[4];
+
+    signal(SIGPIPE, SIG_IGN);   /* dead client -> send() -1/EPIPE, not death */
 
     int ls = socket(AF_INET, SOCK_STREAM, 0);
     if (ls < 0) {

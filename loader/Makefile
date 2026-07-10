@@ -307,7 +307,7 @@ $(BUILD)/desktop.so: test/freertos/progs/desktop.c $(BUILD)/libGEM.so $(BUILD)/l
 	$(LLD) -shared --hash-style=sysv -o $@ $(BUILD)/desktop.o $(BUILD)/libGEM.so $(BUILD)/libc.so
 
 $(BUILD)/fujiclient.o: $(GEM)/fujiclient.c $(GEM)/fujiclient.h | $(BUILD)
-	$(ARMCC) $(GEMCFLAGS) -Ilibc-compat -Itest/qemu -c $< -o $@
+	$(ARMCC) $(GEMCFLAGS) -DXT_TARGET -Ilibc-compat -Itest/qemu -c $< -o $@
 $(BUILD)/aesdesk.so: test/freertos/progs/aesdesk.c $(BUILD)/registry.o $(BUILD)/fujiclient.o $(BUILD)/net_shim.o $(BUILD)/sqlite3.o $(BUILD)/sqlite_vfs.o $(BUILD)/libGEM.so $(BUILD)/libc.so $(BUILD)/libm.so | $(BUILD)
 	$(ARMCC) $(GEMCFLAGS) -I$(SQLITE) -Itest/qemu -c $< -o $(BUILD)/aesdesk.o
 	$(LLD) -shared --hash-style=sysv -o $@ $(BUILD)/aesdesk.o $(BUILD)/registry.o $(BUILD)/fujiclient.o $(BUILD)/net_shim.o $(BUILD)/sqlite3.o $(BUILD)/sqlite_vfs.o $(BUILD)/libGEM.so $(BUILD)/libc.so $(BUILD)/libm.so
