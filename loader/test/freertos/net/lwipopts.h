@@ -63,9 +63,15 @@
                                           * exhausts under churn -> connect/accept fail */
 #define MEMP_NUM_TCP_PCB_LISTEN    16   /* a multi-port server wants many listeners */
 #define MEMP_NUM_TCP_SEG           48
-#define MEMP_NUM_SYS_TIMEOUT       24    /* dhcp+arp+tcp+dns+mdns+sntp+tftp cyclic + one-
-                                          * shots; an EXHAUSTED pool spins the tcpip thread
-                                          * at prio 3 = a whole-system wedge */
+#define MEMP_NUM_SYS_TIMEOUT       64    /* dhcp+arp+tcp+dns+mdns+sntp+tftp cyclic + one-
+                                          * shots. EXHAUSTION is silent + nasty: sys_timeout()
+                                          * just drops the timer (timeouts.c), so mDNS's
+                                          * rate-limit reset never fires, its multicast_timeout
+                                          * flag sticks, and the responder goes permanently
+                                          * quiet -> xtos.local stops resolving until reboot.
+                                          * 24 was marginal (mDNS alone holds ~4 + probe/announce
+                                          * bursts); 64 = generous headroom. Watch systmo.err in
+                                          * /OS/proc/net/stats. Was 24. */
 #define PBUF_POOL_SIZE             48
 #define PBUF_POOL_BUFSIZE          1600
 

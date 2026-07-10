@@ -140,6 +140,20 @@ static void stat_row(nb *o, const char *name, const struct stats_proto *s)
     nb_c(o, '\n');
 }
 
+/* a memp pool's occupancy: used now / peak / pool size / alloc failures. A
+ * climbing err means the pool ran dry and lwIP silently dropped the request —
+ * for MEMP_SYS_TIMEOUT that means a dropped timer, which can wedge the mDNS
+ * responder (its rate-limit reset never fires) so xtos.local stops resolving. */
+static void pool_row(nb *o, const char *name, int idx)
+{
+    struct stats_mem *m = lwip_stats.memp[idx];
+    nb_s(o, name); nb_s(o, ":\tused="); nb_d(o, (unsigned)m->used);
+    nb_s(o, " max=");   nb_d(o, (unsigned)m->max);
+    nb_s(o, " size=");  nb_d(o, (unsigned)m->avail);   /* MEMP_STATS: avail = pool size */
+    nb_s(o, " err=");   nb_d(o, (unsigned)m->err);
+    nb_c(o, '\n');
+}
+
 static int gen_stats(char *buf, int cap)
 {
     nb o = { buf, 0, cap };
@@ -166,6 +180,11 @@ static int gen_stats(char *buf, int cap)
       nb_s(&o, " err=");          nb_d(&o, (unsigned)ppl->err);
       nb_c(&o, '\n');
     }
+    /* the pools that ssh churn + mDNS contend for; systmo.err>0 is the mDNS-wedge tell */
+    pool_row(&o, "systmo",  MEMP_SYS_TIMEOUT);
+    pool_row(&o, "tcp_pcb", MEMP_TCP_PCB);
+    pool_row(&o, "udp_pcb", MEMP_UDP_PCB);
+    pool_row(&o, "netconn", MEMP_NETCONN);
     return o.n;
 }
 
