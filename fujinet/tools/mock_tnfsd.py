@@ -1,11 +1,13 @@
 #!/usr/bin/env python3
 """Minimal TNFS server for testing libfujinet — serves one local directory.
 
-Usage: mock_tnfsd.py <root-dir> [port] [--drop N]   (--drop: drop every Nth
-datagram to exercise the client's retry path)
+Usage: mock_tnfsd.py <root-dir> [port] [--drop N] [--no-dirx]
+  --drop N   : drop every Nth datagram to exercise the client's retry path
+  --no-dirx  : make OPENDIRX return an error (forces the legacy fallback path)
 
-Implements: MOUNT UMOUNT OPENDIR READDIR CLOSEDIR MKDIR RMDIR OPEN READ
-WRITE CLOSE STAT LSEEK UNLINK RENAME SIZE FREE. Single session, UDP only.
+Implements: MOUNT UMOUNT OPENDIR READDIR CLOSEDIR OPENDIRX READDIRX MKDIR
+RMDIR OPEN READ WRITE CLOSE STAT LSEEK UNLINK RENAME SIZE FREE. Single
+session, UDP + TCP.
 """
 import os
 import socket
@@ -13,19 +15,43 @@ import stat as statmod
 import struct
 import sys
 
-OK, ENOENT, EBADF, EINVAL, EOF_, EHANDLE = 0x00, 0x02, 0x06, 0x0E, 0x21, 0xFF
+OK, ENOENT, EBADF, EINVAL, ENOSYS, EOF_, EHANDLE = \
+    0x00, 0x02, 0x06, 0x0E, 0x16, 0x21, 0xFF
 
 root = os.path.realpath(sys.argv[1])
 port = int(sys.argv[2]) if len(sys.argv) > 2 and not sys.argv[2].startswith("--") else 16384
 drop_every = 0
 if "--drop" in sys.argv:
     drop_every = int(sys.argv[sys.argv.index("--drop") + 1])
+no_dirx = "--no-dirx" in sys.argv
+
+# DIRENTRY flags + DIRSTATUS bits (mirrors tnfs.h)
+DIRENTRY_DIR, DIRSTATUS_EOF = 0x01, 0x01
+READDIRX_MAX_PAYLOAD = 512    # keep each READDIRX reply within one datagram
 
 session = 0xBEEF
-dirs = {}    # handle -> list of remaining names
+dirs = {}    # handle -> list of remaining names (legacy READDIR)
+dirsx = {}   # handle -> list of remaining (name, flags, size, mtime, ctime)
 files = {}   # handle -> file object
 next_dh, next_fh = 1, 1
 rx_count = 0
+
+
+def dirx_entries(path):
+    """Sorted (name, flags, size, mtime, ctime) for OPENDIRX default options:
+    folders first, name-sorted (case-insensitive), '.'/'..' + hidden skipped."""
+    out = []
+    for name in os.listdir(localpath(path)):
+        if name.startswith("."):                  # skip hidden + . ..
+            continue
+        st = os.stat(os.path.join(localpath(path), name))
+        isdir = statmod.S_ISDIR(st.st_mode)
+        out.append((name, DIRENTRY_DIR if isdir else 0,
+                    st.st_size & 0xFFFFFFFF,
+                    int(st.st_mtime) & 0xFFFFFFFF,
+                    int(st.st_ctime) & 0xFFFFFFFF))
+    out.sort(key=lambda e: (0 if e[1] & DIRENTRY_DIR else 1, e[0].lower()))
+    return out
 
 
 def localpath(p):
@@ -64,7 +90,46 @@ def handle(cmd, body):
             return bytes([OK]) + dirs[dh].pop(0).encode() + b"\0"
         if cmd == 0x12:  # CLOSEDIR
             dirs.pop(body[0], None)
+            dirsx.pop(body[0], None)
             return bytes([OK])
+        if cmd == 0x17:  # OPENDIRX  (opts,sort,maxresults16,pattern\0,path\0)
+            if no_dirx:
+                return bytes([ENOSYS])           # force the legacy fallback
+            maxresults = struct.unpack("<H", body[2:4])[0]
+            _pattern, off = cstr(body, 4)        # pattern honoured as "*" only
+            path, _ = cstr(body, off)
+            ents = dirx_entries(path)            # default opts: folders-first etc.
+            if maxresults:
+                ents = ents[:maxresults]
+            dh = next_dh
+            next_dh += 1
+            dirsx[dh] = ents
+            return bytes([OK, dh]) + struct.pack("<H", len(ents))
+        if cmd == 0x18:  # READDIRX  (handle, nwanted)
+            dh, nwanted = body[0], body[1]
+            if dh not in dirsx:
+                return bytes([EHANDLE])
+            remaining = dirsx[dh]
+            pos = 0                               # entries emitted before this call
+            # server-side dirpos = how many already consumed on this handle
+            # (we consume from the front, so it's total - len(remaining))
+            body_parts, n, used = [], 0, 0
+            while remaining:
+                name, flags, size, mtime, ctime = remaining[0]
+                enc = (bytes([flags]) + struct.pack("<III", size, mtime, ctime)
+                       + name.encode() + b"\0")
+                if used + len(enc) > READDIRX_MAX_PAYLOAD and n > 0:
+                    break                         # datagram full: stop the batch
+                if nwanted and n >= nwanted:
+                    break
+                body_parts.append(enc)
+                used += len(enc)
+                n += 1
+                remaining.pop(0)
+            eof = DIRSTATUS_EOF if not remaining else 0
+            dirpos = pos  # cursor is advisory here
+            return (bytes([OK, n, eof]) + struct.pack("<H", dirpos)
+                    + b"".join(body_parts))
         if cmd == 0x13:  # MKDIR
             path, _ = cstr(body, 0)
             os.mkdir(localpath(path))

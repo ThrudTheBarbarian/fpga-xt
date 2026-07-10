@@ -16,11 +16,13 @@
  *   servers                               -> +ok, then per registry row:
  *        "<id> <udp|tcp|auto> <host>:<port> <path> <displayName>", then "."
  *   ls   <server> <path>
- *        -> +ok, then one entry per line: "d 0 <name>" | "f <size> <name>",
+ *        -> "+ok <count>" (count = entry total, -1 if unknown/legacy path),
+ *           then one entry per line: "d <size> <name>" | "f <size> <name>",
  *           terminated by "."
  *   lsc  <server> <path>                  ls + netcache state column:
- *        -> "d 0 - <name>" | "f <size> <g|f|c|u> <name>" (ghost/fetching/
- *           cached/updateAvailable), terminated by "."
+ *        -> "+ok <count>", then "d <size> - <name>" |
+ *           "f <size> <g|f|c|u> <name>" (ghost/fetching/cached/
+ *           updateAvailable), terminated by "."
  *   stat <server> <path>                  -> +ok <d|f> <size> <mtime>
  *   df   <server>                         -> +ok <total-kb> <free-kb>
  *   get  <server> <remote> <local>        plain download to an explicit path
@@ -271,7 +273,7 @@ typedef struct {
         int server_id;
         uint32_t r_size, r_mtime;       /* remote stat for the cache stamp */
         /* ls/lsc */
-        uint8_t dh;             /* remote dir handle */
+        tnfs_dir dir;           /* remote dir iterator (fast or legacy) */
         int withstate;
         sqlite3 *db;            /* lsc: cache-state lookups */
         char path[LINE_MAX_LEN];
@@ -474,7 +476,7 @@ static void op_abort(client *c)
         if (c->op.db)
             sqlite3_close(c->op.db);
         if (e->live)
-            (void)tnfs_closedir(&e->s, c->op.dh);
+            (void)tnfs_dirclose(&e->s, &c->op.dir);
     }
     op_finish(c);
 }
@@ -549,46 +551,45 @@ static void xfer_turn(client *c)
     }
 }
 
-/* advance an ls/lsc by one time-budgeted turn of readdir+stat pairs */
+/* advance an ls/lsc by one time-budgeted turn of directory entries.
+   Fast path: size + isdir come inline from READDIRX (no per-entry STAT);
+   only the local fujiCache lookup remains per file (cheap). Legacy path:
+   the iterator does READDIR+STAT internally. */
 static void list_turn(client *c)
 {
     pool_entry *e = c->op.sess;
     static const char statechar[] = { 'g', 'f', 'c', 'u' };
-    char name[512], full[1024];
+    tnfs_dirent ent;
+    char full[1024];
     long long t0 = now_ms();
 
     for (int i = 0; i < LIST_TURN_ENTRIES && now_ms() - t0 < OP_TURN_MS; i++) {
-        int rc = tnfs_readdir(&e->s, c->op.dh, name, sizeof name);
+        int rc = tnfs_dirnext(&e->s, &c->op.dir, &ent);
         if (rc != TNFS_OK) {                /* EOF (or error): end of listing */
             if (c->op.db)
                 sqlite3_close(c->op.db);
             c->op.db = NULL;
             if (rc != TNFS_ERR_TIMEOUT && rc != TNFS_ERR_TRANSPORT)
-                (void)tnfs_closedir(&e->s, c->op.dh);
+                (void)tnfs_dirclose(&e->s, &c->op.dir);
             session_check(e, rc == TNFS_EOF ? TNFS_OK : rc);
             say(c, ".");
             op_finish(c);
             return;
         }
-        if (strcmp(name, ".") == 0 || strcmp(name, "..") == 0)
+        if (strcmp(ent.name, ".") == 0 || strcmp(ent.name, "..") == 0)
             continue;
-        tnfs_stat_t st;
-        int isdir = 0;
-        uint32_t size = 0;
-        snprintf(full, sizeof full, "%s/%s",
-                 strcmp(c->op.path, "/") == 0 ? "" : c->op.path, name);
-        if (tnfs_stat(&e->s, full, &st) == TNFS_OK) {
-            isdir = TNFS_S_ISDIR(st.mode);
-            size = st.size;
-        }
+        int isdir = (ent.flags & TNFS_DIRENTRY_DIR) != 0;
+        uint32_t size = ent.size;
         if (!c->op.withstate) {
-            say(c, "%c %u %s", isdir ? 'd' : 'f', size, name);
+            say(c, "%c %u %s", isdir ? 'd' : 'f', size, ent.name);
         } else if (isdir) {
-            say(c, "d %u - %s", size, name);
+            say(c, "d %u - %s", size, ent.name);
         } else {
+            snprintf(full, sizeof full, "%s/%s",
+                     strcmp(c->op.path, "/") == 0 ? "" : c->op.path, ent.name);
             int cs = c->op.server_id
                    ? cache_state(c->op.db, c->op.server_id, full) : CS_NONE;
-            say(c, "f %u %c %s", size, statechar[cs & 3], name);
+            say(c, "f %u %c %s", size, statechar[cs & 3], ent.name);
         }
         if (c->dead)
             return;
@@ -606,8 +607,8 @@ static void cmd_ls(client *c, const char *spec, const char *path, int withstate)
         return;
     }
 
-    uint8_t handle;
-    rc = tnfs_opendir(&e->s, path, &handle);
+    tnfs_dir dir;
+    rc = tnfs_diropen(&e->s, path, &dir);
     if (rc != TNFS_OK) {
         session_check(e, rc);
         say(c, "-err opendir: %s", tnfs_strerror(rc));
@@ -622,12 +623,14 @@ static void cmd_ls(client *c, const char *spec, const char *path, int withstate)
         if (registry_server(spec, h, sizeof h, &p16, &tr, &server_id))
             db = reg_open(0);
     }
-    say(c, "+ok");
+    /* handshake carries the entry count: >=0 on the fast path (drives a
+       determinate progress bar), -1 on the legacy path (count unknown) */
+    say(c, "+ok %d", dir.have_count ? (int)dir.count : -1);
 
     c->op.kind = OP_LIST;
     c->op.sess = e;
     e->busy = 1;
-    c->op.dh = handle;
+    c->op.dir = dir;
     c->op.withstate = withstate;
     c->op.server_id = server_id;
     c->op.db = db;

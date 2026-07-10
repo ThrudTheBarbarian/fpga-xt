@@ -40,6 +40,28 @@ static size_t frame_need(const uint8_t *buf, size_t len)
                 return i + 1;
         return 0;
     }
+    case TNFS_CMD_OPENDIRX:
+        return base + 3;                        /* handle + count16 */
+    case TNFS_CMD_READDIRX: {
+        /* count(1) + dirstatus(1) + dirpos(2), then `count` entries, each
+           13 fixed bytes (flags + size + mtime + ctime) + a NUL name.
+           A short read mid-entry returns 0 ("need more"), never a misframe. */
+        if (len < base + 4)
+            return 0;
+        unsigned cnt = buf[base];
+        size_t off = base + 4;
+        for (unsigned e = 0; e < cnt; e++) {
+            if (off + 13 > len)                 /* fixed part not all here */
+                return 0;
+            off += 13;
+            while (off < len && buf[off])       /* walk the name */
+                off++;
+            if (off >= len)                     /* name NUL not here yet */
+                return 0;
+            off++;                              /* consume the NUL */
+        }
+        return off;
+    }
     case TNFS_CMD_READ:                         /* len16 + data */
         if (len < base + 2)
             return 0;
@@ -275,6 +297,202 @@ int tnfs_readdir(tnfs_session *s, uint8_t handle, char *name, size_t cap)
 int tnfs_closedir(tnfs_session *s, uint8_t handle)
 {
     return xchg(s, TNFS_CMD_CLOSEDIR, &handle, 1, NULL, 0, NULL, NULL);
+}
+
+int tnfs_opendirx(tnfs_session *s, const char *path, const char *pattern,
+                  uint8_t opts, uint8_t sort, uint16_t maxresults,
+                  uint8_t *out_handle, uint16_t *out_count)
+{
+    uint8_t pl[TNFS_MAX_PACKET - TNFS_HDR_SIZE], rp[3];
+    size_t off = 4, rlen = 0;
+    pl[0] = opts;
+    pl[1] = sort;
+    put16(pl + 2, maxresults);
+    if (put_str(pl, sizeof pl, &off, pattern ? pattern : "*") < 0 ||
+        put_str(pl, sizeof pl, &off, path) < 0)
+        return TNFS_ERR_ARGS;
+    int rc = xchg(s, TNFS_CMD_OPENDIRX, pl, off, rp, sizeof rp, &rlen, NULL);
+    if (rc == TNFS_OK) {
+        if (rlen < 3)
+            return TNFS_ERR_PROTOCOL;
+        if (out_handle)
+            *out_handle = rp[0];
+        if (out_count)
+            *out_count = get16(rp + 1);
+    }
+    return rc;
+}
+
+int tnfs_readdirx(tnfs_session *s, uint8_t handle, uint8_t nwanted,
+                  tnfs_dirent *ents, int max, int *got,
+                  uint16_t *dirpos, int *eof)
+{
+    uint8_t pl[2], rp[TNFS_MAX_PACKET];
+    size_t rlen = 0;
+
+    if (got)    *got = 0;
+    if (eof)    *eof = 0;
+    if (dirpos) *dirpos = 0;
+
+    pl[0] = handle;
+    pl[1] = nwanted;
+    int rc = xchg(s, TNFS_CMD_READDIRX, pl, 2, rp, sizeof rp, &rlen, NULL);
+    if (rc != TNFS_OK)
+        return rc;
+    if (rlen < 4)
+        return TNFS_ERR_PROTOCOL;
+
+    unsigned cnt = rp[0];
+    if (eof)
+        *eof = (rp[1] & TNFS_DIRSTATUS_EOF) != 0;
+    if (dirpos)
+        *dirpos = get16(rp + 2);
+
+    size_t off = 4;
+    int n = 0;
+    for (unsigned e = 0; e < cnt; e++) {
+        if (off + 13 > rlen)
+            return TNFS_ERR_PROTOCOL;
+        uint8_t  flags = rp[off];
+        uint32_t size  = get32(rp + off + 1);
+        uint32_t mtime = get32(rp + off + 5);
+        uint32_t ctime = get32(rp + off + 9);
+        off += 13;
+        size_t start = off;
+        while (off < rlen && rp[off])
+            off++;
+        if (off >= rlen)
+            return TNFS_ERR_PROTOCOL;           /* unterminated name */
+        if (n < max) {
+            tnfs_dirent *d = &ents[n++];
+            size_t nl = off - start;
+            if (nl > sizeof d->name - 1)
+                nl = sizeof d->name - 1;
+            memcpy(d->name, rp + start, nl);
+            d->name[nl] = '\0';
+            d->size  = size;
+            d->mtime = mtime;
+            d->ctime = ctime;
+            d->flags = flags;
+        }
+        off++;                                  /* skip NUL */
+    }
+    if (got)
+        *got = n;
+    return TNFS_OK;
+}
+
+/* skip . and .. — the special entries the fast path already omits by default */
+static int dir_is_dotdot(const char *name)
+{
+    return name[0] == '.' && (name[1] == '\0' ||
+           (name[1] == '.' && name[2] == '\0'));
+}
+
+int tnfs_diropen(tnfs_session *s, const char *path, tnfs_dir *it)
+{
+    memset(it, 0, sizeof *it);
+    size_t n = strlen(path);
+    if (n >= sizeof it->path)
+        n = sizeof it->path - 1;
+    memcpy(it->path, path, n);
+    it->path[n] = '\0';
+
+    uint8_t handle = 0;
+    uint16_t count = 0;
+    int rc = tnfs_opendirx(s, path, "*", 0, 0, 0, &handle, &count);
+    if (rc == TNFS_OK) {
+        it->mode = TNFS_DIR_X;
+        it->handle = handle;
+        it->have_count = 1;
+        it->count = count;
+        return TNFS_OK;
+    }
+    /* transport failures are fatal — only a protocol/status error means the
+       server simply lacks the extension, so fall back to plain OPENDIR */
+    if (rc == TNFS_ERR_TIMEOUT || rc == TNFS_ERR_TRANSPORT)
+        return rc;
+
+    rc = tnfs_opendir(s, path, &handle);
+    if (rc != TNFS_OK)
+        return rc;
+    it->mode = TNFS_DIR_LEGACY;
+    it->handle = handle;
+    it->have_count = 0;
+    return TNFS_OK;
+}
+
+int tnfs_dirnext(tnfs_session *s, tnfs_dir *it, tnfs_dirent *ent)
+{
+    if (it->mode == TNFS_DIR_X) {
+        for (;;) {
+            if (it->ibatch < it->nbatch) {
+                *ent = it->batch[it->ibatch++];
+                return TNFS_OK;
+            }
+            if (it->eof)
+                return TNFS_EOF;
+            int got = 0, eof = 0;
+            int rc = tnfs_readdirx(s, it->handle, 0, it->batch,
+                                   TNFS_DIRX_BATCH, &got, NULL, &eof);
+            if (rc != TNFS_OK)
+                return rc;
+            it->nbatch = got;
+            it->ibatch = 0;
+            it->eof = eof;
+            if (got == 0 && eof)
+                return TNFS_EOF;
+        }
+    }
+
+    /* legacy: READDIR a name, then STAT it for size + isdir */
+    for (;;) {
+        char name[256];
+        int rc = tnfs_readdir(s, it->handle, name, sizeof name);
+        if (rc != TNFS_OK)
+            return rc;                          /* TNFS_EOF ends the walk */
+        if (dir_is_dotdot(name))
+            continue;
+        memset(ent, 0, sizeof *ent);
+        {
+            size_t nl = strlen(name);
+            if (nl > sizeof ent->name - 1)
+                nl = sizeof ent->name - 1;
+            memcpy(ent->name, name, nl);
+            ent->name[nl] = '\0';
+        }
+        /* full path = dir "/" name, treating "/" as an empty prefix */
+        char full[512];
+        {
+            size_t o = 0;
+            const char *dir = strcmp(it->path, "/") == 0 ? "" : it->path;
+            size_t dl = strlen(dir);
+            if (dl > sizeof full - 2)
+                dl = sizeof full - 2;
+            memcpy(full, dir, dl);
+            o = dl;
+            full[o++] = '/';
+            size_t nl = strlen(name);
+            if (nl > sizeof full - 1 - o)
+                nl = sizeof full - 1 - o;
+            memcpy(full + o, name, nl);
+            full[o + nl] = '\0';
+        }
+        tnfs_stat_t st;
+        if (tnfs_stat(s, full, &st) == TNFS_OK) {
+            ent->size = st.size;
+            ent->mtime = st.mtime;
+            ent->ctime = st.ctime;
+            if (TNFS_S_ISDIR(st.mode))
+                ent->flags |= TNFS_DIRENTRY_DIR;
+        }
+        return TNFS_OK;
+    }
+}
+
+int tnfs_dirclose(tnfs_session *s, tnfs_dir *it)
+{
+    return tnfs_closedir(s, it->handle);
 }
 
 int tnfs_mkdir(tnfs_session *s, const char *path) { return path_cmd(s, TNFS_CMD_MKDIR, path); }

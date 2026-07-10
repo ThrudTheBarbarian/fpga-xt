@@ -286,6 +286,8 @@ typedef struct {
     int req_fd, req_kind, req_hdr;                     // async fujinetd request (req_fd < 0 = idle)
     unsigned prog_done, prog_total;                    // fetch progress (pump-updated)
     char prog_name[64];                                // fetch display name
+    int req_total;                                     // lsc entry count from "+ok <n>" (-1 = unknown)
+    unsigned prog_phase;                               // listing spinner tick (indeterminate bar)
     char req_err[96];                                  // last async error (shown in the info bar)
     bent ent[MAXENT];
     gfx_surface *isurf[MAXENT];
@@ -374,6 +376,8 @@ static void net_row(browser *b, const char *ln) {     // one `lsc` reply row -> 
     snprintf(e->name, sizeof e->name, "%s", ln + off);
     e->dir = (kind == 'd'); e->size = size;
     e->state = e->dir ? 0 : cs; e->srvid = 0;
+    b->cic[b->nent-1].img = NULL;                      // live fill: text label now,
+    b->cic[b->nent-1].text = e->name;                  // sorted icons on completion
 }
 static void net_finish(browser *b) {                  // rows all in: sort + icons
     qsort(b->ent, b->nent, sizeof(bent), ent_cmp);
@@ -399,6 +403,7 @@ static void net_list_start(browser *b) {              // entries from `lsc <serv
     br_free_icons(b);
     b->nent = 0; b->nfiles = 0; b->total = 0; b->sel = -1;
     b->req_err[0] = 0; b->req_hdr = 0;
+    b->req_total = -1; b->prog_phase = 0;             // count unknown until the +ok header
     char path[300]; snprintf(path, sizeof path, "/%s", b->rel);
     int fd = fuji_connect();
     if (fd < 0 || fuji_cmd(fd, "lsc %d \"%s\"", b->server_id, path) != 0) {
@@ -485,6 +490,23 @@ static void br_infobar(int hd, int ix, int iy, int iw, int ih, void *ud) {
         bar[10] = 0;
         snprintf(info, sizeof info, "Fetching %.40s  [%s] %u%%", b->prog_name, bar, pc);
     }
+    else if (b->req_fd >= 0 && b->req_kind == RQ_LSC) {       // listing in flight: progress
+        char bar[12];
+        if (b->req_total >= 0) {                              // determinate: rows/total + bar
+            int tot = b->req_total > 0 ? b->req_total : 1;
+            unsigned pc = (unsigned)((long long)b->nent * 100 / tot);
+            if (pc > 100) pc = 100;
+            for (int i = 0; i < 10; i++) bar[i] = (unsigned)i < (pc + 9) / 10 ? '#' : ' ';
+            bar[10] = 0;
+            snprintf(info, sizeof info, "Listing %d/%d  [%s]", b->nent, b->req_total, bar);
+        } else {                                             // indeterminate: barber-pole
+            int p = (int)(b->prog_phase % 10);
+            for (int i = 0; i < 10; i++)
+                bar[i] = (i == p || i == (p+3)%10 || i == (p+6)%10) ? '#' : ' ';
+            bar[10] = 0;
+            snprintf(info, sizeof info, "Listing %d  [%s]", b->nent, bar);
+        }
+    }
     else if (b->req_err[0])                                   // last async request failed
         snprintf(info, sizeof info, "Error: %.80s", b->req_err);
     else if (b->net == 1)                                     // servers window (minus the Add tile)
@@ -501,7 +523,11 @@ static void br_infobar(int hd, int ix, int iy, int iw, int ih, void *ud) {
 static void br_content(int hd, int wax, int way, int waw, int wah, void *ud) {
     (void)hd; browser *b = ud;
     b->wax = wax; b->way = way; b->waw = waw; b->wah = wah;
-    if (b->req_fd >= 0 && b->req_kind != RQ_FETCH) {          // list still in flight
+    // list still in flight with nothing yet: the "Contacting" placeholder.  Once
+    // rows start arriving (RQ_LSC), fall through and lay the partial list out so
+    // the window visibly fills; the info bar carries the progress bar.
+    if (b->req_fd >= 0 && b->req_kind != RQ_FETCH &&
+        !(b->req_kind == RQ_LSC && b->nent > 0)) {
         char m[160]; snprintf(m, sizeof m, "Contacting %s ...", b->logical_root);
         vst_color(HV, 1); vst_height(HV, 15, 0,0,0,0);
         vst_alignment(HV, VDI_TA_CENTER, VDI_TA_HALF, 0,0);
@@ -677,8 +703,14 @@ static void net_req_line(browser *b, char *ln) {              // dispatch one re
         }
         return;
     }
-    if (!b->req_hdr) {                                        // list header: +ok / -err
-        if (ln[0] == '+') { b->req_hdr = 1; return; }
+    if (!b->req_hdr) {                                        // list header: "+ok <count>" / -err
+        if (ln[0] == '+') {
+            int cnt = -1;                                    // count: >=0 fast path, -1 legacy
+            if (sscanf(ln, "+ok %d", &cnt) != 1) cnt = -1;
+            b->req_total = cnt;
+            b->req_hdr = 1;
+            return;
+        }
         net_req_fail(b, ln[0] == '-' ? ln + 1 : ln);
         return;
     }
@@ -703,11 +735,20 @@ static void net_pump(void) {
     for (int i = 0; i < MAXBR; i++) {
         browser *b = &BR[i];
         if (!b->used) continue;
+        int before = b->nent;
         for (int n = 0; n < 64 && b->req_fd >= 0; n++) {
             int r = fuji_poll_line(b->req_fd, ln, sizeof ln);
             if (r == 0) break;                                // no complete line yet
             if (r < 0) { net_req_fail(b, "daemon connection lost"); break; }
             net_req_line(b, ln);
+        }
+        // listing still in flight: advance the spinner + reflect new rows.  New
+        // rows -> full redraw (the window fills, batched per pump, not per row);
+        // an idle tick -> just the info bar (keeps the indeterminate bar moving).
+        if (b->req_fd >= 0 && b->req_kind == RQ_LSC) {
+            b->prog_phase++;
+            if (b->nent != before) repaint();
+            else                   br_info_redraw(b);
         }
     }
 }

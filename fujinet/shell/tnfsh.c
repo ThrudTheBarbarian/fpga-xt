@@ -145,14 +145,16 @@ static void cmd_open(const char *hostspec, const char *mountpath)
 
 static void cmd_ls(const char *arg)
 {
-    char path[MAX_PATH], entry[MAX_PATH], full[MAX_PATH * 2];
-    uint8_t handle;
+    char path[MAX_PATH];
+    tnfs_dir it;
+    tnfs_dirent ent;
 
     if (!require_connected())
         return;
     path_resolve(arg, path, sizeof path);
 
-    int rc = tnfs_opendir(&g_session, path, &handle);
+    /* the iterator picks OPENDIRX (fast, with a count) or the legacy fallback */
+    int rc = tnfs_diropen(&g_session, path, &it);
     if (rc != TNFS_OK) {
         report("ls", rc);
         return;
@@ -160,31 +162,27 @@ static void cmd_ls(const char *arg)
 
     int count = 0;
     for (;;) {
-        rc = tnfs_readdir(&g_session, handle, entry, sizeof entry);
+        rc = tnfs_dirnext(&g_session, &it, &ent);
         if (rc == TNFS_EOF)
             break;
         if (rc != TNFS_OK) {
             report("ls", rc);
             break;
         }
-        if (strcmp(entry, ".") == 0 || strcmp(entry, "..") == 0)
+        if (strcmp(ent.name, ".") == 0 || strcmp(ent.name, "..") == 0)
             continue;
-
-        tnfs_stat_t st;
-        snprintf(full, sizeof full, "%s/%s",
-                 strcmp(path, "/") == 0 ? "" : path, entry);
-        if (tnfs_stat(&g_session, full, &st) == TNFS_OK) {
-            if (TNFS_S_ISDIR(st.mode))
-                printf("%10s  %s/\n", "<dir>", entry);
-            else
-                printf("%10u  %s\n", st.size, entry);
-        } else {
-            printf("%10s  %s\n", "?", entry);
-        }
+        if (ent.flags & TNFS_DIRENTRY_DIR)
+            printf("%10s  %s/\n", "<dir>", ent.name);
+        else
+            printf("%10u  %s\n", ent.size, ent.name);
         count++;
     }
-    tnfs_closedir(&g_session, handle);
-    printf("%d entr%s\n", count, count == 1 ? "y" : "ies");
+    tnfs_dirclose(&g_session, &it);
+    if (it.have_count)
+        printf("%d entr%s (fast, server count %u)\n",
+               count, count == 1 ? "y" : "ies", it.count);
+    else
+        printf("%d entr%s (legacy)\n", count, count == 1 ? "y" : "ies");
 }
 
 static void cmd_cd(const char *arg)

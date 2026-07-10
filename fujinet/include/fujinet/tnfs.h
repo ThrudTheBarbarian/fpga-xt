@@ -43,6 +43,8 @@ enum {
     TNFS_CMD_CLOSEDIR = 0x12,
     TNFS_CMD_MKDIR    = 0x13,
     TNFS_CMD_RMDIR    = 0x14,
+    TNFS_CMD_OPENDIRX = 0x17,   /* extended opendir: returns entry count */
+    TNFS_CMD_READDIRX = 0x18,   /* extended readdir: sizes+flags in batches */
     TNFS_CMD_READ     = 0x21,
     TNFS_CMD_WRITE    = 0x22,
     TNFS_CMD_CLOSE    = 0x23,
@@ -87,6 +89,55 @@ enum {
 /* File mode helpers (POSIX bits on the wire) */
 #define TNFS_S_ISDIR(m)  (((m) & 0170000) == 0040000)
 #define TNFS_S_ISREG(m)  (((m) & 0170000) == 0100000)
+
+/*
+ * OPENDIRX/READDIRX flags (per the FujiNet TNFS extension).
+ *
+ * OPENDIRX request "opts" byte — default 0 means folders-first, name-sorted,
+ * hidden + special entries skipped. Each bit turns one of those OFF:
+ */
+#define TNFS_DIROPT_NO_FOLDERSFIRST  0x01   /* don't list folders first     */
+#define TNFS_DIROPT_NO_SKIPHIDDEN    0x02   /* include hidden entries        */
+#define TNFS_DIROPT_NO_SKIPSPECIAL   0x04   /* include . / .. and specials   */
+
+/* Per-entry flags in a READDIRX reply */
+#define TNFS_DIRENTRY_DIR      0x01
+#define TNFS_DIRENTRY_HIDDEN   0x02
+#define TNFS_DIRENTRY_SPECIAL  0x04
+
+/* READDIRX dirstatus byte */
+#define TNFS_DIRSTATUS_EOF    0x01
+
+/* One directory entry as returned by READDIRX / the directory iterator. */
+typedef struct tnfs_dirent_s {
+    char     name[256];
+    uint32_t size;
+    uint32_t mtime;
+    uint32_t ctime;
+    uint8_t  flags;         /* TNFS_DIRENTRY_* — bit0 = directory */
+} tnfs_dirent;
+
+/*
+ * Directory iterator (tnfs_diropen / tnfs_dirnext / tnfs_dirclose). Prefers
+ * OPENDIRX+READDIRX (the fast path: an up-front entry count and inline
+ * sizes/flags, no per-entry STAT); falls back to OPENDIR+READDIR+STAT when the
+ * server lacks the extension. `have_count` tells the caller whether `count` is
+ * meaningful (only the fast path knows it up front — the legacy path can't).
+ */
+#define TNFS_DIR_X       1      /* OPENDIRX/READDIRX fast path */
+#define TNFS_DIR_LEGACY  2      /* OPENDIR/READDIR (+STAT) fallback */
+#define TNFS_DIRX_BATCH  40     /* entries buffered per READDIRX round-trip */
+
+typedef struct tnfs_dir_s {
+    uint8_t  handle;
+    int      mode;              /* TNFS_DIR_X / TNFS_DIR_LEGACY */
+    int      have_count;
+    uint16_t count;            /* total entries (fast path only) */
+    char     path[512];        /* dir path — legacy STAT builds full paths */
+    tnfs_dirent batch[TNFS_DIRX_BATCH];
+    int      nbatch, ibatch;   /* fast-path readdirx buffer cursor */
+    int      eof;
+} tnfs_dir;
 
 /*
  * Transport supplied by the platform layer.
@@ -144,6 +195,36 @@ int tnfs_readdir(tnfs_session *s, uint8_t handle, char *name, size_t cap);
 int tnfs_closedir(tnfs_session *s, uint8_t handle);
 int tnfs_mkdir(tnfs_session *s, const char *path);
 int tnfs_rmdir(tnfs_session *s, const char *path);
+
+/*
+ * Extended directory listing (FujiNet TNFS extension).
+ *
+ * tnfs_opendirx: opts/sort/pattern per the wire spec (opts=0 sort=0
+ * pattern="*" = the default folders-first, name-sorted, hidden/special
+ * skipped). maxresults 0 = unlimited. On success *out_handle + *out_count
+ * (the total number of entries) are set.
+ *
+ * tnfs_readdirx: fills up to `max` entries into `ents`, sets *got (how many),
+ * *dirpos (server-side cursor) and *eof (1 once the directory is drained).
+ * nwanted 0 = as many as fit in one datagram.
+ */
+int tnfs_opendirx(tnfs_session *s, const char *path, const char *pattern,
+                  uint8_t opts, uint8_t sort, uint16_t maxresults,
+                  uint8_t *out_handle, uint16_t *out_count);
+int tnfs_readdirx(tnfs_session *s, uint8_t handle, uint8_t nwanted,
+                  tnfs_dirent *ents, int max, int *got,
+                  uint16_t *dirpos, int *eof);
+
+/*
+ * Directory iterator: tnfs_diropen picks the fast path (OPENDIRX) or falls
+ * back to legacy (OPENDIR); tnfs_dirnext yields one entry at a time (returning
+ * TNFS_EOF at the end), batching READDIRX or doing READDIR+STAT internally so
+ * the caller never issues a per-entry STAT on the fast path. tnfs_dirclose
+ * releases the server handle.
+ */
+int tnfs_diropen(tnfs_session *s, const char *path, tnfs_dir *it);
+int tnfs_dirnext(tnfs_session *s, tnfs_dir *it, tnfs_dirent *ent);
+int tnfs_dirclose(tnfs_session *s, tnfs_dir *it);
 
 /* Files */
 int tnfs_open(tnfs_session *s, const char *path, uint16_t flags,
