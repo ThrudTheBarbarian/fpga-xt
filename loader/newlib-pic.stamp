@@ -4,6 +4,6 @@
 # is pinned by libc_a_sha256 (the header only carries the X.Y.Z triple).
 newlib_version 4.4.0
 multilib       arm-none-eabi/thumb/v7-a+simd/softfp/newlib
-config_sha256  f1c382d4a481fe8882aa979c66516e7f13a689f8759965b017c4597d3bd3e46e
+config_sha256  aca113c9d1c53ef853063c49fa02415e66eeb3b9f2be519bd5fac07cf43549b2
 libc_a_sha256  0e53c9ed858debe0d5459b6138ab48a15a8bdb37c8ee18f0054a0b552b255fc0
 libm_a_sha256  7a74454b7928f99fcf03658a117edaa82c135453faed7815b41e3032912eca7f

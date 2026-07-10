@@ -193,6 +193,13 @@ xtcrun:
 # from-source rebuild on another host produces bit-different .a (DWARF comp_dir,
 # ar mtimes) and that's fine — this just tells you whether you're on the pinned,
 # HW-validated libc or a local rebuild. Nonzero exit on mismatch so CI can gate.
+# newlib — (re)build the PIC newlib into newlib-pic/ (~10 min; needs arm-none-eabi-gcc
+# + curl). Upgrade to a new release without editing sources:  VER=4.5.0.YYYYMMDD make newlib
+# Then `make newlib-check` (will MISMATCH), validate on HW, and promote the stamp.
+.PHONY: newlib
+newlib:
+	VER=$(VER) tools/build-newlib-pic.sh
+
 .PHONY: newlib-check
 newlib-check:
 	@tools/newlib-stamp.sh > $(BUILD)/newlib.stamp.now

@@ -9,7 +9,9 @@
 # GLOB_DAT/ABS32/JUMP_SLOT). Inject ONLY -fPIC (not arch flags) so every
 # multilib keeps its own arch flags; we then pick the cortex-a9 variant.
 set -e
-VER=4.4.0.20231231
+# Default newlib release. Upgrade by overriding, not editing:  VER=4.5.0.YYYYMMDD make newlib
+# (releases: https://sourceware.org/pub/newlib/). Any bump needs rebuild + HW revalidation.
+VER=${VER:-4.4.0.20231231}
 DST=$(cd "$(dirname "$0")/.." && pwd)/newlib-pic
 WORK=${TMPDIR:-/tmp}/newlib-pic-build
 mkdir -p "$WORK"; cd "$WORK"
