@@ -137,11 +137,19 @@ special-case. Dissolves the original read/signal/sigaction bind ambiguity.
 **This fixes aesdesk-can't-kill**: aesdesk blocks in `aes_wait` (a syscall) → EINTR
 delivers, so it's now signalable/killable. (docs/NextSteps.md motivating case.)
 
-### Remaining (deliberately staged, not started — gated on HW/dropbear testing)
-- **Kernel SIGCHLD-on-exit + SIGWINCH**, then delete the `g_sigact` soft-dispatch
-  (`winch_dispatch`/`sigchld_dispatch`) and the dual-write. Needs a `ppid` in proc_t
-  and delivery from `proc_exit_self`; must be validated against dropbear's SIGCHLD
-  reaping on HW before removing the soft path.
+### DONE (2026-07-10, commit ed61752) — kernel SIGCHLD/SIGWINCH + soft-path removal
+- `proc_t.ppid` + `sig_raise()` in `proc_exit_self`/fault-exit raise **SIGCHLD** on
+  the parent; pty size-change raises **SIGWINCH** on the reader — both via the real
+  async path. The `g_sigact` soft-dispatch (`winch_dispatch`/`sigchld_dispatch`, the
+  poll SIGCHLD-cap, the dual-write) is deleted; `signal`/`sigaction` are thin
+  wrappers over the one kernel table. `sigtest` 4/4 (adds SIGCHLD-on-exit).
+- Fixed a latent numbering bug: `XT_SIGSTOP/TSTP/CONT` were Linux (19/20/18) but the
+  shim passes newlib arm numbers (17/18/19) — aligned + added `XT_SIGCHLD 20`,
+  `XT_SIGWINCH 28`.
+- **HW-validate**: ssh/dropbear child reaping is the real SIGCHLD test (its self-pipe
+  handler now runs on the kernel's async SIGCHLD).
+
+### Remaining
 - **Part 3 symbol dedup** (localize newlib `read/signal/kill/execve` in libc.so).
   Signals work WITHOUT it (shim-linked programs bind the shim's copies locally via
   xtld's no-interposition rule); it's defensive hygiene. Deferred to avoid risking

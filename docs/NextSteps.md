@@ -54,11 +54,11 @@
      ASYNC into a CPU-bound loop (tick-return hook), and EINTR of a blocked syscall.
      **aesdesk-can't-kill is FIXED** — it blocks in `aes_wait` (a syscall), so EINTR
      now delivers. Full design + ABI: docs/Design/process-signal-model.md.
-     Remaining (staged, gated on HW/dropbear testing): kernel SIGCHLD-on-exit +
-     SIGWINCH, then delete the `g_sigact` soft-dispatch (dual-write today keeps
-     dropbear's SIGCHLD reaping working); symbol dedup (localize newlib
+     Kernel SIGCHLD-on-exit + SIGWINCH + soft-dispatch removal now DONE too
+     (commit ed61752, sigtest 4/4). Remaining: symbol dedup (localize newlib
      read/signal/kill/execve); SA_RESTART. **HW-validate**: cold-load
-     `build/freertos-hw.elf`, run `/bin/sigtest`, confirm aesdesk is killable.
+     `build/freertos-hw.elf`, run `/bin/sigtest` (4/4), confirm aesdesk is killable,
+     and check ssh/dropbear child reaping (the real async-SIGCHLD test).
   The shim still has a legit job afterwards (the POSIX *shape* newlib lacks —
   `opendir`/`readdir` over `getdents`, stdio buffering, `spawn`/`wait`, termios —
   none of it `read`-coupled). Cost/why-not-done-first: real frame-injection
