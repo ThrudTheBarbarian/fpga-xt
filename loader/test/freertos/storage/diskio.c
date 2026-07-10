@@ -229,8 +229,14 @@ DSTATUS disk_status (
 		StatusReg = XSdPs_GetPresentStatusReg(BaseAddress[pdrv]);
 		if (SlotType[pdrv] != XSDPS_CAPS_EMB_SLOT) {
 			if (CardDetect[pdrv]) {
+				/* XTOS: 500*10ms=5s absent-card debounce -> 2*10ms=20ms. FatFs
+				 * calls disk_status on every f_open/f_stat (mount_volume media
+				 * check); at 5s a removed card hung every SD command for ~5s each
+				 * (dmesg froze until reinsert). Only runs when the card is OUT
+				 * (present cards skip the loop), so shortening it is safe; the
+				 * hot-plug poll re-mounts on reinsert anyway. */
 				while ((StatusReg & XSDPS_PSR_CARD_INSRT_MASK) == 0U) {
-					if (DelayCount == 500U) {
+					if (DelayCount == 2U) {
 						s = STA_NODISK | STA_NOINIT;
 						goto Label;
 					}
