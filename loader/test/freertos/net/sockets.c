@@ -22,6 +22,8 @@ typedef int (*xt_sock_tick)(void *proc);   /* returns nonzero when the caller mu
 
 typedef struct {
     struct netconn *conn;
+    struct netconn *pending;    /* listener: accepted-but-unclaimed conn parked
+                                   by the avail probe (poll readability) */
     struct netbuf  *rb;         /* partially-consumed receive buffer */
     unsigned        rb_off;
     int             listening;
@@ -65,6 +67,7 @@ void xt_sock_close(int si)
     xt_sock *s = slot_of(si);
     if (!s) return;
     if (s->rb) { netbuf_delete(s->rb); s->rb = 0; }
+    if (s->pending) { netconn_close(s->pending); netconn_delete(s->pending); s->pending = 0; }
     netconn_close(s->conn);
     netconn_delete(s->conn);
     s->conn = 0; s->listening = 0;
@@ -119,8 +122,9 @@ int xt_sock_accept(int si, unsigned *peer_ip, unsigned *peer_port,
 {
     xt_sock *s = slot_of(si);
     if (!s || !s->listening) return -1;
-    struct netconn *nc = 0;
-    for (;;) {
+    struct netconn *nc = s->pending;   /* parked by the avail probe? */
+    s->pending = 0;
+    while (!nc) {
         err_t e = netconn_accept(s->conn, &nc);
         if (e == ERR_OK) break;
         if (e != ERR_TIMEOUT && e != ERR_WOULDBLOCK) return -1;
@@ -271,6 +275,18 @@ long xt_sock_avail(int si)
 {
     xt_sock *s = slot_of(si);
     if (!s) return -1;
+    if (s->listening) {
+        /* lwIP queues pending connections in the acceptmbox without touching
+           recv_avail, so probe with a (nonblocking) accept and park the
+           result for xt_sock_accept — a poll()ed listener must read as
+           READABLE when a connection is waiting (fujinetd's accept loop) */
+        if (!s->pending) {
+            struct netconn *nc = 0;
+            if (netconn_accept(s->conn, &nc) == ERR_OK)
+                s->pending = nc;
+        }
+        return s->pending ? 1 : 0;
+    }
     unsigned n = s->rb ? (netbuf_len(s->rb) - s->rb_off) : 0;
 #if LWIP_SO_RCVBUF
     if (!n) {
