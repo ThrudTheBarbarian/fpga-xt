@@ -5,6 +5,16 @@
 #include "aes/aes_internal.h"
 #include <string.h>
 
+/* XTOS system messages (SD insert/remove, ...): the kernel queues them per-process;
+ * we drain them into the AES message pipe so they surface as normal MU_MESAG events.
+ * Guarded so the portable SDL testbed (no XTOS syscalls) just skips it. */
+#ifdef GEM_XTOS
+#include "usys.h"
+static void xtos_drain(void) { int16_t xm[8]; while (sys_xtos_recv(xm)) appl_write(0, 16, xm); }
+#else
+static void xtos_drain(void) {}
+#endif
+
 static aes_event_fn g_src;
 void aes_set_events(aes_event_fn fn) { g_src = fn; }
 int  aes_wait(aes_event *ev, int timeout_ms) {
@@ -49,11 +59,13 @@ int evnt_multi(int flags, int bclk, int bmask, int bstate,
     (void)bclk;
     long timeout = (flags & MU_TIMER)
                  ? (((long)(unsigned short)thc << 16) | (unsigned short)tlc) : -1;
+    xtos_drain();                                                              // pull OS system events into the pipe
     if ((flags & MU_MESAG) && mep && appl_read(0, 16, mep)) return MU_MESAG;   // already queued
 
     for (;;) {
         aes_event ev;
         int t = aes_wait(&ev, (int)timeout);
+        xtos_drain();                                                          // and again after each wakeup
         if (omx) *omx = ev.mx; if (omy) *omy = ev.my;
         if (omb) *omb = ev.button; if (oks) *oks = ev.shift;
 

@@ -863,6 +863,12 @@ void _app_entry(int argc, char **argv) {
         }
         if ((r & MU_MESAG) && (msg[0] == WM_MOVED || msg[0] == WM_SIZED) && msg[3] == g_xlwin)
             xl_sync();                                   // keep the plane on the work area
+        if ((r & MU_MESAG) && msg[0] == XTOS_MEDIA_CHANGE) {
+            // OS says the SD card left (msg[3]=0) or came back (msg[3]=1). Placeholder:
+            // log it. Real UX would grey out / close windows rooted on /media.
+            if (msg[3]) sys_klog("[desk] SD inserted\n", 19);
+            else        sys_klog("[desk] SD removed\n", 18);
+        }
         if (r & MU_BUTTON) {
             int wh = wind_find(mx, my); browser *b = wh ? br_of_window(wh) : NULL;
             if (b) br_click(b, mx, my); else desk_click(mx, my);

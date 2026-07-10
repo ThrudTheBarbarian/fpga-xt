@@ -263,10 +263,12 @@ GEMSRC := $(GEM)/gfx_soft.c $(GEM)/font.c $(GEM)/wm.c $(GEM)/theme.c $(GEM)/img.
           $(wildcard $(GEM)/vdi/*.c) $(wildcard $(GEM)/aes/*.c) \
           ../vitis/xtos/src/gem_pdf_stub.c test/freertos/libs/gem_stubs.c
 FTSRC  := $(wildcard $(FT)/tu/*.c)
-GEMINC := -Itest/freertos/libs/shim -I$(GEM) -I$(GEM)/vdi -I$(FT)/include -Inewlib-pic/include -Ikernel
+GEMINC := -Itest/freertos/libs/shim -I$(GEM) -I$(GEM)/vdi -I$(FT)/include -Inewlib-pic/include -Ikernel -Itest/qemu
 # -g: embed DWARF so libGEM.so is self-describing for xtc's #import (the .so IS
 # the interface — see docs/OS/library-imports.md). Ship unstripped.
-GEMCFLAGS := -marm -mcpu=cortex-a9 -mfloat-abi=softfp -mfpu=neon-vfpv3 -fpic -O2 -g $(GEMINC)
+# -DGEM_XTOS: compile the XTOS syscall paths (usys.h) into the AES core — e.g. the
+# evnt_multi drain of kernel XTOS system messages. The SDL testbed leaves it off.
+GEMCFLAGS := -marm -mcpu=cortex-a9 -mfloat-abi=softfp -mfpu=neon-vfpv3 -fpic -O2 -g -DGEM_XTOS $(GEMINC)
 
 # Vendored SQLite (amalgamation) for the A9 registry — built with our own VFS
 # (SQLITE_OS_OTHER, sqlite_vfs.c over the loader file API), single-threaded,

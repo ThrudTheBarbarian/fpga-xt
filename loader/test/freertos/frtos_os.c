@@ -113,6 +113,9 @@ typedef struct {
     uint32_t          sig_trap;       /* userland __sig_trap stub (async delivery entry) */
     uint32_t          async_ctx[16];  /* r0..r15 of a PL0 task preempted with a signal pending */
     uint32_t          async_cpsr;     /* its CPSR (captured by the tick-return hook) */
+    uint32_t          xtos_cursor;    /* next XTOS-broadcast seq this proc will receive
+                                       * (see xtos_broadcast / SYS_xtos_recv); set = g_xtos_seq
+                                       * at launch so a new app gets no historical events */
 } proc_t;
 
 static proc_t *proc_by_pid(int pid);     /* impl below with the waitpid family */
@@ -141,6 +144,36 @@ static int proc_live(void) { int n = 0; for (int i = 0; i < MAXPROC; i++) if (g_
 static int pipe_live(void) { int n = 0; for (int i = 0; i < MAXPIPE; i++) if (g_pipes[i].used) n++; return n; }
 static void note_proc_hwm(void) { int n = proc_live(); if (n > g_proc_hwm) g_proc_hwm = n; }
 static void note_pipe_hwm(void) { int n = pipe_live(); if (n > g_pipe_hwm) g_pipe_hwm = n; }
+
+/* ---- XTOS system-message broadcast (OS -> GUI apps) -----------------------
+ * A tiny global ring the kernel drops XTOS_* GEM messages into (SD insert/remove,
+ * future system events). Each proc has a cursor; GUI apps drain via SYS_xtos_recv
+ * (gem/aes evnt_multi calls it every event wait), turning them into normal AES
+ * MU_MESAG events. Rare events, so 8 slots suffice; a proc that lags past the ring
+ * just skips the overflowed ones. New procs start at the head (no history). The
+ * kernel is generic here — it relays opaque 8-word messages; only sd.c + the app
+ * know what XTOS_MEDIA_CHANGE means. */
+#define XTOS_RING_N 8
+static int16_t  g_xtos_ring[XTOS_RING_N][8];
+static uint32_t g_xtos_seq;                         /* total broadcast (monotonic) */
+
+void xtos_broadcast(const int16_t *m8)              /* enqueue one 8-word message */
+{
+    taskENTER_CRITICAL();
+    for (int i = 0; i < 8; i++) g_xtos_ring[g_xtos_seq % XTOS_RING_N][i] = m8[i];
+    g_xtos_seq++;
+    taskEXIT_CRITICAL();
+}
+static long xtos_recv(proc_t *p, int16_t *out)      /* -> 1 filled out[8], 0 = none pending */
+{
+    if (!p || !out || p->xtos_cursor >= g_xtos_seq) return 0;
+    if (g_xtos_seq - p->xtos_cursor > XTOS_RING_N)  /* lagged past the ring: jump to newest N */
+        p->xtos_cursor = g_xtos_seq - XTOS_RING_N;
+    const int16_t *m = g_xtos_ring[p->xtos_cursor % XTOS_RING_N];
+    for (int i = 0; i < 8; i++) out[i] = m[i];
+    p->xtos_cursor++;
+    return 1;
+}
 static int    g_next_pid = 1;
 static void (*g_console)(const char *, int);
 static volatile int g_con_eof;           /* console hit EOF (drained qemu pipe) */
@@ -2428,6 +2461,8 @@ static long do_syscall(uint32_t num, long a0, long a1, long a2)
         return (long)(uint32_t)*p;                          /* read back / peek */
     }
     case SYS_strace: { if (p) p->strace = a0 ? 1 : 0; return 0; }   /* /bin/strace */
+    case SYS_xtos_recv:                                     /* (int16 msg[8]) -> 1 dequeued, 0 none */
+        return a0 ? xtos_recv(p, (int16_t *)a0) : 0;
     case SYS_nanosleep: {                                   /* (usec) — real yield, not a spin */
         TickType_t ticks = pdMS_TO_TICKS((uint32_t)a0 / 1000u);
         vTaskDelay(ticks ? ticks : 1);      /* >=1 tick so other tasks (net RX pump) run */
@@ -2963,6 +2998,7 @@ static int proc_launch(int slot, xtld_obj *obj, uintptr_t entry,
     p->asid = (uint32_t)slot + 1u;
     p->heap_brk = XTOS_HEAP_VA; p->heap_end = XTOS_HEAP_VA + XTOS_HEAP_SIZE;    /* private heap */
     p->used = 1;
+    p->xtos_cursor = g_xtos_seq;                            /* start fresh: no historical XTOS events */
     note_proc_hwm();                                        /* /OS/proc/limits peak */
     /* name the task after the program (basename of argv[0]) so fault reports and
      * task listings identify it — FreeRTOS copies the name into the TCB. */
@@ -3066,6 +3102,7 @@ static int alloc_slot(void)
     for (int i = 0; i < MAXPROC; i++)
         if (!g_proc[i].used) {
             g_proc[i].used = 1; g_proc[i].exited = 0; g_proc[i].waited = 0; g_proc[i].reaping = 0;
+            g_proc[i].xtos_cursor = g_xtos_seq;             /* start fresh: no historical XTOS events */
             slot = i; break;
         }
     taskEXIT_CRITICAL();

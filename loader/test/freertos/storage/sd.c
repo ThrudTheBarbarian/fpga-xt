@@ -7,6 +7,8 @@
 #include "diskio.h"
 #include "blkdev.h"
 #include "vfs.h"
+#include <stdint.h>
+#include "xtsys.h"      /* XT_XTOS_MEDIA_CHANGE (the OS->app message ABI) */
 
 extern void klog(const char *);      /* -> /OS/var/log/system.log (not console) */
 extern void klog_u(unsigned);
@@ -122,7 +124,17 @@ int sd_listdir_raw(const char *dir, char out[][32], int max)
  * every cached dir listing so a swapped card never shows the old one's files. */
 extern int  sd_card_present(void);       /* diskio.c: one register read, no wait */
 extern void dcache_flush_all(void);      /* frtos_os.c */
+extern void xtos_broadcast(const int16_t *m8);   /* frtos_os.c: OS -> GUI apps */
 static int  g_sd_present = 1;            /* mounted at boot */
+
+/* tell GUI apps the SD went away / came back (they may grey out or close windows
+ * rooted on it). Delivered as a normal AES message via SYS_xtos_recv / evnt_multi. */
+static void media_change_msg(int present)
+{
+    int16_t m[8] = { (int16_t)XT_XTOS_MEDIA_CHANGE, 0, 0,
+                     (int16_t)present, 0 /*volume 0 = SD*/, 0, 0, 0 };
+    xtos_broadcast(m);
+}
 
 void sd_hotplug_poll(void)
 {
@@ -132,10 +144,11 @@ void sd_hotplug_poll(void)
         g_sd_present = 0;
         dcache_flush_all();                         /* stale listings must not survive a swap */
         klog("[sd] card REMOVED\r\n");
+        media_change_msg(0);
     } else {
         FRESULT r = f_mount(&g_fs, "0:", 1);        /* opt=1: re-init now (a different card is fine) */
         dcache_flush_all();
-        if (r == FR_OK) { g_sd_present = 1; klog("[sd] card inserted (remounted)\r\n"); }
+        if (r == FR_OK) { g_sd_present = 1; klog("[sd] card inserted (remounted)\r\n"); media_change_msg(1); }
         else            { klog("[sd] card inserted, remount FAILED rc="); klog_u((unsigned)r); klog("\r\n"); }
     }
 }

@@ -66,6 +66,16 @@
 #define SYS_sigreturn      0x10B  /* (xt_sigframe *) -> no return: restore the saved context */
 #define SYS_sig_async      0x10C  /* () -> no return: deliver from the async-captured context
                                    * (the __sig_trap stub the tick-return hook redirects to) */
+#define SYS_xtos_recv      0x10D  /* (int16 msg[8]) -> 1 if an XTOS system message was
+                                   * dequeued into msg (drain in a loop until 0), else 0.
+                                   * GUI apps drain this each evnt_multi (see gem/aes). */
+
+/* XTOS system-event GEM messages (msg[0]) — the OS broadcasting hardware/system state
+ * to GUI apps, delivered via SYS_xtos_recv and surfaced as normal AES MU_MESAG events.
+ * These values are the app-facing ABI; they MUST match gem/aes/aes.h's XTOS_* enum
+ * (that header is portable — SDL testbed — so it can't include this one). */
+#define XT_XTOS_BASE           0x4000
+#define XT_XTOS_MEDIA_CHANGE   0x4000  /* msg[3]=present(1)/gone(0), msg[4]=volume(0=SD) */
 
 #define XT_NSIG      32
 #define XT_SIG_DFL   0            /* default disposition (kill / ignore per signal) */

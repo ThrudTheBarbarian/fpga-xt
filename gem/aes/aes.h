@@ -136,6 +136,25 @@ enum { W_NAME=0x01, W_CLOSER=0x02, W_FULLER=0x04, W_MOVER=0x08, W_INFO=0x10,
        W_LFARROW=0x200, W_RTARROW=0x400, W_HSLIDE=0x800 };
 enum { WM_REDRAW=20, WM_TOPPED=21, WM_CLOSED=22, WM_FULLED=23, WM_ARROWED=24,
        WM_HSLID=25, WM_VSLID=26, WM_SIZED=27, WM_MOVED=28, WM_NEWTOP=29 };
+
+/* ---- XTOS_*: XTOS system-event messages (OS/AES -> apps) ------------------
+ * A reserved range for events that classic GEM has no message for — the OS
+ * telling apps about hardware/system state. Delivered like any AES message
+ * (evnt_multi MU_MESAG -> msg[8]); apps switch(msg[0]) and ignore unknown ones.
+ * Named XTOS_ to match the bare classic messages (WM_/AC_/MN_). Kept well clear
+ * of classic (10..63) at 0x4000..0x7FFF (positive int16_t), leaving ~16k types.
+ * Convention as usual: msg[0]=type, msg[1]=sender ap_id (0 = system),
+ * msg[2]=extra bytes, msg[3..]=payload. */
+enum {
+    XTOS_BASE          = 0x4000,
+    /* SD / removable media inserted or removed.
+     *   msg[3] = present (1 = inserted/ready, 0 = removed)
+     *   msg[4] = volume index (0 = the SD card)
+     * Apps may grey out / close windows backed by that volume. */
+    XTOS_MEDIA_CHANGE  = XTOS_BASE + 0x000,
+    /* 0x4001.. reserved for future XTOS system events */
+    XTOS_LAST          = 0x7FFF
+};
 enum { WF_NAME=2, WF_WORKXYWH=4, WF_CURRXYWH=5, WF_PREVXYWH=6, WF_FULLXYWH=7 };
 enum { WC_BORDER=0, WC_WORK=1 };                    // wind_calc direction
 

@@ -45,6 +45,9 @@ static inline long sys_klog(const void *buf, unsigned len)
 static inline long sys_devmem(unsigned long addr, unsigned long val, int write)
 { return __syscall(SYS_devmem, (long)addr, (long)val, (long)write); }
 static inline long sys_getpid(void) { return __syscall(SYS_getpid, 0, 0, 0); }
+/* drain one pending XTOS system message into msg[8] (int16). 1 = filled, 0 = none.
+ * GUI apps loop this each evnt_multi (see gem/aes) -> surfaced as AES MU_MESAG. */
+static inline long sys_xtos_recv(void *msg8) { return __syscall(SYS_xtos_recv, (long)msg8, 0, 0); }
 static inline long sys_spawn(const char *path, int argc, char **argv)
 { return __syscall(SYS_spawn, (long)path, argc, (long)argv); }
 static inline long sys_waitpid(int pid) { return __syscall(SYS_waitpid, pid, 0, 0); }
