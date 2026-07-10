@@ -230,6 +230,7 @@ typedef struct {
     char prog_name[64];                                // fetch display name
     int req_total;                                     // lsc entry count from "+ok <n>" (-1 = unknown)
     unsigned prog_phase;                               // listing spinner tick (indeterminate bar)
+    unsigned prog_stall;                               // pumps since the last reply line (watchdog)
     char req_err[96];                                  // last async error (shown in the info bar)
     bent ent[MAXENT];
     gfx_surface *isurf[MAXENT];
@@ -237,6 +238,7 @@ typedef struct {
     OBJECT tree[1 + MAXENT];
     int wax, way, waw, wah;                            // last work area (for hit-testing)
     int infox, infoy, infow, infoh;                    // last W_INFO chrome rect
+    int retryx, retryw;                                // Retry button rect in the info bar (error state)
 } browser;
 static browser BR[MAXBR];
 static int g_bx = 380, g_by = 130;
@@ -266,6 +268,10 @@ static int ent_cmp(const void *a, const void *c) {
 // the daemon (single-threaded, one client at a time — a reply can sit behind
 // another window's transfer for minutes). ------------------------------------
 enum { RQ_NONE = 0, RQ_SRV, RQ_LSC, RQ_FETCH, RQ_ADD };   // browser.req_kind
+// net_pump ticks ~40ms while a request is pending; a request that goes fully
+// silent for this many pumps (~20s) is declared dead by the watchdog.
+#define NET_WATCHDOG_TICKS 500
+static void br_info_redraw(browser *b);               // fwd (contacting/progress feedback)
 
 static void net_req_close(browser *b) {               // idle the request slot (also = cancel)
     if (b->req_fd >= 0) fuji_close(b->req_fd);
@@ -298,6 +304,7 @@ static void srv_list_start(browser *b) {              // one tile per `servers` 
     br_free_icons(b);
     b->nent = 0; b->nfiles = 0; b->total = 0; b->sel = -1;
     b->req_err[0] = 0; b->req_hdr = 0;
+    b->prog_phase = 0; b->prog_stall = 0;             // fresh contacting bounce + watchdog
     int fd = fuji_connect();
     if (fd < 0 || fuji_cmd(fd, "servers") != 0) {     // no daemon: just the Add tile
         if (fd >= 0) fuji_close(fd);
@@ -307,8 +314,8 @@ static void srv_list_start(browser *b) {              // one tile per `servers` 
     }
     fuji_set_nonblock(fd);
     b->req_fd = fd; b->req_kind = RQ_SRV;             // net_pump takes it from here
+    if (b->infow > 0) br_info_redraw(b);              // instant contacting feedback (replaces desk_busy)
 }
-static void desk_busy(const char *msg);   // fwd
 
 static void net_row(browser *b, const char *ln) {     // one `lsc` reply row -> an entry
     if (b->nent >= MAXENT || ln[0] == '-') return;
@@ -340,12 +347,11 @@ static void net_finish(browser *b) {                  // rows all in: sort + ico
     }
 }
 static void net_list_start(browser *b) {              // entries from `lsc <server> <path>`
-    { char m[160]; snprintf(m, sizeof m, "Contacting %s ...", b->logical_root);
-      desk_busy(m); }                                 // click-instant feedback (non-blocking)
     br_free_icons(b);
     b->nent = 0; b->nfiles = 0; b->total = 0; b->sel = -1;
     b->req_err[0] = 0; b->req_hdr = 0;
     b->req_total = -1; b->prog_phase = 0;             // count unknown until the +ok header
+    b->prog_stall = 0;                                // reset the listing watchdog
     char path[300]; snprintf(path, sizeof path, "/%s", b->rel);
     int fd = fuji_connect();
     if (fd < 0 || fuji_cmd(fd, "lsc %d \"%s\"", b->server_id, path) != 0) {
@@ -356,6 +362,7 @@ static void net_list_start(browser *b) {              // entries from `lsc <serv
     }
     fuji_set_nonblock(fd);
     b->req_fd = fd; b->req_kind = RQ_LSC;             // net_pump takes it from here
+    if (b->infow > 0) br_info_redraw(b);              // instant contacting feedback (replaces desk_busy)
 }
 static void br_list(browser *b) {
     if (b->net == 1) { srv_list_start(b); return; }   // FujiNet flavours (async)
@@ -408,6 +415,40 @@ static void br_layout(browser *b) {
                                 &b->cic[i], (int16_t)cx, (int16_t)cy, ICON_CW, ICON_CH };
     }
 }
+// Graphical progress indicator drawn straight into the info bar — the old
+// (removed) net_progress modal box style, relocated: a grey track (disabled
+// pen 9) with a solid fill (pen 1) and a thin outline.  Determinate fills
+// done/total; indeterminate sweeps a ~30%-wide block left<->right off the
+// caller's triangle-wave phase.  Geometry is pixels within the info rect.
+static void br_progbar(int x, int y, int w, int h, int determinate,
+                       unsigned done, unsigned total, unsigned phase) {
+    if (w < 8) return;
+    vsf_interior(HV, VDI_FIS_SOLID); vsf_perimeter(HV, 0);
+    int16_t tr[4] = { (int16_t)x, (int16_t)y, (int16_t)(x+w-1), (int16_t)(y+h-1) };
+    vsf_color(HV, 9); vr_recfl(HV, tr);                       // grey track (trough)
+    if (determinate) {
+        int tot = total ? (int)total : 1;
+        int fill = (int)((long long)w * done / tot);
+        if (fill > w) fill = w; if (fill < 0) fill = 0;
+        if (fill > 0) {
+            int16_t fr[4] = { (int16_t)x, (int16_t)y, (int16_t)(x+fill-1), (int16_t)(y+h-1) };
+            vsf_color(HV, 1); vr_recfl(HV, fr);               // filled portion
+        }
+    } else {                                                  // bouncing ~30%-wide block
+        int bw = w * 3 / 10; if (bw < 6) bw = 6;
+        int span = w - bw; if (span < 1) span = 1;
+        int ph = (int)(phase % 14);                           // 0..7..0 triangle wave
+        int t = ph < 7 ? ph : 14 - ph;                        // block sweeps + returns
+        int bx = x + span * t / 7;
+        int16_t fr[4] = { (int16_t)bx, (int16_t)y, (int16_t)(bx+bw-1), (int16_t)(y+h-1) };
+        vsf_color(HV, 1); vr_recfl(HV, fr);                   // moving block
+    }
+    vsl_color(HV, 1); vsl_width(HV, 1);                       // thin outline
+    int16_t o[10] = { (int16_t)x,(int16_t)y, (int16_t)(x+w-1),(int16_t)y,
+                      (int16_t)(x+w-1),(int16_t)(y+h-1), (int16_t)x,(int16_t)(y+h-1),
+                      (int16_t)x,(int16_t)y };
+    v_pline(HV, 5, o);
+}
 // W_INFO chrome line: Up button (greyed at root) + file count / total size.
 static void br_infobar(int hd, int ix, int iy, int iw, int ih, void *ud) {
     (void)hd; browser *b = ud;
@@ -421,35 +462,42 @@ static void br_infobar(int hd, int ix, int iy, int iw, int ih, void *ud) {
     vst_color(HV, upc); vst_alignment(HV, VDI_TA_LEFT, VDI_TA_HALF, 0,0);
     v_gtext(HV, ax+18, ay, "Up");
     char info[96];
-    if (b->req_fd >= 0 && b->req_kind == RQ_FETCH) {          // fetch in flight: text + bar
-        char bar[12];
+    int irx = ix+iw-12;                                      // right edge of the info text
+    b->retryx = 0; b->retryw = 0;                            // no Retry button unless in the error state
+    int drewbar = 0;                                        // active states draw a graphical bar + left label
+    int pw = 120, pbh = 10;                                  // progress track: 120x10, vertically centred
+    int pby = iy + (ih - pbh)/2;
+    int pbx = ix + iw - 12 - pw;                             // right-anchored, before the right margin
+    if (b->req_fd >= 0 && b->req_kind == RQ_FETCH) {          // fetch in flight: label + determinate bar
         unsigned pc = b->prog_total
                     ? (unsigned)((unsigned long long)b->prog_done * 100 / b->prog_total) : 0;
         if (pc > 100) pc = 100;
-        for (int i = 0; i < 10; i++) bar[i] = (unsigned)i < pc/10 ? '#' : ' ';
-        bar[10] = 0;
-        snprintf(info, sizeof info, "Fetching %.40s  [%s] %u%%", b->prog_name, bar, pc);
+        snprintf(info, sizeof info, "Fetching %.40s %u%%", b->prog_name, pc);
+        br_progbar(pbx, pby, pw, pbh, 1, b->prog_done, b->prog_total, 0);
+        drewbar = 1;
     }
-    else if (b->req_fd >= 0 && b->req_kind == RQ_LSC) {       // listing in flight: progress
-        char bar[12];
-        if (b->req_total >= 0) {                              // determinate: rows/total + bar
-            int tot = b->req_total > 0 ? b->req_total : 1;
-            unsigned pc = (unsigned)((long long)b->nent * 100 / tot);
-            if (pc > 100) pc = 100;
-            for (int i = 0; i < 10; i++) bar[i] = (unsigned)i < (pc + 9) / 10 ? '#' : ' ';
-            bar[10] = 0;
-            snprintf(info, sizeof info, "Listing %d/%d  [%s]", b->nent, b->req_total, bar);
+    else if (b->req_fd >= 0 && (b->req_kind == RQ_LSC || b->req_kind == RQ_SRV)) {  // listing in flight
+        if (!b->req_hdr) {                                   // contacting: indeterminate (header not in yet)
+            snprintf(info, sizeof info, "Contacting %.40s", b->logical_root);
+            br_progbar(pbx, pby, pw, pbh, 0, 0, 0, b->prog_phase);
+        } else if (b->req_kind == RQ_LSC && b->req_total >= 0) {   // determinate: rows/total
+            snprintf(info, sizeof info, "Listing %d/%d", b->nent, b->req_total);
+            br_progbar(pbx, pby, pw, pbh, 1, (unsigned)b->nent,
+                       (unsigned)(b->req_total > 0 ? b->req_total : 1), 0);
         } else {                                             // indeterminate: a bouncing block
-            int ph = (int)(b->prog_phase % 14);              // 0..7..0 triangle
-            int pos = ph < 7 ? ph : 14 - ph;                 // block sweeps + returns
-            for (int i = 0; i < 10; i++)
-                bar[i] = (i >= pos && i < pos + 3) ? '#' : ' ';
-            bar[10] = 0;
-            snprintf(info, sizeof info, "Listing %d  [%s]", b->nent, bar);
+            snprintf(info, sizeof info, "Listing %d", b->nent);
+            br_progbar(pbx, pby, pw, pbh, 0, 0, 0, b->prog_phase);
         }
+        drewbar = 1;
     }
-    else if (b->req_err[0])                                   // last async request failed
+    else if (b->req_err[0]) {                                 // last async request failed: msg + Retry
         snprintf(info, sizeof info, "Error: %.80s", b->req_err);
+        b->retryx = ix+iw-70; b->retryw = 58;                // clickable Retry button, right edge
+        vst_height(HV, 14, 0,0,0,0);
+        vst_color(HV, 1); vst_alignment(HV, VDI_TA_LEFT, VDI_TA_HALF, 0,0);
+        v_gtext(HV, b->retryx, ay, "Retry");
+        irx = b->retryx-12;                                  // keep the error text clear of the button
+    }
     else if (b->net == 1)                                     // servers window (minus the Add tile)
         snprintf(info, sizeof info, "%d servers", b->nent ? b->nent-1 : 0);
     else if (b->net == 2)
@@ -458,31 +506,22 @@ static void br_infobar(int hd, int ix, int iy, int iw, int ih, void *ud) {
     else
         snprintf(info, sizeof info, "%d files, %ld KB", b->nfiles, (b->total+1023)/1024);
     vst_color(HV, 1); vst_alignment(HV, VDI_TA_RIGHT, VDI_TA_HALF, 0,0);
-    v_gtext(HV, ix+iw-12, ay, info);
+    v_gtext(HV, drewbar ? pbx-8 : irx, ay, info);            // active: label to the LEFT of the bar
     vst_alignment(HV, VDI_TA_LEFT, VDI_TA_TOP, 0,0);
 }
 static void br_content(int hd, int wax, int way, int waw, int wah, void *ud) {
     (void)hd; browser *b = ud;
     b->wax = wax; b->way = way; b->waw = waw; b->wah = wah;
-    // list still in flight with nothing yet: the "Contacting" placeholder.  Once
-    // rows start arriving (RQ_LSC), fall through and lay the partial list out so
-    // the window visibly fills; the info bar carries the progress bar.
-    if (b->req_fd >= 0 && b->req_kind != RQ_FETCH &&
-        !(b->req_kind == RQ_LSC && b->nent > 0)) {
-        char m[160]; snprintf(m, sizeof m, "Contacting %s ...", b->logical_root);
-        vst_color(HV, 1); vst_height(HV, 15, 0,0,0,0);
-        vst_alignment(HV, VDI_TA_CENTER, VDI_TA_HALF, 0,0);
-        v_gtext(HV, wax+waw/2, way+wah/2, m);
-        vst_alignment(HV, VDI_TA_LEFT, VDI_TA_TOP, 0,0);
-        return;
-    }
+    // A listing lays out the partial/empty list as it fills (rows arrive live);
+    // the info bar carries the single contacting -> progress indicator.  A fetch
+    // keeps the existing list on screen and shows progress in the info bar too.
     br_layout(b);
     aes_icon_label_style(0);                       // browser: over the light window
     objc_draw(b->tree, 0, 2, wax, way, waw, wah);
 }
 // Repaint ONLY the info bar (per fetch-progress line): chrome fill + divider +
 // br_infobar + flush — no full-window redraw per tick.  Drawn straight to the
-// screen like desk_busy; the next full redraw repaints it anyway.
+// screen; the next full redraw repaints it anyway.
 static void br_info_redraw(browser *b) {
     if (!b->used || b->infow <= 0) return;
     int ix = b->infox, iy = b->infoy, iw = b->infow, ih = b->infoh;
@@ -499,26 +538,6 @@ static int br_up_hit(browser *b, int mx, int my) {
     return b->rel[0] && mx >= b->infox+8 && mx < b->infox+70 && my >= b->infoy && my < b->infoy+b->infoh;
 }
 static void open_fuji_browser(int server_id, const char *name);   // fwd
-/* immediate "working..." box — click-instant feedback, drawn straight to the
- * screen (aes_flush_rect makes it visible mid-loop) and wiped by the next
- * full redraw; it never blocks */
-static void desk_busy(const char *msg) {
-    int W = 360, H = 40, wx, wy, ww, wh;
-    wind_get(0, WF_WORKXYWH, &wx, &wy, &ww, &wh);
-    int x = wx + (ww-W)/2, y = wy + (wh-H)/2;
-    vsf_interior(HV, VDI_FIS_SOLID); vsf_perimeter(HV, 0); vsf_color(HV, 0);
-    int16_t bx[4] = { (int16_t)x, (int16_t)y, (int16_t)(x+W-1), (int16_t)(y+H-1) };
-    vr_recfl(HV, bx);
-    vsl_color(HV, 1); vsl_width(HV, 1);
-    int16_t o[10] = { (int16_t)x,(int16_t)y, (int16_t)(x+W-1),(int16_t)y,
-                      (int16_t)(x+W-1),(int16_t)(y+H-1), (int16_t)x,(int16_t)(y+H-1),
-                      (int16_t)x,(int16_t)y };
-    v_pline(HV, 5, o);
-    vst_color(HV, 1); vst_height(HV, 13, 0,0,0,0); vst_alignment(HV, VDI_TA_LEFT, VDI_TA_HALF, 0,0);
-    v_gtext(HV, x+12, y+H/2, msg);
-    vst_alignment(HV, VDI_TA_LEFT, VDI_TA_TOP, 0,0);
-    aes_flush_rect(x, y, W, H);
-}
 
 // Async netcache fetch: send `fetch` and return; the pump streams "+progress"
 // into the info bar, "+ok" triggers an async re-list (the entry solidifies)
@@ -534,7 +553,7 @@ static void net_fetch_start(browser *b, const char *remote, const char *name) {
     }
     fuji_set_nonblock(fd);
     b->req_fd = fd; b->req_kind = RQ_FETCH; b->req_hdr = 0;
-    b->prog_done = 0; b->prog_total = 0;
+    b->prog_done = 0; b->prog_total = 0; b->prog_stall = 0;   // reset the transfer watchdog
     snprintf(b->prog_name, sizeof b->prog_name, "%s", name);
     b->req_err[0] = 0;
     br_info_redraw(b);                                        // instant "Fetching ..." feedback
@@ -604,6 +623,7 @@ static void add_server_dialog(browser *b) {           // b = the servers browser
     }
     fuji_set_nonblock(fd);
     b->req_fd = fd; b->req_kind = RQ_ADD; b->req_hdr = 0;   // net_pump takes it from here
+    b->prog_stall = 0;                                     // reset the request watchdog
 }
 
 // ---- async pump: feed arrived reply lines back into the owning browser -----
@@ -675,17 +695,29 @@ static void net_pump(void) {
     for (int i = 0; i < MAXBR; i++) {
         browser *b = &BR[i];
         if (!b->used) continue;
-        int before = b->nent;
+        int before = b->nent, consumed = 0;
         for (int n = 0; n < 64 && b->req_fd >= 0; n++) {
             int r = fuji_poll_line(b->req_fd, ln, sizeof ln);
             if (r == 0) break;                                // no complete line yet
             if (r < 0) { net_req_fail(b, "daemon connection lost"); break; }
+            consumed = 1;
             net_req_line(b, ln);
+        }
+        // watchdog: any reply line (rows or +progress) resets the stall counter;
+        // a request that sends nothing for NET_WATCHDOG_TICKS pumps is declared
+        // dead so a wedged listing/transfer can never wait forever.
+        if (b->req_fd >= 0) {
+            if (consumed) b->prog_stall = 0;
+            else if (++b->prog_stall > NET_WATCHDOG_TICKS) {
+                net_req_fail(b, "server not responding");
+                continue;
+            }
         }
         // listing still in flight: advance the spinner + reflect new rows.  New
         // rows -> full redraw (the window fills, batched per pump, not per row);
-        // an idle tick -> just the info bar (keeps the indeterminate bar moving).
-        if (b->req_fd >= 0 && b->req_kind == RQ_LSC) {
+        // an idle tick -> just the info bar (keeps the contacting/indeterminate
+        // bar moving, in the servers window too).
+        if (b->req_fd >= 0 && (b->req_kind == RQ_LSC || b->req_kind == RQ_SRV)) {
             b->prog_phase++;
             if (b->nent != before) wind_redraw();
             else                   br_info_redraw(b);
@@ -694,6 +726,13 @@ static void net_pump(void) {
 }
 static void br_click(browser *b, int mx, int my) {
     if (b->req_fd >= 0) return;                               // request in flight: ignore clicks
+    if (b->req_err[0] && b->retryw > 0 &&                     // Retry button (error state): re-run
+        mx >= b->retryx && mx < b->retryx + b->retryw &&
+        my >= b->infoy && my < b->infoy + b->infoh) {
+        b->req_err[0] = 0;
+        if (b->net == 1) srv_list_start(b); else net_list_start(b);
+        wind_redraw(); return;
+    }
     if (br_up_hit(b, mx, my)) {                               // ascend (never above the root)
         char *s = strrchr(b->rel, '/'); if (s) *s = 0; else b->rel[0] = 0;
         br_list(b); br_settitle(b); wind_redraw(); return;
