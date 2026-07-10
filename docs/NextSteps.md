@@ -58,8 +58,8 @@
      symbol dedup DONE (fc6fe7d, libc-hide.map), and SA_RESTART DONE (2026-07-10 —
      kernel returns XT_ERESTARTSYS, __syscall re-issues; sigtest 5/5). Signals are
      feature-complete (sync/async/EINTR/SA_RESTART/SIGCHLD/SIGWINCH); HW-validated
-     for the 4/4 battery — the SA_RESTART case (test 5) is qemu-only, add it to the
-     next cold-load pass. newlib-pic provenance DONE: newlib-pic.stamp golden +
+     end to end — sigtest **5/5 on HW** (test 5 SA_RESTART restart included).
+     newlib-pic provenance DONE: newlib-pic.stamp golden +
      `make newlib-check` + `make newlib` version-upgrade path (085e5bf, 735d87f).
   The shim still has a legit job afterwards (the POSIX *shape* newlib lacks —
   `opendir`/`readdir` over `getdents`, stdio buffering, `spawn`/`wait`, termios —
