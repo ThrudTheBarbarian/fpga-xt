@@ -1184,6 +1184,35 @@ static uint32_t  g_dcache_tick;
 
 static int dstr_eq(const char *a, const char *b) { while (*a && *a == *b) { a++; b++; } return *a == *b; }
 
+/* Canonicalize an absolute path for use as the dir-cache key: collapse //, drop "."
+ * components, resolve "..", strip the trailing '/'. Without this, the SAME directory
+ * keys differently depending on how it was named — `ls` (no arg) enumerates "." which
+ * abspath()s to "/dir/.", while unlink's dcache_drop_parent normalizes the parent to
+ * "/dir" — so the delete failed to invalidate the listing and `ls` showed stale
+ * entries. Only affects key matching (never the FatFs path), so a miscanon can at
+ * worst cause an extra cache miss/drop, never wrong data. */
+static void dcache_norm(const char *in, char *out)
+{
+    int o = 0;
+    out[o++] = '/';
+    for (int i = 0; in[i]; ) {
+        while (in[i] == '/') i++;
+        if (!in[i]) break;
+        int j = i; while (in[j] && in[j] != '/') j++;
+        int len = j - i;
+        if (len == 1 && in[i] == '.') { /* "." -> skip */ }
+        else if (len == 2 && in[i] == '.' && in[i+1] == '.') {
+            if (o > 1) { o--; while (o > 1 && out[o-1] != '/') o--; }   /* pop a segment */
+        } else {
+            if (out[o-1] != '/') out[o++] = '/';
+            for (int k = i; k < j && o < FS_PATH_MAX - 1; k++) out[o++] = in[k];
+        }
+        i = j;
+    }
+    if (o > 1 && out[o-1] == '/') o--;
+    out[o] = 0;
+}
+
 /* split an absolute path into parent dir (no trailing '/', root stays "/") + leaf name.
  * 0 ok; -1 if there's no leaf to look up (root, empty, or a bare relative name). */
 static int path_split(const char *path, char *dir, int dsz, const char **leaf)
@@ -1202,14 +1231,16 @@ static int path_split(const char *path, char *dir, int dsz, const char **leaf)
 
 static dcache_t *dcache_find(const char *dir)
 {
+    char k[FS_PATH_MAX]; dcache_norm(dir, k);
     for (int i = 0; i < DCACHE_N; i++)
-        if (g_dcache[i].valid && dstr_eq(g_dcache[i].dir, dir)) return &g_dcache[i];
+        if (g_dcache[i].valid && dstr_eq(g_dcache[i].dir, k)) return &g_dcache[i];
     return 0;
 }
 static void dcache_drop(const char *dir)
 {
+    char k[FS_PATH_MAX]; dcache_norm(dir, k);
     for (int i = 0; i < DCACHE_N; i++)
-        if (g_dcache[i].valid && dstr_eq(g_dcache[i].dir, dir)) g_dcache[i].valid = 0;
+        if (g_dcache[i].valid && dstr_eq(g_dcache[i].dir, k)) g_dcache[i].valid = 0;
 }
 /* a create/delete/rename/size-change at `path` makes its parent dir's snapshot stale */
 static void dcache_drop_parent(const char *path)
@@ -1235,7 +1266,7 @@ static dcache_t *dcache_fill(const char *dir)
     if (r < 0) return 0;                                   /* -2 unsupported / -1 not-a-dir */
     dcache_t *c = dcache_slot();
     c->valid = 0;                                          /* unusable while (re)filling */
-    int i = 0; while (dir[i] && i < FS_PATH_MAX - 1) { c->dir[i] = dir[i]; i++; } c->dir[i] = 0;
+    dcache_norm(dir, c->dir);                              /* canonical key (matches find/drop) */
     c->nents = 0;
     for (int idx = 0; r == 1; r = vfs_readdir_meta(dir, ++idx, &d)) {
         if (!d.name[0]) continue;                          /* over-long name: uncacheable, skip */
