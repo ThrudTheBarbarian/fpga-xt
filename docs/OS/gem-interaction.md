@@ -545,14 +545,12 @@ Follow-ups (post-stage-3): drop-on-emulator-window media insert, windowed
 dialogs for multi-app, the explicit-refresh verb that sets `fujiCache`
 `updateAvailable` (feeds the desktop update pip), caret blink.
 
-## Open questions (for the owner)
+## Settled lifecycle details
 
-The original seven are settled and folded into the sections above. What
-genuinely remains:
-
-1. **`/Desktop` copy lifecycle**: removing a network-homed desktop icon —
-   delete its `/Desktop` copy with it, or drop only the registry row and
-   leave the file (it is user data, after all)?
-2. **Update-pip action**: what does a pipped icon *do*? Double-click
-   launches the local copy as-is (pip purely advisory), or is there a
-   re-fetch verb — a context action, or an ask-at-launch alert?
+1. **`/Desktop` copy lifecycle**: removing a network-homed desktop icon
+   deletes its `/Desktop` copy too — the copy was created by that drag
+   and is reproducible from the network. Removing a *link* icon removes
+   only the registry row; its local target is untouched.
+2. **Update pip is advisory**: double-click launches the local copy
+   as-is; a context-menu "Update" verb re-fetches. No ask-at-launch
+   interruptions.
