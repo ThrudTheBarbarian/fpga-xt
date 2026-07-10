@@ -22,4 +22,27 @@ void aes_reserve_top(int h);       // reserve a top strip from the work area (th
 // click hit a window frame (consumed), 0 if it fell in a work area / desktop.
 int  wind_handle_click(int mx, int my);
 
+// Idle-aware wait: aes_wait chunked by the aes_set_idle period, calling the
+// idle hook on each expiry.  Every modal AES loop waits through this.
+int  aes_wait_idle(aes_event *ev, int timeout_ms);
+
+// wind_redraw generation counter — modal loops compare it around the idle
+// hook to notice a full repaint (which wipes anything drawn outside
+// wind_redraw, e.g. a modal dialog) and repaint their own pixels.
+int  aes_redraw_gen(void);
+
+// The HW drag-overlay hooks (window.c holds the registration): begin returns
+// 0 when no hook / refused -> the caller falls back to redraw-per-motion.
+int  aes_ovl_lift(int x, int y, int w, int h);
+void aes_ovl_move(int x, int y);
+void aes_ovl_drop(void);
+
+// Edit focus (edit.c): returns 1 + the caret index when `obj` of `tree` is
+// the focused edit field — object.c draws the caret during tree draws.
+int  objc_edit_state(OBJECT *tree, int obj, int *caret);
+// Build the display string for a TEDINFO (template merged with text) into
+// out[cap]; returns the display index of input position `pos` via *dpos
+// (pos < 0 -> ignored).  Shared by the renderer (object.c) and edit.c.
+int  ted_display(const TEDINFO *ted, char *out, int cap, int pos, int *dpos);
+
 #endif // AES_INTERNAL_H

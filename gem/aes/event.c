@@ -22,6 +22,33 @@ int  aes_wait(aes_event *ev, int timeout_ms) {
     return g_src(ev, timeout_ms);
 }
 
+// ---- central idle hook ---------------------------------------------------
+// Modal AES loops (form_do, drags, future menus) wait through aes_wait_idle:
+// the caller's wait is chunked by the registered period and fn runs on each
+// expiry, so async work (net_pump) stays alive inside modal interactions.
+static void (*g_idle_fn)(void);
+static int g_idle_ms;
+static int g_in_idle;             // no re-entry: an idle-spawned modal loop
+                                  // (e.g. an error alert) must not recurse
+void aes_set_idle(void (*fn)(void), int period_ms) {
+    g_idle_fn = fn; g_idle_ms = period_ms;
+}
+int aes_wait_idle(aes_event *ev, int timeout_ms) {
+    if (!g_idle_fn || g_idle_ms <= 0 || g_in_idle)
+        return aes_wait(ev, timeout_ms);
+    long left = timeout_ms;                       // <0 = forever
+    for (;;) {
+        int chunk = (timeout_ms < 0 || left > g_idle_ms) ? g_idle_ms : (int)left;
+        int t = aes_wait(ev, chunk);
+        if (t != AES_TIMER) return t;
+        g_in_idle = 1; g_idle_fn(); g_in_idle = 0;
+        if (timeout_ms >= 0) {
+            left -= chunk;
+            if (left <= 0) return AES_TIMER;      // the caller's real timeout
+        }
+    }
+}
+
 // ---- message pipe (appl_write -> evnt_mesag) ----------------------------
 #define MQW 8
 #define MQN 32

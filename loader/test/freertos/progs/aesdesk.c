@@ -321,7 +321,7 @@ static int ent_cmp(const void *a, const void *c) {
 // loop) feeds reply lines back in as they arrive, so the UI never blocks on
 // the daemon (single-threaded, one client at a time — a reply can sit behind
 // another window's transfer for minutes). ------------------------------------
-enum { RQ_NONE = 0, RQ_SRV, RQ_LSC, RQ_FETCH };       // browser.req_kind
+enum { RQ_NONE = 0, RQ_SRV, RQ_LSC, RQ_FETCH, RQ_ADD };   // browser.req_kind
 
 static void net_req_close(browser *b) {               // idle the request slot (also = cancel)
     if (b->req_fd >= 0) fuji_close(b->req_fd);
@@ -586,17 +586,72 @@ static void net_open(browser *b, int i) {
     }
     net_fetch_start(b, remote, e->name);
 }
+// ---- Add Server dialog (the "Add server" tile; form_do consumer #1) ---------
+// host[:port] + transport radio + mount path + display name; OK (default) sends
+// `add-server` through the servers browser's async request slot, Cancel /
+// Esc-Esc backs out.  Movable (OF_MOVEABLE fly corner), mnemonics auto-assign.
+enum { AS_ROOT, AS_TITLE, AS_LHOST, AS_FHOST, AS_LTRAN, AS_RUDP, AS_RTCP,
+       AS_RAUTO, AS_LPATH, AS_FPATH, AS_LNAME, AS_FNAME, AS_CANCEL, AS_OK, AS_N };
+#define AS_W 480
+#define AS_H 246
+static char as_host[64], as_path[64], as_name[48];
+static char as_tmpl[35];                              // 34 input positions ('_' run)
+static TEDINFO as_thost = { as_host, as_tmpl, "P", sizeof as_host, TE_LEFT };
+static TEDINFO as_tpath = { as_path, as_tmpl, "P", sizeof as_path, TE_LEFT };
+static TEDINFO as_tname = { as_name, as_tmpl, "X", sizeof as_name, TE_LEFT };
+static OBJECT as_dlg[AS_N] = {
+ /*ROOT  */ { NIL, AS_TITLE, AS_OK, G_BOX, OF_MOVEABLE, OS_NORMAL, 0, 0,0, AS_W, AS_H },
+ /*TITLE */ { AS_LHOST,  NIL,NIL, G_STRING, OF_NONE, OS_NORMAL, (void*)"Add FujiNet server",  20,12, 440,20 },
+ /*LHOST */ { AS_FHOST,  NIL,NIL, G_STRING, OF_NONE, OS_NORMAL, (void*)"Host:",               20,50, 88,20 },
+ /*FHOST */ { AS_LTRAN,  NIL,NIL, G_FTEXT,  OF_EDITABLE, OS_NORMAL, &as_thost,               116,47, 340,26 },
+ /*LTRAN */ { AS_RUDP,   NIL,NIL, G_STRING, OF_NONE, OS_NORMAL, (void*)"Transport:",          20,86, 88,20 },
+ /*RUDP  */ { AS_RTCP,   NIL,NIL, G_RADIO,  OF_SELECTABLE|OF_RBUTTON, OS_NORMAL, (void*)"udp",  116,84, 70,20 },
+ /*RTCP  */ { AS_RAUTO,  NIL,NIL, G_RADIO,  OF_SELECTABLE|OF_RBUTTON, OS_NORMAL, (void*)"tcp",  196,84, 70,20 },
+ /*RAUTO */ { AS_LPATH,  NIL,NIL, G_RADIO,  OF_SELECTABLE|OF_RBUTTON, OS_SELECTED, (void*)"auto", 276,84, 80,20 },
+ /*LPATH */ { AS_FPATH,  NIL,NIL, G_STRING, OF_NONE, OS_NORMAL, (void*)"Path:",               20,122, 88,20 },
+ /*FPATH */ { AS_LNAME,  NIL,NIL, G_FTEXT,  OF_EDITABLE, OS_NORMAL, &as_tpath,               116,119, 340,26 },
+ /*LNAME */ { AS_FNAME,  NIL,NIL, G_STRING, OF_NONE, OS_NORMAL, (void*)"Name:",               20,158, 88,20 },
+ /*FNAME */ { AS_CANCEL, NIL,NIL, G_FTEXT,  OF_EDITABLE, OS_NORMAL, &as_tname,               116,155, 340,26 },
+ /*CANCEL*/ { AS_OK,     NIL,NIL, G_BUTTON, OF_SELECTABLE|OF_EXIT|OF_CANCEL, OS_NORMAL, (void*)"Cancel", 252,196, 100,32 },
+ /*OK    */ { AS_ROOT,   NIL,NIL, G_BUTTON, OF_SELECTABLE|OF_EXIT|OF_DEFAULT|OF_LASTOB, OS_NORMAL, (void*)"OK", 364,196, 92,32 },
+};
+static void add_server_dialog(browser *b) {           // b = the servers browser
+    as_host[0] = 0; as_name[0] = 0;
+    snprintf(as_path, sizeof as_path, "/");
+    memset(as_tmpl, '_', sizeof as_tmpl - 1); as_tmpl[sizeof as_tmpl - 1] = 0;
+    as_dlg[AS_RUDP].ob_state &= ~OS_SELECTED;
+    as_dlg[AS_RTCP].ob_state &= ~OS_SELECTED;
+    as_dlg[AS_RAUTO].ob_state |= OS_SELECTED;         // default transport: auto
+    int r = form_do_dialog(as_dlg, 0);                // focus starts in Host
+    if (r >= 0) as_dlg[r].ob_state &= ~OS_SELECTED;   // release for the next run
+    repaint();                                        // repaint under the dismissed dialog
+    if (r != AS_OK || !as_host[0]) return;
+    const char *tr = (as_dlg[AS_RUDP].ob_state & OS_SELECTED) ? "udp"
+                   : (as_dlg[AS_RTCP].ob_state & OS_SELECTED) ? "tcp" : "auto";
+    int fd = fuji_connect();
+    if (fd < 0) { form_alert(1, "[3][FujiNet daemon not running|(boot script 40-FujiNet)][OK]"); return; }
+    if (fuji_cmd(fd, "add-server \"%s\" %s \"%s\" \"%s\"",
+                 as_host, tr, as_path[0] ? as_path : "/", as_name) != 0) {
+        fuji_close(fd);
+        form_alert(1, "[3][Add server failed|daemon connection lost][OK]");
+        return;
+    }
+    fuji_set_nonblock(fd);
+    b->req_fd = fd; b->req_kind = RQ_ADD; b->req_hdr = 0;   // net_pump takes it from here
+}
+
 // ---- async pump: feed arrived reply lines back into the owning browser -----
 static void net_req_fail(browser *b, const char *msg) {
     int kind = b->req_kind;
     net_req_close(b);
-    if (kind == RQ_FETCH) {                                   // fetch: alert + re-list (entry reverts)
+    if (kind == RQ_FETCH || kind == RQ_ADD) {                 // alert + re-list (entry/list reverts)
         char e[80], m[120];
         snprintf(e, sizeof e, "%s", msg);
         for (char *p = e; *p; p++) if (*p=='['||*p==']'||*p=='|') *p = ' ';   // keep form_alert parsable
-        snprintf(m, sizeof m, "[3][Fetch failed|%.60s][OK]", e);
+        snprintf(m, sizeof m, "[3][%s failed|%.60s][OK]", kind == RQ_ADD ? "Add server" : "Fetch", e);
         form_alert(1, m);
-        net_list_start(b); repaint();
+        if (kind == RQ_ADD) srv_list_start(b); else net_list_start(b);
+        repaint();
         return;
     }
     snprintf(b->req_err, sizeof b->req_err, "%s", msg);       // lists: empty + error in the info bar
@@ -604,6 +659,12 @@ static void net_req_fail(browser *b, const char *msg) {
     repaint();
 }
 static void net_req_line(browser *b, char *ln) {              // dispatch one reply line
+    if (b->req_kind == RQ_ADD) {                              // one-line reply: +ok <id> / -err
+        if (ln[0] == '-') { net_req_fail(b, ln + 1); return; }
+        net_req_close(b);
+        srv_list_start(b); repaint();                         // async refresh: the new tile appears
+        return;
+    }
     if (b->req_kind == RQ_FETCH) {
         if (!strncmp(ln, "+progress ", 10)) {
             sscanf(ln + 10, "%u %u", &b->prog_done, &b->prog_total);
@@ -667,8 +728,8 @@ static void br_click(browser *b, int mx, int my) {
         int w2 = wind_find(mx2, my2);
         if (w2 == b->win && objc_find(b->tree, 0, 2, mx2, my2) == oi) {   // double-click
             if (b->net == 1) {                               // servers window
-                if (b->ent[i].srvid < 0)                     // "Add server": v1 points at the CLI
-                    form_alert(1, "[1][To add a server, run:|fuji add-server host udp/tcp/auto|path name][OK]");
+                if (b->ent[i].srvid < 0)                     // "Add server": the dialog
+                    add_server_dialog(b);
                 else open_fuji_browser(b->ent[i].srvid, b->ent[i].label);
             } else if (b->ent[i].dir) {                      // descend
                 int n = (int)strlen(b->rel);
@@ -836,6 +897,7 @@ void _app_entry(int argc, char **argv) {
     wind_set_desktop_content(deskcontent, NULL);
 
     aes_set_events(a9_events);
+    aes_set_idle(net_pump, 40);                      // modal loops (dialogs, drags) keep pumping
     wind_set_overlay(ovl_begin, ovl_move, ovl_end, present_rect);   // tear-free HW-overlay window drag
     repaint();                                       // initial frame
 

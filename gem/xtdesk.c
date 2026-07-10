@@ -263,7 +263,7 @@ static int ent_cmp(const void *a, const void *c) {
 // loop) feeds reply lines back in as they arrive, so the UI never blocks on
 // the daemon (single-threaded, one client at a time — a reply can sit behind
 // another window's transfer for minutes). ------------------------------------
-enum { RQ_NONE = 0, RQ_SRV, RQ_LSC, RQ_FETCH };       // browser.req_kind
+enum { RQ_NONE = 0, RQ_SRV, RQ_LSC, RQ_FETCH, RQ_ADD };   // browser.req_kind
 
 static void net_req_close(browser *b) {               // idle the request slot (also = cancel)
     if (b->req_fd >= 0) fuji_close(b->req_fd);
@@ -526,17 +526,71 @@ static void net_open(browser *b, int i) {
     }
     net_fetch_start(b, remote, e->name);
 }
+// ---- Add Server dialog (the "Add server" tile; form_do consumer #1) ---------
+// host[:port] + transport radio + mount path + display name; OK (default) sends
+// `add-server` through the servers browser's async request slot, Cancel /
+// Esc-Esc backs out.  Movable (OF_MOVEABLE fly corner), mnemonics auto-assign.
+enum { AS_ROOT, AS_TITLE, AS_LHOST, AS_FHOST, AS_LTRAN, AS_RUDP, AS_RTCP,
+       AS_RAUTO, AS_LPATH, AS_FPATH, AS_LNAME, AS_FNAME, AS_CANCEL, AS_OK, AS_N };
+#define AS_W 480
+#define AS_H 246
+static char as_host[64], as_path[64], as_name[48];
+static char as_tmpl[35];                              // 34 input positions ('_' run)
+static TEDINFO as_thost = { as_host, as_tmpl, "P", sizeof as_host, TE_LEFT };
+static TEDINFO as_tpath = { as_path, as_tmpl, "P", sizeof as_path, TE_LEFT };
+static TEDINFO as_tname = { as_name, as_tmpl, "X", sizeof as_name, TE_LEFT };
+static OBJECT as_dlg[AS_N] = {
+ /*ROOT  */ { NIL, AS_TITLE, AS_OK, G_BOX, OF_MOVEABLE, OS_NORMAL, 0, 0,0, AS_W, AS_H },
+ /*TITLE */ { AS_LHOST,  NIL,NIL, G_STRING, OF_NONE, OS_NORMAL, (void*)"Add FujiNet server",  20,12, 440,20 },
+ /*LHOST */ { AS_FHOST,  NIL,NIL, G_STRING, OF_NONE, OS_NORMAL, (void*)"Host:",               20,50, 88,20 },
+ /*FHOST */ { AS_LTRAN,  NIL,NIL, G_FTEXT,  OF_EDITABLE, OS_NORMAL, &as_thost,               116,47, 340,26 },
+ /*LTRAN */ { AS_RUDP,   NIL,NIL, G_STRING, OF_NONE, OS_NORMAL, (void*)"Transport:",          20,86, 88,20 },
+ /*RUDP  */ { AS_RTCP,   NIL,NIL, G_RADIO,  OF_SELECTABLE|OF_RBUTTON, OS_NORMAL, (void*)"udp",  116,84, 70,20 },
+ /*RTCP  */ { AS_RAUTO,  NIL,NIL, G_RADIO,  OF_SELECTABLE|OF_RBUTTON, OS_NORMAL, (void*)"tcp",  196,84, 70,20 },
+ /*RAUTO */ { AS_LPATH,  NIL,NIL, G_RADIO,  OF_SELECTABLE|OF_RBUTTON, OS_SELECTED, (void*)"auto", 276,84, 80,20 },
+ /*LPATH */ { AS_FPATH,  NIL,NIL, G_STRING, OF_NONE, OS_NORMAL, (void*)"Path:",               20,122, 88,20 },
+ /*FPATH */ { AS_LNAME,  NIL,NIL, G_FTEXT,  OF_EDITABLE, OS_NORMAL, &as_tpath,               116,119, 340,26 },
+ /*LNAME */ { AS_FNAME,  NIL,NIL, G_STRING, OF_NONE, OS_NORMAL, (void*)"Name:",               20,158, 88,20 },
+ /*FNAME */ { AS_CANCEL, NIL,NIL, G_FTEXT,  OF_EDITABLE, OS_NORMAL, &as_tname,               116,155, 340,26 },
+ /*CANCEL*/ { AS_OK,     NIL,NIL, G_BUTTON, OF_SELECTABLE|OF_EXIT|OF_CANCEL, OS_NORMAL, (void*)"Cancel", 252,196, 100,32 },
+ /*OK    */ { AS_ROOT,   NIL,NIL, G_BUTTON, OF_SELECTABLE|OF_EXIT|OF_DEFAULT|OF_LASTOB, OS_NORMAL, (void*)"OK", 364,196, 92,32 },
+};
+static void add_server_dialog(browser *b) {           // b = the servers browser
+    as_host[0] = 0; as_name[0] = 0;
+    snprintf(as_path, sizeof as_path, "/");
+    memset(as_tmpl, '_', sizeof as_tmpl - 1); as_tmpl[sizeof as_tmpl - 1] = 0;
+    as_dlg[AS_RUDP].ob_state &= ~OS_SELECTED;
+    as_dlg[AS_RTCP].ob_state &= ~OS_SELECTED;
+    as_dlg[AS_RAUTO].ob_state |= OS_SELECTED;         // default transport: auto
+    int r = form_do_dialog(as_dlg, 0);                // focus starts in Host
+    if (r >= 0) as_dlg[r].ob_state &= ~OS_SELECTED;   // release for the next run
+    if (r != AS_OK || !as_host[0]) return;
+    const char *tr = (as_dlg[AS_RUDP].ob_state & OS_SELECTED) ? "udp"
+                   : (as_dlg[AS_RTCP].ob_state & OS_SELECTED) ? "tcp" : "auto";
+    int fd = fuji_connect();
+    if (fd < 0) { form_alert(1, "[3][FujiNet daemon not running|(boot script 40-FujiNet)][OK]"); return; }
+    if (fuji_cmd(fd, "add-server \"%s\" %s \"%s\" \"%s\"",
+                 as_host, tr, as_path[0] ? as_path : "/", as_name) != 0) {
+        fuji_close(fd);
+        form_alert(1, "[3][Add server failed|daemon connection lost][OK]");
+        return;
+    }
+    fuji_set_nonblock(fd);
+    b->req_fd = fd; b->req_kind = RQ_ADD; b->req_hdr = 0;   // net_pump takes it from here
+}
+
 // ---- async pump: feed arrived reply lines back into the owning browser -----
 static void net_req_fail(browser *b, const char *msg) {
     int kind = b->req_kind;
     net_req_close(b);
-    if (kind == RQ_FETCH) {                                   // fetch: alert + re-list (entry reverts)
+    if (kind == RQ_FETCH || kind == RQ_ADD) {                 // alert + re-list (entry/list reverts)
         char e[80], m[120];
         snprintf(e, sizeof e, "%s", msg);
         for (char *p = e; *p; p++) if (*p=='['||*p==']'||*p=='|') *p = ' ';   // keep form_alert parsable
-        snprintf(m, sizeof m, "[3][Fetch failed|%.60s][OK]", e);
+        snprintf(m, sizeof m, "[3][%s failed|%.60s][OK]", kind == RQ_ADD ? "Add server" : "Fetch", e);
         form_alert(1, m);
-        net_list_start(b); wind_redraw();
+        if (kind == RQ_ADD) srv_list_start(b); else net_list_start(b);
+        wind_redraw();
         return;
     }
     snprintf(b->req_err, sizeof b->req_err, "%s", msg);       // lists: empty + error in the info bar
@@ -544,6 +598,12 @@ static void net_req_fail(browser *b, const char *msg) {
     wind_redraw();
 }
 static void net_req_line(browser *b, char *ln) {              // dispatch one reply line
+    if (b->req_kind == RQ_ADD) {                              // one-line reply: +ok <id> / -err
+        if (ln[0] == '-') { net_req_fail(b, ln + 1); return; }
+        net_req_close(b);
+        srv_list_start(b); wind_redraw();                     // async refresh: the new tile appears
+        return;
+    }
     if (b->req_kind == RQ_FETCH) {
         if (!strncmp(ln, "+progress ", 10)) {
             sscanf(ln + 10, "%u %u", &b->prog_done, &b->prog_total);
@@ -607,8 +667,8 @@ static void br_click(browser *b, int mx, int my) {
         int w2 = wind_find(mx2, my2);
         if (w2 == b->win && objc_find(b->tree, 0, 2, mx2, my2) == oi) {   // double-click
             if (b->net == 1) {                               // servers window
-                if (b->ent[i].srvid < 0)                     // "Add server": v1 points at the CLI
-                    form_alert(1, "[1][To add a server, run:|fuji add-server host udp/tcp/auto|path name][OK]");
+                if (b->ent[i].srvid < 0)                     // "Add server": the dialog
+                    add_server_dialog(b);
                 else open_fuji_browser(b->ent[i].srvid, b->ent[i].label);
             } else if (b->ent[i].dir) {                      // descend
                 int n = (int)strlen(b->rel);
@@ -724,18 +784,116 @@ static void dump_ppm(const char *path) {
     fclose(f);
 }
 
+// ---- scripted event source (headless replay, --fuji-add) --------------------
+// A canned aes_event[] drives the full interactive stack — evnt_multi,
+// br_click, form_do — with no SDL.  SE_SNAP dumps the composited frame to a
+// PPM mid-replay (so a modal dialog can be captured while it is up); running
+// off the end delivers AES_QUIT, which unwinds every loop cleanly.
+typedef struct { int op, x, y, key, shift; const char *path; } sev;
+enum { SE_END = 0, SE_DOWN, SE_UP, SE_MOVE, SE_KEY, SE_SNAP };
+static sev g_fa[160];
+static int g_fan, g_sbtn;
+static void fa_push(int op, int x, int y, int key, int shift, const char *path) {
+    if (g_fan < (int)(sizeof g_fa / sizeof g_fa[0]) - 1)
+        g_fa[g_fan++] = (sev){ op, x, y, key, shift, path };
+}
+static void fa_keys(const char *s) { for (; *s; s++) fa_push(SE_KEY, 0,0, *s, 0, NULL); }
+static const sev *g_script;
+static int script_events(aes_event *ev, int timeout_ms) {
+    (void)timeout_ms;
+    for (;;) {
+        const sev *s = g_script;
+        if (!s || s->op == SE_END) { ev->type = AES_QUIT; return AES_QUIT; }
+        g_script++;
+        switch (s->op) {
+            case SE_SNAP:
+                dump_ppm(s->path);
+                fprintf(stderr, "fuji-add: snap %s (dialog at %d,%d)\n",
+                        s->path, as_dlg[0].ob_x, as_dlg[0].ob_y);
+                continue;
+            case SE_DOWN: g_sbtn = 1; ev->type = AES_BTN_DOWN; break;
+            case SE_UP:   g_sbtn = 0; ev->type = AES_BTN_UP;   break;
+            case SE_MOVE: ev->type = AES_MOTION; break;
+            case SE_KEY:  ev->type = AES_KEY; break;
+            default: continue;
+        }
+        ev->mx = s->x; ev->my = s->y; ev->button = g_sbtn;
+        ev->key = s->key; ev->shift = s->shift;
+        return ev->type;
+    }
+}
+// Ask the daemon whether the row landed exactly as typed; returns its id (0 =
+// no match) — the honest end-to-end check that add-server crossed the wire.
+static int fa_verify_row(const char *name, const char *hostport,
+                         const char *tr, const char *path) {
+    int fd = fuji_connect();
+    if (fd < 0) return 0;
+    if (fuji_cmd(fd, "servers") != 0) { fuji_close(fd); return 0; }
+    char ln[320]; int ok = 0, hdr = 0;
+    while (fuji_readline(fd, ln, sizeof ln) == 1) {
+        if (!hdr) { hdr = 1; if (ln[0] != '+') break; continue; }
+        if (!strcmp(ln, ".")) break;
+        int sid, off = 0; char trs[16], hp[160], pa[160];
+        if (sscanf(ln, "%d %15s %159s %159s %n", &sid, trs, hp, pa, &off) < 4) continue;
+        if (!strcmp(ln + off, name) && !strcmp(hp, hostport) &&
+            !strcmp(trs, tr) && !strcmp(pa, path)) ok = sid;
+    }
+    fuji_close(fd);
+    return ok;
+}
+
 static SDL_Renderer *g_ren; static SDL_Texture *g_tex; static int g_btn;
+// SDL modifier state -> the classic Kbshift bits (aes_event.shift / kstate).
+static int sdl_mods(void) {
+    SDL_Keymod m = SDL_GetModState();
+    return ((m & KMOD_RSHIFT) ? K_RSHIFT : 0) | ((m & KMOD_LSHIFT) ? K_LSHIFT : 0)
+         | ((m & KMOD_CTRL)   ? K_CTRL   : 0) | ((m & KMOD_ALT)    ? K_ALT    : 0)
+         | ((m & KMOD_CAPS)   ? K_CAPS   : 0);
+}
+// SDL keysym -> AES key: low byte = ASCII (shift-applied, US layout), high
+// byte = Atari scancode for keys with no ASCII.  0 = nothing to deliver.
+static int sdl_map_key(SDL_Keycode k, int shift) {
+    switch (k) {
+        case SDLK_RETURN: case SDLK_KP_ENTER: return '\r';
+        case SDLK_BACKSPACE: return 0x08;
+        case SDLK_TAB:       return 0x09;
+        case SDLK_ESCAPE:    return 0x1b;
+        case SDLK_UP:        return XK_UP << 8;
+        case SDLK_DOWN:      return XK_DOWN << 8;
+        case SDLK_LEFT:      return XK_LEFT << 8;
+        case SDLK_RIGHT:     return XK_RIGHT << 8;
+        case SDLK_HOME:      return XK_HOME << 8;
+        case SDLK_DELETE:    return XK_DEL << 8;
+        case SDLK_INSERT:    return XK_INS << 8;
+        default: break;
+    }
+    if (k >= SDLK_F1 && k <= SDLK_F10) return (XK_F1 + (int)(k - SDLK_F1)) << 8;
+    if (k < 32 || k > 126) return 0;                      // bare modifier / unmapped
+    int c = (int)k, sh = (shift & (K_LSHIFT | K_RSHIFT)) != 0;
+    if (c >= 'a' && c <= 'z') {
+        if (sh != ((shift & K_CAPS) != 0)) c -= 32;       // uppercase
+    } else if (sh) {                                      // US-layout shifted symbols
+        static const char *from = "1234567890-=[]\\;',./`";
+        static const char *to   = "!@#$%^&*()_+{}|:\"<>?~";
+        const char *f = strchr(from, (char)c);
+        if (f) c = to[f - from];
+    }
+    return c;
+}
 static int present_and_wait(aes_event *ev, int timeout_ms) {
     SDL_UpdateTexture(g_tex, NULL, g_desk->px, g_desk->stride*(int)sizeof(uint32_t));
     SDL_SetRenderDrawColor(g_ren,0,0,0,255); SDL_RenderClear(g_ren);
     SDL_RenderCopy(g_ren, g_tex, NULL, NULL); SDL_RenderPresent(g_ren);   // logical size scales it
     SDL_Event e;
     int got=(timeout_ms<0)?SDL_WaitEvent(&e):SDL_WaitEventTimeout(&e,timeout_ms);
-    ev->button=g_btn; if(!got){ ev->type=AES_TIMER; return AES_TIMER; }
+    ev->button=g_btn; ev->shift=sdl_mods(); if(!got){ ev->type=AES_TIMER; return AES_TIMER; }
     do { switch(e.type){
         case SDL_QUIT: ev->type=AES_QUIT; return AES_QUIT;
-        case SDL_KEYDOWN: if(e.key.keysym.sym==SDLK_ESCAPE){ ev->type=AES_QUIT; return AES_QUIT; }
-            ev->type=AES_KEY; ev->key=(e.key.keysym.sym==SDLK_RETURN?'\r':(int)e.key.keysym.sym); return AES_KEY;
+        case SDL_KEYDOWN: {
+            ev->shift = sdl_mods();
+            int k = sdl_map_key(e.key.keysym.sym, ev->shift);
+            if (!k) break;                                 // modifier-only press
+            ev->type=AES_KEY; ev->key=k; return AES_KEY; }
         case SDL_MOUSEMOTION: ev->type=AES_MOTION; ev->mx=e.motion.x; ev->my=e.motion.y; return AES_MOTION;
         case SDL_MOUSEBUTTONDOWN: if(e.button.button!=SDL_BUTTON_LEFT)break;
             g_btn|=1; ev->button=g_btn; ev->type=AES_BTN_DOWN; ev->mx=e.button.x; ev->my=e.button.y; return AES_BTN_DOWN;
@@ -767,6 +925,7 @@ int main(int argc, char **argv) {
             { fuji = 2; fuji_id = atoi(argv[++i]); }
         else if (!strcmp(argv[i], "--fuji-fetch") && i+2 < argc)    // headless: + fetch <id> <path>
             { fuji = 3; fuji_id = atoi(argv[++i]); fuji_path = argv[++i]; }
+        else if (!strcmp(argv[i], "--fuji-add")) fuji = 4;          // headless: Add-Server replay
         else snprintf(base, sizeof base, "%s", argv[i]);
     }
 
@@ -794,6 +953,74 @@ int main(int argc, char **argv) {
     if (browse == 2) desk_launch("River Raid.atr", ICT_MEDIA_8BIT);
     wind_redraw();
 
+    if (fuji == 4) {                                  // headless Add-Server dialog replay
+        open_fuji_servers();
+        net_drain(60);                                // servers list settles
+        wind_redraw();                                // lay the tiles out (br_layout)
+        browser *sb = &BR[0];
+        int add = -1;
+        for (int i = 0; i < sb->nent; i++) if (sb->ent[i].srvid < 0) add = i;
+        if (!sb->used || add < 0) { fprintf(stderr, "fuji-add: no Add-server tile\n"); return 1; }
+        int tx, ty; objc_offset(sb->tree, 1 + add, &tx, &ty);
+        tx += ICON_CW/2; ty += ICON_SZ/2;             // tile centre
+        int wx, wy, ww, wh; wind_get(0, WF_WORKXYWH, &wx, &wy, &ww, &wh);
+        int dx = wx + (ww - AS_W)/2, dy = wy + (wh - AS_H)/2;   // where the dialog centres
+        // the replay: double-click the tile; type; Alt-T mnemonic; TAB / Esc-clear /
+        // Shift-TAB traversal; snap; fly-corner drag; snap; Return submits.
+        fa_push(SE_DOWN, tx, ty, 0,0,0); fa_push(SE_UP, tx, ty, 0,0,0);
+        fa_push(SE_DOWN, tx, ty, 0,0,0); fa_push(SE_UP, tx, ty, 0,0,0);
+        fa_keys("127.0.0.1:16917");                   // Host (focused on entry)
+        fa_push(SE_KEY, 0,0, 't', K_ALT, 0);          // mnemonic: Alt-T -> tcp radio
+        fa_push(SE_KEY, 0,0, 0x09, 0, 0);             // TAB -> Path (holds "/")
+        fa_push(SE_KEY, 0,0, 0x1b, 0, 0);             // Esc stage 1: clears the field
+        fa_keys("/data");
+        fa_push(SE_KEY, 0,0, 0x09, 0, 0);             // TAB -> Name
+        fa_push(SE_KEY, 0,0, 0x09, K_LSHIFT, 0);      // Shift-TAB back to Path
+        fa_push(SE_KEY, 0,0, 0x09, 0, 0);             // TAB -> Name again
+        fa_keys("Test Box");
+        fa_push(SE_SNAP, 0,0,0,0, "/tmp/xtdesk-addsrv.ppm");
+        fa_push(SE_DOWN, dx + AS_W - 8, dy + 8, 0,0,0);          // grab the fly corner
+        fa_push(SE_MOVE, dx + AS_W - 8 + 40, dy + 8 + 30, 0,0,0);
+        fa_push(SE_MOVE, dx + AS_W - 8 + 80, dy + 8 + 60, 0,0,0);
+        fa_push(SE_UP,   dx + AS_W - 8 + 80, dy + 8 + 60, 0,0,0);
+        fa_push(SE_SNAP, 0,0,0,0, "/tmp/xtdesk-addsrv-moved.ppm");
+        fa_push(SE_KEY, 0,0, '\r', 0, 0);             // Return fires OK (OF_DEFAULT)
+        fa_push(SE_END, 0,0,0,0,0);
+        g_script = g_fa;
+        aes_set_events(script_events);
+        aes_set_idle(net_pump, 40);                   // modal loops keep the pump alive
+        for (;;) {                                    // the interactive loop, replayed
+            int mx,my,mb,ks,key,nc; int16_t msg[8];
+            int r = evnt_multi(MU_MESAG|MU_KEYBD|MU_BUTTON, 2,1,1, 0,0,0,0,0, 0,0,0,0,0,
+                               msg, 0,0, &mx,&my,&mb,&ks,&key,&nc);
+            net_pump();
+            if (r & MU_QUIT) break;
+            if (r & MU_MESAG && msg[0]==WM_CLOSED) wind_close(msg[3]);
+            if (r & MU_BUTTON) {
+                int wh2 = wind_find(mx, my); browser *bb = wh2 ? br_of_window(wh2) : NULL;
+                if (bb) br_click(bb, mx, my); else desk_click(mx, my);
+            }
+        }
+        net_drain(60);                                // the add + triggered re-list settle
+        wind_redraw();
+        dump_ppm("/tmp/xtdesk-addsrv2.ppm");
+        int moved_ok = (as_dlg[0].ob_x == dx + 80 && as_dlg[0].ob_y == dy + 60);
+        int tile_ok = 0;
+        for (int i = 0; i < sb->nent; i++) if (!strcmp(sb->ent[i].label, "Test Box")) tile_ok = 1;
+        int row_id = fa_verify_row("Test Box", "127.0.0.1:16917", "tcp", "/data");
+        fprintf(stderr, "fuji-add: fly-corner move %s (dlg %d,%d expect %d,%d)\n",
+                moved_ok ? "OK" : "FAIL", as_dlg[0].ob_x, as_dlg[0].ob_y, dx+80, dy+60);
+        fprintf(stderr, "fuji-add: server tile %s, daemon row %s (id %d)\n",
+                tile_ok ? "OK" : "FAIL", row_id ? "OK" : "FAIL", row_id);
+        if (row_id) {                                 // leave the scratch registry re-runnable
+            int fd = fuji_connect();
+            if (fd >= 0) { char tmp[64];
+                if (fuji_cmd(fd, "del-server %d", row_id) == 0) fuji_readline(fd, tmp, sizeof tmp);
+                fuji_close(fd); }
+        }
+        registry_close();
+        return (moved_ok && tile_ok && row_id) ? 0 : 1;
+    }
     if (fuji) {                                       // headless FujiNet render modes
         open_fuji_servers();
         net_drain(60);                                // async: settle before inspecting
@@ -830,6 +1057,7 @@ int main(int argc, char **argv) {
     SDL_RenderSetLogicalSize(g_ren, WIN_W, WIN_H);   // 1920x1080 logical, scaled to the window
     g_tex = SDL_CreateTexture(g_ren,SDL_PIXELFORMAT_RGBA8888,SDL_TEXTUREACCESS_STREAMING,WIN_W,WIN_H);
     aes_set_events(present_and_wait);
+    aes_set_idle(net_pump, 40);                       // modal loops (dialogs, drags) keep pumping
     wind_set_overlay(NULL, NULL, NULL, host_flush);   // aes_flush_rect -> present (modal draws)
 
     for (;;) {
@@ -838,6 +1066,7 @@ int main(int argc, char **argv) {
         int r = evnt_multi(MU_MESAG|MU_KEYBD|MU_BUTTON|(pend?MU_TIMER:0), 2,1,1, 0,0,0,0,0, 0,0,0,0,0, msg, pend?40:0, 0, &mx,&my,&mb,&ks,&key,&nc);
         net_pump();                                   // drain any arrived reply lines
         if (r & MU_QUIT) break;
+        if ((r & MU_KEYBD) && key == 0x1b) break;     // Esc at the desktop quits (as on the A9)
         if (r & MU_MESAG && msg[0]==WM_CLOSED) {
             browser *b = br_of_window(msg[3]);        // close cancels any in-flight request
             if (b) { net_req_close(b); br_free_icons(b); b->used = 0; }

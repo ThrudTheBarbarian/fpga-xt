@@ -1,10 +1,33 @@
 // aes/form.c — form_do, the modal dialog interaction loop.  Drives the host
 // event source: present the dialog (objc_draw), wait for a click/key, update
-// object state, repeat — until an EXIT button is clicked or Return fires the
-// default button.
+// object state, repeat — until an EXIT button is clicked or a key fires one.
+//
+// Keyboard policy (form_keybd, also public for bare evnt_multi clients):
+//   Return       fires the OF_DEFAULT object
+//   Esc          clears the focused edit field first; then (or with no edit
+//                focus / an empty field) fires the OF_CANCEL object
+//   TAB / Shift-TAB  cycle focus over OF_EDITABLE objects (tree order, wrap)
+//   mnemonics    WHITEBAK-underlined letters act as clicks — bare letters when
+//                no edit field has focus, Alt+letter (or Ctrl+letter, the
+//                terminal testbed's substitute) always
+// Mnemonics are auto-assigned on form_do entry (fix_shortcuts): app-declared
+// WHITEBAK (or Geneva-style "[S]ave" brackets, promoted + stripped — bracket
+// labels must be writable) claim first, then every button/checkbox/radio and
+// every label-of-a-field gets the first unclaimed letter of its label.
+//
+// A root with OF_MOVEABLE is draggable by its fly corner (top-right 16x16,
+// theme-drawn dog-ear) or any inert area (objc_find hit nothing SELECTABLE /
+// EXIT / TOUCHEXIT / EDITABLE): save-under move on the host, the HW overlay
+// plane on the A9 (same hooks as window drag).  Dialogs clamp to the work
+// area.  form_do_dialog = centre + save-under + form_do + restore — the
+// standard dialog wrapper (form_alert runs through it).
+//
+// All modal waits go through aes_wait_idle, so the registered idle hook
+// (net_pump) keeps async I/O alive while a dialog is up.
 
 #include "aes/aes_internal.h"
 #include <string.h>
+#include <ctype.h>
 
 #define DEPTH 8
 #define BIG   4096
@@ -25,6 +48,11 @@ static int find_default(OBJECT *t, int root) {
     EACH_CHILD(t, root, c) { int d = find_default(t, c); if (d >= 0) return d; }
     return -1;
 }
+static int find_cancel(OBJECT *t, int root) {
+    if (t[root].ob_flags & OF_CANCEL) return root;
+    EACH_CHILD(t, root, c) { int d = find_cancel(t, c); if (d >= 0) return d; }
+    return -1;
+}
 // Select a radio button, deselecting its RBUTTON siblings.
 static void do_radio(OBJECT *t, int o) {
     int p = find_parent(t, 0, o);
@@ -37,34 +65,301 @@ static void draw(OBJECT *t) {
     objc_draw(t, 0, DEPTH, 0, 0, BIG, BIG);
     aes_flush_rect(t[0].ob_x, t[0].ob_y, t[0].ob_w, t[0].ob_h);
 }
+static void draw_one(OBJECT *t, int o) {
+    int x, y; objc_offset(t, o, &x, &y);
+    objc_draw(t, o, 0, x, y, t[o].ob_w, t[o].ob_h);
+    aes_flush_rect(x, y, t[o].ob_w, t[o].ob_h);
+}
+static int tree_count(OBJECT *t) {
+    int n = 0;
+    while (n < BIG && !(t[n].ob_flags & OF_LASTOB)) n++;
+    return n + 1;
+}
 
+// ---- editable-field focus -------------------------------------------------
+static int can_edit(OBJECT *t, int i) {
+    return (t[i].ob_flags & OF_EDITABLE) && !(t[i].ob_state & OS_DISABLED)
+        && !(t[i].ob_flags & OF_HIDETREE);
+}
+// Next / previous OF_EDITABLE in tree order, wrapping; -1 = none.
+static int next_editable(OBJECT *t, int from) {
+    int n = tree_count(t);
+    for (int s = 1; s <= n; s++) { int i = (from + s) % n; if (i < 0) i += n; if (can_edit(t, i)) return i; }
+    return -1;
+}
+static int prev_editable(OBJECT *t, int from) {
+    int n = tree_count(t);
+    if (from < 0) from = 0;
+    for (int s = 1; s <= n; s++) { int i = (from - s + 2*n) % n; if (can_edit(t, i)) return i; }
+    return -1;
+}
+static int focus_edit(OBJECT *t, int from, int to) {
+    if (to == from) return to;
+    if (from >= 0) objc_edit(t, from, 0, NULL, ED_END);
+    if (to >= 0) { int c = -1; objc_edit(t, to, 0, &c, ED_INIT); }
+    return to;
+}
+
+// ---- mnemonics (WHITEBAK) ---------------------------------------------------
+static int has_label(OBJECT *t, int i) {
+    int ty = t[i].ob_type;
+    return (ty == G_BUTTON || ty == G_CHECKBOX || ty == G_RADIO || ty == G_STRING)
+        && t[i].ob_spec;
+}
+static int label_of_field(OBJECT *t, int i) {   // G_STRING immediately preceding an editable
+    int nx = t[i].ob_next;
+    return t[i].ob_type == G_STRING && nx >= 0 && (t[nx].ob_flags & OF_EDITABLE);
+}
+// Promote Geneva "[S]ave" markers to WHITEBAK (stripping the brackets), claim
+// app-declared letters, then auto-assign the rest (first unclaimed letter of
+// each label, case-insensitive).  Idempotent — safe on re-entered trees.
+static void fix_shortcuts(OBJECT *t) {
+    int n = tree_count(t);
+    unsigned claimed = 0;
+    for (int i = 0; i < n; i++) {
+        if (!has_label(t, i)) continue;
+        if (t[i].ob_type == G_STRING && !label_of_field(t, i)) continue;  // plain text: leave brackets alone
+        char *s = (char *)t[i].ob_spec;
+        if (!(t[i].ob_state & OS_WHITEBAK)) {
+            char *b = strchr(s, '[');                     // "[S]ave" -> "Save" + WHITEBAK
+            if (b && b[1] && b[2] == ']') {
+                int idx = (int)(b - s);
+                memmove(b, b + 1, strlen(b + 1) + 1);     // drop '['
+                memmove(b + 1, b + 2, strlen(b + 2) + 1); // drop ']'
+                t[i].ob_state |= WB_MAKE(idx);
+            }
+        }
+        if (t[i].ob_state & OS_WHITEBAK) {                // app-declared: claim it
+            int c = tolower((unsigned char)s[WB_INDEX(t[i].ob_state)]);
+            if (c >= 'a' && c <= 'z') claimed |= 1u << (c - 'a');
+        }
+    }
+    for (int i = 0; i < n; i++) {                         // auto-assign the rest
+        if ((t[i].ob_state & OS_WHITEBAK) || !has_label(t, i)) continue;
+        if (t[i].ob_type == G_STRING && !label_of_field(t, i)) continue;
+        const char *s = (const char *)t[i].ob_spec;
+        for (int j = 0; s[j]; j++) {                      // collisions fall through
+            int c = tolower((unsigned char)s[j]);
+            if (c < 'a' || c > 'z' || (claimed & (1u << (c - 'a')))) continue;
+            claimed |= 1u << (c - 'a');
+            t[i].ob_state |= WB_MAKE(j);
+            break;
+        }
+    }
+}
+static int mnemonic_obj(OBJECT *t, int letter) {
+    int n = tree_count(t), c = tolower(letter);
+    for (int i = 0; i < n; i++) {
+        if (!(t[i].ob_state & OS_WHITEBAK) || !has_label(t, i)) continue;
+        if (t[i].ob_flags & OF_HIDETREE) continue;
+        const char *s = (const char *)t[i].ob_spec;
+        if (tolower((unsigned char)s[WB_INDEX(t[i].ob_state)]) == c) return i;
+    }
+    return -1;
+}
+
+// ---- form_keybd -------------------------------------------------------------
+int form_keybd(OBJECT *t, int edobj, int key, int kstate, int *new_edobj) {
+    int ascii = key & 0xFF, exit_obj = -1;
+    if (edobj >= 0 && !(t[edobj].ob_flags & OF_EDITABLE)) edobj = -1;
+
+    if (ascii == '\r' || ascii == '\n') {                 // Return -> default
+        int d = find_default(t, 0);
+        if (d >= 0 && !(t[d].ob_state & OS_DISABLED)) {
+            t[d].ob_state |= OS_SELECTED; draw_one(t, d);
+            exit_obj = d;
+        }
+        goto out;
+    }
+    if (ascii == 0x1b) {                                  // Esc: two-stage
+        if (edobj >= 0) {
+            TEDINFO *te = (TEDINFO *)t[edobj].ob_spec;
+            if (te && te->te_ptext && te->te_ptext[0]) {  // stage 1: clear the field
+                objc_edit(t, edobj, 0x15, NULL, ED_CHAR); // Ctrl-U = clear
+                goto out;
+            }
+        }
+        int c = find_cancel(t, 0);                        // stage 2: fire OF_CANCEL
+        if (c >= 0 && !(t[c].ob_state & OS_DISABLED)) {
+            t[c].ob_state |= OS_SELECTED; draw_one(t, c);
+            exit_obj = c;
+        }
+        goto out;                                         // no OF_CANCEL: stay modal
+    }
+    if (ascii == 0x09) {                                  // TAB / Shift-TAB focus cycle
+        int to = (kstate & (K_LSHIFT | K_RSHIFT)) ? prev_editable(t, edobj)
+                                                  : next_editable(t, edobj);
+        if (to >= 0) edobj = focus_edit(t, edobj, to);
+        goto out;
+    }
+    if (isalpha((unsigned char)ascii) &&
+        ((kstate & (K_ALT | K_CTRL)) || edobj < 0)) {     // mnemonic fire
+        // Ctrl-U belongs to the editor (clear) while a field has focus
+        if (!(edobj >= 0 && (kstate & K_CTRL) && tolower(ascii) == 'u')) {
+            int m = mnemonic_obj(t, ascii);
+            if (m >= 0 && !(t[m].ob_state & OS_DISABLED)) {
+                if (t[m].ob_flags & (OF_EXIT | OF_TOUCHEXIT)) {
+                    t[m].ob_state |= OS_SELECTED; draw_one(t, m);
+                    exit_obj = m;
+                } else if (t[m].ob_flags & OF_RBUTTON) {
+                    do_radio(t, m); draw(t);
+                } else if (t[m].ob_flags & OF_SELECTABLE) {
+                    t[m].ob_state ^= OS_SELECTED; draw_one(t, m);
+                } else if (label_of_field(t, m) && can_edit(t, t[m].ob_next)) {
+                    edobj = focus_edit(t, edobj, t[m].ob_next);
+                }
+                goto out;
+            }
+        }
+    }
+    if (edobj >= 0) {                                     // everything else: the editor
+        if ((kstate & K_CTRL) && tolower(ascii) == 'u') key = 0x15;
+        objc_edit(t, edobj, key, NULL, ED_CHAR);
+    }
+out:
+    if (new_edobj) *new_edobj = edobj;
+    return exit_obj;
+}
+
+// ---- save-under stack (form_do_dialog + the drag loop) ----------------------
+// A small stack so dialogs nest (a dialog's error alert on top of it); each
+// entry remembers its tree so the drag loop only touches its own pixels.
+#define SAVN 4
+static struct { gfx_surface *s; OBJECT *t; int x, y, w, h; } g_sav[SAVN];
+static int g_nsav;
+
+static void sav_blit(int i, int to_screen) {
+    int H = aes_handle();
+    MFDB scr = {0}, m; mfdb_from_surface(&m, g_sav[i].s);
+    int x = g_sav[i].x, y = g_sav[i].y, w = g_sav[i].w, h = g_sav[i].h;
+    if (to_screen) {
+        int16_t p[8] = {0,0,(int16_t)(w-1),(int16_t)(h-1),
+                        (int16_t)x,(int16_t)y,(int16_t)(x+w-1),(int16_t)(y+h-1)};
+        vro_cpyfm(H, VRO_COPY, p, &m, &scr);
+    } else {
+        int16_t p[8] = {(int16_t)x,(int16_t)y,(int16_t)(x+w-1),(int16_t)(y+h-1),
+                        0,0,(int16_t)(w-1),(int16_t)(h-1)};
+        vro_cpyfm(H, VRO_COPY, p, &scr, &m);
+    }
+}
+static void sav_push(OBJECT *t) {
+    if (g_nsav >= SAVN) { g_nsav++; return; }             // too deep: skip (counted)
+    gfx_surface *s = gfx_surface_alloc(t[0].ob_w, t[0].ob_h);
+    g_sav[g_nsav].s = s; g_sav[g_nsav].t = t;
+    g_sav[g_nsav].x = t[0].ob_x; g_sav[g_nsav].y = t[0].ob_y;
+    g_sav[g_nsav].w = t[0].ob_w; g_sav[g_nsav].h = t[0].ob_h;
+    if (s) sav_blit(g_nsav, 0);
+    g_nsav++;
+}
+static void sav_pop_restore(void) {
+    if (g_nsav <= 0) return;
+    g_nsav--;
+    if (g_nsav >= SAVN || !g_sav[g_nsav].s) return;
+    sav_blit(g_nsav, 1);
+    aes_flush_rect(g_sav[g_nsav].x, g_sav[g_nsav].y, g_sav[g_nsav].w, g_sav[g_nsav].h);
+    gfx_surface_free(g_sav[g_nsav].s);
+    g_sav[g_nsav].s = NULL; g_sav[g_nsav].t = NULL;
+}
+// The top save-under, if it belongs to `t` (the dialog the drag is moving).
+static int sav_top_of(OBJECT *t) {
+    int i = g_nsav - 1;
+    return (i >= 0 && i < SAVN && g_sav[i].t == t && g_sav[i].s) ? i : -1;
+}
+
+// ---- movable dialogs ---------------------------------------------------------
+static int want_move(OBJECT *t, int o, int mx, int my) {
+    int rx = t[0].ob_x, ry = t[0].ob_y;
+    if (mx >= rx + t[0].ob_w - 16 && mx < rx + t[0].ob_w &&
+        my >= ry && my < ry + 16) return 1;               // the fly corner
+    if (o < 0) return 0;                                  // outside the dialog
+    if (o == 0) return 1;                                 // root = inert
+    return !(t[o].ob_flags & (OF_SELECTABLE | OF_EXIT | OF_TOUCHEXIT | OF_EDITABLE));
+}
+static void clamp_dlg(OBJECT *t, int *nx, int *ny) {
+    int wx, wy, ww, wh; wind_get(0, WF_WORKXYWH, &wx, &wy, &ww, &wh);
+    if (*nx > wx + ww - t[0].ob_w) *nx = wx + ww - t[0].ob_w;
+    if (*ny > wy + wh - t[0].ob_h) *ny = wy + wh - t[0].ob_h;
+    if (*nx < wx) *nx = wx;
+    if (*ny < wy) *ny = wy;
+}
+static void drag_dialog(OBJECT *t, int mx, int my) {
+    int gx = mx - t[0].ob_x, gy = my - t[0].ob_y;
+    int sav = sav_top_of(t);
+    int ox = t[0].ob_x, oy = t[0].ob_y, w = t[0].ob_w, h = t[0].ob_h;
+
+    if (aes_ovl_lift(ox, oy, w, h)) {                     // A9: ride the HW overlay
+        if (sav >= 0) sav_blit(sav, 1); else wind_redraw();
+        aes_flush_rect(ox, oy, w, h);                     // dialog gone from the plane (overlay covers it)
+        for (;;) {
+            aes_event e; int ty = aes_wait_idle(&e, -1);
+            if (ty == AES_QUIT || ty == AES_BTN_UP) break;
+            if (ty != AES_MOTION) continue;
+            int nx = e.mx - gx, ny = e.my - gy; clamp_dlg(t, &nx, &ny);
+            t[0].ob_x = (int16_t)nx; t[0].ob_y = (int16_t)ny;
+            aes_ovl_move(nx, ny);                         // register write, no redraw
+        }
+        if (sav >= 0) {                                   // re-save + paint at the new home
+            g_sav[sav].x = t[0].ob_x; g_sav[sav].y = t[0].ob_y;
+            sav_blit(sav, 0);
+        }
+        draw(t);
+        aes_ovl_drop();
+        return;
+    }
+    for (;;) {                                            // host: restore/move/save/redraw
+        aes_event e; int ty = aes_wait_idle(&e, -1);
+        if (ty == AES_QUIT || ty == AES_BTN_UP) break;
+        if (ty != AES_MOTION) continue;
+        int nx = e.mx - gx, ny = e.my - gy; clamp_dlg(t, &nx, &ny);
+        if (nx == t[0].ob_x && ny == t[0].ob_y) continue;
+        int px = t[0].ob_x, py = t[0].ob_y;
+        if (sav >= 0) sav_blit(sav, 1); else wind_redraw();
+        t[0].ob_x = (int16_t)nx; t[0].ob_y = (int16_t)ny;
+        if (sav >= 0) { g_sav[sav].x = nx; g_sav[sav].y = ny; sav_blit(sav, 0); }
+        objc_draw(t, 0, DEPTH, 0, 0, BIG, BIG);
+        aes_flush_rect(px, py, w, h);
+        aes_flush_rect(nx, ny, w, h);
+    }
+}
+
+// ---- form_do ------------------------------------------------------------------
 int form_do(OBJECT *t, int start) {
-    (void)start;
+    fix_shortcuts(t);
+    int edobj = -1;
+    if (start == 0)      edobj = next_editable(t, -1);    // classic: 0 = first editable
+    else if (start > 0 && can_edit(t, start)) edobj = start;
+    if (edobj >= 0) { int c = -1; objc_edit(t, edobj, 0, &c, ED_INIT); }
     draw(t);
     int pressed = -1;
+#define END_FOCUS() do { if (edobj >= 0) objc_edit(t, edobj, 0, NULL, ED_END); } while (0)
     for (;;) {
         aes_event ev;
-        int ty = aes_wait(&ev, -1);
-        if (ty == AES_QUIT) return -1;
+        int gen = aes_redraw_gen();
+        int ty = aes_wait_idle(&ev, -1);
+        if (aes_redraw_gen() != gen) draw(t);             // idle work repainted under us
+        if (ty == AES_QUIT) { END_FOCUS(); return -1; }
 
         if (ty == AES_KEY) {
-            if (ev.key == '\r' || ev.key == '\n') {
-                int d = find_default(t, 0);
-                if (d >= 0 && !(t[d].ob_state & OS_DISABLED)) {
-                    t[d].ob_state |= OS_SELECTED; draw(t);
-                    return d;
-                }
-            }
+            int r = form_keybd(t, edobj, ev.key, ev.shift, &edobj);
+            if (r >= 0) { END_FOCUS(); return r; }
             continue;
         }
         if (ty == AES_BTN_DOWN) {
             int o = objc_find(t, 0, DEPTH, ev.mx, ev.my);
+            if ((t[0].ob_flags & OF_MOVEABLE) && want_move(t, o, ev.mx, ev.my)) {
+                drag_dialog(t, ev.mx, ev.my);
+                continue;
+            }
+            if (o > 0 && can_edit(t, o)) {                // click focuses an edit field
+                edobj = focus_edit(t, edobj, o);
+                continue;
+            }
             if (o >= 0 && (t[o].ob_flags & OF_SELECTABLE) && !(t[o].ob_state & OS_DISABLED)) {
                 if (t[o].ob_flags & (OF_EXIT | OF_TOUCHEXIT)) { t[o].ob_state |= OS_SELECTED; pressed = o; }
                 else if (t[o].ob_flags & OF_RBUTTON)         { do_radio(t, o); }
                 else                                          { t[o].ob_state ^= OS_SELECTED; }
                 draw(t);
-                if (t[o].ob_flags & OF_TOUCHEXIT) return o;
+                if (t[o].ob_flags & OF_TOUCHEXIT) { END_FOCUS(); return o; }
             }
             continue;
         }
@@ -73,9 +368,21 @@ int form_do(OBJECT *t, int start) {
             int hit = (o == pressed);
             t[pressed].ob_state &= ~OS_SELECTED; draw(t);
             int p = pressed; pressed = -1;
-            if (hit) return p;                          // released inside -> trigger
+            if (hit) { END_FOCUS(); return p; }           // released inside -> trigger
         }
     }
+#undef END_FOCUS
+}
+
+// Centre + save-under + form_do + restore: the standard dialog wrapper.
+int form_do_dialog(OBJECT *t, int start) {
+    int wx, wy, ww, wh; wind_get(0, WF_WORKXYWH, &wx, &wy, &ww, &wh);
+    t[0].ob_x = (int16_t)(wx + (ww - t[0].ob_w) / 2);
+    t[0].ob_y = (int16_t)(wy + (wh - t[0].ob_h) / 2);
+    sav_push(t);
+    int r = form_do(t, start);
+    sav_pop_restore();                                    // restores at the moved-to rect
+    return r;
 }
 
 // ---- form_alert ---------------------------------------------------------
@@ -109,30 +416,17 @@ int form_alert(int defbtn, const char *s) {
     int box_h = PAD + content_h + PAD + BTNH + PAD;
 
     OBJECT o[12]; memset(o,0,sizeof o); int n=1;
-    o[0]=(OBJECT){NIL,1,0,G_BOX,OF_NONE,OS_NORMAL,0,0,0,(int16_t)box_w,(int16_t)box_h};
+    o[0]=(OBJECT){NIL,1,0,G_BOX,OF_MOVEABLE,OS_NORMAL,0,0,0,(int16_t)box_w,(int16_t)box_h};
     if(icn){ o[n]=(OBJECT){0,NIL,NIL,G_IMAGE,OF_NONE,OS_NORMAL,(void*)icn,(int16_t)ix,(int16_t)PAD,(int16_t)iw,(int16_t)ih}; n++; }
     for(int i=0;i<nl;i++){ o[n]=(OBJECT){0,NIL,NIL,G_STRING,OF_NONE,OS_NORMAL,(void*)line[i],(int16_t)mx,(int16_t)(PAD+i*LINEH),(int16_t)msgw,LINEH}; n++; }
     int firstbtn=n, bx=(box_w-tbw)/2, by=box_h-PAD-BTNH;
     for(int i=0;i<nb;i++){ o[n]=(OBJECT){0,NIL,NIL,G_BUTTON,
-        (uint16_t)(OF_SELECTABLE|OF_EXIT|((i+1==defbtn)?OF_DEFAULT:0)),OS_NORMAL,
+        (uint16_t)(OF_SELECTABLE|OF_EXIT|((i+1==defbtn)?OF_DEFAULT:0)|((nb==1)?OF_CANCEL:0)),OS_NORMAL,
         (void*)btn[i],(int16_t)bx,(int16_t)by,(int16_t)bw[i],BTNH}; bx+=bw[i]+GAP; n++; }
     o[0].ob_tail=n-1;
     for(int i=1;i<n;i++) o[i].ob_next=(i<n-1)?(i+1):0;
     o[n-1].ob_flags|=OF_LASTOB;
 
-    int wx,wy,ww,wh; wind_get(0,WF_WORKXYWH,&wx,&wy,&ww,&wh);
-    o[0].ob_x=wx+(ww-box_w)/2; o[0].ob_y=wy+(wh-box_h)/2;
-
-    // save what's underneath, run modal, restore
-    int H=aes_handle();
-    gfx_surface *sav=gfx_surface_alloc(box_w,box_h);
-    MFDB scr={0}, m; mfdb_from_surface(&m,sav);
-    int16_t sp[8]={(int16_t)o[0].ob_x,(int16_t)o[0].ob_y,(int16_t)(o[0].ob_x+box_w-1),(int16_t)(o[0].ob_y+box_h-1),0,0,(int16_t)(box_w-1),(int16_t)(box_h-1)};
-    vro_cpyfm(H,VRO_COPY,sp,&scr,&m);
-    int r=form_do(o,0);
-    int16_t rp[8]={0,0,(int16_t)(box_w-1),(int16_t)(box_h-1),(int16_t)o[0].ob_x,(int16_t)o[0].ob_y,(int16_t)(o[0].ob_x+box_w-1),(int16_t)(o[0].ob_y+box_h-1)};
-    vro_cpyfm(H,VRO_COPY,rp,&m,&scr); gfx_surface_free(sav);
-    aes_flush_rect(o[0].ob_x,o[0].ob_y,box_w,box_h);            // push the restored background
-
+    int r=form_do_dialog(o,-1);
     return (r>=firstbtn && r<firstbtn+nb) ? (r-firstbtn+1) : defbtn;
 }

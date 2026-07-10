@@ -39,10 +39,34 @@ typedef struct { gfx_surface *img; const char *text; } CICON;
 
 enum { OF_NONE=0x00, OF_SELECTABLE=0x01, OF_DEFAULT=0x02, OF_EXIT=0x04,
        OF_EDITABLE=0x08, OF_RBUTTON=0x10, OF_LASTOB=0x20, OF_TOUCHEXIT=0x40,
-       OF_HIDETREE=0x80 };
+       OF_HIDETREE=0x80,
+       OF_CANCEL=0x200,      // Esc fires this object (see form_keybd)
+       OF_MOVEABLE=0x400 };  // on the tree ROOT: dialog is movable (fly corner + grab-inert)
 
 enum { OS_NORMAL=0x00, OS_SELECTED=0x01, OS_CROSSED=0x02, OS_CHECKED=0x04,
-       OS_DISABLED=0x08, OS_OUTLINED=0x10, OS_SHADOWED=0x20 };
+       OS_DISABLED=0x08, OS_OUTLINED=0x10, OS_SHADOWED=0x20,
+       // The WHITEBAK mnemonic convention (TOS/XaAES): OS_WHITEBAK set means
+       // bits 8..14 of ob_state hold the index of the underlined shortcut
+       // character in the object's label (bit 15 reserved).
+       OS_WHITEBAK=0x40 };
+#define WB_INDEX(state)   (((state) >> 8) & 0x7F)
+#define WB_MAKE(idx)      ((uint16_t)(OS_WHITEBAK | (((idx) & 0x7F) << 8)))
+
+// Editable text (G_FTEXT / G_FBOXTEXT ob_spec).  A reduced classic TEDINFO:
+// the six font/colour/thickness words are gone (the theme draws the field);
+// template + validation semantics are kept verbatim.
+typedef struct {
+    char   *te_ptext;    // the editable text (caller's buffer)
+    char   *te_ptmplt;   // display template, '_' = input position ("__:__"); NULL = free text
+    char   *te_pvalid;   // one validation char per input position (last char extends):
+                         //   '9' digits  'A' upper+space  'a' letters+space
+                         //   'N' digit+upper+space  'n' alnum+space
+                         //   'F'/'f' filename chars  'P'/'p' path chars
+                         //   'X' anything  'x' anything, uppercased
+    int16_t te_txtlen;   // sizeof buffer at te_ptext (incl. NUL)
+    int16_t te_just;     // TE_LEFT / TE_RIGHT / TE_CNTR
+} TEDINFO;
+enum { TE_LEFT=0, TE_RIGHT=1, TE_CNTR=2 };
 
 #define NIL (-1)
 
@@ -76,6 +100,19 @@ typedef int (*aes_event_fn)(aes_event *ev, int timeout_ms);
 void aes_set_events(aes_event_fn fn);
 int  aes_wait(aes_event *ev, int timeout_ms);     // low level: calls the source
 
+// aes_event.key: low byte = ASCII (0 if none), high byte = scancode for keys
+// with no ASCII.  Scancodes use the Atari keyboard table (m68k-app compat):
+enum { XK_UP=0x48, XK_DOWN=0x50, XK_LEFT=0x4B, XK_RIGHT=0x4D,
+       XK_HOME=0x47, XK_DEL=0x53, XK_INS=0x52, XK_F1=0x3B /* ..F10=0x44 */ };
+// aes_event.shift / evnt_multi kstate: classic Kbshift bits:
+enum { K_RSHIFT=0x01, K_LSHIFT=0x02, K_CTRL=0x04, K_ALT=0x08, K_CAPS=0x10 };
+
+// Central idle hook: every modal AES loop (form_do, dialog/window drags,
+// future menus) waits at most period_ms and calls fn on timeout, so async
+// work (the desktops' net_pump) stays alive inside modal interactions.
+// NULL fn (or period_ms <= 0) disables it.
+void aes_set_idle(void (*fn)(void), int period_ms);
+
 // evnt_multi flags (+ MU_QUIT, our host extension for window close).
 enum { MU_KEYBD=0x01, MU_BUTTON=0x02, MU_M1=0x04, MU_M2=0x08,
        MU_MESAG=0x10, MU_TIMER=0x20, MU_QUIT=0x40 };
@@ -102,9 +139,32 @@ void appl_write(int dest_id, int len, const void *msg);
 int  appl_read(int id, int len, void *buf);
 
 // Run a modal form: push buttons flash while held + trigger on release-inside,
-// checkboxes toggle, radio buttons exclude their siblings, Return fires the
-// DEFAULT button; returns the EXIT/TOUCHEXIT object clicked (-1 = quit).
+// checkboxes toggle, radio buttons exclude their siblings.  Keyboard: Return
+// fires the DEFAULT button; Esc clears the focused edit field, then fires the
+// OF_CANCEL object; TAB / Shift-TAB cycle focus over OF_EDITABLE objects;
+// mnemonic letters (WHITEBAK, auto-assigned on entry) act as clicks.  A root
+// with OF_MOVEABLE is draggable by its fly corner or any inert area.
+// `start` = the initial edit object (0 = first editable, -1 = none).
+// Returns the EXIT/TOUCHEXIT object clicked (-1 = quit).
 int  form_do(OBJECT *tree, int start);
+
+// Centre `tree` on the work area, save what's underneath, run form_do, and
+// restore.  The standard way to run a dialog (form_alert uses it too).
+int  form_do_dialog(OBJECT *tree, int start);
+
+// The full form key policy (Return / Esc / TAB / mnemonics / ED_CHAR) as one
+// call, for bare evnt_multi clients that host editable objects themselves.
+// edobj = the focused editable (-1 none); *new_edobj (may be NULL) receives
+// the focus after the key.  Returns the exit object fired, or -1 (keep going).
+int  form_keybd(OBJECT *tree, int edobj, int key, int kstate, int *new_edobj);
+
+// The edit engine behind OF_EDITABLE (classic entry points): ED_INIT focuses
+// the field + shows the caret (idx = caret position, -1 = end), ED_CHAR
+// processes one aes_event key (insert / Backspace / Del / arrows / Ctrl-U
+// clear; returns 1 if consumed; redraws + flushes the field), ED_END drops
+// focus.  idx carries the caret in/out (may be NULL).
+enum { ED_START=0, ED_INIT=1, ED_CHAR=2, ED_END=3 };
+int  objc_edit(OBJECT *tree, int obj, int key, int *idx, int kind);
 
 // Canned alert: alert = "[icon][message|with|lines][button1|button2|button3]"
 // (icon 0 none, 1 note, 2 wait, 3 stop).  Builds + centres + runs the dialog,

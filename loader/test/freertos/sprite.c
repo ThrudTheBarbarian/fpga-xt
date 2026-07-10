@@ -337,7 +337,18 @@ int input_next_event(struct os_event *ev, int timeout_ms, int raw) {
             return 0;
         }
         if (!raw && (c == '\r' || c == '\n')) return click_event(ev);   /* Enter: click */
-        ev->type = OS_EV_KEY; ev->key = c; ev->button = s_btn; cursor_pos(&ev->mx, &ev->my); return 0;
+        /* The terminal can't send scancodes or a real modifier state, but it CAN
+         * infer Ctrl: bytes 0x01-0x1A are Ctrl+letter.  Report them as the plain
+         * letter + K_CTRL (0x04) so mnemonics / the field editor's Ctrl-U see
+         * them — the documented graceful degradation (arrows/Tab still special,
+         * everything else 0).  Exclude the keys already carried literally:
+         * Backspace (0x08), Tab (0x09, handled above), LF (0x0A), CR (0x0D). */
+        ev->type = OS_EV_KEY; ev->key = c; ev->shift = 0;
+        if (c >= 0x01 && c <= 0x1A && c != 0x08 && c != 0x0A && c != 0x0D) {
+            ev->key = c + 0x60;                       /* 0x01 -> 'a' ... */
+            ev->shift = 0x04;                         /* K_CTRL */
+        }
+        ev->button = s_btn; cursor_pos(&ev->mx, &ev->my); return 0;
     }
 }
 

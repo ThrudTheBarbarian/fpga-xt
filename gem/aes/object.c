@@ -2,7 +2,8 @@
 // to a theme element (buttons/fields/checks via theme_draw) or a VDI primitive
 // (boxes, text), so dialogs are themed without AES knowing any pixels.
 
-#include "aes/aes.h"
+#include "aes/aes_internal.h"
+#include "font.h"
 #include <string.h>
 
 static int g_vh;
@@ -94,13 +95,38 @@ gfx_surface *icon_ghost(const gfx_surface *s) {
     return t;
 }
 
-static void draw_obj(OBJECT *o, int x, int y) {
+// 1-px mnemonic underline under label character `idx` (the WHITEBAK
+// convention).  tx = text start x under the CURRENT vst settings; uy = the
+// underline row.  Prefix/char widths via vqt_extent, so it tracks the face.
+static void underline_ch(const char *txt, int idx, int tx, int uy, int pen) {
+    if (idx < 0 || idx >= (int)strlen(txt)) return;
+    char pre[96]; int16_t e[8]; int x0 = 0;
+    int n = idx < (int)sizeof pre - 1 ? idx : (int)sizeof pre - 1;
+    if (n) { memcpy(pre, txt, n); pre[n] = 0; vqt_extent(g_vh, pre, e); x0 = e[2]-e[0]; }
+    char ch[2] = { txt[idx], 0 };
+    vqt_extent(g_vh, ch, e); int cw = e[2]-e[0]; if (cw < 2) cw = 2;
+    vsl_color(g_vh, pen); vsl_width(g_vh, 1);
+    int16_t l[4] = { (int16_t)(tx+x0), (int16_t)uy, (int16_t)(tx+x0+cw-1), (int16_t)uy };
+    v_pline(g_vh, 2, l);
+}
+
+static void draw_obj(OBJECT *t, int obj, int x, int y) {
+    OBJECT *o = &t[obj];
     int w = o->ob_w, h = o->ob_h, st = o->ob_state, fl = o->ob_flags;
     const char *txt = (const char *)o->ob_spec;
     switch (o->ob_type) {
         case G_BOX: case G_BOXTEXT:
             box(x, y, w, h, 1);
             if (o->ob_type == G_BOXTEXT && txt) centered(txt, x, y, w, h, 1, 0);
+            if (fl & OF_MOVEABLE) {                     // fly corner: dog-ear grip, top-right
+                vsl_color(g_vh, PEN_BORDER); vsl_width(g_vh, 1);
+                for (int i = 0; i < 3; i++) {
+                    int d = 5 + i*4;
+                    int16_t l[4] = { (int16_t)(x+w-1-d), (int16_t)(y+1),
+                                     (int16_t)(x+w-2),   (int16_t)(y+d) };
+                    v_pline(g_vh, 2, l);
+                }
+            }
             break;
         case G_IBOX: break;                                     // invisible container
         case G_BUTTON: {
@@ -110,23 +136,29 @@ static void draw_obj(OBJECT *o, int x, int y) {
                           : def                        ? "button.default"
                           : (st & OS_SELECTED)         ? "button.selected" : "button";
             theme_draw(g_vh, g_th, v, x, y, w, h);
-            centered(txt ? txt : "", x, y, w, h, def ? 0 : (st & OS_DISABLED) ? 9 : 1, def);
+            int pen = def ? 0 : (st & OS_DISABLED) ? 9 : 1;
+            centered(txt ? txt : "", x, y, w, h, pen, def);
+            if (txt && (st & OS_WHITEBAK)) {            // mnemonic underline (centred text)
+                vst_height(g_vh, 14, 0,0,0,0);
+                if (def) vst_effects(g_vh, FX_BOLD);
+                int16_t e[8]; vqt_extent(g_vh, txt, e); int tw = e[2]-e[0];
+                underline_ch(txt, WB_INDEX(st), x + w/2 - tw/2, y + h/2 + 9, pen);
+                vst_effects(g_vh, 0);
+            }
             break;
         }
-        case G_CHECKBOX: {
-            const char *v = (st & OS_SELECTED) ? "check.selected" : "check";
+        case G_CHECKBOX: case G_RADIO: {
+            const char *v = o->ob_type == G_RADIO
+                          ? ((st & OS_SELECTED) ? "radio.selected" : "radio")
+                          : ((st & OS_SELECTED) ? "check.selected" : "check");
             const theme_slice *s = theme_find(g_th, v);
             int bs = s ? s->sh : 16;
             theme_draw(g_vh, g_th, v, x, y + (h-bs)/2, bs, bs);
-            if (txt) { vst_color(g_vh,1); vst_height(g_vh,14,0,0,0,0); v_gtext(g_vh, x+bs+8, y+h/2-7, txt); }
-            break;
-        }
-        case G_RADIO: {
-            const char *v = (st & OS_SELECTED) ? "radio.selected" : "radio";
-            const theme_slice *s = theme_find(g_th, v);
-            int bs = s ? s->sh : 16;
-            theme_draw(g_vh, g_th, v, x, y + (h-bs)/2, bs, bs);
-            if (txt) { vst_color(g_vh,1); vst_height(g_vh,14,0,0,0,0); v_gtext(g_vh, x+bs+8, y+h/2-7, txt); }
+            if (txt) {
+                vst_color(g_vh,1); vst_height(g_vh,14,0,0,0,0);
+                v_gtext(g_vh, x+bs+8, y+h/2-7, txt);
+                if (st & OS_WHITEBAK) underline_ch(txt, WB_INDEX(st), x+bs+8, y+h/2+9, 1);
+            }
             break;
         }
         case G_FIELD: case G_POPUP: {
@@ -183,11 +215,40 @@ static void draw_obj(OBJECT *o, int x, int y) {
             }
             break;
         }
-        case G_STRING: case G_TITLE:
-            if (txt) { vst_color(g_vh, (st & OS_DISABLED) ? 9 : 1); vst_height(g_vh,14,0,0,0,0);
-                       v_gtext(g_vh, x, y + h/2 - 7, txt); }
+        case G_STRING: case G_TITLE: {
+            if (txt) { int pen = (st & OS_DISABLED) ? 9 : 1;
+                       vst_color(g_vh, pen); vst_height(g_vh,14,0,0,0,0);
+                       v_gtext(g_vh, x, y + h/2 - 7, txt);
+                       if (st & OS_WHITEBAK) underline_ch(txt, WB_INDEX(st), x, y+h/2+9, pen); }
             break;
-        case G_TEXT: case G_FTEXT:
+        }
+        case G_FTEXT: case G_FBOXTEXT: {                 // editable text field (TEDINFO)
+            TEDINFO *te = (TEDINFO *)o->ob_spec;
+            theme_draw(g_vh, g_th, "textfield", x, y, w, h);
+            if (!te) break;
+            int caret = -1, foc = objc_edit_state(t, obj, &caret);
+            char disp[160]; int dpos = 0;
+            ted_display(te, disp, sizeof disp, foc ? caret : -1, &dpos);
+            vst_color(g_vh, (st & OS_DISABLED) ? 9 : 1); vst_height(g_vh, 13, 0,0,0,0);
+            int16_t e[8]; int tw = 0;
+            if (disp[0]) { vqt_extent(g_vh, disp, e); tw = e[2]-e[0]; }
+            int tx = x + 8;                              // TE_LEFT default
+            if      (te->te_just == TE_RIGHT) tx = x + w - 8 - tw;
+            else if (te->te_just == TE_CNTR)  tx = x + (w - tw)/2;
+            if (disp[0]) v_gtext(g_vh, tx, y + h/2 - 7, disp);
+            if (foc) {                                   // caret at the input position
+                int cx = tx;
+                if (dpos > 0) { char pre[160];
+                    memcpy(pre, disp, (size_t)dpos); pre[dpos] = 0;
+                    vqt_extent(g_vh, pre, e); cx = tx + (e[2]-e[0]); }
+                vsl_color(g_vh, 1); vsl_width(g_vh, 1);
+                int16_t l[4] = { (int16_t)cx, (int16_t)(y + h/2 - 8),
+                                 (int16_t)cx, (int16_t)(y + h/2 + 8) };
+                v_pline(g_vh, 2, l);
+            }
+            break;
+        }
+        case G_TEXT:
             if (txt) { vst_color(g_vh,1); vst_height(g_vh,14,0,0,0,0); v_gtext(g_vh, x, y, txt); }
             break;
         default: break;
@@ -196,7 +257,7 @@ static void draw_obj(OBJECT *o, int x, int y) {
 
 static void draw_rec(OBJECT *t, int obj, int ax, int ay, int depth) {
     if (t[obj].ob_flags & OF_HIDETREE) return;
-    draw_obj(&t[obj], ax, ay);
+    draw_obj(t, obj, ax, ay);
     if (depth > 0) EACH_CHILD(t, obj, c) draw_rec(t, c, ax + t[c].ob_x, ay + t[c].ob_y, depth - 1);
 }
 

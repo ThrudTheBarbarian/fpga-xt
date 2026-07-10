@@ -110,7 +110,18 @@ void wind_set_overlay(int(*begin)(int,int,int,int), void(*move)(int,int),
  * (the SDL host presents inside its event source). */
 void aes_flush_rect(int x,int y,int w,int h){ if(g_ovl_present) g_ovl_present(x,y,w,h); }
 
+/* The drag-overlay ops, for other modal movers (dialog drag in form.c): lift
+ * returns 0 when no hook is registered / the lift was refused, and the caller
+ * falls back to the classic redraw-per-motion move. */
+int  aes_ovl_lift(int x,int y,int w,int h){ return g_ovl_begin ? g_ovl_begin(x,y,w,h) : 0; }
+void aes_ovl_move(int x,int y){ if(g_ovl_move) g_ovl_move(x,y); }
+void aes_ovl_drop(void){ if(g_ovl_end) g_ovl_end(); }
+
+static int g_redraw_gen;           // bumped per wind_redraw: modal loops watch it
+int aes_redraw_gen(void){ return g_redraw_gen; }
+
 void wind_redraw(void){
+    g_redraw_gen++;
     gfx_surface *d = vdi_screen_target();
     if(d){ uint32_t bg=g_deskbg; for(int i=0;i<d->w*d->h;i++) d->px[i]=bg; }
     if(g_deskcontent && d) g_deskcontent(0, 0,0, d->w,d->h, g_deskcontent_ud);  // wallpaper + icons
@@ -185,14 +196,14 @@ int wind_handle_click(int mx,int my){
             int ox=W->x, oy=W->y, ow=W->w, oh=W->h;            // vacated rect
             W->hidden=1; wind_redraw();                        // erase from the plane (overlay still covers it)...
             if(g_ovl_present) g_ovl_present(ox,oy,ow,oh);      // ...push the now-behind pixels
-            for(;;){ aes_event e; int t=aes_wait(&e,-1); if(t==AES_QUIT)break;
+            for(;;){ aes_event e; int t=aes_wait_idle(&e,-1); if(t==AES_QUIT)break;
                 if(t==AES_MOTION){ W->x=e.mx-gx; W->y=e.my-gy; clamp_win(W); g_ovl_move(W->x,W->y); } // register write, no redraw
                 if(t==AES_BTN_UP) break; }
             W->hidden=0; wind_redraw();                        // paint the window at its new home (under the overlay)...
             if(g_ovl_present){ g_ovl_present(ox,oy,ow,oh); g_ovl_present(W->x,W->y,W->w,W->h); }
             g_ovl_end();                                       // ...then drop the overlay -> seamless
         } else {                                               // SDL host: classic redraw-per-motion
-            for(;;){ aes_event e; int t=aes_wait(&e,-1); if(t==AES_QUIT)break;
+            for(;;){ aes_event e; int t=aes_wait_idle(&e,-1); if(t==AES_QUIT)break;
                 if(t==AES_MOTION){ W->x=e.mx-gx; W->y=e.my-gy; clamp_win(W); wind_redraw(); }
                 if(t==AES_BTN_UP) break; }
         }
@@ -200,7 +211,7 @@ int wind_handle_click(int mx,int my){
     }
     // size box (bottom-right corner)
     if((W->kind&W_SIZER) && mx>=W->x+W->w-18 && my>=W->y+W->h-18){
-        for(;;){ aes_event e; int t=aes_wait(&e,-1); if(t==AES_QUIT)break;
+        for(;;){ aes_event e; int t=aes_wait_idle(&e,-1); if(t==AES_QUIT)break;
             if(t==AES_MOTION){ int nw=e.mx-W->x, nh=e.my-W->y; if(nw<120)nw=120; if(nh<80)nh=80; W->w=nw; W->h=nh; wind_redraw(); }
             if(t==AES_BTN_UP) break; }
         post(WM_SIZED,hd,W->x,W->y,W->w,W->h); return 1;
