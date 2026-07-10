@@ -144,6 +144,17 @@
 - **GEMDOS via FMC RPC (Phase 3)**, **Desktop + sample apps (Phase 4)**, **Polish
   (Phase 5)** — clipboard, drag-drop, file associations, DRAW batching, font-cache,
   multitasking model. *(src: GEM-implementation.md)*
+- **Desktop media-change reaction (plumbing DONE, UX TODO)** — `aesdesk` already
+  receives `XTOS_MEDIA_CHANGE` (the kernel broadcasts it on SD insert/remove;
+  delivered as a normal `MU_MESAG` via `evnt_multi` — commit a721d3b). Current
+  handler is a placeholder that just logs `[desk] SD removed/inserted` to dmesg.
+  TODO: the real UX — when the card leaves (`msg[3]==0`), grey out / close windows
+  rooted on `/media` (browsers, file windows) and stop in-flight SD reads; on
+  reinsert (`msg[3]==1`, `msg[4]`=volume) restore/refresh them. The one-line switch
+  case is all it takes to act; the plumbing hands over the event. Same pattern will
+  serve future `XTOS_*` system events (net up/down, temp alarm, low memory). *(src:
+  gem/aes/aes.h `XTOS_*`, loader sd.c `media_change_msg`, aesdesk.c handler; memory
+  gem_xtos_messages)*
 - **VDI op gaps** — define reserved/extended-colour ops ($0xC0-0xFE, RGB-direct
   0xC1-0xCF); N6 form/bitmap cache mgmt; font-ID→`lv_font_t` table; bezier-quality
   (escape 99) mapping; `vr_trnfm` behaviour; multi-plane forms. *(src: docs/GEM/VDI-opcodes.md)*
