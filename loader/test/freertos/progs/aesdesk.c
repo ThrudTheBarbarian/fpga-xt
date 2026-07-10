@@ -22,6 +22,7 @@
 #include "fujiclient.h"
 #include "font.h"
 #include "usys.h"
+#include <sqlite3.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -281,7 +282,7 @@ static void desk_launch(const char *name, int media_type) {
 #define MAXENT  96
 #define MAX_CRUMB 18                                  // breadcrumb: <root> + up to ~16 path segments
 #define BR_WKIND (W_NAME|W_CLOSER|W_MOVER|W_SIZER|W_FULLER|W_INFO)   // browser-window kind
-typedef struct { char name[128], label[128]; int dir; long size;
+typedef struct { char name[128], label[128]; int dir; long size, mtime;
                  char state; int srvid; } bent;     // state: lsc cache column; srvid: servers row (-1 = Add server)
 typedef struct {
     int used, win, media_type, sel;
@@ -306,6 +307,8 @@ typedef struct {
     int viewx, vieww;                                  // View button rect (cycles the view mode)
     int maskx, maskw;                                  // Filter (file-mask) button rect (info bar)
     int viewmode;                                      // 1=icons grid, 2=single-col text, 3=multi-col text
+    int sortmode, sortinv;                             // 1 unsorted/2 name/3 type/4 size/5 date; sortinv reverses
+    int selall;                                        // context-menu "select all": highlight every entry
     char mask[32];                                     // per-window file mask ("*"/"*.*"/"" = show all)
     int ncrumb;                                        // breadcrumb span count (0 = none drawn)
     int crumbx[MAX_CRUMB], crumbw[MAX_CRUMB];          // per-segment hit rects (info bar left)
@@ -335,6 +338,14 @@ static browser *br_of_window(int win) {
 static int default_viewmode(void) {
     char v[16]; registry_pref("viewMode", "1", v, sizeof v);
     int m = atoi(v); return (m >= 1 && m <= 3) ? m : 1;
+}
+// deskPrefs sort defaults (sortMode 1..5, sortInverted 0/1) for a new window.
+static int default_sortmode(void) {
+    char v[16]; registry_pref("sortMode", "2", v, sizeof v);
+    int m = atoi(v); return (m >= 1 && m <= 5) ? m : 2;
+}
+static int default_sortinv(void) {
+    char v[16]; registry_pref("sortInverted", "0", v, sizeof v); return atoi(v) ? 1 : 0;
 }
 static void br_free_icons(browser *b) {
     for (int i = 0; i < b->nent; i++) if (b->isurf[i]) { gfx_surface_free(b->isurf[i]); b->isurf[i] = NULL; }
@@ -371,10 +382,25 @@ static void br_settitle(browser *b) {
     }
     wind_set_name(b->win, t);
 }
+// Active sort key (set from the browser before every qsort — qsort has no
+// context arg): 2 name / 3 type (extension) / 4 size / 5 date; 1 unsorted keeps
+// only the dirs-first grouping.  g_sort_inv reverses within the group.
+static int g_sort_mode = 2, g_sort_inv = 0;
+static const char *ext_of(const char *n) { const char *d = strrchr(n, '.'); return d ? d + 1 : ""; }
 static int ent_cmp(const void *a, const void *c) {
-    const bent *x = a, *y = c;
-    if (x->dir != y->dir) return y->dir - x->dir;     // folders first
-    return strcasecmp(x->name, y->name);
+    const bent *x = a, *y = c; int r;
+    if (x->dir != y->dir) return y->dir - x->dir;     // folders always first
+    switch (g_sort_mode) {
+        case 1:  r = 0; break;                                                    // unsorted
+        case 3:  r = strcasecmp(ext_of(x->name), ext_of(y->name));
+                 if (!r) r = strcasecmp(x->name, y->name); break;                 // type
+        case 4:  r = (x->size  < y->size)  ? -1 : (x->size  > y->size)  ? 1 : 0;
+                 if (!r) r = strcasecmp(x->name, y->name); break;                 // size
+        case 5:  r = (x->mtime < y->mtime) ? -1 : (x->mtime > y->mtime) ? 1 : 0;
+                 if (!r) r = strcasecmp(x->name, y->name); break;                 // date
+        default: r = strcasecmp(x->name, y->name); break;                         // name
+    }
+    return g_sort_inv ? -r : r;
 }
 // ---- FujiNet listings (fujiclient.c talks to fujinetd; the daemon does the
 // TNFS + registry/netcache work).  All daemon I/O is ASYNC: *_start sends the
@@ -445,6 +471,7 @@ static void net_row(browser *b, const char *ln) {     // one `lsc` reply row -> 
     b->cic[b->nent-1].text = e->name;                  // sorted icons on completion
 }
 static void net_finish(browser *b) {                  // rows all in: sort + icons
+    g_sort_mode = b->sortmode; g_sort_inv = b->sortinv;
     qsort(b->ent, b->nent, sizeof(bent), ent_cmp);
     for (int i = 0; i < b->nent; i++) {
         bent *e = &b->ent[i];
@@ -496,15 +523,14 @@ static void br_list(browser *b) {
         bent *e = &b->ent[b->nent];
         snprintf(e->name, sizeof e->name, "%s", de.name);
         e->dir = (de.mode & XT_S_IFMT) == XT_S_IFDIR;
-        e->size = 0; e->state = 0; e->srvid = 0;
-        if (!e->dir) {
-            char full[560]; struct xt_stat st;
-            snprintf(full, sizeof full, "%s/%s", dir, de.name);
-            if (sys_stat(full, &st) == 0) e->size = (long)st.size;
-        }
+        e->size = 0; e->mtime = 0; e->state = 0; e->srvid = 0;
+        { char full[560]; struct xt_stat st;             // stat every entry (size + mtime for sorting)
+          snprintf(full, sizeof full, "%s/%s", dir, de.name);
+          if (sys_stat(full, &st) == 0) { if (!e->dir) e->size = (long)st.size; e->mtime = (long)st.mtime; } }
         if (!br_visible(b, de.name, e->dir)) continue;   // masked file (dirs always shown)
         b->nent++;
     }
+    g_sort_mode = b->sortmode; g_sort_inv = b->sortinv;
     qsort(b->ent, b->nent, sizeof(bent), ent_cmp);
     for (int i = 0; i < b->nent; i++) {
         bent *e = &b->ent[i];
@@ -539,7 +565,7 @@ static void br_layout(browser *b) {
         int ghost = (b->ent[i].state == 'g' || b->ent[i].state == 'f');   // uncached net entry
         b->tree[oi] = (OBJECT){ (int16_t)(last?0:oi+1), NIL, NIL, G_CICON,
                                 (uint16_t)(OF_SELECTABLE | (last?OF_LASTOB:0)),
-                                (uint16_t)((i == b->sel ? OS_SELECTED : OS_NORMAL) | (ghost ? OS_DISABLED : 0)),
+                                (uint16_t)(((i == b->sel || b->selall) ? OS_SELECTED : OS_NORMAL) | (ghost ? OS_DISABLED : 0)),
                                 &b->cic[i], (int16_t)cx, (int16_t)cy, ICON_CW, ICON_CH };
     }
 }
@@ -593,7 +619,7 @@ static void br_draw_text(browser *b) {
     for (int slot = 0; slot < nt; slot++) {
         int cx, cy, cw, ch; br_text_cell(b, slot, &cx, &cy, &cw, &ch);
         int isdot = (dd && slot == 0), i = slot - dd;
-        int sel   = (!isdot && i == b->sel);
+        int sel   = (!isdot && (i == b->sel || b->selall));
         int ghost = (!isdot && (b->ent[i].state == 'g' || b->ent[i].state == 'f'));
         if (sel) {                                          // selection highlight bar
             vsf_color(HV, BR_TEXT_SEL); vsf_interior(HV, VDI_FIS_SOLID); vsf_perimeter(HV, 0);
@@ -1106,6 +1132,7 @@ static void br_click(browser *b, int mx, int my) {
         my >= b->infoy && my < b->infoy + b->infoh) {
         mask_dialog(b); return;
     }
+    b->selall = 0;                                           // any in-window click drops a "select all"
     int slot = br_hit_slot(b, mx, my);
     if (slot < 0) { b->sel = -1; repaint(); return; }
     int dd = b->rel[0] ? 1 : 0;
@@ -1159,6 +1186,7 @@ static void open_browser_win(const char *logical, int media_type, int net, int s
     b->used = 1; b->media_type = media_type; b->sel = -1; b->req_fd = -1;
     b->net = net; b->server_id = server_id;
     b->viewmode = default_viewmode();
+    b->sortmode = default_sortmode(); b->sortinv = default_sortinv();
     snprintf(b->mask, sizeof b->mask, "*");           // default file mask: show everything
     snprintf(b->logical_root, sizeof b->logical_root, "%s", logical);
     snprintf(b->fs_root, sizeof b->fs_root, "%s", logical);   // logical IS the SD path here
@@ -1228,6 +1256,277 @@ static void desk_click(int mx, int my) {
                    int x,y,w,h; icon_dirty(obj,&x,&y,&w,&h); repaint_rect(x,y,w,h); }
 }
 
+// ======================================================================
+// Right-click context menus.  A scope-sensitive popup built from the
+// registry's contextMenu table (what's under the cursor decides the scope:
+// 1 desktop bg / 2 drive / 3 window / 4 icon) and dispatched to the desktop's
+// verbs.  The flat rows come from SQL; the "Show" submenu (view mode + sort)
+// is built in code off the target window's live state.  menu_popup (aes/menu.c)
+// runs the modal loop.  The build + dispatch halves are factored out (below the
+// modal ctx_menu_at) to match the host twin, whose --ctx test drives them.
+// ======================================================================
+typedef struct { char label[48], accel[12], action[24], submenu[24]; } ctxrow;
+
+// A parallel read-only connection to the same DB (registry.c keeps its own
+// handle private, and we must not touch it) — used only for contextMenu rows.
+static sqlite3 *g_ctxdb;
+static void ctx_db_open(const char *dbpath) {
+    if (!g_ctxdb) sqlite3_open_v2(dbpath, &g_ctxdb, SQLITE_OPEN_READONLY, NULL);
+}
+static void ctx_db_close(void) { if (g_ctxdb) { sqlite3_close(g_ctxdb); g_ctxdb = NULL; } }
+static int ctx_menu_rows(int scope, ctxrow *out, int max) {
+    if (!g_ctxdb) return 0;
+    sqlite3_stmt *st;
+    const char *sql = "SELECT label,COALESCE(accel,''),action,COALESCE(submenu,'') "
+                      "FROM contextMenu WHERE scope=? ORDER BY ord";
+    if (sqlite3_prepare_v2(g_ctxdb, sql, -1, &st, NULL) != SQLITE_OK) return 0;
+    sqlite3_bind_int(st, 1, scope);
+    int n = 0;
+    while (n < max && sqlite3_step(st) == SQLITE_ROW) {
+        snprintf(out[n].label,   sizeof out[n].label,   "%s", (const char*)sqlite3_column_text(st, 0));
+        snprintf(out[n].accel,   sizeof out[n].accel,   "%s", (const char*)sqlite3_column_text(st, 1));
+        snprintf(out[n].action,  sizeof out[n].action,  "%s", (const char*)sqlite3_column_text(st, 2));
+        snprintf(out[n].submenu, sizeof out[n].submenu, "%s", (const char*)sqlite3_column_text(st, 3));
+        n++;
+    }
+    sqlite3_finalize(st);
+    return n;
+}
+// A scope with no rows of its own falls back to a sensible sibling (drive ->
+// icon), so every click still yields a usable menu.
+static int ctx_scope_rows(int scope, ctxrow *out, int max) {
+    int n = ctx_menu_rows(scope, out, max);
+    if (n == 0 && scope == 2) n = ctx_menu_rows(4, out, max);   // drive -> icon
+    return n;
+}
+
+enum { ACT_UNKNOWN = 0, ACT_NEW, ACT_INFO, ACT_SELECTALL, ACT_DELETE, ACT_OPEN, ACT_BROWSE, ACT_SHOW, ACT_SEP };
+static int ctx_action_id(const char *a) {
+    if (!strcmp(a, "new"))       return ACT_NEW;
+    if (!strcmp(a, "info"))      return ACT_INFO;
+    if (!strcmp(a, "selectall")) return ACT_SELECTALL;
+    if (!strcmp(a, "delete"))    return ACT_DELETE;
+    if (!strcmp(a, "open"))      return ACT_OPEN;
+    if (!strcmp(a, "browse"))    return ACT_BROWSE;
+    if (!strcmp(a, "show"))      return ACT_SHOW;
+    if (!strcmp(a, "sep"))       return ACT_SEP;
+    return ACT_UNKNOWN;
+}
+// menu_popup id spaces: flat contextMenu rows return CTX_ROW_BASE+index; the
+// built-in Show submenu leaves return their own SH_* ids.
+#define CTX_ROW_BASE 1000
+enum { SH_VIEW_ICONS = 100, SH_VIEW_LIST, SH_VIEW_COLS,
+       SH_SORT_NAME = 110, SH_SORT_TYPE, SH_SORT_SIZE, SH_SORT_DATE, SH_SORT_INV };
+
+// Build the cascading Show submenu off a window's live view/sort state (the
+// checkmarks track the current mode / inverted flag).  Returns the item count.
+static int ctx_build_show(menu_item *it, browser *b) {
+    int vm = b ? b->viewmode : 1, sm = b ? b->sortmode : 2, si = b ? b->sortinv : 0;
+    int n = 0;
+    it[n++] = (menu_item){ "Icons",        NULL, SH_VIEW_ICONS, NULL, 0, vm == 1 ? MI_CHECKED : 0 };
+    it[n++] = (menu_item){ "List",         NULL, SH_VIEW_LIST,  NULL, 0, vm == 2 ? MI_CHECKED : 0 };
+    it[n++] = (menu_item){ "Columns",      NULL, SH_VIEW_COLS,  NULL, 0, vm == 3 ? MI_CHECKED : 0 };
+    it[n++] = (menu_item){ "-",            NULL, 0,             NULL, 0, 0 };
+    it[n++] = (menu_item){ "Sort by Name", NULL, SH_SORT_NAME,  NULL, 0, sm == 2 ? MI_CHECKED : 0 };
+    it[n++] = (menu_item){ "Sort by Type", NULL, SH_SORT_TYPE,  NULL, 0, sm == 3 ? MI_CHECKED : 0 };
+    it[n++] = (menu_item){ "Sort by Size", NULL, SH_SORT_SIZE,  NULL, 0, sm == 4 ? MI_CHECKED : 0 };
+    it[n++] = (menu_item){ "Sort by Date", NULL, SH_SORT_DATE,  NULL, 0, sm == 5 ? MI_CHECKED : 0 };
+    it[n++] = (menu_item){ "-",            NULL, 0,             NULL, 0, 0 };
+    it[n++] = (menu_item){ "Inverted",     NULL, SH_SORT_INV,   NULL, 0, si ? MI_CHECKED : 0 };
+    return n;
+}
+// Assemble the flat menu_item[] for `scope` from `crows` (which the caller keeps
+// alive across menu_popup — items[].label alias into it); the row flagged with a
+// submenu name gets the built Show cascade.  Returns the item count.
+static int ctx_build_items(int scope, ctxrow *crows, int maxr,
+                           menu_item *items, menu_item *show, int *nshow, browser *b) {
+    int nr = ctx_scope_rows(scope, crows, maxr);
+    *nshow = 0;
+    for (int i = 0; i < nr; i++) {
+        items[i].label = crows[i].label;
+        items[i].accel = crows[i].accel[0] ? crows[i].accel : NULL;
+        items[i].id    = CTX_ROW_BASE + i;
+        items[i].sub   = NULL; items[i].nsub = 0; items[i].flags = 0;
+        if (crows[i].submenu[0]) {                       // "Show" -> the built cascade
+            *nshow = ctx_build_show(show, b);
+            items[i].sub = show; items[i].nsub = *nshow; items[i].id = 0;
+        }
+    }
+    return nr;
+}
+// Resolve what's under (mx,my): the scope + dispatch target (a browser window's
+// entry, a desktop icon, or just the background).
+static int ctx_resolve(int mx, int my, browser **tb, int *tentry, int *tdeskobj) {
+    *tb = NULL; *tentry = -1; *tdeskobj = 0;
+    int wh = wind_find(mx, my);
+    browser *b = wh ? br_of_window(wh) : NULL;
+    if (b) {
+        *tb = b;
+        int slot = br_hit_slot(b, mx, my);
+        int dd = b->rel[0] ? 1 : 0;
+        if (slot >= 0 && !(dd && slot == 0)) { *tentry = slot - dd; return 4; }  // an entry -> icon
+        return 3;                                        // work-area background -> window
+    }
+    int obj = objc_find(desk, 0, 2, mx, my);
+    if (obj > 0) {                                       // a desktop icon
+        *tdeskobj = obj;
+        int t = rows[obj-1].type;
+        if (t == ICT_MEDIA_8BIT || t == ICT_MEDIA_1632 || t == ICT_FUJINET) return 2;  // drive
+        return 4;                                        // generic icon (emulators)
+    }
+    return 1;                                            // desktop background
+}
+// Copy s into out, neutralising form_alert's structural chars so file/dir names
+// can't corrupt an alert string.
+static void ctx_san(const char *s, char *out, int cap) {
+    int j = 0;
+    for (int i = 0; s[i] && j < cap - 1; i++) { char c = s[i]; out[j++] = (c=='['||c==']'||c=='|') ? ' ' : c; }
+    out[j] = 0;
+}
+// Absolute filesystem path of `name` in the browser's current directory.
+static void ctx_entry_path(browser *b, const char *name, char *out, int cap) {
+    if (b->rel[0]) snprintf(out, cap, "%s/%s/%s", b->fs_root, b->rel, name);
+    else           snprintf(out, cap, "%s/%s", b->fs_root, name);
+}
+// Open a browser entry — the same descend/launch/net-open the double-click path
+// runs (factored so both callers stay in step).
+static void ctx_open_entry(browser *b, int i) {
+    if (b->net == 1) {
+        if (b->ent[i].srvid < 0) add_server_dialog(b);
+        else open_fuji_browser(b->ent[i].srvid, b->ent[i].label);
+    } else if (b->ent[i].dir) {
+        int n = (int)strlen(b->rel);
+        snprintf(b->rel + n, sizeof b->rel - n, "%s%s", b->rel[0] ? "/" : "", b->ent[i].name);
+        br_list(b); br_settitle(b); repaint();
+    } else if (b->net == 2) {
+        net_open(b, i);
+    } else {
+        desk_launch(b->ent[i].name, b->media_type); repaint();
+    }
+}
+// A context-sensitive Info alert: differs by scope (file / folder / window /
+// drive / desktop).
+static void ctx_info(int scope, browser *b, int tentry, int tdeskobj) {
+    char m[300], nm[96], loc[160];
+    if (scope == 4 && b && tentry >= 0) {                // an in-window entry
+        bent *e = &b->ent[tentry];
+        ctx_san(e->name, nm, sizeof nm);
+        if (b->rel[0]) { char t[160]; snprintf(t, sizeof t, "%s/%s", b->logical_root, b->rel); ctx_san(t, loc, sizeof loc); }
+        else           ctx_san(b->logical_root, loc, sizeof loc);
+        if (e->dir) snprintf(m, sizeof m, "[1][%s|folder in %s][OK]", nm, loc);
+        else        snprintf(m, sizeof m, "[1][%s|%ld bytes|in %s][OK]", nm, e->size, loc);
+    } else if ((scope == 4 || scope == 2) && tdeskobj) { // a desktop icon / drive
+        reg_desktop_icon *ri = &rows[tdeskobj-1];
+        ctx_san(ri->displayName[0] ? ri->displayName : "icon", nm, sizeof nm);
+        snprintf(m, sizeof m, "[1][%s|%s][OK]", nm, scope == 2 ? "drive / volume" : "desktop icon");
+    } else if (scope == 3 && b) {                        // a window
+        if (b->rel[0]) { char t[160]; snprintf(t, sizeof t, "%s/%s", b->logical_root, b->rel); ctx_san(t, loc, sizeof loc); }
+        else           ctx_san(b->logical_root, loc, sizeof loc);
+        snprintf(m, sizeof m, "[1][%s|%d items, %d files|%ld bytes total][OK]", loc, b->nent, b->nfiles, b->total);
+    } else {                                             // the desktop background
+        snprintf(m, sizeof m, "[1][XTOS desktop|right-click for actions][OK]");
+    }
+    form_alert(1, m);
+}
+// ---- New-folder dialog (context-menu "New..."; form_do consumer #3) ----------
+enum { NF_ROOT, NF_TITLE, NF_LNAME, NF_FNAME, NF_CANCEL, NF_OK, NF_N };
+#define NF_W 360
+#define NF_H 150
+static char nf_buf[64];
+static char nf_tmpl[41];                              // 40 input positions ('_' run)
+static TEDINFO nf_tname = { nf_buf, nf_tmpl, "F", sizeof nf_buf, TE_LEFT };
+static OBJECT nf_dlg[NF_N] = {
+ /*ROOT  */ { NIL, NF_TITLE, NF_OK, G_BOX, OF_MOVEABLE, OS_NORMAL, 0, 0,0, NF_W, NF_H },
+ /*TITLE */ { NF_LNAME,  NIL,NIL, G_STRING, OF_NONE, OS_NORMAL, (void*)"New folder", 20,12, 320,20 },
+ /*LNAME */ { NF_FNAME,  NIL,NIL, G_STRING, OF_NONE, OS_NORMAL, (void*)"Name:",      20,54, 60,20 },
+ /*FNAME */ { NF_CANCEL, NIL,NIL, G_FTEXT,  OF_EDITABLE, OS_NORMAL, &nf_tname,       88,51, 250,26 },
+ /*CANCEL*/ { NF_OK,     NIL,NIL, G_BUTTON, OF_SELECTABLE|OF_EXIT|OF_CANCEL, OS_NORMAL, (void*)"Cancel", 132,102, 100,32 },
+ /*OK    */ { NF_ROOT,   NIL,NIL, G_BUTTON, OF_SELECTABLE|OF_EXIT|OF_DEFAULT|OF_LASTOB, OS_NORMAL, (void*)"OK", 244,102, 92,32 },
+};
+static int new_folder_dialog(char *out, int cap) {
+    nf_buf[0] = 0; memset(nf_tmpl, '_', sizeof nf_tmpl - 1); nf_tmpl[sizeof nf_tmpl - 1] = 0;
+    int r = form_do_dialog(nf_dlg, NF_FNAME);         // focus starts in the field
+    if (r >= 0) nf_dlg[r].ob_state &= ~OS_SELECTED;
+    repaint();                                        // repaint under the dismissed dialog
+    if (r != NF_OK) return 0;
+    char nm[64]; snprintf(nm, sizeof nm, "%s", nf_buf);
+    for (int i = (int)strlen(nm)-1; i >= 0 && nm[i] == ' '; i--) nm[i] = 0;
+    if (!nm[0]) return 0;
+    snprintf(out, cap, "%s", nm);
+    return 1;
+}
+// New folder in the target window's directory (local net==0 only; else a stub
+// alert).  Prompt -> mkdir -> re-list.
+static void ctx_new(browser *b) {
+    if (!b || b->net != 0) { form_alert(1, "[1][New folder|only in local windows][OK]"); return; }
+    char nm[64];
+    if (!new_folder_dialog(nm, sizeof nm)) return;
+    char full[520]; ctx_entry_path(b, nm, full, sizeof full);
+    if (sys_mkdir(full, 0777) != 0) { form_alert(1, "[3][Could not create the folder][OK]"); return; }
+    br_list(b); br_settitle(b); repaint();
+}
+// Delete the target entr(y/ies): confirm, then unlink (local net==0 only).  An
+// icon-scope click deletes that entry; otherwise the selection (or every listed
+// entry when "select all" is active).
+static void ctx_delete(browser *b, int scope, int tentry) {
+    if (!b || b->net != 0) { form_alert(1, "[1][Delete|only in local windows][OK]"); return; }
+    int one = -1;
+    if (scope == 4 && tentry >= 0) one = tentry;
+    else if (b->sel >= 0)          one = b->sel;
+    if (one < 0 && !b->selall) { form_alert(1, "[1][Nothing selected to delete][OK]"); return; }
+    int r = form_alert(2, b->selall ? "[2][Delete all listed items?][Cancel|Delete]"
+                                     : "[2][Delete the selected item?][Cancel|Delete]");
+    if (r != 2) return;
+    int lo = b->selall ? 0 : one, hi = b->selall ? b->nent - 1 : one;
+    for (int i = lo; i <= hi; i++) {
+        char full[520]; ctx_entry_path(b, b->ent[i].name, full, sizeof full);
+        sys_unlink(full);                                // files (+ dirs the kernel allows); ignore failures
+    }
+    b->sel = -1; b->selall = 0;
+    br_list(b); br_settitle(b); repaint();
+}
+// Dispatch a menu_popup result (factored out of ctx_menu_at to match the host
+// twin, whose --ctx test invokes actions without driving the modal loop).
+static void ctx_apply(int chosen, ctxrow *crows, int scope, browser *b, int tentry, int tdeskobj) {
+    if (chosen < 0) return;
+    if (chosen >= CTX_ROW_BASE) {                        // a flat contextMenu row
+        switch (ctx_action_id(crows[chosen - CTX_ROW_BASE].action)) {
+            case ACT_OPEN:      if (b && tentry >= 0) ctx_open_entry(b, tentry);
+                                else if (tdeskobj)   open_icon(tdeskobj); break;
+            case ACT_INFO:      ctx_info(scope, b, tentry, tdeskobj); break;
+            case ACT_SELECTALL: if (b) { b->selall = 1; b->sel = -1; repaint(); } break;
+            case ACT_NEW:       ctx_new(b); break;
+            case ACT_DELETE:    ctx_delete(b, scope, tentry); break;
+            case ACT_BROWSE:    form_alert(1, "[1][Browse navigator|coming soon][OK]"); break;  // TODO: browse task
+            default:            break;                    // sep / unknown: no-op
+        }
+        return;
+    }
+    if (!b) return;                                      // Show items act on a window
+    switch (chosen) {
+        case SH_VIEW_ICONS: b->viewmode = 1; b->sel = -1; repaint(); break;
+        case SH_VIEW_LIST:  b->viewmode = 2; b->sel = -1; repaint(); break;
+        case SH_VIEW_COLS:  b->viewmode = 3; b->sel = -1; repaint(); break;
+        case SH_SORT_NAME:  b->sortmode = 2; br_list(b); repaint(); break;
+        case SH_SORT_TYPE:  b->sortmode = 3; br_list(b); repaint(); break;
+        case SH_SORT_SIZE:  b->sortmode = 4; br_list(b); repaint(); break;
+        case SH_SORT_DATE:  b->sortmode = 5; br_list(b); repaint(); break;
+        case SH_SORT_INV:   b->sortinv = !b->sortinv; br_list(b); repaint(); break;
+    }
+}
+// The right-click entry point: resolve the scope/target, highlight it, build the
+// registry menu (+ the Show cascade), run it, dispatch the choice.
+static void ctx_menu_at(int mx, int my) {
+    browser *b; int tentry, tdeskobj;
+    int scope = ctx_resolve(mx, my, &b, &tentry, &tdeskobj);
+    if (b && tentry >= 0 && (b->sel != tentry || b->selall)) { b->sel = tentry; b->selall = 0; repaint(); }
+    ctxrow crows[24]; menu_item items[24], show[12]; int nshow;
+    int n = ctx_build_items(scope, crows, 24, items, show, &nshow, b);
+    if (n <= 0) return;
+    int chosen = menu_popup(items, n, mx, my);
+    ctx_apply(chosen, crows, scope, b, tentry, tdeskobj);
+}
+
 // ---- A9 event source: block for the next kernel input event ----------------
 // (the cursor is a HW sprite moved kernel-side, so motion needs no present —
 // only real actions repaint).
@@ -1239,12 +1538,24 @@ static void desk_click(int mx, int my) {
 // always steer to a grabbed emu window's close box and Tab it shut.
 static int g_kbd_grab = 1;
 static int g_last_top;
+// Right-click plumbing.  The A9 input layer has no secondary-button bit yet, so
+// the documented terminal fallback is Ctrl+left (we also honour a real right
+// button, bit 1, if that ever lands).  g_rclick marks the one synthetic click
+// the main loop routes to the context menu; g_swallow_up turns the trailing
+// button-release into a harmless motion so it can't pre-select a menu row.
+static int g_rclick, g_swallow_up;
 
 static int a9_events(aes_event *ev, int timeout_ms) {
     struct os_event oe = { OS_EV_TIMER, 0, 0, 0, 0, 0 };   // default if the syscall fails
     // raw keys while an emulator window is topped AND grabbed: Enter/Space TYPE
     // into the machine instead of clicking (the mouse clicks/drags either way)
     sys_input(&oe, timeout_ms, g_kbd_grab && emu_of_window(wind_top()) != NULL);
+    g_rclick = 0;                                          // valid only for the event we return
+    if (oe.type == OS_EV_BTN_DOWN && ((oe.button & 2) || (oe.shift & K_CTRL))) {
+        g_rclick = 1; g_swallow_up = 1; oe.button = 1;     // secondary click: menu on the DOWN
+    } else if (g_swallow_up && oe.type == OS_EV_BTN_UP) {
+        g_swallow_up = 0; oe.type = OS_EV_MOTION; oe.button = 0;   // eat its release
+    }
     ev->type = oe.type; ev->mx = oe.mx; ev->my = oe.my;
     ev->button = oe.button; ev->key = oe.key; ev->shift = oe.shift;
     return ev->type;
@@ -1289,6 +1600,7 @@ void _app_entry(int argc, char **argv) {
 
     if (registry_open("/OS/var/registry.db") != 0)
         sys_write(2, "aesdesk: no registry (/OS/var/registry.db)\n", 43);
+    ctx_db_open("/OS/var/registry.db");              // parallel read-only conn for contextMenu
     build_desktop();
     wind_set_desktop_content(deskcontent, NULL);
 
@@ -1328,9 +1640,12 @@ void _app_entry(int argc, char **argv) {
             else        sys_klog("[desk] SD removed\n", 18);
         }
         if (r & MU_BUTTON) {
-            int wh = wind_find(mx, my); browser *b = wh ? br_of_window(wh) : NULL;
-            if (b) br_click(b, mx, my); else desk_click(mx, my);
+            if (g_rclick) { g_rclick = 0; ctx_menu_at(mx, my); }   // right-click -> context menu
+            else {
+                int wh = wind_find(mx, my); browser *b = wh ? br_of_window(wh) : NULL;
+                if (b) br_click(b, mx, my); else desk_click(mx, my);
+            }
         }
     }
-    registry_close();
+    registry_close(); ctx_db_close();
 }
