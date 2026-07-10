@@ -1257,6 +1257,121 @@ static void desk_click(int mx, int my) {
 }
 
 // ======================================================================
+// Browse navigator — a cascading menu_popup filesystem walk invoked from the
+// context menu's "browse" verb.  Each popup lists one directory (".." unless at
+// the browse root, then sorted dirs with a trailing "/", then sorted files);
+// picking a folder cascades a fresh popup to the right (reads as a descent), a
+// file launches it (the double-click path), ".." ascends, Esc/click-outside
+// ends.  Local FS only.  The per-level menu build (browse_build_level) and the
+// navigation decision (browse_decide) are pure helpers, matching the host twin
+// whose --browsenav test drives them without the modal loop.
+// ======================================================================
+#define BR_MAX        200               // per-level entry cap
+#define BR_ID_UP      2900              // the ".." row
+#define BR_ID_DIR     3000              // directory rows: BR_ID_DIR + slot
+#define BR_ID_FILE    6000              // file rows:      BR_ID_FILE + slot
+#define BR_CASCADE_DX 172               // per-level rightward cascade step
+enum { BR_ACT_END = 0, BR_ACT_DESCEND, BR_ACT_ASCEND, BR_ACT_OPEN };
+typedef struct {
+    int  n, truncated;
+    char name[BR_MAX][128];             // raw entry name (no trailing "/")
+    char label[BR_MAX][132];            // menu label (dirs get a trailing "/")
+    int  isdir[BR_MAX];
+} browse_level;
+typedef struct { char name[128]; int dir; } br_scan;
+static int br_scan_cmp(const void *a, const void *b) {   // dirs first, then name
+    const br_scan *x = a, *y = b;
+    if (x->dir != y->dir) return y->dir - x->dir;
+    return strcasecmp(x->name, y->name);
+}
+// Read `dir` into `lv` (sorted dirs-first) and emit menu_item[] rows into
+// `items` (caller-owned; the labels alias lv->label, which the caller keeps
+// alive across menu_popup).  `hasup` prepends a ".." row.  Ids encode the slot
+// and dir-vs-file (BR_ID_DIR/BR_ID_FILE ranges).  Returns the row count.
+static int browse_build_level(const char *dir, int hasup, browse_level *lv, menu_item *items) {
+    static br_scan sc[BR_MAX + 1];
+    static struct xt_dirent de;
+    int ns = 0, truncated = 0;
+    for (int idx = 0; sys_readdir(dir, idx, &de) == 1; idx++) {
+        if (de.name[0] == '.') continue;                 // hidden + . ..
+        if (ns >= BR_MAX) { truncated = 1; break; }
+        int isdir = (de.mode & XT_S_IFMT) == XT_S_IFDIR;
+        snprintf(sc[ns].name, sizeof sc[ns].name, "%s", de.name);
+        sc[ns].dir = isdir; ns++;
+    }
+    qsort(sc, ns, sizeof sc[0], br_scan_cmp);
+    lv->n = ns; lv->truncated = truncated;
+    int ni = 0;
+    if (hasup) items[ni++] = (menu_item){ "..", NULL, BR_ID_UP, NULL, 0, 0 };
+    for (int i = 0; i < ns; i++) {
+        snprintf(lv->name[i], sizeof lv->name[i], "%s", sc[i].name);
+        lv->isdir[i] = sc[i].dir;
+        if (sc[i].dir) snprintf(lv->label[i], sizeof lv->label[i], "%s/", sc[i].name);
+        else           snprintf(lv->label[i], sizeof lv->label[i], "%s",  sc[i].name);
+        items[ni++] = (menu_item){ lv->label[i], NULL,
+                                   (sc[i].dir ? BR_ID_DIR : BR_ID_FILE) + i, NULL, 0, 0 };
+    }
+    if (truncated) {                                      // note the cap was hit
+        items[ni++] = (menu_item){ "-", NULL, 0, NULL, 0, 0 };
+        items[ni++] = (menu_item){ "(more not shown)", NULL, 0, NULL, 0, MI_DISABLED };
+    }
+    return ni;
+}
+// Decide what a chosen popup id means for `cur` in level `lv`: fills `out` (the
+// next dir for DESCEND/ASCEND, the launch path for OPEN) and returns the action.
+// `floor` bounds ASCEND — ".." at the browse root ends instead of climbing out.
+static int browse_decide(const char *cur, const char *floor, const browse_level *lv,
+                         int chosen, char *out, int cap) {
+    if (chosen < 0) return BR_ACT_END;
+    if (chosen == BR_ID_UP) {
+        if (!strcmp(cur, floor)) return BR_ACT_END;      // at the browse root: don't climb out
+        snprintf(out, cap, "%s", cur);
+        char *s = strrchr(out, '/');
+        if (s && s != out) *s = 0; else snprintf(out, cap, "/");
+        return BR_ACT_ASCEND;
+    }
+    int slot, isdir;
+    if (chosen >= BR_ID_FILE)     { slot = chosen - BR_ID_FILE; isdir = 0; }
+    else if (chosen >= BR_ID_DIR) { slot = chosen - BR_ID_DIR;  isdir = 1; }
+    else return BR_ACT_END;                              // separator / "(more)" / unknown
+    if (slot < 0 || slot >= lv->n) return BR_ACT_END;
+    snprintf(out, cap, "%s/%s", cur, lv->name[slot]);
+    return isdir ? BR_ACT_DESCEND : BR_ACT_OPEN;
+}
+// Launch a browsed file: the same emulator path a double-click runs, with the
+// media type inferred from the path (the m68k media root vs the 6502 one).
+static void browse_launch(const char *fullpath) {
+    const char *nm = strrchr(fullpath, '/'); nm = nm ? nm + 1 : fullpath;
+    int media = strstr(fullpath, "m68k") ? ICT_MEDIA_1632 : ICT_MEDIA_8BIT;
+    desk_launch(nm, media); repaint();
+}
+// Run the browse navigator rooted at `startdir` (an absolute FS path), the first
+// popup at (sx,sy).  Loops one directory at a time: build the level, run the
+// popup, act on the choice.  Local FS only (the caller guards net paths).
+static void browse_at(const char *startdir, int sx, int sy) {
+    char cur[512];   snprintf(cur, sizeof cur, "%s", startdir);
+    char floor[512]; snprintf(floor, sizeof floor, "%s", startdir);   // never browse above the start
+    int x = sx, y = sy;
+    for (;;) {
+        static browse_level lv;                          // labels must outlive menu_popup
+        static menu_item items[BR_MAX + 4];
+        int hasup = strcmp(cur, floor) != 0;
+        int n = browse_build_level(cur, hasup, &lv, items);
+        if (n <= 0) return;                              // empty browse root: nothing to show
+        int cx = x; if (cx > PW - 220) cx = PW - 220; if (cx < 0) cx = 0;
+        int chosen = menu_popup(items, n, cx, y);
+        char out[512];
+        switch (browse_decide(cur, floor, &lv, chosen, out, sizeof out)) {
+            case BR_ACT_DESCEND: snprintf(cur, sizeof cur, "%s", out); x += BR_CASCADE_DX; break;
+            case BR_ACT_ASCEND:  snprintf(cur, sizeof cur, "%s", out);
+                                 x -= BR_CASCADE_DX; if (x < sx) x = sx; break;
+            case BR_ACT_OPEN:    browse_launch(out); return;
+            default:             return;                 // BR_ACT_END (cancel / at-root "..")
+        }
+    }
+}
+
+// ======================================================================
 // Right-click context menus.  A scope-sensitive popup built from the
 // registry's contextMenu table (what's under the cursor decides the scope:
 // 1 desktop bg / 2 drive / 3 window / 4 icon) and dispatched to the desktop's
@@ -1388,6 +1503,41 @@ static void ctx_entry_path(browser *b, const char *name, char *out, int cap) {
     if (b->rel[0]) snprintf(out, cap, "%s/%s/%s", b->fs_root, b->rel, name);
     else           snprintf(out, cap, "%s/%s", b->fs_root, name);
 }
+static int g_ctx_mx, g_ctx_my;                        // the right-click point (browse popup origin)
+// Compute the browse start dir for the resolved scope/target.  Returns 1 with
+// `out` filled for a local, browsable target; 0 for a net (non-local) target.
+//   window scope  -> the window's current dir (fs_root + rel)
+//   folder entry  -> that folder;  file entry -> its parent (the window dir)
+//   drive icon    -> the media root; net drive -> not local (0)
+//   desktop bg    -> the SD root
+static int ctx_browse_start(int scope, browser *b, int tentry, int tdeskobj, char *out, int cap) {
+    if (b) {
+        if (b->net != 0) return 0;                       // net browser: local-only
+        if (scope == 4 && tentry >= 0 && b->ent[tentry].dir)
+            ctx_entry_path(b, b->ent[tentry].name, out, cap);
+        else if (b->rel[0]) snprintf(out, cap, "%s/%s", b->fs_root, b->rel);
+        else                snprintf(out, cap, "%s", b->fs_root);
+        return 1;
+    }
+    if (tdeskobj) {
+        switch (rows[tdeskobj-1].type) {
+            case ICT_MEDIA_8BIT: snprintf(out, cap, "/media/6502"); return 1;
+            case ICT_MEDIA_1632: snprintf(out, cap, "/media/m68k"); return 1;
+            case ICT_FUJINET:    return 0;               // net drive: local-only
+            default:             snprintf(out, cap, "/"); return 1;
+        }
+    }
+    snprintf(out, cap, "/");                             // desktop background -> the root
+    return 1;
+}
+// Start the browse navigator for the resolved scope/target (local FS only).
+static void ctx_browse(int scope, browser *b, int tentry, int tdeskobj) {
+    char start[512];
+    if (!ctx_browse_start(scope, b, tentry, tdeskobj, start, sizeof start)) {
+        form_alert(1, "[1][Browse|browse is local-only][OK]"); return;
+    }
+    browse_at(start, g_ctx_mx, g_ctx_my);
+}
 // Open a browser entry — the same descend/launch/net-open the double-click path
 // runs (factored so both callers stay in step).
 static void ctx_open_entry(browser *b, int i) {
@@ -1497,7 +1647,7 @@ static void ctx_apply(int chosen, ctxrow *crows, int scope, browser *b, int tent
             case ACT_SELECTALL: if (b) { b->selall = 1; b->sel = -1; repaint(); } break;
             case ACT_NEW:       ctx_new(b); break;
             case ACT_DELETE:    ctx_delete(b, scope, tentry); break;
-            case ACT_BROWSE:    form_alert(1, "[1][Browse navigator|coming soon][OK]"); break;  // TODO: browse task
+            case ACT_BROWSE:    ctx_browse(scope, b, tentry, tdeskobj); break;
             default:            break;                    // sep / unknown: no-op
         }
         return;
@@ -1520,6 +1670,7 @@ static void ctx_menu_at(int mx, int my) {
     browser *b; int tentry, tdeskobj;
     int scope = ctx_resolve(mx, my, &b, &tentry, &tdeskobj);
     if (b && tentry >= 0 && (b->sel != tentry || b->selall)) { b->sel = tentry; b->selall = 0; repaint(); }
+    g_ctx_mx = mx; g_ctx_my = my;                        // browse popups open at the right-click point
     ctxrow crows[24]; menu_item items[24], show[12]; int nshow;
     int n = ctx_build_items(scope, crows, 24, items, show, &nshow, b);
     if (n <= 0) return;
