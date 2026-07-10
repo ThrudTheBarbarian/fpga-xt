@@ -54,11 +54,12 @@
      ASYNC into a CPU-bound loop (tick-return hook), and EINTR of a blocked syscall.
      **aesdesk-can't-kill is FIXED** — it blocks in `aes_wait` (a syscall), so EINTR
      now delivers. Full design + ABI: docs/Design/process-signal-model.md.
-     Kernel SIGCHLD-on-exit + SIGWINCH + soft-dispatch removal now DONE too
-     (commit ed61752, sigtest 4/4). Remaining: symbol dedup (localize newlib
-     read/signal/kill/execve); SA_RESTART. **HW-validate**: cold-load
-     `build/freertos-hw.elf`, run `/bin/sigtest` (4/4), confirm aesdesk is killable,
-     and check ssh/dropbear child reaping (the real async-SIGCHLD test).
+     Kernel SIGCHLD-on-exit + SIGWINCH + soft-dispatch removal DONE (ed61752), and
+     symbol dedup DONE (fc6fe7d, libc-hide.map). Signals HW-validated (sigtest 4/4,
+     kill, ssh reaping clean). Remaining: SA_RESTART (every interrupted syscall is
+     EINTR today); and newlib-pic provenance — the checked-in libc.a/libm.a have no
+     STAMP recording version+config+hash+validated (mystery-blob footgun); a submodule
+     is optional (no source patches; the dedup is loader-side).
   The shim still has a legit job afterwards (the POSIX *shape* newlib lacks —
   `opendir`/`readdir` over `getdents`, stdio buffering, `spawn`/`wait`, termios —
   none of it `read`-coupled). Cost/why-not-done-first: real frame-injection

@@ -149,8 +149,22 @@ delivers, so it's now signalable/killable. (docs/NextSteps.md motivating case.)
 - **HW-validate**: ssh/dropbear child reaping is the real SIGCHLD test (its self-pipe
   handler now runs on the kernel's async SIGCHLD).
 
+### DONE (2026-07-10, commit fc6fe7d) — Part 3 symbol dedup
+- `loader/libc-hide.map` version script localizes `read/signal/kill/execve` in the
+  libc.so link (the only four newlib+shim both define). They drop from libc.so's
+  `.dynsym`; shim-linked programs bind their own copies (xtld no-interposition),
+  newlib's internal `read` user keeps the retained local def, `exit()->_exit` is
+  a kernel import (untouched). Verified: no program imports the four from libc.so,
+  dropbear keeps its own shim copies, `hello`/pipelines/sigtest all green.
+- Fixed a latent build bug it surfaced: usys.h now `#include <stdint.h>` (the
+  `uint16_t` in sys_xl_window/sys_overlay assumed the includer pulled stdint).
+
 ### Remaining
-- **Part 3 symbol dedup** (localize newlib `read/signal/kill/execve` in libc.so).
+- **`SA_RESTART`** — today every interrupted syscall is EINTR, never auto-restart.
+- Newlib provenance: no STAMP/submodule for the checked-in `newlib-pic/{libc.a,
+  libm.a}` prebuilts (mystery-blob footgun class). Proposed: a STAMP recording
+  version + config-hash + artifact sha256 + validated marker; submodule optional
+  (no source patches today; the dedup is loader-side, not a newlib change).
   Signals work WITHOUT it (shim-linked programs bind the shim's copies locally via
   xtld's no-interposition rule); it's defensive hygiene. Deferred to avoid risking
   program-load resolution at 3am; do it with the kernel-export-table robustness
