@@ -56,8 +56,8 @@ What the surviving AES implementations and desktops do, and what we take.
 |------|-----------|----------|-----------|
 | Movable dialogs | MagiC **flying dialogs**: every dialog/alert gets a "fly corner" (*Eselsohr*, dog-ear) top-right to drag it by; right-button/Alt drags move it transparently ([MagiC manual p.53](https://www.dsd.net/files/dl.php?File=Magic.pdf), API = `form_xdial`/`form_xdo` ["flydials"](https://www.exxosforum.co.uk/atari/mirror/toshyp/00800b.html)). XaAES instead hosts `form_do` in real **windows** — movable only if `xa_nomove` is off ([XaAES wiki](https://github.com/freemint/freemint/wiki/XaAES)) | The fly-corner handle **plus** grab-anywhere-inert, save-under move (§Forms) | Windowed dialogs (form_do stays modal; revisit for multi-app); transparent move (no alpha win worth the blend) |
 | Editable fields | AES `TEDINFO` + `G_FTEXT`, [`objc_edit`](https://www.exxosforum.co.uk/atari/mirror/toshyp/008010.html) with `ED_START=0/ED_INIT=1/ED_CHAR=2/ED_END=3`, `te_ptmplt` `'_'` templates, [`te_pvalid` validation set](https://www.exxosforum.co.uk/atari/mirror/toshyp/008016.html) | The classic call shape, template + pvalid semantics, a reduced TEDINFO (§Editable fields) | The six font/colour/thickness TEDINFO words (the theme owns appearance) |
-| Dialog shortcuts | The **WHITEBAK convention**: `OS_WHITEBAK (0x40)` in `ob_state` + high byte = index of the underlined char ([TOS.hyp fundamentals](https://freemint.github.io/tos.hyp/en/aes_fundamentals.html); XaAES masks bits 8–14, [`ob_fix_shortcuts`](https://github.com/freemint/freemint/blob/master/xaaes/src.km/obtree.c)). XaAES **auto-assigns** Alt-shortcuts to every `form_do` dialog since 0.999. Geneva instead marks with `'['` inside button strings. MagiC: UNDO fires the Cancel/Abort button, F1–F3 fire alert buttons ([manual pp.53-54](https://www.dsd.net/files/dl.php?File=Magic.pdf)) | WHITEBAK storage verbatim + XaAES-style auto-assign; Return=default (built), Esc=cancel via a new flag | Geneva's in-string marker (encoding rot); UNDO key (no such key on our boards) |
-| Drag & drop | MultiTOS **D&D protocol**: `AP_DRAGDROP (63)` AES message (msg[3]=dest window, [4]/[5]=mouse x/y, [6]=kbshift, [7]=pipe suffix) + a named-pipe handshake (`U:\PIPE\DRAGDROP.xx`, acks `DD_OK=0/DD_NAK=1/DD_EXT=2/DD_LEN=3/DD_TRASH=4/DD_PRINTER=5/DD_CLIPBOARD=6`, types `"ARGS"`/`"PATH"`) ([TOS.hyp D&D](https://freemint.github.io/tos.hyp/en/proto_dd.html)) | The message word-layout verbatim, the ARGS/PATH type vocabulary | The pipe transport (one AES process; the doorbell ABI moves 16-bit arrays, not fds) |
+| Dialog shortcuts | The **WHITEBAK convention**: `OS_WHITEBAK (0x40)` in `ob_state` + high byte = index of the underlined char ([TOS.hyp fundamentals](https://freemint.github.io/tos.hyp/en/aes_fundamentals.html); XaAES masks bits 8–14, [`ob_fix_shortcuts`](https://github.com/freemint/freemint/blob/master/xaaes/src.km/obtree.c)). XaAES **auto-assigns** Alt-shortcuts to every `form_do` dialog since 0.999. Geneva instead marks with `'['` inside button strings. MagiC: UNDO fires the Cancel/Abort button, F1–F3 fire alert buttons ([manual pp.53-54](https://www.dsd.net/files/dl.php?File=Magic.pdf)) | WHITEBAK storage verbatim + XaAES-style auto-assign; Geneva's `'['` marker accepted as a compat input, promoted to WHITEBAK; Return=default (built), Esc=cancel via a new flag | UNDO key (no such key on our boards) |
+| Drag & drop | MultiTOS **D&D protocol**: `AP_DRAGDROP (63)` AES message (msg[3]=dest window, [4]/[5]=mouse x/y, [6]=kbshift, [7]=pipe suffix) + a named-pipe handshake (`U:\PIPE\DRAGDROP.xx`, acks `DD_OK=0/DD_NAK=1/DD_EXT=2/DD_LEN=3/DD_TRASH=4/DD_PRINTER=5/DD_CLIPBOARD=6`, types `"ARGS"`/`"PATH"`) ([TOS.hyp D&D](https://freemint.github.io/tos.hyp/en/proto_dd.html)) | The message word-layout verbatim; the type negotiation, generalised to a vector of MIME types | The pipe transport (one AES process; the doorbell ABI moves 16-bit arrays, not fds); the four-char ARGS/PATH type names (MIME strings say more) |
 | Drop conventions | [TeraDesk](https://github.com/freemint/teradesk) (manual §5.3): plain drop=**copy**, Ctrl=move, Alt=rename-on-copy, Esc aborts; symlinks via a menu, never a drag. Windows: plain = move-within-volume / copy-across, Ctrl=copy, Shift=move, [Alt/Ctrl+Shift=shortcut](https://learn.microsoft.com/en-us/previous-versions/windows/desktop/mmc/using-copy-as-the-default-drag-and-drop-verb); Mac: plain=move, [Option=copy, Cmd-Option=alias](https://support.apple.com/en-us/102650) | The Windows modifier table (§Modifiers) — same-volume moves are what a desktop mostly does, and it degrades best to no-modifier input | TeraDesk's always-copy default (surprising for local reorganising) |
 | Drop-on-executable | TeraDesk ("the name of the file is passed to it as a parameter") & Windows both launch the target with the dropped file as argument | Yes — resolves through the same launcher as a double-click | — |
 | Menus | Classic `menu_bar(tree,1)` + `MN_SELECTED` (msg[3]=title, msg[4]=item; AES 3.30 adds msg[5..6]=tree address, msg[7]=parent obj); multitasking AES swaps the visible bar to the **topped app's** (`MENU_INSTL=100` = install without topping); [`menu_popup`](https://freemint.github.io/tos.hyp/en/menu.html) (AES 3.30+, `MENU{mn_tree,mn_menu,mn_item,mn_scroll,mn_keystate}`) and MagiC `form_popup` (1.11+) "run a popup" | Per-app bars keyed by `ap_id`, swapped on topping; a run-a-popup call | Scrolling popups (`mn_scroll`), `menu_attach` submenus (v1); pointer words in MN_SELECTED (handles, not addresses, cross the doorbell) |
@@ -81,10 +81,13 @@ enum { K_RSHIFT=0x01, K_LSHIFT=0x02, K_CTRL=0x04, K_ALT=0x08, K_CAPS=0x10 };
 - **Host** (`xtdesk.c present_and_wait`): fill `ev.shift` from
   `SDL_GetModState()`, map SDL keysyms → the table above. ~15 lines.
 - **A9** (`sprite.c input_next_event` / `struct os_event`): the struct
-  already has `shift`; the kernel input layer fills it once HID lands. The
-  terminal decoder can only infer Ctrl (control chars) — it reports
-  `K_CTRL` for `0x01–0x1A` and leaves the rest 0. Documented degradation,
-  not a blocker (see A9 specifics).
+  already has `shift`; the kernel input layer fills it when the STM HID
+  keyboard lands — imminent with the new board, so everything here is
+  designed and implemented as if Ctrl/Shift arrive in events (the host
+  testbed already delivers them today). The terminal decoder can only
+  infer Ctrl (control chars) — it reports `K_CTRL` for `0x01–0x1A` and
+  leaves the rest 0. Documented degradation, not a blocker (see A9
+  specifics).
 - `evnt_multi` already returns `kstate` through `oks`; it just starts being
   real. `MU_M1`/`MU_M2` are already live — no new event classes are needed;
   D&D and editing are built on `BTN_DOWN/MOTION/BTN_UP` + `MU_TIMER`.
@@ -144,15 +147,21 @@ basic functionality* — so assignment is automatic, not opt-in:
 
 - **Storage**: the WHITEBAK convention, verbatim — `OS_WHITEBAK (0x40)`
   set in `ob_state` means bits 8–14 hold the index of the underlined
-  character in the label (XaAES's 7-bit reading, bit 15 reserved). Apps
-  may pre-set it to pick their letter; resource-compatible if m68k apps
-  ever hand us trees.
-- **Auto-assign**: on `form_do` entry, a tree scan gives each
-  `G_BUTTON/G_CHECKBOX/G_RADIO` (and each `G_STRING` immediately preceding
-  an editable field) without a preset WHITEBAK the first letter of its
-  label not yet claimed in this dialog, case-insensitive; collisions fall
-  through to later letters. (Precedent: XaAES has auto-assigned dialog
-  shortcuts this way since 0.999.)
+  character in the label (XaAES's 7-bit reading, bit 15 reserved);
+  resource-compatible if m68k apps ever hand us trees.
+- **App override**: an app that picks its own letters is honoured. Two
+  ways to mark one: pre-set WHITEBAK directly, or write a Geneva-style
+  bracket in the label (`"[S]ave"`, `"[Q]uit"`) — the tree scan promotes
+  the bracket to WHITEBAK and strips it from the display string, so
+  internally there is only one representation and display strings are
+  never re-parsed.
+- **Auto-assign**: on `form_do` entry, app-declared letters are claimed
+  first; then a tree scan gives each `G_BUTTON/G_CHECKBOX/G_RADIO` (and
+  each `G_STRING` immediately preceding an editable field) still without
+  a WHITEBAK the first letter of its label not yet claimed in this
+  dialog, case-insensitive; collisions fall through to later letters.
+  (Precedent: XaAES has auto-assigned dialog shortcuts this way since
+  0.999.)
 - **Draw**: `objc_draw` underlines that character (a 1-px `v_pline` under
   the glyph, position via `vqt_extent` of the prefix).
 - **Fire**: a key matching a mnemonic acts as a click on the object —
@@ -164,11 +173,14 @@ basic functionality* — so assignment is automatic, not opt-in:
 ### Default, cancel, TAB (req 3)
 
 - **Return** fires `OF_DEFAULT` — already built; kept.
-- **Esc** fires the object carrying the new flag `OF_CANCEL (0x200)`; if
-  no object has it, Esc is ignored (a modal dialog with no cancel button
-  stays modal, it does not become "exit -1"). `form_alert` sets
-  `OF_CANCEL` on its sole button in single-button alerts, so Esc dismisses
-  them.
+- **Esc** is two-stage when an edit field has focus: the first Esc
+  clears the field (the classic GEM behaviour); the second — or an Esc
+  on an already-empty field, or with no edit focus at all — fires the
+  object carrying the new flag `OF_CANCEL (0x200)`. If no object has the
+  flag the cancel stage is ignored (a modal dialog with no cancel button
+  stays modal, it does not become "exit -1"); the field-clear stage
+  works regardless. `form_alert` sets `OF_CANCEL` on its sole button in
+  single-button alerts, so Esc dismisses them.
 - **TAB / Shift-TAB** move focus to the next / previous `OF_EDITABLE`
   object in tree order (wrap). A click in an editable field focuses it.
 
@@ -267,8 +279,13 @@ typedef struct { const char *title; const menu_item *items; int nitems; } menu_d
 
 Accelerators are matched inside `evnt_multi` *before* `MU_KEYBD`
 delivery: `Ctrl+letter` that matches the **topped app's** bar posts
-`MN_SELECTED` instead. Structured accel beats XaAES-style text parsing —
-we own `menu_build`, and parsing display strings is how encodings rot.
+`MN_SELECTED` instead. The structured `accel` field is the native API;
+`menu_build` *also* recognises the classic in-string convention — a
+trailing `"^Q"` in the item text — and promotes it to a real `accel`,
+stripping it from the display string (it draws right-aligned like any
+other accel). m68k/RSC-heritage menus work unmodified, and internally
+there is only one representation — display strings are parsed once, at
+build, and never again.
 
 The pull-down/save-under path gains the missing `aes_flush_rect` calls
 (today the open menu never reaches the A9 plane) and calls the idle hook.
@@ -303,29 +320,52 @@ world keeps the protocol and only swaps the payload transport.
 
 ```c
 // -- source side ----------------------------------------------------------
+enum { DND_PATH = 0,         // data = NUL-separated VFS paths, double-NUL end
+       DND_BYTES = 1 };      // data = arbitrary binary
 typedef struct {
-    char type[5];            // "PATH" (VFS path list) | "ARGS" (command tail)
-    const char *data;        // NUL-separated paths, double-NUL terminated
-    int  len;
+    const char *mime;        // "text/uri", "image/png", "text/plain", ...
+    uint8_t     kind;        // DND_PATH | DND_BYTES
+    const void *data;
+    int         len;
+} dnd_offer;
+typedef struct {
+    const dnd_offer *offers; // every representation the source can supply,
+    int  noffers;            //   ordered best-first
     const gfx_surface *icon; // drag feedback image (may be NULL)
 } dnd_payload;
 int dnd_drag(const dnd_payload *p, int mx, int my);  // runs the modal drag;
                                                      // returns 1 delivered / 0 cancelled
 // -- target side (arrives via evnt_mesag) ----------------------------------
 // Word layout mirrors AP_DRAGDROP(63) exactly, except msg[7] carries a
-// payload id instead of a pipe-name suffix:
+// payload handle instead of a pipe-name suffix:
 enum { WM_DROPPED = 40 };    // msg[3]=window handle (0 = desktop),
                              // msg[4]=drop x, msg[5]=drop y,
-                             // msg[6]=kbshift at drop, msg[7]=payload id
+                             // msg[6]=kbshift at drop, msg[7]=payload handle
 int dnd_payload_read(int id, dnd_payload *out);      // valid until next drag
 ```
+
+**Type negotiation, MiNT-shaped.** MiNT's protocol negotiated a type
+before transfer; we keep the negotiation and generalise the vocabulary
+to MIME strings. A drag publishes *every* representation its source can
+supply and the recipient picks the first offer it understands (offers
+are ordered best-first by the source) — an image drag offers
+`{image/png bytes, text/uri path}`, a text drag might offer
+`{text/plain, text/markdown, text/html}`. Each offer is a `path` (a VFS
+path list) or `bytes` (arbitrary binary — payloads are deliberately not
+path-only), and the same content may appear under several MIME types.
+
+In-process, `dnd_payload_read` is pointer passing — zero copies. The
+message itself carries only the 16-bit **payload handle** (msg[7]), so
+a future multi-app world swaps the handle dereference for a real
+transfer behind the same call; neither the message nor either side's
+logic changes shape.
 
 1. **Source**: button-down on an icon + motion past a 4-px slop starts the
    drag (`desk_click`/`br_click` grow a slop check before their
    double-click wait). The source builds a `dnd_payload` — a browser entry
-   drags its **VFS path** (`/Media/6502/Games/foo.xex`, or the
-   `/Network/<server>/…` path for net entries), a desktop icon drags its
-   own row reference.
+   offers its **VFS path** as `{text/uri, DND_PATH}`
+   (`/Media/6502/Games/foo.xex`, or the `/Network/<server>/…` path for
+   net entries), a desktop icon its own row reference.
 2. **AES drag loop** (`dnd_drag`): cursor carries the ghosted icon — A9:
    the DRAG_BASE overlay plane (same machinery as window drag, a ~48×48
    rect); host: redraw-per-motion + `aes_flush_rect`. The loop calls the
@@ -335,11 +375,12 @@ int dnd_payload_read(int id, dnd_payload *out);      // valid until next drag
    payload. The in-process desktop reads it from its `MU_MESAG` arm —
    the identical code a doorbell app will run.
 
-Rejected: the MiNT pipe handshake (DD_OK/DD_NAK over `U:\PIPE\DRAGDROP`).
-It exists to stream arbitrary bytes between two *processes*; our payloads
-are paths, the AES is one process, and the doorbell ABI is array-based.
-The `"PATH"/"ARGS"` type vocabulary is kept so a MiNT-style extension
-negotiation can be added later without changing the message.
+Rejected: the MiNT pipe transport (DD_OK/DD_NAK over `U:\PIPE\DRAGDROP`).
+It exists to stream bytes between two *processes*; the AES is one
+process and the doorbell ABI is array-based. Its type *negotiation* is
+the part worth keeping — reshaped as the MIME offer vector above — and
+the four-char `"PATH"`/`"ARGS"` names go with the pipe (MIME strings
+say more and cost nothing in-process).
 
 ### Modifier semantics
 
@@ -352,10 +393,20 @@ Read from `msg[6]` (kbshift at drop) by the **target**:
 | Shift | move | link |
 | Ctrl+Shift | link — *rejected in v1: no symlinks in the VFS/FAT* | link |
 
-- **Drop on the desktop = home a link, always.** The desktop has no
-  backing directory; a homed icon is a *reference*, like a Mac alias.
-  Copy/move onto the desktop background is meaningless and refused
-  (alert). This sidesteps inventing a `/Desktop` folder.
+The desktop column governs **local** sources; a network-drive source
+dropped on the desktop copies down regardless of modifier (next).
+
+- **Local drop on the desktop = home a link.** A homed icon is a
+  *reference*, like a Mac alias; copy/move of a local file onto the
+  desktop background is refused (alert) — the file already lives on the
+  SD card, and a link to it is cheap and never stale.
+- **Network drop on the desktop = copy down.** A remote link is fragile
+  (server absent at boot, share renamed), so dropping a network-drive
+  entry on the desktop materialises a local copy in **`/Desktop`** — a
+  new top-level SD folder, peer to `/OS` and `/Cache` — and homes an
+  icon whose `target` is the copy. Deliberately *not* inside `/Cache`:
+  the cache is flushable by contract, and desktop copies are user data.
+  Filename collisions rename-on-copy.
 - **Drop on an executable icon** (a `desktopIcons` row or browser entry
   whose type is launchable): run it with the dropped file as first
   argument — resolves through the same `desk_launch` path as a
@@ -376,24 +427,28 @@ Double-click on a homed icon = `desk_launch(target, mediaType)`. The icon
 bitmap resolves through the existing `windowIcons` glob rules at home
 time, `displayName` = the filename.
 
-**Write path**: the desktop currently opens the registry read-only and
-fujinetd owns all writes. `desktopIcons` is the desktop's own table — the
-desktop opens the DB read-write and becomes the single writer *for its
-tables* (fujinetd keeps `fujinet`/`fujiCache`); SQLite's locking covers
-the cross-process case. (Flagged as an open question — routing through a
-daemon command is the alternative.)
+**Write path**: ownership is segregated by table. The desktop opens the
+DB read-write and writes its own `desktopIcons` rows directly; fujinetd
+keeps `fujinet`/`fujiCache`. SQLite's locking covers the cross-process
+case. Routing homing through a daemon command was considered and
+rejected — the daemon has no stake in these rows, and the indirection
+buys nothing.
 
 **FujiNet ghosts as drag sources**: dragging an uncached (ghosted) entry
-drags its `/Network/<server>/…` path.
+offers its `/Network/<server>/…` path.
 
-- Homed on the desktop → a link whose double-click is fetch-then-launch —
-  exactly the ghost double-click semantics, already async via `net_pump`.
+- Dropped on the desktop → copy down: the drop issues a daemon `fetch`
+  with a `/Desktop` destination (async via `net_pump`, progress like any
+  fetch) and homes the icon against the local copy — double-click
+  launches locally whether the server is up or not.
 - Copied into a folder window → the target issues a daemon `fetch` with a
   destination override; progress lands in the target window's info bar
   like any fetch. Move is refused (the remote is read-only in v1).
-- A homed network link's icon should show cache state (solid/ghost); v1
-  draws it solid and re-checks on launch — badge-on-refresh is listed
-  under open questions.
+- **One badge only.** A network-homed icon draws an **update pip** when
+  an explicit refresh marks its `fujiCache` row `updateAvailable`.
+  Ghost/solid cache states don't apply on the desktop — the copy is
+  local by construction, so the icon is always solid and always
+  launchable.
 
 ## Event-loop integration summary
 
@@ -415,13 +470,18 @@ drags its `/Network/<server>/…` path.
 - **`struct os_event` already carries `shift`** (`loader/kernel/xtsys.h`)
   — the syscall ABI needs no change, only the kernel input layer filling
   it (HID) and the two desktops copying it through (they already do).
+- **Modifiers are first-class.** The STM HID keyboard (scancodes +
+  modifier state) lands imminently with the new board, and the host
+  testbed delivers full modifiers via SDL today — so the Ctrl/Shift
+  paths are implemented and tested from day one, not stubbed pending
+  hardware.
 - **Terminal-decoder degradation** (`sprite.c`): arrows move the pointer
   and `Tab` *is* a click, so TAB-focus and arrow-editing are unavailable
   on the serial testbed — click-to-focus and plain-letter mnemonics still
   work, and `Ctrl+letter` arrives as control chars (mapped to `K_CTRL` +
   letter). Modifier-based drop semantics degrade to the no-modifier
-  column (move/copy-by-volume, desktop=link) — acceptable: the testbed is
-  a debug surface; real HID lands scancodes + modifiers.
+  column (move/copy-by-volume, desktop=link or copy-down) — acceptable:
+  the testbed is a debug surface, not the product input path.
 - **HW cursor during drags**: the pointer sprite stays kernel-side; the
   dragged icon rides the **DRAG_BASE overlay plane** (`SYS_overlay`), the
   same lift/move/drop ops as window drag — tear-free, no per-motion
@@ -475,37 +535,24 @@ replay (click bar → move → release on item → drain message queue).
 | `gem/aes/dnd.c` (new) | `dnd_drag` loop (host redraw + A9 overlay), payload park, target resolve, `WM_DROPPED` post | ~250 |
 | `gem/aes/aes.h` | `dnd_payload`, `WM_DROPPED` | +25 |
 | `gem/registry.c/h` | read-write open, `registry_home_icon()` insert/update/delete, schema migration | +80 |
-| desktops ×2 | drag sources in `desk_click`/`br_click` (slop check), desktop drop target (home link), browser drop target (copy/move + ghost fetch), exec-target launch, icon reload | +200 each |
+| desktops ×2 | drag sources in `desk_click`/`br_click` (slop check), desktop drop target (local home-link, network copy-down into `/Desktop`), browser drop target (copy/move + ghost fetch), exec-target launch, icon reload | +200 each |
 
 Testability: scripted replay drags (down-motion-up sequences) headlessly;
 assert the `desktopIcons` row via the `sqlite3` CLI; PPM snapshot of the
 homed icon; ghost-source case against `mock_tnfsd.py` + fujinetd.
 
 Follow-ups (post-stage-3): drop-on-emulator-window media insert, windowed
-dialogs for multi-app, cache-state badges on network links, caret blink.
+dialogs for multi-app, the explicit-refresh verb that sets `fujiCache`
+`updateAvailable` (feeds the desktop update pip), caret blink.
 
 ## Open questions (for the owner)
 
-1. **Esc in a focused edit field**: classic GEM Esc *clears the field*
-   (universally implemented, though no primary spec sentence survives —
-   MagiC's key table only implies it); this design makes Esc always
-   cancel-the-dialog (field clear = Ctrl-U). OK, or
-   Esc-clears-field-first, second Esc cancels?
-2. **Desktop drop = link only**: copy/move onto the desktop background is
-   refused (no backing directory). Acceptable, or do you want a real
-   `/Desktop` folder so plain drops materialise files?
-3. **Registry writes from the desktop**: open read-write and own
-   `desktopIcons` directly (proposed), or route homing through a daemon
-   command in the fujinetd style?
-4. **Auto-assigned mnemonics** (req 2 "as basic functionality"): letters
-   are picked automatically on dialog entry when the app didn't mark one —
-   assignments can shift as labels change. Fine, or app-declared only?
-5. **Menu accelerators**: structured `accel` field (proposed) means future
-   m68k apps' text-embedded `"^Q"` conventions need translation in the
-   binding layer. Acceptable?
-6. **A9 modifiers**: is STM HID keyboard delivery (scancodes + modifier
-   state) scheduled? Until then the terminal testbed can't express
-   Ctrl/Shift drops — is the no-modifier fallback column enough?
-7. **Ghost links' cache-state display**: homed network links draw solid in
-   v1 and re-check at launch. Is a lazy state badge (daemon `stat` on
-   desktop redraw) worth stage-3 scope?
+The original seven are settled and folded into the sections above. What
+genuinely remains:
+
+1. **`/Desktop` copy lifecycle**: removing a network-homed desktop icon —
+   delete its `/Desktop` copy with it, or drop only the registry row and
+   leave the file (it is user data, after all)?
+2. **Update-pip action**: what does a pipped icon *do*? Double-click
+   launches the local copy as-is (pip purely advisory), or is there a
+   re-fetch verb — a context action, or an ask-at-launch alert?
