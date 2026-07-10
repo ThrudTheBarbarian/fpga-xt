@@ -186,6 +186,45 @@ void    menu_tnormal(OBJECT *tree, int title, int normal);   // (un)highlight a 
 void    menu_icheck(OBJECT *tree, int item, int check);      // tick / untick an item
 void    menu_ienable(OBJECT *tree, int item, int enable);    // enable / disable an item
 
+// ---- Popup / context menus (menu_popup) ---------------------------------
+// A generic run-a-popup: a flat array of menu_item rows drawn as a themed box
+// at (x,y), tracked modally (hover highlights, cascades open to the right),
+// returning the chosen leaf's id (or -1 on cancel).  Used for the desktop's
+// right-click context menu and the browse navigator, and to back G_POPUP combo
+// fields in dialogs.  (The classic AES menu_popup(MENU*,...) tree shape is not
+// copied — this is the flat-array form; an m68k shim can wrap it.)
+typedef struct menu_item {
+    const char *label;               // "-" = separator (a divider, non-selectable)
+    const char *accel;               // e.g. "^N", drawn right-aligned in grey; NULL = none
+    int         id;                  // returned when this leaf is chosen
+    const struct menu_item *sub;     // non-NULL = cascading submenu (opens to the right)
+    int         nsub;                // submenu item count
+    unsigned    flags;               // MI_DISABLED | MI_CHECKED (bit flags)
+} menu_item;
+enum { MI_DISABLED = 1, MI_CHECKED = 2 };
+
+// Run a modal popup at (x,y) (clamped fully on-screen).  Mouse hover highlights
+// rows, moving onto a submenu item cascades right (flipping left near the edge),
+// click/Enter on a leaf returns its id, click-outside/Esc returns -1.  Keyboard:
+// up/down move (skipping separators/disabled), right/left open/close a cascade,
+// a first-letter mnemonic jumps/selects.  Waits through aes_wait_idle so the
+// desktop's idle hook (net_pump) keeps running.  Restores all pixels on exit.
+int menu_popup(const menu_item *items, int n, int x, int y);
+
+// Geometry + navigation, factored out so the layout / hit-test / keyboard nav
+// are unit-testable without driving the modal loop headlessly.
+typedef struct { int x, y, w, h, rowh, seph, pady, labelx, n; } popup_geom;
+// Size the box for `items` and clamp its origin on-screen; fills `g`.
+void menu_popup_layout(const menu_item *items, int n, int x, int y, popup_geom *g);
+// Row index at (mx,my), or -1 (outside, or a separator / disabled row).
+int  menu_popup_hit(const popup_geom *g, const menu_item *items, int mx, int my);
+// Next selectable row from `cur` in direction dir (+1 down / -1 up), wrapping,
+// skipping separators + disabled items; -1 if none.  cur < 0 starts at an edge.
+int  menu_popup_nav(const menu_item *items, int n, int cur, int dir);
+// Row whose auto-assigned first-letter mnemonic matches `ch` (case-insensitive),
+// skipping separators / disabled; -1 if none.
+int  menu_popup_mnemonic(const menu_item *items, int n, int ch);
+
 // ---- Windows ------------------------------------------------------------
 // Themed windows over the AES.  The frame (9-slice window + titlebar + traffic
 // lights) is drawn by the AES; the app draws the work area through a content

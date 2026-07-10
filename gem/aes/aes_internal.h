@@ -14,6 +14,9 @@ int  menu_handle_click(int mx, int my);
 // Draw a dropdown open with one item highlighted (item_ord<0 = none) — for
 // demos / screenshots; the live pull-down is driven by menu_handle_click.
 void menu_render_open(int title_ord, int item_ord);
+// Draw a popup menu open with row `hov` highlighted at a laid-out geometry —
+// for demos / screenshots / headless tests (the live popup is menu_popup).
+void menu_popup_render_demo(const menu_item *items, int n, int hov, const popup_geom *g);
 void menu_redraw(void);            // repaint the active menu bar (always on top)
 void aes_reserve_top(int h);       // reserve a top strip from the work area (the menu bar)
 

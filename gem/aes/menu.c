@@ -7,6 +7,9 @@
 #include "aes/aes_internal.h"
 #include <stdlib.h>
 #include <string.h>
+#include <ctype.h>
+
+gfx_surface *vdi_screen_target(void);   // the physical workstation surface (VDI core)
 
 #define BARH   22
 #define ITEMH  20
@@ -182,4 +185,333 @@ int menu_handle_click(int mx, int my){
     close_menu(cur);
     if(sel>=0){ int16_t msg[8]={MN_SELECTED,1,0,(int16_t)(T0+cur),(int16_t)sel,0,0,0}; appl_write(0,16,msg); }
     return 1;
+}
+
+// ==== Popup / context menus (menu_popup) =================================
+// A generic run-a-popup over a flat menu_item[] array: a themed "menu" box with
+// one row per item (label left, accel/tick/submenu-triangle right), tracked
+// modally with hover highlight + cascading submenus.  Layout + hit-test + nav
+// are factored into pure helpers (menu_popup_layout / _hit / _nav / _mnemonic)
+// so they unit-test without the modal loop.  Drawing reuses the same "menu"
+// theme element + PEN_HILITE as the bar pull-down (draw_items above); this path
+// adds the accel column, separators, disabled greying, and submenu triangles.
+
+#define P_ITEMH  20     // selectable row height
+#define P_SEPH   9      // separator row height (a thin divider)
+#define P_PADX   22     // left pad (leaves room for the check tick)
+#define P_RPAD   14     // right pad
+#define P_GAP    22     // gap between the label and the accel / triangle column
+#define P_TRIW   12     // submenu-triangle column width
+#define P_PADY   4      // top/bottom pad inside the box
+#define PEN_GREY 9      // accel + disabled text (matches object.c's disabled pen)
+
+static int mi_is_sep(const menu_item *it){ return it->label && it->label[0]=='-' && it->label[1]==0; }
+static int mi_selectable(const menu_item *items, int i){
+    const menu_item *it=&items[i];
+    return it->label && !mi_is_sep(it) && !(it->flags & MI_DISABLED);
+}
+static int mi_row_h(const menu_item *items, int i){ return mi_is_sep(&items[i]) ? P_SEPH : P_ITEMH; }
+
+// The auto-assigned mnemonic: the first still-unclaimed alpha letter of each
+// selectable label, in row order.  Returns the label-char index for `row`
+// (-1 = none).  Recomputed on the fly (deterministic) so no per-panel storage.
+static int mi_mnemonic_idx(const menu_item *items, int n, int row){
+    if(row<0 || row>=n || !mi_selectable(items,row)) return -1;
+    unsigned claimed=0;
+    for(int i=0;i<=row;i++){
+        if(!mi_selectable(items,i)) continue;
+        const char *s=items[i].label; int pick=-1;
+        for(int j=0;s[j];j++){ int c=tolower((unsigned char)s[j]);
+            if(c<'a'||c>'z'||(claimed&(1u<<(c-'a')))) continue;
+            pick=j; claimed|=1u<<(c-'a'); break; }
+        if(i==row) return pick;
+    }
+    return -1;
+}
+
+// ---- geometry ----------------------------------------------------------
+void menu_popup_layout(const menu_item *items, int n, int x, int y, popup_geom *g){
+    vst_height(H(),14,0,0,0,0);
+    int lw=0, aw=0, has_sub=0, h=P_PADY*2;
+    for(int i=0;i<n;i++){
+        h += mi_row_h(items,i);
+        if(mi_is_sep(&items[i])) continue;
+        int w=text_w(items[i].label); if(w>lw) lw=w;
+        if(items[i].accel){ int a=text_w(items[i].accel); if(a>aw) aw=a; }
+        if(items[i].sub) has_sub=1;
+    }
+    int rightw = aw;                                  // accel column width
+    if(has_sub && P_TRIW>rightw) rightw = P_TRIW;     // ...or the triangle column
+    int w = P_PADX + lw + (rightw ? P_GAP+rightw : 0) + P_RPAD;
+
+    gfx_surface *scr = vdi_screen_target();
+    int sw = scr?scr->w:640, sh = scr?scr->h:480;
+    if(x+w > sw) x = sw-w;   if(x<0) x=0;             // clamp fully on-screen
+    if(y+h > sh) y = sh-h;   if(y<0) y=0;
+
+    g->x=x; g->y=y; g->w=w; g->h=h;
+    g->rowh=P_ITEMH; g->seph=P_SEPH; g->pady=P_PADY; g->labelx=P_PADX; g->n=n;
+}
+
+// y of row `row`'s top, given the (laid-out) box.
+static int mi_row_top(const menu_item *items, const popup_geom *g, int row){
+    int ty=g->y+g->pady;
+    for(int i=0;i<row;i++) ty += mi_row_h(items,i);
+    return ty;
+}
+
+int menu_popup_hit(const popup_geom *g, const menu_item *items, int mx, int my){
+    if(mx<g->x || mx>=g->x+g->w) return -1;
+    int ty=g->y+g->pady;
+    for(int i=0;i<g->n;i++){
+        int rh=mi_row_h(items,i);
+        if(my>=ty && my<ty+rh) return mi_selectable(items,i) ? i : -1;
+        ty+=rh;
+    }
+    return -1;
+}
+
+int menu_popup_nav(const menu_item *items, int n, int cur, int dir){
+    if(n<=0) return -1;
+    if(dir==0) dir=1;
+    for(int step=0; step<n; step++){
+        cur += dir;
+        if(cur<0) cur=n-1; else if(cur>=n) cur=0;
+        if(mi_selectable(items,cur)) return cur;
+    }
+    return -1;
+}
+
+int menu_popup_mnemonic(const menu_item *items, int n, int ch){
+    ch=tolower((unsigned char)ch);
+    for(int i=0;i<n;i++){
+        int mi=mi_mnemonic_idx(items,n,i);
+        if(mi>=0 && tolower((unsigned char)items[i].label[mi])==ch) return i;
+    }
+    return -1;
+}
+
+// ---- drawing -----------------------------------------------------------
+static void popup_pens(void){
+    const theme *th=aes_theme();
+    if(th){ v_setrgb(H(),PEN_HILITE,(th->highlight>>24)&0xFF,(th->highlight>>16)&0xFF,(th->highlight>>8)&0xFF);
+            v_setrgb(H(),PEN_BARLINE,(th->border>>24)&0xFF,(th->border>>16)&0xFF,(th->border>>8)&0xFF); }
+}
+
+// A 1px underline under label char `idx` at text origin (tx,uy), current face.
+static void popup_underline(const char *s, int idx, int tx, int uy, int pen){
+    if(idx<0 || idx>=(int)strlen(s)) return;
+    char pre[96]; int16_t e[8]; int x0=0;
+    int k = idx<(int)sizeof pre-1 ? idx : (int)sizeof pre-1;
+    if(k){ memcpy(pre,s,k); pre[k]=0; vqt_extent(H(),pre,e); x0=e[2]-e[0]; }
+    char ch[2]={s[idx],0}; vqt_extent(H(),ch,e); int cw=e[2]-e[0]; if(cw<2)cw=2;
+    vsl_color(H(),pen); vsl_width(H(),1);
+    int16_t l[4]={(int16_t)(tx+x0),(int16_t)uy,(int16_t)(tx+x0+cw-1),(int16_t)uy};
+    v_pline(H(),2,l);
+}
+
+static void draw_popup(const menu_item *items, const popup_geom *g, int hov){
+    theme_draw(H(),aes_theme(),"menu",g->x,g->y,g->w,g->h);
+    vst_height(H(),14,0,0,0,0);
+    for(int i=0;i<g->n;i++){
+        int ty=mi_row_top(items,g,i), rh=mi_row_h(items,i);
+        if(mi_is_sep(&items[i])){                                  // thin divider line
+            vsl_color(H(),PEN_BARLINE); vsl_width(H(),1);
+            int16_t ln[4]={(int16_t)(g->x+6),(int16_t)(ty+rh/2),(int16_t)(g->x+g->w-7),(int16_t)(ty+rh/2)};
+            v_pline(H(),2,ln); continue;
+        }
+        int disabled = items[i].flags & MI_DISABLED;
+        int sel = (i==hov);
+        if(sel){ vsf_color(H(),PEN_HILITE); vsf_interior(H(),VDI_FIS_SOLID); vsf_perimeter(H(),0);
+                 int16_t r[4]={(int16_t)(g->x+4),(int16_t)ty,(int16_t)(g->x+g->w-5),(int16_t)(ty+rh-1)};
+                 vr_recfl(H(),r); }
+        int lpen = sel ? 0 : disabled ? PEN_GREY : 1;
+        int apen = sel ? 0 : PEN_GREY;
+        int cy = ty+rh/2-7;
+        if(items[i].flags & MI_CHECKED){                                  // a drawn check tick
+            int cx=g->x+7, cym=ty+rh/2;
+            vsl_color(H(), sel?0:1); vsl_width(H(),2);
+            int16_t tk[6]={(int16_t)cx,(int16_t)cym,(int16_t)(cx+3),(int16_t)(cym+3),(int16_t)(cx+8),(int16_t)(cym-4)};
+            v_pline(H(),3,tk); }
+        vst_color(H(),lpen);
+        vst_alignment(H(),VDI_TA_LEFT,VDI_TA_TOP,0,0);
+        v_gtext(H(), g->x+g->labelx, cy, items[i].label);
+        if(!disabled && !sel){                                      // mnemonic underline
+            int mi=mi_mnemonic_idx(items,g->n,i);
+            if(mi>=0) popup_underline(items[i].label, mi, g->x+g->labelx, cy+16, lpen);
+        }
+        if(items[i].sub){                                           // right-pointing triangle
+            int tx=g->x+g->w-P_RPAD-P_TRIW+3, tym=ty+rh/2;
+            vsf_color(H(),sel?0:1); vsf_interior(H(),VDI_FIS_SOLID); vsf_perimeter(H(),0);
+            int16_t tri[6]={(int16_t)tx,(int16_t)(tym-4),(int16_t)(tx+5),(int16_t)tym,(int16_t)tx,(int16_t)(tym+4)};
+            v_fillarea(H(),3,tri);
+        } else if(items[i].accel){                                  // accel, right-aligned grey
+            vst_color(H(),apen);
+            vst_alignment(H(),VDI_TA_RIGHT,VDI_TA_TOP,0,0);
+            v_gtext(H(), g->x+g->w-P_RPAD, cy, items[i].accel);
+            vst_alignment(H(),VDI_TA_LEFT,VDI_TA_TOP,0,0);
+        }
+    }
+    aes_flush_rect(g->x,g->y,g->w,g->h);
+}
+
+// Draw a popup open with row `hov` highlighted, at the already-laid-out geom —
+// for demos / screenshots / headless tests (the live popup is driven by
+// menu_popup below).  Sets up its pens so it works without an active menu bar.
+void menu_popup_render_demo(const menu_item *items, int n, int hov, const popup_geom *g){
+    (void)n; popup_pens(); draw_popup(items, g, hov);
+}
+
+// ---- save-under stack (nested popup + cascades) ------------------------
+#define PSAV 6
+static struct { gfx_surface *s; int x,y,w,h; } g_psav[PSAV];
+static int g_npsav;
+static void psav_push(int x,int y,int w,int h){
+    if(g_npsav>=PSAV){ g_npsav++; return; }
+    gfx_surface *s=gfx_surface_alloc(w,h);
+    g_psav[g_npsav].s=s; g_psav[g_npsav].x=x; g_psav[g_npsav].y=y;
+    g_psav[g_npsav].w=w; g_psav[g_npsav].h=h;
+    if(s){ MFDB scr={0},dst; mfdb_from_surface(&dst,s);
+        int16_t p[8]={(int16_t)x,(int16_t)y,(int16_t)(x+w-1),(int16_t)(y+h-1),0,0,(int16_t)(w-1),(int16_t)(h-1)};
+        vro_cpyfm(H(),VRO_COPY,p,&scr,&dst); }
+    g_npsav++;
+}
+static void psav_pop(void){
+    if(g_npsav<=0) return;
+    g_npsav--;
+    if(g_npsav>=PSAV || !g_psav[g_npsav].s) return;
+    int x=g_psav[g_npsav].x,y=g_psav[g_npsav].y,w=g_psav[g_npsav].w,h=g_psav[g_npsav].h;
+    MFDB scr={0},src; mfdb_from_surface(&src,g_psav[g_npsav].s);
+    int16_t p[8]={0,0,(int16_t)(w-1),(int16_t)(h-1),(int16_t)x,(int16_t)y,(int16_t)(x+w-1),(int16_t)(y+h-1)};
+    vro_cpyfm(H(),VRO_COPY,p,&src,&scr);
+    aes_flush_rect(x,y,w,h);
+    gfx_surface_free(g_psav[g_npsav].s); g_psav[g_npsav].s=NULL;
+}
+
+// ---- modal loop --------------------------------------------------------
+#define POPMAX_INTERNAL 6
+// subrow = the row of this panel whose cascade is currently open (-1 = none),
+// so hovering that same row again doesn't flicker the submenu closed/open.
+typedef struct { const menu_item *items; int n; popup_geom g; int hov, subrow; } popup_panel;
+
+static void panel_open(popup_panel *p, const menu_item *items, int n, int x, int y){
+    p->items=items; p->n=n; p->hov=-1; p->subrow=-1;
+    menu_popup_layout(items,n,x,y,&p->g);
+    psav_push(p->g.x,p->g.y,p->g.w,p->g.h);
+    draw_popup(items,&p->g,-1);
+}
+static void panel_close(popup_panel *p){ (void)p; psav_pop(); }
+static void panel_redraw(popup_panel *p){ draw_popup(p->items,&p->g,p->hov); }
+
+// Topmost open panel whose box contains (mx,my); -1 if over none.
+static int panel_at(popup_panel *st, int depth, int mx, int my){
+    for(int i=depth-1;i>=0;i--){ popup_geom *g=&st[i].g;
+        if(mx>=g->x && mx<g->x+g->w && my>=g->y && my<g->y+g->h) return i; }
+    return -1;
+}
+// Close every panel above index `keep`, restoring their save-unders, and clear
+// the record of `keep`'s open cascade.
+static void close_above(popup_panel *st, int *depth, int keep){
+    while(*depth-1>keep){ panel_close(&st[*depth-1]); (*depth)--; }
+    if(keep>=0 && keep<*depth) st[keep].subrow=-1;
+}
+// Open item `row` of panel `pi` as a cascade to its right (flip left if needed).
+static void open_cascade(popup_panel *st, int *depth, int pi, int row){
+    if(*depth>=POPMAX_INTERNAL) return;
+    const menu_item *it=&st[pi].items[row];
+    int rtop=mi_row_top(st[pi].items,&st[pi].g,row);
+    popup_geom tg; menu_popup_layout(it->sub,it->nsub,
+                    st[pi].g.x+st[pi].g.w-2, rtop-P_PADY, &tg);   // provisional size
+    int nx=st[pi].g.x+st[pi].g.w-2;
+    gfx_surface *scr=vdi_screen_target(); int sw=scr?scr->w:640;
+    if(nx+tg.w>sw) nx=st[pi].g.x-tg.w+2;                         // flip to the left
+    panel_open(&st[*depth], it->sub, it->nsub, nx, rtop-P_PADY);
+    st[*depth].hov = menu_popup_nav(it->sub,it->nsub,-1,1);
+    panel_redraw(&st[*depth]);
+    st[pi].subrow=row;                                          // remember the spawning row
+    (*depth)++;
+}
+
+int menu_popup(const menu_item *items, int n, int x, int y){
+    if(n<=0) return -1;
+    popup_pens();
+    popup_panel st[POPMAX_INTERNAL]; int depth=0;
+    panel_open(&st[0], items, n, x, y); depth=1;
+    int result=-1;
+
+    for(;;){
+        aes_event ev; int gen=aes_redraw_gen();
+        int t=aes_wait_idle(&ev,-1);
+        if(aes_redraw_gen()!=gen){                       // idle work repainted under us
+            for(int i=0;i<depth;i++) panel_redraw(&st[i]);
+        }
+        if(t==AES_QUIT){ result=-1; break; }
+
+        if(t==AES_KEY){
+            int ascii=ev.key&0xFF, scan=(ev.key>>8)&0xFF;
+            popup_panel *top=&st[depth-1];
+            if(ascii==0x1b){ result=-1; break; }                       // Esc -> cancel
+            if(scan==XK_DOWN || scan==XK_UP){
+                int dir = scan==XK_DOWN ? 1 : -1;
+                int nx=menu_popup_nav(top->items,top->n,top->hov,dir);
+                if(nx!=top->hov){ top->hov=nx; panel_redraw(top); }
+                continue;
+            }
+            if(scan==XK_RIGHT){
+                if(top->hov>=0 && top->items[top->hov].sub) open_cascade(st,&depth,depth-1,top->hov);
+                continue;
+            }
+            if(scan==XK_LEFT){
+                if(depth>1) close_above(st,&depth,depth-2);       // back to the parent panel
+                continue;
+            }
+            if(ascii=='\r' || ascii=='\n' || ascii==' '){
+                if(top->hov>=0){
+                    if(top->items[top->hov].sub) open_cascade(st,&depth,depth-1,top->hov);
+                    else { result=top->items[top->hov].id; break; }
+                }
+                continue;
+            }
+            if(isalnum(ascii)){                                        // mnemonic jump/select
+                int m=menu_popup_mnemonic(top->items,top->n,ascii);
+                if(m>=0){ top->hov=m; panel_redraw(top);
+                    if(top->items[m].sub) open_cascade(st,&depth,depth-1,m);
+                    else { result=top->items[m].id; break; } }
+                continue;
+            }
+            continue;
+        }
+
+        if(t==AES_MOTION){
+            int pi=panel_at(st,depth,ev.mx,ev.my);
+            if(pi<0) continue;                                         // outside: leave panels as-is
+            popup_panel *p=&st[pi];
+            int row=menu_popup_hit(&p->g,p->items,ev.mx,ev.my);
+            if(depth>pi+1 && row==p->subrow){                          // still over the open cascade's row
+                if(p->hov!=row){ p->hov=row; panel_redraw(p); }
+                continue;                                              // keep it open (no flicker)
+            }
+            close_above(st,&depth,pi);                                 // a different row: drop cascades
+            if(row!=p->hov){ p->hov=row; panel_redraw(p); }
+            if(row>=0 && p->items[row].sub)                            // hover a sub item -> cascade
+                open_cascade(st,&depth,pi,row);
+            continue;
+        }
+
+        if(t==AES_BTN_DOWN || t==AES_BTN_UP){
+            int pi=panel_at(st,depth,ev.mx,ev.my);
+            if(pi<0){ if(t==AES_BTN_DOWN){ result=-1; break; } continue; }  // click-out cancels
+            popup_panel *p=&st[pi];
+            int row=menu_popup_hit(&p->g,p->items,ev.mx,ev.my);
+            if(row<0) continue;
+            if(p->items[row].sub){                                    // click a sub parent -> open
+                if(!(depth>pi+1 && row==p->subrow)){                  // (unless already open)
+                    close_above(st,&depth,pi);
+                    open_cascade(st,&depth,pi,row);
+                }
+            } else { result=p->items[row].id; break; }                // leaf -> select
+        }
+    }
+    while(depth>0){ panel_close(&st[depth-1]); depth--; }             // restore all save-unders
+    return result;
 }

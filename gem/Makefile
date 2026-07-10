@@ -36,7 +36,7 @@ OBJ      := $(addprefix $(BUILD)/,$(SRC:.c=.o))
 
 TARGET  := $(BUILD)/gem_sdl
 
-.PHONY: all run test clean fills shapes output text lines theme themewin themepack aes aesmenu aeswin desktop pdf fontscan catalogtest
+.PHONY: all run test clean fills shapes output text lines theme themewin themepack aes aesmenu aeswin desktop pdf fontscan catalogtest menu_test
 all: $(TARGET)
 
 $(TARGET): $(OBJ)
@@ -163,6 +163,15 @@ $(BUILD)/gem_test: $(TEST_OBJ)
 WMTEST_OBJ := $(addprefix $(BUILD)/,gfx_soft.o font.o wm.o wm_test.o $(VDI_SRC:.c=.o))
 $(BUILD)/wm_test: $(WMTEST_OBJ)
 	$(CC) $(WMTEST_OBJ) $(FT_LIBS) -o $@
+
+# menu_test — headless AES popup-menu self-test (no SDL): unit-tests the
+# menu_popup geometry / hit-test / keyboard-nav helpers and renders one open
+# popup + its cascade to /tmp/xtdesk-menu.ppm.
+MENUTEST_OBJ := $(addprefix $(BUILD)/,gfx_soft.o font.o theme.o menu_test.o $(VDI_SRC:.c=.o) $(AES_SRC:.c=.o))
+$(BUILD)/menu_test: $(MENUTEST_OBJ)
+	$(CC) $(MENUTEST_OBJ) $(FT_LIBS) -o $@
+menu_test: $(BUILD)/menu_test
+	./$(BUILD)/menu_test
 
 test: $(BUILD)/gem_test $(BUILD)/wm_test
 	./$(BUILD)/gem_test
