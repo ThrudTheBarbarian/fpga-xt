@@ -209,15 +209,15 @@ static int ff_open(vfs_mount *m, const char *path, int flags, vfs_file *f)
     /* prefix the FatFs drive: "/foo" -> "0:/foo" */
     char p[256];
     ffpath(p, path);
-    /* map VFS open flags -> FatFs mode */
-    BYTE mode;
-    if (!(flags & VFS_O_ACCMODE)) mode = FA_READ;                         /* read-only */
-    else {
-        mode = FA_READ | FA_WRITE;
-        if (flags & VFS_O_TRUNC)      mode |= FA_CREATE_ALWAYS;           /* create/truncate */
-        else if (flags & VFS_O_CREAT) mode |= FA_OPEN_ALWAYS;             /* create if absent */
-        else                          mode |= FA_OPEN_EXISTING;
-    }
+    /* map VFS open flags -> FatFs mode. O_CREAT/O_TRUNC create the file regardless of
+     * access mode — POSIX: open(path, O_RDONLY|O_CREAT) still creates it. (This is what
+     * `touch` does: open(path, O_CREAT) == O_RDONLY|O_CREAT; the old code only created
+     * on a write open, so touch got ENOENT.) FatFs' create modes don't need FA_WRITE
+     * for a 0-byte create (ff.c f_open enters the create path on FA_OPEN_ALWAYS alone). */
+    BYTE mode = (flags & VFS_O_ACCMODE) ? (FA_READ | FA_WRITE) : FA_READ;
+    if (flags & VFS_O_TRUNC)      mode |= FA_CREATE_ALWAYS;               /* create/truncate */
+    else if (flags & VFS_O_CREAT) mode |= FA_OPEN_ALWAYS;                 /* create if absent */
+    else                          mode |= FA_OPEN_EXISTING;
     if (f_open(&pool[h], p, mode) != FR_OK) return -1;
     used[h] = 1;
     f->priv = &pool[h];
