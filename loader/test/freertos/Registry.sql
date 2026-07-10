@@ -178,3 +178,88 @@ CREATE TABLE fujinet
 	transport	INTEGER NOT NULL DEFAULT 3,  -- ref to fujiTransport:id
 	path		VARCHAR NOT NULL DEFAULT '/'
 	);
+
+
+
+-- ---------------------------------------------------------------------------
+-- Desktop menus, views and sorting
+--
+-- contextMenu drives the right-click menu, scoped by where the click landed
+-- (desktop / drive / in-window / icon-in-window). Users add/delete rows to
+-- customise it; every item carries an accelerator. `action` is a verb the
+-- desktop dispatches; `label` "-" is a separator; a `submenu` name groups
+-- child items (e.g. the Show submenu). viewMode/sortMode + deskPrefs hold the
+-- view defaults (per-window state overrides these live).
+-- ---------------------------------------------------------------------------
+DROP TABLE IF EXISTS menuScope;
+CREATE TABLE menuScope
+    (
+    id      INTEGER PRIMARY KEY AUTOINCREMENT,
+    type    VARCHAR NOT NULL
+    );
+INSERT INTO menuScope (id,type) VALUES (1,'desktop');
+INSERT INTO menuScope (id,type) VALUES (2,'drive');
+INSERT INTO menuScope (id,type) VALUES (3,'window');
+INSERT INTO menuScope (id,type) VALUES (4,'icon');
+
+DROP TABLE IF EXISTS viewMode;
+CREATE TABLE viewMode
+    (
+    id      INTEGER PRIMARY KEY AUTOINCREMENT,
+    type    VARCHAR NOT NULL
+    );
+INSERT INTO viewMode (id,type) VALUES (1,'icons');
+INSERT INTO viewMode (id,type) VALUES (2,'single');
+INSERT INTO viewMode (id,type) VALUES (3,'multi');
+
+DROP TABLE IF EXISTS sortMode;
+CREATE TABLE sortMode
+    (
+    id      INTEGER PRIMARY KEY AUTOINCREMENT,
+    type    VARCHAR NOT NULL
+    );
+INSERT INTO sortMode (id,type) VALUES (1,'unsorted');
+INSERT INTO sortMode (id,type) VALUES (2,'name');
+INSERT INTO sortMode (id,type) VALUES (3,'type');
+INSERT INTO sortMode (id,type) VALUES (4,'size');
+INSERT INTO sortMode (id,type) VALUES (5,'date');
+
+DROP TABLE IF EXISTS contextMenu;
+CREATE TABLE contextMenu
+    (
+    id      INTEGER PRIMARY KEY AUTOINCREMENT,
+    scope   INTEGER NOT NULL,               -- ref menuScope:id
+    ord     INTEGER NOT NULL DEFAULT 0,     -- display order within the scope
+    label   VARCHAR NOT NULL,               -- text; "-" = separator
+    accel   VARCHAR,                        -- e.g. "^N" or a mnemonic letter
+    action  VARCHAR NOT NULL,               -- verb the desktop dispatches
+    submenu VARCHAR                         -- non-null: this item opens a submenu
+    );
+-- in-window (scope 3) starter set
+INSERT INTO contextMenu (scope,ord,label,accel,action,submenu) VALUES (3,10,'New...','^N','new',NULL);
+INSERT INTO contextMenu (scope,ord,label,accel,action,submenu) VALUES (3,20,'Info...','^I','info',NULL);
+INSERT INTO contextMenu (scope,ord,label,accel,action,submenu) VALUES (3,30,'Select all','^A','selectall',NULL);
+INSERT INTO contextMenu (scope,ord,label,accel,action,submenu) VALUES (3,40,'Delete','^D','delete',NULL);
+INSERT INTO contextMenu (scope,ord,label,accel,action,submenu) VALUES (3,50,'-',NULL,'sep',NULL);
+INSERT INTO contextMenu (scope,ord,label,accel,action,submenu) VALUES (3,60,'Show','^S','show','show');
+INSERT INTO contextMenu (scope,ord,label,accel,action,submenu) VALUES (3,70,'Browse','^B','browse',NULL);
+-- desktop (scope 1) starter set
+INSERT INTO contextMenu (scope,ord,label,accel,action,submenu) VALUES (1,10,'New...','^N','new',NULL);
+INSERT INTO contextMenu (scope,ord,label,accel,action,submenu) VALUES (1,20,'Info...','^I','info',NULL);
+INSERT INTO contextMenu (scope,ord,label,accel,action,submenu) VALUES (1,30,'Browse','^B','browse',NULL);
+-- icon (scope 4) starter set
+INSERT INTO contextMenu (scope,ord,label,accel,action,submenu) VALUES (4,10,'Open','^O','open',NULL);
+INSERT INTO contextMenu (scope,ord,label,accel,action,submenu) VALUES (4,20,'Info...','^I','info',NULL);
+INSERT INTO contextMenu (scope,ord,label,accel,action,submenu) VALUES (4,30,'Delete','^D','delete',NULL);
+
+DROP TABLE IF EXISTS deskPrefs;
+CREATE TABLE deskPrefs
+    (
+    id      INTEGER PRIMARY KEY AUTOINCREMENT,
+    key     VARCHAR NOT NULL UNIQUE,
+    value   VARCHAR NOT NULL
+    );
+INSERT INTO deskPrefs (key,value) VALUES ('viewMode','1');       -- ref viewMode:id (icons)
+INSERT INTO deskPrefs (key,value) VALUES ('sortMode','2');       -- ref sortMode:id (name)
+INSERT INTO deskPrefs (key,value) VALUES ('sortInverted','0');
+INSERT INTO deskPrefs (key,value) VALUES ('columns','size,date'); -- multi/text column attrs
