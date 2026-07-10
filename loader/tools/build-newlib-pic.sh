@@ -26,4 +26,8 @@ cp "$ML/libc.a" "$ML/libm.a" "$DST/"
 cp -R "../newlib-$VER/newlib/libc/include/." "$DST/include/"
 cp "$ML/targ-include/newlib.h" "$ML/targ-include/_newlib_version.h" "$DST/include/" 2>/dev/null || true
 [ -d "$ML/targ-include/machine" ] && cp -R "$ML/targ-include/machine/." "$DST/include/machine/" || true
+# Record provenance so `make newlib-check` can confirm these are the validated
+# artifacts (or flag a local rebuild). See tools/newlib-stamp.sh.
+"$(dirname "$0")/newlib-stamp.sh" > "$DST/STAMP"
 echo "newlib-pic ready: $DST"
+echo "  wrote $DST/STAMP — after validating, promote it:  cp newlib-pic/STAMP newlib-pic.stamp && git add newlib-pic.stamp"

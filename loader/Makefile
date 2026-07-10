@@ -188,6 +188,24 @@ xtcrun:
 	@echo "=== running /bin/xtcprog on the XTOS loader (qemu) ==="
 	@printf 'xtcprog\nexit\n' | $(QEMUZYNQ) -kernel $(BUILD)/freertos.elf; echo "(qemu exited $$?)"
 
+# newlib-check — confirm the local newlib-pic/{libc.a,libm.a} are the VALIDATED
+# artifacts recorded in newlib-pic.stamp (the golden). Not a build prereq: a
+# from-source rebuild on another host produces bit-different .a (DWARF comp_dir,
+# ar mtimes) and that's fine — this just tells you whether you're on the pinned,
+# HW-validated libc or a local rebuild. Nonzero exit on mismatch so CI can gate.
+.PHONY: newlib-check
+newlib-check:
+	@tools/newlib-stamp.sh > $(BUILD)/newlib.stamp.now
+	@if cmp -s $(BUILD)/newlib.stamp.now newlib-pic.stamp; then \
+	    echo "newlib-check: OK — newlib-pic matches validated golden (newlib-pic.stamp)"; \
+	else \
+	    echo "newlib-check: MISMATCH — local newlib-pic differs from validated golden:"; \
+	    diff newlib-pic.stamp $(BUILD)/newlib.stamp.now || true; \
+	    echo "  This is a local rebuild, not the pinned/validated libc. If intentional,"; \
+	    echo "  re-validate on HW then promote:  cp newlib-pic/STAMP newlib-pic.stamp && git add newlib-pic.stamp"; \
+	    exit 1; \
+	fi
+
 # libc.so — PIC newlib (loader/newlib-pic/, built by tools/build-newlib-pic.sh)
 # linked into a loadable shared object; goes in the romfs at /OS/Library/libc.so
 $(BUILD)/libc.so: newlib-pic/libc.a libc-hide.map | $(BUILD)
