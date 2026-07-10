@@ -132,6 +132,15 @@ static inline void sig_raise(proc_t *t, int sig)
 }
 
 static proc_t g_proc[MAXPROC];
+
+/* live-count helpers + peak high-water marks for /OS/proc/limits. The peaks are
+ * bumped at the claim sites (proc launch, pipe create) so they catch transients
+ * between reads, not just what's live when someone happens to cat the file. */
+static int g_proc_hwm, g_pipe_hwm;
+static int proc_live(void) { int n = 0; for (int i = 0; i < MAXPROC; i++) if (g_proc[i].used) n++; return n; }
+static int pipe_live(void) { int n = 0; for (int i = 0; i < MAXPIPE; i++) if (g_pipes[i].used) n++; return n; }
+static void note_proc_hwm(void) { int n = proc_live(); if (n > g_proc_hwm) g_proc_hwm = n; }
+static void note_pipe_hwm(void) { int n = pipe_live(); if (n > g_pipe_hwm) g_pipe_hwm = n; }
 static int    g_next_pid = 1;
 static void (*g_console)(const char *, int);
 static volatile int g_con_eof;           /* console hit EOF (drained qemu pipe) */
@@ -664,6 +673,7 @@ static long k_pipe_create(proc_t *p, int *out)
     g_pipes[pi].sb = xStreamBufferCreate(PIPE_BUF_SZ, 1);
     if (!g_pipes[pi].sb) return -1;
     g_pipes[pi].readers = 1; g_pipes[pi].writers = 1; g_pipes[pi].used = 1;
+    note_pipe_hwm();                                        /* /OS/proc/limits peak */
     memset(&p->fd[fda], 0, sizeof(fd_t));
     memset(&p->fd[fdb], 0, sizeof(fd_t));
     p->fd[fda].open = 1; p->fd[fda].pipei = pi + 1; p->fd[fda].pwrite = 0;
@@ -2910,6 +2920,7 @@ static int proc_launch(int slot, xtld_obj *obj, uintptr_t entry,
     p->asid = (uint32_t)slot + 1u;
     p->heap_brk = XTOS_HEAP_VA; p->heap_end = XTOS_HEAP_VA + XTOS_HEAP_SIZE;    /* private heap */
     p->used = 1;
+    note_proc_hwm();                                        /* /OS/proc/limits peak */
     /* name the task after the program (basename of argv[0]) so fault reports and
      * task listings identify it — FreeRTOS copies the name into the TCB. */
     const char *nm = (argc > 0 && argv && argv[0]) ? argv[0] : "app";
@@ -2975,6 +2986,32 @@ int frtos_proc_snap(int idx, char *comm, int commsz, char *cmdl, int cmdsz,
     return pid ? pid : -1;
 }
 
+/* /OS/proc/limits: current use of each fixed-size kernel pool. Current counts are
+ * scanned live (no accounting to drift); hwm is the peak the claim sites recorded. */
+void frtos_limits(xt_limits_t *L)
+{
+    int fdc = 0, busiest = 0;
+    for (int i = 0; i < MAXPROC; i++) {
+        if (!g_proc[i].used) continue;
+        int n = 0;                                        /* explicitly-allocated slots: any
+                                                           * occupancy marker (stdio 0/1/2 route
+                                                           * to the console implicitly, unmarked) */
+        for (int f = 0; f < NFD; f++) {
+            fd_t *fd = &g_proc[i].fd[f];
+            if (fd->open || fd->pipei || fd->sock || fd->con) n++;
+        }
+        fdc += n;
+        if (n > busiest) busiest = n;
+    }
+    int pc = proc_live(), pp = pipe_live();
+    if (pc > g_proc_hwm) g_proc_hwm = pc;                  /* also catch a read-time peak */
+    if (pp > g_pipe_hwm) g_pipe_hwm = pp;
+    L->proc_cur = pc;  L->proc_max = MAXPROC;  L->proc_hwm = g_proc_hwm;
+    L->pipe_cur = pp;  L->pipe_max = MAXPIPE;  L->pipe_hwm = g_pipe_hwm;
+    L->prog_cur = g_prog_n; L->prog_max = MAXPROG;
+    L->fd_cur = fdc;   L->fd_cap = NFD;         L->fd_busiest = busiest;
+}
+
 /* Atomically claim a free proc slot: mark it used + running (exited/waited/reaping
  * cleared) so a concurrent reap_orphans/spawn can't grab or reap it mid-setup. The
  * spawn fills the rest; proc_launch clears the slot again on failure. Returns -1 if
@@ -2989,6 +3026,7 @@ static int alloc_slot(void)
             slot = i; break;
         }
     taskEXIT_CRITICAL();
+    if (slot >= 0) note_proc_hwm();                        /* /OS/proc/limits peak */
     return slot;
 }
 

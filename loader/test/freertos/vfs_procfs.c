@@ -6,8 +6,9 @@
  *                            plausible zeros for the accounting fields)
  *   /OS/proc/<pid>/status    Name/State/Pid/Uid/Gid, tab-separated
  *   /OS/proc/<pid>/cmdline   argv, NUL-joined
- *   /OS/proc/uptime          wall clock since boot
+ *   /OS/proc/uptime          monotonic seconds since boot (global timer)
  *   /OS/proc/meminfo         static totals (tools want it to exist)
+ *   /OS/proc/limits          fixed-size kernel pools: cur/max/high-water
  *
  * Content is generated at OPEN into an allocated buffer (a moment-in-time
  * snapshot; the fd then reads in-memory via vf.data), freed at close. Opens
@@ -377,6 +378,36 @@ static int pf_gen_temp(char *buf, int sz)
     return o.n;
 }
 
+/* /OS/proc/limits — current vs compile-time-max use of each fixed-size kernel pool,
+ * plus a peak high-water mark where the claim site tracks one ("-" = untracked).
+ * One row per pool; max "-" means there is no single system-wide cap (see note). */
+static void lim_row(pfb *o, const char *name, int cur, int max, int hwm, const char *note)
+{
+    int p = o->n;
+    pfb_s(o, name); pfb_pad(o, p, 14);
+    p = o->n; pfb_d(o, cur);                              pfb_pad(o, p, 8);
+    p = o->n; if (max < 0) pfb_c(o, '-'); else pfb_d(o, max); pfb_pad(o, p, 8);
+    p = o->n; if (hwm < 0) pfb_c(o, '-'); else pfb_d(o, hwm); pfb_pad(o, p, 8);
+    if (note) pfb_s(o, note);
+    pfb_c(o, '\n');
+}
+static int pf_gen_limits(char *buf, int sz)
+{
+    xt_limits_t L;
+    frtos_limits(&L);
+    pfb o = { buf, 0, sz };
+    pfb_s(&o, "resource      cur     max     hwm\n");
+    lim_row(&o, "processes",   L.proc_cur, L.proc_max, L.proc_hwm, 0);
+    lim_row(&o, "pipes",       L.pipe_cur, L.pipe_max, L.pipe_hwm, 0);
+    lim_row(&o, "prog-images", L.prog_cur, L.prog_max, -1, "(loaded ELF cache)");
+    lim_row(&o, "open-fds",    L.fd_cur,   -1,         -1, "(explicit; stdio implicit)");
+    /* fds are a per-process array, not a global pool; annotate the real cap */
+    pfb_s(&o, "                            per-proc cap ");
+    pfb_d(&o, L.fd_cap); pfb_s(&o, ", busiest proc "); pfb_d(&o, L.fd_busiest);
+    pfb_c(&o, '\n');
+    return o.n;
+}
+
 /* ---- driver ops ------------------------------------------------------------ */
 static long pf_read(vfs_file *f, void *buf, uint32_t n)
 {
@@ -425,6 +456,7 @@ static int pf_open(vfs_mount *m, const char *rel, int flags, vfs_file *f)
     else if (!strcmp(rel, "/video-kick")) len = pf_gen_video_kick(buf, PF_BUF);
     else if (!strcmp(rel, "/video-sleep")) len = pf_gen_video_sleep(buf, PF_BUF);
     else if (!strcmp(rel, "/temp"))    len = pf_gen_temp(buf, PF_BUF);
+    else if (!strcmp(rel, "/limits"))  len = pf_gen_limits(buf, PF_BUF);
     else if (!strcmp(rel, "/mounts"))  { extern int vfs_mounts_str(char *, int); len = vfs_mounts_str(buf, PF_BUF); }
     else if (!strncmp(rel, "/net/", 5)) { extern int xt_procnet(const char *, char *, int); len = xt_procnet(rel + 5, buf, cap); }
     else if (rel[0] == '/' && (k = pf_num(rel + 1, &pid)) > 0) {
@@ -451,7 +483,7 @@ static int pf_stat(vfs_mount *m, const char *rel, struct xt_stat *st)
     if (!strcmp(rel, "/uptime") || !strcmp(rel, "/meminfo") || !strcmp(rel, "/kmsg") || !strcmp(rel, "/mounts") ||
         !strcmp(rel, "/video")  || !strcmp(rel, "/video-sii") || !strcmp(rel, "/video-kick") ||
         !strcmp(rel, "/video-sleep") ||
-        !strcmp(rel, "/temp")) { st->mode = XT_S_IFREG; return 0; }
+        !strcmp(rel, "/temp") || !strcmp(rel, "/limits")) { st->mode = XT_S_IFREG; return 0; }
     if (!strcmp(rel, "/net")) { st->mode = XT_S_IFDIR; return 0; }
     if (!strncmp(rel, "/net/", 5)) {
         for (int i = 0; xt_procnet_leaves[i]; i++)
@@ -489,7 +521,7 @@ static int pf_readdir(vfs_mount *m, const char *rel, int index,
                 return 1;
             }
         }
-        const char *fixed[] = { "uptime", "meminfo", "kmsg", "mounts", "video", "video-sii", "video-kick", "video-sleep", "temp" };
+        const char *fixed[] = { "uptime", "meminfo", "kmsg", "mounts", "video", "video-sii", "video-kick", "video-sleep", "temp", "limits" };
         int fi = index - emitted;
         if (fi >= 0 && fi < (int)(sizeof fixed / sizeof fixed[0])) {
             pfb o = { name, 0, nsz };

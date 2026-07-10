@@ -88,6 +88,15 @@ int  frtos_spawn_argv_fds(const char *path, int argc, char **argv, char **envp,
 /* procfs: snapshot proc-table slot idx (0 = free; else the pid) */
 int  frtos_proc_snap(int idx, char *comm, int commsz, char *cmdl, int cmdsz,
                      int *cmdlen, int *state);
+/* procfs: kernel resource limits -> /OS/proc/limits. cur = live now (scanned),
+ * max = the compile-time table size, hwm = peak live count seen (0 where untracked). */
+typedef struct {
+    int proc_cur, proc_max, proc_hwm;   /* process table (g_proc[MAXPROC]) */
+    int pipe_cur, pipe_max, pipe_hwm;   /* pipe pool (g_pipes[MAXPIPE]) */
+    int prog_cur, prog_max;             /* cached program images (g_prog[MAXPROG]) */
+    int fd_cur, fd_cap, fd_busiest;     /* open fds: total, per-process cap, busiest proc */
+} xt_limits_t;
+void frtos_limits(xt_limits_t *L);
 int  frtos_spawn_host(const char *hostpath, int argc, char **argv, const xtld_host *host);
 int  frtos_open_lib(const char *name, const uint8_t **data, uint32_t *len, void *user);
 void frtos_lib_path_set(const char *const *dirs, int n);  /* loader lib search path (default /OS/library/) */
