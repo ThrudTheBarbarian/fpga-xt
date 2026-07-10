@@ -199,15 +199,24 @@ long xt_sock_send(int si, const void *buf, unsigned len)
 }
 
 /* blocking read (ticking); 0 = orderly close / EOF */
-long xt_sock_recv(int si, void *buf, unsigned len, xt_sock_tick tick, void *proc)
+long xt_sock_recv(int si, void *buf, unsigned len, xt_sock_tick tick, void *proc,
+                  int nonblock)
 {
     xt_sock *s = slot_of(si);
     if (!s) return -1;
     if (!s->rb) {
+        /* nonblock (FIONBIO): one attempt, -EAGAIN if it would block. lwIP's
+         * nonblocking netconn returns ERR_WOULDBLOCK immediately; blocking mode
+         * keeps the 200 ms recvtimeout tick loop for kill/^C/^Z. Without this a
+         * "nonblocking" socket read blocked anyway — an async client (the
+         * desktop's fujiclient pump) froze whenever the peer went quiet. */
+        netconn_set_nonblocking(s->conn, nonblock ? 1 : 0);
         for (;;) {
             err_t e = netconn_recv(s->conn, &s->rb);
             if (e == ERR_OK) { s->rb_off = 0; break; }
             if (e == ERR_CLSD) return 0;                       /* peer closed */
+            if (nonblock && (e == ERR_WOULDBLOCK || e == ERR_TIMEOUT))
+                return -11;                                    /* -EAGAIN */
             if (e != ERR_TIMEOUT) return -1;
             if (tick && tick(proc)) return -1;                 /* killed/stopped */
         }

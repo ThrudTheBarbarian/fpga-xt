@@ -2025,11 +2025,12 @@ void deferral_thunk(void)                 /* PL1 (System), task context */
             r = k_socket_call(p);                          /* the socket family (net/sockets.c) */
         } else if ((p->dnum == SYS_read || p->dnum == SYS_write) &&
                    p->da0 < NFD && p->fd[p->da0].open && p->fd[p->da0].sock) {
-            extern long xt_sock_recv(int, void *, unsigned, int (*)(void *), void *);
+            extern long xt_sock_recv(int, void *, unsigned, int (*)(void *), void *, int);
             extern long xt_sock_send(int, const void *, unsigned);
             int si = p->fd[p->da0].sock - 1;
             if (p->dnum == SYS_read)
-                r = xt_sock_recv(si, (void *)p->da1, (unsigned)p->da2, sock_tick, p);
+                r = xt_sock_recv(si, (void *)p->da1, (unsigned)p->da2, sock_tick, p,
+                                 p->fd[p->da0].nonblock);
             else
                 r = xt_sock_send(si, (const void *)p->da1, (unsigned)p->da2);
         } else if (p->dnum == SYS_recvfrom &&
