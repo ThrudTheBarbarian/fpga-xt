@@ -171,6 +171,7 @@ void wind_set_overlay(int(*begin)(int,int,int,int), void(*move)(int,int),
                       void(*end)(void), void(*present)(int,int,int,int));
 // Push a just-drawn screen rect through the overlay present hook (visibility
 // for modal draws outside wind_redraw); no-op when no hook is registered.
+void aes_label_fit(int vh, const char *text, int maxw, char *out, int cap);
 void aes_flush_rect(int x, int y, int w, int h);
 // The desktop work area windows are clamped to (so a window can't be dragged out
 // of reach).  Defaults to the screen minus the menu bar; Desktop.app can reserve

@@ -285,7 +285,11 @@ static void srv_list(browser *b) {                    // one tile per `servers` 
         b->cic[i].img = b->isurf[i]; b->cic[i].text = e->label;
     }
 }
+static void desk_busy(const char *msg);   // fwd
+
 static void net_list(browser *b) {                    // entries from `lsc <server> <path>`
+    { char m[160]; snprintf(m, sizeof m, "Contacting %s ...", b->logical_root);
+      desk_busy(m); }
     br_free_icons(b);
     b->nent = 0; b->nfiles = 0; b->total = 0; b->sel = -1;
     char path[300]; snprintf(path, sizeof path, "/%s", b->rel);
@@ -409,6 +413,26 @@ static int br_up_hit(browser *b, int mx, int my) {
 static void open_fuji_browser(int server_id, const char *name);   // fwd
 // Fetch-progress box: filename + a bar, drawn straight to the screen (the next
 // wind_redraw repaints over it); aes_flush_rect makes it visible mid-loop.
+/* immediate "working..." box — network round-trips take seconds; wiped by
+ * the next full redraw */
+static void desk_busy(const char *msg) {
+    int W = 360, H = 40, wx, wy, ww, wh;
+    wind_get(0, WF_WORKXYWH, &wx, &wy, &ww, &wh);
+    int x = wx + (ww-W)/2, y = wy + (wh-H)/2;
+    vsf_interior(HV, VDI_FIS_SOLID); vsf_perimeter(HV, 0); vsf_color(HV, 0);
+    int16_t bx[4] = { (int16_t)x, (int16_t)y, (int16_t)(x+W-1), (int16_t)(y+H-1) };
+    vr_recfl(HV, bx);
+    vsl_color(HV, 1); vsl_width(HV, 1);
+    int16_t o[10] = { (int16_t)x,(int16_t)y, (int16_t)(x+W-1),(int16_t)y,
+                      (int16_t)(x+W-1),(int16_t)(y+H-1), (int16_t)x,(int16_t)(y+H-1),
+                      (int16_t)x,(int16_t)y };
+    v_pline(HV, 5, o);
+    vst_color(HV, 1); vst_height(HV, 13, 0,0,0,0); vst_alignment(HV, VDI_TA_LEFT, VDI_TA_HALF, 0,0);
+    v_gtext(HV, x+12, y+H/2, msg);
+    vst_alignment(HV, VDI_TA_LEFT, VDI_TA_TOP, 0,0);
+    aes_flush_rect(x, y, W, H);
+}
+
 static void net_progress(const char *name, unsigned done, unsigned total) {
     int W = 360, H = 64, wx, wy, ww, wh;
     wind_get(0, WF_WORKXYWH, &wx, &wy, &ww, &wh);
@@ -512,6 +536,15 @@ static void br_click(browser *b, int mx, int my) {
     if (was) { b->sel = -1; wind_redraw(); }                 // toggle off
 }
 static void open_browser_win(const char *logical, int media_type, int net, int server_id) {
+    for (int i = 0; i < MAXBR; i++) {             // one window per place: re-top it
+        browser *e = &BR[i];
+        if (!e->used || e->net != net) continue;
+        if (net == 2 ? e->server_id == server_id
+                     : strcmp(e->logical_root, logical) == 0) {
+            wind_raise(e->win); wind_redraw();
+            return;
+        }
+    }
     int s = -1; for (int i = 0; i < MAXBR; i++) if (!BR[i].used) { s = i; break; }
     if (s < 0) return;
     browser *b = &BR[s]; memset(b, 0, sizeof *b);
@@ -662,6 +695,11 @@ int main(int argc, char **argv) {
             browser *sb = &BR[0];
             for (int i = 0; i < sb->nent; i++)
                 if (sb->ent[i].srvid == fuji_id) { open_fuji_browser(fuji_id, sb->ent[i].label); break; }
+            open_fuji_servers();                      // deliberate re-opens: both must
+            open_fuji_browser(fuji_id, "dup?");       //   re-top, not duplicate
+            int used = 0;
+            for (int i = 0; i < MAXBR; i++) used += BR[i].used;
+            fprintf(stderr, "fuji-browse: %d browser windows (expect 2)\n", used);
         }
         wind_redraw();
         dump_ppm(fuji == 1 ? "/tmp/xtdesk-fuji.ppm" : "/tmp/xtdesk-fujibr.ppm");

@@ -156,8 +156,10 @@ static void draw_obj(OBJECT *o, int x, int y) {
                 int txtpen = g_icon_dark ? 0 : 1;            // text: white (desktop) / black (window)
                 vst_height(g_vh, 12, 0,0,0,0);
                 vst_alignment(g_vh, VDI_TA_CENTER, VDI_TA_TOP, 0,0);
+                char lbl[96];                        // ellipsised to the cell
+                aes_label_fit(g_vh, ci->text, w - 4, lbl, sizeof lbl);
                 if (sel) {                                   // label bar sized to the text
-                    int16_t ext[8]; vqt_extent(g_vh, ci->text, ext);
+                    int16_t ext[8]; vqt_extent(g_vh, lbl, ext);
                     int tw = ext[2]-ext[0]; if (tw < 0) tw = -tw;
                     int th = ext[1]-ext[7]; if (th < 0) th = -th;
                     int16_t r[4] = { (int16_t)(tcx-tw/2-3), (int16_t)(ly-1),
@@ -170,12 +172,12 @@ static void draw_obj(OBJECT *o, int x, int y) {
                         v_pline(g_vh, 5, o);
                     }
                     vst_color(g_vh, txtpen);
-                    v_gtext(g_vh, tcx, ly, ci->text);
+                    v_gtext(g_vh, tcx, ly, lbl);
                 } else if (g_icon_dark) {                    // white + shadow -> readable over a wallpaper
-                    vst_color(g_vh, 1); v_gtext(g_vh, tcx+1, ly+1, ci->text);
-                    vst_color(g_vh, 0); v_gtext(g_vh, tcx,   ly,   ci->text);
+                    vst_color(g_vh, 1); v_gtext(g_vh, tcx+1, ly+1, lbl);
+                    vst_color(g_vh, 0); v_gtext(g_vh, tcx,   ly,   lbl);
                 } else {                                     // black on the light window (grey when ghosted)
-                    vst_color(g_vh, (st & OS_DISABLED) ? 9 : 1); v_gtext(g_vh, tcx, ly, ci->text);
+                    vst_color(g_vh, (st & OS_DISABLED) ? 9 : 1); v_gtext(g_vh, tcx, ly, lbl);
                 }
                 vst_alignment(g_vh, VDI_TA_LEFT, VDI_TA_TOP, 0,0);
             }
@@ -218,6 +220,32 @@ static int find_rec(OBJECT *t, int obj, int ax, int ay, int depth, int mx, int m
     }
     return found;
 }
+/* middle-ellipsis `text` into out so it fits maxw pixels at the CURRENT
+ * vst_height: "A Very Long Filename.xex" -> "A Very...name.xex". Cells are
+ * narrow and icon sizes will become user-specifiable, so the width is the
+ * caller's. */
+void aes_label_fit(int vh, const char *text, int maxw, char *out, int cap)
+{
+    int16_t ext[8];
+    const int flen = (int)strlen(text);
+    int len = flen > cap - 1 ? cap - 1 : flen;
+    memcpy(out, text, len); out[len] = 0;
+    vqt_extent(vh, out, ext);
+    if (ext[2] - ext[0] <= maxw || maxw <= 0)
+        return;
+    for (int keep = len - 1; keep >= 2; keep--) {
+        int head = (keep + 1) / 2, tail = keep / 2;
+        if (head + 3 + tail > cap - 1) continue;
+        memcpy(out, text, head);
+        memcpy(out + head, "...", 3);
+        memcpy(out + head + 3, text + flen - tail, tail);
+        out[head + 3 + tail] = 0;
+        vqt_extent(vh, out, ext);
+        if (ext[2] - ext[0] <= maxw)
+            return;
+    }
+}
+
 int objc_find(OBJECT *t, int start, int depth, int mx, int my) {
     int x, y; objc_offset(t, start, &x, &y);
     return find_rec(t, start, x, y, depth, mx, my);
