@@ -793,11 +793,17 @@ long xt_pty_read(int i, int master, void *buf, uint32_t n, int nonblock)
         if (sig_ready(p)) return -4;                       /* -EINTR: caught signal pending */
         if (p) stop_park(p);
         if (!master && g_pty[i].winch) {
-            /* terminal size changed: raise SIGWINCH on the reader (real signal) and
-             * unwind with -EINTR; the deferred return then vectors its handler. */
+            /* terminal size changed: raise SIGWINCH on the reader. Only unwind with
+             * -EINTR if it's actually DELIVERABLE (a handler is installed) — a process
+             * with the default disposition (ignore) must NOT see EINTR, or its read
+             * spuriously fails. This bit an ssh login shell (toysh, no SIGWINCH handler):
+             * dropbear's initial TIOCSWINSZ set winch, the shell's first read EINTR'd,
+             * and toysh (post-signal-rework, read no longer auto-retries) took it as
+             * EOF and exited — the "first ssh always closes" bug (only the first, since
+             * the pty then holds the client's size so later sessions don't change it). */
             g_pty[i].winch = 0;
-            sig_raise(cur_proc(), XT_SIGWINCH);
-            return -4;                                     /* -EINTR */
+            sig_raise(cur_proc(), XT_SIGWINCH);            /* pending only if a handler exists */
+            if (sig_ready(p)) return -4;                   /* -EINTR to vector the handler */
         }
         size_t got = xStreamBufferReceive(sb, buf, n, pdMS_TO_TICKS(20));
         if (got > 0) return (long)got;
