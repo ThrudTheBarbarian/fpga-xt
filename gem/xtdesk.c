@@ -218,6 +218,8 @@ static void desk_launch(const char *name, int media_type) {
 // server"), net=2 a network browser over fujinetd (rel = the remote path).
 #define MAXBR   6
 #define MAXENT  128
+#define MAX_CRUMB 18                                  // breadcrumb: <root> + up to ~16 path segments
+#define BR_WKIND (W_NAME|W_CLOSER|W_MOVER|W_SIZER|W_FULLER|W_INFO)   // browser-window kind
 typedef struct { char name[128], label[128]; int dir; long size;
                  char state; int srvid; } bent;     // state: lsc cache column; srvid: servers row (-1 = Add server)
 typedef struct {
@@ -235,13 +237,29 @@ typedef struct {
     bent ent[MAXENT];
     gfx_surface *isurf[MAXENT];
     CICON  cic[MAXENT];
-    OBJECT tree[1 + MAXENT];
+    OBJECT tree[2 + MAXENT];                           // + the synthetic ".." tile
     int wax, way, waw, wah;                            // last work area (for hit-testing)
     int infox, infoy, infow, infoh;                    // last W_INFO chrome rect
     int retryx, retryw;                                // Retry button rect in the info bar (error state)
+    int fitx, fitw;                                    // Fit button rect in the info bar (path windows)
+    int ncrumb;                                        // breadcrumb span count (0 = none drawn)
+    int crumbx[MAX_CRUMB], crumbw[MAX_CRUMB];          // per-segment hit rects (info bar left)
+    int crumbcut[MAX_CRUMB];                           // strlen to truncate b->rel to on a segment click
 } browser;
 static browser BR[MAXBR];
 static int g_bx = 380, g_by = 130;
+
+// The synthetic ".." up-entry that leads a non-root browser's icon grid: a
+// single shared folder icon (ICT_FOLDER) + ".." label, built once on demand.
+static gfx_surface *g_dotsurf;
+static CICON g_dotcic;
+static void ensure_doticon(void) {
+    if (g_dotcic.text) return;                         // already built
+    char ip[REG_PATH_MAX] = "", id[REG_NAME_MAX] = "";
+    if (registry_match("..", ICT_FOLDER, ip, sizeof ip, id, sizeof id) && ip[0])
+        g_dotsurf = load_icon(ip);
+    g_dotcic.img = g_dotsurf; g_dotcic.text = "..";
+}
 
 static browser *br_of_window(int win) {
     for (int i = 0; i < MAXBR; i++) if (BR[i].used && BR[i].win == win) return &BR[i];
@@ -402,12 +420,21 @@ static void br_list(browser *b) {
 // Lay the entry grid out in the current work area (also used for hit-testing).
 static void br_layout(browser *b) {
     int pad = 14, cols = (b->waw - pad) / ICON_CW; if (cols < 1) cols = 1;
-    b->tree[0] = (OBJECT){ NIL, b->nent?1:NIL, b->nent?b->nent:NIL, G_IBOX, OF_NONE, OS_NORMAL,
+    int dd = b->rel[0] ? 1 : 0;                        // synthetic ".." leads a non-root grid
+    int ntile = b->nent + dd;
+    b->tree[0] = (OBJECT){ NIL, ntile?1:NIL, ntile?ntile:NIL, G_IBOX, OF_NONE, OS_NORMAL,
                            0, (int16_t)b->wax, (int16_t)b->way, (int16_t)b->waw, (int16_t)b->wah };
+    if (dd) {                                          // ".." tile at grid slot 0
+        ensure_doticon();
+        int last = (b->nent == 0);
+        b->tree[1] = (OBJECT){ (int16_t)(last?0:2), NIL, NIL, G_CICON,
+                               (uint16_t)(OF_SELECTABLE | (last?OF_LASTOB:0)), OS_NORMAL,
+                               &g_dotcic, (int16_t)pad, (int16_t)pad, ICON_CW, ICON_CH };
+    }
     for (int i = 0; i < b->nent; i++) {
-        int oi = 1+i, last = (i == b->nent-1);
-        int cx = pad + (i % cols) * ICON_CW;
-        int cy = pad + (i / cols) * ICON_CH;
+        int oi = 1+dd+i, last = (i == b->nent-1), slot = i + dd;
+        int cx = pad + (slot % cols) * ICON_CW;
+        int cy = pad + (slot / cols) * ICON_CH;
         int ghost = (b->ent[i].state == 'g' || b->ent[i].state == 'f');   // uncached net entry
         b->tree[oi] = (OBJECT){ (int16_t)(last?0:oi+1), NIL, NIL, G_CICON,
                                 (uint16_t)(OF_SELECTABLE | (last?OF_LASTOB:0)),
@@ -449,6 +476,77 @@ static void br_progbar(int x, int y, int w, int h, int determinate,
                       (int16_t)x,(int16_t)y };
     v_pline(HV, 5, o);
 }
+static int br_textw(const char *s) {                  // width of s in the current font/size
+    int16_t e[8]; vqt_extent(HV, s, e); return e[2] - e[0];
+}
+// Draw the location as a row of individually-clickable path segments in the
+// info bar's left region: "<logical_root>/seg1/seg2/…".  Records a hit rect
+// (crumbx/crumbw) + the b->rel truncation length (crumbcut) for every segment
+// actually drawn.  When the row overflows availw it middle-ellipsises at
+// segment granularity (root + "…" + the tail that fits) so the recorded rects
+// stay correct for exactly what is on screen.
+static void br_crumbs(browser *b, int x0, int ay, int availw) {
+    b->ncrumb = 0;
+    vst_height(HV, 14, 0,0,0,0);
+    vst_color(HV, 1); vst_alignment(HV, VDI_TA_LEFT, VDI_TA_HALF, 0,0);
+    char seg[MAX_CRUMB][80]; int cut[MAX_CRUMB], segw[MAX_CRUMB], nseg = 0;
+    snprintf(seg[nseg], sizeof seg[0], "%s", b->logical_root); cut[nseg] = 0; nseg++;
+    for (int i = 0; b->rel[i] && nseg < MAX_CRUMB; ) {     // one span per rel component
+        int j = i; while (b->rel[j] && b->rel[j] != '/') j++;
+        int len = j - i; if (len > 79) len = 79;
+        memcpy(seg[nseg], b->rel + i, len); seg[nseg][len] = 0;
+        cut[nseg] = j;                                    // truncate rel just before the next '/'
+        nseg++;
+        if (b->rel[j] == '/') i = j + 1; else break;
+    }
+    int sepw = br_textw("/"), ellw = br_textw("...");
+    int need = 0;
+    for (int k = 0; k < nseg; k++) { segw[k] = br_textw(seg[k]); need += segw[k] + (k ? sepw : 0); }
+    int t = 1;                                            // suffix start after an elided middle (1 = show all)
+    if (availw > 0 && need > availw && nseg > 2) {
+        for (t = 2; t < nseg; t++) {
+            int w = segw[0] + sepw + ellw;
+            for (int k = t; k < nseg; k++) w += sepw + segw[k];
+            if (w <= availw) break;
+        }
+        if (t >= nseg) t = nseg - 1;                      // always keep root + last
+    }
+    int x = x0;
+    v_gtext(HV, x, ay, seg[0]);                           // root span
+    b->crumbx[b->ncrumb] = x; b->crumbw[b->ncrumb] = segw[0]; b->crumbcut[b->ncrumb] = cut[0]; b->ncrumb++;
+    x += segw[0];
+    if (t > 1) { v_gtext(HV, x, ay, "/"); x += sepw; v_gtext(HV, x, ay, "..."); x += ellw; }
+    for (int k = (t > 1 ? t : 1); k < nseg; k++) {
+        v_gtext(HV, x, ay, "/"); x += sepw;
+        v_gtext(HV, x, ay, seg[k]);
+        if (b->ncrumb < MAX_CRUMB) {
+            b->crumbx[b->ncrumb] = x; b->crumbw[b->ncrumb] = segw[k]; b->crumbcut[b->ncrumb] = cut[k]; b->ncrumb++;
+        }
+        x += segw[k];
+    }
+}
+// Fit the window to its current icon-grid contents: enough columns for
+// min(nEntries, 8) × ICON_CW wide and the resulting rows × ICON_CH tall (the
+// ".." tile counts), plus the title + info chrome (wind_calc).  Clamped to 80%
+// of the screen and a sane minimum, top-left fixed, kept on-screen.
+static void br_fit(browser *b) {
+    int dd = b->rel[0] ? 1 : 0, ntile = b->nent + dd; if (ntile < 1) ntile = 1;
+    int pad = 14, maxcols = 8;
+    int cols = ntile < maxcols ? ntile : maxcols; if (cols < 1) cols = 1;
+    int nrows = (ntile + cols - 1) / cols;
+    int cw = 2*pad + cols * ICON_CW, chh = 2*pad + nrows * ICON_CH;   // desired work-area size
+    int cx, cy, cw0, ch0; wind_get(b->win, WF_CURRXYWH, &cx, &cy, &cw0, &ch0);
+    int bx, by, bw, bh;
+    wind_calc(WC_BORDER, BR_WKIND, cx, cy, cw, chh, &bx, &by, &bw, &bh);   // + chrome
+    int maxw = 8*WIN_W/10, maxh = 8*WIN_H/10;             // clamp to 80% of the screen
+    if (bw > maxw) bw = maxw; if (bh > maxh) bh = maxh;
+    if (cx + bw > WIN_W) bw = WIN_W - cx;                 // keep on-screen (top-left fixed)
+    if (cy + bh > WIN_H) bh = WIN_H - cy;
+    int minw = 280, minh = 200;                           // sane minimum
+    if (bw < minw) bw = minw; if (bh < minh) bh = minh;
+    wind_open(b->win, cx, cy, bw, bh);                    // already open: resizes in place
+    wind_redraw();
+}
 // W_INFO chrome line: Up button (greyed at root) + file count / total size.
 static void br_infobar(int hd, int ix, int iy, int iw, int ih, void *ud) {
     (void)hd; browser *b = ud;
@@ -464,10 +562,20 @@ static void br_infobar(int hd, int ix, int iy, int iw, int ih, void *ud) {
     char info[96];
     int irx = ix+iw-12;                                      // right edge of the info text
     b->retryx = 0; b->retryw = 0;                            // no Retry button unless in the error state
-    int drewbar = 0;                                        // active states draw a graphical bar + left label
+    b->fitx = 0; b->fitw = 0; b->ncrumb = 0;                // Fit / breadcrumb recorded only when drawn
+    int drewbar = 0, drewcrumbs = 0;                        // active states draw a graphical bar + left label
     int pw = 120, pbh = 10;                                  // progress track: 120x10, vertically centred
     int pby = iy + (ih - pbh)/2;
     int pbx = ix + iw - 12 - pw;                             // right-anchored, before the right margin
+    // Fit button (path windows, no request in flight — the bar owns the right
+    // side while a request is): far right, before the margin.
+    if (b->net != 1 && b->req_fd < 0) {
+        vst_height(HV, 14, 0,0,0,0);
+        b->fitw = br_textw("Fit") + 14; b->fitx = ix + iw - 12 - b->fitw;
+        vst_color(HV, 1); vst_alignment(HV, VDI_TA_LEFT, VDI_TA_HALF, 0,0);
+        v_gtext(HV, b->fitx + 7, ay, "Fit");
+        irx = b->fitx - 12;                                  // keep other content clear of the button
+    }
     if (b->req_fd >= 0 && b->req_kind == RQ_FETCH) {          // fetch in flight: label + determinate bar
         unsigned pc = b->prog_total
                     ? (unsigned)((unsigned long long)b->prog_done * 100 / b->prog_total) : 0;
@@ -492,7 +600,7 @@ static void br_infobar(int hd, int ix, int iy, int iw, int ih, void *ud) {
     }
     else if (b->req_err[0]) {                                 // last async request failed: msg + Retry
         snprintf(info, sizeof info, "Error: %.80s", b->req_err);
-        b->retryx = ix+iw-70; b->retryw = 58;                // clickable Retry button, right edge
+        b->retryw = 58; b->retryx = irx - b->retryw;         // clickable Retry button, left of Fit
         vst_height(HV, 14, 0,0,0,0);
         vst_color(HV, 1); vst_alignment(HV, VDI_TA_LEFT, VDI_TA_HALF, 0,0);
         v_gtext(HV, b->retryx, ay, "Retry");
@@ -500,13 +608,14 @@ static void br_infobar(int hd, int ix, int iy, int iw, int ih, void *ud) {
     }
     else if (b->net == 1)                                     // servers window (minus the Add tile)
         snprintf(info, sizeof info, "%d servers", b->nent ? b->nent-1 : 0);
-    else if (b->net == 2)
-        snprintf(info, sizeof info, "%d files, %ld KB \xE2\x80\x94 %s",
-                 b->nfiles, (b->total+1023)/1024, b->logical_root);
-    else
-        snprintf(info, sizeof info, "%d files, %ld KB", b->nfiles, (b->total+1023)/1024);
-    vst_color(HV, 1); vst_alignment(HV, VDI_TA_RIGHT, VDI_TA_HALF, 0,0);
-    v_gtext(HV, drewbar ? pbx-8 : irx, ay, info);            // active: label to the LEFT of the bar
+    else {                                                    // path window (net 0/2), idle: breadcrumb
+        br_crumbs(b, ix+72, ay, irx - (ix+72) - 8);          // clickable "<root>/seg1/seg2/…"
+        drewcrumbs = 1;
+    }
+    if (!drewcrumbs) {
+        vst_color(HV, 1); vst_alignment(HV, VDI_TA_RIGHT, VDI_TA_HALF, 0,0);
+        v_gtext(HV, drewbar ? pbx-8 : irx, ay, info);        // active: label to the LEFT of the bar
+    }
     vst_alignment(HV, VDI_TA_LEFT, VDI_TA_TOP, 0,0);
 }
 static void br_content(int hd, int wax, int way, int waw, int wah, void *ud) {
@@ -726,6 +835,22 @@ static void net_pump(void) {
 }
 static void br_click(browser *b, int mx, int my) {
     if (b->req_fd >= 0) return;                               // request in flight: ignore clicks
+    for (int c = 0; c < b->ncrumb; c++)                       // breadcrumb: jump to a path level
+        if (my >= b->infoy && my < b->infoy + b->infoh &&
+            mx >= b->crumbx[c] && mx < b->crumbx[c] + b->crumbw[c]) {
+            if (b->crumbcut[c] >= (int)strlen(b->rel)) return;   // current level: no-op
+            b->rel[b->crumbcut[c]] = 0;
+            br_list(b); br_settitle(b); wind_redraw(); return;
+        }
+    if (br_up_hit(b, mx, my)) {                               // ascend (never above the root)
+        char *s = strrchr(b->rel, '/'); if (s) *s = 0; else b->rel[0] = 0;
+        br_list(b); br_settitle(b); wind_redraw(); return;
+    }
+    if (b->fitw > 0 &&                                        // Fit button: size window to contents
+        mx >= b->fitx && mx < b->fitx + b->fitw &&
+        my >= b->infoy && my < b->infoy + b->infoh) {
+        br_fit(b); return;
+    }
     if (b->req_err[0] && b->retryw > 0 &&                     // Retry button (error state): re-run
         mx >= b->retryx && mx < b->retryx + b->retryw &&
         my >= b->infoy && my < b->infoy + b->infoh) {
@@ -733,21 +858,22 @@ static void br_click(browser *b, int mx, int my) {
         if (b->net == 1) srv_list_start(b); else net_list_start(b);
         wind_redraw(); return;
     }
-    if (br_up_hit(b, mx, my)) {                               // ascend (never above the root)
-        char *s = strrchr(b->rel, '/'); if (s) *s = 0; else b->rel[0] = 0;
-        br_list(b); br_settitle(b); wind_redraw(); return;
-    }
     int oi = objc_find(b->tree, 0, 2, mx, my);
     if (oi <= 0) { b->sel = -1; wind_redraw(); return; }
-    int i = oi-1, was = (b->sel == i);
-    b->sel = i; wind_redraw();
+    int dd = b->rel[0] ? 1 : 0;
+    int isdot = (dd && oi == 1);                             // synthetic ".." up-tile
+    int i = oi-1-dd, was = (!isdot && b->sel == i);
+    b->sel = isdot ? -1 : i; wind_redraw();
     int mx2, my2, nc2; int16_t m2[8];
     int r = evnt_multi(MU_BUTTON|MU_TIMER, 2,1,1, 0,0,0,0,0, 0,0,0,0,0, m2, DCLICK_MS, 0,
                        &mx2, &my2, NULL, NULL, NULL, &nc2);
     if (r & MU_BUTTON) {
         int w2 = wind_find(mx2, my2);
         if (w2 == b->win && objc_find(b->tree, 0, 2, mx2, my2) == oi) {   // double-click
-            if (b->net == 1) {                               // servers window
+            if (isdot) {                                     // ".." : ascend one level (like Up)
+                char *s = strrchr(b->rel, '/'); if (s) *s = 0; else b->rel[0] = 0;
+                br_list(b); br_settitle(b); wind_redraw();
+            } else if (b->net == 1) {                        // servers window
                 if (b->ent[i].srvid < 0)                     // "Add server": the dialog
                     add_server_dialog(b);
                 else open_fuji_browser(b->ent[i].srvid, b->ent[i].label);
@@ -785,7 +911,7 @@ static void open_browser_win(const char *logical, int media_type, int net, int s
     b->net = net; b->server_id = server_id;
     snprintf(b->logical_root, sizeof b->logical_root, "%s", logical);
     snprintf(b->fs_root, sizeof b->fs_root, "%s%s", base, logical);
-    int kind = W_NAME|W_CLOSER|W_MOVER|W_SIZER|W_FULLER|W_INFO;
+    int kind = BR_WKIND;
     int pw = 760, ph = 520, bx, by, bw, bh;
     wind_calc(WC_BORDER, kind, g_bx, g_by, pw, ph, &bx, &by, &bw, &bh);
     b->win = wind_create(kind, bx, by, bw, bh);
@@ -1009,6 +1135,7 @@ int main(int argc, char **argv) {
         else if (!strcmp(argv[i], "--fuji-add")) fuji = 4;          // headless: Add-Server replay
         else if (!strcmp(argv[i], "--fuji-listprog") && i+2 < argc) // headless: listing-progress <id> <dir>
             { fuji = 5; fuji_id = atoi(argv[++i]); fuji_path = argv[++i]; }
+        else if (!strcmp(argv[i], "--nav")) fuji = 6;               // headless: ".."/breadcrumb/Fit render
         else snprintf(base, sizeof base, "%s", argv[i]);
     }
 
@@ -1036,6 +1163,38 @@ int main(int argc, char **argv) {
     if (browse == 2) desk_launch("River Raid.atr", ICT_MEDIA_8BIT);
     wind_redraw();
 
+    if (fuji == 6) {                                  // headless nav-chrome render (".."/breadcrumb/Fit)
+        open_browser("/navtest", ICT_MEDIA_8BIT);     // local browser rooted at <base>/navtest
+        browser *nb = BR[0].used ? &BR[0] : NULL;
+        if (!nb) { fprintf(stderr, "nav: no browser (mkdir <base>/navtest/a/b/c first)\n"); return 1; }
+        snprintf(nb->rel, sizeof nb->rel, "a/b");     // descend two levels
+        br_list(nb); br_settitle(nb);
+        wind_redraw();                                 // runs br_infobar -> lays out the crumbs
+        dump_ppm("/tmp/xtdesk-nav.ppm");
+        int dot_ok = (nb->tree[1].ob_type == G_CICON && nb->tree[1].ob_spec == (void*)&g_dotcic);
+        int crumb_ok = (nb->ncrumb == 3 && nb->crumbcut[0] == 0 &&
+                        nb->crumbcut[1] == 1 && nb->crumbcut[2] == 3);
+        fprintf(stderr, "nav: rel=%s nent=%d  '..' first=%s  ncrumb=%d (%s)\n",
+                nb->rel, nb->nent, dot_ok ? "OK" : "FAIL", nb->ncrumb, crumb_ok ? "OK" : "FAIL");
+        for (int c = 0; c < nb->ncrumb; c++)
+            fprintf(stderr, "  crumb %d x=%d w=%d cut=%d\n",
+                    c, nb->crumbx[c], nb->crumbw[c], nb->crumbcut[c]);
+        if (nb->ncrumb >= 2)                           // click the "a" breadcrumb -> re-list at rel="a"
+            br_click(nb, nb->crumbx[1] + 2, nb->infoy + nb->infoh/2);
+        int click_ok = !strcmp(nb->rel, "a");
+        fprintf(stderr, "nav: breadcrumb click 'a' -> rel=\"%s\" (%s)\n", nb->rel, click_ok ? "OK" : "FAIL");
+        wind_redraw();                                 // refresh Fit rect at the new level
+        int bx0,by0,bw0,bh0; wind_get(nb->win, WF_CURRXYWH, &bx0,&by0,&bw0,&bh0);
+        if (nb->fitw > 0)                              // click Fit -> resize window to contents
+            br_click(nb, nb->fitx + 2, nb->infoy + nb->infoh/2);
+        int bx1,by1,bw1,bh1; wind_get(nb->win, WF_CURRXYWH, &bx1,&by1,&bw1,&bh1);
+        int fit_ok = (bx1 == bx0 && by1 == by0 && (bw1 != bw0 || bh1 != bh0));
+        fprintf(stderr, "nav: Fit %dx%d -> %dx%d topleft (%d,%d)->(%d,%d) (%s)\n",
+                bw0,bh0, bw1,bh1, bx0,by0, bx1,by1, fit_ok ? "OK" : "FAIL");
+        dump_ppm("/tmp/xtdesk-nav-fit.ppm");
+        registry_close();
+        return (dot_ok && crumb_ok && click_ok && fit_ok) ? 0 : 1;
+    }
     if (fuji == 4) {                                  // headless Add-Server dialog replay
         open_fuji_servers();
         net_drain(60);                                // servers list settles
