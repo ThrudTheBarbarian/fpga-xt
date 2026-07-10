@@ -246,7 +246,9 @@ typedef struct {
     int retryx, retryw;                                // Retry button rect in the info bar (error state)
     int fitx, fitw;                                    // Fit button rect in the info bar (path windows)
     int viewx, vieww;                                  // View button rect (cycles the view mode)
+    int maskx, maskw;                                  // Filter (file-mask) button rect (info bar)
     int viewmode;                                      // 1=icons grid, 2=single-col text, 3=multi-col text
+    char mask[32];                                     // per-window file mask ("*"/"*.*"/"" = show all)
     int ncrumb;                                        // breadcrumb span count (0 = none drawn)
     int crumbx[MAX_CRUMB], crumbw[MAX_CRUMB];          // per-segment hit rects (info bar left)
     int crumbcut[MAX_CRUMB];                           // strlen to truncate b->rel to on a segment click
@@ -279,10 +281,36 @@ static int default_viewmode(void) {
 static void br_free_icons(browser *b) {
     for (int i = 0; i < b->nent; i++) if (b->isurf[i]) { gfx_surface_free(b->isurf[i]); b->isurf[i] = NULL; }
 }
+// Case-insensitive glob match: '*' matches any run (incl. empty), '?' one char.
+static int glob_ci(const char *pat, const char *s) {
+    while (*pat) {
+        if (*pat == '*') {
+            while (*pat == '*') pat++;                 // collapse a run of '*'
+            if (!*pat) return 1;                       // trailing '*' matches the rest
+            for (; *s; s++) if (glob_ci(pat, s)) return 1;
+            return glob_ci(pat, s);                    // also try the empty tail
+        }
+        if (!*s) return 0;
+        if (*pat != '?' && tolower((unsigned char)*pat) != tolower((unsigned char)*s)) return 0;
+        pat++; s++;
+    }
+    return *s == 0;
+}
+// "*", "*.*" and "" all mean "show everything".
+static int br_show_all(const char *m) {
+    return !m[0] || !strcmp(m, "*") || !strcmp(m, "*.*");
+}
+// A directory (and the synthetic "..") is always shown; a file must match the mask.
+static int br_visible(browser *b, const char *name, int isdir) {
+    return isdir || br_show_all(b->mask) || glob_ci(b->mask, name);
+}
 static void br_settitle(browser *b) {
     char t[400];
     if (b->rel[0]) snprintf(t, sizeof t, "%s/%s", b->logical_root, b->rel);
     else           snprintf(t, sizeof t, "%s", b->logical_root);
+    if (!br_show_all(b->mask)) {                        // show the active filter in the title
+        int n = (int)strlen(t); snprintf(t + n, sizeof t - n, "  (%s)", b->mask);
+    }
     wind_set_name(b->win, t);
 }
 static int ent_cmp(const void *a, const void *c) {
@@ -350,6 +378,7 @@ static void net_row(browser *b, const char *ln) {     // one `lsc` reply row -> 
     if (b->nent >= MAXENT || ln[0] == '-') return;
     char kind, cs; long size; int off = 0;            // "d <size> - <name>" | "f <size> <g|f|c|u> <name>"
     if (sscanf(ln, " %c %ld %c %n", &kind, &size, &cs, &off) < 3 || !ln[off]) return;
+    if (!br_visible(b, ln + off, kind == 'd')) return; // masked file (dirs always shown)
     bent *e = &b->ent[b->nent++];
     snprintf(e->name, sizeof e->name, "%s", ln + off);
     e->dir = (kind == 'd'); e->size = size;
@@ -411,6 +440,7 @@ static void br_list(browser *b) {
             char full[560]; snprintf(full, sizeof full, "%s/%s", dir, de->d_name);
             struct stat stt; e->dir = 0; e->size = 0; e->state = 0; e->srvid = 0;
             if (stat(full, &stt) == 0) { e->dir = S_ISDIR(stt.st_mode); e->size = (long)stt.st_size; }
+            if (!br_visible(b, de->d_name, e->dir)) continue;   // masked file (dirs always shown)
             b->nent++;
         }
         closedir(d);
@@ -646,6 +676,7 @@ static void br_infobar(int hd, int ix, int iy, int iw, int ih, void *ud) {
     b->retryx = 0; b->retryw = 0;                            // no Retry button unless in the error state
     b->fitx = 0; b->fitw = 0; b->ncrumb = 0;                // Fit / breadcrumb recorded only when drawn
     b->viewx = 0; b->vieww = 0;                             // View button recorded only when drawn
+    b->maskx = 0; b->maskw = 0;                             // Filter button recorded only when drawn
     int drewbar = 0, drewcrumbs = 0;                        // active states draw a graphical bar + left label
     int pw = 120, pbh = 10;                                  // progress track: 120x10, vertically centred
     int pby = iy + (ih - pbh)/2;
@@ -669,6 +700,18 @@ static void br_infobar(int hd, int ix, int iy, int iw, int ih, void *ud) {
         vst_color(HV, 1); vst_alignment(HV, VDI_TA_LEFT, VDI_TA_HALF, 0,0);
         v_gtext(HV, b->viewx + 7, ay, vl);
         irx = b->viewx - 12;                                 // keep other content clear of the button
+    }
+    // Filter button (path windows net 0/2, no request in flight): shows the file
+    // mask; click opens the mask dialog.  Sits left of View.  (Titlebar clicks are
+    // consumed by the AES window drag, so this info-bar affordance replaces the
+    // planned title double-click.)
+    if (b->req_fd < 0 && b->net != 1) {
+        char ml[48]; snprintf(ml, sizeof ml, "Filter: %s", b->mask[0] ? b->mask : "*");
+        vst_height(HV, 14, 0,0,0,0);
+        b->maskw = br_textw(ml) + 14; b->maskx = irx - b->maskw;
+        vst_color(HV, 1); vst_alignment(HV, VDI_TA_LEFT, VDI_TA_HALF, 0,0);
+        v_gtext(HV, b->maskx + 7, ay, ml);
+        irx = b->maskx - 12;                                 // keep other content clear of the button
     }
     if (b->req_fd >= 0 && b->req_kind == RQ_FETCH) {          // fetch in flight: label + determinate bar
         unsigned pc = b->prog_total
@@ -830,6 +873,35 @@ static void add_server_dialog(browser *b) {           // b = the servers browser
     b->prog_stall = 0;                                     // reset the request watchdog
 }
 
+// ---- Set-filter dialog (the info-bar "Filter" button; form_do consumer #2) ---
+// One editable field prefilled with the current mask; OK (default) stores it and
+// re-lists, Cancel / Esc-Esc backs out.  Mirrors add_server_dialog's plumbing.
+enum { MK_ROOT, MK_TITLE, MK_LFILT, MK_FFILT, MK_CANCEL, MK_OK, MK_N };
+#define MK_W 360
+#define MK_H 150
+static char mk_buf[32];
+static char mk_tmpl[31];                             // 30 input positions ('_' run)
+static TEDINFO mk_tfilt = { mk_buf, mk_tmpl, "X", sizeof mk_buf, TE_LEFT };
+static OBJECT mk_dlg[MK_N] = {
+ /*ROOT  */ { NIL, MK_TITLE, MK_OK, G_BOX, OF_MOVEABLE, OS_NORMAL, 0, 0,0, MK_W, MK_H },
+ /*TITLE */ { MK_LFILT,  NIL,NIL, G_STRING, OF_NONE, OS_NORMAL, (void*)"Set file filter",  20,12, 320,20 },
+ /*LFILT */ { MK_FFILT,  NIL,NIL, G_STRING, OF_NONE, OS_NORMAL, (void*)"Filter:",          20,54, 70,20 },
+ /*FFILT */ { MK_CANCEL, NIL,NIL, G_FTEXT,  OF_EDITABLE, OS_NORMAL, &mk_tfilt,              98,51, 240,26 },
+ /*CANCEL*/ { MK_OK,     NIL,NIL, G_BUTTON, OF_SELECTABLE|OF_EXIT|OF_CANCEL, OS_NORMAL, (void*)"Cancel", 132,102, 100,32 },
+ /*OK    */ { MK_ROOT,   NIL,NIL, G_BUTTON, OF_SELECTABLE|OF_EXIT|OF_DEFAULT|OF_LASTOB, OS_NORMAL, (void*)"OK", 244,102, 92,32 },
+};
+static void mask_dialog(browser *b) {
+    snprintf(mk_buf, sizeof mk_buf, "%s", b->mask[0] ? b->mask : "*");
+    memset(mk_tmpl, '_', sizeof mk_tmpl - 1); mk_tmpl[sizeof mk_tmpl - 1] = 0;
+    int r = form_do_dialog(mk_dlg, MK_FFILT);         // focus starts in the field
+    if (r >= 0) mk_dlg[r].ob_state &= ~OS_SELECTED;   // release for the next run
+    if (r != MK_OK) return;
+    char m[32]; snprintf(m, sizeof m, "%s", mk_buf);  // trim trailing blanks; empty -> "*"
+    for (int i = (int)strlen(m)-1; i >= 0 && m[i] == ' '; i--) m[i] = 0;
+    snprintf(b->mask, sizeof b->mask, "%s", m[0] ? m : "*");
+    br_list(b); br_settitle(b); wind_redraw();        // re-list/re-layout/retitle/redraw
+}
+
 // ---- async pump: feed arrived reply lines back into the owning browser -----
 static void net_req_fail(browser *b, const char *msg) {
     int kind = b->req_kind;
@@ -967,6 +1039,11 @@ static void br_click(browser *b, int mx, int my) {
         b->viewmode = b->viewmode >= 3 ? 1 : b->viewmode + 1;
         b->sel = -1; wind_redraw(); return;
     }
+    if (b->maskw > 0 &&                                     // Filter button: edit the file mask
+        mx >= b->maskx && mx < b->maskx + b->maskw &&
+        my >= b->infoy && my < b->infoy + b->infoh) {
+        mask_dialog(b); return;
+    }
     int slot = br_hit_slot(b, mx, my);
     if (slot < 0) { b->sel = -1; wind_redraw(); return; }
     int dd = b->rel[0] ? 1 : 0;
@@ -1019,6 +1096,7 @@ static void open_browser_win(const char *logical, int media_type, int net, int s
     b->used = 1; b->media_type = media_type; b->sel = -1; b->req_fd = -1;
     b->net = net; b->server_id = server_id;
     b->viewmode = default_viewmode();
+    snprintf(b->mask, sizeof b->mask, "*");           // default file mask: show everything
     snprintf(b->logical_root, sizeof b->logical_root, "%s", logical);
     snprintf(b->fs_root, sizeof b->fs_root, "%s%s", base, logical);
     int kind = BR_WKIND;
@@ -1247,6 +1325,7 @@ int main(int argc, char **argv) {
             { fuji = 5; fuji_id = atoi(argv[++i]); fuji_path = argv[++i]; }
         else if (!strcmp(argv[i], "--nav")) fuji = 6;               // headless: ".."/breadcrumb/Fit render
         else if (!strcmp(argv[i], "--views")) fuji = 7;             // headless: text view-mode render
+        else if (!strcmp(argv[i], "--mask")) fuji = 8;              // headless: file-mask filter render
         else snprintf(base, sizeof base, "%s", argv[i]);
     }
 
@@ -1354,6 +1433,45 @@ int main(int argc, char **argv) {
                 cwide, cnar, resp_ok ? "OK" : "FAIL");
         registry_close();
         return (single_ok && multi_ok && geom_ok && resp_ok) ? 0 : 1;
+    }
+    if (fuji == 8) {                                  // headless file-mask filter test (--mask)
+        // 1) glob helper unit checks (case-insensitive '*' / '?').
+        struct { const char *pat, *nm; int want; } gt[] = {
+            { "*.gif", "pic1.gif", 1 }, { "*.gif", "readme.txt", 0 },
+            { "*.GIF", "pic1.gif", 1 }, { "*.gif", "PIC2.GIF", 1 },
+            { "*",     "anything", 1 }, { "pic?.gif", "pic2.gif", 1 },
+            { "pic?.gif", "pic10.gif", 0 }, { "*.x*", "a.xex", 1 }, { "*.x*", "a.txt", 0 },
+        };
+        int glob_ok = 1;
+        for (int i = 0; i < (int)(sizeof gt / sizeof gt[0]); i++) {
+            int got = glob_ci(gt[i].pat, gt[i].nm);
+            if (got != gt[i].want) { glob_ok = 0;
+                fprintf(stderr, "mask: glob(%s,%s)=%d want %d FAIL\n", gt[i].pat, gt[i].nm, got, gt[i].want); }
+        }
+        fprintf(stderr, "mask: glob unit %s\n", glob_ok ? "OK" : "FAIL");
+        // 2) open a local browser on a mixed-extension dir; filter to "*.gif".
+        open_browser("/navtest/many", ICT_MEDIA_8BIT);
+        browser *nb = BR[0].used ? &BR[0] : NULL;
+        if (!nb) { fprintf(stderr, "mask: no browser (mkdir <base>/navtest/many first)\n"); return 1; }
+        int all_n = nb->nent;
+        snprintf(nb->mask, sizeof nb->mask, "*.gif");
+        br_list(nb); br_settitle(nb); wind_redraw();
+        int gif = 0, nongif = 0, dirs = 0;
+        for (int i = 0; i < nb->nent; i++) {
+            if (nb->ent[i].dir) { dirs++; continue; }
+            if (glob_ci("*.gif", nb->ent[i].name)) gif++; else nongif++;
+        }
+        int mask_ok = (nongif == 0 && gif > 0);
+        dump_ppm("/tmp/xtdesk-mask.ppm");
+        fprintf(stderr, "mask: all=%d  '*.gif' nent=%d gif=%d nongif=%d dirs=%d (%s)\n",
+                all_n, nb->nent, gif, nongif, dirs, mask_ok ? "OK" : "FAIL");
+        // 3) switching back to "*" shows everything again.
+        snprintf(nb->mask, sizeof nb->mask, "*");
+        br_list(nb); br_settitle(nb); wind_redraw();
+        int restore_ok = (nb->nent == all_n);
+        fprintf(stderr, "mask: restore '*' nent=%d (%s)\n", nb->nent, restore_ok ? "OK" : "FAIL");
+        registry_close();
+        return (glob_ok && mask_ok && restore_ok) ? 0 : 1;
     }
     if (fuji == 4) {                                  // headless Add-Server dialog replay
         open_fuji_servers();
