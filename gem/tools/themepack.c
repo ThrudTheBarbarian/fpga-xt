@@ -58,17 +58,20 @@ static img trim_center(img m, int n) {
 // `name` may carry suffixes (any one): "@90/180/270" rotate, "~N" trim N px from
 // the centre of the longer axis, "^RRGGBB" tint by a colour (for the blue
 // default button — the grey bezel tinted by intensity), "*NN" scale brightness
-// to NN% (magick -modulate, e.g. darken the active titlebar to the button tone).
+// to NN% (magick -modulate), "%NN" multiply by a TOP-to-bottom gradient that
+// keeps the top and darkens the bottom to NN% (a pronounced vertical shade — the
+// active titlebar gets its metallic top-light/bottom-dark gradient this way).
 static img load_png(const char *dir, const char *name) {
     img m = { 0, 0, 0 };
-    char base[256]; int rot = 0, trim = 0, bright = 0; char tint[16] = "";
+    char base[256]; int rot = 0, trim = 0, bright = 0, grad = 0; char tint[16] = "";
     snprintf(base, sizeof base, "%s", name);
     const char *sfx;
     if ((sfx = strchr(base, '@'))) rot    = atoi(sfx + 1);
     if ((sfx = strchr(base, '~'))) trim   = atoi(sfx + 1);
     if ((sfx = strchr(base, '*'))) bright = atoi(sfx + 1);
+    if ((sfx = strchr(base, '%'))) grad   = atoi(sfx + 1);
     if ((sfx = strchr(base, '^'))) snprintf(tint, sizeof tint, "%.6s", sfx + 1);
-    for (char *q = base; *q; q++) if (*q=='@'||*q=='~'||*q=='^'||*q=='*') { *q = 0; break; }
+    for (char *q = base; *q; q++) if (*q=='@'||*q=='~'||*q=='^'||*q=='*'||*q=='%') { *q = 0; break; }
     name = base;
 
     const char *srcdir = dir;                          // overlay overrides the base dir
@@ -85,9 +88,13 @@ static img load_png(const char *dir, const char *name) {
     if (rot == 90 || rot == 270) { int t = m.w; m.w = m.h; m.h = t; }   // dims swap
 
     unsigned char *raw = malloc((size_t)m.w * m.h * 4);
-    char ops[96] = "", t[48];
+    char ops[256] = "", t[128];
     if (rot)     { snprintf(t, sizeof t, " -rotate %d", rot); strncat(ops, t, sizeof ops-strlen(ops)-1); }
     if (bright)  { snprintf(t, sizeof t, " -modulate %d", bright); strncat(ops, t, sizeof ops-strlen(ops)-1); }
+    if (grad)    { int g = grad*255/100;                       // top stays, bottom -> g/255
+                   snprintf(t, sizeof t, " \\( -size %dx%d gradient:#ffffff-#%02x%02x%02x \\) -compose Multiply -composite",
+                            m.w, m.h, g, g, g);
+                   strncat(ops, t, sizeof ops-strlen(ops)-1); }
     if (tint[0]) { snprintf(t, sizeof t, " -fill \"#%s\" -colorize 85%%", tint); strncat(ops, t, sizeof ops-strlen(ops)-1); }
     snprintf(cmd, sizeof cmd, "magick '%s'%s -depth 8 RGBA:- 2>/dev/null", path, ops);
     p = popen(cmd, "r");
