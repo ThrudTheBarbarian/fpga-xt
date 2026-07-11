@@ -89,3 +89,28 @@ int registry_match(const char *name, int type, char *path, int psz, char *disp, 
     sqlite3_finalize(st);
     return found;
 }
+
+int registry_mime(const char *name, char *app, int asz,
+                  char *machine, int msz, char *boot, int bsz) {
+    if (app && asz)     app[0] = 0;
+    if (machine && msz) machine[0] = 0;
+    if (boot && bsz)    boot[0] = 0;
+    if (!g_db) return -1;                                  // no DB -> caller falls back
+    sqlite3_stmt *st;
+    const char *sql = "SELECT match,app,COALESCE(machine,''),COALESCE(boot,'') FROM mimeApps";
+    if (sqlite3_prepare_v2(g_db, sql, -1, &st, NULL) != SQLITE_OK) return -1;  // no table
+    int best = -1, found = 0;
+    while (sqlite3_step(st) == SQLITE_ROW) {
+        const char *pat = (const char *)sqlite3_column_text(st, 0);
+        if (!pat || !pmatch(pat, name)) continue;
+        int sp = specificity(pat);
+        if (sp > best) {                                   // most-specific glob wins
+            best = sp; found = 1;
+            if (app)     snprintf(app,     asz, "%s", (const char *)sqlite3_column_text(st, 1));
+            if (machine) snprintf(machine, msz, "%s", (const char *)sqlite3_column_text(st, 2));
+            if (boot)    snprintf(boot,    bsz, "%s", (const char *)sqlite3_column_text(st, 3));
+        }
+    }
+    sqlite3_finalize(st);
+    return found;                                          // 1 matched, 0 = none matched
+}

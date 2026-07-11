@@ -195,7 +195,7 @@ static void desk_click(int mx, int my);   // fwd
 // The work area will be the compositor's emulation plane; until the core hookup
 // lands it shows the machine + what was booted into it (same as the host stub).
 #define MAXEMU 6
-typedef struct { int used, win; char name[48], boot[96]; } emuwin;
+typedef struct { int used, win, istext; char name[48], boot[96]; } emuwin;
 static emuwin EMU[MAXEMU];
 static int g_ex = 380, g_ey = 130;
 
@@ -265,10 +265,66 @@ static void open_emulator(int type, const char *media, const char *boot) {
     }
     repaint_rect(bx, by, bw, bh);             // push just the new window, not the whole plane
 }
-// Launch a media file: pick the emulator by the browser's media type, and the
-// boot method by extension (disk -> D1:/A:, cartridge -> CART, executable -> a
-// dummy-env RUN), then open the emulator window loaded with it.
+// A minimal text-viewer window naming the file.  There is no process-spawn
+// primitive here yet, so like open_emulator (which frames the compositor plane
+// rather than spawning a core) this is a stub page; when a spawn syscall lands
+// it launches /bin/gemtext on the file the same way emulator media is passed.
+// Reuses an EMU slot (istext=1) so the event loop's close handling frees it.
+static void txt_draw(int hd, int wx, int wy, int ww, int wh, void *ud) {
+    (void)hd; emuwin *e = ud;
+    vsf_color(HV, 0); vsf_interior(HV, VDI_FIS_SOLID); vsf_perimeter(HV, 0);   // white page
+    int16_t r[4] = { (int16_t)wx, (int16_t)wy, (int16_t)(wx+ww-1), (int16_t)(wy+wh-1) };
+    vr_recfl(HV, r);
+    vst_color(HV, 1); vst_alignment(HV, VDI_TA_LEFT, VDI_TA_TOP, 0,0);
+    vst_height(HV, 16, 0,0,0,0); v_gtext(HV, wx+12, wy+12, e->boot);           // the file name
+    vst_height(HV, 13, 0,0,0,0); v_gtext(HV, wx+12, wy+40, "(text viewer — stub)");
+}
+static void open_textview(const char *name) {
+    int s = -1; for (int i = 0; i < MAXEMU; i++) if (!EMU[i].used) { s = i; break; }
+    if (s < 0) return;
+    emuwin *e = &EMU[s]; memset(e, 0, sizeof *e); e->used = 1; e->istext = 1;
+    snprintf(e->name, sizeof e->name, "Text");
+    snprintf(e->boot, sizeof e->boot, "%s", name);
+    int pw = 560, ph = 420, bx, by, bw, bh;
+    wind_calc(WC_BORDER, W_NAME|W_CLOSER|W_MOVER, g_ex, g_ey, pw, ph, &bx, &by, &bw, &bh);
+    e->win = wind_create(W_NAME|W_CLOSER|W_MOVER, bx, by, bw, bh);
+    if (!e->win) { e->used = 0; return; }
+    char title[128]; snprintf(title, sizeof title, "Text \xE2\x80\x94 %s", name);
+    wind_set_name(e->win, title); wind_content(e->win, txt_draw, e);
+    wind_open(e->win, bx, by, bw, bh);
+    g_ex += 34; g_ey += 30; if (g_ey > PH-320) { g_ex = 380; g_ey = 130; }
+    repaint_rect(bx, by, bw, bh);
+}
+static void ctx_san(const char *s, char *out, int cap);   // fwd (alert-string sanitiser)
+// No application maps to this file: a graceful notice (never a silent emulator).
+static void launch_none(const char *name) {
+    char nm[96]; ctx_san(name, nm, sizeof nm);
+    char m[160]; snprintf(m, sizeof m, "[1][No application for|%s][OK]", nm);
+    form_alert(1, m);
+}
+// Launch a file THROUGH the mimeApps database (registry_mime): the file TYPE
+// (its extension glob) decides the app — an emulator (with the looked-up
+// machine + boot method), the text viewer, or a "no application" notice.  A
+// text file must NEVER route to an emulator.  Only if the table can't be loaded
+// at all do we fall back to the old path-based media inference (`media_type`).
 static void desk_launch(const char *name, int media_type) {
+    char app[16], machine[8], meth[8];
+    int r = registry_mime(name, app, sizeof app, machine, sizeof machine, meth, sizeof meth);
+    if (r >= 0) {                                          // table present: obey it
+        if (r == 0 || !strcmp(app, "none")) { launch_none(name); return; }
+        if (!strcmp(app, "textview"))       { open_textview(name); return; }
+        if (!strcmp(app, "emulator")) {
+            int emu = !strcmp(machine, "m68k") ? ICT_EMU_1632 : ICT_EMU_8BIT;
+            char boot[96];
+            if (!strcmp(meth, "cart"))      snprintf(boot, sizeof boot, "CART %s", name);
+            else if (!strcmp(meth, "disk")) snprintf(boot, sizeof boot, "%s %s", emu == ICT_EMU_8BIT ? "D1:" : "A:", name);
+            else                            snprintf(boot, sizeof boot, "RUN %s", name);   // exec
+            open_emulator(emu, name, boot);
+            return;
+        }
+        launch_none(name); return;                        // unknown verb -> notice
+    }
+    // Last resort (mimeApps table unavailable): infer emulator by path-derived media.
     int emu = (media_type == ICT_MEDIA_1632) ? ICT_EMU_1632 : ICT_EMU_8BIT;
     char ext[8] = ""; const char *dot = strrchr(name, '.');
     if (dot) { int i = 0; for (const char *p = dot+1; *p && i < 7; p++) ext[i++] = (char)tolower((unsigned char)*p); ext[i] = 0; }
@@ -1647,8 +1703,11 @@ static int ctx_browse_start(int scope, browser *b, int tentry, int tdeskobj, cha
     snprintf(out, cap, "/");                             // desktop background -> the root
     return 1;
 }
-// Start the browse navigator for the resolved scope/target (local FS only).
+// Start the browse navigator for the resolved scope/target.  Local FS targets
+// run the cascading navigator; the Fujinet desktop drive is a NETWORK root, so
+// it routes to the net browser (open_fuji_servers) instead of the local nav.
 static void ctx_browse(int scope, browser *b, int tentry, int tdeskobj) {
+    if (!b && tdeskobj && rows[tdeskobj-1].type == ICT_FUJINET) { open_fuji_servers(); return; }
     char start[512];
     if (!ctx_browse_start(scope, b, tentry, tdeskobj, start, sizeof start)) {
         form_alert(1, "[1][Browse|browse is local-only][OK]"); return;

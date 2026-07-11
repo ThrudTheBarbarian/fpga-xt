@@ -251,6 +251,11 @@ INSERT INTO contextMenu (scope,ord,label,accel,action,submenu) VALUES (1,30,'Bro
 INSERT INTO contextMenu (scope,ord,label,accel,action,submenu) VALUES (4,10,'Open','^O','open',NULL);
 INSERT INTO contextMenu (scope,ord,label,accel,action,submenu) VALUES (4,20,'Info...','^I','info',NULL);
 INSERT INTO contextMenu (scope,ord,label,accel,action,submenu) VALUES (4,30,'Delete','^D','delete',NULL);
+-- drive (scope 2) starter set — the {8-bit files, 16-bit files, Fujinet} desktop
+-- icons.  Browse roots the navigator at that icon's path (Fujinet -> net browser).
+INSERT INTO contextMenu (scope,ord,label,accel,action,submenu) VALUES (2,10,'Open','^O','open',NULL);
+INSERT INTO contextMenu (scope,ord,label,accel,action,submenu) VALUES (2,20,'Browse','^B','browse',NULL);
+INSERT INTO contextMenu (scope,ord,label,accel,action,submenu) VALUES (2,30,'Info...','^I','info',NULL);
 
 DROP TABLE IF EXISTS deskPrefs;
 CREATE TABLE deskPrefs
@@ -263,3 +268,58 @@ INSERT INTO deskPrefs (key,value) VALUES ('viewMode','1');       -- ref viewMode
 INSERT INTO deskPrefs (key,value) VALUES ('sortMode','2');       -- ref sortMode:id (name)
 INSERT INTO deskPrefs (key,value) VALUES ('sortInverted','0');
 INSERT INTO deskPrefs (key,value) VALUES ('columns','size,date'); -- multi/text column attrs
+
+-- ---------------------------------------------------------------------------
+-- Application <-> mimetype launch database
+--
+-- Maps a file (by a filename glob) to the application that opens it, so a
+-- launch/open is routed by file TYPE rather than by which /Media volume it
+-- lives under (a .txt must NOT boot an emulator).  The desktop glob-matches the
+-- filename case-insensitively; the most specific (most literal chars) match
+-- wins, exactly like windowIcons.
+--
+-- id				: used to identify the row
+-- match			: filename glob ('*' = a run, '%' = one char), e.g. '*.atr'
+-- app				: the application verb — one of:
+--                    'emulator' : open an emulator window (see machine/boot)
+--                    'textview' : open a text viewer on the file
+--                    'none'     : no application (the desktop shows a notice)
+-- machine			: for 'emulator' — '6502' (8-bit media) or 'm68k' (16/32-bit)
+-- boot				: for 'emulator' — the boot method:
+--                    'disk' : mount as a floppy (D1: on 6502, A: on m68k)
+--                    'cart' : insert as a cartridge (CART)
+--                    'exec' : run as an executable (RUN, dummy env)
+--
+-- Anything that matches no row is treated as 'none' (never an emulator).
+-- ---------------------------------------------------------------------------
+DROP TABLE IF EXISTS mimeApps;
+CREATE TABLE mimeApps
+    (
+    id      INTEGER PRIMARY KEY AUTOINCREMENT,
+    match   VARCHAR NOT NULL,
+    app     VARCHAR NOT NULL,               -- 'emulator' | 'textview' | 'none'
+    machine VARCHAR,                        -- '6502' | 'm68k' (emulator only)
+    boot    VARCHAR                         -- 'disk' | 'cart' | 'exec' (emulator only)
+    );
+
+-- 8-bit media -> the 6502 emulator
+INSERT INTO mimeApps (match,app,machine,boot) VALUES ('*.atr','emulator','6502','disk');
+INSERT INTO mimeApps (match,app,machine,boot) VALUES ('*.atx','emulator','6502','disk');
+INSERT INTO mimeApps (match,app,machine,boot) VALUES ('*.xfd','emulator','6502','disk');
+INSERT INTO mimeApps (match,app,machine,boot) VALUES ('*.rom','emulator','6502','cart');
+INSERT INTO mimeApps (match,app,machine,boot) VALUES ('*.car','emulator','6502','cart');
+INSERT INTO mimeApps (match,app,machine,boot) VALUES ('*.bin','emulator','6502','cart');
+INSERT INTO mimeApps (match,app,machine,boot) VALUES ('*.xex','emulator','6502','exec');
+INSERT INTO mimeApps (match,app,machine,boot) VALUES ('*.exe','emulator','6502','exec');
+-- 16/32-bit media -> the m68k emulator
+INSERT INTO mimeApps (match,app,machine,boot) VALUES ('*.st','emulator','m68k','disk');
+INSERT INTO mimeApps (match,app,machine,boot) VALUES ('*.msa','emulator','m68k','disk');
+INSERT INTO mimeApps (match,app,machine,boot) VALUES ('*.dim','emulator','m68k','disk');
+INSERT INTO mimeApps (match,app,machine,boot) VALUES ('*.prg','emulator','m68k','exec');
+INSERT INTO mimeApps (match,app,machine,boot) VALUES ('*.tos','emulator','m68k','exec');
+INSERT INTO mimeApps (match,app,machine,boot) VALUES ('*.app','emulator','m68k','exec');
+-- text-like files -> the text viewer
+INSERT INTO mimeApps (match,app,machine,boot) VALUES ('*.txt','textview',NULL,NULL);
+INSERT INTO mimeApps (match,app,machine,boot) VALUES ('*.md','textview',NULL,NULL);
+INSERT INTO mimeApps (match,app,machine,boot) VALUES ('*.html','textview',NULL,NULL);
+INSERT INTO mimeApps (match,app,machine,boot) VALUES ('*.log','textview',NULL,NULL);

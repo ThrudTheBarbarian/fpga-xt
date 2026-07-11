@@ -40,4 +40,14 @@ int  registry_pref(const char *key, const char *deflt, char *out, int osz);
 // uses `name`).  Returns 1 on a match, 0 if none.
 int  registry_match(const char *name, int type, char *path, int psz, char *disp, int dsz);
 
+// Application <-> mimetype lookup: pick the launch action for a file named
+// `name` from the mimeApps table (most-specific glob wins, case-insensitive).
+// Fills `app` ("emulator"|"textview"|"none"), and for an emulator `machine`
+// ("6502"|"m68k") + `boot` ("disk"|"cart"|"exec") — empty for non-emulators.
+// Returns 1 on a match, 0 if the table exists but nothing matched (caller = a
+// "none" / no-application notice), and -1 if the table/DB is unavailable (caller
+// may fall back to path-based inference).  machine/boot may be NULL.
+int  registry_mime(const char *name, char *app, int asz,
+                   char *machine, int msz, char *boot, int bsz);
+
 #endif // GEM_REGISTRY_H
