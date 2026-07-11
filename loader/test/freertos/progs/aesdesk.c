@@ -60,13 +60,24 @@ static struct os_fbinfo g_fb;
 static gfx_surface *g_bb;
 
 /* Push only the changed rectangle from the cached back-buffer to the scanned
- * plane.  wind_redraw regenerates ALL of g_bb (cheap — cached, no plane traffic),
- * but the plane write is the only thing that contends with the free-running
- * compositor's DDR reads.  A full-plane blit is ~8 MB and starved the compositor
- * hard enough to briefly drop the HDMI link (SiI read the sink as absent) on
- * every repaint; presenting just the touched region keeps an icon highlight to a
- * few KB.  g_bb is always fully correct and the plane already matches outside the
- * rect, so a partial push stays in sync. */
+ * plane.  wind_redraw regenerates ALL of g_bb (cheap — cached, no plane traffic);
+ * the plane write is the only DDR traffic, so a full-plane blit is ~8 MB where an
+ * icon highlight is a few KB.  g_bb is always fully correct and the plane already
+ * matches outside the rect, so a partial push stays in sync.  Worth it for CPU and
+ * DDR either way.
+ *
+ * DO NOT re-derive the old story here, which was WRONG: this used to claim a
+ * full-plane blit "starved the compositor hard enough to drop the HDMI link (SiI
+ * read the sink as absent)".  It does not.  The link drops were a POWER problem —
+ * the board was running off USB bus power, and the current transient of a big blit
+ * drooped the rail enough to dip the SiI9022's analog RxSense, which reads as
+ * "sink absent".  Proof: the PL diag monitor (hdmi.c hdmi_diag_mon_task) logged
+ * ZERO overruns / MMCM unlocks / frame stalls through every drop — the compositor
+ * never starved and the pixel clock never lost lock — and an external PSU made the
+ * drops vanish entirely.  That false diagnosis cost months in AXI-QoS and
+ * blit-banding attempts, neither of which could ever have worked.  Bandwidth is
+ * not the constraint: the DDR has ample headroom and a big sequential blit is the
+ * FRIENDLIEST access pattern there is. */
 static void present_rect(int x, int y, int w, int h) {
     if (x < 0) { w += x; x = 0; }
     if (y < 0) { h += y; y = 0; }

@@ -301,11 +301,18 @@ static void hdmi_watch_task(void *arg)
         i2c_unlock();
         if (rd != 0) continue;                             /* I2C hiccup: skip this tick */
         if (st & 0x08) { lost = 0; continue; }             /* RxSense high = receiver present -> healthy */
-        if (++lost < 3) {                                  /* RxSense low <3 s: transient (DDR burst) — ride it out,
-                                                            * but LOG it WITH the die temp: the debounced dips are
-                                                            * otherwise silent, so this builds the thermal-correlation
-                                                            * dataset (do they cluster above a temp threshold? do they
-                                                            * vanish once the fan lands?). See [[hdmi_blank...]]. */
+        if (++lost < 3) {                                  /* RxSense low <3 s: transient (current burst) — ride it out,
+                                                            * but LOG it WITH the die temp.
+                                                            * CONFIRMED 2026-07-11: these dips are a POWER problem, not a
+                                                            * bandwidth one.  The board was running off USB bus power; a
+                                                            * CPU/DDR burst (a big blit, a process spawn) drooped the rail
+                                                            * enough to dip RxSense.  An external PSU made them vanish.
+                                                            * The PL diag monitor logged ZERO overrun / MMCM-unlock /
+                                                            * frame-stall through every drop, so the compositor never
+                                                            * starved and the pixel clock never lost lock.  If these
+                                                            * reappear, suspect the SUPPLY first — do NOT go chasing DDR
+                                                            * QoS or blit throttling again (both were tried; neither could
+                                                            * ever have worked). */
             extern int g_temp_die;                          /* cached XADC die milli-C (temp task) */
             extern void klog_u(unsigned);
             int mc = g_temp_die;

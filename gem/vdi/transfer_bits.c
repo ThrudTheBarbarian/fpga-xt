@@ -75,14 +75,30 @@ void op_transfer_bits(vdi_pb *pb) {
     int cx0 = 0, cy0 = 0, cx1 = dst.w - 1, cy1 = dst.h - 1;
     if (!(dm && dm->addr)) vdi_ws_clip(w, &cx0, &cy0, &cx1, &cy1);   // screen: honour the clip
 
-    for (int dy = dy1; dy <= dy2; dy++) {
-        if (dy < cy0 || dy > cy1 || dy < 0 || dy >= dst.h) continue;
+    /* Intersect the destination rect with the clip (and the surface) ONCE, then walk
+     * only that span — rather than iterating every pixel of the sprite and testing
+     * each one against the clip.  This is load-bearing for damage-rect redraws:
+     * wind_redraw_area re-renders the WHOLE desktop clipped to the damage rect, so
+     * without an early reject every icon/sprite on screen was walked pixel-by-pixel
+     * (testing, discarding, drawing nothing) just to paint one icon's worth of
+     * damage.  A sprite wholly outside the damage rect now costs O(1) instead of
+     * O(w*h), and a partly-visible one only touches its visible pixels.  cpyfm.c
+     * already clamped this way; this blitter (the alpha-blended icon/theme path)
+     * never did.  The source mapping still divides by the ORIGINAL dst rect
+     * (dx1/dw, dy1/dh), so scaling is unchanged — we just skip pixels that the
+     * per-pixel test would have thrown away anyway.  Output is bit-identical. */
+    if (cx0 < 0) cx0 = 0;   if (cx1 > dst.w - 1) cx1 = dst.w - 1;
+    if (cy0 < 0) cy0 = 0;   if (cy1 > dst.h - 1) cy1 = dst.h - 1;
+    int gx0 = dx1 > cx0 ? dx1 : cx0, gx1 = dx2 < cx1 ? dx2 : cx1;
+    int gy0 = dy1 > cy0 ? dy1 : cy0, gy1 = dy2 < cy1 ? dy2 : cy1;
+    if (gx0 > gx1 || gy0 > gy1) return;                              // wholly clipped -> nothing to do
+
+    for (int dy = gy0; dy <= gy1; dy++) {
         int sy = sy1 + (dy - dy1) * sh / dh;
         if (sy < 0 || sy >= src.h) continue;
         uint32_t *drow = dst.px + (size_t)dy * dst.stride;
         const uint32_t *srow = src.px + (size_t)sy * src.stride;
-        for (int dx = dx1; dx <= dx2; dx++) {
-            if (dx < cx0 || dx > cx1 || dx < 0 || dx >= dst.w) continue;
+        for (int dx = gx0; dx <= gx1; dx++) {
             int sx = sx1 + (dx - dx1) * sw / dw;
             if (sx < 0 || sx >= src.w) continue;
             uint32_t s = srow[sx], d = drow[dx];
