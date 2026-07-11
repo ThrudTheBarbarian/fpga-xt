@@ -25,6 +25,7 @@ typedef struct {
     int tbx[WIND_MAXTB], tby[WIND_MAXTB], tbw[WIND_MAXTB], tbh[WIND_MAXTB];   // their last screen rects
     int content_w, content_h;                  // app-reported full content size (work coords)
     int scroll_x, scroll_y;                    // current scroll offset (vertical bar drawn)
+    int maxed, sx,sy,sw,sh;                    // maximise toggle: flag + the pre-maximise rect
 } awin;
 
 #define SB_W      16     // reserved vertical-scrollbar column width
@@ -405,6 +406,16 @@ int wind_handle_click(int mx,int my){
     int tx=W->x, ty=W->y, tw=W->w;               // flush title bar
     // close box
     if((W->kind&W_CLOSER) && mx>=tx+8 && mx<tx+8+WTB_W && my>=ty && my<ty+th){ post(WM_CLOSED,hd,0,0,0,0); return 1; }
+    // maximise box (W_FULLER): toggle between the full desktop work area and the
+    // saved pre-maximise rect, then WM_SIZED so the app reflows to the new size.
+    if((W->kind&W_FULLER) && mx>=tx+8+WTB_PITCH && mx<tx+8+WTB_PITCH+WTB_W && my>=ty && my<ty+th){
+        if(!W->maxed){ W->sx=W->x; W->sy=W->y; W->sw=W->w; W->sh=W->h;
+                       int ax,ay,aw,ah; work_area(&ax,&ay,&aw,&ah);
+                       W->x=ax; W->y=ay; W->w=aw; W->h=ah; W->maxed=1; }
+        else         { W->x=W->sx; W->y=W->sy; W->w=W->sw; W->h=W->sh; W->maxed=0; }
+        clamp_win(W); clamp_scroll(W); wind_redraw();
+        post(WM_SIZED,hd,W->x,W->y,W->w,W->h); return 1;
+    }
     // title bar -> drag (live move)
     if((W->kind&W_MOVER) && my>=ty && my<ty+th && mx>=tx && mx<tx+tw){
         // Interactive title: a press on the app's title span that does NOT move is

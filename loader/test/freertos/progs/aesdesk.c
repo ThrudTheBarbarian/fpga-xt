@@ -42,7 +42,7 @@
 #define GAL_CW  180         // Gallery (viewmode 4) cell: ~2x the icon cell -> fewer per row
 #define GAL_CH  140         // (icon art is still ICON_SZ; true thumbnails are a future enhancement)
 #define TEXT_ROWH 20         // text-view row height (single/multi column)
-#define TEXT_COLW 220        // multi-column text: target column width
+#define TEXT_COLW 260        // multi-column text: target column width (name + attrs + size fields)
 #define BR_TEXT_SEL 250      // theme selection background (aes object.c PEN_SEL)
 #define MAX_ICONS 32
 #define DCLICK_MS 500   /* generous: serial Enter-Enter / Space-toggle need more than a real mouse */
@@ -348,8 +348,18 @@ static void desk_launch(const char *name, int media_type) {
 #define MAXENT  96
 #define MAX_CRUMB 18                                  // breadcrumb: <root> + up to ~16 path segments
 #define BR_WKIND (W_NAME|W_CLOSER|W_MOVER|W_SIZER|W_FULLER|W_INFO)   // browser-window kind
+// Per-entry access-attribute bits, rendered as a "d a r x h s" flag string
+// (br_fmt_attr).  d=dir a=archived r=read-only x=executable h=hidden s=system.
+// a/s are FAT/DOS-only and stay off here; the kernel stat only reports the file
+// type, so A9 entries only get d (r/x/h/a/s dashed).
+#define BATTR_DIR 0x01
+#define BATTR_ARC 0x02
+#define BATTR_RO  0x04
+#define BATTR_EXE 0x08
+#define BATTR_HID 0x10
+#define BATTR_SYS 0x20
 typedef struct { char name[128], label[128]; int dir; long size, mtime;
-                 char state; int srvid; } bent;     // state: lsc cache column; srvid: servers row (-1 = Add server)
+                 char state; int srvid; unsigned char attr; } bent;   // state: lsc cache column; srvid: servers row (-1 = Add server); attr: BATTR_* flags
 typedef struct {
     int used, win, media_type, sel;
     int net, server_id;                               // net browser flavour (see above)
@@ -498,12 +508,12 @@ static void srv_row(browser *b, const char *ln) {     // one `servers` reply row
     if (sscanf(ln, "%d %15s %159s %159s %n", &sid, tr, hp, pa, &off) < 4) return;
     bent *e = &b->ent[b->nent++];
     snprintf(e->name, sizeof e->name, "%s", ln[off] ? ln + off : hp);
-    e->dir = 1; e->size = 0; e->state = 0; e->srvid = sid;
+    e->dir = 1; e->size = 0; e->state = 0; e->srvid = sid; e->attr = BATTR_DIR;
 }
 static void srv_finish(browser *b) {                  // rows all in: Add tile + icons
     bent *a = &b->ent[b->nent++];                     // trailing "Add server" tile
     snprintf(a->name, sizeof a->name, "Add server");
-    a->dir = 0; a->size = 0; a->state = 0; a->srvid = -1;
+    a->dir = 0; a->size = 0; a->state = 0; a->srvid = -1; a->attr = 0;
     for (int i = 0; i < b->nent; i++) {
         bent *e = &b->ent[i];
         char ip[REG_PATH_MAX] = "", id[REG_NAME_MAX] = "";
@@ -541,6 +551,7 @@ static void net_row(browser *b, const char *ln) {     // one `lsc` reply row -> 
     snprintf(e->name, sizeof e->name, "%s", ln + off);
     e->dir = (kind == 'd'); e->size = size;
     e->state = e->dir ? 0 : cs; e->srvid = 0;
+    e->attr = e->dir ? BATTR_DIR : 0;   // lsc protocol carries no FAT attribute bits
     b->cic[b->nent-1].img = NULL;                      // live fill: text label now,
     b->cic[b->nent-1].text = e->name;                  // sorted icons on completion
 }
@@ -599,6 +610,9 @@ static void br_list(browser *b) {
         snprintf(e->name, sizeof e->name, "%s", de.name);
         e->dir = (de.mode & XT_S_IFMT) == XT_S_IFDIR;
         e->size = 0; e->mtime = 0; e->state = 0; e->srvid = 0;
+        // Kernel stat reports type only (no permission bits), so only d is known;
+        // r/x/h/a/s stay dashed on A9.
+        e->attr = e->dir ? BATTR_DIR : 0;
         { char full[560]; struct xt_stat st;             // stat every entry (size + mtime for sorting)
           snprintf(full, sizeof full, "%s/%s", dir, de.name);
           if (sys_stat(full, &st) == 0) { if (!e->dir) e->size = (long)st.size; e->mtime = (long)st.mtime; } }
@@ -662,6 +676,14 @@ static void br_fmt_size(long sz, char *out, int cap) {
     else if (sz < 1000*1000) snprintf(out, cap, "%ldK", (sz + 512) / 1024);
     else                     snprintf(out, cap, "%ldM", (sz + 524288) / (1024*1024));
 }
+// Format the BATTR_* bitmask as a fixed 6-char flag string in canonical order
+// "d a r x h s" (letter when set, '-' when clear), e.g. "d-----" / "-r-x--".
+static void br_fmt_attr(unsigned char attr, char *out) {
+    static const char let[6] = { 'd','a','r','x','h','s' };
+    static const unsigned char bit[6] = { BATTR_DIR,BATTR_ARC,BATTR_RO,BATTR_EXE,BATTR_HID,BATTR_SYS };
+    for (int i = 0; i < 6; i++) out[i] = (attr & bit[i]) ? let[i] : '-';
+    out[6] = 0;
+}
 // Text-view geometry (viewmode 2/3): columns (single=1; multi=work_width/COLW,
 // min 1 — recomputed every call so a resize reflows), rows-per-column (newspaper
 // flow: fill a column top-to-bottom then step right), and the per-column pixel
@@ -723,7 +745,12 @@ static void br_report_content(browser *b) {
 static void br_draw_text(browser *b) {
     int dd = b->rel[0] ? 1 : 0, nt = b->nent + dd;
     int sy = wind_scroll_y(b->win);                     // content is drawn shifted up
+    int pad = 14, cols, rpc, colw, ntg; br_text_grid(b, &cols, &rpc, &colw, &ntg);
     vst_height(HV, 14, 0,0,0,0);
+    // Fields packed from the RIGHT so each colw-wide cell reads as aligned
+    // columns:  [name… (left)]  gap  [attrs (right)]  gap  [size (right)]  gutter │
+    // attrw is a fixed all-letters sample so name truncation is stable row to row.
+    int gutter = 12, gap = 8, attrw = br_textw("darxhs");
     for (int slot = 0; slot < nt; slot++) {
         int cx, cy, cw, ch; br_text_cell(b, slot, &cx, &cy, &cw, &ch);
         cy -= sy;                                       // screen y (clipped to the work rect)
@@ -737,16 +764,35 @@ static void br_draw_text(browser *b) {
             vr_recfl(HV, r);
         }
         const char *nm = isdot ? ".." : (b->ent[i].label[0] ? b->ent[i].label : b->ent[i].name);
-        char szbuf[24];
+        char szbuf[24], atbuf[8];
         if (isdot || b->ent[i].dir) snprintf(szbuf, sizeof szbuf, "<dir>");
         else                        br_fmt_size(b->ent[i].size, szbuf, sizeof szbuf);
+        br_fmt_attr(isdot ? BATTR_DIR : b->ent[i].attr, atbuf);
         int szw = br_textw(szbuf), pen = ghost ? 9 : 1;
+        int size_rx  = cx + cw - gutter;                    // size right edge
+        int attrs_rx = size_rx - szw - gap;                 // attrs right edge (right-aligned)
+        int name_x   = cx + 6;
+        int name_w   = attrs_rx - attrw - gap - name_x;     // remaining room for the name
+        if (name_w < 8) name_w = 8;
         char lbl[128];
-        aes_label_fit(HV, nm, cw - szw - 18, lbl, sizeof lbl);   // leave room for the size
+        aes_label_fit(HV, nm, name_w, lbl, sizeof lbl);
         vst_color(HV, pen); vst_alignment(HV, VDI_TA_LEFT, VDI_TA_HALF, 0,0);
-        v_gtext(HV, cx + 6, cy + ch/2, lbl);
-        vst_alignment(HV, VDI_TA_RIGHT, VDI_TA_HALF, 0,0);
-        v_gtext(HV, cx + cw - 8, cy + ch/2, szbuf);
+        v_gtext(HV, name_x, cy + ch/2, lbl);
+        vst_color(HV, 9); vst_alignment(HV, VDI_TA_RIGHT, VDI_TA_HALF, 0,0);   // attrs: muted/secondary
+        v_gtext(HV, attrs_rx, cy + ch/2, atbuf);
+        vst_color(HV, pen);
+        v_gtext(HV, size_rx, cy + ch/2, szbuf);             // size (still right-aligned)
+    }
+    // Multi-column view: subtle light-gray dividers at internal column boundaries,
+    // spanning the visible work rect (viewmode 2 single-column needs none).
+    if (b->viewmode == 3 && cols > 1) {
+        vsl_color(HV, 249); vsl_width(HV, 1);               // PEN_BORDER (same as the info divider)
+        for (int col = 1; col < cols; col++) {
+            int sx = b->wax + pad + col * colw;
+            int16_t seg[4] = { (int16_t)sx, (int16_t)b->way,
+                               (int16_t)sx, (int16_t)(b->way + b->wah - 1) };
+            v_pline(HV, 2, seg);
+        }
     }
     vst_alignment(HV, VDI_TA_LEFT, VDI_TA_TOP, 0,0);
 }
