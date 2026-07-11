@@ -36,7 +36,7 @@ OBJ      := $(addprefix $(BUILD)/,$(SRC:.c=.o))
 
 TARGET  := $(BUILD)/gem_sdl
 
-.PHONY: all run test clean fills shapes output text lines theme themewin themepack aes aesmenu aeswin desktop pdf fontscan catalogtest menu_test
+.PHONY: all run test clean fills shapes output text lines theme themewin themepack aes aesmenu aeswin desktop pdf fontscan catalogtest menu_test mkrsc rsc_test
 all: $(TARGET)
 
 $(TARGET): $(OBJ)
@@ -172,6 +172,28 @@ $(BUILD)/menu_test: $(MENUTEST_OBJ)
 	$(CC) $(MENUTEST_OBJ) $(FT_LIBS) -o $@
 menu_test: $(BUILD)/menu_test
 	./$(BUILD)/menu_test
+
+# ---- Shared GEM .rsc codec (aes/rsc.c): authoring tool + resource + test ----
+# mkrsc — authors gem/resources/desktop.rsc through the rsc builder API.  Only
+# the codec + libc are needed (no VDI/theme/SDL), so it links tiny.
+MKRSC_OBJ := $(addprefix $(BUILD)/,aes/rsc.o tools/mkrsc.o)
+$(BUILD)/mkrsc: $(MKRSC_OBJ)
+	$(CC) $(MKRSC_OBJ) -o $@
+mkrsc: $(BUILD)/mkrsc resources/desktop.rsc
+
+# The authored resource — regenerated whenever mkrsc changes.
+resources/desktop.rsc: $(BUILD)/mkrsc
+	mkdir -p resources
+	./$(BUILD)/mkrsc resources/desktop.rsc
+
+# rsc_test — headless codec self-test: structure asserts on the New dialog, a
+# centred render to /tmp/xtdesk-rsc.ppm, and a load->save->load round-trip
+# (structural + byte-identity).  rsc.o rides in via $(AES_SRC).
+RSCTEST_OBJ := $(addprefix $(BUILD)/,gfx_soft.o font.o theme.o rsc_test.o $(VDI_SRC:.c=.o) $(AES_SRC:.c=.o))
+$(BUILD)/rsc_test: $(RSCTEST_OBJ)
+	$(CC) $(RSCTEST_OBJ) $(FT_LIBS) -o $@
+rsc_test: $(BUILD)/rsc_test resources/desktop.rsc
+	./$(BUILD)/rsc_test
 
 test: $(BUILD)/gem_test $(BUILD)/wm_test
 	./$(BUILD)/gem_test
