@@ -263,8 +263,8 @@ static void draw_one(int hd, int active){
     }
     if(W->kind & W_SIZER){         // resize grips at BOTH ends of the footer band
         int gy=W->y+W->h-SIZER_SZ-2;                    // bottom-aligned in the footer
-        draw_grip_l(W->x,               gy, SIZER_SZ);  // bottom-left corner
-        draw_grip  (W->x+W->w-SIZER_SZ, gy, SIZER_SZ);  // bottom-right corner
+        draw_grip_l(W->x+2,               gy, SIZER_SZ);  // bottom-left, inside the frame border
+        draw_grip  (W->x+W->w-SIZER_SZ-2, gy, SIZER_SZ);  // bottom-right, inside the frame border
     }
     // work area + content (clipped).  The rect is shrunk by the scrollbar column
     // when the bar shows, so the app reflows into the narrower span.
