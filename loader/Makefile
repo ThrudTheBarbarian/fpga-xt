@@ -618,7 +618,7 @@ $(BUILD)/romfs_blob.h: $(BUILD)/romfs.bin
 # base libraries every spawn needs (libc/libm), init + lua (the boot runner and
 # its #!/bin/lua scripts), motd, and the tier-2 test battery. ~6 MB of RAM back
 # vs the full image. qemu keeps the full romfs (no SD there).
-$(BUILD)/romfs-hw.bin: $(BUILD)/mkromfs $(BUILD)/pipetest.so $(BUILD)/hello.so $(BUILD)/motd.so $(BUILD)/usestr.so $(BUILD)/libc_test.so $(BUILD)/locktest.so $(BUILD)/lntest.so $(BUILD)/fstest.so $(BUILD)/lua.so $(BUILD)/init.so $(BUILD)/faultprog.so $(BUILD)/vmtest.so $(BUILD)/demandtest.so $(BUILD)/stacktest.so $(BUILD)/wxtest.so $(BUILD)/cowtest.so $(BUILD)/sharetext.so $(BUILD)/shmtest.so $(BUILD)/finictor.so $(BUILD)/mmaptest.so $(BUILD)/modetest.so $(BUILD)/ttytest.so $(BUILD)/jobctl.so $(BUILD)/socktest.so $(BUILD)/httpd.so $(BUILD)/nstress.so $(BUILD)/dmesg.so $(BUILD)/mem.so $(BUILD)/badpoke.so $(BUILD)/stackpoke.so $(BUILD)/dropbearkey.so $(BUILD)/dropbear.so $(BUILD)/sshd.so $(BUILD)/netup.so $(BUILD)/ssh.so $(BUILD)/scp.so $(BUILD)/strace.so $(BUILD)/sigtest.so $(BUILD)/libutil.so $(BUILD)/libm.so $(BUILD)/libc.so $(ROMFS_OVERLAY_FILES) $(ROMFS_ASSET_FILES)
+$(BUILD)/romfs-hw.bin: $(BUILD)/mkromfs $(BUILD)/pipetest.so $(BUILD)/hello.so $(BUILD)/motd.so $(BUILD)/usestr.so $(BUILD)/libc_test.so $(BUILD)/locktest.so $(BUILD)/lntest.so $(BUILD)/fstest.so $(BUILD)/lua.so $(BUILD)/init.so $(BUILD)/faultprog.so $(BUILD)/vmtest.so $(BUILD)/demandtest.so $(BUILD)/stacktest.so $(BUILD)/wxtest.so $(BUILD)/cowtest.so $(BUILD)/sharetext.so $(BUILD)/shmtest.so $(BUILD)/finictor.so $(BUILD)/mmaptest.so $(BUILD)/modetest.so $(BUILD)/ttytest.so $(BUILD)/jobctl.so $(BUILD)/socktest.so $(BUILD)/httpd.so $(BUILD)/nstress.so $(BUILD)/dmesg.so $(BUILD)/mem.so $(BUILD)/badpoke.so $(BUILD)/stackpoke.so $(BUILD)/dropbearkey.so $(BUILD)/dropbear.so $(BUILD)/sshd.so $(BUILD)/netup.so $(BUILD)/ssh.so $(BUILD)/scp.so $(BUILD)/strace.so $(BUILD)/sigtest.so
 	$(BUILD)/mkromfs $@ \
 	    /bin/faultprog=$(BUILD)/faultprog.so \
 	    /bin/vmtest=$(BUILD)/vmtest.so \
@@ -642,9 +642,6 @@ $(BUILD)/romfs-hw.bin: $(BUILD)/mkromfs $(BUILD)/pipetest.so $(BUILD)/hello.so $
 	    /bin/strace=$(BUILD)/strace.so \
 	    /bin/sigtest=$(BUILD)/sigtest.so \
 	    $(if $(XTC_SO),/bin/xtcprog=$(XTC_SO)) \
-	    /Library/libc.so=$(BUILD)/libc.so \
-	    /Library/libm.so=$(BUILD)/libm.so \
-	    /Library/libutil.so=$(BUILD)/libutil.so \
 	    /bin/libc_test=$(BUILD)/libc_test.so \
 	    /bin/locktest=$(BUILD)/locktest.so \
 	    /bin/lntest=$(BUILD)/lntest.so \
@@ -663,9 +660,14 @@ $(BUILD)/romfs-hw.bin: $(BUILD)/mkromfs $(BUILD)/pipetest.so $(BUILD)/hello.so $
 	    /bin/init=$(BUILD)/init.so \
 	    /bin/hello=$(BUILD)/hello.so \
 	    /bin/motd=$(BUILD)/motd.so \
-	    /bin/usestr=$(BUILD)/usestr.so \
-	    $(ROMFS_ASSET_ARGS) \
-	    $(ROMFS_OVERLAY_ARGS)
+	    /bin/usestr=$(BUILD)/usestr.so
+	# NB: the HW romfs is deliberately SLIM — no /Library base libs (libc/libm/
+	# libutil), no fonts, no themes, no overlay libs.  All of those are USER-
+	# MODIFIABLE and now live on the SD (/OS/library, /OS/fonts, /OS/themes — see
+	# `sdstage`).  The loader searches romfs /Library first then SD /OS/library, so
+	# anything baked in here is read-only and permanently shadows the card — the
+	# trap we keep hitting.  /bin stays in romfs on purpose (trusted, can't be
+	# swapped on the card).  QEMU keeps the full set (romfs.bin) — it has no SD.
 
 $(BUILD)/hwromfs/romfs_blob.h: $(BUILD)/romfs-hw.bin
 	@mkdir -p $(BUILD)/hwromfs
@@ -680,9 +682,9 @@ $(BUILD)/hwromfs/romfs_blob.h: $(BUILD)/romfs-hw.bin
 # login shell exists before the links do)
 SDSTAGE := $(BUILD)/sdstage
 .PHONY: sdstage
-sdstage: $(BUILD)/toybox.so $(BUILD)/sqlite3.so $(BUILD)/libGEM.so $(BUILD)/libxtos.so $(BUILD)/aesdesk.so $(BUILD)/desktop.so $(BUILD)/gemtext.so $(BUILD)/regtest.so $(BUILD)/tnfs.so $(BUILD)/fujinetd.so $(BUILD)/fuji.so $(DESKTOP_RSC)
+sdstage: $(BUILD)/toybox.so $(BUILD)/sqlite3.so $(BUILD)/libGEM.so $(BUILD)/libxtos.so $(BUILD)/libc.so $(BUILD)/libm.so $(BUILD)/libutil.so $(BUILD)/aesdesk.so $(BUILD)/desktop.so $(BUILD)/gemtext.so $(BUILD)/regtest.so $(BUILD)/tnfs.so $(BUILD)/fujinetd.so $(BUILD)/fuji.so $(DESKTOP_RSC) $(ROMFS_OVERLAY_FILES) $(ROMFS_ASSET_FILES)
 	@rm -rf $(SDSTAGE)
-	@mkdir -p $(SDSTAGE)/OS/bin $(SDSTAGE)/OS/library $(SDSTAGE)/OS/etc $(SDSTAGE)/OS/boot $(SDSTAGE)/OS/Apps/Desktop/Spaces/1
+	@mkdir -p $(SDSTAGE)/OS/bin $(SDSTAGE)/OS/library $(SDSTAGE)/OS/etc $(SDSTAGE)/OS/boot $(SDSTAGE)/OS/fonts $(SDSTAGE)/OS/themes/Aristo2/1x $(SDSTAGE)/OS/Apps/Desktop/Spaces/1
 	cp sd/boot/* $(SDSTAGE)/OS/boot/
 	cp $(DESKTOP_RSC) $(SDSTAGE)/OS/Apps/Desktop/desktop.rsc
 	cp $(BUILD)/toybox.so  $(SDSTAGE)/OS/bin/toybox
@@ -698,6 +700,17 @@ sdstage: $(BUILD)/toybox.so $(BUILD)/sqlite3.so $(BUILD)/libGEM.so $(BUILD)/libx
 	cp $(BUILD)/fuji.so    $(SDSTAGE)/OS/bin/fuji
 	cp $(BUILD)/libGEM.so  $(SDSTAGE)/OS/library/libGEM.so
 	cp $(BUILD)/libxtos.so $(SDSTAGE)/OS/library/libxtos.so
+	# base libs — no longer baked into the HW romfs; the card is authoritative
+	cp $(BUILD)/libc.so    $(SDSTAGE)/OS/library/libc.so
+	cp $(BUILD)/libm.so    $(SDSTAGE)/OS/library/libm.so
+	cp $(BUILD)/libutil.so $(SDSTAGE)/OS/library/libutil.so
+	# overlay libs (libXTGem / libSpike*) — were romfs-only; ship on the card too
+	cp romfs-overlay/Library/*.so $(SDSTAGE)/OS/library/
+	# font + theme atlas — user-modifiable content, off the read-only romfs
+	cp ../gem/fonts/AovelSansRounded.ttf $(SDSTAGE)/OS/fonts/AovelSansRounded.ttf
+	cp ../gem/themes/Aristo2/1x/artwork.tex ../gem/themes/Aristo2/1x/locations.txt \
+	   ../gem/themes/Aristo2/1x/theme.ini $(SDSTAGE)/OS/themes/Aristo2/1x/
+	@printf 'Aristo2\n' > $(SDSTAGE)/OS/themes/Default   # read_default() -> theme name
 	@printf '# XTOS /OS/etc/hosts — static name -> address (checked before DNS)\n127.0.0.1\tlocalhost xtos\n' > $(SDSTAGE)/OS/etc/hosts
 	cp tools/tz.tab $(SDSTAGE)/OS/etc/tz.tab
 	@printf 'Europe/London\n' > $(SDSTAGE)/OS/etc/timezone
