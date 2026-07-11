@@ -35,6 +35,8 @@ typedef struct {
 #define WTB_W     16     // title-button box size (matches the left close/full 16x16 boxes)
 #define WTB_PITCH 20     // horizontal pitch between title buttons (16 wide + 4 gap, like the left pair)
 
+#define SIZER_SZ  18     // bottom-right resize sizer corner (square); reserved from the scrollbar column
+
 static awin g_w[MAXW];          // slot 0 unused (handles are 1-based)
 static int  g_z[MAXW], g_nz;    // z-order: g_z[0] bottom .. g_z[nz-1] top
 static uint32_t g_deskbg = 0x46566EFF;
@@ -63,15 +65,26 @@ void wind_calc(int dir,int kind,int x,int y,int w,int h,int*ox,int*oy,int*ow,int
 
 static void spr(const char*n,int x,int y){ const theme_slice*s=theme_find(aes_theme(),n); if(s) theme_blit(H(),aes_theme(),s,x,y,s->sw,s->sh); }
 
-// A right-side title button: a themed box (reusing the "button" 9-slice art so it
-// reads as a small control) + a vector glyph.  No theme slice carries arbitrary
-// title-button glyphs, so the glyph is drawn with VDI primitives — a downward
-// chevron (WTG_CHEVRON, e.g. a "view" popup) or a diagonal resize arrow
-// (WTG_EXPAND, e.g. a "fit"/expand action).
+// A right-side title button, drawn to read as chrome PAIRED with the left
+// close/maximize controls (16x16 gradient-circle theme sprites).  If the theme
+// carries a sprite for the action ("view" for WTG_CHEVRON, "fit" for WTG_EXPAND)
+// we blit it at native size, centred like the left pair — so the theme can add
+// `view`/`fit` 16x16 sprites and they upgrade automatically.  Until then we draw
+// a steel disc (a ring edge + a mid-steel fill, so it reads as a round button on
+// the titlebar, NOT the old square "button" box) topped with a WHITE vector
+// glyph: a downward chevron (WTG_CHEVRON, a "view" popup) or a diagonal
+// double-headed arrow (WTG_EXPAND, a "fit"/expand action).
 static void draw_titlebtn(int bx,int by,int glyph){
-    theme_draw(H(),aes_theme(),"button",bx,by,WTB_W,WTB_W);
-    int cx=bx+WTB_W/2, cy=by+WTB_W/2;
-    vsl_color(H(),1); vsl_width(H(),2);
+    const char *name = glyph==WTG_CHEVRON ? "view" : glyph==WTG_EXPAND ? "fit" : NULL;
+    const theme_slice *s = name ? theme_find(aes_theme(),name) : NULL;
+    if(s){ theme_blit(H(),aes_theme(),s, bx+(WTB_W-s->sw)/2, by+(WTB_W-s->sh)/2, s->sw, s->sh); return; }
+    int cx=bx+WTB_W/2, cy=by+WTB_W/2, r=WTB_W/2-1;
+    v_setrgb(H(),251, 108,118,134);                      // steel disc fill
+    v_setrgb(H(),252,  70, 78, 92);                      // subtle darker edge ring
+    vsf_interior(H(),VDI_FIS_SOLID); vsf_perimeter(H(),0);
+    vsf_color(H(),252); v_circle(H(),cx,cy,r);           // edge ring
+    vsf_color(H(),251); v_circle(H(),cx,cy,r-1);         // steel fill inside it
+    vsl_color(H(),0); vsl_width(H(),2);                  // WHITE glyph (pen 0)
     if(glyph==WTG_CHEVRON){                               // ⌄ downward chevron
         int16_t p[6]={(int16_t)(cx-4),(int16_t)(cy-2),(int16_t)cx,(int16_t)(cy+2),(int16_t)(cx+4),(int16_t)(cy-2)};
         v_pline(H(),3,p);
@@ -128,7 +141,11 @@ static int vsb_geom(awin *W,int*colx,int*coly,int*colw,int*colh,
                     int*trky,int*trkh,int*thy,int*thh){
     if(!vsb_on(W)) return 0;
     int wx,wy,ww,wh; full_work(W,&wx,&wy,&ww,&wh);
+    // Reserve the bottom-right SIZER corner for the resize gadget (classic GEM):
+    // shorten the scrollbar column so the down arrow + thumb travel end ABOVE it,
+    // and the corner stays a clean ~18px sizer (checked first in wind_handle_click).
     int cx=wx+ww-SB_W, cy=wy, ch=wh;
+    if(W->kind & W_SIZER){ ch-=SIZER_SZ; if(ch<0) ch=0; }
     int ah=SB_ARROW; if(ah*2 > ch-SB_MINTH) ah=(ch-SB_MINTH)/2; if(ah<0) ah=0;
     int ty=cy+ah, th=ch-2*ah; if(th<1) th=1;
     int total=W->content_h, vis=wh;
@@ -141,19 +158,13 @@ static int vsb_geom(awin *W,int*colx,int*coly,int*colw,int*colh,
     if(thy)*thy=ty+off; if(thh)*thh=len;
     return 1;
 }
-// A small centred arrow glyph (dir -1 = up chevron, +1 = down) for the scroll
-// arrow boxes — same vector style as the title buttons (draw_titlebtn).
-static void draw_sb_arrow(int bx,int by,int bw,int bh,int dir){
-    int cx=bx+bw/2, cy=by+bh/2;
-    vsl_color(H(),1); vsl_width(H(),2);
-    int16_t p[6]={(int16_t)(cx-4),(int16_t)(cy-dir*2),(int16_t)cx,(int16_t)(cy+dir*2),
-                  (int16_t)(cx+4),(int16_t)(cy-dir*2)};
-    v_pline(H(),3,p);
-}
-// Draw the vertical scrollbar: chrome column + a themed track fill, up/down
-// arrow boxes and a proportional thumb, all in the window-button "button" style
-// so it reads as part of the same chrome (the narrow theme vscroll.* art is
-// left for the classic 14px sliders; this matches the 16px window buttons).
+// Draw the vertical scrollbar from the theme's real scrollbar art: a light
+// chrome column (with a left divider to separate it from the content), the
+// vscroll.up / vscroll.down arrow sprites blitted at native size centred in
+// their arrow boxes, and the vscroll.thumb 9-slice stretched down its length
+// (fixed 4px caps + a stretched middle, so it never distorts like a squashed
+// pill).  The column is already shortened by vsb_geom when a sizer is present,
+// so the down arrow sits above the reserved bottom-right corner.
 static void draw_vscroll(int hd){
     awin*W=&g_w[hd];
     int cx,cy,cw,ch,upy,dny,arrh,trky,trkh,thy,thh;
@@ -162,11 +173,14 @@ static void draw_vscroll(int hd){
     int16_t cr[4]={(int16_t)cx,(int16_t)cy,(int16_t)(cx+cw-1),(int16_t)(cy+ch-1)}; vr_recfl(H(),cr);
     vsl_color(H(),249); vsl_width(H(),1);                                        // PEN_BORDER left divider
     int16_t dl[4]={(int16_t)cx,(int16_t)cy,(int16_t)cx,(int16_t)(cy+ch-1)}; v_pline(H(),2,dl);
-    if(arrh>0){                                                                 // arrow boxes at the ends
-        theme_draw(H(),aes_theme(),"button",cx,upy,cw,arrh); draw_sb_arrow(cx,upy,cw,arrh,-1);
-        theme_draw(H(),aes_theme(),"button",cx,dny,cw,arrh); draw_sb_arrow(cx,dny,cw,arrh,+1);
+    { int thw=cw-6; if(thw<7) thw=7; int thx=cx+(cw-thw)/2;                      // themed thumb, centred
+      theme_draw(H(),aes_theme(),"vscroll.thumb", thx,thy,thw,thh); }
+    if(arrh>0){                                                                 // theme up/down arrow art
+        const theme_slice*su=theme_find(aes_theme(),"vscroll.up");
+        const theme_slice*sd=theme_find(aes_theme(),"vscroll.down");
+        if(su) theme_blit(H(),aes_theme(),su, cx+(cw-su->sw)/2, upy+(arrh-su->sh)/2, su->sw, su->sh);
+        if(sd) theme_blit(H(),aes_theme(),sd, cx+(cw-sd->sw)/2, dny+(arrh-sd->sh)/2, sd->sw, sd->sh);
     }
-    theme_draw(H(),aes_theme(),"button",cx+2,thy,cw-4,thh);                      // the thumb
 }
 
 static void draw_one(int hd, int active){
@@ -179,12 +193,15 @@ static void draw_one(int hd, int active){
     if(W->kind & W_FULLER) spr("maximize", W->x+28, cy);
     if(W->kind & W_NAME){
         // Title work span: right of the close/full boxes, up to the right edge.
-        int tlx=W->x+8; if(W->kind&W_CLOSER) tlx+=20; if(W->kind&W_FULLER) tlx+=20;
+        // +8 extra left inset so the title text breathes past the left buttons
+        // (was flush against the maximize circle).
+        int tlx=W->x+8; if(W->kind&W_CLOSER) tlx+=20; if(W->kind&W_FULLER) tlx+=20; tlx+=8;
         int trx=W->x+W->w-8; int tlw=trx-tlx; if(tlw<0) tlw=0;
-        // Right-side title buttons occupy the far right; reserve their width so the
-        // title renderer's DRAW span (dlw) stops short of them.  The app-CLICK span
-        // (titlew) stays the full width, so a press on a button is a title click.
-        int nb=W->ntb, bspan = nb>0 ? nb*WTB_PITCH+2 : 0;
+        // Right-side title buttons occupy the far right; reserve their width (plus
+        // an 8px gap) so the title renderer's DRAW span (dlw) stops short of them
+        // and text never touches a button.  The app-CLICK span (titlew) stays the
+        // full width, so a press on a button is still delivered as a title click.
+        int nb=W->ntb, bspan = nb>0 ? nb*WTB_PITCH+8 : 0;
         int dlw=tlw-bspan; if(dlw<0) dlw=0;
         int cyb=W->y+(th-16)/2;
         for(int i=0;i<nb;i++){ int bx=trx-WTB_W-(nb-1-i)*WTB_PITCH;   // right-aligned, index 0 leftmost
@@ -384,9 +401,10 @@ int wind_handle_click(int mx,int my){
         }
         post(WM_MOVED,hd,W->x,W->y,W->w,W->h); return 1;
     }
-    // size box (bottom-right corner) — checked before the scrollbar so the corner
-    // (which the scrollbar column overlaps) still resizes.
-    if((W->kind&W_SIZER) && mx>=W->x+W->w-18 && my>=W->y+W->h-18){
+    // size box (bottom-right corner) — checked before the scrollbar.  vsb_geom
+    // shortens the scrollbar column by SIZER_SZ when W_SIZER, so the down arrow
+    // sits ABOVE this reserved corner (no overlap) and the corner still resizes.
+    if((W->kind&W_SIZER) && mx>=W->x+W->w-SIZER_SZ && my>=W->y+W->h-SIZER_SZ){
         for(;;){ aes_event e; int t=aes_wait_idle(&e,-1); if(t==AES_QUIT)break;
             if(t==AES_MOTION){ int nw=e.mx-W->x, nh=e.my-W->y; if(nw<120)nw=120; if(nh<80)nh=80; W->w=nw; W->h=nh; clamp_scroll(W); wind_redraw(); }
             if(t==AES_BTN_UP) break; }

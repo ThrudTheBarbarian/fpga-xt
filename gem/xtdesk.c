@@ -2256,8 +2256,30 @@ int main(int argc, char **argv) {
         int wheel_ok = (consumed && wind_scroll_y(nb->win) > 0);
         fprintf(stderr, "scroll: wheel-down consumed=%d -> sy=%d (%s)\n",
                 consumed, wind_scroll_y(nb->win), wheel_ok ? "OK" : "FAIL");
+        // The down arrow now sits ABOVE the reserved bottom-right sizer corner
+        // (vsb_geom shortens the column by SIZER_SZ=18 for a W_SIZER window), so a
+        // click at the down arrow SCROLLS instead of resizing.  Its box is the last
+        // SB_ARROW(16) of the shortened column at the SB_W(16) column's right edge:
+        //   column x0 = fx+fw-16 ; column bottom = fy + (fh-18) ; arrow h = 16.
+        wind_set_scroll(nb->win, 0, 0);
+        int da_cx = fx + fw - 8;               // SB_W/2 into the column
+        int da_cy = fy + (fh - 18) - 16 + 8;   // centre of the down-arrow box
+        wind_handle_click(da_cx, da_cy);
+        int da_sy = wind_scroll_y(nb->win);
+        int downarrow_ok = (da_sy > 0);
+        // The bottom-right corner still belongs to the sizer: a click there does
+        // NOT scroll (it takes the resize gadget, checked before the scrollbar).
+        wind_set_scroll(nb->win, 0, 200);
+        int corner_before = wind_scroll_y(nb->win);
+        wind_handle_click(bx + 560 - 2, by + 320 - 2);   // very bottom-right pixel
+        int corner_after = wind_scroll_y(nb->win);
+        int sizer_ok = (corner_after == corner_before);
+        fprintf(stderr, "scroll: down-arrow@(%d,%d) -> sy=%d (%s); corner sy %d->%d (%s)\n",
+                da_cx, da_cy, da_sy, downarrow_ok ? "scrolls OK" : "FAIL",
+                corner_before, corner_after, sizer_ok ? "sizer OK" : "FAIL");
         registry_close();
-        return (overflow_ok && barwidth_ok && last_hidden_top && clamp_ok && hit_ok && wheel_ok) ? 0 : 1;
+        return (overflow_ok && barwidth_ok && last_hidden_top && clamp_ok && hit_ok &&
+                wheel_ok && downarrow_ok && sizer_ok) ? 0 : 1;
     }
     if (fuji == 8) {                                  // headless file-mask filter test (--mask)
         // 1) glob helper unit checks (case-insensitive '*' / '?').
