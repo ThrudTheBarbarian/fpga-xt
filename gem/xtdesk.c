@@ -613,6 +613,15 @@ static void br_fmt_size(long sz, char *out, int cap) {
     else if (sz < 1000*1000) snprintf(out, cap, "%ldK", (sz + 512) / 1024);
     else                     snprintf(out, cap, "%ldM", (sz + 524288) / (1024*1024));
 }
+// Spelled-out size for the info FOOTER (where there's room): "46 bytes",
+// "13 kilobytes", "4 megabytes" (singular when the count is 1).
+static void br_fmt_size_words(long sz, char *out, int cap) {
+    long n; const char *u;
+    if      (sz < 1000)      { n = sz;                          u = "byte"; }
+    else if (sz < 1000*1000) { n = (sz + 512) / 1024;          u = "kilobyte"; }
+    else                     { n = (sz + 524288)/(1024*1024);  u = "megabyte"; }
+    snprintf(out, cap, "%ld %s%s", n, u, n == 1 ? "" : "s");
+}
 // Format the BATTR_* bitmask as a fixed 6-char flag string in canonical order
 // "d a r x h s" (letter when set, '-' when clear), e.g. "d-----" / "-r-x--".
 static void br_fmt_attr(unsigned char attr, char *out) {
@@ -936,7 +945,7 @@ static void br_infobar(int hd, int ix, int iy, int iw, int ih, void *ud) {
     else if (b->net == 1)                                     // servers window (minus the Add tile)
         snprintf(info, sizeof info, "%d servers", b->nent ? b->nent-1 : 0);
     else {                                                    // path window (net 0/2), idle: file-count status
-        char sz[16]; br_fmt_size(b->total, sz, sizeof sz);
+        char sz[24]; br_fmt_size_words(b->total, sz, sizeof sz);
         snprintf(info, sizeof info, "%d items, %d files  %s", b->nent, b->nfiles, sz);
         vst_height(HV, 14, 0,0,0,0);
         vst_color(HV, 1); vst_alignment(HV, VDI_TA_LEFT, VDI_TA_HALF, 0,0);
