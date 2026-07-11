@@ -92,7 +92,6 @@ static void present_rect(int x, int y, int w, int h) {
 }
 static void present(void) { present_rect(0, 0, g_fb.w, g_fb.h); }
 static void repaint(void) { wind_redraw(); present(); }
-static void repaint_rect(int x, int y, int w, int h) { wind_redraw(); present_rect(x, y, w, h); }
 
 /* dirty-rect helpers: union two rects, and the on-screen bounds of a desktop
  * icon (padded to cover the G_CICON label below the bitmap + selection chrome). */
@@ -281,7 +280,7 @@ static void open_emulator(int type, const char *media, const char *boot) {
         g_xlwin = e->win;
         xl_sync();
     }
-    repaint_rect(bx, by, bw, bh);             // push just the new window, not the whole plane
+    // (wind_open redraws + presents the new window's rect)
 }
 // A minimal text-viewer window naming the file.  There is no process-spawn
 // primitive here yet, so like open_emulator (which frames the compositor plane
@@ -311,7 +310,7 @@ static void open_textview(const char *name) {
     wind_set_name(e->win, title); wind_content(e->win, txt_draw, e);
     wind_open(e->win, bx, by, bw, bh);
     g_ex += 34; g_ey += 30; if (g_ey > PH-320) { g_ex = 380; g_ey = 130; }
-    repaint_rect(bx, by, bw, bh);
+    // (wind_open redraws + presents the new window's rect)
 }
 static void ctx_san(const char *s, char *out, int cap);   // fwd (alert-string sanitiser)
 // No application maps to this file: a graceful notice (never a silent emulator).
@@ -1072,7 +1071,10 @@ static void br_fit(browser *b) {
     int minw = 280, minh = 200;                           // sane minimum
     if (bw < minw) bw = minw; if (bh < minh) bh = minh;
     wind_open(b->win, cx, cy, bw, bh);                    // already open: resizes in place
-    repaint();
+    // wind_open early-returns for an ALREADY-OPEN window without redrawing, so the
+    // repaint is ours to do. Top-left is fixed and the window may SHRINK, so the
+    // damage is old ∪ new — anything vacated must go back to desktop.
+    wind_redraw_area(cx, cy, cw0 > bw ? cw0 : bw, ch0 > bh ? ch0 : bh);
 }
 // W_INFO chrome FOOTER (window bottom): file count / total size (+ progress /
 // Retry).  Navigation moved to the ".." tile + the breadcrumb, so there is no
@@ -1199,7 +1201,7 @@ static void net_open(browser *b, int i) {
     if (e->state == 'c' || e->state == 'u') {
         char local[560]; struct xt_stat st;                   // /Cache/<id><remote> (the daemon's mirror)
         snprintf(local, sizeof local, "/Cache/%d%s", b->server_id, remote);
-        if (sys_stat(local, &st) == 0) { desk_launch(e->name, b->media_type); repaint(); return; }
+        if (sys_stat(local, &st) == 0) { desk_launch(e->name, b->media_type); return; }
     }
     net_fetch_start(b, remote, e->name);
 }
@@ -1241,7 +1243,7 @@ static void add_server_dialog(browser *b) {           // b = the servers browser
     as_dlg[AS_RAUTO].ob_state |= OS_SELECTED;         // default transport: auto
     int r = form_do_dialog(as_dlg, 0);                // focus starts in Host
     if (r >= 0) as_dlg[r].ob_state &= ~OS_SELECTED;   // release for the next run
-    repaint();                                        // repaint under the dismissed dialog
+    // (form_do_dialog restores the rect it covered — no repaint needed)
     if (r != AS_OK || !as_host[0]) return;
     const char *tr = (as_dlg[AS_RUDP].ob_state & OS_SELECTED) ? "udp"
                    : (as_dlg[AS_RTCP].ob_state & OS_SELECTED) ? "tcp" : "auto";
@@ -1280,7 +1282,7 @@ static void mask_dialog(browser *b) {
     memset(mk_tmpl, '_', sizeof mk_tmpl - 1); mk_tmpl[sizeof mk_tmpl - 1] = 0;
     int r = form_do_dialog(mk_dlg, MK_FFILT);         // focus starts in the field
     if (r >= 0) mk_dlg[r].ob_state &= ~OS_SELECTED;   // release for the next run
-    repaint();                                        // repaint under the dismissed dialog
+    // (form_do_dialog restores the rect it covered — no repaint needed)
     if (r != MK_OK) return;
     char m[32]; snprintf(m, sizeof m, "%s", mk_buf);  // trim trailing blanks; empty -> "*"
     for (int i = (int)strlen(m)-1; i >= 0 && m[i] == ' '; i--) m[i] = 0;
@@ -1489,7 +1491,6 @@ static void br_click(browser *b, int mx, int my) {
                 net_open(b, i);
             } else {                                         // launch the file in its emulator
                 desk_launch(b->ent[i].name, b->media_type);
-                repaint();
             }
             return;
         }
@@ -1534,7 +1535,7 @@ static void open_browser_win(const char *logical, int media_type, int net, int s
     }
     wind_open(b->win, bx, by, bw, bh);
     g_bx += 34; g_by += 30; if (g_by > PH-320) { g_bx = 380; g_by = 130; }
-    repaint_rect(bx, by, bw, bh);             // push just the new window, not the whole plane
+    // (wind_open redraws + presents the new window's rect)
 }
 static void open_browser(const char *logical, int media_type) {
     open_browser_win(logical, media_type, 0, 0);
@@ -1704,13 +1705,13 @@ static int br_expand(void *ctx, int dynid, menu_item **out, int *outn) {
 static void browse_launch(const char *fullpath) {
     const char *nm = strrchr(fullpath, '/'); nm = nm ? nm + 1 : fullpath;
     int media = strstr(fullpath, "m68k") ? ICT_MEDIA_1632 : ICT_MEDIA_8BIT;
-    desk_launch(nm, media); repaint();
+    desk_launch(nm, media);
 }
 // Open a browsed folder as a rooted browser WINDOW.  On A9 the logical path IS
 // the SD path, so the absolute FS path is passed to open_browser directly.
 static void browse_open_folder(const char *fullpath) {
     int media = strstr(fullpath, "m68k") ? ICT_MEDIA_1632 : ICT_MEDIA_8BIT;
-    open_browser(fullpath, media); repaint();
+    open_browser(fullpath, media);
 }
 // Run the live cascading browse navigator rooted at `startdir` (an absolute FS
 // path), the first popup at (sx,sy).  Builds the root level, runs menu_popup_dyn
@@ -1917,7 +1918,7 @@ static void ctx_open_entry(browser *b, int i) {
     } else if (b->net == 2) {
         net_open(b, i);
     } else {
-        desk_launch(b->ent[i].name, b->media_type); repaint();
+        desk_launch(b->ent[i].name, b->media_type);
     }
 }
 // A context-sensitive Info alert: differs by scope (file / folder / window /
@@ -1963,7 +1964,7 @@ static int new_folder_dialog(char *out, int cap) {
     nf_buf[0] = 0; memset(nf_tmpl, '_', sizeof nf_tmpl - 1); nf_tmpl[sizeof nf_tmpl - 1] = 0;
     int r = form_do_dialog(nf_dlg, NF_FNAME);         // focus starts in the field
     if (r >= 0) nf_dlg[r].ob_state &= ~OS_SELECTED;
-    repaint();                                        // repaint under the dismissed dialog
+    // (form_do_dialog restores the rect it covered — no repaint needed)
     if (r != NF_OK) return 0;
     char nm[64]; snprintf(nm, sizeof nm, "%s", nf_buf);
     for (int i = (int)strlen(nm)-1; i >= 0 && nm[i] == ' '; i--) nm[i] = 0;
@@ -2053,7 +2054,7 @@ static void ctx_new(browser *b) {
     int r = form_do_dialog(t, 0);                      // focus starts in the Name field
     form_set_hook(NULL, NULL);
     if (r >= 0) t[r].ob_state &= ~OS_SELECTED;
-    repaint();                                          // repaint under the dismissed dialog
+    // (form_do_dialog restores the rect it covered — no repaint needed)
 
     int file = (t[NEW_FILE].ob_state & OS_SELECTED) != 0;
     char nm[64]; snprintf(nm, sizeof nm, "%s", namebuf);
@@ -2204,7 +2205,8 @@ static void menu_close_front(void) {
     if (!w) { form_alert(1, "[1][Close|no window is open][OK]"); return; }
     close_win(w);   // wind_close already repaints+presents the vacated rect
 }
-static void menu_close_all(void) { int w; while ((w = wind_top())) close_win(w); repaint(); }
+// close_win -> wind_close repaints each vacated rect as it goes; no full repaint.
+static void menu_close_all(void) { int w; while ((w = wind_top())) close_win(w); }
 static void menu_cycle(void) {                               // raise the next window in z-order
     int wins[MAXBR + MAXEMU], n = 0;
     for (int i = 0; i < MAXBR;  i++) if (BR[i].used)  wins[n++] = BR[i].win;
@@ -2212,7 +2214,7 @@ static void menu_cycle(void) {                               // raise the next w
     if (n < 2) { form_alert(1, "[1][Cycle|open two or more windows first][OK]"); return; }
     int top = wind_top(), idx = 0;
     for (int i = 0; i < n; i++) if (wins[i] == top) idx = i;
-    wind_raise(wins[(idx + 1) % n]); repaint();
+    wind_raise(wins[(idx + 1) % n]);   // wind_raise repaints the raised window's rect
 }
 static void menu_duplicate(void) {                           // a second window at the current dir
     browser *b = front_browser();
@@ -2421,12 +2423,11 @@ void _app_entry(int argc, char **argv) {
         if ((r & MU_KEYBD) && key == 0x1b) break;                              // Esc quits
         if ((r & MU_MESAG) && msg[0] == MN_SELECTED) menu_message(msg);        // menu-bar selection
         if ((r & MU_MESAG) && msg[0] == WM_CLOSED) {
-            int cx,cy,cw,ch; wind_get(msg[3], WF_CURRXYWH, &cx,&cy,&cw,&ch);   // area the close reveals
             browser *b = br_of_window(msg[3]);       // close cancels any in-flight request
             if (b) { net_req_close(b); br_free_icons(b); b->used = 0; }
             emuwin *e = emu_of_window(msg[3]); if (e) e->used = 0;
             xl_unbind(msg[3]);
-            wind_close(msg[3]); repaint_rect(cx,cy,cw,ch);
+            wind_close(msg[3]);   // wind_close repaints + presents the vacated rect
         }
         if ((r & MU_MESAG) && (msg[0] == WM_MOVED || msg[0] == WM_SIZED) && msg[3] == g_xlwin)
             xl_sync();                                   // keep the plane on the work area

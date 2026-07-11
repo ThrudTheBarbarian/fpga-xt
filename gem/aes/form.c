@@ -257,14 +257,21 @@ static void sav_push(OBJECT *t) {
     if (s) sav_blit(g_nsav, 0);
     g_nsav++;
 }
-static void sav_pop_restore(void) {
-    if (g_nsav <= 0) return;
+// Restore what the dialog covered.  Returns 1 if the save-under was blitted back,
+// 0 if there was nothing to restore with — either the nesting went past SAVN (so
+// sav_push recorded nothing) or the surface alloc failed.  The caller MUST then
+// regenerate the rect itself, or the dialog is left painted on the screen forever.
+// Callers used to paper over this with a full-screen repaint(); returning the
+// failure lets them redraw just the dialog's rect instead.
+static int sav_pop_restore(void) {
+    if (g_nsav <= 0) return 0;
     g_nsav--;
-    if (g_nsav >= SAVN || !g_sav[g_nsav].s) return;
+    if (g_nsav >= SAVN || !g_sav[g_nsav].s) return 0;
     sav_blit(g_nsav, 1);
     aes_flush_rect(g_sav[g_nsav].x, g_sav[g_nsav].y, g_sav[g_nsav].w, g_sav[g_nsav].h);
     gfx_surface_free(g_sav[g_nsav].s);
     g_sav[g_nsav].s = NULL; g_sav[g_nsav].t = NULL;
+    return 1;
 }
 // The top save-under, if it belongs to `t` (the dialog the drag is moving).
 static int sav_top_of(OBJECT *t) {
@@ -392,7 +399,11 @@ int form_do_dialog(OBJECT *t, int start) {
     t[0].ob_y = (int16_t)(wy + (wh - t[0].ob_h) / 2);
     sav_push(t);
     int r = form_do(t, start);
-    sav_pop_restore();                                    // restores at the moved-to rect
+    // The dialog is MOVEABLE, so read the moved-to rect off the tree, not the
+    // pushed one.  If the save-under couldn't restore (nesting past SAVN, or the
+    // alloc failed), regenerate just that rect — never leave the dialog painted.
+    int dx = t[0].ob_x, dy = t[0].ob_y, dw = t[0].ob_w, dh = t[0].ob_h;
+    if (!sav_pop_restore()) wind_redraw_area(dx, dy, dw, dh);
     return r;
 }
 
