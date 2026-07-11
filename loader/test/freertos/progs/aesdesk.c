@@ -747,10 +747,11 @@ static void br_draw_text(browser *b) {
     int sy = wind_scroll_y(b->win);                     // content is drawn shifted up
     int pad = 14, cols, rpc, colw, ntg; br_text_grid(b, &cols, &rpc, &colw, &ntg);
     vst_height(HV, 14, 0,0,0,0);
-    // Fields packed from the RIGHT so each colw-wide cell reads as aligned
-    // columns:  [name… (left)]  gap  [attrs (right)]  gap  [size (right)]  gutter │
-    // attrw is a fixed all-letters sample so name truncation is stable row to row.
-    int gutter = 12, gap = 8, attrw = br_textw("darxhs");
+    // Columns:  [name… (left)]  gap  [attrs (LEFT-aligned, FIXED column)]  gap
+    //           [size (right, fixed zone)]  gutter.  The attr column is measured
+    // from a fixed size zone (not the variable size width), so it lines up row to
+    // row instead of drifting with "<dir>" vs "2K" vs "18".
+    int gutter = 12, gap = 8, attrw = br_textw("darxhs"), szzone = br_textw("<dir>");
     for (int slot = 0; slot < nt; slot++) {
         int cx, cy, cw, ch; br_text_cell(b, slot, &cx, &cy, &cw, &ch);
         cy -= sy;                                       // screen y (clipped to the work rect)
@@ -767,21 +768,21 @@ static void br_draw_text(browser *b) {
         char szbuf[24], atbuf[8];
         if (isdot || b->ent[i].dir) snprintf(szbuf, sizeof szbuf, "<dir>");
         else                        br_fmt_size(b->ent[i].size, szbuf, sizeof szbuf);
-        br_fmt_attr(isdot ? BATTR_DIR : b->ent[i].attr, atbuf);
-        int szw = br_textw(szbuf), pen = ghost ? 9 : 1;
-        int size_rx  = cx + cw - gutter;                    // size right edge
-        int attrs_rx = size_rx - szw - gap;                 // attrs right edge (right-aligned)
-        int name_x   = cx + 6;
-        int name_w   = attrs_rx - attrw - gap - name_x;     // remaining room for the name
+        br_fmt_attr(isdot ? (BATTR_DIR|BATTR_EXE) : b->ent[i].attr, atbuf);   // ".." is a dir: d--x--
+        int pen = ghost ? 9 : 1;
+        int size_rx = cx + cw - gutter;                     // size right-aligned in the fixed zone
+        int attrs_x = size_rx - szzone - gap - attrw;       // attrs LEFT edge — a FIXED column
+        int name_x  = cx + 6;
+        int name_w  = attrs_x - gap - name_x;               // name fills up to the attr column
         if (name_w < 8) name_w = 8;
         char lbl[128];
         aes_label_fit(HV, nm, name_w, lbl, sizeof lbl);
         vst_color(HV, pen); vst_alignment(HV, VDI_TA_LEFT, VDI_TA_HALF, 0,0);
         v_gtext(HV, name_x, cy + ch/2, lbl);
-        vst_color(HV, 9); vst_alignment(HV, VDI_TA_RIGHT, VDI_TA_HALF, 0,0);   // attrs: muted/secondary
-        v_gtext(HV, attrs_rx, cy + ch/2, atbuf);
-        vst_color(HV, pen);
-        v_gtext(HV, size_rx, cy + ch/2, szbuf);             // size (still right-aligned)
+        vst_color(HV, 9);                                   // attrs: muted, LEFT-aligned at the fixed column
+        v_gtext(HV, attrs_x, cy + ch/2, atbuf);
+        vst_color(HV, pen); vst_alignment(HV, VDI_TA_RIGHT, VDI_TA_HALF, 0,0);
+        v_gtext(HV, size_rx, cy + ch/2, szbuf);             // size right-aligned in the reserved zone
     }
     // Multi-column view: subtle light-gray dividers at internal column boundaries,
     // spanning the visible work rect (viewmode 2 single-column needs none).
