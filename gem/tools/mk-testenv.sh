@@ -10,10 +10,15 @@ repo=$(cd "$here/.." && pwd)
 BASE=${1:-/private/tmp/xtdesk-env}
 rm -rf "$BASE"; mkdir -p "$BASE"
 
-# --- theme (the rebaked Aristo2 atlas) ---------------------------------------
+# --- theme (the rebaked Aristo2 atlas) + the "Default" marker naming it ------
 mkdir -p "$BASE/OS/Themes/Aristo2/1x"
 cp "$here"/themes/Aristo2/1x/artwork.tex "$here"/themes/Aristo2/1x/locations.txt \
    "$here"/themes/Aristo2/1x/theme.ini "$BASE/OS/Themes/Aristo2/1x/"
+printf 'Aristo2\n' > "$BASE/OS/Themes/Default"      # load_theme reads this name
+
+# --- label font (icon/window text) -------------------------------------------
+mkdir -p "$BASE/OS/fonts"
+cp "$here/fonts/AovelSansRounded.ttf" "$BASE/OS/fonts/"
 
 # --- registry (desktop icons, icon types, context menus, mime -> app) --------
 mkdir -p "$BASE/OS/var"
