@@ -104,6 +104,67 @@ static void unit_tests(void) {
     CHECK(show_sub[1].flags & MI_CHECKED, "submenu 'List' is checked");
 }
 
+// ---- menu-bar engine: separator / check / disable encoding + ordinal state ---
+// Build a 2-title bar whose dropdown items exercise every marker, then check the
+// resulting OBJECT tree carries the right flags/state, that the by-ordinal state
+// helpers flip a row, and that menu_item_ord round-trips an object index.
+static void bar_tests(void) {
+    printf("--- menu-bar dropdown encoding ------------------------\n");
+    static const char *show_items[] = {
+        MENU_CHECK("As icons"),          // 0: pre-checked
+        "As text",                       // 1: plain
+        MENU_SEP,                        // 2: separator
+        MENU_DISABLE("Deselect"),        // 3: pre-disabled
+        "unsorted",                      // 4: plain
+    };
+    static const char *win_items[] = { "Close", "Close all" };
+    static const menu_def defs[] = {
+        { "Show",   show_items, 5 },
+        { "Window", win_items,  2 },
+    };
+    OBJECT *t = menu_build(defs, 2, WIN_W);
+    CHECK(t != NULL, "menu_build returns a tree");
+
+    // Collect Show's item object indices (title ord 0) by walking the dropdown
+    // box's children — the same structure the by-ordinal helpers walk.
+    int show_dd = t[t[t[0].ob_head].ob_next].ob_head;          // first dropdown box
+    int objs[5], k = 0;
+    for (int c = t[show_dd].ob_head; c >= 0 && k < 5;
+         c = (c == t[show_dd].ob_tail ? -1 : t[c].ob_next)) objs[k++] = c;
+    CHECK(k == 5, "Show dropdown has 5 item objects");
+
+    CHECK(t[objs[0]].ob_state & OS_CHECKED,  "MENU_CHECK item is pre-checked");
+    CHECK(!(t[objs[0]].ob_state & OS_DISABLED), "checked item stays enabled");
+    CHECK((const char*)t[objs[0]].ob_spec != show_items[0] &&
+          !strcmp((const char*)t[objs[0]].ob_spec, "As icons"), "\\x01 marker stripped from label");
+    CHECK(!(t[objs[1]].ob_state & (OS_CHECKED|OS_DISABLED)) &&
+          (t[objs[1]].ob_flags & OF_SELECTABLE), "plain item is selectable, unmarked");
+    CHECK(!(t[objs[2]].ob_flags & OF_SELECTABLE), "separator is non-selectable");
+    CHECK(t[objs[2]].ob_h < t[objs[1]].ob_h, "separator row is shorter than a normal row");
+    CHECK((t[objs[3]].ob_state & OS_DISABLED) &&
+          !(t[objs[3]].ob_flags & OF_SELECTABLE), "MENU_DISABLE item is disabled + non-selectable");
+    CHECK(!strcmp((const char*)t[objs[3]].ob_spec, "Deselect"), "\\x02 marker stripped from label");
+
+    // menu_item_ord round-trips: object index of item ord 4 -> ordinal 4; a
+    // foreign object index resolves to -1.
+    CHECK(menu_item_ord(t, 0, objs[4]) == 4, "menu_item_ord maps object -> ordinal");
+    CHECK(menu_item_ord(t, 0, objs[0]) == 0, "menu_item_ord maps the first item -> 0");
+    CHECK(menu_item_ord(t, 1, objs[0]) == -1, "menu_item_ord rejects a foreign object");
+
+    printf("--- menu-bar by-ordinal state helpers -----------------\n");
+    menu_icheck(t, 0, 0, 0);                                    // untick As icons
+    CHECK(!(t[objs[0]].ob_state & OS_CHECKED), "menu_icheck clears a tick");
+    menu_icheck(t, 0, 1, 1);                                    // tick As text
+    CHECK(t[objs[1]].ob_state & OS_CHECKED, "menu_icheck sets a tick by ordinal");
+    menu_ienable(t, 0, 3, 1);                                   // re-enable Deselect
+    CHECK(!(t[objs[3]].ob_state & OS_DISABLED) &&
+          (t[objs[3]].ob_flags & OF_SELECTABLE), "menu_ienable re-enables (restores OF_SELECTABLE)");
+    menu_ienable(t, 0, 1, 0);                                   // disable As text
+    CHECK((t[objs[1]].ob_state & OS_DISABLED) &&
+          !(t[objs[1]].ob_flags & OF_SELECTABLE), "menu_ienable disables + drops OF_SELECTABLE");
+    free(t);
+}
+
 // Render one open popup + its Show▸ cascade as a static frame, mirroring what
 // the modal loop draws (draw_popup + save-under), and dump it to a PPM.
 static void render_frame(int HV) {
@@ -154,6 +215,7 @@ int main(void) {
 
     printf("=== menu_popup helper unit tests ======================\n");
     unit_tests();
+    bar_tests();
     render_frame(HV);
 
     printf("\n%s\n", g_fail ? "SOME TESTS FAILED" : "ALL TESTS PASSED");

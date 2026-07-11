@@ -1929,6 +1929,162 @@ static void ctx_menu_at(int mx, int my) {
     ctx_apply(chosen, crows, scope, b, tentry, tdeskobj);
 }
 
+// ==== Menu bar =============================================================
+// A real GEM menu bar (menu_build + menu_bar): the owner's five menus, shown once
+// at startup and alive for the desktop's lifetime.  A bar selection arrives as an
+// MN_SELECTED message (caught inside evnt_multi) and dispatches to the desktop's
+// existing verbs where they exist (WIRED), a small new action (IMPL), or a
+// graceful "not implemented yet" alert (STUB).  Item rows are addressed by
+// ordinal; separators (MENU_SEP) occupy an ordinal but never fire.
+enum { MB_DESKTOP = 0, MB_OBJECT, MB_SHOW, MB_WINDOW, MB_SETTINGS };
+static OBJECT *g_menubar;
+
+static const char *mb_desktop[]  = { "About", MENU_SEP, "Empty bin", MENU_SEP, "Shutdown" };
+static const char *mb_object[]   = { "New \xE2\x80\xA6", MENU_SEP, "Open", "Info \xE2\x80\xA6", "Copy",
+                                     "Append", "Insert", "Delete \xE2\x80\xA6", MENU_SEP,
+                                     "Select all", "Find \xE2\x80\xA6", "Print \xE2\x80\xA6" };
+static const char *mb_show[]     = { "As icons", "As text", MENU_SEP, "Filter", "Hide",
+                                     "Deselect folders", MENU_SEP, "Size", "Time", "Date",
+                                     "Attributes", MENU_SEP, "Single column", "Multiple columns",
+                                     MENU_SEP, "unsorted", "By size", "By time", "By date",
+                                     "By attributes" };
+static const char *mb_window[]   = { "Close", "Close all", MENU_SEP, "Cycle", "Duplicate", "Pin" };
+static const char *mb_settings[] = { "Main config", "Applications", "Icon Mgr", MENU_SEP, "Record script" };
+static const menu_def mb_menus[] = {
+    { "Desktop",  mb_desktop,  5 }, { "Object", mb_object, 12 }, { "Show", mb_show, 20 },
+    { "Window",   mb_window,   6 }, { "Settings", mb_settings, 5 },
+};
+static void menu_show(void) { g_menubar = menu_build(mb_menus, 5, WIN_W); menu_bar(g_menubar, 1); }
+
+// The front (topmost) browser window, or NULL if the top window isn't a browser.
+static browser *front_browser(void) { int w = wind_top(); return w ? br_of_window(w) : NULL; }
+
+// Reflect the front window's live view/sort mode into the Show menu's checkmarks,
+// and grey Object verbs that need a window/selection.  Called each loop tick, so
+// the bar is already correct before a dropdown can open (opening is caught inside
+// evnt_multi, out of the app's reach).
+static void menu_sync(void) {
+    if (!g_menubar) return;
+    browser *b = front_browser();
+    int vm = b ? b->viewmode : 0, sm = b ? b->sortmode : 0;
+    menu_icheck(g_menubar, MB_SHOW, 0,  vm == 1);            // As icons
+    menu_icheck(g_menubar, MB_SHOW, 1,  vm == 2 || vm == 3); // As text (either text view)
+    menu_icheck(g_menubar, MB_SHOW, 12, vm == 2);            // Single column
+    menu_icheck(g_menubar, MB_SHOW, 13, vm == 3);            // Multiple columns
+    for (int i = 0; i < 5; i++)                              // sort group: unsorted..attributes -> 1..5
+        menu_icheck(g_menubar, MB_SHOW, 15 + i, sm == i + 1);
+    int haswin = (b != NULL), hassel = (b && b->sel >= 0);
+    menu_ienable(g_menubar, MB_OBJECT, 2, hassel);           // Open   (needs a selection)
+    menu_ienable(g_menubar, MB_OBJECT, 7, haswin);           // Delete… (needs a window)
+    menu_ienable(g_menubar, MB_OBJECT, 9, haswin);           // Select all
+}
+
+// ---- Window menu actions --------------------------------------------------
+static void close_win(int win) {                             // mirror the WM_CLOSED cleanup
+    if (!win) return;
+    browser *b = br_of_window(win); if (b) { net_req_close(b); br_free_icons(b); b->used = 0; }
+    emuwin *e = emu_of_window(win); if (e) e->used = 0;
+    wind_close(win);
+}
+static void menu_close_front(void) {
+    int w = wind_top();
+    if (!w) { form_alert(1, "[1][Close|no window is open][OK]"); return; }
+    close_win(w); wind_redraw();
+}
+static void menu_close_all(void) { int w; while ((w = wind_top())) close_win(w); wind_redraw(); }
+static void menu_cycle(void) {                               // raise the next window in z-order
+    int wins[MAXBR + MAXEMU], n = 0;
+    for (int i = 0; i < MAXBR;  i++) if (BR[i].used)  wins[n++] = BR[i].win;
+    for (int i = 0; i < MAXEMU; i++) if (EMU[i].used) wins[n++] = EMU[i].win;
+    if (n < 2) { form_alert(1, "[1][Cycle|open two or more windows first][OK]"); return; }
+    int top = wind_top(), idx = 0;
+    for (int i = 0; i < n; i++) if (wins[i] == top) idx = i;
+    wind_raise(wins[(idx + 1) % n]); wind_redraw();
+}
+static void menu_duplicate(void) {                           // a second window at the current dir
+    browser *b = front_browser();
+    if (!b)          { form_alert(1, "[1][Duplicate|no window to duplicate][OK]"); return; }
+    if (b->net != 0) { form_alert(1, "[1][Duplicate|local windows only][OK]"); return; }
+    char path[400];
+    if (b->rel[0]) snprintf(path, sizeof path, "%s/%s", b->logical_root, b->rel);
+    else           snprintf(path, sizeof path, "%s", b->logical_root);
+    open_browser(path, b->media_type);
+}
+static void menu_stub(const char *name) {                    // graceful placeholder
+    char m[96]; snprintf(m, sizeof m, "[1][%s|not implemented yet][OK]", name);
+    form_alert(1, m);
+}
+
+// Dispatch a decoded MN_SELECTED (title ordinal, item ordinal).
+static void menu_dispatch(int to, int io) {
+    browser *b = front_browser();
+    switch (to) {
+    case MB_DESKTOP:
+        switch (io) {
+        case 0: form_alert(1, "[1][XTOS Desktop|a GEM desktop for XTOS][OK]"); break;    // About     IMPL
+        case 2: form_alert(1, "[1][Empty bin|the bin is empty][OK]"); break;             // Empty bin IMPL
+        case 4: menu_stub("Shutdown"); break;                                            // TODO shutdown       STUB
+        } break;
+    case MB_OBJECT:
+        switch (io) {
+        case 0:  ctx_new(b); break;                                                      // New…       WIRED
+        case 2:  if (b && b->sel >= 0) ctx_open_entry(b, b->sel);                         // Open       WIRED
+                 else form_alert(1, "[1][Open|select an item first][OK]"); break;
+        case 3:  ctx_info(b && b->sel >= 0 ? 4 : 3, b, b ? b->sel : -1, 0); break;        // Info…      WIRED
+        case 4:  menu_stub("Copy"); break;                                               // TODO       STUB
+        case 5:  menu_stub("Append"); break;                                             // TODO       STUB
+        case 6:  menu_stub("Insert"); break;                                             // TODO       STUB
+        case 7:  ctx_delete(b, 4, b ? b->sel : -1); break;                               // Delete…    WIRED
+        case 9:  if (b) { b->selall = 1; b->sel = -1; wind_redraw(); }                    // Select all WIRED
+                 else form_alert(1, "[1][Select all|no window is open][OK]"); break;
+        case 10: menu_stub("Find"); break;                                               // TODO       STUB
+        case 11: menu_stub("Print"); break;                                              // TODO       STUB
+        } break;
+    case MB_SHOW:
+        if (!b) { form_alert(1, "[1][Show|no window is open][OK]"); break; }
+        switch (io) {
+        case 0:  b->viewmode = 1; b->sel = -1; wind_redraw(); break;                      // As icons        WIRED
+        case 1:  b->viewmode = 2; b->sel = -1; wind_redraw(); break;                      // As text         WIRED
+        case 3:  menu_stub("Filter"); break;                                             // TODO STUB
+        case 4:  menu_stub("Hide"); break;                                               // TODO STUB
+        case 5:  menu_stub("Deselect folders"); break;                                   // TODO STUB
+        case 7:  menu_stub("Size column"); break;                                        // TODO STUB
+        case 8:  menu_stub("Time column"); break;                                        // TODO STUB
+        case 9:  menu_stub("Date column"); break;                                        // TODO STUB
+        case 10: menu_stub("Attributes column"); break;                                  // TODO STUB
+        case 12: b->viewmode = 2; b->sel = -1; wind_redraw(); break;                      // Single column    WIRED
+        case 13: b->viewmode = 3; b->sel = -1; wind_redraw(); break;                      // Multiple columns WIRED
+        case 15: b->sortmode = 1; br_list(b); wind_redraw(); break;                       // unsorted         WIRED
+        case 16: b->sortmode = 2; br_list(b); wind_redraw(); break;                       // By size          WIRED
+        case 17: b->sortmode = 3; br_list(b); wind_redraw(); break;                       // By time          WIRED
+        case 18: b->sortmode = 4; br_list(b); wind_redraw(); break;                       // By date          WIRED
+        case 19: b->sortmode = 5; br_list(b); wind_redraw(); break;                       // By attributes    WIRED
+        }
+        menu_sync(); break;
+    case MB_WINDOW:
+        switch (io) {
+        case 0: menu_close_front(); break;                                               // Close     IMPL
+        case 1: menu_close_all(); break;                                                 // Close all IMPL
+        case 3: menu_cycle(); break;                                                     // Cycle     IMPL
+        case 4: menu_duplicate(); break;                                                 // Duplicate IMPL
+        case 5: menu_stub("Pin"); break;                                                 // TODO STUB
+        } break;
+    case MB_SETTINGS:
+        switch (io) {
+        case 0: menu_stub("Main config"); break;                                         // TODO STUB
+        case 1: menu_stub("Applications"); break;                                        // TODO STUB
+        case 2: menu_stub("Icon Mgr"); break;                                            // TODO STUB
+        case 4: menu_stub("Record script"); break;                                       // TODO STUB
+        } break;
+    }
+}
+// Decode + dispatch a raw MN_SELECTED (msg[3]=title object, msg[4]=item object).
+static void menu_message(const int16_t *msg) {
+    int to = msg[3] - 2;                                     // T0 = 2 (first title object)
+    int io = menu_item_ord(g_menubar, to, msg[4]);
+    if (to >= 0 && io >= 0) menu_dispatch(to, io);
+}
+
 // Headless drain: pump pending async requests to completion so the --fuji*
 // modes stay synchronous end-to-end.  max_s is a wall-clock cap for wedged
 // servers (the daemon's own mount timeout lands a -err well inside it).
@@ -2122,6 +2278,7 @@ int main(int argc, char **argv) {
         else if (!strcmp(argv[i], "--titlebtn")) fuji = 13;         // headless: right-side title buttons + Gallery
         else if (!strcmp(argv[i], "--pair")) fuji = 14;             // headless: front(active)+back(inactive) titlebars
         else if (!strcmp(argv[i], "--scroll")) fuji = 14;           // headless: scrollbar overflow + scroll + wheel
+        else if (!strcmp(argv[i], "--menubar")) fuji = 15;          // headless: menu bar + open dropdown + dispatch
         else snprintf(base, sizeof base, "%s", argv[i]);
     }
 
@@ -2154,6 +2311,7 @@ int main(int argc, char **argv) {
     load_wall();
     build_desktop();
     wind_set_desktop_content(deskcontent, NULL);
+    menu_show();                                      // the owner's menu bar (reserves the top BARH)
     if (sel && n_icons) desk[1].ob_state |= OS_SELECTED;
     if (browse) { open_browser("/Media/6502/Games", ICT_MEDIA_8BIT); if (sel) BR[0].sel = 0; }
     if (browse == 2) desk_launch("River Raid.atr", ICT_MEDIA_8BIT);
@@ -2780,6 +2938,25 @@ int main(int argc, char **argv) {
         registry_close();
         return 0;
     }
+    if (fuji == 15) {                                // headless menu-bar test (--menubar)
+        open_browser("/navtest", ICT_MEDIA_8BIT);    // a local window to act on
+        browser *nb = front_browser();
+        if (!nb) { fprintf(stderr, "menubar: no browser (mkdir <base>/navtest first)\n"); return 1; }
+        menu_sync();                                 // reflect the window's mode into the bar
+        wind_redraw();
+        menu_render_open(MB_SHOW, 1);                // draw the Show dropdown open, "As text" hovered
+        dump_ppm("/tmp/xtdesk-menubar.ppm");         // shows the bar + separators + a checkmark
+        int fail = 0;
+        menu_dispatch(MB_SHOW, 1);                    // As text -> viewmode 2
+        if (nb->viewmode != 2) { fprintf(stderr, "menubar: 'As text' vm=%d (exp 2) FAIL\n", nb->viewmode); fail = 1; }
+        menu_dispatch(MB_SHOW, 13);                   // Multiple columns -> viewmode 3
+        if (nb->viewmode != 3) { fprintf(stderr, "menubar: 'Multiple columns' vm=%d (exp 3) FAIL\n", nb->viewmode); fail = 1; }
+        menu_dispatch(MB_SHOW, 16);                   // By size -> sortmode 2
+        if (nb->sortmode != 2) { fprintf(stderr, "menubar: 'By size' sm=%d (exp 2) FAIL\n", nb->sortmode); fail = 1; }
+        fprintf(stderr, "menubar: dispatch %s; wrote /tmp/xtdesk-menubar.ppm\n", fail ? "FAIL" : "OK");
+        registry_close();
+        return fail;
+    }
     if (fuji) {                                       // headless FujiNet render modes
         open_fuji_servers();
         net_drain(60);                                // async: settle before inspecting
@@ -2821,11 +2998,13 @@ int main(int argc, char **argv) {
 
     for (;;) {
         int mx,my,mb,ks,key,nc; int16_t msg[8];
+        menu_sync();                                  // keep the bar in step with the front window
         int pend = net_pending();                     // net I/O in flight: tick to pump it
         int r = evnt_multi(MU_MESAG|MU_KEYBD|MU_BUTTON|(pend?MU_TIMER:0), 2,1,1, 0,0,0,0,0, 0,0,0,0,0, msg, pend?40:0, 0, &mx,&my,&mb,&ks,&key,&nc);
         net_pump();                                   // drain any arrived reply lines
         if (r & MU_QUIT) break;
         if ((r & MU_KEYBD) && key == 0x1b) break;     // Esc at the desktop quits (as on the A9)
+        if (r & MU_MESAG && msg[0]==MN_SELECTED) menu_message(msg);   // menu-bar selection
         if (r & MU_MESAG && msg[0]==WM_CLOSED) {
             browser *b = br_of_window(msg[3]);        // close cancels any in-flight request
             if (b) { net_req_close(b); br_free_icons(b); b->used = 0; }

@@ -203,16 +203,30 @@ int  form_alert(int default_button, const char *alert);
 // A menu is a GEM OBJECT tree (bar of G_TITLEs + a dropdown G_BOX of G_STRINGs
 // per title).  menu_build assembles one from a simple description; menu_bar
 // shows/hides it.  A selection posts an MN_SELECTED message (msg[0]=MN_SELECTED,
-// msg[3]=title object, msg[4]=item object) read via evnt_mesag — the bar click
-// is intercepted inside evnt_multi, so apps just receive the message.
+// msg[3]=title object index, msg[4]=item object index) read via evnt_mesag — the
+// bar click is intercepted inside evnt_multi, so apps just receive the message.
+// Decode it as: title ordinal = msg[3]-2; item ordinal = menu_item_ord(tree,
+// title_ord, msg[4]).  Separators never fire (they are non-selectable).
 enum { MN_SELECTED = 10 };
+
+// Bar-dropdown item encoding (the menu_def `items[]` strings): a leading marker
+// byte, stripped before drawing, sets a row's initial kind/state.
+//   MENU_SEP        -> a separator: a non-selectable divider line
+//   MENU_CHECK(s)   -> row `s`, pre-ticked (toggle later with menu_icheck)
+//   MENU_DISABLE(s) -> row `s`, greyed + non-selectable (menu_ienable re-enables)
+// A plain string is an ordinary selectable item.  (The check/disable helpers below
+// address rows by title/item ORDINAL, so state can be reflected after build.)
+#define MENU_SEP          "-"
+#define MENU_CHECK(s)     "\x01" s
+#define MENU_DISABLE(s)   "\x02" s
 
 typedef struct { const char *title; const char **items; int nitems; } menu_def;
 OBJECT *menu_build(const menu_def *menus, int nmenus, int screen_w);   // malloc'd tree
 void    menu_bar(OBJECT *tree, int show);          // show/erase the active menu bar
-void    menu_tnormal(OBJECT *tree, int title, int normal);   // (un)highlight a title
-void    menu_icheck(OBJECT *tree, int item, int check);      // tick / untick an item
-void    menu_ienable(OBJECT *tree, int item, int enable);    // enable / disable an item
+void    menu_tnormal(OBJECT *tree, int title_ord, int normal);          // (un)highlight a title (by ordinal)
+void    menu_icheck(OBJECT *tree, int title_ord, int item_ord, int on); // tick / untick an item (by ordinal)
+void    menu_ienable(OBJECT *tree, int title_ord, int item_ord, int on);// enable / disable an item (by ordinal)
+int     menu_item_ord(OBJECT *tree, int title_ord, int item_obj);       // item object index -> ordinal (-1 none)
 
 // ---- Popup / context menus (menu_popup) ---------------------------------
 // A generic run-a-popup: a flat array of menu_item rows drawn as a themed box

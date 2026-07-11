@@ -13,6 +13,7 @@ gfx_surface *vdi_screen_target(void);   // the physical workstation surface (VDI
 
 #define BARH   22
 #define ITEMH  20
+#define SEPH   10          // a separator row: a thin divider, shorter than a normal item
 #define TPAD   14
 #define DDPADX 22
 #define DDPADY 4
@@ -27,6 +28,15 @@ static int H(void) { return aes_handle(); }
 #define EACH_CHILD(t,p,c) for(int c=(t)[p].ob_head;c>=0;c=(c==(t)[p].ob_tail?-1:(t)[c].ob_next))
 
 static int text_w(const char *s) { int16_t e[8]; vst_height(H(),14,0,0,0,0); vqt_extent(H(),s,e); return e[2]-e[0]; }
+
+// Bar-dropdown item encoding (see aes.h MENU_SEP / MENU_CHECK / MENU_DISABLE):
+// a leading "-" marks a separator (a non-selectable divider); a leading \x01
+// pre-checks the row; a leading \x02 pre-disables it.  bar_is_sep spots the
+// divider; bar_disp strips the \x01/\x02 marker so only the label is measured/drawn.
+static int bar_is_sep(const char *s) { return s && s[0]=='-'; }
+static const char *bar_disp(const char *s) {
+    return (s && ((unsigned char)s[0]==1 || (unsigned char)s[0]==2)) ? s+1 : s;
+}
 
 OBJECT *menu_build(const menu_def *m, int n, int sw) {
     int nit = 0; for (int i=0;i<n;i++) nit += m[i].nitems;
@@ -44,16 +54,28 @@ OBJECT *menu_build(const menu_def *m, int n, int sw) {
     t[active]=(OBJECT){0,dd0,dd0+n-1,G_IBOX,OF_NONE,OS_NORMAL,0,0,BARH,(int16_t)sw,(int16_t)(400-BARH)};
     tx=0;
     for (int i=0;i<n;i++){
-        int mw=0; for(int j=0;j<m[i].nitems;j++){int w=text_w(m[i].items[j]); if(w>mw)mw=w;}
-        int ddw=mw+DDPADX+12, ddh=m[i].nitems*ITEMH+DDPADY*2, ddi=dd0+i, first=it;
+        int mw=0, ddh=DDPADY*2;
+        for(int j=0;j<m[i].nitems;j++){
+            int w=text_w(bar_disp(m[i].items[j])); if(w>mw)mw=w;
+            ddh += bar_is_sep(m[i].items[j]) ? SEPH : ITEMH;
+        }
+        int ddw=mw+DDPADX+12, ddi=dd0+i, first=it;
         int titlew=text_w(m[i].title)+TPAD*2;
         t[ddi]=(OBJECT){(int16_t)(i<n-1?ddi+1:active),(int16_t)first,(int16_t)(first+m[i].nitems-1),
                         G_BOX,OF_HIDETREE,OS_NORMAL,0,(int16_t)tx,0,(int16_t)ddw,(int16_t)ddh};
+        int iy=DDPADY;
         for (int j=0;j<m[i].nitems;j++){
+            const char *raw=m[i].items[j];
+            uint16_t fl=OF_SELECTABLE, stt=OS_NORMAL; const char *spec=raw;
+            int ih=ITEMH;
+            if (bar_is_sep(raw))                    { fl=OF_NONE; ih=SEPH; }         // divider
+            else if ((unsigned char)raw[0]==1)      { stt|=OS_CHECKED;  spec=raw+1; } // pre-checked
+            else if ((unsigned char)raw[0]==2)      { stt|=OS_DISABLED; fl=OF_NONE; spec=raw+1; } // pre-disabled
             int oi=it++;
             t[oi]=(OBJECT){(int16_t)(j<m[i].nitems-1?oi+1:ddi),NIL,NIL,G_STRING,
-                           OF_SELECTABLE,OS_NORMAL,(void*)m[i].items[j],
-                           (int16_t)DDPADX,(int16_t)(DDPADY+j*ITEMH),(int16_t)(ddw-DDPADX-4),ITEMH};
+                           fl,stt,(void*)spec,
+                           (int16_t)DDPADX,(int16_t)iy,(int16_t)(ddw-DDPADX-4),(int16_t)ih};
+            iy+=ih;
         }
         tx+=titlew;
     }
@@ -88,14 +110,43 @@ void menu_bar(OBJECT *tree, int show) {
     }
 }
 
-void menu_tnormal(OBJECT *t, int title, int normal) {
-    if (normal) t[title].ob_state &= ~OS_SELECTED; else t[title].ob_state |= OS_SELECTED;
+// ---- state by (title,item) ordinal --------------------------------------
+// The bar dropdown is drawn only while open (draw_items reads ob_state live), so
+// these just flip the stored state — the change shows the next time that dropdown
+// opens.  All address a row by its title/item ordinal (not the flat object index),
+// so an app can reflect live state without knowing the tree layout.  menu_dd_obj
+// walks to a title's dropdown box; menu_item_obj to one of its item objects.
+static int menu_dd_obj(OBJECT *t, int to) {
+    int bar=t[0].ob_head, active=t[bar].ob_next, dd=t[active].ob_head;
+    for(int i=0;i<to && dd>=0;i++) dd=(dd==t[active].ob_tail?-1:t[dd].ob_next);
+    return dd;
 }
-void menu_icheck(OBJECT *t, int item, int check) {
-    if (check) t[item].ob_state |= OS_CHECKED; else t[item].ob_state &= ~OS_CHECKED;
+static int menu_item_obj(OBJECT *t, int to, int io) {
+    int dd=menu_dd_obj(t,to); if(dd<0) return -1;
+    int c=t[dd].ob_head;
+    for(int i=0;i<io && c>=0;i++) c=(c==t[dd].ob_tail?-1:t[c].ob_next);
+    return c;
 }
-void menu_ienable(OBJECT *t, int item, int enable) {
-    if (enable) t[item].ob_state &= ~OS_DISABLED; else t[item].ob_state |= OS_DISABLED;
+// Ordinal (0-based) of item object `item_obj` in title `to`'s dropdown; -1 if not
+// found.  Decodes an MN_SELECTED message: msg[3]-2 = title ordinal, msg[4] = the
+// item object index -> menu_item_ord -> the item ordinal an app dispatches on.
+int menu_item_ord(OBJECT *t, int to, int item_obj) {
+    int dd=menu_dd_obj(t,to); if(dd<0) return -1;
+    int ord=0; EACH_CHILD(t,dd,c){ if(c==item_obj) return ord; ord++; }
+    return -1;
+}
+void menu_tnormal(OBJECT *t, int title_ord, int normal) {
+    int ti=t[t[0].ob_head].ob_head + title_ord;
+    if (normal) t[ti].ob_state &= ~OS_SELECTED; else t[ti].ob_state |= OS_SELECTED;
+}
+void menu_icheck(OBJECT *t, int title_ord, int item_ord, int on) {
+    int o=menu_item_obj(t,title_ord,item_ord); if(o<0) return;
+    if (on) t[o].ob_state |= OS_CHECKED; else t[o].ob_state &= ~OS_CHECKED;
+}
+void menu_ienable(OBJECT *t, int title_ord, int item_ord, int on) {
+    int o=menu_item_obj(t,title_ord,item_ord); if(o<0) return;
+    if (on) { t[o].ob_state &= ~OS_DISABLED; t[o].ob_flags |= OF_SELECTABLE; }
+    else    { t[o].ob_state |=  OS_DISABLED; t[o].ob_flags &= ~OF_SELECTABLE; }
 }
 
 // ---- pull-down interaction ----------------------------------------------
@@ -131,12 +182,23 @@ static void draw_items(int ord,int hov){
     vst_height(H(),14,0,0,0,0);
     EACH_CHILD(g_menu,ddi,c){
         int iy=dy+g_menu[c].ob_y, ih=g_menu[c].ob_h;
-        if(c==hov){ vsf_color(H(),PEN_HILITE); vsf_interior(H(),VDI_FIS_SOLID); vsf_perimeter(H(),0);
-                    int16_t r[4]={(int16_t)(dx+4),(int16_t)iy,(int16_t)(dx+w-5),(int16_t)(iy+ih-1)}; vr_recfl(H(),r);
-                    vst_color(H(),0); }
-        else vst_color(H(), (g_menu[c].ob_state&OS_DISABLED)?9:1);
-        if(g_menu[c].ob_state&OS_CHECKED) v_gtext(H(), dx+6, iy+ih/2-7, "\xE2\x9C\x93");   // check mark
-        v_gtext(H(), dx+g_menu[c].ob_x, iy+ih/2-7, (const char*)g_menu[c].ob_spec);
+        const char *lbl=(const char*)g_menu[c].ob_spec;
+        if(bar_is_sep(lbl)){                                       // a thin divider line
+            vsl_color(H(),PEN_BARLINE); vsl_width(H(),1);
+            int16_t ln[4]={(int16_t)(dx+6),(int16_t)(iy+ih/2),(int16_t)(dx+w-7),(int16_t)(iy+ih/2)};
+            v_pline(H(),2,ln); continue;
+        }
+        int sel=(c==hov), dis=(g_menu[c].ob_state&OS_DISABLED);
+        if(sel){ vsf_color(H(),PEN_HILITE); vsf_interior(H(),VDI_FIS_SOLID); vsf_perimeter(H(),0);
+                 int16_t r[4]={(int16_t)(dx+4),(int16_t)iy,(int16_t)(dx+w-5),(int16_t)(iy+ih-1)}; vr_recfl(H(),r); }
+        if(g_menu[c].ob_state&OS_CHECKED){                         // drawn check tick (mirrors the popup)
+            int cx=dx+7, cym=iy+ih/2;
+            vsl_color(H(), sel?0:1); vsl_width(H(),2);
+            int16_t tk[6]={(int16_t)cx,(int16_t)cym,(int16_t)(cx+3),(int16_t)(cym+3),(int16_t)(cx+8),(int16_t)(cym-4)};
+            v_pline(H(),3,tk);
+        }
+        vst_color(H(), sel?0:(dis?9:1));
+        v_gtext(H(), dx+g_menu[c].ob_x, iy+ih/2-7, lbl);
     }
 }
 
@@ -148,7 +210,11 @@ static int item_at(int ord,int mx,int my){
     int ddi=DD0+ord, dx,dy; objc_offset(g_menu,ddi,&dx,&dy);
     if(mx<dx || mx>=dx+g_menu[ddi].ob_w) return -1;
     EACH_CHILD(g_menu,ddi,c){ int iy=dy+g_menu[c].ob_y;
-        if(my>=iy && my<iy+g_menu[c].ob_h && !(g_menu[c].ob_state&OS_DISABLED)) return c; }
+        if(my>=iy && my<iy+g_menu[c].ob_h){                        // within this row
+            const char *lbl=(const char*)g_menu[c].ob_spec;
+            if(bar_is_sep(lbl) || (g_menu[c].ob_state&OS_DISABLED)) return -1;  // non-selectable
+            return c;
+        } }
     return -1;
 }
 static void open_menu(int ord){
