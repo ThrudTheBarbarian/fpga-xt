@@ -670,7 +670,7 @@ SDSTAGE := $(BUILD)/sdstage
 .PHONY: sdstage
 sdstage: $(BUILD)/toybox.so $(BUILD)/sqlite3.so $(BUILD)/libGEM.so $(BUILD)/aesdesk.so $(BUILD)/desktop.so $(BUILD)/gemtext.so $(BUILD)/regtest.so $(BUILD)/tnfs.so $(BUILD)/fujinetd.so $(BUILD)/fuji.so $(DESKTOP_RSC)
 	@rm -rf $(SDSTAGE)
-	@mkdir -p $(SDSTAGE)/OS/bin $(SDSTAGE)/OS/library $(SDSTAGE)/OS/etc $(SDSTAGE)/OS/boot $(SDSTAGE)/OS/Apps/Desktop
+	@mkdir -p $(SDSTAGE)/OS/bin $(SDSTAGE)/OS/library $(SDSTAGE)/OS/etc $(SDSTAGE)/OS/boot $(SDSTAGE)/OS/Apps/Desktop/Spaces/1
 	cp sd/boot/* $(SDSTAGE)/OS/boot/
 	cp $(DESKTOP_RSC) $(SDSTAGE)/OS/Apps/Desktop/desktop.rsc
 	cp $(BUILD)/toybox.so  $(SDSTAGE)/OS/bin/toybox

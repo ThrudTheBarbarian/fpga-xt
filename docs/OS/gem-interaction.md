@@ -554,3 +554,23 @@ dialogs for multi-app, the explicit-refresh verb that sets `fujiCache`
 2. **Update pip is advisory**: double-click launches the local copy
    as-is; a context-menu "Update" verb re-fetches. No ask-at-launch
    interruptions.
+
+## Desktop app namespace (`/OS/Apps`)
+
+ARM/A9 applications live under `/OS/Apps/<App>/`. The desktop is one such
+app: **`/OS/Apps/Desktop/`** holds its resources and per-app state —
+
+- `desktop.rsc` — the dialog/window resource trees (GemRCS/Rocks format),
+  loaded via the shared `rsc.c` codec (also packed into the qemu romfs at
+  `/System/OS/Apps/Desktop/desktop.rsc`).
+- `Spaces/<N>/` — a **virtual desktop** ("space"). `Spaces/1` is the
+  default space and is the home for **desktop-homed files** (icons the
+  user drags onto the desktop become copies here, once drag-and-drop
+  lands — replacing the earlier flat `/Desktop` idea). Additional numbered
+  spaces enable multiple virtual desktops later, each with its own icon
+  layout + files. Other per-space desktop state (icon positions, window
+  arrangement) lives under the space too.
+
+This is distinct from **`/Cache`** (the flushable network mirror, keyed by
+server id) — desktop files are user data and must survive a cache flush,
+so they live under `/OS/Apps/Desktop/Spaces`, not `/Cache`.
