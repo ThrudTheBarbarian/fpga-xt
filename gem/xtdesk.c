@@ -124,6 +124,7 @@ static void load_wall(void) {
 static void build_desktop(void) {
     n_icons = registry_desktop_icons(rows, MAX_ICONS);
     if (n_icons < 0) n_icons = 0;
+    int reserve = aes_top_reserve();                    // menu-bar strip to keep icons clear of
     desk[ROOT] = (OBJECT){ NIL, n_icons ? 1 : NIL, n_icons ? n_icons : NIL,
                            G_IBOX, OF_NONE, OS_NORMAL, 0, 0, 0, WIN_W, WIN_H };
     for (int i = 0; i < n_icons; i++) {
@@ -132,9 +133,15 @@ static void build_desktop(void) {
         cic[i].text = rows[i].displayName[0] ? rows[i].displayName : NULL;
         int oi = 1 + i;
         int last = (i == n_icons - 1);
+        // Re-fit into the usable band below the menu bar: shift a top icon down to
+        // clear the bar, pull a bottom icon up so it stays fully on-screen.
+        int iy = rows[i].y;
+        if (iy < reserve)         iy += reserve;
+        if (iy + ICON_CH > WIN_H) iy = WIN_H - ICON_CH;
+        if (iy < reserve)         iy = reserve;
         desk[oi] = (OBJECT){ (int16_t)(last ? ROOT : oi+1), NIL, NIL, G_CICON,
                              (uint16_t)(OF_SELECTABLE | (last ? OF_LASTOB : 0)), OS_NORMAL,
-                             &cic[i], (int16_t)rows[i].x, (int16_t)rows[i].y, ICON_CW, ICON_CH };
+                             &cic[i], (int16_t)rows[i].x, (int16_t)iy, ICON_CW, ICON_CH };
     }
 }
 
@@ -279,7 +286,11 @@ static void desk_launch(const char *name, int media_type) {
 // net=1 the FujiNet servers window (one tile per registry server + "Add
 // server"), net=2 a network browser over fujinetd (rel = the remote path).
 #define MAXBR   6
-#define MAXENT  128
+#define MAXENT  512                                   // flat cap; also the tree-view total row cap
+#define MAX_EXPAND 64                                 // tree view: how many folders may be open at once
+#define TREE_INDENT 15                                // single-column tree: px indent per depth level
+#define TREE_MAXDEPTH 16                              // single-column tree: recursion/cycle guard
+#define TREE_TRIW  14                                 // single-column tree: disclosure-triangle gutter width
 #define MAX_CRUMB 18                                  // breadcrumb: <root> + up to ~16 path segments
 #define BR_WKIND (W_NAME|W_CLOSER|W_MOVER|W_SIZER|W_FULLER|W_INFO)   // browser-window kind
 // Per-entry access-attribute bits, rendered as a "d a r x h s" flag string
@@ -293,7 +304,10 @@ static void desk_launch(const char *name, int media_type) {
 #define BATTR_HID 0x10
 #define BATTR_SYS 0x20
 typedef struct { char name[128], label[128]; int dir; long size, mtime;
-                 char state; int srvid; unsigned char attr; } bent;   // state: lsc cache column; srvid: servers row (-1 = Add server); attr: BATTR_* flags
+                 char state; int srvid; unsigned char attr;
+                 short depth; char expanded; char path[256]; } bent;   // state: lsc cache column; srvid: servers row (-1 = Add server); attr: BATTR_* flags
+                 // depth/expanded/path: single-column tree view — indent level, whether this dir is
+                 // open, and the entry's path relative to the browse root ("a/b/child.atr")
 typedef struct {
     int used, win, media_type, sel;
     int net, server_id;                               // net browser flavour (see above)
@@ -318,6 +332,8 @@ typedef struct {
     int viewx, vieww;                                  // (retired) info-bar View rect — now a title button
     int maskx, maskw;                                  // file-mask span rect (in the title)
     int viewmode;                                      // 1=icons 2=single-col 3=multi-col 4=gallery
+    char expanded_paths[MAX_EXPAND][256];              // single-column tree: open-folder set (paths rel. to root)
+    int  n_expanded;                                   // count in expanded_paths (persists across rebuilds)
     int sortmode, sortinv;                             // 1 unsorted/2 name/3 type/4 size/5 date; sortinv reverses
     int selall;                                        // context-menu "select all": highlight every entry
     char mask[32];                                     // per-window file mask ("*"/"*.*"/"" = show all)
@@ -527,37 +543,109 @@ static void net_list_start(browser *b) {              // entries from `lsc <serv
     if (b->infow > 0) br_info_redraw(b);              // instant contacting feedback (replaces desk_busy)
 }
 static void br_report_content(browser *b);            // fwd: report content size for the scrollbar
-static void br_list(browser *b) {
-    if (b->net == 1) { srv_list_start(b); return; }   // FujiNet flavours (async)
-    if (b->net == 2) { net_list_start(b); return; }
-    br_free_icons(b);
-    b->nent = 0; b->nfiles = 0; b->total = 0; b->sel = -1;
-    char dir[400];
-    if (b->rel[0]) snprintf(dir, sizeof dir, "%s/%s", b->fs_root, b->rel);
-    else           snprintf(dir, sizeof dir, "%s", b->fs_root);
+// ---- single-column tree view (viewmode 2) ---------------------------------
+// The open-folder set: paths (relative to the browse root) of directories the
+// user has expanded.  Held on the browser so a rebuild (re-list, sort change,
+// resize) preserves which folders are open.
+static int br_is_expanded(browser *b, const char *path) {
+    for (int i = 0; i < b->n_expanded; i++)
+        if (!strcmp(b->expanded_paths[i], path)) return 1;
+    return 0;
+}
+static void br_expand_add(browser *b, const char *path) {
+    if (br_is_expanded(b, path)) return;
+    if (b->n_expanded >= MAX_EXPAND) return;          // set full: silently cap
+    snprintf(b->expanded_paths[b->n_expanded++], sizeof b->expanded_paths[0], "%s", path);
+}
+static void br_expand_del(browser *b, const char *path) {   // drop `path` AND its whole subtree
+    int plen = (int)strlen(path);
+    for (int i = 0; i < b->n_expanded; ) {
+        const char *p = b->expanded_paths[i];
+        if (!strcmp(p, path) || (!strncmp(p, path, plen) && p[plen] == '/')) {
+            for (int j = i; j < b->n_expanded - 1; j++)
+                snprintf(b->expanded_paths[j], sizeof b->expanded_paths[0], "%s", b->expanded_paths[j+1]);
+            b->n_expanded--;
+        } else i++;
+    }
+}
+// Read one directory (absolute fs path `dir`) into `out[]` (cap entries): skip
+// dotfiles, stat for type/size/mtime/attr, apply the file mask, then sort with
+// the browser's active key.  Returns the count.  Shared by the flat fill
+// (viewmode 1/3/4) and the recursive tree fill (viewmode 2).
+static int br_read_level(browser *b, const char *dir, bent *out, int cap) {
+    int n = 0;
     DIR *d = opendir(dir);
     if (d) {
         struct dirent *de;
-        while ((de = readdir(d)) && b->nent < MAXENT) {
+        while ((de = readdir(d)) && n < cap) {
             if (de->d_name[0] == '.') continue;       // hidden + . ..
-            bent *e = &b->ent[b->nent];
+            bent *e = &out[n];
+            memset(e, 0, sizeof *e);
             snprintf(e->name, sizeof e->name, "%s", de->d_name);
-            char full[560]; snprintf(full, sizeof full, "%s/%s", dir, de->d_name);
-            struct stat stt; e->dir = 0; e->size = 0; e->mtime = 0; e->state = 0; e->srvid = 0; e->attr = 0;
+            char full[600]; snprintf(full, sizeof full, "%s/%s", dir, de->d_name);
+            struct stat stt;
             if (stat(full, &stt) == 0) { e->dir = S_ISDIR(stt.st_mode); e->size = (long)stt.st_size;
                                          e->mtime = (long)stt.st_mtime;
                                          // POSIX -> flag mapping (a/s have no POSIX equivalent, left off)
                                          if (e->dir)                                          e->attr |= BATTR_DIR;
                                          if (stt.st_mode & (S_IXUSR|S_IXGRP|S_IXOTH))          e->attr |= BATTR_EXE;
-                                         if (!(stt.st_mode & S_IWUSR))                         e->attr |= BATTR_RO;
-                                         if (de->d_name[0] == '.')                            e->attr |= BATTR_HID; }
+                                         if (!(stt.st_mode & S_IWUSR))                         e->attr |= BATTR_RO; }
             if (!br_visible(b, de->d_name, e->dir)) continue;   // masked file (dirs always shown)
-            b->nent++;
+            n++;
         }
         closedir(d);
     }
     g_sort_mode = b->sortmode; g_sort_inv = b->sortinv;
-    qsort(b->ent, b->nent, sizeof(bent), ent_cmp);
+    qsort(out, n, sizeof(bent), ent_cmp);
+    return n;
+}
+// Recursively flatten the tree rooted at `relbase` (path relative to the browse
+// root; "" = the view root) into b->ent starting at *pn, indent `depth`.  A dir
+// in the expanded set is immediately followed by its (recursively built)
+// children, so ent[] holds the visible tree in display order.
+static void br_tree_build(browser *b, const char *relbase, int depth, int *pn) {
+    if (depth > TREE_MAXDEPTH) return;                 // cycle / very-deep guard
+    char dir[600]; int off = 0;
+    off += snprintf(dir + off, sizeof dir - off, "%s", b->fs_root);
+    if (b->rel[0])   off += snprintf(dir + off, sizeof dir - off, "/%s", b->rel);
+    if (relbase[0])           snprintf(dir + off, sizeof dir - off, "/%s", relbase);
+    bent *lvl = malloc(sizeof(bent) * MAXENT);
+    if (!lvl) return;                                  // OOM: skip this level (degrade, don't crash)
+    int ln = br_read_level(b, dir, lvl, MAXENT);
+    for (int k = 0; k < ln; k++) {
+        if (*pn >= MAXENT) {                           // table full: stop gracefully
+            fprintf(stderr, "xtdesk: tree entry cap %d hit — truncating\n", MAXENT);
+            break;
+        }
+        bent *e = &b->ent[*pn];
+        *e = lvl[k];
+        e->depth = (short)depth;
+        if (relbase[0]) snprintf(e->path, sizeof e->path, "%s/%s", relbase, e->name);
+        else            snprintf(e->path, sizeof e->path, "%s", e->name);
+        int exp = (e->dir && br_is_expanded(b, e->path));
+        e->expanded = (char)exp;
+        (*pn)++;
+        if (exp) br_tree_build(b, e->path, depth + 1, pn);   // splice children right after
+    }
+    free(lvl);
+}
+static void br_list(browser *b) {
+    if (b->net == 1) { srv_list_start(b); return; }   // FujiNet flavours (async)
+    if (b->net == 2) { net_list_start(b); return; }
+    br_free_icons(b);
+    b->nent = 0; b->nfiles = 0; b->total = 0; b->sel = -1;
+    if (b->viewmode == 2) {                            // single-column: a recursive tree
+        int n = 0; br_tree_build(b, "", 0, &n); b->nent = n;
+    } else {                                           // icons / multi-col / gallery: one flat level
+        char dir[600];
+        if (b->rel[0]) snprintf(dir, sizeof dir, "%s/%s", b->fs_root, b->rel);
+        else           snprintf(dir, sizeof dir, "%s", b->fs_root);
+        b->nent = br_read_level(b, dir, b->ent, MAXENT);
+        for (int i = 0; i < b->nent; i++) {            // flat: depth 0, path = name, never expanded
+            b->ent[i].depth = 0; b->ent[i].expanded = 0;
+            snprintf(b->ent[i].path, sizeof b->ent[i].path, "%s", b->ent[i].name);
+        }
+    }
     for (int i = 0; i < b->nent; i++) {
         bent *e = &b->ent[i];
         if (!e->dir) { b->nfiles++; b->total += e->size; }
@@ -698,6 +786,7 @@ static void br_draw_text(browser *b) {
     // from a fixed size zone (not the variable size width), so it lines up row to
     // row instead of drifting with "<dir>" vs "2K" vs "18".
     int gutter = 12, gap = 8, attrw = br_textw("darxhs"), szzone = br_textw("<dir>");
+    int tree = (b->viewmode == 2);                       // single column -> disclosure tree
     for (int slot = 0; slot < nt; slot++) {
         int cx, cy, cw, ch; br_text_cell(b, slot, &cx, &cy, &cw, &ch);
         cy -= sy;                                       // screen y (clipped to the work rect)
@@ -716,11 +805,32 @@ static void br_draw_text(browser *b) {
         else                        br_fmt_size(b->ent[i].size, szbuf, sizeof szbuf);
         br_fmt_attr(isdot ? (BATTR_DIR|BATTR_EXE) : b->ent[i].attr, atbuf);   // ".." is a dir: d--x--
         int pen = ghost ? 9 : 1;
+        // Tree indent + disclosure gutter (single column only): shift the name right
+        // by depth*INDENT, then a fixed triangle gutter so files/".." names still
+        // align with folder names.  Multi-column (3) keeps name_x = cx + 6.
+        int depth  = (tree && !isdot) ? b->ent[i].depth : 0;
+        int indent = tree ? depth * TREE_INDENT : 0;
+        int tri_x  = cx + 6 + indent;                       // triangle gutter left edge
         int size_rx = cx + cw - gutter;                     // size right-aligned in the fixed zone
         int attrs_x = size_rx - szzone - gap - attrw;       // attrs LEFT edge — a FIXED column
-        int name_x  = cx + 6;
+        int name_x  = tree ? tri_x + TREE_TRIW : cx + 6;    // name after the triangle gutter
         int name_w  = attrs_x - gap - name_x;               // name fills up to the attr column
         if (name_w < 8) name_w = 8;
+        if (tree && !isdot && b->ent[i].dir) {              // disclosure triangle (folders only)
+            int tym = cy + ch/2, ts = 4;
+            int16_t tri[6];
+            if (b->ent[i].expanded) {                       // down-pointing (open)
+                tri[0] = (int16_t)tri_x;        tri[1] = (int16_t)(tym - ts + 1);
+                tri[2] = (int16_t)(tri_x+2*ts); tri[3] = (int16_t)(tym - ts + 1);
+                tri[4] = (int16_t)(tri_x+ts);   tri[5] = (int16_t)(tym + ts);
+            } else {                                        // right-pointing (collapsed)
+                tri[0] = (int16_t)tri_x;        tri[1] = (int16_t)(tym - ts);
+                tri[2] = (int16_t)(tri_x+ts+1); tri[3] = (int16_t)tym;
+                tri[4] = (int16_t)tri_x;        tri[5] = (int16_t)(tym + ts);
+            }
+            vsf_color(HV, 9); vsf_interior(HV, VDI_FIS_SOLID); vsf_perimeter(HV, 0);
+            v_fillarea(HV, 3, tri);
+        }
         char lbl[128];
         aes_label_fit(HV, nm, name_w, lbl, sizeof lbl);
         vst_color(HV, pen); vst_alignment(HV, VDI_TA_LEFT, VDI_TA_HALF, 0,0);
@@ -1209,6 +1319,19 @@ static int br_hit_slot(browser *b, int mx, int my) {
     int oi = objc_find(b->tree, 0, 2, mx, my);
     return oi <= 0 ? -1 : oi - 1;
 }
+// True if mx falls in the disclosure-triangle gutter of tree row `slot` (a
+// directory in single-column tree mode).  Mirrors br_draw_text's indent math;
+// only x matters (the row is already resolved by br_text_hit).
+static int br_tree_tri_hit(browser *b, int slot, int mx) {
+    if (b->viewmode != 2) return 0;
+    int dd = b->rel[0] ? 1 : 0;
+    if (dd && slot == 0) return 0;                     // ".." has no triangle
+    int i = slot - dd;
+    if (i < 0 || i >= b->nent || !b->ent[i].dir) return 0;
+    int cx, cy, cw, ch; br_text_cell(b, slot, &cx, &cy, &cw, &ch);
+    int tri_x = cx + 6 + b->ent[i].depth * TREE_INDENT;
+    return (mx >= tri_x && mx < tri_x + TREE_TRIW);
+}
 // The View title-button popup: pick a view mode, a check on the current one.
 // Opens at the button's screen rect; choosing one relayouts + redraws.  Item ids
 // 1..4 map directly onto viewmode (icons/list/columns/gallery).
@@ -1257,6 +1380,15 @@ static void br_click(browser *b, int mx, int my) {
     b->selall = 0;                                           // any in-window click drops a "select all"
     int slot = br_hit_slot(b, mx, my);
     if (slot < 0) { b->sel = -1; wind_redraw(); return; }
+    if (br_tree_tri_hit(b, slot, mx)) {                      // tree disclosure: toggle, not select/open
+        int td = b->rel[0] ? 1 : 0, ti = slot - td;
+        if (b->ent[ti].expanded) br_expand_del(b, b->ent[ti].path);
+        else                     br_expand_add(b, b->ent[ti].path);
+        br_list(b);                                          // rebuild the flattened tree (re-reads children)
+        br_report_content(b);                                // new row count -> scrollbar
+        wind_redraw();
+        return;
+    }
     int dd = b->rel[0] ? 1 : 0;
     int isdot = (dd && slot == 0);                          // synthetic ".." up-tile
     int i = slot-dd, was = (!isdot && b->sel == i);
@@ -2279,6 +2411,7 @@ int main(int argc, char **argv) {
         else if (!strcmp(argv[i], "--pair")) fuji = 14;             // headless: front(active)+back(inactive) titlebars
         else if (!strcmp(argv[i], "--scroll")) fuji = 14;           // headless: scrollbar overflow + scroll + wheel
         else if (!strcmp(argv[i], "--menubar")) fuji = 15;          // headless: menu bar + open dropdown + dispatch
+        else if (!strcmp(argv[i], "--tree")) fuji = 16;             // headless: single-column disclosure tree
         else snprintf(base, sizeof base, "%s", argv[i]);
     }
 
@@ -2502,6 +2635,48 @@ int main(int argc, char **argv) {
                 cwide, cnar, resp_ok ? "OK" : "FAIL");
         registry_close();
         return (single_ok && multi_ok && geom_ok && resp_ok) ? 0 : 1;
+    }
+    if (fuji == 16) {                                // headless single-column tree test (--tree)
+        open_browser("/navtest", ICT_MEDIA_8BIT);    // subdir a/ (a/b/c/leaf*) + root.xex
+        browser *nb = BR[0].used ? &BR[0] : NULL;
+        if (!nb) { fprintf(stderr, "tree: no browser (run gem/tools/mk-testenv.sh first)\n"); return 1; }
+        nb->viewmode = 2; nb->sel = -1;
+        br_list(nb); wind_redraw();
+        int base_nent = nb->nent;                    // flat root (nothing expanded)
+        int arow = -1;                               // the 'a' folder (dirs sort first, rel="" so dd=0)
+        for (int s = 0; s < nb->nent; s++)
+            if (nb->ent[s].dir && !strcmp(nb->ent[s].name, "a")) { arow = s; break; }
+        if (arow < 0) { fprintf(stderr, "tree: no 'a' folder in /navtest\n"); return 1; }
+        // Disclosure hit-test: a click in the triangle gutter toggles, one on the name does not.
+        int cx, cy, cw, ch; br_text_cell(nb, arow, &cx, &cy, &cw, &ch);
+        int base_x  = cx + 6 + nb->ent[arow].depth * TREE_INDENT;
+        int tri_ok  = br_tree_tri_hit(nb, arow, base_x + TREE_TRIW/2);
+        int name_no = !br_tree_tri_hit(nb, arow, base_x + TREE_TRIW + 20);
+        dump_ppm("/tmp/xtdesk-tree-collapsed.ppm");
+        // Expand 'a' (the exact toggle br_click's triangle branch runs) -> children indented.
+        br_expand_add(nb, nb->ent[arow].path); br_list(nb); br_report_content(nb); wind_redraw();
+        int exp_nent = nb->nent, has_depth1 = 0;
+        for (int s = 0; s < nb->nent; s++) if (nb->ent[s].depth == 1) has_depth1 = 1;
+        int grew_ok = (exp_nent > base_nent && has_depth1);
+        // Recurse: open a/b then a/b/c -> the leaves appear at depth 3.
+        br_expand_add(nb, "a/b"); br_expand_add(nb, "a/b/c");
+        br_list(nb); br_report_content(nb); wind_redraw();
+        int has_leaf = 0, maxd = 0;
+        for (int s = 0; s < nb->nent; s++) { if (nb->ent[s].depth > maxd) maxd = nb->ent[s].depth;
+            if (!strcmp(nb->ent[s].name, "leaf1.xex")) has_leaf = 1; }
+        int deep_ok = (has_leaf && maxd >= 3);
+        dump_ppm("/tmp/xtdesk-tree.ppm");
+        // Collapse 'a' -> the whole subtree disappears (back to the flat root).
+        br_expand_del(nb, "a"); br_list(nb); br_report_content(nb); wind_redraw();
+        int gone = 1; for (int s = 0; s < nb->nent; s++) if (nb->ent[s].depth != 0) gone = 0;
+        int collapse_ok = (nb->nent == base_nent && gone && nb->n_expanded == 0);
+        dump_ppm("/tmp/xtdesk-tree-recollapsed.ppm");
+        fprintf(stderr, "tree: base=%d expand=%d(depth1=%d) deep(maxd=%d leaf=%d) recollapse=%d "
+                        "hit(tri=%d name=%d) (%s)\n",
+                base_nent, exp_nent, has_depth1, maxd, has_leaf, nb->nent, tri_ok, name_no,
+                (tri_ok && name_no && grew_ok && deep_ok && collapse_ok) ? "OK" : "FAIL");
+        registry_close();
+        return (tri_ok && name_no && grew_ok && deep_ok && collapse_ok) ? 0 : 1;
     }
     if (fuji == 14) {                                // headless scrollbar test (--scroll)
         // A dir with MANY entries, in a small window, so the icon grid overflows.
