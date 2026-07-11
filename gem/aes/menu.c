@@ -20,10 +20,23 @@ gfx_surface *vdi_screen_target(void);   // the physical workstation surface (VDI
 #define PEN_BAR    246
 #define PEN_HILITE 247
 #define PEN_BARLINE 245
+#define PEN_SEP    244     // pull-down separators — see set_sep_pen()
 
 static OBJECT *g_menu;
 static int g_n, T0, DD0, ACTIVE;        // title count + base object indices
 static int H(void) { return aes_handle(); }
+
+/* Separators get their OWN pen, not PEN_BARLINE.  The theme's border colour is a
+ * hairline tint: fine as the bar's bottom edge (against the desktop), but inside a
+ * pull-down — light panel, light border — it all but vanished.  Derive a distinctly
+ * darker shade from the same theme colour so dividers actually read as dividers
+ * while still tracking the theme.  PEN_BARLINE keeps the plain border colour for
+ * the bar edge, which is why this can't just darken that pen. */
+static void set_sep_pen(const theme *th) {
+    if (!th) return;
+    int r = (th->border>>24)&0xFF, g = (th->border>>16)&0xFF, b = (th->border>>8)&0xFF;
+    v_setrgb(H(), PEN_SEP, r*42/100, g*42/100, b*42/100);
+}
 
 #define EACH_CHILD(t,p,c) for(int c=(t)[p].ob_head;c>=0;c=(c==(t)[p].ob_tail?-1:(t)[c].ob_next))
 
@@ -102,7 +115,8 @@ void menu_bar(OBJECT *tree, int show) {
         const theme *th = aes_theme();
         v_setrgb(H(), PEN_BAR, 244,245,247);
         if (th) { v_setrgb(H(), PEN_HILITE,(th->highlight>>24)&0xFF,(th->highlight>>16)&0xFF,(th->highlight>>8)&0xFF);
-                  v_setrgb(H(), PEN_BARLINE,(th->border>>24)&0xFF,(th->border>>16)&0xFF,(th->border>>8)&0xFF); }
+                  v_setrgb(H(), PEN_BARLINE,(th->border>>24)&0xFF,(th->border>>16)&0xFF,(th->border>>8)&0xFF);
+                  set_sep_pen(th); }
         aes_reserve_top(BARH);          // keep windows below the bar
         draw_bar();
     } else {
@@ -186,7 +200,7 @@ static void draw_items(int ord,int hov){
         int iy=dy+g_menu[c].ob_y, ih=g_menu[c].ob_h;
         const char *lbl=(const char*)g_menu[c].ob_spec;
         if(bar_is_sep(lbl)){                                       // a thin divider line
-            vsl_color(H(),PEN_BARLINE); vsl_width(H(),1);
+            vsl_color(H(),PEN_SEP); vsl_width(H(),1);
             int16_t ln[4]={(int16_t)(dx+6),(int16_t)(iy+ih/2),(int16_t)(dx+w-7),(int16_t)(iy+ih/2)};
             v_pline(H(),2,ln); continue;
         }
@@ -380,7 +394,8 @@ int menu_popup_mnemonic(const menu_item *items, int n, int ch){
 static void popup_pens(void){
     const theme *th=aes_theme();
     if(th){ v_setrgb(H(),PEN_HILITE,(th->highlight>>24)&0xFF,(th->highlight>>16)&0xFF,(th->highlight>>8)&0xFF);
-            v_setrgb(H(),PEN_BARLINE,(th->border>>24)&0xFF,(th->border>>16)&0xFF,(th->border>>8)&0xFF); }
+            v_setrgb(H(),PEN_BARLINE,(th->border>>24)&0xFF,(th->border>>16)&0xFF,(th->border>>8)&0xFF);
+            set_sep_pen(th); }
 }
 
 // A 1px underline under label char `idx` at text origin (tx,uy), current face.
@@ -401,7 +416,7 @@ static void draw_popup(const menu_item *items, const popup_geom *g, int hov){
     for(int i=0;i<g->n;i++){
         int ty=mi_row_top(items,g,i), rh=mi_row_h(items,i);
         if(mi_is_sep(&items[i])){                                  // thin divider line
-            vsl_color(H(),PEN_BARLINE); vsl_width(H(),1);
+            vsl_color(H(),PEN_SEP); vsl_width(H(),1);
             int16_t ln[4]={(int16_t)(g->x+6),(int16_t)(ty+rh/2),(int16_t)(g->x+g->w-7),(int16_t)(ty+rh/2)};
             v_pline(H(),2,ln); continue;
         }
