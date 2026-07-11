@@ -32,6 +32,8 @@
 #define ICON_SZ  48          // system-default icon size (up to 128 src, scaled)
 #define ICON_CW  100         // icon cell width
 #define ICON_CH  (ICON_SZ + 26)
+#define GAL_CW   180         // Gallery (viewmode 4) cell: ~2x the icon cell -> fewer per row
+#define GAL_CH   140         // (icon art is still ICON_SZ; true thumbnails are a future enhancement)
 #define TEXT_ROWH 20         // text-view row height (single/multi column)
 #define TEXT_COLW 220        // multi-column text: target column width
 #define BR_TEXT_SEL 250      // theme selection background (aes object.c PEN_SEL)
@@ -249,9 +251,9 @@ typedef struct {
     int titlex, titley, titlew, titleh;                // last interactive-title work rect
     int retryx, retryw;                                // Retry button rect in the info bar (error state)
     int fitx, fitw;                                    // Fit button rect in the info bar (path windows)
-    int viewx, vieww;                                  // View button rect (cycles the view mode)
+    int viewx, vieww;                                  // (retired) info-bar View rect — now a title button
     int maskx, maskw;                                  // file-mask span rect (in the title)
-    int viewmode;                                      // 1=icons grid, 2=single-col text, 3=multi-col text
+    int viewmode;                                      // 1=icons 2=single-col 3=multi-col 4=gallery
     int sortmode, sortinv;                             // 1 unsorted/2 name/3 type/4 size/5 date; sortinv reverses
     int selall;                                        // context-menu "select all": highlight every entry
     char mask[32];                                     // per-window file mask ("*"/"*.*"/"" = show all)
@@ -280,10 +282,16 @@ static browser *br_of_window(int win) {
     return NULL;
 }
 // The default view mode for a new browser window: deskPrefs 'viewMode' (1=icons,
-// 2=single-col text, 3=multi-col text), falling back to icons.
+// 2=single-col text, 3=multi-col text, 4=gallery), falling back to icons.
 static int default_viewmode(void) {
     char v[16]; registry_pref("viewMode", "1", v, sizeof v);
-    int m = atoi(v); return (m >= 1 && m <= 3) ? m : 1;
+    int m = atoi(v); return (m >= 1 && m <= 4) ? m : 1;
+}
+// Icon-grid cell size for the current view mode: normal (viewmode 1) or the
+// larger Gallery cell (viewmode 4).  The text views (2/3) don't use this.
+static void br_cell_size(browser *b, int *cw, int *ch) {
+    if (b->viewmode == 4) { *cw = GAL_CW; *ch = GAL_CH; }
+    else                  { *cw = ICON_CW; *ch = ICON_CH; }
 }
 // deskPrefs sort defaults (sortMode 1..5, sortInverted 0/1) for a new window.
 static int default_sortmode(void) {
@@ -493,7 +501,8 @@ static void br_list(browser *b) {
 }
 // Lay the entry grid out in the current work area (also used for hit-testing).
 static void br_layout(browser *b) {
-    int pad = 14, cols = (b->waw - pad) / ICON_CW; if (cols < 1) cols = 1;
+    int icw, ich; br_cell_size(b, &icw, &ich);          // icon (1) or gallery (4) cell
+    int pad = 14, cols = (b->waw - pad) / icw; if (cols < 1) cols = 1;
     int dd = b->rel[0] ? 1 : 0;                        // synthetic ".." leads a non-root grid
     int ntile = b->nent + dd;
     b->tree[0] = (OBJECT){ NIL, ntile?1:NIL, ntile?ntile:NIL, G_IBOX, OF_NONE, OS_NORMAL,
@@ -503,17 +512,17 @@ static void br_layout(browser *b) {
         int last = (b->nent == 0);
         b->tree[1] = (OBJECT){ (int16_t)(last?0:2), NIL, NIL, G_CICON,
                                (uint16_t)(OF_SELECTABLE | (last?OF_LASTOB:0)), OS_NORMAL,
-                               &g_dotcic, (int16_t)pad, (int16_t)pad, ICON_CW, ICON_CH };
+                               &g_dotcic, (int16_t)pad, (int16_t)pad, (int16_t)icw, (int16_t)ich };
     }
     for (int i = 0; i < b->nent; i++) {
         int oi = 1+dd+i, last = (i == b->nent-1), slot = i + dd;
-        int cx = pad + (slot % cols) * ICON_CW;
-        int cy = pad + (slot / cols) * ICON_CH;
+        int cx = pad + (slot % cols) * icw;
+        int cy = pad + (slot / cols) * ich;
         int ghost = (b->ent[i].state == 'g' || b->ent[i].state == 'f');   // uncached net entry
         b->tree[oi] = (OBJECT){ (int16_t)(last?0:oi+1), NIL, NIL, G_CICON,
                                 (uint16_t)(OF_SELECTABLE | (last?OF_LASTOB:0)),
                                 (uint16_t)(((i == b->sel || b->selall) ? OS_SELECTED : OS_NORMAL) | (ghost ? OS_DISABLED : 0)),
-                                &b->cic[i], (int16_t)cx, (int16_t)cy, ICON_CW, ICON_CH };
+                                &b->cic[i], (int16_t)cx, (int16_t)cy, (int16_t)icw, (int16_t)ich };
     }
 }
 static int br_textw(const char *s);                   // fwd (defined with the info-bar helpers)
@@ -714,11 +723,12 @@ static void br_navigate(browser *b, const char *abspath) {
 // ".." tile counts), plus the title + info chrome (wind_calc).  Clamped to 80%
 // of the screen and a sane minimum, top-left fixed, kept on-screen.
 static void br_fit(browser *b) {
+    int icw, ich; br_cell_size(b, &icw, &ich);            // icon (1) or gallery (4) cell
     int dd = b->rel[0] ? 1 : 0, ntile = b->nent + dd; if (ntile < 1) ntile = 1;
     int pad = 14, maxcols = 8;
     int cols = ntile < maxcols ? ntile : maxcols; if (cols < 1) cols = 1;
     int nrows = (ntile + cols - 1) / cols;
-    int cw = 2*pad + cols * ICON_CW, chh = 2*pad + nrows * ICON_CH;   // desired work-area size
+    int cw = 2*pad + cols * icw, chh = 2*pad + nrows * ich;   // desired work-area size
     int cx, cy, cw0, ch0; wind_get(b->win, WF_CURRXYWH, &cx, &cy, &cw0, &ch0);
     int bx, by, bw, bh;
     wind_calc(WC_BORDER, BR_WKIND, cx, cy, cw, chh, &bx, &by, &bw, &bh);   // + chrome
@@ -752,29 +762,10 @@ static void br_infobar(int hd, int ix, int iy, int iw, int ih, void *ud) {
     int pw = 120, pbh = 10;                                  // progress track: 120x10, vertically centred
     int pby = iy + (ih - pbh)/2;
     int pbx = ix + iw - 12 - pw;                             // right-anchored, before the right margin
-    // Fit button (path windows, no request in flight — the bar owns the right
-    // side while a request is): far right, before the margin.
-    if (b->net != 1 && b->req_fd < 0) {
-        vst_height(HV, 14, 0,0,0,0);
-        b->fitw = br_textw("Fit") + 14; b->fitx = ix + iw - 12 - b->fitw;
-        vst_color(HV, 1); vst_alignment(HV, VDI_TA_LEFT, VDI_TA_HALF, 0,0);
-        v_gtext(HV, b->fitx + 7, ay, "Fit");
-        irx = b->fitx - 12;                                  // keep other content clear of the button
-    }
-    // View button (all browsers incl. servers; hidden while a request owns the
-    // right side): cycles icons -> single -> multi.  Sits left of Fit.
-    if (b->req_fd < 0) {
-        const char *vl = b->viewmode == 2 ? "View: List"
-                       : b->viewmode == 3 ? "View: Cols" : "View: Icons";
-        vst_height(HV, 14, 0,0,0,0);
-        b->vieww = br_textw(vl) + 14; b->viewx = irx - b->vieww;
-        vst_color(HV, 1); vst_alignment(HV, VDI_TA_LEFT, VDI_TA_HALF, 0,0);
-        v_gtext(HV, b->viewx + 7, ay, vl);
-        irx = b->viewx - 12;                                 // keep other content clear of the button
-    }
-    // (The file mask + the path breadcrumb now live in the interactive window
-    // TITLE — see br_title; the info bar keeps Up / View / Fit / progress /
-    // Retry and, when idle, the file-count status on the left.)
+    // (The View popup + Fit are now RIGHT-side title-bar icon buttons — see
+    // wind_titlebtns in open_browser_win + the title-button hit-test in br_click;
+    // the file mask + path breadcrumb live in the interactive window TITLE.  The
+    // info bar keeps Up / progress / Retry and, when idle, the file-count status.)
     if (b->req_fd >= 0 && b->req_kind == RQ_FETCH) {          // fetch in flight: label + determinate bar
         unsigned pc = b->prog_total
                     ? (unsigned)((unsigned long long)b->prog_done * 100 / b->prog_total) : 0;
@@ -1074,8 +1065,32 @@ static int br_hit_slot(browser *b, int mx, int my) {
     int oi = objc_find(b->tree, 0, 2, mx, my);
     return oi <= 0 ? -1 : oi - 1;
 }
+// The View title-button popup: pick a view mode, a check on the current one.
+// Opens at the button's screen rect; choosing one relayouts + redraws.  Item ids
+// 1..4 map directly onto viewmode (icons/list/columns/gallery).
+static void br_view_popup(browser *b, int px, int py) {
+    enum { V_ICONS = 1, V_LIST, V_COLS, V_GALLERY };
+    menu_item it[4] = {
+        { "as Icons",   NULL, V_ICONS,   NULL, 0, b->viewmode == 1 ? MI_CHECKED : 0 },
+        { "as List",    NULL, V_LIST,    NULL, 0, b->viewmode == 2 ? MI_CHECKED : 0 },
+        { "as Columns", NULL, V_COLS,    NULL, 0, b->viewmode == 3 ? MI_CHECKED : 0 },
+        { "as Gallery", NULL, V_GALLERY, NULL, 0, b->viewmode == 4 ? MI_CHECKED : 0 },
+    };
+    int r = menu_popup(it, 4, px, py);
+    if (r < V_ICONS || r > V_GALLERY) return;
+    b->viewmode = r; b->sel = -1; wind_redraw();
+}
 static void br_click(browser *b, int mx, int my) {
     if (b->req_fd >= 0) return;                               // request in flight: ignore clicks
+    for (int k = 0; k < 2; k++) {                             // right-side title icon buttons (View, Fit)
+        int bx, by, bw, bh;
+        if (wind_titlebtn_rect(b->win, k, &bx, &by, &bw, &bh) &&
+            mx >= bx && mx < bx + bw && my >= by && my < by + bh) {
+            if (k == 0) br_view_popup(b, bx, by + bh);       // chevron -> view popup, below the button
+            else        br_fit(b);                            // expand -> size window to contents
+            return;
+        }
+    }
     for (int c = 0; c < b->ncrumb; c++)                       // title breadcrumb: jump to an absolute level
         if (my >= b->titley && my < b->titley + b->titleh &&
             mx >= b->crumbx[c] && mx < b->crumbx[c] + b->crumbw[c]) {
@@ -1092,23 +1107,12 @@ static void br_click(browser *b, int mx, int my) {
         char *s = strrchr(b->rel, '/'); if (s) *s = 0; else b->rel[0] = 0;
         br_list(b); br_settitle(b); wind_redraw(); return;
     }
-    if (b->fitw > 0 &&                                        // Fit button: size window to contents
-        mx >= b->fitx && mx < b->fitx + b->fitw &&
-        my >= b->infoy && my < b->infoy + b->infoh) {
-        br_fit(b); return;
-    }
     if (b->req_err[0] && b->retryw > 0 &&                     // Retry button (error state): re-run
         mx >= b->retryx && mx < b->retryx + b->retryw &&
         my >= b->infoy && my < b->infoy + b->infoh) {
         b->req_err[0] = 0;
         if (b->net == 1) srv_list_start(b); else net_list_start(b);
         wind_redraw(); return;
-    }
-    if (b->vieww > 0 &&                                      // View button: cycle icons/single/multi
-        mx >= b->viewx && mx < b->viewx + b->vieww &&
-        my >= b->infoy && my < b->infoy + b->infoh) {
-        b->viewmode = b->viewmode >= 3 ? 1 : b->viewmode + 1;
-        b->sel = -1; wind_redraw(); return;
     }
     b->selall = 0;                                           // any in-window click drops a "select all"
     int slot = br_hit_slot(b, mx, my);
@@ -1175,7 +1179,11 @@ static void open_browser_win(const char *logical, int media_type, int net, int s
     br_list(b); br_settitle(b);
     wind_content(b->win, br_content, b);
     wind_info(b->win, br_infobar, b);
-    if (net != 1) wind_title(b->win, br_title, b);    // path windows: interactive title; servers keep a plain name
+    if (net != 1) {                                   // path windows: interactive title + right-side buttons
+        wind_title(b->win, br_title, b);              // (servers window keeps a plain name, no buttons)
+        int glyphs[2] = { WTG_CHEVRON, WTG_EXPAND };  // [0] View popup, [1] Fit
+        wind_titlebtns(b->win, glyphs, 2);
+    }
     wind_open(b->win, bx, by, bw, bh);
     g_bx += 34; g_by += 30; if (g_by > WIN_H-320) { g_bx = 380; g_by = 130; }
 }
@@ -1435,7 +1443,7 @@ static int ctx_action_id(const char *a) {
 // menu_popup id spaces: flat contextMenu rows return CTX_ROW_BASE+index; the
 // built-in Show submenu leaves return their own SH_* ids.
 #define CTX_ROW_BASE 1000
-enum { SH_VIEW_ICONS = 100, SH_VIEW_LIST, SH_VIEW_COLS,
+enum { SH_VIEW_ICONS = 100, SH_VIEW_LIST, SH_VIEW_COLS, SH_VIEW_GALLERY,
        SH_SORT_NAME = 110, SH_SORT_TYPE, SH_SORT_SIZE, SH_SORT_DATE, SH_SORT_INV };
 
 // Build the cascading Show submenu off a window's live view/sort state (the
@@ -1446,6 +1454,7 @@ static int ctx_build_show(menu_item *it, browser *b) {
     it[n++] = (menu_item){ "Icons",        NULL, SH_VIEW_ICONS, NULL, 0, vm == 1 ? MI_CHECKED : 0 };
     it[n++] = (menu_item){ "List",         NULL, SH_VIEW_LIST,  NULL, 0, vm == 2 ? MI_CHECKED : 0 };
     it[n++] = (menu_item){ "Columns",      NULL, SH_VIEW_COLS,  NULL, 0, vm == 3 ? MI_CHECKED : 0 };
+    it[n++] = (menu_item){ "Gallery",      NULL, SH_VIEW_GALLERY, NULL, 0, vm == 4 ? MI_CHECKED : 0 };
     it[n++] = (menu_item){ "-",            NULL, 0,             NULL, 0, 0 };
     it[n++] = (menu_item){ "Sort by Name", NULL, SH_SORT_NAME,  NULL, 0, sm == 2 ? MI_CHECKED : 0 };
     it[n++] = (menu_item){ "Sort by Type", NULL, SH_SORT_TYPE,  NULL, 0, sm == 3 ? MI_CHECKED : 0 };
@@ -1755,6 +1764,7 @@ static void ctx_apply(int chosen, ctxrow *crows, int scope, browser *b, int tent
         case SH_VIEW_ICONS: b->viewmode = 1; b->sel = -1; wind_redraw(); break;
         case SH_VIEW_LIST:  b->viewmode = 2; b->sel = -1; wind_redraw(); break;
         case SH_VIEW_COLS:  b->viewmode = 3; b->sel = -1; wind_redraw(); break;
+        case SH_VIEW_GALLERY: b->viewmode = 4; b->sel = -1; wind_redraw(); break;
         case SH_SORT_NAME:  b->sortmode = 2; br_list(b); wind_redraw(); break;
         case SH_SORT_TYPE:  b->sortmode = 3; br_list(b); wind_redraw(); break;
         case SH_SORT_SIZE:  b->sortmode = 4; br_list(b); wind_redraw(); break;
@@ -1962,6 +1972,7 @@ int main(int argc, char **argv) {
         else if (!strcmp(argv[i], "--browsenav")) fuji = 10;        // headless: browse navigator
         else if (!strcmp(argv[i], "--newdlg")) fuji = 11;           // headless: New… resource dialog
         else if (!strcmp(argv[i], "--title")) fuji = 12;            // headless: interactive title breadcrumb/mask
+        else if (!strcmp(argv[i], "--titlebtn")) fuji = 13;         // headless: right-side title buttons + Gallery
         else snprintf(base, sizeof base, "%s", argv[i]);
     }
 
@@ -2021,10 +2032,11 @@ int main(int argc, char **argv) {
             br_click(nb, nb->crumbx[1] + 2, nb->titley + nb->titleh/2);
         int click_ok = !strcmp(nb->rel, "a");
         fprintf(stderr, "nav: breadcrumb click 'a' -> rel=\"%s\" (%s)\n", nb->rel, click_ok ? "OK" : "FAIL");
-        wind_redraw();                                 // refresh Fit rect at the new level
+        wind_redraw();                                 // refresh title-button rects at the new level
         int bx0,by0,bw0,bh0; wind_get(nb->win, WF_CURRXYWH, &bx0,&by0,&bw0,&bh0);
-        if (nb->fitw > 0)                              // click Fit -> resize window to contents
-            br_click(nb, nb->fitx + 2, nb->infoy + nb->infoh/2);
+        int fbx,fby,fbw,fbh;                           // Fit is the right-side title button #1 (expand glyph)
+        if (wind_titlebtn_rect(nb->win, 1, &fbx,&fby,&fbw,&fbh))
+            br_click(nb, fbx + fbw/2, fby + fbh/2);     // click Fit -> resize window to contents
         int bx1,by1,bw1,bh1; wind_get(nb->win, WF_CURRXYWH, &bx1,&by1,&bw1,&bh1);
         int fit_ok = (bx1 == bx0 && by1 == by0 && (bw1 != bw0 || bh1 != bh0));
         fprintf(stderr, "nav: Fit %dx%d -> %dx%d topleft (%d,%d)->(%d,%d) (%s)\n",
@@ -2068,21 +2080,65 @@ int main(int argc, char **argv) {
         registry_close();
         return (path_ok && seg_ok && mask_ok && hit_mask && up_ok) ? 0 : 1;
     }
+    if (fuji == 13) {                                // headless right-side title buttons + Gallery (--titlebtn)
+        open_browser("/Media/6502/Games", ICT_MEDIA_8BIT);
+        browser *nb = BR[0].used ? &BR[0] : NULL;
+        if (!nb) { fprintf(stderr, "titlebtn: no browser (mkdir <base>/Media/6502/Games first)\n"); return 1; }
+        wind_redraw();                               // draw_one lays out title text + the two buttons
+        // (a) two right-side title buttons exist, in the title bar, right of the
+        // breadcrumb, non-overlapping, View (index 0) left of Fit (index 1).
+        int vx,vy,vw,vh, fx,fy,fw,fh;
+        int have_v = wind_titlebtn_rect(nb->win, 0, &vx,&vy,&vw,&vh);
+        int have_f = wind_titlebtn_rect(nb->win, 1, &fx,&fy,&fw,&fh);
+        int lastcrumb_r = nb->ncrumb ? nb->crumbx[nb->ncrumb-1] + nb->crumbw[nb->ncrumb-1] : nb->titlex;
+        int in_title = have_v && have_f &&
+            vy >= nb->titley && vy + vh <= nb->titley + nb->titleh &&
+            vx > lastcrumb_r && fx > vx && vx + vw <= fx;         // right of crumbs, View left of Fit, no overlap
+        fprintf(stderr, "titlebtn: View@(%d,%d %dx%d) Fit@(%d,%d %dx%d) crumbR=%d (%s)\n",
+                vx,vy,vw,vh, fx,fy,fw,fh, lastcrumb_r, in_title ? "OK" : "FAIL");
+        // (b) the View button opens on a mode; simulate its pick = Gallery (4).
+        // The Gallery layout uses the larger cell: fewer columns than icon mode at
+        // the same work width.
+        int icols = (nb->waw - 14) / ICON_CW; if (icols < 1) icols = 1;
+        nb->viewmode = 4; nb->sel = -1; wind_redraw();           // as Gallery
+        int gcols = (nb->waw - 14) / GAL_CW; if (gcols < 1) gcols = 1;
+        int gallery_ok = (nb->viewmode == 4 && gcols < icols);
+        fprintf(stderr, "titlebtn: Gallery cell cols icon=%d gallery=%d (%s)\n",
+                icols, gcols, gallery_ok ? "OK" : "FAIL");
+        // (c) br_hit_slot resolves the right entry in Gallery mode (icon-grid path
+        // with the larger cell): each tile centre hits its own slot.
+        int dd = nb->rel[0] ? 1 : 0, hit_ok = (nb->nent > 0);
+        for (int i = 0; i < nb->nent && i < 6; i++) {
+            int ox, oy; objc_offset(nb->tree, 1 + dd + i, &ox, &oy);
+            int slot = br_hit_slot(nb, ox + GAL_CW/2, oy + ICON_SZ/2);
+            if (slot != i + dd) { hit_ok = 0; fprintf(stderr, "titlebtn: gallery slot %d hit->%d MISMATCH\n", i+dd, slot); }
+        }
+        fprintf(stderr, "titlebtn: Gallery hit-test %s\n", hit_ok ? "OK" : "FAIL");
+        dump_ppm("/tmp/xtdesk-titlebtn.ppm");                    // Gallery window, title shows View+Fit icons
+        // (d) the Fit button (index 1) resolves to br_fit: clicking it resizes.
+        int bx0,by0,bw0,bh0; wind_get(nb->win, WF_CURRXYWH, &bx0,&by0,&bw0,&bh0);
+        if (wind_titlebtn_rect(nb->win, 1, &fx,&fy,&fw,&fh))
+            br_click(nb, fx + fw/2, fy + fh/2);
+        int bx1,by1,bw1,bh1; wind_get(nb->win, WF_CURRXYWH, &bx1,&by1,&bw1,&bh1);
+        int fit_ok = (bx1 == bx0 && by1 == by0 && (bw1 != bw0 || bh1 != bh0));
+        fprintf(stderr, "titlebtn: Fit %dx%d -> %dx%d (%s)\n", bw0,bh0, bw1,bh1, fit_ok ? "OK" : "FAIL");
+        registry_close();
+        return (in_title && gallery_ok && hit_ok && fit_ok) ? 0 : 1;
+    }
     if (fuji == 7) {                                  // headless text view-mode render (--views)
         open_browser("/navtest/many", ICT_MEDIA_8BIT);   // a dir with many files
         browser *nb = BR[0].used ? &BR[0] : NULL;
         if (!nb) { fprintf(stderr, "views: no browser (mkdir <base>/navtest/many first)\n"); return 1; }
-        // 1) icons (the default), then drive the info-bar toggle to cycle modes.
+        // 1) icons (the default), then set the modes the View title-popup would
+        // (the popup itself is modal; --titlebtn covers its button + Gallery).
         nb->viewmode = 1; wind_redraw(); dump_ppm("/tmp/xtdesk-views-icons.ppm");
-        br_click(nb, nb->viewx + 2, nb->infoy + nb->infoh/2);   // View -> single
-        wind_redraw();
+        nb->viewmode = 2; nb->sel = -1; wind_redraw();          // View popup -> as List
         int c1, r1, cw1, nt1; br_text_grid(nb, &c1, &r1, &cw1, &nt1);
         int single_ok = (nb->viewmode == 2 && c1 == 1 && nt1 == nb->nent);
         dump_ppm("/tmp/xtdesk-views-single.ppm");
         fprintf(stderr, "views: single mode=%d cols=%d rows=%d ntile=%d (%s)\n",
                 nb->viewmode, c1, r1, nt1, single_ok ? "OK" : "FAIL");
-        br_click(nb, nb->viewx + 2, nb->infoy + nb->infoh/2);   // View -> multi
-        wind_redraw();
+        nb->viewmode = 3; nb->sel = -1; wind_redraw();          // View popup -> as Columns
         int c2, r2, cw2, nt2; br_text_grid(nb, &c2, &r2, &cw2, &nt2);
         int multi_ok = (nb->viewmode == 3 && c2 > 1);
         dump_ppm("/tmp/xtdesk-views-multi.ppm");

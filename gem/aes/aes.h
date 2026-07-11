@@ -327,6 +327,21 @@ void wind_content(int handle, wind_draw_fn fn, void *ud);
 // title span itself (fn is handed the same tx,ty,tw,th to record its hot-rects,
 // like wind_info records its rect).  NULL fn restores the plain centred name.
 void wind_title(int handle, wind_draw_fn fn, void *ud);
+// ---- App-defined right-side title buttons -------------------------------
+// A window may register up to WIND_MAXTB small icon buttons at the RIGHT of its
+// title bar, drawn in the same size/inset as the left close/full boxes so they
+// read as a pair.  Each carries a vector glyph (WTG_*).  window.c stays
+// content-agnostic: it draws the buttons + records each one's screen rect (query
+// with wind_titlebtn_rect), and shortens the wind_title text span so the title
+// renderer never overlaps them.  A press on a button that does NOT start a drag
+// reaches the app as an ordinary MU_BUTTON (exactly like a title-span click), so
+// the app hit-tests the button rects itself.  A press that moves still drags.
+enum { WTG_NONE = 0, WTG_CHEVRON = 1, WTG_EXPAND = 2 };   // title-button glyphs
+#define WIND_MAXTB 3
+void wind_titlebtns(int handle, const int *glyphs, int n);
+// Screen rect of right-side title button `idx` (0-based, 0 = leftmost).  Returns
+// 1 with x/y/w/h filled when the button exists (and has been laid out), else 0.
+int  wind_titlebtn_rect(int handle, int idx, int *x, int *y, int *w, int *h);
 // Optional W_INFO chrome line under the title bar (full inner width, like the
 // title): fn draws its contents (count/path/toolbar); the work area shrinks by
 // AES_INFO_H.  Only used when the window was created with W_INFO.

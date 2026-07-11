@@ -21,7 +21,12 @@ typedef struct {
     wind_draw_fn info; void *infoud;           // W_INFO chrome line
     wind_draw_fn title; void *titleud;         // interactive title renderer (wind_title)
     int titlex, titley, titlew, titleh;        // last title work rect (app-drawable span)
+    int ntb, tbglyph[WIND_MAXTB];              // right-side title buttons: count + glyph per button
+    int tbx[WIND_MAXTB], tby[WIND_MAXTB], tbw[WIND_MAXTB], tbh[WIND_MAXTB];   // their last screen rects
 } awin;
+
+#define WTB_W     16     // title-button box size (matches the left close/full 16x16 boxes)
+#define WTB_PITCH 20     // horizontal pitch between title buttons (16 wide + 4 gap, like the left pair)
 
 static awin g_w[MAXW];          // slot 0 unused (handles are 1-based)
 static int  g_z[MAXW], g_nz;    // z-order: g_z[0] bottom .. g_z[nz-1] top
@@ -51,6 +56,25 @@ void wind_calc(int dir,int kind,int x,int y,int w,int h,int*ox,int*oy,int*ow,int
 
 static void spr(const char*n,int x,int y){ const theme_slice*s=theme_find(aes_theme(),n); if(s) theme_blit(H(),aes_theme(),s,x,y,s->sw,s->sh); }
 
+// A right-side title button: a themed box (reusing the "button" 9-slice art so it
+// reads as a small control) + a vector glyph.  No theme slice carries arbitrary
+// title-button glyphs, so the glyph is drawn with VDI primitives — a downward
+// chevron (WTG_CHEVRON, e.g. a "view" popup) or a diagonal resize arrow
+// (WTG_EXPAND, e.g. a "fit"/expand action).
+static void draw_titlebtn(int bx,int by,int glyph){
+    theme_draw(H(),aes_theme(),"button",bx,by,WTB_W,WTB_W);
+    int cx=bx+WTB_W/2, cy=by+WTB_W/2;
+    vsl_color(H(),1); vsl_width(H(),2);
+    if(glyph==WTG_CHEVRON){                               // ⌄ downward chevron
+        int16_t p[6]={(int16_t)(cx-4),(int16_t)(cy-2),(int16_t)cx,(int16_t)(cy+2),(int16_t)(cx+4),(int16_t)(cy-2)};
+        v_pline(H(),3,p);
+    } else if(glyph==WTG_EXPAND){                         // ⤢ diagonal double-headed arrow
+        int16_t d[4]={(int16_t)(cx-4),(int16_t)(cy+4),(int16_t)(cx+4),(int16_t)(cy-4)}; v_pline(H(),2,d);
+        int16_t h1[6]={(int16_t)(cx+4),(int16_t)cy,(int16_t)(cx+4),(int16_t)(cy-4),(int16_t)cx,(int16_t)(cy-4)}; v_pline(H(),3,h1);
+        int16_t h2[6]={(int16_t)(cx-4),(int16_t)cy,(int16_t)(cx-4),(int16_t)(cy+4),(int16_t)cx,(int16_t)(cy+4)}; v_pline(H(),3,h2);
+    }
+}
+
 // Keep the window reachable: the title bar stays below the menu bar, above the
 // work-area bottom, and at least MINVIS px stays on-screen horizontally — so a
 // window can never be dragged completely out of reach.
@@ -64,7 +88,7 @@ static void clamp_win(awin *W){
 }
 
 static void draw_one(int hd, int active){
-    awin*W=&g_w[hd]; int b=bw(), th=tbh();
+    awin*W=&g_w[hd]; int th=tbh();
     if(W->hidden) return;                        // lifted into the HW drag-overlay
     theme_draw(H(),aes_theme(),"window", W->x,W->y,W->w,W->h);
     theme_draw(H(),aes_theme(), active?"titlebar":"titlebar.inactive", W->x, W->y, W->w, th);  // flush top
@@ -75,16 +99,25 @@ static void draw_one(int hd, int active){
         // Title work span: right of the close/full boxes, up to the right edge.
         int tlx=W->x+8; if(W->kind&W_CLOSER) tlx+=20; if(W->kind&W_FULLER) tlx+=20;
         int trx=W->x+W->w-8; int tlw=trx-tlx; if(tlw<0) tlw=0;
+        // Right-side title buttons occupy the far right; reserve their width so the
+        // title renderer's DRAW span (dlw) stops short of them.  The app-CLICK span
+        // (titlew) stays the full width, so a press on a button is a title click.
+        int nb=W->ntb, bspan = nb>0 ? nb*WTB_PITCH+2 : 0;
+        int dlw=tlw-bspan; if(dlw<0) dlw=0;
+        int cyb=W->y+(th-16)/2;
+        for(int i=0;i<nb;i++){ int bx=trx-WTB_W-(nb-1-i)*WTB_PITCH;   // right-aligned, index 0 leftmost
+            W->tbx[i]=bx; W->tby[i]=cyb; W->tbw[i]=WTB_W; W->tbh[i]=WTB_W; }
         W->titlex=tlx; W->titley=W->y; W->titlew=tlw; W->titleh=th;
-        if(W->title){                          // app-drawn interactive title (clipped to its span)
-            int16_t tc[4]={(int16_t)tlx,(int16_t)W->y,(int16_t)(trx-1),(int16_t)(W->y+th-1)};
-            vs_clip(H(),1,tc); W->title(hd, tlx, W->y, tlw, th, W->titleud); vs_clip(H(),0,tc);
+        if(W->title){                          // app-drawn interactive title (clipped to the shortened span)
+            int16_t tc[4]={(int16_t)tlx,(int16_t)W->y,(int16_t)(tlx+dlw-1),(int16_t)(W->y+th-1)};
+            vs_clip(H(),1,tc); W->title(hd, tlx, W->y, dlw, th, W->titleud); vs_clip(H(),0,tc);
         } else {                               // plain centred name
             vst_color(H(),1); vst_height(H(),15,0,0,0,0);
             vst_alignment(H(),VDI_TA_CENTER,VDI_TA_HALF,0,0);
             v_gtext(H(), W->x+W->w/2, W->y+th/2, W->name);
             vst_alignment(H(),VDI_TA_LEFT,VDI_TA_TOP,0,0);
         }
+        for(int i=0;i<nb;i++) draw_titlebtn(W->tbx[i], W->tby[i], W->tbglyph[i]);   // over the title, right-aligned
     }
     if(W->kind & W_INFO){          // W_INFO chrome line under the title; tuck 2px inside the
         int ix=W->x+2, iy=W->y+th, iw=W->w-4;   // rounded frame corners (the flat fill can't self-round)
@@ -163,6 +196,19 @@ void wind_set_name(int hd,const char*n){ if(hd>=1&&hd<MAXW){ snprintf(g_w[hd].na
 void wind_content(int hd,wind_draw_fn fn,void*ud){ if(hd>=1&&hd<MAXW){ g_w[hd].draw=fn; g_w[hd].ud=ud; } }
 void wind_info(int hd,wind_draw_fn fn,void*ud){ if(hd>=1&&hd<MAXW){ g_w[hd].info=fn; g_w[hd].infoud=ud; } }
 void wind_title(int hd,wind_draw_fn fn,void*ud){ if(hd>=1&&hd<MAXW){ g_w[hd].title=fn; g_w[hd].titleud=ud; } }
+void wind_titlebtns(int hd,const int*glyphs,int n){
+    if(hd<1||hd>=MAXW) return; awin*W=&g_w[hd];
+    if(n<0) n=0; if(n>WIND_MAXTB) n=WIND_MAXTB;
+    W->ntb=n;
+    for(int i=0;i<n;i++) W->tbglyph[i]=glyphs?glyphs[i]:WTG_NONE;
+    for(int i=n;i<WIND_MAXTB;i++){ W->tbglyph[i]=WTG_NONE; W->tbw[i]=0; }   // clear stale rects
+}
+int wind_titlebtn_rect(int hd,int idx,int*x,int*y,int*w,int*h){
+    if(hd<1||hd>=MAXW) return 0; awin*W=&g_w[hd];
+    if(idx<0||idx>=W->ntb||W->tbw[idx]<=0) return 0;               // not registered / not yet laid out
+    if(x)*x=W->tbx[idx]; if(y)*y=W->tby[idx]; if(w)*w=W->tbw[idx]; if(h)*h=W->tbh[idx];
+    return 1;
+}
 
 void wind_get(int hd,int field,int*a,int*b,int*c,int*d){
     if(hd==0){ int x,y,w,h; work_area(&x,&y,&w,&h); if(a)*a=x; if(b)*b=y; if(c)*c=w; if(d)*d=h; return; }  // desktop
