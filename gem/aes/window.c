@@ -54,6 +54,7 @@ static void work_area(int *x,int *y,int *w,int *h){
 }
 void aes_set_workarea(int x,int y,int w,int h){ g_wa[0]=x; g_wa[1]=y; g_wa[2]=w; g_wa[3]=h; }
 void aes_reserve_top(int h){ g_top_reserve = h; }
+int  aes_top_reserve(void){ return g_top_reserve; }   // px reserved at the top (menu bar)
 
 static int bw(void){ const theme_slice*s=theme_find(aes_theme(),"window"); return s?s->l:5; }
 static int tbh(void){ const theme_slice*s=theme_find(aes_theme(),"titlebar"); return s?s->sh:22; }

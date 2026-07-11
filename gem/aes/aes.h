@@ -394,6 +394,7 @@ void wind_set_desktop(uint32_t rgba);               // desktop background colour
 // fill and before any windows, so a wallpaper + desktop icons draw under every
 // window.  Called as fn(0, x,y,w,h, ud) over the whole screen.  NULL clears it.
 void wind_set_desktop_content(wind_draw_fn fn, void *ud);
+int  aes_top_reserve(void);                         // px reserved at the top (menu bar) — offset desktop icons below it
 void wind_redraw(void);                             // redraw desktop + all windows (AES owns it)
 // Optional HW drag-overlay hooks (A9): title-bar drag lifts the window into the
 // overlay plane and moves it by register write (no redraw). NULL -> classic drag.
