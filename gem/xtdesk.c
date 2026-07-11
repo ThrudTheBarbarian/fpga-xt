@@ -2409,7 +2409,7 @@ int main(int argc, char **argv) {
         else if (!strcmp(argv[i], "--title")) fuji = 12;            // headless: interactive title breadcrumb/mask
         else if (!strcmp(argv[i], "--titlebtn")) fuji = 13;         // headless: right-side title buttons + Gallery
         else if (!strcmp(argv[i], "--pair")) fuji = 14;             // headless: front(active)+back(inactive) titlebars
-        else if (!strcmp(argv[i], "--scroll")) fuji = 14;           // headless: scrollbar overflow + scroll + wheel
+        else if (!strcmp(argv[i], "--scroll")) fuji = 17;           // headless: scrollbar overflow + scroll + wheel
         else if (!strcmp(argv[i], "--menubar")) fuji = 15;          // headless: menu bar + open dropdown + dispatch
         else if (!strcmp(argv[i], "--tree")) fuji = 16;             // headless: single-column disclosure tree
         else snprintf(base, sizeof base, "%s", argv[i]);
@@ -2678,7 +2678,7 @@ int main(int argc, char **argv) {
         registry_close();
         return (tri_ok && name_no && grew_ok && deep_ok && collapse_ok) ? 0 : 1;
     }
-    if (fuji == 14) {                                // headless scrollbar test (--scroll)
+    if (fuji == 17) {                                // headless scrollbar test (--scroll)
         // A dir with MANY entries, in a small window, so the icon grid overflows.
         open_browser("/navtest/big", ICT_MEDIA_8BIT);
         browser *nb = BR[0].used ? &BR[0] : NULL;
