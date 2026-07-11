@@ -92,7 +92,10 @@ static img load_png(const char *dir, const char *name) {
     if (rot)     { snprintf(t, sizeof t, " -rotate %d", rot); strncat(ops, t, sizeof ops-strlen(ops)-1); }
     if (bright)  { snprintf(t, sizeof t, " -modulate %d", bright); strncat(ops, t, sizeof ops-strlen(ops)-1); }
     if (grad)    { int g = grad*255/100;                       // top stays, bottom -> g/255
-                   snprintf(t, sizeof t, " \\( -size %dx%d gradient:#ffffff-#%02x%02x%02x \\) -compose Multiply -composite",
+                   // -channel RGB so the multiply touches only colour and KEEPS the
+                   // source alpha (an opaque gradient would otherwise fill the
+                   // rounded-corner transparency, squaring off the titlebar corners).
+                   snprintf(t, sizeof t, " \\( -size %dx%d gradient:#ffffff-#%02x%02x%02x \\) -channel RGB -compose Multiply -composite +channel",
                             m.w, m.h, g, g, g);
                    strncat(ops, t, sizeof ops-strlen(ops)-1); }
     if (tint[0]) { snprintf(t, sizeof t, " -fill \"#%s\" -colorize 85%%", tint); strncat(ops, t, sizeof ops-strlen(ops)-1); }
