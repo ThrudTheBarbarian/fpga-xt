@@ -473,7 +473,9 @@ int wind_handle_click(int mx,int my){
             g_ovl_end();                                       // ...then drop the overlay -> seamless
         } else {                                               // SDL host: classic redraw-per-motion
             for(;;){ aes_event e; int t=aes_wait_idle(&e,-1); if(t==AES_QUIT)break;
-                if(t==AES_MOTION){ W->x=e.mx-gx; W->y=e.my-gy; clamp_win(W); wind_redraw(); }
+                if(t==AES_MOTION){ int ox=W->x,oy=W->y; W->x=e.mx-gx; W->y=e.my-gy; clamp_win(W);
+                    int ux=ox<W->x?ox:W->x, uy=oy<W->y?oy:W->y;   // repaint old ∪ new
+                    wind_redraw_area(ux, uy, (ox>W->x?ox:W->x)+W->w-ux, (oy>W->y?oy:W->y)+W->h-uy); }
                 if(t==AES_BTN_UP) break; }
         }
         post(WM_MOVED,hd,W->x,W->y,W->w,W->h); return 1;
@@ -489,16 +491,18 @@ int wind_handle_click(int mx,int my){
         int rgrip = infr && mx>=W->x+W->w-SIZER_SZ && mx<W->x+W->w;
         if(rgrip){
             for(;;){ aes_event e; int t=aes_wait_idle(&e,-1); if(t==AES_QUIT)break;
-                if(t==AES_MOTION){ int nw=e.mx-W->x, nh=e.my-W->y; if(nw<120)nw=120; if(nh<80)nh=80; W->w=nw; W->h=nh; clamp_scroll(W); wind_redraw(); }
+                if(t==AES_MOTION){ int ow=W->w,oh=W->h; int nw=e.mx-W->x, nh=e.my-W->y; if(nw<120)nw=120; if(nh<80)nh=80; W->w=nw; W->h=nh; clamp_scroll(W);
+                    wind_redraw_area(W->x, W->y, ow>nw?ow:nw, oh>nh?oh:nh); }   // old ∪ new (same top-left)
                 if(t==AES_BTN_UP) break; }
             post(WM_SIZED,hd,W->x,W->y,W->w,W->h); return 1;
         }
         if(lgrip){
             int right=W->x+W->w;                                 // pin the right edge
             for(;;){ aes_event e; int t=aes_wait_idle(&e,-1); if(t==AES_QUIT)break;
-                if(t==AES_MOTION){ int nx=e.mx, nh=e.my-W->y; int nw=right-nx;
+                if(t==AES_MOTION){ int ox=W->x,oh=W->h; int nx=e.mx, nh=e.my-W->y; int nw=right-nx;
                     if(nw<120){ nw=120; nx=right-nw; } if(nh<80)nh=80;
-                    W->x=nx; W->w=nw; W->h=nh; clamp_scroll(W); wind_redraw(); }
+                    W->x=nx; W->w=nw; W->h=nh; clamp_scroll(W);
+                    int ux=ox<nx?ox:nx; wind_redraw_area(ux, W->y, right-ux, oh>nh?oh:nh); }   // old ∪ new (right pinned)
                 if(t==AES_BTN_UP) break; }
             post(WM_SIZED,hd,W->x,W->y,W->w,W->h); return 1;
         }
