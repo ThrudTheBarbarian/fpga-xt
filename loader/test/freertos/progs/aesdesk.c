@@ -17,11 +17,18 @@
  * registry /OS/var/registry.db; the font from /OS/fonts.
  */
 #include "aes/aes.h"
+#include "aes/rscload.h"
 #include "img.h"
 #include "registry.h"
 #include "fujiclient.h"
 #include "font.h"
 #include "usys.h"
+
+#ifndef O_RDONLY
+#define O_RDONLY 0x0000
+#define O_WRONLY 0x0001
+#define O_CREAT  0x0200
+#endif
 #include <sqlite3.h>
 #include <stdint.h>
 #include <stdio.h>
@@ -39,6 +46,7 @@
 #define DCLICK_MS 500   /* generous: serial Enter-Enter / Space-toggle need more than a real mouse */
 
 static int    HV, PW, PH;
+static rscdoc *g_rsc;                                // desktop.rsc dialogs (New…, …); NULL = built-ins
 static theme  TH;
 static CICON  ci[MAX_ICONS];
 static gfx_surface *isurf[MAX_ICONS];
@@ -1633,14 +1641,109 @@ static int new_folder_dialog(char *out, int cap) {
     snprintf(out, cap, "%s", nm);
     return 1;
 }
-// New folder in the target window's directory (local net==0 only; else a stub
-// alert).  Prompt -> mkdir -> re-list.
+// ---- New… from the desktop.rsc "New" tree (tree 0) ---------------------------
+// mkrsc build_new object indices: 0 root G_BOX, 1 "New", 2 "Kind:", 3 Folder
+// radio, 4 File radio, 5 "Type:" label, 6 Type G_POPUP, 7 "Name:", 8 Name
+// G_FTEXT, 9 Cancel, 10 OK.  Kept as an enum so both twins read identically.
+enum { NEW_ROOT=0, NEW_FOLDER=3, NEW_FILE=4, NEW_TYPELBL=5, NEW_POPUP=6,
+       NEW_NAME=8, NEW_CANCEL=9, NEW_OK=10 };
+
+// Set the Type popup's shown value to the first item of its linked menu tree
+// (.txt) — used to reset the tree to a pristine state before each open.
+static void new_reset_type(OBJECT *t) {
+    int link = rscload_ext(g_rsc, 0, NEW_POPUP);
+    if (link <= 0) return;
+    OBJECT *menu = rscload_tree(g_rsc, link);
+    if (!menu) return;
+    for (int c = menu[0].ob_head; c >= 0; c = (c == menu[0].ob_tail ? -1 : menu[c].ob_next))
+        if (menu[c].ob_type == G_STRING && menu[c].ob_spec) { t[NEW_POPUP].ob_spec = menu[c].ob_spec; return; }
+}
+// Run the Type popup: build a menu_item[] from its linked menu tree's G_STRING
+// items, run menu_popup at the popup rect, and set the popup's shown value.
+static void new_run_typepopup(OBJECT *t, int popup) {
+    int link = rscload_ext(g_rsc, 0, popup);          // linked menu tree index (RSC high byte)
+    if (link <= 0) return;
+    OBJECT *menu = rscload_tree(g_rsc, link);
+    if (!menu) return;
+    menu_item items[16]; int n = 0;
+    for (int c = menu[0].ob_head; c >= 0 && n < 16; c = (c == menu[0].ob_tail ? -1 : menu[c].ob_next)) {
+        if (menu[c].ob_type != G_STRING || !menu[c].ob_spec) continue;
+        items[n].label = (const char *)menu[c].ob_spec; items[n].accel = NULL;
+        items[n].id = n; items[n].sub = NULL; items[n].nsub = 0; items[n].flags = 0;
+        n++;
+    }
+    if (!n) return;
+    int x, y; objc_offset(t, popup, &x, &y);
+    int choice = menu_popup(items, n, x, y + t[popup].ob_h);
+    if (choice >= 0 && choice < n) t[popup].ob_spec = (void *)items[choice].label;
+}
+// form_do hook: Folder/File radio -> show/hide the Type popup + its label; Type
+// popup click -> run its linked menu.  Registered only around the New dialog.
+static int new_hook(OBJECT *t, int obj, void *ud) {
+    (void)ud;
+    if (obj == NEW_FOLDER || obj == NEW_FILE) {
+        int file = (t[NEW_FILE].ob_state & OS_SELECTED) != 0;
+        if (file) { t[NEW_POPUP].ob_flags &= ~OF_HIDETREE; t[NEW_TYPELBL].ob_flags &= ~OF_HIDETREE; }
+        else      { t[NEW_POPUP].ob_flags |=  OF_HIDETREE; t[NEW_TYPELBL].ob_flags |=  OF_HIDETREE; }
+        return 1;
+    }
+    if (obj == NEW_POPUP) { new_run_typepopup(t, obj); return 1; }
+    return 0;
+}
+
+// New folder/file in the target window's directory (local net==0 only; else a
+// stub alert).  Prompt via the resource "New" tree (Folder/File + conditional
+// Type popup + Name); create -> re-list.  Falls back to the built-in
+// folder-only dialog when the resource is unavailable.
 static void ctx_new(browser *b) {
     if (!b || b->net != 0) { form_alert(1, "[1][New folder|only in local windows][OK]"); return; }
-    char nm[64];
-    if (!new_folder_dialog(nm, sizeof nm)) return;
-    char full[520]; ctx_entry_path(b, nm, full, sizeof full);
-    if (sys_mkdir(full, 0777) != 0) { form_alert(1, "[3][Could not create the folder][OK]"); return; }
+
+    OBJECT *t = g_rsc ? rscload_tree(g_rsc, 0) : NULL;
+    if (!t) {                                          // fallback: legacy folder-only dialog
+        char nm[64];
+        if (!new_folder_dialog(nm, sizeof nm)) return;
+        char full[520]; ctx_entry_path(b, nm, full, sizeof full);
+        if (sys_mkdir(full, 0777) != 0) { form_alert(1, "[3][Could not create the folder][OK]"); return; }
+        br_list(b); br_settitle(b); repaint(); return;
+    }
+
+    // Reset the shared resource tree to a pristine state (Folder default, Type
+    // hidden, popup value .txt, name empty) so it survives repeated opens.
+    t[NEW_FOLDER].ob_state |= OS_SELECTED; t[NEW_FILE].ob_state &= ~OS_SELECTED;
+    t[NEW_TYPELBL].ob_flags |= OF_HIDETREE; t[NEW_POPUP].ob_flags |= OF_HIDETREE;
+    new_reset_type(t);
+    // The rsc TEDINFO's te_ptext lives in the resource arena; hand the editor a
+    // local writable buffer for this run, then restore it (keeps the rsc pristine).
+    char namebuf[64]; namebuf[0] = 0;
+    TEDINFO *te = (TEDINFO *)t[NEW_NAME].ob_spec;
+    char *save_ptext = te->te_ptext; int16_t save_txtlen = te->te_txtlen;
+    te->te_ptext = namebuf; te->te_txtlen = (int16_t)sizeof namebuf;
+
+    form_set_hook(new_hook, NULL);
+    int r = form_do_dialog(t, 0);                      // focus starts in the Name field
+    form_set_hook(NULL, NULL);
+    if (r >= 0) t[r].ob_state &= ~OS_SELECTED;
+    repaint();                                          // repaint under the dismissed dialog
+
+    int file = (t[NEW_FILE].ob_state & OS_SELECTED) != 0;
+    char nm[64]; snprintf(nm, sizeof nm, "%s", namebuf);
+    char suffix[16]; snprintf(suffix, sizeof suffix, "%s", (const char *)t[NEW_POPUP].ob_spec);
+    te->te_ptext = save_ptext; te->te_txtlen = save_txtlen;   // restore pristine
+    if (r != NEW_OK) return;
+    for (int i = (int)strlen(nm)-1; i >= 0 && nm[i] == ' '; i--) nm[i] = 0;
+    if (!nm[0]) return;
+
+    char leaf[96];
+    if (file && suffix[0]) snprintf(leaf, sizeof leaf, "%s%s", nm, suffix);
+    else                   snprintf(leaf, sizeof leaf, "%s", nm);
+    char full[520]; ctx_entry_path(b, leaf, full, sizeof full);
+    if (file) {
+        long fd = sys_open(full, O_CREAT | O_WRONLY);   // create an empty file
+        if (fd < 0) { form_alert(1, "[3][Could not create the file][OK]"); return; }
+        sys_close(fd);
+    } else if (sys_mkdir(full, 0777) != 0) {
+        form_alert(1, "[3][Could not create the folder][OK]"); return;
+    }
     br_list(b); br_settitle(b); repaint();
 }
 // Delete the target entr(y/ies): confirm, then unlink (local net==0 only).  An
@@ -1780,6 +1883,28 @@ void _app_entry(int argc, char **argv) {
     if (registry_open("/OS/var/registry.db") != 0)
         sys_write(2, "aesdesk: no registry (/OS/var/registry.db)\n", 43);
     ctx_db_open("/OS/var/registry.db");              // parallel read-only conn for contextMenu
+
+    /* Dialog resource: the SD layout first (/OS, user-overridable), then the copy
+     * bundled in romfs (/System) so aesdesk has it in qemu / on a bare card.  No
+     * host fopen here — read the bytes then rscload_mem().  On failure the built-in
+     * hard-coded dialogs take over. */
+    { static const char *const rscp[] = { "/OS/Apps/Desktop/desktop.rsc",
+                                          "/System/OS/Apps/Desktop/desktop.rsc" };
+      for (int i = 0; i < 2 && !g_rsc; i++) {
+          struct xt_stat st;
+          if (sys_stat(rscp[i], &st) != 0 || st.size == 0) continue;
+          uint8_t *buf = malloc(st.size); if (!buf) continue;
+          long fd = sys_open(rscp[i], O_RDONLY);
+          if (fd < 0) { free(buf); continue; }
+          long got = 0, k;
+          while (got < (long)st.size && (k = sys_read(fd, buf + got, st.size - got)) > 0) got += k;
+          sys_close(fd);
+          const char *err = NULL;
+          if (got == (long)st.size) g_rsc = rscload_mem(buf, st.size, &err);
+          free(buf);
+      }
+      if (!g_rsc) sys_write(2, "aesdesk: no desktop.rsc — using built-in dialogs\n", 49); }
+
     build_desktop();
     wind_set_desktop_content(deskcontent, NULL);
 
@@ -1826,5 +1951,6 @@ void _app_entry(int argc, char **argv) {
             }
         }
     }
+    if (g_rsc) rscload_free(g_rsc);
     registry_close(); ctx_db_close();
 }

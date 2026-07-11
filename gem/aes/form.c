@@ -76,6 +76,12 @@ static int tree_count(OBJECT *t) {
     return n + 1;
 }
 
+// App hook for radio-change / G_POPUP-click reactions (see aes.h).  The modal
+// loop is non-reentrant, so a single pair of file statics is enough.
+static form_hook_fn g_form_hook;
+static void        *g_form_hook_ud;
+void form_set_hook(form_hook_fn fn, void *ud) { g_form_hook = fn; g_form_hook_ud = ud; }
+
 // ---- editable-field focus -------------------------------------------------
 static int can_edit(OBJECT *t, int i) {
     return (t[i].ob_flags & OF_EDITABLE) && !(t[i].ob_state & OS_DISABLED)
@@ -202,7 +208,7 @@ int form_keybd(OBJECT *t, int edobj, int key, int kstate, int *new_edobj) {
                     t[m].ob_state |= OS_SELECTED; draw_one(t, m);
                     exit_obj = m;
                 } else if (t[m].ob_flags & OF_RBUTTON) {
-                    do_radio(t, m); draw(t);
+                    do_radio(t, m); if (g_form_hook) g_form_hook(t, m, g_form_hook_ud); draw(t);
                 } else if (t[m].ob_flags & OF_SELECTABLE) {
                     t[m].ob_state ^= OS_SELECTED; draw_one(t, m);
                 } else if (label_of_field(t, m) && can_edit(t, t[m].ob_next)) {
@@ -355,11 +361,16 @@ int form_do(OBJECT *t, int start) {
                 continue;
             }
             if (o >= 0 && (t[o].ob_flags & OF_SELECTABLE) && !(t[o].ob_state & OS_DISABLED)) {
-                if (t[o].ob_flags & (OF_EXIT | OF_TOUCHEXIT)) { t[o].ob_state |= OS_SELECTED; pressed = o; }
-                else if (t[o].ob_flags & OF_RBUTTON)         { do_radio(t, o); }
-                else                                          { t[o].ob_state ^= OS_SELECTED; }
-                draw(t);
-                if (t[o].ob_flags & OF_TOUCHEXIT) { END_FOCUS(); return o; }
+                if (t[o].ob_type == G_POPUP) {                // combo: app runs the linked menu
+                    if (g_form_hook) g_form_hook(t, o, g_form_hook_ud);
+                    draw(t);
+                } else {
+                    if (t[o].ob_flags & (OF_EXIT | OF_TOUCHEXIT)) { t[o].ob_state |= OS_SELECTED; pressed = o; }
+                    else if (t[o].ob_flags & OF_RBUTTON)         { do_radio(t, o); if (g_form_hook) g_form_hook(t, o, g_form_hook_ud); }
+                    else                                          { t[o].ob_state ^= OS_SELECTED; }
+                    draw(t);
+                    if (t[o].ob_flags & OF_TOUCHEXIT) { END_FOCUS(); return o; }
+                }
             }
             continue;
         }

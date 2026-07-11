@@ -166,6 +166,16 @@ int  form_do(OBJECT *tree, int start);
 // restore.  The standard way to run a dialog (form_alert uses it too).
 int  form_do_dialog(OBJECT *tree, int start);
 
+// Optional hook for dialogs with dependent widgets (a radio that shows/hides a
+// popup, a G_POPUP combo whose menu is app-supplied): form_do calls it after a
+// G_RADIO selection changes, or when a G_POPUP is clicked (obj = that object),
+// so the app can toggle OF_HIDETREE on the dependents, or open the popup's
+// linked menu and set its ob_spec.  Returns nonzero to request a redraw (form_do
+// redraws regardless — the return is advisory).  ud is passed through; NULL fn
+// clears it.  form.c stays resource-agnostic: the app maps obj -> effect.
+typedef int (*form_hook_fn)(OBJECT *tree, int obj, void *ud);
+void form_set_hook(form_hook_fn fn, void *ud);
+
 // The full form key policy (Return / Esc / TAB / mnemonics / ED_CHAR) as one
 // call, for bare evnt_multi clients that host editable objects themselves.
 // edobj = the focused editable (-1 none); *new_edobj (may be NULL) receives

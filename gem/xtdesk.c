@@ -12,6 +12,7 @@
 // `xtdesk --ppm` renders one frame to /tmp/xtdesk.ppm (no SDL).
 
 #include "aes/aes_internal.h"
+#include "aes/rscload.h"
 #include "img.h"
 #include "registry.h"
 #include "fujiclient.h"
@@ -40,6 +41,7 @@
 // `base` mirrors the runtime root "/" (the SD mount): system assets live under
 // /OS, user content under /Media — exactly as on the A9 (SD = fatfs root).
 static char base[256] = "/Volumes/XTOS";
+static rscdoc *g_rsc;                                  // desktop.rsc dialogs (New…, …); NULL = built-ins
 static theme TH;
 static gfx_surface *g_desk, *g_wall;
 static int HV;
@@ -1571,14 +1573,108 @@ static int new_folder_dialog(char *out, int cap) {
     snprintf(out, cap, "%s", nm);
     return 1;
 }
-// New folder in the target window's directory (local net==0 only; else a stub
-// alert).  Prompt -> mkdir -> re-list.
+// ---- New… from the desktop.rsc "New" tree (tree 0) ---------------------------
+// mkrsc build_new object indices: 0 root G_BOX, 1 "New", 2 "Kind:", 3 Folder
+// radio, 4 File radio, 5 "Type:" label, 6 Type G_POPUP, 7 "Name:", 8 Name
+// G_FTEXT, 9 Cancel, 10 OK.  Kept as an enum so both twins read identically.
+enum { NEW_ROOT=0, NEW_FOLDER=3, NEW_FILE=4, NEW_TYPELBL=5, NEW_POPUP=6,
+       NEW_NAME=8, NEW_CANCEL=9, NEW_OK=10 };
+
+// Set the Type popup's shown value to the first item of its linked menu tree
+// (.txt) — used to reset the tree to a pristine state before each open.
+static void new_reset_type(OBJECT *t) {
+    int link = rscload_ext(g_rsc, 0, NEW_POPUP);
+    if (link <= 0) return;
+    OBJECT *menu = rscload_tree(g_rsc, link);
+    if (!menu) return;
+    for (int c = menu[0].ob_head; c >= 0; c = (c == menu[0].ob_tail ? -1 : menu[c].ob_next))
+        if (menu[c].ob_type == G_STRING && menu[c].ob_spec) { t[NEW_POPUP].ob_spec = menu[c].ob_spec; return; }
+}
+// Run the Type popup: build a menu_item[] from its linked menu tree's G_STRING
+// items, run menu_popup at the popup rect, and set the popup's shown value.
+static void new_run_typepopup(OBJECT *t, int popup) {
+    int link = rscload_ext(g_rsc, 0, popup);          // linked menu tree index (RSC high byte)
+    if (link <= 0) return;
+    OBJECT *menu = rscload_tree(g_rsc, link);
+    if (!menu) return;
+    menu_item items[16]; int n = 0;
+    for (int c = menu[0].ob_head; c >= 0 && n < 16; c = (c == menu[0].ob_tail ? -1 : menu[c].ob_next)) {
+        if (menu[c].ob_type != G_STRING || !menu[c].ob_spec) continue;
+        items[n].label = (const char *)menu[c].ob_spec; items[n].accel = NULL;
+        items[n].id = n; items[n].sub = NULL; items[n].nsub = 0; items[n].flags = 0;
+        n++;
+    }
+    if (!n) return;
+    int x, y; objc_offset(t, popup, &x, &y);
+    int choice = menu_popup(items, n, x, y + t[popup].ob_h);
+    if (choice >= 0 && choice < n) t[popup].ob_spec = (void *)items[choice].label;
+}
+// form_do hook: Folder/File radio -> show/hide the Type popup + its label; Type
+// popup click -> run its linked menu.  Registered only around the New dialog.
+static int new_hook(OBJECT *t, int obj, void *ud) {
+    (void)ud;
+    if (obj == NEW_FOLDER || obj == NEW_FILE) {
+        int file = (t[NEW_FILE].ob_state & OS_SELECTED) != 0;
+        if (file) { t[NEW_POPUP].ob_flags &= ~OF_HIDETREE; t[NEW_TYPELBL].ob_flags &= ~OF_HIDETREE; }
+        else      { t[NEW_POPUP].ob_flags |=  OF_HIDETREE; t[NEW_TYPELBL].ob_flags |=  OF_HIDETREE; }
+        return 1;
+    }
+    if (obj == NEW_POPUP) { new_run_typepopup(t, obj); return 1; }
+    return 0;
+}
+
+// New folder/file in the target window's directory (local net==0 only; else a
+// stub alert).  Prompt via the resource "New" tree (Folder/File + conditional
+// Type popup + Name); create -> re-list.  Falls back to the built-in
+// folder-only dialog when the resource is unavailable.
 static void ctx_new(browser *b) {
     if (!b || b->net != 0) { form_alert(1, "[1][New folder|only in local windows][OK]"); return; }
-    char nm[64];
-    if (!new_folder_dialog(nm, sizeof nm)) return;
-    char full[520]; ctx_entry_path(b, nm, full, sizeof full);
-    if (mkdir(full, 0777) != 0) { form_alert(1, "[3][Could not create the folder][OK]"); return; }
+
+    OBJECT *t = g_rsc ? rscload_tree(g_rsc, 0) : NULL;
+    if (!t) {                                          // fallback: legacy folder-only dialog
+        char nm[64];
+        if (!new_folder_dialog(nm, sizeof nm)) return;
+        char full[520]; ctx_entry_path(b, nm, full, sizeof full);
+        if (mkdir(full, 0777) != 0) { form_alert(1, "[3][Could not create the folder][OK]"); return; }
+        br_list(b); br_settitle(b); wind_redraw(); return;
+    }
+
+    // Reset the shared resource tree to a pristine state (Folder default, Type
+    // hidden, popup value .txt, name empty) so it survives repeated opens.
+    t[NEW_FOLDER].ob_state |= OS_SELECTED; t[NEW_FILE].ob_state &= ~OS_SELECTED;
+    t[NEW_TYPELBL].ob_flags |= OF_HIDETREE; t[NEW_POPUP].ob_flags |= OF_HIDETREE;
+    new_reset_type(t);
+    // The rsc TEDINFO's te_ptext lives in the resource arena; hand the editor a
+    // local writable buffer for this run, then restore it (keeps the rsc pristine).
+    char namebuf[64]; namebuf[0] = 0;
+    TEDINFO *te = (TEDINFO *)t[NEW_NAME].ob_spec;
+    char *save_ptext = te->te_ptext; int16_t save_txtlen = te->te_txtlen;
+    te->te_ptext = namebuf; te->te_txtlen = (int16_t)sizeof namebuf;
+
+    form_set_hook(new_hook, NULL);
+    int r = form_do_dialog(t, 0);                      // focus starts in the Name field
+    form_set_hook(NULL, NULL);
+    if (r >= 0) t[r].ob_state &= ~OS_SELECTED;
+
+    int file = (t[NEW_FILE].ob_state & OS_SELECTED) != 0;
+    char nm[64]; snprintf(nm, sizeof nm, "%s", namebuf);
+    char suffix[16]; snprintf(suffix, sizeof suffix, "%s", (const char *)t[NEW_POPUP].ob_spec);
+    te->te_ptext = save_ptext; te->te_txtlen = save_txtlen;   // restore pristine
+    if (r != NEW_OK) return;
+    for (int i = (int)strlen(nm)-1; i >= 0 && nm[i] == ' '; i--) nm[i] = 0;
+    if (!nm[0]) return;
+
+    char leaf[96];
+    if (file && suffix[0]) snprintf(leaf, sizeof leaf, "%s%s", nm, suffix);
+    else                   snprintf(leaf, sizeof leaf, "%s", nm);
+    char full[520]; ctx_entry_path(b, leaf, full, sizeof full);
+    if (file) {
+        FILE *cf = fopen(full, "w");                   // create an empty file
+        if (!cf) { form_alert(1, "[3][Could not create the file][OK]"); return; }
+        fclose(cf);
+    } else if (mkdir(full, 0777) != 0) {
+        form_alert(1, "[3][Could not create the folder][OK]"); return;
+    }
     br_list(b); br_settitle(b); wind_redraw();
 }
 // Delete the target entr(y/ies): confirm, then unlink (local net==0 only).  An
@@ -1828,6 +1924,7 @@ int main(int argc, char **argv) {
         else if (!strcmp(argv[i], "--mask")) fuji = 8;              // headless: file-mask filter render
         else if (!strcmp(argv[i], "--ctx"))  fuji = 9;              // headless: right-click context menu
         else if (!strcmp(argv[i], "--browsenav")) fuji = 10;        // headless: browse navigator
+        else if (!strcmp(argv[i], "--newdlg")) fuji = 11;           // headless: New… resource dialog
         else snprintf(base, sizeof base, "%s", argv[i]);
     }
 
@@ -1848,6 +1945,15 @@ int main(int argc, char **argv) {
     { char dbp[320]; snprintf(dbp, sizeof dbp, "%s/OS/var/registry.db", base);
       if (registry_open(dbp) != 0) fprintf(stderr, "xtdesk: no registry at %s\n", dbp);
       ctx_db_open(dbp); }                                // parallel read-only conn for contextMenu
+
+    // Dialog resource: the SD layout first (mirrors aesdesk's /OS), then the repo
+    // copy so a bare dev tree still has it — regardless of cwd.  On failure the
+    // built-in hard-coded dialogs take over.
+    { char rscp[320]; const char *err = NULL;
+      snprintf(rscp, sizeof rscp, "%s/OS/Apps/Desktop/desktop.rsc", base);
+      g_rsc = rscload_file(rscp, &err);
+      if (!g_rsc) g_rsc = rscload_file("resources/desktop.rsc", &err);
+      if (!g_rsc) fprintf(stderr, "xtdesk: no desktop.rsc (%s) — using built-in dialogs\n", err ? err : rscp); }
     load_wall();
     build_desktop();
     wind_set_desktop_content(deskcontent, NULL);
@@ -2024,6 +2130,63 @@ int main(int argc, char **argv) {
         fprintf(stderr, "ctx: wrote /tmp/xtdesk-ctx.ppm (window-scope menu, %d items + Show cascade)\n", wn);
         registry_close(); ctx_db_close();
         return (reg_ok && sort_ok && view_ok) ? 0 : 1;
+    }
+    if (fuji == 11) {                                // headless New… resource-dialog test (--newdlg)
+        if (!g_rsc) { fprintf(stderr, "newdlg: no desktop.rsc under %s/OS/Apps/Desktop\n", base); return 1; }
+        OBJECT *t = rscload_tree(g_rsc, 0);
+        int link = t ? rscload_ext(g_rsc, 0, NEW_POPUP) : -1;
+        int struct_ok = t && t[NEW_ROOT].ob_type == G_BOX
+            && (t[NEW_FOLDER].ob_flags & OF_RBUTTON) && (t[NEW_FILE].ob_flags & OF_RBUTTON)
+            && t[NEW_POPUP].ob_type == G_POPUP && link == 1
+            && t[NEW_NAME].ob_type == G_FTEXT
+            && (t[NEW_OK].ob_flags & OF_DEFAULT) && (t[NEW_CANCEL].ob_flags & OF_CANCEL);
+        fprintf(stderr, "newdlg: structure box+radios+popup(link=%d)+ftext+ok/cancel (%s)\n",
+                link, struct_ok ? "OK" : "FAIL");
+
+        // File selected -> Type popup shown; Folder -> hidden (via new_hook).
+        t[NEW_FOLDER].ob_state &= ~OS_SELECTED; t[NEW_FILE].ob_state |= OS_SELECTED;
+        new_hook(t, NEW_FILE, NULL);
+        int shown_ok = !(t[NEW_POPUP].ob_flags & OF_HIDETREE) && !(t[NEW_TYPELBL].ob_flags & OF_HIDETREE);
+        t[NEW_FILE].ob_state &= ~OS_SELECTED; t[NEW_FOLDER].ob_state |= OS_SELECTED;
+        new_hook(t, NEW_FOLDER, NULL);
+        int hidden_ok = (t[NEW_POPUP].ob_flags & OF_HIDETREE) && (t[NEW_TYPELBL].ob_flags & OF_HIDETREE);
+        fprintf(stderr, "newdlg: File->Type shown %s ; Folder->Type hidden %s\n",
+                shown_ok ? "OK" : "FAIL", hidden_ok ? "OK" : "FAIL");
+
+        // Simulate choosing ".html" from the Type popup's linked menu tree.
+        OBJECT *menu = rscload_tree(g_rsc, link);
+        for (int c = menu[0].ob_head; c >= 0; c = (c == menu[0].ob_tail ? -1 : menu[c].ob_next))
+            if (menu[c].ob_type == G_STRING && menu[c].ob_spec && !strcmp((char *)menu[c].ob_spec, ".html"))
+                t[NEW_POPUP].ob_spec = menu[c].ob_spec;
+        int val_ok = !strcmp((const char *)t[NEW_POPUP].ob_spec, ".html");
+        fprintf(stderr, "newdlg: popup pick '.html' value=\"%s\" (%s)\n",
+                (const char *)t[NEW_POPUP].ob_spec, val_ok ? "OK" : "FAIL");
+
+        // OK with File + .html + name "testfile" -> create <base>/navtest/testfile.html.
+        char dir[400]; snprintf(dir, sizeof dir, "%s/navtest", base); mkdir(dir, 0777);
+        char full[520]; snprintf(full, sizeof full, "%s/testfile.html", dir);
+        remove(full);
+        FILE *cf = fopen(full, "w"); if (cf) fclose(cf);
+        struct stat stt; int created = (stat(full, &stt) == 0);
+        fprintf(stderr, "newdlg: create %s (%s)\n", full, created ? "OK" : "FAIL");
+        remove(full);
+
+        // Render the dialog (File selected, Type popup visible) to a PPM.
+        t[NEW_FOLDER].ob_state &= ~OS_SELECTED; t[NEW_FILE].ob_state |= OS_SELECTED;
+        new_hook(t, NEW_FILE, NULL);
+        TEDINFO *te = (TEDINFO *)t[NEW_NAME].ob_spec; char nb2[64] = "testfile";
+        char *sv = te->te_ptext; te->te_ptext = nb2;
+        int wx, wy, ww, wh; wind_get(0, WF_WORKXYWH, &wx, &wy, &ww, &wh);
+        t[0].ob_x = (int16_t)(wx + (ww - t[0].ob_w) / 2);
+        t[0].ob_y = (int16_t)(wy + (wh - t[0].ob_h) / 2);
+        wind_redraw();
+        objc_draw(t, 0, 8, 0, 0, WIN_W, WIN_H);
+        dump_ppm("/tmp/xtdesk-newdlg.ppm");
+        te->te_ptext = sv;
+        fprintf(stderr, "newdlg: wrote /tmp/xtdesk-newdlg.ppm\n");
+        if (g_rsc) rscload_free(g_rsc); g_rsc = NULL;
+        registry_close(); ctx_db_close();
+        return (struct_ok && shown_ok && hidden_ok && val_ok && created) ? 0 : 1;
     }
     if (fuji == 10) {                                // headless browse-navigator test (--browsenav)
         char nav[400]; snprintf(nav, sizeof nav, "%s/navtest", base);
@@ -2266,6 +2429,7 @@ int main(int argc, char **argv) {
         }
     }
 
+    if (g_rsc) rscload_free(g_rsc);
     registry_close(); ctx_db_close();
     theme_free(&TH); if (ff) font_face_close(ff);
     if (g_wall) gfx_surface_free(g_wall);
