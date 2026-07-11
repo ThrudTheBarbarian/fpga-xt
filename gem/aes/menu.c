@@ -162,6 +162,7 @@ static void restore_area(void){
     MFDB scr={0}, src; mfdb_from_surface(&src,g_sav);
     int16_t p[8]={0,0,(int16_t)(g_sw-1),(int16_t)(g_sh-1),(int16_t)g_sx,(int16_t)g_sy,(int16_t)(g_sx+g_sw-1),(int16_t)(g_sy+g_sh-1)};
     vro_cpyfm(H(),VRO_COPY,p,&src,&scr);
+    aes_flush_rect(g_sx,g_sy,g_sw,g_sh);     // push the restored pixels to the plane
     gfx_surface_free(g_sav); g_sav=NULL;
 }
 
@@ -173,6 +174,7 @@ static void hilite_title(int ord,int on){
             int16_t r[4]={(int16_t)x,0,(int16_t)(x+w-1),BARH-2}; vr_recfl(H(),r); vst_color(H(),1); }
     vst_height(H(),14,0,0,0,0);
     v_gtext(H(), x+TPAD, BARH/2-7, (const char*)g_menu[ti].ob_spec);
+    aes_flush_rect(x,0,w,BARH);              // push the title cell to the plane
 }
 
 static void draw_items(int ord,int hov){
@@ -200,6 +202,7 @@ static void draw_items(int ord,int hov){
         vst_color(H(), sel?0:(dis?9:1));
         v_gtext(H(), dx+g_menu[c].ob_x, iy+ih/2-7, lbl);
     }
+    aes_flush_rect(dx,dy,w,h);               // push the pull-down to the plane
 }
 
 static int title_at(int mx){
