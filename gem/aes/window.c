@@ -59,11 +59,42 @@ static int tbh(void){ const theme_slice*s=theme_find(aes_theme(),"titlebar"); re
 
 void wind_calc(int dir,int kind,int x,int y,int w,int h,int*ox,int*oy,int*ow,int*oh){
     int b=bw(), th=tbh(), inf=(kind&W_INFO)?AES_INFO_H:0;
-    if(dir==WC_BORDER){ *ox=x-b; *oy=y-th-inf; *ow=w+2*b; *oh=h+th+inf+b; }   // work -> full (flush header)
-    else              { *ox=x+b; *oy=y+th+inf; *ow=w-2*b; *oh=h-th-inf-b; }   // full -> work
+    // The work area sits BETWEEN the title (top) and the W_INFO footer (bottom):
+    // its origin drops only by the title height, and inf is taken off the BOTTOM.
+    if(dir==WC_BORDER){ *ox=x-b; *oy=y-th; *ow=w+2*b; *oh=h+th+inf+b; }   // work -> full (info footer)
+    else              { *ox=x+b; *oy=y+th; *ow=w-2*b; *oh=h-th-inf-b; }   // full -> work
 }
 
 static void spr(const char*n,int x,int y){ const theme_slice*s=theme_find(aes_theme(),n); if(s) theme_blit(H(),aes_theme(),s,x,y,s->sw,s->sh); }
+// Titlebar buttons come in an active and an ".inactive" (lighter disc) variant;
+// pick the right sprite name for a window's focus state.
+static const char* tbvariant(char*buf,size_t n,const char*base,int active){
+    if(active) return base;
+    snprintf(buf,n,"%s.inactive",base); return buf;
+}
+// Focus state of the window whose interactive title is being drawn right now, so
+// the app's wind_title callback can pick a legible pen: the active title bar is
+// dark (see the darkened `titlebar` slice) -> light text; inactive is pale -> dark.
+static int g_title_active = 1;
+int wind_title_active(void){ return g_title_active; }
+
+// A small diagonal-hatch resize grip glyph (a few 45° lines in PEN_BORDER),
+// drawn hugging a bottom corner of the SIZER_SZ box at (gx,gy).  `left`=1 mirrors
+// it into the bottom-LEFT corner; else the bottom-RIGHT corner.
+static void draw_grip(int gx,int gy,int sz){
+    vsl_color(H(),249); vsl_width(H(),1);                 // PEN_BORDER
+    for(int i=0;i<3;i++){ int o=5+i*4;                    // three parallel 45° lines
+        int16_t p[4]={(int16_t)(gx+sz-1-o),(int16_t)(gy+sz-1),(int16_t)(gx+sz-1),(int16_t)(gy+sz-1-o)};
+        v_pline(H(),2,p);
+    }
+}
+static void draw_grip_l(int gx,int gy,int sz){
+    vsl_color(H(),249); vsl_width(H(),1);                 // PEN_BORDER, mirrored to bottom-LEFT
+    for(int i=0;i<3;i++){ int o=5+i*4;
+        int16_t p[4]={(int16_t)gx,(int16_t)(gy+sz-1-o),(int16_t)(gx+o),(int16_t)(gy+sz-1)};
+        v_pline(H(),2,p);
+    }
+}
 
 // A right-side title button, drawn to read as chrome PAIRED with the left
 // close/maximize controls (16x16 gradient-circle theme sprites).  If the theme
@@ -74,8 +105,9 @@ static void spr(const char*n,int x,int y){ const theme_slice*s=theme_find(aes_th
 // the titlebar, NOT the old square "button" box) topped with a WHITE vector
 // glyph: a downward chevron (WTG_CHEVRON, a "view" popup) or a diagonal
 // double-headed arrow (WTG_EXPAND, a "fit"/expand action).
-static void draw_titlebtn(int bx,int by,int glyph){
-    const char *name = glyph==WTG_CHEVRON ? "view" : glyph==WTG_EXPAND ? "fit" : NULL;
+static void draw_titlebtn(int bx,int by,int glyph,int active){
+    const char *base = glyph==WTG_CHEVRON ? "view" : glyph==WTG_EXPAND ? "fit" : NULL;
+    char nb[32]; const char *name = base ? tbvariant(nb,sizeof nb,base,active) : NULL;
     const theme_slice *s = name ? theme_find(aes_theme(),name) : NULL;
     if(s){ theme_blit(H(),aes_theme(),s, bx+(WTB_W-s->sw)/2, by+(WTB_W-s->sh)/2, s->sw, s->sh); return; }
     int cx=bx+WTB_W/2, cy=by+WTB_W/2, r=WTB_W/2-1;
@@ -141,11 +173,10 @@ static int vsb_geom(awin *W,int*colx,int*coly,int*colw,int*colh,
                     int*trky,int*trkh,int*thy,int*thh){
     if(!vsb_on(W)) return 0;
     int wx,wy,ww,wh; full_work(W,&wx,&wy,&ww,&wh);
-    // Reserve the bottom-right SIZER corner for the resize gadget (classic GEM):
-    // shorten the scrollbar column so the down arrow + thumb travel end ABOVE it,
-    // and the corner stays a clean ~18px sizer (checked first in wind_handle_click).
+    // The scrollbar column spans the FULL work-area height: the resize sizer now
+    // lives in the W_INFO footer BELOW the work area, so there is no longer a
+    // bottom-right corner to carve out — the down arrow sits at the work bottom.
     int cx=wx+ww-SB_W, cy=wy, ch=wh;
-    if(W->kind & W_SIZER){ ch-=SIZER_SZ; if(ch<0) ch=0; }
     int ah=SB_ARROW; if(ah*2 > ch-SB_MINTH) ah=(ch-SB_MINTH)/2; if(ah<0) ah=0;
     int ty=cy+ah, th=ch-2*ah; if(th<1) th=1;
     int total=W->content_h, vis=wh;
@@ -163,8 +194,8 @@ static int vsb_geom(awin *W,int*colx,int*coly,int*colw,int*colh,
 // vscroll.up / vscroll.down arrow sprites blitted at native size centred in
 // their arrow boxes, and the vscroll.thumb 9-slice stretched down its length
 // (fixed 4px caps + a stretched middle, so it never distorts like a squashed
-// pill).  The column is already shortened by vsb_geom when a sizer is present,
-// so the down arrow sits above the reserved bottom-right corner.
+// pill).  The column spans the full work height; the down arrow sits at the
+// work-area bottom (the resize sizer moved to the W_INFO footer below it).
 static void draw_vscroll(int hd){
     awin*W=&g_w[hd];
     int cx,cy,cw,ch,upy,dny,arrh,trky,trkh,thy,thh;
@@ -189,8 +220,9 @@ static void draw_one(int hd, int active){
     theme_draw(H(),aes_theme(),"window", W->x,W->y,W->w,W->h);
     theme_draw(H(),aes_theme(), active?"titlebar":"titlebar.inactive", W->x, W->y, W->w, th);  // flush top
     int cy = W->y+(th-WTB_W)/2;
-    if(W->kind & W_CLOSER) spr("close",    W->x+8,           cy);
-    if(W->kind & W_FULLER) spr("maximize", W->x+8+WTB_PITCH, cy);
+    char nbl[32], nbm[32];
+    if(W->kind & W_CLOSER) spr(tbvariant(nbl,sizeof nbl,"close",   active), W->x+8,           cy);
+    if(W->kind & W_FULLER) spr(tbvariant(nbm,sizeof nbm,"maximize",active), W->x+8+WTB_PITCH, cy);
     if(W->kind & W_NAME){
         // Title work span: right of the close/full boxes, up to the right edge.
         // +8 extra left inset so the title text breathes past the left buttons
@@ -209,23 +241,29 @@ static void draw_one(int hd, int active){
         W->titlex=tlx; W->titley=W->y; W->titlew=tlw; W->titleh=th;
         if(W->title){                          // app-drawn interactive title (clipped to the shortened span)
             int16_t tc[4]={(int16_t)tlx,(int16_t)W->y,(int16_t)(tlx+dlw-1),(int16_t)(W->y+th-1)};
+            g_title_active=active;             // let the callback pick a legible pen
             vs_clip(H(),1,tc); W->title(hd, tlx, W->y, dlw, th, W->titleud); vs_clip(H(),0,tc);
         } else {                               // plain centred name
-            vst_color(H(),1); vst_height(H(),15,0,0,0,0);
+            vst_color(H(),active?0:1); vst_height(H(),15,0,0,0,0);   // white on the dark active bar
             vst_alignment(H(),VDI_TA_CENTER,VDI_TA_HALF,0,0);
             v_gtext(H(), W->x+W->w/2, W->y+th/2, W->name);
             vst_alignment(H(),VDI_TA_LEFT,VDI_TA_TOP,0,0);
         }
-        for(int i=0;i<nb;i++) draw_titlebtn(W->tbx[i], W->tby[i], W->tbglyph[i]);   // over the title, right-aligned
+        for(int i=0;i<nb;i++) draw_titlebtn(W->tbx[i], W->tby[i], W->tbglyph[i], active);   // over the title, right-aligned
     }
-    if(W->kind & W_INFO){          // W_INFO chrome line under the title; tuck 2px inside the
-        int ix=W->x+2, iy=W->y+th, iw=W->w-4;   // rounded frame corners (the flat fill can't self-round)
+    if(W->kind & W_INFO){          // W_INFO chrome line as a FOOTER at the window bottom; tuck 2px
+        int ix=W->x+2, iy=W->y+W->h-AES_INFO_H-2, iw=W->w-4;   // inside the rounded frame corners
         vsf_color(H(),248); vsf_interior(H(),VDI_FIS_SOLID); vsf_perimeter(H(),0);   // PEN_DLG (object.c): light chrome
         int16_t ir[4]={(int16_t)ix,(int16_t)iy,(int16_t)(ix+iw-1),(int16_t)(iy+AES_INFO_H-1)}; vr_recfl(H(),ir);
-        vsl_color(H(),249); vsl_width(H(),1);                                        // PEN_BORDER: bottom divider
-        int16_t il[4]={(int16_t)ix,(int16_t)(iy+AES_INFO_H-1),(int16_t)(ix+iw-1),(int16_t)(iy+AES_INFO_H-1)}; v_pline(H(),2,il);
+        vsl_color(H(),249); vsl_width(H(),1);                                        // PEN_BORDER: TOP divider (work | footer)
+        int16_t il[4]={(int16_t)ix,(int16_t)iy,(int16_t)(ix+iw-1),(int16_t)iy}; v_pline(H(),2,il);
         if(W->info){ int16_t ic[4]={(int16_t)ix,(int16_t)iy,(int16_t)(ix+iw-1),(int16_t)(iy+AES_INFO_H-1)};
             vs_clip(H(),1,ic); W->info(hd,ix,iy,iw,AES_INFO_H,W->infoud); vs_clip(H(),0,ic); }
+    }
+    if(W->kind & W_SIZER){         // resize grips at BOTH ends of the footer band
+        int gy=W->y+W->h-SIZER_SZ-2;                    // bottom-aligned in the footer
+        draw_grip_l(W->x,               gy, SIZER_SZ);  // bottom-left corner
+        draw_grip  (W->x+W->w-SIZER_SZ, gy, SIZER_SZ);  // bottom-right corner
     }
     // work area + content (clipped).  The rect is shrunk by the scrollbar column
     // when the bar shows, so the app reflows into the narrower span.
@@ -401,14 +439,30 @@ int wind_handle_click(int mx,int my){
         }
         post(WM_MOVED,hd,W->x,W->y,W->w,W->h); return 1;
     }
-    // size box (bottom-right corner) — checked before the scrollbar.  vsb_geom
-    // shortens the scrollbar column by SIZER_SZ when W_SIZER, so the down arrow
-    // sits ABOVE this reserved corner (no overlap) and the corner still resizes.
-    if((W->kind&W_SIZER) && mx>=W->x+W->w-SIZER_SZ && my>=W->y+W->h-SIZER_SZ){
-        for(;;){ aes_event e; int t=aes_wait_idle(&e,-1); if(t==AES_QUIT)break;
-            if(t==AES_MOTION){ int nw=e.mx-W->x, nh=e.my-W->y; if(nw<120)nw=120; if(nh<80)nh=80; W->w=nw; W->h=nh; clamp_scroll(W); wind_redraw(); }
-            if(t==AES_BTN_UP) break; }
-        post(WM_SIZED,hd,W->x,W->y,W->w,W->h); return 1;
+    // resize grips: one at EACH end of the W_INFO footer (bottom-left / bottom-right
+    // corners) — checked before the scrollbar.  The right grip drags the bottom+right
+    // edges (classic sizer); the left grip drags the bottom+LEFT edges (right edge
+    // pinned).  The rest of the footer falls through to the app (info-bar Retry etc.).
+    if(W->kind & W_SIZER){
+        int fy=W->y+W->h-AES_INFO_H;                             // footer band top
+        int infr = my>=fy && my<W->y+W->h;
+        int lgrip = infr && mx>=W->x && mx<W->x+SIZER_SZ;
+        int rgrip = infr && mx>=W->x+W->w-SIZER_SZ && mx<W->x+W->w;
+        if(rgrip){
+            for(;;){ aes_event e; int t=aes_wait_idle(&e,-1); if(t==AES_QUIT)break;
+                if(t==AES_MOTION){ int nw=e.mx-W->x, nh=e.my-W->y; if(nw<120)nw=120; if(nh<80)nh=80; W->w=nw; W->h=nh; clamp_scroll(W); wind_redraw(); }
+                if(t==AES_BTN_UP) break; }
+            post(WM_SIZED,hd,W->x,W->y,W->w,W->h); return 1;
+        }
+        if(lgrip){
+            int right=W->x+W->w;                                 // pin the right edge
+            for(;;){ aes_event e; int t=aes_wait_idle(&e,-1); if(t==AES_QUIT)break;
+                if(t==AES_MOTION){ int nx=e.mx, nh=e.my-W->y; int nw=right-nx;
+                    if(nw<120){ nw=120; nx=right-nw; } if(nh<80)nh=80;
+                    W->x=nx; W->w=nw; W->h=nh; clamp_scroll(W); wind_redraw(); }
+                if(t==AES_BTN_UP) break; }
+            post(WM_SIZED,hd,W->x,W->y,W->w,W->h); return 1;
+        }
     }
     // vertical scrollbar in the reserved right column (arrows / thumb drag / track page)
     { int cx,cy,cw,ch,upy,dny,arrh,trky,trkh,thy,thh;

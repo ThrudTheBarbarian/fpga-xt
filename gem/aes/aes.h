@@ -307,7 +307,7 @@ enum { WC_BORDER=0, WC_WORK=1 };                    // wind_calc direction
 
 typedef void (*wind_draw_fn)(int handle, int wx, int wy, int ww, int wh, void *ud);
 
-#define AES_INFO_H 24     // height of the W_INFO chrome line (under the title bar)
+#define AES_INFO_H 24     // height of the W_INFO chrome line (a footer at the window bottom)
 
 int  wind_create(int kind, int x, int y, int w, int h);   // -> handle (0 = none)
 void wind_open(int handle, int x, int y, int w, int h);
@@ -351,6 +351,10 @@ int  wind_handle_wheel(int mx, int my, int delta);
 // title span itself (fn is handed the same tx,ty,tw,th to record its hot-rects,
 // like wind_info records its rect).  NULL fn restores the plain centred name.
 void wind_title(int handle, wind_draw_fn fn, void *ud);
+// True while the wind_title callback is drawing the ACTIVE (focused) window's
+// bar — the active bar is dark, so the app should use a light text pen (0), and a
+// dark pen (1) otherwise.  Only meaningful inside a wind_title callback.
+int wind_title_active(void);
 // ---- App-defined right-side title buttons -------------------------------
 // A window may register up to WIND_MAXTB small icon buttons at the RIGHT of its
 // title bar, drawn in the same size/inset as the left close/full boxes so they
@@ -366,9 +370,10 @@ void wind_titlebtns(int handle, const int *glyphs, int n);
 // Screen rect of right-side title button `idx` (0-based, 0 = leftmost).  Returns
 // 1 with x/y/w/h filled when the button exists (and has been laid out), else 0.
 int  wind_titlebtn_rect(int handle, int idx, int *x, int *y, int *w, int *h);
-// Optional W_INFO chrome line under the title bar (full inner width, like the
-// title): fn draws its contents (count/path/toolbar); the work area shrinks by
-// AES_INFO_H.  Only used when the window was created with W_INFO.
+// Optional W_INFO chrome FOOTER at the window bottom (full inner width): fn draws
+// its contents (count/path/toolbar); the work area shrinks by AES_INFO_H off the
+// bottom.  Only used when the window was created with W_INFO.  When the window is
+// also W_SIZER, resize grips occupy both ends of the footer band.
 void wind_info(int handle, wind_draw_fn fn, void *ud);
 void wind_set_desktop(uint32_t rgba);               // desktop background colour
 // Optional desktop-content drawer — invoked by wind_redraw after the background

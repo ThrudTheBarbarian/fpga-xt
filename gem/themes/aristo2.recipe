@@ -9,7 +9,11 @@
 window              nine    window-standard-head-left window-standard-head-center window-standard-head-right window-standard-center-left window-standard-center-center window-standard-center-right window-standard-bottom-left window-standard-bottom-center window-standard-bottom-right
 window.inactive     nine    window-standard-head-inactive-left window-standard-head-inactive-center window-standard-head-inactive-right window-standard-center-left window-standard-center-center window-standard-center-right window-standard-bottom-left window-standard-bottom-center window-standard-bottom-right
 # Standalone titlebar strips (kept for the AES host demo / panels).
-titlebar            h3      window-standard-head-left window-standard-head-center window-standard-head-right
+# Active titlebar darkened (*60) to a proper dark bar so white title text + the
+# light metal buttons pop -> the active window clearly reads as focused to sit at the brushed-metal button
+# tone, so the (dark) active buttons no longer read as too dark on a pale bar.
+# Inactive stays pale — the dark-vs-pale bar is the main active/inactive cue.
+titlebar            h3      window-standard-head-left*60 window-standard-head-center*60 window-standard-head-right*60
 titlebar.inactive   h3      window-standard-head-inactive-left window-standard-head-inactive-center window-standard-head-inactive-right
 # Titlebar buttons: brushed-metal disc + white Material Symbol, 20x20, composited
 # by gem/tools/gen-titlebar-icons.sh into gem/icons/titlebar (the overlay dir, so
@@ -20,6 +24,11 @@ minimize            sprite  window-standard-minimize-button
 maximize            sprite  maximize
 view                sprite  view
 fit                 sprite  fit
+# Inactive-window variants: light silver disc (texture-circle-light) + muted glyph.
+close.inactive      sprite  close.inactive
+maximize.inactive   sprite  maximize.inactive
+view.inactive       sprite  view.inactive
+fit.inactive        sprite  fit.inactive
 
 # --- buttons -----------------------------------------------------------------
 button              h3      button-bezel-left button-bezel-center button-bezel-right

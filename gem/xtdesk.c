@@ -739,7 +739,10 @@ static void br_title(int hd, int tx, int ty, int tw, int th, void *ud) {
     char masktext[40];
     snprintf(masktext, sizeof masktext, "%s", br_show_all(b->mask) ? "*.*" : b->mask);
     vst_height(HV, 15, 0,0,0,0);
-    vst_color(HV, 1); vst_alignment(HV, VDI_TA_LEFT, VDI_TA_HALF, 0,0);
+    int tpen = 1;                                        // dark text on the pale inactive bar
+    if (wind_title_active()) { v_setrgb(HV, 250, 255,255,255); tpen = 250; }  // white on the dark active bar
+    vst_color(HV, tpen);
+    vst_alignment(HV, VDI_TA_LEFT, VDI_TA_HALF, 0,0);
     int ay = ty + th/2;
     // Split crumbpath into components; cut[k] = strlen to truncate crumbpath to.
     char seg[MAX_CRUMB][80]; int cut[MAX_CRUMB], segw[MAX_CRUMB], nseg = 0;
@@ -830,31 +833,27 @@ static void br_fit(browser *b) {
     wind_open(b->win, cx, cy, bw, bh);                    // already open: resizes in place
     wind_redraw();
 }
-// W_INFO chrome line: Up button (greyed at root) + file count / total size.
+// W_INFO chrome FOOTER (window bottom): file count / total size (+ progress /
+// Retry).  Navigation moved to the ".." tile + the breadcrumb, so there is no
+// "Up" button; resize grips occupy both footer ends, so text insets past them.
 static void br_infobar(int hd, int ix, int iy, int iw, int ih, void *ud) {
     (void)hd; browser *b = ud;
     b->infox = ix; b->infoy = iy; b->infow = iw; b->infoh = ih;
-    int upc = b->rel[0] ? 1 : 9;                              // greyed at the root
-    int ax = ix+12, ay = iy+ih/2;
-    vsf_color(HV, upc); vsf_interior(HV, VDI_FIS_SOLID); vsf_perimeter(HV, 0);
-    int16_t tri[6] = { (int16_t)ax,(int16_t)(ay+5), (int16_t)(ax+5),(int16_t)(ay-5), (int16_t)(ax+10),(int16_t)(ay+5) };
-    v_fillarea(HV, 3, tri);                                   // up-triangle
-    vst_height(HV, 14, 0,0,0,0);
-    vst_color(HV, upc); vst_alignment(HV, VDI_TA_LEFT, VDI_TA_HALF, 0,0);
-    v_gtext(HV, ax+18, ay, "Up");
+    int gripw = 20;                                          // clear the footer resize grips (both ends)
+    int ay = iy+ih/2;
     char info[96];
-    int irx = ix+iw-12;                                      // right edge of the info text
+    int irx = ix+iw-gripw;                                   // right edge of the info text (clear of the R grip)
     b->retryx = 0; b->retryw = 0;                            // no Retry button unless in the error state
     b->fitx = 0; b->fitw = 0;                                // Fit recorded only when drawn
     b->viewx = 0; b->vieww = 0;                             // View button recorded only when drawn
     int drewbar = 0, drewleft = 0;                          // active states draw a graphical bar; idle draws left status
     int pw = 120, pbh = 10;                                  // progress track: 120x10, vertically centred
     int pby = iy + (ih - pbh)/2;
-    int pbx = ix + iw - 12 - pw;                             // right-anchored, before the right margin
+    int pbx = irx - pw;                                      // right-anchored, before the right grip inset
     // (The View popup + Fit are now RIGHT-side title-bar icon buttons — see
     // wind_titlebtns in open_browser_win + the title-button hit-test in br_click;
     // the file mask + path breadcrumb live in the interactive window TITLE.  The
-    // info bar keeps Up / progress / Retry and, when idle, the file-count status.)
+    // info footer keeps progress / Retry and, when idle, the file-count status.)
     if (b->req_fd >= 0 && b->req_kind == RQ_FETCH) {          // fetch in flight: label + determinate bar
         unsigned pc = b->prog_total
                     ? (unsigned)((unsigned long long)b->prog_done * 100 / b->prog_total) : 0;
@@ -892,7 +891,7 @@ static void br_infobar(int hd, int ix, int iy, int iw, int ih, void *ud) {
         snprintf(info, sizeof info, "%d items, %d files  %s", b->nent, b->nfiles, sz);
         vst_height(HV, 14, 0,0,0,0);
         vst_color(HV, 1); vst_alignment(HV, VDI_TA_LEFT, VDI_TA_HALF, 0,0);
-        v_gtext(HV, ix+72, ay, info);                        // left status, after the Up button
+        v_gtext(HV, ix+gripw, ay, info);                     // left status, clear of the left resize grip
         drewleft = 1;
     }
     if (!drewleft) {
@@ -922,14 +921,11 @@ static void br_info_redraw(browser *b) {
     vsf_color(HV, 248); vsf_interior(HV, VDI_FIS_SOLID); vsf_perimeter(HV, 0);   // PEN_DLG chrome
     int16_t ir[4] = { (int16_t)ix, (int16_t)iy, (int16_t)(ix+iw-1), (int16_t)(iy+ih-1) };
     vr_recfl(HV, ir);
-    vsl_color(HV, 249); vsl_width(HV, 1);                                        // PEN_BORDER divider
-    int16_t il[4] = { (int16_t)ix, (int16_t)(iy+ih-1), (int16_t)(ix+iw-1), (int16_t)(iy+ih-1) };
+    vsl_color(HV, 249); vsl_width(HV, 1);                                        // PEN_BORDER: TOP divider (work | footer)
+    int16_t il[4] = { (int16_t)ix, (int16_t)iy, (int16_t)(ix+iw-1), (int16_t)iy };
     v_pline(HV, 2, il);
     br_infobar(HV, ix, iy, iw, ih, b);
     aes_flush_rect(ix, iy, iw, ih);
-}
-static int br_up_hit(browser *b, int mx, int my) {
-    return b->rel[0] && mx >= b->infox+8 && mx < b->infox+70 && my >= b->infoy && my < b->infoy+b->infoh;
 }
 static void open_fuji_browser(int server_id, const char *name);   // fwd
 
@@ -1192,10 +1188,6 @@ static void br_click(browser *b, int mx, int my) {
         my >= b->titley && my < b->titley + b->titleh &&
         mx >= b->maskx && mx < b->maskx + b->maskw) {
         mask_dialog(b); return;
-    }
-    if (br_up_hit(b, mx, my)) {                               // ascend (never above the root)
-        char *s = strrchr(b->rel, '/'); if (s) *s = 0; else b->rel[0] = 0;
-        br_list(b); br_settitle(b); wind_redraw(); return;
     }
     if (b->req_err[0] && b->retryw > 0 &&                     // Retry button (error state): re-run
         mx >= b->retryx && mx < b->retryx + b->retryw &&
@@ -2070,6 +2062,7 @@ int main(int argc, char **argv) {
         else if (!strcmp(argv[i], "--newdlg")) fuji = 11;           // headless: New… resource dialog
         else if (!strcmp(argv[i], "--title")) fuji = 12;            // headless: interactive title breadcrumb/mask
         else if (!strcmp(argv[i], "--titlebtn")) fuji = 13;         // headless: right-side title buttons + Gallery
+        else if (!strcmp(argv[i], "--pair")) fuji = 14;             // headless: front(active)+back(inactive) titlebars
         else if (!strcmp(argv[i], "--scroll")) fuji = 14;           // headless: scrollbar overflow + scroll + wheel
         else snprintf(base, sizeof base, "%s", argv[i]);
     }
@@ -2142,6 +2135,14 @@ int main(int argc, char **argv) {
         dump_ppm("/tmp/xtdesk-nav-fit.ppm");
         registry_close();
         return (dot_ok && crumb_ok && click_ok && fit_ok) ? 0 : 1;
+    }
+    if (fuji == 14) {                                 // headless active/inactive pair (--pair)
+        open_browser("/Media/6502/Games", ICT_MEDIA_8BIT);         // back window -> inactive
+        open_browser("/Media/m68k", ICT_MEDIA_1632);              // opened last -> front, active
+        wind_redraw();                                            // cascaded, so the back titlebar shows
+        dump_ppm("/tmp/xtdesk-pair.ppm");
+        fprintf(stderr, "pair: wrote /tmp/xtdesk-pair.ppm (front active + back inactive)\n");
+        return 0;
     }
     if (fuji == 12) {                                 // headless interactive-title test (--title)
         // Open a browser a couple of levels deep; the title shows the FULL
@@ -2313,27 +2314,29 @@ int main(int argc, char **argv) {
         int wheel_ok = (consumed && wind_scroll_y(nb->win) > 0);
         fprintf(stderr, "scroll: wheel-down consumed=%d -> sy=%d (%s)\n",
                 consumed, wind_scroll_y(nb->win), wheel_ok ? "OK" : "FAIL");
-        // The down arrow now sits ABOVE the reserved bottom-right sizer corner
-        // (vsb_geom shortens the column by SIZER_SZ=18 for a W_SIZER window), so a
-        // click at the down arrow SCROLLS instead of resizing.  Its box is the last
-        // SB_ARROW(16) of the shortened column at the SB_W(16) column's right edge:
-        //   column x0 = fx+fw-16 ; column bottom = fy + (fh-18) ; arrow h = 16.
+        // The scrollbar now spans the FULL work-area height (the sizer moved to the
+        // W_INFO footer BELOW the work area), so the down arrow sits at the work-area
+        // bottom and a click there SCROLLS.  Down-arrow box = last SB_ARROW(16) of the
+        // column: column x0 = fx+fw-16, column bottom = fy+fh, arrow centre fy+fh-8.
         wind_set_scroll(nb->win, 0, 0);
         int da_cx = fx + fw - 8;               // SB_W/2 into the column
-        int da_cy = fy + (fh - 18) - 16 + 8;   // centre of the down-arrow box
+        int da_cy = fy + fh - 8;               // centre of the down-arrow box (work bottom)
         wind_handle_click(da_cx, da_cy);
         int da_sy = wind_scroll_y(nb->win);
         int downarrow_ok = (da_sy > 0);
-        // The bottom-right corner still belongs to the sizer: a click there does
-        // NOT scroll (it takes the resize gadget, checked before the scrollbar).
+        // The resize grips live in the footer at BOTH bottom corners.  A click in
+        // either grip posts WM_SIZED (consumes the click) and does NOT scroll.  In the
+        // headless harness the modal resize loop unwinds immediately (AES_QUIT), so the
+        // size is unchanged; assert the click was consumed and left scroll intact.
         wind_set_scroll(nb->win, 0, 200);
-        int corner_before = wind_scroll_y(nb->win);
-        wind_handle_click(bx + 560 - 2, by + 320 - 2);   // very bottom-right pixel
-        int corner_after = wind_scroll_y(nb->win);
-        int sizer_ok = (corner_after == corner_before);
-        fprintf(stderr, "scroll: down-arrow@(%d,%d) -> sy=%d (%s); corner sy %d->%d (%s)\n",
+        int grip_before = wind_scroll_y(nb->win);
+        int lgrip_ret = wind_handle_click(bx + 8,       by + 320 - 8);   // bottom-LEFT grip
+        int rgrip_ret = wind_handle_click(bx + 560 - 8, by + 320 - 8);   // bottom-RIGHT grip
+        int grip_after = wind_scroll_y(nb->win);
+        int sizer_ok = (lgrip_ret == 1 && rgrip_ret == 1 && grip_after == grip_before);
+        fprintf(stderr, "scroll: down-arrow@(%d,%d) -> sy=%d (%s); grips L=%d R=%d sy %d->%d (%s)\n",
                 da_cx, da_cy, da_sy, downarrow_ok ? "scrolls OK" : "FAIL",
-                corner_before, corner_after, sizer_ok ? "sizer OK" : "FAIL");
+                lgrip_ret, rgrip_ret, grip_before, grip_after, sizer_ok ? "grips OK" : "FAIL");
         registry_close();
         return (overflow_ok && barwidth_ok && last_hidden_top && clamp_ok && hit_ok &&
                 wheel_ok && downarrow_ok && sizer_ok) ? 0 : 1;
