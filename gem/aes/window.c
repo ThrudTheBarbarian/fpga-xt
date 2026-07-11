@@ -19,6 +19,8 @@ typedef struct {
     char name[64];
     wind_draw_fn draw; void *ud;
     wind_draw_fn info; void *infoud;           // W_INFO chrome line
+    wind_draw_fn title; void *titleud;         // interactive title renderer (wind_title)
+    int titlex, titley, titlew, titleh;        // last title work rect (app-drawable span)
 } awin;
 
 static awin g_w[MAXW];          // slot 0 unused (handles are 1-based)
@@ -69,10 +71,21 @@ static void draw_one(int hd, int active){
     int cy = W->y+(th-16)/2;
     if(W->kind & W_CLOSER) spr("close",    W->x+8,  cy);
     if(W->kind & W_FULLER) spr("maximize", W->x+28, cy);
-    if(W->kind & W_NAME){ vst_color(H(),1); vst_height(H(),15,0,0,0,0);
-        vst_alignment(H(),VDI_TA_CENTER,VDI_TA_HALF,0,0);
-        v_gtext(H(), W->x+W->w/2, W->y+th/2, W->name);
-        vst_alignment(H(),VDI_TA_LEFT,VDI_TA_TOP,0,0); }
+    if(W->kind & W_NAME){
+        // Title work span: right of the close/full boxes, up to the right edge.
+        int tlx=W->x+8; if(W->kind&W_CLOSER) tlx+=20; if(W->kind&W_FULLER) tlx+=20;
+        int trx=W->x+W->w-8; int tlw=trx-tlx; if(tlw<0) tlw=0;
+        W->titlex=tlx; W->titley=W->y; W->titlew=tlw; W->titleh=th;
+        if(W->title){                          // app-drawn interactive title (clipped to its span)
+            int16_t tc[4]={(int16_t)tlx,(int16_t)W->y,(int16_t)(trx-1),(int16_t)(W->y+th-1)};
+            vs_clip(H(),1,tc); W->title(hd, tlx, W->y, tlw, th, W->titleud); vs_clip(H(),0,tc);
+        } else {                               // plain centred name
+            vst_color(H(),1); vst_height(H(),15,0,0,0,0);
+            vst_alignment(H(),VDI_TA_CENTER,VDI_TA_HALF,0,0);
+            v_gtext(H(), W->x+W->w/2, W->y+th/2, W->name);
+            vst_alignment(H(),VDI_TA_LEFT,VDI_TA_TOP,0,0);
+        }
+    }
     if(W->kind & W_INFO){          // W_INFO chrome line under the title; tuck 2px inside the
         int ix=W->x+2, iy=W->y+th, iw=W->w-4;   // rounded frame corners (the flat fill can't self-round)
         vsf_color(H(),248); vsf_interior(H(),VDI_FIS_SOLID); vsf_perimeter(H(),0);   // PEN_DLG (object.c): light chrome
@@ -149,6 +162,7 @@ void wind_delete(int hd){ if(hd>=1&&hd<MAXW){ zremove(hd); g_w[hd].used=0; } }
 void wind_set_name(int hd,const char*n){ if(hd>=1&&hd<MAXW){ snprintf(g_w[hd].name,sizeof g_w[hd].name,"%s",n?n:""); } }
 void wind_content(int hd,wind_draw_fn fn,void*ud){ if(hd>=1&&hd<MAXW){ g_w[hd].draw=fn; g_w[hd].ud=ud; } }
 void wind_info(int hd,wind_draw_fn fn,void*ud){ if(hd>=1&&hd<MAXW){ g_w[hd].info=fn; g_w[hd].infoud=ud; } }
+void wind_title(int hd,wind_draw_fn fn,void*ud){ if(hd>=1&&hd<MAXW){ g_w[hd].title=fn; g_w[hd].titleud=ud; } }
 
 void wind_get(int hd,int field,int*a,int*b,int*c,int*d){
     if(hd==0){ int x,y,w,h; work_area(&x,&y,&w,&h); if(a)*a=x; if(b)*b=y; if(c)*c=w; if(d)*d=h; return; }  // desktop
@@ -191,6 +205,20 @@ int wind_handle_click(int mx,int my){
     if((W->kind&W_CLOSER) && mx>=tx+8 && mx<tx+8+16 && my>=ty && my<ty+th){ post(WM_CLOSED,hd,0,0,0,0); return 1; }
     // title bar -> drag (live move)
     if((W->kind&W_MOVER) && my>=ty && my<ty+th && mx>=tx && mx<tx+tw){
+        // Interactive title: a press on the app's title span that does NOT move is
+        // a click for the app (return 0 -> evnt_multi delivers MU_BUTTON at the
+        // press point, the app hit-tests its own title hot-rects).  A press that
+        // moves past the slop still drags, so the whole title stays grab-to-move.
+        if(W->title && mx>=W->titlex && mx<W->titlex+W->titlew){
+            int dnx=mx, dny=my, moved=0;
+            for(;;){ aes_event e; int t=aes_wait_idle(&e,-1);
+                if(t==AES_QUIT) break;
+                if(t==AES_MOTION){ int ex=e.mx-dnx, ey=e.my-dny; if(ex<0)ex=-ex; if(ey<0)ey=-ey;
+                    if(ex>3||ey>3){ moved=1; break; } }
+                if(t==AES_BTN_UP) break; }
+            if(!moved) return 0;               // click (no drag) -> app handles it
+            // moved: fall through into the drag loop (anchored to the press point)
+        }
         int gx=mx-W->x, gy=my-W->y;
         if(g_ovl_begin && g_ovl_begin(W->x,W->y,W->w,W->h)){    // A9: lift window into the HW overlay
             int ox=W->x, oy=W->y, ow=W->w, oh=W->h;            // vacated rect

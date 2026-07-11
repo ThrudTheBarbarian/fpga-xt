@@ -246,17 +246,19 @@ typedef struct {
     OBJECT tree[2 + MAXENT];                           // + the synthetic ".." tile
     int wax, way, waw, wah;                            // last work area (for hit-testing)
     int infox, infoy, infow, infoh;                    // last W_INFO chrome rect
+    int titlex, titley, titlew, titleh;                // last interactive-title work rect
     int retryx, retryw;                                // Retry button rect in the info bar (error state)
     int fitx, fitw;                                    // Fit button rect in the info bar (path windows)
     int viewx, vieww;                                  // View button rect (cycles the view mode)
-    int maskx, maskw;                                  // Filter (file-mask) button rect (info bar)
+    int maskx, maskw;                                  // file-mask span rect (in the title)
     int viewmode;                                      // 1=icons grid, 2=single-col text, 3=multi-col text
     int sortmode, sortinv;                             // 1 unsorted/2 name/3 type/4 size/5 date; sortinv reverses
     int selall;                                        // context-menu "select all": highlight every entry
     char mask[32];                                     // per-window file mask ("*"/"*.*"/"" = show all)
     int ncrumb;                                        // breadcrumb span count (0 = none drawn)
-    int crumbx[MAX_CRUMB], crumbw[MAX_CRUMB];          // per-segment hit rects (info bar left)
-    int crumbcut[MAX_CRUMB];                           // strlen to truncate b->rel to on a segment click
+    int crumbx[MAX_CRUMB], crumbw[MAX_CRUMB];          // per-segment hit rects (in the title)
+    int crumbcut[MAX_CRUMB];                           // strlen to truncate crumbpath to on a segment click
+    char crumbpath[400];                               // full absolute logical path the crumbs were built from
 } browser;
 static browser BR[MAXBR];
 static int g_bx = 380, g_by = 130;
@@ -622,42 +624,58 @@ static void br_progbar(int x, int y, int w, int h, int determinate,
 static int br_textw(const char *s) {                  // width of s in the current font/size
     int16_t e[8]; vqt_extent(HV, s, e); return e[2] - e[0];
 }
-// Draw the location as a row of individually-clickable path segments in the
-// info bar's left region: "<logical_root>/seg1/seg2/…".  Records a hit rect
-// (crumbx/crumbw) + the b->rel truncation length (crumbcut) for every segment
-// actually drawn.  When the row overflows availw it middle-ellipsises at
-// segment granularity (root + "…" + the tail that fits) so the recorded rects
-// stay correct for exactly what is on screen.
-static void br_crumbs(browser *b, int x0, int ay, int availw) {
-    b->ncrumb = 0;
-    vst_height(HV, 14, 0,0,0,0);
+// Interactive window TITLE (wind_title draw fn): the FULL absolute logical path
+// as individually-clickable segments, then the file-mask as its own clickable
+// span — e.g. "/Media/6502/*.*".  The path = logical_root joined with rel, so
+// EVERY absolute level is clickable (incl. ancestors above the window's open
+// root).  Records a hit rect (crumbx/crumbw) + the crumbpath truncation length
+// (crumbcut) per drawn segment, and the mask rect (maskx/maskw).  Overflow
+// middle-ellipsises the path at segment granularity (first + "…" + the tail that
+// fits) while always keeping the mask, so the recorded rects stay correct.
+static void br_title(int hd, int tx, int ty, int tw, int th, void *ud) {
+    (void)hd; browser *b = ud;
+    b->titlex = tx; b->titley = ty; b->titlew = tw; b->titleh = th;
+    b->ncrumb = 0; b->maskx = 0; b->maskw = 0;
+    if (b->rel[0]) snprintf(b->crumbpath, sizeof b->crumbpath, "%s/%s", b->logical_root, b->rel);
+    else           snprintf(b->crumbpath, sizeof b->crumbpath, "%s", b->logical_root);
+    char masktext[40];
+    snprintf(masktext, sizeof masktext, "%s", br_show_all(b->mask) ? "*.*" : b->mask);
+    vst_height(HV, 15, 0,0,0,0);
     vst_color(HV, 1); vst_alignment(HV, VDI_TA_LEFT, VDI_TA_HALF, 0,0);
+    int ay = ty + th/2;
+    // Split crumbpath into components; cut[k] = strlen to truncate crumbpath to.
     char seg[MAX_CRUMB][80]; int cut[MAX_CRUMB], segw[MAX_CRUMB], nseg = 0;
-    snprintf(seg[nseg], sizeof seg[0], "%s", b->logical_root); cut[nseg] = 0; nseg++;
-    for (int i = 0; b->rel[i] && nseg < MAX_CRUMB; ) {     // one span per rel component
-        int j = i; while (b->rel[j] && b->rel[j] != '/') j++;
+    for (int i = 0; b->crumbpath[i] && nseg < MAX_CRUMB; ) {
+        while (b->crumbpath[i] == '/') i++;               // skip separators (incl. a leading '/')
+        if (!b->crumbpath[i]) break;
+        int j = i; while (b->crumbpath[j] && b->crumbpath[j] != '/') j++;
         int len = j - i; if (len > 79) len = 79;
-        memcpy(seg[nseg], b->rel + i, len); seg[nseg][len] = 0;
-        cut[nseg] = j;                                    // truncate rel just before the next '/'
-        nseg++;
-        if (b->rel[j] == '/') i = j + 1; else break;
+        memcpy(seg[nseg], b->crumbpath + i, len); seg[nseg][len] = 0;
+        cut[nseg] = j; nseg++; i = j;
     }
     int sepw = br_textw("/"), ellw = br_textw("...");
-    int need = 0;
-    for (int k = 0; k < nseg; k++) { segw[k] = br_textw(seg[k]); need += segw[k] + (k ? sepw : 0); }
-    int t = 1;                                            // suffix start after an elided middle (1 = show all)
-    if (availw > 0 && need > availw && nseg > 2) {
+    int lead = (b->crumbpath[0] == '/') ? sepw : 0;       // draw a leading '/' for absolute paths
+    int maskw = br_textw(masktext), maskspace = sepw + maskw;
+    int pathavail = tw - maskspace - 6;                   // reserve the mask span at the right
+    for (int k = 0; k < nseg; k++) segw[k] = br_textw(seg[k]);
+    int need = lead;
+    for (int k = 0; k < nseg; k++) need += segw[k] + (k ? sepw : 0);
+    int t = 1;                                            // suffix start after an elided middle (1 = all)
+    if (pathavail > 0 && need > pathavail && nseg > 2) {
         for (t = 2; t < nseg; t++) {
-            int w = segw[0] + sepw + ellw;
+            int w = lead + segw[0] + sepw + ellw;
             for (int k = t; k < nseg; k++) w += sepw + segw[k];
-            if (w <= availw) break;
+            if (w <= pathavail) break;
         }
-        if (t >= nseg) t = nseg - 1;                      // always keep root + last
+        if (t >= nseg) t = nseg - 1;                      // always keep first + last
     }
-    int x = x0;
-    v_gtext(HV, x, ay, seg[0]);                           // root span
-    b->crumbx[b->ncrumb] = x; b->crumbw[b->ncrumb] = segw[0]; b->crumbcut[b->ncrumb] = cut[0]; b->ncrumb++;
-    x += segw[0];
+    int x = tx;
+    if (lead) { v_gtext(HV, x, ay, "/"); x += sepw; }
+    if (nseg > 0) {
+        v_gtext(HV, x, ay, seg[0]);
+        b->crumbx[b->ncrumb] = x; b->crumbw[b->ncrumb] = segw[0]; b->crumbcut[b->ncrumb] = cut[0]; b->ncrumb++;
+        x += segw[0];
+    }
     if (t > 1) { v_gtext(HV, x, ay, "/"); x += sepw; v_gtext(HV, x, ay, "..."); x += ellw; }
     for (int k = (t > 1 ? t : 1); k < nseg; k++) {
         v_gtext(HV, x, ay, "/"); x += sepw;
@@ -667,6 +685,29 @@ static void br_crumbs(browser *b, int x0, int ay, int availw) {
         }
         x += segw[k];
     }
+    v_gtext(HV, x, ay, "/"); x += sepw;                   // mask span (own clickable rect)
+    b->maskx = x; b->maskw = maskw;
+    v_gtext(HV, x, ay, masktext);
+    vst_alignment(HV, VDI_TA_LEFT, VDI_TA_TOP, 0,0);
+}
+// Navigate the window to an absolute logical path (a clicked title segment).
+// Within the current root it just re-points rel; an ancestor above the root
+// re-roots the local window there (rel="") — so ANY level is reachable.  A
+// network (net!=0) root is the server top, so its crumbs are always within it
+// (rel-relative) and never re-root.  fs_root is rebuilt as open_browser_win
+// does (base + logical here).
+static void br_list(browser *b);                          // fwd
+static void br_navigate(browser *b, const char *abspath) {
+    size_t rl = strlen(b->logical_root);
+    if (strncmp(abspath, b->logical_root, rl) == 0 && (abspath[rl] == '/' || abspath[rl] == 0)) {
+        const char *r = abspath + rl; while (*r == '/') r++;   // within the current root
+        snprintf(b->rel, sizeof b->rel, "%s", r);
+    } else if (b->net == 0) {                             // ancestor above the open root: re-root
+        snprintf(b->logical_root, sizeof b->logical_root, "%s", abspath);
+        snprintf(b->fs_root, sizeof b->fs_root, "%s%s", base, abspath);
+        b->rel[0] = 0;
+    } else return;                                        // network: nothing above the server root
+    br_list(b); br_settitle(b); wind_redraw();
 }
 // Fit the window to its current icon-grid contents: enough columns for
 // min(nEntries, 8) × ICON_CW wide and the resulting rows × ICON_CH tall (the
@@ -705,10 +746,9 @@ static void br_infobar(int hd, int ix, int iy, int iw, int ih, void *ud) {
     char info[96];
     int irx = ix+iw-12;                                      // right edge of the info text
     b->retryx = 0; b->retryw = 0;                            // no Retry button unless in the error state
-    b->fitx = 0; b->fitw = 0; b->ncrumb = 0;                // Fit / breadcrumb recorded only when drawn
+    b->fitx = 0; b->fitw = 0;                                // Fit recorded only when drawn
     b->viewx = 0; b->vieww = 0;                             // View button recorded only when drawn
-    b->maskx = 0; b->maskw = 0;                             // Filter button recorded only when drawn
-    int drewbar = 0, drewcrumbs = 0;                        // active states draw a graphical bar + left label
+    int drewbar = 0, drewleft = 0;                          // active states draw a graphical bar; idle draws left status
     int pw = 120, pbh = 10;                                  // progress track: 120x10, vertically centred
     int pby = iy + (ih - pbh)/2;
     int pbx = ix + iw - 12 - pw;                             // right-anchored, before the right margin
@@ -732,18 +772,9 @@ static void br_infobar(int hd, int ix, int iy, int iw, int ih, void *ud) {
         v_gtext(HV, b->viewx + 7, ay, vl);
         irx = b->viewx - 12;                                 // keep other content clear of the button
     }
-    // Filter button (path windows net 0/2, no request in flight): shows the file
-    // mask; click opens the mask dialog.  Sits left of View.  (Titlebar clicks are
-    // consumed by the AES window drag, so this info-bar affordance replaces the
-    // planned title double-click.)
-    if (b->req_fd < 0 && b->net != 1) {
-        char ml[48]; snprintf(ml, sizeof ml, "Filter: %s", b->mask[0] ? b->mask : "*");
-        vst_height(HV, 14, 0,0,0,0);
-        b->maskw = br_textw(ml) + 14; b->maskx = irx - b->maskw;
-        vst_color(HV, 1); vst_alignment(HV, VDI_TA_LEFT, VDI_TA_HALF, 0,0);
-        v_gtext(HV, b->maskx + 7, ay, ml);
-        irx = b->maskx - 12;                                 // keep other content clear of the button
-    }
+    // (The file mask + the path breadcrumb now live in the interactive window
+    // TITLE — see br_title; the info bar keeps Up / View / Fit / progress /
+    // Retry and, when idle, the file-count status on the left.)
     if (b->req_fd >= 0 && b->req_kind == RQ_FETCH) {          // fetch in flight: label + determinate bar
         unsigned pc = b->prog_total
                     ? (unsigned)((unsigned long long)b->prog_done * 100 / b->prog_total) : 0;
@@ -776,11 +807,15 @@ static void br_infobar(int hd, int ix, int iy, int iw, int ih, void *ud) {
     }
     else if (b->net == 1)                                     // servers window (minus the Add tile)
         snprintf(info, sizeof info, "%d servers", b->nent ? b->nent-1 : 0);
-    else {                                                    // path window (net 0/2), idle: breadcrumb
-        br_crumbs(b, ix+72, ay, irx - (ix+72) - 8);          // clickable "<root>/seg1/seg2/…"
-        drewcrumbs = 1;
+    else {                                                    // path window (net 0/2), idle: file-count status
+        char sz[16]; br_fmt_size(b->total, sz, sizeof sz);
+        snprintf(info, sizeof info, "%d items, %d files  %s", b->nent, b->nfiles, sz);
+        vst_height(HV, 14, 0,0,0,0);
+        vst_color(HV, 1); vst_alignment(HV, VDI_TA_LEFT, VDI_TA_HALF, 0,0);
+        v_gtext(HV, ix+72, ay, info);                        // left status, after the Up button
+        drewleft = 1;
     }
-    if (!drewcrumbs) {
+    if (!drewleft) {
         vst_color(HV, 1); vst_alignment(HV, VDI_TA_RIGHT, VDI_TA_HALF, 0,0);
         v_gtext(HV, drewbar ? pbx-8 : irx, ay, info);        // active: label to the LEFT of the bar
     }
@@ -1041,13 +1076,18 @@ static int br_hit_slot(browser *b, int mx, int my) {
 }
 static void br_click(browser *b, int mx, int my) {
     if (b->req_fd >= 0) return;                               // request in flight: ignore clicks
-    for (int c = 0; c < b->ncrumb; c++)                       // breadcrumb: jump to a path level
-        if (my >= b->infoy && my < b->infoy + b->infoh &&
+    for (int c = 0; c < b->ncrumb; c++)                       // title breadcrumb: jump to an absolute level
+        if (my >= b->titley && my < b->titley + b->titleh &&
             mx >= b->crumbx[c] && mx < b->crumbx[c] + b->crumbw[c]) {
-            if (b->crumbcut[c] >= (int)strlen(b->rel)) return;   // current level: no-op
-            b->rel[b->crumbcut[c]] = 0;
-            br_list(b); br_settitle(b); wind_redraw(); return;
+            char tgt[400]; snprintf(tgt, sizeof tgt, "%s", b->crumbpath);
+            if (b->crumbcut[c] < (int)sizeof tgt) tgt[b->crumbcut[c]] = 0;
+            br_navigate(b, tgt); return;
         }
+    if (b->maskw > 0 &&                                       // title mask span: edit the file filter
+        my >= b->titley && my < b->titley + b->titleh &&
+        mx >= b->maskx && mx < b->maskx + b->maskw) {
+        mask_dialog(b); return;
+    }
     if (br_up_hit(b, mx, my)) {                               // ascend (never above the root)
         char *s = strrchr(b->rel, '/'); if (s) *s = 0; else b->rel[0] = 0;
         br_list(b); br_settitle(b); wind_redraw(); return;
@@ -1069,11 +1109,6 @@ static void br_click(browser *b, int mx, int my) {
         my >= b->infoy && my < b->infoy + b->infoh) {
         b->viewmode = b->viewmode >= 3 ? 1 : b->viewmode + 1;
         b->sel = -1; wind_redraw(); return;
-    }
-    if (b->maskw > 0 &&                                     // Filter button: edit the file mask
-        mx >= b->maskx && mx < b->maskx + b->maskw &&
-        my >= b->infoy && my < b->infoy + b->infoh) {
-        mask_dialog(b); return;
     }
     b->selall = 0;                                           // any in-window click drops a "select all"
     int slot = br_hit_slot(b, mx, my);
@@ -1140,6 +1175,7 @@ static void open_browser_win(const char *logical, int media_type, int net, int s
     br_list(b); br_settitle(b);
     wind_content(b->win, br_content, b);
     wind_info(b->win, br_infobar, b);
+    if (net != 1) wind_title(b->win, br_title, b);    // path windows: interactive title; servers keep a plain name
     wind_open(b->win, bx, by, bw, bh);
     g_bx += 34; g_by += 30; if (g_by > WIN_H-320) { g_bx = 380; g_by = 130; }
 }
@@ -1925,6 +1961,7 @@ int main(int argc, char **argv) {
         else if (!strcmp(argv[i], "--ctx"))  fuji = 9;              // headless: right-click context menu
         else if (!strcmp(argv[i], "--browsenav")) fuji = 10;        // headless: browse navigator
         else if (!strcmp(argv[i], "--newdlg")) fuji = 11;           // headless: New… resource dialog
+        else if (!strcmp(argv[i], "--title")) fuji = 12;            // headless: interactive title breadcrumb/mask
         else snprintf(base, sizeof base, "%s", argv[i]);
     }
 
@@ -1971,15 +2008,17 @@ int main(int argc, char **argv) {
         wind_redraw();                                 // runs br_infobar -> lays out the crumbs
         dump_ppm("/tmp/xtdesk-nav.ppm");
         int dot_ok = (nb->tree[1].ob_type == G_CICON && nb->tree[1].ob_spec == (void*)&g_dotcic);
-        int crumb_ok = (nb->ncrumb == 3 && nb->crumbcut[0] == 0 &&
-                        nb->crumbcut[1] == 1 && nb->crumbcut[2] == 3);
-        fprintf(stderr, "nav: rel=%s nent=%d  '..' first=%s  ncrumb=%d (%s)\n",
-                nb->rel, nb->nent, dot_ok ? "OK" : "FAIL", nb->ncrumb, crumb_ok ? "OK" : "FAIL");
+        // Title crumbs are the FULL absolute path "/navtest/a/b": segments
+        // navtest(cut=8) a(cut=10) b(cut=12), each truncating crumbpath.
+        int crumb_ok = (nb->ncrumb == 3 && nb->crumbcut[0] == 8 &&
+                        nb->crumbcut[1] == 10 && nb->crumbcut[2] == 12);
+        fprintf(stderr, "nav: rel=%s nent=%d  '..' first=%s  ncrumb=%d path=%s (%s)\n",
+                nb->rel, nb->nent, dot_ok ? "OK" : "FAIL", nb->ncrumb, nb->crumbpath, crumb_ok ? "OK" : "FAIL");
         for (int c = 0; c < nb->ncrumb; c++)
             fprintf(stderr, "  crumb %d x=%d w=%d cut=%d\n",
                     c, nb->crumbx[c], nb->crumbw[c], nb->crumbcut[c]);
         if (nb->ncrumb >= 2)                           // click the "a" breadcrumb -> re-list at rel="a"
-            br_click(nb, nb->crumbx[1] + 2, nb->infoy + nb->infoh/2);
+            br_click(nb, nb->crumbx[1] + 2, nb->titley + nb->titleh/2);
         int click_ok = !strcmp(nb->rel, "a");
         fprintf(stderr, "nav: breadcrumb click 'a' -> rel=\"%s\" (%s)\n", nb->rel, click_ok ? "OK" : "FAIL");
         wind_redraw();                                 // refresh Fit rect at the new level
@@ -1993,6 +2032,41 @@ int main(int argc, char **argv) {
         dump_ppm("/tmp/xtdesk-nav-fit.ppm");
         registry_close();
         return (dot_ok && crumb_ok && click_ok && fit_ok) ? 0 : 1;
+    }
+    if (fuji == 12) {                                 // headless interactive-title test (--title)
+        // Open a browser a couple of levels deep; the title shows the FULL
+        // absolute path "/Media/6502/Games" as clickable segments + "/*.*".
+        open_browser("/Media/6502/Games", ICT_MEDIA_8BIT);
+        browser *nb = BR[0].used ? &BR[0] : NULL;
+        if (!nb) { fprintf(stderr, "title: no browser (mkdir <base>/Media/6502/Games first)\n"); return 1; }
+        wind_redraw();                                // draw_one -> br_title lays out the crumbs + mask
+        // Every absolute level is a segment: Media(cut=6) 6502(cut=11) Games(cut=17).
+        int path_ok = !strcmp(nb->crumbpath, "/Media/6502/Games");
+        int seg_ok  = (nb->ncrumb == 3 && nb->crumbcut[0] == 6 &&
+                       nb->crumbcut[1] == 11 && nb->crumbcut[2] == 17);
+        int mask_ok = (nb->maskw > 0 && nb->maskx > nb->crumbx[nb->ncrumb-1]);
+        fprintf(stderr, "title: path=\"%s\" ncrumb=%d maskx=%d maskw=%d (%s/%s/%s)\n",
+                nb->crumbpath, nb->ncrumb, nb->maskx, nb->maskw,
+                path_ok ? "OK" : "FAIL", seg_ok ? "OK" : "FAIL", mask_ok ? "OK" : "FAIL");
+        for (int c = 0; c < nb->ncrumb; c++)
+            fprintf(stderr, "  seg %d x=%d w=%d cut=%d\n", c, nb->crumbx[c], nb->crumbw[c], nb->crumbcut[c]);
+        dump_ppm("/tmp/xtdesk-title.ppm");            // shows "/Media/6502/Games/*.*"
+        // A click at the mask span resolves to the mask (not a crumb) — the same
+        // hit-test br_click runs before opening mask_dialog.
+        int mcx = nb->maskx + 2, mcy = nb->titley + nb->titleh/2, hit_mask = 0;
+        if (nb->maskw > 0 && mcy >= nb->titley && mcy < nb->titley + nb->titleh &&
+            mcx >= nb->maskx && mcx < nb->maskx + nb->maskw) hit_mask = 1;
+        for (int c = 0; c < nb->ncrumb; c++)          // must NOT also fall on a crumb
+            if (mcx >= nb->crumbx[c] && mcx < nb->crumbx[c] + nb->crumbw[c]) hit_mask = 0;
+        fprintf(stderr, "title: mask hit-test at (%d,%d) -> %s\n", mcx, mcy, hit_mask ? "OK" : "FAIL");
+        // Click the "Media" segment (an ancestor ABOVE the open root) -> re-root
+        // the window to /Media (rel="").
+        br_click(nb, nb->crumbx[0] + 2, nb->titley + nb->titleh/2);
+        int up_ok = (!strcmp(nb->logical_root, "/Media") && nb->rel[0] == 0);
+        fprintf(stderr, "title: click 'Media' -> root=\"%s\" rel=\"%s\" (%s)\n",
+                nb->logical_root, nb->rel, up_ok ? "OK" : "FAIL");
+        registry_close();
+        return (path_ok && seg_ok && mask_ok && hit_mask && up_ok) ? 0 : 1;
     }
     if (fuji == 7) {                                  // headless text view-mode render (--views)
         open_browser("/navtest/many", ICT_MEDIA_8BIT);   // a dir with many files

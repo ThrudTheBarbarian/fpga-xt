@@ -317,6 +317,16 @@ int  wind_find(int x, int y);                       // topmost window at point (
 int  wind_top(void);                                // topmost open window (0 = none)
 void wind_raise(int handle);                        // bring an open window to the top
 void wind_content(int handle, wind_draw_fn fn, void *ud);
+// Optional interactive TITLE renderer (parallel to wind_content/wind_info): when
+// set, draw_one calls fn(handle, tx,ty,tw,th, ud) to draw the title's text span
+// — the area between the left close/full boxes and the right edge — instead of
+// the plain window name.  A button-down there that is NOT on the close/full boxes
+// and does NOT start a drag is delivered to the app as a normal MU_BUTTON at that
+// point (mirroring how info-bar clicks reach the app); a press that moves still
+// drags the window.  window.c stays content-agnostic: the app hit-tests the
+// title span itself (fn is handed the same tx,ty,tw,th to record its hot-rects,
+// like wind_info records its rect).  NULL fn restores the plain centred name.
+void wind_title(int handle, wind_draw_fn fn, void *ud);
 // Optional W_INFO chrome line under the title bar (full inner width, like the
 // title): fn draws its contents (count/path/toolbar); the work area shrinks by
 // AES_INFO_H.  Only used when the window was created with W_INFO.
