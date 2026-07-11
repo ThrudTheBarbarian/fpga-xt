@@ -38,8 +38,8 @@ mkicon() {
 }
 mkicon retro/xe.pam                              "$here/icons/xe.pam"
 mkicon retro/st.pam                              "$here/icons/st.pam"
-mkicon retro/floppy525.pam                       "$repo/iconSrc/devices/media-floppy-3.5.png"
-mkicon retro/floppy35.pam                        "$repo/iconSrc/devices/media-floppy-3.5.png"
+mkicon retro/floppy525.pam                       "$repo/iconSrc/devices/media-floppy-5.25.png"   # 8-bit: 5.25"
+mkicon retro/floppy35.pam                        "$repo/iconSrc/devices/media-floppy-3.5.png"    # 16-bit: 3.5"
 mkicon devices/network-nfs.pam                   "$repo/iconSrc/devices/network-nfs.png"
 mkicon places/crystal_clear-style/folder-blue.pam "$repo/iconSrc/actions/folder-new.png"
 mkicon mimetypes/crystal-style/text-x-plain.pam  "$repo/iconSrc/mimetypes/crystal-style/text-x-plain.png"
