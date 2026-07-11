@@ -5,3 +5,6 @@
 	path = third_party/dropbear
 	url = https://github.com/mkj/dropbear.git
 	shallow = true
+[submodule "third_party/Rocks"]
+	path = third_party/Rocks
+	url = https://github.com/ThrudTheBarbarian/Rocks

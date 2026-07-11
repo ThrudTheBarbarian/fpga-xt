@@ -257,12 +257,12 @@ $(BUILD)/libm.so: newlib-pic/libm.a $(BUILD)/libc.so | $(BUILD)
 # dynamic imports resolved by the kernel export table at load (libgcc isn't PIC).
 GEM := ../gem
 FT  := ../xtos/freetype
-# The ONE shared GEM .rsc codec lives in the sibling fpga-gem repo (co-located
-# on every dev machine); referenced, not copied.  The AES bridge $(GEM)/aes/
+# The ONE shared GEM .rsc codec lives in the third_party/Rocks submodule (the
+# "Rocks" resource editor); referenced, not copied.  The AES bridge $(GEM)/aes/
 # rscload.c rides in via the aes/*.c wildcard below and links against this
 # engine object, built separately (it sits outside aes/) with aes.h force-
 # included so its RSC_OBJECT/RSC_TEDINFO + flag/type enums coincide with ours.
-FPGAGEM := ../../fpga-gem/src
+FPGAGEM := ../third_party/Rocks/src
 RSC_ENGINE_OBJ := $(BUILD)/gem_rsc.o
 # Desktop artwork (theme, icons, wallpaper) is user content on the SD — /OS/Themes,
 # /OS/Icons, /OS/Wallpaper, each selected by a `Default` file — not baked in.
