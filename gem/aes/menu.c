@@ -233,11 +233,20 @@ void menu_render_open(int to, int io){
     draw_items(to,hov);
 }
 
+// A bar click drives the pull-down.  BOTH interaction styles work:
+//   - press-drag-release: hold on the title, drag onto an item, release -> pick.
+//   - click-to-latch:     CLICK the title (down+up, no travel) -> the menu stays
+//     open; then click an item to pick, or click away to dismiss.
+// The latch is load-bearing.  This used to select on the FIRST button-up
+// unconditionally, so a plain click opened the menu on the down and closed it on
+// the up with hov still -1 — no selection, yet the click was consumed.  Symptom:
+// clicking the menubar swallowed the click and actioned nothing, and menus were
+// unusable with any input that clicks rather than holds (keyboard/touch mouse).
 int menu_handle_click(int mx, int my){
     if(!g_menu || my>=BARH) return 0;
     int cur=title_at(mx); if(cur<0) return 1;        // bar click, no title -> consumed
     open_menu(cur);
-    int hov=-1, sel=-1;
+    int hov=-1, sel=-1, latched=0;
     for(;;){
         aes_event ev; int t=aes_wait(&ev,-1);
         if(t==AES_QUIT){ close_menu(cur); return 1; }
@@ -246,7 +255,12 @@ int menu_handle_click(int mx, int my){
             if(nt>=0 && nt!=cur){ close_menu(cur); cur=nt; open_menu(cur); hov=-1; }
             else if(hov!=-1){ hov=-1; draw_items(cur,hov); } }
         else { int hi=item_at(cur,nx,ny); if(hi!=hov){ hov=hi; draw_items(cur,hov); } }
-        if(t==AES_BTN_UP){ sel=hov; break; }
+        if(t==AES_BTN_UP){
+            if(hov>=0){ sel=hov; break; }            // released on an item -> pick it
+            if(!latched){ latched=1; continue; }     // plain click on the title -> latch open
+            if(ny<BARH) continue;                    // latched, released on the bar -> stay open
+            break;                                   // latched, released off the menu -> dismiss
+        }
     }
     close_menu(cur);
     if(sel>=0){ int16_t msg[8]={MN_SELECTED,1,0,(int16_t)(T0+cur),(int16_t)sel,0,0,0}; appl_write(0,16,msg); }
