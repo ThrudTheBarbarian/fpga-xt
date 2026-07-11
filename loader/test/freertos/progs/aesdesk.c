@@ -1038,7 +1038,7 @@ static void br_navigate(browser *b, const char *abspath) {
         snprintf(b->fs_root, sizeof b->fs_root, "%s", abspath);
         b->rel[0] = 0;
     } else return;                                        // network: nothing above the server root
-    br_list(b); br_settitle(b); repaint();
+    br_list(b); br_settitle(b); wind_redraw_win(b->win);
 }
 // Fit the window to its current icon-grid contents: enough columns for
 // min(nEntries, 8) × ICON_CW wide and the resulting rows × ICON_CH tall (the
@@ -1274,7 +1274,7 @@ static void mask_dialog(browser *b) {
     char m[32]; snprintf(m, sizeof m, "%s", mk_buf);  // trim trailing blanks; empty -> "*"
     for (int i = (int)strlen(m)-1; i >= 0 && m[i] == ' '; i--) m[i] = 0;
     snprintf(b->mask, sizeof b->mask, "%s", m[0] ? m : "*");
-    br_list(b); br_settitle(b); repaint();            // re-list/re-layout/retitle/redraw
+    br_list(b); br_settitle(b); wind_redraw_win(b->win);            // re-list/re-layout/retitle/redraw
 }
 
 // ---- async pump: feed arrived reply lines back into the owning browser -----
@@ -1288,18 +1288,18 @@ static void net_req_fail(browser *b, const char *msg) {
         snprintf(m, sizeof m, "[3][%s failed|%.60s][OK]", kind == RQ_ADD ? "Add server" : "Fetch", e);
         form_alert(1, m);
         if (kind == RQ_ADD) srv_list_start(b); else net_list_start(b);
-        repaint();
+        wind_redraw_win(b->win);
         return;
     }
     snprintf(b->req_err, sizeof b->req_err, "%s", msg);       // lists: empty + error in the info bar
     if (kind == RQ_SRV) srv_finish(b); else net_finish(b);
-    repaint();
+    wind_redraw_win(b->win);
 }
 static void net_req_line(browser *b, char *ln) {              // dispatch one reply line
     if (b->req_kind == RQ_ADD) {                              // one-line reply: +ok <id> / -err
         if (ln[0] == '-') { net_req_fail(b, ln + 1); return; }
         net_req_close(b);
-        srv_list_start(b); repaint();                         // async refresh: the new tile appears
+        srv_list_start(b); wind_redraw_win(b->win);                         // async refresh: the new tile appears
         return;
     }
     if (b->req_kind == RQ_FETCH) {
@@ -1308,7 +1308,7 @@ static void net_req_line(browser *b, char *ln) {              // dispatch one re
             br_info_redraw(b);                                // ONLY the info bar repaints
         } else if (!strncmp(ln, "+ok", 3)) {
             net_req_close(b);
-            net_list_start(b); repaint();                     // async re-list: entry solidifies
+            net_list_start(b); wind_redraw_win(b->win);                     // async re-list: entry solidifies
         } else if (ln[0] == '-') {
             net_req_fail(b, ln + 1);
         }
@@ -1329,7 +1329,7 @@ static void net_req_line(browser *b, char *ln) {              // dispatch one re
         int kind = b->req_kind;
         net_req_close(b);
         if (kind == RQ_SRV) srv_finish(b); else net_finish(b);
-        repaint();
+        wind_redraw_win(b->win);
         return;
     }
     if (b->req_kind == RQ_SRV) srv_row(b, ln); else net_row(b, ln);
@@ -1370,7 +1370,7 @@ static void net_pump(void) {
         // bar moving, in the servers window too).
         if (b->req_fd >= 0 && (b->req_kind == RQ_LSC || b->req_kind == RQ_SRV)) {
             b->prog_phase++;
-            if (b->nent != before) repaint();
+            if (b->nent != before) wind_redraw_win(b->win);
             else                   br_info_redraw(b);
         }
     }
@@ -1409,7 +1409,7 @@ static void br_view_popup(browser *b, int px, int py) {
     };
     int r = menu_popup(it, 4, px, py);
     if (r < V_ICONS || r > V_GALLERY) return;
-    b->viewmode = r; b->sel = -1; repaint();
+    b->viewmode = r; b->sel = -1; wind_redraw_win(b->win);
 }
 static void br_click(browser *b, int mx, int my) {
     if (b->req_fd >= 0) return;                               // request in flight: ignore clicks
@@ -1439,24 +1439,24 @@ static void br_click(browser *b, int mx, int my) {
         my >= b->infoy && my < b->infoy + b->infoh) {
         b->req_err[0] = 0;
         if (b->net == 1) srv_list_start(b); else net_list_start(b);
-        repaint(); return;
+        wind_redraw_win(b->win); return;
     }
     b->selall = 0;                                           // any in-window click drops a "select all"
     int slot = br_hit_slot(b, mx, my);
-    if (slot < 0) { b->sel = -1; repaint(); return; }
+    if (slot < 0) { b->sel = -1; wind_redraw_win(b->win); return; }
     if (br_tree_tri_hit(b, slot, mx)) {                      // tree disclosure: toggle, not select/open
         int td = b->rel[0] ? 1 : 0, ti = slot - td;
         if (b->ent[ti].expanded) br_expand_del(b, b->ent[ti].path);
         else                     br_expand_add(b, b->ent[ti].path);
         br_list(b);                                          // rebuild the flattened tree (re-reads children)
         br_report_content(b);                                // new row count -> scrollbar
-        repaint();
+        wind_redraw_win(b->win);
         return;
     }
     int dd = b->rel[0] ? 1 : 0;
     int isdot = (dd && slot == 0);                          // synthetic ".." up-tile
     int i = slot-dd, was = (!isdot && b->sel == i);
-    b->sel = isdot ? -1 : i; repaint();
+    b->sel = isdot ? -1 : i; wind_redraw_win(b->win);
     int mx2, my2, nc2; int16_t m2[8];
     int r = evnt_multi(MU_BUTTON|MU_TIMER, 2,1,1, 0,0,0,0,0, 0,0,0,0,0, m2, DCLICK_MS, 0,
                        &mx2, &my2, NULL, NULL, NULL, &nc2);
@@ -1465,7 +1465,7 @@ static void br_click(browser *b, int mx, int my) {
         if (w2 == b->win && br_hit_slot(b, mx2, my2) == slot) {   // double-click
             if (isdot) {                                     // ".." : ascend one level (like Up)
                 char *s = strrchr(b->rel, '/'); if (s) *s = 0; else b->rel[0] = 0;
-                br_list(b); br_settitle(b); repaint();
+                br_list(b); br_settitle(b); wind_redraw_win(b->win);
             } else if (b->net == 1) {                        // servers window
                 if (b->ent[i].srvid < 0)                     // "Add server": the dialog
                     add_server_dialog(b);
@@ -1473,7 +1473,7 @@ static void br_click(browser *b, int mx, int my) {
             } else if (b->ent[i].dir) {                      // descend
                 int n = (int)strlen(b->rel);
                 snprintf(b->rel + n, sizeof b->rel - n, "%s%s", b->rel[0] ? "/" : "", b->ent[i].name);
-                br_list(b); br_settitle(b); repaint();
+                br_list(b); br_settitle(b); wind_redraw_win(b->win);
             } else if (b->net == 2) {                        // network file: launch cached / fetch ghost
                 net_open(b, i);
             } else {                                         // launch the file in its emulator
@@ -1486,7 +1486,7 @@ static void br_click(browser *b, int mx, int my) {
         else if (!w2)     desk_click(mx2, my2);
         return;
     }
-    if (was) { b->sel = -1; repaint(); }                     // toggle off
+    if (was) { b->sel = -1; wind_redraw_win(b->win); }                     // toggle off
 }
 static void open_browser_win(const char *logical, int media_type, int net, int server_id) {
     for (int i = 0; i < MAXBR; i++) {             // one window per place: re-top it
@@ -1494,7 +1494,7 @@ static void open_browser_win(const char *logical, int media_type, int net, int s
         if (!e->used || e->net != net) continue;
         if (net == 2 ? e->server_id == server_id
                      : strcmp(e->logical_root, logical) == 0) {
-            wind_raise(e->win); repaint();
+            wind_raise(e->win);   // wind_raise already repaints+presents the raised window's rect
             return;
         }
     }
@@ -1557,7 +1557,7 @@ static void desk_click(int mx, int my) {
     int obj = objc_find(desk, 0, 2, mx, my);
     if (obj <= 0) {                                              // empty desktop -> drop any selection
         int old = desk_sel(); clear_sel();
-        if (old) { int x,y,w,h; icon_dirty(old,&x,&y,&w,&h); repaint_rect(x,y,w,h); }
+        if (old) { int x,y,w,h; icon_dirty(old,&x,&y,&w,&h); wind_redraw_area(x,y,w,h); }
         return;
     }
     int was_sel = desk[obj].ob_state & OS_SELECTED;
@@ -1565,7 +1565,7 @@ static void desk_click(int mx, int my) {
     clear_sel(); desk[obj].ob_state |= OS_SELECTED;              // immediate select
     { int x,y,w,h; icon_dirty(obj,&x,&y,&w,&h);
       if (old && old != obj) { int ox,oy,ow,oh; icon_dirty(old,&ox,&oy,&ow,&oh); rect_union(&x,&y,&w,&h,ox,oy,ow,oh); }
-      repaint_rect(x,y,w,h); }
+      wind_redraw_area(x,y,w,h); }
 
     int mx2, my2, nc2; int16_t m2[8];
     int r = evnt_multi(MU_BUTTON|MU_TIMER, 2,1,1, 0,0,0,0,0, 0,0,0,0,0, m2, DCLICK_MS, 0,
@@ -1576,7 +1576,7 @@ static void desk_click(int mx, int my) {
         desk_click(mx2, my2); return;                            // 2nd click elsewhere
     }
     if (was_sel) { desk[obj].ob_state &= ~OS_SELECTED;           // toggle off
-                   int x,y,w,h; icon_dirty(obj,&x,&y,&w,&h); repaint_rect(x,y,w,h); }
+                   int x,y,w,h; icon_dirty(obj,&x,&y,&w,&h); wind_redraw_area(x,y,w,h); }
 }
 
 // ======================================================================
@@ -1902,7 +1902,7 @@ static void ctx_open_entry(browser *b, int i) {
     } else if (b->ent[i].dir) {
         int n = (int)strlen(b->rel);
         snprintf(b->rel + n, sizeof b->rel - n, "%s%s", b->rel[0] ? "/" : "", b->ent[i].name);
-        br_list(b); br_settitle(b); repaint();
+        br_list(b); br_settitle(b); wind_redraw_win(b->win);
     } else if (b->net == 2) {
         net_open(b, i);
     } else {
@@ -2023,7 +2023,7 @@ static void ctx_new(browser *b) {
         if (!new_folder_dialog(nm, sizeof nm)) return;
         char full[520]; ctx_entry_path(b, nm, full, sizeof full);
         if (sys_mkdir(full, 0777) != 0) { form_alert(1, "[3][Could not create the folder][OK]"); return; }
-        br_list(b); br_settitle(b); repaint(); return;
+        br_list(b); br_settitle(b); wind_redraw_win(b->win); return;
     }
 
     // Reset the shared resource tree to a pristine state (Folder default, Type
@@ -2063,7 +2063,7 @@ static void ctx_new(browser *b) {
     } else if (sys_mkdir(full, 0777) != 0) {
         form_alert(1, "[3][Could not create the folder][OK]"); return;
     }
-    br_list(b); br_settitle(b); repaint();
+    br_list(b); br_settitle(b); wind_redraw_win(b->win);
 }
 // Delete the target entr(y/ies): confirm, then unlink (local net==0 only).  An
 // icon-scope click deletes that entry; otherwise the selection (or every listed
@@ -2083,7 +2083,7 @@ static void ctx_delete(browser *b, int scope, int tentry) {
         sys_unlink(full);                                // files (+ dirs the kernel allows); ignore failures
     }
     b->sel = -1; b->selall = 0;
-    br_list(b); br_settitle(b); repaint();
+    br_list(b); br_settitle(b); wind_redraw_win(b->win);
 }
 // Dispatch a menu_popup result (factored out of ctx_menu_at to match the host
 // twin, whose --ctx test invokes actions without driving the modal loop).
@@ -2094,7 +2094,7 @@ static void ctx_apply(int chosen, ctxrow *crows, int scope, browser *b, int tent
             case ACT_OPEN:      if (b && tentry >= 0) ctx_open_entry(b, tentry);
                                 else if (tdeskobj)   open_icon(tdeskobj); break;
             case ACT_INFO:      ctx_info(scope, b, tentry, tdeskobj); break;
-            case ACT_SELECTALL: if (b) { b->selall = 1; b->sel = -1; repaint(); } break;
+            case ACT_SELECTALL: if (b) { b->selall = 1; b->sel = -1; wind_redraw_win(b->win); } break;
             case ACT_NEW:       ctx_new(b); break;
             case ACT_DELETE:    ctx_delete(b, scope, tentry); break;
             case ACT_BROWSE:    ctx_browse(scope, b, tentry, tdeskobj); break;
@@ -2104,15 +2104,15 @@ static void ctx_apply(int chosen, ctxrow *crows, int scope, browser *b, int tent
     }
     if (!b) return;                                      // Show items act on a window
     switch (chosen) {
-        case SH_VIEW_ICONS: b->viewmode = 1; b->sel = -1; repaint(); break;
-        case SH_VIEW_LIST:  b->viewmode = 2; b->sel = -1; repaint(); break;
-        case SH_VIEW_COLS:  b->viewmode = 3; b->sel = -1; repaint(); break;
-        case SH_VIEW_GALLERY: b->viewmode = 4; b->sel = -1; repaint(); break;
-        case SH_SORT_NAME:  b->sortmode = 2; br_list(b); repaint(); break;
-        case SH_SORT_TYPE:  b->sortmode = 3; br_list(b); repaint(); break;
-        case SH_SORT_SIZE:  b->sortmode = 4; br_list(b); repaint(); break;
-        case SH_SORT_DATE:  b->sortmode = 5; br_list(b); repaint(); break;
-        case SH_SORT_INV:   b->sortinv = !b->sortinv; br_list(b); repaint(); break;
+        case SH_VIEW_ICONS: b->viewmode = 1; b->sel = -1; wind_redraw_win(b->win); break;
+        case SH_VIEW_LIST:  b->viewmode = 2; b->sel = -1; wind_redraw_win(b->win); break;
+        case SH_VIEW_COLS:  b->viewmode = 3; b->sel = -1; wind_redraw_win(b->win); break;
+        case SH_VIEW_GALLERY: b->viewmode = 4; b->sel = -1; wind_redraw_win(b->win); break;
+        case SH_SORT_NAME:  b->sortmode = 2; br_list(b); wind_redraw_win(b->win); break;
+        case SH_SORT_TYPE:  b->sortmode = 3; br_list(b); wind_redraw_win(b->win); break;
+        case SH_SORT_SIZE:  b->sortmode = 4; br_list(b); wind_redraw_win(b->win); break;
+        case SH_SORT_DATE:  b->sortmode = 5; br_list(b); wind_redraw_win(b->win); break;
+        case SH_SORT_INV:   b->sortinv = !b->sortinv; br_list(b); wind_redraw_win(b->win); break;
     }
 }
 // The right-click entry point: resolve the scope/target, highlight it, build the
@@ -2120,7 +2120,7 @@ static void ctx_apply(int chosen, ctxrow *crows, int scope, browser *b, int tent
 static void ctx_menu_at(int mx, int my) {
     browser *b; int tentry, tdeskobj;
     int scope = ctx_resolve(mx, my, &b, &tentry, &tdeskobj);
-    if (b && tentry >= 0 && (b->sel != tentry || b->selall)) { b->sel = tentry; b->selall = 0; repaint(); }
+    if (b && tentry >= 0 && (b->sel != tentry || b->selall)) { b->sel = tentry; b->selall = 0; wind_redraw_win(b->win); }
     g_ctx_mx = mx; g_ctx_my = my;                        // browse popups open at the right-click point
     ctxrow crows[24]; menu_item items[24], show[12]; int nshow;
     int n = ctx_build_items(scope, crows, 24, items, show, &nshow, b);
@@ -2191,7 +2191,7 @@ static void close_win(int win) {                             // mirror the WM_CL
 static void menu_close_front(void) {
     int w = wind_top();
     if (!w) { form_alert(1, "[1][Close|no window is open][OK]"); return; }
-    close_win(w); repaint();
+    close_win(w);   // wind_close already repaints+presents the vacated rect
 }
 static void menu_close_all(void) { int w; while ((w = wind_top())) close_win(w); repaint(); }
 static void menu_cycle(void) {                               // raise the next window in z-order
@@ -2237,7 +2237,7 @@ static void menu_dispatch(int to, int io) {
         case 5:  menu_stub("Append"); break;                                             // TODO       STUB
         case 6:  menu_stub("Insert"); break;                                             // TODO       STUB
         case 7:  ctx_delete(b, 4, b ? b->sel : -1); break;                               // Delete…    WIRED
-        case 9:  if (b) { b->selall = 1; b->sel = -1; repaint(); }                        // Select all WIRED
+        case 9:  if (b) { b->selall = 1; b->sel = -1; wind_redraw_win(b->win); }                        // Select all WIRED
                  else form_alert(1, "[1][Select all|no window is open][OK]"); break;
         case 10: menu_stub("Find"); break;                                               // TODO       STUB
         case 11: menu_stub("Print"); break;                                              // TODO       STUB
@@ -2245,8 +2245,8 @@ static void menu_dispatch(int to, int io) {
     case MB_SHOW:
         if (!b) { form_alert(1, "[1][Show|no window is open][OK]"); break; }
         switch (io) {
-        case 0:  b->viewmode = 1; b->sel = -1; repaint(); break;                          // As icons        WIRED
-        case 1:  b->viewmode = 2; b->sel = -1; repaint(); break;                          // As text         WIRED
+        case 0:  b->viewmode = 1; b->sel = -1; wind_redraw_win(b->win); break;                          // As icons        WIRED
+        case 1:  b->viewmode = 2; b->sel = -1; wind_redraw_win(b->win); break;                          // As text         WIRED
         case 3:  menu_stub("Filter"); break;                                             // TODO STUB
         case 4:  menu_stub("Hide"); break;                                               // TODO STUB
         case 5:  menu_stub("Deselect folders"); break;                                   // TODO STUB
@@ -2254,13 +2254,13 @@ static void menu_dispatch(int to, int io) {
         case 8:  menu_stub("Time column"); break;                                        // TODO STUB
         case 9:  menu_stub("Date column"); break;                                        // TODO STUB
         case 10: menu_stub("Attributes column"); break;                                  // TODO STUB
-        case 12: b->viewmode = 2; b->sel = -1; repaint(); break;                          // Single column    WIRED
-        case 13: b->viewmode = 3; b->sel = -1; repaint(); break;                          // Multiple columns WIRED
-        case 15: b->sortmode = 1; br_list(b); repaint(); break;                           // unsorted         WIRED
-        case 16: b->sortmode = 2; br_list(b); repaint(); break;                           // By name          WIRED
-        case 17: b->sortmode = 3; br_list(b); repaint(); break;                           // By type          WIRED
-        case 18: b->sortmode = 4; br_list(b); repaint(); break;                           // By size          WIRED
-        case 19: b->sortmode = 5; br_list(b); repaint(); break;                           // By date      WIRED
+        case 12: b->viewmode = 2; b->sel = -1; wind_redraw_win(b->win); break;                          // Single column    WIRED
+        case 13: b->viewmode = 3; b->sel = -1; wind_redraw_win(b->win); break;                          // Multiple columns WIRED
+        case 15: b->sortmode = 1; br_list(b); wind_redraw_win(b->win); break;                           // unsorted         WIRED
+        case 16: b->sortmode = 2; br_list(b); wind_redraw_win(b->win); break;                           // By name          WIRED
+        case 17: b->sortmode = 3; br_list(b); wind_redraw_win(b->win); break;                           // By type          WIRED
+        case 18: b->sortmode = 4; br_list(b); wind_redraw_win(b->win); break;                           // By size          WIRED
+        case 19: b->sortmode = 5; br_list(b); wind_redraw_win(b->win); break;                           // By date      WIRED
         }
         menu_sync(); break;
     case MB_WINDOW:
