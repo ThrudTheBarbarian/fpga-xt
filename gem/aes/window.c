@@ -27,13 +27,13 @@ typedef struct {
     int scroll_x, scroll_y;                    // current scroll offset (vertical bar drawn)
 } awin;
 
-#define SB_W      16     // reserved vertical-scrollbar column width (matches WTB_W)
+#define SB_W      16     // reserved vertical-scrollbar column width
 #define SB_ARROW  16     // up/down arrow box height at the track ends
 #define SB_MINTH  24     // minimum thumb length so it stays grabbable
 #define SB_LINE   40     // arrow-click step (px); wheel notch uses the same
 
-#define WTB_W     16     // title-button box size (matches the left close/full 16x16 boxes)
-#define WTB_PITCH 20     // horizontal pitch between title buttons (16 wide + 4 gap, like the left pair)
+#define WTB_W     20     // title-button box size (the 20x20 brushed-metal disc sprites)
+#define WTB_PITCH 26     // horizontal pitch between title buttons (20 wide + 6 gap, like the left pair)
 
 #define SIZER_SZ  18     // bottom-right resize sizer corner (square); reserved from the scrollbar column
 
@@ -188,14 +188,14 @@ static void draw_one(int hd, int active){
     if(W->hidden) return;                        // lifted into the HW drag-overlay
     theme_draw(H(),aes_theme(),"window", W->x,W->y,W->w,W->h);
     theme_draw(H(),aes_theme(), active?"titlebar":"titlebar.inactive", W->x, W->y, W->w, th);  // flush top
-    int cy = W->y+(th-16)/2;
-    if(W->kind & W_CLOSER) spr("close",    W->x+8,  cy);
-    if(W->kind & W_FULLER) spr("maximize", W->x+28, cy);
+    int cy = W->y+(th-WTB_W)/2;
+    if(W->kind & W_CLOSER) spr("close",    W->x+8,           cy);
+    if(W->kind & W_FULLER) spr("maximize", W->x+8+WTB_PITCH, cy);
     if(W->kind & W_NAME){
         // Title work span: right of the close/full boxes, up to the right edge.
         // +8 extra left inset so the title text breathes past the left buttons
         // (was flush against the maximize circle).
-        int tlx=W->x+8; if(W->kind&W_CLOSER) tlx+=20; if(W->kind&W_FULLER) tlx+=20; tlx+=8;
+        int tlx=W->x+8; if(W->kind&W_CLOSER) tlx+=WTB_PITCH; if(W->kind&W_FULLER) tlx+=WTB_PITCH; tlx+=8;
         int trx=W->x+W->w-8; int tlw=trx-tlx; if(tlw<0) tlw=0;
         // Right-side title buttons occupy the far right; reserve their width (plus
         // an 8px gap) so the title renderer's DRAW span (dlw) stops short of them
@@ -203,7 +203,7 @@ static void draw_one(int hd, int active){
         // full width, so a press on a button is still delivered as a title click.
         int nb=W->ntb, bspan = nb>0 ? nb*WTB_PITCH+8 : 0;
         int dlw=tlw-bspan; if(dlw<0) dlw=0;
-        int cyb=W->y+(th-16)/2;
+        int cyb=W->y+(th-WTB_W)/2;
         for(int i=0;i<nb;i++){ int bx=trx-WTB_W-(nb-1-i)*WTB_PITCH;   // right-aligned, index 0 leftmost
             W->tbx[i]=bx; W->tby[i]=cyb; W->tbw[i]=WTB_W; W->tbh[i]=WTB_W; }
         W->titlex=tlx; W->titley=W->y; W->titlew=tlw; W->titleh=th;
@@ -366,7 +366,7 @@ int wind_handle_click(int mx,int my){
     int th=tbh();
     int tx=W->x, ty=W->y, tw=W->w;               // flush title bar
     // close box
-    if((W->kind&W_CLOSER) && mx>=tx+8 && mx<tx+8+16 && my>=ty && my<ty+th){ post(WM_CLOSED,hd,0,0,0,0); return 1; }
+    if((W->kind&W_CLOSER) && mx>=tx+8 && mx<tx+8+WTB_W && my>=ty && my<ty+th){ post(WM_CLOSED,hd,0,0,0,0); return 1; }
     // title bar -> drag (live move)
     if((W->kind&W_MOVER) && my>=ty && my<ty+th && mx>=tx && mx<tx+tw){
         // Interactive title: a press on the app's title span that does NOT move is

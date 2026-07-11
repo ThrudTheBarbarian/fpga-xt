@@ -11,9 +11,15 @@ window.inactive     nine    window-standard-head-inactive-left window-standard-h
 # Standalone titlebar strips (kept for the AES host demo / panels).
 titlebar            h3      window-standard-head-left window-standard-head-center window-standard-head-right
 titlebar.inactive   h3      window-standard-head-inactive-left window-standard-head-inactive-center window-standard-head-inactive-right
-close               sprite  window-standard-close-button
+# Titlebar buttons: brushed-metal disc + white Material Symbol, 20x20, composited
+# by gem/tools/gen-titlebar-icons.sh into gem/icons/titlebar (the overlay dir, so
+# these tokens override the upstream sprites).  view = Select Window 2 (view-mode
+# popup), fit = Open With (scale-to-fit).
+close               sprite  close
 minimize            sprite  window-standard-minimize-button
-maximize            sprite  window-standard-maximize-button
+maximize            sprite  maximize
+view                sprite  view
+fit                 sprite  fit
 
 # --- buttons -----------------------------------------------------------------
 button              h3      button-bezel-left button-bezel-center button-bezel-right

@@ -150,7 +150,7 @@ $(BUILD)/themepack: tools/themepack.c | $(BUILD)
 	$(CC) $(CSTD) -O2 -o $@ $<
 themepack: $(BUILD)/themepack
 	mkdir -p themes/Aristo2/1x
-	./$(BUILD)/themepack "$(ARISTO2)" themes/aristo2.recipe themes/Aristo2/1x
+	./$(BUILD)/themepack "$(ARISTO2)" themes/aristo2.recipe themes/Aristo2/1x icons/titlebar
 
 # Variable-font catalog prototype: enumerate axes + named instances via FreeType.
 $(BUILD)/fontscan: tools/fontscan.c | $(BUILD)

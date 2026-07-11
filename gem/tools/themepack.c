@@ -21,6 +21,12 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <unistd.h>
+
+// Optional overlay resource dir (argv[4]): a repo-local dir of custom slice PNGs
+// (e.g. the composited titlebar buttons in gem/icons/titlebar) checked BEFORE the
+// upstream resource dir, so a recipe token like `close` picks the local override.
+static const char *g_overlay = NULL;
 
 typedef struct { unsigned *px; int w, h; } img;        // px = 0xRRGGBBAA
 
@@ -63,8 +69,13 @@ static img load_png(const char *dir, const char *name) {
     for (char *q = base; *q; q++) if (*q=='@'||*q=='~'||*q=='^') { *q = 0; break; }
     name = base;
 
+    const char *srcdir = dir;                          // overlay overrides the base dir
+    if (g_overlay) {
+        char op[1024]; snprintf(op, sizeof op, "%s/%s.png", g_overlay, name);
+        if (access(op, R_OK) == 0) srcdir = g_overlay;
+    }
     char path[1024], cmd[1200];
-    snprintf(path, sizeof path, "%s/%s.png", dir, name);
+    snprintf(path, sizeof path, "%s/%s.png", srcdir, name);
     snprintf(cmd, sizeof cmd, "magick identify -format '%%w %%h' '%s' 2>/dev/null", path);
     FILE *p = popen(cmd, "r");
     if (!p || fscanf(p, "%d %d", &m.w, &m.h) != 2) { if (p) pclose(p); fprintf(stderr, "missing %s\n", path); exit(1); }
@@ -129,8 +140,9 @@ static elem compose(const char *name, const char *type, img *s, int n) {
 }
 
 int main(int argc, char **argv) {
-    if (argc < 4) { fprintf(stderr, "usage: themepack <res-dir> <recipe> <out-dir>\n"); return 1; }
+    if (argc < 4) { fprintf(stderr, "usage: themepack <res-dir> <recipe> <out-dir> [overlay-dir]\n"); return 1; }
     const char *res = argv[1], *recipe = argv[2], *out = argv[3];
+    if (argc >= 5) g_overlay = argv[4];
     FILE *rf = fopen(recipe, "r"); if (!rf) { perror(recipe); return 1; }
 
     elem el[128]; int ne = 0;
