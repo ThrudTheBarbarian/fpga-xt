@@ -108,8 +108,12 @@ int  objc_find(OBJECT *tree, int start, int depth, int mx, int my);
 // SDL_WaitEventTimeout; on hardware it's the AES event pump over the VDI input
 // layer.  Everything else (form_do, evnt_multi) builds on this.
 enum { AES_NONE=0, AES_BTN_DOWN=1, AES_BTN_UP=2, AES_KEY=3, AES_QUIT=4,
-       AES_MOTION=5, AES_TIMER=6 };
-typedef struct { int type, mx, my, button, key, shift; } aes_event;
+       AES_MOTION=5, AES_TIMER=6, AES_WHEEL=7 };
+// wheel: signed notch count for AES_WHEEL (>0 = away from the user / scroll up),
+// with mx/my at the current pointer.  The host source (SDL) fills it from
+// SDL_MOUSEWHEEL; the A9 kernel input layer has no wheel yet, so it stays 0
+// there (scrollbar drag / arrows / page still work) — see wind_handle_wheel.
+typedef struct { int type, mx, my, button, key, shift, wheel; } aes_event;
 typedef int (*aes_event_fn)(aes_event *ev, int timeout_ms);
 void aes_set_events(aes_event_fn fn);
 int  aes_wait(aes_event *ev, int timeout_ms);     // low level: calls the source
@@ -317,6 +321,26 @@ int  wind_find(int x, int y);                       // topmost window at point (
 int  wind_top(void);                                // topmost open window (0 = none)
 void wind_raise(int handle);                        // bring an open window to the top
 void wind_content(int handle, wind_draw_fn fn, void *ud);
+// ---- Scrolling ----------------------------------------------------------
+// The AES owns a vertical scrollbar per window.  The app reports its full
+// content size (in the CURRENT work-area coordinate system); when content_h
+// exceeds the work-area height, the AES draws a themed scrollbar in the right
+// border and SHRINKS the work area (WF_WORKXYWH / the content callback's ww)
+// by the bar's width, so the content reflows into the narrower span and
+// objc_draw clips to it.  The app draws its content translated by -scroll_y
+// (read wind_scroll_y) and adds scroll_y back into any click Y it hit-tests.
+// Frame interaction (thumb drag, arrow step, track page) is caught inside
+// evnt_multi; a mouse wheel over a scrollable window scrolls it too.  Scroll
+// is clamped to [0, content-work] whenever content or the window size changes;
+// the bar hides when the content fits.  content_w/scroll_x are tracked for a
+// future horizontal bar (only the vertical bar is drawn today).
+void wind_content_size(int handle, int w, int h);   // report full content size
+int  wind_scroll_y(int handle);                      // current vertical offset
+int  wind_scroll_x(int handle);                      // current horizontal offset
+void wind_set_scroll(int handle, int x, int y);      // set (clamped) scroll
+// A wheel notch over the window at (mx,my): scroll a scrollable window and
+// redraw.  Returns 1 if consumed.  Called by evnt_multi on AES_WHEEL.
+int  wind_handle_wheel(int mx, int my, int delta);
 // Optional interactive TITLE renderer (parallel to wind_content/wind_info): when
 // set, draw_one calls fn(handle, tx,ty,tw,th, ud) to draw the title's text span
 // — the area between the left close/full boxes and the right edge — instead of

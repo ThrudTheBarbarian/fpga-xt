@@ -23,7 +23,14 @@ typedef struct {
     int titlex, titley, titlew, titleh;        // last title work rect (app-drawable span)
     int ntb, tbglyph[WIND_MAXTB];              // right-side title buttons: count + glyph per button
     int tbx[WIND_MAXTB], tby[WIND_MAXTB], tbw[WIND_MAXTB], tbh[WIND_MAXTB];   // their last screen rects
+    int content_w, content_h;                  // app-reported full content size (work coords)
+    int scroll_x, scroll_y;                    // current scroll offset (vertical bar drawn)
 } awin;
+
+#define SB_W      16     // reserved vertical-scrollbar column width (matches WTB_W)
+#define SB_ARROW  16     // up/down arrow box height at the track ends
+#define SB_MINTH  24     // minimum thumb length so it stays grabbable
+#define SB_LINE   40     // arrow-click step (px); wheel notch uses the same
 
 #define WTB_W     16     // title-button box size (matches the left close/full 16x16 boxes)
 #define WTB_PITCH 20     // horizontal pitch between title buttons (16 wide + 4 gap, like the left pair)
@@ -87,6 +94,81 @@ static void clamp_win(awin *W){
     if (W->x < wx - (W->w - MINVIS))  W->x = wx - (W->w - MINVIS);
 }
 
+// ---- Scrollbar geometry / state -----------------------------------------
+// The FULL work rect (before the scrollbar column is reserved).
+static void full_work(awin *W,int*x,int*y,int*w,int*h){
+    wind_calc(WC_WORK,W->kind,W->x,W->y,W->w,W->h,x,y,w,h);
+}
+// Is a vertical scrollbar currently needed (content taller than the work area)?
+static int vsb_on(awin *W){
+    int wx,wy,ww,wh; full_work(W,&wx,&wy,&ww,&wh); (void)wx;(void)wy;(void)ww;
+    return W->content_h > wh && wh > 0;
+}
+// Clamp scroll_y to [0, content_h - work_h] (0 when it all fits).
+static void clamp_scroll(awin *W){
+    int wx,wy,ww,wh; full_work(W,&wx,&wy,&ww,&wh); (void)wx;(void)wy;(void)ww;
+    int maxs = W->content_h - wh; if(maxs<0) maxs=0;
+    if(W->scroll_y>maxs) W->scroll_y=maxs;
+    if(W->scroll_y<0)    W->scroll_y=0;
+    int maxx = W->content_w - ww; if(maxx<0) maxx=0;
+    if(W->scroll_x>maxx) W->scroll_x=maxx;
+    if(W->scroll_x<0)    W->scroll_x=0;
+}
+// The work rect handed to the app (WF_WORKXYWH + the content callback): the full
+// rect, shrunk by the scrollbar column when the bar is showing.
+static void app_work(awin *W,int*x,int*y,int*w,int*h){
+    full_work(W,x,y,w,h);
+    if(vsb_on(W)){ *w -= SB_W; if(*w<0) *w=0; }
+}
+// Vertical-scrollbar sub-geometry (all outputs optional): the reserved column,
+// the up/down arrow boxes, the track between them, and the proportional thumb.
+// Returns 1 when a bar is shown.  Coordinates are absolute (screen) px.
+static int vsb_geom(awin *W,int*colx,int*coly,int*colw,int*colh,
+                    int*upy,int*dny,int*arrh,
+                    int*trky,int*trkh,int*thy,int*thh){
+    if(!vsb_on(W)) return 0;
+    int wx,wy,ww,wh; full_work(W,&wx,&wy,&ww,&wh);
+    int cx=wx+ww-SB_W, cy=wy, ch=wh;
+    int ah=SB_ARROW; if(ah*2 > ch-SB_MINTH) ah=(ch-SB_MINTH)/2; if(ah<0) ah=0;
+    int ty=cy+ah, th=ch-2*ah; if(th<1) th=1;
+    int total=W->content_h, vis=wh;
+    int len = (int)((long)th*vis/total); if(len<SB_MINTH) len=SB_MINTH; if(len>th) len=th;
+    int maxs = total-vis; if(maxs<1) maxs=1;
+    int off = (int)((long)(th-len)*W->scroll_y/maxs);
+    if(colx)*colx=cx; if(coly)*coly=cy; if(colw)*colw=SB_W; if(colh)*colh=ch;
+    if(upy)*upy=cy; if(dny)*dny=cy+ch-ah; if(arrh)*arrh=ah;
+    if(trky)*trky=ty; if(trkh)*trkh=th;
+    if(thy)*thy=ty+off; if(thh)*thh=len;
+    return 1;
+}
+// A small centred arrow glyph (dir -1 = up chevron, +1 = down) for the scroll
+// arrow boxes — same vector style as the title buttons (draw_titlebtn).
+static void draw_sb_arrow(int bx,int by,int bw,int bh,int dir){
+    int cx=bx+bw/2, cy=by+bh/2;
+    vsl_color(H(),1); vsl_width(H(),2);
+    int16_t p[6]={(int16_t)(cx-4),(int16_t)(cy-dir*2),(int16_t)cx,(int16_t)(cy+dir*2),
+                  (int16_t)(cx+4),(int16_t)(cy-dir*2)};
+    v_pline(H(),3,p);
+}
+// Draw the vertical scrollbar: chrome column + a themed track fill, up/down
+// arrow boxes and a proportional thumb, all in the window-button "button" style
+// so it reads as part of the same chrome (the narrow theme vscroll.* art is
+// left for the classic 14px sliders; this matches the 16px window buttons).
+static void draw_vscroll(int hd){
+    awin*W=&g_w[hd];
+    int cx,cy,cw,ch,upy,dny,arrh,trky,trkh,thy,thh;
+    if(!vsb_geom(W,&cx,&cy,&cw,&ch,&upy,&dny,&arrh,&trky,&trkh,&thy,&thh)) return;
+    vsf_color(H(),248); vsf_interior(H(),VDI_FIS_SOLID); vsf_perimeter(H(),0);   // PEN_DLG column
+    int16_t cr[4]={(int16_t)cx,(int16_t)cy,(int16_t)(cx+cw-1),(int16_t)(cy+ch-1)}; vr_recfl(H(),cr);
+    vsl_color(H(),249); vsl_width(H(),1);                                        // PEN_BORDER left divider
+    int16_t dl[4]={(int16_t)cx,(int16_t)cy,(int16_t)cx,(int16_t)(cy+ch-1)}; v_pline(H(),2,dl);
+    if(arrh>0){                                                                 // arrow boxes at the ends
+        theme_draw(H(),aes_theme(),"button",cx,upy,cw,arrh); draw_sb_arrow(cx,upy,cw,arrh,-1);
+        theme_draw(H(),aes_theme(),"button",cx,dny,cw,arrh); draw_sb_arrow(cx,dny,cw,arrh,+1);
+    }
+    theme_draw(H(),aes_theme(),"button",cx+2,thy,cw-4,thh);                      // the thumb
+}
+
 static void draw_one(int hd, int active){
     awin*W=&g_w[hd]; int th=tbh();
     if(W->hidden) return;                        // lifted into the HW drag-overlay
@@ -128,10 +210,12 @@ static void draw_one(int hd, int active){
         if(W->info){ int16_t ic[4]={(int16_t)ix,(int16_t)iy,(int16_t)(ix+iw-1),(int16_t)(iy+AES_INFO_H-1)};
             vs_clip(H(),1,ic); W->info(hd,ix,iy,iw,AES_INFO_H,W->infoud); vs_clip(H(),0,ic); }
     }
-    // work area + content (clipped)
-    int wx,wy,ww,wh; wind_calc(WC_WORK,W->kind,W->x,W->y,W->w,W->h,&wx,&wy,&ww,&wh);
+    // work area + content (clipped).  The rect is shrunk by the scrollbar column
+    // when the bar shows, so the app reflows into the narrower span.
+    int wx,wy,ww,wh; app_work(W,&wx,&wy,&ww,&wh);
     if(W->draw){ int16_t clip[4]={(int16_t)wx,(int16_t)wy,(int16_t)(wx+ww-1),(int16_t)(wy+wh-1)};
         vs_clip(H(),1,clip); W->draw(hd,wx,wy,ww,wh,W->ud); vs_clip(H(),0,clip); }
+    draw_vscroll(hd);                            // over the reserved right column
 }
 
 void wind_set_desktop(uint32_t bg){ g_deskbg = bg; }
@@ -185,7 +269,7 @@ int wind_create(int kind,int x,int y,int w,int h){
 }
 void wind_open(int hd,int x,int y,int w,int h){
     if(hd<1||hd>=MAXW||!g_w[hd].used) return;
-    g_w[hd].x=x; g_w[hd].y=y; g_w[hd].w=w; g_w[hd].h=h; clamp_win(&g_w[hd]);
+    g_w[hd].x=x; g_w[hd].y=y; g_w[hd].w=w; g_w[hd].h=h; clamp_win(&g_w[hd]); clamp_scroll(&g_w[hd]);
     for(int i=0;i<g_nz;i++) if(g_z[i]==hd) return;       // already open
     g_z[g_nz++]=hd; wind_redraw();
 }
@@ -194,6 +278,23 @@ void wind_close(int hd){ zremove(hd); wind_redraw(); }
 void wind_delete(int hd){ if(hd>=1&&hd<MAXW){ zremove(hd); g_w[hd].used=0; } }
 void wind_set_name(int hd,const char*n){ if(hd>=1&&hd<MAXW){ snprintf(g_w[hd].name,sizeof g_w[hd].name,"%s",n?n:""); } }
 void wind_content(int hd,wind_draw_fn fn,void*ud){ if(hd>=1&&hd<MAXW){ g_w[hd].draw=fn; g_w[hd].ud=ud; } }
+void wind_content_size(int hd,int w,int h){
+    if(hd<1||hd>=MAXW||!g_w[hd].used) return;
+    g_w[hd].content_w=w<0?0:w; g_w[hd].content_h=h<0?0:h; clamp_scroll(&g_w[hd]);
+}
+int wind_scroll_y(int hd){ return (hd>=1&&hd<MAXW)?g_w[hd].scroll_y:0; }
+int wind_scroll_x(int hd){ return (hd>=1&&hd<MAXW)?g_w[hd].scroll_x:0; }
+void wind_set_scroll(int hd,int x,int y){
+    if(hd<1||hd>=MAXW) return; g_w[hd].scroll_x=x; g_w[hd].scroll_y=y; clamp_scroll(&g_w[hd]);
+}
+int wind_handle_wheel(int mx,int my,int delta){
+    int hd=wind_find(mx,my); if(!hd) return 0; awin*W=&g_w[hd];
+    if(!vsb_on(W)) return 0;                       // nothing scrollable under the pointer
+    int before=W->scroll_y;
+    W->scroll_y -= delta*SB_LINE; clamp_scroll(W);  // wheel-up (delta>0) -> toward the top
+    if(W->scroll_y!=before) wind_redraw();
+    return 1;
+}
 void wind_info(int hd,wind_draw_fn fn,void*ud){ if(hd>=1&&hd<MAXW){ g_w[hd].info=fn; g_w[hd].infoud=ud; } }
 void wind_title(int hd,wind_draw_fn fn,void*ud){ if(hd>=1&&hd<MAXW){ g_w[hd].title=fn; g_w[hd].titleud=ud; } }
 void wind_titlebtns(int hd,const int*glyphs,int n){
@@ -214,13 +315,13 @@ void wind_get(int hd,int field,int*a,int*b,int*c,int*d){
     if(hd==0){ int x,y,w,h; work_area(&x,&y,&w,&h); if(a)*a=x; if(b)*b=y; if(c)*c=w; if(d)*d=h; return; }  // desktop
     if(hd<1||hd>=MAXW){ if(a)*a=0; return; }
     awin*W=&g_w[hd]; int x=W->x,y=W->y,w=W->w,h=W->h;
-    if(field==WF_WORKXYWH) wind_calc(WC_WORK,W->kind,W->x,W->y,W->w,W->h,&x,&y,&w,&h);
+    if(field==WF_WORKXYWH) app_work(W,&x,&y,&w,&h);   // already minus the scrollbar column
     else if(field==WF_PREVXYWH){ x=W->px;y=W->py;w=W->pw;h=W->ph; }
     if(a)*a=x; if(b)*b=y; if(c)*c=w; if(d)*d=h;
 }
 void wind_set(int hd,int field,int a,int b,int c,int d){
     if(hd<1||hd>=MAXW) return; awin*W=&g_w[hd];
-    if(field==WF_CURRXYWH){ W->px=W->x;W->py=W->y;W->pw=W->w;W->ph=W->h; W->x=a;W->y=b;W->w=c;W->h=d; clamp_win(W); wind_redraw(); }
+    if(field==WF_CURRXYWH){ W->px=W->x;W->py=W->y;W->pw=W->w;W->ph=W->h; W->x=a;W->y=b;W->w=c;W->h=d; clamp_win(W); clamp_scroll(W); wind_redraw(); }
 }
 
 int wind_find(int x,int y){
@@ -283,12 +384,39 @@ int wind_handle_click(int mx,int my){
         }
         post(WM_MOVED,hd,W->x,W->y,W->w,W->h); return 1;
     }
-    // size box (bottom-right corner)
+    // size box (bottom-right corner) — checked before the scrollbar so the corner
+    // (which the scrollbar column overlaps) still resizes.
     if((W->kind&W_SIZER) && mx>=W->x+W->w-18 && my>=W->y+W->h-18){
         for(;;){ aes_event e; int t=aes_wait_idle(&e,-1); if(t==AES_QUIT)break;
-            if(t==AES_MOTION){ int nw=e.mx-W->x, nh=e.my-W->y; if(nw<120)nw=120; if(nh<80)nh=80; W->w=nw; W->h=nh; wind_redraw(); }
+            if(t==AES_MOTION){ int nw=e.mx-W->x, nh=e.my-W->y; if(nw<120)nw=120; if(nh<80)nh=80; W->w=nw; W->h=nh; clamp_scroll(W); wind_redraw(); }
             if(t==AES_BTN_UP) break; }
         post(WM_SIZED,hd,W->x,W->y,W->w,W->h); return 1;
     }
+    // vertical scrollbar in the reserved right column (arrows / thumb drag / track page)
+    { int cx,cy,cw,ch,upy,dny,arrh,trky,trkh,thy,thh;
+      if(vsb_geom(W,&cx,&cy,&cw,&ch,&upy,&dny,&arrh,&trky,&trkh,&thy,&thh) &&
+         mx>=cx && mx<cx+cw && my>=cy && my<cy+ch){
+        if(arrh>0 && my<upy+arrh){                              // up arrow: one line
+            W->scroll_y-=SB_LINE; clamp_scroll(W); wind_redraw(); post(WM_VSLID,hd,0,0,0,0); return 1; }
+        if(arrh>0 && my>=dny){                                  // down arrow: one line
+            W->scroll_y+=SB_LINE; clamp_scroll(W); wind_redraw(); post(WM_VSLID,hd,0,0,0,0); return 1; }
+        if(my<thy){                                             // track above thumb: page up
+            int wx,wy,ww,wh; full_work(W,&wx,&wy,&ww,&wh); (void)wx;(void)wy;(void)ww;
+            W->scroll_y-=(wh>SB_LINE?wh-SB_LINE:wh); clamp_scroll(W); wind_redraw(); post(WM_VSLID,hd,0,0,0,0); return 1; }
+        if(my>=thy+thh){                                        // track below thumb: page down
+            int wx,wy,ww,wh; full_work(W,&wx,&wy,&ww,&wh); (void)wx;(void)wy;(void)ww;
+            W->scroll_y+=(wh>SB_LINE?wh-SB_LINE:wh); clamp_scroll(W); wind_redraw(); post(WM_VSLID,hd,0,0,0,0); return 1; }
+        // on the thumb: drag it, mapping travel back to scroll_y proportionally
+        int grab=my-thy;
+        for(;;){ aes_event e; int t=aes_wait_idle(&e,-1); if(t==AES_QUIT)break;
+            if(t==AES_MOTION){
+                int t2y,t2h,tk2y,tk2h; vsb_geom(W,0,0,0,0,0,0,0,&tk2y,&tk2h,&t2y,&t2h);
+                int span=tk2h-t2h; int wx,wy,ww,wh; full_work(W,&wx,&wy,&ww,&wh); (void)wx;(void)wy;(void)ww;
+                int maxs=W->content_h-wh; if(maxs<0)maxs=0;
+                int rel=e.my-grab-tk2y; if(span>0){ W->scroll_y=(int)((long)rel*maxs/span); }
+                clamp_scroll(W); wind_redraw(); }
+            if(t==AES_BTN_UP) break; }
+        post(WM_VSLID,hd,0,0,0,0); return 1;
+      } }
     return 0;     // click in the work area -> the app gets it
 }

@@ -461,6 +461,7 @@ static void net_list_start(browser *b) {              // entries from `lsc <serv
     b->req_fd = fd; b->req_kind = RQ_LSC;             // net_pump takes it from here
     if (b->infow > 0) br_info_redraw(b);              // instant contacting feedback (replaces desk_busy)
 }
+static void br_report_content(browser *b);            // fwd: report content size for the scrollbar
 static void br_list(browser *b) {
     if (b->net == 1) { srv_list_start(b); return; }   // FujiNet flavours (async)
     if (b->net == 2) { net_list_start(b); return; }
@@ -498,11 +499,21 @@ static void br_list(browser *b) {
         snprintf(e->label, sizeof e->label, "%s", id[0] ? id : e->name);
         b->cic[i].img = b->isurf[i]; b->cic[i].text = e->label;
     }
+    // A fresh listing resets the scroll to the top, then reports the new content
+    // height so the scrollbar (and the reserved work-area width) are right on the
+    // very next redraw.
+    wind_set_scroll(b->win, 0, 0);
+    { int wx, wy, ww, wh; wind_get(b->win, WF_WORKXYWH, &wx, &wy, &ww, &wh);
+      b->wax = wx; b->way = wy; b->waw = ww; b->wah = wh; br_report_content(b); }
 }
 // Lay the entry grid out in the current work area (also used for hit-testing).
+// Tiles are shifted up by the window's scroll_y; the IBOX root stays on the
+// visible work rect so objc_find recurses for clicks in the visible band (and
+// the click Y already carries the scroll, so br_hit_slot needs no adjustment).
 static void br_layout(browser *b) {
     int icw, ich; br_cell_size(b, &icw, &ich);          // icon (1) or gallery (4) cell
     int pad = 14, cols = (b->waw - pad) / icw; if (cols < 1) cols = 1;
+    int sy = wind_scroll_y(b->win);                     // vertical scroll offset
     int dd = b->rel[0] ? 1 : 0;                        // synthetic ".." leads a non-root grid
     int ntile = b->nent + dd;
     b->tree[0] = (OBJECT){ NIL, ntile?1:NIL, ntile?ntile:NIL, G_IBOX, OF_NONE, OS_NORMAL,
@@ -512,12 +523,12 @@ static void br_layout(browser *b) {
         int last = (b->nent == 0);
         b->tree[1] = (OBJECT){ (int16_t)(last?0:2), NIL, NIL, G_CICON,
                                (uint16_t)(OF_SELECTABLE | (last?OF_LASTOB:0)), OS_NORMAL,
-                               &g_dotcic, (int16_t)pad, (int16_t)pad, (int16_t)icw, (int16_t)ich };
+                               &g_dotcic, (int16_t)pad, (int16_t)(pad - sy), (int16_t)icw, (int16_t)ich };
     }
     for (int i = 0; i < b->nent; i++) {
         int oi = 1+dd+i, last = (i == b->nent-1), slot = i + dd;
         int cx = pad + (slot % cols) * icw;
-        int cy = pad + (slot / cols) * ich;
+        int cy = pad + (slot / cols) * ich - sy;
         int ghost = (b->ent[i].state == 'g' || b->ent[i].state == 'f');   // uncached net entry
         b->tree[oi] = (OBJECT){ (int16_t)(last?0:oi+1), NIL, NIL, G_CICON,
                                 (uint16_t)(OF_SELECTABLE | (last?OF_LASTOB:0)),
@@ -556,24 +567,48 @@ static void br_text_cell(browser *b, int slot, int *x, int *y, int *w, int *h) {
     *w = colw; *h = TEXT_ROWH;
 }
 // Reverse of br_text_cell: the tile slot under (mx,my), or -1 for a miss.
+// br_text_cell yields content coords (drawn shifted up by scroll_y), so add
+// scroll_y to the click Y to map screen -> content before resolving the row.
 static int br_text_hit(browser *b, int mx, int my) {
     int pad = 14, cols, rpc, colw, nt; br_text_grid(b, &cols, &rpc, &colw, &nt);
     if (nt <= 0) return -1;
-    int lx = mx - (b->wax + pad), ly = my - (b->way + pad);
+    int sy = wind_scroll_y(b->win);
+    int lx = mx - (b->wax + pad), ly = (my + sy) - (b->way + pad);
     if (lx < 0 || ly < 0) return -1;
     int col = lx / colw, row = ly / TEXT_ROWH;
     if (col < 0 || col >= cols || row < 0 || row >= rpc) return -1;
     int slot = col * rpc + row;
     return (slot >= 0 && slot < nt) ? slot : -1;
 }
+// Full content height of the current view at the current work width (b->waw):
+// icon/gallery grid = rows*cell_h + top+bottom margin; text = rows*TEXT_ROWH +
+// margins (single = one column of nt rows; multi = ceil(nt/cols) rows).
+static int br_content_height(browser *b) {
+    int pad = 14;
+    if (b->viewmode == 2 || b->viewmode == 3) {
+        int cols, rpc, colw, nt; br_text_grid(b, &cols, &rpc, &colw, &nt);
+        return (nt > 0 ? rpc : 0) * TEXT_ROWH + 2 * pad;
+    }
+    int icw, ich; br_cell_size(b, &icw, &ich);
+    int cols = (b->waw - pad) / icw; if (cols < 1) cols = 1;
+    int dd = b->rel[0] ? 1 : 0, nt = b->nent + dd;
+    int rows = (nt + cols - 1) / cols;                  // ceil
+    return rows * ich + 2 * pad;
+}
+static void br_report_content(browser *b) {
+    wind_content_size(b->win, b->waw, br_content_height(b));
+}
 // Draw the entries as one-line text rows (viewmode 2 single / 3 multi): name left,
 // size right-aligned per cell (dirs / ".." -> "<dir>").  The selected row gets a
 // PEN_SEL fill.  Geometry mirrors br_text_cell so br_click resolves the same slot.
 static void br_draw_text(browser *b) {
     int dd = b->rel[0] ? 1 : 0, nt = b->nent + dd;
+    int sy = wind_scroll_y(b->win);                     // content is drawn shifted up
     vst_height(HV, 14, 0,0,0,0);
     for (int slot = 0; slot < nt; slot++) {
         int cx, cy, cw, ch; br_text_cell(b, slot, &cx, &cy, &cw, &ch);
+        cy -= sy;                                       // screen y (clipped to the work rect)
+        if (cy + ch <= b->way || cy >= b->way + b->wah) continue;   // fully scrolled off
         int isdot = (dd && slot == 0), i = slot - dd;
         int sel   = (!isdot && (i == b->sel || b->selall));
         int ghost = (!isdot && (b->ent[i].state == 'g' || b->ent[i].state == 'f'));
@@ -819,6 +854,7 @@ static void br_content(int hd, int wax, int way, int waw, int wah, void *ud) {
     // the info bar carries the single contacting -> progress indicator.  A fetch
     // keeps the existing list on screen and shows progress in the info bar too.
     aes_icon_label_style(0);                       // browser: over the light window
+    br_report_content(b);                          // full content height -> scrollbar + width
     if (b->viewmode == 2 || b->viewmode == 3) { br_draw_text(b); return; }
     br_layout(b);                                  // viewmode 1: the icon grid
     objc_draw(b->tree, 0, 2, wax, way, waw, wah);
@@ -1869,6 +1905,7 @@ static int fa_verify_row(const char *name, const char *hostport,
 }
 
 static SDL_Renderer *g_ren; static SDL_Texture *g_tex; static int g_btn;
+static int g_mx, g_my;                                   // last pointer pos (for wheel events)
 // Set for the one synthetic event a right-button *release* delivers, so the main
 // loop routes it to the context menu instead of the normal left-click path.
 // (Right-click acts on release so no pending button lands inside menu_popup and
@@ -1926,10 +1963,13 @@ static int present_and_wait(aes_event *ev, int timeout_ms) {
             int k = sdl_map_key(e.key.keysym.sym, ev->shift);
             if (!k) break;                                 // modifier-only press
             ev->type=AES_KEY; ev->key=k; return AES_KEY; }
-        case SDL_MOUSEMOTION: ev->type=AES_MOTION; ev->mx=e.motion.x; ev->my=e.motion.y; return AES_MOTION;
+        case SDL_MOUSEMOTION: g_mx=e.motion.x; g_my=e.motion.y; ev->type=AES_MOTION; ev->mx=e.motion.x; ev->my=e.motion.y; return AES_MOTION;
+        case SDL_MOUSEWHEEL:                               // scroll the window under the pointer
+            ev->type=AES_WHEEL; ev->wheel=e.wheel.y; ev->mx=g_mx; ev->my=g_my; return AES_WHEEL;
         case SDL_MOUSEBUTTONDOWN:
             if(e.button.button==SDL_BUTTON_RIGHT) break;   // right button: acted on at release
             if(e.button.button!=SDL_BUTTON_LEFT)break;
+            g_mx=e.button.x; g_my=e.button.y;
             g_btn|=1; ev->button=g_btn; ev->type=AES_BTN_DOWN; ev->mx=e.button.x; ev->my=e.button.y; return AES_BTN_DOWN;
         case SDL_MOUSEBUTTONUP:
             if(e.button.button==SDL_BUTTON_RIGHT){         // deliver a context-menu click at the release point
@@ -1973,6 +2013,7 @@ int main(int argc, char **argv) {
         else if (!strcmp(argv[i], "--newdlg")) fuji = 11;           // headless: New… resource dialog
         else if (!strcmp(argv[i], "--title")) fuji = 12;            // headless: interactive title breadcrumb/mask
         else if (!strcmp(argv[i], "--titlebtn")) fuji = 13;         // headless: right-side title buttons + Gallery
+        else if (!strcmp(argv[i], "--scroll")) fuji = 14;           // headless: scrollbar overflow + scroll + wheel
         else snprintf(base, sizeof base, "%s", argv[i]);
     }
 
@@ -2172,6 +2213,51 @@ int main(int argc, char **argv) {
                 cwide, cnar, resp_ok ? "OK" : "FAIL");
         registry_close();
         return (single_ok && multi_ok && geom_ok && resp_ok) ? 0 : 1;
+    }
+    if (fuji == 14) {                                // headless scrollbar test (--scroll)
+        // A dir with MANY entries, in a small window, so the icon grid overflows.
+        open_browser("/navtest/big", ICT_MEDIA_8BIT);
+        browser *nb = BR[0].used ? &BR[0] : NULL;
+        if (!nb) { fprintf(stderr, "scroll: no browser (mkdir <base>/navtest/big + ~120 files)\n"); return 1; }
+        int bx, by, bw, bh; wind_get(nb->win, WF_CURRXYWH, &bx, &by, &bw, &bh);
+        wind_set(nb->win, WF_CURRXYWH, bx, by, 560, 320);   // shrink -> content overflows
+        wind_redraw();                                       // br_content reports content_h; work shrinks by the bar
+        int wx, wy, ww, wh; wind_get(nb->win, WF_WORKXYWH, &wx, &wy, &ww, &wh);   // reduced work rect
+        int ch = br_content_height(nb);
+        // full (no-bar) work width vs the reduced one: the bar reserved its column.
+        int fx, fy, fw, fh; wind_calc(WC_WORK, BR_WKIND, bx, by, 560, 320, &fx, &fy, &fw, &fh);
+        int overflow_ok = (ch > wh);
+        int barwidth_ok = (ww == fw - 16);               // SB_W reserved from the work width
+        fprintf(stderr, "scroll: nent=%d content_h=%d work_h=%d work_w=%d(full %d) (%s / %s)\n",
+                nb->nent, ch, wh, ww, fw, overflow_ok ? "overflow OK" : "FAIL", barwidth_ok ? "bar OK" : "FAIL");
+        // TOP: scroll 0; the last entry is below the fold (not hit-testable).
+        wind_set_scroll(nb->win, 0, 0); wind_redraw();
+        int top_sy = wind_scroll_y(nb->win);
+        int last = nb->nent - 1, dd = nb->rel[0] ? 1 : 0, loi = 1 + dd + last;
+        int tx, ty; objc_offset(nb->tree, loi, &tx, &ty);
+        int last_hidden_top = (ty >= wy + wh);           // last tile off the bottom at the top
+        dump_ppm("/tmp/xtdesk-scroll-top.ppm");
+        // BOTTOM: scroll past the end -> clamps to (content - work); last entry now
+        // visible and br_hit_slot at its centre resolves it.
+        wind_set_scroll(nb->win, 0, ch); wind_redraw();  // request beyond end -> clamps
+        int bot_sy = wind_scroll_y(nb->win);
+        int clamp_ok = (bot_sy == ch - wh && bot_sy > top_sy);
+        objc_offset(nb->tree, loi, &tx, &ty);
+        int last_visible = (ty >= wy && ty < wy + wh);
+        int hs = br_hit_slot(nb, tx + ICON_CW/2, ty + ICON_SZ/2);
+        int hit_ok = (last_visible && hs == last + dd);
+        dump_ppm("/tmp/xtdesk-scroll-bot.ppm");
+        fprintf(stderr, "scroll: top_sy=%d bot_sy=%d max=%d (%s); last tile top=%d @bottom -> hit slot=%d want=%d (%s)\n",
+                top_sy, bot_sy, ch - wh, clamp_ok ? "clamp OK" : "FAIL",
+                ty, hs, last + dd, hit_ok ? "OK" : "FAIL");
+        // Wheel over the window scrolls it (host path uses the same call).
+        wind_set_scroll(nb->win, 0, 0);
+        int consumed = wind_handle_wheel(wx + ww/2, wy + wh/2, -3);   // wheel down 3 notches
+        int wheel_ok = (consumed && wind_scroll_y(nb->win) > 0);
+        fprintf(stderr, "scroll: wheel-down consumed=%d -> sy=%d (%s)\n",
+                consumed, wind_scroll_y(nb->win), wheel_ok ? "OK" : "FAIL");
+        registry_close();
+        return (overflow_ok && barwidth_ok && last_hidden_top && clamp_ok && hit_ok && wheel_ok) ? 0 : 1;
     }
     if (fuji == 8) {                                  // headless file-mask filter test (--mask)
         // 1) glob helper unit checks (case-insensitive '*' / '?').

@@ -97,6 +97,7 @@ int evnt_multi(int flags, int bclk, int bmask, int bstate,
         if (omb) *omb = ev.button; if (oks) *oks = ev.shift;
 
         if (t == AES_QUIT) return MU_QUIT;
+        if (t == AES_WHEEL) { wind_handle_wheel(ev.mx, ev.my, ev.wheel); continue; }   // scroll under pointer
         if (t == AES_TIMER) { if (flags & MU_TIMER) return MU_TIMER; continue; }
         if (t == AES_KEY && (flags & MU_KEYBD)) {
             if (okey) *okey = ev.key; return MU_KEYBD;

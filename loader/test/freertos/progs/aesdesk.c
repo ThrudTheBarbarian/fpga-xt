@@ -527,6 +527,7 @@ static void net_list_start(browser *b) {              // entries from `lsc <serv
 }
 // List the browser's current directory over the kernel VFS (sys_readdir gives
 // the type; sys_stat only for file sizes).
+static void br_report_content(browser *b);            // fwd: report content size for the scrollbar
 static void br_list(browser *b) {
     if (b->net == 1) { srv_list_start(b); return; }   // FujiNet flavours (async)
     if (b->net == 2) { net_list_start(b); return; }
@@ -561,11 +562,21 @@ static void br_list(browser *b) {
         snprintf(e->label, sizeof e->label, "%s", id[0] ? id : e->name);
         b->cic[i].img = b->isurf[i]; b->cic[i].text = e->label;
     }
+    // A fresh listing resets the scroll to the top, then reports the new content
+    // height so the scrollbar (and the reserved work-area width) are right on the
+    // very next redraw.
+    wind_set_scroll(b->win, 0, 0);
+    { int wx, wy, ww, wh; wind_get(b->win, WF_WORKXYWH, &wx, &wy, &ww, &wh);
+      b->wax = wx; b->way = wy; b->waw = ww; b->wah = wh; br_report_content(b); }
 }
 // Lay the entry grid out in the current work area (also used for hit-testing).
+// Tiles are shifted up by the window's scroll_y; the IBOX root stays on the
+// visible work rect so objc_find recurses for clicks in the visible band (and
+// the click Y already carries the scroll, so br_hit_slot needs no adjustment).
 static void br_layout(browser *b) {
     int icw, ich; br_cell_size(b, &icw, &ich);          // icon (1) or gallery (4) cell
     int pad = 14, cols = (b->waw - pad) / icw; if (cols < 1) cols = 1;
+    int sy = wind_scroll_y(b->win);                     // vertical scroll offset
     int dd = b->rel[0] ? 1 : 0;                        // synthetic ".." leads a non-root grid
     int ntile = b->nent + dd;
     b->tree[0] = (OBJECT){ NIL, ntile?1:NIL, ntile?ntile:NIL, G_IBOX, OF_NONE, OS_NORMAL,
@@ -575,12 +586,12 @@ static void br_layout(browser *b) {
         int last = (b->nent == 0);
         b->tree[1] = (OBJECT){ (int16_t)(last?0:2), NIL, NIL, G_CICON,
                                (uint16_t)(OF_SELECTABLE | (last?OF_LASTOB:0)), OS_NORMAL,
-                               &g_dotcic, (int16_t)pad, (int16_t)pad, (int16_t)icw, (int16_t)ich };
+                               &g_dotcic, (int16_t)pad, (int16_t)(pad - sy), (int16_t)icw, (int16_t)ich };
     }
     for (int i = 0; i < b->nent; i++) {
         int oi = 1+dd+i, last = (i == b->nent-1), slot = i + dd;
         int cx = pad + (slot % cols) * icw;
-        int cy = pad + (slot / cols) * ich;
+        int cy = pad + (slot / cols) * ich - sy;
         int ghost = (b->ent[i].state == 'g' || b->ent[i].state == 'f');   // uncached net entry
         b->tree[oi] = (OBJECT){ (int16_t)(last?0:oi+1), NIL, NIL, G_CICON,
                                 (uint16_t)(OF_SELECTABLE | (last?OF_LASTOB:0)),
@@ -619,24 +630,48 @@ static void br_text_cell(browser *b, int slot, int *x, int *y, int *w, int *h) {
     *w = colw; *h = TEXT_ROWH;
 }
 // Reverse of br_text_cell: the tile slot under (mx,my), or -1 for a miss.
+// br_text_cell yields content coords (drawn shifted up by scroll_y), so add
+// scroll_y to the click Y to map screen -> content before resolving the row.
 static int br_text_hit(browser *b, int mx, int my) {
     int pad = 14, cols, rpc, colw, nt; br_text_grid(b, &cols, &rpc, &colw, &nt);
     if (nt <= 0) return -1;
-    int lx = mx - (b->wax + pad), ly = my - (b->way + pad);
+    int sy = wind_scroll_y(b->win);
+    int lx = mx - (b->wax + pad), ly = (my + sy) - (b->way + pad);
     if (lx < 0 || ly < 0) return -1;
     int col = lx / colw, row = ly / TEXT_ROWH;
     if (col < 0 || col >= cols || row < 0 || row >= rpc) return -1;
     int slot = col * rpc + row;
     return (slot >= 0 && slot < nt) ? slot : -1;
 }
+// Full content height of the current view at the current work width (b->waw):
+// icon/gallery grid = rows*cell_h + top+bottom margin; text = rows*TEXT_ROWH +
+// margins (single = one column of nt rows; multi = ceil(nt/cols) rows).
+static int br_content_height(browser *b) {
+    int pad = 14;
+    if (b->viewmode == 2 || b->viewmode == 3) {
+        int cols, rpc, colw, nt; br_text_grid(b, &cols, &rpc, &colw, &nt);
+        return (nt > 0 ? rpc : 0) * TEXT_ROWH + 2 * pad;
+    }
+    int icw, ich; br_cell_size(b, &icw, &ich);
+    int cols = (b->waw - pad) / icw; if (cols < 1) cols = 1;
+    int dd = b->rel[0] ? 1 : 0, nt = b->nent + dd;
+    int rows = (nt + cols - 1) / cols;                  // ceil
+    return rows * ich + 2 * pad;
+}
+static void br_report_content(browser *b) {
+    wind_content_size(b->win, b->waw, br_content_height(b));
+}
 // Draw the entries as one-line text rows (viewmode 2 single / 3 multi): name left,
 // size right-aligned per cell (dirs / ".." -> "<dir>").  The selected row gets a
 // PEN_SEL fill.  Geometry mirrors br_text_cell so br_click resolves the same slot.
 static void br_draw_text(browser *b) {
     int dd = b->rel[0] ? 1 : 0, nt = b->nent + dd;
+    int sy = wind_scroll_y(b->win);                     // content is drawn shifted up
     vst_height(HV, 14, 0,0,0,0);
     for (int slot = 0; slot < nt; slot++) {
         int cx, cy, cw, ch; br_text_cell(b, slot, &cx, &cy, &cw, &ch);
+        cy -= sy;                                       // screen y (clipped to the work rect)
+        if (cy + ch <= b->way || cy >= b->way + b->wah) continue;   // fully scrolled off
         int isdot = (dd && slot == 0), i = slot - dd;
         int sel   = (!isdot && (i == b->sel || b->selall));
         int ghost = (!isdot && (b->ent[i].state == 'g' || b->ent[i].state == 'f'));
@@ -882,6 +917,7 @@ static void br_content(int hd, int wax, int way, int waw, int wah, void *ud) {
     // the info bar carries the single contacting -> progress indicator.  A fetch
     // keeps the existing list on screen and shows progress in the info bar too.
     aes_icon_label_style(0);                       // browser: over the light window
+    br_report_content(b);                          // full content height -> scrollbar + width
     if (b->viewmode == 2 || b->viewmode == 3) { br_draw_text(b); return; }
     br_layout(b);                                  // viewmode 1: the icon grid
     objc_draw(b->tree, 0, 2, wax, way, waw, wah);
@@ -1886,6 +1922,7 @@ static int a9_events(aes_event *ev, int timeout_ms) {
     }
     ev->type = oe.type; ev->mx = oe.mx; ev->my = oe.my;
     ev->button = oe.button; ev->key = oe.key; ev->shift = oe.shift;
+    ev->wheel = 0;                                        // A9 input layer has no wheel yet
     return ev->type;
 }
 
