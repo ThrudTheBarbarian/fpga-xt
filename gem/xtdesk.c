@@ -858,9 +858,9 @@ enum { AS_ROOT, AS_TITLE, AS_LHOST, AS_FHOST, AS_LTRAN, AS_RUDP, AS_RTCP,
 #define AS_H 246
 static char as_host[64], as_path[64], as_name[48];
 static char as_tmpl[35];                              // 34 input positions ('_' run)
-static TEDINFO as_thost = { as_host, as_tmpl, "P", sizeof as_host, TE_LEFT };
-static TEDINFO as_tpath = { as_path, as_tmpl, "P", sizeof as_path, TE_LEFT };
-static TEDINFO as_tname = { as_name, as_tmpl, "X", sizeof as_name, TE_LEFT };
+static TEDINFO as_thost = { .te_ptext = as_host, .te_ptmplt = as_tmpl, .te_pvalid = "P", .te_txtlen = sizeof as_host, .te_just = TE_LEFT };
+static TEDINFO as_tpath = { .te_ptext = as_path, .te_ptmplt = as_tmpl, .te_pvalid = "P", .te_txtlen = sizeof as_path, .te_just = TE_LEFT };
+static TEDINFO as_tname = { .te_ptext = as_name, .te_ptmplt = as_tmpl, .te_pvalid = "X", .te_txtlen = sizeof as_name, .te_just = TE_LEFT };
 static OBJECT as_dlg[AS_N] = {
  /*ROOT  */ { NIL, AS_TITLE, AS_OK, G_BOX, OF_MOVEABLE, OS_NORMAL, 0, 0,0, AS_W, AS_H },
  /*TITLE */ { AS_LHOST,  NIL,NIL, G_STRING, OF_NONE, OS_NORMAL, (void*)"Add FujiNet server",  20,12, 440,20 },
@@ -910,7 +910,7 @@ enum { MK_ROOT, MK_TITLE, MK_LFILT, MK_FFILT, MK_CANCEL, MK_OK, MK_N };
 #define MK_H 150
 static char mk_buf[32];
 static char mk_tmpl[31];                             // 30 input positions ('_' run)
-static TEDINFO mk_tfilt = { mk_buf, mk_tmpl, "X", sizeof mk_buf, TE_LEFT };
+static TEDINFO mk_tfilt = { .te_ptext = mk_buf, .te_ptmplt = mk_tmpl, .te_pvalid = "X", .te_txtlen = sizeof mk_buf, .te_just = TE_LEFT };
 static OBJECT mk_dlg[MK_N] = {
  /*ROOT  */ { NIL, MK_TITLE, MK_OK, G_BOX, OF_MOVEABLE, OS_NORMAL, 0, 0,0, MK_W, MK_H },
  /*TITLE */ { MK_LFILT,  NIL,NIL, G_STRING, OF_NONE, OS_NORMAL, (void*)"Set file filter",  20,12, 320,20 },
@@ -1551,7 +1551,7 @@ enum { NF_ROOT, NF_TITLE, NF_LNAME, NF_FNAME, NF_CANCEL, NF_OK, NF_N };
 #define NF_H 150
 static char nf_buf[64];
 static char nf_tmpl[41];                              // 40 input positions ('_' run)
-static TEDINFO nf_tname = { nf_buf, nf_tmpl, "F", sizeof nf_buf, TE_LEFT };
+static TEDINFO nf_tname = { .te_ptext = nf_buf, .te_ptmplt = nf_tmpl, .te_pvalid = "F", .te_txtlen = sizeof nf_buf, .te_just = TE_LEFT };
 static OBJECT nf_dlg[NF_N] = {
  /*ROOT  */ { NIL, NF_TITLE, NF_OK, G_BOX, OF_MOVEABLE, OS_NORMAL, 0, 0,0, NF_W, NF_H },
  /*TITLE */ { NF_LNAME,  NIL,NIL, G_STRING, OF_NONE, OS_NORMAL, (void*)"New folder", 20,12, 320,20 },

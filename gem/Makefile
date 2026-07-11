@@ -21,8 +21,22 @@ FT_CFLAGS := $(shell pkg-config --cflags freetype2)
 FT_LIBS   := $(shell pkg-config --libs freetype2) -lm -lz
 
 # -I. so the per-call VDI files resolve "vdi/vdi.h", "vdi/internal.h", etc.
-CFLAGS  := $(CSTD) $(WARN) -O2 -g -I. $(FT_CFLAGS) $(shell pkg-config --cflags sdl2 2>/dev/null || sdl2-config --cflags)
+# -I../../fpga-gem/src: the ONE shared .rsc codec (rsc.h/rsc.c) lives in the sibling
+# fpga-gem repo (co-located on every dev machine).  The codec uses OUR aes.h
+# enums instead of its own: -DRSC_NO_STATE_FLAGS skips its OF_/OS_/BOX_ROUND_
+# copies, and -DG_BOX=G_BOX (a self-referential macro) satisfies rsc.h's
+# `#ifndef G_BOX` type-enum guard so it uses aes.h's G_* (an enum, not a macro).
+CFLAGS  := $(CSTD) $(WARN) -O2 -g -I. -I../../fpga-gem/src -DRSC_NO_STATE_FLAGS -DG_BOX=G_BOX $(FT_CFLAGS) $(shell pkg-config --cflags sdl2 2>/dev/null || sdl2-config --cflags)
 LDLIBS  := $(FT_LIBS) $(shell pkg-config --libs sdl2 2>/dev/null || sdl2-config --libs)
+
+# The GemRCS resource engine, REFERENCED (not copied) from ../../fpga-gem/src.  It
+# sits outside aes/ (so the aes/*.c wildcard misses it) and is compiled with
+# aes.h force-included so its RSC_OBJECT/RSC_TEDINFO and flag/type enums coincide
+# with ours (with -DRSC_NO_STATE_FLAGS, above, skipping the codec's own copies).
+# aes/rscload.c (the AES bridge) rides in via $(AES_SRC); it needs this object,
+# so every target that links $(AES_SRC) links $(RSC_ENGINE_OBJ) too.
+RSC_ENGINE     := ../../fpga-gem/src/rsc.c
+RSC_ENGINE_OBJ := $(BUILD)/rsc_engine.o
 
 # Portable core + host backend.  The VDI is one file per call under vdi/, plus
 # the output-device drivers under vdi/printers/ (the PDF printer device, etc.).
@@ -39,8 +53,12 @@ TARGET  := $(BUILD)/gem_sdl
 .PHONY: all run test clean fills shapes output text lines theme themewin themepack aes aesmenu aeswin desktop pdf fontscan catalogtest menu_test mkrsc rsc_test
 all: $(TARGET)
 
-$(TARGET): $(OBJ)
-	$(CC) $(OBJ) $(LDLIBS) -o $@
+$(RSC_ENGINE_OBJ): $(RSC_ENGINE) aes/aes.h | $(BUILD)
+	@mkdir -p $(dir $@)
+	$(CC) $(CFLAGS) -include aes/aes.h -MMD -MP -c $< -o $@
+
+$(TARGET): $(OBJ) $(RSC_ENGINE_OBJ)
+	$(CC) $(OBJ) $(RSC_ENGINE_OBJ) $(LDLIBS) -o $@
 
 # Standalone examples: fill attributes, and the curved GDPs + line styles.
 FILLS_OBJ := $(addprefix $(BUILD)/,gfx_soft.o font.o fills_demo.o $(VDI_SRC:.c=.o))
@@ -85,26 +103,26 @@ $(BUILD)/gem_themewin: $(TWIN_OBJ)
 themewin: $(BUILD)/gem_themewin
 	./$(BUILD)/gem_themewin
 
-AES_DEMO_OBJ := $(addprefix $(BUILD)/,gfx_soft.o font.o theme.o aes_demo.o $(VDI_SRC:.c=.o) $(AES_SRC:.c=.o))
+AES_DEMO_OBJ := $(addprefix $(BUILD)/,gfx_soft.o font.o theme.o aes_demo.o $(VDI_SRC:.c=.o) $(AES_SRC:.c=.o)) $(RSC_ENGINE_OBJ)
 $(BUILD)/gem_aes: $(AES_DEMO_OBJ)
 	$(CC) $(AES_DEMO_OBJ) $(LDLIBS) -o $@
 aes: $(BUILD)/gem_aes
 	./$(BUILD)/gem_aes
 
-AESMENU_OBJ := $(addprefix $(BUILD)/,gfx_soft.o font.o theme.o aes_menu_demo.o $(VDI_SRC:.c=.o) $(AES_SRC:.c=.o))
+AESMENU_OBJ := $(addprefix $(BUILD)/,gfx_soft.o font.o theme.o aes_menu_demo.o $(VDI_SRC:.c=.o) $(AES_SRC:.c=.o)) $(RSC_ENGINE_OBJ)
 $(BUILD)/gem_aesmenu: $(AESMENU_OBJ)
 	$(CC) $(AESMENU_OBJ) $(LDLIBS) -o $@
 aesmenu: $(BUILD)/gem_aesmenu
 	./$(BUILD)/gem_aesmenu
 
-AESWIN_OBJ := $(addprefix $(BUILD)/,gfx_soft.o font.o theme.o aes_window_demo.o $(VDI_SRC:.c=.o) $(AES_SRC:.c=.o))
+AESWIN_OBJ := $(addprefix $(BUILD)/,gfx_soft.o font.o theme.o aes_window_demo.o $(VDI_SRC:.c=.o) $(AES_SRC:.c=.o)) $(RSC_ENGINE_OBJ)
 $(BUILD)/gem_aeswin: $(AESWIN_OBJ)
 	$(CC) $(AESWIN_OBJ) $(LDLIBS) -o $@
 aeswin: $(BUILD)/gem_aeswin
 	./$(BUILD)/gem_aeswin
 
 # The combined interactive desktop: menu bar + draggable windows + a dialog.
-DESK_OBJ := $(addprefix $(BUILD)/,gfx_soft.o font.o theme.o aes_desktop_demo.o $(VDI_SRC:.c=.o) $(AES_SRC:.c=.o))
+DESK_OBJ := $(addprefix $(BUILD)/,gfx_soft.o font.o theme.o aes_desktop_demo.o $(VDI_SRC:.c=.o) $(AES_SRC:.c=.o)) $(RSC_ENGINE_OBJ)
 $(BUILD)/gem_desktop: $(DESK_OBJ)
 	$(CC) $(DESK_OBJ) $(LDLIBS) -o $@
 desktop: $(BUILD)/gem_desktop
@@ -116,7 +134,7 @@ desktop: $(BUILD)/gem_desktop
 # frame to /tmp/xtdesk.ppm.
 SQLITE_CFLAGS := $(shell pkg-config --cflags sqlite3 2>/dev/null)
 SQLITE_LIBS   := $(shell pkg-config --libs sqlite3 2>/dev/null || echo -lsqlite3)
-XTDESK_OBJ := $(addprefix $(BUILD)/,gfx_soft.o font.o theme.o img.o registry.o fujiclient.o xtdesk.o $(VDI_SRC:.c=.o) $(AES_SRC:.c=.o))
+XTDESK_OBJ := $(addprefix $(BUILD)/,gfx_soft.o font.o theme.o img.o registry.o fujiclient.o xtdesk.o $(VDI_SRC:.c=.o) $(AES_SRC:.c=.o)) $(RSC_ENGINE_OBJ)
 $(BUILD)/registry.o: registry.c | $(BUILD)
 	$(CC) $(CFLAGS) $(SQLITE_CFLAGS) -MMD -MP -c $< -o $@
 $(BUILD)/gem_xtdesk: $(XTDESK_OBJ)
@@ -167,16 +185,16 @@ $(BUILD)/wm_test: $(WMTEST_OBJ)
 # menu_test — headless AES popup-menu self-test (no SDL): unit-tests the
 # menu_popup geometry / hit-test / keyboard-nav helpers and renders one open
 # popup + its cascade to /tmp/xtdesk-menu.ppm.
-MENUTEST_OBJ := $(addprefix $(BUILD)/,gfx_soft.o font.o theme.o menu_test.o $(VDI_SRC:.c=.o) $(AES_SRC:.c=.o))
+MENUTEST_OBJ := $(addprefix $(BUILD)/,gfx_soft.o font.o theme.o menu_test.o $(VDI_SRC:.c=.o) $(AES_SRC:.c=.o)) $(RSC_ENGINE_OBJ)
 $(BUILD)/menu_test: $(MENUTEST_OBJ)
 	$(CC) $(MENUTEST_OBJ) $(FT_LIBS) -o $@
 menu_test: $(BUILD)/menu_test
 	./$(BUILD)/menu_test
 
-# ---- Shared GEM .rsc codec (aes/rsc.c): authoring tool + resource + test ----
-# mkrsc — authors gem/resources/desktop.rsc through the rsc builder API.  Only
-# the codec + libc are needed (no VDI/theme/SDL), so it links tiny.
-MKRSC_OBJ := $(addprefix $(BUILD)/,aes/rsc.o tools/mkrsc.o)
+# ---- Shared GEM .rsc engine (../../fpga-gem/src/rsc.c): authoring tool + test ----
+# mkrsc — authors gem/resources/desktop.rsc through the engine's builder API.
+# Only the engine + libc are needed (no VDI/theme/SDL), so it links tiny.
+MKRSC_OBJ := $(addprefix $(BUILD)/,tools/mkrsc.o) $(RSC_ENGINE_OBJ)
 $(BUILD)/mkrsc: $(MKRSC_OBJ)
 	$(CC) $(MKRSC_OBJ) -o $@
 mkrsc: $(BUILD)/mkrsc resources/desktop.rsc
@@ -187,9 +205,10 @@ resources/desktop.rsc: $(BUILD)/mkrsc
 	./$(BUILD)/mkrsc resources/desktop.rsc
 
 # rsc_test — headless codec self-test: structure asserts on the New dialog, a
-# centred render to /tmp/xtdesk-rsc.ppm, and a load->save->load round-trip
-# (structural + byte-identity).  rsc.o rides in via $(AES_SRC).
-RSCTEST_OBJ := $(addprefix $(BUILD)/,gfx_soft.o font.o theme.o rsc_test.o $(VDI_SRC:.c=.o) $(AES_SRC:.c=.o))
+# centred render (through the aes/rscload.c bridge) to /tmp/xtdesk-rsc.ppm, and a
+# rsc_read->rsc_write->rsc_read round-trip (structural + byte-identity).  The
+# bridge (aes/rscload.o) rides in via $(AES_SRC); the engine via $(RSC_ENGINE_OBJ).
+RSCTEST_OBJ := $(addprefix $(BUILD)/,gfx_soft.o font.o theme.o rsc_test.o $(VDI_SRC:.c=.o) $(AES_SRC:.c=.o)) $(RSC_ENGINE_OBJ)
 $(BUILD)/rsc_test: $(RSCTEST_OBJ)
 	$(CC) $(RSCTEST_OBJ) $(FT_LIBS) -o $@
 rsc_test: $(BUILD)/rsc_test resources/desktop.rsc

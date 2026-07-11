@@ -257,6 +257,13 @@ $(BUILD)/libm.so: newlib-pic/libm.a $(BUILD)/libc.so | $(BUILD)
 # dynamic imports resolved by the kernel export table at load (libgcc isn't PIC).
 GEM := ../gem
 FT  := ../xtos/freetype
+# The ONE shared GEM .rsc codec lives in the sibling fpga-gem repo (co-located
+# on every dev machine); referenced, not copied.  The AES bridge $(GEM)/aes/
+# rscload.c rides in via the aes/*.c wildcard below and links against this
+# engine object, built separately (it sits outside aes/) with aes.h force-
+# included so its RSC_OBJECT/RSC_TEDINFO + flag/type enums coincide with ours.
+FPGAGEM := ../../fpga-gem/src
+RSC_ENGINE_OBJ := $(BUILD)/gem_rsc.o
 # Desktop artwork (theme, icons, wallpaper) is user content on the SD — /OS/Themes,
 # /OS/Icons, /OS/Wallpaper, each selected by a `Default` file — not baked in.
 GEMSRC := $(GEM)/gfx_soft.c $(GEM)/font.c $(GEM)/wm.c $(GEM)/theme.c $(GEM)/img.c \
@@ -268,7 +275,10 @@ GEMINC := -Itest/freertos/libs/shim -I$(GEM) -I$(GEM)/vdi -I$(FT)/include -Inewl
 # the interface — see docs/OS/library-imports.md). Ship unstripped.
 # -DGEM_XTOS: compile the XTOS syscall paths (usys.h) into the AES core — e.g. the
 # evnt_multi drain of kernel XTOS system messages. The SDL testbed leaves it off.
-GEMCFLAGS := -marm -mcpu=cortex-a9 -mfloat-abi=softfp -mfpu=neon-vfpv3 -fpic -O2 -g -DGEM_XTOS $(GEMINC)
+# -I$(FPGAGEM): the shared rsc.h; -DRSC_NO_STATE_FLAGS + -DG_BOX=G_BOX: rsc.h uses
+# OUR aes.h flag/type enums (rscload.c includes aes.h before rsc.h).
+GEMCFLAGS := -marm -mcpu=cortex-a9 -mfloat-abi=softfp -mfpu=neon-vfpv3 -fpic -O2 -g -DGEM_XTOS \
+             -I$(FPGAGEM) -DRSC_NO_STATE_FLAGS -DG_BOX=G_BOX $(GEMINC)
 
 # Vendored SQLite (amalgamation) for the A9 registry — built with our own VFS
 # (SQLITE_OS_OTHER, sqlite_vfs.c over the loader file API), single-threaded,
@@ -294,9 +304,14 @@ $(BUILD)/sqlite3.so: test/freertos/progs/sqlite3.c $(BUILD)/sqlite3.o $(BUILD)/s
 	$(ARMCC) $(GEMCFLAGS) -I$(SQLITE) -Itest/qemu -c $< -o $(BUILD)/sqlite3sh.o
 	$(LLD) -shared --hash-style=sysv -o $@ $(BUILD)/sqlite3sh.o $(BUILD)/sqlite3.o $(BUILD)/sqlite_vfs.o $(BUILD)/libc.so $(BUILD)/libm.so
 
-$(BUILD)/libGEM.so: $(GEMSRC) $(FTSRC) $(BUILD)/libc.so $(BUILD)/libm.so | $(BUILD)
+# The shared .rsc engine, compiled once (outside aes/) with aes.h force-included
+# so -DRSC_NO_STATE_FLAGS/-DG_BOX=G_BOX make its enums coincide with the AES's.
+$(RSC_ENGINE_OBJ): $(FPGAGEM)/rsc.c $(GEM)/aes/aes.h | $(BUILD)
+	$(ARMCC) $(GEMCFLAGS) -include aes/aes.h -c $< -o $@
+
+$(BUILD)/libGEM.so: $(GEMSRC) $(FTSRC) $(RSC_ENGINE_OBJ) $(BUILD)/libc.so $(BUILD)/libm.so | $(BUILD)
 	$(ARMCC) $(GEMCFLAGS) -shared -nostdlib -Wl,-soname,libGEM.so \
-	    $(GEMSRC) $(FTSRC) $(BUILD)/libc.so $(BUILD)/libm.so -o $@
+	    $(GEMSRC) $(FTSRC) $(RSC_ENGINE_OBJ) $(BUILD)/libc.so $(BUILD)/libm.so -o $@
 
 # gemtext — real-VDI client: open workstation, fill rect, FreeType text, ASCII dump
 $(BUILD)/gemtext.so: test/freertos/progs/gemtext.c $(BUILD)/libGEM.so $(BUILD)/libc.so | $(BUILD)

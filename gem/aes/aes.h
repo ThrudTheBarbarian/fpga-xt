@@ -52,9 +52,20 @@ enum { OS_NORMAL=0x00, OS_SELECTED=0x01, OS_CROSSED=0x02, OS_CHECKED=0x04,
 #define WB_INDEX(state)   (((state) >> 8) & 0x7F)
 #define WB_MAKE(idx)      ((uint16_t)(OS_WHITEBAK | (((idx) & 0x7F) << 8)))
 
-// Editable text (G_FTEXT / G_FBOXTEXT ob_spec).  A reduced classic TEDINFO:
-// the six font/colour/thickness words are gone (the theme draws the field);
-// template + validation semantics are kept verbatim.
+// ob_type high byte (the "extended" byte the AES ignores): per-corner box
+// rounding for the box types (G_BOX/G_IBOX/G_BOXCHAR/G_BOXTEXT).  Cosmetic — a
+// plain loader draws square corners.  0xF0 = all four.  These match the shared
+// GEM .rsc codec (fpga-gem/src/rsc.h, RSC-FORMAT.md §5), so RSC_OBJECT and our
+// OBJECT are byte-identical and the codec's flag/type enums coincide with ours.
+enum { BOX_ROUND_TL=0x10, BOX_ROUND_TR=0x20, BOX_ROUND_BR=0x40, BOX_ROUND_BL=0x80 };
+
+// Editable text (G_FTEXT / G_FBOXTEXT ob_spec).  This is the EXACT classic /
+// RSC_TEDINFO layout (fpga-gem/src/rsc.h) so a TEDINFO and an RSC_TEDINFO are
+// byte-identical and the shared codec's ob_spec can be used directly.  The AES
+// only reads te_ptext / te_ptmplt / te_pvalid / te_txtlen / te_just (the theme
+// draws the field); te_font / te_fontid / te_color / te_fontsize / te_thickness
+// / te_tmplen are the classic font/colour words — carried for byte-identity but
+// inert in this AES.
 typedef struct {
     char   *te_ptext;    // the editable text (caller's buffer)
     char   *te_ptmplt;   // display template, '_' = input position ("__:__"); NULL = free text
@@ -63,8 +74,11 @@ typedef struct {
                          //   'N' digit+upper+space  'n' alnum+space
                          //   'F'/'f' filename chars  'P'/'p' path chars
                          //   'X' anything  'x' anything, uppercased
-    int16_t te_txtlen;   // sizeof buffer at te_ptext (incl. NUL)
+    int16_t te_font, te_fontid;                    // classic font words (inert here)
     int16_t te_just;     // TE_LEFT / TE_RIGHT / TE_CNTR
+    int16_t te_color, te_fontsize, te_thickness;   // classic colour/size/thickness (inert here)
+    int16_t te_txtlen;   // sizeof buffer at te_ptext (incl. NUL)
+    int16_t te_tmplen;   // template length incl. NUL (inert here)
 } TEDINFO;
 enum { TE_LEFT=0, TE_RIGHT=1, TE_CNTR=2 };
 
