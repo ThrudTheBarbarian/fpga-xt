@@ -42,6 +42,63 @@ static int off_rec(OBJECT *t, int root, int target, int ax, int ay, int *ox, int
 }
 void objc_offset(OBJECT *t, int obj, int *x, int *y) { *x = *y = 0; off_rec(t, 0, obj, 0, 0, x, y); }
 
+// ---- live tree edits (classic AES: pure index relinking of the child chain) --
+// The last child's ob_next points back to its parent, so following ob_next from
+// `obj` reaches the parent exactly when we arrive at that parent's tail child.
+static int objc_parent(OBJECT *t, int obj) {
+    for (int q = obj; t[q].ob_next >= 0; q = t[q].ob_next)
+        if (t[t[q].ob_next].ob_tail == q) return t[q].ob_next;
+    return NIL;
+}
+// Append `obj` (already sized/placed by the caller) as the LAST child of parent.
+void objc_add(OBJECT *tree, int parent, int obj) {
+    tree[obj].ob_next = (int16_t)parent;                       // tail child -> parent
+    if (tree[parent].ob_head < 0) tree[parent].ob_head = (int16_t)obj;
+    else                          tree[tree[parent].ob_tail].ob_next = (int16_t)obj;
+    tree[parent].ob_tail = (int16_t)obj;
+}
+// Unlink `obj` from its parent's child list (frees nothing; OF_LASTOB untouched).
+void objc_delete(OBJECT *tree, int obj) {
+    int parent = objc_parent(tree, obj); if (parent < 0) return;
+    OBJECT *p = &tree[parent];
+    if (p->ob_head == obj) {
+        p->ob_head = (p->ob_tail == obj) ? NIL : tree[obj].ob_next;   // first child
+        if (p->ob_tail == obj) p->ob_tail = NIL;
+    } else {                                                   // find the sibling before obj
+        int s = p->ob_head;
+        while (tree[s].ob_next != obj) s = tree[s].ob_next;
+        tree[s].ob_next = tree[obj].ob_next;
+        if (p->ob_tail == obj) p->ob_tail = (int16_t)s;
+    }
+    tree[obj].ob_next = NIL;
+}
+// Move `obj` to position `pos` among its siblings: 0 = first (bottom of the draw
+// order), >= child-count = last (top).  Pure relink within the same parent.
+void objc_order(OBJECT *tree, int obj, int pos) {
+    int parent = objc_parent(tree, obj); if (parent < 0) return;
+    objc_delete(tree, obj);
+    OBJECT *p = &tree[parent];
+    if (pos <= 0) {                                           // first child
+        tree[obj].ob_next = (p->ob_head < 0) ? (int16_t)parent : p->ob_head;
+        if (p->ob_tail < 0) p->ob_tail = (int16_t)obj;
+        p->ob_head = (int16_t)obj;
+        return;
+    }
+    int n = 0; EACH_CHILD(tree, parent, c) n++;               // remaining children
+    if (pos >= n) { objc_add(tree, parent, obj); return; }    // last child
+    int prev = p->ob_head;
+    for (int i = 0; i < pos - 1; i++) prev = tree[prev].ob_next;
+    tree[obj].ob_next = tree[prev].ob_next;
+    tree[prev].ob_next = (int16_t)obj;
+}
+
+// USERDEF draw seam (mirrors form_set_hook): one registered callback, invoked for
+// each G_USERDEF object during objc_draw.  The app gets the object's position via
+// objc_offset(tree,obj,&x,&y) and draws through aes_handle().
+static objc_userdraw_fn g_userdraw;
+static void            *g_userdraw_ud;
+void objc_set_userdraw(objc_userdraw_fn fn, void *ud) { g_userdraw = fn; g_userdraw_ud = ud; }
+
 static void box(int x, int y, int w, int h, int border) {
     vsf_color(g_vh, PEN_DLG); vsf_interior(g_vh, VDI_FIS_SOLID); vsf_perimeter(g_vh, 0);
     int16_t r[4] = { (int16_t)x, (int16_t)y, (int16_t)(x+w-1), (int16_t)(y+h-1) };
@@ -129,6 +186,7 @@ static void draw_obj(OBJECT *t, int obj, int x, int y) {
             }
             break;
         case G_IBOX: break;                                     // invisible container
+        case G_USERDEF: if (g_userdraw) g_userdraw(t, obj, g_userdraw_ud); break;   // app-drawn
         case G_BUTTON: {
             int def = fl & OF_DEFAULT;
             const char *v = (st & OS_DISABLED)         ? "button.disabled"

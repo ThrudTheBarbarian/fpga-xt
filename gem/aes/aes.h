@@ -100,6 +100,19 @@ void aes_icon_label_style(int dark_bg);
 gfx_surface *icon_ghost(const gfx_surface *s);
 // Topmost drawable object under (mx,my) within `depth` levels of `start`; -1 none.
 int  objc_find(OBJECT *tree, int start, int depth, int mx, int my);
+// ---- Live object-tree edits (classic AES; pure child-chain relinking) --------
+// objc_add appends `obj` (caller-sized/placed) as parent's LAST child; objc_delete
+// unlinks it (frees nothing); objc_order moves it among its siblings (0 = first /
+// bottom, >= child-count = last / top).  The object array + OF_LASTOB are the
+// caller's to manage.
+void objc_add(OBJECT *tree, int parent, int obj);
+void objc_delete(OBJECT *tree, int obj);
+void objc_order(OBJECT *tree, int obj, int pos);
+// USERDEF draw seam — one registered callback (like form_set_hook), invoked for
+// each G_USERDEF object inside objc_draw.  Get the rect via objc_offset + ob_w/h,
+// draw through aes_handle().  Return value is currently ignored.
+typedef int (*objc_userdraw_fn)(OBJECT *tree, int obj, void *ud);
+void objc_set_userdraw(objc_userdraw_fn fn, void *ud);
 
 // ---- Events: the host source, the multiplexer, the message pipe ---------
 // AES is event-driven by one host source: wait up to timeout_ms (-1 = forever)
