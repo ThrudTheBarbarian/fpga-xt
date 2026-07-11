@@ -203,7 +203,7 @@ int menu_handle_click(int mx, int my){
 #define P_GAP    22     // gap between the label and the accel / triangle column
 #define P_TRIW   12     // submenu-triangle column width
 #define P_PADY   4      // top/bottom pad inside the box
-#define PEN_GREY 9      // accel + disabled text (matches object.c's disabled pen)
+#define PEN_GREY 9      // disabled text (matches object.c's disabled pen)
 
 static int mi_is_sep(const menu_item *it){ return it->label && it->label[0]=='-' && it->label[1]==0; }
 // A row that cascades: a static submenu (sub != NULL) or a lazy one (MI_LAZY).
@@ -328,7 +328,9 @@ static void draw_popup(const menu_item *items, const popup_geom *g, int hov){
                  int16_t r[4]={(int16_t)(g->x+4),(int16_t)ty,(int16_t)(g->x+g->w-5),(int16_t)(ty+rh-1)};
                  vr_recfl(H(),r); }
         int lpen = sel ? 0 : disabled ? PEN_GREY : 1;
-        int apen = sel ? 0 : PEN_GREY;
+        int apen = lpen;                              // accel matches the label pen: black when
+                                                      // enabled (grey would read as disabled),
+                                                      // grey only on a genuinely disabled row
         int cy = ty+rh/2-7;
         if(items[i].flags & MI_CHECKED){                                  // a drawn check tick
             int cx=g->x+7, cym=ty+rh/2;
@@ -347,7 +349,7 @@ static void draw_popup(const menu_item *items, const popup_geom *g, int hov){
             vsf_color(H(),sel?0:1); vsf_interior(H(),VDI_FIS_SOLID); vsf_perimeter(H(),0);
             int16_t tri[6]={(int16_t)tx,(int16_t)(tym-4),(int16_t)(tx+5),(int16_t)tym,(int16_t)tx,(int16_t)(tym+4)};
             v_fillarea(H(),3,tri);
-        } else if(items[i].accel){                                  // accel, right-aligned grey
+        } else if(items[i].accel){                                  // accel, right-aligned
             vst_color(H(),apen);
             vst_alignment(H(),VDI_TA_RIGHT,VDI_TA_TOP,0,0);
             v_gtext(H(), g->x+g->w-P_RPAD, cy, items[i].accel);
@@ -467,6 +469,12 @@ static int menu_popup_run(const menu_item *items, int n, int x, int y,
     popup_panel st[POPMAX_INTERNAL]; int depth=0;
     panel_open(&st[0], items, n, x, y); depth=1;
     int result=-1;
+    // A popup opened by a click must ignore the button-RELEASE of that same click:
+    // when popups chain (context menu -> Browse cascade) the opener returns on the
+    // BTN_DOWN and the trailing BTN_UP would otherwise leak in and auto-select the
+    // item under the cursor.  Arm on the first in-popup BTN_DOWN; only then may a
+    // BTN_UP select.
+    int armed=0;
 
     for(;;){
         aes_event ev; int gen=aes_redraw_gen();
@@ -532,6 +540,8 @@ static int menu_popup_run(const menu_item *items, int n, int x, int y,
         }
 
         if(t==AES_BTN_DOWN || t==AES_BTN_UP){
+            if(t==AES_BTN_UP && !armed) continue;            // swallow the opener click's release
+            if(t==AES_BTN_DOWN) armed=1;                     // a genuine in-popup press: releases now count
             int pi=panel_at(st,depth,ev.mx,ev.my);
             if(pi<0){ if(t==AES_BTN_DOWN){ result=-1; break; } continue; }  // click-out cancels
             popup_panel *p=&st[pi];
