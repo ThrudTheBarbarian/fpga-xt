@@ -49,7 +49,9 @@ typedef struct {
     int          text_font_id;     // selected font id (vst_font; 1 = system)
     int          wr_mode;          // VDI_MD_* (vswr_mode; default REPLACE)
     int          in_mode[5];       // vsin_mode per device class (1..4)
-    int          clip_on, cx0, cy0, cx1, cy1;   // clip rect, inclusive
+    int          clip_on, cx0, cy0, cx1, cy1;   // clip rect, inclusive (current top of stack)
+    int          clip_sp;                        // nested-clip stack depth
+    int          clip_stk[16][5];                // saved [on,x0,y0,x1,y1] per vs_clip push
     int          device;           // v_opnwk device id (0 = virtual/screen draw)
     void        *dev;              // device state (metafile recorder / PDF page)
     gfx_surface  bm;               // backing surface for an off-screen bitmap ws (v_opnbm)

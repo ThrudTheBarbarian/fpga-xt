@@ -408,7 +408,9 @@ void wind_set_desktop(uint32_t rgba);               // desktop background colour
 // window.  Called as fn(0, x,y,w,h, ud) over the whole screen.  NULL clears it.
 void wind_set_desktop_content(wind_draw_fn fn, void *ud);
 int  aes_top_reserve(void);                         // px reserved at the top (menu bar) — offset desktop icons below it
-void wind_redraw(void);                             // redraw desktop + all windows (AES owns it)
+void wind_redraw(void);                             // full-screen redraw (desktop + all windows)
+void wind_redraw_area(int x, int y, int w, int h);  // repaint only this damage rect (bg+wallpaper+windows+bar, clipped + presented)
+void wind_redraw_win(int handle);                   // repaint just one window's rect (the "only this window changed" case)
 // Optional HW drag-overlay hooks (A9): title-bar drag lifts the window into the
 // overlay plane and moves it by register write (no redraw). NULL -> classic drag.
 void wind_set_overlay(int(*begin)(int,int,int,int), void(*move)(int,int),

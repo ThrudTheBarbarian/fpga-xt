@@ -307,13 +307,40 @@ void aes_ovl_drop(void){ if(g_ovl_end) g_ovl_end(); }
 static int g_redraw_gen;           // bumped per wind_redraw: modal loops watch it
 int aes_redraw_gen(void){ return g_redraw_gen; }
 
-void wind_redraw(void){
+// Repaint only the damage rectangle: background + wallpaper/icons + every window
+// that intersects it (in z-order) + the menu bar if the rect reaches it, all
+// clipped to the rect, then present it.  wind_redraw() is the whole-screen case.
+// Everything is drawn through the (nesting) clip so draw_one's own content clips
+// intersect with the damage bound instead of escaping it.
+void wind_redraw_area(int rx,int ry,int rw,int rh){
     g_redraw_gen++;
+    gfx_surface *d = vdi_screen_target(); if(!d) return;
+    if(rx<0){ rw+=rx; rx=0; } if(ry<0){ rh+=ry; ry=0; }
+    if(rx+rw>d->w) rw=d->w-rx; if(ry+rh>d->h) rh=d->h-ry;
+    if(rw<=0||rh<=0) return;
+    int16_t clip[4]={(int16_t)rx,(int16_t)ry,(int16_t)(rx+rw-1),(int16_t)(ry+rh-1)};
+    vs_clip(H(),2,NULL);                                  // fresh clip stack for the frame
+    vs_clip(H(),1,clip);
+    uint32_t bg=g_deskbg;                                 // background (wallpaper overdraws it)
+    for(int yy=ry; yy<ry+rh; yy++){ uint32_t*row=d->px+(size_t)yy*d->w; for(int xx=rx; xx<rx+rw; xx++) row[xx]=bg; }
+    if(g_deskcontent) g_deskcontent(0, 0,0, d->w,d->h, g_deskcontent_ud);   // full extent, clipped to the rect
+    for(int i=0;i<g_nz;i++){ awin*W=&g_w[g_z[i]];         // windows intersecting the damage, z-order
+        if(W->hidden) continue;
+        if(W->x < rx+rw && W->x+W->w > rx && W->y < ry+rh && W->y+W->h > ry)
+            draw_one(g_z[i], i==g_nz-1);
+    }
+    if(ry < g_top_reserve) menu_redraw();                 // the bar only if the rect reaches it
+    vs_clip(H(),0,NULL);
+    aes_flush_rect(rx,ry,rw,rh);                          // present (A9 back-buffer; no-op on SDL)
+}
+void wind_redraw(void){
     gfx_surface *d = vdi_screen_target();
-    if(d){ uint32_t bg=g_deskbg; for(int i=0;i<d->w*d->h;i++) d->px[i]=bg; }
-    if(g_deskcontent && d) g_deskcontent(0, 0,0, d->w,d->h, g_deskcontent_ud);  // wallpaper + icons
-    for(int i=0;i<g_nz;i++) draw_one(g_z[i], i==g_nz-1);
-    menu_redraw();                 // the menu bar sits above every window
+    if(d) wind_redraw_area(0,0,d->w,d->h);
+}
+// Repaint just one window's rect (the common "only this window changed" case).
+void wind_redraw_win(int hd){
+    if(hd<1||hd>=MAXW||!g_w[hd].used) return;
+    awin*W=&g_w[hd]; wind_redraw_area(W->x,W->y,W->w,W->h);
 }
 
 int wind_create(int kind,int x,int y,int w,int h){
@@ -328,10 +355,10 @@ void wind_open(int hd,int x,int y,int w,int h){
     if(hd<1||hd>=MAXW||!g_w[hd].used) return;
     g_w[hd].x=x; g_w[hd].y=y; g_w[hd].w=w; g_w[hd].h=h; clamp_win(&g_w[hd]); clamp_scroll(&g_w[hd]);
     for(int i=0;i<g_nz;i++) if(g_z[i]==hd) return;       // already open
-    g_z[g_nz++]=hd; wind_redraw();
+    g_z[g_nz++]=hd; wind_redraw_win(hd);
 }
 static void zremove(int hd){ for(int i=0;i<g_nz;i++) if(g_z[i]==hd){ for(int j=i;j<g_nz-1;j++) g_z[j]=g_z[j+1]; g_nz--; return; } }
-void wind_close(int hd){ zremove(hd); wind_redraw(); }
+void wind_close(int hd){ awin*W=&g_w[hd]; int x=W->x,y=W->y,w=W->w,h=W->h; zremove(hd); wind_redraw_area(x,y,w,h); }
 void wind_delete(int hd){ if(hd>=1&&hd<MAXW){ zremove(hd); g_w[hd].used=0; } }
 void wind_set_name(int hd,const char*n){ if(hd>=1&&hd<MAXW){ snprintf(g_w[hd].name,sizeof g_w[hd].name,"%s",n?n:""); } }
 void wind_content(int hd,wind_draw_fn fn,void*ud){ if(hd>=1&&hd<MAXW){ g_w[hd].draw=fn; g_w[hd].ud=ud; } }
@@ -349,7 +376,7 @@ int wind_handle_wheel(int mx,int my,int delta){
     if(!vsb_on(W)) return 0;                       // nothing scrollable under the pointer
     int before=W->scroll_y;
     W->scroll_y -= delta*SB_LINE; clamp_scroll(W);  // wheel-up (delta>0) -> toward the top
-    if(W->scroll_y!=before) wind_redraw();
+    if(W->scroll_y!=before) wind_redraw_win(hd);
     return 1;
 }
 void wind_info(int hd,wind_draw_fn fn,void*ud){ if(hd>=1&&hd<MAXW){ g_w[hd].info=fn; g_w[hd].infoud=ud; } }
@@ -390,7 +417,7 @@ int wind_top(void){ return g_nz ? g_z[g_nz-1] : 0; }
 
 void wind_raise(int hd){
     if(hd<1||hd>=MAXW) return;
-    for(int i=0;i<g_nz;i++) if(g_z[i]==hd){ zremove(hd); g_z[g_nz++]=hd; wind_redraw(); return; }
+    for(int i=0;i<g_nz;i++) if(g_z[i]==hd){ zremove(hd); g_z[g_nz++]=hd; wind_redraw_win(hd); return; }
 }
 
 static void post(int type,int hd,int a,int b,int c,int d){
@@ -402,7 +429,7 @@ int wind_handle_click(int mx,int my){
     int hd = wind_find(mx,my);
     if(!hd) return 0;
     awin*W=&g_w[hd];
-    if(g_z[g_nz-1]!=hd){ raise(hd); wind_redraw(); post(WM_TOPPED,hd,0,0,0,0); return 1; }
+    if(g_z[g_nz-1]!=hd){ raise(hd); wind_redraw_win(hd); post(WM_TOPPED,hd,0,0,0,0); return 1; }
     int th=tbh();
     int tx=W->x, ty=W->y, tw=W->w;               // flush title bar
     // close box
@@ -481,15 +508,15 @@ int wind_handle_click(int mx,int my){
       if(vsb_geom(W,&cx,&cy,&cw,&ch,&upy,&dny,&arrh,&trky,&trkh,&thy,&thh) &&
          mx>=cx && mx<cx+cw && my>=cy && my<cy+ch){
         if(arrh>0 && my<upy+arrh){                              // up arrow: one line
-            W->scroll_y-=SB_LINE; clamp_scroll(W); wind_redraw(); post(WM_VSLID,hd,0,0,0,0); return 1; }
+            W->scroll_y-=SB_LINE; clamp_scroll(W); wind_redraw_win(hd); post(WM_VSLID,hd,0,0,0,0); return 1; }
         if(arrh>0 && my>=dny){                                  // down arrow: one line
-            W->scroll_y+=SB_LINE; clamp_scroll(W); wind_redraw(); post(WM_VSLID,hd,0,0,0,0); return 1; }
+            W->scroll_y+=SB_LINE; clamp_scroll(W); wind_redraw_win(hd); post(WM_VSLID,hd,0,0,0,0); return 1; }
         if(my<thy){                                             // track above thumb: page up
             int wx,wy,ww,wh; full_work(W,&wx,&wy,&ww,&wh); (void)wx;(void)wy;(void)ww;
-            W->scroll_y-=(wh>SB_LINE?wh-SB_LINE:wh); clamp_scroll(W); wind_redraw(); post(WM_VSLID,hd,0,0,0,0); return 1; }
+            W->scroll_y-=(wh>SB_LINE?wh-SB_LINE:wh); clamp_scroll(W); wind_redraw_win(hd); post(WM_VSLID,hd,0,0,0,0); return 1; }
         if(my>=thy+thh){                                        // track below thumb: page down
             int wx,wy,ww,wh; full_work(W,&wx,&wy,&ww,&wh); (void)wx;(void)wy;(void)ww;
-            W->scroll_y+=(wh>SB_LINE?wh-SB_LINE:wh); clamp_scroll(W); wind_redraw(); post(WM_VSLID,hd,0,0,0,0); return 1; }
+            W->scroll_y+=(wh>SB_LINE?wh-SB_LINE:wh); clamp_scroll(W); wind_redraw_win(hd); post(WM_VSLID,hd,0,0,0,0); return 1; }
         // on the thumb: drag it, mapping travel back to scroll_y proportionally
         int grab=my-thy;
         for(;;){ aes_event e; int t=aes_wait_idle(&e,-1); if(t==AES_QUIT)break;
@@ -498,7 +525,7 @@ int wind_handle_click(int mx,int my){
                 int span=tk2h-t2h; int wx,wy,ww,wh; full_work(W,&wx,&wy,&ww,&wh); (void)wx;(void)wy;(void)ww;
                 int maxs=W->content_h-wh; if(maxs<0)maxs=0;
                 int rel=e.my-grab-tk2y; if(span>0){ W->scroll_y=(int)((long)rel*maxs/span); }
-                clamp_scroll(W); wind_redraw(); }
+                clamp_scroll(W); wind_redraw_win(hd); }
             if(t==AES_BTN_UP) break; }
         post(WM_VSLID,hd,0,0,0,0); return 1;
       } }
