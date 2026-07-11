@@ -17,6 +17,19 @@ and records `DT_NEEDED`. At load time the XTOS loader resolves it across the
 registry of loaded objects (dynamic-loading.md §5). That path is proven — libc.so,
 libm.so, libGEM.so all load and link this way.
 
+> **`libxtos.so` — the XT syscall half of the ABI.** POSIX ships as real symbols
+> in `libc.so`, but the XT-specific syscalls (framebuffer `sys_fb_info` /
+> `sys_fb_present` / `sys_fb_wallpaper`, input `sys_input` / `sys_kbd_6502`,
+> `sys_xtos_recv`, `sys_overlay`, …) existed only as `static inline` wrappers in
+> `usys.h` — a C-only, compile-time interface, so any language that can't inline
+> the `svc #1` was locked out of the machine's own display and input.
+> `/OS/Library/libxtos.so` closes that gap: every `usys.h` wrapper (58 of them,
+> POSIX and XT alike) as a real exported `sys_*` symbol, importable by exactly the
+> mechanism this doc describes. It is derived wholesale from `usys.h` (included
+> with the `static inline` storage-class stripped), so it can never drift from the
+> frozen ABI. The names are the raw `sys_*`, so they never collide with libc.so's
+> POSIX `write`/`open`/… Source: `loader/test/freertos/libs/libxtos.c`.
+
 What is missing is the **front-end** half: a way for xtc *source* to say "I want
 what `libGEM.so` provides" and have the compiler pull that library's exported
 names and types into scope — so it can type-check the calls and emit them as
