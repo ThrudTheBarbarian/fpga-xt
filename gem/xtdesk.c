@@ -1187,46 +1187,65 @@ static void desk_click(int mx, int my) {
 }
 
 // ======================================================================
-// Browse navigator — a cascading menu_popup filesystem walk invoked from the
-// context menu's "browse" verb.  Each popup lists one directory (".." unless at
-// the browse root, then sorted dirs with a trailing "/", then sorted files);
-// picking a folder cascades a fresh popup to the right (reads as a descent), a
-// file launches it (the double-click path), ".." ascends, Esc/click-outside
-// ends.  Local FS only.  The per-level menu build (browse_build_level) and the
-// navigation decision (browse_decide) are pure helpers so the --browsenav
-// headless test can drive them without the modal loop.
+// Browse navigator — a LIVE cascading filesystem menu (TeraDesk/Jinni "Contents"
+// style) invoked from the context menu's "browse" verb.  The start directory's
+// contents are the first popup; hovering a folder row cascades ITS contents as a
+// live submenu, recursively, reading each directory only when it first opens
+// (menu_popup_dyn + the br_expand provider below).  Leaf actions: choosing a
+// FILE launches it (the double-click path); choosing a FOLDER (clicking the row,
+// as opposed to hovering to cascade) opens it as a folder WINDOW.  Local FS only.
+//
+// Since a submenu id can't encode a path, a per-session node table maps each
+// interned entry to (parent, name, isdir); its 1-based index is the menu id AND
+// the provider key (item->id), and br_path() rebuilds the absolute path by
+// walking parents.  Expansions are cached (firstkid/nkids) so re-hovering a
+// folder doesn't re-read it or grow the table.  br_expand + the table are the
+// testable core the --browsenav headless test drives without the modal loop.
 // ======================================================================
-#define BR_MAX        200               // per-level entry cap
-#define BR_ID_UP      2900              // the ".." row
-#define BR_ID_DIR     3000              // directory rows: BR_ID_DIR + slot
-#define BR_ID_FILE    6000              // file rows:      BR_ID_FILE + slot
-#define BR_CASCADE_DX 172               // per-level rightward cascade step
-enum { BR_ACT_END = 0, BR_ACT_DESCEND, BR_ACT_ASCEND, BR_ACT_OPEN };
-typedef struct {
-    int  n, truncated;
-    char name[BR_MAX][128];             // raw entry name (no trailing "/")
-    char label[BR_MAX][132];            // menu label (dirs get a trailing "/")
-    int  isdir[BR_MAX];
-} browse_level;
+#define BR_MAX        256               // per-level entry cap (matches menu_popup's advice)
+#define BR_MAXNODES   1536              // path-table capacity (grows as folders open)
 typedef struct { char name[128]; int dir; } br_scan;
 static int br_scan_cmp(const void *a, const void *b) {   // dirs first, then name
     const br_scan *x = a, *y = b;
     if (x->dir != y->dir) return y->dir - x->dir;
     return strcasecmp(x->name, y->name);
 }
-// Read `dir` into `lv` (sorted dirs-first) and emit menu_item[] rows into
-// `items` (caller-owned; the labels alias lv->label, which the caller keeps
-// alive across menu_popup).  `hasup` prepends a ".." row.  Ids encode the slot
-// and dir-vs-file (BR_ID_DIR/BR_ID_FILE ranges).  Returns the row count.
-static int browse_build_level(const char *dir, int hasup, browse_level *lv, menu_item *items) {
+// One interned filesystem entry.  parent 0 = the root (path in br_rootpath).
+// firstkid < 0 = not yet expanded; else the 1-based id of the first child.
+typedef struct { int parent, isdir, firstkid, nkids, trunc; char name[128]; } br_node;
+static br_node br_nodes[BR_MAXNODES];
+static int     br_nnodes;
+static char    br_rootpath[512];
+static void br_reset(void) { br_nnodes = 0; }
+// Intern one entry; returns its 1-based id (0 = table full).
+static int br_intern(int parent, const char *name, int isdir) {
+    if (br_nnodes >= BR_MAXNODES) return 0;
+    br_node *nd = &br_nodes[br_nnodes];
+    nd->parent = parent; nd->isdir = isdir; nd->firstkid = -1; nd->nkids = 0; nd->trunc = 0;
+    snprintf(nd->name, sizeof nd->name, "%s", name);
+    return ++br_nnodes;                                  // id = index + 1
+}
+// Rebuild the absolute FS path of node `id` by walking parents up to the root.
+static void br_path(int id, char *out, int cap) {
+    if (id <= 0 || id > br_nnodes) { if (cap) out[0] = 0; return; }
+    br_node *nd = &br_nodes[id-1];
+    if (nd->parent == 0) { snprintf(out, cap, "%s", br_rootpath); return; }
+    char pp[512]; br_path(nd->parent, pp, sizeof pp);
+    snprintf(out, cap, "%s/%s", pp, nd->name);
+}
+// Read directory node `id` once: readdir (dirs-first sorted), interning each
+// child as a node.  Children are interned back-to-back, so they occupy a
+// contiguous id range [firstkid .. firstkid+nkids-1] — cached for re-hovers.
+static void br_scan_dir(int id) {
+    char dir[512]; br_path(id, dir, sizeof dir);
     static br_scan sc[BR_MAX + 1];
-    int ns = 0, truncated = 0;
+    int ns = 0, trunc = 0;
     DIR *d = opendir(dir);
     if (d) {
         struct dirent *de;
         while ((de = readdir(d))) {
             if (de->d_name[0] == '.') continue;          // hidden + . ..
-            if (ns >= BR_MAX) { truncated = 1; break; }
+            if (ns >= BR_MAX) { trunc = 1; break; }
             char full[600]; snprintf(full, sizeof full, "%s/%s", dir, de->d_name);
             struct stat st; int isdir = 0;
             if (stat(full, &st) == 0) isdir = S_ISDIR(st.st_mode);
@@ -1236,43 +1255,51 @@ static int browse_build_level(const char *dir, int hasup, browse_level *lv, menu
         closedir(d);
     }
     qsort(sc, ns, sizeof sc[0], br_scan_cmp);
-    lv->n = ns; lv->truncated = truncated;
-    int ni = 0;
-    if (hasup) items[ni++] = (menu_item){ "..", NULL, BR_ID_UP, NULL, 0, 0 };
+    br_node *nd = &br_nodes[id-1];
+    nd->firstkid = 0; nd->nkids = 0; nd->trunc = trunc;  // mark expanded (even if empty)
     for (int i = 0; i < ns; i++) {
-        snprintf(lv->name[i], sizeof lv->name[i], "%s", sc[i].name);
-        lv->isdir[i] = sc[i].dir;
-        if (sc[i].dir) snprintf(lv->label[i], sizeof lv->label[i], "%s/", sc[i].name);
-        else           snprintf(lv->label[i], sizeof lv->label[i], "%s",  sc[i].name);
-        items[ni++] = (menu_item){ lv->label[i], NULL,
-                                   (sc[i].dir ? BR_ID_DIR : BR_ID_FILE) + i, NULL, 0, 0 };
+        int cid = br_intern(id, sc[i].name, sc[i].dir);
+        if (cid == 0) { nd->trunc = 1; break; }          // table full: note truncation, stop
+        if (nd->nkids == 0) nd->firstkid = cid;          // first child's id
+        nd->nkids++;
     }
-    if (truncated) {                                      // note the cap was hit
-        items[ni++] = (menu_item){ "-", NULL, 0, NULL, 0, 0 };
-        items[ni++] = (menu_item){ "(more not shown)", NULL, 0, NULL, 0, MI_DISABLED };
-    }
-    return ni;
 }
-// Decide what a chosen popup id means for `cur` in level `lv`: fills `out` (the
-// next dir for DESCEND/ASCEND, the launch path for OPEN) and returns the action.
-// `floor` bounds ASCEND — ".." at the browse root ends instead of climbing out.
-static int browse_decide(const char *cur, const char *floor, const browse_level *lv,
-                         int chosen, char *out, int cap) {
-    if (chosen < 0) return BR_ACT_END;
-    if (chosen == BR_ID_UP) {
-        if (!strcmp(cur, floor)) return BR_ACT_END;      // at the browse root: don't climb out
-        snprintf(out, cap, "%s", cur);
-        char *s = strrchr(out, '/');
-        if (s && s != out) *s = 0; else snprintf(out, cap, "/");
-        return BR_ACT_ASCEND;
+// Build a malloc'd menu_item[] block for the (already-interned) children of node
+// `id`.  ONE block holds the items AND their label strings (labels alias into
+// it), so menu_popup_dyn frees it with a single free().  Dirs get MI_LAZY (they
+// cascade on hover) + a trailing "/"; every row's id is its node id (so a click
+// resolves to launch/open).  A truncated directory gets a disabled "(more…)"
+// tail.  Returns 1 with *out/*outn set, or 0 (empty / OOM).
+static int br_build_block(int id, menu_item **out, int *outn) {
+    br_node *nd = &br_nodes[id-1];
+    int nk = nd->nkids, extra = nd->trunc ? 2 : 0, total = nk + extra;
+    if (total <= 0) { *out = NULL; *outn = 0; return 0; }
+    const size_t LBL = 132;
+    char *block = malloc(sizeof(menu_item) * total + LBL * nk);
+    if (!block) { *out = NULL; *outn = 0; return 0; }
+    menu_item *it = (menu_item *)block;
+    char *labels = block + sizeof(menu_item) * total;
+    for (int k = 0; k < nk; k++) {
+        int cid = nd->firstkid + k;                      // contiguous child ids
+        br_node *c = &br_nodes[cid-1];
+        char *lbl = labels + (size_t)k * LBL;
+        if (c->isdir) snprintf(lbl, LBL, "%s/", c->name);
+        else          snprintf(lbl, LBL, "%s",  c->name);
+        it[k] = (menu_item){ lbl, NULL, cid, NULL, 0, (unsigned)(c->isdir ? MI_LAZY : 0) };
     }
-    int slot, isdir;
-    if (chosen >= BR_ID_FILE)     { slot = chosen - BR_ID_FILE; isdir = 0; }
-    else if (chosen >= BR_ID_DIR) { slot = chosen - BR_ID_DIR;  isdir = 1; }
-    else return BR_ACT_END;                              // separator / "(more)" / unknown
-    if (slot < 0 || slot >= lv->n) return BR_ACT_END;
-    snprintf(out, cap, "%s/%s", cur, lv->name[slot]);
-    return isdir ? BR_ACT_DESCEND : BR_ACT_OPEN;
+    if (nd->trunc) {                                      // the cap was hit
+        it[nk]   = (menu_item){ "-", NULL, 0, NULL, 0, 0 };
+        it[nk+1] = (menu_item){ "(more not shown)", NULL, 0, NULL, 0, MI_DISABLED };
+    }
+    *out = it; *outn = total; return 1;
+}
+// menu_popup_dyn provider: expand directory node `dynid` into its children (on
+// first open it reads the directory; thereafter it reuses the cached range).
+static int br_expand(void *ctx, int dynid, menu_item **out, int *outn) {
+    (void)ctx;
+    if (dynid <= 0 || dynid > br_nnodes || !br_nodes[dynid-1].isdir) { *out = NULL; *outn = 0; return 0; }
+    if (br_nodes[dynid-1].firstkid < 0) br_scan_dir(dynid);   // first time: read it
+    return br_build_block(dynid, out, outn);
 }
 // Launch a browsed file: the same emulator path a double-click runs, with the
 // media type inferred from the path (the m68k media root vs the 6502 one).
@@ -1281,29 +1308,33 @@ static void browse_launch(const char *fullpath) {
     int media = strstr(fullpath, "m68k") ? ICT_MEDIA_1632 : ICT_MEDIA_8BIT;
     desk_launch(nm, media);
 }
-// Run the browse navigator rooted at `startdir` (an absolute FS path), the first
-// popup at (sx,sy).  Loops one directory at a time: build the level, run the
-// popup, act on the choice.  Local FS only (the caller guards net paths).
+// Open a browsed folder as a rooted browser WINDOW.  open_browser wants a logical
+// path (relative to `base`), so strip the base prefix off the absolute FS path.
+static void browse_open_folder(const char *fullpath) {
+    const char *logical = fullpath; size_t bl = strlen(base);
+    if (!strncmp(fullpath, base, bl)) logical = fullpath + bl;   // absolute FS -> logical
+    if (!logical[0]) logical = "/";
+    int media = strstr(fullpath, "m68k") ? ICT_MEDIA_1632 : ICT_MEDIA_8BIT;
+    open_browser(logical, media);
+}
+// Run the live cascading browse navigator rooted at `startdir` (an absolute FS
+// path), the first popup at (sx,sy).  Builds the root level, runs menu_popup_dyn
+// (which cascades into folders live as they are hovered), then acts on the chosen
+// leaf: a FILE launches, a FOLDER opens as a window.  Local FS only (caller
+// guards net paths).
 static void browse_at(const char *startdir, int sx, int sy) {
-    char cur[512];   snprintf(cur, sizeof cur, "%s", startdir);
-    char floor[512]; snprintf(floor, sizeof floor, "%s", startdir);   // never browse above the start
-    int x = sx, y = sy;
-    for (;;) {
-        static browse_level lv;                          // labels must outlive menu_popup
-        static menu_item items[BR_MAX + 4];
-        int hasup = strcmp(cur, floor) != 0;
-        int n = browse_build_level(cur, hasup, &lv, items);
-        if (n <= 0) return;                              // empty browse root: nothing to show
-        int cx = x; if (cx > WIN_W - 220) cx = WIN_W - 220; if (cx < 0) cx = 0;
-        int chosen = menu_popup(items, n, cx, y);
-        char out[512];
-        switch (browse_decide(cur, floor, &lv, chosen, out, sizeof out)) {
-            case BR_ACT_DESCEND: snprintf(cur, sizeof cur, "%s", out); x += BR_CASCADE_DX; break;
-            case BR_ACT_ASCEND:  snprintf(cur, sizeof cur, "%s", out);
-                                 x -= BR_CASCADE_DX; if (x < sx) x = sx; break;
-            case BR_ACT_OPEN:    browse_launch(out); return;
-            default:             return;                 // BR_ACT_END (cancel / at-root "..")
-        }
+    br_reset();
+    snprintf(br_rootpath, sizeof br_rootpath, "%s", startdir);
+    int root = br_intern(0, "", 1);                      // the root node (id 1)
+    menu_item *items = NULL; int n = 0;
+    if (!br_expand(NULL, root, &items, &n) || n <= 0) { free(items); return; }  // empty root
+    int cx = sx; if (cx > WIN_W - 220) cx = WIN_W - 220; if (cx < 0) cx = 0;
+    int chosen = menu_popup_dyn(items, n, cx, sy, br_expand, NULL);
+    free(items);                                         // the root block is caller-owned
+    if (chosen > 0 && chosen <= br_nnodes) {             // a chosen entry: act on it
+        char full[512]; br_path(chosen, full, sizeof full);
+        if (br_nodes[chosen-1].isdir) browse_open_folder(full);
+        else                          browse_launch(full);
     }
 }
 
@@ -1996,71 +2027,87 @@ int main(int argc, char **argv) {
     }
     if (fuji == 10) {                                // headless browse-navigator test (--browsenav)
         char nav[400]; snprintf(nav, sizeof nav, "%s/navtest", base);
-        static browse_level lv; static menu_item items[BR_MAX + 4];
-        // (a) build the browse menu for <base>/navtest: subdirs (a, many) + files
-        // (root.xex), dirs distinguishable by a trailing "/" in the label.
-        int n = browse_build_level(nav, 0, &lv, items);   // hasup=0 at the browse root
-        int has_a = 0, adir = 0, has_many = 0, has_root = 0, rootfile = 0;
-        for (int i = 0; i < lv.n; i++) {
-            if (!strcmp(lv.name[i], "a"))        { has_a = 1; adir = lv.isdir[i]; }
-            if (!strcmp(lv.name[i], "many"))       has_many = 1;
-            if (!strcmp(lv.name[i], "root.xex")) { has_root = 1; rootfile = !lv.isdir[i]; }
+        // (a) the expand provider for <base>/navtest yields lazy dirs (a/, many/)
+        // plus a file (root.xex): dirs carry MI_LAZY + a trailing "/", files don't.
+        br_reset(); snprintf(br_rootpath, sizeof br_rootpath, "%s", nav);
+        int root = br_intern(0, "", 1);                   // root node (id 1)
+        menu_item *ri = NULL; int rn = 0;
+        int got = br_expand(NULL, root, &ri, &rn);
+        int has_a = 0, alazy = 0, aid = 0, has_many = 0, has_root = 0, rfile = 0;
+        int distinct_ok = (rn > 0);                       // dirs: "/" + MI_LAZY; files: neither
+        for (int i = 0; i < rn; i++) {
+            int cid = ri[i].id; if (cid <= 0) continue;   // skip the "(more)" tail, if any
+            br_node *c = &br_nodes[cid-1];
+            int len = (int)strlen(ri[i].label), slash = len > 0 && ri[i].label[len-1] == '/';
+            int lazy = (ri[i].flags & MI_LAZY) != 0;
+            if (slash != c->isdir || lazy != c->isdir) distinct_ok = 0;
+            if (!strcmp(c->name, "a"))        { has_a = 1; alazy = lazy; aid = cid; }
+            if (!strcmp(c->name, "many"))       has_many = 1;
+            if (!strcmp(c->name, "root.xex")) { has_root = 1; rfile = !c->isdir && !lazy; }
         }
-        int distinct_ok = (lv.n > 0);                     // dirs end in "/", files don't
-        for (int i = 0; i < lv.n; i++) {
-            int len = (int)strlen(lv.label[i]);
-            int slash = len > 0 && lv.label[i][len-1] == '/';
-            if (slash != lv.isdir[i]) distinct_ok = 0;
+        int build_ok = (got && has_a && alazy && has_many && has_root && rfile && distinct_ok);
+        fprintf(stderr, "browsenav: expand root n=%d a(lazy=%d) many=%d root.xex(file=%d) distinct=%s (%s)\n",
+                rn, alazy, has_many, rfile, distinct_ok?"OK":"FAIL", build_ok?"OK":"FAIL");
+        // (b) expand "a" then "b" then "c" live via the provider; c holds
+        // leaf1.xex + leaf2.atr.
+        int cur = aid; const char *steps[2] = { "b", "c" }; int descend_ok = (aid > 0);
+        menu_item *lv = NULL; int ln = 0;
+        for (int s = 0; s < 2 && descend_ok; s++) {
+            if (!br_expand(NULL, cur, &lv, &ln)) { descend_ok = 0; break; }
+            int nx = 0;
+            for (int i = 0; i < ln; i++) { int cid = lv[i].id;
+                if (cid > 0 && br_nodes[cid-1].isdir && !strcmp(br_nodes[cid-1].name, steps[s])) nx = cid; }
+            free(lv); lv = NULL;
+            if (nx <= 0) { descend_ok = 0; break; }
+            cur = nx;
         }
-        int build_ok = (n == lv.n && has_a && adir && has_many && has_root && rootfile && distinct_ok);
-        fprintf(stderr, "browsenav: build root n=%d a(dir=%d) many=%d root.xex(file=%d) distinct=%s (%s)\n",
-                lv.n, adir, has_many, rootfile, distinct_ok?"OK":"FAIL", build_ok?"OK":"FAIL");
-        // (b) descend a -> b -> c; c holds leaf1.xex + leaf2.atr.
-        char cur[400]; snprintf(cur, sizeof cur, "%s", nav);
-        const char *steps[3] = { "a", "b", "c" }; int descend_ok = 1;
-        for (int s = 0; s < 3; s++) {
-            browse_build_level(cur, 1, &lv, items);       // hasup=1 below the root
-            int found = -1;
-            for (int i = 0; i < lv.n; i++) if (!strcmp(lv.name[i], steps[s]) && lv.isdir[i]) found = i;
-            char out[400];
-            if (found < 0 || browse_decide(cur, nav, &lv, BR_ID_DIR + found, out, sizeof out) != BR_ACT_DESCEND)
-                { descend_ok = 0; break; }
-            snprintf(cur, sizeof cur, "%s", out);
+        int cl1 = 0, cl2 = 0, leaf = 0, cn = 0;
+        if (descend_ok && br_expand(NULL, cur, &lv, &ln)) {
+            cn = ln;
+            for (int i = 0; i < ln; i++) { int cid = lv[i].id; if (cid <= 0) continue;
+                if (!strcmp(br_nodes[cid-1].name, "leaf1.xex")) cl1 = 1;
+                if (!strcmp(br_nodes[cid-1].name, "leaf2.atr")) { cl2 = 1; leaf = cid; } }
+            free(lv); lv = NULL;
         }
-        int cnt = browse_build_level(cur, 1, &lv, items); // now cur == nav/a/b/c
-        int cl1 = 0, cl2 = 0, lf = -1;
-        for (int i = 0; i < lv.n; i++) { if (!strcmp(lv.name[i], "leaf1.xex")) cl1 = 1;
-                                         if (!strcmp(lv.name[i], "leaf2.atr")) { cl2 = 1; lf = i; } }
         descend_ok = descend_ok && cl1 && cl2;
-        fprintf(stderr, "browsenav: descend a/b/c -> nrows=%d leaf1=%d leaf2=%d (%s)\n",
-                cnt, cl1, cl2, descend_ok?"OK":"FAIL");
-        // (c) picking a file resolves to the full launch path.
-        char lpath[400]; int lact = browse_decide(cur, nav, &lv, BR_ID_FILE + lf, lpath, sizeof lpath);
-        char expect[400]; snprintf(expect, sizeof expect, "%s/leaf2.atr", cur);
-        int open_ok = (lf >= 0 && lact == BR_ACT_OPEN && !strcmp(lpath, expect));
-        fprintf(stderr, "browsenav: file leaf2.atr act=%d -> \"%s\" (%s)\n", lact, lpath, open_ok?"OK":"FAIL");
-        // (d) ".." ascends (c -> a/b); at the browse root it is refused (END).
-        char apath[400]; int aact = browse_decide(cur, nav, &lv, BR_ID_UP, apath, sizeof apath);
-        char aexp[400]; snprintf(aexp, sizeof aexp, "%s/a/b", nav);
-        char rpath[400]; int rootup = browse_decide(nav, nav, &lv, BR_ID_UP, rpath, sizeof rpath);
-        int up_ok = (aact == BR_ACT_ASCEND) && !strcmp(apath, aexp) && (rootup == BR_ACT_END);
-        fprintf(stderr, "browsenav: '..' from c -> \"%s\" (%s); at-root refused=%s\n",
-                apath, up_ok?"OK":"FAIL", rootup==BR_ACT_END?"OK":"FAIL");
+        fprintf(stderr, "browsenav: expand a/b/c -> nrows=%d leaf1=%d leaf2=%d (%s)\n",
+                cn, cl1, cl2, descend_ok?"OK":"FAIL");
+        // (c) a FILE id resolves to its absolute launch path.
+        char lpath[512]; br_path(leaf, lpath, sizeof lpath);
+        char expect[512]; snprintf(expect, sizeof expect, "%s/a/b/c/leaf2.atr", nav);
+        int open_ok = (leaf > 0 && !br_nodes[leaf-1].isdir && !strcmp(lpath, expect));
+        fprintf(stderr, "browsenav: file leaf2.atr id=%d -> \"%s\" (%s)\n", leaf, lpath, open_ok?"OK":"FAIL");
+        // (d) a FOLDER id resolves to "open as folder window": its path is a
+        // directory that strips to the logical path open_browser() roots at.
+        char fpath[512]; br_path(aid, fpath, sizeof fpath);
+        const char *logical = fpath; size_t bl = strlen(base);
+        if (!strncmp(fpath, base, bl)) logical = fpath + bl;
+        int folder_ok = (aid > 0 && br_nodes[aid-1].isdir && !strcmp(logical, "/navtest/a"));
+        fprintf(stderr, "browsenav: folder 'a' id=%d dir=%d logical=\"%s\" (%s)\n",
+                aid, aid>0?br_nodes[aid-1].isdir:0, logical, folder_ok?"OK":"FAIL");
         // ctx_browse wiring: window scope -> the window's current dir.
         open_browser("/navtest", ICT_MEDIA_8BIT);
         browser *wb = BR[0].used ? &BR[0] : NULL;
-        char st[512]; int scope_ok = 0;
-        if (wb) scope_ok = ctx_browse_start(3, wb, -1, 0, st, sizeof st) && !strcmp(st, nav);
-        fprintf(stderr, "browsenav: window-scope start=\"%s\" (%s)\n", wb?st:"-", scope_ok?"OK":"FAIL");
-        // render one open browse popup (root level) to a PPM via the render path.
-        int rn = browse_build_level(nav, 0, &lv, items);
-        popup_geom pg; menu_popup_layout(items, rn, 220, 220, &pg);
+        char stt[512]; int scope_ok = 0;
+        if (wb) scope_ok = ctx_browse_start(3, wb, -1, 0, stt, sizeof stt) && !strcmp(stt, nav);
+        fprintf(stderr, "browsenav: window-scope start=\"%s\" (%s)\n", wb?stt:"-", scope_ok?"OK":"FAIL");
+        // render one open cascade (root + the 'a/' submenu expanded) to a PPM via
+        // the menu render path (no modal loop).
         wind_redraw();
-        menu_popup_render_demo(items, rn, 1, &pg);
-        dump_ppm("/tmp/xtdesk-browsenav.ppm");
-        fprintf(stderr, "browsenav: wrote /tmp/xtdesk-browsenav.ppm (root level, %d rows)\n", rn);
+        popup_geom pg; menu_popup_layout(ri, rn, 220, 160, &pg);
+        int subrow = -1; for (int i = 0; i < rn; i++) if (ri[i].id == aid) subrow = i;
+        menu_popup_render_demo(ri, rn, subrow >= 0 ? subrow : 0, &pg);
+        menu_item *sub = NULL; int sn = 0;
+        if (aid > 0 && br_expand(NULL, aid, &sub, &sn)) {
+            popup_geom sg; menu_popup_layout(sub, sn, pg.x + pg.w - 2, pg.y, &sg);
+            menu_popup_render_demo(sub, sn, 0, &sg);
+            free(sub);
+        }
+        dump_ppm("/tmp/xtdesk-browse2.ppm");
+        fprintf(stderr, "browsenav: wrote /tmp/xtdesk-browse2.ppm (root + 'a/' cascade)\n");
+        free(ri);
         registry_close(); ctx_db_close();
-        return (build_ok && descend_ok && open_ok && up_ok && scope_ok) ? 0 : 1;
+        return (build_ok && descend_ok && open_ok && folder_ok && scope_ok) ? 0 : 1;
     }
     if (fuji == 4) {                                  // headless Add-Server dialog replay
         open_fuji_servers();

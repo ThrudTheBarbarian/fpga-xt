@@ -206,6 +206,8 @@ int menu_handle_click(int mx, int my){
 #define PEN_GREY 9      // accel + disabled text (matches object.c's disabled pen)
 
 static int mi_is_sep(const menu_item *it){ return it->label && it->label[0]=='-' && it->label[1]==0; }
+// A row that cascades: a static submenu (sub != NULL) or a lazy one (MI_LAZY).
+static int mi_has_sub(const menu_item *it){ return it->sub || (it->flags & MI_LAZY); }
 static int mi_selectable(const menu_item *items, int i){
     const menu_item *it=&items[i];
     return it->label && !mi_is_sep(it) && !(it->flags & MI_DISABLED);
@@ -238,7 +240,7 @@ void menu_popup_layout(const menu_item *items, int n, int x, int y, popup_geom *
         if(mi_is_sep(&items[i])) continue;
         int w=text_w(items[i].label); if(w>lw) lw=w;
         if(items[i].accel){ int a=text_w(items[i].accel); if(a>aw) aw=a; }
-        if(items[i].sub) has_sub=1;
+        if(mi_has_sub(&items[i])) has_sub=1;
     }
     int rightw = aw;                                  // accel column width
     if(has_sub && P_TRIW>rightw) rightw = P_TRIW;     // ...or the triangle column
@@ -340,7 +342,7 @@ static void draw_popup(const menu_item *items, const popup_geom *g, int hov){
             int mi=mi_mnemonic_idx(items,g->n,i);
             if(mi>=0) popup_underline(items[i].label, mi, g->x+g->labelx, cy+16, lpen);
         }
-        if(items[i].sub){                                           // right-pointing triangle
+        if(mi_has_sub(&items[i])){                                  // right-pointing triangle
             int tx=g->x+g->w-P_RPAD-P_TRIW+3, tym=ty+rh/2;
             vsf_color(H(),sel?0:1); vsf_interior(H(),VDI_FIS_SOLID); vsf_perimeter(H(),0);
             int16_t tri[6]={(int16_t)tx,(int16_t)(tym-4),(int16_t)(tx+5),(int16_t)tym,(int16_t)tx,(int16_t)(tym+4)};
@@ -390,17 +392,26 @@ static void psav_pop(void){
 
 // ---- modal loop --------------------------------------------------------
 #define POPMAX_INTERNAL 6
+// The lazy-submenu provider for the current run (menu_popup_dyn sets these; the
+// static menu_popup leaves them NULL).  The modal loop is non-reentrant, so a
+// pair of file statics is enough — matching the save-under stack's style.
+static menu_provider g_expand;
+static void         *g_expandctx;
 // subrow = the row of this panel whose cascade is currently open (-1 = none),
 // so hovering that same row again doesn't flicker the submenu closed/open.
-typedef struct { const menu_item *items; int n; popup_geom g; int hov, subrow; } popup_panel;
+// owned = this panel's items were malloc'd by the lazy provider (free on close).
+typedef struct { const menu_item *items; int n; popup_geom g; int hov, subrow, owned; } popup_panel;
 
 static void panel_open(popup_panel *p, const menu_item *items, int n, int x, int y){
-    p->items=items; p->n=n; p->hov=-1; p->subrow=-1;
+    p->items=items; p->n=n; p->hov=-1; p->subrow=-1; p->owned=0;
     menu_popup_layout(items,n,x,y,&p->g);
     psav_push(p->g.x,p->g.y,p->g.w,p->g.h);
     draw_popup(items,&p->g,-1);
 }
-static void panel_close(popup_panel *p){ (void)p; psav_pop(); }
+static void panel_close(popup_panel *p){
+    if(p->owned && p->items){ free((void*)p->items); p->items=NULL; p->owned=0; }
+    psav_pop();
+}
 static void panel_redraw(popup_panel *p){ draw_popup(p->items,&p->g,p->hov); }
 
 // Topmost open panel whose box contains (mx,my); -1 if over none.
@@ -416,24 +427,42 @@ static void close_above(popup_panel *st, int *depth, int keep){
     if(keep>=0 && keep<*depth) st[keep].subrow=-1;
 }
 // Open item `row` of panel `pi` as a cascade to its right (flip left if needed).
+// A static submenu uses the item's own sub[]/nsub; a lazy (MI_LAZY) row asks the
+// provider to produce its children first (a malloc'd block the panel then owns).
 static void open_cascade(popup_panel *st, int *depth, int pi, int row){
     if(*depth>=POPMAX_INTERNAL) return;
     const menu_item *it=&st[pi].items[row];
+    const menu_item *sub=it->sub; int nsub=it->nsub, owned=0;
+    if(!sub && (it->flags&MI_LAZY)){                            // produce children on demand
+        if(!g_expand) return;
+        menu_item *kids=NULL; int nk=0;
+        if(!g_expand(g_expandctx, it->id, &kids, &nk) || !kids || nk<=0){ free(kids); return; }
+        sub=kids; nsub=nk; owned=1;
+    }
+    if(!sub || nsub<=0) return;                                 // nothing to cascade
     int rtop=mi_row_top(st[pi].items,&st[pi].g,row);
-    popup_geom tg; menu_popup_layout(it->sub,it->nsub,
+    popup_geom tg; menu_popup_layout(sub,nsub,
                     st[pi].g.x+st[pi].g.w-2, rtop-P_PADY, &tg);   // provisional size
     int nx=st[pi].g.x+st[pi].g.w-2;
     gfx_surface *scr=vdi_screen_target(); int sw=scr?scr->w:640;
     if(nx+tg.w>sw) nx=st[pi].g.x-tg.w+2;                         // flip to the left
-    panel_open(&st[*depth], it->sub, it->nsub, nx, rtop-P_PADY);
-    st[*depth].hov = menu_popup_nav(it->sub,it->nsub,-1,1);
+    panel_open(&st[*depth], sub, nsub, nx, rtop-P_PADY);
+    st[*depth].owned=owned;                                     // own the provider's block
+    st[*depth].hov = menu_popup_nav(sub,nsub,-1,1);
     panel_redraw(&st[*depth]);
     st[pi].subrow=row;                                          // remember the spawning row
     (*depth)++;
 }
 
-int menu_popup(const menu_item *items, int n, int x, int y){
+// A submenu row whose click should SELECT (return its id) rather than open the
+// cascade: a lazy row (e.g. a directory) that carries a real id.  A static
+// submenu parent (id==0, like "Show") opens instead.
+static int mi_click_selects(const menu_item *it){ return mi_has_sub(it) && it->id!=0; }
+
+static int menu_popup_run(const menu_item *items, int n, int x, int y,
+                          menu_provider expand, void *ctx){
     if(n<=0) return -1;
+    g_expand=expand; g_expandctx=ctx;
     popup_pens();
     popup_panel st[POPMAX_INTERNAL]; int depth=0;
     panel_open(&st[0], items, n, x, y); depth=1;
@@ -457,8 +486,8 @@ int menu_popup(const menu_item *items, int n, int x, int y){
                 if(nx!=top->hov){ top->hov=nx; panel_redraw(top); }
                 continue;
             }
-            if(scan==XK_RIGHT){
-                if(top->hov>=0 && top->items[top->hov].sub) open_cascade(st,&depth,depth-1,top->hov);
+            if(scan==XK_RIGHT){                                        // always cascade (explicit)
+                if(top->hov>=0 && mi_has_sub(&top->items[top->hov])) open_cascade(st,&depth,depth-1,top->hov);
                 continue;
             }
             if(scan==XK_LEFT){
@@ -467,16 +496,20 @@ int menu_popup(const menu_item *items, int n, int x, int y){
             }
             if(ascii=='\r' || ascii=='\n' || ascii==' '){
                 if(top->hov>=0){
-                    if(top->items[top->hov].sub) open_cascade(st,&depth,depth-1,top->hov);
-                    else { result=top->items[top->hov].id; break; }
+                    const menu_item *it=&top->items[top->hov];
+                    if(mi_click_selects(it)){ result=it->id; break; }          // e.g. open a folder
+                    else if(mi_has_sub(it)) open_cascade(st,&depth,depth-1,top->hov);
+                    else { result=it->id; break; }
                 }
                 continue;
             }
             if(isalnum(ascii)){                                        // mnemonic jump/select
                 int m=menu_popup_mnemonic(top->items,top->n,ascii);
                 if(m>=0){ top->hov=m; panel_redraw(top);
-                    if(top->items[m].sub) open_cascade(st,&depth,depth-1,m);
-                    else { result=top->items[m].id; break; } }
+                    const menu_item *it=&top->items[m];
+                    if(mi_click_selects(it)){ result=it->id; break; }
+                    else if(mi_has_sub(it)) open_cascade(st,&depth,depth-1,m);
+                    else { result=it->id; break; } }
                 continue;
             }
             continue;
@@ -493,7 +526,7 @@ int menu_popup(const menu_item *items, int n, int x, int y){
             }
             close_above(st,&depth,pi);                                 // a different row: drop cascades
             if(row!=p->hov){ p->hov=row; panel_redraw(p); }
-            if(row>=0 && p->items[row].sub)                            // hover a sub item -> cascade
+            if(row>=0 && mi_has_sub(&p->items[row]))                   // hover a sub item -> cascade
                 open_cascade(st,&depth,pi,row);
             continue;
         }
@@ -504,14 +537,24 @@ int menu_popup(const menu_item *items, int n, int x, int y){
             popup_panel *p=&st[pi];
             int row=menu_popup_hit(&p->g,p->items,ev.mx,ev.my);
             if(row<0) continue;
-            if(p->items[row].sub){                                    // click a sub parent -> open
+            const menu_item *it=&p->items[row];
+            if(mi_click_selects(it)){ result=it->id; break; }         // clickable sub (folder) -> select
+            else if(mi_has_sub(it)){                                  // click a sub parent -> open
                 if(!(depth>pi+1 && row==p->subrow)){                  // (unless already open)
                     close_above(st,&depth,pi);
                     open_cascade(st,&depth,pi,row);
                 }
-            } else { result=p->items[row].id; break; }                // leaf -> select
+            } else { result=it->id; break; }                          // leaf -> select
         }
     }
     while(depth>0){ panel_close(&st[depth-1]); depth--; }             // restore all save-unders
+    g_expand=NULL; g_expandctx=NULL;
     return result;
+}
+
+int menu_popup(const menu_item *items, int n, int x, int y){
+    return menu_popup_run(items, n, x, y, NULL, NULL);
+}
+int menu_popup_dyn(const menu_item *root, int n, int x, int y, menu_provider expand, void *ctx){
+    return menu_popup_run(root, n, x, y, expand, ctx);
 }

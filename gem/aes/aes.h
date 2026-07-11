@@ -199,9 +199,12 @@ typedef struct menu_item {
     int         id;                  // returned when this leaf is chosen
     const struct menu_item *sub;     // non-NULL = cascading submenu (opens to the right)
     int         nsub;                // submenu item count
-    unsigned    flags;               // MI_DISABLED | MI_CHECKED (bit flags)
+    unsigned    flags;               // MI_DISABLED | MI_CHECKED | MI_LAZY (bit flags)
 } menu_item;
-enum { MI_DISABLED = 1, MI_CHECKED = 2 };
+// MI_LAZY: this row's children are produced on demand (see menu_popup_dyn); the
+// row draws a submenu triangle even though `sub` is NULL, and its `id` doubles
+// as the opaque key handed to the provider (so a lazy row also carries an id).
+enum { MI_DISABLED = 1, MI_CHECKED = 2, MI_LAZY = 4 };
 
 // Run a modal popup at (x,y) (clamped fully on-screen).  Mouse hover highlights
 // rows, moving onto a submenu item cascades right (flipping left near the edge),
@@ -210,6 +213,23 @@ enum { MI_DISABLED = 1, MI_CHECKED = 2 };
 // a first-letter mnemonic jumps/selects.  Waits through aes_wait_idle so the
 // desktop's idle hook (net_pump) keeps running.  Restores all pixels on exit.
 int menu_popup(const menu_item *items, int n, int x, int y);
+
+// Lazy/dynamic variant of menu_popup: the `root` array is shown immediately, but
+// any row flagged MI_LAZY has its children produced ON DEMAND the first time it
+// opens (hover / right-arrow / click-with-no-id), by calling
+//     expand(ctx, item->id, &children, &nchildren)
+// which returns nonzero on success and hands back a submenu the popup then owns:
+// the provider malloc's ONE block holding the menu_item[] AND its label strings
+// (labels alias into that block), and menu_popup_dyn free()s the block when the
+// submenu closes or the popup exits.  Children may themselves be MI_LAZY, so a
+// whole tree cascades without being read up front.  Cap each level yourself (a
+// trailing disabled "(more…)" row is the convention).  Selection returns the
+// chosen leaf's id as usual; an MI_LAZY row with a NONZERO id returns that id
+// when clicked (while still cascading on hover), so e.g. a directory row can
+// both open-on-click and expand-on-hover.  The `root` array is caller-owned
+// (never freed here).  expand may be NULL (then MI_LAZY rows just never open).
+typedef int (*menu_provider)(void *ctx, int dynid, menu_item **out_items, int *out_n);
+int menu_popup_dyn(const menu_item *root, int n, int x, int y, menu_provider expand, void *ctx);
 
 // Geometry + navigation, factored out so the layout / hit-test / keyboard nav
 // are unit-testable without driving the modal loop headlessly.
