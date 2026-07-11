@@ -562,6 +562,39 @@ Falcon becomes a target alongside the m68k. Conclusion of the design thread: bui
 - **Sequencing:** gated on the m68k JIT + Falcon target maturing; not near-term. *(design
   option; no source doc yet — capture in a docs/Design/ note if it advances.)*
 
+## Compiler (xtc) — link-time vtable shrinking
+
+- **Shrink vtables at link time, when the used-method set is finally known.**
+  Virtuality in xtc is inferred *whole-program*: a method earns a vtable slot only
+  when some subclass in the same compilation overrides it, and everything else keeps
+  a direct call. That inference is unsound the moment the program isn't whole, so
+  `--emit-lib` now has to give **every** instance method of every exported class a
+  slot — the overrides live in a client that doesn't exist yet, and devirtualising on
+  their absence would make an app's override unreachable forever. Correct, but it
+  gives up the optimisation wholesale for library code, and it inflates every vtable
+  with slots nobody ever dispatches through.
+
+  The link step is where the program becomes whole again. At that point the used-method
+  set *is* known: a slot no client dispatches through can be dropped, and the surviving
+  slots renumbered densely. That recovers most of what `--emit-lib` currently concedes,
+  without reintroducing the unsoundness — the closed-world assumption is finally true at
+  link time, which is exactly when it wasn't at compile time.
+
+- **This is load-bearing on xt6502, not just a size win.** The 6502 backend packs
+  `slot * 3` into a byte, so it hard-errors above **slot 84**
+  (`XT6502Backend.m:2655`). Forcing every exported method into a slot means a large
+  library can now hit that ceiling where it previously didn't. It fails loudly at
+  compile time rather than silently miscompiling, and `--emit-lib` is really an
+  arm9/x86_64 story today — but link-time shrinking is what makes `--emit-lib` viable
+  on the 6502 at all.
+
+- **The opt-in escape hatch, if this doesn't land:** a `final` keyword restoring
+  devirtualisation per-method where the author can prove no client overrides. Note the
+  polarity — `final` (opt *into* the optimisation) rather than a `virtual:`/`public:`
+  marker (opt *into* correctness), because a marker you must remember for correctness
+  is silently wrong the day you forget it. *(src: fpga-xtc
+  `docs/Design/bound-methods.md`; `XTSemanticAnalyzer.libraryBuild`.)*
+
 
 ---
 
