@@ -2147,8 +2147,8 @@ static const char *mb_object[]   = { "New \xE2\x80\xA6", MENU_SEP, "Open", "Info
 static const char *mb_show[]     = { "As icons", "As text", MENU_SEP, "Filter", "Hide",
                                      "Deselect folders", MENU_SEP, "Size", "Time", "Date",
                                      "Attributes", MENU_SEP, "Single column", "Multiple columns",
-                                     MENU_SEP, "unsorted", "By size", "By time", "By date",
-                                     "By attributes" };
+                                     MENU_SEP, "unsorted", "By name", "By type", "By size",
+                                     "By date" };
 static const char *mb_window[]   = { "Close", "Close all", MENU_SEP, "Cycle", "Duplicate", "Pin" };
 static const char *mb_settings[] = { "Main config", "Applications", "Icon Mgr", MENU_SEP, "Record script" };
 static const menu_def mb_menus[] = {
@@ -2257,10 +2257,10 @@ static void menu_dispatch(int to, int io) {
         case 12: b->viewmode = 2; b->sel = -1; repaint(); break;                          // Single column    WIRED
         case 13: b->viewmode = 3; b->sel = -1; repaint(); break;                          // Multiple columns WIRED
         case 15: b->sortmode = 1; br_list(b); repaint(); break;                           // unsorted         WIRED
-        case 16: b->sortmode = 2; br_list(b); repaint(); break;                           // By size          WIRED
-        case 17: b->sortmode = 3; br_list(b); repaint(); break;                           // By time          WIRED
-        case 18: b->sortmode = 4; br_list(b); repaint(); break;                           // By date          WIRED
-        case 19: b->sortmode = 5; br_list(b); repaint(); break;                           // By attributes    WIRED
+        case 16: b->sortmode = 2; br_list(b); repaint(); break;                           // By name          WIRED
+        case 17: b->sortmode = 3; br_list(b); repaint(); break;                           // By type          WIRED
+        case 18: b->sortmode = 4; br_list(b); repaint(); break;                           // By size          WIRED
+        case 19: b->sortmode = 5; br_list(b); repaint(); break;                           // By date      WIRED
         }
         menu_sync(); break;
     case MB_WINDOW:
