@@ -245,8 +245,11 @@ $(BUILD)/libutil.so: test/freertos/libs/libutil.c | $(BUILD)
 # real, callable symbols, so non-C languages reach the machine the way libc.so
 # gives them POSIX.  Derived wholesale from usys.h (see the source) — no
 # hand-maintained wrapper list to drift from the frozen ABI.
+# -g: embed DWARF so the .so is self-describing for xtc's #import — .dynsym gives
+# the names, DWARF the signatures + struct layouts (os_fbinfo/os_event/xt_stat…).
+# The .so IS the interface (docs/OS/library-imports.md §5); ship unstripped.
 $(BUILD)/libxtos.so: test/freertos/libs/libxtos.c test/qemu/usys.h kernel/xtsys.h | $(BUILD)
-	$(ARMCC) $(PROGCFLAGS) -c $< -o $(BUILD)/libxtos.o
+	$(ARMCC) $(PROGCFLAGS) -g -c $< -o $(BUILD)/libxtos.o
 	$(LLD) -shared --hash-style=sysv -soname libxtos.so -o $@ $(BUILD)/libxtos.o
 
 # a program that links against the .so gets a DT_NEEDED + an unresolved import
