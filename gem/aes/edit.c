@@ -34,11 +34,15 @@ int ted_display(const TEDINFO *ted, char *out, int cap, int pos, int *dpos) {
         out[di] = 0;
         return di;
     }
-    int ip = 0;                                           // input-position counter
+    int ip = 0, ended = 0;                                // input-position counter
     for (const char *tp = ted->te_ptmplt; *tp && di < cap - 1; tp++) {
         if (*tp == '_') {
             if (dpos && ip == pos) *dpos = di;
-            out[di++] = txt[ip] ? txt[ip] : '_';
+            // te_ptext is a C string: once its NUL is reached every remaining slot
+            // is empty ('_').  (Reading past the NUL would spill whatever
+            // uninitialised bytes follow into the field — the "garbage field" bug.)
+            if (!ended && !txt[ip]) ended = 1;
+            out[di++] = ended ? '_' : txt[ip];
             ip++;
         } else {
             out[di++] = *tp;
