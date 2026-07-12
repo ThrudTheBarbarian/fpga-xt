@@ -190,3 +190,28 @@ long blit_submit(const struct xt_blit_cmd *c, int priority)
     __asm__ volatile("dsb");
     return (long)blit_seq();
 }
+
+/* ---------------------------------------------------------------------------
+ * ⚠ STATUS (2026-07-12): this file is on branch wip/dev-blitter, NOT on main.
+ *
+ * It was reverted from main because the HW kernel built with it did not come back on the
+ * NETWORK after a JTAG load, while main's kernel did. I described that as "hangs the board".
+ *
+ * BOTH of my evidence sources for that turned out to be unsound, and the next person should
+ * not trust the conclusion:
+ *
+ *   - "zero UART bytes, so it dies before console output" — my serial capture reads only 2
+ *     bytes even when the board is KNOWN-UP and answering ssh. The harness does not work;
+ *     zero bytes meant nothing.
+ *   - "it never comes back on the network" — the board was later observed dropping OFF the
+ *     network while running MAIN's kernel, which boots fine and passes the whole suite. So
+ *     network reachability is not a reliable boot signal either.
+ *
+ * So the revert was conservative, not proven. This code may well be fine. It boots and runs
+ * correctly under qemu, and blittest confirms both of §13's safety properties there (a
+ * pool-backed surface is refused as a blit target; an 8x-oversize rect is clipped and
+ * scribbles nothing past the surface).
+ *
+ * DO THIS FIRST: get a trustworthy console (fix the serial capture, or add an early klog).
+ * One boot with a console settles in seconds what cost hours of blind 6-minute JTAG cycles.
+ * --------------------------------------------------------------------------- */
