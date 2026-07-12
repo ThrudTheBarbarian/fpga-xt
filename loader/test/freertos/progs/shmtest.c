@@ -56,24 +56,35 @@ void _app_entry(int argc, char **argv)
     printf("shmtest: after child, second word = 0x%04x %s\n",
            p[1], p[1] == 0xBEEF ? "OK (child wrote it -> shared write!)" : "NOT written");
 
-    /* ---- STAGE 1: the per-space L2 ceiling ---------------------------------------
-     * vm_shm_map burns ONE per-space L2 slot per 1 MB of surface mapped, and the old
-     * static space_l2pool capped EVERY space at MAXSEC=12 overridden sections — slots
-     * already shared with libc and each shared lib's data. gemd maps a backing store
-     * per window, so it would have failed to map its third window.
-     * Map as many 1 MB objects as the shm table allows: on the old kernel this stops
-     * dead once the space runs out of L2 slots. It must now run to NSHM. */
+    /* ---- STAGE 2: variable-size objects -----------------------------------------
+     * The old kernel pinned each id to a fixed 1 MB VA slot, so NOTHING could exceed
+     * 1 MB — a 640x400 window backing store is already 1.02 MiB. A maximised 1920x1080
+     * window is 1920x1088x4 = 7.97 MiB. Create exactly that, and touch the FIRST and
+     * LAST page: spanning 8 sections proves vm_shm_map now walks one L2 per section
+     * (the old code took a single perproc_l2 for va>>20, which is why 1 MB was the wall). */
+    unsigned big = 1920u * 1088u * 4u;                 /* 7.97 MiB: a maximised window */
+    int bid = sys_shm_create(big, 0);
+    if (bid < 0) { printf("shmtest: FAIL — could not create a %u-byte surface\n", big); sys_exit(1); }
+    volatile unsigned *b = sys_shm_map(bid);
+    if (!b) { printf("shmtest: FAIL — could not map the big surface\n"); sys_exit(1); }
+    unsigned last = big / 4u - 1u;
+    b[0] = 0xF1257A6Eu; b[last] = 0x1A57FA6Eu;
+    printf("shmtest: %u-byte surface @ %p — first=0x%08x last=0x%08x %s\n",
+           big, (void *)b, b[0], b[last],
+           (b[0] == 0xF1257A6Eu && b[last] == 0x1A57FA6Eu) ? "OK (spans 8 sections)" : "CORRUPT");
+
+    /* how many 1 MB objects can we now create+map? old ceiling was 8 (L2), then 15 (NSHM=16). */
     int mapped = 0;
-    for (int i = 0; i < 64; i++) {
-        int sid = sys_shm_create(1u << 20, 0);         /* 1 MB -> exactly one section */
-        if (sid < 0) break;                            /* shm table exhausted (expected end) */
+    for (int i = 0; i < 300; i++) {
+        int sid = sys_shm_create(1u << 20, 0);
+        if (sid < 0) break;
         volatile unsigned *q = sys_shm_map(sid);
-        if (!q) { printf("shmtest: L2 CEILING HIT after %d mappings\n", mapped); break; }
-        q[0] = 0x5EC00000u + (unsigned)i;              /* touch it: the mapping must be live */
+        if (!q) break;
+        q[0] = 0x5EC00000u + (unsigned)i;
         if (q[0] != 0x5EC00000u + (unsigned)i) { printf("shmtest: FAIL readback at %d\n", i); break; }
         mapped++;
     }
-    printf("shmtest: mapped %d x 1MB shm objects — old MAXSEC=12 ceiling %s\n",
-           mapped, mapped > 12 ? "GONE" : "STILL THERE");
+    printf("shmtest: mapped %d x 1MB objects (old kernel: 8, L2-capped)\n", mapped);
+
     sys_exit(0);
 }

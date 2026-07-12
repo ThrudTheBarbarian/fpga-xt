@@ -19,19 +19,48 @@
  * demand-paged on first touch. One section; bump-allocated per process. */
 #define XTOS_MMAP_VA   0x12000000u
 #define XTOS_MMAP_SIZE 0x00100000u
-/* shared-memory window: pool-backed pages mapped PL0-RW into one or more spaces at a
- * per-id VA slot (same VA in every mapper -> portable pointers), refcounted, freed
- * when the last mapper drops. The IPC substrate for the fs service + mmap-style file
- * pages (docs/OS/fs-pagecache.md). NSHM ids, one 1 MB VA slot each. */
-#define XTOS_SHM_VA    0x13000000u
-#define XTOS_SHM_SIZE  0x01000000u   /* 16 MB window = NSHM * 1 MB slots */
-/* The page pool is IDENTITY-mapped, but the per-process windows above (0x1000_0000..
- * 0x1400_0000) OVERRIDE those VAs per-process. So a pool page whose physical falls in
- * the window range is reachable by its identity VA ONLY in the master space — in a
- * process's space that VA is its private window, not the pool page. The fd page-cache
- * fill runs in the CLIENT space and would write the wrong page (corrupting the file AND
- * spraying data into that process). The pool must therefore stay ABOVE the windows. */
-#define XTOS_POOL_FLOOR (XTOS_SHM_VA + XTOS_SHM_SIZE)   /* 0x1400_0000 */
+/* shared-memory window: pool-backed pages mapped PL0-RW into one or more spaces at a VA
+ * allocated when the object is CREATED and recorded on it (so it is still the same VA in
+ * every mapper -> portable pointers), refcounted, freed when the last mapper drops. The
+ * IPC substrate for the fs service + mmap-style file pages (docs/OS/fs-pagecache.md), and
+ * the backing store for GEM window surfaces.
+ *
+ * The window used to sit at 0x1300_0000 — INSIDE the page pool's identity range — and was
+ * carved into NSHM fixed 1 MB slots, which capped every object at 1 MB. That cap was fatal
+ * for a window server (a 640x400 backing store is already 1.02 MiB), and the placement was
+ * worse: XTOS_POOL_FLOOR is the top of the per-process window band, dpage_raw SKIPS that
+ * band, so every megabyte of shm VA cost a megabyte of DDR the pool could never use.
+ *
+ * It now lives in UNUSED VA above DDR (1 GB ends at 0x4000_0000) and below the MMIO the PL
+ * and PS peripherals occupy (GP0 @0x43C0_xxxx, PS periphs @0xE000_0000, SLCR @0xF800_0000).
+ * VA there is free, so the window can be large at zero cost in RAM. */
+#define XTOS_SHM_VA    0x50000000u
+#define XTOS_SHM_SIZE  0x10000000u   /* 256 MB of VA — costs no DDR; objects are section-allocated */
+/* The page pool is IDENTITY-mapped, but the per-process windows OVERRIDE those VAs
+ * per-process. So a pool page whose physical falls in the window band is reachable by its
+ * identity VA ONLY in the master space — in a process's space that VA is its private
+ * window, not the pool page. The fd page-cache fill runs in the CLIENT space and would
+ * write the wrong page (corrupting the file AND spraying data into that process). So
+ * dpage_raw SKIPS the band, and fd_page() has a fail-loud tripwire on it.
+ *
+ * The band must span every window that remaps a VA to DIFFERENT physical:
+ *
+ *     HEAP  0x1000_0000 + 8 MB   -> 0x1080_0000
+ *     COW   0x1100_0000 + 4 KB
+ *     MMAP  0x1200_0000 + 1 MB   -> 0x1210_0000   <- the top
+ *
+ * (The stack arena is static kernel BSS, identity-mapped, so it is not a window. The shm
+ * window USED to be the top of this band, at 0x1300_0000–0x1400_0000; it has moved out to
+ * unused VA above DDR, which is why the floor drops.)
+ *
+ * This must be defined from the WINDOWS, not from the shm window: shm now lives at
+ * 0x5000_0000, and `SHM_VA + SHM_SIZE` would put the floor at 0x6000_0000 — the pool would
+ * skip its entire range and starve on the first allocation.
+ *
+ * The band shrinks 64 MB -> 33 MB, handing ~31 MB of DDR back to the pool: frames whose
+ * identity VA lies in 0x1210_0000..0x1400_0000 are no longer shadowed by anything, so they
+ * are now usable. (vm.c calls the band "TEMPORARY"; the real fix is a physical page map.) */
+#define XTOS_POOL_FLOOR (XTOS_MMAP_VA + XTOS_MMAP_SIZE)   /* 0x1210_0000 */
 /* TTBR0 cacheable-walk attributes (short descriptor): inner+outer Write-Back
  * Write-Allocate, non-shared. OR'd into the table base whenever TTBR0 is written
  * (mmu_init, vm_switch) so page-table walks go through the D-cache and stay

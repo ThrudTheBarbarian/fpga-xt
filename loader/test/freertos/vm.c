@@ -20,6 +20,7 @@
  */
 #include <stdint.h>
 #include <string.h>
+#include "FreeRTOS.h"     /* pvPortMalloc/vPortFree: the shm page list */
 #include "frtos_os.h"
 #include "xtsys.h"   /* XT_SHM_* flags + XT_SHM_SUPPORTED (the frozen ABI) */
 
@@ -123,7 +124,8 @@ static void space_l2_release_all(int idx)
 static void     *g_space_pages[NSPACE][MAXPP];
 static uint16_t  g_space_npages[NSPACE];
 
-static uint32_t  g_space_shm[NSPACE];            /* bitmap: which shm ids each space mapped (for reap) */
+static uint32_t  g_space_shm[NSPACE][8];         /* bitmap: which shm ids each space mapped (for reap).
+                                                  * 8 words = 256 ids; a uint32_t capped it at 32. */
 static uint32_t *g_cur_table;            /* currently-active TTBR0 table */
 static uint32_t  g_cur_asid;
 
@@ -304,7 +306,7 @@ uint32_t *vm_space_create(int idx, uint32_t prog_va, uint32_t prog_size, uint32_
     space_l2_release_all(idx);                 /* hand back the old space's L2s (pool-owned now:
                                                 * merely zeroing the count would LEAK them) */
     g_space_npages[idx] = 0;                   /* fresh private-page charge list */
-    g_space_shm[idx] = 0;                      /* fresh shm-mapping set (reap dropped the old refs) */
+    for (int w = 0; w < 8; w++) g_space_shm[idx][w] = 0;  /* fresh shm-mapping set (reap dropped the refs) */
 
     /* (b) private heap: an L2 with every page faulting -> zero-filled ON DEMAND
      * (T2-c). Physical is consumed only for pages the process actually touches. */
@@ -832,13 +834,77 @@ int vm_munmap(int idx, uint32_t va, uint32_t size)
  * service reaches the same pages by their pool IDENTITY address (no map needed on the
  * service side); only clients map. Cacheable + single-core PIPT -> the two views are
  * coherent with no maintenance. See docs/OS/fs-pagecache.md. */
-#define NSHM      16
-#define SHM_SLOT  (XTOS_SHM_SIZE / NSHM)     /* VA bytes per id (1 MB) */
-#define SHM_MAXPG (SHM_SLOT >> 12)           /* max pages per shm (256) */
+/* ---- shared memory: VARIABLE SIZE ------------------------------------------
+ * Was: NSHM=16 ids, each PINNED to a fixed 1 MB VA slot (va = SHM_VA + id*SHM_SLOT),
+ * which capped every object at 1 MB. That is not a corner case for a window server —
+ * a 640x400 backing store is already 1.02 MiB, so gemd could not have created even a
+ * small window. (Rocks RESPONSIBILITIES.md §12: backing stores are window-sized,
+ * rounded mod-64, up to 7.97 MiB for a maximised 1920x1080 window.)
+ *
+ * Now:
+ *  - PHYSICAL is exact — npages = ceil(size/4K), in a page list allocated per object.
+ *  - VA is allocated at CREATE from a section bitmap over the window and stored on the
+ *    object, so it is still THE SAME VA IN EVERY MAPPER. GEM does not need that (only
+ *    pixels cross, and a pixel buffer holds no pointers) but the fs page-cache is the
+ *    other shm user, so it is kept — it is free.
+ *  - VA is rounded up to a 1 MB section; PHYSICAL is NOT. VA is free (unused address
+ *    space above DDR); physical is not. Round the cheap one. Section alignment also
+ *    means an object never shares an L2 with another object.
+ */
+#define NSHM      256                        /* ids. ~24 B each now the page list is dynamic. */
+#define SHM_MAXPG 4096                       /* 16 MB ceiling per object (a maximised
+                                              * 1920x1080 window is 7.97 MiB = 2040 pages) */
+#define SHM_SECS  (XTOS_SHM_SIZE >> 20)      /* window, in 1 MB sections */
+#define SHM_BMW   ((NSHM + 31) / 32)         /* words in a per-space id bitmap */
 #define L2_SHM(phys) (L2_PAGE(phys) | 0x1u)  /* cacheable RW nG small page, execute-never */
 
-typedef struct { void *pages[SHM_MAXPG]; uint32_t npages; int nref; int used; } shm_t;
+typedef struct {
+    void   **pages;        /* page list (pvPortMalloc'd; NOT a fixed array — at SHM_MAXPG
+                            * that would have been 16 KB x NSHM = 4 MB of BSS) */
+    uint32_t npages;
+    uint32_t va;           /* VA allocated at create: the same in every mapper */
+    uint32_t nsecs;        /* 1 MB sections of VA reserved (size rounded up) */
+    uint32_t size;         /* the requested size, exactly as asked */
+    int      nref;
+    int      used;
+} shm_t;
 static shm_t    g_shm[NSHM];                  /* g_space_shm[] declared up top (used by vm_space_create) */
+
+/* VA allocator: a bitmap of 1 MB sections over the shm window. Objects are
+ * section-aligned and section-granular, so allocation is a first-fit run scan. */
+static uint32_t g_shm_va_bm[(SHM_SECS + 31) / 32];
+
+static uint32_t shm_va_alloc(uint32_t nsecs)     /* -> VA, or 0 if the window is full */
+{
+    if (!nsecs || nsecs > SHM_SECS) return 0;
+    uint32_t f = xt_irq_save();
+    for (uint32_t s = 0; s + nsecs <= SHM_SECS; s++) {
+        uint32_t k = 0;
+        while (k < nsecs && !(g_shm_va_bm[(s + k) >> 5] & (1u << ((s + k) & 31)))) k++;
+        if (k < nsecs) { s += k; continue; }      /* blocked at s+k: restart past it */
+        for (k = 0; k < nsecs; k++) g_shm_va_bm[(s + k) >> 5] |= (1u << ((s + k) & 31));
+        xt_irq_restore(f);
+        return XTOS_SHM_VA + (s << 20);
+    }
+    xt_irq_restore(f);
+    return 0;
+}
+static void shm_va_free(uint32_t va, uint32_t nsecs)
+{
+    uint32_t s = (va - XTOS_SHM_VA) >> 20;
+    uint32_t f = xt_irq_save();
+    for (uint32_t k = 0; k < nsecs; k++) g_shm_va_bm[(s + k) >> 5] &= ~(1u << ((s + k) & 31));
+    xt_irq_restore(f);
+}
+/* release an object's physical pages, its page list and its VA run. Caller holds no lock
+ * and has already cleared `used`. */
+static void shm_teardown(int id)
+{
+    for (uint32_t k = 0; k < g_shm[id].npages; k++) dfree_raw(g_shm[id].pages[k]);
+    if (g_shm[id].pages) vPortFree(g_shm[id].pages);
+    if (g_shm[id].nsecs) shm_va_free(g_shm[id].va, g_shm[id].nsecs);
+    g_shm[id].pages = 0; g_shm[id].npages = 0; g_shm[id].nsecs = 0; g_shm[id].va = 0;
+}
 
 /* allocate an shm of `size` bytes -> id, or -1. nref starts 0 (a mapper adds one).
  *
@@ -856,19 +922,35 @@ int vm_shm_create(uint32_t size, uint32_t flags)
     if (flags & ~(uint32_t)XT_SHM_SUPPORTED) return -1;   /* unhonourable request */
     uint32_t np = (size + 0xFFFu) >> 12; if (!np) np = 1;
     if (np > SHM_MAXPG) return -1;
+    uint32_t nsecs = (np + 255u) >> 8;                    /* pages -> 1 MB sections, rounded up */
+
     uint32_t f = xt_irq_save();
     int id = -1;
     for (int i = 0; i < NSHM; i++) if (!g_shm[i].used) { g_shm[i].used = 1; id = i; break; }
     xt_irq_restore(f);
     if (id < 0) return -1;
+    g_shm[id].pages = 0; g_shm[id].npages = 0; g_shm[id].nsecs = 0; g_shm[id].va = 0;
+
+    void **pgs = pvPortMalloc(np * sizeof(void *));
+    if (!pgs) { g_shm[id].used = 0; return -1; }
+    g_shm[id].pages = pgs;
+
+    uint32_t va = shm_va_alloc(nsecs);                    /* VA is free; take it up front */
+    if (!va) { vPortFree(pgs); g_shm[id].pages = 0; g_shm[id].used = 0; return -1; }
+    g_shm[id].va = va; g_shm[id].nsecs = nsecs;
+
     for (uint32_t k = 0; k < np; k++) {
         void *pg = dpage_raw();
-        if (!pg) { for (uint32_t j = 0; j < k; j++) dfree_raw(g_shm[id].pages[j]);
-                   g_shm[id].used = 0; return -1; }
-        g_shm[id].pages[k] = pg;                       /* dpage_raw zeroes on free; scrub-on-create too */
+        if (!pg) {                                        /* out of pool: unwind fully */
+            g_shm[id].npages = k;                         /* so shm_teardown frees what we got */
+            shm_teardown(id);
+            g_shm[id].used = 0;
+            return -1;
+        }
+        pgs[k] = pg;                                      /* dpage_raw zeroes on free; scrub on create too */
         memset(pg, 0, 0x1000);
     }
-    g_shm[id].npages = np; g_shm[id].nref = 0;
+    g_shm[id].npages = np; g_shm[id].size = size; g_shm[id].nref = 0;
     return id;
 }
 
@@ -889,13 +971,23 @@ void *vm_shm_kaddr(int id)
 uint32_t vm_shm_map(int idx, int id)
 {
     if (id < 0 || id >= NSHM || !g_shm[id].used) return 0;
-    uint32_t va  = XTOS_SHM_VA + (uint32_t)id * SHM_SLOT;
-    uint32_t *l2 = perproc_l2(idx, space_l1[idx], va >> 20);
-    if (!l2) return 0;
-    for (uint32_t k = 0; k < g_shm[id].npages; k++)
-        l2[L2_IDX(va + k * 0x1000u)] = L2_SHM((uint32_t)g_shm[id].pages[k]);
+    uint32_t va = g_shm[id].va;                       /* allocated at create, not id*SLOT */
+    uint32_t np = g_shm[id].npages;
+    /* An object now spans MULTIPLE 1 MB sections, so it needs one L2 per section — the old
+     * code took a single perproc_l2 for va>>20, which is why nothing could exceed 1 MB.
+     * va is section-aligned, so each section takes a clean run of up to 256 pages. */
+    for (uint32_t k = 0; k < np; ) {
+        uint32_t pva = va + k * 0x1000u;
+        uint32_t *l2 = perproc_l2(idx, space_l1[idx], pva >> 20);
+        if (!l2) return 0;                            /* out of L2s / pool (stage 1 made this rare) */
+        for (uint32_t i = L2_IDX(pva); i < 256 && k < np; i++, k++)
+            l2[i] = L2_SHM((uint32_t)g_shm[id].pages[k]);
+    }
     uint32_t f = xt_irq_save();
-    if (!(g_space_shm[idx] & (1u << id))) { g_space_shm[idx] |= (1u << id); g_shm[id].nref++; }
+    if (!(g_space_shm[idx][id >> 5] & (1u << (id & 31)))) {
+        g_space_shm[idx][id >> 5] |= (1u << (id & 31));
+        g_shm[id].nref++;
+    }
     xt_irq_restore(f);
     __asm__ volatile("dsb");
     __asm__ volatile("mcr p15,0,%0,c8,c7,0" :: "r"(0u));   /* TLBIALL (window pages installed) */
@@ -907,16 +999,16 @@ uint32_t vm_shm_map(int idx, int id)
  * goes (nref -> 0). The space's L2s + bitmap are reset by vm_space_create on reuse. */
 void vm_shm_drop_space(int idx)
 {
+    uint32_t bits[8];
     uint32_t f = xt_irq_save();
-    uint32_t bits = g_space_shm[idx]; g_space_shm[idx] = 0;
+    for (int w = 0; w < 8; w++) { bits[w] = g_space_shm[idx][w]; g_space_shm[idx][w] = 0; }
     xt_irq_restore(f);
     for (int id = 0; id < NSHM; id++) {
-        if (!(bits & (1u << id))) continue;
+        if (!(bits[id >> 5] & (1u << (id & 31)))) continue;
         f = xt_irq_save();
         int free_now = (g_shm[id].nref > 0 && --g_shm[id].nref == 0);
         if (free_now) g_shm[id].used = 0;
         xt_irq_restore(f);
-        if (free_now) { for (uint32_t k = 0; k < g_shm[id].npages; k++) dfree_raw(g_shm[id].pages[k]);
-                        g_shm[id].npages = 0; }
+        if (free_now) shm_teardown(id);   /* pages + page list + VA run */
     }
 }
