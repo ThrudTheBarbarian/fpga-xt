@@ -21,6 +21,7 @@
 #include <stdint.h>
 #include <string.h>
 #include "frtos_os.h"
+#include "xtsys.h"   /* XT_SHM_* flags + XT_SHM_SUPPORTED (the frozen ABI) */
 
 #define NSPACE     64      /* must match MAXPROC (frtos_os.c) */
 #define STK_ARENA_MAXSECS 8 /* must match stackguard.c ceiling */
@@ -776,9 +777,20 @@ int vm_munmap(int idx, uint32_t va, uint32_t size)
 typedef struct { void *pages[SHM_MAXPG]; uint32_t npages; int nref; int used; } shm_t;
 static shm_t    g_shm[NSHM];                  /* g_space_shm[] declared up top (used by vm_space_create) */
 
-/* allocate an shm of `size` bytes -> id, or -1. nref starts 0 (a mapper adds one). */
-int vm_shm_create(uint32_t size)
+/* allocate an shm of `size` bytes -> id, or -1. nref starts 0 (a mapper adds one).
+ *
+ * `flags` (XT_SHM_* in xtsys.h) rides in the syscall's already-free a1, so SYS_shm_create
+ * keeps its frozen number and old callers — which passed a literal 0 — keep their meaning.
+ *
+ * UNKNOWN BITS ARE REJECTED, never masked off. That is the whole point of validating here:
+ * a caller built against a newer flag set (say XT_SHM_CONTIG, once plv_alloc lands) gets a
+ * clean -1 on a kernel that cannot honour it, instead of silently receiving a SCATTERED
+ * pool object where it asked for physically contiguous memory. The PL's blitter and
+ * compositor have no MMU and read physical addresses — handing them a page list would not
+ * fail, it would render garbage and corrupt whatever followed. Fail loud. */
+int vm_shm_create(uint32_t size, uint32_t flags)
 {
+    if (flags & ~(uint32_t)XT_SHM_SUPPORTED) return -1;   /* unhonourable request */
     uint32_t np = (size + 0xFFFu) >> 12; if (!np) np = 1;
     if (np > SHM_MAXPG) return -1;
     uint32_t f = xt_irq_save();

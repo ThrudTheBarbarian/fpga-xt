@@ -114,8 +114,26 @@ struct xt_sigframe {
 #define SYS_mmap     0x200   /* (fd, len, off) -> VA: map a file RO + shared, demand-paged */
 #define SYS_munmap   0x201   /* (addr, len) -> 0 */
 #define SYS_sbrk     0x202   /* (incr) -> old break: grow the per-process heap (libc malloc) */
-#define SYS_shm_create 0x203 /* (size) -> id: allocate a shared-memory object */
+#define SYS_shm_create 0x203 /* (size, flags) -> id: allocate a shared-memory object.
+                              * flags: XT_SHM_* below; 0 = the classic pool-backed object.
+                              * The number is FROZEN; `flags` went into the already-free a1,
+                              * so old callers (which passed a literal 0) keep their meaning. */
 #define SYS_shm_map    0x204 /* (id) -> VA: map an shm object PL0-RW into this process */
+
+/* shm_create flags (a1).  UNKNOWN BITS ARE REJECTED, never ignored — see below. */
+#define XT_SHM_CONTIG  (1u << 0) /* physically contiguous + PL-visible (plv_alloc): the
+                                  * blitter/compositor are DMA engines with NO MMU and read
+                                  * physical addresses, so anything the PL touches must be
+                                  * contiguous. NOT YET IMPLEMENTED — the kernel REJECTS it
+                                  * (see XT_SHM_SUPPORTED) rather than quietly handing back a
+                                  * scattered pool object, which the PL would then read as
+                                  * garbage. A loud -1 beats silent corruption. */
+
+/* The bits this kernel actually honours.  vm_shm_create() fails any request carrying a bit
+ * outside this mask.  That is deliberate: it is what lets the flag word grow without a new
+ * syscall number, because a program built against a NEWER flag set gets a clean failure on
+ * an OLDER kernel instead of silently different memory. Widen this as each flag lands. */
+#define XT_SHM_SUPPORTED (0u)
 
 /* filesystem / VFS — block 0x300 */
 #define SYS_open     0x300   /* (path, flags) -> fd */

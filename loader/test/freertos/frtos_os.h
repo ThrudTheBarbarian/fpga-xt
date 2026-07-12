@@ -61,7 +61,7 @@ int      vm_mmap_write_fault(int idx, uint32_t va);   /* RW mmap write-fault: fl
 int      vm_mmap_dirty_plan(int idx, uint32_t va, uint32_t *fd, void **pages, uint32_t *foffs, int max);
 int  vm_mmap_fault(int idx, uint32_t va);                 /* demand-page an mmap'd file page */
 int  vm_munmap(int idx, uint32_t va, uint32_t size);
-int      vm_shm_create(uint32_t size);            /* alloc pool pages for an shm -> id (-1 fail) */
+int      vm_shm_create(uint32_t size, uint32_t flags);  /* flags: XT_SHM_* (xtsys.h) */            /* alloc pool pages for an shm -> id (-1 fail) */
 uint32_t vm_shm_map(int idx, int id);             /* map shm `id` PL0-RW into space idx -> VA (0 fail) */
 void    *vm_shm_kaddr(int id);                    /* shm's first page by pool IDENTITY addr (PL1, no map) */
 void    *vm_page_alloc(void);                     /* raw pool page (fs page cache); identity, uncharged */

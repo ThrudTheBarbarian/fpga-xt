@@ -28,7 +28,20 @@ void _app_entry(int argc, char **argv)
         sys_exit(0);
     }
 
-    int id = sys_shm_create(4096);                     /* ---- parent ---- */
+    /* Stage 0: the flag word must be VALIDATED, not ignored. A kernel that quietly
+     * masked off XT_SHM_CONTIG would hand the PL a scattered page list and render
+     * garbage; a clean -1 is the whole point. Prove both directions before anything
+     * relies on it. */
+    if (sys_shm_create(4096, XT_SHM_CONTIG) >= 0)
+        printf("shmtest: FAIL — XT_SHM_CONTIG accepted but plv_alloc does not exist yet\n");
+    else
+        printf("shmtest: unsupported flag rejected OK\n");
+    if (sys_shm_create(4096, 0x8000u) >= 0)
+        printf("shmtest: FAIL — unknown flag bit accepted\n");
+    else
+        printf("shmtest: unknown flag rejected OK\n");
+
+    int id = sys_shm_create(4096, 0);                  /* ---- parent ---- */ /* flags=0: classic pool-backed */
     if (id < 0) { printf("shmtest: shm_create FAILED\n"); sys_exit(1); }
     volatile unsigned *p = sys_shm_map(id);
     if (!p) { printf("shmtest: shm_map FAILED\n"); sys_exit(1); }

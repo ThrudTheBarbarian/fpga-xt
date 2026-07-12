@@ -144,8 +144,12 @@ static inline void *sys_mmap(int fd, unsigned len, unsigned off)
 static inline long sys_munmap(void *addr, unsigned len)
 { return __syscall(SYS_munmap, (long)addr, (long)len, 0); }
 /* shared memory: create an object (-> id), map it PL0-RW into this process (-> ptr).
- * Same VA in every mapper, so the id is enough to share; freed when the last mapper exits. */
-static inline int   sys_shm_create(unsigned size) { return (int)__syscall(SYS_shm_create, (long)size, 0, 0); }
+ * Same VA in every mapper, so the id is enough to share; freed when the last mapper exits.
+ * flags: XT_SHM_* (xtsys.h); 0 = the classic pool-backed object. Unknown bits are REJECTED
+ * (-1), never ignored — a program built for a newer flag set fails loudly on an older
+ * kernel rather than silently getting memory with different properties. */
+static inline int   sys_shm_create(unsigned size, unsigned flags)
+{ return (int)__syscall(SYS_shm_create, (long)size, (long)flags, 0); }
 static inline void *sys_shm_map(int id) { long r = __syscall(SYS_shm_map, id, 0, 0); return r ? (void *)r : (void *)0; }
 static inline long sys_settime(unsigned unix_sec) { return __syscall(SYS_settime, (long)unix_sec, 0, 0); }
 static inline long sys_nanosleep(unsigned usec) { return __syscall(SYS_nanosleep, (long)usec, 0, 0); }
