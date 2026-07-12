@@ -4,7 +4,8 @@
 #include <stdint.h>
 #include <stddef.h>
 #include "xtld.h"
-#include "xtsys.h"   /* struct xt_blit_cmd (the /dev/blitter ABI) */
+struct xt_blit_cmd;   /* fwd — the /dev/blitter ABI lives in xtsys.h; do NOT include it
+                       * here, or every kernel file pulls in the whole syscall ABI. */
 
 /* T2-b: per-process heap window (mapped per-process to private physical by vm.c;
  * libc's _sbrk hands out of it for the current process). 1 section for now. */
