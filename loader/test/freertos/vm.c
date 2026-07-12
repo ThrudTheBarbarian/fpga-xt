@@ -20,7 +20,6 @@
  */
 #include <stdint.h>
 #include <string.h>
-#include "FreeRTOS.h"     /* pvPortMalloc/vPortFree: the shm page list */
 #include "frtos_os.h"
 #include "xtsys.h"   /* XT_SHM_* flags + XT_SHM_SUPPORTED (the frozen ABI) */
 
@@ -858,9 +857,19 @@ int vm_munmap(int idx, uint32_t va, uint32_t size)
 #define SHM_BMW   ((NSHM + 31) / 32)         /* words in a per-space id bitmap */
 #define L2_SHM(phys) (L2_PAGE(phys) | 0x1u)  /* cacheable RW nG small page, execute-never */
 
+/* The page list must NOT be a fixed array (16 KB x NSHM = 4 MB of BSS), and it must NOT
+ * come from the FreeRTOS heap: syscall bodies run INSIDE THE SVC EXCEPTION HANDLER
+ * (frtos_os.c:385), and pvPortMalloc suspends the scheduler, which is illegal there — and
+ * heap_4 also hands out task stacks, so corrupting it smashes a stack and the task returns
+ * to a garbage LR. That is a hardware-only fault (qemu tolerated it on timing luck); it
+ * showed up as a PREFETCH-ABORT branching into the XN'd PL window. Every other allocation
+ * in a syscall goes through the page pool, so this one does too.
+ *
+ * The list therefore lives in POOL PAGES: 1024 pointers per 4 KB page, so SHM_MAXPG=4096
+ * needs at most four, and shm_t carries just those four pointers (16 B). */
+#define SHM_LISTPP ((SHM_MAXPG + 1023) / 1024)   /* pool pages needed for a full page list */
 typedef struct {
-    void   **pages;        /* page list (pvPortMalloc'd; NOT a fixed array — at SHM_MAXPG
-                            * that would have been 16 KB x NSHM = 4 MB of BSS) */
+    void    *listpg[SHM_LISTPP];   /* pool pages holding the page list (1024 ptrs each) */
     uint32_t npages;
     uint32_t va;           /* VA allocated at create: the same in every mapper */
     uint32_t nsecs;        /* 1 MB sections of VA reserved (size rounded up) */
@@ -869,6 +878,12 @@ typedef struct {
     int      used;
 } shm_t;
 static shm_t    g_shm[NSHM];                  /* g_space_shm[] declared up top (used by vm_space_create) */
+
+/* page k of object o, via its pool-page list */
+static void *shm_page(const shm_t *o, uint32_t k)
+{ return ((void **)o->listpg[k >> 10])[k & 1023]; }
+static void shm_set_page(shm_t *o, uint32_t k, void *pg)
+{ ((void **)o->listpg[k >> 10])[k & 1023] = pg; }
 
 /* VA allocator: a bitmap of 1 MB sections over the shm window. Objects are
  * section-aligned and section-granular, so allocation is a first-fit run scan. */
@@ -900,10 +915,11 @@ static void shm_va_free(uint32_t va, uint32_t nsecs)
  * and has already cleared `used`. */
 static void shm_teardown(int id)
 {
-    for (uint32_t k = 0; k < g_shm[id].npages; k++) dfree_raw(g_shm[id].pages[k]);
-    if (g_shm[id].pages) vPortFree(g_shm[id].pages);
+    for (uint32_t k = 0; k < g_shm[id].npages; k++) dfree_raw(shm_page(&g_shm[id], k));
+    for (int i = 0; i < SHM_LISTPP; i++)
+        if (g_shm[id].listpg[i]) { dfree_raw(g_shm[id].listpg[i]); g_shm[id].listpg[i] = 0; }
     if (g_shm[id].nsecs) shm_va_free(g_shm[id].va, g_shm[id].nsecs);
-    g_shm[id].pages = 0; g_shm[id].npages = 0; g_shm[id].nsecs = 0; g_shm[id].va = 0;
+    g_shm[id].npages = 0; g_shm[id].nsecs = 0; g_shm[id].va = 0;
 }
 
 /* allocate an shm of `size` bytes -> id, or -1. nref starts 0 (a mapper adds one).
@@ -929,14 +945,17 @@ int vm_shm_create(uint32_t size, uint32_t flags)
     for (int i = 0; i < NSHM; i++) if (!g_shm[i].used) { g_shm[i].used = 1; id = i; break; }
     xt_irq_restore(f);
     if (id < 0) return -1;
-    g_shm[id].pages = 0; g_shm[id].npages = 0; g_shm[id].nsecs = 0; g_shm[id].va = 0;
+    for (int i = 0; i < SHM_LISTPP; i++) g_shm[id].listpg[i] = 0;
+    g_shm[id].npages = 0; g_shm[id].nsecs = 0; g_shm[id].va = 0;
 
-    void **pgs = pvPortMalloc(np * sizeof(void *));
-    if (!pgs) { g_shm[id].used = 0; return -1; }
-    g_shm[id].pages = pgs;
+    uint32_t nlist = (np + 1023u) >> 10;                  /* pool pages for the page list */
+    for (uint32_t i = 0; i < nlist; i++) {
+        g_shm[id].listpg[i] = dpage_raw();
+        if (!g_shm[id].listpg[i]) { shm_teardown(id); g_shm[id].used = 0; return -1; }
+    }
 
     uint32_t va = shm_va_alloc(nsecs);                    /* VA is free; take it up front */
-    if (!va) { vPortFree(pgs); g_shm[id].pages = 0; g_shm[id].used = 0; return -1; }
+    if (!va) { shm_teardown(id); g_shm[id].used = 0; return -1; }
     g_shm[id].va = va; g_shm[id].nsecs = nsecs;
 
     for (uint32_t k = 0; k < np; k++) {
@@ -947,7 +966,7 @@ int vm_shm_create(uint32_t size, uint32_t flags)
             g_shm[id].used = 0;
             return -1;
         }
-        pgs[k] = pg;                                      /* dpage_raw zeroes on free; scrub on create too */
+        shm_set_page(&g_shm[id], k, pg);                  /* dpage_raw zeroes on free; scrub on create too */
         memset(pg, 0, 0x1000);
     }
     g_shm[id].npages = np; g_shm[id].size = size; g_shm[id].nref = 0;
@@ -962,7 +981,7 @@ int vm_shm_create(uint32_t size, uint32_t flags)
 void *vm_shm_kaddr(int id)
 {
     if (id < 0 || id >= NSHM || !g_shm[id].used || !g_shm[id].npages) return 0;
-    return g_shm[id].pages[0];
+    return shm_page(&g_shm[id], 0);
 }
 
 /* map shm `id` PL0-RW into space idx's SHM window -> VA (0 on failure). Idempotent per
@@ -981,7 +1000,7 @@ uint32_t vm_shm_map(int idx, int id)
         uint32_t *l2 = perproc_l2(idx, space_l1[idx], pva >> 20);
         if (!l2) return 0;                            /* out of L2s / pool (stage 1 made this rare) */
         for (uint32_t i = L2_IDX(pva); i < 256 && k < np; i++, k++)
-            l2[i] = L2_SHM((uint32_t)g_shm[id].pages[k]);
+            l2[i] = L2_SHM((uint32_t)shm_page(&g_shm[id], k));
     }
     uint32_t f = xt_irq_save();
     if (!(g_space_shm[idx][id >> 5] & (1u << (id & 31)))) {
