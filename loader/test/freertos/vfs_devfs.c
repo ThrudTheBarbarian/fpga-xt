@@ -240,7 +240,6 @@ static long dv_blit_ioctl(vfs_file *f, unsigned req, void *arg)
 }
 
 static const devnode g_nodes[] = {
-    { "/blitter", VFS_CHR_DEV, 0, dv_blit_wr, dv_blit_ioctl },
     { "/null",    VFS_CHR_DEV, dv_null_rd, dv_sink_wr, 0 },
     { "/zero",    VFS_CHR_DEV, dv_zero_rd, dv_sink_wr, 0 },
     { "/urandom", VFS_CHR_DEV, dv_rand_rd, dv_sink_wr, 0 },
@@ -256,6 +255,9 @@ static const devnode g_nodes[] = {
     { "/ttyp1",   VFS_CHR_DEV, dv_ptys_rd, dv_ptys_wr, dv_pty_ioctl },
     { "/ttyp2",   VFS_CHR_DEV, dv_ptys_rd, dv_ptys_wr, dv_pty_ioctl },
     { "/ttyp3",   VFS_CHR_DEV, dv_ptys_rd, dv_ptys_wr, dv_pty_ioctl },
+    /* APPENDED, deliberately: inserting at the front shifts every other device's index,
+     * and /dev/console lives in this table. Add new devices at the END. */
+    { "/blitter", VFS_CHR_DEV, 0, dv_blit_wr, dv_blit_ioctl },
 };
 #define NDEV ((int)(sizeof g_nodes / sizeof g_nodes[0]))
 
