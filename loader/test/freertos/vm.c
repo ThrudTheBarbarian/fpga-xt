@@ -1016,6 +1016,56 @@ uint32_t vm_shm_map(int idx, int id)
 
 /* reap hook: drop every shm this space held; free an shm's pages when its last mapper
  * goes (nref -> 0). The space's L2s + bitmap are reset by vm_space_create on reuse. */
+/* Drop THIS space's mapping of shm `id`, and its ref. 0 on success, -1 if this space did
+ * not have it mapped.
+ *
+ * This is the syscall the gemd design (Rocks RESPONSIBILITIES.md §11, "refcount, do not
+ * handshake") is built on, and until now it did not exist: the ONLY nref-- was
+ * vm_shm_drop_space, called from vm_space_destroy — i.e. at process DEATH. A LIVE process
+ * could never release a surface, so every window resize and every window close leaked its
+ * buffer AND its id, permanently. §11's whole point is that either side can drop while both
+ * are alive: on resize gemd allocates a new surface, hands the client the new id, and drops
+ * its ref on the old; the client maps the new one and drops the old; refcount hits 0 and it
+ * is freed. Nobody blocks, no handshake.
+ *
+ * The pages are unmapped from this space (entries -> 0), so a STALE POINTER FAULTS. It must
+ * not silently read whatever is mapped at that VA next — after a resize the client may well
+ * still be mid-draw into the old surface, and §11 says that is safe precisely because the
+ * memory stays valid until the refcount drops, not because the pointer is still wired to
+ * something. A dangling read that quietly returned another window's pixels would be far
+ * worse than a fault. */
+int vm_shm_unmap(int idx, int id)
+{
+    if (id < 0 || id >= NSHM || !g_shm[id].used) return -1;
+
+    uint32_t f = xt_irq_save();
+    int had = (g_space_shm[idx][id >> 5] & (1u << (id & 31))) != 0;
+    if (had) g_space_shm[idx][id >> 5] &= ~(1u << (id & 31));
+    xt_irq_restore(f);
+    if (!had) return -1;                         /* this space never mapped it */
+
+    uint32_t va = g_shm[id].va, np = g_shm[id].npages;
+    for (uint32_t k = 0; k < np; ) {
+        uint32_t pva = va + k * 0x1000u;
+        uint32_t *l2 = perproc_l2(idx, space_l1[idx], pva >> 20);
+        if (!l2) { k += 256u - L2_IDX(pva); continue; }   /* no L2 -> nothing mapped there */
+        for (uint32_t i = L2_IDX(pva); i < 256 && k < np; i++, k++)
+            l2[i] = 0;                                    /* translation fault on a stale deref */
+    }
+    /* The L2 TABLES stay tracked for their sections: shm_va_free returns the VA run to the
+     * bitmap, so the next object usually lands on the same sections and reuses them. */
+    __asm__ volatile("dsb");
+    __asm__ volatile("mcr p15,0,%0,c8,c7,0" :: "r"(0u));  /* TLBIALL — drop the stale entries */
+    __asm__ volatile("dsb; isb");
+
+    f = xt_irq_save();
+    int free_now = (g_shm[id].nref > 0 && --g_shm[id].nref == 0);
+    if (free_now) g_shm[id].used = 0;
+    xt_irq_restore(f);
+    if (free_now) shm_teardown(id);              /* pages + page list + VA run */
+    return 0;
+}
+
 void vm_shm_drop_space(int idx)
 {
     uint32_t bits[8];

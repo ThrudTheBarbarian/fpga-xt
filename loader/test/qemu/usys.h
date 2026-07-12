@@ -151,6 +151,10 @@ static inline long sys_munmap(void *addr, unsigned len)
 static inline int   sys_shm_create(unsigned size, unsigned flags)
 { return (int)__syscall(SYS_shm_create, (long)size, (long)flags, 0); }
 static inline void *sys_shm_map(int id) { long r = __syscall(SYS_shm_map, id, 0, 0); return r ? (void *)r : (void *)0; }
+/* drop this process's mapping + ref; the object is freed when the last mapper drops it.
+ * A stale pointer into an unmapped surface FAULTS — it does not silently read whatever is
+ * mapped there next. 0 on success, -1 if this process had it not mapped. */
+static inline long sys_shm_unmap(int id) { return __syscall(SYS_shm_unmap, id, 0, 0); }
 static inline long sys_settime(unsigned unix_sec) { return __syscall(SYS_settime, (long)unix_sec, 0, 0); }
 static inline long sys_nanosleep(unsigned usec) { return __syscall(SYS_nanosleep, (long)usec, 0, 0); }
 static inline long sys_fb_info(struct os_fbinfo *fi) { return __syscall(SYS_fb_info, (long)fi, 0, 0); }

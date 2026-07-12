@@ -96,6 +96,7 @@ void    *vm_shm_kaddr(int id);                    /* shm's first page by pool ID
 void    *vm_page_alloc(void);                     /* raw pool page (fs page cache); identity, uncharged */
 void     vm_page_free(void *p);                   /* return a vm_page_alloc page to the pool */
 void     vm_shm_drop_space(int idx);              /* drop all shm refs a space held (reap) */
+int      vm_shm_unmap(int idx, int id);           /* drop ONE mapping + ref, while alive (§11) */
 uint32_t *vm_space_create(int idx, uint32_t prog_va, uint32_t prog_size, uint32_t prog_src);
 void vm_space_destroy(int idx);     /* reclaim a dead space's private pages to the pool */
 void vm_sync_loaded_sections(void); /* adopt master section splits into every space L1 (post-load) */

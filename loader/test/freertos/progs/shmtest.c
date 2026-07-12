@@ -74,6 +74,7 @@ void _app_entry(int argc, char **argv)
            (b[0] == 0xF1257A6Eu && b[last] == 0x1A57FA6Eu) ? "OK (spans 8 sections)" : "CORRUPT");
 
     /* how many 1 MB objects can we now create+map? old ceiling was 8 (L2), then 15 (NSHM=16). */
+    static int ids[300];
     int mapped = 0;
     for (int i = 0; i < 300; i++) {
         int sid = sys_shm_create(1u << 20, 0);
@@ -82,9 +83,45 @@ void _app_entry(int argc, char **argv)
         if (!q) break;
         q[0] = 0x5EC00000u + (unsigned)i;
         if (q[0] != 0x5EC00000u + (unsigned)i) { printf("shmtest: FAIL readback at %d\n", i); break; }
-        mapped++;
+        ids[mapped++] = sid;
     }
     printf("shmtest: mapped %d x 1MB objects (old kernel: 8, L2-capped)\n", mapped);
+    /* release them, or they hoard every id + VA section and starve everything below */
+    int freed = 0;
+    for (int i = 0; i < mapped; i++) if (sys_shm_unmap(ids[i]) == 0) freed++;
+    printf("shmtest: unmapped %d/%d — %s\n", freed, mapped, freed == mapped ? "OK" : "FAIL");
+
+    /* ---- STAGE 3: sys_shm_unmap ---------------------------------------------------
+     * Until this syscall existed the ONLY nref-- was at process DEATH, so a live process
+     * could never release a surface: every resize and every window close leaked its
+     * buffer and its id, forever. §11 ("refcount, do not handshake") is built on either
+     * side dropping while both are alive.
+     *
+     * The real test is therefore a LEAK test. Churn far more surface memory than the
+     * machine has: 400 iterations x 8 MiB = 3.2 GB through a 1 GB box. If unmap does not
+     * genuinely free the pages, the VA sections, the page list and the id, this runs out
+     * and fails long before the end. */
+    int leaked = 0;
+    for (int i = 0; i < 400; i++) {
+        int sid = sys_shm_create(1920u * 1088u * 4u, 0);      /* a maximised window, every time */
+        if (sid < 0) { printf("shmtest: LEAK — shm_create failed at iteration %d\n", i); leaked = 1; break; }
+        volatile unsigned *q = sys_shm_map(sid);
+        if (!q) { printf("shmtest: LEAK — shm_map failed at iteration %d\n", i); leaked = 1; break; }
+        q[0] = 0xA5A50000u + (unsigned)i;
+        if (q[0] != 0xA5A50000u + (unsigned)i) { printf("shmtest: FAIL readback at %d\n", i); leaked = 1; break; }
+        if (sys_shm_unmap(sid) != 0) { printf("shmtest: FAIL — shm_unmap returned an error at %d\n", i); leaked = 1; break; }
+    }
+    if (!leaked)
+        printf("shmtest: unmap churned 400 x 8MiB surfaces (3.2 GB through a 1 GB box) — NO LEAK\n");
+
+    /* Unmapping an id this process does not HOLD must fail, not corrupt. Create one and
+     * never map it: the object exists, but this space has no ref on it. */
+    int unheld = sys_shm_create(4096, 0);
+    if (unheld < 0) printf("shmtest: FAIL — could not create the unheld probe\n");
+    else if (sys_shm_unmap(unheld) == 0)
+        printf("shmtest: FAIL — unmap of an id we never mapped succeeded\n");
+    else
+        printf("shmtest: unmap of an unheld id rejected OK\n");
 
     sys_exit(0);
 }

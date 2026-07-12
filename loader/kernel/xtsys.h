@@ -119,6 +119,16 @@ struct xt_sigframe {
                               * The number is FROZEN; `flags` went into the already-free a1,
                               * so old callers (which passed a literal 0) keep their meaning. */
 #define SYS_shm_map    0x204 /* (id) -> VA: map an shm object PL0-RW into this process */
+#define SYS_shm_unmap  0x205 /* (id) -> 0: drop THIS process's mapping + ref. Frees the object
+                              * when the last mapper drops it.
+                              * Until this existed the ONLY nref-- was at process DEATH, so a
+                              * LIVE process could never release a surface: every window resize
+                              * and every window close leaked its buffer AND its id, forever.
+                              * The gemd design (Rocks RESPONSIBILITIES.md §11 "refcount, do not
+                              * handshake") is built on either side being able to drop while both
+                              * are alive — gemd hands the client a new surface on resize and
+                              * drops its ref on the old; the client maps the new and drops the
+                              * old; refcount -> 0 -> freed. No handshake, nobody blocks. */
 
 /* shm_create flags (a1).  UNKNOWN BITS ARE REJECTED, never ignored — see below. */
 #define XT_SHM_CONTIG  (1u << 0) /* physically contiguous + PL-visible (plv_alloc): the
