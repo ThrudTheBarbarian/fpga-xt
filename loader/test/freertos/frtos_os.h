@@ -4,6 +4,7 @@
 #include <stdint.h>
 #include <stddef.h>
 #include "xtld.h"
+#include "xtsys.h"   /* struct xt_blit_cmd (the /dev/blitter ABI) */
 
 /* T2-b: per-process heap window (mapped per-process to private physical by vm.c;
  * libc's _sbrk hands out of it for the current process). 1 section for now. */
@@ -97,6 +98,11 @@ void    *vm_page_alloc(void);                     /* raw pool page (fs page cach
 void     vm_page_free(void *p);                   /* return a vm_page_alloc page to the pool */
 void     vm_shm_drop_space(int idx);              /* drop all shm refs a space held (reap) */
 int      vm_shm_unmap(int idx, int id);           /* drop ONE mapping + ref, while alive (§11) */
+uint32_t vm_shm_phys(int id, uint32_t *size);     /* physical base of a CONTIG surface (0 if not) */
+int      frtos_current_pid(void);                 /* calling process's pid, or -1 in kernel ctx */
+int      blit_declare(int id, uint32_t stride);   /* /dev/blitter: a surface's row stride */
+long     blit_submit(const struct xt_blit_cmd *c, int priority);
+uint32_t blit_seq(void);                          /* the engine's RETIRED sequence number */
 uint32_t *vm_space_create(int idx, uint32_t prog_va, uint32_t prog_size, uint32_t prog_src);
 void vm_space_destroy(int idx);     /* reclaim a dead space's private pages to the pool */
 void vm_sync_loaded_sections(void); /* adopt master section splits into every space L1 (post-load) */

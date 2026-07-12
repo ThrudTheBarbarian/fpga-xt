@@ -145,6 +145,44 @@ struct xt_sigframe {
  * an OLDER kernel instead of silently different memory. Widen this as each flag lands. */
 #define XT_SHM_SUPPORTED (XT_SHM_CONTIG)
 
+/* ---- /dev/blitter (Rocks RESPONSIBILITIES.md §13) ---------------------------
+ * The blitter is a DMA engine with NO MMU — it takes PHYSICAL addresses — so raw register
+ * access IS arbitrary physical write. It is therefore a DEVICE, and the kernel mediates.
+ *
+ * COMMANDS NAME SURFACES BY HANDLE (an shm id), NEVER BY ADDRESS. The driver resolves
+ * id -> physical itself and bounds-checks every rect against that surface's own
+ * allocation, so a client cannot even EXPRESS an out-of-bounds blit. Only XT_SHM_CONTIG
+ * surfaces may be named: a pool-backed shm is 2048 unrelated frames and the engine, which
+ * accumulates base+stride, would walk straight off the first page.
+ *
+ *   fd = open("/dev/blitter")
+ *   ioctl(fd, XT_BLIT_DECLARE, &(struct xt_blit_surf){id, stride})   once per surface
+ *   write(fd, cmds, n * sizeof cmd)   -> the retire SEQ of the last command
+ *   ioctl(fd, XT_BLIT_SEQ, &seq)      -> what the engine has actually RETIRED
+ *
+ * The seq is a FENCE, and it is not optional. gemd holds PRIORITY, so it can composite a
+ * window whose own draws have not retired yet. "I posted damage" must therefore mean "my
+ * pixels are in memory", and only a fence can say that — with a queued engine, drawing was
+ * never synchronous; priority merely exposes an assumption that was already false. */
+#define XT_BLIT_FILL   1        /* rect fill with `color` */
+#define XT_BLIT_COPY   2        /* block blit: src rect -> dst rect */
+#define XT_BLITF_BLEND (1u<<0)  /* alpha-blend over the destination (not replace) */
+
+struct xt_blit_cmd {
+    uint16_t op;         /* XT_BLIT_* */
+    uint16_t flags;      /* XT_BLITF_* */
+    int32_t  dst_id;     /* surface HANDLE. Never an address. */
+    int32_t  src_id;     /* HANDLE; ignored for FILL */
+    uint16_t dx, dy, dw, dh;
+    uint16_t sx, sy;
+    uint32_t color;      /* FILL: RGBA-8888 */
+};
+struct xt_blit_surf { int32_t id; uint32_t stride; };   /* stride in BYTES per row */
+
+#define XT_BLIT_DECLARE  0xB100  /* (struct xt_blit_surf *) -> 0: tell the driver a stride */
+#define XT_BLIT_SEQ      0xB101  /* (uint32_t *) -> 0: the RETIRED sequence number */
+#define XT_BLIT_PRIORITY 0xB102  /* () -> 0: this fd jumps the queue. gemd only. */
+
 /* filesystem / VFS — block 0x300 */
 #define SYS_open     0x300   /* (path, flags) -> fd */
 #define SYS_close    0x301   /* (fd) -> 0 */
