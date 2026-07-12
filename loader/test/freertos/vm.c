@@ -893,6 +893,8 @@ typedef struct {
     uint32_t va;           /* VA allocated at create: the same in every mapper */
     uint32_t nsecs;        /* 1 MB sections of VA reserved (size rounded up) */
     uint32_t size;         /* the requested size, exactly as asked */
+    uint32_t phys;         /* XT_SHM_CONTIG: physical base in plv (0 = pool-backed, scattered) */
+    uint32_t flags;        /* XT_SHM_* as created */
     int      nref;
     int      used;
 } shm_t;
@@ -903,6 +905,65 @@ static void *shm_page(const shm_t *o, uint32_t k)
 { return ((void **)o->listpg[k >> 10])[k & 1023]; }
 static void shm_set_page(shm_t *o, uint32_t k, void *pg)
 { ((void **)o->listpg[k >> 10])[k & 1023] = pg; }
+
+/* ---- plv_alloc: the PL-visible / WIRED heap -------------------------------
+ * docs/Zynq/memory-map.md reserves 0x3800_0000..0x3FFF_FFFF (128 MB) for exactly this:
+ * "Anything the PL reads by physical address: GEM window surfaces, the hardware glyph
+ * atlas (SRC_BLIT), asset caches, DMA buffers. Never swapped or moved."
+ *
+ * The blitter and the compositor are DMA engines with NO MMU — they read PHYSICAL
+ * addresses and accumulate base+stride. A scattered page list is not something they can
+ * walk, so anything they touch must be PHYSICALLY CONTIGUOUS. The page pool cannot give
+ * that (dpage_raw hands out unrelated 4 KB frames), which is the whole reason
+ * XT_SHM_CONTIG exists.
+ *
+ * mmu.c already maps this region SEC_PLANE: Normal NON-CACHEABLE, PL0-RW, XN. Uncached is
+ * REQUIRED — the PL does not snoop the A9's caches — and it is precisely why
+ * RESPONSIBILITIES.md §14 insists the VDI's blitter backend and the move to plv land
+ * TOGETHER: a *software* VDI writing to uncached memory is the worst of both worlds.
+ *
+ * Granularity is 1 MB, so an object is section-aligned and maps with L1 SECTION
+ * descriptors — no L2 tables at all, and 8 TLB entries for an 8 MiB surface rather than
+ * 2048.
+ *
+ * ⚠ NOT ISOLATED (pre-existing, flagged not introduced): SEC_PLANE is AP=11 (PL0-RW) and
+ * vm_space_create copies the master L1 into every space, so EVERY process can already
+ * read and write this whole region — and the framebuffer — at its identity address,
+ * without mapping anything. That is how the current desktop writes FB_BASE. Mapping a
+ * surface by id is therefore a convenience (a stable id -> VA), NOT a capability. Real
+ * isolation needs the region marked PL0-none in the master with surfaces mapped in
+ * explicitly, which would break the desktop's direct FB access and has to land with it. */
+#define PLV_BASE  0x38000000u
+#define PLV_SIZE  0x08000000u                    /* 128 MB */
+#define PLV_SECS  (PLV_SIZE >> 20)               /* 128 x 1 MB */
+static uint32_t g_plv_bm[(PLV_SECS + 31) / 32];
+
+/* section descriptor for a mapped contiguous surface: Normal non-cacheable, PL0-RW, XN,
+ * and nG (ASID-tagged — it is a per-process mapping, unlike the global identity map). */
+#define SEC_SHM(phys) (((phys) & 0xFFF00000u) | 0x1C12u | (1u << 17))
+
+static uint32_t plv_alloc(uint32_t nsecs)        /* -> physical base, or 0 */
+{
+    if (!nsecs || nsecs > PLV_SECS) return 0;
+    uint32_t f = xt_irq_save();
+    for (uint32_t s = 0; s + nsecs <= PLV_SECS; s++) {
+        uint32_t k = 0;
+        while (k < nsecs && !(g_plv_bm[(s + k) >> 5] & (1u << ((s + k) & 31)))) k++;
+        if (k < nsecs) { s += k; continue; }
+        for (k = 0; k < nsecs; k++) g_plv_bm[(s + k) >> 5] |= (1u << ((s + k) & 31));
+        xt_irq_restore(f);
+        return PLV_BASE + (s << 20);
+    }
+    xt_irq_restore(f);
+    return 0;                                    /* plv is a BUDGET, not a free lunch */
+}
+static void plv_free(uint32_t phys, uint32_t nsecs)
+{
+    uint32_t s = (phys - PLV_BASE) >> 20;
+    uint32_t f = xt_irq_save();
+    for (uint32_t k = 0; k < nsecs; k++) g_plv_bm[(s + k) >> 5] &= ~(1u << ((s + k) & 31));
+    xt_irq_restore(f);
+}
 
 /* VA allocator: a bitmap of 1 MB sections over the shm window. Objects are
  * section-aligned and section-granular, so allocation is a first-fit run scan. */
@@ -934,11 +995,16 @@ static void shm_va_free(uint32_t va, uint32_t nsecs)
  * and has already cleared `used`. */
 static void shm_teardown(int id)
 {
-    for (uint32_t k = 0; k < g_shm[id].npages; k++) dfree_raw(shm_page(&g_shm[id], k));
-    for (int i = 0; i < SHM_LISTPP; i++)
-        if (g_shm[id].listpg[i]) { dfree_raw(g_shm[id].listpg[i]); g_shm[id].listpg[i] = 0; }
+    if (g_shm[id].phys) {                       /* XT_SHM_CONTIG: one plv run, no page list */
+        plv_free(g_shm[id].phys, g_shm[id].nsecs);
+        g_shm[id].phys = 0;
+    } else {
+        for (uint32_t k = 0; k < g_shm[id].npages; k++) dfree_raw(shm_page(&g_shm[id], k));
+        for (int i = 0; i < SHM_LISTPP; i++)
+            if (g_shm[id].listpg[i]) { dfree_raw(g_shm[id].listpg[i]); g_shm[id].listpg[i] = 0; }
+    }
     if (g_shm[id].nsecs) shm_va_free(g_shm[id].va, g_shm[id].nsecs);
-    g_shm[id].npages = 0; g_shm[id].nsecs = 0; g_shm[id].va = 0;
+    g_shm[id].npages = 0; g_shm[id].nsecs = 0; g_shm[id].va = 0; g_shm[id].flags = 0;
 }
 
 /* allocate an shm of `size` bytes -> id, or -1. nref starts 0 (a mapper adds one).
@@ -966,6 +1032,25 @@ int vm_shm_create(uint32_t size, uint32_t flags)
     if (id < 0) return -1;
     for (int i = 0; i < SHM_LISTPP; i++) g_shm[id].listpg[i] = 0;
     g_shm[id].npages = 0; g_shm[id].nsecs = 0; g_shm[id].va = 0;
+    g_shm[id].phys = 0; g_shm[id].flags = flags;
+
+    if (flags & XT_SHM_CONTIG) {
+        /* PHYSICALLY CONTIGUOUS, from plv: what the blitter and compositor need, because
+         * they are DMA engines with no MMU that accumulate base+stride. No page list, no
+         * pool pages — one run of 1 MB sections. */
+        uint32_t phys = plv_alloc(nsecs);
+        if (!phys) { g_shm[id].used = 0; return -1; }     /* plv is a BUDGET */
+        uint32_t va2 = shm_va_alloc(nsecs);
+        if (!va2) { plv_free(phys, nsecs); g_shm[id].used = 0; return -1; }
+        g_shm[id].phys = phys; g_shm[id].va = va2; g_shm[id].nsecs = nsecs;
+        /* Scrub: a recycled surface must not hand the next owner another window's pixels.
+         * plv is Normal NON-cacheable, so this memset streams straight to DRAM and is slow
+         * (~8 MiB for a maximised window). Once /dev/blitter exists this should be a
+         * hardware RECT_FILL — clearing a surface is exactly what the engine is for. */
+        memset((void *)phys, 0, (size_t)nsecs << 20);
+        g_shm[id].npages = np; g_shm[id].size = size; g_shm[id].nref = 0;
+        return id;
+    }
 
     uint32_t nlist = (np + 1023u) >> 10;                  /* pool pages for the page list */
     for (uint32_t i = 0; i < nlist; i++) {
@@ -1001,6 +1086,7 @@ int vm_shm_create(uint32_t size, uint32_t flags)
 void *vm_shm_kaddr(int id)
 {
     if (id < 0 || id >= NSHM || !g_shm[id].used || !g_shm[id].npages) return 0;
+    if (g_shm[id].phys) return (void *)g_shm[id].phys;   /* CONTIG: identity-mapped, PL1-valid */
     return shm_page(&g_shm[id], 0);
 }
 
@@ -1012,6 +1098,25 @@ uint32_t vm_shm_map(int idx, int id)
     if (id < 0 || id >= NSHM || !g_shm[id].used) return 0;
     uint32_t va = g_shm[id].va;                       /* allocated at create, not id*SLOT */
     uint32_t np = g_shm[id].npages;
+
+    if (g_shm[id].phys) {                             /* XT_SHM_CONTIG: L1 SECTION descriptors.
+                                                       * Contiguous + section-aligned, so it needs
+                                                       * NO L2 tables at all, and costs 8 TLB
+                                                       * entries for an 8 MiB surface, not 2048. */
+        uint32_t *t = space_l1[idx];
+        for (uint32_t s = 0; s < g_shm[id].nsecs; s++)
+            t[(va >> 20) + s] = SEC_SHM(g_shm[id].phys + (s << 20));
+        uint32_t fc = xt_irq_save();
+        if (!(g_space_shm[idx][id >> 5] & (1u << (id & 31)))) {
+            g_space_shm[idx][id >> 5] |= (1u << (id & 31));
+            g_shm[id].nref++;
+        }
+        xt_irq_restore(fc);
+        __asm__ volatile("dsb");
+        __asm__ volatile("mcr p15,0,%0,c8,c7,0" :: "r"(0u));   /* TLBIALL */
+        __asm__ volatile("dsb; isb");
+        return va;
+    }
     /* An object now spans MULTIPLE 1 MB sections, so it needs one L2 per section — the old
      * code took a single perproc_l2 for va>>20, which is why nothing could exceed 1 MB.
      * va is section-aligned, so each section takes a clean run of up to 256 pages. */
@@ -1065,12 +1170,18 @@ int vm_shm_unmap(int idx, int id)
     if (!had) return -1;                         /* this space never mapped it */
 
     uint32_t va = g_shm[id].va, np = g_shm[id].npages;
-    for (uint32_t k = 0; k < np; ) {
-        uint32_t pva = va + k * 0x1000u;
-        uint32_t *l2 = perproc_l2(idx, space_l1[idx], pva >> 20);
-        if (!l2) { k += 256u - L2_IDX(pva); continue; }   /* no L2 -> nothing mapped there */
-        for (uint32_t i = L2_IDX(pva); i < 256 && k < np; i++, k++)
-            l2[i] = 0;                                    /* translation fault on a stale deref */
+    if (g_shm[id].phys) {                                 /* CONTIG: restore the master's section */
+        uint32_t *t = space_l1[idx];
+        for (uint32_t s = 0; s < g_shm[id].nsecs; s++)
+            t[(va >> 20) + s] = mmu_master_table()[(va >> 20) + s];
+    } else {
+        for (uint32_t k = 0; k < np; ) {
+            uint32_t pva = va + k * 0x1000u;
+            uint32_t *l2 = perproc_l2(idx, space_l1[idx], pva >> 20);
+            if (!l2) { k += 256u - L2_IDX(pva); continue; }   /* no L2 -> nothing mapped there */
+            for (uint32_t i = L2_IDX(pva); i < 256 && k < np; i++, k++)
+                l2[i] = 0;                                    /* translation fault on a stale deref */
+        }
     }
     /* The L2 TABLES stay tracked for their sections: shm_va_free returns the VA run to the
      * bitmap, so the next object usually lands on the same sections and reuses them. */

@@ -143,7 +143,7 @@ struct xt_sigframe {
  * outside this mask.  That is deliberate: it is what lets the flag word grow without a new
  * syscall number, because a program built against a NEWER flag set gets a clean failure on
  * an OLDER kernel instead of silently different memory. Widen this as each flag lands. */
-#define XT_SHM_SUPPORTED (0u)
+#define XT_SHM_SUPPORTED (XT_SHM_CONTIG)
 
 /* filesystem / VFS — block 0x300 */
 #define SYS_open     0x300   /* (path, flags) -> fd */

@@ -32,10 +32,13 @@ void _app_entry(int argc, char **argv)
      * masked off XT_SHM_CONTIG would hand the PL a scattered page list and render
      * garbage; a clean -1 is the whole point. Prove both directions before anything
      * relies on it. */
-    if (sys_shm_create(4096, XT_SHM_CONTIG) >= 0)
-        printf("shmtest: FAIL — XT_SHM_CONTIG accepted but plv_alloc does not exist yet\n");
-    else
-        printf("shmtest: unsupported flag rejected OK\n");
+    /* XT_SHM_CONTIG is SUPPORTED as of stage 4 (plv_alloc), so it must now be ACCEPTED.
+     * Free it immediately: leaking it would consume plv section 0 and shift every later
+     * contiguous allocation, which is exactly the bug this line used to cause. */
+    { int probe = sys_shm_create(4096, XT_SHM_CONTIG);
+      if (probe < 0) printf("shmtest: FAIL — XT_SHM_CONTIG rejected, but plv_alloc exists\n");
+      else { sys_shm_map(probe); sys_shm_unmap(probe);
+             printf("shmtest: XT_SHM_CONTIG accepted OK\n"); } }
     if (sys_shm_create(4096, 0x8000u) >= 0)
         printf("shmtest: FAIL — unknown flag bit accepted\n");
     else
@@ -138,6 +141,50 @@ void _app_entry(int argc, char **argv)
             sys_shm_unmap(sb);
         }
     }
+
+    /* ---- STAGE 4: XT_SHM_CONTIG (plv_alloc) --------------------------------------
+     * The blitter and compositor are DMA engines with NO MMU: they read PHYSICAL
+     * addresses and accumulate base+stride, so a surface they touch must be physically
+     * CONTIGUOUS. The page pool cannot give that. XT_SHM_CONTIG allocates from plv
+     * (0x3800_0000, 128 MB — the memory map reserves it for exactly "GEM window
+     * surfaces").
+     *
+     * Prove BOTH placement and contiguity from userspace, using sys_devmem to peek
+     * PHYSICAL memory: write through the mapped VA, then read the raw physical address
+     * and demand the same bytes. This is the first CONTIG object, so plv_alloc hands out
+     * PLV_BASE. If the last word also reads back at base+size-4, the run is contiguous.  */
+    unsigned csz = 1920u * 1088u * 4u;                  /* a maximised window */
+    int cid = sys_shm_create(csz, XT_SHM_CONTIG);
+    if (cid < 0) { printf("shmtest: FAIL — XT_SHM_CONTIG rejected (plv_alloc missing?)\n"); }
+    else {
+        volatile unsigned *cp = sys_shm_map(cid);
+        if (!cp) printf("shmtest: FAIL — could not map a CONTIG surface\n");
+        else {
+            unsigned clast = csz / 4u - 1u;
+            cp[0] = 0xC0117E00u; cp[clast] = 0xC0117EFFu;
+            unsigned va0 = cp[0], val = cp[clast];               /* readback through the MAPPING */
+            unsigned long pbase = 0x38000000ul;                  /* PLV_BASE: first contig alloc */
+            long w0 = sys_devmem(pbase, 0, 0);                   /* peek PHYSICAL */
+            long wl = sys_devmem(pbase + (unsigned long)clast * 4ul, 0, 0);
+            printf("shmtest: CONTIG @VA %p  via-VA: first=0x%08x last=0x%08x\n", (void *)cp, va0, val);
+            printf("shmtest: CONTIG phys 0x%lx: first=0x%08lx last=0x%08lx %s\n",
+                   pbase, (unsigned long)w0, (unsigned long)wl,
+                   (w0 == (long)0xC0117E00u && wl == (long)0xC0117EFFu)
+                     ? "OK (in plv, and PHYSICALLY CONTIGUOUS)" : "FAIL");
+            sys_shm_unmap(cid);
+        }
+    }
+    /* plv is a BUDGET (128 MB): 8 MiB surfaces must run out at ~16, not forever. */
+    int cn = 0; static int cids[40];
+    for (int i = 0; i < 40; i++) {
+        int q = sys_shm_create(csz, XT_SHM_CONTIG);
+        if (q < 0) break;
+        if (!sys_shm_map(q)) break;
+        cids[cn++] = q;
+    }
+    printf("shmtest: plv held %d x 8MiB contiguous surfaces (128 MB budget -> expect ~16)\n", cn);
+    int cf = 0; for (int i = 0; i < cn; i++) if (sys_shm_unmap(cids[i]) == 0) cf++;
+    printf("shmtest: released %d/%d contiguous surfaces — %s\n", cf, cn, cf == cn ? "OK" : "FAIL");
 
     /* Unmapping an id this process does not HOLD must fail, not corrupt. Create one and
      * never map it: the object exists, but this space has no ref on it. */
