@@ -49,15 +49,73 @@ static uint32_t  space_l1[NSPACE][4096]     __attribute__((aligned(16384)));
 static uint32_t  space_l2_heap[NSPACE][HEAP_SECS][256] __attribute__((aligned(1024)));/* heap: HEAP_SECS sections, demand-paged */
 static uint32_t  space_l2_mmap[NSPACE][256] __attribute__((aligned(1024)));/* mmap window (file-backed RO) */
 static uint32_t  space_l2_stk[NSPACE][STK_ARENA_MAXSECS][256] __attribute__((aligned(1024)));/* stack arena (per section): own slot only */
-/* a small per-space pool of L2 tables, one per 1 MB section the space overrides
- * (libc data, program data, the synthetic demo). Section-keyed so a program and
- * libc that happen to share a 1 MB section reuse ONE L2 (no clobber, the §6
- * collision). */
-#define MAXSEC 12       /* per-space overridden sections: libc + each shared lib's data
-                         * + synthetic + the program's data (libs are global ranges) */
-static uint32_t  space_l2pool[NSPACE][MAXSEC][256] __attribute__((aligned(1024)));
+/* Per-space L2 tables, one per 1 MB section the space overrides (libc data, program
+ * data, shm mappings). Section-keyed so a program and libc that happen to share a 1 MB
+ * section reuse ONE L2 (no clobber, the §6 collision).
+ *
+ * The TABLES THEMSELVES are allocated from the page pool on demand (l2_alloc below).
+ * They used to be a static `space_l2pool[NSPACE][MAXSEC][256]` — 768 KB up front, and,
+ * far worse, a hard cap of MAXSEC=12 overridden sections for EVERY space. That cap is
+ * fine for a program (libc + a few libs) and fatal for a window server: `vm_shm_map`
+ * burns one L2 slot per 1 MB of every surface it maps, and gemd maps every client's
+ * backing store. Ten 2 MiB windows is ~30 sections — gemd would have failed to map its
+ * third window, with `perproc_l2` returning 0.
+ *
+ * Raising MAXSEC on the static array was not the answer: the cost is NSPACE x MAXSEC x
+ * 1 KB, so sizing it for gemd (MAXSEC=64) would have charged 4 MB to all 64 spaces to
+ * benefit one. Allocating on demand makes the cost proportional to what is ACTUALLY
+ * mapped — an idle process pays nothing, gemd pays for what it maps — and it hands the
+ * 768 KB back. What remains here is a per-space TRACKING array of 6 bytes per section
+ * (a pointer + a section number), so MAXSEC is now cheap enough to be generous. */
+#define MAXSEC 256      /* per-space overridden sections. Now only a TRACKING bound
+                         * (6 B/entry = 96 KB total), NOT 1 KB/entry. */
+static uint32_t *space_l2ptr[NSPACE][MAXSEC];   /* the L2 table backing each tracked section */
 static uint16_t  space_l2sec[NSPACE][MAXSEC];   /* section number each slot maps */
-static uint8_t   space_l2n[NSPACE];             /* slots used this space */
+static uint16_t  space_l2n[NSPACE];             /* slots used this space (uint8_t no longer fits MAXSEC) */
+
+/* ---- L2 slab: 1 KB tables carved out of 4 KB pool pages ---------------------
+ * An ARM short-descriptor L2 table is 256 entries x 4 B = 1 KB, and must be 1 KB
+ * ALIGNED. A pool page is 4 KB and 4 KB aligned, so it holds exactly FOUR L2s, each
+ * correctly aligned. Free slots are threaded on a list whose link lives in the slot.
+ *
+ * Whole pages are never handed back to the pool — only 1 KB slots are recycled — so the
+ * L2 arena grows to the high-water mark of concurrent mappings and stays there. That is
+ * deliberate: it keeps the allocator to a dozen lines with no partial-page bookkeeping,
+ * and the ceiling is bounded by real mappings rather than by NSPACE x MAXSEC. */
+static void *dpage_raw(void);                    /* defined below (with the page pool) */
+static void *g_l2_free;                          /* free list of 1 KB L2 slots */
+
+static uint32_t *l2_alloc(void)
+{
+    unsigned f = xt_irq_save();
+    if (!g_l2_free) {
+        xt_irq_restore(f);
+        void *pg = dpage_raw();                  /* 4 KB, 4 KB-aligned (takes its own lock) */
+        if (!pg) return 0;
+        f = xt_irq_save();
+        for (int i = 3; i >= 0; i--) {           /* carve into 4 x 1 KB, push onto the free list */
+            void *slot = (char *)pg + i * 1024;
+            *(void **)slot = g_l2_free; g_l2_free = slot;
+        }
+    }
+    void *l2 = g_l2_free;
+    g_l2_free = *(void **)l2;
+    xt_irq_restore(f);
+    return (uint32_t *)l2;                       /* caller fills all 256 entries */
+}
+static void l2_release(uint32_t *l2)
+{
+    unsigned f = xt_irq_save();
+    *(void **)l2 = g_l2_free; g_l2_free = l2;
+    xt_irq_restore(f);
+}
+/* Hand back every L2 this space owns. IDEMPOTENT (zeroes the count), so it is safe to
+ * call from both vm_space_destroy (reclaim at death) and vm_space_create (slot reuse). */
+static void space_l2_release_all(int idx)
+{
+    for (int i = 0; i < space_l2n[idx]; i++) l2_release(space_l2ptr[idx][i]);
+    space_l2n[idx] = 0;
+}
 /* per-space list of pool pages charged to a space (heap + COW), for reclaim on
  * exit. MAXPP covers a full heap window (256) + COW pages; overflow stops tracking
  * (extra pages leak, never double-freed). */
@@ -156,14 +214,16 @@ uint32_t vm_cow_count(void) { return g_cow_count; }
 static uint32_t *perproc_l2(int idx, uint32_t *t, uint32_t sec)
 {
     for (int i = 0; i < space_l2n[idx]; i++)
-        if (space_l2sec[idx][i] == sec) return space_l2pool[idx][i];
+        if (space_l2sec[idx][i] == sec) return space_l2ptr[idx][i];
     if (space_l2n[idx] >= MAXSEC) return 0;
-    uint32_t *l2  = space_l2pool[idx][space_l2n[idx]];
+    uint32_t *l2 = l2_alloc();                    /* from the pool, not a static array */
+    if (!l2) return 0;                            /* pool exhausted -> caller must fail the map */
     uint32_t  ml1 = mmu_master_table()[sec];
     if ((ml1 & 0x3u) == 0x1u)                                     /* master is coarse L2 */
         memcpy(l2, (uint32_t *)(ml1 & 0xFFFFFC00u), 256 * sizeof(uint32_t));
     else                                                          /* master is a 1 MB section */
         for (uint32_t i = 0; i < 256; i++) l2[i] = L2_KERN((sec << 20) + i * 0x1000u);  /* PL0-none bg */
+    space_l2ptr[idx][space_l2n[idx]] = l2;
     space_l2sec[idx][space_l2n[idx]] = (uint16_t)sec;
     space_l2n[idx]++;
     /* Swapping this section's L1 from the shared master L2 to a fresh private L2 is a
@@ -241,7 +301,8 @@ uint32_t *vm_space_create(int idx, uint32_t prog_va, uint32_t prog_size, uint32_
     uint32_t *t    = space_l1[idx];
     uint32_t  asid = (uint32_t)idx + 1u;
     memcpy(t, mmu_master_table(), 4096 * sizeof(uint32_t));
-    space_l2n[idx] = 0;                        /* fresh per-space L2 pool */
+    space_l2_release_all(idx);                 /* hand back the old space's L2s (pool-owned now:
+                                                * merely zeroing the count would LEAK them) */
     g_space_npages[idx] = 0;                   /* fresh private-page charge list */
     g_space_shm[idx] = 0;                      /* fresh shm-mapping set (reap dropped the old refs) */
 
@@ -470,6 +531,8 @@ static void *dpage(int idx)
 void vm_space_destroy(int idx)
 {
     vm_shm_drop_space(idx);                    /* release this space's shm refs (free at last mapper) */
+    space_l2_release_all(idx);                 /* and its L2 tables — reclaim at DEATH, not just at
+                                                * slot reuse, or a dead space pins them until reused */
     /* free pool pages owned by backing-store mmaps (uncharged, so not in g_space_pages) */
     for (int m = 0; m < g_space_nmaps[idx]; m++) {
         if (!g_space_maps[idx][m].owned) continue;

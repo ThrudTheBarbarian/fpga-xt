@@ -55,5 +55,25 @@ void _app_entry(int argc, char **argv)
 
     printf("shmtest: after child, second word = 0x%04x %s\n",
            p[1], p[1] == 0xBEEF ? "OK (child wrote it -> shared write!)" : "NOT written");
+
+    /* ---- STAGE 1: the per-space L2 ceiling ---------------------------------------
+     * vm_shm_map burns ONE per-space L2 slot per 1 MB of surface mapped, and the old
+     * static space_l2pool capped EVERY space at MAXSEC=12 overridden sections — slots
+     * already shared with libc and each shared lib's data. gemd maps a backing store
+     * per window, so it would have failed to map its third window.
+     * Map as many 1 MB objects as the shm table allows: on the old kernel this stops
+     * dead once the space runs out of L2 slots. It must now run to NSHM. */
+    int mapped = 0;
+    for (int i = 0; i < 64; i++) {
+        int sid = sys_shm_create(1u << 20, 0);         /* 1 MB -> exactly one section */
+        if (sid < 0) break;                            /* shm table exhausted (expected end) */
+        volatile unsigned *q = sys_shm_map(sid);
+        if (!q) { printf("shmtest: L2 CEILING HIT after %d mappings\n", mapped); break; }
+        q[0] = 0x5EC00000u + (unsigned)i;              /* touch it: the mapping must be live */
+        if (q[0] != 0x5EC00000u + (unsigned)i) { printf("shmtest: FAIL readback at %d\n", i); break; }
+        mapped++;
+    }
+    printf("shmtest: mapped %d x 1MB shm objects — old MAXSEC=12 ceiling %s\n",
+           mapped, mapped > 12 ? "GONE" : "STILL THERE");
     sys_exit(0);
 }
