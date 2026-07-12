@@ -14,20 +14,27 @@
 #   ./jtag-valhalla.sh treset   # tier-2 testbed: `rst -system` (clean DDR/peripherals)
 #   ./jtag-valhalla.sh tdow     # tier-2 testbed: fastest reload (rst -processor; heap accumulates)
 #
-# ⚠ USE `tdow` TO ITERATE, NOT `treset`.  Diagnosed on the board 2026-07-12 from
-# the xsct log: `treset` runs every step successfully (rst -system -> ps7_init ->
-# downloading ELF -> running), so the download is NOT the problem — but the board
-# then needs `testbed` anyway, because **`rst -system` WIPES THE PL CONFIGURATION**.
-# jtag_sysdow.tcl's header claims it leaves "the live PL config and the clk_pix
-# MMCM lock untouched"; that is FALSE on this board.  XSDB's `rst -system` resets
-# the entire system including the PL, so the bitstream is gone and only `fpga
-# -file` (i.e. `testbed`) puts it back.
+# ⚠ WHAT ACTUALLY WORKS ON THIS BOARD (measured 2026-07-12, not inferred):
 #
-# `tdow` -> jtag_dow.tcl -> `rst -processor`, which resets ONLY the A9.  The PL
-# config and the clock MMCMs genuinely survive, so it is a one-command reload with
-# no power-cycle and no testbed chaser.  Its documented caveat ("heap accumulates",
-# because DDR/peripherals are not re-initialised) was written for the Vitis
-# xtos.elf; the FreeRTOS testbed re-inits its own page pool and heap every boot.
+#     ./jtag-valhalla.sh treset && ./jtag-valhalla.sh testbed
+#
+#   treset  — every xsct step succeeds (rst -system -> ps7_init -> dow -> running),
+#             so the download is NOT the problem. But the board still needs a
+#             `testbed` afterwards, which means `rst -system` WIPES THE PL
+#             CONFIGURATION. jtag_sysdow.tcl's header claims it leaves "the live PL
+#             config and the clk_pix MMCM lock untouched" — that is FALSE here.
+#   tdow    — HANGS THE BOARD. jtag_dow.tcl does `rst -processor` and no ps7_init,
+#             so DDR/peripherals keep the dying kernel's state and the new one wedges.
+#             Its header's "use this for software-only iteration" does not hold for
+#             the FreeRTOS testbed.
+#   testbed — jtag_load.tcl: fpga -file + ps7_init + dow. A full cold-load, and the
+#             only mode observed to leave a working board.
+#
+# NOT YET TRIED: `testbed` ON ITS OWN. It is a complete cold-load, so it may well be
+# the single command, making the treset chaser pointless. The stated reason to avoid
+# it — that `fpga -file` unlocks the clk_pix MMCM and forces a physical power-cycle —
+# is now doubtful, since treset+testbed reprograms the PL and needs no power-cycle.
+# Try it; if it works, delete treset/tdow.
 #
 # Env: REMOTE=valhalla  REMOTE_DIR=fpga-xt-build  VITIS_PATH=/opt/xilinx/2025.2/Vitis
 
