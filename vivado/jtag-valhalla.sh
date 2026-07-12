@@ -11,17 +11,22 @@
 #   ./jtag-valhalla.sh load     # full cold-load: bitstream + ps7_init + ELF
 #   ./jtag-valhalla.sh dow      # ELF-only reload (PL + clocks untouched)
 #   ./jtag-valhalla.sh testbed  # tier-2 testbed (loader/build/freertos-hw.elf), FULL load (re-programs the PL)
-#   ./jtag-valhalla.sh treset   # tier-2 testbed: HARD reset + reload, NO POWER-CYCLE   <-- use this to iterate
+#   ./jtag-valhalla.sh treset   # tier-2 testbed: `rst -system` (clean DDR/peripherals)
 #   ./jtag-valhalla.sh tdow     # tier-2 testbed: fastest reload (rst -processor; heap accumulates)
 #
-# Iterating on the kernel?  Use `treset`, not `testbed`.  `testbed` runs
-# jtag_load.tcl, whose `fpga -file` re-programs the PL and unlocks the clk_pix
-# MMCM — which is what forces a physical power-cycle (i.e. crawling under the
-# desk).  `treset` runs jtag_sysdow.tcl: `rst -system` (clean DDR/peripherals ->
-# clean heap, a genuine hard reset) + ps7_init + download, while leaving the PL
-# config and the MMCM lock ALONE.  The bitstream doesn't change between kernel
-# builds, so there is no reason to reprogram it.  Only run `testbed` when the
-# BITSTREAM itself changed.
+# ⚠ OBSERVED ON THE BOARD (2026-07-12): `treset` alone does NOT leave a running
+# image — it resets, and you then need `testbed` to load.  So the working
+# sequence is currently:
+#
+#     ./jtag-valhalla.sh treset && ./jtag-valhalla.sh testbed
+#
+# That still avoids the power-cycle, which was the point.  But it means
+# jtag_sysdow.tcl is not doing what its header claims (`rst -system` + ps7_init +
+# dow, leaving the live PL config and the clk_pix MMCM lock untouched).  Either
+# the `dow` is not landing, or `rst -system` is wiping the PL configuration on
+# this board — in which case the "no fpga -file needed" premise is false and the
+# reload has to reprogram the PL anyway.  UNDIAGNOSED; do not trust the header
+# until someone reads the actual xsct output.
 #
 # Env: REMOTE=valhalla  REMOTE_DIR=fpga-xt-build  VITIS_PATH=/opt/xilinx/2025.2/Vitis
 
