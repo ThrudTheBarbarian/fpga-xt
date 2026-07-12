@@ -114,6 +114,31 @@ void _app_entry(int argc, char **argv)
     if (!leaked)
         printf("shmtest: unmap churned 400 x 8MiB surfaces (3.2 GB through a 1 GB box) — NO LEAK\n");
 
+    /* ---- page recycling must NOT leak the previous owner's data --------------------
+     * dpage_raw now guarantees a zeroed page instead of every caller memset'ing again
+     * (which doubled the cost of every surface allocation and every heap demand fault).
+     * The guarantee rests on: dfree_raw scrubs the whole page on free, then stores the
+     * free-list link in WORD 0 — and dpage_raw clears exactly that word on reuse. Word 0
+     * therefore holds a KERNEL POINTER right up until the page is handed out, so if the
+     * clear is wrong this leaks one straight to userspace.
+     * Write a sentinel over a whole surface, free it, allocate again (which reuses those
+     * very pages, LIFO), and demand zeros. */
+    int sa = sys_shm_create(1u << 20, 0);
+    volatile unsigned *pa = sa >= 0 ? sys_shm_map(sa) : 0;
+    if (pa) {
+        for (unsigned i = 0; i < (1u << 18); i++) pa[i] = 0xDEADBEEFu;   /* 1 MB of sentinel */
+        sys_shm_unmap(sa);                                               /* -> back to the pool */
+        int sb = sys_shm_create(1u << 20, 0);                            /* reuses those pages */
+        volatile unsigned *pb = sb >= 0 ? sys_shm_map(sb) : 0;
+        if (pb) {
+            unsigned dirty = 0, w0 = pb[0];
+            for (unsigned i = 0; i < (1u << 18); i++) if (pb[i] != 0) dirty++;
+            printf("shmtest: recycled page — %u non-zero words, word0=0x%08x %s\n",
+                   dirty, w0, dirty == 0 ? "OK (no data leak, no kernel pointer)" : "FAIL — LEAK");
+            sys_shm_unmap(sb);
+        }
+    }
+
     /* Unmapping an id this process does not HOLD must fail, not corrupt. Create one and
      * never map it: the object exists, but this space has no ref on it. */
     int unheld = sys_shm_create(4096, 0);

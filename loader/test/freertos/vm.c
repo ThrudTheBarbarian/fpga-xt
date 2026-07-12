@@ -470,13 +470,30 @@ uint32_t vm_pages_free(void)
 }
 
 /* allocate a raw page from the pool (NOT charged to any space). Used for shm, whose
- * pages are refcount-owned by the shm object, not a space. */
+ * pages are refcount-owned by the shm object, not a space.
+ *
+ * GUARANTEES A ZEROED PAGE. Callers must not scrub it again — and they used to, which cost
+ * a second full memset per page. dfree_raw already scrubs on FREE, so a recycled page is
+ * clean *except* word 0, where dfree_raw then stores the free-list link; that one word is
+ * all we have to clear here. Only a FRONTIER page (raw DDR, never freed) needs a full
+ * memset, and it gets one exactly once in its life.
+ *
+ * The double-scrub was not academic: an 8 MiB GEM surface is 2040 pages, so gemd would have
+ * paid ~8 MiB of redundant zeroing on every window open and every resize. Zeroing each page
+ * once, not twice, halves the churn. */
 static void *dpage_raw(void)
 {
+    int scrub = 0;
     uint32_t f = xt_irq_save();
     void *p = g_dfree;
-    if (p) { g_dfree = *(void **)p; g_freelist_n--; }      /* reuse a reclaimed page */
+    if (p) {
+        g_dfree = *(void **)p; g_freelist_n--;            /* reuse a reclaimed page */
+        *(void **)p = 0;                                  /* clear the free-list link: the rest of
+                                                           * the page is already zero, and handing
+                                                           * word 0 out would leak a kernel pointer */
+    }
     else {                                                  /* else take from the frontier */
+        scrub = 1;                                          /* raw DDR: never scrubbed */
         char *nf = g_pfront - 0x1000u;
         /* SKIP the per-process window VA band [XTOS_HEAP_VA, XTOS_POOL_FLOOR): a pool
          * page whose identity VA lands there is shadowed per-process, so the fd
@@ -493,6 +510,7 @@ static void *dpage_raw(void)
     }
     g_pages_inuse++;
     xt_irq_restore(f);
+    if (scrub) memset(p, 0, 0x1000);   /* outside the lock: never memset with IRQs masked */
     return p;
 }
 
@@ -565,8 +583,9 @@ int vm_demand_map(int idx, uint32_t va)
     uint32_t  i   = L2_IDX(va);
     if (hl2[i]) return 1;                       /* already present (lost race) */
     void *pg = dpage(idx);
-    if (!pg) return 0;
-    memset(pg, 0, 0x1000);                      /* zero-fill */
+    if (!pg) return 0;                          /* dpage_raw already guarantees a zeroed page;
+                                                 * zero-filling again here doubled the cost of
+                                                 * every lazy-heap demand fault */
     hl2[i] = L2_PAGE((uint32_t)pg);
     g_demand_count++;
     __asm__ volatile("dsb");
@@ -966,8 +985,9 @@ int vm_shm_create(uint32_t size, uint32_t flags)
             g_shm[id].used = 0;
             return -1;
         }
-        shm_set_page(&g_shm[id], k, pg);                  /* dpage_raw zeroes on free; scrub on create too */
-        memset(pg, 0, 0x1000);
+        shm_set_page(&g_shm[id], k, pg);                  /* dpage_raw guarantees a zeroed page —
+                                                           * scrubbing again here doubled the cost of
+                                                           * every surface allocation */
     }
     g_shm[id].npages = np; g_shm[id].size = size; g_shm[id].nref = 0;
     return id;
