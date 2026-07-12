@@ -1083,18 +1083,6 @@ int vm_shm_create(uint32_t size, uint32_t flags)
  * it into a space: the pool is identity-mapped and global, so this pointer is valid at
  * PL1 in every space. Returns 0 for an unused id. Used by the fs control channel
  * (docs/OS/fs-pagecache.md step 3b). */
-/* Physical base of a CONTIGUOUS surface (+ its allocated size), for the blitter driver.
- * Returns 0 for a pool-backed object: the engine accumulates base+stride and cannot walk a
- * scattered page list — it would not fail, it would render garbage and corrupt whatever
- * followed the first page. Refusing here is what makes /dev/blitter's handle-based rule
- * (RESPONSIBILITIES.md §13.1) actually safe. */
-uint32_t vm_shm_phys(int id, uint32_t *size)
-{
-    if (id < 0 || id >= NSHM || !g_shm[id].used || !g_shm[id].phys) return 0;
-    if (size) *size = g_shm[id].size;
-    return g_shm[id].phys;
-}
-
 void *vm_shm_kaddr(int id)
 {
     if (id < 0 || id >= NSHM || !g_shm[id].used || !g_shm[id].npages) return 0;

@@ -187,60 +187,7 @@ typedef struct {
     long (*ioc)(vfs_file *, unsigned, void *);
 } devnode;
 
-/* ---- /dev/blitter (RESPONSIBILITIES.md §13) --------------------------------
- * The fd IS the capability. The kernel already knows which process owns it, and it closes
- * on process death, so queue cleanup is free.
- *
- * write() = submit a BATCH of commands (one per objc_draw, not one per primitive) and get
- * back the retire seq of the last. Commands name surfaces by HANDLE; blit_submit() resolves
- * them to physical and clips every rect to the surface's own allocation, so a client cannot
- * express an out-of-bounds blit.
- *
- * PRIORITY is privileged: only the process that called aes_init — i.e. gemd — may have it,
- * because a client that floods the queue must never be able to stall the screen. */
-static int g_blit_prio_pid = -1;      /* the one process allowed to jump the queue */
-
-static long dv_blit_wr(vfs_file *f, const void *buf, uint32_t n)
-{
-    (void)f;
-    if (!buf || n < sizeof(struct xt_blit_cmd)) return -1;
-    const struct xt_blit_cmd *c = (const struct xt_blit_cmd *)buf;
-    uint32_t cnt = n / (uint32_t)sizeof(struct xt_blit_cmd);
-    int prio = (frtos_current_pid() == g_blit_prio_pid);
-    long seq = 0;
-    for (uint32_t i = 0; i < cnt; i++) {
-        long s = blit_submit(&c[i], prio);
-        if (s < 0) return -1;              /* rejected: bad handle, or out of bounds */
-        seq = s;
-    }
-    return seq;                            /* the fence the caller puts on its damage rect */
-}
-static long dv_blit_ioctl(vfs_file *f, unsigned req, void *arg)
-{
-    (void)f;
-    switch (req) {
-    case XT_BLIT_DECLARE: {
-        if (!arg) return -1;
-        struct xt_blit_surf *s = (struct xt_blit_surf *)arg;
-        return blit_declare(s->id, s->stride);
-    }
-    case XT_BLIT_SEQ:
-        if (!arg) return -1;
-        *(uint32_t *)arg = blit_seq();
-        return 0;
-    case XT_BLIT_PRIORITY:
-        /* First caller wins and is remembered; gemd starts before any client, so this is
-         * the aes_init process. A second claimant is refused rather than allowed to steal
-         * the screen from the window server. */
-        if (g_blit_prio_pid >= 0 && g_blit_prio_pid != frtos_current_pid()) return -1;
-        g_blit_prio_pid = frtos_current_pid();
-        return 0;
-    default: return -1;
-    }
-}
-
 static const devnode g_nodes[] = {
-    { "/blitter", VFS_CHR_DEV, 0, dv_blit_wr, dv_blit_ioctl },
     { "/null",    VFS_CHR_DEV, dv_null_rd, dv_sink_wr, 0 },
     { "/zero",    VFS_CHR_DEV, dv_zero_rd, dv_sink_wr, 0 },
     { "/urandom", VFS_CHR_DEV, dv_rand_rd, dv_sink_wr, 0 },
