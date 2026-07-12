@@ -14,19 +14,20 @@
 #   ./jtag-valhalla.sh treset   # tier-2 testbed: `rst -system` (clean DDR/peripherals)
 #   ./jtag-valhalla.sh tdow     # tier-2 testbed: fastest reload (rst -processor; heap accumulates)
 #
-# ⚠ OBSERVED ON THE BOARD (2026-07-12): `treset` alone does NOT leave a running
-# image — it resets, and you then need `testbed` to load.  So the working
-# sequence is currently:
+# ⚠ USE `tdow` TO ITERATE, NOT `treset`.  Diagnosed on the board 2026-07-12 from
+# the xsct log: `treset` runs every step successfully (rst -system -> ps7_init ->
+# downloading ELF -> running), so the download is NOT the problem — but the board
+# then needs `testbed` anyway, because **`rst -system` WIPES THE PL CONFIGURATION**.
+# jtag_sysdow.tcl's header claims it leaves "the live PL config and the clk_pix
+# MMCM lock untouched"; that is FALSE on this board.  XSDB's `rst -system` resets
+# the entire system including the PL, so the bitstream is gone and only `fpga
+# -file` (i.e. `testbed`) puts it back.
 #
-#     ./jtag-valhalla.sh treset && ./jtag-valhalla.sh testbed
-#
-# That still avoids the power-cycle, which was the point.  But it means
-# jtag_sysdow.tcl is not doing what its header claims (`rst -system` + ps7_init +
-# dow, leaving the live PL config and the clk_pix MMCM lock untouched).  Either
-# the `dow` is not landing, or `rst -system` is wiping the PL configuration on
-# this board — in which case the "no fpga -file needed" premise is false and the
-# reload has to reprogram the PL anyway.  UNDIAGNOSED; do not trust the header
-# until someone reads the actual xsct output.
+# `tdow` -> jtag_dow.tcl -> `rst -processor`, which resets ONLY the A9.  The PL
+# config and the clock MMCMs genuinely survive, so it is a one-command reload with
+# no power-cycle and no testbed chaser.  Its documented caveat ("heap accumulates",
+# because DDR/peripherals are not re-initialised) was written for the Vitis
+# xtos.elf; the FreeRTOS testbed re-inits its own page pool and heap every boot.
 #
 # Env: REMOTE=valhalla  REMOTE_DIR=fpga-xt-build  VITIS_PATH=/opt/xilinx/2025.2/Vitis
 
