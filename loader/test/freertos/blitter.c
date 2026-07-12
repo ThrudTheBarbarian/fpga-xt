@@ -85,6 +85,35 @@ static inline void w32(unsigned off, uint32_t v)
 static inline uint32_t r32(unsigned off)
 { return *(volatile uint32_t *)(BLT_BASE + off); }
 
+/* ---- THE UNLOCK GATE — do this before touching ANY blitter register ---------
+ * The XT gates its native register blocks behind a lock that RESETS LOCKED, exactly like
+ * the bank-select registers ($D5C0/$D5C1, gated by bit 3 of $D1DF — the trap that already
+ * cost us once). From the HDL:
+ *
+ *     xt_gp0_pkg.sv:42   CTRL_UNLOCK = 8'h08   // RW register-unlock (dual: 6502 $D1DF)
+ *     fpga_xt_top.sv:528 UNLK_BLIT   = 2       // blitter
+ *     fpga_xt_top.sv:529 UNLK_BANK   = 3       // $D5C0/$D5C1 bank select
+ *
+ * CTRL is GP0 block 3, so the register is at GP0 + 0x300 + 0x08 = 0x43C0_0308, and the
+ * blitter is bit 2.
+ *
+ * Touching a LOCKED blitter does not merely fail — it WEDGES THE AXI BUS AND HANGS THE
+ * BOARD. That is what an unlocked-gate access looks like from software: not an error, a
+ * dead machine. (Diagnosed the hard way: the kernel boots perfectly and prints its whole
+ * banner; running blittest is what killed it.) */
+#define CTRL_UNLOCK 0x43C00308u
+#define UNLK_BLIT   (1u << 2)
+
+static int g_unlocked;
+static void blit_unlock(void)
+{
+    if (g_unlocked) return;
+    volatile uint32_t *u = (volatile uint32_t *)CTRL_UNLOCK;
+    *u = *u | UNLK_BLIT;
+    __asm__ volatile("dsb");
+    g_unlocked = 1;
+}
+
 uint32_t blit_status(void) { return r32(BL_STATUS); }
 uint32_t blit_seq(void)    { return r32(BL_SEQ) & 0xFFFFu; }   /* retired count */
 
@@ -145,6 +174,7 @@ static int clip(uint32_t size, uint32_t stride, uint32_t x, uint32_t y,
  * priority fd always has room. */
 long blit_submit(const struct xt_blit_cmd *c, int priority)
 {
+    blit_unlock();                                       /* or the first register touch hangs */
     uint32_t dsz = 0, ssz = 0;
     uint32_t dphys = surf_phys(c->dst_id, &dsz);
     if (!dphys) return -1;                                /* not a live contiguous surface */
