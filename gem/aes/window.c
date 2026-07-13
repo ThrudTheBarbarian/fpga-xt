@@ -322,7 +322,12 @@ void wind_redraw_area(int rx,int ry,int rw,int rh){
     vs_clip(H(),2,NULL);                                  // fresh clip stack for the frame
     vs_clip(H(),1,clip);
     uint32_t bg=g_deskbg;                                 // background (wallpaper overdraws it)
-    for(int yy=ry; yy<ry+rh; yy++){ uint32_t*row=d->px+(size_t)yy*d->w; for(int xx=rx; xx<rx+rw; xx++) row[xx]=bg; }
+    // STRIDE, not width: a surface's row pitch is its CAPACITY width (Rocks §12), and the
+    // drawable is the top-left w x h sub-rect.  d->w happened to equal d->stride for every
+    // surface this had ever been handed, so it was harmless -- and it becomes a silent
+    // wrong-address bug (rows walking diagonally) the moment capacity != extent, which is
+    // exactly what gemd's surfaces are.
+    for(int yy=ry; yy<ry+rh; yy++){ uint32_t*row=d->px+(size_t)yy*d->stride; for(int xx=rx; xx<rx+rw; xx++) row[xx]=bg; }
     if(g_deskcontent) g_deskcontent(0, 0,0, d->w,d->h, g_deskcontent_ud);   // full extent, clipped to the rect
     for(int i=0;i<g_nz;i++){ awin*W=&g_w[g_z[i]];         // windows intersecting the damage, z-order
         if(W->hidden) continue;
