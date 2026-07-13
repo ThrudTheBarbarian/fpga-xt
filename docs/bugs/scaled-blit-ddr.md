@@ -1,7 +1,9 @@
 # BUG: SCALED blit (CMD 0x04 / 0x06) writes nothing to a DDR surface
 
-**Status:** ROOT-CAUSED, fixed in `hdl/xt_blitter.sv`, proven in simulation and confirmed
-on silicon. **The RTL fix is NOT yet on the board — it needs a Vivado bitstream rebuild.**
+**Status: CLOSED (2026-07-13).** Root-caused, fixed in `hdl/xt_blitter.sv`, proven in
+simulation, and **verified on silicon with a rebuilt bitstream** — nearest-neighbour,
+1:1, and bilinear scaling all pass in `blittest`. Timing closed on the first attempt
+(`PLACE_DIRECTIVE=Explore`; "All user specified timing constraints are met").
 
 ## The answer
 

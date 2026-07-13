@@ -166,15 +166,11 @@ struct xt_sigframe {
  * never synchronous; priority merely exposes an assumption that was already false. */
 #define XT_BLIT_FILL   1        /* rect fill with `color` */
 #define XT_BLIT_COPY   2        /* block blit: src rect -> dst rect (1:1) */
-#define XT_BLIT_SCALE  3        /* scaled blit: src sw x sh -> dst dw x dh.
-                                 * ⚠ BROKEN ON THE CURRENT BITSTREAM (fix in hdl, needs a
-                                 * Vivado rebuild). The engine does NOT "write nothing" --
-                                 * it writes the rect to the WRONG COLUMN: seg_cx (the burst
-                                 * origin) is never assigned in the RTL's SC_* states, so a
-                                 * scaled blit inherits the previous command's last burst
-                                 * column. Confirmed on silicon: after a 256-wide blit it
-                                 * lands at column 224. Nothing to do with DDR. Do not use
-                                 * SCALE until the bitstream is rebuilt. */
+#define XT_BLIT_SCALE  3        /* scaled blit: src sw x sh -> dst dw x dh (nearest, or
+                                 * bilinear with XT_BLITF_BILINEAR). Verified on silicon.
+                                 * Needs the bitstream with the seg_cx fix (2026-07-13) --
+                                 * before it, a scaled blit inherited the previous command's
+                                 * burst column and landed in the wrong place. */
 #define XT_BLITF_BLEND    (1u<<0)  /* alpha-blend over the destination (not replace) */
 #define XT_BLITF_BILINEAR (1u<<1)  /* SCALE only: bilinear taps, else nearest-neighbour */
 
