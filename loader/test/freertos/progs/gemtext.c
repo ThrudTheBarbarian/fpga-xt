@@ -34,8 +34,13 @@ void _app_entry(int argc, char **argv)
     int fd = gem_connect();
     if (fd < 0) { printf("gemtext: no \"gem\" service (%d) — is gemd running?\n", fd); sys_exit(1); }
 
+    /* 600 x 180 is DELIBERATELY not a multiple of the 64px capacity quantum: the surface
+     * comes back 640 x 192, so its STRIDE (640) differs from its EXTENT WIDTH (600) and the
+     * §12 rule is actually exercised rather than accidentally true. A round 640 would make
+     * stride == width and any code that confused the two would pass this test unharmed —
+     * which is exactly how the wind_redraw_area bug survived. */
     gem_window win;
-    if (gem_wind_create(fd, 0, 200, 150, 640, 200, &win) != 0) {
+    if (gem_wind_create(fd, 0, 200, 150, 600, 180, &win) != 0) {
         printf("gemtext: wind_create FAILED\n"); sys_exit(1);
     }
     printf("gemtext: wh=%d surf=%d gen=%u extent %dx%d capacity %dx%d (stride %d)\n",
