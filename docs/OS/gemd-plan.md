@@ -10,7 +10,7 @@ phase 1 is and is not). This file is the *implementation* plan and the running s
 | **kernel prerequisites (§14)** | **DONE, board-verified.** variable-size shm; `sys_shm_unmap` |
 | **M0 — the channel** | **DONE, board-verified** (commit `3c6f5b4`) |
 | **M1 — gemd skeleton + one client** | **DONE, board-verified** (see below) |
-| M2 — window list moves server-side | |
+| **M2 — window list moves server-side** | **DONE, board-verified** |
 | M3 — desktop becomes a client | |
 | M4 — menu strip, grabs, liveness | |
 | M5 — resize (capacity/extent) | |
@@ -60,6 +60,33 @@ handed out on the say-so of the process being granted it.
 > exactly as specified (gemd in one ssh session, `gemtext` in a separate one). Post-mortem, and
 > the one real defect it uncovered (the loader reports a nested dependency's missing symbol as
 > if it were the object's own): `docs/bugs/dropbear-svr-opts-undefined.md`.
+
+## M2 (done): the window list, the z-order and the chrome move server-side — board-verified
+
+**gemd does not keep a window list beside the AES's — gemd IS the process where
+`gem/aes/window.c` runs, in server mode.** So z-order, geometry, the themed frame, the title
+bar, the closer/mover/sizer and `wind_redraw_area`'s compositing are the AES's own code,
+unchanged, and a client's `wind_create` is a message that lands on the very function it used to
+call directly. That is what makes §5 hold: *the signatures did not move, only their bodies.*
+
+**One line in `draw_one` is what M2 exists to break.** It called `W->draw()` — the app's content
+callback, a function pointer **in another address space**. It now blits the client's backing
+store instead (through `gfx_blit`, the VDI's existing backend seam), and falls back to the
+callback when there is no surface — which *is* single-process GEM, so the SDL host is untouched.
+
+`gemtext` stops using the raw transport (M1 scaffolding) and becomes an ordinary AES app.
+
+**Observed on the board:** a 600x180 window with `NAME|CLOSER|MOVER|SIZER` comes back with a
+**590x144 work area** — gemd took the chrome out of the rect, and the client is never told the
+border width or the title height, only how big its drawable is. On the plane: the title bar
+(`0x8D8D8D`) and frame (`0xF5F5F5`) are **gemd's** pixels and the content (white) is the
+**client's**, interleaving exactly at the work-area boundary. Kill the client → chrome *and*
+content vanish and the surface id is reclaimed, by channel EOF. Two clients → two chromed
+windows, surfaces 0 and 1.
+
+> `MAXW` was **16 per app**; it is now **64, system-wide**, because the list lives in gemd.
+> `gem/gemd/composite.c` is **deleted**: §14 asks for *a* backend seam for the inner blit, and
+> the VDI's (`gfx_blit`) is the one phase 2 has to swap anyway. Two seams is worse than one.
 
 ## Wire protocol (fixed 16-bit LE words, AES-message shaped)
 
