@@ -179,12 +179,21 @@ static long dv_i2c_ioctl(vfs_file *f, unsigned req, void *arg)
     }
 }
 
+/* ---- /dev/input (docs/OS/gemd-plan.md M4) ----------------------------------
+ * INPUT AS AN FD. SYS_input blocks, so a window server cannot wait on input and on its client
+ * channels at once; as an fd it just joins the poll set. The queue, the producer task and the
+ * decoder live in input_dev.c — this is only the node. */
+extern long xt_input_dev_read(vfs_file *f, void *buf, uint32_t n);
+extern long xt_input_dev_avail(vfs_file *f);
+extern long xt_input_dev_ioctl(vfs_file *f, unsigned req, void *arg);
+
 typedef struct {
     const char *name;                    /* rel path within the mount, e.g. "/null" */
     int chr;                             /* VFS_CHR_DEV or VFS_CHR_TTY */
     long (*rd)(vfs_file *, void *, uint32_t);
     long (*wr)(vfs_file *, const void *, uint32_t);
     long (*ioc)(vfs_file *, unsigned, void *);
+    long (*avl)(vfs_file *);             /* readable-now (poll); NULL = always ready */
 } devnode;
 
 /* ---- /dev/blitter (RESPONSIBILITIES.md §13) --------------------------------
@@ -240,22 +249,23 @@ static long dv_blit_ioctl(vfs_file *f, unsigned req, void *arg)
 }
 
 static const devnode g_nodes[] = {
-    { "/blitter", VFS_CHR_DEV, 0, dv_blit_wr, dv_blit_ioctl },
-    { "/null",    VFS_CHR_DEV, dv_null_rd, dv_sink_wr, 0 },
-    { "/zero",    VFS_CHR_DEV, dv_zero_rd, dv_sink_wr, 0 },
-    { "/urandom", VFS_CHR_DEV, dv_rand_rd, dv_sink_wr, 0 },
-    { "/random",  VFS_CHR_DEV, dv_rand_rd, dv_sink_wr, 0 },
-    { "/tty",     VFS_CHR_TTY, 0, 0, 0 },
-    { "/console", VFS_CHR_TTY, 0, 0, 0 },
-    { "/i2c-0",   VFS_CHR_DEV, dv_i2c_rd, dv_i2c_wr, dv_i2c_ioctl },
-    { "/ptyp0",   VFS_CHR_DEV, dv_ptym_rd, dv_ptym_wr, dv_pty_ioctl },
-    { "/ptyp1",   VFS_CHR_DEV, dv_ptym_rd, dv_ptym_wr, dv_pty_ioctl },
-    { "/ptyp2",   VFS_CHR_DEV, dv_ptym_rd, dv_ptym_wr, dv_pty_ioctl },
-    { "/ptyp3",   VFS_CHR_DEV, dv_ptym_rd, dv_ptym_wr, dv_pty_ioctl },
-    { "/ttyp0",   VFS_CHR_DEV, dv_ptys_rd, dv_ptys_wr, dv_pty_ioctl },
-    { "/ttyp1",   VFS_CHR_DEV, dv_ptys_rd, dv_ptys_wr, dv_pty_ioctl },
-    { "/ttyp2",   VFS_CHR_DEV, dv_ptys_rd, dv_ptys_wr, dv_pty_ioctl },
-    { "/ttyp3",   VFS_CHR_DEV, dv_ptys_rd, dv_ptys_wr, dv_pty_ioctl },
+    { "/blitter", VFS_CHR_DEV, 0, dv_blit_wr, dv_blit_ioctl, 0 },
+    { "/input",   VFS_CHR_DEV, xt_input_dev_read, 0, xt_input_dev_ioctl, xt_input_dev_avail },
+    { "/null",    VFS_CHR_DEV, dv_null_rd, dv_sink_wr, 0, 0 },
+    { "/zero",    VFS_CHR_DEV, dv_zero_rd, dv_sink_wr, 0, 0 },
+    { "/urandom", VFS_CHR_DEV, dv_rand_rd, dv_sink_wr, 0, 0 },
+    { "/random",  VFS_CHR_DEV, dv_rand_rd, dv_sink_wr, 0, 0 },
+    { "/tty",     VFS_CHR_TTY, 0, 0, 0, 0 },
+    { "/console", VFS_CHR_TTY, 0, 0, 0, 0 },
+    { "/i2c-0",   VFS_CHR_DEV, dv_i2c_rd, dv_i2c_wr, dv_i2c_ioctl, 0 },
+    { "/ptyp0",   VFS_CHR_DEV, dv_ptym_rd, dv_ptym_wr, dv_pty_ioctl, 0 },
+    { "/ptyp1",   VFS_CHR_DEV, dv_ptym_rd, dv_ptym_wr, dv_pty_ioctl, 0 },
+    { "/ptyp2",   VFS_CHR_DEV, dv_ptym_rd, dv_ptym_wr, dv_pty_ioctl, 0 },
+    { "/ptyp3",   VFS_CHR_DEV, dv_ptym_rd, dv_ptym_wr, dv_pty_ioctl, 0 },
+    { "/ttyp0",   VFS_CHR_DEV, dv_ptys_rd, dv_ptys_wr, dv_pty_ioctl, 0 },
+    { "/ttyp1",   VFS_CHR_DEV, dv_ptys_rd, dv_ptys_wr, dv_pty_ioctl, 0 },
+    { "/ttyp2",   VFS_CHR_DEV, dv_ptys_rd, dv_ptys_wr, dv_pty_ioctl, 0 },
+    { "/ttyp3",   VFS_CHR_DEV, dv_ptys_rd, dv_ptys_wr, dv_pty_ioctl, 0 },
 };
 #define NDEV ((int)(sizeof g_nodes / sizeof g_nodes[0]))
 
@@ -275,7 +285,7 @@ static int dv_open(vfs_mount *m, const char *rel, int flags, vfs_file *f)
     const devnode *d = dv_find(rel);
     if (!d) return -1;
     f->read = d->rd; f->write = d->wr; f->lseek = 0; f->close = dv_close;
-    f->ioctl = d->ioc; f->ondup = 0; f->nonblock = 0;
+    f->ioctl = d->ioc; f->avail = d->avl; f->ondup = 0; f->nonblock = 0;
     f->size = 0; f->pos = 0; f->data = 0; f->mnt = 0;
     f->chr = d->chr;
     if (d->rd == dv_ptym_rd || d->rd == dv_ptys_rd) {   /* pty: idx from the trailing digit */

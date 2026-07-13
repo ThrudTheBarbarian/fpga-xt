@@ -74,6 +74,11 @@ struct vfs_file {
                                        * NULL for everything else. */
     long      (*ioctl)(vfs_file *f, unsigned req, void *arg);  /* char devices only
                            * (SYS_ioctl); NULL = no device controls */
+    long      (*avail)(vfs_file *f);  /* char devices: how much is readable RIGHT NOW (poll).
+                           * NULL = "always ready", which is right for a regular file and WRONG
+                           * for an event stream: a poller would spin and then block in read().
+                           * /dev/input needs this, and so will every future device you can wait
+                           * on. */
     uint32_t    size;
     uint32_t    pos;
     const void *data;     /* in-memory backing (romfs) -> enables identity mmap; NULL otherwise */

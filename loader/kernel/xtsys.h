@@ -380,9 +380,19 @@ struct xt_pollfd { int fd; short events; short revents; };
 #define SYS_kbd_6502     0x701 /* (ascii) -> 0 / -1 no such Atari key: inject one keystroke
                                 * into the 6502's POKEY (KBCODE down + release; ^C = BREAK) */
 
-/* one input event (SYS_input); type values match the AES aes_event enum. */
+/* one input event (SYS_input, and one read() record from /OS/dev/input); type values match the
+ * AES aes_event enum. */
 struct os_event { int type, mx, my, button, key, shift; };
 enum { OS_EV_NONE = 0, OS_EV_BTN_DOWN = 1, OS_EV_BTN_UP = 2, OS_EV_KEY = 3,
        OS_EV_MOTION = 5, OS_EV_TIMER = 6 };
+
+/* /OS/dev/input — INPUT AS A POLLABLE FD, which SYS_input (a blocking syscall) can never be.
+ * A window server has to wait on input AND on its client channels in ONE poll(); with a blocking
+ * syscall it cannot, and every alternative degenerates into a thread per source. read() delivers
+ * whole `struct os_event` records (as many as are queued); poll() is readable only when one is
+ * actually waiting. The kernel publishes events on a device and knows nothing about who consumes
+ * them — there is deliberately NO kernel-side "post input to the window server" path, because
+ * that would put window-server policy in the kernel (RESPONSIBILITIES.md §2). */
+#define XT_INPUT_RAW 0x7501u   /* ioctl: arg != 0 -> raw keys (Enter/Space stop being clicks) */
 
 #endif

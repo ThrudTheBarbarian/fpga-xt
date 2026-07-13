@@ -119,7 +119,7 @@ FRCFLAGS := -marm -mcpu=cortex-a9 -mfloat-abi=softfp -mfpu=neon-vfpv3 -ffreestan
 FRSRC := $(FR)/tasks.c $(FR)/queue.c $(FR)/list.c $(FR)/timers.c $(FR)/event_groups.c \
          $(FR)/croutine.c $(FR)/stream_buffer.c $(FR)/portable/MemMang/heap_4.c \
          $(FRPORT)/port.c \
-         test/freertos/zynq.c test/freertos/bsp_shim.c test/freertos/mmu.c test/freertos/vm.c test/freertos/stackguard.c test/freertos/gfxplane.c test/freertos/hdmi.c test/freertos/frtos_os.c test/freertos/uart1_rx.c test/freertos/sprite.c \
+         test/freertos/zynq.c test/freertos/bsp_shim.c test/freertos/mmu.c test/freertos/vm.c test/freertos/stackguard.c test/freertos/gfxplane.c test/freertos/hdmi.c test/freertos/frtos_os.c test/freertos/uart1_rx.c test/freertos/sprite.c test/freertos/input_dev.c \
          test/freertos/mathcop.c \
          test/freertos/romfs.c test/freertos/syscalls.c test/freertos/main.c test/freertos/blitter.c \
          newlib-pic/libm.a \

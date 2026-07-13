@@ -1061,6 +1061,14 @@ static short poll_revents(proc_t *p, int fd, short events)
         re |= XT_POLLOUT;                            /* lwIP send blocks rather than refusing */
         return re & (events | XT_POLLERR | XT_POLLHUP | XT_POLLNVAL);
     }
+    /* A char device that can SAY whether it has anything (vf.avail): /dev/input, and every
+     * future device you can wait on. Without this the rule below ("always ready") makes a poller
+     * spin and then BLOCK inside read() — a wedged server with a busy loop in front of it. */
+    if (f->vf.chr && f->vf.avail) {
+        if (f->vf.avail(&f->vf) > 0) re |= XT_POLLIN;
+        re |= XT_POLLOUT;
+        return re & (events | XT_POLLERR | XT_POLLHUP | XT_POLLNVAL);
+    }
     /* VFS file / device node: regular files are always ready. */
     re |= (XT_POLLIN | XT_POLLOUT);
     return re & (events | XT_POLLERR | XT_POLLHUP | XT_POLLNVAL);
@@ -2598,11 +2606,26 @@ void deferral_thunk(void)                 /* PL1 (System), task context */
             /* munmap: the fs task writes back dirty pages (if any) then unmaps. */
             r = fs_munmap(p);
         } else if (p->dnum == SYS_input) {
-            /* block for the next input event (serial mouse/keyboard); cursor moves
-             * kernel-side.  Runs here in task context so con_tty_readc may block.
+            /* Block for the next input event. THE QUEUE IS THE SOURCE OF TRUTH (input_dev.c):
+             * one decoder task drains the serial lane and everybody — this syscall and
+             * /OS/dev/input — is a view on the same queue, so there is never a second reader
+             * racing it for bytes. Kept for programs that predate the fd; a window server must
+             * use /OS/dev/input, because THIS cannot be polled alongside anything else.
              * da2 = raw-keys mode (typing into an emulator window). */
-            extern int input_next_event(void *, int, int);
-            r = input_next_event((void *)p->da0, (int)p->da1, (int)p->da2);
+            extern int  xt_input_pop(struct os_event *, int);
+            extern void xt_input_set_raw(int);
+            extern void xt_input_pos(int *, int *);
+            struct os_event *ev = (struct os_event *)p->da0;
+            if (!ev) { r = -1; }
+            else {
+                memset(ev, 0, sizeof *ev);
+                xt_input_set_raw((int)p->da2);
+                if (!xt_input_pop(ev, (int)p->da1)) {          /* timeout: the old contract */
+                    ev->type = OS_EV_TIMER;
+                    xt_input_pos(&ev->mx, &ev->my);
+                }
+                r = 0;
+            }
         } else {
             r = do_syscall(p->dnum, p->da0, p->da1, p->da2);
         }
