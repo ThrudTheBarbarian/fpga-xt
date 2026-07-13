@@ -278,8 +278,11 @@ FPGAGEM := ../third_party/Rocks/src
 RSC_ENGINE_OBJ := $(BUILD)/gem_rsc.o
 # Desktop artwork (theme, icons, wallpaper) is user content on the SD — /OS/Themes,
 # /OS/Icons, /OS/Wallpaper, each selected by a `Default` file — not baked in.
+# $(GEM)/gemd/ is the SERVER half and $(GEM)/gemclient.c the CLIENT half of the same
+# library: gemd links libGEM.so and so does every app — one library, two modes (§5).
 GEMSRC := $(GEM)/gfx_soft.c $(GEM)/font.c $(GEM)/wm.c $(GEM)/theme.c $(GEM)/img.c \
           $(wildcard $(GEM)/vdi/*.c) $(wildcard $(GEM)/aes/*.c) \
+          $(GEM)/gemclient.c $(wildcard $(GEM)/gemd/*.c) \
           ../gem/gem_pdf_stub.c test/freertos/libs/gem_stubs.c
 FTSRC  := $(wildcard $(FT)/tu/*.c)
 GEMINC := -Itest/freertos/libs/shim -I$(GEM) -I$(GEM)/vdi -I$(FT)/include -Inewlib-pic/include -Ikernel -Itest/qemu
@@ -331,7 +334,13 @@ $(BUILD)/libGEM.so: $(GEMSRC) $(FTSRC) $(RSC_ENGINE_OBJ) $(BUILD)/libc.so $(BUIL
 	$(ARMCC) $(GEMCFLAGS) -shared -nostdlib -Wl,-soname,libGEM.so \
 	    $(GEMSRC) $(FTSRC) $(RSC_ENGINE_OBJ) $(BUILD)/libc.so $(BUILD)/libm.so -o $@
 
-# gemtext — real-VDI client: open workstation, fill rect, FreeType text, ASCII dump
+# gemd — THE WINDOW SERVER (M1). Thin: the loop lives in libGEM.so's gem/gemd/ half.
+$(BUILD)/gemd.so: test/freertos/progs/gemd.c $(BUILD)/libGEM.so $(BUILD)/libc.so | $(BUILD)
+	$(ARMCC) $(GEMCFLAGS) -Itest/qemu -c $< -o $(BUILD)/gemd.o
+	$(LLD) -shared --hash-style=sysv -o $@ $(BUILD)/gemd.o $(BUILD)/libGEM.so $(BUILD)/libc.so
+
+# gemtext — the first GEM CLIENT: connect to "gem", create a window, map the surface it is
+# handed, draw into it with the real VDI, post one damage rect. Touches no framebuffer.
 $(BUILD)/gemtext.so: test/freertos/progs/gemtext.c $(BUILD)/libGEM.so $(BUILD)/libc.so | $(BUILD)
 	$(ARMCC) $(GEMCFLAGS) -Itest/qemu -c $< -o $(BUILD)/gemtext.o
 	$(LLD) -shared --hash-style=sysv -o $@ $(BUILD)/gemtext.o $(BUILD)/libGEM.so $(BUILD)/libc.so
@@ -549,7 +558,7 @@ ROMFS_ASSET_ARGS := /fonts/AovelSansRounded.ttf=../gem/fonts/AovelSansRounded.tt
 # copy at /System/OS/Apps/Desktop when there is no SD (qemu / a bare card).
 DESKTOP_RSC := ../gem/resources/desktop.rsc
 
-$(BUILD)/romfs.bin: $(BUILD)/mkromfs $(BUILD)/tnfs.so $(BUILD)/fujinetd.so $(BUILD)/fuji.so $(BUILD)/toybox.so $(BUILD)/sqlite3.so $(BUILD)/pipetest.so $(BUILD)/svctest.so $(BUILD)/hello.so $(BUILD)/motd.so $(BUILD)/usestr.so $(BUILD)/echo.so $(BUILD)/libc_test.so $(BUILD)/gemtext.so $(BUILD)/desktop.so $(BUILD)/regtest.so $(BUILD)/locktest.so $(BUILD)/lntest.so $(BUILD)/fstest.so $(BUILD)/lua.so $(BUILD)/init.so $(BUILD)/faultprog.so $(BUILD)/vmtest.so $(BUILD)/demandtest.so $(BUILD)/stacktest.so $(BUILD)/wxtest.so $(BUILD)/cowtest.so $(BUILD)/sharetext.so $(BUILD)/shmtest.so $(BUILD)/finictor.so $(BUILD)/mmaptest.so $(BUILD)/modetest.so $(BUILD)/ttytest.so $(BUILD)/jobctl.so $(BUILD)/socktest.so $(BUILD)/httpd.so $(BUILD)/nstress.so $(BUILD)/dmesg.so $(BUILD)/mem.so $(BUILD)/badpoke.so $(BUILD)/stackpoke.so $(BUILD)/dropbearkey.so $(BUILD)/dropbear.so $(BUILD)/sshd.so $(BUILD)/netup.so $(BUILD)/ssh.so $(BUILD)/scp.so $(BUILD)/strace.so $(BUILD)/sigtest.so $(BUILD)/libutil.so $(BUILD)/libGEM.so $(BUILD)/libm.so $(BUILD)/libxtos.so $(BUILD)/libc.so test/freertos/Registry.db $(DESKTOP_RSC) $(ROMFS_OVERLAY_FILES) $(ROMFS_ASSET_FILES) $(BUILD)/blittest.so
+$(BUILD)/romfs.bin: $(BUILD)/mkromfs $(BUILD)/tnfs.so $(BUILD)/fujinetd.so $(BUILD)/fuji.so $(BUILD)/toybox.so $(BUILD)/sqlite3.so $(BUILD)/pipetest.so $(BUILD)/svctest.so $(BUILD)/hello.so $(BUILD)/motd.so $(BUILD)/usestr.so $(BUILD)/echo.so $(BUILD)/libc_test.so $(BUILD)/gemtext.so $(BUILD)/gemd.so $(BUILD)/desktop.so $(BUILD)/regtest.so $(BUILD)/locktest.so $(BUILD)/lntest.so $(BUILD)/fstest.so $(BUILD)/lua.so $(BUILD)/init.so $(BUILD)/faultprog.so $(BUILD)/vmtest.so $(BUILD)/demandtest.so $(BUILD)/stacktest.so $(BUILD)/wxtest.so $(BUILD)/cowtest.so $(BUILD)/sharetext.so $(BUILD)/shmtest.so $(BUILD)/finictor.so $(BUILD)/mmaptest.so $(BUILD)/modetest.so $(BUILD)/ttytest.so $(BUILD)/jobctl.so $(BUILD)/socktest.so $(BUILD)/httpd.so $(BUILD)/nstress.so $(BUILD)/dmesg.so $(BUILD)/mem.so $(BUILD)/badpoke.so $(BUILD)/stackpoke.so $(BUILD)/dropbearkey.so $(BUILD)/dropbear.so $(BUILD)/sshd.so $(BUILD)/netup.so $(BUILD)/ssh.so $(BUILD)/scp.so $(BUILD)/strace.so $(BUILD)/sigtest.so $(BUILD)/libutil.so $(BUILD)/libGEM.so $(BUILD)/libm.so $(BUILD)/libxtos.so $(BUILD)/libc.so test/freertos/Registry.db $(DESKTOP_RSC) $(ROMFS_OVERLAY_FILES) $(ROMFS_ASSET_FILES) $(BUILD)/blittest.so
 	$(BUILD)/mkromfs $@ \
 	    /OS/Apps/Desktop/desktop.rsc=$(DESKTOP_RSC) \
 	    /bin/faultprog=$(BUILD)/faultprog.so \
@@ -582,6 +591,7 @@ $(BUILD)/romfs.bin: $(BUILD)/mkromfs $(BUILD)/tnfs.so $(BUILD)/fujinetd.so $(BUI
 	    $(if $(SD_TEST),,/Library/libutil.so=$(BUILD)/libutil.so) \
 	    /bin/libc_test=$(BUILD)/libc_test.so \
 	    /bin/gemtext=$(BUILD)/gemtext.so \
+	    /bin/gemd=$(BUILD)/gemd.so \
 	    /bin/desktop=$(BUILD)/desktop.so \
 	    /bin/regtest=$(BUILD)/regtest.so \
 	    /bin/locktest=$(BUILD)/locktest.so \
@@ -694,7 +704,7 @@ $(BUILD)/hwromfs/romfs_blob.h: $(BUILD)/romfs-hw.bin
 # login shell exists before the links do)
 SDSTAGE := $(BUILD)/sdstage
 .PHONY: sdstage
-sdstage: $(BUILD)/toybox.so $(BUILD)/sqlite3.so $(BUILD)/libGEM.so $(BUILD)/libxtos.so $(BUILD)/libm.so $(BUILD)/libutil.so $(BUILD)/desktop.so $(BUILD)/gemtext.so $(BUILD)/regtest.so $(BUILD)/tnfs.so $(BUILD)/fujinetd.so $(BUILD)/fuji.so $(DESKTOP_RSC) $(ROMFS_OVERLAY_FILES) $(ROMFS_ASSET_FILES)
+sdstage: $(BUILD)/toybox.so $(BUILD)/sqlite3.so $(BUILD)/libGEM.so $(BUILD)/libxtos.so $(BUILD)/libm.so $(BUILD)/libutil.so $(BUILD)/desktop.so $(BUILD)/gemtext.so $(BUILD)/gemd.so $(BUILD)/regtest.so $(BUILD)/tnfs.so $(BUILD)/fujinetd.so $(BUILD)/fuji.so $(DESKTOP_RSC) $(ROMFS_OVERLAY_FILES) $(ROMFS_ASSET_FILES)
 	@rm -rf $(SDSTAGE)
 	@mkdir -p $(SDSTAGE)/OS/bin $(SDSTAGE)/OS/library $(SDSTAGE)/OS/etc $(SDSTAGE)/OS/boot $(SDSTAGE)/OS/fonts $(SDSTAGE)/OS/themes/Aristo2/1x $(SDSTAGE)/OS/Apps/Desktop/Spaces/1
 	cp sd/boot/* $(SDSTAGE)/OS/boot/
@@ -704,6 +714,7 @@ sdstage: $(BUILD)/toybox.so $(BUILD)/sqlite3.so $(BUILD)/libGEM.so $(BUILD)/libx
 	cp $(BUILD)/sqlite3.so $(SDSTAGE)/OS/bin/sqlite3
 	cp $(BUILD)/desktop.so $(SDSTAGE)/OS/bin/desktop
 	cp $(BUILD)/gemtext.so $(SDSTAGE)/OS/bin/gemtext
+	cp $(BUILD)/gemd.so    $(SDSTAGE)/OS/bin/gemd
 	cp $(BUILD)/regtest.so $(SDSTAGE)/OS/bin/regtest
 	cp $(BUILD)/httpd.so   $(SDSTAGE)/OS/bin/httpd
 	cp $(BUILD)/tnfs.so    $(SDSTAGE)/OS/bin/tnfs
