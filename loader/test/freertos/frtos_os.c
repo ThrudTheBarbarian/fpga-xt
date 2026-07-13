@@ -79,6 +79,14 @@ typedef struct {
     int  nq;
 } svc_t;
 static svc_t g_svc[MAXSVC];
+
+/* init's pid. init(1) is the ULTIMATE REAPER: when a parent dies, its children are
+ * re-parented here, and init's waitpid(-1) loop collects them. Without it, an orphan
+ * whose parent registered a waitpid and then died keeps `waited` set forever -- and
+ * reap_orphans() deliberately skips `waited` processes, so the slot is NEVER freed.
+ * That is the "dead process still in ps" bug: not a missing reaper, a DANGLING CLAIM. */
+static int g_init_pid = 0;
+void frtos_set_init_pid(int pid) { g_init_pid = pid; }
 static void k_chan_close(fd_t *f);        /* impl below with the service ops */
 
 /* kernel-mailbox fs ops (impls with the fs task, below): displacing an open
@@ -532,6 +540,20 @@ static void proc_exit_self(proc_t *p, int code)
         pipes_release(p);                            /* EOF to pipeline peers first */
         tty_release(p);                              /* raw-mode owner dies -> cooked */
         p->exited = 1;
+
+        /* Re-parent this process's children to init(1) BEFORE we announce our death.
+         * Two things must happen, and the second is the actual bug:
+         *   - ppid -> init, so a future SIGCHLD/waitpid has somewhere real to go;
+         *   - if a child's waiter was US, the claim dies with us. `waited` left set
+         *     makes reap_orphans() skip that child FOREVER -- it is not a zombie
+         *     waiting to be collected, it is a zombie nobody is ALLOWED to collect. */
+        for (int i = 0; i < MAXPROC; i++) {
+            proc_t *c = &g_proc[i];
+            if (!c->used || c == p || c->ppid != p->pid) continue;
+            c->ppid = g_init_pid ? g_init_pid : 0;
+            if (c->waiter == p->task) { c->waiter = 0; c->waited = 0; }
+        }
+
         sig_raise(proc_by_pid(p->ppid), XT_SIGCHLD); /* notify the parent (real async SIGCHLD) */
         if (p->waiter) xTaskNotifyGive(p->waiter);   /* wake a PL0 waitpid (task notification) */
         if (p->done)   xSemaphoreGive(p->done);      /* wake a kernel-task waitpid (shell_task) */
@@ -3841,8 +3863,33 @@ static void reap_orphans(void)
  * the notification, and parks in vTaskSuspend; we wake, then reap it (which deletes its
  * parked task). The child never self-deletes, so its FreeRTOS lists are unlinked before
  * its static TCB/stack is reused — see task_exit_thunk + frtos_reap. */
+/* waitpid(-1): reap ANY exited child. This is init's whole job. It also collects the
+ * re-parented orphans, which is what stops them accumulating in ps forever. */
+static int frtos_waitany(proc_t *self)
+{
+    if (!self) return -1;
+    for (;;) {
+        if (self->killed) proc_exit_self(self, 137);
+        if (sig_ready(self)) return -4;                  /* -EINTR */
+        for (int i = 0; i < MAXPROC; i++) {
+            proc_t *c = &g_proc[i];
+            if (c->used && c->exited && c->ppid == self->pid && !c->reaping) {
+                int pid = c->pid;
+                frtos_reap(c);
+                return pid;
+            }
+        }
+        int kids = 0;
+        for (int i = 0; i < MAXPROC; i++)
+            if (g_proc[i].used && g_proc[i].ppid == self->pid && &g_proc[i] != self) kids++;
+        if (!kids) return -1;                            /* -ECHILD: nothing to wait for */
+        vTaskDelay(pdMS_TO_TICKS(20));
+    }
+}
+
 int frtos_waitpid_notify(int pid)
 {
+    if (pid < 0) return frtos_waitany(cur_proc());       /* waitpid(-1): any child */
     proc_t *p = proc_by_pid(pid);
     if (!p) return -1;
     p->waited = 1;

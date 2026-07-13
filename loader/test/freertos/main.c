@@ -165,6 +165,10 @@ static void boot_run(void)
         av[ac++] = paths[i];
     }
     int pid = frtos_spawn_argv("/System/bin/init", ac, av, &g_host);
+    /* init(1) is the ultimate reaper: orphans are re-parented to it on their parent's
+     * death, and its waitpid(-1) loop collects them. Tell the kernel who it is. */
+    extern void frtos_set_init_pid(int);
+    if (pid > 0) frtos_set_init_pid(pid);
     if (pid < 0) { puts0("[boot] /System/bin/init MISSING\n"); return; }
     frtos_waitpid(pid);
 }

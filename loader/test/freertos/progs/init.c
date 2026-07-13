@@ -72,5 +72,21 @@ void _app_entry(int argc, char **argv)
                                                      /* a long-running daemon in a script uses `&` to detach */
         status(script, pid >= 0 && code == 0);       /* [ OK ] / [FAIL] per script */
     }
-    sys_exit(0);
+
+    /* Do NOT exit. init(1) stays resident as the ULTIMATE REAPER.
+     *
+     * When any process dies, the kernel re-parents its children here. Without a resident
+     * init they had no parent at all, and worse: if the dead parent had registered a
+     * waitpid on a child, that child's `waited` flag stayed set forever -- and the lazy
+     * orphan sweeper deliberately skips `waited` processes, believing someone is coming
+     * for them. Nobody was. The process sat in `ps` for the life of the machine, looking
+     * alive: `kill -0` said "No such process" while `ps` still listed it. ("Two desktops
+     * are running" -- one of them had been dead for ten minutes.)
+     *
+     * waitpid(-1) blocks until any child exits, reaps it, and returns -ECHILD when there
+     * is nothing left to wait for -- so this loop costs nothing while the machine is idle. */
+    for (;;) {
+        long r = sys_waitpid(-1);
+        if (r < 0) sys_nanosleep(200000);  /* usec: 200ms. No children right now; check again shortly. */
+    }
 }
