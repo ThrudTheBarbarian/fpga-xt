@@ -186,6 +186,74 @@ static void draw_obj(OBJECT *t, int obj, int x, int y) {
             }
             break;
         case G_IBOX: break;                                     // invisible container
+
+        // A themed scrollbar and a themed value slider.  The AES only DRAWS them; the
+        // caller owns the interaction (objc_find gives it the hit, and it writes `value`
+        // back).  That keeps the AES dumb and the toolkit smart, which is the right way
+        // round -- and it is why XGScrollBar, like XGButton, contains no drawing code.
+        case G_SCROLL: {
+            SCROLLBAR *s = (SCROLLBAR *)o->ob_spec;
+            if (!s) break;
+            int val  = s->value < 0 ? 0 : (s->value > 1000 ? 1000 : s->value);
+            int page = s->page  < 1 ? 1 : (s->page  > 1000 ? 1000 : s->page);
+            const char *trk = s->vert ? "vscroll.track" : "hscroll.track";
+            const char *thm = s->vert ? "vscroll.thumb" : "hscroll.thumb";
+            const char *a0  = s->vert ? "vscroll.up"    : "hscroll.left";
+            const char *a1  = s->vert ? "vscroll.down"  : "hscroll.right";
+
+            int ax0 = x, ay0 = y, aw = w, ah = h;      // the track, minus the arrow caps
+            if (s->arrows) {
+                const theme_slice *s0 = theme_find(g_th, a0);
+                const theme_slice *s1 = theme_find(g_th, a1);
+                int c0 = s0 ? (s->vert ? s0->sh : s0->sw) : 0;
+                int c1 = s1 ? (s->vert ? s1->sh : s1->sw) : 0;
+                if (s->vert) {
+                    if (s0) theme_blit(g_vh, g_th, s0, x + (w - s0->sw)/2, y, s0->sw, s0->sh);
+                    if (s1) theme_blit(g_vh, g_th, s1, x + (w - s1->sw)/2, y + h - s1->sh, s1->sw, s1->sh);
+                    ay0 += c0; ah -= c0 + c1;
+                } else {
+                    if (s0) theme_blit(g_vh, g_th, s0, x, y + (h - s0->sh)/2, s0->sw, s0->sh);
+                    if (s1) theme_blit(g_vh, g_th, s1, x + w - s1->sw, y + (h - s1->sh)/2, s1->sw, s1->sh);
+                    ax0 += c0; aw -= c0 + c1;
+                }
+            }
+            if (aw <= 0 || ah <= 0) break;
+            theme_draw(g_vh, g_th, trk, ax0, ay0, aw, ah);
+
+            if (s->vert) {                              // thumb: size = page, pos = value
+                int th = ah * page / 1000; if (th < 12) th = 12; if (th > ah) th = ah;
+                int ty = ay0 + (ah - th) * val / 1000;
+                int tw = aw - 2; if (tw < 5) tw = aw;
+                theme_draw(g_vh, g_th, thm, ax0 + (aw - tw)/2, ty, tw, th);
+            } else {
+                int tw = aw * page / 1000; if (tw < 12) tw = 12; if (tw > aw) tw = aw;
+                int tx = ax0 + (aw - tw) * val / 1000;
+                int th = ah - 2; if (th < 5) th = ah;
+                theme_draw(g_vh, g_th, thm, tx, ay0 + (ah - th)/2, tw, th);
+            }
+            break;
+        }
+
+        case G_SLIDER: {                                // a value slider: a knob, no page
+            SCROLLBAR *s = (SCROLLBAR *)o->ob_spec;
+            if (!s) break;
+            int val = s->value < 0 ? 0 : (s->value > 1000 ? 1000 : s->value);
+            const theme_slice *k = theme_find(g_th, (st & OS_SELECTED) ? "slider.knob.hi"
+                                                                       : "slider.knob");
+            int kw = k ? k->sw : 16, kh = k ? k->sh : 16;
+            if (s->vert) {
+                int tw = 6; if (tw > w) tw = w;
+                theme_draw(g_vh, g_th, "slider.vtrack", x + (w - tw)/2, y + kh/2, tw, h - kh);
+                int ky = y + (h - kh) * val / 1000;
+                if (k) theme_blit(g_vh, g_th, k, x + (w - kw)/2, ky, kw, kh);
+            } else {
+                int th = 6; if (th > h) th = h;
+                theme_draw(g_vh, g_th, "slider.htrack", x + kw/2, y + (h - th)/2, w - kw, th);
+                int kx = x + (w - kw) * val / 1000;
+                if (k) theme_blit(g_vh, g_th, k, kx, y + (h - kh)/2, kw, kh);
+            }
+            break;
+        }
         case G_USERDEF: if (g_userdraw) g_userdraw(t, obj, g_userdraw_ud); break;   // app-drawn
         case G_BUTTON: {
             int def = fl & OF_DEFAULT;
@@ -313,17 +381,94 @@ static void draw_obj(OBJECT *t, int obj, int x, int y) {
     }
 }
 
-static void draw_rec(OBJECT *t, int obj, int ax, int ay, int depth) {
+/* `cl` is the clip currently in force.  An object flagged OF_CLIPCHILDREN narrows it to
+ * its own rect for the duration of its subtree, then restores it — which is what lets a
+ * container SCROLL: the partially-visible row at its edge is cut off at the container's
+ * boundary instead of painting over its neighbours.  (NSView clips subviews to bounds by
+ * default; this is that, opt-in.)  Without the flag the behaviour is exactly as before. */
+static void draw_rec(OBJECT *t, int obj, int ax, int ay, int depth, const int16_t *cl) {
     if (t[obj].ob_flags & OF_HIDETREE) return;
     draw_obj(t, obj, ax, ay);
-    if (depth > 0) EACH_CHILD(t, obj, c) draw_rec(t, c, ax + t[c].ob_x, ay + t[c].ob_y, depth - 1);
+    if (depth <= 0) return;
+
+    int16_t kid[4];
+    const int16_t *kcl = cl;
+    if (t[obj].ob_flags & OF_CLIPCHILDREN) {
+        int16_t r0 = (int16_t)ax, r1 = (int16_t)ay;
+        int16_t r2 = (int16_t)(ax + t[obj].ob_w - 1), r3 = (int16_t)(ay + t[obj].ob_h - 1);
+        kid[0] = r0 > cl[0] ? r0 : cl[0];          /* intersect with the parent's clip */
+        kid[1] = r1 > cl[1] ? r1 : cl[1];
+        kid[2] = r2 < cl[2] ? r2 : cl[2];
+        kid[3] = r3 < cl[3] ? r3 : cl[3];
+        if (kid[0] > kid[2] || kid[1] > kid[3]) return;   /* empty -> the subtree is invisible */
+        vs_clip(g_vh, 1, kid);                           /* PUSH + intersect (see op_clip) */
+        kcl = kid;
+    }
+    EACH_CHILD(t, obj, c) draw_rec(t, c, ax + t[c].ob_x, ay + t[c].ob_y, depth - 1, kcl);
+    if (kcl != cl) vs_clip(g_vh, 0, 0);                  /* POP.  Mode 1 would push AND
+                                                          * INTERSECT again, leaving the clip
+                                                          * still narrowed to this object --
+                                                          * every later sibling would vanish. */
+}
+
+SCROLLBAR *objc_scrollbar(OBJECT *t, int obj)
+{
+    uint16_t ty = t[obj].ob_type & 0x00FFu;
+    if (ty != G_SCROLL && ty != G_SLIDER) return 0;
+    return (SCROLLBAR *)t[obj].ob_spec;
+}
+
+/* Pixel position -> value (0..1000) for a G_SCROLL / G_SLIDER, thumb centred on the
+ * cursor.  Same geometry the draw code uses, so a drag tracks exactly what is painted. */
+int16_t objc_scroll_value(OBJECT *t, int obj, int mx, int my)
+{
+    SCROLLBAR *s = (SCROLLBAR *)t[obj].ob_spec;
+    if (!s) return 0;
+    int ax, ay; objc_offset(t, obj, &ax, &ay);
+    int w = t[obj].ob_w, h = t[obj].ob_h;
+    int scroll = (t[obj].ob_type == G_SCROLL);
+
+    int t0, tlen, thumb;                                  /* track origin, length, thumb size */
+    if (s->vert) {
+        t0 = ay; tlen = h;
+        if (scroll && s->arrows) {
+            const theme_slice *a = theme_find(g_th, "vscroll.up");
+            const theme_slice *b = theme_find(g_th, "vscroll.down");
+            int c0 = a ? a->sh : 0, c1 = b ? b->sh : 0;
+            t0 += c0; tlen -= c0 + c1;
+        }
+        if (scroll) { int p = s->page < 1 ? 1 : s->page;
+                      thumb = tlen * p / 1000; if (thumb < 12) thumb = 12; }
+        else        { const theme_slice *k = theme_find(g_th, "slider.knob");
+                      thumb = k ? k->sh : 16; }
+    } else {
+        t0 = ax; tlen = w;
+        if (scroll && s->arrows) {
+            const theme_slice *a = theme_find(g_th, "hscroll.left");
+            const theme_slice *b = theme_find(g_th, "hscroll.right");
+            int c0 = a ? a->sw : 0, c1 = b ? b->sw : 0;
+            t0 += c0; tlen -= c0 + c1;
+        }
+        if (scroll) { int p = s->page < 1 ? 1 : s->page;
+                      thumb = tlen * p / 1000; if (thumb < 12) thumb = 12; }
+        else        { const theme_slice *k = theme_find(g_th, "slider.knob");
+                      thumb = k ? k->sw : 16; }
+    }
+    if (thumb > tlen) thumb = tlen;
+    int span = tlen - thumb;                              /* travel available to the thumb */
+    if (span <= 0) return 0;
+
+    int pos = (s->vert ? my - t0 : mx - t0) - thumb / 2;  /* centre the thumb on the cursor */
+    if (pos < 0) pos = 0;
+    if (pos > span) pos = span;
+    return (int16_t)(pos * 1000 / span);
 }
 
 void objc_draw(OBJECT *t, int start, int depth, int clx, int cly, int clw, int clh) {
     int x, y; objc_offset(t, start, &x, &y);
     int16_t clip[4] = { (int16_t)clx, (int16_t)cly, (int16_t)(clx+clw-1), (int16_t)(cly+clh-1) };
     vs_clip(g_vh, 1, clip);
-    draw_rec(t, start, x, y, depth);
+    draw_rec(t, start, x, y, depth, clip);
     vs_clip(g_vh, 0, clip);
 }
 

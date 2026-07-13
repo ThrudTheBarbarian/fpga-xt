@@ -29,7 +29,35 @@ enum { G_BOX=20, G_TEXT=21, G_BOXTEXT=22, G_IMAGE=23, G_USERDEF=24, G_IBOX=25,
        G_ICON=31, G_TITLE=32,
        // our themed extensions (checkbox / radio / popup / colour icon), drawn
        // via the theme + the software gfx backend
-       G_CHECKBOX=40, G_RADIO=41, G_POPUP=42, G_FIELD=43, G_CICON=44 };
+       G_CHECKBOX=40, G_RADIO=41, G_POPUP=42, G_FIELD=43, G_CICON=44,
+       G_SCROLL=45, G_SLIDER=46 };
+
+// ob_spec for G_SCROLL — a themed scrollbar (track + sized thumb + arrows), and for
+// G_SLIDER — a themed value slider (track + knob).  They are different widgets: a
+// scrollbar's thumb has a SIZE (how much of the content is visible), a slider's knob
+// does not.  The theme carries art for both (vscroll./hscroll. vs slider.).
+//
+// value/page are PERMILLE (0..1000), so an object is resolution-independent and the
+// AES needs no floating point.  The AES only DRAWS these; dragging the thumb is the
+// caller's job (objc_find gives it the hit, and it writes back value).
+typedef struct {
+    int16_t vert;     // 1 = vertical, 0 = horizontal
+    int16_t value;    // 0..1000 — thumb position within the track
+    int16_t page;     // 1..1000 — G_SCROLL only: thumb size as a fraction of the track
+    int16_t arrows;   // 1 = draw the end arrows (G_SCROLL only)
+} SCROLLBAR;
+
+// Map a pixel position inside a G_SCROLL / G_SLIDER object to a value (0..1000),
+// centring the thumb on the cursor.  The AES already knows the track geometry (arrow
+// caps, thumb size); without this every caller would re-derive it and get it subtly
+// wrong.  The caller writes the result back into the SCROLLBAR and redraws — the AES
+// draws, the toolkit interacts.
+int16_t objc_scroll_value(OBJECT *t, int obj, int mx, int my);
+
+// The SCROLLBAR behind a G_SCROLL / G_SLIDER object (NULL for any other type).  Saves
+// callers casting ob_spec by hand, and — because it names the type in an exported
+// signature — it is what lets a DWARF-importing language (xtc) SEE the type at all.
+SCROLLBAR *objc_scrollbar(OBJECT *t, int obj);
 
 // ob_spec for G_CICON — our colour desktop/file icon: a pre-scaled RGBA bitmap
 // blitted src-over, centred at the top of the object rect, with `text` centred
@@ -41,7 +69,16 @@ enum { OF_NONE=0x00, OF_SELECTABLE=0x01, OF_DEFAULT=0x02, OF_EXIT=0x04,
        OF_EDITABLE=0x08, OF_RBUTTON=0x10, OF_LASTOB=0x20, OF_TOUCHEXIT=0x40,
        OF_HIDETREE=0x80,
        OF_CANCEL=0x200,      // Esc fires this object (see form_keybd)
-       OF_MOVEABLE=0x400 };  // on the tree ROOT: dialog is movable (fly corner + grab-inert)
+       OF_MOVEABLE=0x400,    // on the tree ROOT: dialog is movable (fly corner + grab-inert)
+       // Clip this object's SUBTREE to its own rect.  Without it a child can draw
+       // outside its parent (objc_draw sets the clip once, for the whole walk), which
+       // makes a scrolling container impossible: the partially-scrolled row at the
+       // edge paints over whatever sits next to it.  NSView clips subviews to bounds
+       // by default; this is that, opt-in so existing resources are untouched.
+       // 0x1000 deliberately clears every classic-GEM flag (OF_INDIRECT=0x100,
+       // OF_FL3DIND=0x200, OF_FL3DBAK=0x400, OF_SUBMENU=0x800) — Rocks imports real
+       // .rsc files and must not collide with them.
+       OF_CLIPCHILDREN=0x1000 };
 
 enum { OS_NORMAL=0x00, OS_SELECTED=0x01, OS_CROSSED=0x02, OS_CHECKED=0x04,
        OS_DISABLED=0x08, OS_OUTLINED=0x10, OS_SHADOWED=0x20,

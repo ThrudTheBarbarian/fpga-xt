@@ -10,6 +10,9 @@
  * Reserved blocks: 0x500 registry/service, 0x700 input/events, 0x800 networking,
  * 0x900 debug, 0xA00-0xF00 spare.
  */
+#include <stdint.h>   /* uint16_t / int32_t — used by struct xt_blit_cmd below.
+                      * Freestanding-safe (C99 requires stdint.h in a freestanding impl). */
+
 #ifndef XTSYS_H
 #define XTSYS_H
 
