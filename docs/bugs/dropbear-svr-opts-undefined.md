@@ -56,3 +56,53 @@ left stale .o's linked in… this exact staleness masked a fixed ssh-exec bug").
 > ⚠ **`-Bsymbolic` would restore ssh immediately — and if (1) is true, it HIDES the bug**
 > rather than fixing it, leaving every other self-referencing `.so` quietly broken. Answer the
 > `xtld.c:333` question first.
+
+---
+
+# Investigation so far (2026-07-13) — several theories are DEAD
+
+Recorded because these cost real time to establish; do not re-run them.
+
+**The contradiction is now sharp: the same bytes, through the same `xtld.c`, LOAD FINE ON THE
+HOST and fail on the board.** So the question is not "is the image bad" or "is the loader
+logic wrong" — it is **what the loader actually reads for `symtab[598]` on ARM**.
+
+## Established (measured, not speculation)
+
+1. **The failing artefact is intact.** The romfs `/bin/sshd-session` in the running kernel is
+   byte-identical to `build/dropbear.so` (sha1 `4d29dfa27f14`, 336484 bytes). It was not
+   corrupted by a rebuild.
+2. **That image cannot produce this error from its own reloc loop.** Emulating `xtld.c`'s exact
+   indexing against the loaded-image layout: `symtab[598]` = `svr_opts`, `st_shndx = 16`
+   (**defined**), and of the **60** relocations needing global resolution, **not one is
+   `svr_opts`** — they are all libc imports (`_ctype_`, `environ`, `memset`, `free`, …).
+3. **It loads OK on the host with the same `xtld.c`.** Given a real `open_lib` for libc and a
+   modelled kernel export table, `xtld_load(dropbear.so)` returns OK. Image good, loader good —
+   *in isolation*.
+4. **The strtab-offset theory is DEAD.** On the host the `DT_NEEDED` failure path prints
+   `libc.so` — correct name, correct offset.
+5. **A reported symbol name need not belong to the object you asked for.** Reproduced: loading
+   `dropbear.so` with a stub resolver reported **`_getpid`** — a *libc* symbol — because the
+   nested `xtld_load` **shares `errbuf`** and `return drc` passes it straight up. Worth fixing
+   on its own merits (it misdirects every future diagnosis), but it is **not** the explanation
+   for `svr_opts`.
+6. **Only dropbear fails.** `ssh`, `scp`, `ssh-keygen` all load and run — same objects, same
+   deps, same link recipe. dropbear.so is the **only** image in the tree with a `GLOB_DAT`
+   against a **self-defined** symbol, i.e. the only one that exercises `xtld.c:333` at all.
+7. **No stale second copy of the loader**: the kernel compiles the same `loader/xtld.c`
+   (`loader/Makefile:121`).
+
+## The next experiment (instrumentation, ready to apply)
+
+Widen the error string to print `si` and `st_shndx` **as the loader sees them on the board**:
+
+- **`shndx=16`** → the reloc loop is not the source at all, and the error is propagating from
+  somewhere else (see (5) — suspect the shared `errbuf` in a nested load).
+- **`shndx=0`** → the loaded image differs from the file, and the hunt moves to *why*: segment
+  copy, alignment, or something overwriting `.dynsym`.
+
+The patch is saved at **`docs/bugs/xtld-instr.patch`** (apply with `git apply`). It is a
+temporary debug print — revert it once it has answered the question.
+
+> ⚠ The board wedged while chasing this (JTAG lost the ARM target; needed a physical
+> power-cycle). Nothing to do with gemd, which was committed and unaffected.
