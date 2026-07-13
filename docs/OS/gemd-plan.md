@@ -55,12 +55,11 @@ client and touches no framebuffer.
 reports for the channel — a pid carried in the client's own message would be a capability
 handed out on the say-so of the process being granted it.
 
-> ⚠ **ssh is currently down on the board** — unrelated to gemd: `/bin/sshd-session`
-> (`dropbear.so`) fails to load with `xtld_load err: svr_opts rc=undefined symbol`. It is a
-> loader/link issue exposed by a *relink* (any edit to `loader/kernel/xtsys.h` cascades:
-> `libc.so` -> `dropbear.so`). M1 was verified over the netcon console instead (telnet :23),
-> which preserves the property that matters: gemd is not the client's parent either way.
-> Written up for the compiler/loader thread.
+> **ssh was down while M1 was being verified — it was a STALE BUILD ARTEFACT, not a loader
+> bug and nothing to do with gemd.** A clean kernel rebuild restored it; the M1 gate then ran
+> exactly as specified (gemd in one ssh session, `gemtext` in a separate one). Post-mortem, and
+> the one real defect it uncovered (the loader reports a nested dependency's missing symbol as
+> if it were the object's own): `docs/bugs/dropbear-svr-opts-undefined.md`.
 
 ## Wire protocol (fixed 16-bit LE words, AES-message shaped)
 
