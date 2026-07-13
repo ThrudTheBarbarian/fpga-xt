@@ -11,7 +11,9 @@ set -e
 
 LOADER=$(cd "$(dirname "$0")/.." && pwd)
 DB=$(cd "$LOADER/../third_party/dropbear" && pwd)
-BUILD="$LOADER/build/dropbear"
+# Honour the Makefile's BUILD (make BUILD=build-<who>): a private build dir is how two agents
+# build this tree at once without racing each other's artefacts. Defaults to build/.
+BUILD="$LOADER/${BUILDDIR:-build}/dropbear"
 OBJ="$BUILD/obj"
 mkdir -p "$OBJ"
 

@@ -15,7 +15,9 @@ set -eu
 
 STAGE="${1:-build/sdstage}"
 BOARD="${2:-xtos.local}"
-MANIFEST="build/.sdpush-manifest.$BOARD"
+# Beside the stage dir, not hardcoded to build/: a private BUILD= tree must keep its OWN
+# push manifest, or two builders overwrite each other's record of what the board holds.
+MANIFEST="$(dirname "$STAGE")/.sdpush-manifest.$BOARD"
 BLK=1428
 
 [ -d "$STAGE/OS" ] || { echo "sdpush: no $STAGE/OS — run 'make sdstage' first" >&2; exit 1; }

@@ -2,3 +2,5 @@ build/
 newlib-pic
 # drop-in romfs content (binaries); `make overlay` recreates the dirs
 romfs-overlay/
+# private per-agent build dirs (make BUILD=build-<who>) — see the BUILD ?= note in Makefile
+build-*/

@@ -58,10 +58,16 @@ REMOTE_DIR="${REMOTE_DIR:-fpga-xt-build}"
 VITIS_PATH="${VITIS_PATH:-/opt/xilinx/2025.2/Vitis}"
 REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 
-echo ">> pushing jtag scripts + ELF + bitstream"
+# Which kernel to load. Defaults to the shared build/, but a private build dir (make
+# BUILD=build-<who>, so two agents don't race each other's artefacts) sets it:
+#   BUILD=build-gemd ./vivado/jtag-valhalla.sh load
+LOCAL_ELF="$REPO_ROOT/loader/${BUILD:-build}/freertos-hw.elf"
+[ -f "$LOCAL_ELF" ] || { echo "!! no kernel at $LOCAL_ELF" >&2; exit 1; }
+
+echo ">> pushing jtag scripts + ELF ($LOCAL_ELF) + bitstream"
 ssh "$REMOTE" "mkdir -p $REMOTE_DIR/vivado/scripts $REMOTE_DIR/vitis/workspace/xtos/build $REMOTE_DIR/loader/build $REMOTE_DIR/build"
 rsync -az "$REPO_ROOT/vivado/scripts/" "$REMOTE:$REMOTE_DIR/vivado/scripts/"
-rsync -az "$REPO_ROOT/loader/build/freertos-hw.elf" "$REMOTE:$REMOTE_DIR/loader/build/freertos-hw.elf"
+rsync -az "$LOCAL_ELF" "$REMOTE:$REMOTE_DIR/loader/build/freertos-hw.elf"
 # Only the full `load` reprograms the PL, so only it needs the bitstream pushed.
 [ "$MODE" = "load" ] && rsync -az "$REPO_ROOT/vivado/build/fpga_xt_top.bit" "$REMOTE:$REMOTE_DIR/build/fpga_xt_top.bit"
 

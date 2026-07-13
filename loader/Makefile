@@ -25,7 +25,13 @@ QEMUFLAGS := -M virt -cpu cortex-a15 -nographic -no-reboot \
 # stdio chardev so the shell's stdin (SYS_READC) reads the terminal/pipe.
 QEMUZYNQ  := qemu-system-arm -M xilinx-zynq-a9 -display none -no-reboot -m 1024 \
              -chardev stdio,id=sh0 -semihosting-config enable=on,target=native,chardev=sh0
-BUILD := build
+# Overridable so two people (or two agents) can build the same tree at once WITHOUT sharing a
+# build directory. They otherwise race: one `make` relinking libc.so/dropbear.so while another
+# is packing them into a romfs embeds a TORN FILE, and the result is a kernel whose sshd-session
+# will not load — with every artefact on disk looking perfectly fine afterwards, because the
+# loser of the race rebuilt it. That cost a long night (docs/bugs/dropbear-svr-opts-undefined.md).
+#   make BUILD=build-<who>   -> private objects, libs, romfs, sdstage
+BUILD ?= build
 BARECFLAGS := -marm -mcpu=cortex-a15 -ffreestanding -nostdlib -O0 -g \
               -I. -I$(BUILD) -Ikernel -Itest/qemu
 
@@ -431,7 +437,7 @@ $(BUILD)/toybox.so: $(BUILD)/toybox/objects.list $(BUILD)/posix_shim.o $(BUILD)/
 $(BUILD)/dropbear/objects.list: tools/build-dropbear.sh \
     $(wildcard ../third_party/dropbear/src/*.c) $(wildcard ../third_party/dropbear/src/*.h) \
     $(wildcard dropbear-config/*.h)
-	tools/build-dropbear.sh
+	BUILDDIR=$(BUILD) tools/build-dropbear.sh
 $(BUILD)/dropbear_glue.o: test/freertos/libs/dropbear_glue.c | $(BUILD)
 	$(ARMCC) -marm -mcpu=cortex-a9 -mfloat-abi=softfp -mfpu=neon-vfpv3 -fpic -Os -fno-builtin \
 	    -D_GNU_SOURCE -Ilibc-compat -Inewlib-pic/include -Itest/qemu -Ikernel -c $< -o $@
