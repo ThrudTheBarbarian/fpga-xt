@@ -34,6 +34,10 @@ typedef struct {
     int      pipei;  /* pipe fd: g_pipes index+1 (0 = not a pipe); pwrite = which end */
     int      pwrite;
     int      sock;   /* socket fd: net/sockets.c index+1 (0 = not a socket) */
+    int      rpipe;  /* channel fd (SYS_svc_*): g_pipes index+1 we READ from  (0 = not a channel) */
+    int      wpipe;  /* channel fd: g_pipes index+1 we WRITE to. A channel is bidirectional:
+                      * two pipes under one fd, so read()/write()/poll() just work on it. */
+    int      svc;    /* service listen fd: g_svc index+1 (0 = not a listener) */
     int      con;    /* console alias (a shell's saved stdio parked on a high fd) */
     int      oflags; /* the VFS_O_* this fd was opened with (for reopen-by-path) */
     int      nonblock; /* O_NONBLOCK (via FIONBIO): a read that would block returns -EAGAIN */
@@ -60,6 +64,19 @@ typedef struct {
 } kpipe_t;
 static kpipe_t g_pipes[MAXPIPE];
 static void k_pipe_close_end(fd_t *f);   /* impl below with the other pipe ops */
+
+/* services (SYS_svc_*): table declared here because pipes_release() -- which runs on
+ * process death, above -- must drop a dying server's unaccepted connects. */
+#define MAXSVC      8
+#define SVC_BACKLOG 8
+typedef struct {
+    int  used;
+    char name[24];
+    int  q[SVC_BACKLOG][2];   /* pending connects: {c2s pipe idx, s2c pipe idx} */
+    int  nq;
+} svc_t;
+static svc_t g_svc[MAXSVC];
+static void k_chan_close(fd_t *f);        /* impl below with the service ops */
 
 /* kernel-mailbox fs ops (impls with the fs task, below): displacing an open
  * file fd (dup2 restore) must flush + close through the SOLE FatFs driver */
@@ -423,6 +440,26 @@ static void pipes_release(proc_t *p)
     for (int fd = 0; fd < NFD; fd++) {
         if (!p->fd[fd].open) continue;
         if (p->fd[fd].pipei) { k_pipe_close_end(&p->fd[fd]); continue; }
+        /* Channel + service fds: same argument as pipes, and stronger. gemd learns a
+         * client died by its channel hitting EOF (SIGCHLD only reaches the PARENT, and
+         * the server is not the parent of an ssh-launched client). If we deferred this to
+         * the reap, a dead client's window would linger until someone waitpid'd it -- and
+         * nobody will. */
+        if (p->fd[fd].rpipe || p->fd[fd].wpipe) { k_chan_close(&p->fd[fd]); continue; }
+        if (p->fd[fd].svc) {
+            svc_t *sv = &g_svc[p->fd[fd].svc - 1];
+            taskENTER_CRITICAL();                    /* drop unaccepted connects, free their pipes */
+            for (int i = 0; i < sv->nq; i++) {
+                for (int k = 0; k < 2; k++) {
+                    kpipe_t *pp = &g_pipes[sv->q[i][k]];
+                    if (pp->used) { pp->used = 0; vStreamBufferDelete(pp->sb); pp->sb = 0; }
+                }
+            }
+            sv->nq = 0; sv->used = 0;                /* the name is free again */
+            taskEXIT_CRITICAL();
+            p->fd[fd].open = 0; p->fd[fd].svc = 0;
+            continue;
+        }
         /* pty slave (char device): release NOW too, for the same reason. When an
          * interactive ssh shell exits, dropbear blocks reading the pty MASTER for
          * EOF — which only arrives once the slave's open count hits 0. If we left
@@ -777,6 +814,249 @@ static long k_pipe_write(proc_t *p, int fd, const char *buf, uint32_t n)
         sent += xStreamBufferSend(pp->sb, buf + sent, n - sent, pdMS_TO_TICKS(20));
     }
     return (long)sent;
+}
+
+/* ---- services: the rendezvous XTOS did not have ----------------------------
+ * Pipes need shared ancestry, so a boot-script-launched server and an ssh-launched client
+ * could not talk AT ALL -- which is precisely gemd's situation. Sockets are lwIP-only, so
+ * a window server would have depended on DHCP coming up.
+ *
+ * A service is a NAME a process registers. Anyone may connect to it by that name. Connect
+ * creates TWO pipes (client->server, server->client) and hands the client one BIDIRECTIONAL
+ * fd; accept() hands the server the mirrored fd. After that it is just read()/write()/
+ * poll()/close() -- deliberately BSD-shaped, so there is no new mental model.
+ *
+ * Death detection is free: a dying process releases its pipe ends, so the peer's read()
+ * returns EOF. That matters because SIGCHLD only reaches the PARENT, and a window server
+ * is not the parent of an ssh-launched client -- so signal-based reaping would simply not
+ * fire for most clients. EOF fires for everyone. */
+static int k_pipe_alloc(void)                       /* one pipe, refcounts left to caller */
+{
+    for (int i = 0; i < MAXPIPE; i++)
+        if (!g_pipes[i].used) {
+            g_pipes[i].sb = xStreamBufferCreate(PIPE_BUF_SZ, 1);
+            if (!g_pipes[i].sb) return -1;
+            g_pipes[i].readers = 1; g_pipes[i].writers = 1; g_pipes[i].used = 1;
+            note_pipe_hwm();
+            return i;
+        }
+    return -1;
+}
+
+static int fd_alloc_slot(proc_t *p)
+{
+    for (int fd = 3; fd < NFD; fd++) if (!p->fd[fd].open) return fd;
+    return -1;                                       /* -EMFILE */
+}
+
+static long k_svc_register(proc_t *p, const char *name)
+{
+    if (!p || !name || !*name) return -1;
+    for (int i = 0; i < MAXSVC; i++)                 /* one holder per name */
+        if (g_svc[i].used && !strncmp(g_svc[i].name, name, sizeof g_svc[i].name - 1)) return -1;
+    int si = -1;
+    for (int i = 0; i < MAXSVC; i++) if (!g_svc[i].used) { si = i; break; }
+    if (si < 0) return -1;
+    int fd = fd_alloc_slot(p);
+    if (fd < 0) return -1;
+    memset(&g_svc[si], 0, sizeof g_svc[si]);
+    for (unsigned i = 0; i + 1 < sizeof g_svc[si].name && name[i]; i++)   /* freestanding: no strncpy */
+        g_svc[si].name[i] = name[i];
+    g_svc[si].used = 1;
+    memset(&p->fd[fd], 0, sizeof(fd_t));
+    p->fd[fd].open = 1; p->fd[fd].svc = si + 1;
+    return fd;
+}
+
+static long k_svc_connect(proc_t *p, const char *name)
+{
+    if (!p || !name) return -1;
+    int si = -1;
+    for (int i = 0; i < MAXSVC; i++)
+        if (g_svc[i].used && !strncmp(g_svc[i].name, name, sizeof g_svc[i].name - 1)) { si = i; break; }
+    if (si < 0) return -2;                           /* -ENOENT: no such service */
+    if (g_svc[si].nq >= SVC_BACKLOG) return -11;     /* -EAGAIN: backlog full */
+    int fd = fd_alloc_slot(p);
+    if (fd < 0) return -1;
+    int c2s = k_pipe_alloc(); if (c2s < 0) return -1;
+    int s2c = k_pipe_alloc();
+    if (s2c < 0) { g_pipes[c2s].used = 0; vStreamBufferDelete(g_pipes[c2s].sb); return -1; }
+    memset(&p->fd[fd], 0, sizeof(fd_t));
+    p->fd[fd].open = 1;
+    p->fd[fd].rpipe = s2c + 1;                       /* client reads what the server sends */
+    p->fd[fd].wpipe = c2s + 1;                       /* client writes to the server */
+    taskENTER_CRITICAL();
+    g_svc[si].q[g_svc[si].nq][0] = c2s;
+    g_svc[si].q[g_svc[si].nq][1] = s2c;
+    g_svc[si].nq++;
+    taskEXIT_CRITICAL();
+    return fd;
+}
+
+static long k_svc_accept(proc_t *p, int lfd)
+{
+    if (!p || lfd < 0 || lfd >= NFD || !p->fd[lfd].open || !p->fd[lfd].svc) return -1;
+    svc_t *sv = &g_svc[p->fd[lfd].svc - 1];
+    for (;;) {
+        if (p->killed) proc_exit_self(p, 137);
+        if (sig_ready(p)) return -4;                 /* -EINTR */
+        stop_park(p);
+        int c2s = -1, s2c = -1;
+        taskENTER_CRITICAL();
+        if (sv->nq > 0) {
+            c2s = sv->q[0][0]; s2c = sv->q[0][1];
+            for (int i = 1; i < sv->nq; i++) {
+                sv->q[i-1][0] = sv->q[i][0]; sv->q[i-1][1] = sv->q[i][1];
+            }
+            sv->nq--;
+        }
+        taskEXIT_CRITICAL();
+        if (c2s >= 0) {
+            int fd = fd_alloc_slot(p);
+            if (fd < 0) return -1;
+            memset(&p->fd[fd], 0, sizeof(fd_t));
+            p->fd[fd].open = 1;
+            p->fd[fd].rpipe = c2s + 1;               /* server reads what the client sends */
+            p->fd[fd].wpipe = s2c + 1;
+            return fd;
+        }
+        if (p->fd[lfd].nonblock) return -11;         /* -EAGAIN */
+        vTaskDelay(pdMS_TO_TICKS(10));
+    }
+}
+
+/* channel read/write: same semantics as a pipe end, but the fd carries both directions. */
+static long k_chan_read(proc_t *p, int fd, char *buf, uint32_t n)
+{
+    kpipe_t *pp = &g_pipes[p->fd[fd].rpipe - 1];
+    if (!buf || !n) return 0;
+    for (;;) {
+        if (p->killed) proc_exit_self(p, 137);
+        if (sig_ready(p)) return -4;
+        stop_park(p);
+        size_t got = xStreamBufferReceive(pp->sb, buf, n, pdMS_TO_TICKS(20));
+        if (got > 0) return (long)got;
+        if (pp->writers <= 0) {                      /* peer gone: drain, then EOF */
+            got = xStreamBufferReceive(pp->sb, buf, n, 0);
+            return (long)got;
+        }
+        if (p->fd[fd].nonblock) return -11;
+    }
+}
+
+static long k_chan_write(proc_t *p, int fd, const char *buf, uint32_t n)
+{
+    kpipe_t *pp = &g_pipes[p->fd[fd].wpipe - 1];
+    uint32_t sent = 0;
+    if (!n) return 0;
+    if (!buf) return -1;
+    while (sent < n) {
+        if (p->killed) proc_exit_self(p, 137);
+        if (sig_ready(p)) return sent ? (long)sent : -4;
+        stop_park(p);
+        if (pp->readers <= 0) return sent ? (long)sent : -1;   /* peer gone */
+        sent += xStreamBufferSend(pp->sb, buf + sent, n - sent, pdMS_TO_TICKS(20));
+    }
+    return (long)sent;
+}
+
+static void k_chan_close(fd_t *f)
+{
+    if (f->rpipe) {
+        kpipe_t *pp = &g_pipes[f->rpipe - 1];
+        int dead;
+        taskENTER_CRITICAL();
+        if (pp->readers > 0) pp->readers--;
+        dead = pp->used && pp->readers <= 0 && pp->writers <= 0;
+        if (dead) pp->used = 0;
+        taskEXIT_CRITICAL();
+        if (dead) { vStreamBufferDelete(pp->sb); pp->sb = 0; }
+    }
+    if (f->wpipe) {
+        kpipe_t *pp = &g_pipes[f->wpipe - 1];
+        int dead;
+        taskENTER_CRITICAL();
+        if (pp->writers > 0) pp->writers--;
+        dead = pp->used && pp->readers <= 0 && pp->writers <= 0;
+        if (dead) pp->used = 0;
+        taskEXIT_CRITICAL();
+        if (dead) { vStreamBufferDelete(pp->sb); pp->sb = 0; }
+    }
+    f->open = 0; f->rpipe = 0; f->wpipe = 0;
+}
+
+/* ---- poll(2) --------------------------------------------------------------
+ * The other thing XTOS did not have. Without it a server with N clients plus an input
+ * source has no single wait, and every design degenerates into a thread per client or a
+ * spin. Level-triggered, scan-based: each pass asks every fd whether it is ready, and
+ * sleeps 2 ms between passes. Not edge-triggered -- it does not need to be, and the
+ * alternative (wiring a wait-queue into every writer) is a much larger change to the
+ * pipe/socket/devfs paths. 2 ms is well under a frame; the GUI cannot tell. */
+extern long xt_sock_avail(int);
+
+static short poll_revents(proc_t *p, int fd, short events)
+{
+    if (fd < 0 || fd >= NFD || !p->fd[fd].open) return XT_POLLNVAL;
+    fd_t *f = &p->fd[fd];
+    short re = 0;
+
+    if (f->svc) {                                    /* listen fd: readable == a pending connect */
+        if (g_svc[f->svc - 1].nq > 0) re |= XT_POLLIN;
+        return re & (events | XT_POLLERR | XT_POLLHUP | XT_POLLNVAL);
+    }
+    if (f->rpipe || f->wpipe) {                      /* channel */
+        if (f->rpipe) {
+            kpipe_t *pp = &g_pipes[f->rpipe - 1];
+            if (xStreamBufferBytesAvailable(pp->sb) > 0) re |= XT_POLLIN;
+            if (pp->writers <= 0) re |= XT_POLLIN | XT_POLLHUP;   /* EOF is readable */
+        }
+        if (f->wpipe) {
+            kpipe_t *pp = &g_pipes[f->wpipe - 1];
+            if (pp->readers <= 0) re |= XT_POLLERR;
+            else if (xStreamBufferSpacesAvailable(pp->sb) > 0) re |= XT_POLLOUT;
+        }
+        return re & (events | XT_POLLERR | XT_POLLHUP | XT_POLLNVAL);
+    }
+    if (f->pipei) {                                  /* ordinary pipe end */
+        kpipe_t *pp = &g_pipes[f->pipei - 1];
+        if (!f->pwrite) {
+            if (xStreamBufferBytesAvailable(pp->sb) > 0) re |= XT_POLLIN;
+            if (pp->writers <= 0) re |= XT_POLLIN | XT_POLLHUP;
+        } else {
+            if (pp->readers <= 0) re |= XT_POLLERR;
+            else if (xStreamBufferSpacesAvailable(pp->sb) > 0) re |= XT_POLLOUT;
+        }
+        return re & (events | XT_POLLERR | XT_POLLHUP | XT_POLLNVAL);
+    }
+    if (f->sock) {
+        if (xt_sock_avail(f->sock - 1) > 0) re |= XT_POLLIN;
+        re |= XT_POLLOUT;                            /* lwIP send blocks rather than refusing */
+        return re & (events | XT_POLLERR | XT_POLLHUP | XT_POLLNVAL);
+    }
+    /* VFS file / device node: regular files are always ready. */
+    re |= (XT_POLLIN | XT_POLLOUT);
+    return re & (events | XT_POLLERR | XT_POLLHUP | XT_POLLNVAL);
+}
+
+static long k_poll(proc_t *p, struct xt_pollfd *fds, int nfds, int timeout_ms)
+{
+    if (!p || (!fds && nfds) || nfds < 0 || nfds > NFD) return -1;
+    int waited = 0;
+    for (;;) {
+        if (p->killed) proc_exit_self(p, 137);
+        if (sig_ready(p)) return -4;                 /* -EINTR */
+        stop_park(p);
+        int ready = 0;
+        for (int i = 0; i < nfds; i++) {
+            fds[i].revents = poll_revents(p, fds[i].fd, fds[i].events);
+            if (fds[i].revents) ready++;
+        }
+        if (ready) return ready;
+        if (timeout_ms == 0) return 0;
+        if (timeout_ms > 0 && waited >= timeout_ms) return 0;
+        vTaskDelay(pdMS_TO_TICKS(2));
+        waited += 2;
+    }
 }
 
 /* ---- pseudoterminals (pty) — SSH interactive sessions ---------------------
@@ -1369,6 +1649,12 @@ static long fs_serve(int slot)
             dcache_drop_parent(c->path);                  /* create/truncate changes the dir listing */
         return sys_open(p, c->path, (int)c->flags);       /* path copied into the shm page */
     case SYS_close:
+        /* A channel closes here too. Belt and braces: an explicit close() MUST release the
+         * pipe ends, or the peer never sees EOF and a client that exits cleanly looks alive
+         * forever -- which is exactly the bug this caught (only the client that DIED without
+         * closing was detected; the two that closed politely were not). */
+        if (p && c->fd >= 3 && c->fd < NFD && p->fd[c->fd].open &&
+            (p->fd[c->fd].rpipe || p->fd[c->fd].wpipe)) { k_chan_close(&p->fd[c->fd]); return 0; }
         if (p && c->fd >= 3 && c->fd < NFD && p->fd[c->fd].open) {
             if (p->fd[c->fd].oflags & (VFS_O_WRONLY | VFS_O_RDWR))
                 dcache_drop_parent(p->fd[c->fd].path);    /* a written file's size/mtime changed */
@@ -1477,7 +1763,27 @@ static void fs_close_all(int slot)
     proc_t *p = &g_proc[slot];
     for (int fd = 0; fd < NFD; fd++) {   /* from 0: a child's stdio can be pipe ends */
         if (!p->fd[fd].open) continue;
-        if (p->fd[fd].pipei) { k_pipe_close_end(&p->fd[fd]); continue; }  /* EOF/EPIPE propagate */
+        if (p->fd[fd].pipei) { k_pipe_close_end(&p->fd[fd]); continue; }
+        /* Channel + service fds: same argument as pipes, and stronger. gemd learns a
+         * client died by its channel hitting EOF (SIGCHLD only reaches the PARENT, and
+         * the server is not the parent of an ssh-launched client). If we deferred this to
+         * the reap, a dead client's window would linger until someone waitpid'd it -- and
+         * nobody will. */
+        if (p->fd[fd].rpipe || p->fd[fd].wpipe) { k_chan_close(&p->fd[fd]); continue; }
+        if (p->fd[fd].svc) {
+            svc_t *sv = &g_svc[p->fd[fd].svc - 1];
+            taskENTER_CRITICAL();                    /* drop unaccepted connects, free their pipes */
+            for (int i = 0; i < sv->nq; i++) {
+                for (int k = 0; k < 2; k++) {
+                    kpipe_t *pp = &g_pipes[sv->q[i][k]];
+                    if (pp->used) { pp->used = 0; vStreamBufferDelete(pp->sb); pp->sb = 0; }
+                }
+            }
+            sv->nq = 0; sv->used = 0;                /* the name is free again */
+            taskEXIT_CRITICAL();
+            p->fd[fd].open = 0; p->fd[fd].svc = 0;
+            continue;
+        }  /* EOF/EPIPE propagate */
         if (p->fd[fd].sock) { extern void xt_sock_close(int);             /* netconn teardown */
                               xt_sock_close(p->fd[fd].sock - 1);
                               p->fd[fd].open = 0; p->fd[fd].sock = 0; continue; }
@@ -2011,6 +2317,28 @@ void deferral_thunk(void)                 /* PL1 (System), task context */
             r = frtos_spawn_argv_fds((const char *)p->da0, ac, av, envp, g_khost, aux);
         } else if (p->dnum == SYS_pipe) {                  /* allocate a pipe + two end fds */
             r = k_pipe_create(p, (int *)p->da0);
+        } else if (p->dnum == SYS_svc_register) {
+            r = k_svc_register(p, (const char *)p->da0);
+        } else if (p->dnum == SYS_svc_connect) {
+            r = k_svc_connect(p, (const char *)p->da0);
+        } else if (p->dnum == SYS_svc_accept) {
+            r = k_svc_accept(p, (int)p->da0);
+        } else if (p->dnum == SYS_poll) {
+            r = k_poll(p, (struct xt_pollfd *)p->da0, (int)p->da1, (int)p->da2);
+        } else if ((p->dnum == SYS_read || p->dnum == SYS_write) &&
+                   p->da0 < NFD && p->fd[p->da0].open &&
+                   (p->fd[p->da0].rpipe || p->fd[p->da0].wpipe)) {
+            if (p->dnum == SYS_read)
+                r = k_chan_read(p, (int)p->da0, (char *)p->da1, (uint32_t)p->da2);
+            else {
+                /* NO SIGPIPE ON A CHANNEL. A pipe write with no reader kills the writer, which
+                 * is right for a shell pipeline -- and CATASTROPHIC for a service. It would mean
+                 * any client that disconnects while the server is mid-reply EXECUTES THE SERVER.
+                 * gemd must survive client death (§3, §9); that is the whole point of it being
+                 * the arbiter. A dead peer is an ERROR RETURN here, and the server notices the
+                 * hangup the same way it notices everything else: EOF on the next read. */
+                r = k_chan_write(p, (int)p->da0, (const char *)p->da1, (uint32_t)p->da2);
+            }
         } else if ((p->dnum == SYS_read || p->dnum == SYS_write) &&
                    p->da0 < NFD && p->fd[p->da0].open && p->fd[p->da0].pipei) {
             if (p->dnum == SYS_read)
@@ -2340,7 +2668,14 @@ static long do_syscall(uint32_t num, long a0, long a1, long a2)
     }
     case SYS_open:   return sys_open(p, (const char *)a0, (int)a1);   /* (path, flags) */
     case SYS_read:   return sys_read(p, (int)a0, (void *)a1, (uint32_t)a2);
-    case SYS_close:  if (p && a0 >= 3 && a0 < NFD && p->fd[a0].open && !p->fd[a0].pipei) {
+    case SYS_close:  if (p && a0 >= 3 && a0 < NFD && p->fd[a0].open &&
+                         (p->fd[a0].rpipe || p->fd[a0].wpipe)) { k_chan_close(&p->fd[a0]); return 0; }
+                     if (p && a0 >= 3 && a0 < NFD && p->fd[a0].open && p->fd[a0].svc) {
+                         svc_t *sv = &g_svc[p->fd[a0].svc - 1];
+                         taskENTER_CRITICAL(); sv->nq = 0; sv->used = 0; taskEXIT_CRITICAL();
+                         p->fd[a0].open = 0; p->fd[a0].svc = 0; return 0;
+                     }
+                     if (p && a0 >= 3 && a0 < NFD && p->fd[a0].open && !p->fd[a0].pipei) {
                          if (p->fd[a0].con) { p->fd[a0].open = 0; p->fd[a0].con = 0; return 0; }
                          fd_drop_cache(&p->fd[a0]);        /* pipe fds close via the deferred path */
                          vfs_close(&p->fd[a0].vf);
@@ -2514,8 +2849,12 @@ static int needs_task_ctx(struct k_regs *regs, uint32_t num)
     case SYS_spawn:   return 1;                    /* may load a DT_NEEDED lib from the SD */
     case SYS_spawn_fd: return 1;                   /* spawn + pipe-end refcounts */
     case SYS_pipe:    return 1;                    /* takes the FreeRTOS heap (stream buffer) */
+    case SYS_svc_register: return 1;               /* fd alloc */
+    case SYS_svc_connect:  return 1;               /* takes the FreeRTOS heap (two stream buffers) */
+    case SYS_svc_accept:   return 1;               /* BLOCKS until a client connects */
+    case SYS_poll:         return 1;               /* BLOCKS until an fd is ready */
     case SYS_open:    return 1;                    /* may walk a FatFs directory path */
-    case SYS_read: {                               /* stdin + pipes block; files -> page store */
+    case SYS_read: {                               /* stdin + pipes + channels block */
         if (fd_is_con(fd)) return 1;               /* console alias: con_tty_readc path */
         proc_t *q = cur_proc();
         if (q && fd < NFD && q->fd[fd].open) return 1;   /* pipe or file, any slot (incl. `< file` stdin) */

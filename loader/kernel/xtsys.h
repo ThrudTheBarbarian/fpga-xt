@@ -324,6 +324,35 @@ struct xt_dirent { unsigned mode; char name[256]; };
                                 * plane (pixels = DRAG_BASE, client-filled). Move = re-call
                                 * with new x/y — no plane redraw. Tear-free window drag. */
 
+/* ---- services + multiplexing — block 0x500 ---------------------------------
+ * The rendezvous XTOS did not have. Pipes need shared ancestry (SYS_spawn_fd), so two
+ * unrelated processes -- a boot-script-launched server and an ssh-launched client --
+ * could not talk at all. Sockets are lwIP-only, so a window server would have depended
+ * on DHCP. This is the missing primitive, and it is deliberately BSD-shaped: register is
+ * bind+listen, then connect/accept, then ordinary read/write on the returned fd.
+ *
+ * A channel fd is BIDIRECTIONAL (two kernel pipes under one fd). It is an ordinary fd:
+ * read(), write(), close(), poll(). A dying process releases its ends, so the peer sees
+ * EOF -- death detection is free and works for clients that are nobody's child (which
+ * SIGCHLD does not: it only reaches the parent).
+ */
+#define SYS_svc_register 0x500 /* (const char *name) -> listen fd. One holder per name. */
+#define SYS_svc_connect  0x501 /* (const char *name) -> channel fd (bidirectional) */
+#define SYS_svc_accept   0x502 /* (listen fd) -> channel fd; blocks until a client connects */
+
+/* poll(2). The other thing XTOS did not have: a way to wait on several fds at once.
+ * Without it a server with N clients plus an input source has no single wait, and every
+ * design degenerates into either one-thread-per-client or a polling loop. Works on pipes,
+ * channels, sockets and device nodes. */
+#define SYS_poll         0x503 /* (struct xt_pollfd *, nfds, timeout_ms) -> n ready
+                                * timeout <0 = forever, 0 = poll and return */
+#define XT_POLLIN   0x0001     /* readable (or EOF -- read() then returns 0) */
+#define XT_POLLOUT  0x0004     /* writable without blocking */
+#define XT_POLLERR  0x0008
+#define XT_POLLHUP  0x0010     /* peer closed */
+#define XT_POLLNVAL 0x0020     /* fd not open */
+struct xt_pollfd { int fd; short events; short revents; };
+
 /* input / events — block 0x700. The kernel owns the HW cursor sprite + the serial
  * mouse; the desktop blocks here for the next event and the cursor moves kernel-side. */
 #define SYS_input        0x700 /* (struct os_event *, timeout_ms) -> 0; blocks (<0 = forever) */

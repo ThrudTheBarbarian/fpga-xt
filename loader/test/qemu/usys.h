@@ -148,6 +148,22 @@ static inline long sys_munmap(void *addr, unsigned len)
  * flags: XT_SHM_* (xtsys.h); 0 = the classic pool-backed object. Unknown bits are REJECTED
  * (-1), never ignored — a program built for a newer flag set fails loudly on an older
  * kernel rather than silently getting memory with different properties. */
+/* ---- services + poll (block 0x500) -----------------------------------------
+ * Deliberately BSD-shaped: register == bind+listen, then connect/accept, then plain
+ * read()/write()/close()/poll() on the returned fd. A channel fd is bidirectional.
+ * A dead peer shows up as EOF on read (and XT_POLLHUP), which works even when the peer
+ * is nobody's child -- unlike SIGCHLD. */
+static inline int sys_svc_register(const char *name)   /* -> listen fd */
+{ return (int)__syscall(SYS_svc_register, (long)name, 0, 0); }
+static inline int sys_svc_connect(const char *name)    /* -> channel fd */
+{ return (int)__syscall(SYS_svc_connect, (long)name, 0, 0); }
+static inline int sys_svc_accept(int lfd)              /* -> channel fd; blocks. accept(2) for
+                                                       * services -- sys_accept() is already
+                                                       * taken by the lwIP socket path. */
+{ return (int)__syscall(SYS_svc_accept, lfd, 0, 0); }
+static inline int sys_poll(struct xt_pollfd *fds, int nfds, int timeout_ms)
+{ return (int)__syscall(SYS_poll, (long)fds, nfds, timeout_ms); }
+
 static inline int   sys_shm_create(unsigned size, unsigned flags)
 { return (int)__syscall(SYS_shm_create, (long)size, (long)flags, 0); }
 static inline void *sys_shm_map(int id) { long r = __syscall(SYS_shm_map, id, 0, 0); return r ? (void *)r : (void *)0; }

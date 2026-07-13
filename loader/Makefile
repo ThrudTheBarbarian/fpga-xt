@@ -549,7 +549,7 @@ ROMFS_ASSET_ARGS := /fonts/AovelSansRounded.ttf=../gem/fonts/AovelSansRounded.tt
 # copy at /System/OS/Apps/Desktop when there is no SD (qemu / a bare card).
 DESKTOP_RSC := ../gem/resources/desktop.rsc
 
-$(BUILD)/romfs.bin: $(BUILD)/mkromfs $(BUILD)/tnfs.so $(BUILD)/fujinetd.so $(BUILD)/fuji.so $(BUILD)/toybox.so $(BUILD)/sqlite3.so $(BUILD)/pipetest.so $(BUILD)/hello.so $(BUILD)/motd.so $(BUILD)/usestr.so $(BUILD)/echo.so $(BUILD)/libc_test.so $(BUILD)/gemtext.so $(BUILD)/desktop.so $(BUILD)/regtest.so $(BUILD)/locktest.so $(BUILD)/lntest.so $(BUILD)/fstest.so $(BUILD)/lua.so $(BUILD)/init.so $(BUILD)/faultprog.so $(BUILD)/vmtest.so $(BUILD)/demandtest.so $(BUILD)/stacktest.so $(BUILD)/wxtest.so $(BUILD)/cowtest.so $(BUILD)/sharetext.so $(BUILD)/shmtest.so $(BUILD)/finictor.so $(BUILD)/mmaptest.so $(BUILD)/modetest.so $(BUILD)/ttytest.so $(BUILD)/jobctl.so $(BUILD)/socktest.so $(BUILD)/httpd.so $(BUILD)/nstress.so $(BUILD)/dmesg.so $(BUILD)/mem.so $(BUILD)/badpoke.so $(BUILD)/stackpoke.so $(BUILD)/dropbearkey.so $(BUILD)/dropbear.so $(BUILD)/sshd.so $(BUILD)/netup.so $(BUILD)/ssh.so $(BUILD)/scp.so $(BUILD)/strace.so $(BUILD)/sigtest.so $(BUILD)/libutil.so $(BUILD)/libGEM.so $(BUILD)/libm.so $(BUILD)/libxtos.so $(BUILD)/libc.so test/freertos/Registry.db $(DESKTOP_RSC) $(ROMFS_OVERLAY_FILES) $(ROMFS_ASSET_FILES) $(BUILD)/blittest.so
+$(BUILD)/romfs.bin: $(BUILD)/mkromfs $(BUILD)/tnfs.so $(BUILD)/fujinetd.so $(BUILD)/fuji.so $(BUILD)/toybox.so $(BUILD)/sqlite3.so $(BUILD)/pipetest.so $(BUILD)/svctest.so $(BUILD)/hello.so $(BUILD)/motd.so $(BUILD)/usestr.so $(BUILD)/echo.so $(BUILD)/libc_test.so $(BUILD)/gemtext.so $(BUILD)/desktop.so $(BUILD)/regtest.so $(BUILD)/locktest.so $(BUILD)/lntest.so $(BUILD)/fstest.so $(BUILD)/lua.so $(BUILD)/init.so $(BUILD)/faultprog.so $(BUILD)/vmtest.so $(BUILD)/demandtest.so $(BUILD)/stacktest.so $(BUILD)/wxtest.so $(BUILD)/cowtest.so $(BUILD)/sharetext.so $(BUILD)/shmtest.so $(BUILD)/finictor.so $(BUILD)/mmaptest.so $(BUILD)/modetest.so $(BUILD)/ttytest.so $(BUILD)/jobctl.so $(BUILD)/socktest.so $(BUILD)/httpd.so $(BUILD)/nstress.so $(BUILD)/dmesg.so $(BUILD)/mem.so $(BUILD)/badpoke.so $(BUILD)/stackpoke.so $(BUILD)/dropbearkey.so $(BUILD)/dropbear.so $(BUILD)/sshd.so $(BUILD)/netup.so $(BUILD)/ssh.so $(BUILD)/scp.so $(BUILD)/strace.so $(BUILD)/sigtest.so $(BUILD)/libutil.so $(BUILD)/libGEM.so $(BUILD)/libm.so $(BUILD)/libxtos.so $(BUILD)/libc.so test/freertos/Registry.db $(DESKTOP_RSC) $(ROMFS_OVERLAY_FILES) $(ROMFS_ASSET_FILES) $(BUILD)/blittest.so
 	$(BUILD)/mkromfs $@ \
 	    /OS/Apps/Desktop/desktop.rsc=$(DESKTOP_RSC) \
 	    /bin/faultprog=$(BUILD)/faultprog.so \
@@ -588,6 +588,7 @@ $(BUILD)/romfs.bin: $(BUILD)/mkromfs $(BUILD)/tnfs.so $(BUILD)/fujinetd.so $(BUI
 	    /bin/lntest=$(BUILD)/lntest.so \
 	    /bin/fstest=$(BUILD)/fstest.so \
 	    /bin/pipetest=$(BUILD)/pipetest.so \
+	    /bin/svctest=$(BUILD)/svctest.so \
 	    /bin/ttytest=$(BUILD)/ttytest.so \
 	    /bin/fg=$(BUILD)/jobctl.so \
 	    /bin/bg=$(BUILD)/jobctl.so \
@@ -623,7 +624,7 @@ $(BUILD)/romfs_blob.h: $(BUILD)/romfs.bin
 # base libraries every spawn needs (libc/libm), init + lua (the boot runner and
 # its #!/bin/lua scripts), motd, and the tier-2 test battery. ~6 MB of RAM back
 # vs the full image. qemu keeps the full romfs (no SD there).
-$(BUILD)/romfs-hw.bin: $(BUILD)/mkromfs $(BUILD)/pipetest.so $(BUILD)/hello.so $(BUILD)/motd.so $(BUILD)/usestr.so $(BUILD)/libc_test.so $(BUILD)/locktest.so $(BUILD)/lntest.so $(BUILD)/fstest.so $(BUILD)/lua.so $(BUILD)/init.so $(BUILD)/faultprog.so $(BUILD)/vmtest.so $(BUILD)/demandtest.so $(BUILD)/stacktest.so $(BUILD)/wxtest.so $(BUILD)/cowtest.so $(BUILD)/sharetext.so $(BUILD)/shmtest.so $(BUILD)/finictor.so $(BUILD)/mmaptest.so $(BUILD)/modetest.so $(BUILD)/ttytest.so $(BUILD)/jobctl.so $(BUILD)/socktest.so $(BUILD)/httpd.so $(BUILD)/nstress.so $(BUILD)/dmesg.so $(BUILD)/mem.so $(BUILD)/badpoke.so $(BUILD)/stackpoke.so $(BUILD)/dropbearkey.so $(BUILD)/dropbear.so $(BUILD)/sshd.so $(BUILD)/netup.so $(BUILD)/ssh.so $(BUILD)/scp.so $(BUILD)/strace.so $(BUILD)/sigtest.so $(BUILD)/libc.so $(BUILD)/blittest.so
+$(BUILD)/romfs-hw.bin: $(BUILD)/mkromfs $(BUILD)/pipetest.so $(BUILD)/svctest.so $(BUILD)/hello.so $(BUILD)/motd.so $(BUILD)/usestr.so $(BUILD)/libc_test.so $(BUILD)/locktest.so $(BUILD)/lntest.so $(BUILD)/fstest.so $(BUILD)/lua.so $(BUILD)/init.so $(BUILD)/faultprog.so $(BUILD)/vmtest.so $(BUILD)/demandtest.so $(BUILD)/stacktest.so $(BUILD)/wxtest.so $(BUILD)/cowtest.so $(BUILD)/sharetext.so $(BUILD)/shmtest.so $(BUILD)/finictor.so $(BUILD)/mmaptest.so $(BUILD)/modetest.so $(BUILD)/ttytest.so $(BUILD)/jobctl.so $(BUILD)/socktest.so $(BUILD)/httpd.so $(BUILD)/nstress.so $(BUILD)/dmesg.so $(BUILD)/mem.so $(BUILD)/badpoke.so $(BUILD)/stackpoke.so $(BUILD)/dropbearkey.so $(BUILD)/dropbear.so $(BUILD)/sshd.so $(BUILD)/netup.so $(BUILD)/ssh.so $(BUILD)/scp.so $(BUILD)/strace.so $(BUILD)/sigtest.so $(BUILD)/libc.so $(BUILD)/blittest.so
 	$(BUILD)/mkromfs $@ \
 	    /bin/faultprog=$(BUILD)/faultprog.so \
 	    /bin/vmtest=$(BUILD)/vmtest.so \
@@ -654,6 +655,7 @@ $(BUILD)/romfs-hw.bin: $(BUILD)/mkromfs $(BUILD)/pipetest.so $(BUILD)/hello.so $
 	    /bin/lntest=$(BUILD)/lntest.so \
 	    /bin/fstest=$(BUILD)/fstest.so \
 	    /bin/pipetest=$(BUILD)/pipetest.so \
+	    /bin/svctest=$(BUILD)/svctest.so \
 	    /bin/ttytest=$(BUILD)/ttytest.so \
 	    /bin/fg=$(BUILD)/jobctl.so \
 	    /bin/bg=$(BUILD)/jobctl.so \
