@@ -49,13 +49,17 @@ static int           g_lx, g_ly;   /* last pointer position seen (SYS_input's ti
 
 /* The producer. One decoder, one queue: every consumer (the fd below, and SYS_input) is a VIEW
  * on this, so there is exactly one thing draining the UART lane and no two-readers race. */
+extern void klog(const char *);
+
 static void input_task(void *arg)
 {
     (void)arg;
+    klog("input: decoder task running (/OS/dev/input is live)\r\n");
     for (;;) {
         struct os_event ev;
         memset(&ev, 0, sizeof ev);
-        if (input_next_event(&ev, -1, g_raw) != 0 || ev.type == OS_EV_TIMER || ev.type == OS_EV_NONE) {
+        int r = input_next_event(&ev, -1, g_raw);
+        if (r != 0 || ev.type == OS_EV_TIMER || ev.type == OS_EV_NONE) {
             /* -1 means "block forever", so a TIMER here means the decoder has nothing to give
              * (qemu has no input at all and returns immediately). Sleep rather than spin. */
             vTaskDelay(pdMS_TO_TICKS(50));
@@ -90,14 +94,24 @@ int xt_input_avail(void)                                /* what poll() asks */
     return (int)uxQueueMessagesWaiting(g_q);
 }
 
-/* 1 = got one, 0 = nothing within timeout_ms (<0 = wait forever). */
+/* 1 = got one, 0 = nothing within timeout_ms, -4 = -EINTR (killed / signalled while parked).
+ *
+ * A BLOCKING READ MUST HONOUR A KILL. Waiting "forever" in 100 ms chunks is not enough on its
+ * own: the chunks must be punctuated by the block check, or `kill <pid>` on a process parked in
+ * here does nothing at all — it stays in the queue, and (worse, for THIS device) it stays a
+ * READER, quietly eating the events its replacement is waiting for. That is exactly what a
+ * debugging `cat /OS/dev/input` did: unkillable, and it swallowed every click on the machine.
+ * uart1_rx.c's q_read already does this; so does this. */
 int xt_input_pop(struct os_event *ev, int timeout_ms)
 {
+    extern int xt_block_check(void);                    /* -4 when a kill/signal is pending */
     xt_input_start();
     if (!g_q) return 0;
     if (timeout_ms < 0) {
-        for (;;)                                        /* forever, in chunks (a kill still lands) */
+        for (;;) {
             if (xQueueReceive(g_q, ev, pdMS_TO_TICKS(100)) == pdPASS) return 1;
+            if (xt_block_check() == -4) return -4;      /* a kill EXITS inside the check */
+        }
     }
     return xQueueReceive(g_q, ev, pdMS_TO_TICKS(timeout_ms)) == pdPASS;
 }
@@ -114,7 +128,9 @@ long xt_input_dev_read(vfs_file *f, void *buf, uint32_t n)
     uint32_t got = 0;
     while (got + sizeof(struct os_event) <= n) {
         int wait = (got == 0 && !f->nonblock) ? -1 : 0;
-        if (!xt_input_pop((struct os_event *)((char *)buf + got), wait)) break;
+        int r = xt_input_pop((struct os_event *)((char *)buf + got), wait);
+        if (r == -4) return got ? (long)got : -4;       /* -EINTR: killed while parked */
+        if (r != 1) break;
         got += (uint32_t)sizeof(struct os_event);
     }
     if (got == 0 && f->nonblock) return -11;            /* -EAGAIN, like every other nonblock chr read */

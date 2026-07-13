@@ -799,3 +799,17 @@ Falcon becomes a target alongside the m68k. Conclusion of the design thread: bui
 - **SCALED blit burst-write rewrite (deferred — path unused by gfx).** Wide scaled
   rows cap at one 32 px burst + beat-half mis-align (SC_ACCUM burst/Bresenham write
   path); fix when scaled is actually used. *([[blitter_addrgen_consolidation]])*
+
+- **`^` equality across two modules that each widen the same function (limitation, not a
+  bug).** A widened `^` carries `{recv = fnptr, code = __bm_tramp_<sig>}`. `recv` is
+  canonical — the function's address resolves through normal dynamic linking — but `code`
+  is the *widening module's* trampoline, and the loader binds a defined symbol to the
+  module that defines it (no interposition, `xtld.c:333`), so two modules each get their
+  own. Two `^`s widened in the **same** module always compare equal, which is the pattern
+  that matters: an app registers *and* unregisters its own callbacks, so
+  `removeAction(&f)` finds what `addAction(&f)` stored even though the *library* holding
+  them has a different trampoline. Only the exotic case — the **same function widened in
+  two different modules**, then compared — differs, and it is no longer a safety issue
+  (the weak-register guard is value-based since phase-611). Closing it would need a
+  canonical trampoline address, which this loader cannot give. Recorded rather than
+  papered over. *(fpga-xtc `docs/Design/bound-methods-across-modules.md`)*

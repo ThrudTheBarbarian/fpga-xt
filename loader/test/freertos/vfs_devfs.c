@@ -186,6 +186,11 @@ static long dv_i2c_ioctl(vfs_file *f, unsigned req, void *arg)
 extern long xt_input_dev_read(vfs_file *f, void *buf, uint32_t n);
 extern long xt_input_dev_avail(vfs_file *f);
 extern long xt_input_dev_ioctl(vfs_file *f, unsigned req, void *arg);
+extern void xt_input_start(void);     /* the decoder task. MUST be started at OPEN, not at the
+                                       * first read: a poller never reads until poll() says
+                                       * readable, and poll() never says readable until the
+                                       * producer has produced. Start-on-read deadlocks the one
+                                       * caller this device exists for. */
 
 typedef struct {
     const char *name;                    /* rel path within the mount, e.g. "/null" */
@@ -298,6 +303,7 @@ static int dv_open(vfs_mount *m, const char *rel, int flags, vfs_file *f)
         xt_pty_open(idx, !slave);
         return 0;
     }
+    if (d->rd == xt_input_dev_read) { xt_input_start(); f->priv = 0; return 0; }
     if (d->rd == dv_rand_rd) {           /* per-open xorshift state, clock-seeded */
         struct { long long sec, usec; } tv = { 0, 0 };   /* time_t is 64-bit here — must not undersize */
         _gettimeofday(&tv, 0);

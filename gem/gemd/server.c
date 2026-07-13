@@ -191,6 +191,9 @@ int gemd_resize_surface(int hd)
         *s = ns;
     }
     wind_attach_surface(hd, s->id, s->gen, s->px, ww, wh, s->cap_w, ci);
+    printf("gemd: resize wh=%d work %dx%d -> surf %d cap %dx%d (%s)\n", hd, ww, wh,
+           s->id, s->cap_w, s->cap_h,
+           "same id = it fitted the capacity; a new id = it did not");
 
     gem_msg r; memset(&r, 0, sizeof r);
     r.w[0] = GEM_MSG_SIZED; r.w[1] = (int16_t)hd;

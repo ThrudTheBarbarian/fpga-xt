@@ -135,19 +135,37 @@ void uart1_rx_init(void)
     REG(UART_IER) = IXR_RTRIG | IXR_RTOUT;        /* rx trigger + rx timeout */
 }
 
-/* network-console input (netcon.c, task context): a received byte enters the
- * SAME shell stream as UART keystrokes — line discipline, ^C/^Z and the raw
- * editor behave identically over TCP. */
+/* network-console input (netcon.c, task context): a received byte enters the SAME console
+ * stream as a UART keystroke — line discipline, ^C/^Z and the raw editor behave identically
+ * over TCP.
+ *
+ * INCLUDING THE FOCUS TOGGLE, which it used to ignore: netcon's own header promises bytes are
+ * injected "as if typed on the UART", and they were not — a backtick over TCP went to the shell
+ * as a literal '`' while the same byte on the wire flipped the console to the GUI lane. So the
+ * GUI/desktop lane (pointer, keys) was reachable ONLY from the physical serial port. One console,
+ * two transports (netcon.c): the transport must not change what a byte MEANS. */
 void sh_inject(unsigned char c)
 {
     extern int frtos_tty_sigint(void);
     extern int frtos_tty_sigtstp(void);
-    if (c == 3)  frtos_tty_sigint();          /* like the ISR fast path */
-    if (c == 26) frtos_tty_sigtstp();
-    uint32_t nt = (g_tty_q.tail + 1u) % RING_SZ;
-    if (nt != g_tty_q.head) {
-        g_tty_q.buf[g_tty_q.tail] = c; g_tty_q.tail = nt;
-        xSemaphoreGive(g_tty_q.sem);
+    rxq *q;
+    if (c == FOCUS_TOGGLE) {                  /* flip focus, don't forward — exactly as the ISR does */
+        g_focus ^= 1;
+        if (g_focus) {
+            g_focus_gen++;
+            q = &g_gui_q;                     /* wake sentinel: byte 0 unblocks the input decoder */
+            uint32_t n0 = (q->tail + 1u) % RING_SZ;
+            if (n0 != q->head) { q->buf[q->tail] = 0; q->tail = n0; xSemaphoreGive(q->sem); }
+        }
+        return;
+    }
+    if (c == 3  && !g_focus) frtos_tty_sigint();       /* like the ISR fast path */
+    if (c == 26 && !g_focus) frtos_tty_sigtstp();
+    q = g_focus ? &g_gui_q : &g_tty_q;
+    uint32_t nt = (q->tail + 1u) % RING_SZ;
+    if (nt != q->head) {
+        q->buf[q->tail] = c; q->tail = nt;
+        xSemaphoreGive(q->sem);
     }
 }
 

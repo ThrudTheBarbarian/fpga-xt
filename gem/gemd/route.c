@@ -128,15 +128,18 @@ void gemd_flush_msgs(void)
         gem_msg m; memset(&m, 0, sizeof m);
         switch (msg[0]) {
         case WM_CLOSED:                                /* the closer. NOT gemd's decision (§3). */
+            printf("gemd: closer on wh=%d -> MSG_CLOSED (the app decides, not us)\n", hd);
             m.w[0] = GEM_MSG_CLOSED; m.w[1] = (int16_t)hd;
             send_win(hd, &m);
             break;
         case WM_MOVED:                                 /* gemd already moved the pixels: no redraw */
+            printf("gemd: moved wh=%d -> %d,%d %dx%d\n", hd, msg[4], msg[5], msg[6], msg[7]);
             m.w[0] = GEM_MSG_MOVED; m.w[1] = (int16_t)hd;
             m.w[2] = msg[4]; m.w[3] = msg[5]; m.w[4] = msg[6]; m.w[5] = msg[7];
             send_win(hd, &m);
             break;
         case WM_SIZED:                                 /* the sizer / the fuller: §12 does the rest */
+            printf("gemd: sized wh=%d -> %d,%d %dx%d\n", hd, msg[4], msg[5], msg[6], msg[7]);
             gemd_resize_surface(hd);
             break;
         case WM_TOPPED:

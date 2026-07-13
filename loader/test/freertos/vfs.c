@@ -326,7 +326,12 @@ int vfs_open(const char *path, int flags, vfs_file *f)
     const char *rel;
     vfs_mount *m = resolve(rp, &rel);
     if (!m) return -1;
+    /* CLEAR EVERY OP, not just the ones you remember. An fd slot is REUSED: whatever was open on
+     * it last left its function pointers here, and a driver that does not set a field inherits
+     * them. A regular file that inherited /dev/input's avail() (or a pty's ondup()) would be
+     * quietly wrong in a way no test would show. */
     f->read = 0; f->write = 0; f->lseek = 0; f->close = 0; f->ioctl = 0;
+    f->avail = 0; f->ondup = 0; f->nonblock = 0;
     f->size = 0; f->pos = 0; f->data = 0; f->priv = 0; f->mnt = m; f->chr = 0;
     return m->fs->open(m, rel, flags, f);
 }
