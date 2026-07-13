@@ -99,8 +99,25 @@ void _app_entry(int argc, char **argv)
     printf("gemtext: wh=%d open%s\n", hd, hold < 0 ? " — holding it open (kill me)" : "");
     fflush(stdout);
 
-    if (hold < 0) for (;;) sys_nanosleep(1000000u);      /* until killed: EOF -> gemd reaps us */
-    for (int i = 0; i < hold; i++) sys_nanosleep(1000000u);
+    /* THE EVENT LOOP — the plain AES one, and it is the same one a single-process GEM app runs.
+     * Our events come from gemd (M4): it owns the pointer, hit-tests the z-order, handles the
+     * chrome itself and sends us only what is ours — clicks in our work area, in OUR coordinates,
+     * and the messages that fall out of the chrome. WM_CLOSED is the closer being clicked, and it
+     * is a REQUEST: gemd did not close us, it asked. Closing is the app's decision (§3). */
+    int deadline = hold;                                   /* seconds; <0 = until killed */
+    for (;;) {
+        int mx, my, mb, ks, key, nc; int16_t msg[8];
+        int r = evnt_multi(MU_MESAG | MU_BUTTON | MU_KEYBD | (deadline >= 0 ? MU_TIMER : 0),
+                           1, 1, 1, 0,0,0,0,0, 0,0,0,0,0, msg,
+                           deadline >= 0 ? 1000 : 0, 0, &mx, &my, &mb, &ks, &key, &nc);
+        if (r & MU_QUIT) break;                            /* gemd is gone: nothing works now */
+        if ((r & MU_MESAG) && msg[0] == WM_CLOSED) break;  /* the closer: we agree, and we quit */
+        if ((r & MU_TIMER) && deadline >= 0 && --deadline <= 0) break;
+        if (r & MU_BUTTON)
+            printf("gemtext: click at %d,%d (MY coordinates — I have no idea where I am)\n", mx, my);
+        if (r & MU_KEYBD) printf("gemtext: key 0x%02x\n", key);
+        fflush(stdout);
+    }
 
     wind_close(hd);            /* drops our surface ref; gemd still holds its own (§11) */
     appl_exit();               /* closes the channel — gemd sees EOF either way */

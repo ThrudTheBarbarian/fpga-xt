@@ -43,6 +43,10 @@ typedef struct {
 
 static gclient     g_cl[GEMD_MAXCL];
 static gfx_surface g_plane;
+static gsurface    g_surf[GEMD_MAXW];   /* the backing store per WINDOW HANDLE. gemd keeps its own
+                                         * ref and its own capacity numbers: §12's resize is
+                                         * "does the new extent still fit?", and only gemd knows. */
+static int         g_ifd = -1;          /* /OS/dev/input — an fd, so it joins the ONE poll (M4) */
 
 /* A write to a client is advisory. If it fails the client is dying; its EOF will arrive and the
  * ordinary death path will clean up. It must NEVER take gemd down with it. */
@@ -50,6 +54,12 @@ static void reply(gclient *c, const gem_msg *m)
 {
     if (gem_send(c->fd, m) != 0)
         printf("gemd: write to pid %d failed — it is dying; EOF will clean up\n", c->pid);
+}
+
+void gemd_send_to(int ci, const gem_msg *m)
+{
+    if (ci < 0 || ci >= GEMD_MAXCL || !g_cl[ci].used) return;
+    reply(&g_cl[ci], m);
 }
 
 static void wind_error(gclient *c, int reason)
@@ -67,7 +77,9 @@ static void wind_error(gclient *c, int reason)
 static void do_wind_create(gclient *c, int ci, const gem_msg *m)
 {
     int hd = wind_create(m->w[1], m->w[2], m->w[3], m->w[4], m->w[5]);
-    if (hd <= 0) { wind_error(c, 1); return; }
+    if (hd <= 0 || hd >= GEMD_MAXW) { wind_error(c, 1); return; }
+    memset(&g_surf[hd], 0, sizeof g_surf[hd]);
+    g_surf[hd].id = -1;                                   /* NOT 0: 0 is a real shm id */
     wind_attach_surface(hd, -1, 0, 0, 0, 0, 0, ci);       /* owner recorded; no pixels yet */
 
     gem_msg r; memset(&r, 0, sizeof r);
@@ -91,6 +103,7 @@ static void do_wind_open(gclient *c, int ci, const gem_msg *m)
     wind_work_size(hd, &ww, &wh);
     if (ww <= 0 || wh <= 0) { wind_error(c, 2); return; }
 
+    if (hd < 1 || hd >= GEMD_MAXW) { wind_error(c, 2); return; }
     gsurface s;
     if (gemd_surf_create(&s, ww, wh, g_plane.w, g_plane.h) != 0) { wind_error(c, 2); return; }
 
@@ -102,6 +115,7 @@ static void do_wind_open(gclient *c, int ci, const gem_msg *m)
         printf("gemd: shm_grant(%d -> pid %d) FAILED\n", s.id, c->pid);
         gemd_surf_drop(&s); wind_error(c, 3); return;
     }
+    g_surf[hd] = s;
     wind_attach_surface(hd, s.id, s.gen, s.px, ww, wh, s.cap_w, ci);
 
     gem_msg r; memset(&r, 0, sizeof r);
@@ -147,6 +161,46 @@ static void do_damage(int ci, const gem_msg *m)
     wind_redraw_area(ox + x, oy + y, w, h);      /* the AES composites; draw_one blits the store */
 }
 
+/* THE RESIZE (§12), on the back of the AES's sizer drag. The capacity is the extent rounded up
+ * to a 64px grid, so almost every resize lands INSIDE the surface we already have:
+ *
+ *   fits  -> change the extent. Same id, same pages, same mapping, NOTHING to remap on either
+ *            side — the client just starts drawing a bigger top-left sub-rect of the same buffer.
+ *            That is the whole reason stride is the CAPACITY width and not the extent width: if
+ *            stride tracked the visible width, growing a window by one pixel would move every row.
+ *   does not fit -> a new surface, granted to the same client. The old one is dropped; the client
+ *            still holds a ref to it until it unmaps, so a composite in flight stays valid (§11).
+ */
+int gemd_resize_surface(int hd)
+{
+    if (hd < 1 || hd >= GEMD_MAXW) return -1;
+    int ci = wind_client_of(hd);
+    if (ci < 0 || ci >= GEMD_MAXCL || !g_cl[ci].used) return -1;
+    gclient *c = &g_cl[ci];
+
+    int ww, wh;
+    wind_work_size(hd, &ww, &wh);
+    if (ww <= 0 || wh <= 0) return -1;
+
+    gsurface *s = &g_surf[hd];
+    if (s->id < 0 || ww > s->cap_w || wh > s->cap_h) {          /* capacity exceeded: a new one */
+        gsurface ns;
+        if (gemd_surf_create(&ns, ww, wh, g_plane.w, g_plane.h) != 0) return -1;
+        if (sys_shm_grant(ns.id, c->pid) != 0) { gemd_surf_drop(&ns); return -1; }
+        gemd_surf_drop(s);                                      /* our ref; the client drops its own */
+        *s = ns;
+    }
+    wind_attach_surface(hd, s->id, s->gen, s->px, ww, wh, s->cap_w, ci);
+
+    gem_msg r; memset(&r, 0, sizeof r);
+    r.w[0] = GEM_MSG_SIZED; r.w[1] = (int16_t)hd;
+    r.w[2] = (int16_t)ww;      r.w[3] = (int16_t)wh;
+    r.w[4] = (int16_t)s->cap_w; r.w[5] = (int16_t)s->cap_h;
+    r.u[0] = (uint32_t)s->id;   r.u[1] = s->gen;
+    reply(c, &r);
+    return 0;
+}
+
 static void do_wind_name(int ci, const gem_msg *m)
 {
     int hd = m->w[1];
@@ -162,14 +216,12 @@ static void do_wind_name(int ci, const gem_msg *m)
 
 static void drop_window(int hd)
 {
-    gsurface s;
-    s.id = wind_surface_of(hd);
-    s.gen = wind_gen_of(hd);
-    s.px = (uint32_t *)1;                        /* non-NULL; the drop only needs the id */
+    if (hd < 1 || hd >= GEMD_MAXW) return;
+    gemd_forget_window(hd);                      /* it cannot hold the focus while it is gone */
     wind_close(hd);                              /* AES: out of the z-order, and RECOMPOSITE the
                                                   * rect it vacated — the window disappears, and
                                                   * no client was asked anything (§3) */
-    if (s.id >= 0) gemd_surf_drop(&s);           /* gemd's ref. A dead client's went with it, so
+    gemd_surf_drop(&g_surf[hd]);                 /* gemd's ref. A dead client's went with it, so
                                                   * this is the LAST one: the pages AND THE ID are
                                                   * reclaimed (§11 — the point of sys_shm_unmap) */
     wind_delete(hd);
@@ -221,6 +273,86 @@ static void client_readable(int ci)
 
 /* ---- the loop ---------------------------------------------------------------------------- */
 
+static int g_lfd = -1;                /* the "gem" service listen fd */
+
+static void accept_client(void)
+{
+    int cfd = sys_svc_accept(g_lfd);
+    if (cfd < 0) return;
+    int ci = -1;
+    for (int i = 0; i < GEMD_MAXCL; i++) if (!g_cl[i].used) { ci = i; break; }
+    if (ci < 0) { sys_close(cfd); printf("gemd: too many clients\n"); return; }
+    memset(&g_cl[ci], 0, sizeof g_cl[ci]);
+    g_cl[ci].used = 1;
+    g_cl[ci].fd   = cfd;
+    g_cl[ci].pid  = sys_chan_peer(cfd);        /* the kernel's word, not the client's */
+    printf("gemd: client pid %d connected (fd %d)\n", g_cl[ci].pid, cfd);
+}
+
+/* THE ONE WAIT. The listen fd, every client channel, and the input device — in a single poll().
+ * No special case for input, no second thread, and nothing that can wedge: gemd holds the grab,
+ * so it must never block on any one source (§3).
+ *
+ * This is ALSO the AES's event source (aes_set_events), and that is what makes the chrome work:
+ * wind_handle_click's drag and resize loops wait through aes_wait_idle, which lands here — so
+ * while a window is being dragged gemd is STILL accepting connections, still reading client
+ * messages, and still compositing damage from other clients. The modal loop is modal for the
+ * pointer, not for the server.
+ */
+static struct os_event g_iq[8];       /* one read() can bring several events; hand them out one
+                                       * at a time, because aes_wait returns one at a time */
+static int g_iqn, g_iqi;
+
+/* NEVER read the input fd unless poll() said it is readable: the read BLOCKS (a device read that
+ * returned 0 would mean EOF, so it cannot "return nothing"), and a blocking read before the poll
+ * is a gemd that never accepts a client — it would sit in read() waiting for a mouse. */
+static int gemd_events(aes_event *ev, int timeout_ms)
+{
+    for (;;) {
+        if (g_iqi < g_iqn) {                      /* a burst still in hand from the last read */
+            struct os_event oe = g_iq[g_iqi++];
+            memset(ev, 0, sizeof *ev);
+            ev->type = oe.type; ev->mx = oe.mx; ev->my = oe.my;
+            ev->button = oe.button; ev->key = oe.key; ev->shift = oe.shift;
+            if (ev->type == OS_EV_TIMER || ev->type == OS_EV_NONE) continue;   /* not an event */
+            return ev->type;                      /* OS_EV_* == AES_* by construction (xtsys.h) */
+        }
+
+        struct xt_pollfd pf[2 + GEMD_MAXCL];
+        int map[GEMD_MAXCL], np = 0, ii;
+
+        pf[0].fd = g_lfd; pf[0].events = XT_POLLIN; pf[0].revents = 0;
+        for (int i = 0; i < GEMD_MAXCL; i++) {
+            if (!g_cl[i].used) continue;
+            pf[1 + np].fd = g_cl[i].fd; pf[1 + np].events = XT_POLLIN; pf[1 + np].revents = 0;
+            map[np++] = i;
+        }
+        ii = 1 + np;
+        pf[ii].fd = g_ifd; pf[ii].events = XT_POLLIN; pf[ii].revents = 0;
+
+        int r = sys_poll(pf, ii + (g_ifd >= 0 ? 1 : 0), timeout_ms);
+        if (r < 0) {
+            if (r == -4) continue;                /* -EINTR: a signal, not a failure */
+            printf("gemd: poll -> %d\n", r);
+            memset(ev, 0, sizeof *ev); ev->type = AES_QUIT; return AES_QUIT;
+        }
+        if (r == 0) { memset(ev, 0, sizeof *ev); ev->type = AES_TIMER; return AES_TIMER; }
+
+        if (pf[0].revents & XT_POLLIN) accept_client();
+        for (int i = 0; i < np; i++)
+            if (pf[1 + i].revents & (XT_POLLIN | XT_POLLHUP | XT_POLLERR))
+                client_readable(map[i]);
+        if (g_ifd >= 0 && (pf[ii].revents & XT_POLLIN)) {   /* readable: the read cannot block now */
+            long n = sys_read(g_ifd, g_iq, sizeof g_iq);
+            if (n >= (long)sizeof(struct os_event)) {
+                g_iqn = (int)(n / (long)sizeof(struct os_event));
+                g_iqi = 0;                                  /* handed out at the top of the next lap */
+            }
+        }
+        fflush(stdout);
+    }
+}
+
 int gemd_run(void)
 {
     struct os_fbinfo fb;
@@ -246,51 +378,29 @@ int gemd_run(void)
     wind_set_desktop(GEMD_BG);           /* the fallback colour: the plane is never un-owned (§3) */
     wind_redraw();
 
-    int lfd = sys_svc_register(GEM_SERVICE);
-    if (lfd < 0) { printf("gemd: svc_register(\"%s\") -> %d (already running?)\n",
-                          GEM_SERVICE, lfd); return 1; }
-    printf("gemd: up — plane %dx%d stride %d, service \"%s\" fd %d, theme %s\n",
-           fb.w, fb.h, fb.stride, GEM_SERVICE, lfd, th ? "loaded" : "MISSING (no chrome art)");
+    for (int i = 1; i < GEMD_MAXW; i++) g_surf[i].id = -1;    /* 0 is a REAL shm id; -1 is "none" */
+
+    g_lfd = sys_svc_register(GEM_SERVICE);
+    if (g_lfd < 0) { printf("gemd: svc_register(\"%s\") -> %d (already running?)\n",
+                            GEM_SERVICE, g_lfd); return 1; }
+
+    /* INPUT IS AN FD (M4). Not SYS_input — that blocks, and a server that blocks on input cannot
+     * hear its clients. The kernel publishes events on a device and knows nothing about window
+     * servers (§2); gemd is simply the process that opened it. */
+    g_ifd = (int)sys_open(GEMD_INPUT_DEV, 0 /*O_RDONLY*/);
+    if (g_ifd < 0) printf("gemd: %s -> %d — NOTHING WILL BE CLICKABLE\n", GEMD_INPUT_DEV, g_ifd);
+    aes_set_events(gemd_events);         /* and the AES's frame drags wait through it too */
+
+    printf("gemd: up — plane %dx%d stride %d, service \"%s\" fd %d, input fd %d, theme %s\n",
+           fb.w, fb.h, fb.stride, GEM_SERVICE, g_lfd, g_ifd,
+           th ? "loaded" : "MISSING (no chrome art)");
     fflush(stdout);
 
     for (;;) {
-        struct xt_pollfd pf[1 + GEMD_MAXCL];
-        int map[GEMD_MAXCL], np = 0;
-
-        pf[0].fd = lfd; pf[0].events = XT_POLLIN; pf[0].revents = 0;
-        for (int i = 0; i < GEMD_MAXCL; i++) {
-            if (!g_cl[i].used) continue;
-            pf[1 + np].fd = g_cl[i].fd; pf[1 + np].events = XT_POLLIN; pf[1 + np].revents = 0;
-            map[np++] = i;
-        }
-
-        int r = sys_poll(pf, 1 + np, -1);          /* ONE wait, all clients. Never one at a time. */
-        if (r < 0) {
-            if (r == -4) continue;                 /* -EINTR: a signal, not a failure */
-            printf("gemd: poll -> %d\n", r);
-            return 1;
-        }
-
-        if (pf[0].revents & XT_POLLIN) {
-            int cfd = sys_svc_accept(lfd);
-            if (cfd >= 0) {
-                int ci = -1;
-                for (int i = 0; i < GEMD_MAXCL; i++) if (!g_cl[i].used) { ci = i; break; }
-                if (ci < 0) { sys_close(cfd); printf("gemd: too many clients\n"); }
-                else {
-                    memset(&g_cl[ci], 0, sizeof g_cl[ci]);
-                    g_cl[ci].used = 1;
-                    g_cl[ci].fd   = cfd;
-                    g_cl[ci].pid  = sys_chan_peer(cfd);   /* the kernel's word, not the client's */
-                    printf("gemd: client pid %d connected (fd %d)\n", g_cl[ci].pid, cfd);
-                }
-            }
-        }
-
-        for (int i = 0; i < np; i++)
-            if (pf[1 + i].revents & (XT_POLLIN | XT_POLLHUP | XT_POLLERR))
-                client_readable(map[i]);
-
+        aes_event ev;
+        int t = gemd_events(&ev, -1);    /* one wait: clients, connections and input alike */
+        if (t == AES_QUIT) return 1;
+        gemd_route(t, &ev);              /* hit-test, chrome, focus, forward (route.c) */
         fflush(stdout);
     }
 }

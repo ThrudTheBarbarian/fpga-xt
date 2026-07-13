@@ -52,6 +52,32 @@
                                      * those pixels. WM_REDRAW nearly disappearing is the whole
                                      * point of the per-window backing store. */
 
+/* ---- input (M4) — gemd -> client -------------------------------------------------------
+ * gemd owns the pointer, hit-tests the z-order, and sends an event to exactly ONE client: the
+ * focused one. A client is never told where it is on screen, so coordinates are WINDOW-LOCAL —
+ * the same space its content callback draws in (0,0 = the top-left of its work area / surface).
+ * The client cannot even express a question about another window, which is the point (§2).
+ *
+ * Chrome events never reach a client: a click on the closer, the title bar or the sizer is
+ * gemd's, and the client hears only the CONSEQUENCE (MSG_CLOSED, MSG_MOVED, MSG_SIZED). */
+#define GEM_EV_KEY       12         /* w[1]=wh w[2]=key w[3]=shift */
+#define GEM_EV_BUTTON    13         /* w[1]=wh w[2]=x w[3]=y w[4]=button (0 = release) w[5]=shift */
+#define GEM_EV_MOTION    14         /* w[1]=wh w[2]=x w[3]=y w[4]=button (buttons held) */
+
+#define GEM_MSG_CLOSED   15         /* w[1]=wh — the CLOSER was clicked. gemd does NOT close the
+                                     * window: closing is the app's decision (it may want to ask
+                                     * "save?"). The app calls wind_close when it agrees. */
+#define GEM_MSG_MOVED    16         /* w[1]=wh w[2..5]=x,y,w,h — NO redraw implied: gemd already
+                                     * has the pixels and moved them itself (§3). */
+#define GEM_MSG_SIZED    17         /* w[1]=wh w[2]=work_w w[3]=work_h w[4]=cap_w w[5]=cap_h
+                                     * u[0]=surf_id u[1]=surf_gen
+                                     * SAME surf_id  => the resize fitted inside the capacity:
+                                     *                  nothing to remap, just draw a bigger
+                                     *                  sub-rect of the SAME buffer (§12).
+                                     * NEW surf_id   => capacity was exceeded; the old surface is
+                                     *                  dropped and this one is granted instead. */
+#define GEM_MSG_ACTIVATE 18         /* w[1]=wh w[2]=1 focused / 0 lost focus */
+
 /* A window name has to fit the fixed 32-byte record: op + wh + 28 bytes. Titles are short, and
  * a variable-length message would buy 200 bytes of title at the cost of a framing rule that a
  * malformed sender could desynchronise. Truncated, deliberately. */

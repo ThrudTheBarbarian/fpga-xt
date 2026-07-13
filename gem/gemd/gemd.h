@@ -24,6 +24,12 @@
 #include "vdi/vdi.h"
 
 #define GEMD_MAXCL   24     /* clients. NFD = 32 per process is the real ceiling above this. */
+#define GEMD_MAXW    64     /* == MAXW in aes/window.c: the window list is SYSTEM-WIDE now */
+
+#define GEMD_INPUT_DEV "/OS/dev/input"   /* input as an FD, so it joins the one poll (M4). A
+                                          * blocking SYS_input could not: gemd would have to
+                                          * choose between waiting on input and waiting on its
+                                          * clients, and a window server may never block (§3). */
 
 /* A window's backing store. ORDINARY CACHED shm (§14) — deliberately NOT plv and NOT
  * XT_SHM_CONTIG: plv is uncached, and a *software* VDI writing to uncached memory is the worst
@@ -45,5 +51,13 @@ const theme *gemd_theme(void);
 
 /* server.c */
 int  gemd_run(void);
+void gemd_send_to(int ci, const gem_msg *m);   /* advisory: a dying client must never kill gemd */
+int  gemd_resize_surface(int hd);              /* §12 capacity: grow the extent, or make a new
+                                                * surface when capacity is exceeded. 0 = ok. */
+
+/* route.c — input. gemd owns the pointer; a client is told only what it is entitled to. */
+void gemd_route(int type, const aes_event *ev);
+void gemd_flush_msgs(void);                    /* AES messages (WM_*) -> the owning client */
+void gemd_forget_window(int hd);               /* it closed / its client died: drop any focus */
 
 #endif /* GEMD_H */
