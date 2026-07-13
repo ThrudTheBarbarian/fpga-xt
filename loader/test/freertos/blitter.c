@@ -58,6 +58,11 @@
 #define BL_SRC_W_LO 0x14
 #define BL_SRC_H_LO 0x16
 #define BL_FLAGS    0x18
+#define BL_PAT_PHX  0x08
+#define BL_PAT_PHY  0x09
+#define BL_PAT_LOGW 0x0A
+#define BL_PAT_DATA 0x0B
+#define BL_PAT_LOGH 0x0E
 #define BL_SRC_BASE 0x30      /* 4 bytes, LSB first */
 #define BL_SRC_STR  0x34      /* 2 bytes */
 #define BL_DST_BASE 0x36      /* 4 bytes */
@@ -75,6 +80,7 @@
 
 #define BL_CMD_RECT_FILL  0x01
 #define BL_CMD_BLOCK_BLIT 0x03
+#define BL_CMD_SYNC       0x07
 
 static inline void w8(unsigned off, uint8_t v)
 { *(volatile uint8_t *)(BLT_BASE + off) = v; }
@@ -199,24 +205,44 @@ long blit_submit(const struct xt_blit_cmd *c, int priority)
         if (!clip(ssz, sstr, c->sx, c->sy, &sw, &sh)) return -1;
         if (sw < dw) dw = sw;                             /* the smaller rect wins */
         if (sh < dh) dh = sh;
+        /* The RTL cannot barrel-shift a non-zero source X, so a shifted-parity block
+         * blit would silently produce garbage. Reject it rather than emit rubbish. */
+        if (c->sx & 1u) return -1;
         flags |= BL_F_SRC_DDR;
         w32(BL_SRC_BASE, row0(sphys, c->sx, c->sy, sstr));
         w16(BL_SRC_STR,  (uint16_t)sstr);
-        w16(BL_SRC_X_LO, 0); w16(BL_SRC_Y_LO, 0);
-        w16(BL_SRC_W_LO, (uint16_t)dw); w16(BL_SRC_H_LO, (uint16_t)dh);
+        /* SRC_X/Y carry the real coords: the engine uses their LOW BIT for 64-bit
+         * half-beat parity. Passing 0 here misaligns every odd-X blit. */
+        w16(BL_SRC_X_LO, (uint16_t)c->sx); w16(BL_SRC_Y_LO, (uint16_t)c->sy);
+        w16(BL_SRC_W_LO, (uint16_t)dw);    w16(BL_SRC_H_LO, (uint16_t)dh);
     } else if (c->op != XT_BLIT_FILL) {
         return -1;                                        /* unknown op: reject, never guess */
     }
 
+    /* FILL colour is a 1x1 PATTERN, not a colour register. Get this wrong and the
+     * engine still fills perfectly -- with whatever stale bytes are in the pattern
+     * BRAM (zeros from reset), which reads exactly like "the blit never ran". */
+    if (c->op == XT_BLIT_FILL) {
+        w8(BL_PAT_LOGW, 0); w8(BL_PAT_LOGH, 0);           /* 1x1 */
+        w8(BL_PAT_PHX,  0); w8(BL_PAT_PHY,  0);
+        w8(BL_PAT_DATA, (uint8_t)(c->color >> 24));
+        w8(BL_PAT_DATA, (uint8_t)(c->color >> 16));
+        w8(BL_PAT_DATA, (uint8_t)(c->color >> 8));
+        w8(BL_PAT_DATA, (uint8_t)(c->color));
+    }
+
     w32(BL_DST_BASE, row0(dphys, c->dx, c->dy, dstr));
     w16(BL_DST_STR,  (uint16_t)dstr);
-    w16(BL_DST_X_LO, 0); w16(BL_DST_Y_LO, 0);
-    w16(BL_DST_W_LO, (uint16_t)dw); w16(BL_DST_H_LO, (uint16_t)dh);
+    w16(BL_DST_X_LO, (uint16_t)c->dx); w16(BL_DST_Y_LO, (uint16_t)c->dy);  /* half parity */
+    w16(BL_DST_W_LO, (uint16_t)dw);    w16(BL_DST_H_LO, (uint16_t)dh);
     w8 (BL_FLAGS,    (uint8_t)flags);
     w8 (BL_RASTER,   0x3);                                /* S (source copy) */
-    if (c->op == XT_BLIT_FILL) w32(BL_SRC_BASE, c->color); /* fill colour rides the src reg */
     __asm__ volatile("dsb");
     w8 (BL_CMD, c->op == XT_BLIT_FILL ? BL_CMD_RECT_FILL : BL_CMD_BLOCK_BLIT);
+
+    /* The retire fence. seq_counter is the SYNC-BARRIER counter -- it does NOT tick
+     * per command, so a caller polling it without this would wait forever on 0. */
+    w8 (BL_CMD, BL_CMD_SYNC);
     __asm__ volatile("dsb");
-    return (long)blit_seq();
+    return (long)blit_seq() + 1;                          /* seq this command retires at */
 }
