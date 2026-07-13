@@ -2448,6 +2448,11 @@ void _app_entry(int argc, char **argv) {
         theme_load(&TH, "/System/themes/Aristo2/1x") != 0) {
         sys_write(2, "desktop: theme load FAILED\n", 27); return;
     }
+    /* 99-Desktop starts gemd and the desktop TOGETHER (gemd does not spawn us -- it must
+     * not know what a desktop is). So we race it at boot: wait for the service rather than
+     * lose the race and silently fall back to painting the plane ourselves. If gemd really
+     * is absent (run standalone), this costs 5s and then we run single-process as before. */
+    gem_connect_set_wait(5000);
     /* THE ATTACH (§4). appl_init() finds the "gem" service, and from here the desktop is an
      * ORDINARY CLIENT that gemd cannot tell apart from any other — except by one flag on its
      * window (W_BOTTOM). If gemd is NOT running it stays standalone and drives the plane

@@ -1,9 +1,21 @@
 #!/bin/sh
-# Start THE desktop. There is exactly one: /OS/bin/desktop (the AES application that
-# used to be called `aesdesk`; the old gem_wm demo of the same name is retired).
+# Start the window server and the desktop. They are SIBLINGS, not parent and child.
 #
-# This script lived ONLY on the SD card for a while, which meant the repo could not keep
-# it correct: when the binary was renamed, the card kept launching a stale `aesdesk` and
-# the board looked fine while running months-old code. It is in-tree now so `make
-# sdstage` owns it. Do not "fix" it by editing the card.
+# gemd does NOT spawn the desktop. It must never know what a desktop is -- to gemd the
+# desktop is just a client that happens to ask for a screen-sized, chromeless, bottom-most
+# window (RESPONSIBILITIES.md §2, §4). The moment gemd launches it, gemd has a policy about
+# desktops baked in, and "the desktop is just an app" stops being true.
+#
+# So both start here and they race. That is fine and deliberate: the desktop's connect to
+# the "gem" service RETRIES until gemd is listening (gem_connect_set_wait). Whoever comes
+# up second simply waits; neither has to be told about the other.
+#
+# It also means the desktop can be killed and restarted at will without touching gemd --
+# exactly the property §4 promises, and why a restarted desktop comes back UNDERNEATH the
+# apps that outlived it rather than on top of them.
+#
+# (This script lived ONLY on the SD card for a while, so the repo could not keep it
+# correct: after a rename the card happily kept launching a stale binary. It is in-tree now
+# and `make sdstage` owns it. Do not "fix" it by editing the card.)
+/OS/bin/gemd &
 /OS/bin/desktop &

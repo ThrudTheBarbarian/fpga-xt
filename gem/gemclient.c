@@ -18,9 +18,27 @@
 #include "gemclient.h"
 #include "usys.h"
 
+/* How long gem_connect() will WAIT for the "gem" service to appear. Default 0: fail at
+ * once, which is what makes appl_init() fall back to single-process GEM when there is no
+ * gemd (§5). A program that is started ALONGSIDE gemd -- the desktop, out of 99-Desktop --
+ * raises this, because the two race at boot and the loser must not lose.
+ *
+ * This is deliberately the CLIENT's problem and not gemd's: gemd does not spawn the
+ * desktop and must never know what a desktop is (§2, §4). The boot script starts both;
+ * whoever comes up second just waits. */
+static int g_wait_ms;
+void gem_connect_set_wait(int ms) { g_wait_ms = ms; }
+
 int gem_connect(void)
 {
-    return sys_svc_connect(GEM_SERVICE);       /* <0: no such service — gemd is not running */
+    int waited = 0;
+    for (;;) {
+        int fd = sys_svc_connect(GEM_SERVICE);
+        if (fd >= 0) return fd;                /* connected */
+        if (waited >= g_wait_ms) return fd;    /* gave up: no gemd -> caller runs local */
+        sys_nanosleep(50000);                  /* usec: 50 ms */
+        waited += 50;
+    }
 }
 
 /* A failed write means gemd is dying. It is not fatal HERE: the next read returns EOF, and EOF

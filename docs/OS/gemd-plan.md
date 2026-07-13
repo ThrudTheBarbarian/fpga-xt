@@ -109,6 +109,37 @@ back-buffer, no drag overlay, no `sys_input`; with no gemd it drives the plane e
 > ⚠ **Nothing is clickable under gemd yet.** Input routing is M4, and it needs kernel work:
 > `sys_input` is a blocking syscall, not a pollable fd. The desktop renders but does not respond.
 
+## 🔴 DECIDED (user, 2026-07-13): on XTOS there is NO single-process fallback
+
+**Everything goes through gemd. No exceptions.** The "single-process GEM" path — where an app
+that finds no `gem` service keeps the old behaviour and paints the plane itself — is being
+REMOVED on XTOS. It must not survive, because:
+
+- **It defeats the M7 gate.** "No app draws direct any more" is the completion criterion, and a
+  fallback whose whole purpose is *draw direct when gemd is missing* is a permanent exception.
+- **It is a silent failure mode.** If gemd is dead or slow, an app does not error — it quietly
+  paints the framebuffer and looks fine. That is the "works by accident" class of bug.
+- It doubles every AES code path for a mode nobody wants.
+
+**Not a contradiction:** the **host/SDL** build is genuinely single-process (no gemd, no plane).
+That is a different *platform* (`GEM_XTOS` undefined), not a fallback. Rule: **on XTOS,
+everything goes through gemd; on the host, single-process is the only mode.**
+
+**To do:** under `GEM_XTOS`, `appl_init()` waits for gemd and **fails hard** if it never appears
+— no local path, no plane access. The desktop's `present_rect()` / `ovl_begin()` direct-plane
+code then becomes dead, which is what M7 deletes anyway. `gem_connect_set_wait()` already
+provides the wait.
+
+## gemd does NOT spawn the desktop (decided)
+
+`99-Desktop` starts **both**, as siblings: `gemd &` then `desktop &`. They race, and the
+desktop's connect **retries** until gemd is listening. gemd must never know what a desktop is
+(§2, §4) — the moment gemd launches it, "the desktop is just an app" stops being true. It also
+means the desktop can be killed and restarted at will without touching gemd, which is the §4
+property that makes it come back *underneath* the apps that outlived it. **Verified on a cold
+boot:** `init(1)`, then `gemd` and `desktop` as siblings, desktop attaching as a `W_BOTTOM`
+client at 1920x1080.
+
 ## Wire protocol (fixed 16-bit LE words, AES-message shaped)
 
 **Client → gemd:** `WIND_CREATE {kind,x,y,w,h} -> WIND_CREATED {wh, surf_id, cap_w, cap_h}`,
