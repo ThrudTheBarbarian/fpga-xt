@@ -31,13 +31,31 @@
 #define GEM_SERVICE  "gem"          /* SYS_svc_register / SYS_svc_connect */
 
 /* client -> gemd */
-#define GEM_WIND_CREATE   1         /* w[1]=kind w[2]=x w[3]=y w[4]=w w[5]=h */
+#define GEM_WIND_CREATE   1         /* w[1]=kind w[2]=x w[3]=y w[4]=w w[5]=h (FULL rect) */
 #define GEM_DAMAGE        3         /* see below */
 #define GEM_SURF_DROP     4         /* u[0]=surf_id: the client has unmapped it (§11) */
+#define GEM_WIND_OPEN     6         /* w[1]=wh w[2..5]=x,y,w,h -> WIND_SURF + MSG_REDRAW */
+#define GEM_WIND_CLOSE    7         /* w[1]=wh */
+#define GEM_WIND_DELETE   8         /* w[1]=wh */
+#define GEM_WIND_NAME     9         /* w[1]=wh, then GEM_NAME_MAX bytes of NUL-terminated name */
 
 /* gemd -> client */
-#define GEM_WIND_CREATED  2         /* w[1]=wh w[2]=cap_w w[3]=cap_h u[0]=surf_id u[1]=surf_gen */
-#define GEM_WIND_ERROR    5         /* w[1]=reason (out of surfaces / bad request) */
+#define GEM_WIND_CREATED  2         /* w[1]=wh  (no surface yet: geometry is not final until OPEN) */
+#define GEM_WIND_ERROR    5         /* w[1]=reason (out of windows / surfaces / bad request) */
+#define GEM_WIND_SURF    10         /* w[1]=wh w[2]=work_w w[3]=work_h w[4]=cap_w w[5]=cap_h
+                                     * u[0]=surf_id u[1]=surf_gen
+                                     * The backing store is the WORK AREA, not the full window:
+                                     * chrome is gemd's (§3) and a client never sees it. */
+#define GEM_MSG_REDRAW   11         /* w[1]=wh w[2..5]=x,y,w,h (SURFACE coords).
+                                     * §3: sent for FIRST PAINT and RESIZE ONLY — never for
+                                     * occlusion, moves or topping, because gemd already holds
+                                     * those pixels. WM_REDRAW nearly disappearing is the whole
+                                     * point of the per-window backing store. */
+
+/* A window name has to fit the fixed 32-byte record: op + wh + 28 bytes. Titles are short, and
+ * a variable-length message would buy 200 bytes of title at the cost of a framing rule that a
+ * malformed sender could desynchronise. Truncated, deliberately. */
+#define GEM_NAME_MAX 27             /* + the NUL */
 
 /* Window kind bits (a mask, as in wind_create) — M1 defines only the one it honours. */
 #define GEM_W_BOTTOM  0x0001        /* insert at the BOTTOM of the z-order, never topped (§4) */

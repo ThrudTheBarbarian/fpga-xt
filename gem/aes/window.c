@@ -10,14 +10,43 @@
 #include <string.h>
 #include <stdio.h>
 
+#ifdef GEM_XTOS
+#include "gemclient.h"                  // client mode: wind_* become messages to gemd
+#endif
+
 gfx_surface *vdi_screen_target(void);   // the physical workstation's surface (VDI core)
 
-#define MAXW 16
+// ---- one file, two modes (RESPONSIBILITIES.md §5) --------------------------
+// LOCAL   single process: this list IS the window system (SDL host, gemd-less XTOS). Unchanged.
+// SERVER  gemd: this list IS the window system, for EVERY app on the machine. Chrome is drawn
+//         here, and a window's content is BLITTED from the client's backing store — gemd cannot
+//         call an app's draw callback, because that pointer is in another address space (§3).
+// CLIENT  an app under gemd: wind_* send messages. The local entry keeps only what the app owns
+//         — its content callback and its own surface.
+// (AES_LOCAL / AES_CLIENT / AES_SERVER are declared in aes.h)
+static int g_mode = AES_LOCAL;
+static int g_gemfd = -1;                // client mode: the channel to gemd
+int aes_mode(void){ return g_mode; }
+void aes_server_mode(void){ g_mode = AES_SERVER; }
+static void client_paint(int hd,int x,int y,int w,int h);   // draw OUR content -> OUR surface -> damage
+
+// MAXW was 16 PER APP. It is now the SYSTEM-WIDE window count, because the list lives in gemd.
+#define MAXW 64
 typedef struct {
     int used, kind, x, y, w, h, px,py,pw,ph;   // full rect (+ previous)
     int hidden;                                // lifted into the HW drag-overlay: skip in redraw
     char name[64];
     wind_draw_fn draw; void *ud;
+    // ---- the backing store (§3) --------------------------------------------
+    // SERVER: gemd's mapping of the client's surface — what it composites, and what lets it
+    //   move/top/reveal a window WITHOUT ASKING THE CLIENT ANYTHING.
+    // CLIENT: our own mapping — where our VDI draws, with zero IPC.
+    // LOCAL:  px == NULL, and draw_one falls back to the content callback. Unchanged.
+    gfx_surface surf;                          // stride == CAPACITY width, not extent (§12)
+    int      surf_id;                          // a HANDLE. Never an address (§13.1).
+    uint32_t surf_gen;                         // stale-damage discard (§11)
+    int      client;                           // SERVER: which client slot owns this window
+    int      vh;                               // CLIENT: our workstation, opened ONCE on surf (§10)
     wind_draw_fn info; void *infoud;           // W_INFO chrome line
     wind_draw_fn title; void *titleud;         // interactive title renderer (wind_title)
     int titlex, titley, titlew, titleh;        // last title work rect (app-drawable span)
@@ -270,9 +299,67 @@ static void draw_one(int hd, int active){
     // work area + content (clipped).  The rect is shrunk by the scrollbar column
     // when the bar shows, so the app reflows into the narrower span.
     int wx,wy,ww,wh; app_work(W,&wx,&wy,&ww,&wh);
-    if(W->draw){ int16_t clip[4]={(int16_t)wx,(int16_t)wy,(int16_t)(wx+ww-1),(int16_t)(wy+wh-1)};
-        vs_clip(H(),1,clip); W->draw(hd,wx,wy,ww,wh,W->ud); vs_clip(H(),0,clip); }
+    if(W->surf.px){
+        // SERVER: the content is the client's BACKING STORE, and we blit it. gemd holds the
+        // pixels, so it can re-composite this window on a move, a top or a reveal without the
+        // client being involved at all (§3) — that promise is the whole reason the backing
+        // store exists, and every other promise leans on it.
+        //
+        // Through gfx_blit, which is the VDI's BACKEND SEAM (gfx.h: software in gfx_soft.c, the
+        // blitter on A9). §14 requires the compositor's inner blit to go through a backend or
+        // phase 2 is a rewrite — and the VDI's backend is the one phase 2 has to swap anyway,
+        // so this is the seam, not a second one beside it.
+        //
+        // The source is the top-left ww x wh sub-rect of a surface whose stride is its CAPACITY
+        // width (§12), which gfx_blit honours via src->stride.
+        int sw = ww > W->surf.w ? W->surf.w : ww;
+        int sh = wh > W->surf.h ? W->surf.h : wh;
+        gfx_surface *d = vdi_screen_target();
+        if(d && sw>0 && sh>0) gfx_blit(d, wx,wy, &W->surf, 0,0, sw,sh);
+    } else if(W->draw){
+        // LOCAL: the app's content callback, in this same process. In CLIENT mode the same
+        // callback runs — but against our own surface, and gemd never sees it (client_paint).
+        int16_t clip[4]={(int16_t)wx,(int16_t)wy,(int16_t)(wx+ww-1),(int16_t)(wy+wh-1)};
+        vs_clip(H(),1,clip); W->draw(hd,wx,wy,ww,wh,W->ud); vs_clip(H(),0,clip);
+    }
     draw_vscroll(hd);                            // over the reserved right column
+}
+
+// ---- SERVER MODE: the narrow seam gemd uses ---------------------------------
+// gemd owns the list, but it reaches it through THESE and not by poking awin, so the window
+// layer keeps one owner. It needs exactly four things: attach a client's surface to a window,
+// ask how big the work area is (only the AES knows — chrome is its business), drop a window,
+// and find a client's windows when that client dies.
+void wind_attach_surface(int hd,int surf_id,uint32_t gen,uint32_t*px,int w,int h,int stride,int client){
+    if(hd<1||hd>=MAXW||!g_w[hd].used) return;
+    awin*W=&g_w[hd];
+    W->surf_id=surf_id; W->surf_gen=gen; W->client=client;
+    W->surf.w=w; W->surf.h=h; W->surf.stride=stride; W->surf.px=px;   // stride = CAPACITY (§12)
+}
+void wind_work_size(int hd,int*w,int*h){          // the work area = what the CLIENT draws into
+    if(hd<1||hd>=MAXW||!g_w[hd].used){ if(w)*w=0; if(h)*h=0; return; }
+    int x,y,ww,wh; app_work(&g_w[hd],&x,&y,&ww,&wh);
+    if(w)*w=ww; if(h)*h=wh;
+}
+int  wind_surface_of(int hd){ return (hd>=1&&hd<MAXW&&g_w[hd].used)?g_w[hd].surf_id:-1; }
+uint32_t wind_gen_of(int hd){ return (hd>=1&&hd<MAXW&&g_w[hd].used)?g_w[hd].surf_gen:0; }
+int  wind_client_of(int hd){ return (hd>=1&&hd<MAXW&&g_w[hd].used)?g_w[hd].client:-1; }
+int  wind_next_of_client(int client,int from){    // iterate a dead client's windows (§9 reaping)
+    for(int i=(from<1?1:from);i<MAXW;i++)
+        if(g_w[i].used && g_w[i].client==client) return i;
+    return 0;
+}
+void wind_rect_of(int hd,int*x,int*y,int*w,int*h){
+    if(hd<1||hd>=MAXW){ if(x)*x=0; if(y)*y=0; if(w)*w=0; if(h)*h=0; return; }
+    awin*W=&g_w[hd];
+    if(x)*x=W->x; if(y)*y=W->y; if(w)*w=W->w; if(h)*h=W->h;
+}
+// Work-area origin ON SCREEN: gemd maps a client's surface-coordinate damage rect through this.
+void wind_work_origin(int hd,int*x,int*y){
+    int wx,wy,ww,wh;
+    if(hd<1||hd>=MAXW||!g_w[hd].used){ if(x)*x=0; if(y)*y=0; return; }
+    app_work(&g_w[hd],&wx,&wy,&ww,&wh);
+    if(x)*x=wx; if(y)*y=wy;
 }
 
 void wind_set_desktop(uint32_t bg){ g_deskbg = bg; }
@@ -314,6 +401,13 @@ int aes_redraw_gen(void){ return g_redraw_gen; }
 // intersect with the damage bound instead of escaping it.
 void wind_redraw_area(int rx,int ry,int rw,int rh){
     g_redraw_gen++;
+    // A CLIENT has no screen to repaint (§5: it must never assume it owns one). "Repaint" for a
+    // client means its own content, into its own surface -> damage.
+    if(g_mode==AES_CLIENT){
+        for(int i=1;i<MAXW;i++) if(g_w[i].used && g_w[i].surf.px)
+            client_paint(i, 0,0, g_w[i].surf.w, g_w[i].surf.h);
+        return;
+    }
     gfx_surface *d = vdi_screen_target(); if(!d) return;
     if(rx<0){ rw+=rx; rx=0; } if(ry<0){ rh+=ry; ry=0; }
     if(rx+rw>d->w) rw=d->w-rx; if(ry+rh>d->h) rh=d->h-ry;
@@ -343,29 +437,159 @@ void wind_redraw(void){
     if(d) wind_redraw_area(0,0,d->w,d->h);
 }
 // Repaint just one window's rect (the common "only this window changed" case).
+//
+// In CLIENT mode this is what an app calls when ITS OWN CONTENT went stale — a line of text
+// changed, a list scrolled. It does NOT repaint the screen (the app has no screen): it redraws
+// the content into the app's own surface and posts one damage rect. gemd blits it and never
+// learns why. That is §3's asymmetry, and it is the same call on both sides of the wire.
 void wind_redraw_win(int hd){
     if(hd<1||hd>=MAXW||!g_w[hd].used) return;
-    awin*W=&g_w[hd]; wind_redraw_area(W->x,W->y,W->w,W->h);
+    awin*W=&g_w[hd];
+    if(g_mode==AES_CLIENT){ client_paint(hd, 0,0, W->surf.w, W->surf.h); return; }
+    wind_redraw_area(W->x,W->y,W->w,W->h);
 }
 
+// ---- CLIENT MODE -----------------------------------------------------------
+// wind_* keep their EXACT signatures and become messages. The app never learns (§5).
+//
+// The app's local entry keeps only what the app genuinely owns: its content callback, and its
+// own surface. Geometry, z-order and chrome are gemd's, and a client is not told where its
+// window is, what is above it, or whether it is visible at all.
+#ifdef GEM_XTOS
+#include "usys.h"
+
+void wind_client_attach(void){
+    if(g_mode==AES_SERVER) return;                  // gemd is nobody's client
+    int fd = gem_connect();
+    if(fd < 0) return;                              // gemd is not running -> stay LOCAL, unchanged
+    g_gemfd = fd; g_mode = AES_CLIENT;
+}
+void wind_client_detach(void){
+    if(g_mode!=AES_CLIENT) return;
+    if(g_gemfd>=0) sys_close(g_gemfd);              // gemd sees EOF and reaps our windows (§9/§11)
+    g_gemfd=-1; g_mode=AES_LOCAL;
+}
+
+// Draw our own content into our OWN surface, then post ONE damage rect. Zero IPC in the draw
+// itself: the VDI writes to ordinary cached memory at full speed, and gemd is told only "these
+// pixels changed" — never why (§3).
+static void client_paint(int hd,int x,int y,int w,int h){
+    awin*W=&g_w[hd];
+    if(!W->surf.px || !W->draw) return;
+    if(x<0){ w+=x; x=0; } if(y<0){ h+=y; y=0; }
+    if(x+w>W->surf.w) w=W->surf.w-x;
+    if(y+h>W->surf.h) h=W->surf.h-y;
+    if(w<=0||h<=0) return;
+
+    int save = aes_handle();                        // point the AES at OUR workstation (opened once
+    aes_init(W->vh, aes_theme());                   // on this surface — §10: a retarget, not a re-open)
+    int16_t clip[4]={(int16_t)x,(int16_t)y,(int16_t)(x+w-1),(int16_t)(y+h-1)};
+    vs_clip(W->vh,1,clip);
+    W->draw(hd, 0,0, W->surf.w, W->surf.h, W->ud);  // SURFACE coords: the work area starts at 0,0
+    vs_clip(W->vh,0,clip);
+    aes_init(save, aes_theme());
+
+    gem_damage_rect(g_gemfd, hd, W->surf_id, W->surf_gen, x,y,w,h);
+}
+#else
+void wind_client_attach(void){}                     // SDL host: there is no gemd, and no usys.h
+void wind_client_detach(void){}
+static void client_paint(int hd,int x,int y,int w,int h){ (void)hd;(void)x;(void)y;(void)w;(void)h; }
+#endif
+
 int wind_create(int kind,int x,int y,int w,int h){
+#ifdef GEM_XTOS
+    if(g_mode==AES_CLIENT){
+        gem_msg m; memset(&m,0,sizeof m);
+        m.w[0]=GEM_WIND_CREATE; m.w[1]=(int16_t)kind;
+        m.w[2]=(int16_t)x; m.w[3]=(int16_t)y; m.w[4]=(int16_t)w; m.w[5]=(int16_t)h;
+        if(gem_send(g_gemfd,&m)!=0) return 0;
+        if(gem_await(g_gemfd,GEM_WIND_CREATED,&m)!=0) return 0;
+        int hd=m.w[1];
+        if(hd<1||hd>=MAXW) return 0;                // gemd's handle indexes OUR table too: the
+        memset(&g_w[hd],0,sizeof g_w[hd]);          // list is system-wide now, so it fits
+        g_w[hd].used=1; g_w[hd].kind=kind;
+        g_w[hd].x=x; g_w[hd].y=y; g_w[hd].w=w; g_w[hd].h=h;
+        g_w[hd].surf_id=-1;
+        return hd;
+    }
+#endif
     for(int i=1;i<MAXW;i++) if(!g_w[i].used){
         memset(&g_w[i],0,sizeof g_w[i]); g_w[i].used=1; g_w[i].kind=kind;
-        g_w[i].x=x; g_w[i].y=y; g_w[i].w=w; g_w[i].h=h;
+        g_w[i].x=x; g_w[i].y=y; g_w[i].w=w; g_w[i].h=h; g_w[i].surf_id=-1;
         return i;
     }
     return 0;
 }
 void wind_open(int hd,int x,int y,int w,int h){
     if(hd<1||hd>=MAXW||!g_w[hd].used) return;
+#ifdef GEM_XTOS
+    if(g_mode==AES_CLIENT){
+        awin*W=&g_w[hd];
+        W->x=x; W->y=y; W->w=w; W->h=h;
+        gem_msg m; memset(&m,0,sizeof m);
+        m.w[0]=GEM_WIND_OPEN; m.w[1]=(int16_t)hd;
+        m.w[2]=(int16_t)x; m.w[3]=(int16_t)y; m.w[4]=(int16_t)w; m.w[5]=(int16_t)h;
+        if(gem_send(g_gemfd,&m)!=0) return;
+        if(gem_await(g_gemfd,GEM_WIND_SURF,&m)!=0) return;   // gemd sizes the surface: it owns the
+                                                             // chrome, so only IT knows the work area
+        int ww=m.w[2], wh2=m.w[3], cw=m.w[4];
+        W->surf_id=(int)m.u[0]; W->surf_gen=m.u[1];
+        uint32_t *px = gem_surf_map(W->surf_id);
+        if(!px){ W->surf_id=-1; return; }
+        W->surf.w=ww; W->surf.h=wh2; W->surf.stride=cw; W->surf.px=px;   // STRIDE = CAPACITY (§12)
+        vdi_init(&W->surf);                          // this surface is all the "screen" we have
+        W->vh = v_opnvwk(&W->surf);                  // ONCE, for this window's life (§10)
+
+        // FIRST PAINT. §3: WM_REDRAW survives only for the first paint and resize — every other
+        // repaint is the app deciding its own content is stale. gemd sent one; drain it and draw.
+        if(gem_await(g_gemfd,GEM_MSG_REDRAW,&m)==0)
+            client_paint(hd, m.w[2],m.w[3],m.w[4],m.w[5]);
+        return;
+    }
+#endif
     g_w[hd].x=x; g_w[hd].y=y; g_w[hd].w=w; g_w[hd].h=h; clamp_win(&g_w[hd]); clamp_scroll(&g_w[hd]);
     for(int i=0;i<g_nz;i++) if(g_z[i]==hd) return;       // already open
     g_z[g_nz++]=hd; wind_redraw_win(hd);
 }
 static void zremove(int hd){ for(int i=0;i<g_nz;i++) if(g_z[i]==hd){ for(int j=i;j<g_nz-1;j++) g_z[j]=g_z[j+1]; g_nz--; return; } }
-void wind_close(int hd){ awin*W=&g_w[hd]; int x=W->x,y=W->y,w=W->w,h=W->h; zremove(hd); wind_redraw_area(x,y,w,h); }
-void wind_delete(int hd){ if(hd>=1&&hd<MAXW){ zremove(hd); g_w[hd].used=0; } }
-void wind_set_name(int hd,const char*n){ if(hd>=1&&hd<MAXW){ snprintf(g_w[hd].name,sizeof g_w[hd].name,"%s",n?n:""); } }
+void wind_close(int hd){
+    if(hd<1||hd>=MAXW) return;
+#ifdef GEM_XTOS
+    if(g_mode==AES_CLIENT){
+        awin*W=&g_w[hd];
+        gem_msg m; memset(&m,0,sizeof m);
+        m.w[0]=GEM_WIND_CLOSE; m.w[1]=(int16_t)hd; gem_send(g_gemfd,&m);
+        if(W->surf_id>=0){ gem_surf_unmap(g_gemfd,W->surf_id); W->surf_id=-1; W->surf.px=0; }
+        return;                                     // gemd drops ITS ref when the window goes (§11)
+    }
+#endif
+    awin*W=&g_w[hd]; int x=W->x,y=W->y,w=W->w,h=W->h; zremove(hd); wind_redraw_area(x,y,w,h);
+}
+void wind_delete(int hd){
+    if(hd<1||hd>=MAXW) return;
+#ifdef GEM_XTOS
+    if(g_mode==AES_CLIENT){
+        gem_msg m; memset(&m,0,sizeof m);
+        m.w[0]=GEM_WIND_DELETE; m.w[1]=(int16_t)hd; gem_send(g_gemfd,&m);
+        g_w[hd].used=0; return;
+    }
+#endif
+    zremove(hd); g_w[hd].used=0;
+}
+void wind_set_name(int hd,const char*n){
+    if(hd<1||hd>=MAXW) return;
+    snprintf(g_w[hd].name,sizeof g_w[hd].name,"%s",n?n:"");
+#ifdef GEM_XTOS
+    if(g_mode==AES_CLIENT){
+        gem_msg m; memset(&m,0,sizeof m);          // the name rides in the fixed 32-byte record,
+        m.w[0]=GEM_WIND_NAME; m.w[1]=(int16_t)hd;  // truncated at GEM_NAME_MAX (titles are short)
+        char *dst=(char*)&m.w[2];
+        snprintf(dst,GEM_NAME_MAX+1,"%s",n?n:"");
+        gem_send(g_gemfd,&m);
+    }
+#endif
+}
 void wind_content(int hd,wind_draw_fn fn,void*ud){ if(hd>=1&&hd<MAXW){ g_w[hd].draw=fn; g_w[hd].ud=ud; } }
 void wind_content_size(int hd,int w,int h){
     if(hd<1||hd>=MAXW||!g_w[hd].used) return;

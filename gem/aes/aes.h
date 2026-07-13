@@ -124,6 +124,21 @@ enum { TE_LEFT=0, TE_RIGHT=1, TE_CNTR=2 };
 // Bind AES to a VDI workstation + theme (objc_draw/objc_find use them).
 void aes_init(int vdi_handle, const theme *th);
 
+// The workstation the AES draws through. A wind_content callback draws through THIS: under gemd
+// it is bound to the app's own backing store, and the app has no other workstation to reach for
+// (it has no screen). Locally it is whatever the app passed to aes_init. Same callback, both.
+int aes_handle(void);
+
+// One library, two modes (RESPONSIBILITIES.md §5). The mode is decided in appl_init(), NOT
+// here: aes_init merely binds a workstation and every app calls it (gemd included), so it
+// cannot be the thing that decides who is the server.
+//   LOCAL   single-process GEM. Unchanged, and what the SDL host always is.
+//   CLIENT  an app under gemd. wind_* become messages; the app never learns.
+//   SERVER  gemd itself: the window list, the z-order and the chrome are ITS.
+enum { AES_LOCAL = 0, AES_CLIENT = 1, AES_SERVER = 2 };
+int  aes_mode(void);
+void aes_server_mode(void);       // gemd, and only gemd, calls this
+
 // Absolute position of object `obj` in `tree` (walks from the root).
 void objc_offset(OBJECT *tree, int obj, int *x, int *y);
 // Draw `tree` from `start` down `depth` levels, clipped to (clx,cly,clw,clh).

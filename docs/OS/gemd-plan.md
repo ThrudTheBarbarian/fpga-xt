@@ -91,15 +91,45 @@ cap_w, cap_h}` (**same id ⇒ resize within capacity ⇒ nothing to remap**, §1
 ## Module layout
 
 ```
-gem/gemd/{server,surface,composite,chrome,route}.c   NEW (server half; in libGEM.so)
-gem/gemclient.c                                      NEW (client transport)
-gem/aes/window.c                                     GUTTED client-side; g_w[]/g_z[]/chrome -> gemd/
-loader/test/freertos/progs/gemd.c                    NEW (thin: aes_init + run)
-loader/sd/boot/99-Desktop                            -> /OS/bin/gemd &   (gemd spawns the desktop)
+gem/gemd/{server,surface,chrome,route}.c             NEW (server half; in libGEM.so)
+gem/gemclient.c                                      NEW (client transport — NOT an app API)
+gem/aes/window.c                                     one file, two modes: gemd owns g_w[]/g_z[]/chrome
+loader/test/freertos/progs/gemd.c                    NEW (thin)
+loader/sd/boot/99-Desktop                            -> /OS/bin/gemd &  THEN  /OS/bin/desktop &
 ```
-One library, two modes (§5): `aes_init()` = server, `appl_init()` = client. Keeps AES signatures
-identical. **Set the do-not-inherit mask (`stdfds[3]`) when gemd spawns the desktop** — fds 3+ are
-same-slot-inherited by default, so a spawned app would otherwise inherit gemd's channel.
+
+### gemd does NOT spawn the desktop (decided 2026-07-13 — supersedes §4's "gemd launches it")
+
+The boot script starts **gemd as a system service, then the desktop as an ordinary program**.
+Both are children of the script; gemd is the parent of neither.
+
+**Because gemd spawning it would smuggle back exactly the knowledge §4 forbids.** "gemd must
+not know what a desktop is" — but a gemd that launches one has to know such a program exists,
+where it lives, and when to restart it. §4's ordering guarantee ("gemd starts first") survives;
+its mechanism does not, and the mechanism was the part that carried the role.
+
+It also **deletes a trap instead of managing one**: the plan previously had to set the
+do-not-inherit mask (`stdfds[3]`) so the spawned desktop would not inherit gemd's channel fds
+(fds 3+ are same-slot-inherited). If gemd spawns nobody, nobody can inherit anything.
+
+Two things move to the boot script / a supervisor, where they belong:
+- **ordering** — gemd must be listening before the desktop connects (`appl_init()` retries the
+  connect briefly, so the script does not have to sleep and guess);
+- **restart** — "who brings the desktop back" is a service question, not a window-server one.
+  Which is precisely §4's point: the desktop dies, `gemd` does not notice or care, and
+  `W_BOTTOM` puts the replacement back *underneath* the apps that outlived it.
+
+### One library, two modes (§5) — and the mode is chosen in `appl_init()`, not `aes_init()`
+
+`aes_init(vdi_handle, theme)` already exists and **every app calls it today** (the desktop, every
+demo) — it binds a VDI workstation and a theme, nothing more. Making it "the server entry point"
+would turn every app into a window server. So:
+
+- **`appl_init()`** connects to `"gem"`; if the service is there the app is a **client**, and if
+  it is not (the SDL host, a single-process build) it stays **local** — today's behaviour,
+  unchanged. That *is* §5's promise ("an app written against single-process GEM compiles and runs
+  against gemd unmodified"), and it keeps the SDL testbed alive.
+- **gemd** puts the library in **server** mode explicitly.
 
 ## ⚠ Known holes and traps
 

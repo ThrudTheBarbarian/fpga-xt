@@ -5,8 +5,27 @@
 
 #include "aes/aes.h"
 
-int          aes_handle(void);     // the VDI workstation AES draws through
+// aes_handle() is declared in aes.h — a wind_content callback needs it (under gemd it is the
+// app's ONLY workstation), so it is public.
 const theme *aes_theme(void);      // the active theme
+
+// One library, two modes (RESPONSIBILITIES.md §5). appl_init() calls attach: if the "gem"
+// service is up the app becomes a CLIENT and every wind_* call becomes a message; if it is not,
+// the app stays LOCAL and nothing changes. gemd declares itself SERVER (aes_server_mode).
+void wind_client_attach(void);
+void wind_client_detach(void);
+
+// SERVER-side seam (gemd only). gemd owns the window list but reaches it through these rather
+// than poking the struct, so the window layer keeps exactly one owner.
+void     wind_attach_surface(int hd,int surf_id,uint32_t gen,uint32_t*px,
+                             int w,int h,int stride,int client);
+void     wind_work_size(int hd,int*w,int*h);       // only the AES knows: chrome is its business
+void     wind_work_origin(int hd,int*x,int*y);     // work-area origin ON SCREEN
+void     wind_rect_of(int hd,int*x,int*y,int*w,int*h);
+int      wind_surface_of(int hd);
+uint32_t wind_gen_of(int hd);
+int      wind_client_of(int hd);
+int      wind_next_of_client(int client,int from); // walk a dead client's windows (§9)
 
 // Called by evnt_multi on a button-down: if it lands in the active menu bar,
 // run the pull-down and post MN_SELECTED; returns 1 if the click was consumed.

@@ -55,8 +55,25 @@ int aes_wait_idle(aes_event *ev, int timeout_ms) {
 static int16_t mq[MQN][MQW];
 static int mqh, mqt;
 
-int  appl_init(void) { mqh = mqt = 0; return 1; }
-void appl_exit(void) {}
+/* THE MODE SWITCH (RESPONSIBILITIES.md §5, "one library, two modes").
+ *
+ * If the "gem" service is there, this app becomes a gemd CLIENT: wind_* stop touching a local
+ * window list and start sending messages, and the app never learns. If it is NOT there (the SDL
+ * host, a single-process build, gemd not running), the app stays LOCAL and behaves exactly as it
+ * always has. That is §5's promise made mechanical:
+ *
+ *     "an app written against single-process GEM compiles and runs against gemd unmodified"
+ *
+ * Note this is appl_init and not aes_init: aes_init(vdi_handle, theme) merely binds a
+ * workstation and is called by EVERY app (and by gemd itself), so it cannot be the thing that
+ * decides who is the server. gemd declares itself with aes_server_mode().
+ */
+int  appl_init(void) {
+    mqh = mqt = 0;
+    wind_client_attach();     /* -> client mode iff gemd is listening (no-op off-target) */
+    return 1;
+}
+void appl_exit(void) { wind_client_detach(); }
 void appl_write(int dest, int len, const void *msg) {
     (void)dest;
     int n = (mqt + 1) % MQN; if (n == mqh) return;     // full: drop
