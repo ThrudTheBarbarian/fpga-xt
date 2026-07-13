@@ -12,10 +12,12 @@ phase 1 is and is not). This file is the *implementation* plan and the running s
 | **M1 — gemd skeleton + one client** | **DONE, board-verified** (see below) |
 | **M2 — window list moves server-side** | **DONE, board-verified** |
 | **M3 — desktop becomes a client** | **DONE, board-verified** (see below) |
-| M4 — menu strip, grabs, liveness | |
-| M5 — resize (capacity/extent) | |
-| M6 — the XL plane | |
-| M7 — **the gate**: `SEC_PLANE` → PL0-none | |
+| **no single-process fallback on XTOS** | **DONE, board-verified** (see below) |
+| **M4 — input: routing, focus, live chrome** | **DONE, board-verified** (see below) |
+| M4b — the menu strip (§10), grabs, liveness | *owed — see "What M4 does NOT cover"* |
+| M5 — resize: client-driven (`wind_set`), scroll/content size | partly done: the SIZER works, capacity/extent proven |
+| M6 — the XL plane | *blocked by design: a client cannot place a plane — see below* |
+| M7 — **the gate**: `SEC_PLANE` → PL0-none | the last app-side plane code is now GONE, so this is a kernel flip |
 
 ## M0 (done): services + poll — block 0x500
 
@@ -106,10 +108,109 @@ A window with no chrome bits now gets no chrome (work area == full rect), so the
 a screen-sized, chromeless, bottom-most window. Under gemd it takes no framebuffer, no
 back-buffer, no drag overlay, no `sys_input`; with no gemd it drives the plane exactly as before.
 
-> ⚠ **Nothing is clickable under gemd yet.** Input routing is M4, and it needs kernel work:
-> `sys_input` is a blocking syscall, not a pollable fd. The desktop renders but does not respond.
+> ⚠ *(M3-era note, now superseded: input routing landed in M4 below — the desktop responds.)*
 
-## 🔴 DECIDED (user, 2026-07-13): on XTOS there is NO single-process fallback
+## M4 (done): INPUT — board-verified
+
+**The kernel problem was the same shape as M0's, and got the same answer.** `SYS_input` (0x700)
+BLOCKS, so gemd could not wait on input and on its client channels at once. Input is now a
+**pollable fd** — `/OS/dev/input` (`loader/test/freertos/input_dev.c`) — and gemd's loop stays
+**ONE `poll()`** over { listen fd, client channels, input fd }. No thread per source, no special
+case. And **the kernel still knows nothing about window servers** (§2): it publishes events on a
+device, and whoever holds the fd reads them. There is deliberately no kernel-side "post input to
+the gem service" path — that would put window-server policy in the kernel.
+
+- One decoder task drains the serial GUI lane into a 64-deep queue; `read()` returns whole
+  `struct os_event` records (a burst in one syscall). `SYS_input` now pops the **same queue**, so
+  there is never a second reader racing the decoder for bytes.
+- The producer stays **swappable**: when input arrives from the STM32F411 over SPI, only
+  `input_task()` changes. The kernel keeps the HW cursor sprite — free, tear-free pointer motion.
+
+**gemd's poll IS the AES's event source** (`aes_set_events`), and that is what makes the chrome
+live without a line of new hit-testing: `wind_handle_click()` — closer, title drag, sizer,
+scrollbars — is the AES's own code running in gemd, and its modal loops wait through
+`aes_wait_idle`, which lands in gemd's poll. **While a window is being dragged, gemd is still
+accepting connections and still compositing other clients' damage.** The loop is modal for the
+pointer, not for the server.
+
+`gem/gemd/route.c` adds only what sits around it: hit-test the z-order; focus follows the CLICK
+(so a `W_BOTTOM` desktop can be focused and used without ever being topped); click-to-raise
+otherwise; forward `EV_KEY`/`EV_BUTTON`/`EV_MOTION` to exactly one client in **window-local**
+coordinates; and turn the AES messages that fall out of frame interaction into wire messages for
+the window's OWNER (`MSG_CLOSED`, `MSG_MOVED`, `MSG_SIZED`).
+
+**gemd does NOT close a window when the closer is clicked.** It sends `MSG_CLOSED`; the app
+decides (it may want to ask "save changes?"). Classic GEM, and the right split.
+
+### Observed on the board (console log, real clicks over the input device)
+
+```
+gemd: click 224,320 -> wh=2 CHROME                     <- 1st click on the LOWER window: raise, consumed
+gemd: click 224,320 -> wh=2 (client 1) content         <- 2nd click: now topmost -> forwarded
+gemtext: click at 19,139 (MY coordinates — I have no idea where I am)
+gemd: click 496,160 -> wh=2 CHROME                     <- title bar
+gemd: moved wh=2 -> 296,246 600x180                    <- DRAGGED +96,+96. MSG_MOVED, no redraw.
+gemd: click 880,416 -> wh=2 CHROME                     <- the sizer grip
+gemd: sized wh=2 -> 296,246 680x266
+gemd: resize wh=2 work 670x230 -> surf 4 cap 704x256   <- exceeded cap 640x192 -> NEW surface, granted
+gemd: click 1600,896 -> wh=1 (client 0) content        <- the desktop: focused, NOT topped (§4(2))
+gemd: closer on wh=2 -> MSG_CLOSED (the app decides)   <- gemtext quits itself
+```
+
+| | |
+|---|---|
+| window-local coords | a click at screen 400,256 reaches the client as **195,75** — it is never told where it is |
+| `aes_event_win()` | a client cannot deduce WHICH of its windows an event is for (every window's content starts at 0,0), so gemd says so on the wire |
+| **W_BOTTOM is never topped** | `wind_handle_click`'s raise path did NOT honour `W_BOTTOM` (only `wind_raise` did) — a click on the desktop would have topped a screen-sized window and swallowed every app. Fixed; verified |
+| §12 capacity, live | a resize past the capacity makes a NEW surface and grants it; the client remaps and keeps drawing |
+| a dying client | `write to pid 46 failed — it is dying; EOF will clean up`. gemd survives, as §9 requires |
+
+### What M4 does NOT cover (be honest about it)
+
+- **The menu strip is §10 and is NOT done (M4b).** Under gemd the desktop does not call
+  `menu_bar()`: menus draw through the AES's workstation, which in a client is bound per-window
+  and only during a content callback. A menu strip needs its own surface (§10), which is the
+  next piece of work. The desktop's menu bar, its context menus and its `form_do` dialogs are
+  therefore **unreachable under gemd today** — the code is intact, not deleted.
+- **`wind_title` / `wind_info` / `wind_titlebtns` cannot survive the split as they are.** They
+  are *app callbacks that draw INSIDE the chrome*, and gemd cannot call a function pointer in
+  another address space (that is the one line M2 exists to break). Browser windows therefore lose
+  their breadcrumb title, their info footer and their title buttons under gemd. **This is a
+  design question, not a bug to patch**: either those become client-drawn surfaces composited
+  into the chrome, or the AES grows a declarative title model. Flagged, not guessed at.
+- **Scrollbars**: `wind_content_size()` is a local call, so gemd does not know a client's content
+  height and draws no scrollbar. Needs a `WIND_SET` message (M5).
+
+## M6 is blocked BY DESIGN, and that is the right answer
+
+The XL plane (emulator video) is placed with `SYS_xl_window(x,y,w,h)` — **screen** coordinates.
+A client does not know where its window is and may not ask (§5), and a plane is gemd's (Rule 1).
+So `xl_sync()` in `desktop.c` is now a **no-op**, deliberately: `wind_get(WF_WORKXYWH)` honestly
+returns SURFACE coordinates in client mode, and faking the placement with those numbers would put
+the emulator picture at the top-left of the screen and call it working. **M6 needs a new server
+call** ("gemd, put plane N on my window"), which is a protocol decision, not a rearrangement.
+
+## Traps found while doing M4 (do not rediscover)
+
+- **A device that starts its producer on first READ deadlocks a poller.** A poller never reads
+  until `poll()` says readable, and `poll()` never says readable until something has been
+  produced. `/dev/input` starts its decoder at **open**.
+- **A blocking device read must honour a kill** (`xt_block_check()`). Without it a process parked
+  in `read()` is unkillable — and on an event device it stays a READER, silently drinking the
+  events its replacement is waiting for. A debugging `cat /OS/dev/input` cost an hour of
+  "input is broken" that was really "input works and something else is drinking it".
+- **`vfs_open()` must clear EVERY op.** fd slots are reused; a driver that does not set a field
+  inherits the last file's function pointer.
+- **libGEM.so is cached by soname for the life of the boot.** `sdpush` + restarting gemd does
+  **not** pick up a libGEM change — the loader hands out the already-loaded image. **Reboot the
+  board.** (The HW romfs carries no libGEM, so the SD copy *is* the one that loads — but only on
+  the next cold boot.)
+- **The console's GUI lane is reachable over netcon now.** `sh_inject()` ignored the focus toggle,
+  so the pointer/key lane could only be driven from the physical serial port. One console, two
+  transports: the transport must not change what a byte means. (`` ` `` flips focus; it TOGGLES,
+  so a test script that sends it twice ends up back on the shell.)
+
+## 🔴 DECIDED (user, 2026-07-13): on XTOS there is NO single-process fallback — DONE
 
 **Everything goes through gemd. No exceptions.** The "single-process GEM" path — where an app
 that finds no `gem` service keeps the old behaviour and paints the plane itself — is being
@@ -125,10 +226,28 @@ REMOVED on XTOS. It must not survive, because:
 That is a different *platform* (`GEM_XTOS` undefined), not a fallback. Rule: **on XTOS,
 everything goes through gemd; on the host, single-process is the only mode.**
 
-**To do:** under `GEM_XTOS`, `appl_init()` waits for gemd and **fails hard** if it never appears
-— no local path, no plane access. The desktop's `present_rect()` / `ovl_begin()` direct-plane
-code then becomes dead, which is what M7 deletes anyway. `gem_connect_set_wait()` already
-provides the wait.
+**DONE, board-verified.** `wind_client_attach()` waits for gemd (`gem_connect_set_wait`, default
+2 s — "still coming up" must not look like "not there") and then **fails hard**: a message on
+stderr and `exit(1)`. No local path, no plane access.
+
+```
+xtos$ /OS/bin/gemtext          (with gemd killed)
+gem: no window server — is gemd running? (there is no single-process mode on XTOS)
+gemtext exit=1
+xtos$ /OS/bin/desktop          (waits its 5 s, then:)
+gem: no window server — is gemd running? (there is no single-process mode on XTOS)
+desktop exit=1                 (5.05 s. It did NOT paint the plane.)
+```
+
+`desktop.c`'s `present_rect()` / `present()` / `repaint()`, the `DRAG_BASE` overlay ops
+(`ovl_begin`/`move`/`end`), the `SYS_fb_wallpaper` back-buffer and `a9_events()` (its direct
+`sys_input`) are **DELETED, not disabled** — they were the last direct-plane code in an app, and
+the M7 gate is "no app draws direct any more". The desktop is now ONE mode: a client. `HV` became
+`aes_handle()`, because under gemd the workstation is bound PER WINDOW and a cached handle would
+paint window 2's content into window 1's buffer.
+
+**The host/SDL build is untouched** and still single-process: `GEM_XTOS` is undefined there, which
+is a different PLATFORM, not a fallback.
 
 ## gemd does NOT spawn the desktop (decided)
 
@@ -218,8 +337,9 @@ would turn every app into a window server. So:
   with its own children and how the fs page cache is reached. Space indices are recycled, so
   `vm_space_create` scrubs the incoming index's owner/grant bits.
 - ~~**`gem/aes/window.c:326` uses `d->w` where it means `d->stride`**~~ — **FIXED** (`729a9ca`).
-- **`input_next_event` swallows `-EINTR`** (`sprite.c:273`): `-4 < 0` is reported as a spurious
-  `OS_EV_TIMER`. The wake happens, the *reason* is lost. Moot once input is an fd gemd polls.
+- ~~**`input_next_event` swallows `-EINTR`**~~ — **moot (M4)**: the decoder now runs in a kernel
+  task that loops forever, so a lost wake *reason* costs one lap and nothing else. It was NOT
+  re-enshrined: the -4 is treated as "nothing to give", not as a timer event for anybody.
 - **`DRAG_BASE` as the §12 resize scratch:** it is inside `SEC_PLANE`, which M7 makes PL0-none,
   so the client cannot map it. **Use an ordinary shm surface for the scratch**; keep `DRAG_BASE`
   gemd-private for the move overlay. A deliberate divergence from §12.
@@ -237,10 +357,14 @@ would turn every app into a window server. So:
 
 ## Still to draw direct to the plane (the M7 gate = "no app draws direct any more")
 
-Only two: **`desktop.c`** (`present_rect()` :81 → framebuffer; `ovl_begin()` :127 → `DRAG_BASE`)
-and **`gemtext.c`** (its whole body). Nothing in `gem/` touches the plane — it goes through the
-`aes_flush_rect` / `wind_set_overlay` hooks, which is why the split is tractable.
+**NOTHING DOES, as of the no-fallback commit.** `desktop.c`'s `present_rect()` and the `DRAG_BASE`
+overlay ops are deleted; `gemtext.c` was already an ordinary client. Nothing in `gem/` touches the
+plane — it goes through the `aes_flush_rect` / `wind_set_overlay` hooks, which is why the split
+was tractable. **M7 is now a kernel flip, not an app port.**
 
 **Decided (2026-07-13): the gate locks the WHOLE `SEC_PLANE` range**, not just the framebuffer.
-So the desktop's drag-overlay writes break too — **two** things must become server calls, not one.
-The math-cop buffer (`0x2080_0000`) is a deliberate exception and stays PL0-RW.
+The math-cop buffer (`0x2080_0000`) is a deliberate exception and stays PL0-RW. Before flipping
+it, note that gemd itself must keep the plane (it is the compositor) and that `DRAG_BASE` is now
+**gemd-private** (no app writes it) — the drag currently uses the classic redraw-per-motion path
+because gemd registers no overlay hook. Wiring gemd's own `wind_set_overlay` to the HW overlay is
+a free win whenever someone wants it.
