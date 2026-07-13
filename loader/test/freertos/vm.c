@@ -306,6 +306,8 @@ uint32_t *vm_space_create(int idx, uint32_t prog_va, uint32_t prog_size, uint32_
                                                 * merely zeroing the count would LEAK them) */
     g_space_npages[idx] = 0;                   /* fresh private-page charge list */
     for (int w = 0; w < 8; w++) g_space_shm[idx][w] = 0;  /* fresh shm-mapping set (reap dropped the refs) */
+    vm_shm_forget_space(idx);                  /* ...and no shm RIGHTS inherited from the dead space
+                                                * that last used this (recycled) index */
 
     /* (b) private heap: an L2 with every page faulting -> zero-filled ON DEMAND
      * (T2-c). Physical is consumed only for pages the process actually touches. */
@@ -897,6 +899,18 @@ typedef struct {
     uint32_t flags;        /* XT_SHM_* as created */
     int      nref;
     int      used;
+    /* ---- XT_SHM_OWNED: the id is a CAPABILITY, not just a name -----------------
+     * Without these two fields any process could map ANY of the 256 ids and read or
+     * write another client's window (Rocks RESPONSIBILITIES.md §13.1: "clients name
+     * surfaces by handle... that is what stops a client blitting into someone else's
+     * memory" — which was simply not true of vm_shm_map). A gemd surface is created
+     * XT_SHM_OWNED, so ONLY the creator and the spaces it has explicitly granted may
+     * map it, and gemd grants exactly one: the client that asked for the window.
+     * `owner` and the allow bits are SPACE INDICES, and a space index is recycled, so
+     * vm_space_create scrubs both for the incoming space (below) — otherwise a new
+     * process could inherit a dead one's rights. */
+    int      owner;        /* space idx that created it (-1 = its creator is gone) */
+    uint32_t allow[(NSPACE + 31) / 32];   /* spaces the owner has granted map rights to */
 } shm_t;
 static shm_t    g_shm[NSHM];                  /* g_space_shm[] declared up top (used by vm_space_create) */
 
@@ -1018,7 +1032,7 @@ static void shm_teardown(int id)
  * pool object where it asked for physically contiguous memory. The PL's blitter and
  * compositor have no MMU and read physical addresses — handing them a page list would not
  * fail, it would render garbage and corrupt whatever followed. Fail loud. */
-int vm_shm_create(uint32_t size, uint32_t flags)
+int vm_shm_create(int idx, uint32_t size, uint32_t flags)
 {
     if (flags & ~(uint32_t)XT_SHM_SUPPORTED) return -1;   /* unhonourable request */
     uint32_t np = (size + 0xFFFu) >> 12; if (!np) np = 1;
@@ -1033,6 +1047,9 @@ int vm_shm_create(uint32_t size, uint32_t flags)
     for (int i = 0; i < SHM_LISTPP; i++) g_shm[id].listpg[i] = 0;
     g_shm[id].npages = 0; g_shm[id].nsecs = 0; g_shm[id].va = 0;
     g_shm[id].phys = 0; g_shm[id].flags = flags;
+    g_shm[id].owner = idx;                                /* the capability's root */
+    for (unsigned i = 0; i < sizeof g_shm[id].allow / sizeof g_shm[id].allow[0]; i++)
+        g_shm[id].allow[i] = 0;
 
     if (flags & XT_SHM_CONTIG) {
         /* PHYSICALLY CONTIGUOUS, from plv: what the blitter and compositor need, because
@@ -1105,9 +1122,50 @@ void *vm_shm_kaddr(int id)
 /* map shm `id` PL0-RW into space idx's SHM window -> VA (0 on failure). Idempotent per
  * space (a re-map doesn't double-count). Caller runs in space idx (its own), so the
  * TLBIALL clears any stale window entry for the freshly-installed pages. */
+/* May space `idx` map object `id`? Everything created without XT_SHM_OWNED is public —
+ * that is the pre-gemd behaviour, and the fs page cache and the shm tests rely on it. An
+ * OWNED object (every gemd surface) may be mapped only by its creator and by the spaces
+ * the creator has granted, so a client cannot map — and therefore cannot read or scribble
+ * on — another client's window by guessing its id. */
+static int shm_may_map(int idx, int id)
+{
+    if (!(g_shm[id].flags & XT_SHM_OWNED)) return 1;
+    if (idx == g_shm[id].owner) return 1;
+    return (g_shm[id].allow[idx >> 5] & (1u << (idx & 31))) != 0;
+}
+
+/* The owner hands map rights to one other space. Owner-only: a grantee cannot re-grant,
+ * so the capability does not spread. 0 on success, -1 if `idx` is not the owner. */
+int vm_shm_grant(int idx, int id, int target)
+{
+    if (id < 0 || id >= NSHM || !g_shm[id].used) return -1;
+    if (target < 0 || target >= NSPACE) return -1;
+    if (g_shm[id].owner != idx) return -1;                /* only the owner may grant */
+    uint32_t f = xt_irq_save();
+    g_shm[id].allow[target >> 5] |= (1u << (target & 31));
+    xt_irq_restore(f);
+    return 0;
+}
+
+/* Scrub every right held by (or granted to) space `idx` — called when a space is created,
+ * because space indices are RECYCLED: without this, process N+1 would inherit the shm
+ * rights of the dead process that last held its slot. */
+void vm_shm_forget_space(int idx)
+{
+    uint32_t f = xt_irq_save();
+    for (int id = 0; id < NSHM; id++) {
+        g_shm[id].allow[idx >> 5] &= ~(1u << (idx & 31));
+        if (g_shm[id].owner == idx) g_shm[id].owner = -1;  /* an orphaned surface: nobody may
+                                                            * grant it, and gemd's own ref is
+                                                            * what keeps it alive (§11) */
+    }
+    xt_irq_restore(f);
+}
+
 uint32_t vm_shm_map(int idx, int id)
 {
     if (id < 0 || id >= NSHM || !g_shm[id].used) return 0;
+    if (!shm_may_map(idx, id)) return 0;              /* not yours, and not granted to you */
     uint32_t va = g_shm[id].va;                       /* allocated at create, not id*SLOT */
     uint32_t np = g_shm[id].npages;
 

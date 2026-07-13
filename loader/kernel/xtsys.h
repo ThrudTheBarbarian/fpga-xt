@@ -132,8 +132,22 @@ struct xt_sigframe {
                               * are alive — gemd hands the client a new surface on resize and
                               * drops its ref on the old; the client maps the new and drops the
                               * old; refcount -> 0 -> freed. No handshake, nobody blocks. */
+#define SYS_shm_grant  0x206 /* (id, pid) -> 0: the OWNER of an XT_SHM_OWNED object lets ONE other
+                              * process map it. Owner-only, and a grantee cannot re-grant, so the
+                              * capability does not spread. This is what makes a surface id a
+                              * CAPABILITY rather than a name: gemd creates a window's surface and
+                              * grants it to exactly the client that asked for the window.
+                              * (vm_shm_map had NO ownership check: ANY process could map ANY of
+                              * the 256 ids and read or scribble on another client's window.) */
 
 /* shm_create flags (a1).  UNKNOWN BITS ARE REJECTED, never ignored — see below. */
+#define XT_SHM_OWNED   (1u << 1) /* the id is a CAPABILITY: only the creator, and the processes the
+                                  * creator SYS_shm_grant's, may map it. Every gemd surface is
+                                  * created with this. It is opt-in rather than the default because
+                                  * plain shm is also how a process shares a buffer with its own
+                                  * children (shmtest) and how the fs page cache is reached — those
+                                  * have no owner/grant handshake and would break. A window has one,
+                                  * and a window is the thing worth protecting. */
 #define XT_SHM_CONTIG  (1u << 0) /* physically contiguous + PL-visible (plv_alloc): the
                                   * blitter/compositor are DMA engines with NO MMU and read
                                   * physical addresses, so anything the PL touches must be
@@ -146,7 +160,7 @@ struct xt_sigframe {
  * outside this mask.  That is deliberate: it is what lets the flag word grow without a new
  * syscall number, because a program built against a NEWER flag set gets a clean failure on
  * an OLDER kernel instead of silently different memory. Widen this as each flag lands. */
-#define XT_SHM_SUPPORTED (XT_SHM_CONTIG)
+#define XT_SHM_SUPPORTED (XT_SHM_CONTIG | XT_SHM_OWNED)
 
 /* ---- /dev/blitter (Rocks RESPONSIBILITIES.md §13) ---------------------------
  * The blitter is a DMA engine with NO MMU — it takes PHYSICAL addresses — so raw register
@@ -346,6 +360,13 @@ struct xt_dirent { unsigned mode; char name[256]; };
  * channels, sockets and device nodes. */
 #define SYS_poll         0x503 /* (struct xt_pollfd *, nfds, timeout_ms) -> n ready
                                 * timeout <0 = forever, 0 = poll and return */
+#define SYS_chan_peer    0x504 /* (channel fd) -> the pid at the OTHER end (-1 if not a channel /
+                                * unknown). The kernel knows who connected; the client does not
+                                * have to say, and so cannot lie. gemd needs a TRUSTWORTHY peer
+                                * identity to SYS_shm_grant a window's surface to exactly the
+                                * process that asked for it — a pid carried in the client's own
+                                * message would be a capability handed out on the say-so of the
+                                * process being granted it. */
 #define XT_POLLIN   0x0001     /* readable (or EOF -- read() then returns 0) */
 #define XT_POLLOUT  0x0004     /* writable without blocking */
 #define XT_POLLERR  0x0008

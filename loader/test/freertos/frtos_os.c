@@ -38,6 +38,9 @@ typedef struct {
     int      wpipe;  /* channel fd: g_pipes index+1 we WRITE to. A channel is bidirectional:
                       * two pipes under one fd, so read()/write()/poll() just work on it. */
     int      svc;    /* service listen fd: g_svc index+1 (0 = not a listener) */
+    int      peer;   /* channel fd: the pid at the other end (SYS_chan_peer). The kernel knows who
+                      * connected, so a server (gemd) can grant a capability to the process that
+                      * actually asked, rather than to whatever pid that process CLAIMS to be. */
     int      con;    /* console alias (a shell's saved stdio parked on a high fd) */
     int      oflags; /* the VFS_O_* this fd was opened with (for reopen-by-path) */
     int      nonblock; /* O_NONBLOCK (via FIONBIO): a read that would block returns -EAGAIN */
@@ -72,7 +75,7 @@ static void k_pipe_close_end(fd_t *f);   /* impl below with the other pipe ops *
 typedef struct {
     int  used;
     char name[24];
-    int  q[SVC_BACKLOG][2];   /* pending connects: {c2s pipe idx, s2c pipe idx} */
+    int  q[SVC_BACKLOG][3];   /* pending connects: {c2s pipe idx, s2c pipe idx, connector pid} */
     int  nq;
 } svc_t;
 static svc_t g_svc[MAXSVC];
@@ -885,9 +888,11 @@ static long k_svc_connect(proc_t *p, const char *name)
     p->fd[fd].open = 1;
     p->fd[fd].rpipe = s2c + 1;                       /* client reads what the server sends */
     p->fd[fd].wpipe = c2s + 1;                       /* client writes to the server */
+    p->fd[fd].peer  = 0;                             /* the client learns nothing about the server */
     taskENTER_CRITICAL();
     g_svc[si].q[g_svc[si].nq][0] = c2s;
     g_svc[si].q[g_svc[si].nq][1] = s2c;
+    g_svc[si].q[g_svc[si].nq][2] = p->pid;           /* who is connecting — accept() hands it over */
     g_svc[si].nq++;
     taskEXIT_CRITICAL();
     return fd;
@@ -901,12 +906,12 @@ static long k_svc_accept(proc_t *p, int lfd)
         if (p->killed) proc_exit_self(p, 137);
         if (sig_ready(p)) return -4;                 /* -EINTR */
         stop_park(p);
-        int c2s = -1, s2c = -1;
+        int c2s = -1, s2c = -1, cpid = 0;
         taskENTER_CRITICAL();
         if (sv->nq > 0) {
-            c2s = sv->q[0][0]; s2c = sv->q[0][1];
+            c2s = sv->q[0][0]; s2c = sv->q[0][1]; cpid = sv->q[0][2];
             for (int i = 1; i < sv->nq; i++) {
-                sv->q[i-1][0] = sv->q[i][0]; sv->q[i-1][1] = sv->q[i][1];
+                sv->q[i-1][0] = sv->q[i][0]; sv->q[i-1][1] = sv->q[i][1]; sv->q[i-1][2] = sv->q[i][2];
             }
             sv->nq--;
         }
@@ -918,6 +923,7 @@ static long k_svc_accept(proc_t *p, int lfd)
             p->fd[fd].open = 1;
             p->fd[fd].rpipe = c2s + 1;               /* server reads what the client sends */
             p->fd[fd].wpipe = s2c + 1;
+            p->fd[fd].peer  = cpid;                  /* SYS_chan_peer: who this really is */
             return fd;
         }
         if (p->fd[lfd].nonblock) return -11;         /* -EAGAIN */
@@ -2728,9 +2734,22 @@ static long do_syscall(uint32_t num, long a0, long a1, long a2)
     }
     case SYS_munmap:                                         /* (addr, len) */
         return p ? vm_munmap((int)(p - g_proc), (uint32_t)a0, (uint32_t)a1) : -1;
-    case SYS_shm_create: return vm_shm_create((uint32_t)a0, (uint32_t)a1);  /* (size, flags) -> id */
+    case SYS_shm_create:                                     /* (size, flags) -> id */
+        return p ? vm_shm_create((int)(p - g_proc), (uint32_t)a0, (uint32_t)a1) : -1;
     case SYS_shm_map:    return p ? (long)vm_shm_map((int)(p - g_proc), (int)a0) : 0;  /* (id) -> VA */
     case SYS_shm_unmap:  return p ? vm_shm_unmap((int)(p - g_proc), (int)a0) : -1;    /* (id) -> 0 */
+    case SYS_shm_grant: {                                    /* (id, pid) -> 0: owner grants map rights */
+        if (!p) return -1;
+        proc_t *t = proc_by_pid((int)a1);
+        if (!t) return -1;                                   /* no such process */
+        return vm_shm_grant((int)(p - g_proc), (int)a0, (int)(t - g_proc));
+    }
+    case SYS_chan_peer: {                                    /* (channel fd) -> peer pid */
+        int fd = (int)a0;
+        if (!p || fd < 0 || fd >= NFD || !p->fd[fd].open) return -1;
+        if (!p->fd[fd].rpipe && !p->fd[fd].wpipe) return -1; /* not a channel */
+        return p->fd[fd].peer ? p->fd[fd].peer : -1;
+    }
     case SYS_fb_info: {                                      /* (struct os_fbinfo *) */
         extern void fb_info(int *, int *, int *, uint32_t *);
         struct { int w, h, stride; uint32_t addr; } *fi = (void *)a0;

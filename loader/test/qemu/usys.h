@@ -163,6 +163,10 @@ static inline int sys_svc_accept(int lfd)              /* -> channel fd; blocks.
 { return (int)__syscall(SYS_svc_accept, lfd, 0, 0); }
 static inline int sys_poll(struct xt_pollfd *fds, int nfds, int timeout_ms)
 { return (int)__syscall(SYS_poll, (long)fds, nfds, timeout_ms); }
+/* the pid at the other end of a channel fd (-1 if it isn't one). The kernel knows who
+ * connected, so a server can act on a peer identity the peer cannot forge — which is what
+ * lets gemd grant a surface capability to exactly the client that asked for the window. */
+static inline int sys_chan_peer(int fd) { return (int)__syscall(SYS_chan_peer, fd, 0, 0); }
 
 static inline int   sys_shm_create(unsigned size, unsigned flags)
 { return (int)__syscall(SYS_shm_create, (long)size, (long)flags, 0); }
@@ -171,6 +175,10 @@ static inline void *sys_shm_map(int id) { long r = __syscall(SYS_shm_map, id, 0,
  * A stale pointer into an unmapped surface FAULTS — it does not silently read whatever is
  * mapped there next. 0 on success, -1 if this process had it not mapped. */
 static inline long sys_shm_unmap(int id) { return __syscall(SYS_shm_unmap, id, 0, 0); }
+/* Owner-only: let process `pid` map this XT_SHM_OWNED object. An id is otherwise just a
+ * number — this is what makes it a capability (a gemd surface is created XT_SHM_OWNED and
+ * granted to the one client that asked for the window; no other client can map it). */
+static inline long sys_shm_grant(int id, int pid) { return __syscall(SYS_shm_grant, id, pid, 0); }
 static inline long sys_settime(unsigned unix_sec) { return __syscall(SYS_settime, (long)unix_sec, 0, 0); }
 static inline long sys_nanosleep(unsigned usec) { return __syscall(SYS_nanosleep, (long)usec, 0, 0); }
 static inline long sys_fb_info(struct os_fbinfo *fi) { return __syscall(SYS_fb_info, (long)fi, 0, 0); }

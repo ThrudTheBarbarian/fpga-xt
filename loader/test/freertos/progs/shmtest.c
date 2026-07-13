@@ -25,6 +25,20 @@ void _app_entry(int argc, char **argv)
         printf("shmtest[child]: id %d @ %p, first word = 0x%08x %s\n",
                id, (void *)p, p[0], p[0] == MAGIC ? "OK (shared read!)" : "MISMATCH");
         p[1] = 0xBEEF;                                 /* write back for the parent to read */
+
+        /* THE CAPABILITY TEST. argv[2] is an XT_SHM_OWNED object the parent created and
+         * did NOT grant us. Before XT_SHM_OWNED, vm_shm_map had no ownership check at all,
+         * so this map SUCCEEDED and any process could read or scribble on any other's
+         * window by guessing an id in 0..255. It must now fail. */
+        if (argc >= 3) {
+            int oid = atoi(argv[2]);
+            volatile unsigned *o = sys_shm_map(oid);
+            if (o) printf("shmtest[child]: FAIL — mapped un-granted OWNED id %d @ %p "
+                          "(first word 0x%08x): a surface id is NOT a capability\n",
+                          oid, (void *)o, o[0]);
+            else   printf("shmtest[child]: un-granted OWNED id %d refused OK (id is a capability)\n",
+                          oid);
+        }
         sys_exit(0);
     }
 
@@ -51,13 +65,24 @@ void _app_entry(int argc, char **argv)
     p[0] = MAGIC; p[1] = 0;
     printf("shmtest: created id %d @ %p, wrote 0x%08x\n", id, (void *)p, p[0]);
 
+    /* An OWNED object for the child to be refused (a gemd surface, in miniature). We map
+     * it ourselves — the owner always may — so it stays alive while the child probes it. */
+    int oid = sys_shm_create(4096, XT_SHM_OWNED);
+    if (oid < 0) { printf("shmtest: FAIL — XT_SHM_OWNED rejected\n"); sys_exit(1); }
+    volatile unsigned *op = sys_shm_map(oid);
+    if (!op) { printf("shmtest: FAIL — the OWNER could not map its own OWNED object\n"); sys_exit(1); }
+    op[0] = 0xDEADBEEFu;                               /* what the child must not be able to see */
+    printf("shmtest: created OWNED id %d (owner maps it OK)\n", oid);
+
     char idbuf[12]; snprintf(idbuf, sizeof idbuf, "%d", id);
-    char *av[3] = { (char *)"/System/bin/shmtest", idbuf, 0 };
-    long pid = sys_spawn(av[0], 2, av);
+    char obuf[12];  snprintf(obuf,  sizeof obuf,  "%d", oid);
+    char *av[4] = { (char *)"/System/bin/shmtest", idbuf, obuf, 0 };
+    long pid = sys_spawn(av[0], 3, av);
     if (pid >= 0) sys_waitpid((int)pid);
 
     printf("shmtest: after child, second word = 0x%04x %s\n",
            p[1], p[1] == 0xBEEF ? "OK (child wrote it -> shared write!)" : "NOT written");
+    sys_shm_unmap(oid);                                /* last ref: the OWNED object is freed */
 
     /* ---- STAGE 2: variable-size objects -----------------------------------------
      * The old kernel pinned each id to a fixed 1 MB VA slot, so NOTHING could exceed
