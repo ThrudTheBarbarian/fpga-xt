@@ -304,6 +304,15 @@ void frtos_activate_libc(xtld_obj *libc)
     sbrk_set_base((void *)brk, (void *)XTOS_HEAP_VA);
 }
 
+/* The calling process's pid, or -1 in kernel context. /dev/blitter needs it: PRIORITY is
+ * privileged (gemd only), and §13's fairness is per-PROCESS, not per-fd — an app with six
+ * windows opens seven blitter fds, and round-robin over fds would reward opening windows. */
+int frtos_current_pid(void)
+{
+    proc_t *p = cur_proc();
+    return p ? p->pid : -1;
+}
+
 static proc_t *cur_proc(void)
 {
     TaskHandle_t t = xTaskGetCurrentTaskHandle();
