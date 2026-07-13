@@ -131,14 +131,18 @@ types.
   private surface: it wraps the OS plane in a `gfx_surface`, draws, and presents.
   This is the seam the on-hardware compositor slots behind unchanged.
 
-  **M6d** brings up the **GEM window manager** (`gem/wm.c` + `theme.c`, now in
-  `libGEM.so`) on the OS plane. `/bin/desktop` does `gem_wm_init` on the plane,
-  adds two overlapping windows (each with its own backing-store surface + VDI
-  workstation), gives them FreeType title + content text via redraw callbacks,
-  then `gem_wm_draw` composites the desktop (frames + `vro_cpyfm` window blits, in
-  z-order) and `SYS_fb_present`s it — a real multi-window desktop with antialiased
-  text. Mouse/drag (`gem_wm_mouse_*`) is wired in the WM, awaiting an input
-  source (next).
+  **M6d** brought up the **GEM window manager** (`gem/wm.c` + `theme.c`, in
+  `libGEM.so`) on the OS plane, as a `/bin/desktop` demo that drew two overlapping
+  windows once and exited.
+
+  > **That demo is retired.** `/bin/desktop` is now **the** desktop — the AES
+  > application (formerly `aesdesk`): a live `evnt_multi` loop with a menu bar,
+  > icons from the registry, file browsers, dialogs from `desktop.rsc`, a hardware
+  > drag overlay, and dirty-rect compositing through a cacheable back-buffer. The
+  > old `gem_wm` demo composited *straight into the scanned plane* and repainted
+  > everything every frame, which is why it was superseded rather than extended.
+  > One desktop, one name. Wallpaper support was the demo's one unique feature and
+  > is tracked in `docs/OS/wallpaper-restore.md`.
 
 Requires `arm-none-eabi-gcc`, `ld.lld`, and `qemu-system-arm` on `PATH` (all via
 Homebrew).

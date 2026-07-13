@@ -52,7 +52,7 @@
      sigreturn/sig_async syscalls + a hidden sigreturn trampoline. All three
      delivery paths qemu-validated (`/bin/sigtest` 3/3): sync at syscall-return,
      ASYNC into a CPU-bound loop (tick-return hook), and EINTR of a blocked syscall.
-     **aesdesk-can't-kill is FIXED** — it blocks in `aes_wait` (a syscall), so EINTR
+     **desktop-can't-kill is FIXED** — it blocks in `aes_wait` (a syscall), so EINTR
      now delivers. Full design + ABI: docs/Design/process-signal-model.md.
      Kernel SIGCHLD-on-exit + SIGWINCH + soft-dispatch removal DONE (ed61752),
      symbol dedup DONE (fc6fe7d, libc-hide.map), and SA_RESTART DONE (2026-07-10 —
@@ -144,7 +144,7 @@
 - **GEMDOS via FMC RPC (Phase 3)**, **Desktop + sample apps (Phase 4)**, **Polish
   (Phase 5)** — clipboard, drag-drop, file associations, DRAW batching, font-cache,
   multitasking model. *(src: GEM-implementation.md)*
-- **Desktop media-change reaction (plumbing DONE, UX TODO)** — `aesdesk` already
+- **Desktop media-change reaction (plumbing DONE, UX TODO)** — `desktop` already
   receives `XTOS_MEDIA_CHANGE` (the kernel broadcasts it on SD insert/remove;
   delivered as a normal `MU_MESAG` via `evnt_multi` — commit a721d3b). Current
   handler is a placeholder that just logs `[desk] SD removed/inserted` to dmesg.
@@ -153,7 +153,7 @@
   reinsert (`msg[3]==1`, `msg[4]`=volume) restore/refresh them. The one-line switch
   case is all it takes to act; the plumbing hands over the event. Same pattern will
   serve future `XTOS_*` system events (net up/down, temp alarm, low memory). *(src:
-  gem/aes/aes.h `XTOS_*`, loader sd.c `media_change_msg`, aesdesk.c handler; memory
+  gem/aes/aes.h `XTOS_*`, loader sd.c `media_change_msg`, desktop.c handler; memory
   gem_xtos_messages)*
 - **VDI op gaps** — define reserved/extended-colour ops ($0xC0-0xFE, RGB-direct
   0xC1-0xCF); N6 form/bitmap cache mgmt; font-ID→`lv_font_t` table; bezier-quality

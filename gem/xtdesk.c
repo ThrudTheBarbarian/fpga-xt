@@ -2441,7 +2441,7 @@ int main(int argc, char **argv) {
 
     g_desk = gfx_surface_alloc(WIN_W, WIN_H);
     vdi_init(g_desk); HV = v_opnvwk(g_desk);
-    // label font: the SD layout first (mirrors aesdesk's /OS/fonts), then the
+    // label font: the SD layout first (mirrors the desktop's /OS/fonts), then the
     // repo copy so a bare dev tree still has text — regardless of cwd
     char fontp[320]; snprintf(fontp, sizeof fontp, "%s/OS/fonts/AovelSansRounded.ttf", base);
     font_face *ff = font_face_open(fontp);
@@ -2457,7 +2457,7 @@ int main(int argc, char **argv) {
       if (registry_open(dbp) != 0) fprintf(stderr, "xtdesk: no registry at %s\n", dbp);
       ctx_db_open(dbp); }                                // parallel read-only conn for contextMenu
 
-    // Dialog resource: the SD layout first (mirrors aesdesk's /OS), then the repo
+    // Dialog resource: the SD layout first (mirrors the desktop's /OS), then the repo
     // copy so a bare dev tree still has it — regardless of cwd.  On failure the
     // built-in hard-coded dialogs take over.
     { char rscp[320]; const char *err = NULL;

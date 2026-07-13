@@ -157,7 +157,7 @@ xt_fault: bl   fault_report
           bic  r0, r0, #(1<<24)     @   CLEAR Jazelle (J) too. If the faulting task was in
                                     @   Thumb (or its CPSR got corrupted with T=1), resuming
                                     @   an ARM thunk in Thumb state = garbage/UNDEF, and it
-                                    @   re-faults forever (the fault loop that wedged aesdesk).
+                                    @   re-faults forever (the fault loop that wedged desktop).
           msr  spsr_cxsf, r0
           movw lr, #:lower16:xtos_task_fault_exit
           movt lr, #:upper16:xtos_task_fault_exit

@@ -4,7 +4,7 @@
 > AES (`gem/aes/`): movable dialogs, keyboard mnemonics, editable text
 > fields, per-app menu bars + popup menus, and a GEM-wide drag & drop
 > mechanism. Everything is specified as AES API so the two desktop twins
-> (`gem/xtdesk.c` host / `loader/test/freertos/progs/aesdesk.c` A9) and
+> (`gem/xtdesk.c` host / `loader/test/freertos/progs/desktop.c` A9) and
 > future multi-app clients (GApplication `.so` apps, XEX class `$FFFE` GEM
 > apps — [app-launch](app-launch.md)) consume the same mechanism. Stage 1
 > is sized to unblock the FujiNet **Add Server…** dialog
@@ -490,7 +490,7 @@ offers its `/Network/<server>/…` path.
 - **`aes_flush_rect` discipline**: every new modal draw — open menus,
   popups, dialog moves, caret updates, drag feedback on hosts without the
   overlay — must flush its rect. Keep rects tight: a full-plane present
-  starves the compositor (the HDMI-drop lesson in `aesdesk.c
+  starves the compositor (the HDMI-drop lesson in `desktop.c
   present_rect`). Caret = one glyph cell; menu = the dropdown box.
 
 ## Staged implementation plan
@@ -507,7 +507,7 @@ Movable dialogs + mnemonics + Return/Esc + editable fields + TAB order.
 | `gem/aes/object.c` | `G_FTEXT` themed render + caret + mnemonic underline | +80 |
 | `gem/aes/event.c` | `aes_set_idle`, kstate pass-through | +25 |
 | `gem/xtdesk.c` | SDL modifiers + key mapping; **Add Server… dialog** (host+name+port G_FTEXT, transport G_POPUP stub as radio for now, OK/Cancel) driving daemon `add-server` | +150 |
-| `progs/aesdesk.c` | same dialog (kept line-parallel); pass `oe.shift` | +150 |
+| `progs/desktop.c` | same dialog (kept line-parallel); pass `oe.shift` | +150 |
 
 Testability: extend the headless pattern — a scripted event source
 (`aes_set_events` fed from a canned `aes_event[]`) drives `form_do`

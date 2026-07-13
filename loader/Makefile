@@ -150,6 +150,7 @@ hosttest: $(BUILD)/freertos-hosttest.elf
 BUILD_SHA   := $(shell git rev-parse --short HEAD 2>/dev/null || echo unknown)
 BUILD_DIRTY := $(shell git diff --quiet HEAD 2>/dev/null || echo -dirty)
 BUILD_ID    := $(BUILD_SHA)$(BUILD_DIRTY)
+BUILD_DATE  := $(shell date +%Y-%m-%d.%H:%M)
 .PHONY: force_build_id
 force_build_id: ;
 $(BUILD)/build_id.h: force_build_id | $(BUILD)
@@ -335,16 +336,14 @@ $(BUILD)/gemtext.so: test/freertos/progs/gemtext.c $(BUILD)/libGEM.so $(BUILD)/l
 	$(ARMCC) $(GEMCFLAGS) -Itest/qemu -c $< -o $(BUILD)/gemtext.o
 	$(LLD) -shared --hash-style=sysv -o $@ $(BUILD)/gemtext.o $(BUILD)/libGEM.so $(BUILD)/libc.so
 
-# desktop — the GEM window manager on the OS plane
-$(BUILD)/desktop.so: test/freertos/progs/desktop.c $(BUILD)/libGEM.so $(BUILD)/libc.so | $(BUILD)
-	$(ARMCC) $(GEMCFLAGS) -Itest/qemu -c $< -o $(BUILD)/desktop.o
-	$(LLD) -shared --hash-style=sysv -o $@ $(BUILD)/desktop.o $(BUILD)/libGEM.so $(BUILD)/libc.so
-
 $(BUILD)/fujiclient.o: $(GEM)/fujiclient.c $(GEM)/fujiclient.h | $(BUILD)
 	$(ARMCC) $(GEMCFLAGS) -DXT_TARGET -Ilibc-compat -Itest/qemu -c $< -o $@
-$(BUILD)/aesdesk.so: test/freertos/progs/aesdesk.c $(BUILD)/registry.o $(BUILD)/fujiclient.o $(BUILD)/net_shim.o $(BUILD)/sqlite3.o $(BUILD)/sqlite_vfs.o $(BUILD)/libGEM.so $(BUILD)/libc.so $(BUILD)/libm.so | $(BUILD)
-	$(ARMCC) $(GEMCFLAGS) -I$(SQLITE) -Itest/qemu -c $< -o $(BUILD)/aesdesk.o
-	$(LLD) -shared --hash-style=sysv -o $@ $(BUILD)/aesdesk.o $(BUILD)/registry.o $(BUILD)/fujiclient.o $(BUILD)/net_shim.o $(BUILD)/sqlite3.o $(BUILD)/sqlite_vfs.o $(BUILD)/libGEM.so $(BUILD)/libc.so $(BUILD)/libm.so
+# desktop — THE desktop (AES-based). Was `desktop`; it took the name when the old
+# gem_wm demo `desktop` was retired. Keep this full link line -- the retired rule had a
+# much shorter one, and reusing that is the easy way to break this.
+$(BUILD)/desktop.so: test/freertos/progs/desktop.c $(BUILD)/registry.o $(BUILD)/fujiclient.o $(BUILD)/net_shim.o $(BUILD)/sqlite3.o $(BUILD)/sqlite_vfs.o $(BUILD)/libGEM.so $(BUILD)/libc.so $(BUILD)/libm.so | $(BUILD)
+	$(ARMCC) $(GEMCFLAGS) -I$(SQLITE) -Itest/qemu -DDESKTOP_BUILD='"$(BUILD_ID) $(BUILD_DATE)"' -c $< -o $(BUILD)/desktop.o
+	$(LLD) -shared --hash-style=sysv -o $@ $(BUILD)/desktop.o $(BUILD)/registry.o $(BUILD)/fujiclient.o $(BUILD)/net_shim.o $(BUILD)/sqlite3.o $(BUILD)/sqlite_vfs.o $(BUILD)/libGEM.so $(BUILD)/libc.so $(BUILD)/libm.so
 
 # lua.so — /System/bin/lua: the Lua interpreter/REPL (real Lua 5.4 core from
 # xtos/lua + lua.c, linked against libc.so/libm.so). Boot scripts that are Lua
@@ -534,7 +533,7 @@ ROMFS_OVERLAY_FILES := $(shell find $(ROMFS_OVERLAY) -type f 2>/dev/null)
 ROMFS_OVERLAY_ARGS  := $(foreach f,$(ROMFS_OVERLAY_FILES),/$(patsubst $(ROMFS_OVERLAY)/%,%,$(f))=$(f))
 
 # Bundled GEM assets (tracked in ../gem, unlike the gitignored overlay): a fallback
-# font + theme packed under romfs /System, so aesdesk runs without SD assets (qemu /
+# font + theme packed under romfs /System, so the desktop runs without SD assets (qemu /
 # fresh card). Runtime paths become /System/fonts/... and /System/themes/... .
 ROMFS_ASSET_FILES := ../gem/fonts/AovelSansRounded.ttf \
                      ../gem/themes/Aristo2/1x/artwork.tex \
@@ -546,11 +545,11 @@ ROMFS_ASSET_ARGS := /fonts/AovelSansRounded.ttf=../gem/fonts/AovelSansRounded.tt
                     /themes/Aristo2/1x/theme.ini=../gem/themes/Aristo2/1x/theme.ini
 
 # The authored desktop dialog resource (New…, Confirm, Add-Server): shipped to the
-# SD at /OS/Apps/Desktop (sdstage), and packed into the romfs so aesdesk finds a
+# SD at /OS/Apps/Desktop (sdstage), and packed into the romfs so the desktop finds a
 # copy at /System/OS/Apps/Desktop when there is no SD (qemu / a bare card).
 DESKTOP_RSC := ../gem/resources/desktop.rsc
 
-$(BUILD)/romfs.bin: $(BUILD)/mkromfs $(BUILD)/tnfs.so $(BUILD)/fujinetd.so $(BUILD)/fuji.so $(BUILD)/toybox.so $(BUILD)/sqlite3.so $(BUILD)/pipetest.so $(BUILD)/hello.so $(BUILD)/motd.so $(BUILD)/usestr.so $(BUILD)/echo.so $(BUILD)/libc_test.so $(BUILD)/gemtext.so $(BUILD)/desktop.so $(BUILD)/aesdesk.so $(BUILD)/regtest.so $(BUILD)/locktest.so $(BUILD)/lntest.so $(BUILD)/fstest.so $(BUILD)/lua.so $(BUILD)/init.so $(BUILD)/faultprog.so $(BUILD)/vmtest.so $(BUILD)/demandtest.so $(BUILD)/stacktest.so $(BUILD)/wxtest.so $(BUILD)/cowtest.so $(BUILD)/sharetext.so $(BUILD)/shmtest.so $(BUILD)/finictor.so $(BUILD)/mmaptest.so $(BUILD)/modetest.so $(BUILD)/ttytest.so $(BUILD)/jobctl.so $(BUILD)/socktest.so $(BUILD)/httpd.so $(BUILD)/nstress.so $(BUILD)/dmesg.so $(BUILD)/mem.so $(BUILD)/badpoke.so $(BUILD)/stackpoke.so $(BUILD)/dropbearkey.so $(BUILD)/dropbear.so $(BUILD)/sshd.so $(BUILD)/netup.so $(BUILD)/ssh.so $(BUILD)/scp.so $(BUILD)/strace.so $(BUILD)/sigtest.so $(BUILD)/libutil.so $(BUILD)/libGEM.so $(BUILD)/libm.so $(BUILD)/libxtos.so $(BUILD)/libc.so test/freertos/Registry.db $(DESKTOP_RSC) $(ROMFS_OVERLAY_FILES) $(ROMFS_ASSET_FILES) $(BUILD)/blittest.so
+$(BUILD)/romfs.bin: $(BUILD)/mkromfs $(BUILD)/tnfs.so $(BUILD)/fujinetd.so $(BUILD)/fuji.so $(BUILD)/toybox.so $(BUILD)/sqlite3.so $(BUILD)/pipetest.so $(BUILD)/hello.so $(BUILD)/motd.so $(BUILD)/usestr.so $(BUILD)/echo.so $(BUILD)/libc_test.so $(BUILD)/gemtext.so $(BUILD)/desktop.so $(BUILD)/regtest.so $(BUILD)/locktest.so $(BUILD)/lntest.so $(BUILD)/fstest.so $(BUILD)/lua.so $(BUILD)/init.so $(BUILD)/faultprog.so $(BUILD)/vmtest.so $(BUILD)/demandtest.so $(BUILD)/stacktest.so $(BUILD)/wxtest.so $(BUILD)/cowtest.so $(BUILD)/sharetext.so $(BUILD)/shmtest.so $(BUILD)/finictor.so $(BUILD)/mmaptest.so $(BUILD)/modetest.so $(BUILD)/ttytest.so $(BUILD)/jobctl.so $(BUILD)/socktest.so $(BUILD)/httpd.so $(BUILD)/nstress.so $(BUILD)/dmesg.so $(BUILD)/mem.so $(BUILD)/badpoke.so $(BUILD)/stackpoke.so $(BUILD)/dropbearkey.so $(BUILD)/dropbear.so $(BUILD)/sshd.so $(BUILD)/netup.so $(BUILD)/ssh.so $(BUILD)/scp.so $(BUILD)/strace.so $(BUILD)/sigtest.so $(BUILD)/libutil.so $(BUILD)/libGEM.so $(BUILD)/libm.so $(BUILD)/libxtos.so $(BUILD)/libc.so test/freertos/Registry.db $(DESKTOP_RSC) $(ROMFS_OVERLAY_FILES) $(ROMFS_ASSET_FILES) $(BUILD)/blittest.so
 	$(BUILD)/mkromfs $@ \
 	    /OS/Apps/Desktop/desktop.rsc=$(DESKTOP_RSC) \
 	    /bin/faultprog=$(BUILD)/faultprog.so \
@@ -584,7 +583,6 @@ $(BUILD)/romfs.bin: $(BUILD)/mkromfs $(BUILD)/tnfs.so $(BUILD)/fujinetd.so $(BUI
 	    /bin/libc_test=$(BUILD)/libc_test.so \
 	    /bin/gemtext=$(BUILD)/gemtext.so \
 	    /bin/desktop=$(BUILD)/desktop.so \
-	    /bin/aesdesk=$(BUILD)/aesdesk.so \
 	    /bin/regtest=$(BUILD)/regtest.so \
 	    /bin/locktest=$(BUILD)/locktest.so \
 	    /bin/lntest=$(BUILD)/lntest.so \
@@ -694,7 +692,7 @@ $(BUILD)/hwromfs/romfs_blob.h: $(BUILD)/romfs-hw.bin
 # login shell exists before the links do)
 SDSTAGE := $(BUILD)/sdstage
 .PHONY: sdstage
-sdstage: $(BUILD)/toybox.so $(BUILD)/sqlite3.so $(BUILD)/libGEM.so $(BUILD)/libxtos.so $(BUILD)/libm.so $(BUILD)/libutil.so $(BUILD)/aesdesk.so $(BUILD)/desktop.so $(BUILD)/gemtext.so $(BUILD)/regtest.so $(BUILD)/tnfs.so $(BUILD)/fujinetd.so $(BUILD)/fuji.so $(DESKTOP_RSC) $(ROMFS_OVERLAY_FILES) $(ROMFS_ASSET_FILES)
+sdstage: $(BUILD)/toybox.so $(BUILD)/sqlite3.so $(BUILD)/libGEM.so $(BUILD)/libxtos.so $(BUILD)/libm.so $(BUILD)/libutil.so $(BUILD)/desktop.so $(BUILD)/gemtext.so $(BUILD)/regtest.so $(BUILD)/tnfs.so $(BUILD)/fujinetd.so $(BUILD)/fuji.so $(DESKTOP_RSC) $(ROMFS_OVERLAY_FILES) $(ROMFS_ASSET_FILES)
 	@rm -rf $(SDSTAGE)
 	@mkdir -p $(SDSTAGE)/OS/bin $(SDSTAGE)/OS/library $(SDSTAGE)/OS/etc $(SDSTAGE)/OS/boot $(SDSTAGE)/OS/fonts $(SDSTAGE)/OS/themes/Aristo2/1x $(SDSTAGE)/OS/Apps/Desktop/Spaces/1
 	cp sd/boot/* $(SDSTAGE)/OS/boot/
@@ -702,7 +700,6 @@ sdstage: $(BUILD)/toybox.so $(BUILD)/sqlite3.so $(BUILD)/libGEM.so $(BUILD)/libx
 	cp $(BUILD)/toybox.so  $(SDSTAGE)/OS/bin/toybox
 	cp $(BUILD)/toybox.so  $(SDSTAGE)/OS/bin/sh
 	cp $(BUILD)/sqlite3.so $(SDSTAGE)/OS/bin/sqlite3
-	cp $(BUILD)/aesdesk.so $(SDSTAGE)/OS/bin/aesdesk
 	cp $(BUILD)/desktop.so $(SDSTAGE)/OS/bin/desktop
 	cp $(BUILD)/gemtext.so $(SDSTAGE)/OS/bin/gemtext
 	cp $(BUILD)/regtest.so $(SDSTAGE)/OS/bin/regtest

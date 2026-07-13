@@ -1,4 +1,4 @@
-/* /bin/aesdesk — the XTOS AES desktop on the A9 (the loader-side port of
+/* /bin/desktop — THE XTOS desktop on the A9 (AES-based; the loader-side port of
  * gem/xtdesk.c, which is the same desktop on the SDL host testbed — keep the
  * two structurally aligned).
  *
@@ -2339,24 +2339,38 @@ void _app_entry(int argc, char **argv) {
     (void)argc; (void)argv;
 
     struct os_fbinfo fb;
-    if (sys_fb_info(&fb) != 0) { sys_write(2, "aesdesk: no display plane\n", 26); return; }
+#ifndef DESKTOP_BUILD
+#define DESKTOP_BUILD "unknown"
+#endif
+    /* Say WHICH desktop this is, at boot, in dmesg. The SD's copy runs whenever it can
+     * run, so "a desktop is on screen" tells you nothing about which binary it came
+     * from -- a stale SD build looks exactly like a fresh one. Do not remove. */
+    {
+        char vb[96]; int n = 0;
+        const char *p = "[desk] desktop build " DESKTOP_BUILD "\n";
+        while (p[n] && n < (int)sizeof vb - 1) { vb[n] = p[n]; n++; }
+        vb[n] = 0;
+        sys_klog(vb, n);
+    }
+
+    if (sys_fb_info(&fb) != 0) { sys_write(2, "desktop: no display plane\n", 26); return; }
     PW = fb.w; PH = fb.h;
 
     /* Composite into the reserved, cacheable WM back-buffer region (SYS_fb_wallpaper
      * -> WALLPAPER_BASE, mapped Normal-WB in the MMU) — fast alpha blending in the
      * D-cache — then blit it to the strided, non-cacheable plane once on present. */
     struct os_fbinfo wp;
-    if (sys_fb_wallpaper(&wp) != 0 || !wp.addr) { sys_write(2, "aesdesk: no back-buffer\n", 24); return; }
+    if (sys_fb_wallpaper(&wp) != 0 || !wp.addr) { sys_write(2, "desktop: no back-buffer\n", 24); return; }
     static gfx_surface bb_s;
     bb_s.w = wp.w; bb_s.h = wp.h; bb_s.stride = wp.stride; bb_s.px = (uint32_t *)wp.addr;
     g_fb = fb; g_bb = &bb_s;
 
     /* Prefer the SD font (/OS, user-overridable); fall back to the one bundled in
-     * romfs (/System, always present — lets aesdesk run in qemu / on a card with no
+     * romfs (/System, always present — lets desktop run in qemu / on a card with no
      * fonts installed, instead of aborting at boot). */
     font_face *face = font_face_open("/OS/fonts/AovelSansRounded.ttf");
     if (!face) face = font_face_open("/System/fonts/AovelSansRounded.ttf");
-    if (!face) { sys_write(2, "aesdesk: font load FAILED\n", 26); return; }
+    if (!face) { sys_write(2, "desktop: font load FAILED\n", 26); return; }
     vdi_init(g_bb); HV = v_opnvwk(g_bb);
     font_face_set_tracking(face, 1); vdi_set_face(face);
 
@@ -2364,20 +2378,20 @@ void _app_entry(int argc, char **argv) {
     if (read_default("/OS/themes", tn, sizeof tn)) snprintf(td, sizeof td, "/OS/themes/%s/1x", tn);
     else                                           snprintf(td, sizeof td, "/OS/themes/Aristo2/1x");
     /* SD theme first (user-overridable); fall back to the Aristo2 pack bundled in
-     * romfs so aesdesk runs in qemu / on a card with no themes installed. */
+     * romfs so desktop runs in qemu / on a card with no themes installed. */
     if (theme_load(&TH, td) != 0 &&
         theme_load(&TH, "/System/themes/Aristo2/1x") != 0) {
-        sys_write(2, "aesdesk: theme load FAILED\n", 27); return;
+        sys_write(2, "desktop: theme load FAILED\n", 27); return;
     }
     aes_init(HV, &TH); appl_init();
     wind_set_desktop(0x30507800u);
 
     if (registry_open("/OS/var/registry.db") != 0)
-        sys_write(2, "aesdesk: no registry (/OS/var/registry.db)\n", 43);
+        sys_write(2, "desktop: no registry (/OS/var/registry.db)\n", 43);
     ctx_db_open("/OS/var/registry.db");              // parallel read-only conn for contextMenu
 
     /* Dialog resource: the SD layout first (/OS, user-overridable), then the copy
-     * bundled in romfs (/System) so aesdesk has it in qemu / on a bare card.  No
+     * bundled in romfs (/System) so desktop has it in qemu / on a bare card.  No
      * host fopen here — read the bytes then rscload_mem().  On failure the built-in
      * hard-coded dialogs take over. */
     { static const char *const rscp[] = { "/OS/Apps/Desktop/desktop.rsc",
@@ -2395,7 +2409,7 @@ void _app_entry(int argc, char **argv) {
           if (got == (long)st.size) g_rsc = rscload_mem(buf, st.size, &err);
           free(buf);
       }
-      if (!g_rsc) sys_write(2, "aesdesk: no desktop.rsc — using built-in dialogs\n", 49); }
+      if (!g_rsc) sys_write(2, "desktop: no desktop.rsc — using built-in dialogs\n", 51); }
 
     build_desktop();
     wind_set_desktop_content(deskcontent, NULL);

@@ -2,7 +2,7 @@
  *
  *   mac$ tftp <board-ip>            (or curl tftp://<ip>/...)
  *   tftp> binary
- *   tftp> put aesdesk /OS/bin/aesdesk
+ *   tftp> put desktop /OS/bin/desktop
  *   tftp> get /OS/etc/motd
  *
  * Writes stream through the fs task (KFS_WRITEOPEN/WRITEBLOCK/WRITECLOSE —

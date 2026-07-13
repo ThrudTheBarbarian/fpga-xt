@@ -124,7 +124,7 @@ static void build_confirm(RSC *r) {
     link_flat(t, 3);
 }
 
-// ---- tree 3: Add-Server (mirrors aesdesk add_server_dialog) ---------------
+// ---- tree 3: Add-Server (mirrors desktop add_server_dialog) ---------------
 static void build_addserver(RSC *r) {
     int base = rsc_alloc_objects(r, 14);
     rsc_add_tree(r, base);

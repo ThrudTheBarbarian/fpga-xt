@@ -134,7 +134,7 @@ special-case. Dissolves the original read/signal/sigaction bind ambiguity.
 - shim `signal`/`sigaction` install the kernel disposition **and** mirror into
   `g_sigact` (dual-write) so the legacy SIGCHLD/SIGWINCH soft-dispatch keeps working.
 
-**This fixes aesdesk-can't-kill**: aesdesk blocks in `aes_wait` (a syscall) → EINTR
+**This fixes desktop-can't-kill**: desktop blocks in `aes_wait` (a syscall) → EINTR
 delivers, so it's now signalable/killable. (docs/NextSteps.md motivating case.)
 
 ### DONE (2026-07-10, commit ed61752) — kernel SIGCHLD/SIGWINCH + soft-path removal
