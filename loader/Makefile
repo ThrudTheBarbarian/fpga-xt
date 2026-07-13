@@ -393,7 +393,7 @@ TOYBOX_APPLETS := toybox [ arch ascii base32 base64 basename bunzip2 bzcat \
     reboot top touch true ts uname uniq uptime reset xxd unix2dos unlink uudecode uuencode uuidgen vi wc which zcat
 TOYBOX_ALIASES := $(foreach a,$(TOYBOX_APPLETS),/bin/$(a)=$(BUILD)/toybox.so)
 $(BUILD)/toybox/objects.list:
-	tools/build-toybox.sh
+	BUILDDIR=$(BUILD) tools/build-toybox.sh
 $(BUILD)/posix_shim.o: test/freertos/libs/posix_shim.c kernel/xtsys.h test/qemu/usys.h | $(BUILD)
 	$(ARMCC) -marm -mcpu=cortex-a9 -mfloat-abi=softfp -mfpu=neon-vfpv3 -fpic -Os -fno-builtin \
 	    -D_GNU_SOURCE -Ilibc-compat -Inewlib-pic/include -Itest/qemu -Ikernel -c $< -o $@
@@ -618,7 +618,6 @@ $(BUILD)/romfs.bin: $(BUILD)/mkromfs $(BUILD)/tnfs.so $(BUILD)/fujinetd.so $(BUI
 	    /bin/fujinetd=$(BUILD)/fujinetd.so \
 	    /bin/fuji=$(BUILD)/fuji.so \
 	    /test/Registry.db=test/freertos/Registry.db \
-	    /bin/sh=$(BUILD)/toybox.so \
 	    /bin/lua=$(BUILD)/lua.so \
 	    /bin/sqlite3=$(BUILD)/sqlite3.so \
 	    $(TOYBOX_ALIASES) \

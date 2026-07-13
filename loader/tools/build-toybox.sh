@@ -11,7 +11,9 @@ set -e
 
 LOADER=$(cd "$(dirname "$0")/.." && pwd)
 TB=$(cd "$LOADER/../third_party/toybox" && pwd)
-OUT="$LOADER/build/toybox"
+# Honour the Makefile's BUILD (make BUILD=build-<who>), like build-dropbear.sh: a private build
+# dir is how two agents build this tree at once without racing each other. Defaults to build/.
+OUT="$LOADER/${BUILDDIR:-build}/toybox"
 mkdir -p "$OUT"
 
 # In-tree build (toybox's kconfig resolves generated/Config.in relative to
