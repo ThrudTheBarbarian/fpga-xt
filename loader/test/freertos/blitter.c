@@ -74,12 +74,15 @@
 #define BL_ST_QFULL (1u << 1)
 
 #define BL_F_BLEND   (1u << 0)
+#define BL_F_BILINEAR (1u << 1)
 #define BL_F_SRC_DDR (1u << 2)
 #define BL_F_AOVER   (1u << 4)
 #define BL_F_DST_DDR (1u << 5)
 
 #define BL_CMD_RECT_FILL  0x01
 #define BL_CMD_BLOCK_BLIT 0x03
+#define BL_CMD_SCALED     0x04
+#define BL_CMD_SRC_BLIT   0x08
 #define BL_CMD_SYNC       0x07
 
 static inline void w8(unsigned off, uint8_t v)
@@ -186,7 +189,31 @@ long blit_submit(const struct xt_blit_cmd *c, int priority)
     if (!dphys) return -1;                                /* not a live contiguous surface */
     uint32_t dstr = g_stride[c->dst_id];
     uint32_t dw = c->dw, dh = c->dh;
-    if (!clip(dsz, dstr, c->dx, c->dy, &dw, &dh)) return -1;
+
+    /* Which engine command actually implements what the caller asked for.
+     *
+     * BLOCK_BLIT (0x03) HAS NO BLEND PATH. The RTL honours FLAGS.BLEND only on CMD
+     * 0x01/0x02 (fill/line) and 0x04/0x06 (scaled) -- see q_blend_mode / q_sc_blend
+     * in xt_blitter.sv. Setting BLEND on a 0x03 is not an error, it is IGNORED, and
+     * the client silently gets an OPAQUE copy. Per-pixel alpha-over of a source
+     * surface is SRC_BLIT (0x08) + SRC_AOVER -- the same FSM path the font renderer
+     * already uses for glyph coverage, just with a 4 B/px RGBA source instead of a
+     * 1 B/px coverage one. That is gemd's window-onto-framebuffer composite. */
+    uint8_t cmd;
+    if (c->op == XT_BLIT_SCALE)      cmd = BL_CMD_SCALED;
+    else if (c->op == XT_BLIT_COPY)  cmd = (c->flags & XT_BLITF_BLEND) ? BL_CMD_SRC_BLIT
+                                                                       : BL_CMD_BLOCK_BLIT;
+    else if (c->op == XT_BLIT_FILL)  cmd = BL_CMD_RECT_FILL;
+    else return -1;                                       /* unknown op: reject, never guess */
+
+    {   /* A SCALE must never be silently CLAMPED: shrinking the dst rect without
+         * touching the src rect changes the scale factor, so the client would get a
+         * quietly WRONG image instead of a clipped one. Reject it. */
+        uint32_t cdw = dw, cdh = dh;
+        if (!clip(dsz, dstr, c->dx, c->dy, &cdw, &cdh)) return -1;
+        if (c->op == XT_BLIT_SCALE && (cdw != dw || cdh != dh)) return -1;
+        dw = cdw; dh = cdh;
+    }
 
     /* leave FIFO headroom: a client must never be able to starve gemd's composite */
     int spins = 0;
@@ -195,28 +222,35 @@ long blit_submit(const struct xt_blit_cmd *c, int priority)
     }
 
     uint32_t flags = BL_F_DST_DDR;
-    if (c->flags & XT_BLITF_BLEND) flags |= BL_F_BLEND | BL_F_AOVER;
+    if (c->flags & XT_BLITF_BLEND)
+        flags |= (cmd == BL_CMD_SRC_BLIT) ? BL_F_AOVER : BL_F_BLEND;
+    if ((c->flags & XT_BLITF_BILINEAR) && cmd == BL_CMD_SCALED)
+        flags |= BL_F_BILINEAR;
 
-    if (c->op == XT_BLIT_COPY) {
+    if (c->op == XT_BLIT_COPY || c->op == XT_BLIT_SCALE) {
         uint32_t sphys = surf_phys(c->src_id, &ssz);
         if (!sphys) return -1;
         uint32_t sstr = g_stride[c->src_id];
-        uint32_t sw = dw, sh = dh;                        /* 1:1 block blit */
-        if (!clip(ssz, sstr, c->sx, c->sy, &sw, &sh)) return -1;
-        if (sw < dw) dw = sw;                             /* the smaller rect wins */
-        if (sh < dh) dh = sh;
-        /* The RTL cannot barrel-shift a non-zero source X, so a shifted-parity block
-         * blit would silently produce garbage. Reject it rather than emit rubbish. */
-        if (c->sx & 1u) return -1;
+
+        /* BLOCK_BLIT has no source barrel-shift in the RTL, so an odd source X would
+         * silently emit shifted garbage. SRC_BLIT and SCALED read per-pixel and do
+         * not care. */
+        if ((c->sx & 1u) && cmd == BL_CMD_BLOCK_BLIT) return -1;
+
+        uint32_t sw = (c->op == XT_BLIT_SCALE) ? c->sw : dw;
+        uint32_t sh = (c->op == XT_BLIT_SCALE) ? c->sh : dh;
+        uint32_t csw = sw, csh = sh;
+        if (!clip(ssz, sstr, c->sx, c->sy, &csw, &csh)) return -1;
+        if (csw != sw || csh != sh) return -1;            /* source rect runs off the surface */
+        if (c->op == XT_BLIT_COPY) { dw = csw; dh = csh; }
+
         flags |= BL_F_SRC_DDR;
         w32(BL_SRC_BASE, row0(sphys, c->sx, c->sy, sstr));
         w16(BL_SRC_STR,  (uint16_t)sstr);
-        /* SRC_X/Y carry the real coords: the engine uses their LOW BIT for 64-bit
-         * half-beat parity. Passing 0 here misaligns every odd-X blit. */
+        /* SRC_X/Y carry the REAL coords: the engine takes their low bit as the 64-bit
+         * half-beat parity. Passing 0 misaligns every odd-X blit. */
         w16(BL_SRC_X_LO, (uint16_t)c->sx); w16(BL_SRC_Y_LO, (uint16_t)c->sy);
-        w16(BL_SRC_W_LO, (uint16_t)dw);    w16(BL_SRC_H_LO, (uint16_t)dh);
-    } else if (c->op != XT_BLIT_FILL) {
-        return -1;                                        /* unknown op: reject, never guess */
+        w16(BL_SRC_W_LO, (uint16_t)sw);    w16(BL_SRC_H_LO, (uint16_t)sh);
     }
 
     /* FILL colour is a 1x1 PATTERN, not a colour register. Get this wrong and the
@@ -238,7 +272,7 @@ long blit_submit(const struct xt_blit_cmd *c, int priority)
     w8 (BL_FLAGS,    (uint8_t)flags);
     w8 (BL_RASTER,   0x3);                                /* S (source copy) */
     __asm__ volatile("dsb");
-    w8 (BL_CMD, c->op == XT_BLIT_FILL ? BL_CMD_RECT_FILL : BL_CMD_BLOCK_BLIT);
+    w8 (BL_CMD, cmd);
 
     /* The retire fence. seq_counter is the SYNC-BARRIER counter -- it does NOT tick
      * per command, so a caller polling it without this would wait forever on 0. */

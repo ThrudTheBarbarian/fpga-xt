@@ -165,8 +165,18 @@ struct xt_sigframe {
  * pixels are in memory", and only a fence can say that — with a queued engine, drawing was
  * never synchronous; priority merely exposes an assumption that was already false. */
 #define XT_BLIT_FILL   1        /* rect fill with `color` */
-#define XT_BLIT_COPY   2        /* block blit: src rect -> dst rect */
-#define XT_BLITF_BLEND (1u<<0)  /* alpha-blend over the destination (not replace) */
+#define XT_BLIT_COPY   2        /* block blit: src rect -> dst rect (1:1) */
+#define XT_BLIT_SCALE  3        /* scaled blit: src sw x sh -> dst dw x dh.
+                                 * ⚠ DOES NOT WORK ON THE CURRENT BITSTREAM. The driver
+                                 * programs it per spec and the engine accepts it, but the
+                                 * RTL's SCALED path (CMD 0x04/0x06) writes NOTHING when the
+                                 * surfaces are DDR descriptors -- verified on silicon, even
+                                 * at 1:1 with no scaling. It works plane->plane, which is the
+                                 * only way vitis ever used it. Needs an HDL fix; until then
+                                 * do NOT composite through SCALE. Alpha and 1:1 COPY are
+                                 * both verified good. */
+#define XT_BLITF_BLEND    (1u<<0)  /* alpha-blend over the destination (not replace) */
+#define XT_BLITF_BILINEAR (1u<<1)  /* SCALE only: bilinear taps, else nearest-neighbour */
 
 struct xt_blit_cmd {
     uint16_t op;         /* XT_BLIT_* */
@@ -175,6 +185,7 @@ struct xt_blit_cmd {
     int32_t  src_id;     /* HANDLE; ignored for FILL */
     uint16_t dx, dy, dw, dh;
     uint16_t sx, sy;
+    uint16_t sw, sh;     /* SCALE: source extent. COPY/FILL: ignored. */
     uint32_t color;      /* FILL: RGBA-8888 */
 };
 struct xt_blit_surf { int32_t id; uint32_t stride; };   /* stride in BYTES per row */
