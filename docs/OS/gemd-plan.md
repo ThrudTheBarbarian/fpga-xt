@@ -47,6 +47,7 @@ client and touches no framebuffer.
 | **stride rule proven, not assumed** | 600 is deliberately NOT a multiple of the 64px quantum, so **stride (640) != extent width (600)**. Plane probes: white to x=799, fallback colour at 800 **and at 839** (the capacity edge) — the compositor blits the EXTENT while reading rows at the CAPACITY pitch. A 640-wide window would have passed this test while broken. |
 | client killed | window disappears; both probed pixels revert to the fallback colour; **gemd is not the client's parent — death arrives as channel EOF, never SIGCHLD** |
 | **no leak, 21 cycles** | the surface id is **always 0** — reclaimed every time. `surf_gen` climbs 1..21 (monotonic by design: it is the stale-damage discriminator). A leaking id would have walked 0,1,2,... and died at 256. |
+| **two clients at once** | two windows, surfaces 0 and 1, two pids. Kill one -> gemd drops **only** its window and surface; **the survivor's pixels stay up while its client is asleep** — gemd recomposited from the backing store without asking anyone anything (§3, the promise everything else leans on). A third client then gets the **reclaimed id 0** back while the live one keeps 1: reclamation is *exact*, not merely monotonic. |
 | capability | `shmtest`'s child is REFUSED an un-granted `XT_SHM_OWNED` id (before this it could map it and read another process's window), while ordinary shm sharing still works both ways. |
 
 **The surface-capability hole is closed** (`194a966`): `XT_SHM_OWNED` + `SYS_shm_grant`
