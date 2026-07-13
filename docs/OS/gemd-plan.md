@@ -11,7 +11,7 @@ phase 1 is and is not). This file is the *implementation* plan and the running s
 | **M0 — the channel** | **DONE, board-verified** (commit `3c6f5b4`) |
 | **M1 — gemd skeleton + one client** | **DONE, board-verified** (see below) |
 | **M2 — window list moves server-side** | **DONE, board-verified** |
-| M3 — desktop becomes a client | |
+| **M3 — desktop becomes a client** | **DONE, board-verified** (see below) |
 | M4 — menu strip, grabs, liveness | |
 | M5 — resize (capacity/extent) | |
 | M6 — the XL plane | |
@@ -87,6 +87,27 @@ windows, surfaces 0 and 1.
 > `MAXW` was **16 per app**; it is now **64, system-wide**, because the list lives in gemd.
 > `gem/gemd/composite.c` is **deleted**: §14 asks for *a* backend seam for the inner blit, and
 > the VDI's (`gfx_blit`) is the one phase 2 has to swap anyway. Two seams is worse than one.
+
+## M3 (done): the desktop is an ordinary client — board-verified
+
+Verified on the board, and it is §4's whole claim:
+
+1. gemd + desktop (as a **client**) + gemtext. Chrome is gemd's, content is the client's,
+   `work area 590x144` from a 600x180 window.
+2. **Kill the desktop → gemtext survives, intact and still composited**, on gemd's fallback
+   colour where the wallpaper used to be. An app outlived the desktop.
+3. **Restart the desktop → it comes back UNDERNEATH gemtext**, which is the point. It is created
+   **last**, so without `W_BOTTOM` meaning *insert at the bottom* — not merely *never topped by a
+   click* — a screen-sized window would land on TOP and swallow the session: every app invisible,
+   machine apparently dead. `W_BOTTOM`, not `W_ROOT`: a z-order **position**, not a **role**,
+   because gemd must not know what a desktop is.
+
+A window with no chrome bits now gets no chrome (work area == full rect), so the desktop is just
+a screen-sized, chromeless, bottom-most window. Under gemd it takes no framebuffer, no
+back-buffer, no drag overlay, no `sys_input`; with no gemd it drives the plane exactly as before.
+
+> ⚠ **Nothing is clickable under gemd yet.** Input routing is M4, and it needs kernel work:
+> `sys_input` is a blocking syscall, not a pollable fd. The desktop renders but does not respond.
 
 ## Wire protocol (fixed 16-bit LE words, AES-message shaped)
 
@@ -178,6 +199,10 @@ would turn every app into a window server. So:
   when the VDI's blitter backend moves — one change, not two.
 - `MAXW = 16` (`window.c:15`) becomes a **system-wide** limit once it lives in gemd. Raise it.
 - `NFD = 32` per process caps gemd at ~30 clients. Fine for now; know it is there.
+- **⚠ ORPHANS ARE NEVER REAPED** (kernel bug, not gemd's). A process whose parent has exited
+  (e.g. anything started from an ssh shell that then closed) stays in `ps` forever after it dies:
+  `kill -0 <pid>` says "No such process" while `ps` still lists it. It looked exactly like "two
+  desktops are running" during the M3 test. Orphans need re-parenting to a reaper (init/pid 1).
 
 ## Still to draw direct to the plane (the M7 gate = "no app draws direct any more")
 
