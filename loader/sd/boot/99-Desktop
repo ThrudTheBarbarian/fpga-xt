@@ -1,0 +1,9 @@
+#!/bin/sh
+# Start THE desktop. There is exactly one: /OS/bin/desktop (the AES application that
+# used to be called `aesdesk`; the old gem_wm demo of the same name is retired).
+#
+# This script lived ONLY on the SD card for a while, which meant the repo could not keep
+# it correct: when the binary was renamed, the card kept launching a stale `aesdesk` and
+# the board looked fine while running months-old code. It is in-tree now so `make
+# sdstage` owns it. Do not "fix" it by editing the card.
+/OS/bin/desktop &
