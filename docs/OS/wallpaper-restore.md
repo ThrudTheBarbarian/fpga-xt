@@ -1,14 +1,29 @@
 # TASK: restore wallpaper to the desktop
 
-**Status: OPEN.** Wallpaper support was **lost** when the old `desktop.c` (the `gem_wm` demo)
-was retired and `aesdesk` took its name (2026-07-13). This file preserves the code and — more
-importantly — the reason a straight copy-paste **will not work**.
+**Status: DONE (2026-07-13).** Wallpaper is restored — but *not* by putting the old code
+back. It is now **content the desktop owns**, which is the shape §4 asks for. Verified on
+hardware: `/OS/wallpaper/road.pnm` renders.
 
-`aesdesk`/`desktop` has **no wallpaper support at all**. It sets a flat colour:
+## How it was actually done
 
-```c
-wind_set_desktop(0x30507800u);      /* progs/desktop.c (was aesdesk.c) */
-```
+The wallpaper lives in **the desktop's own shm surface** (`sys_shm_create` + `sys_shm_map`,
+ordinary pooled memory — `L2_SHM` maps it **cacheable**, so the decode and the per-frame blit
+are both cheap). `deskcontent()` blits it as the bottom layer, clipped to the damage rect, and
+the icons draw on top. Missing/unparseable file → the procedural gradient, so the desktop never
+depends on SD content existing.
+
+Three things fall out, and they are why the old code was *not* simply restored:
+
+- **No privileged region.** It never touches `WALLPAPER_BASE` (now the compositing
+  back-buffer) and adds **no** new user to the `SEC_PLANE` range that is scheduled to go
+  PL0-none. Restoring the old code verbatim would have done both — actively working against
+  the phase-1 gate.
+- **The 8 MB objection is gone.** The original code noted a 1080p backdrop was too big for the
+  per-process heap. Variable-size shm removed that constraint; this is its first real user.
+- **It survives the gemd migration unchanged.** When the desktop becomes a gemd client, the
+  surface simply comes from gemd instead of from shm directly. The drawing code does not move.
+
+The historical notes below are kept because they explain *why* the obvious approach is wrong.
 
 ## ⚠ Why this is not a copy-paste
 

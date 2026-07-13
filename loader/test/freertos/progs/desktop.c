@@ -200,8 +200,71 @@ static void build_desktop(void) {
 }
 static void clear_sel(void) { for (int i = 1; i <= n_icons; i++) desk[i].ob_state &= ~OS_SELECTED; }
 
+/* ---- wallpaper ------------------------------------------------------------
+ * The desktop is an ordinary app, so its wallpaper is CONTENT: it lives in a surface
+ * the desktop owns (ordinary pooled shm -- cacheable, so the decode and the per-frame
+ * blit are cheap), NOT in a privileged plane every process can write.
+ *
+ * The retired gem_wm desktop decoded straight into WALLPAPER_BASE. That region is now
+ * this program's entire compositing back-buffer (g_bb), so the old approach cannot come
+ * back -- and it should not: WALLPAPER_BASE is inside the SEC_PLANE range that is
+ * scheduled to go PL0-none. Owning the pixels ourselves is what the gemd design (§4)
+ * asks for, and it needs no privileged region at all.
+ *
+ * Absent or unreadable /OS/wallpaper/<name> -> procedural gradient, so the desktop
+ * always has a backdrop and never depends on SD content being present. */
+static gfx_surface  g_wall;
+static int          g_wall_ok;
+
+static void wall_gradient(gfx_surface *wp)          /* deep blue -> desktop blue */
+{
+    for (int y = 0; y < wp->h; y++) {
+        int t = wp->h > 1 ? y * 255 / (wp->h - 1) : 0;
+        uint8_t r = (uint8_t)(0x1a + (0x30 - 0x1a) * t / 255);
+        uint8_t g = (uint8_t)(0x2a + (0x50 - 0x2a) * t / 255);
+        uint8_t b = (uint8_t)(0x40 + (0x78 - 0x40) * t / 255);
+        uint32_t c = GFX_RGB(r, g, b);
+        uint32_t *row = wp->px + (size_t)y * wp->stride;
+        for (int x = 0; x < wp->w; x++) row[x] = c;
+    }
+}
+
+static void wall_init(int w, int h)
+{
+    int id = sys_shm_create((unsigned)((size_t)w * h * 4), 0);   /* pooled, cacheable */
+    if (id < 0) return;                                          /* no wallpaper: flat bg */
+    uint32_t *px = (uint32_t *)sys_shm_map(id);
+    if (!px) return;
+    g_wall.w = w; g_wall.h = h; g_wall.stride = w; g_wall.px = px;
+
+    char name[128], path[192];
+    if (read_default("/OS/wallpaper", name, sizeof name)) {
+        snprintf(path, sizeof path, "/OS/wallpaper/%s", name);
+        /* exact plane-sized image: decode straight into our surface */
+        if (img_load(path, &g_wall)) { g_wall_ok = 1; return; }
+        /* any other size: decode + scale to fit, then take the pixels */
+        gfx_surface *raw = img_load(path, NULL);
+        if (raw) {
+            gfx_surface *sc = img_scale(raw, w, h);
+            gfx_surface_free(raw);
+            if (sc) {
+                for (int y = 0; y < h; y++)
+                    memcpy(g_wall.px + (size_t)y * g_wall.stride,
+                           sc->px    + (size_t)y * sc->stride, (size_t)w * 4);
+                gfx_surface_free(sc);
+                g_wall_ok = 1;
+                return;
+            }
+        }
+    }
+    wall_gradient(&g_wall);
+    g_wall_ok = 1;
+}
+
 static void deskcontent(int hd, int wx, int wy, int ww, int wh, void *ud) {
     (void)hd; (void)ud;
+    if (g_wall_ok)                                 // backdrop first, only the damaged part
+        gfx_blit(g_bb, wx, wy, &g_wall, wx, wy, ww, wh);
     aes_icon_label_style(1);                       // desktop: over the dark backdrop
     objc_draw(desk, 0, 2, wx, wy, ww, wh);
 }
@@ -2384,7 +2447,8 @@ void _app_entry(int argc, char **argv) {
         sys_write(2, "desktop: theme load FAILED\n", 27); return;
     }
     aes_init(HV, &TH); appl_init();
-    wind_set_desktop(0x30507800u);
+    wind_set_desktop(0x30507800u);   /* fallback flat colour, if wallpaper is unavailable */
+    wall_init(PW, PH);
 
     if (registry_open("/OS/var/registry.db") != 0)
         sys_write(2, "desktop: no registry (/OS/var/registry.db)\n", 43);
