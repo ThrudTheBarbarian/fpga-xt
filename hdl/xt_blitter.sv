@@ -2500,6 +2500,16 @@ module xt_blitter #(
                         // Row complete — flush any pending pixels
                         state <= S_PEND;
                     end else begin
+                        // Segment origin for the burst AW (seg_raw_addr = dst_row_base
+                        // + seg_cx*4).  ONLY S_SEG (rect/line/font) and BL_READ (block
+                        // blit) used to write seg_cx — the SC_* states never did, so a
+                        // scaled blit inherited the previous command's last segment
+                        // column and wrote its whole rect that many pixels to the right
+                        // (off the end of a narrow surface = "the engine wrote
+                        // nothing").  Capture it when a burst STARTS: the burst is
+                        // empty exactly when burst_len==0 and no half-beat is pending.
+                        if (burst_len == 5'd0 && !beat_lo_filled)
+                            seg_cx <= cx;
                         sc_raddr_q <= sc_raddr_next;   // for SC_READ's addr bookkeeping
                         if (sc_pixel_valid_q && sc_pixel_addr_q == sc_raddr_next) begin
                             // Cache hit — pixel already in sc_pixel_q
@@ -2687,7 +2697,13 @@ module xt_blitter #(
                         // bottom edge the "next" column/row clamps to the last
                         // in-rect one, so taps never read neighbouring content
                         // (which at upscale smears in as a coloured edge streak).
+                        //
+                        // Capture the burst's segment origin for S_AW — see the note
+                        // in SC_CALC.  SC_BL_RD is re-entered once per tap with cx
+                        // held, so the repeat assignments are the same value.
                         logic [31:0] bl_col0, bl_col1, bl_addr, row1_add;
+                        if (burst_len == 5'd0 && !beat_lo_filled)
+                            seg_cx <= cx;
                         // bl_col0 = current src column addr (pre-accumulated — no deep
                         // add); bl_col1 = next column = +4 bytes, edge-clamped to bl_col0
                         // at the right edge (sx_step+1 >= src_w).

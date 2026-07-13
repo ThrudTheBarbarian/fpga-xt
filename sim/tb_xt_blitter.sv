@@ -684,6 +684,103 @@ module tb_xt_blitter;
     endtask
 
     // ----------------------------------------------------------------
+    // SCALED after a WIDE command — the seg_cx staleness reproducer.
+    //
+    // The SC_* states never assign seg_cx, but S_AW derives the burst address
+    // from it (seg_raw_addr = dst_row_base + seg_cx*4).  So a scaled blit
+    // inherits whatever column the LAST multi-segment fill/blit left behind and
+    // writes its entire rect that many pixels to the right.  Every scaled test
+    // above passes only because it follows a <=32px-wide command, which leaves
+    // seg_cx == 0.  Run the identical scaled blit after a 376px fill (which
+    // leaves seg_cx = 352) and it lands 352 pixels off — off the end of a
+    // narrow surface, i.e. "the engine wrote nothing".  (docs/bugs/scaled-blit-ddr.md)
+    task test_scaled_after_wide();
+        logic [31:0] da, got, exp; int errs;
+        $display("=== Test: SCALED DDR after a WIDE fill (seg_cx staleness) ===");
+        clear_logs(); errs = 0;
+        // src 2x2 @ 0x30100000 stride 8
+        mem[mem_idx(32'h3010_0000)] = 64'h22222222_11111111;  // (1,0)=B (0,0)=A
+        mem[mem_idx(32'h3010_0008)] = 64'h44444444_33333333;  // (1,1)=D (0,1)=C
+        // pre-dirty the whole dst surface (4 rows x 4 px, stride 16) so a
+        // displaced write cannot be mistaken for a correct one.
+        for (int j = 0; j < 4; j++)
+          for (int i = 0; i < 4; i++) begin
+            da = 32'h3030_0000 + j*16 + i*4;
+            mem[mem_idx(da)][(da[2] ? 32 : 0) +: 32] = 32'hDEADBEEF;
+          end
+        write_reg(16'hD4E0,8'h00); write_reg(16'hD4E1,8'h00); write_reg(16'hD4E2,8'h10); write_reg(16'hD4E3,8'h30);
+        write_reg(16'hD4E4,8'd8);  write_reg(16'hD4E5,8'd0);
+        write_reg(16'hD4E6,8'h00); write_reg(16'hD4E7,8'h00); write_reg(16'hD4E8,8'h30); write_reg(16'hD4E9,8'h30);
+        write_reg(16'hD4EA,8'd16); write_reg(16'hD4EB,8'd0);
+        write_reg(16'hD4C0,8'd0); write_reg(16'hD4C1,8'd0); write_reg(16'hD4C2,8'd0); write_reg(16'hD4C3,8'd0);
+        write_reg(16'hD4C4,8'd2); write_reg(16'hD4C5,8'd0); write_reg(16'hD4C6,8'd2); write_reg(16'hD4C7,8'd0);
+        write_reg(16'hD4B0,8'd0); write_reg(16'hD4B1,8'd0); write_reg(16'hD4B2,8'd0); write_reg(16'hD4B3,8'd0);
+        write_reg(16'hD4B4,8'd4); write_reg(16'hD4B5,8'd0); write_reg(16'hD4B6,8'd4); write_reg(16'hD4B7,8'd0);
+        write_reg(16'hD4C8,8'h24);   // FLAGS: SRC_DDR(2) | DST_DDR(5)
+        write_reg(16'hD4BC,8'h04);   // CMD = SCALED nearest
+        wait_idle();
+        write_reg(16'hD4C8,8'h00);
+        if (w_addr_q.size() != 0)
+            $display("  (engine issued %0d write beats, first at %08h; dst ROW0 = 30300000)",
+                     w_addr_q.size(), w_addr_q[0]);
+        else
+            $display("  (engine issued NO write beats at all)");
+        for (int j = 0; j < 4; j++)
+          for (int i = 0; i < 4; i++) begin
+            da  = 32'h3030_0000 + j*16 + i*4;
+            got = mem[mem_idx(da)][(da[2] ? 32 : 0) +: 32];
+            case ({j[1], i[1]})
+              2'b00: exp = 32'h11111111; 2'b01: exp = 32'h22222222;
+              2'b10: exp = 32'h33333333; default: exp = 32'h44444444;
+            endcase
+            if (got !== exp) begin errs++; $display("  dst(%0d,%0d) got %08x exp %08x", i, j, got, exp); end
+          end
+        if (errs == 0) $display("PASS: test_scaled_after_wide");
+        else begin $display("FAIL: test_scaled_after_wide (%0d mismatches)", errs); $fatal(1); end
+    endtask
+
+    // ----------------------------------------------------------------
+    // SCALED with a row WIDER than one burst (40 px = 32 + 8) — the second
+    // consequence of the same seg_cx bug.  A scaled row longer than 32 px is
+    // drained as several bursts, and each one must start at its own column.
+    // Every other scaled test is <= 8 px wide, so the multi-burst scaled row
+    // had zero coverage — and it is exactly what gemd does (scaling a window is
+    // hundreds of px wide).  1:1 (sw=dw) so the expected pixels are exact.
+    task test_scaled_wide_row();
+        logic [31:0] sa, da, got, exp; int errs;
+        $display("=== Test: SCALED 40x2 1:1 DDR (row spans 2 bursts) ===");
+        clear_logs(); errs = 0;
+        for (int yy = 0; yy < 2; yy++)
+          for (int xx = 0; xx < 40; xx++) begin
+            sa = 32'h3040_0000 + yy*160 + xx*4;
+            mem[mem_idx(sa)][(sa[2] ? 32 : 0) +: 32] = 32'h5EED_0000 + yy*32'h100 + xx;
+            da = 32'h3050_0000 + yy*160 + xx*4;
+            mem[mem_idx(da)][(da[2] ? 32 : 0) +: 32] = 32'hDEADBEEF;
+          end
+        write_reg(16'hD4E0,8'h00); write_reg(16'hD4E1,8'h00); write_reg(16'hD4E2,8'h40); write_reg(16'hD4E3,8'h30);
+        write_reg(16'hD4E4,8'd160); write_reg(16'hD4E5,8'd0);
+        write_reg(16'hD4E6,8'h00); write_reg(16'hD4E7,8'h00); write_reg(16'hD4E8,8'h50); write_reg(16'hD4E9,8'h30);
+        write_reg(16'hD4EA,8'd160); write_reg(16'hD4EB,8'd0);
+        write_reg(16'hD4C0,8'd0); write_reg(16'hD4C1,8'd0); write_reg(16'hD4C2,8'd0); write_reg(16'hD4C3,8'd0);
+        write_reg(16'hD4C4,8'd40); write_reg(16'hD4C5,8'd0); write_reg(16'hD4C6,8'd2); write_reg(16'hD4C7,8'd0);
+        write_reg(16'hD4B0,8'd0); write_reg(16'hD4B1,8'd0); write_reg(16'hD4B2,8'd0); write_reg(16'hD4B3,8'd0);
+        write_reg(16'hD4B4,8'd40); write_reg(16'hD4B5,8'd0); write_reg(16'hD4B6,8'd2); write_reg(16'hD4B7,8'd0);
+        write_reg(16'hD4C8,8'h24);   // FLAGS: SRC_DDR | DST_DDR
+        write_reg(16'hD4BC,8'h04);   // CMD = SCALED nearest
+        wait_idle();
+        write_reg(16'hD4C8,8'h00);
+        for (int yy = 0; yy < 2; yy++)
+          for (int xx = 0; xx < 40; xx++) begin
+            da  = 32'h3050_0000 + yy*160 + xx*4;
+            got = mem[mem_idx(da)][(da[2] ? 32 : 0) +: 32];
+            exp = 32'h5EED_0000 + yy*32'h100 + xx;
+            if (got !== exp) begin errs++; if (errs<=8) $display("  dst(%0d,%0d) got %08x exp %08x", xx, yy, got, exp); end
+          end
+        if (errs == 0) $display("PASS: test_scaled_wide_row");
+        else begin $display("FAIL: test_scaled_wide_row (%0d mismatches)", errs); $fatal(1); end
+    endtask
+
+    // ----------------------------------------------------------------
     // SCALED nearest 2x upscale: 2x2 src (plane 0,0) -> 4x4 dst (plane 8,0).
     // Each src pixel maps to a 2x2 dst block.  4 dst rows -> exercises the
     // scaled row advance (the multi-row path no test ever covered).
@@ -1901,6 +1998,8 @@ module tb_xt_blitter;
         test_sync_barrier();
         test_block_blit_srcparity();
         test_rect_fill_wide();
+        test_scaled_after_wide();
+        test_scaled_wide_row();
 
         // Done
         $display("=== ALL TESTS PASSED ===");

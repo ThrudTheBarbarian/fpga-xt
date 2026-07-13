@@ -108,6 +108,16 @@ void _app_entry(int argc, char **argv)
                q0, q1, q2, q3,
                (q0 == Q[0] && q1 == Q[1] && q2 == Q[2] && q3 == Q[3])
                  ? "OK (each quadrant = its source pixel)" : "FAIL");
+        /* Is the result DISPLACED rather than absent? seg_cx is never assigned in the
+         * SC_* states, so a scaled blit inherits the burst column left by the previous
+         * command. blittest's 256-wide FILL/COPY leave seg_cx = 224 (last 32px burst of
+         * a 256px row). If the engine wrote perfectly at column 224, these read as the
+         * source quadrants -- and the "SCALED is broken on DDR" story is wrong. */
+        printf("blittest:   DISPLACED probe @col 224 -> %08x %08x %s\n",
+               dp[1 * W + 224 + 1], dp[6 * W + 224 + 6],
+               (dp[1 * W + 224 + 1] == Q[0] && dp[6 * W + 224 + 6] == Q[3])
+                 ? "*** CONFIRMED: engine wrote at column 224, not 0 ***"
+                 : "(not displaced by 224 either)");
         printf("blittest:   after-delay resample -> %08x %08x  (%s)\n", l0, l3,
                (l0 == Q[0] && l3 == Q[3]) ? "FENCE RACE: pixels arrived late"
                                           : "engine wrote nothing");

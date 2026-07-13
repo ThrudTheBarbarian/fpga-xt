@@ -167,14 +167,14 @@ struct xt_sigframe {
 #define XT_BLIT_FILL   1        /* rect fill with `color` */
 #define XT_BLIT_COPY   2        /* block blit: src rect -> dst rect (1:1) */
 #define XT_BLIT_SCALE  3        /* scaled blit: src sw x sh -> dst dw x dh.
-                                 * ⚠ DOES NOT WORK ON THE CURRENT BITSTREAM. The driver
-                                 * programs it per spec and the engine accepts it, but the
-                                 * RTL's SCALED path (CMD 0x04/0x06) writes NOTHING when the
-                                 * surfaces are DDR descriptors -- verified on silicon, even
-                                 * at 1:1 with no scaling. It works plane->plane, which is the
-                                 * only way vitis ever used it. Needs an HDL fix; until then
-                                 * do NOT composite through SCALE. Alpha and 1:1 COPY are
-                                 * both verified good. */
+                                 * ⚠ BROKEN ON THE CURRENT BITSTREAM (fix in hdl, needs a
+                                 * Vivado rebuild). The engine does NOT "write nothing" --
+                                 * it writes the rect to the WRONG COLUMN: seg_cx (the burst
+                                 * origin) is never assigned in the RTL's SC_* states, so a
+                                 * scaled blit inherits the previous command's last burst
+                                 * column. Confirmed on silicon: after a 256-wide blit it
+                                 * lands at column 224. Nothing to do with DDR. Do not use
+                                 * SCALE until the bitstream is rebuilt. */
 #define XT_BLITF_BLEND    (1u<<0)  /* alpha-blend over the destination (not replace) */
 #define XT_BLITF_BILINEAR (1u<<1)  /* SCALE only: bilinear taps, else nearest-neighbour */
 
