@@ -16,8 +16,10 @@
  * dies. gemd notices by channel EOF, not SIGCHLD (which only ever reaches a parent, and gemd
  * is not this process's parent when it is launched over ssh).
  *
- *   gemtext          draw, then hold the window open until killed
- *   gemtext <secs>   draw, hold for <secs>, exit cleanly  (0 = exit at once)
+ *   gemtext                  draw, then hold the window open until killed
+ *   gemtext <secs>           draw, hold for <secs>, exit cleanly  (0 = exit at once)
+ *   gemtext <secs> <x> <y>   ...at a given position, so TWO can be on screen at once and
+ *                            killing one must take exactly one window with it
  */
 #include <stdlib.h>
 #include "gemclient.h"
@@ -30,6 +32,8 @@
 void _app_entry(int argc, char **argv)
 {
     int hold = (argc >= 2) ? atoi(argv[1]) : -1;      /* -1 = forever (until killed) */
+    int wx   = (argc >= 4) ? atoi(argv[2]) : 200;
+    int wy   = (argc >= 4) ? atoi(argv[3]) : 150;
 
     int fd = gem_connect();
     if (fd < 0) { printf("gemtext: no \"gem\" service (%d) — is gemd running?\n", fd); sys_exit(1); }
@@ -40,7 +44,7 @@ void _app_entry(int argc, char **argv)
      * stride == width and any code that confused the two would pass this test unharmed —
      * which is exactly how the wind_redraw_area bug survived. */
     gem_window win;
-    if (gem_wind_create(fd, 0, 200, 150, 600, 180, &win) != 0) {
+    if (gem_wind_create(fd, 0, wx, wy, 600, 180, &win) != 0) {
         printf("gemtext: wind_create FAILED\n"); sys_exit(1);
     }
     printf("gemtext: wh=%d surf=%d gen=%u extent %dx%d capacity %dx%d (stride %d)\n",
@@ -68,6 +72,12 @@ void _app_entry(int argc, char **argv)
     vst_height(vh, 26, 0, 0, 0, 0);
     v_gtext(vh, 40, 8, "Hello XTOS");
     v_gtext(vh, 40, 48, "a window, not the framebuffer");
+
+    /* stamp the pid, so two of these on screen are TELLABLE APART — otherwise "kill one and
+     * the right window disappears" is not something you can actually check. */
+    char who[48];
+    snprintf(who, sizeof who, "pid %d  wh %d  surf %d", (int)sys_getpid(), win.wh, win.surf_id);
+    v_gtext(vh, 40, 96, who);
 
     /* ONE message. gemd blits the rect and never learns why it changed (§3). */
     gem_damage(fd, &win, 0, 0, win.w, win.h);

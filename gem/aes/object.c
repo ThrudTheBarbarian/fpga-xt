@@ -388,7 +388,20 @@ static void draw_obj(OBJECT *t, int obj, int x, int y) {
  * default; this is that, opt-in.)  Without the flag the behaviour is exactly as before. */
 static void draw_rec(OBJECT *t, int obj, int ax, int ay, int depth, const int16_t *cl) {
     if (t[obj].ob_flags & OF_HIDETREE) return;
-    draw_obj(t, obj, ax, ay);
+
+    /* Damage-driven repaint: an object outside the clip is not drawn.  The VDI would
+     * throw the pixels away anyway, but it cannot stop draw_obj COMPUTING them --
+     * theme_draw still looks up its slices and sets up its blits.  With a small damage
+     * rect and a large tree that is nearly all the work, and all of it wasted.
+     *
+     * And if the object CLIPS ITS CHILDREN, the whole subtree is confined to it, so an
+     * out-of-clip container prunes its entire subtree in one test.  That is what makes a
+     * long scrolling list cheap: the rows you cannot see are never visited at all. */
+    int ox0 = ax, oy0 = ay, ox1 = ax + t[obj].ob_w - 1, oy1 = ay + t[obj].ob_h - 1;
+    int miss = (ox1 < cl[0] || ox0 > cl[2] || oy1 < cl[1] || oy0 > cl[3]);
+    if (miss && (t[obj].ob_flags & OF_CLIPCHILDREN)) return;   /* prune the whole subtree */
+    if (!miss) draw_obj(t, obj, ax, ay);
+
     if (depth <= 0) return;
 
     int16_t kid[4];
