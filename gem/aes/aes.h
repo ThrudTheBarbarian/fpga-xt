@@ -359,7 +359,28 @@ int  menu_popup_mnemonic(const menu_item *items, int n, int ch);
 // interaction (drag, resize, close box, raise) is caught inside evnt_multi.
 enum { W_NAME=0x01, W_CLOSER=0x02, W_FULLER=0x04, W_MOVER=0x08, W_INFO=0x10,
        W_SIZER=0x20, W_UPARROW=0x40, W_DNARROW=0x80, W_VSLIDE=0x100,
-       W_LFARROW=0x200, W_RTARROW=0x400, W_HSLIDE=0x800 };
+       W_LFARROW=0x200, W_RTARROW=0x400, W_HSLIDE=0x800,
+
+       // W_BOTTOM — the entire cost of "the desktop is an ordinary app" (§4). It means TWO
+       // things, and it needs both:
+       //
+       //   1. INSERT AT THE BOTTOM of the z-order, whenever the window is created.
+       //   2. NEVER TOPPED by a click.
+       //
+       // (2) alone is not enough, and (1) is not free. It is tempting to say the desktop is
+       // simply the first app launched, so it is at the bottom because new windows go on top —
+       // no flag needed. THAT IS TRUE AT BOOT AND FALSE EVER AFTER. Restart the desktop while
+       // apps are running — which §4 explicitly promises works, and which is exactly what you
+       // do WHEN SOMETHING HAS ALREADY GONE WRONG — and its new screen-sized window is created
+       // LAST. Without (1) it lands on TOP and swallows the entire session: every app
+       // invisible, the machine apparently dead. Creation order is luck, not design.
+       //
+       // It is W_BOTTOM and not W_ROOT deliberately: it names a Z-ORDER POSITION, which is the
+       // only thing gemd should understand. W_ROOT would smuggle a ROLE into the server, and
+       // the whole argument of §4 is that gemd must not know what a desktop is. Nothing stops
+       // two clients setting it; they simply stack at the bottom among themselves, and gemd
+       // neither knows nor cares which of them is "the desktop".
+       W_BOTTOM=0x1000 };
 enum { WM_REDRAW=20, WM_TOPPED=21, WM_CLOSED=22, WM_FULLED=23, WM_ARROWED=24,
        WM_HSLID=25, WM_VSLID=26, WM_SIZED=27, WM_MOVED=28, WM_NEWTOP=29 };
 
@@ -396,6 +417,10 @@ void wind_set_name(int handle, const char *name);
 void wind_get(int handle, int field, int *a, int *b, int *c, int *d);
 void wind_set(int handle, int field, int a, int b, int c, int d);
 void wind_calc(int dir, int kind, int x,int y,int w,int h, int *ox,int *oy,int *ow,int *oh);
+// Does this kind mask ask for ANY chrome? A window with none gets none — no frame, no title bar
+// — and its work area IS its full rect. That is the whole mechanism behind §4's "the desktop is
+// an ordinary client": a full-screen W_BOTTOM window with nothing drawn around it.
+int  wind_has_chrome(int kind);
 int  wind_find(int x, int y);                       // topmost window at point (0 = desktop)
 int  wind_top(void);                                // topmost open window (0 = none)
 void wind_raise(int handle);                        // bring an open window to the top

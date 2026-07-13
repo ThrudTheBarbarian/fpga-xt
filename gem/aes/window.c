@@ -88,7 +88,16 @@ int  aes_top_reserve(void){ return g_top_reserve; }   // px reserved at the top 
 static int bw(void){ const theme_slice*s=theme_find(aes_theme(),"window"); return s?s->l:5; }
 static int tbh(void){ const theme_slice*s=theme_find(aes_theme(),"titlebar"); return s?s->sh:22; }
 
+// A window with NO chrome bits has NO CHROME — no frame, no title bar, and its work area IS its
+// full rect. §4: "No chrome, because it passed none of the chrome bits. wind_create's kind mask
+// already expresses this." That is what lets the desktop be an ordinary client: a full-screen
+// W_BOTTOM window whose drawable is the whole screen, with nothing drawn around it.
+int wind_has_chrome(int kind){
+    return (kind & (W_NAME|W_CLOSER|W_FULLER|W_MOVER|W_INFO|W_SIZER)) != 0;
+}
+
 void wind_calc(int dir,int kind,int x,int y,int w,int h,int*ox,int*oy,int*ow,int*oh){
+    if(!wind_has_chrome(kind)){ *ox=x; *oy=y; *ow=w; *oh=h; return; }   // chromeless: work == full
     int b=bw(), th=tbh(), inf=(kind&W_INFO)?AES_INFO_H:0;
     // The work area sits BETWEEN the title (top) and the W_INFO footer (bottom):
     // its origin drops only by the title height, and inf is taken off the BOTTOM.
@@ -245,9 +254,12 @@ static void draw_vscroll(int hd){
     }
 }
 
+static void draw_content(int hd);                // content only (surface blit / callback)
+
 static void draw_one(int hd, int active){
     awin*W=&g_w[hd]; int th=tbh();
     if(W->hidden) return;                        // lifted into the HW drag-overlay
+    if(!wind_has_chrome(W->kind)){ draw_content(hd); return; }   // no chrome bits -> no chrome (§4)
     theme_draw(H(),aes_theme(),"window", W->x,W->y,W->w,W->h);
     theme_draw(H(),aes_theme(), active?"titlebar":"titlebar.inactive", W->x, W->y, W->w, th);  // flush top
     int cy = W->y+(th-WTB_W)/2;
@@ -296,8 +308,14 @@ static void draw_one(int hd, int active){
         draw_grip_l(W->x+2,               gy, SIZER_SZ);  // bottom-left, inside the frame border
         draw_grip  (W->x+W->w-SIZER_SZ-2, gy, SIZER_SZ);  // bottom-right, inside the frame border
     }
-    // work area + content (clipped).  The rect is shrunk by the scrollbar column
-    // when the bar shows, so the app reflows into the narrower span.
+    draw_content(hd);
+    draw_vscroll(hd);                            // over the reserved right column
+}
+
+// The work area + its content (clipped).  The rect is shrunk by the scrollbar column when the
+// bar shows, so the app reflows into the narrower span.
+static void draw_content(int hd){
+    awin*W=&g_w[hd];
     int wx,wy,ww,wh; app_work(W,&wx,&wy,&ww,&wh);
     if(W->surf.px){
         // SERVER: the content is the client's BACKING STORE, and we blit it. gemd holds the
@@ -322,7 +340,6 @@ static void draw_one(int hd, int active){
         int16_t clip[4]={(int16_t)wx,(int16_t)wy,(int16_t)(wx+ww-1),(int16_t)(wy+wh-1)};
         vs_clip(H(),1,clip); W->draw(hd,wx,wy,ww,wh,W->ud); vs_clip(H(),0,clip);
     }
-    draw_vscroll(hd);                            // over the reserved right column
 }
 
 // ---- SERVER MODE: the narrow seam gemd uses ---------------------------------
@@ -481,8 +498,13 @@ static void client_paint(int hd,int x,int y,int w,int h){
     if(y+h>W->surf.h) h=W->surf.h-y;
     if(w<=0||h<=0) return;
 
-    int save = aes_handle();                        // point the AES at OUR workstation (opened once
-    aes_init(W->vh, aes_theme());                   // on this surface — §10: a retarget, not a re-open)
+    // Point the AES *and* the VDI's physical target at THIS window's surface. Both matter: the
+    // AES handle is what vdi primitives draw through, and vdi_screen_target() is what a callback
+    // that blits (the desktop's wallpaper) asks for. A client with two windows would otherwise
+    // paint the second one's content into the first one's buffer.
+    int save = aes_handle();
+    vdi_set_target(&W->surf);
+    aes_init(W->vh, aes_theme());
     int16_t clip[4]={(int16_t)x,(int16_t)y,(int16_t)(x+w-1),(int16_t)(y+h-1)};
     vs_clip(W->vh,1,clip);
     W->draw(hd, 0,0, W->surf.w, W->surf.h, W->ud);  // SURFACE coords: the work area starts at 0,0
@@ -538,7 +560,11 @@ void wind_open(int hd,int x,int y,int w,int h){
         uint32_t *px = gem_surf_map(W->surf_id);
         if(!px){ W->surf_id=-1; return; }
         W->surf.w=ww; W->surf.h=wh2; W->surf.stride=cw; W->surf.px=px;   // STRIDE = CAPACITY (§12)
-        vdi_init(&W->surf);                          // this surface is all the "screen" we have
+        // vdi_init MEMSETS the workstation table, so it must run exactly ONCE per client: a
+        // second window would otherwise wipe the first window's workstation (§10: opened once,
+        // never re-opened). After that, retarget — a workstation holds a POINTER to the surface.
+        static int g_vdi_up;
+        if(!g_vdi_up){ vdi_init(&W->surf); g_vdi_up=1; } else vdi_set_target(&W->surf);
         W->vh = v_opnvwk(&W->surf);                  // ONCE, for this window's life (§10)
 
         // FIRST PAINT. §3: WM_REDRAW survives only for the first paint and resize — every other
@@ -550,6 +576,14 @@ void wind_open(int hd,int x,int y,int w,int h){
 #endif
     g_w[hd].x=x; g_w[hd].y=y; g_w[hd].w=w; g_w[hd].h=h; clamp_win(&g_w[hd]); clamp_scroll(&g_w[hd]);
     for(int i=0;i<g_nz;i++) if(g_z[i]==hd) return;       // already open
+    if(g_w[hd].kind & W_BOTTOM){
+        // §4(1): insert AT THE BOTTOM, not on top. A desktop restarted while apps are running
+        // is created LAST — without this it would land on top and swallow the whole session.
+        for(int i=g_nz;i>0;i--) g_z[i]=g_z[i-1];
+        g_z[0]=hd; g_nz++;
+        wind_redraw();                                   // it is underneath: repaint everything
+        return;
+    }
     g_z[g_nz++]=hd; wind_redraw_win(hd);
 }
 static void zremove(int hd){ for(int i=0;i<g_nz;i++) if(g_z[i]==hd){ for(int j=i;j<g_nz-1;j++) g_z[j]=g_z[j+1]; g_nz--; return; } }
@@ -646,6 +680,8 @@ int wind_top(void){ return g_nz ? g_z[g_nz-1] : 0; }
 
 void wind_raise(int hd){
     if(hd<1||hd>=MAXW) return;
+    if(g_w[hd].kind & W_BOTTOM) return;   // §4(2): NEVER topped by a click. A desktop that came
+                                          // to the front on a click would hide every app.
     for(int i=0;i<g_nz;i++) if(g_z[i]==hd){ zremove(hd); g_z[g_nz++]=hd; wind_redraw_win(hd); return; }
 }
 

@@ -261,10 +261,17 @@ static void wall_init(int w, int h)
     g_wall_ok = 1;
 }
 
+/* The desktop's CONTENT: wallpaper, then icons. Identical in both worlds — and that is the
+ * point of §4. Standalone it draws into the back-buffer; under gemd the very same callback runs
+ * against this client's own backing store, and gemd composites it like any other window.
+ *
+ * It targets vdi_screen_target() rather than g_bb by name, which is what makes that true: the
+ * VDI's target is the back-buffer standalone, and our surface under gemd. */
 static void deskcontent(int hd, int wx, int wy, int ww, int wh, void *ud) {
     (void)hd; (void)ud;
-    if (g_wall_ok)                                 // backdrop first, only the damaged part
-        gfx_blit(g_bb, wx, wy, &g_wall, wx, wy, ww, wh);
+    gfx_surface *dst = vdi_screen_target();
+    if (g_wall_ok && dst)                          // backdrop first, only the damaged part
+        gfx_blit(dst, wx, wy, &g_wall, wx, wy, ww, wh);
     aes_icon_label_style(1);                       // desktop: over the dark backdrop
     objc_draw(desk, 0, 2, wx, wy, ww, wh);
 }
@@ -2416,17 +2423,13 @@ void _app_entry(int argc, char **argv) {
         sys_klog(vb, n);
     }
 
+    /* Screen SIZE only — never its pixels. A client may know how big the desktop is (classic
+     * GEM's wind_get(0) says so); it may not draw on it. sys_fb_info survives M7's SEC_PLANE
+     * flip for exactly this reason: the w/h stay readable, the address stops being usable.
+     * (A cleaner wind_get(0) over the wire is owed; noted in the plan.) */
     if (sys_fb_info(&fb) != 0) { sys_write(2, "desktop: no display plane\n", 26); return; }
     PW = fb.w; PH = fb.h;
-
-    /* Composite into the reserved, cacheable WM back-buffer region (SYS_fb_wallpaper
-     * -> WALLPAPER_BASE, mapped Normal-WB in the MMU) — fast alpha blending in the
-     * D-cache — then blit it to the strided, non-cacheable plane once on present. */
-    struct os_fbinfo wp;
-    if (sys_fb_wallpaper(&wp) != 0 || !wp.addr) { sys_write(2, "desktop: no back-buffer\n", 24); return; }
-    static gfx_surface bb_s;
-    bb_s.w = wp.w; bb_s.h = wp.h; bb_s.stride = wp.stride; bb_s.px = (uint32_t *)wp.addr;
-    g_fb = fb; g_bb = &bb_s;
+    g_fb = fb;
 
     /* Prefer the SD font (/OS, user-overridable); fall back to the one bundled in
      * romfs (/System, always present — lets desktop run in qemu / on a card with no
@@ -2434,7 +2437,6 @@ void _app_entry(int argc, char **argv) {
     font_face *face = font_face_open("/OS/fonts/AovelSansRounded.ttf");
     if (!face) face = font_face_open("/System/fonts/AovelSansRounded.ttf");
     if (!face) { sys_write(2, "desktop: font load FAILED\n", 26); return; }
-    vdi_init(g_bb); HV = v_opnvwk(g_bb);
     font_face_set_tracking(face, 1); vdi_set_face(face);
 
     char tn[64], td[160];
@@ -2446,8 +2448,27 @@ void _app_entry(int argc, char **argv) {
         theme_load(&TH, "/System/themes/Aristo2/1x") != 0) {
         sys_write(2, "desktop: theme load FAILED\n", 27); return;
     }
-    aes_init(HV, &TH); appl_init();
-    wind_set_desktop(0x30507800u);   /* fallback flat colour, if wallpaper is unavailable */
+    /* THE ATTACH (§4). appl_init() finds the "gem" service, and from here the desktop is an
+     * ORDINARY CLIENT that gemd cannot tell apart from any other — except by one flag on its
+     * window (W_BOTTOM). If gemd is NOT running it stays standalone and drives the plane
+     * itself, exactly as before. Both paths, one program. */
+    appl_init();
+
+    if (aes_mode() == AES_CLIENT) {
+        aes_init(0, &TH);            /* theme only: the AES binds our workstation at wind_open */
+    } else {
+        /* Standalone (no gemd): composite into the reserved, cacheable WM back-buffer
+         * (SYS_fb_wallpaper -> WALLPAPER_BASE, Normal-WB in the MMU) — fast alpha blending in
+         * the D-cache — then blit it to the strided, non-cacheable plane once on present. */
+        struct os_fbinfo wp;
+        if (sys_fb_wallpaper(&wp) != 0 || !wp.addr) { sys_write(2, "desktop: no back-buffer\n", 24); return; }
+        static gfx_surface bb_s;
+        bb_s.w = wp.w; bb_s.h = wp.h; bb_s.stride = wp.stride; bb_s.px = (uint32_t *)wp.addr;
+        g_bb = &bb_s;
+        vdi_init(g_bb); HV = v_opnvwk(g_bb);
+        aes_init(HV, &TH);
+        wind_set_desktop(0x30507800u);  /* fallback flat colour, if wallpaper is unavailable */
+    }
     wall_init(PW, PH);
 
     if (registry_open("/OS/var/registry.db") != 0)
@@ -2476,6 +2497,32 @@ void _app_entry(int argc, char **argv) {
       if (!g_rsc) sys_write(2, "desktop: no desktop.rsc — using built-in dialogs\n", 51); }
 
     build_desktop();
+
+    if (aes_mode() == AES_CLIENT) {
+        /* ---- THE DESKTOP AS AN ORDINARY CLIENT (§4) --------------------------------------
+         * One window. Screen-sized. W_BOTTOM, and NO CHROME BITS — so it gets no frame and no
+         * title bar, and its work area is the whole screen. gemd cannot tell this program apart
+         * from gemtext except by that one flag, which is the entire point: the desktop can
+         * crash, be restarted, or be replaced, and the window system does not notice.
+         *
+         * The wallpaper is CONTENT (§4) and goes into our own backing store like anybody's.
+         * There is no plane here, no back-buffer, no drag overlay, and no sys_input: gemd owns
+         * the screen (Rule 1) and gemd owns input (§3). */
+        int hd = wind_create(W_BOTTOM, 0, 0, PW, PH);
+        if (hd <= 0) { sys_write(2, "desktop: wind_create FAILED\n", 28); return; }
+        wind_content(hd, deskcontent, NULL);         // the SAME callback as standalone
+        wind_open(hd, 0, 0, PW, PH);                 // -> surface, first paint, damage
+        {
+            char b[80]; int n = snprintf(b, sizeof b,
+                "[desk] client of gemd: W_BOTTOM window %d, %dx%d\n", hd, PW, PH);
+            sys_klog(b, n);
+        }
+        /* Idle. Input routing is gemd's and does not exist yet (M4), so nothing is clickable
+         * under gemd — the desktop RENDERS but does not respond. That is the honest state of
+         * the split at M3, and it is why M4 is next; it is not a bug to hunt. */
+        for (;;) { net_pump(); sys_nanosleep(200000u); }
+    }
+
     wind_set_desktop_content(deskcontent, NULL);
     menu_show();                                     // the owner's menu bar (reserves the top BARH)
 

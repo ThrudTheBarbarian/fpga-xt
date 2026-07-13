@@ -213,6 +213,16 @@ typedef struct {
 } vdi_pb;
 
 void vdi_init(gfx_surface *default_target);   // sets the default surface + pen palette
+// The surface the VDI is currently drawing into. A wind_content callback that needs to blit
+// (rather than go through a VDI primitive) must target THIS and not a surface it named itself:
+// under gemd the callback runs against the app's own backing store, and standalone it runs
+// against the screen/back-buffer. Same callback, different target, and the callback never
+// learns which. (Was vdi/internal.h; the desktop's wallpaper blit needs it.)
+gfx_surface *vdi_screen_target(void);
+// Point the physical workstation at another surface WITHOUT re-initialising the VDI (vdi_init
+// memsets the workstation table and would destroy every workstation already open). §12's
+// "retarget, not re-open".
+void vdi_set_target(gfx_surface *s);
 void vdi_call(vdi_pb *pb);                    // the doorbell: dispatch one VDI call
 
 uint32_t vdi_pen_rgba(int pen);               // pen index -> RGBA (for the WM/theming)

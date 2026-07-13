@@ -179,7 +179,7 @@ $(BUILD)/freertos-hw.elf: $(FRSRC) $(FRASM) test/freertos/freertos.ld test/freer
 	$(ARMCC) -I$(BUILD)/hwromfs $(FRCFLAGS) -DXT_HW_UART -DXT_HW -T test/freertos/freertos.ld $(FRASM) $(FRSRC) -lgcc -o $@
 
 # Kernel-menu (runhost) testbed ELF for the toolchain — same sources, -DXT_KERNEL_SHELL.
-$(BUILD)/freertos-hosttest.elf: $(FRSRC) $(FRASM) test/freertos/freertos.ld test/freertos/FreeRTOSConfig.h test/freertos/net/lwipopts.h $(BUILD)/romfs_blob.h | $(BUILD)
+$(BUILD)/freertos-hosttest.elf: $(FRSRC) $(FRASM) test/freertos/freertos.ld test/freertos/FreeRTOSConfig.h test/freertos/net/lwipopts.h $(BUILD)/build_id.h $(BUILD)/romfs_blob.h | $(BUILD)
 	$(ARMCC) $(FRCFLAGS) $(XTRACFLAGS) -DXT_KERNEL_SHELL -T test/freertos/freertos.ld $(FRASM) $(FRSRC) -lgcc -o $@
 
 # Load + run an externally-built PIC .so (e.g. xtc output) on the real loader:

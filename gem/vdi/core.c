@@ -305,6 +305,14 @@ void vdi_set_face(font_face *face) { g_default_face = face; }
 
 gfx_surface *vdi_screen_target(void) { return ws_tab[0].target; }   // the desktop surface
 
+// Retarget the physical workstation WITHOUT re-initialising the VDI (vdi_init memsets the
+// workstation table, which would destroy every workstation already open).  §12's "retarget, not
+// re-open": a workstation holds a POINTER to a gfx_surface, so pointing it at another surface is
+// a retarget and the workstation survives.  gemd's clients use this to aim the VDI at whichever
+// of their windows is being painted — a client with two windows must not have the first one's
+// workstation wiped by opening the second.
+void vdi_set_target(gfx_surface *s) { ws_tab[0].target = s; }
+
 // Fill a v_opnwk / v_opnvwk work_out capability array (intout[0..44] +
 // ptsout[0..11]).  Key field: intout[13] = number of simultaneous colours
 // (>= 2 => a colour device); the true-colour flag is reported by vq_extnd.
