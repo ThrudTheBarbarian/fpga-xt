@@ -18,15 +18,19 @@
 #include "gemclient.h"
 #include "usys.h"
 
-/* How long gem_connect() will WAIT for the "gem" service to appear. Default 0: fail at
- * once, which is what makes appl_init() fall back to single-process GEM when there is no
- * gemd (§5). A program that is started ALONGSIDE gemd -- the desktop, out of 99-Desktop --
- * raises this, because the two race at boot and the loser must not lose.
+/* How long gem_connect() will WAIT for the "gem" service to appear before giving up — and
+ * giving up is now FATAL (wind_client_attach exits): on XTOS there is no single-process mode
+ * to fall back to. The wait exists because a program started ALONGSIDE gemd -- the desktop,
+ * out of 99-Desktop -- races it at boot, and the loser of that race must not lose.
  *
- * This is deliberately the CLIENT's problem and not gemd's: gemd does not spawn the
- * desktop and must never know what a desktop is (§2, §4). The boot script starts both;
- * whoever comes up second just waits. */
-static int g_wait_ms;
+ * It is deliberately the CLIENT's problem and not gemd's: gemd does not spawn the desktop and
+ * must never know what a desktop is (§2, §4). The boot script starts both; whoever comes up
+ * second just waits. A program that WANTS to fail fast sets the wait to 0.
+ *
+ * The default is not 0, because "gemd is still coming up" and "gemd is not there" must not look
+ * the same to an app launched a moment too early. */
+#define GEM_CONNECT_WAIT_DEFAULT_MS 2000
+static int g_wait_ms = GEM_CONNECT_WAIT_DEFAULT_MS;
 void gem_connect_set_wait(int ms) { g_wait_ms = ms; }
 
 int gem_connect(void)
@@ -35,7 +39,7 @@ int gem_connect(void)
     for (;;) {
         int fd = sys_svc_connect(GEM_SERVICE);
         if (fd >= 0) return fd;                /* connected */
-        if (waited >= g_wait_ms) return fd;    /* gave up: no gemd -> caller runs local */
+        if (waited >= g_wait_ms) return fd;    /* gave up: there is no gemd. The caller FAILS. */
         sys_nanosleep(50000);                  /* usec: 50 ms */
         waited += 50;
     }
@@ -66,7 +70,10 @@ int gem_await(int fd, int op, gem_msg *m)
         if (gem_recv(fd, m) != 0) return -1;
         if (m->w[0] == op) return 0;
         if (m->w[0] == GEM_WIND_ERROR) return -1;
-        /* anything else is DISCARDED — see the header: honest for M2, a queue at M4 */
+        /* NOT discarded (M4): a window handshake is not a quiet moment any more — the pointer is
+         * live and an event can land inside it. Anything else goes to the AES's client queue,
+         * because a dropped button-up is a drag that never ends. */
+        wind_client_stray(m);
     }
 }
 

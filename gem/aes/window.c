@@ -475,11 +475,30 @@ void wind_redraw_win(int hd){
 #ifdef GEM_XTOS
 #include "usys.h"
 
+static int client_events(aes_event *ev,int timeout_ms);   // fwd: our events come from gemd (M4)
+
+// ON XTOS THERE IS NO SINGLE-PROCESS FALLBACK. Everything goes through gemd, and an app that
+// cannot reach it FAILS — it does not quietly paint the framebuffer instead.
+//
+// The fallback used to be the "if there is no gem service, stay LOCAL" line here, and it had to
+// go for two reasons:
+//   1. it defeats the M7 gate. "No app draws direct any more" is the completion criterion, and a
+//      path whose whole purpose is *draw direct when gemd is missing* is a permanent exception;
+//   2. it is a SILENT failure mode. With gemd dead or slow, an app did not error — it painted the
+//      plane and looked fine. That is the works-by-accident class of bug.
+// Not a contradiction with the SDL host: there GEM_XTOS is undefined and single-process is the
+// only mode there is — a different PLATFORM, not a fallback (see the #else below).
 void wind_client_attach(void){
     if(g_mode==AES_SERVER) return;                  // gemd is nobody's client
-    int fd = gem_connect();
-    if(fd < 0) return;                              // gemd is not running -> stay LOCAL, unchanged
+    int fd = gem_connect();                         // waits (gem_connect_set_wait) then gives up
+    if(fd < 0){
+        static const char msg[] =
+            "gem: no window server — is gemd running? (there is no single-process mode on XTOS)\n";
+        sys_write(2, msg, sizeof msg - 1);
+        sys_exit(1);                                // HARD. No local path, no plane access.
+    }
     g_gemfd = fd; g_mode = AES_CLIENT;
+    aes_set_events(client_events);                  // every event we ever see is gemd's (§3)
 }
 void wind_client_detach(void){
     if(g_mode!=AES_CLIENT) return;
@@ -513,9 +532,119 @@ static void client_paint(int hd,int x,int y,int w,int h){
 
     gem_damage_rect(g_gemfd, hd, W->surf_id, W->surf_gen, x,y,w,h);
 }
+
+// ---- CLIENT MODE: events (M4) ----------------------------------------------
+// A client has no input device. It has a CHANNEL, and gemd — which owns the pointer, the z-order
+// and the chrome — sends it the events it is entitled to: the ones for the window it focused,
+// in WINDOW-LOCAL coordinates (the same space its content callback draws in). It is never told
+// where it is on screen, what is above it, or that a click landed on somebody else.
+//
+// Chrome events never arrive: gemd handles the closer, the mover and the sizer itself and the
+// client hears only the consequence (WM_CLOSED / WM_MOVED / WM_SIZED), which is exactly the set
+// of AES messages a single-process app already handles. §5 again: the app does not change.
+
+static int g_pmx, g_pmy, g_pbtn;             // pointer state, as last reported by gemd
+static int g_evwin;                          // WHICH of our windows the last input event was for.
+// A client cannot work this out for itself: coordinates are window-LOCAL, so two windows both
+// see a click at (10,10). gemd knows — it hit-tested the z-order — so it says, and this is where
+// the app reads the answer (wind_find() cannot help: a client has no z-order and no geometry).
+int aes_event_win(void){ return g_evwin; }
+
+// gem_await() (used inside wind_open/wind_create) has to skip messages it is not waiting for.
+// It must not DROP input while it does — a swallowed button-up is a stuck drag. So strays are
+// dispatched here instead: AES messages go into the app's message pipe, input events into this
+// small ring, and client_events() drains the ring before it reads the channel again.
+#define CPQ 16
+static aes_event g_evq[CPQ]; static int g_evh, g_evt;
+static void evq_push(const aes_event *e){ int n=(g_evt+1)%CPQ; if(n==g_evh) return; g_evq[g_evt]=*e; g_evt=n; }
+static int  evq_pop(aes_event *e){ if(g_evh==g_evt) return 0; *e=g_evq[g_evh]; g_evh=(g_evh+1)%CPQ; return 1; }
+
+static void post_msg(int type,int hd,int a,int b,int c,int d){
+    int16_t m[8]={(int16_t)type,1,0,(int16_t)hd,(int16_t)a,(int16_t)b,(int16_t)c,(int16_t)d};
+    appl_write(0,16,m);
+}
+
+// gemd resized us. SAME surf_id means the new work area fitted inside the surface's CAPACITY —
+// nothing to remap, the extent just grew inside the buffer we already hold (§12). A NEW id means
+// capacity was exceeded and gemd made us a bigger one: drop the old mapping and take it.
+static void client_sized(const gem_msg *m){
+    int hd=m->w[1]; if(hd<1||hd>=MAXW||!g_w[hd].used) return;
+    awin*W=&g_w[hd];
+    int nid=(int)m->u[0];
+    if(nid!=W->surf_id){
+        if(W->surf_id>=0) gem_surf_unmap(g_gemfd,W->surf_id);
+        uint32_t*px=gem_surf_map(nid);
+        if(!px){ W->surf_id=-1; W->surf.px=0; return; }        // gemd will reap us; nothing to draw
+        W->surf_id=nid; W->surf.px=px;
+    }
+    W->surf_gen=m->u[1];
+    W->surf.w=m->w[2]; W->surf.h=m->w[3]; W->surf.stride=m->w[4];   // stride = CAPACITY width (§12)
+    client_paint(hd, 0,0, W->surf.w, W->surf.h);
+    post_msg(WM_SIZED,hd,0,0,W->surf.w,W->surf.h);   // the app reflows; work coords, as it draws in
+}
+
+// One message from gemd -> either an aes_event (returned) or a queued AES message (0).
+static int client_dispatch(const gem_msg *m, aes_event *ev){
+    memset(ev,0,sizeof *ev);
+    ev->mx=g_pmx; ev->my=g_pmy; ev->button=g_pbtn;
+    switch(m->w[0]){
+    case GEM_EV_KEY:
+        g_evwin=m->w[1];
+        ev->type=AES_KEY; ev->key=m->w[2]; ev->shift=m->w[3]; return AES_KEY;
+    case GEM_EV_BUTTON:
+        g_evwin=m->w[1];
+        g_pmx=m->w[2]; g_pmy=m->w[3]; g_pbtn=m->w[4];
+        ev->mx=g_pmx; ev->my=g_pmy; ev->button=g_pbtn; ev->shift=m->w[5];
+        ev->type = m->w[4] ? AES_BTN_DOWN : AES_BTN_UP; return ev->type;
+    case GEM_EV_MOTION:
+        g_evwin=m->w[1];
+        g_pmx=m->w[2]; g_pmy=m->w[3]; g_pbtn=m->w[4];
+        ev->mx=g_pmx; ev->my=g_pmy; ev->button=g_pbtn;
+        ev->type=AES_MOTION; return AES_MOTION;
+    case GEM_MSG_REDRAW:                                   // first paint + resize ONLY (§3)
+        client_paint(m->w[1], m->w[2],m->w[3],m->w[4],m->w[5]); return 0;
+    case GEM_MSG_SIZED:   client_sized(m); return AES_MESAG;
+    case GEM_MSG_MOVED:                                    // no redraw implied: gemd moved the pixels
+        if(m->w[1]>=1 && m->w[1]<MAXW && g_w[m->w[1]].used){
+            awin*W=&g_w[m->w[1]]; W->x=m->w[2]; W->y=m->w[3]; W->w=m->w[4]; W->h=m->w[5]; }
+        post_msg(WM_MOVED,m->w[1],m->w[2],m->w[3],m->w[4],m->w[5]); return AES_MESAG;
+    case GEM_MSG_CLOSED:                                   // the CLOSER was clicked. Closing is OURS.
+        post_msg(WM_CLOSED,m->w[1],0,0,0,0); return AES_MESAG;
+    case GEM_MSG_ACTIVATE:
+        post_msg(m->w[2]?WM_TOPPED:WM_UNTOPPED,m->w[1],0,0,0,0); return AES_MESAG;
+    default: return 0;                                     // not ours to understand
+    }
+}
+
+// Called from gem_await's skip path (via wind_client_stray): NEVER drop an event on the floor.
+void wind_client_stray(const gem_msg *m){
+    aes_event e;
+    int t = client_dispatch(m,&e);
+    if(t && t!=AES_MESAG) evq_push(&e);                    // AES messages are already in the pipe
+}
+
+// THE CLIENT'S EVENT SOURCE. One poll on one fd — the channel — so a timeout is a timeout and an
+// event is an event, and there is no second place an app could get input from.
+static int client_events(aes_event *ev,int timeout_ms){
+    if(evq_pop(ev)) return ev->type;                       // strays picked up during a gem_await
+    for(;;){
+        struct xt_pollfd pf; pf.fd=g_gemfd; pf.events=XT_POLLIN; pf.revents=0;
+        int r=sys_poll(&pf,1,timeout_ms);
+        if(r<0){ if(r==-4) continue;                       // -EINTR: a signal, not a failure
+                 memset(ev,0,sizeof *ev); ev->type=AES_QUIT; return AES_QUIT; }
+        if(r==0){ memset(ev,0,sizeof *ev); ev->mx=g_pmx; ev->my=g_pmy; ev->button=g_pbtn;
+                  ev->type=AES_TIMER; return AES_TIMER; }
+        gem_msg m;
+        if(gem_recv(g_gemfd,&m)!=0){                       // EOF: gemd is gone. Nothing works now.
+            memset(ev,0,sizeof *ev); ev->type=AES_QUIT; return AES_QUIT; }
+        int t=client_dispatch(&m,ev);
+        if(t) return t;                                    // AES_MESAG -> evnt_multi reads the pipe
+    }
+}
 #else
 void wind_client_attach(void){}                     // SDL host: there is no gemd, and no usys.h
 void wind_client_detach(void){}
+int  aes_event_win(void){ return 0; }               // single process: nobody routed anything to us
 static void client_paint(int hd,int x,int y,int w,int h){ (void)hd;(void)x;(void)y;(void)w;(void)h; }
 #endif
 
@@ -662,6 +791,13 @@ void wind_get(int hd,int field,int*a,int*b,int*c,int*d){
     if(hd==0){ int x,y,w,h; work_area(&x,&y,&w,&h); if(a)*a=x; if(b)*b=y; if(c)*c=w; if(d)*d=h; return; }  // desktop
     if(hd<1||hd>=MAXW){ if(a)*a=0; return; }
     awin*W=&g_w[hd]; int x=W->x,y=W->y,w=W->w,h=W->h;
+    // A CLIENT'S WORK AREA IS ITS SURFACE, and it starts at 0,0. It must not compute the chrome
+    // inset itself (it does not know the theme's border width, and §5 says it may not care): the
+    // drawable gemd gave it IS the answer, and it is the same space its content callback draws in
+    // and its input events arrive in. One coordinate system, no chrome model on the client side.
+    if(g_mode==AES_CLIENT && field==WF_WORKXYWH){
+        if(a)*a=0; if(b)*b=0; if(c)*c=W->surf.w; if(d)*d=W->surf.h; return;
+    }
     if(field==WF_WORKXYWH) app_work(W,&x,&y,&w,&h);   // already minus the scrollbar column
     else if(field==WF_PREVXYWH){ x=W->px;y=W->py;w=W->pw;h=W->ph; }
     if(a)*a=x; if(b)*b=y; if(c)*c=w; if(d)*d=h;
@@ -690,11 +826,24 @@ static void post(int type,int hd,int a,int b,int c,int d){
 }
 static void raise(int hd){ zremove(hd); g_z[g_nz++]=hd; }
 
+// Frame interaction. In gemd this is the SERVER's hit test — the closer, the mover and the sizer
+// are chrome, chrome is gemd's, and a client never sees these clicks (it hears the consequence:
+// WM_CLOSED / WM_MOVED / WM_SIZED). Returns 1 when the frame consumed the click; 0 means the
+// click was in the work area, and under gemd that is what gets forwarded to the owning client.
+//
+// A CLIENT never runs this: its local list has no z-order, no geometry it may trust, and no
+// chrome. Its clicks are already routed and already window-local.
 int wind_handle_click(int mx,int my){
+    if(g_mode==AES_CLIENT) return 0;               // gemd hit-tested it; this one is ours to use
     int hd = wind_find(mx,my);
     if(!hd) return 0;
     awin*W=&g_w[hd];
-    if(g_z[g_nz-1]!=hd){ raise(hd); wind_redraw_win(hd); post(WM_TOPPED,hd,0,0,0,0); return 1; }
+    // Click-to-raise — but NEVER for W_BOTTOM (§4(2)). wind_raise() honours it and this path did
+    // not: a click on the desktop (a screen-sized W_BOTTOM window) would have topped it and
+    // swallowed every app on the machine. It falls through instead, so a bottom window still gets
+    // its click; it just does not come to the front.
+    if(g_z[g_nz-1]!=hd && !(W->kind & W_BOTTOM)){
+        raise(hd); wind_redraw_win(hd); post(WM_TOPPED,hd,0,0,0,0); return 1; }
     int th=tbh();
     int tx=W->x, ty=W->y, tw=W->w;               // flush title bar
     // close box

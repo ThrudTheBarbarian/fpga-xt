@@ -139,6 +139,17 @@ enum { AES_LOCAL = 0, AES_CLIENT = 1, AES_SERVER = 2 };
 int  aes_mode(void);
 void aes_server_mode(void);       // gemd, and only gemd, calls this
 
+// How long appl_init() waits for the "gem" service before giving up — and on XTOS giving up is
+// FATAL (there is no single-process mode to fall back to). A program started ALONGSIDE gemd (the
+// desktop, out of 99-Desktop) races it at boot and raises this so it cannot lose that race.
+void gem_connect_set_wait(int ms);
+
+// CLIENT: which of OUR windows the last input event was delivered to (0 = none/not a client).
+// A client cannot deduce it — event coordinates are window-LOCAL, so every window sees a click
+// at (10,10) — and it must not try: wind_find() needs a z-order and a geometry, and a client is
+// entitled to neither. gemd hit-tested it and says so on the wire.
+int  aes_event_win(void);
+
 // Absolute position of object `obj` in `tree` (walks from the root).
 void objc_offset(OBJECT *tree, int obj, int *x, int *y);
 // Draw `tree` from `start` down `depth` levels, clipped to (clx,cly,clw,clh).
@@ -173,7 +184,12 @@ void objc_set_userdraw(objc_userdraw_fn fn, void *ud);
 // SDL_WaitEventTimeout; on hardware it's the AES event pump over the VDI input
 // layer.  Everything else (form_do, evnt_multi) builds on this.
 enum { AES_NONE=0, AES_BTN_DOWN=1, AES_BTN_UP=2, AES_KEY=3, AES_QUIT=4,
-       AES_MOTION=5, AES_TIMER=6, AES_WHEEL=7 };
+       AES_MOTION=5, AES_TIMER=6, AES_WHEEL=7,
+       // AES_MESAG: the source queued an AES MESSAGE (appl_write) rather than an input event —
+       // under gemd, WM_CLOSED/WM_MOVED/WM_SIZED arrive on the same channel as the input does.
+       // evnt_multi must then LOOK IN THE PIPE; returning AES_TIMER instead would send it back
+       // to sleep with the message still sitting there.
+       AES_MESAG=8 };
 // wheel: signed notch count for AES_WHEEL (>0 = away from the user / scroll up),
 // with mx/my at the current pointer.  The host source (SDL) fills it from
 // SDL_MOUSEWHEEL; the A9 kernel input layer has no wheel yet, so it stays 0
@@ -382,7 +398,8 @@ enum { W_NAME=0x01, W_CLOSER=0x02, W_FULLER=0x04, W_MOVER=0x08, W_INFO=0x10,
        // neither knows nor cares which of them is "the desktop".
        W_BOTTOM=0x1000 };
 enum { WM_REDRAW=20, WM_TOPPED=21, WM_CLOSED=22, WM_FULLED=23, WM_ARROWED=24,
-       WM_HSLID=25, WM_VSLID=26, WM_SIZED=27, WM_MOVED=28, WM_NEWTOP=29 };
+       WM_HSLID=25, WM_VSLID=26, WM_SIZED=27, WM_MOVED=28, WM_NEWTOP=29,
+       WM_UNTOPPED=30 };   // focus LOST (gemd's MSG_ACTIVATE 0; classic GEM has it too)
 
 /* ---- XTOS_*: XTOS system-event messages (OS/AES -> apps) ------------------
  * A reserved range for events that classic GEM has no message for — the OS

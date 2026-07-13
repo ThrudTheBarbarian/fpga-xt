@@ -20,11 +20,14 @@ int  gem_connect(void);                       /* -> channel fd (<0: gemd is not 
 int  gem_send(int fd, const gem_msg *m);      /* 0 = ok. A failed write is NEVER fatal */
 int  gem_recv(int fd, gem_msg *m);            /* 0 = ok, -1 = EOF: gemd is gone */
 
-/* Block until a message of type `op` arrives. Anything else that arrives first is DISCARDED.
- * That is honest for M2 — the only unsolicited message is MSG_REDRAW and every request is
- * answered immediately — but it is a real limitation, not an oversight: when evnt_multi becomes
- * the pump (M4) this has to become a queue. */
+/* Block until a message of type `op` arrives. Anything that arrives FIRST is handed to
+ * wind_client_stray() rather than dropped: once input flows (M4) an unsolicited event can land
+ * in the middle of a wind_open handshake, and a swallowed button-up is a stuck drag. */
 int  gem_await(int fd, int op, gem_msg *m);
+
+/* The AES's client mode (gem/aes/window.c) — where a stray message goes: input into its event
+ * queue, an AES message into the app's message pipe. */
+void wind_client_stray(const gem_msg *m);
 
 /* Map/unmap a surface gemd granted us by id (§11: the client holds one ref and gemd the other;
  * either may drop it while both are alive). */

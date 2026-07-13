@@ -116,6 +116,13 @@ int evnt_multi(int flags, int bclk, int bmask, int bstate,
         if (t == AES_QUIT) return MU_QUIT;
         if (t == AES_WHEEL) { wind_handle_wheel(ev.mx, ev.my, ev.wheel); continue; }   // scroll under pointer
         if (t == AES_TIMER) { if (flags & MU_TIMER) return MU_TIMER; continue; }
+        // The source queued an AES message (under gemd: WM_CLOSED/WM_MOVED/WM_SIZED come down the
+        // same channel as input). Fall THROUGH to the pipe check below — `continue` here would go
+        // straight back to sleep with the message unread.
+        if (t == AES_MESAG) {
+            if ((flags & MU_MESAG) && mep && appl_read(0, 16, mep)) return MU_MESAG;
+            continue;
+        }
         if (t == AES_KEY && (flags & MU_KEYBD)) {
             if (okey) *okey = ev.key; return MU_KEYBD;
         }

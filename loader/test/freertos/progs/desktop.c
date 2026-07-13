@@ -47,7 +47,13 @@
 #define MAX_ICONS 32
 #define DCLICK_MS 500   /* generous: serial Enter-Enter / Space-toggle need more than a real mouse */
 
-static int    HV, PW, PH;
+/* The workstation to draw through. NOT a variable any more: under gemd the AES binds a
+ * workstation PER WINDOW (each window's surface is a separate drawable), and it rebinds it around
+ * every content callback. Whichever window is being painted right now, aes_handle() is its
+ * workstation — so a client with two windows cannot paint the second one's content into the
+ * first one's buffer, which is exactly what a cached HV would have done. */
+#define HV aes_handle()
+static int    PW, PH;
 static rscdoc *g_rsc;                                // desktop.rsc dialogs (New…, …); NULL = built-ins
 static theme  TH;
 static CICON  ci[MAX_ICONS];
@@ -56,42 +62,18 @@ static reg_desktop_icon rows[MAX_ICONS];
 static OBJECT desk[1 + MAX_ICONS];
 static int    n_icons;
 
-static struct os_fbinfo g_fb;
-static gfx_surface *g_bb;
-
-/* Push only the changed rectangle from the cached back-buffer to the scanned
- * plane.  wind_redraw regenerates ALL of g_bb (cheap — cached, no plane traffic);
- * the plane write is the only DDR traffic, so a full-plane blit is ~8 MB where an
- * icon highlight is a few KB.  g_bb is always fully correct and the plane already
- * matches outside the rect, so a partial push stays in sync.  Worth it for CPU and
- * DDR either way.
+/* THE DESKTOP DOES NOT TOUCH THE PLANE. Not the framebuffer, not the back-buffer, not the drag
+ * overlay — on XTOS everything goes through gemd, and there is no fallback (docs/OS/gemd-plan.md).
  *
- * DO NOT re-derive the old story here, which was WRONG: this used to claim a
- * full-plane blit "starved the compositor hard enough to drop the HDMI link (SiI
- * read the sink as absent)".  It does not.  The link drops were a POWER problem —
- * the board was running off USB bus power, and the current transient of a big blit
- * drooped the rail enough to dip the SiI9022's analog RxSense, which reads as
- * "sink absent".  Proof: the PL diag monitor (hdmi.c hdmi_diag_mon_task) logged
- * ZERO overruns / MMCM unlocks / frame stalls through every drop — the compositor
- * never starved and the pixel clock never lost lock — and an external PSU made the
- * drops vanish entirely.  That false diagnosis cost months in AXI-QoS and
- * blit-banding attempts, neither of which could ever have worked.  Bandwidth is
- * not the constraint: the DDR has ample headroom and a big sequential blit is the
- * FRIENDLIEST access pattern there is. */
-static void present_rect(int x, int y, int w, int h) {
-    if (x < 0) { w += x; x = 0; }
-    if (y < 0) { h += y; y = 0; }
-    if (x + w > g_fb.w) w = g_fb.w - x;
-    if (y + h > g_fb.h) h = g_fb.h - y;
-    if (w <= 0 || h <= 0) return;
-    uint32_t *plane = (uint32_t *)g_fb.addr;
-    for (int r = y; r < y + h; r++)
-        memcpy(plane + (size_t)r * g_fb.stride + x,
-               g_bb->px + (size_t)r * g_bb->stride + x, (size_t)w * 4);
-    sys_fb_present();
-}
-static void present(void) { present_rect(0, 0, g_fb.w, g_fb.h); }
-static void repaint(void) { wind_redraw(); present(); }
+ * What used to be here — present_rect() (back-buffer -> framebuffer), present(), repaint(), and
+ * the DRAG_BASE overlay ops — is GONE, not disabled. It was the last direct-plane code in an app
+ * (the M7 gate is "no app draws direct any more"), and while it existed it was also a silent
+ * failure mode: with gemd dead the desktop did not error, it painted the screen itself and looked
+ * fine. The wallpaper and the icons are CONTENT (§4); they go into the desktop's own backing
+ * store like any app's, and gemd composites them.
+ *
+ * The SDL host twin (gem/xtdesk.c) still presents, and that is not a contradiction: it is a
+ * different PLATFORM with no gemd and no plane, where single-process is the only mode there is. */
 
 /* dirty-rect helpers: union two rects, and the on-screen bounds of a desktop
  * icon (padded to cover the G_CICON label below the bitmap + selection chrome). */
@@ -109,48 +91,15 @@ static void icon_dirty(int obj, int *x,int *y,int *w,int *h) {
 }
 static int desk_sel(void) { for (int i = 1; i <= n_icons; i++) if (desk[i].ob_state & OS_SELECTED) return i; return 0; }
 
-/* The live XL compositor plane (emulator video) binds to ONE 6502 window: the
- * kernel places plane 1 over that window's work area (SYS_xl_window).  Declared
- * here because the drag-overlay hooks below track it during a drag. */
+/* The live XL compositor plane (emulator video): the kernel places plane 1 over the emu window's
+ * work area (SYS_xl_window).  It is a PLANE, and planes are gemd's (Rule 1) — and the placement
+ * needs the window's SCREEN rect, which a client does not know and may not ask for (§5).  So it
+ * cannot work from here, and it is not going to be faked: emulator windows open with empty work
+ * areas until gemd places the XL plane on a client's behalf.  That is M6, and it is the one thing
+ * that genuinely needs a new server call rather than a rearrangement of this file. */
 #define XL_SCALE 2                      // 320x192 XL writeback -> a 640x384 work area
-static int g_xlwin;                     // window handle owning the plane (0 = none)
-static void xl_sync(void);              // fwd: re-place the plane on g_xlwin's work area
-
-/* HW drag-overlay ops (registered with wind_set_overlay): the AES title-bar drag
- * lifts the window into the overlay plane and moves it by register write — no
- * per-motion redraw, tear-free. begin copies the window rect from the cached
- * back-buffer into the DRAG_BASE overlay buffer.  The back-buffer holds only the
- * chrome + a black work area, though — the emulator's live picture is a SEPARATE
- * compositor plane (XL, depth 2, above this overlay).  So when the lifted window
- * is the emu window, move the XL plane in lock-step with the overlay: the live
- * picture then rides on top of the dragged frame instead of staying pinned. */
-#define DRAG_BASE 0x32000000u
-static int g_ovl_w, g_ovl_h;
-static int ovl_begin(int x, int y, int w, int h) {
-    if (w <= 0 || h <= 0) return 0;
-    if (x < 0 || y < 0 || x + w > g_fb.w || y + h > g_fb.h) return 0;   // off-screen edge -> classic drag
-    uint32_t *dst = (uint32_t *)DRAG_BASE;              // COMP plane reads a FIXED 2048-word (8192 B)
-    for (int r = 0; r < h; r++)                         // row stride (hdl/fpga_xt_top.sv stride_bytes=8192),
-        memcpy(dst + (size_t)r * g_fb.stride,           // NOT packed — OVL_W only bounds the displayed width
-               g_bb->px + (size_t)(y + r) * g_bb->stride + x, (size_t)w * 4);
-    g_ovl_w = w; g_ovl_h = h;
-    sys_overlay(x, y, w, h, 1);
-    return 1;
-}
-// The emulator's live picture is a SEPARATE compositor plane (XL, depth 2, above
-// this drag overlay).  WM_MOVED is one-shot at drag-END (classic GEM), so it can
-// only SNAP the plane, never track it — the continuous follow must ride the
-// per-motion overlay hook.  xl_sync() re-reads g_xlwin's LIVE work area (window.c
-// updates W->x/W->y before calling ovl_move), so the plane steps with the drag
-// and settles on release.  A no-op when the dragged window isn't the emu window
-// (g_xlwin's work area is unchanged → same placement), so it's safe to call
-// unconditionally without a per-drag bind check (the old g_drag_xl arming, which
-// never fired reliably).
-static void ovl_move(int x, int y) {
-    sys_overlay(x, y, g_ovl_w, g_ovl_h, 1);
-    xl_sync();                                          // XL plane follows the emu window each step
-}
-static void ovl_end(void) { sys_overlay(1920, 1080, 1, 1, 1); xl_sync(); }  /* park overlay; settle the plane */
+static int g_xlwin;                     // window handle that WOULD own the plane (0 = none)
+static void xl_sync(void);              // no-op under gemd (M6); see above
 
 static int read_default(const char *dir, char *out, int n) {
     char p[160]; snprintf(p, sizeof p, "%s/Default", dir);
@@ -291,17 +240,14 @@ static int g_ex = 380, g_ey = 130;
 // re-place it whenever the window moves/resizes, hide it on close.  m68k
 // windows stay placeholders (no core hosted yet).  (XL_SCALE / g_xlwin are
 // declared up by the drag-overlay hooks, which track the plane during a drag.)
-static void xl_sync(void) {
-    if (!g_xlwin) return;
-    int x, y, w, h;
-    wind_get(g_xlwin, WF_WORKXYWH, &x, &y, &w, &h);
-    sys_xl_window(x, y, w, h, XL_SCALE);
-}
-static void xl_unbind(int win) {
-    if (win != g_xlwin || !g_xlwin) return;
-    sys_xl_window(0, 0, 0, 0, 0);       // hide the plane
-    g_xlwin = 0;
-}
+// M6, and NOT a rearrangement of this file: placing the XL plane needs the window's SCREEN rect,
+// and a client is not told where its window is (§5) — wind_get(WF_WORKXYWH) now honestly returns
+// SURFACE coordinates (0,0,w,h), because that is the only space a client has. Faking it with
+// those numbers would put the emulator plane at the top-left of the screen and call it working.
+// The plane belongs to gemd (Rule 1); a client must ASK gemd to place it, and that call does not
+// exist yet. Until it does, an emu window is a frame with an empty work area.
+static void xl_sync(void) { }
+static void xl_unbind(int win) { if (win == g_xlwin) g_xlwin = 0; }
 
 static emuwin *emu_of_window(int win) {
     for (int i = 0; i < MAXEMU; i++) if (EMU[i].used && EMU[i].win == win) return &EMU[i];
@@ -2381,29 +2327,15 @@ static void menu_message(const int16_t *msg) {
 // always steer to a grabbed emu window's close box and Tab it shut.
 static int g_kbd_grab = 1;
 static int g_last_top;
-// Right-click plumbing.  The A9 input layer has no secondary-button bit yet, so
-// the documented terminal fallback is Ctrl+left (we also honour a real right
-// button, bit 1, if that ever lands).  g_rclick marks the one synthetic click
-// the main loop routes to the context menu; g_swallow_up turns the trailing
-// button-release into a harmless motion so it can't pre-select a menu row.
-static int g_rclick, g_swallow_up;
-
-static int a9_events(aes_event *ev, int timeout_ms) {
-    struct os_event oe = { OS_EV_TIMER, 0, 0, 0, 0, 0 };   // default if the syscall fails
-    // raw keys while an emulator window is topped AND grabbed: Enter/Space TYPE
-    // into the machine instead of clicking (the mouse clicks/drags either way)
-    sys_input(&oe, timeout_ms, g_kbd_grab && emu_of_window(wind_top()) != NULL);
-    g_rclick = 0;                                          // valid only for the event we return
-    if (oe.type == OS_EV_BTN_DOWN && ((oe.button & 2) || (oe.shift & K_CTRL))) {
-        g_rclick = 1; g_swallow_up = 1; oe.button = 1;     // secondary click: menu on the DOWN
-    } else if (g_swallow_up && oe.type == OS_EV_BTN_UP) {
-        g_swallow_up = 0; oe.type = OS_EV_MOTION; oe.button = 0;   // eat its release
-    }
-    ev->type = oe.type; ev->mx = oe.mx; ev->my = oe.my;
-    ev->button = oe.button; ev->key = oe.key; ev->shift = oe.shift;
-    ev->wheel = 0;                                        // A9 input layer has no wheel yet
-    return ev->type;
-}
+// THE DESKTOP HAS NO INPUT DEVICE, and no event source of its own. It is an ordinary client:
+// gemd owns the pointer, hit-tests the z-order, keeps the chrome to itself and sends us the
+// events that are ours, in OUR window's coordinates (aes_set_events is wired inside the AES's
+// client attach). What used to be here — a9_events(), a direct sys_input() with the emulator's
+// raw-key grab — is gone with the rest of the direct-device access.
+//
+// The right-click fallback (the terminal has no secondary button: Ctrl+left stands in for one)
+// survives as a test on the SHIFT STATE that gemd forwards with the click, which is where it
+// always belonged — it is a UI convention, not an input-layer trick.
 
 void _app_entry(int argc, char **argv) {
     (void)argc; (void)argv;
@@ -2428,8 +2360,7 @@ void _app_entry(int argc, char **argv) {
      * flip for exactly this reason: the w/h stay readable, the address stops being usable.
      * (A cleaner wind_get(0) over the wire is owed; noted in the plan.) */
     if (sys_fb_info(&fb) != 0) { sys_write(2, "desktop: no display plane\n", 26); return; }
-    PW = fb.w; PH = fb.h;
-    g_fb = fb;
+    PW = fb.w; PH = fb.h;      /* the SIZE. fb.addr is never dereferenced anywhere in this file. */
 
     /* Prefer the SD font (/OS, user-overridable); fall back to the one bundled in
      * romfs (/System, always present — lets desktop run in qemu / on a card with no
@@ -2448,32 +2379,17 @@ void _app_entry(int argc, char **argv) {
         theme_load(&TH, "/System/themes/Aristo2/1x") != 0) {
         sys_write(2, "desktop: theme load FAILED\n", 27); return;
     }
-    /* 99-Desktop starts gemd and the desktop TOGETHER (gemd does not spawn us -- it must
-     * not know what a desktop is). So we race it at boot: wait for the service rather than
-     * lose the race and silently fall back to painting the plane ourselves. If gemd really
-     * is absent (run standalone), this costs 5s and then we run single-process as before. */
+    /* 99-Desktop starts gemd and the desktop TOGETHER (gemd does not spawn us -- it must not know
+     * what a desktop is). So we race it at boot, and wait rather than lose that race. */
     gem_connect_set_wait(5000);
     /* THE ATTACH (§4). appl_init() finds the "gem" service, and from here the desktop is an
      * ORDINARY CLIENT that gemd cannot tell apart from any other — except by one flag on its
-     * window (W_BOTTOM). If gemd is NOT running it stays standalone and drives the plane
-     * itself, exactly as before. Both paths, one program. */
+     * window (W_BOTTOM). If gemd is NOT there, this FAILS: appl_init exits, because on XTOS there
+     * is no single-process mode to fall back to and a desktop that quietly paints the plane
+     * instead is exactly the bug the whole split exists to prevent. */
     appl_init();
 
-    if (aes_mode() == AES_CLIENT) {
-        aes_init(0, &TH);            /* theme only: the AES binds our workstation at wind_open */
-    } else {
-        /* Standalone (no gemd): composite into the reserved, cacheable WM back-buffer
-         * (SYS_fb_wallpaper -> WALLPAPER_BASE, Normal-WB in the MMU) — fast alpha blending in
-         * the D-cache — then blit it to the strided, non-cacheable plane once on present. */
-        struct os_fbinfo wp;
-        if (sys_fb_wallpaper(&wp) != 0 || !wp.addr) { sys_write(2, "desktop: no back-buffer\n", 24); return; }
-        static gfx_surface bb_s;
-        bb_s.w = wp.w; bb_s.h = wp.h; bb_s.stride = wp.stride; bb_s.px = (uint32_t *)wp.addr;
-        g_bb = &bb_s;
-        vdi_init(g_bb); HV = v_opnvwk(g_bb);
-        aes_init(HV, &TH);
-        wind_set_desktop(0x30507800u);  /* fallback flat colour, if wallpaper is unavailable */
-    }
+    aes_init(0, &TH);                /* theme only: the AES binds our workstation at wind_open */
     wall_init(PW, PH);
 
     if (registry_open("/OS/var/registry.db") != 0)
@@ -2503,64 +2419,45 @@ void _app_entry(int argc, char **argv) {
 
     build_desktop();
 
-    if (aes_mode() == AES_CLIENT) {
-        /* ---- THE DESKTOP AS AN ORDINARY CLIENT (§4) --------------------------------------
-         * One window. Screen-sized. W_BOTTOM, and NO CHROME BITS — so it gets no frame and no
-         * title bar, and its work area is the whole screen. gemd cannot tell this program apart
-         * from gemtext except by that one flag, which is the entire point: the desktop can
-         * crash, be restarted, or be replaced, and the window system does not notice.
-         *
-         * The wallpaper is CONTENT (§4) and goes into our own backing store like anybody's.
-         * There is no plane here, no back-buffer, no drag overlay, and no sys_input: gemd owns
-         * the screen (Rule 1) and gemd owns input (§3). */
-        int hd = wind_create(W_BOTTOM, 0, 0, PW, PH);
-        if (hd <= 0) { sys_write(2, "desktop: wind_create FAILED\n", 28); return; }
-        wind_content(hd, deskcontent, NULL);         // the SAME callback as standalone
-        wind_open(hd, 0, 0, PW, PH);                 // -> surface, first paint, damage
-        {
-            char b[80]; int n = snprintf(b, sizeof b,
-                "[desk] client of gemd: W_BOTTOM window %d, %dx%d\n", hd, PW, PH);
-            sys_klog(b, n);
-        }
-        /* Idle. Input routing is gemd's and does not exist yet (M4), so nothing is clickable
-         * under gemd — the desktop RENDERS but does not respond. That is the honest state of
-         * the split at M3, and it is why M4 is next; it is not a bug to hunt. */
-        for (;;) { net_pump(); sys_nanosleep(200000u); }
+    /* ---- THE DESKTOP AS AN ORDINARY CLIENT (§4) ------------------------------------------
+     * One window. Screen-sized. W_BOTTOM, and NO CHROME BITS — so it gets no frame and no title
+     * bar, and its work area is the whole screen. gemd cannot tell this program apart from
+     * gemtext except by that one flag, which is the entire point: the desktop can crash, be
+     * restarted, or be replaced, and the window system does not notice.
+     *
+     * The wallpaper is CONTENT (§4) and goes into our own backing store like anybody's. There is
+     * no plane here, no back-buffer, no drag overlay and no input device: gemd owns the screen
+     * (Rule 1) and gemd owns input (§3). Our window is at 0,0 and full-screen, so its LOCAL
+     * coordinates — the only ones we are given — happen to equal screen coordinates. That is a
+     * coincidence of this window's geometry and nothing to lean on. */
+    int deskwin = wind_create(W_BOTTOM, 0, 0, PW, PH);
+    if (deskwin <= 0) { sys_write(2, "desktop: wind_create FAILED\n", 28); return; }
+    wind_content(deskwin, deskcontent, NULL);
+    wind_open(deskwin, 0, 0, PW, PH);                // -> surface, first paint, damage
+    {
+        char b[80]; int n = snprintf(b, sizeof b,
+            "[desk] client of gemd: W_BOTTOM window %d, %dx%d\n", deskwin, PW, PH);
+        sys_klog(b, n);
     }
 
-    wind_set_desktop_content(deskcontent, NULL);
-    menu_show();                                     // the owner's menu bar (reserves the top BARH)
-
-    aes_set_events(a9_events);
-    aes_set_idle(net_pump, 40);                      // modal loops (dialogs, drags) keep pumping
-    wind_set_overlay(ovl_begin, ovl_move, ovl_end, present_rect);   // tear-free HW-overlay window drag
-    repaint();                                       // initial frame
+    aes_set_idle(net_pump, 40);                      // modal loops keep pumping the network
 
     for (;;) {                                       // interactive loop
         int mx, my, mb, ks, key, nc; int16_t msg[8];
-        menu_sync();                                 // keep the bar in step with the front window
         int pend = net_pending();                    // net I/O in flight: tick to pump it
         int r = evnt_multi(MU_MESAG|MU_KEYBD|MU_BUTTON|(pend?MU_TIMER:0), 2,1,1, 0,0,0,0,0, 0,0,0,0,0, msg, pend?40:0, 0,
                            &mx, &my, &mb, &ks, &key, &nc);
+        if (r & MU_QUIT) break;                      // gemd is gone: EOF on the channel
         net_pump();                                  // drain any arrived reply lines
-        { int top = wind_top();                          // (re-)grab on topping an emu window
-          if (top != g_last_top) { g_last_top = top; if (emu_of_window(top)) g_kbd_grab = 1; } }
-        // Keyboard goes to the ATARI while a topped emulator window holds the
-        // grab (kernel injects into POKEY); Ctrl-] releases the grab; with no
-        // grab, keys act on the desktop and Esc quits it.
-        if ((r & MU_KEYBD) && key == 0x1D) { g_kbd_grab = !g_kbd_grab; continue; }  // Ctrl-]
-        if ((r & MU_KEYBD) && g_kbd_grab && emu_of_window(wind_top())) { sys_kbd_6502(key); continue; }
         if ((r & MU_KEYBD) && key == 0x1b) break;                              // Esc quits
-        if ((r & MU_MESAG) && msg[0] == MN_SELECTED) menu_message(msg);        // menu-bar selection
         if ((r & MU_MESAG) && msg[0] == WM_CLOSED) {
+            /* The closer, on one of OUR windows. gemd asked; it did not decide (§3). */
             browser *b = br_of_window(msg[3]);       // close cancels any in-flight request
             if (b) { net_req_close(b); br_free_icons(b); b->used = 0; }
             emuwin *e = emu_of_window(msg[3]); if (e) e->used = 0;
             xl_unbind(msg[3]);
-            wind_close(msg[3]);   // wind_close repaints + presents the vacated rect
+            wind_close(msg[3]);   // gemd drops the window and recomposites the rect it vacated
         }
-        if ((r & MU_MESAG) && (msg[0] == WM_MOVED || msg[0] == WM_SIZED) && msg[3] == g_xlwin)
-            xl_sync();                                   // keep the plane on the work area
         if ((r & MU_MESAG) && msg[0] == XTOS_MEDIA_CHANGE) {
             // OS says the SD card left (msg[3]=0) or came back (msg[3]=1). Placeholder:
             // log it. Real UX would grey out / close windows rooted on /media.
@@ -2568,13 +2465,17 @@ void _app_entry(int argc, char **argv) {
             else        sys_klog("[desk] SD removed\n", 18);
         }
         if (r & MU_BUTTON) {
-            if (g_rclick) { g_rclick = 0; ctx_menu_at(mx, my); }   // right-click -> context menu
-            else {
-                int wh = wind_find(mx, my); browser *b = wh ? br_of_window(wh) : NULL;
-                if (b) br_click(b, mx, my); else desk_click(mx, my);
-            }
+            /* WHICH window? gemd says (aes_event_win): the coordinates are window-LOCAL, so we
+             * cannot tell from them — every window's content starts at 0,0. wind_find() is not
+             * an option and must not be: a client has no z-order and no geometry. */
+            int wh = aes_event_win();
+            browser *b = (wh && wh != deskwin) ? br_of_window(wh) : NULL;
+            if (b)                  br_click(b, mx, my);
+            else if (wh == deskwin) desk_click(mx, my);
         }
+        (void)mb; (void)ks;
     }
     if (g_rsc) rscload_free(g_rsc);
     registry_close(); ctx_db_close();
+    appl_exit();
 }
