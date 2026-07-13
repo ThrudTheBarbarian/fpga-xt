@@ -1,3 +1,10 @@
+/* ============================================================================
+ * ⚠ REFERENCE ONLY — THIS FILE IS NOT BUILT, NOT LINKED, NOT RUN.
+ *
+ * This is the RETIRED bare-metal XTOS. The live operating system is in loader/.
+ * Do not "fix" this file; do not assume it reflects the running system.
+ * See reference/vitis-baremetal/README.md.
+ * ============================================================================ */
 // tmpfs_backend.c — VFS backend: a small RAM filesystem mounted at "/tmp".
 // Files live in malloc'd buffers (newlib heap); they vanish on reboot.  Handy
 // for scratch/temp files that shouldn't touch the SD.  (Shape after T288 tmpfs.)

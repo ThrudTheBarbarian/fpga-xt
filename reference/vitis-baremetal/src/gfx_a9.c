@@ -1,3 +1,13 @@
+/* ============================================================================
+ * ⚠ REFERENCE ONLY — NOT BUILT, NOT LINKED, NOT RUN. The live OS is loader/.
+ *
+ * ...BUT THIS FILE IS WORTH READING. It is the AUTHORITATIVE example of driving
+ * the PL blitter, and the live driver (loader/test/freertos/blitter.c) was ported
+ * FROM it. Three real bugs in that port were found only by diffing against this
+ * file (docs/bugs/scaled-blit-ddr.md). If you are writing blitter code, read this
+ * BEFORE re-deriving anything from the docs -- re-deriving is the mistake.
+ * See reference/vitis-baremetal/README.md.
+ * ============================================================================ */
 // gfx_a9.c — A9 graphics backend for the GEM gfx.h primitives.
 //
 // Routes the three backend primitives (fill / blit / line) to the hardware

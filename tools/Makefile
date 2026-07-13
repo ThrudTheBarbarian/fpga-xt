@@ -1,7 +1,7 @@
 # tools/Makefile — code-generation + lint helpers.
 #
 #   make regmap        regenerate the GP0 register map artefacts from the spec
-#                      (hdl/xt_gp0_pkg.sv, vitis/xtos/src/xt_gp0_map.h,
+#                      (hdl/xt_gp0_pkg.sv, hdl/regmap/xt_gp0_map.h,
 #                       docs/Design/gp0-register-map.md)
 #   make regmap-check  fail if any generated artefact is stale (CI gate)
 #   make cdc-lint      scan hdl/ for unsafe multi-bit 2-FF clock crossings

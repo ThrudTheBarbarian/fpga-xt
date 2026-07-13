@@ -1,3 +1,10 @@
+/* ============================================================================
+ * ⚠ REFERENCE ONLY — THIS FILE IS NOT BUILT, NOT LINKED, NOT RUN.
+ *
+ * This is the RETIRED bare-metal XTOS. The live operating system is in loader/.
+ * Do not "fix" this file; do not assume it reflects the running system.
+ * See reference/vitis-baremetal/README.md.
+ * ============================================================================ */
 // vfs.c — VFS dispatcher + newlib file syscalls.
 //
 // Owns the fd table and the strong _open/_read/_write/_close/_lseek/_fstat/

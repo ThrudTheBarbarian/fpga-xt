@@ -11,7 +11,7 @@
 //
 // The block selectors and register offsets below are NOT hand-written here: they
 // come from xt_gp0_pkg (generated from hdl/regmap/xt_gp0.json by
-// tools/gen_regmap.py, which also renders vitis/xtos/src/xt_gp0_map.h and
+// tools/gen_regmap.py, which also renders hdl/regmap/xt_gp0_map.h and
 // docs/Design/gp0-register-map.md).  Edit the JSON spec, never these constants.
 //
 // ====================================================================

@@ -3,7 +3,7 @@
     "Single source of truth for the PL control-register map over PS GP0.",
     "tools/gen_regmap.py renders this to:",
     "  hdl/xt_gp0_pkg.sv          (SystemVerilog package, imported by xt_gp0_regs.sv)",
-    "  vitis/xtos/src/xt_gp0_map.h (A9-side C header)",
+    "  hdl/regmap/xt_gp0_map.h (A9-side C header)",
     "  docs/Design/gp0-register-map.md (docs table)",
     "Edit THIS file, then run `make -C tools regmap` (or tools/gen_regmap.py).",
     "CI runs `gen_regmap.py --check` and fails on drift."

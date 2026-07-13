@@ -1,3 +1,10 @@
+/* ============================================================================
+ * ⚠ REFERENCE ONLY — THIS FILE IS NOT BUILT, NOT LINKED, NOT RUN.
+ *
+ * This is the RETIRED bare-metal XTOS. The live operating system is in loader/.
+ * Do not "fix" this file; do not assume it reflects the running system.
+ * See reference/vitis-baremetal/README.md.
+ * ============================================================================ */
 // fatfs_backend.c — VFS backend for the SD card (FatFs), mounted at "/".
 //
 // Backend handles are indices into a small FIL/DIR pool.  f_read/f_write use a

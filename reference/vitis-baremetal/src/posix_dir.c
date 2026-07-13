@@ -1,3 +1,10 @@
+/* ============================================================================
+ * ⚠ REFERENCE ONLY — THIS FILE IS NOT BUILT, NOT LINKED, NOT RUN.
+ *
+ * This is the RETIRED bare-metal XTOS. The live operating system is in loader/.
+ * Do not "fix" this file; do not assume it reflects the running system.
+ * See reference/vitis-baremetal/README.md.
+ * ============================================================================ */
 // posix_dir.c — POSIX opendir/readdir/closedir backed by the VFS.
 //
 // newlib has no directory syscalls on bare metal, but portable code (the GEM

@@ -1,3 +1,10 @@
+/* ============================================================================
+ * ⚠ REFERENCE ONLY — THIS FILE IS NOT BUILT, NOT LINKED, NOT RUN.
+ *
+ * This is the RETIRED bare-metal XTOS. The live operating system is in loader/.
+ * Do not "fix" this file; do not assume it reflects the running system.
+ * See reference/vitis-baremetal/README.md.
+ * ============================================================================ */
 /*
  * fault.c — T2-a memory protection + fault RECOVERY on real hardware.
  *

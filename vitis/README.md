@@ -1,3 +1,20 @@
+# vitis/ — LIVE. This tree builds the FSBL, and nothing else.
+
+> **What this is now.** The only live purpose of this directory is producing
+> **`fsbl.elf`** (via `scripts/create_platform.py`, driven by `run-win10.sh` = `make platform`)
+> so that **`make boot.bin`** can build a bootable SD card. The *app* in BOOT.BIN is the live
+> FreeRTOS kernel, `loader/build/freertos-hw.elf` — **not** anything in this tree.
+>
+> **The old bare-metal XTOS application sources have MOVED** to
+> **`reference/vitis-baremetal/`**, where they are clearly marked as reference: not built, not
+> booted. If you came here looking for the OS, it is in **`loader/`**.
+>
+> This split exists because the tree used to contain two operating systems with no way to tell
+> which one was real — and the JTAG script defaulted to booting the dead one. That cost real
+> time. Do not reintroduce a second implementation here.
+
+---
+
 # vitis/ — PS-side build (Vitis Unified 2025.x)
 
 PS-side counterpart to `vivado/`.  Generates the Vitis platform,

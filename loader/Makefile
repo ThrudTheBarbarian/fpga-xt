@@ -136,7 +136,7 @@ FRASM := test/freertos/xt_boot.S test/freertos/xt_vectors.S $(FRPORT)/portASM.S
 freertos-build: $(BUILD)/freertos.elf
 	@echo "built $< (no qemu) — run: make freertos | flash: vivado/jtag-valhalla.sh dow"
 hw: $(BUILD)/freertos-hw.elf
-	@echo "built $< — JTAG-load: vivado/jtag-valhalla.sh testbed"
+	@echo "built $< — JTAG-load: vivado/jtag-valhalla.sh load"
 # Toolchain testbed: boots straight into the kernel menu (skips the PL0 login sh), which
 # owns `runhost` — load + run a host-filesystem .so over semihosting. The compiler drives
 # it non-interactively:  printf 'runhost <hostpath>\nexit\n' | make hosttest-run
@@ -279,7 +279,7 @@ RSC_ENGINE_OBJ := $(BUILD)/gem_rsc.o
 # /OS/Icons, /OS/Wallpaper, each selected by a `Default` file — not baked in.
 GEMSRC := $(GEM)/gfx_soft.c $(GEM)/font.c $(GEM)/wm.c $(GEM)/theme.c $(GEM)/img.c \
           $(wildcard $(GEM)/vdi/*.c) $(wildcard $(GEM)/aes/*.c) \
-          ../vitis/xtos/src/gem_pdf_stub.c test/freertos/libs/gem_stubs.c
+          ../gem/gem_pdf_stub.c test/freertos/libs/gem_stubs.c
 FTSRC  := $(wildcard $(FT)/tu/*.c)
 GEMINC := -Itest/freertos/libs/shim -I$(GEM) -I$(GEM)/vdi -I$(FT)/include -Inewlib-pic/include -Ikernel -Itest/qemu
 # -g: embed DWARF so libGEM.so is self-describing for xtc's #import (the .so IS
@@ -288,7 +288,13 @@ GEMINC := -Itest/freertos/libs/shim -I$(GEM) -I$(GEM)/vdi -I$(FT)/include -Inewl
 # evnt_multi drain of kernel XTOS system messages. The SDL testbed leaves it off.
 # -I$(FPGAGEM): the shared rsc.h; -DRSC_NO_STATE_FLAGS + -DG_BOX=G_BOX: rsc.h uses
 # OUR aes.h flag/type enums (rscload.c includes aes.h before rsc.h).
+# -fno-eliminate-unused-debug-types: gcc drops DWARF for any type nothing USES, and
+# aes.h declares every constant as an anonymous enum and its structs (SCROLLBAR, ...)
+# without ever naming them in an exported signature.  Without this flag xtc's
+# `#import <GEM>` sees NONE of them and every binding hand-mirrors 49 constants that
+# silently drift.  Costs ~10KB/TU of .debug_* — the ALLOC sections are byte-identical.
 GEMCFLAGS := -marm -mcpu=cortex-a9 -mfloat-abi=softfp -mfpu=neon-vfpv3 -fpic -O2 -g -DGEM_XTOS \
+             -fno-eliminate-unused-debug-types \
              -I$(FPGAGEM) -DRSC_NO_STATE_FLAGS -DG_BOX=G_BOX $(GEMINC)
 
 # Vendored SQLite (amalgamation) for the A9 registry — built with our own VFS
