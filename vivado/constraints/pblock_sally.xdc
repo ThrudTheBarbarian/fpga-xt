@@ -40,4 +40,14 @@
 create_pblock pb_sally
 add_cells_to_pblock [get_pblocks pb_sally] [get_cells u_sally_mem]
 add_cells_to_pblock [get_pblocks pb_sally] [get_cells u_sally_core]
+# Overlay CPU-READ BRAMs (clk-sally-timing-study Lever A, 2026-07-14): these were
+# free-floating top-level siblings, and the placer regularly dropped one across
+# the die from its only consumer — the sally read mux — leaving the binding
+# clk_sally path 53-55% ROUTE and closure a matter of directive luck (-0.200 /
+# -0.073 across three directives the day this landed, with the worst path
+# alternating between the math and screen-bank BRAM sources). Only the CPU-read
+# BRAMs are pinned; each engine's clk_sys side stays free to place near its
+# AXI/DDR plumbing.
+add_cells_to_pblock [get_pblocks pb_sally] [get_cells u_screen_bank/cpu_bram_reg*]
+add_cells_to_pblock [get_pblocks pb_sally] [get_cells u_math_cop/page_bram_reg*]
 resize_pblock [get_pblocks pb_sally] -add {CLOCKREGION_X0Y0 CLOCKREGION_X0Y1}
