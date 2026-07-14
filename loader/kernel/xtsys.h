@@ -214,6 +214,12 @@ struct xt_blit_surf { int32_t id; uint32_t stride; };   /* stride in BYTES per r
 
 #define XT_BLIT_DECLARE  0xB100  /* (struct xt_blit_surf *) -> 0: tell the driver a stride */
 #define XT_BLIT_SEQ      0xB101  /* (uint32_t *) -> 0: the RETIRED sequence number */
+#define XT_BLIT_WAIT     0xB103  /* (uint32_t *seq) -> 0 when the engine has retired *seq.
+                                  * BLOCKS in the kernel (brief register spin, then tick
+                                  * sleeps): one syscall per fence instead of an SVC storm —
+                                  * gemd's poll-loop fence burned 55 ms against 19 ms of
+                                  * actual blitting on full-screen presents. -1 = timeout
+                                  * (a wedged engine must not wedge the caller). */
 #define XT_BLIT_PRIORITY 0xB102  /* () -> 0: this fd jumps the queue. gemd only. */
 
 /* filesystem / VFS — block 0x300 */

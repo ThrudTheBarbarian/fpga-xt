@@ -242,6 +242,23 @@ static long dv_blit_ioctl(vfs_file *f, unsigned req, void *arg)
         if (!arg) return -1;
         *(uint32_t *)arg = blit_seq();
         return 0;
+    case XT_BLIT_WAIT: {
+        /* Block until the engine retires *arg. Spin briefly on the register (a small
+         * present retires in tens of microseconds — a tick sleep would DOUBLE its cost),
+         * then sleep by ticks for the big ones. Bounded: a wedged engine costs the caller
+         * 200 ms and an error, never a hang. */
+        if (!arg) return -1;
+        uint32_t want = *(uint32_t *)arg;
+        extern void vTaskDelay(uint32_t);           /* 1 tick = 1 ms here; header-free like
+                                                     * this file's other FreeRTOS externs */
+        for (int i = 0; i < 2000; i++)
+            if ((int32_t)(blit_seq() - want) >= 0) return 0;
+        for (int ms = 0; ms < 200; ms++) {
+            if ((int32_t)(blit_seq() - want) >= 0) return 0;
+            vTaskDelay(1);
+        }
+        return -1;
+    }
     case XT_BLIT_PRIORITY:
         /* First caller wins and is remembered; gemd starts before any client, so this is
          * the aes_init process. A second claimant is refused rather than allowed to steal

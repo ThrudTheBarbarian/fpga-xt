@@ -118,14 +118,13 @@ static void gemd_present(int x, int y, int w, int h)
         long seq = sys_write(g_blitfd, &c, sizeof c);
         long long t1 = gemd_us();
         if (seq >= 0) {
-            for (int i = 0; i < 5000000; i++) {
-                unsigned r = 0;
-                sys_ioctl(g_blitfd, XT_BLIT_SEQ, &r);
-                if ((long)r >= seq) {
-                    g_prof.blit += t1 - t0; g_prof.fence += gemd_us() - t1;
-                    g_prof.presents++;
-                    return;
-                }
+            unsigned want = (unsigned)seq;
+            if (sys_ioctl(g_blitfd, XT_BLIT_WAIT, &want) == 0) {   /* ONE syscall, kernel
+                                                                    * spins-then-sleeps: no
+                                                                    * more SVC-storm fence */
+                g_prof.blit += t1 - t0; g_prof.fence += gemd_us() - t1;
+                g_prof.presents++;
+                return;
             }
         }
         printf("gemd: blitter present failed (seq %ld) — CPU present from here on\n", seq);
