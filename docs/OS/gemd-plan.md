@@ -247,10 +247,21 @@ process preempted mid-`memcpy` resumed with clobbered NEON registers and left th
 uncopied. Now **2**: every task gets the context (264 B stack each). The corruption class was
 latent under every float-touching process — FreeType, printf `%f`, all of it — not just scroll.
 
+**Scroll cost, measured on the board (user-timed full-track drag, ~14 serial-lane motions):**
+~9 s → ~3 s → ~2.5 s across three fixes. (1) a scroll step repaints only the BAR server-side —
+the content cannot change until the client's damage arrives, and the full-window recomposite
+per thumb notch was the largest slice; (2) `aes_damage()` lets the content callback CULL: the
+VDI clip guarantees correctness, not thrift, and every visible tile used to render its FreeType
+label for the clip to discard — both desktops now hand the damage rect to `objc_draw` and skip
+text rows / the status bar outside it, and the scroll path posts ONE whole-band damage
+(`client_render`, split from `client_paint`); (3) scroll bursts COALESCE client-side — VSLID
+carries the absolute offset, so the newest supersedes the backlog (peek + one-slot stash,
+nothing dropped or reordered). What remains per step is one composite+present; the HW blitter
+taking over gemd's inner blit and present copy is the phase-2 multiplier.
+
 **Still owed in M5:** the wheel under gemd (`struct os_event` has no wheel field yet — when the
 input device grows one, `gemd_route` forwards it to `wind_handle_wheel` server-side and the
-existing `WM_VSLID` path does the rest); horizontal scrollbars (no bar drawn today); scroll-lag
-polish (per-motion server recomposites could coalesce to the newest offset).
+existing `WM_VSLID` path does the rest); horizontal scrollbars (no bar drawn today).
 
 ## gemd renders CACHED and presents rects (the 3-second redraw)
 
