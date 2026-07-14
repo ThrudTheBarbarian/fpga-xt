@@ -480,8 +480,17 @@ int gemd_run(void)
      * client's backing store into the work area. */
     aes_server_mode();
     vdi_init(&g_plane);
+    // THE FONT LIVES IN TWO PLACES, because we boot from two. The SD card stages it at
+    // /OS/fonts (loader/Makefile: $(SDSTAGE)/OS/fonts), but the romfs — which is all we have
+    // under qemu, where there is no SD card — mounts it at /System/fonts. Try the card, then
+    // fall back, exactly as desktop.c already does (desktop.c:2359).
+    //
+    // Without the fallback gemd comes up on qemu with no font at all, and since chrome is
+    // gemd's now (§11), that means EVERY window title on the system is blank — including the
+    // titles of apps that are working perfectly.
     vdi_set_font_dir("/OS/fonts");
     font_face *face = vdi_load_system_font();
+    if (!face) face = font_face_open("/System/fonts/AovelSansRounded.ttf");
     if (!face) printf("gemd: system font load FAILED — titles will be blank\n");
     else       vdi_set_face(face);
 
