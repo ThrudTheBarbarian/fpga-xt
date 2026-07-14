@@ -933,7 +933,10 @@ static int br_textw(const char *s) {                  // width of s in the curre
 // the tail that fits) while always keeping the mask, so the recorded rects stay correct.
 static void br_crumbbar(browser *b) {
     int tx = b->cbx, ty = b->cby, tw = b->cbw, th = b->cbh;
-    vsf_color(HV, 248); vsf_interior(HV, VDI_FIS_SOLID); vsf_perimeter(HV, 0);   // PEN_DLG strip
+    // A LOCATION bar, not a second info bar: white, like the list it belongs to, with a rule
+    // under it.  (The grey chrome strip at the BOTTOM is the status footer.  They are different
+    // things -- navigation vs. state -- and styling them alike read as the same bar drawn twice.)
+    vsf_color(HV, 0); vsf_interior(HV, VDI_FIS_SOLID); vsf_perimeter(HV, 0);     // PEN_WHITE
     int16_t br[4] = { (int16_t)tx, (int16_t)ty, (int16_t)(tx+tw-1), (int16_t)(ty+th-1) };
     vr_recfl(HV, br);
     vsl_color(HV, 249); vsl_width(HV, 1);                                        // PEN_BORDER divider

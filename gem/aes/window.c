@@ -973,11 +973,25 @@ int wind_find(int x,int y){
 
 int wind_top(void){ return g_nz ? g_z[g_nz-1] : 0; }
 
+// THE WINDOW THAT LOSES THE TOP MUST BE REPAINTED TOO.
+//
+// draw_one picks the titlebar art from `active` (= is this the topmost window), so a z-order
+// change makes TWO windows stale, not one — and repainting only the raised one left the old top
+// wearing the ACTIVE title bar for as long as it stayed on screen. Every window looked focused,
+// which is worse than none of them looking focused: focus is what the chrome is FOR.
+static void raise_repaint(int hd,int old){
+    if(old && old!=hd) wind_redraw_win(old);   // it is no longer active: redraw its bar
+    wind_redraw_win(hd);                       // ...and it now is
+}
 void wind_raise(int hd){
     if(hd<1||hd>=MAXW) return;
     if(g_w[hd].kind & W_BOTTOM) return;   // §4(2): NEVER topped by a click. A desktop that came
                                           // to the front on a click would hide every app.
-    for(int i=0;i<g_nz;i++) if(g_z[i]==hd){ zremove(hd); g_z[g_nz++]=hd; wind_redraw_win(hd); return; }
+    for(int i=0;i<g_nz;i++) if(g_z[i]==hd){
+        int old = g_z[g_nz-1];
+        if(old==hd) return;                                    // already top: nothing to restyle
+        zremove(hd); g_z[g_nz++]=hd; raise_repaint(hd,old); return;
+    }
 }
 
 static void post(int type,int hd,int a,int b,int c,int d){
@@ -1002,7 +1016,8 @@ int wind_handle_click(int mx,int my){
     // swallowed every app on the machine. It falls through instead, so a bottom window still gets
     // its click; it just does not come to the front.
     if(g_z[g_nz-1]!=hd && !(W->kind & W_BOTTOM)){
-        raise(hd); wind_redraw_win(hd); post(WM_TOPPED,hd,0,0,0,0); return 1; }
+        int old = g_z[g_nz-1];                      // it loses the ACTIVE title bar: repaint it too
+        raise(hd); raise_repaint(hd,old); post(WM_TOPPED,hd,0,0,0,0); return 1; }
     int th=tbh();
     int tx=W->x, ty=W->y, tw=W->w;               // flush title bar
     // close box
