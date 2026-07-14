@@ -86,6 +86,11 @@
                                      * has the pixels and moved them itself (§3). */
 #define GEM_MSG_SIZED    17         /* w[1]=wh w[2]=work_w w[3]=work_h w[4]=cap_w w[5]=cap_h
                                      * u[0]=surf_id u[1]=surf_gen
+                                     * u[2]=scroll_x u[3]=scroll_y — a resize CLAMPS the scroll
+                                     *   server-side (clamp_scroll), and a client whose copy
+                                     *   goes stale scroll-BLITS by a wrong delta later: stale
+                                     *   bands through the content, found on the board. Every
+                                     *   server-side scroll change must reach the client.
                                      * SAME surf_id  => the resize fitted inside the capacity:
                                      *                  nothing to remap, just draw a bigger
                                      *                  sub-rect of the SAME buffer (§12).

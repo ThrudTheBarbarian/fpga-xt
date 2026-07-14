@@ -182,6 +182,14 @@ WMTEST_OBJ := $(addprefix $(BUILD)/,gfx_soft.o font.o wm.o wm_test.o $(VDI_SRC:.
 $(BUILD)/wm_test: $(WMTEST_OBJ)
 	$(CC) $(WMTEST_OBJ) $(FT_LIBS) -o $@
 
+# scroll_sim — HOST reproduction rig for the client scroll blit (window.c client_scrolled):
+# blit + exposed-strip repaint vs a full fresh render, over a random drag walk.
+SCROLLSIM_OBJ := $(addprefix $(BUILD)/,gfx_soft.o font.o scroll_sim.o $(VDI_SRC:.c=.o))
+$(BUILD)/scroll_sim: $(SCROLLSIM_OBJ)
+	$(CC) $(SCROLLSIM_OBJ) $(FT_LIBS) -o $@
+scrollsim: $(BUILD)/scroll_sim
+	./$(BUILD)/scroll_sim
+
 # menu_test — headless AES popup-menu self-test (no SDL): unit-tests the
 # menu_popup geometry / hit-test / keyboard-nav helpers and renders one open
 # popup + its cascade to /tmp/xtdesk-menu.ppm.

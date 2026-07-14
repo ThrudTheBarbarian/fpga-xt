@@ -240,6 +240,10 @@ int gemd_resize_surface(int hd)
     r.w[2] = (int16_t)ww;      r.w[3] = (int16_t)wh;
     r.w[4] = (int16_t)s->cap_w; r.w[5] = (int16_t)s->cap_h;
     r.u[0] = (uint32_t)s->id;   r.u[1] = s->gen;
+    r.u[2] = (uint32_t)wind_scroll_x(hd);   /* the resize CLAMPED the scroll server-side; a
+                                             * client left with a stale copy blits by a wrong
+                                             * delta on its next scroll (stale bands, board) */
+    r.u[3] = (uint32_t)wind_scroll_y(hd);
     reply(c, &r);
     return 0;
 }
@@ -320,13 +324,22 @@ static void do_wind_set(gclient *c, int ci, const gem_msg *m)
          * appearing/vanishing changes the WORK AREA (the column is reserved from it): that is
          * a surface resize, and the §12 dance tells the client. */
         int ow, oh; wind_work_size(hd, &ow, &oh);
+        int osx = wind_scroll_x(hd), osy = wind_scroll_y(hd);
         int ox, oy2, ocw, och, othy, othh;
         int on0 = wind_vsb_col(hd, &ox, &oy2, &ocw, &och, &othy, &othh);
         wind_content_size(hd, (int)m->u[0], (int)m->u[1]);
         int nx, ny, ncw, nch, nthy, nthh;
         int on1 = wind_vsb_col(hd, &nx, &ny, &ncw, &nch, &nthy, &nthh);
         int nw, nh; wind_work_size(hd, &nw, &nh);
-        if (nw != ow || nh != oh) gemd_resize_surface(hd);
+        if (nw != ow || nh != oh) gemd_resize_surface(hd);       /* MSG_SIZED carries the scroll */
+        else if (wind_scroll_x(hd) != osx || wind_scroll_y(hd) != osy) {
+            /* shrinking content CLAMPED the scroll with no resize: the client must hear it,
+             * or its stale copy makes the next scroll blit by a wrong delta (stale bands) */
+            gem_msg r; memset(&r, 0, sizeof r);
+            r.w[0] = GEM_MSG_VSLID; r.w[1] = (int16_t)hd;
+            r.u[0] = (uint32_t)wind_scroll_x(hd); r.u[1] = (uint32_t)wind_scroll_y(hd);
+            reply(c, &r);
+        }
         if (on0 != on1)      wind_redraw_area(on0?ox:nx, on0?oy2:ny, on0?ocw:ncw, on0?och:nch);
         else if (on1 && (nthy != othy || nthh != othh))
                              wind_redraw_area(nx, ny, ncw, nch);

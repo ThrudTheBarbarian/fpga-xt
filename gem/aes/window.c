@@ -796,6 +796,9 @@ static void client_sized(const gem_msg *m){
     }
     W->surf_gen=m->u[1];
     W->surf.w=m->w[2]; W->surf.h=m->w[3]; W->surf.stride=m->w[4];   // stride = CAPACITY width (§12)
+    // The resize CLAMPED the scroll server-side. Take the truth BEFORE painting: a stale copy
+    // here means the next scroll blits by a wrong delta — stale bands through the content.
+    W->scroll_x=(int)m->u[2]; W->scroll_y=(int)m->u[3];
     client_paint(hd, 0,0, W->surf.w, W->surf.h);
     post_msg(WM_SIZED,hd,0,0,W->surf.w,W->surf.h);   // the app reflows; work coords, as it draws in
 }
