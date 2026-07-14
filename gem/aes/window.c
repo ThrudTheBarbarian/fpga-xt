@@ -821,6 +821,11 @@ static int client_scrolled(const gem_msg *m){
     // The blit covers the SCROLLING BAND only: [0, vh). Anything the app pinned over the scroll
     // (wind_pin_bottom — a status bar) stays where it is; blitting the whole surface dragged a
     // stale copy of the bar up through the list, observed on the board.
+    //
+    // (If stale partial-width rows EVER reappear here: this memcpy is newlib's NEON one, and it
+    // was the messenger for a KERNEL bug once — tasks preempted mid-copy resumed with clobbered
+    // NEON registers until configUSE_TASK_FPU_SUPPORT became 2. `make scrollsim` proves the
+    // blit math; suspect the context switch, not this code.)
     int w=W->surf.w, h=W->surf.h, ady=dy<0?-dy:dy;
     int pin=W->pin_bottom; if(pin<0) pin=0; if(pin>h) pin=h;
     int vh=h-pin;

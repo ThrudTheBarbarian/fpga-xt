@@ -20,7 +20,15 @@ void vClearTickInterrupt(void);
 
 /* --- kernel behaviour --------------------------------------------------- */
 #define configUSE_PREEMPTION            1
-#define configUSE_TASK_FPU_SUPPORT      1   /* port requires 1 or 2; VFP enabled in xt_boot.S */
+#define configUSE_TASK_FPU_SUPPORT      2   /* EVERY task gets a VFP/NEON context (was 1: opt-in
+                                             * via vPortTaskUsesFPU, and only mathcop opted in).
+                                             * Newlib's armv7-A memcpy uses NEON, FreeType uses
+                                             * VFP — any PL0 process preempted mid-copy resumed
+                                             * with clobbered registers. Board-proven: partial-
+                                             * width stale rows in a scrolled window's backing
+                                             * store (docs/OS/gemd-plan.md, the sliver hunt);
+                                             * the same corruption class was latent under every
+                                             * float-touching process. Costs 264 B stack/task. */
 #define configTASK_RETURN_ADDRESS       NULL
 #define configUSE_IDLE_HOOK             0
 #define configUSE_TICK_HOOK             0

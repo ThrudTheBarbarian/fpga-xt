@@ -236,9 +236,21 @@ scrolling with live content, the pinned status bar staying put. Two lessons the 
   now posts `WM_VSLID` per motion, and gemd's event wait flushes the message pipe EVERY LAP, so
   what a modal frame loop posts goes out while it is still modal.
 
+**The scroll slivers were a KERNEL bug, and the scroll blit was only the messenger.** After a
+live drag the backing store held stale partial-width rows (fbgrab-proven surface-resident; the
+host rig `make scrollsim` drives the identical blit+clip pipeline through hundreds of steps and
+PASSES). The on-board bisect — two runtime flags, no reboots per toggle — cleared the drawing
+(no-blit mode: clean) and then cleared the blit *logic* (explicit word-loop copy: clean), leaving
+only newlib's `memcpy`. Which uses NEON — and `configUSE_TASK_FPU_SUPPORT` was **1**: FPU/NEON
+context saved ONLY for tasks that opt in, and only the math-cop worker ever did. Every PL0
+process preempted mid-`memcpy` resumed with clobbered NEON registers and left the tail of a row
+uncopied. Now **2**: every task gets the context (264 B stack each). The corruption class was
+latent under every float-touching process — FreeType, printf `%f`, all of it — not just scroll.
+
 **Still owed in M5:** the wheel under gemd (`struct os_event` has no wheel field yet — when the
 input device grows one, `gemd_route` forwards it to `wind_handle_wheel` server-side and the
-existing `WM_VSLID` path does the rest); horizontal scrollbars (no bar drawn today).
+existing `WM_VSLID` path does the rest); horizontal scrollbars (no bar drawn today); scroll-lag
+polish (per-motion server recomposites could coalesce to the newest offset).
 
 ## gemd renders CACHED and presents rects (the 3-second redraw)
 
