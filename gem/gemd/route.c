@@ -148,6 +148,12 @@ void gemd_flush_msgs(void)
             m.w[0] = GEM_MSG_TBUTTON; m.w[1] = (int16_t)hd; m.w[2] = msg[4];
             send_win(hd, &m);
             break;
+        case WM_PATHSEG:                               /* a breadcrumb component. Same shape as the
+                                                        * title button: an INDEX, never a rect. */
+            printf("gemd: path segment %d on wh=%d -> MSG_PATHSEG\n", msg[4], hd);
+            m.w[0] = GEM_MSG_PATHSEG; m.w[1] = (int16_t)hd; m.w[2] = msg[4];
+            send_win(hd, &m);
+            break;
         case WM_TOPPED:
             set_focus(hd);
             break;

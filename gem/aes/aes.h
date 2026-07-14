@@ -404,7 +404,11 @@ enum { WM_REDRAW=20, WM_TOPPED=21, WM_CLOSED=22, WM_FULLED=23, WM_ARROWED=24,
        // Chrome routes input, so a title-button press is a MESSAGE — the same shape as
        // WM_CLOSED — and never an app-side hit-test against a rect it had to ask for
        // (RESPONSIBILITIES.md §11: "if a client has to DRAW it, it is not chrome").
-       WM_TBUTTON=31 };
+       WM_TBUTTON=31,
+       // A SEGMENT OF THE TITLE PATH was clicked: msg[4] = its index in the path the app set
+       // (0 = the first component).  The app never drew the path and is never told where any of
+       // it is — it set a string and gets back an index into that same string (§11).
+       WM_PATHSEG=32 };
 
 /* ---- XTOS_*: XTOS system-event messages (OS/AES -> apps) ------------------
  * A reserved range for events that classic GEM has no message for — the OS
@@ -432,7 +436,13 @@ enum { WF_KIND=1, WF_NAME=2, WF_INFO=3, WF_WORKXYWH=4, WF_CURRXYWH=5,
        WF_ICON=33,         // a THEME SLICE NAME: the proxy/document icon ("" = none)
        WF_TITLEFLAGS=34,   // WT_* below
        WF_TITLEBTNS=35 };  // (a,b) = glyph array ptr; c = count
-enum { WT_MODIFIED = 0x01 };   // WF_TITLEFLAGS: show the unsaved-changes dot
+enum { WT_MODIFIED = 0x01,     // WF_TITLEFLAGS: show the unsaved-changes dot
+       // THE SUBTITLE IS A PATH.  The AES draws it as "/a/b/c" with each component its own
+       // clickable span (middle-eliding at COMPONENT granularity when it will not fit), and a
+       // click comes back as WM_PATHSEG(index).  This is what a breadcrumb becomes once chrome
+       // is declarative: the app owns the STRING, the AES owns the drawing and the hit-testing,
+       // and the only thing that crosses is an index.  A wedged app's breadcrumb still paints.
+       WT_PATH     = 0x02 };
 
 // ---- POINTER FIELDS: the classic hi/lo split -----------------------------------
 // WF_NAME / WF_INFO / WF_SUBTITLE / WF_ICON / WF_TITLEBTNS carry a POINTER, and GEM
@@ -542,6 +552,7 @@ int  wind_handle_wheel(int mx, int my, int delta);
 // learns (and must never need) a screen rect.
 enum { WTG_NONE = 0, WTG_CHEVRON = 1, WTG_EXPAND = 2 };   // title-button glyphs
 #define WIND_MAXTB 3
+#define WIND_MAXSEG 16   // WT_PATH: most path components the AES will lay out as crumbs
 // DEPRECATED sugar over wind_set(handle, WF_TITLEBTNS, hi, lo, n, 0) — implemented
 // THROUGH it, like wind_set_name.
 void wind_titlebtns(int handle, const int *glyphs, int n);

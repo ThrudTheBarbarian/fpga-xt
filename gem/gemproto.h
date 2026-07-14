@@ -92,6 +92,11 @@
                                      * the press is a message, and what to DO about it is the
                                      * app's business, not the window server's. */
 
+#define GEM_MSG_PATHSEG  20         /* w[1]=wh w[2]=idx — a component of the WT_PATH title was
+                                     * clicked. gemd split the path IT was given, drew it, and
+                                     * hit-tested it; the client gets back an index into the very
+                                     * string it set. A breadcrumb, declaratively (§11). */
+
 /* A chrome string is sent in GEM_STR_CHUNK-byte pieces of the fixed 32-byte record: w[0..3] are
  * op/wh/field/offset, and the remaining 24 bytes (w[4..7] + u[0..3]) carry the payload. Long
  * enough for a path in three records, and the record size never changes — so a byte-stream
