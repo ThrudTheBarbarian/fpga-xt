@@ -284,11 +284,21 @@ overlay CPU-read BRAMs) → the timing study's **Lever A** (pin them into `pb_sa
 closed it ON THE DEFAULT DIRECTIVE at +0.025/+0.062 — determinism claim proven. (Lever B, the
 mux split, was already in since 909c65f.)
 
-Remaining to actually USE it in gemd: (1) driver plumbing — well-known `/dev/blitter` handles
-for the PLANE and WALLPAPER back-buffer (fixed regions, not shm) plus a cache-clean of the
-cached source rect; (2) `gemd_present` submits + fences; (3) optional: deepen the AR pipeline
-(2 → 4 buffers) toward ~850 MB/s. The compositor's inner blit stays CPU — cached→cached is
-already fast, and §14's move-together rule applies only when the VDI backend itself moves.
+**The engine presents for gemd now** (8be0f91, board-verified): `/dev/blitter` gained the two
+well-known handles (PLANE + WALLPAPER — fixed regions, kernel-known geometry, driver-side
+cache-clean of the cached source; WALLPAPER refused as a destination), and `gemd_present` is a
+submit + SEQ fence with the CPU rows as automatic fallback (qemu, or any failed submit). Live
+resize composites only the L-shaped DELTA between reflows (dd1b778).
+
+**And then the profilers ended the perf chase with a verdict** (018c056, probes marked TEMP in
+input_dev.c/server.c): during a drag the terminal delivers **12-13 motion events/s**, gemd
+consumes every one, and the whole render pipeline idles at ~15 ms of work per second. The
+remaining resize lag is INPUT CADENCE — the serial GUI lane (SGR mouse over 115200) was always
+the transitional hack, and the **STM32F411 HID companion is the fix of record**. Two software
+follow-ups remain worth having: an IRQ-backed blocking fence (the SVC-spin fence burned 55 ms
+against 19 ms of blitting on full-screen presents; the engine's completion IRQ already exists)
+and the AR pipeline 2 → 4 (~850 MB/s). The compositor's inner blit stays CPU — cached→cached
+is already fast, and §14's move-together rule applies only when the VDI backend itself moves.
 
 **Still owed in M5:** horizontal scrollbars (no bar drawn today).
 
