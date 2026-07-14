@@ -1373,6 +1373,40 @@ static int soak_motion(aes_event *e){
     }
 }
 
+// A LIVE-RESIZE STEP REPAINTS THE DELTA, NOT THE WINDOW (server mode). During a sizer drag
+// the old∩new region is ALREADY CORRECT on screen — the content there did not move, and the
+// client's reflow arrives separately as damage. What actually changes per motion is the
+// L-shape: the edge that moved (plus the border/scrollbar column that used to sit there),
+// the stretched TITLE band and the moving FOOTER band. Compositing only those is ~4-10x less
+// traffic per motion, which is what lets the FRAME track the mouse while the content catches
+// up underneath — the MagiC/NeoDesk feel, in a compositor. Local mode keeps the full old∪new:
+// there the content callback draws live and the whole area genuinely changes.
+static void resize_step_redraw(awin *W,int ox,int oy,int ow,int oh){
+    int nx=W->x, ny=W->y, nw=W->w, nh=W->h;
+    if(g_mode!=AES_SERVER){
+        int ux=ox<nx?ox:nx, uy=oy<ny?oy:ny;
+        int ux1=(ox+ow)>(nx+nw)?(ox+ow):(nx+nw), uy1=(oy+oh)>(ny+nh)?(oy+oh):(ny+nh);
+        wind_redraw_area(ux,uy,ux1-ux,uy1-uy);
+        return;
+    }
+    int b=bw(), th=tbh();
+    int inset = b + SB_W + 1;                       // cover the border AND the old bar column
+    int ux  = ox<nx?ox:nx,       uy  = oy<ny?oy:ny;
+    int ux1 = (ox+ow)>(nx+nw)?(ox+ow):(nx+nw);
+    int uy1 = (oy+oh)>(ny+nh)?(oy+oh):(ny+nh);
+    wind_redraw_area(ux, uy, ux1-ux, th+b);                          // title band (full union width)
+    { int fb0 = ((oy+oh)<(ny+nh)?(oy+oh):(ny+nh)) - AES_INFO_H - b;  // footer: both positions
+      wind_redraw_area(ux, fb0, ux1-ux, uy1-fb0); }
+    if(ox!=nx){                                                      // left edge moved (lgrip)
+        int e0=(ox<nx?ox:nx), e1=(ox>nx?ox:nx)+inset;
+        wind_redraw_area(e0, uy, e1-e0, uy1-uy);
+    }
+    if(ox+ow != nx+nw){                                              // right edge moved (rgrip)
+        int e0=((ox+ow)<(nx+nw)?(ox+ow):(nx+nw))-inset, e1=(ox+ow)>(nx+nw)?(ox+ow):(nx+nw);
+        wind_redraw_area(e0, uy, e1-e0, uy1-uy);
+    }
+}
+
 int wind_handle_click(int mx,int my){
     if(g_mode==AES_CLIENT) return 0;               // gemd hit-tested it; this one is ours to use
     int hd = wind_find(mx,my);
@@ -1461,7 +1495,7 @@ int wind_handle_click(int mx,int my){
             for(;;){ aes_event e; int t=aes_wait_idle(&e,-1); if(t==AES_QUIT)break;
                 if(t==AES_MOTION){ int done=soak_motion(&e);   // act on the NEWEST position
                     int ow=W->w,oh=W->h; int nw=e.mx-W->x, nh=e.my-W->y; if(nw<WIND_MIN_W)nw=WIND_MIN_W; if(nh<WIND_MIN_H)nh=WIND_MIN_H; W->w=nw; W->h=nh; clamp_scroll(W);
-                    wind_redraw_area(W->x, W->y, ow>nw?ow:nw, oh>nh?oh:nh);     // old ∪ new (same top-left)
+                    resize_step_redraw(W, W->x, W->y, ow, oh);   // the L-shaped DELTA, not the window
                     if(nw!=ow||nh!=oh) post(WM_SIZED,hd,W->x,W->y,W->w,W->h);
                     if(done!=AES_MOTION) break; }
                 if(t==AES_BTN_UP) break; }
@@ -1471,11 +1505,11 @@ int wind_handle_click(int mx,int my){
             int right=W->x+W->w;                                 // pin the right edge
             for(;;){ aes_event e; int t=aes_wait_idle(&e,-1); if(t==AES_QUIT)break;
                 if(t==AES_MOTION){ int done=soak_motion(&e);   // act on the NEWEST position
-                    int ox=W->x,oh=W->h; int nx=e.mx, nh=e.my-W->y; int nw=right-nx;
+                    int ox=W->x,ow=W->w,oh=W->h; int nx=e.mx, nh=e.my-W->y; int nw=right-nx;
                     if(nw<WIND_MIN_W){ nw=WIND_MIN_W; nx=right-nw; } if(nh<WIND_MIN_H)nh=WIND_MIN_H;
                     int moved=(nx!=W->x||nh!=oh);
                     W->x=nx; W->w=nw; W->h=nh; clamp_scroll(W);
-                    int ux=ox<nx?ox:nx; wind_redraw_area(ux, W->y, right-ux, oh>nh?oh:nh);   // old ∪ new (right pinned)
+                    resize_step_redraw(W, ox, W->y, ow, oh);     // the L-shaped DELTA, not the window
                     if(moved) post(WM_SIZED,hd,W->x,W->y,W->w,W->h);
                     if(done!=AES_MOTION) break; }
                 if(t==AES_BTN_UP) break; }
