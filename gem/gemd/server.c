@@ -415,6 +415,16 @@ int gemd_run(void)
     const theme *th = gemd_theme();      /* chrome art. Read-only: §5 says both sides may load it */
     aes_init(vh, th);
     wind_set_desktop(GEMD_BG);           /* the fallback colour: the plane is never un-owned (§3) */
+
+    /* THE ONLY SANCTIONED FULL-SCREEN REPAINT IN THE WHOLE STACK, and it is the FIRST FRAME:
+     * gemd has just come up, the plane holds whatever the bootloader left, and there is no
+     * previous frame for a damage rect to be relative to. It happens exactly once per boot.
+     *
+     * Everything else repaints old ∪ new. On the A9 gemd composites in SOFTWARE, so a full-plane
+     * repaint is ~8 MB of pixel work you can watch fill down the screen — and it does not merely
+     * look bad: one of them once outran DCLICK_MS and made double-click stop working. If you are
+     * about to add a second wind_redraw(), you need a documented reason and the user's agreement
+     * BEFORE it lands. */
     wind_redraw();
 
     for (int i = 1; i < GEMD_MAXW; i++) g_surf[i].id = -1;    /* 0 is a REAL shm id; -1 is "none" */

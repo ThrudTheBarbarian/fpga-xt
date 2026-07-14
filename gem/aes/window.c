@@ -60,6 +60,9 @@ typedef struct {
     int tbx[WIND_MAXTB], tby[WIND_MAXTB], tbw[WIND_MAXTB], tbh[WIND_MAXTB];   // their last rects — OURS.
                                                // The AES draws them and the AES hit-tests them; a press
                                                // is a WM_TBUTTON message. No client ever sees a rect (§11).
+    // WT_PATH: the drawn breadcrumb spans. segn[i] is the segment's index in the ORIGINAL path,
+    // which is NOT its drawn position — the middle elides — and it is the index the app gets back.
+    int nseg, segx[WIND_MAXSEG], segw[WIND_MAXSEG], segn[WIND_MAXSEG];
     int content_w, content_h;                  // app-reported full content size (work coords)
     int scroll_x, scroll_y;                    // current scroll offset (vertical bar drawn)
     int maxed, sx,sy,sw,sh;                    // maximise toggle: flag + the pre-maximise rect
@@ -169,6 +172,93 @@ static void draw_titlebtn(int bx,int by,int glyph,int active){
     }
 }
 
+// ---- WT_PATH: the breadcrumb, which is CHROME (§11) -------------------------
+// The app hands us a path STRING. We split it, lay it out, draw it, hit-test it, and hand back an
+// INDEX. Nothing else crosses — no rects, no pixels, no callback — so a wedged app's breadcrumb
+// still repaints, and a drag does not cost a client round-trip per frame.
+//
+// It used to be an app-drawn "interactive title" callback, and this is the whole argument of §11
+// in one widget: a breadcrumb LOOKS like something only the app can draw, and it is not. It is a
+// list of strings and a click that resolves to one of them.
+//
+// The middle elides at COMPONENT granularity when the path will not fit ("/a/.../y/z"), so segn[]
+// (the index in the ORIGINAL path) is NOT the drawn position — and segn[] is what the app gets.
+static int str_w(const char *s){ int16_t e[8]; vqt_extent(H(), s, e); return e[2]-e[0]; }
+static int sep_w(void){ return str_w("/"); }        // MEASURED, not guessed: a fixed advance left a
+                                                   // visible gap after every separator
+static int ell_w(void){ return str_w("...") + 2*sep_w(); }
+
+static int path_split(const awin *W, int *off, int *len, int max){
+    int n = 0;
+    for(int i = 0; W->subtitle[i] && n < max; ){
+        while(W->subtitle[i] == '/') i++;          // skip separators (incl. a leading '/')
+        if(!W->subtitle[i]) break;
+        int j = i; while(W->subtitle[j] && W->subtitle[j] != '/') j++;
+        off[n] = i; len[n] = j - i; n++; i = j;
+    }
+    return n;
+}
+static int seg_width(const awin *W,int off,int len){
+    char b[64]; if(len > (int)sizeof b - 1) len = (int)sizeof b - 1;
+    memcpy(b, W->subtitle+off, (size_t)len); b[len] = 0;
+    int16_t e[8]; vqt_extent(H(), b, e); return e[2]-e[0];
+}
+// Lay the crumbs out into W->seg* to fit `avail` px, and return the width used. Caller has already
+// selected the subtitle's text size. Keeps the FIRST component and as much of the TAIL as fits.
+static int path_measure(awin *W,int avail){
+    int off[WIND_MAXSEG], len[WIND_MAXSEG];
+    int n = path_split(W, off, len, WIND_MAXSEG);
+    W->nseg = 0;
+    if(n <= 0 || avail <= 0) return 0;
+
+    int sep = sep_w(), ellw = ell_w();
+    int wid[WIND_MAXSEG], need = 0;
+    for(int k=0;k<n;k++){ wid[k] = seg_width(W,off[k],len[k]); need += wid[k] + sep; }
+
+    int first = 0;                                  // elide the MIDDLE: keep [0] + the tail that fits
+    if(need > avail && n > 2){
+        int tail = n - 1;
+        for(; tail > 1; tail--){                    // grow the tail while it still fits
+            int w = wid[0] + sep + ellw;
+            for(int k=tail;k<n;k++) w += wid[k] + sep;
+            if(w <= avail) break;
+        }
+        first = tail;                               // draw [0], "...", then [first..n)
+    }
+
+    int used = 0;
+    for(int k=0;k<n;k++){
+        if(first && k > 0 && k < first) continue;   // elided
+        if(W->nseg >= WIND_MAXSEG) break;
+        W->segn[W->nseg] = k; W->segw[W->nseg] = wid[k]; W->nseg++;
+        used += wid[k] + sep;
+    }
+    if(first) used += ellw;
+    return used;
+}
+// Draw the crumbs laid out by path_measure, recording each one's screen x (segx) for the hit test.
+static void path_draw(awin *W,int x,int cy,int pen){
+    int off[WIND_MAXSEG], len[WIND_MAXSEG];
+    int n = path_split(W, off, len, WIND_MAXSEG);
+    vst_color(H(),pen);
+    vst_alignment(H(),VDI_TA_LEFT,VDI_TA_HALF,0,0);
+    int sep = sep_w(), prev = -1;
+    for(int i=0;i<W->nseg;i++){
+        int k = W->segn[i]; if(k >= n) break;
+        v_gtext(H(), x, cy, "/"); x += sep;
+        if(prev >= 0 && k > prev + 1){              // the elided middle
+            v_gtext(H(), x, cy, "..."); x += str_w("...") + sep;
+            v_gtext(H(), x, cy, "/");  x += sep;
+        }
+        char b[64]; int l = len[k]; if(l > (int)sizeof b - 1) l = (int)sizeof b - 1;
+        memcpy(b, W->subtitle+off[k], (size_t)l); b[l] = 0;
+        W->segx[i] = x;                             // its span, for wind_handle_click
+        v_gtext(H(), x, cy, b);
+        x += W->segw[i];
+        prev = k;
+    }
+}
+
 // Keep the window reachable: the title bar stays below the menu bar, above the
 // work-area bottom, and at least MINVIS px stays on-screen horizontally — so a
 // window can never be dragged completely out of reach.
@@ -257,6 +347,7 @@ static void draw_vscroll(int hd){
 }
 
 static void draw_content(int hd);                // content only (surface blit / callback)
+static void raise_repaint(int hd,int old);       // a z-order change makes TWO windows stale
 
 // The rect the current repaint is allowed to touch — x0,y0,x1,y1, half-open at the far edge.
 // The VDI clip carries this for everything drawn THROUGH the VDI; draw_content's backend blit
@@ -303,7 +394,18 @@ static void draw_one(int hd, int active){
         int16_t e[8];
         int sw2 = 0;                         // subtitle, measured at ITS size
         char sfit[64]; sfit[0]=0;
-        if(W->subtitle[0]){
+        int crumbs = (W->titleflags & WT_PATH) && W->subtitle[0];
+        // With no WF_NAME the breadcrumb IS the title, so it is drawn at TITLE size; beside a name
+        // it is a subtitle, and drops to subtitle size. The app sets a string either way.
+        int crumbh = W->name[0] ? 12 : 15;
+        W->nseg = 0;
+        if(crumbs){                          // WT_PATH: measure the breadcrumb we are about to lay out
+            vst_height(H(),crumbh,0,0,0,0);
+            int savail = dlw - (iw?iw+6:0) - dotw - (W->name[0] ? 10 : 0);
+            if(W->name[0] && savail > (dlw*2)/3) savail = (dlw*2)/3;   // beside a name: two thirds
+            sw2 = path_measure(W, savail) + (W->name[0] ? 10 : 0);
+            vst_height(H(),15,0,0,0,0);
+        } else if(W->subtitle[0]){
             vst_height(H(),12,0,0,0,0);
             int savail = dlw - (iw?iw+6:0) - dotw - 10;    // whatever the name does not need...
             if(savail > dlw/2) savail = dlw/2;             // ...but never more than half the bar
@@ -333,7 +435,11 @@ static void draw_one(int hd, int active){
             vr_recfl(H(),dr);
             gx += dotw;
         }
-        if(sfit[0]){                         // path / second line, smaller
+        if(crumbs){                          // THE BREADCRUMB, drawn and hit-tested by US (§11)
+            vst_height(H(),crumbh,0,0,0,0);
+            path_draw(W, gx + (W->name[0] ? 10 : 0), cy, pen);
+            vst_height(H(),15,0,0,0,0);
+        } else if(sfit[0]){                  // a plain second line, smaller
             vst_height(H(),12,0,0,0,0);
             v_gtext(H(), gx+10, cy, sfit);
             vst_height(H(),15,0,0,0,0);
@@ -496,9 +602,21 @@ void wind_redraw_area(int rx,int ry,int rw,int rh){
     g_redraw_gen++;
     // A CLIENT has no screen to repaint (§5: it must never assume it owns one). "Repaint" for a
     // client means its own content, into its own surface -> damage.
+    //
+    // AND IT MEANS *THIS RECT*, NOT EVERYTHING.  This used to ignore the rect and repaint every
+    // window's whole surface, posting whole-surface damage — so the desktop (a FULL-SCREEN window)
+    // redrew all 1920x1080 and made gemd recomposite the entire plane every time an icon was
+    // clicked.  Two consequences, and the second one is not a performance complaint:
+    //
+    //   - you could WATCH the screen fill, on every click;
+    //   - the repaint outran DCLICK_MS, so the second click of a double-click landed after the
+    //     window had closed.  Double-click simply stopped working once there was enough on screen
+    //     to make the composite slow.  A latency bug wearing a logic bug's clothes.
+    //
+    // client_paint clamps the rect to each surface and damages only what it drew.
     if(g_mode==AES_CLIENT){
         for(int i=1;i<MAXW;i++) if(g_w[i].used && g_w[i].surf.px)
-            client_paint(i, 0,0, g_w[i].surf.w, g_w[i].surf.h);
+            client_paint(i, rx,ry, rw,rh);
         return;
     }
     gfx_surface *d = vdi_screen_target(); if(!d) return;
@@ -691,6 +809,9 @@ static int client_dispatch(const gem_msg *m, aes_event *ev){
     case GEM_MSG_TBUTTON:                                  // a title button was pressed (§11): the
         post_msg(WM_TBUTTON,m->w[1],m->w[2],0,0,0);        // app learns WHICH, never WHERE
         return AES_MESAG;
+    case GEM_MSG_PATHSEG:                                  // a breadcrumb component was clicked: we
+        post_msg(WM_PATHSEG,m->w[1],m->w[2],0,0,0);        // set the string, we get back an INDEX
+        return AES_MESAG;
     case GEM_MSG_ACTIVATE:
         post_msg(m->w[2]?WM_TOPPED:WM_UNTOPPED,m->w[1],0,0,0,0); return AES_MESAG;
     default: return 0;                                     // not ours to understand
@@ -835,11 +956,23 @@ void wind_open(int hd,int x,int y,int w,int h){
         // is created LAST — without this it would land on top and swallow the whole session.
         for(int i=g_nz;i>0;i--) g_z[i]=g_z[i-1];
         g_z[0]=hd; g_nz++;
-        wind_redraw();                                   // it is underneath: repaint everything
-        return;
+        wind_redraw_win(hd);                             // its OWN rect: it is underneath, so the
+        return;                                          // windows above it redraw over it anyway
     }
-    g_z[g_nz++]=hd; wind_redraw_win(hd);
+    { int old = g_nz ? g_z[g_nz-1] : 0;               // whoever was on top is now stale: draw_one
+      g_z[g_nz++]=hd; raise_repaint(hd,old); }        // picks its titlebar art from `active` (§11)
 }
+// Repaint old ∪ new — the ONLY correct shape for a geometry change, and the reason there is a
+// helper for it: every one of these sites used to reach for wind_redraw() (the whole plane).
+// On the A9 gemd composites in SOFTWARE, so a full-plane repaint is ~8 MB of pixel work you can
+// WATCH fill down the screen — and it is not merely slow. One of them outran the double-click
+// timeout and made double-click "stop working". A full-screen repaint needs a documented reason.
+static void redraw_union(int ox,int oy,int ow,int oh,int nx,int ny,int nw,int nh){
+    int x0 = ox<nx?ox:nx, y0 = oy<ny?oy:ny;
+    int x1 = (ox+ow)>(nx+nw)?(ox+ow):(nx+nw), y1 = (oy+oh)>(ny+nh)?(oy+oh):(ny+nh);
+    wind_redraw_area(x0,y0,x1-x0,y1-y0);
+}
+static void zremove(int hd);
 static void zremove(int hd){ for(int i=0;i<g_nz;i++) if(g_z[i]==hd){ for(int j=i;j<g_nz-1;j++) g_z[j]=g_z[j+1]; g_nz--; return; } }
 void wind_close(int hd){
     if(hd<1||hd>=MAXW) return;
@@ -852,7 +985,11 @@ void wind_close(int hd){
         return;                                     // gemd drops ITS ref when the window goes (§11)
     }
 #endif
-    awin*W=&g_w[hd]; int x=W->x,y=W->y,w=W->w,h=W->h; zremove(hd); wind_redraw_area(x,y,w,h);
+    awin*W=&g_w[hd]; int x=W->x,y=W->y,w=W->w,h=W->h;
+    zremove(hd);
+    wind_redraw_area(x,y,w,h);                        // the rect it vacated...
+    if(g_nz) wind_redraw_win(g_z[g_nz-1]);            // ...and whoever INHERITED the top: it is
+                                                      // active now, and nothing else would say so
 }
 void wind_delete(int hd){
     if(hd<1||hd>=MAXW) return;
@@ -946,10 +1083,13 @@ void wind_set(int hd,int field,int a,int b,int c,int d){
     case WF_NAME:     set_str(W->name,     sizeof W->name,     a,b); wind_redraw_win(hd); break;
     case WF_INFO:     set_str(W->info_text,sizeof W->info_text,a,b); wind_redraw_win(hd); break;
     case WF_TOP:      wind_raise(hd); break;
-    case WF_CURRXYWH:
+    case WF_CURRXYWH: {
         W->px=W->x;W->py=W->y;W->pw=W->w;W->ph=W->h;
-        W->x=a;W->y=b;W->w=c;W->h=d; clamp_win(W); clamp_scroll(W); wind_redraw();
+        int ox=W->x,oy=W->y,ow=W->w,oh=W->h;
+        W->x=a;W->y=b;W->w=c;W->h=d; clamp_win(W); clamp_scroll(W);
+        redraw_union(ox,oy,ow,oh, W->x,W->y,W->w,W->h);   // NOT the plane: the rect it left ∪ took
         break;
+    }
     /* ---- our extensions --------------------------------------------------- */
     case WF_SUBTITLE: set_str(W->subtitle, sizeof W->subtitle, a,b); wind_redraw_win(hd); break;
     case WF_ICON:     set_str(W->icon,     sizeof W->icon,     a,b); wind_redraw_win(hd); break;
@@ -1025,11 +1165,13 @@ int wind_handle_click(int mx,int my){
     // maximise box (W_FULLER): toggle between the full desktop work area and the
     // saved pre-maximise rect, then WM_SIZED so the app reflows to the new size.
     if((W->kind&W_FULLER) && mx>=tx+8+WTB_PITCH && mx<tx+8+WTB_PITCH+WTB_W && my>=ty && my<ty+th){
+        int ox=W->x,oy=W->y,ow=W->w,oh=W->h;              // the rect it is leaving
         if(!W->maxed){ W->sx=W->x; W->sy=W->y; W->sw=W->w; W->sh=W->h;
                        int ax,ay,aw,ah; work_area(&ax,&ay,&aw,&ah);
                        W->x=ax; W->y=ay; W->w=aw; W->h=ah; W->maxed=1; }
         else         { W->x=W->sx; W->y=W->sy; W->w=W->sw; W->h=W->sh; W->maxed=0; }
-        clamp_win(W); clamp_scroll(W); wind_redraw();
+        clamp_win(W); clamp_scroll(W);
+        redraw_union(ox,oy,ow,oh, W->x,W->y,W->w,W->h);   // maximise/restore: old ∪ new, not the plane
         post(WM_SIZED,hd,W->x,W->y,W->w,W->h); return 1;
     }
     // right-side title buttons: OUR chrome, OUR hit test. The app is told WHICH button was
@@ -1040,18 +1182,28 @@ int wind_handle_click(int mx,int my){
         for(int i=0;i<W->ntb;i++)
             if(W->tbw[i]>0 && mx>=W->tbx[i] && mx<W->tbx[i]+W->tbw[i]){
                 post(WM_TBUTTON,hd,i,0,0,0); return 1; }
+    // BREADCRUMB SPANS (WT_PATH): our chrome, our hit test. The app gets the INDEX of the path
+    // component it set — never a rect, never a pixel (§11).  Before the mover, so a crumb click is
+    // a click; the rest of the bar still drags.
+    if((W->kind&W_NAME) && (W->titleflags & WT_PATH) && my>=ty && my<ty+th)
+        for(int i=0;i<W->nseg;i++)
+            if(W->segw[i]>0 && mx>=W->segx[i] && mx<W->segx[i]+W->segw[i]){
+                post(WM_PATHSEG,hd,W->segn[i],0,0,0); return 1; }
     // title bar -> drag (live move). The WHOLE bar drags: there is no app-drawn span in it
     // to click any more, so there is no press-vs-drag ambiguity to resolve.
     if((W->kind&W_MOVER) && my>=ty && my<ty+th && mx>=tx && mx<tx+tw){
         int gx=mx-W->x, gy=my-W->y;
         if(g_ovl_begin && g_ovl_begin(W->x,W->y,W->w,W->h)){    // A9: lift window into the HW overlay
             int ox=W->x, oy=W->y, ow=W->w, oh=W->h;            // vacated rect
-            W->hidden=1; wind_redraw();                        // erase from the plane (overlay still covers it)...
+            W->hidden=1; wind_redraw_area(ox,oy,ow,oh);         // erase JUST the rect it vacated
+                                                               // (it is in the overlay; the plane
+                                                               // below it is all that changed)...
             if(g_ovl_present) g_ovl_present(ox,oy,ow,oh);      // ...push the now-behind pixels
             for(;;){ aes_event e; int t=aes_wait_idle(&e,-1); if(t==AES_QUIT)break;
                 if(t==AES_MOTION){ W->x=e.mx-gx; W->y=e.my-gy; clamp_win(W); g_ovl_move(W->x,W->y); } // register write, no redraw
                 if(t==AES_BTN_UP) break; }
-            W->hidden=0; wind_redraw();                        // paint the window at its new home (under the overlay)...
+            W->hidden=0;                                       // paint it at its new home, under the
+            redraw_union(ox,oy,ow,oh, W->x,W->y,W->w,W->h);     // overlay: old ∪ new, never the plane
             if(g_ovl_present){ g_ovl_present(ox,oy,ow,oh); g_ovl_present(W->x,W->y,W->w,W->h); }
             g_ovl_end();                                       // ...then drop the overlay -> seamless
         } else {                                               // SDL host: classic redraw-per-motion

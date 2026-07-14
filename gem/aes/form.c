@@ -301,7 +301,9 @@ static void drag_dialog(OBJECT *t, int mx, int my) {
     int ox = t[0].ob_x, oy = t[0].ob_y, w = t[0].ob_w, h = t[0].ob_h;
 
     if (aes_ovl_lift(ox, oy, w, h)) {                     // A9: ride the HW overlay
-        if (sav >= 0) sav_blit(sav, 1); else wind_redraw();
+        // No save-under? Repaint what the dialog COVERED — which is the dialog's rect, and never
+        // the whole plane. (A full-plane repaint on the A9 is ~8 MB of software compositing.)
+        if (sav >= 0) sav_blit(sav, 1); else wind_redraw_area(ox, oy, w, h);
         aes_flush_rect(ox, oy, w, h);                     // dialog gone from the plane (overlay covers it)
         for (;;) {
             aes_event e; int ty = aes_wait_idle(&e, -1);
@@ -326,7 +328,7 @@ static void drag_dialog(OBJECT *t, int mx, int my) {
         int nx = e.mx - gx, ny = e.my - gy; clamp_dlg(t, &nx, &ny);
         if (nx == t[0].ob_x && ny == t[0].ob_y) continue;
         int px = t[0].ob_x, py = t[0].ob_y;
-        if (sav >= 0) sav_blit(sav, 1); else wind_redraw();
+        if (sav >= 0) sav_blit(sav, 1); else wind_redraw_area(px, py, w, h);   // its rect, not the plane
         t[0].ob_x = (int16_t)nx; t[0].ob_y = (int16_t)ny;
         if (sav >= 0) { g_sav[sav].x = nx; g_sav[sav].y = ny; sav_blit(sav, 0); }
         objc_draw(t, 0, DEPTH, 0, 0, BIG, BIG);
