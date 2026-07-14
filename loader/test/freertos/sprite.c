@@ -68,7 +68,9 @@ static const char *s_arrow[CURH] = {
     "X.X X..X    ", "XX  X..X    ", "X    X..X   ", "     X..X   ",
     "      X..X  ", "      X..X  ", "       XX   ",
 };
-static int cur_x = 960, cur_y = 540;
+static int cur_x = 96, cur_y = 96;   /* home near the top-left: that is where the desktop
+                                      * icons live, and a serial mouse crosses half of 1080p
+                                      * slowly (user request — was screen centre) */
 
 void cursor_init(void) {
     static uint32_t img[32 * 32];
