@@ -11,7 +11,7 @@
 
 gfx_surface *vdi_screen_target(void);   // the physical workstation surface (VDI core)
 
-#define BARH   22
+#define BARH   AES_MENUBAR_H   /* one height, shared with gemd's top reserve (aes.h) */
 #define ITEMH  20
 #define SEPH   10          // a separator row: a thin divider, shorter than a normal item
 #define TPAD   14

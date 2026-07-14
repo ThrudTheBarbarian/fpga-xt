@@ -45,7 +45,37 @@ typedef struct {
 } gclient;
 
 static gclient     g_cl[GEMD_MAXCL];
-static gfx_surface g_plane;
+static gfx_surface g_plane;          /* what the VDI draws into: the CACHED back-buffer when the
+                                      * kernel provides one (SYS_fb_wallpaper), else the plane */
+static struct os_fbinfo g_scan;      /* the REAL plane — uncached, because the compositor scans
+                                      * it. Written only by gemd_present, in rows, never read. */
+static int         g_scan_on;        /* back-buffer mode: present copies rects to the plane */
+
+/* THE PRESENT (aes_flush_rect lands here, via the overlay hook). This split is not a nicety —
+ * it was a 3-SECOND window redraw, observed on the board. The plane is NON-CACHEABLE (the HW
+ * compositor scans it), and the VDI's software rendering read-modify-writes nearly every pixel
+ * it touches: FreeType blends, 9-slice edges, pattern fills. Every one of those reads was an
+ * uncached DDR round-trip. §14 called drawing into the plane "the worst of both worlds" and
+ * this is what it costs. So the VDI renders into the kernel's CACHED back-buffer
+ * (SYS_fb_wallpaper — a dedicated 16 MB PL0-RW cacheable region, no heap cost), and this copy
+ * — cached reads, sequential uncached writes, nothing else — is the only thing that ever
+ * touches the plane. */
+static void gemd_present(int x, int y, int w, int h)
+{
+    if (!g_scan_on) return;
+    if (x < 0) { w += x; x = 0; }
+    if (y < 0) { h += y; y = 0; }
+    if (x + w > g_plane.w) w = g_plane.w - x;
+    if (y + h > g_plane.h) h = g_plane.h - y;
+    if (w <= 0 || h <= 0) return;
+    const uint32_t *src = g_plane.px + (size_t)y * g_plane.stride + x;
+    uint32_t *dst = (uint32_t *)g_scan.addr + (size_t)y * g_scan.stride + x;
+    for (int yy = 0; yy < h; yy++) {
+        memcpy(dst, src, (size_t)w * 4);
+        src += g_plane.stride; dst += g_scan.stride;
+    }
+    sys_fb_present();                            /* dsb: the compositor scans DDR */
+}
 static gsurface    g_surf[GEMD_MAXW];   /* the backing store per WINDOW HANDLE. gemd keeps its own
                                          * ref and its own capacity numbers: §12's resize is
                                          * "does the new extent still fit?", and only gemd knows. */
@@ -472,13 +502,28 @@ int gemd_run(void)
 {
     struct os_fbinfo fb;
     if (sys_fb_info(&fb) != 0) { printf("gemd: no display plane\n"); return 1; }
-    g_plane.w = fb.w; g_plane.h = fb.h; g_plane.stride = fb.stride;
-    g_plane.px = (uint32_t *)fb.addr;
+
+    /* RENDER CACHED, PRESENT UNCACHED (see gemd_present). The kernel's wallpaper region is a
+     * dedicated cacheable back-buffer with no heap cost; the plane itself is only ever the
+     * TARGET of a present. If the kernel has no back-buffer, draw direct as before — slower,
+     * never wrong. */
+    struct os_fbinfo wp;
+    if (sys_fb_wallpaper(&wp) == 0 && wp.addr && wp.w == fb.w && wp.h == fb.h) {
+        g_scan = fb; g_scan_on = 1;
+        g_plane.w = wp.w; g_plane.h = wp.h; g_plane.stride = wp.stride;
+        g_plane.px = (uint32_t *)wp.addr;
+    } else {
+        g_plane.w = fb.w; g_plane.h = fb.h; g_plane.stride = fb.stride;
+        g_plane.px = (uint32_t *)fb.addr;
+    }
 
     /* gemd is the ONLY process that presents to the framebuffer (Rule 1), so it is the only one
      * that opens a workstation on the plane. The AES draws chrome through it and blits each
      * client's backing store into the work area. */
     aes_server_mode();
+    wind_set_overlay(NULL, NULL, NULL, gemd_present);   /* aes_flush_rect -> the present. NULL
+                                                         * begin: drags keep the classic
+                                                         * redraw-per-motion path for now. */
     vdi_init(&g_plane);
     // THE FONT LIVES IN TWO PLACES, because we boot from two. The SD card stages it at
     // /OS/fonts (loader/Makefile: $(SDSTAGE)/OS/fonts), but the romfs — which is all we have
@@ -500,6 +545,11 @@ int gemd_run(void)
     const theme *th = gemd_theme();      /* chrome art. Read-only: §5 says both sides may load it */
     aes_init(vh, th);
     wind_set_desktop(GEMD_BG);           /* the fallback colour: the plane is never un-owned (§3) */
+    aes_reserve_top(AES_MENUBAR_H);      /* the menu STRIP's space, reserved before the menu
+                                          * exists (§10 is M4b, still owed): the fuller and the
+                                          * clamps must not put a window where the bar is going
+                                          * to be. W_BOTTOM windows still span it — wallpaper
+                                          * runs under the bar, and the bar draws over it. */
 
     /* THE ONLY SANCTIONED FULL-SCREEN REPAINT IN THE WHOLE STACK, and it is the FIRST FRAME:
      * gemd has just come up, the plane holds whatever the bootloader left, and there is no

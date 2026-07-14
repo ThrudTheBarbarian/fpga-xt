@@ -491,6 +491,9 @@ enum { WC_BORDER=0, WC_WORK=1 };                    // wind_calc direction
 typedef void (*wind_draw_fn)(int handle, int wx, int wy, int ww, int wh, void *ud);
 
 #define AES_INFO_H 24     // height of the W_INFO chrome line (a footer at the window bottom)
+#define AES_MENUBAR_H 22  // height of the menu bar strip (menu.c draws it; gemd RESERVES it at
+                          // startup even before the menu strip exists, so the fuller and the
+                          // clamps never put a window where the bar is going to be)
 
 int  wind_create(int kind, int x, int y, int w, int h);   // -> handle (0 = none)
 void wind_open(int handle, int x, int y, int w, int h);

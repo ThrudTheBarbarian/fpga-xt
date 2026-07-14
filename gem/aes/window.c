@@ -265,6 +265,10 @@ static void path_draw(awin *W,int x,int cy,int pen){
 #define MINVIS 72
 static void clamp_win(awin *W){
     int wx,wy,ww,wh; work_area(&wx,&wy,&ww,&wh); int th=tbh();
+    // A W_BOTTOM window may span the reserved top strip: the desktop is WALLPAPER, and the
+    // menu bar draws OVER it (always-on-top chrome). Clamping it below the reserve would
+    // leave a band of bare fallback colour where the wallpaper should run under the bar.
+    if (W->kind & W_BOTTOM) return;
     if (W->y < wy)            W->y = wy;
     if (W->y > wy+wh - th)    W->y = wy+wh - th;
     if (W->x > wx+ww - MINVIS)        W->x = wx+ww - MINVIS;

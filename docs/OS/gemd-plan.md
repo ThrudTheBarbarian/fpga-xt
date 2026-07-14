@@ -230,6 +230,29 @@ input device grows one, `gemd_route` forwards it to `wind_handle_wheel` server-s
 existing `WM_VSLID` path does the rest); horizontal scrollbars (no bar drawn today); board
 verification of the whole M5 batch.
 
+## gemd renders CACHED and presents rects (the 3-second redraw)
+
+Observed on the board while testing M5: **one window redraw took ~3 seconds.** The plane is
+NON-cacheable (the HW compositor scans it), and gemd's VDI was rendering straight into it —
+FreeType blends, 9-slice edges and pattern fills read-modify-write nearly every pixel they
+touch, and every one of those reads was an uncached DDR round-trip. §14 called drawing into the
+plane "the worst of both worlds"; this is what it costs. The old desktop had the cure
+(`SYS_fb_wallpaper` + a present) and the no-fallback commit deleted it APP-side — correctly,
+apps must not present — but it never moved INTO gemd.
+
+Now it has: gemd's VDI renders into the kernel's **cached** back-buffer (`SYS_fb_wallpaper` — a
+dedicated 16 MB PL0-RW cacheable region, no heap cost), and `gemd_present` (the
+`aes_flush_rect` hook, which `wind_redraw_area` already calls with exactly the damage rect) is
+the ONLY thing that touches the plane: cached reads, sequential uncached row writes, then
+`SYS_fb_present`'s dsb. No kernel change. Follow-ups when someone wants them: the blitter's
+SRC_BLIT as the present copy, and the HW drag overlay (gemd registers no `begin` hook, so drags
+still redraw-per-motion).
+
+**The menu strip's SPACE is reserved before the strip exists** (`aes_reserve_top(AES_MENUBAR_H)`
+at gemd startup): the fuller was maximising to the full 1920×1080 with no room left for the
+M4b menu bar. `W_BOTTOM` windows are exempt from the top clamp — the desktop is wallpaper and
+must run UNDER the bar, which draws over it (always-on-top chrome) when M4b lands.
+
 ## M6 is blocked BY DESIGN, and that is the right answer
 
 The XL plane (emulator video) is placed with `SYS_xl_window(x,y,w,h)` — **screen** coordinates.
