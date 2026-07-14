@@ -1470,6 +1470,7 @@ static void open_browser_win(const char *logical, int media_type, int net, int s
     if (!b->win) { b->used = 0; return; }
     br_list(b); br_settitle(b);
     wind_content(b->win, br_content, b);
+    wind_pin_bottom(b->win, BR_STATUS_H);   // the status bar does not scroll: the blit stops above it
     if (net != 1) {                                   // path windows: the two title buttons.  A LIST OF
         int glyphs[2] = { WTG_CHEVRON, WTG_EXPAND };  // GLYPH IDS — declarative (§11); the press comes
         wind_titlebtns(b->win, glyphs, 2);            // back as WM_TBUTTON.  ([0] View popup, [1] Fit)

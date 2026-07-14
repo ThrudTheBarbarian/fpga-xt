@@ -577,6 +577,10 @@ int  aes_top_reserve(void);                         // px reserved at the top (m
 void wind_redraw(void);                             // full-screen redraw (desktop + all windows)
 void wind_redraw_area(int x, int y, int w, int h);  // repaint only this damage rect (bg+wallpaper+windows+bar, clipped + presented)
 void wind_redraw_win(int handle);                   // repaint just one window's rect (the "only this window changed" case)
+// Declare a non-scrolling strip at the work-area BOTTOM (a status bar drawn as content).
+// Under gemd the scroll consequence shifts the backing store with a blit; without this the
+// blit drags a stale copy of the pinned strip up through the content.
+void wind_pin_bottom(int handle, int px);
 // THE DIRTY-RECT TOOL: repaint one RECT of one window's content, in the SAME coordinate
 // space the content callback draws in (client: surface coords; local: screen coords — i.e.
 // whatever you measured your widgets in when you drew them).  Use it when a ROW changed, a

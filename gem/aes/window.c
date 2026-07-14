@@ -65,6 +65,8 @@ typedef struct {
     int nseg, segx[WIND_MAXSEG], segw[WIND_MAXSEG], segn[WIND_MAXSEG];
     int content_w, content_h;                  // app-reported full content size (work coords)
     int scroll_x, scroll_y;                    // current scroll offset (vertical bar drawn)
+    int pin_bottom;                            // px at the work-area BOTTOM that do not scroll
+                                               // (a status bar): the scroll blit stops above it
     int maxed, sx,sy,sw,sh;                    // maximise toggle: flag + the pre-maximise rect
 } awin;
 
@@ -816,11 +818,16 @@ static int client_scrolled(const gem_msg *m){
     W->scroll_x=(int)m->u[0]; W->scroll_y=(int)m->u[1];
     if(!dx && !dy) return 0;                        // the echo of our own request: nothing moved
     if(!W->surf.px || !W->draw) return 0;
+    // The blit covers the SCROLLING BAND only: [0, vh). Anything the app pinned over the scroll
+    // (wind_pin_bottom — a status bar) stays where it is; blitting the whole surface dragged a
+    // stale copy of the bar up through the list, observed on the board.
     int w=W->surf.w, h=W->surf.h, ady=dy<0?-dy:dy;
-    if(dx || ady>=h){                               // sideways / a whole view: nothing survives
+    int pin=W->pin_bottom; if(pin<0) pin=0; if(pin>h) pin=h;
+    int vh=h-pin;
+    if(dx || ady>=vh){                              // sideways / a whole view: nothing survives
         client_paint(hd, 0,0, w,h);
     } else {
-        uint32_t *px=W->surf.px; int st=W->surf.stride, keep=h-ady;
+        uint32_t *px=W->surf.px; int st=W->surf.stride, keep=vh-ady;
         if(dy>0) for(int yy=0;     yy<keep; yy++) memcpy(px+(size_t)yy*st,      px+(size_t)(yy+dy)*st, (size_t)w*4);
         else     for(int yy=keep-1;yy>=0;  yy--) memcpy(px+(size_t)(yy+ady)*st, px+(size_t)yy*st,      (size_t)w*4);
         client_paint(hd, 0, dy>0?keep:0, w, ady);   // the exposed strip: drawn + damaged
@@ -1096,6 +1103,12 @@ void wind_content_size(int hd,int w,int h){
     }
 #endif
     W->content_w=w; W->content_h=h; clamp_scroll(W);
+}
+// Declare a non-scrolling strip at the work-area BOTTOM (a status bar). Client-side model
+// only: it bounds the scroll BLIT in client_scrolled — no wire message, gemd never needs it.
+void wind_pin_bottom(int hd,int px){
+    if(hd<1||hd>=MAXW||!g_w[hd].used) return;
+    g_w[hd].pin_bottom = px<0?0:px;
 }
 int wind_scroll_y(int hd){ return (hd>=1&&hd<MAXW)?g_w[hd].scroll_y:0; }
 int wind_scroll_x(int hd){ return (hd>=1&&hd<MAXW)?g_w[hd].scroll_x:0; }
@@ -1374,6 +1387,12 @@ int wind_handle_click(int mx,int my){
             int wx,wy,ww,wh; full_work(W,&wx,&wy,&ww,&wh); (void)wx;(void)wy;(void)ww;
             W->scroll_y+=(wh>SB_LINE?wh-SB_LINE:wh); clamp_scroll(W); wind_redraw_win(hd); post(WM_VSLID,hd,0,0,0,0); return 1; }
         // on the thumb: drag it, mapping travel back to scroll_y proportionally
+#ifdef GEM_XTOS
+        /* TEMP scroll-debug trace (board): the drag posts NO WM_VSLID on HW — bisect whether
+         * the thumb branch is even entered, and whether the loop exits. Remove with the fix. */
+        { char tb[64]; int tn=snprintf(tb,sizeof tb,"[gemd] thumb-drag begin wh=%d sy=%d\n",hd,W->scroll_y);
+          sys_klog(tb,(unsigned)tn); }
+#endif
         int grab=my-thy;
         for(;;){ aes_event e; int t=aes_wait_idle(&e,-1); if(t==AES_QUIT)break;
             if(t==AES_MOTION){
