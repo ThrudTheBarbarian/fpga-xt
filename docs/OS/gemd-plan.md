@@ -271,15 +271,24 @@ taking over gemd's inner blit and present copy is the phase-2 multiplier.
 stopped discarding wheel reports, gemd routes `AES_WHEEL` to `wind_handle_wheel` — a wheel notch
 is a scroll step, with the scroll-step rules (bar-only repaint, coalescing).
 
-**The blitter, measured before wiring** (`/OS/bin/blitbench`, in sdstage as the before/after
-gauge): engine COPY **187 MB/s** vs CPU uncached memcpy 121 / fill 198. Single-beat confirmed —
-wiring the engine into the present today would break even and win only async overlap. Order of
-work: (1) burst the SRC_BLIT AXI master (~1 GB/s headroom = the 3-5× present lever); (2) driver
-plumbing — `/dev/blitter` already does handles/CONTIG/clip/SEQ (§13, blittest-proven), and the
-present offload needs well-known handles for the PLANE and WALLPAPER back-buffer plus a
-cache-clean of the cached source rect; (3) `gemd_present` submits + fences. The compositor's
-inner blit stays CPU — cached→cached is already fast, and §14's move-together rule applies only
-when the VDI backend itself moves.
+**The blitter bursts now** (board-verified 2026-07-14): engine COPY **187 → 433 MB/s**
+(`/OS/bin/blitbench`; CPU uncached memcpy 121 / fill 203), `blittest` all-green on silicon. The
+serial engine already burst 16 beats but serialized read → write → B per segment; the FC engine
+(BLOCK_BLIT, raster-op SRC, 8B-aligned rows both sides — every `/dev/blitter` COPY) overlaps
+them: ping-pong buffers, two ARs in flight, counted B responses, and 4KB clamps on BOTH sides
+(the serial path never clamped; no HW test had ever handed it a crossing rect). The tb gained a
+queued-AR slave with read latency, a THROUGHPUT GATE (1.90 cy/beat measured; >2200 cycles for
+1024 beats fails the suite) and a 4KB-legality test. Timing: three directive-luck gate failures
+(clk_sally −0.200/−0.200/−0.073, the binding path ALTERNATING between the two free-floating
+overlay CPU-read BRAMs) → the timing study's **Lever A** (pin them into `pb_sally`, XDC-only)
+closed it ON THE DEFAULT DIRECTIVE at +0.025/+0.062 — determinism claim proven. (Lever B, the
+mux split, was already in since 909c65f.)
+
+Remaining to actually USE it in gemd: (1) driver plumbing — well-known `/dev/blitter` handles
+for the PLANE and WALLPAPER back-buffer (fixed regions, not shm) plus a cache-clean of the
+cached source rect; (2) `gemd_present` submits + fences; (3) optional: deepen the AR pipeline
+(2 → 4 buffers) toward ~850 MB/s. The compositor's inner blit stays CPU — cached→cached is
+already fast, and §14's move-together rule applies only when the VDI backend itself moves.
 
 **Still owed in M5:** horizontal scrollbars (no bar drawn today).
 
