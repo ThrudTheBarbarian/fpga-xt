@@ -34,6 +34,12 @@ static void send_pkt(unsigned buttons, int dx, int dy, int wheel)
                            (unsigned char)(dy & 0xFF), (unsigned char)((dy >> 8) & 0xFF),
                            (unsigned char)(signed char)wheel, 0 };
     sendto(g_sock, p, sizeof p, 0, (struct sockaddr *)&g_dst, g_dstlen);
+    /* per-second send counter: compare with the board's receive counter to place a gap */
+    { static Uint32 t0; static int n;
+      n++;
+      Uint32 now = SDL_GetTicks();
+      if (t0 == 0) t0 = now;
+      if (now - t0 >= 1000) { fprintf(stderr, "xtmouse: %d pkt/s\n", n); n = 0; t0 = now; } }
 }
 
 int main(int argc, char **argv)

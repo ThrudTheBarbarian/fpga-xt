@@ -38,6 +38,17 @@ static void in_recv(void *arg, struct udp_pcb *pcb, struct pbuf *p,
                     const ip_addr_t *addr, u16_t port)
 {
     (void)arg; (void)pcb; (void)addr; (void)port;
+    /* per-second receive counter (klog): compare with xtmouse's send counter */
+    { static uint32_t rx_n, rx_t0;
+      extern uint32_t xTaskGetTickCount(void);
+      extern void klog_u(unsigned);
+      uint32_t now = xTaskGetTickCount();
+      rx_n++;
+      if (rx_t0 == 0) rx_t0 = now;
+      if (now - rx_t0 >= 1000) {
+          klog("[net] input_udp "); klog_u(rx_n); klog(" pkt/s\n");
+          rx_n = 0; rx_t0 = now;
+      } }
     if (p->len >= 8) {
         const uint8_t *b = (const uint8_t *)p->payload;
         if (b[0] == 'X') {
