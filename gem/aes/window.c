@@ -263,6 +263,11 @@ static void draw_vscroll(int hd){
 
 static void draw_content(int hd);                // content only (surface blit / callback)
 
+// The rect the current repaint is allowed to touch — x0,y0,x1,y1, half-open at the far edge.
+// The VDI clip carries this for everything drawn THROUGH the VDI; draw_content's backend blit
+// bypasses the VDI, so it has to read the bound itself (see draw_content).
+static int g_dmg[4], g_dmg_on;
+
 static void draw_one(int hd, int active){
     awin*W=&g_w[hd]; int th=tbh();
     if(W->hidden) return;                        // lifted into the HW drag-overlay
@@ -379,10 +384,30 @@ static void draw_content(int hd){
         //
         // The source is the top-left ww x wh sub-rect of a surface whose stride is its CAPACITY
         // width (§12), which gfx_blit honours via src->stride.
+        //
+        // ⚠ AND IT MUST BE CLIPPED TO THE DAMAGE RECT, BY HAND.  gfx_blit is a BACKEND blit: it
+        // does not go through the VDI, so it does not honour the VDI clip that wind_redraw_area
+        // set for this repaint.  Everything else drawn here does.  That asymmetry ate the chrome:
+        //
+        //   the desktop is a FULL-SCREEN window (§4).  A client — any client — posts a damage
+        //   rect; wind_redraw_area clips to it and redraws the windows under it.  The desktop's
+        //   draw_content then blitted its whole 1920x1080 surface over the ENTIRE PLANE, ignoring
+        //   the clip, wiping every other window's title bar and frame — while the chrome redraw
+        //   in the very same pass WAS clipped to the damage rect, so it could not put them back.
+        //
+        // Which looked exactly like "chrome draws, then something repaints over it": one frame
+        // with chrome, then a repaint, then content-only forever.  It is not a chrome bug at all
+        // — the compositor's inner blit was simply unclipped.
         int sw = ww > W->surf.w ? W->surf.w : ww;
         int sh = wh > W->surf.h ? W->surf.h : wh;
         gfx_surface *d = vdi_screen_target();
-        if(d && sw>0 && sh>0) gfx_blit(d, wx,wy, &W->surf, 0,0, sw,sh);
+        int dx0=wx, dy0=wy, dx1=wx+sw, dy1=wy+sh;
+        if(g_dmg_on){                                  // ∩ the rect this repaint is allowed to touch
+            if(dx0<g_dmg[0]) dx0=g_dmg[0];  if(dy0<g_dmg[1]) dy0=g_dmg[1];
+            if(dx1>g_dmg[2]) dx1=g_dmg[2];  if(dy1>g_dmg[3]) dy1=g_dmg[3];
+        }
+        if(d && dx1>dx0 && dy1>dy0)                    // source origin shifts with the clipped corner
+            gfx_blit(d, dx0,dy0, &W->surf, dx0-wx, dy0-wy, dx1-dx0, dy1-dy0);
     } else if(W->draw){
         // LOCAL: the app's content callback, in this same process. In CLIENT mode the same
         // callback runs — but against our own surface, and gemd never sees it (client_paint).
@@ -481,6 +506,7 @@ void wind_redraw_area(int rx,int ry,int rw,int rh){
     int16_t clip[4]={(int16_t)rx,(int16_t)ry,(int16_t)(rx+rw-1),(int16_t)(ry+rh-1)};
     vs_clip(H(),2,NULL);                                  // fresh clip stack for the frame
     vs_clip(H(),1,clip);
+    g_dmg[0]=rx; g_dmg[1]=ry; g_dmg[2]=rx+rw; g_dmg[3]=ry+rh; g_dmg_on=1;   // ...and for the BLIT
     uint32_t bg=g_deskbg;                                 // background (wallpaper overdraws it)
     // STRIDE, not width: a surface's row pitch is its CAPACITY width (Rocks §12), and the
     // drawable is the top-left w x h sub-rect.  d->w happened to equal d->stride for every
@@ -496,6 +522,7 @@ void wind_redraw_area(int rx,int ry,int rw,int rh){
     }
     if(ry < g_top_reserve) menu_redraw();                 // the bar only if the rect reaches it
     vs_clip(H(),0,NULL);
+    g_dmg_on=0;
     aes_flush_rect(rx,ry,rw,rh);                          // present (A9 back-buffer; no-op on SDL)
 }
 void wind_redraw(void){
