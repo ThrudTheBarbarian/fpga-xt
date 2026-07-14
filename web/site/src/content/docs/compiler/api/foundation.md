@@ -1,254 +1,286 @@
 ---
 title: Foundation classes
-description: "Number, String, Data, Array — Object-style wrappers around primitive values plus the first heterogeneous container, the building blocks for Foundation-style collections."
+description: "Object, Number, String, Data, Array, Map, Set — value wrappers, containers, ordering, sorting and the functional methods, with the Comparable / Hashable / Enumerable protocols behind them."
 ---
 
-`Number`, `String`, and `Data` are Object-style wrappers around xtc's primitives. `Array` is the first heterogeneous container — a NSMutableArray-style mutable list whose elements are `Object@` (any heap-class instance). The classes live under `support/generic/lib/` so they work on every platform.
+Foundation is xtc's standard object library: value wrappers (`Number`, `String`, `Data`),
+containers (`Array`, `Map`, `Set`), and the three protocols they are built on (`Comparable`,
+`Hashable`, `Enumerable`).
 
 ```c
-#import <Number.xt>
-#import <String.xt>
-#import <Data.xt>
-#import <Array.xt>
+#import "Foundation.xt"        // the umbrella — everything below
 ```
 
-For convenience, `Foundation.xt` is an umbrella that pulls in all four plus the `Comparable` protocol:
+Every class inherits from the runtime's built-in `Object` root — every parentless `class X`
+does — so a `Number@`, a `String@`, or any class of your own fits wherever an `Object@` is
+expected. No `: Object` annotation is needed.
+
+All of it needs a real heap (`-falloc=heap`), which is the default on the 6502 `xt` layouts
+and on every native backend.
+
+:::note[Two implementations, one API]
+Foundation exists twice. `support/generic/lib/` is the 32-bit build — arm64, arm9, m68k,
+x86_64 — with `u32` indices and a `u32` hash, bounded only by memory. `support/xt6502/lib/`
+is the 6502 build, with `u16` indices and a `u8` hash, because four-byte index arithmetic on
+every compare is not something an 8-bit CPU should pay for.
+
+**Same API, different implementation.** Portable source compiles against both: a narrower
+caller index widens at the call boundary, so `for (u16 i = 0; i < a.count(); i++)` means what
+it says on either.
+:::
+
+## `Array`
+
+An ordered, resizable list of `Object@`. Holds a strong reference to every element.
 
 ```c
-#import <Foundation.xt>
+Array@ a = new Array();
+a.add(Number.with((i32)42));
+a.add(String.withCString("hi"));
+
+for (Object@ o in a) {                 // Enumerable
+    Number@ n = (Number@ ?)o;          // safe-checked downcast
+    if (n != 0) Stdio.printf("%d\n", n.asI16());
+}
 ```
 
-All four inherit from the runtime's built-in `Object` root class — every parentless `class X` does — so a `Number@`, `String@`, `Data@`, or any user class fits anywhere an `Object@` is expected. No `: Object` annotation is needed in source.
+| | |
+|---|---|
+| **Build** | `new Array()`, `Array.withCapacity(n)`, `Array.withArray(other)` |
+| **Read** | `count()`, `isEmpty()`, `capacity()`, `get(i)`, `first()`, `last()` |
+| **Mutate** | `add(o)`, `insert(i, o)`, `set(i, o)`, `addAll(other)`, `removeAt(i)`, `removeFirst()`, `removeLast()`, `removeAll()` |
+| **Search** | `indexOf(o)` / `contains(o)` — pointer identity; `indexOfEqual(c)` / `containsEqual(c)` — value equality |
+| **Order** | `sort()`, `sortUsing(cmp^)`, `sorted()`, `sortedUsing(cmp^)`, `isSortedUsing(cmp^)` |
+| **Structure** | `reverse()`, `reversed()`, `swapAt(i, j)`, `subarray(from, len)` |
+| **Functional** | `filtered(p^)`, `mapped(f^)`, `forEach(v^)`, `firstWhere(p^)`, `indexWhere(p^)`, `countWhere(p^)`, `anySatisfy(p^)`, `allSatisfy(p^)` |
 
-All three need a real heap allocator (the `-falloc=heap` free-list path), which is the default on the 6502 `xt` layouts and on every native backend. A bump-only target rejects the `new u8[N]` calls these classes use internally.
+`indexOf` and `indexWhere` return **`Array.notFound()`** when there is no match — not a
+hardcoded `$FFFF`, which is a perfectly valid index once a container can hold more than 65535
+things.
+
+### The functional methods take a `^`
+
+That is the point of them. A predicate can be a plain function *or* a **bound method that
+carries its receiver** — so a filter's state lives on the filter, not in a global, and the
+same Array can be filtered two different ways at once.
+
+```c
+class Threshold {
+    i16 limit;
+    bool above(Object@ o) {
+        Number@ n = (Number@ ?)o;
+        return n != 0 && n.asI16() > limit;
+    }
+}
+
+Threshold@ t = new Threshold();
+t.limit = (i16)3;
+Array@ big = rows.filtered(&t.above);      // the receiver comes along
+t.limit = (i16)10;
+Array@ bigger = rows.filtered(&t.above);   // same ^, different answer
+```
+
+`mapped` skips a `null` result rather than storing it, so a transform doubles as a filter in
+one pass.
+
+### Sorting
+
+`sortUsing` takes a comparator; `sort()` uses the elements' own order.
+
+```c
+a.sort();                      // Comparable.compare on the elements
+a.sortUsing(&byLastName);      // a free function
+a.sortUsing(&cfg.byColumn);    // …or a bound method, so the column is configuration
+```
+
+**`sort()` returns `false`, and changes nothing, when the elements define no order.** It does
+not invent one. See [Comparable](#comparable) below.
+
+## `Map`
+
+A hash map keyed by anything that is `Hashable` + `Comparable`. Retains both keys and values.
+
+```c
+Map@ m = new Map();
+m.set(String.withCString("width"), Number.with((i32)320));
+
+Number@ w = (Number@ ?)m.get(String.withCString("width"));
+for (Object@ key in m) { … }               // for-in yields the KEYS
+```
+
+| | |
+|---|---|
+| **Build** | `new Map()`, `Map.withCapacity(n)` |
+| **Read** | `count()`, `isEmpty()`, `get(k)`, `getOrDefault(k, fallback)`, `containsKey(k)` |
+| **Views** | `allKeys()`, `allValues()` — each an `Array@` |
+| **Mutate** | `set(k, v)`, `remove(k)`, `removeAll()` |
+
+`containsKey` asks whether the **key** is present, which is a different question from "is
+`get(k)` non-null" — a key stored with a null value is still a key.
+
+## `Set`
+
+A hash set of `Hashable` + `Comparable` elements, and the algebra that makes one worth having
+over an Array.
+
+```c
+Set@ online = Set.withArray(currentUsers);
+Set@ known  = Set.withArray(allUsers);
+
+Set@ newcomers = online.subtract(known);       // who is new
+Set@ shared    = online.intersect(known);      // who is in both
+```
+
+| | |
+|---|---|
+| **Build** | `new Set()`, `Set.withCapacity(n)`, `Set.withArray(a)` |
+| **Read** | `count()`, `isEmpty()`, `contains(e)`, `allObjects()` |
+| **Mutate** | `add(e)`, `remove(e)`, `removeAll()` |
+| **Algebra** | `unionWith(s)`, `intersect(s)`, `subtract(s)`, `symmetricDifference(s)` |
+| **Relations** | `isSubsetOf(s)`, `isSupersetOf(s)`, `intersects(s)`, `isDisjointFrom(s)`, `equalsSet(s)` |
+
+Every algebra method returns a **new** Set; neither operand is modified.
+
+## `String`
+
+A heap-owned, NUL-terminated byte string.
+
+```c
+String@ s = String.withCString("  Hello, World  ");
+String@ t = s.trimmed();                             // "Hello, World"
+
+if (t.hasPrefix(String.withCString("Hello"))) { … }
+
+Array@ fields = String.withCString("a,b,,c").split((u8)',');   // 4 parts — the gap counts
+String@ back  = String.join(fields, String.withCString("-"));  // "a-b--c"
+```
+
+| | |
+|---|---|
+| **Build** | `String.withCString(p)`, `withString(s)`, `withBytes(p, n)` |
+| **Numbers** | `String.withI32(v)`, `withU32(v)`, `withI16(v)`, `withU16(v)`, `withFloat(v)` |
+| **Read** | `length()`, `isEmpty()`, `charAt(i)`, `cString()` |
+| **Search** | `indexOf(needle)`, `indexOfChar(c)`, `lastIndexOfChar(c)`, `contains(s)`, `hasPrefix(s)`, `hasSuffix(s)` |
+| **Slice** | `substring(from, len)`, `substringFrom(from)`, `substringTo(to)` |
+| **Mutate** | `append(s)`, `appendChar(c)`, `appendCString(p)` — and `appending(s)`, which returns a new String instead |
+| **Case** | `uppercased()`, `lowercased()`, `caseInsensitiveCompare(s)`, `equalsIgnoringCase(s)` |
+| **Other** | `trimmed()`, `split(sep)` → `Array@`, `String.join(parts, sep)`, `replacing(find, sub)` |
+
+Out-of-range slicing **clamps to empty** rather than faulting — `substringFrom(999)` is an
+empty String, the same choice Foundation makes for a clamped range.
+
+`split` yields empty components for consecutive, leading or trailing separators, so `"a,,b"`
+is three fields. That is what a CSV needs; filter the empties out if you want tokens.
+
+Ordering is lexicographic by unsigned byte, then by length — so a prefix sorts before its
+extension (`"go"` before `"gone"`).
+
+## `Data`
+
+An opaque byte block. No trailing NUL, no character semantics.
+
+```c
+Data@ d = Data.withBytes(&raw[0], (u32)4);
+Stdio.printf("%s\n", d.hexString().cString());     // "deadbeef"
+```
+
+| | |
+|---|---|
+| **Build** | `Data.withBytes(p, n)`, `withCapacity(n)`, `withData(other)` |
+| **Read** | `length()`, `isEmpty()`, `bytes()`, `byteAt(i)` |
+| **Mutate** | `setByteAt(i, v)`, `appendByte(b)`, `append(other)`, `appendBytes(p, n)` |
+| **Slice** | `subdata(from, len)`, `subdataFrom(from)` |
+| **Search** | `indexOfByte(b)`, `containsByte(b)` |
+| **Text** | `hexString()`, `description()` |
 
 ## `Number`
 
-A box around a single primitive value. Two storage kinds: integer (held bit-preserving as `i32`) and float (held as the native 5-byte `float`). The kind decides which `as*` getter is meaningful.
-
-### Factories
-
-The type-pinned factories spell out the source kind, so the call site always picks an unambiguous overload:
+A wrapper around any sized integer or a float. Conversion between the two is lazy and cached.
 
 ```c
-static Number@ withI8(i8 v);
-static Number@ withU8(u8 v);
-static Number@ withI16(i16 v);
-static Number@ withU16(u16 v);
-static Number@ withI32(i32 v);
-static Number@ withU32(u32 v);
-static Number@ withFloat(float v);
+Number@ n = Number.with((i32)-42);
+Stdio.printf("%s\n", n.description().cString());   // "-42"
+
+Number@ f = Number.withFloat(3.25);
+Stdio.printf("%s\n", f.description().cString());   // "3.250"
 ```
 
-Each returns a fresh `Number@` of the matching kind.
+`with(v)` picks the storage kind from the argument's type; `withI8` / `withU16` / `withI32` /
+`withFloat` pin it explicitly. `asI32()` / `asFloat()` / `asI16()` … read it back, and
+`value()` is return-type-overloaded so it takes its kind from the destination.
 
-The shorter `with()` family is overloaded across the same primitive set; the compiler picks the right factory from the argument's type:
+`description()` renders an Int exactly and a Float to **three decimal places** — deliberately
+not a general float formatter, and candid about being exactly that.
+
+Cross-kind comparison promotes to float, so `Number.with((i16)42)` and
+`Number.withFloat(42.0)` are **equal**, and `compare` agrees with `equals`.
+
+## The protocols
+
+### `Comparable`
 
 ```c
-static Number@ with(i8 v);     static Number@ with(u8 v);
-static Number@ with(i16 v);    static Number@ with(u16 v);
-static Number@ with(i32 v);    static Number@ with(u32 v);
-static Number@ with(float v);
+protocol Comparable
+{
+    bool equals(Object@ other);
+    optional i8 compare(Object@ other);      // <0 / 0 / >0, as NSComparisonResult
+}
 ```
 
+`equals` is required. **`compare` is optional, on purpose:** equality is universal and
+ordering is not — a colour can be compared for sameness without any colour being "less than"
+another.
+
+A class that omits `compare` simply has no order, and the language says so honestly. An
+unimplemented optional method leaves a **null vtable slot**, so:
+
 ```c
-Number.with((i16)42);          // routes to withI16
-Number.with((float)3.14);      // routes to withFloat
+cmp1_t^ f = &obj.compare;      // null when the class doesn't implement it
+if (f) { … }                   // this IS respondsTo
 ```
 
-The typed `withXxx` form remains useful when the source value is itself a literal whose type the compiler would infer differently — `Number.with(42)` defaults to whatever `42`'s minimal-fitting signed type is; cast or use `withI16(42)` if you need a specific kind.
+`Array.sort()` runs exactly that test and returns `false` rather than inventing an order for
+things that define none. If you want those sorted, say what the order is:
+`sortUsing(&yourComparator)`.
 
-### Setters
+`Number`, `String` and `Data` all implement `compare`.
 
-Same family as factories, but mutate an existing instance:
-
-```c
-void setI8(i8 v);    void setU8(u8 v);
-void setI16(i16 v);  void setU16(u16 v);
-void setI32(i32 v);  void setU32(u32 v);
-void setFloat(float v);
-```
-
-The overloaded short form picks the right one from the argument:
+### `Hashable`
 
 ```c
-void set(i8 v);      void set(u8 v);    // (… one per primitive …)
-void set(float v);
-```
-
-### Getters
-
-```c
-i8    asI8(void);      u8    asU8(void);
-i16   asI16(void);     u16   asU16(void);
-i32   asI32(void);     u32   asU32(void);
-float asFloat(void);
-```
-
-The `value()` form is overloaded by **return type** rather than parameter type, so the compiler picks based on the destination context:
-
-```c
-i16  v = n.value();    // routes to asI16
-float f = n.value();   // routes to asFloat
-```
-
-This relies on xtc's return-type-aware overload resolution (the same machinery `Math.rand()` uses to pick `i16` vs `float` from context). When the destination is ambiguous (e.g. an untyped expression context), spell out the typed `asXxx` form instead.
-
-Same-kind retrieval is exact. Cross-kind (e.g. `asFloat` on an Int Number) reads the inactive field and returns whatever default was last written there — guard with `isInt()` / `isFloat()` first.
-
-Within the integer kind, casts are bit-preserving: `Number.withU32($FFFFFFFF).asI32()` returns `-1`, and `Number.withI32(-5).asU16()` returns the low two bytes of the sign-extended `i32`. Same convention as the language-level `(i32)` / `(u32)` casts.
-
-### Predicates and equality
-
-```c
-bool isInt(void);
-bool isFloat(void);
-bool equals(Number@ other);
-bool equals(Object@ other);    // Comparable conformance
-```
-
-Same-kind comparison stays bit-exact: an Int / Int compare goes byte-for-byte through `_i`, a Float / Float compare uses the runtime float comparator. Cross-kind comparison promotes both sides through `asFloat()` and compares the resulting floats — `Number.withI16(42).equals(Number.withFloat(42.0))` is `true`, and a non-integer float never compares equal to any int (`Number.withI16(42).equals(Number.withFloat(42.5))` is `false`).
-
-The `equals(Object@)` overload satisfies the `Comparable` protocol below — it safe-casts the argument to `Number@` and forwards to the typed equality, returning false on type mismatch.
-
-## `Comparable` protocol
-
-A single-method protocol that lets heterogeneous `Object@` collections compare elements by value:
-
-```c
-protocol Comparable {
+protocol Hashable
+{
+    u32  hash(void);           // u8 on the 6502 build
     bool equals(Object@ other);
 }
 ```
 
-`Number`, `String`, and `Data` all conform. Reaching equality through a `Comparable@` pointer dispatches via the protocol's vtable, so a generic comparator doesn't need to know the concrete type:
+Equal keys must hash equally. `String` and `Data` use FNV-1a over their bytes; `Number`
+scrambles its 32-bit value; `Object`'s default hashes the instance's address, so distinct
+instances hash apart.
+
+A class can list both `<Comparable, Hashable>` and satisfy the shared `equals` slot with a
+single method body.
+
+### `Enumerable`
 
 ```c
-Comparable@ a = Number.withI16(42);
-Comparable@ b = Number.withI16(42);
-Stdio.printf("%u\n", a.equals(b));    // 1
-```
-
-Each conforming class's `equals(Object@)` safe-casts the argument back to its own type and returns false on mismatch — comparing a `Number` to a `String` is well-defined and yields false.
-
-## `String`
-
-A heap-owned, null-terminated byte buffer. Conforms to `Comparable`.
-
-### Factory
-
-```c
-static String@ withCString(u8@ src);
-```
-
-Copies `src` (a null-terminated C-string — could be a string literal, a buffer the caller owns, etc.) into a fresh heap allocation. The copy includes the trailing `\0`. The String owns its own bytes from then on.
-
-### Accessors
-
-```c
-u16 length(void);                // bytes before the trailing \0
-u8  charAt(u16 idx);             // byte at idx, no bounds check
-u8@ cString(void);               // raw pointer for use with %s / strcmp / …
-bool equals(String@ other);      // byte-by-byte
-bool equals(Object@ other);      // Comparable conformance — safe-casts to String@
-```
-
-`length` is cached at construction, so it's `O(1)`. `cString()` returns the underlying buffer, valid as long as the String is.
-
-## `Data`
-
-A heap-owned `(pointer, length)` byte block. Like `String` but without the null terminator and with no character-class operations — bytes are opaque. Conforms to `Comparable`.
-
-### Factories
-
-```c
-static Data@ withBytes(u8@ src, u16 len);     // copy len bytes from src
-static Data@ withCapacity(u16 len);           // zero-filled allocation
-```
-
-### Accessors
-
-```c
-u16 length(void);                            // declared length
-u8@ bytes(void);                             // raw pointer
-u8  byteAt(u16 idx);                         // byte at idx
-void setByteAt(u16 idx, u8 value);           // mutate byte at idx
-bool equals(Data@ other);                    // byte-by-byte
-bool equals(Object@ other);                  // Comparable conformance — safe-casts to Data@
-```
-
-`bytes()` returns the underlying buffer; the caller can subscript it directly (`bytes()[i]`) or pass it to memcpy-style routines. Lifetime mirrors the Data instance.
-
-## Why these three first
-
-The intent is heterogeneous collections — `Array@`, `Dictionary@`, `Set@` — that hold mixed primitive values. xtc classes are heap-allocated objects, so a container that stores `T@` (class pointer) is the natural shape for a "list of things". `Number`, `String`, `Data` cover the three primitive-shapes the language doesn't already represent uniformly:
-
-- `Number` collapses six integer types and `float` into a single Object-pointer.
-- `String` adds Object identity to a `u8@` C-string.
-- `Data` does the same for an arbitrary byte block.
-
-Future container work can then accept `Object@` (or whichever common base / protocol comes out of that design) and hold any of these wrappers — plus user-defined classes — without per-container monomorphisation. Autoboxing (so user code can write `arr.add(42)` rather than `arr.add(Number.withI32(42))`) is a separate, deferred feature.
-
-## `Array`
-
-NSMutableArray-style mutable list of `Object@`. Elements are stored as 2-byte pointer bits in a heap-allocated buffer; capacity grows geometrically (starts at 8, doubles when full). The Array does NOT retain on add — the caller is responsible for keeping element objects alive (via separate strong references) until either the Array drops them or the Array itself is released. ARC-aware retain on add is a future addition.
-
-### Construction
-
-```c
-static Array@ withCapacity(u16 cap);     // pre-sized; skips the first resize copy
-```
-
-`new Array()` returns an empty Array with capacity 0; the first `add` triggers a `_grow` that bumps capacity to 8.
-
-### Querying
-
-```c
-u16     count(void);                     // current element count
-u16     length(void);                    // alias of count
-bool    isEmpty(void);                   // count == 0
-u16     capacity(void);                  // allocated slot count
-Object@ get(u16 i);                      // element at index, no bounds check
-Object@ first(void);                     // get(0) or 0 when empty
-Object@ last(void);                      // get(count-1) or 0 when empty
-```
-
-### Mutation
-
-```c
-void set(u16 i, Object@ obj);            // replace at index, no shift, count unchanged
-void add(Object@ obj);                   // append, _grow if needed
-void insert(u16 i, Object@ obj);         // insert at index, shift tail right
-void removeAt(u16 i);                    // remove at index, shift tail left
-void removeFirst(void);                  // removeAt(0)
-void removeLast(void);                   // count--
-void removeAll(void);                    // count = 0 (does not free buffer)
-```
-
-### Search
-
-```c
-u16  indexOf(Object@ obj);               // first match by pointer identity, or $FFFF
-bool contains(Object@ obj);              // indexOf != $FFFF
-```
-
-`indexOf` and `contains` use **pointer identity**, not value equality — two distinct `Number(42)` instances compare unequal. Use a typed walk (loop + `((Number@)a.get(i)).equals(target)`) for value-equality matching.
-
-### Example
-
-```c
-Array@ a = new Array();
-Number@ n1 = Number.withI16(-42);
-String@ s1 = String.withCString("hello");
-a.add(n1);
-a.add(s1);
-
-for (u16 i = (u16)0; i < a.count(); i++) {
-    Object@ o = a.get(i);
-    Number@ n = (Number@ ?)o;            // safe-checked cast — 0 on type mismatch
-    if (n != 0) Stdio.printf("number %d\n", n.asI16());
-    else        Stdio.printf("non-number at %u\n", i);
+protocol Enumerable
+{
+    u32     enumLength(void);      // u16 on the 6502 build
+    Object@ enumAt(u32 i);
 }
 ```
 
-Verified on every live backend — xt6502, arm64, arm9, m68k, x86_64 — at O0/O2/O3.
+What `for (x in collection)` dispatches through. Implement the two methods and your class
+works with for-in. `Array`, `Map` (yielding keys) and `Set` all conform.
+
+The loop variable is **borrowed** — the element belongs to the container — so the loop never
+retains or releases it.
+
+## Ownership
+
+Containers hold a **strong** reference to everything they store, and release it when the
+element is removed or the container dies. Sorting and reversing move pointers only; no
+refcount changes. `sorted()`, `filtered()`, `mapped()`, `subarray()` and the Set algebra all
+return **new** containers, leaving the originals untouched.

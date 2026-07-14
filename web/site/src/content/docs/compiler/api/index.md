@@ -10,7 +10,7 @@ The xtc standard library is a set of `.xt` classes that ship alongside the compi
 ```
 support/
   generic/lib/        ← platform-agnostic classes (work on every target)
-    Foundation.xt       ← umbrella: Number + String + Data + Array + Comparable
+    Foundation.xt       ← umbrella: Object + Number + String + Data + Array + Map + Set
     Object.xt           ← the runtime's root class
     Number.xt  String.xt  Data.xt  Array.xt  Map.xt  Set.xt  Memory.xt
     Comparable.xt  Hashable.xt  Enumerable.xt   ← protocols
@@ -23,7 +23,7 @@ support/
   6502/asm/           ← 6502 assembly runtime (mul/div, heap, float) — not .xt classes
 ```
 
-The compiler's `#import` machinery searches platform-specific paths first, then falls through to `generic/lib/`, so a class with the same name in both wins on the active platform. That's how `Stdio.xt` gets per-platform implementations while the Foundation framework (`Object`, `Number`, `Array`, …) and helpers like `Assert` / `Sort` stay shared.
+The compiler's `#import` machinery searches platform-specific paths first, then falls through to `generic/lib/`, so a class with the same name in both wins on the active platform. That's how `Stdio.xt` gets per-platform implementations — and how Foundation ships two builds behind one API: a 32-bit one in `generic/lib/` and a 6502-tuned one in `xt6502/lib/`. Files with no width in them (`Object`, `Comparable`, `Sort`, the `Foundation` umbrella) exist once and are shared by both.
 
 ## How `static` makes calling concise
 
@@ -62,7 +62,7 @@ Bare-call promotion (`use Stdio;` and the `#use` shorthand) is documented under 
 
 | Class | Role | Where |
 |-------|------|-------|
-| [`Foundation`](/compiler/api/foundation/) | Object-style value wrappers + first container (`Number`, `String`, `Data`, `Array`) | `generic/lib/` |
+| [`Foundation`](/compiler/api/foundation/) | value wrappers + containers: `Object`, `Number`, `String`, `Data`, `Array`, `Map`, `Set`, and the `Comparable` / `Hashable` / `Enumerable` protocols | `generic/lib/` (32-bit) and `xt6502/lib/` (6502) |
 | [`Stdio`](/compiler/api/stdio/) | screen output, cursor positioning, formatted print | per-architecture `lib/` |
 | [`Math`](/compiler/api/math/) | random numbers, square root, trig, log/exp/pow, constants | per-architecture `lib/` |
 | [`Time`](/compiler/api/time/) | RTCLOK access, jiffy / second timing, busy-wait delays | per-architecture `lib/` |
