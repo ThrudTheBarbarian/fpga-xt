@@ -587,6 +587,12 @@ void wind_pin_bottom(int handle, int px);
 // selection toggled, a status bar ticked: wind_redraw_win for a one-line change renders the
 // whole surface and makes gemd recomposite all of it.
 void wind_redraw_rect(int handle, int x, int y, int w, int h);
+// Inside a content callback: the rect THIS invocation must cover, in the callback's own
+// coordinates — cull to it freely (hand it to objc_draw, skip rows outside it). The VDI clip
+// already guarantees nothing outside it changes, but clipped-away work is still WORK: a
+// FreeType label renders its glyphs before the clip discards them. Outside a callback it
+// answers "everything", so culling against it is always safe.
+void aes_damage(int *x, int *y, int *w, int *h);
 // Optional HW drag-overlay hooks (A9): title-bar drag lifts the window into the
 // overlay plane and moves it by register write (no redraw). NULL -> classic drag.
 void wind_set_overlay(int(*begin)(int,int,int,int), void(*move)(int,int),

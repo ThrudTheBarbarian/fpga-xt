@@ -932,6 +932,9 @@ static void br_report_content(browser *b) {
 static void br_draw_text(browser *b) {
     int dd = b->rel[0] ? 1 : 0, nt = b->nent + dd;
     int sy = wind_scroll_y(b->win);                     // content is drawn shifted up
+    int dmx, dmy, dmw, dmh; aes_damage(&dmx, &dmy, &dmw, &dmh); (void)dmx; (void)dmw;
+    int cull0 = dmy > b->way ? dmy : b->way;            // damage ∩ work: rows outside render
+    int cull1 = dmy + dmh < b->way + b->wah ? dmy + dmh : b->way + b->wah;   // glyphs for nothing
     int pad = 14, cols, rpc, colw, ntg; br_text_grid(b, &cols, &rpc, &colw, &ntg);
     vst_height(HV, 14, 0,0,0,0);
     // Columns:  [name… (left)]  gap  [attrs (LEFT-aligned, FIXED column)]  gap
@@ -943,7 +946,7 @@ static void br_draw_text(browser *b) {
     for (int slot = 0; slot < nt; slot++) {
         int cx, cy, cw, ch; br_text_cell(b, slot, &cx, &cy, &cw, &ch);
         cy -= sy;                                       // screen y (clipped to the work rect)
-        if (cy + ch <= b->way || cy >= b->way + b->wah) continue;   // fully scrolled off
+        if (cy + ch <= cull0 || cy >= cull1) continue;  // scrolled off / outside the damage
         int isdot = (dd && slot == 0), i = slot - dd;
         int sel   = (!isdot && (i == b->sel || b->selall));
         int ghost = (!isdot && (b->ent[i].state == 'g' || b->ent[i].state == 'f'));
@@ -1186,10 +1189,20 @@ static void br_content(int hd, int wax, int way, int waw, int wah, void *ud) {
     // screen and shows progress in the status bar too.
     aes_icon_label_style(0);                       // browser: over the light window
     br_report_content(b);                          // full content height -> scrollbar + width
-    if (b->viewmode == 2 || b->viewmode == 3) br_draw_text(b);
-    else { br_layout(b);                           // viewmode 1: the icon grid
-           objc_draw(b->tree, 0, 2, b->wax, b->way, b->waw, b->wah); }
-    br_statusbar(b);                               // the one content bar, over any list bleed
+    // CULL to the damage (aes_damage): objc_draw prunes tiles outside its rect, and a tile
+    // pruned is a LABEL NOT RENDERED — repainting a scroll strip used to re-render every
+    // visible tile's glyphs just for the clip to discard them.
+    int dmx, dmy, dmw, dmh; aes_damage(&dmx, &dmy, &dmw, &dmh);
+    int cx0 = dmx > b->wax ? dmx : b->wax, cy0 = dmy > b->way ? dmy : b->way;
+    int cx1 = dmx + dmw < b->wax + b->waw ? dmx + dmw : b->wax + b->waw;
+    int cy1 = dmy + dmh < b->way + b->wah ? dmy + dmh : b->way + b->wah;
+    if (cx1 > cx0 && cy1 > cy0) {
+        if (b->viewmode == 2 || b->viewmode == 3) br_draw_text(b);
+        else { br_layout(b);                       // viewmode 1: the icon grid
+               objc_draw(b->tree, 0, 2, cx0, cy0, cx1 - cx0, cy1 - cy0); }
+    }
+    if (dmy + dmh > b->infoy)                      // the bar: only when the damage reaches it
+        br_statusbar(b);                           // the one content bar, over any list bleed
 }
 static void open_fuji_browser(int server_id, const char *name);   // fwd
 

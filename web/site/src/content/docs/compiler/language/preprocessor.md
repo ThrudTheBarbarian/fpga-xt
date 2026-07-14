@@ -65,7 +65,53 @@ LOG("warn", "value=%d\n", x);
 // expands to: Stdio.printf("[" "warn" "] " "value=%d\n", x);
 ```
 
-This follows the standard C model.
+This follows the standard C model. GNU's `, ##__VA_ARGS__` comma-swallow is supported too — an
+empty variadic tail removes the comma before it, so `LOG("hi")` expands cleanly:
+
+```c
+#define LOG(fmt, ...)   Stdio.printf(fmt, ##__VA_ARGS__)
+
+LOG("done\n");          // → Stdio.printf("done\n")     — no dangling comma
+LOG("x=%d\n", x);       // → Stdio.printf("x=%d\n", x)
+```
+
+### Stringize (`#`) and token paste (`##`)
+
+`#param` replaces the parameter with a **string literal** of the argument as written.
+`a ## b` **pastes** two tokens into one.
+
+Both operate on the argument *unexpanded*, which is why the idiomatic form uses two levels:
+the outer macro expands its arguments normally, and only the inner one applies the operator.
+
+```c
+#define CAT2(a,b)  a##b
+#define CAT(a,b)   CAT2(a,b)
+#define STR2(x)    #x
+#define STR(x)     STR2(x)
+#define VER        7
+
+CAT(x, VER)     // → x7      — VER expanded first, then pasted
+CAT2(x, VER)    // → xVER    — pasted raw
+STR(VER)        // → "7"
+STR2(VER)       // → "VER"
+```
+
+The usual application is building a name from its parts — an ABI symbol from a version number,
+say — so that a mismatch fails at link time, by name, rather than surfacing later as a wild
+jump through a stale vtable.
+
+### Substitution is token-aware
+
+A parameter is substituted only where it appears as a **whole token**. It is not replaced
+inside a longer identifier, and not inside a string literal:
+
+```c
+#define ABS_OK(a)   a + abs_val      // `a` does NOT rewrite `abs_val`
+#define INSTR(a)    "a is here"      // `a` does NOT rewrite the string
+```
+
+Likewise, a comma inside a string argument is part of that argument, not a separator:
+`P("a,b")` passes one argument.
 
 ## Conditional compilation
 

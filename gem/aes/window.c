@@ -683,6 +683,17 @@ void wind_redraw_rect(int hd,int x,int y,int w,int h){
     wind_redraw_area(x,y,w,h);
 }
 
+// THE DAMAGE RECT, for callbacks that want to CULL (aes.h). The VDI clip already guarantees
+// correctness — nothing outside the rect changes — but clipped-away work is still WORK: a
+// FreeType label renders its glyphs before the clip discards them, and a 50-tile browser
+// re-rendered every label to repaint a 4-pixel scroll strip. Most of a 9-second full-track
+// drag, measured on the board, was exactly this. Set around a client content callback;
+// everywhere else it answers "everything" and culling against it is a no-op.
+static int g_dmg_cb[4] = { 0, 0, 32767, 32767 };
+void aes_damage(int *x,int *y,int *w,int *h){
+    if(x)*x=g_dmg_cb[0]; if(y)*y=g_dmg_cb[1]; if(w)*w=g_dmg_cb[2]; if(h)*h=g_dmg_cb[3];
+}
+
 // ---- CLIENT MODE -----------------------------------------------------------
 // wind_* keep their EXACT signatures and become messages. The app never learns (§5).
 //
@@ -723,6 +734,28 @@ void wind_client_detach(void){
     g_gemfd=-1; g_mode=AES_LOCAL;
 }
 
+// RENDER a rect of our content into our OWN surface — no wire traffic. The scroll path uses
+// this directly: it draws only the exposed strip but tells gemd about the WHOLE moved band in
+// one damage rect, so a scroll costs gemd exactly one recomposite.
+static void client_render(int hd,int x,int y,int w,int h){
+    awin*W=&g_w[hd];
+    if(!W->surf.px || !W->draw) return;
+    // Point the AES *and* the VDI's physical target at THIS window's surface. Both matter: the
+    // AES handle is what vdi primitives draw through, and vdi_screen_target() is what a callback
+    // that blits (the desktop's wallpaper) asks for. A client with two windows would otherwise
+    // paint the second one's content into the first one's buffer.
+    int save = aes_handle();
+    vdi_set_target(&W->surf);
+    aes_init(W->vh, aes_theme());
+    int16_t clip[4]={(int16_t)x,(int16_t)y,(int16_t)(x+w-1),(int16_t)(y+h-1)};
+    vs_clip(W->vh,1,clip);
+    g_dmg_cb[0]=x; g_dmg_cb[1]=y; g_dmg_cb[2]=w; g_dmg_cb[3]=h;   // aes_damage: cull to this
+    W->draw(hd, 0,0, W->surf.w, W->surf.h, W->ud);  // SURFACE coords: the work area starts at 0,0
+    g_dmg_cb[0]=0; g_dmg_cb[1]=0; g_dmg_cb[2]=32767; g_dmg_cb[3]=32767;
+    vs_clip(W->vh,0,clip);
+    aes_init(save, aes_theme());
+}
+
 // Draw our own content into our OWN surface, then post ONE damage rect. Zero IPC in the draw
 // itself: the VDI writes to ordinary cached memory at full speed, and gemd is told only "these
 // pixels changed" — never why (§3).
@@ -733,20 +766,7 @@ static void client_paint(int hd,int x,int y,int w,int h){
     if(x+w>W->surf.w) w=W->surf.w-x;
     if(y+h>W->surf.h) h=W->surf.h-y;
     if(w<=0||h<=0) return;
-
-    // Point the AES *and* the VDI's physical target at THIS window's surface. Both matter: the
-    // AES handle is what vdi primitives draw through, and vdi_screen_target() is what a callback
-    // that blits (the desktop's wallpaper) asks for. A client with two windows would otherwise
-    // paint the second one's content into the first one's buffer.
-    int save = aes_handle();
-    vdi_set_target(&W->surf);
-    aes_init(W->vh, aes_theme());
-    int16_t clip[4]={(int16_t)x,(int16_t)y,(int16_t)(x+w-1),(int16_t)(y+h-1)};
-    vs_clip(W->vh,1,clip);
-    W->draw(hd, 0,0, W->surf.w, W->surf.h, W->ud);  // SURFACE coords: the work area starts at 0,0
-    vs_clip(W->vh,0,clip);
-    aes_init(save, aes_theme());
-
+    client_render(hd,x,y,w,h);
     gem_damage_rect(g_gemfd, hd, W->surf_id, W->surf_gen, x,y,w,h);
 }
 
@@ -835,8 +855,10 @@ static int client_scrolled(const gem_msg *m){
         uint32_t *px=W->surf.px; int st=W->surf.stride, keep=vh-ady;
         if(dy>0) for(int yy=0;     yy<keep; yy++) memcpy(px+(size_t)yy*st,      px+(size_t)(yy+dy)*st, (size_t)w*4);
         else     for(int yy=keep-1;yy>=0;  yy--) memcpy(px+(size_t)(yy+ady)*st, px+(size_t)yy*st,      (size_t)w*4);
-        client_paint(hd, 0, dy>0?keep:0, w, ady);   // the exposed strip: drawn + damaged
-        gem_damage_rect(g_gemfd, hd, W->surf_id, W->surf_gen, 0, dy>0?0:ady, w, keep);
+        client_render(hd, 0, dy>0?keep:0, w, ady);  // DRAW only the exposed strip...
+        gem_damage_rect(g_gemfd, hd, W->surf_id, W->surf_gen, 0, 0, w, vh);
+                                                    // ...but ONE damage for the whole moved
+                                                    // band: gemd recomposites exactly once
     }
     post_msg(WM_VSLID,hd,0,0,0,0);                  // pinned content is yours: repaint it now
     return AES_MESAG;
@@ -1378,19 +1400,29 @@ int wind_handle_click(int mx,int my){
         }
     }
     // vertical scrollbar in the reserved right column (arrows / thumb drag / track page)
+    //
+    // A scroll step repaints ONLY THE BAR in server mode. Server-side the content is a
+    // backing-store blit that does not change until the client's damage arrives — the only
+    // pixels a scroll step moves HERE are the thumb's. Recompositing the whole window per
+    // thumb notch was most of a 9-SECOND full-track drag, measured on the board. Local mode
+    // keeps the window repaint: there the content callback draws live with the new offset.
+    #define VSB_STEP_REDRAW(hd, W) do { int bx_,by_,bw_,bh_; \
+        if (g_mode==AES_SERVER && vsb_geom((W),&bx_,&by_,&bw_,&bh_,0,0,0,0,0,0,0)) \
+             wind_redraw_area(bx_,by_,bw_,bh_); \
+        else wind_redraw_win(hd); } while (0)
     { int cx,cy,cw,ch,upy,dny,arrh,trky,trkh,thy,thh;
       if(vsb_geom(W,&cx,&cy,&cw,&ch,&upy,&dny,&arrh,&trky,&trkh,&thy,&thh) &&
          mx>=cx && mx<cx+cw && my>=cy && my<cy+ch){
         if(arrh>0 && my<upy+arrh){                              // up arrow: one line
-            W->scroll_y-=SB_LINE; clamp_scroll(W); wind_redraw_win(hd); post(WM_VSLID,hd,0,0,0,0); return 1; }
+            W->scroll_y-=SB_LINE; clamp_scroll(W); VSB_STEP_REDRAW(hd,W); post(WM_VSLID,hd,0,0,0,0); return 1; }
         if(arrh>0 && my>=dny){                                  // down arrow: one line
-            W->scroll_y+=SB_LINE; clamp_scroll(W); wind_redraw_win(hd); post(WM_VSLID,hd,0,0,0,0); return 1; }
+            W->scroll_y+=SB_LINE; clamp_scroll(W); VSB_STEP_REDRAW(hd,W); post(WM_VSLID,hd,0,0,0,0); return 1; }
         if(my<thy){                                             // track above thumb: page up
             int wx,wy,ww,wh; full_work(W,&wx,&wy,&ww,&wh); (void)wx;(void)wy;(void)ww;
-            W->scroll_y-=(wh>SB_LINE?wh-SB_LINE:wh); clamp_scroll(W); wind_redraw_win(hd); post(WM_VSLID,hd,0,0,0,0); return 1; }
+            W->scroll_y-=(wh>SB_LINE?wh-SB_LINE:wh); clamp_scroll(W); VSB_STEP_REDRAW(hd,W); post(WM_VSLID,hd,0,0,0,0); return 1; }
         if(my>=thy+thh){                                        // track below thumb: page down
             int wx,wy,ww,wh; full_work(W,&wx,&wy,&ww,&wh); (void)wx;(void)wy;(void)ww;
-            W->scroll_y+=(wh>SB_LINE?wh-SB_LINE:wh); clamp_scroll(W); wind_redraw_win(hd); post(WM_VSLID,hd,0,0,0,0); return 1; }
+            W->scroll_y+=(wh>SB_LINE?wh-SB_LINE:wh); clamp_scroll(W); VSB_STEP_REDRAW(hd,W); post(WM_VSLID,hd,0,0,0,0); return 1; }
         // on the thumb: drag it, mapping travel back to scroll_y proportionally. The scroll is
         // LIVE: every motion that moves it posts WM_VSLID, and in gemd the event wait flushes
         // the pipe each lap — so the owning client scrolls its store WHILE the thumb moves,
@@ -1404,7 +1436,7 @@ int wind_handle_click(int mx,int my){
                 int maxs=W->content_h-wh; if(maxs<0)maxs=0;
                 int rel=e.my-grab-tk2y; int before=W->scroll_y;
                 if(span>0){ W->scroll_y=(int)((long)rel*maxs/span); }
-                clamp_scroll(W); wind_redraw_win(hd);
+                clamp_scroll(W); VSB_STEP_REDRAW(hd,W);
                 if(W->scroll_y!=before) post(WM_VSLID,hd,0,0,0,0); }
             if(t==AES_BTN_UP) break; }
         post(WM_VSLID,hd,0,0,0,0); return 1;
