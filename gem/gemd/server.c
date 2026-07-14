@@ -50,6 +50,10 @@ static gfx_surface g_plane;          /* what the VDI draws into: the CACHED back
 static struct os_fbinfo g_scan;      /* the REAL plane — uncached, because the compositor scans
                                       * it. Written only by gemd_present, in rows, never read. */
 static int         g_scan_on;        /* back-buffer mode: present copies rects to the plane */
+static int         g_blitfd = -1;    /* /dev/blitter: the present is the ENGINE's when the
+                                      * device is there (433 MB/s vs ~200 for CPU uncached
+                                      * stores), the CPU's otherwise (qemu). One failed submit
+                                      * disables it for the boot: slower, never wrong. */
 
 /* THE PRESENT (aes_flush_rect lands here, via the overlay hook). This split is not a nicety —
  * it was a 3-SECOND window redraw, observed on the board. The plane is NON-CACHEABLE (the HW
@@ -68,6 +72,33 @@ static void gemd_present(int x, int y, int w, int h)
     if (x + w > g_plane.w) w = g_plane.w - x;
     if (y + h > g_plane.h) h = g_plane.h - y;
     if (w <= 0 || h <= 0) return;
+
+    if (g_blitfd >= 0) {
+        /* THE ENGINE PRESENTS: one COPY, wallpaper -> plane, same rect both sides. The
+         * driver cleans the cached source rows itself. Rounded out to even x/width —
+         * BLOCK_BLIT refuses odd source X — which for a present only re-copies a column
+         * that is identical anyway. SYNCHRONOUS for now: the very next composite may
+         * redraw this back-buffer rect, and the engine must have finished READING it
+         * (still ~2x the CPU copy; async + in-flight-rect tracking is the follow-up). */
+        int bx = x & ~1, bw = (w + (x - bx) + 1) & ~1;
+        struct xt_blit_cmd c; memset(&c, 0, sizeof c);
+        c.op = XT_BLIT_COPY;
+        c.dst_id = XT_BLIT_SURF_PLANE; c.src_id = XT_BLIT_SURF_WALLPAPER;
+        c.dx = (uint16_t)bx; c.dy = (uint16_t)y;
+        c.dw = (uint16_t)bw; c.dh = (uint16_t)h;
+        c.sx = (uint16_t)bx; c.sy = (uint16_t)y;
+        long seq = sys_write(g_blitfd, &c, sizeof c);
+        if (seq >= 0) {
+            for (int i = 0; i < 5000000; i++) {
+                unsigned r = 0;
+                sys_ioctl(g_blitfd, XT_BLIT_SEQ, &r);
+                if ((long)r >= seq) return;
+            }
+        }
+        printf("gemd: blitter present failed (seq %ld) — CPU present from here on\n", seq);
+        sys_close(g_blitfd); g_blitfd = -1;      /* never wedge the present on a sick engine */
+    }
+
     const uint32_t *src = g_plane.px + (size_t)y * g_plane.stride + x;
     uint32_t *dst = (uint32_t *)g_scan.addr + (size_t)y * g_scan.stride + x;
     for (int yy = 0; yy < h; yy++) {
@@ -531,6 +562,11 @@ int gemd_run(void)
         g_scan = fb; g_scan_on = 1;
         g_plane.w = wp.w; g_plane.h = wp.h; g_plane.stride = wp.stride;
         g_plane.px = (uint32_t *)wp.addr;
+        /* the ENGINE does the present when the device exists (433 vs ~200 MB/s, and the
+         * driver owns the cache-clean); a missing device or a failed submit falls back
+         * to the CPU rows — qemu never has the engine, and must never need it */
+        g_blitfd = (int)sys_open("/dev/blitter", 2);
+        printf("gemd: present via %s\n", g_blitfd >= 0 ? "/dev/blitter" : "CPU rows");
     } else {
         g_plane.w = fb.w; g_plane.h = fb.h; g_plane.stride = fb.stride;
         g_plane.px = (uint32_t *)fb.addr;

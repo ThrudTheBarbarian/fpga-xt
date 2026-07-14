@@ -145,11 +145,57 @@ int blit_declare(int id, uint32_t stride)
  * actually read. A pool-backed shm is 2048 unrelated 4 KB frames; the blitter accumulates
  * base+stride and would walk straight off the first page into whatever follows. It would
  * not fail — it would render garbage and corrupt memory. Only XT_SHM_CONTIG surfaces
- * (plv_alloc) may be named. */
+ * (plv_alloc) may be named — plus the two WELL-KNOWN fixed regions (xtsys.h): the plane
+ * and the wallpaper back-buffer, whose geometry the kernel itself owns. */
+extern void fb_info(int *, int *, int *, uint32_t *);            /* gfxplane.c; stride in PIXELS */
+extern void fb_wallpaper_info(int *, int *, int *, uint32_t *);
 static uint32_t surf_phys(int id, uint32_t *size)
 {
+    if (id == XT_BLIT_SURF_PLANE || id == XT_BLIT_SURF_WALLPAPER) {
+        int w, h, stride; uint32_t addr;
+        if (id == XT_BLIT_SURF_PLANE) fb_info(&w, &h, &stride, &addr);
+        else                          fb_wallpaper_info(&w, &h, &stride, &addr);
+        *size = (uint32_t)stride * 4u * (uint32_t)h;
+        return addr;
+    }
     if (id < 0 || id >= BL_NSURF) return 0;
     return vm_shm_phys(id, size);          /* 0 unless live AND contiguous */
+}
+
+/* Stride in BYTES for any nameable surface: DECLAREd for shm, kernel-known for the
+ * well-known regions (fb strides are in pixels). */
+static uint32_t surf_stride(int id)
+{
+    if (id == XT_BLIT_SURF_PLANE || id == XT_BLIT_SURF_WALLPAPER) {
+        int w, h, stride; uint32_t addr;
+        if (id == XT_BLIT_SURF_PLANE) fb_info(&w, &h, &stride, &addr);
+        else                          fb_wallpaper_info(&w, &h, &stride, &addr);
+        return (uint32_t)stride * 4u;
+    }
+    if (id < 0 || id >= BL_NSURF) return 0;
+    return g_stride[id];
+}
+
+/* The wallpaper back-buffer is CACHED (SEC_PLANE_C) and the engine reads PHYSICAL DDR:
+ * everything the CPU drew into the source rect must be cleaned to the Point of Coherency
+ * first. Row-by-row over the rect (not the whole buffer); kernel VA == phys for this
+ * region (identity 1 MB sections), so the clean addresses ARE the physical ones.
+ * Same DCCMVAC + PL310-drain shape as mathcop.c — the lesson there was that a bare
+ * barrier over non-cacheable does NOT drain A9 writes; the explicit clean does. */
+#define BL_CLINE 32u
+#define BL_L2CC_CACHE_SYNC (*(volatile uint32_t *)0xF8F02730u)
+static void bl_clean_rows(uint32_t base, uint32_t stride,
+                          uint32_t x, uint32_t y, uint32_t w, uint32_t h)
+{
+    for (uint32_t row = 0; row < h; row++) {
+        uint32_t a = (base + (y + row) * stride + x * 4u) & ~(BL_CLINE - 1u);
+        uint32_t e = (base + (y + row) * stride + (x + w) * 4u + BL_CLINE - 1u) & ~(BL_CLINE - 1u);
+        for (; a < e; a += BL_CLINE)
+            __asm__ volatile("mcr p15,0,%0,c7,c10,1" :: "r"(a) : "memory");   /* DCCMVAC */
+    }
+    __asm__ volatile("dsb" ::: "memory");
+    BL_L2CC_CACHE_SYNC = 0u;                                  /* drain the PL310 store buffer */
+    __asm__ volatile("dsb" ::: "memory");
 }
 
 /* The engine's DDR path is addressed by a software-computed ROW0 + row stride
@@ -183,11 +229,16 @@ static int clip(uint32_t size, uint32_t stride, uint32_t x, uint32_t y,
  * priority fd always has room. */
 long blit_submit(const struct xt_blit_cmd *c, int priority)
 {
+#ifndef XT_HW
+    (void)priority;
+    return -1;   /* qemu: there is no engine, and its MMIO window is unmapped */
+#else
     blit_unlock();                                       /* or the first register touch hangs */
+    if (c->dst_id == XT_BLIT_SURF_WALLPAPER) return -1;   /* cached dst: see xtsys.h */
     uint32_t dsz = 0, ssz = 0;
     uint32_t dphys = surf_phys(c->dst_id, &dsz);
     if (!dphys) return -1;                                /* not a live contiguous surface */
-    uint32_t dstr = g_stride[c->dst_id];
+    uint32_t dstr = surf_stride(c->dst_id);
     uint32_t dw = c->dw, dh = c->dh;
 
     /* Which engine command actually implements what the caller asked for.
@@ -230,7 +281,7 @@ long blit_submit(const struct xt_blit_cmd *c, int priority)
     if (c->op == XT_BLIT_COPY || c->op == XT_BLIT_SCALE) {
         uint32_t sphys = surf_phys(c->src_id, &ssz);
         if (!sphys) return -1;
-        uint32_t sstr = g_stride[c->src_id];
+        uint32_t sstr = surf_stride(c->src_id);
 
         /* BLOCK_BLIT has no source barrel-shift in the RTL, so an odd source X would
          * silently emit shifted garbage. SRC_BLIT and SCALED read per-pixel and do
@@ -243,6 +294,10 @@ long blit_submit(const struct xt_blit_cmd *c, int priority)
         if (!clip(ssz, sstr, c->sx, c->sy, &csw, &csh)) return -1;
         if (csw != sw || csh != sh) return -1;            /* source rect runs off the surface */
         if (c->op == XT_BLIT_COPY) { dw = csw; dh = csh; }
+
+        /* the CACHED back-buffer as a source: push the CPU's pixels to DDR first */
+        if (c->src_id == XT_BLIT_SURF_WALLPAPER)
+            bl_clean_rows(sphys, sstr, c->sx, c->sy, csw, csh);
 
         flags |= BL_F_SRC_DDR;
         w32(BL_SRC_BASE, row0(sphys, c->sx, c->sy, sstr));
@@ -279,4 +334,5 @@ long blit_submit(const struct xt_blit_cmd *c, int priority)
     w8 (BL_CMD, BL_CMD_SYNC);
     __asm__ volatile("dsb");
     return (long)blit_seq() + 1;                          /* seq this command retires at */
+#endif /* XT_HW */
 }

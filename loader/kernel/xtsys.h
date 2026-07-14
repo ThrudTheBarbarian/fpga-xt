@@ -191,6 +191,15 @@ struct xt_sigframe {
 #define XT_BLITF_BLEND    (1u<<0)  /* alpha-blend over the destination (not replace) */
 #define XT_BLITF_BILINEAR (1u<<1)  /* SCALE only: bilinear taps, else nearest-neighbour */
 
+/* Well-known surface handles: the two FIXED kernel regions that are not shm. The driver
+ * knows their base/stride/size itself — no DECLARE. WALLPAPER is the kernel's CACHED
+ * back-buffer: the driver cleans the source rect to DDR before the engine reads it, and
+ * REFUSES it as a destination (engine writes vs CPU cached reads would need an invalidate
+ * protocol nobody has yet). PRE-M7 any opener may name these — PL0 can map the plane
+ * anyway; the M7 gate must restrict them along with SEC_PLANE. */
+#define XT_BLIT_SURF_PLANE      (-2)   /* the scan-out plane (uncached; compositor reads it) */
+#define XT_BLIT_SURF_WALLPAPER  (-3)   /* the wallpaper back-buffer (cached; SOURCE only) */
+
 struct xt_blit_cmd {
     uint16_t op;         /* XT_BLIT_* */
     uint16_t flags;      /* XT_BLITF_* */
