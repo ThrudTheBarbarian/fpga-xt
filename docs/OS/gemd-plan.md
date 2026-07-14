@@ -247,6 +247,14 @@ process preempted mid-`memcpy` resumed with clobbered NEON registers and left th
 uncopied. Now **2**: every task gets the context (264 B stack each). The corruption class was
 latent under every float-touching process — FreeType, printf `%f`, all of it — not just scroll.
 
+**RESIZE is live too** (sizer grips post `WM_SIZED` per motion; the client reflows while the
+frame moves), and interaction cost came down the same trail: a pathological 1-column→7-column
+widening went **~12 s → ~4 s** with (a) drags acting on the NEWEST pointer position — the modal
+loops soak the motion backlog instead of replaying one composite per queued event — and (b) the
+per-motion console lines going quiet (three printf over 115200-baud serial = ~15 ms of BLOCKING
+UART time per step; user-spotted). What remains per step is the composite+present pair, twice
+(the server's frame redraw and the client's damage) — the HW blitter's job.
+
 **Scroll cost, measured on the board (user-timed full-track drag, ~14 serial-lane motions):**
 ~9 s → ~3 s → ~2.5 s across three fixes. (1) a scroll step repaints only the BAR server-side —
 the content cannot change until the client's damage arrives, and the full-window recomposite
