@@ -64,6 +64,33 @@ static int         g_blitfd = -1;    /* /dev/blitter: the present is the ENGINE'
  * (SYS_fb_wallpaper — a dedicated 16 MB PL0-RW cacheable region, no heap cost), and this copy
  * — cached reads, sequential uncached writes, nothing else — is the only thing that ever
  * touches the plane. */
+/* TEMP drag-lag profiler: where does a resize-drag millisecond actually go? Accumulates
+ * per-stage microseconds and counts, klogs one line per second while active. Remove with
+ * the verdict. */
+static long long gemd_us(void)
+{
+    unsigned tv[3];
+    __syscall(SYS_gettimeofday, (long)tv, 0, 0);
+    return (long long)tv[0] * 1000000ll + tv[2];
+}
+static struct { long long blit, fence, cpu; int presents, damages, sizes, motions; long long last; } g_prof;
+static void prof_dump(void)
+{
+    long long now = gemd_us();
+    if (g_prof.last == 0) { g_prof.last = now; return; }
+    if (now - g_prof.last < 1000000ll) return;
+    if (g_prof.presents || g_prof.damages || g_prof.sizes) {
+        char b[160];
+        int n = snprintf(b, sizeof b,
+            "[gemd] 1s: %d motions %d presents (blit %dms fence %dms cpu %dms) %d damages %d resizes\n",
+            g_prof.motions, g_prof.presents, (int)(g_prof.blit/1000), (int)(g_prof.fence/1000),
+            (int)(g_prof.cpu/1000), g_prof.damages, g_prof.sizes);
+        sys_klog(b, (unsigned)n);
+    }
+    memset(&g_prof, 0, sizeof g_prof);
+    g_prof.last = now;
+}
+
 static void gemd_present(int x, int y, int w, int h)
 {
     if (!g_scan_on) return;
@@ -87,18 +114,25 @@ static void gemd_present(int x, int y, int w, int h)
         c.dx = (uint16_t)bx; c.dy = (uint16_t)y;
         c.dw = (uint16_t)bw; c.dh = (uint16_t)h;
         c.sx = (uint16_t)bx; c.sy = (uint16_t)y;
+        long long t0 = gemd_us();
         long seq = sys_write(g_blitfd, &c, sizeof c);
+        long long t1 = gemd_us();
         if (seq >= 0) {
             for (int i = 0; i < 5000000; i++) {
                 unsigned r = 0;
                 sys_ioctl(g_blitfd, XT_BLIT_SEQ, &r);
-                if ((long)r >= seq) return;
+                if ((long)r >= seq) {
+                    g_prof.blit += t1 - t0; g_prof.fence += gemd_us() - t1;
+                    g_prof.presents++;
+                    return;
+                }
             }
         }
         printf("gemd: blitter present failed (seq %ld) — CPU present from here on\n", seq);
         sys_close(g_blitfd); g_blitfd = -1;      /* never wedge the present on a sick engine */
     }
 
+    long long tc = gemd_us();
     const uint32_t *src = g_plane.px + (size_t)y * g_plane.stride + x;
     uint32_t *dst = (uint32_t *)g_scan.addr + (size_t)y * g_scan.stride + x;
     for (int yy = 0; yy < h; yy++) {
@@ -106,6 +140,7 @@ static void gemd_present(int x, int y, int w, int h)
         src += g_plane.stride; dst += g_scan.stride;
     }
     sys_fb_present();                            /* dsb: the compositor scans DDR */
+    g_prof.cpu += gemd_us() - tc; g_prof.presents++;
 }
 static gsurface    g_surf[GEMD_MAXW];   /* the backing store per WINDOW HANDLE. gemd keeps its own
                                          * ref and its own capacity numbers: §12's resize is
@@ -229,6 +264,7 @@ static void do_damage(int ci, const gem_msg *m)
     if (y + h > wh) h = wh - y;
     if (w <= 0 || h <= 0) return;
 
+    g_prof.damages++;
     wind_redraw_area(ox + x, oy + y, w, h);      /* the AES composites; draw_one blits the store */
 }
 
@@ -266,6 +302,7 @@ int gemd_resize_surface(int hd)
                hd, ww, wh, s->id, s->cap_w, s->cap_h);
     }
     wind_attach_surface(hd, s->id, s->gen, s->px, ww, wh, s->cap_w, ci);
+    g_prof.sizes++;
 
     gem_msg r; memset(&r, 0, sizeof r);
     r.w[0] = GEM_MSG_SIZED; r.w[1] = (int16_t)hd;
@@ -503,6 +540,7 @@ static int gemd_events(aes_event *ev, int timeout_ms)
          * frame loop (a thumb drag) waits through here, and what it posts per motion must go
          * out per motion — that is the whole of "the scroll is live". */
         gemd_flush_msgs();
+        prof_dump();                                 /* TEMP drag-lag profiler */
         if (g_iqi < g_iqn) {                      /* a burst still in hand from the last read */
             struct os_event oe = g_iq[g_iqi++];
             memset(ev, 0, sizeof *ev);
@@ -510,6 +548,7 @@ static int gemd_events(aes_event *ev, int timeout_ms)
             ev->button = oe.button; ev->key = oe.key; ev->shift = oe.shift;
             ev->wheel = oe.wheel;
             if (ev->type == OS_EV_TIMER || ev->type == OS_EV_NONE) continue;   /* not an event */
+            if (ev->type == OS_EV_MOTION) g_prof.motions++;   /* TEMP input-cadence probe */
             return ev->type;                      /* OS_EV_* == AES_* by construction (xtsys.h) */
         }
 

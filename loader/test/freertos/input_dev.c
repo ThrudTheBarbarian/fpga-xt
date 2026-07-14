@@ -66,6 +66,19 @@ static void input_task(void *arg)
             continue;
         }
         g_lx = ev.mx; g_ly = ev.my;
+        /* TEMP input-cadence probe: how many events does the DECODER produce per second?
+         * Compare with gemd's per-second consumption to find where motion goes sparse. */
+        { static uint32_t s_cnt, s_mot, s_t0;
+          extern uint32_t xTaskGetTickCount(void);
+          uint32_t now = xTaskGetTickCount();
+          s_cnt++; if (ev.type == 5 /*OS_EV_MOTION*/) s_mot++;
+          if (now - s_t0 >= 1000) {
+              char b[80]; extern void klog(const char *);
+              int n; (void)n;
+              snprintf(b, sizeof b, "input: %u ev/s (%u motion)\r\n", (unsigned)s_cnt, (unsigned)s_mot);
+              klog(b);
+              s_cnt = 0; s_mot = 0; s_t0 = now;
+          } }
         if (xQueueSend(g_q, &ev, 0) != pdPASS) {        /* full: drop the OLDEST and keep the newest —
                                                          * a stalled reader must not freeze the queue */
             struct os_event drop;
