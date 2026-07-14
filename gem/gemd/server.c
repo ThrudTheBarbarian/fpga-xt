@@ -229,11 +229,12 @@ int gemd_resize_surface(int hd)
         if (sys_shm_grant(ns.id, c->pid) != 0) { gemd_surf_drop(&ns); return -1; }
         gemd_surf_drop(s);                                      /* our ref; the client drops its own */
         *s = ns;
+        /* log ONLY the reallocation (rare, notable). A live resize calls this per MOTION, and
+         * per-motion console lines are blocking serial time (see route.c). */
+        printf("gemd: resize wh=%d work %dx%d -> NEW surf %d cap %dx%d\n",
+               hd, ww, wh, s->id, s->cap_w, s->cap_h);
     }
     wind_attach_surface(hd, s->id, s->gen, s->px, ww, wh, s->cap_w, ci);
-    printf("gemd: resize wh=%d work %dx%d -> surf %d cap %dx%d (%s)\n", hd, ww, wh,
-           s->id, s->cap_w, s->cap_h,
-           "same id = it fitted the capacity; a new id = it did not");
 
     gem_msg r; memset(&r, 0, sizeof r);
     r.w[0] = GEM_MSG_SIZED; r.w[1] = (int16_t)hd;

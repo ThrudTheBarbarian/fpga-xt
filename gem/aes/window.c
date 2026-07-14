@@ -1349,6 +1349,21 @@ static void raise(int hd){ zremove(hd); g_z[g_nz++]=hd; }
 //
 // A CLIENT never runs this: its local list has no z-order, no geometry it may trust, and no
 // chrome. Its clicks are already routed and already window-local.
+// SOAK THE MOTION BACKLOG. A drag-frame redraw costs real work (composite + present), and the
+// pointer does not care: acting on every queued motion replays the drag long after the hand
+// stopped — a 12-second resize catch-up, measured on the board. Drain what is pending (timeout
+// 0 costs nothing) and act on the NEWEST position. Returns AES_MOTION when drained, or the
+// AES_BTN_UP / AES_QUIT that ended the drag — the caller acts on *e first, then honours it.
+// Keys are dropped during a drag, exactly as the modal loops always did.
+static int soak_motion(aes_event *e){
+    for(;;){
+        aes_event n; int t=aes_wait_idle(&n,0);
+        if(t==AES_MOTION){ *e=n; continue; }
+        if(t==AES_BTN_UP || t==AES_QUIT) return t;
+        if(t==AES_TIMER) return AES_MOTION;            // nothing pending: drained
+    }
+}
+
 int wind_handle_click(int mx,int my){
     if(g_mode==AES_CLIENT) return 0;               // gemd hit-tested it; this one is ours to use
     int hd = wind_find(mx,my);
@@ -1411,9 +1426,11 @@ int wind_handle_click(int mx,int my){
             g_ovl_end();                                       // ...then drop the overlay -> seamless
         } else {                                               // SDL host: classic redraw-per-motion
             for(;;){ aes_event e; int t=aes_wait_idle(&e,-1); if(t==AES_QUIT)break;
-                if(t==AES_MOTION){ int ox=W->x,oy=W->y; W->x=e.mx-gx; W->y=e.my-gy; clamp_win(W);
+                if(t==AES_MOTION){ int done=soak_motion(&e);   // act on the NEWEST position
+                    int ox=W->x,oy=W->y; W->x=e.mx-gx; W->y=e.my-gy; clamp_win(W);
                     int ux=ox<W->x?ox:W->x, uy=oy<W->y?oy:W->y;   // repaint old ∪ new
-                    wind_redraw_area(ux, uy, (ox>W->x?ox:W->x)+W->w-ux, (oy>W->y?oy:W->y)+W->h-uy); }
+                    wind_redraw_area(ux, uy, (ox>W->x?ox:W->x)+W->w-ux, (oy>W->y?oy:W->y)+W->h-uy);
+                    if(done!=AES_MOTION) break; }              // the release was behind the backlog
                 if(t==AES_BTN_UP) break; }
         }
         post(WM_MOVED,hd,W->x,W->y,W->w,W->h); return 1;
@@ -1433,21 +1450,25 @@ int wind_handle_click(int mx,int my){
         // client that falls behind skips to the newest size instead of replaying the drag.
         if(rgrip){
             for(;;){ aes_event e; int t=aes_wait_idle(&e,-1); if(t==AES_QUIT)break;
-                if(t==AES_MOTION){ int ow=W->w,oh=W->h; int nw=e.mx-W->x, nh=e.my-W->y; if(nw<WIND_MIN_W)nw=WIND_MIN_W; if(nh<WIND_MIN_H)nh=WIND_MIN_H; W->w=nw; W->h=nh; clamp_scroll(W);
+                if(t==AES_MOTION){ int done=soak_motion(&e);   // act on the NEWEST position
+                    int ow=W->w,oh=W->h; int nw=e.mx-W->x, nh=e.my-W->y; if(nw<WIND_MIN_W)nw=WIND_MIN_W; if(nh<WIND_MIN_H)nh=WIND_MIN_H; W->w=nw; W->h=nh; clamp_scroll(W);
                     wind_redraw_area(W->x, W->y, ow>nw?ow:nw, oh>nh?oh:nh);     // old ∪ new (same top-left)
-                    if(nw!=ow||nh!=oh) post(WM_SIZED,hd,W->x,W->y,W->w,W->h); }
+                    if(nw!=ow||nh!=oh) post(WM_SIZED,hd,W->x,W->y,W->w,W->h);
+                    if(done!=AES_MOTION) break; }
                 if(t==AES_BTN_UP) break; }
             post(WM_SIZED,hd,W->x,W->y,W->w,W->h); return 1;
         }
         if(lgrip){
             int right=W->x+W->w;                                 // pin the right edge
             for(;;){ aes_event e; int t=aes_wait_idle(&e,-1); if(t==AES_QUIT)break;
-                if(t==AES_MOTION){ int ox=W->x,oh=W->h; int nx=e.mx, nh=e.my-W->y; int nw=right-nx;
+                if(t==AES_MOTION){ int done=soak_motion(&e);   // act on the NEWEST position
+                    int ox=W->x,oh=W->h; int nx=e.mx, nh=e.my-W->y; int nw=right-nx;
                     if(nw<WIND_MIN_W){ nw=WIND_MIN_W; nx=right-nw; } if(nh<WIND_MIN_H)nh=WIND_MIN_H;
                     int moved=(nx!=W->x||nh!=oh);
                     W->x=nx; W->w=nw; W->h=nh; clamp_scroll(W);
                     int ux=ox<nx?ox:nx; wind_redraw_area(ux, W->y, right-ux, oh>nh?oh:nh);   // old ∪ new (right pinned)
-                    if(moved) post(WM_SIZED,hd,W->x,W->y,W->w,W->h); }
+                    if(moved) post(WM_SIZED,hd,W->x,W->y,W->w,W->h);
+                    if(done!=AES_MOTION) break; }
                 if(t==AES_BTN_UP) break; }
             post(WM_SIZED,hd,W->x,W->y,W->w,W->h); return 1;
         }
@@ -1484,13 +1505,15 @@ int wind_handle_click(int mx,int my){
         int grab=my-thy;
         for(;;){ aes_event e; int t=aes_wait_idle(&e,-1); if(t==AES_QUIT)break;
             if(t==AES_MOTION){
+                int done=soak_motion(&e);                   // act on the NEWEST position
                 int t2y,t2h,tk2y,tk2h; vsb_geom(W,0,0,0,0,0,0,0,&tk2y,&tk2h,&t2y,&t2h);
                 int span=tk2h-t2h; int wx,wy,ww,wh; full_work(W,&wx,&wy,&ww,&wh); (void)wx;(void)wy;(void)ww;
                 int maxs=W->content_h-wh; if(maxs<0)maxs=0;
                 int rel=e.my-grab-tk2y; int before=W->scroll_y;
                 if(span>0){ W->scroll_y=(int)((long)rel*maxs/span); }
                 clamp_scroll(W); VSB_STEP_REDRAW(hd,W);
-                if(W->scroll_y!=before) post(WM_VSLID,hd,0,0,0,0); }
+                if(W->scroll_y!=before) post(WM_VSLID,hd,0,0,0,0);
+                if(done!=AES_MOTION) break; }
             if(t==AES_BTN_UP) break; }
         post(WM_VSLID,hd,0,0,0,0); return 1;
       } }

@@ -132,14 +132,15 @@ void gemd_flush_msgs(void)
             m.w[0] = GEM_MSG_CLOSED; m.w[1] = (int16_t)hd;
             send_win(hd, &m);
             break;
+        /* NO printf on the per-motion messages (MOVED / SIZED / VSLID): a live drag posts them
+         * per motion, and three log lines over a 115200-baud console is ~15 ms of BLOCKING
+         * serial time per step — a visible slice of the drag lag, spotted by the user. */
         case WM_MOVED:                                 /* gemd already moved the pixels: no redraw */
-            printf("gemd: moved wh=%d -> %d,%d %dx%d\n", hd, msg[4], msg[5], msg[6], msg[7]);
             m.w[0] = GEM_MSG_MOVED; m.w[1] = (int16_t)hd;
             m.w[2] = msg[4]; m.w[3] = msg[5]; m.w[4] = msg[6]; m.w[5] = msg[7];
             send_win(hd, &m);
             break;
         case WM_SIZED:                                 /* the sizer / the fuller: §12 does the rest */
-            printf("gemd: sized wh=%d -> %d,%d %dx%d\n", hd, msg[4], msg[5], msg[6], msg[7]);
             /* The full rect FIRST: a left-grip drag moves x as it resizes, and MSG_SIZED
              * carries only the work area — without this the client's idea of where it is
              * (wind_get(WF_CURRXYWH), the Fit button's anchor) drifts from the screen. */
