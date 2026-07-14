@@ -79,20 +79,42 @@ static int load_theme(void) {
 // Load an icon named by a registry path (relative to /OS/Icons), scaled to fit
 // ICON_SZ (aspect preserved).  Tries the SD, then the repo icons/<path>, then the
 // repo icons/<basename> — so the testbed shows something even without the card.
+//
+// ONE load per icon FILE, ever (mirrors the A9 twin). A 150-entry folder of same-type files
+// used to cost 150 loads + scales of the SAME image. OWNERSHIP RULE: what load_icon returns
+// is the CACHE'S — nobody frees it (br_free_icons checks icache_owns; the ghost path must
+// not free its source). Misses are cached too, so a missing file is not retried per entry.
+#define ICACHE_MAX 48
+static struct { char path[200]; gfx_surface *s; } g_icache[ICACHE_MAX];
+static int g_nicache;
+static int icache_owns(const gfx_surface *s) {
+    if (!s) return 0;
+    for (int i = 0; i < g_nicache; i++) if (g_icache[i].s == s) return 1;
+    return 0;
+}
 static gfx_surface *load_icon(const char *path) {
+    for (int i = 0; i < g_nicache; i++)
+        if (!strcmp(g_icache[i].path, path)) return g_icache[i].s;
     char p[440];
     snprintf(p, sizeof p, "%s/OS/Icons/%s", base, path);
     gfx_surface *raw = img_load(p, NULL);
     if (!raw) { snprintf(p, sizeof p, "icons/%s", path); raw = img_load(p, NULL); }
     if (!raw) { const char *b = strrchr(path, '/'); b = b ? b+1 : path;
                 snprintf(p, sizeof p, "icons/%s", b); raw = img_load(p, NULL); }
-    if (!raw) return NULL;
-    int dw = ICON_SZ, dh = ICON_SZ;
-    if (raw->w >= raw->h) dh = raw->h * ICON_SZ / (raw->w ? raw->w : 1);
-    else                  dw = raw->w * ICON_SZ / (raw->h ? raw->h : 1);
-    if (dw < 1) dw = 1; if (dh < 1) dh = 1;
-    gfx_surface *ic = img_scale(raw, dw, dh);
-    gfx_surface_free(raw);
+    gfx_surface *ic = NULL;
+    if (raw) {
+        int dw = ICON_SZ, dh = ICON_SZ;
+        if (raw->w >= raw->h) dh = raw->h * ICON_SZ / (raw->w ? raw->w : 1);
+        else                  dw = raw->w * ICON_SZ / (raw->h ? raw->h : 1);
+        if (dw < 1) dw = 1; if (dh < 1) dh = 1;
+        ic = img_scale(raw, dw, dh);
+        gfx_surface_free(raw);
+    }
+    if (g_nicache < ICACHE_MAX) {
+        snprintf(g_icache[g_nicache].path, sizeof g_icache[g_nicache].path, "%s", path);
+        g_icache[g_nicache].s = ic;
+        g_nicache++;
+    }
     return ic;
 }
 
@@ -397,7 +419,11 @@ static int default_sortinv(void) {
     char v[16]; registry_pref("sortInverted", "0", v, sizeof v); return atoi(v) ? 1 : 0;
 }
 static void br_free_icons(browser *b) {
-    for (int i = 0; i < b->nent; i++) if (b->isurf[i]) { gfx_surface_free(b->isurf[i]); b->isurf[i] = NULL; }
+    // Cache-owned surfaces (load_icon) are SHARED — only per-entry variants (icon_ghost) die here.
+    for (int i = 0; i < b->nent; i++) if (b->isurf[i]) {
+        if (!icache_owns(b->isurf[i])) gfx_surface_free(b->isurf[i]);
+        b->isurf[i] = NULL;
+    }
 }
 // Case-insensitive glob match: '*' matches any run (incl. empty), '?' one char.
 static int glob_ci(const char *pat, const char *s) {
@@ -552,7 +578,7 @@ static void net_finish(browser *b) {                  // rows all in: sort + ico
         b->isurf[i] = ip[0] ? load_icon(ip) : NULL;
         if (b->isurf[i] && (e->state == 'g' || e->state == 'f')) {   // uncached -> ghosted icon
             gfx_surface *gs = icon_ghost(b->isurf[i]);
-            if (gs) { gfx_surface_free(b->isurf[i]); b->isurf[i] = gs; }
+            if (gs) b->isurf[i] = gs;        // the source is the CACHE's — do not free it
         }
         snprintf(e->label, sizeof e->label, "%s", id[0] ? id : e->name);
         b->cic[i].img = b->isurf[i]; b->cic[i].text = e->label;

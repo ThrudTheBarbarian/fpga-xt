@@ -809,6 +809,9 @@ static void client_sized(const gem_msg *m){
 static int client_scrolled(const gem_msg *m){
     int hd=m->w[1]; if(hd<1||hd>=MAXW||!g_w[hd].used) return 0;
     awin*W=&g_w[hd];
+    /* TEMP scroll-debug trace (board): remove once contents scroll on HW */
+    { char tb[96]; int tn=snprintf(tb,sizeof tb,"[gem] VSLID wh=%d y %d->%d surf=%d draw=%d\n",
+          hd, W->scroll_y, (int)m->u[1], W->surf_id, W->draw?1:0); sys_klog(tb,(unsigned)tn); }
     int dx=(int)m->u[0]-W->scroll_x, dy=(int)m->u[1]-W->scroll_y;
     W->scroll_x=(int)m->u[0]; W->scroll_y=(int)m->u[1];
     if(!dx && !dy) return 0;                        // the echo of our own request: nothing moved
