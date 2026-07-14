@@ -994,15 +994,37 @@ static int client_events(aes_event *ev,int timeout_ms){
             if(gem_recv(g_gemfd,&m)!=0){                   // EOF: gemd is gone. Nothing works now.
                 memset(ev,0,sizeof *ev); ev->type=AES_QUIT; return AES_QUIT; }
         }
-        if(m.w[0]==GEM_MSG_VSLID){
-            for(;;){                                       // the peek: newest absolute offset wins
+        // A GEOMETRY/SCROLL CONSEQUENCE coalesces. A live drag (thumb OR sizer) posts one
+        // message per motion, interleaving MSG_MOVED / MSG_SIZED / MSG_VSLID — and each
+        // carries ABSOLUTE state, so within a contiguous same-window run only the NEWEST of
+        // each type matters. Collect those, act on them in dependency order (rect, then
+        // surface, then scroll), and a client that fell behind skips to the end of the drag
+        // instead of replaying it repaint by repaint.
+        #define GEOM_MSG(op) ((op)==GEM_MSG_MOVED || (op)==GEM_MSG_SIZED || (op)==GEM_MSG_VSLID)
+        if(GEOM_MSG(m.w[0])){
+            gem_msg hold[3]; int seq[3]={0,0,0}; int sq=0;   // [0]=MOVED [1]=SIZED [2]=VSLID
+            for(;;){
+                int i = m.w[0]==GEM_MSG_MOVED?0 : m.w[0]==GEM_MSG_SIZED?1 : 2;
+                hold[i]=m; seq[i]=++sq;                    // newest of each type, ARRIVAL-stamped
                 struct xt_pollfd pf; pf.fd=g_gemfd; pf.events=XT_POLLIN; pf.revents=0;
                 if(sys_poll(&pf,1,0)<=0 || !(pf.revents&XT_POLLIN)) break;
                 gem_msg n;
                 if(gem_recv(g_gemfd,&n)!=0) break;         // EOF: the next lap reports it
-                if(n.w[0]==GEM_MSG_VSLID && n.w[1]==m.w[1]) m=n;
+                if(GEOM_MSG(n.w[0]) && n.w[1]==m.w[1]) m=n;
                 else { g_stash=n; g_stash_v=1; break; }
             }
+            // Dispatch survivors IN ARRIVAL ORDER: the last message the server sent reflects
+            // its final state (a SIZED carries a newer scroll clamp than the VSLID before it).
+            int t=0;
+            for(int pass=0; pass<3; pass++){
+                int best=-1;
+                for(int i=0;i<3;i++) if(seq[i] && (best<0 || seq[i]<seq[best])) best=i;
+                if(best<0) break;
+                int t2=client_dispatch(&hold[best],ev); if(t2)t=t2;
+                seq[best]=0;
+            }
+            if(t) return t;                                // their WM_* are all in the pipe already
+            continue;
         }
         int t=client_dispatch(&m,ev);
         if(t) return t;                                    // AES_MESAG -> evnt_multi reads the pipe
@@ -1405,10 +1427,15 @@ int wind_handle_click(int mx,int my){
         int infr = my>=fy && my<W->y+W->h;
         int lgrip = infr && mx>=W->x && mx<W->x+SIZER_SZ;
         int rgrip = infr && mx>=W->x+W->w-SIZER_SZ && mx<W->x+W->w;
+        // The resize is LIVE, like the thumb: every motion that changes the size posts WM_SIZED
+        // (gemd's event wait flushes per lap), so the owning client reflows WHILE the frame
+        // moves. The client coalesces the burst — geometry messages carry absolute state — so a
+        // client that falls behind skips to the newest size instead of replaying the drag.
         if(rgrip){
             for(;;){ aes_event e; int t=aes_wait_idle(&e,-1); if(t==AES_QUIT)break;
                 if(t==AES_MOTION){ int ow=W->w,oh=W->h; int nw=e.mx-W->x, nh=e.my-W->y; if(nw<WIND_MIN_W)nw=WIND_MIN_W; if(nh<WIND_MIN_H)nh=WIND_MIN_H; W->w=nw; W->h=nh; clamp_scroll(W);
-                    wind_redraw_area(W->x, W->y, ow>nw?ow:nw, oh>nh?oh:nh); }   // old ∪ new (same top-left)
+                    wind_redraw_area(W->x, W->y, ow>nw?ow:nw, oh>nh?oh:nh);     // old ∪ new (same top-left)
+                    if(nw!=ow||nh!=oh) post(WM_SIZED,hd,W->x,W->y,W->w,W->h); }
                 if(t==AES_BTN_UP) break; }
             post(WM_SIZED,hd,W->x,W->y,W->w,W->h); return 1;
         }
@@ -1417,8 +1444,10 @@ int wind_handle_click(int mx,int my){
             for(;;){ aes_event e; int t=aes_wait_idle(&e,-1); if(t==AES_QUIT)break;
                 if(t==AES_MOTION){ int ox=W->x,oh=W->h; int nx=e.mx, nh=e.my-W->y; int nw=right-nx;
                     if(nw<WIND_MIN_W){ nw=WIND_MIN_W; nx=right-nw; } if(nh<WIND_MIN_H)nh=WIND_MIN_H;
+                    int moved=(nx!=W->x||nh!=oh);
                     W->x=nx; W->w=nw; W->h=nh; clamp_scroll(W);
-                    int ux=ox<nx?ox:nx; wind_redraw_area(ux, W->y, right-ux, oh>nh?oh:nh); }   // old ∪ new (right pinned)
+                    int ux=ox<nx?ox:nx; wind_redraw_area(ux, W->y, right-ux, oh>nh?oh:nh);   // old ∪ new (right pinned)
+                    if(moved) post(WM_SIZED,hd,W->x,W->y,W->w,W->h); }
                 if(t==AES_BTN_UP) break; }
             post(WM_SIZED,hd,W->x,W->y,W->w,W->h); return 1;
         }
