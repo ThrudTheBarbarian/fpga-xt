@@ -225,10 +225,20 @@ control: gemd draws it and runs its interaction, and now it can, because:
   space — the dirty-rect tool; `wind_redraw_win` for a one-line change renders the whole
   surface and makes gemd recomposite all of it).
 
+**Board-verified (2026-07-14):** Fit, the fuller (below the menu strip), track/arrow/thumb
+scrolling with live content, the pinned status bar staying put. Two lessons the board taught:
+
+- **the scroll blit must stop above anything the app PINS over the scroll** — blitting the
+  whole surface dragged a stale copy of the status bar up through the list. The app declares
+  its non-scrolling bottom strip (`wind_pin_bottom`, client-side model only — no wire change);
+- **"dragging does not scroll" was release-only scrolling**, the classic behaviour, not a bug —
+  and it reads as broken the moment the machine is fast enough to expect better. The thumb loop
+  now posts `WM_VSLID` per motion, and gemd's event wait flushes the message pipe EVERY LAP, so
+  what a modal frame loop posts goes out while it is still modal.
+
 **Still owed in M5:** the wheel under gemd (`struct os_event` has no wheel field yet — when the
 input device grows one, `gemd_route` forwards it to `wind_handle_wheel` server-side and the
-existing `WM_VSLID` path does the rest); horizontal scrollbars (no bar drawn today); board
-verification of the whole M5 batch.
+existing `WM_VSLID` path does the rest); horizontal scrollbars (no bar drawn today).
 
 ## gemd renders CACHED and presents rects (the 3-second redraw)
 
