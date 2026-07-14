@@ -44,6 +44,12 @@ void aes_reserve_top(int h);       // reserve a top strip from the work area (th
 // click hit a window frame (consumed), 0 if it fell in a work area / desktop.
 int  wind_handle_click(int mx, int my);
 
+// The smallest window the sizer will drag to — and therefore the smallest rect a
+// client may ask for: gemd clamps a WF_CURRXYWH request with the SAME numbers.
+// One rule, two doors; a request must not reach a size a drag could not.
+#define WIND_MIN_W 120
+#define WIND_MIN_H 80
+
 // Idle-aware wait: aes_wait chunked by the aes_set_idle period, calling the
 // idle hook on each expiry.  Every modal AES loop waits through this.
 int  aes_wait_idle(aes_event *ev, int timeout_ms);

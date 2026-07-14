@@ -45,6 +45,12 @@
                                      *     still no framing rule a malformed sender could break.
                                      *   WF_TITLEFLAGS: w[3] = the flags (WT_*)
                                      *   WF_TITLEBTNS:  w[3] = count, u[0..2] = the glyph ids
+                                     *   WF_CURRXYWH (M5): w[3..6] = x,y,w,h — the FULL rect, and a
+                                     *     REQUEST, not an instruction (§9): gemd clamps it with the
+                                     *     same rules as a sizer drag and the client learns the
+                                     *     outcome the same way — MSG_MOVED with the clamped rect,
+                                     *     plus MSG_SIZED when the work area changed. The client
+                                     *     updates NO local geometry on the way out.
                                      * A POINTER NEVER CROSSES: gemd keeps its own copy, which is
                                      * exactly what lets it repaint a WEDGED app's title bar. */
 

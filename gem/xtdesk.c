@@ -970,8 +970,10 @@ static void br_fit(browser *b) {
     if (cy + bh > WIN_H) bh = WIN_H - cy;
     int minw = 280, minh = 200;                           // sane minimum
     if (bw < minw) bw = minw; if (bh < minh) bh = minh;
-    wind_open(b->win, cx, cy, bw, bh);                    // already open: resizes in place
-    wind_redraw();
+    // A REQUEST, not an instruction (M5): under gemd this goes on the wire and the clamped
+    // truth comes back as MSG_MOVED/MSG_SIZED; locally it clamps and repaints old ∪ new.
+    // (It was wind_open + wind_redraw() — a FULL-PLANE repaint for a one-window resize.)
+    wind_set(b->win, WF_CURRXYWH, cx, cy, bw, bh);
 }
 // THE STATUS BAR — CONTENT, not chrome (§11).  File count / total size, a progress bar, a Retry
 // button: a progress bar is not a string, so it is not chrome, and it belongs in a view at the

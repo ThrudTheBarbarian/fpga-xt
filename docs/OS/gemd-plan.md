@@ -15,7 +15,7 @@ phase 1 is and is not). This file is the *implementation* plan and the running s
 | **no single-process fallback on XTOS** | **DONE, board-verified** (see below) |
 | **M4 — input: routing, focus, live chrome** | **DONE, board-verified** (see below) |
 | M4b — the menu strip (§10), grabs, liveness | *owed — see "What M4 does NOT cover"* |
-| M5 — resize: client-driven (`wind_set`), scroll/content size | partly done: the SIZER works, capacity/extent proven |
+| M5 — resize: client-driven (`wind_set`), scroll/content size | in progress: **geometry is a wire request (WF_CURRXYWH) — the Fit button works**, build-verified; board + scroll/content size open |
 | M6 — the XL plane | *blocked by design: a client cannot place a plane — see below* |
 | M7 — **the gate**: `SEC_PLANE` → PL0-none | the last app-side plane code is now GONE, so this is a kernel flip |
 
@@ -180,6 +180,34 @@ gemd: closer on wh=2 -> MSG_CLOSED (the app decides)   <- gemtext quits itself
   into the chrome, or the AES grows a declarative title model. Flagged, not guessed at.
 - **Scrollbars**: `wind_content_size()` is a local call, so gemd does not know a client's content
   height and draws no scrollbar. Needs a `WIND_SET` message (M5).
+
+## M5 (in progress): geometry is a wire request — WF_CURRXYWH joins the model
+
+**A rect is a REQUEST, not an instruction (§9).** `wind_set(WF_CURRXYWH)` in a client puts the
+rect on the wire (`GEM_WIND_SET`, w[3..6]) and changes NOTHING locally: gemd clamps it with the
+SAME rules as a sizer drag (`WIND_MIN_W/H` — one rule, two doors — plus `clamp_win`), applies it
+through the AES's own `wind_set`, and the client learns the outcome the way it learns about a
+drag: `MSG_MOVED` with the clamped rect, then `MSG_SIZED` (the §12 surface dance) when the work
+area changed. A client that trusted its own request would disagree with the screen every time
+gemd said no.
+
+What it carried with it:
+
+- **The Fit button works under gemd** — `br_fit` in both desktops sends the request instead of
+  calling `wind_open` + a repaint. That deleted a FULL-PLANE `wind_redraw()` in the SDL twin and
+  a wrong-space repaint in the A9 twin (`wind_redraw_area` with SCREEN coords, which client mode
+  reads as SURFACE coords — right-looking, wrong-space).
+- **`wind_open` on an already-open window is the same request**, both sides. The classic
+  "resizes in place" idiom used to re-run the OPEN handshake: a second workstation client-side
+  and an ORPHANED surface server-side (overwritten, never dropped).
+- **`MSG_MOVED` now precedes `MSG_SIZED` on the sizer path too**: a left-grip drag moves x as it
+  resizes, and `MSG_SIZED` carries only the work area — without the rect the client's
+  `wind_get(WF_CURRXYWH)` (the Fit button's anchor) drifts from the screen.
+
+**Still owed in M5 — scroll/content size.** The scrollbar is a REAL control: gemd draws it and
+runs its interaction (it is chrome), but it cannot know a client's content height until
+`wind_content_size` goes on the wire, and a scroll's consequence must reach the client so it can
+shift its own backing store (an internal VDI blit) and post the dirty rects. Not started.
 
 ## M6 is blocked BY DESIGN, and that is the right answer
 

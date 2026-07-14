@@ -1056,11 +1056,13 @@ static void br_fit(browser *b) {
     if (cy + bh > PH) bh = PH - cy;
     int minw = 280, minh = 200;                           // sane minimum
     if (bw < minw) bw = minw; if (bh < minh) bh = minh;
-    wind_open(b->win, cx, cy, bw, bh);                    // already open: resizes in place
-    // wind_open early-returns for an ALREADY-OPEN window without redrawing, so the
-    // repaint is ours to do. Top-left is fixed and the window may SHRINK, so the
-    // damage is old ∪ new — anything vacated must go back to desktop.
-    wind_redraw_area(cx, cy, cw0 > bw ? cw0 : bw, ch0 > bh ? ch0 : bh);
+    // A REQUEST, not an instruction (M5): the rect goes to gemd, which clamps it with the
+    // sizer's rules and answers MSG_MOVED (+ MSG_SIZED when the work area changed) — the
+    // repaint and the vacated-rect recomposite are gemd's, in gemd's coordinates. Nothing
+    // to redraw here: our next paint comes with the MSG_SIZED.  (The old wind_open +
+    // wind_redraw_area pair passed SCREEN coords to a client-mode repaint that reads
+    // SURFACE coords — right-looking, wrong-space.)
+    wind_set(b->win, WF_CURRXYWH, cx, cy, bw, bh);
 }
 // THE STATUS BAR — CONTENT, not chrome (§11).  File count / total size, a progress bar, a Retry
 // button: a progress bar is not a string, so it is not chrome, and it belongs in a view at the

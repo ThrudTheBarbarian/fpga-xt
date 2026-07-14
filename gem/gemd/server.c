@@ -74,6 +74,8 @@ static void wind_error(gclient *c, int reason)
 
 /* ---- requests ------------------------------------------------------------------------- */
 
+static void set_rect(gclient *c, int hd, int x, int y, int w, int h);   /* below, with WIND_SET */
+
 /* The AES allocates the handle and owns the geometry from here on. NO surface yet: the work
  * area is not knowable until the window's final rect is set at OPEN, and the surface is sized
  * to the WORK AREA — the client draws content, never chrome. */
@@ -96,6 +98,11 @@ static void do_wind_open(gclient *c, int ci, const gem_msg *m)
 {
     int hd = m->w[1];
     if (wind_client_of(hd) != ci) return;                 /* not this client's window: ignore */
+
+    /* Already open: the classic "wind_open again resizes in place" idiom, and a second
+     * handshake would ORPHAN the surface below (overwritten, never dropped). It is a geometry
+     * request, so it takes the geometry-request path — same clamp, same replies. */
+    if (g_surf[hd].id >= 0) { set_rect(c, hd, m->w[2], m->w[3], m->w[4], m->w[5]); return; }
 
     wind_open(hd, m->w[2], m->w[3], m->w[4], m->w[5]);    /* the AES: z-order, clamp, chrome */
 
@@ -207,6 +214,34 @@ int gemd_resize_surface(int hd)
     return 0;
 }
 
+/* A RECT IS A REQUEST (§9/M5) — the Fit button, and any client that wants a different window
+ * geometry. The client asked; it did not instruct. Clamp with the SAME rules as a sizer drag
+ * (WIND_MIN_* here, clamp_win inside the AES's own wind_set), apply through the very function a
+ * single-process app used to call, and send back the truth: MSG_MOVED with the clamped rect,
+ * then the §12 surface dance (gemd_resize_surface -> MSG_SIZED) when the work area changed.
+ * The client changed nothing locally on the way out — what it learns, it learns from these. */
+static void set_rect(gclient *c, int hd, int x, int y, int w, int h)
+{
+    if (w < WIND_MIN_W) w = WIND_MIN_W;
+    if (h < WIND_MIN_H) h = WIND_MIN_H;
+    int ow, oh;
+    wind_work_size(hd, &ow, &oh);
+    wind_set(hd, WF_CURRXYWH, x, y, w, h);        /* the AES: clamp_win + repaint old ∪ new */
+
+    int fx, fy, fw, fh;
+    wind_rect_of(hd, &fx, &fy, &fw, &fh);         /* what the window actually IS now */
+    gem_msg r; memset(&r, 0, sizeof r);
+    r.w[0] = GEM_MSG_MOVED; r.w[1] = (int16_t)hd;
+    r.w[2] = (int16_t)fx; r.w[3] = (int16_t)fy; r.w[4] = (int16_t)fw; r.w[5] = (int16_t)fh;
+    reply(c, &r);
+
+    int nw, nh;
+    wind_work_size(hd, &nw, &nh);
+    if (nw != ow || nh != oh) gemd_resize_surface(hd);   /* §12; it sends MSG_SIZED itself */
+    printf("gemd: set_rect wh=%d asked %d,%d %dx%d -> %d,%d %dx%d\n",
+           hd, x, y, w, h, fx, fy, fw, fh);
+}
+
 /* THE DECLARATIVE CHROME MODEL ARRIVES (§11). The client tells us what its window IS — a name, a
  * subtitle, a proxy icon, a modified flag, a list of title-button glyphs — and from here on the
  * chrome is OURS: we hold the model, so we repaint the title bar on a drag, on a reveal, on a
@@ -245,6 +280,9 @@ static void do_wind_set(gclient *c, int ci, const gem_msg *m)
         wind_set(hd, field, WIND_PTR_HI(g), WIND_PTR_LO(g), n, 0);
         break;
     }
+    case WF_CURRXYWH:                               /* geometry is a model field too (M5) */
+        set_rect(c, hd, m->w[3], m->w[4], m->w[5], m->w[6]);
+        break;
     default:
         printf("gemd: pid %d set field %d — not a chrome field, ignored\n", c->pid, field);
         break;

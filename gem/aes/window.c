@@ -837,12 +837,23 @@ static void client_send_str(int hd,int field,const char*s){
         gem_send(g_gemfd,&m);
     }
 }
-// 1 = sent (chrome is gemd's); 0 = not a chrome field, handle it locally.
-static int client_wind_set(int hd,int field,int a,int b,int c){
+// 1 = sent (the model is gemd's); 0 = not gemd's field, handle it locally.
+static int client_wind_set(int hd,int field,int a,int b,int c,int d){
     switch(field){
     case WF_NAME: case WF_INFO: case WF_SUBTITLE: case WF_ICON:
         client_send_str(hd, field, (const char*)WIND_PTR(a,b));
         return 1;
+    case WF_CURRXYWH: {
+        // GEOMETRY IS GEMD'S TOO (M5). The rect goes out as a REQUEST and nothing changes
+        // here: the clamped truth comes back as MSG_MOVED (and MSG_SIZED when the work area
+        // changed), through the same door a sizer drag uses. A client that trusted its own
+        // request would disagree with the screen every time gemd said no.
+        gem_msg m; memset(&m,0,sizeof m);
+        m.w[0]=GEM_WIND_SET; m.w[1]=(int16_t)hd; m.w[2]=(int16_t)field;
+        m.w[3]=(int16_t)a; m.w[4]=(int16_t)b; m.w[5]=(int16_t)c; m.w[6]=(int16_t)d;
+        gem_send(g_gemfd,&m);
+        return 1;
+    }
     case WF_TITLEFLAGS: {
         gem_msg m; memset(&m,0,sizeof m);
         m.w[0]=GEM_WIND_SET; m.w[1]=(int16_t)hd; m.w[2]=(int16_t)field; m.w[3]=(int16_t)a;
@@ -923,6 +934,10 @@ void wind_open(int hd,int x,int y,int w,int h){
 #ifdef GEM_XTOS
     if(g_mode==AES_CLIENT){
         awin*W=&g_w[hd];
+        // Already open: the classic "wind_open again resizes in place" idiom. It must NOT
+        // re-run the open handshake — that would open a second workstation on this side and
+        // orphan a surface on gemd's. It is a geometry request, so it goes out as one.
+        if(W->surf.px){ client_wind_set(hd,WF_CURRXYWH,x,y,w,h); return; }
         W->x=x; W->y=y; W->w=w; W->h=h;
         gem_msg m; memset(&m,0,sizeof m);
         m.w[0]=GEM_WIND_OPEN; m.w[1]=(int16_t)hd;
@@ -1076,7 +1091,7 @@ void wind_set(int hd,int field,int a,int b,int c,int d){
 #ifdef GEM_XTOS
     // CHROME IS GEMD'S. A client does not keep a chrome model, does not draw one, and does not
     // repaint one: it says what the window IS, and gemd renders it (§11).
-    if(g_mode==AES_CLIENT && client_wind_set(hd,field,a,b,c)) return;
+    if(g_mode==AES_CLIENT && client_wind_set(hd,field,a,b,c,d)) return;
 #endif
     switch(field){
     /* ---- classic ---------------------------------------------------------- */
@@ -1226,7 +1241,7 @@ int wind_handle_click(int mx,int my){
         int rgrip = infr && mx>=W->x+W->w-SIZER_SZ && mx<W->x+W->w;
         if(rgrip){
             for(;;){ aes_event e; int t=aes_wait_idle(&e,-1); if(t==AES_QUIT)break;
-                if(t==AES_MOTION){ int ow=W->w,oh=W->h; int nw=e.mx-W->x, nh=e.my-W->y; if(nw<120)nw=120; if(nh<80)nh=80; W->w=nw; W->h=nh; clamp_scroll(W);
+                if(t==AES_MOTION){ int ow=W->w,oh=W->h; int nw=e.mx-W->x, nh=e.my-W->y; if(nw<WIND_MIN_W)nw=WIND_MIN_W; if(nh<WIND_MIN_H)nh=WIND_MIN_H; W->w=nw; W->h=nh; clamp_scroll(W);
                     wind_redraw_area(W->x, W->y, ow>nw?ow:nw, oh>nh?oh:nh); }   // old ∪ new (same top-left)
                 if(t==AES_BTN_UP) break; }
             post(WM_SIZED,hd,W->x,W->y,W->w,W->h); return 1;
@@ -1235,7 +1250,7 @@ int wind_handle_click(int mx,int my){
             int right=W->x+W->w;                                 // pin the right edge
             for(;;){ aes_event e; int t=aes_wait_idle(&e,-1); if(t==AES_QUIT)break;
                 if(t==AES_MOTION){ int ox=W->x,oh=W->h; int nx=e.mx, nh=e.my-W->y; int nw=right-nx;
-                    if(nw<120){ nw=120; nx=right-nw; } if(nh<80)nh=80;
+                    if(nw<WIND_MIN_W){ nw=WIND_MIN_W; nx=right-nw; } if(nh<WIND_MIN_H)nh=WIND_MIN_H;
                     W->x=nx; W->w=nw; W->h=nh; clamp_scroll(W);
                     int ux=ox<nx?ox:nx; wind_redraw_area(ux, W->y, right-ux, oh>nh?oh:nh); }   // old ∪ new (right pinned)
                 if(t==AES_BTN_UP) break; }
