@@ -165,11 +165,15 @@ module tb_xt_blitter;
     localparam int READ_LAT = 12;
     logic [31:0] ar_addr_fifo[$];
     logic [7:0]  ar_len_fifo[$];
+    int          ar_rdy_fifo[$];     // tick the burst's data becomes available: latency is
+                                     // PIPELINED across outstanding ARs, as the HP+DDR pair
+                                     // really behaves — a serial-latency model hides the
+                                     // whole point of read-ahead
+    int          tb_tick;
     logic [31:0] ar_addr_q;
     logic [7:0]  ar_len_q;
     logic [7:0]  r_beat_count;
     logic        r_active;
-    int          r_lat_cnt;
     logic [63:0] r_data_q;
 
     // ====================================================================
@@ -191,7 +195,8 @@ module tb_xt_blitter;
             w_need_bvalid  <= 1'b0;
             ar_addr_fifo.delete();
             ar_len_fifo.delete();
-            r_lat_cnt      <= 0;
+            ar_rdy_fifo.delete();
+            tb_tick        <= 0;
             ar_addr_q      <= 32'd0;
             ar_len_q       <= 8'd0;
             r_beat_count   <= 8'd0;
@@ -258,28 +263,27 @@ module tb_xt_blitter;
             end
 
             // ---- Read address (AR) ready -- always accept, QUEUED --------
+            tb_tick <= tb_tick + 1;
             m_axi_arready <= 1'b1;
             if (m_axi_arvalid && m_axi_arready) begin
                 ar_addr_fifo.push_back(m_axi_araddr);
                 ar_len_fifo.push_back(m_axi_arlen);
+                ar_rdy_fifo.push_back(tb_tick + READ_LAT);   // latency runs CONCURRENTLY
 
                 r_addr_q.push_back(m_axi_araddr);
                 r_len_q.push_back(m_axi_arlen);
                 r_cycle_q.push_back($time);
             end
 
-            // ---- Read data (R): pop the queue, pay READ_LAT, then burst --
-            if (!r_active && ar_addr_fifo.size() > 0) begin
-                if (r_lat_cnt < READ_LAT) begin
-                    r_lat_cnt <= r_lat_cnt + 1;
-                end else begin
-                    ar_addr_q   <= ar_addr_fifo.pop_front();
-                    ar_len_q    <= ar_len_fifo.pop_front();
-                    r_lat_cnt   <= 0;
-                    r_active    <= 1'b1;
-                    r_beat_count <= 8'd0;
-                    m_axi_rvalid <= 1'b0;   // first beat presented next cycle
-                end
+            // ---- Read data (R): serve the next burst the moment its (pipelined)
+            // latency has elapsed — back-to-back when the master read ahead ------
+            if (!r_active && ar_addr_fifo.size() > 0 && tb_tick >= ar_rdy_fifo[0]) begin
+                ar_addr_q   <= ar_addr_fifo.pop_front();
+                ar_len_q    <= ar_len_fifo.pop_front();
+                void'(ar_rdy_fifo.pop_front());
+                r_active    <= 1'b1;
+                r_beat_count <= 8'd0;
+                m_axi_rvalid <= 1'b0;   // first beat presented next cycle
             end else if (r_active && !m_axi_rvalid) begin
                 m_axi_rvalid <= 1'b1;
                 m_axi_rlast  <= (ar_len_q == 8'd0);
@@ -2059,7 +2063,7 @@ module tb_xt_blitter;
         $display("  FC copy 1024 beats in %0d cycles (%0d.%02d cy/beat)",
                  cycles, cycles/1024, (cycles*100/1024) % 100);
         if (errs) begin $display("FAIL: test_fc_perf (%0d mismatches)", errs); $fatal(1); end
-        if (cycles > 2200) begin
+        if (cycles > 1500) begin
             $display("FAIL: test_fc_perf — %0d cycles for 1024 beats: the pipeline is not pipelining", cycles);
             $fatal(1);
         end

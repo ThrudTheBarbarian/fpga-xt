@@ -981,13 +981,16 @@ module xt_blitter #(
     // /dev/blitter COPY), rows 8-byte aligned on BOTH sides, strides multiples
     // of 8, even width. Anything else takes the old serial path, unchanged.
     // ====================================================================
-    logic [63:0] fc_buf [0:1][0:15];      // ping-pong segment buffers
-    logic [4:0]  fc_len [0:1];            // beats queued per buffer (1..16)
-    logic        fc_full[0:1];            // buffer holds a complete segment
-    logic        fc_resv[0:1];            // buffer's AR is in flight
-    logic        fc_ar_ptr;               // next buffer to issue an AR for
-    logic        fc_r_ptr;                // buffer the R stream is filling
-    logic        fc_wr_ptr;               // next buffer to drain to AW/W
+    logic [63:0] fc_buf [0:3][0:15];      // 4 rotating segment buffers: enough read-ahead to
+                                          // hide the HP latency behind a continuous R stream
+                                          // (2 buffers measured 433 MB/s: every other segment
+                                          // stalled on the ~25-cycle first-beat latency)
+    logic [4:0]  fc_len [0:3];            // beats queued per buffer (1..16)
+    logic        fc_full[0:3];            // buffer holds a complete segment
+    logic        fc_resv[0:3];            // buffer's AR is in flight
+    logic [1:0]  fc_ar_ptr;               // next buffer to issue an AR for
+    logic [1:0]  fc_r_ptr;                // buffer the R stream is filling
+    logic [1:0]  fc_wr_ptr;               // next buffer to drain to AW/W
     logic [3:0]  fc_r_idx;                // R beat index in the filling buffer
     logic        fc_ar_pend;              // AR asserted, awaiting arready
     logic [4:0]  fc_ar_beats_q;           // beats of the pending AR (cursor advance)
@@ -1388,8 +1391,12 @@ module xt_blitter #(
             fc_b_cnt          <= 3'd0;
             fc_full[0]        <= 1'b0;
             fc_full[1]        <= 1'b0;
+            fc_full[2]        <= 1'b0;
+            fc_full[3]        <= 1'b0;
             fc_resv[0]        <= 1'b0;
             fc_resv[1]        <= 1'b0;
+            fc_resv[2]        <= 1'b0;
+            fc_resv[3]        <= 1'b0;
         end else begin
             // one-shot strobes default off
             m_axi_awvalid <= 1'b0;
@@ -1486,8 +1493,10 @@ module xt_blitter #(
                                 fc_wr_addr <= q_fc_dst_row0; fc_wr_row <= q_fc_dst_row0;
                                 fc_wr_left <= q_dst_w[11:1]; fc_wr_rows <= q_dst_h;
                                 fc_full[0] <= 1'b0; fc_full[1] <= 1'b0;
+                                fc_full[2] <= 1'b0; fc_full[3] <= 1'b0;
                                 fc_resv[0] <= 1'b0; fc_resv[1] <= 1'b0;
-                                fc_ar_ptr <= 1'b0; fc_r_ptr <= 1'b0; fc_wr_ptr <= 1'b0;
+                                fc_resv[2] <= 1'b0; fc_resv[3] <= 1'b0;
+                                fc_ar_ptr <= 2'd0; fc_r_ptr <= 2'd0; fc_wr_ptr <= 2'd0;
                                 fc_r_idx <= 4'd0; fc_w_idx <= 4'd0;
                                 fc_ar_pend <= 1'b0; fc_aw_pend <= 1'b0; fc_w_act <= 1'b0;
                                 fc_b_cnt <= 3'd0;
@@ -2392,7 +2401,7 @@ module xt_blitter #(
                                                                // duplicate of the same AR
                         else begin
                             fc_ar_pend <= 1'b0;
-                            fc_ar_ptr  <= ~fc_ar_ptr;
+                            fc_ar_ptr  <= fc_ar_ptr + 2'd1;
                             // advance the source + shadow-dest cursors by the
                             // accepted segment; wrap rows on exhaustion
                             if (fc_rd_left == 11'(fc_ar_beats_q)) begin
@@ -2427,7 +2436,7 @@ module xt_blitter #(
                         if (m_axi_rlast) begin
                             fc_full[fc_r_ptr] <= 1'b1;
                             fc_resv[fc_r_ptr] <= 1'b0;
-                            fc_r_ptr <= ~fc_r_ptr;
+                            fc_r_ptr <= fc_r_ptr + 2'd1;
                             fc_r_idx <= 4'd0;
                         end else
                             fc_r_idx <= fc_r_idx + 4'd1;
@@ -2457,7 +2466,7 @@ module xt_blitter #(
                             if (fc_w_idx == 4'(fc_len[fc_wr_ptr] - 5'd1)) begin
                                 fc_w_act <= 1'b0;              // wvalid falls (default)
                                 fc_full[fc_wr_ptr] <= 1'b0;
-                                fc_wr_ptr <= ~fc_wr_ptr;
+                                fc_wr_ptr <= fc_wr_ptr + 2'd1;
                                 if (fc_wr_left == 11'(fc_len[fc_wr_ptr])) begin
                                     fc_wr_rows <= fc_wr_rows - 16'd1;
                                     fc_wr_row  <= fc_wr_row + 32'(dst_stride_eff);
@@ -2494,8 +2503,8 @@ module xt_blitter #(
                     // ---- done? -------------------------------------------
                     if (fc_wr_rows == 16'd0 && fc_rd_rows == 16'd0
                         && !fc_ar_pend && !fc_aw_pend && !fc_w_act
-                        && !fc_full[0] && !fc_full[1]
-                        && !fc_resv[0] && !fc_resv[1]
+                        && !fc_full[0] && !fc_full[1] && !fc_full[2] && !fc_full[3]
+                        && !fc_resv[0] && !fc_resv[1] && !fc_resv[2] && !fc_resv[3]
                         && fc_b_cnt == 3'd0 && !m_axi_bvalid)
                         state <= S_DONE;
                 end
