@@ -300,6 +300,16 @@ against 19 ms of blitting on full-screen presents; the engine's completion IRQ a
 and the AR pipeline 2 → 4 (~850 MB/s). The compositor's inner blit stays CPU — cached→cached
 is already fast, and §14's move-together rule applies only when the VDI backend itself moves.
 
+**Both follow-ups landed overnight 2026-07-14/15** (6a1b191 + 5b19048, board-verified): four
+segment buffers keep the R stream continuous — engine COPY **433 → 777 MB/s** (4.15× the
+morning's 187 baseline), blittest all-green — and the fence is ONE blocking syscall
+(`XT_BLIT_WAIT`: kernel register-spin then tick sleeps, 200 ms bound) instead of the SVC storm
+that burned 55 ms per full-screen present. Timing note for the record: the 4-buffer netlist
+closed at clk_sally **+0.003** and only under Explore (default/ExtraTimingOpt both −0.381 on
+the screen-bank → line-reader CE path). The pinned region is at its congestion tipping point;
+the next clk_sally session (study Lever C, or rebalancing the overlay BRAMs adjacent) should
+happen BEFORE the next netlist growth, not after it fails a gate.
+
 **Still owed in M5:** horizontal scrollbars (no bar drawn today).
 
 ## gemd renders CACHED and presents rects (the 3-second redraw)
