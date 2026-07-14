@@ -1209,12 +1209,21 @@ void wind_set_scroll(int hd,int x,int y){
 #endif
     g_w[hd].scroll_x=x; g_w[hd].scroll_y=y; clamp_scroll(&g_w[hd]);
 }
+static void post(int type,int hd,int a,int b,int c,int d);   // fwd: defined with the click handler
 int wind_handle_wheel(int mx,int my,int delta){
     int hd=wind_find(mx,my); if(!hd) return 0; awin*W=&g_w[hd];
     if(!vsb_on(W)) return 0;                       // nothing scrollable under the pointer
     int before=W->scroll_y;
     W->scroll_y -= delta*SB_LINE; clamp_scroll(W);  // wheel-up (delta>0) -> toward the top
-    if(W->scroll_y!=before) wind_redraw_win(hd);
+    if(W->scroll_y!=before){
+        // A scroll step, so the scroll-step rules: in gemd only the THUMB changes here (the
+        // content is the owner's, told via WM_VSLID); locally the callback redraws live.
+        int bx,by,bw,bh;
+        if(g_mode==AES_SERVER && vsb_geom(W,&bx,&by,&bw,&bh,0,0,0,0,0,0,0))
+             wind_redraw_area(bx,by,bw,bh);
+        else wind_redraw_win(hd);
+        post(WM_VSLID,hd,0,0,0,0);
+    }
     return 1;
 }
 /* DEPRECATED: sugar over wind_set(WF_TITLEBTNS), implemented THROUGH it (like wind_set_name). */

@@ -735,6 +735,10 @@ sdstage: $(BUILD)/toybox.so $(BUILD)/sqlite3.so $(BUILD)/fbgrab.so $(BUILD)/libG
 	cp $(BUILD)/libutil.so $(SDSTAGE)/OS/library/libutil.so
 	# overlay libs (libXTGem / libSpike*) — were romfs-only; ship on the card too
 	cp romfs-overlay/Library/*.so $(SDSTAGE)/OS/library/
+	# overlay apps (romfs-overlay/bin/*) — same deal: an app dropped in the overlay was
+	# reachable in qemu but NOT on the card, so it could never be run on the real display.
+	# `-` because the directory is legitimately empty in a clean tree.
+	-cp romfs-overlay/bin/* $(SDSTAGE)/OS/bin/ 2>/dev/null || true
 	# font + theme atlas — user-modifiable content, off the read-only romfs
 	cp ../gem/fonts/AovelSansRounded.ttf $(SDSTAGE)/OS/fonts/AovelSansRounded.ttf
 	cp ../gem/themes/Aristo2/1x/artwork.tex ../gem/themes/Aristo2/1x/locations.txt \

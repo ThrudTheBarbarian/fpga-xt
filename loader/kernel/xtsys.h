@@ -387,10 +387,12 @@ struct xt_pollfd { int fd; short events; short revents; };
                                 * into the 6502's POKEY (KBCODE down + release; ^C = BREAK) */
 
 /* one input event (SYS_input, and one read() record from /OS/dev/input); type values match the
- * AES aes_event enum. */
-struct os_event { int type, mx, my, button, key, shift; };
+ * AES aes_event enum. `wheel` is the signed notch count for OS_EV_WHEEL (>0 = away from the
+ * user / scroll up). Kernel and userland share this header and ship together — a record-size
+ * change is a lockstep rebuild, not a protocol negotiation. */
+struct os_event { int type, mx, my, button, key, shift, wheel; };
 enum { OS_EV_NONE = 0, OS_EV_BTN_DOWN = 1, OS_EV_BTN_UP = 2, OS_EV_KEY = 3,
-       OS_EV_MOTION = 5, OS_EV_TIMER = 6 };
+       OS_EV_MOTION = 5, OS_EV_TIMER = 6, OS_EV_WHEEL = 7 };
 
 /* /OS/dev/input — INPUT AS A POLLABLE FD, which SYS_input (a blocking syscall) can never be.
  * A window server has to wait on input AND on its client channels in ONE poll(); with a blocking

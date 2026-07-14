@@ -110,6 +110,13 @@ void gemd_route(int type, const aes_event *ev)
         }
         break;
 
+    case AES_WHEEL:
+        /* The wheel scrolls the window UNDER THE POINTER — the scrollbar is chrome, so this is
+         * gemd's interaction, and the owner hears the consequence (WM_VSLID -> MSG_VSLID) like
+         * any other scroll. The AES's own handler does the work, exactly as the sizer does. */
+        wind_handle_wheel(ev->mx, ev->my, ev->wheel);
+        break;
+
     default: break;                                    /* TIMER / anything else: nothing to route */
     }
     gemd_flush_msgs();

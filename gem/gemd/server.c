@@ -477,6 +477,7 @@ static int gemd_events(aes_event *ev, int timeout_ms)
             memset(ev, 0, sizeof *ev);
             ev->type = oe.type; ev->mx = oe.mx; ev->my = oe.my;
             ev->button = oe.button; ev->key = oe.key; ev->shift = oe.shift;
+            ev->wheel = oe.wheel;
             if (ev->type == OS_EV_TIMER || ev->type == OS_EV_NONE) continue;   /* not an event */
             return ev->type;                      /* OS_EV_* == AES_* by construction (xtsys.h) */
         }

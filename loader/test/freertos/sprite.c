@@ -262,7 +262,7 @@ static int click_event(struct os_event *ev) {
 }
 
 int input_next_event(struct os_event *ev, int timeout_ms, int raw) {
-    ev->shift = 0; ev->key = 0;
+    ev->shift = 0; ev->key = 0; ev->wheel = 0;
     if (s_pend_up) { s_pend_up = 0; s_btn = 0; ev->type = OS_EV_BTN_UP; ev->button = 0; cursor_pos(&ev->mx, &ev->my); return 0; }
 
     for (;;) {
@@ -287,7 +287,13 @@ int input_next_event(struct os_event *ev, int timeout_ms, int raw) {
                 if (rd_int(&cx) != ';') continue;
                 t = rd_int(&cy);
                 if (t != 'M' && t != 'm') continue;
-                if (b & 64) continue;                 /* wheel: ignore */
+                if (b & 64) {                         /* wheel: 64 = away/up (+1), 65 = toward (-1) */
+                    if (t != 'M') continue;           /* wheels only press */
+                    cursor_move(cell2px(cx, s_cols, 1920), cell2px(cy, s_rows, 1080));
+                    ev->type = OS_EV_WHEEL; ev->wheel = (b & 1) ? -1 : 1;
+                    ev->button = s_btn; cursor_pos(&ev->mx, &ev->my);
+                    return 0;
+                }
                 return mouse_event(ev, cell2px(cx, s_cols, 1920), cell2px(cy, s_rows, 1080),
                                    (t == 'm') ? 0 : (b & 32) ? 2 : 1);
             }
@@ -295,7 +301,12 @@ int input_next_event(struct os_event *ev, int timeout_ms, int raw) {
                 int b = con_gui_readc_timeout(50), cx = con_gui_readc_timeout(50), cy = con_gui_readc_timeout(50);
                 if (b < 0 || cx < 0 || cy < 0) continue;
                 b -= 32; cx -= 32; cy -= 32;
-                if (b & 64) continue;                 /* wheel: ignore */
+                if (b & 64) {                         /* wheel, same mapping as SGR */
+                    cursor_move(cell2px(cx, s_cols, 1920), cell2px(cy, s_rows, 1080));
+                    ev->type = OS_EV_WHEEL; ev->wheel = (b & 1) ? -1 : 1;
+                    ev->button = s_btn; cursor_pos(&ev->mx, &ev->my);
+                    return 0;
+                }
                 int kind = ((b & 3) == 3) ? 0 : (b & 32) ? 2 : 1;
                 return mouse_event(ev, cell2px(cx, s_cols, 1920), cell2px(cy, s_rows, 1080), kind);
             }
