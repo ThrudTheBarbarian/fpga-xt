@@ -454,6 +454,10 @@ static int g_iqn, g_iqi;
 static int gemd_events(aes_event *ev, int timeout_ms)
 {
     for (;;) {
+        /* Flush the AES's message pipe EVERY LAP, not only at the end of gemd_route: a modal
+         * frame loop (a thumb drag) waits through here, and what it posts per motion must go
+         * out per motion — that is the whole of "the scroll is live". */
+        gemd_flush_msgs();
         if (g_iqi < g_iqn) {                      /* a burst still in hand from the last read */
             struct os_event oe = g_iq[g_iqi++];
             memset(ev, 0, sizeof *ev);

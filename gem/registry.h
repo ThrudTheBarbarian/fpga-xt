@@ -39,6 +39,10 @@ int  registry_pref(const char *key, const char *deflt, char *out, int osz);
 // case-insensitive).  Fills path/displayName (displayName may be "" -> caller
 // uses `name`).  Returns 1 on a match, 0 if none.
 int  registry_match(const char *name, int type, char *path, int psz, char *disp, int dsz);
+// registry_match caches the rules per type (they were re-queried per directory ENTRY — most
+// of a big folder's open time). Call this after CHANGING windowIcons rows in a live process;
+// registry_close() flushes on its own.
+void registry_match_flush(void);
 
 // Application <-> mimetype lookup: pick the launch action for a file named
 // `name` from the mimeApps table (most-specific glob wins, case-insensitive).

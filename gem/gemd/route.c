@@ -21,7 +21,6 @@
 #include <string.h>
 #include "gemd.h"
 #include "aes/aes_internal.h"
-#include "usys.h"
 
 static int g_focus;                   /* the window that gets keys. 0 = nobody. */
 static int g_pmx, g_pmy;              /* the pointer, as gemd last saw it */
@@ -167,9 +166,6 @@ void gemd_flush_msgs(void)
         case WM_VSLID:                                 /* the user worked OUR bar: the client owns
                                                         * the pixels, so it is told the new offset
                                                         * and scrolls its own store (M5) */
-            /* TEMP scroll-debug trace (board): remove once contents scroll on HW */
-            { char tb[80]; int tn = snprintf(tb, sizeof tb, "[gemd] VSLID wh=%d sy=%d ci=%d\n",
-                  hd, wind_scroll_y(hd), wind_client_of(hd)); sys_klog(tb, (unsigned)tn); }
             m.w[0] = GEM_MSG_VSLID; m.w[1] = (int16_t)hd;
             m.u[0] = (uint32_t)wind_scroll_x(hd); m.u[1] = (uint32_t)wind_scroll_y(hd);
             send_win(hd, &m);

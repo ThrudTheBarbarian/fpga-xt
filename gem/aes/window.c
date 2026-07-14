@@ -811,9 +811,6 @@ static void client_sized(const gem_msg *m){
 static int client_scrolled(const gem_msg *m){
     int hd=m->w[1]; if(hd<1||hd>=MAXW||!g_w[hd].used) return 0;
     awin*W=&g_w[hd];
-    /* TEMP scroll-debug trace (board): remove once contents scroll on HW */
-    { char tb[96]; int tn=snprintf(tb,sizeof tb,"[gem] VSLID wh=%d y %d->%d surf=%d draw=%d\n",
-          hd, W->scroll_y, (int)m->u[1], W->surf_id, W->draw?1:0); sys_klog(tb,(unsigned)tn); }
     int dx=(int)m->u[0]-W->scroll_x, dy=(int)m->u[1]-W->scroll_y;
     W->scroll_x=(int)m->u[0]; W->scroll_y=(int)m->u[1];
     if(!dx && !dy) return 0;                        // the echo of our own request: nothing moved
@@ -1386,21 +1383,21 @@ int wind_handle_click(int mx,int my){
         if(my>=thy+thh){                                        // track below thumb: page down
             int wx,wy,ww,wh; full_work(W,&wx,&wy,&ww,&wh); (void)wx;(void)wy;(void)ww;
             W->scroll_y+=(wh>SB_LINE?wh-SB_LINE:wh); clamp_scroll(W); wind_redraw_win(hd); post(WM_VSLID,hd,0,0,0,0); return 1; }
-        // on the thumb: drag it, mapping travel back to scroll_y proportionally
-#ifdef GEM_XTOS
-        /* TEMP scroll-debug trace (board): the drag posts NO WM_VSLID on HW — bisect whether
-         * the thumb branch is even entered, and whether the loop exits. Remove with the fix. */
-        { char tb[64]; int tn=snprintf(tb,sizeof tb,"[gemd] thumb-drag begin wh=%d sy=%d\n",hd,W->scroll_y);
-          sys_klog(tb,(unsigned)tn); }
-#endif
+        // on the thumb: drag it, mapping travel back to scroll_y proportionally. The scroll is
+        // LIVE: every motion that moves it posts WM_VSLID, and in gemd the event wait flushes
+        // the pipe each lap — so the owning client scrolls its store WHILE the thumb moves,
+        // not at release. (Release-only was the classic behaviour; it read as "dragging does
+        // not work" the moment the machine was fast enough to expect better.)
         int grab=my-thy;
         for(;;){ aes_event e; int t=aes_wait_idle(&e,-1); if(t==AES_QUIT)break;
             if(t==AES_MOTION){
                 int t2y,t2h,tk2y,tk2h; vsb_geom(W,0,0,0,0,0,0,0,&tk2y,&tk2h,&t2y,&t2h);
                 int span=tk2h-t2h; int wx,wy,ww,wh; full_work(W,&wx,&wy,&ww,&wh); (void)wx;(void)wy;(void)ww;
                 int maxs=W->content_h-wh; if(maxs<0)maxs=0;
-                int rel=e.my-grab-tk2y; if(span>0){ W->scroll_y=(int)((long)rel*maxs/span); }
-                clamp_scroll(W); wind_redraw_win(hd); }
+                int rel=e.my-grab-tk2y; int before=W->scroll_y;
+                if(span>0){ W->scroll_y=(int)((long)rel*maxs/span); }
+                clamp_scroll(W); wind_redraw_win(hd);
+                if(W->scroll_y!=before) post(WM_VSLID,hd,0,0,0,0); }
             if(t==AES_BTN_UP) break; }
         post(WM_VSLID,hd,0,0,0,0); return 1;
       } }
