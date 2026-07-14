@@ -25,7 +25,9 @@ gfx_surface *vdi_screen_target(void);   // the physical workstation's surface (V
 //         — its content callback and its own surface.
 // (AES_LOCAL / AES_CLIENT / AES_SERVER are declared in aes.h)
 static int g_mode = AES_LOCAL;
-static int g_gemfd = -1;                // client mode: the channel to gemd
+#ifdef GEM_XTOS
+static int g_gemfd = -1;                // client mode: the channel to gemd (there is no gemd on the
+#endif                                  // SDL host — a different PLATFORM, not a fallback)
 int aes_mode(void){ return g_mode; }
 void aes_server_mode(void){ g_mode = AES_SERVER; }
 static void client_paint(int hd,int x,int y,int w,int h);   // draw OUR content -> OUR surface -> damage
@@ -54,11 +56,10 @@ typedef struct {
     uint32_t surf_gen;                         // stale-damage discard (§11)
     int      client;                           // SERVER: which client slot owns this window
     int      vh;                               // CLIENT: our workstation, opened ONCE on surf (§10)
-    wind_draw_fn info; void *infoud;           // W_INFO chrome line
-    wind_draw_fn title; void *titleud;         // interactive title renderer (wind_title)
-    int titlex, titley, titlew, titleh;        // last title work rect (app-drawable span)
     int ntb, tbglyph[WIND_MAXTB];              // right-side title buttons: count + glyph per button
-    int tbx[WIND_MAXTB], tby[WIND_MAXTB], tbw[WIND_MAXTB], tbh[WIND_MAXTB];   // their last screen rects
+    int tbx[WIND_MAXTB], tby[WIND_MAXTB], tbw[WIND_MAXTB], tbh[WIND_MAXTB];   // their last rects — OURS.
+                                               // The AES draws them and the AES hit-tests them; a press
+                                               // is a WM_TBUTTON message. No client ever sees a rect (§11).
     int content_w, content_h;                  // app-reported full content size (work coords)
     int scroll_x, scroll_y;                    // current scroll offset (vertical bar drawn)
     int maxed, sx,sy,sw,sh;                    // maximise toggle: flag + the pre-maximise rect
@@ -119,12 +120,6 @@ static const char* tbvariant(char*buf,size_t n,const char*base,int active){
     if(active) return base;
     snprintf(buf,n,"%s.inactive",base); return buf;
 }
-// Focus state of the window whose interactive title is being drawn right now, so
-// the app's wind_title callback can pick a legible pen: the active title bar is
-// dark (see the darkened `titlebar` slice) -> light text; inactive is pale -> dark.
-static int g_title_active = 1;
-int wind_title_active(void){ return g_title_active; }
-
 // A small diagonal-hatch resize grip glyph (a few 45° lines in PEN_BORDER),
 // drawn hugging a bottom corner of the SIZER_SZ box at (gx,gy).  `left`=1 mirrors
 // it into the bottom-LEFT corner; else the bottom-RIGHT corner.
@@ -293,54 +288,58 @@ static void draw_one(int hd, int active){
         int cyb=W->y+(th-WTB_W)/2;
         for(int i=0;i<nb;i++){ int bx=trx-WTB_W-(nb-1-i)*WTB_PITCH;   // right-aligned, index 0 leftmost
             W->tbx[i]=bx; W->tby[i]=cyb; W->tbw[i]=WTB_W; W->tbh[i]=WTB_W; }
-        W->titlex=tlx; W->titley=W->y; W->titlew=tlw; W->titleh=th;
-        if(W->title){                          // app-drawn interactive title (clipped to the shortened span)
-            int16_t tc[4]={(int16_t)tlx,(int16_t)W->y,(int16_t)(tlx+dlw-1),(int16_t)(W->y+th-1)};
-            g_title_active=active;             // let the callback pick a legible pen
-            vs_clip(H(),1,tc); W->title(hd, tlx, W->y, dlw, th, W->titleud); vs_clip(H(),0,tc);
-        } else {                               // THE MODEL (§11).  The AES draws it.
-            // Everything the deleted wind_title callback was FOR, as data:
-            //   proxy icon (WF_ICON) . name (WF_NAME) . modified dot (WF_TITLEFLAGS)
-            //   . subtitle (WF_SUBTITLE), all centred as one group.
-            int pen = active ? 0 : 1;            // the active bar is dark: light text on it
+
+        // THE MODEL, AND ONLY THE MODEL (§11).  Everything the deleted wind_title callback
+        // was FOR, as data:  proxy icon (WF_ICON) . name (WF_NAME) . modified dot
+        // (WF_TITLEFLAGS) . subtitle (WF_SUBTITLE), centred as one group and fitted to the
+        // span WE own.  No client is involved, so a WEDGED app's title bar still repaints.
+        int pen = active ? 0 : 1;            // the active bar is dark: light text on it
+        vst_height(H(),15,0,0,0,0);
+
+        const theme_slice *ic = W->icon[0] ? theme_find(aes_theme(), W->icon) : 0;
+        int iw = ic ? ic->sw : 0, ih = ic ? ic->sh : 0;
+        int dotw = (W->titleflags & WT_MODIFIED) ? 12 : 0;
+
+        int16_t e[8];
+        int sw2 = 0;                         // subtitle, measured at ITS size
+        char sfit[64]; sfit[0]=0;
+        if(W->subtitle[0]){
+            vst_height(H(),12,0,0,0,0);
+            int savail = dlw - (iw?iw+6:0) - dotw - 10;    // whatever the name does not need...
+            if(savail > dlw/2) savail = dlw/2;             // ...but never more than half the bar
+            aes_label_fit(H(), W->subtitle, savail, sfit, sizeof sfit);   // MIDDLE-ELLIPSIS: ours (§11)
+            if(sfit[0]){ vqt_extent(H(), sfit, e); sw2 = (e[2]-e[0]) + 10; }
             vst_height(H(),15,0,0,0,0);
-
-            const theme_slice *ic = W->icon[0] ? theme_find(aes_theme(), W->icon) : 0;
-            int iw = ic ? ic->sw : 0, ih = ic ? ic->sh : 0;
-
-            int16_t e[8];
-            vqt_extent(H(), W->name, e);   int nw = e[2]-e[0];
-            int dotw = (W->titleflags & WT_MODIFIED) ? 12 : 0;
-
-            int sw2 = 0;
-            if(W->subtitle[0]){ vst_height(H(),12,0,0,0,0);
-                                vqt_extent(H(), W->subtitle, e); sw2 = (e[2]-e[0]) + 10;
-                                vst_height(H(),15,0,0,0,0); }
-
-            int total = (iw ? iw+6 : 0) + nw + dotw + sw2;
-            int gx = W->x + (W->w - total)/2;    // centre the whole group, not just the name
-            int cy = W->y + th/2;
-
-            if(ic) { theme_blit(H(),aes_theme(),ic, gx, cy - ih/2, iw, ih); gx += iw + 6; }
-
-            vst_color(H(),pen);
-            vst_alignment(H(),VDI_TA_LEFT,VDI_TA_HALF,0,0);
-            v_gtext(H(), gx, cy, W->name);
-            gx += nw;
-
-            if(dotw){                            // the unsaved-changes dot
-                vsf_color(H(),pen); vsf_interior(H(),VDI_FIS_SOLID); vsf_perimeter(H(),0);
-                int16_t dr[4]={(int16_t)(gx+3),(int16_t)(cy-3),(int16_t)(gx+8),(int16_t)(cy+2)};
-                vr_recfl(H(),dr);
-                gx += dotw;
-            }
-            if(W->subtitle[0]){                  // path / second line, smaller
-                vst_height(H(),12,0,0,0,0);
-                v_gtext(H(), gx+10, cy, W->subtitle);
-                vst_height(H(),15,0,0,0,0);
-            }
-            vst_alignment(H(),VDI_TA_LEFT,VDI_TA_TOP,0,0);
         }
+        char nfit[64];
+        aes_label_fit(H(), W->name, dlw - (iw?iw+6:0) - dotw - sw2, nfit, sizeof nfit);
+        vqt_extent(H(), nfit, e); int nw = e[2]-e[0];
+
+        int total = (iw ? iw+6 : 0) + nw + dotw + sw2;
+        int gx = W->x + (W->w - total)/2;    // centre the whole group, not just the name
+        if(gx < tlx) gx = tlx;               // ...but never under the left buttons
+        int cy = W->y + th/2;
+
+        if(ic) { theme_blit(H(),aes_theme(),ic, gx, cy - ih/2, iw, ih); gx += iw + 6; }
+
+        vst_color(H(),pen);
+        vst_alignment(H(),VDI_TA_LEFT,VDI_TA_HALF,0,0);
+        v_gtext(H(), gx, cy, nfit);
+        gx += nw;
+
+        if(dotw){                            // the unsaved-changes dot
+            vsf_color(H(),pen); vsf_interior(H(),VDI_FIS_SOLID); vsf_perimeter(H(),0);
+            int16_t dr[4]={(int16_t)(gx+3),(int16_t)(cy-3),(int16_t)(gx+8),(int16_t)(cy+2)};
+            vr_recfl(H(),dr);
+            gx += dotw;
+        }
+        if(sfit[0]){                         // path / second line, smaller
+            vst_height(H(),12,0,0,0,0);
+            v_gtext(H(), gx+10, cy, sfit);
+            vst_height(H(),15,0,0,0,0);
+        }
+        vst_alignment(H(),VDI_TA_LEFT,VDI_TA_TOP,0,0);
+
         for(int i=0;i<nb;i++) draw_titlebtn(W->tbx[i], W->tby[i], W->tbglyph[i], active);   // over the title, right-aligned
     }
     if(W->kind & W_INFO){          // W_INFO chrome line as a FOOTER at the window bottom; tuck 2px
@@ -349,13 +348,16 @@ static void draw_one(int hd, int active){
         int16_t ir[4]={(int16_t)ix,(int16_t)iy,(int16_t)(ix+iw-1),(int16_t)(iy+AES_INFO_H-1)}; vr_recfl(H(),ir);
         vsl_color(H(),249); vsl_width(H(),1);                                        // PEN_BORDER: TOP divider (work | footer)
         int16_t il[4]={(int16_t)ix,(int16_t)iy,(int16_t)(ix+iw-1),(int16_t)iy}; v_pline(H(),2,il);
-        // The MODEL wins.  A client cannot draw into gemd's chrome (§11), so the info
-        // callback is deprecated: it is only consulted when no WF_INFO text is set.
+        // A STRING (§11).  There is no info callback: a client cannot draw in gemd's chrome,
+        // and a toolbar is not chrome — it is CONTENT, and it belongs in a view at the bottom
+        // of the work area, drawing into the client's own backing store.
         if(W->info_text[0]){
             vst_color(H(),1); vst_height(H(),13,0,0,0,0);
-            v_gtext(H(), ix+8, iy+AES_INFO_H/2-7, W->info_text);
-        } else if(W->info){ int16_t ic[4]={(int16_t)ix,(int16_t)iy,(int16_t)(ix+iw-1),(int16_t)(iy+AES_INFO_H-1)};
-            vs_clip(H(),1,ic); W->info(hd,ix,iy,iw,AES_INFO_H,W->infoud); vs_clip(H(),0,ic); }
+            char ifit[80];
+            int iavail = iw - 16 - ((W->kind&W_SIZER) ? 2*SIZER_SZ : 0);   // clear of the grips
+            aes_label_fit(H(), W->info_text, iavail, ifit, sizeof ifit);
+            v_gtext(H(), ix+8+((W->kind&W_SIZER)?SIZER_SZ:0), iy+AES_INFO_H/2-7, ifit);
+        }
     }
     if(W->kind & W_SIZER){         // resize grips at BOTH ends of the footer band
         int gy=W->y+W->h-SIZER_SZ-2;                    // bottom-aligned in the footer
@@ -686,9 +688,56 @@ static int client_dispatch(const gem_msg *m, aes_event *ev){
         post_msg(WM_MOVED,m->w[1],m->w[2],m->w[3],m->w[4],m->w[5]); return AES_MESAG;
     case GEM_MSG_CLOSED:                                   // the CLOSER was clicked. Closing is OURS.
         post_msg(WM_CLOSED,m->w[1],0,0,0,0); return AES_MESAG;
+    case GEM_MSG_TBUTTON:                                  // a title button was pressed (§11): the
+        post_msg(WM_TBUTTON,m->w[1],m->w[2],0,0,0);        // app learns WHICH, never WHERE
+        return AES_MESAG;
     case GEM_MSG_ACTIVATE:
         post_msg(m->w[2]?WM_TOPPED:WM_UNTOPPED,m->w[1],0,0,0,0); return AES_MESAG;
     default: return 0;                                     // not ours to understand
+    }
+}
+
+// ---- CLIENT MODE: the chrome MODEL goes on the wire (§11) -------------------
+// A pointer means nothing across a process boundary; a buffer of characters means the same
+// thing everywhere. So a client's wind_set reassembles the hi/lo pointer, reads the BYTES, and
+// sends them — and from that moment the model is GEMD'S. It redraws the title bar from its own
+// copy, on a drag, on a theme change, on a reveal, and with a wedged owner (§11.1).
+//
+// A string longer than one record is sent as several: the record stays a FIXED 32 bytes (no
+// framing to desynchronise — gemproto.h), and w[3] carries the byte offset of the chunk.
+static void client_send_str(int hd,int field,const char*s){
+    int n = s ? (int)strlen(s) : 0;
+    if(n > GEM_STR_MAX) n = GEM_STR_MAX;
+    for(int off=0; off<=n; off+=GEM_STR_CHUNK){        // <= n: an empty string still sends one record
+        gem_msg m; memset(&m,0,sizeof m);
+        m.w[0]=GEM_WIND_SET; m.w[1]=(int16_t)hd; m.w[2]=(int16_t)field; m.w[3]=(int16_t)off;
+        int len=n-off; if(len>GEM_STR_CHUNK) len=GEM_STR_CHUNK;
+        if(len>0) memcpy((char*)&m.w[4], s+off, (size_t)len);   // the rest of the record is already 0
+        gem_send(g_gemfd,&m);
+    }
+}
+// 1 = sent (chrome is gemd's); 0 = not a chrome field, handle it locally.
+static int client_wind_set(int hd,int field,int a,int b,int c){
+    switch(field){
+    case WF_NAME: case WF_INFO: case WF_SUBTITLE: case WF_ICON:
+        client_send_str(hd, field, (const char*)WIND_PTR(a,b));
+        return 1;
+    case WF_TITLEFLAGS: {
+        gem_msg m; memset(&m,0,sizeof m);
+        m.w[0]=GEM_WIND_SET; m.w[1]=(int16_t)hd; m.w[2]=(int16_t)field; m.w[3]=(int16_t)a;
+        gem_send(g_gemfd,&m);
+        return 1;
+    }
+    case WF_TITLEBTNS: {
+        const int *g=(const int*)WIND_PTR(a,b);
+        int n=c; if(n<0) n=0; if(n>WIND_MAXTB) n=WIND_MAXTB;
+        gem_msg m; memset(&m,0,sizeof m);
+        m.w[0]=GEM_WIND_SET; m.w[1]=(int16_t)hd; m.w[2]=(int16_t)field; m.w[3]=(int16_t)n;
+        for(int i=0;i<n;i++) m.u[i] = (uint32_t)(g ? g[i] : WTG_NONE);   // the glyph LIST, not a pointer
+        gem_send(g_gemfd,&m);
+        return 1;
+    }
+    default: return 0;
     }
 }
 
@@ -817,18 +866,11 @@ void wind_delete(int hd){
     zremove(hd); g_w[hd].used=0;
 }
 /* DEPRECATED: sugar over wind_set(WF_NAME).  It is now implemented THROUGH the
- * standard call rather than beside it — which is the only reason it is safe to keep. */
+ * standard call rather than beside it — which is the only reason it is safe to keep.
+ * (It had its OWN wire message once. That was the bug in miniature: a second path to
+ * the same model, so the standard one could stay broken and nobody would notice.) */
 void wind_set_name(int hd,const char*n){
     wind_set(hd, WF_NAME, WIND_PTR_HI(n), WIND_PTR_LO(n), 0, 0);
-#ifdef GEM_XTOS
-    if(g_mode==AES_CLIENT){
-        gem_msg m; memset(&m,0,sizeof m);          // the name rides in the fixed 32-byte record,
-        m.w[0]=GEM_WIND_NAME; m.w[1]=(int16_t)hd;  // truncated at GEM_NAME_MAX (titles are short)
-        char *dst=(char*)&m.w[2];
-        snprintf(dst,GEM_NAME_MAX+1,"%s",n?n:"");
-        gem_send(g_gemfd,&m);
-    }
-#endif
 }
 void wind_content(int hd,wind_draw_fn fn,void*ud){ if(hd>=1&&hd<MAXW){ g_w[hd].draw=fn; g_w[hd].ud=ud; } }
 void wind_content_size(int hd,int w,int h){
@@ -848,20 +890,9 @@ int wind_handle_wheel(int mx,int my,int delta){
     if(W->scroll_y!=before) wind_redraw_win(hd);
     return 1;
 }
-void wind_info(int hd,wind_draw_fn fn,void*ud){ if(hd>=1&&hd<MAXW){ g_w[hd].info=fn; g_w[hd].infoud=ud; } }
-void wind_title(int hd,wind_draw_fn fn,void*ud){ if(hd>=1&&hd<MAXW){ g_w[hd].title=fn; g_w[hd].titleud=ud; } }
+/* DEPRECATED: sugar over wind_set(WF_TITLEBTNS), implemented THROUGH it (like wind_set_name). */
 void wind_titlebtns(int hd,const int*glyphs,int n){
-    if(hd<1||hd>=MAXW) return; awin*W=&g_w[hd];
-    if(n<0) n=0; if(n>WIND_MAXTB) n=WIND_MAXTB;
-    W->ntb=n;
-    for(int i=0;i<n;i++) W->tbglyph[i]=glyphs?glyphs[i]:WTG_NONE;
-    for(int i=n;i<WIND_MAXTB;i++){ W->tbglyph[i]=WTG_NONE; W->tbw[i]=0; }   // clear stale rects
-}
-int wind_titlebtn_rect(int hd,int idx,int*x,int*y,int*w,int*h){
-    if(hd<1||hd>=MAXW) return 0; awin*W=&g_w[hd];
-    if(idx<0||idx>=W->ntb||W->tbw[idx]<=0) return 0;               // not registered / not yet laid out
-    if(x)*x=W->tbx[idx]; if(y)*y=W->tby[idx]; if(w)*w=W->tbw[idx]; if(h)*h=W->tbh[idx];
-    return 1;
+    wind_set(hd, WF_TITLEBTNS, WIND_PTR_HI(glyphs), WIND_PTR_LO(glyphs), n, 0);
 }
 
 void wind_get(int hd,int field,int*a,int*b,int*c,int*d){
@@ -905,6 +936,11 @@ static void set_str(char *dst, size_t cap, int a, int b) {
 
 void wind_set(int hd,int field,int a,int b,int c,int d){
     if(hd<1||hd>=MAXW) return; awin*W=&g_w[hd];
+#ifdef GEM_XTOS
+    // CHROME IS GEMD'S. A client does not keep a chrome model, does not draw one, and does not
+    // repaint one: it says what the window IS, and gemd renders it (§11).
+    if(g_mode==AES_CLIENT && client_wind_set(hd,field,a,b,c)) return;
+#endif
     switch(field){
     /* ---- classic ---------------------------------------------------------- */
     case WF_NAME:     set_str(W->name,     sizeof W->name,     a,b); wind_redraw_win(hd); break;
@@ -981,22 +1017,17 @@ int wind_handle_click(int mx,int my){
         clamp_win(W); clamp_scroll(W); wind_redraw();
         post(WM_SIZED,hd,W->x,W->y,W->w,W->h); return 1;
     }
-    // title bar -> drag (live move)
+    // right-side title buttons: OUR chrome, OUR hit test. The app is told WHICH button was
+    // pressed (WM_TBUTTON, msg[4] = index) and never where it is — §11: gemd routes input, so a
+    // press is a message, the same shape as WM_CLOSED. Checked before the mover, so a button
+    // press is a press and not the start of a drag.
+    if((W->kind&W_NAME) && my>=ty && my<ty+th)
+        for(int i=0;i<W->ntb;i++)
+            if(W->tbw[i]>0 && mx>=W->tbx[i] && mx<W->tbx[i]+W->tbw[i]){
+                post(WM_TBUTTON,hd,i,0,0,0); return 1; }
+    // title bar -> drag (live move). The WHOLE bar drags: there is no app-drawn span in it
+    // to click any more, so there is no press-vs-drag ambiguity to resolve.
     if((W->kind&W_MOVER) && my>=ty && my<ty+th && mx>=tx && mx<tx+tw){
-        // Interactive title: a press on the app's title span that does NOT move is
-        // a click for the app (return 0 -> evnt_multi delivers MU_BUTTON at the
-        // press point, the app hit-tests its own title hot-rects).  A press that
-        // moves past the slop still drags, so the whole title stays grab-to-move.
-        if(W->title && mx>=W->titlex && mx<W->titlex+W->titlew){
-            int dnx=mx, dny=my, moved=0;
-            for(;;){ aes_event e; int t=aes_wait_idle(&e,-1);
-                if(t==AES_QUIT) break;
-                if(t==AES_MOTION){ int ex=e.mx-dnx, ey=e.my-dny; if(ex<0)ex=-ex; if(ey<0)ey=-ey;
-                    if(ex>3||ey>3){ moved=1; break; } }
-                if(t==AES_BTN_UP) break; }
-            if(!moved) return 0;               // click (no drag) -> app handles it
-            // moved: fall through into the drag loop (anchored to the press point)
-        }
         int gx=mx-W->x, gy=my-W->y;
         if(g_ovl_begin && g_ovl_begin(W->x,W->y,W->w,W->h)){    // A9: lift window into the HW overlay
             int ox=W->x, oy=W->y, ow=W->w, oh=W->h;            // vacated rect

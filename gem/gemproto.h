@@ -37,7 +37,16 @@
 #define GEM_WIND_OPEN     6         /* w[1]=wh w[2..5]=x,y,w,h -> WIND_SURF + MSG_REDRAW */
 #define GEM_WIND_CLOSE    7         /* w[1]=wh */
 #define GEM_WIND_DELETE   8         /* w[1]=wh */
-#define GEM_WIND_NAME     9         /* w[1]=wh, then GEM_NAME_MAX bytes of NUL-terminated name */
+#define GEM_WIND_SET      9         /* THE DECLARATIVE CHROME MODEL (§11). w[1]=wh w[2]=field (WF_*)
+                                     *   strings (WF_NAME/WF_INFO/WF_SUBTITLE/WF_ICON):
+                                     *     w[3] = byte OFFSET of this chunk; the bytes follow at
+                                     *     &w[4] (GEM_STR_CHUNK of them). A long string is several
+                                     *     records — the record stays a fixed 32 bytes, so there is
+                                     *     still no framing rule a malformed sender could break.
+                                     *   WF_TITLEFLAGS: w[3] = the flags (WT_*)
+                                     *   WF_TITLEBTNS:  w[3] = count, u[0..2] = the glyph ids
+                                     * A POINTER NEVER CROSSES: gemd keeps its own copy, which is
+                                     * exactly what lets it repaint a WEDGED app's title bar. */
 
 /* gemd -> client */
 #define GEM_WIND_CREATED  2         /* w[1]=wh  (no surface yet: geometry is not final until OPEN) */
@@ -77,11 +86,18 @@
                                      * NEW surf_id   => capacity was exceeded; the old surface is
                                      *                  dropped and this one is granted instead. */
 #define GEM_MSG_ACTIVATE 18         /* w[1]=wh w[2]=1 focused / 0 lost focus */
+#define GEM_MSG_TBUTTON  19         /* w[1]=wh w[2]=idx — a right-side title button was pressed.
+                                     * gemd hit-tested its OWN chrome, so the client learns WHICH
+                                     * button, never WHERE it is (§11). Same shape as MSG_CLOSED:
+                                     * the press is a message, and what to DO about it is the
+                                     * app's business, not the window server's. */
 
-/* A window name has to fit the fixed 32-byte record: op + wh + 28 bytes. Titles are short, and
- * a variable-length message would buy 200 bytes of title at the cost of a framing rule that a
- * malformed sender could desynchronise. Truncated, deliberately. */
-#define GEM_NAME_MAX 27             /* + the NUL */
+/* A chrome string is sent in GEM_STR_CHUNK-byte pieces of the fixed 32-byte record: w[0..3] are
+ * op/wh/field/offset, and the remaining 24 bytes (w[4..7] + u[0..3]) carry the payload. Long
+ * enough for a path in three records, and the record size never changes — so a byte-stream
+ * channel still needs no framing, and a malformed sender still cannot desynchronise it. */
+#define GEM_STR_CHUNK 24
+#define GEM_STR_MAX   79            /* + the NUL. Matches the AES's widest chrome field (WF_INFO) */
 
 /* Window kind bits (a mask, as in wind_create) — M1 defines only the one it honours. */
 #define GEM_W_BOTTOM  0x0001        /* insert at the BOTTOM of the z-order, never topped (§4) */

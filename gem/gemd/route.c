@@ -142,6 +142,12 @@ void gemd_flush_msgs(void)
             printf("gemd: sized wh=%d -> %d,%d %dx%d\n", hd, msg[4], msg[5], msg[6], msg[7]);
             gemd_resize_surface(hd);
             break;
+        case WM_TBUTTON:                               /* our chrome, our hit test (§11). The app is
+                                                        * told WHICH button, never where it is. */
+            printf("gemd: title button %d on wh=%d -> MSG_TBUTTON\n", msg[4], hd);
+            m.w[0] = GEM_MSG_TBUTTON; m.w[1] = (int16_t)hd; m.w[2] = msg[4];
+            send_win(hd, &m);
+            break;
         case WM_TOPPED:
             set_focus(hd);
             break;

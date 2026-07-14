@@ -399,7 +399,12 @@ enum { W_NAME=0x01, W_CLOSER=0x02, W_FULLER=0x04, W_MOVER=0x08, W_INFO=0x10,
        W_BOTTOM=0x1000 };
 enum { WM_REDRAW=20, WM_TOPPED=21, WM_CLOSED=22, WM_FULLED=23, WM_ARROWED=24,
        WM_HSLID=25, WM_VSLID=26, WM_SIZED=27, WM_MOVED=28, WM_NEWTOP=29,
-       WM_UNTOPPED=30 };   // focus LOST (gemd's MSG_ACTIVATE 0; classic GEM has it too)
+       WM_UNTOPPED=30,     // focus LOST (gemd's MSG_ACTIVATE 0; classic GEM has it too)
+       // A right-side title button was pressed: msg[4] = its index (0 = leftmost).
+       // Chrome routes input, so a title-button press is a MESSAGE — the same shape as
+       // WM_CLOSED — and never an app-side hit-test against a rect it had to ask for
+       // (RESPONSIBILITIES.md §11: "if a client has to DRAW it, it is not chrome").
+       WM_TBUTTON=31 };
 
 /* ---- XTOS_*: XTOS system-event messages (OS/AES -> apps) ------------------
  * A reserved range for events that classic GEM has no message for — the OS
@@ -435,11 +440,30 @@ enum { WT_MODIFIED = 0x01 };   // WF_TITLEFLAGS: show the unsaved-changes dot
 // born on a 16-bit machine.  We keep that: an m68k app must be able to call
 // wind_set(h, WF_NAME, hi, lo, 0, 0) and have it work.
 //
-// Native (32-bit) callers use these:
+// Native callers use these.
+//
+// ⚠ THE SPLIT IS 16+16 ONLY WHERE A POINTER IS 32 BITS.  That is every TARGET (A9, m68k), and
+// there the halves are exactly classic GEM's, so an m68k app binds directly — which is the whole
+// point of keeping the split.  The SDL host is 64-bit, and a 64-bit pointer DOES NOT FIT in two
+// 16-bit halves: packing it into 16+16 silently truncates it to its low 32 bits, and the AES then
+// runs strlen() on an address that was never a string.  (It did.  wind_set_name went through
+// wind_set the moment the chrome model landed, and the host build has been reading a truncated
+// pointer ever since — "built, not run".)
+//
+// So the halves are pointer-WIDTH halves: 16+16 on the targets (the classic ABI, unchanged, and
+// what the m68k track needs), 32+32 on a 64-bit dev host.  Nothing crosses the wire this way in
+// either case — gemd is sent the BYTES (see gemproto.h); this split is a local C ABI and nothing
+// more.
+#if UINTPTR_MAX > 0xFFFFFFFFu
+#define WIND_PTR_HI(p)  ((int)(uint32_t)(((uintptr_t)(p)) >> 32))
+#define WIND_PTR_LO(p)  ((int)(uint32_t)( ((uintptr_t)(p)) & 0xFFFFFFFFu))
+#define WIND_PTR(a,b)   ((void *)((((uintptr_t)(uint32_t)(a)) << 32) | (uintptr_t)(uint32_t)(b)))
+#else
 #define WIND_PTR_HI(p)  ((int)((((uintptr_t)(p)) >> 16) & 0xFFFF))
 #define WIND_PTR_LO(p)  ((int)( ((uintptr_t)(p))        & 0xFFFF))
 #define WIND_PTR(a,b)   ((void *)(uintptr_t)((((uint32_t)(a) & 0xFFFFu) << 16) | \
                                               ((uint32_t)(b) & 0xFFFFu)))
+#endif
 //
 // NOTE FOR THE SPLIT: the pointer is a CLIENT-SIDE ABI detail and nothing more.  The
 // AES *copies* every string it is given (it always has — see wind_set_name), so in the
@@ -464,6 +488,11 @@ void wind_delete(int handle);
 void wind_set_name(int handle, const char *name);
 void wind_get(int handle, int field, int *a, int *b, int *c, int *d);
 void wind_set(int handle, int field, int a, int b, int c, int d);
+// Read a chrome string field back (WF_NAME / WF_INFO / WF_SUBTITLE / WF_ICON), hi/lo split.
+// It returns the AES'S OWN COPY — the model it will actually draw, not the pointer you passed —
+// so a caller gets a stable string it did not have to keep alive.  1 = field read, 0 = not a
+// string field.  (It was defined and never declared: nobody could call it.)
+int  wind_get_str(int handle, int field, int *a, int *b);
 void wind_calc(int dir, int kind, int x,int y,int w,int h, int *ox,int *oy,int *ow,int *oh);
 // Does this kind mask ask for ANY chrome? A window with none gets none — no frame, no title bar
 // — and its work area IS its full rect. That is the whole mechanism behind §4's "the desktop is
@@ -493,40 +522,32 @@ void wind_set_scroll(int handle, int x, int y);      // set (clamped) scroll
 // A wheel notch over the window at (mx,my): scroll a scrollable window and
 // redraw.  Returns 1 if consumed.  Called by evnt_multi on AES_WHEEL.
 int  wind_handle_wheel(int mx, int my, int delta);
-// Optional interactive TITLE renderer (parallel to wind_content/wind_info): when
-// set, draw_one calls fn(handle, tx,ty,tw,th, ud) to draw the title's text span
-// — the area between the left close/full boxes and the right edge — instead of
-// the plain window name.  A button-down there that is NOT on the close/full boxes
-// and does NOT start a drag is delivered to the app as a normal MU_BUTTON at that
-// point (mirroring how info-bar clicks reach the app); a press that moves still
-// drags the window.  window.c stays content-agnostic: the app hit-tests the
-// title span itself (fn is handed the same tx,ty,tw,th to record its hot-rects,
-// like wind_info records its rect).  NULL fn restores the plain centred name.
-void wind_title(int handle, wind_draw_fn fn, void *ud);
-// True while the wind_title callback is drawing the ACTIVE (focused) window's
-// bar — the active bar is dark, so the app should use a light text pen (0), and a
-// dark pen (1) otherwise.  Only meaningful inside a wind_title callback.
-int wind_title_active(void);
+// ---- CHROME IS DECLARATIVE (§11) ----------------------------------------
+// There is no title-draw callback, no info-draw callback, and no way to ask where
+// a chrome control is: the AES draws chrome from its MODEL (WF_NAME / WF_SUBTITLE /
+// WF_ICON / WF_TITLEFLAGS / WF_INFO / WF_TITLEBTNS, all set through wind_set), and
+// it routes chrome input itself.  That is what lets gemd repaint the title bar of
+// a WEDGED app — the model is gemd's, so no client is involved — and it is what
+// keeps a drag from costing a client round-trip per frame.
+//
+// Anything that needs arbitrary drawing is CONTENT, and content goes in the work
+// area (a breadcrumb bar, a status bar, a toolbar): the client draws it into its
+// own backing store, hit-tests it in its own coordinates, and it costs gemd nothing.
+//
 // ---- App-defined right-side title buttons -------------------------------
 // A window may register up to WIND_MAXTB small icon buttons at the RIGHT of its
-// title bar, drawn in the same size/inset as the left close/full boxes so they
-// read as a pair.  Each carries a vector glyph (WTG_*).  window.c stays
-// content-agnostic: it draws the buttons + records each one's screen rect (query
-// with wind_titlebtn_rect), and shortens the wind_title text span so the title
-// renderer never overlaps them.  A press on a button that does NOT start a drag
-// reaches the app as an ordinary MU_BUTTON (exactly like a title-span click), so
-// the app hit-tests the button rects itself.  A press that moves still drags.
+// title bar, drawn in the same size/inset as the left close/full boxes so they read
+// as a pair.  Each carries a vector glyph (WTG_*).  Declarative: a list of glyph
+// ids in, and a press comes back as WM_TBUTTON(msg[4] = index) — the app never
+// learns (and must never need) a screen rect.
 enum { WTG_NONE = 0, WTG_CHEVRON = 1, WTG_EXPAND = 2 };   // title-button glyphs
 #define WIND_MAXTB 3
+// DEPRECATED sugar over wind_set(handle, WF_TITLEBTNS, hi, lo, n, 0) — implemented
+// THROUGH it, like wind_set_name.
 void wind_titlebtns(int handle, const int *glyphs, int n);
-// Screen rect of right-side title button `idx` (0-based, 0 = leftmost).  Returns
-// 1 with x/y/w/h filled when the button exists (and has been laid out), else 0.
-int  wind_titlebtn_rect(int handle, int idx, int *x, int *y, int *w, int *h);
-// Optional W_INFO chrome FOOTER at the window bottom (full inner width): fn draws
-// its contents (count/path/toolbar); the work area shrinks by AES_INFO_H off the
-// bottom.  Only used when the window was created with W_INFO.  When the window is
-// also W_SIZER, resize grips occupy both ends of the footer band.
-void wind_info(int handle, wind_draw_fn fn, void *ud);
+// The W_INFO footer is a STRING: wind_set(handle, WF_INFO, hi, lo, 0, 0).  The work
+// area shrinks by AES_INFO_H off the bottom; when the window is also W_SIZER, resize
+// grips occupy both ends of the footer band.
 void wind_set_desktop(uint32_t rgba);               // desktop background colour
 // Optional desktop-content drawer — invoked by wind_redraw after the background
 // fill and before any windows, so a wallpaper + desktop icons draw under every

@@ -384,7 +384,14 @@ static void desk_launch(const char *name, int media_type) {
 #define TREE_MAXDEPTH 16                              // single-column tree: recursion/cycle guard
 #define TREE_TRIW  14                                 // single-column tree: disclosure-triangle gutter width
 #define MAX_CRUMB 18                                  // breadcrumb: <root> + up to ~16 path segments
-#define BR_WKIND (W_NAME|W_CLOSER|W_MOVER|W_SIZER|W_FULLER|W_INFO)   // browser-window kind
+// CHROME IS DECLARATIVE (RESPONSIBILITIES.md §11), so the browser's two interactive bars are
+// CONTENT, not chrome: they are drawn into our OWN backing store, at the top and bottom of the
+// work area, and hit-tested in our own coordinates.  The window's title is a MODEL (name +
+// subtitle), gemd draws it, and gemd keeps drawing it when we are wedged.  Hence no W_INFO:
+// the footer was the one place the old API let an app draw inside someone else's pixels.
+#define BR_WKIND (W_NAME|W_CLOSER|W_MOVER|W_SIZER|W_FULLER)   // browser-window kind
+#define BR_CRUMB_H  24                                // breadcrumb bar: top strip of the CONTENT
+#define BR_STATUS_H 24                                // status bar: bottom strip of the CONTENT
 // Per-entry access-attribute bits, rendered as a "d a r x h s" flag string
 // (br_fmt_attr).  d=dir a=archived r=read-only x=executable h=hidden s=system.
 // a/s are FAT/DOS-only and stay off here; the kernel stat only reports the file
@@ -416,13 +423,11 @@ typedef struct {
     gfx_surface *isurf[MAXENT];
     CICON  cic[MAXENT];
     OBJECT tree[2 + MAXENT];                           // + the synthetic ".." tile
-    int wax, way, waw, wah;                            // last work area (for hit-testing)
-    int infox, infoy, infow, infoh;                    // last W_INFO chrome rect
-    int titlex, titley, titlew, titleh;                // last interactive-title work rect
-    int retryx, retryw;                                // Retry button rect in the info bar (error state)
-    int fitx, fitw;                                    // Fit button rect in the info bar (path windows)
-    int viewx, vieww;                                  // (retired) info-bar View rect — now a title button
-    int maskx, maskw;                                  // file-mask span rect (in the title)
+    int wax, way, waw, wah;                            // the LIST rect: the work area minus the two bars
+    int cbx, cby, cbw, cbh;                            // breadcrumb bar (content, top of the work area)
+    int infox, infoy, infow, infoh;                    // status bar (content, bottom of the work area)
+    int retryx, retryw;                                // Retry button rect in the status bar (error state)
+    int maskx, maskw;                                  // file-mask span rect (in the breadcrumb bar)
     int viewmode;                                      // 1=icons 2=single-col 3=multi-col 4=gallery
     char expanded_paths[MAX_EXPAND][256];              // single-column tree: open-folder set (paths rel. to root)
     int  n_expanded;                                   // count in expanded_paths (persists across rebuilds)
@@ -430,7 +435,7 @@ typedef struct {
     int selall;                                        // context-menu "select all": highlight every entry
     char mask[32];                                     // per-window file mask ("*"/"*.*"/"" = show all)
     int ncrumb;                                        // breadcrumb span count (0 = none drawn)
-    int crumbx[MAX_CRUMB], crumbw[MAX_CRUMB];          // per-segment hit rects (in the title)
+    int crumbx[MAX_CRUMB], crumbw[MAX_CRUMB];          // per-segment hit rects (in the breadcrumb bar)
     int crumbcut[MAX_CRUMB];                           // strlen to truncate crumbpath to on a segment click
     char crumbpath[400];                               // full absolute logical path the crumbs were built from
 } browser;
@@ -499,14 +504,18 @@ static int br_show_all(const char *m) {
 static int br_visible(browser *b, const char *name, int isdir) {
     return isdir || br_show_all(b->mask) || glob_ci(b->mask, name);
 }
+// THE TITLE IS A MODEL (§11).  We say what the window IS — the folder we are looking at (the
+// name) and where it lives (the subtitle) — and gemd draws it: it middle-ellipsises the path to
+// the space it has, in the pen its own title bar needs, on every drag frame, and with us WEDGED.
+// We do not draw it, we do not measure it, and we are never told how wide the bar is.
 static void br_settitle(browser *b) {
-    char t[400];
-    if (b->rel[0]) snprintf(t, sizeof t, "%s/%s", b->logical_root, b->rel);
-    else           snprintf(t, sizeof t, "%s", b->logical_root);
-    if (!br_show_all(b->mask)) {                        // show the active filter in the title
-        int n = (int)strlen(t); snprintf(t + n, sizeof t - n, "  (%s)", b->mask);
-    }
-    wind_set_name(b->win, t);
+    char path[400];
+    if (b->rel[0]) snprintf(path, sizeof path, "%s/%s", b->logical_root, b->rel);
+    else           snprintf(path, sizeof path, "%s", b->logical_root);
+    const char *leaf = strrchr(path, '/');
+    leaf = (leaf && leaf[1]) ? leaf + 1 : path;         // "/Media/6502/Games" -> "Games"
+    wind_set_name(b->win, leaf[0] ? leaf : path);
+    wind_set(b->win, WF_SUBTITLE, WIND_PTR_HI(path), WIND_PTR_LO(path), 0, 0);
 }
 // Active sort key (set from the browser before every qsort — qsort has no
 // context arg): 2 name / 3 type (extension) / 4 size / 5 date; 1 unsorted keeps
@@ -538,7 +547,6 @@ enum { RQ_NONE = 0, RQ_SRV, RQ_LSC, RQ_FETCH, RQ_ADD };   // browser.req_kind
 // net_pump ticks ~40ms while a request is pending; a request that goes fully
 // silent for this many pumps (~20s) is declared dead by the watchdog.
 #define NET_WATCHDOG_TICKS 500
-static void br_info_redraw(browser *b);               // fwd (contacting/progress feedback)
 
 static void net_req_close(browser *b) {               // idle the request slot (also = cancel)
     if (b->req_fd >= 0) fuji_close(b->req_fd);
@@ -581,7 +589,7 @@ static void srv_list_start(browser *b) {              // one tile per `servers` 
     }
     fuji_set_nonblock(fd);
     b->req_fd = fd; b->req_kind = RQ_SRV;             // net_pump takes it from here
-    if (b->infow > 0) br_info_redraw(b);              // instant contacting feedback (replaces desk_busy)
+    wind_redraw_win(b->win);                          // instant contacting feedback (replaces desk_busy)
 }
 
 static void net_row(browser *b, const char *ln) {     // one `lsc` reply row -> an entry
@@ -632,7 +640,7 @@ static void net_list_start(browser *b) {              // entries from `lsc <serv
     }
     fuji_set_nonblock(fd);
     b->req_fd = fd; b->req_kind = RQ_LSC;             // net_pump takes it from here
-    if (b->infow > 0) br_info_redraw(b);              // instant contacting feedback (replaces desk_busy)
+    wind_redraw_win(b->win);                          // instant contacting feedback (replaces desk_busy)
 }
 // List the browser's current directory over the kernel VFS (sys_readdir gives
 // the type; sys_stat only for file sizes).
@@ -750,7 +758,10 @@ static void br_list(browser *b) {
     // very next redraw.
     wind_set_scroll(b->win, 0, 0);
     { int wx, wy, ww, wh; wind_get(b->win, WF_WORKXYWH, &wx, &wy, &ww, &wh);
-      b->wax = wx; b->way = wy; b->waw = ww; b->wah = wh; br_report_content(b); }
+      b->wax = wx; b->waw = ww;                       // the LIST rect, as br_content lays it out
+      b->way = wy + BR_CRUMB_H;
+      b->wah = wh - BR_CRUMB_H - BR_STATUS_H; if (b->wah < 0) b->wah = 0;
+      br_report_content(b); }
 }
 // Lay the entry grid out in the current work area (also used for hit-testing).
 // Tiles are shifted up by the window's scroll_y; the IBOX root stays on the
@@ -858,8 +869,11 @@ static int br_content_height(browser *b) {
     int rows = (nt + cols - 1) / cols;                  // ceil
     return rows * ich + 2 * pad;
 }
+// The scrollable content is the LIST plus the two bars: the AES clamps scroll against the FULL
+// work height, so reporting only the list height would leave the last rows unreachable under the
+// status bar.  (The bars themselves do not scroll — we draw them unshifted.)
 static void br_report_content(browser *b) {
-    wind_content_size(b->win, b->waw, br_content_height(b));
+    wind_content_size(b->win, b->waw, br_content_height(b) + BR_CRUMB_H + BR_STATUS_H);
 }
 // Draw the entries as one-line text rows (viewmode 2 single / 3 multi): name left,
 // size right-aligned per cell (dirs / ".." -> "<dir>").  The selected row gets a
@@ -978,26 +992,34 @@ static void br_progbar(int x, int y, int w, int h, int determinate,
 static int br_textw(const char *s) {                  // width of s in the current font/size
     int16_t e[8]; vqt_extent(HV, s, e); return e[2] - e[0];
 }
-// Interactive window TITLE (wind_title draw fn): the FULL absolute logical path
-// as individually-clickable segments, then the file-mask as its own clickable
-// span — e.g. "/Media/6502/*.*".  The path = logical_root joined with rel, so
-// EVERY absolute level is clickable (incl. ancestors above the window's open
-// root).  Records a hit rect (crumbx/crumbw) + the crumbpath truncation length
-// (crumbcut) per drawn segment, and the mask rect (maskx/maskw).  Overflow
-// middle-ellipsises the path at segment granularity (first + "…" + the tail that
-// fits) while always keeping the mask, so the recorded rects stay correct.
-static void br_title(int hd, int tx, int ty, int tw, int th, void *ud) {
-    (void)hd; browser *b = ud;
-    b->titlex = tx; b->titley = ty; b->titlew = tw; b->titleh = th;
+// THE BREADCRUMB BAR — CONTENT, not chrome (§11).  It is arbitrary drawing (per-segment text)
+// with arbitrary hit-testing (a click per segment, a click on the mask), which is the definition
+// of content: so it lives in a bar at the TOP OF THE WORK AREA, drawn into our own backing store
+// and hit-tested in our own coordinates.  It used to be a wind_title draw callback painting
+// inside the window server's title bar — which a client cannot do, and (§11) should never have.
+//
+// The FULL absolute logical path as individually-clickable segments, then the file-mask as its
+// own clickable span — e.g. "/Media/6502/*.*".  The path = logical_root joined with rel, so EVERY
+// absolute level is clickable (incl. ancestors above the window's open root).  Records a hit rect
+// (crumbx/crumbw) + the crumbpath truncation length (crumbcut) per drawn segment, and the mask
+// rect (maskx/maskw).  Overflow middle-ellipsises the path at segment granularity (first + "…" +
+// the tail that fits) while always keeping the mask, so the recorded rects stay correct.
+static void br_crumbbar(browser *b) {
+    int tx = b->cbx, ty = b->cby, tw = b->cbw, th = b->cbh;
+    vsf_color(HV, 248); vsf_interior(HV, VDI_FIS_SOLID); vsf_perimeter(HV, 0);   // PEN_DLG strip
+    int16_t br[4] = { (int16_t)tx, (int16_t)ty, (int16_t)(tx+tw-1), (int16_t)(ty+th-1) };
+    vr_recfl(HV, br);
+    vsl_color(HV, 249); vsl_width(HV, 1);                                        // PEN_BORDER divider
+    int16_t bl[4] = { (int16_t)tx, (int16_t)(ty+th-1), (int16_t)(tx+tw-1), (int16_t)(ty+th-1) };
+    v_pline(HV, 2, bl);
+    tx += 8; tw -= 16; if (tw < 0) tw = 0;               // text inset
     b->ncrumb = 0; b->maskx = 0; b->maskw = 0;
     if (b->rel[0]) snprintf(b->crumbpath, sizeof b->crumbpath, "%s/%s", b->logical_root, b->rel);
     else           snprintf(b->crumbpath, sizeof b->crumbpath, "%s", b->logical_root);
     char masktext[40];
     snprintf(masktext, sizeof masktext, "%s", br_show_all(b->mask) ? "*.*" : b->mask);
     vst_height(HV, 15, 0,0,0,0);
-    int tpen = 1;                                        // dark text on the pale inactive bar
-    if (wind_title_active()) { v_setrgb(HV, 250, 255,255,255); tpen = 250; }  // white on the dark active bar
-    vst_color(HV, tpen);
+    vst_color(HV, 1);                                    // dark text: the bar is our own pale strip
     vst_alignment(HV, VDI_TA_LEFT, VDI_TA_HALF, 0,0);
     int ay = ty + th/2;
     // Split crumbpath into components; cut[k] = strlen to truncate crumbpath to.
@@ -1076,7 +1098,8 @@ static void br_fit(browser *b) {
     int pad = 14, maxcols = 8;
     int cols = ntile < maxcols ? ntile : maxcols; if (cols < 1) cols = 1;
     int nrows = (ntile + cols - 1) / cols;
-    int cw = 2*pad + cols * icw, chh = 2*pad + nrows * ich;   // desired work-area size
+    int cw = 2*pad + cols * icw;                              // desired work-area size...
+    int chh = 2*pad + nrows * ich + BR_CRUMB_H + BR_STATUS_H; // ...the grid PLUS our two content bars
     int cx, cy, cw0, ch0; wind_get(b->win, WF_CURRXYWH, &cx, &cy, &cw0, &ch0);
     int bx, by, bw, bh;
     wind_calc(WC_BORDER, BR_WKIND, cx, cy, cw, chh, &bx, &by, &bw, &bh);   // + chrome
@@ -1092,27 +1115,32 @@ static void br_fit(browser *b) {
     // damage is old ∪ new — anything vacated must go back to desktop.
     wind_redraw_area(cx, cy, cw0 > bw ? cw0 : bw, ch0 > bh ? ch0 : bh);
 }
-// W_INFO chrome FOOTER (window bottom): file count / total size (+ progress /
-// Retry).  Navigation moved to the ".." tile + the breadcrumb, so there is no
-// "Up" button; resize grips occupy both footer ends, so text insets past them.
-static void br_infobar(int hd, int ix, int iy, int iw, int ih, void *ud) {
-    (void)hd; browser *b = ud;
-    b->infox = ix; b->infoy = iy; b->infow = iw; b->infoh = ih;
-    int gripw = 20;                                          // clear the footer resize grips (both ends)
+// THE STATUS BAR — CONTENT, not chrome (§11).  File count / total size, a progress bar, a Retry
+// button: a progress bar is not a string, so it is not chrome, and it belongs in a view at the
+// BOTTOM OF THE WORK AREA — drawn into our own backing store, hit-tested in our own coordinates,
+// and costing gemd nothing.  It was a wind_info draw callback painting inside the window's
+// chrome; that call is gone, and this is what §11 says replaces it.
+//
+// (The View popup + Fit are RIGHT-side title-bar buttons: DECLARATIVE — we hand gemd a list of
+// glyph ids (wind_titlebtns) and a press comes back as WM_TBUTTON.  The resize grips still sit in
+// the window's bottom corners, over this bar, so the text insets past them.)
+static void br_statusbar(browser *b) {
+    int ix = b->infox, iy = b->infoy, iw = b->infow, ih = b->infoh;
+    vsf_color(HV, 248); vsf_interior(HV, VDI_FIS_SOLID); vsf_perimeter(HV, 0);   // PEN_DLG strip
+    int16_t sr[4] = { (int16_t)ix, (int16_t)iy, (int16_t)(ix+iw-1), (int16_t)(iy+ih-1) };
+    vr_recfl(HV, sr);
+    vsl_color(HV, 249); vsl_width(HV, 1);                                        // PEN_BORDER divider
+    int16_t sl[4] = { (int16_t)ix, (int16_t)iy, (int16_t)(ix+iw-1), (int16_t)iy };
+    v_pline(HV, 2, sl);
+    int gripw = 20;                                          // clear the resize grips (both ends)
     int ay = iy+ih/2;
     char info[96];
     int irx = ix+iw-gripw;                                   // right edge of the info text (clear of the R grip)
     b->retryx = 0; b->retryw = 0;                            // no Retry button unless in the error state
-    b->fitx = 0; b->fitw = 0;                                // Fit recorded only when drawn
-    b->viewx = 0; b->vieww = 0;                             // View button recorded only when drawn
     int drewbar = 0, drewleft = 0;                          // active states draw a graphical bar; idle draws left status
     int pw = 120, pbh = 10;                                  // progress track: 120x10, vertically centred
     int pby = iy + (ih - pbh)/2;
     int pbx = irx - pw;                                      // right-anchored, before the right grip inset
-    // (The View popup + Fit are now RIGHT-side title-bar icon buttons — see
-    // wind_titlebtns in open_browser_win + the title-button hit-test in br_click;
-    // the file mask + path breadcrumb live in the interactive window TITLE.  The
-    // info footer keeps progress / Retry and, when idle, the file-count status.)
     if (b->req_fd >= 0 && b->req_kind == RQ_FETCH) {          // fetch in flight: label + determinate bar
         unsigned pc = b->prog_total
                     ? (unsigned)((unsigned long long)b->prog_done * 100 / b->prog_total) : 0;
@@ -1159,32 +1187,35 @@ static void br_infobar(int hd, int ix, int iy, int iw, int ih, void *ud) {
     }
     vst_alignment(HV, VDI_TA_LEFT, VDI_TA_TOP, 0,0);
 }
+// THE WHOLE WINDOW'S CONTENT, into our own backing store: the breadcrumb bar (top), the file
+// list (middle), the status bar (bottom).  gemd blits this; it never learns what any of it means.
+//
+// The background fill is OURS.  In the split the client's surface is the ONLY thing behind its
+// content — gemd draws the frame around it, not underneath it — so an unpainted work area is
+// whatever the buffer happened to contain.
 static void br_content(int hd, int wax, int way, int waw, int wah, void *ud) {
     (void)hd; browser *b = ud;
-    b->wax = wax; b->way = way; b->waw = waw; b->wah = wah;
-    // A listing lays out the partial/empty list as it fills (rows arrive live);
-    // the info bar carries the single contacting -> progress indicator.  A fetch
-    // keeps the existing list on screen and shows progress in the info bar too.
+    b->cbx = wax; b->cby = way; b->cbw = waw; b->cbh = BR_CRUMB_H;
+    b->infox = wax; b->infow = waw; b->infoh = BR_STATUS_H;
+    b->infoy = way + wah - BR_STATUS_H;
+    b->wax = wax; b->waw = waw;                    // the LIST rect: the work area between the bars
+    b->way = way + BR_CRUMB_H;
+    b->wah = wah - BR_CRUMB_H - BR_STATUS_H; if (b->wah < 0) b->wah = 0;
+
+    vsf_color(HV, 0); vsf_interior(HV, VDI_FIS_SOLID); vsf_perimeter(HV, 0);     // PEN_WHITE
+    int16_t bg[4] = { (int16_t)wax, (int16_t)way, (int16_t)(wax+waw-1), (int16_t)(way+wah-1) };
+    vr_recfl(HV, bg);
+
+    // A listing lays out the partial/empty list as it fills (rows arrive live); the status bar
+    // carries the single contacting -> progress indicator.  A fetch keeps the existing list on
+    // screen and shows progress in the status bar too.
     aes_icon_label_style(0);                       // browser: over the light window
     br_report_content(b);                          // full content height -> scrollbar + width
-    if (b->viewmode == 2 || b->viewmode == 3) { br_draw_text(b); return; }
-    br_layout(b);                                  // viewmode 1: the icon grid
-    objc_draw(b->tree, 0, 2, wax, way, waw, wah);
-}
-// Repaint ONLY the info bar (per fetch-progress line): chrome fill + divider +
-// br_infobar + flush — no full-window redraw per tick.  Drawn straight to the
-// back-buffer; the next full redraw repaints it anyway.
-static void br_info_redraw(browser *b) {
-    if (!b->used || b->infow <= 0) return;
-    int ix = b->infox, iy = b->infoy, iw = b->infow, ih = b->infoh;
-    vsf_color(HV, 248); vsf_interior(HV, VDI_FIS_SOLID); vsf_perimeter(HV, 0);   // PEN_DLG chrome
-    int16_t ir[4] = { (int16_t)ix, (int16_t)iy, (int16_t)(ix+iw-1), (int16_t)(iy+ih-1) };
-    vr_recfl(HV, ir);
-    vsl_color(HV, 249); vsl_width(HV, 1);                                        // PEN_BORDER: TOP divider (work | footer)
-    int16_t il[4] = { (int16_t)ix, (int16_t)iy, (int16_t)(ix+iw-1), (int16_t)iy };
-    v_pline(HV, 2, il);
-    br_infobar(HV, ix, iy, iw, ih, b);
-    aes_flush_rect(ix, iy, iw, ih);
+    if (b->viewmode == 2 || b->viewmode == 3) br_draw_text(b);
+    else { br_layout(b);                           // viewmode 1: the icon grid
+           objc_draw(b->tree, 0, 2, b->wax, b->way, b->waw, b->wah); }
+    br_crumbbar(b);                                // the two content bars, over any list bleed
+    br_statusbar(b);
 }
 static void open_fuji_browser(int server_id, const char *name);   // fwd
 
@@ -1205,7 +1236,7 @@ static void net_fetch_start(browser *b, const char *remote, const char *name) {
     b->prog_done = 0; b->prog_total = 0; b->prog_stall = 0;   // reset the transfer watchdog
     snprintf(b->prog_name, sizeof b->prog_name, "%s", name);
     b->req_err[0] = 0;
-    br_info_redraw(b);                                        // instant "Fetching ..." feedback
+    wind_redraw_win(b->win);                                  // instant "Fetching ..." feedback
 }
 // Open a network file: cached -> launch its /Cache mirror; ghost (or a cache
 // row whose file went missing) -> async fetch first.
@@ -1334,7 +1365,7 @@ static void net_req_line(browser *b, char *ln) {              // dispatch one re
     if (b->req_kind == RQ_FETCH) {
         if (!strncmp(ln, "+progress ", 10)) {
             sscanf(ln + 10, "%u %u", &b->prog_done, &b->prog_total);
-            br_info_redraw(b);                                // ONLY the info bar repaints
+            wind_redraw_win(b->win);                          // the status bar is CONTENT: redraw it into our store
         } else if (!strncmp(ln, "+ok", 3)) {
             net_req_close(b);
             net_list_start(b); wind_redraw_win(b->win);                     // async re-list: entry solidifies
@@ -1400,7 +1431,7 @@ static void net_pump(void) {
         if (b->req_fd >= 0 && (b->req_kind == RQ_LSC || b->req_kind == RQ_SRV)) {
             b->prog_phase++;
             if (b->nent != before) wind_redraw_win(b->win);
-            else                   br_info_redraw(b);
+            else                   wind_redraw_win(b->win);
         }
     }
 }
@@ -1440,26 +1471,24 @@ static void br_view_popup(browser *b, int px, int py) {
     if (r < V_ICONS || r > V_GALLERY) return;
     b->viewmode = r; b->sel = -1; wind_redraw_win(b->win);
 }
+// A TITLE BUTTON WAS PRESSED (WM_TBUTTON).  gemd hit-tested its own chrome and told us WHICH
+// button — never where it is on screen, which we must not know and no longer need (§11).
+static void br_tbutton(browser *b, int idx) {
+    if (b->req_fd >= 0) return;                               // request in flight: ignore
+    if (idx == 0) br_view_popup(b, b->cbx + b->cbw - 40, b->cby + b->cbh);   // chevron -> view popup
+    else          br_fit(b);                                  // expand -> size window to contents
+}
 static void br_click(browser *b, int mx, int my) {
     if (b->req_fd >= 0) return;                               // request in flight: ignore clicks
-    for (int k = 0; k < 2; k++) {                             // right-side title icon buttons (View, Fit)
-        int bx, by, bw, bh;
-        if (wind_titlebtn_rect(b->win, k, &bx, &by, &bw, &bh) &&
-            mx >= bx && mx < bx + bw && my >= by && my < by + bh) {
-            if (k == 0) br_view_popup(b, bx, by + bh);       // chevron -> view popup, below the button
-            else        br_fit(b);                            // expand -> size window to contents
-            return;
-        }
-    }
-    for (int c = 0; c < b->ncrumb; c++)                       // title breadcrumb: jump to an absolute level
-        if (my >= b->titley && my < b->titley + b->titleh &&
+    for (int c = 0; c < b->ncrumb; c++)                       // breadcrumb: jump to an absolute level
+        if (my >= b->cby && my < b->cby + b->cbh &&
             mx >= b->crumbx[c] && mx < b->crumbx[c] + b->crumbw[c]) {
             char tgt[400]; snprintf(tgt, sizeof tgt, "%s", b->crumbpath);
             if (b->crumbcut[c] < (int)sizeof tgt) tgt[b->crumbcut[c]] = 0;
             br_navigate(b, tgt); return;
         }
-    if (b->maskw > 0 &&                                       // title mask span: edit the file filter
-        my >= b->titley && my < b->titley + b->titleh &&
+    if (b->maskw > 0 &&                                       // mask span: edit the file filter
+        my >= b->cby && my < b->cby + b->cbh &&
         mx >= b->maskx && mx < b->maskx + b->maskw) {
         mask_dialog(b); return;
     }
@@ -1543,12 +1572,10 @@ static void open_browser_win(const char *logical, int media_type, int net, int s
     if (!b->win) { b->used = 0; return; }
     br_list(b); br_settitle(b);
     wind_content(b->win, br_content, b);
-    wind_info(b->win, br_infobar, b);
-    if (net != 1) {                                   // path windows: interactive title + right-side buttons
-        wind_title(b->win, br_title, b);              // (servers window keeps a plain name, no buttons)
-        int glyphs[2] = { WTG_CHEVRON, WTG_EXPAND };  // [0] View popup, [1] Fit
-        wind_titlebtns(b->win, glyphs, 2);
-    }
+    if (net != 1) {                                   // path windows: the two title buttons.  A LIST OF
+        int glyphs[2] = { WTG_CHEVRON, WTG_EXPAND };  // GLYPH IDS — declarative (§11); the press comes
+        wind_titlebtns(b->win, glyphs, 2);            // back as WM_TBUTTON.  ([0] View popup, [1] Fit)
+    }                                                 // (the servers window keeps a plain name, no buttons)
     wind_open(b->win, bx, by, bw, bh);
     g_bx += 34; g_by += 30; if (g_by > PH-320) { g_bx = 380; g_by = 130; }
     // (wind_open redraws + presents the new window's rect)
@@ -2457,6 +2484,13 @@ void _app_entry(int argc, char **argv) {
             emuwin *e = emu_of_window(msg[3]); if (e) e->used = 0;
             xl_unbind(msg[3]);
             wind_close(msg[3]);   // gemd drops the window and recomposites the rect it vacated
+        }
+        if ((r & MU_MESAG) && msg[0] == WM_TBUTTON) {
+            /* A right-side title button, on one of OUR windows. Chrome routes input, so the press
+             * arrives as a MESSAGE carrying the button INDEX (§11) — we never hit-tested a rect,
+             * and we were never told where the button is. */
+            browser *b = br_of_window(msg[3]);
+            if (b) br_tbutton(b, msg[4]);
         }
         if ((r & MU_MESAG) && msg[0] == XTOS_MEDIA_CHANGE) {
             // OS says the SD card left (msg[3]=0) or came back (msg[3]=1). Placeholder:

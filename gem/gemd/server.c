@@ -39,6 +39,9 @@ typedef struct {
     int  pid;                        /* from the KERNEL (SYS_chan_peer) — the client cannot lie */
     char in[GEM_MSG_SZ];             /* partial-record accumulator: see the no-stall rule above */
     int  inlen;
+    char str[GEM_STR_MAX + 1];       /* a chrome string being assembled from its chunks (§11).
+                                      * PER CLIENT, so a half-sent title is never another
+                                      * client's problem. */
 } gclient;
 
 static gclient     g_cl[GEMD_MAXCL];
@@ -204,15 +207,48 @@ int gemd_resize_surface(int hd)
     return 0;
 }
 
-static void do_wind_name(int ci, const gem_msg *m)
+/* THE DECLARATIVE CHROME MODEL ARRIVES (§11). The client tells us what its window IS — a name, a
+ * subtitle, a proxy icon, a modified flag, a list of title-button glyphs — and from here on the
+ * chrome is OURS: we hold the model, so we repaint the title bar on a drag, on a reveal, on a
+ * theme change, and with the owner WEDGED. Nothing here calls back into a client, and nothing
+ * here can.
+ *
+ * Strings arrive in chunks (a fixed record cannot hold a path). They are accumulated in the
+ * CLIENT'S OWN scratch buffer — one client's half-sent title cannot disturb another's — and
+ * committed to the AES when the terminating chunk lands. */
+static void do_wind_set(gclient *c, int ci, const gem_msg *m)
 {
-    int hd = m->w[1];
+    int hd = m->w[1], field = m->w[2];
     if (wind_client_of(hd) != ci) return;
-    char name[GEM_NAME_MAX + 1];
-    memcpy(name, (const char *)&m->w[2], GEM_NAME_MAX);
-    name[GEM_NAME_MAX] = 0;                      /* the wire field is fixed-size; a long title is
-                                                  * truncated, deliberately (gemproto.h) */
-    wind_set_name(hd, name);
+
+    switch (field) {
+    case WF_NAME: case WF_INFO: case WF_SUBTITLE: case WF_ICON: {
+        int cap = (int)sizeof c->str - 1;
+        int off = m->w[3];
+        if (off < 0 || off >= cap) return;                  /* a lying offset buys nothing */
+        int n = cap - off; if (n > GEM_STR_CHUNK) n = GEM_STR_CHUNK;
+        memcpy(c->str + off, (const char *)&m->w[4], (size_t)n);
+        c->str[cap] = 0;
+        int done = (off + n >= cap);                        /* the buffer is full: that is the end */
+        for (int i = 0; i < n && !done; i++) if (!c->str[off + i]) done = 1;
+        if (!done) return;                                  /* more chunks to come */
+        wind_set(hd, field, WIND_PTR_HI(c->str), WIND_PTR_LO(c->str), 0, 0);
+        break;
+    }
+    case WF_TITLEFLAGS:
+        wind_set(hd, field, m->w[3], 0, 0, 0);
+        break;
+    case WF_TITLEBTNS: {
+        int n = m->w[3]; if (n < 0) n = 0; if (n > WIND_MAXTB) n = WIND_MAXTB;
+        int g[WIND_MAXTB];
+        for (int i = 0; i < n; i++) g[i] = (int)m->u[i];
+        wind_set(hd, field, WIND_PTR_HI(g), WIND_PTR_LO(g), n, 0);
+        break;
+    }
+    default:
+        printf("gemd: pid %d set field %d — not a chrome field, ignored\n", c->pid, field);
+        break;
+    }
 }
 
 /* ---- client lifecycle ------------------------------------------------------------------- */
@@ -261,7 +297,7 @@ static void client_readable(int ci)
         switch (m.w[0]) {
         case GEM_WIND_CREATE: do_wind_create(c, ci, &m); break;
         case GEM_WIND_OPEN:   do_wind_open(c, ci, &m);   break;
-        case GEM_WIND_NAME:   do_wind_name(ci, &m);      break;
+        case GEM_WIND_SET:    do_wind_set(c, ci, &m);    break;
         case GEM_DAMAGE:      do_damage(ci, &m);         break;
         case GEM_WIND_CLOSE:  if (wind_client_of(m.w[1]) == ci) drop_window(m.w[1]); break;
         case GEM_WIND_DELETE: break;                     /* CLOSE already deleted it */
