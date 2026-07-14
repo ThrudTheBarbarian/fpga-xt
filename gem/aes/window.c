@@ -732,6 +732,8 @@ void wind_client_detach(void){
     if(g_mode!=AES_CLIENT) return;
     if(g_gemfd>=0) sys_close(g_gemfd);              // gemd sees EOF and reaps our windows (§9/§11)
     g_gemfd=-1; g_mode=AES_LOCAL;
+    extern void wind_client_stash_reset(void);      // fwd (defined with client_events below)
+    wind_client_stash_reset();                      // a stashed message belongs to the dead channel
 }
 
 // RENDER a rect of our content into our OWN surface — no wire traffic. The scroll path uses
@@ -968,18 +970,40 @@ void wind_client_stray(const gem_msg *m){
 
 // THE CLIENT'S EVENT SOURCE. One poll on one fd — the channel — so a timeout is a timeout and an
 // event is an event, and there is no second place an app could get input from.
+//
+// SCROLL BURSTS COALESCE. A drag posts one MSG_VSLID per motion, each carrying the ABSOLUTE
+// offset — so a client that has fallen behind can skip straight to the newest: peek the channel,
+// and while the next complete message is a VSLID for the same window, it supersedes this one.
+// (A big coalesced jump then takes client_scrolled's full-repaint path, which is cheaper than
+// replaying the burst blit by blit.) A non-VSLID message ends the peek and waits in a one-slot
+// stash — consumed before the next channel read, so nothing is dropped or reordered.
+static gem_msg g_stash; static int g_stash_v;
+void wind_client_stash_reset(void){ g_stash_v = 0; }
 static int client_events(aes_event *ev,int timeout_ms){
     if(evq_pop(ev)) return ev->type;                       // strays picked up during a gem_await
     for(;;){
-        struct xt_pollfd pf; pf.fd=g_gemfd; pf.events=XT_POLLIN; pf.revents=0;
-        int r=sys_poll(&pf,1,timeout_ms);
-        if(r<0){ if(r==-4) continue;                       // -EINTR: a signal, not a failure
-                 memset(ev,0,sizeof *ev); ev->type=AES_QUIT; return AES_QUIT; }
-        if(r==0){ memset(ev,0,sizeof *ev); ev->mx=g_pmx; ev->my=g_pmy; ev->button=g_pbtn;
-                  ev->type=AES_TIMER; return AES_TIMER; }
         gem_msg m;
-        if(gem_recv(g_gemfd,&m)!=0){                       // EOF: gemd is gone. Nothing works now.
-            memset(ev,0,sizeof *ev); ev->type=AES_QUIT; return AES_QUIT; }
+        if(g_stash_v){ m=g_stash; g_stash_v=0; }
+        else{
+            struct xt_pollfd pf; pf.fd=g_gemfd; pf.events=XT_POLLIN; pf.revents=0;
+            int r=sys_poll(&pf,1,timeout_ms);
+            if(r<0){ if(r==-4) continue;                   // -EINTR: a signal, not a failure
+                     memset(ev,0,sizeof *ev); ev->type=AES_QUIT; return AES_QUIT; }
+            if(r==0){ memset(ev,0,sizeof *ev); ev->mx=g_pmx; ev->my=g_pmy; ev->button=g_pbtn;
+                      ev->type=AES_TIMER; return AES_TIMER; }
+            if(gem_recv(g_gemfd,&m)!=0){                   // EOF: gemd is gone. Nothing works now.
+                memset(ev,0,sizeof *ev); ev->type=AES_QUIT; return AES_QUIT; }
+        }
+        if(m.w[0]==GEM_MSG_VSLID){
+            for(;;){                                       // the peek: newest absolute offset wins
+                struct xt_pollfd pf; pf.fd=g_gemfd; pf.events=XT_POLLIN; pf.revents=0;
+                if(sys_poll(&pf,1,0)<=0 || !(pf.revents&XT_POLLIN)) break;
+                gem_msg n;
+                if(gem_recv(g_gemfd,&n)!=0) break;         // EOF: the next lap reports it
+                if(n.w[0]==GEM_MSG_VSLID && n.w[1]==m.w[1]) m=n;
+                else { g_stash=n; g_stash_v=1; break; }
+            }
+        }
         int t=client_dispatch(&m,ev);
         if(t) return t;                                    // AES_MESAG -> evnt_multi reads the pipe
     }
