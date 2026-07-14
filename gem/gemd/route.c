@@ -163,7 +163,14 @@ void gemd_flush_msgs(void)
         case WM_TOPPED:
             set_focus(hd);
             break;
-        default: break;                                /* WM_VSLID &c: gemd's scrollbars, gemd's */
+        case WM_VSLID:                                 /* the user worked OUR bar: the client owns
+                                                        * the pixels, so it is told the new offset
+                                                        * and scrolls its own store (M5) */
+            m.w[0] = GEM_MSG_VSLID; m.w[1] = (int16_t)hd;
+            m.u[0] = (uint32_t)wind_scroll_x(hd); m.u[1] = (uint32_t)wind_scroll_y(hd);
+            send_win(hd, &m);
+            break;
+        default: break;
         }
     }
 }

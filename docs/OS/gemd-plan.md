@@ -204,10 +204,31 @@ What it carried with it:
   resizes, and `MSG_SIZED` carries only the work area — without the rect the client's
   `wind_get(WF_CURRXYWH)` (the Fit button's anchor) drifts from the screen.
 
-**Still owed in M5 — scroll/content size.** The scrollbar is a REAL control: gemd draws it and
-runs its interaction (it is chrome), but it cannot know a client's content height until
-`wind_content_size` goes on the wire, and a scroll's consequence must reach the client so it can
-shift its own backing store (an internal VDI blit) and post the dirty rects. Not started.
+**The scroll model is on the wire too** (build-verified; board pending). The scrollbar is a REAL
+control: gemd draws it and runs its interaction, and now it can, because:
+
+- `wind_content_size` sends `WF_CONTENTSIZE` (u32s — a listing outgrows 32767px), **only on
+  change**: apps report it from inside their draw callback, so an unconditional send is a wire
+  message per paint. gemd repaints ONLY what changed — the bar column when the thumb moved, a
+  §12 surface resize (`MSG_SIZED`) when the bar appeared/vanished (the column is reserved from
+  the work area). A full recomposite here would double the cost of every damage post.
+- `wind_set_scroll` is a REQUEST like a rect — but set optimistically on the client with the
+  same clamp gemd will apply, so the next paint needs no round trip; gemd answers `MSG_VSLID`
+  **only on disagreement**.
+- a scroll's consequence (`MSG_VSLID`, from the bar or a clamped request) reaches the client,
+  which shifts its own backing store — an internal blit, only the exposed STRIP is rendered —
+  and posts those two dirty rects. A full render per thumb notch is exactly the heavyweight
+  repaint this message exists to kill.
+- **pinned content is the app's**: the AES scrolls the whole view it was told about, so a
+  status bar pinned over it just moved — the app repaints it on `WM_VSLID` through
+  `wind_redraw_rect` (NEW: one rect, one window, in the content callback's own coordinate
+  space — the dirty-rect tool; `wind_redraw_win` for a one-line change renders the whole
+  surface and makes gemd recomposite all of it).
+
+**Still owed in M5:** the wheel under gemd (`struct os_event` has no wheel field yet — when the
+input device grows one, `gemd_route` forwards it to `wind_handle_wheel` server-side and the
+existing `WM_VSLID` path does the rest); horizontal scrollbars (no bar drawn today); board
+verification of the whole M5 batch.
 
 ## M6 is blocked BY DESIGN, and that is the right answer
 

@@ -2455,6 +2455,13 @@ void _app_entry(int argc, char **argv) {
             browser *b = br_of_window(msg[3]);
             if (b) br_tbutton(b, msg[4]);
         }
+        if ((r & MU_MESAG) && msg[0] == WM_VSLID) {
+            /* The view scrolled (gemd's bar, our pixels: the AES shifted the whole surface and
+             * drew the exposed strip). The status bar is PINNED over the scroll, so its rows
+             * just moved with everything else — repaint it. ONE RECT, not the window. */
+            browser *b = br_of_window(msg[3]);
+            if (b) wind_redraw_rect(b->win, b->infox, b->infoy, b->infow, b->infoh);
+        }
         if ((r & MU_MESAG) && msg[0] == XTOS_MEDIA_CHANGE) {
             // OS says the SD card left (msg[3]=0) or came back (msg[3]=1). Placeholder:
             // log it. Real UX would grey out / close windows rooted on /media.

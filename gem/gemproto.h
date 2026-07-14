@@ -103,6 +103,15 @@
                                      * hit-tested it; the client gets back an index into the very
                                      * string it set. A breadcrumb, declaratively (§11). */
 
+#define GEM_MSG_VSLID    21         /* w[1]=wh u[0]=scroll_x u[1]=scroll_y — the scroll offset
+                                     * CHANGED: the user worked the bar (gemd's chrome, gemd's
+                                     * interaction), or a WF_SCROLL request came back clamped.
+                                     * u32s, NOT w[]: a long listing scrolls past 32767px. The
+                                     * client shifts its own backing store (an internal VDI
+                                     * blit), REDRAWS only the exposed strip, and posts those
+                                     * two dirty rects; anything it pins over the scroll (a
+                                     * status bar) it repaints on the WM_VSLID it receives. */
+
 /* A chrome string is sent in GEM_STR_CHUNK-byte pieces of the fixed 32-byte record: w[0..3] are
  * op/wh/field/offset, and the remaining 24 bytes (w[4..7] + u[0..3]) carry the payload. Long
  * enough for a path in three records, and the record size never changes — so a byte-stream

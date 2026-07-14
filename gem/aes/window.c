@@ -540,6 +540,13 @@ void wind_work_size(int hd,int*w,int*h){          // the work area = what the CL
     int x,y,ww,wh; app_work(&g_w[hd],&x,&y,&ww,&wh);
     if(w)*w=ww; if(h)*h=wh;
 }
+// SERVER seam (M5): the scrollbar column + thumb, so gemd can repaint JUST the bar when only
+// the bar changed (a thumb move, a content-size tick) instead of recompositing the window.
+// Returns 0 when no bar is showing (outputs untouched).
+int wind_vsb_col(int hd,int*x,int*y,int*w,int*h,int*thy,int*thh){
+    if(hd<1||hd>=MAXW||!g_w[hd].used) return 0;
+    return vsb_geom(&g_w[hd], x,y,w,h, 0,0,0, 0,0, thy,thh);
+}
 int  wind_surface_of(int hd){ return (hd>=1&&hd<MAXW&&g_w[hd].used)?g_w[hd].surf_id:-1; }
 uint32_t wind_gen_of(int hd){ return (hd>=1&&hd<MAXW&&g_w[hd].used)?g_w[hd].surf_gen:0; }
 int  wind_client_of(int hd){ return (hd>=1&&hd<MAXW&&g_w[hd].used)?g_w[hd].client:-1; }
@@ -661,6 +668,14 @@ void wind_redraw_win(int hd){
     if(g_mode==AES_CLIENT){ client_paint(hd, 0,0, W->surf.w, W->surf.h); return; }
     wind_redraw_area(W->x,W->y,W->w,W->h);
 }
+// THE DIRTY-RECT TOOL (aes.h). One rect, one window, in the space the content callback draws
+// in — which is exactly what makes it mode-agnostic: a client's callback space IS its surface,
+// a local app's IS the screen, and in both cases the rect goes straight through untranslated.
+void wind_redraw_rect(int hd,int x,int y,int w,int h){
+    if(hd<1||hd>=MAXW||!g_w[hd].used) return;
+    if(g_mode==AES_CLIENT){ client_paint(hd, x,y, w,h); return; }
+    wind_redraw_area(x,y,w,h);
+}
 
 // ---- CLIENT MODE -----------------------------------------------------------
 // wind_* keep their EXACT signatures and become messages. The app never learns (§5).
@@ -779,6 +794,35 @@ static void client_sized(const gem_msg *m){
     post_msg(WM_SIZED,hd,0,0,W->surf.w,W->surf.h);   // the app reflows; work coords, as it draws in
 }
 
+// THE SCROLL CONSEQUENCE (M5). gemd owns the bar and ran the interaction; we own the pixels.
+// The rows that survive the scroll are ALREADY DRAWN — in our own backing store — so they move
+// with an internal blit, only the exposed strip is rendered, and BOTH rects go out as damage.
+// A full render per thumb notch is exactly the heavyweight repaint this message exists to kill.
+//
+// The blit shifts the WHOLE surface: the AES was told the view scrolls, and it cannot know what
+// an app pinned over it. Pinned content (a status bar) is the app's, and the app repaints it on
+// the WM_VSLID posted below — a small rect through wind_redraw_rect, not a surface render.
+static int client_scrolled(const gem_msg *m){
+    int hd=m->w[1]; if(hd<1||hd>=MAXW||!g_w[hd].used) return 0;
+    awin*W=&g_w[hd];
+    int dx=(int)m->u[0]-W->scroll_x, dy=(int)m->u[1]-W->scroll_y;
+    W->scroll_x=(int)m->u[0]; W->scroll_y=(int)m->u[1];
+    if(!dx && !dy) return 0;                        // the echo of our own request: nothing moved
+    if(!W->surf.px || !W->draw) return 0;
+    int w=W->surf.w, h=W->surf.h, ady=dy<0?-dy:dy;
+    if(dx || ady>=h){                               // sideways / a whole view: nothing survives
+        client_paint(hd, 0,0, w,h);
+    } else {
+        uint32_t *px=W->surf.px; int st=W->surf.stride, keep=h-ady;
+        if(dy>0) for(int yy=0;     yy<keep; yy++) memcpy(px+(size_t)yy*st,      px+(size_t)(yy+dy)*st, (size_t)w*4);
+        else     for(int yy=keep-1;yy>=0;  yy--) memcpy(px+(size_t)(yy+ady)*st, px+(size_t)yy*st,      (size_t)w*4);
+        client_paint(hd, 0, dy>0?keep:0, w, ady);   // the exposed strip: drawn + damaged
+        gem_damage_rect(g_gemfd, hd, W->surf_id, W->surf_gen, 0, dy>0?0:ady, w, keep);
+    }
+    post_msg(WM_VSLID,hd,0,0,0,0);                  // pinned content is yours: repaint it now
+    return AES_MESAG;
+}
+
 // One message from gemd -> either an aes_event (returned) or a queued AES message (0).
 static int client_dispatch(const gem_msg *m, aes_event *ev){
     memset(ev,0,sizeof *ev);
@@ -800,6 +844,7 @@ static int client_dispatch(const gem_msg *m, aes_event *ev){
     case GEM_MSG_REDRAW:                                   // first paint + resize ONLY (§3)
         client_paint(m->w[1], m->w[2],m->w[3],m->w[4],m->w[5]); return 0;
     case GEM_MSG_SIZED:   client_sized(m); return AES_MESAG;
+    case GEM_MSG_VSLID:   return client_scrolled(m);       // blit + strip, never a full render
     case GEM_MSG_MOVED:                                    // no redraw implied: gemd moved the pixels
         if(m->w[1]>=1 && m->w[1]<MAXW && g_w[m->w[1]].used){
             awin*W=&g_w[m->w[1]]; W->x=m->w[2]; W->y=m->w[3]; W->w=m->w[4]; W->h=m->w[5]; }
@@ -1027,12 +1072,49 @@ void wind_set_name(int hd,const char*n){
 void wind_content(int hd,wind_draw_fn fn,void*ud){ if(hd>=1&&hd<MAXW){ g_w[hd].draw=fn; g_w[hd].ud=ud; } }
 void wind_content_size(int hd,int w,int h){
     if(hd<1||hd>=MAXW||!g_w[hd].used) return;
-    g_w[hd].content_w=w<0?0:w; g_w[hd].content_h=h<0?0:h; clamp_scroll(&g_w[hd]);
+    awin*W=&g_w[hd];
+    if(w<0)w=0; if(h<0)h=0;
+#ifdef GEM_XTOS
+    // THE SCROLL MODEL IS GEMD'S (M5): the scrollbar is chrome, and gemd cannot draw a thumb
+    // for a content height it was never told. Sent ONLY ON CHANGE — apps report content size
+    // from inside their draw callback, so an unconditional send is a wire message per paint.
+    if(g_mode==AES_CLIENT){
+        if(W->content_w==w && W->content_h==h) return;
+        W->content_w=w; W->content_h=h;                    // our copy: local scroll clamp below
+        gem_msg m; memset(&m,0,sizeof m);
+        m.w[0]=GEM_WIND_SET; m.w[1]=(int16_t)hd; m.w[2]=WF_CONTENTSIZE;
+        m.u[0]=(uint32_t)w; m.u[1]=(uint32_t)h;            // u32s: a listing outgrows 32767px
+        gem_send(g_gemfd,&m);
+        return;
+    }
+#endif
+    W->content_w=w; W->content_h=h; clamp_scroll(W);
 }
 int wind_scroll_y(int hd){ return (hd>=1&&hd<MAXW)?g_w[hd].scroll_y:0; }
 int wind_scroll_x(int hd){ return (hd>=1&&hd<MAXW)?g_w[hd].scroll_x:0; }
 void wind_set_scroll(int hd,int x,int y){
-    if(hd<1||hd>=MAXW) return; g_w[hd].scroll_x=x; g_w[hd].scroll_y=y; clamp_scroll(&g_w[hd]);
+    if(hd<1||hd>=MAXW) return;
+#ifdef GEM_XTOS
+    // A REQUEST, like a rect (M5). Set locally too — OPTIMISTICALLY, clamped with the same
+    // numbers gemd will use (our content copy vs our surface), so the next paint draws at the
+    // offset we asked for without a round trip; gemd answers MSG_VSLID only when its clamp
+    // DISAGREES, and that answer corrects us.
+    if(g_mode==AES_CLIENT){
+        awin*W=&g_w[hd];
+        int maxx=W->content_w-W->surf.w; if(maxx<0)maxx=0;
+        int maxy=W->content_h-W->surf.h; if(maxy<0)maxy=0;
+        if(x<0)x=0; if(x>maxx)x=maxx;
+        if(y<0)y=0; if(y>maxy)y=maxy;
+        if(x==W->scroll_x && y==W->scroll_y) return;
+        W->scroll_x=x; W->scroll_y=y;
+        gem_msg m; memset(&m,0,sizeof m);
+        m.w[0]=GEM_WIND_SET; m.w[1]=(int16_t)hd; m.w[2]=WF_SCROLL;
+        m.u[0]=(uint32_t)x; m.u[1]=(uint32_t)y;
+        gem_send(g_gemfd,&m);
+        return;
+    }
+#endif
+    g_w[hd].scroll_x=x; g_w[hd].scroll_y=y; clamp_scroll(&g_w[hd]);
 }
 int wind_handle_wheel(int mx,int my,int delta){
     int hd=wind_find(mx,my); if(!hd) return 0; awin*W=&g_w[hd];
@@ -1091,7 +1173,20 @@ void wind_set(int hd,int field,int a,int b,int c,int d){
 #ifdef GEM_XTOS
     // CHROME IS GEMD'S. A client does not keep a chrome model, does not draw one, and does not
     // repaint one: it says what the window IS, and gemd renders it (§11).
-    if(g_mode==AES_CLIENT && client_wind_set(hd,field,a,b,c,d)) return;
+    if(g_mode==AES_CLIENT && client_wind_set(hd,field,a,b,c,d)){
+        // ...but it may still READ BACK what it set. wind_get(WF_NAME) is a classic call and an
+        // app is entitled to it, so cache the strings — and ONLY the strings. gemd never rewrites
+        // a title, so for these the request IS the truth. Geometry is the exact opposite: gemd
+        // CLAMPS, and the truth arrives later as MSG_MOVED, so a client that cached WF_CURRXYWH
+        // would disagree with the screen every time gemd said no. Cache what cannot be refused.
+        switch(field){
+        case WF_NAME:     set_str(W->name,     sizeof W->name,     a,b); break;
+        case WF_INFO:     set_str(W->info_text,sizeof W->info_text,a,b); break;
+        case WF_SUBTITLE: set_str(W->subtitle, sizeof W->subtitle, a,b); break;
+        case WF_ICON:     set_str(W->icon,     sizeof W->icon,     a,b); break;
+        }
+        return;
+    }
 #endif
     switch(field){
     /* ---- classic ---------------------------------------------------------- */

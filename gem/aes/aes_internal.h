@@ -26,6 +26,10 @@ int      wind_surface_of(int hd);
 uint32_t wind_gen_of(int hd);
 int      wind_client_of(int hd);
 int      wind_next_of_client(int client,int from); // walk a dead client's windows (§9)
+int      wind_vsb_col(int hd,int*x,int*y,int*w,int*h,int*thy,int*thh);
+                                                   // scrollbar column + thumb (screen px);
+                                                   // 0 = no bar. So gemd repaints THE BAR
+                                                   // when only the bar changed (M5).
 
 // Called by evnt_multi on a button-down: if it lands in the active menu bar,
 // run the pull-down and post MN_SELECTED; returns 1 if the click was consumed.

@@ -435,7 +435,13 @@ enum { WF_KIND=1, WF_NAME=2, WF_INFO=3, WF_WORKXYWH=4, WF_CURRXYWH=5,
        WF_SUBTITLE=32,     // a second line / path, drawn smaller after the name
        WF_ICON=33,         // a THEME SLICE NAME: the proxy/document icon ("" = none)
        WF_TITLEFLAGS=34,   // WT_* below
-       WF_TITLEBTNS=35 };  // (a,b) = glyph array ptr; c = count
+       WF_TITLEBTNS=35,    // (a,b) = glyph array ptr; c = count
+       // The scroll MODEL (M5).  Set through wind_content_size / wind_set_scroll — these are
+       // their wire names, not a second app API.  Under gemd the scrollbar is CHROME: gemd
+       // draws it, runs its interaction, and clamps a scroll request exactly as it clamps a
+       // rect; the app hears WM_VSLID and repaints anything it pins (a status bar).
+       WF_CONTENTSIZE=36,  // full content extent, work coords
+       WF_SCROLL=37 };     // scroll offset — a REQUEST: gemd clamps and answers with the truth
 enum { WT_MODIFIED = 0x01,     // WF_TITLEFLAGS: show the unsaved-changes dot
        // THE SUBTITLE IS A PATH.  The AES draws it as "/a/b/c" with each component its own
        // clickable span (middle-eliding at COMPONENT granularity when it will not fit), and a
@@ -568,6 +574,12 @@ int  aes_top_reserve(void);                         // px reserved at the top (m
 void wind_redraw(void);                             // full-screen redraw (desktop + all windows)
 void wind_redraw_area(int x, int y, int w, int h);  // repaint only this damage rect (bg+wallpaper+windows+bar, clipped + presented)
 void wind_redraw_win(int handle);                   // repaint just one window's rect (the "only this window changed" case)
+// THE DIRTY-RECT TOOL: repaint one RECT of one window's content, in the SAME coordinate
+// space the content callback draws in (client: surface coords; local: screen coords — i.e.
+// whatever you measured your widgets in when you drew them).  Use it when a ROW changed, a
+// selection toggled, a status bar ticked: wind_redraw_win for a one-line change renders the
+// whole surface and makes gemd recomposite all of it.
+void wind_redraw_rect(int handle, int x, int y, int w, int h);
 // Optional HW drag-overlay hooks (A9): title-bar drag lifts the window into the
 // overlay plane and moves it by register write (no redraw). NULL -> classic drag.
 void wind_set_overlay(int(*begin)(int,int,int,int), void(*move)(int,int),

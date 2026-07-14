@@ -283,6 +283,44 @@ static void do_wind_set(gclient *c, int ci, const gem_msg *m)
     case WF_CURRXYWH:                               /* geometry is a model field too (M5) */
         set_rect(c, hd, m->w[3], m->w[4], m->w[5], m->w[6]);
         break;
+    case WF_CONTENTSIZE: {
+        /* The scroll model arrives (M5). Repaint ONLY what changed: apps report content size
+         * from inside their draw callback, so this lands after nearly EVERY damage post — a
+         * full-window recomposite here would double the cost of every paint. The bar
+         * appearing/vanishing changes the WORK AREA (the column is reserved from it): that is
+         * a surface resize, and the §12 dance tells the client. */
+        int ow, oh; wind_work_size(hd, &ow, &oh);
+        int ox, oy2, ocw, och, othy, othh;
+        int on0 = wind_vsb_col(hd, &ox, &oy2, &ocw, &och, &othy, &othh);
+        wind_content_size(hd, (int)m->u[0], (int)m->u[1]);
+        int nx, ny, ncw, nch, nthy, nthh;
+        int on1 = wind_vsb_col(hd, &nx, &ny, &ncw, &nch, &nthy, &nthh);
+        int nw, nh; wind_work_size(hd, &nw, &nh);
+        if (nw != ow || nh != oh) gemd_resize_surface(hd);
+        if (on0 != on1)      wind_redraw_area(on0?ox:nx, on0?oy2:ny, on0?ocw:ncw, on0?och:nch);
+        else if (on1 && (nthy != othy || nthh != othh))
+                             wind_redraw_area(nx, ny, ncw, nch);
+        break;
+    }
+    case WF_SCROLL: {
+        /* A scroll request: clamp, and ANSWER ONLY DISAGREEMENT. The client already moved its
+         * own copy (optimistically, with the same clamp) — echoing agreement back would cost a
+         * blit-and-repaint for nothing on the other side. */
+        int sx = wind_scroll_x(hd), sy = wind_scroll_y(hd);
+        wind_set_scroll(hd, (int)m->u[0], (int)m->u[1]);
+        int nsx = wind_scroll_x(hd), nsy = wind_scroll_y(hd);
+        if (nsx != (int)m->u[0] || nsy != (int)m->u[1]) {   /* clamped: the client is wrong */
+            gem_msg r; memset(&r, 0, sizeof r);
+            r.w[0] = GEM_MSG_VSLID; r.w[1] = (int16_t)hd;
+            r.u[0] = (uint32_t)nsx; r.u[1] = (uint32_t)nsy;
+            reply(c, &r);
+        }
+        if (nsx != sx || nsy != sy) {                       /* the thumb moved: repaint the bar */
+            int bx, by, bw2, bh2;
+            if (wind_vsb_col(hd, &bx, &by, &bw2, &bh2, 0, 0)) wind_redraw_area(bx, by, bw2, bh2);
+        }
+        break;
+    }
     default:
         printf("gemd: pid %d set field %d — not a chrome field, ignored\n", c->pid, field);
         break;
