@@ -419,7 +419,33 @@ enum {
     /* 0x4001.. reserved for future XTOS system events */
     XTOS_LAST          = 0x7FFF
 };
-enum { WF_NAME=2, WF_WORKXYWH=4, WF_CURRXYWH=5, WF_PREVXYWH=6, WF_FULLXYWH=7 };
+// wind_get / wind_set fields.  Classic numbers, so an m68k app binds directly.
+enum { WF_KIND=1, WF_NAME=2, WF_INFO=3, WF_WORKXYWH=4, WF_CURRXYWH=5,
+       WF_PREVXYWH=6, WF_FULLXYWH=7, WF_TOP=10,
+       // ---- our extensions.  Numbered clear of the classic range. -----------
+       WF_SUBTITLE=32,     // a second line / path, drawn smaller after the name
+       WF_ICON=33,         // a THEME SLICE NAME: the proxy/document icon ("" = none)
+       WF_TITLEFLAGS=34,   // WT_* below
+       WF_TITLEBTNS=35 };  // (a,b) = glyph array ptr; c = count
+enum { WT_MODIFIED = 0x01 };   // WF_TITLEFLAGS: show the unsaved-changes dot
+
+// ---- POINTER FIELDS: the classic hi/lo split -----------------------------------
+// WF_NAME / WF_INFO / WF_SUBTITLE / WF_ICON / WF_TITLEBTNS carry a POINTER, and GEM
+// has always passed one as two 16-bit halves (a = high, b = low) because the AES was
+// born on a 16-bit machine.  We keep that: an m68k app must be able to call
+// wind_set(h, WF_NAME, hi, lo, 0, 0) and have it work.
+//
+// Native (32-bit) callers use these:
+#define WIND_PTR_HI(p)  ((int)((((uintptr_t)(p)) >> 16) & 0xFFFF))
+#define WIND_PTR_LO(p)  ((int)( ((uintptr_t)(p))        & 0xFFFF))
+#define WIND_PTR(a,b)   ((void *)(uintptr_t)((((uint32_t)(a) & 0xFFFFu) << 16) | \
+                                              ((uint32_t)(b) & 0xFFFFu)))
+//
+// NOTE FOR THE SPLIT: the pointer is a CLIENT-SIDE ABI detail and nothing more.  The
+// AES *copies* every string it is given (it always has — see wind_set_name), so in the
+// client/server world the client-side wind_set reassembles the pointer, reads the
+// bytes, and sends THE BYTES to gemd.  A pointer means nothing across a process
+// boundary; a buffer of characters means the same thing everywhere.
 enum { WC_BORDER=0, WC_WORK=1 };                    // wind_calc direction
 
 typedef void (*wind_draw_fn)(int handle, int wx, int wy, int ww, int wh, void *ud);
@@ -430,6 +456,11 @@ int  wind_create(int kind, int x, int y, int w, int h);   // -> handle (0 = none
 void wind_open(int handle, int x, int y, int w, int h);
 void wind_close(int handle);
 void wind_delete(int handle);
+// DEPRECATED — use wind_set(handle, WF_NAME, WIND_PTR_HI(s), WIND_PTR_LO(s), 0, 0).
+// This wrapper existed before wind_set implemented WF_NAME, and its existence is why
+// nobody noticed that it did not: everything in our own tree took the sugared path, so
+// the COMPATIBLE path was never exercised and a classic app's title silently did
+// nothing.  Kept only so existing callers keep building.
 void wind_set_name(int handle, const char *name);
 void wind_get(int handle, int field, int *a, int *b, int *c, int *d);
 void wind_set(int handle, int field, int a, int b, int c, int d);

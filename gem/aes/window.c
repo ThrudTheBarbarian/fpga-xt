@@ -35,7 +35,14 @@ static void client_paint(int hd,int x,int y,int w,int h);   // draw OUR content 
 typedef struct {
     int used, kind, x, y, w, h, px,py,pw,ph;   // full rect (+ previous)
     int hidden;                                // lifted into the HW drag-overlay: skip in redraw
-    char name[64];
+    // ---- the declarative chrome MODEL (§11) ---------------------------------
+    // The AES owns these, not the client.  A pointer handed to wind_set is COPIED,
+    // which is what lets gemd repaint a wedged app's title bar from its own model.
+    char name[64];       // WF_NAME
+    char info_text[80];  // WF_INFO      — the footer TEXT (supersedes the info callback)
+    char subtitle[64];   // WF_SUBTITLE  — a path / second line
+    char icon[32];       // WF_ICON      — a theme slice name; "" = none
+    int  titleflags;     // WF_TITLEFLAGS — WT_MODIFIED
     wind_draw_fn draw; void *ud;
     // ---- the backing store (§3) --------------------------------------------
     // SERVER: gemd's mapping of the client's surface — what it composites, and what lets it
@@ -286,10 +293,47 @@ static void draw_one(int hd, int active){
             int16_t tc[4]={(int16_t)tlx,(int16_t)W->y,(int16_t)(tlx+dlw-1),(int16_t)(W->y+th-1)};
             g_title_active=active;             // let the callback pick a legible pen
             vs_clip(H(),1,tc); W->title(hd, tlx, W->y, dlw, th, W->titleud); vs_clip(H(),0,tc);
-        } else {                               // plain centred name
-            vst_color(H(),active?0:1); vst_height(H(),15,0,0,0,0);   // white on the dark active bar
-            vst_alignment(H(),VDI_TA_CENTER,VDI_TA_HALF,0,0);
-            v_gtext(H(), W->x+W->w/2, W->y+th/2, W->name);
+        } else {                               // THE MODEL (§11).  The AES draws it.
+            // Everything the deleted wind_title callback was FOR, as data:
+            //   proxy icon (WF_ICON) . name (WF_NAME) . modified dot (WF_TITLEFLAGS)
+            //   . subtitle (WF_SUBTITLE), all centred as one group.
+            int pen = active ? 0 : 1;            // the active bar is dark: light text on it
+            vst_height(H(),15,0,0,0,0);
+
+            const theme_slice *ic = W->icon[0] ? theme_find(aes_theme(), W->icon) : 0;
+            int iw = ic ? ic->sw : 0, ih = ic ? ic->sh : 0;
+
+            int16_t e[8];
+            vqt_extent(H(), W->name, e);   int nw = e[2]-e[0];
+            int dotw = (W->titleflags & WT_MODIFIED) ? 12 : 0;
+
+            int sw2 = 0;
+            if(W->subtitle[0]){ vst_height(H(),12,0,0,0,0);
+                                vqt_extent(H(), W->subtitle, e); sw2 = (e[2]-e[0]) + 10;
+                                vst_height(H(),15,0,0,0,0); }
+
+            int total = (iw ? iw+6 : 0) + nw + dotw + sw2;
+            int gx = W->x + (W->w - total)/2;    // centre the whole group, not just the name
+            int cy = W->y + th/2;
+
+            if(ic) { theme_blit(H(),aes_theme(),ic, gx, cy - ih/2, iw, ih); gx += iw + 6; }
+
+            vst_color(H(),pen);
+            vst_alignment(H(),VDI_TA_LEFT,VDI_TA_HALF,0,0);
+            v_gtext(H(), gx, cy, W->name);
+            gx += nw;
+
+            if(dotw){                            // the unsaved-changes dot
+                vsf_color(H(),pen); vsf_interior(H(),VDI_FIS_SOLID); vsf_perimeter(H(),0);
+                int16_t dr[4]={(int16_t)(gx+3),(int16_t)(cy-3),(int16_t)(gx+8),(int16_t)(cy+2)};
+                vr_recfl(H(),dr);
+                gx += dotw;
+            }
+            if(W->subtitle[0]){                  // path / second line, smaller
+                vst_height(H(),12,0,0,0,0);
+                v_gtext(H(), gx+10, cy, W->subtitle);
+                vst_height(H(),15,0,0,0,0);
+            }
             vst_alignment(H(),VDI_TA_LEFT,VDI_TA_TOP,0,0);
         }
         for(int i=0;i<nb;i++) draw_titlebtn(W->tbx[i], W->tby[i], W->tbglyph[i], active);   // over the title, right-aligned
@@ -300,7 +344,12 @@ static void draw_one(int hd, int active){
         int16_t ir[4]={(int16_t)ix,(int16_t)iy,(int16_t)(ix+iw-1),(int16_t)(iy+AES_INFO_H-1)}; vr_recfl(H(),ir);
         vsl_color(H(),249); vsl_width(H(),1);                                        // PEN_BORDER: TOP divider (work | footer)
         int16_t il[4]={(int16_t)ix,(int16_t)iy,(int16_t)(ix+iw-1),(int16_t)iy}; v_pline(H(),2,il);
-        if(W->info){ int16_t ic[4]={(int16_t)ix,(int16_t)iy,(int16_t)(ix+iw-1),(int16_t)(iy+AES_INFO_H-1)};
+        // The MODEL wins.  A client cannot draw into gemd's chrome (§11), so the info
+        // callback is deprecated: it is only consulted when no WF_INFO text is set.
+        if(W->info_text[0]){
+            vst_color(H(),1); vst_height(H(),13,0,0,0,0);
+            v_gtext(H(), ix+8, iy+AES_INFO_H/2-7, W->info_text);
+        } else if(W->info){ int16_t ic[4]={(int16_t)ix,(int16_t)iy,(int16_t)(ix+iw-1),(int16_t)(iy+AES_INFO_H-1)};
             vs_clip(H(),1,ic); W->info(hd,ix,iy,iw,AES_INFO_H,W->infoud); vs_clip(H(),0,ic); }
     }
     if(W->kind & W_SIZER){         // resize grips at BOTH ends of the footer band
@@ -740,9 +789,10 @@ void wind_delete(int hd){
 #endif
     zremove(hd); g_w[hd].used=0;
 }
+/* DEPRECATED: sugar over wind_set(WF_NAME).  It is now implemented THROUGH the
+ * standard call rather than beside it — which is the only reason it is safe to keep. */
 void wind_set_name(int hd,const char*n){
-    if(hd<1||hd>=MAXW) return;
-    snprintf(g_w[hd].name,sizeof g_w[hd].name,"%s",n?n:"");
+    wind_set(hd, WF_NAME, WIND_PTR_HI(n), WIND_PTR_LO(n), 0, 0);
 #ifdef GEM_XTOS
     if(g_mode==AES_CLIENT){
         gem_msg m; memset(&m,0,sizeof m);          // the name rides in the fixed 32-byte record,
@@ -802,9 +852,55 @@ void wind_get(int hd,int field,int*a,int*b,int*c,int*d){
     else if(field==WF_PREVXYWH){ x=W->px;y=W->py;w=W->pw;h=W->ph; }
     if(a)*a=x; if(b)*b=y; if(c)*c=w; if(d)*d=h;
 }
+
+/* Read a chrome field back.  Pointer fields return the AES's OWN copy, hi/lo split —
+ * so a caller gets a stable string it did not have to keep alive. */
+int wind_get_str(int hd,int field,int *a,int *b){
+    if(hd<1||hd>=MAXW) return 0; awin*W=&g_w[hd];
+    const char *s = 0;
+    switch(field){
+    case WF_NAME:     s = W->name;     break;
+    case WF_INFO:     s = W->info_text; break;
+    case WF_SUBTITLE: s = W->subtitle; break;
+    case WF_ICON:     s = W->icon;     break;
+    default: return 0;
+    }
+    if(a)*a = WIND_PTR_HI(s);
+    if(b)*b = WIND_PTR_LO(s);
+    return 1;
+}
+/* Copy a hi/lo-split string field.  The AES takes a COPY, always: the client's pointer
+ * is meaningless to gemd, and a copy is what lets gemd redraw chrome with no client. */
+static void set_str(char *dst, size_t cap, int a, int b) {
+    const char *s = (const char *)WIND_PTR(a, b);
+    snprintf(dst, cap, "%s", s ? s : "");
+}
+
 void wind_set(int hd,int field,int a,int b,int c,int d){
     if(hd<1||hd>=MAXW) return; awin*W=&g_w[hd];
-    if(field==WF_CURRXYWH){ W->px=W->x;W->py=W->y;W->pw=W->w;W->ph=W->h; W->x=a;W->y=b;W->w=c;W->h=d; clamp_win(W); clamp_scroll(W); wind_redraw(); }
+    switch(field){
+    /* ---- classic ---------------------------------------------------------- */
+    case WF_NAME:     set_str(W->name,     sizeof W->name,     a,b); wind_redraw_win(hd); break;
+    case WF_INFO:     set_str(W->info_text,sizeof W->info_text,a,b); wind_redraw_win(hd); break;
+    case WF_TOP:      wind_raise(hd); break;
+    case WF_CURRXYWH:
+        W->px=W->x;W->py=W->y;W->pw=W->w;W->ph=W->h;
+        W->x=a;W->y=b;W->w=c;W->h=d; clamp_win(W); clamp_scroll(W); wind_redraw();
+        break;
+    /* ---- our extensions --------------------------------------------------- */
+    case WF_SUBTITLE: set_str(W->subtitle, sizeof W->subtitle, a,b); wind_redraw_win(hd); break;
+    case WF_ICON:     set_str(W->icon,     sizeof W->icon,     a,b); wind_redraw_win(hd); break;
+    case WF_TITLEFLAGS: W->titleflags = a;                           wind_redraw_win(hd); break;
+    case WF_TITLEBTNS: {
+        const int *g = (const int *)WIND_PTR(a,b);
+        int n = c; if(n<0) n=0; if(n>WIND_MAXTB) n=WIND_MAXTB;
+        W->ntb = n;
+        for(int i=0;i<n;i++) W->tbglyph[i] = g ? g[i] : WTG_NONE;
+        wind_redraw_win(hd);
+        break;
+    }
+    default: break;
+    }
 }
 
 int wind_find(int x,int y){
