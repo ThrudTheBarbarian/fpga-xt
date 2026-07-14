@@ -192,6 +192,23 @@ call** ("gemd, put plane N on my window"), which is a protocol decision, not a r
 
 ## Traps found while doing M4 (do not rediscover)
 
+- **A resident init cannot be waited for.** `init(1)` became the reaper and stopped exiting — but
+  the kernel's `shell_task` still ended `boot_run()` with `frtos_waitpid(init)`, and that task is
+  the one that starts the login shell / kernel menu. It blocked forever, so **the machine came up
+  with no console output at all**. The board hid it (the desktop is the UI, and ssh still worked);
+  under headless qemu, where the console *is* the machine, it looked like a kernel that died before
+  its first write, and it blocked the compiler/arm9 thread for a day. init now says it is done
+  (`SYS_boot_done`) and the kernel waits for THAT — with a 30s ceiling, so a wedged boot script
+  costs you the script, never the console. **Anything that assumed init exits is now wrong.**
+- **The child outruns the spawn.** A PL0 process is created at a priority that preempts
+  `shell_task`, so it can reach its first syscall *before* `frtos_spawn_argv()` returns. Recording
+  init's pid from the returned value was too late: init's `SYS_boot_done` arrived while
+  `g_init_pid` was still 0 and was refused, and the console waited for a signal that had already
+  been sent and thrown away. The kernel now claims init's identity at pid assignment
+  (`frtos_claim_next_as_init()`), not after the spawn call returns.
+- **Headless qemu has no `/bin/sh`** (the romfs deliberately carries no shell — the board's lives
+  on the SD). qemu therefore lands on the **kernel menu**, not toysh. That is correct, and it is
+  what `make hosttest` drives. Do not "fix" it by putting a shell back in the romfs.
 - **A device that starts its producer on first READ deadlocks a poller.** A poller never reads
   until `poll()` says readable, and `poll()` never says readable until something has been
   produced. `/dev/input` starts its decoder at **open**.

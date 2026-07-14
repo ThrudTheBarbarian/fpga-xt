@@ -181,6 +181,10 @@ static inline long sys_shm_unmap(int id) { return __syscall(SYS_shm_unmap, id, 0
 static inline long sys_shm_grant(int id, int pid) { return __syscall(SYS_shm_grant, id, pid, 0); }
 static inline long sys_settime(unsigned unix_sec) { return __syscall(SYS_settime, (long)unix_sec, 0, 0); }
 static inline long sys_nanosleep(unsigned usec) { return __syscall(SYS_nanosleep, (long)usec, 0, 0); }
+/* init(1) only: "every boot script has run" — releases the kernel's shell_task to start the
+ * login shell. init then goes resident as the reaper, so it must SAY it is done; it can never
+ * signal that by exiting. */
+static inline long sys_boot_done(void) { return __syscall(SYS_boot_done, 0, 0, 0); }
 static inline long sys_fb_info(struct os_fbinfo *fi) { return __syscall(SYS_fb_info, (long)fi, 0, 0); }
 static inline long sys_fb_present(void) { return __syscall(SYS_fb_present, 0, 0, 0); }
 /* OS-owned desk-sized WM backdrop buffer (WALLPAPER_BASE region — no process-heap

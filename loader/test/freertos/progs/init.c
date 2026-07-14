@@ -73,6 +73,12 @@ void _app_entry(int argc, char **argv)
         status(script, pid >= 0 && code == 0);       /* [ OK ] / [FAIL] per script */
     }
 
+    /* Every boot script has run. TELL THE KERNEL — it is holding the console for us, and
+     * since we are about to go resident it can never find this out by waiting for us to
+     * exit. (It used to. The day init stopped exiting, the login shell and the kernel menu
+     * stopped starting, and the machine came up with no console at all.) */
+    sys_boot_done();
+
     /* Do NOT exit. init(1) stays resident as the ULTIMATE REAPER.
      *
      * When any process dies, the kernel re-parents its children here. Without a resident

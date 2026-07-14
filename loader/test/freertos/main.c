@@ -164,13 +164,23 @@ static void boot_run(void)
         paths[i][k] = 0;
         av[ac++] = paths[i];
     }
-    int pid = frtos_spawn_argv("/System/bin/init", ac, av, &g_host);
     /* init(1) is the ultimate reaper: orphans are re-parented to it on their parent's
-     * death, and its waitpid(-1) loop collects them. Tell the kernel who it is. */
-    extern void frtos_set_init_pid(int);
-    if (pid > 0) frtos_set_init_pid(pid);
+     * death, and its waitpid(-1) loop collects them. Tell the kernel who it is BEFORE the
+     * spawn — init outruns us (it preempts shell_task and can reach its first syscall
+     * before frtos_spawn_argv even returns), so a "now that I have the pid" setter here
+     * would be too late. */
+    extern void frtos_claim_next_as_init(void);
+    frtos_claim_next_as_init();
+    int pid = frtos_spawn_argv("/System/bin/init", ac, av, &g_host);
     if (pid < 0) { puts0("[boot] /System/bin/init MISSING\n"); return; }
-    frtos_waitpid(pid);
+
+    /* Wait for the boot SCRIPTS, not for init. init is resident (the reaper) and never
+     * exits, so frtos_waitpid(init) would block this task forever — and this task is the
+     * one that starts the login shell / kernel menu, i.e. the console. A 30s ceiling: if a
+     * boot script wedges, the console still comes up, and says why. */
+    extern int frtos_wait_boot(int, int);
+    if (!frtos_wait_boot(pid, 30000))
+        puts0("[boot] boot scripts did not finish — starting the console anyway\n");
 }
 
 static void shell_task(void *arg)

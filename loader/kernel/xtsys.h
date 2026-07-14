@@ -315,6 +315,12 @@ struct xt_dirent { unsigned mode; char name[256]; };
 #define SYS_devmem       0x404 /* (addr, val, write) -> word: peek/poke a 32-bit physical
                                 * word (kernel MMU is identity-mapped, reaches GP0/DDR/periph).
                                 * DEBUG poke tool (/bin/mem) — no bounds check, by design. */
+#define SYS_boot_done    0x405 /* () -> 0: init(1) has run every boot script and is about to go
+                                * resident as the reaper. The kernel's shell_task blocks on THIS
+                                * before it starts the login shell — it cannot waitpid(init),
+                                * because a resident init never exits. (It tried, and the machine
+                                * came up with no console at all — see docs/OS/gemd-plan.md.)
+                                * init(1) only; anyone else gets -EPERM. */
 
 /* networking control — block 0x800. Bringing the stack up is a BOOT-SCRIPT decision
  * (/boot/20-Networking runs /bin/netup), not kernel magic. */

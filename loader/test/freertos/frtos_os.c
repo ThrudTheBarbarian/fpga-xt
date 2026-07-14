@@ -86,7 +86,17 @@ static svc_t g_svc[MAXSVC];
  * reap_orphans() deliberately skips `waited` processes, so the slot is NEVER freed.
  * That is the "dead process still in ps" bug: not a missing reaper, a DANGLING CLAIM. */
 static int g_init_pid = 0;
-void frtos_set_init_pid(int pid) { g_init_pid = pid; }
+static int g_claim_init = 0;             /* "the next process spawned is init" — see proc_launch */
+void frtos_claim_next_as_init(void) { g_claim_init = 1; }
+
+/* The boot barrier. init(1) runs the boot scripts and then STAYS RESIDENT, so the kernel
+ * cannot learn "the boot scripts are done" by waiting for init to exit -- it never does.
+ * (It tried: shell_task's frtos_waitpid(init) blocked forever, the login shell and the
+ * kernel menu never started, and the machine produced NO CONSOLE OUTPUT AT ALL. On the
+ * board the desktop still came up, which hid it; under headless qemu, where there is no
+ * desktop and the console IS the machine, it looked like a kernel that died before its
+ * first write.) init calls SYS_boot_done instead, and shell_task waits for THAT. */
+static volatile int g_boot_done = 0;    /* set by SYS_boot_done; waited on by shell_task */
 static void k_chan_close(fd_t *f);        /* impl below with the service ops */
 
 /* kernel-mailbox fs ops (impls with the fs task, below): displacing an open
@@ -147,6 +157,7 @@ typedef struct {
 } proc_t;
 
 static proc_t *proc_by_pid(int pid);     /* impl below with the waitpid family */
+static long k_boot_done(proc_t *p);      /* SYS_boot_done — impl below, ditto */
 /* a deliverable signal is pending -> a blocking syscall should unwind with -EINTR
  * (-4) so the kernel can vector the handler on the deferred return (deliver_deferred). */
 static inline int sig_ready(proc_t *p) { return p && ((p->sig_pending & ~p->sig_blocked) != 0); }
@@ -2866,10 +2877,11 @@ static long do_syscall(uint32_t num, long a0, long a1, long a2)
         return klog_write((const char *)a0, (uint32_t)a1);
     }
     case SYS_devmem: {                                      /* (addr, val, write) -> word: DEBUG peek/poke */
-        volatile uint32_t *p = (volatile uint32_t *)(unsigned long)a0;
-        if (a2) *p = (uint32_t)a1;                          /* poke */
-        return (long)(uint32_t)*p;                          /* read back / peek */
+        volatile uint32_t *q = (volatile uint32_t *)(unsigned long)a0;
+        if (a2) *q = (uint32_t)a1;                          /* poke */
+        return (long)(uint32_t)*q;                          /* read back / peek */
     }
+    case SYS_boot_done: return k_boot_done(p);              /* () -> 0: init ran every boot script */
     case SYS_strace: { if (p) p->strace = a0 ? 1 : 0; return 0; }   /* /bin/strace */
     case SYS_xtos_recv:                                     /* (int16 msg[8]) -> 1 dequeued, 0 none */
         return a0 ? xtos_recv(p, (int16_t *)a0) : 0;
@@ -2980,6 +2992,7 @@ static const char *strace_name(uint32_t n)
     case SYS_dup2: return "dup2";       case SYS_kill: return "kill";
     case SYS_nanosleep: return "nanosleep"; case SYS_gettimeofday: return "gettimeofday";
     case SYS_klog: return "klog";       case SYS_devmem: return "devmem";
+    case SYS_boot_done: return "boot_done";
     case SYS_getcwd: return "getcwd";
     case SYS_socket: return "socket";   case SYS_accept: return "accept";
     case SYS_recvfrom: return "recvfrom"; case SYS_readdir: return "readdir";
@@ -3383,6 +3396,12 @@ static int proc_launch(int slot, xtld_obj *obj, uintptr_t entry,
         }
     }
     p->obj = obj; p->entry = entry; p->exit_code = 0; p->exited = 0; p->waited = 0; p->waiter = 0; p->pid = g_next_pid++;
+    /* init's identity is claimed HERE, at pid assignment — not by the caller once spawn
+     * returns. The child task is created below at a priority that preempts shell_task, so
+     * it can run to its first syscall BEFORE frtos_spawn_argv returns: an init that told
+     * the kernel "boot scripts done" in that window was refused (g_init_pid still 0), and
+     * the console waited for a signal that had already been sent and thrown away. */
+    if (g_claim_init) { g_claim_init = 0; g_init_pid = p->pid; }
     p->killed = 0;                       /* slot reuse must not inherit a SYS_kill */
     p->stopped = 0;                      /* ...nor a SIGSTOP */
     p->sig_pending = 0; p->sig_blocked = 0; p->sig_trap = 0;   /* exec resets signal state */
@@ -3950,6 +3969,33 @@ int frtos_waitpid_peek(int pid)
     if (!p) return -1;
     p->waited = 1;
     return p->exited ? 1 : 0;
+}
+
+/* SYS_boot_done — init(1) only. */
+static long k_boot_done(proc_t *p)
+{
+    if (!p || p->pid != g_init_pid) return -1;   /* -EPERM: only init(1) opens the console */
+    g_boot_done = 1;
+    return 0;
+}
+
+/* shell_task's side of the boot barrier: block until init says the boot scripts are done.
+ *
+ * Two escapes, because a console you cannot reach is worse than a boot script that did
+ * not run:
+ *   - init died (crashed, or an old init that predates SYS_boot_done): stop waiting.
+ *   - a boot script hung: come up anyway after `timeout_ms`, and say so. A wedged daemon
+ *     or desktop must never cost the machine its console.
+ * Returns 1 if the boot scripts completed, 0 if we gave up on them. */
+int frtos_wait_boot(int initpid, int timeout_ms)
+{
+    for (int waited = 0; !g_boot_done; waited += 20) {
+        proc_t *p = proc_by_pid(initpid);
+        if (!p || p->exited) return 0;                    /* no init -> nothing is coming */
+        if (timeout_ms > 0 && waited >= timeout_ms) return 0;
+        vTaskDelay(pdMS_TO_TICKS(20));
+    }
+    return 1;
 }
 
 /* waitpid for a KERNEL task waiter (shell_task) — blocks on the child's `done`
