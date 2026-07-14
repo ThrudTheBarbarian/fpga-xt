@@ -267,9 +267,21 @@ carries the absolute offset, so the newest supersedes the backlog (peek + one-sl
 nothing dropped or reordered). What remains per step is one composite+present; the HW blitter
 taking over gemd's inner blit and present copy is the phase-2 multiplier.
 
-**Still owed in M5:** the wheel under gemd (`struct os_event` has no wheel field yet — when the
-input device grows one, `gemd_route` forwards it to `wind_handle_wheel` server-side and the
-existing `WM_VSLID` path does the rest); horizontal scrollbars (no bar drawn today).
+**The wheel is DONE** (board deploy 2026-07-14): `os_event` grew the field, the serial decoder
+stopped discarding wheel reports, gemd routes `AES_WHEEL` to `wind_handle_wheel` — a wheel notch
+is a scroll step, with the scroll-step rules (bar-only repaint, coalescing).
+
+**The blitter, measured before wiring** (`/OS/bin/blitbench`, in sdstage as the before/after
+gauge): engine COPY **187 MB/s** vs CPU uncached memcpy 121 / fill 198. Single-beat confirmed —
+wiring the engine into the present today would break even and win only async overlap. Order of
+work: (1) burst the SRC_BLIT AXI master (~1 GB/s headroom = the 3-5× present lever); (2) driver
+plumbing — `/dev/blitter` already does handles/CONTIG/clip/SEQ (§13, blittest-proven), and the
+present offload needs well-known handles for the PLANE and WALLPAPER back-buffer plus a
+cache-clean of the cached source rect; (3) `gemd_present` submits + fences. The compositor's
+inner blit stays CPU — cached→cached is already fast, and §14's move-together rule applies only
+when the VDI backend itself moves.
+
+**Still owed in M5:** horizontal scrollbars (no bar drawn today).
 
 ## gemd renders CACHED and presents rects (the 3-second redraw)
 
