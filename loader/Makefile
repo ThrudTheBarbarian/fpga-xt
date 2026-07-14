@@ -709,7 +709,7 @@ $(BUILD)/hwromfs/romfs_blob.h: $(BUILD)/romfs-hw.bin
 # login shell exists before the links do)
 SDSTAGE := $(BUILD)/sdstage
 .PHONY: sdstage
-sdstage: $(BUILD)/toybox.so $(BUILD)/sqlite3.so $(BUILD)/fbgrab.so $(BUILD)/libGEM.so $(BUILD)/libxtos.so $(BUILD)/libm.so $(BUILD)/libutil.so $(BUILD)/desktop.so $(BUILD)/gemtext.so $(BUILD)/gemd.so $(BUILD)/regtest.so $(BUILD)/tnfs.so $(BUILD)/fujinetd.so $(BUILD)/fuji.so $(DESKTOP_RSC) $(ROMFS_OVERLAY_FILES) $(ROMFS_ASSET_FILES)
+sdstage: $(BUILD)/toybox.so $(BUILD)/sqlite3.so $(BUILD)/fbgrab.so $(BUILD)/blitbench.so $(BUILD)/libGEM.so $(BUILD)/libxtos.so $(BUILD)/libm.so $(BUILD)/libutil.so $(BUILD)/desktop.so $(BUILD)/gemtext.so $(BUILD)/gemd.so $(BUILD)/regtest.so $(BUILD)/tnfs.so $(BUILD)/fujinetd.so $(BUILD)/fuji.so $(DESKTOP_RSC) $(ROMFS_OVERLAY_FILES) $(ROMFS_ASSET_FILES)
 	@rm -rf $(SDSTAGE)
 	@mkdir -p $(SDSTAGE)/OS/bin $(SDSTAGE)/OS/library $(SDSTAGE)/OS/etc $(SDSTAGE)/OS/boot $(SDSTAGE)/OS/fonts $(SDSTAGE)/OS/themes/Aristo2/1x $(SDSTAGE)/OS/Apps/Desktop/Spaces/1
 	cp sd/boot/* $(SDSTAGE)/OS/boot/
@@ -721,6 +721,7 @@ sdstage: $(BUILD)/toybox.so $(BUILD)/sqlite3.so $(BUILD)/fbgrab.so $(BUILD)/libG
 	cp $(BUILD)/gemtext.so $(SDSTAGE)/OS/bin/gemtext
 	cp $(BUILD)/gemd.so    $(SDSTAGE)/OS/bin/gemd
 	cp $(BUILD)/fbgrab.so  $(SDSTAGE)/OS/bin/fbgrab
+	cp $(BUILD)/blitbench.so $(SDSTAGE)/OS/bin/blitbench
 	cp $(BUILD)/regtest.so $(SDSTAGE)/OS/bin/regtest
 	cp $(BUILD)/httpd.so   $(SDSTAGE)/OS/bin/httpd
 	cp $(BUILD)/tnfs.so    $(SDSTAGE)/OS/bin/tnfs
