@@ -157,11 +157,19 @@ module tb_xt_blitter;
     logic        w_need_bvalid;
 
     // ---- Read state -------------------------------------------------------
-    logic        ar_pending;
+    // AR is a QUEUE: the FC engine keeps up to two reads in flight, and a slave
+    // that overwrites its single pending AR corrupts the second burst — the HP
+    // ports accept multiple ARs, so the model must too. READ_LAT models the
+    // DDR round-trip so pipelining is MEASURABLE (a serial engine pays it per
+    // segment; a pipelined one hides it).
+    localparam int READ_LAT = 12;
+    logic [31:0] ar_addr_fifo[$];
+    logic [7:0]  ar_len_fifo[$];
     logic [31:0] ar_addr_q;
     logic [7:0]  ar_len_q;
     logic [7:0]  r_beat_count;
     logic        r_active;
+    int          r_lat_cnt;
     logic [63:0] r_data_q;
 
     // ====================================================================
@@ -181,7 +189,9 @@ module tb_xt_blitter;
             aw_len_q       <= 8'd0;
             w_beat_count   <= 8'd0;
             w_need_bvalid  <= 1'b0;
-            ar_pending     <= 1'b0;
+            ar_addr_fifo.delete();
+            ar_len_fifo.delete();
+            r_lat_cnt      <= 0;
             ar_addr_q      <= 32'd0;
             ar_len_q       <= 8'd0;
             r_beat_count   <= 8'd0;
@@ -247,39 +257,40 @@ module tb_xt_blitter;
                 m_axi_bvalid <= 1'b0;
             end
 
-            // ---- Read address (AR) ready -- always accept ---------------
+            // ---- Read address (AR) ready -- always accept, QUEUED --------
             m_axi_arready <= 1'b1;
             if (m_axi_arvalid && m_axi_arready) begin
-                ar_pending <= 1'b1;
-                ar_addr_q  <= m_axi_araddr;
-                ar_len_q   <= m_axi_arlen;
-                r_beat_count <= 8'd0;
+                ar_addr_fifo.push_back(m_axi_araddr);
+                ar_len_fifo.push_back(m_axi_arlen);
 
                 r_addr_q.push_back(m_axi_araddr);
                 r_len_q.push_back(m_axi_arlen);
                 r_cycle_q.push_back($time);
             end
 
-            // ---- Read data (R) ------------------------------------------
-            if (ar_pending && !r_active) begin
-                // Start read burst on the cycle after AR accepted
-                r_active    <= 1'b1;
-                r_beat_count <= 8'd0;
-                r_data_q    <= mem[mem_idx(ar_addr_q)];
+            // ---- Read data (R): pop the queue, pay READ_LAT, then burst --
+            if (!r_active && ar_addr_fifo.size() > 0) begin
+                if (r_lat_cnt < READ_LAT) begin
+                    r_lat_cnt <= r_lat_cnt + 1;
+                end else begin
+                    ar_addr_q   <= ar_addr_fifo.pop_front();
+                    ar_len_q    <= ar_len_fifo.pop_front();
+                    r_lat_cnt   <= 0;
+                    r_active    <= 1'b1;
+                    r_beat_count <= 8'd0;
+                    m_axi_rvalid <= 1'b0;   // first beat presented next cycle
+                end
+            end else if (r_active && !m_axi_rvalid) begin
                 m_axi_rvalid <= 1'b1;
                 m_axi_rlast  <= (ar_len_q == 8'd0);
                 m_axi_rdata  <= mem[mem_idx(ar_addr_q)];
             end else if (r_active && m_axi_rvalid && m_axi_rready) begin
                 if (m_axi_rlast) begin
-                    // Last beat of read burst
-                    r_active    <= 1'b0;
-                    ar_pending  <= 1'b0;
+                    r_active     <= 1'b0;
                     m_axi_rvalid <= 1'b0;
                     m_axi_rlast  <= 1'b0;
                 end else begin
-                    // Advance to next beat
                     r_beat_count <= r_beat_count + 8'd1;
-                    r_data_q     <= mem[mem_idx(ar_addr_q) + r_beat_count + 8'd1];
                     m_axi_rdata  <= mem[mem_idx(ar_addr_q) + r_beat_count + 8'd1];
                     m_axi_rlast  <= (r_beat_count + 8'd1 == ar_len_q);
                 end
@@ -2000,11 +2011,117 @@ module tb_xt_blitter;
         test_rect_fill_wide();
         test_scaled_after_wide();
         test_scaled_wide_row();
+        test_fc_perf();
+        test_fc_4k();
 
         // Done
         $display("=== ALL TESTS PASSED ===");
         $finish;
     end
+
+    // ----------------------------------------------------------------
+    // FC throughput: the pipelining PROOF. 256x8 aligned copy = 1024
+    // beats in 64 segments. The serial engine pays READ_LAT + full
+    // serialization per segment (~3400+ cycles here); the FC engine must
+    // land under 2200 or the pipeline is not actually pipelining. This
+    // bound is the test — a refactor that quietly re-serializes fails it.
+    // ----------------------------------------------------------------
+    task test_fc_perf();
+        logic [31:0] sa, da, got, exp;
+        int errs; longint t0, cycles;
+        $display("=== Test: FC pipelined copy 256x8 (perf gate) ===");
+        clear_logs(); errs = 0;
+        for (int yy = 0; yy < 8; yy++)
+          for (int xx = 0; xx < 128; xx++)   // 128 x 64-bit words per row
+            mem[mem_idx(32'h3010_0000 + yy*2048 + xx*8)] = {32'(32'hF00D0000 + yy*32'h100 + xx*2 + 1),
+                                                            32'(32'hF00D0000 + yy*32'h100 + xx*2)};
+        write_reg(16'hD4E0,8'h00); write_reg(16'hD4E1,8'h00); write_reg(16'hD4E2,8'h10); write_reg(16'hD4E3,8'h30);
+        write_reg(16'hD4E4,8'h00); write_reg(16'hD4E5,8'h08);                       // SRC stride 2048
+        write_reg(16'hD4E6,8'h00); write_reg(16'hD4E7,8'h00); write_reg(16'hD4E8,8'h20); write_reg(16'hD4E9,8'h30);
+        write_reg(16'hD4EA,8'h00); write_reg(16'hD4EB,8'h08);                       // DST stride 2048
+        write_reg(16'hD4C0,8'd0); write_reg(16'hD4C1,8'd0); write_reg(16'hD4C2,8'd0); write_reg(16'hD4C3,8'd0);
+        write_reg(16'hD4C4,8'd0); write_reg(16'hD4C5,8'd1); write_reg(16'hD4C6,8'd8); write_reg(16'hD4C7,8'd0);   // SRC 256x8
+        write_reg(16'hD4B0,8'd0); write_reg(16'hD4B1,8'd0); write_reg(16'hD4B2,8'd0); write_reg(16'hD4B3,8'd0);
+        write_reg(16'hD4B4,8'd0); write_reg(16'hD4B5,8'd1); write_reg(16'hD4B6,8'd8); write_reg(16'hD4B7,8'd0);   // DST 256x8
+        write_reg(16'hD4BF,8'h03);                                                  // RASTER_OP = S
+        write_reg(16'hD4C8,8'h24);                                                  // SRC_DDR | DST_DDR
+        t0 = longint'($realtime);
+        write_reg(16'hD4BC,8'h03);                                                  // CMD = BLOCK_BLIT
+        wait_idle();
+        cycles = longint'(($realtime - real'(t0)) / 6.666);                          // 6.666 ns clk
+        write_reg(16'hD4C8, 8'h00);
+        for (int yy = 0; yy < 8; yy++)
+          for (int xx = 0; xx < 128; xx++) begin
+            got = mem[mem_idx(32'h3020_0000 + yy*2048 + xx*8)][31:0];
+            exp = 32'hF00D0000 + yy*32'h100 + xx*2;
+            if (got !== exp) begin errs++; if (errs < 5) $display("  MISMATCH (%0d,%0d): got %08x exp %08x", xx, yy, got, exp); end
+          end
+        $display("  FC copy 1024 beats in %0d cycles (%0d.%02d cy/beat)",
+                 cycles, cycles/1024, (cycles*100/1024) % 100);
+        if (errs) begin $display("FAIL: test_fc_perf (%0d mismatches)", errs); $fatal(1); end
+        if (cycles > 2200) begin
+            $display("FAIL: test_fc_perf — %0d cycles for 1024 beats: the pipeline is not pipelining", cycles);
+            $fatal(1);
+        end
+        $display("PASS: test_fc_perf");
+    endtask
+
+    // ----------------------------------------------------------------
+    // FC 4KB legality: rows START near a 4KB boundary on BOTH sides (at
+    // DIFFERENT distances, so the shadow-cursor clamp is what saves the
+    // write side). Verifies the pixels AND walks the AR/W logs asserting
+    // no burst crosses a 4KB page — the AXI rule the serial path only
+    // obeys by luck.
+    // ----------------------------------------------------------------
+    task test_fc_4k();
+        logic [31:0] got, exp, burst_page;
+        int errs;
+        $display("=== Test: FC copy across 4KB boundaries (clamped bursts) ===");
+        clear_logs(); errs = 0;
+        // src rows at ...0FC0 (8 beats to the page edge), dst rows at ...0F40
+        // (24 beats to the edge). 64px = 32 beats/row, 3 rows, stride 4096+64.
+        for (int yy = 0; yy < 3; yy++)
+          for (int xx = 0; xx < 32; xx++)
+            mem[mem_idx(32'h3030_0FC0 + yy*4160 + xx*8)] = {32'(32'hCAFE0000 + yy*32'h100 + xx*2 + 1),
+                                                            32'(32'hCAFE0000 + yy*32'h100 + xx*2)};
+        write_reg(16'hD4E0,8'hC0); write_reg(16'hD4E1,8'h0F); write_reg(16'hD4E2,8'h30); write_reg(16'hD4E3,8'h30);
+        write_reg(16'hD4E4,8'h40); write_reg(16'hD4E5,8'h10);                       // SRC stride 4160
+        write_reg(16'hD4E6,8'h40); write_reg(16'hD4E7,8'h0F); write_reg(16'hD4E8,8'h40); write_reg(16'hD4E9,8'h30);
+        write_reg(16'hD4EA,8'h40); write_reg(16'hD4EB,8'h10);                       // DST stride 4160
+        write_reg(16'hD4C0,8'd0); write_reg(16'hD4C1,8'd0); write_reg(16'hD4C2,8'd0); write_reg(16'hD4C3,8'd0);
+        write_reg(16'hD4C4,8'd64); write_reg(16'hD4C5,8'd0); write_reg(16'hD4C6,8'd3); write_reg(16'hD4C7,8'd0);
+        write_reg(16'hD4B0,8'd0); write_reg(16'hD4B1,8'd0); write_reg(16'hD4B2,8'd0); write_reg(16'hD4B3,8'd0);
+        write_reg(16'hD4B4,8'd64); write_reg(16'hD4B5,8'd0); write_reg(16'hD4B6,8'd3); write_reg(16'hD4B7,8'd0);
+        write_reg(16'hD4BF,8'h03);
+        write_reg(16'hD4C8,8'h24);
+        write_reg(16'hD4BC,8'h03);
+        wait_idle();
+        write_reg(16'hD4C8, 8'h00);
+        for (int yy = 0; yy < 3; yy++)
+          for (int xx = 0; xx < 32; xx++) begin
+            got = mem[mem_idx(32'h3040_0F40 + yy*4160 + xx*8)][31:0];
+            exp = 32'hCAFE0000 + yy*32'h100 + xx*2;
+            if (got !== exp) begin errs++; if (errs < 5) $display("  MISMATCH word (%0d,%0d): got %08x exp %08x", xx, yy, got, exp); end
+          end
+        // no READ burst may cross a 4KB page
+        for (int i = 0; i < r_addr_q.size(); i++)
+            if ((r_addr_q[i] & 32'hFFF) + (r_len_q[i] + 1) * 8 > 32'h1000) begin
+                errs++;
+                $display("  AR CROSSES 4KB: addr %08x len %0d", r_addr_q[i], r_len_q[i] + 1);
+            end
+        // no WRITE burst may cross one either: beats of one burst share a page
+        burst_page = 32'hFFFFFFFF;
+        for (int i = 0; i < w_addr_q.size(); i++) begin
+            if (burst_page == 32'hFFFFFFFF) burst_page = w_addr_q[i] >> 12;
+            if ((w_addr_q[i] >> 12) != burst_page) begin
+                errs++;
+                $display("  W BURST CROSSES 4KB at beat addr %08x", w_addr_q[i]);
+            end
+            if (w_last_q[i]) burst_page = 32'hFFFFFFFF;
+        end
+        if (errs) begin $display("FAIL: test_fc_4k (%0d errors)", errs); $fatal(1); end
+        $display("PASS: test_fc_4k");
+    endtask
 
     // Watchdog -- 200k cycles (~1.3 ms at 150 MHz) should be plenty
     initial begin

@@ -966,6 +966,65 @@ module xt_blitter #(
     wire [31:0]  bl_src_addr_cx  = src_row_base + (32'(cx) << 2);
 
     // ====================================================================
+    // FC — the pipelined fast copy (BLOCK_BLIT, raster op SRC only).
+    //
+    // The serial path bursts 16 beats but SERIALIZES read -> write -> B per
+    // segment: ~80 clk per 128 B = the 187 MB/s measured on the board
+    // (blitbench). FC overlaps them: two ping-pong segment buffers, up to two
+    // ARs in flight, W streams while the next read fills, B responses are
+    // COUNTED (bready is tied high), never awaited. The read issuer walks a
+    // SHADOW of the write cursor so every segment is clamped against BOTH
+    // sides' 4 KB boundaries (the serial path never clamps; no HW test ever
+    // crossed one — FC does it right rather than inheriting the luck).
+    //
+    // Eligible: raster op 3/15 (straight SRC copy — gemd's present and every
+    // /dev/blitter COPY), rows 8-byte aligned on BOTH sides, strides multiples
+    // of 8, even width. Anything else takes the old serial path, unchanged.
+    // ====================================================================
+    logic [63:0] fc_buf [0:1][0:15];      // ping-pong segment buffers
+    logic [4:0]  fc_len [0:1];            // beats queued per buffer (1..16)
+    logic        fc_full[0:1];            // buffer holds a complete segment
+    logic        fc_resv[0:1];            // buffer's AR is in flight
+    logic        fc_ar_ptr;               // next buffer to issue an AR for
+    logic        fc_r_ptr;                // buffer the R stream is filling
+    logic        fc_wr_ptr;               // next buffer to drain to AW/W
+    logic [3:0]  fc_r_idx;                // R beat index in the filling buffer
+    logic        fc_ar_pend;              // AR asserted, awaiting arready
+    logic [4:0]  fc_ar_beats_q;           // beats of the pending AR (cursor advance)
+    logic        fc_aw_pend;              // AW asserted, awaiting awready
+    logic        fc_w_act;                // W burst streaming
+    logic [3:0]  fc_w_idx;
+    logic [2:0]  fc_b_cnt;                // AWs accepted minus B responses seen
+    logic [31:0] fc_rd_addr, fc_rd_row;   // source cursor + its row base
+    logic [31:0] fc_sh_addr, fc_sh_row;   // SHADOW dest cursor at the read issuer
+    logic [10:0] fc_rd_left;              // beats left in the current source row
+    logic [15:0] fc_rd_rows;              // source rows left to issue
+    logic [31:0] fc_wr_addr, fc_wr_row;   // dest cursor + its row base (write engine)
+    logic [10:0] fc_wr_left;
+    logic [15:0] fc_wr_rows;              // dest rows left to complete
+    logic [10:0] fc_row_beats;            // dst_w/2: 64-bit beats per row
+
+    // Segment sizing for the next AR: the row tail, and the 4 KB boundary on
+    // BOTH the source and the shadowed destination address.
+    wire [10:0] fc_4k_src   = 11'((13'h1000 - 13'(fc_rd_addr[11:0])) >> 3);
+    wire [10:0] fc_4k_dst   = 11'((13'h1000 - 13'(fc_sh_addr[11:0])) >> 3);
+    wire [10:0] fc_beats_a  = (fc_rd_left  < 11'd16)     ? fc_rd_left  : 11'd16;
+    wire [10:0] fc_beats_b  = (fc_beats_a  < fc_4k_src)  ? fc_beats_a  : fc_4k_src;
+    wire [10:0] fc_ar_beats = (fc_beats_b  < fc_4k_dst)  ? fc_beats_b  : fc_4k_dst;
+
+    // Eligibility, decided at S_IDLE from the popped command's own fields.
+    wire [31:0] q_fc_src_row0 = q_flags[2] ? q_src_base
+                              : (FB_BASE + (32'(q_src_y) << 13) + (32'(q_src_x) << 2));
+    wire [31:0] q_fc_dst_row0 = q_flags[5] ? q_dst_base
+                              : (FB_BASE + (32'(q_dst_y) << 13) + (32'(q_dst_x) << 2));
+    wire [15:0] q_fc_sstr = q_flags[2] ? q_src_stride : 16'(FB_STRIDE_B);
+    wire [15:0] q_fc_dstr = q_flags[5] ? q_dst_stride : 16'(FB_STRIDE_B);
+    wire        q_fc_ok   = (q_raster_op == 4'd3 || q_raster_op == 4'd15)
+                         && (q_fc_src_row0[2:0] == 3'b000) && (q_fc_dst_row0[2:0] == 3'b000)
+                         && (q_fc_sstr[2:0] == 3'b000)     && (q_fc_dstr[2:0] == 3'b000)
+                         && (q_dst_w[0] == 1'b0);
+
+    // ====================================================================
     // Scaled-blit state
     // ====================================================================
     // Bresenham-like stepping for nearest-neighbour source coordinate:
@@ -1160,6 +1219,7 @@ module xt_blitter #(
         // Block blit states
         BL_READ  = 6'd14,  // issue AR for source segment
         BL_RWAIT = 6'd15,  // receive R beats, fill burst buffer
+        FC_RUN   = 6'd61,  // pipelined fast copy: rd/wr engines overlap (see FC block)
         // Scaled blit states
         SC_ROW   = 6'd16,  // start new destination row, compute source Y
         SC_ROW2  = 6'd17,  // finish sy advance (may loop for downscale)
@@ -1322,6 +1382,14 @@ module xt_blitter #(
             line_step_q       <= 2'd0;
             bl_read_high_half_q <= 1'b0;
             line_use_blend_q  <= 1'b0;
+            fc_ar_pend        <= 1'b0;     // FC control state (data regs init at dispatch)
+            fc_aw_pend        <= 1'b0;
+            fc_w_act          <= 1'b0;
+            fc_b_cnt          <= 3'd0;
+            fc_full[0]        <= 1'b0;
+            fc_full[1]        <= 1'b0;
+            fc_resv[0]        <= 1'b0;
+            fc_resv[1]        <= 1'b0;
         end else begin
             // one-shot strobes default off
             m_axi_awvalid <= 1'b0;
@@ -1409,7 +1477,22 @@ module xt_blitter #(
                             // Block blit
                             if (q_dst_w == 16'd0 || q_dst_h == 16'd0 || q_raster_op == 4'd0 || q_raster_op == 4'd5)
                                 state <= S_DONE;
-                            else
+                            else if (q_fc_ok) begin
+                                // FAST COPY: pipelined rd/wr engines (see the FC block)
+                                fc_row_beats <= q_dst_w[11:1];
+                                fc_rd_addr <= q_fc_src_row0; fc_rd_row <= q_fc_src_row0;
+                                fc_sh_addr <= q_fc_dst_row0; fc_sh_row <= q_fc_dst_row0;
+                                fc_rd_left <= q_dst_w[11:1]; fc_rd_rows <= q_dst_h;
+                                fc_wr_addr <= q_fc_dst_row0; fc_wr_row <= q_fc_dst_row0;
+                                fc_wr_left <= q_dst_w[11:1]; fc_wr_rows <= q_dst_h;
+                                fc_full[0] <= 1'b0; fc_full[1] <= 1'b0;
+                                fc_resv[0] <= 1'b0; fc_resv[1] <= 1'b0;
+                                fc_ar_ptr <= 1'b0; fc_r_ptr <= 1'b0; fc_wr_ptr <= 1'b0;
+                                fc_r_idx <= 4'd0; fc_w_idx <= 4'd0;
+                                fc_ar_pend <= 1'b0; fc_aw_pend <= 1'b0; fc_w_act <= 1'b0;
+                                fc_b_cnt <= 3'd0;
+                                state <= FC_RUN;
+                            end else
                                 state <= BL_READ;
                         end else if (q_sc_mode) begin
                             // Scaled blit
@@ -2283,6 +2366,139 @@ module xt_blitter #(
                 // ============================================================
                 // Block blit
                 // ============================================================
+
+                // ============================================================
+                // FC_RUN — the pipelined fast copy. THREE engines run every
+                // cycle in this one state:
+                //   read issuer  — up to 2 ARs in flight (ping-pong buffers),
+                //                  cursor walks src rows + a SHADOW dst cursor
+                //                  so segments are 4KB-legal on BOTH sides;
+                //   R sink       — rready held high, beats fill the buffers
+                //                  strictly in AR order (same-ID ordering);
+                //   write engine — drains full buffers as AW + W bursts with
+                //                  proper held-until-ready valids; B responses
+                //                  are counted, never awaited.
+                // Done = every cursor exhausted, no burst in flight, B count 0.
+                // ============================================================
+                FC_RUN: begin
+                    m_axi_rready <= 1'b1;
+
+                    // ---- read issuer -------------------------------------
+                    if (fc_ar_pend) begin
+                        if (!m_axi_arready)
+                            m_axi_arvalid <= 1'b1;             // hold until accepted — but NOT
+                                                               // through the acceptance cycle,
+                                                               // or the slave takes a phantom
+                                                               // duplicate of the same AR
+                        else begin
+                            fc_ar_pend <= 1'b0;
+                            fc_ar_ptr  <= ~fc_ar_ptr;
+                            // advance the source + shadow-dest cursors by the
+                            // accepted segment; wrap rows on exhaustion
+                            if (fc_rd_left == 11'(fc_ar_beats_q)) begin
+                                fc_rd_rows <= fc_rd_rows - 16'd1;
+                                fc_rd_row  <= fc_rd_row + 32'(src_stride_eff);
+                                fc_rd_addr <= fc_rd_row + 32'(src_stride_eff);
+                                fc_sh_row  <= fc_sh_row + 32'(dst_stride_eff);
+                                fc_sh_addr <= fc_sh_row + 32'(dst_stride_eff);
+                                fc_rd_left <= fc_row_beats;
+                            end else begin
+                                fc_rd_left <= fc_rd_left - 11'(fc_ar_beats_q);
+                                fc_rd_addr <= fc_rd_addr + (32'(fc_ar_beats_q) << 3);
+                                fc_sh_addr <= fc_sh_addr + (32'(fc_ar_beats_q) << 3);
+                            end
+                        end
+                    end else if (fc_rd_rows != 16'd0
+                                 && !fc_full[fc_ar_ptr] && !fc_resv[fc_ar_ptr]) begin
+                        m_axi_araddr  <= fc_rd_addr;
+                        m_axi_arlen   <= 8'(fc_ar_beats) - 8'd1;
+                        m_axi_arsize  <= 3'b011;
+                        m_axi_arburst <= 2'b01;
+                        m_axi_arvalid <= 1'b1;
+                        fc_ar_pend    <= 1'b1;
+                        fc_ar_beats_q <= 5'(fc_ar_beats);
+                        fc_len[fc_ar_ptr]  <= 5'(fc_ar_beats);
+                        fc_resv[fc_ar_ptr] <= 1'b1;
+                    end
+
+                    // ---- R sink ------------------------------------------
+                    if (m_axi_rvalid) begin
+                        fc_buf[fc_r_ptr][fc_r_idx] <= m_axi_rdata;
+                        if (m_axi_rlast) begin
+                            fc_full[fc_r_ptr] <= 1'b1;
+                            fc_resv[fc_r_ptr] <= 1'b0;
+                            fc_r_ptr <= ~fc_r_ptr;
+                            fc_r_idx <= 4'd0;
+                        end else
+                            fc_r_idx <= fc_r_idx + 4'd1;
+                    end
+
+                    // ---- write engine ------------------------------------
+                    if (fc_aw_pend) begin
+                        if (!m_axi_awready)
+                            m_axi_awvalid <= 1'b1;             // hold, but not through acceptance
+                        else begin
+                            fc_aw_pend <= 1'b0;
+                            fc_w_act   <= 1'b1;                // W starts next cycle
+                        end
+                    end else if (!fc_w_act && fc_full[fc_wr_ptr]) begin
+                        m_axi_awaddr  <= fc_wr_addr;
+                        m_axi_awlen   <= 8'(fc_len[fc_wr_ptr]) - 8'd1;
+                        m_axi_awsize  <= 3'b011;
+                        m_axi_awburst <= 2'b01;
+                        m_axi_awvalid <= 1'b1;
+                        fc_aw_pend    <= 1'b1;
+                        fc_w_idx      <= 4'd0;
+                    end
+
+                    if (fc_w_act) begin
+                        if (m_axi_wvalid && m_axi_wready) begin
+                            // beat fc_w_idx transferred THIS cycle
+                            if (fc_w_idx == 4'(fc_len[fc_wr_ptr] - 5'd1)) begin
+                                fc_w_act <= 1'b0;              // wvalid falls (default)
+                                fc_full[fc_wr_ptr] <= 1'b0;
+                                fc_wr_ptr <= ~fc_wr_ptr;
+                                if (fc_wr_left == 11'(fc_len[fc_wr_ptr])) begin
+                                    fc_wr_rows <= fc_wr_rows - 16'd1;
+                                    fc_wr_row  <= fc_wr_row + 32'(dst_stride_eff);
+                                    fc_wr_addr <= fc_wr_row + 32'(dst_stride_eff);
+                                    fc_wr_left <= fc_row_beats;
+                                end else begin
+                                    fc_wr_left <= fc_wr_left - 11'(fc_len[fc_wr_ptr]);
+                                    fc_wr_addr <= fc_wr_addr + (32'(fc_len[fc_wr_ptr]) << 3);
+                                end
+                            end else begin
+                                fc_w_idx     <= fc_w_idx + 4'd1;
+                                m_axi_wdata  <= fc_buf[fc_wr_ptr][fc_w_idx + 4'd1];
+                                m_axi_wstrb  <= 8'hFF;
+                                m_axi_wlast  <= (fc_w_idx + 4'd1 == 4'(fc_len[fc_wr_ptr] - 5'd1));
+                                m_axi_wvalid <= 1'b1;
+                            end
+                        end else if (!m_axi_wvalid) begin
+                            // first beat of the burst
+                            m_axi_wdata  <= fc_buf[fc_wr_ptr][0];
+                            m_axi_wstrb  <= 8'hFF;
+                            m_axi_wlast  <= (fc_len[fc_wr_ptr] == 5'd1);
+                            m_axi_wvalid <= 1'b1;
+                        end else begin
+                            m_axi_wvalid <= 1'b1;              // stalled: hold valid + last
+                            m_axi_wlast  <= m_axi_wlast;
+                        end
+                    end
+
+                    // ---- B counting (bready is tied high at the port) ----
+                    fc_b_cnt <= fc_b_cnt
+                              + ((fc_aw_pend && m_axi_awready) ? 3'd1 : 3'd0)
+                              - (m_axi_bvalid ? 3'd1 : 3'd0);
+
+                    // ---- done? -------------------------------------------
+                    if (fc_wr_rows == 16'd0 && fc_rd_rows == 16'd0
+                        && !fc_ar_pend && !fc_aw_pend && !fc_w_act
+                        && !fc_full[0] && !fc_full[1]
+                        && !fc_resv[0] && !fc_resv[1]
+                        && fc_b_cnt == 3'd0 && !m_axi_bvalid)
+                        state <= S_DONE;
+                end
 
                 // ============================================================
                 // BL_READ — issue AR for source segment
