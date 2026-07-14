@@ -3,11 +3,15 @@ title: Linker scripts (.lnk)
 description: The .lnk format that defines a memory model — sections, address syntax, banking and shadow specs, and how to write your own.
 ---
 
-A **linker script** (`.lnk`) is a UTF-8 text file that describes a complete target layout: zero-page reservations, address spaces, banking mechanism (if any), shadow-mode configuration, stack and heap placement, and the startup hook. Each shipped memory model (`xl`, `xe`, `xt`, `rambo*`, `compy*`, …) is a `.lnk` file under `support/<platform>/layouts/`.
+A **linker script** (`.lnk`) is a UTF-8 text file that describes a complete target layout: zero-page reservations, address spaces, banking mechanism (if any), shadow-mode configuration, stack and heap placement, and the startup hook. Each shipped memory model (`xt`, `xt-heap`) is a `.lnk` file under `support/xt6502/layouts/`.
+
+:::note[The format is broader than the shipped layouts]
+The `.lnk` parser still understands the `[shadow]` and `[cloaked]` sections described below, but **no shipped layout uses them** — they belonged to the retired stock-Atari `xl` / `xe` models. They are documented here because the format supports them and a custom layout may want them; the `xt6502` target reaches its extra RAM through the two bank windows instead.
+:::
 
 ```bash
 xtc -m ./my-layout.lnk app.xt -o app.xex     # use a custom layout
-xtc -m xe-shadow      app.xt -o app.xex      # use a shipped layout by name
+xtc -m xt             app.xt -o app.xex      # use a shipped layout by name
 xtc --dump-layout -m xe                       # print a layout's diagram
 ```
 
@@ -173,7 +177,7 @@ Validation rejects:
 - a single-bank form with `<n>` in the id (the placeholder has nothing to bind to),
 - duplicate ids across all `[cloaked]` blocks in the file (a `:cloaked(<id>)` annotation would be ambiguous).
 
-Each region's bank is also reserved with the page tracker so `:banked` decls aren't packed on top of cloaked code. Empty regions cost nothing — codegen + xta both skip zero-byte buffers — so a layout can over-declare its pool without runtime overhead. The shipped `rambo*` and `compy*` layouts use the pool form; on `rambo1088` it expands to 62 regions × 16 KB = 992 KB of cloaked-code surface.
+Each region's bank is also reserved with the page tracker so `:banked` decls aren't packed on top of cloaked code. Empty regions cost nothing — codegen + xta both skip zero-byte buffers — so a layout can over-declare its pool without runtime overhead. No shipped layout uses the pool form today.
 
 `[cloaked]` is xe-family-only: layouts without PORTB-style banking (`xl`, `xt`) reject the section and any source-level `:cloaked` annotation on non-xe targets is a compile error.
 
@@ -194,7 +198,7 @@ A layout that **declares** `[heap]` makes the coalescing free-list allocator ava
 range = before-screen     # symbolic — heap grows down from just below screen RAM
 ```
 
-Multi-bank heap configurations (`xt`, the `rambo*` family) reserve specific banks for the heap and the runtime selects the appropriate bank on each allocator call.
+The shipped `xt` heap is *on-demand*: it claims one data bank at a time from a shared bitmap as allocation needs it, and gives empty banks back. The runtime selects the right bank on each allocator call.
 
 ### `[entry]` — entry point address
 
@@ -216,7 +220,7 @@ The template is a 6502 assembly file with placeholder substitutions (sentinels t
 
 ```ini
 [output]
-format = atari-xex        # or commodore-prg
+format = atari-xex
 ```
 
 Used when the user passes `-o file` without an extension; otherwise the extension wins.
@@ -226,7 +230,7 @@ Used when the user passes `-o file` without an extension; otherwise the extensio
 By convention, every shipped `.lnk` opens with a Unicode box-art comment showing the actual memory layout the file describes:
 
 ```ini
-# xl.lnk — flat Atari 8-bit (no banking, no shadow)
+# flat.lnk — a hypothetical flat 6502 target (no banking, no shadow)
 #
 # ┌──────────────────────────────────────────────┐
 # │ $0000-$0081  OS/hardware zero page           │
@@ -257,13 +261,9 @@ xtc -ll
 
 Prints every shipped layout grouped by platform. Each one is a `.lnk` file you can copy as a starting point for a custom variant.
 
-The shipped Atari layouts cover:
-
-- Flat: `xl`, `xl-shadow`
-- xe family: `xe`, `xe-shadow`, `rambo192`, `rambo256`, `rambo320`, `rambo576`, `rambo1088`, `compy320`, `compy576`
-- xt family: `xt`, `xt`, `xt`
-
-For Commodore: `c64`.
+The shipped layouts are `xt` (the standard xt6502 model — two bank windows and an on-demand
+banked heap) and `xt-heap` (the same map with a fixed heap reservation). Layouts apply to the
+6502 backend only; the native targets have no layout to choose.
 
 See [Memory models](/compiler/usage/memory-models/) for what each one is for and when to pick it.
 

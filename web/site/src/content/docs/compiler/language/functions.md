@@ -143,7 +143,7 @@ void fn(void) :irq        { ... }    // hardware-IRQ handler, ends with RTI
 void fn(void) :vbi        { ... }    // VBI handler — install via Vbi.install()
 void fn(void) :banked     { ... }    // place in the bank window (xt / xe)
 void fn(void) :main       { ... }    // place in main RAM, opt out of auto-bank
-void fn(void) :shadow     { ... }    // place in shadow RAM (xl / xt / xe-shadow)
+void fn(void) :shadow     { ... }    // place in shadow RAM (layouts declaring a [shadow] section)
 void fn(void) :cloaked    { ... }    // place in a cloaked region (xe family)
 void fn(void) :cloaked(ext1) { ... } // pin to a named cloaked region
 ```
@@ -163,11 +163,11 @@ On banked targets (xt / xe), `:irq` and `:vbi` handlers are placed in main RAM a
 
 ### Placement
 
-`:banked`, `:main`, and `:shadow` are mutually exclusive and control where in the address space the function lives. Defaults stay as they are (auto-bank free functions on xt / xe; main RAM otherwise), so most programs don't need to think about them.
+`:banked`, `:main`, and `:shadow` are mutually exclusive and control where in the address space the function lives. They apply to the **6502** target; the native backends ignore them. Defaults stay as they are (free functions auto-bank on `xt`; unbanked RAM otherwise), so most programs don't need to think about them.
 
-- `:banked` — force into the bank window. On a target with no banking (e.g. plain `xl`), the compiler warns and falls through to `:main`.
+- `:banked` — force into the code-bank window. On a target with no banking, the compiler warns and falls through to `:main`.
 - `:main` — force into main RAM, even on xt / xe where it would otherwise auto-bank. Useful for hot routines where the cross-bank trampoline cost matters, or for code that an `:irq` / `:vbi` handler calls (since handlers can't trampoline).
-- `:shadow` — place under the OS ROM (`$C000-$CFFF` and `$D800-$FFF9` on Atari shadow targets). On a target without shadow RAM, the compiler warns and falls through to `:main`. Cross-bank-style calls work either way — but `:shadow` code is unreachable when ROM is mapped in, so don't call it from inside a `:needsOS` function.
+- `:shadow` — place under the OS ROM, on a layout that declares a `[shadow]` section. No shipped layout does — `xt6502` reaches its extra RAM through the bank windows — so on the shipped targets the compiler warns and falls through to `:main`. Cross-bank-style calls work either way — but `:shadow` code is unreachable when ROM is mapped in, so don't call it from inside a `:needsOS` function.
 - `:cloaked` / `:cloaked(<id>)` — place in a layout-declared cloaked region. xe-family-only. Bare `:cloaked` auto-packs into the layout's first declared region, with overflow spilling forward to the next region (and finally to `:main`). The id form pins the decl to a named region — useful when the layout has both `lib` (banking-off, exposed in main RAM) and numbered-bank `extN` regions and you want a specific one. The compiler errors on a target without cloaking support or on an unknown id; see [Linker scripts — `[cloaked]`](/compiler/usage/linker-scripts/#cloaked--code-regions-for-cloaked-decls) for the layout side. Auto-cloak (`-fauto-cloak={never,auto,always}`) promotes cloak-safe decls automatically, so most programs don't need the manual annotation.
 
 ### Shadow-target helpers

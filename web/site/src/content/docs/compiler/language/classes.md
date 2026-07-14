@@ -221,6 +221,47 @@ Writing `self.w` inside the getter `w()` would recurse infinitely. **Read the ba
 
 `b.w += 1` rewrites to `b.w = b.w + 1`, so the read side picks up the getter and the write side picks up the setter. The base expression (`b`) is evaluated **twice** in the desugared form — free for identifiers and `self`, watch-out only if the base has a side effect (a function call, for instance).
 
+## Bound methods (`^`)
+
+`&obj.method` yields a **bound method** — a `{receiver, code}` pair you can store in a field,
+pass as an argument, and call later. It is the callback type.
+
+```c
+typedef u16 act_t(void);
+
+class Button {
+    weak: act_t^ action;                      // a control that STORES an action
+    void setAction(act_t^ a) { action = a; }
+    u16  fire(void) { if (action) { return action(); } return (u16)0; }
+}
+
+Controller@ c = new Controller();
+Button@ b = new Button();
+
+b.setAction(&c.save);        // a bound METHOD — the receiver rides along
+b.setAction(&freeFn);        // a plain FUNCTION — widened into the same type
+b.setAction(&Ctl.onClick);   // a STATIC method — no receiver, widens the same way
+```
+
+All three fill the same field. A plain function has no `self`, so widening wraps it so the
+call site does not have to care which it got. That is target/action.
+
+### A `^` never owns its receiver
+
+Retaining it would refcount a `.text` address for a widened function, and would create a
+retain cycle for a bound one — a control that owns its target, which owns the control.
+
+So a **stored** `^` always auto-zeroes: when the receiver dies, the `^` becomes null and
+`if (action)` is false. That is the same machinery as
+[`weak:`](/compiler/language/memory/#weak-references), and it is why `weak: act_t^` is the
+idiomatic spelling of an action field. There is no `unowned` form — a `^` cannot check a
+dead receiver for you, so one must not be offered.
+
+### Identity
+
+A `^` compares as a pair, so two `^`s naming the same action are equal — which is what makes
+`removeAction(&f)` find what `addAction(&f)` stored.
+
 ## What's next
 
 - [Inheritance & protocols](/compiler/language/inheritance/) — single inheritance, virtual dispatch, downcasts, protocols.

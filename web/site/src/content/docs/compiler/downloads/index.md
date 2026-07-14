@@ -55,7 +55,7 @@ void main(void) {
 ```
 
 ```bash
-xtc -m xl -O2 hello.xt -o hello.xex
+xtc -O2 hello.xt -o hello.xex
 ```
 
 ```
@@ -77,4 +77,4 @@ One thing to note is that xtc will attempt to read from its 'support' folder for
 
 You should find the support directory itself in the resources/ folder that came in the download along with xtc, xta and xts.
 
-From here, [Compiler usage → CLI reference](/compiler/usage/cli/) covers the flags you'll reach for next; [Memory models](/compiler/usage/memory-models/) walks through picking a target beyond plain `xl`.
+From here, [Compiler usage → CLI reference](/compiler/usage/cli/) covers the flags you'll reach for next; [Memory models](/compiler/usage/memory-models/) walks through the xt6502 memory map.

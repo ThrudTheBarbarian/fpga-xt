@@ -164,8 +164,54 @@ void main(void) {
 }
 ```
 
+### Optional methods
+
+A protocol method marked `optional` need not be implemented. That is what makes the
+**delegate pattern** work — a delegate implements the two callbacks it cares about and
+ignores the rest.
+
+```c
+protocol WindowDelegate {
+    void willClose(void);
+    optional void didResize(u16 w, u16 h);   // may be absent
+}
+
+class Lazy <WindowDelegate> {
+    void willClose(void) { … }               // didResize omitted — legal
+}
+```
+
+An unimplemented `optional` leaves a **null slot**, so testing for it is just a null test on
+a [bound method](/compiler/language/classes/#bound-methods):
+
+```c
+act_t^ resized = &delegate.didResize;
+if (resized) { resized(w, h); }              // this IS respondsTo
+```
+
+Calling an `optional` method *directly* is a compile error — it might not be there. Take
+`&delegate.method` and test it.
+
+### `final`
+
+Virtuality is inferred whole-program: a method nobody overrides keeps its direct call and
+needs no marker. `final` exists for `--emit-lib`, where the program *isn't* whole — there,
+every exported instance method is treated as an override root, because the overrides may
+live in a client. `final` opts a method back out of the vtable and says so.
+
 ### Dispatch
 
-Calls through a protocol-typed pointer go through the same per-class vtable that class inheritance uses. Every protocol method is assigned its own global slot, and each conforming class's implementation lands in that slot in the class's own vtable. At the call site the compiler reads the instance's class-id byte and uses it to index the vtable — one indirect `JMP` per call, no runtime string lookup.
+Calls through a protocol-typed pointer go through the receiver's vtable, exactly as class
+inheritance does — one indirect call, no runtime string lookup.
 
-A class may adopt any number of protocols; the list is order-insensitive. When two protocols declare a method with the same name and signature, they share a single vtable slot, and a class that conforms to both supplies just one implementation covering both.
+A class may adopt any number of protocols; the list is order-insensitive.
+
+On whole-program targets each protocol method gets a slot in the flat vtable. On targets
+that can be linked as **multiple modules** (`arm9`), that will not do: two libraries built
+in ignorance of each other would number their protocols from the same base, and a class
+conforming to one from each could satisfy neither. So there, a protocol method is identified
+by its **index within its own protocol** — which every module derives identically, needing no
+agreement — and the receiver carries a small table mapping protocol → implementations.
+
+You do not have to think about any of this. It is the reason a protocol works across a `.so`
+at all; see [Modules & shared libraries](/compiler/language/modules/).

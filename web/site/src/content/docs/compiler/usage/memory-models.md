@@ -1,13 +1,18 @@
 ---
 title: Memory models
-description: Picking the right -m flag — xl, xe, xt, the rambo / compy variants, and the -shadow overlays.
+description: The -m flag and the xt6502 memory map — two bank windows, a 4 KB hardware stack, and the on-demand banked heap.
 ---
 
-A **memory model** is the layout the compiler targets: where code lives, where data lives, what banking (if any) is in play, and how the OS ROM is treated. Pick one with `-m <name>`. The default is `xl` — flat 64 KB, no tricks.
+A **memory model** is the layout a 6502 build targets: where code lives, where data lives,
+how banking works, and where the stack and heap sit. Pick one with `-m <name>`.
 
 ```bash
-xtc -m xe app.xt -o app.xex
+xtc -m xt app.xt -o app.xex
 ```
+
+Memory models apply to the **6502 backend only**. The other four targets
+(`arm64`, `arm9`, `m68k`, `x86_64`) are native platforms with a loader and an OS of their
+own — they have no layout to choose, and `-m` is ignored.
 
 To see every layout the compiler ships with:
 
@@ -15,191 +20,124 @@ To see every layout the compiler ships with:
 xtc -ll
 ```
 
-To inspect a specific layout's memory map:
+To inspect a layout's memory map:
 
 ```bash
-xtc --dump-layout -m xe-shadow
+xtc --dump-layout -m xt
 ```
 
-This page covers the shipped layouts and the trade-offs between them. The file format is on [Linker scripts (.lnk)](/compiler/usage/linker-scripts/) — useful if you're customising or writing your own.
+## The xt6502 target
 
-## The Atari layouts
+There is **one** 6502 target: **xt6502**, a custom FPGA 6502 core. The stock-Atari `xl`
+(flat 64 KB) and `xe` (PORTB-banked) models, the `rambo*` / `compy*` expansion variants, and
+the Commodore `c64` target have all been **retired** — `-m xl`, `-m xe` and `-m c64` now
+hard-error rather than silently producing something that won't run.
 
-```
-atari/xl              ← flat 64 KB, no banking, no shadow
-atari/xl-shadow       ← shadow ROM disable for ~14 KB extra "always on" RAM
-atari/xe              ← 130XE: 128 KB via PORTB-driven 16 KB window
-atari/xe-shadow       ← xe + shadow ROM disable
-atari/rambo192        ← extended memory variant (192 KB)
-atari/rambo256        ← (256 KB)
-atari/rambo320        ← (320 KB)
-atari/rambo576        ← (576 KB)
-atari/rambo1088       ← (1088 KB)
-atari/compy320        ← Compy-Shop variant (320 KB)
-atari/compy576        ← (576 KB)
-atari/xt              ← three-window banked + shadow main + banked heap + regC
-atari/xt-no-regC      ← xt without the region-C fallover
-atari/xt-no-bank      ← xt with no banked heap (bump heap, OS ROM live)
-                        (xt family is CUSTOM HARDWARE — not stock XL/XE)
-```
-
-`xtc -ll` is the authoritative list — the catalogue may grow.
-
-## The flat models
-
-### `xl` — standard 800XL, 64 KB
-
-The simplest layout. No banking, no shadow tricks. Roughly:
+The shipped layouts are:
 
 ```
-$2000  ┌─────────────────┐
-       │ Code + data     │
-       ├─────────────────┤  stack_low
-       │ Stack ↑         │  SP starts here, grows upward
-       │   (free RAM)    │
-       │          ↓ Heap │  HP starts at $9FFF, grows downward
-$9FFF  └─────────────────┘
-$A000  ┌─────────────────┐
-       │ OS ROM / I/O    │  CIO, math pack, charset, I/O regs
-$FFFF  └─────────────────┘
+xt         ← the standard model: two bank windows + on-demand banked heap
+xt-heap    ← the same map with a fixed heap reservation
 ```
 
-You get the bottom 32 KB minus startup overhead (typically ≈30 KB usable for code + data + stack + heap). Perfect for small programs and the easiest target for first-time exploration. **Default model.**
+`support/xt6502/layouts/xt.lnk` is the **single source of truth** for the map. The code
+generator, the assembler (`xta`) and the simulator (`xts`) all read the bank registers and
+regions out of it — nothing is hardcoded in any of them.
 
-### `xl-shadow` — flat with ROM disable
+## The map
 
-Extends `xl` by **disabling the OS ROM** to gain access to the ~14 KB of RAM that lives underneath at `$C000-$CFFF` and `$D800-$FFF9`. Trade-offs:
+```
+$0500-$07FF   spill-frame region (grows up)
+$2400-$3FFF   system region — entry point, startup, descriptors, literals
+$4000-$5FFF   screen RAM
+$6000-$9FFF   CODE bank window — one 16 KB page, selected by $D5C0
+$A000-$CFFF   DATA bank window — one 12 KB page, selected by $D5C1
+$D800-$FFF9   unbanked code
+```
 
-| Pro | Con |
-|-----|-----|
-| Zero-overhead access to ~14 KB of "always on" extra RAM | Disabling ROM breaks CIO, the floating-point math pack, and the default character set |
-| Predictable code placement — no banking trampolines | Charset must be relocated; a fake-frame VBI trampoline temporarily re-enables ROM for OS calls |
-| Fast — the CPU just reads/writes, no register pokes per access | Only one "bank" — content can't be paged in and out |
+Entry is at `$2400`.
 
-A function that needs the OS (file I/O, Atari math, etc.) gets annotated `:needsOS` and the codegen brackets the call with a ROM enable / disable pair. Keep `:needsOS` functions small and self-contained — many such calls means the ROM swap fires repeatedly and erases the speed advantage.
+### Two windows, memory-mapped selectors
 
-## The xe family — single 16 KB bank window
+The bank selectors are **memory-mapped registers**, not zero page: **`$D5C0`** selects the
+code window, **`$D5C1`** the data window. (Zero-page selectors were the old design; the boot
+ROM's RAM-clear loop zeroes zero page mid-init, which is exactly the wrong moment.) Generated
+code and the runtime asm see them as the symbols `__bank_code_reg` / `__bank_data_reg`, taken
+from the layout.
 
-### `xe` — 130XE, 128 KB
+With an 8-bit selector each:
 
-The 130XE adds 64 KB of banked RAM on top of the 64 KB base. xtc paged the bank window at `$4000-$7FFF` and selects the active bank by writing to **PORTB** (`$D301`). The codegen does this transparently — every cross-bank call goes through an `_xcall` trampoline that saves the current bank, switches, performs the JSR, and restores. From the source's perspective, banking does not exist:
+| Window | Page size | Pages | Addressable |
+|---|---|---|---|
+| Code (`$6000-$9FFF`) | 16 KB | 256 | **4 MB** of code |
+| Data (`$A000-$CFFF`) | 12 KB | 256 | **3 MB** of data |
+
+**Code lives in exactly two places** — the code-bank pages and the unbanked `$D800-$FFF9`
+region. It is **never** placed in the data window. `main` and a few must-stay-resident helpers
+run unbanked; everything else is packed into 16 KB code pages and reached through the unbanked
+`_xcall` trampoline, which saves the current code bank, switches, calls, and restores.
+
+From the source's point of view, banking does not exist:
 
 ```c
-class World { ... }     // lands in a bank
-class Player { ... }    // also a bank — possibly a different one
-void main(void) {
-    World@ w = new World();
+class World  { … }     // lands in some code bank
+class Player { … }     // possibly a different one
+
+i16 main(void)
+{
+    World@  w = new World();
     Player@ p = new Player();
-    p.bumpInto(w);                  // cross-bank if w and p are on different pages
+    p.bumpInto(w);      // cross-bank call — the trampoline handles it
+    return 0;
 }
 ```
 
-`XTBankPageTracker` first-fit packs classes and free functions across pages, so a large program scales naturally. Hot, always-resident code (runtime, math, main, interrupt handlers) lives in **main RAM** at `$A000-$BFFF` so it's reachable regardless of which bank is selected.
+Banking is **function-granular**, so a single function larger than the 16 KB window cannot be
+placed at all; `xta` fails the build rather than spilling code somewhere it can't run. Split
+it into smaller functions. (See [Future work](/compiler/future-work/) — intra-function banking
+is a planned fix.)
 
-The cost of banking is the per-cross-bank-call trampoline — measurable, but tiny compared to the value of having an extra 64 KB to play with on a 128 KB machine.
+### Pointers carry their bank
 
-### `rambo192` / `rambo256` / `rambo320` / `rambo576` / `rambo1088`
+xtc's 6502 pointers are **three bytes**: `[addr-lo, addr-hi, data-bank]`. The backend writes
+`$D5C1` from byte 2 on **every** dereference, so a pointer into any of the 256 data pages is
+just a pointer — no annotation, no manual bank juggling.
 
-The `rambo*` family is "bigger `xe`s". Same banking mechanism (PORTB-driven 16 KB window), more banks, more total RAM. The trailing number is total kilobytes:
+### The hardware stack
 
-| Layout | Total RAM | Banks |
-|--------|-----------|-------|
-| `rambo192` | 192 KB | 8 |
-| `rambo256` | 256 KB | 12 |
-| `rambo320` | 320 KB | 16 |
-| `rambo576` | 576 KB | 32 |
-| `rambo1088` | 1088 KB | 64 |
+The xt6502 core has a **4 KB hidden hardware stack** (12-bit SP) with SP-relative addressing
+(`d,SP`, `(d,SP),Y`, `d,SP,X`). That is the primary stack: it carries frames, parameters and
+register spills, and the runtime libraries push their recursion frames on it too. Its top 256
+bytes alias `$0100-$01FF`, so legacy `TSX` + `$0100,X` code still works.
 
-The linker script for each model just adjusts which PORTB bits drive the bank selection. Programs that fit in `xe` run on any `rambo*` unchanged; programs that overflow `xe` may compile cleanly against `rambo256` if the bank packer can find room.
+There is exactly **one** software stack pointer (SSP), used only for the rare non-leaf spill
+frame whose pinned locals don't fit in zero page; those frames live in the `$0500-$07FF`
+region.
 
-### `compy320` / `compy576`
+### The heap grows on demand
 
-The same idea as the `rambo*` line, but using the bit pattern of the **Compy-Shop** memory expansion. Pick by hardware — the catalogue is per-physical-card.
+`xt` declares a **banked free-list heap** in the data window, which is what makes
+`-falloc=heap` (and therefore ARC, `new` / `delete`) the default on this target. It is
+*on-demand*: it claims one data bank at a time from a shared bank bitmap as allocation needs
+it, grows up to the window's last page (3 MB), and gives empty banks back.
 
-### `xe-shadow` and the shadow variants
+There is no fixed reservation to tune — a program uses as much heap as it needs without
+editing the layout. The one limit: **a single allocation cannot span a bank boundary**, so no
+one object may exceed ~12 KB. Total heap is unaffected. This is by design.
 
-Every banked layout has a **`-shadow`** sibling that combines banking with ROM disable. You get the bank window at `$4000-$7FFF` **and** the ~14 KB of shadow RAM at `$C000-$CFFF` + `$D800-$FFF9`. The `:needsOS` discipline applies — wrap any OS-using function with the annotation, keep them small.
+`xt-heap` is the variant with a fixed heap reservation instead, for when you want the
+allocation deterministic.
 
-The rule of thumb is: put hot / always-resident code in **shadow RAM**; spill cold or bulky class methods into the **bank window**. The codegen handles the placement automatically given the function annotations described in [Functions → Placement](/compiler/language/functions/#placement).
+## Libraries resolve by architecture × platform
 
-## The xt family — three independent bank windows
-
-:::note[Being redesigned around the new-xt FPGA core]
-The `xt` description below is the **0.12 shipping model** — three
-zero-page-selected bank windows. In the active development tree the `xt`
-target is being rebuilt around a **custom FPGA 6502** ("new-xt") with a
-**4 KB hidden hardware stack** (12-bit SP) and **SP-relative addressing**
-(`d,SP`, plus `(d,SP),Y` and `d,SP,X`) in place of the bank-window scheme,
-so the compiler can keep locals and temporaries in a real stack frame
-instead of zero page. That work is **in development** and not in a released
-build — see [Future work](/compiler/future-work/).
-:::
-
-:::caution[Requires custom hardware]
-The `xt` family targets a banking scheme that **does not exist on stock XL or XE machines**. Selecting `-m xt` produces a binary that pokes zero-page bank-select registers (`$82`/`$83`/`$84`/`$85`) which the standard Atari hardware does not interpret as bank selectors — those are just plain RAM there. Picking `xt` only makes sense if you have (or are designing for) an aftermarket hardware expansion that implements the three-window mapping at those addresses. On unmodified hardware, use `xe` or `rambo*` / `compy*` instead.
-:::
-
-### `xt` — three-window banked target
-
-`xt` solves the main pain point of `xe`: when `xe` switches its 16 KB window for a heap access, it also swaps out the caller's own code page. `xt` splits the `$4000-$7FFF` aperture into **three independent windows** with separate selectors:
-
-```
-$4000  ┌──────────────────┐
-       │ Code bank        │  $82 selects this 8 KB page
-       │   (8 KB via $82) │  Classes and :banked functions
-$5FFF  └──────────────────┘
-$6000  ┌──────────────────┐
-       │ Data bank (B)    │  $83 selects this 4 KB page
-       │  (4 KB via $83)  │  Heap, spilled struct data, array storage
-$6FFF  └──────────────────┘
-$7000  ┌──────────────────┐
-       │ Region C bank    │  $84/$85 (16-bit pair) selects this 4 KB page
-       │ (4 KB via $84/85)│  Extended HyperRAM beyond the first 4 MB
-$7FFF  └──────────────────┘
-```
-
-Code, data, and region C can each page independently, so switching the data bank for a heap access **doesn't swap out the caller's own code page**. The cost is more zero-page real estate burned on bank registers, plus the requirement that the host hardware implement the three-register mapping (the callout above). See the source repo's `doc/xt-usage.md` for the full hardware story.
-
-The default `xt` layout pulls the full hardware story together: shadow ROM disable for ~22 KB of main code at `$A000-$CFFF` + `$D800-$FFF9`, a banked free-list heap in the data-pool window, and region-C fallover for the regions beyond the first ~2 MB of HyperRAM. Two narrower variants are also available — `xt-no-regC` drops the region-C fallover (frees `$84`/`$85` ZP), and `xt-no-bank` keeps the bank windows wired for `:banked` code but pins the heap to a bump allocator in the system region with the OS ROM still mapped.
-
-### Pay-for-what-you-use (region C)
-
-A program whose call graph never touches `$84`/`$85` produces **byte-identical XEX** to a layout without region C at all. The compiler tracks which functions reach region C (transitively) and gates the entire region-C machinery — ZP reservation of `$84`/`$85`, the region-C-aware `_xcall` trampoline, and the heap.asm region-C variant — on whether the program reaches it.
-
-## The Commodore platform
-
-```
-commodore/c64
-```
-
-A single layout for the C64 today. The Commodore platform is a sister target that uses the same compiler driver and language but a different output format (`.prg`) and a different standard library implementation (under `support/commodore/lib/`).
-
-:::note[New-IR: libraries resolve by architecture × platform]
-The 0.12 standard library is selected by **platform** — `support/atari/lib`
-vs `support/commodore/lib`, falling back to the arch-neutral
-`support/generic/lib`. The new-IR backends (in development) add an
-**architecture** axis on top: each backend also searches its CPU tree —
-`support/arm64/lib` for the native arm64 backend, the 6502 runtime for the
-6502 backends — so one Foundation source compiles for very different
-machines. See [Future work](/compiler/future-work/).
-:::
-
-## Choosing a model
-
-| When you have | And you want | Pick |
-|---------------|--------------|------|
-| 64 KB stock 800XL | The simplest possible build | `xl` |
-| 64 KB stock 800XL | Maximum "always on" RAM | `xl-shadow` |
-| 130XE / RAM expansion | Transparent bank switching | `xe` |
-| 130XE | Maximum RAM **and** ~14 KB extra in shadow | `xe-shadow` |
-| Larger Atari RAM expansion | Match your card's bit pattern | `rambo*` or `compy*` |
-| Custom three-window hardware | Full configuration (shadow + heap + regC) | `xt` |
-| Custom three-window hardware | Heap, no region-C fallover | `xt-no-regC` |
-| Custom three-window hardware | Bank windows for explicit `:banked` only, no heap | `xt-no-bank` |
-| C64 | C64 PRG output | `commodore/c64` |
-
-If you're not sure, start with **`xl`**. Move to `xe` when you've outgrown 64 KB. Move to a `-shadow` variant when you want the extra RAM in the I/O hole. Reach for `xt` only when you've got the hardware to back it.
+The standard library is selected on **two** axes: the backend's CPU tree
+(`support/xt6502/`, `support/arm64/`) and the arch-neutral `support/generic/lib` beneath it,
+with a platform-specific file of the same name winning. That is how one `Stdio.xt` or
+`Math.xt` source serves a banked 6502 and a 64-bit host.
 
 ## Customising or writing your own
 
-Every memory model is a `.lnk` file shipped under `support/<platform>/layouts/`. Open one in a text editor — the format is documented (and self-documenting) at [Linker scripts (.lnk)](/compiler/usage/linker-scripts/). Copy and modify; pass your custom file with `-m ./my-layout.lnk` or drop it next to the shipped layouts and reference by name.
+Every memory model is a `.lnk` file under `support/xt6502/layouts/`. Open one — the format is
+documented (and self-documenting) at
+[Linker scripts (.lnk)](/compiler/usage/linker-scripts/). Copy and modify; pass your own file
+with `-m ./my-layout.lnk`, or drop it next to the shipped layouts and reference it by name.

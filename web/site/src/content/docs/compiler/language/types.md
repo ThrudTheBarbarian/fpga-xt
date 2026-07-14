@@ -108,7 +108,7 @@ u16@ heap = new u16[64];
 u16 n2 = heap.length;         // runtime: read from heap header → 64
 ```
 
-`.length` on a non-heap pointer (a `T@` that didn't come from `new T[N]`) is undefined — the codegen reads whatever bytes happen to live before the pointer. Bump-allocator targets store no header, so `.length` is meaningful only on heap-allocator targets (`xl-shadow`, `xe-nobank`, `xt`, `xe-heap`, the rambo / compy family).
+`.length` on a non-heap pointer (a `T@` that didn't come from `new T[N]`) is undefined — the codegen reads whatever bytes happen to live before the pointer. Bump-allocator targets store no header, so `.length` is meaningful only under `-falloc=heap` (the default on the 6502 `xt` layouts and on every native backend).
 
 ## Pointers
 

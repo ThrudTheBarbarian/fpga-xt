@@ -3,55 +3,97 @@ title: ChangeLog
 description: Release notes for the xtc toolchain — bug fixes and new features per version.
 ---
 
-## Unreleased — new-IR backend + new-xt core (in development)
+## Version 0.2 — five backends, shared libraries, bound methods
 
-This work lives in the active development tree and is **not in a released
-build** — the [downloads](/compiler/downloads/) are still the 0.12 AST-codegen
-compiler. It tracks a ground-up reimplementation of the code generator
-around an architecture-neutral IR plus a redesigned 6502 target, so the
-items below are progress notes, not shipped features.
+A new version line. 0.12 was the last of the AST code generator; **0.2** is the first of the
+IR compiler, which replaces it entirely. The old code generator has been removed.
 
-### New-IR pipeline
+### Five backends, one IR
 
-A new **architecture-neutral IR** sits between the semantic analyser and
-code generation, with pluggable backends. Two exist today:
+The compiler lowers to a single architecture-neutral IR and out through five live backends,
+each passing the full fixture corpus:
 
-- **arm64** — a native macOS / Linux backend that runs the lowered IR
-  directly. Its job is fast, end-to-end validation (and `lldb` debugging)
-  of the arch-neutral lowering; it's also the first step toward genuinely
-  native targets (e.g. an ARM microcontroller).
-- **xt6502** — the new-xt 6502 core (below). Codegen here is mid-flight.
+| `-A` | Target | Output |
+|---|---|---|
+| `6502` *(default)* | banked **xt6502** — 4 KB hidden hardware stack, SP-relative addressing | Atari `.xex`, run under `xts` |
+| `arm64` | native macOS / Linux host | Mach-O / ELF executable |
+| `arm9` | AArch32 / **XTOS** | ELF executable, or a `.so` |
+| `m68k` | Atari ST | GEMDOS `.tos`, run under `xst` |
+| `x86_64` | Linux (musl) | ELF executable |
 
-Libraries now resolve by **architecture × platform**: the backend's CPU
-tree (`support/arm64/lib`, the 6502 runtime) is searched alongside the
-board / OS platform (`support/atari/lib`, `support/commodore/lib`) and the
-arch-neutral `support/generic/lib`. The 6502 runtime asm moved out of
-`support/generic/asm` into a 6502-arch tree (`support/6502/asm`);
-`generic/` is now arch-neutral content only.
+Standard-library classes resolve by **architecture × platform**, so one source serves all of
+them.
 
-### New-xt 6502 core (SALLY embellishments)
+The Atari `xl` / `xe` flat and PORTB memory models, and the Commodore `c64` target, are
+**retired**.
 
-The `xt` target is being redesigned around a **custom FPGA 6502** with a
-**4 KB hidden hardware stack** (12-bit SP), **SP-relative addressing**
-(`LDA/STA d,SP`, `ADC/SBC/CMP d,SP`), and newer **indirect / indexed
-SP** modes (`(d,SP),Y` to dereference a stack-resident pointer in place,
-`d,SP,X` for indexed in-frame aggregates). This replaces the old
-three-window bank-switched `xt` described under [Memory models](/compiler/usage/memory-models/).
+### Shared libraries — `--emit-lib` and `#import <Lib>`
 
-### Fixes shaken out along the way
+On `arm9`, a program can be split into a library and its clients:
 
-- arm64: short-circuit `||` / `&&` / `?:` evaluated one side
-  unconditionally — a `CondBranch` phi-copy clobbered the branch condition
-  register before the test.
-- arm64: pointer equality compared only the low 32 bits, so `p == null`
-  (and any pointer `==`/`!=`) could be wrong on 64-bit hosts.
-- protocol / virtual dispatch: the vtable slot numbering disagreed between
-  sema and the lowering, so a call could land on the wrong method body.
-- inline-`asm{}` references to xtc locals now bind to the local's storage
-  instead of leaking as undefined symbols.
-- Foundation `Map` / `Set` slot tags compare the full pointer rather than a
-  `(u16)` truncation that could alias a live 64-bit key onto the
-  empty/tombstone sentinels.
+```bash
+xtc -A arm9 --emit-lib -o libXtg.so xtg.xt
+xtc -A arm9 -L . -o app.so app.xt
+```
+
+The library carries its **own interface inside the `.so`**, so `#import <Xtg>` type-checks
+the client against the real binary — there is no header to drift out of sync. Classes (with
+inheritance and virtual dispatch back into a client subclass), protocols, structs by value,
+enums (constants *and* type names), free functions, typedefs, `weak:` fields, bound methods,
+and C types re-exported from *other* libraries all cross the boundary.
+
+`#import <Foo>` also reads a plain **C** library's DWARF for its functions, types and enum
+constants. (Build the C library with `-fno-eliminate-unused-debug-types` or gcc drops the
+enum constants — see [Modules](/compiler/language/modules/).)
+
+### Protocols across a `.so`
+
+A protocol method is identified by its **index within its own declaration**, and the protocol
+by a hash of its **name** — both derived identically by every module with no coordination. So
+two libraries built in complete ignorance of each other compose, and a class conforming to a
+protocol from each dispatches correctly through both.
+
+### Bound methods (`^`) and optional protocol methods
+
+`&obj.method` yields a storable, callable `{receiver, code}` value; a plain function or a
+static method **widens** into the same type, so one `action` field takes any of them. A
+stored `^` never owns its receiver and auto-zeroes when the receiver dies.
+
+An `optional` protocol method may be left unimplemented, leaving a **null slot** — so testing
+a `^` *is* `respondsTo`:
+
+```c
+act_t^ resized = &delegate.didResize;
+if (resized) { resized(w, h); }
+```
+
+Together these make the delegate and target/action patterns work.
+
+### `extern` globals
+
+Globals are scoped to the module they are compiled in. `extern u16 gCounter;` refers to one
+defined elsewhere without reserving storage for a second copy — which is what an imported
+library's globals need.
+
+### `weak:` without a table
+
+Weak slots are threaded onto an **intrusive list** whose head lives in the referent's own
+heap header. No capacity limit (the old bounded side table is gone, along with its
+`[weak] entries` knob), O(1) stores, and destroying an object with **no** weak references
+costs *one null test* instead of a full table scan. Works on a stored `^` too
+(`weak: act_t^`).
+
+### `final`
+
+Opts a method back out of the vtable under `--emit-lib`, where whole-program devirtualisation
+is unsound because the program isn't whole.
+
+### Diagnostics
+
+A long-standing habit of *degrading silently rather than refusing* has been swept out. A
+store to a non-existent struct field, an unknown type name, an unresolvable imported type, and
+a construct the lowering cannot express are now **errors**, not notes that let the build
+succeed with the code quietly missing.
 
 ## Version 0.12
 

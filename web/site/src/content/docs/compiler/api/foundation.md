@@ -20,7 +20,7 @@ For convenience, `Foundation.xt` is an umbrella that pulls in all four plus the 
 
 All four inherit from the runtime's built-in `Object` root class — every parentless `class X` does — so a `Number@`, `String@`, `Data@`, or any user class fits anywhere an `Object@` is expected. No `: Object` annotation is needed in source.
 
-All three need a real heap allocator (the `-falloc=heap` free-list path). They run on every heap-capable target — `xl-shadow`, `xe-nobank`, `xt`, and `xe-heap`. Bump-only targets reject the `new u8[N]` calls these classes use internally.
+All three need a real heap allocator (the `-falloc=heap` free-list path), which is the default on the 6502 `xt` layouts and on every native backend. A bump-only target rejects the `new u8[N]` calls these classes use internally.
 
 ## `Number`
 
@@ -251,4 +251,4 @@ for (u16 i = (u16)0; i < a.count(); i++) {
 }
 ```
 
-Verified on every heap-capable target — `xl-shadow`, `xe-nobank`, `xt`, `xe-heap` — at O0/O2/O3.
+Verified on every live backend — xt6502, arm64, arm9, m68k, x86_64 — at O0/O2/O3.

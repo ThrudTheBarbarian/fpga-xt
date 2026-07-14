@@ -35,4 +35,4 @@ The `-Q loop` command-line switch changes the post-`main` behaviour to an infini
 
 ## Platform notes
 
-`System` is also implemented for the C64 under `support/commodore/lib/System.xt`, with the same signature. The C64 version returns through the BASIC warm-start vector instead of Atari's `DOSVEC`.
+`System` is implemented per-architecture with the same signature everywhere — the 6502 version returns through Atari's `DOSVEC`; the native backends call the host's `exit`.

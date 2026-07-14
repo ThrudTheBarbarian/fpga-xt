@@ -9,7 +9,7 @@ description: Test-fixture assertion helpers; gated to no-ops by -DNDEBUG / -DREL
 #import <Assert.xt>          // generic — works on every platform
 ```
 
-`Assert.xt` lives under `support/generic/lib/`, not a platform directory — it works the same on Atari, Commodore, and any future port.
+`Assert.xt` lives under `support/generic/lib/`, not an architecture directory — it works the same on every target.
 
 ## Release-build gating
 

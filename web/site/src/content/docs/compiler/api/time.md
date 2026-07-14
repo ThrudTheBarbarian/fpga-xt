@@ -79,4 +79,4 @@ That gives a 24-bit jiffy counter (max `$FFFFFF`, ~16.7 million jiffies). At 50 
 
 ## Platform notes
 
-`Time` is reimplemented for Commodore 64 under `support/commodore/lib/Time.xt`, driving the C64's `JIFFIES` zero-page timer instead of `RTCLOK`. The signatures and semantics match.
+`Time` is reimplemented per-architecture — the native backends read a real monotonic clock through the host runtime rather than the Atari `RTCLOK` jiffy counter. The signatures and semantics match.

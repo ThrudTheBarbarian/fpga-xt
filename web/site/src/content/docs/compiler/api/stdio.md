@@ -162,4 +162,4 @@ Every variadic call shares a single 64-byte pack buffer (the address is platform
 
 ## Platform notes
 
-`Stdio` is reimplemented per-platform. The Atari version writes through the OS character output channel; the Commodore 64 version (under `support/commodore/lib/Stdio.xt`) drives the C64 KERNAL. The class API stays identical — same method signatures, same format specifiers — so a program that only uses `Stdio` for output is portable between the two without source changes.
+`Stdio` is reimplemented per-architecture. The 6502 version writes through the Atari OS character output channel; the native backends route through the host runtime. The class API stays identical — same method signatures, same format specifiers — so a program that only uses `Stdio` for output is portable across every target without source changes.

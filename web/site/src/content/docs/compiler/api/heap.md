@@ -9,7 +9,7 @@ description: Introspection helpers for the coalescing free-list heap allocator.
 #import <Heap.xt>
 ```
 
-`Heap` is meaningful only on heap-allocator targets — currently `xl-shadow`, `xe-nobank`, `xt`, `xe-heap`, and the multi-bank `rambo*` / `compy*` variants. On bump-allocator targets the allocator keeps no free-list metadata, so `size()` and `largest()` would return misleading values.
+`Heap` is meaningful only under `-falloc=heap` — the default on the 6502 `xt` layouts and on every native backend. On a bump-allocator target the allocator keeps no free-list metadata, so `size()` and `largest()` would return misleading values.
 
 ## Methods
 
@@ -29,7 +29,7 @@ Stdio.printf("heap: %lu free of %lu (largest extent: %u)\n", free, total, max);
 
 ## Why the types differ
 
-- **`size()` and `totalSize()` are `u32`** because a multi-bank heap can easily exceed 64 KB. For example, `xe-heap` reserves 6 banks × 16 KB = 96 KB; `rambo576` goes higher.
+- **`size()` and `totalSize()` are `u32`** because a multi-bank heap easily exceeds 64 KB. The 6502 `xt` heap grows on demand across the data window's 256 pages — up to 3 MB.
 - **`largest()` is `u16`** because a single free extent cannot span a bank boundary — it's bounded by the flat region size or one 16 KB bank, both of which fit in 16 bits.
 
 ## What "free" means

@@ -19,7 +19,6 @@ support/
     Stdio.xt  Math.xt  Time.xt  Heap.xt  System.xt  Vbi.xt  FILE.xt
     Gfx.xt  Gfx6.xt  Gfx7.xt  Gfx8.xt  Gfx15.xt  GfxFactory.xt   ← graphics (not yet documented)
     mapData.xt  symbols.xt                                       ← (not yet documented)
-  commodore/lib/      ← C64 mirrors: Stdio / Math / Time / System
   arm64/lib/          ← host (arm64) target: Stdio / Math / Time / Heap / FILE
   6502/asm/           ← 6502 assembly runtime (mul/div, heap, float) — not .xt classes
 ```
@@ -64,12 +63,12 @@ Bare-call promotion (`use Stdio;` and the `#use` shorthand) is documented under 
 | Class | Role | Where |
 |-------|------|-------|
 | [`Foundation`](/compiler/api/foundation/) | Object-style value wrappers + first container (`Number`, `String`, `Data`, `Array`) | `generic/lib/` |
-| [`Stdio`](/compiler/api/stdio/) | screen output, cursor positioning, formatted print | `atari/lib/`, `commodore/lib/` |
-| [`Math`](/compiler/api/math/) | random numbers, square root, trig, log/exp/pow, constants | `atari/lib/`, `commodore/lib/` |
-| [`Time`](/compiler/api/time/) | RTCLOK access, jiffy / second timing, busy-wait delays | `atari/lib/`, `commodore/lib/` |
+| [`Stdio`](/compiler/api/stdio/) | screen output, cursor positioning, formatted print | per-architecture `lib/` |
+| [`Math`](/compiler/api/math/) | random numbers, square root, trig, log/exp/pow, constants | per-architecture `lib/` |
+| [`Time`](/compiler/api/time/) | RTCLOK access, jiffy / second timing, busy-wait delays | per-architecture `lib/` |
 | [`Heap`](/compiler/api/heap/) | heap allocator introspection (free, largest, total) | `atari/lib/` |
 | [`Vbi`](/compiler/api/vbi/) | install / remove Vertical-Blank-Interrupt handlers | `atari/lib/` |
-| [`System`](/compiler/api/system/) | process control (`exit`) | `atari/lib/`, `commodore/lib/` |
+| [`System`](/compiler/api/system/) | process control (`exit`) | per-architecture `lib/` |
 | [`Assert`](/compiler/api/assert/) | test-fixture assertion helpers; gated to no-ops by `-DNDEBUG` / `-DRELEASE` | `generic/lib/` |
 | [`Sort`](/compiler/api/sort/) | in-place quicksort with a user-supplied comparator | `generic/lib/` |
 

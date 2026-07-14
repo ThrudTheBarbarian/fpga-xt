@@ -68,4 +68,4 @@ If you don't have a clear reason to use immediate, prefer deferred — your hand
 
 ## Banking
 
-On `xt` and `xe` (banked targets), `:vbi` and `:irq` handlers are placed in **main RAM** at a stable address — the OS dispatcher `JMP`s through the vector slot directly, with no opportunity for the bank-switch trampoline to swap the right page in. The codegen handles this automatically; you don't need to annotate the function `:main`.
+On the banked `xt` target, `:vbi` and `:irq` handlers are placed in **unbanked RAM** at a stable address — the OS dispatcher `JMP`s through the vector slot directly, with no opportunity for the bank-switch trampoline to swap the right page in. The codegen handles this automatically; you don't need to annotate the function `:main`.

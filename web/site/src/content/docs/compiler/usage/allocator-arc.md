@@ -51,7 +51,7 @@ Use heap when:
 - Class instances come and go (heap classes need `dealloc`, which needs `release`, which needs the heap allocator).
 - The program needs the `Heap.size()` / `Heap.largest()` / `Heap.totalSize()` introspection helpers.
 
-The heap allocator is **available only on layouts that declare a `[heap]` region** — currently `xl-shadow`, `xe-nobank`, `xt`, `xe-heap`, and the multi-bank `rambo*` / `compy*` extended-memory variants. On those targets `-falloc=heap` is the default. Other layouts fall back to bump and reject heap-only constructs (`delete`, `release`, the introspection helpers) at sema time.
+The heap allocator is **available on any layout that declares a `[heap]` region** — the shipped 6502 `xt` layouts do — and on all four native backends. On those targets `-falloc=heap` is the default. A layout without a `[heap]` region falls back to bump and rejects heap-only constructs (`delete`, `release`, the introspection helpers) at sema time.
 
 ### Mixing
 

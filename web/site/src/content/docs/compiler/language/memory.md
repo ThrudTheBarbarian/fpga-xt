@@ -3,7 +3,7 @@ title: Heap, ARC & weak refs
 description: "new and delete, automatic reference counting, weak: references, manual -farc=off mode."
 ---
 
-xtc has a coalescing free-list heap with reference-counted ownership. It is available on any memory layout that declares a `[heap]` region — currently `xl-shadow`, `xe-nobank`, `xt`, `xe-heap`, and the `rambo*` / `compy*` extended-memory variants. On those targets `-falloc=heap` is the default; layouts without a `[heap]` region fall back to a bump allocator (heap-only statements are rejected at sema time).
+xtc has a coalescing free-list heap with reference-counted ownership. It is available on any memory layout that declares a `[heap]` region — the shipped 6502 `xt` layouts do — and on all four native backends. On those targets `-falloc=heap` is the default; a layout without a `[heap]` region falls back to a bump allocator (heap-only statements are rejected at sema time).
 
 Banked-heap targets reserve one or more 16 KB bank pages for the heap, and the runtime selects the appropriate bank on each allocator call transparently.
 
@@ -101,7 +101,7 @@ class Parent {
 }
 ```
 
-A `weak:T@` slot holds a raw pointer but is **invisible to refcounting** — assigning to it doesn't retain, releasing the pointee doesn't consult it. Instead the runtime tracks every live weak slot in a bounded side table; when a refcount reaches zero, the dealloc path walks the table and writes `$00` through every slot pointing at the dying block. Reads of the slot after that return null.
+A `weak:T@` slot holds a raw pointer but is **invisible to refcounting** — assigning to it doesn't retain, releasing the pointee doesn't consult it. Instead every live weak slot is linked onto a chain hanging off the referent's own heap header; when a refcount reaches zero, the dealloc path walks *that object's* chain and writes `$00` through every slot pointing at the dying block. Reads of the slot after that return null.
 
 ```c
 Parent@ p = new Parent();
@@ -114,8 +114,8 @@ p = (Parent@)0;                  // p's release cascades:
 //     Aggregate walker releases Parent.kid.
 //       Child refcount → 0; dealloc fires.
 //         Walker processes Child.dad — it's weak, so the
-//         walker just unregisters the slot from the side
-//         table. No decref.
+//         walker just unlinks the slot from Parent's weak
+//         chain. No decref.
 //     Child freed.
 //   Weak walker zeroes any external weak refs to Parent.
 //   Parent freed.
@@ -128,29 +128,44 @@ Weak slots come in all the shapes a strong pointer can take:
 ```c
 weak:Foo@ g;                     // module-scope global
 weak:Foo@ local;                 // stack-resident local
-weak:Foo@ arr[8];                // stack array of weak slots
+weak:Foo@ arr[8];                // array of weak slots
+struct Row { weak:Foo@ owner; }  // struct field
 class Observer {
     weak:Subject@ target;        // ivar
+    weak: act_t^  action;        // a weak BOUND METHOD — target/action
 }
 ```
 
+That last one is the important one. A stored [`^`](/compiler/language/classes/#bound-methods)
+auto-zeroes anyway, and `weak:` on it says so — an action whose target dies reads as null
+rather than calling into freed memory.
+
 ### Rules and limits
 
-- **Class pointers only.** `weak:u8@` and similar are rejected at compile time — the side table keys on heap-block addresses, and non-class pointers don't own heap blocks with refcount headers.
+- **Class pointers only.** `weak:u8@` and similar are rejected at compile time — the chain head lives in a heap block's refcount header, and non-class pointers don't have one.
 - **Use `weak:banked:T@` when the pointee is itself banked.** Bare `weak:T@` in a class ivar means "whatever placement the target uses for a bare T@". On banked-heap layouts that's a 2-byte implicit-bank pointer — fine for ivars holding heap-placement pointees. If you need a per-instance bank byte in the weak slot (because the pointee really is `banked:T@`), say so explicitly.
 - **Cycle-detection is your responsibility.** There is no automatic cycle collector; the `weak:` annotation is how you tell the compiler which edge in a cycle is the non-owning one.
-- **Reading is a plain pointer read.** A non-null weak slot is guaranteed to point at a live block (the side table is updated eagerly *before* the block's dealloc runs), so `if (w != 0) ...` is sufficient — no special `weak_load` primitive.
+- **Reading is a plain pointer read.** A non-null weak slot is guaranteed to point at a live block (the chain is zeroed *before* the block's dealloc runs), so `if (w != 0) ...` is sufficient — no special `weak_load` primitive.
 
-### Side-table sizing
+### How it works: no table, no cap
 
-The side table is bounded. By default it holds 64 entries; each entry accounts for one declared weak slot (arrays contribute their element count). If the static count of weak declarations in your program exceeds the capacity, sema emits a warning at compile time. To raise the cap, add a `[weak]` section to your `.lnk`:
+A weak reference costs nothing you have to budget for. The slots are threaded onto an
+**intrusive doubly-linked list** whose head lives in the referent's own heap header, so:
 
-```ini
-[weak]
-entries = 128       # default 64; max 255
-```
+- there is **no capacity limit** — nothing to size, nothing to overflow;
+- a weak store is **O(1)**;
+- and destroying an object with **no** weak references — which is nearly every object in any
+  program — costs **one null test**, not a scan.
 
-The maximum is **255**. Internally the runtime stores entries across six parallel byte-wide tables (obj lo / hi / bank, slot lo / hi / bank) indexed by the entry number, and the scan loops terminate on `CPX #WEAK_TABLE_ENTRIES / BEQ done` — an 8-bit immediate compare, which is why 256 doesn't fit. Footprint is `6 × N` bytes in main RAM, so the default 64 costs 384 bytes and the ceiling 255 costs 1530 bytes.
+That last point is the one that mattered. An earlier design used a bounded side table that
+every `dealloc` scanned in full, so every object in the program paid for a feature it did not
+use: closing a window of ~500 objects cost ~500 × N comparisons, and 499 of those objects had
+never been weakly referenced by anything.
+
+:::note[If you have an old `.lnk`]
+`[weak] entries = N` used to size that table. It is accepted and ignored — there is nothing
+to configure.
+:::
 
 ## Manual lifecycle (`-farc=off`)
 
@@ -178,7 +193,6 @@ The `Heap` library class (`#import <Heap.xt>`) exposes static helpers for inspec
 
 ## Limits
 
-- **A single block cannot exceed 16 KB** — that's the size of the bank page holding the heap. Multi-bank layouts (rambo*, compy*) hold more *in total*, but no one allocation spans a bank boundary.
+- **On the 6502, a single block cannot exceed one bank** (~12 KB) — that's the size of the data page holding it. The heap holds far more *in total* (it grows across banks on demand), but no one allocation spans a bank boundary. The native backends have no such limit.
 - **Retain counts saturate at `$FFFF`** (65535). Effectively unlimited for normal ownership patterns; not a defect to be worked around with additional retains.
-- **Weak-reference side table defaults to 64 entries**; max 255 (see above).
-- **On `xt` and `xe-heap`,** any function or method that touches a heap pointer (direct deref, calling a method on a heap-allocated class, running a custom `dealloc`) must be annotated `:main`. A `:banked` function runs with its own bank selected, so the heap bank wouldn't be visible during the call.
+- **On the 6502**, a heap pointer carries its own data bank in its third byte, and the backend re-selects that bank on every dereference. Because the code window and the data window have *separate* selectors, a `:banked` function can touch the heap freely — it does not swap its own code page out to do so.

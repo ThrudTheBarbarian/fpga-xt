@@ -23,7 +23,7 @@ The compiler produces three lines of summary by default — what optimisation pa
 
 - **[CLI flag reference](/compiler/usage/cli/)** — every command-line option, grouped by purpose. Start here when you want to know what a specific flag does.
 - **[Optimisation](/compiler/usage/optimization/)** — what each `-O` level adds, the tuning knobs (`-Fli`, `-Flu`), how to read the optimiser's "before/after" instruction count.
-- **[Memory models](/compiler/usage/memory-models/)** — picking among `xl`, `xe`, `xt`, the `rambo*` / `compy*` variants, and the `-shadow` overlays. Includes the trade-offs between shadow RAM and banked RAM.
+- **[Memory models](/compiler/usage/memory-models/)** — the `xt6502` map: two bank windows, the 4 KB hardware stack, and the on-demand banked heap. 6502-only; the native targets have no layout to choose.
 - **[Allocator & ARC](/compiler/usage/allocator-arc/)** — `-falloc=bump` vs `-falloc=heap`, and the `-farc=on|off` choice between automatic and manual reference counting.
 - **[Linker scripts (.lnk)](/compiler/usage/linker-scripts/)** — the file format that defines a memory model. Customise an existing layout or write a new one for non-standard hardware.
 
@@ -41,7 +41,6 @@ The output format is determined by the `-o` filename extension or by the `[outpu
 |-----------|--------|
 | `.asm` | 6502 assembly source (no assembler invocation) |
 | `.xex`, `.exe`, `.bin`, `.com` | Atari XEX binary |
-| `.prg` | Commodore 64 PRG binary |
 
 Asking for `.asm` stops the pipeline after the compiler — useful when integrating with a separate assembler workflow or when inspecting the generated assembly.
 
