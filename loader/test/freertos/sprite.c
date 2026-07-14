@@ -205,6 +205,17 @@ static int s_pend_up;
 static int s_btn;                       /* space-toggle / SGR button state */
 static int s_mouse_gen = -1;            /* focus generation the enable was sent under */
 static int s_cols = 80, s_rows = 24;    /* terminal text area (CSI 18t reply) */
+/* SGR-PIXELS (?1016): the terminal reports mouse coordinates in text-area PIXELS instead of
+ * cells — same ~cadence, ~17x finer horizontal granularity. Three-part handshake, each part
+ * defensive because terminals lie by omission:
+ *   - we ARM 1016 (a terminal that lacks it ignores the sequence and keeps sending cells);
+ *   - we query CSI 14t for the text area's PIXEL size (the scale denominator);
+ *   - we believe reports are pixels only after one PROVES it by exceeding the cell grid
+ *     (there is no ACK for 1016 — a coord like x=53 could be either unit, but x=800 in a
+ *     109-column terminal can only be pixels). Until then cells are assumed, which is right
+ *     either way near the origin and self-corrects on the first real movement. */
+static int s_pxw, s_pxh;                /* terminal text area in pixels (CSI 14t reply) */
+static int s_sgr_pixels;                /* latched: this terminal's reports are PIXELS */
 static int s_saw_report;                /* first mouse report logged once */
 
 extern void puts0(const char *);
@@ -229,6 +240,26 @@ static int cell2px(int cell, int cells, int span) {
     if (p < 0) p = 0; if (p > span - 1) p = span - 1;
     return p;
 }
+/* SGR coordinate -> screen pixel, in whatever unit this terminal actually sends. A report
+ * beyond the cell grid LATCHES pixel mode (the only proof there is — 1016 has no ACK); the
+ * scale denominator is the 14t text-area pixel size. No 14t reply = stay in cell mode. */
+static void sgr2px(int cx, int cy, int *px, int *py) {
+    if (!s_sgr_pixels && s_pxw > 0 && s_pxh > 0
+        && (cx > s_cols + 1 || cy > s_rows + 1)) {
+        s_sgr_pixels = 1;
+        klog("mouse: PIXEL reports confirmed (?1016)\r\n");
+    }
+    if (s_sgr_pixels) {
+        int x = (cx - 1) * 1920 / (s_pxw > 0 ? s_pxw : 1920);
+        int y = (cy - 1) * 1080 / (s_pxh > 0 ? s_pxh : 1080);
+        if (x < 0) x = 0; if (x > 1919) x = 1919;
+        if (y < 0) y = 0; if (y > 1079) y = 1079;
+        *px = x; *py = y;
+    } else {
+        *px = cell2px(cx, s_cols, 1920);
+        *py = cell2px(cy, s_rows, 1080);
+    }
+}
 static void mouse_rearm(void) {
     int g = con_focus_gen();
     if (g == s_mouse_gen) return;
@@ -240,8 +271,9 @@ static void mouse_rearm(void) {
      * ?1002 = + motion while a button is held (what DRAG needs) — layered so a
      * terminal without 1002 still reports clicks; ?1006 = SGR encoding (we
      * decode legacy X10 too, for terminals that ignore 1006). */
-    puts0("\x1b[?1000h\x1b[?1002h\x1b[?1006h");
+    puts0("\x1b[?1000h\x1b[?1002h\x1b[?1006h\x1b[?1016h");   /* 1016 = SGR-PIXELS, if honoured */
     puts0("\x1b[18t");                  /* -> ESC [ 8 ; rows ; cols t */
+    puts0("\x1b[14t");                  /* -> ESC [ 4 ; height ; width t (text area PIXELS) */
     klog("mouse: reporting armed (gen "); klog_u((unsigned)g); klog(")\r\n");
 }
 /* deliver one decoded mouse action (both encodings converge here) */
@@ -288,14 +320,16 @@ int input_next_event(struct os_event *ev, int timeout_ms, int raw) {
                 t = rd_int(&cy);
                 if (t != 'M' && t != 'm') continue;
                 if (b & 64) {                         /* wheel: 64 = away/up (+1), 65 = toward (-1) */
+                    int wx, wy;
                     if (t != 'M') continue;           /* wheels only press */
-                    cursor_move(cell2px(cx, s_cols, 1920), cell2px(cy, s_rows, 1080));
+                    sgr2px(cx, cy, &wx, &wy);
+                    cursor_move(wx, wy);
                     ev->type = OS_EV_WHEEL; ev->wheel = (b & 1) ? -1 : 1;
                     ev->button = s_btn; cursor_pos(&ev->mx, &ev->my);
                     return 0;
                 }
-                return mouse_event(ev, cell2px(cx, s_cols, 1920), cell2px(cy, s_rows, 1080),
-                                   (t == 'm') ? 0 : (b & 32) ? 2 : 1);
+                { int mx2, my2; sgr2px(cx, cy, &mx2, &my2);
+                  return mouse_event(ev, mx2, my2, (t == 'm') ? 0 : (b & 32) ? 2 : 1); }
             }
             if (c2 == 'M') {                          /* legacy X10 mouse: M b x y (byte-32) */
                 int b = con_gui_readc_timeout(50), cx = con_gui_readc_timeout(50), cy = con_gui_readc_timeout(50);
@@ -310,7 +344,7 @@ int input_next_event(struct os_event *ev, int timeout_ms, int raw) {
                 int kind = ((b & 3) == 3) ? 0 : (b & 32) ? 2 : 1;
                 return mouse_event(ev, cell2px(cx, s_cols, 1920), cell2px(cy, s_rows, 1080), kind);
             }
-            if (c2 >= '0' && c2 <= '9') {             /* CSI n... — the 18t size reply */
+            if (c2 >= '0' && c2 <= '9') {             /* CSI n... — the 18t / 14t size replies */
                 int n1 = c2 - '0', n2, n3, t;
                 for (;;) { t = con_gui_readc_timeout(50);
                            if (t < '0' || t > '9') break; n1 = n1 * 10 + (t - '0'); }
@@ -319,6 +353,12 @@ int input_next_event(struct os_event *ev, int timeout_ms, int raw) {
                         s_rows = n2; s_cols = n3;
                         klog("mouse: terminal is "); klog_u((unsigned)n3);
                         klog("x"); klog_u((unsigned)n2); klog(" cells\r\n");
+                    }
+                } else if (t == ';' && n1 == 4) {     /* text area pixel size: the 1016 scale */
+                    if (rd_int(&n2) == ';' && rd_int(&n3) == 't' && n2 > 0 && n3 > 0) {
+                        s_pxh = n2; s_pxw = n3;
+                        klog("mouse: terminal is "); klog_u((unsigned)n3);
+                        klog("x"); klog_u((unsigned)n2); klog(" px\r\n");
                     }
                 }
                 continue;                             /* consumed, no event */

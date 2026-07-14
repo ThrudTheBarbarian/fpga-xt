@@ -51,6 +51,21 @@ static int           g_lx, g_ly;   /* last pointer position seen (SYS_input's ti
  * on this, so there is exactly one thing draining the UART lane and no two-readers race. */
 extern void klog(const char *);
 
+/* A SECOND PRODUCER's door into the one queue (network input — input_udp.c). Same
+ * drop-the-oldest overflow rule as the decoder: a stalled reader loses history, never
+ * the queue. Safe from any task context; a no-op before the queue exists. */
+int xt_input_inject(const struct os_event *ev)
+{
+    if (!g_q) return -1;
+    g_lx = ev->mx; g_ly = ev->my;
+    if (xQueueSend(g_q, ev, 0) != pdPASS) {
+        struct os_event drop;
+        xQueueReceive(g_q, &drop, 0);
+        xQueueSend(g_q, ev, 0);
+    }
+    return 0;
+}
+
 static void input_task(void *arg)
 {
     (void)arg;

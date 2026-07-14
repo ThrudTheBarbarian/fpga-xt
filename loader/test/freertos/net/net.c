@@ -127,6 +127,7 @@ static void net_task(void *arg)
 
     tftpd_init();
     netcon_init();
+    { extern void input_udp_init(void); input_udp_init(); }   /* mouse over UDP :4242 */
     { extern void sntp_start_cb(void *); tcpip_callback(sntp_start_cb, 0); }
 
     TickType_t lastlink = 0;

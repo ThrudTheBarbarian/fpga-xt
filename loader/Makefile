@@ -114,6 +114,7 @@ NETSRC  := test/freertos/net/xemacps.c test/freertos/net/xemacps_control.c \
            test/freertos/net/xemacps_g.c test/freertos/net/net_libc.c \
            test/freertos/net/xemacpsif.c test/freertos/net/net.c test/freertos/net/tftpd.c \
            test/freertos/net/netcon.c test/freertos/net/wallclock.c test/freertos/net/sockets.c \
+           test/freertos/net/input_udp.c \
            test/freertos/net/procnet.c
 FRCFLAGS := -marm -mcpu=cortex-a9 -mfloat-abi=softfp -mfpu=neon-vfpv3 -ffreestanding -nostdlib -O2 -g -DSDT $(FRINC)
 FRSRC := $(FR)/tasks.c $(FR)/queue.c $(FR)/list.c $(FR)/timers.c $(FR)/event_groups.c \

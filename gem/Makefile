@@ -182,6 +182,13 @@ WMTEST_OBJ := $(addprefix $(BUILD)/,gfx_soft.o font.o wm.o wm_test.o $(VDI_SRC:.
 $(BUILD)/wm_test: $(WMTEST_OBJ)
 	$(CC) $(WMTEST_OBJ) $(FT_LIBS) -o $@
 
+# xtmouse — stream the Mac's mouse to the board over UDP (the interim real mouse; the
+# serial-terminal lane caps at ~12 events/s). Other end: loader .../net/input_udp.c.
+$(BUILD)/xtmouse: tools/xtmouse.c | $(BUILD)
+	$(CC) -O2 -Wall $(shell sdl2-config --cflags) tools/xtmouse.c $(shell sdl2-config --libs) -o $@
+xtmouse: $(BUILD)/xtmouse
+	@echo "run: ./$(BUILD)/xtmouse xtos.local"
+
 # scroll_sim — HOST reproduction rig for the client scroll blit (window.c client_scrolled):
 # blit + exposed-strip repaint vs a full fresh render, over a random drag walk.
 SCROLLSIM_OBJ := $(addprefix $(BUILD)/,gfx_soft.o font.o scroll_sim.o $(VDI_SRC:.c=.o))
