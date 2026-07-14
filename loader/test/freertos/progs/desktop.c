@@ -218,11 +218,24 @@ static void wall_init(int w, int h)
  * VDI's target is the back-buffer standalone, and our surface under gemd. */
 static void deskcontent(int hd, int wx, int wy, int ww, int wh, void *ud) {
     (void)hd; (void)ud;
-    gfx_surface *dst = vdi_screen_target();
-    if (g_wall_ok && dst)                          // backdrop first, only the damaged part
-        gfx_blit(dst, wx, wy, &g_wall, wx, wy, ww, wh);
+    if (g_wall_ok) {
+        // THROUGH THE VDI, 1:1 — so the clip the AES set from OUR OWN declared dirty rect applies
+        // to the backdrop too, and this copies only the pixels we said had changed.
+        //
+        // It used to be a raw gfx_blit. gfx_blit is a BACKEND blit: it bypasses the VDI and cannot
+        // see the clip, and this callback is always handed the whole work area (those args are for
+        // LAYOUT, not for damage). So the desktop re-blitted all 1920x1080 of wallpaper on every
+        // repaint — a full-screen paint hiding inside a content callback. It went unnoticed only
+        // because the repaint around it was full-surface too; once repaints were properly bounded
+        // it wiped every icon except the one in the dirty rect, since objc_draw below IS clipped
+        // and would not repaint the others.
+        MFDB m; mfdb_from_surface(&m, &g_wall);
+        int16_t pxy[8] = { (int16_t)wx, (int16_t)wy, (int16_t)(wx+ww-1), (int16_t)(wy+wh-1),
+                           (int16_t)wx, (int16_t)wy, (int16_t)(wx+ww-1), (int16_t)(wy+wh-1) };
+        vr_transfer_bits(HV, &m, NULL, pxy, VRO_COPY);
+    }
     aes_icon_label_style(1);                       // desktop: over the dark backdrop
-    objc_draw(desk, 0, 2, wx, wy, ww, wh);
+    objc_draw(desk, 0, 2, wx, wy, ww, wh);         // VDI, so this one clips itself
 }
 
 static void desk_click(int mx, int my);   // fwd
