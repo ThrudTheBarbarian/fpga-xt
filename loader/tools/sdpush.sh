@@ -29,8 +29,16 @@ command -v curl >/dev/null || { echo "sdpush: curl not found" >&2; exit 1; }
 # and ~5 s/file. If BOARD is already an IP, use it as-is.
 case "$BOARD" in
     *[!0-9.]*)   # contains a non-digit/dot -> a hostname: resolve it
-        IP=$(ping -c1 -t2 "$BOARD" 2>/dev/null | sed -n 's/^PING[^(]*(\([0-9.]*\)).*/\1/p' | head -1)
-        [ -n "$IP" ] || { echo "sdpush: can't resolve $BOARD — is the board up? (mDNS may be cold; retry)" >&2; exit 1; }
+        # mDNS from a cold cache routinely eats the first query (it wakes the responder)
+        # and answers the second — a single 2s attempt reports a healthy board as down.
+        # Retry for ~20s before concluding anything.
+        IP=""
+        for try in 1 2 3 4 5; do
+            IP=$(ping -c1 -t4 "$BOARD" 2>/dev/null | sed -n 's/^PING[^(]*(\([0-9.]*\)).*/\1/p' | head -1)
+            [ -n "$IP" ] && break
+            [ "$try" -lt 5 ] && sleep 2
+        done
+        [ -n "$IP" ] || { echo "sdpush: can't resolve $BOARD after 5 tries (~20s) — is the board up?" >&2; exit 1; }
         echo "sdpush: $BOARD -> $IP"
         ;;
     *) IP="$BOARD" ;;
