@@ -284,3 +284,30 @@ clk_pix both improved. **First change this session to lift the GOVERNING margin
 (13x).** LESSON: a pipeline/counter register that localizes ROUTE beats a pure
 logic-depth cut on a route-bound path — the difference between this and Lever B.
 Next binding domain if ever wanted: the blitter cmd_fifo path (+0.039).
+
+
+## Build result — the diagnostic counter was the gate (2026-07-15)
+
+The scan-out fix (`line_start_e`, all clk_pix) re-rolled the placement dice and clk_sally
+failed four straight: Explore fresh −0.034, ExtraTimingOpt −0.315, incremental/RuntimeOptimized
+−0.371, incremental/TimingClosure −0.091. Every roll's WORST path ended at
+`u_sally_mem/math_lat_run_reg[*]/D` — the math-op LATENCY COUNTER ($D5C9 diagnostics) fed
+straight off the `is_math_exec` decode at the tail of the page-BRAM → cpu_rdata → EA cone.
+A perf probe was gating builds. Registering its strobe (one cycle late on a count of
+thousands = noise; the doorbell keeps same-cycle timing, 6e2867d) plus fresh Explore closed
+at **+0.001** (clk_pix +0.145, clk_sys +0.076).
+
+Standing observations:
+- The killed path immediately revealed the NEXT tail consumer of the same cone
+  (`g_line_cache.u_axi_reader/pending_addr_q/CE`, −0.197 in the incremental roll): the page-BRAM
+  read cone has a FAMILY of decode-gated tails. The durable fix is a **math-page read
+  wait-state**: stretch RDY one cycle for math-page reads only and serve `math_cpu_rdata` from a
+  pipeline register — lifts the whole cone, costs 8 extra cycles per 64-bit result collect
+  (~80 ns against a µs-scale op), ordinary RAM reads untouched. The EA cone consuming math data
+  is architecturally dead weight anyway (nobody indirects through a math result). Same trick
+  extends to the screen-bank overlay. Candidate opener for the next clk_sally session, before
+  Lever C.
+- Incremental impl needs `-directive TimingClosure` (now build.tcl's default via INCR_DIRECTIVE):
+  the RuntimeOptimized default reused 98.8% of cells and still lost the inherited margin.
+- The green route is preserved on valhalla as `ref_scanout_green.dcp` (+ locally in
+  vivado/build/post_route.dcp) — point INCR_REF_DCP at it for the next small change.
