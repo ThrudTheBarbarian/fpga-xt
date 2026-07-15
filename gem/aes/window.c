@@ -1538,14 +1538,25 @@ int wind_handle_click(int mx,int my){
             if(W->tbw[i]>0 && mx>=W->tbx[i] && mx<W->tbx[i]+W->tbw[i]){
                 post(WM_TBUTTON,hd,i,0,0,0); return 1; }
     // BREADCRUMB SPANS (WT_PATH): our chrome, our hit test. The app gets the INDEX of the path
-    // component it set — never a rect, never a pixel (§11).  Before the mover, so a crumb click is
-    // a click; the rest of the bar still drags.
+    // component it set — never a rect, never a pixel (§11).  Before the mover — but a PRESS on
+    // a crumb is not yet a click: wait for the verdict.  Release in place = navigate; move past
+    // a small threshold = the user is dragging the WINDOW by its title bar, so fall through to
+    // the mover (whose grab offset uses the original press point — no jump).
     if((W->kind&W_NAME) && (W->titleflags & WT_PATH) && my>=ty && my<ty+th)
         for(int i=0;i<W->nseg;i++)
             if(W->segw[i]>0 && mx>=W->segx[i] && mx<W->segx[i]+W->segw[i]){
-                post(WM_PATHSEG,hd,W->segn[i],0,0,0); return 1; }
-    // title bar -> drag (live move). The WHOLE bar drags: there is no app-drawn span in it
-    // to click any more, so there is no press-vs-drag ambiguity to resolve.
+                int dragged=0;
+                for(;;){ aes_event e; int t=aes_wait_idle(&e,-1);
+                    if(t==AES_QUIT) return 1;
+                    if(t==AES_MOTION && (e.mx-mx>3||mx-e.mx>3||e.my-my>3||my-e.my>3)){
+                        dragged=1; break; }
+                    if(t==AES_BTN_UP) break;
+                }
+                if(!dragged){ post(WM_PATHSEG,hd,W->segn[i],0,0,0); return 1; }
+                break;                       // the press became a title drag: the mover takes it
+            }
+    // title bar -> drag (live move). The WHOLE bar drags; a crumb press that MOVED falls
+    // through to here with the original press coords as the grab point.
     if((W->kind&W_MOVER) && my>=ty && my<ty+th && mx>=tx && mx<tx+tw){
         int gx=mx-W->x, gy=my-W->y;
         if(g_ovl_begin && g_ovl_begin(W->x,W->y,W->w,W->h)){    // A9: lift window into the HW overlay
