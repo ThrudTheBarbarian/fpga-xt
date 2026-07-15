@@ -332,9 +332,16 @@ so a realloc is visually a non-event — the black flash was uninitialized shm c
 before the client's repaint landed. And a breadcrumb PRESS is not yet a click: release in
 place navigates, motion past 3px falls through to the mover with the original grab point.
 
-**Still owed in M5:** horizontal scrollbars (no bar drawn today). Placement decided
-(2026-07-15, user): the bar sits BETWEEN the info bar and the content pane, spanning so its
-right arrow lands above the grip zone (the chrome column below the vertical bar's track).
+**THE CHROME REWORK (M5 close-out, 2026-07-15, user-designed):** the info strip lives at the
+TOP of the work area under the titlebar (lighter fill, 1px divider below as the demarcation;
+`wind_pin_top` bounds the scroll blit and never goes on the wire); the horizontal scrollbar is
+a clean reservation off the work BOTTOM (mirror of the vertical column, which stops above it);
+and the permanent grips are GONE — a W_SIZER window resizes from its frame ring (corner + edge-
+midpoint proximity zones, border + 8px outside, interior always wins) with THE CURSOR as the
+affordance (`SYS_cursor_shape`: HW-sprite glyph swap on hover transitions; theme-able hover
+brackets remain open as a second layer). One anchor-parameterized drag covers all four corners
+and edges. First h-scroll consumer: the text views floor their column width instead of
+crushing, and consume `scroll_x` symmetrically with `scroll_y`. Board visual pass pending.
 
 ## The composite is CPU-bound in transfer_bits, and the engine composite is M7 work
 
