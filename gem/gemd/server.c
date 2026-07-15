@@ -24,6 +24,7 @@
  *     the desktop side by side, and an app is launched from a shell. EOF fires for everyone.
  */
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 #include "gemd.h"
 #include "aes/aes_internal.h"

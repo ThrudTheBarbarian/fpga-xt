@@ -112,13 +112,13 @@ int wind_has_chrome(int kind){
 
 void wind_calc(int dir,int kind,int x,int y,int w,int h,int*ox,int*oy,int*ow,int*oh){
     if(!wind_has_chrome(kind)){ *ox=x; *oy=y; *ow=w; *oh=h; return; }   // chromeless: work == full
-    // The footer band exists for W_INFO *or* W_SIZER: the resize grips live IN the footer,
-    // so a sizer-only window must reserve it too — without this its work area (and the
-    // scrollbar column, which spans work height) ran over the grips, and the down arrow
-    // overdrew the right one (board-observed on a W_SIZER|no-W_INFO window).
-    int b=bw(), th=tbh(), inf=(kind&(W_INFO|W_SIZER))?AES_INFO_H:0;
-    // The work area sits BETWEEN the title (top) and the footer (bottom):
+    int b=bw(), th=tbh(), inf=(kind&W_INFO)?AES_INFO_H:0;
+    // The work area sits BETWEEN the title (top) and the W_INFO footer (bottom):
     // its origin drops only by the title height, and inf is taken off the BOTTOM.
+    // NOT reserved for W_SIZER alone: a sizer window without W_INFO draws its own status
+    // bar as CONTENT (the browser, deliberately — §11) and the grips sit ON that bar;
+    // reserving a band under it doubled the footer. The scrollbar stays clear of the
+    // grips via vsb_geom instead (its column stops above the bottom band).
     if(dir==WC_BORDER){ *ox=x-b; *oy=y-th; *ow=w+2*b; *oh=h+th+inf+b; }   // work -> full (info footer)
     else              { *ox=x+b; *oy=y+th; *ow=w-2*b; *oh=h-th-inf-b; }   // full -> work
 }
@@ -316,10 +316,14 @@ static int vsb_geom(awin *W,int*colx,int*coly,int*colw,int*colh,
                     int*trky,int*trkh,int*thy,int*thh){
     if(!vsb_on(W)) return 0;
     int wx,wy,ww,wh; full_work(W,&wx,&wy,&ww,&wh);
-    // The scrollbar column spans the FULL work-area height: the resize sizer now
-    // lives in the W_INFO footer BELOW the work area, so there is no longer a
-    // bottom-right corner to carve out — the down arrow sits at the work bottom.
+    // The scrollbar column spans the work-area height, minus the grip band when the
+    // grips live on the app's own bottom bar (W_SIZER without W_INFO): the down arrow
+    // must stop above it. With W_INFO the footer is chrome and already out of the work.
     int cx=wx+ww-SB_W, cy=wy, ch=wh;
+    if((W->kind & W_SIZER) && !(W->kind & W_INFO)){
+        ch -= AES_INFO_H;              // grips live on the CONTENT's bottom band (browser-style
+        if(ch < SB_MINTH) ch = SB_MINTH;   // status bar): the down arrow stops above it
+    }
     int ah=SB_ARROW; if(ah*2 > ch-SB_MINTH) ah=(ch-SB_MINTH)/2; if(ah<0) ah=0;
     int ty=cy+ah, th=ch-2*ah; if(th<1) th=1;
     int total=W->content_h, vis=wh;
@@ -1439,6 +1443,17 @@ static int soak_motion(aes_event *e){
 static void resize_step_redraw(awin *W,int ox,int oy,int ow,int oh){
     int nx=W->x, ny=W->y, nw=W->w, nh=W->h;
     if(g_mode!=AES_SERVER){
+        int ux=ox<nx?ox:nx, uy=oy<ny?oy:ny;
+        int ux1=(ox+ow)>(nx+nw)?(ox+ow):(nx+nw), uy1=(oy+oh)>(ny+nh)?(oy+oh):(ny+nh);
+        wind_redraw_area(ux,uy,ux1-ux,uy1-uy);
+        return;
+    }
+    // A LEFT-GRIP drag moves the ORIGIN: the store's pixels are anchored to the work origin,
+    // so on screen they must move WITH the frame — edge strips alone leave the old content
+    // pinned to the old origin while the frame slides over it (board-observed: the frame ate
+    // the first icon column, then the relayout snapped everything back). Composite the whole
+    // union for origin moves; the right grip keeps the cheap L-delta.
+    if(ox!=nx){
         int ux=ox<nx?ox:nx, uy=oy<ny?oy:ny;
         int ux1=(ox+ow)>(nx+nw)?(ox+ow):(nx+nw), uy1=(oy+oh)>(ny+nh)?(oy+oh):(ny+nh);
         wind_redraw_area(ux,uy,ux1-ux,uy1-uy);
