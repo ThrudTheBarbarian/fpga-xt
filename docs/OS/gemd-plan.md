@@ -323,6 +323,15 @@ FULL = always correct): `client_sized` paints nothing within capacity and the ap
 `WM_SIZED` with what its layout demands; a FRESH surface (capacity realloc, pixels gone) is
 repainted fully by the AES and flagged `msg[5]=1`. Client-side model only — no wire change.
 
+**The drag capacity policy (M5, board-verified):** a grow drag crossed the §12 quantum every
+~64px and every crossing was a FRESH surface — a dozen realloc+full-repaint blinks per drag.
+The AES exposes `wind_drag_sizing()` (the sizer modal loops set it); gemd allocates ONCE and
+generously while a drag is live (screen-size capacity) and shrink-fits in ONE realloc on
+release. The swap is CONTENT-PRESERVING (old intersection memcpy'd across before the switch)
+so a realloc is visually a non-event — the black flash was uninitialized shm compositing
+before the client's repaint landed. And a breadcrumb PRESS is not yet a click: release in
+place navigates, motion past 3px falls through to the mover with the original grab point.
+
 **Still owed in M5:** horizontal scrollbars (no bar drawn today). Placement decided
 (2026-07-15, user): the bar sits BETWEEN the info bar and the content pane, spanning so its
 right arrow lands above the grip zone (the chrome column below the vertical bar's track).
