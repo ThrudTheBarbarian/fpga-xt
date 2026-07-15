@@ -12,6 +12,7 @@
 
 #ifdef GEM_XTOS
 #include "gemclient.h"                  // client mode: wind_* become messages to gemd
+#include "usys.h"                       // sys_klog (probes) + the syscall inlines
 #endif
 
 gfx_surface *vdi_screen_target(void);   // the physical workstation's surface (VDI core)
@@ -556,7 +557,9 @@ static void draw_one(int hd, int active){
             v_gtext(H(), ix+8+((W->kind&W_SIZER)?SIZER_SZ:0), iy+AES_INFO_H/2-5, ifit);   // +2: below-centre reads as a footer
         }
     }
-    if(W->pin_top>0 && W->surf.px){
+    if(W->pin_top>0){    // NOT gated on the surface: the one composite whose clip covers the
+                          // borders is the OPEN one, and it runs BEFORE the surface attaches —
+                          // gated on surf.px the fill only ever ran damage-clipped (invisible)
         // The info strip is CONTENT, so it stops at the surface edge — paint the frame border
         // columns beside its rows in the bar's colour (and continue its bottom divider), so
         // the strip runs wall-to-wall. The vscroll column draws after and keeps its own top.
