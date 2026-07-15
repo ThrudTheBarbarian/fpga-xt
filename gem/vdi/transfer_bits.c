@@ -93,18 +93,56 @@ void op_transfer_bits(vdi_pb *pb) {
     int gy0 = dy1 > cy0 ? dy1 : cy0, gy1 = dy2 < cy1 ? dy2 : cy1;
     if (gx0 > gx1 || gy0 > gy1) return;                              // wholly clipped -> nothing to do
 
-    for (int dy = gy0; dy <= gy1; dy++) {
-        int sy = sy1 + (dy - dy1) * sh / dh;
-        if (sy < 0 || sy >= src.h) continue;
-        uint32_t *drow = dst.px + (size_t)dy * dst.stride;
-        const uint32_t *srow = src.px + (size_t)sy * src.stride;
-        for (int dx = gx0; dx <= gx1; dx++) {
-            int sx = sx1 + (dx - dx1) * sw / dw;
-            if (sx < 0 || sx >= src.w) continue;
-            uint32_t s = srow[sx], d = drow[dx];
-            drow[dx] = (mode < 16) ? logic_op(mode, s, d) : blend_op(mode, s, d);
+    long long gp_t0 = gem_prof_now();                                // TEMP profiler
+
+    /* The two hot shapes take a dedicated loop; the generic per-pixel dispatch below is
+     * for everything else.  This matters at desktop scale: a 1920x1080 wallpaper pass
+     * through the generic loop is 2M function calls (and blend_op re-derives the four
+     * blend pen colours PER PIXEL) — measured at 1.3s for one full-screen render on the
+     * A9.  Both fast paths are bit-identical to what the generic loop produces. */
+    int unscaled = (sw == dw && sh == dh);
+    if (unscaled && (mode == 3 || mode == VR_OVER)) {
+        for (int dy = gy0; dy <= gy1; dy++) {
+            int sy = sy1 + (dy - dy1);
+            if (sy < 0 || sy >= src.h) continue;
+            uint32_t       *drow = dst.px + (size_t)dy * dst.stride;
+            const uint32_t *srow = src.px + (size_t)sy * src.stride;
+            int x0 = gx0, x1 = gx1;                                  // clamp the source span once
+            if (sx1 + (x0 - dx1) < 0)          x0 = dx1 - sx1;
+            if (sx1 + (x1 - dx1) > src.w - 1)  x1 = dx1 + (src.w - 1 - sx1);
+            if (mode == 3) {
+                for (int dx = x0; dx <= x1; dx++)                    // copy, alpha forced opaque
+                    drow[dx] = (srow[sx1 + (dx - dx1)] & 0xFFFFFF00u) | 0xFF;
+            } else {
+                for (int dx = x0; dx <= x1; dx++) {                  // src-over, source alpha
+                    uint32_t s = srow[sx1 + (dx - dx1)];
+                    unsigned a = s & 0xFF;
+                    if (a == 0) continue;
+                    if (a == 255) { drow[dx] = (s & 0xFFFFFF00u) | 0xFF; continue; }
+                    uint32_t d = drow[dx];
+                    int r = (CH(s,24)*(int)a + CH(d,24)*(255-(int)a)) / 255;
+                    int g = (CH(s,16)*(int)a + CH(d,16)*(255-(int)a)) / 255;
+                    int b = (CH(s,8) *(int)a + CH(d,8) *(255-(int)a)) / 255;
+                    drow[dx] = GFX_RGB(r, g, b);
+                }
+            }
+        }
+    } else {
+        for (int dy = gy0; dy <= gy1; dy++) {
+            int sy = sy1 + (dy - dy1) * sh / dh;
+            if (sy < 0 || sy >= src.h) continue;
+            uint32_t *drow = dst.px + (size_t)dy * dst.stride;
+            const uint32_t *srow = src.px + (size_t)sy * src.stride;
+            for (int dx = gx0; dx <= gx1; dx++) {
+                int sx = sx1 + (dx - dx1) * sw / dw;
+                if (sx < 0 || sx >= src.w) continue;
+                uint32_t s = srow[sx], d = drow[dx];
+                drow[dx] = (mode < 16) ? logic_op(mode, s, d) : blend_op(mode, s, d);
+            }
         }
     }
+    gem_prof_add(GEM_PROF_BLIT, gem_prof_now() - gp_t0,              // TEMP profiler
+                 (long)(gx1 - gx0 + 1) * (gy1 - gy0 + 1));
 }
 
 // pxy = src x1,y1,x2,y2, dst x1,y1,x2,y2 (different sizes => scaled).
