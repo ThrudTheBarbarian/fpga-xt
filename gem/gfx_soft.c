@@ -36,6 +36,7 @@ void gfx_fill_rect(gfx_surface *s, int x, int y, int w, int h, uint32_t rgba) {
     int ox = 0, oy = 0;
     w = clip_span(&x, &ox, w, s->w);
     h = clip_span(&y, &oy, h, s->h);
+    if (w > 0 && h > 0) gem_prof_add(GEM_PROF_FILL, 0, (long)w * h);   // TEMP profiler
     for (int row = 0; row < h; row++) {
         uint32_t *p = s->px + (size_t)(y + row) * s->stride + x;
         for (int col = 0; col < w; col++) p[col] = rgba;
@@ -54,6 +55,7 @@ void gfx_blit(gfx_surface *dst, int dx, int dy,
     w = clip_span(&dx, &dox, w, dst->w);
     h = clip_span(&dy, &doy, h, dst->h);
     sx += dox; sy += doy;                        // dst-side clip shifts src too
+    if (w > 0 && h > 0) gem_prof_add(GEM_PROF_BLIT, 0, (long)w * h);   // TEMP profiler
     for (int row = 0; row < h; row++) {
         const uint32_t *sp = src->px + (size_t)(sy + row) * src->stride + sx;
         uint32_t       *dp = dst->px + (size_t)(dy + row) * dst->stride + dx;
@@ -102,4 +104,62 @@ void gfx_line(gfx_surface *s, int x0, int y0, int x1, int y1, uint32_t rgba) {
         if (e2 >= dy) { err += dy; x0 += sx; }
         if (e2 <= dx) { err += dx; y0 += sy; }
     }
+}
+
+// ---- TEMP draw profiler (see gfx.h; remove with the resize-lag verdict) -----
+#include <stdio.h>
+#ifdef GEM_XTOS
+#include "usys.h"
+#else
+#include <sys/time.h>
+#endif
+
+static struct { long long us; long units; int n; } g_gp[GEM_PROF_NSLOTS];
+
+long long gem_prof_now(void)
+{
+#ifdef GEM_XTOS
+    unsigned tv[3];
+    __syscall(SYS_gettimeofday, (long)tv, 0, 0);
+    return (long long)tv[0] * 1000000ll + tv[2];
+#else
+    struct timeval tv; gettimeofday(&tv, NULL);
+    return (long long)tv.tv_sec * 1000000ll + tv.tv_usec;
+#endif
+}
+
+void gem_prof_add(int slot, long long us, long units)
+{
+    if ((unsigned)slot >= GEM_PROF_NSLOTS) return;
+    g_gp[slot].us += us; g_gp[slot].units += units; g_gp[slot].n++;
+}
+
+void gem_prof_dump(const char *tag)
+{
+    static long long last;
+    long long now = gem_prof_now();
+    if (!last) { last = now; return; }
+    if (now - last < 1000000ll) return;
+    if (g_gp[GEM_PROF_RENDER].n || g_gp[GEM_PROF_DAMAGE].n) {
+        char b[256];
+        int n = snprintf(b, sizeof b,
+            "[gemprof %s] 1s: render %d/%dms (layout %d/%dms text %d/%dms %ld gl) "
+            "blit %d/%dms/%ldkpx fill %d/%ldkpx dmg %d/%ldkpx\n",
+            tag,
+            g_gp[GEM_PROF_RENDER].n, (int)(g_gp[GEM_PROF_RENDER].us / 1000),
+            g_gp[GEM_PROF_LAYOUT].n, (int)(g_gp[GEM_PROF_LAYOUT].us / 1000),
+            g_gp[GEM_PROF_TEXT].n,   (int)(g_gp[GEM_PROF_TEXT].us   / 1000),
+            g_gp[GEM_PROF_TEXT].units,
+            g_gp[GEM_PROF_BLIT].n,   (int)(g_gp[GEM_PROF_BLIT].us   / 1000),
+            g_gp[GEM_PROF_BLIT].units / 1000,
+            g_gp[GEM_PROF_FILL].n,   g_gp[GEM_PROF_FILL].units / 1000,
+            g_gp[GEM_PROF_DAMAGE].n, g_gp[GEM_PROF_DAMAGE].units / 1000);
+#ifdef GEM_XTOS
+        sys_klog(b, (unsigned)n);
+#else
+        fputs(b, stderr); (void)n;
+#endif
+    }
+    memset(g_gp, 0, sizeof g_gp);
+    last = now;
 }

@@ -54,4 +54,21 @@ void gfx_blit_coverage(gfx_surface *dst, int dx, int dy,
 // atlas.  Call it after each string's glyph loop.  No-op on the host backend.
 void gfx_text_flush(void);
 
+// ---- TEMP draw profiler (remove with the resize-lag verdict) ----------------
+// Where does a large-window frame actually go?  The VDI/AES layers bump these
+// while a client renders; gem_prof_dump emits ONE summary line per second (klog
+// on XTOS, stderr on the host).  The expensive outer stages carry microseconds;
+// the memory-bound inner ones carry only count + units (pixels, glyphs) so the
+// probe itself never becomes the cost it is measuring.
+enum { GEM_PROF_RENDER,     // client_render: one whole content callback (µs + calls)
+       GEM_PROF_TEXT,       // font_draw*: per string (µs + glyphs)
+       GEM_PROF_LAYOUT,     // app-declared layout work, e.g. the desktop's tile pass (µs)
+       GEM_PROF_BLIT,       // gfx_blit (calls + px) — icons, backing-store copies
+       GEM_PROF_FILL,       // gfx_fill_rect (calls + px) — 9-slice, panels, selection
+       GEM_PROF_DAMAGE,     // damage rects posted to gemd (posts + px)
+       GEM_PROF_NSLOTS };
+long long gem_prof_now(void);                          // µs since some epoch
+void gem_prof_add(int slot, long long us, long units);
+void gem_prof_dump(const char *tag);                   // rate-limited internally to 1/s
+
 #endif // GEM_GFX_H

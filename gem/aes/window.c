@@ -747,6 +747,7 @@ static void client_render(int hd,int x,int y,int w,int h){
     // that blits (the desktop's wallpaper) asks for. A client with two windows would otherwise
     // paint the second one's content into the first one's buffer.
     int save = aes_handle();
+    long long gp_t0 = gem_prof_now();               // TEMP profiler
     vdi_set_target(&W->surf);
     aes_init(W->vh, aes_theme());
     int16_t clip[4]={(int16_t)x,(int16_t)y,(int16_t)(x+w-1),(int16_t)(y+h-1)};
@@ -756,6 +757,7 @@ static void client_render(int hd,int x,int y,int w,int h){
     g_dmg_cb[0]=0; g_dmg_cb[1]=0; g_dmg_cb[2]=32767; g_dmg_cb[3]=32767;
     vs_clip(W->vh,0,clip);
     aes_init(save, aes_theme());
+    gem_prof_add(GEM_PROF_RENDER, gem_prof_now() - gp_t0, (long)w * h);   // TEMP profiler
 }
 
 // Draw our own content into our OWN surface, then post ONE damage rect. Zero IPC in the draw
@@ -770,6 +772,7 @@ static void client_paint(int hd,int x,int y,int w,int h){
     if(w<=0||h<=0) return;
     client_render(hd,x,y,w,h);
     gem_damage_rect(g_gemfd, hd, W->surf_id, W->surf_gen, x,y,w,h);
+    gem_prof_add(GEM_PROF_DAMAGE, 0, (long)w * h);   // TEMP profiler
 }
 
 // ---- CLIENT MODE: events (M4) ----------------------------------------------
@@ -859,6 +862,7 @@ static int client_scrolled(const gem_msg *m){
         else     for(int yy=keep-1;yy>=0;  yy--) memcpy(px+(size_t)(yy+ady)*st, px+(size_t)yy*st,      (size_t)w*4);
         client_render(hd, 0, dy>0?keep:0, w, ady);  // DRAW only the exposed strip...
         gem_damage_rect(g_gemfd, hd, W->surf_id, W->surf_gen, 0, 0, w, vh);
+        gem_prof_add(GEM_PROF_DAMAGE, 0, (long)w * vh);   // TEMP profiler
                                                     // ...but ONE damage for the whole moved
                                                     // band: gemd recomposites exactly once
     }
@@ -980,6 +984,7 @@ void wind_client_stray(const gem_msg *m){
 static gem_msg g_stash; static int g_stash_v;
 void wind_client_stash_reset(void){ g_stash_v = 0; }
 static int client_events(aes_event *ev,int timeout_ms){
+    gem_prof_dump("cli");                                  // TEMP profiler: 1s summary to klog
     if(evq_pop(ev)) return ev->type;                       // strays picked up during a gem_await
     for(;;){
         gem_msg m;

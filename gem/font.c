@@ -451,6 +451,7 @@ static void clip_of(gfx_surface *d, const int *clip, int *cx0, int *cy0, int *cx
 void font_draw(font *f, gfx_surface *d, int x, int y, const char *s,
                uint32_t rgba, const int *clip, int mode) {
     if (!f || !s || !d) return;
+    long long gp_t0 = gem_prof_now(); long gp_n = 0;    // TEMP profiler
     int cx0, cy0, cx1, cy1; clip_of(d, clip, &cx0, &cy0, &cx1, &cy1);
     int pen = x, base = y + f->ascent, trk = face_trk(f);
     unsigned prev = 0;
@@ -461,9 +462,10 @@ void font_draw(font *f, gfx_surface *d, int x, int y, const char *s,
         if (!g) continue;
         pen += kern_px(f, prev, cp);
         blit_glyph(d, pen, base, g, rgba, cx0, cy0, cx1, cy1, mode);
-        pen += g->advance + trk; prev = cp;
+        pen += g->advance + trk; prev = cp; gp_n++;
     }
     gfx_text_flush();   // drain the batched glyph blits (no-op on the host)
+    gem_prof_add(GEM_PROF_TEXT, gem_prof_now() - gp_t0, gp_n);   // TEMP profiler
 }
 
 // Spread `s` to occupy `width` px: extra slack goes to the gaps after spaces
@@ -472,6 +474,7 @@ void font_draw_justified(font *f, gfx_surface *d, int x, int y, const char *s,
                          int width, int word_space, int char_space,
                          uint32_t rgba, const int *clip, int mode) {
     if (!f || !s || !d) return;
+    long long gp_t0 = gem_prof_now(); long gp_n = 0;    // TEMP profiler
     int trk = face_trk(f);
     int natural = 0, n = 0, nspaces = 0;                 // measure
     for (const char *p = s; *p; ) {
@@ -497,11 +500,12 @@ void font_draw_justified(font *f, gfx_surface *d, int x, int y, const char *s,
         unsigned cp = utf8_next(&p);
         const glyph *g = glyph_get(f, cp); if (!g) { i--; continue; }
         blit_glyph(d, pen, base, g, rgba, cx0, cy0, cx1, cy1, mode);
-        pen += g->advance + trk;
+        pen += g->advance + trk; gp_n++;
         if (cp == ' ' && word_space) pen += word_add;
         if (i < n - 1 && char_space) pen += char_add;
     }
     gfx_text_flush();
+    gem_prof_add(GEM_PROF_TEXT, gem_prof_now() - gp_t0, gp_n);   // TEMP profiler
 }
 
 // Draw each glyph of s at its own offset from (x,y) (em-box top-left): glyph
@@ -510,14 +514,17 @@ void font_draw_justified(font *f, gfx_surface *d, int x, int y, const char *s,
 void font_draw_offsets(font *f, gfx_surface *d, int x, int y, const char *s,
                        const int16_t *off, uint32_t rgba, const int *clip, int mode) {
     if (!f || !s || !d || !off) return;
+    long long gp_t0 = gem_prof_now(); long gp_n = 0;    // TEMP profiler
     int cx0, cy0, cx1, cy1; clip_of(d, clip, &cx0, &cy0, &cx1, &cy1);
     int base0 = y + f->ascent, j = 0;
     for (const char *p = s; *p; j++) {
         const glyph *g = glyph_get(f, utf8_next(&p));
         if (!g) { j--; continue; }
         blit_glyph(d, x + off[2*j], base0 + off[2*j+1], g, rgba, cx0, cy0, cx1, cy1, mode);
+        gp_n++;
     }
     gfx_text_flush();
+    gem_prof_add(GEM_PROF_TEXT, gem_prof_now() - gp_t0, gp_n);   // TEMP profiler
 }
 
 // Blit an FT bitmap's coverage at device top-left.  `light` halves coverage.
@@ -558,6 +565,7 @@ void font_draw_fx(font *f, gfx_surface *d, int x, int y, const char *s,
                   int angle_tenths, int effects, int skew_tenths,
                   uint32_t rgba, const int *clip, int mode) {
     if (!f || !s || !d) return;
+    long long gp_t0 = gem_prof_now(); long gp_n = 0;    // TEMP profiler
     int cx0, cy0, cx1, cy1; clip_of(d, clip, &cx0, &cy0, &cx1, &cy1);
     double a = angle_tenths * (M_PI / 1800.0);          // CCW
     double c = cos(a), sn = sin(a);
@@ -606,6 +614,7 @@ void font_draw_fx(font *f, gfx_surface *d, int x, int y, const char *s,
         }
         penx += g->advance.x / 64.0 + trk * c;
         peny -= g->advance.y / 64.0 + trk * sn;
+        gp_n++;
     }
     if (effects & FX_UNDERLINE) {                        // along the (rotated) baseline, just below
         double uoff = f->px / 8.0 + 1, perpx = sn, perpy = c;   // device "below text"
@@ -615,4 +624,5 @@ void font_draw_fx(font *f, gfx_surface *d, int x, int y, const char *s,
     }
     if (stroker) FT_Stroker_Done(stroker);
     FT_Set_Transform(face, NULL, NULL);                 // identity again for the cached path
+    gem_prof_add(GEM_PROF_TEXT, gem_prof_now() - gp_t0, gp_n);   // TEMP profiler
 }

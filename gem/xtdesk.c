@@ -1098,7 +1098,9 @@ static void br_content(int hd, int wax, int way, int waw, int wah, void *ud) {
     // carries the single contacting -> progress indicator.  A fetch keeps the existing list on
     // screen and shows progress in the status bar too.
     aes_icon_label_style(0);                       // browser: over the light window
+    long long gp_t0 = gem_prof_now();              // TEMP profiler: the layout pass
     br_report_content(b);                          // full content height -> scrollbar + width
+    gem_prof_add(GEM_PROF_LAYOUT, gem_prof_now() - gp_t0, 0);
     // CULL to the damage (aes_damage): objc_draw prunes tiles outside its rect, and a tile
     // pruned is a LABEL NOT RENDERED — repainting a scroll strip used to re-render every
     // visible tile's glyphs just for the clip to discard them. (Mirrors the A9 twin.)
@@ -1108,7 +1110,9 @@ static void br_content(int hd, int wax, int way, int waw, int wah, void *ud) {
     int cy1 = dmy + dmh < b->way + b->wah ? dmy + dmh : b->way + b->wah;
     if (cx1 > cx0 && cy1 > cy0) {
         if (b->viewmode == 2 || b->viewmode == 3) br_draw_text(b);
-        else { br_layout(b);                       // viewmode 1: the icon grid
+        else { gp_t0 = gem_prof_now();
+               br_layout(b);                       // viewmode 1: the icon grid
+               gem_prof_add(GEM_PROF_LAYOUT, gem_prof_now() - gp_t0, 0);
                objc_draw(b->tree, 0, 2, cx0, cy0, cx1 - cx0, cy1 - cy0); }
     }
     if (dmy + dmh > b->infoy)                      // the bar: only when the damage reaches it
