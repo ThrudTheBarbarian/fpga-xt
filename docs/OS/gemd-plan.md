@@ -14,7 +14,7 @@ phase 1 is and is not). This file is the *implementation* plan and the running s
 | **M3 — desktop becomes a client** | **DONE, board-verified** (see below) |
 | **no single-process fallback on XTOS** | **DONE, board-verified** (see below) |
 | **M4 — input: routing, focus, live chrome** | **DONE, board-verified** (see below) |
-| M4b — the menu strip (§10), grabs, liveness | *owed — see "What M4 does NOT cover"* |
+| M4b — the menu strip (§10), grabs, liveness | **DONE, board-verified** — per-app strip surface, input grab, §9 revoke |
 | M5 — resize: client-driven (`wind_set`), scroll/content size | in progress: **geometry is a wire request (WF_CURRXYWH) — the Fit button works**, build-verified; board + scroll/content size open |
 | M6 — the XL plane | *blocked by design: a client cannot place a plane — see below* |
 | M7 — **the gate**: `SEC_PLANE` → PL0-none; **+ the engine composite** (designed, deferred — see below) | the gate is a kernel flip; the composite swap is the §14 seam move |
@@ -167,19 +167,21 @@ gemd: closer on wh=2 -> MSG_CLOSED (the app decides)   <- gemtext quits itself
 
 ### What M4 does NOT cover (be honest about it)
 
-- **The menu strip is §10 and is NOT done (M4b).** Under gemd the desktop does not call
-  `menu_bar()`: menus draw through the AES's workstation, which in a client is bound per-window
-  and only during a content callback. A menu strip needs its own surface (§10), which is the
-  next piece of work. The desktop's menu bar, its context menus and its `form_do` dialogs are
-  therefore **unreachable under gemd today** — the code is intact, not deleted.
-- **`wind_title` / `wind_info` / `wind_titlebtns` cannot survive the split as they are.** They
-  are *app callbacks that draw INSIDE the chrome*, and gemd cannot call a function pointer in
-  another address space (that is the one line M2 exists to break). Browser windows therefore lose
-  their breadcrumb title, their info footer and their title buttons under gemd. **This is a
-  design question, not a bug to patch**: either those become client-drawn surfaces composited
-  into the chrome, or the AES grows a declarative title model. Flagged, not guessed at.
-- **Scrollbars**: `wind_content_size()` is a local call, so gemd does not know a client's content
-  height and draws no scrollbar. Needs a `WIND_SET` message (M5).
+- ~~**The menu strip (§10)**~~ — **DONE, board-verified (M4b).** A client that calls `menu_bar()`
+  gets its OWN strip-sized surface from gemd (`GEM_MENU_BAR` → `MSG_MENU_SURF`, once, mapped for
+  the app's life), opens a VDI workstation on it and draws its bar with the same `draw_bar` as
+  local mode. gemd composites the MENU OWNER's strip into the reserved top band — the focused app,
+  or the desktop (bottom `W_BOTTOM` window) when no app is active. A press in the band is
+  `MSG_MENUCLK`; the dropdown is a chromeless WINDOW under an input GRAB, so the classic modal loop
+  runs client-side unchanged (its hit math is absolute, the strip origin IS the screen origin).
+- ~~**`wind_title` / `wind_info` / `wind_titlebtns`**~~ — **RESOLVED by the declarative title model**
+  (`WF_NAME`/`WF_SUBTITLE`/breadcrumbs/`WM_TBUTTON`, §11): all board-proven. The info footer became
+  a client content strip (the info bar, now under the titlebar after the chrome rework).
+- ~~**Scrollbars**~~ — **DONE (M5), both axes.** `wind_content_size()` puts the extent on the wire;
+  gemd draws the bar; the client scrolls its own store.
+- **GRABS + LIVENESS (§9)** — `GEM_GRAB{on}` routes all input to the grabber (screen coords);
+  while held, input forwarded to a then-silent client for >7 s revokes it (`MSG_GRAB_REVOKED`).
+  The menu interaction is the first grab client; the wedged-app-holding-a-grab case is covered.
 
 ## M5 (in progress): geometry is a wire request — WF_CURRXYWH joins the model
 
