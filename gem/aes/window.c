@@ -111,8 +111,12 @@ int wind_has_chrome(int kind){
 
 void wind_calc(int dir,int kind,int x,int y,int w,int h,int*ox,int*oy,int*ow,int*oh){
     if(!wind_has_chrome(kind)){ *ox=x; *oy=y; *ow=w; *oh=h; return; }   // chromeless: work == full
-    int b=bw(), th=tbh(), inf=(kind&W_INFO)?AES_INFO_H:0;
-    // The work area sits BETWEEN the title (top) and the W_INFO footer (bottom):
+    // The footer band exists for W_INFO *or* W_SIZER: the resize grips live IN the footer,
+    // so a sizer-only window must reserve it too — without this its work area (and the
+    // scrollbar column, which spans work height) ran over the grips, and the down arrow
+    // overdrew the right one (board-observed on a W_SIZER|no-W_INFO window).
+    int b=bw(), th=tbh(), inf=(kind&(W_INFO|W_SIZER))?AES_INFO_H:0;
+    // The work area sits BETWEEN the title (top) and the footer (bottom):
     // its origin drops only by the title height, and inf is taken off the BOTTOM.
     if(dir==WC_BORDER){ *ox=x-b; *oy=y-th; *ow=w+2*b; *oh=h+th+inf+b; }   // work -> full (info footer)
     else              { *ox=x+b; *oy=y+th; *ow=w-2*b; *oh=h-th-inf-b; }   // full -> work
@@ -364,12 +368,14 @@ static void draw_one(int hd, int active){
     awin*W=&g_w[hd]; int th=tbh();
     if(W->hidden) return;                        // lifted into the HW drag-overlay
     if(!wind_has_chrome(W->kind)){ draw_content(hd); return; }   // no chrome bits -> no chrome (§4)
-    if(W->surf.px && g_dmg_on){
+    if(W->surf.px){
         // The 9-slice's stretched CENTER lies under the content blit — draw_content overwrites
         // every pixel of it, so painting it first is pure overdraw (~540kpx of src-over per
         // composite for a 900x600 window, board-measured as the largest slice of a move step).
         // Draw the frame as four clip strips AROUND the rect the content will cover instead.
         // The blit mapping is untouched (clip only), so the frame pixels are bit-identical.
+        // vs_clip is a NESTING stack (ON = push + ∩current, OFF = pop): each strip is one
+        // balanced pair, and ∩ the damage clip happens by construction.
         int wx,wy,ww,wh; app_work(W,&wx,&wy,&ww,&wh);
         int cw = ww > W->surf.w ? W->surf.w : ww;    // what draw_content will really cover —
         int ch = wh > W->surf.h ? W->surf.h : wh;    // a lagging §12 surface covers less
@@ -380,15 +386,15 @@ static void draw_one(int hd, int active){
             { wx+cw, wy,    W->x+W->w, wy+ch     },  // right border + scrollbar column
         };
         for(int i=0;i<4;i++){
-            int x0=st[i][0]>g_dmg[0]?st[i][0]:g_dmg[0], y0=st[i][1]>g_dmg[1]?st[i][1]:g_dmg[1];
-            int x1=st[i][2]<g_dmg[2]?st[i][2]:g_dmg[2], y1=st[i][3]<g_dmg[3]?st[i][3]:g_dmg[3];
-            if(x1<=x0||y1<=y0) continue;
-            int16_t c[4]={(int16_t)x0,(int16_t)y0,(int16_t)(x1-1),(int16_t)(y1-1)};
+            if(st[i][2]<=st[i][0] || st[i][3]<=st[i][1]) continue;
+            if(g_dmg_on && (st[i][0]>=g_dmg[2] || st[i][2]<=g_dmg[0] ||
+                            st[i][1]>=g_dmg[3] || st[i][3]<=g_dmg[1])) continue;
+            int16_t c[4]={(int16_t)st[i][0],(int16_t)st[i][1],
+                          (int16_t)(st[i][2]-1),(int16_t)(st[i][3]-1)};
             vs_clip(H(),1,c);
             theme_draw(H(),aes_theme(),"window", W->x,W->y,W->w,W->h);
+            vs_clip(H(),0,NULL);
         }
-        int16_t dc[4]={(int16_t)g_dmg[0],(int16_t)g_dmg[1],(int16_t)(g_dmg[2]-1),(int16_t)(g_dmg[3]-1)};
-        vs_clip(H(),1,dc);                           // the damage clip back for the rest of the pass
     } else
         theme_draw(H(),aes_theme(),"window", W->x,W->y,W->w,W->h);
     theme_draw(H(),aes_theme(), active?"titlebar":"titlebar.inactive", W->x, W->y, W->w, th);  // flush top
