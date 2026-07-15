@@ -184,8 +184,9 @@ $(BUILD)/wm_test: $(WMTEST_OBJ)
 
 # xtmouse — stream the Mac's mouse to the board over UDP (the interim real mouse; the
 # serial-terminal lane caps at ~12 events/s). Other end: loader .../net/input_udp.c.
+XTMOUSE_LIBS := $(if $(filter Darwin,$(shell uname -s)),-lobjc -framework Foundation)
 $(BUILD)/xtmouse: tools/xtmouse.c | $(BUILD)
-	$(CC) -O2 -Wall $(shell sdl2-config --cflags) tools/xtmouse.c $(shell sdl2-config --libs) -o $@
+	$(CC) -O2 -Wall $(shell sdl2-config --cflags) tools/xtmouse.c $(shell sdl2-config --libs) $(XTMOUSE_LIBS) -o $@
 xtmouse: $(BUILD)/xtmouse
 	@echo "run: ./$(BUILD)/xtmouse xtos.local"
 
