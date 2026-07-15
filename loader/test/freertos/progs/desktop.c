@@ -425,7 +425,7 @@ static void desk_launch(const char *name, int media_type) {
 // subtitle), gemd draws it, and gemd keeps drawing it when we are wedged.  Hence no W_INFO:
 // the footer was the one place the old API let an app draw inside someone else's pixels.
 #define BR_WKIND (W_NAME|W_CLOSER|W_MOVER|W_SIZER|W_FULLER)   // browser-window kind
-#define BR_STATUS_H 24                                // status bar: bottom strip of the CONTENT
+#define BR_STATUS_H AES_SIZERBAND_H                   // status bar: bottom strip of the CONTENT — the AES constant, so the scrollbar stop and the border fills stay in lock-step
 // (There is no breadcrumb bar.  The breadcrumb is the TITLE -- WF_SUBTITLE + WT_PATH -- so gemd
 // draws it and hit-tests it, and a click arrives as WM_PATHSEG(index).  It went back into the
 // title bar where it always was, without a client drawing a single pixel of chrome.)
@@ -1113,7 +1113,7 @@ static void br_statusbar(browser *b) {
     int16_t sl[4] = { (int16_t)ix, (int16_t)iy, (int16_t)(ix+iw-1), (int16_t)iy };
     v_pline(HV, 2, sl);
     int gripw = 20;                                          // clear the resize grips (both ends)
-    int ay = iy+ih/2+2;                                      // +2: below-centre reads as a footer
+    int ay = iy+ih/2+1;                                      // +1: just below centre, within the band
     char info[96];
     int irx = ix+iw-gripw;                                   // right edge of the info text (clear of the R grip)
     b->retryx = 0; b->retryw = 0;                            // no Retry button unless in the error state

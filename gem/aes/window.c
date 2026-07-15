@@ -306,7 +306,9 @@ static void clamp_scroll(awin *W){
 // rect, shrunk by the scrollbar column when the bar is showing.
 static void app_work(awin *W,int*x,int*y,int*w,int*h){
     full_work(W,x,y,w,h);
-    if(vsb_on(W)){ *w -= SB_W; if(*w<0) *w=0; }
+    // reserve only up to the DIVIDER: the bar sits bw()-1 into the frame border (vsb_geom),
+    // so those pixels go back to the content pane instead of a dead gap left of the bar
+    if(vsb_on(W)){ *w -= SB_W-(bw()-1); if(*w<0) *w=0; }
 }
 // Vertical-scrollbar sub-geometry (all outputs optional): the reserved column,
 // the up/down arrow boxes, the track between them, and the proportional thumb.
@@ -324,7 +326,7 @@ static int vsb_geom(awin *W,int*colx,int*coly,int*colw,int*colh,
     // off-centre in its gutter). Shift the whole bar onto it, flush with the edge.
     int cx=wx+ww-SB_W+(bw()-1), cy=wy, ch=wh;
     if((W->kind & W_SIZER) && !(W->kind & W_INFO)){
-        ch -= AES_INFO_H;              // grips live on the CONTENT's bottom band (browser-style
+        ch -= AES_SIZERBAND_H;         // grips live on the CONTENT's bottom band (browser-style
         if(ch < SB_MINTH) ch = SB_MINTH;   // status bar): the down arrow stops above it
     }
     int ah=SB_ARROW; if(ah*2 > ch-SB_MINTH) ah=(ch-SB_MINTH)/2; if(ah<0) ah=0;
@@ -516,6 +518,17 @@ static void draw_one(int hd, int active){
     }
     draw_content(hd);
     draw_vscroll(hd);                            // over the reserved right column
+    if((W->kind & W_SIZER) && !(W->kind & W_INFO)){
+        // The frame borders BESIDE and BELOW the app's status band go chrome-grey, so the
+        // band runs wall-to-wall to the window outline (the right column already does).
+        int fx,fy,fw,fh; full_work(W,&fx,&fy,&fw,&fh); (void)fw;
+        int bt=fy+fh-AES_SIZERBAND_H;
+        vsf_color(H(),AES_PEN_CHROME); vsf_interior(H(),VDI_FIS_SOLID); vsf_perimeter(H(),0);
+        int16_t lb[4]={(int16_t)(W->x+1),(int16_t)bt,(int16_t)(fx-1),(int16_t)(W->y+W->h-2)};
+        vr_recfl(H(),lb);                        // left border, from the band top down
+        int16_t bb[4]={(int16_t)(W->x+1),(int16_t)(fy+fh),(int16_t)(W->x+W->w-2),(int16_t)(W->y+W->h-2)};
+        vr_recfl(H(),bb);                        // bottom border, full width (1px outline kept)
+    }
     if(W->kind & W_SIZER){         // resize grips LAST: the content blit erased the left one
         int gy=W->y+W->h-SIZER_SZ-2;                    // bottom-aligned in the footer band
         draw_grip_l(W->x+2,               gy, SIZER_SZ);  // bottom-left, inside the frame border
