@@ -134,14 +134,14 @@ static const char* tbvariant(char*buf,size_t n,const char*base,int active){
 // drawn hugging a bottom corner of the SIZER_SZ box at (gx,gy).  `left`=1 mirrors
 // it into the bottom-LEFT corner; else the bottom-RIGHT corner.
 static void draw_grip(int gx,int gy,int sz){
-    vsl_color(H(),249); vsl_width(H(),1);                 // PEN_BORDER
+    vsl_color(H(),AES_PEN_GRIP); vsl_width(H(),1);        // light against the chrome band
     for(int i=0;i<4;i++){ int o=5+i*4;                    // four parallel 45° lines
         int16_t p[4]={(int16_t)(gx+sz-1-o),(int16_t)(gy+sz-1),(int16_t)(gx+sz-1),(int16_t)(gy+sz-1-o)};
         v_pline(H(),2,p);
     }
 }
 static void draw_grip_l(int gx,int gy,int sz){
-    vsl_color(H(),249); vsl_width(H(),1);                 // PEN_BORDER, mirrored to bottom-LEFT
+    vsl_color(H(),AES_PEN_GRIP); vsl_width(H(),1);        // light, mirrored to bottom-LEFT
     for(int i=0;i<4;i++){ int o=5+i*4;
         int16_t p[4]={(int16_t)gx,(int16_t)(gy+sz-1-o),(int16_t)(gx+o),(int16_t)(gy+sz-1)};
         v_pline(H(),2,p);
@@ -357,8 +357,9 @@ static void draw_vscroll(int hd){
                                               // below a shortened track shares the chrome backdrop
     vsf_color(H(),AES_PEN_CHROME); vsf_interior(H(),VDI_FIS_SOLID); vsf_perimeter(H(),0);
     int16_t cr[4]={(int16_t)cx,(int16_t)cy,(int16_t)(cx+cw-1),(int16_t)colb}; vr_recfl(H(),cr);
-    vsl_color(H(),249); vsl_width(H(),1);                                        // PEN_BORDER left divider
-    int16_t dl[4]={(int16_t)cx,(int16_t)cy,(int16_t)cx,(int16_t)colb}; v_pline(H(),2,dl);
+    vsl_color(H(),249); vsl_width(H(),1);          // PEN_BORDER left divider — TRACK ONLY: through
+    int16_t dl[4]={(int16_t)cx,(int16_t)cy,(int16_t)cx,(int16_t)(cy+ch-1)};   // the band it cut the
+    v_pline(H(),2,dl);                             // grey with a 1px line
     { int thw=cw-6; if(thw<7) thw=7; int thx=cx+(cw-thw)/2;                      // themed thumb, centred
       theme_draw(H(),aes_theme(),"vscroll.thumb", thx,thy,thw,thh); }
     if(arrh>0){                                                                 // theme up/down arrow art
@@ -528,6 +529,13 @@ static void draw_one(int hd, int active){
         vr_recfl(H(),lb);                        // left border, from the band top down
         int16_t bb[4]={(int16_t)(W->x+1),(int16_t)(fy+fh),(int16_t)(W->x+W->w-2),(int16_t)(W->y+W->h-2)};
         vr_recfl(H(),bb);                        // bottom border, full width (1px outline kept)
+        // The rect fills squared the frame's rounded bottom corners — put the slice's own
+        // corner cells back on top (clip-only redraw, bit-identical corner pixels).
+        const int CR=8;
+        int16_t c1[4]={(int16_t)W->x,(int16_t)(W->y+W->h-CR),(int16_t)(W->x+CR-1),(int16_t)(W->y+W->h-1)};
+        vs_clip(H(),1,c1); theme_draw(H(),aes_theme(),"window",W->x,W->y,W->w,W->h); vs_clip(H(),0,NULL);
+        int16_t c2[4]={(int16_t)(W->x+W->w-CR),(int16_t)(W->y+W->h-CR),(int16_t)(W->x+W->w-1),(int16_t)(W->y+W->h-1)};
+        vs_clip(H(),1,c2); theme_draw(H(),aes_theme(),"window",W->x,W->y,W->w,W->h); vs_clip(H(),0,NULL);
     }
     if(W->kind & W_SIZER){         // resize grips LAST: the content blit erased the left one
         int gy=W->y+W->h-SIZER_SZ-2;                    // bottom-aligned in the footer band

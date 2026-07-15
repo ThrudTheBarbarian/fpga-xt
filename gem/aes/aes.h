@@ -493,7 +493,9 @@ typedef void (*wind_draw_fn)(int handle, int wx, int wy, int ww, int wh, void *u
 #define AES_INFO_H 24     // height of the W_INFO chrome line (a footer at the window bottom)
 #define AES_PEN_CHROME 251 // scratch pen: scrollbar / info-bar / grip-zone background (200,200,200
                            // — darker than PEN_DLG's 236 so the bars read as chrome, not content)
-#define AES_SIZERBAND_H 16 // the status/grip band at the bottom of a W_SIZER window WITHOUT
+#define AES_PEN_GRIP 252   // scratch pen: the resize-grip diagonals (240,240,240 — light against
+                           // the AES_PEN_CHROME band; PEN_BORDER was too subtle there)
+#define AES_SIZERBAND_H 14 // the status/grip band at the bottom of a W_SIZER window WITHOUT
                            // W_INFO: the app draws its bar (content) this tall, the scrollbar
                            // stops above it, and the AES paints the adjacent frame borders in
                            // AES_PEN_CHROME so the band runs wall-to-wall to the outline.
