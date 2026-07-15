@@ -135,14 +135,14 @@ static const char* tbvariant(char*buf,size_t n,const char*base,int active){
 // it into the bottom-LEFT corner; else the bottom-RIGHT corner.
 static void draw_grip(int gx,int gy,int sz){
     vsl_color(H(),249); vsl_width(H(),1);                 // PEN_BORDER
-    for(int i=0;i<3;i++){ int o=5+i*4;                    // three parallel 45° lines
+    for(int i=0;i<4;i++){ int o=5+i*4;                    // four parallel 45° lines
         int16_t p[4]={(int16_t)(gx+sz-1-o),(int16_t)(gy+sz-1),(int16_t)(gx+sz-1),(int16_t)(gy+sz-1-o)};
         v_pline(H(),2,p);
     }
 }
 static void draw_grip_l(int gx,int gy,int sz){
     vsl_color(H(),249); vsl_width(H(),1);                 // PEN_BORDER, mirrored to bottom-LEFT
-    for(int i=0;i<3;i++){ int o=5+i*4;
+    for(int i=0;i<4;i++){ int o=5+i*4;
         int16_t p[4]={(int16_t)gx,(int16_t)(gy+sz-1-o),(int16_t)(gx+o),(int16_t)(gy+sz-1)};
         v_pline(H(),2,p);
     }
@@ -319,7 +319,10 @@ static int vsb_geom(awin *W,int*colx,int*coly,int*colw,int*colh,
     // The scrollbar column spans the work-area height, minus the grip band when the
     // grips live on the app's own bottom bar (W_SIZER without W_INFO): the down arrow
     // must stop above it. With W_INFO the footer is chrome and already out of the work.
-    int cx=wx+ww-SB_W, cy=wy, ch=wh;
+    // +bw()-1: the frame's inner border is dead space to the bar's right (board-measured:
+    // a 4px near-white strip between the fill and the window edge made the bar look
+    // off-centre in its gutter). Shift the whole bar onto it, flush with the edge.
+    int cx=wx+ww-SB_W+(bw()-1), cy=wy, ch=wh;
     if((W->kind & W_SIZER) && !(W->kind & W_INFO)){
         ch -= AES_INFO_H;              // grips live on the CONTENT's bottom band (browser-style
         if(ch < SB_MINTH) ch = SB_MINTH;   // status bar): the down arrow stops above it
@@ -347,10 +350,13 @@ static void draw_vscroll(int hd){
     awin*W=&g_w[hd];
     int cx,cy,cw,ch,upy,dny,arrh,trky,trkh,thy,thh;
     if(!vsb_geom(W,&cx,&cy,&cw,&ch,&upy,&dny,&arrh,&trky,&trkh,&thy,&thh)) return;
-    vsf_color(H(),248); vsf_interior(H(),VDI_FIS_SOLID); vsf_perimeter(H(),0);   // PEN_DLG column
-    int16_t cr[4]={(int16_t)cx,(int16_t)cy,(int16_t)(cx+cw-1),(int16_t)(cy+ch-1)}; vr_recfl(H(),cr);
+    int wx2,wy2,ww2,wh2; full_work(W,&wx2,&wy2,&ww2,&wh2); (void)wx2;(void)ww2;
+    int colb=wy2+wh2-1;                       // fill + divider to the WORK bottom: the grip band
+                                              // below a shortened track shares the chrome backdrop
+    vsf_color(H(),AES_PEN_CHROME); vsf_interior(H(),VDI_FIS_SOLID); vsf_perimeter(H(),0);
+    int16_t cr[4]={(int16_t)cx,(int16_t)cy,(int16_t)(cx+cw-1),(int16_t)colb}; vr_recfl(H(),cr);
     vsl_color(H(),249); vsl_width(H(),1);                                        // PEN_BORDER left divider
-    int16_t dl[4]={(int16_t)cx,(int16_t)cy,(int16_t)cx,(int16_t)(cy+ch-1)}; v_pline(H(),2,dl);
+    int16_t dl[4]={(int16_t)cx,(int16_t)cy,(int16_t)cx,(int16_t)colb}; v_pline(H(),2,dl);
     { int thw=cw-6; if(thw<7) thw=7; int thx=cx+(cw-thw)/2;                      // themed thumb, centred
       theme_draw(H(),aes_theme(),"vscroll.thumb", thx,thy,thw,thh); }
     if(arrh>0){                                                                 // theme up/down arrow art
@@ -493,7 +499,7 @@ static void draw_one(int hd, int active){
     }
     if(W->kind & W_INFO){          // W_INFO chrome line as a FOOTER at the window bottom; tuck 2px
         int ix=W->x+2, iy=W->y+W->h-AES_INFO_H-2, iw=W->w-4;   // inside the rounded frame corners
-        vsf_color(H(),248); vsf_interior(H(),VDI_FIS_SOLID); vsf_perimeter(H(),0);   // PEN_DLG (object.c): light chrome
+        vsf_color(H(),AES_PEN_CHROME); vsf_interior(H(),VDI_FIS_SOLID); vsf_perimeter(H(),0);   // chrome-bar grey
         int16_t ir[4]={(int16_t)ix,(int16_t)iy,(int16_t)(ix+iw-1),(int16_t)(iy+AES_INFO_H-1)}; vr_recfl(H(),ir);
         vsl_color(H(),249); vsl_width(H(),1);                                        // PEN_BORDER: TOP divider (work | footer)
         int16_t il[4]={(int16_t)ix,(int16_t)iy,(int16_t)(ix+iw-1),(int16_t)iy}; v_pline(H(),2,il);
@@ -505,16 +511,16 @@ static void draw_one(int hd, int active){
             char ifit[80];
             int iavail = iw - 16 - ((W->kind&W_SIZER) ? 2*SIZER_SZ : 0);   // clear of the grips
             aes_label_fit(H(), W->info_text, iavail, ifit, sizeof ifit);
-            v_gtext(H(), ix+8+((W->kind&W_SIZER)?SIZER_SZ:0), iy+AES_INFO_H/2-7, ifit);
+            v_gtext(H(), ix+8+((W->kind&W_SIZER)?SIZER_SZ:0), iy+AES_INFO_H/2-5, ifit);   // +2: below-centre reads as a footer
         }
-    }
-    if(W->kind & W_SIZER){         // resize grips at BOTH ends of the footer band
-        int gy=W->y+W->h-SIZER_SZ-2;                    // bottom-aligned in the footer
-        draw_grip_l(W->x+2,               gy, SIZER_SZ);  // bottom-left, inside the frame border
-        draw_grip  (W->x+W->w-SIZER_SZ-2, gy, SIZER_SZ);  // bottom-right, inside the frame border
     }
     draw_content(hd);
     draw_vscroll(hd);                            // over the reserved right column
+    if(W->kind & W_SIZER){         // resize grips LAST: the content blit erased the left one
+        int gy=W->y+W->h-SIZER_SZ-2;                    // bottom-aligned in the footer band
+        draw_grip_l(W->x+2,               gy, SIZER_SZ);  // bottom-left, inside the frame border
+        draw_grip  (W->x+W->w-SIZER_SZ-2, gy, SIZER_SZ);  // bottom-right, over the chrome column
+    }
 }
 
 // The work area + its content (clipped).  The rect is shrunk by the scrollbar column when the

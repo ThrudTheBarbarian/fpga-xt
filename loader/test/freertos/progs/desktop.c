@@ -1106,14 +1106,14 @@ static void br_fit(browser *b) {
 // the window's bottom corners, over this bar, so the text insets past them.)
 static void br_statusbar(browser *b) {
     int ix = b->infox, iy = b->infoy, iw = b->infow, ih = b->infoh;
-    vsf_color(HV, 248); vsf_interior(HV, VDI_FIS_SOLID); vsf_perimeter(HV, 0);   // PEN_DLG strip
+    vsf_color(HV, AES_PEN_CHROME); vsf_interior(HV, VDI_FIS_SOLID); vsf_perimeter(HV, 0);   // chrome-bar grey
     int16_t sr[4] = { (int16_t)ix, (int16_t)iy, (int16_t)(ix+iw-1), (int16_t)(iy+ih-1) };
     vr_recfl(HV, sr);
     vsl_color(HV, 249); vsl_width(HV, 1);                                        // PEN_BORDER divider
     int16_t sl[4] = { (int16_t)ix, (int16_t)iy, (int16_t)(ix+iw-1), (int16_t)iy };
     v_pline(HV, 2, sl);
     int gripw = 20;                                          // clear the resize grips (both ends)
-    int ay = iy+ih/2;
+    int ay = iy+ih/2+2;                                      // +2: below-centre reads as a footer
     char info[96];
     int irx = ix+iw-gripw;                                   // right edge of the info text (clear of the R grip)
     b->retryx = 0; b->retryw = 0;                            // no Retry button unless in the error state

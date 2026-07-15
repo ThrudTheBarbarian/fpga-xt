@@ -15,6 +15,7 @@ enum { PEN_DLG = 248, PEN_BORDER = 249, PEN_SEL = 250 };
 void aes_init(int vh, const theme *th) {
     g_vh = vh; g_th = th;
     v_setrgb(vh, PEN_DLG, 236, 238, 240);
+    v_setrgb(vh, AES_PEN_CHROME, 200, 200, 200);
     if (th) {
         v_setrgb(vh, PEN_BORDER, (th->border>>24)&0xFF, (th->border>>16)&0xFF, (th->border>>8)&0xFF);
         v_setrgb(vh, PEN_SEL,    (th->sel_bg>>24)&0xFF, (th->sel_bg>>16)&0xFF, (th->sel_bg>>8)&0xFF);
