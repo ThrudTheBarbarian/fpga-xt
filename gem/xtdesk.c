@@ -334,7 +334,7 @@ static void desk_launch(const char *name, int media_type) {
 // subtitle), gemd draws it, and gemd keeps drawing it when we are wedged.  Hence no W_INFO:
 // the footer was the one place the old API let an app draw inside someone else's pixels.
 #define BR_WKIND (W_NAME|W_CLOSER|W_MOVER|W_SIZER|W_FULLER)   // browser-window kind
-#define BR_STATUS_H AES_SIZERBAND_H                   // status bar: bottom strip of the CONTENT — the AES constant, so the scrollbar stop and the border fills stay in lock-step
+#define BR_STATUS_H 14                                // the info strip: TOP of the content, under the titlebar
 // (There is no breadcrumb bar.  The breadcrumb is the TITLE -- WF_SUBTITLE + WT_PATH -- so gemd
 // draws it and hit-tests it, and a click arrives as WM_PATHSEG(index).  It went back into the
 // title bar where it always was, without a client drawing a single pixel of chrome.)
@@ -370,7 +370,7 @@ typedef struct {
     CICON  cic[MAXENT];
     OBJECT tree[2 + MAXENT];                           // + the synthetic ".." tile
     int wax, way, waw, wah;                            // the LIST rect: the work area minus the two bars
-    int infox, infoy, infow, infoh;                    // status bar (content, bottom of the work area)
+    int infox, infoy, infow, infoh;                    // info strip (content, TOP of the work area)
     int last_ww, last_wh;                              // work size at the last paint (WM_SIZED delta)
     int retryx, retryw;                                // Retry button rect in the status bar (error state)
     int viewmode;                                      // 1=icons 2=single-col 3=multi-col 4=gallery
@@ -792,9 +792,13 @@ static void br_text_grid(browser *b, int *cols, int *rpc, int *colw, int *ntile)
     int c = 1;
     if (b->viewmode == 3) { c = avail / TEXT_COLW; if (c < 1) c = 1; }
     int rows = ((nt < 1 ? 1 : nt) + c - 1) / c; if (rows < 1) rows = 1;
+    // A column narrower than its fields CRUSHES the row; floor it and let the window
+    // H-SCROLL instead (the first horizontal-scrollbar consumer).
+    int cw2 = avail / c;
+    if (cw2 < TEXT_COLW) cw2 = TEXT_COLW;
     if (cols)  *cols  = c;
     if (rpc)   *rpc   = rows;
-    if (colw)  *colw  = avail / c;
+    if (colw)  *colw  = cw2;
     if (ntile) *ntile = nt;
 }
 // Pixel cell rect for text-view tile `slot` (0..ntile-1, slot 0 = ".." when present).
@@ -811,8 +815,8 @@ static void br_text_cell(browser *b, int slot, int *x, int *y, int *w, int *h) {
 static int br_text_hit(browser *b, int mx, int my) {
     int pad = 14, cols, rpc, colw, nt; br_text_grid(b, &cols, &rpc, &colw, &nt);
     if (nt <= 0) return -1;
-    int sy = wind_scroll_y(b->win);
-    int lx = mx - (b->wax + pad), ly = (my + sy) - (b->way + pad);
+    int sy = wind_scroll_y(b->win), sx2 = wind_scroll_x(b->win);
+    int lx = (mx + sx2) - (b->wax + pad), ly = (my + sy) - (b->way + pad);
     if (lx < 0 || ly < 0) return -1;
     int col = lx / colw, row = ly / TEXT_ROWH;
     if (col < 0 || col >= cols || row < 0 || row >= rpc) return -1;
@@ -838,7 +842,12 @@ static int br_content_height(browser *b) {
 // work height, so reporting only the list height would leave the last rows unreachable under the
 // status bar.  (The bar itself does not scroll — we draw it unshifted.)
 static void br_report_content(browser *b) {
-    wind_content_size(b->win, b->waw, br_content_height(b) + BR_STATUS_H);
+    int cw = b->waw;
+    if (b->viewmode == 2 || b->viewmode == 3) {          // text rows have a REAL width
+        int cols, rpc, colw, nt; br_text_grid(b, &cols, &rpc, &colw, &nt);
+        cw = 2*14 + cols*colw;
+    }
+    wind_content_size(b->win, cw, br_content_height(b) + BR_STATUS_H);
 }
 // Draw the entries as one-line text rows (viewmode 2 single / 3 multi): name left,
 // size right-aligned per cell (dirs / ".." -> "<dir>").  The selected row gets a
@@ -846,6 +855,7 @@ static void br_report_content(browser *b) {
 static void br_draw_text(browser *b) {
     int dd = b->rel[0] ? 1 : 0, nt = b->nent + dd;
     int sy = wind_scroll_y(b->win);                     // content is drawn shifted up
+    int sx = wind_scroll_x(b->win);                     // ... and left, when it h-scrolls
     int dmx, dmy, dmw, dmh; aes_damage(&dmx, &dmy, &dmw, &dmh); (void)dmx; (void)dmw;
     int cull0 = dmy > b->way ? dmy : b->way;            // damage ∩ work: rows outside render
     int cull1 = dmy + dmh < b->way + b->wah ? dmy + dmh : b->way + b->wah;   // glyphs for nothing
@@ -860,6 +870,7 @@ static void br_draw_text(browser *b) {
     for (int slot = 0; slot < nt; slot++) {
         int cx, cy, cw, ch; br_text_cell(b, slot, &cx, &cy, &cw, &ch);
         cy -= sy;                                       // screen y (clipped to the work rect)
+        cx -= sx;                                       // screen x, mirror of the y shift
         if (cy + ch <= cull0 || cy >= cull1) continue;  // scrolled off / outside the damage
         int isdot = (dd && slot == 0), i = slot - dd;
         int sel   = (!isdot && (i == b->sel || b->selall));
@@ -1016,11 +1027,11 @@ static void br_fit(browser *b) {
 // the window's bottom corners, over this bar, so the text insets past them.)
 static void br_statusbar(browser *b) {
     int ix = b->infox, iy = b->infoy, iw = b->infow, ih = b->infoh;
-    vsf_color(HV, AES_PEN_CHROME); vsf_interior(HV, VDI_FIS_SOLID); vsf_perimeter(HV, 0);   // chrome-bar grey
+    vsf_color(HV, AES_PEN_INFOBAR); vsf_interior(HV, VDI_FIS_SOLID); vsf_perimeter(HV, 0);  // light strip
     int16_t sr[4] = { (int16_t)ix, (int16_t)iy, (int16_t)(ix+iw-1), (int16_t)(iy+ih-1) };
     vr_recfl(HV, sr);
-    vsl_color(HV, 249); vsl_width(HV, 1);                                        // PEN_BORDER divider
-    int16_t sl[4] = { (int16_t)ix, (int16_t)iy, (int16_t)(ix+iw-1), (int16_t)iy };
+    vsl_color(HV, 249); vsl_width(HV, 1);                    // PEN_BORDER: the bar|content demarcation
+    int16_t sl[4] = { (int16_t)ix, (int16_t)(iy+ih-1), (int16_t)(ix+iw-1), (int16_t)(iy+ih-1) };
     v_pline(HV, 2, sl);
     int gripw = 20;                                          // clear the resize grips (both ends)
     int ay = iy+ih/2+1;                                      // +1: just below centre, within the band
@@ -1086,9 +1097,9 @@ static void br_statusbar(browser *b) {
 static void br_content(int hd, int wax, int way, int waw, int wah, void *ud) {
     (void)hd; browser *b = ud;
     b->infox = wax; b->infow = waw; b->infoh = BR_STATUS_H;
-    b->infoy = way + wah - BR_STATUS_H;
-    b->wax = wax; b->waw = waw;                    // the LIST rect: the work area above the status bar
-    b->way = way;                                  // (the breadcrumb is the TITLE now — chrome, not ours)
+    b->infoy = way;                                // the info strip sits at the TOP, under the title
+    b->wax = wax; b->waw = waw;                    // the LIST rect: the work area BELOW the info strip
+    b->way = way + BR_STATUS_H;                    // (the breadcrumb is the TITLE — chrome, not ours)
     b->wah = wah - BR_STATUS_H; if (b->wah < 0) b->wah = 0;
 
     vsf_color(HV, 0); vsf_interior(HV, VDI_FIS_SOLID); vsf_perimeter(HV, 0);     // PEN_WHITE
@@ -1116,7 +1127,7 @@ static void br_content(int hd, int wax, int way, int waw, int wah, void *ud) {
                gem_prof_add(GEM_PROF_LAYOUT, gem_prof_now() - gp_t0, 0);
                objc_draw(b->tree, 0, 2, cx0, cy0, cx1 - cx0, cy1 - cy0); }
     }
-    if (dmy + dmh > b->infoy)                      // the bar: only when the damage reaches it
+    if (dmy < b->infoy + b->infoh)                 // the bar: only when the damage reaches it
         br_statusbar(b);                           // the one content bar, over any list bleed
 }
 static void open_fuji_browser(int server_id, const char *name);   // fwd
@@ -1353,8 +1364,9 @@ static int br_tree_tri_hit(browser *b, int slot, int mx) {
     int i = slot - dd;
     if (i < 0 || i >= b->nent || !b->ent[i].dir) return 0;
     int cx, cy, cw, ch; br_text_cell(b, slot, &cx, &cy, &cw, &ch);
-    int tri_x = cx + 6 + b->ent[i].depth * TREE_INDENT;
-    return (mx >= tri_x && mx < tri_x + TREE_TRIW);
+    int tri_x = cx + 6 + b->ent[i].depth * TREE_INDENT;   // content coords: shift the CLICK
+    int cmx = mx + wind_scroll_x(b->win);                 // into content space (h-scroll)
+    return (cmx >= tri_x && cmx < tri_x + TREE_TRIW);
 }
 // The View title-button popup: pick a view mode, a check on the current one.
 // Opens at the button's screen rect; choosing one relayouts + redraws.  Item ids
@@ -1488,7 +1500,7 @@ static void open_browser_win(const char *logical, int media_type, int net, int s
     if (!b->win) { b->used = 0; return; }
     br_list(b); br_settitle(b);
     wind_content(b->win, br_content, b);
-    wind_pin_bottom(b->win, BR_STATUS_H);   // the status bar does not scroll: the blit stops above it
+    wind_pin_top(b->win, BR_STATUS_H);      // the info strip does not scroll: the blit starts below it
     wind_resize_mode(b->win, WIND_RESIZE_APP);   // resize discipline (aes.h): we paint only what
                                                  // our layout invalidates — see the WM_SIZED case
     if (net != 1) {                                   // path windows: the two title buttons.  A LIST OF

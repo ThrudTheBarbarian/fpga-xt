@@ -442,8 +442,9 @@ enum { WF_KIND=1, WF_NAME=2, WF_INFO=3, WF_WORKXYWH=4, WF_CURRXYWH=5,
        // rect; the app hears WM_VSLID and repaints anything it pins (a status bar).
        WF_CONTENTSIZE=36,  // full content extent, work coords
        WF_SCROLL=37,       // scroll offset — a REQUEST: gemd clamps and answers with the truth
-       WF_PINBOTTOM=38 };  // u[0]=px: the pinned bottom strip (wind_pin_bottom's wire name) —
-                           // gemd places the HORIZONTAL scrollbar band just above the app's bar
+       WF_LAST_=38 };      // (38 was WF_PINBOTTOM for one commit; the info bar moved to the
+                           // TOP of the work area and the band anchors at the work bottom, so
+                           // the pin never goes on the wire — it is the client's blit bound)
 enum { WT_MODIFIED = 0x01,     // WF_TITLEFLAGS: show the unsaved-changes dot
        // THE SUBTITLE IS A PATH.  The AES draws it as "/a/b/c" with each component its own
        // clickable span (middle-eliding at COMPONENT granularity when it will not fit), and a
@@ -495,12 +496,12 @@ typedef void (*wind_draw_fn)(int handle, int wx, int wy, int ww, int wh, void *u
 #define AES_INFO_H 24     // height of the W_INFO chrome line (a footer at the window bottom)
 #define AES_PEN_CHROME 251 // scratch pen: scrollbar / info-bar / grip-zone background (200,200,200
                            // — darker than PEN_DLG's 236 so the bars read as chrome, not content)
-#define AES_PEN_GRIP 252   // scratch pen: the resize-grip diagonals (240,240,240 — light against
-                           // the AES_PEN_CHROME band; PEN_BORDER was too subtle there)
-#define AES_SIZERBAND_H 14 // the status/grip band at the bottom of a W_SIZER window WITHOUT
-                           // W_INFO: the app draws its bar (content) this tall, the scrollbar
-                           // stops above it, and the AES paints the adjacent frame borders in
-                           // AES_PEN_CHROME so the band runs wall-to-wall to the outline.
+#define AES_PEN_GRIP 252   // scratch pen (240,240,240): reserved for the hover resize
+                           // brackets (theme-able, later); the permanent grips are GONE —
+                           // resize is proximity zones on the frame itself
+#define AES_PEN_INFOBAR 253 // the app's info strip under the titlebar (224,224,224 — lighter
+                           // than AES_PEN_CHROME; a 1px PEN_BORDER divider at its BOTTOM is
+                           // the demarcation against the content)
 #define AES_MENUBAR_H 22  // height of the menu bar strip (menu.c draws it; gemd RESERVES it at
                           // startup even before the menu strip exists, so the fuller and the
                           // clamps never put a window where the bar is going to be)
@@ -587,10 +588,10 @@ int  aes_top_reserve(void);                         // px reserved at the top (m
 void wind_redraw(void);                             // full-screen redraw (desktop + all windows)
 void wind_redraw_area(int x, int y, int w, int h);  // repaint only this damage rect (bg+wallpaper+windows+bar, clipped + presented)
 void wind_redraw_win(int handle);                   // repaint just one window's rect (the "only this window changed" case)
-// Declare a non-scrolling strip at the work-area BOTTOM (a status bar drawn as content).
-// Under gemd the scroll consequence shifts the backing store with a blit; without this the
-// blit drags a stale copy of the pinned strip up through the content.
-void wind_pin_bottom(int handle, int px);
+// Declare a non-scrolling strip at the work-area TOP (the info bar drawn as content, directly
+// under the titlebar). Under gemd the scroll consequence shifts the backing store with a blit;
+// without this the blit drags a stale copy of the pinned strip through the content.
+void wind_pin_top(int handle, int px);
 // THE DIRTY-RECT TOOL: repaint one RECT of one window's content, in the SAME coordinate
 // space the content callback draws in (client: surface coords; local: screen coords — i.e.
 // whatever you measured your widgets in when you drew them).  Use it when a ROW changed, a

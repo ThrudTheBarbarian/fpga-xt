@@ -91,7 +91,19 @@ void gemd_route(int type, const aes_event *ev)
         if (g_focus) send_button(g_focus, ev->mx, ev->my, 0, ev->shift);
         break;
 
-    case AES_MOTION:
+    case AES_MOTION: {
+        /* THE HOVER AFFORDANCE: near a resizable frame the cursor becomes the grip. Zone ->
+         * glyph, swapped only on TRANSITIONS (SYS_cursor_shape is a no-op on a same-shape
+         * call anyway, but don't burn a syscall per motion). During a resize drag the modal
+         * loop consumes the motions, so the glyph naturally stays put until release. */
+        static int hover_shape = 0;
+        int z = wind_resize_zone_at(ev->mx, ev->my);
+        int shape = 0;
+        if (z == WIND_RZ_L || z == WIND_RZ_R) shape = 1;                     /* EW  */
+        else if (z == WIND_RZ_T || z == WIND_RZ_B) shape = 2;                /* NS  */
+        else if (z == (WIND_RZ_L|WIND_RZ_T) || z == (WIND_RZ_R|WIND_RZ_B)) shape = 3;   /* NWSE */
+        else if (z) shape = 4;                                               /* NESW */
+        if (shape != hover_shape) { hover_shape = shape; sys_cursor_shape(shape); }
         if (g_focus) {
             int lx, ly; to_local(g_focus, ev->mx, ev->my, &lx, &ly);
             gem_msg m; memset(&m, 0, sizeof m);
@@ -99,7 +111,7 @@ void gemd_route(int type, const aes_event *ev)
             m.w[2] = (int16_t)lx; m.w[3] = (int16_t)ly; m.w[4] = (int16_t)ev->button;
             send_win(g_focus, &m);
         }
-        break;
+        break; }
 
     case AES_KEY:
         if (g_focus) {

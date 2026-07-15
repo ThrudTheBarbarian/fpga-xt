@@ -209,5 +209,6 @@ static inline long sys_overlay(int x, int y, int w, int h, int en) {
 static inline long sys_input(struct os_event *ev, int timeout_ms, int raw) { return __syscall(SYS_input, (long)ev, timeout_ms, raw); }
 /* Inject one ASCII keystroke into the 6502's POKEY (Ctrl-C = Atari BREAK). */
 static inline long sys_kbd_6502(int c) { return __syscall(SYS_kbd_6502, c, 0, 0); }
+static inline long sys_cursor_shape(int n) { return __syscall(SYS_cursor_shape, n, 0, 0); }
 
 #endif

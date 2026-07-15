@@ -72,6 +72,57 @@ static int cur_x = 96, cur_y = 96;   /* home near the top-left: that is where th
                                       * icons live, and a serial mouse crosses half of 1080p
                                       * slowly (user request — was screen centre) */
 
+/* ---- resize cursors (proximity-resize affordance; gemd swaps via SYS_cursor_shape) ----
+ * 16x16 double-headed arrows, CENTRE hotspot (8,8) — the arrow keeps its tip hotspot (0,0).
+ * Each shape pre-rendered into its own 32px arena cell at init; switching is ONE sprite
+ * commit with a different arena x, cheap enough to do per hover transition. */
+#define RSZW 16
+static const char *s_rsz_ew[RSZW] = {   /* <-> */
+    "                ", "                ", "                ", "                ",
+    "                ", "   X       X    ", "  XX       XX   ", " X.XXXXXXXXX.X  ",
+    "X.............X ", " X.XXXXXXXXX.X  ", "  XX       XX   ", "   X       X    ",
+    "                ", "                ", "                ", "                ",
+};
+static const char *s_rsz_ns[RSZW] = {   /* up-down */
+    "       X        ", "      X.X       ", "     X...X      ", "    X.....X     ",
+    "   XXXX.XXXX    ", "      X.X       ", "      X.X       ", "      X.X       ",
+    "      X.X       ", "      X.X       ", "      X.X       ", "   XXXX.XXXX    ",
+    "    X.....X     ", "     X...X      ", "      X.X       ", "       X        ",
+};
+static const char *s_rsz_nwse[RSZW] = { /* top-left <-> bottom-right */
+    "XXXXXX          ", "X....X          ", "X...X           ", "X..X.X          ",
+    "X.X X.X         ", "XX   X.X        ", "      X.X       ", "       X.X      ",
+    "        X.X     ", "         X.X    ", "          X.XX  ", "         X.X X.X",
+    "          X.X..X", "           X...X", "          X....X", "          XXXXXX",
+};
+static const char *s_rsz_nesw[RSZW] = { /* top-right <-> bottom-left */
+    "          XXXXXX", "          X....X", "           X...X", "          X.X..X",
+    "         X.X X.X", "        X.X   XX", "       X.X      ", "      X.X       ",
+    "     X.X        ", "    X.X         ", "  XX.X          ", "X.X X.X         ",
+    "X..X.X          ", "X...X           ", "X....X          ", "XXXXXX          ",
+};
+static const struct { const char **art; int n, ax, hx, hy; } s_shapes[] = {
+    { 0,          0,   0,   0, 0 },      /* 0: the arrow (rendered by cursor_init) */
+    { s_rsz_ew,   RSZW, 32, 8, 8 },
+    { s_rsz_ns,   RSZW, 64, 8, 8 },
+    { s_rsz_nwse, RSZW, 96, 8, 8 },
+    { s_rsz_nesw, RSZW, 128,8, 8 },
+};
+#define NSHAPES 5
+static int cur_shape = 0;
+static void shape_render(int i){
+    static uint32_t img[32*32];
+    for(int r=0;r<32;r++) for(int c=0;c<32;c++){
+        uint32_t px=0x00000000u;
+        if(r<s_shapes[i].n && c<s_shapes[i].n){
+            char ch=s_shapes[i].art[r][c];
+            if(ch=='X') px=0x000000FFu; else if(ch=='.') px=0xFFFFFFFFu;
+        }
+        img[r*32+c]=px;
+    }
+    sprite_load_rgba(s_shapes[i].ax, 0, 32, 32, img);
+}
+
 void cursor_init(void) {
     static uint32_t img[32 * 32];
     for (int r = 0; r < 32; r++)
@@ -85,13 +136,21 @@ void cursor_init(void) {
             img[r * 32 + c] = px;
         }
     sprite_load_rgba(0, 0, 32, 32, img);
+    for (int i = 1; i < NSHAPES; i++) shape_render(i);
     sprite_set(CUR_SLOT, 0, 5, 0, 0, cur_x, cur_y);   /* log2sz 5 = 32 px */
     spr_reg((uint8_t)(R_CTRL0 + CUR_SLOT), 0x21u);    /* enable(0) + format32(5) */
     spr_reg(R_GLOBAL, 0x01u);
 }
 void cursor_move(int x, int y) {
     cur_x = x; cur_y = y;
-    sprite_set(CUR_SLOT, 0, 5, 0, 0, x, y);
+    sprite_set(CUR_SLOT, 0, 5, s_shapes[cur_shape].ax, 0,
+               x - s_shapes[cur_shape].hx, y - s_shapes[cur_shape].hy);
+}
+void cursor_set_shape(int n) {
+    if (n < 0 || n >= NSHAPES || n == cur_shape) return;
+    cur_shape = n;
+    sprite_set(CUR_SLOT, 0, 5, s_shapes[n].ax, 0,
+               cur_x - s_shapes[n].hx, cur_y - s_shapes[n].hy);
 }
 void cursor_pos(int *x, int *y) { *x = cur_x; *y = cur_y; }
 

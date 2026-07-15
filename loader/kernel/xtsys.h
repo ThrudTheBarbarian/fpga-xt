@@ -400,6 +400,10 @@ struct xt_pollfd { int fd; short events; short revents; };
 #define SYS_input        0x700 /* (struct os_event *, timeout_ms) -> 0; blocks (<0 = forever) */
 #define SYS_kbd_6502     0x701 /* (ascii) -> 0 / -1 no such Atari key: inject one keystroke
                                 * into the 6502's POKEY (KBCODE down + release; ^C = BREAK) */
+#define SYS_cursor_shape 0x702 /* (shape) -> 0: the HW cursor sprite's glyph. 0=arrow,
+                                * 1=resize-EW, 2=resize-NS, 3=resize-NWSE, 4=resize-NESW.
+                                * Resize glyphs are centre-hotspot (the kernel offsets the
+                                * sprite); gemd swaps on frame-zone hover. No-op off-HW. */
 
 /* one input event (SYS_input, and one read() record from /OS/dev/input); type values match the
  * AES aes_event enum. `wheel` is the signed notch count for OS_EV_WHEEL (>0 = away from the

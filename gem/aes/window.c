@@ -67,7 +67,8 @@ typedef struct {
     int nseg, segx[WIND_MAXSEG], segw[WIND_MAXSEG], segn[WIND_MAXSEG];
     int content_w, content_h;                  // app-reported full content size (work coords)
     int scroll_x, scroll_y;                    // current scroll offset (vertical bar drawn)
-    int pin_bottom;                            // px at the work-area BOTTOM that do not scroll
+    int pin_top;                               // px at the work-area TOP that do not scroll (the
+                                               // info strip under the titlebar)
     int rsz_mode;                              // WIND_RESIZE_FULL/APP (aes.h): who paints a resize
                                                // (a status bar): the scroll blit stops above it
     int maxed, sx,sy,sw,sh;                    // maximise toggle: flag + the pre-maximise rect
@@ -131,23 +132,6 @@ static void spr(const char*n,int x,int y){ const theme_slice*s=theme_find(aes_th
 static const char* tbvariant(char*buf,size_t n,const char*base,int active){
     if(active) return base;
     snprintf(buf,n,"%s.inactive",base); return buf;
-}
-// A small diagonal-hatch resize grip glyph (a few 45° lines in PEN_BORDER),
-// drawn hugging a bottom corner of the SIZER_SZ box at (gx,gy).  `left`=1 mirrors
-// it into the bottom-LEFT corner; else the bottom-RIGHT corner.
-static void draw_grip(int gx,int gy,int sz){
-    vsl_color(H(),AES_PEN_GRIP); vsl_width(H(),1);        // light against the chrome band
-    for(int i=0;i<4;i++){ int o=5+i*4;                    // four parallel 45° lines
-        int16_t p[4]={(int16_t)(gx+sz-1-o),(int16_t)(gy+sz-1),(int16_t)(gx+sz-1),(int16_t)(gy+sz-1-o)};
-        v_pline(H(),2,p);
-    }
-}
-static void draw_grip_l(int gx,int gy,int sz){
-    vsl_color(H(),AES_PEN_GRIP); vsl_width(H(),1);        // light, mirrored to bottom-LEFT
-    for(int i=0;i<4;i++){ int o=5+i*4;
-        int16_t p[4]={(int16_t)gx,(int16_t)(gy+sz-1-o),(int16_t)(gx+o),(int16_t)(gy+sz-1)};
-        v_pline(H(),2,p);
-    }
 }
 
 // A right-side title button, drawn to read as chrome PAIRED with the left
@@ -306,32 +290,29 @@ static void clamp_scroll(awin *W){
 }
 // The work rect handed to the app (WF_WORKXYWH + the content callback): the full
 // rect, shrunk by the scrollbar column when the bar is showing.
+static int hsb_on(awin *W);            // fwd: the band reserves work height below
 static void app_work(awin *W,int*x,int*y,int*w,int*h){
     full_work(W,x,y,w,h);
     // reserve only up to the DIVIDER: the bar sits bw()-1 into the frame border (vsb_geom),
     // so those pixels go back to the content pane instead of a dead gap left of the bar
     if(vsb_on(W)){ *w -= SB_W-(bw()-1); if(*w<0) *w=0; }
+    if(hsb_on(W)){ *h -= SB_W; if(*h<0) *h=0; }   // the horizontal band, reserved off the bottom
 }
 // Vertical-scrollbar sub-geometry (all outputs optional): the reserved column,
 // the up/down arrow boxes, the track between them, and the proportional thumb.
 // Returns 1 when a bar is shown.  Coordinates are absolute (screen) px.
-static int hsb_on(awin *W);            // fwd: the horizontal band claims vsb column bottom
 static int vsb_geom(awin *W,int*colx,int*coly,int*colw,int*colh,
                     int*upy,int*dny,int*arrh,
                     int*trky,int*trkh,int*thy,int*thh){
     if(!vsb_on(W)) return 0;
     int wx,wy,ww,wh; full_work(W,&wx,&wy,&ww,&wh);
-    // The scrollbar column spans the work-area height, minus the grip band when the
-    // grips live on the app's own bottom bar (W_SIZER without W_INFO): the down arrow
-    // must stop above it. With W_INFO the footer is chrome and already out of the work.
+    // The scrollbar column spans the work-area height, minus the horizontal band when
+    // that is shown (the down arrow stops above the right arrow).  There are no permanent
+    // resize grips any more — resize is proximity zones on the frame itself.
     // +bw()-1: the frame's inner border is dead space to the bar's right (board-measured:
     // a 4px near-white strip between the fill and the window edge made the bar look
     // off-centre in its gutter). Shift the whole bar onto it, flush with the edge.
     int cx=wx+ww-SB_W+(bw()-1), cy=wy, ch=wh;
-    if((W->kind & W_SIZER) && !(W->kind & W_INFO)){
-        ch -= AES_SIZERBAND_H;         // grips live on the CONTENT's bottom band (browser-style
-        if(ch < SB_MINTH) ch = SB_MINTH;   // status bar): the down arrow stops above it
-    }
     if(hsb_on(W)){
         ch -= SB_W;                    // the horizontal band claims the bottom of the column:
         if(ch < SB_MINTH) ch = SB_MINTH;   // the down arrow stops above the right arrow
@@ -348,24 +329,23 @@ static int vsb_geom(awin *W,int*colx,int*coly,int*colw,int*colh,
     if(thy)*thy=ty+off; if(thh)*thh=len;
     return 1;
 }
-// Is a horizontal scrollbar needed (content wider than the app's visible width)?
+// Is a horizontal scrollbar needed (content wider than the app's visible width)?  Computes
+// the vsb-adjusted width DIRECTLY (app_work calls hsb_on for the height — no recursion).
 static int hsb_on(awin *W){
-    int wx,wy,ww,wh; app_work(W,&wx,&wy,&ww,&wh); (void)wx;(void)wy;(void)wh;
+    int wx,wy,ww,wh; full_work(W,&wx,&wy,&ww,&wh); (void)wx;(void)wy;(void)wh;
+    if(vsb_on(W)){ ww -= SB_W-(bw()-1); }
     return W->content_w > ww && ww > 0;
 }
-// Horizontal-scrollbar geometry (all outputs optional): the band sits just ABOVE the app's
-// pinned bottom strip (wind_pin_bottom, on the wire as WF_PINBOTTOM) — "between the info bar
-// and the content pane" — and spans to the window's inner right edge so the right arrow lands
-// over the grip zone below the vertical bar (user-spec).  The band OVERLAYS the surface (chrome
-// draws after content); the work area is not re-carved, the app just keeps its layout clear.
+// Horizontal-scrollbar geometry (all outputs optional): a chrome band RESERVED from the
+// work-area BOTTOM (app_work shrinks the height, exactly as the vertical column shrinks the
+// width), spanning to the window's inner right edge; the vertical bar stops above it.
 static int hsb_geom(awin *W,int*bx,int*by,int*bw_,int*bh_,
                     int*lfx,int*rtx,int*arrw,
                     int*trkx,int*trkw,int*thx,int*thw){
     if(!hsb_on(W)) return 0;
     int wx,wy,ww,wh; full_work(W,&wx,&wy,&ww,&wh);
     int vw; { int ax,ay,aw2,ah2; app_work(W,&ax,&ay,&aw2,&ah2); (void)ax;(void)ay;(void)ah2; vw=aw2; }
-    int pin=W->pin_bottom; if(pin<0) pin=0;
-    int x0=wx, y0=wy+wh-pin-SB_W;
+    int x0=wx, y0=wy+wh-SB_W;
     int bwid=(W->x+W->w-1)-x0;                     // through the chrome column, to the inner edge
     int aw=SB_ARROW; if(aw*2 > bwid-SB_MINTH) aw=(bwid-SB_MINTH)/2; if(aw<0) aw=0;
     int tx=x0+aw, tw=bwid-2*aw; if(tw<1) tw=1;
@@ -391,8 +371,8 @@ static void draw_vscroll(int hd){
     int cx,cy,cw,ch,upy,dny,arrh,trky,trkh,thy,thh;
     if(!vsb_geom(W,&cx,&cy,&cw,&ch,&upy,&dny,&arrh,&trky,&trkh,&thy,&thh)) return;
     int wx2,wy2,ww2,wh2; full_work(W,&wx2,&wy2,&ww2,&wh2); (void)wx2;(void)ww2;
-    int colb=wy2+wh2-1;                       // fill + divider to the WORK bottom: the grip band
-                                              // below a shortened track shares the chrome backdrop
+    int colb=wy2+wh2-1;                       // fill + divider to the FULL work bottom (under the
+                                              // horizontal band's right arrow when that is shown)
     vsf_color(H(),AES_PEN_CHROME); vsf_interior(H(),VDI_FIS_SOLID); vsf_perimeter(H(),0);
     int16_t cr[4]={(int16_t)cx,(int16_t)cy,(int16_t)(cx+cw-1),(int16_t)colb}; vr_recfl(H(),cr);
     vsl_color(H(),249); vsl_width(H(),1);          // PEN_BORDER left divider — TRACK ONLY: through
@@ -578,25 +558,9 @@ static void draw_one(int hd, int active){
     }
     draw_content(hd);
     draw_vscroll(hd);                            // over the reserved right column
-    draw_hscroll(hd);                            // over the band above the app's pinned bar
-    if((W->kind & W_SIZER) && !(W->kind & W_INFO)){
-        // The frame borders BESIDE and BELOW the app's status band go chrome-grey, so the
-        // band runs wall-to-wall to the window outline (the right column already does).
-        int fx,fy,fw,fh; full_work(W,&fx,&fy,&fw,&fh); (void)fw;
-        int bt=fy+fh-AES_SIZERBAND_H;
-        vsf_color(H(),AES_PEN_CHROME); vsf_interior(H(),VDI_FIS_SOLID); vsf_perimeter(H(),0);
-        int16_t lb[4]={(int16_t)(W->x+1),(int16_t)bt,(int16_t)(fx-1),(int16_t)(W->y+W->h-2)};
-        vr_recfl(H(),lb);                        // left border, from the band top down
-        int16_t bb[4]={(int16_t)(W->x+1),(int16_t)(fy+fh),(int16_t)(W->x+W->w-2),(int16_t)(W->y+W->h-2)};
-        vr_recfl(H(),bb);                        // bottom border, full width (1px outline kept)
-        // (Square corners for now, by choice: the slice-corner redraw restored the curve but
-        // left a light wedge inside it — revisit if the square bottom ever grates.)
-    }
-    if(W->kind & W_SIZER){         // resize grips LAST: the content blit erased the left one
-        int gy=W->y+W->h-SIZER_SZ-2;                    // bottom-aligned in the footer band
-        draw_grip_l(W->x+2,               gy, SIZER_SZ);  // bottom-left, inside the frame border
-        draw_grip  (W->x+W->w-SIZER_SZ-2, gy, SIZER_SZ);  // bottom-right, over the chrome column
-    }
+    draw_hscroll(hd);                            // over the reserved bottom band
+    // No permanent grips: resize is proximity zones on the frame (corners + edge midpoints);
+    // the hover affordance is the cursor (and, later, theme-able brackets).
 }
 
 // The work area + its content (clipped).  The rect is shrunk by the scrollbar column when the
@@ -974,35 +938,35 @@ static int client_scrolled(const gem_msg *m){
     W->scroll_x=(int)m->u[0]; W->scroll_y=(int)m->u[1];
     if(!dx && !dy) return 0;                        // the echo of our own request: nothing moved
     if(!W->surf.px || !W->draw) return 0;
-    // The blit covers the SCROLLING BAND only: [0, vh). Anything the app pinned over the scroll
-    // (wind_pin_bottom — a status bar) stays where it is; blitting the whole surface dragged a
-    // stale copy of the bar up through the list, observed on the board.
+    // The blit covers the SCROLLING BAND only: [pin, h). Anything the app pinned over the
+    // scroll (wind_pin_top — the info strip under the titlebar) stays where it is; blitting
+    // the whole surface dragged a stale copy of the bar through the list, observed on the board.
     //
     // (If stale partial-width rows EVER reappear here: this memcpy is newlib's NEON one, and it
     // was the messenger for a KERNEL bug once — tasks preempted mid-copy resumed with clobbered
     // NEON registers until configUSE_TASK_FPU_SUPPORT became 2. `make scrollsim` proves the
     // blit math; suspect the context switch, not this code.)
     int w=W->surf.w, h=W->surf.h, ady=dy<0?-dy:dy, adx=dx<0?-dx:dx;
-    int pin=W->pin_bottom; if(pin<0) pin=0; if(pin>h) pin=h;
-    int vh=h-pin;
+    int pin=W->pin_top; if(pin<0) pin=0; if(pin>h) pin=h;
+    int vh=h-pin;                                   // the scrolling band is [pin, h)
     if((dx && dy) || ady>=vh || adx>=w){            // diagonal / a whole view: nothing survives
         client_paint(hd, 0,0, w,h);
     } else if(dx){                                  // HORIZONTAL: memmove within each row (they
-        uint32_t *px=W->surf.px; int st=W->surf.stride, keep=w-adx;   // overlap), same band [0,vh)
-        for(int yy=0; yy<vh; yy++){
+        uint32_t *px=W->surf.px; int st=W->surf.stride, keep=w-adx;   // overlap), band rows only
+        for(int yy=pin; yy<h; yy++){
             uint32_t *row=px+(size_t)yy*st;
             if(dx>0) memmove(row,      row+adx, (size_t)keep*4);
             else     memmove(row+adx,  row,     (size_t)keep*4);
         }
-        client_render(hd, dx>0?keep:0, 0, adx, vh); // DRAW only the exposed column strip...
-        gem_damage_rect(g_gemfd, hd, W->surf_id, W->surf_gen, 0, 0, w, vh);
+        client_render(hd, dx>0?keep:0, pin, adx, vh); // DRAW only the exposed column strip...
+        gem_damage_rect(g_gemfd, hd, W->surf_id, W->surf_gen, 0, pin, w, vh);
         gem_prof_add(GEM_PROF_DAMAGE, 0, (long)w * vh);   // TEMP profiler
     } else {
         uint32_t *px=W->surf.px; int st=W->surf.stride, keep=vh-ady;
-        if(dy>0) for(int yy=0;     yy<keep; yy++) memcpy(px+(size_t)yy*st,      px+(size_t)(yy+dy)*st, (size_t)w*4);
-        else     for(int yy=keep-1;yy>=0;  yy--) memcpy(px+(size_t)(yy+ady)*st, px+(size_t)yy*st,      (size_t)w*4);
-        client_render(hd, 0, dy>0?keep:0, w, ady);  // DRAW only the exposed strip...
-        gem_damage_rect(g_gemfd, hd, W->surf_id, W->surf_gen, 0, 0, w, vh);
+        if(dy>0) for(int yy=pin;       yy<pin+keep; yy++) memcpy(px+(size_t)yy*st,      px+(size_t)(yy+dy)*st, (size_t)w*4);
+        else     for(int yy=pin+keep-1;yy>=pin;    yy--) memcpy(px+(size_t)(yy+ady)*st, px+(size_t)yy*st,      (size_t)w*4);
+        client_render(hd, 0, dy>0?h-ady:pin, w, ady); // DRAW only the exposed strip...
+        gem_damage_rect(g_gemfd, hd, W->surf_id, W->surf_gen, 0, pin, w, vh);
         gem_prof_add(GEM_PROF_DAMAGE, 0, (long)w * vh);   // TEMP profiler
                                                     // ...but ONE damage for the whole moved
                                                     // band: gemd recomposites exactly once
@@ -1323,23 +1287,12 @@ void wind_content_size(int hd,int w,int h){
 #endif
     W->content_w=w; W->content_h=h; clamp_scroll(W);
 }
-// Declare a non-scrolling strip at the work-area BOTTOM (a status bar). Client-side model
-// only: it bounds the scroll BLIT in client_scrolled — no wire message, gemd never needs it.
-void wind_pin_bottom(int hd,int px){
+// Declare a non-scrolling strip at the work-area TOP (the info bar). Client-side model only:
+// it bounds the scroll BLIT in client_scrolled — no wire message, gemd never needs it (the
+// horizontal scrollbar band anchors at the work BOTTOM, pure chrome).
+void wind_pin_top(int hd,int px){
     if(hd<1||hd>=MAXW||!g_w[hd].used) return;
-    if(px<0) px=0;
-    if(g_w[hd].pin_bottom==px) return;
-    g_w[hd].pin_bottom = px;
-#ifdef GEM_XTOS
-    // gemd needs the pin too: the HORIZONTAL scrollbar band sits just ABOVE the app's pinned
-    // bar (user-spec placement), and only the app knows how tall that bar is.
-    if(g_mode==AES_CLIENT){
-        gem_msg m; memset(&m,0,sizeof m);
-        m.w[0]=GEM_WIND_SET; m.w[1]=(int16_t)hd; m.w[2]=WF_PINBOTTOM;
-        m.u[0]=(uint32_t)px;
-        gem_send(g_gemfd,&m);
-    }
-#endif
+    g_w[hd].pin_top = px<0?0:px;
 }
 // Who paints a resize (aes.h: THE RESIZE DISCIPLINE). Client-side model only — no wire message.
 void wind_resize_mode(int hd,int mode){
@@ -1557,7 +1510,7 @@ static void resize_step_redraw(awin *W,int ox,int oy,int ow,int oh){
     // pinned to the old origin while the frame slides over it (board-observed: the frame ate
     // the first icon column, then the relayout snapped everything back). Composite the whole
     // union for origin moves; the right grip keeps the cheap L-delta.
-    if(ox!=nx){
+    if(ox!=nx || oy!=ny){
         int ux=ox<nx?ox:nx, uy=oy<ny?oy:ny;
         int ux1=(ox+ow)>(nx+nw)?(ox+ow):(nx+nw), uy1=(oy+oh)>(ny+nh)?(oy+oh):(ny+nh);
         wind_redraw_area(ux,uy,ux1-ux,uy1-uy);
@@ -1581,8 +1534,76 @@ static void resize_step_redraw(awin *W,int ox,int oy,int ow,int oh){
     }
 }
 
+// ---- PROXIMITY RESIZE (M5 chrome rework): no permanent grips ---------------
+// A W_SIZER window is resized from its FRAME: hover zones at the four corners and the four
+// edge midpoints, living on the frame RING — the border plus up to RZ_OUT px OUTSIDE it,
+// never the interior (buttons and content always win). The affordance is the cursor (and,
+// later, theme-able hover brackets); there are no reserved grip pixels anywhere.
+enum { RZ_L=1, RZ_R=2, RZ_T=4, RZ_B=8 };
+static int resize_zone(awin *W,int mx,int my){
+    if(!(W->kind & W_SIZER)) return 0;
+    const int OUT=8, CS=14, EL=28;
+    int x0=W->x, y0=W->y, x1=W->x+W->w-1, y1=W->y+W->h-1;
+    if(mx<x0-OUT||mx>x1+OUT||my<y0-OUT||my>y1+OUT) return 0;    // beyond the ring
+    int b=bw();
+    if(mx>=x0+b && mx<=x1-b && my>=y0+b && my<=y1-b) return 0;  // interior: buttons/content win
+    #define RZ_NEAR(px,py) (mx-(px)<=CS && (px)-mx<=CS && my-(py)<=CS && (py)-my<=CS)
+    if(RZ_NEAR(x0,y0)) return RZ_L|RZ_T;
+    if(RZ_NEAR(x1,y0)) return RZ_R|RZ_T;
+    if(RZ_NEAR(x0,y1)) return RZ_L|RZ_B;
+    if(RZ_NEAR(x1,y1)) return RZ_R|RZ_B;
+    #undef RZ_NEAR
+    int cx=(x0+x1)/2, cy=(y0+y1)/2;
+    if(my<=y0+b && mx>=cx-EL && mx<=cx+EL) return RZ_T;         // edge midpoints: 1-D resize
+    if(my>=y1-b && mx>=cx-EL && mx<=cx+EL) return RZ_B;
+    if(mx<=x0+b && my>=cy-EL && my<=cy+EL) return RZ_L;
+    if(mx>=x1-b && my>=cy-EL && my<=cy+EL) return RZ_R;
+    return 0;
+}
+// The hover query for gemd's cursor affordance: which resize zone (if any) is under the
+// pointer on the TOP window. 0 = none; else the RZ_ mask.
+int wind_resize_zone_at(int mx,int my){
+    if(g_nz<1) return 0;
+    awin*TW=&g_w[g_z[g_nz-1]];
+    if(TW->hidden) return 0;
+    return resize_zone(TW,mx,my);
+}
+// The one resize drag, any anchor. LIVE like the thumb (per-motion WM_SIZED, coalesced by the
+// client); grab offsets keep the pressed edge under the hand, no jump. Replaces the old
+// lgrip/rgrip pair — a corner is just two edges at once.
+static int resize_drag(int hd,awin*W,int z,int mx,int my){
+    int offl=mx-W->x, offr=mx-(W->x+W->w), offt=my-W->y, offb=my-(W->y+W->h);
+    g_sizing=1;
+    for(;;){ aes_event e; int t=aes_wait_idle(&e,-1); if(t==AES_QUIT)break;
+        if(t==AES_MOTION){ int done=soak_motion(&e);            // act on the NEWEST position
+            int ox=W->x,oy=W->y,ow=W->w,oh=W->h;
+            int nx=ox,ny=oy,nw=ow,nh=oh;
+            if(z&RZ_R) nw=(e.mx-offr)-nx;
+            if(z&RZ_B) nh=(e.my-offb)-ny;
+            if(z&RZ_L){ nx=e.mx-offl; nw=(ox+ow)-nx; }
+            if(z&RZ_T){ ny=e.my-offt; nh=(oy+oh)-ny; }
+            if(nw<WIND_MIN_W){ if(z&RZ_L) nx=(ox+ow)-WIND_MIN_W; nw=WIND_MIN_W; }
+            if(nh<WIND_MIN_H){ if(z&RZ_T) ny=(oy+oh)-WIND_MIN_H; nh=WIND_MIN_H; }
+            int moved=(nx!=ox||ny!=oy||nw!=ow||nh!=oh);
+            W->x=nx; W->y=ny; W->w=nw; W->h=nh; clamp_scroll(W);
+            resize_step_redraw(W, ox,oy,ow,oh);
+            if(moved) post(WM_SIZED,hd,W->x,W->y,W->w,W->h);
+            if(done!=AES_MOTION) break; }
+        if(t==AES_BTN_UP) break; }
+    g_sizing=0;
+    post(WM_SIZED,hd,W->x,W->y,W->w,W->h); return 1;
+}
+
 int wind_handle_click(int mx,int my){
     if(g_mode==AES_CLIENT) return 0;               // gemd hit-tested it; this one is ours to use
+    // The TOP sizer window's frame ring owns a press in its resize zones — including the part
+    // OUTSIDE the frame, where wind_find would blame the window below. Top window only: a
+    // press must never resize a window it visually landed on top of.
+    if(g_nz>0){
+        int thd=g_z[g_nz-1]; awin*TW=&g_w[thd];
+        int z=resize_zone(TW,mx,my);
+        if(z && !TW->hidden) return resize_drag(thd,TW,z,mx,my);
+    }
     int hd = wind_find(mx,my);
     if(!hd) return 0;
     awin*W=&g_w[hd];
@@ -1667,44 +1688,6 @@ int wind_handle_click(int mx,int my){
     // corners) — checked before the scrollbar.  The right grip drags the bottom+right
     // edges (classic sizer); the left grip drags the bottom+LEFT edges (right edge
     // pinned).  The rest of the footer falls through to the app (info-bar Retry etc.).
-    if(W->kind & W_SIZER){
-        int fy=W->y+W->h-AES_INFO_H;                             // footer band top
-        int infr = my>=fy && my<W->y+W->h;
-        int lgrip = infr && mx>=W->x && mx<W->x+SIZER_SZ;
-        int rgrip = infr && mx>=W->x+W->w-SIZER_SZ && mx<W->x+W->w;
-        // The resize is LIVE, like the thumb: every motion that changes the size posts WM_SIZED
-        // (gemd's event wait flushes per lap), so the owning client reflows WHILE the frame
-        // moves. The client coalesces the burst — geometry messages carry absolute state — so a
-        // client that falls behind skips to the newest size instead of replaying the drag.
-        if(rgrip){
-            g_sizing=1;
-            for(;;){ aes_event e; int t=aes_wait_idle(&e,-1); if(t==AES_QUIT)break;
-                if(t==AES_MOTION){ int done=soak_motion(&e);   // act on the NEWEST position
-                    int ow=W->w,oh=W->h; int nw=e.mx-W->x, nh=e.my-W->y; if(nw<WIND_MIN_W)nw=WIND_MIN_W; if(nh<WIND_MIN_H)nh=WIND_MIN_H; W->w=nw; W->h=nh; clamp_scroll(W);
-                    resize_step_redraw(W, W->x, W->y, ow, oh);   // the L-shaped DELTA, not the window
-                    if(nw!=ow||nh!=oh) post(WM_SIZED,hd,W->x,W->y,W->w,W->h);
-                    if(done!=AES_MOTION) break; }
-                if(t==AES_BTN_UP) break; }
-            g_sizing=0;
-            post(WM_SIZED,hd,W->x,W->y,W->w,W->h); return 1;
-        }
-        if(lgrip){
-            g_sizing=1;
-            int right=W->x+W->w;                                 // pin the right edge
-            for(;;){ aes_event e; int t=aes_wait_idle(&e,-1); if(t==AES_QUIT)break;
-                if(t==AES_MOTION){ int done=soak_motion(&e);   // act on the NEWEST position
-                    int ox=W->x,ow=W->w,oh=W->h; int nx=e.mx, nh=e.my-W->y; int nw=right-nx;
-                    if(nw<WIND_MIN_W){ nw=WIND_MIN_W; nx=right-nw; } if(nh<WIND_MIN_H)nh=WIND_MIN_H;
-                    int moved=(nx!=W->x||nh!=oh);
-                    W->x=nx; W->w=nw; W->h=nh; clamp_scroll(W);
-                    resize_step_redraw(W, ox, W->y, ow, oh);     // the L-shaped DELTA, not the window
-                    if(moved) post(WM_SIZED,hd,W->x,W->y,W->w,W->h);
-                    if(done!=AES_MOTION) break; }
-                if(t==AES_BTN_UP) break; }
-            g_sizing=0;
-            post(WM_SIZED,hd,W->x,W->y,W->w,W->h); return 1;
-        }
-    }
     // vertical scrollbar in the reserved right column (arrows / thumb drag / track page)
     //
     // A scroll step repaints ONLY THE BAR in server mode. Server-side the content is a

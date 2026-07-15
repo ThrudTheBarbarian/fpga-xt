@@ -2838,6 +2838,13 @@ static long do_syscall(uint32_t num, long a0, long a1, long a2)
                     (int)((uint32_t)a1 >> 16), (int)(a1 & 0xFFFF));
         return 0;
     }
+    case SYS_cursor_shape: {                                 /* (shape) -> HW cursor glyph */
+#ifdef XT_HW
+        extern void cursor_set_shape(int);
+        cursor_set_shape((int)a0);
+#endif
+        return 0;
+    }
     case SYS_kbd_6502: {                                     /* (ascii) -> keystroke to POKEY */
         extern int  kbd_6502_pace(int);
         extern void kbd_6502_inject(int);
