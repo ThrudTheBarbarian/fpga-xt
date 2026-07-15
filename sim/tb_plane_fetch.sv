@@ -27,7 +27,7 @@ module tb_plane_fetch;
     wire [63:0] rdata;
 
     logic [11:0] fetch_row = 12'd0, rd_col = 12'd0;
-    logic        line_start = 1'b0;
+    logic        line_start = 1'b0, line_start_e = 1'b0;
     wire  [31:0] rd_pixel;
 
     plane_fetch u_dut (
@@ -38,7 +38,7 @@ module tb_plane_fetch;
         .m_axi_rdata (rdata), .m_axi_rvalid (rvalid), .m_axi_rlast (rlast),
         .m_axi_rready (rready),
         .clk_pix (clk_pix), .rst_pix (rst_pix),
-        .line_start (line_start), .fetch_row (fetch_row),
+        .line_start (line_start), .line_start_e (line_start_e), .fetch_row (fetch_row),
         .rd_col (rd_col), .rd_pixel (rd_pixel)
     );
 
@@ -75,6 +75,9 @@ module tb_plane_fetch;
     // Latch a row to fetch, pulse line_start, wait for the fetch to drain.
     task automatic fetch_line(input int row);
         @(negedge clk_pix);
+        line_start_e = 1'b1;               // the early twin, one cycle before (as vbeam)
+        @(negedge clk_pix);
+        line_start_e = 1'b0;
         fetch_row  = row[11:0];
         line_start = 1'b1;
         @(negedge clk_pix);

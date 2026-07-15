@@ -48,6 +48,11 @@ module plane_fetch #(
     input  wire        clk_pix,
     input  wire        rst_pix,
     input  wire        line_start,
+    input  wire        line_start_e,  // one cycle earlier (vbeam): flips the READ half
+                                      // while still in blanking, so the first active
+                                      // pixel's read (h_count==0) addresses the fresh
+                                      // line — flipped at line_start_d1 the first two
+                                      // reads hit the PREVIOUS line's half
     input  wire [11:0] fetch_row,     // source row to display NEXT line
     input  wire [11:0] rd_col,        // source column to read this pixel
     output wire [31:0] rd_pixel,      // RGBA8888, registered 1 clk after rd_col
@@ -148,10 +153,11 @@ module plane_fetch #(
             line_start_d1 <= 1'b0;
         end else begin
             line_start_d1 <= line_start;
+            if (line_start_e) ping_pong_rd <= ~ping_pong_rd;   // flip IN blanking: the
+                                                               // h==0 read wants the new half
             if (line_start_d1) begin
                 ls_toggle_pix <= ~ls_toggle_pix;
                 fetch_row_pix <= fetch_row;
-                ping_pong_rd  <= ~ping_pong_rd;
             end
         end
     end

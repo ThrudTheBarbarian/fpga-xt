@@ -46,6 +46,14 @@ module vbeam #(
 
     // Per-frame events for downstream consumers.
     output logic        line_start,     // pulses on the cycle h_count rolls to 0
+    output logic        line_start_e,   // EARLY twin: pulses one cycle BEFORE line_start
+                                        // (the last blanking cycle). Consumers whose
+                                        // output must be valid ON h_count==0 (the
+                                        // compositor's column accumulator, the fetch
+                                        // ping-pong read flip) key off this one —
+                                        // keyed off line_start they lag the first
+                                        // active pixel and column 0 scans out the
+                                        // stride padding (the tracking 1px ghost).
     output logic        frame_start,    // pulses on the cycle v_count rolls to 0
     output logic        vbi_start,      // pulses on entry to vertical blank
 
@@ -100,10 +108,12 @@ module vbeam #(
     always_ff @(posedge clk_pix or posedge rst) begin
         if (rst) begin
             line_start  <= 1'b0;
+            line_start_e <= 1'b0;
             frame_start <= 1'b0;
             vbi_start   <= 1'b0;
         end else begin
             line_start  <= (h_count == H_TOTAL - 1);
+            line_start_e <= (h_count == H_TOTAL - 2);
             frame_start <= (h_count == H_TOTAL - 1) && (v_count == V_TOTAL - 1);
             vbi_start   <= (h_count == H_TOTAL - 1) && (v_count == V_ACTIVE - 1);
         end

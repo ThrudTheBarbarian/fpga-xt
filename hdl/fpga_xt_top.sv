@@ -1398,7 +1398,7 @@ module fpga_xt_top (
     // ---- vbeam: 1080p60 raster (clk_pix) --------------------------------
     wire [11:0] fb_h_count, fb_v_count;
     wire        vb_de, vb_hsync, vb_vsync;
-    wire        fb_line_start, fb_frame_start, fb_vbi_start;
+    wire        fb_line_start, fb_line_start_e, fb_frame_start, fb_vbi_start;
 
     vbeam #(
         .H_ACTIVE (1920), .H_FRONT_PORCH (88), .H_SYNC_WIDTH (44), .H_BACK_PORCH (148),
@@ -1410,7 +1410,7 @@ module fpga_xt_top (
         .h_count (fb_h_count), .v_count (fb_v_count),
         .in_active (), .h_active (), .v_active (),
         .hsync (vb_hsync), .vsync (vb_vsync), .de (vb_de),
-        .line_start (fb_line_start), .frame_start (fb_frame_start),
+        .line_start (fb_line_start), .line_start_e (fb_line_start_e), .frame_start (fb_frame_start),
         .vbi_start (fb_vbi_start), .atari_row (), .vcount ()
     );
 
@@ -1454,7 +1454,7 @@ module fpga_xt_top (
         .m_axi_arready (hp0_arready), .m_axi_rdata (hp0_rdata),
         .m_axi_rvalid (hp0_rvalid), .m_axi_rlast (hp0_rlast), .m_axi_rready (hp0_rready),
         .clk_pix (clk_pix), .rst_pix (pf_rst_pix),
-        .line_start (fb_line_start), .fetch_row (desk_fetch_row),
+        .line_start (fb_line_start), .line_start_e (fb_line_start_e), .fetch_row (desk_fetch_row),
         .rd_col (cmp_src_col[0*12 +: 12]), .rd_pixel (desk_pixel),
         .read_abort (hp0_read_abort), .fetch_overrun (hp0_overrun)
     );
@@ -1555,7 +1555,7 @@ module fpga_xt_top (
         .m_axi_arready (hp3_arready), .m_axi_rdata (hp3_rdata),
         .m_axi_rvalid (hp3_rvalid), .m_axi_rlast (hp3_rlast), .m_axi_rready (hp3_rready),
         .clk_pix (clk_pix), .rst_pix (pf_rst_pix),
-        .line_start (fb_line_start), .fetch_row (xl_fetch_row),
+        .line_start (fb_line_start), .line_start_e (fb_line_start_e), .fetch_row (xl_fetch_row),
         .rd_col (cmp_src_col[2*12 +: 12]), .rd_pixel (xl_pixel),
         .read_abort (xl_read_abort), .fetch_overrun (xl_overrun)
     );
@@ -1613,7 +1613,7 @@ module fpga_xt_top (
         .m_axi_arready (ovl_arready), .m_axi_rdata (ovl_rdata),
         .m_axi_rvalid (ovl_rvalid), .m_axi_rlast (ovl_rlast), .m_axi_rready (ovl_rready),
         .clk_pix (clk_pix), .rst_pix (pf_rst_pix),
-        .line_start (fb_line_start), .fetch_row (ov_fetch_row),
+        .line_start (fb_line_start), .line_start_e (fb_line_start_e), .fetch_row (ov_fetch_row),
         .rd_col (cmp_src_col[1*12 +: 12]), .rd_pixel (overlay_pixel),
         .read_abort (), .fetch_overrun ()
     );
@@ -1625,7 +1625,7 @@ module fpga_xt_top (
     plane_compositor #(.N_PLANES(CMP_PLANES), .H_ACTIVE(1920), .V_ACTIVE(1080)) u_compositor (
         .clk_pix (clk_pix), .rst_pix (rst_pix),
         .h_count (fb_h_count), .v_count (fb_v_count),
-        .de (vb_de), .hsync (vb_hsync), .vsync (vb_vsync), .line_start (fb_line_start),
+        .de (vb_de), .hsync (vb_hsync), .vsync (vb_vsync), .line_start (fb_line_start), .line_start_e (fb_line_start_e),
         // Buses pack {plane2, plane1, plane0} = {XL, drag-overlay, desktop}.
         // depth: desktop 0 (back), overlay 1, XL 2 (front) — the overlay rides
         // above the desktop but below the XL/ST windows so a dragged window

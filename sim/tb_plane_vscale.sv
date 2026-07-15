@@ -42,7 +42,7 @@ module tb_plane_vscale #(
 
     // ---- raster ----------------------------------------------------------
     wire [11:0] h_count, v_count;
-    wire        de, hsync, vsync, line_start, frame_start;
+    wire        de, hsync, vsync, line_start, line_start_e, frame_start;
     vbeam #(
         .H_ACTIVE (H_ACTIVE), .H_FRONT_PORCH (2), .H_SYNC_WIDTH (4), .H_BACK_PORCH (2),
         .V_ACTIVE (V_ACTIVE), .V_FRONT_PORCH (1), .V_SYNC_WIDTH (2), .V_BACK_PORCH (2),
@@ -52,7 +52,7 @@ module tb_plane_vscale #(
         .h_count (h_count), .v_count (v_count),
         .in_active (de), .h_active (), .v_active (),
         .hsync (hsync), .vsync (vsync), .de (),
-        .line_start (line_start), .frame_start (frame_start),
+        .line_start (line_start), .line_start_e (line_start_e), .frame_start (frame_start),
         .vbi_start (), .atari_row (), .vcount ()
     );
 
@@ -78,8 +78,9 @@ module tb_plane_vscale #(
     plane_compositor #(.N_PLANES(N), .H_ACTIVE(H_ACTIVE), .V_ACTIVE(V_ACTIVE)) u_cmp (
         .clk_pix (clk_pix), .rst_pix (rst_pix),
         .h_count (h_count), .v_count (v_count),
-        .de (de), .hsync (hsync), .vsync (vsync), .line_start (line_start),
-        .pl_enable (pl_enable), .pl_origin_x (pl_origin_x), .pl_origin_y (pl_origin_y),
+        .de (de), .hsync (hsync), .vsync (vsync), .line_start (line_start), .line_start_e (line_start_e),
+        .pl_enable (pl_enable), .pl_alpha_en (2'b00),   // no blending in this test
+        .pl_origin_x (pl_origin_x), .pl_origin_y (pl_origin_y),
         .pl_scale (pl_scale), .pl_depth (pl_depth),
         .pl_clip_x0 (pl_clip_x0), .pl_clip_y0 (pl_clip_y0),
         .pl_clip_x1 (pl_clip_x1), .pl_clip_y1 (pl_clip_y1),
@@ -110,7 +111,7 @@ module tb_plane_vscale #(
         .m_axi_rdata (rdata), .m_axi_rvalid (rvalid), .m_axi_rlast (rlast),
         .m_axi_rready (rready),
         .clk_pix (clk_pix), .rst_pix (rst_pix),
-        .line_start (line_start), .fetch_row (xl_fetch_row),
+        .line_start (line_start), .line_start_e (line_start_e), .fetch_row (xl_fetch_row),
         .rd_col (src_col_o[1*12 +: 12]), .rd_pixel (xl_pixel)
     );
 
@@ -133,7 +134,9 @@ module tb_plane_vscale #(
         logic [31:0] a, p;
         for (int c = 0; c < SRC_W; c++) begin
             a = BASE + r*STRIDE + c*4;
-            p = {8'(((r+1)<<3) & 8'hFF), 8'h00, 8'h00, 8'h00};   // {R,G,B,A} bytes
+            p = {8'(((r+1)<<3) & 8'hFF), 8'(((c+1)<<2) & 8'hFF), 8'h00, 8'h00};   // {R,G,B,A}:
+                                                     // R encodes the row, G the COLUMN (the
+                                                     // h==0 padding-scan-out regression below)
             u_mem.seed_byte(a+0, p[7:0]);   u_mem.seed_byte(a+1, p[15:8]);
             u_mem.seed_byte(a+2, p[23:16]); u_mem.seed_byte(a+3, p[31:24]);
         end
@@ -146,6 +149,25 @@ module tb_plane_vscale #(
     always_ff @(posedge clk_pix) begin v_d1 <= v_count; v_d2 <= v_d1; end
     int frame_no = 0;
     always_ff @(posedge clk_pix) if (frame_start) frame_no <= frame_no + 1;
+    // Column capture (one window line): displayed rgb_g per output h.  Output lags
+    // h_count by 4 (decision + s2 + mul + s3), so index by a 4-deep h/v delay line.
+    // THE REGRESSION: pixel h must show source column floor(h/scale) — before the
+    // line_start_e fix, pixel 0's address went out as the PARKED column (one past
+    // the clip), scanning out the over-fetch/stride padding (the tracking 1px ghost
+    // at screen column 0, board-observed).
+    logic [11:0] h_d [0:3]; logic [11:0] v_dd [0:3];
+    always_ff @(posedge clk_pix) begin
+        h_d[0] <= h_count; v_dd[0] <= v_count;
+        for (int k = 1; k < 4; k++) begin h_d[k] <= h_d[k-1]; v_dd[k] <= v_dd[k-1]; end
+    end
+    logic [5:0] col_g [0:H_ACTIVE-1];
+    logic       col_seen [0:H_ACTIVE-1];
+    always_ff @(posedge clk_pix) begin
+        if (de_o && v_dd[3] == 12'(CY0+1) && h_d[3] < H_ACTIVE[11:0]) begin
+            col_g[h_d[3]]    <= rgb_g;
+            col_seen[h_d[3]] <= 1'b1;
+        end
+    end
     logic [4:0] line_r [0:V_ACTIVE-1];      // latest frame (single-frame check)
     logic [4:0] line_a [0:V_ACTIVE-1];      // frame 5
     logic [4:0] line_b [0:V_ACTIVE-1];      // frame 6 (consecutive)
@@ -181,6 +203,7 @@ module tb_plane_vscale #(
     initial begin
         $display("=== PLANE_VSCALE TEST (scale %0d, window [%0d,%0d), V_TOTAL parity matters) ===", SCALE, CY0, CY1);
         for (int i = 0; i < V_ACTIVE; i++) line_seen[i] = 1'b0;
+        for (int i = 0; i < H_ACTIVE; i++) col_seen[i]  = 1'b0;
         for (int r = 0; r < SRC_H; r++) seed_row(r);
 
         repeat (4) @(posedge clk_pix);
@@ -217,6 +240,18 @@ module tb_plane_vscale #(
 
         $write("frame5: "); for (int v=0;v<V_ACTIVE;v++) $write("%0d ", line_a[v]); $write("\n");
         $write("frame6: "); for (int v=0;v<V_ACTIVE;v++) $write("%0d ", line_b[v]); $write("\n");
+
+        // (3) COLUMN alignment on a window line: pixel h shows source column h/SCALE
+        // — h==0 especially (the padding scan-out regression).
+        for (int hh = 0; hh < H_ACTIVE; hh++) begin
+            if (!col_seen[hh]) continue;
+            exp_r = (hh / SCALE) + 1;
+            if (col_g[hh] !== exp_r[5:0]) begin
+                $display("FAIL col %0d: got rgb_g=%0d expected src_col=%0d (rgb_g=%0d)",
+                         hh, col_g[hh], hh/SCALE, exp_r);
+                fail_count++;
+            end
+        end
 
         $display("MONITOR: RD_LAT=%0d RD_LAT_JIT=%0d  collisions=%0d  overruns=%0d",
                  RD_LAT, RD_LAT_JIT, collision_cnt, overrun_cnt);

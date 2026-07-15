@@ -24,7 +24,7 @@ module tb_plane_compositor;
 
     // ---- raster ----------------------------------------------------------
     wire [11:0] h_count, v_count;
-    wire        de, hsync, vsync, line_start, frame_start;
+    wire        de, hsync, vsync, line_start, line_start_e, frame_start;
 
     vbeam #(
         .H_ACTIVE (40), .H_FRONT_PORCH (2), .H_SYNC_WIDTH (4), .H_BACK_PORCH (2),
@@ -35,7 +35,7 @@ module tb_plane_compositor;
         .h_count (h_count), .v_count (v_count),
         .in_active (de), .h_active (), .v_active (),
         .hsync (hsync), .vsync (vsync), .de (),
-        .line_start (line_start), .frame_start (frame_start),
+        .line_start (line_start), .line_start_e (line_start_e), .frame_start (frame_start),
         .vbi_start (), .atari_row (), .vcount ()
     );
 
@@ -62,7 +62,7 @@ module tb_plane_compositor;
     plane_compositor #(.N_PLANES(N), .H_ACTIVE(40), .V_ACTIVE(24)) u_dut (
         .clk_pix (clk_pix), .rst_pix (rst_pix),
         .h_count (h_count), .v_count (v_count),
-        .de (de), .hsync (hsync), .vsync (vsync), .line_start (line_start),
+        .de (de), .hsync (hsync), .vsync (vsync), .line_start (line_start), .line_start_e (line_start_e),
         .pl_enable (pl_enable), .pl_alpha_en (pl_alpha_en),
         .pl_origin_x (pl_origin_x), .pl_origin_y (pl_origin_y),
         .pl_scale (pl_scale), .pl_depth (pl_depth),

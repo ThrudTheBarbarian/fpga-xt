@@ -38,6 +38,11 @@ module plane_compositor #(
     input  wire        hsync,
     input  wire        vsync,
     input  wire        line_start,
+    input  wire        line_start_e,  // one cycle earlier (vbeam): resets the COLUMN
+                                      // accumulators while still in blanking, so pixel
+                                      // h==0's source address is 0 — reset at line_start
+                                      // the parked value (one past the clip) goes out as
+                                      // pixel 0's address and the stride padding scans out
 
     // ---- Per-plane config (flattened, clk_pix-stable) --------------------
     input  wire [N_PLANES-1:0]      pl_enable,
@@ -99,7 +104,7 @@ module plane_compositor #(
                 if (rst_pix) begin
                     src_col[gi] <= 12'd0;
                     hsub        <= 3'd0;
-                end else if (line_start) begin
+                end else if (line_start_e) begin
                     src_col[gi] <= 12'd0;
                     hsub        <= 3'd0;
                 end else if (h_in_clip) begin
