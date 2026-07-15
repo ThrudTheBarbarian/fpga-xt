@@ -418,6 +418,10 @@ static void do_wind_set(gclient *c, int ci, const gem_msg *m)
     case WF_CURRXYWH:                               /* geometry is a model field too (M5) */
         set_rect(c, hd, m->w[3], m->w[4], m->w[5], m->w[6]);
         break;
+    case WF_PINBOTTOM:                              /* the app's bottom bar height: anchors the
+                                                     * horizontal scrollbar band above it */
+        wind_pin_bottom(hd, (int)m->u[0]);
+        return;
     case WF_CONTENTSIZE: {
         /* The scroll model arrives (M5). Repaint ONLY what changed: apps report content size
          * from inside their draw callback, so this lands after nearly EVERY damage post — a

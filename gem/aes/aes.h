@@ -441,7 +441,9 @@ enum { WF_KIND=1, WF_NAME=2, WF_INFO=3, WF_WORKXYWH=4, WF_CURRXYWH=5,
        // draws it, runs its interaction, and clamps a scroll request exactly as it clamps a
        // rect; the app hears WM_VSLID and repaints anything it pins (a status bar).
        WF_CONTENTSIZE=36,  // full content extent, work coords
-       WF_SCROLL=37 };     // scroll offset — a REQUEST: gemd clamps and answers with the truth
+       WF_SCROLL=37,       // scroll offset — a REQUEST: gemd clamps and answers with the truth
+       WF_PINBOTTOM=38 };  // u[0]=px: the pinned bottom strip (wind_pin_bottom's wire name) —
+                           // gemd places the HORIZONTAL scrollbar band just above the app's bar
 enum { WT_MODIFIED = 0x01,     // WF_TITLEFLAGS: show the unsaved-changes dot
        // THE SUBTITLE IS A PATH.  The AES draws it as "/a/b/c" with each component its own
        // clickable span (middle-eliding at COMPONENT granularity when it will not fit), and a

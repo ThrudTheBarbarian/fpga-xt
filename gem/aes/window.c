@@ -315,6 +315,7 @@ static void app_work(awin *W,int*x,int*y,int*w,int*h){
 // Vertical-scrollbar sub-geometry (all outputs optional): the reserved column,
 // the up/down arrow boxes, the track between them, and the proportional thumb.
 // Returns 1 when a bar is shown.  Coordinates are absolute (screen) px.
+static int hsb_on(awin *W);            // fwd: the horizontal band claims vsb column bottom
 static int vsb_geom(awin *W,int*colx,int*coly,int*colw,int*colh,
                     int*upy,int*dny,int*arrh,
                     int*trky,int*trkh,int*thy,int*thh){
@@ -331,6 +332,10 @@ static int vsb_geom(awin *W,int*colx,int*coly,int*colw,int*colh,
         ch -= AES_SIZERBAND_H;         // grips live on the CONTENT's bottom band (browser-style
         if(ch < SB_MINTH) ch = SB_MINTH;   // status bar): the down arrow stops above it
     }
+    if(hsb_on(W)){
+        ch -= SB_W;                    // the horizontal band claims the bottom of the column:
+        if(ch < SB_MINTH) ch = SB_MINTH;   // the down arrow stops above the right arrow
+    }
     int ah=SB_ARROW; if(ah*2 > ch-SB_MINTH) ah=(ch-SB_MINTH)/2; if(ah<0) ah=0;
     int ty=cy+ah, th=ch-2*ah; if(th<1) th=1;
     int total=W->content_h, vis=wh;
@@ -341,6 +346,37 @@ static int vsb_geom(awin *W,int*colx,int*coly,int*colw,int*colh,
     if(upy)*upy=cy; if(dny)*dny=cy+ch-ah; if(arrh)*arrh=ah;
     if(trky)*trky=ty; if(trkh)*trkh=th;
     if(thy)*thy=ty+off; if(thh)*thh=len;
+    return 1;
+}
+// Is a horizontal scrollbar needed (content wider than the app's visible width)?
+static int hsb_on(awin *W){
+    int wx,wy,ww,wh; app_work(W,&wx,&wy,&ww,&wh); (void)wx;(void)wy;(void)wh;
+    return W->content_w > ww && ww > 0;
+}
+// Horizontal-scrollbar geometry (all outputs optional): the band sits just ABOVE the app's
+// pinned bottom strip (wind_pin_bottom, on the wire as WF_PINBOTTOM) — "between the info bar
+// and the content pane" — and spans to the window's inner right edge so the right arrow lands
+// over the grip zone below the vertical bar (user-spec).  The band OVERLAYS the surface (chrome
+// draws after content); the work area is not re-carved, the app just keeps its layout clear.
+static int hsb_geom(awin *W,int*bx,int*by,int*bw_,int*bh_,
+                    int*lfx,int*rtx,int*arrw,
+                    int*trkx,int*trkw,int*thx,int*thw){
+    if(!hsb_on(W)) return 0;
+    int wx,wy,ww,wh; full_work(W,&wx,&wy,&ww,&wh);
+    int vw; { int ax,ay,aw2,ah2; app_work(W,&ax,&ay,&aw2,&ah2); (void)ax;(void)ay;(void)ah2; vw=aw2; }
+    int pin=W->pin_bottom; if(pin<0) pin=0;
+    int x0=wx, y0=wy+wh-pin-SB_W;
+    int bwid=(W->x+W->w-1)-x0;                     // through the chrome column, to the inner edge
+    int aw=SB_ARROW; if(aw*2 > bwid-SB_MINTH) aw=(bwid-SB_MINTH)/2; if(aw<0) aw=0;
+    int tx=x0+aw, tw=bwid-2*aw; if(tw<1) tw=1;
+    int total=W->content_w, vis=vw;
+    int len=(int)((long)tw*vis/total); if(len<SB_MINTH) len=SB_MINTH; if(len>tw) len=tw;
+    int maxs=total-vis; if(maxs<1) maxs=1;
+    int off=(int)((long)(tw-len)*W->scroll_x/maxs);
+    if(bx)*bx=x0; if(by)*by=y0; if(bw_)*bw_=bwid; if(bh_)*bh_=SB_W;
+    if(lfx)*lfx=x0; if(rtx)*rtx=x0+bwid-aw; if(arrw)*arrw=aw;
+    if(trkx)*trkx=tx; if(trkw)*trkw=tw;
+    if(thx)*thx=tx+off; if(thw)*thw=len;
     return 1;
 }
 // Draw the vertical scrollbar from the theme's real scrollbar art: a light
@@ -369,6 +405,27 @@ static void draw_vscroll(int hd){
         const theme_slice*sd=theme_find(aes_theme(),"vscroll.down");
         if(su) theme_blit(H(),aes_theme(),su, cx+(cw-su->sw)/2, upy+(arrh-su->sh)/2, su->sw, su->sh);
         if(sd) theme_blit(H(),aes_theme(),sd, cx+(cw-sd->sw)/2, dny+(arrh-sd->sh)/2, sd->sw, sd->sh);
+    }
+}
+
+// Draw the horizontal scrollbar: the chrome band above the app's pinned bar, a top divider,
+// theme hscroll.left/.right arrows at the ends (the right one over the grip zone) and the
+// hscroll.thumb 9-slice stretched along its length.  Mirrors draw_vscroll.
+static void draw_hscroll(int hd){
+    awin*W=&g_w[hd];
+    int bx,by,bw_,bh_,lfx,rtx,arrw,trkx,trkw,thx,thw;
+    if(!hsb_geom(W,&bx,&by,&bw_,&bh_,&lfx,&rtx,&arrw,&trkx,&trkw,&thx,&thw)) return;
+    vsf_color(H(),AES_PEN_CHROME); vsf_interior(H(),VDI_FIS_SOLID); vsf_perimeter(H(),0);
+    int16_t br_[4]={(int16_t)bx,(int16_t)by,(int16_t)(bx+bw_-1),(int16_t)(by+bh_-1)}; vr_recfl(H(),br_);
+    vsl_color(H(),249); vsl_width(H(),1);                         // PEN_BORDER top divider
+    int16_t dl[4]={(int16_t)bx,(int16_t)by,(int16_t)(bx+bw_-1),(int16_t)by}; v_pline(H(),2,dl);
+    { int thh2=bh_-6; if(thh2<7) thh2=7; int thy2=by+(bh_-thh2)/2;   // themed thumb, centred
+      theme_draw(H(),aes_theme(),"hscroll.thumb", thx,thy2,thw,thh2); }
+    if(arrw>0){
+        const theme_slice*sl=theme_find(aes_theme(),"hscroll.left");
+        const theme_slice*sr=theme_find(aes_theme(),"hscroll.right");
+        if(sl) theme_blit(H(),aes_theme(),sl, lfx+(arrw-sl->sw)/2, by+(bh_-sl->sh)/2, sl->sw, sl->sh);
+        if(sr) theme_blit(H(),aes_theme(),sr, rtx+(arrw-sr->sw)/2, by+(bh_-sr->sh)/2, sr->sw, sr->sh);
     }
 }
 
@@ -521,6 +578,7 @@ static void draw_one(int hd, int active){
     }
     draw_content(hd);
     draw_vscroll(hd);                            // over the reserved right column
+    draw_hscroll(hd);                            // over the band above the app's pinned bar
     if((W->kind & W_SIZER) && !(W->kind & W_INFO)){
         // The frame borders BESIDE and BELOW the app's status band go chrome-grey, so the
         // band runs wall-to-wall to the window outline (the right column already does).
@@ -924,11 +982,21 @@ static int client_scrolled(const gem_msg *m){
     // was the messenger for a KERNEL bug once — tasks preempted mid-copy resumed with clobbered
     // NEON registers until configUSE_TASK_FPU_SUPPORT became 2. `make scrollsim` proves the
     // blit math; suspect the context switch, not this code.)
-    int w=W->surf.w, h=W->surf.h, ady=dy<0?-dy:dy;
+    int w=W->surf.w, h=W->surf.h, ady=dy<0?-dy:dy, adx=dx<0?-dx:dx;
     int pin=W->pin_bottom; if(pin<0) pin=0; if(pin>h) pin=h;
     int vh=h-pin;
-    if(dx || ady>=vh){                              // sideways / a whole view: nothing survives
+    if((dx && dy) || ady>=vh || adx>=w){            // diagonal / a whole view: nothing survives
         client_paint(hd, 0,0, w,h);
+    } else if(dx){                                  // HORIZONTAL: memmove within each row (they
+        uint32_t *px=W->surf.px; int st=W->surf.stride, keep=w-adx;   // overlap), same band [0,vh)
+        for(int yy=0; yy<vh; yy++){
+            uint32_t *row=px+(size_t)yy*st;
+            if(dx>0) memmove(row,      row+adx, (size_t)keep*4);
+            else     memmove(row+adx,  row,     (size_t)keep*4);
+        }
+        client_render(hd, dx>0?keep:0, 0, adx, vh); // DRAW only the exposed column strip...
+        gem_damage_rect(g_gemfd, hd, W->surf_id, W->surf_gen, 0, 0, w, vh);
+        gem_prof_add(GEM_PROF_DAMAGE, 0, (long)w * vh);   // TEMP profiler
     } else {
         uint32_t *px=W->surf.px; int st=W->surf.stride, keep=vh-ady;
         if(dy>0) for(int yy=0;     yy<keep; yy++) memcpy(px+(size_t)yy*st,      px+(size_t)(yy+dy)*st, (size_t)w*4);
@@ -1259,7 +1327,19 @@ void wind_content_size(int hd,int w,int h){
 // only: it bounds the scroll BLIT in client_scrolled — no wire message, gemd never needs it.
 void wind_pin_bottom(int hd,int px){
     if(hd<1||hd>=MAXW||!g_w[hd].used) return;
-    g_w[hd].pin_bottom = px<0?0:px;
+    if(px<0) px=0;
+    if(g_w[hd].pin_bottom==px) return;
+    g_w[hd].pin_bottom = px;
+#ifdef GEM_XTOS
+    // gemd needs the pin too: the HORIZONTAL scrollbar band sits just ABOVE the app's pinned
+    // bar (user-spec placement), and only the app knows how tall that bar is.
+    if(g_mode==AES_CLIENT){
+        gem_msg m; memset(&m,0,sizeof m);
+        m.w[0]=GEM_WIND_SET; m.w[1]=(int16_t)hd; m.w[2]=WF_PINBOTTOM;
+        m.u[0]=(uint32_t)px;
+        gem_send(g_gemfd,&m);
+    }
+#endif
 }
 // Who paints a resize (aes.h: THE RESIZE DISCIPLINE). Client-side model only — no wire message.
 void wind_resize_mode(int hd,int mode){
@@ -1665,6 +1745,39 @@ int wind_handle_click(int mx,int my){
                 if(span>0){ W->scroll_y=(int)((long)rel*maxs/span); }
                 clamp_scroll(W); VSB_STEP_REDRAW(hd,W);
                 if(W->scroll_y!=before) post(WM_VSLID,hd,0,0,0,0);
+                if(done!=AES_MOTION) break; }
+            if(t==AES_BTN_UP) break; }
+        post(WM_VSLID,hd,0,0,0,0); return 1;
+      } }
+    // horizontal scrollbar: same shape, x for y.  The scroll consequence is the SAME message
+    // (WM_VSLID -> MSG_VSLID carries BOTH axes); the client's blit handles dx.
+    #define HSB_STEP_REDRAW(hd, W) do { int bx_,by_,bw2_,bh2_; \
+        if (g_mode==AES_SERVER && hsb_geom((W),&bx_,&by_,&bw2_,&bh2_,0,0,0,0,0,0,0)) \
+             wind_redraw_area(bx_,by_,bw2_,bh2_); \
+        else wind_redraw_win(hd); } while (0)
+    { int bx,by,bw_,bh_,lfx,rtx,arrw,trkx,trkw,thx,thw;
+      if(hsb_geom(W,&bx,&by,&bw_,&bh_,&lfx,&rtx,&arrw,&trkx,&trkw,&thx,&thw) &&
+         mx>=bx && mx<bx+bw_ && my>=by && my<by+bh_){
+        int vw; { int ax,ay,aw2,ah2; app_work(W,&ax,&ay,&aw2,&ah2); (void)ax;(void)ay;(void)ah2; vw=aw2; }
+        if(arrw>0 && mx<lfx+arrw){                              // left arrow: one line
+            W->scroll_x-=SB_LINE; clamp_scroll(W); HSB_STEP_REDRAW(hd,W); post(WM_VSLID,hd,0,0,0,0); return 1; }
+        if(arrw>0 && mx>=rtx){                                  // right arrow: one line
+            W->scroll_x+=SB_LINE; clamp_scroll(W); HSB_STEP_REDRAW(hd,W); post(WM_VSLID,hd,0,0,0,0); return 1; }
+        if(mx<thx){                                             // track left of thumb: page left
+            W->scroll_x-=(vw>SB_LINE?vw-SB_LINE:vw); clamp_scroll(W); HSB_STEP_REDRAW(hd,W); post(WM_VSLID,hd,0,0,0,0); return 1; }
+        if(mx>=thx+thw){                                        // track right of thumb: page right
+            W->scroll_x+=(vw>SB_LINE?vw-SB_LINE:vw); clamp_scroll(W); HSB_STEP_REDRAW(hd,W); post(WM_VSLID,hd,0,0,0,0); return 1; }
+        int grab=mx-thx;                                        // on the thumb: LIVE drag
+        for(;;){ aes_event e; int t=aes_wait_idle(&e,-1); if(t==AES_QUIT)break;
+            if(t==AES_MOTION){
+                int done=soak_motion(&e);                       // act on the NEWEST position
+                int tk2x,tk2w,t2x,t2w; hsb_geom(W,0,0,0,0,0,0,0,&tk2x,&tk2w,&t2x,&t2w);
+                int span=tk2w-t2w;
+                int maxs=W->content_w-vw; if(maxs<0)maxs=0;
+                int rel=e.mx-grab-tk2x; int before=W->scroll_x;
+                if(span>0){ W->scroll_x=(int)((long)rel*maxs/span); }
+                clamp_scroll(W); HSB_STEP_REDRAW(hd,W);
+                if(W->scroll_x!=before) post(WM_VSLID,hd,0,0,0,0);
                 if(done!=AES_MOTION) break; }
             if(t==AES_BTN_UP) break; }
         post(WM_VSLID,hd,0,0,0,0); return 1;
