@@ -432,10 +432,25 @@ static void pf_close(vfs_file *f)
     if (f->priv) { frtos_free(f->priv, 0); f->priv = 0; }
 }
 
+/* /proc/kmsg is writable ONLY in the `dmesg -c` sense: any write CLEARS the ring. The
+ * bytes are ignored — this is a control knob, not a log-injection path (that is SYS_klog). */
+static long pf_kmsg_write(vfs_file *f, const void *buf, uint32_t n)
+{
+    (void)f; (void)buf;
+    extern void klog_clear(void);
+    klog_clear();
+    return (long)n;
+}
+
 static int pf_open(vfs_mount *m, const char *rel, int flags, vfs_file *f)
 {
     (void)m;
-    if (flags & VFS_O_ACCMODE) return -1;                 /* read-only fs */
+    if ((flags & VFS_O_ACCMODE) && !strcmp(rel, "/kmsg")) {   /* dmesg -c: write = clear */
+        f->data = 0; f->priv = 0; f->size = 0; f->pos = 0;
+        f->read = 0; f->write = pf_kmsg_write; f->lseek = pf_lseek; f->close = pf_close;
+        return 0;
+    }
+    if (flags & VFS_O_ACCMODE) return -1;                 /* read-only fs otherwise */
     if (!strcmp(rel, "/kmsg")) {                          /* dmesg: the live klog buffer, in place */
         extern int klog_snapshot(const char **);
         const char *lp; int klen = klog_snapshot(&lp);

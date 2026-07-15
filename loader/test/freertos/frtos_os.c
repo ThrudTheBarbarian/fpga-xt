@@ -1934,6 +1934,18 @@ static void klog_sync(void)
         g_klog_flushed_seq = seq;
 }
 
+/* dmesg -c (a write to /proc/kmsg): drop everything logged so far, so a test run's
+ * output starts from a clean ring. Resetting the flushed seq forces the next logger
+ * pass to rewrite /tmp/system.log too — a cleared ring stays cleared everywhere. */
+void klog_clear(void)
+{
+    unsigned f = xt_irq_save();
+    g_klog_head = 0;
+    g_klog_wrapped = 0;
+    xt_irq_restore(f);
+    g_klog_flushed_seq = -1;
+}
+
 static void logger_task(void *arg)
 {
     (void)arg;
