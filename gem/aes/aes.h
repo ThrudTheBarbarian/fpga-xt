@@ -587,6 +587,19 @@ void wind_pin_bottom(int handle, int px);
 // selection toggled, a status bar ticked: wind_redraw_win for a one-line change renders the
 // whole surface and makes gemd recomposite all of it.
 void wind_redraw_rect(int handle, int x, int y, int w, int h);
+// THE RESIZE DISCIPLINE (M5, scroll's sibling). Within a §12 capacity, the pixels of the
+// old∩new work area are ALREADY RENDERED — they sit in the backing store — so a resize step
+// owes only (a) the exposed strips and (b) whatever the app's own LAYOUT invalidates, and
+// only the app knows (b): the icon grid reflows on a column-count change, never on height.
+// WIND_RESIZE_FULL (default): every size change repaints everything — always correct.
+// WIND_RESIZE_APP: the AES paints NOTHING on a within-capacity resize; the app hears
+// WM_SIZED (msg[6]=w, msg[7]=h, work/surface size) and paints what its layout demands via
+// wind_redraw_win / wind_redraw_rect. When capacity was exceeded the surface is FRESH (its
+// pixels are gone): the AES repaints fully itself and says so with msg[5]=1 — the app should
+// only refresh its content-size model, not draw. Client mode only; local mode ignores it
+// (there the server-side sizer already repaints, and WM_SIZED carries the FULL rect).
+enum { WIND_RESIZE_FULL = 0, WIND_RESIZE_APP = 1 };
+void wind_resize_mode(int handle, int mode);
 // Inside a content callback: the rect THIS invocation must cover, in the callback's own
 // coordinates — cull to it freely (hand it to objc_draw, skip rows outside it). The VDI clip
 // already guarantees nothing outside it changes, but clipped-away work is still WORK: a

@@ -371,6 +371,7 @@ typedef struct {
     OBJECT tree[2 + MAXENT];                           // + the synthetic ".." tile
     int wax, way, waw, wah;                            // the LIST rect: the work area minus the two bars
     int infox, infoy, infow, infoh;                    // status bar (content, bottom of the work area)
+    int last_ww, last_wh;                              // work size at the last paint (WM_SIZED delta)
     int retryx, retryw;                                // Retry button rect in the status bar (error state)
     int viewmode;                                      // 1=icons 2=single-col 3=multi-col 4=gallery
     char expanded_paths[MAX_EXPAND][256];              // single-column tree: open-folder set (paths rel. to root)
@@ -1488,6 +1489,8 @@ static void open_browser_win(const char *logical, int media_type, int net, int s
     br_list(b); br_settitle(b);
     wind_content(b->win, br_content, b);
     wind_pin_bottom(b->win, BR_STATUS_H);   // the status bar does not scroll: the blit stops above it
+    wind_resize_mode(b->win, WIND_RESIZE_APP);   // resize discipline (aes.h): we paint only what
+                                                 // our layout invalidates — see the WM_SIZED case
     if (net != 1) {                                   // path windows: the two title buttons.  A LIST OF
         int glyphs[2] = { WTG_CHEVRON, WTG_EXPAND };  // GLYPH IDS — declarative (§11); the press comes
         wind_titlebtns(b->win, glyphs, 2);            // back as WM_TBUTTON.  ([0] View popup, [1] Fit)

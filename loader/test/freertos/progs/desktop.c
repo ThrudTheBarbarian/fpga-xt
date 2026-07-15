@@ -462,6 +462,7 @@ typedef struct {
     OBJECT tree[2 + MAXENT];                           // + the synthetic ".." tile
     int wax, way, waw, wah;                            // the LIST rect: the work area minus the two bars
     int infox, infoy, infow, infoh;                    // status bar (content, bottom of the work area)
+    int last_ww, last_wh;                              // work size at the last paint (WM_SIZED delta)
     int retryx, retryw;                                // Retry button rect in the status bar (error state)
     int viewmode;                                      // 1=icons 2=single-col 3=multi-col 4=gallery
     char expanded_paths[MAX_EXPAND][256];              // single-column tree: open-folder set (paths rel. to root)
@@ -1580,6 +1581,8 @@ static void open_browser_win(const char *logical, int media_type, int net, int s
     br_list(b); br_settitle(b);
     wind_content(b->win, br_content, b);
     wind_pin_bottom(b->win, BR_STATUS_H);   // the status bar does not scroll: the blit stops above it
+    wind_resize_mode(b->win, WIND_RESIZE_APP);   // resize discipline (aes.h): we paint only what
+                                                 // our layout invalidates — see the WM_SIZED case
     if (net != 1) {                                   // path windows: the two title buttons.  A LIST OF
         int glyphs[2] = { WTG_CHEVRON, WTG_EXPAND };  // GLYPH IDS — declarative (§11); the press comes
         wind_titlebtns(b->win, glyphs, 2);            // back as WM_TBUTTON.  ([0] View popup, [1] Fit)
@@ -2506,6 +2509,38 @@ void _app_entry(int argc, char **argv) {
              * just moved with everything else — repaint it. ONE RECT, not the window. */
             browser *b = br_of_window(msg[3]);
             if (b) wind_redraw_rect(b->win, b->infox, b->infoy, b->infow, b->infoh);
+        }
+        if ((r & MU_MESAG) && msg[0] == WM_SIZED) {
+            /* THE RESIZE DISCIPLINE (aes.h, WIND_RESIZE_APP): the old∩new pixels are already
+             * in our surface, so paint only what OUR layout invalidates. The icon grid
+             * reflows on a COLUMN-COUNT change, never on height; the text views reflow on
+             * any width change (full-width rows). Otherwise: the exposed right strip when
+             * width grew, and the bottom band — the pinned status bar RELOCATES with every
+             * height change, so its old row (content now) and its new row both repaint.
+             * A vertical shrink with same columns paints just that band: the vacated screen
+             * estate is gemd's, recomposited from the desktop's store without us.
+             * msg[5]=1 = FRESH surface (capacity realloc): the AES painted fully already —
+             * only refresh the delta bookkeeping. Client mode only (local carries a rect). */
+            browser *b = br_of_window(msg[3]);
+            if (b && aes_mode() == AES_CLIENT) {
+                int fresh = msg[5], nw = msg[6], nh = msg[7];
+                int ow = b->last_ww, oh = b->last_wh;
+                b->last_ww = nw; b->last_wh = nh;
+                if (!fresh && (nw != ow || nh != oh)) {
+                    int cw, ch2; br_cell_size(b, &cw, &ch2);
+                    int pad = 14;
+                    int oc = ow > 0 ? (ow - pad) / cw : 0; if (ow > 0 && oc < 1) oc = 1;
+                    int nc2 = (nw - pad) / cw; if (nc2 < 1) nc2 = 1;
+                    int text = (b->viewmode == 2 || b->viewmode == 3);
+                    int relayout = (ow <= 0) || (text ? (nw != ow) : (oc != nc2));
+                    if (relayout) wind_redraw_win(b->win);
+                    else {
+                        if (nw > ow) wind_redraw_rect(b->win, ow, 0, nw - ow, nh);
+                        int y0 = (nh < oh ? nh : oh) - BR_STATUS_H; if (y0 < 0) y0 = 0;
+                        wind_redraw_rect(b->win, 0, y0, nw, nh - y0);
+                    }
+                }
+            }
         }
         if ((r & MU_MESAG) && msg[0] == XTOS_MEDIA_CHANGE) {
             // OS says the SD card left (msg[3]=0) or came back (msg[3]=1). Placeholder:

@@ -66,6 +66,7 @@ typedef struct {
     int content_w, content_h;                  // app-reported full content size (work coords)
     int scroll_x, scroll_y;                    // current scroll offset (vertical bar drawn)
     int pin_bottom;                            // px at the work-area BOTTOM that do not scroll
+    int rsz_mode;                              // WIND_RESIZE_FULL/APP (aes.h): who paints a resize
                                                // (a status bar): the scroll blit stops above it
     int maxed, sx,sy,sw,sh;                    // maximise toggle: flag + the pre-maximise rect
 } awin;
@@ -847,7 +848,8 @@ static void client_sized(const gem_msg *m){
     int hd=m->w[1]; if(hd<1||hd>=MAXW||!g_w[hd].used) return;
     awin*W=&g_w[hd];
     int nid=(int)m->u[0];
-    if(nid!=W->surf_id){
+    int fresh=(nid!=W->surf_id);                               // capacity realloc: the pixels are GONE
+    if(fresh){
         long long gp_t0=gem_prof_now();                        // TEMP profiler: the remap leg
         if(W->surf_id>=0) gem_surf_unmap(g_gemfd,W->surf_id);
         uint32_t*px=gem_surf_map(nid);
@@ -860,8 +862,15 @@ static void client_sized(const gem_msg *m){
     // The resize CLAMPED the scroll server-side. Take the truth BEFORE painting: a stale copy
     // here means the next scroll blits by a wrong delta — stale bands through the content.
     W->scroll_x=(int)m->u[2]; W->scroll_y=(int)m->u[3];
+    // THE RESIZE DISCIPLINE (aes.h): within capacity the old∩new pixels are already in the
+    // surface, so an opted-in app paints only what its layout invalidates — from WM_SIZED.
+    // A FRESH surface has no pixels to keep: paint fully here and tell the app (msg[5]=1).
+    if(W->rsz_mode==WIND_RESIZE_APP && !fresh){
+        post_msg(WM_SIZED,hd,0,0,W->surf.w,W->surf.h);
+        return;
+    }
     client_paint(hd, 0,0, W->surf.w, W->surf.h);
-    post_msg(WM_SIZED,hd,0,0,W->surf.w,W->surf.h);   // the app reflows; work coords, as it draws in
+    post_msg(WM_SIZED,hd,0,fresh?1:0,W->surf.w,W->surf.h);   // the app reflows; work coords, as it draws in
 }
 
 // THE SCROLL CONSEQUENCE (M5). gemd owns the bar and ran the interaction; we own the pixels.
@@ -1223,6 +1232,11 @@ void wind_content_size(int hd,int w,int h){
 void wind_pin_bottom(int hd,int px){
     if(hd<1||hd>=MAXW||!g_w[hd].used) return;
     g_w[hd].pin_bottom = px<0?0:px;
+}
+// Who paints a resize (aes.h: THE RESIZE DISCIPLINE). Client-side model only — no wire message.
+void wind_resize_mode(int hd,int mode){
+    if(hd<1||hd>=MAXW||!g_w[hd].used) return;
+    g_w[hd].rsz_mode = mode;
 }
 int wind_scroll_y(int hd){ return (hd>=1&&hd<MAXW)?g_w[hd].scroll_y:0; }
 int wind_scroll_x(int hd){ return (hd>=1&&hd<MAXW)?g_w[hd].scroll_x:0; }
