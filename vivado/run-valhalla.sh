@@ -28,6 +28,7 @@ PLACE_DIRECTIVE="${PLACE_DIRECTIVE:-}"
 # $REMOTE_DIR) to reuse its P&R for unchanged logic.  Keep it OUTSIDE build/
 # (which is rm -rf'd each run), e.g. ref.dcp.  Empty = full build.
 INCR_REF_DCP="${INCR_REF_DCP:-}"
+INCR_DIRECTIVE="${INCR_DIRECTIVE:-}"
 
 REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 LOCAL_BUILD="$REPO_ROOT/vivado/build"
@@ -51,6 +52,7 @@ set -u
 cd ~/$REMOTE_DIR
 export PLACE_DIRECTIVE="$PLACE_DIRECTIVE"
 export INCR_REF_DCP="$INCR_REF_DCP"
+export INCR_DIRECTIVE="$INCR_DIRECTIVE"
 # Regenerate the PS block design (gen_ps_bd.tcl) for synth/impl/bit so it
 # tracks the script, not the stale committed BD output — else an HP port added
 # to the script but not re-run fails elaboration with "m_axi_hpN_* does not

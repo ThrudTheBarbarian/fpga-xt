@@ -242,8 +242,17 @@ if {$flow eq "impl" || $flow eq "bit"} {
     if {[info exists ::env(INCR_REF_DCP)] && $::env(INCR_REF_DCP) ne ""} {
         set ref_dcp $::env(INCR_REF_DCP)
         if {[file exists $ref_dcp]} {
-            puts ">> incremental impl: reference checkpoint $ref_dcp"
-            read_checkpoint -incremental $ref_dcp
+            # -directive TimingClosure: the incremental flow otherwise substitutes its own
+            # RuntimeOptimized effort for the whole implementation — it reuses placement but
+            # optimises the changed/re-routed portion lightly, which is exactly how a 3 ps
+            # inherited margin dies (clk_sally +0.003 reference -> -0.371 incremental,
+            # measured 2026-07-15 with 98.8% cell reuse).
+            set incr_dir TimingClosure
+            if {[info exists ::env(INCR_DIRECTIVE)] && $::env(INCR_DIRECTIVE) ne ""} {
+                set incr_dir $::env(INCR_DIRECTIVE)
+            }
+            puts ">> incremental impl: reference checkpoint $ref_dcp (directive $incr_dir)"
+            read_checkpoint -incremental -directive $incr_dir $ref_dcp
         } else {
             puts ">> WARNING: INCR_REF_DCP=$ref_dcp not found — full (non-incremental) build"
         }

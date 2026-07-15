@@ -397,13 +397,22 @@ module sally_mem #(
     // Static between ops, so the 4-byte 6502 read is coherent without a latch.
     logic [31:0] math_lat_run, math_lat_q;
     logic        math_lat_active, math_lat_sawlow, math_done_d;
+    // The strobe is REGISTERED before it reaches this counter, on purpose: math_exec_we is
+    // an address decode at the tail of the CPU read/EA cone (page-BRAM data -> cpu_rdata ->
+    // effective address -> decode), and feeding it straight into math_lat_run's D made a
+    // DIAGNOSTIC counter the worst path of the whole clk_sally domain (-0.091 gated a build,
+    // 2026-07-15). One cycle late on a counter that measures thousands is noise; the doorbell
+    // itself (math_exec_we out of this module) keeps its same-cycle timing.
+    logic        math_exec_we_q;
     always_ff @(posedge clk or posedge rst) begin
         if (rst) begin
             math_lat_run <= 32'd0; math_lat_q <= 32'd0;
             math_lat_active <= 1'b0; math_lat_sawlow <= 1'b0; math_done_d <= 1'b0;
+            math_exec_we_q <= 1'b0;
         end else begin
             math_done_d <= math_done;
-            if (math_exec_we) begin                 // doorbell -> start
+            math_exec_we_q <= math_exec_we;
+            if (math_exec_we_q) begin               // doorbell (1 cycle late) -> start
                 math_lat_run    <= 32'd0;
                 math_lat_active <= 1'b1;
                 math_lat_sawlow <= 1'b0;
