@@ -310,6 +310,16 @@ the screen-bank → line-reader CE path). The pinned region is at its congestion
 the next clk_sally session (study Lever C, or rebalancing the overlay BRAMs adjacent) should
 happen BEFORE the next netlist growth, not after it fails a gate.
 
+**THE RESIZE DISCIPLINE (M5, user-derived general rule):** scroll's rule, generalised. Within
+a §12 capacity the old∩new work-area pixels are already rendered — they sit in the backing
+store — so a resize step owes only (a) the exposed strips and (b) whatever the app's own
+LAYOUT invalidates, and only the app knows (b): the icon grid reflows on a column-count
+change, never on height; a vertical shrink owes nothing at all (the vacated screen estate is
+gemd's, recomposited from the desktop's store). `WIND_RESIZE_APP` (aes.h; default stays
+FULL = always correct): `client_sized` paints nothing within capacity and the app answers
+`WM_SIZED` with what its layout demands; a FRESH surface (capacity realloc, pixels gone) is
+repainted fully by the AES and flagged `msg[5]=1`. Client-side model only — no wire change.
+
 **Still owed in M5:** horizontal scrollbars (no bar drawn today).
 
 ## The composite is CPU-bound in transfer_bits, and the engine composite is M7 work
