@@ -144,12 +144,13 @@ void gem_prof_dump(const char *tag)
         char b[256];
         int n = snprintf(b, sizeof b,
             "[gemprof %s] 1s: render %d/%dms (layout %d/%dms text %d/%dms %ld gl) "
-            "blit %d/%dms/%ldkpx fill %d/%ldkpx dmg %d/%ldkpx\n",
+            "alloc %d/%dms blit %d/%dms/%ldkpx fill %d/%ldkpx dmg %d/%ldkpx\n",
             tag,
             g_gp[GEM_PROF_RENDER].n, (int)(g_gp[GEM_PROF_RENDER].us / 1000),
             g_gp[GEM_PROF_LAYOUT].n, (int)(g_gp[GEM_PROF_LAYOUT].us / 1000),
             g_gp[GEM_PROF_TEXT].n,   (int)(g_gp[GEM_PROF_TEXT].us   / 1000),
             g_gp[GEM_PROF_TEXT].units,
+            g_gp[GEM_PROF_ALLOC].n,  (int)(g_gp[GEM_PROF_ALLOC].us  / 1000),
             g_gp[GEM_PROF_BLIT].n,   (int)(g_gp[GEM_PROF_BLIT].us   / 1000),
             g_gp[GEM_PROF_BLIT].units / 1000,
             g_gp[GEM_PROF_FILL].n,   g_gp[GEM_PROF_FILL].units / 1000,

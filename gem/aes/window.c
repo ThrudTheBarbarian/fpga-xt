@@ -636,6 +636,7 @@ void wind_redraw_area(int rx,int ry,int rw,int rh){
     if(rx<0){ rw+=rx; rx=0; } if(ry<0){ rh+=ry; ry=0; }
     if(rx+rw>d->w) rw=d->w-rx; if(ry+rh>d->h) rh=d->h-ry;
     if(rw<=0||rh<=0) return;
+    long long gp_t0 = gem_prof_now();               // TEMP profiler: one composite pass (srv/local)
     int16_t clip[4]={(int16_t)rx,(int16_t)ry,(int16_t)(rx+rw-1),(int16_t)(ry+rh-1)};
     vs_clip(H(),2,NULL);                                  // fresh clip stack for the frame
     vs_clip(H(),1,clip);
@@ -656,6 +657,7 @@ void wind_redraw_area(int rx,int ry,int rw,int rh){
     if(ry < g_top_reserve) menu_redraw();                 // the bar only if the rect reaches it
     vs_clip(H(),0,NULL);
     g_dmg_on=0;
+    gem_prof_add(GEM_PROF_RENDER, gem_prof_now()-gp_t0, (long)rw*rh);   // TEMP: composite, sans present
     aes_flush_rect(rx,ry,rw,rh);                          // present (A9 back-buffer; no-op on SDL)
 }
 void wind_redraw(void){
@@ -814,8 +816,10 @@ static void client_sized(const gem_msg *m){
     awin*W=&g_w[hd];
     int nid=(int)m->u[0];
     if(nid!=W->surf_id){
+        long long gp_t0=gem_prof_now();                        // TEMP profiler: the remap leg
         if(W->surf_id>=0) gem_surf_unmap(g_gemfd,W->surf_id);
         uint32_t*px=gem_surf_map(nid);
+        gem_prof_add(GEM_PROF_ALLOC, gem_prof_now()-gp_t0, 0);
         if(!px){ W->surf_id=-1; W->surf.px=0; return; }        // gemd will reap us; nothing to draw
         W->surf_id=nid; W->surf.px=px;
     }

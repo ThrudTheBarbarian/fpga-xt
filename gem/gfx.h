@@ -66,6 +66,7 @@ enum { GEM_PROF_RENDER,     // client_render: one whole content callback (µs + 
        GEM_PROF_BLIT,       // gfx_blit (calls + px) — icons, backing-store copies
        GEM_PROF_FILL,       // gfx_fill_rect (calls + px) — 9-slice, panels, selection
        GEM_PROF_DAMAGE,     // damage rects posted to gemd (posts + px)
+       GEM_PROF_ALLOC,      // surface churn: gemd realloc+grant / client unmap+map (µs + calls)
        GEM_PROF_NSLOTS };
 long long gem_prof_now(void);                          // µs since some epoch
 void gem_prof_add(int slot, long long us, long units);

@@ -290,11 +290,13 @@ int gemd_resize_surface(int hd)
 
     gsurface *s = &g_surf[hd];
     if (s->id < 0 || ww > s->cap_w || wh > s->cap_h) {          /* capacity exceeded: a new one */
+        long long gp_t0 = gem_prof_now();                       /* TEMP profiler: the realloc leg */
         gsurface ns;
         if (gemd_surf_create(&ns, ww, wh, g_plane.w, g_plane.h) != 0) return -1;
         if (sys_shm_grant(ns.id, c->pid) != 0) { gemd_surf_drop(&ns); return -1; }
         gemd_surf_drop(s);                                      /* our ref; the client drops its own */
         *s = ns;
+        gem_prof_add(GEM_PROF_ALLOC, gem_prof_now() - gp_t0, 0);
         /* log ONLY the reallocation (rare, notable). A live resize calls this per MOTION, and
          * per-motion console lines are blocking serial time (see route.c). */
         printf("gemd: resize wh=%d work %dx%d -> NEW surf %d cap %dx%d\n",
@@ -540,6 +542,7 @@ static int gemd_events(aes_event *ev, int timeout_ms)
          * out per motion — that is the whole of "the scroll is live". */
         gemd_flush_msgs();
         prof_dump();                                 /* TEMP drag-lag profiler */
+        gem_prof_dump("srv");                        /* TEMP: composite/alloc/blit, server side */
         if (g_iqi < g_iqn) {                      /* a burst still in hand from the last read */
             struct os_event oe = g_iq[g_iqi++];
             memset(ev, 0, sizeof *ev);
