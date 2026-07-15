@@ -106,7 +106,8 @@ void gfx_line(gfx_surface *s, int x0, int y0, int x1, int y1, uint32_t rgba) {
     }
 }
 
-// ---- TEMP draw profiler (see gfx.h; remove with the resize-lag verdict) -----
+// ---- draw profiler (see gfx.h) — compiled only under -DINSTRUMENTATION ------
+#ifdef INSTRUMENTATION
 #include <stdio.h>
 #ifdef GEM_XTOS
 #include "usys.h"
@@ -164,3 +165,4 @@ void gem_prof_dump(const char *tag)
     memset(g_gp, 0, sizeof g_gp);
     last = now;
 }
+#endif // INSTRUMENTATION

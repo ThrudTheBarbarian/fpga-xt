@@ -17,7 +17,7 @@ phase 1 is and is not). This file is the *implementation* plan and the running s
 | M4b — the menu strip (§10), grabs, liveness | *owed — see "What M4 does NOT cover"* |
 | M5 — resize: client-driven (`wind_set`), scroll/content size | in progress: **geometry is a wire request (WF_CURRXYWH) — the Fit button works**, build-verified; board + scroll/content size open |
 | M6 — the XL plane | *blocked by design: a client cannot place a plane — see below* |
-| M7 — **the gate**: `SEC_PLANE` → PL0-none | the last app-side plane code is now GONE, so this is a kernel flip |
+| M7 — **the gate**: `SEC_PLANE` → PL0-none; **+ the engine composite** (designed, deferred — see below) | the gate is a kernel flip; the composite swap is the §14 seam move |
 
 ## M0 (done): services + poll — block 0x500
 
@@ -297,8 +297,8 @@ remaining resize lag is INPUT CADENCE — the serial GUI lane (SGR mouse over 11
 the transitional hack, and the **STM32F411 HID companion is the fix of record**. Two software
 follow-ups remain worth having: an IRQ-backed blocking fence (the SVC-spin fence burned 55 ms
 against 19 ms of blitting on full-screen presents; the engine's completion IRQ already exists)
-and the AR pipeline 2 → 4 (~850 MB/s). The compositor's inner blit stays CPU — cached→cached
-is already fast, and §14's move-together rule applies only when the VDI backend itself moves.
+and the AR pipeline 2 → 4 (~850 MB/s). The compositor's inner blit stays CPU for now — the
+engine composite is DESIGNED and DEFERRED TO M7 (see "The engine composite" below).
 
 **Both follow-ups landed overnight 2026-07-14/15** (6a1b191 + 5b19048, board-verified): four
 segment buffers keep the R stream continuous — engine COPY **433 → 777 MB/s** (4.15× the
@@ -311,6 +311,51 @@ the next clk_sally session (study Lever C, or rebalancing the overlay BRAMs adja
 happen BEFORE the next netlist growth, not after it fails a gate.
 
 **Still owed in M5:** horizontal scrollbars (no bar drawn today).
+
+## The composite is CPU-bound in transfer_bits, and the engine composite is M7 work
+
+The M5 resize-lag chase ended in three board-measured verdicts, each found by the
+`-DINSTRUMENTATION` profiler (`[gemprof cli]`/`[gemprof srv]` klog lines, 1/s; `dmesg -c`
+between tests) — recorded here so M7 starts from facts, not a re-investigation:
+
+1. **`vr_transfer_bits`' generic loop is a per-pixel function call**, and `blend_op` re-derived
+   the four blend pen colours per pixel. One full-desktop render (wallpaper VR_OVER through it)
+   measured **1365 ms → 51 ms** once unscaled COPY/VR_OVER got dedicated bit-identical loops
+   (`d42265a`), and the chrome (9-slice edges + title bars, which STRETCH and so missed the
+   unscaled paths) measured **550 ns/px** — 1.1 s/s of composite, gemd saturated, the window
+   chasing the mouse at 3-5 resize steps/s against 30-39 motions/s — until the scaled
+   COPY/VR_OVER loops joined them.
+2. **Client rendering was never the problem** (16-30 ms a frame at 9 columns, 92% idle), and
+   neither was the §12 surface dance (alloc/remap 0-6 ms). The profiler's lesson generalises:
+   when `render` dwarfs the sum of its parts, the time is in a path the ledger does not cover —
+   instrument the gap before theorizing (two wrong theories died to this rule in one session).
+3. **The mappings are NOT the bottleneck**: gemd's boot-time membench (INSTRUMENTATION-gated,
+   kept as the attribute-regression canary) measures every edge of {shm surface, heap,
+   back-buffer} at ~5.5 ms/MB — uniform, cacheable, no Device mapping anywhere. Window
+   surfaces are ordinary cached shm (`L2_SHM`), the back-buffer is the cached wallpaper
+   region, and chrome text blends at ~30 ns/px through both.
+
+**The engine composite (M7, designed 2026-07-15, deferred from M5 to stay on-milestone).** The
+CPU composite now costs ~*memcpy speed* (~190 MB/s on this A9), and `/dev/blitter`'s FC engine
+does 777 MB/s — the §14 seam swap is worth ~4x on every composite and frees the CPU during
+drags. The design, from today's code reading:
+
+1. **Driver**: accept the cached back-buffer (`XT_BLIT_SURF_WALLPAPER`) as a blit
+   *destination* (refused today) and **invalidate the destination rows after the engine
+   writes** — clean+invalidate at unaligned edges, the SD-DMA lesson, symmetric to the
+   existing source-row cleaning.
+2. **gemd**: declare each client surface to `/dev/blitter` at `wind_attach_surface` time and
+   give `draw_one`'s inner blit an engine path (the `blit_rect` backend seam §14 asks for).
+   Surfaces would need to be physically contiguous for the engine — they are pool-backed
+   scattered pages today, so this is `XT_SHM_CONTIG`/plv **at the same time**, which is
+   exactly §14's "backing stores move to plv when the VDI's blitter backend moves, and not
+   one commit before". plv is uncached, so the CLIENT keeps a cached view or eats uncached
+   writes — the client-side story must be settled as part of this design, not assumed.
+3. **FC constraints**: 8-byte co-alignment + even width. With the 64px capacity quantum and
+   even strides everywhere, co-alignment parity reduces to the window's screen x — snap
+   window x to even in the AES (invisible), widen odd rects a pixel within bounds, CPU-copy
+   a 1 px edge column when clamped.
+4. **Chrome fills and text stay CPU** — small, and never the problem.
 
 ## gemd renders CACHED and presents rects (the 3-second redraw)
 

@@ -136,6 +136,18 @@
   work as /MPD shadow; src: docs/OS/expansion-options.md)*
 
 ## GEM (VDI + AES) / desktop
+- **gemd M7: the engine composite (designed 2026-07-15, deferred from M5)** — swap
+  `draw_one`'s inner blit (client surface → back-buffer) onto the `/dev/blitter` FC
+  engine (777 MB/s vs ~190 MB/s CPU memcpy). Full design + the three board-measured
+  findings that motivated it (transfer_bits per-pixel dispatch 1365→51 ms; scaled
+  chrome 550 ns/px saturating gemd at 3-5 resize steps/s; membench proving mappings
+  uniform-cacheable) are in **docs/OS/gemd-plan.md §"The composite is CPU-bound in
+  transfer_bits"**. Pieces: driver accepts WALLPAPER as dst + invalidates dst rows;
+  gemd declares surfaces at attach (needs XT_SHM_CONTIG/plv + the client-side cached
+  view settled — §14's move-together rule); FC 8B-co-align/even-width handling (snap
+  window x even, widen odd rects, CPU 1px edge). Profiler + membench recoverable via
+  `-DINSTRUMENTATION` (gem/Makefile + loader GEMCFLAGS). *(src: gemd-plan.md, memory
+  gemprof-and-dmesg-c)*
 - **VDI dispatch layer (Phase 1, keystone)** — opcode wire format + 6502-side VDI
   library + N6 DRAW dispatcher + palette expansion + inquiry RPCs. *(highest priority;
   everything depends on it; src: docs/GEM/GEM-implementation.md)*

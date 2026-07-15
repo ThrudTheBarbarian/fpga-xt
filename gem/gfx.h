@@ -60,6 +60,8 @@ void gfx_text_flush(void);
 // on XTOS, stderr on the host).  The expensive outer stages carry microseconds;
 // the memory-bound inner ones carry only count + units (pixels, glyphs) so the
 // probe itself never becomes the cost it is measuring.
+// Everything compiles away without -DINSTRUMENTATION (the hook sites stay in the
+// source; a later milestone recovers the whole apparatus by restoring the flag).
 enum { GEM_PROF_RENDER,     // client_render: one whole content callback (µs + calls)
        GEM_PROF_TEXT,       // font_draw*: per string (µs + glyphs)
        GEM_PROF_LAYOUT,     // app-declared layout work, e.g. the desktop's tile pass (µs)
@@ -68,8 +70,15 @@ enum { GEM_PROF_RENDER,     // client_render: one whole content callback (µs + 
        GEM_PROF_DAMAGE,     // damage rects posted to gemd (posts + px)
        GEM_PROF_ALLOC,      // surface churn: gemd realloc+grant / client unmap+map (µs + calls)
        GEM_PROF_NSLOTS };
+#ifdef INSTRUMENTATION
 long long gem_prof_now(void);                          // µs since some epoch
 void gem_prof_add(int slot, long long us, long units);
 void gem_prof_dump(const char *tag);                   // rate-limited internally to 1/s
+#else
+static inline long long gem_prof_now(void) { return 0; }
+static inline void gem_prof_add(int slot, long long us, long units)
+{ (void)slot; (void)us; (void)units; }
+static inline void gem_prof_dump(const char *tag) { (void)tag; }
+#endif
 
 #endif // GEM_GFX_H

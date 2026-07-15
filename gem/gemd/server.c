@@ -608,6 +608,43 @@ int gemd_run(void)
          * to the CPU rows — qemu never has the engine, and must never need it */
         g_blitfd = (int)sys_open("/dev/blitter", 2);
         printf("gemd: present via %s\n", g_blitfd >= 0 ? "/dev/blitter" : "CPU rows");
+#ifdef INSTRUMENTATION
+        /* membench: memcpy 1MB along each edge of the {shm, malloc} x {backbuf} square and
+         * klog it. VERDICT (board, 2026-07-15): all edges ~5.5ms/MB — attributes uniform,
+         * no Device mapping; the composite's 550ns/px was the chrome's SCALED VR_OVER
+         * through the generic transfer_bits loop, since specialized. Kept as the boot-time
+         * canary for mapping-attribute regressions. */
+        {
+            enum { MB = 1024 * 1024 };
+            int bid = sys_shm_create(MB, 0);
+            uint32_t *shmp = bid >= 0 ? (uint32_t *)sys_shm_map(bid) : 0;
+            uint32_t *heap = (uint32_t *)malloc(MB);
+            uint32_t *bb   = g_plane.px;
+            if (shmp && heap) {
+                struct { const char *nm; void *d; const void *s; } tc[] = {
+                    { "shm->bb",    bb,   shmp },
+                    { "heap->bb",   bb,   heap },
+                    { "shm->heap",  heap, shmp },
+                    { "bb->heap",   heap, bb   },
+                    { "heap->heap", heap, heap },
+                };
+                memset(shmp, 0x5A, MB); memset(heap, 0xA5, MB);      /* fault + warm both */
+                char line[160]; int off = 0;
+                off += snprintf(line + off, sizeof line - (size_t)off, "[gemd] membench 1MB:");
+                for (unsigned i = 0; i < sizeof tc / sizeof tc[0]; i++) {
+                    long long t0 = gem_prof_now();
+                    memcpy(tc[i].d, tc[i].s, MB);
+                    long long dt = gem_prof_now() - t0;
+                    off += snprintf(line + off, sizeof line - (size_t)off,
+                                    " %s %dus", tc[i].nm, (int)dt);
+                }
+                off += snprintf(line + off, sizeof line - (size_t)off, "\n");
+                sys_klog(line, (unsigned)off);
+            }
+            if (heap) free(heap);
+            if (shmp) sys_shm_unmap(bid);
+        }
+#endif // INSTRUMENTATION
     } else {
         g_plane.w = fb.w; g_plane.h = fb.h; g_plane.stride = fb.stride;
         g_plane.px = (uint32_t *)fb.addr;
