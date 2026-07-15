@@ -37,6 +37,12 @@
 #define GEM_WIND_OPEN     6         /* w[1]=wh w[2..5]=x,y,w,h -> WIND_SURF + MSG_REDRAW */
 #define GEM_WIND_CLOSE    7         /* w[1]=wh */
 #define GEM_WIND_DELETE   8         /* w[1]=wh */
+#define GEM_MENU_BAR     10         /* the app has a menu (§10): gemd allocates its own strip-sized
+                                     * surface ONCE, grants it, replies MSG_MENU_SURF. Idempotent. */
+#define GEM_MENU_DAMAGE  11         /* w[2]=x w[4]=w — strip pixels changed; gemd recomposites the band */
+#define GEM_GRAB         12         /* w[2]=1 take / 0 release: ALL input routes to this client with
+                                     * SCREEN coords (w[1]=-1 in the event) until release, EOF, or the
+                                     * §9 liveness clock revokes it (MSG_GRAB_REVOKED). Focus-only. */
 #define GEM_WIND_SET      9         /* THE DECLARATIVE CHROME MODEL (§11). w[1]=wh w[2]=field (WF_*)
                                      *   strings (WF_NAME/WF_INFO/WF_SUBTITLE/WF_ICON):
                                      *     w[3] = byte OFFSET of this chunk; the bytes follow at
@@ -108,6 +114,11 @@
                                      * hit-tested it; the client gets back an index into the very
                                      * string it set. A breadcrumb, declaratively (§11). */
 
+#define GEM_MSG_MENU_SURF 22        /* reply to MENU_BAR: u[0]=surf_id u[1]=gen w[2]=w w[3]=h
+                                     * w[4]=stride — the app's own strip surface (§10) */
+#define GEM_MSG_MENUCLK  23         /* w[2]=x — a press in the strip; the FOCUS app owns the pixels
+                                     * there, so it owns the hit test (its own title layout) */
+#define GEM_MSG_GRAB_REVOKED 24     /* the §9 clock fired: the grab is gone, dismiss and clean up */
 #define GEM_MSG_VSLID    21         /* w[1]=wh u[0]=scroll_x u[1]=scroll_y — the scroll offset
                                      * CHANGED: the user worked the bar (gemd's chrome, gemd's
                                      * interaction), or a WF_SCROLL request came back clamped.

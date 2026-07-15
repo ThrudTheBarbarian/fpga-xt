@@ -101,6 +101,8 @@ static void work_area(int *x,int *y,int *w,int *h){
 }
 void aes_set_workarea(int x,int y,int w,int h){ g_wa[0]=x; g_wa[1]=y; g_wa[2]=w; g_wa[3]=h; }
 void aes_reserve_top(int h){ g_top_reserve = h; }
+static void (*g_menu_hook)(void);   // server mode: gemd composites the FOCUS app's strip (§10)
+void aes_set_menu_redraw(void (*fn)(void)){ g_menu_hook = fn; }
 int  aes_top_reserve(void){ return g_top_reserve; }   // px reserved at the top (menu bar)
 
 static int bw(void){ const theme_slice*s=theme_find(aes_theme(),"window"); return s?s->l:5; }
@@ -757,7 +759,10 @@ void wind_redraw_area(int rx,int ry,int rw,int rh){
         if(W->x < rx+rw && W->x+W->w > rx && W->y < ry+rh && W->y+W->h > ry)
             draw_one(g_z[i], i==g_nz-1);
     }
-    if(ry < g_top_reserve) menu_redraw();                 // the bar only if the rect reaches it
+    if(ry < g_top_reserve){                               // the bar only if the rect reaches it
+        if(g_menu_hook) g_menu_hook();                    // gemd: the focus app's strip (§10)
+        else menu_redraw();                               // local: the app's own bar
+    }
     vs_clip(H(),0,NULL);
     g_dmg_on=0;
     gem_prof_add(GEM_PROF_RENDER, gem_prof_now()-gp_t0, (long)rw*rh);   // TEMP: composite, sans present
@@ -895,6 +900,7 @@ static int g_evwin;                          // WHICH of our windows the last in
 // A client cannot work this out for itself: coordinates are window-LOCAL, so two windows both
 // see a click at (10,10). gemd knows — it hit-tested the z-order — so it says, and this is where
 // the app reads the answer (wind_find() cannot help: a client has no z-order and no geometry).
+int wind_gem_fd(void){ return g_gemfd; }        // menu.c: the strip/grab channel
 int aes_event_win(void){ return g_evwin; }
 
 // gem_await() (used inside wind_open/wind_create) has to skip messages it is not waiting for.
@@ -1026,6 +1032,16 @@ static int client_dispatch(const gem_msg *m, aes_event *ev){
     case GEM_MSG_TBUTTON:                                  // a title button was pressed (§11): the
         post_msg(WM_TBUTTON,m->w[1],m->w[2],0,0,0);        // app learns WHICH, never WHERE
         return AES_MESAG;
+    case GEM_MSG_MENUCLK: {                                // a press in OUR strip (§10): run the menu
+        extern void menu_client_click(int x);
+        menu_client_click(m->w[2]);
+        return 0;
+    }
+    case GEM_MSG_GRAB_REVOKED: {                           // §9: the clock fired; dismiss
+        extern void menu_grab_revoked(void);
+        menu_grab_revoked();
+        return 0;
+    }
     case GEM_MSG_PATHSEG:                                  // a breadcrumb component was clicked: we
         post_msg(WM_PATHSEG,m->w[1],m->w[2],0,0,0);        // set the string, we get back an INDEX
         return AES_MESAG;

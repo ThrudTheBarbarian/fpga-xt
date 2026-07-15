@@ -31,6 +31,7 @@ int      wind_drag_sizing(void);   // 1 while a sizer drag is live (server mode)
 int      wind_resize_zone_at(int mx,int my);   // RZ_ mask under the pointer on the TOP window
                                    // (0 = none): gemd's hover cursor swap
 enum { WIND_RZ_L=1, WIND_RZ_R=2, WIND_RZ_T=4, WIND_RZ_B=8 };
+void     aes_set_menu_redraw(void (*fn)(void));   // gemd's strip-composite hook (§10)
 int      wind_next_of_client(int client,int from); // walk a dead client's windows (§9)
 int      wind_vsb_col(int hd,int*x,int*y,int*w,int*h,int*thy,int*thh);
                                                    // scrollbar column + thumb (screen px);

@@ -2490,6 +2490,7 @@ void _app_entry(int argc, char **argv) {
         sys_klog(b, n);
     }
 
+    menu_show();                     // §10: the strip is ours now — gemd composites it on focus
     aes_set_idle(net_pump, 40);                      // modal loops keep pumping the network
 
     for (;;) {                                       // interactive loop

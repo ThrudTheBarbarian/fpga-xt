@@ -43,6 +43,10 @@ typedef struct {
     char str[GEM_STR_MAX + 1];       /* a chrome string being assembled from its chunks (§11).
                                       * PER CLIENT, so a half-sent title is never another
                                       * client's problem. */
+    gsurface menu;                   /* §10: this app's OWN strip surface (id -1 = never asked).
+                                      * gemd composites the FOCUSED app's; a switch is a
+                                      * compositing decision, not a conversation. */
+    long long last_recv;             /* §9 liveness: when the client last said ANYTHING */
 } gclient;
 
 static gclient     g_cl[GEMD_MAXCL];
@@ -91,6 +95,47 @@ static void prof_dump(void)
     memset(&g_prof, 0, sizeof g_prof);
     g_prof.last = now;
 }
+
+/* ---- §10: the menu strip -------------------------------------------------------------- */
+/* The focused client's strip surface composites into the reserved top band; no menu (or no
+ * focus) composites the band's own background. Registered as the AES's menu-redraw hook, so
+ * wind_redraw_area paints it whenever a damage rect reaches the band — the same path that
+ * painted the local-mode bar. */
+int gemd_focus_client(void);                 /* route.c: the focused window's client, or -1 */
+static void menu_strip_redraw(void)
+{
+    int sh = aes_top_reserve(); if (sh <= 0) return;
+    int ci = gemd_focus_client();
+    gfx_surface *d = &g_plane;
+    if (ci >= 0 && g_cl[ci].used && g_cl[ci].menu.id >= 0 && g_cl[ci].menu.px) {
+        gfx_surface src; memset(&src, 0, sizeof src);
+        src.px = g_cl[ci].menu.px; src.w = g_cl[ci].menu.cap_w;
+        src.h  = sh;               src.stride = g_cl[ci].menu.cap_w;
+        gfx_blit(d, 0, 0, &src, 0, 0, d->w, sh);
+    } else {
+        for (int y = 0; y < sh; y++) {       /* no menu: the band is gemd's, flat */
+            uint32_t *row = d->px + (size_t)y * d->stride;
+            for (int x = 0; x < d->w; x++) row[x] = GFX_RGB(0xF4, 0xF5, 0xF7);
+        }
+    }
+}
+static void do_menu_bar(gclient *c, int ci)
+{
+    int sh = aes_top_reserve(); if (sh <= 0) sh = AES_MENUBAR_H;
+    if (c->menu.id < 0) {                    /* once per client (§10): idempotent re-ask */
+        if (gemd_surf_create(&c->menu, g_plane.w, sh, g_plane.w, g_plane.h) != 0) return;
+        if (sys_shm_grant(c->menu.id, c->pid) != 0) { gemd_surf_drop(&c->menu); c->menu.id = -1; return; }
+    }
+    gem_msg r; memset(&r, 0, sizeof r);
+    r.w[0] = GEM_MSG_MENU_SURF; r.u[0] = (uint32_t)c->menu.id; r.u[1] = c->menu.gen;
+    r.w[2] = (int16_t)g_plane.w; r.w[3] = (int16_t)sh; r.w[4] = (int16_t)c->menu.cap_w;
+    gem_send(c->fd, &r);
+    (void)ci;
+}
+
+long long gemd_us_pub(void){ return gemd_us(); }
+long long gemd_client_last_recv(int ci){ return (ci>=0&&ci<GEMD_MAXCL&&g_cl[ci].used)?g_cl[ci].last_recv:0; }
+int gemd_client_has_menu(int ci){ return ci>=0&&ci<GEMD_MAXCL&&g_cl[ci].used&&g_cl[ci].menu.id>=0; }
 
 static void gemd_present(int x, int y, int w, int h)
 {
@@ -500,7 +545,10 @@ static void drop_client(int ci)
         drop_window(hd);
     }
     sys_close(c->fd);
+    if (c->menu.id >= 0) gemd_surf_drop(&c->menu);      /* §10: the strip dies with the app */
+    gemd_grab_client_gone(ci);                           /* §9: EOF releases any grab */
     memset(c, 0, sizeof *c);
+    c->menu.id = -1;
 }
 
 /* Drain what is readable and dispatch every COMPLETE record. Never blocks: poll said there was
@@ -518,7 +566,16 @@ static void client_readable(int ci)
         gem_msg m;
         memcpy(&m, c->in, sizeof m);
         c->inlen = 0;
+        c->last_recv = gemd_us();               /* §9: any message = the pipe is draining */
         switch (m.w[0]) {
+        case GEM_MENU_BAR:    do_menu_bar(c, ci);        break;
+        case GEM_MENU_DAMAGE: {
+            int sh = aes_top_reserve();
+            if (sh > 0 && gemd_focus_client() == ci)
+                wind_redraw_area(m.w[2], 0, m.w[4], sh); /* only the FOCUS strip shows */
+            break;
+        }
+        case GEM_GRAB:        gemd_set_grab(ci, m.w[2]); break;
         case GEM_WIND_CREATE: do_wind_create(c, ci, &m); break;
         case GEM_WIND_OPEN:   do_wind_open(c, ci, &m);   break;
         case GEM_WIND_SET:    do_wind_set(c, ci, &m);    break;
@@ -547,6 +604,8 @@ static void accept_client(void)
     if (ci < 0) { sys_close(cfd); printf("gemd: too many clients\n"); return; }
     memset(&g_cl[ci], 0, sizeof g_cl[ci]);
     g_cl[ci].used = 1;
+    g_cl[ci].menu.id = -1;
+    g_cl[ci].last_recv = gemd_us();
     g_cl[ci].fd   = cfd;
     g_cl[ci].pid  = sys_chan_peer(cfd);        /* the kernel's word, not the client's */
     printf("gemd: client pid %d connected (fd %d)\n", g_cl[ci].pid, cfd);
@@ -713,7 +772,8 @@ int gemd_run(void)
     const theme *th = gemd_theme();      /* chrome art. Read-only: §5 says both sides may load it */
     aes_init(vh, th);
     wind_set_desktop(GEMD_BG);           /* the fallback colour: the plane is never un-owned (§3) */
-    aes_reserve_top(AES_MENUBAR_H);      /* the menu STRIP's space, reserved before the menu
+    aes_reserve_top(AES_MENUBAR_H);
+    aes_set_menu_redraw(menu_strip_redraw);      /* §10: the band composites the FOCUS app's strip */      /* the menu STRIP's space, reserved before the menu
                                           * exists (§10 is M4b, still owed): the fuller and the
                                           * clamps must not put a window where the bar is going
                                           * to be. W_BOTTOM windows still span it — wallpaper

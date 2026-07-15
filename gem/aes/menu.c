@@ -25,6 +25,61 @@ gfx_surface *vdi_screen_target(void);   // the physical workstation surface (VDI
 static OBJECT *g_menu;
 static int g_n, T0, DD0, ACTIVE;        // title count + base object indices
 static int H(void) { return aes_handle(); }
+static void set_sep_pen(const theme *th);
+static void draw_bar(void);
+
+#ifdef GEM_XTOS
+#include "gemclient.h"
+#include "usys.h"
+/* ---- §10 CLIENT MODE: the strip is OUR surface (gemd allocated it, once), the dropdown is
+ * an ordinary chromeless WINDOW at the dropdown's screen rect, and the whole interaction
+ * runs under a GRAB (every event, screen coords) so the classic modal loop below works
+ * untouched — its hit math was always absolute, and the strip's origin is the screen's. */
+static gfx_surface g_strip;  static int g_strip_vh = -1;
+static int g_mrevoked;                   /* MSG_GRAB_REVOKED: dismiss on next lap */
+static int g_pn_wh, g_pn_ord = -1, g_pn_hov = -1;
+int  wind_gem_fd(void);                  /* window.c: the channel */
+void menu_grab_revoked(void){ g_mrevoked = 1; }
+static int is_client(void){ return aes_mode()==AES_CLIENT; }
+static void menu_pens(void){
+    const theme *th = aes_theme();
+    v_setrgb(H(), PEN_BAR, 244,245,247);
+    if (th) { v_setrgb(H(), PEN_HILITE,(th->highlight>>24)&0xFF,(th->highlight>>16)&0xFF,(th->highlight>>8)&0xFF);
+              v_setrgb(H(), PEN_BARLINE,(th->border>>24)&0xFF,(th->border>>16)&0xFF,(th->border>>8)&0xFF);
+              set_sep_pen(th); }
+}
+static int strip_begin(void){
+    if(!g_strip.px) return -1;
+    int save = aes_handle();
+    vdi_set_target(&g_strip);
+    aes_init(g_strip_vh, aes_theme());
+    menu_pens();
+    return save;
+}
+static void strip_end(int save, int x, int w){
+    aes_init(save, aes_theme());
+    gem_msg m; memset(&m,0,sizeof m);
+    m.w[0]=GEM_MENU_DAMAGE; m.w[2]=(int16_t)x; m.w[4]=(int16_t)w;
+    gem_send(wind_gem_fd(), &m);
+}
+static void menu_grab(int on){
+    gem_msg m; memset(&m,0,sizeof m);
+    m.w[0]=GEM_GRAB; m.w[2]=(int16_t)on;
+    gem_send(wind_gem_fd(), &m);
+}
+static void panel_draw_cb(int hd,int x,int y,int w,int h,void *ud);
+static void dd_panel_open(int ord){
+    int ddi=DD0+ord, dx,dy; objc_offset(g_menu,ddi,&dx,&dy); (void)dy;
+    int w=g_menu[ddi].ob_w, hh=g_menu[ddi].ob_h;
+    g_pn_ord=ord; g_pn_hov=-1;
+    g_pn_wh=wind_create(0, dx, BARH, w, hh);
+    if(g_pn_wh){ wind_content(g_pn_wh, panel_draw_cb, 0); wind_open(g_pn_wh, dx, BARH, w, hh); }
+}
+static void dd_panel_close(void){
+    if(g_pn_wh){ wind_close(g_pn_wh); wind_delete(g_pn_wh); g_pn_wh=0; }
+    g_pn_ord=-1;
+}
+#endif
 
 /* Separators get their OWN pen, not PEN_BARLINE.  The theme's border colour is a
  * hairline tint: fine as the bar's bottom edge (against the desktop), but inside a
@@ -107,7 +162,35 @@ static void draw_bar(void) {
 
 void menu_redraw(void) { if (g_menu) draw_bar(); }   // bar is always-on-top chrome
 
+#ifdef GEM_XTOS
+static void strip_redraw_all(void){                  /* the whole bar into the strip + damage */
+    int sv=strip_begin(); if(sv<0) return;
+    draw_bar();
+    strip_end(sv, 0, g_strip.w);
+}
+#endif
+
 void menu_bar(OBJECT *tree, int show) {
+#ifdef GEM_XTOS
+    if (is_client()) {
+        if (!show) { g_menu = NULL; return; }
+        g_menu = tree;
+        T0 = 2; ACTIVE = g_menu[1].ob_next; DD0 = g_menu[ACTIVE].ob_head;
+        g_n = 0; EACH_CHILD(g_menu,1,c) g_n++;
+        if (!g_strip.px) {                       /* ONCE (§10): ask, map, open a vh, forever */
+            gem_msg m; memset(&m,0,sizeof m);
+            m.w[0]=GEM_MENU_BAR;
+            gem_send(wind_gem_fd(), &m);
+            if (gem_await(wind_gem_fd(), GEM_MSG_MENU_SURF, &m)!=0) { g_menu=NULL; return; }
+            uint32_t *px = gem_surf_map((int)m.u[0]);
+            if (!px) { g_menu=NULL; return; }
+            g_strip.px=px; g_strip.w=m.w[2]; g_strip.h=m.w[3]; g_strip.stride=m.w[4];
+            g_strip_vh = v_opnvwk(&g_strip);
+        }
+        strip_redraw_all();                      /* the server reserves the band; we just draw */
+        return;
+    }
+#endif
     if (show) {
         g_menu = tree;
         T0 = 2; ACTIVE = g_menu[1].ob_next; DD0 = g_menu[ACTIVE].ob_head;
@@ -182,6 +265,19 @@ static void restore_area(void){
 
 static void hilite_title(int ord,int on){
     int ti=T0+ord, x=g_menu[ti].ob_x, w=g_menu[ti].ob_w;
+#ifdef GEM_XTOS
+    if(is_client()){
+        int sv=strip_begin(); if(sv<0) return;
+        if(on){ vsf_color(H(),PEN_HILITE); vsf_interior(H(),VDI_FIS_SOLID); vsf_perimeter(H(),0);
+                int16_t r[4]={(int16_t)x,0,(int16_t)(x+w-1),BARH-2}; vr_recfl(H(),r); vst_color(H(),0); }
+        else  { vsf_color(H(),PEN_BAR); vsf_interior(H(),VDI_FIS_SOLID); vsf_perimeter(H(),0);
+                int16_t r[4]={(int16_t)x,0,(int16_t)(x+w-1),BARH-2}; vr_recfl(H(),r); vst_color(H(),1); }
+        vst_height(H(),14,0,0,0,0);
+        v_gtext(H(), x+TPAD, BARH/2-7, (const char*)g_menu[ti].ob_spec);
+        strip_end(sv, x, w);
+        return;
+    }
+#endif
     if(on){ vsf_color(H(),PEN_HILITE); vsf_interior(H(),VDI_FIS_SOLID); vsf_perimeter(H(),0);
             int16_t r[4]={(int16_t)x,0,(int16_t)(x+w-1),BARH-2}; vr_recfl(H(),r); vst_color(H(),0); }
     else  { vsf_color(H(),PEN_BAR); vsf_interior(H(),VDI_FIS_SOLID); vsf_perimeter(H(),0);
@@ -192,6 +288,10 @@ static void hilite_title(int ord,int on){
 }
 
 static void draw_items(int ord,int hov){
+#ifdef GEM_XTOS
+    if(is_client()){ g_pn_ord=ord; g_pn_hov=hov;      /* the panel window redraws itself */
+                     if(g_pn_wh) wind_redraw_win(g_pn_wh); return; }
+#endif
     int ddi=DD0+ord, dx,dy; objc_offset(g_menu,ddi,&dx,&dy);
     int w=g_menu[ddi].ob_w, h=g_menu[ddi].ob_h;
     theme_draw(H(),aes_theme(),"menu",dx,dy,w,h);
@@ -236,11 +336,19 @@ static int item_at(int ord,int mx,int my){
 }
 static void open_menu(int ord){
     hilite_title(ord,1);
+#ifdef GEM_XTOS
+    if(is_client()){ dd_panel_open(ord); return; }   /* the dropdown is a WINDOW (§10) */
+#endif
     int ddi=DD0+ord, dx,dy; objc_offset(g_menu,ddi,&dx,&dy);
     save_area(dx,dy,g_menu[ddi].ob_w,g_menu[ddi].ob_h);
     draw_items(ord,-1);
 }
-static void close_menu(int ord){ restore_area(); hilite_title(ord,0); }
+static void close_menu(int ord){
+#ifdef GEM_XTOS
+    if(is_client()){ dd_panel_close(); hilite_title(ord,0); return; }
+#endif
+    restore_area(); hilite_title(ord,0);
+}
 
 void menu_render_open(int to, int io){
     if(!g_menu) return;
@@ -267,6 +375,9 @@ int menu_handle_click(int mx, int my){
     for(;;){
         aes_event ev; int t=aes_wait(&ev,-1);
         if(t==AES_QUIT){ close_menu(cur); return 1; }
+#ifdef GEM_XTOS
+        if(g_mrevoked){ close_menu(cur); return 1; }     /* §9: the clock took our grab */
+#endif
         int nx=ev.mx, ny=ev.my;
         if(ny<BARH){ int nt=title_at(nx);
             if(nt>=0 && nt!=cur){ close_menu(cur); cur=nt; open_menu(cur); hov=-1; }
@@ -666,3 +777,48 @@ int menu_popup(const menu_item *items, int n, int x, int y){
 int menu_popup_dyn(const menu_item *root, int n, int x, int y, menu_provider expand, void *ctx){
     return menu_popup_run(root, n, x, y, expand, ctx);
 }
+
+#ifdef GEM_XTOS
+/* The dropdown panel's content: draw_items at the panel's origin. Children's ob_x/ob_y are
+ * dropdown-relative already, so this is the same loop with dx=dy=0 and no flush (the damage
+ * is client_paint's, like any window content). */
+static void panel_draw_cb(int hd,int x,int y,int w,int h,void *ud){
+    (void)hd;(void)x;(void)y;(void)ud;
+    if(g_pn_ord<0 || !g_menu) return;
+    menu_pens();
+    int ddi=DD0+g_pn_ord;
+    theme_draw(H(),aes_theme(),"menu",0,0,w,h);
+    vst_height(H(),14,0,0,0,0);
+    EACH_CHILD(g_menu,ddi,c){
+        int iy=g_menu[c].ob_y, ih=g_menu[c].ob_h;
+        const char *lbl=(const char*)g_menu[c].ob_spec;
+        if(bar_is_sep(lbl)){
+            vsl_color(H(),PEN_SEP); vsl_width(H(),1);
+            int16_t ln[4]={6,(int16_t)(iy+ih/2),(int16_t)(w-7),(int16_t)(iy+ih/2)};
+            v_pline(H(),2,ln); continue;
+        }
+        int sel=(c==g_pn_hov), dis=(g_menu[c].ob_state&OS_DISABLED);
+        if(sel){ vsf_color(H(),PEN_HILITE); vsf_interior(H(),VDI_FIS_SOLID); vsf_perimeter(H(),0);
+                 int16_t r[4]={4,(int16_t)iy,(int16_t)(w-5),(int16_t)(iy+ih-1)}; vr_recfl(H(),r); }
+        if(g_menu[c].ob_state&OS_CHECKED){
+            int cx=7, cym=iy+ih/2;
+            vsl_color(H(), sel?0:1); vsl_width(H(),2);
+            int16_t tk[6]={(int16_t)cx,(int16_t)cym,(int16_t)(cx+3),(int16_t)(cym+3),(int16_t)(cx+8),(int16_t)(cym-4)};
+            v_pline(H(),3,tk);
+        }
+        vst_color(H(), sel?0:(dis?9:1));
+        v_gtext(H(), g_menu[c].ob_x, iy+ih/2-7, lbl);
+    }
+    (void)h;
+}
+
+/* gemd said a press landed in OUR strip (MSG_MENUCLK): grab, run the classic loop (its hit
+ * math is absolute and the strip origin IS the screen origin), release. */
+void menu_client_click(int x){
+    if(!g_menu || !g_strip.px) return;
+    g_mrevoked = 0;
+    menu_grab(1);
+    menu_handle_click(x, 0);
+    if(!g_mrevoked) menu_grab(0);
+}
+#endif

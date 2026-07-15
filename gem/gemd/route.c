@@ -24,6 +24,55 @@
 #include "usys.h"                 /* sys_cursor_shape: the hover affordance's glyph swap */
 
 static int g_focus;                   /* the window that gets keys. 0 = nobody. */
+/* ---- §10/§9: the grab ------------------------------------------------------------------
+ * One client may hold the input grab (menus, popups): EVERY event routes to it with SCREEN
+ * coords and w[1]=-1 until it releases, dies (EOF), or the §9 clock revokes it: input has
+ * been forwarded and the client has said NOTHING for GRAB_REVOKE_US. */
+static int       g_grab_ci = -1;
+static long long g_grab_last_fwd;
+#define GRAB_REVOKE_US 7000000ll
+long long gemd_client_last_recv(int ci);
+int  gemd_client_has_menu(int ci);
+int gemd_focus_client(void){ return g_focus ? wind_client_of(g_focus) : -1; }
+void gemd_grab_client_gone(int ci){ if (g_grab_ci == ci) g_grab_ci = -1; }
+void gemd_set_grab(int ci, int on)
+{
+    if (on) {
+        if (ci != gemd_focus_client()) return;   /* only the focus may grab (§9) */
+        g_grab_ci = ci; g_grab_last_fwd = 0;
+    } else if (g_grab_ci == ci) g_grab_ci = -1;
+}
+extern long long gemd_us_pub(void);
+static void grab_forward(int type, const aes_event *ev)
+{
+    gem_msg m; memset(&m, 0, sizeof m);
+    m.w[1] = -1;                                 /* SCREEN coords, no window: a grab event */
+    switch (type) {
+    case AES_BTN_DOWN: case AES_BTN_UP:
+        m.w[0] = GEM_EV_BUTTON;
+        m.w[2] = (int16_t)ev->mx; m.w[3] = (int16_t)ev->my;
+        m.w[4] = (int16_t)(type == AES_BTN_DOWN ? ev->button : 0);
+        m.w[5] = (int16_t)ev->shift; break;
+    case AES_MOTION:
+        m.w[0] = GEM_EV_MOTION;
+        m.w[2] = (int16_t)ev->mx; m.w[3] = (int16_t)ev->my;
+        m.w[4] = (int16_t)ev->button; break;
+    case AES_KEY:
+        m.w[0] = GEM_EV_KEY;
+        m.w[2] = (int16_t)ev->key; m.w[3] = (int16_t)ev->shift; break;
+    default: return;
+    }
+    gemd_send_to(g_grab_ci, &m);
+    g_grab_last_fwd = gemd_us_pub();
+    /* §9: forwarded input + a silent client = wedged. Revoke, tell it, recomposite. */
+    long long lr = gemd_client_last_recv(g_grab_ci);
+    if (lr && g_grab_last_fwd - lr > GRAB_REVOKE_US) {
+        gem_msg r; memset(&r, 0, sizeof r);
+        r.w[0] = GEM_MSG_GRAB_REVOKED;
+        gemd_send_to(g_grab_ci, &r);
+        g_grab_ci = -1;
+    }
+}
 static int g_pmx, g_pmy;              /* the pointer, as gemd last saw it */
 
 static void send_win(int hd, const gem_msg *m)
@@ -72,10 +121,30 @@ void gemd_route(int type, const aes_event *ev)
 {
     g_pmx = ev->mx; g_pmy = ev->my;
 
+    /* THE GRAB eats everything (§10 menus, popups): screen coords, no hit tests, no focus
+     * changes — the holder is running a modal interaction and owns the whole device. */
+    if (g_grab_ci >= 0) { grab_forward(type, ev); gemd_flush_msgs(); return; }
+
     switch (type) {
     case AES_BTN_DOWN: {
+        /* the STRIP: gemd owns the band, the FOCUS app owns the pixels — a press there is the
+         * app's to hit-test (its own title layout), as MSG_MENUCLK{x} (§10) */
+        if (ev->my < aes_top_reserve()) {
+            int mci = gemd_focus_client();
+            if (mci >= 0 && gemd_client_has_menu(mci)) {
+                gem_msg m; memset(&m, 0, sizeof m);
+                m.w[0] = GEM_MSG_MENUCLK; m.w[2] = (int16_t)ev->mx;
+                gemd_send_to(mci, &m);
+            }
+            gemd_flush_msgs(); return;
+        }
         int hd = wind_find(ev->mx, ev->my);
-        if (!hd) { gemd_flush_msgs(); return; }        /* the bare plane: nobody's */
+        if (!hd) {
+            /* not over any window — but the TOP window's resize ring extends OUTSIDE its
+             * frame, and wind_handle_click is where that ring lives */
+            if (wind_handle_click(ev->mx, ev->my)) break;
+            gemd_flush_msgs(); return;
+        }
         set_focus(hd);
         /* THE AES'S OWN FRAME HIT TEST — closer, mover, sizer, scrollbars — running in gemd.
          * It returns 1 when the chrome consumed the click, and its drag/resize loops wait
