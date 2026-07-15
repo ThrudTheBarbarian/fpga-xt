@@ -1034,7 +1034,7 @@ static void br_statusbar(browser *b) {
     int16_t sl[4] = { (int16_t)ix, (int16_t)(iy+ih-1), (int16_t)(ix+iw-1), (int16_t)(iy+ih-1) };
     v_pline(HV, 2, sl);
     int gripw = 20;                                          // clear the resize grips (both ends)
-    int ay = iy+ih/2+1;                                      // +1: just below centre, within the band
+    int ay = iy+ih/2-1;                                      // -1: hugs the top of the band (user-tuned)
     char info[96];
     int irx = ix+iw-gripw;                                   // right edge of the info text (clear of the R grip)
     b->retryx = 0; b->retryw = 0;                            // no Retry button unless in the error state

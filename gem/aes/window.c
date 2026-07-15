@@ -556,6 +556,23 @@ static void draw_one(int hd, int active){
             v_gtext(H(), ix+8+((W->kind&W_SIZER)?SIZER_SZ:0), iy+AES_INFO_H/2-5, ifit);   // +2: below-centre reads as a footer
         }
     }
+    if(W->pin_top>0 && W->surf.px){
+        // The info strip is CONTENT, so it stops at the surface edge — paint the frame border
+        // columns beside its rows in the bar's colour (and continue its bottom divider), so
+        // the strip runs wall-to-wall. The vscroll column draws after and keeps its own top.
+        int fx,fy,fw,fh; full_work(W,&fx,&fy,&fw,&fh);
+        int pb=W->pin_top; if(pb>fh) pb=fh;
+        vsf_color(H(),AES_PEN_INFOBAR); vsf_interior(H(),VDI_FIS_SOLID); vsf_perimeter(H(),0);
+        int16_t lb[4]={(int16_t)(W->x+1),(int16_t)fy,(int16_t)(fx-1),(int16_t)(fy+pb-2)};
+        vr_recfl(H(),lb);
+        int16_t rb[4]={(int16_t)(fx+fw),(int16_t)fy,(int16_t)(W->x+W->w-2),(int16_t)(fy+pb-2)};
+        vr_recfl(H(),rb);
+        vsl_color(H(),249); vsl_width(H(),1);    // the divider continues across the borders
+        int16_t d1[4]={(int16_t)(W->x+1),(int16_t)(fy+pb-1),(int16_t)(fx-1),(int16_t)(fy+pb-1)};
+        v_pline(H(),2,d1);
+        int16_t d2[4]={(int16_t)(fx+fw),(int16_t)(fy+pb-1),(int16_t)(W->x+W->w-2),(int16_t)(fy+pb-1)};
+        v_pline(H(),2,d2);
+    }
     draw_content(hd);
     draw_vscroll(hd);                            // over the reserved right column
     draw_hscroll(hd);                            // over the reserved bottom band
@@ -1287,12 +1304,22 @@ void wind_content_size(int hd,int w,int h){
 #endif
     W->content_w=w; W->content_h=h; clamp_scroll(W);
 }
-// Declare a non-scrolling strip at the work-area TOP (the info bar). Client-side model only:
-// it bounds the scroll BLIT in client_scrolled — no wire message, gemd never needs it (the
-// horizontal scrollbar band anchors at the work BOTTOM, pure chrome).
+// Declare a non-scrolling strip at the work-area TOP (the info bar). Bounds the scroll BLIT
+// in client_scrolled, and goes on the wire (WF_PINTOP) so gemd can paint the frame borders
+// beside those rows in the bar's colour — the strip runs wall-to-wall to the outline.
 void wind_pin_top(int hd,int px){
     if(hd<1||hd>=MAXW||!g_w[hd].used) return;
-    g_w[hd].pin_top = px<0?0:px;
+    if(px<0) px=0;
+    if(g_w[hd].pin_top==px) return;
+    g_w[hd].pin_top = px;
+#ifdef GEM_XTOS
+    if(g_mode==AES_CLIENT){
+        gem_msg m; memset(&m,0,sizeof m);
+        m.w[0]=GEM_WIND_SET; m.w[1]=(int16_t)hd; m.w[2]=WF_PINTOP;
+        m.u[0]=(uint32_t)px;
+        gem_send(g_gemfd,&m);
+    }
+#endif
 }
 // Who paints a resize (aes.h: THE RESIZE DISCIPLINE). Client-side model only — no wire message.
 void wind_resize_mode(int hd,int mode){

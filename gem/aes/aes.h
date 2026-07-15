@@ -442,9 +442,9 @@ enum { WF_KIND=1, WF_NAME=2, WF_INFO=3, WF_WORKXYWH=4, WF_CURRXYWH=5,
        // rect; the app hears WM_VSLID and repaints anything it pins (a status bar).
        WF_CONTENTSIZE=36,  // full content extent, work coords
        WF_SCROLL=37,       // scroll offset — a REQUEST: gemd clamps and answers with the truth
-       WF_LAST_=38 };      // (38 was WF_PINBOTTOM for one commit; the info bar moved to the
-                           // TOP of the work area and the band anchors at the work bottom, so
-                           // the pin never goes on the wire — it is the client's blit bound)
+       WF_PINTOP=38 };     // u[0]=px: the pinned TOP strip (wind_pin_top's wire name). gemd
+                           // paints the frame borders BESIDE those rows in the bar's colour,
+                           // so the info strip runs wall-to-wall to the window outline.
 enum { WT_MODIFIED = 0x01,     // WF_TITLEFLAGS: show the unsaved-changes dot
        // THE SUBTITLE IS A PATH.  The AES draws it as "/a/b/c" with each component its own
        // clickable span (middle-eliding at COMPONENT granularity when it will not fit), and a
