@@ -310,7 +310,10 @@ the screen-bank → line-reader CE path). The pinned region is at its congestion
 the next clk_sally session (study Lever C, or rebalancing the overlay BRAMs adjacent) should
 happen BEFORE the next netlist growth, not after it fails a gate.
 
-**THE RESIZE DISCIPLINE (M5, user-derived general rule):** scroll's rule, generalised. Within
+**THE RESIZE DISCIPLINE (M5, user-derived general rule — BOARD-VERIFIED 2026-07-15,
+with the day's full perf trail: transfer_bits fast paths + Bresenham stepping + frame-strip
+overdraw + left-grip union compositing; the user's verdict: "everything is working really
+nicely"):** scroll's rule, generalised. Within
 a §12 capacity the old∩new work-area pixels are already rendered — they sit in the backing
 store — so a resize step owes only (a) the exposed strips and (b) whatever the app's own
 LAYOUT invalidates, and only the app knows (b): the icon grid reflows on a column-count
