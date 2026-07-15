@@ -105,7 +105,10 @@ int gemd_focus_client(void);                 /* route.c: the focused window's cl
 static void menu_strip_redraw(void)
 {
     int sh = aes_top_reserve(); if (sh <= 0) return;
+    /* the MENU OWNER (§10): the focused app if it has a bar, else the desktop (bottom window)
+     * — classic GEM shows the desktop's menu whenever no app is active. */
     int ci = gemd_focus_client();
+    if (!(ci >= 0 && g_cl[ci].used && g_cl[ci].menu.id >= 0)) ci = wind_bottom_client();
     gfx_surface *d = &g_plane;
     if (ci >= 0 && g_cl[ci].used && g_cl[ci].menu.id >= 0 && g_cl[ci].menu.px) {
         gfx_surface src; memset(&src, 0, sizeof src);
@@ -113,7 +116,7 @@ static void menu_strip_redraw(void)
         src.h  = sh;               src.stride = g_cl[ci].menu.cap_w;
         gfx_blit(d, 0, 0, &src, 0, 0, d->w, sh);
     } else {
-        for (int y = 0; y < sh; y++) {       /* no menu: the band is gemd's, flat */
+        for (int y = 0; y < sh; y++) {       /* no menu owner: the band is gemd's, flat */
             uint32_t *row = d->px + (size_t)y * d->stride;
             for (int x = 0; x < d->w; x++) row[x] = GFX_RGB(0xF4, 0xF5, 0xF7);
         }
@@ -570,9 +573,11 @@ static void client_readable(int ci)
         switch (m.w[0]) {
         case GEM_MENU_BAR:    do_menu_bar(c, ci);        break;
         case GEM_MENU_DAMAGE: {
+            extern int gemd_menu_client(void);
             int sh = aes_top_reserve();
-            if (sh > 0 && gemd_focus_client() == ci)
-                wind_redraw_area(m.w[2], 0, m.w[4], sh); /* only the FOCUS strip shows */
+            if (sh > 0 && gemd_menu_client() == ci)      /* the MENU OWNER's strip shows (§10):
+                                                          * the desktop owns it when unfocused */
+                wind_redraw_area(m.w[2], 0, m.w[4], sh);
             break;
         }
         case GEM_GRAB:        gemd_set_grab(ci, m.w[2]); break;

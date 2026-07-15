@@ -661,6 +661,9 @@ int wind_vsb_col(int hd,int*x,int*y,int*w,int*h,int*thy,int*thh){
 int  wind_surface_of(int hd){ return (hd>=1&&hd<MAXW&&g_w[hd].used)?g_w[hd].surf_id:-1; }
 uint32_t wind_gen_of(int hd){ return (hd>=1&&hd<MAXW&&g_w[hd].used)?g_w[hd].surf_gen:0; }
 int  wind_client_of(int hd){ return (hd>=1&&hd<MAXW&&g_w[hd].used)?g_w[hd].client:-1; }
+// The BOTTOM window's client (the desktop under gemd) — the menu owner of last resort (§10):
+// classic GEM shows the desktop's menu whenever no app window is active.
+int  wind_bottom_client(void){ return g_nz>0 ? g_w[g_z[0]].client : -1; }
 int  wind_next_of_client(int client,int from){    // iterate a dead client's windows (§9 reaping)
     for(int i=(from<1?1:from);i<MAXW;i++)
         if(g_w[i].used && g_w[i].client==client) return i;

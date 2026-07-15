@@ -34,11 +34,17 @@ static long long g_grab_last_fwd;
 long long gemd_client_last_recv(int ci);
 int  gemd_client_has_menu(int ci);
 int gemd_focus_client(void){ return g_focus ? wind_client_of(g_focus) : -1; }
+/* the MENU OWNER: the focused app if it has a bar, else the desktop (§10) */
+int gemd_menu_client(void){
+    int ci = gemd_focus_client();
+    if (ci >= 0 && gemd_client_has_menu(ci)) return ci;
+    return wind_bottom_client();
+}
 void gemd_grab_client_gone(int ci){ if (g_grab_ci == ci) g_grab_ci = -1; }
 void gemd_set_grab(int ci, int on)
 {
     if (on) {
-        if (ci != gemd_focus_client()) return;   /* only the focus may grab (§9) */
+        if (ci != gemd_menu_client() && ci != gemd_focus_client()) return;  /* menu owner or focus */
         g_grab_ci = ci; g_grab_last_fwd = 0;
     } else if (g_grab_ci == ci) g_grab_ci = -1;
 }
@@ -130,7 +136,7 @@ void gemd_route(int type, const aes_event *ev)
         /* the STRIP: gemd owns the band, the FOCUS app owns the pixels — a press there is the
          * app's to hit-test (its own title layout), as MSG_MENUCLK{x} (§10) */
         if (ev->my < aes_top_reserve()) {
-            int mci = gemd_focus_client();
+            int mci = gemd_menu_client();
             if (mci >= 0 && gemd_client_has_menu(mci)) {
                 gem_msg m; memset(&m, 0, sizeof m);
                 m.w[0] = GEM_MSG_MENUCLK; m.w[2] = (int16_t)ev->mx;

@@ -28,6 +28,7 @@ int      wind_client_of(int hd);
 int      wind_drag_sizing(void);   // 1 while a sizer drag is live (server mode) — gemd's
                                    // surface policy allocates ONCE (generous) during it and
                                    // shrink-fits on release, instead of per quantum crossing
+int      wind_bottom_client(void);             // §10: the desktop's client (menu owner default)
 int      wind_resize_zone_at(int mx,int my);   // RZ_ mask under the pointer on the TOP window
                                    // (0 = none): gemd's hover cursor swap
 enum { WIND_RZ_L=1, WIND_RZ_R=2, WIND_RZ_T=4, WIND_RZ_B=8 };
