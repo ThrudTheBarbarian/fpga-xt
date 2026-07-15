@@ -25,6 +25,8 @@ gfx_surface *vdi_screen_target(void);   // the physical workstation's surface (V
 //         — its content callback and its own surface.
 // (AES_LOCAL / AES_CLIENT / AES_SERVER are declared in aes.h)
 static int g_mode = AES_LOCAL;
+static int g_sizing = 0;                // a sizer grip drag is live (server mode)
+int wind_drag_sizing(void){ return g_sizing; }
 #ifdef GEM_XTOS
 static int g_gemfd = -1;                // client mode: the channel to gemd (there is no gemd on the
 #endif                                  // SDL host — a different PLATFORM, not a fallback)
@@ -529,13 +531,8 @@ static void draw_one(int hd, int active){
         vr_recfl(H(),lb);                        // left border, from the band top down
         int16_t bb[4]={(int16_t)(W->x+1),(int16_t)(fy+fh),(int16_t)(W->x+W->w-2),(int16_t)(W->y+W->h-2)};
         vr_recfl(H(),bb);                        // bottom border, full width (1px outline kept)
-        // The rect fills squared the frame's rounded bottom corners — put the slice's own
-        // corner cells back on top (clip-only redraw, bit-identical corner pixels).
-        const int CR=8;
-        int16_t c1[4]={(int16_t)W->x,(int16_t)(W->y+W->h-CR),(int16_t)(W->x+CR-1),(int16_t)(W->y+W->h-1)};
-        vs_clip(H(),1,c1); theme_draw(H(),aes_theme(),"window",W->x,W->y,W->w,W->h); vs_clip(H(),0,NULL);
-        int16_t c2[4]={(int16_t)(W->x+W->w-CR),(int16_t)(W->y+W->h-CR),(int16_t)(W->x+W->w-1),(int16_t)(W->y+W->h-1)};
-        vs_clip(H(),1,c2); theme_draw(H(),aes_theme(),"window",W->x,W->y,W->w,W->h); vs_clip(H(),0,NULL);
+        // (Square corners for now, by choice: the slice-corner redraw restored the curve but
+        // left a light wedge inside it — revisit if the square bottom ever grates.)
     }
     if(W->kind & W_SIZER){         // resize grips LAST: the content blit erased the left one
         int gy=W->y+W->h-SIZER_SZ-2;                    // bottom-aligned in the footer band
@@ -1589,6 +1586,7 @@ int wind_handle_click(int mx,int my){
         // moves. The client coalesces the burst — geometry messages carry absolute state — so a
         // client that falls behind skips to the newest size instead of replaying the drag.
         if(rgrip){
+            g_sizing=1;
             for(;;){ aes_event e; int t=aes_wait_idle(&e,-1); if(t==AES_QUIT)break;
                 if(t==AES_MOTION){ int done=soak_motion(&e);   // act on the NEWEST position
                     int ow=W->w,oh=W->h; int nw=e.mx-W->x, nh=e.my-W->y; if(nw<WIND_MIN_W)nw=WIND_MIN_W; if(nh<WIND_MIN_H)nh=WIND_MIN_H; W->w=nw; W->h=nh; clamp_scroll(W);
@@ -1596,9 +1594,11 @@ int wind_handle_click(int mx,int my){
                     if(nw!=ow||nh!=oh) post(WM_SIZED,hd,W->x,W->y,W->w,W->h);
                     if(done!=AES_MOTION) break; }
                 if(t==AES_BTN_UP) break; }
+            g_sizing=0;
             post(WM_SIZED,hd,W->x,W->y,W->w,W->h); return 1;
         }
         if(lgrip){
+            g_sizing=1;
             int right=W->x+W->w;                                 // pin the right edge
             for(;;){ aes_event e; int t=aes_wait_idle(&e,-1); if(t==AES_QUIT)break;
                 if(t==AES_MOTION){ int done=soak_motion(&e);   // act on the NEWEST position
@@ -1610,6 +1610,7 @@ int wind_handle_click(int mx,int my){
                     if(moved) post(WM_SIZED,hd,W->x,W->y,W->w,W->h);
                     if(done!=AES_MOTION) break; }
                 if(t==AES_BTN_UP) break; }
+            g_sizing=0;
             post(WM_SIZED,hd,W->x,W->y,W->w,W->h); return 1;
         }
     }

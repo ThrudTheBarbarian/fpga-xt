@@ -25,6 +25,9 @@ void     wind_rect_of(int hd,int*x,int*y,int*w,int*h);
 int      wind_surface_of(int hd);
 uint32_t wind_gen_of(int hd);
 int      wind_client_of(int hd);
+int      wind_drag_sizing(void);   // 1 while a sizer grip drag is live (server mode) — gemd's
+                                   // surface policy allocates ONCE (generous) during it and
+                                   // shrink-fits on release, instead of per quantum crossing
 int      wind_next_of_client(int client,int from); // walk a dead client's windows (§9)
 int      wind_vsb_col(int hd,int*x,int*y,int*w,int*h,int*thy,int*thh);
                                                    // scrollbar column + thumb (screen px);

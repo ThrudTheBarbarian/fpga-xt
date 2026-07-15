@@ -290,18 +290,37 @@ int gemd_resize_surface(int hd)
     if (ww <= 0 || wh <= 0) return -1;
 
     gsurface *s = &g_surf[hd];
-    if (s->id < 0 || ww > s->cap_w || wh > s->cap_h) {          /* capacity exceeded: a new one */
+    /* THE DRAG CAPACITY POLICY. A grow drag crosses a §12 capacity quantum every ~64px, and a
+     * realloc per crossing means a FRESH surface (pixels gone -> forced full repaint) a dozen
+     * times per drag — the mid-drag redraw artifacts, board-observed. While the sizer drag is
+     * LIVE, allocate ONCE and generously (screen-size capacity, the cap anyway); when it ends,
+     * shrink-fit back to the quantum in ONE realloc — the "one update on release". */
+    int drag = wind_drag_sizing();
+    static int was_sizing;
+    int drag_ended = was_sizing && !drag;
+    was_sizing = drag;
+    int need = (s->id < 0 || ww > s->cap_w || wh > s->cap_h);
+    if (!need && drag_ended) {
+        int fw = ww + GEM_CAP_QUANTUM - 1; fw -= fw % GEM_CAP_QUANTUM;
+        int fh = wh + GEM_CAP_QUANTUM - 1; fh -= fh % GEM_CAP_QUANTUM;
+        if (fw > g_plane.w) fw = g_plane.w;
+        if (fh > g_plane.h) fh = g_plane.h;
+        need = (s->cap_w > fw || s->cap_h > fh);                /* oversized: give the shm back */
+    }
+    if (need) {
         long long gp_t0 = gem_prof_now();                       /* TEMP profiler: the realloc leg */
         gsurface ns;
-        if (gemd_surf_create(&ns, ww, wh, g_plane.w, g_plane.h) != 0) return -1;
+        int aw = drag ? g_plane.w : ww, ah = drag ? g_plane.h : wh;
+        if (gemd_surf_create(&ns, aw, ah, g_plane.w, g_plane.h) != 0) return -1;
         if (sys_shm_grant(ns.id, c->pid) != 0) { gemd_surf_drop(&ns); return -1; }
         gemd_surf_drop(s);                                      /* our ref; the client drops its own */
         *s = ns;
         gem_prof_add(GEM_PROF_ALLOC, gem_prof_now() - gp_t0, 0);
         /* log ONLY the reallocation (rare, notable). A live resize calls this per MOTION, and
          * per-motion console lines are blocking serial time (see route.c). */
-        printf("gemd: resize wh=%d work %dx%d -> NEW surf %d cap %dx%d\n",
-               hd, ww, wh, s->id, s->cap_w, s->cap_h);
+        printf("gemd: resize wh=%d work %dx%d -> NEW surf %d cap %dx%d%s\n",
+               hd, ww, wh, s->id, s->cap_w, s->cap_h,
+               drag ? " (drag: screen-cap once)" : drag_ended ? " (drag end: shrink-fit)" : "");
     }
     wind_attach_surface(hd, s->id, s->gen, s->px, ww, wh, s->cap_w, ci);
     g_prof.sizes++;
