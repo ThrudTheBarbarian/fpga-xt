@@ -21,6 +21,7 @@
 #include <string.h>
 #include "gemd.h"
 #include "aes/aes_internal.h"
+#include "usys.h"                 /* sys_cursor_shape: the hover affordance's glyph swap */
 
 static int g_focus;                   /* the window that gets keys. 0 = nobody. */
 static int g_pmx, g_pmy;              /* the pointer, as gemd last saw it */
