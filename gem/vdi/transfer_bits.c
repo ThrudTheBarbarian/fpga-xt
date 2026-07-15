@@ -103,32 +103,39 @@ void op_transfer_bits(vdi_pb *pb) {
      * STRETCH and so miss any unscaled-only path — was 550ns/px of gemd's composite,
      * saturating the server during a live resize.  All specialized loops are
      * bit-identical to what the generic loop produces (same sx/sy rounding math). */
-    if (mode == 3 || mode == VR_OVER) {
-        int unscaled = (sw == dw && sh == dh);
+    if ((mode == 3 || mode == VR_OVER) && sw > 0 && sh > 0) {
+        /* The source column for dst column dx is floor((dx-dx1)*sw/dw) — but the A9 has no
+         * integer divide, so computing that PER PIXEL is an __aeabi_idiv library call each
+         * time (~200-350ns/px measured with the blend).  Step it instead: one div/mod at the
+         * row start, then integer adds — exactly floor(k*sw/dw) at every k, bit-identical. */
+        int k0 = gx0 - dx1;
+        int sx0 = sx1 + k0 * sw / dw, err0 = (k0 * sw) % dw;
         for (int dy = gy0; dy <= gy1; dy++) {
-            int sy = unscaled ? sy1 + (dy - dy1) : sy1 + (dy - dy1) * sh / dh;
+            int sy = (sh == dh) ? sy1 + (dy - dy1) : sy1 + (dy - dy1) * sh / dh;
             if (sy < 0 || sy >= src.h) continue;
             uint32_t       *drow = dst.px + (size_t)dy * dst.stride;
             const uint32_t *srow = src.px + (size_t)sy * src.stride;
+            int sx = sx0, err = err0;
             if (mode == 3) {
                 for (int dx = gx0; dx <= gx1; dx++) {                // copy, alpha forced opaque
-                    int sx = unscaled ? sx1 + (dx - dx1) : sx1 + (dx - dx1) * sw / dw;
-                    if (sx < 0 || sx >= src.w) continue;
-                    drow[dx] = (srow[sx] & 0xFFFFFF00u) | 0xFF;
+                    if (sx >= 0 && sx < src.w) drow[dx] = (srow[sx] & 0xFFFFFF00u) | 0xFF;
+                    err += sw; while (err >= dw) { err -= dw; sx++; }
                 }
             } else {
                 for (int dx = gx0; dx <= gx1; dx++) {                // src-over, source alpha
-                    int sx = unscaled ? sx1 + (dx - dx1) : sx1 + (dx - dx1) * sw / dw;
-                    if (sx < 0 || sx >= src.w) continue;
-                    uint32_t s = srow[sx];
-                    unsigned a = s & 0xFF;
-                    if (a == 0) continue;
-                    if (a == 255) { drow[dx] = (s & 0xFFFFFF00u) | 0xFF; continue; }
-                    uint32_t d = drow[dx];
-                    int r = (CH(s,24)*(int)a + CH(d,24)*(255-(int)a)) / 255;
-                    int g = (CH(s,16)*(int)a + CH(d,16)*(255-(int)a)) / 255;
-                    int b = (CH(s,8) *(int)a + CH(d,8) *(255-(int)a)) / 255;
-                    drow[dx] = GFX_RGB(r, g, b);
+                    if (sx >= 0 && sx < src.w) {
+                        uint32_t s = srow[sx];
+                        unsigned a = s & 0xFF;
+                        if (a == 255) drow[dx] = (s & 0xFFFFFF00u) | 0xFF;
+                        else if (a) {
+                            uint32_t d = drow[dx];
+                            int r = (CH(s,24)*(int)a + CH(d,24)*(255-(int)a)) / 255;
+                            int g = (CH(s,16)*(int)a + CH(d,16)*(255-(int)a)) / 255;
+                            int b = (CH(s,8) *(int)a + CH(d,8) *(255-(int)a)) / 255;
+                            drow[dx] = GFX_RGB(r, g, b);
+                        }
+                    }
+                    err += sw; while (err >= dw) { err -= dw; sx++; }
                 }
             }
         }

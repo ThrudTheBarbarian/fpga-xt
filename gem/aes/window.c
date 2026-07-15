@@ -364,7 +364,33 @@ static void draw_one(int hd, int active){
     awin*W=&g_w[hd]; int th=tbh();
     if(W->hidden) return;                        // lifted into the HW drag-overlay
     if(!wind_has_chrome(W->kind)){ draw_content(hd); return; }   // no chrome bits -> no chrome (§4)
-    theme_draw(H(),aes_theme(),"window", W->x,W->y,W->w,W->h);
+    if(W->surf.px && g_dmg_on){
+        // The 9-slice's stretched CENTER lies under the content blit — draw_content overwrites
+        // every pixel of it, so painting it first is pure overdraw (~540kpx of src-over per
+        // composite for a 900x600 window, board-measured as the largest slice of a move step).
+        // Draw the frame as four clip strips AROUND the rect the content will cover instead.
+        // The blit mapping is untouched (clip only), so the frame pixels are bit-identical.
+        int wx,wy,ww,wh; app_work(W,&wx,&wy,&ww,&wh);
+        int cw = ww > W->surf.w ? W->surf.w : ww;    // what draw_content will really cover —
+        int ch = wh > W->surf.h ? W->surf.h : wh;    // a lagging §12 surface covers less
+        int st[4][4] = {
+            { W->x,  W->y,  W->x+W->w, wy        },  // above the content (title zone included)
+            { W->x,  wy+ch, W->x+W->w, W->y+W->h },  // below (footer band)
+            { W->x,  wy,    wx,        wy+ch     },  // left border column
+            { wx+cw, wy,    W->x+W->w, wy+ch     },  // right border + scrollbar column
+        };
+        for(int i=0;i<4;i++){
+            int x0=st[i][0]>g_dmg[0]?st[i][0]:g_dmg[0], y0=st[i][1]>g_dmg[1]?st[i][1]:g_dmg[1];
+            int x1=st[i][2]<g_dmg[2]?st[i][2]:g_dmg[2], y1=st[i][3]<g_dmg[3]?st[i][3]:g_dmg[3];
+            if(x1<=x0||y1<=y0) continue;
+            int16_t c[4]={(int16_t)x0,(int16_t)y0,(int16_t)(x1-1),(int16_t)(y1-1)};
+            vs_clip(H(),1,c);
+            theme_draw(H(),aes_theme(),"window", W->x,W->y,W->w,W->h);
+        }
+        int16_t dc[4]={(int16_t)g_dmg[0],(int16_t)g_dmg[1],(int16_t)(g_dmg[2]-1),(int16_t)(g_dmg[3]-1)};
+        vs_clip(H(),1,dc);                           // the damage clip back for the rest of the pass
+    } else
+        theme_draw(H(),aes_theme(),"window", W->x,W->y,W->w,W->h);
     theme_draw(H(),aes_theme(), active?"titlebar":"titlebar.inactive", W->x, W->y, W->w, th);  // flush top
     int cy = W->y+(th-WTB_W)/2;
     char nbl[32], nbm[32];
