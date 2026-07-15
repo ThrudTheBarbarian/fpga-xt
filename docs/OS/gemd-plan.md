@@ -323,7 +323,9 @@ FULL = always correct): `client_sized` paints nothing within capacity and the ap
 `WM_SIZED` with what its layout demands; a FRESH surface (capacity realloc, pixels gone) is
 repainted fully by the AES and flagged `msg[5]=1`. Client-side model only — no wire change.
 
-**Still owed in M5:** horizontal scrollbars (no bar drawn today).
+**Still owed in M5:** horizontal scrollbars (no bar drawn today). Placement decided
+(2026-07-15, user): the bar sits BETWEEN the info bar and the content pane, spanning so its
+right arrow lands above the grip zone (the chrome column below the vertical bar's track).
 
 ## The composite is CPU-bound in transfer_bits, and the engine composite is M7 work
 
