@@ -313,6 +313,17 @@ int gemd_resize_surface(int hd)
         int aw = drag ? g_plane.w : ww, ah = drag ? g_plane.h : wh;
         if (gemd_surf_create(&ns, aw, ah, g_plane.w, g_plane.h) != 0) return -1;
         if (sys_shm_grant(ns.id, c->pid) != 0) { gemd_surf_drop(&ns); return -1; }
+        /* CONTENT-PRESERVING swap: a fresh surface is uninitialized shm (BLACK), and gemd
+         * composites it before the client's repaint lands — the black window flash at every
+         * realloc, board-observed. Copy the old intersection across; the follow-up full
+         * repaint then paints identical pixels and the swap is invisible. */
+        if (s->id >= 0 && s->px && ns.px) {
+            int cw = s->cap_w < ns.cap_w ? s->cap_w : ns.cap_w;
+            int ch = s->cap_h < ns.cap_h ? s->cap_h : ns.cap_h;
+            for (int y = 0; y < ch; y++)
+                memcpy(ns.px + (size_t)y * ns.cap_w, s->px + (size_t)y * s->cap_w,
+                       (size_t)cw * 4);
+        }
         gemd_surf_drop(s);                                      /* our ref; the client drops its own */
         *s = ns;
         gem_prof_add(GEM_PROF_ALLOC, gem_prof_now() - gp_t0, 0);
