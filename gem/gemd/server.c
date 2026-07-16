@@ -233,6 +233,9 @@ static void do_wind_create(gclient *c, int ci, const gem_msg *m)
 
     gem_msg r; memset(&r, 0, sizeof r);
     r.w[0] = GEM_WIND_CREATED; r.w[1] = (int16_t)hd;
+    { int tr=aes_top_reserve();                           /* the SCREEN work area, for the client's
+                                                           * wind_get(0) — dialog centring (§16) */
+      r.w[2]=0; r.w[3]=(int16_t)tr; r.w[4]=(int16_t)g_plane.w; r.w[5]=(int16_t)(g_plane.h-tr); }
     reply(c, &r);
     printf("gemd: wind_create wh=%d pid=%d kind=0x%x %dx%d @ %d,%d\n",
            hd, c->pid, m->w[1], m->w[4], m->w[5], m->w[2], m->w[3]);

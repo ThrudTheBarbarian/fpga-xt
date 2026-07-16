@@ -394,11 +394,108 @@ int form_do(OBJECT *t, int start) {
 #undef END_FOCUS
 }
 
+#ifdef GEM_XTOS
+// ---- §16: a dialog is a gemd WINDOW ------------------------------------------
+// Under gemd a client cannot draw to the screen or save-under it (there is no
+// screen), so a modal dialog is a chromeless window the client owns, with the
+// input GRAB (§0): every event routes here, so the classic form_do logic runs
+// unchanged EXCEPT the tree is drawn at the surface ORIGIN (0,0) and screen
+// coords are translated to surface-local for the hit tests. A drag moves the
+// WINDOW (wind_set(WF_CURRXYWH)) instead of blitting saved pixels — gemd owns
+// the move. app-modal falls out: the grab is this app's, and a client cannot
+// reach another app to freeze it. The save-under path below stays for the SDL
+// host (no gemd there) — the standard §5 one-file-two-modes split.
+#include "gemclient.h"
+int  wind_gem_fd(void);
+static OBJECT *g_fc_tree; static int g_fc_w, g_fc_h;
+static int g_form_revoked;
+void form_grab_revoked(void){ g_form_revoked = 1; }
+static void form_client_draw(int hd,int x,int y,int w,int h,void *ud){
+    (void)hd;(void)x;(void)y;(void)w;(void)h;(void)ud;
+    if(g_fc_tree) objc_draw(g_fc_tree, 0, DEPTH, 0,0, g_fc_w, g_fc_h);   // tree root is at 0,0
+}
+static void form_grab(int on){
+    gem_msg m; memset(&m,0,sizeof m); m.w[0]=GEM_GRAB; m.w[2]=(int16_t)on;
+    gem_send(wind_gem_fd(), &m);
+}
+static int form_do_client(OBJECT *t, int start){
+    int dx=t[0].ob_x, dy=t[0].ob_y, dw=t[0].ob_w, dh=t[0].ob_h;
+    fix_shortcuts(t);
+    int edobj = -1;
+    if(start==0) edobj=next_editable(t,-1);
+    else if(start>0 && can_edit(t,start)) edobj=start;
+    t[0].ob_x=0; t[0].ob_y=0;                         // draw + hit at the surface origin
+    g_fc_tree=t; g_fc_w=dw; g_fc_h=dh;
+    int win=wind_create(0, dx,dy,dw,dh);              // chromeless: no title/closer/mover
+    if(!win){ t[0].ob_x=(int16_t)dx; t[0].ob_y=(int16_t)dy; g_fc_tree=0; return -1; }
+    wind_content(win, form_client_draw, 0);
+    wind_open(win, dx,dy,dw,dh);
+    if(edobj>=0){ int c=-1; objc_edit(t,edobj,0,&c,ED_INIT); }
+    wind_redraw_win(win);
+    g_form_revoked=0; form_grab(1);
+    int winx=dx, winy=dy, pressed=-1, exit_obj=-1;
+    for(;;){
+        aes_event ev; int ty=aes_wait_idle(&ev,-1);
+        if(ty==AES_QUIT || g_form_revoked){ exit_obj=-1; break; }
+        int lmx=ev.mx-winx, lmy=ev.my-winy;           // screen -> surface-local
+        if(ty==AES_KEY){
+            int r=form_keybd(t, edobj, ev.key, ev.shift, &edobj);
+            wind_redraw_win(win);                      // reflect the edit / focus / state
+            if(r>=0){ exit_obj=r; break; }
+            continue;
+        }
+        if(ty==AES_BTN_DOWN){
+            int o=objc_find(t,0,DEPTH,lmx,lmy);
+            if(want_move(t,o,lmx,lmy)){                // drag: move the WINDOW live
+                int gx=ev.mx-winx, gy=ev.my-winy;
+                for(;;){ aes_event e; int t2=aes_wait_idle(&e,-1);
+                    if(t2==AES_QUIT||t2==AES_BTN_UP) break;
+                    if(t2!=AES_MOTION) continue;
+                    int wx,wy,ww,wh; wind_get(0,WF_WORKXYWH,&wx,&wy,&ww,&wh);
+                    int nx=e.mx-gx, ny=e.my-gy;
+                    if(nx>wx+ww-dw)nx=wx+ww-dw; if(ny>wy+wh-dh)ny=wy+wh-dh;
+                    if(nx<wx)nx=wx; if(ny<wy)ny=wy;
+                    if(nx!=winx||ny!=winy){ wind_set(win,WF_CURRXYWH,nx,ny,dw,dh); winx=nx; winy=ny; } }
+                continue;
+            }
+            if(o>0 && can_edit(t,o)){ edobj=focus_edit(t,edobj,o); wind_redraw_win(win); continue; }
+            if(o>=0 && (t[o].ob_flags&OF_SELECTABLE) && !(t[o].ob_state&OS_DISABLED)){
+                if(t[o].ob_type==G_POPUP){ if(g_form_hook) g_form_hook(t,o,g_form_hook_ud); wind_redraw_win(win); }
+                else {
+                    if(t[o].ob_flags&(OF_EXIT|OF_TOUCHEXIT)){ t[o].ob_state|=OS_SELECTED; pressed=o; }
+                    else if(t[o].ob_flags&OF_RBUTTON){ do_radio(t,o); if(g_form_hook) g_form_hook(t,o,g_form_hook_ud); }
+                    else { t[o].ob_state^=OS_SELECTED; }
+                    wind_redraw_win(win);
+                    if(t[o].ob_flags&OF_TOUCHEXIT){ exit_obj=o; break; }
+                }
+            }
+            continue;
+        }
+        if(ty==AES_BTN_UP && pressed>=0){
+            int o=objc_find(t,0,DEPTH,lmx,lmy);
+            int hit=(o==pressed);
+            t[pressed].ob_state&=~OS_SELECTED; wind_redraw_win(win);
+            int p=pressed; pressed=-1;
+            if(hit){ exit_obj=p; break; }
+        }
+    }
+    if(edobj>=0) objc_edit(t,edobj,0,NULL,ED_END);
+    form_grab(0);
+    wind_close(win); wind_delete(win);                // gemd recomposites what it covered
+    t[0].ob_x=(int16_t)dx; t[0].ob_y=(int16_t)dy;     // restore (next open re-centres anyway)
+    g_fc_tree=0;
+    return exit_obj;
+}
+#endif
+
 // Centre + save-under + form_do + restore: the standard dialog wrapper.
 int form_do_dialog(OBJECT *t, int start) {
     int wx, wy, ww, wh; wind_get(0, WF_WORKXYWH, &wx, &wy, &ww, &wh);
     t[0].ob_x = (int16_t)(wx + (ww - t[0].ob_w) / 2);
     t[0].ob_y = (int16_t)(wy + (wh - t[0].ob_h) / 2);
+#ifdef GEM_XTOS
+    if(aes_mode()==AES_CLIENT) return form_do_client(t, start);   // §16: a dialog is a window
+#endif
     sav_push(t);
     int r = form_do(t, start);
     // The dialog is MOVEABLE, so read the moved-to rect off the tree, not the

@@ -90,6 +90,8 @@ static int  g_z[MAXW], g_nz;    // z-order: g_z[0] bottom .. g_z[nz-1] top
 static uint32_t g_deskbg = 0x46566EFF;
 static int g_wa[4] = {-1,0,0,0};   // desktop work area (x,y,w,h); x<0 = auto
 static int g_top_reserve = 0;       // top strip reserved by chrome (e.g. menu bar)
+static int g_scr_x, g_scr_y, g_scr_w, g_scr_h;   // CLIENT: the screen work area (from gemd on
+                                                 // wind_create) — wind_get(0) / dialog centring
 static int H(void){ return aes_handle(); }
 
 // The desktop work area: what Desktop.app set, else the screen minus reserved
@@ -1044,9 +1046,11 @@ static int client_dispatch(const gem_msg *m, aes_event *ev){
         menu_client_click(m->w[2]);
         return 0;
     }
-    case GEM_MSG_GRAB_REVOKED: {                           // §9: the clock fired; dismiss
-        extern void menu_grab_revoked(void);
+    case GEM_MSG_GRAB_REVOKED: {                           // §9: the clock fired; dismiss whoever
+        extern void menu_grab_revoked(void);              // held it (menu or dialog — exclusive)
+        extern void form_grab_revoked(void);
         menu_grab_revoked();
+        form_grab_revoked();
         return 0;
     }
     case GEM_MSG_PATHSEG:                                  // a breadcrumb component was clicked: we
@@ -1198,6 +1202,7 @@ int wind_create(int kind,int x,int y,int w,int h){
         m.w[2]=(int16_t)x; m.w[3]=(int16_t)y; m.w[4]=(int16_t)w; m.w[5]=(int16_t)h;
         if(gem_send(g_gemfd,&m)!=0) return 0;
         if(gem_await(g_gemfd,GEM_WIND_CREATED,&m)!=0) return 0;
+        g_scr_x=m.w[2]; g_scr_y=m.w[3]; g_scr_w=m.w[4]; g_scr_h=m.w[5];   // gemd's screen work area
         int hd=m.w[1];
         if(hd<1||hd>=MAXW) return 0;                // gemd's handle indexes OUR table too: the
         memset(&g_w[hd],0,sizeof g_w[hd]);          // list is system-wide now, so it fits
@@ -1401,7 +1406,12 @@ void wind_titlebtns(int hd,const int*glyphs,int n){
 }
 
 void wind_get(int hd,int field,int*a,int*b,int*c,int*d){
-    if(hd==0){ int x,y,w,h; work_area(&x,&y,&w,&h); if(a)*a=x; if(b)*b=y; if(c)*c=w; if(d)*d=h; return; }  // desktop
+    if(hd==0){ // the DESKTOP work area. In client mode work_area() would read whatever surface is
+               // the current VDI target (a small window), so use gemd's cached screen dims.
+        int x,y,w,h;
+        if(g_mode==AES_CLIENT && g_scr_w>0){ x=g_scr_x; y=g_scr_y; w=g_scr_w; h=g_scr_h; }
+        else work_area(&x,&y,&w,&h);
+        if(a)*a=x; if(b)*b=y; if(c)*c=w; if(d)*d=h; return; }
     if(hd<1||hd>=MAXW){ if(a)*a=0; return; }
     awin*W=&g_w[hd]; int x=W->x,y=W->y,w=W->w,h=W->h;
     // A CLIENT'S WORK AREA IS ITS SURFACE, and it starts at 0,0. It must not compute the chrome
