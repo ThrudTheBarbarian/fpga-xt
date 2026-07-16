@@ -11,13 +11,22 @@
  * Trust model: LAN-open, exactly like the TFTP drop and the netcon console beside it. The
  * STM32 makes all three of these transitional lanes retire together.
  *
- * Packet (8 bytes, LE), one per capture event, lossy-OK because deltas are small and
+ * Mouse packet (8 bytes, LE), one per capture event, lossy-OK because deltas are small and
  * buttons carry full STATE (a lost packet skews the pointer a pixel, never a stuck button):
  *   u8  magic   'X'
  *   u8  buttons bit0 = left, bit1 = right, bit2 = middle  (STATE, not edges)
  *   s16 dx, dy  pointer delta
  *   s8  wheel   notches (+ = away/up)
  *   u8  pad
+ *
+ * Keyboard packet (8 bytes, LE) — the interim keyboard, so GEM dialogs can be typed into
+ * without handing the serial terminal focus. key/shift already carry the board's encoding
+ * (gem/aes/aes.h K_*, matching sprite.c's serial decoder), so this injects OS_EV_KEY raw:
+ *   u8  magic  'K'
+ *   u8  shift  K_ bitmask (RSHIFT=1 LSHIFT=2 CTRL=4 ALT=8 CAPS=0x10)
+ *   u16 key    board key code (printable ASCII, or Enter 0x0d / BS 0x08 / Tab 0x09 / Del 0x7f)
+ *   u8  down   1 = press (we inject on press only; AES has no key-up model)
+ *   u8  pad*3
  */
 #include <stdint.h>
 #include "lwip/udp.h"
@@ -77,6 +86,16 @@ static void in_recv(void *arg, struct udp_pcb *pcb, struct pbuf *p,
             if (wh) {
                 ev = (struct os_event){ OS_EV_WHEEL, x, y, s_btn & 1, 0, 0, wh };
                 xt_input_inject(&ev);
+            }
+        }
+        else if (b[0] == 'K') {                          /* keyboard: inject on press only */
+            if (b[4]) {
+                int x, y;
+                cursor_pos(&x, &y);
+                struct os_event ev = { OS_EV_KEY, x, y, s_btn & 1, 0, 0, 0 };
+                ev.key   = (int)(uint16_t)(b[2] | (b[3] << 8));
+                ev.shift = b[1];
+                xt_input_inject(&ev);                    /* same queue the serial decoder feeds */
             }
         }
     }

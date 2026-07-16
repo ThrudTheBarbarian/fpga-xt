@@ -1,17 +1,20 @@
 /*
  * xtmouse — capture the Mac's mouse and stream it to the board over UDP.
  *
- * The interim real mouse, until the STM32 HID companion is manufactured: the serial-terminal
- * mouse is capped at ~12 motion reports/s by the emulator (board-measured); this delivers
- * raw deltas at device rate to the kernel's input_udp listener (:4242), which feeds the same
- * input queue as the serial decoder — the desktop just sees a fast mouse. It also bypasses
- * the console focus toggle entirely: the ` key stops mattering for pointing.
+ * The interim real mouse AND keyboard, until the STM32 HID companion is manufactured: the
+ * serial-terminal mouse is capped at ~12 motion reports/s by the emulator (board-measured);
+ * this delivers raw deltas at device rate to the kernel's input_udp listener (:4242), which
+ * feeds the same input queue as the serial decoder — the desktop just sees a fast mouse. It
+ * also bypasses the console focus toggle entirely: the ` key stops mattering for pointing.
  *
  *   make xtmouse && ./build/xtmouse xtos.local
  *
  * Click the window to CAPTURE (relative mouse mode: the Mac cursor disappears, raw deltas
- * flow). Esc releases the capture. Wheel and left button are forwarded; keys are NOT (the
- * terminal keeps the keyboard until the STM32).
+ * flow). Esc releases the capture (LOCAL — it is the escape hatch, so it is never forwarded;
+ * a dialog's Cancel button is clickable). While captured, the keyboard is forwarded too, so
+ * you can type into GEM dialogs without giving the serial terminal focus: printable keys go
+ * over as SDL_TEXTINPUT (layout- and shift-correct), and Enter/Backspace/Tab/Delete plus
+ * Ctrl+letter go over as their board key codes (matching the serial decoder in sprite.c).
  *
  * Loop shape — this matters on macOS. An app that never draws gets App Nap'd: the OS
  * coalesces its timers and event delivery, so motion arrives in clumps ("mouse freezes, then
@@ -83,6 +86,32 @@ static void send_pkt(unsigned buttons, int dx, int dy, int wheel)
       if (now - t0 >= 1000) { fprintf(stderr, "xtmouse: %d pkt/s\n", n); n = 0; t0 = now; } }
 }
 
+/* Keyboard packet (8 bytes, LE — input_udp.c is the other end):
+ *   u8 magic 'K' | u8 shift(K_ bitmask) | u16 key | u8 down | u8 pad*3
+ * `key`/`shift` use the board's encoding (gem/aes/aes.h K_*, sprite.c serial decoder):
+ * printable ASCII carries shift 0 (the character is already the shifted result), the
+ * special keys carry their control code (Enter 0x0d, BS 0x08, Tab 0x09, Del 0x7f), and
+ * Ctrl+letter arrives as the plain letter + K_CTRL — exactly what form_keybd expects. */
+static void send_key(unsigned key, unsigned shift, int down)
+{
+    unsigned char p[8] = { 'K', (unsigned char)shift,
+                           (unsigned char)(key & 0xFF), (unsigned char)((key >> 8) & 0xFF),
+                           (unsigned char)(down ? 1 : 0), 0, 0, 0 };
+    sendto(g_sock, p, sizeof p, 0, (struct sockaddr *)&g_dst, g_dstlen);
+}
+
+/* SDL modifier state -> board K_ bitmask (aes.h: RSHIFT=1 LSHIFT=2 CTRL=4 ALT=8 CAPS=0x10) */
+static unsigned kmods(unsigned mod)
+{
+    unsigned s = 0;
+    if (mod & KMOD_RSHIFT) s |= 0x01;
+    if (mod & KMOD_LSHIFT) s |= 0x02;
+    if (mod & KMOD_CTRL)   s |= 0x04;
+    if (mod & KMOD_ALT)    s |= 0x08;
+    if (mod & KMOD_CAPS)   s |= 0x10;
+    return s;
+}
+
 int main(int argc, char **argv)
 {
     const char *host = argc > 1 ? argv[1] : "xtos.local";
@@ -111,6 +140,7 @@ int main(int argc, char **argv)
                                            SDL_RENDERER_ACCELERATED | SDL_RENDERER_PRESENTVSYNC);
     if (!ren) ren = SDL_CreateRenderer(win, -1, 0);
     if (!ren) { fprintf(stderr, "xtmouse: %s\n", SDL_GetError()); return 1; }
+    SDL_StartTextInput();      /* enable SDL_TEXTINPUT for keyboard forwarding while captured */
     printf("xtmouse: streaming to %s:%s — click the window to capture\n", host, port);
 
     unsigned buttons = 0;
@@ -125,11 +155,40 @@ int main(int argc, char **argv)
         while (SDL_PollEvent(&e)) {
             switch (e.type) {
             case SDL_QUIT: running = 0; break;
-            case SDL_KEYDOWN:
-                if (e.key.keysym.sym == SDLK_ESCAPE && captured) {
+            case SDL_KEYDOWN: {
+                SDL_Keycode sym = e.key.keysym.sym;
+                if (sym == SDLK_ESCAPE && captured) {     /* LOCAL escape hatch, never forwarded */
                     SDL_SetRelativeMouseMode(SDL_FALSE);
                     captured = 0;
                     SDL_SetWindowTitle(win, "XT mouse — click to capture, Esc to release");
+                    break;
+                }
+                if (!captured) break;
+                /* Special keys that produce no SDL_TEXTINPUT — forward with the board's codes.
+                 * Printable characters come through SDL_TEXTINPUT below (layout/shift correct),
+                 * so we deliberately do NOT handle them here (that would double-send). */
+                unsigned sh = kmods(e.key.keysym.mod), key = 0; int have = 0;
+                switch (sym) {
+                case SDLK_RETURN: case SDLK_KP_ENTER: key = 0x0d; have = 1; break;
+                case SDLK_BACKSPACE:                  key = 0x08; have = 1; break;
+                case SDLK_TAB:                        key = 0x09; have = 1; break;
+                case SDLK_DELETE:                     key = 0x7f; have = 1; break;
+                default: break;
+                }
+                /* Ctrl+letter (e.g. Ctrl-U clears a field): TEXTINPUT is suppressed while Ctrl
+                 * is held, so route it here as plain letter + K_CTRL, matching sprite.c. */
+                if (!have && (e.key.keysym.mod & KMOD_CTRL) && sym >= SDLK_a && sym <= SDLK_z) {
+                    key = (unsigned)sym; sh |= 0x04; have = 1;
+                }
+                if (have) send_key(key, sh, 1);
+                break;
+            }
+            case SDL_TEXTINPUT:
+                if (captured) {                          /* UTF-8; forward the ASCII bytes */
+                    for (const char *t = e.text.text; *t; ++t) {
+                        unsigned char ch = (unsigned char)*t;
+                        if (ch >= 0x20 && ch < 0x7f) send_key(ch, 0, 1);
+                    }
                 }
                 break;
             case SDL_MOUSEBUTTONDOWN:
