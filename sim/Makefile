@@ -674,6 +674,16 @@ plane_compositor: $(BUILD_DIR)/tb_plane_compositor.vvp
 $(BUILD_DIR)/tb_plane_compositor.vvp: $(HDL_DIR)/plane_compositor.sv $(HDL_DIR)/vbeam.sv tb_plane_compositor.sv | $(BUILD_DIR)
 	$(IVERILOG) $(SV_FLAGS) -o $@ -s tb_plane_compositor $(HDL_DIR)/plane_compositor.sv $(HDL_DIR)/vbeam.sv tb_plane_compositor.sv
 
+alpha_hole: $(BUILD_DIR)/tb_alpha_hole.vvp
+	@echo "=== alpha_hole — Route-A occlusion (alpha=0 hole reveals XL, opaque occluders hide it) ==="
+	@$(VVP) -N $< | tee $(BUILD_DIR)/tb_alpha_hole.log
+	@grep -q '\*\*\* ALPHA_HOLE OK \*\*\*' $(BUILD_DIR)/tb_alpha_hole.log || \
+	    (echo "FAIL: tb_alpha_hole missing ALPHA_HOLE OK"; exit 1)
+	@echo "PASS: tb_alpha_hole"
+
+$(BUILD_DIR)/tb_alpha_hole.vvp: $(HDL_DIR)/plane_compositor.sv $(HDL_DIR)/vbeam.sv tb_alpha_hole.sv | $(BUILD_DIR)
+	$(IVERILOG) $(SV_FLAGS) -o $@ -s tb_alpha_hole $(HDL_DIR)/plane_compositor.sv $(HDL_DIR)/vbeam.sv tb_alpha_hole.sv
+
 # ---- plane_fetch — per-plane DDR3 line fetch unit (video arch phase 1b) ---
 plane_fetch: $(BUILD_DIR)/tb_plane_fetch.vvp
 	@echo "=== plane_fetch — per-plane DDR3 line fetch ==="
