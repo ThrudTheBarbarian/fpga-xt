@@ -396,7 +396,11 @@ enum { W_NAME=0x01, W_CLOSER=0x02, W_FULLER=0x04, W_MOVER=0x08, W_INFO=0x10,
        // the whole argument of §4 is that gemd must not know what a desktop is. Nothing stops
        // two clients setting it; they simply stack at the bottom among themselves, and gemd
        // neither knows nor cares which of them is "the desktop".
-       W_BOTTOM=0x1000 };
+       W_BOTTOM=0x1000,
+       // A window gemd composites SRC-OVER (alpha) instead of opaque — for menus, popups,
+       // tooltips whose themed art has transparent rounded corners. The surface's uncovered
+       // pixels stay alpha-0 (fresh shm is zeroed), so they blend to the desktop, not black.
+       W_ALPHA=0x2000 };
 enum { WM_REDRAW=20, WM_TOPPED=21, WM_CLOSED=22, WM_FULLED=23, WM_ARROWED=24,
        WM_HSLID=25, WM_VSLID=26, WM_SIZED=27, WM_MOVED=28, WM_NEWTOP=29,
        WM_UNTOPPED=30,     // focus LOST (gemd's MSG_ACTIVATE 0; classic GEM has it too)

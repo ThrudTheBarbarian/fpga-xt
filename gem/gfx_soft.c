@@ -63,6 +63,33 @@ void gfx_blit(gfx_surface *dst, int dx, int dy,
     }
 }
 
+void gfx_blit_over(gfx_surface *dst, int dx, int dy,
+                   const gfx_surface *src, int sx, int sy, int w, int h) {
+    if (!dst || !src) return;
+    int sox = 0, soy = 0;
+    w = clip_span(&sx, &sox, w, src->w);
+    h = clip_span(&sy, &soy, h, src->h);
+    dx += sox; dy += soy;
+    int dox = 0, doy = 0;
+    w = clip_span(&dx, &dox, w, dst->w);
+    h = clip_span(&dy, &doy, h, dst->h);
+    sx += dox; sy += doy;
+    for (int row = 0; row < h; row++) {
+        const uint32_t *sp = src->px + (size_t)(sy + row) * src->stride + sx;
+        uint32_t       *dp = dst->px + (size_t)(dy + row) * dst->stride + dx;
+        for (int col = 0; col < w; col++) {
+            uint32_t s = sp[col]; unsigned a = s & 0xFF;
+            if (a == 0) continue;                       // transparent: keep dst
+            if (a == 255) { dp[col] = (s & 0xFFFFFF00u) | 0xFF; continue; }
+            uint32_t d = dp[col];
+            unsigned r = (((s>>24)&0xFF)*a + ((d>>24)&0xFF)*(255-a)) / 255;
+            unsigned g = (((s>>16)&0xFF)*a + ((d>>16)&0xFF)*(255-a)) / 255;
+            unsigned b = (((s>>8) &0xFF)*a + ((d>>8) &0xFF)*(255-a)) / 255;
+            dp[col] = (r<<24)|(g<<16)|(b<<8)|0xFF;
+        }
+    }
+}
+
 static void put_px(gfx_surface *s, int x, int y, uint32_t rgba) {
     if ((unsigned)x < (unsigned)s->w && (unsigned)y < (unsigned)s->h)
         s->px[(size_t)y * s->stride + x] = rgba;

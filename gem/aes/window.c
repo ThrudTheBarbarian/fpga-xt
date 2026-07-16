@@ -625,8 +625,12 @@ static void draw_content(int hd){
             if(dx0<g_dmg[0]) dx0=g_dmg[0];  if(dy0<g_dmg[1]) dy0=g_dmg[1];
             if(dx1>g_dmg[2]) dx1=g_dmg[2];  if(dy1>g_dmg[3]) dy1=g_dmg[3];
         }
-        if(d && dx1>dx0 && dy1>dy0)                    // source origin shifts with the clipped corner
-            gfx_blit(d, dx0,dy0, &W->surf, dx0-wx, dy0-wy, dx1-dx0, dy1-dy0);
+        if(d && dx1>dx0 && dy1>dy0){                   // source origin shifts with the clipped corner
+            if(W->kind & W_ALPHA)                      // menus/popups: blend, don't stamp (transparent corners)
+                gfx_blit_over(d, dx0,dy0, &W->surf, dx0-wx, dy0-wy, dx1-dx0, dy1-dy0);
+            else
+                gfx_blit(d, dx0,dy0, &W->surf, dx0-wx, dy0-wy, dx1-dx0, dy1-dy0);
+        }
     } else if(W->draw){
         // LOCAL: the app's content callback, in this same process. In CLIENT mode the same
         // callback runs — but against our own surface, and gemd never sees it (client_paint).

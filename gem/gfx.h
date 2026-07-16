@@ -34,6 +34,11 @@ void         gfx_surface_free(gfx_surface *s);
 // ---- Backend primitives (software in gfx_soft.c, blitter on A9) -----------
 // All clip to the destination surface; out-of-range args are safe no-ops.
 void gfx_fill_rect(gfx_surface *s, int x, int y, int w, int h, uint32_t rgba);
+// Src-over (alpha) blit: dst = src over dst, using src's own alpha (RGBA low byte). For window
+// surfaces whose uncovered pixels are transparent (menus/popups): the corners blend to what is
+// behind rather than stamping black. Caller clips (sx,sy,w,h)/(dx,dy) to the destination.
+void gfx_blit_over(gfx_surface *dst, int dx, int dy,
+                   const gfx_surface *src, int sx, int sy, int w, int h);
 void gfx_blit(gfx_surface *dst, int dx, int dy,
               const gfx_surface *src, int sx, int sy, int w, int h);
 void gfx_line(gfx_surface *s, int x0, int y0, int x1, int y1, uint32_t rgba);

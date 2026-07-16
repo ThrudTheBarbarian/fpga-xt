@@ -68,11 +68,33 @@ static void menu_grab(int on){
     gem_send(wind_gem_fd(), &m);
 }
 static void panel_draw_cb(int hd,int x,int y,int w,int h,void *ud);
+static int text_w(const char *s);       // defined below; needed by the re-measure in dd_panel_open
+static int bar_is_sep(const char *s);
+// Measure with the DEFAULT FACE at the draw size directly. text_w goes through the current VDI
+// workstation, whose font state under-sizes it here (measures ~half); the dropdown draws with
+// g_default_face at 14, so measure the same way — box, draw and hit-test then agree.
+extern font_face *g_default_face;       // vdi/core.c
+static int dd_text_w(const char *s){
+    font *f = g_default_face ? font_at(g_default_face, BARH>=14?14:BARH) : 0;
+    return f ? font_text_width(f, s) : text_w(s);
+}
 static void dd_panel_open(int ord){
     int ddi=DD0+ord, dx,dy; objc_offset(g_menu,ddi,&dx,&dy); (void)dy;
-    int w=g_menu[ddi].ob_w, hh=g_menu[ddi].ob_h;
+    // RE-MEASURE here, not in menu_build: menu_build runs at menu_show (startup) when the font
+    // face's glyph advances are not yet warm, so it under-sizes the box (items overflow at draw
+    // time). By open time the font is ready — measure the widest item and correct the box + its
+    // item widths so the window, the draw, and objc hit-testing all agree.
+    int mw=0;                                   // EACH_CHILD is #defined BELOW this fn — iterate by hand
+    for(int c=g_menu[ddi].ob_head; c>=0; c=(c==g_menu[ddi].ob_tail?-1:g_menu[c].ob_next)){
+        const char *l=(const char*)g_menu[c].ob_spec;
+        if(!bar_is_sep(l)){ int tw=dd_text_w(l); if(tw>mw)mw=tw; } }
+    int w=mw+DDPADX*2; if(w<g_menu[ddi].ob_w) w=g_menu[ddi].ob_w;   // never shrink below layout
+    g_menu[ddi].ob_w=(int16_t)w;
+    for(int c=g_menu[ddi].ob_head; c>=0; c=(c==g_menu[ddi].ob_tail?-1:g_menu[c].ob_next))
+        g_menu[c].ob_w=(int16_t)(w-DDPADX-4);   // items span the corrected box
+    int hh=g_menu[ddi].ob_h;
     g_pn_ord=ord; g_pn_hov=-1;
-    g_pn_wh=wind_create(0, dx, BARH, w, hh);
+    g_pn_wh=wind_create(W_ALPHA, dx, BARH, w, hh);   // src-over: rounded corners over the desktop
     if(g_pn_wh){ wind_content(g_pn_wh, panel_draw_cb, 0); wind_open(g_pn_wh, dx, BARH, w, hh); }
 }
 static void dd_panel_close(void){
@@ -127,7 +149,7 @@ OBJECT *menu_build(const menu_def *m, int n, int sw) {
             int w=text_w(bar_disp(m[i].items[j])); if(w>mw)mw=w;
             ddh += bar_is_sep(m[i].items[j]) ? SEPH : ITEMH;
         }
-        int ddw=mw+DDPADX+12, ddi=dd0+i, first=it;
+        int ddw=mw+DDPADX*2, ddi=dd0+i, first=it;   // symmetric pad: the right margin now
         int titlew=text_w(m[i].title)+TPAD*2;
         t[ddi]=(OBJECT){(int16_t)(i<n-1?ddi+1:active),(int16_t)first,(int16_t)(first+m[i].nitems-1),
                         G_BOX,OF_HIDETREE,OS_NORMAL,0,(int16_t)tx,0,(int16_t)ddw,(int16_t)ddh};
@@ -785,6 +807,10 @@ int menu_popup_dyn(const menu_item *root, int n, int x, int y, menu_provider exp
 static void panel_draw_cb(int hd,int x,int y,int w,int h,void *ud){
     (void)hd;(void)x;(void)y;(void)ud;
     if(g_pn_ord<0 || !g_menu) return;
+    { gfx_surface *ts=vdi_screen_target();         // clear to TRANSPARENT: the corners the
+      if(ts){ for(int yy=0;yy<h && yy<ts->h;yy++){ // rounded slice does not cover stay alpha-0,
+          uint32_t *r=ts->px+(size_t)yy*ts->stride; // so gemd blends them to the desktop, not
+          for(int xx=0;xx<w && xx<ts->w;xx++) r[xx]=0; } } }   // to stale/black
     menu_pens();
     int ddi=DD0+g_pn_ord;
     theme_draw(H(),aes_theme(),"menu",0,0,w,h);
