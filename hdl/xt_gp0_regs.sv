@@ -130,6 +130,12 @@ module xt_gp0_regs (
     // live compositor; bars are a debug option only).
     output reg  [7:0]  gp0_ctrl,
 
+    // ---- Compositor plane arrangement (clk_sys; CDC'd to clk_pix in top) ----
+    // depth [3:0]=desktop [7:4]=overlay [11:8]=XL; alpha_en [16]=desktop
+    // [17]=overlay [18]=XL.  Reset 0x210 = the shipping arrangement (XL on top
+    // opaque, desktop at the back).  Route-A flip is a single PS word write.
+    output reg  [31:0] cmpcfg,
+
     // ---- XT register-unlock control (clk_sys) ------------------------------
     output reg         xt_unlock_we,       // 1-cycle strobe (byte on bl_data)
     input  wire [7:0]  xt_unlock_state,    // effective unlock, for read-back
@@ -206,6 +212,7 @@ module xt_gp0_regs (
             w_data         <= 32'd0;
             w_byte         <= 8'd0;
             gp0_ctrl       <= 8'h00;   // boot to the compositor; bars are debug-only
+            cmpcfg         <= 32'h0000_0210;  // depth desktop0/overlay1/XL2, all opaque = shipping
             xt_unlock_we   <= 1'b0;
             overlay_base   <= 32'd0;
             overlay_x      <= 12'd0;
@@ -295,7 +302,8 @@ module xt_gp0_regs (
                             // ---- 0x3xx CONTROL ------------------------------
                             BLK_CTRL: begin
                                 unique case (aw_off)
-                                    CTRL_GP0:   gp0_ctrl <= w_byte;            // [0]bars/compositor [3:1]XL-scale [4]DMACTL-blank [5]drag-overlay alpha-blend
+                                    CTRL_GP0:   gp0_ctrl <= w_byte;            // [0]bars/compositor [3:1]XL-scale [4]DMACTL-blank [5]video-sleep
+                                    CTRL_CMPCFG: cmpcfg  <= w_data;            // per-plane depth + alpha_en (whole word)
                                     CTRL_SPEED: begin bl_addr <= 6'h1A; bl_we <= 1'b1; end // clock_mult -> $D4CA
                                     CTRL_UNLOCK: xt_unlock_we <= 1'b1;         // unlock (data on bl_data)
                                     CTRL_KBD_INJECT:  begin bl_addr <= 6'h1F; bl_we <= 1'b1; end // -> $D4CF
@@ -387,6 +395,7 @@ module xt_gp0_regs (
                                 if      (ar_off == CTRL_GP0)    s_axi_rdata <= {24'd0, gp0_ctrl};
                                 else if (ar_off == CTRL_SPEED)  s_axi_rdata <= {24'd0, clock_mult};
                                 else if (ar_off == CTRL_UNLOCK) s_axi_rdata <= {24'd0, xt_unlock_state};
+                                else if (ar_off == CTRL_CMPCFG) s_axi_rdata <= cmpcfg;
                             BLK_DIAG:
                                 unique case (ar_off)
                                     DIAG0: s_axi_rdata <= diag_word;

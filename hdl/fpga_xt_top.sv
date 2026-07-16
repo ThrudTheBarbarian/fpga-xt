@@ -1618,6 +1618,30 @@ module fpga_xt_top (
         .read_abort (), .fetch_overrun ()
     );
 
+    // ---- Compositor plane arrangement (cmpcfg -> clk_pix) ----------------
+    // cmpcfg is QUASI-STATIC: the PS writes it at setup and (rarely) to switch
+    // arrangement, so a plain 2-FF sync is correct here — this is NOT a
+    // free-running multi-bit bus (the class that needs cdc_flag_data). The sync
+    // regs INITIALISE to 0x210 so the compositor boots the shipping arrangement
+    // (XL depth 2 on top, overlay 1, desktop 0, all opaque) before any PS write.
+    // A skew glitch can only occur the instant the PS rewrites it -> at worst a
+    // single-frame flicker during a deliberate mode switch, never at runtime.
+    // Route-A flip = PS writes 0x00010132 (desktop depth 2 + alpha, overlay 3,
+    // XL 1) so the desktop rides on top and its alpha=0 holes reveal XL below.
+    (* ASYNC_REG = "TRUE" *) reg [31:0] cmpcfg_s0  = 32'h0000_0210;
+    (* ASYNC_REG = "TRUE" *) reg [31:0] cmpcfg_pix = 32'h0000_0210;
+    always_ff @(posedge clk_pix) begin
+        cmpcfg_s0  <= cmpcfg;
+        cmpcfg_pix <= cmpcfg_s0;
+    end
+    // Decode into per-plane fields, packed {plane2=XL, plane1=overlay, plane0=desktop}.
+    wire [3:0] cc_desk_depth = cmpcfg_pix[3:0];
+    wire [3:0] cc_ovl_depth  = cmpcfg_pix[7:4];
+    wire [3:0] cc_xl_depth   = cmpcfg_pix[11:8];
+    wire       cc_desk_alpha = cmpcfg_pix[16];
+    wire       cc_ovl_alpha  = cmpcfg_pix[17];
+    wire       cc_xl_alpha   = cmpcfg_pix[18];
+
     // ---- Plane compositor -----------------------------------------------
     wire [4:0] comp_rgb_r; wire [5:0] comp_rgb_g; wire [4:0] comp_rgb_b;
     wire       comp_de, comp_hsync, comp_vsync;
@@ -1631,16 +1655,15 @@ module fpga_xt_top (
         // above the desktop but below the XL/ST windows so a dragged window
         // never jumps in front of them.
         .pl_enable   ({1'b1,       ov_en_d,  1'b1}),          // XL on, overlay gated, desktop on
-        .pl_alpha_en ({1'b0,       gp0_ctrl[5], 1'b0}),       // overlay alpha-blends over the desktop
-                                                              // when PS opts in (gp0_ctrl[5]); XL/desktop
-                                                              // always opaque. Off by default — the PS
-                                                              // sets it once it builds the overlay with
-                                                              // real per-pixel alpha (else FB-copy alpha
-                                                              // would blend wrong).
+        .pl_alpha_en ({cc_xl_alpha, cc_ovl_alpha, cc_desk_alpha}), // per-plane, from cmpcfg (CTRL 0x18).
+                                                              // Reset: all opaque. Route-A sets the
+                                                              // desktop bit so its alpha=0 holes reveal
+                                                              // XL. (Retires the old gp0_ctrl[5] tie,
+                                                              // which collided with video-sleep.)
         .pl_origin_x ({xl_org_x_r, ov_x_d,   12'd0}),         // XL runtime-scaled (gp0_ctrl[3:1])
         .pl_origin_y ({xl_org_y_r, ov_y_d,   12'd0}),
         .pl_scale    ({xl_scale_q, 3'd1,     3'd1}),
-        .pl_depth    ({4'd2,       4'd1,     4'd0}),
+        .pl_depth    ({cc_xl_depth, cc_ovl_depth, cc_desk_depth}), // per-plane, from cmpcfg (CTRL 0x18)
         .pl_clip_x0  ({xl_org_x_r, ov_x_d,   12'd0}),
         .pl_clip_y0  ({xl_org_y_r, ov_y_d,   12'd0}),
         .pl_clip_x1  ({xl_clx1_r,  ov_x1_d,  12'd1920}),
@@ -1763,7 +1786,8 @@ module fpga_xt_top (
     // 0x43C0001C), synchronised clk_sys -> clk_pix.  It RESETS to 1 so the
     // board still boots showing bars; the PS clears it to show the live
     // compositor — no bitstream rebuild to toggle (config belongs in PS sw).
-    wire [7:0] gp0_ctrl;                              // driven by u_axi_bridge
+    wire [7:0]  gp0_ctrl;                             // driven by u_axi_bridge
+    wire [31:0] cmpcfg;                               // compositor plane arrangement (CTRL 0x18)
     assign pix_clk_ce = ~gp0_ctrl[5];                // video-sleep: gp0_ctrl[5]=1 gates clk_pix off (BUFGCE)
     // Drag-overlay config (clk_sys), driven by u_axi_bridge (offsets 0x21-0x2F).
     wire [31:0] overlay_base;
@@ -2656,6 +2680,7 @@ module fpga_xt_top (
         .trng_word       (trng_word),        // ring-oscillator entropy (0x7xx)
         .clock_mult      (eff_clock_mult_sys), // effective $D4CA speed, read back at GP0 offset 0x1E
         .gp0_ctrl        (gp0_ctrl),
+        .cmpcfg          (cmpcfg),           // compositor plane arrangement (CTRL 0x18)
         .xt_unlock_we    (xt_unlock_we),     // A9 unlock write strobe (offset 0x20)
         .xt_unlock_state (xt_unlock),        // effective unlock, read-back at 0x20
         .overlay_base    (overlay_base),     // drag-overlay config (offsets 0x21-0x2F)

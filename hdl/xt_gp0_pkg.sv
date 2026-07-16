@@ -43,6 +43,7 @@ package xt_gp0_pkg;
     localparam logic [7:0] CTRL_KBD_INJECT  = 8'h0C;  // W KBCODE + POKEY IRQ (A9-only; emits $D4CF)
     localparam logic [7:0] CTRL_KBD_RELEASE = 8'h10;  // W all-keys-up (A9-only; emits $D4CD)
     localparam logic [7:0] CTRL_KBD_BREAK   = 8'h14;  // W Atari BREAK (A9-only; emits $D4CB)
+    localparam logic [7:0] CTRL_CMPCFG      = 8'h18;  // RW compositor plane arrangement (A9-only; reset 0x210 = current). depth: [3:0]=desktop, [7:4]=overlay, [11:8]=XL. alpha_en: [16]=desktop, [17]=overlay, [18]=XL. Route-A flip = desktop on top with alpha (0x00010132)
     // DIAG
     localparam logic [7:0] DIAG0            = 8'h00;  // R MMCM locks / clk_pix-alive / frame count
     localparam logic [7:0] DIAG2            = 8'h04;  // R production-chain counters

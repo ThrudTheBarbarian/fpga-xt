@@ -53,6 +53,7 @@ control plane (gp0_ctrl, SALLY speed, XT unlock, keyboard inject)
 | 0x0C | W | 8 | `XT_CTRL_KBD_INJECT` | `CTRL_KBD_INJECT` | KBCODE + POKEY IRQ (A9-only; emits $D4CF) |
 | 0x10 | W | 8 | `XT_CTRL_KBD_RELEASE` | `CTRL_KBD_RELEASE` | all-keys-up (A9-only; emits $D4CD) |
 | 0x14 | W | 8 | `XT_CTRL_KBD_BREAK` | `CTRL_KBD_BREAK` | Atari BREAK (A9-only; emits $D4CB) |
+| 0x18 | RW | 32 | `XT_CTRL_CMPCFG` | `CTRL_CMPCFG` | compositor plane arrangement (A9-only; reset 0x210 = current). depth: [3:0]=desktop, [7:4]=overlay, [11:8]=XL. alpha_en: [16]=desktop, [17]=overlay, [18]=XL. Route-A flip = desktop on top with alpha (0x00010132) |
 
 ## 0x400 — DIAG  (`XT_BLK_DIAG`)
 
