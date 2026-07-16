@@ -15,7 +15,7 @@ phase 1 is and is not). This file is the *implementation* plan and the running s
 | **no single-process fallback on XTOS** | **DONE, board-verified** (see below) |
 | **M4 — input: routing, focus, live chrome** | **DONE, board-verified** (see below) |
 | M4b — the menu strip (§10), grabs, liveness | **DONE, board-verified** — per-app strip surface, input grab, §9 revoke |
-| M5 — resize: client-driven (`wind_set`), scroll/content size | in progress: **geometry is a wire request (WF_CURRXYWH) — the Fit button works**, build-verified; board + scroll/content size open |
+| M5 — resize: client-driven (`wind_set`), scroll/content size | **DONE, board-verified.** geometry-as-request (WF_CURRXYWH/Fit), live resize, both-axis scroll + content-size, wheel, the resize discipline, horizontal scrollbars, and the chrome rework (info bar to top, proximity resize + cursor affordance). Optional follow-up only: theme-able hover-resize brackets. |
 | M6 — the XL plane | *blocked by design: a client cannot place a plane — see below* |
 | M7 — **the gate**: `SEC_PLANE` → PL0-none; **+ the engine composite** (designed, deferred — see below) | the gate is a kernel flip; the composite swap is the §14 seam move |
 
