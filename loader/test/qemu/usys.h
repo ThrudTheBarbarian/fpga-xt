@@ -202,6 +202,16 @@ static inline long sys_overlay(int x, int y, int w, int h, int en) {
     return __syscall(SYS_overlay, ((long)x << 16) | (uint16_t)y,
                      ((long)w << 16) | (uint16_t)h, en);
 }
+/* M6: place HW compositor plane `plane` (XT_PLANE_*) at a screen rect, integer zoom
+ * `scale` 1..5; en=0 parks it off-screen. x/y may be negative (a window dragged past
+ * an edge) — the kernel clips. First active plane flips the compositor to the Route-A
+ * arrangement (desktop on top with alpha: an alpha=0 area reveals the plane below). */
+static inline long sys_plane_window(int plane, int x, int y, int w, int h, int scale, int en) {
+    return __syscall(SYS_plane_window,
+                     ((long)plane << 16) | ((long)(scale & 0xFF) << 8) | (en ? 1 : 0),
+                     ((long)(uint16_t)x << 16) | (uint16_t)y,
+                     ((long)(uint16_t)w << 16) | (uint16_t)h);
+}
 /* Block for the next input event (mouse/keyboard); timeout_ms < 0 = forever.  The
  * cursor sprite is moved kernel-side; `ev` is filled with the event. */
 /* raw = 1: Enter/Space stay KEY events (typing into an emulator window) instead

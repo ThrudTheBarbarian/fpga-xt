@@ -91,15 +91,13 @@ static void icon_dirty(int obj, int *x,int *y,int *w,int *h) {
 }
 static int desk_sel(void) { for (int i = 1; i <= n_icons; i++) if (desk[i].ob_state & OS_SELECTED) return i; return 0; }
 
-/* The live XL compositor plane (emulator video): the kernel places plane 1 over the emu window's
- * work area (SYS_xl_window).  It is a PLANE, and planes are gemd's (Rule 1) — and the placement
- * needs the window's SCREEN rect, which a client does not know and may not ask for (§5).  So it
- * cannot work from here, and it is not going to be faked: emulator windows open with empty work
- * areas until gemd places the XL plane on a client's behalf.  That is M6, and it is the one thing
- * that genuinely needs a new server call rather than a rearrangement of this file. */
+/* The live XL compositor plane (emulator video): a PLANE, and planes are gemd's (Rule 1).
+ * The desktop asks with wind_plane_bind (M6, the WIND_PLANE message) — "show plane
+ * AES_PLANE_XL through this window" — and gemd does the placing, because only gemd knows
+ * the window's SCREEN rect (a client may not ask, §5). */
 #define XL_SCALE 2                      // 320x192 XL writeback -> a 640x384 work area
-static int g_xlwin;                     // window handle that WOULD own the plane (0 = none)
-static void xl_sync(void);              // no-op under gemd (M6); see above
+static int g_xlwin;                     // window handle that owns the XL plane (0 = none)
+static void xl_sync(void);              // bind the XL plane to g_xlwin (M6 WIND_PLANE); see below
 
 static int read_default(const char *dir, char *out, int n) {
     char p[160]; snprintf(p, sizeof p, "%s/Default", dir);
@@ -271,19 +269,19 @@ typedef struct { int used, win, istext; char name[48], boot[96]; } emuwin;
 static emuwin EMU[MAXEMU];
 static int g_ex = 380, g_ey = 130;
 
-// The live XL compositor plane binds to ONE 6502 window (first opened): the
-// kernel places plane 1 over that window's work area (SYS_xl_window), and we
-// re-place it whenever the window moves/resizes, hide it on close.  m68k
-// windows stay placeholders (no core hosted yet).  (XL_SCALE / g_xlwin are
-// declared up by the drag-overlay hooks, which track the plane during a drag.)
-// M6, and NOT a rearrangement of this file: placing the XL plane needs the window's SCREEN rect,
-// and a client is not told where its window is (§5) — wind_get(WF_WORKXYWH) now honestly returns
-// SURFACE coordinates (0,0,w,h), because that is the only space a client has. Faking it with
-// those numbers would put the emulator plane at the top-left of the screen and call it working.
-// The plane belongs to gemd (Rule 1); a client must ASK gemd to place it, and that call does not
-// exist yet. Until it does, an emu window is a frame with an empty work area.
-static void xl_sync(void) { }
-static void xl_unbind(int win) { if (win == g_xlwin) g_xlwin = 0; }
+// The live XL compositor plane binds to ONE 6502 window (first opened): wind_plane_bind
+// (M6, the WIND_PLANE message) asks gemd to show plane AES_PLANE_XL through the window's
+// work area, and that is the WHOLE story on this side — the plane is gemd's (Rule 1), a
+// client is never told where its window is (§5), so gemd places it and keeps it tracking
+// the window through every move/raise/close, occluded per pixel by whatever is composited
+// above (the Route-A alpha hole). m68k windows stay placeholders (no core hosted yet).
+// (XL_SCALE / g_xlwin are declared up by the drag-overlay hooks.)
+static void xl_sync(void) {
+    if (g_xlwin) wind_plane_bind(g_xlwin, AES_PLANE_XL, XL_SCALE);
+}
+static void xl_unbind(int win) {
+    if (win == g_xlwin) { wind_plane_bind(win, 0, 0); g_xlwin = 0; }
+}
 
 static emuwin *emu_of_window(int win) {
     for (int i = 0; i < MAXEMU; i++) if (EMU[i].used && EMU[i].win == win) return &EMU[i];

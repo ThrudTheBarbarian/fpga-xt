@@ -73,6 +73,12 @@ typedef struct {
     int rsz_mode;                              // WIND_RESIZE_FULL/APP (aes.h): who paints a resize
                                                // (a status bar): the scroll blit stops above it
     int maxed, sx,sy,sw,sh;                    // maximise toggle: flag + the pre-maximise rect
+    int plane_id;                              // SERVER (M6): HW compositor plane shown through
+                                               // this window's work area (0 = none). The work
+                                               // area composites as an ALPHA=0 HOLE — the desktop
+                                               // plane rides on top with alpha, so the HW plane
+                                               // shows through exactly there and every opaque
+                                               // window above occludes it per pixel (Route A).
 } awin;
 
 #define SB_W      16     // reserved vertical-scrollbar column width
@@ -592,6 +598,25 @@ static void draw_one(int hd, int active){
 static void draw_content(int hd){
     awin*W=&g_w[hd];
     int wx,wy,ww,wh; app_work(W,&wx,&wy,&ww,&wh);
+    if(g_mode==AES_SERVER && W->plane_id>0){
+        // A PLANE-BOUND WINDOW'S CONTENT IS A HOLE (M6, Route A). The desktop plane is on top
+        // with alpha enabled while any HW plane is active (SYS_plane_window flips CMPCFG), so
+        // alpha=0 here reveals the plane below — and everything this loop composites ON TOP of
+        // it stamps opaque pixels, which is per-pixel occlusion of the emulator picture by
+        // ordinary windows, for free. gfx_fill_rect writes the raw word (alpha included); the
+        // VDI's own paths force alpha opaque, which is exactly why the rest of the desktop
+        // never punches a hole by accident. Clipped to the damage rect by hand, like the
+        // backing-store blit below (a backend fill does not see the VDI clip).
+        gfx_surface *d = vdi_screen_target();
+        int dx0=wx, dy0=wy, dx1=wx+ww, dy1=wy+wh;
+        if(g_dmg_on){
+            if(dx0<g_dmg[0]) dx0=g_dmg[0];  if(dy0<g_dmg[1]) dy0=g_dmg[1];
+            if(dx1>g_dmg[2]) dx1=g_dmg[2];  if(dy1>g_dmg[3]) dy1=g_dmg[3];
+        }
+        if(d && dx1>dx0 && dy1>dy0)
+            gfx_fill_rect(d, dx0,dy0, dx1-dx0, dy1-dy0, 0x00000000u);
+        return;
+    }
     if(W->surf.px){
         // SERVER: the content is the client's BACKING STORE, and we blit it. gemd holds the
         // pixels, so it can re-composite this window on a move, a top or a reveal without the
@@ -665,6 +690,10 @@ int wind_vsb_col(int hd,int*x,int*y,int*w,int*h,int*thy,int*thh){
     return vsb_geom(&g_w[hd], x,y,w,h, 0,0,0, 0,0, thy,thh);
 }
 int  wind_surface_of(int hd){ return (hd>=1&&hd<MAXW&&g_w[hd].used)?g_w[hd].surf_id:-1; }
+// M6: the plane bind. gemd records it (its WIND_PLANE handler owns the plane table and the
+// placement policy); the window layer only needs to know so draw_content paints the hole.
+int  wind_plane_of(int hd){ return (hd>=1&&hd<MAXW&&g_w[hd].used)?g_w[hd].plane_id:0; }
+void wind_plane_link(int hd,int plane_id){ if(hd>=1&&hd<MAXW&&g_w[hd].used) g_w[hd].plane_id=plane_id; }
 uint32_t wind_gen_of(int hd){ return (hd>=1&&hd<MAXW&&g_w[hd].used)?g_w[hd].surf_gen:0; }
 int  wind_client_of(int hd){ return (hd>=1&&hd<MAXW&&g_w[hd].used)?g_w[hd].client:-1; }
 // The BOTTOM window's client (the desktop under gemd) — the menu owner of last resort (§10):
@@ -709,6 +738,14 @@ void wind_set_overlay(int(*begin)(int,int,int,int), void(*move)(int,int),
  * targets that composite into a back-buffer (A9).  No-op when no hook is set
  * (the SDL host presents inside its event source). */
 void aes_flush_rect(int x,int y,int w,int h){ if(g_ovl_present) g_ovl_present(x,y,w,h); }
+
+/* M6: gemd's plane-follow hook. Runs at the END of every wind_redraw_area — the one
+ * point every geometry/z/visibility change converges on (moves, resize drags, raises,
+ * closes, the maximise toggle all end in a composite) — so a HW plane bound to a window
+ * tracks it without hooking each mutation path. Change-detected on gemd's side, so a
+ * composite that moved nothing costs one comparison, not a syscall. */
+static void (*g_plane_hook)(void);
+void aes_set_plane_sync(void (*fn)(void)){ g_plane_hook=fn; }
 
 /* The drag-overlay ops, for other modal movers (dialog drag in form.c): lift
  * returns 0 when no hook is registered / the lift was refused, and the caller
@@ -776,6 +813,7 @@ void wind_redraw_area(int rx,int ry,int rw,int rh){
     g_dmg_on=0;
     gem_prof_add(GEM_PROF_RENDER, gem_prof_now()-gp_t0, (long)rw*rh);   // TEMP: composite, sans present
     aes_flush_rect(rx,ry,rw,rh);                          // present (A9 back-buffer; no-op on SDL)
+    if(g_plane_hook) g_plane_hook();                      // M6: HW planes follow their windows
 }
 void wind_redraw(void){
     gfx_surface *d = vdi_screen_target();
@@ -1351,6 +1389,23 @@ void wind_pin_top(int hd,int px){
         gem_send(g_gemfd,&m);
     }
 #endif
+}
+// M6: bind a HW compositor plane to this window (aes.h). The plane is gemd's (Rule 1) and a
+// client is never told where its window is (§5), so the bind is the WHOLE client-side story:
+// gemd places the plane over the work area and keeps it there through every move/resize/raise/
+// close, no per-geometry sync from this side. plane_id=0 unbinds. On the SDL host there are no
+// HW planes and the content callback IS the picture: no-op.
+void wind_plane_bind(int hd,int plane_id,int scale){
+#ifdef GEM_XTOS
+    if(g_mode==AES_CLIENT && hd>=1 && hd<MAXW && g_w[hd].used){
+        gem_msg m; memset(&m,0,sizeof m);
+        m.w[0]=GEM_WIND_PLANE; m.w[1]=(int16_t)hd;
+        m.w[2]=(int16_t)plane_id; m.w[3]=(int16_t)scale;
+        gem_send(g_gemfd,&m);
+        return;
+    }
+#endif
+    (void)hd; (void)plane_id; (void)scale;
 }
 // Who paints a resize (aes.h: THE RESIZE DISCIPLINE). Client-side model only — no wire message.
 void wind_resize_mode(int hd,int mode){

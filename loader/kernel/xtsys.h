@@ -358,6 +358,20 @@ struct xt_dirent { unsigned mode; char name[256]; };
 #define SYS_overlay      0x604 /* (x<<16|y, w<<16|h, en) -> 0: place/hide the drag-overlay
                                 * plane (pixels = DRAG_BASE, client-filled). Move = re-call
                                 * with new x/y — no plane redraw. Tear-free window drag. */
+#define SYS_plane_window 0x605 /* (plane<<16|scale<<8|en, x<<16|y, w<<16|h) -> 0/-errno:
+                                * place HW compositor plane `plane` (XT_PLANE_* below) at an
+                                * on-screen rect, integer zoom `scale` 1..5; en=0 parks it
+                                * off-screen. x/y are SIGNED 16-bit (a window may hang off an
+                                * edge; the kernel clips). Generalises SYS_xl_window over a
+                                * plane table (M6). While ANY plane is active the compositor
+                                * runs the Route-A arrangement (CMPCFG: desktop plane on top,
+                                * alpha-enabled — an alpha=0 work area is a HOLE revealing the
+                                * plane below, so ordinary opaque windows occlude it per pixel,
+                                * no clip-rect list); the last park restores the reset
+                                * arrangement. docs/OS/m6-routeA-handoff.md. */
+
+/* plane ids for SYS_plane_window (gemd's WIND_PLANE bind carries the same ids) */
+#define XT_PLANE_XL      1     /* the 6502/XL emulation plane (XLCTL GP0 block) */
 
 /* ---- services + multiplexing — block 0x500 ---------------------------------
  * The rendezvous XTOS did not have. Pipes need shared ancestry (SYS_spawn_fd), so two

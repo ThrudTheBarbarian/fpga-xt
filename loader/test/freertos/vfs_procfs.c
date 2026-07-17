@@ -216,56 +216,6 @@ static int pf_gen_video_sleep(char *buf, int sz)
     return o.n;
 }
 
-/* /OS/proc/plane-test — TEMPORARY Route-A (M6) occlusion proof. Reading it hand-
- * builds the alpha-hole scene so an HDMI grab confirms the desktop plane's alpha
- * is real end-to-end on silicon:
- *   1. fills the XL triple-buffer with magenta (known plane-behind content),
- *   2. un-parks the XL plane at a centred 960x576 rect so it actually scans out,
- *   3. repaints the desktop plane FB: opaque blue field, an ALPHA=0 hole, and an
- *      opaque grey occluder over the hole's right half (arbitrary occlusion),
- *   4. flips the compositor via CMPCFG so the desktop rides on top with alpha.
- * Kill gemd+desktop FIRST so nothing recomposites the plane FB under the test;
- * reboot restores the normal desktop. Remove this hook once M6 lands for real. */
-#ifdef XT_HW
-static void pt_fill(volatile uint32_t *fb, int stride, int x, int y, int w, int h, uint32_t px)
-{
-    for (int r = y; r < y + h; r++) {
-        volatile uint32_t *row = fb + (uint32_t)r * (uint32_t)stride;
-        for (int c = x; c < x + w; c++) row[c] = px;
-    }
-}
-static int pf_gen_plane_test(char *buf, int sz)
-{
-    pfb o = { buf, 0, sz };
-    extern void xl_window_set(int, int, int, int, int);
-    volatile uint32_t *fb = (volatile uint32_t *)0x30000000u;      /* desktop plane, stride 2048 words */
-
-    /* 1) XL content: magenta (0xRRGGBBAA) into all three writeback slots (320x192). */
-    for (int b = 0; b < 3; b++) {
-        volatile uint32_t *x = (volatile uint32_t *)(0x31000000u + (uint32_t)b * 0x00100000u);
-        for (uint32_t i = 0; i < 320u * 192u; i++) x[i] = 0xFF00FFFFu;
-    }
-    /* 2) place XL centred, scale 3 -> 960x576 at (480,252). */
-    xl_window_set(480, 252, 960, 576, 3);
-    /* 3) desktop plane: opaque blue, an alpha=0 hole, an opaque grey occluder (hole's right half). */
-    pt_fill(fb, 2048, 0,   0,   1920, 1080, 0x0000FFFFu);          /* blue,  A=FF */
-    pt_fill(fb, 2048, 660, 340, 600,  400,  0x00000000u);          /* HOLE,  A=00 -> reveal XL */
-    pt_fill(fb, 2048, 960, 340, 300,  400,  0x808080FFu);          /* grey,  A=FF -> occlude XL */
-    __asm__ volatile("dsb");
-    /* 4) flip: desktop depth2 + alpha, overlay depth3, XL depth1. */
-    *(volatile uint32_t *)0x43C00318u = 0x00010132u;
-    __asm__ volatile("dsb");
-
-    pfb_s(&o, "plane-test: XL=magenta (480,252,960,576); desktop=blue + alpha=0 hole "
-              "(660,340,600,400) + grey occluder (960,340,300,400); CMPCFG=0x00010132.\n"
-              "Expect on HDMI: blue field, a magenta box (XL through the hole) whose RIGHT HALF is grey.\n");
-    return o.n;
-}
-#else
-static int pf_gen_plane_test(char *buf, int sz)
-{ pfb o = { buf, 0, sz }; pfb_s(&o, "no compositor on qemu\n"); return o.n; }
-#endif
-
 static int pf_gen_meminfo(char *buf, int sz)
 {
     /* the DDR arena truth: pool pages handed out vs available (heap grows up,
@@ -520,7 +470,6 @@ static int pf_open(vfs_mount *m, const char *rel, int flags, vfs_file *f)
     else if (!strcmp(rel, "/video-sii")) len = pf_gen_video_sii(buf, PF_BUF);
     else if (!strcmp(rel, "/video-kick")) len = pf_gen_video_kick(buf, PF_BUF);
     else if (!strcmp(rel, "/video-sleep")) len = pf_gen_video_sleep(buf, PF_BUF);
-    else if (!strcmp(rel, "/plane-test")) len = pf_gen_plane_test(buf, PF_BUF);
     else if (!strcmp(rel, "/temp"))    len = pf_gen_temp(buf, PF_BUF);
     else if (!strcmp(rel, "/limits"))  len = pf_gen_limits(buf, PF_BUF);
     else if (!strcmp(rel, "/mounts"))  { extern int vfs_mounts_str(char *, int); len = vfs_mounts_str(buf, PF_BUF); }
@@ -548,7 +497,7 @@ static int pf_stat(vfs_mount *m, const char *rel, struct xt_stat *st)
     if (rel[0] == 0 || (rel[0] == '/' && rel[1] == 0)) { st->mode = XT_S_IFDIR; return 0; }
     if (!strcmp(rel, "/uptime") || !strcmp(rel, "/meminfo") || !strcmp(rel, "/kmsg") || !strcmp(rel, "/mounts") ||
         !strcmp(rel, "/video")  || !strcmp(rel, "/video-sii") || !strcmp(rel, "/video-kick") ||
-        !strcmp(rel, "/video-sleep") || !strcmp(rel, "/plane-test") ||
+        !strcmp(rel, "/video-sleep") ||
         !strcmp(rel, "/temp") || !strcmp(rel, "/limits")) { st->mode = XT_S_IFREG; return 0; }
     if (!strcmp(rel, "/net")) { st->mode = XT_S_IFDIR; return 0; }
     if (!strncmp(rel, "/net/", 5)) {
@@ -587,7 +536,7 @@ static int pf_readdir(vfs_mount *m, const char *rel, int index,
                 return 1;
             }
         }
-        const char *fixed[] = { "uptime", "meminfo", "kmsg", "mounts", "video", "video-sii", "video-kick", "video-sleep", "plane-test", "temp", "limits" };
+        const char *fixed[] = { "uptime", "meminfo", "kmsg", "mounts", "video", "video-sii", "video-kick", "video-sleep", "temp", "limits" };
         int fi = index - emitted;
         if (fi >= 0 && fi < (int)(sizeof fixed / sizeof fixed[0])) {
             pfb o = { name, 0, nsz };

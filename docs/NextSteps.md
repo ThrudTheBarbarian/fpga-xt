@@ -621,10 +621,11 @@ Falcon becomes a target alongside the m68k. Conclusion of the design thread: bui
 - none
 
 ## Video / compositor / sprites / textures
-- **Compositor polish (deferred)** — desktop-window-over-live-window occlusion
-  (clip-rect → bitmap override); visible-span-only plane fetch (bandwidth); tear-free
-  `front_sel` sampling at the compositor's own frame start; narrow/wide playfield
-  `src_w` tracking. *(src: docs/video/video-architecture.md, former docs/TODO.txt)*
+- **Compositor polish (deferred)** — visible-span-only plane fetch (bandwidth);
+  tear-free `front_sel` sampling at the compositor's own frame start; narrow/wide
+  playfield `src_w` tracking. *(desktop-window-over-live-window occlusion is DONE —
+  the Route-A alpha hole, no clip-rect list; docs/OS/m6-routeA-handoff.md.)*
+  *(src: docs/video/video-architecture.md, former docs/TODO.txt)*
   
 - **PL-only test-pattern mux in `plane_compositor`** — build-param gradient/colour-bar
   bypass of plane_fetch reads (old `SCANOUT_TEST_PATTERN` lived only in orphaned

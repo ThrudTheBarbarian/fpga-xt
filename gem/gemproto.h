@@ -43,6 +43,14 @@
 #define GEM_GRAB         12         /* w[2]=1 take / 0 release: ALL input routes to this client with
                                      * SCREEN coords (w[1]=-1 in the event) until release, EOF, or the
                                      * §9 liveness clock revokes it (MSG_GRAB_REVOKED). Focus-only. */
+#define GEM_WIND_PLANE   13         /* w[1]=wh w[2]=plane_id w[3]=scale (M6, Route A): "show HW
+                                     * compositor plane `plane_id` through this window's work area."
+                                     * plane_id=0 unbinds. Plane ids are the KERNEL's namespace
+                                     * (SYS_plane_window / XT_PLANE_* in xtsys.h; 1 = the XL plane);
+                                     * gemd carries them opaquely. The client never learns where its
+                                     * window is (§5): gemd owns the placement, paints the work area
+                                     * as an alpha=0 HOLE, and re-places the plane on every geometry/
+                                     * z/visibility change. One window per plane; close unbinds. */
 #define GEM_WIND_SET      9         /* THE DECLARATIVE CHROME MODEL (§11). w[1]=wh w[2]=field (WF_*)
                                      *   strings (WF_NAME/WF_INFO/WF_SUBTITLE/WF_ICON):
                                      *     w[3] = byte OFFSET of this chunk; the bytes follow at

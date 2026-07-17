@@ -98,6 +98,66 @@ void xl_window_set(int x, int y, int w, int h, int scale)
     __asm__ volatile("dsb");
 }
 
+/* M6: the generic "a HW plane follows a GEM window" placement (SYS_plane_window).
+ * One table row per compositor plane with a per-plane GP0 placement block — XL
+ * today; an m68k plane gets a row when its block exists. Placement is XLCTL-shaped:
+ * X/Y/W/H/SCALE, then EN commits (clk_pix CDC).
+ *
+ * The Route-A occlusion arrangement (docs/OS/m6-routeA-handoff.md) rides on the
+ * same call: while ANY plane is active, CMPCFG puts the desktop plane on TOP with
+ * alpha enabled — gemd paints alpha=0 over a bound window's work area, so the
+ * plane below shows through exactly there and every opaque window composited
+ * above occludes it per pixel. Order matters both ways: Route-A is written BEFORE
+ * the first plane un-parks (the reset arrangement scans XL opaque on top), and
+ * the last park lands BEFORE the reset arrangement returns. */
+#define CMPCFG_REG    ((volatile uint32_t *)0x43C00318u)  /* XT_CTRL_CMPCFG */
+#define CMPCFG_RESET  0x00000210u   /* XL depth 2 opaque on top / overlay 1 / desktop 0 */
+#define CMPCFG_ROUTEA 0x00010132u   /* desktop depth 2 + alpha / overlay 3 / XL 1 */
+
+static const uint32_t plane_blk[] = { 0, 0x43C00500u };   /* [XT_PLANE_XL] = XT_BLK_XLCTL */
+#define NPLANES ((int)(sizeof plane_blk / sizeof plane_blk[0]))
+static uint32_t g_plane_live;                             /* bitmask of active (un-parked) planes */
+
+long plane_window_set(int plane, int x, int y, int w, int h, int scale, int en)
+{
+    if (plane < 1 || plane >= NPLANES || !plane_blk[plane]) return -19;   /* -ENODEV */
+    if (scale < 1) scale = 1;
+    if (scale > 5) scale = 5;
+    /* Clip to the screen: the placement regs are unsigned 12-bit, and a window may hang
+     * off an edge (the AES clamp allows it horizontally). There is no source-offset
+     * register, so clipping the origin at 0 shows the plane's top-left column there —
+     * the picture shifts while a window overhangs the LEFT edge, and rights itself the
+     * moment it is dragged back on. Right/bottom clips are exact (origin unchanged). */
+    if (x < 0) { w += x; x = 0; }
+    if (y < 0) { h += y; y = 0; }
+    if (x + w > FB_W) w = FB_W - x;
+    if (y + h > FB_H) h = FB_H - y;
+    if (w <= 0 || h <= 0) en = 0;
+
+    uint32_t live = en ? (g_plane_live | (1u << plane))
+                       : (g_plane_live & ~(1u << plane));
+    if (!g_plane_live && live) {           /* first active plane: Route-A BEFORE un-parking */
+        *CMPCFG_REG = CMPCFG_ROUTEA;
+        __asm__ volatile("dsb");
+    }
+    if (!en) { x = 1920; y = 1080; w = 1; h = 1; scale = 1; }   /* park 1x1 off-screen; EN
+                                                                 * stays 1 (0 = legacy centred) */
+    volatile uint32_t *pl = (volatile uint32_t *)plane_blk[plane];
+    pl[0] = (uint32_t)x & 0x0FFFu;
+    pl[1] = (uint32_t)y & 0x0FFFu;
+    pl[2] = (uint32_t)w & 0x0FFFu;
+    pl[3] = (uint32_t)h & 0x0FFFu;
+    pl[4] = (uint32_t)scale & 0x7u;
+    pl[5] = 1;                              /* EN: commit the rect (clk_pix CDC) */
+    __asm__ volatile("dsb");
+    if (g_plane_live && !live) {           /* last park landed: the reset arrangement returns */
+        *CMPCFG_REG = CMPCFG_RESET;
+        __asm__ volatile("dsb");
+    }
+    g_plane_live = live;
+    return 0;
+}
+
 /* Drag-overlay plane (COMP GP0 block @0x43C0_0200): composite a w*h RGBA patch
  * from DRAG_BASE (packed, stride = w<<2 bytes) at on-screen (x,y).  Used for
  * tear-free window drag — the client copies the window into DRAG_BASE once, then
@@ -135,6 +195,11 @@ void gfxplane_init(void) { }
 void xl_window_set(int x, int y, int w, int h, int scale)
 {
     (void)x; (void)y; (void)w; (void)h; (void)scale;
+}
+long plane_window_set(int plane, int x, int y, int w, int h, int scale, int en)
+{
+    (void)plane; (void)x; (void)y; (void)w; (void)h; (void)scale; (void)en;
+    return 0;
 }
 void overlay_set(int en, int x, int y, int w, int h)
 {

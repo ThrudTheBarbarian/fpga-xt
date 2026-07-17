@@ -33,6 +33,13 @@ int      wind_resize_zone_at(int mx,int my);   // RZ_ mask under the pointer on 
                                    // (0 = none): gemd's hover cursor swap
 enum { WIND_RZ_L=1, WIND_RZ_R=2, WIND_RZ_T=4, WIND_RZ_B=8 };
 void     aes_set_menu_redraw(void (*fn)(void));   // gemd's strip-composite hook (§10)
+int      wind_plane_of(int hd);                   // M6: HW plane bound to this window (0 = none)
+void     wind_plane_link(int hd,int plane_id);    // M6: gemd's bind handler records it here —
+                                                  // draw_content paints the work area as an
+                                                  // alpha=0 hole instead of blitting the store
+void     aes_set_plane_sync(void (*fn)(void));    // M6: gemd's plane-follow hook; runs after
+                                                  // EVERY composite (wind_redraw_area), because
+                                                  // every geometry/z/visibility change ends there
 int      wind_next_of_client(int client,int from); // walk a dead client's windows (§9)
 int      wind_vsb_col(int hd,int*x,int*y,int*w,int*h,int*thy,int*thh);
                                                    // scrollbar column + thumb (screen px);

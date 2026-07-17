@@ -65,28 +65,34 @@ reconfig on `clk_pix` is stable). `fbgrab` only captures **plane 0** (the
 composite goes straight to the HDMI pins), so this can only be seen on the
 monitor, not grabbed.
 
-## What's LEFT — M6 proper (the generic bind)
+## M6 proper (the generic bind) — DONE, board-verified 2026-07-17
 
-1. **`WIND_PLANE { wh, plane_id }`** — client→gemd wire message: "show `plane_id`
-   in this window; `plane_id=0` unbinds." Generic from day one (XL=1, m68k=2, …).
-   gemd stores (window→plane_id); close/minimise unbinds.
-2. **`SYS_plane_window(plane_id, x, y, w, h, scale, enable)`** — generalise the
-   XL-specific `SYS_xl_window` (0x603) into a kernel table `plane_id → GP0 block
-   base` (XLCTL is `0x43C0_0500`; m68k gets its own block). PS-only per plane.
-3. **gemd drives it**: on any geometry change of a plane-bound window (move/size/
-   scroll/z/work-area), gemd writes `CMPCFG=0x00010132` once (desktop on top +
-   alpha), calls `SYS_plane_window` with the window's screen rect, and **paints
-   alpha=0 into the desktop plane over the window's visible work area** (its normal
-   compositing already draws occluders opaquely on top → per-pixel occlusion for
-   free). `enable=0` when minimised/fully occluded.
-4. **Remove the temp `/OS/proc/plane-test` hook** (`vfs_procfs.c`,
-   `pf_gen_plane_test` + the 3 dispatch registrations) once (3) works.
+All four items are in (see docs/OS/gemd-plan.md §M6 for the living description):
 
-Open corner (documented, deferred): two emulator windows overlapping *each other*
-resolve by plane depth (the blend is top-2), not window z. Rare; fine for v1.
+1. **`GEM_WIND_PLANE {wh, plane_id, scale}`** (opcode 13) — client API
+   `wind_plane_bind(wh, plane_id, scale)`; `plane_id=0` unbinds; ids are the
+   kernel's namespace (`XT_PLANE_XL=1`). One window per plane; close/client-death
+   unbinds. *(`scale` joined the message: gemd must not know a plane's source
+   dimensions, so the client says how big a source pixel is.)*
+2. **`SYS_plane_window(plane, x, y, w, h, scale, en)`** (0x605) — kernel table
+   `plane_id → GP0 placement block` in `gfxplane.c` (`plane_window_set`); clips
+   signed x/y to the screen; owns the CMPCFG flip: first active plane writes
+   Route-A **before** un-parking, last park lands **before** the reset arrangement
+   returns. `SYS_xl_window` (0x603) stays as-is (frozen ABI; boot park uses it).
+3. **gemd drives it**: the bind marks the awin, `draw_content` composites the work
+   area as an alpha=0 hole, and `aes_set_plane_sync(gemd_plane_sync)` re-places the
+   plane after EVERY composite (all geometry/z/visibility changes end in
+   `wind_redraw_area`), change-detected. `xl_sync()` in `desktop.c` IS the bind now.
+4. **`/OS/proc/plane-test` removed** (generator + 3 registrations in vfs_procfs.c).
 
-Also revisit: `xl_sync()` in `desktop.c` is currently a deliberate no-op — it
-becomes the `WIND_PLANE` bind for the XL window.
+Open corners (documented, deferred): two emulator windows overlapping *each other*
+resolve by plane depth (the blend is top-2), not window z; a window overhanging the
+LEFT screen edge shifts the plane picture (no source-offset register — the origin
+clamps at 0).
+
+**Board-verified (2026-07-17):** live XL video framed in the 6502 emulator window on
+the textured wallpaper; drag, per-pixel occlusion by an ordinary window, edge clipping
+and close/unpark all behave; the desktop is pixel-normal with no plane bound.
 
 ## Pointers
 - Memory: `m6_routeA_alpha_hole.md`

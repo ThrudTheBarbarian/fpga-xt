@@ -2838,6 +2838,16 @@ static long do_syscall(uint32_t num, long a0, long a1, long a2)
                     (int)((uint32_t)a1 >> 16), (int)(a1 & 0xFFFF));
         return 0;
     }
+    case SYS_plane_window: {                                /* (plane<<16|scale<<8|en, x<<16|y, w<<16|h) */
+        extern long plane_window_set(int, int, int, int, int, int, int);
+        return plane_window_set((int)(((uint32_t)a0 >> 16) & 0xFFFFu),
+                                (int)(int16_t)((uint32_t)a1 >> 16),   /* x/y SIGNED: a window */
+                                (int)(int16_t)(a1 & 0xFFFF),          /* may hang off an edge */
+                                (int)(int16_t)((uint32_t)a2 >> 16),
+                                (int)(int16_t)(a2 & 0xFFFF),
+                                (int)(((uint32_t)a0 >> 8) & 0xFFu),
+                                (int)((uint32_t)a0 & 0xFFu));
+    }
     case SYS_cursor_shape: {                                 /* (shape) -> HW cursor glyph */
 #ifdef XT_HW
         extern void cursor_set_shape(int);

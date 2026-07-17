@@ -596,6 +596,17 @@ void wind_redraw_win(int handle);                   // repaint just one window's
 // under the titlebar). Under gemd the scroll consequence shifts the backing store with a blit;
 // without this the blit drags a stale copy of the pinned strip through the content.
 void wind_pin_top(int handle, int px);
+// M6: "show HW compositor plane `plane_id` through this window's work area" — the emulator
+// window's live video. plane_id=0 unbinds; `scale` is the plane's integer zoom (size the work
+// area to src*scale). Under gemd this goes on the wire (GEM_WIND_PLANE): the plane is gemd's
+// (Rule 1) and a client is never told where its window is, so gemd places the plane and keeps
+// it tracking the window through move/resize/z/close. Ordinary windows above occlude it per
+// pixel (the Route-A alpha hole). On the SDL host there are no HW planes: no-op, the content
+// callback is the picture.
+void wind_plane_bind(int handle, int plane_id, int scale);
+// Plane ids = the kernel's SYS_plane_window namespace (XT_PLANE_* in xtsys.h), aliased here so
+// a portable client needs no kernel header.
+#define AES_PLANE_XL 1
 // THE DIRTY-RECT TOOL: repaint one RECT of one window's content, in the SAME coordinate
 // space the content callback draws in (client: surface coords; local: screen coords — i.e.
 // whatever you measured your widgets in when you drew them).  Use it when a ROW changed, a

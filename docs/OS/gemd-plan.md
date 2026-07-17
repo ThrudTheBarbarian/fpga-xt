@@ -16,7 +16,7 @@ phase 1 is and is not). This file is the *implementation* plan and the running s
 | **M4 — input: routing, focus, live chrome** | **DONE, board-verified** (see below) |
 | M4b — the menu strip (§10), grabs, liveness | **DONE, board-verified** — per-app strip surface, input grab, §9 revoke |
 | M5 — resize: client-driven (`wind_set`), scroll/content size | **DONE, board-verified.** geometry-as-request (WF_CURRXYWH/Fit), live resize, both-axis scroll + content-size, wheel, the resize discipline, horizontal scrollbars, and the chrome rework (info bar to top, proximity resize + cursor affordance). Optional follow-up only: theme-able hover-resize brackets. |
-| M6 — the XL plane | *blocked by design: a client cannot place a plane — see below* |
+| M6 — the XL plane (generic: ANY plane) | **DONE, board-verified (2026-07-17)** — `WIND_PLANE` bind + `SYS_plane_window` + the Route-A alpha hole; see below |
 | M7 — **the gate**: `SEC_PLANE` → PL0-none; **+ the engine composite** (designed, deferred — see below) | the gate is a kernel flip; the composite swap is the §14 seam move |
 
 ## M0 (done): services + poll — block 0x500
@@ -413,14 +413,39 @@ at gemd startup): the fuller was maximising to the full 1920×1080 with no room 
 M4b menu bar. `W_BOTTOM` windows are exempt from the top clamp — the desktop is wallpaper and
 must run UNDER the bar, which draws over it (always-on-top chrome) when M4b lands.
 
-## M6 is blocked BY DESIGN, and that is the right answer
+## M6 — the plane bind (the "new server call" the blocked-by-design analysis asked for)
 
-The XL plane (emulator video) is placed with `SYS_xl_window(x,y,w,h)` — **screen** coordinates.
-A client does not know where its window is and may not ask (§5), and a plane is gemd's (Rule 1).
-So `xl_sync()` in `desktop.c` is now a **no-op**, deliberately: `wind_get(WF_WORKXYWH)` honestly
-returns SURFACE coordinates in client mode, and faking the placement with those numbers would put
-the emulator picture at the top-left of the screen and call it working. **M6 needs a new server
-call** ("gemd, put plane N on my window"), which is a protocol decision, not a rearrangement.
+A plane is gemd's (Rule 1) and a client does not know where its window is (§5) — so the bind
+is a **protocol message**, and the client's whole involvement is one call:
+
+- **`wind_plane_bind(wh, plane_id, scale)`** → `GEM_WIND_PLANE {wh, plane_id, scale}` on the
+  wire. `plane_id=0` unbinds; ids are the KERNEL's namespace (`XT_PLANE_XL=1` in xtsys.h,
+  aliased `AES_PLANE_XL` in aes.h), generic from day one (m68k gets an id when its GP0 block
+  exists). One window per plane; a re-bind of the same window updates the scale; close or
+  client death unbinds. `desktop.c`'s `xl_sync()` is this call.
+- **gemd owns the placement.** The bind handler records (plane → window) and marks the awin;
+  from then on `draw_content` composites that window's work area as an **alpha=0 HOLE**
+  (`gfx_fill_rect` with a raw 0-alpha word — the VDI's own paths force alpha opaque, which is
+  why nothing else ever punches one by accident), and every ordinary window composited above
+  stamps opaque pixels: **per-pixel occlusion of the live plane, no clip-rect list** (Route A,
+  HW-proven — docs/OS/m6-routeA-handoff.md, memory `m6_routeA_alpha_hole`).
+- **The plane follows the window through ONE hook.** `aes_set_plane_sync(gemd_plane_sync)`
+  runs at the end of every `wind_redraw_area` — every move, resize drag, raise, maximise,
+  scroll-column change and close ends in a composite, so there is no mutation path to hook
+  individually. gemd re-reads the work-area screen rect and calls `SYS_plane_window` only when
+  it changed (change-detected: a composite that moved nothing costs one comparison).
+- **`SYS_plane_window(plane, x, y, w, h, scale, en)` (0x605)** generalises `SYS_xl_window`
+  over a kernel table `plane_id → GP0 placement block` (XLCTL `0x43C0_0500`; XLCTL-shaped:
+  X/Y/W/H/SCALE, EN commits across the clk_pix CDC). The kernel clips to the screen (x/y are
+  signed — a window may overhang an edge) and owns the **CMPCFG arrangement**: the first
+  active plane writes Route-A (`0x00010132`, desktop on top + alpha) BEFORE un-parking, the
+  last park lands BEFORE the reset arrangement (`0x210`, XL opaque on top) returns — ordered
+  so the reset arrangement never scans an un-parked plane. PS-only; no bitstream change.
+
+v1 corners, deliberate: a window overhanging the LEFT edge shifts the plane picture (the
+placement block has no source-offset register — the origin clamps at 0); two plane-bound
+windows overlapping EACH OTHER resolve by plane depth, not window z (the blend is top-2).
+Both documented in the handoff doc; neither blocks the single-emulator-window case.
 
 ## Traps found while doing M4 (do not rediscover)
 
@@ -512,7 +537,8 @@ client at 1920x1080.
 
 **Client → gemd:** `WIND_CREATE {kind,x,y,w,h} -> WIND_CREATED {wh, surf_id, cap_w, cap_h}`,
 `WIND_OPEN`, `WIND_SET`, `WIND_CLOSE`, `WIND_DELETE`, `MENU_BAR -> MENU_SURF`,
-`GRAB_BEGIN/END`, `SURF_DROP {surf_id}`, and:
+`GRAB_BEGIN/END`, `SURF_DROP {surf_id}`, `WIND_PLANE {wh, plane_id, scale}` (M6: show a HW
+plane through this window's work area; 0 unbinds), and:
 
 ```c
 DAMAGE { u16 wh;                /* 0 = the menu strip */

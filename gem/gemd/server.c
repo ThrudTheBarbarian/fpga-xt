@@ -526,12 +526,82 @@ static void do_wind_set(gclient *c, int ci, const gem_msg *m)
     }
 }
 
+/* ---- M6: HW planes bound to windows (Route A) --------------------------------------------
+ * gemd owns plane placement (Rule 1). A client asks with GEM_WIND_PLANE {wh, plane_id, scale};
+ * gemd records the bind (wind_plane_link — draw_content then composites that window's work
+ * area as an ALPHA=0 HOLE) and keeps the plane's screen rect tracking the work area through
+ * the plane-sync hook, which the AES runs after EVERY composite — every geometry, z-order and
+ * visibility change ends in wind_redraw_area, so there is no mutation path to miss. The kernel
+ * (SYS_plane_window) owns the compositor arrangement: the first active plane flips CMPCFG to
+ * Route A (desktop plane on top, alpha-enabled), the last park restores the reset one. */
+#define GEMD_NPLANES 4                    /* ids 1..3; the kernel refuses ones that don't exist */
+static struct {
+    int hd, scale;                        /* the bind (hd 0 = free) */
+    int sx, sy, sw, sh, sscale, sen;      /* last state SENT to the kernel: a composite that
+                                           * moved nothing costs one comparison, not a syscall */
+} g_pl[GEMD_NPLANES];
+
+static void plane_send(int p, int x, int y, int w, int h, int scale, int en)
+{
+    if (g_pl[p].sx == x && g_pl[p].sy == y && g_pl[p].sw == w && g_pl[p].sh == h &&
+        g_pl[p].sscale == scale && g_pl[p].sen == en) return;
+    if (sys_plane_window(p, x, y, w, h, scale, en) != 0) return;   /* unknown plane: stay unsent */
+    g_pl[p].sx = x; g_pl[p].sy = y; g_pl[p].sw = w; g_pl[p].sh = h;
+    g_pl[p].sscale = scale; g_pl[p].sen = en;
+}
+
+static void gemd_plane_sync(void)                 /* the aes_set_plane_sync hook */
+{
+    for (int p = 1; p < GEMD_NPLANES; p++) {
+        if (!g_pl[p].hd) continue;
+        int ox, oy, ww, wh;
+        wind_work_origin(g_pl[p].hd, &ox, &oy);
+        wind_work_size(g_pl[p].hd, &ww, &wh);
+        plane_send(p, ox, oy, ww, wh, g_pl[p].scale, ww > 0 && wh > 0);
+    }
+}
+
+static void plane_unbind(int p)
+{
+    if (!g_pl[p].hd) return;
+    wind_plane_link(g_pl[p].hd, 0);
+    g_pl[p].hd = 0;
+    plane_send(p, 0, 0, 0, 0, 1, 0);              /* park it off-screen; the kernel restores the
+                                                   * reset compositor arrangement after the last */
+}
+
+static void do_wind_plane(gclient *c, int ci, const gem_msg *m)
+{
+    int hd = m->w[1], p = m->w[2], scale = m->w[3];
+    if (wind_client_of(hd) != ci) return;                    /* not this client's window: ignore */
+    if (p == 0) {                                            /* unbind, then composite the work
+                                                              * area back to ordinary content */
+        for (int i = 1; i < GEMD_NPLANES; i++)
+            if (g_pl[i].hd == hd) plane_unbind(i);
+        wind_redraw_win(hd);
+        return;
+    }
+    if (p < 1 || p >= GEMD_NPLANES) { wind_error(c, 4); return; }
+    if (g_pl[p].hd && g_pl[p].hd != hd) {                    /* one window per plane; re-binding
+                                                              * the SAME window updates the scale */
+        printf("gemd: plane %d is wh=%d's — pid %d refused\n", p, g_pl[p].hd, c->pid);
+        wind_error(c, 4); return;
+    }
+    g_pl[p].hd = hd; g_pl[p].scale = scale;
+    wind_plane_link(hd, p);
+    printf("gemd: wh=%d shows plane %d (scale %d, pid %d)\n", hd, p, scale, c->pid);
+    wind_redraw_win(hd);       /* punch the hole; the plane-sync hook then places the plane */
+}
+
 /* ---- client lifecycle ------------------------------------------------------------------- */
 
 static void drop_window(int hd)
 {
     if (hd < 1 || hd >= GEMD_MAXW) return;
     gemd_forget_window(hd);                      /* it cannot hold the focus while it is gone */
+    for (int p = 1; p < GEMD_NPLANES; p++)       /* M6: a bound plane parks BEFORE the vacated
+                                                  * rect recomposites (close and client death) */
+        if (g_pl[p].hd == hd) plane_unbind(p);
     wind_close(hd);                              /* AES: out of the z-order, and RECOMPOSITE the
                                                   * rect it vacated — the window disappears, and
                                                   * no client was asked anything (§3) */
@@ -586,6 +656,7 @@ static void client_readable(int ci)
         case GEM_GRAB:        gemd_set_grab(ci, m.w[2]); break;
         case GEM_WIND_CREATE: do_wind_create(c, ci, &m); break;
         case GEM_WIND_OPEN:   do_wind_open(c, ci, &m);   break;
+        case GEM_WIND_PLANE:  do_wind_plane(c, ci, &m);  break;
         case GEM_WIND_SET:    do_wind_set(c, ci, &m);    break;
         case GEM_DAMAGE:      do_damage(ci, &m);         break;
         case GEM_WIND_CLOSE:  if (wind_client_of(m.w[1]) == ci) drop_window(m.w[1]); break;
@@ -759,6 +830,8 @@ int gemd_run(void)
     wind_set_overlay(NULL, NULL, NULL, gemd_present);   /* aes_flush_rect -> the present. NULL
                                                          * begin: drags keep the classic
                                                          * redraw-per-motion path for now. */
+    aes_set_plane_sync(gemd_plane_sync);                /* M6: bound HW planes follow their
+                                                         * windows, re-checked per composite */
     vdi_init(&g_plane);
     // THE FONT LIVES IN TWO PLACES, because we boot from two. The SD card stages it at
     // /OS/fonts (loader/Makefile: $(SDSTAGE)/OS/fonts), but the romfs — which is all we have
