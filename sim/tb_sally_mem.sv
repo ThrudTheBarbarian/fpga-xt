@@ -70,6 +70,9 @@ module tb_sally_mem;
 
     wire [7:0] cpu_code_bank_q, cpu_data_bank_q;
     wire       mem_busy;
+    logic [15:0] tb_rom_addr = 16'h0000;   // ROM-loader upload port (the sally_rom_loader path)
+    logic  [7:0] tb_rom_data = 8'h00;
+    logic        tb_rom_we   = 1'b0;
     logic [7:0] portb = 8'h02;     // default (XL): OS off (bit0=0) + BASIC off (bit1=1) -> both windows RAM
     logic       tb_rdy = 1'b1;     // CPU RDY: 1 for the existing tests; A.5 toggles it to
                                    // exercise the banked-read busy-persist (rdy drops mid-fill).
@@ -132,9 +135,9 @@ module tb_sally_mem;
         .m_axi_wready  (axi_wready),
         .m_axi_bvalid  (axi_bvalid),
         .m_axi_bready  (axi_bready),
-        .rom_addr    (16'h0000),
-        .rom_data    (8'h00),
-        .rom_we      (1'b0),
+        .rom_addr    (tb_rom_addr),
+        .rom_data    (tb_rom_data),
+        .rom_we      (tb_rom_we),
         // Tie off ports we don't exercise in this testbench.
         .stack_op    (1'b0),
         .s_high      (4'd0),
@@ -505,6 +508,30 @@ module tb_sally_mem;
             do_write(16'hFFFC, 8'hEE);
             do_read (16'hFFFC, v);
             expect_eq("A.11 BRAM[$FFFC]", v, 8'hEE);
+        end
+
+        // A.12: THE ROM-LOADER UPLOAD PATH (rom_we -> mem[] -> CPU read).
+        // The board evidence (2026-07-17) says an A9 ROM-window upload of the
+        // patched OS never reaches the CPU's executed ROM.  This is the exact
+        // untested link: pulse rom_we like the loader does, then read that
+        // address back on the CPU port with OS ROM enabled.
+        $display("[A.12] ROM-loader write (rom_we) -> CPU read");
+        portb = 8'h03;                   // OS ROM ON (bit0=1), BASIC off (bit1=1)
+        // upload two bytes at OS-high ($E459 = SIOV target lo, the real patch site)
+        @(negedge clk); tb_rom_addr = 16'hE45A; tb_rom_data = 8'h65; tb_rom_we = 1'b1;
+        @(negedge clk); tb_rom_addr = 16'hE45B; tb_rom_data = 8'hCB; tb_rom_we = 1'b1;
+        @(negedge clk); tb_rom_we = 1'b0;
+        @(negedge clk); @(negedge clk);
+        begin logic [7:0] v;
+            do_read(16'hE45A, v); expect_eq("A.12 rom_we->read $E45A", v, 8'h65);
+            do_read(16'hE45B, v); expect_eq("A.12 rom_we->read $E45B", v, 8'hCB);
+        end
+        // and an OS-low site ($C123) for good measure
+        @(negedge clk); tb_rom_addr = 16'hC123; tb_rom_data = 8'h5A; tb_rom_we = 1'b1;
+        @(negedge clk); tb_rom_we = 1'b0;
+        @(negedge clk); @(negedge clk);
+        begin logic [7:0] v;
+            do_read(16'hC123, v); expect_eq("A.12 rom_we->read $C123", v, 8'h5A);
         end
 
         // Reset portb to default for any subsequent tests.
