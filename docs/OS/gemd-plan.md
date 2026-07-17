@@ -455,6 +455,21 @@ placement block has no source-offset register — the origin clamps at 0); two p
 windows overlapping EACH OTHER resolve by plane depth, not window z (the blend is top-2).
 Both documented in the handoff doc; neither blocks the single-emulator-window case.
 
+**THE FETCH-STARVATION RULE (board-found the day M7 landed).** The blitter (HP1) and the
+desktop scan-out fetcher (HP0) share a DDRC port, QoS pins are tied 0 in fabric ("inert
+without HPR arb config"), and the fetch line FIFO is marginal against FC bursts: engine
+traffic — and ONLY engine traffic, the A/B was zero-vs-climbing overrun counters — starves
+the fetcher. Symptoms by degree: a slow overrun trickle = invisible single-frame
+line-segment dropouts; a sustained stream (the original per-motion engine composite during
+a resize drag) = visible "ghosted" halftone rows (fetch-beat dropouts, NOT memory
+corruption — a red herring that cost a parity-bug detour) and eventually a monitor
+stale-lock (RHS loss; `/OS/proc/video-kick` recovers). Mitigations shipped: engine blits
+are BANDED (128 rows per fenced submit — composite AND present), live sizer-drag frames
+composite on the CPU (`wind_drag_sizing()`), and `/OS/etc/gemd-noengine` is the chicken
+bit that forces the whole display path to CPU (the A/B instrument, kept). hdmi-mon
+coalesces residual overrun lines to 1/5 s. The REAL fix is RTL (deeper/earlier
+plane_fetch FIFO or fabric arb priority) — NextSteps.
+
 ## Traps found while doing M4 (do not rediscover)
 
 - **A resident init cannot be waited for.** `init(1)` became the reaper and stopped exiting — but

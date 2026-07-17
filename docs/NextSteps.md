@@ -619,6 +619,15 @@ Falcon becomes a target alongside the m68k. Conclusion of the design thread: bui
 - none
 
 ## Video / compositor / sprites / textures
+- **plane_fetch vs blitter DDR arbitration (RTL — the real fix for the overrun
+  trickle)** — the desktop fetcher (HP0) loses to blitter bursts (HP1) on their
+  shared DDRC port: single-frame line-segment corruption, ZERO overruns with the
+  engine off (board A/B 2026-07-17). PS QoS is a dead end (QOS pins tied 0 in
+  fabric, "inert without HPR arb config"). Fix in fabric: deeper/earlier
+  plane_fetch line FIFO, or arb priority for the fetcher. gemd-side mitigations
+  shipped (128-row banded engine blits + CPU composite during live drags) make it
+  visually clean; hdmi-mon coalesces the residual events to 1 line/5 s.
+  *(src: gemd-plan.md §M7, hdmi.c hdmi-mon)*
 - **Compositor polish (deferred)** — visible-span-only plane fetch (bandwidth);
   tear-free `front_sel` sampling at the compositor's own frame start; narrow/wide
   playfield `src_w` tracking. *(desktop-window-over-live-window occlusion is DONE —

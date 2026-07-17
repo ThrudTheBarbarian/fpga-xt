@@ -163,33 +163,38 @@ static void gemd_present(int x, int y, int w, int h)
     if (w <= 0 || h <= 0) return;
 
     if (g_blitfd >= 0) {
-        /* THE ENGINE PRESENTS: one COPY, wallpaper -> plane, same rect both sides. The
+        /* THE ENGINE PRESENTS: COPY, wallpaper -> plane, same rect both sides. The
          * driver cleans the cached source rows itself. Rounded out to even x/width —
          * BLOCK_BLIT refuses odd source X — which for a present only re-copies a column
          * that is identical anyway. SYNCHRONOUS for now: the very next composite may
          * redraw this back-buffer rect, and the engine must have finished READING it
-         * (still ~2x the CPU copy; async + in-flight-rect tracking is the follow-up). */
+         * (still ~2x the CPU copy; async + in-flight-rect tracking is the follow-up).
+         * BANDED, 128 rows per fenced submit (the fetch-starvation rule, see
+         * gemd_compose_blit): the present rides the scan-out fetcher's DDRC port, and a
+         * monolithic near-screen present holds it long enough to OVERRUN the display —
+         * board-observed at plain wind_open, before any drag. The inter-band fences are
+         * the fetcher's refill gaps. */
         int bx = x & ~1, bw = (w + (x - bx) + 1) & ~1;
-        struct xt_blit_cmd c; memset(&c, 0, sizeof c);
-        c.op = XT_BLIT_COPY;
-        c.dst_id = XT_BLIT_SURF_PLANE; c.src_id = XT_BLIT_SURF_WALLPAPER;
-        c.dx = (uint16_t)bx; c.dy = (uint16_t)y;
-        c.dw = (uint16_t)bw; c.dh = (uint16_t)h;
-        c.sx = (uint16_t)bx; c.sy = (uint16_t)y;
         long long t0 = PROF_NOW();
-        long seq = sys_write(g_blitfd, &c, sizeof c);
-        long long t1 = PROF_NOW();
-        if (seq >= 0) {
+        int ok = 1;
+        for (int band = 0; band < h && ok; band += 128) {
+            int bh = h - band > 128 ? 128 : h - band;
+            struct xt_blit_cmd c; memset(&c, 0, sizeof c);
+            c.op = XT_BLIT_COPY;
+            c.dst_id = XT_BLIT_SURF_PLANE; c.src_id = XT_BLIT_SURF_WALLPAPER;
+            c.dx = (uint16_t)bx; c.dy = (uint16_t)(y + band);
+            c.dw = (uint16_t)bw; c.dh = (uint16_t)bh;
+            c.sx = (uint16_t)bx; c.sy = (uint16_t)(y + band);
+            long seq = sys_write(g_blitfd, &c, sizeof c);
             unsigned want = (unsigned)seq;
-            if (sys_ioctl(g_blitfd, XT_BLIT_WAIT, &want) == 0) {   /* ONE syscall, kernel
-                                                                    * spins-then-sleeps: no
-                                                                    * more SVC-storm fence */
-                PROF_ADD(blit, t1 - t0); PROF_ADD(fence, PROF_NOW() - t1);
-                PROF_INC(presents);
-                return;
-            }
+            if (seq < 0 || sys_ioctl(g_blitfd, XT_BLIT_WAIT, &want) != 0) ok = 0;
         }
-        gemd_log("blitter present failed (seq %ld) — CPU present from here on", seq);
+        if (ok) {
+            PROF_ADD(blit, PROF_NOW() - t0);
+            PROF_INC(presents);
+            return;
+        }
+        gemd_log("blitter present failed — CPU present from here on");
         sys_close(g_blitfd); g_blitfd = -1;      /* never wedge the present on a sick engine */
     }
 
@@ -228,6 +233,15 @@ static int gemd_compose_blit(int surf_id, int dx, int dy, int sx, int sy, int w,
     if (g_blitfd < 0 || !g_scan_on || surf_id < 0) return -1;
     if ((long)w * h < 4096) return -1;               /* syscall+fence beats memcpy only past
                                                       * a few thousand pixels: small = CPU */
+    /* THE FETCH-STARVATION RULE (board-found, 2026-07-17): the blitter (HP1) and the
+     * scan-out fetcher (HP0) share a DDRC port, and QoS pins are tied off in fabric —
+     * a sustained FC stream simply out-arbitrates the display. A live resize drag
+     * composites the union rect PER MOTION (~21/s x ~16 MB); with the engine that
+     * monopolized the port and the desktop fetch OVERRAN — line-segment "ghost" rows,
+     * and enough sustained starvation to stale-lock the monitor. Drag frames are
+     * throwaway: composite them on the CPU (its traffic rides the CPU/L2 port), and
+     * keep the engine for settled frames. */
+    if (wind_drag_sizing()) return -1;
     const gsurface *s = 0;
     for (int i = 1; i < GEMD_MAXW; i++)
         if (g_surf[i].id == surf_id) { s = &g_surf[i]; break; }
@@ -256,17 +270,28 @@ static int gemd_compose_blit(int surf_id, int dx, int dy, int sx, int sy, int w,
     }
     if (w <= 0) return 0;                            /* the edge columns were the whole rect */
 
-    struct xt_blit_cmd c; memset(&c, 0, sizeof c);
-    c.op = XT_BLIT_COPY;
-    c.dst_id = XT_BLIT_SURF_WALLPAPER; c.src_id = surf_id;
-    c.dx = (uint16_t)dx; c.dy = (uint16_t)dy; c.dw = (uint16_t)w; c.dh = (uint16_t)h;
-    c.sx = (uint16_t)sx; c.sy = (uint16_t)sy;
-    long seq = sys_write(g_blitfd, &c, sizeof c);    /* cached dst: the DRIVER fences +
-                                                      * invalidates before returning */
-    if (seq < 0) return -1;                          /* fallback redoes the rect: harmless */
-    unsigned want = (unsigned)seq;                   /* belt: a lost fence would hand the
-                                                      * present stale back-buffer rows */
-    return sys_ioctl(g_blitfd, XT_BLIT_WAIT, &want) == 0 ? 0 : -1;
+    /* BANDED, 128 rows per submit: a monolithic near-screen blit holds the shared DDRC
+     * port for ~10 ms — 150+ scanlines of fetch starvation. Each band is synchronous in
+     * the driver (fence + dst cache maintenance), so the inter-band gaps are real port
+     * idle the fetcher refills in. Cost when small: nothing (one band). */
+    for (int band = 0; band < h; band += 128) {
+        int bh = h - band > 128 ? 128 : h - band;
+        struct xt_blit_cmd c; memset(&c, 0, sizeof c);
+        c.op = XT_BLIT_COPY;
+        c.dst_id = XT_BLIT_SURF_WALLPAPER; c.src_id = surf_id;
+        c.dx = (uint16_t)dx; c.dy = (uint16_t)(dy + band);
+        c.dw = (uint16_t)w;  c.dh = (uint16_t)bh;
+        c.sx = (uint16_t)sx; c.sy = (uint16_t)(sy + band);
+        long seq = sys_write(g_blitfd, &c, sizeof c);    /* cached dst: the DRIVER fences +
+                                                          * invalidates before returning */
+        if (seq < 0) return -1;                          /* CPU redoes the whole rect: the
+                                                          * bands already written are simply
+                                                          * rewritten identical — harmless */
+        unsigned want = (unsigned)seq;                   /* belt: a lost fence would hand the
+                                                          * present stale back-buffer rows */
+        if (sys_ioctl(g_blitfd, XT_BLIT_WAIT, &want) != 0) return -1;
+    }
+    return 0;
 }
 static int         g_ifd = -1;          /* /OS/dev/input — an fd, so it joins the ONE poll (M4) */
 
@@ -870,8 +895,14 @@ int gemd_run(void)
         g_plane.px = (uint32_t *)wp.addr;
         /* the ENGINE does the present when the device exists (433 vs ~200 MB/s, and the
          * driver owns the cache-clean); a missing device or a failed submit falls back
-         * to the CPU rows — qemu never has the engine, and must never need it */
-        g_blitfd = (int)sys_open("/dev/blitter", 2);
+         * to the CPU rows — qemu never has the engine, and must never need it.
+         * /OS/etc/gemd-noengine = the chicken bit: don't open the engine AT ALL, so the
+         * ENTIRE display path (composite + present) is CPU — the clean A/B for anything
+         * suspected of being the blitter's fault (fetch-overrun hunts, FC bugs). */
+        { int nofd = (int)sys_open("/OS/etc/gemd-noengine", 0);
+          if (nofd >= 0) { sys_close(nofd); g_blitfd = -1;
+                           gemd_log("engine DISABLED (/OS/etc/gemd-noengine) — CPU composite + present"); }
+          else g_blitfd = (int)sys_open("/dev/blitter", 2); }
         gemd_log("present via %s", g_blitfd >= 0 ? "/dev/blitter" : "CPU rows");
 #ifdef INSTRUMENTATION
         /* membench: memcpy 1MB along each edge of the {shm, malloc} x {backbuf} square and
@@ -926,7 +957,9 @@ int gemd_run(void)
                                                          * windows, re-checked per composite */
     if (g_blitfd >= 0)
         aes_set_compose_blit(gemd_compose_blit);        /* M7: opaque content blits go to the
-                                                         * engine; refusals fall back to CPU */
+                                                         * engine; refusals fall back to CPU.
+                                                         * (The /OS/etc/gemd-noengine chicken bit
+                                                         * left g_blitfd at -1 above.) */
     vdi_init(&g_plane);
     // THE FONT LIVES IN TWO PLACES, because we boot from two. The SD card stages it at
     // /OS/fonts (loader/Makefile: $(SDSTAGE)/OS/fonts), but the romfs — which is all we have

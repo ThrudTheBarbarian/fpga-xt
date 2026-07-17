@@ -375,7 +375,14 @@ static void hdmi_diag_mon_task(void *arg)
                  | pix_stall | (frm_stall >= 3);
         if (fire) {
             TickType_t now = xTaskGetTickCount();
-            if ((now - last_evt) >= pdMS_TO_TICKS(50)) {          /* coalesce bursts */
+            /* Coalesce 5 s (was 50 ms): plane-fetch overruns are a KNOWN cosmetic margin
+             * against blitter bursts on the shared DDRC port (single-frame, single-line
+             * events; zero with the engine off — board A/B 2026-07-17, gemd-plan §M7).
+             * The first event after quiet still logs the INSTANT it happens, and the
+             * line carries cumulative totals, so a 5 s window loses nothing — it just
+             * stops a busy drag carpet-bombing dmesg with development data. The real
+             * fix is RTL (deeper fetch FIFO / fabric arb priority) — NextSteps. */
+            if ((now - last_evt) >= pdMS_TO_TICKS(5000)) {
                 last_evt = now;
                 klog("[hdmi-mon] ");
                 if (!lk2)                                  klog("CLKPIX-UNLOCKED ");
