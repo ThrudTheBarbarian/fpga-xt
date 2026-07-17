@@ -596,6 +596,20 @@ sally_mem_page: $(BUILD_DIR)/tb_sally_mem_page.vvp
 $(BUILD_DIR)/tb_sally_mem_page.vvp: $(SALLY_MEM_HDL) tb_sally_mem.sv axi_slave_mem.sv | $(BUILD_DIR)
 	$(IVERILOG) $(SV_FLAGS) -D SALLY_BANK_MODE='"PAGE"' -D PAGE_BACKEND -o $@ -s tb_sally_mem $(SALLY_MEM_HDL) axi_slave_mem.sv tb_sally_mem.sv
 
+# ---- ROM-loader AXI-Lite write path (the OS-image upload window) --------
+# Drives the Zynq PS ordering (AWVALID, wait AWREADY, THEN WVALID) that
+# deadlocked the old FSM and hung the A9 on the window's first real use, plus
+# the held-BREADY case that collapsed bvalid.  Both fixed 2026-07-17.
+rom_loader: $(BUILD_DIR)/tb_sally_rom_loader.vvp
+	@echo "=== sally_rom_loader (AXI write path) ==="
+	@$(VVP) -N $< | tee $(BUILD_DIR)/tb_sally_rom_loader.log
+	@grep -q '\*\*\* SALLY_ROM_LOADER OK \*\*\*' $(BUILD_DIR)/tb_sally_rom_loader.log || \
+	    (echo "FAIL: tb_sally_rom_loader"; exit 1)
+	@echo "PASS: tb_sally_rom_loader"
+
+$(BUILD_DIR)/tb_sally_rom_loader.vvp: $(HDL_DIR)/sally_rom_loader.sv $(HDL_DIR)/cdc_fifo_1w1r.sv tb_sally_rom_loader.sv | $(BUILD_DIR)
+	$(IVERILOG) $(SV_FLAGS) -o $@ -s tb_sally_rom_loader $(HDL_DIR)/sally_rom_loader.sv $(HDL_DIR)/cdc_fifo_1w1r.sv tb_sally_rom_loader.sv
+
 # ---- M24-5 — SALLY bus arbitration -------------------------------------
 sally_arb: $(BUILD_DIR)/tb_sally_arbitration.vvp
 	@echo "=== M24-5 sally_arb ==="

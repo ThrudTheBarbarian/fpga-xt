@@ -110,8 +110,13 @@
  * mount table instead of the interpreter.  Additive: a math program never
  * emits 0x25, and the stub uses its own chunk (MC_SIO_CHUNK) so a program's
  * slot state in other chunks is untouched. */
-#define MC_OP_SIO           0x25
+#define MC_OP_SIO           0x25        /* (retired: the stub uses the magic byte) */
 #define MC_SIO_CHUNK        0xFF        /* $D5C8 while the stub runs */
+#define MC_OFF_SIO_MAGIC    0x0005      /* u8: $5A = this chunk is an SIO request
+                                         * (the compact stub sets this instead of
+                                         * a 1-op math program; the worker routes
+                                         * on it, then clears it) */
+#define MC_SIO_MAGIC        0x5A
 #define MC_OFF_SIO_FLAGS    0x0004      /* u8 (was reserved): bit7 = NOT MINE
                                          * (6502 falls through to real SIO),
                                          * bit0 = data DELIVERED direct to BRAM

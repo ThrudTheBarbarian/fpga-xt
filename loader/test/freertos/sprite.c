@@ -145,6 +145,15 @@ void cursor_move(int x, int y) {
     cur_x = x; cur_y = y;
     sprite_set(CUR_SLOT, 0, 5, s_shapes[cur_shape].ax, 0,
                x - s_shapes[cur_shape].hx, y - s_shapes[cur_shape].hy);
+    /* SELF-HEAL the sprite enables on every move.  The sprite engine clears
+     * global_enable (and per-sprite enable) on ANY clk_pix reset pulse, and
+     * clk_pix's MMCM briefly unlocks under DDR/power pressure (a big SD DMA, an
+     * HDMI RxSense dip) — which silently killed the cursor mid-session.  These
+     * two writes are idempotent and cost nothing; re-asserting them per input
+     * event means the cursor comes back within one mouse move of any glitch.
+     * The real fix is RTL (global_enable should survive a transient reset). */
+    spr_reg((uint8_t)(R_CTRL0 + CUR_SLOT), 0x21u);
+    spr_reg(R_GLOBAL, 0x01u);
 }
 void cursor_set_shape(int n) {
     if (n < 0 || n >= NSHAPES || n == cur_shape) return;

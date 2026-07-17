@@ -504,14 +504,15 @@ static void mc_run_chunk(uint8_t chunk)
     unsigned op_count = page[MC_OFF_OPCOUNT] | ((unsigned)page[MC_OFF_OPCOUNT + 1] << 8);
     if (op_count > MC_MAX_OPS) { op_count = MC_MAX_OPS; st |= MC_ST_RANGE; }
 
-    /* SIO over the mailbox (mathcop.h MC_OP_SIO): one op word, routed to
-     * xl_boot.c's mount table instead of the interpreter.  The service writes
-     * DCB status/flags + up to a sector of payload into the page directly, so
-     * the result span is fixed: header .. MC_OFF_SIO_DATA+256. */
-    if (op_count == 1 &&
-        ((page[MC_OFF_OPS] & 0x3Fu) == MC_OP_SIO)) {
+    /* SIO over the mailbox (mathcop.h): the compact stub flags a request with a
+     * MAGIC byte rather than a 1-op math program (it must fit a small ROM
+     * padding run).  Route it to xl_boot.c's mount table instead of the
+     * interpreter; the service writes DCB status/flags + up to a sector of
+     * payload into the page directly, so the result span is fixed. */
+    if (page[MC_OFF_SIO_MAGIC] == MC_SIO_MAGIC) {
         extern void xl_sio_service(volatile uint8_t *page);
         xl_sio_service(page);
+        page[MC_OFF_SIO_MAGIC] = 0;                     /* consume it */
         unsigned last_line = (MC_OFF_SIO_DATA + 256u - 1u) >> 6;
         mc_dcache_clean(page, (last_line + 1u) * 64u);
         REG32(MC_GP0_DONE) = ((last_line + 1u) << 16) | (0u << 8) | chunk;

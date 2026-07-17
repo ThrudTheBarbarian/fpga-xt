@@ -95,12 +95,20 @@ module sally_rom_loader (
     );
 
     // ---- AXI-Lite write FSM ---------------------------------------------
-    localparam WST_IDLE = 0, WST_B = 1;
-    reg wstate;
+    // Accept AW and W INDEPENDENTLY.  The old FSM asserted awready only when
+    // awvalid AND wvalid were high in the SAME cycle — which DEADLOCKS the Zynq
+    // PS M_AXI_GP0 master, whose single stores assert AWVALID and wait for
+    // AWREADY *before* driving WVALID.  The window's first ever real write (the
+    // OS-image upload, 2026-07-17) hung the A9 hard on exactly this.  Now:
+    // capture the address the cycle AW arrives (in-window only, so a foreign
+    // $0xxx write is left entirely to xt_gp0_regs and its W is never stolen),
+    // then take W, push, and respond.
+    localparam WST_AW = 0, WST_W = 1, WST_B = 2;
+    reg [1:0] wstate;
 
     always_ff @(posedge clk_sys) begin  // sync reset: rst_sys held post-lock; avoids async removal-hold
         if (rst_sys) begin
-            wstate        <= WST_IDLE;
+            wstate        <= WST_AW;
             s_axi_awready <= 1'b0;
             s_axi_wready  <= 1'b0;
             s_axi_bvalid  <= 1'b0;
@@ -114,29 +122,43 @@ module sally_rom_loader (
             fifo_push     <= 1'b0;
 
             case (wstate)
-                WST_IDLE: begin
-                    if (s_axi_awvalid && s_axi_wvalid
-                        && write_in_window && !fifo_full) begin
+                // Wait for OUR address.  Assert awready on AW alone (no wait for
+                // W) — that is the deadlock fix.  Out-of-window AW is ignored so
+                // xt_gp0_regs owns the $0xxx transaction, W included.
+                WST_AW: begin
+                    if (s_axi_awvalid && write_in_window && !fifo_full) begin
                         s_axi_awready <= 1'b1;
-                        s_axi_wready  <= 1'b1;
                         push_addr     <= s_axi_awaddr[15:0];
-                        push_data     <= s_axi_wstrb[0] ? s_axi_wdata[7:0]
-                                       : s_axi_wstrb[1] ? s_axi_wdata[15:8]
-                                       : s_axi_wstrb[2] ? s_axi_wdata[23:16]
-                                                        : s_axi_wdata[31:24];
-                        fifo_push     <= 1'b1;
-                        wstate        <= WST_B;
+                        wstate        <= WST_W;
+                    end
+                end
+                // Now take the data (already valid, or arriving after AW), push
+                // one byte to the CDC FIFO, and raise the B response.
+                WST_W: begin
+                    if (s_axi_wvalid) begin
+                        s_axi_wready <= 1'b1;
+                        push_data    <= s_axi_wstrb[0] ? s_axi_wdata[7:0]
+                                      : s_axi_wstrb[1] ? s_axi_wdata[15:8]
+                                      : s_axi_wstrb[2] ? s_axi_wdata[23:16]
+                                                       : s_axi_wdata[31:24];
+                        fifo_push    <= 1'b1;
+                        wstate       <= WST_B;
                     end
                 end
                 WST_B: begin
                     s_axi_bvalid <= 1'b1;
                     s_axi_bresp  <= 2'b00;
-                    if (s_axi_bready) begin
+                    // Clear ONLY once bvalid is actually asserted (registered
+                    // high) AND accepted — never in the same cycle it first
+                    // rises.  The Zynq PS holds BREADY high, so `if (bready)`
+                    // alone would collapse bvalid to a zero-width pulse and the
+                    // master would wait forever for a B response.
+                    if (s_axi_bvalid && s_axi_bready) begin
                         s_axi_bvalid <= 1'b0;
-                        wstate       <= WST_IDLE;
+                        wstate       <= WST_AW;
                     end
                 end
-                default: wstate <= WST_IDLE;
+                default: wstate <= WST_AW;
             endcase
         end
     end
