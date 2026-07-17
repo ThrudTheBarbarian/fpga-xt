@@ -102,3 +102,25 @@ hardware entropy (ring-oscillator TRNG in the PL; A9-only, read-only)
 | Offset | Acc | Width | C macro | SV | Meaning |
 |--------|-----|-------|---------|----|---------|
 | 0x00 | R | 32 | `XT_TRNG_RND` | `TRNG_RND` | whitened 32-bit entropy word (free-running pool snapshot); read repeatedly for fresh words. Entropy SOURCE for the OS pool, not raw crypto output |
+
+## 0x800 — DEBUG  (`XT_BLK_DEBUG`)
+
+in-fabric 6502 debugger (xt6502_debug): halt/step/breakpoint/register access, driving /bin/6502. Halt is a non-destructive rdy-gate (state preserved); all actions align to the ST_FETCH instruction boundary. Status is coherent when halted (a halted core is static). Sel 0x9 is RESERVED for the future ANTIC debugger. See docs/OS/6502-debug.md
+
+| Offset | Acc | Width | C macro | SV | Meaning |
+|--------|-----|-------|---------|----|---------|
+| 0x00 | W | 1 | `XT_DBG_HALT` | `DBG_HALT` | write (any) -> run to the next instruction boundary, then freeze (state preserved). Also arms halt-at-reset when combined with a SALLYRST pulse |
+| 0x04 | W | 1 | `XT_DBG_GO` | `DBG_GO` | write (any) -> release the core, run at the configured speed |
+| 0x08 | W | 16 | `XT_DBG_STEP` | `DBG_STEP` | write N -> execute exactly N instructions (min 1) then freeze |
+| 0x0C | RW | 2 | `XT_DBG_CFG` | `DBG_CFG` | [0]=bkpt_en (arm the PC breakpoint), [1]=halt_at_reset (freeze at the reset-vector fetch after the next SALLYRST release) |
+| 0x10 | RW | 16 | `XT_DBG_BKPT` | `DBG_BKPT` | [15:0]=breakpoint PC; when bkpt_en, the core freezes at the ST_FETCH of this address (before executing it) |
+| 0x14 | W | 1 | `XT_DBG_COMMIT` | `DBG_COMMIT` | write (any) -> inject DBG_WPC/WAXYS/WPSH into the core's PC/regs and re-anchor at ST_FETCH (only meaningful while halted) |
+| 0x18 | RW | 16 | `XT_DBG_WPC` | `DBG_WPC` | [15:0]=PC to inject on DBG_COMMIT |
+| 0x1C | RW | 32 | `XT_DBG_WAXYS` | `DBG_WAXYS` | regs to inject on DBG_COMMIT: [7:0]=A [15:8]=X [23:16]=Y [31:24]=SP(low) |
+| 0x20 | RW | 12 | `XT_DBG_WPSH` | `DBG_WPSH` | inject on DBG_COMMIT: [7:0]=P (NV-BDIZC) [11:8]=SP high nibble (12-bit xt stack) |
+| 0x24 | R | 4 | `XT_DBG_STAT` | `DBG_STAT` | [0]=halted [1]=bkpt_hit [2]=stepping [3]=running |
+| 0x28 | R | 16 | `XT_DBG_PC` | `DBG_PC` | [15:0]=PC snapshot at the last instruction boundary (coherent when halted = next instruction to execute) |
+| 0x2C | R | 32 | `XT_DBG_AXYS` | `DBG_AXYS` | reg snapshot: [7:0]=A [15:8]=X [23:16]=Y [31:24]=SP(low) |
+| 0x30 | R | 12 | `XT_DBG_PSH` | `DBG_PSH` | snapshot: [7:0]=P [11:8]=SP high nibble |
+| 0x34 | R | 32 | `XT_DBG_ICNT` | `DBG_ICNT` | retired-instruction count since SALLYRST (increments on each ST_FETCH boundary) |
+| 0x38 | R | 32 | `XT_DBG_BEAM` | `DBG_BEAM` | RESERVED (reads 0 for now): display beam position at the last boundary — [15:0]=scanline [31:16]=beam-x — for future ANTIC/DLI correlation |

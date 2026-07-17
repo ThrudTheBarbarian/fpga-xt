@@ -731,6 +731,29 @@ module fpga_xt_top (
     wire [3:0]  cpu_s_high;
 
     // The xt6502 clean-sheet core (registered MAR, mem round-trip in-clock).
+    // ---- 6502 debugger (xt6502_debug) wires ----
+    wire        cdbg_boundary;
+    wire [15:0] cdbg_pc;
+    wire [7:0]  cdbg_a, cdbg_x, cdbg_y, cdbg_s, cdbg_p;
+    wire [3:0]  cdbg_shigh;
+    wire        idbg_wr;
+    wire [15:0] idbg_wpc;
+    wire [7:0]  idbg_wa, idbg_wx, idbg_wy, idbg_ws, idbg_wp;
+    wire [3:0]  idbg_wshigh;
+    wire        dbg_core_run;                // gates .rdy (1 = run)
+    // control from xt_gp0_regs (clk_sys), synchronised inside the debug block
+    wire        gdbg_halt_tog, gdbg_go_tog, gdbg_step_tog, gdbg_commit_tog;
+    wire [1:0]  gdbg_cfg;
+    wire [15:0] gdbg_bkpt, gdbg_stepcnt, gdbg_wpc;
+    wire [31:0] gdbg_waxys;
+    wire [11:0] gdbg_wpsh;
+    // status back to xt_gp0_regs (clk_sally; coherent when halted)
+    wire [3:0]  sdbg_stat;
+    wire [15:0] sdbg_pc;
+    wire [31:0] sdbg_axys;
+    wire [11:0] sdbg_psh;
+    wire [31:0] sdbg_icnt;
+
     xt6502 u_sally_core (
         .clk      (clk_sally),
         .rst      (rst_sally_core),          // A9-held for cold-boot-per-launch
@@ -738,11 +761,53 @@ module fpga_xt_top (
         .data_in  (cpu_din),
         .data_out (cpu_dout),
         .rw       (cpu_rw),
-        .rdy      (sally_rdy),
+        .rdy      (sally_rdy & dbg_core_run), // debugger HALT = non-destructive rdy gate
         .irq_n    (irq_n_sync),      // from ANTIC via CDC
         .nmi_n    (nmi_n_sync),      // from ANTIC via CDC
         .stack_op (cpu_stack_op),    // 12-bit stack push/pull cycle
-        .s_high   (cpu_s_high)       // high 4 bits of SP
+        .s_high   (cpu_s_high),      // high 4 bits of SP
+        // debug taps out
+        .dbg_boundary (cdbg_boundary),
+        .dbg_pc   (cdbg_pc),
+        .dbg_a    (cdbg_a), .dbg_x (cdbg_x), .dbg_y (cdbg_y),
+        .dbg_s    (cdbg_s), .dbg_p (cdbg_p), .dbg_shigh (cdbg_shigh),
+        // debug register injection in
+        .dbg_wr   (idbg_wr),
+        .dbg_wpc  (idbg_wpc),
+        .dbg_wa   (idbg_wa), .dbg_wx (idbg_wx), .dbg_wy (idbg_wy),
+        .dbg_ws   (idbg_ws), .dbg_wp (idbg_wp), .dbg_wshigh (idbg_wshigh)
+    );
+
+    // In-fabric 6502 debugger — halt/step/breakpoint/register access (docs/OS/6502-debug.md).
+    // Reset by rst_sally (power-on) so it survives a SALLYRST core reset.
+    xt6502_debug u_sally_dbg (
+        .clk          (clk_sally),
+        .rst          (rst_sally),
+        .core_rst     (rst_sally_core),
+        .dbg_boundary (cdbg_boundary),
+        .dbg_pc       (cdbg_pc),
+        .dbg_a        (cdbg_a), .dbg_x (cdbg_x), .dbg_y (cdbg_y),
+        .dbg_s        (cdbg_s), .dbg_p (cdbg_p), .dbg_shigh (cdbg_shigh),
+        .halt_tog     (gdbg_halt_tog),
+        .go_tog       (gdbg_go_tog),
+        .step_tog     (gdbg_step_tog),
+        .commit_tog   (gdbg_commit_tog),
+        .cfg          (gdbg_cfg),
+        .bkpt_addr    (gdbg_bkpt),
+        .step_count   (gdbg_stepcnt),
+        .wpc          (gdbg_wpc),
+        .waxys        (gdbg_waxys),
+        .wpsh         (gdbg_wpsh),
+        .dbg_wr       (idbg_wr),
+        .dbg_wpc      (idbg_wpc),
+        .dbg_wa       (idbg_wa), .dbg_wx (idbg_wx), .dbg_wy (idbg_wy),
+        .dbg_ws       (idbg_ws), .dbg_wp (idbg_wp), .dbg_wshigh (idbg_wshigh),
+        .core_run     (dbg_core_run),
+        .stat         (sdbg_stat),
+        .snap_pc      (sdbg_pc),
+        .snap_axys    (sdbg_axys),
+        .snap_psh     (sdbg_psh),
+        .icnt         (sdbg_icnt)
     );
 
     // ROM-init wires (driven by sally_rom_loader when USE_PS_BD is set;
@@ -2754,7 +2819,24 @@ module fpga_xt_top (
         .math_evt_pop    (math_evt_pop),
         .math_done_word  (math_done_word),
         .math_done_we    (math_done_we),
-        .math_stat_word  (math_stat_word)
+        .math_stat_word  (math_stat_word),
+        // ---- 6502 debugger control/status (0x8xx) ----
+        .dbg_halt_tog    (gdbg_halt_tog),
+        .dbg_go_tog      (gdbg_go_tog),
+        .dbg_step_tog    (gdbg_step_tog),
+        .dbg_commit_tog  (gdbg_commit_tog),
+        .dbg_cfg         (gdbg_cfg),
+        .dbg_bkpt_addr   (gdbg_bkpt),
+        .dbg_step_count  (gdbg_stepcnt),
+        .dbg_wpc         (gdbg_wpc),
+        .dbg_waxys       (gdbg_waxys),
+        .dbg_wpsh        (gdbg_wpsh),
+        .dbg_stat        (sdbg_stat),
+        .dbg_snap_pc     (sdbg_pc),
+        .dbg_snap_axys   (sdbg_axys),
+        .dbg_snap_psh    (sdbg_psh),
+        .dbg_icnt        (sdbg_icnt),
+        .dbg_beam        (32'd0)             // reserved (future ANTIC/DLI correlation)
     );
 
     // ROM-init AXI-Lite slave — see hdl/sally_rom_loader.sv.

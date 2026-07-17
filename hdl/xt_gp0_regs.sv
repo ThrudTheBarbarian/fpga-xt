@@ -174,12 +174,41 @@ module xt_gp0_regs (
     output reg         math_evt_pop,       // 1-cycle strobe on a MATH_EVT read
     output reg  [23:0] math_done_word,     // {count, first-line, chunk}
     output reg         math_done_we,       // 1-cycle strobe on a MATH_DONE write
-    input  wire [31:0] math_stat_word      // MATH_STAT readback
+    input  wire [31:0] math_stat_word,     // MATH_STAT readback
+
+    // ---- DEBUG block (in-fabric 6502 debugger, xt6502_debug @ clk_sally) ------
+    // Control OUT (clk_sys): command toggles flip on each write; levels are values.
+    output reg         dbg_halt_tog,
+    output reg         dbg_go_tog,
+    output reg         dbg_step_tog,
+    output reg         dbg_commit_tog,
+    output reg  [1:0]  dbg_cfg,            // [0]=bkpt_en [1]=halt_at_reset
+    output reg  [15:0] dbg_bkpt_addr,
+    output reg  [15:0] dbg_step_count,
+    output reg  [15:0] dbg_wpc,
+    output reg  [31:0] dbg_waxys,
+    output reg  [11:0] dbg_wpsh,
+    // Status IN (from clk_sally; coherent when halted — a halted core is static).
+    input  wire [3:0]  dbg_stat,           // [3]run [2]step [1]bkpt_hit [0]halted
+    input  wire [15:0] dbg_snap_pc,
+    input  wire [31:0] dbg_snap_axys,
+    input  wire [11:0] dbg_snap_psh,
+    input  wire [31:0] dbg_icnt,
+    input  wire [31:0] dbg_beam           // reserved (0)
 );
 
     // Block selectors (addr[11:8]) and register offsets (addr[7:0]) come from
     // the generated package — see the header comment / hdl/regmap/xt_gp0.json.
     import xt_gp0_pkg::*;
+
+    // 2-FF sync for the debugger status nibble (clk_sally -> clk_sys). The halted
+    // flag drives the poll loop in /bin/6502, so it must be metastability-clean;
+    // the wider snapshots are read only once halted (static) and need no sync.
+    (* ASYNC_REG = "TRUE" *) reg [3:0] dbg_stat_s1, dbg_stat_s;
+    always_ff @(posedge clk) begin
+        dbg_stat_s1 <= dbg_stat;
+        dbg_stat_s  <= dbg_stat_s1;
+    end
 
     // ====================================================================
     // AXI4-Lite write transaction FSM.
@@ -242,6 +271,16 @@ module xt_gp0_regs (
             spr_reg_we     <= 1'b0;
             math_done_word <= 24'd0;
             math_done_we   <= 1'b0;
+            dbg_halt_tog   <= 1'b0;
+            dbg_go_tog     <= 1'b0;
+            dbg_step_tog   <= 1'b0;
+            dbg_commit_tog <= 1'b0;
+            dbg_cfg        <= 2'b00;
+            dbg_bkpt_addr  <= 16'd0;
+            dbg_step_count <= 16'd1;
+            dbg_wpc        <= 16'd0;
+            dbg_waxys      <= 32'd0;
+            dbg_wpsh       <= 12'd0;
         end else begin
             s_axi_awready <= 1'b0;
             s_axi_wready  <= 1'b0;
@@ -344,6 +383,24 @@ module xt_gp0_regs (
                                     math_done_we   <= 1'b1;
                                 end
                             end
+                            // ---- 0x8xx DEBUG (6502 debugger) ----------------
+                            // Command regs toggle a bit (edge-detected in clk_sally);
+                            // value regs latch. DBG_STEP carries the count + a pulse.
+                            BLK_DEBUG: begin
+                                unique case (aw_off)
+                                    DBG_HALT:   dbg_halt_tog   <= ~dbg_halt_tog;
+                                    DBG_GO:     dbg_go_tog     <= ~dbg_go_tog;
+                                    DBG_STEP:   begin dbg_step_count <= w_data[15:0];
+                                                      dbg_step_tog   <= ~dbg_step_tog; end
+                                    DBG_CFG:    dbg_cfg        <= w_data[1:0];
+                                    DBG_BKPT:   dbg_bkpt_addr  <= w_data[15:0];
+                                    DBG_COMMIT: dbg_commit_tog <= ~dbg_commit_tog;
+                                    DBG_WPC:    dbg_wpc        <= w_data[15:0];
+                                    DBG_WAXYS:  dbg_waxys      <= w_data;
+                                    DBG_WPSH:   dbg_wpsh       <= w_data[11:0];
+                                    default: ;
+                                endcase
+                            end
                             default: ; // 0x4xx diag is read-only; others no-op
                         endcase
                         s_axi_bresp  <= 2'b00;
@@ -429,6 +486,24 @@ module xt_gp0_regs (
                                 else if (ar_off == MATH_STAT) s_axi_rdata <= math_stat_word;
                             BLK_TRNG:
                                 if (ar_off == TRNG_RND) s_axi_rdata <= trng_word;
+                            // ---- 0x8xx DEBUG (6502 debugger read-back) ------
+                            // Snapshots are coherent only when halted (static core);
+                            // the halted flag itself is 2-FF synced (dbg_stat_s).
+                            BLK_DEBUG:
+                                unique case (ar_off)
+                                    DBG_CFG:   s_axi_rdata <= {30'd0, dbg_cfg};
+                                    DBG_BKPT:  s_axi_rdata <= {16'd0, dbg_bkpt_addr};
+                                    DBG_WPC:   s_axi_rdata <= {16'd0, dbg_wpc};
+                                    DBG_WAXYS: s_axi_rdata <= dbg_waxys;
+                                    DBG_WPSH:  s_axi_rdata <= {20'd0, dbg_wpsh};
+                                    DBG_STAT:  s_axi_rdata <= {28'd0, dbg_stat_s};
+                                    DBG_PC:    s_axi_rdata <= {16'd0, dbg_snap_pc};
+                                    DBG_AXYS:  s_axi_rdata <= dbg_snap_axys;
+                                    DBG_PSH:   s_axi_rdata <= {20'd0, dbg_snap_psh};
+                                    DBG_ICNT:  s_axi_rdata <= dbg_icnt;
+                                    DBG_BEAM:  s_axi_rdata <= dbg_beam;
+                                    default: ;
+                                endcase
                             default: ;
                         endcase
                         s_axi_rresp  <= 2'b00;

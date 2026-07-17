@@ -16,6 +16,7 @@
  *   0x500  XLCTL       XL compositor-plane window placement (A9-positioned emulation window)
  *   0x600  MATH        math-coprocessor mailbox (A9-only); 6502 side = $D5C6-$D5C8 + the $4000-$5FFF math page
  *   0x700  TRNG        hardware entropy (ring-oscillator TRNG in the PL; A9-only, read-only)
+ *   0x800  DEBUG       in-fabric 6502 debugger (xt6502_debug): halt/step/breakpoint/register access, driving /bin/6502. Halt is a non-destructive rdy-gate (state preserved); all actions align to the ST_FETCH instruction boundary. Status is coherent when halted (a halted core is static). Sel 0x9 is RESERVED for the future ANTIC debugger. See docs/OS/6502-debug.md
  */
 #ifndef XT_GP0_MAP_H_
 #define XT_GP0_MAP_H_
@@ -33,6 +34,7 @@
 #define XT_BLK_XLCTL     (XT_GP0_BASE + 0x500u)
 #define XT_BLK_MATH      (XT_GP0_BASE + 0x600u)
 #define XT_BLK_TRNG      (XT_GP0_BASE + 0x700u)
+#define XT_BLK_DEBUG     (XT_GP0_BASE + 0x800u)
 
 /* ---- BLITTER block --------------------------------------------------- */
 /*   0x00..0x18  W  blitter registers DST/PAT/CMD/SRC/FLAGS (bl_addr = offset); see blitter.h XT_BL_* */
@@ -89,5 +91,22 @@
 
 /* ---- TRNG block --------------------------------------------------- */
 #define XT_TRNG_RND          (XT_BLK_TRNG + 0x00u)        /* R whitened 32-bit entropy word (free-running pool snapshot); read repeatedly for fresh words. Entropy SOURCE for the OS pool, not raw crypto output */
+
+/* ---- DEBUG block --------------------------------------------------- */
+#define XT_DBG_HALT          (XT_BLK_DEBUG + 0x00u)       /* W write (any) -> run to the next instruction boundary, then freeze (state preserved). Also arms halt-at-reset when combined with a SALLYRST pulse */
+#define XT_DBG_GO            (XT_BLK_DEBUG + 0x04u)       /* W write (any) -> release the core, run at the configured speed */
+#define XT_DBG_STEP          (XT_BLK_DEBUG + 0x08u)       /* W write N -> execute exactly N instructions (min 1) then freeze */
+#define XT_DBG_CFG           (XT_BLK_DEBUG + 0x0Cu)       /* RW [0]=bkpt_en (arm the PC breakpoint), [1]=halt_at_reset (freeze at the reset-vector fetch after the next SALLYRST release) */
+#define XT_DBG_BKPT          (XT_BLK_DEBUG + 0x10u)       /* RW [15:0]=breakpoint PC; when bkpt_en, the core freezes at the ST_FETCH of this address (before executing it) */
+#define XT_DBG_COMMIT        (XT_BLK_DEBUG + 0x14u)       /* W write (any) -> inject DBG_WPC/WAXYS/WPSH into the core's PC/regs and re-anchor at ST_FETCH (only meaningful while halted) */
+#define XT_DBG_WPC           (XT_BLK_DEBUG + 0x18u)       /* RW [15:0]=PC to inject on DBG_COMMIT */
+#define XT_DBG_WAXYS         (XT_BLK_DEBUG + 0x1Cu)       /* RW regs to inject on DBG_COMMIT: [7:0]=A [15:8]=X [23:16]=Y [31:24]=SP(low) */
+#define XT_DBG_WPSH          (XT_BLK_DEBUG + 0x20u)       /* RW inject on DBG_COMMIT: [7:0]=P (NV-BDIZC) [11:8]=SP high nibble (12-bit xt stack) */
+#define XT_DBG_STAT          (XT_BLK_DEBUG + 0x24u)       /* R [0]=halted [1]=bkpt_hit [2]=stepping [3]=running */
+#define XT_DBG_PC            (XT_BLK_DEBUG + 0x28u)       /* R [15:0]=PC snapshot at the last instruction boundary (coherent when halted = next instruction to execute) */
+#define XT_DBG_AXYS          (XT_BLK_DEBUG + 0x2Cu)       /* R reg snapshot: [7:0]=A [15:8]=X [23:16]=Y [31:24]=SP(low) */
+#define XT_DBG_PSH           (XT_BLK_DEBUG + 0x30u)       /* R snapshot: [7:0]=P [11:8]=SP high nibble */
+#define XT_DBG_ICNT          (XT_BLK_DEBUG + 0x34u)       /* R retired-instruction count since SALLYRST (increments on each ST_FETCH boundary) */
+#define XT_DBG_BEAM          (XT_BLK_DEBUG + 0x38u)       /* R RESERVED (reads 0 for now): display beam position at the last boundary — [15:0]=scanline [31:16]=beam-x — for future ANTIC/DLI correlation */
 
 #endif /* XT_GP0_MAP_H_ */

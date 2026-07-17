@@ -401,6 +401,17 @@ xt6502: $(BUILD_DIR)/tb_xt6502.vvp
 $(BUILD_DIR)/tb_xt6502.vvp: $(HDL_DIR)/xt6502/xt6502.sv tb_xt6502.sv | $(BUILD_DIR)
 	$(IVERILOG) $(SV_FLAGS) -o $@ -s tb_xt6502 $(HDL_DIR)/xt6502/xt6502.sv tb_xt6502.sv
 
+# ---- xt6502_debug — in-fabric debugger (halt/step/breakpoint/register access) --
+xt6502_debug: $(BUILD_DIR)/tb_xt6502_debug.vvp
+	@echo "=== xt6502_debug — halt/step/breakpoint/register access ==="
+	@$(VVP) -N $< | tee $(BUILD_DIR)/tb_xt6502_debug.log
+	@grep -q '\*\*\* XT6502_DEBUG OK \*\*\*' $(BUILD_DIR)/tb_xt6502_debug.log || \
+	    (echo "FAIL: tb_xt6502_debug did not pass"; exit 1)
+	@echo "PASS: tb_xt6502_debug"
+
+$(BUILD_DIR)/tb_xt6502_debug.vvp: $(HDL_DIR)/xt6502/xt6502.sv $(HDL_DIR)/xt6502/xt6502_debug.sv tb_xt6502_debug.sv | $(BUILD_DIR)
+	$(IVERILOG) $(SV_FLAGS) -o $@ -s tb_xt6502_debug $(HDL_DIR)/xt6502/xt6502.sv $(HDL_DIR)/xt6502/xt6502_debug.sv tb_xt6502_debug.sv
+
 sally_stack: $(BUILD_DIR)/tb_sally_stack.vvp
 	@echo "=== sally_stack — stack-BRAM alias test ==="
 	@$(VVP) -N $< | tee $(BUILD_DIR)/tb_sally_stack.log

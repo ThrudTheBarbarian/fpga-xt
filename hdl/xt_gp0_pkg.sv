@@ -16,6 +16,7 @@ package xt_gp0_pkg;
     localparam logic [3:0] BLK_XLCTL    = 4'h5;  // 0x500  XLCTL
     localparam logic [3:0] BLK_MATH     = 4'h6;  // 0x600  MATH
     localparam logic [3:0] BLK_TRNG     = 4'h7;  // 0x700  TRNG
+    localparam logic [3:0] BLK_DEBUG    = 4'h8;  // 0x800  DEBUG
 
     // ---- register offsets = addr[7:0] (per block) ----
     // BLITTER
@@ -68,6 +69,22 @@ package xt_gp0_pkg;
     localparam logic [7:0] MATH_STAT        = 8'h08;  // R [0]=engine busy, [1]=chunk resident/ready, [2]=evt FIFO non-empty, [15:8]=resident chunk, [23:16]=evt FIFO fill
     // TRNG
     localparam logic [7:0] TRNG_RND         = 8'h00;  // R whitened 32-bit entropy word (free-running pool snapshot); read repeatedly for fresh words. Entropy SOURCE for the OS pool, not raw crypto output
+    // DEBUG
+    localparam logic [7:0] DBG_HALT         = 8'h00;  // W write (any) -> run to the next instruction boundary, then freeze (state preserved). Also arms halt-at-reset when combined with a SALLYRST pulse
+    localparam logic [7:0] DBG_GO           = 8'h04;  // W write (any) -> release the core, run at the configured speed
+    localparam logic [7:0] DBG_STEP         = 8'h08;  // W write N -> execute exactly N instructions (min 1) then freeze
+    localparam logic [7:0] DBG_CFG          = 8'h0C;  // RW [0]=bkpt_en (arm the PC breakpoint), [1]=halt_at_reset (freeze at the reset-vector fetch after the next SALLYRST release)
+    localparam logic [7:0] DBG_BKPT         = 8'h10;  // RW [15:0]=breakpoint PC; when bkpt_en, the core freezes at the ST_FETCH of this address (before executing it)
+    localparam logic [7:0] DBG_COMMIT       = 8'h14;  // W write (any) -> inject DBG_WPC/WAXYS/WPSH into the core's PC/regs and re-anchor at ST_FETCH (only meaningful while halted)
+    localparam logic [7:0] DBG_WPC          = 8'h18;  // RW [15:0]=PC to inject on DBG_COMMIT
+    localparam logic [7:0] DBG_WAXYS        = 8'h1C;  // RW regs to inject on DBG_COMMIT: [7:0]=A [15:8]=X [23:16]=Y [31:24]=SP(low)
+    localparam logic [7:0] DBG_WPSH         = 8'h20;  // RW inject on DBG_COMMIT: [7:0]=P (NV-BDIZC) [11:8]=SP high nibble (12-bit xt stack)
+    localparam logic [7:0] DBG_STAT         = 8'h24;  // R [0]=halted [1]=bkpt_hit [2]=stepping [3]=running
+    localparam logic [7:0] DBG_PC           = 8'h28;  // R [15:0]=PC snapshot at the last instruction boundary (coherent when halted = next instruction to execute)
+    localparam logic [7:0] DBG_AXYS         = 8'h2C;  // R reg snapshot: [7:0]=A [15:8]=X [23:16]=Y [31:24]=SP(low)
+    localparam logic [7:0] DBG_PSH          = 8'h30;  // R snapshot: [7:0]=P [11:8]=SP high nibble
+    localparam logic [7:0] DBG_ICNT         = 8'h34;  // R retired-instruction count since SALLYRST (increments on each ST_FETCH boundary)
+    localparam logic [7:0] DBG_BEAM         = 8'h38;  // R RESERVED (reads 0 for now): display beam position at the last boundary — [15:0]=scanline [31:16]=beam-x — for future ANTIC/DLI correlation
 
 endpackage
 `endif

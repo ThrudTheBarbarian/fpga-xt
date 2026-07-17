@@ -41,7 +41,27 @@ module xt6502 (
     input  wire        nmi_n,
 
     output wire        stack_op,
-    output wire [3:0]  s_high
+    output wire [3:0]  s_high,
+
+    // ── Debug taps (pure fan-out of architectural state; read by xt6502_debug) ──
+    output wire        dbg_boundary,   // 1 = at ST_FETCH: the once-per-instruction boundary
+    output wire [15:0] dbg_pc,
+    output wire [7:0]  dbg_a,
+    output wire [7:0]  dbg_x,
+    output wire [7:0]  dbg_y,
+    output wire [7:0]  dbg_s,
+    output wire [7:0]  dbg_p,
+    output wire [3:0]  dbg_shigh,
+
+    // ── Debug register injection (commit while halted; from xt6502_debug) ──
+    input  wire        dbg_wr,         // 1-cycle: load PC/regs below, re-anchor at ST_FETCH
+    input  wire [15:0] dbg_wpc,
+    input  wire [7:0]  dbg_wa,
+    input  wire [7:0]  dbg_wx,
+    input  wire [7:0]  dbg_wy,
+    input  wire [7:0]  dbg_ws,
+    input  wire [7:0]  dbg_wp,
+    input  wire [3:0]  dbg_wshigh
 );
 
     localparam [15:0] VEC_RESET = 16'hFFFC;
@@ -848,6 +868,17 @@ module xt6502 (
             intr_mode <= 1'b0; intr_nmi <= 1'b0;
             sp_new_q <= 12'h000; frame_idx <= 3'd0;
         end
+        else if (dbg_wr) begin
+            // Debug register injection (only while halted, rdy=0): load PC/regs and
+            // re-anchor at ST_FETCH with MAR=PC so a subsequent `go` re-fetches from
+            // the injected PC. Nothing else in the pipeline is disturbed.
+            PC     <= dbg_wpc;
+            MAR    <= dbg_wpc;
+            state  <= ST_FETCH;
+            A      <= dbg_wa; X <= dbg_wx; Y <= dbg_wy;
+            S      <= dbg_ws; S_high <= dbg_wshigh;
+            P      <= dbg_wp;
+        end
         else if (rdy) begin
             state <= state_nxt;
             MAR   <= mar_nxt;
@@ -1026,6 +1057,20 @@ module xt6502 (
     assign data_out = wr_data;
     assign stack_op = stk_cycle;
     assign s_high   = S_high;
+
+    // ── Debug taps: combinational fan-out of architectural state (no added path) ──
+    // ST_DECODE is the true once-per-instruction boundary: the core PREFETCHES the
+    // next opcode during execution, so ST_FETCH is skipped except after control
+    // flow.  At ST_DECODE the opcode has been fetched (PC already incremented past
+    // it), so the instruction's address is PC-1 — the debug block subtracts it.
+    assign dbg_boundary = (state == ST_DECODE);
+    assign dbg_pc       = PC;
+    assign dbg_a        = A;
+    assign dbg_x        = X;
+    assign dbg_y        = Y;
+    assign dbg_s        = S;
+    assign dbg_p        = P;
+    assign dbg_shigh    = S_high;
 
 endmodule
 

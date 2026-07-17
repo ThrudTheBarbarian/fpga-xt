@@ -179,6 +179,46 @@
         { "off": "0x00", "access": "R", "width": 32, "c": "XT_TRNG_RND", "sv": "TRNG_RND",
           "desc": "whitened 32-bit entropy word (free-running pool snapshot); read repeatedly for fresh words. Entropy SOURCE for the OS pool, not raw crypto output" }
       ]
+    },
+    {
+      "name": "DEBUG",
+      "sel": "0x8",
+      "base": "0x800",
+      "base_macro": "XT_BLK_DEBUG",
+      "sv_sel": "BLK_DEBUG",
+      "desc": "in-fabric 6502 debugger (xt6502_debug): halt/step/breakpoint/register access, driving /bin/6502. Halt is a non-destructive rdy-gate (state preserved); all actions align to the ST_FETCH instruction boundary. Status is coherent when halted (a halted core is static). Sel 0x9 is RESERVED for the future ANTIC debugger. See docs/OS/6502-debug.md",
+      "regs": [
+        { "off": "0x00", "access": "W", "width": 1,  "c": "XT_DBG_HALT",   "sv": "DBG_HALT",
+          "desc": "write (any) -> run to the next instruction boundary, then freeze (state preserved). Also arms halt-at-reset when combined with a SALLYRST pulse" },
+        { "off": "0x04", "access": "W", "width": 1,  "c": "XT_DBG_GO",     "sv": "DBG_GO",
+          "desc": "write (any) -> release the core, run at the configured speed" },
+        { "off": "0x08", "access": "W", "width": 16, "c": "XT_DBG_STEP",   "sv": "DBG_STEP",
+          "desc": "write N -> execute exactly N instructions (min 1) then freeze" },
+        { "off": "0x0C", "access": "RW", "width": 2, "c": "XT_DBG_CFG",    "sv": "DBG_CFG",
+          "desc": "[0]=bkpt_en (arm the PC breakpoint), [1]=halt_at_reset (freeze at the reset-vector fetch after the next SALLYRST release)" },
+        { "off": "0x10", "access": "RW", "width": 16, "c": "XT_DBG_BKPT",  "sv": "DBG_BKPT",
+          "desc": "[15:0]=breakpoint PC; when bkpt_en, the core freezes at the ST_FETCH of this address (before executing it)" },
+        { "off": "0x14", "access": "W", "width": 1,  "c": "XT_DBG_COMMIT", "sv": "DBG_COMMIT",
+          "desc": "write (any) -> inject DBG_WPC/WAXYS/WPSH into the core's PC/regs and re-anchor at ST_FETCH (only meaningful while halted)" },
+        { "off": "0x18", "access": "RW", "width": 16, "c": "XT_DBG_WPC",   "sv": "DBG_WPC",
+          "desc": "[15:0]=PC to inject on DBG_COMMIT" },
+        { "off": "0x1C", "access": "RW", "width": 32, "c": "XT_DBG_WAXYS", "sv": "DBG_WAXYS",
+          "desc": "regs to inject on DBG_COMMIT: [7:0]=A [15:8]=X [23:16]=Y [31:24]=SP(low)" },
+        { "off": "0x20", "access": "RW", "width": 12, "c": "XT_DBG_WPSH",  "sv": "DBG_WPSH",
+          "desc": "inject on DBG_COMMIT: [7:0]=P (NV-BDIZC) [11:8]=SP high nibble (12-bit xt stack)" },
+        { "off": "0x24", "access": "R", "width": 4,  "c": "XT_DBG_STAT",   "sv": "DBG_STAT",
+          "desc": "[0]=halted [1]=bkpt_hit [2]=stepping [3]=running" },
+        { "off": "0x28", "access": "R", "width": 16, "c": "XT_DBG_PC",     "sv": "DBG_PC",
+          "desc": "[15:0]=PC snapshot at the last instruction boundary (coherent when halted = next instruction to execute)" },
+        { "off": "0x2C", "access": "R", "width": 32, "c": "XT_DBG_AXYS",   "sv": "DBG_AXYS",
+          "desc": "reg snapshot: [7:0]=A [15:8]=X [23:16]=Y [31:24]=SP(low)" },
+        { "off": "0x30", "access": "R", "width": 12, "c": "XT_DBG_PSH",    "sv": "DBG_PSH",
+          "desc": "snapshot: [7:0]=P [11:8]=SP high nibble" },
+        { "off": "0x34", "access": "R", "width": 32, "c": "XT_DBG_ICNT",   "sv": "DBG_ICNT",
+          "desc": "retired-instruction count since SALLYRST (increments on each ST_FETCH boundary)" },
+        { "off": "0x38", "access": "R", "width": 32, "c": "XT_DBG_BEAM",   "sv": "DBG_BEAM",
+          "desc": "RESERVED (reads 0 for now): display beam position at the last boundary — [15:0]=scanline [31:16]=beam-x — for future ANTIC/DLI correlation" }
+      ]
     }
   ]
 }
