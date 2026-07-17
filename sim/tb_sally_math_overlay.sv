@@ -221,11 +221,21 @@ module tb_sally_math_overlay;
         @(negedge clk);
     endtask
 
-    // Plain read, no stall (turbo-equivalent: rdy=1 every cycle).
+    // Turbo read honouring `busy` the way sally_clock does (busy registered ->
+    // rdy low the NEXT cycle): present with rdy=1; if the memory asserted busy
+    // during the present cycle, one frozen cycle (MAR already advanced); then
+    // consume.  Since the overlay wait-state (2026-07-17) this is what "no
+    // stall" LOOKS like at full turbo — the memory itself paces overlay reads.
     task automatic cpu_read(input [15:0] a, output [7:0] d);
+        logic stalled;
         @(negedge clk); addr = a; rw = 1'b1; tb_rdy = 1'b1;
-        @(posedge clk);
-        @(negedge clk);
+        #1 stalled = mem_busy;          // sample busy in the present cycle
+        @(posedge clk);                 // edge: selects/bram latch for `a`
+        if (stalled) begin
+            @(negedge clk); tb_rdy = 1'b0;   // sally_clock's registered stall
+            @(posedge clk);
+        end
+        @(negedge clk); tb_rdy = 1'b1;
         #1 d = data_out;
     endtask
 
@@ -249,10 +259,28 @@ module tb_sally_math_overlay;
         cpu_write(16'h4040, 8'h6F);
         cpu_write(16'h4048, 8'hFB);
 
-        // T1 — no-stall overlay read round-trip (works even pre-fix).
-        $display("[T1] no-stall overlay read");
-        cpu_read(16'h4040, v);
-        expect_eq("T1 read $4040 (no stall)", v, 8'h6F);
+        // T1 — turbo overlay read round-trip.  The overlay wait-state means the
+        // memory asserts busy on the present cycle and the data is consumed one
+        // stalled cycle later, served from ovl_dout_qq — cpu_read models the
+        // sally_clock pacing.  Also assert the stall actually happened: an
+        // overlay read that DIDN'T stall would be consuming the live BRAM path
+        // the wait-state exists to retire.
+        $display("[T1] turbo overlay read (memory-paced wait-state)");
+        begin
+            logic saw_busy;
+            @(negedge clk); addr = 16'h4040; rw = 1'b1; tb_rdy = 1'b1;
+            #1 saw_busy = mem_busy;
+            @(posedge clk);
+            @(negedge clk); tb_rdy = 1'b0;
+            @(posedge clk);
+            @(negedge clk); tb_rdy = 1'b1;
+            #1 v = data_out;
+            if (!saw_busy) begin
+                $display("FAIL T1: overlay read did not assert busy (wait-state missing)");
+                fail_count++;
+            end
+        end
+        expect_eq("T1 read $4040 (turbo, one wait-state)", v, 8'h6F);
 
         // T2 — THE REPRO.  Read $4040 while the CPU stalls and its MAR advances
         // to the neighbour $4048.  Correct = $6F (what was written).  Pre-fix

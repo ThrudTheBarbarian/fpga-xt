@@ -585,8 +585,23 @@ module sally_mem #(
         end
     endgenerate
 
-    // SALLY stalls while the reader can't serve the current request.
-    assign busy = axi_req_valid && !axi_ready_w;
+    // ---- Overlay read wait-state (clk_sally timing study, 2026-07-17) ------
+    // The $4000-$5FFF overlays (math page / screen bank) used to feed cpu_rdata
+    // from their BRAM output registers LIVE — a late arrival whose decode-gated
+    // tail family (EA cone, diag counters, reader CEs) kept ambushing clk_sally
+    // closure (+0.000 last build).  Now their data is served from ovl_dout_qq —
+    // one more FF — and the CPU is stalled EXACTLY one cycle per overlay read at
+    // turbo through the existing busy line (registered in sally_clock, the
+    // hwreg-CDC idiom).  `rdy &&` makes the stall self-limiting: only the cycle
+    // the CPU actually presents the address asserts it, so back-to-back overlay
+    // reads pace correctly, and at CLOCK_MULT < BASE_DIV the inter-step gap
+    // absorbs the latency and busy_n_q has recovered by the next step — the
+    // wait-state costs NOTHING below full turbo.
+    wire ovl_rd_stall = rdy && rw && (math_mapped || scrn_banked);
+
+    // SALLY stalls while the reader can't serve the current request, and for
+    // the one-cycle overlay-read wait-state.
+    assign busy = (axi_req_valid && !axi_ready_w) || ovl_rd_stall;
 
     // Latch the AXI-returned byte for the output mux. Latched on the
     // cycle ready fires (hit or burst-complete), aligned with the
@@ -820,10 +835,21 @@ module sally_mem #(
     // (scrn_banked carries !math_map), so a plain 2:1 with the early-latched select.
     wire       overlay_active = was_math_q | was_scrn_q;
     wire [7:0] overlay_dout   = was_math_q ? math_cpu_rdata : scrn_cpu_rdata;
+    // The wait-state's serving register (see ovl_rd_stall above): free-running,
+    // so it captures the (rdy-held) overlay data during the stall cycle and the
+    // CPU consumes a pure FF on the rdy cycle after — the late BRAM arrivals
+    // leave the cpu_rdata cone entirely.  Free-running is safe for the same
+    // reason hwreg_dout_q is: the stall guarantees the consume cycle samples
+    // one cycle after the data went valid.
+    logic [7:0] ovl_dout_qq;
+    always_ff @(posedge clk or posedge rst) begin
+        if (rst) ovl_dout_qq <= 8'h00;
+        else     ovl_dout_qq <= overlay_dout;
+    end
     // Cap fanout so the read-data driver replicates near the ~140 CPU loads
     // (the cpu_din net was ~0.9 ns of route at fo=141 on the critical path).
     (* max_fanout = 24 *) wire [7:0] cpu_rdata = use_early      ? rare_dout
-                                               : overlay_active ? overlay_dout
+                                               : overlay_active ? ovl_dout_qq
                                                : bram_dout_q;
     assign data_out = cpu_rdata;
 
