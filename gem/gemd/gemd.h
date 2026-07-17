@@ -51,6 +51,9 @@ const theme *gemd_theme(void);
 
 /* server.c */
 int  gemd_run(void);
+void gemd_log(const char *fmt, ...);           /* "[gemd] ..." to the kernel log (dmesg) — no
+                                                * trailing newline; console printf is blocking
+                                                * serial time and is reserved for fatal launch */
 void gemd_send_to(int ci, const gem_msg *m);   /* advisory: a dying client must never kill gemd */
 int  gemd_resize_surface(int hd);              /* §12 capacity: grow the extent, or make a new
                                                 * surface when capacity is exceeded. 0 = ok. */

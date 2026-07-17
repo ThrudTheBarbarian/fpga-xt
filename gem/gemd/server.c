@@ -26,6 +26,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <stdarg.h>
 #include "gemd.h"
 #include "aes/aes_internal.h"
 #include "font.h"
@@ -176,7 +177,7 @@ static void gemd_present(int x, int y, int w, int h)
                 return;
             }
         }
-        printf("gemd: blitter present failed (seq %ld) — CPU present from here on\n", seq);
+        gemd_log("blitter present failed (seq %ld) — CPU present from here on", seq);
         sys_close(g_blitfd); g_blitfd = -1;      /* never wedge the present on a sick engine */
     }
 
@@ -195,12 +196,29 @@ static gsurface    g_surf[GEMD_MAXW];   /* the backing store per WINDOW HANDLE. 
                                          * "does the new extent still fit?", and only gemd knows. */
 static int         g_ifd = -1;          /* /OS/dev/input — an fd, so it joins the ONE poll (M4) */
 
+/* [gemd] to the kernel log (dmesg). gemd's stdout is the boot console, and console writes
+ * are BLOCKING SERIAL TIME (route.c learned this per-motion); the ring is where operational
+ * messages belong. Only fatal at-launch errors still printf — the shell that started gemd
+ * should see WHY it exited. Callers pass no trailing newline; the ring line gets one here. */
+void gemd_log(const char *fmt, ...)
+{
+    char b[192];
+    int n = snprintf(b, sizeof b, "[gemd] ");
+    va_list ap;
+    va_start(ap, fmt);
+    n += vsnprintf(b + n, sizeof b - (size_t)n, fmt, ap);
+    va_end(ap);
+    if (n > (int)sizeof b - 2) n = (int)sizeof b - 2;
+    b[n++] = '\n';
+    sys_klog(b, (unsigned)n);
+}
+
 /* A write to a client is advisory. If it fails the client is dying; its EOF will arrive and the
  * ordinary death path will clean up. It must NEVER take gemd down with it. */
 static void reply(gclient *c, const gem_msg *m)
 {
     if (gem_send(c->fd, m) != 0)
-        printf("gemd: write to pid %d failed — it is dying; EOF will clean up\n", c->pid);
+        gemd_log("write to pid %d failed — it is dying; EOF will clean up", c->pid);
 }
 
 void gemd_send_to(int ci, const gem_msg *m)
@@ -237,8 +255,8 @@ static void do_wind_create(gclient *c, int ci, const gem_msg *m)
                                                            * wind_get(0) — dialog centring (§16) */
       r.w[2]=0; r.w[3]=(int16_t)tr; r.w[4]=(int16_t)g_plane.w; r.w[5]=(int16_t)(g_plane.h-tr); }
     reply(c, &r);
-    printf("gemd: wind_create wh=%d pid=%d kind=0x%x %dx%d @ %d,%d\n",
-           hd, c->pid, m->w[1], m->w[4], m->w[5], m->w[2], m->w[3]);
+    gemd_log("wind_create wh=%d pid=%d kind=0x%x %dx%d @ %d,%d",
+             hd, c->pid, m->w[1], m->w[4], m->w[5], m->w[2], m->w[3]);
 }
 
 static void do_wind_open(gclient *c, int ci, const gem_msg *m)
@@ -269,7 +287,7 @@ static void do_wind_open(gclient *c, int ci, const gem_msg *m)
      * asserts in a message (that would be a capability handed out on the say-so of the process
      * being granted it). */
     if (sys_shm_grant(s.id, c->pid) != 0) {
-        printf("gemd: shm_grant(%d -> pid %d) FAILED\n", s.id, c->pid);
+        gemd_log("shm_grant(%d -> pid %d) FAILED", s.id, c->pid);
         gemd_surf_drop(&s); wind_error(c, 3); return;
     }
     g_surf[hd] = s;
@@ -289,8 +307,8 @@ static void do_wind_open(gclient *c, int ci, const gem_msg *m)
     rd.w[2] = 0; rd.w[3] = 0; rd.w[4] = (int16_t)ww; rd.w[5] = (int16_t)wh;
     reply(c, &rd);
 
-    printf("gemd: wind_open wh=%d pid=%d work %dx%d -> surf %d gen %u cap %dx%d (stride %d)\n",
-           hd, c->pid, ww, wh, s.id, s.gen, s.cap_w, s.cap_h, s.cap_w);
+    gemd_log("wind_open wh=%d pid=%d work %dx%d -> surf %d gen %u cap %dx%d (stride %d)",
+             hd, c->pid, ww, wh, s.id, s.gen, s.cap_w, s.cap_h, s.cap_w);
 }
 
 /* A client posted damage in SURFACE coordinates. Clamp it (§9: a damage rect is a REQUEST, not
@@ -378,11 +396,11 @@ int gemd_resize_surface(int hd)
         gemd_surf_drop(s);                                      /* our ref; the client drops its own */
         *s = ns;
         gem_prof_add(GEM_PROF_ALLOC, gem_prof_now() - gp_t0, 0);
-        /* log ONLY the reallocation (rare, notable). A live resize calls this per MOTION, and
-         * per-motion console lines are blocking serial time (see route.c). */
-        printf("gemd: resize wh=%d work %dx%d -> NEW surf %d cap %dx%d%s\n",
-               hd, ww, wh, s->id, s->cap_w, s->cap_h,
-               drag ? " (drag: screen-cap once)" : drag_ended ? " (drag end: shrink-fit)" : "");
+        /* log ONLY the reallocation (rare, notable); the per-motion within-capacity case says
+         * nothing. */
+        gemd_log("resize wh=%d work %dx%d -> NEW surf %d cap %dx%d%s",
+                 hd, ww, wh, s->id, s->cap_w, s->cap_h,
+                 drag ? " (drag: screen-cap once)" : drag_ended ? " (drag end: shrink-fit)" : "");
     }
     wind_attach_surface(hd, s->id, s->gen, s->px, ww, wh, s->cap_w, ci);
     g_prof.sizes++;
@@ -424,8 +442,6 @@ static void set_rect(gclient *c, int hd, int x, int y, int w, int h)
     int nw, nh;
     wind_work_size(hd, &nw, &nh);
     if (nw != ow || nh != oh) gemd_resize_surface(hd);   /* §12; it sends MSG_SIZED itself */
-    printf("gemd: set_rect wh=%d asked %d,%d %dx%d -> %d,%d %dx%d\n",
-           hd, x, y, w, h, fx, fy, fw, fh);
 }
 
 /* THE DECLARATIVE CHROME MODEL ARRIVES (§11). The client tells us what its window IS — a name, a
@@ -521,7 +537,7 @@ static void do_wind_set(gclient *c, int ci, const gem_msg *m)
         break;
     }
     default:
-        printf("gemd: pid %d set field %d — not a chrome field, ignored\n", c->pid, field);
+        gemd_log("pid %d set field %d — not a chrome field, ignored", c->pid, field);
         break;
     }
 }
@@ -584,12 +600,12 @@ static void do_wind_plane(gclient *c, int ci, const gem_msg *m)
     if (p < 1 || p >= GEMD_NPLANES) { wind_error(c, 4); return; }
     if (g_pl[p].hd && g_pl[p].hd != hd) {                    /* one window per plane; re-binding
                                                               * the SAME window updates the scale */
-        printf("gemd: plane %d is wh=%d's — pid %d refused\n", p, g_pl[p].hd, c->pid);
+        gemd_log("plane %d is wh=%d's — pid %d refused", p, g_pl[p].hd, c->pid);
         wind_error(c, 4); return;
     }
     g_pl[p].hd = hd; g_pl[p].scale = scale;
     wind_plane_link(hd, p);
-    printf("gemd: wh=%d shows plane %d (scale %d, pid %d)\n", hd, p, scale, c->pid);
+    gemd_log("wh=%d shows plane %d (scale %d, pid %d)", hd, p, scale, c->pid);
     wind_redraw_win(hd);       /* punch the hole; the plane-sync hook then places the plane */
 }
 
@@ -616,8 +632,8 @@ static void drop_client(int ci)
     gclient *c = &g_cl[ci];
     int hd;
     while ((hd = wind_next_of_client(ci, 1)) != 0) {      /* re-scan: drop_window frees the slot */
-        printf("gemd: pid %d gone — dropping wh=%d, surface %d\n",
-               c->pid, hd, wind_surface_of(hd));
+        gemd_log("pid %d gone — dropping wh=%d, surface %d",
+                 c->pid, hd, wind_surface_of(hd));
         drop_window(hd);
     }
     sys_close(c->fd);
@@ -664,7 +680,7 @@ static void client_readable(int ci)
         case GEM_SURF_DROP:   break;                     /* the client dropped ITS ref; gemd keeps
                                                           * its own until the window closes (§11) */
         default:
-            printf("gemd: pid %d sent op %d — ignored\n", c->pid, m.w[0]);
+            gemd_log("pid %d sent op %d — ignored", c->pid, m.w[0]);
             break;
         }
     }
@@ -680,14 +696,14 @@ static void accept_client(void)
     if (cfd < 0) return;
     int ci = -1;
     for (int i = 0; i < GEMD_MAXCL; i++) if (!g_cl[i].used) { ci = i; break; }
-    if (ci < 0) { sys_close(cfd); printf("gemd: too many clients\n"); return; }
+    if (ci < 0) { sys_close(cfd); gemd_log("too many clients"); return; }
     memset(&g_cl[ci], 0, sizeof g_cl[ci]);
     g_cl[ci].used = 1;
     g_cl[ci].menu.id = -1;
     g_cl[ci].last_recv = gemd_us();
     g_cl[ci].fd   = cfd;
     g_cl[ci].pid  = sys_chan_peer(cfd);        /* the kernel's word, not the client's */
-    printf("gemd: client pid %d connected (fd %d)\n", g_cl[ci].pid, cfd);
+    gemd_log("client pid %d connected (fd %d)", g_cl[ci].pid, cfd);
 }
 
 /* THE ONE WAIT. The listen fd, every client channel, and the input device — in a single poll().
@@ -742,7 +758,7 @@ static int gemd_events(aes_event *ev, int timeout_ms)
         int r = sys_poll(pf, ii + (g_ifd >= 0 ? 1 : 0), timeout_ms);
         if (r < 0) {
             if (r == -4) continue;                /* -EINTR: a signal, not a failure */
-            printf("gemd: poll -> %d\n", r);
+            gemd_log("poll -> %d — shutting down", r);
             memset(ev, 0, sizeof *ev); ev->type = AES_QUIT; return AES_QUIT;
         }
         if (r == 0) { memset(ev, 0, sizeof *ev); ev->type = AES_TIMER; return AES_TIMER; }
@@ -780,7 +796,7 @@ int gemd_run(void)
          * driver owns the cache-clean); a missing device or a failed submit falls back
          * to the CPU rows — qemu never has the engine, and must never need it */
         g_blitfd = (int)sys_open("/dev/blitter", 2);
-        printf("gemd: present via %s\n", g_blitfd >= 0 ? "/dev/blitter" : "CPU rows");
+        gemd_log("present via %s", g_blitfd >= 0 ? "/dev/blitter" : "CPU rows");
 #ifdef INSTRUMENTATION
         /* membench: memcpy 1MB along each edge of the {shm, malloc} x {backbuf} square and
          * klog it. VERDICT (board, 2026-07-15): all edges ~5.5ms/MB — attributes uniform,
@@ -844,7 +860,7 @@ int gemd_run(void)
     vdi_set_font_dir("/OS/fonts");
     font_face *face = vdi_load_system_font();
     if (!face) face = font_face_open("/System/fonts/AovelSansRounded.ttf");
-    if (!face) printf("gemd: system font load FAILED — titles will be blank\n");
+    if (!face) gemd_log("system font load FAILED — titles will be blank");
     else       vdi_set_face(face);
 
     int vh = v_opnvwk(&g_plane);
@@ -881,13 +897,12 @@ int gemd_run(void)
      * hear its clients. The kernel publishes events on a device and knows nothing about window
      * servers (§2); gemd is simply the process that opened it. */
     g_ifd = (int)sys_open(GEMD_INPUT_DEV, 0 /*O_RDONLY*/);
-    if (g_ifd < 0) printf("gemd: %s -> %d — NOTHING WILL BE CLICKABLE\n", GEMD_INPUT_DEV, g_ifd);
+    if (g_ifd < 0) gemd_log("%s -> %d — NOTHING WILL BE CLICKABLE", GEMD_INPUT_DEV, g_ifd);
     aes_set_events(gemd_events);         /* and the AES's frame drags wait through it too */
 
-    printf("gemd: up — plane %dx%d stride %d, service \"%s\" fd %d, input fd %d, theme %s\n",
-           fb.w, fb.h, fb.stride, GEM_SERVICE, g_lfd, g_ifd,
-           th ? "loaded" : "MISSING (no chrome art)");
-    fflush(stdout);
+    gemd_log("up — plane %dx%d stride %d, service \"%s\" fd %d, input fd %d, theme %s",
+             fb.w, fb.h, fb.stride, GEM_SERVICE, g_lfd, g_ifd,
+             th ? "loaded" : "MISSING (no chrome art)");
 
     for (;;) {
         aes_event ev;

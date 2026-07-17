@@ -223,7 +223,6 @@ void gemd_flush_msgs(void)
         gem_msg m; memset(&m, 0, sizeof m);
         switch (msg[0]) {
         case WM_CLOSED:                                /* the closer. NOT gemd's decision (§3). */
-            printf("gemd: closer on wh=%d -> MSG_CLOSED (the app decides, not us)\n", hd);
             m.w[0] = GEM_MSG_CLOSED; m.w[1] = (int16_t)hd;
             send_win(hd, &m);
             break;
@@ -246,13 +245,11 @@ void gemd_flush_msgs(void)
             break;
         case WM_TBUTTON:                               /* our chrome, our hit test (§11). The app is
                                                         * told WHICH button, never where it is. */
-            printf("gemd: title button %d on wh=%d -> MSG_TBUTTON\n", msg[4], hd);
             m.w[0] = GEM_MSG_TBUTTON; m.w[1] = (int16_t)hd; m.w[2] = msg[4];
             send_win(hd, &m);
             break;
         case WM_PATHSEG:                               /* a breadcrumb component. Same shape as the
                                                         * title button: an INDEX, never a rect. */
-            printf("gemd: path segment %d on wh=%d -> MSG_PATHSEG\n", msg[4], hd);
             m.w[0] = GEM_MSG_PATHSEG; m.w[1] = (int16_t)hd; m.w[2] = msg[4];
             send_win(hd, &m);
             break;
