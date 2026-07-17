@@ -44,6 +44,10 @@ static inline long sys_klog(const void *buf, unsigned len)
 /* DEBUG peek/poke of a 32-bit physical word (kernel does the access) — /bin/mem */
 static inline long sys_devmem(unsigned long addr, unsigned long val, int write)
 { return __syscall(SYS_devmem, (long)addr, (long)val, (long)write); }
+/* sized peek/poke: size = 1/2/4 bytes. The kernel does the access (PL1), so an
+ * unaligned Device cell (the SALLY ROM window, sub-word GP0 regs) works. */
+static inline long sys_devmem_sz(unsigned long addr, unsigned long val, int write, int size)
+{ return __syscall(SYS_devmem, (long)addr, (long)val, (long)((write & 1) | ((size & 0xFF) << 8))); }
 static inline long sys_getpid(void) { return __syscall(SYS_getpid, 0, 0, 0); }
 /* drain one pending XTOS system message into msg[8] (int16). 1 = filled, 0 = none.
  * GUI apps loop this each evnt_multi (see gem/aes) -> surfaced as AES MU_MESAG. */

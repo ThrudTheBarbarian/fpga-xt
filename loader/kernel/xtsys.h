@@ -329,8 +329,12 @@ struct xt_dirent { unsigned mode; char name[256]; };
 #define SYS_klog         0x403 /* (buf, len) -> bytes: append to the kernel diagnostic log
                                 * (dmesg / /proc/kmsg + /OS/var/log/system.log). Lets PL0
                                 * boot daemons log without cluttering the console. */
-#define SYS_devmem       0x404 /* (addr, val, write) -> word: peek/poke a 32-bit physical
-                                * word (kernel MMU is identity-mapped, reaches GP0/DDR/periph).
+#define SYS_devmem       0x404 /* (addr, val, write|size<<8) -> value: peek/poke a physical
+                                * cell. a2 bit0 = write; bits[15:8] = access size 1/2/4 bytes
+                                * (0 => word, back-compat). The kernel does the SIZED volatile
+                                * access in PL1, so an unaligned Device cell (the SALLY ROM
+                                * window $43C0_xxxx, sub-word GP0 regs) reads/writes without an
+                                * alignment fault, and the M7-gated plane band stays reachable.
                                 * DEBUG poke tool (/bin/mem) — no bounds check, by design. */
 #define SYS_boot_done    0x405 /* () -> 0: init(1) has run every boot script and is about to go
                                 * resident as the reaper. The kernel's shell_task blocks on THIS

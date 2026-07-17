@@ -2936,10 +2936,21 @@ static long do_syscall(uint32_t num, long a0, long a1, long a2)
         extern long klog_write(const char *, uint32_t);
         return klog_write((const char *)a0, (uint32_t)a1);
     }
-    case SYS_devmem: {                                      /* (addr, val, write) -> word: DEBUG peek/poke */
-        volatile uint32_t *q = (volatile uint32_t *)(unsigned long)a0;
-        if (a2) *q = (uint32_t)a1;                          /* poke */
-        return (long)(uint32_t)*q;                          /* read back / peek */
+    case SYS_devmem: {                                      /* (addr, val, write|size<<8) -> value: DEBUG peek/poke */
+        /* a2: bit0 = write, bits[15:8] = access size 1/2/4 (0 => word, back-compat).
+         * The access runs HERE, in the kernel (PL1), sized: a byte/half poke to an
+         * unaligned Device address (the SALLY ROM window $43C0_xxxx, sub-word GP0
+         * regs) no longer alignment-faults — a fault that used to be fatal and kill
+         * the caller. PL1 also reaches the M7-gated plane band (SEC_PLANE_K = PL1-RW
+         * in every process table). No bounds check — DEBUG tool, by design. */
+        unsigned long q = (unsigned long)a0;
+        int      wr = (int)(a2 & 1u);
+        unsigned sz = (unsigned)((a2 >> 8) & 0xFFu);
+        switch (sz) {
+        case 1: { volatile uint8_t  *p = (volatile uint8_t  *)q; if (wr) *p = (uint8_t)a1;  return (long)(uint8_t)*p; }
+        case 2: { volatile uint16_t *p = (volatile uint16_t *)q; if (wr) *p = (uint16_t)a1; return (long)(uint16_t)*p; }
+        default:{ volatile uint32_t *p = (volatile uint32_t *)q; if (wr) *p = (uint32_t)a1; return (long)(uint32_t)*p; }
+        }
     }
     case SYS_boot_done: return k_boot_done(p);              /* () -> 0: init ran every boot script */
     case SYS_strace: { if (p) p->strace = a0 ? 1 : 0; return 0; }   /* /bin/strace */
