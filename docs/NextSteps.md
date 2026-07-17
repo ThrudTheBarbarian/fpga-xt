@@ -4,6 +4,38 @@
 
 # Immediate targets
 
+## In-fabric 6502 debugger (branch `debug`) + XL app-launch
+The debugger is BUILT and HW-PROVEN: `/bin/6502 status|halt|go|step N|break $A|
+break off|breakreset on|off|reset|REG=VAL...` (halt via non-destructive rdy-gate,
+single-step, PC breakpoint, register snapshot + injection), GP0 DEBUG block
+(0x8xx), `xt6502_debug.sv`. Closed timing (clk_sally WNS +0.001). `/bin/xlboot`
+launches an ATR from the CLI. Docs: `docs/OS/6502-debug.md`. Tag `pre-6502-debug`
+on `main` is the fast baseline; sel 0x9 + DBG_BEAM reserved for the future ANTIC
+debugger. **Next tools (user's roadmap):** ANTIC recorder + waterfall diff; 6502
+AND ANTIC breakpoints; step DLIs with beam position (wire DBG_BEAM).
+
+**XL app-launch — progress with the debugger (still OPEN):**
+- FIXED (found via the debugger): SALLYRST didn't clear ANTIC NMIEN or POKEY
+  IRQEN, so a launched OS inherited stale interrupt-enables and took a phantom
+  NMI/IRQ at its FIRST post-reset instruction, derailing to $0000 before
+  coldstart. Fix = power-on-clear NMIEN/DMACTL (antic_regs) + IRQEN/latches
+  (pokey_regs) while SALLYRST held (cold_boot). Natural `xlboot` now RUNS
+  coldstart instead of derailing. See [[xl-coldstart-nmi-derail]].
+- OPEN blocker: coldstart runs but enters the **self-test** ($5000-$57FF, loops
+  $532D↔$53BC forever) and NEVER calls DSKINV ($E453) or SIOV ($E459) — proven
+  with breakpoints — so the disk is never booted and the paravirtual SIO doorbell
+  never rings. WHY coldstart diverts to self-test instead of booting D1: is the
+  next question (Atari-OS behaviour; suspects: RAM test looping on a sally_mem
+  quirk / math-page $4000-$5FFF or screen-banking overlap; PUPBT/console-key
+  path). Debug it: `6502 break` coldstart milestones from $C2AA and step to find
+  the branch into $5000.
+- Gotcha: rom_we (ROM-window) writes commit to the CPU's mem[] only while
+  SALLYRST is HELD, not while the debugger merely rdy-halts the core — so debug
+  read-probes that write the ROM window mid-halt read STALE ROM.
+- Branch hygiene: the debugger + the two interrupt fixes live on `debug`. The
+  NMIEN/IRQEN fixes are real app-launch fixes and should land on `main` too once
+  the launch is proven end-to-end (cherry-pick).
+
 ## Open Issues (tracked bugs)
 - **Retire the per-switch `TLBIALL` sledgehammer (residual stale image-region TLB entry).**
   `vm_switch` does a full `TLBIALL` on every process switch as a robust backstop for HW
