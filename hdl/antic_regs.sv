@@ -12,6 +12,7 @@
 module antic_regs (
     input  wire        clk,
     input  wire        rst,
+    input  wire        cold_boot,   // SALLYRST cold-boot (clk_bus): power-on-clears NMIEN+DMACTL
 
     // Write port (registered from bus_snoop).
     input  wire        we,
@@ -184,7 +185,16 @@ module antic_regs (
             pal_write_strobe <= 1'b0;
             os_rom_we        <= 1'b0;
 
-            if (we && is_canonical) begin
+            // SALLYRST cold-boot mimics a power-on ANTIC reset (Altirra §4.1): hold
+            // NMIEN and DMACTL cleared while the SALLY realm is held in reset, so a
+            // freshly launched OS never inherits the previous session's NMIEN — which
+            // would fire a stale DLI/VBI NMI at its first instruction (before coldstart
+            // initialises $0200/VDSLST) and derail. The 6502 is held during cold_boot,
+            // so this never races a real $D40E/$D400 write. See xl-coldstart-nmi-derail.
+            if (cold_boot) begin
+                nmien  <= 8'h00;
+                dmactl <= 8'h00;
+            end else if (we && is_canonical) begin
                 unique case (canon_w)
                     4'h0: dmactl <= wdata;       // $D400 DMACTL
                     4'h1: chactl <= wdata;       // $D401 CHACTL

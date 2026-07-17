@@ -30,6 +30,7 @@ module antic_top #(
     // ANTIC is paced by the phi2 raster (antic_raster); it is a window
     // *source*, not a display.
     input  wire        rst_n,           // /G_RST, active-low (sync'd internally)
+    input  wire        sally_cold,      // SALLYRST cold-boot level -> power-on-clear NMIEN/DMACTL
 
     // CPU bus inputs
     input  wire [15:0] bus_addr,        // A[15:0]
@@ -449,9 +450,16 @@ module antic_top #(
         unlock_blit_q   <= unlock_blit;
     end
 
+    // SALLYRST cold-boot, 2-FF synced into clk_bus (source is clk_sys = clk_bus, but
+    // keep the sync so it is domain-safe if clk_bus is ever a derived clock).
+    (* ASYNC_REG = "TRUE" *) reg [1:0] sally_cold_sync = 2'b00;
+    always_ff @(posedge clk_bus) sally_cold_sync <= {sally_cold_sync[0], sally_cold};
+    wire cold_boot_bus = sally_cold_sync[1];
+
     antic_regs u_antic_regs (
         .clk                  (clk_bus),
         .rst                  (rst_bus),
+        .cold_boot            (cold_boot_bus),
         .we                   (snoop_we_antic),
         .waddr                (snoop_addr[7:0]),
         .wdata                (snoop_data),

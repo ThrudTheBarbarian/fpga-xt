@@ -1099,6 +1099,7 @@ module fpga_xt_top (
     ) u_antic_top (
         .clk_bus            (clk_sys),
         .rst_n              (rst_sys_n),
+        .sally_cold         (sallyrst[0]),      // cold-boot: power-on-clear NMIEN/DMACTL
         .bus_addr           (bus_addr_antic),
         .bus_data_in        (bus_data_in_antic),
         .bus_rw             (bus_rw_antic),
