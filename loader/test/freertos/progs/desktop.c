@@ -374,7 +374,10 @@ static void launch_none(const char *name) {
 // machine + boot method), the text viewer, or a "no application" notice.  A
 // text file must NEVER route to an emulator.  Only if the table can't be loaded
 // at all do we fall back to the old path-based media inference (`media_type`).
-static void desk_launch(const char *name, int media_type) {
+// `full` = the absolute VFS path (for the actual boot); `name` = the leaf (for
+// the registry lookup + window title).  full may be NULL when the caller only
+// has a leaf (a text view / notice needs no path).
+static void desk_launch_full(const char *name, const char *full, int media_type) {
     char app[16], machine[8], meth[8];
     int r = registry_mime(name, app, sizeof app, machine, sizeof machine, meth, sizeof meth);
     if (r >= 0) {                                          // table present: obey it
@@ -386,6 +389,17 @@ static void desk_launch(const char *name, int media_type) {
             if (!strcmp(meth, "cart"))      snprintf(boot, sizeof boot, "CART %s", name);
             else if (!strcmp(meth, "disk")) snprintf(boot, sizeof boot, "%s %s", emu == ICT_EMU_8BIT ? "D1:" : "A:", name);
             else                            snprintf(boot, sizeof boot, "RUN %s", name);   // exec
+            // v1 (docs/OS/app-launch.md): an 8-bit DISK cold-boots the fabric 6502
+            // with the ATR mounted as D1:.  cart/exec still open the framed plane
+            // only (boot-disk synth + cart window are v1.5+).
+            if (emu == ICT_EMU_8BIT && !strcmp(meth, "disk") && full) {
+                long rc = sys_xl_boot(full, 1);
+                if (rc != 0) {
+                    char m[80]; snprintf(m, sizeof m, "[1][Can't boot %s (%ld)][OK]", name, rc);
+                    form_alert(1, m);
+                    return;
+                }
+            }
             open_emulator(emu, name, boot);
             return;
         }
@@ -396,13 +410,19 @@ static void desk_launch(const char *name, int media_type) {
     char ext[8] = ""; const char *dot = strrchr(name, '.');
     if (dot) { int i = 0; for (const char *p = dot+1; *p && i < 7; p++) ext[i++] = (char)tolower((unsigned char)*p); ext[i] = 0; }
     char boot[96];
+    int is_disk = 0;
     if (emu == ICT_EMU_8BIT) {
-        if (!strcmp(ext,"atr")||!strcmp(ext,"atx")||!strcmp(ext,"xfd")) snprintf(boot,sizeof boot,"D1: %s",name);
+        if (!strcmp(ext,"atr")||!strcmp(ext,"atx")||!strcmp(ext,"xfd")) { snprintf(boot,sizeof boot,"D1: %s",name); is_disk = 1; }
         else if (!strcmp(ext,"rom")||!strcmp(ext,"car")||!strcmp(ext,"bin")) snprintf(boot,sizeof boot,"CART %s",name);
         else snprintf(boot,sizeof boot,"RUN %s",name);        // xex/exe -> dummy env
     } else {
         if (!strcmp(ext,"st")||!strcmp(ext,"msa")||!strcmp(ext,"dim")) snprintf(boot,sizeof boot,"A: %s",name);
         else snprintf(boot,sizeof boot,"RUN %s",name);        // prg/tos/app
+    }
+    if (emu == ICT_EMU_8BIT && is_disk && full) {
+        long rc = sys_xl_boot(full, 1);
+        if (rc != 0) { char m[80]; snprintf(m, sizeof m, "[1][Can't boot %s (%ld)][OK]", name, rc);
+                       form_alert(1, m); return; }
     }
     open_emulator(emu, name, boot);
 }
@@ -471,6 +491,17 @@ typedef struct {
 } browser;
 static browser BR[MAXBR];
 static int g_bx = 380, g_by = 130;
+
+// A browser file: build its absolute VFS path and launch it (desk_launch_full,
+// declared above with the media-inference fallback).  One launcher, whether the
+// click came from an icon window or the tree browser.
+static void desk_launch_full(const char *name, const char *full, int media_type);
+static void desk_launch_browser(browser *b, int i) {
+    char full[600];
+    if (b->rel[0]) snprintf(full, sizeof full, "%s/%s/%s", b->fs_root, b->rel, b->ent[i].name);
+    else           snprintf(full, sizeof full, "%s/%s",    b->fs_root, b->ent[i].name);
+    desk_launch_full(b->ent[i].name, full, b->media_type);
+}
 
 // The synthetic ".." up-entry that leads a non-root browser's icon grid: a
 // single shared folder icon (ICT_FOLDER) + ".." label, built once on demand.
@@ -1249,7 +1280,7 @@ static void net_open(browser *b, int i) {
     if (e->state == 'c' || e->state == 'u') {
         char local[560]; struct xt_stat st;                   // /Cache/<id><remote> (the daemon's mirror)
         snprintf(local, sizeof local, "/Cache/%d%s", b->server_id, remote);
-        if (sys_stat(local, &st) == 0) { desk_launch(e->name, b->media_type); return; }
+        if (sys_stat(local, &st) == 0) { desk_launch_full(e->name, local, b->media_type); return; }
     }
     net_fetch_start(b, remote, e->name);
 }
@@ -1553,7 +1584,7 @@ static void br_click(browser *b, int mx, int my) {
             } else if (b->net == 2) {                        // network file: launch cached / fetch ghost
                 net_open(b, i);
             } else {                                         // launch the file in its emulator
-                desk_launch(b->ent[i].name, b->media_type);
+                desk_launch_browser(b, i);
             }
             return;
         }
@@ -1769,7 +1800,7 @@ static int br_expand(void *ctx, int dynid, menu_item **out, int *outn) {
 static void browse_launch(const char *fullpath) {
     const char *nm = strrchr(fullpath, '/'); nm = nm ? nm + 1 : fullpath;
     int media = strstr(fullpath, "m68k") ? ICT_MEDIA_1632 : ICT_MEDIA_8BIT;
-    desk_launch(nm, media);
+    desk_launch_full(nm, fullpath, media);
 }
 // Open a browsed folder as a rooted browser WINDOW.  On A9 the logical path IS
 // the SD path, so the absolute FS path is passed to open_browser directly.
@@ -1982,7 +2013,7 @@ static void ctx_open_entry(browser *b, int i) {
     } else if (b->net == 2) {
         net_open(b, i);
     } else {
-        desk_launch(b->ent[i].name, b->media_type);
+        desk_launch_browser(b, i);
     }
 }
 // A context-sensitive Info alert: differs by scope (file / folder / window /
@@ -2260,7 +2291,11 @@ static void menu_sync(void) {
 static void close_win(int win) {                             // mirror the WM_CLOSED cleanup
     if (!win) return;
     browser *b = br_of_window(win); if (b) { net_req_close(b); br_free_icons(b); b->used = 0; }
-    emuwin *e = emu_of_window(win); if (e) e->used = 0;
+    emuwin *e = emu_of_window(win);
+    if (e) {
+        e->used = 0;
+        if (win == g_xlwin) sys_xl_boot(NULL, 0);   // eject the medium, cold-boot to BASIC
+    }
     xl_unbind(win);
     wind_close(win);
 }
@@ -2503,7 +2538,8 @@ void _app_entry(int argc, char **argv) {
             /* The closer, on one of OUR windows. gemd asked; it did not decide (§3). */
             browser *b = br_of_window(msg[3]);       // close cancels any in-flight request
             if (b) { net_req_close(b); br_free_icons(b); b->used = 0; }
-            emuwin *e = emu_of_window(msg[3]); if (e) e->used = 0;
+            emuwin *e = emu_of_window(msg[3]);
+            if (e) { e->used = 0; if (msg[3] == g_xlwin) sys_xl_boot(NULL, 0); }  // eject + cold boot
             xl_unbind(msg[3]);
             wind_close(msg[3]);   // gemd drops the window and recomposites the rect it vacated
         }

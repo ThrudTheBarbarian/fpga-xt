@@ -214,6 +214,21 @@ module fpga_xt_top (
     wire rst_sally_n = ~rst_sally;
     wire rst_sys_n   = ~rst_sys;
 
+    // ---- A9-held SALLY reset (CTRL 0x1C bit 0) ---------------------------
+    // Cold-boot-per-launch (docs/OS/app-launch.md): the A9 sets the bit, the
+    // 6502 core + its clock gen freeze in reset, the A9 rewrites the OS/RAM
+    // through the ROM-loader window (which stays ALIVE — it and sally_mem keep
+    // plain rst_sally, so uploads work while held), then clears the bit for a
+    // fresh coldstart.  Quasi-static 2-FF CDC from clk_sys, initialised 0
+    // (running) — the same shape as CMPCFG.  The XT CCTL state a stock guest
+    // can't know about ($D5C0/C1, screen banks) is cleared by the patched OS
+    // coldstart, not here — sally_mem must not reset (BRAM writes, bank
+    // in-flight AXI drain).
+    wire [7:0] sallyrst;                     // clk_sys, from xt_gp0_regs
+    (* ASYNC_REG = "TRUE" *) reg [1:0] sallyrst_sync = 2'b00;
+    always_ff @(posedge clk_sally) sallyrst_sync <= {sallyrst_sync[0], sallyrst[0]};
+    wire rst_sally_core = rst_sally | sallyrst_sync[1];
+
     // ====================================================================
     // PL diagnostic word — read over GP0 at 0x43C0001C (no LED guessing)
     // ====================================================================
@@ -701,7 +716,7 @@ module fpga_xt_top (
         .BASE_DIV (56)
     ) u_sally_clock (
         .clk           (clk_sally),
-        .rst           (rst_sally),
+        .rst           (rst_sally_core),     // A9 hold freezes the step gen too
         .phi2_tick     (phi2_tick),
         .clock_mult    (clock_mult_sally),   // runtime-set via $D4CA (REPL `speed`); resets to 1x
         .halt_n        (~dma_steal_sally), // ANTIC DMA bus-steal; gated to CLOCK_MULT=1 inside
@@ -718,7 +733,7 @@ module fpga_xt_top (
     // The xt6502 clean-sheet core (registered MAR, mem round-trip in-clock).
     xt6502 u_sally_core (
         .clk      (clk_sally),
-        .rst      (rst_sally),
+        .rst      (rst_sally_core),          // A9-held for cold-boot-per-launch
         .addr     (cpu_addr),
         .data_in  (cpu_din),
         .data_out (cpu_dout),
@@ -2681,6 +2696,7 @@ module fpga_xt_top (
         .clock_mult      (eff_clock_mult_sys), // effective $D4CA speed, read back at GP0 offset 0x1E
         .gp0_ctrl        (gp0_ctrl),
         .cmpcfg          (cmpcfg),           // compositor plane arrangement (CTRL 0x18)
+        .sallyrst        (sallyrst),         // SALLY reset hold (CTRL 0x1C)
         .xt_unlock_we    (xt_unlock_we),     // A9 unlock write strobe (offset 0x20)
         .xt_unlock_state (xt_unlock),        // effective unlock, read-back at 0x20
         .overlay_base    (overlay_base),     // drag-overlay config (offsets 0x21-0x2F)

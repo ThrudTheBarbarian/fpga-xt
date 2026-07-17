@@ -134,3 +134,34 @@ doorbell/param-block ABI to the **A9 GEM service**, which draws the window onto 
 - **Now:** cold-boot per launch, one XL session, A9-served disk.
 - **With multitasking:** "launch task" instead of cold-boot; multiple 6502 tasks →
   multiple GEM windows from the 6502, classic + GEM coexisting.
+
+## v1 implementation (BUILT 2026-07-17 — pending the bitstream + board)
+
+The pieces, as landed:
+
+- **RTL (one bitstream):** `CTRL SALLYRST` (GP0 `0x43C0_031C` bit 0) holds/releases the
+  6502 core + its clock gen — the A9's cold-boot control the design lacked. `sally_mem`
+  and the ROM-loader keep the plain reset so uploads work WHILE the core is held.
+  (Bundled the clk_sally overlay-read wait-state opener in the same build — see the
+  timing study.)
+- **`SYS_xl_boot(path, drive)`** (`0x606`, `loader/test/freertos/xl_boot.c`): holds
+  SALLYRST, builds the 64 KB OS image from `/OS/roms/atari-{xl,basic}.rom`, PATCHES it
+  (SIOV's JMP → the paravirtual SIO stub; RESET vector → a coldstart-forcing stub that
+  clears PUPBT so a warm RAM still cold-boots), uploads `$1000-$FFFF` through the
+  `sally_rom_loader` window (which also scrubs RAM), mounts the ATR (whole file in kernel
+  memory), releases. `path=NULL` = eject + boot to BASIC.
+- **The stubs** (`tools/xl_sio_stub.s`, `xl_reset_stub.s`, assembled with `xa`, bytes
+  embedded in `xl_boot.c`): position-independent, each ending in a `JMP` whose target the
+  kernel fixes up to the original vector. The SIO stub copies the DCB into the math-page
+  slots, emits one `MC_OP_SIO` op word, rings the doorbell, and either copies the payload
+  itself (boot sectors, DBUF < $1000) or lets the A9 deliver straight to BRAM (DBUF ≥
+  $1000 — which is also the only safe route when DBUF sits under the mapped math page).
+- **Sector service** rides the **math-cop worker** (`xl_sio_service`, dispatched from
+  `mc_run_chunk` on the `MC_OP_SIO` opcode): decode DCB → the mount table → serve from the
+  RAM-resident ATR. Mounts change only while the 6502 is held in reset, so no locks.
+- **Desktop:** `desk_launch` on an 8-bit **disk** calls `SYS_xl_boot(full, 1)` then opens
+  the framed plane window; the close box / `WM_CLOSED` ejects (`SYS_xl_boot(NULL,0)`).
+
+**v1 boots ATRs only.** Documented gaps, all software follow-ups: XEX (needs the boot-disk
+synth), CAR/cart (no cart-window RTL), a write FROM a `$4000-$5FFF` buffer (staged through
+the overlay the stub maps), and media write-back to the SD (writes hit the RAM image only).

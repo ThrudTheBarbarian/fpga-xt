@@ -2847,6 +2847,10 @@ static long do_syscall(uint32_t num, long a0, long a1, long a2)
                     (int)((uint32_t)a1 >> 16), (int)(a1 & 0xFFFF));
         return 0;
     }
+    case SYS_xl_boot: {                                     /* (path, drive) — task ctx (SD reads) */
+        extern int xl_boot(const char *, int);
+        return xl_boot((const char *)a0, (int)a1);
+    }
     case SYS_plane_window: {                                /* (plane<<16|scale<<8|en, x<<16|y, w<<16|h) */
         extern long plane_window_set(int, int, int, int, int, int, int);
         if (frtos_current_pid() != g_fb_owner_pid) return -1;   /* M7 gate: plane placement
@@ -2986,6 +2990,7 @@ static int needs_task_ctx(struct k_regs *regs, uint32_t num)
     case SYS_svc_accept:   return 1;               /* BLOCKS until a client connects */
     case SYS_poll:         return 1;               /* BLOCKS until an fd is ready */
     case SYS_open:    return 1;                    /* may walk a FatFs directory path */
+    case SYS_xl_boot: return 1;                    /* reads the OS ROMs + the ATR off the SD */
     case SYS_read: {                               /* stdin + pipes + channels block */
         if (fd_is_con(fd)) return 1;               /* console alias: con_tty_readc path */
         proc_t *q = cur_proc();

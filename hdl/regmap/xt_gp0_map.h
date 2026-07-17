@@ -61,6 +61,7 @@
 #define XT_CTRL_KBD_RELEASE  (XT_BLK_CTRL + 0x10u)        /* W all-keys-up (A9-only; emits $D4CD) */
 #define XT_CTRL_KBD_BREAK    (XT_BLK_CTRL + 0x14u)        /* W Atari BREAK (A9-only; emits $D4CB) */
 #define XT_CTRL_CMPCFG       (XT_BLK_CTRL + 0x18u)        /* RW compositor plane arrangement (A9-only; reset 0x210 = current). depth: [3:0]=desktop, [7:4]=overlay, [11:8]=XL. alpha_en: [16]=desktop, [17]=overlay, [18]=XL. Route-A flip = desktop on top with alpha (0x00010132) */
+#define XT_CTRL_SALLYRST     (XT_BLK_CTRL + 0x1Cu)        /* RW [0]=1 HOLD the SALLY realm in reset (A9-only; reset 0 = running). Cold-boot-per-launch: hold, rewrite the OS/RAM through the ROM-loader window (0x1000+), release = fresh coldstart. Resets the 6502 core AND the XT state a stock guest cannot know about (bank selects $D5C0/$D5C1, screen banking $D5C3-5); the video pipeline keeps scanning */
 
 /* ---- DIAG block --------------------------------------------------- */
 #define XT_DIAG0             (XT_BLK_DIAG + 0x00u)        /* R MMCM locks / clk_pix-alive / frame count */

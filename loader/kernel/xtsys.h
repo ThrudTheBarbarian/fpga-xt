@@ -375,6 +375,15 @@ struct xt_dirent { unsigned mode; char name[256]; };
 /* plane ids for SYS_plane_window (gemd's WIND_PLANE bind carries the same ids) */
 #define XT_PLANE_XL      1     /* the 6502/XL emulation plane (XLCTL GP0 block) */
 
+#define SYS_xl_boot      0x606 /* (path, drive) -> 0/-errno: cold-boot the fabric
+                                * 6502 with `path` (an ATR) mounted as D<drive>:
+                                * (docs/OS/app-launch.md).  Holds SALLYRST, patches
+                                * + uploads the OS image (SIOV -> the paravirtual
+                                * SIO stub; RESET -> forced coldstart), mounts,
+                                * releases.  path=NULL = eject all media and cold
+                                * boot to BASIC.  The XL OS does the load itself —
+                                * the A9 never drives the 6502's PC. */
+
 /* ---- services + multiplexing — block 0x500 ---------------------------------
  * The rendezvous XTOS did not have. Pipes need shared ancestry (SYS_spawn_fd), so two
  * unrelated processes -- a boot-script-launched server and an ssh-launched client --

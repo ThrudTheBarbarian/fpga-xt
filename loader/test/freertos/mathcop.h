@@ -102,6 +102,24 @@
 #define MC_OP_TRUNC         0x1E
 /* conversion: op-word type field = DEST type, src2 byte [1:0] = SOURCE type */
 #define MC_OP_CVT           0x20
+
+/* ---- SIO over the mailbox (docs/OS/app-launch.md, Tier 1) -----------------
+ * The paravirtual SIO stub (tools/xl_sio_stub.s, patched into the OS ROM by
+ * xl_boot.c) borrows the mailbox for disk I/O: DCB in the slot file, ONE
+ * MC_OP_SIO op word, doorbell as usual — the worker routes it to xl_boot.c's
+ * mount table instead of the interpreter.  Additive: a math program never
+ * emits 0x25, and the stub uses its own chunk (MC_SIO_CHUNK) so a program's
+ * slot state in other chunks is untouched. */
+#define MC_OP_SIO           0x25
+#define MC_SIO_CHUNK        0xFF        /* $D5C8 while the stub runs */
+#define MC_OFF_SIO_FLAGS    0x0004      /* u8 (was reserved): bit7 = NOT MINE
+                                         * (6502 falls through to real SIO),
+                                         * bit0 = data DELIVERED direct to BRAM
+                                         * via the ROM window (DBUF >= $1000) */
+#define MC_OFF_SIO_DCB      (MC_OFF_SLOTS)          /* 12-byte Atari DCB copy */
+#define MC_OFF_SIO_DATA     (MC_OFF_SLOTS + 0x80)   /* <= 256 B sector payload */
+#define MC_SIO_NOTMINE      0x80
+#define MC_SIO_DELIVERED    0x01
 /* integer only (MC_T_F* -> MC_ST_BADOP) */
 #define MC_OP_AND           0x28
 #define MC_OP_OR            0x29

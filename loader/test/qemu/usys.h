@@ -206,6 +206,11 @@ static inline long sys_overlay(int x, int y, int w, int h, int en) {
  * `scale` 1..5; en=0 parks it off-screen. x/y may be negative (a window dragged past
  * an edge) — the kernel clips. First active plane flips the compositor to the Route-A
  * arrangement (desktop on top with alpha: an alpha=0 area reveals the plane below). */
+/* Cold-boot the fabric 6502 with an ATR mounted as D<drive>: (the XL OS boots it
+ * through the paravirtual SIO).  path=NULL = eject + cold boot to BASIC. */
+static inline long sys_xl_boot(const char *path, int drive) {
+    return __syscall(SYS_xl_boot, (long)path, drive, 0);
+}
 static inline long sys_plane_window(int plane, int x, int y, int w, int h, int scale, int en) {
     return __syscall(SYS_plane_window,
                      ((long)plane << 16) | ((long)(scale & 0xFF) << 8) | (en ? 1 : 0),

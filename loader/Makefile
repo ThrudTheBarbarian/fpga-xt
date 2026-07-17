@@ -121,7 +121,7 @@ FRSRC := $(FR)/tasks.c $(FR)/queue.c $(FR)/list.c $(FR)/timers.c $(FR)/event_gro
          $(FR)/croutine.c $(FR)/stream_buffer.c $(FR)/portable/MemMang/heap_4.c \
          $(FRPORT)/port.c \
          test/freertos/zynq.c test/freertos/bsp_shim.c test/freertos/mmu.c test/freertos/vm.c test/freertos/stackguard.c test/freertos/gfxplane.c test/freertos/hdmi.c test/freertos/frtos_os.c test/freertos/uart1_rx.c test/freertos/sprite.c test/freertos/input_dev.c \
-         test/freertos/mathcop.c \
+         test/freertos/mathcop.c test/freertos/xl_boot.c \
          test/freertos/romfs.c test/freertos/syscalls.c test/freertos/main.c test/freertos/blitter.c \
          newlib-pic/libm.a \
          test/freertos/blkdev.c test/freertos/vfs.c test/freertos/vfs_romfs.c test/freertos/vfs_ramfs.c test/freertos/vfs_lockfs.c test/freertos/vfs_devfs.c test/freertos/vfs_procfs.c \
@@ -732,6 +732,8 @@ sdstage: $(BUILD)/toybox.so $(BUILD)/sqlite3.so $(BUILD)/fbgrab.so $(BUILD)/blit
 	cp $(BUILD)/fujinetd.so $(SDSTAGE)/OS/bin/fujinetd
 	cp $(BUILD)/fuji.so    $(SDSTAGE)/OS/bin/fuji
 	cp $(BUILD)/libGEM.so  $(SDSTAGE)/OS/library/libGEM.so
+	mkdir -p $(SDSTAGE)/OS/roms
+	cp ../rsrc/atari-xl.rom ../rsrc/atari-basic.rom $(SDSTAGE)/OS/roms/
 	cp $(BUILD)/libxtos.so $(SDSTAGE)/OS/library/libxtos.so
 	# libm/libutil — off the HW romfs, card is authoritative.  NOT libc: it's
 	# bootstrap-loaded from romfs before the SD exists, so an SD copy would be a

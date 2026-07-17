@@ -136,6 +136,12 @@ module xt_gp0_regs (
     // opaque, desktop at the back).  Route-A flip is a single PS word write.
     output reg  [31:0] cmpcfg,
 
+    // ---- SALLY reset hold (clk_sys; CDC'd to clk_sally in top) -------------
+    // [0]=1 holds the 6502 core + its clock gen in reset (cold-boot-per-launch:
+    // hold, rewrite OS/RAM through the ROM-loader window, release = coldstart).
+    // Reset 0 = running, so a bitstream load boots exactly as before.
+    output reg  [7:0]  sallyrst,
+
     // ---- XT register-unlock control (clk_sys) ------------------------------
     output reg         xt_unlock_we,       // 1-cycle strobe (byte on bl_data)
     input  wire [7:0]  xt_unlock_state,    // effective unlock, for read-back
@@ -213,6 +219,7 @@ module xt_gp0_regs (
             w_byte         <= 8'd0;
             gp0_ctrl       <= 8'h00;   // boot to the compositor; bars are debug-only
             cmpcfg         <= 32'h0000_0210;  // depth desktop0/overlay1/XL2, all opaque = shipping
+            sallyrst       <= 8'h00;          // 6502 runs from config, as always
             xt_unlock_we   <= 1'b0;
             overlay_base   <= 32'd0;
             overlay_x      <= 12'd0;
@@ -304,6 +311,7 @@ module xt_gp0_regs (
                                 unique case (aw_off)
                                     CTRL_GP0:   gp0_ctrl <= w_byte;            // [0]bars/compositor [3:1]XL-scale [4]DMACTL-blank [5]video-sleep
                                     CTRL_CMPCFG: cmpcfg  <= w_data;            // per-plane depth + alpha_en (whole word)
+                                    CTRL_SALLYRST: sallyrst <= w_byte;         // [0] = hold the 6502 realm in reset
                                     CTRL_SPEED: begin bl_addr <= 6'h1A; bl_we <= 1'b1; end // clock_mult -> $D4CA
                                     CTRL_UNLOCK: xt_unlock_we <= 1'b1;         // unlock (data on bl_data)
                                     CTRL_KBD_INJECT:  begin bl_addr <= 6'h1F; bl_we <= 1'b1; end // -> $D4CF
@@ -396,6 +404,7 @@ module xt_gp0_regs (
                                 else if (ar_off == CTRL_SPEED)  s_axi_rdata <= {24'd0, clock_mult};
                                 else if (ar_off == CTRL_UNLOCK) s_axi_rdata <= {24'd0, xt_unlock_state};
                                 else if (ar_off == CTRL_CMPCFG) s_axi_rdata <= cmpcfg;
+                                else if (ar_off == CTRL_SALLYRST) s_axi_rdata <= {24'd0, sallyrst};
                             BLK_DIAG:
                                 unique case (ar_off)
                                     DIAG0: s_axi_rdata <= diag_word;
