@@ -72,12 +72,15 @@ invasive than feared. Two facts drive the whole design:
   `if (rdy) begin … end`). Holding `rdy=0` freezes *every* flop — state, PC,
   A/X/Y/S/P — with nothing cleared (unlike `rst`, which zeros them). So **HALT =
   gate `rdy` low.** No new logic inside the core.
-- **`state == ST_FETCH` (7'd3) is the once-per-instruction boundary.** At
-  ST_FETCH the opcode address is on the bus and `PC` holds that address (the
-  increment lands on the clock edge), so it is both the clean halt point and the
-  right PC to compare a breakpoint against. (`ST_DECODE`=4 also fires once per
-  instruction but PC has already incremented — use ST_FETCH so `PC` reads as the
-  next-instruction address.)
+- **`state == ST_DECODE` (7'd4) is the once-per-instruction boundary.** The core
+  PREFETCHES the next opcode during execution, so `ST_FETCH` is *skipped* except
+  after control-flow changes — it is NOT once per instruction (a sim trace proved
+  this: DECODE fired once per instruction, FETCH did not). At ST_DECODE the opcode
+  has been consumed and PC already incremented past it, so the instruction address
+  is `PC - 1` — the debug block subtracts one for the snapshot and the breakpoint
+  compare. The core halts one microstate after the DECODE boundary (mid-instruction,
+  not yet retired); `step` then runs to the next DECODE, executing exactly one
+  instruction.
 
 ### Core taps (the only change to xt6502.sv)
 

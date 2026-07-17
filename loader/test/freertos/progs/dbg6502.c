@@ -1,0 +1,191 @@
+/* dbg6502.c — /bin/6502: the in-fabric 6502 debugger front-end (docs/OS/6502-debug.md).
+ *
+ *   6502 status                 dump PC A X Y SP P (flags) + halted/icnt
+ *   6502 halt                   run to the next instruction boundary, then freeze
+ *   6502 go                     release / run
+ *   6502 step [N]               execute N instructions (default 1) then freeze
+ *   6502 break $DE34            arm a PC breakpoint (halts before executing it)
+ *   6502 break off              disarm the breakpoint
+ *   6502 breakreset on|off      halt at the reset-vector fetch on the next SALLYRST
+ *   6502 reset                  pulse SALLYRST (halts at reset if breakreset is on)
+ *   6502 PC=$200 SP=$FF ...     write registers while halted (REG: PC A X Y SP P)
+ *   6502 PC=$4000 SP=$FF go     write registers, then run
+ *
+ * Talks to the GP0 DEBUG block (0x43C0_0800) via SYS_devmem — aligned words, so
+ * plain sys_devmem is fine.  Register read-back is coherent only when halted. */
+#include <stdint.h>
+#include "usys.h"
+
+#define GP0            0x43C00000ul
+#define DBG            (GP0 + 0x800ul)
+#define DBG_HALT       (DBG + 0x00)
+#define DBG_GO         (DBG + 0x04)
+#define DBG_STEP       (DBG + 0x08)
+#define DBG_CFG        (DBG + 0x0C)     /* [0]=bkpt_en [1]=halt_at_reset */
+#define DBG_BKPT       (DBG + 0x10)
+#define DBG_COMMIT     (DBG + 0x14)
+#define DBG_WPC        (DBG + 0x18)
+#define DBG_WAXYS      (DBG + 0x1C)
+#define DBG_WPSH       (DBG + 0x20)
+#define DBG_STAT       (DBG + 0x24)     /* [0]halted [1]bkpt_hit [2]stepping [3]running */
+#define DBG_PC         (DBG + 0x28)
+#define DBG_AXYS       (DBG + 0x2C)
+#define DBG_PSH        (DBG + 0x30)
+#define DBG_ICNT       (DBG + 0x34)
+#define CTRL_SALLYRST  (GP0 + 0x31Cul)
+
+static unsigned long rd(unsigned long a)            { return (unsigned long)sys_devmem(a, 0, 0); }
+static void          wr(unsigned long a, unsigned long v) { sys_devmem(a, v, 1); }
+
+/* ---- tiny string / number helpers (freestanding) ---- */
+static int streq(const char *a, const char *b)
+{ while (*a && *a == *b) { a++; b++; } return *a == *b; }
+
+static unsigned long parse_num(const char *s)       /* $hex, 0xhex, or decimal */
+{
+    unsigned long v = 0; int hex = 0;
+    if (*s == '$') { s++; hex = 1; }
+    else if (s[0] == '0' && (s[1] == 'x' || s[1] == 'X')) { s += 2; hex = 1; }
+    for (; *s; s++) {
+        char c = *s; int d;
+        if      (c >= '0' && c <= '9') d = c - '0';
+        else if (c >= 'a' && c <= 'f') d = c - 'a' + 10;
+        else if (c >= 'A' && c <= 'F') d = c - 'A' + 10;
+        else break;
+        if (!hex && d > 9) break;
+        v = hex ? (v << 4) + d : v * 10 + d;
+    }
+    return v;
+}
+
+/* output buffer */
+static char  ob[256]; static int on;
+static void  oc(char c) { if (on < (int)sizeof ob) ob[on++] = c; }
+static void  os(const char *s) { while (*s) oc(*s++); }
+static void  ohex(unsigned long v, int digits)
+{ static const char h[] = "0123456789ABCDEF"; oc('$');
+  for (int i = digits - 1; i >= 0; i--) oc(h[(v >> (i * 4)) & 0xF]); }
+static void  odec(unsigned long v)
+{ char t[12]; int n = 0; if (!v) { oc('0'); return; }
+  while (v) { t[n++] = '0' + v % 10; v /= 10; } while (n) oc(t[--n]); }
+static void  flush(int fd) { sys_write(fd, ob, on); on = 0; }
+
+/* spin-poll DBG_STAT until halted (bit0). Bounded so a runaway never wedges. */
+static int poll_halt(void)
+{
+    for (long i = 0; i < 2000000; i++) if (rd(DBG_STAT) & 1u) return 1;
+    return 0;
+}
+
+static void status(void)
+{
+    unsigned long st = rd(DBG_STAT), pc = rd(DBG_PC) & 0xFFFF;
+    unsigned long ax = rd(DBG_AXYS), ps = rd(DBG_PSH), ic = rd(DBG_ICNT);
+    unsigned A = ax & 0xFF, X = (ax >> 8) & 0xFF, Y = (ax >> 16) & 0xFF;
+    unsigned Slo = (ax >> 24) & 0xFF, Shi = (ps >> 8) & 0xF, P = ps & 0xFF;
+    static const char fl[8] = { 'N','V','-','B','D','I','Z','C' };  /* bit 7..0 */
+
+    on = 0;
+    os("6502 ");
+    os((st & 1) ? "HALTED " : (st & 8) ? "RUN    " : "?      ");
+    if (st & 2) os("(bkpt) ");
+    os(" PC="); ohex(pc, 4);
+    os("  A=");  ohex(A, 2);
+    os(" X=");   ohex(X, 2);
+    os(" Y=");   ohex(Y, 2);
+    os(" SP=");  ohex((Shi << 8) | Slo, 3);
+    os("  P=");  ohex(P, 2); os(" [");
+    for (int i = 7; i >= 0; i--) {
+        char c = fl[7 - i];
+        oc((P >> i) & 1 ? c : (c >= 'A' && c <= 'Z' ? c + 32 : c));
+    }
+    os("]  icnt="); odec(ic); oc('\n');
+    flush(1);
+}
+
+void _app_entry(int argc, char **argv)
+{
+    if (argc < 2) { status(); sys_exit(0); }
+    const char *cmd = argv[1];
+
+    if (streq(cmd, "status")) { status(); sys_exit(0); }
+
+    if (streq(cmd, "halt")) { wr(DBG_HALT, 1); poll_halt(); status(); sys_exit(0); }
+
+    if (streq(cmd, "go"))   { wr(DBG_GO, 1);
+        on = 0; os("6502 running\n"); flush(1); sys_exit(0); }
+
+    if (streq(cmd, "step")) {
+        unsigned long n = (argc >= 3) ? parse_num(argv[2]) : 1;
+        if (!n) n = 1;
+        wr(DBG_STEP, n); poll_halt(); status(); sys_exit(0);
+    }
+
+    if (streq(cmd, "reset")) {
+        wr(CTRL_SALLYRST, 1); wr(CTRL_SALLYRST, 0);
+        if (rd(DBG_CFG) & 2u) poll_halt();       /* halt_at_reset armed -> wait */
+        status(); sys_exit(0);
+    }
+
+    if (streq(cmd, "break")) {
+        unsigned long cfg = rd(DBG_CFG);
+        if (argc >= 3 && streq(argv[2], "off")) { wr(DBG_CFG, cfg & ~1ul);
+            on = 0; os("6502 breakpoint off\n"); flush(1); }
+        else if (argc >= 3) {
+            wr(DBG_BKPT, parse_num(argv[2]) & 0xFFFF);
+            wr(DBG_CFG, cfg | 1ul);
+            on = 0; os("6502 break at "); ohex(rd(DBG_BKPT) & 0xFFFF, 4); oc('\n'); flush(1);
+        }
+        sys_exit(0);
+    }
+
+    if (streq(cmd, "breakreset")) {
+        unsigned long cfg = rd(DBG_CFG);
+        int on2 = (argc >= 3 && streq(argv[2], "on"));
+        wr(DBG_CFG, on2 ? (cfg | 2ul) : (cfg & ~2ul));
+        on = 0; os("6502 breakreset "); os(on2 ? "on\n" : "off\n"); flush(1);
+        sys_exit(0);
+    }
+
+    /* register-assignment form: PC=.. A=.. X=.. Y=.. SP=.. P=.. [go] */
+    {
+        int did_assign = 0, do_go = 0;
+        unsigned long pc = rd(DBG_PC) & 0xFFFF;
+        unsigned long ax = rd(DBG_AXYS);
+        unsigned long ps = rd(DBG_PSH);
+        for (int i = 1; i < argc; i++) {
+            const char *t = argv[i];
+            if (streq(t, "go")) { do_go = 1; continue; }
+            /* find '=' */
+            const char *e = t; while (*e && *e != '=') e++;
+            if (*e != '=') {
+                on = 0; os("6502: unknown '"); os(t); os("'\n"); flush(2); sys_exit(2);
+            }
+            unsigned long v = parse_num(e + 1);
+            /* reg name = t..e */
+            int L = (int)(e - t);
+            if      (L == 2 && t[0] == 'P' && t[1] == 'C') pc = v & 0xFFFF;
+            else if (L == 1 && t[0] == 'A') ax = (ax & ~0xFFul)        | (v & 0xFF);
+            else if (L == 1 && t[0] == 'X') ax = (ax & ~0xFF00ul)      | ((v & 0xFF) << 8);
+            else if (L == 1 && t[0] == 'Y') ax = (ax & ~0xFF0000ul)    | ((v & 0xFF) << 16);
+            else if (L == 1 && t[0] == 'P') ps = (ps & ~0xFFul)        | (v & 0xFF);
+            else if ((L == 2 && t[0] == 'S' && t[1] == 'P') || (L == 1 && t[0] == 'S')) {
+                ax = (ax & ~0xFF000000ul) | ((v & 0xFF) << 24);         /* SP low */
+                ps = (ps & ~0xF00ul)      | (((v >> 8) & 0xF) << 8);    /* SP high nibble */
+            } else {
+                on = 0; os("6502: bad reg '"); os(t); os("'\n"); flush(2); sys_exit(2);
+            }
+            did_assign = 1;
+        }
+        if (!did_assign) {
+            on = 0; os("usage: 6502 status|halt|go|step [N]|break $A|break off|breakreset on|off|reset|REG=VAL...\n");
+            flush(2); sys_exit(2);
+        }
+        wr(DBG_WPC, pc); wr(DBG_WAXYS, ax); wr(DBG_WPSH, ps);
+        wr(DBG_COMMIT, 1);
+        poll_halt();                                 /* commit fetch+decodes then halts */
+        if (do_go) { wr(DBG_GO, 1); on = 0; os("6502 running\n"); flush(1); }
+        else status();
+        sys_exit(0);
+    }
+}
