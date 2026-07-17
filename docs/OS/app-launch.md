@@ -50,6 +50,44 @@ The **A9 serves virtual disks** — the file is in its VFS, and this keeps the S
 virtual). Crucially the A9 never drives the 6502's PC: it cold-boots and serves
 sectors, and the XL OS does the load itself.
 
+## SIO coexistence — virtual disks vs a real D1: on the port
+
+**One mount table, arbitrated by SIO device ID.** On a real SIO bus arbitration
+*is* the device ID — every command frame names its target (D1:=$31 … D8:=$38) and
+whoever owns that ID answers. So the OS keeps a single device table, visible to
+the desktop: each slot is **virtual** (an A9 VFS file — an ATR, a synthesized XEX
+boot disk), **physical** (pass through to the real bus), or **empty**. Every
+routing decision is a per-slot lookup; there is no other mechanism.
+
+**Explicit action wins.** Launching an ATR mounts it at D1: *for that session* —
+the virtual disk deliberately shadows a physical drive with the same ID, exactly
+as inserting media should. Close the session and the mount evaporates; the real
+D1: is visible again. Booting the actual floppy is a desktop action too ("boot
+from real D1:" = cold-boot with the virtual slot empty). Nothing forces a fight:
+launch prefs can mount the virtual disk at D2: instead, leaving a real D1:
+bootable — a per-app registry setting, not a special case.
+
+**Two transports behind the same table:**
+
+- **Tier 1 — the SIOV hook (now).** The patched OS image routes `SIOV` through a
+  paravirtual stub: DCB → the math-cop mailbox → the A9 serves the sector from
+  the VFS. Slots marked *physical* fall through to the **original** OS SIO code,
+  which drives POKEY serial — the path the STM terminates. Instant sector loads
+  at turbo speed; the classic limitation applies (custom loaders that bang POKEY
+  directly bypass any vector patch).
+- **Tier 2 — the byte-level interposer (when the STM lands).** The fabric already
+  sits between POKEY's byte-level serial engine and the SPI link (`peri_bridge`,
+  pins tied off today). When a command frame goes out, the A9 peeks the device
+  ID: virtual slot → the A9 answers by injecting response bytes into POKEY's
+  receive side and the physical bus never sees the frame; physical/empty → bytes
+  flow to the STM untouched. Device-ID-granular, zero bus collisions, and it
+  works for custom loaders — the same arbitration model FujiNet uses to live
+  alongside real drives. The SIOV hook then survives purely as the per-slot
+  fast path, switchable via the same prefs.
+
+The table and per-ID routing are the contract; transports change underneath
+without the desktop, the registry schema, or the launch flow changing shape.
+
 ## Preferences — one SQLite registry
 
 App/system settings live as a **namespace in the single SQLite database** (the XTOS
