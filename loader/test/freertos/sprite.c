@@ -470,4 +470,6 @@ int input_next_event(struct os_event *ev, int timeout_ms, int raw) {
 }
 int  kbd_6502_pace(int c)   { (void)c; return -1; }
 void kbd_6502_inject(int c) { (void)c; }
+void cursor_move(int x, int y) { (void)x; (void)y; }   /* no HW cursor sprite on qemu; the UDP  */
+void cursor_pos(int *x, int *y) { *x = 0; *y = 0; }    /* mouse (net/input_udp.c) still links   */
 #endif
