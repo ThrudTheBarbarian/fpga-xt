@@ -19,6 +19,7 @@ module pokey #(
 ) (
     input  wire        clk,
     input  wire        rst,
+    input  wire        cold_boot,   // SALLYRST cold-boot -> power-on-clear IRQEN in pokey_regs
 
     // Bus phi2 strobe — 1-cycle pulse per 6502 phi2 rising edge.
     // Generated at antic_top from the bus-clock divider; consumed by
@@ -104,6 +105,7 @@ module pokey #(
     pokey_regs u_regs (
         .clk                  (clk),
         .rst                  (rst),
+        .cold_boot            (cold_boot),
         .we                   (we),
         .waddr                (waddr),
         .wdata                (wdata),

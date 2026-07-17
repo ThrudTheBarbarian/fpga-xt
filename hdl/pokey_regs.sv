@@ -57,6 +57,7 @@
 module pokey_regs (
     input  wire        clk,
     input  wire        rst,
+    input  wire        cold_boot,   // SALLYRST cold-boot: power-on-clear IRQEN (+ latches)
 
     // Write port from bus_snoop.
     input  wire        we,                 // snoop_we_pokey
@@ -219,6 +220,15 @@ module pokey_regs (
             irq_latch_q <= 8'h00;
             serout_q    <= 8'h00;
             serin_q     <= 8'h00;
+        end else if (cold_boot) begin
+            // SALLYRST cold-boot mimics a POKEY power-on reset: clear IRQEN and the
+            // IRQ latches so a freshly launched OS never inherits the previous
+            // session's IRQEN — which (with a pending source) holds IRQ_n low and
+            // derails the guest's reset before coldstart masks it. The 6502 is held
+            // during cold-boot, so this never races a real $D20E write. Pairs with
+            // the ANTIC NMIEN clear. See xl-coldstart-nmi-derail.
+            irqen_q     <= 8'h00;
+            irq_latch_q <= 8'h00;
         end else begin
             // ---- Keyboard event ingest (M23-4) -----
             if (kbd_event_valid) begin

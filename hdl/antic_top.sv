@@ -629,6 +629,7 @@ module antic_top #(
     pokey #(.CLK_BUS_HZ(POKEY_CLK_BUS_HZ)) u_pokey_l (
         .clk                  (clk_bus),
         .rst                  (rst_bus),
+        .cold_boot            (cold_boot_bus),
         .phi2_tick            (phi2_tick),
         .we                   (snoop_we_pokey_l),
         .waddr                (snoop_addr[7:0]),
@@ -683,6 +684,7 @@ module antic_top #(
     pokey #(.CLK_BUS_HZ(POKEY_CLK_BUS_HZ)) u_pokey_r (
         .clk                  (clk_bus),
         .rst                  (rst_bus),
+        .cold_boot            (cold_boot_bus),
         .phi2_tick            (phi2_tick),
         .we                   (snoop_we_pokey_r),
         .waddr                (snoop_addr[7:0]),
