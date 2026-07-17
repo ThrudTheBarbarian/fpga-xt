@@ -119,6 +119,8 @@ module xt_gp0_regs (
     input  wire [31:0] diag5_word,
     input  wire [31:0] diag6_word,
     input  wire [31:0] diag7_word,
+    input  wire [31:0] diag8_word,      // TEMP: ROM-window upload diag (AXI/rom_we counts)
+    input  wire [31:0] diag9_word,      // TEMP: ROM-window upload diag (last addr/data)
     // ---- hardware entropy (clk_sys) — read in the 0x7xx block --------------
     input  wire [31:0] trng_word,
 
@@ -414,6 +416,8 @@ module xt_gp0_regs (
                                     DIAG5: s_axi_rdata <= diag5_word;
                                     DIAG6: s_axi_rdata <= diag6_word;
                                     DIAG7: s_axi_rdata <= diag7_word;
+                                    DIAG8: s_axi_rdata <= diag8_word;
+                                    DIAG9: s_axi_rdata <= diag9_word;
                                     default: ;
                                 endcase
                             BLK_MATH:

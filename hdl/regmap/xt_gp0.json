@@ -123,7 +123,11 @@
         { "off": "0x14", "access": "R", "width": 32, "c": "XT_DIAG6", "sv": "DIAG6",
           "desc": "HP2 read-probe status" },
         { "off": "0x18", "access": "R", "width": 32, "c": "XT_DIAG7", "sv": "DIAG7",
-          "desc": "HP2 read-probe last rdata" }
+          "desc": "HP2 read-probe last rdata" },
+        { "off": "0x1C", "access": "R", "width": 32, "c": "XT_DIAG8", "sv": "DIAG8",
+          "desc": "TEMP ROM-window upload diag: [31:16]=window AXI writes accepted, [15:0]=rom_we pulses emitted to sally_mem" },
+        { "off": "0x20", "access": "R", "width": 32, "c": "XT_DIAG9", "sv": "DIAG9",
+          "desc": "TEMP ROM-window upload diag: [23:8]=last rom_addr, [7:0]=last rom_data" }
       ]
     },
     {

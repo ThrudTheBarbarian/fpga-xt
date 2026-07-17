@@ -69,6 +69,8 @@ PL diagnostic words (A9-only, read-only, word-aligned)
 | 0x10 | R | 32 | `XT_DIAG5` | `DIAG5` | HP0 (desktop) first-AR address |
 | 0x14 | R | 32 | `XT_DIAG6` | `DIAG6` | HP2 read-probe status |
 | 0x18 | R | 32 | `XT_DIAG7` | `DIAG7` | HP2 read-probe last rdata |
+| 0x1C | R | 32 | `XT_DIAG8` | `DIAG8` | TEMP ROM-window upload diag: [31:16]=window AXI writes accepted, [15:0]=rom_we pulses emitted to sally_mem |
+| 0x20 | R | 32 | `XT_DIAG9` | `DIAG9` | TEMP ROM-window upload diag: [23:8]=last rom_addr, [7:0]=last rom_data |
 
 ## 0x500 — XLCTL  (`XT_BLK_XLCTL`)
 

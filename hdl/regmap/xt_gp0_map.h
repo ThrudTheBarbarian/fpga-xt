@@ -71,6 +71,8 @@
 #define XT_DIAG5             (XT_BLK_DIAG + 0x10u)        /* R HP0 (desktop) first-AR address */
 #define XT_DIAG6             (XT_BLK_DIAG + 0x14u)        /* R HP2 read-probe status */
 #define XT_DIAG7             (XT_BLK_DIAG + 0x18u)        /* R HP2 read-probe last rdata */
+#define XT_DIAG8             (XT_BLK_DIAG + 0x1Cu)        /* R TEMP ROM-window upload diag: [31:16]=window AXI writes accepted, [15:0]=rom_we pulses emitted to sally_mem */
+#define XT_DIAG9             (XT_BLK_DIAG + 0x20u)        /* R TEMP ROM-window upload diag: [23:8]=last rom_addr, [7:0]=last rom_data */
 
 /* ---- XLCTL block --------------------------------------------------- */
 #define XT_XL_WIN_X          (XT_BLK_XLCTL + 0x00u)       /* W plane origin X on screen (12-bit) */
