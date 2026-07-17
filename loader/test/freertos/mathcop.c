@@ -504,6 +504,16 @@ static void mc_run_chunk(uint8_t chunk)
     unsigned op_count = page[MC_OFF_OPCOUNT] | ((unsigned)page[MC_OFF_OPCOUNT + 1] << 8);
     if (op_count > MC_MAX_OPS) { op_count = MC_MAX_OPS; st |= MC_ST_RANGE; }
 
+#ifdef XL_SIO_TRACE
+    { static int dn; if (dn < 30) { dn++;
+        char b[64]; int k=0; const char*hx="0123456789ABCDEF";
+        const char*p="[mc] doorbell chunk="; while(*p)b[k++]=*p++;
+        b[k++]=hx[(chunk>>4)&0xF]; b[k++]=hx[chunk&0xF];
+        p=" magic="; while(*p)b[k++]=*p++;
+        b[k++]=hx[(page[MC_OFF_SIO_MAGIC]>>4)&0xF]; b[k++]=hx[page[MC_OFF_SIO_MAGIC]&0xF];
+        b[k++]='\r'; b[k++]='\n'; b[k]=0; klog(b);
+    } }
+#endif
     /* SIO over the mailbox (mathcop.h): the compact stub flags a request with a
      * MAGIC byte rather than a 1-op math program (it must fit a small ROM
      * padding run).  Route it to xl_boot.c's mount table instead of the

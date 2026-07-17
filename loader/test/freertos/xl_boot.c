@@ -171,6 +171,26 @@ void xl_sio_service(volatile uint8_t *page)
     }
     page[MC_OFF_SIO_FLAGS] = flags;
     page[MC_OFF_STATUS]    = st;
+
+#ifdef XL_SIO_TRACE
+    /* TEMP: trace the first requests of a boot to diagnose the data path. */
+    { static int n; if (n < 40) { n++;
+        char b[96]; int k = 0;
+        const char *hx = "0123456789ABCDEF";
+        #define P(s) do{ for(const char*_p=(s);*_p&&k<90;_p++) b[k++]=*_p; }while(0)
+        #define PH(v,d) do{ for(int _i=(d)-1;_i>=0;_i--) if(k<90) b[k++]=hx[((v)>>(_i*4))&0xF]; }while(0)
+        P("[xl] sio cmd="); PH(cmd,2);
+        P(" d"); PH((unsigned)drive+1,1);
+        P(" sec="); PH(daux,4);
+        P(" buf="); PH(dbuf,4);
+        P(" n="); PH((unsigned)outlen,4);
+        P(" st="); PH(st,2);
+        P(flags & MC_SIO_DELIVERED ? " DLV\r\n" : "\r\n");
+        b[k] = 0; klog(b);
+        #undef P
+        #undef PH
+    } }
+#endif
 }
 
 /* ---- OS image build + patch ----------------------------------------------- */
