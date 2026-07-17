@@ -37,6 +37,25 @@ static long dv_sink_wr(vfs_file *f, const void *buf, uint32_t n)
 static long dv_zero_rd(vfs_file *f, void *buf, uint32_t n)
 { (void)f; memset(buf, 0, n); return (long)n; }
 
+/* /dev/fb0 — the scan-out plane, READ-ONLY and kernel-mediated (M7): the gate made the
+ * plane PL0-none, which killed fbgrab's direct mapping; a screen grab is a legitimate
+ * diagnostic, so the kernel streams the pixels instead — no PL0 mapping, the write
+ * discipline intact. Geometry comes from SYS_fb_info, whose NUMBERS survived the gate
+ * for exactly this kind of use. Sequential reads walk the raw plane (stride*4*h bytes);
+ * EOF at the end. Uncached reads — a grab is seconds-tolerant, the desktop is not. */
+static long dv_fb0_rd(vfs_file *f, void *buf, uint32_t n)
+{
+    extern void fb_info(int *, int *, int *, uint32_t *);
+    int w, h, stride; uint32_t addr;
+    fb_info(&w, &h, &stride, &addr);
+    uint32_t total = (uint32_t)stride * 4u * (uint32_t)h;
+    if (f->pos >= total) return 0;
+    if (n > total - f->pos) n = total - f->pos;
+    memcpy(buf, (const void *)(uintptr_t)(addr + f->pos), n);   /* kernel identity view */
+    f->pos += n;
+    return (long)n;
+}
+
 static long dv_rand_rd(vfs_file *f, void *buf, uint32_t n)
 {
     uint32_t s = (uint32_t)(uintptr_t)f->priv;
@@ -282,6 +301,7 @@ static const devnode g_nodes[] = {
     { "/null",    VFS_CHR_DEV, dv_null_rd, dv_sink_wr, 0, 0 },
     { "/zero",    VFS_CHR_DEV, dv_zero_rd, dv_sink_wr, 0, 0 },
     { "/urandom", VFS_CHR_DEV, dv_rand_rd, dv_sink_wr, 0, 0 },
+    { "/fb0",     VFS_CHR_DEV, dv_fb0_rd,  0,          0, 0 },   /* plane pixels, read-only (M7) */
     { "/random",  VFS_CHR_DEV, dv_rand_rd, dv_sink_wr, 0, 0 },
     { "/tty",     VFS_CHR_TTY, 0, 0, 0, 0 },
     { "/console", VFS_CHR_TTY, 0, 0, 0, 0 },

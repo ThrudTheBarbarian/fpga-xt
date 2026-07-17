@@ -6,10 +6,11 @@
  * looking at the monitor — which is no use to anything automated, and no use at all when the
  * question is "is the chrome there, or is it there and then painted over?".
  *
- * It reads the plane directly (SEC_PLANE is PL0-RW in every space today — RESPONSIBILITIES.md
- * §2), which is exactly the access the M7 gate will close.  When it does, this becomes gemd's
- * to answer, not a client's, and this tool goes with it: it is a DIAGNOSTIC, and it is on the
- * wrong side of the line it is helping to defend.
+ * The M7 gate made the plane PL0-none, so the pixels come from /dev/fb0 — a READ-ONLY
+ * kernel-mediated stream of the raw plane (stride*4*h bytes) — instead of a direct mapping.
+ * A grab is a legitimate diagnostic; writing the plane is not, and this tool never needed
+ * to. Geometry still comes from SYS_fb_info, whose numbers survived the gate for exactly
+ * this kind of use.
  *
  * Pixel format is the VDI's: 0xRRGGBBAA (gfx.h GFX_RGBA).
  */
@@ -36,10 +37,18 @@ int main(int argc, char **argv)
     }
     const char *out = (argc > 1) ? argv[1] : "/tmp/screen.ppm";
 
+    int pfd = (int)sys_open("/OS/dev/fb0", 0 /* O_RDONLY */);
+    if (pfd < 0) {
+        static const char e[] = "fbgrab: /OS/dev/fb0 not there (pre-M7 kernel?)\n";
+        sys_write(2, e, sizeof e - 1);
+        return 1;
+    }
+
     int fd = (int)sys_open(out, 0x0241 /* O_WRONLY|O_CREAT|O_TRUNC */);
     if (fd < 0) {
         static const char e[] = "fbgrab: cannot create the output file\n";
         sys_write(2, e, sizeof e - 1);
+        sys_close(pfd);
         return 1;
     }
 
@@ -50,10 +59,18 @@ int main(int argc, char **argv)
     *p++ = '2'; *p++ = '5'; *p++ = '5'; *p++ = '\n';
     sys_write(fd, hdr, (unsigned)(p - hdr));
 
-    const uint32_t *px = (const uint32_t *)fb.addr;
+    static uint32_t src[4096];                  /* one scanline of plane words */
     static unsigned char row[4096 * 3];         /* one scanline of RGB */
-    for (int y = 0; y < fb.h; y++) {
-        const uint32_t *src = px + (size_t)y * (size_t)fb.stride;
+    unsigned rowbytes = (unsigned)fb.stride * 4u;   /* the STREAM carries full stride rows */
+    int trunc = (rowbytes > sizeof src);        /* never expected (stride 2048); stay safe */
+    for (int y = 0; y < fb.h && !trunc; y++) {
+        unsigned got = 0;                       /* a device read may return short: loop */
+        while (got < rowbytes) {
+            long r = sys_read(pfd, (char *)src + got, rowbytes - got);
+            if (r <= 0) { trunc = 1; break; }   /* stream ended early: stop cleanly */
+            got += (unsigned)r;
+        }
+        if (trunc) break;
         int n = 0;
         for (int x = 0; x < fb.w && x < 4096; x++) {
             uint32_t v = src[x];                /* 0xRRGGBBAA */
@@ -64,6 +81,7 @@ int main(int argc, char **argv)
         sys_write(fd, row, (unsigned)n);
     }
     sys_close(fd);
+    sys_close(pfd);
 
     static const char ok[] = "fbgrab: wrote the plane\n";
     sys_write(1, ok, sizeof ok - 1);

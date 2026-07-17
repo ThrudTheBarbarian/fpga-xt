@@ -330,10 +330,14 @@ long blit_submit(const struct xt_blit_cmd *c, int priority)
         if (!sphys) return -1;
         uint32_t sstr = surf_stride(c->src_id);
 
-        /* BLOCK_BLIT has no source barrel-shift in the RTL, so an odd source X would
-         * silently emit shifted garbage. SRC_BLIT and SCALED read per-pixel and do
-         * not care. */
-        if ((c->sx & 1u) && cmd == BL_CMD_BLOCK_BLIT) return -1;
+        /* BLOCK_BLIT has no source barrel-shift in the RTL: an odd source X — and just
+         * as fatally a src/dst PARITY MISMATCH (sx even, dx odd) — silently emits
+         * half-beat-shifted garbage (the gfx_a9 workaround class; board-observed as
+         * "ghosted" halftone rows when a mid-resize-drag frame composited from an
+         * odd-parity window position). Refuse both; the caller composites on the CPU
+         * for that frame. SRC_BLIT and SCALED read per-pixel and do not care. */
+        if (cmd == BL_CMD_BLOCK_BLIT &&
+            ((c->sx & 1u) || ((c->sx ^ c->dx) & 1u))) return -1;
 
         uint32_t sw = (c->op == XT_BLIT_SCALE) ? c->sw : dw;
         uint32_t sh = (c->op == XT_BLIT_SCALE) ? c->sh : dh;

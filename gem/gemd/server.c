@@ -233,11 +233,17 @@ static int gemd_compose_blit(int surf_id, int dx, int dy, int sx, int sy, int w,
         if (g_surf[i].id == surf_id) { s = &g_surf[i]; break; }
     if (!s || !s->contig) return -1;                 /* pooled fallback surface: CPU */
 
-    /* BLOCK_BLIT needs an EVEN source X (no barrel shift in the RTL): CPU-copy an odd
-     * leading/trailing column rather than widening — the damage clip is a hard boundary,
-     * one pixel outside it can belong to a window HIGHER in the z-order. The columns'
-     * cache lines are flushed by the driver's dst clean+invalidate (they share lines
-     * with the engine rect's edges), so coherency holds for them too. */
+    /* BLOCK_BLIT needs src/dst X of EQUAL parity (no barrel shift in the RTL: a
+     * mismatch emits half-beat-shifted garbage — seen as one frame of "ghosted"
+     * halftone rows when a mid-drag resize put the work origin on an odd X; clamp_win's
+     * even-snap only runs on settled positions). The mismatch is invariant under equal
+     * advance, so it cannot be fixed with edge columns: CPU-composite that frame. */
+    if ((sx ^ dx) & 1) return -1;
+    /* And an EVEN source X: CPU-copy an odd leading/trailing column rather than
+     * widening — the damage clip is a hard boundary, one pixel outside it can belong
+     * to a window HIGHER in the z-order. The columns' cache lines are flushed by the
+     * driver's dst clean+invalidate (they share lines with the engine rect's edges),
+     * so coherency holds for them too. */
     gfx_surface ss; memset(&ss, 0, sizeof ss);
     ss.px = s->px; ss.w = s->cap_w; ss.h = s->cap_h; ss.stride = s->cap_w;
     if (sx & 1) {

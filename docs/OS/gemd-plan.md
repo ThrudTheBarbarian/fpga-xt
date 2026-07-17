@@ -655,7 +655,13 @@ chunk stack (`0x2080_0000`, 2 MB) stays PL0-RW as the deliberate exception. Thre
 
 Side effect, deliberate: plv is PL0-none at its identity address too, so a CONTIG shm id is
 now a real **capability at the memory level** (reachable only via `vm_shm_map`) — the caveat
-vm.c carried since plv exists is closed. `fbgrab` is dead as documented (its header said "this
-tool goes with it"): board-verified fault-kill, and it doubles as the gate's negative test.
+vm.c carried since plv exists is closed. `fbgrab` lost its direct mapping (board-verified
+fault-kill — the gate's negative test) and now reads **`/dev/fb0`**, a read-only
+kernel-mediated stream of the raw plane: grabs stay a legitimate diagnostic, no PL0 mapping.
 `DRAG_BASE` is gemd-private; wiring gemd's `wind_set_overlay` to the HW overlay is still a
 free win whenever someone wants it.
+
+⚠ **The gate is a DISCIPLINE boundary, not a security one, while `SYS_devmem` exists**: the
+debug peek/poke syscall reaches any physical word from any process (mem/shmtest depend on
+it). Fine for a development OS; revisit (boot-flag it off?) if the gate ever needs to hold
+against hostile code.
