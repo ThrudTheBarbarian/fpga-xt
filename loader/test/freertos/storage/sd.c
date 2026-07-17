@@ -58,18 +58,6 @@ void sd_init(void)
       vfs_fatfs_init(); vfs_add_mount("/", "fatfs", 0); }   /* SD = the root filesystem */
     klog("[sd] blkdev sd0 + / (fatfs root) registered\r\n");
 
-    /* list the root directory: proves directory traversal + shows the card contents */
-    r = f_opendir(&g_dir, "0:/");
-    if (r != FR_OK) { klog("[sd] opendir / rc="); klog_u((unsigned)r); klog("\r\n"); return; }
-    klog("[sd] 0:/ contents:\r\n");
-    for (;;) {
-        r = f_readdir(&g_dir, &g_fno);
-        if (r != FR_OK || g_fno.fname[0] == 0) break;
-        klog("  "); klog(g_fno.fname);
-        klog((g_fno.fattrib & AM_DIR) ? "/\r\n" : "\r\n");
-    }
-    f_closedir(&g_dir);
-
     /* prove blkdev sd0: raw LBA 0 (MBR/boot sector) ends in the 0x55AA signature */
     {
         static uint8_t sec[512];

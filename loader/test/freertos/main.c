@@ -422,7 +422,7 @@ int main(void)
         puts0(" ("); puts0(err); puts0(")\n"); sh_exit(1); }
     frtos_activate_libc(libc);
     xtld_run_init(libc);
-    { extern void klog(const char *); klog("libc.so loaded + activated\n"); }
+    { extern void klog(const char *); klog("[libc] libc.so loaded + activated\n"); }
 
     /* T2-b: snapshot libc.so's pristine data/bss (post-init, before any malloc)
      * into a static buffer, so each spawned process gets its OWN copy of libc's
@@ -446,7 +446,7 @@ int main(void)
 
     void *p = frtos_alloc(4096, 16, NULL);       /* now via libc.so's malloc */
     { extern void klog(const char *);
-      if (p) klog("libc.so malloc: ok\n");
+      if (p) klog("[libc] malloc: ok\n");
       else   puts0("libc.so malloc: FAIL\n"); }   /* a fatal one stays on the console */
     frtos_free(p, NULL);
 

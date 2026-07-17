@@ -65,7 +65,7 @@ void _app_entry(int argc, char **argv)
     if (sys_listen(ls, 4) != 0) { wrs(2, "sshd: listen failed\n"); sys_exit(1); }
     /* to dmesg + the sshd logfile, NOT the console (init's "SecureShell [ OK ]"
      * is the user-visible boot line) */
-    sys_klog("sshd: listening for ssh\n", 24);
+    { static const char m[] = "[sshd] listening for ssh\n"; sys_klog(m, sizeof m - 1); }
     logline("sshd: listening for ssh\n");
 
     for (;;) {

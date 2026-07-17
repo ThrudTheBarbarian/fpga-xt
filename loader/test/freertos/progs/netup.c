@@ -14,6 +14,6 @@ void _app_entry(int argc, char **argv)
     (void)argc; (void)argv;
     __syscall(SYS_net_up, 0, 0, 0);
     /* to dmesg, not the console — init's "Networking [ OK ]" is the user-visible line */
-    klg("netup: network stack starting (DHCP/mDNS/SNTP in background)\n");
+    klg("[net] stack starting (DHCP/mDNS/SNTP in background)\n");
     sys_exit(0);
 }

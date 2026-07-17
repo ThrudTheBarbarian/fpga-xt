@@ -306,7 +306,7 @@ static void sgr2px(int cx, int cy, int *px, int *py) {
     if (!s_sgr_pixels && s_pxw > 0 && s_pxh > 0
         && (cx > s_cols + 1 || cy > s_rows + 1)) {
         s_sgr_pixels = 1;
-        klog("mouse: PIXEL reports confirmed (?1016)\r\n");
+        klog("[mouse] PIXEL reports confirmed (?1016)\r\n");
     }
     if (s_sgr_pixels) {
         int x = (cx - 1) * 1920 / (s_pxw > 0 ? s_pxw : 1920);
@@ -337,7 +337,7 @@ static void mouse_rearm(void) {
 }
 /* deliver one decoded mouse action (both encodings converge here) */
 static int mouse_event(struct os_event *ev, int x, int y, int kind /*0=up 1=down 2=motion*/) {
-    if (!s_saw_report) { s_saw_report = 1; klog("mouse: terminal reports ARRIVING\r\n"); }
+    if (!s_saw_report) { s_saw_report = 1; klog("[mouse] terminal reports ARRIVING\r\n"); }
     cursor_move(x, y);
     ev->mx = x; ev->my = y;
     if      (kind == 0) { s_btn = 0; ev->type = OS_EV_BTN_UP;   ev->button = 0; }

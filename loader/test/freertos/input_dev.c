@@ -69,7 +69,7 @@ int xt_input_inject(const struct os_event *ev)
 static void input_task(void *arg)
 {
     (void)arg;
-    klog("input: decoder task running (/OS/dev/input is live)\r\n");
+    klog("[input] decoder task running (/OS/dev/input is live)\r\n");
     for (;;) {
         struct os_event ev;
         memset(&ev, 0, sizeof ev);
