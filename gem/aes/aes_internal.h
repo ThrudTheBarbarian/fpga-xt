@@ -40,6 +40,10 @@ void     wind_plane_link(int hd,int plane_id);    // M6: gemd's bind handler rec
 void     aes_set_plane_sync(void (*fn)(void));    // M6: gemd's plane-follow hook; runs after
                                                   // EVERY composite (wind_redraw_area), because
                                                   // every geometry/z/visibility change ends there
+void     aes_set_compose_blit(int (*fn)(int surf_id, int dx, int dy,
+                                        int sx, int sy, int w, int h));
+                                                  // M7: the engine composite — draw_content's
+                                                  // inner blit on /dev/blitter; !=0 = software
 int      wind_next_of_client(int client,int from); // walk a dead client's windows (§9)
 int      wind_vsb_col(int hd,int*x,int*y,int*w,int*h,int*thy,int*thh);
                                                    // scrollbar column + thumb (screen px);

@@ -1,10 +1,13 @@
 /*
  * gemd/surface.c — window backing stores, and the chrome art.
  *
- * A surface is ORDINARY CACHED shm (RESPONSIBILITIES.md §14). It is deliberately NOT plv and
- * NOT XT_SHM_CONTIG: plv is uncached, and a *software* VDI writing to uncached memory is the
- * worst of both worlds — the full uncached penalty and none of the hardware speed. Backing
- * stores move to plv when the VDI's blitter backend moves, and not one commit before.
+ * A surface is CACHED, CONTIGUOUS shm (M7: XT_SHM_CONTIG from plv, whose per-process
+ * mappings are cached now — vm.c SEC_SHM_C). RESPONSIBILITIES.md §14's move-together rule
+ * is satisfied both ways at once: the VDI still renders through the caches (a software
+ * VDI on uncached memory is the worst of both worlds), and the surface is engine-visible
+ * (physically contiguous, so /dev/blitter can composite it — the driver owns the
+ * clean/invalidate per submit). plv is a BUDGET (128 MB, 1 MB granular): when it runs
+ * out, fall back to pooled shm — that surface simply composites on the CPU (contig=0).
  *
  * They ARE created XT_SHM_OWNED, so the id is a CAPABILITY and not merely a name: gemd grants
  * it to exactly the client that asked for the window (SYS_shm_grant, against the pid the KERNEL
@@ -40,7 +43,10 @@ int gemd_surf_create(gsurface *s, int w, int h, int scr_w, int scr_h)
     if (cap_w < w || cap_h < h) return -1;          /* asked for more than the screen holds */
 
     unsigned bytes = (unsigned)cap_w * (unsigned)cap_h * 4u;
-    int id = sys_shm_create(bytes, XT_SHM_OWNED);
+    int contig = 1;
+    int id = sys_shm_create(bytes, XT_SHM_OWNED | XT_SHM_CONTIG);
+    if (id < 0) { contig = 0; id = sys_shm_create(bytes, XT_SHM_OWNED); }   /* plv budget
+                                                     * exhausted: pooled, CPU-composited */
     if (id < 0) return -1;
 
     uint32_t *px = (uint32_t *)sys_shm_map(id);     /* gemd's ref — the one that OUTLIVES the
@@ -51,6 +57,7 @@ int gemd_surf_create(gsurface *s, int w, int h, int scr_w, int scr_h)
     s->gen = g_gen++;
     s->cap_w = cap_w; s->cap_h = cap_h;
     s->px = px;
+    s->contig = contig;
     return 0;
 }
 

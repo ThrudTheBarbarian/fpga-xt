@@ -40,6 +40,8 @@ typedef struct {
     uint32_t  gen;          /* generation: stale-damage discard (§11) */
     int       cap_w, cap_h; /* CAPACITY. The stride is cap_w — NOT the extent width (§12). */
     uint32_t *px;           /* gemd's mapping */
+    int       contig;       /* XT_SHM_CONTIG (plv): engine-compositable. 0 = pooled
+                             * fallback (plv budget ran out) — CPU composite only. */
 } gsurface;
 
 /* surface.c */

@@ -931,10 +931,17 @@ static void shm_set_page(shm_t *o, uint32_t k, void *pg)
  * that (dpage_raw hands out unrelated 4 KB frames), which is the whole reason
  * XT_SHM_CONTIG exists.
  *
- * mmu.c already maps this region SEC_PLANE: Normal NON-CACHEABLE, PL0-RW, XN. Uncached is
- * REQUIRED — the PL does not snoop the A9's caches — and it is precisely why
- * RESPONSIBILITIES.md §14 insists the VDI's blitter backend and the move to plv land
- * TOGETHER: a *software* VDI writing to uncached memory is the worst of both worlds.
+ * mmu.c maps this region SEC_PLANE: Normal NON-CACHEABLE, PL0-RW, XN — that identity view
+ * (the kernel's, and the scrub memset's) stays uncached. Per-process shm-window mappings
+ * of CONTIG objects are CACHED (SEC_SHM_C below, M7): the PL does not snoop the A9's
+ * caches, but /dev/blitter owns the coherency protocol per submit — it CLEANS the source
+ * rows a CPU may have written and CLEAN+INVALIDATEs cached destination rows around the
+ * engine's write — so software (the client's VDI, gemd's fallback composite) renders at
+ * cached speed and the engine still reads/writes honest DDR. This is RESPONSIBILITIES.md
+ * §14's move-together rule landing: the VDI blitter backend and the move to plv, one
+ * change. (A *software* VDI writing uncached memory is the worst of both worlds — the
+ * 3-second-window lesson — which is why the cached view, not the engine, was the
+ * precondition.)
  *
  * Granularity is 1 MB, so an object is section-aligned and maps with L1 SECTION
  * descriptors — no L2 tables at all, and 8 TLB entries for an 8 MiB surface rather than
@@ -952,9 +959,49 @@ static void shm_set_page(shm_t *o, uint32_t k, void *pg)
 #define PLV_SECS  (PLV_SIZE >> 20)               /* 128 x 1 MB */
 static uint32_t g_plv_bm[(PLV_SECS + 31) / 32];
 
-/* section descriptor for a mapped contiguous surface: Normal non-cacheable, PL0-RW, XN,
- * and nG (ASID-tagged — it is a per-process mapping, unlike the global identity map). */
-#define SEC_SHM(phys) (((phys) & 0xFFF00000u) | 0x1C12u | (1u << 17))
+/* section descriptor for a mapped contiguous surface: PL0-RW, XN, and nG (ASID-tagged —
+ * it is a per-process mapping, unlike the global identity map). SEC_SHM_C is the CACHED
+ * (Normal WB-WA, +0xC like SEC_PLANE_C) variant every per-process CONTIG mapping uses
+ * since M7 — /dev/blitter does the clean/invalidate per submit (see the plv comment). */
+#define SEC_SHM(phys)   (((phys) & 0xFFF00000u) | 0x1C12u | (1u << 17))
+#define SEC_SHM_C(phys) (SEC_SHM(phys) | 0xCu)
+
+/* M7 GATE, the grant half: the master maps the whole PL-shared band PL0-NONE (mmu.c
+ * SEC_PLANE_K); the ONE display owner (the first SYS_fb_wallpaper caller — gemd) gets
+ * the three regions it composites with mapped back PL0-RW into ITS space, at their
+ * identity VAs, nG (per-process, ASID-tagged — the SEC_SHM template):
+ *   plane 0x3000_0000 (uncached — the CPU-present fallback writes it in rows),
+ *   DRAG  0x3200_0000 (uncached — the move-overlay pixels, gemd-private by decision),
+ *   wallpaper 0x3300_0000 (cached — the compositing back-buffer).
+ * The caller IS the space being granted (it made the syscall), so TLBIALL here drops
+ * the PL0-none entries it may have faulted in. Death needs no unmap — the space's L1
+ * dies with it — only the owner latch reset (frtos_os.c). */
+void vm_map_fb_band(int idx)
+{
+    if (idx < 0 || idx >= NSPACE) return;
+    uint32_t *t = space_l1[idx];
+    for (uint32_t s = 0x300; s < 0x310; s++) t[s] = SEC_SHM(s << 20);     /* plane */
+    for (uint32_t s = 0x320; s < 0x330; s++) t[s] = SEC_SHM(s << 20);     /* DRAG */
+    for (uint32_t s = 0x330; s < 0x340; s++) t[s] = SEC_SHM_C(s << 20);   /* wallpaper */
+    __asm__ volatile("dsb");
+    __asm__ volatile("mcr p15,0,%0,c8,c7,0" :: "r"(0u));   /* TLBIALL */
+    __asm__ volatile("dsb; isb");
+}
+
+/* Clean+invalidate a physical range by its identity VA — recycled-surface hygiene: a
+ * previous tenant's CACHED mapping of these lines may survive its unmap (PIPT caches key
+ * on the physical line, not the space), and a stale DIRTY line evicting later would
+ * scribble old pixels over the new owner's data. Run before the scrub memset at create. */
+static void plv_cleaninval(uint32_t phys, uint32_t bytes)
+{
+    for (uint32_t a = phys & ~31u; a < phys + bytes; a += 32u)
+        __asm__ volatile("mcr p15,0,%0,c7,c14,1" :: "r"(a) : "memory");   /* DCCIMVAC */
+    __asm__ volatile("dsb" ::: "memory");
+#ifdef XT_HW
+    *(volatile uint32_t *)0xF8F02730u = 0u;               /* PL310 CACHE_SYNC drain */
+    __asm__ volatile("dsb" ::: "memory");
+#endif
+}
 
 static uint32_t plv_alloc(uint32_t nsecs)        /* -> physical base, or 0 */
 {
@@ -1060,10 +1107,12 @@ int vm_shm_create(int idx, uint32_t size, uint32_t flags)
         uint32_t va2 = shm_va_alloc(nsecs);
         if (!va2) { plv_free(phys, nsecs); g_shm[id].used = 0; return -1; }
         g_shm[id].phys = phys; g_shm[id].va = va2; g_shm[id].nsecs = nsecs;
-        /* Scrub: a recycled surface must not hand the next owner another window's pixels.
-         * plv is Normal NON-cacheable, so this memset streams straight to DRAM and is slow
-         * (~8 MiB for a maximised window). Once /dev/blitter exists this should be a
-         * hardware RECT_FILL — clearing a surface is exactly what the engine is for. */
+        /* Scrub: a recycled surface must not hand the next owner another window's pixels —
+         * neither from DDR (the memset, via the uncached identity view) nor from a prior
+         * tenant's surviving CACHE LINES (the clean+invalidate; mappings are cached now).
+         * The memset streams straight to DRAM and is slow (~8 MiB for a maximised window);
+         * once gemd drives /dev/blitter this could be a hardware RECT_FILL. */
+        plv_cleaninval(phys, (uint32_t)nsecs << 20);
         memset((void *)phys, 0, (size_t)nsecs << 20);
         g_shm[id].npages = np; g_shm[id].size = size; g_shm[id].nref = 0;
         return id;
@@ -1175,7 +1224,10 @@ uint32_t vm_shm_map(int idx, int id)
                                                        * entries for an 8 MiB surface, not 2048. */
         uint32_t *t = space_l1[idx];
         for (uint32_t s = 0; s < g_shm[id].nsecs; s++)
-            t[(va >> 20) + s] = SEC_SHM(g_shm[id].phys + (s << 20));
+            t[(va >> 20) + s] = SEC_SHM_C(g_shm[id].phys + (s << 20));   /* CACHED (M7):
+                                                       * the driver cleans/invalidates per
+                                                       * submit, so software draws at cached
+                                                       * speed into an engine-visible surface */
         uint32_t fc = xt_irq_save();
         if (!(g_space_shm[idx][id >> 5] & (1u << (id & 31)))) {
             g_space_shm[idx][id >> 5] |= (1u << (id & 31));

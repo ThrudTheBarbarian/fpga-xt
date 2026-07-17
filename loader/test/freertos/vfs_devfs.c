@@ -214,15 +214,30 @@ typedef struct {
  * because a client that floods the queue must never be able to stall the screen. */
 static int g_blit_prio_pid = -1;      /* the one process allowed to jump the queue */
 
+extern int  blit_wait_seq(uint32_t want);        /* blitter.c (frtos_os.h) */
+extern int  fb_owner_pid(void);                  /* frtos_os.c: the M7 display owner */
+
+/* M7 gate, the driver leg (xtsys.h asked for it): the well-known PLANE/WALLPAPER handles
+ * belong to the display owner — any process can still blit between its OWN declared
+ * surfaces, but only the compositor may name the screen. */
+static int blit_names_display(const struct xt_blit_cmd *c)
+{
+    return c->dst_id == XT_BLIT_SURF_PLANE || c->dst_id == XT_BLIT_SURF_WALLPAPER ||
+           ((c->op == XT_BLIT_COPY || c->op == XT_BLIT_SCALE) &&
+            (c->src_id == XT_BLIT_SURF_PLANE || c->src_id == XT_BLIT_SURF_WALLPAPER));
+}
+
 static long dv_blit_wr(vfs_file *f, const void *buf, uint32_t n)
 {
     (void)f;
     if (!buf || n < sizeof(struct xt_blit_cmd)) return -1;
     const struct xt_blit_cmd *c = (const struct xt_blit_cmd *)buf;
     uint32_t cnt = n / (uint32_t)sizeof(struct xt_blit_cmd);
-    int prio = (frtos_current_pid() == g_blit_prio_pid);
+    int pid  = frtos_current_pid();
+    int prio = (pid == g_blit_prio_pid);
     long seq = 0;
     for (uint32_t i = 0; i < cnt; i++) {
+        if (blit_names_display(&c[i]) && pid != fb_owner_pid()) return -1;   /* M7 gate */
         long s = blit_submit(&c[i], prio);
         if (s < 0) return -1;              /* rejected: bad handle, or out of bounds */
         seq = s;
@@ -243,21 +258,12 @@ static long dv_blit_ioctl(vfs_file *f, unsigned req, void *arg)
         *(uint32_t *)arg = blit_seq();
         return 0;
     case XT_BLIT_WAIT: {
-        /* Block until the engine retires *arg. Spin briefly on the register (a small
-         * present retires in tens of microseconds — a tick sleep would DOUBLE its cost),
-         * then sleep by ticks for the big ones. Bounded: a wedged engine costs the caller
+        /* Block until the engine retires *arg — blit_wait_seq (blitter.c): brief register
+         * spin (a small present retires in tens of microseconds — a tick sleep would
+         * DOUBLE its cost), then tick sleeps. Bounded: a wedged engine costs the caller
          * 200 ms and an error, never a hang. */
         if (!arg) return -1;
-        uint32_t want = *(uint32_t *)arg;
-        extern void vTaskDelay(uint32_t);           /* 1 tick = 1 ms here; header-free like
-                                                     * this file's other FreeRTOS externs */
-        for (int i = 0; i < 2000; i++)
-            if ((int32_t)(blit_seq() - want) >= 0) return 0;
-        for (int ms = 0; ms < 200; ms++) {
-            if ((int32_t)(blit_seq() - want) >= 0) return 0;
-            vTaskDelay(1);
-        }
-        return -1;
+        return blit_wait_seq(*(uint32_t *)arg);
     }
     case XT_BLIT_PRIORITY:
         /* First caller wins and is remembered; gemd starts before any client, so this is

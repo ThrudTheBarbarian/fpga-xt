@@ -105,6 +105,9 @@ int      frtos_current_pid(void);                 /* calling process's pid, or -
 int      blit_declare(int id, uint32_t stride);   /* /dev/blitter: a surface's row stride */
 long     blit_submit(const struct xt_blit_cmd *c, int priority);
 uint32_t blit_seq(void);                          /* the engine's RETIRED sequence number */
+int      blit_wait_seq(uint32_t want);            /* in-kernel retire fence; -1 = wedged */
+void     vm_map_fb_band(int idx);                 /* M7 gate: plane/DRAG/wallpaper -> one space */
+int      fb_owner_pid(void);                      /* the display owner (-1 = unclaimed) */
 uint32_t *vm_space_create(int idx, uint32_t prog_va, uint32_t prog_size, uint32_t prog_src);
 void vm_space_destroy(int idx);     /* reclaim a dead space's private pages to the pool */
 void vm_sync_loaded_sections(void); /* adopt master section splits into every space L1 (post-load) */

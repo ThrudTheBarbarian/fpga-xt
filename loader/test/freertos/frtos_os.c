@@ -352,6 +352,13 @@ int frtos_current_pid(void)
     return p ? p->pid : -1;
 }
 
+/* M7 gate: THE DISPLAY OWNER — the one PL0 process allowed at the plane. Latched by the
+ * first SYS_fb_wallpaper caller (gemd by boot order), reset when that process dies. The
+ * plane-touching syscalls (SYS_overlay, SYS_plane_window) and /dev/blitter's well-known
+ * PLANE/WALLPAPER handles all check it. */
+static int g_fb_owner_pid = -1;
+int fb_owner_pid(void) { return g_fb_owner_pid; }
+
 static proc_t *cur_proc(void)
 {
     TaskHandle_t t = xTaskGetCurrentTaskHandle();
@@ -2834,12 +2841,16 @@ static long do_syscall(uint32_t num, long a0, long a1, long a2)
     }
     case SYS_overlay: {                                     /* (x<<16|y, w<<16|h, en) -> drag-overlay */
         extern void overlay_set(int, int, int, int, int);
+        if (frtos_current_pid() != g_fb_owner_pid) return -1;   /* M7 gate: the display
+                                                                 * owner's plane, only */
         overlay_set((int)a2, (int)((uint32_t)a0 >> 16), (int)(a0 & 0xFFFF),
                     (int)((uint32_t)a1 >> 16), (int)(a1 & 0xFFFF));
         return 0;
     }
     case SYS_plane_window: {                                /* (plane<<16|scale<<8|en, x<<16|y, w<<16|h) */
         extern long plane_window_set(int, int, int, int, int, int, int);
+        if (frtos_current_pid() != g_fb_owner_pid) return -1;   /* M7 gate: plane placement
+                                                                 * is the display owner's */
         return plane_window_set((int)(((uint32_t)a0 >> 16) & 0xFFFFu),
                                 (int)(int16_t)((uint32_t)a1 >> 16),   /* x/y SIGNED: a window */
                                 (int)(int16_t)(a1 & 0xFFFF),          /* may hang off an edge */
@@ -2875,6 +2886,22 @@ static long do_syscall(uint32_t num, long a0, long a1, long a2)
         struct { int w, h, stride; uint32_t addr; } *fi = (void *)a0;
         if (!fi) return -1;
         fb_wallpaper_info(&fi->w, &fi->h, &fi->stride, &fi->addr);
+        /* THE M7 GATE'S KEY: the first caller becomes THE DISPLAY OWNER — the whole
+         * band is PL0-none in the master (mmu.c), and this grants the plane / DRAG /
+         * wallpaper sections back into exactly one space (vm_map_fb_band). gemd is
+         * first by boot order; first-caller-wins is the XT_BLIT_PRIORITY shape, and
+         * the kernel still knows nothing about window servers — only that ONE process
+         * composites the display. Everyone else gets the numbers and no mapping (the
+         * desktop reads fb sizes; a deref would fault). Owner death resets the latch
+         * (proc teardown below) so a restarted gemd claims again. */
+        { proc_t *q = cur_proc();
+          if (q) {
+              if (g_fb_owner_pid < 0) {
+                  g_fb_owner_pid = q->pid;
+                  vm_map_fb_band((int)(q - g_proc));
+              } else if (g_fb_owner_pid == q->pid)
+                  vm_map_fb_band((int)(q - g_proc));   /* idempotent re-ask */
+          } }
         return 0;
     }
     case SYS_spawn:                                          /* (path, argc, argv) -> pid */
@@ -3903,6 +3930,10 @@ static int frtos_reap(proc_t *p)
                  else        fs_close_all(slot); } }
     if (p->task) { vTaskDelete(p->task); p->task = 0; }   /* the child parked in vTaskSuspend */
     if (p->done) { vSemaphoreDelete(p->done); p->done = 0; }
+    if (g_fb_owner_pid == p->pid) g_fb_owner_pid = -1;    /* M7 gate: a dead display owner
+                                                           * frees the claim — a restarted
+                                                           * gemd re-latches on its first
+                                                           * SYS_fb_wallpaper */
     vm_space_destroy((int)(p - g_proc));         /* reclaim its private pages to the pool */
     if (p->transient) {
         extern void mmu_unprotect(uint32_t, uint32_t);

@@ -206,6 +206,62 @@ static void gemd_present(int x, int y, int w, int h)
 static gsurface    g_surf[GEMD_MAXW];   /* the backing store per WINDOW HANDLE. gemd keeps its own
                                          * ref and its own capacity numbers: §12's resize is
                                          * "does the new extent still fit?", and only gemd knows. */
+
+/* ---- M7: the ENGINE COMPOSITE ------------------------------------------------------------
+ * draw_content's inner blit (client surface -> back-buffer) through /dev/blitter instead of
+ * the CPU: 777 MB/s FC vs ~190 memcpy, and the CPU freed during drags. The AES calls the
+ * aes_set_compose_blit hook below for every opaque content blit; ANY refusal (-1) falls back
+ * to the software gfx_blit — qemu, a pooled (non-plv) surface, an odd rect that cannot be
+ * split, a failed submit: slower, never wrong. Surfaces are declared (id -> stride) at
+ * attach; coherency is the DRIVER's (cached src rows cleaned, cached dst rows
+ * clean+invalidated around the engine write — vm.c/blitter.c, the M7 protocol). */
+static void gemd_surf_declare(const gsurface *s)
+{
+    if (g_blitfd < 0 || s->id < 0 || !s->contig) return;
+    struct xt_blit_surf d = { s->id, (uint32_t)s->cap_w * 4u };
+    if (sys_ioctl(g_blitfd, XT_BLIT_DECLARE, &d) != 0)
+        gemd_log("blit declare surf %d failed — CPU composite for it", s->id);
+}
+
+static int gemd_compose_blit(int surf_id, int dx, int dy, int sx, int sy, int w, int h)
+{
+    if (g_blitfd < 0 || !g_scan_on || surf_id < 0) return -1;
+    if ((long)w * h < 4096) return -1;               /* syscall+fence beats memcpy only past
+                                                      * a few thousand pixels: small = CPU */
+    const gsurface *s = 0;
+    for (int i = 1; i < GEMD_MAXW; i++)
+        if (g_surf[i].id == surf_id) { s = &g_surf[i]; break; }
+    if (!s || !s->contig) return -1;                 /* pooled fallback surface: CPU */
+
+    /* BLOCK_BLIT needs an EVEN source X (no barrel shift in the RTL): CPU-copy an odd
+     * leading/trailing column rather than widening — the damage clip is a hard boundary,
+     * one pixel outside it can belong to a window HIGHER in the z-order. The columns'
+     * cache lines are flushed by the driver's dst clean+invalidate (they share lines
+     * with the engine rect's edges), so coherency holds for them too. */
+    gfx_surface ss; memset(&ss, 0, sizeof ss);
+    ss.px = s->px; ss.w = s->cap_w; ss.h = s->cap_h; ss.stride = s->cap_w;
+    if (sx & 1) {
+        gfx_blit(&g_plane, dx, dy, &ss, sx, sy, 1, h);
+        sx++; dx++; w--;
+    }
+    if (w > 0 && (w & 1)) {
+        gfx_blit(&g_plane, dx + w - 1, dy, &ss, sx + w - 1, sy, 1, h);
+        w--;
+    }
+    if (w <= 0) return 0;                            /* the edge columns were the whole rect */
+
+    struct xt_blit_cmd c; memset(&c, 0, sizeof c);
+    c.op = XT_BLIT_COPY;
+    c.dst_id = XT_BLIT_SURF_WALLPAPER; c.src_id = surf_id;
+    c.dx = (uint16_t)dx; c.dy = (uint16_t)dy; c.dw = (uint16_t)w; c.dh = (uint16_t)h;
+    c.sx = (uint16_t)sx; c.sy = (uint16_t)sy;
+    long seq = sys_write(g_blitfd, &c, sizeof c);    /* cached dst: the DRIVER fences +
+                                                      * invalidates before returning */
+    if (seq < 0) return -1;                          /* fallback redoes the rect: harmless */
+    unsigned want = (unsigned)seq;                   /* belt: a lost fence would hand the
+                                                      * present stale back-buffer rows */
+    return sys_ioctl(g_blitfd, XT_BLIT_WAIT, &want) == 0 ? 0 : -1;
+}
 static int         g_ifd = -1;          /* /OS/dev/input — an fd, so it joins the ONE poll (M4) */
 
 /* [gemd] to the kernel log (dmesg). gemd's stdout is the boot console, and console writes
@@ -303,6 +359,7 @@ static void do_wind_open(gclient *c, int ci, const gem_msg *m)
         gemd_surf_drop(&s); wind_error(c, 3); return;
     }
     g_surf[hd] = s;
+    gemd_surf_declare(&s);                                /* M7: engine-compositable from now on */
     wind_attach_surface(hd, s.id, s.gen, s.px, ww, wh, s.cap_w, ci);
 
     gem_msg r; memset(&r, 0, sizeof r);
@@ -407,6 +464,7 @@ int gemd_resize_surface(int hd)
         }
         gemd_surf_drop(s);                                      /* our ref; the client drops its own */
         *s = ns;
+        gemd_surf_declare(s);                                   /* M7: fresh id, fresh stride */
         gem_prof_add(GEM_PROF_ALLOC, gem_prof_now() - gp_t0, 0);
         /* log ONLY the reallocation (rare, notable); the per-motion within-capacity case says
          * nothing. */
@@ -860,6 +918,9 @@ int gemd_run(void)
                                                          * redraw-per-motion path for now. */
     aes_set_plane_sync(gemd_plane_sync);                /* M6: bound HW planes follow their
                                                          * windows, re-checked per composite */
+    if (g_blitfd >= 0)
+        aes_set_compose_blit(gemd_compose_blit);        /* M7: opaque content blits go to the
+                                                         * engine; refusals fall back to CPU */
     vdi_init(&g_plane);
     // THE FONT LIVES IN TWO PLACES, because we boot from two. The SD card stages it at
     // /OS/fonts (loader/Makefile: $(SDSTAGE)/OS/fonts), but the romfs — which is all we have

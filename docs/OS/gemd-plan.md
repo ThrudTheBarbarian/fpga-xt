@@ -17,7 +17,7 @@ phase 1 is and is not). This file is the *implementation* plan and the running s
 | M4b — the menu strip (§10), grabs, liveness | **DONE, board-verified** — per-app strip surface, input grab, §9 revoke |
 | M5 — resize: client-driven (`wind_set`), scroll/content size | **DONE, board-verified.** geometry-as-request (WF_CURRXYWH/Fit), live resize, both-axis scroll + content-size, wheel, the resize discipline, horizontal scrollbars, and the chrome rework (info bar to top, proximity resize + cursor affordance). Optional follow-up only: theme-able hover-resize brackets. |
 | M6 — the XL plane (generic: ANY plane) | **DONE, board-verified (2026-07-17)** — `WIND_PLANE` bind + `SYS_plane_window` + the Route-A alpha hole; see below |
-| M7 — **the gate**: `SEC_PLANE` → PL0-none; **+ the engine composite** (designed, deferred — see below) | the gate is a kernel flip; the composite swap is the §14 seam move |
+| M7 — **the gate** + **the engine composite** | **CODE COMPLETE (2026-07-17); gate + engine proven on the board** (fbgrab fault-killed; blittest full matrix on cached CONTIG), visual/perf pass pending — see below |
 
 ## M0 (done): services + poll — block 0x500
 
@@ -368,10 +368,18 @@ between tests) — recorded here so M7 starts from facts, not a re-investigation
    surfaces are ordinary cached shm (`L2_SHM`), the back-buffer is the cached wallpaper
    region, and chrome text blends at ~30 ns/px through both.
 
-**The engine composite (M7, designed 2026-07-15, deferred from M5 to stay on-milestone).** The
-CPU composite now costs ~*memcpy speed* (~190 MB/s on this A9), and `/dev/blitter`'s FC engine
-does 777 MB/s — the §14 seam swap is worth ~4x on every composite and frees the CPU during
-drags. The design, from today's code reading:
+**The engine composite — LANDED 2026-07-17 (M7a).** As built: surfaces are `XT_SHM_CONTIG`
+plv with **CACHED per-process views** (`SEC_SHM_C`, nG — the settled "client-side story":
+software still renders through the caches, and `/dev/blitter` owns coherency per submit —
+cached source rows CLEANED before the engine reads, cached destination rows
+CLEAN+INVALIDATED on both sides of the engine's write, which runs synchronously in the
+driver for that case). plv is a budget: exhaustion falls back to pooled shm and the CPU
+path (`gsurface.contig`). gemd declares each surface (id → stride) at attach; the AES seam
+is `aes_set_compose_blit` — draw_content's opaque inner blit goes to the engine (min 4096
+px), odd leading/trailing columns are CPU-copied (the damage clip is a hard boundary), and
+`clamp_win` snaps the work-origin x even so the FC path co-aligns. W_ALPHA windows and all
+chrome stay CPU. Recycled plv sections are clean+invalidated at create (a prior tenant's
+dirty lines must not evict over the new owner). The original design notes, all satisfied:
 
 1. **Driver**: accept the cached back-buffer (`XT_BLIT_SURF_WALLPAPER`) as a blit
    *destination* (refused today) and **invalidate the destination rows after the engine
@@ -630,16 +638,24 @@ would turn every app into a window server. So:
   `kill -0 <pid>` says "No such process" while `ps` still lists it. It looked exactly like "two
   desktops are running" during the M3 test. Orphans need re-parenting to a reaper (init/pid 1).
 
-## Still to draw direct to the plane (the M7 gate = "no app draws direct any more")
+## The M7 gate — FLIPPED (2026-07-17): "no app draws direct any more" is enforced
 
-**NOTHING DOES, as of the no-fallback commit.** `desktop.c`'s `present_rect()` and the `DRAG_BASE`
-overlay ops are deleted; `gemtext.c` was already an ordinary client. Nothing in `gem/` touches the
-plane — it goes through the `aes_flush_rect` / `wind_set_overlay` hooks, which is why the split
-was tractable. **M7 is now a kernel flip, not an app port.**
+The whole PL-shared band (0x2000_0000–0x3FFF_FFFF) is **PL0-none in the master table**
+(`SEC_PLANE_K`/`SEC_PLANE_CK`, mmu.c), per the 2026-07-13 whole-range decision; the math-cop
+chunk stack (`0x2080_0000`, 2 MB) stays PL0-RW as the deliberate exception. Three legs:
 
-**Decided (2026-07-13): the gate locks the WHOLE `SEC_PLANE` range**, not just the framebuffer.
-The math-cop buffer (`0x2080_0000`) is a deliberate exception and stays PL0-RW. Before flipping
-it, note that gemd itself must keep the plane (it is the compositor) and that `DRAG_BASE` is now
-**gemd-private** (no app writes it) — the drag currently uses the classic redraw-per-motion path
-because gemd registers no overlay hook. Wiring gemd's own `wind_set_overlay` to the HW overlay is
-a free win whenever someone wants it.
+- **The grant**: the FIRST `SYS_fb_wallpaper` caller becomes THE DISPLAY OWNER (gemd, by boot
+  order — the `XT_BLIT_PRIORITY` first-caller-wins shape, so the kernel still knows nothing
+  about window servers, only that one process composites). `vm_map_fb_band` maps the plane,
+  `DRAG_BASE` and the wallpaper back into that space only (identity VA, nG). Owner death
+  resets the latch, so a restarted gemd re-claims. Everyone else gets fb *numbers* only.
+- **The syscall leg**: `SYS_overlay` and `SYS_plane_window` refuse non-owners.
+- **The driver leg**: `/dev/blitter` refuses the well-known `PLANE`/`WALLPAPER` handles from
+  non-owners (own declared surfaces stay fair game — blittest passes untouched).
+
+Side effect, deliberate: plv is PL0-none at its identity address too, so a CONTIG shm id is
+now a real **capability at the memory level** (reachable only via `vm_shm_map`) — the caveat
+vm.c carried since plv exists is closed. `fbgrab` is dead as documented (its header said "this
+tool goes with it"): board-verified fault-kill, and it doubles as the gate's negative test.
+`DRAG_BASE` is gemd-private; wiring gemd's `wind_set_overlay` to the HW overlay is still a
+free win whenever someone wants it.

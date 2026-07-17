@@ -34,6 +34,9 @@ static int g_gemfd = -1;                // client mode: the channel to gemd (the
 int aes_mode(void){ return g_mode; }
 void aes_server_mode(void){ g_mode = AES_SERVER; }
 static void client_paint(int hd,int x,int y,int w,int h);   // draw OUR content -> OUR surface -> damage
+// M7 engine-composite hook (registered by gemd, aes_set_compose_blit below): draw_content's
+// inner blit on /dev/blitter; NULL / a nonzero return = the software gfx_blit does it.
+static int (*g_compose_blit)(int surf_id, int dx, int dy, int sx, int sy, int w, int h);
 
 // MAXW was 16 PER APP. It is now the SYSTEM-WIDE window count, because the list lives in gemd.
 #define MAXW 64
@@ -277,6 +280,13 @@ static void clamp_win(awin *W){
     if (W->y > wy+wh - th)    W->y = wy+wh - th;
     if (W->x > wx+ww - MINVIS)        W->x = wx+ww - MINVIS;
     if (W->x < wx - (W->w - MINVIS))  W->x = wx - (W->w - MINVIS);
+    // M7 (server): EVEN work-area origin. The engine composite's fast-copy path needs
+    // 8-byte co-alignment between a surface row and its screen row; strides are all
+    // multiples of 8, so co-alignment reduces to "dst x even". dst x parity = the
+    // work-origin parity, so snap it here — the one clamp every placement passes
+    // through. One pixel leftward; invisible.
+    if (g_mode==AES_SERVER && ((W->x + (wind_has_chrome(W->kind)?bw():0)) & 1))
+        W->x--;
 }
 
 // ---- Scrollbar geometry / state -----------------------------------------
@@ -655,7 +665,10 @@ static void draw_content(int hd){
         if(d && dx1>dx0 && dy1>dy0){                   // source origin shifts with the clipped corner
             if(W->kind & W_ALPHA)                      // menus/popups: blend, don't stamp (transparent corners)
                 gfx_blit_over(d, dx0,dy0, &W->surf, dx0-wx, dy0-wy, dx1-dx0, dy1-dy0);
-            else
+            // M7: opaque content goes through the engine when gemd registered the hook
+            // (777 MB/s FC vs ~190 CPU); any refusal falls back to the software blit.
+            else if(!g_compose_blit || W->surf_id<0 ||
+                    g_compose_blit(W->surf_id, dx0,dy0, dx0-wx, dy0-wy, dx1-dx0, dy1-dy0)!=0)
                 gfx_blit(d, dx0,dy0, &W->surf, dx0-wx, dy0-wy, dx1-dx0, dy1-dy0);
         }
     } else if(W->draw){
@@ -746,6 +759,14 @@ void aes_flush_rect(int x,int y,int w,int h){ if(g_ovl_present) g_ovl_present(x,
  * composite that moved nothing costs one comparison, not a syscall. */
 static void (*g_plane_hook)(void);
 void aes_set_plane_sync(void (*fn)(void)){ g_plane_hook=fn; }
+
+/* M7: gemd's ENGINE COMPOSITE hook (the variable lives up with the mode statics —
+ * draw_content reads it) — draw_content's inner blit (client surface -> the back-buffer),
+ * the §14 backend seam, offloaded to /dev/blitter. Returns 0 when the engine did the
+ * rect; anything else and the caller falls back to the software gfx_blit (qemu, a pooled
+ * surface, a failed submit — slower, never wrong). Screen coords for the dst, surface
+ * coords for the src, exactly the arguments the software blit takes. */
+void aes_set_compose_blit(int (*fn)(int,int,int,int,int,int,int)){ g_compose_blit=fn; }
 
 /* The drag-overlay ops, for other modal movers (dialog drag in form.c): lift
  * returns 0 when no hook is registered / the lift was refused, and the caller

@@ -136,19 +136,16 @@
   work as /MPD shadow; src: docs/OS/expansion-options.md)*
 
 ## GEM (VDI + AES) / desktop
-- **gemd M7: the engine composite (designed 2026-07-15, deferred from M5)** — swap
-  `draw_one`'s inner blit (client surface → back-buffer) onto the `/dev/blitter` FC
-  engine (777 MB/s vs ~190 MB/s CPU memcpy). Full design + the three board-measured
-  findings that motivated it (transfer_bits per-pixel dispatch 1365→51 ms; scaled
-  chrome 550 ns/px saturating gemd at 3-5 resize steps/s; membench proving mappings
-  uniform-cacheable) are in **docs/OS/gemd-plan.md §"The composite is CPU-bound in
-  transfer_bits"**. Pieces: driver accepts WALLPAPER as dst + invalidates dst rows;
-  gemd declares surfaces at attach (needs XT_SHM_CONTIG/plv + the client-side cached
-  view settled — §14's move-together rule); FC 8B-co-align/even-width handling (snap
-  window x even, widen odd rects, CPU 1px edge). Profiler + membench + drag-lag
-  profiler recoverable via `make INSTRUMENT=1` (gem/Makefile + loader GEMCFLAGS;
-  off by default so dmesg stays clean). *(src: gemd-plan.md, memory
-  gemprof-and-dmesg-c)*
+- **gemd M7: board visual/perf pass (code landed + gate/engine proven 2026-07-17)** —
+  the engine composite (cached CONTIG surfaces + driver-owned coherency) and the
+  SEC_PLANE gate (display-owner grant via first SYS_fb_wallpaper; syscall + blitter
+  legs) are in; fbgrab fault-kill and the full blittest matrix passed on the board.
+  Remaining: eyeball the desktop on the textured wallpaper (drag/resize feel — expect
+  the ~4× composite win), emulator window still perfect (M6 plane bind now runs under
+  the owner check). Follow-ups when someone wants them: ASYNC present + in-flight-rect
+  tracking (the present is deliberately synchronous); gemd's `wind_set_overlay` onto
+  the HW drag overlay (DRAG_BASE is gemd-private now — a free win); profiler
+  recoverable via `make INSTRUMENT=1`. *(src: gemd-plan.md §M7)*
 - **VDI dispatch layer (Phase 1, keystone)** — opcode wire format + 6502-side VDI
   library + N6 DRAW dispatcher + palette expansion + inquiry RPCs. *(highest priority;
   everything depends on it; src: docs/GEM/GEM-implementation.md)*

@@ -39,6 +39,16 @@ static volatile uint32_t l1[4096] __attribute__((aligned(16384)));
 #define SEC_PLANE_C (SEC_PLANE | 0xCu) /* 0x1C1E: as SEC_PLANE but Normal cacheable WB-WA —
                                         * CPU-only graphics scratch (WM back-buffer); no PL
                                         * master reads it, so no coherency vs the compositor */
+/* THE M7 GATE: the PL-shared band is PL0-NONE in the master — same attributes, AP=01.
+ * "No app draws direct any more" became enforceable the day the desktop stopped being
+ * special; now it is enforced. The ONE process that owns the display (the first
+ * SYS_fb_wallpaper caller — gemd, by boot order) gets the plane/DRAG/wallpaper sections
+ * mapped back PL0-RW into ITS space only (vm_map_fb_band, nG). Everything else in the
+ * band — SALLY banks, XL writeback, the sprite arena, plv — is kernel/PL territory, and
+ * plv surfaces reach PL0 only through vm_shm_map (which is what makes an shm id a real
+ * capability at the MEMORY level at last, closing the caveat vm.c carried since plv). */
+#define SEC_PLANE_K  (SEC_PLANE   & ~0x800u)   /* 0x1412: PL1-RW / PL0-none, non-cacheable */
+#define SEC_PLANE_CK (SEC_PLANE_C & ~0x800u)   /* 0x141E: PL1-RW / PL0-none, cacheable */
 #define SEC_PERIPH 0x0416u    /* section: AP=01 (PL0 none), Device, XN */
 
 extern char __ktext_end[];    /* end of kernel text+rodata (linker, page-aligned) */
@@ -111,14 +121,18 @@ void mmu_init(void)
         if (i == 0)              l1[i] = 0;                              /* NULL trap */
         else if (i == 1)         l1[i] = ((uint32_t)boot_text_l2 & 0xFFFFFC00u) | 0x1u;  /* kernel text/data split */
         else if (i < 0x200)      l1[i] = base | SEC_KDATA;              /* kernel data + heap + pool: PL0-none */
-        else if (i >= 0x330 && i < 0x340) l1[i] = base | SEC_PLANE_C;  /* WALLPAPER_BASE 16 MB: PL0-RW cacheable
-                                                                        * WM/desktop back-buffer (CPU-only) */
+        else if (i >= 0x330 && i < 0x340) l1[i] = base | SEC_PLANE_CK; /* WALLPAPER_BASE 16 MB: cacheable
+                                                                        * back-buffer — PL0-none (M7 gate);
+                                                                        * the display owner gets it back
+                                                                        * per-space via vm_map_fb_band */
         else if (i == 0x208 || i == 0x209) l1[i] = base | SEC_PLANE_C; /* math/screen chunk stack 0x2080_0000 (2 MB):
                                                                         * cacheable DMA buffer — the math-cop worker
                                                                         * clean/invalidates it around the PL round-trip
-                                                                        * (mathcop.c); a bare barrier over non-cacheable
-                                                                        * didn't drain A9 writes to DDR before the reload */
-        else if (i < 1024)       l1[i] = base | SEC_PLANE;             /* SALLY/planes: PL0-RW, non-cacheable */
+                                                                        * (mathcop.c). The DELIBERATE exception to the
+                                                                        * M7 gate (decided 2026-07-13): stays PL0-RW. */
+        else if (i < 1024)       l1[i] = base | SEC_PLANE_K;           /* SALLY/planes/plv: PL0-NONE (M7 gate);
+                                                                        * kernel + PL unaffected, PL0 reaches plv
+                                                                        * surfaces only via vm_shm_map */
         else                     l1[i] = base | SEC_PERIPH;            /* peripherals: PL0-none, Device */
     }
     /* caches are UNKNOWN out of reset — invalidate before enabling, or a stale

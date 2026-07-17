@@ -149,16 +149,23 @@ int blit_declare(int id, uint32_t stride)
  * and the wallpaper back-buffer, whose geometry the kernel itself owns. */
 extern void fb_info(int *, int *, int *, uint32_t *);            /* gfxplane.c; stride in PIXELS */
 extern void fb_wallpaper_info(int *, int *, int *, uint32_t *);
-static uint32_t surf_phys(int id, uint32_t *size)
+/* `cached`: does some CPU mapping of this surface go through the caches — i.e. does the
+ * driver owe coherency maintenance around the engine's DMA? The PLANE is uncached
+ * everywhere (scan-out); the WALLPAPER back-buffer is SEC_PLANE_C; and every CONTIG shm
+ * surface has CACHED per-process views since M7 (vm.c SEC_SHM_C) — the whole point of
+ * which is that this driver, not the clients, owns the clean/invalidate protocol. */
+static uint32_t surf_phys(int id, uint32_t *size, int *cached)
 {
     if (id == XT_BLIT_SURF_PLANE || id == XT_BLIT_SURF_WALLPAPER) {
         int w, h, stride; uint32_t addr;
         if (id == XT_BLIT_SURF_PLANE) fb_info(&w, &h, &stride, &addr);
         else                          fb_wallpaper_info(&w, &h, &stride, &addr);
         *size = (uint32_t)stride * 4u * (uint32_t)h;
+        if (cached) *cached = (id == XT_BLIT_SURF_WALLPAPER);
         return addr;
     }
     if (id < 0 || id >= BL_NSURF) return 0;
+    if (cached) *cached = 1;               /* CONTIG shm: cached per-process views (M7) */
     return vm_shm_phys(id, size);          /* 0 unless live AND contiguous */
 }
 
@@ -198,6 +205,46 @@ static void bl_clean_rows(uint32_t base, uint32_t stride,
     __asm__ volatile("dsb" ::: "memory");
 }
 
+/* CLEAN+INVALIDATE destination rows — the cached-dst protocol (M7 engine composite),
+ * run on BOTH sides of the engine's write:
+ *   BEFORE: flushes any CPU-written pixels in the rect to DDR (a chrome fill, a CPU edge
+ *           column — they share cache lines with the rect's edges) and leaves NO copy in
+ *           the cache, so nothing dirty can evict over the engine's output later.
+ *   AFTER (post-fence): drops the lines speculation may have refetched while the engine
+ *           was writing, so the next CPU read sees the engine's pixels, not a stale line.
+ * Line-granular rounding out at the edges is exactly the SD-DMA lesson (unaligned edges
+ * must be CLEAN+inval, never invalidate-only — a neighbour's bytes live in those lines).
+ * Post-fence the rect's lines are clean by construction (nothing wrote between), so the
+ * clean half is a no-op and this cannot overwrite the engine's work. */
+static void bl_cleaninval_rows(uint32_t base, uint32_t stride,
+                               uint32_t x, uint32_t y, uint32_t w, uint32_t h)
+{
+    for (uint32_t row = 0; row < h; row++) {
+        uint32_t a = (base + (y + row) * stride + x * 4u) & ~(BL_CLINE - 1u);
+        uint32_t e = (base + (y + row) * stride + (x + w) * 4u + BL_CLINE - 1u) & ~(BL_CLINE - 1u);
+        for (; a < e; a += BL_CLINE)
+            __asm__ volatile("mcr p15,0,%0,c7,c14,1" :: "r"(a) : "memory");   /* DCCIMVAC */
+    }
+    __asm__ volatile("dsb" ::: "memory");
+    BL_L2CC_CACHE_SYNC = 0u;
+    __asm__ volatile("dsb" ::: "memory");
+}
+
+/* In-kernel retire fence: spin briefly (a small blit retires in µs), then sleep-poll.
+ * Shared by the XT_BLIT_WAIT ioctl and the cached-dst synchronous path below.
+ * 0 = retired; -1 = engine wedged (never hang the caller on it). */
+int blit_wait_seq(uint32_t want)
+{
+    for (int i = 0; i < 2000; i++)
+        if ((int32_t)(blit_seq() - want) >= 0) return 0;
+    for (int t = 0; t < 200; t++) {
+        extern void vTaskDelay(uint32_t);
+        vTaskDelay(1);
+        if ((int32_t)(blit_seq() - want) >= 0) return 0;
+    }
+    return -1;
+}
+
 /* The engine's DDR path is addressed by a software-computed ROW0 + row stride
  * ("The blitter only accumulates — +stride per row, +bpp per pixel, no fabric multiply",
  * hdl/xt_blitter.sv). So the driver computes the origin-pixel address itself. */
@@ -234,9 +281,9 @@ long blit_submit(const struct xt_blit_cmd *c, int priority)
     return -1;   /* qemu: there is no engine, and its MMIO window is unmapped */
 #else
     blit_unlock();                                       /* or the first register touch hangs */
-    if (c->dst_id == XT_BLIT_SURF_WALLPAPER) return -1;   /* cached dst: see xtsys.h */
     uint32_t dsz = 0, ssz = 0;
-    uint32_t dphys = surf_phys(c->dst_id, &dsz);
+    int dcached = 0, scached = 0;
+    uint32_t dphys = surf_phys(c->dst_id, &dsz, &dcached);
     if (!dphys) return -1;                                /* not a live contiguous surface */
     uint32_t dstr = surf_stride(c->dst_id);
     uint32_t dw = c->dw, dh = c->dh;
@@ -279,7 +326,7 @@ long blit_submit(const struct xt_blit_cmd *c, int priority)
         flags |= BL_F_BILINEAR;
 
     if (c->op == XT_BLIT_COPY || c->op == XT_BLIT_SCALE) {
-        uint32_t sphys = surf_phys(c->src_id, &ssz);
+        uint32_t sphys = surf_phys(c->src_id, &ssz, &scached);
         if (!sphys) return -1;
         uint32_t sstr = surf_stride(c->src_id);
 
@@ -295,8 +342,9 @@ long blit_submit(const struct xt_blit_cmd *c, int priority)
         if (csw != sw || csh != sh) return -1;            /* source rect runs off the surface */
         if (c->op == XT_BLIT_COPY) { dw = csw; dh = csh; }
 
-        /* the CACHED back-buffer as a source: push the CPU's pixels to DDR first */
-        if (c->src_id == XT_BLIT_SURF_WALLPAPER)
+        /* a CACHED source (the wallpaper back-buffer, or any CONTIG shm surface — their
+         * per-process views are cached since M7): push the CPU's pixels to DDR first */
+        if (scached)
             bl_clean_rows(sphys, sstr, c->sx, c->sy, csw, csh);
 
         flags |= BL_F_SRC_DDR;
@@ -320,6 +368,13 @@ long blit_submit(const struct xt_blit_cmd *c, int priority)
         w8(BL_PAT_DATA, (uint8_t)(c->color));
     }
 
+    /* A CACHED destination (the wallpaper back-buffer, or a CONTIG shm surface): flush
+     * and drop the rect's lines BEFORE the engine writes, so no dirty CPU line can evict
+     * over its output — and note the command must then run SYNCHRONOUSLY (below), because
+     * the lines must ALSO be dropped after it retires (speculation refetches). */
+    if (dcached)
+        bl_cleaninval_rows(dphys, dstr, c->dx, c->dy, dw, dh);
+
     w32(BL_DST_BASE, row0(dphys, c->dx, c->dy, dstr));
     w16(BL_DST_STR,  (uint16_t)dstr);
     w16(BL_DST_X_LO, (uint16_t)c->dx); w16(BL_DST_Y_LO, (uint16_t)c->dy);  /* half parity */
@@ -333,6 +388,17 @@ long blit_submit(const struct xt_blit_cmd *c, int priority)
      * per command, so a caller polling it without this would wait forever on 0. */
     w8 (BL_CMD, BL_CMD_SYNC);
     __asm__ volatile("dsb");
-    return (long)blit_seq() + 1;                          /* seq this command retires at */
+    long seq = (long)blit_seq() + 1;                      /* seq this command retires at */
+
+    /* Cached dst: the M7 protocol's second half. Fence HERE (in-kernel, spin-then-sleep)
+     * and drop the rect's lines again — the A9 speculates, and a line refetched while the
+     * engine was writing would serve the CPU stale pixels forever. The caller's own
+     * XT_BLIT_WAIT then returns immediately (already retired). A wedged engine fails the
+     * submit rather than leaving a half-coherent rect. */
+    if (dcached) {
+        if (blit_wait_seq((uint32_t)seq) != 0) return -1;
+        bl_cleaninval_rows(dphys, dstr, c->dx, c->dy, dw, dh);
+    }
+    return seq;
 #endif /* XT_HW */
 }
