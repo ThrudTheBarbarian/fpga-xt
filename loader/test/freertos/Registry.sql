@@ -61,8 +61,6 @@ CREATE TABLE windowIcons
 
 INSERT INTO windowIcons (id,path,type,match,displayName) 
     VALUES(1,'mimetypes/crystal-style/text-x-plain.pam',7,'*',NULL);
-INSERT INTO windowIcons (id,path,type,match,displayName) 
-    VALUES(2,'places/crystal_clear-style/folder-blue.pam',6,'*',NULL);
 INSERT INTO windowIcons (path,type,match,displayName) 
     VALUES('games/despatchRider.pam',7,'DespatchRider.atr','Despatch Rider');
 INSERT INTO windowIcons (path,type,match,displayName) 
@@ -70,9 +68,22 @@ INSERT INTO windowIcons (path,type,match,displayName)
 INSERT INTO windowIcons (path,type,match,displayName) 
     VALUES('games/ballBlazer.pam',7,'BallBlazer.atx','Ball Blazer');
 INSERT INTO windowIcons (path,type,match,displayName) 
+    VALUES('retro/atr.pam',7,'*.atr',NULL);
+INSERT INTO windowIcons (path,type,match,displayName) 
+    VALUES('retro/xex.pam',7,'*.xex',NULL);
+
+INSERT INTO windowIcons (path,type,match,displayName) 
+    VALUES('places/crystal_clear-style/folder-blue.pam',6,'*',NULL);
+INSERT INTO windowIcons (path,type,match,displayName) 
+    VALUES('actions/go-previous-3.pam',6,'..',NULL);
+
+
+INSERT INTO windowIcons (path,type,match,displayName)
     VALUES('actions/document-open-remote.pam',9,'Server','Server');
+    
 INSERT INTO windowIcons (path,type,match,displayName) 
     VALUES('actions/folder-new-7.pam',10,'Add server','Add server');
+    
 
 -- ---------------------------------------------------------------------------
 -- Desktop-icons table
