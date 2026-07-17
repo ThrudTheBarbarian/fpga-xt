@@ -26,9 +26,11 @@ FT_LIBS   := $(shell pkg-config --libs freetype2) -lm -lz
 # enums instead of its own: -DRSC_NO_STATE_FLAGS skips its OF_/OS_/BOX_ROUND_
 # copies, and -DG_BOX=G_BOX (a self-referential macro) satisfies rsc.h's
 # `#ifndef G_BOX` type-enum guard so it uses aes.h's G_* (an enum, not a macro).
-# -DINSTRUMENTATION: the gem draw profiler + gemd membench (gfx.h) — drop the flag to
-# compile the whole apparatus away; the hook sites stay for a later milestone to recover.
-CFLAGS  := $(CSTD) $(WARN) -O2 -g -DINSTRUMENTATION -I. -I../third_party/Rocks/src -DRSC_NO_STATE_FLAGS -DG_BOX=G_BOX $(FT_CFLAGS) $(shell pkg-config --cflags sdl2 2>/dev/null || sdl2-config --cflags)
+# INSTRUMENT=1: the gem draw profiler + gemd membench + drag-lag profiler (gfx.h,
+# gemd/server.c). OFF by default — the per-second [gemprof]/[gemd] klog lines are
+# development data and must not pollute dmesg in normal use. `make INSTRUMENT=1`
+# compiles the whole apparatus back in; the hook sites always stay.
+CFLAGS  := $(CSTD) $(WARN) -O2 -g $(if $(INSTRUMENT),-DINSTRUMENTATION) -I. -I../third_party/Rocks/src -DRSC_NO_STATE_FLAGS -DG_BOX=G_BOX $(FT_CFLAGS) $(shell pkg-config --cflags sdl2 2>/dev/null || sdl2-config --cflags)
 LDLIBS  := $(FT_LIBS) $(shell pkg-config --libs sdl2 2>/dev/null || sdl2-config --libs)
 
 # The Rocks resource engine, REFERENCED (not copied) from the third_party/Rocks submodule.  It

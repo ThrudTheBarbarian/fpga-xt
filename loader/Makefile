@@ -304,8 +304,10 @@ GEMINC := -Itest/freertos/libs/shim -I$(GEM) -I$(GEM)/vdi -I$(FT)/include -Inewl
 # without ever naming them in an exported signature.  Without this flag xtc's
 # `#import <GEM>` sees NONE of them and every binding hand-mirrors 49 constants that
 # silently drift.  Costs ~10KB/TU of .debug_* — the ALLOC sections are byte-identical.
-# -DINSTRUMENTATION: gem draw profiler + gemd membench — one flag recovers it all later.
-GEMCFLAGS := -marm -mcpu=cortex-a9 -mfloat-abi=softfp -mfpu=neon-vfpv3 -fpic -O2 -g -DGEM_XTOS -DINSTRUMENTATION \
+# INSTRUMENT=1: gem draw profiler + gemd membench + drag-lag profiler. OFF by default —
+# the per-second [gemprof]/[gemd] klog lines are development data and must not pollute
+# dmesg in normal use. `make INSTRUMENT=1 ...` compiles it all back in.
+GEMCFLAGS := -marm -mcpu=cortex-a9 -mfloat-abi=softfp -mfpu=neon-vfpv3 -fpic -O2 -g -DGEM_XTOS $(if $(INSTRUMENT),-DINSTRUMENTATION) \
              -fno-eliminate-unused-debug-types \
              -I$(FPGAGEM) -DRSC_NO_STATE_FLAGS -DG_BOX=G_BOX $(GEMINC)
 

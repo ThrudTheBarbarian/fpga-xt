@@ -47,7 +47,9 @@ static void in_recv(void *arg, struct udp_pcb *pcb, struct pbuf *p,
                     const ip_addr_t *addr, u16_t port)
 {
     (void)arg; (void)pcb; (void)addr; (void)port;
-    /* per-second receive counter (klog): compare with xtmouse's send counter */
+#ifdef XT_INPUT_UDP_STATS
+    /* per-second receive counter (klog): compare with xtmouse's send counter to place a
+     * lost-motion gap. Debug-only (-DXT_INPUT_UDP_STATS) — dmesg stays quiet in normal use. */
     { static uint32_t rx_n, rx_t0;
       extern uint32_t xTaskGetTickCount(void);
       extern void klog_u(unsigned);
@@ -58,6 +60,7 @@ static void in_recv(void *arg, struct udp_pcb *pcb, struct pbuf *p,
           klog("[net] input_udp "); klog_u(rx_n); klog(" pkt/s\n");
           rx_n = 0; rx_t0 = now;
       } }
+#endif
     if (p->len >= 8) {
         const uint8_t *b = (const uint8_t *)p->payload;
         if (b[0] == 'X') {

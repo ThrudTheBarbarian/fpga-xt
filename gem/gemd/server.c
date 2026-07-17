@@ -70,15 +70,18 @@ static int         g_blitfd = -1;    /* /dev/blitter: the present is the ENGINE'
  * (SYS_fb_wallpaper — a dedicated 16 MB PL0-RW cacheable region, no heap cost), and this copy
  * — cached reads, sequential uncached writes, nothing else — is the only thing that ever
  * touches the plane. */
-/* TEMP drag-lag profiler: where does a resize-drag millisecond actually go? Accumulates
- * per-stage microseconds and counts, klogs one line per second while active. Remove with
- * the verdict. */
+/* µs clock — NOT profiler-only: the §9 liveness clock (last_recv) runs on it. */
 static long long gemd_us(void)
 {
     unsigned tv[3];
     __syscall(SYS_gettimeofday, (long)tv, 0, 0);
     return (long long)tv[0] * 1000000ll + tv[2];
 }
+#ifdef INSTRUMENTATION
+/* Drag-lag profiler: where does a resize-drag millisecond actually go? Accumulates
+ * per-stage microseconds and counts, klogs one line per second while active. Debug
+ * data only — compiled away (with its per-present gettimeofday pairs) unless the
+ * build says INSTRUMENT=1, so dmesg stays quiet in normal use. */
 static struct { long long blit, fence, cpu; int presents, damages, sizes, motions; long long last; } g_prof;
 static void prof_dump(void)
 {
@@ -96,6 +99,15 @@ static void prof_dump(void)
     memset(&g_prof, 0, sizeof g_prof);
     g_prof.last = now;
 }
+#define PROF_NOW()      gemd_us()
+#define PROF_ADD(f, v)  (g_prof.f += (v))
+#define PROF_INC(f)     (g_prof.f++)
+#else
+static void prof_dump(void) {}
+#define PROF_NOW()      0
+#define PROF_ADD(f, v)  ((void)(v))
+#define PROF_INC(f)     ((void)0)
+#endif
 
 /* ---- §10: the menu strip -------------------------------------------------------------- */
 /* The focused client's strip surface composites into the reserved top band; no menu (or no
@@ -164,16 +176,16 @@ static void gemd_present(int x, int y, int w, int h)
         c.dx = (uint16_t)bx; c.dy = (uint16_t)y;
         c.dw = (uint16_t)bw; c.dh = (uint16_t)h;
         c.sx = (uint16_t)bx; c.sy = (uint16_t)y;
-        long long t0 = gemd_us();
+        long long t0 = PROF_NOW();
         long seq = sys_write(g_blitfd, &c, sizeof c);
-        long long t1 = gemd_us();
+        long long t1 = PROF_NOW();
         if (seq >= 0) {
             unsigned want = (unsigned)seq;
             if (sys_ioctl(g_blitfd, XT_BLIT_WAIT, &want) == 0) {   /* ONE syscall, kernel
                                                                     * spins-then-sleeps: no
                                                                     * more SVC-storm fence */
-                g_prof.blit += t1 - t0; g_prof.fence += gemd_us() - t1;
-                g_prof.presents++;
+                PROF_ADD(blit, t1 - t0); PROF_ADD(fence, PROF_NOW() - t1);
+                PROF_INC(presents);
                 return;
             }
         }
@@ -181,7 +193,7 @@ static void gemd_present(int x, int y, int w, int h)
         sys_close(g_blitfd); g_blitfd = -1;      /* never wedge the present on a sick engine */
     }
 
-    long long tc = gemd_us();
+    long long tc = PROF_NOW();
     const uint32_t *src = g_plane.px + (size_t)y * g_plane.stride + x;
     uint32_t *dst = (uint32_t *)g_scan.addr + (size_t)y * g_scan.stride + x;
     for (int yy = 0; yy < h; yy++) {
@@ -189,7 +201,7 @@ static void gemd_present(int x, int y, int w, int h)
         src += g_plane.stride; dst += g_scan.stride;
     }
     sys_fb_present();                            /* dsb: the compositor scans DDR */
-    g_prof.cpu += gemd_us() - tc; g_prof.presents++;
+    PROF_ADD(cpu, PROF_NOW() - tc); PROF_INC(presents);
 }
 static gsurface    g_surf[GEMD_MAXW];   /* the backing store per WINDOW HANDLE. gemd keeps its own
                                          * ref and its own capacity numbers: §12's resize is
@@ -333,7 +345,7 @@ static void do_damage(int ci, const gem_msg *m)
     if (y + h > wh) h = wh - y;
     if (w <= 0 || h <= 0) return;
 
-    g_prof.damages++;
+    PROF_INC(damages);
     wind_redraw_area(ox + x, oy + y, w, h);      /* the AES composites; draw_one blits the store */
 }
 
@@ -403,7 +415,7 @@ int gemd_resize_surface(int hd)
                  drag ? " (drag: screen-cap once)" : drag_ended ? " (drag end: shrink-fit)" : "");
     }
     wind_attach_surface(hd, s->id, s->gen, s->px, ww, wh, s->cap_w, ci);
-    g_prof.sizes++;
+    PROF_INC(sizes);
 
     gem_msg r; memset(&r, 0, sizeof r);
     r.w[0] = GEM_MSG_SIZED; r.w[1] = (int16_t)hd;
@@ -730,8 +742,8 @@ static int gemd_events(aes_event *ev, int timeout_ms)
          * frame loop (a thumb drag) waits through here, and what it posts per motion must go
          * out per motion — that is the whole of "the scroll is live". */
         gemd_flush_msgs();
-        prof_dump();                                 /* TEMP drag-lag profiler */
-        gem_prof_dump("srv");                        /* TEMP: composite/alloc/blit, server side */
+        prof_dump();                                 /* drag-lag profiler (INSTRUMENTATION-only) */
+        gem_prof_dump("srv");                        /* draw profiler (INSTRUMENTATION-only) */
         if (g_iqi < g_iqn) {                      /* a burst still in hand from the last read */
             struct os_event oe = g_iq[g_iqi++];
             memset(ev, 0, sizeof *ev);
@@ -739,7 +751,7 @@ static int gemd_events(aes_event *ev, int timeout_ms)
             ev->button = oe.button; ev->key = oe.key; ev->shift = oe.shift;
             ev->wheel = oe.wheel;
             if (ev->type == OS_EV_TIMER || ev->type == OS_EV_NONE) continue;   /* not an event */
-            if (ev->type == OS_EV_MOTION) g_prof.motions++;   /* TEMP input-cadence probe */
+            if (ev->type == OS_EV_MOTION) PROF_INC(motions);  /* input-cadence probe */
             return ev->type;                      /* OS_EV_* == AES_* by construction (xtsys.h) */
         }
 

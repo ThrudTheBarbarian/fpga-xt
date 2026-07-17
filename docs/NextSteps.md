@@ -145,8 +145,9 @@
   transfer_bits"**. Pieces: driver accepts WALLPAPER as dst + invalidates dst rows;
   gemd declares surfaces at attach (needs XT_SHM_CONTIG/plv + the client-side cached
   view settled — §14's move-together rule); FC 8B-co-align/even-width handling (snap
-  window x even, widen odd rects, CPU 1px edge). Profiler + membench recoverable via
-  `-DINSTRUMENTATION` (gem/Makefile + loader GEMCFLAGS). *(src: gemd-plan.md, memory
+  window x even, widen odd rects, CPU 1px edge). Profiler + membench + drag-lag
+  profiler recoverable via `make INSTRUMENT=1` (gem/Makefile + loader GEMCFLAGS;
+  off by default so dmesg stays clean). *(src: gemd-plan.md, memory
   gemprof-and-dmesg-c)*
 - **VDI dispatch layer (Phase 1, keystone)** — opcode wire format + 6502-side VDI
   library + N6 DRAW dispatcher + palette expansion + inquiry RPCs. *(highest priority;
