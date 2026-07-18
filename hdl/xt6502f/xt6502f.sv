@@ -79,7 +79,13 @@ module xt6502f #(
         ST_STORE=24,                       // write [eah,eal] <- reg (store terminal)
         ST_ACC=25,                         // accumulator RMW (ASL/LSR/ROL/ROR A)
         ST_RMW_RD=26, ST_RMW_W0=27, ST_RMW_W1=28, // memory RMW: read, write-orig, write-mod
-        ST_BRA=29, ST_BRA_TK=30, ST_BRA_PG=31;    // relative branch: fetch offset / taken / page-cross
+        ST_BRA=29, ST_BRA_TK=30, ST_BRA_PG=31,    // relative branch: fetch offset / taken / page-cross
+        ST_PH1=32, ST_PH2=33,                     // PHA/PHP: dummy, write
+        ST_PL1=34, ST_PL2=35, ST_PL3=36,          // PLA/PLP: dummy, dummy(S++), read
+        ST_JSR1=37, ST_JSR2=38, ST_JSR3=39, ST_JSR4=40, ST_JSR5=41,   // JSR
+        ST_RTS1=42, ST_RTS2=43, ST_RTS3=44, ST_RTS4=45, ST_RTS5=46,   // RTS
+        ST_RTI1=47, ST_RTI2=48, ST_RTI3=49, ST_RTI4=50, ST_RTI5=51,   // RTI
+        ST_BRK1=52, ST_BRK2=53, ST_BRK3=54, ST_BRK4=55, ST_BRK5=56, ST_BRK6=57; // BRK
     reg [5:0] state;
     reg [2:0] rst_cnt;
     reg [7:0] ir;
@@ -105,18 +111,30 @@ module xt6502f #(
             ST_VECL: addr_c = 16'hFFFC;
             ST_VECH: addr_c = 16'hFFFD;
             ST_LOAD, ST_STORE, ST_ZPI, ST_ABX, ST_ABXC, ST_IYRD, ST_IYC,
-            ST_RMW_RD, ST_RMW_W0, ST_RMW_W1: addr_c = {eah, eal};
+            ST_RMW_RD, ST_RMW_W0, ST_RMW_W1, ST_RTS5: addr_c = {eah, eal};
             ST_IXP, ST_IXA, ST_IYA: addr_c = {8'h00, ptr};
             ST_IXB, ST_IYB:         addr_c = {8'h00, ptr + 8'd1};   // zp wrap
-            default: addr_c = PC;   // FETCH / IMM / ZPF / ABL / ABH / IXF / IYF / NOP1 / JMPn
+            ST_PH2, ST_PL2, ST_PL3, ST_JSR2, ST_JSR3, ST_JSR4,      // stack access = {01, S}
+            ST_RTS2, ST_RTS3, ST_RTS4, ST_RTI2, ST_RTI3, ST_RTI4, ST_RTI5,
+            ST_BRK2, ST_BRK3, ST_BRK4: addr_c = {8'h01, S};
+            ST_BRK5: addr_c = 16'hFFFE;                             // IRQ/BRK vector
+            ST_BRK6: addr_c = 16'hFFFF;
+            default: addr_c = PC;   // FETCH / IMM / ZPF / ABL / ABH / IXF / IYF / IMPL / JMPn / branch / push+pull dummy
         endcase
     end
 
+    wire push_write = (state==ST_PH2 || state==ST_JSR3 || state==ST_JSR4 ||
+                       state==ST_BRK2 || state==ST_BRK3 || state==ST_BRK4);
     assign addr = addr_c;
-    assign rw   = (state==ST_STORE || state==ST_RMW_W0 || state==ST_RMW_W1) ? 1'b0 : 1'b1;  // write cycles
-    assign data_out = (state==ST_RMW_W0) ? rmw_val :                 // RMW ghost write (original)
-                      (state==ST_RMW_W1) ? rmw_mod :                 // RMW final write (modified)
-                      (dst==2'd0) ? A : (dst==2'd1) ? X : Y;         // store register
+    assign rw   = (state==ST_STORE || state==ST_RMW_W0 || state==ST_RMW_W1 || push_write) ? 1'b0 : 1'b1;
+    assign data_out =
+        (state==ST_RMW_W0)                  ? rmw_val :               // RMW ghost write (original)
+        (state==ST_RMW_W1)                  ? rmw_mod :               // RMW final write (modified)
+        (state==ST_JSR3 || state==ST_BRK2)  ? PC[15:8] :             // push PCH
+        (state==ST_JSR4 || state==ST_BRK3)  ? PC[7:0]  :             // push PCL
+        (state==ST_BRK4)                    ? (P | 8'h30) :          // push P (B set)
+        (state==ST_PH2)                     ? ((ir==8'h48) ? A : (P | 8'h30)) : // PHA : PHP
+                                              ((dst==2'd0) ? A : (dst==2'd1) ? X : Y); // store reg
     assign sync = (state == ST_FETCH);
     wire   advance  = slot_commit && rdy;
 
@@ -391,6 +409,13 @@ module xt6502f #(
                                  state <= ST_IMPL;
                         // ---- branches (relative) ----
                         8'h10, 8'h30, 8'h50, 8'h70, 8'h90, 8'hB0, 8'hD0, 8'hF0: state <= ST_BRA;
+                        // ---- stack / subroutine / break ----
+                        8'h48, 8'h08: state <= ST_PH1;                          // PHA / PHP
+                        8'h68, 8'h28: state <= ST_PL1;                          // PLA / PLP
+                        8'h20: state <= ST_JSR1;                                // JSR
+                        8'h60: state <= ST_RTS1;                                // RTS
+                        8'h40: state <= ST_RTI1;                                // RTI
+                        8'h00: state <= ST_BRK1;                                // BRK
                         // ---- control / nop ----
                         8'h4C: state <= ST_JMP1;                                // JMP abs
                         8'hEA: state <= ST_IMPL;                                // NOP
@@ -464,6 +489,44 @@ module xt6502f #(
                     else begin PC[7:0] <= bra_sum[7:0]; eah <= bra_sum[15:8]; state <= ST_BRA_PG; end
                 end
                 ST_BRA_PG: begin PC[15:8] <= eah; state <= ST_FETCH; end   // fix PCH (page cross)
+
+                // ---- PHA / PHP (write value onto stack) ----
+                ST_PH1: state <= ST_PH2;                                   // dummy read at PC
+                ST_PH2: begin S <= S - 8'd1; state <= ST_FETCH; end        // bus writes data_out; S--
+                // ---- PLA / PLP (pull value off stack) ----
+                ST_PL1: state <= ST_PL2;                                   // dummy read at PC
+                ST_PL2: begin S <= S + 8'd1; state <= ST_PL3; end          // dummy read {01,S}; S++
+                ST_PL3: begin                                             // read {01,S} = pulled value
+                    if (ir == 8'h68) begin                                // PLA
+                        A <= din_r; P <= {din_r[7], P[6:2], (din_r == 8'h00), P[0]};
+                    end else P <= (din_r & 8'hEF) | 8'h20;                // PLP (B cleared, bit5 set)
+                    state <= ST_FETCH;
+                end
+                // ---- JSR (fetch ADL, push return PC-of-last-byte, fetch ADH) ----
+                ST_JSR1: begin eal <= din_r; PC <= PC + 16'd1; state <= ST_JSR2; end // ADL; PC->opcode+2
+                ST_JSR2: state <= ST_JSR3;                                 // dummy read {01,S}
+                ST_JSR3: begin S <= S - 8'd1; state <= ST_JSR4; end        // push PCH; S--
+                ST_JSR4: begin S <= S - 8'd1; state <= ST_JSR5; end        // push PCL; S--
+                ST_JSR5: begin PC <= {din_r, eal}; state <= ST_FETCH; end  // ADH; PC = {ADH,ADL}
+                // ---- RTS (pull PC, +1) ----
+                ST_RTS1: state <= ST_RTS2;                                 // dummy read at PC
+                ST_RTS2: begin S <= S + 8'd1; state <= ST_RTS3; end        // dummy read {01,S}; S++
+                ST_RTS3: begin eal <= din_r; S <= S + 8'd1; state <= ST_RTS4; end  // pull PCL; S++
+                ST_RTS4: begin eah <= din_r; state <= ST_RTS5; end         // pull PCH
+                ST_RTS5: begin PC <= {eah, eal} + 16'd1; state <= ST_FETCH; end    // dummy read; PC = ret+1
+                // ---- RTI (pull P then PC, no +1) ----
+                ST_RTI1: state <= ST_RTI2;                                 // dummy read at PC
+                ST_RTI2: begin S <= S + 8'd1; state <= ST_RTI3; end        // dummy read {01,S}; S++
+                ST_RTI3: begin P <= (din_r & 8'hEF) | 8'h20; S <= S + 8'd1; state <= ST_RTI4; end // pull P
+                ST_RTI4: begin eal <= din_r; S <= S + 8'd1; state <= ST_RTI5; end  // pull PCL; S++
+                ST_RTI5: begin PC <= {din_r, eal}; state <= ST_FETCH; end  // pull PCH; PC = {PCH,PCL}
+                // ---- BRK (push PC+2, push P|B, set I, jump IRQ vector) ----
+                ST_BRK1: begin PC <= PC + 16'd1; state <= ST_BRK2; end     // read operand byte; PC->op+2
+                ST_BRK2: begin S <= S - 8'd1; state <= ST_BRK3; end        // push PCH; S--
+                ST_BRK3: begin S <= S - 8'd1; state <= ST_BRK4; end        // push PCL; S--
+                ST_BRK4: begin S <= S - 8'd1; P[2] <= 1'b1; state <= ST_BRK5; end  // push P|B; S--; set I
+                ST_BRK5: begin eal <= din_r; state <= ST_BRK6; end         // read vector low
+                ST_BRK6: begin PC <= {din_r, eal}; state <= ST_FETCH; end  // read vector high; PC = vector
 
                 default: state <= ST_FETCH;
             endcase
