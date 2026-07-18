@@ -10,18 +10,20 @@ machine cycle; debug first-class in the micro-schedule; resident alongside turbo
 per docs/Design/dual-cpu-resident-mux.md). Refs: MOS datasheet
 (refs/mos_6501-6505_mpu_preliminary_aug_1975.pdf) governs the core cycle; the XL PBI gif
 (refs/XL-bus-timing.gif, ~worst-case) governs the expansion boundary.
-- **Phase 1 DONE** (commit 3aae8ef): `hdl/xt6502f/xt6502f.sv` — cycle engine, phi2-paced
-  window, `sub`-slotting (addr early / data@SUB_DATA / commit@SUB_COMMIT), reset seq +
-  NOP/JMP-abs. `sim/tb_xt6502f.sv` all pass (reset→loop, cycle counts, RDY halt/resume).
-- **Phase 2 (next)** — full documented ISA: addressing-mode cadences + op-ALU. Decision
-  first (open #2 in the doc): mode-FSM (lean) vs micro-ROM. Then Klaus + differential
-  co-sim vs xt6502.
-- Phases 3–6: quirks/illegals (RMW double-write, dummy reads, decimal, interrupt timing/
-  hijack per datasheet, all illegals); debug slots (retire-slot bkpt/wp/trace, two sample
-  windows); resident 2:1 mux + turbo<->fidelity handoff; HW bring-up + chase the fidelity
-  backlog (magenta palette, garbled tiles, input) ON the fidelity core.
-- Open decisions (doc S9): N from BASE_DIV; sequencer encoding; unstable-illegal
-  convention; boundary-only handoff; trace granularity; KIL/JAM = halt+surface.
+- **Phases 1–3 DONE**: `hdl/xt6502f/xt6502f.sv` — cycle engine + `sub`-slotting + RDY halt,
+  and the **entire ISA cycle-exact: all 256 opcodes pass Tom Harte** (documented + every
+  illegal incl. NMOS decimal ADC/SBC, JMP($xxFF) wrap, SLO/RLA/SRE/RRA/DCP/ISC, ANC/ALR/
+  ARR/XAA/LXA/SBX, KIL/JAM lock-up, unstable SHA/SHX/SHY/TAS/LAS). Harness: `sim/tb_xt6502f
+  _harte.sv` + `sim/harte/{fetch,convert,run}.sh`; `sim/harte/run.sh` → "256 pass, 0 fail".
+- **Still OPEN in Phase 3** — interrupts: sample IRQ/NMI (Φ2), 7-cycle sequence, RESET
+  sequence, and the BRK/IRQ hijack. NOT covered by Harte — needs a directed tb (or Visual6502
+  trace). The core already has `irq_n`/`nmi_n` inputs, currently unsampled.
+- **Phase 4** — debug sub-cycle slots: early/late sample (clocks 2-4 / 53-55), retire-slot
+  bkpt/wp/trace, inject; wire the GP0 DEBUG block + `/bin/6502` cycle-level additions.
+- **Phase 5** — resident 2:1 bus mux + turbo<->fidelity handoff (instruction-boundary only);
+  gate the build on clk_sally WNS ≥ 0.
+- **Phase 6** — HW bring-up: cold-load, run the OS/games on the fidelity core, chase the
+  fidelity backlog (magenta palette, garbled tiles, input) ON the right core.
 
 ## In-fabric 6502 debugger (branch `debug`) + XL app-launch
 The debugger is BUILT and HW-PROVEN: `/bin/6502 status|halt|go|step N|break $A|

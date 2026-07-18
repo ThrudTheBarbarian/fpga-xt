@@ -228,13 +228,14 @@ capabilities (cycle step, micro-PC, bus trace) are additive registers.
 
 ## 8. Implementation phasing
 
-1. **Cycle engine + sequencer skeleton** — the 56-clock window, `sub` slotting, phi1/phi2
-   handshake to `sally_mem`, /HALT gate; run `NOP` loops + reset. Prove real-time 1×.
-2. **Documented ISA** — addressing-mode cadences + operations for the legal opcodes;
-   pass Klaus; differential co-sim vs `xt6502`.
-3. **Quirks + illegals** — RMW double-write, dummy reads, page-cross, branch timing,
-   decimal flags, interrupt timing/hijack, all illegals (stable exact, unstable per
-   convention); pass Lorenz/decimal.
+1. **Cycle engine + sequencer skeleton** ✅ — the window, `sub` slotting, /HALT (RDY) gate;
+   `NOP`/`JMP` loops + reset run real-time 1× (`sim/tb_xt6502f`).
+2. **Documented ISA** ✅ — every legal opcode across all addressing modes, cycle-exact.
+3. **Quirks + illegals** ✅ — RMW double-write, dummy reads, page-cross, branch timing,
+   NMOS decimal ADC/SBC flags, JMP($xxFF) wrap, and **all 256 opcodes incl. illegals**
+   (stable exact; unstable = most-common result; KIL/JAM = lock-up). Validated cycle-exact
+   against Tom Harte's tests via `sim/tb_xt6502f_harte` + `sim/harte/` (per-opcode `.vec`).
+   *Still open here: IRQ/NMI/RESET interrupt timing + the BRK/IRQ hijack (not in Harte).*
 4. **Debug slots** — early/late sample, retire-slot bkpt/wp/trace, inject; wire the GP0
    DEBUG block + `/bin/6502` cycle-level additions.
 5. **Resident mux + hand-off** — 2:1 bus mux, per-core enable, turbo↔fidelity switch via

@@ -10,10 +10,12 @@
 // Sequencer = structured addressing-mode FSMs + a small op-ALU (decision 3). Validated
 // per-opcode, cycle-exact, against Tom Harte's 65x02 ProcessorTests (sim/tb_xt6502f_harte).
 //
-// IMPLEMENTED SO FAR (Phase 2, growing): reset; opcode fetch (SYNC); NOP; JMP-abs;
-// the full LOAD group LDA/LDX/LDY across imm / zp / zp,X / zp,Y / abs / abs,X / abs,Y /
-// (zp,X) / (zp),Y with page-cross dummy reads. Unimplemented opcodes act as NOP (and so
-// FAIL the Harte oracle — that's how the backlog is tracked).
+// ISA COMPLETE (Phase 2): all 256 NMOS 6502 opcodes are cycle-exact against Tom Harte's
+// tests — the full documented set (load/store/ALU/RMW/branch/stack/subroutine/jump, incl.
+// NMOS decimal ADC/SBC and the JMP($xxFF) page-wrap bug) plus every undocumented opcode:
+// NOPs, LAX/SAX, the SLO/RLA/SRE/RRA/DCP/ISC combos, ANC/ALR/ARR/XAA/LXA/SBX, KIL/JAM
+// lock-up, and the unstable SHA/SHX/SHY/TAS/LAS stores. Next phases: debug sub-cycle slots,
+// the resident turbo<->fidelity mux, and HW bring-up.
 
 `default_nettype none
 
