@@ -88,7 +88,8 @@ module xt6502f #(
         ST_BRK1=52, ST_BRK2=53, ST_BRK3=54, ST_BRK4=55, ST_BRK5=56, ST_BRK6=57, // BRK
         ST_JMPI1=58, ST_JMPI2=59, ST_JMPI3=60, ST_JMPI4=61,  // JMP (ind): ptrL, ptrH, tgtL, tgtH(page-wrap)
         ST_IMMILL=62,                                        // illegal immediate-ALU (ANC/ALR/ARR/XAA/LXA/SBX)
-        ST_JAM=63;                                           // KIL/JAM: lock up (Harte 11-cycle trace, then frozen)
+        ST_JAM=63,                                           // KIL/JAM: lock up (Harte 11-cycle trace, then frozen)
+        ST_USHW=64;                                          // unstable-store write (SHA/SHX/SHY/TAS)
     reg [6:0] state;
     reg [3:0] jam_cnt;   // JAM machine-cycle index (drives the lock-up address dance)
     reg [2:0] rst_cnt;
@@ -102,13 +103,18 @@ module xt6502f #(
     reg       is_rmw;    // read-modify-write to memory (double-write)
     reg       sax;       // store source = A & X (illegal SAX)
     reg       combo;     // illegal RMW+ALU: after the modify-write, run op2 on A
-    reg [3:0] op2;       // the ALU op for a combo (ORA/AND/EOR/ADC/CMP/SBC)
+    reg [4:0] op2;       // the ALU op for a combo (ORA/AND/EOR/ADC/CMP/SBC)
+    reg       ushx;      // unstable store (SHA/SHX/SHY/TAS): value = reg & (H+1), high-byte quirk
+    reg [1:0] ushx_src;  // store source: 0 = A&X, 1 = X, 2 = Y
+    reg       ushx_tas;  // TAS also sets S = A&X
+    reg [7:0] ush_val;   // computed unstable-store value
 
     // operation applied at the value terminal (read-group ALU + RMW ALU)
-    localparam [3:0] OP_LD=0, OP_AND=1, OP_ORA=2, OP_EOR=3, OP_CMP=4, OP_BIT=5, OP_ADC=6, OP_SBC=7,
+    localparam [4:0] OP_LD=0, OP_AND=1, OP_ORA=2, OP_EOR=3, OP_CMP=4, OP_BIT=5, OP_ADC=6, OP_SBC=7,
                      OP_ASL=8, OP_LSR=9, OP_ROL=10, OP_ROR=11, OP_INC=12, OP_DEC=13,
-                     OP_NOP=14, OP_LAX=15;   // OP_NOP: read-and-discard; OP_LAX: load A and X (illegal)
-    reg [3:0] op;
+                     OP_NOP=14, OP_LAX=15,   // OP_NOP: read-and-discard; OP_LAX: load A and X (illegal)
+                     OP_LAS=16;              // LAS (illegal): A = X = S = mem & S
+    reg [4:0] op;
     wire [6:0] mem_term = is_rmw ? ST_RMW_RD : is_store ? ST_STORE : ST_LOAD;  // terminal after EA
 
     // ---- address source for the current cycle --------------------------------------
@@ -120,7 +126,7 @@ module xt6502f #(
             ST_VECH: addr_c = 16'hFFFD;
             ST_LOAD, ST_STORE, ST_ZPI, ST_ABX, ST_ABXC, ST_IYRD, ST_IYC,
             ST_RMW_RD, ST_RMW_W0, ST_RMW_W1, ST_RTS5,
-            ST_JMPI3, ST_JMPI4: addr_c = {eah, eal};
+            ST_JMPI3, ST_JMPI4, ST_USHW: addr_c = {eah, eal};
             ST_IXP, ST_IXA, ST_IYA: addr_c = {8'h00, ptr};
             ST_IXB, ST_IYB:         addr_c = {8'h00, ptr + 8'd1};   // zp wrap
             ST_PH2, ST_PL2, ST_PL3, ST_JSR2, ST_JSR3, ST_JSR4,      // stack access = {01, S}
@@ -138,7 +144,7 @@ module xt6502f #(
     wire push_write = (state==ST_PH2 || state==ST_JSR3 || state==ST_JSR4 ||
                        state==ST_BRK2 || state==ST_BRK3 || state==ST_BRK4);
     assign addr = addr_c;
-    assign rw   = (state==ST_STORE || state==ST_RMW_W0 || state==ST_RMW_W1 || push_write) ? 1'b0 : 1'b1;
+    assign rw   = (state==ST_STORE || state==ST_RMW_W0 || state==ST_RMW_W1 || state==ST_USHW || push_write) ? 1'b0 : 1'b1;
     assign data_out =
         (state==ST_RMW_W0)                  ? rmw_val :               // RMW ghost write (original)
         (state==ST_RMW_W1)                  ? rmw_mod :               // RMW final write (modified)
@@ -146,6 +152,7 @@ module xt6502f #(
         (state==ST_JSR4 || state==ST_BRK3)  ? PC[7:0]  :             // push PCL
         (state==ST_BRK4)                    ? (P | 8'h30) :          // push P (B set)
         (state==ST_PH2)                     ? ((ir==8'h48) ? A : (P | 8'h30)) : // PHA : PHP
+        (state==ST_USHW)                    ? ush_val :                 // unstable store value
         sax                                 ? (A & X) :                 // SAX store (A&X)
                                               ((dst==2'd0) ? A : (dst==2'd1) ? X : Y); // store reg
     assign sync = (state == ST_FETCH);
@@ -153,7 +160,7 @@ module xt6502f #(
 
     // ---- ALU core: apply op `o` to value `v` (no state change) — shared by the read
     // terminal (exec_op) and the illegal RMW+ALU combos (SLO/RLA/SRE/RRA/DCP/ISC) -----
-    task automatic exec_alu(input [3:0] o, input [7:0] v);
+    task automatic exec_alu(input [4:0] o, input [7:0] v);
         reg [7:0] r, res;
         reg [8:0] sum9;      // binary add/sub with carry-out
         reg [7:0] bres; reg bc, bv;
@@ -165,6 +172,8 @@ module xt6502f #(
                               P <= {v[7], P[6:2], (v==8'h00), P[0]}; end
                 OP_LAX: begin A<=v; X<=v;                              // LAX (illegal): load A and X
                               P <= {v[7], P[6:2], (v==8'h00), P[0]}; end
+                OP_LAS: begin res = v & S; A<=res; X<=res; S<=res;      // LAS (illegal): A=X=S = mem & S
+                              P <= {res[7], P[6:2], (res==8'h00), P[0]}; end
                 OP_AND: begin res = A & v; A <= res; P <= {res[7], P[6:2], (res==8'h00), P[0]}; end
                 OP_ORA: begin res = A | v; A <= res; P <= {res[7], P[6:2], (res==8'h00), P[0]}; end
                 OP_EOR: begin res = A ^ v; A <= res; P <= {res[7], P[6:2], (res==8'h00), P[0]}; end
@@ -301,6 +310,9 @@ module xt6502f #(
     wire [8:0] eal_plus_y   = {1'b0, eal} + {1'b0, Y};
     // branch target = PC(opcode+2) + sign-extended offset (latched in eal)
     wire [15:0] bra_sum = PC + {{8{eal[7]}}, eal};
+    // unstable-store source (0=A&X, 1=X, 2=Y) and value = src & (H+1); H is in eah at ST_ABX/ST_IYRD
+    wire [7:0] ush_reg = (ushx_src==2'd0) ? (A & X) : (ushx_src==2'd1) ? X : Y;
+    wire [7:0] ush_now = ush_reg & (eah + 8'd1);
 
     // ---- data latch (phi2 read slot) -----------------------------------------------
     always @(posedge clk) if (slot_data) din_r <= data_in;
@@ -313,6 +325,7 @@ module xt6502f #(
             ir <= 8'hEA; eal <= 0; eah <= 0; ptr <= 0; idx <= 0; din_r <= 0;
             dst <= 0; has_idx <= 0; pgx <= 0; is_store <= 0; is_rmw <= 0; op <= OP_LD;
             rmw_val <= 0; rmw_mod <= 0; sax <= 0; combo <= 0; op2 <= OP_LD; jam_cnt <= 0;
+            ushx <= 0; ushx_src <= 0; ushx_tas <= 0; ush_val <= 0;
         end else if (dbg_load) begin
             PC <= dbg_pc_in; A <= dbg_a_in; X <= dbg_x_in; Y <= dbg_y_in;
             S <= dbg_s_in; P <= dbg_p_in; state <= ST_FETCH; ir <= 8'hEA;
@@ -325,7 +338,7 @@ module xt6502f #(
                 ST_FETCH: begin
                     ir <= din_r; PC <= PC + 16'd1;
                     has_idx <= 1'b0; pgx <= 1'b0; is_store <= 1'b0; is_rmw <= 1'b0; op <= OP_LD; sax <= 1'b0;
-                    combo <= 1'b0;
+                    combo <= 1'b0; ushx <= 1'b0; ushx_tas <= 1'b0;
                     case (din_r)
                         // ---- immediate loads ----
                         8'hA9: begin dst <= 2'd0; state <= ST_IMM; end          // LDA #
@@ -496,6 +509,13 @@ module xt6502f #(
                         // ---- KIL/JAM: lock up the processor ----
                         8'h02, 8'h12, 8'h22, 8'h32, 8'h42, 8'h52, 8'h62, 8'h72,
                         8'h92, 8'hB2, 8'hD2, 8'hF2: begin jam_cnt <= 4'd0; state <= ST_JAM; end
+                        // ---- unstable stores: value = reg & (H+1), high-byte quirk on page-cross ----
+                        8'h9F: begin ushx<=1; ushx_src<=2'd0; idx<=Y; has_idx<=1; state<=ST_ABL; end  // SHA abs,Y
+                        8'h9E: begin ushx<=1; ushx_src<=2'd1; idx<=Y; has_idx<=1; state<=ST_ABL; end  // SHX abs,Y
+                        8'h9C: begin ushx<=1; ushx_src<=2'd2; idx<=X; has_idx<=1; state<=ST_ABL; end  // SHY abs,X
+                        8'h9B: begin ushx<=1; ushx_src<=2'd0; ushx_tas<=1; idx<=Y; has_idx<=1; state<=ST_ABL; end // TAS abs,Y
+                        8'h93: begin ushx<=1; ushx_src<=2'd0; state<=ST_IYF; end                     // SHA (zp),Y
+                        8'hBB: begin op<=OP_LAS; idx<=Y; has_idx<=1; state<=ST_ABL; end               // LAS abs,Y
                         // ---- LAX (illegal): load A and X ----
                         8'hA7: begin op<=OP_LAX; eah<=0; state<=ST_ZPF; end                          // LAX zp
                         8'hB7: begin op<=OP_LAX; eah<=0; idx<=Y; has_idx<=1; state<=ST_ZPF; end       // LAX zp,Y
@@ -566,6 +586,8 @@ module xt6502f #(
                 ST_IMMILL: begin PC <= PC + 16'd1; exec_immill(din_r); state <= ST_FETCH; end
                 // JAM/KIL: never leave — PC/regs frozen; jam_cnt drives the address dance (saturates)
                 ST_JAM: if (jam_cnt != 4'd15) jam_cnt <= jam_cnt + 4'd1;
+                // unstable-store write: bus writes ush_val at {eah,eal}; retire
+                ST_USHW: state <= ST_FETCH;
 
                 // zero page
                 ST_ZPF:  begin eal <= din_r; PC <= PC + 16'd1;
@@ -577,7 +599,12 @@ module xt6502f #(
                 ST_ABH:  begin eah <= din_r; PC <= PC + 16'd1;
                                if (has_idx) begin eal <= eal_plus_idx[7:0]; pgx <= eal_plus_idx[8]; state <= ST_ABX; end
                                else state <= mem_term; end
-                ST_ABX:  begin if (is_store || is_rmw) begin eah <= eah + {7'd0, pgx}; state <= is_rmw ? ST_RMW_RD : ST_STORE; end  // dummy; fix; write-terminal
+                ST_ABX:  begin if (ushx) begin                                // unstable store: this cycle = dummy read [H,lo]
+                                   ush_val <= ush_now;                        // reg & (H+1)
+                                   if (pgx) eah <= ush_now;                   // page-cross: high byte := value
+                                   if (ushx_tas) S <= A & X;                  // TAS side effect
+                                   state <= ST_USHW;
+                               end else if (is_store || is_rmw) begin eah <= eah + {7'd0, pgx}; state <= is_rmw ? ST_RMW_RD : ST_STORE; end  // dummy; fix; write-terminal
                                else if (pgx) begin eah <= eah + 8'd1; state <= ST_ABXC; end
                                else exec_op(din_r); end                       // load, no cross: value here
                 ST_ABXC: exec_op(din_r);                                      // load, page-cross fixed read
@@ -592,7 +619,11 @@ module xt6502f #(
                 ST_IYF:  begin ptr <= din_r; PC <= PC + 16'd1; state <= ST_IYA; end
                 ST_IYA:  begin eal <= din_r; state <= ST_IYB; end               // [00,ptr]   -> adl
                 ST_IYB:  begin eah <= din_r; eal <= eal_plus_y[7:0]; pgx <= eal_plus_y[8]; state <= ST_IYRD; end
-                ST_IYRD: begin if (is_store || is_rmw) begin eah <= eah + {7'd0, pgx}; state <= is_rmw ? ST_RMW_RD : ST_STORE; end // dummy; fix; write-terminal
+                ST_IYRD: begin if (ushx) begin                                // SHA (zp),Y: dummy read [H,lo]
+                                   ush_val <= ush_now;
+                                   if (pgx) eah <= ush_now;                   // page-cross high-byte quirk
+                                   state <= ST_USHW;
+                               end else if (is_store || is_rmw) begin eah <= eah + {7'd0, pgx}; state <= is_rmw ? ST_RMW_RD : ST_STORE; end // dummy; fix; write-terminal
                                else if (pgx) begin eah <= eah + 8'd1; state <= ST_IYC; end
                                else exec_op(din_r); end
                 ST_IYC:  exec_op(din_r);
