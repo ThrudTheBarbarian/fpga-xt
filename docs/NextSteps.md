@@ -34,8 +34,10 @@ per docs/Design/dual-cpu-resident-mux.md). Refs: MOS datasheet
   - Handoff FSM `cpu_handoff.sv` (sim-proven) is NOT yet wired in — this build just proves
     residency + mux timing, and lets the OS boot on either core (set `sallyrst[1]` before
     releasing SALLYRST).
-  - **HW test (needs board):** cold-load; confirm turbo unchanged (cpu_sel=0); then
-    `sallyrst[1]=1` + SALLYRST cycle -> OS boots on the fidelity core at real 1x speed.
+  - **HW VALIDATED 2026-07-18:** turbo unchanged (desktop boots); `6502 core fid` boots the
+    real Atari OS to READY on the cycle-exact core at 1x. Needed one fix: sally_mem.rdy must
+    follow the ACTIVE core (its read-latch + writes + bank/peripheral strobes are rdy-gated) —
+    fid drives a single early-window pulse. `/bin/6502 core [turbo|fid]` switches live.
   - **Follow-ups:** clk_sally has zero slack — if HW is marginal, retime the mux into the
     shared MAR D-input (mux doc §5.1) to reclaim margin. Then wire cpu_handoff (live switch;
     turbo snapshot via cdbg_* raw taps, inject via idbg_* muxed with xt6502_debug) + the
