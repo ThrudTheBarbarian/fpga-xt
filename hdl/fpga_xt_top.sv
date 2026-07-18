@@ -293,9 +293,20 @@ module fpga_xt_top (
     // ====================================================================
     // SALLY + memory (runs on clk_sally)
     // ====================================================================
+    // cpu_* is the MUXED active-core bus into sally_mem (all downstream decode keys off it).
+    // The turbo xt6502 drives turbo_*; the resident fidelity xt6502f drives fid_*; `cpu_sel`
+    // (sallyrst[1]) picks the owner. Default 0 = turbo, so the shipping system is unchanged.
     wire [15:0] cpu_addr;
     wire [7:0]  cpu_din, cpu_dout;
     wire        cpu_rw;
+    wire [15:0] turbo_addr, fid_addr;
+    wire [7:0]  turbo_dout, fid_dout;
+    wire        turbo_rw,   fid_rw;
+    wire        turbo_stackop; wire [3:0] turbo_shigh;
+    // cpu_sel: 0 = turbo owns the bus, 1 = fidelity core owns it (PS-set via CTRL_SALLYRST bit1)
+    (* ASYNC_REG = "TRUE" *) reg [1:0] cpusel_sync = 2'b00;
+    always_ff @(posedge clk_sally) cpusel_sync <= {cpusel_sync[0], sallyrst[1]};
+    wire        cpu_sel = cpusel_sync[1];
     wire        sally_rdy;
 
     // sally_clock wires
@@ -771,15 +782,15 @@ module fpga_xt_top (
     xt6502 u_sally_core (
         .clk      (clk_sally),
         .rst      (rst_sally_core),          // A9-held for cold-boot-per-launch
-        .addr     (cpu_addr),
+        .addr     (turbo_addr),
         .data_in  (cpu_din),
-        .data_out (cpu_dout),
-        .rw       (cpu_rw),
-        .rdy      (sally_rdy & dbg_core_run), // debugger HALT = non-destructive rdy gate
+        .data_out (turbo_dout),
+        .rw       (turbo_rw),
+        .rdy      (sally_rdy & dbg_core_run & ~cpu_sel), // owns the bus only when cpu_sel=0
         .irq_n    (irq_n_sync),      // from ANTIC via CDC
         .nmi_n    (nmi_n_sync),      // from ANTIC via CDC
-        .stack_op (cpu_stack_op),    // 12-bit stack push/pull cycle
-        .s_high   (cpu_s_high),      // high 4 bits of SP
+        .stack_op (turbo_stackop),   // 12-bit stack push/pull cycle
+        .s_high   (turbo_shigh),     // high 4 bits of SP
         // debug taps out
         .dbg_boundary (cdbg_boundary),
         .dbg_pc   (cdbg_pc),
@@ -795,6 +806,57 @@ module fpga_xt_top (
         .dbg_wa   (idbg_wa), .dbg_wx (idbg_wx), .dbg_wy (idbg_wy),
         .dbg_ws   (idbg_ws), .dbg_wp (idbg_wp), .dbg_wshigh (idbg_wshigh)
     );
+
+    // ---- Resident fidelity ("single-speed Sally") 6502 --------------------
+    // A second, time-native cycle-exact 6502 (hdl/xt6502f/, all 256 opcodes Harte-exact,
+    // interrupts, first-class debug — docs/Design/fidelity-6502.md) lives in the fabric
+    // alongside the turbo core, sharing sally_mem. `cpu_sel` (below) hands it the bus. This
+    // first integration proves the binding-path 2:1 addr mux closes clk_sally timing (mux
+    // doc §5) and lets the OS boot on either core; the live hand-off FSM (cpu_handoff.sv,
+    // sim-proven) lands next once timing is confirmed.
+    //
+    // Clocking: a free-running phi2 window every 56 clk_sally (= the 1x NTSC phi2 rate, same
+    // as sally_clock's BASE_DIV=56); commit is gated by `fid_rdy`. `fid_mem_ok` samples the
+    // sally_mem busy at the core's data slot (SUB_DATA = 56-7 = 49) so a banked/DDR cache
+    // miss can never let the fixed sub-schedule commit stale data (sim/tb_xt6502f_busy.sv).
+    reg  [5:0] fid_ph_ctr = 6'd0;
+    always_ff @(posedge clk_sally) begin
+        if (rst_sally_core) fid_ph_ctr <= 6'd0;
+        else                fid_ph_ctr <= (fid_ph_ctr == 6'd55) ? 6'd0 : fid_ph_ctr + 6'd1;
+    end
+    wire       phi2_tick_fid = (fid_ph_ctr == 6'd55);
+    wire [7:0] fid_sub;
+    wire       fid_busy = mem_busy_n | hwreg_rd_busy;
+    reg        fid_mem_ok = 1'b1;
+    always_ff @(posedge clk_sally) if (fid_sub == 8'd49) fid_mem_ok <= ~fid_busy;  // SUB_DATA = N-7
+    wire       fid_rdy = cpu_sel & fid_mem_ok & ~dma_steal_sally;  // runs only when it owns; /HALT + busy aware
+
+    xt6502f #(.CLK_SALLY_HZ(100_000_000), .PHI2_HZ(1_785_714)) u_fid_core (  // N = 56
+        .clk       (clk_sally),
+        .rst       (rst_sally_core),
+        .phi2_tick (phi2_tick_fid),
+        .addr      (fid_addr),
+        .data_in   (cpu_din),
+        .data_out  (fid_dout),
+        .rw        (fid_rw),
+        .rdy       (fid_rdy),
+        .irq_n     (irq_n_sync),
+        .nmi_n     (nmi_n_sync),
+        .sync      (),
+        .dbg_pc    (), .dbg_a (), .dbg_x (), .dbg_y (), .dbg_s (), .dbg_p (),
+        .dbg_sub   (fid_sub), .dbg_ir (),
+        .dbg_load  (1'b0), .dbg_pc_in (16'd0), .dbg_a_in (8'd0), .dbg_x_in (8'd0),
+        .dbg_y_in  (8'd0), .dbg_s_in (8'd0), .dbg_p_in (8'd0),
+        .dbg_cyc_addr (), .dbg_cyc_val (), .dbg_cyc_rw (), .dbg_cyc_valid ()
+    );
+
+    // ---- the 2:1 bus mux (the one LUT on the clk_sally binding path, mux doc §5) ----------
+    // Read data (cpu_din) fans out to both cores; only the owner's rdy is live.
+    assign cpu_addr     = cpu_sel ? fid_addr : turbo_addr;
+    assign cpu_dout     = cpu_sel ? fid_dout : turbo_dout;
+    assign cpu_rw       = cpu_sel ? fid_rw   : turbo_rw;
+    assign cpu_stack_op = cpu_sel ? 1'b0     : turbo_stackop;  // fidelity uses plain $01xx stack accesses
+    assign cpu_s_high   = cpu_sel ? 4'h0     : turbo_shigh;
 
     // In-fabric 6502 debugger — halt/step/breakpoint/register access (docs/OS/6502-debug.md).
     // Reset by rst_sally (power-on) so it survives a SALLYRST core reset.
