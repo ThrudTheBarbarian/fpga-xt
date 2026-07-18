@@ -100,7 +100,8 @@ module xt6502f #(
 
     // operation applied at the value terminal (read-group ALU + RMW ALU)
     localparam [3:0] OP_LD=0, OP_AND=1, OP_ORA=2, OP_EOR=3, OP_CMP=4, OP_BIT=5, OP_ADC=6, OP_SBC=7,
-                     OP_ASL=8, OP_LSR=9, OP_ROL=10, OP_ROR=11, OP_INC=12, OP_DEC=13;
+                     OP_ASL=8, OP_LSR=9, OP_ROL=10, OP_ROR=11, OP_INC=12, OP_DEC=13,
+                     OP_NOP=14, OP_LAX=15;   // OP_NOP: read-and-discard; OP_LAX: load A and X (illegal)
     reg [3:0] op;
     wire [5:0] mem_term = is_rmw ? ST_RMW_RD : is_store ? ST_STORE : ST_LOAD;  // terminal after EA
 
@@ -150,6 +151,8 @@ module xt6502f #(
         begin
             case (op)
                 OP_LD:  begin case (dst) 2'd0:A<=v; 2'd1:X<=v; 2'd2:Y<=v; default:; endcase
+                              P <= {v[7], P[6:2], (v==8'h00), P[0]}; end
+                OP_LAX: begin A<=v; X<=v;                              // LAX (illegal): load A and X
                               P <= {v[7], P[6:2], (v==8'h00), P[0]}; end
                 OP_AND: begin res = A & v; A <= res; P <= {res[7], P[6:2], (res==8'h00), P[0]}; end
                 OP_ORA: begin res = A | v; A <= res; P <= {res[7], P[6:2], (res==8'h00), P[0]}; end
@@ -422,6 +425,20 @@ module xt6502f #(
                         8'h4C: state <= ST_JMP1;                                // JMP abs
                         8'h6C: state <= ST_JMPI1;                               // JMP (ind)
                         8'hEA: state <= ST_IMPL;                                // NOP
+                        // ---- illegal NOPs (read-and-discard) ----
+                        8'h1A, 8'h3A, 8'h5A, 8'h7A, 8'hDA, 8'hFA: state <= ST_IMPL; // 2-cyc implied NOP
+                        8'h80, 8'h82, 8'h89, 8'hC2, 8'hE2:                          // 2-cyc immediate NOP
+                            begin op<=OP_NOP; state<=ST_IMM; end
+                        8'h04, 8'h44, 8'h64:                                        // 3-cyc zp NOP
+                            begin op<=OP_NOP; eah<=0; state<=ST_ZPF; end
+                        8'h14, 8'h34, 8'h54, 8'h74, 8'hD4, 8'hF4:                   // 4-cyc zp,X NOP
+                            begin op<=OP_NOP; eah<=0; idx<=X; has_idx<=1; state<=ST_ZPF; end
+                        8'h0C:                                                      // 4-cyc abs NOP
+                            begin op<=OP_NOP; state<=ST_ABL; end
+                        8'h1C, 8'h3C, 8'h5C, 8'h7C, 8'hDC, 8'hFC:                   // 4/5-cyc abs,X NOP
+                            begin op<=OP_NOP; idx<=X; has_idx<=1; state<=ST_ABL; end
+                        // ---- SBC #imm (illegal, == $E9) ----
+                        8'hEB: begin op<=OP_SBC; state<=ST_IMM; end
                         default: state <= ST_IMPL;                              // unimpl -> NOP (fails Harte)
                     endcase
                 end
