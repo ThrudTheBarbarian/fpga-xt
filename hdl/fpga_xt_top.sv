@@ -830,6 +830,15 @@ module fpga_xt_top (
     reg        fid_mem_ok = 1'b1;
     always_ff @(posedge clk_sally) if (fid_sub == 8'd49) fid_mem_ok <= ~fid_busy;  // SUB_DATA = N-7
     wire       fid_rdy = cpu_sel & fid_mem_ok & ~dma_steal_sally;  // runs only when it owns; /HALT + busy aware
+    // sally_mem's read-latch (bram_dout_q) AND every write/bank-latch/hwreg-strobe are gated
+    // by its `rdy` — a "the CPU took a step" pulse. For the turbo core that is sally_rdy. The
+    // fidelity core drives a STABLE address for the whole window and samples data at SUB_DATA=49,
+    // so it needs sally_mem stepped EARLY (so the read is latched by 49) and exactly ONCE per
+    // machine cycle (so writes/peripheral strobes/bank selects don't fire N times). A single
+    // pulse near window-start does both. (Banked-AXI reads, which trigger on this too, aren't
+    // used by a plain OS boot; they get the active-core treatment when the hand-off lands.)
+    wire       fid_mem_step = (fid_sub == 8'd2);
+    wire       mem_rdy = cpu_sel ? fid_mem_step : sally_rdy;   // sally_mem steps with the ACTIVE core
 
     xt6502f #(.CLK_SALLY_HZ(100_000_000), .PHI2_HZ(1_785_714)) u_fid_core (  // N = 56
         .clk       (clk_sally),
@@ -934,7 +943,7 @@ module fpga_xt_top (
         .data_in    (cpu_dout),
         .rw         (cpu_rw),
         .data_out   (cpu_din),
-        .rdy        (sally_rdy),
+        .rdy        (mem_rdy),       // steps with the ACTIVE core (turbo: sally_rdy; fid: early-window pulse)
         .stack_op   (cpu_stack_op),
         .s_high     (cpu_s_high),
         .busy       (mem_busy_n),
