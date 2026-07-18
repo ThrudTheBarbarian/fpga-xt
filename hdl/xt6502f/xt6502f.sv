@@ -68,7 +68,7 @@ module xt6502f #(
     // ---- micro-state ---------------------------------------------------------------
     localparam [5:0]
         ST_RST=0, ST_VECL=1, ST_VECH=2, ST_FETCH=3,
-        ST_NOP1=4, ST_JMP1=5, ST_JMP2=6,
+        ST_IMPL=4, ST_JMP1=5, ST_JMP2=6,
         ST_IMM=7,                          // immediate: operand = value
         ST_ZPF=8, ST_ZPI=9,                // zero page: fetch addr / (indexed dummy)
         ST_LOAD=10,                        // read [eah,eal] -> value
@@ -194,6 +194,30 @@ module xt6502f #(
             endcase
             if (to_a) A <= m; else rmw_mod <= m;
             P <= {m[7], P[6:2], (m==8'h00), c};                     // N, Z, C
+        end
+    endtask
+
+    // ---- implied 2-cycle ops (register transfer / inc-dec / flag), keyed by opcode ----
+    task automatic exec_impl;
+        reg [7:0] t;
+        begin
+            case (ir)
+                8'hAA: begin X<=A; P<={A[7], P[6:2], (A==8'h00), P[0]}; end   // TAX
+                8'hA8: begin Y<=A; P<={A[7], P[6:2], (A==8'h00), P[0]}; end   // TAY
+                8'h8A: begin A<=X; P<={X[7], P[6:2], (X==8'h00), P[0]}; end   // TXA
+                8'h98: begin A<=Y; P<={Y[7], P[6:2], (Y==8'h00), P[0]}; end   // TYA
+                8'hBA: begin X<=S; P<={S[7], P[6:2], (S==8'h00), P[0]}; end   // TSX
+                8'h9A: S<=X;                                                  // TXS (no flags)
+                8'hE8: begin t=X+8'd1; X<=t; P<={t[7], P[6:2], (t==8'h00), P[0]}; end  // INX
+                8'hC8: begin t=Y+8'd1; Y<=t; P<={t[7], P[6:2], (t==8'h00), P[0]}; end  // INY
+                8'hCA: begin t=X-8'd1; X<=t; P<={t[7], P[6:2], (t==8'h00), P[0]}; end  // DEX
+                8'h88: begin t=Y-8'd1; Y<=t; P<={t[7], P[6:2], (t==8'h00), P[0]}; end  // DEY
+                8'h18: P[0]<=1'b0;   8'h38: P[0]<=1'b1;    // CLC / SEC
+                8'h58: P[2]<=1'b0;   8'h78: P[2]<=1'b1;    // CLI / SEI
+                8'hD8: P[3]<=1'b0;   8'hF8: P[3]<=1'b1;    // CLD / SED
+                8'hB8: P[6]<=1'b0;                         // CLV
+                default: ;                                 // NOP / unimplemented
+            endcase
         end
     endtask
 
@@ -357,10 +381,15 @@ module xt6502f #(
                         8'hD6: begin op<=OP_DEC; is_rmw<=1; eah<=0; idx<=X; has_idx<=1; state<=ST_ZPF; end
                         8'hCE: begin op<=OP_DEC; is_rmw<=1; state<=ST_ABL; end
                         8'hDE: begin op<=OP_DEC; is_rmw<=1; idx<=X; has_idx<=1; state<=ST_ABL; end
+                        // ---- implied 2-cycle: transfers / inc-dec reg / flags (exec_impl keys on ir) ----
+                        8'hAA, 8'hA8, 8'h8A, 8'h98, 8'hBA, 8'h9A,     // TAX TAY TXA TYA TSX TXS
+                        8'hE8, 8'hC8, 8'hCA, 8'h88,                   // INX INY DEX DEY
+                        8'h18, 8'h38, 8'h58, 8'h78, 8'hD8, 8'hF8, 8'hB8:  // CLC SEC CLI SEI CLD SED CLV
+                                 state <= ST_IMPL;
                         // ---- control / nop ----
                         8'h4C: state <= ST_JMP1;                                // JMP abs
-                        8'hEA: state <= ST_NOP1;                                // NOP
-                        default: state <= ST_NOP1;                              // unimpl -> NOP (fails Harte)
+                        8'hEA: state <= ST_IMPL;                                // NOP
+                        default: state <= ST_IMPL;                              // unimpl -> NOP (fails Harte)
                     endcase
                 end
 
@@ -406,7 +435,7 @@ module xt6502f #(
                 ST_RMW_W1: state <= ST_FETCH;                                  // final write (modified, data_out)
 
                 // NOP / JMP
-                ST_NOP1: state <= ST_FETCH;
+                ST_IMPL: begin exec_impl; state <= ST_FETCH; end
                 ST_JMP1: begin eal <= din_r; PC <= PC + 16'd1; state <= ST_JMP2; end
                 ST_JMP2: begin PC <= {din_r, eal}; state <= ST_FETCH; end
 
