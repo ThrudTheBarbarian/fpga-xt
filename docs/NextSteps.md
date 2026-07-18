@@ -4,6 +4,25 @@
 
 # Immediate targets
 
+## Fidelity 6502 ("single-speed Sally") — time-native cycle-exact core
+Design: **docs/Design/fidelity-6502.md** (a FRESH core built around ~56 clk_sally per
+machine cycle; debug first-class in the micro-schedule; resident alongside turbo xt6502
+per docs/Design/dual-cpu-resident-mux.md). Refs: MOS datasheet
+(refs/mos_6501-6505_mpu_preliminary_aug_1975.pdf) governs the core cycle; the XL PBI gif
+(refs/XL-bus-timing.gif, ~worst-case) governs the expansion boundary.
+- **Phase 1 DONE** (commit 3aae8ef): `hdl/xt6502f/xt6502f.sv` — cycle engine, phi2-paced
+  window, `sub`-slotting (addr early / data@SUB_DATA / commit@SUB_COMMIT), reset seq +
+  NOP/JMP-abs. `sim/tb_xt6502f.sv` all pass (reset→loop, cycle counts, RDY halt/resume).
+- **Phase 2 (next)** — full documented ISA: addressing-mode cadences + op-ALU. Decision
+  first (open #2 in the doc): mode-FSM (lean) vs micro-ROM. Then Klaus + differential
+  co-sim vs xt6502.
+- Phases 3–6: quirks/illegals (RMW double-write, dummy reads, decimal, interrupt timing/
+  hijack per datasheet, all illegals); debug slots (retire-slot bkpt/wp/trace, two sample
+  windows); resident 2:1 mux + turbo<->fidelity handoff; HW bring-up + chase the fidelity
+  backlog (magenta palette, garbled tiles, input) ON the fidelity core.
+- Open decisions (doc S9): N from BASE_DIV; sequencer encoding; unstable-illegal
+  convention; boundary-only handoff; trace granularity; KIL/JAM = halt+surface.
+
 ## In-fabric 6502 debugger (branch `debug`) + XL app-launch
 The debugger is BUILT and HW-PROVEN: `/bin/6502 status|halt|go|step N|break $A|
 break off|breakreset on|off|reset|REG=VAL...` (halt via non-destructive rdy-gate,
