@@ -72,7 +72,17 @@ module xt6502_debug (
     output reg  [31:0] trc_wptr_stat,// [11:0]=wptr [16]=wrapped [17]=broke_on_full
     output reg  [15:0] trc_pc,
     output reg  [31:0] trc_axys,
-    output reg  [11:0] trc_p
+    output reg  [11:0] trc_p,
+
+    // ---- data watchpoint (control from GP0) + core bus taps (clk_sally) ----
+    input  wire        dbg_bus_stb,   // 1 = a bus access commits this cycle (= core rdy)
+    input  wire [15:0] dbg_bus_addr,  // address of that access
+    input  wire        dbg_bus_rw,    // 1 = read, 0 = write
+    input  wire [15:0] wp_addr,       // watchpoint address (clk_sys level, synced here)
+    input  wire [2:0]  wp_cfg,        // [0]=en [1]=on_write [2]=on_read
+
+    // ---- self-observability (clk_sally; coherent when halted) ----
+    output wire [31:0] diag           // DBG_DIAG: see the regmap
 );
     // ================= CDC: level synchronisers =================
     // The level buses are stable in clk_sys whenever their command pulse fires
@@ -84,6 +94,8 @@ module xt6502_debug (
     (* ASYNC_REG = "TRUE" *) reg [15:0] wpc_s1,   wpc_s;
     (* ASYNC_REG = "TRUE" *) reg [31:0] waxys_s1, waxys_s;
     (* ASYNC_REG = "TRUE" *) reg [11:0] wpsh_s1,  wpsh_s;
+    (* ASYNC_REG = "TRUE" *) reg [15:0] wpa_s1,   wpa_s;
+    (* ASYNC_REG = "TRUE" *) reg [2:0]  wpc_cfg_s1, wpc_cfg_s;
     always @(posedge clk) begin
         cfg_s1   <= cfg;        cfg_s   <= cfg_s1;
         bkpt_s1  <= bkpt_addr;  bkpt_s  <= bkpt_s1;
@@ -91,6 +103,8 @@ module xt6502_debug (
         wpc_s1   <= wpc;        wpc_s   <= wpc_s1;
         waxys_s1 <= waxys;      waxys_s <= waxys_s1;
         wpsh_s1  <= wpsh;       wpsh_s  <= wpsh_s1;
+        wpa_s1   <= wp_addr;    wpa_s   <= wpa_s1;
+        wpc_cfg_s1 <= wp_cfg;   wpc_cfg_s <= wpc_cfg_s1;
     end
     assign dbg_wpc    = wpc_s;
     assign dbg_wa     = waxys_s[7:0];
@@ -146,10 +160,42 @@ module xt6502_debug (
     end
     wire bkpt_fire = bnd_pulse_d && cfg_s[0] && (inst_pc_d == bkpt_s);
 
+    // ---- data watchpoint: same one-stage registration as the breakpoint so the
+    // address compare is flop->flop, not off the long live bus route. Fires the
+    // cycle after a committed bus access (dbg_bus_stb = core rdy) to wpa_s whose
+    // direction matches the arm (bit1=write, bit2=read). ----
+    reg        bus_stb_d;
+    reg [15:0] bus_addr_d;
+    reg        bus_rw_d;
+    always @(posedge clk) begin
+        if (rst) bus_stb_d <= 1'b0; else bus_stb_d <= dbg_bus_stb;
+        bus_addr_d <= dbg_bus_addr;
+        bus_rw_d   <= dbg_bus_rw;
+    end
+    wire wp_fire = bus_stb_d && wpc_cfg_s[0] && (bus_addr_d == wpa_s)
+                   && ((bus_rw_d && wpc_cfg_s[2]) || (!bus_rw_d && wpc_cfg_s[1]));
+
+    // ---- self-observability: sticky "fire seen since arm" flags + synced values.
+    // Lets HW answer "is the breakpoint actually armed (cfg_s), does bkpt_s match
+    // what I wrote, and did the compare ever fire" without trusting run-time reads. ----
+    reg bkpt_seen, wp_seen, arm_d;
+    reg wp_was_hit;                       // set in the FSM; last halt was a watchpoint
+    wire any_arm = cfg_s[0] | wpc_cfg_s[0];
+    always @(posedge clk) begin
+        if (rst) begin bkpt_seen <= 1'b0; wp_seen <= 1'b0; arm_d <= 1'b0; end
+        else begin
+            arm_d <= any_arm;
+            if (any_arm && !arm_d) begin bkpt_seen <= 1'b0; wp_seen <= 1'b0; end  // clear on (re)arm
+            if (bkpt_fire) bkpt_seen <= 1'b1;
+            if (wp_fire)   wp_seen   <= 1'b1;
+        end
+    end
+    assign diag = {bkpt_s, 11'd0, wp_was_hit, wp_seen, bkpt_seen, cfg_s};
+
     always @(posedge clk) begin
         if (rst) begin
             fsm <= S_RUN; run_r <= 1'b1; halt_pending <= 1'b0;
-            step_rem <= 16'd0; bkpt_hit_r <= 1'b0;
+            step_rem <= 16'd0; bkpt_hit_r <= 1'b0; wp_was_hit <= 1'b0;
             snap_pc <= 16'd0; snap_axys <= 32'd0; snap_psh <= 12'd0; icnt <= 32'd0;
             dbg_wr <= 1'b0; do_step_q <= 1'b0; bnd_q <= 1'b0;
         end else begin
@@ -173,9 +219,11 @@ module xt6502_debug (
             case (fsm)
                 S_RUN: begin
                     if (bkpt_fire)                      begin bkpt_hit_r <= 1'b1; run_r <= 1'b0; fsm <= S_HALT; end
+                    else if (wp_fire)                   begin bkpt_hit_r <= 1'b1; wp_was_hit <= 1'b1; run_r <= 1'b0; fsm <= S_HALT; end
                     else if (bnd_pulse && halt_pending) begin run_r <= 1'b0; fsm <= S_HALT; end
                 end
                 S_STEP: if (bkpt_fire) begin bkpt_hit_r <= 1'b1; run_r <= 1'b0; fsm <= S_HALT; end
+                else    if (wp_fire)   begin bkpt_hit_r <= 1'b1; wp_was_hit <= 1'b1; run_r <= 1'b0; fsm <= S_HALT; end
                 else    if (bnd_pulse) begin
                     if      (step_rem <= 16'd1) begin run_r <= 1'b0; fsm <= S_HALT; end
                     else                        step_rem <= step_rem - 16'd1;
@@ -185,7 +233,7 @@ module xt6502_debug (
 
             // ---- commands (take priority over the boundary logic above) ----
             if (do_halt)   halt_pending <= 1'b1;       // freeze at the next boundary
-            if (do_go)     begin fsm <= S_RUN;  run_r <= 1'b1; halt_pending <= 1'b0; bkpt_hit_r <= 1'b0; end
+            if (do_go)     begin fsm <= S_RUN;  run_r <= 1'b1; halt_pending <= 1'b0; bkpt_hit_r <= 1'b0; wp_was_hit <= 1'b0; end
             if (do_step_q) begin fsm <= S_STEP; run_r <= 1'b1; halt_pending <= 1'b0; bkpt_hit_r <= 1'b0;
                                  step_rem <= (stepc_s == 16'd0) ? 16'd1 : stepc_s; end
             if (do_commit) begin

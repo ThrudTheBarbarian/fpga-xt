@@ -38,6 +38,9 @@
 #define DBG_TRC_PC     (DBG + 0x48)
 #define DBG_TRC_AXYS   (DBG + 0x4C)
 #define DBG_TRC_P      (DBG + 0x50)
+#define DBG_WP         (DBG + 0x54)     /* [15:0]=watchpoint address */
+#define DBG_WPCFG      (DBG + 0x58)     /* [0]=en [1]=on_write [2]=on_read */
+#define DBG_DIAG       (DBG + 0x5C)     /* [1:0]cfg_s [2]bkpt_seen [3]wp_seen [4]wp_was_hit [31:16]bkpt_s */
 #define CTRL_SALLYRST  (GP0 + 0x31Cul)
 
 static unsigned long rd(unsigned long a)            { return (unsigned long)sys_devmem(a, 0, 0); }
@@ -184,6 +187,38 @@ void _app_entry(int argc, char **argv)
         sys_exit(0);
     }
 
+    if (streq(cmd, "watch")) {
+        if (argc >= 3 && streq(argv[2], "off")) {
+            wr(DBG_WPCFG, 0); on = 0; os("6502 watch off\n"); flush(1); sys_exit(0);
+        }
+        if (argc >= 3) {
+            unsigned long cfg = 1;                     /* enable */
+            const char *m = (argc >= 4) ? argv[3] : "rw";
+            /* mode: r / w / rw (default). bit1=on_write bit2=on_read */
+            int wantr = 0, wantw = 0;
+            for (const char *p = m; *p; p++) { if (*p=='r'||*p=='R') wantr=1; if (*p=='w'||*p=='W') wantw=1; }
+            if (!wantr && !wantw) { wantr = wantw = 1; }
+            if (wantw) cfg |= 2; if (wantr) cfg |= 4;
+            wr(DBG_WP, parse_num(argv[2]) & 0xFFFF);
+            wr(DBG_WPCFG, cfg);
+            on = 0; os("6502 watch "); os(wantr&&wantw?"rw":wantw?"w":"r");
+            os(" @ "); ohex(rd(DBG_WP) & 0xFFFF, 4); oc('\n'); flush(1);
+        }
+        sys_exit(0);
+    }
+
+    if (streq(cmd, "diag")) {
+        unsigned long d = rd(DBG_DIAG);
+        on = 0;
+        os("6502 diag: cfg_s="); ohex(d & 3, 1);
+        os(" bkpt_seen="); oc((d>>2)&1 ? '1':'0');
+        os(" wp_seen=");   oc((d>>3)&1 ? '1':'0');
+        os(" wp_hit=");    oc((d>>4)&1 ? '1':'0');
+        os("  bkpt_s=");   ohex((d>>16) & 0xFFFF, 4);
+        oc('\n'); flush(1);
+        sys_exit(0);
+    }
+
     /* register-assignment form: PC=.. A=.. X=.. Y=.. SP=.. P=.. [go] */
     {
         int did_assign = 0, do_go = 0;
@@ -215,7 +250,8 @@ void _app_entry(int argc, char **argv)
             did_assign = 1;
         }
         if (!did_assign) {
-            on = 0; os("usage: 6502 status|halt|go|step [N]|break $A|break off|breakreset on|off|reset|REG=VAL...\n");
+            on = 0; os("usage: 6502 status|halt|go|step [N]|break $A|break off|breakreset on|off|reset|"
+                       "watch $A [r|w|rw]|watch off|diag|trace on|off|N|REG=VAL...\n");
             flush(2); sys_exit(2);
         }
         wr(DBG_WPC, pc); wr(DBG_WAXYS, ax); wr(DBG_WPSH, ps);

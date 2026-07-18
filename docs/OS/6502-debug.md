@@ -27,9 +27,23 @@ mechanism as `/bin/mem`, `/bin/speed`, `/bin/scale`). Grammar:
 6502 status               # dump PC A X Y SP P (flags decoded), halted?, retired-instr count
 6502 break $DE34          # arm a PC breakpoint at $DE34 (halts on fetch of that address)
 6502 break off            # disarm the breakpoint
+6502 watch $01 w          # arm a data watchpoint: halt on a WRITE to $01 (r / w / rw; default rw)
+6502 watch $D40A rw       # halt on any bus access (read or write) to $D40A
+6502 watch off            # disarm the watchpoint
+6502 diag                 # self-observability: cfg_s (is bkpt armed?), bkpt_s (synced addr),
+                          #   bkpt_seen / wp_seen (did the compare ever fire since arm), wp_hit
+6502 trace on|off|N       # 4096-deep instruction ring (PC + regs per boundary); N dumps last N
 6502 PC=$200 SP=$FF       # write registers (only while halted). REG in {PC,A,X,Y,SP,P}
 6502 PC=$4000 SP=$FF go   # write registers, then run
 ```
+
+The **data watchpoint** (`watch`) compares the core's live memory-access bus
+(`addr`/`rw`, committed on `rdy`) against `DBG_WP` and freezes the core the cycle
+after a matching access — the complement of the PC breakpoint, for catching *who
+touches an address*. `diag` reads `DBG_DIAG`, the debug block's own state
+(CDC-synced `cfg`/`bkpt`, plus sticky "fire seen" flags), so a mis-arm or a stuck
+compare is visible on the board without trusting run-time register reads (which are
+incoherent while the core runs — read them only when halted).
 
 Separators are flexible: `6502 PC=$200; SP=$FF` (semicolons) and
 `6502 PC=$200 SP=$FF` (spaces) both parse. A trailing `go` on an assignment line

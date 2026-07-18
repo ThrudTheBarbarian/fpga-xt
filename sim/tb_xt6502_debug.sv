@@ -18,6 +18,9 @@ module tb_xt6502_debug;
     wire        idbg_wr; wire [15:0] idbg_wpc;
     wire [7:0]  idbg_wa, idbg_wx, idbg_wy, idbg_ws, idbg_wp; wire [3:0] idbg_wshigh;
     wire        core_run;
+    // bus-access taps + watchpoint + diag
+    wire        cdbg_bus_stb; wire [15:0] cdbg_bus_addr; wire cdbg_bus_rw;
+    reg  [15:0] wp_addr=0; reg [2:0] wp_cfg=0; wire [31:0] diag;
 
     // ---- GP0-domain control (driven by this TB) ----
     reg         halt_tog=0, go_tog=0, step_tog=0, commit_tog=0;
@@ -43,6 +46,7 @@ module tb_xt6502_debug;
         .dbg_boundary(cdbg_boundary), .dbg_pc(cdbg_pc),
         .dbg_a(cdbg_a), .dbg_x(cdbg_x), .dbg_y(cdbg_y), .dbg_s(cdbg_s), .dbg_p(cdbg_p),
         .dbg_shigh(cdbg_shigh),
+        .dbg_bus_stb(cdbg_bus_stb), .dbg_bus_addr(cdbg_bus_addr), .dbg_bus_rw(cdbg_bus_rw),
         .dbg_wr(idbg_wr), .dbg_wpc(idbg_wpc),
         .dbg_wa(idbg_wa), .dbg_wx(idbg_wx), .dbg_wy(idbg_wy), .dbg_ws(idbg_ws),
         .dbg_wp(idbg_wp), .dbg_wshigh(idbg_wshigh)
@@ -61,7 +65,9 @@ module tb_xt6502_debug;
         .core_run(core_run),
         .stat(stat), .snap_pc(snap_pc), .snap_axys(snap_axys), .snap_psh(snap_psh), .icnt(icnt),
         .trc_ctrl(trc_ctrl), .trc_idx(trc_idx), .trc_wptr_stat(trc_wptr),
-        .trc_pc(trc_pc), .trc_axys(trc_axys), .trc_p(trc_p)
+        .trc_pc(trc_pc), .trc_axys(trc_axys), .trc_p(trc_p),
+        .dbg_bus_stb(cdbg_bus_stb), .dbg_bus_addr(cdbg_bus_addr), .dbg_bus_rw(cdbg_bus_rw),
+        .wp_addr(wp_addr), .wp_cfg(wp_cfg), .diag(diag)
     );
 
     // ---- synchronous memory (addr N -> data_in N+1), gated on the effective rdy ----
@@ -122,6 +128,11 @@ module tb_xt6502_debug;
         // alt routine for injection: $0300 LDA #$AA / JMP $0300
         mem[16'h0300]=8'hA9; mem[16'h0301]=8'hAA;
         mem[16'h0302]=8'h4C; mem[16'h0303]=8'h00; mem[16'h0304]=8'h03;
+        // watchpoint routine: $0400 LDA #$5A / STA $1234 / LDA $1234 / JMP $0400
+        mem[16'h0400]=8'hA9; mem[16'h0401]=8'h5A;
+        mem[16'h0402]=8'h8D; mem[16'h0403]=8'h34; mem[16'h0404]=8'h12;   // STA $1234 (write)
+        mem[16'h0405]=8'hAD; mem[16'h0406]=8'h34; mem[16'h0407]=8'h12;   // LDA $1234 (read)
+        mem[16'h0408]=8'h4C; mem[16'h0409]=8'h00; mem[16'h040A]=8'h04;   // JMP $0400
 
         data_in = 8'h00;
         repeat (4) @(posedge clk); rst = 0;
@@ -171,6 +182,11 @@ module tb_xt6502_debug;
         pulse_go; run_until_halt("T6");
         chk16("T6 snap_pc", snap_pc, 16'h0206);
         if (stat[1]) $display("  ok  T6: bkpt_hit"); else begin $display("FAIL T6: bkpt_hit not set"); nfail=nfail+1; end
+        // diag self-observability (coherent while halted): cfg_s reflects the arm, bkpt_seen sticky
+        repeat (4) @(posedge clk);
+        if (diag[1:0]==2'b01) $display("  ok  T6: diag cfg_s=01"); else begin $display("FAIL T6: diag cfg_s=%b (want 01)", diag[1:0]); nfail=nfail+1; end
+        if (diag[2]) $display("  ok  T6: diag bkpt_seen"); else begin $display("FAIL T6: diag bkpt_seen not set"); nfail=nfail+1; end
+        if (diag[31:16]==16'h0206) $display("  ok  T6: diag bkpt_s=$0206"); else begin $display("FAIL T6: diag bkpt_s=$%04h", diag[31:16]); nfail=nfail+1; end
 
         // ---- T7: GO free (clear bkpt), confirm running ----
         $display("[T7] go");
@@ -197,6 +213,41 @@ module tb_xt6502_debug;
                 $display("  ok  T8: newest trace PC=$%04h", p);
             else begin $display("FAIL T8: trace PC=$%04h not a loop addr", p); nfail=nfail+1; end
         end
+
+        // ---- T9: data WATCHPOINT on WRITE to $1234 (STA $1234 at $0402) ----
+        $display("[T9] watchpoint write $1234");
+        @(negedge clk) cfg=2'b00; bkpt=0; trc_ctrl=0; wp_cfg=3'b000; // clear bkpt + trace + disarm wp
+        repeat (4) @(posedge clk);
+        @(negedge clk) wpc=16'h0400; waxys=0; wpsh=0; pulse_commit; run_until_halt("T9inj");
+        @(negedge clk) wp_addr=16'h1234; wp_cfg=3'b011;             // en + on_write
+        repeat (4) @(posedge clk);                                   // let wpa_s / wpc_cfg_s CDC settle
+        pulse_go; run_until_halt("T9");
+        repeat (4) @(posedge clk);
+        if (stat[0]) $display("  ok  T9: halted on write"); else begin $display("FAIL T9: not halted"); nfail=nfail+1; end
+        $display("  ..  T9 snap_pc=$%04h (watchpoint freezes mid-STA)", snap_pc);
+        if (diag[3]) $display("  ok  T9: diag wp_seen"); else begin $display("FAIL T9: wp_seen not set"); nfail=nfail+1; end
+        if (diag[4]) $display("  ok  T9: diag wp_was_hit"); else begin $display("FAIL T9: wp_was_hit not set"); nfail=nfail+1; end
+
+        // ---- T10: WATCHPOINT on READ of $1234 (LDA $1234 at $0405; the STA write must NOT fire) ----
+        $display("[T10] watchpoint read $1234");
+        @(negedge clk) wp_cfg=3'b000;                              // disarm (clears sticky on re-arm)
+        repeat (4) @(posedge clk);
+        @(negedge clk) wpc=16'h0400; waxys=0; wpsh=0; pulse_commit; run_until_halt("T10inj");
+        @(negedge clk) wp_addr=16'h1234; wp_cfg=3'b101;            // en + on_read
+        repeat (4) @(posedge clk);
+        pulse_go; run_until_halt("T10");
+        repeat (4) @(posedge clk);
+        $display("  ..  T10 snap_pc=$%04h", snap_pc);
+        if (stat[0] && diag[4]) $display("  ok  T10: halted on read"); else begin $display("FAIL T10: not halted on read (stat=%b diag=%h)", stat, diag); nfail=nfail+1; end
+
+        // ---- T11: WATCHPOINT disarmed -> runs free ----
+        $display("[T11] watchpoint off");
+        @(negedge clk) wp_cfg=3'b000;
+        repeat (4) @(posedge clk);
+        @(negedge clk) wpc=16'h0400; waxys=0; wpsh=0; pulse_commit; run_until_halt("T11inj");
+        pulse_go;
+        repeat (80) @(posedge clk);
+        if (stat[3]) $display("  ok  T11: running (no spurious wp halt)"); else begin $display("FAIL T11: halted with wp disabled"); nfail=nfail+1; end
 
         if (nfail==0) $display("*** XT6502_DEBUG OK ***");
         else          $display("*** XT6502_DEBUG FAIL *** %0d failure(s)", nfail);

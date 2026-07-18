@@ -114,5 +114,8 @@
 #define XT_DBG_TRC_PC        (XT_BLK_DEBUG + 0x48u)       /* R [15:0]=PC of the traced instruction at DBG_TRC_IDX */
 #define XT_DBG_TRC_AXYS      (XT_BLK_DEBUG + 0x4Cu)       /* R traced regs at DBG_TRC_IDX: [7:0]=A [15:8]=X [23:16]=Y [31:24]=SP(low) */
 #define XT_DBG_TRC_P         (XT_BLK_DEBUG + 0x50u)       /* R traced at DBG_TRC_IDX: [7:0]=P [11:8]=SP high nibble */
+#define XT_DBG_WP            (XT_BLK_DEBUG + 0x54u)       /* RW [15:0]=data watchpoint address; when armed the core freezes on a bus access to it */
+#define XT_DBG_WPCFG         (XT_BLK_DEBUG + 0x58u)       /* RW data watchpoint arm: [0]=enable, [1]=break on WRITE to DBG_WP, [2]=break on READ of DBG_WP (set both for any access) */
+#define XT_DBG_DIAG          (XT_BLK_DEBUG + 0x5Cu)       /* R debug self-observability (clk_sally, coherent when halted): [1:0]=cfg_s (CDC-synced DBG_CFG), [2]=bkpt_fire seen since arm, [3]=wp_fire seen since arm, [4]=last halt was a watchpoint, [31:16]=bkpt_s (CDC-synced DBG_BKPT — verify it matches what was written) */
 
 #endif /* XT_GP0_MAP_H_ */

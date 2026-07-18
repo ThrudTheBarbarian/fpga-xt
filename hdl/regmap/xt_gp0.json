@@ -229,7 +229,13 @@
         { "off": "0x4C", "access": "R", "width": 32, "c": "XT_DBG_TRC_AXYS", "sv": "DBG_TRC_AXYS",
           "desc": "traced regs at DBG_TRC_IDX: [7:0]=A [15:8]=X [23:16]=Y [31:24]=SP(low)" },
         { "off": "0x50", "access": "R", "width": 12, "c": "XT_DBG_TRC_P",    "sv": "DBG_TRC_P",
-          "desc": "traced at DBG_TRC_IDX: [7:0]=P [11:8]=SP high nibble" }
+          "desc": "traced at DBG_TRC_IDX: [7:0]=P [11:8]=SP high nibble" },
+        { "off": "0x54", "access": "RW", "width": 16, "c": "XT_DBG_WP",      "sv": "DBG_WP",
+          "desc": "[15:0]=data watchpoint address; when armed the core freezes on a bus access to it" },
+        { "off": "0x58", "access": "RW", "width": 3, "c": "XT_DBG_WPCFG",    "sv": "DBG_WPCFG",
+          "desc": "data watchpoint arm: [0]=enable, [1]=break on WRITE to DBG_WP, [2]=break on READ of DBG_WP (set both for any access)" },
+        { "off": "0x5C", "access": "R", "width": 32, "c": "XT_DBG_DIAG",     "sv": "DBG_DIAG",
+          "desc": "debug self-observability (clk_sally, coherent when halted): [1:0]=cfg_s (CDC-synced DBG_CFG), [2]=bkpt_fire seen since arm, [3]=wp_fire seen since arm, [4]=last halt was a watchpoint, [31:16]=bkpt_s (CDC-synced DBG_BKPT — verify it matches what was written)" }
       ]
     }
   ]

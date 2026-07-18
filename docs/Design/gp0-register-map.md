@@ -130,3 +130,6 @@ in-fabric 6502 debugger (xt6502_debug): halt/step/breakpoint/register access, dr
 | 0x48 | R | 16 | `XT_DBG_TRC_PC` | `DBG_TRC_PC` | [15:0]=PC of the traced instruction at DBG_TRC_IDX |
 | 0x4C | R | 32 | `XT_DBG_TRC_AXYS` | `DBG_TRC_AXYS` | traced regs at DBG_TRC_IDX: [7:0]=A [15:8]=X [23:16]=Y [31:24]=SP(low) |
 | 0x50 | R | 12 | `XT_DBG_TRC_P` | `DBG_TRC_P` | traced at DBG_TRC_IDX: [7:0]=P [11:8]=SP high nibble |
+| 0x54 | RW | 16 | `XT_DBG_WP` | `DBG_WP` | [15:0]=data watchpoint address; when armed the core freezes on a bus access to it |
+| 0x58 | RW | 3 | `XT_DBG_WPCFG` | `DBG_WPCFG` | data watchpoint arm: [0]=enable, [1]=break on WRITE to DBG_WP, [2]=break on READ of DBG_WP (set both for any access) |
+| 0x5C | R | 32 | `XT_DBG_DIAG` | `DBG_DIAG` | debug self-observability (clk_sally, coherent when halted): [1:0]=cfg_s (CDC-synced DBG_CFG), [2]=bkpt_fire seen since arm, [3]=wp_fire seen since arm, [4]=last halt was a watchpoint, [31:16]=bkpt_s (CDC-synced DBG_BKPT — verify it matches what was written) |

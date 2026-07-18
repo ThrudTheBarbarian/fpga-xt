@@ -188,8 +188,11 @@ module xt_gp0_regs (
     output reg  [15:0] dbg_wpc,
     output reg  [31:0] dbg_waxys,
     output reg  [11:0] dbg_wpsh,
+    output reg  [15:0] dbg_wp_addr,        // data watchpoint address
+    output reg  [2:0]  dbg_wp_cfg,         // [0]=en [1]=on_write [2]=on_read
     // Status IN (from clk_sally; coherent when halted — a halted core is static).
     input  wire [3:0]  dbg_stat,           // [3]run [2]step [1]bkpt_hit [0]halted
+    input  wire [31:0] dbg_diag,           // DBG_DIAG self-observability (coherent when halted)
     input  wire [15:0] dbg_snap_pc,
     input  wire [31:0] dbg_snap_axys,
     input  wire [11:0] dbg_snap_psh,
@@ -284,6 +287,8 @@ module xt_gp0_regs (
             dbg_commit_tog <= 1'b0;
             dbg_cfg        <= 2'b00;
             dbg_bkpt_addr  <= 16'd0;
+            dbg_wp_addr    <= 16'd0;
+            dbg_wp_cfg     <= 3'b000;
             dbg_step_count <= 16'd1;
             dbg_wpc        <= 16'd0;
             dbg_waxys      <= 32'd0;
@@ -403,6 +408,8 @@ module xt_gp0_regs (
                                                       dbg_step_tog   <= ~dbg_step_tog; end
                                     DBG_CFG:    dbg_cfg        <= w_data[1:0];
                                     DBG_BKPT:   dbg_bkpt_addr  <= w_data[15:0];
+                                    DBG_WP:     dbg_wp_addr    <= w_data[15:0];
+                                    DBG_WPCFG:  dbg_wp_cfg     <= w_data[2:0];
                                     DBG_COMMIT: dbg_commit_tog <= ~dbg_commit_tog;
                                     DBG_WPC:    dbg_wpc        <= w_data[15:0];
                                     DBG_WAXYS:  dbg_waxys      <= w_data;
@@ -504,6 +511,9 @@ module xt_gp0_regs (
                                 unique case (ar_off)
                                     DBG_CFG:   s_axi_rdata <= {30'd0, dbg_cfg};
                                     DBG_BKPT:  s_axi_rdata <= {16'd0, dbg_bkpt_addr};
+                                    DBG_WP:    s_axi_rdata <= {16'd0, dbg_wp_addr};
+                                    DBG_WPCFG: s_axi_rdata <= {29'd0, dbg_wp_cfg};
+                                    DBG_DIAG:  s_axi_rdata <= dbg_diag;
                                     DBG_WPC:   s_axi_rdata <= {16'd0, dbg_wpc};
                                     DBG_WAXYS: s_axi_rdata <= dbg_waxys;
                                     DBG_WPSH:  s_axi_rdata <= {20'd0, dbg_wpsh};

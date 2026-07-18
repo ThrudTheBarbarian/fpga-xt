@@ -91,6 +91,9 @@ package xt_gp0_pkg;
     localparam logic [7:0] DBG_TRC_PC       = 8'h48;  // R [15:0]=PC of the traced instruction at DBG_TRC_IDX
     localparam logic [7:0] DBG_TRC_AXYS     = 8'h4C;  // R traced regs at DBG_TRC_IDX: [7:0]=A [15:8]=X [23:16]=Y [31:24]=SP(low)
     localparam logic [7:0] DBG_TRC_P        = 8'h50;  // R traced at DBG_TRC_IDX: [7:0]=P [11:8]=SP high nibble
+    localparam logic [7:0] DBG_WP           = 8'h54;  // RW [15:0]=data watchpoint address; when armed the core freezes on a bus access to it
+    localparam logic [7:0] DBG_WPCFG        = 8'h58;  // RW data watchpoint arm: [0]=enable, [1]=break on WRITE to DBG_WP, [2]=break on READ of DBG_WP (set both for any access)
+    localparam logic [7:0] DBG_DIAG         = 8'h5C;  // R debug self-observability (clk_sally, coherent when halted): [1:0]=cfg_s (CDC-synced DBG_CFG), [2]=bkpt_fire seen since arm, [3]=wp_fire seen since arm, [4]=last halt was a watchpoint, [31:16]=bkpt_s (CDC-synced DBG_BKPT — verify it matches what was written)
 
 endpackage
 `endif

@@ -53,6 +53,11 @@ module xt6502 (
     output wire [7:0]  dbg_p,
     output wire [3:0]  dbg_shigh,
 
+    // ── Bus-access taps (for the data watchpoint) ──
+    output wire        dbg_bus_stb,    // 1 = a bus access commits this cycle (= rdy)
+    output wire [15:0] dbg_bus_addr,   // address of that access (= the live addr bus)
+    output wire        dbg_bus_rw,     // 1 = read, 0 = write
+
     // ── Debug register injection (commit while halted; from xt6502_debug) ──
     input  wire        dbg_wr,         // 1-cycle: load PC/regs below, re-anchor at ST_FETCH
     input  wire [15:0] dbg_wpc,
@@ -1065,6 +1070,9 @@ module xt6502 (
     // it), so the instruction's address is PC-1 — the debug block subtracts it.
     assign dbg_boundary = (state == ST_DECODE);
     assign dbg_pc       = PC;
+    assign dbg_bus_stb  = rdy;              // an access commits when the core is not stalled
+    assign dbg_bus_addr = addr;             // the live memory address (MAR / EA / stack)
+    assign dbg_bus_rw   = rw;
     assign dbg_a        = A;
     assign dbg_x        = X;
     assign dbg_y        = Y;

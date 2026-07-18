@@ -760,6 +760,13 @@ module fpga_xt_top (
     wire [15:0] sdbg_trc_pc;
     wire [31:0] sdbg_trc_axys;
     wire [11:0] sdbg_trc_p;
+    // bus-access taps + watchpoint + self-observability
+    wire        cdbg_bus_stb;
+    wire [15:0] cdbg_bus_addr;
+    wire        cdbg_bus_rw;
+    wire [15:0] gdbg_wp;
+    wire [2:0]  gdbg_wpcfg;
+    wire [31:0] sdbg_diag;
 
     xt6502 u_sally_core (
         .clk      (clk_sally),
@@ -778,6 +785,10 @@ module fpga_xt_top (
         .dbg_pc   (cdbg_pc),
         .dbg_a    (cdbg_a), .dbg_x (cdbg_x), .dbg_y (cdbg_y),
         .dbg_s    (cdbg_s), .dbg_p (cdbg_p), .dbg_shigh (cdbg_shigh),
+        // bus-access taps (data watchpoint)
+        .dbg_bus_stb  (cdbg_bus_stb),
+        .dbg_bus_addr (cdbg_bus_addr),
+        .dbg_bus_rw   (cdbg_bus_rw),
         // debug register injection in
         .dbg_wr   (idbg_wr),
         .dbg_wpc  (idbg_wpc),
@@ -820,7 +831,14 @@ module fpga_xt_top (
         .trc_wptr_stat(sdbg_trc_wptr),
         .trc_pc       (sdbg_trc_pc),
         .trc_axys     (sdbg_trc_axys),
-        .trc_p        (sdbg_trc_p)
+        .trc_p        (sdbg_trc_p),
+        // data watchpoint + bus taps + self-observability
+        .dbg_bus_stb  (cdbg_bus_stb),
+        .dbg_bus_addr (cdbg_bus_addr),
+        .dbg_bus_rw   (cdbg_bus_rw),
+        .wp_addr      (gdbg_wp),
+        .wp_cfg       (gdbg_wpcfg),
+        .diag         (sdbg_diag)
     );
 
     // ROM-init wires (driven by sally_rom_loader when USE_PS_BD is set;
@@ -2841,6 +2859,9 @@ module fpga_xt_top (
         .dbg_commit_tog  (gdbg_commit_tog),
         .dbg_cfg         (gdbg_cfg),
         .dbg_bkpt_addr   (gdbg_bkpt),
+        .dbg_wp_addr     (gdbg_wp),
+        .dbg_wp_cfg      (gdbg_wpcfg),
+        .dbg_diag        (sdbg_diag),
         .dbg_step_count  (gdbg_stepcnt),
         .dbg_wpc         (gdbg_wpc),
         .dbg_waxys       (gdbg_waxys),
