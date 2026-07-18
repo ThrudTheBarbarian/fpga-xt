@@ -86,7 +86,8 @@ module xt6502f #(
         ST_RTS1=42, ST_RTS2=43, ST_RTS3=44, ST_RTS4=45, ST_RTS5=46,   // RTS
         ST_RTI1=47, ST_RTI2=48, ST_RTI3=49, ST_RTI4=50, ST_RTI5=51,   // RTI
         ST_BRK1=52, ST_BRK2=53, ST_BRK3=54, ST_BRK4=55, ST_BRK5=56, ST_BRK6=57, // BRK
-        ST_JMPI1=58, ST_JMPI2=59, ST_JMPI3=60, ST_JMPI4=61;  // JMP (ind): ptrL, ptrH, tgtL, tgtH(page-wrap)
+        ST_JMPI1=58, ST_JMPI2=59, ST_JMPI3=60, ST_JMPI4=61,  // JMP (ind): ptrL, ptrH, tgtL, tgtH(page-wrap)
+        ST_IMMILL=62;                                        // illegal immediate-ALU (ANC/ALR/ARR/XAA/LXA/SBX)
     reg [5:0] state;
     reg [2:0] rst_cnt;
     reg [7:0] ir;
@@ -227,6 +228,42 @@ module xt6502f #(
             endcase
             if (to_a) A <= m; else rmw_mod <= m;
             P <= {m[7], P[6:2], (m==8'h00), c};                     // N, Z, C
+        end
+    endtask
+
+    // ---- illegal immediate-ALU ops (2 cyc), keyed by opcode. Behaviour modelled + verified
+    // against Harte in Python first; magic constant for XAA/LXA is $EE (most-common result). ----
+    task automatic exec_immill(input [7:0] imm);
+        reg [7:0] t, s0, s, res;
+        reg cin;
+        begin
+            cin = P[0];
+            case (ir)
+                8'h0B, 8'h2B: begin res = A & imm; A <= res;                 // ANC: AND, C = N = bit7
+                              P <= {res[7], P[6:2], (res==8'h00), res[7]}; end
+                8'h4B: begin t = A & imm; res = {1'b0, t[7:1]}; A <= res;     // ALR: AND then LSR
+                              P <= {res[7], P[6:2], (res==8'h00), t[0]}; end
+                8'h6B: begin t = A & imm; s0 = {cin, t[7:1]};                 // ARR: AND then ROR + weird flags
+                    if (!P[3]) begin                                         // binary
+                        A <= s0;
+                        P <= {s0[7], (s0[6]^s0[5]), P[5:2], (s0==8'h00), s0[6]};
+                    end else begin                                          // decimal (nibble-adjust A; flags pre-adjust)
+                        s = s0;
+                        if (({1'b0,t[3:0]} + {4'b0,t[0]}) > 5'd5) s = (s0 & 8'hF0) | ((s0 + 8'd6) & 8'h0F);
+                        if (({1'b0,t[7:4]} + {4'b0,t[4]}) > 5'd5) begin
+                            A <= (s + 8'h60); P <= {s0[7], (s0[6]^s0[5]), P[5:2], (s0==8'h00), 1'b1};
+                        end else begin
+                            A <= s;           P <= {s0[7], (s0[6]^s0[5]), P[5:2], (s0==8'h00), 1'b0};
+                        end
+                    end end
+                8'h8B: begin res = (A | 8'hEE) & X & imm; A <= res;           // XAA/ANE (unstable, magic $EE)
+                              P <= {res[7], P[6:2], (res==8'h00), P[0]}; end
+                8'hAB: begin res = (A | 8'hEE) & imm; A <= res; X <= res;     // LXA/LAX# (unstable, magic $EE)
+                              P <= {res[7], P[6:2], (res==8'h00), P[0]}; end
+                8'hCB: begin t = A & X; res = t - imm; X <= res;             // SBX/AXS: X = (A&X) - imm
+                              P <= {res[7], P[6:2], (res==8'h00), (t >= imm)}; end
+                default: ;
+            endcase
         end
     endtask
 
@@ -449,6 +486,8 @@ module xt6502f #(
                             begin op<=OP_NOP; idx<=X; has_idx<=1; state<=ST_ABL; end
                         // ---- SBC #imm (illegal, == $E9) ----
                         8'hEB: begin op<=OP_SBC; state<=ST_IMM; end
+                        // ---- illegal immediate-ALU (ANC/ALR/ARR/XAA/LXA/SBX) ----
+                        8'h0B, 8'h2B, 8'h4B, 8'h6B, 8'h8B, 8'hAB, 8'hCB: state <= ST_IMMILL;
                         // ---- LAX (illegal): load A and X ----
                         8'hA7: begin op<=OP_LAX; eah<=0; state<=ST_ZPF; end                          // LAX zp
                         8'hB7: begin op<=OP_LAX; eah<=0; idx<=Y; has_idx<=1; state<=ST_ZPF; end       // LAX zp,Y
@@ -516,6 +555,7 @@ module xt6502f #(
 
                 // immediate
                 ST_IMM:  begin PC <= PC + 16'd1; exec_op(din_r); end
+                ST_IMMILL: begin PC <= PC + 16'd1; exec_immill(din_r); state <= ST_FETCH; end
 
                 // zero page
                 ST_ZPF:  begin eal <= din_r; PC <= PC + 16'd1;
