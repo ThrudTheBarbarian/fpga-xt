@@ -520,9 +520,9 @@ module antic_top #(
     wire [7:0] colbk_q;
     wire [7:0] prior_q;
     wire [7:0] vdelay_q;
-    // TEMP diag: expose the live GTIA/ANTIC register state (clk_sys) for `mem` readback
+    // TEMP diag: colours (colpf0/colpf1/colpf2/colbk) for `mem` readback. dbg_antic (DLI
+    // counter + NMIEN/NMIST/mode) is assigned lower down, after dl_meta_mode is declared.
     assign dbg_gtia  = {colpf_q[0], colpf_q[1], colpf_q[2], colbk_q};
-    assign dbg_antic = {colpf_q[3], prior_q,   chbase_q,    dmactl_q};
     wire [7:0] gractl_q;
     wire [7:0] consol_w_q;
     wire       hitclr_strobe;
@@ -961,6 +961,15 @@ module antic_top #(
     wire [3:0]  dl_meta_sub;
     wire        dl_meta_hscrol_en;
     wire        dl_meta_vscrol_en;
+    // TEMP diag: count DLI fires per frame + expose NMIEN/NMIST/mode -> dbg_antic (diag9).
+    // dbg_dli_cnt>0 proves DLIs are firing; ==0 means NMIEN[7] off or no DL line asserts DLI.
+    reg  [7:0]  dbg_dli_cnt;
+    wire        dbg_dli_fire = ar_line_start & nmi_cur_row_dli & nmien_q[7];
+    always_ff @(posedge clk_bus) begin
+        if (rst_bus || vbi_start_pulse_bus) dbg_dli_cnt <= 8'h0;
+        else if (dbg_dli_fire)              dbg_dli_cnt <= dbg_dli_cnt + 8'h1;
+    end
+    assign dbg_antic = {nmien_q, nmist_q, dbg_dli_cnt, dl_meta_mode, 4'h0};
 
     dl_parser u_dl_parser (
         .clk(clk_bus), .rst(rst_bus), .start_parse(dl_start_pulse),
