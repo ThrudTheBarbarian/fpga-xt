@@ -2533,7 +2533,13 @@ void _app_entry(int argc, char **argv) {
                            &mx, &my, &mb, &ks, &key, &nc);
         if (r & MU_QUIT) break;                      // gemd is gone: EOF on the channel
         net_pump();                                  // drain any arrived reply lines
-        if ((r & MU_KEYBD) && key == 0x1b) break;                              // Esc quits
+        if (r & MU_KEYBD) {
+            /* A key. If the live 6502 emulator window is on top, the keystroke belongs to the
+             * Atari, not the desktop — meter it into POKEY (sys_kbd_6502 paces + injects the
+             * KBCODE, incl. Return/BREAK). Only when no emulator is topped does Esc quit. */
+            if (g_xlwin && wind_top() == g_xlwin) sys_kbd_6502(key & 0xFF);
+            else if (key == 0x1b) break;
+        }
         if ((r & MU_MESAG) && msg[0] == WM_CLOSED) {
             /* The closer, on one of OUR windows. gemd asked; it did not decide (§3). */
             browser *b = br_of_window(msg[3]);       // close cancels any in-flight request
