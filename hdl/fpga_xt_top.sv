@@ -1195,6 +1195,8 @@ module fpga_xt_top (
     wire        antic_wb_pal_we;
     wire [7:0]  antic_wb_pal_idx;
     wire [23:0] antic_wb_pal_rgb;
+    wire [31:0] antic_dbg_gtia;   // TEMP: {colpf0,colpf1,colpf2,colbk}  -> diag8 @ GP0 0x41C
+    wire [31:0] antic_dbg_antic;  // TEMP: {colpf3,prior,chbase,dmactl}  -> diag9 @ GP0 0x420
 
     antic_top #(
         .POKEY_CLK_BUS_HZ (150_000_000)     // clk_sys nominal (150 MHz)
@@ -1259,6 +1261,8 @@ module fpga_xt_top (
         .wb_pal_we          (antic_wb_pal_we),
         .wb_pal_idx         (antic_wb_pal_idx),
         .wb_pal_rgb         (antic_wb_pal_rgb),
+        .dbg_gtia           (antic_dbg_gtia),
+        .dbg_antic          (antic_dbg_antic),
         // Zynq build: sally_* / xlat_phys_addr removed (no shadow SALLY core).
         .adc_bclk_o         (),
         .adc_lrck_o         (),
@@ -1588,11 +1592,11 @@ module fpga_xt_top (
         ad_s0 <= romdiag_addr; ad_s1 <= ad_s0;
         da_s0 <= romdiag_data; da_s1 <= da_s0;
     end
-    assign diag8_word = {romdiag_axi, we_s1};                 // [31:16]=AXI accepts, [15:0]=rom_we
-    assign diag9_word = {8'd0, ad_s1, da_s1};                 // [23:8]=last addr, [7:0]=last data
+    assign diag8_word = antic_dbg_gtia;    // TEMP repurpose: {colpf0,colpf1,colpf2,colbk}
+    assign diag9_word = antic_dbg_antic;   // TEMP repurpose: {colpf3,prior,chbase,dmactl}
 `else
-    assign diag8_word = 32'd0;
-    assign diag9_word = 32'd0;
+    assign diag8_word = antic_dbg_gtia;
+    assign diag9_word = antic_dbg_antic;
 `endif
 
     // ====================================================================

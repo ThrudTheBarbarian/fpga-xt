@@ -226,7 +226,10 @@ module antic_top #(
     output wire        wb_frame_done,   // pulse (vbi): flip the double buffer
     output wire        wb_pal_we,       // palette write strobe (clk_bus origin)
     output wire [7:0]  wb_pal_idx,      // palette index
-    output wire [23:0] wb_pal_rgb       // {R,G,B} palette entry
+    output wire [23:0] wb_pal_rgb,      // {R,G,B} palette entry
+    // ---- TEMP debug: live ANTIC/GTIA register state (clk_sys) for `mem` readback ----
+    output wire [31:0] dbg_gtia,        // {colpf0, colpf1, colpf2, colbk}
+    output wire [31:0] dbg_antic        // {colpf3, prior, chbase, dmactl}
 );
 
     // Synchronise /G_RST into the bus_clk domain.
@@ -517,6 +520,9 @@ module antic_top #(
     wire [7:0] colbk_q;
     wire [7:0] prior_q;
     wire [7:0] vdelay_q;
+    // TEMP diag: expose the live GTIA/ANTIC register state (clk_sys) for `mem` readback
+    assign dbg_gtia  = {colpf_q[0], colpf_q[1], colpf_q[2], colbk_q};
+    assign dbg_antic = {colpf_q[3], prior_q,   chbase_q,    dmactl_q};
     wire [7:0] gractl_q;
     wire [7:0] consol_w_q;
     wire       hitclr_strobe;
