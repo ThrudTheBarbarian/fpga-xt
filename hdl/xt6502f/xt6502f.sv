@@ -44,7 +44,18 @@ module xt6502f #(
     output wire  [7:0] dbg_y,
     output wire  [7:0] dbg_s,
     output wire  [7:0] dbg_p,
-    output wire  [7:0] dbg_sub       // window position, for observability
+    output wire  [7:0] dbg_sub,      // window position, for observability
+
+    // ---- state inject (harness / Phase-4 debug seed): 1-cycle load, restart at fetch ----
+    input  wire        dbg_load,
+    input  wire [15:0] dbg_pc_in,
+    input  wire  [7:0] dbg_a_in, dbg_x_in, dbg_y_in, dbg_s_in, dbg_p_in,
+
+    // ---- per-machine-cycle bus capture (cycle-exact validation, one pulse per cycle) ----
+    output reg  [15:0] dbg_cyc_addr,
+    output reg   [7:0] dbg_cyc_val,
+    output reg         dbg_cyc_rw,
+    output reg         dbg_cyc_valid
 );
     // ---- machine-cycle window: N clk_sally per emulated 6502 cycle -----------------
     // N and the phase-constants are all derived from the one knob (symbolic).
@@ -55,9 +66,9 @@ module xt6502f #(
     // `sub` = clocks since the last phi2_tick (8-bit covers N up to 255).
     reg [7:0] sub;
     always @(posedge clk) begin
-        if (rst)            sub <= 8'd0;
-        else if (phi2_tick) sub <= 8'd0;
-        else                sub <= sub + 8'd1;
+        if (rst)                        sub <= 8'd0;
+        else if (phi2_tick || dbg_load) sub <= 8'd0;   // realign the window on inject too
+        else                            sub <= sub + 8'd1;
     end
     wire slot_data   = (sub == SUB_DATA[7:0]);
     wire slot_commit = (sub == SUB_COMMIT[7:0]);
@@ -111,6 +122,10 @@ module xt6502f #(
             PC      <= 16'hFFFC;
             A <= 8'h00; X <= 8'h00; Y <= 8'h00; S <= 8'hFD; P <= 8'h34; // I=1,B=1,bit5=1
             ir <= 8'hEA; adl <= 8'h00; din_r <= 8'h00;
+        end else if (dbg_load) begin                       // harness: seed a test case
+            PC <= dbg_pc_in;
+            A <= dbg_a_in; X <= dbg_x_in; Y <= dbg_y_in; S <= dbg_s_in; P <= dbg_p_in;
+            state <= ST_FETCH; ir <= 8'hEA;
         end else if (advance) begin
             case (state)
                 ST_RST:   if (rst_cnt == 3'd0) state <= ST_VECL;
@@ -130,6 +145,21 @@ module xt6502f #(
                 ST_JMP2:  begin PC <= {din_r, adl}; state <= ST_FETCH; end
                 default:  state <= ST_FETCH;
             endcase
+        end
+    end
+
+    // per-machine-cycle bus capture: latch this cycle's {addr, value, rw} at commit
+    always @(posedge clk) begin
+        if (rst) begin
+            dbg_cyc_valid <= 1'b0; dbg_cyc_addr <= 16'd0; dbg_cyc_val <= 8'd0; dbg_cyc_rw <= 1'b1;
+        end else begin
+            dbg_cyc_valid <= 1'b0;
+            if (advance) begin
+                dbg_cyc_addr  <= addr;
+                dbg_cyc_rw    <= rw;
+                dbg_cyc_val   <= rw ? din_r : data_out;   // read data latched / write data driven
+                dbg_cyc_valid <= 1'b1;
+            end
         end
     end
 

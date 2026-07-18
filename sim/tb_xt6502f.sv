@@ -28,7 +28,10 @@ module tb_xt6502f;
         .addr(addr), .data_in(data_in), .data_out(data_out), .rw(rw),
         .rdy(rdy), .irq_n(1'b1), .nmi_n(1'b1),
         .sync(sync), .dbg_pc(dbg_pc), .dbg_a(dbg_a), .dbg_x(dbg_x), .dbg_y(dbg_y),
-        .dbg_s(dbg_s), .dbg_p(dbg_p), .dbg_sub(dbg_sub)
+        .dbg_s(dbg_s), .dbg_p(dbg_p), .dbg_sub(dbg_sub),
+        .dbg_load(1'b0), .dbg_pc_in(16'd0), .dbg_a_in(8'd0), .dbg_x_in(8'd0),
+        .dbg_y_in(8'd0), .dbg_s_in(8'd0), .dbg_p_in(8'd0),
+        .dbg_cyc_addr(), .dbg_cyc_val(), .dbg_cyc_rw(), .dbg_cyc_valid()
     );
 
     // combinational memory
