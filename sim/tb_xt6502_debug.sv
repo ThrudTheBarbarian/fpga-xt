@@ -30,7 +30,12 @@ module tb_xt6502_debug;
     // trace ring
     reg  [1:0]  trc_ctrl=0; reg [11:0] trc_idx=0;
     wire [31:0] trc_wptr; wire [15:0] trc_pc; wire [31:0] trc_axys; wire [11:0] trc_p;
-    wire eff_rdy = core_run;                 // base rdy = 1 (full speed); gated by the debugger
+    // Model the HW: the core's rdy is (sally_rdy & core_run); sally_rdy drops for
+    // WSYNC/mem-busy. A periodic stall exposes any halt/breakpoint imprecision that
+    // a never-stalling sim would hide.
+    reg [2:0] stallc = 0; always @(posedge clk) stallc <= stallc + 3'd1;
+    wire sally_rdy = (stallc != 3'd0);       // rdy low 1 cycle in 8
+    wire eff_rdy = core_run & sally_rdy;
 
     xt6502 u_dut (
         .clk(clk), .rst(rst), .addr(addr), .data_in(data_in), .data_out(data_out),
