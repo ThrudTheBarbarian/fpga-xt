@@ -15,9 +15,11 @@ per docs/Design/dual-cpu-resident-mux.md). Refs: MOS datasheet
   illegal incl. NMOS decimal ADC/SBC, JMP($xxFF) wrap, SLO/RLA/SRE/RRA/DCP/ISC, ANC/ALR/
   ARR/XAA/LXA/SBX, KIL/JAM lock-up, unstable SHA/SHX/SHY/TAS/LAS). Harness: `sim/tb_xt6502f
   _harte.sv` + `sim/harte/{fetch,convert,run}.sh`; `sim/harte/run.sh` → "256 pass, 0 fail".
-- **Still OPEN in Phase 3** — interrupts: sample IRQ/NMI (Φ2), 7-cycle sequence, RESET
-  sequence, and the BRK/IRQ hijack. NOT covered by Harte — needs a directed tb (or Visual6502
-  trace). The core already has `irq_n`/`nmi_n` inputs, currently unsampled.
+- **Phase 3 interrupts DONE** — IRQ (level, I-gated), NMI (edge-latched, one-shot), 7-cycle
+  push+vector, B-clear pushed status, NMI hijack of BRK/IRQ, RTI. Directed bench
+  `sim/tb_xt6502f_irq.sv` (all pass); Harte ties the lines inactive so the ISA is unaffected.
+  Refinements left: exact Φ2 sample slot (CLI/SEI/PLP one-instruction delay) + RESET-as-
+  interrupt sequencing.
 - **Phase 4** — debug sub-cycle slots: early/late sample (clocks 2-4 / 53-55), retire-slot
   bkpt/wp/trace, inject; wire the GP0 DEBUG block + `/bin/6502` cycle-level additions.
 - **Phase 5** — resident 2:1 bus mux + turbo<->fidelity handoff (instruction-boundary only);

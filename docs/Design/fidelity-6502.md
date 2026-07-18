@@ -235,7 +235,10 @@ capabilities (cycle step, micro-PC, bus trace) are additive registers.
    NMOS decimal ADC/SBC flags, JMP($xxFF) wrap, and **all 256 opcodes incl. illegals**
    (stable exact; unstable = most-common result; KIL/JAM = lock-up). Validated cycle-exact
    against Tom Harte's tests via `sim/tb_xt6502f_harte` + `sim/harte/` (per-opcode `.vec`).
-   *Still open here: IRQ/NMI/RESET interrupt timing + the BRK/IRQ hijack (not in Harte).*
+   **HW interrupts** ✅ — IRQ (level, I-gated), NMI (edge-latched), the 7-cycle push+vector
+   sequence, B-clear on the pushed status, NMI-vector hijack of BRK/IRQ, RTI. Directed bench
+   `sim/tb_xt6502f_irq` (Harte ties the lines inactive). *Remaining refinements: the exact
+   Φ2 sample slot for the CLI/SEI/PLP one-instruction delay + RESET-as-interrupt sequencing.*
 4. **Debug slots** — early/late sample, retire-slot bkpt/wp/trace, inject; wire the GP0
    DEBUG block + `/bin/6502` cycle-level additions.
 5. **Resident mux + hand-off** — 2:1 bus mux, per-core enable, turbo↔fidelity switch via

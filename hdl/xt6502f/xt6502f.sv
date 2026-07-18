@@ -91,7 +91,8 @@ module xt6502f #(
         ST_JMPI1=58, ST_JMPI2=59, ST_JMPI3=60, ST_JMPI4=61,  // JMP (ind): ptrL, ptrH, tgtL, tgtH(page-wrap)
         ST_IMMILL=62,                                        // illegal immediate-ALU (ANC/ALR/ARR/XAA/LXA/SBX)
         ST_JAM=63,                                           // KIL/JAM: lock up (Harte 11-cycle trace, then frozen)
-        ST_USHW=64;                                          // unstable-store write (SHA/SHX/SHY/TAS)
+        ST_USHW=64,                                          // unstable-store write (SHA/SHX/SHY/TAS)
+        ST_IRQ2=65;                                          // HW interrupt: 2nd (dummy) cycle, then reuse BRK push/vector
     reg [6:0] state;
     reg [3:0] jam_cnt;   // JAM machine-cycle index (drives the lock-up address dance)
     reg [2:0] rst_cnt;
@@ -110,6 +111,11 @@ module xt6502f #(
     reg [1:0] ushx_src;  // store source: 0 = A&X, 1 = X, 2 = Y
     reg       ushx_tas;  // TAS also sets S = A&X
     reg [7:0] ush_val;   // computed unstable-store value
+    // ---- hardware interrupts (IRQ level / NMI edge) ----
+    reg       nmi_n_d;   // previous nmi_n (machine-cycle sampled) for falling-edge detect
+    reg       nmi_pend;  // latched NMI, held until serviced
+    reg       intr;      // servicing a HW interrupt (push P with B=0, vs BRK B=1)
+    reg       nmi_svc;   // this service uses the NMI vector ($FFFA/B) — incl. BRK/IRQ hijack
 
     // operation applied at the value terminal (read-group ALU + RMW ALU)
     localparam [4:0] OP_LD=0, OP_AND=1, OP_ORA=2, OP_EOR=3, OP_CMP=4, OP_BIT=5, OP_ADC=6, OP_SBC=7,
@@ -134,8 +140,8 @@ module xt6502f #(
             ST_PH2, ST_PL2, ST_PL3, ST_JSR2, ST_JSR3, ST_JSR4,      // stack access = {01, S}
             ST_RTS2, ST_RTS3, ST_RTS4, ST_RTI2, ST_RTI3, ST_RTI4, ST_RTI5,
             ST_BRK2, ST_BRK3, ST_BRK4: addr_c = {8'h01, S};
-            ST_BRK5: addr_c = 16'hFFFE;                             // IRQ/BRK vector
-            ST_BRK6: addr_c = 16'hFFFF;
+            ST_BRK5: addr_c = nmi_svc ? 16'hFFFA : 16'hFFFE;        // vector low (NMI $FFFA / IRQ+BRK $FFFE)
+            ST_BRK6: addr_c = nmi_svc ? 16'hFFFB : 16'hFFFF;        // vector high
             ST_JAM:  addr_c = (jam_cnt==4'd0) ? PC :                // lock-up dance: PC, FFFF, FFFE, FFFE, FFFF...
                               (jam_cnt==4'd1) ? 16'hFFFF :
                               (jam_cnt==4'd2 || jam_cnt==4'd3) ? 16'hFFFE : 16'hFFFF;
@@ -152,7 +158,7 @@ module xt6502f #(
         (state==ST_RMW_W1)                  ? rmw_mod :               // RMW final write (modified)
         (state==ST_JSR3 || state==ST_BRK2)  ? PC[15:8] :             // push PCH
         (state==ST_JSR4 || state==ST_BRK3)  ? PC[7:0]  :             // push PCL
-        (state==ST_BRK4)                    ? (P | 8'h30) :          // push P (B set)
+        (state==ST_BRK4)                    ? (intr ? (P | 8'h20) : (P | 8'h30)) : // push P: IRQ/NMI B=0, BRK B=1
         (state==ST_PH2)                     ? ((ir==8'h48) ? A : (P | 8'h30)) : // PHA : PHP
         (state==ST_USHW)                    ? ush_val :                 // unstable store value
         sax                                 ? (A & X) :                 // SAX store (A&X)
@@ -328,19 +334,27 @@ module xt6502f #(
             dst <= 0; has_idx <= 0; pgx <= 0; is_store <= 0; is_rmw <= 0; op <= OP_LD;
             rmw_val <= 0; rmw_mod <= 0; sax <= 0; combo <= 0; op2 <= OP_LD; jam_cnt <= 0;
             ushx <= 0; ushx_src <= 0; ushx_tas <= 0; ush_val <= 0;
+            nmi_n_d <= 1'b1; nmi_pend <= 1'b0; intr <= 1'b0; nmi_svc <= 1'b0;
         end else if (dbg_load) begin
             PC <= dbg_pc_in; A <= dbg_a_in; X <= dbg_x_in; Y <= dbg_y_in;
             S <= dbg_s_in; P <= dbg_p_in; state <= ST_FETCH; ir <= 8'hEA;
         end else if (advance) begin
+            nmi_n_d <= nmi_n;
+            if (nmi_n_d && !nmi_n) nmi_pend <= 1'b1;   // NMI is edge-triggered: latch the falling edge
             case (state)
                 ST_RST:   if (rst_cnt == 0) state <= ST_VECL; else rst_cnt <= rst_cnt - 3'd1;
                 ST_VECL:  begin PC[7:0]  <= din_r; state <= ST_VECH; end
                 ST_VECH:  begin PC[15:8] <= din_r; state <= ST_FETCH; end
 
                 ST_FETCH: begin
-                    ir <= din_r; PC <= PC + 16'd1;
                     has_idx <= 1'b0; pgx <= 1'b0; is_store <= 1'b0; is_rmw <= 1'b0; op <= OP_LD; sax <= 1'b0;
                     combo <= 1'b0; ushx <= 1'b0; ushx_tas <= 1'b0;
+                  if (nmi_pend || (!irq_n && !P[2])) begin       // HW interrupt (NMI priority): discard opcode, PC held
+                    intr <= 1'b1; nmi_svc <= nmi_pend; ir <= 8'h00;
+                    if (nmi_pend) nmi_pend <= 1'b0;
+                    state <= ST_IRQ2;
+                  end else begin
+                    ir <= din_r; PC <= PC + 16'd1;
                     case (din_r)
                         // ---- immediate loads ----
                         8'hA9: begin dst <= 2'd0; state <= ST_IMM; end          // LDA #
@@ -581,6 +595,7 @@ module xt6502f #(
                         8'hFF: begin is_rmw<=1; combo<=1; op<=OP_INC; op2<=OP_SBC; idx<=X; has_idx<=1; state<=ST_ABL; end
                         default: state <= ST_IMPL;                              // unimpl -> NOP (fails Harte)
                     endcase
+                  end
                 end
 
                 // immediate
@@ -706,9 +721,13 @@ module xt6502f #(
                 ST_BRK1: begin PC <= PC + 16'd1; state <= ST_BRK2; end     // read operand byte; PC->op+2
                 ST_BRK2: begin S <= S - 8'd1; state <= ST_BRK3; end        // push PCH; S--
                 ST_BRK3: begin S <= S - 8'd1; state <= ST_BRK4; end        // push PCL; S--
-                ST_BRK4: begin S <= S - 8'd1; P[2] <= 1'b1; state <= ST_BRK5; end  // push P|B; S--; set I
+                ST_BRK4: begin S <= S - 8'd1; P[2] <= 1'b1;                // push P; S--; set I
+                    if (nmi_pend) begin nmi_svc <= 1'b1; nmi_pend <= 1'b0; end   // BRK/IRQ -> NMI vector hijack
+                    state <= ST_BRK5; end
                 ST_BRK5: begin eal <= din_r; state <= ST_BRK6; end         // read vector low
-                ST_BRK6: begin PC <= {din_r, eal}; state <= ST_FETCH; end  // read vector high; PC = vector
+                ST_BRK6: begin PC <= {din_r, eal}; intr <= 1'b0; nmi_svc <= 1'b0; state <= ST_FETCH; end // vec high; PC = vector
+                // HW interrupt: 2nd cycle is a dummy read at PC (no increment); then the BRK push+vector sequence
+                ST_IRQ2: state <= ST_BRK2;
 
                 default: state <= ST_FETCH;
             endcase
