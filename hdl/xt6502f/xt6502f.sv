@@ -39,6 +39,7 @@ module xt6502f #(
     output wire [15:0] dbg_pc,
     output wire  [7:0] dbg_a, dbg_x, dbg_y, dbg_s, dbg_p,
     output wire  [7:0] dbg_sub,
+    output wire  [7:0] dbg_ir,
 
     input  wire        dbg_load,     // 1-cycle: seed regs, restart at fetch (harness / debug)
     input  wire [15:0] dbg_pc_in,
@@ -747,7 +748,7 @@ module xt6502f #(
     end
 
     assign dbg_pc = PC;  assign dbg_a = A; assign dbg_x = X; assign dbg_y = Y;
-    assign dbg_s  = S;   assign dbg_p = P; assign dbg_sub = sub;
+    assign dbg_s  = S;   assign dbg_p = P; assign dbg_sub = sub; assign dbg_ir = ir;
 endmodule
 
 `default_nettype wire
