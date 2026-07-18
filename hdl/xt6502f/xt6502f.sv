@@ -331,7 +331,9 @@ module xt6502f #(
         if (rst) begin
             state <= ST_RST; rst_cnt <= 3'd5; PC <= 16'hFFFC;
             A <= 0; X <= 0; Y <= 0; S <= 8'hFD; P <= 8'h34;
-            ir <= 8'hEA; eal <= 0; eah <= 0; ptr <= 0; idx <= 0; din_r <= 0;
+            ir <= 8'hEA; eal <= 0; eah <= 0; ptr <= 0; idx <= 0;  // din_r is owned solely by the
+            // slot_data latch above (one always block per reg — a 2nd driver here made synth tie
+            // din_r to GND); it is always latched at SUB_DATA before any read uses it.
             dst <= 0; has_idx <= 0; pgx <= 0; is_store <= 0; is_rmw <= 0; op <= OP_LD;
             rmw_val <= 0; rmw_mod <= 0; sax <= 0; combo <= 0; op2 <= OP_LD; jam_cnt <= 0;
             ushx <= 0; ushx_src <= 0; ushx_tas <= 0; ush_val <= 0;
