@@ -25,8 +25,16 @@ per docs/Design/dual-cpu-resident-mux.md). Refs: MOS datasheet
   (halt drives cpu_halt -> rdy-gate), single-instruction step, per-cycle trace ring.
   Bench `sim/tb_xt6502f_dbg.sv` (all pass). Left for Phase 5: wire cpu_halt/bkpt/wp/trace to
   the GP0 DEBUG block + `/bin/6502` cycle-level additions once the core is in the SoC.
-- **Phase 5** — resident 2:1 bus mux + turbo<->fidelity handoff (instruction-boundary only);
-  gate the build on clk_sally WNS ≥ 0.
+- **Phase 5 handoff FSM DONE** (RTL + sim) — `hdl/xt6502f/cpu_handoff.sv`: bus-mux owner bit,
+  per-core freeze (run=0), quiesce-at-boundary -> snapshot {PC,A,X,Y,S,P} -> inject -> flip.
+  Bench `sim/tb_cpu_handoff.sv` (two xt6502f + shared mem): idle core frozen, target
+  re-anchors at the exact snapshot PC, shared counter contiguous across A->B->A. **Left (SoC
+  + board):** wire into `fpga_xt_top` — instantiate `xt6502f` + `xt6502f_debug` alongside
+  turbo `xt6502`, the one binding-path 2:1 `mem_addr` mux, a 2nd `sally_clock` at MULT=1,
+  fold `busy` into the fidelity `rdy`, drive `switch_req` from a GP0/CTRL bit, wire the
+  fidelity debug to the GP0 DEBUG block; then a WNS≥0 bitstream. Decisions to confirm first:
+  turbo-side snapshot port mapping (repack to `xt6502_debug` dbg_wr/wpc/waxys/wpsh), and
+  whether turbo sheds illegal/decimal/RMW decode now that fidelity owns accuracy (§0a).
 - **Phase 6** — HW bring-up: cold-load, run the OS/games on the fidelity core, chase the
   fidelity backlog (magenta palette, garbled tiles, input) ON the right core.
 

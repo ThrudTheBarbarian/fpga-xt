@@ -243,8 +243,10 @@ capabilities (cycle step, micro-PC, bus trace) are additive registers.
    snapshots, break-before-execute PC bkpt + data wp (halt via the rdy-gate), single-step,
    per-cycle trace ring. Bench `sim/tb_xt6502f_dbg`. *Left: wire to the GP0 DEBUG block +
    `/bin/6502` cycle-level additions — lands with the SoC integration (Phase 5).*
-5. **Resident mux + hand-off** — 2:1 bus mux, per-core enable, turbo↔fidelity switch via
-   inject; gate the build on `clk_sally` WNS ≥ 0 (the one mux LUT).
+5. **Resident mux + hand-off** — FSM ✅ (RTL + sim): `hdl/xt6502f/cpu_handoff.sv` +
+   `sim/tb_cpu_handoff.sv` (bus-mux/freeze/snapshot→inject, seamless A↔B proven with two
+   fidelity cores). *Left: `fpga_xt_top` integration (2:1 addr mux, 2nd `sally_clock`@MULT=1,
+   `busy`→`rdy`, GP0 wiring) + a WNS ≥ 0 bitstream — the one mux LUT on the binding path.*
 6. **HW bring-up + validation** — cold-load, run the OS/games on the fidelity core, chase
    the fidelity backlog (the magenta palette, garbled tiles, input) *on the right core*.
 
