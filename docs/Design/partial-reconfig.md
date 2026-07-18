@@ -6,6 +6,15 @@ host) with the desktop/video staying live (architecture-review §1.4,
 Reconfigurable Partition (RP) is, why it is fMax-neutral, and the steps to stand
 up the Vivado DFX flow. Build-host work; staged.
 
+> **This is the fallback, not the default.** For the turbo↔fidelity 6502 swap
+> specifically, the pragmatic first cut on the LUT-rich (timing-thin) 7020 is to keep
+> **both cores resident and mux the bus** — see **docs/Design/dual-cpu-resident-mux.md**
+> (NextSteps §6502 option A). It avoids the entire DFX flow and the partition-pin
+> fence; it costs only the idle core's area (a rounding error here) plus one 2:1 LUT on
+> the binding path (self-gated by the WNS-≥0 build abort). DFX/PR below is the
+> fMax-purist fallback if that single LUT-level won't close after the §5 mitigations in
+> that doc. The m68k-JIT host still lives on the spare A9, not a fabric RM, either way.
+
 ## 1. The RP is the clk_sally loop = `{xt6502 + sally_mem}`
 
 PR is only fMax-neutral if the RP **contains the entire `clk_sally` critical
