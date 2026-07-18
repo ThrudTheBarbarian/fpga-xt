@@ -75,14 +75,16 @@ module xt6502f #(
         ST_ABL=11, ST_ABH=12,              // absolute: fetch adl / adh
         ST_ABX=13, ST_ABXC=14,             // abs,idx read / page-cross fix
         ST_IXF=15, ST_IXP=16, ST_IXA=17, ST_IXB=18,   // (zp,X)
-        ST_IYF=19, ST_IYA=20, ST_IYB=21, ST_IYRD=22, ST_IYC=23; // (zp),Y
+        ST_IYF=19, ST_IYA=20, ST_IYB=21, ST_IYRD=22, ST_IYC=23, // (zp),Y
+        ST_STORE=24;                       // write [eah,eal] <- reg (store terminal)
     reg [5:0] state;
     reg [2:0] rst_cnt;
     reg [7:0] ir;
     reg [7:0] eal, eah, ptr, idx, din_r;
-    reg [1:0] dst;       // load target: 0=A 1=X 2=Y
+    reg [1:0] dst;       // register selector: 0=A 1=X 2=Y (load target or store source)
     reg       has_idx;   // indexed addressing (abs/zp with X/Y)
     reg       pgx;       // page cross pending (indexed abs / (zp),Y)
+    reg       is_store;  // this instruction writes the register to memory
 
     // ---- address source for the current cycle --------------------------------------
     reg [15:0] addr_c;
@@ -91,7 +93,7 @@ module xt6502f #(
             ST_RST:  addr_c = 16'hFFFF;
             ST_VECL: addr_c = 16'hFFFC;
             ST_VECH: addr_c = 16'hFFFD;
-            ST_LOAD, ST_ZPI, ST_ABX, ST_ABXC, ST_IYRD, ST_IYC: addr_c = {eah, eal};
+            ST_LOAD, ST_STORE, ST_ZPI, ST_ABX, ST_ABXC, ST_IYRD, ST_IYC: addr_c = {eah, eal};
             ST_IXP, ST_IXA, ST_IYA: addr_c = {8'h00, ptr};
             ST_IXB, ST_IYB:         addr_c = {8'h00, ptr + 8'd1};   // zp wrap
             default: addr_c = PC;   // FETCH / IMM / ZPF / ABL / ABH / IXF / IYF / NOP1 / JMPn
@@ -99,8 +101,8 @@ module xt6502f #(
     end
 
     assign addr     = addr_c;
-    assign rw       = 1'b1;               // load group is all reads
-    assign data_out = 8'h00;
+    assign rw       = (state == ST_STORE) ? 1'b0 : 1'b1;              // write only on the store cycle
+    assign data_out = (dst == 2'd0) ? A : (dst == 2'd1) ? X : Y;      // register being stored
     assign sync     = (state == ST_FETCH);
     wire   advance  = slot_commit && rdy;
 
@@ -126,7 +128,7 @@ module xt6502f #(
             state <= ST_RST; rst_cnt <= 3'd5; PC <= 16'hFFFC;
             A <= 0; X <= 0; Y <= 0; S <= 8'hFD; P <= 8'h34;
             ir <= 8'hEA; eal <= 0; eah <= 0; ptr <= 0; idx <= 0; din_r <= 0;
-            dst <= 0; has_idx <= 0; pgx <= 0;
+            dst <= 0; has_idx <= 0; pgx <= 0; is_store <= 0;
         end else if (dbg_load) begin
             PC <= dbg_pc_in; A <= dbg_a_in; X <= dbg_x_in; Y <= dbg_y_in;
             S <= dbg_s_in; P <= dbg_p_in; state <= ST_FETCH; ir <= 8'hEA;
@@ -138,7 +140,7 @@ module xt6502f #(
 
                 ST_FETCH: begin
                     ir <= din_r; PC <= PC + 16'd1;
-                    has_idx <= 1'b0; pgx <= 1'b0;
+                    has_idx <= 1'b0; pgx <= 1'b0; is_store <= 1'b0;
                     case (din_r)
                         // ---- immediate loads ----
                         8'hA9: begin dst <= 2'd0; state <= ST_IMM; end          // LDA #
@@ -164,6 +166,20 @@ module xt6502f #(
                         // ---- (indirect,X) / (indirect),Y ----
                         8'hA1: begin dst<=2'd0; state<=ST_IXF; end              // LDA (zp,X)
                         8'hB1: begin dst<=2'd0; state<=ST_IYF; end              // LDA (zp),Y
+                        // ---- stores (indexed always takes the dummy-read cycle: no page-cross early-out) ----
+                        8'h85: begin dst<=2'd0; is_store<=1; eah<=0; state<=ST_ZPF; end            // STA zp
+                        8'h86: begin dst<=2'd1; is_store<=1; eah<=0; state<=ST_ZPF; end            // STX zp
+                        8'h84: begin dst<=2'd2; is_store<=1; eah<=0; state<=ST_ZPF; end            // STY zp
+                        8'h95: begin dst<=2'd0; is_store<=1; eah<=0; idx<=X; has_idx<=1; state<=ST_ZPF; end // STA zp,X
+                        8'h94: begin dst<=2'd2; is_store<=1; eah<=0; idx<=X; has_idx<=1; state<=ST_ZPF; end // STY zp,X
+                        8'h96: begin dst<=2'd1; is_store<=1; eah<=0; idx<=Y; has_idx<=1; state<=ST_ZPF; end // STX zp,Y
+                        8'h8D: begin dst<=2'd0; is_store<=1; state<=ST_ABL; end                    // STA abs
+                        8'h8E: begin dst<=2'd1; is_store<=1; state<=ST_ABL; end                    // STX abs
+                        8'h8C: begin dst<=2'd2; is_store<=1; state<=ST_ABL; end                    // STY abs
+                        8'h9D: begin dst<=2'd0; is_store<=1; idx<=X; has_idx<=1; state<=ST_ABL; end // STA abs,X
+                        8'h99: begin dst<=2'd0; is_store<=1; idx<=Y; has_idx<=1; state<=ST_ABL; end // STA abs,Y
+                        8'h81: begin dst<=2'd0; is_store<=1; state<=ST_IXF; end                    // STA (zp,X)
+                        8'h91: begin dst<=2'd0; is_store<=1; state<=ST_IYF; end                    // STA (zp),Y
                         // ---- control / nop ----
                         8'h4C: state <= ST_JMP1;                                // JMP abs
                         8'hEA: state <= ST_NOP1;                                // NOP
@@ -176,34 +192,37 @@ module xt6502f #(
 
                 // zero page
                 ST_ZPF:  begin eal <= din_r; PC <= PC + 16'd1;
-                               state <= has_idx ? ST_ZPI : ST_LOAD; end
-                ST_ZPI:  begin eal <= eal + idx; state <= ST_LOAD; end          // dummy read [00,eal]; +idx (zp wrap)
+                               state <= has_idx ? ST_ZPI : (is_store ? ST_STORE : ST_LOAD); end
+                ST_ZPI:  begin eal <= eal + idx; state <= is_store ? ST_STORE : ST_LOAD; end  // dummy read [00,eal]; +idx (zp wrap)
 
                 // absolute
                 ST_ABL:  begin eal <= din_r; PC <= PC + 16'd1; state <= ST_ABH; end
                 ST_ABH:  begin eah <= din_r; PC <= PC + 16'd1;
                                if (has_idx) begin eal <= eal_plus_idx[7:0]; pgx <= eal_plus_idx[8]; state <= ST_ABX; end
-                               else state <= ST_LOAD; end
-                ST_ABX:  begin if (pgx) begin eah <= eah + 8'd1; state <= ST_ABXC; end
-                               else exec_load(din_r); end                       // no cross: value here
-                ST_ABXC: exec_load(din_r);                                      // page-cross fixed read
+                               else state <= is_store ? ST_STORE : ST_LOAD; end
+                ST_ABX:  begin if (is_store) begin eah <= eah + {7'd0, pgx}; state <= ST_STORE; end  // dummy read; fix eah; write
+                               else if (pgx) begin eah <= eah + 8'd1; state <= ST_ABXC; end
+                               else exec_load(din_r); end                       // load, no cross: value here
+                ST_ABXC: exec_load(din_r);                                      // load, page-cross fixed read
 
                 // (indirect,X)
                 ST_IXF:  begin ptr <= din_r; PC <= PC + 16'd1; state <= ST_IXP; end
                 ST_IXP:  begin ptr <= ptr + X; state <= ST_IXA; end             // dummy read [00,ptr]; ptr+=X
                 ST_IXA:  begin eal <= din_r; state <= ST_IXB; end               // [00,ptr]   -> adl
-                ST_IXB:  begin eah <= din_r; state <= ST_LOAD; end              // [00,ptr+1] -> adh
+                ST_IXB:  begin eah <= din_r; state <= is_store ? ST_STORE : ST_LOAD; end   // [00,ptr+1] -> adh
 
                 // (indirect),Y
                 ST_IYF:  begin ptr <= din_r; PC <= PC + 16'd1; state <= ST_IYA; end
                 ST_IYA:  begin eal <= din_r; state <= ST_IYB; end               // [00,ptr]   -> adl
                 ST_IYB:  begin eah <= din_r; eal <= eal_plus_y[7:0]; pgx <= eal_plus_y[8]; state <= ST_IYRD; end
-                ST_IYRD: begin if (pgx) begin eah <= eah + 8'd1; state <= ST_IYC; end
+                ST_IYRD: begin if (is_store) begin eah <= eah + {7'd0, pgx}; state <= ST_STORE; end  // dummy read; fix; write
+                               else if (pgx) begin eah <= eah + 8'd1; state <= ST_IYC; end
                                else exec_load(din_r); end
                 ST_IYC:  exec_load(din_r);
 
-                // load terminal (zp / abs non-indexed / (zp,X))
-                ST_LOAD: exec_load(din_r);
+                // terminals
+                ST_LOAD:  exec_load(din_r);                                     // read [eah,eal] -> reg
+                ST_STORE: state <= ST_FETCH;                                    // write [eah,eal] <- reg (bus does it)
 
                 // NOP / JMP
                 ST_NOP1: state <= ST_FETCH;
