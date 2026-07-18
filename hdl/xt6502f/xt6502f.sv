@@ -113,6 +113,10 @@ module xt6502f #(
     // ---- read-group execute: apply `op` to the read value `v`, return to fetch -----
     task automatic exec_op(input [7:0] v);
         reg [7:0] r, res;
+        reg [8:0] sum9;      // binary add/sub with carry-out
+        reg [7:0] bres; reg bc, bv;
+        reg [5:0] al;   reg [9:0] inter; reg dn, dv, dc;   // NMOS decimal ADC
+        integer   al_i, a_i;                               // NMOS decimal SBC (signed)
         begin
             case (op)
                 OP_LD:  begin case (dst) 2'd0:A<=v; 2'd1:X<=v; 2'd2:Y<=v; default:; endcase
@@ -124,7 +128,43 @@ module xt6502f #(
                               res = r - v;
                               P <= {res[7], P[6:2], (r==v), (r>=v)}; end     // N, Z, C (V untouched)
                 OP_BIT: P <= {v[7], v[6], P[5:2], ((A & v)==8'h00), P[0]};   // N=v7, V=v6, Z=(A&M)
-                default: ;  // OP_ADC / OP_SBC added next
+
+                OP_ADC: begin
+                    sum9 = {1'b0,A} + {1'b0,v} + {8'd0,P[0]};
+                    bres = sum9[7:0];
+                    if (P[3]) begin                                          // NMOS decimal (Bruce Clark)
+                        al = {2'd0,A[3:0]} + {2'd0,v[3:0]} + {5'd0,P[0]};
+                        if (al > 6'h09) al = ((al + 6'h06) & 6'h0F) + 6'h10;
+                        inter = {2'd0,A[7:4],4'd0} + {2'd0,v[7:4],4'd0} + {4'd0,al};
+                        dn = inter[7];                                       // N, V from the intermediate
+                        dv = ((~(A ^ v)) & (A ^ inter[7:0]) & 8'h80) != 8'h00;
+                        if (inter > 10'h09F) inter = inter + 10'h060;
+                        dc = (inter > 10'h0FF);
+                        A <= inter[7:0];
+                        P <= {dn, dv, P[5:2], (bres==8'h00), dc};            // Z from the BINARY sum (quirk)
+                    end else begin
+                        bv = ((~(A ^ v)) & (A ^ bres) & 8'h80) != 8'h00;
+                        A <= bres;
+                        P <= {bres[7], bv, P[5:2], (bres==8'h00), sum9[8]};
+                    end
+                end
+                OP_SBC: begin
+                    sum9 = {1'b0,A} + {1'b0,~v} + {8'd0,P[0]};               // A + ~M + C
+                    bres = sum9[7:0]; bc = sum9[8];
+                    bv   = ((A ^ v) & (A ^ bres) & 8'h80) != 8'h00;
+                    if (P[3]) begin                                          // NMOS decimal: A adjusted, flags = BINARY
+                        al_i = (A & 'h0F) - (v & 'h0F) + P[0] - 1;
+                        if (al_i < 0) al_i = ((al_i - 6) & 'h0F) - 'h10;
+                        a_i  = (A & 'hF0) - (v & 'hF0) + al_i;
+                        if (a_i < 0) a_i = a_i - 'h60;
+                        A <= a_i[7:0];
+                        P <= {bres[7], bv, P[5:2], (bres==8'h00), bc};
+                    end else begin
+                        A <= bres;
+                        P <= {bres[7], bv, P[5:2], (bres==8'h00), bc};
+                    end
+                end
+                default: ;
             endcase
             state <= ST_FETCH;
         end
@@ -241,6 +281,24 @@ module xt6502f #(
                         // ---- BIT (zp/abs) ----
                         8'h24: begin op<=OP_BIT; eah<=0; state<=ST_ZPF; end
                         8'h2C: begin op<=OP_BIT; state<=ST_ABL; end
+                        // ---- ADC ----
+                        8'h69: begin op<=OP_ADC; state<=ST_IMM; end
+                        8'h65: begin op<=OP_ADC; eah<=0; state<=ST_ZPF; end
+                        8'h75: begin op<=OP_ADC; eah<=0; idx<=X; has_idx<=1; state<=ST_ZPF; end
+                        8'h6D: begin op<=OP_ADC; state<=ST_ABL; end
+                        8'h7D: begin op<=OP_ADC; idx<=X; has_idx<=1; state<=ST_ABL; end
+                        8'h79: begin op<=OP_ADC; idx<=Y; has_idx<=1; state<=ST_ABL; end
+                        8'h61: begin op<=OP_ADC; state<=ST_IXF; end
+                        8'h71: begin op<=OP_ADC; state<=ST_IYF; end
+                        // ---- SBC ----
+                        8'hE9: begin op<=OP_SBC; state<=ST_IMM; end
+                        8'hE5: begin op<=OP_SBC; eah<=0; state<=ST_ZPF; end
+                        8'hF5: begin op<=OP_SBC; eah<=0; idx<=X; has_idx<=1; state<=ST_ZPF; end
+                        8'hED: begin op<=OP_SBC; state<=ST_ABL; end
+                        8'hFD: begin op<=OP_SBC; idx<=X; has_idx<=1; state<=ST_ABL; end
+                        8'hF9: begin op<=OP_SBC; idx<=Y; has_idx<=1; state<=ST_ABL; end
+                        8'hE1: begin op<=OP_SBC; state<=ST_IXF; end
+                        8'hF1: begin op<=OP_SBC; state<=ST_IYF; end
                         // ---- control / nop ----
                         8'h4C: state <= ST_JMP1;                                // JMP abs
                         8'hEA: state <= ST_NOP1;                                // NOP
