@@ -97,6 +97,7 @@ static int desk_sel(void) { for (int i = 1; i <= n_icons; i++) if (desk[i].ob_st
  * the window's SCREEN rect (a client may not ask, §5). */
 #define XL_SCALE 2                      // 320x192 XL writeback -> a 640x384 work area
 static int g_xlwin;                     // window handle that owns the XL plane (0 = none)
+static int g_active;                    // focused window (WM_TOPPED); wind_top() ignores plane windows
 static void xl_sync(void);              // bind the XL plane to g_xlwin (M6 WIND_PLANE); see below
 
 static int read_default(const char *dir, char *out, int n) {
@@ -330,6 +331,7 @@ static void open_emulator(int type, const char *media, const char *boot) {
         g_xlwin = e->win;
         xl_sync();
     }
+    wind_raise(e->win);   // focus the new window so keys route to it at once (else a click is needed)
     // (wind_open redraws + presents the new window's rect)
 }
 // A minimal text-viewer window naming the file.  There is no process-spawn
@@ -2534,12 +2536,22 @@ void _app_entry(int argc, char **argv) {
         if (r & MU_QUIT) break;                      // gemd is gone: EOF on the channel
         net_pump();                                  // drain any arrived reply lines
         if (r & MU_KEYBD) {
-            /* A key. If the live 6502 emulator window is on top, the keystroke belongs to the
-             * Atari, not the desktop — meter it into POKEY (sys_kbd_6502 paces + injects the
-             * KBCODE, incl. Return/BREAK). Only when no emulator is topped does Esc quit. */
-            if (g_xlwin && wind_top() == g_xlwin) sys_kbd_6502(key & 0xFF);
-            else if (key == 0x1b) break;
+            /* A key. When the 6502 emulator is open it OWNS the keyboard, unless a browser
+             * window is the focused one (browsers are the only desktop windows that use keys).
+             * gemd focuses only on a click and its W_BOTTOM desktop is focused-not-topped, so a
+             * freshly opened emulator never wins an exact focus test — hence "not a browser"
+             * rather than "== g_xlwin". Keys meter into POKEY (sys_kbd_6502: pace + inject the
+             * KBCODE, incl. Return/BREAK). Esc quits only when no emulator is capturing. */
+            if (g_xlwin && !br_of_window(g_active)) {
+                int c = key & 0xFF;
+                /* The input layer reports Ctrl+letter as the plain letter + K_CTRL; fold it back
+                 * to a control code so Ctrl-C reaches kbd_6502 as 0x03 (= the Atari BREAK key). */
+                if ((ks & K_CTRL) && c >= 'a' && c <= 'z') c -= 0x60;
+                sys_kbd_6502(c);
+            } else if (key == 0x1b) break;
         }
+        if ((r & MU_MESAG) && msg[0] == WM_TOPPED)   g_active = msg[3];       // a window gained focus
+        if ((r & MU_MESAG) && msg[0] == WM_UNTOPPED && g_active == msg[3]) g_active = 0;  // lost it
         if ((r & MU_MESAG) && msg[0] == WM_CLOSED) {
             /* The closer, on one of OUR windows. gemd asked; it did not decide (§3). */
             browser *b = br_of_window(msg[3]);       // close cancels any in-flight request
