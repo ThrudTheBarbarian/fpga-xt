@@ -47,16 +47,23 @@ extern void  frtos_free(void *p, void *host);
 
 static void romwin_write(uint16_t a, const uint8_t *p, uint32_t n)
 {
-    for (uint32_t i = 0; i < n; i++)
-        ROMWIN_BASE[(uint32_t)a + i] = p[i];     /* byte lanes via WSTRB; the
-                                                  * loader back-pressures on B */
+    /* PACE every byte.  The sally_rom_loader does NOT actually back-pressure on
+     * a full FIFO — a tight A9 store loop outruns its clk_sys->clk_sally CDC
+     * drain (depth 4) and SILENTLY DROPS all but the last ~4 bytes of the burst.
+     * That was invisible for a ~128 B sector delivery (fits the residual) but
+     * corrupted the 49 KB OS upload: only the tail ($FFFC-$FFFF, the vectors)
+     * survived, so the reset vector got patched to a $CBD5 stub that itself was
+     * dropped -> reset fetched $00=BRK -> immediate derail (HW-proven).  Until
+     * the loader asserts real WREADY back-pressure (RTL follow-up), fence each
+     * byte so the FIFO empties between writes: dsb (one write in flight) + a
+     * short spin comfortably slower than the ~10 ns/entry clk_sally drain.
+     * ~60 KB * a few hundred ns = a few ms per launch — invisible. */
+    for (uint32_t i = 0; i < n; i++) {
+        ROMWIN_BASE[(uint32_t)a + i] = p[i];     /* byte lane via WSTRB */
+        __asm__ volatile("dsb");                 /* B-response before the next */
+        for (volatile int k = 0; k < 16; k++) { } /* let the depth-4 FIFO drain */
+    }
     __asm__ volatile("dsb");
-    /* The dsb waits for B-responses, not the loader's clk_sys->clk_sally CDC
-     * FIFO drain (depth 4).  For a DELIVERED sector this is a fence against the
-     * 6502 reading DBUF before delivery completes — but the FIFO drains in <=4
-     * clk_sally cycles (~40 ns) while the doorbell DONE handshake + plane reload
-     * + 6502 wake-up before the program touches its buffer is microseconds, so
-     * the residual bytes always land first.  A margin, not a coincidence. */
 }
 
 /* ---- the 6502 stubs (assembled from tools/xl_*_stub.s with xa; regenerate
@@ -237,6 +244,34 @@ static uint16_t find_padding(const uint8_t *img, uint32_t need, uint16_t from,
     return 0;
 }
 
+/* The XL OS coldstart self-checks its own ROM before booting: $FF73 16-bit-sums
+ * $C002-$CFFF + $5000-$57FF + $D800-$DFFF and compares to the value at $C000/$C001;
+ * $FF92 sums $E000-$FFF7 + $FFFA-$FFFF vs $FFF8/$FFF9.  A mismatch clears bit0 of the
+ * "$01" flag (LSR $01), and the coldstart then JMP $5003 into the built-in SELF-TEST
+ * instead of booting the disk.  Our patches (SIO stub + reset stub in $CBxx, the SIOV
+ * redirect at $E45A, the reset vector at $FFFC) all land inside those summed ranges, so
+ * both checksums break.  Re-point the two stored checksums by the exact delta our edits
+ * introduce.  $5000-$57FF is a separate self-test ROM we never touch, so it cancels out
+ * of the delta; `xl` is the pristine 16 KB image where orig[a] == xl[a-0xC000] for both
+ * the $C000-$CFFF and $D800-$FFFF windows.  (HW-proven: the /bin/6502 watchpoint on $01
+ * caught the LSR that this defeats.) */
+static void fix_os_checksums(uint8_t *img, const uint8_t *xl)
+{
+    static const struct { uint16_t lo, hi; } ra[2] = { {0xC002,0xD000}, {0xD800,0xE000} };
+    static const struct { uint16_t lo, hi; } rb[2] = { {0xE000,0xFFF8}, {0xFFFA,0x0000} };
+    uint16_t dA = 0, dB = 0;
+    for (int i = 0; i < 2; i++)
+        for (uint32_t a = ra[i].lo; a != ra[i].hi; a = (a + 1) & 0xFFFF)
+            dA = (uint16_t)(dA + img[a] - xl[a - 0xC000]);
+    for (int i = 0; i < 2; i++)
+        for (uint32_t a = rb[i].lo; a != rb[i].hi; a = (a + 1) & 0xFFFF)
+            dB = (uint16_t)(dB + img[a] - xl[a - 0xC000]);
+    uint16_t newA = (uint16_t)((xl[0x0000] | (xl[0x0001] << 8)) + dA);   /* stored @ $C000/1 */
+    uint16_t newB = (uint16_t)((xl[0x3FF8] | (xl[0x3FF9] << 8)) + dB);   /* stored @ $FFF8/9 */
+    img[0xC000] = (uint8_t)(newA & 0xFF); img[0xC001] = (uint8_t)(newA >> 8);
+    img[0xFFF8] = (uint8_t)(newB & 0xFF); img[0xFFF9] = (uint8_t)(newB >> 8);
+}
+
 static int build_patched_os(uint8_t *img /* 64K */)
 {
     static uint8_t xl[16384], ba[8192];
@@ -274,6 +309,9 @@ static int build_patched_os(uint8_t *img /* 64K */)
     img[rst_at + sizeof rst_stub - 1] = (uint8_t)(orig_rst >> 8);
     img[0xFFFC] = (uint8_t)(rst_at & 0xFF);
     img[0xFFFD] = (uint8_t)(rst_at >> 8);
+
+    /* Re-point the OS ROM self-checksums so the coldstart boots instead of self-testing. */
+    fix_os_checksums(img, xl);
 
     klog("[xl] OS patched: SIO stub @$"); klog_u(sio_at);
     klog(" reset stub @$"); klog_u(rst_at); klog("\r\n");

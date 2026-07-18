@@ -14,27 +14,31 @@ on `main` is the fast baseline; sel 0x9 + DBG_BEAM reserved for the future ANTIC
 debugger. **Next tools (user's roadmap):** ANTIC recorder + waterfall diff; 6502
 AND ANTIC breakpoints; step DLIs with beam position (wire DBG_BEAM).
 
-**XL app-launch — progress with the debugger (still OPEN):**
-- FIXED (found via the debugger): SALLYRST didn't clear ANTIC NMIEN or POKEY
-  IRQEN, so a launched OS inherited stale interrupt-enables and took a phantom
-  NMI/IRQ at its FIRST post-reset instruction, derailing to $0000 before
-  coldstart. Fix = power-on-clear NMIEN/DMACTL (antic_regs) + IRQEN/latches
-  (pokey_regs) while SALLYRST held (cold_boot). Natural `xlboot` now RUNS
-  coldstart instead of derailing. See [[xl-coldstart-nmi-derail]].
-- OPEN blocker: coldstart runs but enters the **self-test** ($5000-$57FF, loops
-  $532D↔$53BC forever) and NEVER calls DSKINV ($E453) or SIOV ($E459) — proven
-  with breakpoints — so the disk is never booted and the paravirtual SIO doorbell
-  never rings. WHY coldstart diverts to self-test instead of booting D1: is the
-  next question (Atari-OS behaviour; suspects: RAM test looping on a sally_mem
-  quirk / math-page $4000-$5FFF or screen-banking overlap; PUPBT/console-key
-  path). Debug it: `6502 break` coldstart milestones from $C2AA and step to find
-  the branch into $5000.
-- Gotcha: rom_we (ROM-window) writes commit to the CPU's mem[] only while
-  SALLYRST is HELD, not while the debugger merely rdy-halts the core — so debug
-  read-probes that write the ROM window mid-halt read STALE ROM.
-- Branch hygiene: the debugger + the two interrupt fixes live on `debug`. The
-  NMIEN/IRQEN fixes are real app-launch fixes and should land on `main` too once
-  the launch is proven end-to-end (cherry-pick).
+**XL app-launch — WORKING END-TO-END 2026-07-18.** `xlboot DespatchRider.atr` boots:
+HW dmesg shows SIO STATUS ($53) + READ ($52) of boot sectors 1..$27 into $0400 via
+the doorbell→math-mailbox→A9 SIO worker, all st=01; the 6502 runs boot+game code
+(351 distinct PCs). Two real blockers, both found with the new debug tools:
+1. **Bulk ROM-window upload dropped the OS patch.** `sally_rom_loader` does NOT
+   back-pressure; a tight 49 KB `romwin_write` store loop outran its depth-4 CDC
+   drain and dropped all but the tail ($FFFC-$FFFF), so the reset stub never landed →
+   reset fetched $00=BRK → derail. FIX (kernel): pace `romwin_write` (dsb + spin per
+   byte). *(RTL follow-up: give the loader real WREADY back-pressure.)*
+2. **OS ROM self-checksum** rejected the patched image → self-test. Coldstart $FF73
+   sums $C002-$CFFF+$5000-$57FF+$D800-$DFFF vs $C000/1, $FF92 sums $E000-$FFF7+
+   $FFFA-$FFFF vs $FFF8/9; mismatch does `LSR $01`→$01=0→`JMP $5003` self-test. Our
+   patches break both. FIX: `fix_os_checksums()` re-points $C000/1 and $FFF8/9 by the
+   patch delta. FOUND via `6502 watch $01 w`. See [[xl-app-launch]].
+- The earlier NMIEN/IRQEN/PORTB "fixes" were DERAIL AFTERMATH, not the cause — kept as
+  valid hardening. The self-test was corruption, not a coldstart decision, until (2).
+- **Debugger: breakpoint is reliable** (was never broken — earlier misses were the
+  derail aftermath + incoherent run-state PC reads). Added `6502 diag` (self-observability)
+  and a **data watchpoint** `6502 watch $A r|w|rw` (DBG_WP/WPCFG). Build #7 clk_sally
+  WNS +0.154. Docs: `docs/OS/6502-debug.md`.
+- Gotcha: rom_we (ROM-window) writes commit to the CPU's mem[] fine while SALLYRST is
+  held, BUT a fast burst overflows the loader FIFO (see blocker 1); pace it.
+- Branch hygiene: debugger + all fixes live on `debug`; cherry-pick to `main`.
+- **Next tools (user roadmap):** ANTIC recorder + waterfall diff; 6502 AND ANTIC
+  breakpoints; step DLIs with beam position (wire DBG_BEAM).
 
 ## Open Issues (tracked bugs)
 - **Retire the per-switch `TLBIALL` sledgehammer (residual stale image-region TLB entry).**
@@ -356,7 +360,11 @@ AND ANTIC breakpoints; step DLIs with beam position (wire DBG_BEAM).
       path (~0.3–0.5 ns ≈ 1 LUT level). Current operating point is **100 MHz** (`clk_sally`
       100 / `clk_sys` 133 / `clk_pix` 148; 120 no longer closes off-the-shelf), so there's
       more headroom than the old 120 target — but it still eats margin on the binding
-      family, so gate any build on `clk_sally` WNS ≥ 0.
+      family, so gate any build on `clk_sally` WNS ≥ 0. **Written up as a build in
+      docs/Design/dual-cpu-resident-mux.md** — reuses `sally_clock` as the fidelity-core
+      cycle-enable (no 1.79 MHz clock domain, no CDC) and the `xt6502_debug`
+      snapshot/inject ports as the core-to-core state handoff, so it is mostly wiring;
+      §5 there gives the mux-retime mitigations if the one LUT-level won't close.
     - **(B) Partial Reconfiguration** — CPU in a Reconfigurable Partition, swap the core
       via a small partial bitstream over PCAP from the A9 (sub-ms, invisible at launch),
       **HDMI/ANTIC/compositor/PS-links stay live**. Removes the 2:1 mux. *Catch:* the RP
@@ -375,10 +383,16 @@ AND ANTIC breakpoints; step DLIs with beam position (wire DBG_BEAM).
       builds, no mux, no boundary), but a full reload **blanks the whole display + re-syncs
       PS↔PL** every launch (bad UX). Rejected unless the display teardown becomes
       acceptable.
-  - **Recommendation:** (B) is the architecturally correct answer for "swap the CPU while
-    the desktop/video stays alive" — *provided* the RP is floorplanned around the
-    CPU↔memory critical loop. Sequence it **after** stable illegals land, and only when
-    cycle-exact faithful mode is actually wanted.
+  - **Recommendation (updated 2026-07-18):** start with **(A)** — on the LUT-rich 7020 a
+    second resident 6502 is a rounding error in area (~1.9k LUT, **0 binding BRAM** — the
+    fidelity core is logic; the 22 BRAM live once in the shared `sally_mem`), and (A)
+    avoids the entire DFX flow + partition-pin fence. Its lone cost is one 2:1 LUT on the
+    binding path, self-gated by our WNS-≥0 build abort. **(B) PR is the fMax-purist
+    fallback** if that LUT-level won't close after the docs/Design/dual-cpu-resident-mux.md
+    §5 mitigations — it removes the mux at the price of the RP fence. Either way, sequence
+    it **after** stable illegals land, and only when cycle-exact faithful mode is actually
+    wanted. (Prior recommendation was (B); flipped because the resident-mux handoff turned
+    out to reuse existing infrastructure — `sally_clock` + the debug inject ports.)
 
 > See also the parked branch `xt-embellishment-relocate` (opcode relocation to free
 > the cc=11 undoc territory; ISA-correct but costs ~150 ps — cherry-pick after fmax
