@@ -20,8 +20,11 @@ per docs/Design/dual-cpu-resident-mux.md). Refs: MOS datasheet
   `sim/tb_xt6502f_irq.sv` (all pass); Harte ties the lines inactive so the ISA is unaffected.
   Refinements left: exact Φ2 sample slot (CLI/SEI/PLP one-instruction delay) + RESET-as-
   interrupt sequencing.
-- **Phase 4** — debug sub-cycle slots: early/late sample (clocks 2-4 / 53-55), retire-slot
-  bkpt/wp/trace, inject; wire the GP0 DEBUG block + `/bin/6502` cycle-level additions.
+- **Phase 4 debug slots DONE** (RTL + sim) — `hdl/xt6502f/xt6502f_debug.sv`: two coherent
+  sample windows (early cycle-entry / late settled), break-before-execute PC bkpt + data wp
+  (halt drives cpu_halt -> rdy-gate), single-instruction step, per-cycle trace ring.
+  Bench `sim/tb_xt6502f_dbg.sv` (all pass). Left for Phase 5: wire cpu_halt/bkpt/wp/trace to
+  the GP0 DEBUG block + `/bin/6502` cycle-level additions once the core is in the SoC.
 - **Phase 5** — resident 2:1 bus mux + turbo<->fidelity handoff (instruction-boundary only);
   gate the build on clk_sally WNS ≥ 0.
 - **Phase 6** — HW bring-up: cold-load, run the OS/games on the fidelity core, chase the

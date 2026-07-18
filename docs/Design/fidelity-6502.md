@@ -239,8 +239,10 @@ capabilities (cycle step, micro-PC, bus trace) are additive registers.
    sequence, B-clear on the pushed status, NMI-vector hijack of BRK/IRQ, RTI. Directed bench
    `sim/tb_xt6502f_irq` (Harte ties the lines inactive). *Remaining refinements: the exact
    Φ2 sample slot for the CLI/SEI/PLP one-instruction delay + RESET-as-interrupt sequencing.*
-4. **Debug slots** — early/late sample, retire-slot bkpt/wp/trace, inject; wire the GP0
-   DEBUG block + `/bin/6502` cycle-level additions.
+4. **Debug slots** ✅ (RTL + sim) — `hdl/xt6502f/xt6502f_debug.sv`: coherent early/late
+   snapshots, break-before-execute PC bkpt + data wp (halt via the rdy-gate), single-step,
+   per-cycle trace ring. Bench `sim/tb_xt6502f_dbg`. *Left: wire to the GP0 DEBUG block +
+   `/bin/6502` cycle-level additions — lands with the SoC integration (Phase 5).*
 5. **Resident mux + hand-off** — 2:1 bus mux, per-core enable, turbo↔fidelity switch via
    inject; gate the build on `clk_sally` WNS ≥ 0 (the one mux LUT).
 6. **HW bring-up + validation** — cold-load, run the OS/games on the fidelity core, chase
