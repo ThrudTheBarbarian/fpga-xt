@@ -85,7 +85,8 @@ module xt6502f #(
         ST_JSR1=37, ST_JSR2=38, ST_JSR3=39, ST_JSR4=40, ST_JSR5=41,   // JSR
         ST_RTS1=42, ST_RTS2=43, ST_RTS3=44, ST_RTS4=45, ST_RTS5=46,   // RTS
         ST_RTI1=47, ST_RTI2=48, ST_RTI3=49, ST_RTI4=50, ST_RTI5=51,   // RTI
-        ST_BRK1=52, ST_BRK2=53, ST_BRK3=54, ST_BRK4=55, ST_BRK5=56, ST_BRK6=57; // BRK
+        ST_BRK1=52, ST_BRK2=53, ST_BRK3=54, ST_BRK4=55, ST_BRK5=56, ST_BRK6=57, // BRK
+        ST_JMPI1=58, ST_JMPI2=59, ST_JMPI3=60, ST_JMPI4=61;  // JMP (ind): ptrL, ptrH, tgtL, tgtH(page-wrap)
     reg [5:0] state;
     reg [2:0] rst_cnt;
     reg [7:0] ir;
@@ -111,7 +112,8 @@ module xt6502f #(
             ST_VECL: addr_c = 16'hFFFC;
             ST_VECH: addr_c = 16'hFFFD;
             ST_LOAD, ST_STORE, ST_ZPI, ST_ABX, ST_ABXC, ST_IYRD, ST_IYC,
-            ST_RMW_RD, ST_RMW_W0, ST_RMW_W1, ST_RTS5: addr_c = {eah, eal};
+            ST_RMW_RD, ST_RMW_W0, ST_RMW_W1, ST_RTS5,
+            ST_JMPI3, ST_JMPI4: addr_c = {eah, eal};
             ST_IXP, ST_IXA, ST_IYA: addr_c = {8'h00, ptr};
             ST_IXB, ST_IYB:         addr_c = {8'h00, ptr + 8'd1};   // zp wrap
             ST_PH2, ST_PL2, ST_PL3, ST_JSR2, ST_JSR3, ST_JSR4,      // stack access = {01, S}
@@ -418,6 +420,7 @@ module xt6502f #(
                         8'h00: state <= ST_BRK1;                                // BRK
                         // ---- control / nop ----
                         8'h4C: state <= ST_JMP1;                                // JMP abs
+                        8'h6C: state <= ST_JMPI1;                               // JMP (ind)
                         8'hEA: state <= ST_IMPL;                                // NOP
                         default: state <= ST_IMPL;                              // unimpl -> NOP (fails Harte)
                     endcase
@@ -468,6 +471,11 @@ module xt6502f #(
                 ST_IMPL: begin exec_impl; state <= ST_FETCH; end
                 ST_JMP1: begin eal <= din_r; PC <= PC + 16'd1; state <= ST_JMP2; end
                 ST_JMP2: begin PC <= {din_r, eal}; state <= ST_FETCH; end
+                // JMP (indirect): fetch pointer, then read target — high byte wraps in-page ($xxFF bug)
+                ST_JMPI1: begin eal <= din_r; PC <= PC + 16'd1; state <= ST_JMPI2; end  // ptr ADL
+                ST_JMPI2: begin eah <= din_r; state <= ST_JMPI3; end                    // ptr ADH
+                ST_JMPI3: begin ptr <= din_r; eal <= eal + 8'd1; state <= ST_JMPI4; end // tgt lo; ptr++ (8-bit wrap)
+                ST_JMPI4: begin PC <= {din_r, ptr}; state <= ST_FETCH; end              // tgt hi; PC = {hi,lo}
 
                 // branches: fetch offset + test condition; if taken, add (with page-cross cycle)
                 ST_BRA: begin
