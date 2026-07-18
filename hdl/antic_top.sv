@@ -1147,7 +1147,15 @@ module antic_top #(
         .raddr         (read_addr_w),
         .rdata         (pia_read_data),   // boot blocker #3: feed PIA reads to the bus mux
         .joy_porta_in  (w_joy_porta_in),
-        .joy_portb_in  (w_joy_portb_in),
+        // XL/XE PORTB is MEMORY MANAGEMENT (OS-ROM/BASIC/self-test/bank), NOT a
+        // joystick port (only the 400/800 had joysticks 3/4 on PORTB; the XL has 2
+        // ports, both on PORTA). Its input-configured bits float high. Routing the
+        // companion's joystick reads here made the OS read OS-ROM-enable (bit0) as a
+        // joystick 0 and its PORTB read-modify-write turned the OS ROM OFF mid-
+        // coldstart (STA $D301 at $C310, banking in the self-test) -> next fetch = RAM
+        // -> BRK/IRQ derail. Tie to all-1s: input bits read high, so the RMW keeps the
+        // driven memory-management bits intact. Found via /bin/6502 (breakpoint+trace).
+        .joy_portb_in  (8'hFF),
         .joy_porta_out (w_joy_porta_out),
         .joy_porta_oe  (w_joy_porta_oe),
         .joy_portb_out (w_joy_portb_out),
