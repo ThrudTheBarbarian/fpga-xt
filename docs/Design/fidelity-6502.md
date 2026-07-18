@@ -208,10 +208,21 @@ capabilities (cycle step, micro-PC, bus trace) are additive registers.
   cheaply, reusing the turbo core as an oracle.
 - **Altirra as the gold standard** for cycle-level bus + timing (Altirra's cycle traces
   are the reference the community trusts).
-- **Test suites:** Klaus functional ([[klaus-conformance]]), the NMOS illegal-opcode +
-  decimal suites (Lorenz / the "6502 decimal test"), and a cycle-accurate bus test
-  (per-cycle read/write log compare). PoP's illegal-op needs ([[pop-illegal-opcodes]])
-  are a subset.
+- **Test suites (ranked for a cycle-exact NMOS-with-decimal core):**
+  1. **Tom Harte "ProcessorTests / 65x02"** — the cycle-exact spine. Per-opcode JSON
+     (~10k cases/opcode): initial `{PC,S,A,X,Y,P,RAM}` → final state **+ a per-cycle
+     `[addr,value,r/w]` list**; ground-truth from perfect6502/visual6502, covers **all
+     256 opcodes incl. illegals + unstable**. A JSON→tb harness injects each case, runs
+     the opcode, and diffs BOTH final regs AND our cycle-by-cycle bus trace — validates
+     the sub-slotted phi1/phi2 model directly, not just end-state.
+  2. **Klaus Dörmann** — functional ([[klaus-conformance]], already passing on xt6502),
+     the decimal test (all ADC/SBC combos + NMOS N/V/Z quirk), and the interrupt test.
+  3. **Lorenz (C64) suite** — breadth on illegals + timing + flags (C64 load-and-trap
+     harness; more plumbing than Harte JSON).
+  4. **Blargg** — cross-check only: `cpu_dummy_reads`/`cpu_dummy_writes` + illegal
+     *results* are useful, but he targets the NES 2A03 (**decimal disabled**), so his BCD
+     expectations do NOT apply and the harness is NES-specific. Superseded for us by (1).
+  PoP's illegal-op needs ([[pop-illegal-opcodes]]) are a subset of (1)/(3).
 - **On HW**, the debug facility validates itself: single-step + cycle trace + bus watch
   reproduce Altirra's per-cycle log for a captured sequence.
 
@@ -231,18 +242,18 @@ capabilities (cycle step, micro-PC, bus trace) are additive registers.
 6. **HW bring-up + validation** — cold-load, run the OS/games on the fidelity core, chase
    the fidelity backlog (the magenta palette, garbled tiles, input) *on the right core*.
 
-## 9. Open decisions (settle before/while building)
+## 9. Decisions (settled 2026-07-18)
 
-- **Window size N** — fixed 56, or track `clk_sally`/`BASE_DIV` (so a future clock
-  operating-point change doesn't desync)? Lean: derive from `BASE_DIV`, one source of
-  truth with `sally_clock`.
-- **Unstable-illegal convention** — pick the magic constant + SH\* behavior; document.
-- **Sequencer encoding** — micro-ROM (`$readmemh` control words) vs structured RTL
-  addressing-mode FSMs. Lean: mode-FSMs for the cadence + a small op ALU, most readable
-  and observable; revisit if it sprawls.
-- **Handoff cycle-boundary semantics** — turbo↔fidelity switch only at an instruction
-  boundary (clean) — confirm the mid-instruction state (micro-PC) is never handed over.
-- **Trace granularity default** — per-instruction (like today) with a per-cycle mode,
-  or per-cycle default given the budget.
-- **KIL/JAM policy** — halt + flag to the debugger (recommended) vs emulate the true
-  bus-lockup.
+1. **Window size N** — **derive from the clk_sally operating point** (`N = CLK_SALLY_HZ /
+   PHI2_HZ`), and derive every phase-constant symbolically from N. One knob: a 120 MHz+
+   point just widens the window (more slack), no hand-tuning. *(Implemented in xt6502f.)*
+2. **Unstable illegals** — model the **most-common documented result, fixed** (ANE/LXA/
+   SHA/SHX/SHY/TAS). No per-run/analog variability — not worth the cleverness.
+3. **Sequencer encoding** — **structured addressing-mode FSMs + a small op-ALU** (most
+   readable/observable); revisit only if it sprawls.
+4. **Handoff** — turbo↔fidelity switch **at instruction boundaries only**; a
+   mid-instruction micro-PC is never handed over.
+5. **Trace granularity** — **per-instruction** default (a per-cycle mode remains available
+   given the budget).
+6. **KIL/JAM** — **halt and surface to the debugger** (a diagnosable state), not a silent
+   bus lock-up.

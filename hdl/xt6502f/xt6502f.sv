@@ -18,10 +18,10 @@
 `default_nettype none
 
 module xt6502f #(
-    // Slots within the machine-cycle window, in `sub` (clocks since phi2_tick).
-    // Derive from sally_clock's BASE_DIV on HW (BASE_DIV-3 etc.); small for fast sim.
-    parameter int unsigned SUB_DATA   = 4,   // latch data_in here (phi2 read)
-    parameter int unsigned SUB_COMMIT = 6    // advance FSM + arch regs here (retire)
+    // ONE knob: the clk_sally operating point. Everything scales from it, so a future
+    // 120 MHz+ point just widens the window (more slack), no hand-tuning. (Decision 1.)
+    parameter int unsigned CLK_SALLY_HZ = 100_000_000,  // clk_sally (max operating point)
+    parameter int unsigned PHI2_HZ      = 1_789_773     // emulated phi2: NTSC (PAL 1_773_447)
 ) (
     input  wire        clk,          // clk_sally
     input  wire        rst,          // synchronous reset (power-on / SALLYRST)
@@ -44,17 +44,23 @@ module xt6502f #(
     output wire  [7:0] dbg_y,
     output wire  [7:0] dbg_s,
     output wire  [7:0] dbg_p,
-    output wire  [3:0] dbg_sub       // window position, for observability
+    output wire  [7:0] dbg_sub       // window position, for observability
 );
-    // ---- machine-cycle window: `sub` = clocks since the last phi2_tick -------------
-    reg [5:0] sub;
+    // ---- machine-cycle window: N clk_sally per emulated 6502 cycle -----------------
+    // N and the phase-constants are all derived from the one knob (symbolic).
+    localparam int unsigned N          = CLK_SALLY_HZ / PHI2_HZ;   // ~56 @100MHz, ~67 @120MHz
+    localparam int unsigned SUB_DATA   = N - 7;   // phi2 read-latch (late; ~sub 49 @N=56)
+    localparam int unsigned SUB_COMMIT = N - 3;   // retire / arch commit (~sub 53 @N=56)
+
+    // `sub` = clocks since the last phi2_tick (8-bit covers N up to 255).
+    reg [7:0] sub;
     always @(posedge clk) begin
-        if (rst)            sub <= 6'd0;
-        else if (phi2_tick) sub <= 6'd0;
-        else                sub <= sub + 6'd1;
+        if (rst)            sub <= 8'd0;
+        else if (phi2_tick) sub <= 8'd0;
+        else                sub <= sub + 8'd1;
     end
-    wire slot_data   = (sub == SUB_DATA[5:0]);
-    wire slot_commit = (sub == SUB_COMMIT[5:0]);
+    wire slot_data   = (sub == SUB_DATA[7:0]);
+    wire slot_commit = (sub == SUB_COMMIT[7:0]);
 
     // ---- architectural state -------------------------------------------------------
     reg [15:0] PC;
@@ -130,7 +136,7 @@ module xt6502f #(
     assign dbg_pc  = PC;
     assign dbg_a   = A;   assign dbg_x = X;  assign dbg_y = Y;
     assign dbg_s   = S;   assign dbg_p = P;
-    assign dbg_sub = sub[3:0];
+    assign dbg_sub = sub;
 endmodule
 
 `default_nettype wire

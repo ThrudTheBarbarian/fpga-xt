@@ -9,8 +9,10 @@ module tb_xt6502f;
     reg clk = 0; always #5 clk = ~clk;
     reg rst = 1;
 
-    // machine-cycle pacing: phi2_tick once per SUB_N clocks (small for fast sim)
-    localparam int unsigned SUB_N = 8;
+    // machine-cycle pacing derived from the core's one knob (small clk -> small N, fast sim)
+    localparam int unsigned PHI2_HZ = 1_789_773;
+    localparam int unsigned CLK_HZ  = 8 * PHI2_HZ;             // -> N = 8
+    localparam int unsigned SUB_N   = CLK_HZ / PHI2_HZ;
     reg [3:0] tc = 0;
     always @(posedge clk) tc <= (tc == SUB_N-1) ? 4'd0 : tc + 4'd1;
     wire phi2_tick = (tc == SUB_N-1);
@@ -19,9 +21,9 @@ module tb_xt6502f;
     reg  [7:0]  data_in;
     reg         rdy = 1'b1;
     wire        sync;
-    wire [15:0] dbg_pc; wire [7:0] dbg_a, dbg_x, dbg_y, dbg_s, dbg_p; wire [3:0] dbg_sub;
+    wire [15:0] dbg_pc; wire [7:0] dbg_a, dbg_x, dbg_y, dbg_s, dbg_p; wire [7:0] dbg_sub;
 
-    xt6502f #(.SUB_DATA(4), .SUB_COMMIT(6)) dut (
+    xt6502f #(.CLK_SALLY_HZ(CLK_HZ), .PHI2_HZ(PHI2_HZ)) dut (
         .clk(clk), .rst(rst), .phi2_tick(phi2_tick),
         .addr(addr), .data_in(data_in), .data_out(data_out), .rw(rw),
         .rdy(rdy), .irq_n(1'b1), .nmi_n(1'b1),
@@ -42,7 +44,7 @@ module tb_xt6502f;
         if (rst) begin nfetch <= 0; seen_this_win <= 0; end
         else begin
             if (phi2_tick) seen_this_win <= 0;
-            else if (sync && dbg_sub == 4'd3 && !seen_this_win && nfetch < 16) begin
+            else if (sync && dbg_sub == 8'd3 && !seen_this_win && nfetch < 16) begin
                 fetchpc[nfetch] <= dbg_pc;   // PC before the commit-time increment
                 nfetch <= nfetch + 1;
                 seen_this_win <= 1;
