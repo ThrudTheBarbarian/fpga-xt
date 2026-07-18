@@ -97,6 +97,7 @@ module xt6502f #(
     reg       pgx;       // page cross pending (indexed abs / (zp),Y)
     reg       is_store;  // writes the register to memory
     reg       is_rmw;    // read-modify-write to memory (double-write)
+    reg       sax;       // store source = A & X (illegal SAX)
 
     // operation applied at the value terminal (read-group ALU + RMW ALU)
     localparam [3:0] OP_LD=0, OP_AND=1, OP_ORA=2, OP_EOR=3, OP_CMP=4, OP_BIT=5, OP_ADC=6, OP_SBC=7,
@@ -137,6 +138,7 @@ module xt6502f #(
         (state==ST_JSR4 || state==ST_BRK3)  ? PC[7:0]  :             // push PCL
         (state==ST_BRK4)                    ? (P | 8'h30) :          // push P (B set)
         (state==ST_PH2)                     ? ((ir==8'h48) ? A : (P | 8'h30)) : // PHA : PHP
+        sax                                 ? (A & X) :                 // SAX store (A&X)
                                               ((dst==2'd0) ? A : (dst==2'd1) ? X : Y); // store reg
     assign sync = (state == ST_FETCH);
     wire   advance  = slot_commit && rdy;
@@ -261,7 +263,7 @@ module xt6502f #(
             A <= 0; X <= 0; Y <= 0; S <= 8'hFD; P <= 8'h34;
             ir <= 8'hEA; eal <= 0; eah <= 0; ptr <= 0; idx <= 0; din_r <= 0;
             dst <= 0; has_idx <= 0; pgx <= 0; is_store <= 0; is_rmw <= 0; op <= OP_LD;
-            rmw_val <= 0; rmw_mod <= 0;
+            rmw_val <= 0; rmw_mod <= 0; sax <= 0;
         end else if (dbg_load) begin
             PC <= dbg_pc_in; A <= dbg_a_in; X <= dbg_x_in; Y <= dbg_y_in;
             S <= dbg_s_in; P <= dbg_p_in; state <= ST_FETCH; ir <= 8'hEA;
@@ -273,7 +275,7 @@ module xt6502f #(
 
                 ST_FETCH: begin
                     ir <= din_r; PC <= PC + 16'd1;
-                    has_idx <= 1'b0; pgx <= 1'b0; is_store <= 1'b0; is_rmw <= 1'b0; op <= OP_LD;
+                    has_idx <= 1'b0; pgx <= 1'b0; is_store <= 1'b0; is_rmw <= 1'b0; op <= OP_LD; sax <= 1'b0;
                     case (din_r)
                         // ---- immediate loads ----
                         8'hA9: begin dst <= 2'd0; state <= ST_IMM; end          // LDA #
@@ -439,6 +441,18 @@ module xt6502f #(
                             begin op<=OP_NOP; idx<=X; has_idx<=1; state<=ST_ABL; end
                         // ---- SBC #imm (illegal, == $E9) ----
                         8'hEB: begin op<=OP_SBC; state<=ST_IMM; end
+                        // ---- LAX (illegal): load A and X ----
+                        8'hA7: begin op<=OP_LAX; eah<=0; state<=ST_ZPF; end                          // LAX zp
+                        8'hB7: begin op<=OP_LAX; eah<=0; idx<=Y; has_idx<=1; state<=ST_ZPF; end       // LAX zp,Y
+                        8'hAF: begin op<=OP_LAX; state<=ST_ABL; end                                   // LAX abs
+                        8'hBF: begin op<=OP_LAX; idx<=Y; has_idx<=1; state<=ST_ABL; end                // LAX abs,Y
+                        8'hA3: begin op<=OP_LAX; state<=ST_IXF; end                                   // LAX (zp,X)
+                        8'hB3: begin op<=OP_LAX; state<=ST_IYF; end                                   // LAX (zp),Y
+                        // ---- SAX (illegal): store A & X (no flags) ----
+                        8'h87: begin is_store<=1; sax<=1; eah<=0; state<=ST_ZPF; end                  // SAX zp
+                        8'h97: begin is_store<=1; sax<=1; eah<=0; idx<=Y; has_idx<=1; state<=ST_ZPF; end // SAX zp,Y
+                        8'h8F: begin is_store<=1; sax<=1; state<=ST_ABL; end                          // SAX abs
+                        8'h83: begin is_store<=1; sax<=1; state<=ST_IXF; end                          // SAX (zp,X)
                         default: state <= ST_IMPL;                              // unimpl -> NOP (fails Harte)
                     endcase
                 end
