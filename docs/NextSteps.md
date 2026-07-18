@@ -25,16 +25,21 @@ per docs/Design/dual-cpu-resident-mux.md). Refs: MOS datasheet
   (halt drives cpu_halt -> rdy-gate), single-instruction step, per-cycle trace ring.
   Bench `sim/tb_xt6502f_dbg.sv` (all pass). Left for Phase 5: wire cpu_halt/bkpt/wp/trace to
   the GP0 DEBUG block + `/bin/6502` cycle-level additions once the core is in the SoC.
-- **Phase 5 handoff FSM DONE** (RTL + sim) — `hdl/xt6502f/cpu_handoff.sv`: bus-mux owner bit,
-  per-core freeze (run=0), quiesce-at-boundary -> snapshot {PC,A,X,Y,S,P} -> inject -> flip.
-  Bench `sim/tb_cpu_handoff.sv` (two xt6502f + shared mem): idle core frozen, target
-  re-anchors at the exact snapshot PC, shared counter contiguous across A->B->A. **Left (SoC
-  + board):** wire into `fpga_xt_top` — instantiate `xt6502f` + `xt6502f_debug` alongside
-  turbo `xt6502`, the one binding-path 2:1 `mem_addr` mux, a 2nd `sally_clock` at MULT=1,
-  fold `busy` into the fidelity `rdy`, drive `switch_req` from a GP0/CTRL bit, wire the
-  fidelity debug to the GP0 DEBUG block; then a WNS≥0 bitstream. Decisions to confirm first:
-  turbo-side snapshot port mapping (repack to `xt6502_debug` dbg_wr/wpc/waxys/wpsh), and
-  whether turbo sheds illegal/decimal/RMW decode now that fidelity owns accuracy (§0a).
+- **Phase 5 SoC integration BUILT + TIMING-CLOSED** — the fidelity `xt6502f` is resident in
+  `fpga_xt_top` alongside turbo `xt6502`: `cpu_*` is the muxed active-core bus, `cpu_sel`
+  (=`sallyrst[1]`, 2-FF synced) picks the owner, default 0 = turbo (shipping system
+  bit-identical). Free-running phi2 window (N=56) + busy-aware `mem_ok` gate (SUB_DATA=49) +
+  /HALT. **Bitstream closes: clk_sally WNS = 0.000 ns** (the binding-path 2:1 mux — mux doc
+  §5 — closes, but at ZERO margin). `vivado/build/fpga_xt_top.bit` built (Explore).
+  - Handoff FSM `cpu_handoff.sv` (sim-proven) is NOT yet wired in — this build just proves
+    residency + mux timing, and lets the OS boot on either core (set `sallyrst[1]` before
+    releasing SALLYRST).
+  - **HW test (needs board):** cold-load; confirm turbo unchanged (cpu_sel=0); then
+    `sallyrst[1]=1` + SALLYRST cycle -> OS boots on the fidelity core at real 1x speed.
+  - **Follow-ups:** clk_sally has zero slack — if HW is marginal, retime the mux into the
+    shared MAR D-input (mux doc §5.1) to reclaim margin. Then wire cpu_handoff (live switch;
+    turbo snapshot via cdbg_* raw taps, inject via idbg_* muxed with xt6502_debug) + the
+    fidelity debug to a GP0 block. Turbo specialization (§0a) deferred per the user.
 - **Phase 6** — HW bring-up: cold-load, run the OS/games on the fidelity core, chase the
   fidelity backlog (magenta palette, garbled tiles, input) ON the right core.
 
