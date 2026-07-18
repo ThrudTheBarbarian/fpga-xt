@@ -66,7 +66,7 @@ module xt6502f #(
     reg  [7:0] A, X, Y, S, P;
 
     // ---- micro-state ---------------------------------------------------------------
-    localparam [5:0]
+    localparam [6:0]
         ST_RST=0, ST_VECL=1, ST_VECH=2, ST_FETCH=3,
         ST_IMPL=4, ST_JMP1=5, ST_JMP2=6,
         ST_IMM=7,                          // immediate: operand = value
@@ -87,8 +87,10 @@ module xt6502f #(
         ST_RTI1=47, ST_RTI2=48, ST_RTI3=49, ST_RTI4=50, ST_RTI5=51,   // RTI
         ST_BRK1=52, ST_BRK2=53, ST_BRK3=54, ST_BRK4=55, ST_BRK5=56, ST_BRK6=57, // BRK
         ST_JMPI1=58, ST_JMPI2=59, ST_JMPI3=60, ST_JMPI4=61,  // JMP (ind): ptrL, ptrH, tgtL, tgtH(page-wrap)
-        ST_IMMILL=62;                                        // illegal immediate-ALU (ANC/ALR/ARR/XAA/LXA/SBX)
-    reg [5:0] state;
+        ST_IMMILL=62,                                        // illegal immediate-ALU (ANC/ALR/ARR/XAA/LXA/SBX)
+        ST_JAM=63;                                           // KIL/JAM: lock up (Harte 11-cycle trace, then frozen)
+    reg [6:0] state;
+    reg [3:0] jam_cnt;   // JAM machine-cycle index (drives the lock-up address dance)
     reg [2:0] rst_cnt;
     reg [7:0] ir;
     reg [7:0] eal, eah, ptr, idx, din_r;
@@ -107,7 +109,7 @@ module xt6502f #(
                      OP_ASL=8, OP_LSR=9, OP_ROL=10, OP_ROR=11, OP_INC=12, OP_DEC=13,
                      OP_NOP=14, OP_LAX=15;   // OP_NOP: read-and-discard; OP_LAX: load A and X (illegal)
     reg [3:0] op;
-    wire [5:0] mem_term = is_rmw ? ST_RMW_RD : is_store ? ST_STORE : ST_LOAD;  // terminal after EA
+    wire [6:0] mem_term = is_rmw ? ST_RMW_RD : is_store ? ST_STORE : ST_LOAD;  // terminal after EA
 
     // ---- address source for the current cycle --------------------------------------
     reg [15:0] addr_c;
@@ -126,6 +128,9 @@ module xt6502f #(
             ST_BRK2, ST_BRK3, ST_BRK4: addr_c = {8'h01, S};
             ST_BRK5: addr_c = 16'hFFFE;                             // IRQ/BRK vector
             ST_BRK6: addr_c = 16'hFFFF;
+            ST_JAM:  addr_c = (jam_cnt==4'd0) ? PC :                // lock-up dance: PC, FFFF, FFFE, FFFE, FFFF...
+                              (jam_cnt==4'd1) ? 16'hFFFF :
+                              (jam_cnt==4'd2 || jam_cnt==4'd3) ? 16'hFFFE : 16'hFFFF;
             default: addr_c = PC;   // FETCH / IMM / ZPF / ABL / ABH / IXF / IYF / IMPL / JMPn / branch / push+pull dummy
         endcase
     end
@@ -307,7 +312,7 @@ module xt6502f #(
             A <= 0; X <= 0; Y <= 0; S <= 8'hFD; P <= 8'h34;
             ir <= 8'hEA; eal <= 0; eah <= 0; ptr <= 0; idx <= 0; din_r <= 0;
             dst <= 0; has_idx <= 0; pgx <= 0; is_store <= 0; is_rmw <= 0; op <= OP_LD;
-            rmw_val <= 0; rmw_mod <= 0; sax <= 0; combo <= 0; op2 <= OP_LD;
+            rmw_val <= 0; rmw_mod <= 0; sax <= 0; combo <= 0; op2 <= OP_LD; jam_cnt <= 0;
         end else if (dbg_load) begin
             PC <= dbg_pc_in; A <= dbg_a_in; X <= dbg_x_in; Y <= dbg_y_in;
             S <= dbg_s_in; P <= dbg_p_in; state <= ST_FETCH; ir <= 8'hEA;
@@ -488,6 +493,9 @@ module xt6502f #(
                         8'hEB: begin op<=OP_SBC; state<=ST_IMM; end
                         // ---- illegal immediate-ALU (ANC/ALR/ARR/XAA/LXA/SBX) ----
                         8'h0B, 8'h2B, 8'h4B, 8'h6B, 8'h8B, 8'hAB, 8'hCB: state <= ST_IMMILL;
+                        // ---- KIL/JAM: lock up the processor ----
+                        8'h02, 8'h12, 8'h22, 8'h32, 8'h42, 8'h52, 8'h62, 8'h72,
+                        8'h92, 8'hB2, 8'hD2, 8'hF2: begin jam_cnt <= 4'd0; state <= ST_JAM; end
                         // ---- LAX (illegal): load A and X ----
                         8'hA7: begin op<=OP_LAX; eah<=0; state<=ST_ZPF; end                          // LAX zp
                         8'hB7: begin op<=OP_LAX; eah<=0; idx<=Y; has_idx<=1; state<=ST_ZPF; end       // LAX zp,Y
@@ -556,6 +564,8 @@ module xt6502f #(
                 // immediate
                 ST_IMM:  begin PC <= PC + 16'd1; exec_op(din_r); end
                 ST_IMMILL: begin PC <= PC + 16'd1; exec_immill(din_r); state <= ST_FETCH; end
+                // JAM/KIL: never leave — PC/regs frozen; jam_cnt drives the address dance (saturates)
+                ST_JAM: if (jam_cnt != 4'd15) jam_cnt <= jam_cnt + 4'd1;
 
                 // zero page
                 ST_ZPF:  begin eal <= din_r; PC <= PC + 16'd1;
