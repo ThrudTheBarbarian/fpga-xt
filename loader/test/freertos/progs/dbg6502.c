@@ -112,12 +112,61 @@ static void status(void)
     flush(1);
 }
 
+/* one help line (the 256-byte ob can't hold the whole screen, so flush per line) */
+static void line(const char *s) { on = 0; os(s); oc('\n'); flush(1); }
+
+static void help(void)
+{
+    line("6502 - control + debug the emulated 6502 (turbo xt6502 / fidelity xt6502f)");
+    line("");
+    line("  6502                    status: halt state, PC/regs, icnt");
+    line("  6502 status");
+    line("  6502 core [turbo|fid]   show or switch the active CPU core (cold-boots the OS on it)");
+    line("  6502 halt               halt at the next instruction boundary");
+    line("  6502 go                 resume");
+    line("  6502 step [N]           single-step N instructions (default 1)");
+    line("  6502 reset              cold-reset the 6502 realm");
+    line("  6502 break $A           break before executing the instruction at $A");
+    line("  6502 break off");
+    line("  6502 breakreset on|off  break at the reset vector");
+    line("  6502 watch $A [r|w|rw]  data watchpoint (default rw)");
+    line("  6502 watch off");
+    line("  6502 trace [on|off|N]   trace ring: enable/disable, or dump the last N");
+    line("  6502 diag               debug-block self-observability");
+    line("  6502 PC=$A A=.. X=.. Y=.. SP=.. P=.. [go]   inject registers");
+    line("");
+    line("cores:  turbo = xt6502  ~56x, documented ISA + xtc accel (default)");
+    line("        fid   = xt6502f real 1x, all 256 opcodes cycle-exact + interrupts");
+    line("note:   halt/step/break/watch/trace/diag target the turbo debugger for now;");
+    line("        the fidelity core's own debug slots are wired next.");
+}
+
 void _app_entry(int argc, char **argv)
 {
     if (argc < 2) { status(); sys_exit(0); }
     const char *cmd = argv[1];
 
+    if (streq(cmd, "-h") || streq(cmd, "--help") || streq(cmd, "help")) { help(); sys_exit(0); }
+
     if (streq(cmd, "status")) { status(); sys_exit(0); }
+
+    /* select the active CPU core (cpu_sel = CTRL_SALLYRST bit1) and cold-boot the OS on it */
+    if (streq(cmd, "core")) {
+        if (argc >= 3) {
+            int fid   = streq(argv[2], "fid") || streq(argv[2], "fidelity");
+            int turbo = streq(argv[2], "turbo");
+            if (!fid && !turbo) { on = 0; os("usage: 6502 core [turbo|fid]\n"); flush(2); sys_exit(2); }
+            unsigned long sel = fid ? 2ul : 0ul;      /* bit1 = cpu_sel */
+            wr(CTRL_SALLYRST, sel | 1ul);             /* hold the 6502 realm in reset + select */
+            wr(CTRL_SALLYRST, sel);                   /* release -> cold-boot on the selected core */
+            on = 0; os("6502 core -> ");
+            os(fid ? "fidelity (real 1x, cycle-exact)\n" : "turbo (~56x)\n"); flush(1);
+        } else {
+            unsigned long s = rd(CTRL_SALLYRST);
+            on = 0; os("6502 core = "); os((s & 2ul) ? "fidelity\n" : "turbo\n"); flush(1);
+        }
+        sys_exit(0);
+    }
 
     if (streq(cmd, "halt")) { wr(DBG_HALT, 1); poll_halt(); status(); sys_exit(0); }
 
@@ -250,8 +299,9 @@ void _app_entry(int argc, char **argv)
             did_assign = 1;
         }
         if (!did_assign) {
-            on = 0; os("usage: 6502 status|halt|go|step [N]|break $A|break off|breakreset on|off|reset|"
-                       "watch $A [r|w|rw]|watch off|diag|trace on|off|N|REG=VAL...\n");
+            on = 0; os("usage: 6502 status|core [turbo|fid]|halt|go|step [N]|break $A|break off|"
+                       "breakreset on|off|reset|watch $A [r|w|rw]|watch off|diag|trace on|off|N|"
+                       "REG=VAL...   (6502 -h for details)\n");
             flush(2); sys_exit(2);
         }
         wr(DBG_WPC, pc); wr(DBG_WAXYS, ax); wr(DBG_WPSH, ps);
