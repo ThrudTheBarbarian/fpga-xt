@@ -81,10 +81,14 @@ module xt6502f #(
     reg [2:0] rst_cnt;
     reg [7:0] ir;
     reg [7:0] eal, eah, ptr, idx, din_r;
-    reg [1:0] dst;       // register selector: 0=A 1=X 2=Y (load target or store source)
+    reg [1:0] dst;       // register selector: 0=A 1=X 2=Y (load target / store src / compare reg)
     reg       has_idx;   // indexed addressing (abs/zp with X/Y)
     reg       pgx;       // page cross pending (indexed abs / (zp),Y)
     reg       is_store;  // this instruction writes the register to memory
+
+    // operation applied at the value-read terminal (read-group ALU)
+    localparam [3:0] OP_LD=0, OP_AND=1, OP_ORA=2, OP_EOR=3, OP_CMP=4, OP_BIT=5, OP_ADC=6, OP_SBC=7;
+    reg [3:0] op;
 
     // ---- address source for the current cycle --------------------------------------
     reg [15:0] addr_c;
@@ -106,11 +110,22 @@ module xt6502f #(
     assign sync     = (state == ST_FETCH);
     wire   advance  = slot_commit && rdy;
 
-    // ---- load writeback: dst <- v, set N/Z, return to fetch ------------------------
-    task automatic exec_load(input [7:0] v);
+    // ---- read-group execute: apply `op` to the read value `v`, return to fetch -----
+    task automatic exec_op(input [7:0] v);
+        reg [7:0] r, res;
         begin
-            case (dst) 2'd0: A <= v; 2'd1: X <= v; 2'd2: Y <= v; default: ; endcase
-            P     <= {v[7], P[6:2], (v == 8'h00), P[0]};   // N=v[7], Z=(v==0), rest kept
+            case (op)
+                OP_LD:  begin case (dst) 2'd0:A<=v; 2'd1:X<=v; 2'd2:Y<=v; default:; endcase
+                              P <= {v[7], P[6:2], (v==8'h00), P[0]}; end
+                OP_AND: begin res = A & v; A <= res; P <= {res[7], P[6:2], (res==8'h00), P[0]}; end
+                OP_ORA: begin res = A | v; A <= res; P <= {res[7], P[6:2], (res==8'h00), P[0]}; end
+                OP_EOR: begin res = A ^ v; A <= res; P <= {res[7], P[6:2], (res==8'h00), P[0]}; end
+                OP_CMP: begin r = (dst==2'd0) ? A : (dst==2'd1) ? X : Y;    // CMP/CPX/CPY
+                              res = r - v;
+                              P <= {res[7], P[6:2], (r==v), (r>=v)}; end     // N, Z, C (V untouched)
+                OP_BIT: P <= {v[7], v[6], P[5:2], ((A & v)==8'h00), P[0]};   // N=v7, V=v6, Z=(A&M)
+                default: ;  // OP_ADC / OP_SBC added next
+            endcase
             state <= ST_FETCH;
         end
     endtask
@@ -128,7 +143,7 @@ module xt6502f #(
             state <= ST_RST; rst_cnt <= 3'd5; PC <= 16'hFFFC;
             A <= 0; X <= 0; Y <= 0; S <= 8'hFD; P <= 8'h34;
             ir <= 8'hEA; eal <= 0; eah <= 0; ptr <= 0; idx <= 0; din_r <= 0;
-            dst <= 0; has_idx <= 0; pgx <= 0; is_store <= 0;
+            dst <= 0; has_idx <= 0; pgx <= 0; is_store <= 0; op <= OP_LD;
         end else if (dbg_load) begin
             PC <= dbg_pc_in; A <= dbg_a_in; X <= dbg_x_in; Y <= dbg_y_in;
             S <= dbg_s_in; P <= dbg_p_in; state <= ST_FETCH; ir <= 8'hEA;
@@ -140,7 +155,7 @@ module xt6502f #(
 
                 ST_FETCH: begin
                     ir <= din_r; PC <= PC + 16'd1;
-                    has_idx <= 1'b0; pgx <= 1'b0; is_store <= 1'b0;
+                    has_idx <= 1'b0; pgx <= 1'b0; is_store <= 1'b0; op <= OP_LD;
                     case (din_r)
                         // ---- immediate loads ----
                         8'hA9: begin dst <= 2'd0; state <= ST_IMM; end          // LDA #
@@ -180,6 +195,52 @@ module xt6502f #(
                         8'h99: begin dst<=2'd0; is_store<=1; idx<=Y; has_idx<=1; state<=ST_ABL; end // STA abs,Y
                         8'h81: begin dst<=2'd0; is_store<=1; state<=ST_IXF; end                    // STA (zp,X)
                         8'h91: begin dst<=2'd0; is_store<=1; state<=ST_IYF; end                    // STA (zp),Y
+                        // ---- AND ----
+                        8'h29: begin op<=OP_AND; state<=ST_IMM; end
+                        8'h25: begin op<=OP_AND; eah<=0; state<=ST_ZPF; end
+                        8'h35: begin op<=OP_AND; eah<=0; idx<=X; has_idx<=1; state<=ST_ZPF; end
+                        8'h2D: begin op<=OP_AND; state<=ST_ABL; end
+                        8'h3D: begin op<=OP_AND; idx<=X; has_idx<=1; state<=ST_ABL; end
+                        8'h39: begin op<=OP_AND; idx<=Y; has_idx<=1; state<=ST_ABL; end
+                        8'h21: begin op<=OP_AND; state<=ST_IXF; end
+                        8'h31: begin op<=OP_AND; state<=ST_IYF; end
+                        // ---- ORA ----
+                        8'h09: begin op<=OP_ORA; state<=ST_IMM; end
+                        8'h05: begin op<=OP_ORA; eah<=0; state<=ST_ZPF; end
+                        8'h15: begin op<=OP_ORA; eah<=0; idx<=X; has_idx<=1; state<=ST_ZPF; end
+                        8'h0D: begin op<=OP_ORA; state<=ST_ABL; end
+                        8'h1D: begin op<=OP_ORA; idx<=X; has_idx<=1; state<=ST_ABL; end
+                        8'h19: begin op<=OP_ORA; idx<=Y; has_idx<=1; state<=ST_ABL; end
+                        8'h01: begin op<=OP_ORA; state<=ST_IXF; end
+                        8'h11: begin op<=OP_ORA; state<=ST_IYF; end
+                        // ---- EOR ----
+                        8'h49: begin op<=OP_EOR; state<=ST_IMM; end
+                        8'h45: begin op<=OP_EOR; eah<=0; state<=ST_ZPF; end
+                        8'h55: begin op<=OP_EOR; eah<=0; idx<=X; has_idx<=1; state<=ST_ZPF; end
+                        8'h4D: begin op<=OP_EOR; state<=ST_ABL; end
+                        8'h5D: begin op<=OP_EOR; idx<=X; has_idx<=1; state<=ST_ABL; end
+                        8'h59: begin op<=OP_EOR; idx<=Y; has_idx<=1; state<=ST_ABL; end
+                        8'h41: begin op<=OP_EOR; state<=ST_IXF; end
+                        8'h51: begin op<=OP_EOR; state<=ST_IYF; end
+                        // ---- CMP (A) ----
+                        8'hC9: begin op<=OP_CMP; dst<=2'd0; state<=ST_IMM; end
+                        8'hC5: begin op<=OP_CMP; dst<=2'd0; eah<=0; state<=ST_ZPF; end
+                        8'hD5: begin op<=OP_CMP; dst<=2'd0; eah<=0; idx<=X; has_idx<=1; state<=ST_ZPF; end
+                        8'hCD: begin op<=OP_CMP; dst<=2'd0; state<=ST_ABL; end
+                        8'hDD: begin op<=OP_CMP; dst<=2'd0; idx<=X; has_idx<=1; state<=ST_ABL; end
+                        8'hD9: begin op<=OP_CMP; dst<=2'd0; idx<=Y; has_idx<=1; state<=ST_ABL; end
+                        8'hC1: begin op<=OP_CMP; dst<=2'd0; state<=ST_IXF; end
+                        8'hD1: begin op<=OP_CMP; dst<=2'd0; state<=ST_IYF; end
+                        // ---- CPX / CPY (imm/zp/abs) ----
+                        8'hE0: begin op<=OP_CMP; dst<=2'd1; state<=ST_IMM; end
+                        8'hE4: begin op<=OP_CMP; dst<=2'd1; eah<=0; state<=ST_ZPF; end
+                        8'hEC: begin op<=OP_CMP; dst<=2'd1; state<=ST_ABL; end
+                        8'hC0: begin op<=OP_CMP; dst<=2'd2; state<=ST_IMM; end
+                        8'hC4: begin op<=OP_CMP; dst<=2'd2; eah<=0; state<=ST_ZPF; end
+                        8'hCC: begin op<=OP_CMP; dst<=2'd2; state<=ST_ABL; end
+                        // ---- BIT (zp/abs) ----
+                        8'h24: begin op<=OP_BIT; eah<=0; state<=ST_ZPF; end
+                        8'h2C: begin op<=OP_BIT; state<=ST_ABL; end
                         // ---- control / nop ----
                         8'h4C: state <= ST_JMP1;                                // JMP abs
                         8'hEA: state <= ST_NOP1;                                // NOP
@@ -188,7 +249,7 @@ module xt6502f #(
                 end
 
                 // immediate
-                ST_IMM:  begin PC <= PC + 16'd1; exec_load(din_r); end
+                ST_IMM:  begin PC <= PC + 16'd1; exec_op(din_r); end
 
                 // zero page
                 ST_ZPF:  begin eal <= din_r; PC <= PC + 16'd1;
@@ -202,8 +263,8 @@ module xt6502f #(
                                else state <= is_store ? ST_STORE : ST_LOAD; end
                 ST_ABX:  begin if (is_store) begin eah <= eah + {7'd0, pgx}; state <= ST_STORE; end  // dummy read; fix eah; write
                                else if (pgx) begin eah <= eah + 8'd1; state <= ST_ABXC; end
-                               else exec_load(din_r); end                       // load, no cross: value here
-                ST_ABXC: exec_load(din_r);                                      // load, page-cross fixed read
+                               else exec_op(din_r); end                       // load, no cross: value here
+                ST_ABXC: exec_op(din_r);                                      // load, page-cross fixed read
 
                 // (indirect,X)
                 ST_IXF:  begin ptr <= din_r; PC <= PC + 16'd1; state <= ST_IXP; end
@@ -217,11 +278,11 @@ module xt6502f #(
                 ST_IYB:  begin eah <= din_r; eal <= eal_plus_y[7:0]; pgx <= eal_plus_y[8]; state <= ST_IYRD; end
                 ST_IYRD: begin if (is_store) begin eah <= eah + {7'd0, pgx}; state <= ST_STORE; end  // dummy read; fix; write
                                else if (pgx) begin eah <= eah + 8'd1; state <= ST_IYC; end
-                               else exec_load(din_r); end
-                ST_IYC:  exec_load(din_r);
+                               else exec_op(din_r); end
+                ST_IYC:  exec_op(din_r);
 
                 // terminals
-                ST_LOAD:  exec_load(din_r);                                     // read [eah,eal] -> reg
+                ST_LOAD:  exec_op(din_r);                                     // read [eah,eal] -> reg
                 ST_STORE: state <= ST_FETCH;                                    // write [eah,eal] <- reg (bus does it)
 
                 // NOP / JMP
