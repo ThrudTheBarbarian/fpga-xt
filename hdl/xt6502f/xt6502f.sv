@@ -78,7 +78,8 @@ module xt6502f #(
         ST_IYF=19, ST_IYA=20, ST_IYB=21, ST_IYRD=22, ST_IYC=23, // (zp),Y
         ST_STORE=24,                       // write [eah,eal] <- reg (store terminal)
         ST_ACC=25,                         // accumulator RMW (ASL/LSR/ROL/ROR A)
-        ST_RMW_RD=26, ST_RMW_W0=27, ST_RMW_W1=28; // memory RMW: read, write-orig, write-mod
+        ST_RMW_RD=26, ST_RMW_W0=27, ST_RMW_W1=28, // memory RMW: read, write-orig, write-mod
+        ST_BRA=29, ST_BRA_TK=30, ST_BRA_PG=31;    // relative branch: fetch offset / taken / page-cross
     reg [5:0] state;
     reg [2:0] rst_cnt;
     reg [7:0] ir;
@@ -224,6 +225,8 @@ module xt6502f #(
     // page-cross add of an index to eal: {carry, low}
     wire [8:0] eal_plus_idx = {1'b0, eal} + {1'b0, idx};
     wire [8:0] eal_plus_y   = {1'b0, eal} + {1'b0, Y};
+    // branch target = PC(opcode+2) + sign-extended offset (latched in eal)
+    wire [15:0] bra_sum = PC + {{8{eal[7]}}, eal};
 
     // ---- data latch (phi2 read slot) -----------------------------------------------
     always @(posedge clk) if (slot_data) din_r <= data_in;
@@ -386,6 +389,8 @@ module xt6502f #(
                         8'hE8, 8'hC8, 8'hCA, 8'h88,                   // INX INY DEX DEY
                         8'h18, 8'h38, 8'h58, 8'h78, 8'hD8, 8'hF8, 8'hB8:  // CLC SEC CLI SEI CLD SED CLV
                                  state <= ST_IMPL;
+                        // ---- branches (relative) ----
+                        8'h10, 8'h30, 8'h50, 8'h70, 8'h90, 8'hB0, 8'hD0, 8'hF0: state <= ST_BRA;
                         // ---- control / nop ----
                         8'h4C: state <= ST_JMP1;                                // JMP abs
                         8'hEA: state <= ST_IMPL;                                // NOP
@@ -438,6 +443,27 @@ module xt6502f #(
                 ST_IMPL: begin exec_impl; state <= ST_FETCH; end
                 ST_JMP1: begin eal <= din_r; PC <= PC + 16'd1; state <= ST_JMP2; end
                 ST_JMP2: begin PC <= {din_r, eal}; state <= ST_FETCH; end
+
+                // branches: fetch offset + test condition; if taken, add (with page-cross cycle)
+                ST_BRA: begin
+                    eal <= din_r; PC <= PC + 16'd1;               // latch offset, PC -> opcode+2
+                    case (ir)                                     // taken?
+                        8'h10: state <= (~P[7]) ? ST_BRA_TK : ST_FETCH;   // BPL
+                        8'h30: state <= ( P[7]) ? ST_BRA_TK : ST_FETCH;   // BMI
+                        8'h50: state <= (~P[6]) ? ST_BRA_TK : ST_FETCH;   // BVC
+                        8'h70: state <= ( P[6]) ? ST_BRA_TK : ST_FETCH;   // BVS
+                        8'h90: state <= (~P[0]) ? ST_BRA_TK : ST_FETCH;   // BCC
+                        8'hB0: state <= ( P[0]) ? ST_BRA_TK : ST_FETCH;   // BCS
+                        8'hD0: state <= (~P[1]) ? ST_BRA_TK : ST_FETCH;   // BNE
+                        8'hF0: state <= ( P[1]) ? ST_BRA_TK : ST_FETCH;   // BEQ
+                        default: state <= ST_FETCH;
+                    endcase
+                end
+                ST_BRA_TK: begin                                 // dummy read at opcode+2; add offset
+                    if (bra_sum[15:8] == PC[15:8]) begin PC <= bra_sum; state <= ST_FETCH; end   // no page cross
+                    else begin PC[7:0] <= bra_sum[7:0]; eah <= bra_sum[15:8]; state <= ST_BRA_PG; end
+                end
+                ST_BRA_PG: begin PC[15:8] <= eah; state <= ST_FETCH; end   // fix PCH (page cross)
 
                 default: state <= ST_FETCH;
             endcase
