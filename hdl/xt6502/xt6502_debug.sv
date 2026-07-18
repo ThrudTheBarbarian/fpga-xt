@@ -127,8 +127,24 @@ module xt6502_debug (
 
     // At the ST_DECODE boundary PC points one past the opcode, so the instruction
     // address is PC-1 (what the user sees and sets breakpoints on).
-    wire [15:0] inst_pc   = dbg_pc - 16'd1;
-    wire        bkpt_here = cfg_s[0] && (inst_pc == bkpt_s);
+    wire [15:0] inst_pc = dbg_pc - 16'd1;
+
+    // Breakpoint match: REGISTER the boundary pulse + inst_pc, so the PC compare that
+    // feeds the halt FSM runs off a local register (reg -> subtract -> 16-bit == ->
+    // FSM) instead of the long, high-fanout core-PC route. That un-registered compare
+    // was marginal on silicon -> INTERMITTENT breakpoints (missed one-time addresses,
+    // matched some and not others), while the snapshot/step (shorter paths off the
+    // same tap) stayed exact. bkpt_fire lands one clk_sally after the boundary; the
+    // snapshot already latched the breakpoint instruction at that boundary, so the
+    // halt still reports the right PC. Snapshot/step/commit stay on the direct taps.
+    reg        bnd_pulse_d;
+    reg [15:0] inst_pc_d;
+    always @(posedge clk) begin
+        if (rst) bnd_pulse_d <= 1'b0;
+        else     bnd_pulse_d <= bnd_pulse;
+        inst_pc_d <= inst_pc;
+    end
+    wire bkpt_fire = bnd_pulse_d && cfg_s[0] && (inst_pc_d == bkpt_s);
 
     always @(posedge clk) begin
         if (rst) begin
@@ -152,14 +168,16 @@ module xt6502_debug (
             end
 
             // ---- boundary-driven transitions (commands below override) ----
+            // Breakpoint uses the registered bkpt_fire (one cycle after the boundary);
+            // halt/step use the direct bnd_pulse.
             case (fsm)
-                S_RUN: if (bnd_pulse) begin
-                    if (bkpt_here)          begin bkpt_hit_r <= 1'b1; run_r <= 1'b0; fsm <= S_HALT; end
-                    else if (halt_pending)  begin run_r <= 1'b0; fsm <= S_HALT; end
+                S_RUN: begin
+                    if (bkpt_fire)                      begin bkpt_hit_r <= 1'b1; run_r <= 1'b0; fsm <= S_HALT; end
+                    else if (bnd_pulse && halt_pending) begin run_r <= 1'b0; fsm <= S_HALT; end
                 end
-                S_STEP: if (bnd_pulse) begin
-                    if (bkpt_here)             begin bkpt_hit_r <= 1'b1; run_r <= 1'b0; fsm <= S_HALT; end
-                    else if (step_rem <= 16'd1) begin run_r <= 1'b0; fsm <= S_HALT; end
+                S_STEP: if (bkpt_fire) begin bkpt_hit_r <= 1'b1; run_r <= 1'b0; fsm <= S_HALT; end
+                else    if (bnd_pulse) begin
+                    if      (step_rem <= 16'd1) begin run_r <= 1'b0; fsm <= S_HALT; end
                     else                        step_rem <= step_rem - 16'd1;
                 end
                 default: /* S_HALT */ run_r <= 1'b0;
