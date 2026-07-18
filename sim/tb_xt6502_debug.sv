@@ -27,6 +27,9 @@ module tb_xt6502_debug;
     // ---- status ----
     wire [3:0]  stat; wire [15:0] snap_pc; wire [31:0] snap_axys; wire [11:0] snap_psh;
     wire [31:0] icnt;
+    // trace ring
+    reg  [1:0]  trc_ctrl=0; reg [11:0] trc_idx=0;
+    wire [31:0] trc_wptr; wire [15:0] trc_pc; wire [31:0] trc_axys; wire [11:0] trc_p;
     wire eff_rdy = core_run;                 // base rdy = 1 (full speed); gated by the debugger
 
     xt6502 u_dut (
@@ -51,7 +54,9 @@ module tb_xt6502_debug;
         .dbg_wa(idbg_wa), .dbg_wx(idbg_wx), .dbg_wy(idbg_wy), .dbg_ws(idbg_ws),
         .dbg_wp(idbg_wp), .dbg_wshigh(idbg_wshigh),
         .core_run(core_run),
-        .stat(stat), .snap_pc(snap_pc), .snap_axys(snap_axys), .snap_psh(snap_psh), .icnt(icnt)
+        .stat(stat), .snap_pc(snap_pc), .snap_axys(snap_axys), .snap_psh(snap_psh), .icnt(icnt),
+        .trc_ctrl(trc_ctrl), .trc_idx(trc_idx), .trc_wptr_stat(trc_wptr),
+        .trc_pc(trc_pc), .trc_axys(trc_axys), .trc_p(trc_p)
     );
 
     // ---- synchronous memory (addr N -> data_in N+1), gated on the effective rdy ----
@@ -169,6 +174,24 @@ module tb_xt6502_debug;
         repeat (40) @(posedge clk);
         if (stat[3]) $display("  ok  T7: running (stat=%b)", stat);
         else begin $display("FAIL T7: not running, stat=%b", stat); nfail=nfail+1; end
+
+        // ---- T8: instruction-trace ring ----
+        $display("[T8] trace ring");
+        @(negedge clk) wpc=16'h0200; waxys=0; wpsh=0; pulse_commit; repeat (6) @(posedge clk);
+        @(negedge clk) trc_ctrl = 2'b01;              // enable trace (clears ring)
+        pulse_go;
+        repeat (80) @(posedge clk);                    // run several loop iterations
+        pulse_halt; wait_halt("T8");
+        repeat (4) @(posedge clk);
+        if (trc_wptr[11:0] == 0) begin $display("FAIL T8: ring empty"); nfail=nfail+1; end
+        else $display("  ok  T8: captured %0d entries", trc_wptr[11:0]);
+        @(negedge clk) trc_idx = trc_wptr[11:0] - 12'd1; // newest entry
+        repeat (6) @(posedge clk);
+        begin reg [15:0] p; p = trc_pc;
+            if (p==16'h0200||p==16'h0202||p==16'h0204||p==16'h0206||p==16'h0207)
+                $display("  ok  T8: newest trace PC=$%04h", p);
+            else begin $display("FAIL T8: trace PC=$%04h not a loop addr", p); nfail=nfail+1; end
+        end
 
         if (nfail==0) $display("*** XT6502_DEBUG OK ***");
         else          $display("*** XT6502_DEBUG FAIL *** %0d failure(s)", nfail);

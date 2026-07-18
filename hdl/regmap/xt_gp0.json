@@ -217,7 +217,19 @@
         { "off": "0x34", "access": "R", "width": 32, "c": "XT_DBG_ICNT",   "sv": "DBG_ICNT",
           "desc": "retired-instruction count since SALLYRST (increments on each ST_FETCH boundary)" },
         { "off": "0x38", "access": "R", "width": 32, "c": "XT_DBG_BEAM",   "sv": "DBG_BEAM",
-          "desc": "RESERVED (reads 0 for now): display beam position at the last boundary — [15:0]=scanline [31:16]=beam-x — for future ANTIC/DLI correlation" }
+          "desc": "RESERVED (reads 0 for now): display beam position at the last boundary — [15:0]=scanline [31:16]=beam-x — for future ANTIC/DLI correlation" },
+        { "off": "0x3C", "access": "RW", "width": 2, "c": "XT_DBG_TRC_CTRL", "sv": "DBG_TRC_CTRL",
+          "desc": "instruction-trace ring: [0]=enable (capture {PC,A,X,Y,SP,P} every ST_DECODE boundary), [1]=break_on_full (halt the core when the ring wraps). Ring is 4096 deep; readable only when halted (static)." },
+        { "off": "0x40", "access": "R", "width": 32, "c": "XT_DBG_TRC_WPTR", "sv": "DBG_TRC_WPTR",
+          "desc": "trace write pointer: [11:0]=next write slot (newest = WPTR-1), [16]=wrapped (ring has been full at least once), [17]=broke_on_full" },
+        { "off": "0x44", "access": "W", "width": 12, "c": "XT_DBG_TRC_IDX",  "sv": "DBG_TRC_IDX",
+          "desc": "set the ring read index (0..4095); the entry appears in DBG_TRC_PC/AXYS/P" },
+        { "off": "0x48", "access": "R", "width": 16, "c": "XT_DBG_TRC_PC",   "sv": "DBG_TRC_PC",
+          "desc": "[15:0]=PC of the traced instruction at DBG_TRC_IDX" },
+        { "off": "0x4C", "access": "R", "width": 32, "c": "XT_DBG_TRC_AXYS", "sv": "DBG_TRC_AXYS",
+          "desc": "traced regs at DBG_TRC_IDX: [7:0]=A [15:8]=X [23:16]=Y [31:24]=SP(low)" },
+        { "off": "0x50", "access": "R", "width": 12, "c": "XT_DBG_TRC_P",    "sv": "DBG_TRC_P",
+          "desc": "traced at DBG_TRC_IDX: [7:0]=P [11:8]=SP high nibble" }
       ]
     }
   ]

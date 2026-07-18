@@ -64,7 +64,15 @@ module xt6502_debug (
     output reg  [15:0] snap_pc,
     output reg  [31:0] snap_axys,
     output reg  [11:0] snap_psh,
-    output reg  [31:0] icnt
+    output reg  [31:0] icnt,
+
+    // ---- instruction-trace ring (control from GP0; readback coherent when halted) ----
+    input  wire [1:0]  trc_ctrl,     // [0]=enable [1]=break_on_full
+    input  wire [11:0] trc_idx,      // read index (0..4095)
+    output reg  [31:0] trc_wptr_stat,// [11:0]=wptr [16]=wrapped [17]=broke_on_full
+    output reg  [15:0] trc_pc,
+    output reg  [31:0] trc_axys,
+    output reg  [11:0] trc_p
 );
     // ================= CDC: level synchronisers =================
     // The level buses are stable in clk_sys whenever their command pulse fires
@@ -189,6 +197,50 @@ module xt6502_debug (
 
     assign core_run = run_r;
     assign stat = {(fsm == S_RUN), (fsm == S_STEP), bkpt_hit_r, (fsm == S_HALT)};
+
+    // ================= instruction-trace ring =================
+    // 4096 entries x {shigh,P,S,Y,X,A,inst_pc}, one per ST_DECODE boundary while
+    // enabled. Continuous wrap keeps the LAST 4096 instructions, so any halt
+    // (breakpoint/step/halt) freezes the path that led there for readback. With
+    // break_on_full it instead freezes the FIRST 4096 from the enable. Read only
+    // when halted (the core is static, so the clk_sys readback needs no CDC).
+    (* ASYNC_REG = "TRUE" *) reg [1:0]  trcc1, trcc2;
+    (* ASYNC_REG = "TRUE" *) reg [11:0] trci1, trci2;
+    always @(posedge clk) begin
+        trcc1 <= trc_ctrl; trcc2 <= trcc1;
+        trci1 <= trc_idx;  trci2 <= trci1;
+    end
+    wire trace_en   = trcc2[0];
+    wire break_full = trcc2[1];
+
+    reg [63:0] tbram [0:4095];
+    reg [11:0] wptr;
+    reg        wrapped, trc_broke, trace_en_d;
+    reg [63:0] trd;
+    always @(posedge clk) begin
+        if (rst) begin
+            wptr <= 12'd0; wrapped <= 1'b0; trc_broke <= 1'b0; trace_en_d <= 1'b0;
+        end else begin
+            trace_en_d <= trace_en;
+            if (trace_en && !trace_en_d) begin
+                wptr <= 12'd0; wrapped <= 1'b0; trc_broke <= 1'b0;   // clear ring on enable
+            end else if (bnd_pulse && trace_en && !trc_broke) begin
+                tbram[wptr] <= {4'd0, dbg_shigh, dbg_p, dbg_s, dbg_y, dbg_x, dbg_a, inst_pc};
+                wptr <= wptr + 12'd1;
+                if (wptr == 12'hFFF) begin
+                    wrapped <= 1'b1;
+                    if (break_full) trc_broke <= 1'b1;              // freeze at first 4096
+                end
+            end
+        end
+        trd <= tbram[trci2];                                        // registered BRAM read
+    end
+    always @(posedge clk) begin
+        trc_pc        <= trd[15:0];
+        trc_axys      <= trd[47:16];
+        trc_p         <= trd[59:48];
+        trc_wptr_stat <= {14'd0, trc_broke, wrapped, 4'd0, wptr};
+    end
 
 endmodule
 

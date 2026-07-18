@@ -108,5 +108,11 @@
 #define XT_DBG_PSH           (XT_BLK_DEBUG + 0x30u)       /* R snapshot: [7:0]=P [11:8]=SP high nibble */
 #define XT_DBG_ICNT          (XT_BLK_DEBUG + 0x34u)       /* R retired-instruction count since SALLYRST (increments on each ST_FETCH boundary) */
 #define XT_DBG_BEAM          (XT_BLK_DEBUG + 0x38u)       /* R RESERVED (reads 0 for now): display beam position at the last boundary — [15:0]=scanline [31:16]=beam-x — for future ANTIC/DLI correlation */
+#define XT_DBG_TRC_CTRL      (XT_BLK_DEBUG + 0x3Cu)       /* RW instruction-trace ring: [0]=enable (capture {PC,A,X,Y,SP,P} every ST_DECODE boundary), [1]=break_on_full (halt the core when the ring wraps). Ring is 4096 deep; readable only when halted (static). */
+#define XT_DBG_TRC_WPTR      (XT_BLK_DEBUG + 0x40u)       /* R trace write pointer: [11:0]=next write slot (newest = WPTR-1), [16]=wrapped (ring has been full at least once), [17]=broke_on_full */
+#define XT_DBG_TRC_IDX       (XT_BLK_DEBUG + 0x44u)       /* W set the ring read index (0..4095); the entry appears in DBG_TRC_PC/AXYS/P */
+#define XT_DBG_TRC_PC        (XT_BLK_DEBUG + 0x48u)       /* R [15:0]=PC of the traced instruction at DBG_TRC_IDX */
+#define XT_DBG_TRC_AXYS      (XT_BLK_DEBUG + 0x4Cu)       /* R traced regs at DBG_TRC_IDX: [7:0]=A [15:8]=X [23:16]=Y [31:24]=SP(low) */
+#define XT_DBG_TRC_P         (XT_BLK_DEBUG + 0x50u)       /* R traced at DBG_TRC_IDX: [7:0]=P [11:8]=SP high nibble */
 
 #endif /* XT_GP0_MAP_H_ */

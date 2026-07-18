@@ -32,6 +32,12 @@
 #define DBG_AXYS       (DBG + 0x2C)
 #define DBG_PSH        (DBG + 0x30)
 #define DBG_ICNT       (DBG + 0x34)
+#define DBG_TRC_CTRL   (DBG + 0x3C)     /* [0]=enable [1]=break_on_full */
+#define DBG_TRC_WPTR   (DBG + 0x40)     /* [11:0]=wptr [16]=wrapped */
+#define DBG_TRC_IDX    (DBG + 0x44)     /* set read index */
+#define DBG_TRC_PC     (DBG + 0x48)
+#define DBG_TRC_AXYS   (DBG + 0x4C)
+#define DBG_TRC_P      (DBG + 0x50)
 #define CTRL_SALLYRST  (GP0 + 0x31Cul)
 
 static unsigned long rd(unsigned long a)            { return (unsigned long)sys_devmem(a, 0, 0); }
@@ -144,6 +150,37 @@ void _app_entry(int argc, char **argv)
         int on2 = (argc >= 3 && streq(argv[2], "on"));
         wr(DBG_CFG, on2 ? (cfg | 2ul) : (cfg & ~2ul));
         on = 0; os("6502 breakreset "); os(on2 ? "on\n" : "off\n"); flush(1);
+        sys_exit(0);
+    }
+
+    if (streq(cmd, "trace")) {
+        if (argc >= 3 && streq(argv[2], "on"))  { wr(DBG_TRC_CTRL, rd(DBG_TRC_CTRL) | 1ul);
+            on = 0; os("6502 trace on\n"); flush(1); sys_exit(0); }
+        if (argc >= 3 && streq(argv[2], "off")) { wr(DBG_TRC_CTRL, rd(DBG_TRC_CTRL) & ~1ul);
+            on = 0; os("6502 trace off\n"); flush(1); sys_exit(0); }
+        /* dump the last N (default 32) instructions, oldest->newest */
+        unsigned long n = (argc >= 3) ? parse_num(argv[2]) : 32;
+        if (n > 4096) n = 4096; if (!n) n = 1;
+        unsigned long w  = rd(DBG_TRC_WPTR);
+        unsigned long wp = w & 0xFFF;
+        unsigned long avail = (w & (1ul << 16)) ? 4096 : wp;    /* wrapped -> full */
+        if (n > avail) n = avail;
+        if (!avail) { on = 0; os("6502 trace: empty (enable with '6502 trace on')\n"); flush(1); sys_exit(0); }
+        for (unsigned long i = 0; i < n; i++) {
+            unsigned long idx = (wp + 4096 - n + i) & 0xFFF;
+            wr(DBG_TRC_IDX, idx);
+            unsigned long pc = rd(DBG_TRC_PC) & 0xFFFF;
+            unsigned long ax = rd(DBG_TRC_AXYS);
+            unsigned long ps = rd(DBG_TRC_P);
+            on = 0;
+            os("  "); ohex(pc, 4);
+            os(" A=");  ohex(ax & 0xFF, 2);
+            os(" X=");  ohex((ax >> 8) & 0xFF, 2);
+            os(" Y=");  ohex((ax >> 16) & 0xFF, 2);
+            os(" SP="); ohex((((ps >> 8) & 0xF) << 8) | ((ax >> 24) & 0xFF), 3);
+            os(" P=");  ohex(ps & 0xFF, 2);
+            oc('\n'); flush(1);
+        }
         sys_exit(0);
     }
 

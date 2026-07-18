@@ -194,7 +194,14 @@ module xt_gp0_regs (
     input  wire [31:0] dbg_snap_axys,
     input  wire [11:0] dbg_snap_psh,
     input  wire [31:0] dbg_icnt,
-    input  wire [31:0] dbg_beam           // reserved (0)
+    input  wire [31:0] dbg_beam,          // reserved (0)
+    // trace ring: control out (levels), status/data in
+    output reg  [1:0]  dbg_trc_ctrl,      // [0]=enable [1]=break_on_full
+    output reg  [11:0] dbg_trc_idx,       // read index
+    input  wire [31:0] dbg_trc_wptr,      // [11:0]=wptr [16]=wrapped [17]=broke
+    input  wire [15:0] dbg_trc_pc,
+    input  wire [31:0] dbg_trc_axys,
+    input  wire [11:0] dbg_trc_p
 );
 
     // Block selectors (addr[11:8]) and register offsets (addr[7:0]) come from
@@ -281,6 +288,8 @@ module xt_gp0_regs (
             dbg_wpc        <= 16'd0;
             dbg_waxys      <= 32'd0;
             dbg_wpsh       <= 12'd0;
+            dbg_trc_ctrl   <= 2'b00;
+            dbg_trc_idx    <= 12'd0;
         end else begin
             s_axi_awready <= 1'b0;
             s_axi_wready  <= 1'b0;
@@ -398,6 +407,8 @@ module xt_gp0_regs (
                                     DBG_WPC:    dbg_wpc        <= w_data[15:0];
                                     DBG_WAXYS:  dbg_waxys      <= w_data;
                                     DBG_WPSH:   dbg_wpsh       <= w_data[11:0];
+                                    DBG_TRC_CTRL: dbg_trc_ctrl <= w_data[1:0];
+                                    DBG_TRC_IDX:  dbg_trc_idx  <= w_data[11:0];
                                     default: ;
                                 endcase
                             end
@@ -502,6 +513,11 @@ module xt_gp0_regs (
                                     DBG_PSH:   s_axi_rdata <= {20'd0, dbg_snap_psh};
                                     DBG_ICNT:  s_axi_rdata <= dbg_icnt;
                                     DBG_BEAM:  s_axi_rdata <= dbg_beam;
+                                    DBG_TRC_CTRL: s_axi_rdata <= {30'd0, dbg_trc_ctrl};
+                                    DBG_TRC_WPTR: s_axi_rdata <= dbg_trc_wptr;
+                                    DBG_TRC_PC:   s_axi_rdata <= {16'd0, dbg_trc_pc};
+                                    DBG_TRC_AXYS: s_axi_rdata <= dbg_trc_axys;
+                                    DBG_TRC_P:    s_axi_rdata <= {20'd0, dbg_trc_p};
                                     default: ;
                                 endcase
                             default: ;

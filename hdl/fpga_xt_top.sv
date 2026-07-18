@@ -753,6 +753,13 @@ module fpga_xt_top (
     wire [31:0] sdbg_axys;
     wire [11:0] sdbg_psh;
     wire [31:0] sdbg_icnt;
+    // trace-ring control (from GP0) + readback
+    wire [1:0]  gdbg_trc_ctrl;
+    wire [11:0] gdbg_trc_idx;
+    wire [31:0] sdbg_trc_wptr;
+    wire [15:0] sdbg_trc_pc;
+    wire [31:0] sdbg_trc_axys;
+    wire [11:0] sdbg_trc_p;
 
     xt6502 u_sally_core (
         .clk      (clk_sally),
@@ -807,7 +814,13 @@ module fpga_xt_top (
         .snap_pc      (sdbg_pc),
         .snap_axys    (sdbg_axys),
         .snap_psh     (sdbg_psh),
-        .icnt         (sdbg_icnt)
+        .icnt         (sdbg_icnt),
+        .trc_ctrl     (gdbg_trc_ctrl),
+        .trc_idx      (gdbg_trc_idx),
+        .trc_wptr_stat(sdbg_trc_wptr),
+        .trc_pc       (sdbg_trc_pc),
+        .trc_axys     (sdbg_trc_axys),
+        .trc_p        (sdbg_trc_p)
     );
 
     // ROM-init wires (driven by sally_rom_loader when USE_PS_BD is set;
@@ -2837,7 +2850,13 @@ module fpga_xt_top (
         .dbg_snap_axys   (sdbg_axys),
         .dbg_snap_psh    (sdbg_psh),
         .dbg_icnt        (sdbg_icnt),
-        .dbg_beam        (32'd0)             // reserved (future ANTIC/DLI correlation)
+        .dbg_beam        (32'd0),            // reserved (future ANTIC/DLI correlation)
+        .dbg_trc_ctrl    (gdbg_trc_ctrl),
+        .dbg_trc_idx     (gdbg_trc_idx),
+        .dbg_trc_wptr    (sdbg_trc_wptr),
+        .dbg_trc_pc      (sdbg_trc_pc),
+        .dbg_trc_axys    (sdbg_trc_axys),
+        .dbg_trc_p       (sdbg_trc_p)
     );
 
     // ROM-init AXI-Lite slave — see hdl/sally_rom_loader.sv.

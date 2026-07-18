@@ -85,6 +85,12 @@ package xt_gp0_pkg;
     localparam logic [7:0] DBG_PSH          = 8'h30;  // R snapshot: [7:0]=P [11:8]=SP high nibble
     localparam logic [7:0] DBG_ICNT         = 8'h34;  // R retired-instruction count since SALLYRST (increments on each ST_FETCH boundary)
     localparam logic [7:0] DBG_BEAM         = 8'h38;  // R RESERVED (reads 0 for now): display beam position at the last boundary — [15:0]=scanline [31:16]=beam-x — for future ANTIC/DLI correlation
+    localparam logic [7:0] DBG_TRC_CTRL     = 8'h3C;  // RW instruction-trace ring: [0]=enable (capture {PC,A,X,Y,SP,P} every ST_DECODE boundary), [1]=break_on_full (halt the core when the ring wraps). Ring is 4096 deep; readable only when halted (static).
+    localparam logic [7:0] DBG_TRC_WPTR     = 8'h40;  // R trace write pointer: [11:0]=next write slot (newest = WPTR-1), [16]=wrapped (ring has been full at least once), [17]=broke_on_full
+    localparam logic [7:0] DBG_TRC_IDX      = 8'h44;  // W set the ring read index (0..4095); the entry appears in DBG_TRC_PC/AXYS/P
+    localparam logic [7:0] DBG_TRC_PC       = 8'h48;  // R [15:0]=PC of the traced instruction at DBG_TRC_IDX
+    localparam logic [7:0] DBG_TRC_AXYS     = 8'h4C;  // R traced regs at DBG_TRC_IDX: [7:0]=A [15:8]=X [23:16]=Y [31:24]=SP(low)
+    localparam logic [7:0] DBG_TRC_P        = 8'h50;  // R traced at DBG_TRC_IDX: [7:0]=P [11:8]=SP high nibble
 
 endpackage
 `endif

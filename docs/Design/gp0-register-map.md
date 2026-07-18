@@ -124,3 +124,9 @@ in-fabric 6502 debugger (xt6502_debug): halt/step/breakpoint/register access, dr
 | 0x30 | R | 12 | `XT_DBG_PSH` | `DBG_PSH` | snapshot: [7:0]=P [11:8]=SP high nibble |
 | 0x34 | R | 32 | `XT_DBG_ICNT` | `DBG_ICNT` | retired-instruction count since SALLYRST (increments on each ST_FETCH boundary) |
 | 0x38 | R | 32 | `XT_DBG_BEAM` | `DBG_BEAM` | RESERVED (reads 0 for now): display beam position at the last boundary — [15:0]=scanline [31:16]=beam-x — for future ANTIC/DLI correlation |
+| 0x3C | RW | 2 | `XT_DBG_TRC_CTRL` | `DBG_TRC_CTRL` | instruction-trace ring: [0]=enable (capture {PC,A,X,Y,SP,P} every ST_DECODE boundary), [1]=break_on_full (halt the core when the ring wraps). Ring is 4096 deep; readable only when halted (static). |
+| 0x40 | R | 32 | `XT_DBG_TRC_WPTR` | `DBG_TRC_WPTR` | trace write pointer: [11:0]=next write slot (newest = WPTR-1), [16]=wrapped (ring has been full at least once), [17]=broke_on_full |
+| 0x44 | W | 12 | `XT_DBG_TRC_IDX` | `DBG_TRC_IDX` | set the ring read index (0..4095); the entry appears in DBG_TRC_PC/AXYS/P |
+| 0x48 | R | 16 | `XT_DBG_TRC_PC` | `DBG_TRC_PC` | [15:0]=PC of the traced instruction at DBG_TRC_IDX |
+| 0x4C | R | 32 | `XT_DBG_TRC_AXYS` | `DBG_TRC_AXYS` | traced regs at DBG_TRC_IDX: [7:0]=A [15:8]=X [23:16]=Y [31:24]=SP(low) |
+| 0x50 | R | 12 | `XT_DBG_TRC_P` | `DBG_TRC_P` | traced at DBG_TRC_IDX: [7:0]=P [11:8]=SP high nibble |
