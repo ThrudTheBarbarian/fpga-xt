@@ -49,6 +49,10 @@ static inline long sys_devmem(unsigned long addr, unsigned long val, int write)
 static inline long sys_devmem_sz(unsigned long addr, unsigned long val, int write, int size)
 { return __syscall(SYS_devmem, (long)addr, (long)val, (long)((write & 1) | ((size & 0xFF) << 8))); }
 static inline long sys_getpid(void) { return __syscall(SYS_getpid, 0, 0, 0); }
+/* grab the on-screen frame of HW compositor plane `plane` (XT_PLANE_*) into buf
+ * (>= 320*192*4 for the XL/6502 plane); returns (w<<16)|h or -errno. See SYS_plane_grab. */
+static inline long sys_plane_grab(int plane, void *buf)
+{ return __syscall(SYS_plane_grab, plane, (long)buf, 0); }
 /* drain one pending XTOS system message into msg[8] (int16). 1 = filled, 0 = none.
  * GUI apps loop this each evnt_multi (see gem/aes) -> surfaced as AES MU_MESAG. */
 static inline long sys_xtos_recv(void *msg8) { return __syscall(SYS_xtos_recv, (long)msg8, 0, 0); }

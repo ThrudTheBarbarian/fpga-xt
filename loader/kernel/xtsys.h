@@ -387,6 +387,13 @@ struct xt_dirent { unsigned mode; char name[256]; };
                                 * releases.  path=NULL = eject all media and cold
                                 * boot to BASIC.  The XL OS does the load itself —
                                 * the A9 never drives the 6502's PC. */
+#define SYS_plane_grab   0x607 /* (plane_id, void *buf) -> (w<<16)|h, or -errno: copy the
+                                * ON-SCREEN frame of HW compositor plane `plane_id` (XT_PLANE_*)
+                                * into buf (caller-supplied, >= w*h*4 bytes RGBA-8888, top-down).
+                                * Reads the exact triple-buffer slot the compositor is scanning
+                                * (DIAG4 = HP3 first-AR addr) so the grab is tear-free. The planes
+                                * are PL0-NONE (M7 gate), so this kernel copy is how a userland
+                                * screen-grab (/bin/graboverlay) reaches them. XL/6502 = plane 1. */
 
 /* ---- services + multiplexing — block 0x500 ---------------------------------
  * The rendezvous XTOS did not have. Pipes need shared ancestry (SYS_spawn_fd), so two

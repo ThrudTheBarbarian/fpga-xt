@@ -2851,6 +2851,22 @@ static long do_syscall(uint32_t num, long a0, long a1, long a2)
         extern int xl_boot(const char *, int);
         return xl_boot((const char *)a0, (int)a1);
     }
+    case SYS_plane_grab: {                                  /* (plane_id, buf) -> (w<<16)|h */
+        const uint32_t XL_W = 320, XL_H = 192;              /* XL_SRC_W x XL_SRC_H (RTL) */
+        if ((int)a0 != XT_PLANE_XL) return -22;             /* 6502/XL plane only (m68k later) */
+        uint32_t *dst = (uint32_t *)a1;
+        if (!dst) return -14;
+        /* DIAG4 (XT_BLK_DIAG+0x0C) = the XL plane's live compositor read address = the
+         * base of the triple-buffer slot currently on screen; snap to the 1 MB slot grid
+         * so the grab is the exact displayed frame (tear-free), fall back to slot 0. The
+         * planes are PL0-NONE (M7 gate) — this PL1 copy is how userland reaches them. */
+        uint32_t base = (*(volatile uint32_t *)0x43C0040Cu) & 0xFFF00000u;
+        if (base != 0x31000000u && base != 0x31100000u && base != 0x31200000u)
+            base = 0x31000000u;
+        const volatile uint32_t *src = (const volatile uint32_t *)base;
+        for (uint32_t i = 0; i < XL_W * XL_H; i++) dst[i] = src[i];
+        return (long)((XL_W << 16) | XL_H);
+    }
     case SYS_plane_window: {                                /* (plane<<16|scale<<8|en, x<<16|y, w<<16|h) */
         extern long plane_window_set(int, int, int, int, int, int, int);
         if (frtos_current_pid() != g_fb_owner_pid) return -1;   /* M7 gate: plane placement
