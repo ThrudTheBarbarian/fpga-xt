@@ -98,6 +98,8 @@ module xt6502f #(
     reg       is_store;  // writes the register to memory
     reg       is_rmw;    // read-modify-write to memory (double-write)
     reg       sax;       // store source = A & X (illegal SAX)
+    reg       combo;     // illegal RMW+ALU: after the modify-write, run op2 on A
+    reg [3:0] op2;       // the ALU op for a combo (ORA/AND/EOR/ADC/CMP/SBC)
 
     // operation applied at the value terminal (read-group ALU + RMW ALU)
     localparam [3:0] OP_LD=0, OP_AND=1, OP_ORA=2, OP_EOR=3, OP_CMP=4, OP_BIT=5, OP_ADC=6, OP_SBC=7,
@@ -143,15 +145,16 @@ module xt6502f #(
     assign sync = (state == ST_FETCH);
     wire   advance  = slot_commit && rdy;
 
-    // ---- read-group execute: apply `op` to the read value `v`, return to fetch -----
-    task automatic exec_op(input [7:0] v);
+    // ---- ALU core: apply op `o` to value `v` (no state change) — shared by the read
+    // terminal (exec_op) and the illegal RMW+ALU combos (SLO/RLA/SRE/RRA/DCP/ISC) -----
+    task automatic exec_alu(input [3:0] o, input [7:0] v);
         reg [7:0] r, res;
         reg [8:0] sum9;      // binary add/sub with carry-out
         reg [7:0] bres; reg bc, bv;
         reg [5:0] al;   reg [9:0] inter; reg dn, dv, dc;   // NMOS decimal ADC
         integer   al_i, a_i;                               // NMOS decimal SBC (signed)
         begin
-            case (op)
+            case (o)
                 OP_LD:  begin case (dst) 2'd0:A<=v; 2'd1:X<=v; 2'd2:Y<=v; default:; endcase
                               P <= {v[7], P[6:2], (v==8'h00), P[0]}; end
                 OP_LAX: begin A<=v; X<=v;                              // LAX (illegal): load A and X
@@ -201,8 +204,12 @@ module xt6502f #(
                 end
                 default: ;
             endcase
-            state <= ST_FETCH;
         end
+    endtask
+
+    // read terminal: run the decoded op, then retire
+    task automatic exec_op(input [7:0] v);
+        begin exec_alu(op, v); state <= ST_FETCH; end
     endtask
 
     // ---- RMW ALU: modify `v`, set N/Z(/C); to A (accumulator form) or rmw_mod (memory) ----
@@ -263,7 +270,7 @@ module xt6502f #(
             A <= 0; X <= 0; Y <= 0; S <= 8'hFD; P <= 8'h34;
             ir <= 8'hEA; eal <= 0; eah <= 0; ptr <= 0; idx <= 0; din_r <= 0;
             dst <= 0; has_idx <= 0; pgx <= 0; is_store <= 0; is_rmw <= 0; op <= OP_LD;
-            rmw_val <= 0; rmw_mod <= 0; sax <= 0;
+            rmw_val <= 0; rmw_mod <= 0; sax <= 0; combo <= 0; op2 <= OP_LD;
         end else if (dbg_load) begin
             PC <= dbg_pc_in; A <= dbg_a_in; X <= dbg_x_in; Y <= dbg_y_in;
             S <= dbg_s_in; P <= dbg_p_in; state <= ST_FETCH; ir <= 8'hEA;
@@ -276,6 +283,7 @@ module xt6502f #(
                 ST_FETCH: begin
                     ir <= din_r; PC <= PC + 16'd1;
                     has_idx <= 1'b0; pgx <= 1'b0; is_store <= 1'b0; is_rmw <= 1'b0; op <= OP_LD; sax <= 1'b0;
+                    combo <= 1'b0;
                     case (din_r)
                         // ---- immediate loads ----
                         8'hA9: begin dst <= 2'd0; state <= ST_IMM; end          // LDA #
@@ -453,6 +461,55 @@ module xt6502f #(
                         8'h97: begin is_store<=1; sax<=1; eah<=0; idx<=Y; has_idx<=1; state<=ST_ZPF; end // SAX zp,Y
                         8'h8F: begin is_store<=1; sax<=1; state<=ST_ABL; end                          // SAX abs
                         8'h83: begin is_store<=1; sax<=1; state<=ST_IXF; end                          // SAX (zp,X)
+                        // ---- combo RMW+ALU illegals: modify memory, then run op2 on A ----
+                        // SLO = ASL + ORA
+                        8'h03: begin is_rmw<=1; combo<=1; op<=OP_ASL; op2<=OP_ORA; state<=ST_IXF; end
+                        8'h07: begin is_rmw<=1; combo<=1; op<=OP_ASL; op2<=OP_ORA; eah<=0; state<=ST_ZPF; end
+                        8'h0F: begin is_rmw<=1; combo<=1; op<=OP_ASL; op2<=OP_ORA; state<=ST_ABL; end
+                        8'h13: begin is_rmw<=1; combo<=1; op<=OP_ASL; op2<=OP_ORA; state<=ST_IYF; end
+                        8'h17: begin is_rmw<=1; combo<=1; op<=OP_ASL; op2<=OP_ORA; eah<=0; idx<=X; has_idx<=1; state<=ST_ZPF; end
+                        8'h1B: begin is_rmw<=1; combo<=1; op<=OP_ASL; op2<=OP_ORA; idx<=Y; has_idx<=1; state<=ST_ABL; end
+                        8'h1F: begin is_rmw<=1; combo<=1; op<=OP_ASL; op2<=OP_ORA; idx<=X; has_idx<=1; state<=ST_ABL; end
+                        // RLA = ROL + AND
+                        8'h23: begin is_rmw<=1; combo<=1; op<=OP_ROL; op2<=OP_AND; state<=ST_IXF; end
+                        8'h27: begin is_rmw<=1; combo<=1; op<=OP_ROL; op2<=OP_AND; eah<=0; state<=ST_ZPF; end
+                        8'h2F: begin is_rmw<=1; combo<=1; op<=OP_ROL; op2<=OP_AND; state<=ST_ABL; end
+                        8'h33: begin is_rmw<=1; combo<=1; op<=OP_ROL; op2<=OP_AND; state<=ST_IYF; end
+                        8'h37: begin is_rmw<=1; combo<=1; op<=OP_ROL; op2<=OP_AND; eah<=0; idx<=X; has_idx<=1; state<=ST_ZPF; end
+                        8'h3B: begin is_rmw<=1; combo<=1; op<=OP_ROL; op2<=OP_AND; idx<=Y; has_idx<=1; state<=ST_ABL; end
+                        8'h3F: begin is_rmw<=1; combo<=1; op<=OP_ROL; op2<=OP_AND; idx<=X; has_idx<=1; state<=ST_ABL; end
+                        // SRE = LSR + EOR
+                        8'h43: begin is_rmw<=1; combo<=1; op<=OP_LSR; op2<=OP_EOR; state<=ST_IXF; end
+                        8'h47: begin is_rmw<=1; combo<=1; op<=OP_LSR; op2<=OP_EOR; eah<=0; state<=ST_ZPF; end
+                        8'h4F: begin is_rmw<=1; combo<=1; op<=OP_LSR; op2<=OP_EOR; state<=ST_ABL; end
+                        8'h53: begin is_rmw<=1; combo<=1; op<=OP_LSR; op2<=OP_EOR; state<=ST_IYF; end
+                        8'h57: begin is_rmw<=1; combo<=1; op<=OP_LSR; op2<=OP_EOR; eah<=0; idx<=X; has_idx<=1; state<=ST_ZPF; end
+                        8'h5B: begin is_rmw<=1; combo<=1; op<=OP_LSR; op2<=OP_EOR; idx<=Y; has_idx<=1; state<=ST_ABL; end
+                        8'h5F: begin is_rmw<=1; combo<=1; op<=OP_LSR; op2<=OP_EOR; idx<=X; has_idx<=1; state<=ST_ABL; end
+                        // RRA = ROR + ADC
+                        8'h63: begin is_rmw<=1; combo<=1; op<=OP_ROR; op2<=OP_ADC; state<=ST_IXF; end
+                        8'h67: begin is_rmw<=1; combo<=1; op<=OP_ROR; op2<=OP_ADC; eah<=0; state<=ST_ZPF; end
+                        8'h6F: begin is_rmw<=1; combo<=1; op<=OP_ROR; op2<=OP_ADC; state<=ST_ABL; end
+                        8'h73: begin is_rmw<=1; combo<=1; op<=OP_ROR; op2<=OP_ADC; state<=ST_IYF; end
+                        8'h77: begin is_rmw<=1; combo<=1; op<=OP_ROR; op2<=OP_ADC; eah<=0; idx<=X; has_idx<=1; state<=ST_ZPF; end
+                        8'h7B: begin is_rmw<=1; combo<=1; op<=OP_ROR; op2<=OP_ADC; idx<=Y; has_idx<=1; state<=ST_ABL; end
+                        8'h7F: begin is_rmw<=1; combo<=1; op<=OP_ROR; op2<=OP_ADC; idx<=X; has_idx<=1; state<=ST_ABL; end
+                        // DCP = DEC + CMP (with A)
+                        8'hC3: begin is_rmw<=1; combo<=1; op<=OP_DEC; op2<=OP_CMP; dst<=2'd0; state<=ST_IXF; end
+                        8'hC7: begin is_rmw<=1; combo<=1; op<=OP_DEC; op2<=OP_CMP; dst<=2'd0; eah<=0; state<=ST_ZPF; end
+                        8'hCF: begin is_rmw<=1; combo<=1; op<=OP_DEC; op2<=OP_CMP; dst<=2'd0; state<=ST_ABL; end
+                        8'hD3: begin is_rmw<=1; combo<=1; op<=OP_DEC; op2<=OP_CMP; dst<=2'd0; state<=ST_IYF; end
+                        8'hD7: begin is_rmw<=1; combo<=1; op<=OP_DEC; op2<=OP_CMP; dst<=2'd0; eah<=0; idx<=X; has_idx<=1; state<=ST_ZPF; end
+                        8'hDB: begin is_rmw<=1; combo<=1; op<=OP_DEC; op2<=OP_CMP; dst<=2'd0; idx<=Y; has_idx<=1; state<=ST_ABL; end
+                        8'hDF: begin is_rmw<=1; combo<=1; op<=OP_DEC; op2<=OP_CMP; dst<=2'd0; idx<=X; has_idx<=1; state<=ST_ABL; end
+                        // ISC = INC + SBC
+                        8'hE3: begin is_rmw<=1; combo<=1; op<=OP_INC; op2<=OP_SBC; state<=ST_IXF; end
+                        8'hE7: begin is_rmw<=1; combo<=1; op<=OP_INC; op2<=OP_SBC; eah<=0; state<=ST_ZPF; end
+                        8'hEF: begin is_rmw<=1; combo<=1; op<=OP_INC; op2<=OP_SBC; state<=ST_ABL; end
+                        8'hF3: begin is_rmw<=1; combo<=1; op<=OP_INC; op2<=OP_SBC; state<=ST_IYF; end
+                        8'hF7: begin is_rmw<=1; combo<=1; op<=OP_INC; op2<=OP_SBC; eah<=0; idx<=X; has_idx<=1; state<=ST_ZPF; end
+                        8'hFB: begin is_rmw<=1; combo<=1; op<=OP_INC; op2<=OP_SBC; idx<=Y; has_idx<=1; state<=ST_ABL; end
+                        8'hFF: begin is_rmw<=1; combo<=1; op<=OP_INC; op2<=OP_SBC; idx<=X; has_idx<=1; state<=ST_ABL; end
                         default: state <= ST_IMPL;                              // unimpl -> NOP (fails Harte)
                     endcase
                 end
@@ -485,7 +542,7 @@ module xt6502f #(
                 ST_IYF:  begin ptr <= din_r; PC <= PC + 16'd1; state <= ST_IYA; end
                 ST_IYA:  begin eal <= din_r; state <= ST_IYB; end               // [00,ptr]   -> adl
                 ST_IYB:  begin eah <= din_r; eal <= eal_plus_y[7:0]; pgx <= eal_plus_y[8]; state <= ST_IYRD; end
-                ST_IYRD: begin if (is_store) begin eah <= eah + {7'd0, pgx}; state <= ST_STORE; end  // dummy read; fix; write
+                ST_IYRD: begin if (is_store || is_rmw) begin eah <= eah + {7'd0, pgx}; state <= is_rmw ? ST_RMW_RD : ST_STORE; end // dummy; fix; write-terminal
                                else if (pgx) begin eah <= eah + 8'd1; state <= ST_IYC; end
                                else exec_op(din_r); end
                 ST_IYC:  exec_op(din_r);
@@ -496,7 +553,10 @@ module xt6502f #(
                 ST_ACC:    begin exec_rmw(A, 1'b1); state <= ST_FETCH; end     // accumulator RMW
                 ST_RMW_RD: begin rmw_val <= din_r; exec_rmw(din_r, 1'b0); state <= ST_RMW_W0; end
                 ST_RMW_W0: state <= ST_RMW_W1;                                 // ghost write (original, data_out)
-                ST_RMW_W1: state <= ST_FETCH;                                  // final write (modified, data_out)
+                ST_RMW_W1: begin                                               // final write (modified, data_out)
+                    if (combo) exec_alu(op2, rmw_mod);                         // illegal: run ALU on A w/ modified value
+                    state <= ST_FETCH;
+                end
 
                 // NOP / JMP
                 ST_IMPL: begin exec_impl; state <= ST_FETCH; end
