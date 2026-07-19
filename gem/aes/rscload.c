@@ -136,6 +136,32 @@ int rscload_ext(const rscdoc *d, int index, int obj)
     return d->ext[gi];
 }
 
+// ---- the XGNB nib extension (see rsc.c) ----------------------------------------
+// Thin wrappers over the engine's rsc_nib_*, exposing only primitives + string pointers so a
+// client (XGNib) can read the nib graph without sharing the engine's struct layouts.
+int rscload_nib_present(const rscdoc *d)  { return d ? rsc_nib_present(d->r)  : 0; }
+int rscload_nib_nclassov(const rscdoc *d) { return d ? rsc_nib_nclassov(d->r) : 0; }
+int rscload_nib_ntopobj(const rscdoc *d)  { return d ? rsc_nib_ntopobj(d->r)  : 0; }
+int rscload_nib_nconn(const rscdoc *d)    { return d ? rsc_nib_nconn(d->r)    : 0; }
+
+const char *rscload_nib_classov(const rscdoc *d, int i, int *space, int *a, int *b) {
+    const RSC_CLASSOV *c = d ? rsc_nib_classov(d->r, i) : 0; if (!c) return 0;
+    if (space) *space = c->view.space; if (a) *a = c->view.a; if (b) *b = c->view.b;
+    return c->cls;
+}
+const char *rscload_nib_topobj(const rscdoc *d, int i, int *id) {
+    const RSC_TOPOBJ *t = d ? rsc_nib_topobj(d->r, i) : 0; if (!t) return 0;
+    if (id) *id = t->id; return t->cls;
+}
+const char *rscload_nib_conn(const rscdoc *d, int i, int *kind,
+                             int *ss, int *sa, int *sb, int *ds, int *da, int *db) {
+    const RSC_CONN *c = d ? rsc_nib_conn(d->r, i) : 0; if (!c) return 0;
+    if (kind) *kind = c->kind;
+    if (ss) *ss = c->src.space; if (sa) *sa = c->src.a; if (sb) *sb = c->src.b;
+    if (ds) *ds = c->dst.space; if (da) *da = c->dst.a; if (db) *db = c->dst.b;
+    return c->member;
+}
+
 void rscload_free(rscdoc *d)
 {
     if (!d) return;

@@ -48,6 +48,17 @@ OBJECT *rscload_tree(rscdoc *d, int index);
 // a G_POPUP this is its linked menu tree index (0 = none).  -1 if out of range.
 int     rscload_ext(const rscdoc *d, int index, int obj);
 
+// The XGNB nib extension (if the .rsc carried one).  Primitives + string pointers only, so a
+// client reads the graph without the engine's structs.  Refs are (space, a, b) per XG-NIB.md.
+int         rscload_nib_present(const rscdoc *d);
+int         rscload_nib_nclassov(const rscdoc *d);
+int         rscload_nib_ntopobj(const rscdoc *d);
+int         rscload_nib_nconn(const rscdoc *d);
+const char *rscload_nib_classov(const rscdoc *d, int i, int *space, int *a, int *b);       // view -> class name
+const char *rscload_nib_topobj(const rscdoc *d, int i, int *id);                            // id -> class name
+const char *rscload_nib_conn(const rscdoc *d, int i, int *kind,                             // -> member name
+                             int *ss, int *sa, int *sb, int *ds, int *da, int *db);
+
 void    rscload_free(rscdoc *d);
 
 #ifdef __cplusplus
