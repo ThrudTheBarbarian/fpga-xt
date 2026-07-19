@@ -88,6 +88,12 @@ module dl_parser (
 );
 
     localparam int ATARI_H = 192;
+    // Leading blank-line scanlines to treat as TOP OVERSCAN and skip (a normal
+    // 2-3 blank-8 OS/game margin). Blanks BEYOND this are intentional vertical
+    // positioning (e.g. a centred title/intro screen) and MUST be emitted as
+    // visible COLBK rows, or the content collapses to the top (DR MASTERTRONIC
+    // title + coloured-bars rendered squashed into the top band).
+    localparam [7:0] LEAD_OVERSCAN = 8'd24;
     localparam int OPS_LIMIT = 1024;       // safety against malformed JMP loops
 
     // ---- Per-row metadata storage --------------------------------------
@@ -186,6 +192,7 @@ module dl_parser (
     logic        is_jvb;            // current $41 JVB (vs $01 JMP)
     logic        is_blank;          // decoded line is a blank ($00)
     logic [4:0]  blank_count;       // blank-line scan count (1..8)
+    logic [7:0]  lead_skipped;      // leading-blank scanlines skipped as overscan
     logic        seen_mode;         // a visible mode line (2..F) has been
                                     // emitted this frame. Leading blanks (before
                                     // the first mode line) are top overscan and
@@ -262,6 +269,7 @@ module dl_parser (
             is_jvb          <= 1'b0;
             is_blank        <= 1'b0;
             blank_count     <= 5'd1;
+            lead_skipped    <= 8'd0;
             seen_mode       <= 1'b0;
             pend_valid      <= 1'b0;
             pend_mode       <= 4'h0;
@@ -301,6 +309,7 @@ module dl_parser (
                         pending_dli    <= 1'b0;
                         pend_valid     <= 1'b0;
                         seen_mode      <= 1'b0;
+                        lead_skipped   <= 8'd0;
                         emit_phase     <= E_STAGE;
                         state          <= S_FETCH_OP;
                     end
@@ -355,12 +364,21 @@ module dl_parser (
                             // renders and the writeback gets a written row.
                             state       <= S_STAGE;
                             emit_phase  <= E_STAGE;
+                        end else if ((lead_skipped + {5'd0, mem_rdata[6:4]} + 8'd1)
+                                        <= LEAD_OVERSCAN) begin
+                            // Leading blank within the top-overscan budget — skip so
+                            // the playfield tops out correctly (a normal 2-3 blank-8
+                            // OS/game margin). Must NOT consume an atari_row or the
+                            // playfield shoves down + bottom mode lines clip.
+                            lead_skipped <= lead_skipped + {5'd0, mem_rdata[6:4]} + 8'd1;
+                            state        <= S_FETCH_OP;
                         end else begin
-                            // Leading overscan blank — skip entirely. It must NOT
-                            // consume an atari_row or the playfield is shoved down
-                            // and the bottom mode lines clip off (the top-band /
-                            // bottom-clip artifact). dl_pos already advanced above.
-                            state       <= S_FETCH_OP;
+                            // Leading blanks BEYOND the overscan budget are intentional
+                            // vertical positioning (centred title / intro) — EMIT them
+                            // as visible COLBK rows so the content lands at the right
+                            // scanline instead of collapsing into the top band.
+                            state        <= S_STAGE;
+                            emit_phase   <= E_STAGE;
                         end
                     end else if (mem_rdata[3:0] == 4'h1) begin
                         // JMP ($01) / JVB ($41) — bit 6 distinguishes.
