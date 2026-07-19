@@ -826,10 +826,17 @@ module fpga_xt_top (
     end
     wire       phi2_tick_fid = (fid_ph_ctr == 6'd55);
     wire [7:0] fid_sub;
+    wire [15:0] fdbg_pc;             // TEMP: fid core live PC  -> diag8
+    wire  [7:0] fdbg_ir;             // TEMP: fid core current opcode -> diag8
     wire       fid_busy = mem_busy_n | hwreg_rd_busy;
     reg        fid_mem_ok = 1'b1;
     always_ff @(posedge clk_sally) if (fid_sub == 8'd49) fid_mem_ok <= ~fid_busy;  // SUB_DATA = N-7
-    wire       fid_rdy = cpu_sel & fid_mem_ok & ~dma_steal_sally;  // runs only when it owns; /HALT + busy aware
+    // Honor WSYNC exactly like the turbo core (sally_clock ANDs wsync_rdy_n into sally_rdy):
+    // a STA $D40A sets wsync_pending in antic_top, wsync_gen drops wsync_rdy_n (1=ready,0=stall)
+    // until ANTIC's cycle-105 hblank (plus an overdue timeout), so no deadlock. Without this the
+    // fid core free-ran through STA WSYNC and every beam-raced kernel (intro rainbow, per-scanline
+    // COLPF) mistimed — turbo and fid must be timing-identical.
+    wire       fid_rdy = cpu_sel & fid_mem_ok & ~dma_steal_sally & wsync_rdy_n;  // owns bus; /HALT + WSYNC + busy aware
     // sally_mem's read-latch (bram_dout_q) AND every write/bank-latch/hwreg-strobe are gated
     // by its `rdy` — a "the CPU took a step" pulse. For the turbo core that is sally_rdy. The
     // fidelity core drives a STABLE address for the whole window and samples data at SUB_DATA=49,
@@ -852,8 +859,8 @@ module fpga_xt_top (
         .irq_n     (irq_n_sync),
         .nmi_n     (nmi_n_sync),
         .sync      (),
-        .dbg_pc    (), .dbg_a (), .dbg_x (), .dbg_y (), .dbg_s (), .dbg_p (),
-        .dbg_sub   (fid_sub), .dbg_ir (),
+        .dbg_pc    (fdbg_pc), .dbg_a (), .dbg_x (), .dbg_y (), .dbg_s (), .dbg_p (),
+        .dbg_sub   (fid_sub), .dbg_ir (fdbg_ir),
         .dbg_load  (1'b0), .dbg_pc_in (16'd0), .dbg_a_in (8'd0), .dbg_x_in (8'd0),
         .dbg_y_in  (8'd0), .dbg_s_in (8'd0), .dbg_p_in (8'd0),
         .dbg_cyc_addr (), .dbg_cyc_val (), .dbg_cyc_rw (), .dbg_cyc_valid ()
@@ -1599,10 +1606,10 @@ module fpga_xt_top (
         ad_s0 <= romdiag_addr; ad_s1 <= ad_s0;
         da_s0 <= romdiag_data; da_s1 <= da_s0;
     end
-    assign diag8_word = antic_dbg_gtia;    // TEMP repurpose: {colpf0,colpf1,colpf2,colbk}
+    assign diag8_word = {fdbg_pc, fdbg_ir, 5'h0, fid_mem_ok, dma_steal_sally, fid_rdy}; // TEMP: fid PC/IR + rdy-gate
     assign diag9_word = antic_dbg_antic;   // TEMP repurpose: {colpf3,prior,chbase,dmactl}
 `else
-    assign diag8_word = antic_dbg_gtia;
+    assign diag8_word = {fdbg_pc, fdbg_ir, 5'h0, fid_mem_ok, dma_steal_sally, fid_rdy};
     assign diag9_word = antic_dbg_antic;
 `endif
 
