@@ -224,13 +224,20 @@ module dl_parser (
         endcase
     endfunction
 
-    function automatic logic [15:0] bytes_per_line(logic [3:0] m);
+    // Bytes ANTIC fetches (and advances the memory scan by) for one mode line.
+    // A line with HSCROL enabled is fetched one playfield-width WIDER (NORMAL->WIDE,
+    // +20%: 40->48, 20->24, 10->12) so there is data to scroll in from the right, and
+    // the scan pointer advances by that wider count.  Ignoring this drifts every
+    // HSCROL char line 8 bytes short of the previous — Despatch Rider's bottom view
+    // (mode-4 + HSCROL, 48-byte rows) "spread out" until this was accounted for.
+    // (DMACTL NARROW base is not modelled; DR and the OS use NORMAL.)
+    function automatic logic [15:0] bytes_per_line(logic [3:0] m, logic hs);
         case (m)
-            4'h2, 4'h3, 4'h4, 4'h5: return 16'd40;   // text modes (NORMAL)
-            4'h6, 4'h7:              return 16'd20;   // 20-col text
-            4'h8, 4'h9:              return 16'd10;   // low-res gfx
-            4'hA, 4'hB, 4'hC:        return 16'd20;
-            4'hD, 4'hE, 4'hF:        return 16'd40;
+            4'h2, 4'h3, 4'h4, 4'h5: return hs ? 16'd48 : 16'd40;   // text modes
+            4'h6, 4'h7:              return hs ? 16'd24 : 16'd20;   // 20-col text
+            4'h8, 4'h9:              return hs ? 16'd12 : 16'd10;   // low-res gfx
+            4'hA, 4'hB, 4'hC:        return hs ? 16'd24 : 16'd20;
+            4'hD, 4'hE, 4'hF:        return hs ? 16'd48 : 16'd40;
             default:                 return 16'd0;
         endcase
     endfunction
@@ -526,7 +533,7 @@ module dl_parser (
                             logic [15:0] adv;
                             logic [15:0] new_lms_after_load;
                             adv = (pend_mode >= 4'd2)
-                                    ? lms_ptr + bytes_per_line(pend_mode)
+                                    ? lms_ptr + bytes_per_line(pend_mode, pend_hscrol_en)
                                     : lms_ptr;
                             new_lms_after_load = lms_was_loaded ? new_lms_loaded : adv;
                             lms_ptr        <= new_lms_after_load;
