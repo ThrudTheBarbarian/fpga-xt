@@ -225,7 +225,10 @@ module sally_mem #(
     // and available 1 cycle later.
     input  wire         dma_clk,
     input  wire [15:0]  dma_addr,
-    output wire [7:0]   dma_rdata
+    output wire [7:0]   dma_rdata,
+    // TEMP diag: A9-driven 6502-RAM peek. Registered read of the flat 64K image.
+    input  wire [15:0]  peek_addr,
+    output reg  [7:0]   peek_data
 );
 
     // ---- Backing BRAM ($0000-$3FFF, $8000-$FFFF less hwreg page) ---
@@ -678,6 +681,9 @@ module sally_mem #(
     always_ff @(posedge clk) begin
         if (mem_we) mem[mem_addr_w] <= mem_din_w;
     end
+
+    // TEMP diag: A9 peek — a separate registered read port into the flat 64K image.
+    always_ff @(posedge clk) peek_data <= mem[peek_addr];
 
     // ---- Stack BRAM write port (separate array; reads prefer this) ----
     // Three write paths land in stack_mem:
