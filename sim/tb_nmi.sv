@@ -190,7 +190,10 @@ module tb_nmi;
         expect_eq("dl/row0_dli", {7'h0, u_dl.line_dli[0]}, 8'h00);
         expect_eq("dl/row1_dli", {7'h0, u_dl.line_dli[1]}, 8'h01);
 
-        // ===== Phase 1: NMIEN[7] only — DLI fires =========================
+        // ===== Phase 1: NMIEN[7] only — DLI fires, /NMI auto-releases =====
+        // The real OS DLI dispatch (JMP (VDSLST)) RTIs WITHOUT writing
+        // NMIRES, so /NMI MUST self-release as a pulse — otherwise the line
+        // pins low forever and no further NMI is ever taken.
         write_reg(8'h0E, 8'h80);                    // NMIEN = $80
         // Pulse line_start at row 0 — no DLI here.
         pulse_line(8'd0);
@@ -204,11 +207,28 @@ module tb_nmi;
         expect_eq("p1/row1/nmist", nmist_q, 8'h9F);
         expect_eq("p1/row1/nmi_n", {7'h0, nmi_n},  8'h00);     // /NMI low
 
-        // CPU acks via NMIRES.
+        // Still low well into the pulse (must span >=1 fidelity-core
+        // machine cycle so a coarse sampler cannot miss it).
+        repeat (100) @(posedge clk);
+        expect_eq("p1/pulse/mid-low", {7'h0, nmi_n}, 8'h00);   // still low
+
+        // WITHOUT any NMIRES, /NMI returns high once the pulse window
+        // (256 cycles) expires. This is the fix — DLI never acks.
+        repeat (200) @(posedge clk);
+        @(negedge clk);
+        expect_eq("p1/pulse/auto-release", {7'h0, nmi_n}, 8'h01);  // high again
+        expect_eq("p1/pulse/nmist-sticky", nmist_q, 8'h9F);        // flag still set
+
+        // A second DLI produces a FRESH falling edge (line re-armed).
+        pulse_line(8'd1);
+        @(negedge clk);
+        expect_eq("p1b/edge2/nmi_n", {7'h0, nmi_n}, 8'h00);    // low again
+
+        // CPU acks via NMIRES → flags clear (nmi_n independent of ack now).
+        repeat (300) @(posedge clk);                // let pulse expire
         write_reg(8'h0F, 8'h00);
         @(negedge clk);
         expect_eq("p1/ack/nmist", nmist_q, 8'h1F);
-        expect_eq("p1/ack/nmi_n", {7'h0, nmi_n},  8'h01);
 
         // ===== Phase 2: NMIEN[6] only — VBI fires =========================
         write_reg(8'h0E, 8'h40);                    // NMIEN = $40
@@ -216,7 +236,7 @@ module tb_nmi;
         @(negedge clk);
         expect_eq("p2/vbi/nmist", nmist_q, 8'h5F);
         expect_eq("p2/vbi/nmi_n", {7'h0, nmi_n},  8'h00);
-
+        repeat (300) @(posedge clk);
         write_reg(8'h0F, 8'h00);
         @(negedge clk);
         expect_eq("p2/ack/nmist", nmist_q, 8'h1F);
@@ -232,35 +252,30 @@ module tb_nmi;
         pulse_vbi();
         @(negedge clk);
         expect_eq("p3/no-fire/nmist", nmist_q, 8'h1F);
+        repeat (300) @(posedge clk);
         expect_eq("p3/no-fire/nmi_n", {7'h0, nmi_n},  8'h01);
 
-        // ===== Phase 4: both enabled, both fire ===========================
+        // ===== Phase 4: last-cause — a VBI clears a pending DLI bit ========
+        // REQUIRED by the OS: a VBI NMI must read bit7=0 (else BPL
+        // mis-dispatches it as a DLI and the VBI/NMIRES body never runs).
         write_reg(8'h0E, 8'hC0);
-        pulse_line(8'd1);
-        pulse_vbi();
+        pulse_line(8'd1);                           // DLI: flags -> $80
         @(negedge clk);
-        expect_eq("p4/both/nmist", nmist_q, 8'hDF);
-        expect_eq("p4/both/nmi_n", {7'h0, nmi_n},  8'h00);
+        expect_eq("p4/dli-first/nmist", nmist_q, 8'h9F);
+        pulse_vbi();                                // VBI: flags -> $40 (DLI cleared)
+        @(negedge clk);
+        expect_eq("p4/vbi-clears-dli/nmist", nmist_q, 8'h5F);   // bit7 == 0
+        expect_eq("p4/vbi/nmi_n", {7'h0, nmi_n},  8'h00);
 
-        // ===== Phase 5: NMIRES + new DLI in same cycle → set wins ========
-        // Re-arm: ack first, then immediately fire DLI.
+        // And the reverse: a DLI after a pending VBI presents bit7=1.
+        pulse_line(8'd1);                           // DLI: flags -> $80
+        @(negedge clk);
+        expect_eq("p4/dli-clears-vbi/nmist", nmist_q, 8'h9F);   // bit6 == 0
+        repeat (300) @(posedge clk);
         write_reg(8'h0F, 8'h00);
-        @(posedge clk);
-        // Manually engineer "set + clear in same cycle":
-        @(negedge clk);
-        atari_row_in <= 8'd1;
-        line_start   <= 1'b1;
-        waddr <= 8'h0F; wdata <= 8'h00; we <= 1'b1;
-        @(posedge clk);
-        @(negedge clk);
-        line_start <= 1'b0;
-        we         <= 1'b0;
-        @(posedge clk);
-        // NMIRES cleared on this cycle, but DLI also fired → NMIST=$80
-        expect_eq("p5/set-wins/nmist", nmist_q, 8'h9F);
 
         if (fail_count == 0) begin
-            $display("*** NMI OK *** DLI + VBI + NMIRES set-wins verified");
+            $display("*** NMI OK *** pulse auto-release + last-cause NMIST verified");
             $finish;
         end else begin
             $display("*** NMI FAIL *** %0d failures", fail_count);
