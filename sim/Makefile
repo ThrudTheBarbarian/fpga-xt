@@ -59,7 +59,7 @@ HDL_SRCS := \
 
 BUILD_DIR := build
 
-.PHONY: all smoke snoop read vbeam dl_parse prior nmi wsync palette dma_master mem_read_mux draw_regs pokey pokey_i2s sally sally_mem sally_mem_page sally_arb bank_xlat cdc_flag_data hwreg_rd_cdc legacy_upscale plane_compositor plane_fetch axi_line_writer antic_writeback xl_buffer_ctrl antic_raster antic_seq antic_modes antic_display pia_regs peri_link joy_link joy_bridge peri_bridge os_rom_load klaus lint clean xt_blitter sally_stack sally_isa sprite_regs sprite_fetcher sprite_compositor xt6502 boot boot_trace plane_vscale disp_modef_wrap antic_dma_steal
+.PHONY: all smoke snoop read vbeam dl_parse prior nmi wsync palette dma_master mem_read_mux draw_regs pokey pokey_i2s sally sally_mem sally_mem_page sally_arb bank_xlat cdc_flag_data hwreg_rd_cdc legacy_upscale plane_compositor plane_fetch axi_line_writer antic_writeback xl_buffer_ctrl antic_raster antic_seq antic_modes hscrol hscrol_e2e antic_display pia_regs peri_link joy_link joy_bridge peri_bridge os_rom_load klaus lint clean xt_blitter sally_stack sally_isa sprite_regs sprite_fetcher sprite_compositor xt6502 boot boot_trace plane_vscale disp_modef_wrap antic_dma_steal
 
 # Retired tests (2026-05-25): rp_bus, mode_f, char_modes, gfx_modes, pm, scroll,
 # dma_int, visual all instantiated the v1 rp_bus injection harness
@@ -833,6 +833,35 @@ antic_modes: $(BUILD_DIR)/tb_antic_modes.vvp
 
 $(BUILD_DIR)/tb_antic_modes.vvp: $(HDL_DIR)/compositor.sv tb_antic_modes.sv $(HDL_DIR)/bus_opcodes.vh | $(BUILD_DIR)
 	$(IVERILOG) $(SV_FLAGS) -o $@ -s tb_antic_modes $(HDL_DIR)/compositor.sv tb_antic_modes.sv
+
+# ---- hscrol — HSCROL fine sub-pixel scroll (compositor, exhaustive) --------
+# Drives the compositor directly with meta_hscrol_en=1 and hscrol=0..15 for
+# modes 2 & 4 over pseudo-random content, checking every displayed atari px
+# against source[x + 2*hscrol].  Proves the fine shift is applied smoothly (2
+# atari px / hscrol step) and never byte-granular.  Not in `all`.
+hscrol: $(BUILD_DIR)/tb_hscrol.vvp
+	@echo "=== hscrol — compositor fine sub-pixel scroll ==="
+	@$(VVP) -N $< | tee $(BUILD_DIR)/tb_hscrol.log
+	@grep -q '\*\*\* HSCROL OK \*\*\*' $(BUILD_DIR)/tb_hscrol.log || \
+	    (echo "FAIL: tb_hscrol missing HSCROL OK"; exit 1)
+	@echo "PASS: tb_hscrol"
+
+$(BUILD_DIR)/tb_hscrol.vvp: $(HDL_DIR)/compositor.sv tb_hscrol.sv $(HDL_DIR)/bus_opcodes.vh | $(BUILD_DIR)
+	$(IVERILOG) $(SV_FLAGS) -o $@ -s tb_hscrol $(HDL_DIR)/compositor.sv tb_hscrol.sv
+
+# ---- hscrol_e2e — HSCROL enable path (dl_parser -> compositor) -------------
+# Parses a real DL with a mode-4 + HSCROL line, then composes it for several
+# live hscrol values, proving DL bit-4 -> meta_hscrol_en turns on the fine
+# window and the value shifts smoothly end-to-end.  Not in `all`.
+hscrol_e2e: $(BUILD_DIR)/tb_hscrol_e2e.vvp
+	@echo "=== hscrol_e2e — dl_parser -> compositor HSCROL enable path ==="
+	@$(VVP) -N $< | tee $(BUILD_DIR)/tb_hscrol_e2e.log
+	@grep -q '\*\*\* HSCROL_E2E OK \*\*\*' $(BUILD_DIR)/tb_hscrol_e2e.log || \
+	    (echo "FAIL: tb_hscrol_e2e missing HSCROL_E2E OK"; exit 1)
+	@echo "PASS: tb_hscrol_e2e"
+
+$(BUILD_DIR)/tb_hscrol_e2e.vvp: $(HDL_DIR)/compositor.sv $(HDL_DIR)/dl_parser.sv tb_hscrol_e2e.sv $(HDL_DIR)/bus_opcodes.vh | $(BUILD_DIR)
+	$(IVERILOG) $(SV_FLAGS) -o $@ -s tb_hscrol_e2e $(HDL_DIR)/compositor.sv $(HDL_DIR)/dl_parser.sv tb_hscrol_e2e.sv
 
 # ---- antic_display — end-to-end ANTIC display path (integration) ----------
 # Drives the real antic_top (DL + screen in a memory model on its bram port,

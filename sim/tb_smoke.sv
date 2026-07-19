@@ -33,6 +33,7 @@ module tb_smoke;
     antic_top u_dut (
         .clk_bus                  (clk_bus),
         .rst_n                    (rst_n),
+        .joy_ovr                  (32'd0),   // keypad->joystick override off (default)
         .unlock_antic             (1'b1),
         .unlock_sprite(1'b1),
         .unlock_blit(1'b1),

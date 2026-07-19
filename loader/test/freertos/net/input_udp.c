@@ -27,6 +27,16 @@
  *   u16 key    board key code (printable ASCII, or Enter 0x0d / BS 0x08 / Tab 0x09 / Del 0x7f)
  *   u8  down   1 = press (we inject on press only; AES has no key-up model)
  *   u8  pad*3
+ *
+ * Joystick packet (8 bytes, LE) — the interim joystick, so Atari games can be driven from the
+ * Mac's numeric keypad while the physical PCAL9722 SPI joystick has no software path. The Mac
+ * sends the full combined STATE on every change (lossy-OK; a lost packet is corrected by the
+ * next). It lands in the PL's keypad->joystick override register (GP0 CTRL 0x20, XT_CTRL_JOY_OVR):
+ *   u8  magic  'J'
+ *   u8  porta  PORTA pin value, ACTIVE-LOW (STICK0 bits[3:0]: bit0=up bit1=down bit2=left
+ *              bit3=right; STICK1 bits[7:4]; 1=released 0=pressed; 0xFF=neutral)
+ *   u8  trig   TRIG0/fire, ACTIVE-LOW (0=pressed, 1=released)
+ *   u8  pad*5
  */
 #include <stdint.h>
 #include "lwip/udp.h"
@@ -35,6 +45,10 @@
 #include "xtsys.h"
 
 #define INPUT_UDP_PORT 4242
+
+/* PL keypad->joystick override register (GP0 CTRL block 0x20 = XT_CTRL_JOY_OVR).
+ * [31]=enable, [7:0]=PORTA pins (active-low STICK0/1), [8]=TRIG0 fire (active-low). */
+#define JOY_OVR_REG   (*(volatile uint32_t *)0x43C00320u)
 
 extern void klog(const char *);
 extern void cursor_move(int x, int y);
@@ -90,6 +104,14 @@ static void in_recv(void *arg, struct udp_pcb *pcb, struct pbuf *p,
                 ev = (struct os_event){ OS_EV_WHEEL, x, y, s_btn & 1, 0, 0, wh };
                 xt_input_inject(&ev);
             }
+        }
+        else if (b[0] == 'J') {                          /* joystick: keypad->STICK0 override */
+            uint8_t porta = b[1];                        /* active-low PORTA pins (STICK0/1) */
+            uint8_t trig  = b[2] & 1;                     /* active-low fire (0 = pressed) */
+            /* enable the PL override and force the current combined stick state. A neutral
+             * packet (porta 0xFF, trig 1) keeps the override latched but all pins released;
+             * it never falls back to the (absent) PCAL9722 poll shadow. */
+            JOY_OVR_REG = (1u << 31) | (uint32_t)porta | ((uint32_t)trig << 8);
         }
         else if (b[0] == 'K') {                          /* keyboard: inject on press only */
             if (b[4]) {

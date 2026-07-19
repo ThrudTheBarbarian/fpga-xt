@@ -55,6 +55,7 @@ module tb_antic_display;
 
     antic_top u_dut (
         .clk_bus(clk_bus), .rst_n(rst_n),
+        .joy_ovr(32'd0),   // keypad->joystick override off (default)
         .bus_addr(bus_addr), .bus_data_in(bus_data_in), .bus_rw(bus_rw),
         .d0xx_n(d0xx_n), .d4xx_n(d4xx_n),
         .bus_data_out(bus_data_out), .bus_data_oe(bus_data_oe),

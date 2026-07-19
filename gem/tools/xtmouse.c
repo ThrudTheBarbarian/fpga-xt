@@ -16,6 +16,10 @@
  * over as SDL_TEXTINPUT (layout- and shift-correct), and Enter/Backspace/Tab/Delete plus
  * Ctrl+letter go over as their board key codes (matching the serial decoder in sprite.c).
  *
+ * The numeric KEYPAD drives Atari STICK0 (there is no physical joystick): KP_8=up KP_2=down
+ * KP_4=left KP_6=right KP_0=fire. These go over as the 'J' packet (below) to the PL joystick-
+ * override register; they are handled instead of the text path so they never type a digit.
+ *
  * Loop shape — this matters on macOS. An app that never draws gets App Nap'd: the OS
  * coalesces its timers and event delivery, so motion arrives in clumps ("mouse freezes, then
  * jumps to where it should be"). caffeinate cannot fix that (it stops SLEEP, not NAP). So:
@@ -100,6 +104,43 @@ static void send_key(unsigned key, unsigned shift, int down)
     sendto(g_sock, p, sizeof p, 0, (struct sockaddr *)&g_dst, g_dstlen);
 }
 
+/* Joystick packet (8 bytes, LE — input_udp.c is the other end):
+ *   u8 magic 'J' | u8 porta(active-low PORTA pins) | u8 trig(active-low fire) | u8 pad*5
+ * There is no physical joystick (the PCAL9722 SPI expander has no software path), so the Mac's
+ * numeric keypad drives Atari STICK0 via the PL keypad-override register: KP_8=up KP_2=down
+ * KP_4=left KP_6=right (STICK0 bits[0..3], active-low) and KP_0=fire (TRIG0, active-low). The
+ * board latches this state and forces PORTA + TRIG0 until a neutral packet (0xFF/1) releases. */
+static void send_stick(unsigned porta, unsigned trig)
+{
+    unsigned char p[8] = { 'J', (unsigned char)porta, (unsigned char)(trig & 1),
+                           0, 0, 0, 0, 0 };
+    sendto(g_sock, p, sizeof p, 0, (struct sockaddr *)&g_dst, g_dstlen);
+}
+
+/* Keypad->STICK0 state. porta is the active-low PORTA pin shadow (STICK0 in bits[3:0], STICK1
+ * bits[7:4] left released); fire is the active-low TRIG0 pin. Both start released. */
+static unsigned char g_stick_porta = 0xFF;   /* 1 = released on every pin */
+static unsigned char g_stick_fire  = 1;      /* 1 = fire released */
+
+/* A numeric-KEYPAD key -> its STICK0 active-low bit (0..3), or -1 if not a keypad direction.
+ * ONLY SDLK_KP_* is matched, so the main number row is untouched and stays available for text. */
+static int kp_stick_bit(SDL_Keycode sym)
+{
+    switch (sym) {
+    case SDLK_KP_8: return 0;   /* up    */
+    case SDLK_KP_2: return 1;   /* down  */
+    case SDLK_KP_4: return 2;   /* left  */
+    case SDLK_KP_6: return 3;   /* right */
+    default:        return -1;
+    }
+}
+
+/* Pending TEXTINPUT chars to swallow: on macOS the numeric keypad still emits SDL_TEXTINPUT
+ * ("8","2","4",...) alongside the KEYDOWN, which would type into a game. We consume the keypad
+ * KEYDOWN for the joystick and record the digit here; the matching following TEXTINPUT is
+ * dropped so a keypad press never leaks a character. Indexed by char; only digits are used. */
+static int g_kp_swallow[128];
+
 /* SDL modifier state -> board K_ bitmask (aes.h: RSHIFT=1 LSHIFT=2 CTRL=4 ALT=8 CAPS=0x10) */
 static unsigned kmods(unsigned mod)
 {
@@ -164,6 +205,25 @@ int main(int argc, char **argv)
                     break;
                 }
                 if (!captured) break;
+                /* Numeric-KEYPAD -> STICK0 (no physical joystick). Handled here, BEFORE the text
+                 * path, and the matching SDL_TEXTINPUT digit is swallowed so it never types.
+                 * Only SDLK_KP_* — the main number row falls through to text below untouched. */
+                {
+                    static const char kp_digit[4] = { '8', '2', '4', '6' };  /* bit -> keypad digit */
+                    int bit = kp_stick_bit(sym);
+                    if (bit >= 0) {                       /* direction: press = clear (active-low) */
+                        g_stick_porta &= ~(1u << bit);
+                        send_stick(g_stick_porta, g_stick_fire);
+                        g_kp_swallow[(int)kp_digit[bit]]++;
+                        break;
+                    }
+                    if (sym == SDLK_KP_0) {               /* fire: press = 0 (active-low) */
+                        g_stick_fire = 0;
+                        send_stick(g_stick_porta, g_stick_fire);
+                        g_kp_swallow['0']++;
+                        break;
+                    }
+                }
                 /* Special keys that produce no SDL_TEXTINPUT — forward with the board's codes.
                  * Printable characters come through SDL_TEXTINPUT below (layout/shift correct),
                  * so we deliberately do NOT handle them here (that would double-send). */
@@ -183,10 +243,29 @@ int main(int argc, char **argv)
                 if (have) send_key(key, sh, 1);
                 break;
             }
+            case SDL_KEYUP: {
+                if (!captured) break;
+                /* Numeric-KEYPAD release -> STICK0 (mirror of the KEYDOWN above). */
+                SDL_Keycode sym = e.key.keysym.sym;
+                int bit = kp_stick_bit(sym);
+                if (bit >= 0) {                          /* direction: release = set (active-low) */
+                    g_stick_porta |= (1u << bit);
+                    send_stick(g_stick_porta, g_stick_fire);
+                    break;
+                }
+                if (sym == SDLK_KP_0) {                  /* fire: release = 1 (active-low) */
+                    g_stick_fire = 1;
+                    send_stick(g_stick_porta, g_stick_fire);
+                    break;
+                }
+                break;
+            }
             case SDL_TEXTINPUT:
                 if (captured) {                          /* UTF-8; forward the ASCII bytes */
                     for (const char *t = e.text.text; *t; ++t) {
                         unsigned char ch = (unsigned char)*t;
+                        /* drop a keypad digit's echo so a joystick press never types (see g_kp_swallow) */
+                        if (ch < 128 && g_kp_swallow[ch] > 0) { g_kp_swallow[ch]--; continue; }
                         if (ch >= 0x20 && ch < 0x7f) send_key(ch, 0, 1);
                     }
                 }

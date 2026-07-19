@@ -32,6 +32,13 @@ module antic_top #(
     input  wire        rst_n,           // /G_RST, active-low (sync'd internally)
     input  wire        sally_cold,      // SALLYRST cold-boot level -> power-on-clear NMIEN/DMACTL
 
+    // ---- Keypad->joystick override (clk_bus = clk_sys; from xt_gp0_regs) ----
+    // When [31]=1, [7:0] replaces the joy_bridge PORTA pin shadow feeding
+    // pia_regs (STICK0 bits[3:0], STICK1 bits[7:4], active-low) and [8] replaces
+    // the TRIG0 fire pin (active-low). Lets the Mac keypad drive STICK0 with no
+    // physical PCAL9722 joystick present. [31]=0 = joy_bridge drives as normal.
+    input  wire [31:0] joy_ovr,
+
     // CPU bus inputs
     input  wire [15:0] bus_addr,        // A[15:0]
     input  wire [7:0]  bus_data_in,     // D[7:0] from bus
@@ -544,6 +551,11 @@ module antic_top #(
     // generate-block references at parse time and would otherwise fail
     // to resolve w_joy_fire[i].
     wire [3:0]  w_joy_fire;
+    // Keypad->joystick override MUX (joy_ovr[31]): when enabled, TRIG0 fire is
+    // forced from joy_ovr[8] (active-low), TRIG1..3 forced released (1). When
+    // disabled, the raw joy_bridge/PCAL9722 shadow drives all four. Combinational
+    // mux — both sources are clk_bus, no CDC.
+    wire [3:0]  pia_joy_fire = joy_ovr[31] ? {3'b111, joy_ovr[8]} : w_joy_fire;
     genvar i;
     generate
         for (i = 0; i < 4; i++) begin : g_collision
@@ -551,12 +563,11 @@ module antic_top #(
             assign p_pf_in[i] = {4'h0, cmp_ppf_q[4*i +: 4]};
             assign m_pl_in[i] = {4'h0, cmp_mpl_q[4*i +: 4]};
             assign p_pl_in[i] = {4'h0, cmp_ppl_q[4*i +: 4]};
-            // M25-1: TRIG0..TRIG3 sourced from w_joy_fire[i] (active-low
-            // shadow of peri-RP TRIG register → active-high "pressed"
-            // semantics matching GTIA's trig_in (bit 0 = 1 when
-            // pressed). The gtia_regs read flips bit 0 to match Atari's
-            // "0 = button pressed" register convention.
-            assign trig_high[i] = {7'h00, w_joy_fire[i]};
+            // M25-1: TRIG0..TRIG3 sourced from pia_joy_fire[i] (active-low
+            // shadow → active-high "pressed" semantics matching GTIA's trig_in
+            // (bit 0 = 1 when pressed). The gtia_regs read flips bit 0 to match
+            // Atari's "0 = button pressed" register convention.
+            assign trig_high[i] = {7'h00, pia_joy_fire[i]};
         end
     endgenerate
 
@@ -1153,6 +1164,11 @@ module antic_top #(
     wire [7:0] pia_read_data;   // $D3xx PIA read data (PORTA/PORTB/PACTL/PBCTL)
     // w_joy_fire forward-declared near the GTIA collision generate.
 
+    // Keypad->joystick override MUX (joy_ovr[31]): PORTA pin shadow feeding
+    // pia_regs is forced from joy_ovr[7:0] (active-low STICK0/1) when enabled,
+    // otherwise the raw joy_bridge/PCAL9722 poll shadow. Combinational, no CDC.
+    wire [7:0] pia_joy_porta_in = joy_ovr[31] ? joy_ovr[7:0] : w_joy_porta_in;
+
     pia_regs u_pia_regs (
         .clk           (clk_bus),
         .rst           (rst_bus),
@@ -1161,7 +1177,7 @@ module antic_top #(
         .wdata         (snoop_data),
         .raddr         (read_addr_w),
         .rdata         (pia_read_data),   // boot blocker #3: feed PIA reads to the bus mux
-        .joy_porta_in  (w_joy_porta_in),
+        .joy_porta_in  (pia_joy_porta_in),  // keypad-override muxed (joy_ovr[31] ? joy_ovr[7:0] : joy_bridge shadow)
         // XL/XE PORTB is MEMORY MANAGEMENT (OS-ROM/BASIC/self-test/bank), NOT a
         // joystick port (only the 400/800 had joysticks 3/4 on PORTB; the XL has 2
         // ports, both on PORTA). Its input-configured bits float high. Routing the

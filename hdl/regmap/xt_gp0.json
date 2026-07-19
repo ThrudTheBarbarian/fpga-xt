@@ -99,7 +99,9 @@
         { "off": "0x18", "access": "RW", "width": 32, "c": "XT_CTRL_CMPCFG",     "sv": "CTRL_CMPCFG",
           "desc": "compositor plane arrangement (A9-only; reset 0x210 = current). depth: [3:0]=desktop, [7:4]=overlay, [11:8]=XL. alpha_en: [16]=desktop, [17]=overlay, [18]=XL. Route-A flip = desktop on top with alpha (0x00010132)" },
         { "off": "0x1C", "access": "RW", "width": 8, "c": "XT_CTRL_SALLYRST",   "sv": "CTRL_SALLYRST",
-          "desc": "[0]=1 HOLD the SALLY realm in reset (A9-only; reset 0 = running). Cold-boot-per-launch: hold, rewrite the OS/RAM through the ROM-loader window (0x1000+), release = fresh coldstart. Resets the 6502 core AND the XT state a stock guest cannot know about (bank selects $D5C0/$D5C1, screen banking $D5C3-5); the video pipeline keeps scanning" }
+          "desc": "[0]=1 HOLD the SALLY realm in reset (A9-only; reset 0 = running). Cold-boot-per-launch: hold, rewrite the OS/RAM through the ROM-loader window (0x1000+), release = fresh coldstart. Resets the 6502 core AND the XT state a stock guest cannot know about (bank selects $D5C0/$D5C1, screen banking $D5C3-5); the video pipeline keeps scanning" },
+        { "off": "0x20", "access": "W", "width": 32, "c": "XT_CTRL_JOY_OVR",    "sv": "CTRL_JOY_OVR",
+          "desc": "keypad->joystick override (A9-only; forces STICK0/1 PORTA pins + TRIG0 when the physical PCAL9722 joystick is absent). [31]=override enable (0 = joy_bridge/PCAL9722 drives as normal). [7:0]=PORTA pin value, ACTIVE-LOW (STICK0 bits[3:0]: bit0=up bit1=down bit2=left bit3=right; STICK1 bits[7:4]; 1=released 0=pressed; 0xFF=neutral). [8]=TRIG0/fire value, ACTIVE-LOW (0=fire pressed). Muxed into pia_regs PORTA + GTIA TRIG0 in antic_top; the joy_bridge write-through path is untouched" }
       ]
     },
     {

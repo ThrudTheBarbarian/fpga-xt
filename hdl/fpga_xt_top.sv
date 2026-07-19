@@ -225,6 +225,7 @@ module fpga_xt_top (
     // coldstart, not here — sally_mem must not reset (BRAM writes, bank
     // in-flight AXI drain).
     wire [7:0] sallyrst;                     // clk_sys, from xt_gp0_regs
+    wire [31:0] joy_ovr;                      // clk_sys, from xt_gp0_regs (keypad->joystick override)
     (* ASYNC_REG = "TRUE" *) reg [1:0] sallyrst_sync = 2'b00;
     always_ff @(posedge clk_sally) sallyrst_sync <= {sallyrst_sync[0], sallyrst[0]};
     wire rst_sally_core = rst_sally | sallyrst_sync[1];
@@ -779,6 +780,29 @@ module fpga_xt_top (
     wire [2:0]  gdbg_wpcfg;
     wire [31:0] sdbg_diag;
 
+    // ---- turbo-debugger status (pre-mux). sdbg_* above are the MUXED result
+    // (turbo vs fidelity, on cpu_sel) that reaches the GP0 DEBUG registers; the
+    // turbo debugger now drives these private tdbg_* wires. Mux lives just after
+    // the two debugger instances below. ----
+    wire [3:0]  tdbg_stat;
+    wire [15:0] tdbg_pc;
+    wire [31:0] tdbg_axys;
+    wire [11:0] tdbg_psh;
+    wire [31:0] tdbg_icnt;
+    wire [31:0] tdbg_trc_wptr;
+    wire [15:0] tdbg_trc_pc;
+    wire [31:0] tdbg_trc_axys;
+    wire [11:0] tdbg_trc_p;
+    wire [31:0] tdbg_diag;
+
+    // ---- fidelity-core debug taps (clk_sally, no CDC) + halt back-pressure ----
+    wire        fid_sync;
+    wire [7:0]  fdbg_a, fdbg_x, fdbg_y, fdbg_s, fdbg_p;
+    wire [15:0] fid_cyc_addr;
+    wire [7:0]  fid_cyc_val;
+    wire        fid_cyc_rw, fid_cyc_valid;
+    wire        fdbg_cpu_halt;          // u_fid_dbg.cpu_halt — ANDed into fid_rdy to freeze
+
     xt6502 u_sally_core (
         .clk      (clk_sally),
         .rst      (rst_sally_core),          // A9-held for cold-boot-per-launch
@@ -836,7 +860,7 @@ module fpga_xt_top (
     // until ANTIC's cycle-105 hblank (plus an overdue timeout), so no deadlock. Without this the
     // fid core free-ran through STA WSYNC and every beam-raced kernel (intro rainbow, per-scanline
     // COLPF) mistimed — turbo and fid must be timing-identical.
-    wire       fid_rdy = cpu_sel & fid_mem_ok & ~dma_steal_sally & wsync_rdy_n;  // owns bus; /HALT + WSYNC + busy aware
+    wire       fid_rdy = cpu_sel & fid_mem_ok & ~dma_steal_sally & wsync_rdy_n & ~fdbg_cpu_halt;  // owns bus; /HALT + WSYNC + busy + dbg-halt aware
     // sally_mem's read-latch (bram_dout_q) AND every write/bank-latch/hwreg-strobe are gated
     // by its `rdy` — a "the CPU took a step" pulse. For the turbo core that is sally_rdy. The
     // fidelity core drives a STABLE address for the whole window and samples data at SUB_DATA=49,
@@ -858,12 +882,12 @@ module fpga_xt_top (
         .rdy       (fid_rdy),
         .irq_n     (irq_n_sync),
         .nmi_n     (nmi_n_sync),
-        .sync      (),
-        .dbg_pc    (fdbg_pc), .dbg_a (), .dbg_x (), .dbg_y (), .dbg_s (), .dbg_p (),
+        .sync      (fid_sync),
+        .dbg_pc    (fdbg_pc), .dbg_a (fdbg_a), .dbg_x (fdbg_x), .dbg_y (fdbg_y), .dbg_s (fdbg_s), .dbg_p (fdbg_p),
         .dbg_sub   (fid_sub), .dbg_ir (fdbg_ir),
         .dbg_load  (1'b0), .dbg_pc_in (16'd0), .dbg_a_in (8'd0), .dbg_x_in (8'd0),
         .dbg_y_in  (8'd0), .dbg_s_in (8'd0), .dbg_p_in (8'd0),
-        .dbg_cyc_addr (), .dbg_cyc_val (), .dbg_cyc_rw (), .dbg_cyc_valid ()
+        .dbg_cyc_addr (fid_cyc_addr), .dbg_cyc_val (fid_cyc_val), .dbg_cyc_rw (fid_cyc_rw), .dbg_cyc_valid (fid_cyc_valid)
     );
 
     // ---- the 2:1 bus mux (the one LUT on the clk_sally binding path, mux doc §5) ----------
@@ -899,25 +923,173 @@ module fpga_xt_top (
         .dbg_wa       (idbg_wa), .dbg_wx (idbg_wx), .dbg_wy (idbg_wy),
         .dbg_ws       (idbg_ws), .dbg_wp (idbg_wp), .dbg_wshigh (idbg_wshigh),
         .core_run     (dbg_core_run),
-        .stat         (sdbg_stat),
-        .snap_pc      (sdbg_pc),
-        .snap_axys    (sdbg_axys),
-        .snap_psh     (sdbg_psh),
-        .icnt         (sdbg_icnt),
+        .stat         (tdbg_stat),
+        .snap_pc      (tdbg_pc),
+        .snap_axys    (tdbg_axys),
+        .snap_psh     (tdbg_psh),
+        .icnt         (tdbg_icnt),
         .trc_ctrl     (gdbg_trc_ctrl),
         .trc_idx      (gdbg_trc_idx),
-        .trc_wptr_stat(sdbg_trc_wptr),
-        .trc_pc       (sdbg_trc_pc),
-        .trc_axys     (sdbg_trc_axys),
-        .trc_p        (sdbg_trc_p),
+        .trc_wptr_stat(tdbg_trc_wptr),
+        .trc_pc       (tdbg_trc_pc),
+        .trc_axys     (tdbg_trc_axys),
+        .trc_p        (tdbg_trc_p),
         // data watchpoint + bus taps + self-observability
         .dbg_bus_stb  (cdbg_bus_stb),
         .dbg_bus_addr (cdbg_bus_addr),
         .dbg_bus_rw   (cdbg_bus_rw),
         .wp_addr      (gdbg_wp),
         .wp_cfg       (gdbg_wpcfg),
-        .diag         (sdbg_diag)
+        .diag         (tdbg_diag)
     );
+
+    // ======================================================================
+    // Fidelity-core in-fabric debugger (xt6502f_debug) — mirrors u_sally_dbg
+    // for the resident xt6502f.  /bin/6502 drives ONE GP0 DEBUG block; when
+    // cpu_sel selects the fidelity core its control reaches THIS debugger and
+    // its status is muxed back to the GP0 status registers, so halt / step /
+    // break / watch / trace / status work on whichever core owns the bus with
+    // no change to /bin/6502.  Reset by rst_sally (power-on), like the turbo
+    // debugger, so it survives a SALLYRST core reset.
+    //
+    // Control adaptation: the GP0 block emits TOGGLES (xt6502_debug edge-XORs
+    // them into pulses); the fid module wants a LEVEL halt_req plus 1-cycle
+    // resume/step pulses.  We edge-detect the toggles into pulses (identical
+    // XOR scheme) and hold a halt_req level that sets on `halt`, clears on
+    // `go`/`step` so a resume is never immediately re-halted.
+    // ======================================================================
+    (* ASYNC_REG = "TRUE" *) reg [2:0] fh_s, fg_s, fs_s;
+    always_ff @(posedge clk_sally) begin
+        fh_s <= {fh_s[1:0], gdbg_halt_tog};
+        fg_s <= {fg_s[1:0], gdbg_go_tog};
+        fs_s <= {fs_s[1:0], gdbg_step_tog};
+    end
+    wire fid_do_halt = fh_s[2] ^ fh_s[1];
+    wire fid_do_go   = fg_s[2] ^ fg_s[1];
+    wire fid_do_step = fs_s[2] ^ fs_s[1];
+
+    reg fid_halt_req;
+    always_ff @(posedge clk_sally) begin
+        if (rst_sally)                    fid_halt_req <= 1'b0;
+        else if (fid_do_go | fid_do_step) fid_halt_req <= 1'b0;
+        else if (fid_do_halt)             fid_halt_req <= 1'b1;
+    end
+
+    // GP0 level buses (clk_sys, stable whenever their command toggle fires) ->
+    // 2-FF sync into clk_sally (the fid module has no internal synchronisers,
+    // unlike xt6502_debug which syncs these itself).
+    (* ASYNC_REG = "TRUE" *) reg [1:0]  fcfg1,  fcfg2;
+    (* ASYNC_REG = "TRUE" *) reg [15:0] fbkpt1, fbkpt2;
+    (* ASYNC_REG = "TRUE" *) reg [15:0] fwpa1,  fwpa2;
+    (* ASYNC_REG = "TRUE" *) reg [2:0]  fwpc1,  fwpc2;
+    (* ASYNC_REG = "TRUE" *) reg [11:0] ftrci1, ftrci2;
+    always_ff @(posedge clk_sally) begin
+        fcfg1  <= gdbg_cfg;     fcfg2  <= fcfg1;
+        fbkpt1 <= gdbg_bkpt;    fbkpt2 <= fbkpt1;
+        fwpa1  <= gdbg_wp;      fwpa2  <= fwpa1;
+        fwpc1  <= gdbg_wpcfg;   fwpc2  <= fwpc1;
+        ftrci1 <= gdbg_trc_idx; ftrci2 <= ftrci1;
+    end
+    wire       fid_bkpt_en = fcfg2[0];              // gdbg_cfg[0]=bkpt_en (halt_at_reset[1] unsupported on fid)
+    wire       fid_wp_en   = fwpc2[0];              // gdbg_wpcfg[0]=en
+    wire [1:0] fid_wp_mode = {fwpc2[1], fwpc2[2]};  // mode[1]=on_write(cfg[1]) mode[0]=on_read(cfg[2])
+
+    // fid debugger outputs
+    wire [15:0] fdbg_entry_pc, fdbg_settled_pc;
+    wire [7:0]  fdbg_entry_a, fdbg_entry_x, fdbg_entry_y, fdbg_entry_s, fdbg_entry_p;
+    wire [7:0]  fdbg_settled_a, fdbg_settled_x, fdbg_settled_y, fdbg_settled_s, fdbg_settled_p;
+    wire        fdbg_halted, fdbg_hit_bkpt, fdbg_hit_wp;
+    wire [15:0] fdbg_trc_pc, fdbg_trc_addr;
+    wire [7:0]  fdbg_trc_ir, fdbg_trc_val;
+    wire        fdbg_trc_rw;
+    wire [4:0]  fdbg_trc_count;                     // $clog2(16)+1 bits, saturates at 16
+
+    // /bin/6502 addresses the trace ring by an ABSOLUTE oldest-based index
+    // (0..avail-1); this ring is "0 = most recent". Invert: fid_idx = count-1-idx.
+    wire [4:0]  fid_trc_sel = fdbg_trc_count - 5'd1 - ftrci2[4:0];
+
+    xt6502f_debug #(.N(56), .TRACE_DEPTH(16)) u_fid_dbg (
+        .clk        (clk_sally),
+        .rst        (rst_sally),
+        .sub        (fid_sub),
+        .sync       (fid_sync),
+        .pc         (fdbg_pc),
+        .a          (fdbg_a), .x (fdbg_x), .y (fdbg_y), .s (fdbg_s), .p (fdbg_p),
+        .ir_in      (fdbg_ir),
+        .cyc_addr   (fid_cyc_addr), .cyc_val (fid_cyc_val),
+        .cyc_rw     (fid_cyc_rw),   .cyc_valid (fid_cyc_valid),
+        .halt_req   (fid_halt_req),
+        .resume     (fid_do_go),
+        .step       (fid_do_step),
+        .bkpt_en    (fid_bkpt_en),
+        .bkpt_addr  (fbkpt2),
+        .wp_en      (fid_wp_en),
+        .wp_addr    (fwpa2),
+        .wp_mode    (fid_wp_mode),
+        .entry_pc   (fdbg_entry_pc),
+        .entry_a    (fdbg_entry_a), .entry_x (fdbg_entry_x), .entry_y (fdbg_entry_y),
+        .entry_s    (fdbg_entry_s), .entry_p (fdbg_entry_p),
+        .settled_pc (fdbg_settled_pc),
+        .settled_a  (fdbg_settled_a), .settled_x (fdbg_settled_x), .settled_y (fdbg_settled_y),
+        .settled_s  (fdbg_settled_s), .settled_p (fdbg_settled_p),
+        .cpu_halt   (fdbg_cpu_halt),
+        .halted     (fdbg_halted),
+        .hit_bkpt   (fdbg_hit_bkpt),
+        .hit_wp     (fdbg_hit_wp),
+        .trace_idx  (fid_trc_sel[3:0]),
+        .trace_pc   (fdbg_trc_pc),
+        .trace_ir   (fdbg_trc_ir),
+        .trace_addr (fdbg_trc_addr),
+        .trace_val  (fdbg_trc_val),
+        .trace_rw   (fdbg_trc_rw),
+        .trace_count(fdbg_trc_count)
+    );
+
+    // Instruction counter for the fid core (the fid debug module has none):
+    // a committed instruction = rising edge of `sync` (entry to ST_FETCH) while
+    // not halted.  Reset on the core reset so icnt counts from the (SALLYRST)
+    // cold start, matching how the turbo debugger zeroes icnt on core_rst.
+    reg [31:0] fid_icnt;
+    reg        fid_sync_d;
+    always_ff @(posedge clk_sally) begin
+        if (rst_sally_core) begin fid_icnt <= 32'd0; fid_sync_d <= 1'b0; end
+        else begin
+            fid_sync_d <= fid_sync;
+            if (fid_sync & ~fid_sync_d & ~fdbg_halted) fid_icnt <= fid_icnt + 32'd1;
+        end
+    end
+
+    // Assemble fid status in the exact bit layout dbg6502.c expects.  The
+    // architectural snapshot uses the ENTRY (cycle-entry) latch: when halted at
+    // a breakpoint the core is frozen in its opcode-fetch cycle, so entry_pc =
+    // the instruction address and the entry regs are the pre-execution state —
+    // "break before execute", matching the turbo debugger's snap.
+    wire [3:0]  fid_stat      = {~fdbg_halted, 1'b0, (fdbg_hit_bkpt | fdbg_hit_wp), fdbg_halted};
+    wire [15:0] fid_snap_pc   = fdbg_entry_pc;
+    wire [31:0] fid_snap_axys = {fdbg_entry_s, fdbg_entry_y, fdbg_entry_x, fdbg_entry_a};
+    wire [11:0] fid_snap_psh  = {4'h0, fdbg_entry_p};   // fid stack is $01xx -> S_high = 0
+    wire [31:0] fid_trc_wptr  = {15'd0, 1'b0 /*wrapped*/, 4'd0, {7'd0, fdbg_trc_count}};
+    wire [15:0] fid_trc_pc    = fdbg_trc_pc;
+    // NB: the fid trace ring is a per-machine-CYCLE bus trace {addr,val,rw,ir},
+    // NOT the turbo per-instruction {A,X,Y,SP,P}.  dbg6502.c formats these as
+    // registers, so a fid trace dump MISLABELS them: A/X = addr lo/hi, Y = val,
+    // P = opcode, SP = 0.  Raw data is preserved; a fid-aware `6502 trace`
+    // formatter is a follow-up.
+    wire [31:0] fid_trc_axys  = {8'h00, fdbg_trc_val, fdbg_trc_addr};
+    wire [11:0] fid_trc_p     = {3'd0, fdbg_trc_rw, fdbg_trc_ir};
+    wire [31:0] fid_diag      = {fbkpt2, 11'd0, fdbg_hit_wp, fdbg_hit_wp, fdbg_hit_bkpt, 1'b0, fid_bkpt_en};
+
+    // Mux debug status back to the GP0 DEBUG registers on the active core.
+    assign sdbg_stat     = cpu_sel ? fid_stat      : tdbg_stat;
+    assign sdbg_pc       = cpu_sel ? fid_snap_pc   : tdbg_pc;
+    assign sdbg_axys     = cpu_sel ? fid_snap_axys : tdbg_axys;
+    assign sdbg_psh      = cpu_sel ? fid_snap_psh  : tdbg_psh;
+    assign sdbg_icnt     = cpu_sel ? fid_icnt      : tdbg_icnt;
+    assign sdbg_trc_wptr = cpu_sel ? fid_trc_wptr  : tdbg_trc_wptr;
+    assign sdbg_trc_pc   = cpu_sel ? fid_trc_pc    : tdbg_trc_pc;
+    assign sdbg_trc_axys = cpu_sel ? fid_trc_axys  : tdbg_trc_axys;
+    assign sdbg_trc_p    = cpu_sel ? fid_trc_p     : tdbg_trc_p;
+    assign sdbg_diag     = cpu_sel ? fid_diag      : tdbg_diag;
 
     // ROM-init wires (driven by sally_rom_loader when USE_PS_BD is set;
     // tied to 0 below in the OOC stub path).  Both branches need the
@@ -1218,6 +1390,7 @@ module fpga_xt_top (
         .clk_bus            (clk_sys),
         .rst_n              (rst_sys_n),
         .sally_cold         (sallyrst[0]),      // cold-boot: power-on-clear NMIEN/DMACTL
+        .joy_ovr            (joy_ovr),          // keypad->joystick override (CTRL 0x20; clk_sys)
         .bus_addr           (bus_addr_antic),
         .bus_data_in        (bus_data_in_antic),
         .bus_rw             (bus_rw_antic),
@@ -2920,6 +3093,7 @@ module fpga_xt_top (
         .gp0_ctrl        (gp0_ctrl),
         .cmpcfg          (cmpcfg),           // compositor plane arrangement (CTRL 0x18)
         .sallyrst        (sallyrst),         // SALLY reset hold (CTRL 0x1C)
+        .joy_ovr         (joy_ovr),          // keypad->joystick override (CTRL 0x20)
         .xt_unlock_we    (xt_unlock_we),     // A9 unlock write strobe (offset 0x20)
         .xt_unlock_state (xt_unlock),        // effective unlock, read-back at 0x20
         .overlay_base    (overlay_base),     // drag-overlay config (offsets 0x21-0x2F)

@@ -144,6 +144,13 @@ module xt_gp0_regs (
     // Reset 0 = running, so a bitstream load boots exactly as before.
     output reg  [7:0]  sallyrst,
 
+    // ---- Keypad->joystick override (clk_sys; routed to antic_top) ----------
+    // [31]=enable, [7:0]=PORTA pin value (active-low STICK0/1), [8]=TRIG0 fire
+    // (active-low). antic_top muxes this into pia_regs PORTA + GTIA TRIG0 when
+    // [31]=1, replacing the absent PCAL9722 joystick. Reset 0 = joy_bridge
+    // drives as normal (override off).
+    output reg  [31:0] joy_ovr,
+
     // ---- XT register-unlock control (clk_sys) ------------------------------
     output reg         xt_unlock_we,       // 1-cycle strobe (byte on bl_data)
     input  wire [7:0]  xt_unlock_state,    // effective unlock, for read-back
@@ -261,6 +268,7 @@ module xt_gp0_regs (
             gp0_ctrl       <= 8'h00;   // boot to the compositor; bars are debug-only
             cmpcfg         <= 32'h0000_0210;  // depth desktop0/overlay1/XL2, all opaque = shipping
             sallyrst       <= 8'h00;          // 6502 runs from config, as always
+            joy_ovr        <= 32'h0000_0000;  // override off: joy_bridge drives PORTA/TRIG0
             xt_unlock_we   <= 1'b0;
             overlay_base   <= 32'd0;
             overlay_x      <= 12'd0;
@@ -367,6 +375,7 @@ module xt_gp0_regs (
                                     CTRL_GP0:   gp0_ctrl <= w_byte;            // [0]bars/compositor [3:1]XL-scale [4]DMACTL-blank [5]video-sleep
                                     CTRL_CMPCFG: cmpcfg  <= w_data;            // per-plane depth + alpha_en (whole word)
                                     CTRL_SALLYRST: sallyrst <= w_byte;         // [0] = hold the 6502 realm in reset
+                                    CTRL_JOY_OVR:  joy_ovr  <= w_data;         // keypad->joystick override (whole word)
                                     CTRL_SPEED: begin bl_addr <= 6'h1A; bl_we <= 1'b1; end // clock_mult -> $D4CA
                                     CTRL_UNLOCK: xt_unlock_we <= 1'b1;         // unlock (data on bl_data)
                                     CTRL_KBD_INJECT:  begin bl_addr <= 6'h1F; bl_we <= 1'b1; end // -> $D4CF

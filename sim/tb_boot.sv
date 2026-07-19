@@ -419,6 +419,7 @@ module tb_boot;
     ) u_antic_top (
         .clk_bus            (clk_sys),
         .rst_n              (rst_sys_n),
+        .joy_ovr            (32'd0),   // keypad->joystick override off (default)
         .bus_addr           (bus_addr_antic),
         .bus_data_in        (bus_data_in_antic),
         .bus_rw             (bus_rw_antic),
