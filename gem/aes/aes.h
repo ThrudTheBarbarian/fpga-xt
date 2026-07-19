@@ -274,6 +274,7 @@ int  form_keybd(OBJECT *tree, int edobj, int key, int kstate, int *new_edobj);
 // focus.  idx carries the caret in/out (may be NULL).
 enum { ED_START=0, ED_INIT=1, ED_CHAR=2, ED_END=3 };
 int  objc_edit(OBJECT *tree, int obj, int key, int *idx, int kind);
+void objc_edit_set_nodraw(int on);   // client owns repaint: skip the AES's internal edit-redraw
 
 // Canned alert: alert = "[icon][message|with|lines][button1|button2|button3]"
 // (icon 0 none, 1 note, 2 wait, 3 stop).  Builds + centres + runs the dialog,
