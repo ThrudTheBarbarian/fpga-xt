@@ -926,14 +926,12 @@ module fpga_xt_top (
     `endif
 
     // ---- sally_mem -------------------------------------------------------
-    // TEMP diag: A9-driven 6502-RAM peek. Write the address to OVL_BASE (0x43C00204), read the
-    // byte back in DIAG7 (0x43C00418) low byte [31:16]=addr echo. OVL_BASE[15:0] (clk_sys) ->
-    // peek addr (clk_sally); the read byte -> clk_sys. Quasi-static: write addr, wait, read.
-    (* ASYNC_REG = "TRUE" *) reg [15:0] peek_a0 = 0, peek_addr_sally = 0;
-    always_ff @(posedge clk_sally) begin peek_a0 <= overlay_base[15:0]; peek_addr_sally <= peek_a0; end
-    wire [7:0] peek_data_sally;
-    (* ASYNC_REG = "TRUE" *) reg [7:0] peek_d0 = 0, peek_data_sys = 0;
-    always_ff @(posedge clk_sys) begin peek_d0 <= peek_data_sally; peek_data_sys <= peek_d0; end
+    // TEMP diag: A9 6502-RAM peek via the ANTIC DMA BRAM port (no extra port, no CDC — all
+    // clk_sys). Set OVL_BASE = {1'b1(en), 15'b0, addr[15:0]} (0x43C00204); while en=1 the DMA
+    // port reads mem[addr] instead of ANTIC's fetch (display glitches — that's fine), and the
+    // byte appears in DIAG7 (0x43C00418) low byte, [31:16]=addr echo. OVL_BASE=0 -> normal.
+    wire        peek_en      = overlay_base[31];
+    wire [15:0] mem_dma_addr = peek_en ? overlay_base[15:0] : antic_bram_addr;
 
     sally_mem #(
         .OS_ROM_HEX_PATH ("rsrc/sally-boot.hex"),
@@ -1014,10 +1012,8 @@ module fpga_xt_top (
         .rom_data    (rom_load_data),
         .rom_we      (rom_load_we),
         .dma_clk     (clk_sys),       // ANTIC reads sally_mem's BRAM at clk_bus
-        .dma_addr    (antic_bram_addr),
-        .dma_rdata   (scrn_shadow_rdata),  // muxed with screen_bank ANTIC-BRAM above
-        .peek_addr   (peek_addr_sally),    // TEMP: A9 6502-RAM peek
-        .peek_data   (peek_data_sally)
+        .dma_addr    (mem_dma_addr),       // TEMP: peek hijacks this (peek_en) else ANTIC's fetch
+        .dma_rdata   (scrn_shadow_rdata)   // muxed with screen_bank ANTIC-BRAM above
     );
 
     // ====================================================================
@@ -1573,7 +1569,7 @@ module fpga_xt_top (
         if (hp0_overrun)    desk_overrun_cnt <= desk_overrun_cnt + 16'd1;
     end
     wire [31:0] diag6_word = {xl_abort_cnt, desk_abort_cnt};
-    wire [31:0] diag7_word = {overlay_base[15:0], 8'h00, peek_data_sys};  // TEMP: peek addr echo + byte
+    wire [31:0] diag7_word = {overlay_base[15:0], 8'h00, scrn_shadow_rdata}; // TEMP: peek addr echo + byte@mem[addr]
 
     // ---- ROM-window upload diagnostic (TEMP, localises the dead-upload bug) --
     // The upload logic is sim-clean (tb_rom_integ) but the board's 6502 never
