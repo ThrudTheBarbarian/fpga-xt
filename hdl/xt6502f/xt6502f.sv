@@ -338,12 +338,19 @@ module xt6502f #(
             rmw_val <= 0; rmw_mod <= 0; sax <= 0; combo <= 0; op2 <= OP_LD; jam_cnt <= 0;
             ushx <= 0; ushx_src <= 0; ushx_tas <= 0; ush_val <= 0;
             nmi_n_d <= 1'b1; nmi_pend <= 1'b0; intr <= 1'b0; nmi_svc <= 1'b0;
-        end else if (dbg_load) begin
-            PC <= dbg_pc_in; A <= dbg_a_in; X <= dbg_x_in; Y <= dbg_y_in;
-            S <= dbg_s_in; P <= dbg_p_in; state <= ST_FETCH; ir <= 8'hEA;
-        end else if (advance) begin
+        end else begin
+            // NMI falling-edge detect runs EVERY clk (decoupled from `advance`). A WSYNC or
+            // memory stall pauses `advance` for many clks, and the ANTIC /NMI pulse (~1.9us)
+            // can fall entirely inside such a stall — sampling only at `advance` (once per
+            // ~560ns machine cycle) then MISSES the edge, the OS VBI never runs and RTCLOK
+            // freezes (HW-observed the moment the fid core started honouring WSYNC). The turbo
+            // core samples every clk for exactly this reason.
             nmi_n_d <= nmi_n;
             if (nmi_n_d && !nmi_n) nmi_pend <= 1'b1;   // NMI is edge-triggered: latch the falling edge
+          if (dbg_load) begin
+            PC <= dbg_pc_in; A <= dbg_a_in; X <= dbg_x_in; Y <= dbg_y_in;
+            S <= dbg_s_in; P <= dbg_p_in; state <= ST_FETCH; ir <= 8'hEA;
+          end else if (advance) begin
             case (state)
                 ST_RST:   if (rst_cnt == 0) state <= ST_VECL; else rst_cnt <= rst_cnt - 3'd1;
                 ST_VECL:  begin PC[7:0]  <= din_r; state <= ST_VECH; end
@@ -734,6 +741,7 @@ module xt6502f #(
 
                 default: state <= ST_FETCH;
             endcase
+          end
         end
     end
 

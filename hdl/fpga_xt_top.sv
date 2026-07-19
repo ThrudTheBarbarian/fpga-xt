@@ -779,6 +779,19 @@ module fpga_xt_top (
     wire [2:0]  gdbg_wpcfg;
     wire [31:0] sdbg_diag;
 
+    // ---- Dual-core debug: the turbo facility (u_sally_dbg) drives tdbg_*, the fid facility
+    // (u_fid_dbg, xt6502f_debug) drives fdbg2_*; the GP0-facing sdbg_* pick the ACTIVE core
+    // (cpu_sel).  /bin/6502 thus debugs whichever core owns the bus. ------------------------
+    wire  [3:0] tdbg_stat;   wire [15:0] tdbg_pc;   wire [31:0] tdbg_axys;   wire [11:0] tdbg_psh;
+    wire [31:0] tdbg_icnt;   wire [31:0] tdbg_trc_wptr; wire [15:0] tdbg_trc_pc;
+    wire [31:0] tdbg_trc_axys; wire [11:0] tdbg_trc_p;  wire [31:0] tdbg_diag;
+    // fid facility snapshots + trace (settled = post-retire coherent view)
+    wire [15:0] fid_settled_pc; wire [7:0] fid_settled_a, fid_settled_x, fid_settled_y, fid_settled_s, fid_settled_p;
+    wire        fid_halted, fid_hit_bkpt, fid_hit_wp;
+    wire [15:0] ftrc_pc;   wire [7:0] ftrc_ir, ftrc_val;   wire [15:0] ftrc_addr;
+    wire        ftrc_rw;   wire [4:0] ftrc_count;
+    reg  [31:0] fid_icnt;
+
     xt6502 u_sally_core (
         .clk      (clk_sally),
         .rst      (rst_sally_core),          // A9-held for cold-boot-per-launch
@@ -826,8 +839,14 @@ module fpga_xt_top (
     end
     wire       phi2_tick_fid = (fid_ph_ctr == 6'd55);
     wire [7:0] fid_sub;
-    wire [15:0] fdbg_pc;             // TEMP: fid core live PC  -> diag8
-    wire  [7:0] fdbg_ir;             // TEMP: fid core current opcode -> diag8
+    wire [15:0] fdbg_pc;             // fid core live PC  (-> diag8 TEMP + fid debug)
+    wire  [7:0] fdbg_ir;             // fid core current opcode
+    wire  [7:0] fdbg_a, fdbg_x, fdbg_y, fdbg_s, fdbg_p;  // fid arch regs (live)
+    wire        fdbg_sync;           // fid opcode-fetch high
+    wire [15:0] fdbg_cyc_addr;       // fid per-machine-cycle bus capture
+    wire  [7:0] fdbg_cyc_val;
+    wire        fdbg_cyc_rw, fdbg_cyc_valid;
+    wire        fid_cpu_halt;        // from u_fid_dbg: 1 = freeze the fid core at the boundary
     wire       fid_busy = mem_busy_n | hwreg_rd_busy;
     reg        fid_mem_ok = 1'b1;
     always_ff @(posedge clk_sally) if (fid_sub == 8'd49) fid_mem_ok <= ~fid_busy;  // SUB_DATA = N-7
@@ -836,7 +855,7 @@ module fpga_xt_top (
     // until ANTIC's cycle-105 hblank (plus an overdue timeout), so no deadlock. Without this the
     // fid core free-ran through STA WSYNC and every beam-raced kernel (intro rainbow, per-scanline
     // COLPF) mistimed — turbo and fid must be timing-identical.
-    wire       fid_rdy = cpu_sel & fid_mem_ok & ~dma_steal_sally & wsync_rdy_n;  // owns bus; /HALT + WSYNC + busy aware
+    wire       fid_rdy = cpu_sel & fid_mem_ok & ~dma_steal_sally & wsync_rdy_n & ~fid_cpu_halt;  // owns bus; /HALT + WSYNC + busy + debug-halt
     // sally_mem's read-latch (bram_dout_q) AND every write/bank-latch/hwreg-strobe are gated
     // by its `rdy` — a "the CPU took a step" pulse. For the turbo core that is sally_rdy. The
     // fidelity core drives a STABLE address for the whole window and samples data at SUB_DATA=49,
@@ -858,12 +877,12 @@ module fpga_xt_top (
         .rdy       (fid_rdy),
         .irq_n     (irq_n_sync),
         .nmi_n     (nmi_n_sync),
-        .sync      (),
-        .dbg_pc    (fdbg_pc), .dbg_a (), .dbg_x (), .dbg_y (), .dbg_s (), .dbg_p (),
+        .sync      (fdbg_sync),
+        .dbg_pc    (fdbg_pc), .dbg_a (fdbg_a), .dbg_x (fdbg_x), .dbg_y (fdbg_y), .dbg_s (fdbg_s), .dbg_p (fdbg_p),
         .dbg_sub   (fid_sub), .dbg_ir (fdbg_ir),
         .dbg_load  (1'b0), .dbg_pc_in (16'd0), .dbg_a_in (8'd0), .dbg_x_in (8'd0),
         .dbg_y_in  (8'd0), .dbg_s_in (8'd0), .dbg_p_in (8'd0),
-        .dbg_cyc_addr (), .dbg_cyc_val (), .dbg_cyc_rw (), .dbg_cyc_valid ()
+        .dbg_cyc_addr (fdbg_cyc_addr), .dbg_cyc_val (fdbg_cyc_val), .dbg_cyc_rw (fdbg_cyc_rw), .dbg_cyc_valid (fdbg_cyc_valid)
     );
 
     // ---- the 2:1 bus mux (the one LUT on the clk_sally binding path, mux doc §5) ----------
@@ -899,25 +918,85 @@ module fpga_xt_top (
         .dbg_wa       (idbg_wa), .dbg_wx (idbg_wx), .dbg_wy (idbg_wy),
         .dbg_ws       (idbg_ws), .dbg_wp (idbg_wp), .dbg_wshigh (idbg_wshigh),
         .core_run     (dbg_core_run),
-        .stat         (sdbg_stat),
-        .snap_pc      (sdbg_pc),
-        .snap_axys    (sdbg_axys),
-        .snap_psh     (sdbg_psh),
-        .icnt         (sdbg_icnt),
+        .stat         (tdbg_stat),
+        .snap_pc      (tdbg_pc),
+        .snap_axys    (tdbg_axys),
+        .snap_psh     (tdbg_psh),
+        .icnt         (tdbg_icnt),
         .trc_ctrl     (gdbg_trc_ctrl),
         .trc_idx      (gdbg_trc_idx),
-        .trc_wptr_stat(sdbg_trc_wptr),
-        .trc_pc       (sdbg_trc_pc),
-        .trc_axys     (sdbg_trc_axys),
-        .trc_p        (sdbg_trc_p),
+        .trc_wptr_stat(tdbg_trc_wptr),
+        .trc_pc       (tdbg_trc_pc),
+        .trc_axys     (tdbg_trc_axys),
+        .trc_p        (tdbg_trc_p),
         // data watchpoint + bus taps + self-observability
         .dbg_bus_stb  (cdbg_bus_stb),
         .dbg_bus_addr (cdbg_bus_addr),
         .dbg_bus_rw   (cdbg_bus_rw),
         .wp_addr      (gdbg_wp),
         .wp_cfg       (gdbg_wpcfg),
-        .diag         (sdbg_diag)
+        .diag         (tdbg_diag)
     );
+
+    // ---- Fidelity-core debug facility (xt6502f_debug) + active-core status mux -----------
+    // GP0 debug control arrives as toggles (clk_sys); sync into clk_sally and edge-detect to
+    // drive the fid facility's level halt_req + resume/step pulses.
+    (* ASYNC_REG = "TRUE" *) reg [2:0] fhalt_s, fgo_s, fstep_s;
+    always_ff @(posedge clk_sally) begin
+        fhalt_s <= {fhalt_s[1:0], gdbg_halt_tog};
+        fgo_s   <= {fgo_s[1:0],   gdbg_go_tog};
+        fstep_s <= {fstep_s[1:0], gdbg_step_tog};
+    end
+    wire fid_go_edge   = fgo_s[2]   ^ fgo_s[1];
+    wire fid_step_edge = fstep_s[2] ^ fstep_s[1];
+    wire fid_halt_edge = fhalt_s[2] ^ fhalt_s[1];
+    reg  fid_halt_req;
+    always_ff @(posedge clk_sally or posedge rst_sally) begin
+        if (rst_sally)                          fid_halt_req <= 1'b0;
+        else if (fid_halt_edge)                 fid_halt_req <= 1'b1;   // halt command
+        else if (fid_go_edge | fid_step_edge)   fid_halt_req <= 1'b0;   // go/step releases the request
+    end
+
+    // fid instruction counter (retire = opcode-fetch rising edge while running)
+    reg fdbg_sync_d;
+    always_ff @(posedge clk_sally or posedge rst_sally_core) begin
+        if (rst_sally_core) begin fdbg_sync_d <= 1'b0; fid_icnt <= 32'd0; end
+        else begin
+            fdbg_sync_d <= fdbg_sync;
+            if (fdbg_sync & ~fdbg_sync_d & ~fid_cpu_halt) fid_icnt <= fid_icnt + 32'd1;
+        end
+    end
+
+    xt6502f_debug #(.N(56), .TRACE_DEPTH(16)) u_fid_dbg (
+        .clk (clk_sally), .rst (rst_sally),
+        .sub (fid_sub), .sync (fdbg_sync),
+        .pc (fdbg_pc), .a (fdbg_a), .x (fdbg_x), .y (fdbg_y), .s (fdbg_s), .p (fdbg_p),
+        .ir_in (fdbg_ir),
+        .cyc_addr (fdbg_cyc_addr), .cyc_val (fdbg_cyc_val), .cyc_rw (fdbg_cyc_rw), .cyc_valid (fdbg_cyc_valid),
+        .halt_req (fid_halt_req), .resume (fid_go_edge), .step (fid_step_edge),
+        .bkpt_en (gdbg_cfg[0]), .bkpt_addr (gdbg_bkpt),
+        .wp_en (gdbg_wpcfg[0]), .wp_addr (gdbg_wp), .wp_mode ({gdbg_wpcfg[1], gdbg_wpcfg[2]}),
+        .entry_pc (), .entry_a (), .entry_x (), .entry_y (), .entry_s (), .entry_p (),
+        .settled_pc (fid_settled_pc), .settled_a (fid_settled_a), .settled_x (fid_settled_x),
+        .settled_y (fid_settled_y), .settled_s (fid_settled_s), .settled_p (fid_settled_p),
+        .cpu_halt (fid_cpu_halt), .halted (fid_halted), .hit_bkpt (fid_hit_bkpt), .hit_wp (fid_hit_wp),
+        .trace_idx (gdbg_trc_idx[3:0]), .trace_pc (ftrc_pc), .trace_ir (ftrc_ir),
+        .trace_addr (ftrc_addr), .trace_val (ftrc_val), .trace_rw (ftrc_rw), .trace_count (ftrc_count)
+    );
+
+    // Active-core status mux (cpu_sel=1 -> fid). STAT: [3]run [2]step [1]bkpt [0]halt.
+    // fid trace packs the per-cycle bus into the reg fields: TRC_AXYS = {ir, 7'h0, rw, addr},
+    // TRC_P = {4'h0, val}  (fid has no per-cycle reg snapshot; the bus trace is the useful view).
+    assign sdbg_stat      = cpu_sel ? {~fid_halted, 1'b0, fid_hit_bkpt, fid_halted} : tdbg_stat;
+    assign sdbg_pc        = cpu_sel ? fid_settled_pc : tdbg_pc;
+    assign sdbg_axys      = cpu_sel ? {fid_settled_s, fid_settled_y, fid_settled_x, fid_settled_a} : tdbg_axys;
+    assign sdbg_psh       = cpu_sel ? {4'h0, fid_settled_p} : tdbg_psh;
+    assign sdbg_icnt      = cpu_sel ? fid_icnt : tdbg_icnt;
+    assign sdbg_trc_wptr  = cpu_sel ? {27'h0, ftrc_count} : tdbg_trc_wptr;
+    assign sdbg_trc_pc    = cpu_sel ? ftrc_pc : tdbg_trc_pc;
+    assign sdbg_trc_axys  = cpu_sel ? {ftrc_ir, 7'h0, ftrc_rw, ftrc_addr} : tdbg_trc_axys;
+    assign sdbg_trc_p     = cpu_sel ? {4'h0, ftrc_val} : tdbg_trc_p;
+    assign sdbg_diag      = cpu_sel ? {fdbg_pc, 8'h00, 4'h0, fid_hit_wp, fid_hit_bkpt, 1'b0, fid_halted} : tdbg_diag;
 
     // ROM-init wires (driven by sally_rom_loader when USE_PS_BD is set;
     // tied to 0 below in the OOC stub path).  Both branches need the
