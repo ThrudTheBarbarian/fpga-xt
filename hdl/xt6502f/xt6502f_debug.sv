@@ -112,7 +112,8 @@ module xt6502f_debug #(
                 if (step_arm && sync_rise) begin halted <= 1'b1; step_arm <= 1'b0; end // one instruction done
                 else if (bkpt_match && !step_arm) begin halted <= 1'b1; hit_bkpt <= 1'b1; end
                 else if (wp_match) begin halted <= 1'b1; hit_wp <= 1'b1; end
-                else if (halt_req) halted <= 1'b1;
+                else if (halt_req && sync_rise) halted <= 1'b1;  // halt at the NEXT opcode-fetch boundary,
+                                                                 // not mid-instruction (clean freeze/resume)
             end
         end
     end

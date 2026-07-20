@@ -43,6 +43,13 @@ extern void  frtos_free(void *p, void *host);
 
 /* ---- hardware handles ---------------------------------------------------- */
 #define GP0_SALLYRST   (*(volatile uint32_t *)0x43C0031Cu)   /* XT_CTRL_SALLYRST */
+#define GP0_CONSOL     (*(volatile uint32_t *)0x43C00324u)   /* XT_CTRL_CONSOL: CONSOL keys the 6502 reads */
+/* Console-keys values (active-low: bit0=START bit1=SELECT bit2=OPTION, 0=pressed).
+ * Games must boot with BASIC OFF; the XL OS leaves BASIC off only when OPTION is
+ * held at coldstart. Hold OPTION ($03) across a game coldstart so $A000-$BFFF stays
+ * RAM (BASIC ROM shadowing that RAM derails games). Release ($07) for boot-to-BASIC. */
+#define CONSOL_OPTION_HELD  0x03u
+#define CONSOL_NONE         0x07u
 #define ROMWIN_BASE    ((volatile uint8_t *)0x43C00000u)     /* + sally addr, >= $1000 */
 
 static void romwin_write(uint16_t a, const uint8_t *p, uint32_t n)
@@ -343,6 +350,7 @@ int xl_boot(const char *path, int drive)
         xl_unmount_all();
         if (build_patched_os(img) != 0) { GP0_SALLYRST = 0; return -5; }
         upload_image(img);
+        GP0_CONSOL = CONSOL_NONE; __asm__ volatile("dsb");   /* OPTION released -> BASIC on -> READY */
         GP0_SALLYRST = 0; __asm__ volatile("dsb");
         klog("[xl] cold boot, no media\r\n");
         return 0;
@@ -384,6 +392,7 @@ int xl_boot(const char *path, int drive)
     g_drv[drive - 1].img   = buf;
     g_drv[drive - 1].len   = sz;
     g_drv[drive - 1].secsz = secsz;
+    GP0_CONSOL = CONSOL_OPTION_HELD; __asm__ volatile("dsb"); /* hold OPTION -> XL OS leaves BASIC OFF ($A000-$BFFF = RAM) */
     GP0_SALLYRST = 0; __asm__ volatile("dsb");      /* coldstart; the OS boots Dn: */
 
     klog("[xl] booted "); klog(path);

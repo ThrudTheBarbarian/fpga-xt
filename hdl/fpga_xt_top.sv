@@ -226,6 +226,7 @@ module fpga_xt_top (
     // in-flight AXI drain).
     wire [7:0] sallyrst;                     // clk_sys, from xt_gp0_regs
     wire [31:0] joy_ovr;                      // clk_sys, from xt_gp0_regs (keypad->joystick override)
+    wire [7:0]  consol_keys;                  // clk_sys, from xt_gp0_regs (CONSOL keys; kernel holds OPTION to keep BASIC off)
     (* ASYNC_REG = "TRUE" *) reg [1:0] sallyrst_sync = 2'b00;
     always_ff @(posedge clk_sally) sallyrst_sync <= {sallyrst_sync[0], sallyrst[0]};
     wire rst_sally_core = rst_sally | sallyrst_sync[1];
@@ -1391,6 +1392,7 @@ module fpga_xt_top (
         .rst_n              (rst_sys_n),
         .sally_cold         (sallyrst[0]),      // cold-boot: power-on-clear NMIEN/DMACTL
         .joy_ovr            (joy_ovr),          // keypad->joystick override (CTRL 0x20; clk_sys)
+        .consol_keys        (consol_keys),      // CONSOL keys (CTRL 0x24; kernel holds OPTION to keep BASIC off)
         .bus_addr           (bus_addr_antic),
         .bus_data_in        (bus_data_in_antic),
         .bus_rw             (bus_rw_antic),
@@ -3094,6 +3096,7 @@ module fpga_xt_top (
         .cmpcfg          (cmpcfg),           // compositor plane arrangement (CTRL 0x18)
         .sallyrst        (sallyrst),         // SALLY reset hold (CTRL 0x1C)
         .joy_ovr         (joy_ovr),          // keypad->joystick override (CTRL 0x20)
+        .consol_keys     (consol_keys),      // CONSOL keys (CTRL 0x24)
         .xt_unlock_we    (xt_unlock_we),     // A9 unlock write strobe (offset 0x20)
         .xt_unlock_state (xt_unlock),        // effective unlock, read-back at 0x20
         .overlay_base    (overlay_base),     // drag-overlay config (offsets 0x21-0x2F)

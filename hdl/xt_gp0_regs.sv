@@ -150,6 +150,7 @@ module xt_gp0_regs (
     // [31]=1, replacing the absent PCAL9722 joystick. Reset 0 = joy_bridge
     // drives as normal (override off).
     output reg  [31:0] joy_ovr,
+    output reg  [7:0]  consol_keys,   // CONSOL ($D01F) value the 6502 reads (active-low console keys)
 
     // ---- XT register-unlock control (clk_sys) ------------------------------
     output reg         xt_unlock_we,       // 1-cycle strobe (byte on bl_data)
@@ -269,6 +270,7 @@ module xt_gp0_regs (
             cmpcfg         <= 32'h0000_0210;  // depth desktop0/overlay1/XL2, all opaque = shipping
             sallyrst       <= 8'h00;          // 6502 runs from config, as always
             joy_ovr        <= 32'h0000_0000;  // override off: joy_bridge drives PORTA/TRIG0
+            consol_keys    <= 8'h07;           // no console keys pressed (BASIC on) until the kernel sets it
             xt_unlock_we   <= 1'b0;
             overlay_base   <= 32'd0;
             overlay_x      <= 12'd0;
@@ -376,6 +378,7 @@ module xt_gp0_regs (
                                     CTRL_CMPCFG: cmpcfg  <= w_data;            // per-plane depth + alpha_en (whole word)
                                     CTRL_SALLYRST: sallyrst <= w_byte;         // [0] = hold the 6502 realm in reset
                                     CTRL_JOY_OVR:  joy_ovr  <= w_data;         // keypad->joystick override (whole word)
+                                    CTRL_CONSOL:   consol_keys <= w_byte;       // CONSOL keys (kernel holds OPTION=$03 to keep BASIC off for games)
                                     CTRL_SPEED: begin bl_addr <= 6'h1A; bl_we <= 1'b1; end // clock_mult -> $D4CA
                                     CTRL_UNLOCK: xt_unlock_we <= 1'b1;         // unlock (data on bl_data)
                                     CTRL_KBD_INJECT:  begin bl_addr <= 6'h1F; bl_we <= 1'b1; end // -> $D4CF

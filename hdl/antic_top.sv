@@ -38,6 +38,7 @@ module antic_top #(
     // the TRIG0 fire pin (active-low). Lets the Mac keypad drive STICK0 with no
     // physical PCAL9722 joystick present. [31]=0 = joy_bridge drives as normal.
     input  wire [31:0] joy_ovr,
+    input  wire [7:0]  consol_keys,   // CONSOL ($D01F) value the 6502 reads (active-low console keys; kernel holds OPTION to keep BASIC off)
 
     // CPU bus inputs
     input  wire [15:0] bus_addr,        // A[15:0]
@@ -598,7 +599,7 @@ module antic_top #(
         .p_pl_in        (p_pl_in),
         .trig_in        (trig_high),
         .pal_sense_in   (8'h02),         // NTSC sense default
-        .consol_r_in    (8'h07),         // no console keys pressed default
+        .consol_r_in    (consol_keys),   // console keys from GP0 CTRL_CONSOL (kernel holds OPTION $03 for games -> BASIC off)
         .hitclr_strobe  (hitclr_strobe)
     );
 
