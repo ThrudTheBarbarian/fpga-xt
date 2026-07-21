@@ -58,12 +58,6 @@ package xt_gp0_pkg;
     localparam logic [7:0] DIAG7            = 8'h18;  // R HP2 read-probe last rdata
     localparam logic [7:0] DIAG8            = 8'h1C;  // R TEMP ROM-window upload diag: [31:16]=window AXI writes accepted, [15:0]=rom_we pulses emitted to sally_mem
     localparam logic [7:0] DIAG9            = 8'h20;  // R TEMP ROM-window upload diag: [23:8]=last rom_addr, [7:0]=last rom_data
-    localparam logic [7:0] DIAG10           = 8'h24;  // R TEMP compositor P/M FETCH capture (antic_pmdma $00 bug): [31:16]=last cmp_raddr in $2000-$3FFF, [15:8]=0, [7:0]=cmp_rdata byte returned
-    localparam logic [7:0] DIAG11           = 8'h28;  // R TEMP compositor P/M-region fetch counter: increments each cmp_ready with cmp_raddr in $2000-$3FFF
-    localparam logic [7:0] DIAG12           = 8'h2C;  // R TEMP nmi_gen DLI/VBI counters: [31:24]=dli_nmi_count (gated DLI /NMI assertions), [23:16]=vbi_nmi_count, [15:8]=dli_event_count (DLIs detected regardless of NMIEN), [7:0]=last NMIST (external view) sampled just after the last /NMI assertion
-    localparam logic [7:0] DIAG13           = 8'h30;  // R TEMP nmi_gen NMI state: [31:24]=nmien, [23:16]=last-DLI antic_raster scanline[7:0], [15:0]=total DLI+VBI /NMI assertion count
-    localparam logic [7:0] DIAG14           = 8'h34;  // R TEMP NMIEN sticky evidence (DLI cluster): [31:16]=CPU write count to $D40E, [15:8]=sticky-OR of every live ANTIC nmien_q value (bit15=nmien_or[7]: 1 -> bit7 EVER latched in nmien_q; 0 -> bit7 never reaches nmien_q), [7:1]=0, [0]=nmien_dli_coincide (sticky: nmien_q[7] high on a DLI line-start)
-    localparam logic [7:0] DIAG15           = 8'h38;  // R TEMP player-0 P/M FETCH capture (antic_pmdma $00 bug): [31:16]=last cmp_raddr in $3400-$34FF (player-0 one-line region only) with a NON-ZERO returned byte, [15:8]=cmp_p0_nz_cnt (saturating count of non-zero P0 fetches; 0=no shape byte ever), [7:0]=cmp_rdata non-zero byte returned
     // XLCTL
     localparam logic [7:0] XL_WIN_X         = 8'h00;  // W plane origin X on screen (12-bit)
     localparam logic [7:0] XL_WIN_Y         = 8'h04;  // W plane origin Y on screen (12-bit)

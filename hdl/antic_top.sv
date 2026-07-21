@@ -237,33 +237,7 @@ module antic_top #(
     output wire [23:0] wb_pal_rgb,      // {R,G,B} palette entry
     // ---- TEMP debug: live ANTIC/GTIA register state (clk_sys) for `mem` readback ----
     output wire [31:0] dbg_gtia,        // {colpf0, colpf1, colpf2, colbk}
-    output wire [31:0] dbg_antic,       // {colpf3, prior, chbase, dmactl}
-    // ---- TEMP debug: compositor P/M FETCH capture (clk_bus) — antic_pmdma "$00" bug ----
-    // [31:16] = last cmp_raddr in the P/M region latched when cmp_ready pulsed,
-    // [15:8]  = 0, [7:0] = the cmp_rdata byte that fetch returned.
-    output wire [31:0] dbg_cmp_fetch,
-    // [31:0] = running count of P/M-region compositor fetches (each cmp_ready in range).
-    output wire [31:0] dbg_cmp_fetch_cnt,
-    // ---- TEMP debug: NMI/DLI instrumentation (clk_bus) — nmi_gen counters ----
-    // dbg_nmi0 = {dli_nmi_count[7:0], vbi_nmi_count[7:0], dli_event_count[7:0], last_nmist[7:0]}
-    // dbg_nmi1 = {nmien[7:0], last_dli_scanline[7:0], nmi_assert_count[15:0]}
-    output wire [31:0] dbg_nmi0,
-    output wire [31:0] dbg_nmi1,
-    // ---- TEMP debug: NMIEN sticky evidence (clk_bus) — DLI cluster ----------
-    // Binary question: does the LIVE ANTIC nmien_q EVER hold bit7=1 on HW?
-    // dbg_nmien_writes = {nmien_wr_count[15:0], nmien_or[7:0], 7'b0,
-    // nmien_dli_coincide}.  nmien_or[7] (bit15) = sticky-OR: bit7 EVER latched
-    // in nmien_q (1 -> data path fine, miss is timing; 0 -> bit7 never latches).
-    // bit0 = sticky: bit7 was high on a DLI line-start (the /NMI precondition).
-    output wire [31:0] dbg_nmien_writes,
-    // ---- TEMP debug: PLAYER-0 P/M fetch capture (clk_bus) — pmdma "$00" bug --
-    // Like dbg_cmp_fetch but filtered to player-0's one-line region ($3400-
-    // $34FF, page $34) only, so the P0 shape fetch is isolated from players
-    // 1/2/3.  Latched on the last NON-ZERO P0 byte (skips the empty bottom-of-
-    // frame $34C7 -> $00 line that hid the real shape).  [15:8] = cmp_p0_nz_cnt,
-    // a saturating count of non-zero P0 fetches (0 = no shape byte ever seen).
-    //   {cmp_raddr[15:0], cmp_p0_nz_cnt[7:0], cmp_rdata[7:0]}.
-    output wire [31:0] dbg_pm_p0
+    output wire [31:0] dbg_antic        // {colpf3, prior, chbase, dmactl}
 );
 
     // Synchronise /G_RST into the bus_clk domain.
@@ -971,108 +945,6 @@ module antic_top #(
         .dma_ack(cmp_dma_ack), .dma_data_valid(cmp_dma_dvalid),
         .dma_rdata(cmp_dma_rdata), .dma_busy(dma_busy_w));
 
-    // ---- TEMP diag: compositor P/M FETCH capture (antic_pmdma "$00" bug) ----
-    // Pure observation of u_mux_cmp's return path — inert to compositor timing.
-    // On the cycle cmp_ready pulses and cmp_raddr lands in the PMBASE window
-    // ($2000-$3FFF, which contains the $3000-$3BFF P/M shape region for a
-    // PMBASE at page $30), latch {addr, data} and bump a running fetch counter.
-    // On HW the shape byte is reading $00; this reg lets `mem` see the exact
-    // address issued and the byte the fabric returned.
-    localparam logic [15:0] PM_FETCH_LO = 16'h2000;
-    localparam logic [15:0] PM_FETCH_HI = 16'h3FFF;
-    wire cmp_pm_fetch = cmp_ready
-                      & (cmp_raddr >= PM_FETCH_LO)
-                      & (cmp_raddr <= PM_FETCH_HI);
-    reg [15:0] cmp_fetch_addr_q;
-    reg [7:0]  cmp_fetch_data_q;
-    reg [31:0] cmp_fetch_cnt_q;
-    always_ff @(posedge clk_bus or posedge rst_bus) begin
-        if (rst_bus) begin
-            cmp_fetch_addr_q <= 16'h0;
-            cmp_fetch_data_q <= 8'h0;
-            cmp_fetch_cnt_q  <= 32'h0;
-        end else if (cmp_pm_fetch) begin
-            cmp_fetch_addr_q <= cmp_raddr;
-            cmp_fetch_data_q <= cmp_rdata;
-            cmp_fetch_cnt_q  <= cmp_fetch_cnt_q + 32'h1;
-        end
-    end
-    assign dbg_cmp_fetch     = {cmp_fetch_addr_q, 8'h0, cmp_fetch_data_q};
-    assign dbg_cmp_fetch_cnt = cmp_fetch_cnt_q;
-
-    // ---- TEMP diag: PLAYER-0 P/M FETCH capture (antic_pmdma "$00" bug) ------
-    // Mirrors the DIAG10 tap on u_mux_cmp's return path but with a tight
-    // address filter: player-0's one-line region ONLY, $3400-$34FF (page $34).
-    // Narrowed from the whole $3400-$37FF player block so this captures the P0
-    // fetch alone and can't be aliased by players 1/2/3.  Pure observation,
-    // inert.  Lets `mem` see the exact address+data for the P0 fetch: line 8's
-    // P0 fetch should read $3408 -> $08; a wrong addr or a $00 exposes the bug.
-    //
-    // The LAST P0 fetch is always the empty bottom-of-frame line ($34C7 -> $00),
-    // which hides the real shape line.  So the latch enable is gated on a
-    // NON-ZERO returned byte: we capture the last P0 fetch that actually read a
-    // player-shape byte.  A small saturating counter (cmp_p0_nz_cnt) tallies how
-    // many non-zero P0 bytes were fetched this run, so "N non-zero fetches" is
-    // distinguishable from "zero non-zero bytes ever" (the true-$00 failure).
-    wire cmp_p0_fetch    = cmp_ready & (cmp_raddr[15:8] == 8'h34);
-    wire cmp_p0_nz_fetch = cmp_p0_fetch & (cmp_rdata != 8'h00);
-    reg [15:0] pm_p0_addr_q;
-    reg [7:0]  pm_p0_data_q;
-    reg [7:0]  cmp_p0_nz_cnt;
-    always_ff @(posedge clk_bus or posedge rst_bus) begin
-        if (rst_bus) begin
-            pm_p0_addr_q  <= 16'h0;
-            pm_p0_data_q  <= 8'h0;
-            cmp_p0_nz_cnt <= 8'h0;
-        end else if (cmp_p0_nz_fetch) begin
-            pm_p0_addr_q  <= cmp_raddr;
-            pm_p0_data_q  <= cmp_rdata;
-            if (cmp_p0_nz_cnt != 8'hFF)   // saturate, don't wrap
-                cmp_p0_nz_cnt <= cmp_p0_nz_cnt + 8'h1;
-        end
-    end
-    assign dbg_pm_p0 = {pm_p0_addr_q, cmp_p0_nz_cnt, pm_p0_data_q};
-
-    // ---- TEMP diag: NMIEN ($D40E) sticky evidence (DLI cluster) ------------
-    // Binary question: does the LIVE ANTIC NMIEN register (nmien_q, output of
-    // u_antic_regs) EVER hold bit7=1 on HW?  The old "last/prev write value"
-    // capture could miss a transient; this replaces it with a sticky OR that
-    // cannot.  Every clk_bus cycle we OR nmien_q into nmien_or_q, so any bit
-    // that was ever set survives to the readback.  We also latch a sticky
-    // coincidence flag: set the first time nmien_q[7] is high on the exact
-    // cycle a DLI line-start pulse occurs (ar_line_start & nmi_cur_row_dli),
-    // i.e. bit7 armed at a DLI line — the precondition for the /NMI to fire.
-    //   nmien_or_q[7]           (DIAG14 bit15): bit7 EVER reached nmien_q.
-    //                             1 -> data path is fine; the miss is that the
-    //                                  DLI event and nmien[7] never coincide
-    //                                  (timing / DL), NOT a dropped byte.
-    //                             0 -> bit7 NEVER latches despite the clean
-    //                                  path -> fid store data or an OS clobber
-    //                                  before the latch.
-    //   nmien_dli_coincide_q    (DIAG14 bit0): bit7 was high AT a DLI line.
-    // The CPU write count (nmien_wr_cnt_q) is retained for cross-checking.
-    wire nmien_wr = snoop_we_antic & (snoop_addr[7:0] == 8'h0E);
-    wire nmien_dli_coincide = ar_line_start & nmi_cur_row_dli & nmien_q[7];
-    reg        nmien_wr_prev_q;
-    reg [15:0] nmien_wr_cnt_q;
-    reg [7:0]  nmien_or_q;                 // sticky-OR of every nmien_q value
-    reg        nmien_dli_coincide_q;       // sticky: bit7 high at a DLI line
-    always_ff @(posedge clk_bus or posedge rst_bus) begin
-        if (rst_bus) begin
-            nmien_wr_prev_q      <= 1'b0;
-            nmien_wr_cnt_q       <= 16'h0;
-            nmien_or_q           <= 8'h0;
-            nmien_dli_coincide_q <= 1'b0;
-        end else begin
-            nmien_wr_prev_q <= nmien_wr;
-            nmien_or_q      <= nmien_or_q | nmien_q;
-            if (nmien_dli_coincide) nmien_dli_coincide_q <= 1'b1;
-            if (nmien_wr & ~nmien_wr_prev_q)
-                nmien_wr_cnt_q <= nmien_wr_cnt_q + 16'h1;
-        end
-    end
-    assign dbg_nmien_writes = {nmien_wr_cnt_q, nmien_or_q, 7'b0, nmien_dli_coincide_q};
-
     // dl_parser status (declared here so the render sequencer below can gate
     // the first compose on parse_done; the parser itself is instanced after).
     wire        dl_done;
@@ -1202,10 +1074,7 @@ module antic_top #(
         .cur_row       (nmi_cur_row),
         .cur_row_dli   (nmi_cur_row_dli),
         .atari_row_in  (ar_atari_row),
-        .scanline_in   (ar_scanline),
         .nmist_q       (nmist_q),
-        .dbg_nmi0      (dbg_nmi0),
-        .dbg_nmi1      (dbg_nmi1),
         .nmi_n         (nmi_n_w)
     );
 

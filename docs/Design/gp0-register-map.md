@@ -73,12 +73,6 @@ PL diagnostic words (A9-only, read-only, word-aligned)
 | 0x18 | R | 32 | `XT_DIAG7` | `DIAG7` | HP2 read-probe last rdata |
 | 0x1C | R | 32 | `XT_DIAG8` | `DIAG8` | TEMP ROM-window upload diag: [31:16]=window AXI writes accepted, [15:0]=rom_we pulses emitted to sally_mem |
 | 0x20 | R | 32 | `XT_DIAG9` | `DIAG9` | TEMP ROM-window upload diag: [23:8]=last rom_addr, [7:0]=last rom_data |
-| 0x24 | R | 32 | `XT_DIAG10` | `DIAG10` | TEMP compositor P/M FETCH capture (antic_pmdma $00 bug): [31:16]=last cmp_raddr in $2000-$3FFF, [15:8]=0, [7:0]=cmp_rdata byte returned |
-| 0x28 | R | 32 | `XT_DIAG11` | `DIAG11` | TEMP compositor P/M-region fetch counter: increments each cmp_ready with cmp_raddr in $2000-$3FFF |
-| 0x2C | R | 32 | `XT_DIAG12` | `DIAG12` | TEMP nmi_gen DLI/VBI counters: [31:24]=dli_nmi_count (gated DLI /NMI assertions), [23:16]=vbi_nmi_count, [15:8]=dli_event_count (DLIs detected regardless of NMIEN), [7:0]=last NMIST (external view) sampled just after the last /NMI assertion |
-| 0x30 | R | 32 | `XT_DIAG13` | `DIAG13` | TEMP nmi_gen NMI state: [31:24]=nmien, [23:16]=last-DLI antic_raster scanline[7:0], [15:0]=total DLI+VBI /NMI assertion count |
-| 0x34 | R | 32 | `XT_DIAG14` | `DIAG14` | TEMP NMIEN sticky evidence (DLI cluster): [31:16]=CPU write count to $D40E, [15:8]=sticky-OR of every live ANTIC nmien_q value (bit15=nmien_or[7]: 1 -> bit7 EVER latched in nmien_q; 0 -> bit7 never reaches nmien_q), [7:1]=0, [0]=nmien_dli_coincide (sticky: nmien_q[7] high on a DLI line-start) |
-| 0x38 | R | 32 | `XT_DIAG15` | `DIAG15` | TEMP player-0 P/M FETCH capture (antic_pmdma $00 bug): [31:16]=last cmp_raddr in $3400-$34FF (player-0 one-line region only) with a NON-ZERO returned byte, [15:8]=cmp_p0_nz_cnt (saturating count of non-zero P0 fetches; 0=no shape byte ever), [7:0]=cmp_rdata non-zero byte returned |
 
 ## 0x500 — XLCTL  (`XT_BLK_XLCTL`)
 

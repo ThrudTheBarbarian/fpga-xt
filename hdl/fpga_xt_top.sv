@@ -1422,12 +1422,6 @@ module fpga_xt_top (
     wire [23:0] antic_wb_pal_rgb;
     wire [31:0] antic_dbg_gtia;   // TEMP: {colpf0,colpf1,colpf2,colbk}  -> diag8 @ GP0 0x41C
     wire [31:0] antic_dbg_antic;  // TEMP: {colpf3,prior,chbase,dmactl}  -> diag9 @ GP0 0x420
-    wire [31:0] antic_dbg_cmp_fetch;      // TEMP: {cmp_raddr[15:0],8'h0,cmp_rdata[7:0]} -> diag10 @ GP0 0x424
-    wire [31:0] antic_dbg_cmp_fetch_cnt;  // TEMP: P/M-region compositor fetch count      -> diag11 @ GP0 0x428
-    wire [31:0] antic_dbg_nmi0;           // TEMP: nmi_gen {dli_nmi,vbi_nmi,dli_evt,nmist} -> diag12 @ GP0 0x42C
-    wire [31:0] antic_dbg_nmi1;           // TEMP: nmi_gen {nmien,last_dli_scan,nmi_cnt}    -> diag13 @ GP0 0x430
-    wire [31:0] antic_dbg_nmien_writes;   // TEMP: NMIEN $D40E writes {cnt[15:0],prev,last}  -> diag14 @ GP0 0x434
-    wire [31:0] antic_dbg_pm_p0;          // TEMP: player-0 P/M fetch {cmp_raddr,8'h0,rdata} -> diag15 @ GP0 0x438
 
     antic_top #(
         .POKEY_CLK_BUS_HZ (150_000_000)     // clk_sys nominal (150 MHz)
@@ -1496,12 +1490,6 @@ module fpga_xt_top (
         .wb_pal_rgb         (antic_wb_pal_rgb),
         .dbg_gtia           (antic_dbg_gtia),
         .dbg_antic          (antic_dbg_antic),
-        .dbg_cmp_fetch      (antic_dbg_cmp_fetch),
-        .dbg_cmp_fetch_cnt  (antic_dbg_cmp_fetch_cnt),
-        .dbg_nmi0           (antic_dbg_nmi0),
-        .dbg_nmi1           (antic_dbg_nmi1),
-        .dbg_nmien_writes   (antic_dbg_nmien_writes),
-        .dbg_pm_p0          (antic_dbg_pm_p0),
         // Zynq build: sally_* / xlat_phys_addr removed (no shadow SALLY core).
         .adc_bclk_o         (),
         .adc_lrck_o         (),
@@ -1811,14 +1799,6 @@ module fpga_xt_top (
     // axi>0 & we=0 -> loader gets AXI but never drains rom_we (FIFO on silicon).
     // axi=0        -> the PS write never reaches the loader (decode/delivery).
     wire [31:0] diag8_word, diag9_word;
-    // TEMP diag: compositor P/M FETCH capture (antic_pmdma "$00" bug). clk_sys
-    // domain both sides (antic_top runs on clk_sys = xt_gp0_regs' clk) — no CDC.
-    wire [31:0] diag10_word = antic_dbg_cmp_fetch;
-    wire [31:0] diag11_word = antic_dbg_cmp_fetch_cnt;
-    wire [31:0] diag12_word = antic_dbg_nmi0;
-    wire [31:0] diag13_word = antic_dbg_nmi1;
-    wire [31:0] diag14_word = antic_dbg_nmien_writes;
-    wire [31:0] diag15_word = antic_dbg_pm_p0;
 `ifdef USE_PS_BD
     (* keep = "true" *) reg [15:0] romdiag_we   = 16'd0;
     (* keep = "true" *) reg [15:0] romdiag_addr = 16'd0;
@@ -3148,12 +3128,6 @@ module fpga_xt_top (
         .diag7_word      (diag7_word),
         .diag8_word      (diag8_word),
         .diag9_word      (diag9_word),
-        .diag10_word     (diag10_word),
-        .diag11_word     (diag11_word),
-        .diag12_word     (diag12_word),
-        .diag13_word     (diag13_word),
-        .diag14_word     (diag14_word),
-        .diag15_word     (diag15_word),
         .trng_word       (trng_word),        // ring-oscillator entropy (0x7xx)
         .clock_mult      (eff_clock_mult_sys), // effective $D4CA speed, read back at GP0 offset 0x1E
         .gp0_ctrl        (gp0_ctrl),

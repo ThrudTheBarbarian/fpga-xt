@@ -121,12 +121,6 @@ module xt_gp0_regs (
     input  wire [31:0] diag7_word,
     input  wire [31:0] diag8_word,      // TEMP: ROM-window upload diag (AXI/rom_we counts)
     input  wire [31:0] diag9_word,      // TEMP: ROM-window upload diag (last addr/data)
-    input  wire [31:0] diag10_word,     // TEMP: compositor P/M FETCH capture {cmp_raddr,8'h0,cmp_rdata}
-    input  wire [31:0] diag11_word,     // TEMP: compositor P/M-region fetch counter
-    input  wire [31:0] diag12_word,     // TEMP: nmi_gen {dli_nmi_cnt,vbi_nmi_cnt,dli_evt_cnt,last_nmist}
-    input  wire [31:0] diag13_word,     // TEMP: nmi_gen {nmien,last_dli_scanline,nmi_assert_cnt}
-    input  wire [31:0] diag14_word,     // TEMP: NMIEN sticky evidence {wr_cnt[15:0],nmien_or[7:0],7'b0,dli_coincide}
-    input  wire [31:0] diag15_word,     // TEMP: player-0 P/M fetch ($34xx, last non-zero) {cmp_raddr,cmp_p0_nz_cnt,cmp_rdata}
     // ---- hardware entropy (clk_sys) — read in the 0x7xx block --------------
     input  wire [31:0] trng_word,
 
@@ -521,12 +515,6 @@ module xt_gp0_regs (
                                     DIAG7: s_axi_rdata <= diag7_word;
                                     DIAG8: s_axi_rdata <= diag8_word;
                                     DIAG9: s_axi_rdata <= diag9_word;
-                                    DIAG10: s_axi_rdata <= diag10_word;
-                                    DIAG11: s_axi_rdata <= diag11_word;
-                                    DIAG12: s_axi_rdata <= diag12_word;
-                                    DIAG13: s_axi_rdata <= diag13_word;
-                                    DIAG14: s_axi_rdata <= diag14_word;
-                                    DIAG15: s_axi_rdata <= diag15_word;
                                     default: ;
                                 endcase
                             BLK_MATH:

@@ -77,12 +77,6 @@
 #define XT_DIAG7             (XT_BLK_DIAG + 0x18u)        /* R HP2 read-probe last rdata */
 #define XT_DIAG8             (XT_BLK_DIAG + 0x1Cu)        /* R TEMP ROM-window upload diag: [31:16]=window AXI writes accepted, [15:0]=rom_we pulses emitted to sally_mem */
 #define XT_DIAG9             (XT_BLK_DIAG + 0x20u)        /* R TEMP ROM-window upload diag: [23:8]=last rom_addr, [7:0]=last rom_data */
-#define XT_DIAG10            (XT_BLK_DIAG + 0x24u)        /* R TEMP compositor P/M FETCH capture (antic_pmdma $00 bug): [31:16]=last cmp_raddr in $2000-$3FFF, [15:8]=0, [7:0]=cmp_rdata byte returned */
-#define XT_DIAG11            (XT_BLK_DIAG + 0x28u)        /* R TEMP compositor P/M-region fetch counter: increments each cmp_ready with cmp_raddr in $2000-$3FFF */
-#define XT_DIAG12            (XT_BLK_DIAG + 0x2Cu)        /* R TEMP nmi_gen DLI/VBI counters: [31:24]=dli_nmi_count (gated DLI /NMI assertions), [23:16]=vbi_nmi_count, [15:8]=dli_event_count (DLIs detected regardless of NMIEN), [7:0]=last NMIST (external view) sampled just after the last /NMI assertion */
-#define XT_DIAG13            (XT_BLK_DIAG + 0x30u)        /* R TEMP nmi_gen NMI state: [31:24]=nmien, [23:16]=last-DLI antic_raster scanline[7:0], [15:0]=total DLI+VBI /NMI assertion count */
-#define XT_DIAG14            (XT_BLK_DIAG + 0x34u)        /* R TEMP NMIEN sticky evidence (DLI cluster): [31:16]=CPU write count to $D40E, [15:8]=sticky-OR of every live ANTIC nmien_q value (bit15=nmien_or[7]: 1 -> bit7 EVER latched in nmien_q; 0 -> bit7 never reaches nmien_q), [7:1]=0, [0]=nmien_dli_coincide (sticky: nmien_q[7] high on a DLI line-start) */
-#define XT_DIAG15            (XT_BLK_DIAG + 0x38u)        /* R TEMP player-0 P/M FETCH capture (antic_pmdma $00 bug): [31:16]=last cmp_raddr in $3400-$34FF (player-0 one-line region only) with a NON-ZERO returned byte, [15:8]=cmp_p0_nz_cnt (saturating count of non-zero P0 fetches; 0=no shape byte ever), [7:0]=cmp_rdata non-zero byte returned */
 
 /* ---- XLCTL block --------------------------------------------------- */
 #define XT_XL_WIN_X          (XT_BLK_XLCTL + 0x00u)       /* W plane origin X on screen (12-bit) */

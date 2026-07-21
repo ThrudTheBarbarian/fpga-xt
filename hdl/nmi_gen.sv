@@ -30,18 +30,8 @@ module nmi_gen (
     // From vbeam.
     input  wire  [7:0] atari_row_in,
 
-    // From antic_raster (display scanline, for DLI correlation diag).
-    input  wire  [8:0] scanline_in,
-
     // To antic_regs read mux.
     output logic [7:0] nmist_q,
-
-    // TEMP DLI-debug instrumentation (clk_bus). See DIAG12/DIAG13 @ GP0.
-    //   dbg_nmi0 = {dli_nmi_count[7:0], vbi_nmi_count[7:0],
-    //              dli_event_count[7:0], last_nmist[7:0]}
-    //   dbg_nmi1 = {nmien[7:0], last_dli_scanline[7:0], nmi_assert_count[15:0]}
-    output logic [31:0] dbg_nmi0,
-    output logic [31:0] dbg_nmi1,
 
     // To CPU bus (active-low).
     output wire        nmi_n
@@ -131,54 +121,6 @@ module nmi_gen (
         else if (nmi_lo_ctr != 8'd0) nmi_lo_ctr <= nmi_lo_ctr - 8'd1;
     end
     assign nmi_n = (nmi_lo_ctr == 8'd0);
-
-    // ---- TEMP DLI-debug instrumentation (pure observation) --------------
-    // Debugging: on HW, VBI NMIs work (RTCLOK advances) but DLI NMIs never
-    // reach their handler. These counters/latches make the DLI path visible
-    // over GP0 (DIAG12/DIAG13). They only READ the existing event/flag/NMI
-    // signals — no signal that drives ANTIC/CPU behaviour depends on them.
-    //
-    //   dli_nmi_count   : # of gated DLI /NMI assertions (dli_event & NMIEN[7])
-    //   vbi_nmi_count   : # of gated VBI /NMI assertions (vbi_event & NMIEN[6])
-    //   dli_event_count : # of DLI events DETECTED, regardless of NMIEN[7]
-    //   last_nmist      : NMIST (external view) sampled the cycle after the
-    //                     last /NMI assertion, i.e. flags_q settled to the cause
-    //   last_dli_scan   : antic_raster scanline latched when a DLI event fires
-    //   nmi_assert_cnt  : total DLI+VBI /NMI assertions
-    logic [7:0]  dli_nmi_count;
-    logic [7:0]  vbi_nmi_count;
-    logic [7:0]  dli_event_count;
-    logic [7:0]  last_nmist;
-    logic [7:0]  last_dli_scan;
-    logic [15:0] nmi_assert_cnt;
-    logic        nmi_assert_d;   // 1-cycle delayed assertion, to sample settled flags_q
-
-    always_ff @(posedge clk or posedge rst) begin
-        if (rst) begin
-            dli_nmi_count   <= 8'd0;
-            vbi_nmi_count   <= 8'd0;
-            dli_event_count <= 8'd0;
-            last_nmist      <= 8'd0;
-            last_dli_scan   <= 8'd0;
-            nmi_assert_cnt  <= 16'd0;
-            nmi_assert_d    <= 1'b0;
-        end else begin
-            if (dli_nmi)   dli_nmi_count   <= dli_nmi_count   + 8'd1;
-            if (vbi_nmi)   vbi_nmi_count   <= vbi_nmi_count   + 8'd1;
-            if (dli_event) begin
-                dli_event_count <= dli_event_count + 8'd1;
-                last_dli_scan   <= scanline_in[7:0];
-            end
-            if (dli_nmi || vbi_nmi) nmi_assert_cnt <= nmi_assert_cnt + 16'd1;
-            // Sample NMIST one cycle after assertion so flags_q reflects THIS
-            // event's cause (flags_q is written on the same edge as the event).
-            nmi_assert_d <= (dli_nmi || vbi_nmi);
-            if (nmi_assert_d) last_nmist <= nmist_q;
-        end
-    end
-
-    assign dbg_nmi0 = {dli_nmi_count, vbi_nmi_count, dli_event_count, last_nmist};
-    assign dbg_nmi1 = {nmien, last_dli_scan, nmi_assert_cnt};
 
 endmodule
 
