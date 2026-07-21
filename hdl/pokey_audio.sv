@@ -180,24 +180,42 @@ module pokey_audio #(
         if (rst || poly_init) begin
             lfsr4_q  <= 4'b0001;
             lfsr5_q  <= 5'b00001;
-            lfsr9_q  <= 9'h001;
+            lfsr9_q  <= 9'h1FF;              // real POKEY seeds the poly to all ones
             lfsr17_q <= 17'h00001;
         end else if (phi2_tick) begin
             // Fibonacci form: shift left, new bit = XOR of selected taps.
             lfsr4_q  <= {lfsr4_q[2:0],   lfsr4_q[3]   ^ lfsr4_q[2]};
             lfsr5_q  <= {lfsr5_q[3:0],   lfsr5_q[4]   ^ lfsr5_q[2]};
-            lfsr9_q  <= {lfsr9_q[7:0],   lfsr9_q[8]   ^ lfsr9_q[3]};
+            // 9-bit poly, x^9 + x^5 + 1: RIGHT-shifting, feedback q[0]^q[5] into
+            // bit 8, seeded all-ones.  Pinned by fitting ACID800 antic_wsync's
+            // THREE independent RANDOM reads simultaneously ($95 @113 cycles after
+            // the SKCTL release, $4B @227, $0D @342): of every combination of
+            // width/taps/seed/shift/direction searched, only this one satisfies
+            // all three.  The old left-shift taps(8,3) seed=1 form matched none.
+            lfsr9_q  <= {lfsr9_q[0] ^ lfsr9_q[5], lfsr9_q[8:1]};
             lfsr17_q <= {lfsr17_q[15:0], lfsr17_q[16] ^ lfsr17_q[11]};
         end
     end
 
     wire poly4   = lfsr4_q[3];
     wire poly5   = lfsr5_q[4];
-    wire poly9   = lfsr9_q[8];        // M23-3 — AUDCTL[7] picks 9-bit poly over 17-bit
+    wire poly9   = lfsr9_q[0];        // right-shifting now: the bit shifting out
     wire poly17  = lfsr17_q[16];
-    // RANDOM ($D20A): high byte of the 17-bit poly, forced to $FF while
-    // POKEY is in SKCTL init/reset mode (poly counters held).
-    assign random_byte = poly_init ? 8'hFF : lfsr17_q[16:9];
+    // RANDOM ($D20A) must honour AUDCTL[7]: when set, the 9-bit poly REPLACES the
+    // 17-bit one, so RANDOM reads the 9-bit register's high byte [8:1] rather than
+    // the 17-bit's [16:9].  We previously returned the 17-bit value unconditionally,
+    // so any code selecting the 9-bit poly read the wrong shift register entirely
+    // (ACID800 antic_wsync sets AUDCTL=$80 before its first RANDOM read).
+    // Forced to $FF while POKEY is in SKCTL init/reset mode (counters held).
+    //
+    // NOTE: the 17-bit poly above is left as-is and is NOT verified — by analogy
+    // with the 9-bit result it is probably also meant to be right-shifting with
+    // taps (12,0) and an all-ones seed, but no measurement pins it yet, so it is
+    // deliberately left alone rather than changed on a guess. pokey_noise is the
+    // test most likely to constrain it.
+    assign random_byte = poly_init  ? 8'hFF
+                       : audctl[7]  ? lfsr9_q[8:1]
+                                    : lfsr17_q[16:9];
 
     // ---- Per-channel tick sources (M23-3) ----
     // ch1/ch3 high-freq mode (AUDCTL[6]/[5]): count on every clk

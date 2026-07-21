@@ -107,9 +107,18 @@ module antic_raster #(
     // (#2 and #4 land on scanlines where old and new agree, so they add nothing.)
     // The two bounds intersect at exactly one value.
     localparam int unsigned VCOUNT_INC_CYC = 112;
-    wire [8:0] vcount_scan = (phi2_in_line >= 8'(VCOUNT_INC_CYC))
-        ? (scanline + 9'd1)
-        : scanline;
+    // Frame wrap is ONE CYCLE WIDE, at the very last cycle of the last line.
+    // Measured (DBG_TB mode 2, antic_vcount rollover): on scanline 261 the
+    // leading counter reads 131 at phi2 112 (rollover #1 expects 131) and must
+    // read 0 at phi2 113 (rollover #2 expects 0).  So the lead runs normally at
+    // 112 even on the final line, and only the last cycle wraps.  Wrapping the
+    // whole lead window (or never wrapping) each satisfies one assertion and
+    // breaks the other.
+    wire last_line = (scanline == 9'(LINES_PER_FRAME - 1));
+    wire [8:0] vcount_scan =
+          (last_line && (phi2_in_line >= 8'(CYC_PER_LINE - 1))) ? 9'd0
+        : (phi2_in_line >= 8'(VCOUNT_INC_CYC))                  ? (scanline + 9'd1)
+        :                                                         scanline;
     assign vcount    = vcount_scan[8:1];
 
 endmodule
