@@ -1167,7 +1167,14 @@ module antic_top #(
         unique case (tb_mode)
             3'd1:    tb_trig = snoop_we_antic & (snoop_addr[7:0] == tb_match_addr);
             3'd2:    tb_trig = snoop_re_antic & (snoop_addr[7:0] == tb_match_addr);
-            3'd3:    tb_trig = cycle_8_pulse   & nmi_cur_row_dli;  // DLI at the REAL gate cycle (8), matching nmi_gen — captures nmien_q there
+            // DLI at the REAL gate cycle (8), matching nmi_gen — captures nmien_q.
+            // cfg[12] narrows this to DLIs that actually ASSERT /NMI (nmien[7] set),
+            // which is the only way to tell "the DL never raised a DLI" apart from
+            // "it raised one while DLIs were masked".  Without it the 16-entry ring
+            // fills with masked boot/framework DLIs and the interesting frame is
+            // never visible (ACID800 nmist/dlitiming/pfstart-stop all hinge on this).
+            3'd3:    tb_trig = cycle_8_pulse & nmi_cur_row_dli
+                             & (~tb_dli_nmi_only | nmien_q[7]);
             3'd4:    tb_trig = vbi_c8_pulse;
             3'd5:    tb_trig = snoop_we_antic & (snoop_addr[7:0] == 8'h0A); // WSYNC $D40A
             3'd6:    tb_trig = snoop_we_antic;
@@ -1198,6 +1205,7 @@ module antic_top #(
     // of the capture-enable path (scanline only changes once per 114 cycles, so a
     // 1-cycle-stale visible flag is exact at every trigger except a line boundary).
     wire tb_visible_only = dbg_tb_cfg_s[3];
+    wire tb_dli_nmi_only = dbg_tb_cfg_s[12];   // mode 3: only DLIs that assert /NMI
     logic tb_scan_vis_q;
     always_ff @(posedge clk_bus or posedge rst_bus) begin
         if (rst_bus) tb_scan_vis_q <= 1'b1;
