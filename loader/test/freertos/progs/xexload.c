@@ -3,6 +3,10 @@
  *
  *   xexload <file.xex>            load+run on the fidelity core (cycle-exact)
  *   xexload --turbo <file.xex>    load+run on the turbo core (~56x)
+ *   xexload --hold  <file.xex>    HALT at an acid800 test's result screen
+ *                                 (breakpoint at _testEnd $1D93) instead of
+ *                                 letting it soft-reset -- so `6502 status` Y
+ *                                 (00 pass / 80 fail) and a screen grab survive.
  *
  * The kernel boots the XL OS with a 1-sector fake disk and then, as the HOST
  * (via the GP0 debug facility), loads the segments straight into 6502 RAM and
@@ -17,11 +21,15 @@ static void puts2(int fd, const char *s) { unsigned n = 0; while (s[n]) n++; sys
 
 void _app_entry(int argc, char **argv)
 {
-    int turbo = 0, ai = 1;
-    if (ai < argc && (streq(argv[ai], "--turbo") || streq(argv[ai], "-t"))) { turbo = 1; ai++; }
-    if (ai >= argc) { puts2(2, "usage: xexload [--turbo] <file.xex>\n"); sys_exit(2); }
+    int flags = 0, ai = 1;         /* bit0 = turbo, bit1 = hold */
+    for (; ai < argc; ai++) {
+        if (streq(argv[ai], "--turbo") || streq(argv[ai], "-t"))     flags |= 1;
+        else if (streq(argv[ai], "--hold") || streq(argv[ai], "-h")) flags |= 2;
+        else break;
+    }
+    if (ai >= argc) { puts2(2, "usage: xexload [--turbo] [--hold] <file.xex>\n"); sys_exit(2); }
 
-    long rc = sys_xexload(argv[ai], turbo);
+    long rc = sys_xexload(argv[ai], flags);
     if (rc == 0) { puts2(1, "xexload: ok\n"); sys_exit(0); }
     puts2(2, "xexload: failed\n");
     sys_exit(1);

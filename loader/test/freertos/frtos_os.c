@@ -2851,9 +2851,10 @@ static long do_syscall(uint32_t num, long a0, long a1, long a2)
         extern int xl_boot(const char *, int);
         return xl_boot((const char *)a0, (int)a1);
     }
-    case SYS_xexload: {                                     /* (path, turbo) — task ctx (SD reads) */
-        extern int xex_boot(const char *, int);
-        return xex_boot((const char *)a0, (int)a1);
+    case SYS_xexload: {                                     /* (path, flags) — task ctx (SD reads) */
+        extern int xex_boot(const char *, int, int);
+        int flags = (int)a1;
+        return xex_boot((const char *)a0, flags & 1, (flags >> 1) & 1);  /* turbo, hold */
     }
     case SYS_plane_grab: {                                  /* (plane_id, buf) -> (w<<16)|h */
         const uint32_t XL_W = 320, XL_H = 192;              /* XL_SRC_W x XL_SRC_H (RTL) */

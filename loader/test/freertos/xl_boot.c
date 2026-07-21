@@ -571,7 +571,17 @@ static int xex_run_init(cpu6502 *r, uint16_t initad)
     return 0;
 }
 
-int xex_boot(const char *path, int turbo)
+/* acid800 standalone framework: every test ends in the shared library proc
+ * _testEnd at 6502 $1D93 (the library links at a fixed base, so this address is
+ * identical across all 63 tests -- verified in the .lst dumps).  _testEnd runs
+ * `sei; sta nmien; ...; jmp ($fffc)` (a soft reset).  By the time it is reached,
+ * _testPassed ($1DF8) / _testFailed ($1E0D) have ALREADY printed "Pass"/"FAIL."
+ * to the screen and set Y (00 = pass, 80 = fail).  So arming a HW breakpoint at
+ * $1D93 freezes the core on its result screen -- ANTIC keeps DMA-refreshing it,
+ * Y still holds the verdict -- instead of the jmp($fffc) clobbering both. */
+#define ACID800_TESTEND 0x1D93u
+
+int xex_boot(const char *path, int turbo, int hold)
 {
     static uint8_t img[0x10000];        /* kernel BSS; single caller (task ctx) */
     uint32_t sel = turbo ? 0u : CPUSEL_FID;  /* default = fidelity core (cycle-exact ref) */
@@ -689,8 +699,19 @@ int xex_boot(const char *path, int turbo)
     }
     frtos_free(xex, NULL);
 
-    /* ---- hand off to the program: JMP (RUNAD), breakpoints disarmed -------- */
-    DBG_CFG = 0u; __asm__ volatile("dsb");          /* bkpt_en=0: let it run free */
+    /* ---- hand off to the program: JMP (RUNAD) ------------------------------
+     * All cold-boots/SALLYRSTs are behind us (the coldstart ran back at reset
+     * release, and the load phase never resets), so a breakpoint armed here
+     * survives until the test itself executes it.  Non-hold: disarm and run
+     * free.  hold: re-point the breakpoint from the load-phase POKE_TRAP to the
+     * acid800 _testEnd ($1D93) and leave bkpt_en set, so the test runs free but
+     * HALTS on its result screen (see ACID800_TESTEND above). */
+    if (hold) {
+        DBG_BKPT = ACID800_TESTEND; __asm__ volatile("dsb");
+        DBG_CFG  = (DBG_CFG & ~2u) | 1u; __asm__ volatile("dsb");  /* bkpt_en=1, keep halt_at_reset */
+    } else {
+        DBG_CFG = 0u; __asm__ volatile("dsb");      /* bkpt_en=0: let it run free */
+    }
     reg.pc = runad;
     DBG_WPC   = reg.pc;
     DBG_WAXYS = (uint32_t)reg.a | ((uint32_t)reg.x << 8) |
@@ -699,9 +720,11 @@ int xex_boot(const char *path, int turbo)
     __asm__ volatile("dsb");
     DBG_COMMIT = 1; __asm__ volatile("dsb");
     dbg_wait_halt();                                 /* PC latched, core halted */
-    DBG_GO = 1; __asm__ volatile("dsb");             /* run RUNAD */
+    DBG_GO = 1; __asm__ volatile("dsb");             /* run RUNAD (hold: until $1D93) */
 
-    klog("[xl] xex-boot "); klog(path); klog(" run=$"); klog_u(runad); klog("\r\n");
+    klog("[xl] xex-boot "); klog(path); klog(" run=$"); klog_u(runad);
+    if (hold) klog(" (hold@$1D93)");
+    klog("\r\n");
     return 0;
 }
 
@@ -709,6 +732,6 @@ int xex_boot(const char *path, int turbo)
 
 void xl_sio_service(volatile uint8_t *page) { (void)page; }
 int  xl_boot(const char *path, int drive) { (void)path; (void)drive; return -19; }
-int  xex_boot(const char *path, int turbo) { (void)path; (void)turbo; return -19; }
+int  xex_boot(const char *path, int turbo, int hold) { (void)path; (void)turbo; (void)hold; return -19; }
 
 #endif /* XT_HW */
