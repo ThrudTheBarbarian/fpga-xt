@@ -278,7 +278,13 @@ module sally_mem #(
     wire is_cart_s5_window = (addr[15:13] == 3'b101);    // $A000-$BFFF
     wire is_stack_page     = (addr[15:8] == 8'h01);      // $0100-$01FF (legacy alias)
     wire is_selftest_range = (addr[15:11] == 5'b01010);  // $5000-$57FF
-    wire selftest_en       = is_selftest_range && !portb[7];  // self-test ROM mapped (PORTB[7]=0)
+    // Self-test ROM ($5000-$57FF) maps only when PORTB[7]=0 (self-test select,
+    // active low) AND PORTB[0]=1 (OS ROM enabled).  On a real XL the self-test
+    // ROM is a slice of the OS ROM address space, so it cannot appear while the
+    // OS ROM is banked out — PORTB[7]=0 alone is not enough.  (ACID800
+    // mmu_xlbanking: PORTB=$72 has bit7=0 but bit0=0, so $5000 must read RAM,
+    // giving mask $0F; without the PORTB[0] term it read ROM -> mask $0E.)
+    wire selftest_en       = is_selftest_range && !portb[7] && portb[0];
     wire cart_external_read = rw                                // reads only
                             & ((is_cart_s4_window & ~bus_rd4_n_in)
                             |  (is_cart_s5_window & ~bus_rd5_n_in));
@@ -655,7 +661,12 @@ module sally_mem #(
     // gates puts the cascade back together; shadow writes into hwreg
     // / bank-window addresses are harmless because the read path
     // already prefers was_hwreg_q / was_bank_q over bram_dout_q.
-    wire        cpu_w      = rdy && !rw && !stack_op && !rom_override;
+    // `selftest_en` blocks the RAM write exactly like `rom_override`: while the
+    // XL self-test ROM is banked into $5000-$57FF (PORTB[7]=0 && PORTB[0]=1) it
+    // is a read-only slice of the OS ROM space, so a CPU write must be ignored
+    // and must NOT fall through to the RAM beneath (ACID800 mmu_xlbanking:
+    // "Write through self-test ROM was not blocked").
+    wire        cpu_w      = rdy && !rw && !stack_op && !rom_override && !selftest_en;
     wire        mem_we     = cpu_w || rom_we;
     wire [15:0] mem_addr_w = rom_we ? rom_addr : addr;
     wire  [7:0] mem_din_w  = rom_we ? rom_data : data_in;

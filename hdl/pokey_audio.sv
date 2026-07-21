@@ -8,11 +8,13 @@
 //   * the selected polynomial counter bit (4 / 17-bit per AUDC[6]),
 //     optionally AND'd with the 5-bit poly (gated by AUDC[7]).
 //
-// The four LFSRs (4-bit, 5-bit, 9-bit, 17-bit) free-run at the
-// reference-tick rate. The 9-bit poly isn't directly selectable by
-// AUDC; it's used by the M23-3 AUDCTL POLY9 mode that replaces the
-// 17-bit poly output with the 9-bit one. RANDOM ($D20A) reads bits
-// 16..9 of the 17-bit poly.
+// The four LFSRs (4-bit, 5-bit, 9-bit, 17-bit) free-run on the machine
+// clock (phi2_tick) — the tone dividers sample them when they fire.
+// While POKEY is in SKCTL init/reset mode (SKCTL[1:0]==0) the counters
+// are held and RANDOM reads $FF. The 9-bit poly isn't directly
+// selectable by AUDC; it's used by the M23-3 AUDCTL POLY9 mode that
+// replaces the 17-bit poly output with the 9-bit one. RANDOM ($D20A)
+// reads bits 16..9 of the 17-bit poly.
 //
 // Channel-clock reference for M23-1/2: a fixed 64 kHz generated from
 // clk_bus by a divide-by-(CLK_BUS_HZ / 64000) counter. Real POKEY
@@ -65,6 +67,13 @@ module pokey_audio #(
     input  wire [7:0]  audf1, audf2, audf3, audf4,
     input  wire [7:0]  audc1, audc2, audc3, audc4,
     input  wire [7:0]  audctl,    // unused at M23-1; reserved for M23-3
+
+    // SKCTL ($D20F). Bits [1:0] gate POKEY's "init"/reset mode: while
+    // both are 0 the polynomial counters are held in reset and RANDOM
+    // ($D20A) reads $FF (Altirra §5.5 "Initialization mode"). Any non-
+    // zero value in [1:0] releases them to free-run on the machine
+    // clock. bit 0 = keyboard debounce, bit 1 = keyboard scan.
+    input  wire [7:0]  skctl,
 
     // Per-channel output: 4-bit value = (channel_state ? volume : 0).
     // 0..15 range. Downstream (M23-7 I2S TX) sums them into stereo PCM.
@@ -148,18 +157,32 @@ module pokey_audio #(
     // Fibonacci form: tap indices = (k-1) and (n-1) for polynomial
     // 1 + x^k + x^n. Initial seed is 1 — any non-zero seed gives a
     // maximal-length sequence.
+    //
+    // Clock domain: on real POKEY every polynomial counter free-runs on
+    // the 1.79 MHz machine clock (phi2), NOT the 64/15 kHz audio
+    // reference — the tone dividers merely *sample* the poly bits when
+    // they fire. RANDOM ($D20A) is therefore the poly's machine-clock
+    // state, so the counters advance on `phi2_tick`. (The audio channel
+    // dividers still count on `ref_tick`; only the poly clock moved.)
+    //
+    // Init/reset (SKCTL[1:0] == 0, `poly_init`): the counters are held
+    // in their seed state and RANDOM is forced to $FF — matching the
+    // Atari OS's `SKCTL=$00` -> read-$FF -> `SKCTL=$03` release idiom
+    // that the ACID800 pokey_noise / antic_wsync tests rely on.
     logic [3:0]  lfsr4_q;
     logic [4:0]  lfsr5_q;
     logic [8:0]  lfsr9_q;
     logic [16:0] lfsr17_q;
 
+    wire poly_init = (skctl[1:0] == 2'b00);   // SKCTL init/reset mode
+
     always_ff @(posedge clk or posedge rst) begin
-        if (rst) begin
+        if (rst || poly_init) begin
             lfsr4_q  <= 4'b0001;
             lfsr5_q  <= 5'b00001;
             lfsr9_q  <= 9'h001;
             lfsr17_q <= 17'h00001;
-        end else if (ref_tick) begin
+        end else if (phi2_tick) begin
             // Fibonacci form: shift left, new bit = XOR of selected taps.
             lfsr4_q  <= {lfsr4_q[2:0],   lfsr4_q[3]   ^ lfsr4_q[2]};
             lfsr5_q  <= {lfsr5_q[3:0],   lfsr5_q[4]   ^ lfsr5_q[2]};
@@ -172,7 +195,9 @@ module pokey_audio #(
     wire poly5   = lfsr5_q[4];
     wire poly9   = lfsr9_q[8];        // M23-3 — AUDCTL[7] picks 9-bit poly over 17-bit
     wire poly17  = lfsr17_q[16];
-    assign random_byte = lfsr17_q[16:9];   // RANDOM ($D20A) source
+    // RANDOM ($D20A): high byte of the 17-bit poly, forced to $FF while
+    // POKEY is in SKCTL init/reset mode (poly counters held).
+    assign random_byte = poly_init ? 8'hFF : lfsr17_q[16:9];
 
     // ---- Per-channel tick sources (M23-3) ----
     // ch1/ch3 high-freq mode (AUDCTL[6]/[5]): count on every clk
@@ -194,9 +219,22 @@ module pokey_audio #(
     wire ch2_tick = audctl[4] ? ch1_wrap : ref_tick;
     wire ch4_tick = audctl[3] ? ch3_wrap : ref_tick;
 
+    // ---- Async serial receive (SKCTL bit 4) ----
+    // In async-receive mode POKEY holds the timer 3 + timer 4 chain in
+    // reset until the serial input line drops for a start bit, so the
+    // receive bit-clock is phase-locked to the incoming byte. With no
+    // start bit (idle SIN) the pair never counts and TIMER 4 never
+    // fires. ACID800 pokey_asyncrecv toggles SKCTL between $13 (async
+    // receive on) and $03 (off) and asserts that the TIMER 4 IRQ is
+    // suppressed only while bit 4 is set. Altirra §5.10.
+    wire async_recv = skctl[4];
+
     // ch2/ch4 wrap pulses — surfaced as TIMER 2 / TIMER 4 IRQ sources.
+    // ch4's wrap is squashed while async-receive holds the pair reset;
+    // the counters themselves are frozen at their reload value in the
+    // sequential block below (so a linked ch4 also sees no motion).
     wire ch2_wrap = ch2_tick & (ch2_cnt == 8'h00);
-    wire ch4_wrap = ch4_tick & (ch4_cnt == 8'h00);
+    wire ch4_wrap = ch4_tick & (ch4_cnt == 8'h00) & ~async_recv;
 
     // M23-6: timer pulses go to pokey_regs' IRQ latch (ch1/ch2/ch4 only;
     // POKEY provides no TIMER 3).
@@ -293,7 +331,11 @@ module pokey_audio #(
                     ch2_cnt <= ch2_cnt - 8'h01;
             end
             // ---- ch3: low timer of pair {3,4} ----
-            if (ch3_tick) begin
+            // Async-receive holds the pair in reset (frozen at the AUDF
+            // reload) so no wrap occurs until a start bit releases it.
+            if (async_recv) begin
+                ch3_cnt <= ch34_paired ? 8'hFF : audf3_reload;
+            end else if (ch3_tick) begin
                 if (ch3_cnt == 8'h00) begin
                     ch3_cnt   <= ch34_paired ? 8'hFF : audf3_reload;
                     ch3_state <= next_state(audc3, ch3_state);
@@ -301,7 +343,9 @@ module pokey_audio #(
                     ch3_cnt <= ch3_cnt - 8'h01;
             end
             // ---- ch4: high timer of pair {3,4} ----
-            if (ch4_tick) begin
+            if (async_recv) begin
+                ch4_cnt <= audf4;
+            end else if (ch4_tick) begin
                 if (ch4_cnt == 8'h00) begin
                     ch4_cnt   <= audf4;
                     ch4_state <= next_state(audc4, ch4_state);

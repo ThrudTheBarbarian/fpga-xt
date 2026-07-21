@@ -17,7 +17,8 @@
 
 module xt6502f_debug #(
     parameter int unsigned N          = 56,   // clk_sally per machine cycle (match the core)
-    parameter integer      TRACE_DEPTH = 16
+    parameter integer      TRACE_DEPTH = 16,
+    parameter integer      STREAM_DEPTH = 4096 // long-run streaming ring depth (A9-drained)
 ) (
     input  wire        clk,
     input  wire        rst,
@@ -60,7 +61,21 @@ module xt6502f_debug #(
     output wire [15:0] trace_addr,
     output wire  [7:0] trace_val,
     output wire        trace_rw,
-    output wire  [$clog2(TRACE_DEPTH):0]   trace_count
+    output wire  [$clog2(TRACE_DEPTH):0]   trace_count,
+
+    // ---- streaming trace to DDR (fidelity long-run capture; A9-drained) ----
+    // Per-INSTRUCTION {PC,A,X,Y,SP,P,IR} into a STREAM_DEPTH ring. When it fills
+    // the core AUTO-HALTS (folded into cpu_halt) and strm_flush_req rises; the A9
+    // drains strm_rdata across strm_raddr (0..strm_wptr-1, static because the core
+    // is frozen) then pulses strm_drain_done (4-phase level handshake) to reset the
+    // ring and resume. strm_en/strm_drain_done/strm_raddr arrive from GP0 (clk_sys)
+    // and are 2-FF synced inside here.
+    input  wire        strm_en,          // level: enable per-instruction capture
+    input  wire        strm_drain_done,  // level: A9 drained the ring; clear+resume
+    input  wire [11:0] strm_raddr,       // ring read address (GP0 domain)
+    output wire        strm_flush_req,   // ring full + core halted -> drain now
+    output wire [12:0] strm_wptr,        // valid entry count (STREAM_DEPTH when full)
+    output wire [63:0] strm_rdata        // ring[strm_raddr]
 );
     // sample slots: early ~ cycle entry (pre-commit), late ~ settled (post-commit)
     localparam [7:0] SLOT_EARLY = 8'd3;
@@ -97,7 +112,8 @@ module xt6502f_debug #(
     reg sync_d;
     wire sync_rise = sync && !sync_d;
 
-    assign cpu_halt = halted;
+    reg s_full;                          // streaming ring full -> freeze core (driven below)
+    assign cpu_halt = halted || s_full;
 
     always @(posedge clk) begin
         if (rst) begin
@@ -145,6 +161,54 @@ module xt6502f_debug #(
     assign trace_val   = t_dv[rd];
     assign trace_rw    = t_rw[rd];
     assign trace_count = count;
+
+    // ================= streaming trace (long-run, A9-drained) =================
+    // Per-INSTRUCTION {PC,A,X,Y,SP,P,IR} into a STREAM_DEPTH ring, one write per
+    // opcode-fetch boundary (sync_rise). On fill the core freezes (s_full folded
+    // into cpu_halt) so the ring is static for the A9 drain; a 4-phase drain_done
+    // handshake resets the ring and resumes. Contiguous windows (minus the ~1
+    // instruction at the freeze boundary) give a complete long trace across many
+    // DDR flushes. The GP0-domain controls are 2-FF synced here.
+    localparam integer SAW = $clog2(STREAM_DEPTH);
+    (* ASYNC_REG = "TRUE" *) reg [1:0]  sen_s, sdd_s;
+    (* ASYNC_REG = "TRUE" *) reg [11:0] sra_s0, sra_s1;
+    always @(posedge clk) begin
+        sen_s  <= {sen_s[0],  strm_en};
+        sdd_s  <= {sdd_s[0],  strm_drain_done};
+        sra_s0 <= strm_raddr; sra_s1 <= sra_s0;
+    end
+    wire s_en = sen_s[1];
+    wire s_dd = sdd_s[1];
+
+    reg [63:0]    s_bram [0:STREAM_DEPTH-1];
+    reg [SAW-1:0] s_wptr;
+    reg           s_en_d, s_dd_d;
+    reg [63:0]    s_trd;
+    // packed entry: [15:0]=PC [23:16]=A [31:24]=X [39:32]=Y [47:40]=SP [55:48]=P [63:56]=IR
+    wire [63:0] s_sample = {ir_in, p, s, y, x, a, pc};
+    always @(posedge clk) begin
+        if (rst) begin
+            s_wptr <= {SAW{1'b0}}; s_full <= 1'b0; s_en_d <= 1'b0; s_dd_d <= 1'b0;
+        end else begin
+            s_en_d <= s_en;
+            s_dd_d <= s_dd;
+            if (s_en && !s_en_d) begin
+                s_wptr <= {SAW{1'b0}}; s_full <= 1'b0;             // enable rising edge: reset ring
+            end else if (!s_full) begin
+                if (s_en && sync_rise && !halted) begin
+                    s_bram[s_wptr] <= s_sample;
+                    if (s_wptr == (STREAM_DEPTH-1)) s_full <= 1'b1; // ring full -> freeze the core
+                    else s_wptr <= s_wptr + 1'b1;
+                end
+            end else begin
+                if (s_dd && !s_dd_d) begin s_full <= 1'b0; s_wptr <= {SAW{1'b0}}; end // drain_done edge: resume
+            end
+        end
+        s_trd <= s_bram[sra_s1[SAW-1:0]];
+    end
+    assign strm_flush_req = s_full;
+    assign strm_wptr      = s_full ? STREAM_DEPTH[12:0] : {{(13-SAW){1'b0}}, s_wptr};
+    assign strm_rdata     = s_trd;
 endmodule
 
 `default_nettype wire

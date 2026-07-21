@@ -297,7 +297,8 @@ module fpga_xt_top (
     // ====================================================================
     // cpu_* is the MUXED active-core bus into sally_mem (all downstream decode keys off it).
     // The turbo xt6502 drives turbo_*; the resident fidelity xt6502f drives fid_*; `cpu_sel`
-    // (sallyrst[1]) picks the owner. Default 0 = turbo, so the shipping system is unchanged.
+    // (sallyrst[1]) picks the owner. Power-on default 1 = FIDELITY (first-class debug/boot core);
+    // turbo is a PS opt-in (CTRL_SALLYRST bit1=0).
     wire [15:0] cpu_addr;
     wire [7:0]  cpu_din, cpu_dout;
     wire        cpu_rw;
@@ -306,7 +307,8 @@ module fpga_xt_top (
     wire        turbo_rw,   fid_rw;
     wire        turbo_stackop; wire [3:0] turbo_shigh;
     // cpu_sel: 0 = turbo owns the bus, 1 = fidelity core owns it (PS-set via CTRL_SALLYRST bit1)
-    (* ASYNC_REG = "TRUE" *) reg [1:0] cpusel_sync = 2'b00;
+    // Power-on init 2'b11 matches the fid-default reset of sallyrst[1] (xt_gp0_regs.sv).
+    (* ASYNC_REG = "TRUE" *) reg [1:0] cpusel_sync = 2'b11;
     always_ff @(posedge clk_sally) cpusel_sync <= {cpusel_sync[0], sallyrst[1]};
     wire        cpu_sel = cpusel_sync[1];
     wire        sally_rdy;
@@ -721,8 +723,11 @@ module fpga_xt_top (
     // 100 MHz, BASE_DIV=56 -> 1.786 MHz ≈ real NTSC phi2; CLOCK_MULT=56 (full
     // turbo) steps every cycle = 100 MHz.  Keep the phi2 RATE matched to
     // antic_top's BASE_DIV (which divides clk_sys, so a different value).
-    // /HALT is bypassed at CLOCK_MULT>=2, so halt_n is tied high.
-    // wsync_rdy_n comes from ANTIC via CDC.
+    // Turbo core is SNOOP-ONLY: its register writes still reach ANTIC via the
+    // sally_mem snoop/CDC path, but it must NOT stall for ANTIC. So both ANTIC
+    // sync inputs are tied always-ready — /HALT (DMA cycle-steal) and WSYNC.
+    // Only sally_mem's memory pacing (busy_n) and the CLOCK_MULT step gate RDY.
+    // (The fidelity core keeps its own /HALT + WSYNC via fid_rdy.)
     // busy_n comes from sally_mem (1 = ready, 0 = cache miss stall).
 
     sally_clock #(
@@ -732,8 +737,8 @@ module fpga_xt_top (
         .rst           (rst_sally_core),     // A9 hold freezes the step gen too
         .phi2_tick     (phi2_tick),
         .clock_mult    (clock_mult_sally),   // runtime-set via $D4CA (REPL `speed`); resets to 1x
-        .halt_n        (~dma_steal_sally), // ANTIC DMA bus-steal; gated to CLOCK_MULT=1 inside
-        .wsync_rdy_n   (wsync_rdy_n),
+        .halt_n        (1'b1),             // snoop-only: no ANTIC DMA cycle-steal stall
+        .wsync_rdy_n   (1'b1),             // snoop-only: no ANTIC WSYNC stall
         .busy_n        (~(mem_busy_n | hwreg_rd_busy)),  // stall on sally_mem cache miss OR hwreg-read CDC round-trip
         .sally_rdy     (sally_rdy),
         .sally_step    (sally_step)
@@ -749,10 +754,6 @@ module fpga_xt_top (
     wire [15:0] cdbg_pc;
     wire [7:0]  cdbg_a, cdbg_x, cdbg_y, cdbg_s, cdbg_p;
     wire [3:0]  cdbg_shigh;
-    wire        idbg_wr;
-    wire [15:0] idbg_wpc;
-    wire [7:0]  idbg_wa, idbg_wx, idbg_wy, idbg_ws, idbg_wp;
-    wire [3:0]  idbg_wshigh;
     wire        dbg_core_run;                // gates .rdy (1 = run)
     // control from xt_gp0_regs (clk_sys), synchronised inside the debug block
     wire        gdbg_halt_tog, gdbg_go_tog, gdbg_step_tog, gdbg_commit_tog;
@@ -779,6 +780,15 @@ module fpga_xt_top (
     wire        cdbg_bus_rw;
     wire [15:0] gdbg_wp;
     wire [2:0]  gdbg_wpcfg;
+
+    // FID streaming trace (fidelity long-run capture) — fid-only, so NOT cpu_sel
+    // muxed: control straight from GP0 (clk_sys, synced inside u_fid_dbg), status
+    // straight back (coherent when the ring is full = core frozen).
+    wire [1:0]  gdbg_strm_ctrl;    // [0]=strm_en [1]=drain_done
+    wire [11:0] gdbg_strm_raddr;
+    wire        sdbg_strm_flush;
+    wire [12:0] sdbg_strm_wptr;
+    wire [63:0] sdbg_strm_rd;
     wire [31:0] sdbg_diag;
 
     // ---- turbo-debugger status (pre-mux). sdbg_* above are the MUXED result
@@ -824,12 +834,7 @@ module fpga_xt_top (
         // bus-access taps (data watchpoint)
         .dbg_bus_stb  (cdbg_bus_stb),
         .dbg_bus_addr (cdbg_bus_addr),
-        .dbg_bus_rw   (cdbg_bus_rw),
-        // debug register injection in
-        .dbg_wr   (idbg_wr),
-        .dbg_wpc  (idbg_wpc),
-        .dbg_wa   (idbg_wa), .dbg_wx (idbg_wx), .dbg_wy (idbg_wy),
-        .dbg_ws   (idbg_ws), .dbg_wp (idbg_wp), .dbg_wshigh (idbg_wshigh)
+        .dbg_bus_rw   (cdbg_bus_rw)
     );
 
     // ---- Resident fidelity ("single-speed Sally") 6502 --------------------
@@ -872,6 +877,33 @@ module fpga_xt_top (
     wire       fid_mem_step = (fid_sub == 8'd2);
     wire       mem_rdy = cpu_sel ? fid_mem_step : sally_rdy;   // sally_mem steps with the ACTIVE core
 
+    // ---- Fidelity-core register inject (commit) -------------------------------
+    // The fid core is the first-class debug/boot core, so its inject port is no
+    // longer tied off.  Mirrors the turbo path (u_sally_dbg drives the turbo
+    // core's dbg_wr/_in from the GP0 commit registers): edge-detect the GP0
+    // commit TOGGLE into a 1-clk clk_sally pulse and 2-FF sync the value buses
+    // (wpc/waxys/wpsh — clk_sys GP0 nets) across to clk_sally, then pulse the fid
+    // core's dbg_load.  dbg_load in xt6502f (~line 350) is honoured every clk
+    // regardless of rdy, so it seeds PC/A/X/Y/S/P and restarts at ST_FETCH even
+    // while halted — exactly what /bin/6502 `commit` and SYS_xexload need.
+    (* ASYNC_REG = "TRUE" *) reg [2:0]  fc_s;
+    (* ASYNC_REG = "TRUE" *) reg [15:0] fwpc_s1,   fwpc_s2;
+    (* ASYNC_REG = "TRUE" *) reg [31:0] fwaxys_s1, fwaxys_s2;
+    (* ASYNC_REG = "TRUE" *) reg [11:0] fwpsh_s1,  fwpsh_s2;
+    always_ff @(posedge clk_sally) begin
+        fc_s      <= {fc_s[1:0], gdbg_commit_tog};
+        fwpc_s1   <= gdbg_wpc;    fwpc_s2   <= fwpc_s1;
+        fwaxys_s1 <= gdbg_waxys;  fwaxys_s2 <= fwaxys_s1;
+        fwpsh_s1  <= gdbg_wpsh;   fwpsh_s2  <= fwpsh_s1;
+    end
+    wire        fid_do_commit = fc_s[2] ^ fc_s[1];        // 1-clk pulse on commit
+    wire [15:0] fid_in_pc = fwpc_s2;
+    wire [7:0]  fid_in_a  = fwaxys_s2[7:0];               // waxys: [7:0]A [15:8]X [23:16]Y [31:24]S
+    wire [7:0]  fid_in_x  = fwaxys_s2[15:8];
+    wire [7:0]  fid_in_y  = fwaxys_s2[23:16];
+    wire [7:0]  fid_in_s  = fwaxys_s2[31:24];
+    wire [7:0]  fid_in_p  = fwpsh_s2[7:0];                // wpsh: [7:0]P [11:8]S_high (unused on fid)
+
     xt6502f #(.CLK_SALLY_HZ(100_000_000), .PHI2_HZ(1_785_714)) u_fid_core (  // N = 56
         .clk       (clk_sally),
         .rst       (rst_sally_core),
@@ -886,8 +918,8 @@ module fpga_xt_top (
         .sync      (fid_sync),
         .dbg_pc    (fdbg_pc), .dbg_a (fdbg_a), .dbg_x (fdbg_x), .dbg_y (fdbg_y), .dbg_s (fdbg_s), .dbg_p (fdbg_p),
         .dbg_sub   (fid_sub), .dbg_ir (fdbg_ir),
-        .dbg_load  (1'b0), .dbg_pc_in (16'd0), .dbg_a_in (8'd0), .dbg_x_in (8'd0),
-        .dbg_y_in  (8'd0), .dbg_s_in (8'd0), .dbg_p_in (8'd0),
+        .dbg_load  (fid_do_commit), .dbg_pc_in (fid_in_pc), .dbg_a_in (fid_in_a), .dbg_x_in (fid_in_x),
+        .dbg_y_in  (fid_in_y), .dbg_s_in (fid_in_s), .dbg_p_in (fid_in_p),
         .dbg_cyc_addr (fid_cyc_addr), .dbg_cyc_val (fid_cyc_val), .dbg_cyc_rw (fid_cyc_rw), .dbg_cyc_valid (fid_cyc_valid)
     );
 
@@ -919,10 +951,10 @@ module fpga_xt_top (
         .wpc          (gdbg_wpc),
         .waxys        (gdbg_waxys),
         .wpsh         (gdbg_wpsh),
-        .dbg_wr       (idbg_wr),
-        .dbg_wpc      (idbg_wpc),
-        .dbg_wa       (idbg_wa), .dbg_wx (idbg_wx), .dbg_wy (idbg_wy),
-        .dbg_ws       (idbg_ws), .dbg_wp (idbg_wp), .dbg_wshigh (idbg_wshigh),
+        // NOTE: the turbo core's register-INJECT was removed (fidelity/debug
+        // now lives in the fid core). xt6502_debug still drives dbg_wr/_w* but
+        // they go nowhere on the turbo core, so `commit`/xexload --turbo can no
+        // longer load regs into this core. Left unconnected on purpose.
         .core_run     (dbg_core_run),
         .stat         (tdbg_stat),
         .snap_pc      (tdbg_pc),
@@ -1009,7 +1041,7 @@ module fpga_xt_top (
     // (0..avail-1); this ring is "0 = most recent". Invert: fid_idx = count-1-idx.
     wire [4:0]  fid_trc_sel = fdbg_trc_count - 5'd1 - ftrci2[4:0];
 
-    xt6502f_debug #(.N(56), .TRACE_DEPTH(16)) u_fid_dbg (
+    xt6502f_debug #(.N(56), .TRACE_DEPTH(16), .STREAM_DEPTH(4096)) u_fid_dbg (
         .clk        (clk_sally),
         .rst        (rst_sally),
         .sub        (fid_sub),
@@ -1043,7 +1075,13 @@ module fpga_xt_top (
         .trace_addr (fdbg_trc_addr),
         .trace_val  (fdbg_trc_val),
         .trace_rw   (fdbg_trc_rw),
-        .trace_count(fdbg_trc_count)
+        .trace_count(fdbg_trc_count),
+        .strm_en         (gdbg_strm_ctrl[0]),
+        .strm_drain_done (gdbg_strm_ctrl[1]),
+        .strm_raddr      (gdbg_strm_raddr),
+        .strm_flush_req  (sdbg_strm_flush),
+        .strm_wptr       (sdbg_strm_wptr),
+        .strm_rdata      (sdbg_strm_rd)
     );
 
     // Instruction counter for the fid core (the fid debug module has none):
@@ -1384,6 +1422,12 @@ module fpga_xt_top (
     wire [23:0] antic_wb_pal_rgb;
     wire [31:0] antic_dbg_gtia;   // TEMP: {colpf0,colpf1,colpf2,colbk}  -> diag8 @ GP0 0x41C
     wire [31:0] antic_dbg_antic;  // TEMP: {colpf3,prior,chbase,dmactl}  -> diag9 @ GP0 0x420
+    wire [31:0] antic_dbg_cmp_fetch;      // TEMP: {cmp_raddr[15:0],8'h0,cmp_rdata[7:0]} -> diag10 @ GP0 0x424
+    wire [31:0] antic_dbg_cmp_fetch_cnt;  // TEMP: P/M-region compositor fetch count      -> diag11 @ GP0 0x428
+    wire [31:0] antic_dbg_nmi0;           // TEMP: nmi_gen {dli_nmi,vbi_nmi,dli_evt,nmist} -> diag12 @ GP0 0x42C
+    wire [31:0] antic_dbg_nmi1;           // TEMP: nmi_gen {nmien,last_dli_scan,nmi_cnt}    -> diag13 @ GP0 0x430
+    wire [31:0] antic_dbg_nmien_writes;   // TEMP: NMIEN $D40E writes {cnt[15:0],prev,last}  -> diag14 @ GP0 0x434
+    wire [31:0] antic_dbg_pm_p0;          // TEMP: player-0 P/M fetch {cmp_raddr,8'h0,rdata} -> diag15 @ GP0 0x438
 
     antic_top #(
         .POKEY_CLK_BUS_HZ (150_000_000)     // clk_sys nominal (150 MHz)
@@ -1452,6 +1496,12 @@ module fpga_xt_top (
         .wb_pal_rgb         (antic_wb_pal_rgb),
         .dbg_gtia           (antic_dbg_gtia),
         .dbg_antic          (antic_dbg_antic),
+        .dbg_cmp_fetch      (antic_dbg_cmp_fetch),
+        .dbg_cmp_fetch_cnt  (antic_dbg_cmp_fetch_cnt),
+        .dbg_nmi0           (antic_dbg_nmi0),
+        .dbg_nmi1           (antic_dbg_nmi1),
+        .dbg_nmien_writes   (antic_dbg_nmien_writes),
+        .dbg_pm_p0          (antic_dbg_pm_p0),
         // Zynq build: sally_* / xlat_phys_addr removed (no shadow SALLY core).
         .adc_bclk_o         (),
         .adc_lrck_o         (),
@@ -1761,6 +1811,14 @@ module fpga_xt_top (
     // axi>0 & we=0 -> loader gets AXI but never drains rom_we (FIFO on silicon).
     // axi=0        -> the PS write never reaches the loader (decode/delivery).
     wire [31:0] diag8_word, diag9_word;
+    // TEMP diag: compositor P/M FETCH capture (antic_pmdma "$00" bug). clk_sys
+    // domain both sides (antic_top runs on clk_sys = xt_gp0_regs' clk) — no CDC.
+    wire [31:0] diag10_word = antic_dbg_cmp_fetch;
+    wire [31:0] diag11_word = antic_dbg_cmp_fetch_cnt;
+    wire [31:0] diag12_word = antic_dbg_nmi0;
+    wire [31:0] diag13_word = antic_dbg_nmi1;
+    wire [31:0] diag14_word = antic_dbg_nmien_writes;
+    wire [31:0] diag15_word = antic_dbg_pm_p0;
 `ifdef USE_PS_BD
     (* keep = "true" *) reg [15:0] romdiag_we   = 16'd0;
     (* keep = "true" *) reg [15:0] romdiag_addr = 16'd0;
@@ -3090,6 +3148,12 @@ module fpga_xt_top (
         .diag7_word      (diag7_word),
         .diag8_word      (diag8_word),
         .diag9_word      (diag9_word),
+        .diag10_word     (diag10_word),
+        .diag11_word     (diag11_word),
+        .diag12_word     (diag12_word),
+        .diag13_word     (diag13_word),
+        .diag14_word     (diag14_word),
+        .diag15_word     (diag15_word),
         .trng_word       (trng_word),        // ring-oscillator entropy (0x7xx)
         .clock_mult      (eff_clock_mult_sys), // effective $D4CA speed, read back at GP0 offset 0x1E
         .gp0_ctrl        (gp0_ctrl),
@@ -3143,7 +3207,12 @@ module fpga_xt_top (
         .dbg_trc_wptr    (sdbg_trc_wptr),
         .dbg_trc_pc      (sdbg_trc_pc),
         .dbg_trc_axys    (sdbg_trc_axys),
-        .dbg_trc_p       (sdbg_trc_p)
+        .dbg_trc_p       (sdbg_trc_p),
+        .dbg_strm_ctrl   (gdbg_strm_ctrl),   // FID streaming trace (0x860..0x874)
+        .dbg_strm_raddr  (gdbg_strm_raddr),
+        .dbg_strm_flush  (sdbg_strm_flush),
+        .dbg_strm_wptr   (sdbg_strm_wptr),
+        .dbg_strm_rd     (sdbg_strm_rd)
     );
 
     // ROM-init AXI-Lite slave — see hdl/sally_rom_loader.sv.

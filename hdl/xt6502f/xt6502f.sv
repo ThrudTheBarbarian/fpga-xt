@@ -117,6 +117,10 @@ module xt6502f #(
     reg       nmi_pend;  // latched NMI, held until serviced
     reg       intr;      // servicing a HW interrupt (push P with B=0, vs BRK B=1)
     reg       nmi_svc;   // this service uses the NMI vector ($FFFA/B) — incl. BRK/IRQ hijack
+    reg       i_poll;    // I-mask used ONLY for IRQ recognition. It lags P[2] by one instruction
+                         // (captured at each opcode fetch), so CLI/SEI/PLP change the interrupt
+                         // enable one instruction LATE — the NMOS quirk cpu_clisei checks. RTI and
+                         // the IRQ/BRK entry update it immediately (their I-change is not delayed).
 
     // operation applied at the value terminal (read-group ALU + RMW ALU)
     localparam [4:0] OP_LD=0, OP_AND=1, OP_ORA=2, OP_EOR=3, OP_CMP=4, OP_BIT=5, OP_ADC=6, OP_SBC=7,
@@ -338,6 +342,7 @@ module xt6502f #(
             rmw_val <= 0; rmw_mod <= 0; sax <= 0; combo <= 0; op2 <= OP_LD; jam_cnt <= 0;
             ushx <= 0; ushx_src <= 0; ushx_tas <= 0; ush_val <= 0;
             nmi_n_d <= 1'b1; nmi_pend <= 1'b0; intr <= 1'b0; nmi_svc <= 1'b0;
+            i_poll <= 1'b1;   // reset P = $34 -> I set
         end else begin
             // NMI falling-edge detect runs EVERY clk (decoupled from `advance`). A WSYNC or
             // memory stall pauses `advance` for many clks, and the ANTIC /NMI pulse (~1.9us)
@@ -350,6 +355,7 @@ module xt6502f #(
           if (dbg_load) begin
             PC <= dbg_pc_in; A <= dbg_a_in; X <= dbg_x_in; Y <= dbg_y_in;
             S <= dbg_s_in; P <= dbg_p_in; state <= ST_FETCH; ir <= 8'hEA;
+            i_poll <= dbg_p_in[2];
           end else if (advance) begin
             case (state)
                 ST_RST:   if (rst_cnt == 0) state <= ST_VECL; else rst_cnt <= rst_cnt - 3'd1;
@@ -359,12 +365,14 @@ module xt6502f #(
                 ST_FETCH: begin
                     has_idx <= 1'b0; pgx <= 1'b0; is_store <= 1'b0; is_rmw <= 1'b0; op <= OP_LD; sax <= 1'b0;
                     combo <= 1'b0; ushx <= 1'b0; ushx_tas <= 1'b0;
-                  if (nmi_pend || (!irq_n && !P[2])) begin       // HW interrupt (NMI priority): discard opcode, PC held
+                  if (nmi_pend || (!irq_n && !i_poll)) begin     // HW interrupt (NMI priority): discard opcode, PC held
                     intr <= 1'b1; nmi_svc <= nmi_pend; ir <= 8'h00;
                     if (nmi_pend) nmi_pend <= 1'b0;
                     state <= ST_IRQ2;
                   end else begin
                     ir <= din_r; PC <= PC + 16'd1;
+                    i_poll <= P[2];    // capture I at THIS fetch; used to poll at the NEXT boundary
+                                       // -> CLI/SEI/PLP's I-change lands one instruction late
                     case (din_r)
                         // ---- immediate loads ----
                         8'hA9: begin dst <= 2'd0; state <= ST_IMM; end          // LDA #
@@ -724,14 +732,14 @@ module xt6502f #(
                 // ---- RTI (pull P then PC, no +1) ----
                 ST_RTI1: state <= ST_RTI2;                                 // dummy read at PC
                 ST_RTI2: begin S <= S + 8'd1; state <= ST_RTI3; end        // dummy read {01,S}; S++
-                ST_RTI3: begin P <= (din_r & 8'hEF) | 8'h20; S <= S + 8'd1; state <= ST_RTI4; end // pull P
+                ST_RTI3: begin P <= (din_r & 8'hEF) | 8'h20; i_poll <= din_r[2]; S <= S + 8'd1; state <= ST_RTI4; end // pull P (RTI's I is NOT delayed)
                 ST_RTI4: begin eal <= din_r; S <= S + 8'd1; state <= ST_RTI5; end  // pull PCL; S++
                 ST_RTI5: begin PC <= {din_r, eal}; state <= ST_FETCH; end  // pull PCH; PC = {PCH,PCL}
                 // ---- BRK (push PC+2, push P|B, set I, jump IRQ vector) ----
                 ST_BRK1: begin PC <= PC + 16'd1; state <= ST_BRK2; end     // read operand byte; PC->op+2
                 ST_BRK2: begin S <= S - 8'd1; state <= ST_BRK3; end        // push PCH; S--
                 ST_BRK3: begin S <= S - 8'd1; state <= ST_BRK4; end        // push PCL; S--
-                ST_BRK4: begin S <= S - 8'd1; P[2] <= 1'b1;                // push P; S--; set I
+                ST_BRK4: begin S <= S - 8'd1; P[2] <= 1'b1; i_poll <= 1'b1;  // push P; S--; set I (poll-mask too, immediately)
                     if (nmi_pend) begin nmi_svc <= 1'b1; nmi_pend <= 1'b0; end   // BRK/IRQ -> NMI vector hijack
                     state <= ST_BRK5; end
                 ST_BRK5: begin eal <= din_r; state <= ST_BRK6; end         // read vector low

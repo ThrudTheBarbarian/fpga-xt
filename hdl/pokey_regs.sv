@@ -332,12 +332,22 @@ module pokey_regs (
             //   bit 2 = KEY still pressed (active-low: 0 = a key is held).
             //           The OS auto-repeat reads this bit; it must release
             //           between taps or every key repeats forever.
-            //   bit 1 = SER INPUT BUSY  (1 = receiving)
+            //   bit 1 = SER INPUT SHIFT-REGISTER IDLE (active-low busy):
+            //           1 = idle (not shifting a byte in), 0 = a byte is
+            //           being received.  POKEY reports this bit *inverted*
+            //           vs. the internal `ser_input_busy` level — ACID800
+            //           pokey_skstat reads it as 1 while the port is idle
+            //           ("Serial input active bit was asserted when idle"
+            //           fires when it reads 0).  See Altirra §5.10.
             //   bit 0 = unused (always 0)
             4'hF: rdata = {kbcode_q[6], 1'b0, key_latch_q,
                            ser_framing_err, ser_input_overrun,
-                           ~key_down_q, ser_input_busy, 1'b0};
-            default: rdata = 8'h00;
+                           ~key_down_q, ~ser_input_busy, 1'b0};
+            // $D20B / $D20C are unused POKEY read addresses; the chip
+            // does not drive the data bus for them, so the Atari reads
+            // the pulled-up bus as $FF.  ACID800 pokey_default reads
+            // $D20C and asserts $FF ("POKEY default value wrong").
+            default: rdata = 8'hFF;
         endcase
     end
 

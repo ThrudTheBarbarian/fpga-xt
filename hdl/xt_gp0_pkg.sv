@@ -58,6 +58,12 @@ package xt_gp0_pkg;
     localparam logic [7:0] DIAG7            = 8'h18;  // R HP2 read-probe last rdata
     localparam logic [7:0] DIAG8            = 8'h1C;  // R TEMP ROM-window upload diag: [31:16]=window AXI writes accepted, [15:0]=rom_we pulses emitted to sally_mem
     localparam logic [7:0] DIAG9            = 8'h20;  // R TEMP ROM-window upload diag: [23:8]=last rom_addr, [7:0]=last rom_data
+    localparam logic [7:0] DIAG10           = 8'h24;  // R TEMP compositor P/M FETCH capture (antic_pmdma $00 bug): [31:16]=last cmp_raddr in $2000-$3FFF, [15:8]=0, [7:0]=cmp_rdata byte returned
+    localparam logic [7:0] DIAG11           = 8'h28;  // R TEMP compositor P/M-region fetch counter: increments each cmp_ready with cmp_raddr in $2000-$3FFF
+    localparam logic [7:0] DIAG12           = 8'h2C;  // R TEMP nmi_gen DLI/VBI counters: [31:24]=dli_nmi_count (gated DLI /NMI assertions), [23:16]=vbi_nmi_count, [15:8]=dli_event_count (DLIs detected regardless of NMIEN), [7:0]=last NMIST (external view) sampled just after the last /NMI assertion
+    localparam logic [7:0] DIAG13           = 8'h30;  // R TEMP nmi_gen NMI state: [31:24]=nmien, [23:16]=last-DLI antic_raster scanline[7:0], [15:0]=total DLI+VBI /NMI assertion count
+    localparam logic [7:0] DIAG14           = 8'h34;  // R TEMP NMIEN sticky evidence (DLI cluster): [31:16]=CPU write count to $D40E, [15:8]=sticky-OR of every live ANTIC nmien_q value (bit15=nmien_or[7]: 1 -> bit7 EVER latched in nmien_q; 0 -> bit7 never reaches nmien_q), [7:1]=0, [0]=nmien_dli_coincide (sticky: nmien_q[7] high on a DLI line-start)
+    localparam logic [7:0] DIAG15           = 8'h38;  // R TEMP player-0 P/M FETCH capture (antic_pmdma $00 bug): [31:16]=last cmp_raddr in $3400-$34FF (player-0 one-line region only) with a NON-ZERO returned byte, [15:8]=cmp_p0_nz_cnt (saturating count of non-zero P0 fetches; 0=no shape byte ever), [7:0]=cmp_rdata non-zero byte returned
     // XLCTL
     localparam logic [7:0] XL_WIN_X         = 8'h00;  // W plane origin X on screen (12-bit)
     localparam logic [7:0] XL_WIN_Y         = 8'h04;  // W plane origin Y on screen (12-bit)
@@ -96,6 +102,12 @@ package xt_gp0_pkg;
     localparam logic [7:0] DBG_WP           = 8'h54;  // RW [15:0]=data watchpoint address; when armed the core freezes on a bus access to it
     localparam logic [7:0] DBG_WPCFG        = 8'h58;  // RW data watchpoint arm: [0]=enable, [1]=break on WRITE to DBG_WP, [2]=break on READ of DBG_WP (set both for any access)
     localparam logic [7:0] DBG_DIAG         = 8'h5C;  // R debug self-observability (clk_sally, coherent when halted): [1:0]=cfg_s (CDC-synced DBG_CFG), [2]=bkpt_fire seen since arm, [3]=wp_fire seen since arm, [4]=last halt was a watchpoint, [31:16]=bkpt_s (CDC-synced DBG_BKPT — verify it matches what was written)
+    localparam logic [7:0] DBG_STRM_CTRL    = 8'h60;  // W FIDELITY streaming-trace control: [0]=strm_en (capture {PC,A,X,Y,SP,P,IR} per instruction into a 4096-deep ring; the core AUTO-HALTS when the ring fills = real stop-the-world), [1]=drain_done (4-phase level handshake: after draining STRM_RD* set this to clear flush_req, reset the ring, and resume the core; then clear it). Rising edge of strm_en resets the ring.
+    localparam logic [7:0] DBG_STRM_STAT    = 8'h64;  // R [0]=flush_req: the streaming ring is FULL and the core is halted; the A9 should drain STRM_RD* (0..STRM_WPTR-1) then pulse drain_done
+    localparam logic [7:0] DBG_STRM_WPTR    = 8'h68;  // R [12:0]=count of valid entries in the streaming ring (4096 when full; a smaller partial count if strm_en was cleared mid-window)
+    localparam logic [7:0] DBG_STRM_RADDR   = 8'h6C;  // W [11:0]=streaming ring read address; the entry appears in STRM_RDLO/RDHI (coherent while flush_req — the ring is static because the core is halted)
+    localparam logic [7:0] DBG_STRM_RDLO    = 8'h70;  // R streaming entry [31:0] at STRM_RADDR: [15:0]=PC [23:16]=A [31:24]=X
+    localparam logic [7:0] DBG_STRM_RDHI    = 8'h74;  // R streaming entry [63:32] at STRM_RADDR: [7:0]=Y [15:8]=SP [23:16]=P [31:24]=IR
 
 endpackage
 `endif

@@ -219,6 +219,13 @@ static inline long sys_overlay(int x, int y, int w, int h, int en) {
 static inline long sys_xl_boot(const char *path, int drive) {
     return __syscall(SYS_xl_boot, (long)path, drive, 0);
 }
+/* Run a standalone Atari executable (.xex / DOS binary) on the fabric 6502: the
+ * kernel boots the XL OS with a 1-sector fake disk, then (as the host, via the
+ * GP0 debug facility) loads the segments and drives the INIT/RUN vectors -- the
+ * way atari800 does it.  core: 0 = fidelity (cycle-exact, default), 1 = turbo. */
+static inline long sys_xexload(const char *path, int turbo) {
+    return __syscall(SYS_xexload, (long)path, turbo, 0);
+}
 static inline long sys_plane_window(int plane, int x, int y, int w, int h, int scale, int en) {
     return __syscall(SYS_plane_window,
                      ((long)plane << 16) | ((long)(scale & 0xFF) << 8) | (en ? 1 : 0),

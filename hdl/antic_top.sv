@@ -237,7 +237,33 @@ module antic_top #(
     output wire [23:0] wb_pal_rgb,      // {R,G,B} palette entry
     // ---- TEMP debug: live ANTIC/GTIA register state (clk_sys) for `mem` readback ----
     output wire [31:0] dbg_gtia,        // {colpf0, colpf1, colpf2, colbk}
-    output wire [31:0] dbg_antic        // {colpf3, prior, chbase, dmactl}
+    output wire [31:0] dbg_antic,       // {colpf3, prior, chbase, dmactl}
+    // ---- TEMP debug: compositor P/M FETCH capture (clk_bus) — antic_pmdma "$00" bug ----
+    // [31:16] = last cmp_raddr in the P/M region latched when cmp_ready pulsed,
+    // [15:8]  = 0, [7:0] = the cmp_rdata byte that fetch returned.
+    output wire [31:0] dbg_cmp_fetch,
+    // [31:0] = running count of P/M-region compositor fetches (each cmp_ready in range).
+    output wire [31:0] dbg_cmp_fetch_cnt,
+    // ---- TEMP debug: NMI/DLI instrumentation (clk_bus) — nmi_gen counters ----
+    // dbg_nmi0 = {dli_nmi_count[7:0], vbi_nmi_count[7:0], dli_event_count[7:0], last_nmist[7:0]}
+    // dbg_nmi1 = {nmien[7:0], last_dli_scanline[7:0], nmi_assert_count[15:0]}
+    output wire [31:0] dbg_nmi0,
+    output wire [31:0] dbg_nmi1,
+    // ---- TEMP debug: NMIEN sticky evidence (clk_bus) — DLI cluster ----------
+    // Binary question: does the LIVE ANTIC nmien_q EVER hold bit7=1 on HW?
+    // dbg_nmien_writes = {nmien_wr_count[15:0], nmien_or[7:0], 7'b0,
+    // nmien_dli_coincide}.  nmien_or[7] (bit15) = sticky-OR: bit7 EVER latched
+    // in nmien_q (1 -> data path fine, miss is timing; 0 -> bit7 never latches).
+    // bit0 = sticky: bit7 was high on a DLI line-start (the /NMI precondition).
+    output wire [31:0] dbg_nmien_writes,
+    // ---- TEMP debug: PLAYER-0 P/M fetch capture (clk_bus) — pmdma "$00" bug --
+    // Like dbg_cmp_fetch but filtered to player-0's one-line region ($3400-
+    // $34FF, page $34) only, so the P0 shape fetch is isolated from players
+    // 1/2/3.  Latched on the last NON-ZERO P0 byte (skips the empty bottom-of-
+    // frame $34C7 -> $00 line that hid the real shape).  [15:8] = cmp_p0_nz_cnt,
+    // a saturating count of non-zero P0 fetches (0 = no shape byte ever seen).
+    //   {cmp_raddr[15:0], cmp_p0_nz_cnt[7:0], cmp_rdata[7:0]}.
+    output wire [31:0] dbg_pm_p0
 );
 
     // Synchronise /G_RST into the bus_clk domain.
@@ -553,10 +579,25 @@ module antic_top #(
     // to resolve w_joy_fire[i].
     wire [3:0]  w_joy_fire;
     // Keypad->joystick override MUX (joy_ovr[31]): when enabled, TRIG0 fire is
-    // forced from joy_ovr[8] (active-low), TRIG1..3 forced released (1). When
-    // disabled, the raw joy_bridge/PCAL9722 shadow drives all four. Combinational
-    // mux — both sources are clk_bus, no CDC.
-    wire [3:0]  pia_joy_fire = joy_ovr[31] ? {3'b111, joy_ovr[8]} : w_joy_fire;
+    // forced from joy_ovr[8] (active-low), TRIG1 forced released (1). When
+    // disabled, the raw joy_bridge/PCAL9722 shadow drives TRIG0/TRIG1.
+    // Combinational mux — both sources are clk_bus, no CDC.
+    //
+    // TRIG2/TRIG3 (bits 3:2) are HARD-TIED released (1) in BOTH paths: the 800XL
+    // has no joystick ports 3/4, and — critically — GTIA TRIG3 ($D013) is what the
+    // XL OS reads as the $A000 cartridge-present line for its cartridge interlock
+    // (VBI: LDA $D013 / CMP GINTLK $03FA / BNE $C0DF-lockup). Sourcing TRIG3 from
+    // the glitchy joy_bridge shadow (or letting the override flip it) drifts it off
+    // the value GINTLK latched at coldstart, tripping the OS's anti-cart-swap lockup
+    // (Despatch Rider ~20s hang / crash-on-input). A stable TRIG3 keeps the interlock
+    // satisfied for all disk-booted (cartridge-less) titles.
+    // No-override idle = 4'b1111 (all triggers RELEASED). w_joy_fire (joy_bridge/
+    // PCAL9722) is tied-off = $00 = "all fire pressed" every frame, so the game
+    // auto-fires garbage; re-source from w_joy_fire[1:0] when the companion MCU
+    // drives the expander. TRIG3/2 stay 1 (no j3/j4 ports; TRIG3 = the $A000
+    // cartridge-interlock line the XL OS checks — see the GINTLK $C0DF lockup).
+    wire [3:0]  pia_joy_fire = joy_ovr[31] ? {2'b11, 1'b1, joy_ovr[8]}
+                                           : 4'b1111;
     genvar i;
     generate
         for (i = 0; i < 4; i++) begin : g_collision
@@ -930,6 +971,108 @@ module antic_top #(
         .dma_ack(cmp_dma_ack), .dma_data_valid(cmp_dma_dvalid),
         .dma_rdata(cmp_dma_rdata), .dma_busy(dma_busy_w));
 
+    // ---- TEMP diag: compositor P/M FETCH capture (antic_pmdma "$00" bug) ----
+    // Pure observation of u_mux_cmp's return path — inert to compositor timing.
+    // On the cycle cmp_ready pulses and cmp_raddr lands in the PMBASE window
+    // ($2000-$3FFF, which contains the $3000-$3BFF P/M shape region for a
+    // PMBASE at page $30), latch {addr, data} and bump a running fetch counter.
+    // On HW the shape byte is reading $00; this reg lets `mem` see the exact
+    // address issued and the byte the fabric returned.
+    localparam logic [15:0] PM_FETCH_LO = 16'h2000;
+    localparam logic [15:0] PM_FETCH_HI = 16'h3FFF;
+    wire cmp_pm_fetch = cmp_ready
+                      & (cmp_raddr >= PM_FETCH_LO)
+                      & (cmp_raddr <= PM_FETCH_HI);
+    reg [15:0] cmp_fetch_addr_q;
+    reg [7:0]  cmp_fetch_data_q;
+    reg [31:0] cmp_fetch_cnt_q;
+    always_ff @(posedge clk_bus or posedge rst_bus) begin
+        if (rst_bus) begin
+            cmp_fetch_addr_q <= 16'h0;
+            cmp_fetch_data_q <= 8'h0;
+            cmp_fetch_cnt_q  <= 32'h0;
+        end else if (cmp_pm_fetch) begin
+            cmp_fetch_addr_q <= cmp_raddr;
+            cmp_fetch_data_q <= cmp_rdata;
+            cmp_fetch_cnt_q  <= cmp_fetch_cnt_q + 32'h1;
+        end
+    end
+    assign dbg_cmp_fetch     = {cmp_fetch_addr_q, 8'h0, cmp_fetch_data_q};
+    assign dbg_cmp_fetch_cnt = cmp_fetch_cnt_q;
+
+    // ---- TEMP diag: PLAYER-0 P/M FETCH capture (antic_pmdma "$00" bug) ------
+    // Mirrors the DIAG10 tap on u_mux_cmp's return path but with a tight
+    // address filter: player-0's one-line region ONLY, $3400-$34FF (page $34).
+    // Narrowed from the whole $3400-$37FF player block so this captures the P0
+    // fetch alone and can't be aliased by players 1/2/3.  Pure observation,
+    // inert.  Lets `mem` see the exact address+data for the P0 fetch: line 8's
+    // P0 fetch should read $3408 -> $08; a wrong addr or a $00 exposes the bug.
+    //
+    // The LAST P0 fetch is always the empty bottom-of-frame line ($34C7 -> $00),
+    // which hides the real shape line.  So the latch enable is gated on a
+    // NON-ZERO returned byte: we capture the last P0 fetch that actually read a
+    // player-shape byte.  A small saturating counter (cmp_p0_nz_cnt) tallies how
+    // many non-zero P0 bytes were fetched this run, so "N non-zero fetches" is
+    // distinguishable from "zero non-zero bytes ever" (the true-$00 failure).
+    wire cmp_p0_fetch    = cmp_ready & (cmp_raddr[15:8] == 8'h34);
+    wire cmp_p0_nz_fetch = cmp_p0_fetch & (cmp_rdata != 8'h00);
+    reg [15:0] pm_p0_addr_q;
+    reg [7:0]  pm_p0_data_q;
+    reg [7:0]  cmp_p0_nz_cnt;
+    always_ff @(posedge clk_bus or posedge rst_bus) begin
+        if (rst_bus) begin
+            pm_p0_addr_q  <= 16'h0;
+            pm_p0_data_q  <= 8'h0;
+            cmp_p0_nz_cnt <= 8'h0;
+        end else if (cmp_p0_nz_fetch) begin
+            pm_p0_addr_q  <= cmp_raddr;
+            pm_p0_data_q  <= cmp_rdata;
+            if (cmp_p0_nz_cnt != 8'hFF)   // saturate, don't wrap
+                cmp_p0_nz_cnt <= cmp_p0_nz_cnt + 8'h1;
+        end
+    end
+    assign dbg_pm_p0 = {pm_p0_addr_q, cmp_p0_nz_cnt, pm_p0_data_q};
+
+    // ---- TEMP diag: NMIEN ($D40E) sticky evidence (DLI cluster) ------------
+    // Binary question: does the LIVE ANTIC NMIEN register (nmien_q, output of
+    // u_antic_regs) EVER hold bit7=1 on HW?  The old "last/prev write value"
+    // capture could miss a transient; this replaces it with a sticky OR that
+    // cannot.  Every clk_bus cycle we OR nmien_q into nmien_or_q, so any bit
+    // that was ever set survives to the readback.  We also latch a sticky
+    // coincidence flag: set the first time nmien_q[7] is high on the exact
+    // cycle a DLI line-start pulse occurs (ar_line_start & nmi_cur_row_dli),
+    // i.e. bit7 armed at a DLI line — the precondition for the /NMI to fire.
+    //   nmien_or_q[7]           (DIAG14 bit15): bit7 EVER reached nmien_q.
+    //                             1 -> data path is fine; the miss is that the
+    //                                  DLI event and nmien[7] never coincide
+    //                                  (timing / DL), NOT a dropped byte.
+    //                             0 -> bit7 NEVER latches despite the clean
+    //                                  path -> fid store data or an OS clobber
+    //                                  before the latch.
+    //   nmien_dli_coincide_q    (DIAG14 bit0): bit7 was high AT a DLI line.
+    // The CPU write count (nmien_wr_cnt_q) is retained for cross-checking.
+    wire nmien_wr = snoop_we_antic & (snoop_addr[7:0] == 8'h0E);
+    wire nmien_dli_coincide = ar_line_start & nmi_cur_row_dli & nmien_q[7];
+    reg        nmien_wr_prev_q;
+    reg [15:0] nmien_wr_cnt_q;
+    reg [7:0]  nmien_or_q;                 // sticky-OR of every nmien_q value
+    reg        nmien_dli_coincide_q;       // sticky: bit7 high at a DLI line
+    always_ff @(posedge clk_bus or posedge rst_bus) begin
+        if (rst_bus) begin
+            nmien_wr_prev_q      <= 1'b0;
+            nmien_wr_cnt_q       <= 16'h0;
+            nmien_or_q           <= 8'h0;
+            nmien_dli_coincide_q <= 1'b0;
+        end else begin
+            nmien_wr_prev_q <= nmien_wr;
+            nmien_or_q      <= nmien_or_q | nmien_q;
+            if (nmien_dli_coincide) nmien_dli_coincide_q <= 1'b1;
+            if (nmien_wr & ~nmien_wr_prev_q)
+                nmien_wr_cnt_q <= nmien_wr_cnt_q + 16'h1;
+        end
+    end
+    assign dbg_nmien_writes = {nmien_wr_cnt_q, nmien_or_q, 7'b0, nmien_dli_coincide_q};
+
     // dl_parser status (declared here so the render sequencer below can gate
     // the first compose on parse_done; the parser itself is instanced after).
     wire        dl_done;
@@ -1024,21 +1167,45 @@ module antic_top #(
         else         dma_steal_q <= dma_steal_comb;
     assign dma_steal = dma_steal_q;
 
+    // ---- Cycle-8 NMI strobe (M-antic-dli) ----------------------------
+    // Real ANTIC raises the DLI / VBI NMI at machine cycle 8 of the scan
+    // line, not cycle 0 (where line_start / vbi_start pulse).  Derive a
+    // cycle-8 strobe (parallel to the cycle-105 WSYNC strobe below) and
+    // feed nmi_gen's DLI/VBI triggers from it.  All clk_bus — no CDC, like
+    // vbi_start_pulse_bus / line_start_pulse_bus.  cur_row_dli is a
+    // combinational lookup that is stable across the whole line, so
+    // sampling it at cycle 8 (rather than cycle 0) is fine.
+    wire cycle_8_pulse = phi2_tick && (ar_phi2_in_line == 8'd8);
+
+    // The VBI marker (ar_vbi_start) pulses at cycle 0 of the VBLANK line;
+    // latch it and release the VBI NMI at that same line's cycle-8 strobe
+    // so the VBI lands on the same machine cycle as a DLI.
+    logic vbi_c8_pending;
+    always_ff @(posedge clk_bus or posedge rst_bus) begin
+        if (rst_bus)                  vbi_c8_pending <= 1'b0;
+        else if (vbi_start_pulse_bus) vbi_c8_pending <= 1'b1;
+        else if (cycle_8_pulse)       vbi_c8_pending <= 1'b0;
+    end
+    wire vbi_c8_pulse = cycle_8_pulse && vbi_c8_pending;
+
     // ---- NMI generator (M12) -----------------------------------------
-    // Instantiated in clk_bus. Vbeam-domain pulses (vbi_start, line_start)
-    // arrive via the 2-FF synchronisers above. cur_row from nmi_gen
-    // closes the DLI loop with dl_parser via combinational dli_at.
+    // Instantiated in clk_bus. cur_row from nmi_gen closes the DLI loop
+    // with dl_parser via combinational dli_at. DLI/VBI triggers come from
+    // the cycle-8 strobe above (cycle_8_pulse for DLI, vbi_c8_pulse for VBI).
     nmi_gen u_nmi_gen (
         .clk           (clk_bus),
         .rst           (rst_bus),
         .nmien         (nmien_q),
         .nmires_strobe (nmires_strobe),
-        .vbi_start     (vbi_start_pulse_bus),
-        .line_start    (line_start_pulse_bus),
+        .vbi_start     (vbi_c8_pulse),
+        .line_start    (cycle_8_pulse),
         .cur_row       (nmi_cur_row),
         .cur_row_dli   (nmi_cur_row_dli),
         .atari_row_in  (ar_atari_row),
+        .scanline_in   (ar_scanline),
         .nmist_q       (nmist_q),
+        .dbg_nmi0      (dbg_nmi0),
+        .dbg_nmi1      (dbg_nmi1),
         .nmi_n         (nmi_n_w)
     );
 
@@ -1091,6 +1258,11 @@ module antic_top #(
         .sizem(sizem_q), .vdelay(vdelay_q),
         .hscrol(hscrol_q[3:0]), .vscrol(vscrol_q[3:0]),
         .prior(prior_q),
+        // GRAFPx/GRAFM shape registers — CPU-written shapes render without DMA;
+        // the P/M DMA fetch overwrites them per scanline when DMA is enabled.
+        .grafp0(grafp_q[0]), .grafp1(grafp_q[1]),
+        .grafp2(grafp_q[2]), .grafp3(grafp_q[3]),
+        .grafm(grafm_q),
         .mpf_q(cmp_mpf_q), .ppf_q(cmp_ppf_q),
         .mpl_q(cmp_mpl_q), .ppl_q(cmp_ppl_q),
         .hitclr(hitclr_strobe),
@@ -1166,9 +1338,14 @@ module antic_top #(
     // w_joy_fire forward-declared near the GTIA collision generate.
 
     // Keypad->joystick override MUX (joy_ovr[31]): PORTA pin shadow feeding
-    // pia_regs is forced from joy_ovr[7:0] (active-low STICK0/1) when enabled,
-    // otherwise the raw joy_bridge/PCAL9722 poll shadow. Combinational, no CDC.
-    wire [7:0] pia_joy_porta_in = joy_ovr[31] ? joy_ovr[7:0] : w_joy_porta_in;
+    // pia_regs is forced from joy_ovr[7:0] (active-low STICK0/1) when enabled.
+    // When NOT overridden the idle value must be $FF = all directions RELEASED
+    // (STICK0/1 = $0F centred). The joy_bridge/PCAL9722 poll shadow (w_joy_porta_in)
+    // is NOT used here: with no companion MCU the SPI reads a tied-off expander =
+    // $00, i.e. "all four directions pressed" every frame, which the game reads as
+    // garbage input (bike uncontrollable / needs fire to start). Re-source from
+    // w_joy_porta_in once the companion MCU actually drives the expander.
+    wire [7:0] pia_joy_porta_in = joy_ovr[31] ? joy_ovr[7:0] : 8'hFF;
 
     pia_regs u_pia_regs (
         .clk           (clk_bus),

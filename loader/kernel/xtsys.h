@@ -394,6 +394,14 @@ struct xt_dirent { unsigned mode; char name[256]; };
                                 * (DIAG4 = HP3 first-AR addr) so the grab is tear-free. The planes
                                 * are PL0-NONE (M7 gate), so this kernel copy is how a userland
                                 * screen-grab (/bin/graboverlay) reaches them. XL/6502 = plane 1. */
+#define SYS_xexload      0x608 /* (path, turbo) -> 0/-errno: run a standalone Atari .xex
+                                * (DOS binary) on the fabric 6502.  Boots the XL OS with a
+                                * 1-sector fake disk, then -- as the HOST, via the GP0 debug
+                                * facility (breakpoint the boot continuation, inject PC/regs)
+                                * -- loads the segments into 6502 RAM and drives the INIT
+                                * ($02E2) and RUN ($02E0) vectors, the way atari800 does it.
+                                * turbo=0 -> fidelity core (cycle-exact, default), 1 -> turbo.
+                                * (docs/OS/app-launch.md.) */
 
 /* ---- services + multiplexing — block 0x500 ---------------------------------
  * The rendezvous XTOS did not have. Pipes need shared ancestry (SYS_spawn_fd), so two

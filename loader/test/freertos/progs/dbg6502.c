@@ -41,6 +41,16 @@
 #define DBG_WP         (DBG + 0x54)     /* [15:0]=watchpoint address */
 #define DBG_WPCFG      (DBG + 0x58)     /* [0]=en [1]=on_write [2]=on_read */
 #define DBG_DIAG       (DBG + 0x5C)     /* [1:0]cfg_s [2]bkpt_seen [3]wp_seen [4]wp_was_hit [31:16]bkpt_s */
+/* streaming per-instruction trace (fidelity core only): a 4096-entry HW ring that
+ * STOPS THE WORLD (halts the 6502) when full and raises flush_req; the kernel drains
+ * every entry then handshakes to resume — no instruction is ever lost. See the
+ * 4-phase drain in stream_trace() below. */
+#define DBG_STRM_CTRL  (DBG + 0x60)     /* W: [0]=strm_en (1=capture; rising edge resets ring) [1]=drain_done */
+#define DBG_STRM_STAT  (DBG + 0x64)     /* R: [0]=flush_req (ring full + core halted; drain now) */
+#define DBG_STRM_WPTR  (DBG + 0x68)     /* R: [12:0]=count of valid entries (4096 when full) */
+#define DBG_STRM_RADDR (DBG + 0x6C)     /* W: [11:0]=ring read address */
+#define DBG_STRM_RDLO  (DBG + 0x70)     /* R: entry[31:0]  = PC(0..15) | A<<16 | X<<24 */
+#define DBG_STRM_RDHI  (DBG + 0x74)     /* R: entry[63:32] = Y | SP<<8 | P<<16 | IR<<24 */
 #define CTRL_SALLYRST  (GP0 + 0x31Cul)
 
 static unsigned long rd(unsigned long a)            { return (unsigned long)sys_devmem(a, 0, 0); }
@@ -84,6 +94,144 @@ static int poll_halt(void)
 {
     for (long i = 0; i < 2000000; i++) if (rd(DBG_STAT) & 1u) return 1;
     return 0;
+}
+
+/* ---- wall clock (A9 global timer via SYS_gettimeofday, same as blitbench) ---- */
+static long long now_us(void)
+{
+    unsigned tv[3];                                   /* {tv_sec lo, tv_sec hi, tv_usec} */
+    __syscall(SYS_gettimeofday, (long)tv, 0, 0);
+    return (long long)tv[0] * 1000000ll + tv[2];
+}
+
+/* ============================================================================
+ * streaming-trace capture buffer  (`6502 trace <secs>`)
+ * ----------------------------------------------------------------------------
+ * The program is freestanding (no libc -> no malloc), so the big buffer comes
+ * from shm objects: each caps at 16 MB (SHM_MAXPG), so we chain up to 8 of them
+ * = 128 MB, treated as ONE logical RING of 8-byte {lo,hi} entries.  When the
+ * ring wraps we overwrite the OLDEST entry, so a long run always keeps the crash
+ * TAIL; the dump walks oldest->newest.  Falls back to fewer chunks (down to one
+ * 16 MB / ~2 M entries) if the pool can't give us all 8 — never fails outright.
+ * ==========================================================================*/
+#define CHUNK_BYTES  (16u << 20)                 /* 16 MB — the per-object shm ceiling */
+#define CHUNK_ENTS   (CHUNK_BYTES / 8u)          /* 2 097 152 eight-byte entries / chunk */
+#define MAX_CHUNKS   8                           /* 8 x 16 MB = 128 MB ring cap */
+
+static unsigned      *g_chunk[MAX_CHUNKS];       /* mapped 16 MB shm segments */
+static int            g_nchunks;
+static unsigned long  g_capents;                 /* g_nchunks * CHUNK_ENTS */
+static unsigned long  g_written;                 /* monotonic count of appended entries */
+
+/* grab as many 16 MB shm chunks as the pool will give, up to MAX_CHUNKS */
+static int cap_alloc(void)
+{
+    for (g_nchunks = 0; g_nchunks < MAX_CHUNKS; g_nchunks++) {
+        int id = sys_shm_create(CHUNK_BYTES, 0);          /* 0 = classic pool-backed */
+        if (id < 0) break;
+        void *p = sys_shm_map(id);
+        if (!p) break;
+        g_chunk[g_nchunks] = (unsigned *)p;
+    }
+    g_capents = (unsigned long)g_nchunks * CHUNK_ENTS;
+    return g_nchunks;
+}
+
+/* append one 8-byte entry to the ring (overwrites oldest once full) */
+static void cap_put(unsigned lo, unsigned hi)
+{
+    unsigned long pos = g_written % g_capents;
+    unsigned *e = g_chunk[pos / CHUNK_ENTS] + (pos % CHUNK_ENTS) * 2;
+    e[0] = lo; e[1] = hi;
+    g_written++;
+}
+
+/* drain the HW ring's current window into the capture buffer (steps b/c) */
+static void cap_drain_window(void)
+{
+    unsigned long n = rd(DBG_STRM_WPTR) & 0x1FFFul;       /* 0..4096 valid entries */
+    for (unsigned long i = 0; i < n; i++) {
+        wr(DBG_STRM_RADDR, i);
+        unsigned lo = (unsigned)rd(DBG_STRM_RDLO);
+        unsigned hi = (unsigned)rd(DBG_STRM_RDHI);
+        cap_put(lo, hi);
+    }
+}
+
+/* dump the ring oldest->newest as raw LE 8-byte entries; returns entries written */
+static unsigned long cap_dump(const char *path)
+{
+    unsigned long count = (g_written < g_capents) ? g_written : g_capents;
+    unsigned long start = (g_written < g_capents) ? 0 : (g_written % g_capents);
+    int fd = (int)sys_open(path, 0x0241 /* O_WRONLY|O_CREAT|O_TRUNC */);
+    if (fd < 0) { on = 0; os("6502 trace: cannot open "); os(path); oc('\n'); flush(2); return 0; }
+    /* write in <=256 KB spans; runs never cross a chunk boundary, and the ring
+     * wrap coincides with a chunk boundary (g_capents is a multiple of CHUNK_ENTS),
+     * so this walks contiguous physical memory in chronological order. */
+    unsigned long done = 0;
+    while (done < count) {
+        unsigned long pos = (start + done) % g_capents;
+        unsigned long ci  = pos / CHUNK_ENTS;
+        unsigned long off = pos % CHUNK_ENTS;             /* entry index within chunk */
+        unsigned long run = CHUNK_ENTS - off;             /* to chunk end */
+        if (run > count - done) run = count - done;       /* to logical end */
+        if (run > 32768) run = 32768;                     /* <=256 KB per write */
+        sys_write(fd, g_chunk[ci] + off * 2, (unsigned)(run * 8));
+        done += run;
+    }
+    sys_close(fd);
+    return count;
+}
+
+/* wait for flush_req==want, bailing at the wall-clock deadline; returns 1 if the
+ * bit reached `want`, 0 if the deadline hit first (only checked for want==1). */
+static int wait_flush(int want, long long deadline)
+{
+    unsigned long spins = 0;
+    for (;;) {
+        int f = (int)(rd(DBG_STRM_STAT) & 1u);
+        if (f == want) return 1;
+        if (want && (++spins & 0x3FF) == 0 && now_us() >= deadline) return 0;
+        if (!want && ++spins > 4000000ul) return 1;       /* handshake bail-out */
+    }
+}
+
+/* `6502 trace <secs> [path]` — long-running streaming trace.  Selects the fidelity
+ * core if it isn't already active (streaming only exists there), captures for <secs>
+ * of wall-clock time draining every stop-the-world window, then dumps oldest->newest.
+ * NOTE: draining is stop-the-world (the 6502 is frozen while we read each window over
+ * the register port), so EMULATED game-time advances slower than wall-clock — pick
+ * <secs> generously (the ring still keeps the crash tail whatever the rate). */
+static void stream_trace(unsigned long secs, const char *path)
+{
+    if (!cap_alloc()) { on = 0; os("6502 trace: out of memory (shm)\n"); flush(2); sys_exit(1); }
+
+    on = 0; os("6502 trace: "); odec((unsigned long)g_nchunks * 16); os(" MB ring (");
+    odec(g_capents); os(" entries)\n"); flush(1);
+
+    /* fidelity core only — cold-boot onto it if we're on turbo */
+    if (!(rd(CTRL_SALLYRST) & 2ul)) {
+        wr(CTRL_SALLYRST, 2ul | 1ul); wr(CTRL_SALLYRST, 2ul);
+        on = 0; os("6502 trace: switched to fidelity core (cold-booted)\n"); flush(1);
+    }
+
+    long long deadline = now_us() + (long long)secs * 1000000ll;
+    wr(DBG_STRM_CTRL, 1);                             /* strm_en=1: rising edge resets the ring */
+
+    while (now_us() < deadline) {
+        if (!wait_flush(1, deadline)) break;          /* (a) flush_req, or time up */
+        cap_drain_window();                           /* (b)(c) drain all valid entries */
+        wr(DBG_STRM_CTRL, 3);                         /* (d) drain_done=1 -> resume + reset ring */
+        wait_flush(0, deadline);                      /* (e) flush_req clears */
+        wr(DBG_STRM_CTRL, 1);                         /* (f) drain_done=0 -> ready for next */
+    }
+
+    wr(DBG_STRM_CTRL, 0);                             /* stop capturing */
+    cap_drain_window();                               /* (4) drain the final partial window */
+
+    unsigned long n = cap_dump(path);
+    on = 0; os("6502 trace: wrote "); odec(n); os(" entries (");
+    odec(n * 8); os(" bytes) to "); os(path); oc('\n'); flush(1);
 }
 
 static void status(void)
@@ -131,14 +279,17 @@ static void help(void)
     line("  6502 breakreset on|off  break at the reset vector");
     line("  6502 watch $A [r|w|rw]  data watchpoint (default rw)");
     line("  6502 watch off");
-    line("  6502 trace [on|off|N]   trace ring: enable/disable, or dump the last N");
+    line("  6502 trace on|off       legacy trace ring: enable/disable");
+    line("  6502 trace dump [N]     dump the last N ring entries oldest->newest (default 32)");
+    line("  6502 trace <secs> [path]  stream a stop-the-world per-instruction trace to a file");
+    line("                          (fidelity core; up to 128 MB ring keeps the crash tail; default /6502trace.bin)");
     line("  6502 diag               debug-block self-observability");
     line("  6502 PC=$A A=.. X=.. Y=.. SP=.. P=.. [go]   inject registers");
     line("");
-    line("cores:  turbo = xt6502  ~56x, documented ISA + xtc accel (default)");
-    line("        fid   = xt6502f real 1x, all 256 opcodes cycle-exact + interrupts");
-    line("note:   halt/step/break/watch/trace/diag target the turbo debugger for now;");
-    line("        the fidelity core's own debug slots are wired next.");
+    line("cores:  fid   = xt6502f real 1x, all 256 opcodes cycle-exact + interrupts (default)");
+    line("        turbo = xt6502  ~56x, documented ISA + xtc accel (opt-in)");
+    line("note:   halt/step/break/watch/trace/diag/commit follow the ACTIVE core (cpu_sel);");
+    line("        both cores have full in-fabric debug + register inject.");
 }
 
 void _app_entry(int argc, char **argv)
@@ -180,7 +331,8 @@ void _app_entry(int argc, char **argv)
     }
 
     if (streq(cmd, "reset")) {
-        wr(CTRL_SALLYRST, 1); wr(CTRL_SALLYRST, 0);
+        unsigned long sel = rd(CTRL_SALLYRST) & 2ul;   /* preserve the selected core */
+        wr(CTRL_SALLYRST, sel | 1ul); wr(CTRL_SALLYRST, sel);
         if (rd(DBG_CFG) & 2u) poll_halt();       /* halt_at_reset armed -> wait */
         status(); sys_exit(0);
     }
@@ -210,8 +362,19 @@ void _app_entry(int argc, char **argv)
             on = 0; os("6502 trace on\n"); flush(1); sys_exit(0); }
         if (argc >= 3 && streq(argv[2], "off")) { wr(DBG_TRC_CTRL, rd(DBG_TRC_CTRL) & ~1ul);
             on = 0; os("6502 trace off\n"); flush(1); sys_exit(0); }
+        /* streaming trace: a bare NUMBER means SECONDS of stop-the-world capture to a
+         * file (catches a crash 20-60s in).  The legacy "dump the last N ring entries"
+         * form now lives under 'trace dump [N]'. */
+        if (argc >= 3 && !streq(argv[2], "dump")) {
+            unsigned long secs = parse_num(argv[2]);
+            const char *path = (argc >= 4) ? argv[3] : "/6502trace.bin";   /* SD root (has room) */
+            if (!secs) { on = 0; os("usage: 6502 trace <secs> [path]\n"); flush(2); sys_exit(2); }
+            stream_trace(secs, path);
+            sys_exit(0);
+        }
         /* dump the last N (default 32) instructions, oldest->newest */
-        unsigned long n = (argc >= 3) ? parse_num(argv[2]) : 32;
+        int have_n = (argc >= 4);                    /* 'trace dump [N]' */
+        unsigned long n = have_n ? parse_num(argv[3]) : 32;
         if (n > 4096) n = 4096; if (!n) n = 1;
         unsigned long w  = rd(DBG_TRC_WPTR);
         unsigned long wp = w & 0xFFF;
@@ -300,7 +463,8 @@ void _app_entry(int argc, char **argv)
         }
         if (!did_assign) {
             on = 0; os("usage: 6502 status|core [turbo|fid]|halt|go|step [N]|break $A|break off|"
-                       "breakreset on|off|reset|watch $A [r|w|rw]|watch off|diag|trace on|off|N|"
+                       "breakreset on|off|reset|watch $A [r|w|rw]|watch off|diag|"
+                       "trace on|off|dump [N]|<secs> [path]|"
                        "REG=VAL...   (6502 -h for details)\n");
             flush(2); sys_exit(2);
         }

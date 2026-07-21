@@ -57,15 +57,42 @@ module mem_read_mux #(
 );
 
     // ---- Snoop path (handshake forward) --------------------------------
+    // The caller drives caller_req for a single cycle, but the shadow side
+    // (bram_shim) gives port A (dl_parser) priority and can be busy servicing
+    // it when this request arrives — bram_shim only samples a request while it
+    // is IDLE, so a one-cycle sh_req pulse that lands during a port-A serve is
+    // silently DROPPED, and the caller (compositor / port B) would then stall
+    // forever waiting for a sh_ready that never comes.  Hold the request
+    // asserted until the shadow actually serves it (sh_ready) so a colliding
+    // higher-priority read cannot lose it.  (With a plain BRAM that pins
+    // sh_ready=1 the pending latch never sets and this reduces to the old
+    // one-cycle forward.)
+    logic snoop_pending;
+    always_ff @(posedge clk or posedge rst) begin
+        if (rst)
+            snoop_pending <= 1'b0;
+        else if (dma_mode)
+            snoop_pending <= 1'b0;
+        else if (sh_ready)
+            snoop_pending <= 1'b0;          // served this cycle
+        else if (caller_req)
+            snoop_pending <= 1'b1;          // request outstanding, hold it
+    end
+
     assign sh_raddr        = caller_raddr;
-    assign sh_req          = caller_req && !dma_mode;
+    assign sh_req          = (caller_req || snoop_pending) && !dma_mode;
     wire [7:0] snoop_rdata = sh_rdata;
 
     // ---- DMA path FSM --------------------------------------------------
-    // Two states:
+    // Three states:
     //   D_READY — last fetch's rdata is held; ready=1.
-    //   D_BUSY  — fetch in flight; ready=0.
-    typedef enum logic { D_READY = 1'b0, D_BUSY = 1'b1 } dma_state_t;
+    //   D_REQ   — request asserted, waiting for the arbiter/dma_master to
+    //             ACCEPT it (dma_ack).  dma_req is HELD (not a one-cycle
+    //             pulse) so a colliding higher-priority port (arbiter p0)
+    //             cannot drop it — the arbiter grants us as soon as it is
+    //             free instead of losing the request.
+    //   D_BUSY  — fetch accepted, in flight; waiting for dma_data_valid.
+    typedef enum logic [1:0] { D_READY = 2'd0, D_REQ = 2'd1, D_BUSY = 2'd2 } dma_state_t;
 
     dma_state_t   dma_state;
     logic [7:0]   dma_rdata_q;     // captured from dma_master
@@ -77,32 +104,44 @@ module mem_read_mux #(
             dma_req     <= 1'b0;
             dma_addr    <= 16'h0;
         end else begin
-            dma_req <= 1'b0;       // single-cycle pulse by default
-
             unique case (dma_state)
                 D_READY: begin
+                    dma_req <= 1'b0;
                     if (caller_req && dma_mode) begin
                         dma_addr  <= 16'(caller_raddr);
-                        dma_req   <= 1'b1;
+                        dma_req   <= 1'b1;      // assert and HOLD until ack
+                        dma_state <= D_REQ;
+                    end
+                end
+
+                D_REQ: begin
+                    // Hold dma_req asserted until the arbiter accepts it.
+                    if (dma_ack) begin
+                        dma_req   <= 1'b0;
                         dma_state <= D_BUSY;
                     end
                 end
 
                 D_BUSY: begin
+                    dma_req <= 1'b0;
                     if (dma_data_valid) begin
                         dma_rdata_q <= dma_rdata;
                         dma_state   <= D_READY;
                     end
                 end
 
-                default: dma_state <= D_READY;
+                default: begin
+                    dma_req   <= 1'b0;
+                    dma_state <= D_READY;
+                end
             endcase
         end
     end
 
     // ---- Output mux ----------------------------------------------------
-    // Snoop mode: pass-through. caller_ready always 1 (BRAM is always
-    // 1-cycle-ready, which the consumer's existing WAIT state handles).
+    // Snoop mode: pass-through. caller_ready pulses when the shadow serves
+    // this read (sh_ready), gated low while caller_req is firing a new
+    // request (so the consumer's WAIT state cannot advance on a stale ready).
     //
     // DMA mode: caller_rdata = the latched DMA byte; caller_ready = 1
     // only when the FSM is in D_READY AND caller_req isn't ALSO firing

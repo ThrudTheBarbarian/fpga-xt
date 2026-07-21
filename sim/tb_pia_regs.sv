@@ -116,6 +116,62 @@ module tb_pia_regs;
             do_read(16'hD302, v); expect_eq("PACTL.set", v, 8'h04);
         end
 
+        // ---- PACTL / PBCTL IRQ-flag mask (ACID800 pia_irq) ----
+        // The top two bits of PACTL/PBCTL are read-only IRQ-status flags.
+        // Writing $FF sets only the control bits [5:0]; a read masks the
+        // status bits (no CA1/CA2 edge source wired → they read 0), so
+        // $FF must read back $3F — NOT $FF.
+        begin
+            logic [7:0] v;
+            do_write(16'hD302, 8'hFF);
+            do_read(16'hD302, v); expect_eq("PACTL.FF-masks-3F", v, 8'h3F);
+            do_write(16'hD303, 8'hFF);
+            do_read(16'hD303, v); expect_eq("PBCTL.FF-masks-3F", v, 8'h3F);
+            // A mid-range control value keeps its low 6 bits and clears [7:6].
+            do_write(16'hD302, 8'hC5);   // $C5 -> read $05
+            do_read(16'hD302, v); expect_eq("PACTL.C5-masks-05", v, 8'h05);
+            // Restore port mode for the checks that follow.
+            do_write(16'hD302, 8'h04);
+        end
+
+        // ---- ACID800 pia_irq: CA2 output->input edge sets IRQA2 (bit 6) ----
+        // Replays the pia_irq "turn on IRQA2 flag" sequence:
+        //   PACTL $34 (CA2 output LOW) -> $3C (output HIGH) -> $14 (input,
+        //   low->high edge select).  The $34->$3C low->high output edge
+        //   arms IRQA2; reading PACTL must return $54 (bit6 set | $14).
+        //   Then: a DDRA read (PACTL DDR-mode read) must NOT clear bit 6,
+        //   but a PORTA data read ($D300) MUST clear it.
+        begin
+            logic [7:0] v;
+            do_write(16'hD302, 8'h34);      // CA2 output low
+            do_write(16'hD302, 8'h3C);      // CA2 output high  (low->high edge)
+            do_write(16'hD302, 8'h14);      // CA2 input, low->high select
+            do_read(16'hD302, v); expect_eq("pia_irq.IRQA2-set.54", v, 8'h54);
+
+            // Reading PACTL again (and putting PORTA into DDR mode) must not
+            // clear IRQA2: write $00 (control), read PACTL -> $40.
+            do_write(16'hD302, 8'h00);      // control write (input mode) keeps flag
+            do_read(16'hD302, v); expect_eq("pia_irq.IRQA2-DDRread-keeps.40", v, 8'h40);
+
+            // A read of the PORTA DATA register ($D300) clears IRQA2.
+            do_write(16'hD302, 8'h04);      // port mode so $D300 reads the data reg
+            do_read(16'hD300, v);           // PORTA data read -> clears bit 6
+            do_read(16'hD302, v); expect_eq("pia_irq.IRQA2-PORTAread-clears.04", v, 8'h04);
+
+            // Symmetric CB2 / IRQB2 (PBCTL) check: same dance, PORTB read clears.
+            do_write(16'hD303, 8'h34);
+            do_write(16'hD303, 8'h3C);
+            do_write(16'hD303, 8'h14);
+            do_read(16'hD303, v); expect_eq("pia_irq.IRQB2-set.54", v, 8'h54);
+            do_write(16'hD303, 8'h04);      // port mode so $D301 reads the data reg
+            do_read(16'hD301, v);           // PORTB data read -> clears bit 6
+            do_read(16'hD303, v); expect_eq("pia_irq.IRQB2-PORTBread-clears.04", v, 8'h04);
+
+            // Restore control regs to port mode for the checks that follow.
+            do_write(16'hD302, 8'h04);
+            do_write(16'hD303, 8'h04);
+        end
+
         // ---- PORTA read in port mode returns the PIN: an OUTPUT bit (DDRA=1)
         //      reads the driven output latch, an INPUT bit reads joy_porta_in.
         //      Set DDRA=$00 (all inputs) so this reads pure joy_porta_in. ----

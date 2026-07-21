@@ -73,6 +73,12 @@ PL diagnostic words (A9-only, read-only, word-aligned)
 | 0x18 | R | 32 | `XT_DIAG7` | `DIAG7` | HP2 read-probe last rdata |
 | 0x1C | R | 32 | `XT_DIAG8` | `DIAG8` | TEMP ROM-window upload diag: [31:16]=window AXI writes accepted, [15:0]=rom_we pulses emitted to sally_mem |
 | 0x20 | R | 32 | `XT_DIAG9` | `DIAG9` | TEMP ROM-window upload diag: [23:8]=last rom_addr, [7:0]=last rom_data |
+| 0x24 | R | 32 | `XT_DIAG10` | `DIAG10` | TEMP compositor P/M FETCH capture (antic_pmdma $00 bug): [31:16]=last cmp_raddr in $2000-$3FFF, [15:8]=0, [7:0]=cmp_rdata byte returned |
+| 0x28 | R | 32 | `XT_DIAG11` | `DIAG11` | TEMP compositor P/M-region fetch counter: increments each cmp_ready with cmp_raddr in $2000-$3FFF |
+| 0x2C | R | 32 | `XT_DIAG12` | `DIAG12` | TEMP nmi_gen DLI/VBI counters: [31:24]=dli_nmi_count (gated DLI /NMI assertions), [23:16]=vbi_nmi_count, [15:8]=dli_event_count (DLIs detected regardless of NMIEN), [7:0]=last NMIST (external view) sampled just after the last /NMI assertion |
+| 0x30 | R | 32 | `XT_DIAG13` | `DIAG13` | TEMP nmi_gen NMI state: [31:24]=nmien, [23:16]=last-DLI antic_raster scanline[7:0], [15:0]=total DLI+VBI /NMI assertion count |
+| 0x34 | R | 32 | `XT_DIAG14` | `DIAG14` | TEMP NMIEN sticky evidence (DLI cluster): [31:16]=CPU write count to $D40E, [15:8]=sticky-OR of every live ANTIC nmien_q value (bit15=nmien_or[7]: 1 -> bit7 EVER latched in nmien_q; 0 -> bit7 never reaches nmien_q), [7:1]=0, [0]=nmien_dli_coincide (sticky: nmien_q[7] high on a DLI line-start) |
+| 0x38 | R | 32 | `XT_DIAG15` | `DIAG15` | TEMP player-0 P/M FETCH capture (antic_pmdma $00 bug): [31:16]=last cmp_raddr in $3400-$34FF (player-0 one-line region only) with a NON-ZERO returned byte, [15:8]=cmp_p0_nz_cnt (saturating count of non-zero P0 fetches; 0=no shape byte ever), [7:0]=cmp_rdata non-zero byte returned |
 
 ## 0x500 — XLCTL  (`XT_BLK_XLCTL`)
 
@@ -135,3 +141,9 @@ in-fabric 6502 debugger (xt6502_debug): halt/step/breakpoint/register access, dr
 | 0x54 | RW | 16 | `XT_DBG_WP` | `DBG_WP` | [15:0]=data watchpoint address; when armed the core freezes on a bus access to it |
 | 0x58 | RW | 3 | `XT_DBG_WPCFG` | `DBG_WPCFG` | data watchpoint arm: [0]=enable, [1]=break on WRITE to DBG_WP, [2]=break on READ of DBG_WP (set both for any access) |
 | 0x5C | R | 32 | `XT_DBG_DIAG` | `DBG_DIAG` | debug self-observability (clk_sally, coherent when halted): [1:0]=cfg_s (CDC-synced DBG_CFG), [2]=bkpt_fire seen since arm, [3]=wp_fire seen since arm, [4]=last halt was a watchpoint, [31:16]=bkpt_s (CDC-synced DBG_BKPT — verify it matches what was written) |
+| 0x60 | W | 2 | `XT_DBG_STRM_CTRL` | `DBG_STRM_CTRL` | FIDELITY streaming-trace control: [0]=strm_en (capture {PC,A,X,Y,SP,P,IR} per instruction into a 4096-deep ring; the core AUTO-HALTS when the ring fills = real stop-the-world), [1]=drain_done (4-phase level handshake: after draining STRM_RD* set this to clear flush_req, reset the ring, and resume the core; then clear it). Rising edge of strm_en resets the ring. |
+| 0x64 | R | 1 | `XT_DBG_STRM_STAT` | `DBG_STRM_STAT` | [0]=flush_req: the streaming ring is FULL and the core is halted; the A9 should drain STRM_RD* (0..STRM_WPTR-1) then pulse drain_done |
+| 0x68 | R | 13 | `XT_DBG_STRM_WPTR` | `DBG_STRM_WPTR` | [12:0]=count of valid entries in the streaming ring (4096 when full; a smaller partial count if strm_en was cleared mid-window) |
+| 0x6C | W | 12 | `XT_DBG_STRM_RADDR` | `DBG_STRM_RADDR` | [11:0]=streaming ring read address; the entry appears in STRM_RDLO/RDHI (coherent while flush_req — the ring is static because the core is halted) |
+| 0x70 | R | 32 | `XT_DBG_STRM_RDLO` | `DBG_STRM_RDLO` | streaming entry [31:0] at STRM_RADDR: [15:0]=PC [23:16]=A [31:24]=X |
+| 0x74 | R | 32 | `XT_DBG_STRM_RDHI` | `DBG_STRM_RDHI` | streaming entry [63:32] at STRM_RADDR: [7:0]=Y [15:8]=SP [23:16]=P [31:24]=IR |

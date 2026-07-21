@@ -59,7 +59,7 @@ HDL_SRCS := \
 
 BUILD_DIR := build
 
-.PHONY: all smoke snoop read vbeam dl_parse prior nmi wsync palette dma_master mem_read_mux draw_regs pokey pokey_i2s sally sally_mem sally_mem_page sally_arb bank_xlat cdc_flag_data hwreg_rd_cdc legacy_upscale plane_compositor plane_fetch axi_line_writer antic_writeback xl_buffer_ctrl antic_raster antic_seq antic_modes hscrol hscrol_e2e antic_display pia_regs peri_link joy_link joy_bridge peri_bridge os_rom_load klaus lint clean xt_blitter sally_stack sally_isa sprite_regs sprite_fetcher sprite_compositor xt6502 boot boot_trace plane_vscale disp_modef_wrap antic_dma_steal
+.PHONY: all smoke snoop read vbeam dl_parse prior nmi wsync palette dma_master mem_read_mux draw_regs pokey pokey_i2s sally sally_mem sally_mem_page sally_arb bank_xlat cdc_flag_data hwreg_rd_cdc legacy_upscale plane_compositor plane_fetch axi_line_writer antic_writeback xl_buffer_ctrl antic_raster antic_seq antic_modes cmp_fetch hscrol hscrol_e2e antic_display pia_regs peri_link joy_link joy_bridge peri_bridge os_rom_load klaus lint clean xt_blitter sally_stack sally_isa sprite_regs sprite_fetcher sprite_compositor xt6502 boot boot_trace plane_vscale disp_modef_wrap antic_dma_steal antic_dli antic_dli_cdc
 
 # Retired tests (2026-05-25): rp_bus, mode_f, char_modes, gfx_modes, pm, scroll,
 # dma_int, visual all instantiated the v1 rp_bus injection harness
@@ -401,16 +401,11 @@ xt6502: $(BUILD_DIR)/tb_xt6502.vvp
 $(BUILD_DIR)/tb_xt6502.vvp: $(HDL_DIR)/xt6502/xt6502.sv tb_xt6502.sv | $(BUILD_DIR)
 	$(IVERILOG) $(SV_FLAGS) -o $@ -s tb_xt6502 $(HDL_DIR)/xt6502/xt6502.sv tb_xt6502.sv
 
-# ---- xt6502_debug — in-fabric debugger (halt/step/breakpoint/register access) --
-xt6502_debug: $(BUILD_DIR)/tb_xt6502_debug.vvp
-	@echo "=== xt6502_debug — halt/step/breakpoint/register access ==="
-	@$(VVP) -N $< | tee $(BUILD_DIR)/tb_xt6502_debug.log
-	@grep -q '\*\*\* XT6502_DEBUG OK \*\*\*' $(BUILD_DIR)/tb_xt6502_debug.log || \
-	    (echo "FAIL: tb_xt6502_debug did not pass"; exit 1)
-	@echo "PASS: tb_xt6502_debug"
-
-$(BUILD_DIR)/tb_xt6502_debug.vvp: $(HDL_DIR)/xt6502/xt6502.sv $(HDL_DIR)/xt6502/xt6502_debug.sv tb_xt6502_debug.sv | $(BUILD_DIR)
-	$(IVERILOG) $(SV_FLAGS) -o $@ -s tb_xt6502_debug $(HDL_DIR)/xt6502/xt6502.sv $(HDL_DIR)/xt6502/xt6502_debug.sv tb_xt6502_debug.sv
+# ---- xt6502_debug — RETIRED with the turbo-core strip (2026-07-20) ----------
+# The turbo core is now speed-only: its register-INJECT was removed, so this
+# test (which drove dbg_wr/dbg_w* inject into the core) no longer applies.
+# The in-fabric debugger lives on the fidelity core now — see the tb_xt6502f_*
+# benches + the Harte harness for debug/interrupt coverage.
 
 sally_stack: $(BUILD_DIR)/tb_sally_stack.vvp
 	@echo "=== sally_stack — stack-BRAM alias test ==="
@@ -834,6 +829,25 @@ antic_modes: $(BUILD_DIR)/tb_antic_modes.vvp
 $(BUILD_DIR)/tb_antic_modes.vvp: $(HDL_DIR)/compositor.sv tb_antic_modes.sv $(HDL_DIR)/bus_opcodes.vh | $(BUILD_DIR)
 	$(IVERILOG) $(SV_FLAGS) -o $@ -s tb_antic_modes $(HDL_DIR)/compositor.sv tb_antic_modes.sv
 
+# ---- cmp_fetch — INTEGRATION: compositor fetch through the REAL mem chain -
+# Wires compositor + mem_read_mux + bram_shim + dma_arbiter + dma_master
+# exactly as antic_top does, with a sally_mem-style registered dual-port RAM,
+# and drives the acid800 antic_pmdma / antic_addresswrap scenarios through the
+# real handshake.  Reproduces the HW $00/wrong-fetch that the mock (mem_ready=1,
+# combinational RAM) and tb_mem_read_mux (sh_ready=1, no bram_shim) cannot.
+CMP_FETCH_HDL := $(HDL_DIR)/compositor.sv $(HDL_DIR)/mem_read_mux.sv \
+                 $(HDL_DIR)/bram_shim.sv $(HDL_DIR)/dma_arbiter.sv \
+                 $(HDL_DIR)/dma_master.sv
+cmp_fetch: $(BUILD_DIR)/tb_cmp_fetch.vvp
+	@echo "=== cmp_fetch — compositor fetch through the real mem chain ==="
+	@$(VVP) -N $< | tee $(BUILD_DIR)/tb_cmp_fetch.log
+	@grep -q '\*\*\* CMP_FETCH OK \*\*\*' $(BUILD_DIR)/tb_cmp_fetch.log || \
+	    (echo "FAIL: tb_cmp_fetch missing CMP_FETCH OK"; exit 1)
+	@echo "PASS: tb_cmp_fetch"
+
+$(BUILD_DIR)/tb_cmp_fetch.vvp: $(CMP_FETCH_HDL) tb_cmp_fetch.sv $(HDL_DIR)/bus_opcodes.vh | $(BUILD_DIR)
+	$(IVERILOG) $(SV_FLAGS) -o $@ -s tb_cmp_fetch $(CMP_FETCH_HDL) tb_cmp_fetch.sv
+
 # ---- hscrol — HSCROL fine sub-pixel scroll (compositor, exhaustive) --------
 # Drives the compositor directly with meta_hscrol_en=1 and hscrol=0..15 for
 # modes 2 & 4 over pseudo-random content, checking every displayed atari px
@@ -878,6 +892,33 @@ antic_display: $(BUILD_DIR)/tb_antic_display.vvp
 
 $(BUILD_DIR)/tb_antic_display.vvp: $(HDL_SRCS) tb_antic_display.sv | $(BUILD_DIR)
 	$(IVERILOG) $(SV_FLAGS) -o $@ -s tb_antic_display $(HDL_SRCS) tb_antic_display.sv
+
+# ---- antic_dli — DLI fires on correct PHYSICAL scanline (integrated) -----
+antic_dli: $(BUILD_DIR)/tb_antic_dli.vvp
+	@echo "=== antic_dli — physical-scanline DLI integration ==="
+	@$(VVP) -N $< | tee $(BUILD_DIR)/tb_antic_dli.log
+	@grep -q '\*\*\* ANTIC_DLI OK \*\*\*' $(BUILD_DIR)/tb_antic_dli.log || \
+	    (echo "FAIL: tb_antic_dli missing ANTIC_DLI OK"; exit 1)
+	@echo "PASS: tb_antic_dli"
+
+$(BUILD_DIR)/tb_antic_dli.vvp: $(HDL_SRCS) tb_antic_dli.sv | $(BUILD_DIR)
+	$(IVERILOG) $(SV_FLAGS) -o $@ -s tb_antic_dli $(HDL_SRCS) tb_antic_dli.sv
+
+# ---- antic_dli_cdc — DLI coincidence via the REAL clk_sally->CDC->clk_sys --
+# register-write path (reproduces / refutes the HW-proven ACID800 antic_nmist
+# DLI failure).  Drives NMIEN through cdc_fifo_1w1r + the fpga_xt_top write-
+# strobe regen pipeline instead of the snoop bus.  Passes on EITHER verdict
+# (BUG-REPRODUCED or NOT-REPRODUCED) — it's a diagnostic bench; it only fails
+# on INCONCLUSIVE (write lost) or watchdog.
+antic_dli_cdc: $(BUILD_DIR)/tb_antic_dli_cdc.vvp
+	@echo "=== antic_dli_cdc — DLI coincidence through the register-write CDC ==="
+	@$(VVP) -N $< | tee $(BUILD_DIR)/tb_antic_dli_cdc.log
+	@grep -Eq 'ANTIC_DLI_CDC: (BUG-REPRODUCED|NOT-REPRODUCED)' $(BUILD_DIR)/tb_antic_dli_cdc.log || \
+	    (echo "FAIL: tb_antic_dli_cdc inconclusive / did not finish"; exit 1)
+	@echo "PASS: tb_antic_dli_cdc (see verdict above)"
+
+$(BUILD_DIR)/tb_antic_dli_cdc.vvp: $(HDL_SRCS) $(HDL_DIR)/cdc_fifo_1w1r.sv tb_antic_dli_cdc.sv | $(BUILD_DIR)
+	$(IVERILOG) $(SV_FLAGS) -o $@ -s tb_antic_dli_cdc $(HDL_SRCS) $(HDL_DIR)/cdc_fifo_1w1r.sv tb_antic_dli_cdc.sv
 
 # ---- M25-2 — peri_link FPGA-side SPI master ------------------------------
 peri_link: $(BUILD_DIR)/tb_peri_link.vvp

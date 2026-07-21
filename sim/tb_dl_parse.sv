@@ -47,10 +47,12 @@ module tb_dl_parse;
     logic [7:0]  dlistl      = 8'h00;
     logic [7:0]  dlisth      = 8'hD0;
     logic [7:0]  meta_row    = 8'h00;
+    logic [3:0]  vscrol_r    = 4'h0;
     wire  [3:0]  meta_mode;
     wire         meta_dli;
     wire  [15:0] meta_lms_addr;
     wire  [3:0]  meta_sub_row;
+    wire         meta_vscrol_en;
     wire         parse_done;
     wire  [31:0] parse_count;
 
@@ -60,7 +62,7 @@ module tb_dl_parse;
         .start_parse   (start_parse),
         .dlistl        (dlistl),
         .dlisth        (dlisth),
-        .vscrol        (4'h0),
+        .vscrol        (vscrol_r),
         .mem_raddr     (bram_raddr),
         .mem_rdata     (bram_rdata),
         .mem_req       (),
@@ -71,7 +73,7 @@ module tb_dl_parse;
         .meta_lms_addr (meta_lms_addr),
         .meta_sub_row  (meta_sub_row),
         .meta_hscrol_en(),
-        .meta_vscrol_en(),
+        .meta_vscrol_en(meta_vscrol_en),
         .dli_row       (8'h00),
         .dli_at        (),
         .parse_done    (parse_done),
@@ -119,6 +121,40 @@ module tb_dl_parse;
                      row, meta_sub_row, exp_sub);
             fail_count++;
         end
+    endtask
+
+    // Lightweight check: mode, sub_row (DCTR) and vscrol_en of one row.
+    task automatic check_ms(input logic [7:0] row,
+                            input logic [3:0] exp_mode,
+                            input logic [3:0] exp_sub,
+                            input logic       exp_vs);
+        meta_row = row;
+        @(posedge clk);
+        #1;
+        if (meta_mode !== exp_mode) begin
+            $display("FAIL row %0d: mode got $%01h, expected $%01h",
+                     row, meta_mode, exp_mode);
+            fail_count++;
+        end
+        if (meta_sub_row !== exp_sub) begin
+            $display("FAIL row %0d: sub got %0d, expected %0d",
+                     row, meta_sub_row, exp_sub);
+            fail_count++;
+        end
+        if (meta_vscrol_en !== exp_vs) begin
+            $display("FAIL row %0d: vscrol_en got %0d, expected %0d",
+                     row, meta_vscrol_en, exp_vs);
+            fail_count++;
+        end
+    endtask
+
+    task automatic do_parse;
+        @(posedge clk);
+        start_parse <= 1'b1;
+        @(posedge clk);
+        start_parse <= 1'b0;
+        wait (parse_done);
+        @(posedge clk);
     endtask
 
     // ---- Main -----------------------------------------------------------
@@ -182,6 +218,60 @@ module tb_dl_parse;
         // Row 26+: not emitted (JVB ended frame). Should still be 0
         // from reset.
         check_row(8'd26, 4'h0, 1'b0, 16'h0000, 4'd0);
+
+        // =============================================================
+        // Directed VSCROL region test (ACID800 antic_vscroll region 1).
+        //
+        // DL:  $22  mode 2 + VSCROL  (first-of-block, prev = frame top = 0)
+        //      $02  mode 2, no VSCROL (last-of-block: NON-vscrol line that
+        //                              follows the region → VSCROL+1 rows)
+        //      $41 $00 $D0  JVB
+        // With VSCROL = 3:
+        //   first-of-block: DCTR starts at 3 → sub 3,4,5,6,7  (8-3 = 5 rows)
+        //   last-of-block : DCTR ends at 3   → sub 0,1,2,3    (3+1 = 4 rows)
+        // =============================================================
+        load_byte(16'hD000, 8'h22);   // mode 2 + VSCROL
+        load_byte(16'hD001, 8'h02);   // mode 2, no VSCROL
+        load_byte(16'hD002, 8'h41);   // JVB
+        load_byte(16'hD003, 8'h00);
+        load_byte(16'hD004, 8'hD0);
+        vscrol_r = 4'd3;
+        do_parse();
+
+        // first-of-block: 5 rows, sub 3..7, vscrol_en=1
+        check_ms(8'd0, 4'h2, 4'd3, 1'b1);
+        check_ms(8'd1, 4'h2, 4'd4, 1'b1);
+        check_ms(8'd2, 4'h2, 4'd5, 1'b1);
+        check_ms(8'd3, 4'h2, 4'd6, 1'b1);
+        check_ms(8'd4, 4'h2, 4'd7, 1'b1);
+        // last-of-block: 4 rows, sub 0..3, vscrol_en=0
+        check_ms(8'd5, 4'h2, 4'd0, 1'b0);
+        check_ms(8'd6, 4'h2, 4'd1, 1'b0);
+        check_ms(8'd7, 4'h2, 4'd2, 1'b0);
+        check_ms(8'd8, 4'h2, 4'd3, 1'b0);
+
+        // =============================================================
+        // Directed VSCROL over-scroll quirk: VSCROL >= mode height.
+        //
+        // DL:  $22  mode 2 + VSCROL  (first-of-block)
+        //      $41 $00 $D0  JVB (flush the single vscrol line)
+        // With VSCROL = 10, mode 2 (height 8): DCTR starts at 10 and runs
+        //   10,11,..,15,0,1,..,7  → 14 scan lines (wraps past 15).
+        // =============================================================
+        load_byte(16'hD000, 8'h22);   // mode 2 + VSCROL
+        load_byte(16'hD001, 8'h41);   // JVB
+        load_byte(16'hD002, 8'h00);
+        load_byte(16'hD003, 8'hD0);
+        vscrol_r = 4'd10;
+        do_parse();
+
+        begin
+            logic [3:0] exp [0:13];
+            exp = '{4'd10,4'd11,4'd12,4'd13,4'd14,4'd15,
+                    4'd0,4'd1,4'd2,4'd3,4'd4,4'd5,4'd6,4'd7};
+            for (int r = 0; r < 14; r++)
+                check_ms(r[7:0], 4'h2, exp[r], 1'b1);
+        end
 
         if (fail_count == 0) begin
             $display("*** DL_PARSE OK *** parse_count=%0d", parse_count);

@@ -131,7 +131,19 @@
         { "off": "0x1C", "access": "R", "width": 32, "c": "XT_DIAG8", "sv": "DIAG8",
           "desc": "TEMP ROM-window upload diag: [31:16]=window AXI writes accepted, [15:0]=rom_we pulses emitted to sally_mem" },
         { "off": "0x20", "access": "R", "width": 32, "c": "XT_DIAG9", "sv": "DIAG9",
-          "desc": "TEMP ROM-window upload diag: [23:8]=last rom_addr, [7:0]=last rom_data" }
+          "desc": "TEMP ROM-window upload diag: [23:8]=last rom_addr, [7:0]=last rom_data" },
+        { "off": "0x24", "access": "R", "width": 32, "c": "XT_DIAG10", "sv": "DIAG10",
+          "desc": "TEMP compositor P/M FETCH capture (antic_pmdma $00 bug): [31:16]=last cmp_raddr in $2000-$3FFF, [15:8]=0, [7:0]=cmp_rdata byte returned" },
+        { "off": "0x28", "access": "R", "width": 32, "c": "XT_DIAG11", "sv": "DIAG11",
+          "desc": "TEMP compositor P/M-region fetch counter: increments each cmp_ready with cmp_raddr in $2000-$3FFF" },
+        { "off": "0x2C", "access": "R", "width": 32, "c": "XT_DIAG12", "sv": "DIAG12",
+          "desc": "TEMP nmi_gen DLI/VBI counters: [31:24]=dli_nmi_count (gated DLI /NMI assertions), [23:16]=vbi_nmi_count, [15:8]=dli_event_count (DLIs detected regardless of NMIEN), [7:0]=last NMIST (external view) sampled just after the last /NMI assertion" },
+        { "off": "0x30", "access": "R", "width": 32, "c": "XT_DIAG13", "sv": "DIAG13",
+          "desc": "TEMP nmi_gen NMI state: [31:24]=nmien, [23:16]=last-DLI antic_raster scanline[7:0], [15:0]=total DLI+VBI /NMI assertion count" },
+        { "off": "0x34", "access": "R", "width": 32, "c": "XT_DIAG14", "sv": "DIAG14",
+          "desc": "TEMP NMIEN sticky evidence (DLI cluster): [31:16]=CPU write count to $D40E, [15:8]=sticky-OR of every live ANTIC nmien_q value (bit15=nmien_or[7]: 1 -> bit7 EVER latched in nmien_q; 0 -> bit7 never reaches nmien_q), [7:1]=0, [0]=nmien_dli_coincide (sticky: nmien_q[7] high on a DLI line-start)" },
+        { "off": "0x38", "access": "R", "width": 32, "c": "XT_DIAG15", "sv": "DIAG15",
+          "desc": "TEMP player-0 P/M FETCH capture (antic_pmdma $00 bug): [31:16]=last cmp_raddr in $3400-$34FF (player-0 one-line region only) with a NON-ZERO returned byte, [15:8]=cmp_p0_nz_cnt (saturating count of non-zero P0 fetches; 0=no shape byte ever), [7:0]=cmp_rdata non-zero byte returned" }
       ]
     },
     {
@@ -239,7 +251,19 @@
         { "off": "0x58", "access": "RW", "width": 3, "c": "XT_DBG_WPCFG",    "sv": "DBG_WPCFG",
           "desc": "data watchpoint arm: [0]=enable, [1]=break on WRITE to DBG_WP, [2]=break on READ of DBG_WP (set both for any access)" },
         { "off": "0x5C", "access": "R", "width": 32, "c": "XT_DBG_DIAG",     "sv": "DBG_DIAG",
-          "desc": "debug self-observability (clk_sally, coherent when halted): [1:0]=cfg_s (CDC-synced DBG_CFG), [2]=bkpt_fire seen since arm, [3]=wp_fire seen since arm, [4]=last halt was a watchpoint, [31:16]=bkpt_s (CDC-synced DBG_BKPT — verify it matches what was written)" }
+          "desc": "debug self-observability (clk_sally, coherent when halted): [1:0]=cfg_s (CDC-synced DBG_CFG), [2]=bkpt_fire seen since arm, [3]=wp_fire seen since arm, [4]=last halt was a watchpoint, [31:16]=bkpt_s (CDC-synced DBG_BKPT — verify it matches what was written)" },
+        { "off": "0x60", "access": "W", "width": 2, "c": "XT_DBG_STRM_CTRL", "sv": "DBG_STRM_CTRL",
+          "desc": "FIDELITY streaming-trace control: [0]=strm_en (capture {PC,A,X,Y,SP,P,IR} per instruction into a 4096-deep ring; the core AUTO-HALTS when the ring fills = real stop-the-world), [1]=drain_done (4-phase level handshake: after draining STRM_RD* set this to clear flush_req, reset the ring, and resume the core; then clear it). Rising edge of strm_en resets the ring." },
+        { "off": "0x64", "access": "R", "width": 1, "c": "XT_DBG_STRM_STAT", "sv": "DBG_STRM_STAT",
+          "desc": "[0]=flush_req: the streaming ring is FULL and the core is halted; the A9 should drain STRM_RD* (0..STRM_WPTR-1) then pulse drain_done" },
+        { "off": "0x68", "access": "R", "width": 13, "c": "XT_DBG_STRM_WPTR", "sv": "DBG_STRM_WPTR",
+          "desc": "[12:0]=count of valid entries in the streaming ring (4096 when full; a smaller partial count if strm_en was cleared mid-window)" },
+        { "off": "0x6C", "access": "W", "width": 12, "c": "XT_DBG_STRM_RADDR", "sv": "DBG_STRM_RADDR",
+          "desc": "[11:0]=streaming ring read address; the entry appears in STRM_RDLO/RDHI (coherent while flush_req — the ring is static because the core is halted)" },
+        { "off": "0x70", "access": "R", "width": 32, "c": "XT_DBG_STRM_RDLO", "sv": "DBG_STRM_RDLO",
+          "desc": "streaming entry [31:0] at STRM_RADDR: [15:0]=PC [23:16]=A [31:24]=X" },
+        { "off": "0x74", "access": "R", "width": 32, "c": "XT_DBG_STRM_RDHI", "sv": "DBG_STRM_RDHI",
+          "desc": "streaming entry [63:32] at STRM_RADDR: [7:0]=Y [15:8]=SP [23:16]=P [31:24]=IR" }
       ]
     }
   ]

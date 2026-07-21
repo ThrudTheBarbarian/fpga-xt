@@ -266,6 +266,49 @@ module tb_pokey;
             end
         end
 
+        // ===== Phase D0 — SKCTL init/reset holds RANDOM at $FF (M23-2) ===
+        // Atari OS idiom (mirrored by ACID800 pokey_noise / antic_wsync):
+        // SKCTL[1:0]==0 is POKEY "init" mode — the polynomial counters
+        // are held in reset and RANDOM ($D20A) reads $FF. Writing a
+        // non-zero SKCTL[1:0] (the OS uses $03) releases them to free
+        // run on the machine clock. We can't reproduce the exact ACID800
+        // phase-dependent values here (no ANTIC/WSYNC phase in this tb),
+        // but the init→$FF hold and the release→advance are checkable.
+        $display("[D0] SKCTL init holds RANDOM=$FF, release frees it");
+        begin
+            int unsigned r_init, r_run;
+            do_write(8'h0F, 8'h00);        // SKCTL = 0 → init/reset mode
+            repeat (8) @(posedge clk);     // let several phi2 ticks pass
+            @(negedge clk);
+            raddr = 8'h0A;
+            @(negedge clk);
+            r_init = rdata;
+            expect_eq("D0.RANDOM-init", r_init, 8'hFF);
+
+            // Release init (SKCTL=$03). The poly counters now free-run;
+            // RANDOM must leave $FF within a bounded window.
+            do_write(8'h0F, 8'h03);
+            r_run = 8'hFF;
+            begin
+                int guard;
+                guard = 0;
+                while (r_run == 8'hFF && guard < 4096) begin
+                    repeat (4) @(posedge clk);
+                    @(negedge clk);
+                    raddr = 8'h0A;
+                    @(negedge clk);
+                    r_run = rdata;
+                    guard++;
+                end
+            end
+            if (r_run == 8'hFF) begin
+                $display("FAIL D0.release: RANDOM stuck at $FF after SKCTL=$03");
+                fail_count++;
+            end else begin
+                $display("[D0] RANDOM: init=$%02x -> running=$%02x", r_init, r_run);
+            end
+        end
+
         // ===== Phase D — RANDOM advances + LFSR period checks (M23-2) ====
         // Sample RANDOM ($D20A) twice with a few hundred ref ticks
         // between samples; the value should change (the 17-bit LFSR's
@@ -747,12 +790,23 @@ module tb_pokey;
                 $display("FAIL K.7: SKSTAT=$%02x bit3=1 (overrun)", rdata);
                 fail_count++;
             end
-            if (rdata[1] !== 1'b1) begin
-                $display("FAIL K.7: SKSTAT=$%02x bit1=0 (ser input busy)", rdata);
+            // bit 1 is active-LOW serial-input-busy: while ser_input_busy
+            // is asserted (a byte is shifting in) SKSTAT bit1 reads 0.
+            if (rdata[1] !== 1'b0) begin
+                $display("FAIL K.7: SKSTAT=$%02x bit1=1 (expected 0 while receiving)", rdata);
                 fail_count++;
             end
             ser_framing_err = 1'b0;
             ser_input_busy  = 1'b0;
+            // Idle again → bit1 must read back as 1 (ACID800 pokey_skstat:
+            // "Serial input active bit was asserted when idle").
+            @(negedge clk);
+            raddr = 8'h0F;
+            @(negedge clk);
+            if (rdata[1] !== 1'b1) begin
+                $display("FAIL K.7: SKSTAT=$%02x bit1=0 when idle (expected 1)", rdata);
+                fail_count++;
+            end
 
             // ---- K.8: bit 3 (SER OUT COMPLETE) is unlatched (Altirra
             //          §5.7). IRQST[3] must follow ser_out_complete
@@ -905,6 +959,77 @@ module tb_pokey;
             do_write(8'h01, 8'h00);
             do_write(8'h02, 8'hFF);
             do_write(8'h03, 8'h00);
+        end
+
+        // ===== Phase O — unused read addresses read $FF (pokey_default) ===
+        // POKEY does not drive the data bus for its unused read
+        // addresses $D20B / $D20C, so the Atari reads the pulled-up bus
+        // as $FF. ACID800 pokey_default reads $D20C and asserts $FF.
+        $display("[O] unused read addr default = $FF");
+        begin
+            @(negedge clk);
+            raddr = 8'h0C;
+            @(negedge clk);
+            expect_eq("O.D20C-default", rdata, 8'hFF);
+            @(negedge clk);
+            raddr = 8'h0B;
+            @(negedge clk);
+            expect_eq("O.D20B-default", rdata, 8'hFF);
+        end
+
+        // ===== Phase P — async receive suppresses TIMER 4 IRQ (asyncrecv) =
+        // ACID800 pokey_asyncrecv: with SKCTL async-receive mode ON
+        // (bit4 = $13) POKEY holds the timer 3+4 pair in reset awaiting
+        // a start bit, so TIMER 4 never fires. Toggling the mode off
+        // ($03) lets it fire again. TIMER 4 IRQ = IRQEN bit 2.
+        $display("[P] async receive suppresses TIMER 4 IRQ");
+        begin
+            // ---- P.1: async OFF ($03) → timer4 fires ----
+            do_write(8'h0F, 8'h03);   // SKCTL = $03 (async recv OFF)
+            do_write(8'h08, 8'h00);   // AUDCTL = 0 (unlinked, ref clock)
+            do_write(8'h07, 8'h00);   // AUDC4 = 0 (silent)
+            do_write(8'h06, 8'h02);   // AUDF4 = 2 → wrap every 3 ref ticks
+            do_write(8'h0E, 8'h00);   // IRQEN = 0
+            do_write(8'h09, 8'h00);   // STIMER — reload ch4
+            do_write(8'h0E, 8'h04);   // IRQEN = $04 (TIMER 4)
+            repeat (64) @(posedge clk);
+            if (irq_n !== 1'b0) begin
+                $display("FAIL P.1: irq_n=%0b, TIMER 4 IRQ did not fire (async OFF)", irq_n);
+                fail_count++;
+            end
+
+            // ---- P.2: async ON ($13) → timer4 suppressed ----
+            do_write(8'h0E, 8'h00);   // ack / clear latch
+            do_write(8'h0F, 8'h13);   // SKCTL = $13 (async recv ON)
+            do_write(8'h09, 8'h00);   // STIMER
+            do_write(8'h0E, 8'h04);   // IRQEN = $04 (TIMER 4)
+            repeat (64) @(posedge clk);
+            if (irq_n !== 1'b1) begin
+                $display("FAIL P.2: irq_n=%0b, TIMER 4 IRQ fired with async recv active", irq_n);
+                fail_count++;
+            end
+            @(negedge clk);
+            raddr = 8'h0E;            // IRQST
+            @(negedge clk);
+            if (rdata[2] !== 1'b1) begin
+                $display("FAIL P.2: IRQST=$%02x bit2=0 (TIMER 4 pending in async recv)", rdata);
+                fail_count++;
+            end
+
+            // ---- P.3: async OFF again → timer4 unlocks ----
+            do_write(8'h0F, 8'h03);   // SKCTL = $03 (async recv OFF)
+            do_write(8'h0E, 8'h00);
+            do_write(8'h09, 8'h00);   // STIMER
+            do_write(8'h0E, 8'h04);   // IRQEN = $04
+            repeat (64) @(posedge clk);
+            if (irq_n !== 1'b0) begin
+                $display("FAIL P.3: irq_n=%0b, TIMER 4 IRQ did not re-fire after async OFF", irq_n);
+                fail_count++;
+            end
+            // Park.
+            do_write(8'h0E, 8'h00);
+            do_write(8'h06, 8'hFF);
+            do_write(8'h0F, 8'h00);
         end
 
         if (fail_count == 0) begin

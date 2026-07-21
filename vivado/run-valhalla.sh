@@ -29,6 +29,8 @@ PLACE_DIRECTIVE="${PLACE_DIRECTIVE:-}"
 # (which is rm -rf'd each run), e.g. ref.dcp.  Empty = full build.
 INCR_REF_DCP="${INCR_REF_DCP:-}"
 INCR_DIRECTIVE="${INCR_DIRECTIVE:-}"
+# Ship a knowingly-marginal bitstream past the negative-WNS gate (e.g. thin clk_sys).
+TIMING_GATE_ALLOW_NEG="${TIMING_GATE_ALLOW_NEG:-}"
 
 REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 LOCAL_BUILD="$REPO_ROOT/vivado/build"
@@ -53,6 +55,7 @@ cd ~/$REMOTE_DIR
 export PLACE_DIRECTIVE="$PLACE_DIRECTIVE"
 export INCR_REF_DCP="$INCR_REF_DCP"
 export INCR_DIRECTIVE="$INCR_DIRECTIVE"
+export TIMING_GATE_ALLOW_NEG="$TIMING_GATE_ALLOW_NEG"
 # Regenerate the PS block design (gen_ps_bd.tcl) for synth/impl/bit so it
 # tracks the script, not the stale committed BD output — else an HP port added
 # to the script but not re-run fails elaboration with "m_axi_hpN_* does not

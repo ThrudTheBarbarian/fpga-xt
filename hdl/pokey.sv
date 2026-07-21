@@ -164,6 +164,7 @@ module pokey #(
         .audc1        (audc1),  .audc2 (audc2),
         .audc3        (audc3),  .audc4 (audc4),
         .audctl       (audctl),
+        .skctl        (skctl_out),
         .ch1_out      (ch1_out),
         .ch2_out      (ch2_out),
         .ch3_out      (ch3_out),

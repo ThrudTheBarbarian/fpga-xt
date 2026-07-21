@@ -56,17 +56,7 @@ module xt6502 (
     // ── Bus-access taps (for the data watchpoint) ──
     output wire        dbg_bus_stb,    // 1 = a bus access commits this cycle (= rdy)
     output wire [15:0] dbg_bus_addr,   // address of that access (= the live addr bus)
-    output wire        dbg_bus_rw,     // 1 = read, 0 = write
-
-    // ── Debug register injection (commit while halted; from xt6502_debug) ──
-    input  wire        dbg_wr,         // 1-cycle: load PC/regs below, re-anchor at ST_FETCH
-    input  wire [15:0] dbg_wpc,
-    input  wire [7:0]  dbg_wa,
-    input  wire [7:0]  dbg_wx,
-    input  wire [7:0]  dbg_wy,
-    input  wire [7:0]  dbg_ws,
-    input  wire [7:0]  dbg_wp,
-    input  wire [3:0]  dbg_wshigh
+    output wire        dbg_bus_rw      // 1 = read, 0 = write
 );
 
     localparam [15:0] VEC_RESET = 16'hFFFC;
@@ -872,17 +862,6 @@ module xt6502 (
             nmi_n_d <= 1'b1; nmi_pending <= 1'b0;
             intr_mode <= 1'b0; intr_nmi <= 1'b0;
             sp_new_q <= 12'h000; frame_idx <= 3'd0;
-        end
-        else if (dbg_wr) begin
-            // Debug register injection (only while halted, rdy=0): load PC/regs and
-            // re-anchor at ST_FETCH with MAR=PC so a subsequent `go` re-fetches from
-            // the injected PC. Nothing else in the pipeline is disturbed.
-            PC     <= dbg_wpc;
-            MAR    <= dbg_wpc;
-            state  <= ST_FETCH;
-            A      <= dbg_wa; X <= dbg_wx; Y <= dbg_wy;
-            S      <= dbg_ws; S_high <= dbg_wshigh;
-            P      <= dbg_wp;
         end
         else if (rdy) begin
             state <= state_nxt;

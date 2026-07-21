@@ -2851,6 +2851,10 @@ static long do_syscall(uint32_t num, long a0, long a1, long a2)
         extern int xl_boot(const char *, int);
         return xl_boot((const char *)a0, (int)a1);
     }
+    case SYS_xexload: {                                     /* (path, turbo) — task ctx (SD reads) */
+        extern int xex_boot(const char *, int);
+        return xex_boot((const char *)a0, (int)a1);
+    }
     case SYS_plane_grab: {                                  /* (plane_id, buf) -> (w<<16)|h */
         const uint32_t XL_W = 320, XL_H = 192;              /* XL_SRC_W x XL_SRC_H (RTL) */
         if ((int)a0 != XT_PLANE_XL) return -22;             /* 6502/XL plane only (m68k later) */
@@ -3018,6 +3022,7 @@ static int needs_task_ctx(struct k_regs *regs, uint32_t num)
     case SYS_poll:         return 1;               /* BLOCKS until an fd is ready */
     case SYS_open:    return 1;                    /* may walk a FatFs directory path */
     case SYS_xl_boot: return 1;                    /* reads the OS ROMs + the ATR off the SD */
+    case SYS_xexload: return 1;                    /* reads the OS ROMs + the .xex off the SD */
     case SYS_read: {                               /* stdin + pipes + channels block */
         if (fd_is_con(fd)) return 1;               /* console alias: con_tty_readc path */
         proc_t *q = cur_proc();

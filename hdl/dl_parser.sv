@@ -21,19 +21,36 @@
 // inst[5]. The compositor uses these together with the live HSCROL /
 // VSCROL register values to scroll. char_row tracking still deferred.
 //
-// M11d: VSCROL last-row truncation. The DL is now parsed with a
-// 1-DL-line buffer: after a line is decoded into the "decoded" regs,
-// it is staged into "pending" only after the prior pending has emitted
-// (or, on the first decode, stashed without emitting). This lets the
-// emit step look at the FRESHLY-DECODED line's vscrol bit to decide
-// whether the pending line is the LAST line of a vscroll block:
-//   - First-of-block (pend_vscrol_en && !prev_pend_vscrol_en): sub_row
-//     starts at VSCROL → emits scan_count - VSCROL rows.
-//   - Last-of-block (pend_vscrol_en && !decoded_vscrol_en && pend was
-//     not also first-of-block): emits sub_rows 0..VSCROL → VSCROL+1 rows.
-//   - Middle: emits scan_count rows starting at sub_row 0.
-//   At end-of-DL (JVB or atari_row >= ATARI_H), the final pending is
-//   flushed with last-of-block treatment.
+// M11d/M11e: VSCROL region accounting, modelled on the real ANTIC DCTR
+// (the 4-bit within-mode-line scan counter) and its VSCROL comparison.
+// Each emitted DL line runs the DCTR from a START value S, incrementing
+// (wrapping mod-16), and ends AFTER the scan line where DCTR == a TERMINAL
+// value E.  Row count = ((E - S) & 15) + 1.  VSCROL modifies S and E only
+// at the two edges of a scroll region, decided purely from the CURRENT
+// line's own VSCROL bit and the PREVIOUS emitted line's VSCROL bit — no
+// look-ahead to the next line is needed:
+//   - first-of-block  (cur.vs && !prev.vs): S = VSCROL, E = mode_h-1.
+//        emits ((mode_h-1 - VSCROL) & 15)+1 rows.  When VSCROL >= mode_h
+//        the DCTR wraps past 15 → a long line (the ANTIC "over-scroll"
+//        quirk, e.g. mode 2 + VSCROL 9 shows 15 scan lines).
+//   - last-of-block   (!cur.vs && prev.vs): S = 0, E = VSCROL.
+//        emits VSCROL+1 rows.  This is the NON-vscrol line that FOLLOWS a
+//        scroll region (mode OR blank) — it grows/shrinks, not the last
+//        line that still carries the VSCROL bit.
+//   - middle / normal (else): S = 0, E = scan_count-1 → full height.
+// S (=pend_init_sub) and E (=pend_eff_end) are computed once, when a line
+// is stashed into "pending", using the previous line's VSCROL bit (which
+// is exactly pend_vscrol_en at REFILL time, before it is overwritten).
+// The 1-DL-line pending buffer is retained for LMS auto-advance and the
+// "DLI fires at end of the flagged line" semantics.
+//   At end-of-DL (JVB or atari_row >= ATARI_H) the final pending is
+//   flushed using its already-computed S/E.
+//
+// NOTE (out of scope for this module): a DLI that rewrites VSCROL *mid*
+// frame (ACID800 antic_vscroll / antic_vscroldli) changes the region size
+// live, per raster line.  dl_parser builds one static table per VBI from
+// the VSCROL value latched at parse time, so it cannot reproduce a mid-
+// frame VSCROL change — that belongs to the live raster/compositor path.
 //
 // Reference: rp-antic/src/display_list.c § parse_display_list().
 
@@ -104,6 +121,19 @@ module dl_parser (
     logic        line_hscrol_en [0:ATARI_H-1];
     logic        line_vscrol_en [0:ATARI_H-1];
 
+    // Physical-scanline DLI map — indexed by the PHYSICAL display row
+    // (ar_atari_row = raster scanline - DISPLAY_TOP), NOT the compressed
+    // emit-row space that line_dli[] lives in.  nmi_gen looks up DLIs via
+    // `dli_at` using the LIVE raster row, so the two spaces MUST agree.  The
+    // compressed line_dli[] diverges from the raster row by the leading-
+    // overscan skip (and drops DLIs on skipped/late blank lines), which made
+    // real-HW DLIs fire at the wrong scan line — or not at all — even though
+    // the unit sims (which drive the compressed row directly) passed.  This
+    // table is built in raster-row space: phys_row = lead_skipped + atari_row
+    // for emitted content, lead_skipped-relative for skipped leading blanks.
+    // Real ANTIC raises the DLI on the LAST scan line of the flagged DL line.
+    logic        line_dli_p     [0:ATARI_H-1];
+
     // Read port: combinational lookup.
     assign meta_mode       = line_mode      [meta_row[7:0]];
     assign meta_dli        = line_dli       [meta_row[7:0]];
@@ -111,7 +141,7 @@ module dl_parser (
     assign meta_sub_row    = line_sub_row   [meta_row[7:0]];
     assign meta_hscrol_en  = line_hscrol_en [meta_row[7:0]];
     assign meta_vscrol_en  = line_vscrol_en [meta_row[7:0]];
-    assign dli_at          = line_dli       [dli_row[7:0]];
+    assign dli_at          = line_dli_p     [dli_row[7:0]];
 
     // ---- FSM -----------------------------------------------------------
     typedef enum logic [3:0] {
@@ -207,16 +237,17 @@ module dl_parser (
     logic        pend_vscrol_en;
     logic        pend_hscrol_en;
     logic [15:0] pend_lms;
-    logic [3:0]  pend_init_sub;
-    logic [4:0]  pend_eff_end;       // emit sub_row in [pend_init_sub, pend_eff_end-1]
-    logic [3:0]  pend_vscrol_val;    // VSCROL register snapshot at pend's decode time
-    logic [4:0]  pend_scan_count;    // natural scan count (for blank lines this = blank_count)
+    logic [3:0]  pend_init_sub;      // S: DCTR start value (first emitted sub_row)
+    logic [4:0]  pend_eff_end;       // E: terminal DCTR value; emit ends when sub_row==E
 
     // ---- Emit walker ----------------------------------------------------
     logic [3:0]  sub_row;             // current sub_row within the emitting pend
     logic [7:0]  atari_row;           // 0..ATARI_H-1
     logic [10:0] ops;                 // ops counter (safety)
     logic        pending_dli;         // DLI to fire on FIRST emitted row of next pend
+    logic        pending_dli_is_mode; // pending_dli came from a visible mode line
+                                      // (uses compressed compositor-aligned position)
+                                      // vs a blank line (uses physical position)
 
     // ANTIC mode → scan count per DL line. Max is 16 (modes 5/7).
     function automatic logic [4:0] scanline_count_for_mode(logic [3:0] m);
@@ -279,12 +310,11 @@ module dl_parser (
             pend_lms        <= 16'h0;
             pend_init_sub   <= 4'h0;
             pend_eff_end    <= 5'd0;
-            pend_vscrol_val <= 4'h0;
-            pend_scan_count <= 5'd1;
             sub_row         <= 4'd0;
             atari_row       <= 8'd0;
             ops             <= 11'd0;
             pending_dli     <= 1'b0;
+            pending_dli_is_mode <= 1'b0;
             parse_done      <= 1'b0;
             parse_count     <= 32'h0;
             mem_raddr       <= 16'h0;
@@ -295,6 +325,7 @@ module dl_parser (
                 line_sub_row[i]   <= 4'h0;
                 line_hscrol_en[i] <= 1'b0;
                 line_vscrol_en[i] <= 1'b0;
+                line_dli_p[i]     <= 1'b0;
             end
         end else begin
             parse_done <= 1'b0;     // single-cycle pulse
@@ -307,11 +338,18 @@ module dl_parser (
                         atari_row      <= 8'd0;
                         ops            <= 11'd0;
                         pending_dli    <= 1'b0;
+                        pending_dli_is_mode <= 1'b0;
                         pend_valid     <= 1'b0;
                         seen_mode      <= 1'b0;
                         lead_skipped   <= 8'd0;
                         emit_phase     <= E_STAGE;
                         state          <= S_FETCH_OP;
+                        // Physical DLI map is written sparsely (only on DLI
+                        // lines' last scan line), so clear it every parse or
+                        // stale bits from a prior frame's DL would fire phantom
+                        // NMIs.  Parallel reset (same as the master reset loop);
+                        // the whole VBI is available before the first fetch.
+                        for (i = 0; i < ATARI_H; i++) line_dli_p[i] <= 1'b0;
                     end
                 end
 
@@ -319,11 +357,8 @@ module dl_parser (
                     if (atari_row >= ATARI_H[7:0] || ops >= OPS_LIMIT[10:0]) begin
                         // End-of-DL or safety abort. Flush pending if any.
                         if (pend_valid) begin
-                            // Last-of-block treatment for trailing pending.
-                            if (pend_vscrol_en && pend_init_sub == 4'd0)
-                                pend_eff_end <= {1'b0, pend_vscrol_val} + 5'd1;
-                            else
-                                pend_eff_end <= pend_scan_count;
+                            // Flush trailing pending using its already-computed
+                            // S (pend_init_sub) / E (pend_eff_end).
                             sub_row    <= pend_init_sub;
                             emit_phase <= E_FLUSH_END;
                             state      <= S_STAGE;
@@ -370,6 +405,14 @@ module dl_parser (
                             // the playfield tops out correctly (a normal 2-3 blank-8
                             // OS/game margin). Must NOT consume an atari_row or the
                             // playfield shoves down + bottom mode lines clip.
+                            // BUT a skipped blank can still carry a DLI (ACID800
+                            // antic_dlitiming's $90 blank-2-line+DLI list): record it
+                            // in physical space at its LAST scan line so the NMI still
+                            // fires at the right raster row.  phys = lead_skipped +
+                            // (blank_count-1) = lead_skipped + mem_rdata[6:4].
+                            if (mem_rdata[7]
+                                && (lead_skipped + {5'd0, mem_rdata[6:4]}) < ATARI_H[7:0])
+                                line_dli_p[lead_skipped + {5'd0, mem_rdata[6:4]}] <= 1'b1;
                             lead_skipped <= lead_skipped + {5'd0, mem_rdata[6:4]} + 8'd1;
                             state        <= S_FETCH_OP;
                         end else begin
@@ -444,12 +487,8 @@ module dl_parser (
                         // hold — multi-cycle DMA fetch in progress
                     end else if (is_jvb) begin
                         // JVB ends the frame. Flush any trailing pending
-                        // with last-of-block treatment.
+                        // using its already-computed S/E.
                         if (pend_valid) begin
-                            if (pend_vscrol_en && pend_init_sub == 4'd0)
-                                pend_eff_end <= {1'b0, pend_vscrol_val} + 5'd1;
-                            else
-                                pend_eff_end <= pend_scan_count;
                             sub_row    <= pend_init_sub;
                             emit_phase <= E_FLUSH_END;
                             state      <= S_STAGE;
@@ -475,25 +514,24 @@ module dl_parser (
                             // with mode_q / vscrol_q / hscrol_q reflecting the
                             // decoded line; is_blank picks whether mode_q is 0.
                             logic        decoded_vs;
+                            logic [4:0]  sc;
                             decoded_vs = is_blank ? 1'b0 : vscrol_q;
+                            sc         = is_blank ? blank_count
+                                                  : scanline_count_for_mode(mode_q);
 
                             if (pend_valid) begin
-                                // Determine pend_eff_end based on lookahead.
-                                // Last-of-block when pend has VSCROL bit, the
-                                // decoded line does NOT, AND pend wasn't itself
-                                // first-of-block (init_sub == 0). The first-of-
-                                // block clamp wins for single-line blocks.
-                                if (pend_vscrol_en && !decoded_vs
-                                    && pend_init_sub == 4'd0)
-                                    pend_eff_end <= {1'b0, pend_vscrol_val} + 5'd1;
-                                else
-                                    pend_eff_end <= pend_scan_count;
+                                // S/E were computed when this pending was filled
+                                // (first-stash or REFILL); just launch the walk.
                                 sub_row    <= pend_init_sub;
                                 emit_phase <= E_EMIT;
                                 // stay in S_STAGE; emit phase handles the walk
                             end else begin
                                 // First decode — stash without emit. lms_ptr
                                 // updates from new_lms_loaded if LMS bit was set.
+                                // The line before the first DL line is treated as
+                                // non-VSCROL (frame top), so first-of-block ==
+                                // (this line has the VSCROL bit).  last-of-block
+                                // can't apply to the very first line.
                                 if (lms_was_loaded) lms_ptr <= new_lms_loaded;
                                 pend_mode      <= is_blank ? 4'h0 : mode_q;
                                 pend_dli       <= dli_q;
@@ -502,20 +540,23 @@ module dl_parser (
                                 pend_lms       <= lms_was_loaded
                                                     ? new_lms_loaded
                                                     : lms_ptr;
-                                // First decode has no prior pending; can't be
-                                // first-of-block.
-                                pend_init_sub  <= 4'd0;
-                                pend_vscrol_val<= vscrol;
-                                pend_scan_count<= is_blank
-                                                    ? blank_count
-                                                    : scanline_count_for_mode(mode_q);
+                                // first-of-block: S = VSCROL; else S = 0.
+                                pend_init_sub  <= decoded_vs ? vscrol : 4'd0;
+                                // no last-of-block on line 0 → E = scan_count-1.
+                                pend_eff_end   <= sc - 5'd1;
                                 pend_valid     <= 1'b1;
                                 state          <= S_FETCH_OP;
                                 emit_phase     <= E_STAGE;
                             end
                         end
 
-                        E_EMIT, E_FLUSH_END: begin
+                        E_EMIT, E_FLUSH_END: begin : sblk_emit
+                            // Physical raster row for this emitted scan line:
+                            // leading-overscan scanlines were skipped without
+                            // consuming an atari_row, so the raster row lags the
+                            // compressed atari_row by exactly lead_skipped.
+                            logic [8:0] phys_r;
+                            phys_r = {1'b0, lead_skipped} + {1'b0, atari_row};
                             if (atari_row < ATARI_H[7:0]) begin
                                 line_mode[atari_row]      <= pend_mode;
                                 line_sub_row[atari_row]   <= sub_row;
@@ -524,11 +565,37 @@ module dl_parser (
                                 line_vscrol_en[atari_row] <= pend_vscrol_en;
                                 line_dli[atari_row]       <=
                                     (sub_row == pend_init_sub) ? pending_dli : 1'b0;
+                                // Physical DLI map (what nmi_gen reads), hybrid by
+                                // source line type so BOTH real games and the ACID800
+                                // raster tests are served despite the leading-overscan
+                                // compression the compositor relies on:
+                                //  - VISIBLE mode-line DLIs keep the COMPRESSED,
+                                //    compositor-aligned "fire on the next line's first
+                                //    row" convention (via pending_dli, deferred here),
+                                //    so per-scanline colour DLIs still land on the row
+                                //    the compositor actually draws (top-aligned).  A
+                                //    physical index would drop them lead_skipped rows
+                                //    too low.
+                                //  - BLANK-line DLIs are recorded at their TRUE
+                                //    physical last scan line (below).  ACID800 nmist/
+                                //    dlitiming/pfstart-stop hang their DLIs on blank
+                                //    lines precisely to probe raster timing, and carry
+                                //    no compositor content to align against.
+                                if ((sub_row == pend_init_sub)
+                                    && pending_dli && pending_dli_is_mode)
+                                    line_dli_p[atari_row] <= 1'b1;
                                 atari_row <= atari_row + 8'd1;
-                                sub_row   <= sub_row + 4'd1;
-                                if ({1'b0, sub_row} + 5'd1 == pend_eff_end) begin
-                                    // Last emitted sub_row of pending.
-                                    pending_dli <= pend_dli;
+                                sub_row   <= sub_row + 4'd1;    // 4-bit DCTR wraps mod-16
+                                if ({1'b0, sub_row} == pend_eff_end) begin
+                                    // Terminal DCTR reached: the DL line's last
+                                    // physical scan line, where real ANTIC raises
+                                    // the DLI.  Only blank lines record here (physical);
+                                    // mode lines defer to the compressed path above.
+                                    if (pend_dli && pend_mode == 4'd0
+                                        && phys_r < {1'b0, ATARI_H[7:0]})
+                                        line_dli_p[phys_r[7:0]] <= 1'b1;
+                                    pending_dli         <= pend_dli;
+                                    pending_dli_is_mode <= (pend_mode >= 4'd2);
                                     if (emit_phase == E_FLUSH_END) begin
                                         parse_done  <= 1'b1;
                                         parse_count <= parse_count + 32'd1;
@@ -550,27 +617,42 @@ module dl_parser (
                             // override with new_lms_loaded if decoded had LMS.
                             logic [15:0] adv;
                             logic [15:0] new_lms_after_load;
+                            // VSCROL edge decision for the NEW (decoded) line.
+                            // prev.vs is the OLD pending's vscrol_en (the line we
+                            // just emitted) — still valid here as pend_vscrol_en
+                            // has not yet been overwritten.  vscrol_q is already
+                            // gated to 0 for mode < 2 in S_DECODE_OP, so new_vs
+                            // implies a real visible-mode VSCROL line.
+                            logic        new_vs;
+                            logic        first_of_block;
+                            logic        last_of_block;
+                            logic [4:0]  sc;
                             adv = (pend_mode >= 4'd2)
                                     ? lms_ptr + bytes_per_line(pend_mode, pend_hscrol_en)
                                     : lms_ptr;
                             new_lms_after_load = lms_was_loaded ? new_lms_loaded : adv;
                             lms_ptr        <= new_lms_after_load;
 
-                            // Copy decoded → pending. prev_vscrol = old pend's
-                            // vscrol_en (which IS pend_vscrol_en RIGHT NOW since
-                            // we haven't overwritten yet).
+                            new_vs         = is_blank ? 1'b0 : vscrol_q;
+                            first_of_block = new_vs  && !pend_vscrol_en;
+                            last_of_block  = !new_vs &&  pend_vscrol_en;
+                            sc             = is_blank ? blank_count
+                                                     : scanline_count_for_mode(mode_q);
+
+                            // Copy decoded → pending.
                             pend_mode      <= is_blank ? 4'h0 : mode_q;
                             pend_dli       <= dli_q;
-                            pend_vscrol_en <= is_blank ? 1'b0 : vscrol_q;
+                            pend_vscrol_en <= new_vs;
                             pend_hscrol_en <= is_blank ? 1'b0 : hscrol_q;
                             pend_lms       <= new_lms_after_load;
-                            pend_init_sub  <= (!is_blank && (mode_q >= 4'd2)
-                                                && vscrol_q && !pend_vscrol_en)
-                                                  ? vscrol : 4'd0;
-                            pend_vscrol_val<= vscrol;
-                            pend_scan_count<= is_blank
-                                                ? blank_count
-                                                : scanline_count_for_mode(mode_q);
+                            // S: first-of-block starts at VSCROL, else 0.
+                            pend_init_sub  <= first_of_block ? vscrol : 4'd0;
+                            // E: last-of-block ends at DCTR==VSCROL (VSCROL+1 rows);
+                            //    else at scan_count-1 (full height).  A first-of-
+                            //    block line with VSCROL >= mode height wraps the DCTR
+                            //    past 15 → the ANTIC over-scroll long line.
+                            pend_eff_end   <= last_of_block ? {1'b0, vscrol}
+                                                            : (sc - 5'd1);
                             // pend_valid stays 1.
                             state          <= S_FETCH_OP;
                             emit_phase     <= E_STAGE;

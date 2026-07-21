@@ -121,6 +121,12 @@ module xt_gp0_regs (
     input  wire [31:0] diag7_word,
     input  wire [31:0] diag8_word,      // TEMP: ROM-window upload diag (AXI/rom_we counts)
     input  wire [31:0] diag9_word,      // TEMP: ROM-window upload diag (last addr/data)
+    input  wire [31:0] diag10_word,     // TEMP: compositor P/M FETCH capture {cmp_raddr,8'h0,cmp_rdata}
+    input  wire [31:0] diag11_word,     // TEMP: compositor P/M-region fetch counter
+    input  wire [31:0] diag12_word,     // TEMP: nmi_gen {dli_nmi_cnt,vbi_nmi_cnt,dli_evt_cnt,last_nmist}
+    input  wire [31:0] diag13_word,     // TEMP: nmi_gen {nmien,last_dli_scanline,nmi_assert_cnt}
+    input  wire [31:0] diag14_word,     // TEMP: NMIEN sticky evidence {wr_cnt[15:0],nmien_or[7:0],7'b0,dli_coincide}
+    input  wire [31:0] diag15_word,     // TEMP: player-0 P/M fetch ($34xx, last non-zero) {cmp_raddr,cmp_p0_nz_cnt,cmp_rdata}
     // ---- hardware entropy (clk_sys) — read in the 0x7xx block --------------
     input  wire [31:0] trng_word,
 
@@ -212,7 +218,13 @@ module xt_gp0_regs (
     input  wire [31:0] dbg_trc_wptr,      // [11:0]=wptr [16]=wrapped [17]=broke
     input  wire [15:0] dbg_trc_pc,
     input  wire [31:0] dbg_trc_axys,
-    input  wire [11:0] dbg_trc_p
+    input  wire [11:0] dbg_trc_p,
+    // FID streaming trace (0x60..0x74)
+    output reg  [1:0]  dbg_strm_ctrl,     // [0]=strm_en [1]=drain_done
+    output reg  [11:0] dbg_strm_raddr,    // ring read address
+    input  wire        dbg_strm_flush,    // ring full + core halted
+    input  wire [12:0] dbg_strm_wptr,     // valid entry count
+    input  wire [63:0] dbg_strm_rd        // ring[raddr]
 );
 
     // Block selectors (addr[11:8]) and register offsets (addr[7:0]) come from
@@ -268,7 +280,7 @@ module xt_gp0_regs (
             w_byte         <= 8'd0;
             gp0_ctrl       <= 8'h00;   // boot to the compositor; bars are debug-only
             cmpcfg         <= 32'h0000_0210;  // depth desktop0/overlay1/XL2, all opaque = shipping
-            sallyrst       <= 8'h00;          // 6502 runs from config, as always
+            sallyrst       <= 8'h02;          // power-on core = FIDELITY (bit1=1); bit0=0 = realm running. Turbo is a PS opt-in (CTRL_SALLYRST bit1=0)
             joy_ovr        <= 32'h0000_0000;  // override off: joy_bridge drives PORTA/TRIG0
             consol_keys    <= 8'h07;           // no console keys pressed (BASIC on) until the kernel sets it
             xt_unlock_we   <= 1'b0;
@@ -305,6 +317,8 @@ module xt_gp0_regs (
             dbg_wpsh       <= 12'd0;
             dbg_trc_ctrl   <= 2'b00;
             dbg_trc_idx    <= 12'd0;
+            dbg_strm_ctrl  <= 2'b00;
+            dbg_strm_raddr <= 12'd0;
         end else begin
             s_axi_awready <= 1'b0;
             s_axi_wready  <= 1'b0;
@@ -428,6 +442,8 @@ module xt_gp0_regs (
                                     DBG_WPSH:   dbg_wpsh       <= w_data[11:0];
                                     DBG_TRC_CTRL: dbg_trc_ctrl <= w_data[1:0];
                                     DBG_TRC_IDX:  dbg_trc_idx  <= w_data[11:0];
+                                    DBG_STRM_CTRL:  dbg_strm_ctrl  <= w_data[1:0];
+                                    DBG_STRM_RADDR: dbg_strm_raddr <= w_data[11:0];
                                     default: ;
                                 endcase
                             end
@@ -505,6 +521,12 @@ module xt_gp0_regs (
                                     DIAG7: s_axi_rdata <= diag7_word;
                                     DIAG8: s_axi_rdata <= diag8_word;
                                     DIAG9: s_axi_rdata <= diag9_word;
+                                    DIAG10: s_axi_rdata <= diag10_word;
+                                    DIAG11: s_axi_rdata <= diag11_word;
+                                    DIAG12: s_axi_rdata <= diag12_word;
+                                    DIAG13: s_axi_rdata <= diag13_word;
+                                    DIAG14: s_axi_rdata <= diag14_word;
+                                    DIAG15: s_axi_rdata <= diag15_word;
                                     default: ;
                                 endcase
                             BLK_MATH:
@@ -540,6 +562,10 @@ module xt_gp0_regs (
                                     DBG_TRC_PC:   s_axi_rdata <= {16'd0, dbg_trc_pc};
                                     DBG_TRC_AXYS: s_axi_rdata <= dbg_trc_axys;
                                     DBG_TRC_P:    s_axi_rdata <= {20'd0, dbg_trc_p};
+                                    DBG_STRM_STAT:  s_axi_rdata <= {31'd0, dbg_strm_flush};
+                                    DBG_STRM_WPTR:  s_axi_rdata <= {19'd0, dbg_strm_wptr};
+                                    DBG_STRM_RDLO:  s_axi_rdata <= dbg_strm_rd[31:0];
+                                    DBG_STRM_RDHI:  s_axi_rdata <= dbg_strm_rd[63:32];
                                     default: ;
                                 endcase
                             default: ;
