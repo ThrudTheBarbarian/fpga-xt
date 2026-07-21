@@ -877,7 +877,16 @@ module fpga_xt_top (
     // until ANTIC's cycle-105 hblank (plus an overdue timeout), so no deadlock. Without this the
     // fid core free-ran through STA WSYNC and every beam-raced kernel (intro rainbow, per-scanline
     // COLPF) mistimed — turbo and fid must be timing-identical.
-    wire       fid_rdy = cpu_sel & fid_mem_ok & ~dma_steal_sally & wsync_rdy_n & ~fdbg_cpu_halt;  // owns bus; /HALT + WSYNC + busy + dbg-halt aware
+    // 6502 RDY semantics: RDY (WSYNC) halts the CPU ONLY on READ cycles — a WRITE
+    // cycle completes regardless of RDY.  STA WSYNC has no post-trigger cycle so it's
+    // unaffected, but a RMW to $D40A (INC WSYNC — cpu_timing) triggers WSYNC on its
+    // dummy-write and MUST still commit the following real-write before halting on the
+    // next opcode fetch.  Gating the WSYNC stall by fid_rw (1=read) lands inc-wsync and
+    // sta-wsync's post-WSYNC VCOUNT read on the SAME cycle = the hardware contract, so a
+    // single VCOUNT increment cycle satisfies both antic_vcount and cpu_timing.  /HALT
+    // (DMA) and mem-busy still stall every cycle — only the WSYNC/RDY term is read-only.
+    wire       wsync_rdy_eff = wsync_rdy_n | ~fid_rw;   // write cycles ignore the WSYNC stall
+    wire       fid_rdy = cpu_sel & fid_mem_ok & ~dma_steal_sally & wsync_rdy_eff & ~fdbg_cpu_halt;  // owns bus; /HALT + WSYNC(read-only) + busy + dbg-halt aware
     // sally_mem's read-latch (bram_dout_q) AND every write/bank-latch/hwreg-strobe are gated
     // by its `rdy` — a "the CPU took a step" pulse. For the turbo core that is sally_rdy. The
     // fidelity core drives a STABLE address for the whole window and samples data at SUB_DATA=49,

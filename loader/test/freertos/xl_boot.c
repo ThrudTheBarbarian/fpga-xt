@@ -633,7 +633,13 @@ int xex_boot(const char *path, int turbo, int hold)
     GP0_SALLYRST = sel; __asm__ volatile("dsb");                  /* release -> coldstart */
 
     int halted = 0;                                 /* yield while the OS coldstarts + boots */
-    for (int ms = 0; ms < 3000 && !halted; ms += 10) {
+    /* 3000ms was marginal: the coldstart-to-$0706 time varies enough that a
+     * bulk sweep saw well over a third of loads bail with -5 ("never hit the
+     * boot trap") while the machine was in fact booting fine — the CPU is found
+     * running normally in OS ROM afterwards.  A generous ceiling costs nothing
+     * on the success path (this polls DBG_STAT and breaks out as soon as the
+     * trap hits) and makes back-to-back xexloads reliable enough to sweep. */
+    for (int ms = 0; ms < 12000 && !halted; ms += 10) {
         if (DBG_STAT & 1u) { halted = 1; break; }
         vTaskDelay(10);
     }

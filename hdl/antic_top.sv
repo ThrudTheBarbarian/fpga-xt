@@ -250,7 +250,7 @@ module antic_top #(
     // (scanline + horizontal machine-cycle) a selected ANTIC event fired,
     // plus its data byte.  cfg is A9-set (clk_sys) and 2-FF synced in here;
     // stat/cap are produced in clk_bus and 2-FF synced on the GP0 side.
-    input  wire [25:0] dbg_tb_cfg,      // {[25]=circular,[24]=clear,[19:16]=read_idx,[11:4]=match_addr,[2:0]=mode}
+    input  wire [25:0] dbg_tb_cfg,      // {[25]=circular,[24]=clear,[19:16]=read_idx,[11:4]=match_addr,[3]=visible_only,[2:0]=mode}
     output wire [31:0] dbg_tb_stat,     // {[25]=armed,[24]=full,[20:16]=wr_idx,[15:0]=trig_count}
     output wire [24:0] dbg_tb_cap       // ring[read_idx] = {scanline[8:0],phi2[7:0],data[7:0]}
 );
@@ -641,7 +641,12 @@ module antic_top #(
         .m_pl_in        (m_pl_in),
         .p_pl_in        (p_pl_in),
         .trig_in        (trig_high),
-        .pal_sense_in   (8'h02),         // NTSC sense default
+        // $D014 PAL/NTSC sense. NTSC GTIA reads $0F, PAL reads $01 — this was
+        // $02, which is neither, so every standard-detect took the PAL branch
+        // despite our 262-line NTSC frame. Found via ACID800 antic_vcount, which
+        // hung forever in `cpx:rne vcount` waiting for VCOUNT==155 (the PAL
+        // rollover) on a frame whose leading VCOUNT tops out at 131.
+        .pal_sense_in   (8'h0F),         // NTSC
         .consol_r_in    (consol_keys),   // console keys from GP0 CTRL_CONSOL (kernel holds OPTION $03 for games -> BASIC off)
         .hitclr_strobe  (hitclr_strobe)
     );
@@ -1171,6 +1176,35 @@ module antic_top #(
         endcase
     end
 
+    // One capture per bus access.  snoop_re_antic / snoop_we_antic are LEVELS
+    // (held for the whole bus phase), so a level-sensitive trigger fired TWICE
+    // per access and the second sample caught the live bus_addr read mux after
+    // it had already moved on — recording a garbage $FF alongside every good
+    // value.  Edge-detect so each access captures exactly once, on the cycle the
+    // data is still valid.  The pure-event modes (3=DLI, 4=VBI, 7=line) are
+    // already 1-cycle pulses, so their rising edge is the same cycle: unaffected.
+    logic tb_trig_q;
+    always_ff @(posedge clk_bus or posedge rst_bus) begin
+        if (rst_bus) tb_trig_q <= 1'b0;
+        else         tb_trig_q <= tb_trig;
+    end
+    wire tb_trig_edge = tb_trig & ~tb_trig_q;
+
+    // cfg[3] = visible-only: ignore triggers during vertical blank (scanline >=
+    // 240).  The ACID800 framework's `cmp:rne vcount` sync loops hammer $D40B in
+    // vblank and otherwise monopolise the 16-entry ring, hiding the test's own
+    // measurement reads (the ones whose cycle position is actually under test).
+    // clk_sys closes with ~zero margin, so the scanline compare is REGISTERED out
+    // of the capture-enable path (scanline only changes once per 114 cycles, so a
+    // 1-cycle-stale visible flag is exact at every trigger except a line boundary).
+    wire tb_visible_only = dbg_tb_cfg_s[3];
+    logic tb_scan_vis_q;
+    always_ff @(posedge clk_bus or posedge rst_bus) begin
+        if (rst_bus) tb_scan_vis_q <= 1'b1;
+        else         tb_scan_vis_q <= (ar_scanline < 9'd240);
+    end
+    wire tb_scan_ok = ~tb_visible_only | tb_scan_vis_q;
+
     // Capture payload byte: the write byte for write modes, the ANTIC
     // register read mux (valid at snoop_addr during a $D4xx read, since
     // antic_regs.raddr = bus_addr = snoop_addr) for the read mode, else the
@@ -1200,7 +1234,7 @@ module antic_top #(
             tb_wr_idx     <= 5'd0;
             tb_trig_count <= 16'd0;
             tb_armed      <= 1'b1;      // arm a fresh capture pass
-        end else if (tb_armed && (tb_mode != 3'd0) && tb_trig) begin
+        end else if (tb_armed && (tb_mode != 3'd0) && tb_trig_edge && tb_scan_ok) begin
             if (tb_circular) begin
                 // Circular: always write, wrap the 4-bit slot; never freeze. The
                 // ring holds the LAST 16 triggers; wr_idx (=next slot) is the OLDEST.
@@ -1228,6 +1262,15 @@ module antic_top #(
     // this correct: the old local counter was reset by the 140 kHz vbeam
     // line_start (~12 phi2 cycles), so it never reached 105 and WSYNC never
     // released.  phi2-paced line_start fixes it.
+    // NOTE (measured 2026-07-21): the DBG_TB read probe shows our post-WSYNC
+    // `lda vcount` reads landing at 111,111,112,112 where Phaeron's per-cycle
+    // annotations say 110,110,111,111 — a consistent +1.  Releasing here at 104
+    // instead of 105 DOES pull those reads onto the expected cycles, but it is
+    // the WRONG fix: it makes the CPU resume a cycle EARLY versus the hardware
+    // contract, and on HW it broke the OS coldstart (the 6502 stopped reaching
+    // the $0706 boot trap — xexload dropped to 3 loads in 8).  The +1 is
+    // therefore in the READ path inside the instruction, not in the resume
+    // point.  Keep the contract correct here; fix the read position instead.
     wire cycle_105_pulse = phi2_tick && (ar_phi2_in_line == 8'd105);
 
     wire        wsync_rdy_w;             // 1 = ready, 0 = stalled
