@@ -1468,7 +1468,7 @@ module fpga_xt_top (
     wire [31:0] antic_dbg_gtia;   // TEMP: {colpf0,colpf1,colpf2,colbk}  -> diag8 @ GP0 0x41C
     wire [31:0] antic_dbg_antic;  // TEMP: {colpf3,prior,chbase,dmactl}  -> diag9 @ GP0 0x420
     // ANTIC timebase debug probe (DBG_TB_*) between xt_gp0_regs and antic_top.
-    wire [24:0] antic_dbg_tb_cfg;   // cfg out of GP0 -> antic_top (2-FF synced inside antic_top)
+    wire [25:0] antic_dbg_tb_cfg;   // cfg out of GP0 -> antic_top (2-FF synced inside antic_top)
     wire [31:0] antic_dbg_tb_stat;  // status  antic_top -> GP0 (2-FF synced inside GP0)
     wire [24:0] antic_dbg_tb_cap;   // capture antic_top -> GP0 (2-FF synced inside GP0)
 

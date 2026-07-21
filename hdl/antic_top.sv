@@ -250,7 +250,7 @@ module antic_top #(
     // (scanline + horizontal machine-cycle) a selected ANTIC event fired,
     // plus its data byte.  cfg is A9-set (clk_sys) and 2-FF synced in here;
     // stat/cap are produced in clk_bus and 2-FF synced on the GP0 side.
-    input  wire [24:0] dbg_tb_cfg,      // {[24]=clear,[19:16]=read_idx,[11:4]=match_addr,[2:0]=mode}
+    input  wire [25:0] dbg_tb_cfg,      // {[25]=circular,[24]=clear,[19:16]=read_idx,[11:4]=match_addr,[2:0]=mode}
     output wire [31:0] dbg_tb_stat,     // {[25]=armed,[24]=full,[20:16]=wr_idx,[15:0]=trig_count}
     output wire [24:0] dbg_tb_cap       // ring[read_idx] = {scanline[8:0],phi2[7:0],data[7:0]}
 );
@@ -1122,12 +1122,19 @@ module antic_top #(
     // and 2-FF synced on the clk_sys (GP0) side.  The probe is purely
     // observational — it drives nothing in the ANTIC datapath.
     //
-    // cfg: [2:0]=mode [11:4]=match_addr [19:16]=read_idx [24]=clear
+    // cfg: [2:0]=mode [11:4]=match_addr [19:16]=read_idx [24]=clear [25]=circular
     // mode: 0=off 1=$D4xx wr@match 2=$D4xx rd@match 3=DLI-line 4=VBI
     //       5=WSYNC($D40A wr) 6=any $D4xx wr 7=every ar_line_start
+    // circular: 0 = stop-on-full (hold the FIRST 16 triggers, then freeze);
+    //           1 = wrap (hold the LAST 16 triggers — the ring rolls so it
+    //           always shows the most-recent events; pairs with xexload --hold
+    //           to capture steady-state / failing-assert timing, not boot).
     // ================================================================
-    wire [24:0] dbg_tb_cfg_s;
-    cdc_sync_bit #(.WIDTH(25)) u_tb_cfg_sync (
+    wire [25:0] dbg_tb_cfg_s;
+    // Slow A9 config: every field (mode/match/read_idx/clear/circular) is quasi-
+    // static — set and left to settle before the probe is armed or read back.
+    // cdc-lint: independent-bits — quasi-static config, per-bit 2-FF skew is benign
+    cdc_sync_bit #(.WIDTH(26)) u_tb_cfg_sync (
         .dst_clk (clk_bus),
         .src_sig (dbg_tb_cfg),
         .dst_sig (dbg_tb_cfg_s)
@@ -1137,6 +1144,7 @@ module antic_top #(
     wire [7:0] tb_match_addr = dbg_tb_cfg_s[11:4];
     wire [3:0] tb_read_idx   = dbg_tb_cfg_s[19:16];
     wire       tb_clear      = dbg_tb_cfg_s[24];
+    wire       tb_circular   = dbg_tb_cfg_s[25];
 
     // Edge-detect the (synced) clear so one cfg write with clear=1 arms and
     // resets the ring for exactly one fresh capture pass.
@@ -1175,10 +1183,13 @@ module antic_top #(
 
     // 16-entry ring in distributed RAM: {scanline[8:0], phi2_in_line[7:0], data[7:0]}.
     logic [24:0] tb_ring [0:15];
-    logic [4:0]  tb_wr_idx;      // 0..16; bit[4] = full (write index saturates)
+    logic [4:0]  tb_wr_idx;      // stop-on-full: 0..16, bit[4]=full (saturates).
+                                 // circular: bit[4]=0, [3:0]=next write slot (wraps 0..15).
     logic [15:0] tb_trig_count;  // 16-bit saturating trigger count since clear
     logic        tb_armed;
-    wire         tb_full = tb_wr_idx[4];
+    // stop-on-full: full once the index reaches 16 (bit4). circular: full once the
+    // ring has wrapped (>=16 triggers seen), i.e. all 16 slots are recent events.
+    wire         tb_full = tb_circular ? (tb_trig_count >= 16'd16) : tb_wr_idx[4];
 
     always_ff @(posedge clk_bus or posedge rst_bus) begin
         if (rst_bus) begin
@@ -1190,7 +1201,13 @@ module antic_top #(
             tb_trig_count <= 16'd0;
             tb_armed      <= 1'b1;      // arm a fresh capture pass
         end else if (tb_armed && (tb_mode != 3'd0) && tb_trig) begin
-            if (!tb_full) begin
+            if (tb_circular) begin
+                // Circular: always write, wrap the 4-bit slot; never freeze. The
+                // ring holds the LAST 16 triggers; wr_idx (=next slot) is the OLDEST.
+                tb_ring[tb_wr_idx[3:0]] <= {ar_scanline, ar_phi2_in_line, tb_data8};
+                tb_wr_idx               <= {1'b0, tb_wr_idx[3:0] + 4'd1};
+            end else if (!tb_full) begin
+                // Stop-on-full (default): fill once, then freeze on the FIRST 16.
                 tb_ring[tb_wr_idx[3:0]] <= {ar_scanline, ar_phi2_in_line, tb_data8};
                 tb_wr_idx               <= tb_wr_idx + 5'd1;   // stops at 16 (bit4 set)
             end
