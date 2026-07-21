@@ -1146,12 +1146,13 @@ module antic_top #(
 
     // Capture payload byte: the write byte for write modes, the ANTIC
     // register read mux (valid at snoop_addr during a $D4xx read, since
-    // antic_regs.raddr = bus_addr = snoop_addr) for the read mode, else 0
-    // (scanline+cycle is the whole payload for the pure-event modes).
+    // antic_regs.raddr = bus_addr = snoop_addr) for the read mode, else the
+    // live NMIEN for the pure-event modes (3=DLI, 4=VBI, 7=line) — so a DLI-line
+    // capture records the gating NMIEN value at that scanline (is bit7 set?).
     wire [7:0] tb_data8 =
           (tb_mode == 3'd1 || tb_mode == 3'd5 || tb_mode == 3'd6) ? snoop_data
         : (tb_mode == 3'd2)                                        ? antic_read_data
-        :                                                           8'h00;
+        :                                                           nmien_q;
 
     // 16-entry ring in distributed RAM: {scanline[8:0], phi2_in_line[7:0], data[7:0]}.
     logic [24:0] tb_ring [0:15];
