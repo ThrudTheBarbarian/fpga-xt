@@ -52,3 +52,9 @@ JSON. Add the new `runs/*.json`, run `python3 docs/a800/gen.py`, commit.
 Test sources (readable `.lst` mads listings) are under
 `rsrc/acid800/Acid800/standalone/<name>.lst` — the assertion that failed maps straight to the
 detail string shown in the dashboard.
+
+**Architecture + remaining timing cluster:** see
+[single-phi2-and-timing.md](single-phi2-and-timing.md) — the fid-core single-phi2 fix,
+the exact ANTIC horizontal contracts (WSYNC@105, VCOUNT@110, DLI@8, DMA schedule), the
+`xexload --hold` / `DBG_TB` measurement tooling, and the precise diagnosis of each
+remaining failure.

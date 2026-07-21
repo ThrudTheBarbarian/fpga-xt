@@ -1162,7 +1162,7 @@ module antic_top #(
         unique case (tb_mode)
             3'd1:    tb_trig = snoop_we_antic & (snoop_addr[7:0] == tb_match_addr);
             3'd2:    tb_trig = snoop_re_antic & (snoop_addr[7:0] == tb_match_addr);
-            3'd3:    tb_trig = ar_line_start  & nmi_cur_row_dli;
+            3'd3:    tb_trig = cycle_8_pulse   & nmi_cur_row_dli;  // DLI at the REAL gate cycle (8), matching nmi_gen — captures nmien_q there
             3'd4:    tb_trig = vbi_c8_pulse;
             3'd5:    tb_trig = snoop_we_antic & (snoop_addr[7:0] == 8'h0A); // WSYNC $D40A
             3'd6:    tb_trig = snoop_we_antic;
