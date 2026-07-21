@@ -314,36 +314,57 @@ module tb_boot;
     wire        is_xtc_ctl     = (cpu_addr[15:1] == 15'h6AE0);   // $D5C0-$D5C1
     wire        hwreg_cdc_rd   = hwreg_page_rd & ~is_blitter_reg & ~is_xtc_ctl;
 
-    wire        hwreg_wr_full_unused;
-    wire        hwreg_rd_empty;
-    wire [23:0] hwreg_rd_data;
-    wire        hwreg_rd_en = ~hwreg_rd_empty & ~cdc_bus_read;
+    // Deterministic mesochronous SALLY->ANTIC register-write handoff — mirrors
+    // fpga_xt_top exactly (replaced the old cdc_fifo_1w1r).  See fpga_xt_top for
+    // the rationale (phase-locked 3:4 clocks, single write in flight).
+    logic [23:0] hwreg_wr_payload_q;
+    logic        hwreg_wr_tog_q;
+    always_ff @(posedge clk_sally or posedge rst_sally) begin
+        if (rst_sally) begin
+            hwreg_wr_payload_q <= 24'h0;
+            hwreg_wr_tog_q     <= 1'b0;
+        end else if (hwreg_we) begin
+            hwreg_wr_payload_q <= {hwreg_addr, hwreg_din};
+            hwreg_wr_tog_q     <= ~hwreg_wr_tog_q;
+        end
+    end
 
-    cdc_fifo_1w1r #(.DATA_W(24), .ADDR_W(2)) u_hwreg_cdc (
-        .src_clk  (clk_sally),
-        .src_rst  (rst_sally),
-        .wr_en    (hwreg_we),
-        .wr_data  ({hwreg_addr, hwreg_din}),
-        .wr_full  (hwreg_wr_full_unused),
-        .dst_clk  (clk_sys),
-        .dst_rst  (rst_sys),
-        .rd_en    (hwreg_rd_en),
-        .rd_data  (hwreg_rd_data),
-        .rd_empty (hwreg_rd_empty)
-    );
-
+    logic        hwreg_wr_tog_s0, hwreg_wr_tog_s1, hwreg_wr_tog_s2;
+    logic        hwreg_wr_pending;
     logic        antic_we_q;
     logic [15:0] bus_addr_antic_q;
     logic [7:0]  bus_data_in_antic_q;
-    always_ff @(posedge clk_sys) begin
+    always_ff @(posedge clk_sys or posedge rst_sys) begin
         if (rst_sys) begin
+            hwreg_wr_tog_s0     <= 1'b0;
+            hwreg_wr_tog_s1     <= 1'b0;
+            hwreg_wr_tog_s2     <= 1'b0;
+            hwreg_wr_pending    <= 1'b0;
             antic_we_q          <= 1'b0;
             bus_addr_antic_q    <= 16'h0000;
             bus_data_in_antic_q <= 8'h00;
         end else begin
-            antic_we_q          <= hwreg_rd_en;
-            bus_addr_antic_q    <= hwreg_rd_data[23:8];
-            bus_data_in_antic_q <= hwreg_rd_data[7:0];
+            hwreg_wr_tog_s0 <= hwreg_wr_tog_q;
+            hwreg_wr_tog_s1 <= hwreg_wr_tog_s0;
+            hwreg_wr_tog_s2 <= hwreg_wr_tog_s1;
+            if (hwreg_wr_tog_s1 ^ hwreg_wr_tog_s2) begin
+                if (!cdc_bus_read) begin
+                    antic_we_q          <= 1'b1;
+                    bus_addr_antic_q    <= hwreg_wr_payload_q[23:8];
+                    bus_data_in_antic_q <= hwreg_wr_payload_q[7:0];
+                    hwreg_wr_pending    <= 1'b0;
+                end else begin
+                    hwreg_wr_pending    <= 1'b1;
+                    antic_we_q          <= 1'b0;
+                end
+            end else if (hwreg_wr_pending && !cdc_bus_read) begin
+                antic_we_q          <= 1'b1;
+                bus_addr_antic_q    <= hwreg_wr_payload_q[23:8];
+                bus_data_in_antic_q <= hwreg_wr_payload_q[7:0];
+                hwreg_wr_pending    <= 1'b0;
+            end else begin
+                antic_we_q          <= 1'b0;
+            end
         end
     end
 
@@ -358,7 +379,7 @@ module tb_boot;
                              : ~(antic_we_q && (bus_addr_antic_q[15:8] == 8'hD4));
 
     // ---- Register read-back CDC bridge (fpga_xt_top lines ~705-719) -----
-    wire        hwreg_bus_idle = hwreg_rd_empty & ~antic_we_q;
+    wire        hwreg_bus_idle = ~hwreg_wr_pending & ~antic_we_q;
     wire [7:0]  antic_rd_ungated;   // antic_top.bus_rdata_int — ungated internal read mux (driven below)
     hwreg_rd_cdc u_hwreg_rd_cdc (
         .clk_sally (clk_sally),

@@ -19,7 +19,8 @@
 #                                HDMI ±0.5 % spec).
 #
 # CDC paths:
-#   - SALLY hwreg writes  → ANTIC bus: async FIFO (cdc_fifo_1w1r)
+#   - SALLY hwreg writes  → ANTIC bus: deterministic mesochronous toggle handoff
+#     (2-FF toggle sync + held payload); covered by the async clock-group below
 #   - ANTIC status (NMI/IRQ/HALT) → SALLY: 2-FF synchroniser
 #   - vbeam pix → bus signals inside antic_top: 2-FF synchroniser
 # All cross-domain paths are CDC-safe; tell STA to skip them via

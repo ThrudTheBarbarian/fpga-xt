@@ -8,7 +8,7 @@
 //   clk_pix   (148.44 MHz) — RGB565 pixel output to SiI9022A HDMI transmitter
 //
 // CDC:
-//   - SALLY→ANTIC register writes: async FIFO (cdc_fifo_1w1r)
+//   - SALLY→ANTIC register writes: deterministic mesochronous toggle handoff
 //   - ANTIC→SALLY status (nmi_n, irq_n, halt_n, rdy_n): 2-FF sync
 //   - ANTIC DMA reads from sally_mem BRAM via dual-port (dma_clk = clk_sys)
 //   - SALLY bank-select state → ANTIC: 2-FF sync on update strobe
@@ -1257,40 +1257,74 @@ module fpga_xt_top (
     wire        is_xtc_ctl     = (cpu_addr[15:1] == 15'h6AE0);   // $D5C0-$D5C1
     wire        hwreg_cdc_rd   = hwreg_page_rd & ~is_blitter_reg & ~is_xtc_ctl;
 
-    wire        hwreg_wr_full_unused;
-    wire        hwreg_rd_empty;
-    wire [23:0] hwreg_rd_data;
-    // Pause the write-FIFO drain while the CDC owns the bus for a read.
-    wire        hwreg_rd_en = ~hwreg_rd_empty & ~cdc_bus_read;
+    // ---- Deterministic mesochronous SALLY->ANTIC register-write handoff ----
+    // clk_sally (100 MHz) and clk_sys (133.3 MHz) are BOTH outputs of one MMCM
+    // (u_mmcm1, VCO 1200: /12 and /9) => phase-locked 3:4 mesochronous, NOT
+    // asynchronous.  A $D0xx/$D4xx write is a single event bounded by phi2
+    // (~1.5 MHz) => >=~112 clk_sally apart, so at most ONE is ever in flight and
+    // an async FIFO (with its gray-pointer variable drain latency) is both
+    // unnecessary and the wrong idiom for mesochronous clocks.  Cross the write
+    // deterministically instead: a TOGGLE event (2-FF synced + edge-detected ->
+    // a 1-cycle apply strobe at a FIXED clk_sys latency) plus a PAYLOAD register
+    // held STABLE across the crossing (a mesochronous data bus; constrain
+    // set_max_delay -datapath_only in the xdc).  The apply cycle is then a known
+    // constant (residual sub-cycle sync uncertainty ~1 clk_sys ~= 7.5 ns << a
+    // 6502 cycle) that the ANTIC-side timing model can compensate.
 
-    cdc_fifo_1w1r #(.DATA_W(24), .ADDR_W(2)) u_hwreg_cdc (
-        .src_clk  (clk_sally),
-        .src_rst  (rst_sally),
-        .wr_en    (hwreg_we),
-        .wr_data  ({hwreg_addr, hwreg_din}),
-        .wr_full  (hwreg_wr_full_unused),
-        .dst_clk  (clk_sys),
-        .dst_rst  (rst_sys),
-        .rd_en    (hwreg_rd_en),
-        .rd_data  (hwreg_rd_data),
-        .rd_empty (hwreg_rd_empty)
-    );
+    // clk_sally: latch {addr,data} + toggle a request on the write pulse.
+    logic [23:0] hwreg_wr_payload_q;
+    logic        hwreg_wr_tog_q;
+    always_ff @(posedge clk_sally or posedge rst_sally) begin
+        if (rst_sally) begin
+            hwreg_wr_payload_q <= 24'h0;
+            hwreg_wr_tog_q     <= 1'b0;
+        end else if (hwreg_we) begin
+            hwreg_wr_payload_q <= {hwreg_addr, hwreg_din};
+            hwreg_wr_tog_q     <= ~hwreg_wr_tog_q;
+        end
+    end
 
-    // Generate 1-cycle write strobe on clk_sys.  rd_en pulses high whenever
-    // the FIFO is non-empty; we capture the popped descriptor and present
-    // it (with bus_rw low) to antic_top for one clk_sys cycle.
+    // clk_sys: 2-FF sync the toggle, edge-detect, and apply for one cycle.  If
+    // the read bridge owns the bus (cdc_bus_read) the apply is held pending
+    // until the bus frees — preserving the read/write mutual exclusion the old
+    // FIFO drain had, but with a deterministic (single-entry) apply.
+    logic        hwreg_wr_tog_s0, hwreg_wr_tog_s1, hwreg_wr_tog_s2;
+    logic        hwreg_wr_pending;
     logic        antic_we_q;
     logic [15:0] bus_addr_antic_q;
     logic [7:0]  bus_data_in_antic_q;
-    always_ff @(posedge clk_sys) begin
+    always_ff @(posedge clk_sys or posedge rst_sys) begin
         if (rst_sys) begin
+            hwreg_wr_tog_s0     <= 1'b0;
+            hwreg_wr_tog_s1     <= 1'b0;
+            hwreg_wr_tog_s2     <= 1'b0;
+            hwreg_wr_pending    <= 1'b0;
             antic_we_q          <= 1'b0;
             bus_addr_antic_q    <= 16'h0000;
             bus_data_in_antic_q <= 8'h00;
         end else begin
-            antic_we_q          <= hwreg_rd_en;
-            bus_addr_antic_q    <= hwreg_rd_data[23:8];
-            bus_data_in_antic_q <= hwreg_rd_data[7:0];
+            hwreg_wr_tog_s0 <= hwreg_wr_tog_q;
+            hwreg_wr_tog_s1 <= hwreg_wr_tog_s0;
+            hwreg_wr_tog_s2 <= hwreg_wr_tog_s1;
+            if (hwreg_wr_tog_s1 ^ hwreg_wr_tog_s2) begin
+                // new write event: apply now if the bus is free, else hold pending.
+                if (!cdc_bus_read) begin
+                    antic_we_q          <= 1'b1;
+                    bus_addr_antic_q    <= hwreg_wr_payload_q[23:8];
+                    bus_data_in_antic_q <= hwreg_wr_payload_q[7:0];
+                    hwreg_wr_pending    <= 1'b0;
+                end else begin
+                    hwreg_wr_pending    <= 1'b1;
+                    antic_we_q          <= 1'b0;
+                end
+            end else if (hwreg_wr_pending && !cdc_bus_read) begin
+                antic_we_q          <= 1'b1;
+                bus_addr_antic_q    <= hwreg_wr_payload_q[23:8];
+                bus_data_in_antic_q <= hwreg_wr_payload_q[7:0];
+                hwreg_wr_pending    <= 1'b0;
+            end else begin
+                antic_we_q          <= 1'b0;
+            end
         end
     end
 
@@ -1310,7 +1344,7 @@ module fpga_xt_top (
     // SALLY hwreg reads cross to clk_sys, get presented to ANTIC's
     // combinational read mux, and the byte crosses back.  bus_idle gates
     // the read start so a draining register write can't collide on the bus.
-    wire        hwreg_bus_idle = hwreg_rd_empty & ~antic_we_q;
+    wire        hwreg_bus_idle = ~hwreg_wr_pending & ~antic_we_q;
     hwreg_rd_cdc u_hwreg_rd_cdc (
         .clk_sally (clk_sally),
         .rst_sally (rst_sally),
