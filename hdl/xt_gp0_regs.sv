@@ -218,7 +218,14 @@ module xt_gp0_regs (
     output reg  [11:0] dbg_strm_raddr,    // ring read address
     input  wire        dbg_strm_flush,    // ring full + core halted
     input  wire [12:0] dbg_strm_wptr,     // valid entry count
-    input  wire [63:0] dbg_strm_rd        // ring[raddr]
+    input  wire [63:0] dbg_strm_rd,       // ring[raddr]
+
+    // ---- ANTIC timebase debug probe (DBG_TB_*, @ antic_top clk_bus) ----------
+    // Config OUT (clk_sys); 2-FF synced into the ANTIC domain inside antic_top.
+    output reg  [24:0] dbg_tb_cfg,        // {[24]=clear,[19:16]=read_idx,[11:4]=match_addr,[2:0]=mode}
+    // Status/capture IN (from clk_bus); 2-FF synced here (stable/slow words).
+    input  wire [31:0] dbg_tb_stat,       // {[25]=armed,[24]=full,[20:16]=wr_idx,[15:0]=trig_count}
+    input  wire [24:0] dbg_tb_cap         // ring[read_idx] = {scanline[8:0],phi2[7:0],data[7:0]}
 );
 
     // Block selectors (addr[11:8]) and register offsets (addr[7:0]) come from
@@ -232,6 +239,18 @@ module xt_gp0_regs (
     always_ff @(posedge clk) begin
         dbg_stat_s1 <= dbg_stat;
         dbg_stat_s  <= dbg_stat_s1;
+    end
+
+    // 2-FF sync for the ANTIC timebase probe read-out (clk_bus -> clk_sys).
+    // Both words are written at most once per captured event and are stable
+    // whenever the A9 reads them, so a plain multi-bit 2-FF sync is safe.
+    (* ASYNC_REG = "TRUE" *) reg [31:0] dbg_tb_stat_s1, dbg_tb_stat_s;
+    (* ASYNC_REG = "TRUE" *) reg [24:0] dbg_tb_cap_s1,  dbg_tb_cap_s;
+    always_ff @(posedge clk) begin
+        dbg_tb_stat_s1 <= dbg_tb_stat;
+        dbg_tb_stat_s  <= dbg_tb_stat_s1;
+        dbg_tb_cap_s1  <= dbg_tb_cap;
+        dbg_tb_cap_s   <= dbg_tb_cap_s1;
     end
 
     // ====================================================================
@@ -313,6 +332,7 @@ module xt_gp0_regs (
             dbg_trc_idx    <= 12'd0;
             dbg_strm_ctrl  <= 2'b00;
             dbg_strm_raddr <= 12'd0;
+            dbg_tb_cfg     <= 25'd0;
         end else begin
             s_axi_awready <= 1'b0;
             s_axi_wready  <= 1'b0;
@@ -438,6 +458,7 @@ module xt_gp0_regs (
                                     DBG_TRC_IDX:  dbg_trc_idx  <= w_data[11:0];
                                     DBG_STRM_CTRL:  dbg_strm_ctrl  <= w_data[1:0];
                                     DBG_STRM_RADDR: dbg_strm_raddr <= w_data[11:0];
+                                    DBG_TB_CFG:     dbg_tb_cfg     <= w_data[24:0];
                                     default: ;
                                 endcase
                             end
@@ -554,6 +575,9 @@ module xt_gp0_regs (
                                     DBG_STRM_WPTR:  s_axi_rdata <= {19'd0, dbg_strm_wptr};
                                     DBG_STRM_RDLO:  s_axi_rdata <= dbg_strm_rd[31:0];
                                     DBG_STRM_RDHI:  s_axi_rdata <= dbg_strm_rd[63:32];
+                                    DBG_TB_CFG:     s_axi_rdata <= {7'd0, dbg_tb_cfg};
+                                    DBG_TB_STAT:    s_axi_rdata <= dbg_tb_stat_s;
+                                    DBG_TB_CAP:     s_axi_rdata <= {7'd0, dbg_tb_cap_s};
                                     default: ;
                                 endcase
                             default: ;

@@ -1456,6 +1456,10 @@ module fpga_xt_top (
     wire [23:0] antic_wb_pal_rgb;
     wire [31:0] antic_dbg_gtia;   // TEMP: {colpf0,colpf1,colpf2,colbk}  -> diag8 @ GP0 0x41C
     wire [31:0] antic_dbg_antic;  // TEMP: {colpf3,prior,chbase,dmactl}  -> diag9 @ GP0 0x420
+    // ANTIC timebase debug probe (DBG_TB_*) between xt_gp0_regs and antic_top.
+    wire [24:0] antic_dbg_tb_cfg;   // cfg out of GP0 -> antic_top (2-FF synced inside antic_top)
+    wire [31:0] antic_dbg_tb_stat;  // status  antic_top -> GP0 (2-FF synced inside GP0)
+    wire [24:0] antic_dbg_tb_cap;   // capture antic_top -> GP0 (2-FF synced inside GP0)
 
     antic_top #(
         .POKEY_CLK_BUS_HZ (150_000_000)     // clk_sys nominal (150 MHz)
@@ -1524,6 +1528,9 @@ module fpga_xt_top (
         .wb_pal_rgb         (antic_wb_pal_rgb),
         .dbg_gtia           (antic_dbg_gtia),
         .dbg_antic          (antic_dbg_antic),
+        .dbg_tb_cfg         (antic_dbg_tb_cfg),
+        .dbg_tb_stat        (antic_dbg_tb_stat),
+        .dbg_tb_cap         (antic_dbg_tb_cap),
         // Zynq build: sally_* / xlat_phys_addr removed (no shadow SALLY core).
         .adc_bclk_o         (),
         .adc_lrck_o         (),
@@ -3220,7 +3227,11 @@ module fpga_xt_top (
         .dbg_strm_raddr  (gdbg_strm_raddr),
         .dbg_strm_flush  (sdbg_strm_flush),
         .dbg_strm_wptr   (sdbg_strm_wptr),
-        .dbg_strm_rd     (sdbg_strm_rd)
+        .dbg_strm_rd     (sdbg_strm_rd),
+        // ANTIC timebase debug probe (DBG_TB_*, 0x878..0x880)
+        .dbg_tb_cfg      (antic_dbg_tb_cfg),
+        .dbg_tb_stat     (antic_dbg_tb_stat),
+        .dbg_tb_cap      (antic_dbg_tb_cap)
     );
 
     // ROM-init AXI-Lite slave — see hdl/sally_rom_loader.sv.

@@ -125,5 +125,8 @@
 #define XT_DBG_STRM_RADDR    (XT_BLK_DEBUG + 0x6Cu)       /* W [11:0]=streaming ring read address; the entry appears in STRM_RDLO/RDHI (coherent while flush_req — the ring is static because the core is halted) */
 #define XT_DBG_STRM_RDLO     (XT_BLK_DEBUG + 0x70u)       /* R streaming entry [31:0] at STRM_RADDR: [15:0]=PC [23:16]=A [31:24]=X */
 #define XT_DBG_STRM_RDHI     (XT_BLK_DEBUG + 0x74u)       /* R streaming entry [63:32] at STRM_RADDR: [7:0]=Y [15:8]=SP [23:16]=P [31:24]=IR */
+#define XT_DBG_TB_CFG        (XT_BLK_DEBUG + 0x78u)       /* RW ANTIC timebase probe config: [2:0]=mode (0=off 1=$D4xx write@match 2=$D4xx read@match 3=DLI-line 4=VBI 5=WSYNC($D40A wr) 6=any $D4xx wr 7=every line_start), [11:4]=match_addr (low byte of $D4xx reg), [19:16]=read_idx (0..15 ring entry selected into DBG_TB_CAP), [24]=clear (write with a mode to arm+reset the ring for a fresh capture). 2-FF synced into the ANTIC clk_bus domain. */
+#define XT_DBG_TB_STAT       (XT_BLK_DEBUG + 0x7Cu)       /* R ANTIC timebase probe status (2-FF synced from clk_bus): [15:0]=trig_count (16-bit saturating # of triggers since clear), [20:16]=wr_idx (0..16; 16=full), [24]=full (ring holds 16 entries), [25]=armed (set by a clear write) */
+#define XT_DBG_TB_CAP        (XT_BLK_DEBUG + 0x80u)       /* R ANTIC timebase probe capture: ring entry selected by DBG_TB_CFG.read_idx = {[24:16]=scanline (0..261), [15:8]=phi2_in_line (machine-cycle 0..113), [7:0]=data (write byte for write modes, ANTIC read byte for read mode, 0 for event modes)} */
 
 #endif /* XT_GP0_MAP_H_ */

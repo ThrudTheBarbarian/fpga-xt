@@ -237,7 +237,16 @@ module antic_top #(
     output wire [23:0] wb_pal_rgb,      // {R,G,B} palette entry
     // ---- TEMP debug: live ANTIC/GTIA register state (clk_sys) for `mem` readback ----
     output wire [31:0] dbg_gtia,        // {colpf0, colpf1, colpf2, colbk}
-    output wire [31:0] dbg_antic        // {colpf3, prior, chbase, dmactl}
+    output wire [31:0] dbg_antic,       // {colpf3, prior, chbase, dmactl}
+
+    // ---- ANTIC timebase debug probe (DBG_TB_*, GP0 DEBUG block) --------
+    // A configurable 16-entry capture ring that records WHERE in the frame
+    // (scanline + horizontal machine-cycle) a selected ANTIC event fired,
+    // plus its data byte.  cfg is A9-set (clk_sys) and 2-FF synced in here;
+    // stat/cap are produced in clk_bus and 2-FF synced on the GP0 side.
+    input  wire [24:0] dbg_tb_cfg,      // {[24]=clear,[19:16]=read_idx,[11:4]=match_addr,[2:0]=mode}
+    output wire [31:0] dbg_tb_stat,     // {[25]=armed,[24]=full,[20:16]=wr_idx,[15:0]=trig_count}
+    output wire [24:0] dbg_tb_cap       // ring[read_idx] = {scanline[8:0],phi2[7:0],data[7:0]}
 );
 
     // Synchronise /G_RST into the bus_clk domain.
@@ -1077,6 +1086,103 @@ module antic_top #(
         .nmist_q       (nmist_q),
         .nmi_n         (nmi_n_w)
     );
+
+    // ================================================================
+    // ANTIC timebase debug probe (DBG_TB_*) — GP0 DEBUG block.
+    //
+    // A 16-entry capture ring + configurable trigger.  On the selected
+    // event it records the 2D timebase — ar_scanline (0..261) and
+    // ar_phi2_in_line (machine-cycle 0..113) — plus a data byte.  This is
+    // the measurement tool for the ACID800 ANTIC-timing test family: it
+    // answers "on which scanline and which horizontal cycle did this
+    // register write / DLI / VBI / WSYNC happen?".
+    //
+    // All logic runs in clk_bus (the snoop + antic_raster domain).  The A9
+    // config word is slow control and 2-FF synced in with cdc_sync_bit;
+    // the status/capture words are stable (written at most once per event)
+    // and 2-FF synced on the clk_sys (GP0) side.  The probe is purely
+    // observational — it drives nothing in the ANTIC datapath.
+    //
+    // cfg: [2:0]=mode [11:4]=match_addr [19:16]=read_idx [24]=clear
+    // mode: 0=off 1=$D4xx wr@match 2=$D4xx rd@match 3=DLI-line 4=VBI
+    //       5=WSYNC($D40A wr) 6=any $D4xx wr 7=every ar_line_start
+    // ================================================================
+    wire [24:0] dbg_tb_cfg_s;
+    cdc_sync_bit #(.WIDTH(25)) u_tb_cfg_sync (
+        .dst_clk (clk_bus),
+        .src_sig (dbg_tb_cfg),
+        .dst_sig (dbg_tb_cfg_s)
+    );
+
+    wire [2:0] tb_mode       = dbg_tb_cfg_s[2:0];
+    wire [7:0] tb_match_addr = dbg_tb_cfg_s[11:4];
+    wire [3:0] tb_read_idx   = dbg_tb_cfg_s[19:16];
+    wire       tb_clear      = dbg_tb_cfg_s[24];
+
+    // Edge-detect the (synced) clear so one cfg write with clear=1 arms and
+    // resets the ring for exactly one fresh capture pass.
+    logic tb_clear_q;
+    always_ff @(posedge clk_bus or posedge rst_bus) begin
+        if (rst_bus) tb_clear_q <= 1'b0;
+        else         tb_clear_q <= tb_clear;
+    end
+    wire tb_clear_pulse = tb_clear & ~tb_clear_q;
+
+    // Trigger select (single-cycle pulse; write/read modes are qualified by
+    // the snoop write/read strobe).
+    logic tb_trig;
+    always_comb begin
+        unique case (tb_mode)
+            3'd1:    tb_trig = snoop_we_antic & (snoop_addr[7:0] == tb_match_addr);
+            3'd2:    tb_trig = snoop_re_antic & (snoop_addr[7:0] == tb_match_addr);
+            3'd3:    tb_trig = ar_line_start  & nmi_cur_row_dli;
+            3'd4:    tb_trig = vbi_c8_pulse;
+            3'd5:    tb_trig = snoop_we_antic & (snoop_addr[7:0] == 8'h0A); // WSYNC $D40A
+            3'd6:    tb_trig = snoop_we_antic;
+            3'd7:    tb_trig = ar_line_start;
+            default: tb_trig = 1'b0;                                       // mode 0 = off
+        endcase
+    end
+
+    // Capture payload byte: the write byte for write modes, the ANTIC
+    // register read mux (valid at snoop_addr during a $D4xx read, since
+    // antic_regs.raddr = bus_addr = snoop_addr) for the read mode, else 0
+    // (scanline+cycle is the whole payload for the pure-event modes).
+    wire [7:0] tb_data8 =
+          (tb_mode == 3'd1 || tb_mode == 3'd5 || tb_mode == 3'd6) ? snoop_data
+        : (tb_mode == 3'd2)                                        ? antic_read_data
+        :                                                           8'h00;
+
+    // 16-entry ring in distributed RAM: {scanline[8:0], phi2_in_line[7:0], data[7:0]}.
+    logic [24:0] tb_ring [0:15];
+    logic [4:0]  tb_wr_idx;      // 0..16; bit[4] = full (write index saturates)
+    logic [15:0] tb_trig_count;  // 16-bit saturating trigger count since clear
+    logic        tb_armed;
+    wire         tb_full = tb_wr_idx[4];
+
+    always_ff @(posedge clk_bus or posedge rst_bus) begin
+        if (rst_bus) begin
+            tb_wr_idx     <= 5'd0;
+            tb_trig_count <= 16'd0;
+            tb_armed      <= 1'b0;
+        end else if (tb_clear_pulse) begin
+            tb_wr_idx     <= 5'd0;
+            tb_trig_count <= 16'd0;
+            tb_armed      <= 1'b1;      // arm a fresh capture pass
+        end else if (tb_armed && (tb_mode != 3'd0) && tb_trig) begin
+            if (!tb_full) begin
+                tb_ring[tb_wr_idx[3:0]] <= {ar_scanline, ar_phi2_in_line, tb_data8};
+                tb_wr_idx               <= tb_wr_idx + 5'd1;   // stops at 16 (bit4 set)
+            end
+            if (tb_trig_count != 16'hFFFF)
+                tb_trig_count <= tb_trig_count + 16'd1;
+        end
+    end
+
+    // Read-out: stable once cfg (hence read_idx) has settled, so a plain
+    // 2-FF sync on the GP0 side is safe.
+    assign dbg_tb_cap  = tb_ring[tb_read_idx];
+    assign dbg_tb_stat = {6'd0, tb_armed, tb_full, 3'd0, tb_wr_idx, tb_trig_count};
 
     // ---- WSYNC handler: release at bus cycle 105 of the line ---------
     // ANTIC's real /RDY release point is bus cycle 105 of the current scan
