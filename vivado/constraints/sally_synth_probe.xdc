@@ -46,6 +46,16 @@ set_clock_groups -name async_xt_domains -asynchronous \
     -group [get_clocks -of_objects [get_pins u_bufg_sys/O]] \
     -group [get_clocks -of_objects [get_pins u_bufg_pix/O]]
 
+# ---- Fid-core phi2 CDC (single-phi2 pacing) -------------------------------
+# ANTIC's phi2 (clk_sys) is the CPU timing master; the fid 6502 (clk_sally)
+# paces its machine cycles off it via a 2-FF sync (phi2f_s0/s1/s2).  The
+# async clock-group above already false-paths clk_sys -> clk_sally, so this
+# bounds only the specific launch (phi2_cdc_src, a dedicated DONT_TOUCH
+# replica in antic_top) -> capture (phi2f_s0) skew so the level lands cleanly.
+set_max_delay -datapath_only 7.0 -quiet \
+    -from [get_cells -quiet -hier -filter {NAME =~ *phi2_cdc_src_reg*}] \
+    -to   [get_cells -quiet -hier -filter {NAME =~ *phi2f_s0_reg*}]
+
 # ---- Output delays (SiI9022A HDMI transmitter) ----------------------------
 # The SiI9022A on Z-Turn SOM samples RGB + sync on pixclk rising edge.
 # Setup requirement is typically ~2 ns; hold ~0 ns.  Budget accordingly.

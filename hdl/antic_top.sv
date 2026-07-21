@@ -106,6 +106,12 @@ module antic_top #(
     // lands). {/MPD, RD4, RD5}. /EXTIRQ wires into the IRQ tree directly.
     output wire [2:0]  bus_pbi_in_status_o,
 
+    // ANTIC's raw phi2 level (clk_bus domain) — the single timing master. The
+    // fidelity 6502 core syncs THIS into clk_sally and edge-detects it to pace
+    // its machine cycles, so the fid CPU's cycle grid is identical to ANTIC's
+    // (no second free-running divider to drift against). See fpga_xt_top.sv.
+    output wire        phi2_level_o,
+
     // ANTIC-driven status (active-low)
     output wire        nmi_n,
     output wire        halt_n,
@@ -328,6 +334,19 @@ module antic_top #(
     end
     wire phi2_tick = phi2 & ~phi2_q;     // 1-cycle pulse on phi2 rising edge
     wire phi2_fall = phi2_q & ~phi2;     // 1-cycle pulse on phi2 falling edge
+
+    // Dedicated, lightly-loaded launch FF for the fid-core CDC.  The fid 6502
+    // (clk_sally) paces its machine cycles off ANTIC's phi2 so the two grids
+    // are identical (fpga_xt_top.sv syncs + edge-detects this level).  Driving
+    // the CDC from a private replica of `phi2` — not the main phi2 reg — keeps
+    // that reg's fanout/timing unburdened.  DONT_TOUCH pins the replica so the
+    // synth-side set_max_delay on phi2_cdc_src_reg -> phi2f_s0_reg has a cell.
+    (* DONT_TOUCH = "true" *) logic phi2_cdc_src = 1'b0;
+    always_ff @(posedge clk_bus or posedge rst_bus) begin
+        if (rst_bus) phi2_cdc_src <= 1'b0;
+        else         phi2_cdc_src <= phi2;
+    end
+    assign phi2_level_o = phi2_cdc_src;
 
     // ---- ANTIC native raster timer (video-arch §5.1) ---------------------
     // phi2-paced raster heartbeat — replaces the 800×600 hdmi_out vbeam as the

@@ -320,6 +320,7 @@ module fpga_xt_top (
     wire        phi2_tick = 1'b0;
     wire        halt_n_sally;      // /HALT after CDC (external-ANTIC mode; unused at our op point)
     wire        antic_dma_steal_w; // ANTIC cycle-steal (clk_sys, active-high) from antic_top
+    wire        antic_phi2_level;  // ANTIC's raw phi2 level (clk_sys) — timing master; paces the fid core
     wire        dma_steal_sally;   // ...CDC'd into clk_sally; gates the CPU at CLOCK_MULT=1
     wire        wsync_rdy_n;       // from ANTIC WSYNC
     wire        mem_busy_n;        // from sally_mem (1 = ready)
@@ -845,16 +846,26 @@ module fpga_xt_top (
     // doc §5) and lets the OS boot on either core; the live hand-off FSM (cpu_handoff.sv,
     // sim-proven) lands next once timing is confirmed.
     //
-    // Clocking: a free-running phi2 window every 56 clk_sally (= the 1x NTSC phi2 rate, same
-    // as sally_clock's BASE_DIV=56); commit is gated by `fid_rdy`. `fid_mem_ok` samples the
-    // sally_mem busy at the core's data slot (SUB_DATA = 56-7 = 49) so a banked/DDR cache
-    // miss can never let the fixed sub-schedule commit stale data (sim/tb_xt6502f_busy.sv).
-    reg  [5:0] fid_ph_ctr = 6'd0;
+    // Clocking (single-phi2): the fid core's machine-cycle tick is SOURCED FROM
+    // ANTIC's phi2 — the timing master — not a second free-running divider. A
+    // private divider (the old fid_ph_ctr @ 56 clk_sally) drifted against
+    // ANTIC's phi2 (133.3MHz/74) because 56 clk_sally (560ns) ≠ 74 clk_sys
+    // (555ns), breaking the ACID800 cycle-exact timing tests. Now `antic_phi2_level`
+    // (antic_top's phi2, clk_sys domain) is 2-FF synced into clk_sally and
+    // edge-detected; a rising edge = the start of a machine cycle. The fid core's
+    // sub-schedule (N=56: SUB_DATA=49, SUB_COMMIT=53) still runs on clk_sally and
+    // completes well inside the ~55.5-clk_sally ANTIC phi2 period, so it holds after
+    // commit until the next ANTIC-sourced tick. commit is gated by `fid_rdy`.
+    // `fid_mem_ok` samples the sally_mem busy at the core's data slot
+    // (SUB_DATA = 56-7 = 49) so a banked/DDR cache miss can never let the fixed
+    // sub-schedule commit stale data (sim/tb_xt6502f_busy.sv). The turbo core keeps
+    // its own free-running sally_clock — this change is FID-CORE-ONLY.
+    (* ASYNC_REG="true" *) reg phi2f_s0=0, phi2f_s1=0, phi2f_s2=0;
     always_ff @(posedge clk_sally) begin
-        if (rst_sally_core) fid_ph_ctr <= 6'd0;
-        else                fid_ph_ctr <= (fid_ph_ctr == 6'd55) ? 6'd0 : fid_ph_ctr + 6'd1;
+        if (rst_sally_core) begin phi2f_s0<=0; phi2f_s1<=0; phi2f_s2<=0; end
+        else begin phi2f_s0<=antic_phi2_level; phi2f_s1<=phi2f_s0; phi2f_s2<=phi2f_s1; end
     end
-    wire       phi2_tick_fid = (fid_ph_ctr == 6'd55);
+    wire       phi2_tick_fid = phi2f_s1 & ~phi2f_s2;  // rising edge of ANTIC's phi2 = machine-cycle start
     wire [7:0] fid_sub;
     wire [15:0] fdbg_pc;             // TEMP: fid core live PC  -> diag8
     wire  [7:0] fdbg_ir;             // TEMP: fid core current opcode -> diag8
@@ -1478,6 +1489,7 @@ module fpga_xt_top (
         .bus_data_oe        (antic_bus_data_oe),
         .bus_rdata_int      (antic_rdata_int),   // ungated read mux for hwreg_rd_cdc
 
+        .phi2_level_o       (antic_phi2_level),  // timing master → fid-core pacing (clk_sally CDC)
         .nmi_n              (antic_nmi_n),
         .halt_n             (antic_halt_n),
         .rdy_n              (antic_rdy_n),
