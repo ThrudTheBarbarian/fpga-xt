@@ -1289,10 +1289,46 @@ module antic_top #(
     wire cycle_105_pulse = phi2_tick && (ar_phi2_in_line == 8'd105);
 
     wire        wsync_rdy_w;             // 1 = ready, 0 = stalled
+    // ANTIC takes ONE MACHINE CYCLE to pull /RDY after the WSYNC write, so the
+    // CPU executes one more cycle before it stalls.  Avery Lee (ACID800 author):
+    // "there is a one-cycle delay before RDY is pulled.  That delay is on
+    // ANTIC's side, so it is one cycle regardless of whether the next cycle is a
+    // DMA or CPU cycle."  Confirmed on a real XE with a logic analyser:
+    //
+    //   STA wsync            INC wsync
+    //   3: write to wsync    4: write ORIGINAL value to wsync
+    //   4: RDY still high    5: write NEW value to wsync / RDY still high
+    //      (next opcode          (the second write "drops into the delay slot")
+    //       fetch completes)
+    //   5: RDY low, stalls   6: RDY low, stalls
+    //
+    // Asserting immediately stalls the CPU one cycle early, so at the cycle-105
+    // release it has NOT yet fetched the next opcode — every post-WSYNC access
+    // then lands one cycle late.  Measured: ACID800 antic_wsync's d1 read landed
+    // on cycle 108 where hardware puts it on 107, making the d1->d2 gap 114
+    // instead of Avery's documented 115.
+    //
+    // NOTE the ACID800 SOURCE COMMENTS are wrong on this ("the code is checked
+    // against a real Atari, but the comments aren't") — do not re-derive cycle
+    // numbers from them.  The authoritative RANDOM sequence indices for the
+    // first three test bytes are 243, 357 (+114) and 472 (+115).
+    // Phase note: the fid core samples rdy at SUB_COMMIT (sub-53, LATE in its
+    // machine cycle), so an assertion fired at the START of cycle N+1 still
+    // stalls N+1.  To leave N+1 executing and stall N+2 — the behaviour the
+    // logic-analyser trace shows — the pulse must land after N+1's sample
+    // point, i.e. on the SECOND phi2 tick after the write.
+    logic [1:0] wsync_arm_q;
+    always_ff @(posedge clk_bus or posedge rst_bus) begin
+        if (rst_bus)                             wsync_arm_q <= 2'd0;
+        else if (wsync_pending)                  wsync_arm_q <= 2'd2;
+        else if (phi2_tick && wsync_arm_q != 0)  wsync_arm_q <= wsync_arm_q - 2'd1;
+    end
+    wire wsync_pending_dly = phi2_tick & (wsync_arm_q == 2'd1);
+
     wsync_gen u_wsync_gen (
         .clk                (clk_bus),
         .rst                (rst_bus),
-        .wsync_pending      (wsync_pending),
+        .wsync_pending      (wsync_pending_dly),
         .line_start         (cycle_105_pulse),     // release on cycle-105, not next-line
         .rdy_n              (wsync_rdy_w),
         .wsync_overdue_count(wsync_overdue_count_q)

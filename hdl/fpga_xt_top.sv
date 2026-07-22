@@ -877,18 +877,19 @@ module fpga_xt_top (
     // until ANTIC's cycle-105 hblank (plus an overdue timeout), so no deadlock. Without this the
     // fid core free-ran through STA WSYNC and every beam-raced kernel (intro rainbow, per-scanline
     // COLPF) mistimed — turbo and fid must be timing-identical.
-    // WSYNC must NOT stall write cycles.  A RMW to $D40A (INC WSYNC) sets WSYNC
-    // on its dummy write; if the following real write is stalled it lands AFTER
-    // the release and re-triggers WSYNC, costing another whole scan line.
-    // Measured with ACID800 antic_wsync (which times WSYNC by reading POKEY
-    // RANDOM as a cycle-exact clock, see tools/pokey-random-decode.py):
-    //     writes stalled  -> $D1 = step 455 vs hardware 342 -> 113 cycles late
-    //                        (one scan line - it re-armed WSYNC)
-    //     writes proceed  -> $1B = step 341 vs hardware 342 ->   1 cycle early
-    // So writes proceeding is correct; a 1-cycle residual remains in the RMW
-    // path only (plain STA WSYNC matches hardware exactly and passes).
-    wire       wsync_rdy_eff = wsync_rdy_n | ~fid_rw;   // write cycles ignore the WSYNC stall
-    wire       fid_rdy = cpu_sel & fid_mem_ok & ~dma_steal_sally & wsync_rdy_eff & ~fdbg_cpu_halt;  // owns bus; /HALT + WSYNC(read-only) + busy + dbg-halt aware
+    // WSYNC stalls every cycle — no read/write special case.  The reason a RMW's
+    // second write survives is NOT that writes ignore RDY: it is that ANTIC has
+    // not pulled RDY yet.  Avery Lee: "there is a one-cycle delay before RDY is
+    // pulled ... INC WSYNC's second write cycle either drops into this delay slot
+    // or proceeds on the next CPU cycle under RDY."  Logic-analyser trace of a
+    // real XE:
+    //     STA wsync:  write, then the next OPCODE FETCH runs, then stall
+    //     INC wsync:  write, then the SECOND WRITE runs,       then stall
+    // One rule: exactly one cycle executes after the WSYNC write, whatever it is.
+    // That is modelled in antic_top's wsync_pending delay, so a read-only RDY
+    // gate here would grant writes a second free cycle on top of it and shift
+    // both reads together, leaving the d1->d2 gap wrong at 114 instead of 115.
+    wire       fid_rdy = cpu_sel & fid_mem_ok & ~dma_steal_sally & wsync_rdy_n & ~fdbg_cpu_halt;  // owns bus; /HALT + WSYNC + busy + dbg-halt aware
     // sally_mem's read-latch (bram_dout_q) AND every write/bank-latch/hwreg-strobe are gated
     // by its `rdy` — a "the CPU took a step" pulse. For the turbo core that is sally_rdy. The
     // fidelity core drives a STABLE address for the whole window and samples data at SUB_DATA=49,
