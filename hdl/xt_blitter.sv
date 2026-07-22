@@ -1036,6 +1036,34 @@ module xt_blitter #(
     // Same approach for sy (per destination row).
     logic [15:0] sx_step_q;             // current source X offset (sx - src_x_q)
     logic [15:0] sy_cur_q;              // current source Y for this row
+
+    // ---- SCALED bilinear: pre-computed tap operands (clk_sys timing) --------
+    // SC_BL_RD used to derive the tap address inside the read state:
+    //     row1_add = (sy_cur_q - src_y_q + 1 < src_h_q) ? src_stride_eff : 0
+    //     bl_col1  = sc_col_addr_q + ((sx_step_q + 1 < src_w_q) ? 4 : 0)
+    // i.e. a 16-bit subtract, a 16-bit add, a compare, a 32-bit add and a 4:1
+    // mux all in one cycle, ending at m_axi_araddr.  That was THE clk_sys
+    // critical path: 19 logic levels (12x CARRY4) and 7.484 ns of a 7.500 ns
+    // budget, leaving the whole design at the mercy of placer variance.
+    //
+    // Both quantities only change at discrete, known points — row1_add when
+    // sy_cur_q moves (SC_ROW / SC_ROW2), bl_col1 when sc_col_addr_q or
+    // sx_step_q move (SC_ROW / SC_ROW2 / SC_NEXT2) — so they are computed
+    // THERE from the values being assigned.  That is exact, not a stale
+    // pipeline: SC_ROW falls straight into SC_BL_RD in the same cycle it
+    // writes sy_cur_q, so a register updated every cycle would be one cycle
+    // behind on first use.
+    logic [31:0] sc_row1_add_q;         // +1 source row, edge-clamped (0 at bottom)
+    logic [31:0] sc_bl_col1_q;          // +1 source column, edge-clamped
+
+    // row1_add for a given source Y, and col1 for a given column addr / x-step.
+    function automatic [31:0] sc_row1_add_for(input [15:0] sy);
+        sc_row1_add_for = ((sy - src_y_q + 16'd1) < src_h_q) ? 32'(src_stride_eff)
+                                                             : 32'd0;
+    endfunction
+    function automatic [31:0] sc_bl_col1_for(input [31:0] col, input [15:0] sxs);
+        sc_bl_col1_for = col + (((sxs + 16'd1) < src_w_q) ? 32'd4 : 32'd0);
+    endfunction
     logic [15:0] sx_accum_q;            // Bresenham X accumulator
     logic [15:0] sy_accum_q;            // Bresenham Y accumulator (per row)
     logic        sc_pixel_valid_q;      // cached pixel is valid
@@ -1328,6 +1356,8 @@ module xt_blitter #(
             src_h_q           <= 16'd0;
             sx_step_q         <= 16'd0;
             sy_cur_q          <= 16'd0;
+            sc_row1_add_q     <= 32'd0;
+            sc_bl_col1_q      <= 32'd0;
             sx_accum_q        <= 16'd0;
             sy_accum_q        <= 16'd0;
             sc_pixel_valid_q  <= 1'b0;
@@ -2665,6 +2695,11 @@ module xt_blitter #(
                     cx <= 16'd0;
                     sx_step_q   <= 16'd0;
                     sc_col_addr_q <= src_row_base;   // sx_step=0 -> col addr = row base
+                    // tap operands for the new column origin (sx_step=0). sy is
+                    // src_y_q on the first row, else unchanged here (SC_ROW2 may
+                    // advance it and recomputes then).
+                    sc_bl_col1_q  <= sc_bl_col1_for(src_row_base, 16'd0);
+                    sc_row1_add_q <= sc_row1_add_for((cy == 16'd0) ? src_y_q : sy_cur_q);
                     sx_accum_q  <= 16'd0;
                     sc_pixel_valid_q <= 1'b0;
                     beat_lo_filled   <= 1'b0;
@@ -2694,6 +2729,8 @@ module xt_blitter #(
                         sy_accum_q <= sy_accum_q - dst_h_q;
                         src_row_base <= src_row_base + src_stride_eff;  // track sy_cur
                         sc_col_addr_q <= sc_col_addr_q + src_stride_eff; // keep == src_row_base (sx_step=0)
+                        sc_row1_add_q <= sc_row1_add_for(sy_cur_q + 16'd1);
+                        sc_bl_col1_q  <= sc_bl_col1_for(sc_col_addr_q + 32'(src_stride_eff), sx_step_q);
                         // Stay in SC_ROW2 to check again
                     end else begin
                         if (bilin_mode_q)
@@ -2879,6 +2916,7 @@ module xt_blitter #(
                     if (sx_accum_q >= dst_w_q) begin
                         sx_step_q  <= sx_step_q + 16'd1;
                         sc_col_addr_q <= sc_col_addr_q + 32'd4;  // +1 src column = +4 bytes
+                        sc_bl_col1_q  <= sc_bl_col1_for(sc_col_addr_q + 32'd4, sx_step_q + 16'd1);
                         sx_accum_q <= sx_accum_q - dst_w_q;
                         // Stay in SC_NEXT2 to check again
                     end else begin
@@ -2932,11 +2970,11 @@ module xt_blitter #(
                         // bl_col0 = current src column addr (pre-accumulated — no deep
                         // add); bl_col1 = next column = +4 bytes, edge-clamped to bl_col0
                         // at the right edge (sx_step+1 >= src_w).
-                        row1_add = (sy_cur_q - src_y_q + 16'd1 < src_h_q)
-                                       ? 32'(src_stride_eff) : 32'd0;
-                        bl_col0 = sc_col_addr_q;
-                        bl_col1 = sc_col_addr_q
-                                      + ((sx_step_q + 16'd1 < src_w_q) ? 32'd4 : 32'd0);
+                        // Pre-computed at the row/column advance points, so what
+                        // remains here is one 32-bit add and the 4:1 tap mux.
+                        row1_add = sc_row1_add_q;
+                        bl_col0  = sc_col_addr_q;
+                        bl_col1  = sc_bl_col1_q;
                         unique case (bl_sub_q)
                             2'd0: bl_addr = bl_col0;
                             2'd1: bl_addr = bl_col1;
