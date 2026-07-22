@@ -35,15 +35,12 @@
 
 ACID_DIR=/media/6502/acid
 OUT=/tmp/acid-sweep.tsv
-SHOTS=/tmp/acid-shots
 ST=/tmp/_acid_status
 POLL_INTERVAL=0.5
 POLL_MAX=24           # 24 * 0.5s = 12s per-test ceiling
 MAX_TRIES=6           # xexload -h is INTERMITTENT - loads fail often; retry hard
 
 : > "$OUT"
-rm -rf "$SHOTS"
-mkdir -p "$SHOTS"
 
 n=0
 for xex in "$ACID_DIR"/*.xex; do
@@ -90,14 +87,6 @@ for xex in "$ACID_DIR"/*.xex; do
         if 6502 status | grep -q 'Y=.00'; then
             result=pass
         fi
-        # Grab the result screen WHILE the core is halted: pass/fail alone says
-        # nothing about WHY, but the framework has already printed its assertion
-        # (e.g. "INC WSYNC failed: $0F != $0D.") and the exact value is the
-        # cycle delta. Decoded back to text on the Mac by bmp2text.py.
-        # NOTE the pipe: like `6502 status` and `dmesg`, graboverlay's stdout is
-        # LOST to a plain board-side file redirect (yields 0 bytes). Piping
-        # through cat is what makes the redirect work.
-        graboverlay | cat > "$SHOTS/$name.bmp" 2>/dev/null
     fi
 
     6502 break off > /dev/null 2>&1
