@@ -877,14 +877,16 @@ module fpga_xt_top (
     // until ANTIC's cycle-105 hblank (plus an overdue timeout), so no deadlock. Without this the
     // fid core free-ran through STA WSYNC and every beam-raced kernel (intro rainbow, per-scanline
     // COLPF) mistimed — turbo and fid must be timing-identical.
-    // 6502 RDY semantics: RDY (WSYNC) halts the CPU ONLY on READ cycles — a WRITE
-    // cycle completes regardless of RDY.  STA WSYNC has no post-trigger cycle so it's
-    // unaffected, but a RMW to $D40A (INC WSYNC — cpu_timing) triggers WSYNC on its
-    // dummy-write and MUST still commit the following real-write before halting on the
-    // next opcode fetch.  Gating the WSYNC stall by fid_rw (1=read) lands inc-wsync and
-    // sta-wsync's post-WSYNC VCOUNT read on the SAME cycle = the hardware contract, so a
-    // single VCOUNT increment cycle satisfies both antic_vcount and cpu_timing.  /HALT
-    // (DMA) and mem-busy still stall every cycle — only the WSYNC/RDY term is read-only.
+    // WSYNC must NOT stall write cycles.  A RMW to $D40A (INC WSYNC) sets WSYNC
+    // on its dummy write; if the following real write is stalled it lands AFTER
+    // the release and re-triggers WSYNC, costing another whole scan line.
+    // Measured with ACID800 antic_wsync (which times WSYNC by reading POKEY
+    // RANDOM as a cycle-exact clock, see tools/pokey-random-decode.py):
+    //     writes stalled  -> $D1 = step 455 vs hardware 342 -> 113 cycles late
+    //                        (one scan line - it re-armed WSYNC)
+    //     writes proceed  -> $1B = step 341 vs hardware 342 ->   1 cycle early
+    // So writes proceeding is correct; a 1-cycle residual remains in the RMW
+    // path only (plain STA WSYNC matches hardware exactly and passes).
     wire       wsync_rdy_eff = wsync_rdy_n | ~fid_rw;   // write cycles ignore the WSYNC stall
     wire       fid_rdy = cpu_sel & fid_mem_ok & ~dma_steal_sally & wsync_rdy_eff & ~fdbg_cpu_halt;  // owns bus; /HALT + WSYNC(read-only) + busy + dbg-halt aware
     // sally_mem's read-latch (bram_dout_q) AND every write/bank-latch/hwreg-strobe are gated
