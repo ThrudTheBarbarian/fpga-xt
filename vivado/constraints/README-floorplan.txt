@@ -41,3 +41,25 @@ If clk_sys goes negative again, prefer fixing the PATH over re-pinning cells —
 the last real win was pipelining the blitter's bilinear tap operands (commit
 3918b57: 19 logic levels -> 8). A pblock is a blunt instrument that goes stale
 silently as the module it names grows.
+
+
+Directive sweep, 2026-07-22 (no pblocks, blitter DO_REG enabled)
+----------------------------------------------------------------
+Removing the pblocks widened the solution space and raised the pass rate from
+2-of-5 builds to 4-of-5 — but the design is NOT robust to arbitrary placement:
+
+    directive               clk_sys setup/hold    gate
+    Default                   -0.028 / +0.036     FAIL
+    Explore                   +0.024 / +0.036     pass
+    ExtraPostPlacementOpt     +0.016 / +0.036     pass
+    ExtraNetDelay_high        +0.065 / +0.036     pass
+    AltSpreadLogic_high       +0.121 / +0.009     pass
+    ExtraTimingOpt            +0.123 / +0.009     pass  (HW-verified build)
+
+Setup varies across a 0.15 ns spread; hold is stable at +0.036 EXCEPT for the
+two directives that buy the best setup by spending hold down to +0.009. That is
+a real setup/hold trade the placer makes, not noise.
+
+Because Vivado's own Default lands negative, run-valhalla.sh now defaults
+PLACE_DIRECTIVE to ExtraTimingOpt rather than leaving it empty. Every good build
+before that point only happened because a directive was passed explicitly.
