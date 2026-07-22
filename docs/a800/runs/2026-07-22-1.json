@@ -1,0 +1,238 @@
+{
+  "date": "2026-07-22",
+  "seq": 1,
+  "core": "fid",
+  "bitstream": "VCOUNT=112 + one-cycle rollover wrap + $D014 NTSC sense",
+  "note": "antic_vcount FLIPS TO PASS. Three stacked fixes, each derived from DBG_TB measurement rather than inferred: VCOUNT_INC_CYC=112 (pinned by two opposing constraints), a one-cycle-wide frame wrap at phi2 113 of the last line, and $D014 pal_sense $02 -> $0F. That last one is a real fidelity bug beyond the suite: $02 is neither the NTSC ($0F) nor PAL ($01) value, so every standard-detect took the PAL branch on our 262-line NTSC machine. Every failure below was diagnosed from its on-screen assertion. Biggest cluster: 5 tests behind blank-line DLIs never asserting /NMI (mode-line DLIs do - measured 3 vs 0). Second: 6 tests need per-color-clock P/M rendering (they write GRAFP/SIZEP mid-scanline; our compositor is row-at-a-time).",
+  "results": {
+    "antic_vcount": {
+      "s": "pass"
+    },
+    "antic_addrmirror": {
+      "s": "pass"
+    },
+    "antic_default": {
+      "s": "pass"
+    },
+    "cpu_insn": {
+      "s": "pass"
+    },
+    "cpu_decimal": {
+      "s": "pass"
+    },
+    "cpu_flags": {
+      "s": "pass"
+    },
+    "cpu_timing": {
+      "s": "pass"
+    },
+    "cpu_bugs": {
+      "s": "pass"
+    },
+    "cpu_clisei": {
+      "s": "pass"
+    },
+    "cpu_illegal": {
+      "s": "pass"
+    },
+    "cpu_illtiming": {
+      "s": "pass"
+    },
+    "gtia_addrmirror": {
+      "s": "pass"
+    },
+    "gtia_collision": {
+      "s": "pass"
+    },
+    "gtia_consol": {
+      "s": "pass"
+    },
+    "gtia_default": {
+      "s": "pass"
+    },
+    "pokey_addrmirror": {
+      "s": "pass"
+    },
+    "pokey_default": {
+      "s": "pass"
+    },
+    "pokey_asyncrecv": {
+      "s": "pass"
+    },
+    "pokey_seroc": {
+      "s": "pass"
+    },
+    "pokey_timergranularity": {
+      "s": "pass"
+    },
+    "pokey_timerirq": {
+      "s": "pass"
+    },
+    "mmu_xlbanking": {
+      "s": "pass"
+    },
+    "pia_basic": {
+      "s": "pass"
+    },
+    "antic_wsync": {
+      "s": "fail",
+      "d": "Initial RANDOM incorrect: $4A != $95 (POKEY 9-bit PRNG blocks the WSYNC test)"
+    },
+    "antic_nmist": {
+      "s": "fail",
+      "d": "The DLI1 handler was not called - blank-line DLI never asserts /NMI"
+    },
+    "antic_dlitiming": {
+      "s": "fail",
+      "d": "Even count incorrect: $C3 != $0a"
+    },
+    "antic_dlistwrap": {
+      "s": "fail",
+      "d": "Display list did not wrap around (needs a DLI; blank-line DLI cluster)"
+    },
+    "antic_pfstarttiming": {
+      "s": "fail",
+      "d": "DLIs did not fire - blank-line DLI never asserts /NMI"
+    },
+    "antic_pfstoptiming": {
+      "s": "fail",
+      "d": "DLIs did not fire - blank-line DLI never asserts /NMI"
+    },
+    "antic_blockednmi": {
+      "s": "fail",
+      "d": "VBI handler should not have executed (6502 NMI/BRK hijack window too wide)"
+    },
+    "antic_addresswrap": {
+      "s": "fail",
+      "d": "Display list LMS address did not wrap at 1K boundary"
+    },
+    "antic_vscroll": {
+      "s": "fail",
+      "d": "Failed test #1: expected 12, got 14 (DLI fires 2 scanlines late)"
+    },
+    "antic_vscroldli": {
+      "s": "fail",
+      "d": "VSCROL took effect too early"
+    },
+    "antic_charcontrol": {
+      "s": "fail",
+      "d": "Failed chactl=$00 on mode 2 at row 0: expected $10, got $00"
+    },
+    "antic_hscrolbug": {
+      "s": "fail",
+      "d": "Unstopped PF DMA test failed: c1=00 (HSCROL DMA window shift not modelled)"
+    },
+    "antic_linebuffering": {
+      "s": "fail",
+      "d": "Readout incorrect for initial mode E: 00000000"
+    },
+    "antic_dmapattern": {
+      "s": "fail",
+      "d": "Cannot decode random pair: 98 C5 (depends on POKEY RANDOM)"
+    },
+    "antic_virtdma": {
+      "s": "fail",
+      "d": "Pattern #2 was not correct: 00 != $05"
+    },
+    "antic_hiresbug": {
+      "s": "fail",
+      "d": "per-color-clock P/M evaluation required"
+    },
+    "antic_pmdma": {
+      "s": "fail",
+      "d": "P/M DMA fetch - memory-path coherency for $3300-$37FF"
+    },
+    "gtia_collision2": {
+      "s": "fail",
+      "d": "Gr.8 %00 collision incorrect: $04"
+    },
+    "gtia_psuedomodee": {
+      "s": "fail",
+      "d": "Cycle 14 test failed: 00 (per-color-clock GTIA mode switch)"
+    },
+    "gtia_pmresize": {
+      "s": "fail",
+      "d": "4x-to-1x failed at index 0: expected $80, got $00 (mid-scanline SIZEP change)"
+    },
+    "gtia_pmoverlap": {
+      "s": "fail",
+      "d": "Pass 0.0: Pos=64, Expected F0, Got 00 (mid-scanline GRAFP write)"
+    },
+    "gtia_vdelay": {
+      "s": "fail",
+      "d": "No delay 1/4 failed: 00 != $01 (mid-scanline GRAFP write)"
+    },
+    "gtia_pmretrigger": {
+      "s": "fail",
+      "d": "per-color-clock P/M evaluation required"
+    },
+    "pokey_noise": {
+      "s": "fail",
+      "d": "Incorrect 9-bit PRNG value: $4A != $95"
+    },
+    "pokey_inittiming": {
+      "s": "fail",
+      "d": "Incorrect 15KHz cycle count (even)"
+    },
+    "pokey_skstat": {
+      "s": "fail",
+      "d": "Framing error occurred"
+    },
+    "pokey_sertiming": {
+      "s": "fail",
+      "d": "serial timing"
+    },
+    "pokey_timertiming": {
+      "s": "fail",
+      "d": "timer timing"
+    },
+    "pokey_irqtiming": {
+      "s": "fail",
+      "d": "IRQ timing"
+    },
+    "pia_irq": {
+      "s": "fail",
+      "d": "PIA interrupt behaviour"
+    },
+    "cpu_65c816": {
+      "s": "na",
+      "d": "correctly skipped - no 65C816"
+    },
+    "mod_disp80": {
+      "s": "na",
+      "d": "display-only module"
+    },
+    "mod_dispmin": {
+      "s": "na",
+      "d": "display-only module"
+    },
+    "mod_options": {
+      "s": "na",
+      "d": "display-only module"
+    },
+    "mod_scroll40": {
+      "s": "na",
+      "d": "display-only module"
+    },
+    "mod_vbxe80": {
+      "s": "na",
+      "d": "display-only module"
+    },
+    "pokey_serdirect": {
+      "s": "fail",
+      "d": "never reaches _testEnd (hangs) - not 'na'"
+    },
+    "gtia_phantomdma": {
+      "s": "fail",
+      "d": "phantom DMA"
+    },
+    "pokey_serclock": {
+      "s": "fail",
+      "d": "serial clock"
+    },
+    "pokey_twotone": {
+      "s": "fail",
+      "d": "two-tone serial mode"
+    }
+  }
+}
