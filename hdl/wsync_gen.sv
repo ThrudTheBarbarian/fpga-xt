@@ -56,7 +56,7 @@ module wsync_gen #(
 );
 
     logic rdy_latch;                // 1 = ready, 0 = stalled
-    logic rdy_q1, rdy_q2, rdy_q3;   // /RDY output pipeline (machine cycles)
+    logic rdy_latch_q;              // latch delayed one machine cycle
     logic [15:0] low_age;           // cycles since /RDY went low
 
     always_ff @(posedge clk or posedge rst) begin
@@ -70,33 +70,26 @@ module wsync_gen #(
         end
     end
 
-    // /RDY trails the latch by two machine cycles, so the CPU executes one
-    // more cycle after the write before it stalls.  The depth is selectable so
-    // the true value can be swept on hardware without a rebuild.
+    // One machine cycle of latch history, so an ASSERT-only delay can be
+    // built: /RDY falls one cycle after the WSYNC write but rises the instant
+    // the latch clears at the release.  This is the shape real ANTIC has — the
+    // "one-cycle delay before RDY is pulled" is on the assert side only — and
+    // it lets an INC WSYNC's second write fall in the delay slot without the
+    // release also being pushed a cycle (which would move every downstream
+    // read).
     always_ff @(posedge clk or posedge rst) begin
-        if (rst) begin
-            rdy_q1 <= 1'b1;
-            rdy_q2 <= 1'b1;
-            rdy_q3 <= 1'b1;
-        end else if (phi2_tick) begin
-            rdy_q1 <= rdy_latch;
-            rdy_q2 <= rdy_q1;
-            rdy_q3 <= rdy_q2;
-        end
+        if (rst)            rdy_latch_q <= 1'b1;
+        else if (phi2_tick) rdy_latch_q <= rdy_latch;
     end
 
-    // Encoding 0 is the COMBINATIONAL path on purpose: it is the only depth
-    // measured to boot and run the ACID800 framework end-to-end on hardware,
-    // so cfg = 0 must select it or a fresh board wedges its 6502 before anyone
-    // can poke the register.  The registered depths stay reachable so the
-    // fidelity-correct depth can be swept without a rebuild.
+    // pipe_sel[1] selects the assert-only-delayed shape; pipe_sel[0] is spare
+    // (the CPU-side write-immunity knob lives in fpga_xt_top).  Encoding 0 is
+    // the plain combinational latch, which is what boots, so it stays cfg = 0.
+    //   rdy_latch | rdy_latch_q : ready if the latch is ready NOW or was ready
+    //   last cycle -> falls 1 cycle late (assert delay), rises immediately.
     always_comb begin
-        case (pipe_sel)
-            2'd0:    rdy_n = rdy_latch;   // combinational — default, always boots
-            2'd1:    rdy_n = rdy_q1;      // 1 stage
-            2'd2:    rdy_n = rdy_q2;      // 2 stages
-            default: rdy_n = rdy_q3;      // 3 stages
-        endcase
+        if (pipe_sel[1]) rdy_n = rdy_latch | rdy_latch_q;   // assert-delayed
+        else             rdy_n = rdy_latch;                  // combinational
     end
 
     // ---- Diagnostic: /RDY held low beyond one scan line -------------------

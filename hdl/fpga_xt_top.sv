@@ -320,6 +320,7 @@ module fpga_xt_top (
     wire        phi2_tick = 1'b0;
     wire        halt_n_sally;      // /HALT after CDC (external-ANTIC mode; unused at our op point)
     wire        antic_dma_steal_w; // ANTIC cycle-steal (clk_sys, active-high) from antic_top
+    wire        antic_wsync_write_immune; // clk_sys; quasi-static debug knob
     wire        antic_phi2_level;  // ANTIC's raw phi2 level (clk_sys) — timing master; paces the fid core
     wire        dma_steal_sally;   // ...CDC'd into clk_sally; gates the CPU at CLOCK_MULT=1
     wire        wsync_rdy_n;       // from ANTIC WSYNC
@@ -894,7 +895,17 @@ module fpga_xt_top (
     // the core parks mid-write with the bus held, the held write re-arms $D40A,
     // and INC WSYNC deadlocks outright — the ACID800 framework hangs in
     // _testEnd ($1DB8 INC WSYNC), which is most of the suite.
-    wire       fid_wsync_rdy = wsync_rdy_n | ~fid_rw;   // writes are immune to WSYNC
+    // Write-immunity is defeatable (debug cfg[15]) so the fidelity-correct
+    // WSYNC shape can be swept: immunity breaks the INC-WSYNC deadlock but
+    // grants the RMW's second write a free cycle, so the assert-only delay in
+    // wsync_gen may be the better model.  The knob is quasi-static — synced
+    // into clk_sally with a plain 2-FF.
+    (* ASYNC_REG = "true" *) reg immune_s1 = 1'b1, immune_s2 = 1'b1;
+    always_ff @(posedge clk_sally) begin
+        immune_s1 <= antic_wsync_write_immune;
+        immune_s2 <= immune_s1;
+    end
+    wire       fid_wsync_rdy = wsync_rdy_n | (~fid_rw & immune_s2);   // writes immune to WSYNC unless disabled
     wire       fid_rdy = cpu_sel & fid_mem_ok & ~dma_steal_sally & fid_wsync_rdy & ~fdbg_cpu_halt;  // owns bus; /HALT + WSYNC + busy + dbg-halt aware
     // sally_mem's read-latch (bram_dout_q) AND every write/bank-latch/hwreg-strobe are gated
     // by its `rdy` — a "the CPU took a step" pulse. For the turbo core that is sally_rdy. The
@@ -1511,6 +1522,7 @@ module fpga_xt_top (
         .nmi_n              (antic_nmi_n),
         .halt_n             (antic_halt_n),
         .rdy_n              (antic_rdy_n),
+        .wsync_write_immune (antic_wsync_write_immune),
         .dma_steal          (antic_dma_steal_w),
         .dmactl_honor       (gp0_ctrl[4]),    // PS opt-in: honour DMACTL screen-blank
         .unlock_antic       (xt_unlock[UNLK_ANTIC]),  // mirror-conditional $D4xx decode:

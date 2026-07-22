@@ -116,6 +116,7 @@ module antic_top #(
     output wire        nmi_n,
     output wire        halt_n,
     output wire        rdy_n,
+    output wire        wsync_write_immune,   // 1 = writes ignore WSYNC /RDY (cfg[15]=0)
 
     // Cycle-exact ANTIC DMA cycle-steal (active-HIGH: 1 = ANTIC takes this
     // machine cycle from the CPU).  Consumed by sally_clock at CLOCK_MULT=1
@@ -1285,11 +1286,14 @@ module antic_top #(
     // the DBG_TB config register, because the fid core's coldstart is sensitive
     // to WSYNC timing and each candidate would otherwise cost a full rebuild:
     //   cfg[23:20] = signed offset applied to the 103 release cycle
-    //   cfg[15:14] = /RDY pipeline depth (0 = 3 stages, the shallowest that boots)
-    // Both default to 0, i.e. release at 103 through 3 stages.
+    //   cfg[14]    = /RDY assert-only delay (0 = combinational, boots)
+    //   cfg[15]    = DISABLE CPU-side write-immunity (0 = immune, boots)
+    // All default to 0: release at 103, combinational /RDY, writes immune —
+    // the configuration measured to boot and run the framework end to end.
     wire signed [3:0] wsync_rel_adj  = dbg_tb_cfg_s[23:20];
     wire       [7:0]  wsync_rel_cyc  = 8'd103 + {{4{wsync_rel_adj[3]}}, wsync_rel_adj};
-    wire       [1:0]  wsync_pipe_sel = dbg_tb_cfg_s[15:14];
+    wire       [1:0]  wsync_pipe_sel = {dbg_tb_cfg_s[14], 1'b0}; // bit1 = assert-delay
+    assign wsync_write_immune = ~dbg_tb_cfg_s[15];              // out to fpga_xt_top
     wire wsync_release_pulse = phi2_tick && (ar_phi2_in_line == wsync_rel_cyc);
 
     wire        wsync_rdy_w;             // 1 = ready, 0 = stalled
