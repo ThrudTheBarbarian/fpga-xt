@@ -1166,7 +1166,8 @@ module antic_top #(
     always_comb begin
         unique case (tb_mode)
             3'd1:    tb_trig = snoop_we_antic & (snoop_addr[7:0] == tb_match_addr);
-            3'd2:    tb_trig = snoop_re_antic & (snoop_addr[7:0] == tb_match_addr);
+            3'd2:    tb_trig = (tb_pokey_rd ? snoop_re_pokey_l : snoop_re_antic)
+                             & (snoop_addr[7:0] == tb_match_addr);
             // DLI at the REAL gate cycle (8), matching nmi_gen — captures nmien_q.
             // cfg[12] narrows this to DLIs that actually ASSERT /NMI (nmien[7] set),
             // which is the only way to tell "the DL never raised a DLI" apart from
@@ -1206,6 +1207,12 @@ module antic_top #(
     // 1-cycle-stale visible flag is exact at every trigger except a line boundary).
     wire tb_visible_only = dbg_tb_cfg_s[3];
     wire tb_dli_nmi_only = dbg_tb_cfg_s[12];   // mode 3: only DLIs that assert /NMI
+    // cfg[13]: retarget mode 2 from the ANTIC ($D4xx) read strobe to the LEFT
+    // POKEY ($D2xx).  The ACID800 suite times WSYNC by reading POKEY RANDOM
+    // ($D20A) as a cycle-exact clock, so measuring WHICH machine cycle that read
+    // lands on is the only way to see a 1-cycle CPU timing error directly rather
+    // than inferring it from the returned byte.
+    wire tb_pokey_rd     = dbg_tb_cfg_s[13];
     logic tb_scan_vis_q;
     always_ff @(posedge clk_bus or posedge rst_bus) begin
         if (rst_bus) tb_scan_vis_q <= 1'b1;
@@ -1220,7 +1227,7 @@ module antic_top #(
     // capture records the gating NMIEN value at that scanline (is bit7 set?).
     wire [7:0] tb_data8 =
           (tb_mode == 3'd1 || tb_mode == 3'd5 || tb_mode == 3'd6) ? snoop_data
-        : (tb_mode == 3'd2)                                        ? antic_read_data
+        : (tb_mode == 3'd2)  ? (tb_pokey_rd ? pokey_l_read_data : antic_read_data)
         :                                                           nmien_q;
 
     // 16-entry ring in distributed RAM: {scanline[8:0], phi2_in_line[7:0], data[7:0]}.
