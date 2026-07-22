@@ -140,6 +140,26 @@ module antic_regs (
     wire is_canonical = ~is_chiplet;
     wire [3:0] canon_w = waddr[3:0];
 
+    // `we` is a LEVEL, held for the whole bus phase — and that phase is
+    // stretched for as long as the CPU is stalled.  Any strobe derived
+    // straight from it therefore re-fires every clock for the duration of one
+    // write, which is fatal for WSYNC: a stalled write re-arms $D40A forever,
+    // /RDY can never be released, and the machine deadlocks on that write
+    // (seen as the OS hardware-clear loop hanging at STA $D41A).  Edge-detect
+    // the write so every strobe below is exactly one pulse per access.
+    logic canon_we_q;
+    always_ff @(posedge clk or posedge rst) begin
+        if (rst) canon_we_q <= 1'b0;
+        else     canon_we_q <= we && is_canonical;
+    end
+    wire canon_we_edge = (we && is_canonical) && !canon_we_q;
+    logic chip_we_q;
+    always_ff @(posedge clk or posedge rst) begin
+        if (rst) chip_we_q <= 1'b0;
+        else     chip_we_q <= we && is_chiplet;
+    end
+    wire chip_we_edge = (we && is_chiplet) && !chip_we_q;
+
     wire is_canon_r   = ~claimed(raddr, unlock_antic, unlock_sprite, unlock_blit);
     wire [3:0] canon_r = raddr[3:0];
 
@@ -206,12 +226,12 @@ module antic_regs (
                     4'h7: pmbase <= wdata;       // $D407 PMBASE
                     4'h8: ;                       // $D408 reserved (was MODE in draft)
                     4'h9: chbase <= wdata;       // $D409 CHBASE
-                    4'hA: wsync_pending <= 1'b1; // $D40A WSYNC strobe
+                    4'hA: wsync_pending <= canon_we_edge; // $D40A WSYNC strobe
                     4'hB: ;                       // $D40B VCOUNT — read-only
                     4'hC: ;                       // $D40C PENH stub
                     4'hD: ;                       // $D40D PENV stub
                     4'hE: nmien <= wdata;        // $D40E NMIEN
-                    4'hF: nmires_strobe <= 1'b1;  // $D40F NMIRES — clears NMIST in nmi_gen
+                    4'hF: nmires_strobe <= canon_we_edge; // $D40F NMIRES — clears NMIST in nmi_gen
                 endcase
             end else if (we && is_chiplet) begin
                 unique case (waddr[6:0])
@@ -238,7 +258,7 @@ module antic_regs (
                     7'h05: pal_b       <= wdata;      // $D485 PAL_B
                     7'h06: begin
                         pal_idx          <= wdata;       // $D486 PAL_IDX
-                        pal_write_strobe <= 1'b1;        // commits {R,G,B} into palette_lut[wdata]
+                        pal_write_strobe <= chip_we_edge; // commits {R,G,B} into palette_lut[wdata]
                     end
                     7'h07: ;                            // $D487 reserved
                     // $D488-$D49B (offsets 7'h08-7'h1B) belong to draw_regs
@@ -258,7 +278,7 @@ module antic_regs (
                         // it tried to write) but DON'T pulse os_rom_we
                         // and don't increment.
                         os_rom_data <= wdata;
-                        if (!os_rom_locked) begin
+                        if (!os_rom_locked && chip_we_edge) begin
                             os_rom_we           <= 1'b1;
                             os_rom_pending_addr <= os_rom_addr;
                             os_rom_addr         <= os_rom_addr + 16'd1;
