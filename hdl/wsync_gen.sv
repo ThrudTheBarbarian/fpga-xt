@@ -1,20 +1,42 @@
 // wsync_gen.sv — WSYNC / RDY handler.
 //
-// $D40A write (any value) asserts /RDY active-low. /RDY releases on
-// the next vbeam line_start. The CPU bus master is expected to stall
-// while /RDY is low.
+// ANTIC holds a WSYNC LATCH, not a countdown:
 //
-// wsync_pending arrives from antic_regs as a 1-cycle pulse.
-// line_start arrives from vbeam as a 1-cycle pulse at the start of
-// each visible scan line. Same-cycle WSYNC + line_start: WSYNC wins —
-// /RDY is held low for one cycle and released on the *next* line_start
-// (matches Atari behaviour where a WSYNC write "at" hsync still
-// stalls until the following one).
+//   * any write to $D40A SETS the latch (the value written is irrelevant),
+//   * `line_start` CLEARS it once per scan line,
+//   * /RDY is a REGISTERED output of the latch, two machine cycles behind it.
 //
-// `wsync_overdue_count` ticks each cycle that /RDY has been low for
-// more than ~228 clk_bus cycles (one full scan line at the Atari
-// reference clock). Real ANTIC always releases by the next hsync —
-// the counter is a diagnostic for vbeam misconfiguration.
+// The register stages are what make a WSYNC write stall the CPU one cycle
+// *after* the write.  Avery Lee (ACID800 author): "there is a one-cycle delay
+// before RDY is pulled.  That delay is on ANTIC's side, so it is one cycle
+// regardless of whether the next cycle is a DMA or CPU cycle."  His
+// logic-analyser capture of a real XE, cycles numbered from the opcode fetch:
+//
+//   STA wsync                     INC wsync
+//   3: write to wsync             4: write ORIGINAL value to wsync
+//   4: /RDY still high            5: write NEW value to wsync, /RDY still high
+//      (next opcode fetch runs)      (the RMW's second write lands here)
+//   5: /RDY low, CPU stalls       6: /RDY low, CPU stalls
+//
+// A read-modify-write writes $D40A twice.  Because the latch is level state,
+// the second write merely re-sets an already-set latch and changes nothing —
+// the stall is timed from the FIRST write.  That is the entire difference
+// between STA WSYNC and INC WSYNC in ACID800's antic_wsync: the extra machine
+// cycle the RMW spends is exactly the one the delay slot already allows, which
+// is why the test's two reads land one cycle apart (114 vs 115 cycles).
+//
+// CLEAR BEATS SET.  A write landing on the same cycle as `line_start` does not
+// start a fresh line-long stall — the release wins and the CPU carries on.
+// This is antic_wsync's "Late INC WSYNC" case: an RMW whose two writes straddle
+// the release point must not cost a whole scan line.
+//
+// `line_start` must be pulsed two machine cycles BEFORE the cycle the CPU is
+// meant to resume on, since /RDY trails the latch by both register stages.
+//
+// `wsync_overdue_count` ticks each cycle that /RDY has been low for more than
+// ~228 clk_bus cycles (one full scan line at the Atari reference clock).  Real
+// ANTIC always releases by the next hsync — the counter is a diagnostic for
+// vbeam misconfiguration.
 
 `default_nettype none
 
@@ -24,38 +46,56 @@ module wsync_gen #(
     input  wire        clk,
     input  wire        rst,
 
+    input  wire        phi2_tick,        // machine-cycle boundary
     input  wire        wsync_pending,    // 1-cycle pulse on $D40A write
     input  wire        line_start,       // 1-cycle pulse from vbeam
 
-    output logic       rdy_n,            // active-low /RDY (1 = ready, 0 = stall)
+    output wire        rdy_n,            // active-low /RDY (1 = ready, 0 = stall)
     output logic [31:0] wsync_overdue_count
 );
 
-    logic rdy_internal;             // 1 = ready, 0 = stalled
-    logic [15:0] low_age;           // cycles since rdy went low
+    logic rdy_latch;                // 1 = ready, 0 = stalled
+    logic rdy_q1, rdy_q2;           // /RDY output pipeline (machine cycles)
+    logic [15:0] low_age;           // cycles since /RDY went low
 
     always_ff @(posedge clk or posedge rst) begin
         if (rst) begin
-            rdy_internal        <= 1'b1;
-            low_age             <= 16'h0;
-            wsync_overdue_count <= 32'h0;
+            rdy_latch <= 1'b1;
         end else begin
-            // WSYNC dominates — set wins over a same-cycle line_start.
-            if (wsync_pending) begin
-                rdy_internal <= 1'b0;
-                low_age      <= 16'h0;
-            end else if (line_start && !rdy_internal) begin
-                rdy_internal <= 1'b1;
-                low_age      <= 16'h0;
-            end else if (!rdy_internal) begin
-                low_age <= low_age + 16'd1;
-                if (low_age == OVERDUE_THRESHOLD[15:0])
-                    wsync_overdue_count <= wsync_overdue_count + 32'd1;
-            end
+            // Both arms assign the same variable non-blockingly, so the LAST
+            // one wins: the release beats a same-cycle WSYNC write.
+            if (wsync_pending) rdy_latch <= 1'b0;
+            if (line_start)    rdy_latch <= 1'b1;
         end
     end
 
-    assign rdy_n = rdy_internal;
+    // /RDY trails the latch by two machine cycles, so the CPU executes one
+    // more cycle after the write before it stalls.
+    always_ff @(posedge clk or posedge rst) begin
+        if (rst) begin
+            rdy_q1 <= 1'b1;
+            rdy_q2 <= 1'b1;
+        end else if (phi2_tick) begin
+            rdy_q1 <= rdy_latch;
+            rdy_q2 <= rdy_q1;
+        end
+    end
+
+    assign rdy_n = rdy_q2;
+
+    // ---- Diagnostic: /RDY held low beyond one scan line -------------------
+    always_ff @(posedge clk or posedge rst) begin
+        if (rst) begin
+            low_age             <= 16'h0;
+            wsync_overdue_count <= 32'h0;
+        end else if (rdy_n) begin
+            low_age <= 16'h0;
+        end else begin
+            low_age <= low_age + 16'd1;
+            if (low_age == OVERDUE_THRESHOLD[15:0])
+                wsync_overdue_count <= wsync_overdue_count + 32'd1;
+        end
+    end
 
 endmodule
 

@@ -55,7 +55,8 @@ HDL_SRCS := \
     $(HDL_DIR)/antic_raster.sv    \
     $(HDL_DIR)/antic_seq.sv       \
     $(HDL_DIR)/antic_top.sv       \
-    $(HDL_DIR)/antic_dma_steal.sv
+    $(HDL_DIR)/antic_dma_steal.sv \
+    $(HDL_DIR)/cdc_sync_bit.sv
 
 BUILD_DIR := build
 

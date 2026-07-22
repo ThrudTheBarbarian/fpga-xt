@@ -1160,6 +1160,19 @@ module antic_top #(
     end
     wire tb_clear_pulse = tb_clear & ~tb_clear_q;
 
+    // cfg[12] narrows mode 3 to DLIs that actually ASSERT /NMI (nmien[7] set),
+    // which is the only way to tell "the DL never raised a DLI" apart from "it
+    // raised one while DLIs were masked".  Without it the 16-entry ring fills
+    // with masked boot/framework DLIs and the interesting frame is never
+    // visible (ACID800 nmist/dlitiming/pfstart-stop all hinge on this).
+    wire tb_dli_nmi_only = dbg_tb_cfg_s[12];
+    // cfg[13]: retarget mode 2 from the ANTIC ($D4xx) read strobe to the LEFT
+    // POKEY ($D2xx).  The ACID800 suite times WSYNC by reading POKEY RANDOM
+    // ($D20A) as a cycle-exact clock, so measuring WHICH machine cycle that read
+    // lands on is the only way to see a 1-cycle CPU timing error directly rather
+    // than inferring it from the returned byte.
+    wire tb_pokey_rd     = dbg_tb_cfg_s[13];
+
     // Trigger select (single-cycle pulse; write/read modes are qualified by
     // the snoop write/read strobe).
     logic tb_trig;
@@ -1169,11 +1182,6 @@ module antic_top #(
             3'd2:    tb_trig = (tb_pokey_rd ? snoop_re_pokey_l : snoop_re_antic)
                              & (snoop_addr[7:0] == tb_match_addr);
             // DLI at the REAL gate cycle (8), matching nmi_gen — captures nmien_q.
-            // cfg[12] narrows this to DLIs that actually ASSERT /NMI (nmien[7] set),
-            // which is the only way to tell "the DL never raised a DLI" apart from
-            // "it raised one while DLIs were masked".  Without it the 16-entry ring
-            // fills with masked boot/framework DLIs and the interesting frame is
-            // never visible (ACID800 nmist/dlitiming/pfstart-stop all hinge on this).
             3'd3:    tb_trig = cycle_8_pulse & nmi_cur_row_dli
                              & (~tb_dli_nmi_only | nmien_q[7]);
             3'd4:    tb_trig = vbi_c8_pulse;
@@ -1206,13 +1214,6 @@ module antic_top #(
     // of the capture-enable path (scanline only changes once per 114 cycles, so a
     // 1-cycle-stale visible flag is exact at every trigger except a line boundary).
     wire tb_visible_only = dbg_tb_cfg_s[3];
-    wire tb_dli_nmi_only = dbg_tb_cfg_s[12];   // mode 3: only DLIs that assert /NMI
-    // cfg[13]: retarget mode 2 from the ANTIC ($D4xx) read strobe to the LEFT
-    // POKEY ($D2xx).  The ACID800 suite times WSYNC by reading POKEY RANDOM
-    // ($D20A) as a cycle-exact clock, so measuring WHICH machine cycle that read
-    // lands on is the only way to see a 1-cycle CPU timing error directly rather
-    // than inferring it from the returned byte.
-    wire tb_pokey_rd     = dbg_tb_cfg_s[13];
     logic tb_scan_vis_q;
     always_ff @(posedge clk_bus or posedge rst_bus) begin
         if (rst_bus) tb_scan_vis_q <= 1'b1;
@@ -1270,66 +1271,33 @@ module antic_top #(
     assign dbg_tb_cap  = tb_ring[tb_read_idx];
     assign dbg_tb_stat = {6'd0, tb_armed, tb_full, 3'd0, tb_wr_idx, tb_trig_count};
 
-    // ---- WSYNC handler: release at bus cycle 105 of the line ---------
-    // ANTIC's real /RDY release point is bus cycle 105 of the current scan
-    // line (start of horizontal blank).  The phi2-cycle-within-line count now
-    // comes from antic_raster (ar_phi2_in_line, 0..113) — which is what makes
-    // this correct: the old local counter was reset by the 140 kHz vbeam
-    // line_start (~12 phi2 cycles), so it never reached 105 and WSYNC never
-    // released.  phi2-paced line_start fixes it.
-    // NOTE (measured 2026-07-21): the DBG_TB read probe shows our post-WSYNC
-    // `lda vcount` reads landing at 111,111,112,112 where Phaeron's per-cycle
-    // annotations say 110,110,111,111 — a consistent +1.  Releasing here at 104
-    // instead of 105 DOES pull those reads onto the expected cycles, but it is
-    // the WRONG fix: it makes the CPU resume a cycle EARLY versus the hardware
-    // contract, and on HW it broke the OS coldstart (the 6502 stopped reaching
-    // the $0706 boot trap — xexload dropped to 3 loads in 8).  The +1 is
-    // therefore in the READ path inside the instruction, not in the resume
-    // point.  Keep the contract correct here; fix the read position instead.
-    wire cycle_105_pulse = phi2_tick && (ar_phi2_in_line == 8'd105);
+    // ---- WSYNC handler ---------------------------------------------------
+    // The CPU resumes on bus cycle 105 of the scan line (start of horizontal
+    // blank).  The phi2-cycle-within-line count comes from antic_raster
+    // (ar_phi2_in_line, 0..113) — which is what makes this correct: a counter
+    // reset by the 140 kHz vbeam line_start (~12 phi2 cycles) never reaches
+    // 105, so WSYNC would never release.
+    //
+    // /RDY is a registered output of wsync_gen's WSYNC latch and trails it by
+    // two machine cycles, so the latch is cleared at 103 to resume at 105.
+    wire wsync_release_pulse = phi2_tick && (ar_phi2_in_line == 8'd103);
 
     wire        wsync_rdy_w;             // 1 = ready, 0 = stalled
-    // ANTIC takes ONE MACHINE CYCLE to pull /RDY after the WSYNC write, so the
-    // CPU executes one more cycle before it stalls.  Avery Lee (ACID800 author):
-    // "there is a one-cycle delay before RDY is pulled.  That delay is on
-    // ANTIC's side, so it is one cycle regardless of whether the next cycle is a
-    // DMA or CPU cycle."  Confirmed on a real XE with a logic analyser:
+    // The one-cycle "delay slot" before /RDY falls lives in wsync_gen's output
+    // pipeline, so the write pulse goes straight in: a read-modify-write's
+    // second write re-sets an already-set latch and must not restart it.  See
+    // wsync_gen.sv for the logic-analyser trace this is modelled on.
     //
-    //   STA wsync            INC wsync
-    //   3: write to wsync    4: write ORIGINAL value to wsync
-    //   4: RDY still high    5: write NEW value to wsync / RDY still high
-    //      (next opcode          (the second write "drops into the delay slot")
-    //       fetch completes)
-    //   5: RDY low, stalls   6: RDY low, stalls
-    //
-    // Asserting immediately stalls the CPU one cycle early, so at the cycle-105
-    // release it has NOT yet fetched the next opcode — every post-WSYNC access
-    // then lands one cycle late.  Measured: ACID800 antic_wsync's d1 read landed
-    // on cycle 108 where hardware puts it on 107, making the d1->d2 gap 114
-    // instead of Avery's documented 115.
-    //
-    // NOTE the ACID800 SOURCE COMMENTS are wrong on this ("the code is checked
-    // against a real Atari, but the comments aren't") — do not re-derive cycle
-    // numbers from them.  The authoritative RANDOM sequence indices for the
-    // first three test bytes are 243, 357 (+114) and 472 (+115).
-    // Phase note: the fid core samples rdy at SUB_COMMIT (sub-53, LATE in its
-    // machine cycle), so an assertion fired at the START of cycle N+1 still
-    // stalls N+1.  To leave N+1 executing and stall N+2 — the behaviour the
-    // logic-analyser trace shows — the pulse must land after N+1's sample
-    // point, i.e. on the SECOND phi2 tick after the write.
-    logic [1:0] wsync_arm_q;
-    always_ff @(posedge clk_bus or posedge rst_bus) begin
-        if (rst_bus)                             wsync_arm_q <= 2'd0;
-        else if (wsync_pending)                  wsync_arm_q <= 2'd2;
-        else if (phi2_tick && wsync_arm_q != 0)  wsync_arm_q <= wsync_arm_q - 2'd1;
-    end
-    wire wsync_pending_dly = phi2_tick & (wsync_arm_q == 2'd1);
-
+    // NOTE the ACID800 SOURCE COMMENTS are wrong on cycle numbers ("the code is
+    // checked against a real Atari, but the comments aren't") — do not
+    // re-derive timing from them.  antic_wsync's asserted RANDOM values are
+    // $95, $0D, $44 and $34, at 9-bit-poly steps 113, 342, 569 and 1253.
     wsync_gen u_wsync_gen (
         .clk                (clk_bus),
         .rst                (rst_bus),
-        .wsync_pending      (wsync_pending_dly),
-        .line_start         (cycle_105_pulse),     // release on cycle-105, not next-line
+        .phi2_tick          (phi2_tick),
+        .wsync_pending      (wsync_pending),
+        .line_start         (wsync_release_pulse),
         .rdy_n              (wsync_rdy_w),
         .wsync_overdue_count(wsync_overdue_count_q)
     );
