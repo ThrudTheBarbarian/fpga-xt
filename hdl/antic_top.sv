@@ -1280,7 +1280,17 @@ module antic_top #(
     //
     // /RDY is a registered output of wsync_gen's WSYNC latch and trails it by
     // two machine cycles, so the latch is cleared at 103 to resume at 105.
-    wire wsync_release_pulse = phi2_tick && (ar_phi2_in_line == 8'd103);
+    //
+    // Both the release point and the pipeline depth are runtime-tunable from
+    // the DBG_TB config register, because the fid core's coldstart is sensitive
+    // to WSYNC timing and each candidate would otherwise cost a full rebuild:
+    //   cfg[23:20] = signed offset applied to the 103 release cycle
+    //   cfg[15:14] = /RDY pipeline depth (0 = 2 stages, the modelled default)
+    // Both default to 0, i.e. release at 103 through 2 stages.
+    wire signed [3:0] wsync_rel_adj  = dbg_tb_cfg_s[23:20];
+    wire       [7:0]  wsync_rel_cyc  = 8'd103 + {{4{wsync_rel_adj[3]}}, wsync_rel_adj};
+    wire       [1:0]  wsync_pipe_sel = dbg_tb_cfg_s[15:14];
+    wire wsync_release_pulse = phi2_tick && (ar_phi2_in_line == wsync_rel_cyc);
 
     wire        wsync_rdy_w;             // 1 = ready, 0 = stalled
     // The one-cycle "delay slot" before /RDY falls lives in wsync_gen's output
@@ -1296,6 +1306,7 @@ module antic_top #(
         .clk                (clk_bus),
         .rst                (rst_bus),
         .phi2_tick          (phi2_tick),
+        .pipe_sel           (wsync_pipe_sel),
         .wsync_pending      (wsync_pending),
         .line_start         (wsync_release_pulse),
         .rdy_n              (wsync_rdy_w),

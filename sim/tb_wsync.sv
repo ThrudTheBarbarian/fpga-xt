@@ -59,6 +59,7 @@ module tb_wsync;
     wsync_gen u_wsync_gen (
         .clk(clk), .rst(rst),
         .phi2_tick(1'b1),
+        .pipe_sel(2'd0),
         .wsync_pending(wsync_pending),
         .line_start(line_start),
         .rdy_n(rdy_n),

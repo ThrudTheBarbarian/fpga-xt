@@ -47,15 +47,16 @@ module wsync_gen #(
     input  wire        rst,
 
     input  wire        phi2_tick,        // machine-cycle boundary
+    input  wire  [1:0] pipe_sel,         // /RDY pipeline depth: 0=2 (default), 1=1, 2=3, 3=comb
     input  wire        wsync_pending,    // 1-cycle pulse on $D40A write
     input  wire        line_start,       // 1-cycle pulse from vbeam
 
-    output wire        rdy_n,            // active-low /RDY (1 = ready, 0 = stall)
+    output logic       rdy_n,            // active-low /RDY (1 = ready, 0 = stall)
     output logic [31:0] wsync_overdue_count
 );
 
     logic rdy_latch;                // 1 = ready, 0 = stalled
-    logic rdy_q1, rdy_q2;           // /RDY output pipeline (machine cycles)
+    logic rdy_q1, rdy_q2, rdy_q3;   // /RDY output pipeline (machine cycles)
     logic [15:0] low_age;           // cycles since /RDY went low
 
     always_ff @(posedge clk or posedge rst) begin
@@ -70,18 +71,28 @@ module wsync_gen #(
     end
 
     // /RDY trails the latch by two machine cycles, so the CPU executes one
-    // more cycle after the write before it stalls.
+    // more cycle after the write before it stalls.  The depth is selectable so
+    // the true value can be swept on hardware without a rebuild.
     always_ff @(posedge clk or posedge rst) begin
         if (rst) begin
             rdy_q1 <= 1'b1;
             rdy_q2 <= 1'b1;
+            rdy_q3 <= 1'b1;
         end else if (phi2_tick) begin
             rdy_q1 <= rdy_latch;
             rdy_q2 <= rdy_q1;
+            rdy_q3 <= rdy_q2;
         end
     end
 
-    assign rdy_n = rdy_q2;
+    always_comb begin
+        case (pipe_sel)
+            2'd0:    rdy_n = rdy_q2;      // 2 stages — the modelled default
+            2'd1:    rdy_n = rdy_q1;      // 1 stage
+            2'd2:    rdy_n = rdy_q3;      // 3 stages
+            default: rdy_n = rdy_latch;   // combinational
+        endcase
+    end
 
     // ---- Diagnostic: /RDY held low beyond one scan line -------------------
     always_ff @(posedge clk or posedge rst) begin
