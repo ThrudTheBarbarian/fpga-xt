@@ -68,7 +68,7 @@ module tb_wsync;
 
     // Let the two-stage /RDY output pipeline propagate.
     task automatic settle();
-        repeat (3) @(posedge clk);
+        repeat (5) @(posedge clk);
     endtask
 
     task automatic write_reg(input logic [7:0] a, input logic [7:0] d);

@@ -1285,8 +1285,8 @@ module antic_top #(
     // the DBG_TB config register, because the fid core's coldstart is sensitive
     // to WSYNC timing and each candidate would otherwise cost a full rebuild:
     //   cfg[23:20] = signed offset applied to the 103 release cycle
-    //   cfg[15:14] = /RDY pipeline depth (0 = 2 stages, the modelled default)
-    // Both default to 0, i.e. release at 103 through 2 stages.
+    //   cfg[15:14] = /RDY pipeline depth (0 = 3 stages, the shallowest that boots)
+    // Both default to 0, i.e. release at 103 through 3 stages.
     wire signed [3:0] wsync_rel_adj  = dbg_tb_cfg_s[23:20];
     wire       [7:0]  wsync_rel_cyc  = 8'd103 + {{4{wsync_rel_adj[3]}}, wsync_rel_adj};
     wire       [1:0]  wsync_pipe_sel = dbg_tb_cfg_s[15:14];
