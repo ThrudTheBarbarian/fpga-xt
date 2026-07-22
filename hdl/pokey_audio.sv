@@ -176,13 +176,29 @@ module pokey_audio #(
 
     wire poly_init = (skctl[1:0] == 2'b00);   // SKCTL init/reset mode
 
+    // Release the counters ONE machine cycle after SKCTL leaves init, not on the
+    // same tick.  `skctl` is registered, so poly_init drops partway through the
+    // write's machine cycle and the tick that ENDS that cycle would otherwise
+    // already shift — giving one shift too many.  Measured: at the ACID800
+    // antic_wsync / pokey_noise read point we landed on sequence step 114 ($4A)
+    // where hardware is at step 113 ($95); those are adjacent steps, so this is
+    // exactly one extra shift.  (The old 17-bit poly also produced $4A at step
+    // 114, which made a working 9-bit mux look like a no-op — the value was
+    // byte-identical for an entirely different reason.)
+    logic poly_run_q;
+    always_ff @(posedge clk or posedge rst) begin
+        if (rst)             poly_run_q <= 1'b0;
+        else if (poly_init)  poly_run_q <= 1'b0;
+        else if (phi2_tick)  poly_run_q <= 1'b1;
+    end
+
     always_ff @(posedge clk or posedge rst) begin
         if (rst || poly_init) begin
             lfsr4_q  <= 4'b0001;
             lfsr5_q  <= 5'b00001;
             lfsr9_q  <= 9'h1FF;              // real POKEY seeds the poly to all ones
             lfsr17_q <= 17'h00001;
-        end else if (phi2_tick) begin
+        end else if (phi2_tick && poly_run_q) begin
             // Fibonacci form: shift left, new bit = XOR of selected taps.
             lfsr4_q  <= {lfsr4_q[2:0],   lfsr4_q[3]   ^ lfsr4_q[2]};
             lfsr5_q  <= {lfsr5_q[3:0],   lfsr5_q[4]   ^ lfsr5_q[2]};
