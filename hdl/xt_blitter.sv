@@ -664,11 +664,25 @@ module xt_blitter #(
     // size only if the read port is "always read mem[ra] into rd_reg".
     // The push-to-empty bypass lives in a separate register below, mux'd
     // into cq_front_q combinationally.
-    logic [287:0] cq_front_bram_q;     // registered output of the BRAM
+    // TWO cascaded read registers, so Vivado enables the BRAM's own output
+    // register (DO_REG=1) instead of the transparent output latch.
+    //
+    // With a SINGLE registered read the BRAM sits in DO_REG=0 (verified on the
+    // routed design: DOA_REG=0 DOB_REG=0) where clock-to-out is ~2.1 ns — and
+    // that measured 2.125 ns was 77% of the logic delay on the worst clk_sys
+    // path, which then fed six levels of command decode ending at
+    // fc_rd_row_reg/CE.  DO_REG=1 turns clock-to-out into a real flop (~0.4 ns)
+    // and splits the BRAM access and the decode into separate cycles.
+    //
+    // Costs one extra cycle of command-dispatch latency, which is irrelevant
+    // against a blit of hundreds of cycles; cq_front_valid below absorbs it.
+    logic [287:0] cq_front_bram_r;     // BRAM array -> output latch  (cycle 1)
+    logic [287:0] cq_front_bram_q;     // BRAM output register        (cycle 2)
 
     always_ff @(posedge clk) begin
         if (cq_push_q) cmd_fifo[cq_head] <= cmd_snapshot_q;
-        cq_front_bram_q <= cmd_fifo[cq_tail];
+        cq_front_bram_r <= cmd_fifo[cq_tail];
+        cq_front_bram_q <= cq_front_bram_r;
     end
 
     // Bypass register — holds the snapshot from the most recent push-to-
@@ -710,16 +724,26 @@ module xt_blitter #(
     // refetch), goes high one cycle later (or the cycle after a
     // push-to-empty, via cq_push_q && (cq_count == 0)).
     logic         cq_front_valid;
+    logic         cq_front_valid_r;   // 2-cycle BRAM read: valid pipeline stage 1
 
     always_ff @(posedge clk) begin  // sync reset — see note at `rst` port
-        if (rst)
-            cq_front_valid <= 1'b0;
-        else if (cq_pop)
-            cq_front_valid <= 1'b0;
-        else if (cq_push_q && (cq_count == '0))
-            cq_front_valid <= 1'b1;
-        else if (!cq_empty_w)
-            cq_front_valid <= 1'b1;
+        // TWO-stage: the BRAM read is now 2 cycles (DO_REG=1), so the front
+        // register only reflects cq_tail one cycle later than before.  The
+        // bypass path is unaffected — it is a plain register, already valid
+        // when armed — but gating both through the same delay keeps the
+        // "cq_front_q reflects the entry at cq_tail" invariant that the pop
+        // logic depends on, rather than dispatching a cycle early off stale
+        // BRAM data.
+        if (rst) begin
+            cq_front_valid_r <= 1'b0;
+            cq_front_valid   <= 1'b0;
+        end else if (cq_pop) begin
+            cq_front_valid_r <= 1'b0;
+            cq_front_valid   <= 1'b0;
+        end else begin
+            cq_front_valid_r <= (cq_push_q && (cq_count == '0)) || !cq_empty_w;
+            cq_front_valid   <= cq_front_valid_r;
+        end
     end
 
     // Unpacked fields for use in S_IDLE (read from the registered output).
