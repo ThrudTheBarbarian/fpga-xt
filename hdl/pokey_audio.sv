@@ -10,11 +10,14 @@
 //
 // The four LFSRs (4-bit, 5-bit, 9-bit, 17-bit) free-run on the machine
 // clock (phi2_tick) — the tone dividers sample them when they fire.
-// While POKEY is in SKCTL init/reset mode (SKCTL[1:0]==0) the counters
-// are held and RANDOM reads $FF. The 9-bit poly isn't directly
-// selectable by AUDC; it's used by the M23-3 AUDCTL POLY9 mode that
-// replaces the 17-bit poly output with the 9-bit one. RANDOM ($D20A)
-// reads bits 16..9 of the 17-bit poly.
+// While POKEY is in SKCTL init/reset mode (SKCTL[1:0]==0) the counters keep
+// SHIFTING but feed in 1s, so the register fills with ones and RANDOM only
+// reaches $FF after n shifts — reading it partway through returns a partly
+// filled value (ACID800 pokey_noise's hot-stop assertions measure exactly
+// this). Leaving init therefore always starts from all-ones. The 9-bit poly
+// isn't directly selectable by AUDC; AUDCTL[7] substitutes it for the 17-bit
+// one, and RANDOM ($D20A) follows that selection: bits [8:1] of the 9-bit
+// poly when AUDCTL[7] is set, else bits [16:9] of the 17-bit poly.
 //
 // Channel-clock reference for M23-1/2: a fixed 64 kHz generated from
 // clk_bus by a divide-by-(CLK_BUS_HZ / 64000) counter. Real POKEY
@@ -185,20 +188,41 @@ module pokey_audio #(
     // exactly one extra shift.  (The old 17-bit poly also produced $4A at step
     // 114, which made a working 9-bit mux look like a no-op — the value was
     // byte-identical for an entirely different reason.)
-    logic poly_run_q;
+    // The mode change takes effect one machine cycle after SKCTL is written, in
+    // BOTH directions.  `skctl` is registered, so the mode flips partway through
+    // the write's machine cycle and the tick that ENDS that cycle would otherwise
+    // already act on the new mode.  Measured twice, symmetrically:
+    //   leaving  init: we landed on sequence step 114 where hardware is at 113
+    //   entering init: we filled 4 ones where hardware had filled 3 ($F9 vs $E9)
+    // Delaying poly_init itself by one tick corrects both with one mechanism.
+    logic poly_init_d;
     always_ff @(posedge clk or posedge rst) begin
-        if (rst)             poly_run_q <= 1'b0;
-        else if (poly_init)  poly_run_q <= 1'b0;
-        else if (phi2_tick)  poly_run_q <= 1'b1;
+        if (rst)            poly_init_d <= 1'b1;
+        else if (phi2_tick) poly_init_d <= poly_init;
     end
 
     always_ff @(posedge clk or posedge rst) begin
-        if (rst || poly_init) begin
-            lfsr4_q  <= 4'b0001;
-            lfsr5_q  <= 5'b00001;
-            lfsr9_q  <= 9'h1FF;              // real POKEY seeds the poly to all ones
-            lfsr17_q <= 17'h00001;
-        end else if (phi2_tick && poly_run_q) begin
+        if (rst) begin
+            lfsr4_q  <= 4'b1111;
+            lfsr5_q  <= 5'b11111;
+            lfsr9_q  <= 9'h1FF;
+            lfsr17_q <= 17'h1FFFF;
+        end else if (phi2_tick && poly_init_d) begin
+            // INIT MODE DOES NOT SNAP TO $FF — it keeps shifting and feeds in 1s,
+            // so the register fills with ones and only THEN does RANDOM read $FF.
+            // Pinned by two ACID800 pokey_noise assertions that are only
+            // consistent with a progressive fill:
+            //   read ~228 cycles (two scan lines) after entering init -> $FF
+            //   read ~4 cycles after entering init ("hot-stop")       -> $E9
+            // $E9 = 11101001: the top bits are already ones, the rest is the
+            // surviving pre-stop state. This also explains independently why an
+            // all-ones seed fitted the release data — leaving init ALWAYS starts
+            // from all-ones.
+            lfsr4_q  <= {lfsr4_q[2:0], 1'b1};
+            lfsr5_q  <= {lfsr5_q[3:0], 1'b1};
+            lfsr9_q  <= {1'b1, lfsr9_q[8:1]};      // right-shifting: ones enter at the top
+            lfsr17_q <= {1'b1, lfsr17_q[16:1]};
+        end else if (phi2_tick) begin
             // Fibonacci form: shift left, new bit = XOR of selected taps.
             lfsr4_q  <= {lfsr4_q[2:0],   lfsr4_q[3]   ^ lfsr4_q[2]};
             lfsr5_q  <= {lfsr5_q[3:0],   lfsr5_q[4]   ^ lfsr5_q[2]};
@@ -209,14 +233,24 @@ module pokey_audio #(
             // width/taps/seed/shift/direction searched, only this one satisfies
             // all three.  The old left-shift taps(8,3) seed=1 form matched none.
             lfsr9_q  <= {lfsr9_q[0] ^ lfsr9_q[5], lfsr9_q[8:1]};
-            lfsr17_q <= {lfsr17_q[15:0], lfsr17_q[16] ^ lfsr17_q[11]};
+            // 17-bit poly: same realisation as the 9-bit above — RIGHT-shifting,
+            // feedback q[0]^q[5] into bit 16, seeded all-ones, RANDOM = [16:9].
+            // For a right-shifting LFSR, x^17+x^12+1 and x^17+x^5+1 are reciprocal
+            // realisations of the same polynomial, so taps (5,0) is POKEY's
+            // documented poly read the other way round.
+            // Constraint: ACID800 pokey_noise reads RANDOM 113 cycles after the
+            // SKCTL release with AUDCTL=0 and expects $08; this model hits it
+            // exactly (delta 0). NOTE fit to ONE constraint (unlike the 9-bit,
+            // which was pinned by three), chosen because it is the only exact fit
+            // that is also structurally identical to the verified 9-bit form.
+            lfsr17_q <= {lfsr17_q[0] ^ lfsr17_q[5], lfsr17_q[16:1]};
         end
     end
 
     wire poly4   = lfsr4_q[3];
     wire poly5   = lfsr5_q[4];
     wire poly9   = lfsr9_q[0];        // right-shifting now: the bit shifting out
-    wire poly17  = lfsr17_q[16];
+    wire poly17  = lfsr17_q[0];       // right-shifting now: the bit shifting out
     // RANDOM ($D20A) must honour AUDCTL[7]: when set, the 9-bit poly REPLACES the
     // 17-bit one, so RANDOM reads the 9-bit register's high byte [8:1] rather than
     // the 17-bit's [16:9].  We previously returned the 17-bit value unconditionally,
@@ -229,9 +263,12 @@ module pokey_audio #(
     // taps (12,0) and an all-ones seed, but no measurement pins it yet, so it is
     // deliberately left alone rather than changed on a guess. pokey_noise is the
     // test most likely to constrain it.
-    assign random_byte = poly_init  ? 8'hFF
-                       : audctl[7]  ? lfsr9_q[8:1]
-                                    : lfsr17_q[16:9];
+    // NO $FF forcing: init mode fills the register with ones progressively (see
+    // the shift logic above), so RANDOM reaches $FF on its own after n shifts and
+    // reads the partially-filled value in between — which is what the ACID800
+    // hot-stop assertions measure.
+    assign random_byte = audctl[7] ? lfsr9_q[8:1]
+                                   : lfsr17_q[16:9];
 
     // ---- Per-channel tick sources (M23-3) ----
     // ch1/ch3 high-freq mode (AUDCTL[6]/[5]): count on every clk
