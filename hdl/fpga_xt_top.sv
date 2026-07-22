@@ -886,10 +886,16 @@ module fpga_xt_top (
     //     STA wsync:  write, then the next OPCODE FETCH runs, then stall
     //     INC wsync:  write, then the SECOND WRITE runs,       then stall
     // One rule: exactly one cycle executes after the WSYNC write, whatever it is.
-    // That is modelled in antic_top's wsync_pending delay, so a read-only RDY
-    // gate here would grant writes a second free cycle on top of it and shift
-    // both reads together, leaving the d1->d2 gap wrong at 114 instead of 115.
-    wire       fid_rdy = cpu_sel & fid_mem_ok & ~dma_steal_sally & wsync_rdy_n & ~fdbg_cpu_halt;  // owns bus; /HALT + WSYNC + busy + dbg-halt aware
+    //
+    // On the NMOS 6502 /RDY only halts READ cycles — a write always completes.
+    // Avery Lee's trace shows it directly: the RMW's second write proceeds
+    // while /RDY is still high, and the stall lands on the following fetch.
+    // Honouring that is not optional here: if WSYNC can stall a write cycle,
+    // the core parks mid-write with the bus held, the held write re-arms $D40A,
+    // and INC WSYNC deadlocks outright — the ACID800 framework hangs in
+    // _testEnd ($1DB8 INC WSYNC), which is most of the suite.
+    wire       fid_wsync_rdy = wsync_rdy_n | ~fid_rw;   // writes are immune to WSYNC
+    wire       fid_rdy = cpu_sel & fid_mem_ok & ~dma_steal_sally & fid_wsync_rdy & ~fdbg_cpu_halt;  // owns bus; /HALT + WSYNC + busy + dbg-halt aware
     // sally_mem's read-latch (bram_dout_q) AND every write/bank-latch/hwreg-strobe are gated
     // by its `rdy` — a "the CPU took a step" pulse. For the turbo core that is sally_rdy. The
     // fidelity core drives a STABLE address for the whole window and samples data at SUB_DATA=49,

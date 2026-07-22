@@ -85,17 +85,17 @@ module wsync_gen #(
         end
     end
 
-    // Depth 3 is the DEFAULT because it is the shallowest depth the fid core
-    // actually runs at: measured on hardware, 1 and 2 stages deadlock the OS
-    // coldstart outright (it hangs in the hardware-clear loop), while 3 and the
-    // combinational path both run.  cfg = 0 must therefore select a depth that
-    // boots, or a fresh board wedges its 6502 until someone pokes the register.
+    // Encoding 0 is the COMBINATIONAL path on purpose: it is the only depth
+    // measured to boot and run the ACID800 framework end-to-end on hardware,
+    // so cfg = 0 must select it or a fresh board wedges its 6502 before anyone
+    // can poke the register.  The registered depths stay reachable so the
+    // fidelity-correct depth can be swept without a rebuild.
     always_comb begin
         case (pipe_sel)
-            2'd0:    rdy_n = rdy_q3;      // 3 stages — default, boots
-            2'd1:    rdy_n = rdy_q2;      // 2 stages
-            2'd2:    rdy_n = rdy_q1;      // 1 stage
-            default: rdy_n = rdy_latch;   // combinational
+            2'd0:    rdy_n = rdy_latch;   // combinational — default, always boots
+            2'd1:    rdy_n = rdy_q1;      // 1 stage
+            2'd2:    rdy_n = rdy_q2;      // 2 stages
+            default: rdy_n = rdy_q3;      // 3 stages
         endcase
     end
 
