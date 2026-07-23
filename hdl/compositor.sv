@@ -336,9 +336,11 @@ module compositor #(
     // table is only 8 rows — divide sub_row by 2 to address. Mode 3
     // (10 scan lines tall, with descender chars) needs the code to
     // pick between regular and descender mappings.
-    function automatic logic [2:0]  glyph_row(logic [3:0] m, logic [7:0] code, logic [3:0] sub);
+    function automatic logic [2:0]  glyph_row(logic [3:0] m, logic [7:0] code, logic [3:0] sub,
+                                              logic refl);
+        logic [2:0] r;
         case (m)
-            4'h5, 4'h7: return sub[3:1];
+            4'h5, 4'h7: r = sub[3:1];
             4'h3: begin
                 // Mode 3: codes with bits[6:5] == 11 (i.e. 96..127 of
                 // the 7-bit char code) are descenders — sub_row 0/1
@@ -346,14 +348,18 @@ module compositor #(
                 // pull rows 0..7. Codes 0..95 use sub 0..7 → rows 0..7
                 // and sub 8/9 are blanked at the glyph-latch step.
                 if (code[6:5] == 2'b11) begin
-                    if (sub < 4'd2) return {2'b11, sub[0]};         // 6 or 7
-                    else            return sub[2:0] - 3'd2;          // sub-2
+                    if (sub < 4'd2) r = {2'b11, sub[0]};             // 6 or 7
+                    else            r = sub[2:0] - 3'd2;             // sub-2
                 end else begin
-                    return sub[2:0];                                  // 0..7 (8/9 → 0; blanked later)
+                    r = sub[2:0];                                     // 0..7 (8/9 → 0; blanked later)
                 end
             end
-            default:    return sub[2:0];
+            default:    r = sub[2:0];
         endcase
+        // CHACTL[2] vertical reflect: characters render upside-down —
+        // glyph row r becomes 7-r (~r on 3 bits).  Applied uniformly,
+        // mode 3 descenders included (approximation for that corner).
+        return refl ? ~r : r;
     endfunction
 
     // Compose the 16-bit glyph address: (chbase << 8) | (masked_code << 3) | glyph_row.
@@ -373,7 +379,7 @@ module compositor #(
             default:    mask = 8'h7F;
         endcase
         base = code[6:0] & mask[6:0];
-        row  = glyph_row(m, code, sub);
+        row  = glyph_row(m, code, sub, chactl[2]);
         addr = {chb, 8'h00}                   // chbase * 256
              + {6'h0, base, 3'b000}           // (code & mask) * 8
              + {13'h0, row};                  // glyph row within char
@@ -1334,12 +1340,13 @@ module compositor #(
                         blanking_code = cur_code;
                         blanking_b7   = cur_code_bit7;
                     end
-                    // chactl[0] = vrefl (handled via glyph_row); [1] = inv_en;
-                    // [2] = inv_blank. Modes 4-7 take raw glyph (per
-                    // rp-antic's expand.c).
-                    if (cur_mode == 4'h2 && chactl[2] && blanking_b7)
+                    // CHACTL ($D401): [0] = BLANK (inverse-video chars
+                    // render blank), [1] = INVERT, [2] = REFLECT (vertical
+                    // mirror, applied in glyph_row).  Modes 4-7 take the raw
+                    // glyph (per rp-antic's expand.c).
+                    if ((cur_mode == 4'h2 || cur_mode == 4'h3) && chactl[0] && blanking_b7)
                         glyph_eff = 8'h00;
-                    else if (cur_mode == 4'h2 && chactl[1] && blanking_b7)
+                    else if ((cur_mode == 4'h2 || cur_mode == 4'h3) && chactl[1] && blanking_b7)
                         glyph_eff = mem_rdata ^ 8'hFF;
                     // Mode 3: codes 0..95 (code[6:5] != 11) blank rows
                     // 8/9 of the 10-scan-line cell. Codes 96..127
