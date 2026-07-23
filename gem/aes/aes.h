@@ -413,7 +413,9 @@ enum { WM_REDRAW=20, WM_TOPPED=21, WM_CLOSED=22, WM_FULLED=23, WM_ARROWED=24,
        // A SEGMENT OF THE TITLE PATH was clicked: msg[4] = its index in the path the app set
        // (0 = the first component).  The app never drew the path and is never told where any of
        // it is — it set a string and gets back an index into that same string (§11).
-       WM_PATHSEG=32 };
+       WM_PATHSEG=32,
+       WM_WHEEL=33 };     // a wheel gemd could not scroll itself (no window bar): m[4]=x m[5]=y
+                          // (window-local) m[6]=notches — for a client-drawn scroll region
 
 /* ---- XTOS_*: XTOS system-event messages (OS/AES -> apps) ------------------
  * A reserved range for events that classic GEM has no message for — the OS

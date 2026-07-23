@@ -1097,6 +1097,8 @@ static int client_dispatch(const gem_msg *m, aes_event *ev){
         post_msg(WM_MOVED,m->w[1],m->w[2],m->w[3],m->w[4],m->w[5]); return AES_MESAG;
     case GEM_MSG_CLOSED:                                   // the CLOSER was clicked. Closing is OURS.
         post_msg(WM_CLOSED,m->w[1],0,0,0,0); return AES_MESAG;
+    case GEM_MSG_WHEEL:                                    // a wheel with no window bar (route.c):
+        post_msg(WM_WHEEL,m->w[1],m->w[2],m->w[3],m->w[4],0); return AES_MESAG;  // hand it to the app
     case GEM_MSG_TBUTTON:                                  // a title button was pressed (§11): the
         post_msg(WM_TBUTTON,m->w[1],m->w[2],0,0,0);        // app learns WHICH, never WHERE
         return AES_MESAG;
