@@ -1109,9 +1109,21 @@ module antic_top #(
         else if (nmien_q[7] && !dbg_dli_rows[3] && dlirow23_q)   // 1->0 edge
             dbg_scan_at_clr <= ar_scanline;
     end
-    // {scan@set[31:23], scan@clr[22:14], parse_lo[13:8]... , ungated[7:0]}.
-    assign dbg_antic = {dbg_scan_at_set[8:0], dbg_scan_at_clr[8:0],
-                        dl_count[5:0], dbg_dliu_cnt};
+    // line_dli_p[23] is cleared at scanline 17, but start_parse should only fire
+    // at vbi_start(248). Capture where dl_start_pulse actually fires and where
+    // the parse completes: dl_start@17 => spurious trigger; parse crossing into
+    // the visible frame => the long DL parse re-clears mid-display.
+    reg [8:0] dbg_scan_dlstart, dbg_scan_pdone;
+    always_ff @(posedge clk_bus) begin
+        if (rst_bus) begin dbg_scan_dlstart<=9'h0; dbg_scan_pdone<=9'h0; end
+        else if (nmien_q[7]) begin
+            if (dl_start_pulse) dbg_scan_dlstart <= ar_scanline;
+            if (dl_done)        dbg_scan_pdone   <= ar_scanline;
+        end
+    end
+    // {dl_start scanline[31:23], parse_done scanline[22:14], clr[13:8]lo, ungated[7:0]}.
+    assign dbg_antic = {dbg_scan_dlstart[8:0], dbg_scan_pdone[8:0],
+                        dbg_scan_at_clr[5:0], dbg_dliu_cnt};
 
     dl_parser u_dl_parser (
         .clk(clk_bus), .rst(rst_bus), .start_parse(dl_start_pulse),
