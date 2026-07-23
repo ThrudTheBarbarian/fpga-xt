@@ -198,13 +198,22 @@ module dl_parser (
     // Swap the freshly-parsed list into the stable ACTIVE snapshot at parse_done
     // (a 1-cycle pulse), so the display's dli_at read never sees the live parse
     // state being cleared/rebuilt mid-frame.
+    //
+    // The swap is UNCONDITIONAL: a parse that found no DLIs must CLEAR the
+    // snapshot, because a display list without DLIs has no DLI rows.  An
+    // earlier guard kept the old snapshot on an empty parse (defending against
+    // spurious mid-frame parses); that made stale DLI rows IMMORTAL across DL
+    // changes — junk rows ingested from a transient boot-time DL survived every
+    // real (DLI-free) parse, and the first frame a test enabled NMIEN[7] they
+    // fired NMIs on garbage scanlines (measured: ACID800 antic_nmist saw DLIs
+    // on every line 9..24 and died on a double DLI2 dispatch).  The spurious
+    // mid-frame parse is now rejected at the source instead: antic_top gates
+    // start_parse to the vbi_start scanline.
     always_ff @(posedge clk or posedge rst) begin
         if (rst) begin
             dli_act_cnt <= 5'd0;
             for (int k = 0; k < DLI_LIST_N; k++) dli_act[k] <= 8'hFF;
-        end else if (parse_done && dli_cnt != 5'd0) begin
-            // Only accept a parse that actually found DLIs, so a spurious/aborted
-            // empty parse (dli_cnt=0 at parse_done) can't wipe the good snapshot.
+        end else if (parse_done) begin
             dli_act_cnt <= dli_cnt;
             for (int k = 0; k < DLI_LIST_N; k++) dli_act[k] <= dli_list[k];
         end

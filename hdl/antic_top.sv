@@ -1168,7 +1168,13 @@ module antic_top #(
     assign dbg_antic = {dbg_vbi_bad, dbg_dlstart_bad, dbg_vbi_cnt, dbg_dliu_cnt[5:0]};
 
     dl_parser u_dl_parser (
-        .clk(clk_bus), .rst(rst_bus), .start_parse(dl_start_pulse),
+        // start_parse is GATED to the true frame boundary: the only legitimate
+        // dl_start_pulse fires at vbi_start (scanline 248), and a spurious
+        // pulse anywhere else (measured mid-frame on hardware, build-dependent)
+        // would re-enter the parse FSM and wipe the live row metadata the
+        // display is reading.  Rejecting it here bounds that whole fault class.
+        .clk(clk_bus), .rst(rst_bus),
+        .start_parse(dl_start_pulse && ar_scanline == 9'd248),
         .dlistl(dlistl_q), .dlisth(dlisth_q),
         .vscrol(vscrol_q[3:0]),
         .mem_raddr(dl_raddr), .mem_rdata(dl_rdata),
