@@ -188,6 +188,15 @@ trick from the fix: read a test's `d0..d5` result bytes from zero page
 $C8-$CD over the OVL peek while halted at `_testEnd` — no screen decode
 needed, and a shape×offset sweep of ~30 configs runs in under 10 minutes.
 
+Side observation from that session's verification (unresolved, low priority):
+`cpu_65c816.xex` now fails `xexload -h` persistently (`xexload: failed`,
+rc=1, 20+ attempts across reboots) while other XEXes load first try —
+differential-checked against `antic_wsync.xex` on the same board state. It
+loaded on 2026-07-22 (sweep scored it `na` = loaded, never halted). Doesn't
+affect the 25/57 count (out-of-scope test, recorded `na` either way), but if
+xexload flakiness gets attention, start here: it may be a marginal handshake
+race the 1-cycle WSYNC resume shift exposed, or XEX-content-specific.
+
 ### C. P/M cluster (`gtia_pmoverlap`, `gtia_pmresize`, `gtia_vdelay`,
 `gtia_phantomdma`, `antic_pmdma`) — 5 tests, "Got 00"
 These are NOT one bug anymore (the old GRAFP-dangling root cause is already
