@@ -215,6 +215,32 @@ itself fails it**, so it's out of scope (ceiling is 54, not 63: also skipped are
 
 ---
 
+## 4b. Overnight session 2026-07-23/24 — state so far
+
+Confirmed flips tonight (Y-verdict, hardware): **pokey_irqtiming** (the
+NMOS 2-cycle /IRQ setup rule in xt6502f, commit 69bf61e).  antic_nmist's
+former double-DLI2 failure was root-caused (stale/junk DLI snapshot made
+immortal by the empty-parse guard — see memory acid800_dli_staleness_fix)
+and fixed (60f0050), plus: live DL program counter with 1K/4K wraps
+(a04517d), deferred mid-parse DLIST writes (4317501), parse kick moved to
+scanline 260 (872923b), CHACTL bit map + reflect (8af815f), POKEY STIMER
+4-cycle lag (69bf61e).
+
+**OPEN WALL — the parser wedge**: after running an acid DLI test the
+ANTIC display goes blank and stays blank across 6502 cold boots (PL
+reload required).  BASIC and non-DLI tests render fine.  The wedged
+parse also explains the DLI cluster still failing on builds 11-13 (rows
+never load).  sim/tb_wedge.sv (real antic_top + the tests' DMACTL/DL-swap
+sequence) does NOT reproduce — HW-timing shaped.  Build 14 adds: SALLYRST
+aborts an in-flight parse (cold boot always recovers), and diag8
+(0x43C0041C) = {[31:28] parser state, [27:26] emit phase, [25:24] 0,
+[23:16] parse_count, [15:8] dlstart_bad, [7:0] ungated DLI count} — read
+it around a wedge (script /media/6502/b14wedge.sh).
+
+Also known: screen grabs while the core is HELD at a breakpoint read
+all-zero on builds 10+ (running-core grabs are fine) — diagnostic-path
+anomaly, unexplained, low priority.
+
 ## 5. Housekeeping the fresh session should do first
 
 - **Revert the temporary diagnostics** for a clean bitstream. The `diag:` commits
