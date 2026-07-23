@@ -1418,19 +1418,21 @@ module antic_top #(
     // 105, so WSYNC would never release.
     //
     // /RDY is a registered output of wsync_gen's WSYNC latch and trails it by
-    // two machine cycles, so the latch is cleared at 103 to resume at 105.
+    // one machine cycle in both directions, so the latch is cleared at 103.
+    // For plain-STA code that is cycle-identical to a combinational /RDY
+    // released at 103 (both edges shift together), which is what keeps the
+    // OS coldstart resume point where it boots; the register stage is what
+    // gives an INC WSYNC's second write its delay slot (ACID800 antic_wsync).
     //
-    // Both the release point and the pipeline depth are runtime-tunable from
+    // Both the release point and the /RDY shape are runtime-tunable from
     // the DBG_TB config register, because the fid core's coldstart is sensitive
     // to WSYNC timing and each candidate would otherwise cost a full rebuild:
     //   cfg[23:20] = signed offset applied to the 103 release cycle
-    //   cfg[14]    = /RDY assert-only delay (0 = combinational, boots)
+    //   cfg[14]    = /RDY combinational fallback (0 = registered, default)
     //   cfg[15]    = DISABLE CPU-side write-immunity (0 = immune, boots)
-    // All default to 0: release at 103, combinational /RDY, writes immune —
-    // the configuration measured to boot and run the framework end to end.
     wire signed [3:0] wsync_rel_adj  = dbg_tb_cfg_s[23:20];
     wire       [7:0]  wsync_rel_cyc  = 8'd103 + {{4{wsync_rel_adj[3]}}, wsync_rel_adj};
-    wire       [1:0]  wsync_pipe_sel = {dbg_tb_cfg_s[14], 1'b0}; // bit1 = assert-delay
+    wire       [1:0]  wsync_pipe_sel = {dbg_tb_cfg_s[14], 1'b0}; // bit1 = comb fallback
     assign wsync_write_immune = ~dbg_tb_cfg_s[15];              // out to fpga_xt_top
     wire wsync_release_pulse = phi2_tick && (ar_phi2_in_line == wsync_rel_cyc);
 

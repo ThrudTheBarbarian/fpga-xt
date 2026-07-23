@@ -4,9 +4,10 @@
 //
 //   * any write to $D40A SETS the latch (the value written is irrelevant),
 //   * `line_start` CLEARS it once per scan line,
-//   * /RDY is a REGISTERED output of the latch, two machine cycles behind it.
+//   * /RDY is a REGISTERED output of the latch, one machine cycle behind it
+//     in BOTH directions (assert and release).
 //
-// The register stages are what make a WSYNC write stall the CPU one cycle
+// The register stage is what makes a WSYNC write stall the CPU one cycle
 // *after* the write.  Avery Lee (ACID800 author): "there is a one-cycle delay
 // before RDY is pulled.  That delay is on ANTIC's side, so it is one cycle
 // regardless of whether the next cycle is a DMA or CPU cycle."  His
@@ -25,13 +26,24 @@
 // cycle the RMW spends is exactly the one the delay slot already allows, which
 // is why the test's two reads land one cycle apart (114 vs 115 cycles).
 //
+// The delay must apply to BOTH edges.  Delaying only the assert side (a
+// previous experiment) breaks the straddle-the-release case; a purely
+// combinational /RDY has no delay slot at all, so a plain STA parks the CPU
+// one stream-position early — the release cycle can be tuned to hide that for
+// STA, but then the RMW's read lands one cycle early (the measured
+// "$1B != $0D" failure).  One register on both edges shifts assert and
+// release together: plain-STA code is cycle-identical to the combinational
+// shape (boot-safe), while the RMW gains the delay-slot cycle it needs.
+// Cycle-modelled against the ACID800 poly-clock values in tools/wsyncfix.py
+// (which reproduces both the passing bytes and the failing shapes exactly).
+//
 // CLEAR BEATS SET.  A write landing on the same cycle as `line_start` does not
 // start a fresh line-long stall — the release wins and the CPU carries on.
 // This is antic_wsync's "Late INC WSYNC" case: an RMW whose two writes straddle
 // the release point must not cost a whole scan line.
 //
-// `line_start` must be pulsed two machine cycles BEFORE the cycle the CPU is
-// meant to resume on, since /RDY trails the latch by both register stages.
+// `line_start` must be pulsed one machine cycle BEFORE the cycle the CPU is
+// meant to resume on, since /RDY trails the latch by the register stage.
 //
 // `wsync_overdue_count` ticks each cycle that /RDY has been low for more than
 // ~228 clk_bus cycles (one full scan line at the Atari reference clock).  Real
@@ -47,7 +59,7 @@ module wsync_gen #(
     input  wire        rst,
 
     input  wire        phi2_tick,        // machine-cycle boundary
-    input  wire  [1:0] pipe_sel,         // /RDY pipeline depth: 0=2 (default), 1=1, 2=3, 3=comb
+    input  wire  [1:0] pipe_sel,         // [1]: 0 = registered /RDY (default), 1 = combinational fallback
     input  wire        wsync_pending,    // 1-cycle pulse on $D40A write
     input  wire        line_start,       // 1-cycle pulse from vbeam
 
@@ -70,26 +82,23 @@ module wsync_gen #(
         end
     end
 
-    // One machine cycle of latch history, so an ASSERT-only delay can be
-    // built: /RDY falls one cycle after the WSYNC write but rises the instant
-    // the latch clears at the release.  This is the shape real ANTIC has — the
-    // "one-cycle delay before RDY is pulled" is on the assert side only — and
-    // it lets an INC WSYNC's second write fall in the delay slot without the
-    // release also being pushed a cycle (which would move every downstream
-    // read).
+    // One machine cycle of latch history: /RDY falls one cycle after the
+    // WSYNC write (the delay slot an RMW's second write lands in) and rises
+    // one cycle after the release clears the latch.  Shifting both edges
+    // together keeps plain-STA code cycle-identical to the combinational
+    // shape, so the OS coldstart resume point does not move.
     always_ff @(posedge clk or posedge rst) begin
         if (rst)            rdy_latch_q <= 1'b1;
         else if (phi2_tick) rdy_latch_q <= rdy_latch;
     end
 
-    // pipe_sel[1] selects the assert-only-delayed shape; pipe_sel[0] is spare
-    // (the CPU-side write-immunity knob lives in fpga_xt_top).  Encoding 0 is
-    // the plain combinational latch, which is what boots, so it stays cfg = 0.
-    //   rdy_latch | rdy_latch_q : ready if the latch is ready NOW or was ready
-    //   last cycle -> falls 1 cycle late (assert delay), rises immediately.
+    // pipe_sel[1] falls back to the plain combinational latch (the previous
+    // shipping shape, kept as a runtime escape hatch); pipe_sel[0] is spare
+    // (the CPU-side write-immunity knob lives in fpga_xt_top).  Encoding 0 —
+    // the power-on default — is the registered stage.
     always_comb begin
-        if (pipe_sel[1]) rdy_n = rdy_latch | rdy_latch_q;   // assert-delayed
-        else             rdy_n = rdy_latch;                  // combinational
+        if (pipe_sel[1]) rdy_n = rdy_latch;      // combinational fallback
+        else             rdy_n = rdy_latch_q;    // registered (default)
     end
 
     // ---- Diagnostic: /RDY held low beyond one scan line -------------------
