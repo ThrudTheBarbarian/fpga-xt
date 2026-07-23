@@ -1022,13 +1022,17 @@ module antic_top #(
     wire [3:0]  dl_meta_sub;
     wire        dl_meta_hscrol_en;
     wire        dl_meta_vscrol_en;
-    // TEMP diag: count DLI fires per frame + expose NMIEN/NMIST/mode -> dbg_antic (diag9).
-    // dbg_dli_cnt>0 proves DLIs are firing; ==0 means NMIEN[7] off or no DL line asserts DLI.
+    // TEMP diag: expose NMIEN/NMIST + a CUMULATIVE count of DLIs that fire with
+    // NMIEN[7] set -> dbg_antic (routed to diag8, GP0 0x41C).  Cumulative (not
+    // per-frame) so a before/after delta around one xexload isolates whether the
+    // DLI-enabled event EVER occurs on the ANTIC side for that test.
+    //   dbg_dli_cnt delta > 0  => DLI fires with NMIEN[7] on ANTIC; bug is DELIVERY to CPU
+    //   dbg_dli_cnt delta == 0 => NMIEN[7] never coincides with a DLI row; bug is earlier
     reg  [7:0]  dbg_dli_cnt;
     wire        dbg_dli_fire = ar_line_start & nmi_cur_row_dli & nmien_q[7];
     always_ff @(posedge clk_bus) begin
-        if (rst_bus || vbi_start_pulse_bus) dbg_dli_cnt <= 8'h0;
-        else if (dbg_dli_fire)              dbg_dli_cnt <= dbg_dli_cnt + 8'h1;
+        if (rst_bus)           dbg_dli_cnt <= 8'h0;
+        else if (dbg_dli_fire) dbg_dli_cnt <= dbg_dli_cnt + 8'h1;
     end
     assign dbg_antic = {nmien_q, nmist_q, dbg_dli_cnt, dl_meta_mode, 4'h0};
 

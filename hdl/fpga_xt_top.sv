@@ -1902,10 +1902,10 @@ module fpga_xt_top (
         ad_s0 <= romdiag_addr; ad_s1 <= ad_s0;
         da_s0 <= romdiag_data; da_s1 <= da_s0;
     end
-    assign diag8_word = {fdbg_pc, fdbg_ir, 5'h0, fid_mem_ok, dma_steal_sally, fid_rdy}; // TEMP: fid PC/IR + rdy-gate
-    assign diag9_word = dli_diag_word;     // TEMP: DLI-delivery instrumentation
+    assign diag8_word = antic_dbg_antic;   // TEMP: ANTIC-side DLI diag {nmien_q,nmist_q,dli_cnt,mode}
+    assign diag9_word = dli_diag_word;     // TEMP: fid-side DLI-delivery instrumentation
 `else
-    assign diag8_word = {fdbg_pc, fdbg_ir, 5'h0, fid_mem_ok, dma_steal_sally, fid_rdy};
+    assign diag8_word = antic_dbg_antic;
     assign diag9_word = dli_diag_word;
 `endif
 
