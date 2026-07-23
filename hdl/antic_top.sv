@@ -1082,8 +1082,20 @@ module antic_top #(
         if (rst_bus)              dbg_dlirows_n7 <= 8'h0;
         else if (nmien_q[7] && dbg_dli_rows != 8'h0) dbg_dlirows_n7 <= dbg_dli_rows;
     end
-    // {DLIST@n7 lo, line_dli_p rows@n7, parse_count lo, ungated DLI count}.
-    assign dbg_antic = {dbg_dlist_at_n7[7:0], dbg_dlirows_n7, dl_count[7:0], dbg_dliu_cnt};
+    // line_dli_p[23] is set (snapshot) but 0 when the raster is at row 23
+    // (scanline 31) -> the parse sets it TOO LATE. Capture the scanline at the
+    // rising edge of line_dli_p[23] (dbg_dli_rows[3]) during dli1: if it is >31
+    // (or past row 23's scanline) the parse finishes after the raster needs it.
+    reg        dlirow23_q;
+    reg  [8:0] dbg_scan_at_set;   // ar_scanline when line_dli_p[23] went 0->1
+    always_ff @(posedge clk_bus) begin
+        dlirow23_q <= dbg_dli_rows[3];
+        if (rst_bus) dbg_scan_at_set <= 9'h0;
+        else if (nmien_q[7] && dbg_dli_rows[3] && !dlirow23_q)
+            dbg_scan_at_set <= ar_scanline;   // rising edge of line_dli_p[23]
+    end
+    // {scanline@line_dli_p[23]-set[24:16], parse_count lo[15:8], ungated[7:0]}.
+    assign dbg_antic = {7'b0, dbg_scan_at_set, dl_count[7:0], dbg_dliu_cnt};
 
     dl_parser u_dl_parser (
         .clk(clk_bus), .rst(rst_bus), .start_parse(dl_start_pulse),
