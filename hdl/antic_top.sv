@@ -1141,9 +1141,24 @@ module antic_top #(
             end
         end
     end
-    // {listcnt@n7[31:27], has23[26], gated_c8[23:16], parse_lo[15:8], ungated[7:0]}.
-    assign dbg_antic = {dbg_listcnt_n7, dbg_has23_n7, 2'b0, dbg_gated_c8,
-                        dl_count[7:0], dbg_dliu_cnt};
+    // Sample dli_cnt + dli_at AT scanline 31 (raster row 23), cycle 8 — exactly
+    // where/when the DLI must fire. dli_cnt_at23==0 => list cleared by then;
+    // dli_cnt_at23>0 && dli_at23==0 => comparator/dli_row broken; both good =>
+    // generation works and the bug is delivery.
+    reg [4:0] dbg_cnt_at23;
+    reg       dbg_at23, dbg_hit23seen;
+    always_ff @(posedge clk_bus) begin
+        if (rst_bus) begin dbg_cnt_at23<=0; dbg_at23<=0; dbg_hit23seen<=0; end
+        else if (nmien_q[7] && c8 && ar_atari_row==8'd23) begin
+            dbg_hit23seen <= 1'b1;
+            dbg_cnt_at23  <= dbg_dli_listcnt;      // list size at scanline 31 cyc 8
+            if (nmi_cur_row_dli) dbg_at23 <= 1'b1; // dli_at at scanline 31 cyc 8
+        end
+    end
+    // {cnt_at23[31:27], at23[26], hit23seen[25], listcnt_n7[24:20], has23[19],
+    //  gated_c8[15:8]... , ungated[7:0]}.
+    assign dbg_antic = {dbg_cnt_at23, dbg_at23, dbg_hit23seen, dbg_listcnt_n7,
+                        dbg_has23_n7, 3'b0, dbg_gated_c8[3:0], dl_count[3:0], dbg_dliu_cnt};
 
     dl_parser u_dl_parser (
         .clk(clk_bus), .rst(rst_bus), .start_parse(dl_start_pulse),
