@@ -1053,8 +1053,32 @@ module antic_top #(
         if (rst_bus)        dbg_dlist_at_n7 <= 16'h0;
         else if (nmien_q[7]) dbg_dlist_at_n7 <= {dlisth_q, dlistl_q};
     end
-    // {DLIST addr while nmien[7], gated DLI count, ungated DLI count}.
-    assign dbg_antic = {dbg_dlist_at_n7, dbg_dli_cnt, dbg_dliu_cnt};
+    // dl_parser uses the RIGHT DL ($2C00) but no DLI fires. Split stale-data (B)
+    // from parse/lookup (C): capture the DL bytes dl_parser actually reads at
+    // $2C00 (should be $70) and $2C02 (should be $F0, blank-8+DLI), plus whether
+    // line_dli_p[23] is ever seen set at the raster row nmi_gen looks up.
+    reg  [7:0]  dbg_dl_b00, dbg_dl_b02;
+    reg  [15:0] dl_raddr_q;
+    reg         dl_ready_q;
+    reg         dbg_raster23;    // sticky: raster reached atari_row 23
+    reg         dbg_dlip23;      // sticky: line_dli_p[23] set when raster at row 23
+    always_ff @(posedge clk_bus) begin
+        dl_raddr_q <= dl_raddr;
+        dl_ready_q <= dl_ready;
+        if (dl_ready && dl_raddr == 16'h2C00) dbg_dl_b00 <= dl_rdata;
+        if (dl_ready && dl_raddr == 16'h2C02) dbg_dl_b02 <= dl_rdata;
+        if (rst_bus) begin dbg_raster23 <= 1'b0; dbg_dlip23 <= 1'b0; end
+        else if (ar_atari_row == 8'd23) begin
+            dbg_raster23 <= 1'b1;
+            if (nmi_cur_row_dli) dbg_dlip23 <= 1'b1;   // line_dli_p[23] set at row 23
+        end
+    end
+    // {DL byte@2C02, DL byte@2C00, flags, ungated DLI count}.
+    //   b02==$F0 => DL data read correct (rules out stale-data B)
+    //   dlip23   => dl_parser flagged row 23 and raster hit it (bug is downstream)
+    wire [7:0] dbg_dli_flags = {2'b0, dbg_dlist_at_n7==16'h2C00, dbg_nmien_or[7],
+                                dbg_raster23, dbg_dlip23, dbg_dli_cnt != 0, 1'b0};
+    assign dbg_antic = {dbg_dl_b02, dbg_dl_b00, dbg_dli_flags, dbg_dliu_cnt};
 
     dl_parser u_dl_parser (
         .clk(clk_bus), .rst(rst_bus), .start_parse(dl_start_pulse),
