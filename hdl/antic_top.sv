@@ -251,7 +251,7 @@ module antic_top #(
     // (scanline + horizontal machine-cycle) a selected ANTIC event fired,
     // plus its data byte.  cfg is A9-set (clk_sys) and 2-FF synced in here;
     // stat/cap are produced in clk_bus and 2-FF synced on the GP0 side.
-    input  wire [25:0] dbg_tb_cfg,      // {[25]=circular,[24]=clear,[19:16]=read_idx,[11:4]=match_addr,[3]=visible_only,[2:0]=mode}
+    input  wire [28:0] dbg_tb_cfg,      // {[28:26]=wsync_shape,[25]=circular,[24]=clear,[19:16]=read_idx,[11:4]=match_addr,[3]=visible_only,[2:0]=mode}
     output wire [31:0] dbg_tb_stat,     // {[25]=armed,[24]=full,[20:16]=wr_idx,[15:0]=trig_count}
     output wire [24:0] dbg_tb_cap       // ring[read_idx] = {scanline[8:0],phi2[7:0],data[7:0]}
 );
@@ -1274,11 +1274,11 @@ module antic_top #(
     //           always shows the most-recent events; pairs with xexload --hold
     //           to capture steady-state / failing-assert timing, not boot).
     // ================================================================
-    wire [25:0] dbg_tb_cfg_s;
+    wire [28:0] dbg_tb_cfg_s;
     // Slow A9 config: every field (mode/match/read_idx/clear/circular) is quasi-
     // static — set and left to settle before the probe is armed or read back.
     // cdc-lint: independent-bits — quasi-static config, per-bit 2-FF skew is benign
-    cdc_sync_bit #(.WIDTH(26)) u_tb_cfg_sync (
+    cdc_sync_bit #(.WIDTH(29)) u_tb_cfg_sync (
         .dst_clk (clk_bus),
         .src_sig (dbg_tb_cfg),
         .dst_sig (dbg_tb_cfg_s)
@@ -1428,11 +1428,13 @@ module antic_top #(
     // the DBG_TB config register, because the fid core's coldstart is sensitive
     // to WSYNC timing and each candidate would otherwise cost a full rebuild:
     //   cfg[23:20] = signed offset applied to the 103 release cycle
+    //   cfg[28:26] = /RDY shape mask {latch,q1,q2} (0 = default = 011, q1|q2)
     //   cfg[14]    = /RDY combinational fallback (0 = registered, default)
     //   cfg[15]    = DISABLE CPU-side write-immunity (0 = immune, boots)
     wire signed [3:0] wsync_rel_adj  = dbg_tb_cfg_s[23:20];
     wire       [7:0]  wsync_rel_cyc  = 8'd103 + {{4{wsync_rel_adj[3]}}, wsync_rel_adj};
-    wire       [1:0]  wsync_pipe_sel = {dbg_tb_cfg_s[14], 1'b0}; // bit1 = comb fallback
+    wire       [2:0]  wsync_shape    = dbg_tb_cfg_s[28:26];
+    wire              wsync_comb_sel = dbg_tb_cfg_s[14];
     assign wsync_write_immune = ~dbg_tb_cfg_s[15];              // out to fpga_xt_top
     wire wsync_release_pulse = phi2_tick && (ar_phi2_in_line == wsync_rel_cyc);
 
@@ -1450,7 +1452,9 @@ module antic_top #(
         .clk                (clk_bus),
         .rst                (rst_bus),
         .phi2_tick          (phi2_tick),
-        .pipe_sel           (wsync_pipe_sel),
+        .phi2_fall          (phi2_fall),
+        .shape_sel          (wsync_shape),
+        .comb_sel           (wsync_comb_sel),
         .wsync_pending      (wsync_pending),
         .line_start         (wsync_release_pulse),
         .rdy_n              (wsync_rdy_w),

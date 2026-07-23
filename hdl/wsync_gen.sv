@@ -31,11 +31,31 @@
 // combinational /RDY has no delay slot at all, so a plain STA parks the CPU
 // one stream-position early — the release cycle can be tuned to hide that for
 // STA, but then the RMW's read lands one cycle early (the measured
-// "$1B != $0D" failure).  One register on both edges shifts assert and
-// release together: plain-STA code is cycle-identical to the combinational
-// shape (boot-safe), while the RMW gains the delay-slot cycle it needs.
-// Cycle-modelled against the ACID800 poly-clock values in tools/wsyncfix.py
-// (which reproduces both the passing bytes and the failing shapes exactly).
+// "$1B != $0D" failure).  One machine cycle of delay on both edges shifts
+// assert and release together: plain-STA code is cycle-identical to the
+// combinational shape (boot-safe), while the RMW gains the delay-slot cycle
+// it needs.  Cycle-modelled against the ACID800 poly-clock values in
+// tools/wsyncfix.py (which reproduces both the passing bytes and the failing
+// shapes exactly).
+//
+// WHERE THE EDGES MAY MOVE — the consumer's sampling point.  The fid core
+// resets its 56-slot subcycle window on a synchronised copy of phi2_tick and
+// retires each machine cycle at SUB_COMMIT = N-3, so its rdy sample for
+// window K lands essentially ON the next ANTIC tick T(K+1).  A delayed /RDY
+// whose edges are launched BY phi2_tick therefore changes value exactly at
+// the sample point: the fall is already visible one window early (the delay
+// slot evaporates) and the rise is caught immediately (the release delay
+// evaporates) — measured on hardware as behaviour identical to the
+// combinational latch.  The delayed edges are instead retimed onto the phi2
+// FALLING edge (mid-cycle), half a machine cycle away from the sample point
+// in either direction.  Through that sampling the mid-cycle signal below is
+// one machine cycle later than the combinational latch on BOTH edges:
+//   fall: latch drops mid-cycle N (the write) -> q1 at tick N+1, q2 at tick
+//         N+2, (q1|q2) falls at tick N+2, retimed -> mid-cycle N+2: window
+//         N+1 still commits (the RMW's delay slot), window N+2 stalls.
+//   rise: latch sets ON the release tick R -> q1 at tick R+1, (q1|q2) rises
+//         at tick R+1, retimed -> mid-cycle R+1: the stalled cycle completes
+//         in window R+1 (one later than the combinational shape).
 //
 // CLEAR BEATS SET.  A write landing on the same cycle as `line_start` does not
 // start a fresh line-long stall — the release wins and the CPU carries on.
@@ -58,8 +78,10 @@ module wsync_gen #(
     input  wire        clk,
     input  wire        rst,
 
-    input  wire        phi2_tick,        // machine-cycle boundary
-    input  wire  [1:0] pipe_sel,         // [1]: 0 = registered /RDY (default), 1 = combinational fallback
+    input  wire        phi2_tick,        // machine-cycle boundary (phi2 rising edge)
+    input  wire        phi2_fall,        // mid-cycle retime point (phi2 falling edge)
+    input  wire  [2:0] shape_sel,        // OR-mask {latch,q1,q2} for the retimed /RDY; 0 = default (011 = q1|q2)
+    input  wire        comb_sel,         // 1 = bypass to the combinational latch (escape hatch)
     input  wire        wsync_pending,    // 1-cycle pulse on $D40A write
     input  wire        line_start,       // 1-cycle pulse from vbeam
 
@@ -69,6 +91,8 @@ module wsync_gen #(
 
     logic rdy_latch;                // 1 = ready, 0 = stalled
     logic rdy_latch_q;              // latch delayed one machine cycle
+    logic rdy_latch_q2;             // latch delayed two machine cycles
+    logic rdy_mid;                  // (q1|q2) retimed to the phi2 falling edge
     logic [15:0] low_age;           // cycles since /RDY went low
 
     always_ff @(posedge clk or posedge rst) begin
@@ -82,23 +106,40 @@ module wsync_gen #(
         end
     end
 
-    // One machine cycle of latch history: /RDY falls one cycle after the
-    // WSYNC write (the delay slot an RMW's second write lands in) and rises
-    // one cycle after the release clears the latch.  Shifting both edges
-    // together keeps plain-STA code cycle-identical to the combinational
-    // shape, so the OS coldstart resume point does not move.
+    // Two machine cycles of latch history (rising-edge launched), then the
+    // asymmetric combination (q1|q2) — fall two ticks after the latch, rise
+    // one tick after — retimed onto the phi2 FALLING edge so both /RDY edges
+    // sit mid-cycle, half a machine cycle from the fid core's commit-slot
+    // sample point (see the header).  Net effect through that sampling: both
+    // edges land one machine cycle later than the combinational latch.
     always_ff @(posedge clk or posedge rst) begin
-        if (rst)            rdy_latch_q <= 1'b1;
-        else if (phi2_tick) rdy_latch_q <= rdy_latch;
+        if (rst) begin
+            rdy_latch_q  <= 1'b1;
+            rdy_latch_q2 <= 1'b1;
+        end else if (phi2_tick) begin
+            rdy_latch_q  <= rdy_latch;
+            rdy_latch_q2 <= rdy_latch_q;
+        end
     end
 
-    // pipe_sel[1] falls back to the plain combinational latch (the previous
-    // shipping shape, kept as a runtime escape hatch); pipe_sel[0] is spare
-    // (the CPU-side write-immunity knob lives in fpga_xt_top).  Encoding 0 —
-    // the power-on default — is the registered stage.
+    // The retimed shape is an OR over selected taps of the latch history so
+    // the exact delay pair can be swept on hardware without a rebuild:
+    //   mask 011 (default) : q1|q2      — fall 2 ticks late, rise 1 tick late
+    //   mask 010           : q1         — both edges 1 tick late
+    //   mask 001           : q2         — both edges 2 ticks late
+    //   mask 110           : latch|q1   — fall 1 tick late, rise immediate
+    //   mask 100           : latch      — combinational, mid-cycle retimed
+    wire [2:0] shape_mask = (shape_sel == 3'b000) ? 3'b011 : shape_sel;
+    always_ff @(posedge clk or posedge rst) begin
+        if (rst)            rdy_mid <= 1'b1;
+        else if (phi2_fall) rdy_mid <= |(shape_mask & {rdy_latch, rdy_latch_q, rdy_latch_q2});
+    end
+
+    // comb_sel falls back to the plain combinational latch (the previous
+    // shipping shape, kept as a runtime escape hatch).
     always_comb begin
-        if (pipe_sel[1]) rdy_n = rdy_latch;      // combinational fallback
-        else             rdy_n = rdy_latch_q;    // registered (default)
+        if (comb_sel) rdy_n = rdy_latch;      // combinational fallback
+        else          rdy_n = rdy_mid;        // registered mid-cycle (default)
     end
 
     // ---- Diagnostic: /RDY held low beyond one scan line -------------------

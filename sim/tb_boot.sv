@@ -443,7 +443,7 @@ module tb_boot;
         .joy_ovr            (32'd0),   // keypad->joystick override off (default)
         // Must be driven, not floating: the WSYNC release cycle is tuned from
         // this register, and an X there stops /RDY ever releasing.
-        .dbg_tb_cfg         (26'd0),
+        .dbg_tb_cfg         (29'd0),
         .bus_addr           (bus_addr_antic),
         .bus_data_in        (bus_data_in_antic),
         .bus_rw             (bus_rw_antic),
