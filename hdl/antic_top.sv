@@ -1044,10 +1044,17 @@ module antic_top #(
             dbg_nmien_or <= dbg_nmien_or | nmien_q;
         end
     end
-    // {sticky nmien-OR, gated DLI count, ungated DLI count, live nmien}.
-    //   nmien_or[7]=0        => the $80 write NEVER set NMIEN[7] (write path bug)
-    //   nmien_or[7]=1, gated=0, ungated>0 => set + DLIs fire, but never together (timing/phase)
-    assign dbg_antic = {dbg_nmien_or, dbg_dli_cnt, dbg_dliu_cnt, nmien_q};
+    // nmien[7] is HELD through the dli1 phase (clr_pc = _testEnd), yet gated=0,
+    // so dl_parser never flags the test DL's DLI rows.  Capture the DL address
+    // dl_parser is actually using WHILE nmien[7] is set (the dli1 phase): if it
+    // is not $2C00 the wrong DL is parsed; if it is, the DL data read is stale.
+    reg [15:0] dbg_dlist_at_n7;
+    always_ff @(posedge clk_bus) begin
+        if (rst_bus)        dbg_dlist_at_n7 <= 16'h0;
+        else if (nmien_q[7]) dbg_dlist_at_n7 <= {dlisth_q, dlistl_q};
+    end
+    // {DLIST addr while nmien[7], gated DLI count, ungated DLI count}.
+    assign dbg_antic = {dbg_dlist_at_n7, dbg_dli_cnt, dbg_dliu_cnt};
 
     dl_parser u_dl_parser (
         .clk(clk_bus), .rst(rst_bus), .start_parse(dl_start_pulse),
