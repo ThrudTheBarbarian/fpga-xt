@@ -355,6 +355,11 @@ module antic_top #(
     // is bypassed for output; see §5.1).  Locked to phi2 so VCOUNT/WSYNC/VBI
     // cadence is correct vs the CPU.  All clk_bus — no CDC.
     wire [8:0] ar_scanline;
+    logic      scanline_is_vbi_q;      // registered (ar_scanline == 248); see start_parse gate
+    always_ff @(posedge clk_bus or posedge rst_bus) begin
+        if (rst_bus) scanline_is_vbi_q <= 1'b0;
+        else         scanline_is_vbi_q <= (ar_scanline == 9'd248);
+    end
     wire [7:0] ar_phi2_in_line;
     wire       ar_line_start, ar_vbi_start;
     wire [7:0] ar_atari_row, ar_vcount;
@@ -1173,8 +1178,11 @@ module antic_top #(
         // pulse anywhere else (measured mid-frame on hardware, build-dependent)
         // would re-enter the parse FSM and wipe the live row metadata the
         // display is reading.  Rejecting it here bounds that whole fault class.
+        // The compare is REGISTERED (scanline holds for a whole line, so a
+        // 1-clk-late flag is equally valid) to keep ar_scanline's fanout off
+        // the timing-critical pulse path.
         .clk(clk_bus), .rst(rst_bus),
-        .start_parse(dl_start_pulse && ar_scanline == 9'd248),
+        .start_parse(dl_start_pulse && scanline_is_vbi_q),
         .dlistl(dlistl_q), .dlisth(dlisth_q),
         .vscrol(vscrol_q[3:0]),
         .mem_raddr(dl_raddr), .mem_rdata(dl_rdata),
