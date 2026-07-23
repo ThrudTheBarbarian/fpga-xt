@@ -473,6 +473,8 @@ module antic_top #(
     wire [7:0]  nmi_cur_row;
     wire        nmi_cur_row_dli;
     wire [7:0]  dbg_dli_rows;      // dl_parser line_dli_p snapshot (temp DLI diag)
+    wire [4:0]  dbg_dli_listcnt;   // dl_parser DLI-row list count
+    wire        dbg_dli_has23;     // list contains raster row 23
     wire        nmi_n_w;
 
     wire        vbi_start_pulse_bus  = ar_vbi_start;
@@ -1121,9 +1123,27 @@ module antic_top #(
             if (dl_done)        dbg_scan_pdone   <= ar_scanline;
         end
     end
-    // {dl_start scanline[31:23], parse_done scanline[22:14], clr[13:8]lo, ungated[7:0]}.
-    assign dbg_antic = {dbg_scan_dlstart[8:0], dbg_scan_pdone[8:0],
-                        dbg_scan_at_clr[5:0], dbg_dliu_cnt};
+    // DEFINITIVE generation-vs-delivery split. cycle-8 DLI fire = the exact
+    // condition nmi_gen uses for the DLI /NMI. If gated_c8 fires but the fid
+    // core never dispatches (fid-side nmist7~0), the bug is DELIVERY; if
+    // gated_c8 stays 0 with the list populated, generation is still broken.
+    wire c8 = phi2_tick && (ar_phi2_in_line == 8'd8);
+    reg [7:0] dbg_gated_c8;
+    reg [4:0] dbg_listcnt_n7;
+    reg       dbg_has23_n7;
+    always_ff @(posedge clk_bus) begin
+        if (rst_bus) begin dbg_gated_c8<=0; dbg_listcnt_n7<=0; dbg_has23_n7<=0; end
+        else begin
+            if (c8 && nmi_cur_row_dli && nmien_q[7]) dbg_gated_c8 <= dbg_gated_c8 + 8'd1;
+            if (nmien_q[7]) begin
+                if (dbg_dli_listcnt != 0) dbg_listcnt_n7 <= dbg_dli_listcnt;
+                if (dbg_dli_has23)        dbg_has23_n7   <= 1'b1;
+            end
+        end
+    end
+    // {listcnt@n7[31:27], has23[26], gated_c8[23:16], parse_lo[15:8], ungated[7:0]}.
+    assign dbg_antic = {dbg_listcnt_n7, dbg_has23_n7, 2'b0, dbg_gated_c8,
+                        dl_count[7:0], dbg_dliu_cnt};
 
     dl_parser u_dl_parser (
         .clk(clk_bus), .rst(rst_bus), .start_parse(dl_start_pulse),
@@ -1139,6 +1159,8 @@ module antic_top #(
         .dli_row(nmi_cur_row),
         .dli_at(nmi_cur_row_dli),
         .dbg_dli_rows(dbg_dli_rows),
+        .dbg_dli_cnt(dbg_dli_listcnt),
+        .dbg_dli_has23(dbg_dli_has23),
         .parse_done(dl_done), .parse_count(dl_count)
     );
 

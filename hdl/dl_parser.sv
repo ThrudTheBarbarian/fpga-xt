@@ -102,6 +102,8 @@ module dl_parser (
     // ($F0 blank-8+DLI at rows 23/41 etc.) so we can see WHICH rows dl_parser
     // records — vs the row nmi_gen looks up.
     output wire  [7:0]  dbg_dli_rows,
+    output wire  [4:0]  dbg_dli_cnt,       // # of DLI rows recorded this parse
+    output wire         dbg_dli_has23,     // list contains raster row 23
 
     // Status.
     output logic        parse_done,        // pulses after each parse pass
@@ -175,6 +177,14 @@ module dl_parser (
             if (k < dli_cnt && dli_list[k] == dli_row[7:0]) dli_hit = 1'b1;
     end
     assign dli_at = dli_hit;
+    assign dbg_dli_cnt = dli_cnt;
+    logic has23;
+    always_comb begin
+        has23 = 1'b0;
+        for (int k = 0; k < DLI_LIST_N; k++)
+            if (k < dli_cnt && dli_list[k] == 8'd23) has23 = 1'b1;
+    end
+    assign dbg_dli_has23 = has23;
     // rows 8,16,22,23,24,25,40,41 — pfstart's first two $F0 DLIs land at 23 & 41
     assign dbg_dli_rows = {line_dli_p[41], line_dli_p[40], line_dli_p[25],
                            line_dli_p[24], line_dli_p[23], line_dli_p[22],
