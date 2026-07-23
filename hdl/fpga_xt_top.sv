@@ -1903,11 +1903,42 @@ module fpga_xt_top (
         da_s0 <= romdiag_data; da_s1 <= da_s0;
     end
     assign diag8_word = {fdbg_pc, fdbg_ir, 5'h0, fid_mem_ok, dma_steal_sally, fid_rdy}; // TEMP: fid PC/IR + rdy-gate
-    assign diag9_word = antic_dbg_antic;   // TEMP repurpose: {colpf3,prior,chbase,dmactl}
+    assign diag9_word = dli_diag_word;     // TEMP: DLI-delivery instrumentation
 `else
     assign diag8_word = {fdbg_pc, fdbg_ir, 5'h0, fid_mem_ok, dma_steal_sally, fid_rdy};
-    assign diag9_word = antic_dbg_antic;
+    assign diag9_word = dli_diag_word;
 `endif
+
+    // ---- TEMP DLI-delivery diagnostic (clk_sally) ------------------------
+    // The ACID800 DLI cluster fails "DLIs did not fire" even though the DLI
+    // GENERATION path is proven correct in sim.  Instrument the fid core's view
+    // of NMI delivery + dispatch:
+    //   [31:24] NMIs the fid core saw   (nmi_n_sync falling edges)
+    //   [23:16] $D40F (NMIST) reads that returned bit7=1 (a DLI to dispatch)
+    //   [15:8]  $D40F reads total
+    //   [7:0]   last NMIST byte the CPU actually read
+    // If the core sees NMIs but never reads bit7=1, the DLI status never
+    // reaches the CPU (readback path); if it reads bit7=1 but dli1 still never
+    // runs, the bug is past the read.
+    (* keep = "true" *) reg  [7:0] dli_nmi_cnt   = 8'd0;
+    (* keep = "true" *) reg  [7:0] dli_nmist7_cnt = 8'd0;
+    (* keep = "true" *) reg  [7:0] dli_nmistrd_cnt = 8'd0;
+    (* keep = "true" *) reg  [7:0] dli_last_nmist = 8'd0;
+    reg        nmi_sync_q = 1'b1;
+    reg        d40f_rd_q  = 1'b0;
+    wire       d40f_rd = (fid_addr == 16'hD40F) & fid_rw;   // CPU read of NMIST
+    always_ff @(posedge clk_sally) begin
+        nmi_sync_q <= nmi_n_sync;
+        if (nmi_sync_q & ~nmi_n_sync) dli_nmi_cnt <= dli_nmi_cnt + 8'd1;  // NMI falling edge
+        // capture the NMIST byte at the data-sample point of a $D40F read
+        d40f_rd_q <= d40f_rd;
+        if (d40f_rd && (fid_sub == 8'd49)) begin
+            dli_last_nmist  <= cpu_din;
+            dli_nmistrd_cnt <= dli_nmistrd_cnt + 8'd1;
+            if (cpu_din[7]) dli_nmist7_cnt <= dli_nmist7_cnt + 8'd1;
+        end
+    end
+    wire [31:0] dli_diag_word = {dli_nmi_cnt, dli_nmist7_cnt, dli_nmistrd_cnt, dli_last_nmist};
 
     // ====================================================================
     // Display: plane compositor (vbeam + plane_fetch x N + plane_compositor)
