@@ -1116,11 +1116,19 @@ module antic_top #(
     // the parse completes: dl_start@17 => spurious trigger; parse crossing into
     // the visible frame => the long DL parse re-clears mid-display.
     reg [8:0] dbg_scan_dlstart, dbg_scan_pdone;
+    reg [8:0] dbg_dlstart_bad;   // scanline of any dl_start NOT at 248
+    reg [7:0] dbg_dlstart_cnt;   // total dl_start pulses during nmien[7]
     always_ff @(posedge clk_bus) begin
-        if (rst_bus) begin dbg_scan_dlstart<=9'h0; dbg_scan_pdone<=9'h0; end
-        else if (nmien_q[7]) begin
-            if (dl_start_pulse) dbg_scan_dlstart <= ar_scanline;
-            if (dl_done)        dbg_scan_pdone   <= ar_scanline;
+        if (rst_bus) begin
+            dbg_scan_dlstart<=9'h0; dbg_scan_pdone<=9'h0;
+            dbg_dlstart_bad<=9'h0; dbg_dlstart_cnt<=8'h0;
+        end else if (nmien_q[7]) begin
+            if (dl_start_pulse) begin
+                dbg_scan_dlstart <= ar_scanline;
+                dbg_dlstart_cnt  <= dbg_dlstart_cnt + 8'd1;
+                if (ar_scanline != 9'd248) dbg_dlstart_bad <= ar_scanline;
+            end
+            if (dl_done) dbg_scan_pdone <= ar_scanline;
         end
     end
     // DEFINITIVE generation-vs-delivery split. cycle-8 DLI fire = the exact
@@ -1155,10 +1163,10 @@ module antic_top #(
             if (nmi_cur_row_dli) dbg_at23 <= 1'b1; // dli_at at scanline 31 cyc 8
         end
     end
-    // {cnt_at23[31:27], at23[26], hit23seen[25], listcnt_n7[24:20], has23[19],
-    //  gated_c8[15:8]... , ungated[7:0]}.
-    assign dbg_antic = {dbg_cnt_at23, dbg_at23, dbg_hit23seen, dbg_listcnt_n7,
-                        dbg_has23_n7, 3'b0, dbg_gated_c8[3:0], dl_count[3:0], dbg_dliu_cnt};
+    // {dlstart_bad scanline[31:23], dlstart_cnt[22:15], pdone scanline...[14:8],
+    //  ungated[7:0]}.  dlstart_bad != 0 => start_parse fires at a wrong scanline
+    // (spurious re-parse clears the DLI state mid-frame).
+    assign dbg_antic = {dbg_dlstart_bad, dbg_dlstart_cnt, dbg_scan_pdone[6:0], dbg_dliu_cnt};
 
     dl_parser u_dl_parser (
         .clk(clk_bus), .rst(rst_bus), .start_parse(dl_start_pulse),
