@@ -355,13 +355,23 @@ module antic_top #(
     // is bypassed for output; see §5.1).  Locked to phi2 so VCOUNT/WSYNC/VBI
     // cadence is correct vs the CPU.  All clk_bus — no CDC.
     wire [8:0] ar_scanline;
-    logic      scanline_is_vbi_q;      // registered (ar_scanline == 248); see start_parse gate
+    // The display-list parse kicks LATE in vblank, not at vbi_start (248):
+    // the XL OS copies its DLIST shadows at ~248-250 and tests arm their DL
+    // around ~250-252, and a parse that has already run at 248 would show
+    // the OLD list for a full frame (real ANTIC fetches the DL live, so a
+    // vblank write always affects the very next frame — ACID800 antic_nmist
+    // and the whole DLI cluster arm exactly this way).  Line 260 is after
+    // every normal vblank write yet still ~10 scanlines (>100 us) before
+    // display, orders of magnitude beyond the parse's needs.
+    localparam [8:0] PARSE_KICK_LINE = 9'd260;
+    wire       ar_line_start, ar_vbi_start;
+    wire parse_kick_pulse = ar_line_start && (ar_scanline == PARSE_KICK_LINE);
+    logic      scanline_is_vbi_q;      // registered (ar_scanline == PARSE_KICK_LINE); start_parse gate
     always_ff @(posedge clk_bus or posedge rst_bus) begin
         if (rst_bus) scanline_is_vbi_q <= 1'b0;
-        else         scanline_is_vbi_q <= (ar_scanline == 9'd248);
+        else         scanline_is_vbi_q <= (ar_scanline == PARSE_KICK_LINE);
     end
     wire [7:0] ar_phi2_in_line;
-    wire       ar_line_start, ar_vbi_start;
     wire [7:0] ar_atari_row, ar_vcount;
     antic_raster u_antic_raster (
         .clk          (clk_bus),
@@ -1017,7 +1027,7 @@ module antic_top #(
     antic_seq u_antic_seq (
         .clk        (clk_bus),
         .rst        (rst_bus),
-        .vbi_start  (vbi_start_pulse_bus),
+        .vbi_start  (parse_kick_pulse),     // parse trigger: LATE-vblank kick (see PARSE_KICK_LINE)
         .line_start (line_start_pulse_bus),
         .active_row (ar_atari_row != 8'hFF),
         .parse_done (dl_done),
@@ -1134,7 +1144,7 @@ module antic_top #(
                 dbg_vbi_cnt <= dbg_vbi_cnt + 8'd1;
                 if (ar_scanline != 9'd248) dbg_vbi_bad <= ar_scanline;
             end
-            if (dl_start_pulse && ar_scanline != 9'd248) dbg_dlstart_bad <= ar_scanline;
+            if (dl_start_pulse && ar_scanline != PARSE_KICK_LINE) dbg_dlstart_bad <= ar_scanline;
         end
     end
     // DEFINITIVE generation-vs-delivery split. cycle-8 DLI fire = the exact
