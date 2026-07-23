@@ -158,8 +158,16 @@ module dl_parser (
     // index array read/write, which on hardware silently mis-behaved (line_dli_p
     // set correctly yet dli_at read 0 — the whole ACID800 DLI cluster).
     localparam int DLI_LIST_N = 24;
-    logic [7:0]  dli_list [0:DLI_LIST_N-1];
+    logic [7:0]  dli_list [0:DLI_LIST_N-1];   // being built by the live parse
     logic [4:0]  dli_cnt;
+    // DOUBLE BUFFER: the display reads the ACTIVE copy, which is swapped from
+    // the live list ONLY at parse_done and is otherwise stable for the whole
+    // frame.  Measured: the live parse state (list/array) is inexplicably
+    // cleared mid-frame on hardware (dli_cnt=8 during the parse, 0 by the time
+    // the raster reaches the DLI row), which sim never reproduces.  Reading a
+    // frame-stable snapshot sidesteps that entirely.
+    logic [7:0]  dli_act [0:DLI_LIST_N-1];
+    logic [4:0]  dli_act_cnt;
 
     // Read port: combinational lookup.
     assign meta_mode       = line_mode      [meta_row[7:0]];
@@ -169,22 +177,36 @@ module dl_parser (
     assign meta_hscrol_en  = line_hscrol_en [meta_row[7:0]];
     assign meta_vscrol_en  = line_vscrol_en [meta_row[7:0]];
 
-    // dli_at = the live raster row matches any recorded DLI row.
+    // dli_at = the live raster row matches any DLI row in the ACTIVE (stable)
+    // snapshot.
     logic dli_hit;
     always_comb begin
         dli_hit = 1'b0;
         for (int k = 0; k < DLI_LIST_N; k++)
-            if (k < dli_cnt && dli_list[k] == dli_row[7:0]) dli_hit = 1'b1;
+            if (k < dli_act_cnt && dli_act[k] == dli_row[7:0]) dli_hit = 1'b1;
     end
     assign dli_at = dli_hit;
-    assign dbg_dli_cnt = dli_cnt;
+    assign dbg_dli_cnt = dli_act_cnt;
     logic has23;
     always_comb begin
         has23 = 1'b0;
         for (int k = 0; k < DLI_LIST_N; k++)
-            if (k < dli_cnt && dli_list[k] == 8'd23) has23 = 1'b1;
+            if (k < dli_act_cnt && dli_act[k] == 8'd23) has23 = 1'b1;
     end
     assign dbg_dli_has23 = has23;
+
+    // Swap the freshly-parsed list into the stable ACTIVE snapshot at parse_done
+    // (a 1-cycle pulse), so the display's dli_at read never sees the live parse
+    // state being cleared/rebuilt mid-frame.
+    always_ff @(posedge clk or posedge rst) begin
+        if (rst) begin
+            dli_act_cnt <= 5'd0;
+            for (int k = 0; k < DLI_LIST_N; k++) dli_act[k] <= 8'hFF;
+        end else if (parse_done) begin
+            dli_act_cnt <= dli_cnt;
+            for (int k = 0; k < DLI_LIST_N; k++) dli_act[k] <= dli_list[k];
+        end
+    end
     // rows 8,16,22,23,24,25,40,41 — pfstart's first two $F0 DLIs land at 23 & 41
     assign dbg_dli_rows = {line_dli_p[41], line_dli_p[40], line_dli_p[25],
                            line_dli_p[24], line_dli_p[23], line_dli_p[22],
