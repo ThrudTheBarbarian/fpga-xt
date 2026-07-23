@@ -1431,8 +1431,14 @@ module antic_top #(
     //   cfg[28:26] = /RDY shape mask {latch,q1,q2} (0 = default = 011, q1|q2)
     //   cfg[14]    = /RDY combinational fallback (0 = registered, default)
     //   cfg[15]    = DISABLE CPU-side write-immunity (0 = immune, boots)
+    // Release cycle 104: with the registered-set latch + q1 shape this puts
+    // the post-WSYNC resume on the cycle real hardware resumes on — measured
+    // on HW as the single release value where antic_vcount's VCOUNT reads
+    // land on 111/112 (103 reads a cycle early, 105 a cycle late) while
+    // antic_wsync, whose poly clock resynchronises to the release, passes at
+    // any offset.
     wire signed [3:0] wsync_rel_adj  = dbg_tb_cfg_s[23:20];
-    wire       [7:0]  wsync_rel_cyc  = 8'd103 + {{4{wsync_rel_adj[3]}}, wsync_rel_adj};
+    wire       [7:0]  wsync_rel_cyc  = 8'd104 + {{4{wsync_rel_adj[3]}}, wsync_rel_adj};
     wire       [2:0]  wsync_shape    = dbg_tb_cfg_s[28:26];
     wire              wsync_comb_sel = dbg_tb_cfg_s[14];
     assign wsync_write_immune = ~dbg_tb_cfg_s[15];              // out to fpga_xt_top
