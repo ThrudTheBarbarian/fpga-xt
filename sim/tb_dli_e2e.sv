@@ -43,7 +43,7 @@ module tb_dli_e2e;
     wire       parse_done;
     dl_parser u_dl (
         .clk(clk), .rst(rst), .start_parse(vbi_start),
-        .dlistl(8'h00), .dlisth(8'h2C), .vscrol(4'h0),
+        .dlistl(8'h00), .dlisth(8'h2C), .dlistl_we(1'b0), .dlisth_we(1'b0), .vscrol(4'h0),
         .mem_raddr(raddr), .mem_rdata(rdata), .mem_req(), .mem_ready(1'b1),
         .meta_row(8'h00), .meta_mode(), .meta_dli(), .meta_lms_addr(),
         .meta_sub_row(), .meta_hscrol_en(), .meta_vscrol_en(),

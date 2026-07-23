@@ -26,6 +26,8 @@ module antic_regs (
     // Side-channel outputs to other modules in later milestones.
     output logic       wsync_pending,   // pulsed high when CPU writes $D40A
     output logic       nmires_strobe,   // pulsed high when CPU writes $D40F (clear NMIST)
+    output logic       dlistl_we,       // pulsed high when CPU writes $D402 (live DL PC low)
+    output logic       dlisth_we,       // pulsed high when CPU writes $D403 (live DL PC high)
     output logic       pal_write_strobe,// pulsed high when CPU writes $D486 (commit palette entry)
     output logic [7:0] pal_r_q,         // latched at $D483 write
     output logic [7:0] pal_g_q,         // latched at $D484 write
@@ -177,6 +179,8 @@ module antic_regs (
             wsync_pending    <= 1'b0;
             nmires_strobe    <= 1'b0;
             pal_write_strobe <= 1'b0;
+            dlistl_we        <= 1'b0;
+            dlisth_we        <= 1'b0;
             // Chiplet-extension registers are our own contract; they
             // get the rp-XT defaults on /G_RST.
             mode_snoop   <= 1'b1;       // snoop is the default at /G_RST
@@ -204,6 +208,8 @@ module antic_regs (
             nmires_strobe    <= 1'b0;
             pal_write_strobe <= 1'b0;
             os_rom_we        <= 1'b0;
+            dlistl_we        <= 1'b0;
+            dlisth_we        <= 1'b0;
 
             // SALLYRST cold-boot mimics a power-on ANTIC reset (Altirra §4.1): hold
             // NMIEN and DMACTL cleared while the SALLY realm is held in reset, so a
@@ -218,8 +224,8 @@ module antic_regs (
                 unique case (canon_w)
                     4'h0: dmactl <= wdata;       // $D400 DMACTL
                     4'h1: chactl <= wdata;       // $D401 CHACTL
-                    4'h2: dlistl <= wdata;       // $D402 DLISTL
-                    4'h3: dlisth <= wdata;       // $D403 DLISTH
+                    4'h2: begin dlistl <= wdata; dlistl_we <= canon_we_edge; end // $D402 DLISTL
+                    4'h3: begin dlisth <= wdata; dlisth_we <= canon_we_edge; end // $D403 DLISTH
                     4'h4: hscrol <= wdata;       // $D404 HSCROL
                     4'h5: vscrol <= wdata;       // $D405 VSCROL
                     4'h6: ;                       // $D406 reserved

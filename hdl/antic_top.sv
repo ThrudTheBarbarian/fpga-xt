@@ -449,6 +449,7 @@ module antic_top #(
     wire [7:0] antic_read_data;
     wire       wsync_pending;             // M13: drives wsync_gen
     wire       nmires_strobe;             // M12: drives nmi_gen
+    wire       dlistl_we_w, dlisth_we_w;  // DLIST write pulses -> dl_parser live DL PC
     wire       pal_write_strobe;          // M-video-int: 1-cycle commit pulse to palette_lut
     wire [7:0] pal_r_q, pal_g_q, pal_b_q;
     wire [7:0] pal_idx_q;
@@ -515,6 +516,8 @@ module antic_top #(
         .rdata                (antic_read_data),
         .wsync_pending        (wsync_pending),
         .nmires_strobe        (nmires_strobe),
+        .dlistl_we            (dlistl_we_w),
+        .dlisth_we            (dlisth_we_w),
         .pal_write_strobe     (pal_write_strobe),
         .pal_r_q              (pal_r_q),
         .pal_g_q              (pal_g_q),
@@ -1184,6 +1187,7 @@ module antic_top #(
         .clk(clk_bus), .rst(rst_bus),
         .start_parse(dl_start_pulse && scanline_is_vbi_q),
         .dlistl(dlistl_q), .dlisth(dlisth_q),
+        .dlistl_we(dlistl_we_w), .dlisth_we(dlisth_we_w),
         .vscrol(vscrol_q[3:0]),
         .mem_raddr(dl_raddr), .mem_rdata(dl_rdata),
         .mem_req(dl_req), .mem_ready(dl_ready),
@@ -1394,6 +1398,25 @@ module antic_top #(
     // ring has wrapped (>=16 triggers seen), i.e. all 16 slots are recent events.
     wire         tb_full = tb_circular ? (tb_trig_count >= 16'd16) : tb_wr_idx[4];
 
+    // The capture is PIPELINED one clk_bus: payload + accept decision are
+    // registered before touching the 16x25 ring.  The payload latches on the
+    // SAME edge the trigger is evaluated (bus data still valid — see the
+    // double-sample note above), only the ring WRITE lands a cycle later.
+    // clk_sys closes with ~no margin and the scanline→ring-CE cone was the
+    // design's WNS path; scanline/cycle values are stable for ~90 clk_bus,
+    // so the recorded values are identical.
+    logic        tb_accept_q;
+    logic [24:0] tb_payload_q;
+    always_ff @(posedge clk_bus or posedge rst_bus) begin
+        if (rst_bus) begin
+            tb_accept_q  <= 1'b0;
+            tb_payload_q <= 25'd0;
+        end else begin
+            tb_accept_q  <= tb_armed && (tb_mode != 3'd0) && tb_trig_edge && tb_scan_ok;
+            tb_payload_q <= {ar_scanline, ar_phi2_in_line, tb_data8};
+        end
+    end
+
     always_ff @(posedge clk_bus or posedge rst_bus) begin
         if (rst_bus) begin
             tb_wr_idx     <= 5'd0;
@@ -1403,15 +1426,15 @@ module antic_top #(
             tb_wr_idx     <= 5'd0;
             tb_trig_count <= 16'd0;
             tb_armed      <= 1'b1;      // arm a fresh capture pass
-        end else if (tb_armed && (tb_mode != 3'd0) && tb_trig_edge && tb_scan_ok) begin
+        end else if (tb_accept_q) begin
             if (tb_circular) begin
                 // Circular: always write, wrap the 4-bit slot; never freeze. The
                 // ring holds the LAST 16 triggers; wr_idx (=next slot) is the OLDEST.
-                tb_ring[tb_wr_idx[3:0]] <= {ar_scanline, ar_phi2_in_line, tb_data8};
+                tb_ring[tb_wr_idx[3:0]] <= tb_payload_q;
                 tb_wr_idx               <= {1'b0, tb_wr_idx[3:0] + 4'd1};
             end else if (!tb_full) begin
                 // Stop-on-full (default): fill once, then freeze on the FIRST 16.
-                tb_ring[tb_wr_idx[3:0]] <= {ar_scanline, ar_phi2_in_line, tb_data8};
+                tb_ring[tb_wr_idx[3:0]] <= tb_payload_q;
                 tb_wr_idx               <= tb_wr_idx + 5'd1;   // stops at 16 (bit4 set)
             end
             if (tb_trig_count != 16'hFFFF)

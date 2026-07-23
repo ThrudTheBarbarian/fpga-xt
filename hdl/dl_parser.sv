@@ -66,6 +66,9 @@ module dl_parser (
     // ANTIC register inputs.
     input  wire [7:0]   dlistl,
     input  wire [7:0]   dlisth,
+    input  wire         dlistl_we,      // 1-clk pulse: CPU wrote DLISTL (live DL PC update)
+    input  wire         dlisth_we,      // 1-clk pulse: CPU wrote DLISTH (value read from
+                                        // dlistl/dlisth one cycle later, once settled)
     input  wire [3:0]   vscrol,            // VSCROL ($D405) — sub-row offset
                                            // applied at the first row of a
                                            // VSCROL block; emit-end clipped at
@@ -290,6 +293,7 @@ module dl_parser (
     // JVB can move out of the current 1 KB region.
     logic [15:0] dl_pos;            // current DL byte address
     logic [15:0] lms_ptr;            // running LMS pointer (was cur_lms)
+    logic        dlistl_we_q, dlisth_we_q;   // delayed DLIST write pulses (see below)
     logic [15:0] target_addr;       // JMP/JVB target / LMS scratch
     logic [15:0] new_lms_loaded;    // LMS captured by S_LATCH_LMS_HI
     logic        lms_was_loaded;    // 1 if decoded line had LMS bit
@@ -366,7 +370,11 @@ module dl_parser (
         if (rst) begin
             state           <= S_IDLE;
             emit_phase      <= E_STAGE;
-            dl_pos          <= 16'h0;
+            // Reset seeds the DL PC from the registers (testbench-friendly;
+            // on hardware the OS's first DLISTL/H writes land via the pulses).
+            dl_pos          <= {dlisth, dlistl};
+            dlistl_we_q     <= 1'b0;
+            dlisth_we_q     <= 1'b0;
             lms_ptr         <= 16'h0;
             target_addr     <= 16'h0;
             new_lms_loaded  <= 16'h0;
@@ -414,7 +422,11 @@ module dl_parser (
             unique case (state)
                 S_IDLE: begin
                     if (start_parse) begin
-                        dl_pos         <= {dlisth, dlistl};
+                        // dl_pos is NOT reloaded here: real ANTIC's DL program
+                        // counter free-runs — DLISTL/H writes hit it live (the
+                        // write-through below), JVB/JMP set it, and a >240-row
+                        // list simply continues next frame (ACID800
+                        // antic_dlistwrap; Altirra antic.cpp mDLIST semantics).
                         lms_ptr        <= 16'h0;
                         atari_row      <= 8'd0;
                         ops            <= 11'd0;
@@ -573,8 +585,10 @@ module dl_parser (
                     if (!mem_ready) begin
                         // hold — multi-cycle DMA fetch in progress
                     end else if (is_jvb) begin
-                        // JVB ends the frame. Flush any trailing pending
-                        // using its already-computed S/E.
+                        // JVB ends the frame — and SETS the DL PC to its
+                        // target (the next frame's parse continues from
+                        // dl_pos; there is no per-frame reload).
+                        dl_pos <= {mem_rdata, target_addr[7:0]};
                         if (pend_valid) begin
                             sub_row    <= pend_init_sub;
                             emit_phase <= E_FLUSH_END;
@@ -724,8 +738,14 @@ module dl_parser (
                             logic        first_of_block;
                             logic        last_of_block;
                             logic [4:0]  sc;
+                            // Screen-memory scan wraps within its 4K page:
+                            // only [11:0] increments, [15:12] hold (Altirra
+                            // HW ref; ACID800 antic_addresswrap).  The
+                            // compositor's per-byte screen_addr() already
+                            // wraps identically.
                             adv = (pend_mode >= 4'd2)
-                                    ? lms_ptr + bytes_per_line(pend_mode, pend_hscrol_en)
+                                    ? {lms_ptr[15:12], 12'(lms_ptr[11:0]
+                                        + 12'(bytes_per_line(pend_mode, pend_hscrol_en)))}
                                     : lms_ptr;
                             new_lms_after_load = lms_was_loaded ? new_lms_loaded : adv;
                             lms_ptr        <= new_lms_after_load;
@@ -761,6 +781,17 @@ module dl_parser (
 
                 default: state <= S_IDLE;
             endcase
+
+            // Live DLISTL/H write-through: the CPU write lands on the DL
+            // program counter immediately, mid-parse included (matches real
+            // ANTIC / Altirra).  The pulse is applied one clk_bus later so the
+            // settled dlistl/dlisth register value is used (invisible at
+            // machine-cycle scale).  Placed after the case so a same-cycle
+            // FSM advance loses to the CPU write.
+            dlistl_we_q <= dlistl_we;
+            dlisth_we_q <= dlisth_we;
+            if (dlistl_we_q) dl_pos[7:0]  <= dlistl;
+            if (dlisth_we_q) dl_pos[15:8] <= dlisth;
         end
     end
 

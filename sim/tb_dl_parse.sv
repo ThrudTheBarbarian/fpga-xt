@@ -44,6 +44,8 @@ module tb_dl_parse;
 
     // ---- dl_parser ------------------------------------------------------
     logic        start_parse = 1'b0;
+    logic        dl_we_pulse = 1'b0;   // reload dl_pos from dlisth/dlistl (as the OS's
+                                       // DLIST rewrite would) before each phase's parse
     logic [7:0]  dlistl      = 8'h00;
     logic [7:0]  dlisth      = 8'hD0;
     logic [7:0]  meta_row    = 8'h00;
@@ -61,7 +63,7 @@ module tb_dl_parse;
         .rst           (rst),
         .start_parse   (start_parse),
         .dlistl        (dlistl),
-        .dlisth        (dlisth),
+        .dlisth        (dlisth), .dlistl_we(dl_we_pulse), .dlisth_we(dl_we_pulse),
         .vscrol        (vscrol_r),
         .mem_raddr     (bram_raddr),
         .mem_rdata     (bram_rdata),
@@ -149,6 +151,10 @@ module tb_dl_parse;
     endtask
 
     task automatic do_parse;
+        // reload the DL PC (persistent across parses since the dlistwrap fix)
+        @(negedge clk); dl_we_pulse <= 1'b1;
+        @(negedge clk); dl_we_pulse <= 1'b0;
+        @(negedge clk);
         @(posedge clk);
         start_parse <= 1'b1;
         @(posedge clk);
