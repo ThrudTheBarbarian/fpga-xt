@@ -392,12 +392,20 @@ static void desk_launch_full(const char *name, const char *full, int media_type)
             else if (!strcmp(meth, "disk")) snprintf(boot, sizeof boot, "%s %s", emu == ICT_EMU_8BIT ? "D1:" : "A:", name);
             else                            snprintf(boot, sizeof boot, "RUN %s", name);   // exec
             // v1 (docs/OS/app-launch.md): an 8-bit DISK cold-boots the fabric 6502
-            // with the ATR mounted as D1:.  cart/exec still open the framed plane
-            // only (boot-disk synth + cart window are v1.5+).
+            // with the ATR mounted as D1:; an 8-bit EXEC cold-boots and runs the
+            // standalone .xex through the same loader /System/bin/xexload uses.
+            // cart still opens the framed plane only (cart window is v1.5+).
             if (emu == ICT_EMU_8BIT && !strcmp(meth, "disk") && full) {
                 long rc = sys_xl_boot(full, 1);
                 if (rc != 0) {
                     char m[80]; snprintf(m, sizeof m, "[1][Can't boot %s (%ld)][OK]", name, rc);
+                    form_alert(1, m);
+                    return;
+                }
+            } else if (emu == ICT_EMU_8BIT && strcmp(meth, "cart") && full) {
+                long rc = sys_xexload(full, 0);
+                if (rc != 0) {
+                    char m[80]; snprintf(m, sizeof m, "[1][Can't run %s (%ld)][OK]", name, rc);
                     form_alert(1, m);
                     return;
                 }
@@ -412,11 +420,11 @@ static void desk_launch_full(const char *name, const char *full, int media_type)
     char ext[8] = ""; const char *dot = strrchr(name, '.');
     if (dot) { int i = 0; for (const char *p = dot+1; *p && i < 7; p++) ext[i++] = (char)tolower((unsigned char)*p); ext[i] = 0; }
     char boot[96];
-    int is_disk = 0;
+    int is_disk = 0, is_exec = 0;
     if (emu == ICT_EMU_8BIT) {
         if (!strcmp(ext,"atr")||!strcmp(ext,"atx")||!strcmp(ext,"xfd")) { snprintf(boot,sizeof boot,"D1: %s",name); is_disk = 1; }
         else if (!strcmp(ext,"rom")||!strcmp(ext,"car")||!strcmp(ext,"bin")) snprintf(boot,sizeof boot,"CART %s",name);
-        else snprintf(boot,sizeof boot,"RUN %s",name);        // xex/exe -> dummy env
+        else { snprintf(boot,sizeof boot,"RUN %s",name); is_exec = 1; }   // xex/exe
     } else {
         if (!strcmp(ext,"st")||!strcmp(ext,"msa")||!strcmp(ext,"dim")) snprintf(boot,sizeof boot,"A: %s",name);
         else snprintf(boot,sizeof boot,"RUN %s",name);        // prg/tos/app
@@ -424,6 +432,10 @@ static void desk_launch_full(const char *name, const char *full, int media_type)
     if (emu == ICT_EMU_8BIT && is_disk && full) {
         long rc = sys_xl_boot(full, 1);
         if (rc != 0) { char m[80]; snprintf(m, sizeof m, "[1][Can't boot %s (%ld)][OK]", name, rc);
+                       form_alert(1, m); return; }
+    } else if (emu == ICT_EMU_8BIT && is_exec && full) {
+        long rc = sys_xexload(full, 0);
+        if (rc != 0) { char m[80]; snprintf(m, sizeof m, "[1][Can't run %s (%ld)][OK]", name, rc);
                        form_alert(1, m); return; }
     }
     open_emulator(emu, name, boot);

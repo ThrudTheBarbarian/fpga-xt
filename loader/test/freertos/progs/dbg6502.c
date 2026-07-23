@@ -274,6 +274,7 @@ static void help(void)
     line("  6502 go                 resume");
     line("  6502 step [N]           single-step N instructions (default 1)");
     line("  6502 reset              cold-reset the 6502 realm");
+    line("  6502 run [--turbo] [--hold] <file.xex>   cold-boot + run a standalone .xex (as xexload)");
     line("  6502 break $A           break before executing the instruction at $A");
     line("  6502 break off");
     line("  6502 breakreset on|off  break at the reset vector");
@@ -335,6 +336,19 @@ void _app_entry(int argc, char **argv)
         wr(CTRL_SALLYRST, sel | 1ul); wr(CTRL_SALLYRST, sel);
         if (rd(DBG_CFG) & 2u) poll_halt();       /* halt_at_reset armed -> wait */
         status(); sys_exit(0);
+    }
+
+    if (streq(cmd, "run")) {                     /* cold-boot + run a standalone .xex */
+        int flags = 0, ai = 2;                   /* bit0 = turbo, bit1 = hold (as xexload) */
+        for (; ai < argc; ai++) {
+            if (streq(argv[ai], "--turbo") || streq(argv[ai], "-t"))     flags |= 1;
+            else if (streq(argv[ai], "--hold") || streq(argv[ai], "-h")) flags |= 2;
+            else break;
+        }
+        if (ai >= argc) { on = 0; os("usage: 6502 run [--turbo] [--hold] <file.xex>\n"); flush(2); sys_exit(2); }
+        long rc = sys_xexload(argv[ai], flags);
+        if (rc != 0) { on = 0; os("6502 run: failed\n"); flush(2); sys_exit(1); }
+        sys_exit(0);
     }
 
     if (streq(cmd, "break")) {
