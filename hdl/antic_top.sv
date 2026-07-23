@@ -1028,13 +1028,26 @@ module antic_top #(
     // DLI-enabled event EVER occurs on the ANTIC side for that test.
     //   dbg_dli_cnt delta > 0  => DLI fires with NMIEN[7] on ANTIC; bug is DELIVERY to CPU
     //   dbg_dli_cnt delta == 0 => NMIEN[7] never coincides with a DLI row; bug is earlier
-    reg  [7:0]  dbg_dli_cnt;
-    wire        dbg_dli_fire = ar_line_start & nmi_cur_row_dli & nmien_q[7];
+    reg  [7:0]  dbg_dli_cnt;      // DLI rows that fire WITH nmien[7] set (gated)
+    reg  [7:0]  dbg_dliu_cnt;     // DLI rows that fire regardless of nmien (ungated)
+    reg  [7:0]  dbg_nmien_or;     // sticky OR of nmien_q — was bit7 EVER set?
+    wire        dbg_dli_fire  = ar_line_start & nmi_cur_row_dli & nmien_q[7];
+    wire        dbg_dliu_fire = ar_line_start & nmi_cur_row_dli;
     always_ff @(posedge clk_bus) begin
-        if (rst_bus)           dbg_dli_cnt <= 8'h0;
-        else if (dbg_dli_fire) dbg_dli_cnt <= dbg_dli_cnt + 8'h1;
+        if (rst_bus) begin
+            dbg_dli_cnt  <= 8'h0;
+            dbg_dliu_cnt <= 8'h0;
+            dbg_nmien_or <= 8'h0;
+        end else begin
+            if (dbg_dli_fire)  dbg_dli_cnt  <= dbg_dli_cnt  + 8'h1;
+            if (dbg_dliu_fire) dbg_dliu_cnt <= dbg_dliu_cnt + 8'h1;
+            dbg_nmien_or <= dbg_nmien_or | nmien_q;
+        end
     end
-    assign dbg_antic = {nmien_q, nmist_q, dbg_dli_cnt, dl_meta_mode, 4'h0};
+    // {sticky nmien-OR, gated DLI count, ungated DLI count, live nmien}.
+    //   nmien_or[7]=0        => the $80 write NEVER set NMIEN[7] (write path bug)
+    //   nmien_or[7]=1, gated=0, ungated>0 => set + DLIs fire, but never together (timing/phase)
+    assign dbg_antic = {dbg_nmien_or, dbg_dli_cnt, dbg_dliu_cnt, nmien_q};
 
     dl_parser u_dl_parser (
         .clk(clk_bus), .rst(rst_bus), .start_parse(dl_start_pulse),
