@@ -1115,20 +1115,18 @@ module antic_top #(
     // at vbi_start(248). Capture where dl_start_pulse actually fires and where
     // the parse completes: dl_start@17 => spurious trigger; parse crossing into
     // the visible frame => the long DL parse re-clears mid-display.
-    reg [8:0] dbg_scan_dlstart, dbg_scan_pdone;
+    reg [8:0] dbg_vbi_bad;       // scanline of any vbi_start NOT at 248
     reg [8:0] dbg_dlstart_bad;   // scanline of any dl_start NOT at 248
-    reg [7:0] dbg_dlstart_cnt;   // total dl_start pulses during nmien[7]
+    reg [7:0] dbg_vbi_cnt;       // total vbi_start pulses during nmien[7]
     always_ff @(posedge clk_bus) begin
         if (rst_bus) begin
-            dbg_scan_dlstart<=9'h0; dbg_scan_pdone<=9'h0;
-            dbg_dlstart_bad<=9'h0; dbg_dlstart_cnt<=8'h0;
+            dbg_vbi_bad<=9'h0; dbg_dlstart_bad<=9'h0; dbg_vbi_cnt<=8'h0;
         end else if (nmien_q[7]) begin
-            if (dl_start_pulse) begin
-                dbg_scan_dlstart <= ar_scanline;
-                dbg_dlstart_cnt  <= dbg_dlstart_cnt + 8'd1;
-                if (ar_scanline != 9'd248) dbg_dlstart_bad <= ar_scanline;
+            if (vbi_start_pulse_bus) begin
+                dbg_vbi_cnt <= dbg_vbi_cnt + 8'd1;
+                if (ar_scanline != 9'd248) dbg_vbi_bad <= ar_scanline;
             end
-            if (dl_done) dbg_scan_pdone <= ar_scanline;
+            if (dl_start_pulse && ar_scanline != 9'd248) dbg_dlstart_bad <= ar_scanline;
         end
     end
     // DEFINITIVE generation-vs-delivery split. cycle-8 DLI fire = the exact
@@ -1166,7 +1164,8 @@ module antic_top #(
     // {dlstart_bad scanline[31:23], dlstart_cnt[22:15], pdone scanline...[14:8],
     //  ungated[7:0]}.  dlstart_bad != 0 => start_parse fires at a wrong scanline
     // (spurious re-parse clears the DLI state mid-frame).
-    assign dbg_antic = {dbg_dlstart_bad, dbg_dlstart_cnt, dbg_scan_pdone[6:0], dbg_dliu_cnt};
+    // {vbi_bad scanline[31:23], dlstart_bad[22:14], vbi_cnt[13:6]... , ungated[5:0]}.
+    assign dbg_antic = {dbg_vbi_bad, dbg_dlstart_bad, dbg_vbi_cnt, dbg_dliu_cnt[5:0]};
 
     dl_parser u_dl_parser (
         .clk(clk_bus), .rst(rst_bus), .start_parse(dl_start_pulse),
