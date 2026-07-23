@@ -136,6 +136,17 @@ module dl_parser (
     // table is built in raster-row space: phys_row = lead_skipped + atari_row
     // for emitted content, lead_skipped-relative for skipped leading blanks.
     // Real ANTIC raises the DLI on the LAST scan line of the flagged DL line.
+    //
+    // MUST be flip-flops, not RAM.  `dli_at = line_dli_p[dli_row]` is a
+    // variable-index read that closes a combinational loop back through nmi_gen
+    // (dli_row comes from nmi_gen.cur_row).  Left to infer, Vivado builds this
+    // 1-bit table as distributed RAM whose read does NOT match the parallel
+    // constant-index reads: on hardware line_dli_p[23] reads 1 by constant
+    // index yet dli_at reads 0 for dli_row=23, so the DLI never fires even
+    // though the table is correct (measured — the whole ACID800 DLI cluster).
+    // Forcing registers makes the variable read behave exactly like the sim's
+    // array read.
+    (* ram_style = "registers" *)
     logic        line_dli_p     [0:ATARI_H-1];
 
     // Read port: combinational lookup.
