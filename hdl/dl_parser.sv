@@ -149,6 +149,16 @@ module dl_parser (
     (* ram_style = "registers" *)
     logic        line_dli_p     [0:ATARI_H-1];
 
+    // DLI ROW LIST — replaces the fragile 240-entry line_dli_p[dli_row] variable
+    // read.  A DL frame has only a handful of DLI rows, so record them (physical
+    // raster rows) in a small list and match the live raster row with parallel
+    // comparators.  This is a clean flop file + N-way compare with NO variable-
+    // index array read/write, which on hardware silently mis-behaved (line_dli_p
+    // set correctly yet dli_at read 0 — the whole ACID800 DLI cluster).
+    localparam int DLI_LIST_N = 24;
+    logic [7:0]  dli_list [0:DLI_LIST_N-1];
+    logic [4:0]  dli_cnt;
+
     // Read port: combinational lookup.
     assign meta_mode       = line_mode      [meta_row[7:0]];
     assign meta_dli        = line_dli       [meta_row[7:0]];
@@ -156,7 +166,15 @@ module dl_parser (
     assign meta_sub_row    = line_sub_row   [meta_row[7:0]];
     assign meta_hscrol_en  = line_hscrol_en [meta_row[7:0]];
     assign meta_vscrol_en  = line_vscrol_en [meta_row[7:0]];
-    assign dli_at          = line_dli_p     [dli_row[7:0]];
+
+    // dli_at = the live raster row matches any recorded DLI row.
+    logic dli_hit;
+    always_comb begin
+        dli_hit = 1'b0;
+        for (int k = 0; k < DLI_LIST_N; k++)
+            if (k < dli_cnt && dli_list[k] == dli_row[7:0]) dli_hit = 1'b1;
+    end
+    assign dli_at = dli_hit;
     // rows 8,16,22,23,24,25,40,41 — pfstart's first two $F0 DLIs land at 23 & 41
     assign dbg_dli_rows = {line_dli_p[41], line_dli_p[40], line_dli_p[25],
                            line_dli_p[24], line_dli_p[23], line_dli_p[22],
@@ -346,6 +364,7 @@ module dl_parser (
                 line_vscrol_en[i] <= 1'b0;
                 line_dli_p[i]     <= 1'b0;
             end
+            dli_cnt <= 5'd0;
         end else begin
             parse_done <= 1'b0;     // single-cycle pulse
 
@@ -369,6 +388,7 @@ module dl_parser (
                         // NMIs.  Parallel reset (same as the master reset loop);
                         // the whole VBI is available before the first fetch.
                         for (i = 0; i < ATARI_H; i++) line_dli_p[i] <= 1'b0;
+                        dli_cnt <= 5'd0;   // clear the DLI row list for a new parse
                     end
                 end
 
@@ -430,8 +450,13 @@ module dl_parser (
                             // fires at the right raster row.  phys = lead_skipped +
                             // (blank_count-1) = lead_skipped + mem_rdata[6:4].
                             if (mem_rdata[7]
-                                && (lead_skipped + {5'd0, mem_rdata[6:4]}) < ATARI_H[7:0])
+                                && (lead_skipped + {5'd0, mem_rdata[6:4]}) < ATARI_H[7:0]) begin
                                 line_dli_p[lead_skipped + {5'd0, mem_rdata[6:4]}] <= 1'b1;
+                                if (dli_cnt < DLI_LIST_N[4:0]) begin
+                                    dli_list[dli_cnt] <= lead_skipped + {5'd0, mem_rdata[6:4]};
+                                    dli_cnt <= dli_cnt + 5'd1;
+                                end
+                            end
                             lead_skipped <= lead_skipped + {5'd0, mem_rdata[6:4]} + 8'd1;
                             state        <= S_FETCH_OP;
                         end else begin
@@ -601,8 +626,13 @@ module dl_parser (
                                 //    lines precisely to probe raster timing, and carry
                                 //    no compositor content to align against.
                                 if ((sub_row == pend_init_sub)
-                                    && pending_dli && pending_dli_is_mode)
+                                    && pending_dli && pending_dli_is_mode) begin
                                     line_dli_p[atari_row] <= 1'b1;
+                                    if (dli_cnt < DLI_LIST_N[4:0]) begin
+                                        dli_list[dli_cnt] <= atari_row;
+                                        dli_cnt <= dli_cnt + 5'd1;
+                                    end
+                                end
                                 atari_row <= atari_row + 8'd1;
                                 sub_row   <= sub_row + 4'd1;    // 4-bit DCTR wraps mod-16
                                 if ({1'b0, sub_row} == pend_eff_end) begin
@@ -611,8 +641,13 @@ module dl_parser (
                                     // the DLI.  Only blank lines record here (physical);
                                     // mode lines defer to the compressed path above.
                                     if (pend_dli && pend_mode == 4'd0
-                                        && phys_r < {1'b0, ATARI_H[7:0]})
+                                        && phys_r < {1'b0, ATARI_H[7:0]}) begin
                                         line_dli_p[phys_r[7:0]] <= 1'b1;
+                                        if (dli_cnt < DLI_LIST_N[4:0]) begin
+                                            dli_list[dli_cnt] <= phys_r[7:0];
+                                            dli_cnt <= dli_cnt + 5'd1;
+                                        end
+                                    end
                                     pending_dli         <= pend_dli;
                                     pending_dli_is_mode <= (pend_mode >= 4'd2);
                                     if (emit_phase == E_FLUSH_END) begin
