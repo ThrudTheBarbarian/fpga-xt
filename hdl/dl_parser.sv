@@ -303,7 +303,7 @@ module dl_parser (
     logic [15:0] dl_pos;            // current DL byte address
     logic [15:0] lms_ptr;            // running LMS pointer (was cur_lms)
     logic        dlistl_we_q, dlisth_we_q;   // delayed DLIST write pulses (see below)
-    logic        dl_wl_pend,  dl_wh_pend;    // DLIST write arrived mid-parse: apply at idle
+    logic        dlist_dirty;                // DLISTL/H written since last parse start
     logic [15:0] target_addr;       // JMP/JVB target / LMS scratch
     logic [15:0] new_lms_loaded;    // LMS captured by S_LATCH_LMS_HI
     logic        lms_was_loaded;    // 1 if decoded line had LMS bit
@@ -385,8 +385,7 @@ module dl_parser (
             dl_pos          <= {dlisth, dlistl};
             dlistl_we_q     <= 1'b0;
             dlisth_we_q     <= 1'b0;
-            dl_wl_pend      <= 1'b0;
-            dl_wh_pend      <= 1'b0;
+            dlist_dirty     <= 1'b1;   // first parse always loads from the regs
             lms_ptr         <= 16'h0;
             target_addr     <= 16'h0;
             new_lms_loaded  <= 16'h0;
@@ -434,11 +433,13 @@ module dl_parser (
             unique case (state)
                 S_IDLE: begin
                     if (start_parse) begin
-                        // dl_pos is NOT reloaded here: real ANTIC's DL program
-                        // counter free-runs — DLISTL/H writes hit it live (the
-                        // write-through below), JVB/JMP set it, and a >240-row
-                        // list simply continues next frame (ACID800
-                        // antic_dlistwrap; Altirra antic.cpp mDLIST semantics).
+                        // Reload dl_pos from the registers only when they were
+                        // written since the last parse (dlist_dirty); untouched
+                        // registers mean the DL PC free-runs — JVB target or
+                        // mid-list continue (ACID800 antic_dlistwrap; Altirra
+                        // mDLIST semantics).
+                        if (dlist_dirty) dl_pos <= {dlisth, dlistl};
+                        dlist_dirty    <= 1'b0;
                         lms_ptr        <= 16'h0;
                         atari_row      <= 8'd0;
                         ops            <= 11'd0;
@@ -816,15 +817,18 @@ module dl_parser (
                 state       <= S_IDLE;
                 parse_done  <= 1'b1;
             end
+            // DLIST dirty tracking: any DLISTL/H write since the last parse
+            // start makes the next parse reload dl_pos from the registers;
+            // with no writes the DL PC free-runs (JVB target / mid-list
+            // continue — the real-ANTIC semantics antic_dlistwrap needs).
+            // Touching dl_pos ONLY at parse start makes mid-parse register
+            // writes unable to teleport a parse in flight, and any drift of
+            // the free-running PC self-heals on the next OS shadow rewrite
+            // (board-measured: the earlier live/pended write-through built up
+            // garbage DLI rows even during plain OS boot).
+            if (dlistl_we_q || dlisth_we_q) dlist_dirty <= 1'b1;
             dlistl_we_q <= dlistl_we;
             dlisth_we_q <= dlisth_we;
-            if (state == S_IDLE) begin
-                if (dlistl_we_q || dl_wl_pend) begin dl_pos[7:0]  <= dlistl; dl_wl_pend <= 1'b0; end
-                if (dlisth_we_q || dl_wh_pend) begin dl_pos[15:8] <= dlisth; dl_wh_pend <= 1'b0; end
-            end else begin
-                if (dlistl_we_q) dl_wl_pend <= 1'b1;
-                if (dlisth_we_q) dl_wh_pend <= 1'b1;
-            end
         end
     end
 
