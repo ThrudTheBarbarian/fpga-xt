@@ -1920,25 +1920,31 @@ module fpga_xt_top (
     // If the core sees NMIs but never reads bit7=1, the DLI status never
     // reaches the CPU (readback path); if it reads bit7=1 but dli1 still never
     // runs, the bug is past the read.
-    (* keep = "true" *) reg  [7:0] dli_nmi_cnt   = 8'd0;
-    (* keep = "true" *) reg  [7:0] dli_nmist7_cnt = 8'd0;
-    (* keep = "true" *) reg  [7:0] dli_nmistrd_cnt = 8'd0;
-    (* keep = "true" *) reg  [7:0] dli_last_nmist = 8'd0;
-    reg        nmi_sync_q = 1'b1;
-    reg        d40f_rd_q  = 1'b0;
-    wire       d40f_rd = (fid_addr == 16'hD40F) & fid_rw;   // CPU read of NMIST
+    // Name the code that clears NMIEN[7]. On the fid write to $D40E (clk_sally,
+    // captured once at the data sub-cycle), track whether bit7 was ever set;
+    // the FIRST write that clears it after that latches the writing PC + value.
+    // That PC is the instruction the DLI cluster's "DLIs did not fire" hinges on.
+    (* keep = "true" *) reg [15:0] clr_pc    = 16'd0;   // PC that cleared NMIEN[7]
+    (* keep = "true" *) reg  [7:0] clr_val   = 8'd0;    // value it wrote
+    (* keep = "true" *) reg  [7:0] nmien_wr_cnt = 8'd0; // total $D40E writes seen
+    reg        saw_nmien7 = 1'b0;                        // bit7 was set at some point
+    reg        clr_captured = 1'b0;
+    reg        d40e_wr_q = 1'b0;
+    wire       d40e_wr = (fid_addr == 16'hD40E) & ~fid_rw & (fid_sub == 8'd49);
     always_ff @(posedge clk_sally) begin
-        nmi_sync_q <= nmi_n_sync;
-        if (nmi_sync_q & ~nmi_n_sync) dli_nmi_cnt <= dli_nmi_cnt + 8'd1;  // NMI falling edge
-        // capture the NMIST byte at the data-sample point of a $D40F read
-        d40f_rd_q <= d40f_rd;
-        if (d40f_rd && (fid_sub == 8'd49)) begin
-            dli_last_nmist  <= cpu_din;
-            dli_nmistrd_cnt <= dli_nmistrd_cnt + 8'd1;
-            if (cpu_din[7]) dli_nmist7_cnt <= dli_nmist7_cnt + 8'd1;
+        d40e_wr_q <= d40e_wr;
+        if (d40e_wr && !d40e_wr_q) begin           // one capture per write
+            nmien_wr_cnt <= nmien_wr_cnt + 8'd1;
+            if (fid_dout[7]) saw_nmien7 <= 1'b1;
+            else if (saw_nmien7 && !clr_captured) begin
+                clr_pc       <= fdbg_pc;
+                clr_val      <= fid_dout;
+                clr_captured <= 1'b1;
+            end
         end
     end
-    wire [31:0] dli_diag_word = {dli_nmi_cnt, dli_nmist7_cnt, dli_nmistrd_cnt, dli_last_nmist};
+    // {PC that cleared NMIEN[7], value written, total NMIEN writes}
+    wire [31:0] dli_diag_word = {clr_pc, clr_val, nmien_wr_cnt};
 
     // ====================================================================
     // Display: plane compositor (vbeam + plane_fetch x N + plane_compositor)
