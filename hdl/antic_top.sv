@@ -1100,18 +1100,18 @@ module antic_top #(
     //   const=1, var=0 => inference: the variable read disagrees (ram_style not
     //                     enough) -> the fix is in the read structure
     //   const=0, var=0 => line_dli_p[23] is genuinely CLEARED by scanline 31
-    reg dbg_const23, dbg_var23, dbg_seen23;
+    // line_dli_p[23] rises at 248 but is 0 at scanline 31, and antic_seq only
+    // clears at vbi_start(248) -> capture the FALLING-edge scanline to find the
+    // hidden re-clear.
+    reg [8:0] dbg_scan_at_clr;
     always_ff @(posedge clk_bus) begin
-        if (rst_bus) begin dbg_const23<=0; dbg_var23<=0; dbg_seen23<=0; end
-        else if (nmien_q[7] && ar_atari_row==8'd23) begin
-            dbg_seen23  <= 1'b1;
-            if (dbg_dli_rows[3])  dbg_const23 <= 1'b1;   // constant line_dli_p[23]
-            if (nmi_cur_row_dli)  dbg_var23   <= 1'b1;   // variable dli_at
-        end
+        if (rst_bus) dbg_scan_at_clr <= 9'h0;
+        else if (nmien_q[7] && !dbg_dli_rows[3] && dlirow23_q)   // 1->0 edge
+            dbg_scan_at_clr <= ar_scanline;
     end
-    // {scan@set[31:23], seen23, const23, var23, parse_lo[15:8], ungated[7:0]}.
-    assign dbg_antic = {dbg_scan_at_set[8:0], 4'b0, dbg_seen23, dbg_const23,
-                        dbg_var23, dl_count[7:0], dbg_dliu_cnt};
+    // {scan@set[31:23], scan@clr[22:14], parse_lo[13:8]... , ungated[7:0]}.
+    assign dbg_antic = {dbg_scan_at_set[8:0], dbg_scan_at_clr[8:0],
+                        dl_count[5:0], dbg_dliu_cnt};
 
     dl_parser u_dl_parser (
         .clk(clk_bus), .rst(rst_bus), .start_parse(dl_start_pulse),
