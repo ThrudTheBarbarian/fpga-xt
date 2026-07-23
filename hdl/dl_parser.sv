@@ -62,6 +62,13 @@ module dl_parser (
 
     // Trigger: pulse to (re)start a parse from DLIST{H,L}.
     input  wire         start_parse,
+    // SALLYRST cold-boot: abort any parse in flight and return to idle
+    // (a wedged mid-parse FSM must never survive a cold boot; the display
+    // otherwise stays blank until a PL reload — board-observed).
+    input  wire         cold_abort,
+    // Diagnostic: current FSM state + emit phase.
+    output wire  [3:0]  dbg_state,
+    output wire  [1:0]  dbg_emit_phase,
 
     // ANTIC register inputs.
     input  wire [7:0]   dlistl,
@@ -283,6 +290,8 @@ module dl_parser (
     assign mem_req = prev_state_was_fetch;
 
     emit_phase_t  emit_phase;
+    assign dbg_state      = state;
+    assign dbg_emit_phase = emit_phase;
 
     // Display-list pointer. Per Altirra §4.6, ANTIC's normal
     // DL-fetch increment is split: only the lower 10 bits advance,
@@ -801,6 +810,12 @@ module dl_parser (
             // to parse-end gives the same observable outcome as real hardware
             // one parse later; a write with the parser idle (the mid-frame
             // rewrite case, ACID800 antic_dlistwrap #2) still lands live.
+            if (cold_abort && state != S_IDLE) begin
+                // Cold-boot abort: retire the parse cleanly so antic_seq's
+                // parse_pending clears and the next kick reparses.
+                state       <= S_IDLE;
+                parse_done  <= 1'b1;
+            end
             dlistl_we_q <= dlistl_we;
             dlisth_we_q <= dlisth_we;
             if (state == S_IDLE) begin

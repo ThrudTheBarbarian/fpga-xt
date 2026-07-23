@@ -1183,7 +1183,12 @@ module antic_top #(
     //  ungated[7:0]}.  dlstart_bad != 0 => start_parse fires at a wrong scanline
     // (spurious re-parse clears the DLI state mid-frame).
     // {vbi_bad scanline[31:23], dlstart_bad[22:14], vbi_cnt[13:6]... , ungated[5:0]}.
-    assign dbg_antic = {dbg_vbi_bad, dbg_dlstart_bad, dbg_vbi_cnt, dbg_dliu_cnt[5:0]};
+    wire [3:0] dbg_parser_state;
+    wire [1:0] dbg_parser_phase;
+    // diag8: {[31:28]=parser state, [27:26]=emit phase, [25:24]=0,
+    //         [23:16]=parse_count[7:0], [15:8]=dlstart_bad[7:0], [7:0]=ungated DLI count}
+    assign dbg_antic = {dbg_parser_state, dbg_parser_phase, 2'b00,
+                        dl_count[7:0], dbg_dlstart_bad[7:0], dbg_dliu_cnt};
 
     dl_parser u_dl_parser (
         // start_parse is GATED to the true frame boundary: the only legitimate
@@ -1195,6 +1200,8 @@ module antic_top #(
         // 1-clk-late flag is equally valid) to keep ar_scanline's fanout off
         // the timing-critical pulse path.
         .clk(clk_bus), .rst(rst_bus),
+        .cold_abort(cold_boot_bus),
+        .dbg_state(dbg_parser_state), .dbg_emit_phase(dbg_parser_phase),
         .start_parse(dl_start_pulse && scanline_is_vbi_q),
         .dlistl(dlistl_q), .dlisth(dlisth_q),
         .dlistl_we(dlistl_we_w), .dlisth_we(dlisth_we_w),
