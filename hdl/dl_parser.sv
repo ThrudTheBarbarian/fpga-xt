@@ -202,7 +202,9 @@ module dl_parser (
         if (rst) begin
             dli_act_cnt <= 5'd0;
             for (int k = 0; k < DLI_LIST_N; k++) dli_act[k] <= 8'hFF;
-        end else if (parse_done) begin
+        end else if (parse_done && dli_cnt != 5'd0) begin
+            // Only accept a parse that actually found DLIs, so a spurious/aborted
+            // empty parse (dli_cnt=0 at parse_done) can't wipe the good snapshot.
             dli_act_cnt <= dli_cnt;
             for (int k = 0; k < DLI_LIST_N; k++) dli_act[k] <= dli_list[k];
         end
