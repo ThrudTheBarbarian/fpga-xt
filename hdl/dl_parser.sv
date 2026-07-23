@@ -98,6 +98,10 @@ module dl_parser (
     // transition.
     input  wire  [7:0]  dli_row,
     output wire         dli_at,
+    // TEMP diag: snapshot of line_dli_p at the rows pfstart's DL should flag
+    // ($F0 blank-8+DLI at rows 23/41 etc.) so we can see WHICH rows dl_parser
+    // records — vs the row nmi_gen looks up.
+    output wire  [7:0]  dbg_dli_rows,
 
     // Status.
     output logic        parse_done,        // pulses after each parse pass
@@ -142,6 +146,10 @@ module dl_parser (
     assign meta_hscrol_en  = line_hscrol_en [meta_row[7:0]];
     assign meta_vscrol_en  = line_vscrol_en [meta_row[7:0]];
     assign dli_at          = line_dli_p     [dli_row[7:0]];
+    // rows 8,16,22,23,24,25,40,41 — pfstart's first two $F0 DLIs land at 23 & 41
+    assign dbg_dli_rows = {line_dli_p[41], line_dli_p[40], line_dli_p[25],
+                           line_dli_p[24], line_dli_p[23], line_dli_p[22],
+                           line_dli_p[16], line_dli_p[8]};
 
     // ---- FSM -----------------------------------------------------------
     typedef enum logic [3:0] {

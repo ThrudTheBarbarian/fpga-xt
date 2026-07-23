@@ -472,6 +472,7 @@ module antic_top #(
     wire [7:0]  nmist_q;
     wire [7:0]  nmi_cur_row;
     wire        nmi_cur_row_dli;
+    wire [7:0]  dbg_dli_rows;      // dl_parser line_dli_p snapshot (temp DLI diag)
     wire        nmi_n_w;
 
     wire        vbi_start_pulse_bus  = ar_vbi_start;
@@ -1073,12 +1074,16 @@ module antic_top #(
             if (nmi_cur_row_dli) dbg_dlip23 <= 1'b1;   // line_dli_p[23] set at row 23
         end
     end
-    // {DL byte@2C02, DL byte@2C00, flags, ungated DLI count}.
-    //   b02==$F0 => DL data read correct (rules out stale-data B)
-    //   dlip23   => dl_parser flagged row 23 and raster hit it (bug is downstream)
-    wire [7:0] dbg_dli_flags = {2'b0, dbg_dlist_at_n7==16'h2C00, dbg_nmien_or[7],
-                                dbg_raster23, dbg_dlip23, dbg_dli_cnt != 0, 1'b0};
-    assign dbg_antic = {dbg_dl_b02, dbg_dl_b00, dbg_dli_flags, dbg_dliu_cnt};
+    // Snapshot dl_parser's line_dli_p rows {41,40,25,24,23,22,16,8} WHILE the
+    // dli1 DL is active (nmien[7]) — shows WHICH rows dl_parser flags for the
+    // pfstart DL (expected: bit 23 and 41 set) vs what nmi_gen looks up.
+    reg  [7:0] dbg_dlirows_n7;
+    always_ff @(posedge clk_bus) begin
+        if (rst_bus)              dbg_dlirows_n7 <= 8'h0;
+        else if (nmien_q[7] && dbg_dli_rows != 8'h0) dbg_dlirows_n7 <= dbg_dli_rows;
+    end
+    // {DLIST@n7 lo, line_dli_p rows@n7, parse_count lo, ungated DLI count}.
+    assign dbg_antic = {dbg_dlist_at_n7[7:0], dbg_dlirows_n7, dl_count[7:0], dbg_dliu_cnt};
 
     dl_parser u_dl_parser (
         .clk(clk_bus), .rst(rst_bus), .start_parse(dl_start_pulse),
@@ -1093,6 +1098,7 @@ module antic_top #(
         .meta_vscrol_en(dl_meta_vscrol_en),
         .dli_row(nmi_cur_row),
         .dli_at(nmi_cur_row_dli),
+        .dbg_dli_rows(dbg_dli_rows),
         .parse_done(dl_done), .parse_count(dl_count)
     );
 
