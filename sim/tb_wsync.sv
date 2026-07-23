@@ -137,19 +137,21 @@ module tb_wsync;
         @(negedge clk);
         expect_b("p2/idle-line", rdy_n, 1'b1);
 
-        // ===== Phase 3: WSYNC pulse + line_start same cycle → CLEAR wins ==
-        // A WSYNC write landing on the release must not start a fresh
-        // line-long stall (ACID800 antic_wsync's "Late INC WSYNC").
-        // antic_regs adds 1 cycle of delay between the $D40A write and the
-        // wsync_pending pulse, so to land them coincidently at wsync_gen we
-        // issue the write first, then pulse line_start on the cycle
-        // wsync_pending fires.
+        // ===== Phase 3: WSYNC write racing the release → CLEAR wins =======
+        // A WSYNC write racing the release must not start a fresh line-long
+        // stall (ACID800 antic_wsync's "Late INC WSYNC").  The set path is
+        // registered: the write arms wsync_pend, which drops the latch at the
+        // NEXT tick — so the true coincidence is line_start pulsing on that
+        // apply tick.  antic_regs adds 1 cycle between the $D40A write and
+        // the wsync_pending pulse, and pend adds one more.
         @(negedge clk);
         waddr <= 8'h0A; wdata <= 8'h00; we <= 1'b1;
-        @(posedge clk);     // write captured; wsync_pending will be 1 at next posedge
+        @(posedge clk);     // write captured; wsync_pending pulses at next posedge
         @(negedge clk);
         we         <= 1'b0;
-        line_start <= 1'b1; // visible on the next posedge alongside wsync_pending=1
+        @(posedge clk);     // wsync_pending=1 here → pend arms
+        @(negedge clk);
+        line_start <= 1'b1; // visible at the tick where pend applies: clear beats set
         @(posedge clk);
         @(negedge clk);
         line_start <= 1'b0;

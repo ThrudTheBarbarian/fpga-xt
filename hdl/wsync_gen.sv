@@ -48,14 +48,13 @@
 // evaporates) — measured on hardware as behaviour identical to the
 // combinational latch.  The delayed edges are instead retimed onto the phi2
 // FALLING edge (mid-cycle), half a machine cycle away from the sample point
-// in either direction.  Through that sampling the mid-cycle signal below is
-// one machine cycle later than the combinational latch on BOTH edges:
-//   fall: latch drops mid-cycle N (the write) -> q1 at tick N+1, q2 at tick
-//         N+2, (q1|q2) falls at tick N+2, retimed -> mid-cycle N+2: window
-//         N+1 still commits (the RMW's delay slot), window N+2 stalls.
-//   rise: latch sets ON the release tick R -> q1 at tick R+1, (q1|q2) rises
-//         at tick R+1, retimed -> mid-cycle R+1: the stalled cycle completes
-//         in window R+1 (one later than the combinational shape).
+// in either direction.  With the registered set and the default q1 tap:
+//   fall: write in window N -> latch drops at tick N+1 -> q1 low from tick
+//         N+2, retimed -> mid-cycle N+2: window N+1 still commits (the RMW's
+//         delay slot), window N+2 stalls.
+//   rise: release at tick R -> latch high during R -> q1 high from tick R+1,
+//         retimed -> mid-cycle R+1: the stalled cycle completes in window
+//         R+1.
 //
 // CLEAR BEATS SET.  A write landing on the same cycle as `line_start` does not
 // start a fresh line-long stall — the release wins and the CPU carries on.
@@ -95,14 +94,32 @@ module wsync_gen #(
     logic rdy_mid;                  // (q1|q2) retimed to the phi2 falling edge
     logic [15:0] low_age;           // cycles since /RDY went low
 
+    // The SET path is registered to the machine-cycle boundary: a $D40A write
+    // anywhere inside window K arms `wsync_pend`, which drops the latch at
+    // tick K+1 — unless the release fires on that same tick, in which case
+    // the clear wins and the write is discarded.  This makes clear-beats-set
+    // a true same-edge arbitration (the release pulse is tick-aligned, the
+    // raw write strobe is not), which is the behaviour the "late INC WSYNC"
+    // straddle needs: the RMW's second write racing the release must not buy
+    // a fresh line-long stall.  Measured on hardware: with a mid-window
+    // asynchronous set, no delay shape passes the straddle and the delay-slot
+    // check together; with the registered set the q1 tap passes all six
+    // ACID800 antic_wsync bytes (tools/wsyncrtl.py).
+    logic wsync_pend;
+    always_ff @(posedge clk or posedge rst) begin
+        if (rst)                wsync_pend <= 1'b0;
+        else if (phi2_tick)     wsync_pend <= wsync_pending;   // pulse landing on the tick starts the new window
+        else if (wsync_pending) wsync_pend <= 1'b1;
+    end
+
     always_ff @(posedge clk or posedge rst) begin
         if (rst) begin
             rdy_latch <= 1'b1;
-        end else begin
+        end else if (phi2_tick) begin
             // Both arms assign the same variable non-blockingly, so the LAST
-            // one wins: the release beats a same-cycle WSYNC write.
-            if (wsync_pending) rdy_latch <= 1'b0;
-            if (line_start)    rdy_latch <= 1'b1;
+            // one wins: the release beats a same-tick WSYNC write.
+            if (wsync_pend)  rdy_latch <= 1'b0;
+            if (line_start)  rdy_latch <= 1'b1;
         end
     end
 
@@ -124,12 +141,14 @@ module wsync_gen #(
 
     // The retimed shape is an OR over selected taps of the latch history so
     // the exact delay pair can be swept on hardware without a rebuild:
-    //   mask 011 (default) : q1|q2      — fall 2 ticks late, rise 1 tick late
-    //   mask 010           : q1         — both edges 1 tick late
-    //   mask 001           : q2         — both edges 2 ticks late
-    //   mask 110           : latch|q1   — fall 1 tick late, rise immediate
-    //   mask 100           : latch      — combinational, mid-cycle retimed
-    wire [2:0] shape_mask = (shape_sel == 3'b000) ? 3'b011 : shape_sel;
+    //   mask 010 (default) : q1         — both edges 1 tick behind the latch;
+    //                        with the registered set this is the shape that
+    //                        passes all six antic_wsync bytes in the model
+    //   mask 001           : q2         — both edges 2 ticks behind
+    //   mask 011           : q1|q2      — fall 2 ticks, rise 1 tick behind
+    //   mask 110           : latch|q1   — fall 1 tick behind, rise immediate
+    //   mask 100           : latch      — tick-updated latch, mid-cycle retimed
+    wire [2:0] shape_mask = (shape_sel == 3'b000) ? 3'b010 : shape_sel;
     always_ff @(posedge clk or posedge rst) begin
         if (rst)            rdy_mid <= 1'b1;
         else if (phi2_fall) rdy_mid <= |(shape_mask & {rdy_latch, rdy_latch_q, rdy_latch_q2});
