@@ -226,7 +226,23 @@ and fixed (60f0050), plus: live DL program counter with 1K/4K wraps
 scanline 260 (872923b), CHACTL bit map + reflect (8af815f), POKEY STIMER
 4-cycle lag (69bf61e).
 
-**OPEN WALL — the parser wedge**: after running an acid DLI test the
+**RESOLVED (build 14 era)**: the "wedge" was two things.  (1) SALLYRST now
+aborts an in-flight parse — display always recovers on cold boot.  (2) The
+persistent free-running DL PC accumulated garbage rows (probe-measured: DLI
+events at rows 12/15/28/37 during plain resume_test phases, and row 177
+during boot) — the live/pended DLISTL/H write-through could not keep it
+honest.  Replaced with DIRTY-TRACKED reload: any DLIST write since the last
+parse start makes the next parse reload from the registers; untouched
+registers free-run (the antic_dlistwrap continue semantics).  Mid-parse
+writes can no longer teleport a parse.
+
+antic_nmist now progresses PAST the whole DLI-handler phase (d0/d1 pass) and
+fails at resume_test's first NMIST-status assert ("DLI bit was not set in
+NMIST with DLIs disabled", read at a fixed scanline ~41) — which the garbage
+rows explain: with wrong rows the scanline-39 DLI event lands elsewhere.
+Re-test after the dirty-reload build.
+
+**OLD NOTE — the parser wedge**: after running an acid DLI test the
 ANTIC display goes blank and stays blank across 6502 cold boots (PL
 reload required).  BASIC and non-DLI tests render fine.  The wedged
 parse also explains the DLI cluster still failing on builds 11-13 (rows
