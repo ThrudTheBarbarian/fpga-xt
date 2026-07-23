@@ -459,6 +459,15 @@ int gemd_resize_surface(int hd)
     if (ww <= 0 || wh <= 0) return -1;
 
     gsurface *s = &g_surf[hd];
+    /* NEVER conjure a surface for a window that has not opened.  Both open
+     * handshakes (do_wind_open here, wind_open client-side) test "has a
+     * surface" to mean "already open" — a surface created by a pre-open
+     * geometry change (e.g. WF_CONTENTSIZE from a listing tall enough to
+     * reserve the scrollbar) makes them silently skip the real open, and the
+     * window exists invisible, forever.  Pre-open the chrome/scroll model
+     * still updates; do_wind_open sizes the FIRST surface from the resulting
+     * work area, so nothing is lost by declining here. */
+    if (s->id < 0) return 0;
     /* THE DRAG CAPACITY POLICY. A grow drag crosses a §12 capacity quantum every ~64px, and a
      * realloc per crossing means a FRESH surface (pixels gone -> forced full repaint) a dozen
      * times per drag — the mid-drag redraw artifacts, board-observed. While the sizer drag is
