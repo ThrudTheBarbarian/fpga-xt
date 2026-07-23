@@ -294,6 +294,7 @@ module dl_parser (
     logic [15:0] dl_pos;            // current DL byte address
     logic [15:0] lms_ptr;            // running LMS pointer (was cur_lms)
     logic        dlistl_we_q, dlisth_we_q;   // delayed DLIST write pulses (see below)
+    logic        dl_wl_pend,  dl_wh_pend;    // DLIST write arrived mid-parse: apply at idle
     logic [15:0] target_addr;       // JMP/JVB target / LMS scratch
     logic [15:0] new_lms_loaded;    // LMS captured by S_LATCH_LMS_HI
     logic        lms_was_loaded;    // 1 if decoded line had LMS bit
@@ -375,6 +376,8 @@ module dl_parser (
             dl_pos          <= {dlisth, dlistl};
             dlistl_we_q     <= 1'b0;
             dlisth_we_q     <= 1'b0;
+            dl_wl_pend      <= 1'b0;
+            dl_wh_pend      <= 1'b0;
             lms_ptr         <= 16'h0;
             target_addr     <= 16'h0;
             new_lms_loaded  <= 16'h0;
@@ -783,15 +786,30 @@ module dl_parser (
             endcase
 
             // Live DLISTL/H write-through: the CPU write lands on the DL
-            // program counter immediately, mid-parse included (matches real
-            // ANTIC / Altirra).  The pulse is applied one clk_bus later so the
-            // settled dlistl/dlisth register value is used (invisible at
-            // machine-cycle scale).  Placed after the case so a same-cycle
-            // FSM advance loses to the CPU write.
+            // program counter (matches real ANTIC / Altirra — no per-frame
+            // reload).  The pulse is applied one clk_bus later so the settled
+            // dlistl/dlisth register value is used.
+            //
+            // WHILE A PARSE IS IN FLIGHT the write is PENDED and applied when
+            // the parser returns to idle.  Real ANTIC spreads its DL fetch
+            // across the frame, so an OS vblank write to DLISTL/H lands while
+            // the DL PC sits idle between instructions; our parse-ahead
+            // compresses the whole fetch into the vblank — exactly where the
+            // XL OS rewrites DLISTL/H from its shadows every frame — and an
+            // immediate mid-parse write teleported the parse to a half-updated
+            // address every frame (board-observed: blank XL plane).  Deferring
+            // to parse-end gives the same observable outcome as real hardware
+            // one parse later; a write with the parser idle (the mid-frame
+            // rewrite case, ACID800 antic_dlistwrap #2) still lands live.
             dlistl_we_q <= dlistl_we;
             dlisth_we_q <= dlisth_we;
-            if (dlistl_we_q) dl_pos[7:0]  <= dlistl;
-            if (dlisth_we_q) dl_pos[15:8] <= dlisth;
+            if (state == S_IDLE) begin
+                if (dlistl_we_q || dl_wl_pend) begin dl_pos[7:0]  <= dlistl; dl_wl_pend <= 1'b0; end
+                if (dlisth_we_q || dl_wh_pend) begin dl_pos[15:8] <= dlisth; dl_wh_pend <= 1'b0; end
+            end else begin
+                if (dlistl_we_q) dl_wl_pend <= 1'b1;
+                if (dlisth_we_q) dl_wh_pend <= 1'b1;
+            end
         end
     end
 
