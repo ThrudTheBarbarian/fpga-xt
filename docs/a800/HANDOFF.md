@@ -5,7 +5,9 @@ conformance suite (63 `.xex` tests in `rsrc/acid800/Acid800/standalone/`).
 Altirra passes the suite, so it is the golden reference; whatever it does is
 correct behaviour.
 
-**Status at handoff: ~22–24 / 57 passing** (roughly the pre-session baseline).
+**Status: 25 / 57 passing** (2026-07-23: `antic_wsync` flipped to PASS —
+see §1a; the run record is `docs/a800/runs/2026-07-23-1.json`).
+Earlier status at handoff: ~22–24 / 57.
 The session's headline result is a *structural* fix (a suite-wide deadlock) and
 a full diagnostic toolchain — **not** a net increase in the pass count. The main
 target this session (the DLI cluster) is **unsolved** and hit a wall that needs
@@ -38,14 +40,18 @@ Altirra** (it reproduced all six `d0..d5` bytes exactly, including the two the
 test never asserts). See memory `[[wsync_rmw_rearm]]`,
 `[[acid800_wsync_deadlock_fixed]]`, `[[altirra_golden_reference]]`.
 
-Open sub-issue: **`antic_wsync` INC WSYNC is off by exactly −1 cycle**.
-Write-immunity gives the RMW's second write a free cycle that real HW spends in
-the 1-cycle assertion-delay slot. The `/RDY` pipeline depth and release cycle
-are runtime-tunable via the DBG_TB cfg register (`cfg[15:14]` depth,
-`cfg[23:20]` signed release offset) so you can sweep on hardware without a
-rebuild — but no combination found so far fixes INC while keeping the board
-booting. Needs the assertion delayed by exactly one machine cycle *without*
-delaying the release.
+RESOLVED (2026-07-23): **`antic_wsync` PASSES on HW** (25/57), with
+`antic_vcount` kept. Three stacked fixes (commits `dc1c388`, `e7f8d80`,
+`2f81408`): the WSYNC latch SET is registered to the machine-cycle boundary
+(clear-beats-set truly arbitrates, so the late-INC straddle no longer re-arms);
+/RDY is the q1 tap retimed on the phi2 FALLING edge (tick-launched edges are
+invisible to the fid core's SUB_COMMIT sample — measured, not theorised); the
+release moved to cycle 104 (anchored by antic_vcount, since antic_wsync's poly
+clock resyncs to the release and is offset-invariant). Shape and release stay
+runtime-sweepable: DBG_TB `cfg[28:26]` shape mask, `cfg[23:20]` release offset,
+`cfg[14]` comb fallback. `tools/wsyncrtl.py` is the validated cycle model
+(byte-exact against a 28-config on-board sweep). See memory
+`[[acid800_wsync_timing_solved]]`.
 
 ### 1b. Edge-detect the `we`-derived strobes
 `antic_regs` derived `wsync_pending`/`nmires_strobe`/`pal_write_strobe`/
@@ -176,14 +182,11 @@ If it IS a spurious `dl_start`, the clean fix is to gate `start_parse` in
 dl_parser to only accept it during the true vblank window (e.g. require
 `scanline >= 200`), and/or register/retime the pulse.
 
-### B. `antic_wsync` INC −1 (1 test, well understood)
-Needs an assertion-only 1-cycle delay (delay the /RDY *fall*, not the *release*),
-so INC's second write lands in the delay slot without shifting downstream reads.
-The tunable already has the knobs (`cfg[14]` assert-delay, `cfg[15]` disable
-immunity, `cfg[23:20]` release offset) — sweep them on hardware
-(`scratchpad/inc_sweep.sh`) and check the decoded value (`bmp2text` +
-poly-decode). If no cfg combo works, the release/assert split needs an RTL tweak
-in `hdl/wsync_gen.sv`.
+### B. `antic_wsync` INC −1 — DONE (2026-07-23, see section 1a)
+Registered-set latch + q1 mid-retimed /RDY + release 104. The useful reusable
+trick from the fix: read a test's `d0..d5` result bytes from zero page
+$C8-$CD over the OVL peek while halted at `_testEnd` — no screen decode
+needed, and a shape×offset sweep of ~30 configs runs in under 10 minutes.
 
 ### C. P/M cluster (`gtia_pmoverlap`, `gtia_pmresize`, `gtia_vdelay`,
 `gtia_phantomdma`, `antic_pmdma`) — 5 tests, "Got 00"
