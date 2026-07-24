@@ -56,6 +56,7 @@ module tb_dli_e2e;
     wire        nmi_n;
     nmi_gen u_nmi (
         .clk(clk), .rst(rst), .nmien(nmien), .nmires_strobe(1'b0),
+        .status_tick(1'b1),
         .vbi_status(vbi_c8), .vbi_start(vbi_c8),
         .line_status(cycle_8), .line_start(cycle_8),
         .cur_row(nmi_cur_row), .cur_row_dli(nmi_cur_row_dli),

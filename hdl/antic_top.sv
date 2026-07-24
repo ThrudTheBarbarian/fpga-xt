@@ -1285,6 +1285,7 @@ module antic_top #(
         .rst           (rst_bus),
         .nmien         (nmien_q),
         .nmires_strobe (nmires_strobe),
+        .status_tick   (phi2_tick),
         .vbi_status    (vbi_c6_pulse),
         .vbi_start     (vbi_c8_pulse),
         .line_status   (cycle_6_pulse),

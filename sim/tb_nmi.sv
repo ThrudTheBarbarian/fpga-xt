@@ -108,6 +108,7 @@ module tb_nmi;
         .clk(clk), .rst(rst),
         .nmien(nmien_q),
         .nmires_strobe(nmires_strobe),
+        .status_tick(1'b1),
         .vbi_status(vbi_start),
         .vbi_start(vbi_start),
         .line_status(line_start),
@@ -233,6 +234,7 @@ module tb_nmi;
         // CPU acks via NMIRES → flags clear (nmi_n independent of ack now).
         repeat (300) @(posedge clk);                // let pulse expire
         write_reg(8'h0F, 8'h00);
+        repeat (2) @(posedge clk);   // NMIRES applies at the status_tick boundary
         @(negedge clk);
         expect_eq("p1/ack/nmist", nmist_q, 8'h1F);
 
@@ -244,6 +246,7 @@ module tb_nmi;
         expect_eq("p2/vbi/nmi_n", {7'h0, nmi_n},  8'h00);
         repeat (300) @(posedge clk);
         write_reg(8'h0F, 8'h00);
+        repeat (2) @(posedge clk);   // NMIRES applies at the status_tick boundary
         @(negedge clk);
         expect_eq("p2/ack/nmist", nmist_q, 8'h1F);
 
@@ -257,6 +260,7 @@ module tb_nmi;
         expect_eq("p2/dli-masked/nmi_n", {7'h0, nmi_n},    8'h01);  // ...but /NMI idle
         repeat (300) @(posedge clk);
         write_reg(8'h0F, 8'h00);                    // clear status for next phase
+        repeat (2) @(posedge clk);   // NMIRES applies at the status_tick boundary
         @(negedge clk);
         expect_eq("p2/dli-masked/ack", nmist_q, 8'h1F);
 

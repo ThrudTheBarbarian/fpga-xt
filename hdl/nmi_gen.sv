@@ -24,6 +24,7 @@ module nmi_gen (
     // the scan line and pulls /NMI at cycle 8 (ACID800 antic_nmist's
     // cycle-exact checks: bit not set at a read ending cycle 5, set by a
     // read ending cycle 6; Altirra updates NMIST at its cycle-7 slot).
+    input  wire        status_tick,      // every-machine-cycle tick: NMIRES apply boundary
     input  wire        vbi_status,       // VBI cause -> NMIST bit, cycle-6 tick
     input  wire        vbi_start,        // VBI /NMI pulse, cycle-8 tick
     input  wire        line_status,      // DLI cause -> NMIST bit, cycle-6 tick
@@ -87,6 +88,20 @@ module nmi_gen (
 
     logic [7:0] flags_q;        // bits 6..7 carry the last cause, others 0
 
+    // NMIRES is applied with MACHINE-CYCLE arbitration: the strobe (an
+    // asynchronous-within-the-cycle CDC pulse) pends until the status tick
+    // boundary, where a same-cycle DLI/VBI status event WINS — real ANTIC's
+    // new cause survives an NMIRES landing on the same machine cycle
+    // (ACID800 antic_nmist NMIRES-timing: 'VBI bit was reset too early'
+    // when the raw strobe order let the clear beat the cycle-7 set).
+    logic nmires_pend;
+    always_ff @(posedge clk or posedge rst) begin
+        if (rst)                 nmires_pend <= 1'b0;
+        else if (dli_event || vbi_event) nmires_pend <= 1'b0;  // set wins; consume
+        else if (status_tick && nmires_pend) nmires_pend <= 1'b0;  // applied below
+        else if (nmires_strobe)  nmires_pend <= 1'b1;
+    end
+
     always_ff @(posedge clk or posedge rst) begin
         if (rst) begin
             flags_q <= 8'h00;
@@ -98,7 +113,7 @@ module nmi_gen (
 `endif
             if      (vbi_event)     flags_q <= 8'h40;  // VBI: present bit6, clear DLI
             else if (dli_event)     flags_q <= 8'h80;  // DLI: present bit7, clear VBI
-            else if (nmires_strobe) flags_q <= 8'h00;  // CPU ack (VBI path)
+            else if (status_tick && nmires_pend) flags_q <= 8'h00;  // CPU ack, tick-aligned
         end
     end
 
