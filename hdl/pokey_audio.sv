@@ -56,6 +56,7 @@ module pokey_audio #(
     parameter int unsigned REF_PHI2_LO = 114,  // 15 kHz period in phi2 cycles
     parameter int unsigned REF_REL_HI  = 22,   // first 64k tick after init release
     parameter int unsigned REF_REL_LO  = 81,   // first 15k tick after init release
+    parameter int unsigned REL_SKEW    = 2,    // write-commit vs phi2_tick alignment (HW-measured)
     // Clock-rate parameter for the reference dividers.
     parameter int unsigned CLK_BUS_HZ   = 161_079_525,
     parameter int unsigned REF_HZ_M23_1 = 64_000,    // M23-3 high-rate ref (AUDCTL[0]=0)
@@ -141,9 +142,14 @@ module pokey_audio #(
             ref_tick_lo <= 1'b0;
             if (poly_init_w) begin
                 // init holds the dividers preset so the release phases are
-                // exact: the next tick fires REF_REL_* cycles after release
-                ref_div_hi_q <= 7'(REF_REL_HI - 1);
-                ref_div_lo_q <= 7'(REF_REL_LO - 1);
+                // exact: the next tick fires REF_REL_* cycles after release.
+                // REL_SKEW compensates the SKCTL write-commit vs phi2_tick
+                // alignment in this implementation: without it the first
+                // post-release tick lands 2 machine cycles early (ACID800
+                // pokey_inittiming on HW measured $1E where the real chip
+                // gives $1F/$20).
+                ref_div_hi_q <= 7'(REF_REL_HI - 1 + REL_SKEW);
+                ref_div_lo_q <= 7'(REF_REL_LO - 1 + REL_SKEW);
             end else if (phi2_tick) begin
                 if (ref_div_hi_q == 7'd0) begin
                     ref_div_hi_q <= 7'(REF_PHI2_HI - 1);

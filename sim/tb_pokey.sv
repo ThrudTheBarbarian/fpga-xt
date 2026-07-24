@@ -83,7 +83,7 @@ module tb_pokey;
     end
 
     pokey #(.CLK_BUS_HZ(8), .REF_HZ_M23_1(4), .REF_HZ_LOW(2),
-            .REF_PHI2_HI(1), .REF_PHI2_LO(2), .REF_REL_HI(1), .REF_REL_LO(1)) u_dut (
+            .REF_PHI2_HI(1), .REF_PHI2_LO(2), .REF_REL_HI(1), .REF_REL_LO(1), .REL_SKEW(0)) u_dut (
         .clk                  (clk),
         .rst                  (rst),
         .phi2_tick            (phi2_tick),

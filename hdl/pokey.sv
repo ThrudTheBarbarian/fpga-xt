@@ -19,7 +19,8 @@ module pokey #(
     parameter int unsigned REF_PHI2_HI  = 28,            // 64 kHz period in phi2 cycles
     parameter int unsigned REF_PHI2_LO  = 114,           // 15 kHz period in phi2 cycles
     parameter int unsigned REF_REL_HI   = 22,            // init-release phase (Altirra)
-    parameter int unsigned REF_REL_LO   = 81
+    parameter int unsigned REF_REL_LO   = 81,
+    parameter int unsigned REL_SKEW     = 2              // write-commit vs phi2_tick alignment
 ) (
     input  wire        clk,
     input  wire        rst,
@@ -160,6 +161,7 @@ module pokey #(
     pokey_audio #(.CLK_BUS_HZ(CLK_BUS_HZ),
                   .REF_PHI2_HI(REF_PHI2_HI), .REF_PHI2_LO(REF_PHI2_LO),
                   .REF_REL_HI(REF_REL_HI),   .REF_REL_LO(REF_REL_LO),
+                  .REL_SKEW(REL_SKEW),
                   .REF_HZ_M23_1(REF_HZ_M23_1),
                   .REF_HZ_LOW(REF_HZ_LOW)) u_audio (
         .clk          (clk),
