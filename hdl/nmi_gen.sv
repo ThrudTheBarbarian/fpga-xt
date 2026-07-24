@@ -98,8 +98,13 @@ module nmi_gen (
             if (vbi_event) vbi_arm_q <= nmien[6];
         end
     end
-    wire dli_nmi   = line_start && cur_row_dli && dli_arm_q; // /NMI (cycle 8, armed @7)
-    wire vbi_nmi   = vbi_start && vbi_arm_q;                 // /NMI (cycle 8, armed @7)
+    // The pulse gate is the OR of the armed decision and the LIVE enable:
+    // a disable landing after the status tick cannot stop a committed NMI
+    // (arm=1 wins), and an enable landing after the tick still catches the
+    // pulse (live=1 wins) — ACID800: disable@5 blocks, disable@6 fires,
+    // enable@6 fires.
+    wire dli_nmi   = line_start && cur_row_dli && (dli_arm_q || nmien[7]);
+    wire vbi_nmi   = vbi_start && (vbi_arm_q || nmien[6]);
 
     logic [7:0] flags_q;        // bits 6..7 carry the last cause, others 0
 
