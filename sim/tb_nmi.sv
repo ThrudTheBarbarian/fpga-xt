@@ -83,8 +83,12 @@ module tb_nmi;
     wire  [7:0]  nmi_dli_row;
     wire         nmi_dli_at;
 
+    logic w_frame = 1'b0, w_line = 1'b0, w_prep = 1'b0;
+
     dl_parser u_dl (
         .clk(clk), .rst(rst), .start_parse(dl_start),
+        .cold_abort(1'b0),
+        .frame_start(w_frame), .line_start(w_line), .prep_tick(w_prep),
         .dlistl(8'h00), .dlisth(8'hD0),
         .vscrol(4'h0),
         .mem_raddr(dl_raddr), .mem_rdata(dl_rdata), .mem_req(), .mem_ready(1'b1),
@@ -151,6 +155,16 @@ module tb_nmi;
         line_start   <= 1'b0;
     endtask
 
+    // Advance the live walker by one displayed row (prefetch then flip).
+    task automatic walker_step();
+        @(negedge clk); w_prep <= 1'b1;
+        @(negedge clk); w_prep <= 1'b0;
+        repeat (2) @(negedge clk);
+        w_line <= 1'b1;
+        @(negedge clk); w_line <= 1'b0;
+        @(negedge clk);
+    endtask
+
     task automatic pulse_vbi();
         @(negedge clk);
         vbi_status <= 1'b1;
@@ -203,9 +217,15 @@ module tb_nmi;
         wait (dl_done);
         @(posedge clk);
 
-        // Verify the physical DLI map (what nmi_gen reads) fires on row 1 only.
-        expect_eq("dl/row0_dli_p", {7'h0, u_dl.line_dli_p[0]}, 8'h00);
-        expect_eq("dl/row1_dli_p", {7'h0, u_dl.line_dli_p[1]}, 8'h01);
+        // Prime the walker for the frame.  Before its first line flip the
+        // current-row registers are empty, so dli_at reads 0; after stepping
+        // onto the first DL line ($8F: mode F + DLI, a 1-scanline line whose
+        // only row IS its last) dli_at asserts — real ANTIC raises the DLI
+        // on the LAST scan line of the flagged line.
+        @(negedge clk); w_frame <= 1'b1;
+        @(negedge clk); w_frame <= 1'b0;
+        repeat (2) @(negedge clk);
+        expect_eq("dl/preboot_dli", {7'h0, nmi_dli_at}, 8'h00);
 
         // ===== Phase 1: NMIEN[7] only — DLI fires, /NMI auto-releases =====
         // The real OS DLI dispatch (JMP (VDSLST)) RTIs WITHOUT writing
@@ -217,6 +237,12 @@ module tb_nmi;
         @(negedge clk);
         expect_eq("p1/row0/nmist", nmist_q, 8'h1F);
         expect_eq("p1/row0/nmi_n", {7'h0, nmi_n},  8'h01);     // /NMI high
+
+        // Step the walker onto the DLI line and PARK it there: dli_at is a
+        // level while the walker sits on a flagged last scan line, so each
+        // subsequent line pulse to nmi_gen re-fires a fresh /NMI edge.
+        walker_step();
+        expect_eq("dl/dli_row_level", {7'h0, nmi_dli_at}, 8'h01);
 
         // Pulse line_start at row 1 — DLI here, NMI fires.
         pulse_line(8'd1);

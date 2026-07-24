@@ -1210,6 +1210,12 @@ module antic_top #(
         .cold_abort(cold_boot_bus),
         .dbg_state(dbg_parser_state), .dbg_emit_phase(dbg_parser_phase),
         .start_parse(dl_start_pulse && scanline_is_vbi_q),
+        // Walker lockstep: prime at the frame boundary, flip at each active
+        // scanline start, prefetch the next DL entry late in every line
+        // (phi2 cycle 111 — after the post-WSYNC register-write window).
+        .frame_start(vbi_start_pulse_bus),
+        .line_start(line_start_pulse_bus && (ar_atari_row != 8'hFF)),
+        .prep_tick(phi2_tick && (ar_phi2_in_line == 8'd111)),
         .dlistl(dlistl_q), .dlisth(dlisth_q),
         .dlistl_we(dlistl_we_w), .dlisth_we(dlisth_we_w),
         .vscrol(vscrol_q[3:0]),

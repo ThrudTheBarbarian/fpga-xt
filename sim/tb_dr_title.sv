@@ -22,7 +22,7 @@ module tb_dr_title;
     logic start_parse=1'b0; logic [7:0] dlistl=8'hAA, dlisth=8'h70; logic [7:0] meta_row=8'h00;
     wire [3:0] meta_mode; wire meta_dli; wire [15:0] meta_lms_addr; wire [3:0] meta_sub_row;
     wire parse_done; wire [31:0] parse_count;
-    dl_parser u_dl (.clk(clk),.rst(rst),.start_parse(start_parse),.dlistl(dlistl),.dlisth(dlisth), .dlistl_we(1'b0), .dlisth_we(1'b0),.vscrol(4'h0),
+    dl_parser u_dl (.clk(clk),.rst(rst),.start_parse(start_parse),.cold_abort(1'b0),.frame_start(1'b0),.line_start(1'b0),.prep_tick(1'b0),.dlistl(dlistl),.dlisth(dlisth), .dlistl_we(1'b0), .dlisth_we(1'b0),.vscrol(4'h0),
         .mem_raddr(bram_raddr),.mem_rdata(bram_rdata),.mem_req(),.mem_ready(1'b1),
         .meta_row(meta_row),.meta_mode(meta_mode),.meta_dli(meta_dli),.meta_lms_addr(meta_lms_addr),.meta_sub_row(meta_sub_row),
         .meta_hscrol_en(),.meta_vscrol_en(),.dli_row(8'h00),.dli_at(),.parse_done(parse_done),.parse_count(parse_count));

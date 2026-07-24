@@ -94,7 +94,10 @@ module tb_antic_dli;
     bit  seen_mode_row = 0;         // DLI at compressed ar 1 (content-aligned)
     bit  seen_shifted_dli = 0;      // DLI at physical ar 24+ (the game regression)
     int  shifted_row = -1;
-    localparam int EXP_MODE_DLI_ROW = 1;   // compressed row 1 (scanline 9)
+    localparam int EXP_MODE_DLI_ROW = 0;   // compressed row 0: real ANTIC raises
+                                           // the DLI on the LAST scan line of the
+                                           // flagged line (the $8F is 1 scanline
+                                           // tall, so its only row IS its last)
 
     always_ff @(posedge clk_bus) begin
         if (rst_n) begin
@@ -138,7 +141,7 @@ module tb_antic_dli;
         amem[16'h1100] = 8'h70;
         amem[16'h1101] = 8'h70;
         amem[16'h1102] = 8'h70;
-        amem[16'h1103] = 8'h8F;                  // mode-F + DLI  -> fires @ compressed ar 1
+        amem[16'h1103] = 8'h8F;                  // mode-F + DLI  -> fires @ compressed ar 0
         amem[16'h1104] = 8'h0F;                  // mode-F
         amem[16'h1105] = 8'h0F;                  // mode-F
         amem[16'h1106] = 8'h41;
@@ -200,7 +203,7 @@ module tb_antic_dli;
         end
 
         if (fail == 0) begin
-            $display("*** ANTIC_DLI OK *** p1 blank DLIs @ ar 31/39 (%0d), p2 mode DLI @ ar 1 (%0d), %0d VBI",
+            $display("*** ANTIC_DLI OK *** p1 blank DLIs @ ar 31/39 (%0d), p2 mode DLI @ ar 0 (%0d), %0d VBI",
                      dli_hits, dli_hits2, vbi_hits);
             $finish;
         end else begin

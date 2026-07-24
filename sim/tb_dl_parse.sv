@@ -50,6 +50,9 @@ module tb_dl_parse;
     logic [7:0]  dlisth      = 8'hD0;
     logic [7:0]  meta_row    = 8'h00;
     logic [3:0]  vscrol_r    = 4'h0;
+    logic        frame_start_r = 1'b0;
+    logic        line_start_r  = 1'b0;
+    logic        prep_tick_r   = 1'b0;
     wire  [3:0]  meta_mode;
     wire         meta_dli;
     wire  [15:0] meta_lms_addr;
@@ -57,11 +60,16 @@ module tb_dl_parse;
     wire         meta_vscrol_en;
     wire         parse_done;
     wire  [31:0] parse_count;
+    wire         dli_at_w;
 
     dl_parser u_dl (
         .clk           (clk),
         .rst           (rst),
         .start_parse   (start_parse),
+        .cold_abort    (1'b0),
+        .frame_start   (frame_start_r),
+        .line_start    (line_start_r),
+        .prep_tick     (prep_tick_r),
         .dlistl        (dlistl),
         .dlisth        (dlisth), .dlistl_we(dl_we_pulse), .dlisth_we(dl_we_pulse),
         .vscrol        (vscrol_r),
@@ -77,7 +85,7 @@ module tb_dl_parse;
         .meta_hscrol_en(),
         .meta_vscrol_en(meta_vscrol_en),
         .dli_row       (8'h00),
-        .dli_at        (),
+        .dli_at        (dli_at_w),
         .parse_done    (parse_done),
         .parse_count   (parse_count)
     );
@@ -93,6 +101,35 @@ module tb_dl_parse;
         bram_we <= 1'b0;
     endtask
 
+    // ---- Walker stepping -------------------------------------------------
+    // The metadata port presents the walker's CURRENT row; rows are reached
+    // by stepping the walker in raster order (prep_tick prefetches the next
+    // entry, line_start flips into the row).
+    int cur_walk_row = -1;
+
+    task automatic step_row;
+        if (cur_walk_row < 0) begin
+            @(negedge clk); frame_start_r <= 1'b1;
+            @(negedge clk); frame_start_r <= 1'b0;
+            repeat (2) @(negedge clk);
+            line_start_r <= 1'b1;
+            @(negedge clk); line_start_r <= 1'b0;
+            @(negedge clk);
+        end else begin
+            @(negedge clk); prep_tick_r <= 1'b1;
+            @(negedge clk); prep_tick_r <= 1'b0;
+            repeat (2) @(negedge clk);
+            line_start_r <= 1'b1;
+            @(negedge clk); line_start_r <= 1'b0;
+            @(negedge clk);
+        end
+        cur_walk_row++;
+    endtask
+
+    task automatic walk_to(input int row);
+        while (cur_walk_row < row) step_row();
+    endtask
+
     // ---- Verify ---------------------------------------------------------
     int fail_count = 0;
     task automatic check_row(input logic [7:0] row,
@@ -100,6 +137,7 @@ module tb_dl_parse;
                              input logic       exp_dli,
                              input logic [15:0] exp_lms,
                              input logic [3:0]  exp_sub);
+        walk_to(int'(row));
         meta_row = row;
         @(posedge clk);   // settle
         #1;
@@ -130,6 +168,7 @@ module tb_dl_parse;
                             input logic [3:0] exp_mode,
                             input logic [3:0] exp_sub,
                             input logic       exp_vs);
+        walk_to(int'(row));
         meta_row = row;
         @(posedge clk);
         #1;
@@ -161,6 +200,7 @@ module tb_dl_parse;
         start_parse <= 1'b0;
         wait (parse_done);
         @(posedge clk);
+        cur_walk_row = -1;   // new frame: walker re-primes
     endtask
 
     // ---- Main -----------------------------------------------------------
@@ -207,15 +247,26 @@ module tb_dl_parse;
             check_row(row, 4'h2, 1'b0, 16'h3028, r[3:0]);
         end
 
-        // Rows 16..23: mode 2, lms = $3050, dli=0, sub=0..7
+        // Rows 16..23: mode 2 + DLI line, lms = $3050, sub=0..7.  meta_dli
+        // marks every row of the flagged line; dli_at asserts only on the
+        // LAST scan line (real ANTIC raises the DLI at end of the line).
         for (int r = 0; r < 8; r++) begin
             logic [7:0] row;
             row = 8'd16 + r[7:0];
-            check_row(row, 4'h2, 1'b0, 16'h3050, r[3:0]);
+            check_row(row, 4'h2, 1'b1, 16'h3050, r[3:0]);
+            if (r < 7 && dli_at_w !== 1'b0) begin
+                $display("FAIL row %0d: dli_at asserted before last sub-row", 16+r);
+                fail_count++;
+            end
+            if (r == 7 && dli_at_w !== 1'b1) begin
+                $display("FAIL row 23: dli_at not asserted on last sub-row");
+                fail_count++;
+            end
         end
 
-        // Row 24: mode F, lms = $3078, dli=1 (delayed from prev DLI line), sub=0
-        check_row(8'd24, 4'hF, 1'b1, 16'h3078, 4'd0);
+        // Row 24: mode F, lms = $3078, dli=0 (the DLI belonged to the mode-2
+        // line and fired on row 23), sub=0
+        check_row(8'd24, 4'hF, 1'b0, 16'h3078, 4'd0);
 
         // Row 25: mode 0 (blank), lms = whatever (we don't care), dli=0, sub=0
         // Blank lines don't auto-advance LMS, so lms is still $3078+40=$30A0.

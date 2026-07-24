@@ -44,6 +44,7 @@ module tb_dr_maze;
 
     dl_parser u_dl (
         .clk(clk), .rst(rst), .start_parse(start_parse),
+        .cold_abort(1'b0), .frame_start(1'b0), .line_start(1'b0), .prep_tick(1'b0),
         .dlistl(dlistl), .dlisth(dlisth), .dlistl_we(1'b0), .dlisth_we(1'b0), .vscrol(4'h0),
         .mem_raddr(bram_raddr), .mem_rdata(bram_rdata),
         .mem_req(), .mem_ready(1'b1),
