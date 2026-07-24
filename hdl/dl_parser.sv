@@ -201,6 +201,10 @@ module dl_parser (
     logic [8:0]  w_idx;             // entry index being displayed
     logic [3:0]  w_dctr;            // ANTIC DCTR (sub-row within the line)
     logic        w_prev_vs;         // previous displayed line's VSCROL bit
+    logic        w_carry_vs;        // VS bit carried across the frame boundary:
+                                    // a line straddling the vertical blank keeps
+                                    // its VSCROL state into the next frame's
+                                    // first line (antic_vscroll #5)
     logic        w_boot;            // primed, first active line pending
     // Current-line registers (what meta_* presents).
     logic [3:0]  cur_sc_m1, cur_mode;
@@ -297,6 +301,7 @@ module dl_parser (
             w_idx           <= 9'd0;
             w_dctr          <= 4'd0;
             w_prev_vs       <= 1'b0;
+            w_carry_vs      <= 1'b0;
             w_boot          <= 1'b0;
             cur_sc_m1       <= 4'd0;
             cur_mode        <= 4'd0;
@@ -340,8 +345,15 @@ module dl_parser (
 
                 S_FETCH_OP: begin
                     if (ecount >= EMAX[8:0] || ops >= OPS_LIMIT[10:0]
-                        || scan_total >= 10'd320) begin
-                        // Safety abort — publish what we have.
+                        || ({2'd0, lead_skipped} + scan_total) >= 10'd240) begin
+                        // Frame scanline budget exhausted (240 physical
+                        // display lines) or safety limit: STOP FETCHING and
+                        // publish.  dl_pos is left at the next unfetched op,
+                        // so the next frame's parse CONTINUES mid-list —
+                        // real ANTIC halts its DL fetch at vertical blank
+                        // and resumes; a DL longer than the frame (ACID800
+                        // antic_vscroll #5's 29x blank-8 + trailing lines)
+                        // spreads across frames.
                         act_bank    <= wr_bank;
                         act_count   <= ecount;
                         act_dli_cnt <= bld_dli_cnt;
@@ -542,18 +554,20 @@ module dl_parser (
                 pf_idx  <= 9'd0;
                 pf_pend <= 1'b1;
                 pf_q    <= eram[{act_bank, 8'd0}];
-                w_prev_vs <= 1'b0;
+                // The line on display when the frame ended carries its VS
+                // bit into the next frame's first line.
+                w_carry_vs <= cur_vs;
             end else if (line_start) begin
                 if (w_boot) begin
                     // First displayed row of the frame: load entry 0.
                     w_boot    <= 1'b0;
-                    w_prev_vs <= 1'b0;
+                    w_prev_vs <= w_carry_vs;
                     {cur_sc_m1, cur_mode, cur_dli, cur_vs, cur_hs, cur_lms}
                               <= (act_count == 9'd0) ? 27'h0 : {nxt_sc_m1,
                                  nxt_mode, nxt_dli, nxt_vs, nxt_hs, nxt_lms};
-                    // S: frame top counts as non-VSCROL, so entry 0 with the
-                    // VS bit is first-of-block.
-                    w_dctr    <= ((act_count != 9'd0) && nxt_vs) ? vscrol : 4'd0;
+                    // S: first-of-block against the carried-over VS state.
+                    w_dctr    <= ((act_count != 9'd0) && nxt_vs && !w_carry_vs)
+                                     ? vscrol : 4'd0;
                 end else if (w_is_last) begin
                     // Advance to the prefetched entry; S latched NOW with the
                     // live VSCROL (first-of-block) else 0.
