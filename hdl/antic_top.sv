@@ -690,9 +690,11 @@ module antic_top #(
     wire       pokey_l_serout_strobe;
     wire [7:0] pokey_l_skctl;
     wire       pokey_l_irq_n;       // POKEY's own irq_n, before M-PBI /EXTIRQ wired-OR
-    // IRQ tree: POKEY irq_n wired-OR with PBI /EXTIRQ (both active-low, AND combines).
-    // Drives both the external irq_n pin and SALLY's .irq_n input.
-    wire       irq_n_combined = pokey_l_irq_n & bus_extirq_n_q;
+    wire       pia_irq_n;           // PIA IRQA2/IRQB2 (CA2/CB2 input-mode, enabled)
+    // IRQ tree: POKEY irq_n wired-OR with the PIA /IRQ and PBI /EXTIRQ (all
+    // active-low, AND combines). Drives both the external irq_n pin and
+    // SALLY's .irq_n input.
+    wire       irq_n_combined = pokey_l_irq_n & pia_irq_n & bus_extirq_n_q;
     assign irq_n = irq_n_combined;
     wire       pokey_r_irq_n_unused;        // intentionally ignored
 
@@ -1698,7 +1700,8 @@ module antic_top #(
         .joy_porta_oe  (w_joy_porta_oe),
         .joy_portb_out (w_joy_portb_out),
         .joy_portb_oe  (w_joy_portb_oe),
-        .portb_out_q   (portb_q)
+        .portb_out_q   (portb_q),
+        .pia_irq_n     (pia_irq_n)
     );
 
     // ---- M25-2c-rev — joy_bridge (PCAL9722 path) -----------------------

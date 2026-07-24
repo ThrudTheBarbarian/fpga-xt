@@ -71,7 +71,7 @@ BUILD_DIR := build
 # deleted too).  They drove ANTIC through the old serial-link mocks, superseded
 # by the compositor model.  Removed from the build rather than reviving
 # intentionally-deleted RTL.
-all: smoke snoop read vbeam dl_parse prior nmi wsync palette dma_master mem_read_mux draw_regs pokey pokey_i2s sally sally_mem sally_mem_page sally_arb bank_xlat pia_regs peri_link joy_link joy_bridge peri_bridge os_rom_load pbi pcm1808_rx xt_blitter sprite_regs sprite_fetcher sprite_compositor antic_raster antic_seq antic_modes xt6502 cdc_flag_data hwreg_rd_cdc
+all: smoke snoop read vbeam dl_parse prior nmi wsync palette dma_master mem_read_mux draw_regs pokey pokey_i2s sally sally_mem sally_mem_page sally_arb bank_xlat pia_regs pia_irq peri_link joy_link joy_bridge peri_bridge os_rom_load pbi pcm1808_rx xt_blitter sprite_regs sprite_fetcher sprite_compositor antic_raster antic_seq antic_modes xt6502 cdc_flag_data hwreg_rd_cdc
 
 # `klaus` is NOT in `all` — Klaus Dormann's full test takes ~96 M
 # cycles (≥10 minutes of iverilog wall-clock). Run it manually with
@@ -989,6 +989,19 @@ pia_regs: $(BUILD_DIR)/tb_pia_regs.vvp
 
 $(BUILD_DIR)/tb_pia_regs.vvp: $(HDL_DIR)/pia_regs.sv tb_pia_regs.sv | $(BUILD_DIR)
 	$(IVERILOG) $(SV_FLAGS) -o $@ -s tb_pia_regs $(HDL_DIR)/pia_regs.sv tb_pia_regs.sv
+
+# ---- ACID800 pia_irq — 6821 CA2/CB2 interrupt-flag vectors --------------
+pia_irq: $(BUILD_DIR)/tb_pia_irq.vvp
+	@echo "=== ACID800 pia_irq vectors ==="
+	@$(VVP) -N $< | tee $(BUILD_DIR)/tb_pia_irq.log
+	@grep -q '\*\*\* PIA IRQ OK \*\*\*' $(BUILD_DIR)/tb_pia_irq.log || \
+	    (echo "FAIL: tb_pia_irq missing PIA IRQ OK"; exit 1)
+	@grep -q 'TRAP\|FATAL\|FAIL' $(BUILD_DIR)/tb_pia_irq.log && \
+	    (echo "FAIL: tb_pia_irq reported a trap"; exit 1) || true
+	@echo "PASS: tb_pia_irq"
+
+$(BUILD_DIR)/tb_pia_irq.vvp: $(HDL_DIR)/pia_regs.sv tb_pia_irq.sv | $(BUILD_DIR)
+	$(IVERILOG) $(SV_FLAGS) -o $@ -s tb_pia_irq $(HDL_DIR)/pia_regs.sv tb_pia_irq.sv
 
 # ---- M24-6 — OS ROM load path -----------------------------------------
 os_rom_load: $(BUILD_DIR)/tb_os_rom_load.vvp
