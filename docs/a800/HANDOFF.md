@@ -257,6 +257,22 @@ Also known: screen grabs while the core is HELD at a breakpoint read
 all-zero on builds 10+ (running-core grabs are fine) — diagnostic-path
 anomaly, unexplained, low priority.
 
+### Next POKEY target, designed but not landed: pokey_inittiming
+The 64k/15k reference dividers free-run in clk_bus and ignore SKCTL init —
+real POKEY holds them preset in init and releases at exact phases:
+**next 64 kHz tick = release + 22 cycles, next 15 kHz tick = release + 81**
+(Altirra pokey.cpp SKCTL init-release block, with the LFSR explanation).
+Design: make both dividers phi2-paced down-counters (period 28/114), held at
+preset (22-1 / 81-1) while `skctl[1:0]==0`.  Audio rates are unchanged
+(28 phi2 = 15.68 us = the current clk-based 64 kHz).  A first attempt was
+reverted: tb_pokey's toggle-count expectations are calibrated to the old
+clk-based cadence and its phase D0 (init RANDOM=$FF) assumes SKCTL is never
+released — the tb needs recalibrating alongside (and check how tb_pokey
+routes phi2_tick into pokey.sv; toggles came out ~100x low, suggesting the
+tb's phi2 wiring differs from the fpga_xt_top one).  pokey_timertiming's
+next step: DBG_TB mode-2 capture of IRQST reads with STOP-ON-FULL armed
+AFTER xexload returns (circular gets flooded by post-fail polling).
+
 ## 5. Housekeeping the fresh session should do first
 
 - **Revert the temporary diagnostics** for a clean bitstream. The `diag:` commits
