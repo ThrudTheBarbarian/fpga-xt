@@ -362,15 +362,22 @@ module xt6502f #(
             // core samples every clk for exactly this reason.
             nmi_n_d <= nmi_n;
             if (nmi_n_d && !nmi_n) nmi_pend <= 1'b1;   // NMI is edge-triggered: latch the falling edge
+            // Interrupt setup pipelines advance every MACHINE CYCLE (phi2),
+            // NOT per executed boundary: the NMOS samples /IRQ//NMI every
+            // phi2 regardless of RDY, so a stall keeps the setup clock
+            // running (ACID800 antic_dlitiming's WSYNC-delayed DLI: the NMI
+            // arriving mid-stall is fully set up by the resume boundary).
+            if (phi2_tick) begin
+                irq_d2 <= irq_d1;
+                irq_d1 <= ~irq_n;
+                nmi_d2 <= nmi_d1;
+                nmi_d1 <= nmi_pend;
+            end
           if (dbg_load) begin
             PC <= dbg_pc_in; A <= dbg_a_in; X <= dbg_x_in; Y <= dbg_y_in;
             S <= dbg_s_in; P <= dbg_p_in; state <= ST_FETCH; ir <= 8'hEA;
             i_poll <= dbg_p_in[2];
           end else if (advance) begin
-            irq_d2 <= irq_d1;          // 2-cycle /IRQ setup pipeline (see declaration)
-            irq_d1 <= ~irq_n;
-            nmi_d2 <= nmi_d1;          // 2-cycle NMI setup pipeline (see declaration)
-            nmi_d1 <= nmi_pend;
             case (state)
                 ST_RST:   if (rst_cnt == 0) state <= ST_VECL; else rst_cnt <= rst_cnt - 3'd1;
                 ST_VECL:  begin PC[7:0]  <= din_r; state <= ST_VECH; end
