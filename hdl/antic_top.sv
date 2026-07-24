@@ -1185,6 +1185,11 @@ module antic_top #(
     // {vbi_bad scanline[31:23], dlstart_bad[22:14], vbi_cnt[13:6]... , ungated[5:0]}.
     wire [3:0] dbg_parser_state;
     wire [1:0] dbg_parser_phase;
+    // Parser is in one of its WAIT states (2=OP, 5=LMS_LO, 8=LMS_HI,
+    // 11=JMP_LO, 14=JMP_HI): the cycle mem_ready completes a fetch.
+    wire dl_in_wait = (dbg_parser_state == 4'd2)  || (dbg_parser_state == 4'd5)
+                   || (dbg_parser_state == 4'd8)  || (dbg_parser_state == 4'd11)
+                   || (dbg_parser_state == 4'd14);
     // diag8: {[31:28]=parser state, [27:26]=emit phase, [25:24]=0,
     //         [23:16]=parse_count[7:0], [15:8]=dlstart_bad[7:0], [7:0]=ungated DLI count}
     assign dbg_antic = {dbg_parser_state, dbg_parser_phase, 2'b00,
@@ -1361,7 +1366,8 @@ module antic_top #(
             3'd4:    tb_trig = vbi_c8_pulse;
             3'd5:    tb_trig = snoop_we_antic & (snoop_addr[7:0] == 8'h0A); // WSYNC $D40A
             3'd6:    tb_trig = snoop_we_antic;
-            3'd7:    tb_trig = ar_line_start;
+            3'd7:    tb_trig = tb_dli_nmi_only ? (dl_ready & dl_in_wait)
+                                               : ar_line_start;   // cfg[12]: parser-fetch capture
             default: tb_trig = 1'b0;                                       // mode 0 = off
         endcase
     end
@@ -1430,7 +1436,13 @@ module antic_top #(
             tb_payload_q <= 25'd0;
         end else begin
             tb_accept_q  <= tb_armed && (tb_mode != 3'd0) && tb_trig_edge && tb_scan_ok;
-            tb_payload_q <= {ar_scanline, ar_phi2_in_line, tb_data8};
+            // mode 7 + cfg[12]: parser-fetch capture — {scanline, DL fetch
+            // address low byte, fetched data} instead of {scanline, cycle,
+            // data}.  Shows exactly which DL byte the parser read and what
+            // value came back (the parse-corruption hunt).
+            tb_payload_q <= (tb_mode == 3'd7 && tb_dli_nmi_only)
+                          ? {ar_scanline, dl_raddr[7:0], dl_rdata}
+                          : {ar_scanline, ar_phi2_in_line, tb_data8};
         end
     end
 
