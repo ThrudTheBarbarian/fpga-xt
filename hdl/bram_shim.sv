@@ -47,14 +47,16 @@ module bram_shim #(
     state_t state_q;
     logic [ADDR_W-1:0] result_addr_q;
     logic              result_port_q;    // 0 = A, 1 = B
-    logic [7:0]        rdata_q;
+    logic [7:0]        rdata_a_q;        // per-port result holds: each client's
+    logic [7:0]        rdata_b_q;        // byte survives the OTHER port's traffic
 
     always_ff @(posedge clk or posedge rst) begin
         if (rst) begin
             state_q        <= IDLE;
             result_addr_q  <= '0;
             result_port_q  <= 1'b0;
-            rdata_q        <= 8'h00;
+            rdata_a_q      <= 8'h00;
+            rdata_b_q      <= 8'h00;
         end else begin
             unique case (state_q)
 
@@ -73,9 +75,10 @@ module bram_shim #(
 
                 LATENCY: begin
                     // One cycle for BRAM read.  bram_rdata is valid this cycle
-                    // (registered on posedge in sally_mem's always_ff).  We
-                    // latch the result and return to IDLE.
-                    rdata_q  <= bram_rdata;
+                    // (registered on posedge in sally_mem's always_ff).  Latch
+                    // into the PER-PORT hold register and return to IDLE.
+                    if (!result_port_q) rdata_a_q <= bram_rdata;
+                    else                rdata_b_q <= bram_rdata;
                     state_q <= IDLE;
                 end
 
@@ -90,9 +93,16 @@ module bram_shim #(
                      ? (req_a ? raddr_a : raddr_b)
                      : result_addr_q;
 
-    // Output data and ready pulses
-    assign rdata_a = rdata_q;
-    assign rdata_b = rdata_q;
+    // Output data: the FRESH byte (bram_rdata) is presented during the
+    // serving port's ready cycle, and the per-port hold register carries it
+    // afterwards until that port's NEXT completion.  Consumers that sample
+    // on ready and consumers that sample one cycle later therefore both get
+    // the right byte, and one port's traffic can never leak into the other
+    // (board-measured: interleaved compositor bytes reached dl_parser's
+    // one-cycle-late opcode consumption via the old shared register — the
+    // DLI-cluster garbage-row parse corruption).
+    assign rdata_a = (state_q == LATENCY && !result_port_q) ? bram_rdata : rdata_a_q;
+    assign rdata_b = (state_q == LATENCY &&  result_port_q) ? bram_rdata : rdata_b_q;
 
     // ready_a fires on the cycle we exit LATENCY with result_port_q=0
     // (the result is valid).  ready_b similarly.
