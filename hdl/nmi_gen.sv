@@ -95,11 +95,22 @@ module nmi_gen (
     // (ACID800 antic_nmist NMIRES-timing: 'VBI bit was reset too early'
     // when the raw strobe order let the clear beat the cycle-7 set).
     logic nmires_pend;
+    logic set_cycle_q;   // a cause bit set at the last status tick; high for
+                         // that whole machine cycle — an NMIRES strobed within
+                         // it LOSES outright (real ANTIC: the write cycle that
+                         // coincides with the set cannot clear the fresh bit;
+                         // ACID800 'VBI bit was reset too early' with the
+                         // strobe landing after the tick inside the set cycle)
+    always_ff @(posedge clk or posedge rst) begin
+        if (rst)                          set_cycle_q <= 1'b0;
+        else if (dli_event || vbi_event)  set_cycle_q <= 1'b1;
+        else if (status_tick)             set_cycle_q <= 1'b0;
+    end
     always_ff @(posedge clk or posedge rst) begin
         if (rst)                 nmires_pend <= 1'b0;
         else if (dli_event || vbi_event) nmires_pend <= 1'b0;  // set wins; consume
         else if (status_tick && nmires_pend) nmires_pend <= 1'b0;  // applied below
-        else if (nmires_strobe)  nmires_pend <= 1'b1;
+        else if (nmires_strobe && !set_cycle_q) nmires_pend <= 1'b1;
     end
 
     always_ff @(posedge clk or posedge rst) begin
