@@ -19,9 +19,15 @@ module nmi_gen (
     input  wire  [7:0] nmien,            // $D40E
     input  wire        nmires_strobe,    // pulses on $D40F write
 
-    // From vbeam (1-cycle pulses).
-    input  wire        vbi_start,        // start of vertical blank
-    input  wire        line_start,       // start of a new atari row
+    // Event ticks (1-cycle pulses).  STATUS ticks lead the NMI ticks by two
+    // machine cycles: real ANTIC latches the NMIST cause bit at ~cycle 6 of
+    // the scan line and pulls /NMI at cycle 8 (ACID800 antic_nmist's
+    // cycle-exact checks: bit not set at a read ending cycle 5, set by a
+    // read ending cycle 6; Altirra updates NMIST at its cycle-7 slot).
+    input  wire        vbi_status,       // VBI cause -> NMIST bit, cycle-6 tick
+    input  wire        vbi_start,        // VBI /NMI pulse, cycle-8 tick
+    input  wire        line_status,      // DLI cause -> NMIST bit, cycle-6 tick
+    input  wire        line_start,       // DLI /NMI pulse, cycle-8 tick
 
     // From dl_parser (combinational read of line_dli at current row).
     output logic [7:0] cur_row,
@@ -74,10 +80,10 @@ module nmi_gen (
     // antic_nmist: "DLI bit set in NMIST with DLIs disabled", "VBI bit set
     // in NMIST with VBIs disabled").  So flags_q sets on the event; the
     // /NMI pulse (nmi_lo_ctr below) is what stays gated by nmien[7]/nmien[6].
-    wire dli_event = line_start && cur_row_dli;   // NMIST status event
-    wire vbi_event = vbi_start;                    // NMIST status event
-    wire dli_nmi   = dli_event && nmien[7];         // /NMI assertion (gated)
-    wire vbi_nmi   = vbi_event && nmien[6];         // /NMI assertion (gated)
+    wire dli_event = line_status && cur_row_dli;         // NMIST status (cycle 6)
+    wire vbi_event = vbi_status;                          // NMIST status (cycle 6)
+    wire dli_nmi   = line_start && cur_row_dli && nmien[7]; // /NMI (cycle 8, gated)
+    wire vbi_nmi   = vbi_start && nmien[6];                 // /NMI (cycle 8, gated)
 
     logic [7:0] flags_q;        // bits 6..7 carry the last cause, others 0
 

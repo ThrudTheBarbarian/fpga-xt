@@ -1260,6 +1260,7 @@ module antic_top #(
     // combinational lookup that is stable across the whole line, so
     // sampling it at cycle 8 (rather than cycle 0) is fine.
     wire cycle_8_pulse = phi2_tick && (ar_phi2_in_line == 8'd8);
+    wire cycle_6_pulse = phi2_tick && (ar_phi2_in_line == 8'd6);   // NMIST status tick
 
     // The VBI marker (ar_vbi_start) pulses at cycle 0 of the VBLANK line;
     // latch it and release the VBI NMI at that same line's cycle-8 strobe
@@ -1271,6 +1272,7 @@ module antic_top #(
         else if (cycle_8_pulse)       vbi_c8_pending <= 1'b0;
     end
     wire vbi_c8_pulse = cycle_8_pulse && vbi_c8_pending;
+    wire vbi_c6_pulse = cycle_6_pulse && vbi_c8_pending;   // status leads the /NMI
 
     // ---- NMI generator (M12) -----------------------------------------
     // Instantiated in clk_bus. cur_row from nmi_gen closes the DLI loop
@@ -1281,7 +1283,9 @@ module antic_top #(
         .rst           (rst_bus),
         .nmien         (nmien_q),
         .nmires_strobe (nmires_strobe),
+        .vbi_status    (vbi_c6_pulse),
         .vbi_start     (vbi_c8_pulse),
+        .line_status   (cycle_6_pulse),
         .line_start    (cycle_8_pulse),
         .cur_row       (nmi_cur_row),
         .cur_row_dli   (nmi_cur_row_dli),
