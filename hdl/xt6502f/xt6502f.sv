@@ -118,10 +118,6 @@ module xt6502f #(
                                // instruction boundary only if the line was low TWO cycles
                                // before it (ACID800 pokey_irqtiming: IRQEN write ->
                                // exactly one INX completes before the handler)
-    reg       irq_d3, nmi_d3;  // third stage: phi2 pacing samples at cycle START where the
-                               // old advance pacing sampled at COMMIT (cycle end) — one
-                               // extra stage restores the calibrated recognition point
-                               // (build 27 regressed pokey_irqtiming with two stages)
     reg       nmi_d1, nmi_d2;  // same 2-cycle setup rule for NMI recognition (ACID800
                                // antic_dlitiming: the DLI preempts the instruction at
                                // origin+10, not +9 — the edge needs 2 cycles before the
@@ -354,8 +350,8 @@ module xt6502f #(
             rmw_val <= 0; rmw_mod <= 0; sax <= 0; combo <= 0; op2 <= OP_LD; jam_cnt <= 0;
             ushx <= 0; ushx_src <= 0; ushx_tas <= 0; ush_val <= 0;
             nmi_n_d <= 1'b1; nmi_pend <= 1'b0; intr <= 1'b0; nmi_svc <= 1'b0;
-            irq_d1 <= 1'b0; irq_d2 <= 1'b0; irq_d3 <= 1'b0;
-            nmi_d1 <= 1'b0; nmi_d2 <= 1'b0; nmi_d3 <= 1'b0;
+            irq_d1 <= 1'b0; irq_d2 <= 1'b0;
+            nmi_d1 <= 1'b0; nmi_d2 <= 1'b0;
             i_poll <= 1'b1;   // reset P = $34 -> I set
         end else begin
             // NMI falling-edge detect runs EVERY clk (decoupled from `advance`). A WSYNC or
@@ -371,11 +367,16 @@ module xt6502f #(
             // phi2 regardless of RDY, so a stall keeps the setup clock
             // running (ACID800 antic_dlitiming's WSYNC-delayed DLI: the NMI
             // arriving mid-stall is fully set up by the resume boundary).
-            if (phi2_tick) begin
-                irq_d3 <= irq_d2;
+            // Pipeline pacing: the COMMIT SLOT of the free-running sub
+            // counter — every machine cycle at commit phase, RDY or not.
+            // Commit-phase sampling is what the even/odd DLI bracket
+            // calibrates (advance-gated d2 passed both; cycle-start phi2
+            // sampling was half a cycle late in odd alignment), and the
+            // free run keeps the setup clock alive through WSYNC stalls
+            // (the delayed cases).
+            if (sub == SUB_COMMIT[7:0]) begin
                 irq_d2 <= irq_d1;
                 irq_d1 <= ~irq_n;
-                nmi_d3 <= nmi_d2;
                 nmi_d2 <= nmi_d1;
                 nmi_d1 <= nmi_pend;
             end
@@ -392,10 +393,10 @@ module xt6502f #(
                 ST_FETCH: begin
                     has_idx <= 1'b0; pgx <= 1'b0; is_store <= 1'b0; is_rmw <= 1'b0; op <= OP_LD; sax <= 1'b0;
                     combo <= 1'b0; ushx <= 1'b0; ushx_tas <= 1'b0;
-                  if (nmi_d3 || (irq_d3 && !i_poll)) begin       // HW interrupt (NMI priority): discard opcode, PC held
-                                                                  // (d3: phi2-paced equivalent of the commit-sampled 2-cycle rule)
-                    intr <= 1'b1; nmi_svc <= nmi_d3; ir <= 8'h00;
-                    if (nmi_d3) begin nmi_pend <= 1'b0; nmi_d1 <= 1'b0; nmi_d2 <= 1'b0; nmi_d3 <= 1'b0; end
+                  if (nmi_d2 || (irq_d2 && !i_poll)) begin       // HW interrupt (NMI priority): discard opcode, PC held
+                                                                  // (d2, commit-slot-paced: the calibrated NMOS setup rule)
+                    intr <= 1'b1; nmi_svc <= nmi_d2; ir <= 8'h00;
+                    if (nmi_d2) begin nmi_pend <= 1'b0; nmi_d1 <= 1'b0; nmi_d2 <= 1'b0; end
                     state <= ST_IRQ2;
                   end else begin
                     ir <= din_r; PC <= PC + 16'd1;
