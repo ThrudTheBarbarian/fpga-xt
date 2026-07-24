@@ -273,6 +273,43 @@ tb's phi2 wiring differs from the fpga_xt_top one).  pokey_timertiming's
 next step: DBG_TB mode-2 capture of IRQST reads with STOP-ON-FULL armed
 AFTER xexload returns (circular gets flooded by post-fail polling).
 
+## 4c. DLI-cluster endgame (2026-07-24 afternoon) — where each test stands
+
+**antic_nmist: GREEN** (run 2026-07-24-2).  The full chain, each rung
+hardware-verified: bram_shim per-port result registers (the cross-client
+data leak — also explains the old gtia_collision/parse-kick-260 conflict:
+one bug, both directions), parse kick at 260 (arm-timing frame miss),
+NMIST status latch at cycle 7 (bisected 8→6→7; Altirra mX==7), NMIRES
+tick-aligned with set-beats-clear + within-the-set-cycle discard, NMIEN
+gate = armed-at-status-tick OR live-at-pulse.
+
+**antic_dlitiming: 3 of 4 sub-cases pass.**  The interrupt-recognition
+model that got there (xt6502f): d1 samples pend/level at EVERY commit
+slot of the free-running sub counter (wall cycles, RDY or not); the POLL
+latch samples d1 only at RDY-true commit slots; recognition reads the
+poll latch at the fetch boundary.  Running: polled(B)=pend(B-2) = the
+2-cycle NMOS setup rule (also what flipped pokey_irqtiming).  Stalled:
+the decision freezes, so a mid-stall edge is taken one instruction after
+resume.  REMAINING: 'Delayed odd count \$0E != \$0F' — the odd-alignment
+delayed case is recognised one instruction early; a half-cycle poll-
+granularity delta (the real poll point is phi2 of the penultimate cycle,
+once per instruction — ours is per-cycle).  Next idea: latch the poll
+ONCE per instruction at its penultimate commit slot instead of every
+slot.  5 builds spent; park unless fresh.
+
+**antic_vscroldli**: 'VSCROL took effect too late' — the DOCUMENTED
+parse-ahead limit (dl_parser header): mid-frame VSCROL rewrites need
+live per-raster-line region sizing in the compositor DCTR.  Same family
+as antic_vscroll's off-by-2.  Feature work.
+
+**antic_pfstarttiming / pfstoptiming**: 'Character mode DMACTL early
+test failed: stride=20/22' — mid-scanline DMACTL writes must change
+playfield DMA start/stop within the line.  Feature work (live DMACTL in
+the fetch/steal path).
+
+Regression state: 27/57 held across the whole interrupt rework (run
+2026-07-24-3, full sweep on build 30).
+
 ## 5. Housekeeping the fresh session should do first
 
 - **Revert the temporary diagnostics** for a clean bitstream. The `diag:` commits
