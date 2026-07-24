@@ -82,7 +82,8 @@ module tb_pokey;
         end
     end
 
-    pokey #(.CLK_BUS_HZ(8), .REF_HZ_M23_1(4), .REF_HZ_LOW(2)) u_dut (
+    pokey #(.CLK_BUS_HZ(8), .REF_HZ_M23_1(4), .REF_HZ_LOW(2),
+            .REF_PHI2_HI(1), .REF_PHI2_LO(2), .REF_REL_HI(1), .REF_REL_LO(1)) u_dut (
         .clk                  (clk),
         .rst                  (rst),
         .phi2_tick            (phi2_tick),
@@ -201,6 +202,8 @@ module tb_pokey;
         // ~half-period = 8 clks; full period ≈ 16 clks; rising edges
         // every 16 clks. Over 800 clks we expect ~50 rising edges.
         $display("[B] frequency check");
+        do_write(8'h0F, 8'h03);    // SKCTL = $03: release init (the OS boot idiom);
+                                   // init holds the phi2-paced ref dividers preset
         // PURE square-wave mode: AUDC[7]=1 (NOT_5 bypass) + AUDC[5]=1
         // (PURE) + low nibble = volume → pattern $Av.
         // Clear AUDCTL (Phase A left it at $5A) so the M23-3 features
@@ -224,10 +227,13 @@ module tb_pokey;
             int t1, t2, t3, t4;
             // Drain any pending state.
             @(posedge clk);
-            count_toggles(1600, 0, t1);
-            count_toggles(1600, 1, t2);
-            count_toggles(1600, 2, t3);
-            count_toggles(1600, 3, t4);
+            // Window doubled: the ref dividers are phi2-paced now (hi = 1
+            // phi2 = 4 clks vs the old 2-clk direct divider), so 3200 clks
+            // spans the same ~800 hi-ref ticks the bands were written for.
+            count_toggles(3200, 0, t1);
+            count_toggles(3200, 1, t2);
+            count_toggles(3200, 2, t3);
+            count_toggles(3200, 3, t4);
             // Allow ±5 % for sampling jitter (enter-mid-cycle, etc).
             $display("[B] toggles: ch1=%0d ch2=%0d ch3=%0d ch4=%0d",
                      t1, t2, t3, t4);
@@ -278,7 +284,7 @@ module tb_pokey;
         begin
             int unsigned r_init, r_run;
             do_write(8'h0F, 8'h00);        // SKCTL = 0 → init/reset mode
-            repeat (8) @(posedge clk);     // let several phi2 ticks pass
+            repeat (64) @(posedge clk);    // several phi2 ticks (phi2 = 4 clks here)
             @(negedge clk);
             raddr = 8'h0A;
             @(negedge clk);
@@ -393,7 +399,7 @@ module tb_pokey;
         begin
             int t2;
             @(posedge clk);
-            count_toggles(16000, 1, t2);
+            count_toggles(32000, 1, t2);   // doubled: phi2-paced refs
             $display("[F] ch2 toggles in 16-bit pair mode: %0d (expected ~15)", t2);
             if (t2 < 10 || t2 > 20) begin
                 $display("FAIL F.pair12: %0d toggles, expected ~15 (linked-pair semantics broken)",
@@ -555,7 +561,7 @@ module tb_pokey;
                 begin
                     repeat (4) @(posedge clk);
                     do_write(8'h0B, 8'h00);
-                    repeat (8) @(posedge clk);
+                    repeat (32) @(posedge clk);
                 end
                 begin
                     repeat (16) @(posedge clk);
@@ -691,6 +697,9 @@ module tb_pokey;
             //          for ch1 to wrap. AUDF1=0 with ref ticks every
             //          2 clks → wraps every 2 clks; we'll see it
             //          almost immediately.
+            do_write(8'h0F, 8'h03);   // SKCTL = \$03: phase J's pot writes left
+                                      // init mode, which (faithfully) freezes
+                                      // the phi2-paced reference dividers
             do_write(8'h0E, 8'h01);   // IRQEN = bit 0 (TIMER 1)
             do_write(8'h00, 8'h00);   // AUDF1 = 0 — fastest divider
             do_write(8'h01, 8'hAF);   // AUDC1 = pure tone, vol 15

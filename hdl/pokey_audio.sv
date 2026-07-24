@@ -52,6 +52,10 @@
 `default_nettype none
 
 module pokey_audio #(
+    parameter int unsigned REF_PHI2_HI = 28,   // 64 kHz period in phi2 cycles
+    parameter int unsigned REF_PHI2_LO = 114,  // 15 kHz period in phi2 cycles
+    parameter int unsigned REF_REL_HI  = 22,   // first 64k tick after init release
+    parameter int unsigned REF_REL_LO  = 81,   // first 15k tick after init release
     // Clock-rate parameter for the reference dividers.
     parameter int unsigned CLK_BUS_HZ   = 161_079_525,
     parameter int unsigned REF_HZ_M23_1 = 64_000,    // M23-3 high-rate ref (AUDCTL[0]=0)
@@ -112,37 +116,45 @@ module pokey_audio #(
 );
 
     // ---- Reference clock dividers (64 kHz + 15 kHz, AUDCTL[0] selects) ---
-    // Both run continuously; the channel sampling logic picks one via
-    // ref_tick_sel. Keeping both alive simplifies switching mid-tone.
-    localparam int unsigned REF_DIV_HI = CLK_BUS_HZ / REF_HZ_M23_1;
-    localparam int unsigned REF_DIV_LO = CLK_BUS_HZ / REF_HZ_LOW;
-    localparam int unsigned REF_DIV_HI_W = $clog2(REF_DIV_HI + 1);
-    localparam int unsigned REF_DIV_LO_W = $clog2(REF_DIV_LO + 1);
-    logic [REF_DIV_HI_W-1:0] ref_div_hi_q;
-    logic [REF_DIV_LO_W-1:0] ref_div_lo_q;
-    logic                    ref_tick_hi;
-    logic                    ref_tick_lo;
+    // PHI2-PACED: real POKEY derives both from poly counters clocked at
+    // 1.79 MHz (64 kHz = phi2/28, 15 kHz = phi2/114), and SKCTL init mode
+    // holds them preset such that after init release the NEXT 64 kHz tick
+    // lands 22 machine cycles later and the next 15 kHz tick 81 cycles
+    // later (Altirra pokey.cpp init-release constants; ACID800
+    // pokey_inittiming measures exactly these phases).  Down-counters: a
+    // tick fires at 0 and reloads the full period.  The ratios are
+    // parameters so tb_pokey's miniature-clock world stays expressible.
+    logic [6:0] ref_div_hi_q;
+    logic [6:0] ref_div_lo_q;
+    logic       ref_tick_hi;
+    logic       ref_tick_lo;
+    wire poly_init_w = (skctl[1:0] == 2'b00);
 
     always_ff @(posedge clk or posedge rst) begin
         if (rst) begin
-            ref_div_hi_q <= '0;
-            ref_div_lo_q <= '0;
+            ref_div_hi_q <= 7'(REF_PHI2_HI - REF_REL_HI);
+            ref_div_lo_q <= 7'(REF_PHI2_LO - REF_REL_LO);
             ref_tick_hi  <= 1'b0;
             ref_tick_lo  <= 1'b0;
         end else begin
-            if (ref_div_hi_q == REF_DIV_HI - 1) begin
-                ref_div_hi_q <= '0;
-                ref_tick_hi  <= 1'b1;
-            end else begin
-                ref_div_hi_q <= ref_div_hi_q + 1'b1;
-                ref_tick_hi  <= 1'b0;
-            end
-            if (ref_div_lo_q == REF_DIV_LO - 1) begin
-                ref_div_lo_q <= '0;
-                ref_tick_lo  <= 1'b1;
-            end else begin
-                ref_div_lo_q <= ref_div_lo_q + 1'b1;
-                ref_tick_lo  <= 1'b0;
+            ref_tick_hi <= 1'b0;
+            ref_tick_lo <= 1'b0;
+            if (poly_init_w) begin
+                // init holds the dividers preset so the release phases are
+                // exact: the next tick fires REF_REL_* cycles after release
+                ref_div_hi_q <= 7'(REF_REL_HI - 1);
+                ref_div_lo_q <= 7'(REF_REL_LO - 1);
+            end else if (phi2_tick) begin
+                if (ref_div_hi_q == 7'd0) begin
+                    ref_div_hi_q <= 7'(REF_PHI2_HI - 1);
+                    ref_tick_hi  <= 1'b1;
+                end else
+                    ref_div_hi_q <= ref_div_hi_q - 7'd1;
+                if (ref_div_lo_q == 7'd0) begin
+                    ref_div_lo_q <= 7'(REF_PHI2_LO - 1);
+                    ref_tick_lo  <= 1'b1;
+                end else
+                    ref_div_lo_q <= ref_div_lo_q - 7'd1;
             end
         end
     end
