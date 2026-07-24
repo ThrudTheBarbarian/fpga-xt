@@ -1430,19 +1430,36 @@ module antic_top #(
     // so the recorded values are identical.
     logic        tb_accept_q;
     logic [24:0] tb_payload_q;
+    logic [15:0] tb_fetch_stage_q;   // {ready-cycle data, addr} staging for fetch mode
+    logic        tb_fetch_acc1;      // fetch-mode capture pipeline stage 1
     always_ff @(posedge clk_bus or posedge rst_bus) begin
         if (rst_bus) begin
             tb_accept_q  <= 1'b0;
             tb_payload_q <= 25'd0;
+            tb_fetch_acc1 <= 1'b0;
+            tb_fetch_stage_q <= 16'd0;
         end else begin
-            tb_accept_q  <= tb_armed && (tb_mode != 3'd0) && tb_trig_edge && tb_scan_ok;
-            // mode 7 + cfg[12]: parser-fetch capture — {scanline, DL fetch
-            // address low byte, fetched data} instead of {scanline, cycle,
-            // data}.  Shows exactly which DL byte the parser read and what
-            // value came back (the parse-corruption hunt).
-            tb_payload_q <= (tb_mode == 3'd7 && tb_dli_nmi_only)
-                          ? {ar_scanline, dl_raddr[7:0], dl_rdata}
-                          : {ar_scanline, ar_phi2_in_line, tb_data8};
+            // mode 7 + cfg[12]: parser-fetch capture —
+            //   {ready-cycle data[8:1], 1'b0, addr low[7:0], NEXT-cycle data[7:0]}
+            // The shim/mux chain has a one-cycle data ambiguity (the shim's
+            // registered rdata is one transaction stale during its ready
+            // cycle, and dl_parser consumes JMP/JVB high bytes ON ready but
+            // opcodes one cycle AFTER) — capturing both cycles' bytes per
+            // fetch shows which carries the truth and what the other holds.
+            // Two-stage: the trigger cycle snapshots {data, addr}; the next
+            // cycle assembles the payload with the live (next-cycle) data.
+            if (tb_mode == 3'd7 && tb_dli_nmi_only) begin
+                tb_fetch_acc1 <= tb_armed && tb_trig_edge && tb_scan_ok;
+                if (tb_trig_edge) tb_fetch_stage_q <= {dl_rdata, dl_raddr[7:0]};
+                tb_accept_q   <= tb_fetch_acc1;
+                if (tb_fetch_acc1)
+                    tb_payload_q <= {tb_fetch_stage_q[15:8], 1'b0,
+                                     tb_fetch_stage_q[7:0], dl_rdata};
+            end else begin
+                tb_fetch_acc1 <= 1'b0;
+                tb_accept_q   <= tb_armed && (tb_mode != 3'd0) && tb_trig_edge && tb_scan_ok;
+                tb_payload_q  <= {ar_scanline, ar_phi2_in_line, tb_data8};
+            end
         end
     end
 
