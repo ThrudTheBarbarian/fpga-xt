@@ -81,10 +81,25 @@ module nmi_gen (
     // antic_nmist: "DLI bit set in NMIST with DLIs disabled", "VBI bit set
     // in NMIST with VBIs disabled").  So flags_q sets on the event; the
     // /NMI pulse (nmi_lo_ctr below) is what stays gated by nmien[7]/nmien[6].
-    wire dli_event = line_status && cur_row_dli;         // NMIST status (cycle 6)
-    wire vbi_event = vbi_status;                          // NMIST status (cycle 6)
-    wire dli_nmi   = line_start && cur_row_dli && nmien[7]; // /NMI (cycle 8, gated)
-    wire vbi_nmi   = vbi_start && nmien[6];                 // /NMI (cycle 8, gated)
+    wire dli_event = line_status && cur_row_dli;         // NMIST status (cycle 7)
+    wire vbi_event = vbi_status;                          // NMIST status (cycle 7)
+    // The NMIEN gate is SAMPLED AT THE STATUS TICK and used at the /NMI tick:
+    // real ANTIC commits the NMI decision with the status latch, so an NMIEN
+    // disable landing after that boundary cannot suppress the pulse (ACID800:
+    // write at cycle 5 blocks the VBI, write at cycle 6 does not — 'VBI was
+    // deactivated by write to NMIEN on cycle 6' when gating live at cycle 8).
+    logic dli_arm_q, vbi_arm_q;
+    always_ff @(posedge clk or posedge rst) begin
+        if (rst) begin
+            dli_arm_q <= 1'b0;
+            vbi_arm_q <= 1'b0;
+        end else begin
+            if (dli_event) dli_arm_q <= nmien[7];
+            if (vbi_event) vbi_arm_q <= nmien[6];
+        end
+    end
+    wire dli_nmi   = line_start && cur_row_dli && dli_arm_q; // /NMI (cycle 8, armed @7)
+    wire vbi_nmi   = vbi_start && vbi_arm_q;                 // /NMI (cycle 8, armed @7)
 
     logic [7:0] flags_q;        // bits 6..7 carry the last cause, others 0
 

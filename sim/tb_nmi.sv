@@ -101,6 +101,8 @@ module tb_nmi;
     // ---- nmi_gen ------------------------------------------------------
     logic        vbi_start    = 1'b0;
     logic        line_start   = 1'b0;
+    logic        vbi_status   = 1'b0;
+    logic        line_status  = 1'b0;
     logic [7:0]  atari_row_in = 8'h00;
     wire         nmi_n;
 
@@ -109,9 +111,9 @@ module tb_nmi;
         .nmien(nmien_q),
         .nmires_strobe(nmires_strobe),
         .status_tick(1'b1),
-        .vbi_status(vbi_start),
+        .vbi_status(vbi_status),
         .vbi_start(vbi_start),
-        .line_status(line_start),
+        .line_status(line_status),
         .line_start(line_start),
         .cur_row(nmi_dli_row),
         .cur_row_dli(nmi_dli_at),
@@ -139,7 +141,11 @@ module tb_nmi;
     task automatic pulse_line(input logic [7:0] row);
         @(negedge clk);
         atari_row_in <= row;
-        line_start   <= 1'b1;
+        line_status  <= 1'b1;      // status tick (cycle 7 on HW)...
+        @(posedge clk);
+        @(negedge clk);
+        line_status  <= 1'b0;
+        line_start   <= 1'b1;      // ...then the /NMI tick (cycle 8)
         @(posedge clk);
         @(negedge clk);
         line_start   <= 1'b0;
@@ -147,10 +153,14 @@ module tb_nmi;
 
     task automatic pulse_vbi();
         @(negedge clk);
-        vbi_start <= 1'b1;
+        vbi_status <= 1'b1;
         @(posedge clk);
         @(negedge clk);
-        vbi_start <= 1'b0;
+        vbi_status <= 1'b0;
+        vbi_start  <= 1'b1;
+        @(posedge clk);
+        @(negedge clk);
+        vbi_start  <= 1'b0;
     endtask
 
     int fail_count = 0;

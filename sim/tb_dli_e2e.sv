@@ -27,7 +27,9 @@ module tb_dli_e2e;
         .atari_row(atari_row), .vcount(vcount));
 
     // cycle-8 strobes (antic_top derives DLI/VBI at machine cycle 8)
+    wire cycle_7   = phi2_tick && (phi2_in_line == 8'd7);   // status tick
     wire cycle_8   = phi2_tick && (phi2_in_line == 8'd8);
+    wire vbi_c7    = cycle_7 && (scanline == 9'd248);
     wire vbi_c8    = cycle_8 && (scanline == 9'd248);
 
     // ---- DL RAM ----
@@ -57,8 +59,8 @@ module tb_dli_e2e;
     nmi_gen u_nmi (
         .clk(clk), .rst(rst), .nmien(nmien), .nmires_strobe(1'b0),
         .status_tick(1'b1),
-        .vbi_status(vbi_c8), .vbi_start(vbi_c8),
-        .line_status(cycle_8), .line_start(cycle_8),
+        .vbi_status(vbi_c7), .vbi_start(vbi_c8),
+        .line_status(cycle_7), .line_start(cycle_8),
         .cur_row(nmi_cur_row), .cur_row_dli(nmi_cur_row_dli),
         .atari_row_in(atari_row), .nmist_q(nmist_q), .nmi_n(nmi_n));
 
