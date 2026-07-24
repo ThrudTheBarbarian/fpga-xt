@@ -52,32 +52,22 @@ void main(void) {
 
 The implementation is a recursive Lomuto-partition quicksort with the pivot at the high end of the partition. No auxiliary buffers — sorting is in place.
 
-## Caveat: arrays must be local
+## A historical caveat: global arrays
 
-`base` must be a **local** array. Global array names currently decay to pointers with a corrupted high byte, so:
+`Sort.xt`'s own header comment still warns that `base` must be a **local** array — that global array names decay to pointers with a corrupted high byte, so `Sort.qsort(globalArr, …)` silently reads the wrong memory.
+
+That no longer reproduces. Sorting a module-scope `u16[]` gives the correct result on **both** live backends (arm64 and xt6502), at `-O0` and at the default `-O3`:
 
 ```c
-u16 g[8] = {…};                     // global
+u16 g[4] = {4, 1, 3, 2};
 
 void main(void) {
-    Sort.qsort(g, (u16)8, &ascending);   // ⚠ silently reads wrong memory
+    Sort.qsort(g, (u16)4, &ascending);
+    // 1 2 3 4
 }
 ```
 
-…compiles but reads garbage at runtime. Until the codegen lifts that restriction, the workaround is to copy the array into a local before sorting:
-
-```c
-u16 g[8] = {…};
-
-void main(void) {
-    u16 local[8];
-    for (u16 i = 0; i < 8; i = i + 1) {
-        local[i] = g[i];
-    }
-    Sort.qsort(local, (u16)8, &ascending);
-    // …copy back if needed…
-}
-```
+The warning is left in the library source and recorded here because it was real; if you do see a global sort misbehave, that is the shape the old bug had, and it is worth reporting rather than working around.
 
 ## Recursion and the call stack
 

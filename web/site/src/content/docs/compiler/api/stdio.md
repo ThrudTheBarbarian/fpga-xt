@@ -14,8 +14,8 @@ All methods are `static`. The class is typically promoted with `use Stdio;` or t
 ## Basic output
 
 ```c
-static void putChar(u8 ch);          // emit one character
-static void scroll(void);            // scroll the screen up one line
+static void putChar(u8 ch);          // emit one character        — xt6502 only
+static void scroll(void);            // scroll the screen up one line — xt6502 only
 static void setCursor(u8 x, u8 y);   // move cursor to column x, row y
 ```
 
@@ -26,6 +26,8 @@ Stdio.putChar('\n');
 Stdio.setCursor(10, 5);
 Stdio.print("centred-ish\n");
 ```
+
+`putChar` and `scroll` are screen-model operations and exist only in the xt6502 build; calling either on a native backend is a compile error (`No method 'putChar' on class 'Stdio'`). `print`, `printf`, `printfAt` and `setCursor` are on both.
 
 ## `print` — type-overloaded direct printing
 
@@ -162,4 +164,6 @@ Every variadic call shares a single 64-byte pack buffer (the address is platform
 
 ## Platform notes
 
-`Stdio` is reimplemented per-architecture. The 6502 version writes through the Atari OS character output channel; the native backends route through the host runtime. The class API stays identical — same method signatures, same format specifiers — so a program that only uses `Stdio` for output is portable across every target without source changes.
+`Stdio` is reimplemented per-architecture. The 6502 version writes through the Atari OS character output channel; the native backends route through the host runtime. Format specifiers and the `print` / `printf` / `printfAt` / `setCursor` signatures are identical, so a program that uses those for its output is portable across every target without source changes.
+
+The two builds are not exactly the same size, though. `putChar`, `scroll` and the fixed-point helper `printFpDec(double, u8, u8)` exist only under `support/xt6502/lib/`; reach for `print` / `printf` if you want source that compiles everywhere.

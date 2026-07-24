@@ -79,4 +79,12 @@ That gives a 24-bit jiffy counter (max `$FFFFFF`, ~16.7 million jiffies). At 50 
 
 ## Platform notes
 
-`Time` is reimplemented per-architecture — the native backends read a real monotonic clock through the host runtime rather than the Atari `RTCLOK` jiffy counter. The signatures and semantics match.
+`Time` is reimplemented per-architecture. The native backends read a real monotonic clock through the host runtime rather than the Atari `RTCLOK` jiffy counter, and the shared methods keep their semantics — but the surface is **not** the same size:
+
+| Method | xt6502 | arm64 |
+|---|---|---|
+| `clearTimer()`, `timerValue()`, `ticksSince()`, `secondsSince()`, `delayJiffies()` | yes | yes |
+| `dpSecondsSince(u32)` | yes | **no** |
+| `delaySeconds(float)` | yes | **no** |
+
+Calling one of the missing two on a native backend is a compile error (`No method 'delaySeconds' on class 'Time'`), not a silent no-op. On arm64, `Time.delayJiffies(n)` is the available wait.

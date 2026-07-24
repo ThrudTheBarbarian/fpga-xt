@@ -36,8 +36,10 @@ The compiler emits retain / release operations at the right places:
 | `Foo@ a = new Foo()` | take the allocator's +1; no extra retain |
 | `Foo@ b = a` | a borrowed read → retain `a`'s pointee |
 | `var = expr` | release the old pointee; retain the new one (if borrowed), or absorb the +1 (if `expr` is a value producer like `new` or a function call) |
-| **scope exit** | release every tracked strong class-pointer local, LIFO |
+| **scope exit** | run that scope's [`defer`](/compiler/language/statements/#defer) bodies, then release every tracked strong class-pointer local, LIFO |
 | **class dealloc** | when refcount hits zero, the aggregate walker releases every strong class-pointer ivar recursively before returning the bytes to the free list |
+
+Scope exit is the interesting row. A scope tears down in a fixed order — **defers first, LIFO; then that scope's ARC releases; then outward to the next scope** — so a `defer` body can still use the local it was written to clean up. Every non-local exit uses the same walk: an early `return`, a `break`, a `continue`, and a propagating [`throw`](/compiler/language/errors/) all release the strong locals of every scope they leave.
 
 Two calling-convention rules follow from those:
 

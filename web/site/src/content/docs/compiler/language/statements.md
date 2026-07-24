@@ -231,6 +231,77 @@ for (u8 i = 0; i < n; i++) {
 }
 ```
 
+## `defer`
+
+`defer { ... }` registers a block to run when the **enclosing scope** exits — by any path: fall-through, `return`, `break`, `continue`, or a propagating [`throw`](/compiler/language/errors/). It is the cleanup statement: you write the release next to the acquisition instead of at the bottom of the function, and every exit path gets it for free.
+
+```c
+void render(Scene@ s) {
+    s.lock();
+    defer { s.unlock(); }             // released however we leave
+
+    if (!s.visible) return;           // …here
+    if (s.clipped)  return;           // …or here
+    s.drawEverything();               // …or by falling off the end
+}
+```
+
+The body must be a block. It runs at several exit points, so the braces keep what is deferred unambiguous.
+
+### LIFO, and per-scope
+
+Multiple defers in one scope run **last-registered-first**, and each defer belongs to the block that registered it — an inner `{ }` runs its own defers at its closing brace, not at function exit.
+
+```c
+{
+    defer { Stdio.printf("A\n"); }
+    defer { Stdio.printf("B\n"); }
+    Stdio.printf("body\n");
+}
+// body
+// B
+// A
+```
+
+Inside a loop body, the defer runs at the end of **each iteration** — including the iteration that `break`s or `continue`s out.
+
+```c
+for (u32 i = (u32)0; i < (u32)3; i = i + (u32)1) {
+    defer { Stdio.printf("d%d\n", i); }
+    if (i == (u32)1) break;
+}
+// d0
+// d1
+```
+
+### It runs before the scope's ARC releases
+
+The ordering that makes `defer` useful: a scope exits by running **its defers first**, then its [ARC teardown](/compiler/language/memory/#automatic-reference-counting-arc), then moving outward to the next scope. So the body can still use the very local it was written to clean up.
+
+```c
+{
+    Res@ r = new Res((u32)7);
+    defer { Stdio.printf("defer sees id=%d\n", r.id); }
+}
+// defer sees id=7
+// dealloc 7
+```
+
+### No closures involved
+
+`defer` is a **statement, not a value**. Its body is lowered inline at each exit point of the scope that registered it — nothing is captured, nothing is allocated, there is no object to keep alive. It reads the enclosing scope's locals directly because it is emitted *in* that scope. That is how a language with no closures gets `defer` at zero cost, on every backend including the 6502.
+
+Two consequences fall out of that, and both are enforced:
+
+- **`return` inside a defer body is rejected.** The body runs at every exit of its scope, so there is no single return for it to perform.
+- **A `break` or `continue` that would *leave* the body is rejected.** A `break` inside a loop or `switch` written *within* the body is fine — it targets that construct.
+
+```c
+defer { return; }                       // error
+defer { break; }                        // error (inside a loop's scope)
+defer { for (…) { … break; } }          // fine — the break is the inner loop's
+```
+
 ## Manual unrolling: `:unroll`
 
 The auto-unroller runs at `-O2+` for counted `for` loops with a small trip count (default ≤5; tunable with `-Flu`). To force an unroll regardless of trip count or optimisation level, annotate the loop with `:unroll`:

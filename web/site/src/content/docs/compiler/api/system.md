@@ -35,4 +35,10 @@ The `-Q loop` command-line switch changes the post-`main` behaviour to an infini
 
 ## Platform notes
 
-`System` is implemented per-architecture with the same signature everywhere — the 6502 version returns through Atari's `DOSVEC`; the native backends call the host's `exit`.
+`System` ships **only** under `support/xt6502/lib/`. There is no native-backend implementation, so `#import <System.xt>` fails to resolve under `-A arm64` and friends:
+
+```
+Cannot find include file 'System.xt'
+```
+
+On the native backends, return from `main` instead.

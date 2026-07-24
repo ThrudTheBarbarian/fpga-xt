@@ -60,11 +60,17 @@ String literals never split across source lines.
 
 ## Reserved words
 
-The following identifiers are reserved and may not be used as names. They cover types, control flow, declaration modifiers, class machinery, and inline-asm syntax.
+These are the words the **lexer** turns into keyword tokens. They are never identifiers, anywhere.
 
-`asm`, `auto`, `bool`, `break`, `case`, `class`, `clobbers`, `continue`, `default`, `delete`, `dealloc`, `do`, `double`, `else`, `enum`, `false`, `float`, `for`, `global`, `i8`, `i16`, `i32`, `if`, `in`, `init`, `inline`, `naked`, `new`, `pointer`, `protocol`, `register`, `release`, `retain`, `return`, `self`, `sizeof`, `static`, `string`, `struct`, `super`, `switch`, `true`, `typedef`, `u8`, `u16`, `u32`, `va_arg`, `va_end`, `va_start`, `void`, `volatile`, `weak`, `while`.
+`asm`, `auto`, `bool`, `break`, `case`, `catch`, `class`, `continue`, `default`, `defer`, `delete`, `double`, `else`, `enum`, `extern`, `false`, `final`, `float`, `for`, `global`, `i8`, `i16`, `i32`, `if`, `in`, `inline`, `new`, `optional`, `pointer`, `protocol`, `register`, `release`, `retain`, `return`, `sizeof`, `static`, `string`, `struct`, `switch`, `throw`, `throws`, `true`, `try`, `typedef`, `u8`, `u16`, `u32`, `use`, `void`, `volatile`, `while`.
 
-The exact set is what the lexer recognises; the parser may accept more in context (e.g. function annotations like `:hwStack`, `:irq`, `:vbi`) which are documented on the [Functions](/compiler/language/functions/) page.
+Separately, the parser rejects the **C reserved words** as variable names even where xtc gives them no meaning of its own, so that C-shaped source doesn't quietly acquire a different meaning:
+
+`char`, `const`, `do`, `goto`, `int`, `long`, `restrict`, `short`, `signed`, `union`, `unsigned` — plus those above that C also reserves.
+
+### Contextual words
+
+A third group is meaningful only in a particular position, and is an ordinary identifier everywhere else: `self` and `super` inside a method body; `init` and `dealloc` as method names; `weak:`, `banked:`, `main:` and `shadow:` as declaration qualifiers; `va_start` / `va_arg` / `va_end` inside a variadic; `clobbers` after an `asm` block; and the function annotations (`:naked`, `:hwStack`, `:irq`, `:vbi`, …) documented on the [Functions](/compiler/language/functions/) page. Using one of these as a variable name is legal but a reliable way to confuse the next reader.
 
 ## Block delimiters
 
