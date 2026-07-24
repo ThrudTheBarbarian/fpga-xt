@@ -1260,7 +1260,9 @@ module antic_top #(
     // combinational lookup that is stable across the whole line, so
     // sampling it at cycle 8 (rather than cycle 0) is fine.
     wire cycle_8_pulse = phi2_tick && (ar_phi2_in_line == 8'd8);
-    wire cycle_6_pulse = phi2_tick && (ar_phi2_in_line == 8'd6);   // NMIST status tick
+    wire cycle_6_pulse = phi2_tick && (ar_phi2_in_line == 8'd7);   // NMIST status tick
+    // (cycle 7, matching Altirra's mX==7 NMIST slot: hardware-bisected —
+    //  8 fails 'set too late (>cycle 6)', 6 fails 'set too early (<cycle 6)')
 
     // The VBI marker (ar_vbi_start) pulses at cycle 0 of the VBLANK line;
     // latch it and release the VBI NMI at that same line's cycle-8 strobe
