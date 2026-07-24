@@ -118,6 +118,10 @@ module xt6502f #(
                                // instruction boundary only if the line was low TWO cycles
                                // before it (ACID800 pokey_irqtiming: IRQEN write ->
                                // exactly one INX completes before the handler)
+    reg       nmi_d1, nmi_d2;  // same 2-cycle setup rule for NMI recognition (ACID800
+                               // antic_dlitiming: the DLI preempts the instruction at
+                               // origin+10, not +9 — the edge needs 2 cycles before the
+                               // boundary).  The BRK-hijack window keeps the LIVE pend.
     reg       nmi_pend;  // latched NMI, held until serviced
     reg       intr;      // servicing a HW interrupt (push P with B=0, vs BRK B=1)
     reg       nmi_svc;   // this service uses the NMI vector ($FFFA/B) — incl. BRK/IRQ hijack
@@ -347,6 +351,7 @@ module xt6502f #(
             ushx <= 0; ushx_src <= 0; ushx_tas <= 0; ush_val <= 0;
             nmi_n_d <= 1'b1; nmi_pend <= 1'b0; intr <= 1'b0; nmi_svc <= 1'b0;
             irq_d1 <= 1'b0; irq_d2 <= 1'b0;
+            nmi_d1 <= 1'b0; nmi_d2 <= 1'b0;
             i_poll <= 1'b1;   // reset P = $34 -> I set
         end else begin
             // NMI falling-edge detect runs EVERY clk (decoupled from `advance`). A WSYNC or
@@ -364,6 +369,8 @@ module xt6502f #(
           end else if (advance) begin
             irq_d2 <= irq_d1;          // 2-cycle /IRQ setup pipeline (see declaration)
             irq_d1 <= ~irq_n;
+            nmi_d2 <= nmi_d1;          // 2-cycle NMI setup pipeline (see declaration)
+            nmi_d1 <= nmi_pend;
             case (state)
                 ST_RST:   if (rst_cnt == 0) state <= ST_VECL; else rst_cnt <= rst_cnt - 3'd1;
                 ST_VECL:  begin PC[7:0]  <= din_r; state <= ST_VECH; end
@@ -372,10 +379,10 @@ module xt6502f #(
                 ST_FETCH: begin
                     has_idx <= 1'b0; pgx <= 1'b0; is_store <= 1'b0; is_rmw <= 1'b0; op <= OP_LD; sax <= 1'b0;
                     combo <= 1'b0; ushx <= 1'b0; ushx_tas <= 1'b0;
-                  if (nmi_pend || (irq_d2 && !i_poll)) begin     // HW interrupt (NMI priority): discard opcode, PC held
-                                                                  // (irq_d2: level from 2 cycles ago — the NMOS setup rule)
-                    intr <= 1'b1; nmi_svc <= nmi_pend; ir <= 8'h00;
-                    if (nmi_pend) nmi_pend <= 1'b0;
+                  if (nmi_d2 || (irq_d2 && !i_poll)) begin       // HW interrupt (NMI priority): discard opcode, PC held
+                                                                  // (both d2: state from 2 cycles ago — the NMOS setup rule)
+                    intr <= 1'b1; nmi_svc <= nmi_d2; ir <= 8'h00;
+                    if (nmi_d2) begin nmi_pend <= 1'b0; nmi_d1 <= 1'b0; nmi_d2 <= 1'b0; end
                     state <= ST_IRQ2;
                   end else begin
                     ir <= din_r; PC <= PC + 16'd1;
