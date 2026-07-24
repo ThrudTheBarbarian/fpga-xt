@@ -114,7 +114,13 @@ module dl_parser (
 
     // ---- Entry list (ping-pong) -----------------------------------------
     // {sc_m1[26:23], mode[22:19], dli[18], vs[17], hs[16], lms[15:0]}
-    logic [26:0] eram [0:2*EMAX-1];        // bank in bit 8 of the index
+    (* ram_style = "block" *)
+    logic [26:0] eram [0:2*EMAX-1];        // bank in bit 8 of the index —
+                                           // one write site (S_APPEND) + one
+                                           // registered read site (pf_q):
+                                           // simple-dual-port BLOCK RAM, keeps
+                                           // ~500 LUTs of LUTRAM off the
+                                           // placer's back (clk_sally closure)
     logic        act_bank;                 // walker reads this bank
     logic [8:0]  act_count;
     logic [4:0]  act_dli_cnt;
