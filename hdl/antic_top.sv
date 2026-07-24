@@ -363,7 +363,7 @@ module antic_top #(
     // and the whole DLI cluster arm exactly this way).  Line 260 is after
     // every normal vblank write yet still ~10 scanlines (>100 us) before
     // display, orders of magnitude beyond the parse's needs.
-    localparam [8:0] PARSE_KICK_LINE = 9'd248;
+    localparam [8:0] PARSE_KICK_LINE = 9'd260;
     wire       ar_line_start, ar_vbi_start;
     wire parse_kick_pulse = ar_line_start && (ar_scanline == PARSE_KICK_LINE);
     logic      scanline_is_vbi_q;      // registered (ar_scanline == PARSE_KICK_LINE); start_parse gate
