@@ -60,10 +60,15 @@ driven VSCROL rewrites incl. over-scroll) now pass on HW.
     status-tick vs WSYNC-release alignment. Instrument with DBG_TB armed
     MID-RUN (arm after xexload; the failure screen's own colour-band DLIs
     pollute post-halt captures — learned the hard way).
- 2. **antic_vscroll #5**: read 19 vs 15 = S latched as first-of-block
-    because the walker never displays the straddling line (rows beyond the
-    192 window) — act_carry_vs fix committed (59f6bef), IN BUILD 37,
-    needs HW verdict.
+ 2. **antic_vscroll GREEN** (build 37): act_carry_vs fixed the
+    frame-straddle case — all 5 sub-tests pass on HW.
+ 2b. **antic_dlistwrap** is NOT a simple DLI-carry: test #2 kills DL DMA
+    MID-FRAME (DMACTL=0 at scanline 14) and expects the LATCHED DL
+    instruction (with its DLI bit) to persist and re-fire after the
+    vblank once NMIEN comes on.  That's the live-DMACTL response family
+    (ANTIC IR-latch semantics), same cluster as pfstart/pfstop's
+    stride tests — the parser currently ignores DMACTL entirely.  Test
+    #3 additionally checks NMIRES doesn't clear a pending DLI.
  3. **antic_dlitiming delayed-odd**: back at the known $0E != $0F. A 3-stage
     NMI poll was tried and REVERTED ($F5 = NMI far late; and the build-35
     "Even $09" that motivated it was actually the marginal phantom-CE
