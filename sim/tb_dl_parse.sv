@@ -376,6 +376,37 @@ module tb_dl_parse;
         dli_row_r = 8'd39; @(posedge clk); #1;
         if (dli_at_w !== 1'b1) begin $display("FAIL handoff: no dli_at@39"); fail_count++; end
 
+        // =============================================================
+        // DLI carry across VBLANK (ACID800 antic_dlistwrap): a DL longer
+        // than the frame whose LAST budget-covered line carries a DLI.
+        // The straddling line's control byte survives the VBI (Altirra
+        // mDLControlPrev) -> its DLI fires on the next frame's row 0.
+        // DL: mode-2 LMS (8) + 28x blank-8 (224) + 1x $F0 (8) = 240 ->
+        // budget stop right after the $F0; trailing $70s never fetched.
+        // =============================================================
+        begin
+            int a;
+            a = 16'hD300;
+            load_byte(a[15:0], 8'h42); a++;          // mode 2 + LMS
+            load_byte(a[15:0], 8'h00); a++;
+            load_byte(a[15:0], 8'h30); a++;
+            for (int i = 0; i < 28; i++) begin load_byte(a[15:0], 8'h70); a++; end
+            load_byte(a[15:0], 8'hF0); a++;          // straddling blank + DLI
+            for (int i = 0; i < 4; i++) begin load_byte(a[15:0], 8'h70); a++; end
+        end
+        dlistl = 8'h00; dlisth = 8'hD3;
+        do_parse();
+        if (u_dl.act_carry_dli !== 1'b1) begin
+            $display("FAIL dlicarry: act_carry_dli=%b (expect 1)", u_dl.act_carry_dli);
+            fail_count++;
+        end
+        cur_walk_row = -1;
+        step_row();                       // frame_start latches w_carry_dli; row 0
+        dli_row_r = 8'd0; @(posedge clk); #1;
+        if (dli_at_w !== 1'b1) begin $display("FAIL dlicarry: no dli_at@row0"); fail_count++; end
+        dli_row_r = 8'd1; @(posedge clk); #1;
+        if (dli_at_w !== 1'b0) begin $display("FAIL dlicarry: dli_at@row1"); fail_count++; end
+
         if (fail_count == 0) begin
             $display("*** DL_PARSE OK *** parse_count=%0d", parse_count);
             $finish;

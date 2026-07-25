@@ -140,6 +140,7 @@ module dl_parser (
     logic        act_bank;                 // walker reads this bank
     logic [8:0]  act_count;
     logic        act_carry_vs;      // VS bit of the line straddling the frame end
+    logic        act_carry_dli;     // DLI bit of the straddling line (fires at row 0 next frame)
     logic [4:0]  act_dli_cnt;
     logic [7:0]  ph_act  [0:PH_N-1];       // active phantom DLI rows
     logic [4:0]  ph_act_cnt;
@@ -147,6 +148,7 @@ module dl_parser (
     // Parse-side (building) copies.
     logic [8:0]  ecount;
     logic        bld_last_vs;       // VS of the last appended entry
+    logic        bld_last_dli;      // DLI of the last appended entry
     logic [4:0]  bld_dli_cnt;
     logic [7:0]  ph_bld  [0:PH_N-1];
     logic [4:0]  ph_bld_cnt;
@@ -225,7 +227,8 @@ module dl_parser (
     logic [8:0]  w_idx;             // entry index being displayed
     logic [3:0]  w_dctr;            // ANTIC DCTR (sub-row within the line)
     logic        w_prev_vs;         // previous displayed line's VSCROL bit
-    logic        w_carry_vs;        // VS bit carried across the frame boundary:
+    logic        w_carry_vs;
+    logic        w_carry_dli;        // VS bit carried across the frame boundary:
                                     // a line straddling the vertical blank keeps
                                     // its VSCROL state into the next frame's
                                     // first line (antic_vscroll #5)
@@ -290,7 +293,8 @@ module dl_parser (
         for (int k = 0; k < PH_N; k++)
             if (k < ph_act_cnt && ph_act[k] == dli_row) ph_hit = 1'b1;
     end
-    assign dli_at = (cur_dli && w_is_last_dli && cur_mode != 4'h0) || ph_hit;
+    assign dli_at = (cur_dli && w_is_last_dli && cur_mode != 4'h0) || ph_hit
+                  || (w_carry_dli && dli_row == 8'd0);
 
     assign dbg_dli_cnt   = act_dli_cnt;
     assign dbg_act_count = act_count;
@@ -340,10 +344,12 @@ module dl_parser (
             act_bank        <= 1'b0;
             act_count       <= 9'd0;
             act_carry_vs    <= 1'b0;
+            act_carry_dli   <= 1'b0;
             act_dli_cnt     <= 5'd0;
             ph_act_cnt      <= 5'd0;
             ecount          <= 9'd0;
             bld_last_vs     <= 1'b0;
+            bld_last_dli    <= 1'b0;
             bld_dli_cnt     <= 5'd0;
             ph_bld_cnt      <= 5'd0;
             for (i = 0; i < PH_N; i++) begin
@@ -354,6 +360,7 @@ module dl_parser (
             w_dctr          <= 4'd0;
             w_prev_vs       <= 1'b0;
             w_carry_vs      <= 1'b0;
+            w_carry_dli     <= 1'b0;
             w_boot          <= 1'b0;
             cur_sc_m1       <= 4'd0;
             cur_mode        <= 4'd0;
@@ -418,6 +425,11 @@ module dl_parser (
                         // that entry, its rows sit beyond the visible window,
                         // so the carry must come from the parse).
                         act_carry_vs <= bld_last_vs;
+                        // Altirra: ANTIC remembers the straddling line's DL
+                        // control byte across the VBI (mDLControlPrev) — a
+                        // DLI riding on it fires on the NEXT frame's first
+                        // display line (ACID800 antic_dlistwrap).
+                        act_carry_dli <= bld_last_dli;
                         act_dli_cnt <= bld_dli_cnt;
                         ph_act_cnt  <= ph_bld_cnt;
                         for (i = 0; i < PH_N; i++) ph_act[i] <= ph_bld[i];
@@ -523,6 +535,7 @@ module dl_parser (
                         act_bank    <= wr_bank;
                         act_count   <= ecount;
                         act_carry_vs <= 1'b0;   // JVB line (vs=0) displays to the VBI
+                        act_carry_dli <= 1'b0;
                         act_dli_cnt <= bld_dli_cnt;
                         ph_act_cnt  <= ph_bld_cnt;
                         for (i = 0; i < PH_N; i++) ph_act[i] <= ph_bld[i];
@@ -579,6 +592,7 @@ module dl_parser (
                                  : elms;
                     if (dli_q) bld_dli_cnt <= bld_dli_cnt + 5'd1;
                     bld_last_vs <= is_blank ? 1'b0 : vscrol_q;
+                    bld_last_dli <= dli_q;
                     ecount     <= ecount + 9'd1;
                     scan_total <= scan_total + {5'd0, sc};
                     state      <= S_FETCH_OP;
@@ -632,6 +646,7 @@ module dl_parser (
                 // (act_carry_vs): the straddling entry's rows sit beyond the
                 // 192-row visible window, so the walker never reaches it.
                 w_carry_vs <= act_carry_vs;
+                w_carry_dli <= act_carry_dli;
             end else if (line_start) begin
                 if (w_boot) begin
                     // First displayed row of the frame: load entry 0.

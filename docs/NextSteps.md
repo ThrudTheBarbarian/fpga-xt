@@ -4,6 +4,16 @@
 
 # Immediate targets
 
+- **tb_hscrol_e2e AND tb_antic_display are STALE (fail at HEAD, pre-existing).** Both
+  predate the dl_parser walker rework: they tie `frame_start`/`line_start`/`prep_tick`
+  low, so the walker never steps and `meta_*` (now the walker's current-row registers)
+  serve stale/zero rows — "row0 not mode 4", wrong row-0 pixel pairs.  Not regressions;
+  they broke when the walker interface landed.  Fix = port them to the tb_dl_parse
+  `step_row()` harness pattern.  Until then they are NOT part of the sim gate
+  (gate = dl_parse, nmi, antic_dli, antic_dli_cdc, antic_modes, antic_dma_steal,
+  wsync, pokey, boot).
+
+
 ## Fidelity 6502 ("single-speed Sally") — time-native cycle-exact core
 Design: **docs/Design/fidelity-6502.md** (a FRESH core built around ~56 clk_sally per
 machine cycle; debug first-class in the micro-schedule; resident alongside turbo xt6502

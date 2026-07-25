@@ -506,38 +506,59 @@ module tb_pokey;
                 fail_count++;
             end
 
-            // Read SKSTAT ($D20F) — KEY_LATCH bit (5) should be 1,
-            // SHIFT bit (7) should mirror kbcode_q[6] = 1.
+            // Read SKSTAT ($D20F) — real POKEY layout: b5 = keyboard
+            // overrun (active-low, no overrun yet -> 1); b7 = framing
+            // error latch (no error -> 1).  KEY_LATCH is internal only.
             @(negedge clk);
             raddr = 8'h0F;
             @(negedge clk);
             if (rdata[5] !== 1'b1) begin
-                $display("FAIL I.key_latch_set: SKSTAT=$%02x bit5=0", rdata);
+                $display("FAIL I.kbd_ovr_idle: SKSTAT=$%02x bit5=0 (no overrun yet)", rdata);
                 fail_count++;
             end
             if (rdata[7] !== 1'b1) begin
-                $display("FAIL I.shift: SKSTAT=$%02x bit7=0 (expected SHIFT=1)", rdata);
+                $display("FAIL I.frame_idle: SKSTAT=$%02x bit7=0 (no framing err)", rdata);
                 fail_count++;
             end
 
-            // Now simulate a KBCODE read pulse (re=1 + re_addr=$09).
-            // pokey_regs clears KEY_LATCH 1 cycle later.
+            // Second key event BEFORE KBCODE is read -> keyboard overrun
+            // latches low (ACID800 pokey_skstat semantics).
+            @(negedge clk);
+            kbd_event_valid = 1'b1;
+            kbd_event_code  = 8'h6B;
+            @(posedge clk);
+            @(negedge clk);
+            kbd_event_valid = 1'b0;
+            @(negedge clk);
+            raddr = 8'h0F;
+            @(negedge clk);
+            if (rdata[5] !== 1'b0) begin
+                $display("FAIL I.kbd_ovr_set: SKSTAT=$%02x bit5=1 (expected overrun)", rdata);
+                fail_count++;
+            end
+
+            // KBCODE read clears the internal latch but NOT the overrun
+            // flag; SKRES returns it to 1.
             @(negedge clk);
             re      = 1'b1;
             re_addr = 8'h09;
             @(posedge clk);
             @(negedge clk);
             re = 1'b0;
-            // Wait one cycle for the latch to clear.
             @(posedge clk);
-
-            // Re-read SKSTAT — KEY_LATCH should now be 0.
             @(negedge clk);
             raddr = 8'h0F;
             @(negedge clk);
             if (rdata[5] !== 1'b0) begin
-                $display("FAIL I.key_latch_clear: SKSTAT=$%02x bit5=1 after KBCODE read",
-                         rdata);
+                $display("FAIL I.kbd_ovr_sticky: SKSTAT=$%02x bit5=1 (KBCODE read must not clear)", rdata);
+                fail_count++;
+            end
+            do_write(8'h0A, 8'h00);   // SKRES
+            @(negedge clk);
+            raddr = 8'h0F;
+            @(negedge clk);
+            if (rdata[5] !== 1'b1) begin
+                $display("FAIL I.kbd_ovr_skres: SKSTAT=$%02x bit5=0 after SKRES", rdata);
                 fail_count++;
             end
         end
@@ -757,10 +778,10 @@ module tb_pokey;
                 fail_count++;
             end
 
-            // ---- K.6: SKRES clears the latched serial IRQ bits
-            //          (4 and 5) but leaves bit 6 (kbd) intact. Bit 3
-            //          is unlatched (live) and SKRES has no effect
-            //          on it.
+            // ---- K.6: SKRES does NOT touch the IRQ latches (real POKEY /
+            //          Altirra: SKRES only resets the SKSTAT error flags).
+            //          The pending ser-in latch from K.5 must survive an
+            //          SKRES and clear only via the IRQEN ack path.
             do_write(8'h0E, 8'h60);   // IRQEN = bit 5 + bit 6
             @(negedge clk);
             kbd_event_valid = 1'b1;
@@ -774,29 +795,41 @@ module tb_pokey;
             @(negedge clk);
             raddr = 8'h0E;
             @(negedge clk);
-            if (rdata[5] !== 1'b1) begin
-                $display("FAIL K.6: IRQST=$%02x bit5=0 (SKRES should clear ser-in)", rdata);
+            if (rdata[5] !== 1'b0) begin
+                $display("FAIL K.6: IRQST=$%02x bit5=1 (ser-in latch must SURVIVE SKRES)", rdata);
                 fail_count++;
             end
             if (rdata[6] !== 1'b0) begin
                 $display("FAIL K.6: IRQST=$%02x bit6=1 (kbd latch should survive SKRES)", rdata);
                 fail_count++;
             end
+            // IRQEN ack (drop bit 5) clears the ser-in latch.
+            do_write(8'h0E, 8'h40);
+            @(negedge clk);
+            raddr = 8'h0E;
+            @(negedge clk);
+            if (rdata[5] !== 1'b1) begin
+                $display("FAIL K.6b: IRQST=$%02x bit5=0 (IRQEN ack should clear)", rdata);
+                fail_count++;
+            end
 
-            // ---- K.7: SKSTAT serial-flag bits (4..2) reflect inputs.
+            // ---- K.7: SKSTAT error flags (real layout): framing = b7,
+            //          serial overrun = b6, LATCHED active-low; busy = b1
+            //          live active-low.
             do_write(8'h0E, 8'h00);   // ack everything
             ser_framing_err   = 1'b1;
             ser_input_overrun = 1'b0;
             ser_input_busy    = 1'b1;
             @(negedge clk);
+            @(negedge clk);
             raddr = 8'h0F;          // SKSTAT
             @(negedge clk);
-            if (rdata[4] !== 1'b1) begin
-                $display("FAIL K.7: SKSTAT=$%02x bit4=0 (framing err)", rdata);
+            if (rdata[7] !== 1'b0) begin
+                $display("FAIL K.7: SKSTAT=$%02x bit7=1 (framing err should latch low)", rdata);
                 fail_count++;
             end
-            if (rdata[3] !== 1'b0) begin
-                $display("FAIL K.7: SKSTAT=$%02x bit3=1 (overrun)", rdata);
+            if (rdata[6] !== 1'b1) begin
+                $display("FAIL K.7: SKSTAT=$%02x bit6=0 (no overrun)", rdata);
                 fail_count++;
             end
             // bit 1 is active-LOW serial-input-busy: while ser_input_busy
@@ -814,6 +847,23 @@ module tb_pokey;
             @(negedge clk);
             if (rdata[1] !== 1'b1) begin
                 $display("FAIL K.7: SKSTAT=$%02x bit1=0 when idle (expected 1)", rdata);
+                fail_count++;
+            end
+
+            // Framing latch survives the input dropping; SKRES restores it.
+            @(negedge clk);
+            raddr = 8'h0F;
+            @(negedge clk);
+            if (rdata[7] !== 1'b0) begin
+                $display("FAIL K.7b: SKSTAT=$%02x bit7=1 (framing latch must stick)", rdata);
+                fail_count++;
+            end
+            do_write(8'h0A, 8'h00);   // SKRES
+            @(negedge clk);
+            raddr = 8'h0F;
+            @(negedge clk);
+            if (rdata[7] !== 1'b1) begin
+                $display("FAIL K.7c: SKSTAT=$%02x bit7=0 after SKRES", rdata);
                 fail_count++;
             end
 

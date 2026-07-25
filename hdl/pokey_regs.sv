@@ -157,6 +157,12 @@ module pokey_regs (
     logic [7:0] kbcode_q;        // last received scan code (+ shift / ctrl)
     logic       key_latch_q;     // SKSTAT[5] — set on event, cleared on KBCODE read
     logic       key_down_q;      // SKSTAT[2] (active-low) — a key is currently held
+    // SKSTAT error latches (active-LOW: 1 = no error).  Set low on the
+    // event, returned high by an SKRES ($D20A) write — real POKEY / Altirra
+    // semantics (SKRES: mSKSTAT |= 0xE0; it does NOT touch IRQST).
+    logic       frame_err_n_q;   // SKSTAT[7] serial input framing error
+    logic       ser_ovr_n_q;     // SKSTAT[6] serial input overrun
+    logic       kbd_ovr_n_q;     // SKSTAT[5] keyboard overrun
     logic [7:0] skctl_q;         // $D20F write — debounce / scan rate / serial mode
 
     // M23-6 IRQ + serial
@@ -215,6 +221,9 @@ module pokey_regs (
             kbcode_q    <= 8'h00;
             key_latch_q <= 1'b0;
             key_down_q  <= 1'b0;
+            frame_err_n_q <= 1'b1;
+            ser_ovr_n_q   <= 1'b1;
+            kbd_ovr_n_q   <= 1'b1;
             skctl_q     <= 8'h00;
             irqen_q     <= 8'h00;
             irq_latch_q <= 8'h00;
@@ -244,6 +253,10 @@ module pokey_regs (
             // auto-repeat runs only while a key is genuinely held.
             if (kbd_event_valid)  key_down_q <= 1'b1;
             else if (kbd_release) key_down_q <= 1'b0;
+            // Keyboard overrun: a new key event while KBCODE is still unread.
+            if (kbd_event_valid && key_latch_q) kbd_ovr_n_q <= 1'b0;
+            if (ser_framing_err)   frame_err_n_q <= 1'b0;
+            if (ser_input_overrun) ser_ovr_n_q   <= 1'b0;
 
             // ---- Serial input byte capture (M23-6) -----
             if (ser_in_byte_pulse) serin_q <= ser_in_byte;
@@ -274,11 +287,15 @@ module pokey_regs (
                     4'h7: audc4_q  <= wdata;
                     4'h8: audctl_q <= wdata;
                     4'hA: begin
-                        // SKRES — clears the latched serial IRQ bits
-                        // (bits 4 and 5). Bit 3 (output-complete) is
-                        // unlatched — it tracks ser_out_complete
-                        // directly and SKRES has no effect on it.
-                        irq_latch_q[5:4] <= 2'b00;
+                        // SKRES — returns the three SKSTAT error latches
+                        // (framing / serial overrun / keyboard overrun) to
+                        // the no-error state.  Real POKEY's SKRES does NOT
+                        // touch the IRQ latches (Altirra: mSKSTAT |= 0xE0
+                        // only; ACID800 pokey_skstat) — IRQ acks go through
+                        // the IRQEN write path.
+                        frame_err_n_q <= 1'b1;
+                        ser_ovr_n_q   <= 1'b1;
+                        kbd_ovr_n_q   <= 1'b1;
                     end
                     4'hD: serout_q <= wdata;       // SEROUT
                     4'hE: begin
@@ -340,9 +357,16 @@ module pokey_regs (
             //           ("Serial input active bit was asserted when idle"
             //           fires when it reads 0).  See Altirra §5.10.
             //   bit 0 = unused (always 0)
-            4'hF: rdata = {kbcode_q[6], 1'b0, key_latch_q,
-                           ser_framing_err, ser_input_overrun,
-                           ~key_down_q, ~ser_input_busy, 1'b0};
+            4'hF: rdata = {frame_err_n_q,       // b7 framing error (0=err)
+                           ser_ovr_n_q,         // b6 serial input overrun (0=err)
+                           kbd_ovr_n_q,         // b5 keyboard overrun (0=err)
+                           1'b1,                // b4 direct serial in (idle mark)
+                           1'b1,                // b3 shift held (0=held; live state
+                                                //    not plumbed — KBCODE b6 carries
+                                                //    shift for typed keys)
+                           ~key_down_q,         // b2 key still pressed (0=held)
+                           ~ser_input_busy,     // b1 serial input busy (0=busy)
+                           1'b1};               // b0 unused, reads 1
             // $D20B / $D20C are unused POKEY read addresses; the chip
             // does not drive the data bus for them, so the Atari reads
             // the pulled-up bus as $FF.  ACID800 pokey_default reads
