@@ -53,6 +53,7 @@ module tb_dl_parse;
     logic        frame_start_r = 1'b0;
     logic        line_start_r  = 1'b0;
     logic        prep_tick_r   = 1'b0;
+    logic [7:0]  dli_row_r     = 8'h00;
     wire  [3:0]  meta_mode;
     wire         meta_dli;
     wire  [15:0] meta_lms_addr;
@@ -84,7 +85,7 @@ module tb_dl_parse;
         .meta_sub_row  (meta_sub_row),
         .meta_hscrol_en(),
         .meta_vscrol_en(meta_vscrol_en),
-        .dli_row       (8'h00),
+        .dli_row       (dli_row_r),
         .dli_at        (dli_at_w),
         .parse_done    (parse_done),
         .parse_count   (parse_count)
@@ -329,6 +330,50 @@ module tb_dl_parse;
             for (int r = 0; r < 14; r++)
                 check_ms(r[7:0], 4'h2, exp[r], 1'b1);
         end
+
+        // =============================================================
+        // Two-stage DLIST handoff (the HW nmist sequence): parse a
+        // "loader" list (mode line + JVB self-loop), then write DLISTL/H
+        // once to the nmist probe list (3x $70 + 2x $F0 + JVB) and check
+        // the NEXT parse publishes the emitted-blank phantoms {31,39}.
+        // =============================================================
+        // loader-ish list at $D100: LMS mode 2 + JVB self-loop
+        load_byte(16'hD100, 8'h42);
+        load_byte(16'hD101, 8'h00);
+        load_byte(16'hD102, 8'h30);
+        load_byte(16'hD103, 8'h41);
+        load_byte(16'hD104, 8'h00);
+        load_byte(16'hD105, 8'hD1);
+        dlistl = 8'h00; dlisth = 8'hD1;
+        do_parse();                       // parse 1: loader list (dirty write)
+        // free-running parse (NO dlist write): JVB self-loop re-parses loader
+        @(negedge clk); start_parse <= 1'b1;
+        @(negedge clk); start_parse <= 1'b0;
+        wait (parse_done); @(posedge clk); cur_walk_row = -1;
+        // nmist probe list at $D200
+        load_byte(16'hD200, 8'h70);
+        load_byte(16'hD201, 8'h70);
+        load_byte(16'hD202, 8'h70);
+        load_byte(16'hD203, 8'hF0);
+        load_byte(16'hD204, 8'hF0);
+        load_byte(16'hD205, 8'h41);
+        load_byte(16'hD206, 8'h00);
+        load_byte(16'hD207, 8'hD2);
+        dlistl = 8'h00; dlisth = 8'hD2;
+        do_parse();                       // parse 3: after the one-time rewrite
+        if (u_dl.ph_act_cnt !== 5'd2
+            || u_dl.ph_act[0] !== 8'd31 || u_dl.ph_act[1] !== 8'd39) begin
+            $display("FAIL handoff: ph_cnt=%0d ph0=%0d ph1=%0d (expect 2/31/39)",
+                     u_dl.ph_act_cnt, u_dl.ph_act[0], u_dl.ph_act[1]);
+            fail_count++;
+        end
+        // dli_at must level at rows 31/39 and be clear at 30
+        dli_row_r = 8'd30; @(posedge clk); #1;
+        if (dli_at_w !== 1'b0) begin $display("FAIL handoff: dli_at@30"); fail_count++; end
+        dli_row_r = 8'd31; @(posedge clk); #1;
+        if (dli_at_w !== 1'b1) begin $display("FAIL handoff: no dli_at@31"); fail_count++; end
+        dli_row_r = 8'd39; @(posedge clk); #1;
+        if (dli_at_w !== 1'b1) begin $display("FAIL handoff: no dli_at@39"); fail_count++; end
 
         if (fail_count == 0) begin
             $display("*** DL_PARSE OK *** parse_count=%0d", parse_count);

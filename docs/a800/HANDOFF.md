@@ -16,6 +16,17 @@ build regenerates the ps7_init tree under the JTAG scripts).
 ## 0. 2026-07-25 sessions (newest)
 
 ### 0e. WSYNC/NMIST calibration dossier (2026-07-25 evening — READ FIRST)
+**INSTRUMENT LANDED (late evening):** `make -C sim fid_raster`
+(tb_fid_raster.sv) — fid core + antic_top + sally_mem at real 3:4
+pacing executing the exact nmist chain, per-commit (PC, IR, scanline,
+cycle) trace.  FIRST RESULT: WSYNC write completes at 38/14; the core
+resumes with PHA at CYCLE 107 (real ~103-104).  The +3 is in the
+release-to-resume path (release tick @104 -> antic_rdy_n -> clk_sally
+CDC -> q1 mid-retime -> fid commit-slot sampling).  Tune there with
+seconds-long sim runs; add vcount/wsync chains to the same tb as
+sim-side anchors BEFORE any rebuild.  (tb_boot runs the TURBO core —
+no other sim exercises fid-vs-raster timing.)
+
 Build 41c (3cfb686 + AltSpreadLogic_high) is on the board: steal-gate +
 status-tick-6, ALL anchors green, dlitiming back to delayed-odd-only.
 Probe data (DBG_TB mode 2, NMIST reads with raster positions):
