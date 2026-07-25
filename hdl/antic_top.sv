@@ -1210,6 +1210,11 @@ module antic_top #(
         .frame_start(vbi_start_pulse_bus),
         .line_start(line_start_pulse_bus && (ar_atari_row != 8'hFF)),
         .prep_tick(phi2_tick && (ar_phi2_in_line == 8'd111)),
+        // Altirra VSCROL latch points: cycle-6 snapshot feeds the DLI
+        // decision (mLatchedVScroll2); the row-stop copy freezes at 109
+        // (mLatchedVScroll, "used at cycles 112 and 1").
+        .vs_dli_tick(phi2_tick && (ar_phi2_in_line == 8'd6)),
+        .vs_stop_tick(phi2_tick && (ar_phi2_in_line == 8'd109)),
         .dlistl(dlistl_q), .dlisth(dlisth_q),
         .dlistl_we(dlistl_we_w), .dlisth_we(dlisth_we_w),
         .vscrol(vscrol_q[3:0]),
@@ -1268,6 +1273,7 @@ module antic_top #(
     // combinational lookup that is stable across the whole line, so
     // sampling it at cycle 8 (rather than cycle 0) is fine.
     wire cycle_8_pulse = phi2_tick && (ar_phi2_in_line == 8'd8);
+
     // NMIST status tick at cycle 6: the DLI/VBI status bit must be VISIBLE
     // to a CPU read whose data cycle is 6 (ACID800 antic_nmist's "set too
     // late" check) — MiSTer/real ANTIC set the flag from the cycle-6 slot.

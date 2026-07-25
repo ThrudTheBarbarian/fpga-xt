@@ -673,6 +673,18 @@ module tb_fid_raster;
                         8'hEA,8'hEA,8'hEA,8'hEA,8'hEA,8'hEA, // NOP sled $2030-2035
                         8'h4C,8'h14,8'h20 };               // JMP w0 ($2036)
                     for (int k = 0; k < 57; k++) u_sally_mem.mem[16'h2000+k] = progb[k];
+                    if (psel == 3) begin
+                        // PLAIN-odd shape: NMIEN=$80 from the start (before
+                        // the sync), INC WSYNC, then the sled.  Expected per
+                        // real NMOS: edge@8 lands on the first cycle of the
+                        // NOP at (8,9) -> penultimate poll sees it -> hijack
+                        // after -> pushed PC = $2032... (offsets differ from
+                        // the delayed shape: sled starts right at t6).
+                        // Rewrite $2023.. to: NOP sled directly (NMIEN was
+                        // already on from init).
+                        u_sally_mem.mem[16'h2006]=8'h80;   // LDA #$80 -> STA NMIEN (init on)
+                        for (int k=0;k<13;k++) u_sally_mem.mem[16'h2023+k]=8'hEA;
+                    end
                     if (psel == 2) begin
                         // delayed-EVEN shape: LDA $80 spans cycles 7-9 so the
                         // cycle-8 edge lands mid-instruction; real NMOS's
@@ -737,6 +749,23 @@ module tb_fid_raster;
     // the last commit of the $202C instruction.
     // ====================================================================
     int chain_runs = 0;
+    // /NMI arrival tracer: wall position of every nmi_pend rise + the
+    // commit slots bracketing it (only near the DLI scanlines).
+    reg pend_q0 = 0;
+    always @(posedge clk_sally) begin
+        pend_q0 <= u_fid_core.nmi_pend;
+        if (u_fid_core.nmi_pend && !pend_q0)
+            $display("[nmi] pend RISE at scan=%0d cyc=%0d (sub=%0d)",
+                     u_antic_top.ar_scanline, u_antic_top.ar_phi2_in_line,
+                     u_fid_core.sub);
+        if (u_fid_core.slot_commit && fid_rdy
+            && u_antic_top.ar_scanline == 9'd39
+            && u_antic_top.ar_phi2_in_line <= 8'd14)
+            $display("[nmi] commit @ scan=39 cyc=%0d PC=%04h IR=%02h pend=%b d1=%b p1=%b p2=%b",
+                     u_antic_top.ar_phi2_in_line, fdbg_pc, fdbg_ir,
+                     u_fid_core.nmi_pend, u_fid_core.nmi_d1,
+                     u_fid_core.nmi_polled, 1'b0);
+    end
     // Parse-path probe: count start_parse pulses + dl_start kicks, and dump
     // the parser's state transitions for the first few.
     int sp_cnt = 0;

@@ -71,6 +71,7 @@ module tb_dl_parse;
         .frame_start   (frame_start_r),
         .line_start    (line_start_r),
         .prep_tick     (prep_tick_r),
+        .vs_dli_tick   (1'b1), .vs_stop_tick (1'b1),
         .dlistl        (dlistl),
         .dlisth        (dlisth), .dlistl_we(dl_we_pulse), .dlisth_we(dl_we_pulse),
         .vscrol        (vscrol_r),

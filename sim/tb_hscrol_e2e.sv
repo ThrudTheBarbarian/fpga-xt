@@ -39,7 +39,7 @@ module tb_hscrol_e2e;
 
     dl_parser u_dl (
         .clk(clk), .rst(rst), .start_parse(start_parse),
-        .cold_abort(1'b0), .frame_start(1'b0), .line_start(1'b0), .prep_tick(1'b0),
+        .cold_abort(1'b0), .frame_start(1'b0), .line_start(1'b0), .prep_tick(1'b0), .vs_dli_tick(1'b1), .vs_stop_tick(1'b1),
         .dlistl(8'h00), .dlisth(8'h30), .vscrol(4'h0),
         .mem_raddr(dl_raddr), .mem_rdata(dl_rdata),
         .mem_req(), .mem_ready(1'b1),

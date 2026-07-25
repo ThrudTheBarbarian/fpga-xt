@@ -89,6 +89,7 @@ module tb_nmi;
         .clk(clk), .rst(rst), .start_parse(dl_start),
         .cold_abort(1'b0),
         .frame_start(w_frame), .line_start(w_line), .prep_tick(w_prep),
+        .vs_dli_tick(1'b1), .vs_stop_tick(1'b1),
         .dlistl(8'h00), .dlisth(8'hD0),
         .vscrol(4'h0),
         .mem_raddr(dl_raddr), .mem_rdata(dl_rdata), .mem_req(), .mem_ready(1'b1),

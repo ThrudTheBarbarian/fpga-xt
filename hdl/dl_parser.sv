@@ -70,6 +70,8 @@ module dl_parser (
     input  wire         frame_start,       // vbi pulse: prime the walker for the next frame
     input  wire         line_start,        // scanline-start pulse, gated to the active window
     input  wire         prep_tick,         // late-line pulse (phi2 cycle ~111): prefetch next entry
+    input  wire         vs_dli_tick,       // cycle-6 pulse: freeze VSCROL for the DLI decision
+    input  wire         vs_stop_tick,      // cycle-109 pulse: freeze VSCROL for the row-stop compare
 
     // ANTIC register inputs.
     input  wire [7:0]   dlistl,
@@ -242,11 +244,33 @@ module dl_parser (
     logic [8:0]  pf_idx;
     logic [26:0] pf_q;
 
-    // Live line-end comparison (the real DCTR/VSCROL semantics).
+    // Line-end comparison against LATCHED VSCROL copies (Altirra semantics:
+    // mLatchedVScroll2 snapshots at cycle 6 and feeds the DLI decision at
+    // cycle 7; mLatchedVScroll updates through cycle ~108 and feeds the
+    // row-stop compare at 112/1.  A mid-line VSCROL write — e.g. from the
+    // DLI handler itself — must NOT retroactively change the CURRENT
+    // line's DLI decision: ACID800 antic_vscroldli 'VSCROL took effect
+    // too early' under the previous live compare).
+    logic [3:0] vscrol_dli_q;    // frozen at cycle 6
+    logic [3:0] vscrol_stop_q;   // frozen at cycle 109
+    always_ff @(posedge clk or posedge rst) begin
+        if (rst) begin
+            vscrol_dli_q  <= 4'd0;
+            vscrol_stop_q <= 4'd0;
+        end else begin
+            if (vs_dli_tick)  vscrol_dli_q  <= vscrol;
+            if (vs_stop_tick) vscrol_stop_q <= vscrol;
+        end
+    end
     wire w_last_of_block = w_prev_vs && !cur_vs;
-    wire [4:0] e_live    = w_last_of_block ? {1'b0, vscrol}
+    // Row-advance decision (evaluated at prep/flip): the 109-latched copy.
+    wire [4:0] e_stop    = w_last_of_block ? {1'b0, vscrol_stop_q}
                                            : {1'b0, cur_sc_m1};
-    wire w_is_last       = ({1'b0, w_dctr} == e_live);
+    wire w_is_last       = ({1'b0, w_dctr} == e_stop);
+    // DLI decision: the cycle-6-latched copy.
+    wire [4:0] e_dli     = w_last_of_block ? {1'b0, vscrol_dli_q}
+                                           : {1'b0, cur_sc_m1};
+    wire w_is_last_dli   = ({1'b0, w_dctr} == e_dli);
 
     // Walker-facing outputs (meta_row is interface-compatibility only —
     // the compositor always asks for the row being walked).
@@ -266,7 +290,7 @@ module dl_parser (
         for (int k = 0; k < PH_N; k++)
             if (k < ph_act_cnt && ph_act[k] == dli_row) ph_hit = 1'b1;
     end
-    assign dli_at = (cur_dli && w_is_last && cur_mode != 4'h0) || ph_hit;
+    assign dli_at = (cur_dli && w_is_last_dli && cur_mode != 4'h0) || ph_hit;
 
     assign dbg_dli_cnt   = act_dli_cnt;
     assign dbg_act_count = act_count;

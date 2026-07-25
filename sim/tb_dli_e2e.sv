@@ -45,6 +45,7 @@ module tb_dli_e2e;
     wire       parse_done;
     dl_parser u_dl (
         .clk(clk), .rst(rst), .start_parse(vbi_start),
+        .cold_abort(1'b0), .frame_start(vbi_start), .line_start(line_start && atari_row != 8'hFF), .prep_tick(cycle_7), .vs_dli_tick(1'b1), .vs_stop_tick(1'b1),
         .dlistl(8'h00), .dlisth(8'h2C), .dlistl_we(1'b0), .dlisth_we(1'b0), .vscrol(4'h0),
         .mem_raddr(raddr), .mem_rdata(rdata), .mem_req(), .mem_ready(1'b1),
         .meta_row(8'h00), .meta_mode(), .meta_dli(), .meta_lms_addr(),
