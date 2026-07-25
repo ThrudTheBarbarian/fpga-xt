@@ -15,6 +15,45 @@ build regenerates the ps7_init tree under the JTAG scripts).
 
 ## 0. 2026-07-25 sessions (newest)
 
+### 0g. antic_vscroldli ROOT CAUSE (overnight 07-25→26 — DEFINITIVE, fix deferred)
+Instrument: `tb_fid_raster +prog=4` — full replica of Avery's two-probe
+bracket (real DL: VS mode-8 block + 1-line VS-exit blank+DLI rows at
+raster 40/57; STX VSCROL write at cycle ~3 must suppress that line's
+DLI, write at ~4 must not; NMIST is the witness, NMIEN=0).
+
+Layered findings:
+1. The VSCROL latch semantics (commit 39c634b: cycle-6 DLI copy /
+   cycle-109 stop copy = Altirra mLatchedVScroll2/mLatchedVScroll)
+   are CORRECT and measured working: the cycle-6 latch captures a
+   cycle-3/4 write and misses later ones, exactly as on real silicon.
+   Altirra confirms the entry-DCTR load (mRowCounter = mVSCROL on
+   block entry) uses the LIVE register — ours does too.  KEEP THIS.
+2. But the probes still fail because the VS-exit BLANK row's DLI never
+   fires at the right line: appended blank+DLI entries deliver their
+   DLI via a PARSE-TIME phantom raster row (lead + scan_total + sc - 1)
+   which assumes STATIC row heights.  Vertical scrolling shortens the
+   VS-exit row dynamically (8 lines -> 1 with VSCROL=0), so the phantom
+   fires at raster 47/71 instead of 40/57.
+3. Walker delivery (drop the `cur_mode != 0` exclusion in dli_at, no
+   phantom for appended blanks) was tried and REVERTED: the walker runs
+   24 ROWS EARLY relative to true raster — the parser skips the
+   standard blank lead (LEAD_OVERSCAN=24) and the walker serves entry 0
+   at ar_atari_row 0 (raster 8, measured in-sim), with output framing
+   hiding the uniform shift on HDMI.  Walker-timed blank DLIs therefore
+   fire 24 lines early (regressed the nmist probe from $9F to $1F).
+4. The test fundamentally requires RASTER-TIME COINCIDENCE: the CPU
+   write at cycle 3/4 of raster line 40 must interact with the row-end
+   decision made ON that raster line.  A walker skewed -24 rows decided
+   that row 24 lines ago; a scheduled/dynamic phantom (walker row +
+   lead) gets the LINE right but freezes the decision a frame-slice too
+   early.  No small patch closes this.
+THE FIX (daylight, architectural): run the walker lead-aligned (idle
+through lead_skipped rows so walker row == true raster row) and move
+the output-window base to compensate, OR drive DLI/NMI timing from a
+raster-true row sequencer (antic_seq).  Either needs HW visual
+verification of the XL plane calibration — not an unattended change.
+All sims for the committed state re-verified green after the revert.
+
 ### 0f. dlitiming NMI-recognition matrix (overnight 07-25→26 — DEFINITIVE)
 Measured with `tb_fid_raster +prog=N` (PC-recording NMI handler; the
 pushed PCL is the verdict).  Real-NMOS expected values: delayed-odd

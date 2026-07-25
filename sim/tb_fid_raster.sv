@@ -693,6 +693,59 @@ module tb_fid_raster;
                         u_sally_mem.mem[16'h2030]=8'hA5;  // LDA $80
                         u_sally_mem.mem[16'h2031]=8'h80;
                     end
+                    if (psel == 4) begin
+                        // ACID800 antic_vscroldli replica (Avery's two-probe
+                        // bracket).  DL = the real test's: VS mode-8 block +
+                        // 1-line VS-exit blank+DLI rows at scanlines 40 & 57.
+                        // Probe 1: STX VSCROL write lands ~cycle 3 of line 40
+                        //   -> MUST take effect (DLI suppressed): $0600 b7=0.
+                        // Probe 2: INC zp pushes the write to ~cycle 4 of
+                        //   line 57 -> must NOT take effect (DLI fires):
+                        //   $0601 b7=1.  NMIEN=0: NMIST records regardless.
+                        static logic [7:0] progv [0:108] = '{
+                            8'hA9,8'h20, 8'h8D,8'h00,8'hD4,   // LDA #$20 / STA DMACTL
+                            8'hA9,8'h00, 8'h8D,8'h0E,8'hD4,   // LDA #0   / STA NMIEN
+                            8'hA9,8'h00, 8'h8D,8'h02,8'hD4,   // LDA #0   / STA DLISTL
+                            8'hA9,8'h2C, 8'h8D,8'h03,8'hD4,   // LDA #$2C / STA DLISTH
+                            8'hA2,8'h01,                       // LDX #1
+                            8'hA0,8'h00,                       // LDY #0
+                            8'hA9,8'h13,                       // p1=$2018: LDA #19
+                            8'hCD,8'h0B,8'hD4, 8'hF0,8'hFB,    // CMP VCOUNT / BEQ
+                            8'hCD,8'h0B,8'hD4, 8'hD0,8'hFB,    // CMP VCOUNT / BNE
+                            8'h8D,8'h0F,8'hD4,                 // STA NMIRES
+                            8'h8D,8'h0A,8'hD4,                 // STA WSYNC (end 38)
+                            8'h8D,8'h0A,8'hD4,                 // STA WSYNC (end 39)
+                            8'h48,8'h68,                       // PHA/PLA  *,104..109
+                            8'hAD,8'h00,8'h01,                 // LDA $0100  110..113
+                            8'h8E,8'h05,8'hD4,                 // STX VSCROL 0,1,2,3 (line 40)
+                            8'h48,8'h68,                       // PHA/PLA
+                            8'hAD,8'h0F,8'hD4,                 // LDA NMIST
+                            8'h8D,8'h00,8'h06,                 // STA $0600
+                            8'h8C,8'h05,8'hD4,                 // STY VSCROL (restore 0)
+                            8'hA9,8'h1B,                       // p2=$2040: LDA #27
+                            8'hCD,8'h0B,8'hD4, 8'hF0,8'hFB,    // CMP VCOUNT / BEQ
+                            8'hCD,8'h0B,8'hD4, 8'hD0,8'hFB,    // CMP VCOUNT / BNE
+                            8'h8D,8'h0F,8'hD4,                 // STA NMIRES
+                            8'h8D,8'h0A,8'hD4,                 // STA WSYNC (end 54)
+                            8'h8D,8'h0A,8'hD4,                 // STA WSYNC (end 55)
+                            8'h8D,8'h0A,8'hD4,                 // STA WSYNC (end 56)
+                            8'h48,8'h68,                       // PHA/PLA  *,104..109
+                            8'hE6,8'hC8,                       // INC $C8   110..113,0
+                            8'h8E,8'h05,8'hD4,                 // STX VSCROL 1,2,3,4 (line 57)
+                            8'h48,8'h68,                       // PHA/PLA
+                            8'hAD,8'h0F,8'hD4,                 // LDA NMIST
+                            8'h8D,8'h01,8'h06,                 // STA $0601
+                            8'h8C,8'h05,8'hD4,                 // STY VSCROL
+                            8'h4C,8'h18,8'h20 };               // JMP p1 ($206A)
+                        for (int k = 0; k < 109; k++) u_sally_mem.mem[16'h2000+k] = progv[k];
+                        // real test's DL: 3x blank8, VS mode8, exit blank+DLI, blank8, VS mode8, exit blank+DLI, JVB
+                        u_sally_mem.mem[16'h2C00]=8'h70; u_sally_mem.mem[16'h2C01]=8'h70;
+                        u_sally_mem.mem[16'h2C02]=8'h70; u_sally_mem.mem[16'h2C03]=8'h28;
+                        u_sally_mem.mem[16'h2C04]=8'hF0; u_sally_mem.mem[16'h2C05]=8'h70;
+                        u_sally_mem.mem[16'h2C06]=8'h28; u_sally_mem.mem[16'h2C07]=8'hF0;
+                        u_sally_mem.mem[16'h2C08]=8'h41; u_sally_mem.mem[16'h2C09]=8'h00;
+                        u_sally_mem.mem[16'h2C0A]=8'h2C;
+                    end
                     // handler: PHA TSX LDA $0103,X STA $0600 PLA RTI
                     u_sally_mem.mem[16'h2100]=8'h48; u_sally_mem.mem[16'h2101]=8'hBA;
                     u_sally_mem.mem[16'h2102]=8'hBD; u_sally_mem.mem[16'h2103]=8'h03;
@@ -707,6 +760,19 @@ module tb_fid_raster;
             u_sally_mem.mem[16'h2C02]=8'h70; u_sally_mem.mem[16'h2C03]=8'hF0;
             u_sally_mem.mem[16'h2C04]=8'hF0; u_sally_mem.mem[16'h2C05]=8'h41;
             u_sally_mem.mem[16'h2C06]=8'h00; u_sally_mem.mem[16'h2C07]=8'h2C;
+            begin
+                int psel2;
+                // prog=4 (vscroldli) uses the REAL test's DL — re-apply it
+                // over the common nmist DL written just above.
+                if ($value$plusargs("prog=%d", psel2) && psel2 == 4) begin
+                    u_sally_mem.mem[16'h2C00]=8'h70; u_sally_mem.mem[16'h2C01]=8'h70;
+                    u_sally_mem.mem[16'h2C02]=8'h70; u_sally_mem.mem[16'h2C03]=8'h28;
+                    u_sally_mem.mem[16'h2C04]=8'hF0; u_sally_mem.mem[16'h2C05]=8'h70;
+                    u_sally_mem.mem[16'h2C06]=8'h28; u_sally_mem.mem[16'h2C07]=8'hF0;
+                    u_sally_mem.mem[16'h2C08]=8'h41; u_sally_mem.mem[16'h2C09]=8'h00;
+                    u_sally_mem.mem[16'h2C0A]=8'h2C;
+                end
+            end
             u_sally_mem.mem[16'hFFFC]=8'h00; u_sally_mem.mem[16'hFFFD]=8'h20;
             $display("[inject] mem[2000..3]=%02h %02h %02h %02h  vec=%02h%02h",
                      u_sally_mem.mem[16'h2000], u_sally_mem.mem[16'h2001],
@@ -749,6 +815,42 @@ module tb_fid_raster;
     // the last commit of the $202C instruction.
     // ====================================================================
     int chain_runs = 0;
+    reg watch_q = 0;
+    always @(posedge clk_sally) if (u_fid_core.slot_commit && u_fid_core.rdy)
+        watch_q <= (fdbg_pc == 16'h203E || fdbg_pc == 16'h2036 || fdbg_pc == 16'h206A);
+    // walker-state tracer: cycle-6 snapshot of the DLI decision inputs.
+    always @(posedge clk_sys) begin
+        if (u_antic_top.phi2_tick && u_antic_top.ar_phi2_in_line == 8'd6
+            && u_antic_top.ar_scanline >= 30 && u_antic_top.ar_scanline <= 60
+            && u_antic_top.u_dl_parser.parse_count != 0)
+            $display("[walk] scan=%0d arow=%0d idx=%0d dctr=%0d curdli=%b mode=%h fill=%b prevvs=%b curvs=%b islast=%b isldli=%b dliat=%b",
+                     u_antic_top.ar_scanline,
+                     u_antic_top.ar_atari_row,
+                     u_antic_top.u_dl_parser.w_idx,
+                     u_antic_top.u_dl_parser.w_dctr,
+                     u_antic_top.u_dl_parser.cur_dli,
+                     u_antic_top.u_dl_parser.cur_mode,
+                     u_antic_top.u_dl_parser.cur_fill,
+                     u_antic_top.u_dl_parser.w_prev_vs,
+                     u_antic_top.u_dl_parser.cur_vs,
+                     u_antic_top.u_dl_parser.w_is_last,
+                     u_antic_top.u_dl_parser.w_is_last_dli,
+                     u_antic_top.u_dl_parser.dli_at);
+    end
+    // vscroldli probe tracer: raster position of every landmark commit.
+    always @(posedge clk_sally) begin
+        if (!rst_sally && u_fid_core.slot_commit && u_fid_core.rdy)
+            case (fdbg_pc)
+                16'h2032, 16'h2037, 16'h205C, 16'h2061:
+                    $display("[vsc] PC=%04h IR=%02h scan=%0d cyc=%0d vscrol_q=%0d dliq=%0d stopq=%0d",
+                             fdbg_pc, fdbg_ir,
+                             u_antic_top.ar_scanline, u_antic_top.ar_phi2_in_line,
+                             u_antic_top.u_dl_parser.vscrol,
+                             u_antic_top.u_dl_parser.vscrol_dli_q,
+                             u_antic_top.u_dl_parser.vscrol_stop_q);
+                default: ;
+            endcase
+    end
     // /NMI arrival tracer: wall position of every nmi_pend rise + the
     // commit slots bracketing it (only near the DLI scanlines).
     reg pend_q0 = 0;
@@ -781,6 +883,16 @@ module tb_fid_raster;
                          u_antic_top.u_dl_parser.dlist_dirty,
                          u_antic_top.u_dl_parser.dl_pos);
         end
+        // Per-opcode dump: every DL byte the parser decodes, with position.
+        if (u_antic_top.u_dl_parser.state == 3 /*S_DECODE_OP*/)
+            $display("[dlop] p#%0d op=%02h at dl_pos=%04h ops=%0d ec=%0d lead=%0d st=%0d",
+                     u_antic_top.u_dl_parser.parse_count,
+                     u_antic_top.u_dl_parser.mem_rdata,
+                     u_antic_top.u_dl_parser.dl_pos,
+                     u_antic_top.u_dl_parser.ops,
+                     u_antic_top.u_dl_parser.ecount,
+                     u_antic_top.u_dl_parser.lead_skipped,
+                     u_antic_top.u_dl_parser.scan_total);
     end
     int boot_trace = 0;
     bit  post_arm = 0;
@@ -821,7 +933,8 @@ module tb_fid_raster;
                      u_antic_top.ar_scanline, u_antic_top.ar_phi2_in_line);
         end
         if (!rst_sally && u_fid_core.slot_commit && u_fid_core.rdy
-            && (fdbg_pc == 16'h203E || fdbg_pc == 16'h2036)) begin // JMP w0 (prog A / prog B)
+            && (fdbg_pc == 16'h203E || fdbg_pc == 16'h2036 || fdbg_pc == 16'h206A)
+            && !watch_q) begin // JMP w0 (prog A/B) or JMP p1 (prog 4) — once per hit
             chain_runs++;
             $display("[probe] kicks=%0d dl_starts=%0d sp=%0d scan_now=%0d", kick_cnt, dls_cnt, sp_cnt, u_antic_top.ar_scanline);
             $display("[chain] ---- run %0d: NMIST=$%02h VCOUNT=$%02h PCL=$%02h parse=%0d act=%0d ph=%0d ----",
