@@ -148,6 +148,14 @@ module tb_fid_raster;
     // a clean every-cycle grade (BASE_DIV=2, clock_mult=2 → threshold 0).  The
     // halt-bypass condition (clock_mult>=2) is unchanged, so /HALT stays
     // bypassed exactly as in production.  Everything else mirrors fpga_xt_top.
+    // Runtime knobs (mirror the HW cfg register): +rel_adj=<signed>
+    logic [28:0] tb_cfg = 29'd0;
+    initial begin
+        int adj;
+        if ($value$plusargs("rel_adj=%d", adj))
+            tb_cfg[23:20] = adj[3:0];
+    end
+
     // ====================================================================
     // FID core pacing — mirrors fpga_xt_top's fid glue exactly:
     // machine-cycle tick sourced from ANTIC's phi2 (2-FF sync + edge),
@@ -170,7 +178,7 @@ module tb_fid_raster;
     wire       fid_busy = mem_busy_n | hwreg_rd_busy;
     reg        fid_mem_ok = 1'b1;
     always_ff @(posedge clk_sally) if (fid_sub == 8'd49) fid_mem_ok <= ~fid_busy;
-    wire       fid_wsync_rdy = wsync_rdy_n | ~cpu_rw;   // writes WSYNC-immune (production shape)
+    wire       fid_wsync_rdy = wsync_rdy_n | ~cpu_rw;   // production shape (delay slot occurs naturally)
     wire       fid_rdy = fid_mem_ok & ~dma_steal_sally & fid_wsync_rdy;
     assign     sally_rdy  = fid_rdy;          // legacy net name used below
     wire       fid_mem_step = (fid_sub == 8'd2);
@@ -484,7 +492,7 @@ module tb_fid_raster;
         .joy_ovr            (32'd0),   // keypad->joystick override off (default)
         // Must be driven, not floating: the WSYNC release cycle is tuned from
         // this register, and an X there stops /RDY ever releasing.
-        .dbg_tb_cfg         (29'd0),
+        .dbg_tb_cfg         (tb_cfg),
         .bus_addr           (bus_addr_antic),
         .bus_data_in        (bus_data_in_antic),
         .bus_rw             (bus_rw_antic),
@@ -511,6 +519,7 @@ module tb_fid_raster;
         .diag_wsync_overdue_count(),
         .kbd_event_valid    (1'b0),
         .kbd_event_code     (8'h00),
+        .sally_cold         (1'b0),
         // joy SPI MISO idles HIGH: an open PCAL9722's inputs pull high ($FF =
         // no buttons, switches released, PORTB MMU pull-up).  With it tied 0 the
         // joy_bridge poll read all-zeros and overwrote joy_portb_in's $FF reset →
@@ -614,7 +623,7 @@ module tb_fid_raster;
         // --- Inject the ACID800 antic_nmist cycle-exact chain at $2000 ---
         // (replaces the OS boot: reset vector -> $2000; DL at $2C00.)
         begin
-            static logic [7:0] prog [0:52] = '{
+            static logic [7:0] prog [0:64] = '{
                 8'hA9,8'h20,            // LDA #$20
                 8'h8D,8'h00,8'hD4,      // STA DMACTL
                 8'hA9,8'h00,            // LDA #$00
@@ -636,22 +645,38 @@ module tb_fid_raster;
                 8'hEA,                  // NOP
                 8'hAD,8'h0F,8'hD4,      // LDA NMIST   (Avery: data at 39/5)
                 8'h8D,8'h00,8'h06,      // STA $0600
-                8'h4C,8'h14,8'h20 };    // JMP w0
-            for (int k = 0; k < 53; k++) u_sally_mem.mem[16'h2000+k] = prog[k];
+                8'h8D,8'h0A,8'hD4,      // STA WSYNC   ($2032) — Avery vcount frag
+                8'h8D,8'h0A,8'hD4,      // STA WSYNC
+                8'hAD,8'h0B,8'hD4,      // LDA VCOUNT  (his note: runs 107-110)
+                8'h8D,8'h01,8'h06,      // STA $0601
+                8'h4C,8'h14,8'h20 };    // JMP w0      ($203E)
+            for (int k = 0; k < 65; k++) u_sally_mem.mem[16'h2000+k] = prog[k];
             // probe DL (nmist's): 3x blank-8, 2x blank-8+DLI, JVB self
             u_sally_mem.mem[16'h2C00]=8'h70; u_sally_mem.mem[16'h2C01]=8'h70;
             u_sally_mem.mem[16'h2C02]=8'h70; u_sally_mem.mem[16'h2C03]=8'hF0;
             u_sally_mem.mem[16'h2C04]=8'hF0; u_sally_mem.mem[16'h2C05]=8'h41;
             u_sally_mem.mem[16'h2C06]=8'h00; u_sally_mem.mem[16'h2C07]=8'h2C;
             u_sally_mem.mem[16'hFFFC]=8'h00; u_sally_mem.mem[16'hFFFD]=8'h20;
+            $display("[inject] mem[2000..3]=%02h %02h %02h %02h  vec=%02h%02h",
+                     u_sally_mem.mem[16'h2000], u_sally_mem.mem[16'h2001],
+                     u_sally_mem.mem[16'h2002], u_sally_mem.mem[16'h2003],
+                     u_sally_mem.mem[16'hFFFD], u_sally_mem.mem[16'hFFFC]);
+            $fflush;
         end
         // Hold reset asserted well past both clock domains' pipe depth.
         repeat (64) @(posedge clk_sys);
         rst_sys = 1'b0;
         repeat (64) @(posedge clk_sally);
+        // Hold the CPU until ANTIC's free-running raster has performed at
+        // least one DL parse (kick at scanline 260) — otherwise a short
+        // test completes before the parser ever runs and the walker serves
+        // blank-fill (measured: whole 2-run test = 259k clk, kick never
+        // fired).  ANTIC (rst_sys) is already released above.
+        wait (u_antic_top.u_dl_parser.parse_count != 0);
         rst_sally = 1'b0;
-        $display("[%0t] reset released; reset vector should be at $FFFC/$FFFD = $%02h%02h",
-                 $time, u_sally_mem.mem[16'hFFFD], u_sally_mem.mem[16'hFFFC]);
+        $display("[%0t] reset released after parse #%0d; vector = $%02h%02h",
+                 $time, u_antic_top.u_dl_parser.parse_count,
+                 u_sally_mem.mem[16'hFFFD], u_sally_mem.mem[16'hFFFC]);
     end
 
     // Absolute sim-time watchdog (in case the clk_sally cycle counter never
@@ -673,20 +698,71 @@ module tb_fid_raster;
     // the last commit of the $202C instruction.
     // ====================================================================
     int chain_runs = 0;
+    // Parse-path probe: count start_parse pulses + dl_start kicks, and dump
+    // the parser's state transitions for the first few.
+    int sp_cnt = 0;
+    int kick_cnt = 0, dls_cnt = 0;
+    always @(posedge clk_sys) begin
+        if (u_antic_top.parse_kick_pulse) kick_cnt++;
+        if (u_antic_top.dl_start_pulse)   dls_cnt++;
+        if (u_antic_top.u_dl_parser.start_parse) begin
+            sp_cnt++;
+            if (sp_cnt <= 3)
+                $display("[parse] start_parse #%0d at scan=%0d (dirty=%b dl_pos=%04h)",
+                         sp_cnt, u_antic_top.ar_scanline,
+                         u_antic_top.u_dl_parser.dlist_dirty,
+                         u_antic_top.u_dl_parser.dl_pos);
+        end
+    end
+    int boot_trace = 0;
+    bit  post_arm = 0;
+    always @(posedge clk_sally) begin
+        if (u_fid_core.slot_commit && fid_rdy && fdbg_pc == 16'h2033) begin
+            post_arm <= 1; boot_trace <= 0;
+        end
+        if (!rst_sally && u_fid_core.slot_commit && post_arm && boot_trace < 45) begin
+            boot_trace++;
+            $display("[boot] #%0d PC=%04h IR=%02h addr=%04h rw=%b din=%02h rdy=%b scan=%0d cyc=%0d",
+                     boot_trace, fdbg_pc, fdbg_ir, cpu_addr, cpu_rw, cpu_din, fid_rdy,
+                     u_antic_top.ar_scanline, u_antic_top.ar_phi2_in_line);
+            $fflush;
+        end
+    end
+    // Flushed heartbeat: proves sim-time advance + shows where the CPU is.
+    longint hb = 0;
+    always @(posedge clk_sally) begin
+        hb++;
+        if (hb % 200_000 == 0) begin
+            $display("[hb] clk=%0d scan=%0d PC=%04h parse=%0d act=%0d ph=%0d pstate=%0d praddr=%04h prdy=%b dmamode=%b",
+                     hb, u_antic_top.ar_scanline, fdbg_pc,
+                     u_antic_top.u_dl_parser.parse_count,
+                     u_antic_top.u_dl_parser.act_count,
+                     u_antic_top.u_dl_parser.ph_act_cnt,
+                     u_antic_top.u_dl_parser.state,
+                     u_antic_top.u_dl_parser.mem_raddr,
+                     u_antic_top.u_dl_parser.mem_ready,
+                     u_antic_top.dma_mode_q);
+            $fflush;
+        end
+    end
     always @(posedge clk_sally) begin
         if (!rst_sally && u_fid_core.slot_commit && u_fid_core.rdy
-            && fdbg_pc >= 16'h2020 && fdbg_pc <= 16'h2034) begin
+            && fdbg_pc >= 16'h2020 && fdbg_pc <= 16'h2040) begin
             $display("[chain] PC=%04h IR=%02h  scan=%0d cyc=%0d",
                      fdbg_pc, fdbg_ir,
                      u_antic_top.ar_scanline, u_antic_top.ar_phi2_in_line);
         end
         if (!rst_sally && u_fid_core.slot_commit && u_fid_core.rdy
-            && fdbg_pc == 16'h2032) begin   // JMP w0 fetch = chain done
+            && fdbg_pc == 16'h203E) begin   // JMP w0 = both chains done
             chain_runs++;
-            $display("[chain] ---- run %0d complete: NMIST value stored = $%02h ----",
-                     chain_runs, u_sally_mem.mem[16'h0600]);
-            if (chain_runs == 4) begin
-                $display("*** FID_RASTER done: 4 chain runs traced ***");
+            $display("[probe] kicks=%0d dl_starts=%0d sp=%0d scan_now=%0d", kick_cnt, dls_cnt, sp_cnt, u_antic_top.ar_scanline);
+            $display("[chain] ---- run %0d: NMIST=$%02h VCOUNT=$%02h parse=%0d act=%0d ph=%0d ----",
+                     chain_runs, u_sally_mem.mem[16'h0600], u_sally_mem.mem[16'h0601],
+                     u_antic_top.u_dl_parser.parse_count,
+                     u_antic_top.u_dl_parser.act_count,
+                     u_antic_top.u_dl_parser.ph_act_cnt);
+            if (chain_runs == 3) begin
+                $display("*** FID_RASTER done: chain runs traced ***");
                 $finish;
             end
         end

@@ -1274,7 +1274,7 @@ module antic_top #(
     // The old ==7 placement was bisected under the blank-fill over-stealing
     // regime (reads arrived +3 late, compensating); with dl_active gating
     // the steal model, the true placement is 6.
-    wire cycle_6_pulse = phi2_tick && (ar_phi2_in_line == 8'd6);   // NMIST status tick
+    wire cycle_6_pulse = phi2_tick && (ar_phi2_in_line == 8'd7);   // NMIST status tick (see dossier)
     // (cycle 7, matching Altirra's mX==7 NMIST slot: hardware-bisected —
     //  8 fails 'set too late (>cycle 6)', 6 fails 'set too early (<cycle 6)')
 
