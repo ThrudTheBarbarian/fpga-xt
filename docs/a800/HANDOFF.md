@@ -62,24 +62,34 @@ driven VSCROL rewrites incl. over-scroll) now pass on HW.
    cone is the turbo core's PAUSED fmax work, not new logic).
 
 ### 0c. OPEN after the walker (next session's first targets)
- 1. **antic_nmist REGRESSED**: "DLI bit set too early (<cycle 6)". The test
-    NMIRES-clears at scanline 38, WSYNC-syncs, reads NMIST completing at
-    cycle 5 of scanline 39 (expects clear) then cycle 6 (expects set). Sim
-    (antic_top-level probe) shows the walker firing at exactly scanlines
-    39/47 cycle 8 with correct phantom rows {31,39}. HW evidence so far:
-    a DBG_TB mode-3 capture (cycle_8 && dli_at) armed 1s into the run
-    recorded ZERO triggers across the whole run+failure screen (build 37)
-    — while dlitiming's phantom DLIs demonstrably fire on the same build
-    (its even/odd cases pass, and its build-35 capture showed cycle-8
-    fires). So during nmist, dli_at is never true at cycle 8, yet the
-    NMIST bit sets "too early". Two divergent mechanisms — next probe:
-    mode 3 with cfg[25]=1 (circular) plus correlate against parse_count,
-    or capture mode 2 (NMIST reads) to see WHAT the CPU actually read and
-    when. Beware: post-halt the failure screen's colour-band DLIs pollute
-    non-circular rings (learned the hard way), and zero triggers here also
-    implies the failure screen produced NO cycle-8 dli_at — meaning
-    dli_at itself may be parked false after this test's NMIEN/DMACTL
-    endgame (DMACTL interplay? nmist sets DMACTL=$00 mid-test).
+ 1. **antic_nmist — 2026-07-25 afternoon triage CONCLUSION**: after a full
+    day of fetch-stream captures (DBG_TB mode 7 circular + freeze windows),
+    the earlier "zero cycle-8 dli_at" and "zero-crawl" observations were
+    POST-RESTORE red herrings: tests call _testRestore at the end, so any
+    capture after ~1s shows the framework screen DL (and later a crawl
+    through zeroed RAM once test text scribbles over the framework list —
+    cosmetic).  The surviving coherent explanation for the failing assert:
+    the probe DL IS live, phantoms {31,39} fire their status at scanline
+    39 cycle 7, and the CPU's `lda nmist` — which Avery's cycle math puts
+    at cycle 5 — actually lands at raster cycle ~7-8 on our machine: the
+    CPU-execution-to-raster phase LAGS ~2 cycles.  The read catches the
+    freshly-set bit -> "DLI bit set too early".  This is the SAME class as
+    antic_dlitiming's delayed-odd ($0E vs $0F) and pokey_inittiming's odd
+    sled ($1E): one CPU-vs-raster phase calibration, three tests.
+    OPEN QUESTION: why build 34 (pre-walker) passed nmist — possibly a
+    vacuous pass off the framework banner DLIs (every pre-"<cycle 6"
+    assert can pass without the probe DL; verified by reading the test).
+    NEXT: build a dedicated phase-calibration measurement (streaming
+    trace of WSYNC-release -> hwreg-read arrival in raster cycle terms),
+    and consult the MiSTer core (semantics only, GPL) for its
+    WSYNC-release/NMIST-set alignment.  Do NOT chase dli_at placement —
+    it is sim-proven and phantom rows are correct.
+    PROBE TRAPS (hard-won): xexload must run FOREGROUND in board scripts
+    (backgrounding kills the toysh session); `6502` control writes are
+    fine; captures are only meaningful in the first ~1s or via the
+    address-filtered modes; the incremental-flow bitstream (build 40)
+    passed timing but broke `6502 break/go` — verify the debugger after
+    any incremental deploy, and prefer full builds for deploys.
  2. **antic_vscroll GREEN** (build 37): act_carry_vs fixed the
     frame-straddle case — all 5 sub-tests pass on HW.
  2b. **antic_dlistwrap** is NOT a simple DLI-carry: test #2 kills DL DMA
