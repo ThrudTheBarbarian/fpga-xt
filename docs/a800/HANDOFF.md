@@ -56,10 +56,20 @@ driven VSCROL rewrites incl. over-scroll) now pass on HW.
     NMIRES-clears at scanline 38, WSYNC-syncs, reads NMIST completing at
     cycle 5 of scanline 39 (expects clear) then cycle 6 (expects set). Sim
     (antic_top-level probe) shows the walker firing at exactly scanlines
-    39/47 cycle 8 with correct phantom rows {31,39} — an HW-only ~2-cycle
-    status-tick vs WSYNC-release alignment. Instrument with DBG_TB armed
-    MID-RUN (arm after xexload; the failure screen's own colour-band DLIs
-    pollute post-halt captures — learned the hard way).
+    39/47 cycle 8 with correct phantom rows {31,39}. HW evidence so far:
+    a DBG_TB mode-3 capture (cycle_8 && dli_at) armed 1s into the run
+    recorded ZERO triggers across the whole run+failure screen (build 37)
+    — while dlitiming's phantom DLIs demonstrably fire on the same build
+    (its even/odd cases pass, and its build-35 capture showed cycle-8
+    fires). So during nmist, dli_at is never true at cycle 8, yet the
+    NMIST bit sets "too early". Two divergent mechanisms — next probe:
+    mode 3 with cfg[25]=1 (circular) plus correlate against parse_count,
+    or capture mode 2 (NMIST reads) to see WHAT the CPU actually read and
+    when. Beware: post-halt the failure screen's colour-band DLIs pollute
+    non-circular rings (learned the hard way), and zero triggers here also
+    implies the failure screen produced NO cycle-8 dli_at — meaning
+    dli_at itself may be parked false after this test's NMIEN/DMACTL
+    endgame (DMACTL interplay? nmist sets DMACTL=$00 mid-test).
  2. **antic_vscroll GREEN** (build 37): act_carry_vs fixed the
     frame-straddle case — all 5 sub-tests pass on HW.
  2b. **antic_dlistwrap** is NOT a simple DLI-carry: test #2 kills DL DMA
