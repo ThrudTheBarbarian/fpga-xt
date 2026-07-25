@@ -1,21 +1,79 @@
 # ACID800 conformance — session handoff
 
-Goal: get the fidelity (fid) 6502 core to pass **all** of Avery Lee's ACID800
-conformance suite (63 `.xex` tests in `rsrc/acid800/Acid800/standalone/`).
-Altirra passes the suite, so it is the golden reference; whatever it does is
-correct behaviour.
-
-**Status: 25 / 57 passing** (2026-07-23: `antic_wsync` flipped to PASS —
-see §1a; the run record is `docs/a800/runs/2026-07-23-1.json`).
-Earlier status at handoff: ~22–24 / 57.
-The session's headline result is a *structural* fix (a suite-wide deadlock) and
-a full diagnostic toolchain — **not** a net increase in the pass count. The main
-target this session (the DLI cluster) is **unsolved** and hit a wall that needs
-a different debugging modality (ILA/ChipScope). Read the DLI section before
-touching it.
+**Status: 28 / 57 passing** (2026-07-25 overnight: `pia_irq` + `antic_addresswrap`
+flipped GREEN; `pokey_irqtiming`/`antic_nmist` earlier flips hold except nmist —
+see the walker section. Run records `2026-07-24-4` and `2026-07-25-1`.)
 
 Branch: `fix-antic-nmi-pulse`. Board: `192.168.192.179` (a.k.a. `xtos.local`,
 but mDNS is flaky — **use the IP**). Build host: `valhalla` over SSH.
+**Board gotcha:** the board's network DIES after ~4-15 xexload sessions —
+power-cycle + reload (`jtag-valhalla.sh reset && testbed`), don't debug mDNS.
+**Build gotcha:** never JTAG-load while a valhalla build is in flight (the
+build regenerates the ps7_init tree under the JTAG scripts).
+
+---
+
+## 0. 2026-07-25 overnight session (newest)
+
+### 0a. pia_irq GREEN — full 6821 CA2/CB2 model (`hdl/pia_regs.sv`)
+Pending-transition semantics derived from all 17 of the test's own vectors
+(paper-verified, then `sim/tb_pia_irq.sv` replays them): a control write whose
+implied line transition matches the edge select being written ARMS a pending
+bit; a high->low fall KILLS it; input-mode entry CONVERTS it (or a matching
+entry edge) into the visible flag; input->output entry clears the flag; data-
+register read clears. PIA /IRQ (flag && CR[3], input mode) is wired into the
+IRQ tree (`antic_top.sv` irq_n_combined). Commit `8cac0f0`.
+
+### 0b. THE LIVE ROW WALKER — dl_parser rearchitecture (`hdl/dl_parser.sv`)
+Parse-ahead row expansion is GONE. Now: parse (per VBI) appends one ENTRY per
+DL line {mode, dli, vs, hs, lms, height} into a ping-pong BRAM; a WALKER flips
+through entries in raster lockstep, comparing the 4-bit DCTR against the LIVE
+VSCROL each scanline (E = last-of-block ? VSCROL : height-1, S latched at line
+start = first-of-block ? VSCROL : 0). Mid-frame VSCROL writes move region
+boundaries exactly like real ANTIC — antic_vscroll tests 1-4 (mid-frame DLI-
+driven VSCROL rewrites incl. over-scroll) now pass on HW.
+ * DLI semantics: mode lines fire LIVE on the flagged line's LAST scanline
+   (real ANTIC; the old next-line-first-row convention is gone). Blank-line
+   DLIs fire at TRUE PHYSICAL raster rows via a parse-computed phantom list
+   (PH_N=24; skipped-lead blanks in S_SKIP, emitted blanks in S_APPEND).
+ * Frame budget: the parse STOPS at 240 scanlines leaving the DL PC mid-list
+   -> next frame continues (real vblank-halt semantics). The straddling
+   line's VS bit carries over via act_carry_vs (parse-published).
+ * antic_addresswrap flipped GREEN (1K DL-PC wrap + 4K LMS wrap per entry).
+ * antic_pfstarttiming: DLIs now FIRE; it fails later at the mid-scanline
+   DMACTL response ("stride=20") — the known deferred feature.
+ * mem_req protocol trap (cost hours): the parser must pulse mem_req one
+   cycle AFTER the FETCH state (settled address), or the read adapter
+   latches the previous address and every DL byte decodes one behind.
+ * Timing closure took 7 spins: entry list forced to BRAM (ram_style),
+   phantom-CE moved off raw mem_rdata (S_SKIP state), and
+   PLACE_DIRECTIVE=AltSpreadLogic_medium (ExtraTimingOpt is deterministic
+   and kept reproducing -0.056 on the TURBO core's BRAM->P flags cone; that
+   cone is the turbo core's PAUSED fmax work, not new logic).
+
+### 0c. OPEN after the walker (next session's first targets)
+ 1. **antic_nmist REGRESSED**: "DLI bit set too early (<cycle 6)". The test
+    NMIRES-clears at scanline 38, WSYNC-syncs, reads NMIST completing at
+    cycle 5 of scanline 39 (expects clear) then cycle 6 (expects set). Sim
+    (antic_top-level probe) shows the walker firing at exactly scanlines
+    39/47 cycle 8 with correct phantom rows {31,39} — an HW-only ~2-cycle
+    status-tick vs WSYNC-release alignment. Instrument with DBG_TB armed
+    MID-RUN (arm after xexload; the failure screen's own colour-band DLIs
+    pollute post-halt captures — learned the hard way).
+ 2. **antic_vscroll #5**: read 19 vs 15 = S latched as first-of-block
+    because the walker never displays the straddling line (rows beyond the
+    192 window) — act_carry_vs fix committed (59f6bef), IN BUILD 37,
+    needs HW verdict.
+ 3. **antic_dlitiming delayed-odd**: back at the known $0E != $0F. A 3-stage
+    NMI poll was tried and REVERTED ($F5 = NMI far late; and the build-35
+    "Even $09" that motivated it was actually the marginal phantom-CE
+    timing path). The real fix is per-instruction poll granularity
+    (penultimate-cycle rule) WITHOUT adding a uniform stage — needs the
+    poll latch captured once per instruction, not per cycle.
+    pokey_inittiming's odd-sled ($1E, unchanged by REL_SKEW 2->3) is the
+    SAME granularity class on the IRQ side.
+ 4. **pokey_inittiming even sled FIXED** by phi2-paced init-release ref
+    dividers + REL_SKEW=3 (`hdl/pokey_audio.sv`) — keep.
 
 ---
 
