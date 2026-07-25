@@ -651,6 +651,45 @@ module tb_fid_raster;
                 8'h8D,8'h01,8'h06,      // STA $0601
                 8'h4C,8'h14,8'h20 };    // JMP w0      ($203E)
             for (int k = 0; k < 65; k++) u_sally_mem.mem[16'h2000+k] = prog[k];
+            // +prog=1: dlitiming delayed-odd replica (Avery origin_test6
+            // shape against our probe DL's DLI at scanline 39).  NMI
+            // handler at $2100 records the interrupted PC low byte.
+            begin
+                int psel;
+                if ($value$plusargs("prog=%d", psel) && psel >= 1) begin
+                    static logic [7:0] progb [0:56] = '{
+                        8'hA9,8'h20, 8'h8D,8'h00,8'hD4,   // LDA #$20 / STA DMACTL
+                        8'hA9,8'h00, 8'h8D,8'h0E,8'hD4,   // LDA #0   / STA NMIEN
+                        8'hA9,8'h00, 8'h8D,8'h02,8'hD4,   // LDA #0   / STA DLISTL
+                        8'hA9,8'h2C, 8'h8D,8'h03,8'hD4,   // LDA #$2C / STA DLISTH
+                        8'hA9,8'h13,                       // w0: LDA #$13   ($2014)
+                        8'hCD,8'h0B,8'hD4, 8'hF0,8'hFB,    // w1: CMP VCOUNT / BEQ w1
+                        8'hCD,8'h0B,8'hD4, 8'hD0,8'hFB,    // w2: CMP VCOUNT / BNE w2
+                        8'hEE,8'h0A,8'hD4,                 // INC WSYNC (-> end 38)
+                        8'hA9,8'h00, 8'h8D,8'h0E,8'hD4,    // t6=$2023: LDA #0 / STA NMIEN
+                        8'hA5,8'h80,                       // LDA $80
+                        8'hEA,                             // NOP
+                        8'hA9,8'h80, 8'h8D,8'h0E,8'hD4,    // LDA #$80 / STA NMIEN (arm)
+                        8'hEA,8'hEA,8'hEA,8'hEA,8'hEA,8'hEA, // NOP sled $2030-2035
+                        8'h4C,8'h14,8'h20 };               // JMP w0 ($2036)
+                    for (int k = 0; k < 57; k++) u_sally_mem.mem[16'h2000+k] = progb[k];
+                    if (psel == 2) begin
+                        // delayed-EVEN shape: LDA $80 spans cycles 7-9 so the
+                        // cycle-8 edge lands mid-instruction; real NMOS's
+                        // penultimate poll (cycle 8) SEES it -> hijack right
+                        // after: pushed PC = $2032 (the first NOP after).
+                        u_sally_mem.mem[16'h2030]=8'hA5;  // LDA $80
+                        u_sally_mem.mem[16'h2031]=8'h80;
+                    end
+                    // handler: PHA TSX LDA $0103,X STA $0600 PLA RTI
+                    u_sally_mem.mem[16'h2100]=8'h48; u_sally_mem.mem[16'h2101]=8'hBA;
+                    u_sally_mem.mem[16'h2102]=8'hBD; u_sally_mem.mem[16'h2103]=8'h03;
+                    u_sally_mem.mem[16'h2104]=8'h01; u_sally_mem.mem[16'h2105]=8'h8D;
+                    u_sally_mem.mem[16'h2106]=8'h00; u_sally_mem.mem[16'h2107]=8'h06;
+                    u_sally_mem.mem[16'h2108]=8'h68; u_sally_mem.mem[16'h2109]=8'h40;
+                    u_sally_mem.mem[16'hFFFA]=8'h00; u_sally_mem.mem[16'hFFFB]=8'h21;
+                end
+            end
             // probe DL (nmist's): 3x blank-8, 2x blank-8+DLI, JVB self
             u_sally_mem.mem[16'h2C00]=8'h70; u_sally_mem.mem[16'h2C01]=8'h70;
             u_sally_mem.mem[16'h2C02]=8'h70; u_sally_mem.mem[16'h2C03]=8'hF0;
@@ -753,11 +792,12 @@ module tb_fid_raster;
                      u_antic_top.ar_scanline, u_antic_top.ar_phi2_in_line);
         end
         if (!rst_sally && u_fid_core.slot_commit && u_fid_core.rdy
-            && fdbg_pc == 16'h203E) begin   // JMP w0 = both chains done
+            && (fdbg_pc == 16'h203E || fdbg_pc == 16'h2036)) begin // JMP w0 (prog A / prog B)
             chain_runs++;
             $display("[probe] kicks=%0d dl_starts=%0d sp=%0d scan_now=%0d", kick_cnt, dls_cnt, sp_cnt, u_antic_top.ar_scanline);
-            $display("[chain] ---- run %0d: NMIST=$%02h VCOUNT=$%02h parse=%0d act=%0d ph=%0d ----",
+            $display("[chain] ---- run %0d: NMIST=$%02h VCOUNT=$%02h PCL=$%02h parse=%0d act=%0d ph=%0d ----",
                      chain_runs, u_sally_mem.mem[16'h0600], u_sally_mem.mem[16'h0601],
+                     u_sally_mem.mem[16'h0600],
                      u_antic_top.u_dl_parser.parse_count,
                      u_antic_top.u_dl_parser.act_count,
                      u_antic_top.u_dl_parser.ph_act_cnt);
