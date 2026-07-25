@@ -15,6 +15,40 @@ build regenerates the ps7_init tree under the JTAG scripts).
 
 ## 0. 2026-07-25 sessions (newest)
 
+### 0e. WSYNC/NMIST calibration dossier (2026-07-25 evening — READ FIRST)
+Build 41c (3cfb686 + AltSpreadLogic_high) is on the board: steal-gate +
+status-tick-6, ALL anchors green, dlitiming back to delayed-odd-only.
+Probe data (DBG_TB mode 2, NMIST reads with raster positions):
+ * build 38: the nmist cycle-critical read (Avery: scanline 39 data cycle
+   5) measured at cycle 8; post-WSYNC-immediate reads (Avery ~108) exact.
+ * build 41c (fill-steal gated): same read at cycle 7 (+2 residual).
+Runtime release-offset matrix (cfg[23:20], NO rebuild needed):
+ * adj 0 (release 104): vcount PASS (pins the release), nmist "too early"
+ * adj -1/-2: vcount FAIL, nmist flips to "too LATE (>cycle 6)"
+ * adj +1: vcount FAIL
+So: release=104 is confirmed; the nmist chain (sta wsync -> pha:pla ->
+lda abs -> nop -> lda nmist, crossing the line boundary) lands +2 late
+while the vcount chain is exact — chain-dependent, not a global offset.
+PHA/PLA state counts verified nominal (3/4 cycles).  wsync_gen already
+models the one-cycle post-write delay slot (both edges, header essay).
+REMAINING QUESTION: where the +2 accumulates in that specific chain —
+candidates: stall-entry vs delay-slot interaction when the write lands
+early in the line, the fid commit-slot sampling of the retimed /RDY
+edges, or the status-bit visibility (ours registers at tick 6 -> visible
+7; MiSTer sets combinationally from the cycle-6 slot — see the MiSTer
+dossier below).  NEXT SESSION'S TOOL: a co-sim tb driving antic_top +
+xt6502f executing Avery's exact chain, printing (instruction, raster
+cycle) per cycle — the bookkeeping is beyond blind analysis.
+MiSTer findings (behavioral reference, non-commercial licence — never
+copy): NMIST DLI flag set from the hcount slot = latter half of cycle 6
+(combinational into NMIST); /NMI = separate 2-cycle registered pulse
+(cycles 7-8); WSYNC "write takes 1.5 cycles to assert rdy" (one cycle
+runs post-write); release such that first executed cycle is 105; VCOUNT
+increments at the cycle-111 boundary; CPU-enable one fast-clock late vs
+ANTIC's; NMI recognized via a ~2-cycle pipeline with the
+no-poll-on-branch-taken quirk modeled.
+
+
 ### 0-day. Display-shadow split (afternoon, commit 7850d08, HW-validated)
 The compositor now reads a dedicated 64 KB display_shadow BRAM copy
 (write-mirrored from sally_mem's SINGLE write site — cpu_w + rom_we;
