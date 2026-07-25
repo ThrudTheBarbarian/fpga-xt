@@ -586,8 +586,14 @@ module antic_top #(
     // TEMP diag: colours (colpf0/colpf1/colpf2/colbk) for `mem` readback. dbg_antic (DLI
     // counter + NMIEN/NMIST/mode) is assigned lower down, after dl_meta_mode is declared.
     // diag9 repurposed (was TEMP GTIA colours): parser triage word —
-    // {last parse start addr[15:0], 3'b0, ph_act_cnt[4:0], act_count[7:0]}
-    assign dbg_gtia  = {dbg_parse_start_w, 3'b000, dbg_ph_cnt_w, dbg_act_count_w[7:0]};
+    // {last parse start addr[15:0], 3'b0, ph_act_cnt[4:0], act_count[7:0]}.
+    // Registered: a debug word tolerates any latency, and the raw cross-
+    // hierarchy nets perturbed clk_pix/clk_sally placement (build 39).
+    reg [31:0] dbg_gtia_q;
+    always_ff @(posedge clk_bus)
+        dbg_gtia_q <= {dbg_parse_start_w, 3'b000, dbg_ph_cnt_w,
+                       dbg_act_count_w[7:0]};
+    assign dbg_gtia  = dbg_gtia_q;
     wire [7:0] gractl_q;
     wire [7:0] consol_w_q;
     wire       hitclr_strobe;
