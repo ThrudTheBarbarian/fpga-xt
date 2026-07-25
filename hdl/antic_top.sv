@@ -585,15 +585,7 @@ module antic_top #(
     wire [7:0] vdelay_q;
     // TEMP diag: colours (colpf0/colpf1/colpf2/colbk) for `mem` readback. dbg_antic (DLI
     // counter + NMIEN/NMIST/mode) is assigned lower down, after dl_meta_mode is declared.
-    // diag9 repurposed (was TEMP GTIA colours): parser triage word —
-    // {last parse start addr[15:0], 3'b0, ph_act_cnt[4:0], act_count[7:0]}.
-    // Registered: a debug word tolerates any latency, and the raw cross-
-    // hierarchy nets perturbed clk_pix/clk_sally placement (build 39).
-    reg [31:0] dbg_gtia_q;
-    always_ff @(posedge clk_bus)
-        dbg_gtia_q <= {dbg_parse_start_w, 3'b000, dbg_ph_cnt_w,
-                       dbg_act_count_w[7:0]};
-    assign dbg_gtia  = dbg_gtia_q;
+    assign dbg_gtia  = {colpf_q[0], colpf_q[1], colpf_q[2], colbk_q};
     wire [7:0] gractl_q;
     wire [7:0] consol_w_q;
     wire       hitclr_strobe;
@@ -1382,7 +1374,8 @@ module antic_top #(
             // DLI at the REAL gate cycle (8), matching nmi_gen — captures nmien_q.
             3'd3:    tb_trig = cycle_8_pulse & nmi_cur_row_dli
                              & (~tb_dli_nmi_only | nmien_q[7]);
-            3'd4:    tb_trig = vbi_c8_pulse;
+            3'd4:    tb_trig = tb_match_addr[0] ? dl_done      // +cfg[4]: parser triage
+                                                 : vbi_c8_pulse;
             3'd5:    tb_trig = snoop_we_antic & (snoop_addr[7:0] == 8'h0A); // WSYNC $D40A
             3'd6:    tb_trig = snoop_we_antic;
             3'd7:    tb_trig = tb_dli_nmi_only ? (dl_ready & dl_in_wait)
@@ -1474,6 +1467,14 @@ module antic_top #(
                 if (tb_fetch_acc1)
                     tb_payload_q <= {tb_fetch_stage_q[15:8], 1'b0,
                                      tb_fetch_stage_q[7:0], dl_rdata};
+            end else if (tb_mode == 3'd4 && tb_match_addr[0]) begin
+                // Parser triage: one capture per parse_done —
+                // payload = {1'b0, parse start addr[15:0], ph_cnt[4:0],
+                //            act_count[2:0] (low bits)}.
+                tb_fetch_acc1 <= 1'b0;
+                tb_accept_q   <= tb_armed && tb_trig_edge;
+                tb_payload_q  <= {1'b0, dbg_parse_start_w, dbg_ph_cnt_w,
+                                  dbg_act_count_w[2:0]};
             end else begin
                 tb_fetch_acc1 <= 1'b0;
                 tb_accept_q   <= tb_armed && (tb_mode != 3'd0) && tb_trig_edge && tb_scan_ok;
