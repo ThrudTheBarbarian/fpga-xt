@@ -92,6 +92,15 @@ module dl_parser (
     output wire  [3:0]  meta_sub_row,
     output wire         meta_hscrol_en,
     output wire         meta_vscrol_en,
+    // 1 while the walker is on an ENTRY-BACKED row; 0 on post-list blank
+    // fill.  Real ANTIC performs NO DL-byte fetches once the display list
+    // has ended (JVB wait / budget stop) — but blank-fill rows present
+    // sub_row==0 every scanline, which read as "first line of a DL line"
+    // to the DMA-steal model and stole a DL-fetch cycle on EVERY fill
+    // scanline.  HW-measured on ACID800 antic_nmist: the post-WSYNC
+    // instruction stream arrived +3 cycles late at the scanline-39 NMIST
+    // read (cycle 8 vs Avery's 5), one extra steal per fill line.
+    output wire         meta_dl_active,
 
     // DLI read port — nmi_gen drives dli_row with the live raster row.
     input  wire  [7:0]  dli_row,
@@ -227,6 +236,7 @@ module dl_parser (
     logic [3:0]  nxt_sc_m1, nxt_mode;
     logic        nxt_dli, nxt_vs, nxt_hs;
     logic        nxt_blankfill;     // entries exhausted -> blank rows
+    logic        cur_fill;          // current row is post-list blank fill
     logic [15:0] nxt_lms;
     logic        pf_pend;           // RAM read issued, latch next cycle
     logic [8:0]  pf_idx;
@@ -246,6 +256,7 @@ module dl_parser (
     assign meta_sub_row   = w_dctr;
     assign meta_hscrol_en = cur_hs;
     assign meta_vscrol_en = cur_vs;
+    assign meta_dl_active = ~cur_fill;
 
     // DLI: last scanline of a flagged line, plus phantom (skipped-blank)
     // rows matched by physical position.
@@ -326,6 +337,7 @@ module dl_parser (
             cur_vs          <= 1'b0;
             cur_hs          <= 1'b0;
             cur_lms         <= 16'h0;
+            cur_fill        <= 1'b1;
             nxt_sc_m1       <= 4'd0;
             nxt_mode        <= 4'd0;
             nxt_dli         <= 1'b0;
@@ -601,6 +613,7 @@ module dl_parser (
                     // First displayed row of the frame: load entry 0.
                     w_boot    <= 1'b0;
                     w_prev_vs <= w_carry_vs;
+                    cur_fill  <= (act_count == 9'd0) || nxt_blankfill;
                     {cur_sc_m1, cur_mode, cur_dli, cur_vs, cur_hs, cur_lms}
                               <= (act_count == 9'd0) ? 27'h0 : {nxt_sc_m1,
                                  nxt_mode, nxt_dli, nxt_vs, nxt_hs, nxt_lms};
@@ -612,6 +625,7 @@ module dl_parser (
                     // live VSCROL (first-of-block) else 0.
                     w_prev_vs <= cur_vs;
                     w_idx     <= pf_idx;
+                    cur_fill  <= nxt_blankfill;
                     {cur_sc_m1, cur_mode, cur_dli, cur_vs, cur_hs, cur_lms}
                               <= {nxt_sc_m1, nxt_mode, nxt_dli, nxt_vs,
                                   nxt_hs, nxt_lms};

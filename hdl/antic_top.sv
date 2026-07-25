@@ -1038,6 +1038,7 @@ module antic_top #(
     wire [3:0]  dl_meta_sub;
     wire        dl_meta_hscrol_en;
     wire        dl_meta_vscrol_en;
+    wire        dl_meta_active;    // entry-backed row (0 = post-list blank fill)
     // TEMP diag: expose NMIEN/NMIST + a CUMULATIVE count of DLIs that fire with
     // NMIEN[7] set -> dbg_antic (routed to diag8, GP0 0x41C).  Cumulative (not
     // per-frame) so a before/after delta around one xexload isolates whether the
@@ -1219,6 +1220,7 @@ module antic_top #(
         .meta_lms_addr(dl_meta_lms), .meta_sub_row(dl_meta_sub),
         .meta_hscrol_en(dl_meta_hscrol_en),
         .meta_vscrol_en(dl_meta_vscrol_en),
+        .meta_dl_active(dl_meta_active),
         .dli_row(nmi_cur_row),
         .dli_at(nmi_cur_row_dli),
         .dbg_parse_start(dbg_parse_start_w),
@@ -1240,7 +1242,9 @@ module antic_top #(
     antic_dma_steal u_dma_steal (
         .cyc      (ar_phi2_in_line),
         .mode     (dl_meta_mode),
-        .is_first (dl_meta_sub == 4'd0),
+        // First scanline of a REAL DL line: post-list fill rows perform no
+        // DL fetches (real ANTIC's list has ended).
+        .is_first ((dl_meta_sub == 4'd0) && dl_meta_active),
         .active   (ar_atari_row != 8'hFF),
         .dmactl   (dmactl_q),
         .steal    (dma_steal_comb)
@@ -1264,7 +1268,13 @@ module antic_top #(
     // combinational lookup that is stable across the whole line, so
     // sampling it at cycle 8 (rather than cycle 0) is fine.
     wire cycle_8_pulse = phi2_tick && (ar_phi2_in_line == 8'd8);
-    wire cycle_6_pulse = phi2_tick && (ar_phi2_in_line == 8'd7);   // NMIST status tick
+    // NMIST status tick at cycle 6: the DLI/VBI status bit must be VISIBLE
+    // to a CPU read whose data cycle is 6 (ACID800 antic_nmist's "set too
+    // late" check) — MiSTer/real ANTIC set the flag from the cycle-6 slot.
+    // The old ==7 placement was bisected under the blank-fill over-stealing
+    // regime (reads arrived +3 late, compensating); with dl_active gating
+    // the steal model, the true placement is 6.
+    wire cycle_6_pulse = phi2_tick && (ar_phi2_in_line == 8'd6);   // NMIST status tick
     // (cycle 7, matching Altirra's mX==7 NMIST slot: hardware-bisected —
     //  8 fails 'set too late (>cycle 6)', 6 fails 'set too early (<cycle 6)')
 
