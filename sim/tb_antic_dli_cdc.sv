@@ -122,6 +122,9 @@ module tb_antic_dli_cdc;
     wire [15:0]  bram_addr;
     logic [7:0]  bram_rdata_r;
     always_ff @(posedge clk_sys) bram_rdata_r <= amem[bram_addr];
+    wire [15:0]  cmp_bram_addr;
+    logic [7:0]  cmp_bram_rdata_r;
+    always_ff @(posedge clk_sys) cmp_bram_rdata_r <= amem[cmp_bram_addr];
 
     wire [7:0]  bus_data_out;
     wire        bus_data_oe;
@@ -151,6 +154,7 @@ module tb_antic_dli_cdc;
         .kbd_event_valid(1'b0), .kbd_event_code(8'h00),
         .kbd_release(1'b0), .kbd_break_pulse(1'b0),
         .bram_addr(bram_addr), .bram_rdata(bram_rdata_r),
+        .cmp_bram_addr(cmp_bram_addr), .cmp_bram_rdata(cmp_bram_rdata_r),
         .wb_pix_valid(wb_pix_valid), .wb_pix_pair(wb_pix_pair),
         .wb_color_lo(wb_color_lo), .wb_color_hi(wb_color_hi),
         .wb_atari_row(wb_atari_row), .wb_row_flush(wb_row_flush),

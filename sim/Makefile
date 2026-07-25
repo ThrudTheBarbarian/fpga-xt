@@ -37,6 +37,7 @@ HDL_SRCS := \
     $(HDL_DIR)/dma_arbiter.sv     \
     $(HDL_DIR)/mem_read_mux.sv    \
     $(HDL_DIR)/bram_shim.sv       \
+    $(HDL_DIR)/display_shadow.sv  \
     $(HDL_DIR)/draw_regs.sv       \
     $(HDL_DIR)/pia_regs.sv        \
     $(HDL_DIR)/peri_link.sv       \
@@ -486,6 +487,7 @@ BOOT_ANTIC_HDL := \
     $(HDL_DIR)/dma_arbiter.sv     \
     $(HDL_DIR)/mem_read_mux.sv    \
     $(HDL_DIR)/bram_shim.sv       \
+    $(HDL_DIR)/display_shadow.sv  \
     $(HDL_DIR)/draw_regs.sv       \
     $(HDL_DIR)/pia_regs.sv        \
     $(HDL_DIR)/peri_link.sv       \

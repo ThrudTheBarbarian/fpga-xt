@@ -188,6 +188,14 @@ module tb_boot;
     // ====================================================================
     // sally_mem (fpga_xt_top lines ~576-631) — OS ROM path overridden.
     // ====================================================================
+    // Display-shadow mirror + compositor-port nets (declared ahead of both
+    // instances that use them).
+    wire        mirror_we_w;
+    wire [15:0] mirror_addr_w;
+    wire [7:0]  mirror_din_w;
+    wire [15:0] antic_cmpram_addr;
+    wire [7:0]  antic_cmpram_rdata;
+
     sally_mem #(
         .OS_ROM_HEX_PATH ("../rsrc/sally-boot.hex"),
         .SELFTEST_HEX_PATH ("../rsrc/selftest.hex"),
@@ -242,9 +250,24 @@ module tb_boot;
         .rom_addr    (rom_load_addr),
         .rom_data    (rom_load_data),
         .rom_we      (rom_load_we),
+        .mirror_we_q   (mirror_we_w),
+        .mirror_addr_q (mirror_addr_w),
+        .mirror_din_q  (mirror_din_w),
         .dma_clk     (clk_sys),
         .dma_addr    (antic_bram_addr),
         .dma_rdata   (antic_bram_rdata)
+    );
+
+    // Display-shadow copy — wired exactly like fpga_xt_top (write-mirrored
+    // from sally_mem's single write site; compositor reads it).
+    display_shadow u_display_shadow (
+        .clk_cpu  (clk_sally),
+        .mir_we   (mirror_we_w),
+        .mir_addr (mirror_addr_w),
+        .mir_din  (mirror_din_w),
+        .clk_disp (clk_sys),
+        .rd_addr  (antic_cmpram_addr),
+        .rd_data  (antic_cmpram_rdata)
     );
 
     // ====================================================================
@@ -491,6 +514,8 @@ module tb_boot;
         .joy_spi_int_n      (1'b1),
         .bram_addr          (antic_bram_addr),
         .bram_rdata         (antic_bram_rdata),
+        .cmp_bram_addr      (antic_cmpram_addr),
+        .cmp_bram_rdata     (antic_cmpram_rdata),
         .portb_q            (portb_q),
         .wb_pix_valid       (wb_pix_valid),
         .wb_pix_pair        (wb_pix_pair),

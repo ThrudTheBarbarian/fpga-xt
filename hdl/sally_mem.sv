@@ -223,6 +223,11 @@ module sally_mem #(
     // fetch display data without halting SALLY (at CLOCK_MULT>=2).
     // dma_addr is sampled on posedge dma_clk; dma_rdata is registered
     // and available 1 cycle later.
+    // Display-shadow mirror write tap (registered; see the mirror block).
+    output logic        mirror_we_q,
+    output logic [15:0] mirror_addr_q,
+    output logic [7:0]  mirror_din_q,
+
     input  wire         dma_clk,
     input  wire [15:0]  dma_addr,
     output wire [7:0]   dma_rdata
@@ -707,6 +712,24 @@ module sally_mem #(
 
     always_ff @(posedge clk) begin
         if (stack_we) stack_mem[stack_addr_w] <= stack_din_w;
+    end
+
+    // Display-shadow mirror tap: registered copies of the ONE BRAM write
+    // site (cpu_w + rom_we both funnel through mem_we/mem_addr_w/mem_din_w
+    // above, so this is complete writer coverage).  Registered so the
+    // shadow BRAM's write port doesn't share the main array's input cone
+    // (placement decoupling); the shadow lags mem[] by one clk — invisible
+    // at scanline granularity.
+    always_ff @(posedge clk or posedge rst) begin
+        if (rst) begin
+            mirror_we_q   <= 1'b0;
+            mirror_addr_q <= 16'h0;
+            mirror_din_q  <= 8'h0;
+        end else begin
+            mirror_we_q   <= mem_we;
+            mirror_addr_q <= mem_addr_w;
+            mirror_din_q  <= mem_din_w;
+        end
     end
 
     // ANTIC DMA read port — independent clock.  Vivado infers a true

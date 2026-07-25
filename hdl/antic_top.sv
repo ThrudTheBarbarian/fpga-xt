@@ -221,8 +221,10 @@ module antic_top #(
     // bram_shim into this port.  On the Zynq build the BRAM lives in
     // sally_mem (its second port at clk_bus), so SALLY writes are
     // visible to ANTIC without a separate shadow memory.
-    output wire [15:0] bram_addr,
+    output wire [15:0] bram_addr,      // dl_parser read port (sally_mem dma port)
     input  wire [7:0]  bram_rdata,
+    output wire [15:0] cmp_bram_addr,  // compositor read port (display_shadow)
+    input  wire [7:0]  cmp_bram_rdata,
 
     // PORTB ($D301) state — needed by sally_mem for ROM vs RAM control.
     output wire [7:0]  portb_q,
@@ -887,19 +889,12 @@ module antic_top #(
         .last_sample_r     ()
     );
 
-    // ---- CPU RAM access (BRAM via bram_shim) ----------------------------
-    // System RAM lives in sally_mem's BRAM; ANTIC reads it through a
-    // bram_shim on sally_mem's second port (clk_bus), so SALLY writes are
-    // visible to ANTIC without a separate shadow memory:
-    //   - bus_snoop drives the write port (snoop_we_screen / snoop_addr /
-    //     snoop_data); the shim's wready is currently unobserved (1-deep
-    //     write FIFO; bus_snoop fires ≤ 1× per ~12 fabric cycles, well
-    //     below the shim's drain rate, so saturation is not expected).
-    //   - dl_parser reads via shim port A; compositor via port B.
-    //   - mem_read_mux per consumer routes between the shim (snoop mode,
-    //     dma_mode_q=0) and dma_master via the arbiter (DMA mode,
-    //     dma_mode_q=1). Multi-cycle shim latency propagates back to the
-    //     consumer via sh_ready / caller_ready.
+    // ---- CPU RAM access (dedicated BRAM ports) --------------------------
+    //   - dl_parser reads sally_mem's dma port (bram_addr/bram_rdata).
+    //   - the compositor reads the display_shadow copy (cmp_bram_*).
+    //   - mem_read_mux per consumer routes between the plain BRAM port
+    //     (snoop mode, dma_mode_q=0, sh_ready=1) and dma_master via the
+    //     arbiter (DMA mode, dma_mode_q=1).
     wire [15:0] dl_raddr,  cmp_raddr;
     wire [7:0]  dl_rdata,  cmp_rdata;
     wire        dl_req,    cmp_req;
@@ -911,24 +906,19 @@ module antic_top #(
     wire [7:0]  dl_sh_rdata, cmp_sh_rdata;
     wire        dl_sh_ready, cmp_sh_ready;
 
-    // SALLY writes propagate to sally_mem's BRAM directly via its normal
-    // bus interface; ANTIC reads the same BRAM through its second port
-    // (sally_mem.dma_addr/dma_rdata at clk_bus).  No separate shadow
-    // memory is needed.
-    bram_shim #(.ADDR_W(16)) u_bram_shim (
-        .clk           (clk_bus),
-        .rst           (rst_bus),
-        .bram_addr     (bram_addr),
-        .bram_rdata    (bram_rdata),
-        .req_a         (dl_sh_req),
-        .raddr_a       (dl_sh_raddr),
-        .rdata_a       (dl_sh_rdata),
-        .ready_a       (dl_sh_ready),
-        .req_b         (cmp_sh_req),
-        .raddr_b       (cmp_sh_raddr),
-        .rdata_b       (cmp_sh_rdata),
-        .ready_b       (cmp_sh_ready)
-    );
+    // Each consumer now owns a DEDICATED registered-read BRAM port —
+    // dl_parser keeps sally_mem's dma port (bram_addr/bram_rdata), the
+    // compositor reads the display_shadow copy (cmp_bram_addr/_rdata,
+    // write-mirrored from sally_mem's single write site at the top level).
+    // bram_shim (the old two-consumers-one-port arbiter, source of the
+    // cross-port staleness bug class) is GONE; the mem_read_muxes run in
+    // their plain-BRAM snoop mode (sh_ready tied 1, fixed 1-cycle reads).
+    assign bram_addr     = dl_sh_raddr;
+    assign dl_sh_rdata   = bram_rdata;
+    assign dl_sh_ready   = 1'b1;
+    assign cmp_bram_addr = cmp_sh_raddr;
+    assign cmp_sh_rdata  = cmp_bram_rdata;
+    assign cmp_sh_ready  = 1'b1;
 
     // ---- dma_mode latch (vsync-aligned, snapped at dl_start_pulse) -----
     // dl_start_pulse fires once per frame at vbi_start (driven by the

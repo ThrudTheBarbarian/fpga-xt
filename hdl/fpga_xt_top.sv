@@ -516,20 +516,27 @@ module fpga_xt_top (
     wire [1:0]  spr_arburst; wire spr_arvalid, spr_arready;
     wire [63:0] spr_rdata;   wire spr_rvalid, spr_rlast, spr_rready;
 
-    // ANTIC's BRAM read port — driven by antic_top's u_bram_shim and
-    // serviced by sally_mem's second BRAM port (clk_sys side).  SALLY
-    // writes propagate naturally through sally_mem; ANTIC sees the
-    // same state without a shadow memory.
+    // ANTIC's read ports — one per consumer since the display-shadow split:
+    //   - dl_parser: antic_bram_* -> sally_mem's dma port (unchanged path;
+    //     the A9 OVL peek still hijacks this port via peek_en).
+    //   - compositor: antic_cmpram_* -> the display_shadow copy (a 64 KB
+    //     BRAM write-mirrored from sally_mem's single write site).
     wire [15:0] antic_bram_addr;
     wire [7:0]  antic_bram_rdata;
-    // ANTIC read mux: sally_mem's flat-shadow read (scrn_shadow_rdata) vs the
-    // banked screen_bank ANTIC-BRAM (scrn_antic_rdata).  Select is registered to
-    // align with both registered read data (1-cycle, clk_sys).
+    wire [15:0] antic_cmpram_addr;
+    wire [7:0]  antic_cmpram_rdata;
+    wire [7:0]  shadow_rdata;
+    // Screen-bank overlay mux ($4000-$5FFF banked screen) follows the
+    // COMPOSITOR address now — it reads screen data; the parser reads DL
+    // bytes from the flat copy (a DL living inside a banked screen bank is
+    // not supported — it never was intentionally).  Select registered to
+    // align with the registered read data (1-cycle, clk_sys).
     wire [7:0]  scrn_shadow_rdata;
     reg         scrn_antic_sel_q;
     always_ff @(posedge clk_sys)
-        scrn_antic_sel_q <= (antic_bram_addr[15:13] == 3'b010) && scrn_antic_banked;
-    assign antic_bram_rdata = scrn_antic_sel_q ? scrn_antic_rdata : scrn_shadow_rdata;
+        scrn_antic_sel_q <= (antic_cmpram_addr[15:13] == 3'b010) && scrn_antic_banked;
+    assign antic_cmpram_rdata = scrn_antic_sel_q ? scrn_antic_rdata : shadow_rdata;
+    assign antic_bram_rdata   = scrn_shadow_rdata;
 
     // PORTB ($D301) from PIA — controls ROM vs banked/BRAM visibility.
     wire [7:0]  portb_q;
@@ -1191,6 +1198,23 @@ module fpga_xt_top (
     wire        peek_en      = overlay_base[31];
     wire [15:0] mem_dma_addr = peek_en ? overlay_base[15:0] : antic_bram_addr;
 
+    // ---- Display-shadow copy of the flat 64 KB --------------------------
+    // Write-mirrored from sally_mem's single BRAM write site (CPU stores +
+    // ROM-load port); read exclusively by the compositor.  See
+    // display_shadow.sv for the CDC story (the RAMB port clocks ARE the CDC).
+    wire        mirror_we_w;
+    wire [15:0] mirror_addr_w;
+    wire [7:0]  mirror_din_w;
+    display_shadow u_display_shadow (
+        .clk_cpu  (clk_sally),
+        .mir_we   (mirror_we_w),
+        .mir_addr (mirror_addr_w),
+        .mir_din  (mirror_din_w),
+        .clk_disp (clk_sys),
+        .rd_addr  (antic_cmpram_addr),
+        .rd_data  (shadow_rdata)
+    );
+
     sally_mem #(
         .OS_ROM_HEX_PATH ("rsrc/sally-boot.hex"),
         .SELFTEST_HEX_PATH ("rsrc/selftest.hex"),  // XL self-test ROM ($5000-$57FF via PORTB[7])
@@ -1269,7 +1293,10 @@ module fpga_xt_top (
         .rom_addr    (rom_load_addr),
         .rom_data    (rom_load_data),
         .rom_we      (rom_load_we),
-        .dma_clk     (clk_sys),       // ANTIC reads sally_mem's BRAM at clk_bus
+        .mirror_we_q   (mirror_we_w),
+        .mirror_addr_q (mirror_addr_w),
+        .mirror_din_q  (mirror_din_w),
+        .dma_clk     (clk_sys),       // dl_parser (+ A9 peek) reads sally_mem's BRAM at clk_bus
         .dma_addr    (mem_dma_addr),       // TEMP: peek hijacks this (peek_en) else ANTIC's fetch
         .dma_rdata   (scrn_shadow_rdata)   // muxed with screen_bank ANTIC-BRAM above
     );
@@ -1555,6 +1582,8 @@ module fpga_xt_top (
         // ANTIC's BRAM read port — connects to sally_mem's dma port.
         .bram_addr          (antic_bram_addr),
         .bram_rdata         (antic_bram_rdata),
+        .cmp_bram_addr      (antic_cmpram_addr),
+        .cmp_bram_rdata     (antic_cmpram_rdata),
         // PORTB state — consumed by sally_mem for ROM vs RAM control.
         .portb_q            (portb_q),
         // ANTIC render tap → DDR3 writeback (HP3, see antic_writeback below).
@@ -1722,7 +1751,7 @@ module fpga_xt_top (
         .cpu_bank_wval(scrn_bank_wval),.cpu_bank_we(scrn_cpu_bank_we),
         .ready        (scrn_ready),
         .clk_antic    (clk_sys),
-        .antic_addr   (antic_bram_addr[12:0]), .antic_rdata (scrn_antic_rdata),
+        .antic_addr   (antic_cmpram_addr[12:0]), .antic_rdata (scrn_antic_rdata),
         .antic_bank_wval(scrn_bank_wval), .antic_bank_we (scrn_antic_bank_we),
         .vbi          (antic_wb_frame_done),   .antic_banked (scrn_antic_banked),
         .e_axi_araddr (sb_araddr),  .e_axi_arlen (sb_arlen),  .e_axi_arsize (sb_arsize),
