@@ -1188,3 +1188,15 @@ $(BUILD_DIR):
 
 clean:
 	rm -rf $(BUILD_DIR) visual/*.ppm
+
+# ---- FID-core vs raster co-sim (WSYNC/NMIST cycle calibration) ----------
+fid_raster: $(BUILD_DIR)/tb_fid_raster.vvp
+	@echo "=== fid_raster (cycle calibration) ==="
+	@$(VVP) -N $< | tee $(BUILD_DIR)/tb_fid_raster.log
+	@grep -q 'FID_RASTER done' $(BUILD_DIR)/tb_fid_raster.log || \
+	    (echo "FAIL: tb_fid_raster did not complete"; exit 1)
+	@echo "PASS: tb_fid_raster"
+
+$(BUILD_DIR)/tb_fid_raster.vvp: $(BOOT_CPU) $(BOOT_SYS_HDL) $(BOOT_ANTIC_HDL) $(HDL_DIR)/xt6502f/xt6502f.sv axi_slave_mem.sv peri_rp_idle.sv tb_fid_raster.sv | $(BUILD_DIR)
+	$(IVERILOG) $(SV_FLAGS) $(BOOT_DEFINES) -o $@ -s tb_fid_raster \
+	    $(BOOT_CPU) $(BOOT_SYS_HDL) $(BOOT_ANTIC_HDL) $(HDL_DIR)/xt6502f/xt6502f.sv axi_slave_mem.sv peri_rp_idle.sv tb_fid_raster.sv
