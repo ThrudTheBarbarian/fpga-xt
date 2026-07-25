@@ -135,16 +135,16 @@ module dl_parser (
     wire         wr_bank = ~act_bank;
 
     // ---- Parse FSM ------------------------------------------------------
-    typedef enum logic [3:0] {
+    typedef enum logic [4:0] {
         S_IDLE, S_FETCH_OP, S_WAIT_OP, S_DECODE_OP,
         S_FETCH_LMS_LO, S_WAIT_LMS_LO, S_LATCH_LMS_LO,
         S_FETCH_LMS_HI, S_WAIT_LMS_HI, S_LATCH_LMS_HI,
         S_FETCH_JMP_LO, S_WAIT_JMP_LO, S_LATCH_JMP_LO,
-        S_FETCH_JMP_HI, S_WAIT_JMP_HI, S_APPEND
+        S_FETCH_JMP_HI, S_WAIT_JMP_HI, S_APPEND, S_SKIP
     } pstate_e;
     pstate_e state;
 
-    assign dbg_state      = state[3:0];
+    assign dbg_state      = state[3:0];   // low 4 bits (17 states)
     assign dbg_emit_phase = 2'b00;         // legacy (emit phases are gone)
 
     // mem_req: pulse for exactly one cycle on each FETCH->WAIT transition —
@@ -394,16 +394,12 @@ module dl_parser (
                             state <= S_APPEND;
                         end else if ((lead_skipped + {5'd0, mem_rdata[6:4]} + 8'd1)
                                         <= LEAD_OVERSCAN) begin
-                            // Skipped top-overscan blank.  A DLI riding on it is
-                            // recorded at its TRUE physical last scan line.
-                            if (mem_rdata[7] && ph_bld_cnt < PH_N[4:0]) begin
-                                ph_bld[ph_bld_cnt] <=
-                                    lead_skipped + {5'd0, mem_rdata[6:4]};
-                                ph_bld_cnt <= ph_bld_cnt + 5'd1;
-                            end
-                            lead_skipped <= lead_skipped
-                                            + {5'd0, mem_rdata[6:4]} + 8'd1;
-                            state        <= S_FETCH_OP;
+                            // Skipped top-overscan blank — bookkeeping happens
+                            // in S_SKIP from REGISTERED operands: gating the
+                            // phantom-list write CE on raw mem_rdata put the
+                            // shadow-BRAM clk-to-out plus decode in one cycle
+                            // (timing violator, build 36f).
+                            state <= S_SKIP;
                         end else begin
                             // Intentional vertical positioning — emit it.
                             state <= S_APPEND;
@@ -481,6 +477,19 @@ module dl_parser (
                         dl_pos            <= {mem_rdata, target_addr[7:0]};
                         state             <= S_FETCH_OP;
                     end
+                end
+
+                // ---- Skipped leading blank: phantom + lead bookkeeping ----
+                S_SKIP: begin
+                    // A DLI riding on a skipped blank is recorded at its TRUE
+                    // physical last scan line (lead + count-1).
+                    if (dli_q && ph_bld_cnt < PH_N[4:0]) begin
+                        ph_bld[ph_bld_cnt] <=
+                            8'(lead_skipped + {3'd0, blank_count} - 8'd1);
+                        ph_bld_cnt <= ph_bld_cnt + 5'd1;
+                    end
+                    lead_skipped <= lead_skipped + {3'd0, blank_count};
+                    state        <= S_FETCH_OP;
                 end
 
                 // ---- Append one entry --------------------------------
