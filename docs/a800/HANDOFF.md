@@ -13,7 +13,17 @@ build regenerates the ps7_init tree under the JTAG scripts).
 
 ---
 
-## 0. 2026-07-25 overnight session (newest)
+## 0. 2026-07-25 sessions (newest)
+
+### 0-day. Display-shadow split (afternoon, commit 7850d08, HW-validated)
+The compositor now reads a dedicated 64 KB display_shadow BRAM copy
+(write-mirrored from sally_mem's SINGLE write site — cpu_w + rom_we;
+the RAMB port clocks are the CDC).  dl_parser keeps sally_mem's dma
+port; **bram_shim is out of the datapath** (mem_read_muxes in plain-BRAM
+snoop mode, sh_ready=1).  Timing: compositor route pressure dropped
+~2 ns, closure went 7 spins -> 1 spin, all 29 greens hold on HW.
+BRAM: 106.5/140 tiles (76%).  The compositor's private port is the
+groundwork for the live-DMACTL cluster (per-scanline DL fetch).
 
 ### 0a. pia_irq GREEN — full 6821 CA2/CB2 model (`hdl/pia_regs.sv`)
 Pending-transition semantics derived from all 17 of the test's own vectors
