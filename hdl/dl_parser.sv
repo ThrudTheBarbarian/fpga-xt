@@ -102,7 +102,12 @@ module dl_parser (
 
     // Status.
     output logic        parse_done,        // pulses after each parse pass
-    output logic [31:0] parse_count
+    output logic [31:0] parse_count,
+    // Debug: the DL address the LAST parse started from + the published
+    // list shape — one-read HW triage for stale-DLIST vs publish faults.
+    output logic [15:0] dbg_parse_start,
+    output wire  [8:0]  dbg_act_count,
+    output wire  [4:0]  dbg_ph_cnt
 );
 
     localparam int ATARI_H = 192;
@@ -253,6 +258,8 @@ module dl_parser (
     assign dli_at = (cur_dli && w_is_last && cur_mode != 4'h0) || ph_hit;
 
     assign dbg_dli_cnt   = act_dli_cnt;
+    assign dbg_act_count = act_count;
+    assign dbg_ph_cnt    = ph_act_cnt;
     assign dbg_dli_rows  = {3'd0, ph_act_cnt};
     logic has23;
     always_comb begin
@@ -329,6 +336,7 @@ module dl_parser (
             pf_pend         <= 1'b0;
             pf_idx          <= 9'd0;
             pf_q            <= 27'h0;
+            dbg_parse_start <= 16'h0;
         end else begin
             parse_done <= 1'b0;     // single-cycle pulse
 
@@ -336,6 +344,8 @@ module dl_parser (
             unique case (state)
                 S_IDLE: begin
                     if (start_parse) begin
+                        dbg_parse_start <= dlist_dirty ? {dlisth, dlistl}
+                                                       : dl_pos;
                         // Reload dl_pos from the registers only when written
                         // since the last parse (free-running DL PC otherwise —
                         // ACID800 antic_dlistwrap / Altirra mDLIST semantics).

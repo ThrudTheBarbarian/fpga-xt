@@ -491,6 +491,9 @@ module antic_top #(
     wire [7:0]  nmi_cur_row;
     wire        nmi_cur_row_dli;
     wire [7:0]  dbg_dli_rows;      // dl_parser line_dli_p snapshot (temp DLI diag)
+    wire [15:0] dbg_parse_start_w; // parser triage: last parse start addr
+    wire [8:0]  dbg_act_count_w;   //   published entry count
+    wire [4:0]  dbg_ph_cnt_w;      //   published phantom count
     wire [4:0]  dbg_dli_listcnt;   // dl_parser DLI-row list count
     wire        dbg_dli_has23;     // list contains raster row 23
     wire        nmi_n_w;
@@ -582,7 +585,9 @@ module antic_top #(
     wire [7:0] vdelay_q;
     // TEMP diag: colours (colpf0/colpf1/colpf2/colbk) for `mem` readback. dbg_antic (DLI
     // counter + NMIEN/NMIST/mode) is assigned lower down, after dl_meta_mode is declared.
-    assign dbg_gtia  = {colpf_q[0], colpf_q[1], colpf_q[2], colbk_q};
+    // diag9 repurposed (was TEMP GTIA colours): parser triage word —
+    // {last parse start addr[15:0], 3'b0, ph_act_cnt[4:0], act_count[7:0]}
+    assign dbg_gtia  = {dbg_parse_start_w, 3'b000, dbg_ph_cnt_w, dbg_act_count_w[7:0]};
     wire [7:0] gractl_q;
     wire [7:0] consol_w_q;
     wire       hitclr_strobe;
@@ -1218,6 +1223,9 @@ module antic_top #(
         .meta_vscrol_en(dl_meta_vscrol_en),
         .dli_row(nmi_cur_row),
         .dli_at(nmi_cur_row_dli),
+        .dbg_parse_start(dbg_parse_start_w),
+        .dbg_act_count(dbg_act_count_w),
+        .dbg_ph_cnt(dbg_ph_cnt_w),
         .dbg_dli_rows(dbg_dli_rows),
         .dbg_dli_cnt(dbg_dli_listcnt),
         .dbg_dli_has23(dbg_dli_has23),
