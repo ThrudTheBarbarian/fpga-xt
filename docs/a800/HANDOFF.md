@@ -15,6 +15,44 @@ build regenerates the ps7_init tree under the JTAG scripts).
 
 ## 0. 2026-07-25 sessions (newest)
 
+### 0f. dlitiming NMI-recognition matrix (overnight 07-25→26 — DEFINITIVE)
+Measured with `tb_fid_raster +prog=N` (PC-recording NMI handler; the
+pushed PCL is the verdict).  Real-NMOS expected values: delayed-odd
+$32, delayed-even $32, plain-odd $2C.  Three recognition/pulse configs
+measured end-to-end through the real ANTIC pulse + 2-FF CDC + fid
+commit pipeline:
+
+| config                              | plain | dly-even | dly-odd |
+|-------------------------------------|-------|----------|---------|
+| A: 2-stage rec, pulse @8 (build 42) | $2C ✓ | ✓ (HW)   | $31 −1  |
+| B: 3-stage rec, pulse @8 (build 43) | $2D +1| $32 ✓    | $32 ✓   |
+| C: 2-stage rec, MiSTer dual-tick    | $2C ✓ | $32 ✓    | $31 −1  |
+
+Config C = cycle-7 pulse leg gated by one-tick-delayed NMIEN, plus a
+cycle-8 leg gated by live NMIEN for the just-armed case (NMIEN write
+completing at cycle 6 only reaches nmien_q ~cycle 7 via the snoop CDC,
+so the c7 leg alone never fires for the delayed progs).  Reverted —
+no better than A for the suite verdict (ACID asserts in order and
+delayed-odd precedes delayed-even).
+
+WHY NO UNIFORM PIPELINE CAN PASS ALL THREE: the real NMOS rule polls
+interrupts at each instruction's PENULTIMATE cycle.  Whether the /NMI
+edge lands on the final vs penultimate cycle of the instruction in
+flight decides hijack-now vs one-more-instruction — that's exactly the
+odd/even sled parity, and a fixed-depth pipeline (2- or 3-stage) sees
+the same edge age in both cases.  THE REAL FIX (specified, not built):
+in xt6502f, freeze the recognition capture during each instruction's
+FINAL commit (the commit whose next state is ST_FETCH), so the value
+consulted at the fetch reflects the penultimate-commit sample.  Needs
+a clean "last commit" marker in the state machine (SYNC is the fetch
+itself — one too late; derive will-enter-ST_FETCH or tag the ~40
+`state <= ST_FETCH` sites).  IRQ side has the same structure
+(pokey_inittiming odd-sled) — one mechanism fixes both, but IRQ
+timing is calibrated against 2-stage, so rebalance STIMER lag in the
+same pass.  Measured constants to reuse: /NMI pend rises at cycle 9
+for a cycle-8 pulse start (1-cycle delivery latency); NMIEN snoop
+write latency ≈1 cycle.
+
 ### 0e. WSYNC/NMIST calibration dossier (2026-07-25 evening — READ FIRST)
 **INSTRUMENT LANDED (late evening):** `make -C sim fid_raster`
 (tb_fid_raster.sv) — fid core + antic_top + sally_mem at real 3:4
