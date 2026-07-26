@@ -466,7 +466,14 @@ module antic_timing #(
                     dl_ctl    <= dl_ctl_prev;                // Altirra restart
                     row_height_m1 <= ctl_height_m1(dl_ctl_prev);
                     row_ctr   <= 4'd0;
-                    vs_prev   <= 1'b0;
+                    // The straddling line's VS state must survive the VBI:
+                    // Altirra restores mDLControl = mDLControlPrev, so the
+                    // "previous line" the next VS-exit compares against is
+                    // the one that ran into the vertical blank.  Resetting
+                    // this to 0 loses a VS->non-VS transition across the
+                    // frame boundary (ACID antic_vscroll #5: a 29x blank-8
+                    // list whose VS mode line straddles the VBI).
+                    vs_prev   <= (dl_ctl_prev[3:0] >= 4'h2) && dl_ctl_prev[5];
                 end
 
                 // ---- counters -------------------------------------------

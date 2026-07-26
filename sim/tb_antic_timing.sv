@@ -188,6 +188,21 @@ module tb_antic_timing;
         if (vcount_w !== 8'd0)   begin $display("FAIL T6: vcount=%0d at 112, want 0", vcount_w); nfail++; end
         $display("  ok  T6: VCOUNT single-cycle rollover (130 -> 131 for one cycle -> 0)");
 
+        // ---------------- T7: VS state survives the VBI ------------------
+        // ACID antic_vscroll #5: a list whose VS mode line straddles the
+        // vertical blank.  After the frame restart the "previous line" the
+        // next VS-exit compares against must still be that straddling line
+        // (Altirra mDLControl = mDLControlPrev), not a cleared slate.
+        wr(4'h0, 8'h00);                    // DL DMA off: freeze the machine
+        force dut.dl_ctl_prev = 8'hA2;      // mode 2 + VS + DLI, as dlist3's
+        wr(4'h0, 8'h22);                    // DL DMA on -> restart at line 8
+        run_to(9'd8, 7'd4);
+        release dut.dl_ctl_prev;
+        if (dut.vs_prev !== 1'b1) begin
+            $display("FAIL T7: vs_prev=%b after restart, want 1 (VS straddle lost)", dut.vs_prev);
+            nfail++;
+        end else $display("  ok  T7: VS state carried across the VBI restart");
+
         if (nfail == 0) $display("*** ANTIC_TIMING OK ***");
         else            $display("*** ANTIC_TIMING FAIL *** %0d failure(s)", nfail);
         $finish;
