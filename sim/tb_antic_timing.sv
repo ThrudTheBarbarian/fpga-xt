@@ -104,41 +104,42 @@ module tb_antic_timing;
             run_to(9'd30, wc + 7'd2);
             if (rdy_n_w !== 1'b0) begin $display("FAIL T2: not stalled at K+2"); nfail++; end
         end
-        run_to(9'd30, 7'd102);
-        if (rdy_n_w !== 1'b0) begin $display("FAIL T2: released early (ready during 102)"); nfail++; end
         run_to(9'd30, 7'd103);
-        if (rdy_n_w !== 1'b1) begin $display("FAIL T2: first ready cycle not 103"); nfail++; end
-        $display("  ok  T2: WSYNC delay slot + release -> first ready cycle 103");
+        if (rdy_n_w !== 1'b0) begin $display("FAIL T2: released early (ready during 103)"); nfail++; end
+        run_to(9'd30, 7'd104);
+        if (rdy_n_w !== 1'b1) begin $display("FAIL T2: first ready cycle not 104"); nfail++; end
+        $display("  ok  T2: WSYNC delay slot + release -> first ready cycle 104");
 
-        // ---------------- T3: VBI at (248,7), pulse, NMIRES --------------
+        // ---------------- T3: VBI NMIST at (248,6), pulse 8-9, NMIRES ----
         wr(4'hE, 8'h40);                    // NMIEN = VBI
-        run_to(9'd248, 7'd6);
+        run_to(9'd248, 7'd5);
         if (nmist_w[6] !== 1'b0) begin $display("FAIL T3: VBI bit early"); nfail++; end
-        run_to(9'd248, 7'd7);
-        if (nmist_w[6] !== 1'b1) begin $display("FAIL T3: no VBI bit at (248,7)"); nfail++; end
-        if (nmi_n_w  !== 1'b0)  begin $display("FAIL T3: /NMI not low at 7"); nfail++; end
+        run_to(9'd248, 7'd6);
+        if (nmist_w[6] !== 1'b1) begin $display("FAIL T3: no VBI bit at (248,6)"); nfail++; end
         run_to(9'd248, 7'd8);
         if (nmi_n_w  !== 1'b0)  begin $display("FAIL T3: /NMI not low at 8"); nfail++; end
         run_to(9'd248, 7'd9);
-        if (nmi_n_w  !== 1'b1)  begin $display("FAIL T3: /NMI still low at 9"); nfail++; end
+        if (nmi_n_w  !== 1'b0)  begin $display("FAIL T3: /NMI not low at 9"); nfail++; end
+        run_to(9'd248, 7'd10);
+        if (nmi_n_w  !== 1'b1)  begin $display("FAIL T3: /NMI still low at 10"); nfail++; end
         wr(4'hF, 8'h00);                    // NMIRES
         mc(2);
         if (nmist_w[7:6] !== 2'b00) begin $display("FAIL T3: NMIRES did not clear"); nfail++; end
-        $display("  ok  T3: VBI NMIST at (248,7), 2-cycle /NMI, NMIRES clears");
+        $display("  ok  T3: VBI NMIST at (248,6), /NMI pulse 8-9, NMIRES clears");
 
         // ---------------- T4: DL DLIs on the nmist list ------------------
         wr(4'h2, 8'h00); wr(4'h3, 8'h2C);   // DLIST = $2C00
         wr(4'h0, 8'h20);                    // DL DMA on
         wr(4'hE, 8'h00);                    // no delivery; NMIST is the witness
         // next frame: blanks 8-31, F0 32-39 (DLI at 39), F0 40-47 (DLI 47)
-        run_to(9'd39, 7'd6);
+        run_to(9'd39, 7'd4);
         wr(4'hF, 8'h00);                    // clear
-        run_to(9'd39, 7'd7);
-        if (nmist_w[7] !== 1'b1) begin $display("FAIL T4: no DLI at (39,7) nmist=%02h dlctl=%02h row=%0d", nmist_w, dlctl_w, rowctr_w); nfail++; end
-        run_to(9'd47, 7'd6);
+        run_to(9'd39, 7'd6);
+        if (nmist_w[7] !== 1'b1) begin $display("FAIL T4: no DLI at (39,6) nmist=%02h dlctl=%02h row=%0d", nmist_w, dlctl_w, rowctr_w); nfail++; end
+        run_to(9'd47, 7'd4);
         wr(4'hF, 8'h00);
-        run_to(9'd47, 7'd7);
-        if (nmist_w[7] !== 1'b1) begin $display("FAIL T4: no DLI at (47,7)"); nfail++; end
+        run_to(9'd47, 7'd6);
+        if (nmist_w[7] !== 1'b1) begin $display("FAIL T4: no DLI at (47,6)"); nfail++; end
         run_to(9'd60, 7'd0);
         wr(4'hF, 8'h00);
         run_to(9'd200, 7'd10);

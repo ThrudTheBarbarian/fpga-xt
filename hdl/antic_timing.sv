@@ -47,7 +47,7 @@
 `default_nettype none
 
 module antic_timing #(
-    parameter [6:0] RELEASE_CYCLE = 7'd102,  // first executed CPU cycle = 103 (Avery: mva ;*=103,104..)
+    parameter [6:0] RELEASE_CYCLE = 7'd103,  // first executed CPU cycle = 104 (HW-calibrated: antic_vcount d2 reads NEW count at data cycle 111)
     parameter [8:0] VBI_LINE      = 9'd248,
     parameter [8:0] RESTART_LINE  = 9'd8      // first display line
 ) (
@@ -173,6 +173,7 @@ module antic_timing #(
     // =====================================================================
     logic [1:0] nmist_hi;             // {DLI, VBI}
     logic       nmi_ext;              // extend the pulse one more cycle
+    logic       nmi_arm_q;            // DLI/VBI decision at 6 -> pulse at 8
     logic       wsync_latch_n;
     assign nmist = {nmist_hi, 6'h1F};
 
@@ -262,7 +263,7 @@ module antic_timing #(
             dl_active <= 1'b0; need_inst <= 1'b0; need_addr <= 1'b0; is_jvb <= 1'b0;
             vs_prev <= 1'b0; vs_latch6 <= 4'd0; vs_latch109 <= 4'd0;
             inst_q <= 8'h00; addr_lo_q <= 8'h00;
-            nmist_hi <= 2'b00; nmi_ext <= 1'b0; nmi_n <= 1'b1;
+            nmist_hi <= 2'b00; nmi_ext <= 1'b0; nmi_n <= 1'b1; nmi_arm_q <= 1'b0;
             wsync_latch_n <= 1'b1; rdy_n_q <= 1'b1;
         end else begin
             // ---------- register snoop (every clk, zero latency) ----------
@@ -333,23 +334,41 @@ module antic_timing #(
                 // ---- entering cycle 6: VSCROL DLI-compare sample --------
                 if (hc_next == 7'd6) vs_latch6 <= vscrol_q[3:0];
 
-                // ---- /NMI pulse shaping + entering cycle 7: NMIST -------
+                // ---- /NMI pulse shaping ---------------------------------
                 // (trigger below overrides — trigger wins on the same tick)
                 if (nmi_ext) begin nmi_ext <= 1'b0; nmi_n <= 1'b0; end
                 else               nmi_n   <= 1'b1;
 
-                if (hc_next == 7'd7) begin
+                // ---- entering cycle 6: NMIST changes --------------------
+                // The status bit must be VISIBLE to a CPU read whose data
+                // cycle is 6 (ACID antic_nmist 'set too late (>cycle 6)';
+                // MiSTer sets it in the latter half of cycle 6).  The DLI
+                // decision here uses the live VSCROL — this tick IS the
+                // latch-6 sample point.
+                if (hc_next == 7'd6) begin
                     if (line == VBI_LINE) begin
-                        nmist_hi <= 2'b01;
-                        if (nmien_q[6]) begin nmi_n <= 1'b0; nmi_ext <= 1'b1; end
+                        nmist_hi  <= 2'b01;
+                        nmi_arm_q <= nmien_q[6];
                         dl_ctl_prev <= dl_ctl;               // save across the VBI
                         dl_ctl      <= dl_ctl & 8'h20;       // VS survives
-                    end else if (dl_ctl[7] && (row_ctr == stop_dli)) begin
-                        // DLI: fires for mode lines, blank+DLI lines, and the
-                        // parked JVB wait region alike (Race In Space).
-                        nmist_hi <= 2'b10;
-                        if (nmien_q[7]) begin nmi_n <= 1'b0; nmi_ext <= 1'b1; end
+                    end else if (dl_ctl[7]
+                                 && (row_ctr == (vs_exit ? vscrol_q[3:0]
+                                                          : row_height_m1))) begin
+                        // DLI: mode lines, blank+DLI lines, and the parked
+                        // JVB wait region alike (Race In Space).
+                        nmist_hi  <= 2'b10;
+                        nmi_arm_q <= nmien_q[7];
+                    end else begin
+                        nmi_arm_q <= 1'b0;
                     end
+                end
+                // ---- entering cycle 8: /NMI pulse (cycles 8-9) ----------
+                // One cycle after the real chip's 7-8 pulse: the NMOS core's
+                // internal /NMI synchronizer stage (which our per-clk edge
+                // latch skips) is folded into the delivery here, so the
+                // core-visible pend timing matches silicon.
+                if (hc_next == 7'd8 && nmi_arm_q) begin
+                    nmi_n <= 1'b0; nmi_ext <= 1'b1; nmi_arm_q <= 1'b0;
                 end
 
                 // ---- WSYNC latch + /RDY (clear beats set) ---------------
