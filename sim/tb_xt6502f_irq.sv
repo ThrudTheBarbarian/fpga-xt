@@ -62,6 +62,14 @@ module tb_xt6502f_irq;
     end endtask
 
     integer i; reg okr; reg [15:0] retpc; reg [7:0] pushp;
+    reg dbg_t5 = 0; integer t5c = 0;
+    always @(posedge clk) if (dbg_t5 && t5c < 900) begin
+        t5c = t5c + 1;
+        if (dut.sub == 0)
+            $display("[t5] state=%0d pend=%b d1=%b p1=%b p2=%b intr=%b svc=%b pc=%04h",
+                     dut.state, dut.nmi_pend, dut.nmi_d1, dut.nmi_polled,
+                     dut.nmi_polled2, dut.intr, dut.nmi_svc, dbg_pc);
+    end
     initial begin
         for (i = 0; i < 65536; i = i + 1) mem[i] = 8'hEA;      // fill with NOP
         // program loop at $0400: NOPs then JMP $0400
@@ -130,6 +138,50 @@ module tb_xt6502f_irq;
             else $display("  ok  T4: NMI is edge-triggered (no re-fire while held low)");
         end
         nmi_n = 1'b1;
+
+        // ============ T5: NMOS blocked NMI — edge during BRK's vector fetch is LOST =========
+        // BRK at $0480: fetch(1) BRK1(2) BRK2(3) BRK3(4) BRK4(5) BRK5(6) BRK6(7).
+        // Assert /NMI during cycle 6 (after the BRK4 hijack decision): the BRK
+        // vector must be taken and the NMI must NEVER fire (ACID800
+        // antic_blockednmi: "VBI handler should not have executed").
+        mem[16'h0480] = 8'h00;                   // BRK
+        dbg_t5 = 1;
+        seed(16'h0480, 8'hFF, 8'h24);
+        run_mc(6);                               // through BRK4 (hijack decision passed;
+                                                 // the post-seed fetch spans 2 sampled mc)
+        nmi_n = 1'b0;                            // edge lands in BRK5/BRK6
+        run_mc(2);
+        nmi_n = 1'b1;
+        // Outcome check (sampling once per mc can miss the 6-cycle RTI at
+        // $0500): the swallowed NMI must NEVER reach $06xx, and execution
+        // must come back to the NOP slide after $0482 — which can only
+        // happen via BRK vector -> $0500 RTI.
+        okr = 0;
+        for (i = 0; i < 30; i = i + 1) begin run_mc(1); if (dbg_pc[15:8] === 8'h06) begin okr = 1; i = 30; end end
+        dbg_t5 = 0;
+        if (okr) begin $display("FAIL T5: swallowed NMI fired anyway (pc=$%04h)", dbg_pc); nfail=nfail+1; end
+        else if (dbg_pc[15:8] !== 8'h04 || dbg_pc < 16'h0482)
+            begin $display("FAIL T5: did not return via BRK vector/RTI (pc=$%04h)", dbg_pc); nfail=nfail+1; end
+        else $display("  ok  T5: late NMI during BRK vector fetch is lost (blocked-NMI)");
+
+        // ============ T6: early NMI during BRK pushes = hijack to $FFFA, single entry ======
+        seed(16'h0480, 8'hFF, 8'h24);
+        run_mc(2);                               // fetch + BRK1
+        nmi_n = 1'b0;                            // edge before the BRK4 decision
+        run_mc(2);
+        nmi_n = 1'b1;
+        wait_pc(16'h0600, okr);
+        if (!okr) begin $display("FAIL T6: early NMI did not hijack BRK to $0600 (pc=$%04h)", dbg_pc); nfail=nfail+1; end
+        else begin
+            okr = 0;
+            for (i = 0; i < 15; i = i + 1) begin run_mc(1);
+                if (dbg_pc[15:8] === 8'h05) begin okr = 1; i = 15; end
+                if (dbg_pc === 16'h0600 && i > 2) begin okr = 2; i = 15; end
+            end
+            if (okr == 1) begin $display("FAIL T6: BRK handler entered after hijack"); nfail=nfail+1; end
+            else if (okr == 2) begin $display("FAIL T6: NMI double-entry after hijack"); nfail=nfail+1; end
+            else $display("  ok  T6: early NMI hijacks BRK, single entry, no BRK handler");
+        end
 
         if (nfail == 0) $display("*** XT6502F_IRQ OK ***");
         else            $display("*** XT6502F_IRQ FAIL *** %0d failure(s)", nfail);

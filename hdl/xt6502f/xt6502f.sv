@@ -785,10 +785,27 @@ module xt6502f #(
                 ST_BRK2: begin S <= S - 8'd1; state <= ST_BRK3; end        // push PCH; S--
                 ST_BRK3: begin S <= S - 8'd1; state <= ST_BRK4; end        // push PCL; S--
                 ST_BRK4: begin S <= S - 8'd1; P[2] <= 1'b1; i_poll <= 1'b1;  // push P; S--; set I (poll-mask too, immediately)
-                    if (nmi_pend) begin nmi_svc <= 1'b1; nmi_pend <= 1'b0; end   // BRK/IRQ -> NMI vector hijack
+                    if (nmi_pend) begin nmi_svc <= 1'b1; nmi_pend <= 1'b0;   // BRK/IRQ -> NMI vector hijack
+                        // Hijacked BRK: also drain the recognition pipeline so
+                        // the consumed edge cannot mature into a SECOND NMI
+                        // entry right after the handler starts.
+                        if (!intr) begin nmi_d1 <= 1'b0; nmi_polled <= 1'b0; nmi_polled2 <= 1'b0; end
+                    end
                     state <= ST_BRK5; end
-                ST_BRK5: begin eal <= din_r; state <= ST_BRK6; end         // read vector low
-                ST_BRK6: begin PC <= {din_r, eal}; intr <= 1'b0; nmi_svc <= 1'b0; state <= ST_FETCH; end // vec high; PC = vector
+                // NMOS blocked-NMI: an NMI edge landing during a genuine BRK's
+                // vector fetch (after the hijack decision at BRK4) is CONSUMED
+                // by the sequence and lost — the BRK vector is taken and the
+                // NMI handler never runs (ACID800 antic_blockednmi: "VBI
+                // handler should not have executed").  Hardware-interrupt
+                // entries (intr) keep the pend: a too-late NMI during IRQ
+                // entry stays pending and fires after the handler's first
+                // instruction (dli/irq coincidence calibration unchanged).
+                ST_BRK5: begin eal <= din_r;
+                    if (!intr) begin nmi_pend <= 1'b0; nmi_d1 <= 1'b0; nmi_polled <= 1'b0; nmi_polled2 <= 1'b0; end
+                    state <= ST_BRK6; end         // read vector low
+                ST_BRK6: begin PC <= {din_r, eal}; intr <= 1'b0; nmi_svc <= 1'b0;
+                    if (!intr) begin nmi_pend <= 1'b0; nmi_d1 <= 1'b0; nmi_polled <= 1'b0; nmi_polled2 <= 1'b0; end
+                    state <= ST_FETCH; end // vec high; PC = vector
                 // HW interrupt: 2nd cycle is a dummy read at PC (no increment); then the BRK push+vector sequence
                 ST_IRQ2: state <= ST_BRK2;
 
