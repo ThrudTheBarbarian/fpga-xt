@@ -180,6 +180,7 @@ module antic_timing #(
     logic       nmi_ext;              // extend the pulse one more cycle
     logic       nmi_arm_q;            // DLI/VBI condition met at 7 -> pulse at 9
     logic       nmi_arm_vbi_q;        // which NMIEN bit gates this pulse
+    logic       nmi_en_ok;            // NMIEN sampled entering 8 (the gate window)
     logic [1:0] nmist_hold_q;         // cycle-6 status set is DOMINANT: re-assert
                                       // entering 7 so a same-cycle-6 NMIRES write
                                       // cannot erase it (ACID nmist 'VBI bit was
@@ -273,7 +274,7 @@ module antic_timing #(
             dl_active <= 1'b0; need_inst <= 1'b0; need_addr <= 1'b0; is_jvb <= 1'b0;
             vs_prev <= 1'b0; vs_latch6 <= 4'd0; vs_latch109 <= 4'd0;
             inst_q <= 8'h00; addr_lo_q <= 8'h00;
-            nmist_hi <= 2'b00; nmi_ext <= 1'b0; nmi_n <= 1'b1; nmi_arm_q <= 1'b0; nmi_arm_vbi_q <= 1'b0; nmist_hold_q <= 2'b00;
+            nmist_hi <= 2'b00; nmi_ext <= 1'b0; nmi_n <= 1'b1; nmi_arm_q <= 1'b0; nmi_arm_vbi_q <= 1'b0; nmi_en_ok <= 1'b0; nmist_hold_q <= 2'b00;
             wsync_latch_n <= 1'b1; rdy_n_q <= 1'b1;
         end else begin
             // ---------- register snoop (every clk, zero latency) ----------
@@ -389,15 +390,19 @@ module antic_timing #(
                 // NMOS core's internal /NMI synchronizer stage (which the
                 // fid's per-clk edge latch skips).  HW-verified: blockednmi
                 // passes under authority on this grid.
-                // NMIEN is sampled HERE, not at the decision: ACID nmist
-                // 'DLI was not activated by write to NMIEN on cycle 6' — a
-                // write landing as late as cycle 6/7 must still enable this
-                // line's interrupt (MiSTer: the /NMI pulse is gated by a
-                // one-cycle-delayed NMIEN, i.e. sampled after the decision).
+                // ---- entering cycle 8: the NMIEN gate sample ------------
+                // BRACKETED BY TWO ACID ASSERTS: sampling at the decision
+                // (7) gave 'DLI was not activated by write to NMIEN on
+                // cycle 6'; sampling at the pulse (9) gave 'DLI WAS
+                // activated by write to NMIEN on cycle 7'.  The window is
+                // exactly one cycle wide: a cycle-6 write counts, a cycle-7
+                // write does not.  (MiSTer's 'one-cycle-delayed NMIEN',
+                // pinned by measurement rather than inherited.)
+                if (hc_next == 7'd8)
+                    nmi_en_ok <= nmi_arm_vbi_q ? nmien_q[6] : nmien_q[7];
+                // ---- entering cycle 9: the /NMI pulse (9-10) ------------
                 if (hc_next == 7'd9 && nmi_arm_q) begin
-                    if (nmi_arm_vbi_q ? nmien_q[6] : nmien_q[7]) begin
-                        nmi_n <= 1'b0; nmi_ext <= 1'b1;
-                    end
+                    if (nmi_en_ok) begin nmi_n <= 1'b0; nmi_ext <= 1'b1; end
                     nmi_arm_q <= 1'b0;
                 end
 
