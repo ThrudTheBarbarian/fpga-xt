@@ -23,8 +23,9 @@
 #include "usys.h"
 
 /* xg_listdir — a portable directory listing for XG's toolkit file panel (GEM has no OS file
- * selector).  Writes one "t name\n" line per entry into buf (t = 'd' for a directory, 'f' for a
- * file), dot-entries skipped.  Returns the entry count, or -1 if the directory can't be opened.
+ * selector).  Writes one "t\tsize\tname\n" line per entry into buf (t = 'd' for a directory, 'f' for
+ * a file; size is bytes, 0 for directories), dot-entries skipped.  Returns the entry count, or -1 if
+ * the directory can't be opened.
  * Lives here because gemclient.c is compiled into libGEM on BOTH the host and the arm9 build, so the
  * struct-dirent layout is whatever each platform's headers say — the XG client never sees it. */
 int xg_listdir(const char *path, char *buf, int cap) {
@@ -38,8 +39,10 @@ int xg_listdir(const char *path, char *buf, int cap) {
         char full[1024];
         snprintf(full, sizeof full, "%s/%s", path, nm);
         struct stat st;
-        int isdir = (stat(full, &st) == 0) && S_ISDIR(st.st_mode);
-        off += snprintf(buf + off, cap - off, "%c %s\n", isdir ? 'd' : 'f', nm);
+        int ok = (stat(full, &st) == 0);
+        int isdir = ok && S_ISDIR(st.st_mode);
+        long long sz = (ok && !isdir) ? (long long)st.st_size : 0;
+        off += snprintf(buf + off, cap - off, "%c\t%lld\t%s\n", isdir ? 'd' : 'f', sz, nm);
         n++;
     }
     closedir(d);
