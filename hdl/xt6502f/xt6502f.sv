@@ -785,7 +785,12 @@ module xt6502f #(
                 ST_BRK2: begin S <= S - 8'd1; state <= ST_BRK3; end        // push PCH; S--
                 ST_BRK3: begin S <= S - 8'd1; state <= ST_BRK4; end        // push PCL; S--
                 ST_BRK4: begin S <= S - 8'd1; P[2] <= 1'b1; i_poll <= 1'b1;  // push P; S--; set I (poll-mask too, immediately)
-                    if (nmi_pend) begin nmi_svc <= 1'b1; nmi_pend <= 1'b0;   // BRK/IRQ -> NMI vector hijack
+                    // Hijack decision uses the ONE-CYCLE-OLD pend (nmi_d1):
+                    // the NMOS 2-cycle setup rule applies here too — an edge
+                    // landing DURING the decision cycle is too late to claim
+                    // the vector (ACID800 antic_blockednmi: a VBI edge at
+                    // cycle 7 must not hijack a BRK whose push-P is cycle 7).
+                    if (nmi_d1) begin nmi_svc <= 1'b1; nmi_pend <= 1'b0;     // BRK/IRQ -> NMI vector hijack
                         // Hijacked BRK: also drain the recognition pipeline so
                         // the consumed edge cannot mature into a SECOND NMI
                         // entry right after the handler starts.

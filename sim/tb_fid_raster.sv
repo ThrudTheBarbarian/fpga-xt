@@ -178,23 +178,106 @@ module tb_fid_raster;
     wire       fid_busy = mem_busy_n | hwreg_rd_busy;
     reg        fid_mem_ok = 1'b1;
     always_ff @(posedge clk_sally) if (fid_sub == 8'd49) fid_mem_ok <= ~fid_busy;
-    wire       fid_wsync_rdy = wsync_rdy_n | ~cpu_rw;   // production shape (delay slot occurs naturally)
-    wire       fid_rdy = fid_mem_ok & ~dma_steal_sally & fid_wsync_rdy;
+    // Timing-machine nets (instance below, after the core).
+    wire [7:0]  tm_vcount, tm_nmist;
+    wire        tm_nmi_n, tm_rdy_n;
+    wire [2:0]  tm_ct;
+    wire [6:0]  tm_hc;
+    wire [8:0]  tm_line;
+    wire [3:0]  tm_row;
+    wire [7:0]  tm_dlctl;
+    wire [15:0] tm_dlpc;
+
+    // ---- PHASE-2-IN-SIM authority switch (+tmauth=1): the timing machine
+    // drives /RDY, /NMI, the steal gate, and VCOUNT/NMIST reads (local
+    // same-cycle read mux — the production fast-path shape).  Default 0 =
+    // the old CDC'd paths, for A/B measurement.
+    int tmauth_i; initial if (!$value$plusargs("tmauth=%d", tmauth_i)) tmauth_i = 0;
+    wire use_tm = (tmauth_i != 0);
+
+    wire       fid_wsync_rdy = (use_tm ? tm_rdy_n : wsync_rdy_n) | ~cpu_rw;   // production shape (delay slot occurs naturally)
+    wire       dma_steal_eff = use_tm ? (tm_ct != 3'd0) : dma_steal_sally;
+    wire       fid_rdy = fid_mem_ok & ~dma_steal_eff & fid_wsync_rdy;
     assign     sally_rdy  = fid_rdy;          // legacy net name used below
     wire       fid_mem_step = (fid_sub == 8'd2);
     wire [15:0] fdbg_pc; wire [7:0] fdbg_ir;
+
+    // ====================================================================
+    // PHASE 1: the cycle-serial ANTIC timing machine, HEADLESS.
+    // Same grid as the fid core (phi2_tick_fid), same-domain register
+    // snoop from the clk_sally hwreg write strobe, behavioral DL memory
+    // read (phase 2d wires the real stolen-slot port).  Nothing consumes
+    // its outputs yet — the tracers below diff it against the old model.
+    // ====================================================================
+    wire        tm_mem_req;
+    wire [15:0] tm_mem_addr;
+    reg  [7:0]  tm_mem_rdata;
+    always @(posedge clk_sally) if (tm_mem_req) tm_mem_rdata <= u_sally_mem.mem[tm_mem_addr];
+
+
+    antic_timing u_tm (
+        .clk(clk_sally), .rst(rst_sys),   // released with ANTIC, before the CPU
+        .phi2_tick(phi2_tick_fid),
+        .reg_we(hwreg_we && hwreg_addr[15:8] == 8'hD4),
+        .reg_addr(hwreg_addr[3:0]),
+        .reg_wdata(hwreg_din),
+        .mem_req(tm_mem_req), .mem_addr(tm_mem_addr), .mem_rdata(tm_mem_rdata),
+        .vcount(tm_vcount), .nmist(tm_nmist), .nmi_n(tm_nmi_n),
+        .rdy_n_q(tm_rdy_n), .cycle_type(tm_ct),
+        .dbg_hcount(tm_hc), .dbg_line(tm_line), .dbg_rowctr(tm_row),
+        .dbg_dlctl(tm_dlctl), .dbg_dlpc(tm_dlpc)
+    );
+
+    // ---- phase-1 diff tracers -----------------------------------------
+    // (a) offset constancy: old-raster minus tm coordinates, sampled once
+    //     per tm frame; must be CONSTANT after both come out of reset.
+    int tm_frames = 0;
+    always @(posedge clk_sally) begin
+        if (phi2_tick_fid && tm_line == 9'd0 && tm_hc == 7'd0) begin
+            tm_frames++;
+            if (tm_frames <= 3 || (tm_frames % 16) == 0)
+                $display("[tmoff] frame %0d: tm(0,0) at ar=(%0d,%0d)",
+                         tm_frames, u_antic_top.ar_scanline, u_antic_top.ar_phi2_in_line);
+        end
+    end
+    reg tm_nmi_n_q = 1'b1;
+    wire tm_nmi_edge = tm_nmi_n_q && (tm_nmi_n === 1'b0);
+    always @(posedge clk_sally) begin
+        tm_nmi_n_q <= tm_nmi_n;
+        // (b) tm DLI/VBI edges in TM coordinates: expect (39,7)/(47,7)
+        //     DLIs on the nmist DL and (248,7) VBI, offset-independent.
+        if (tm_nmi_edge)
+            $display("[tmnmi] /NMI edge at tm=(%0d,%0d) nmist=%02h dlctl=%02h row=%0d",
+                     tm_line, tm_hc, tm_nmist, tm_dlctl, tm_row);
+    end
+
+    // Local same-cycle read mux: $D40B/$D40F served from the timing
+    // machine (phase-2a/2b production shape).  The CDC read still runs
+    // underneath and paces mem_ok; its data is simply not used.
+    wire [7:0] cpu_din_fid = (use_tm && cpu_rw && cpu_addr == 16'hD40B) ? tm_vcount :
+                             (use_tm && cpu_rw && cpu_addr == 16'hD40F) ? tm_nmist  :
+                             cpu_din;
+    // temporary: trace VCOUNT reads under tm authority
+    int vtrc = 0;
+    always @(posedge clk_sally)
+        if (use_tm && u_fid_core.slot_commit && cpu_rw && cpu_addr == 16'hD40B
+            && vtrc < 12) begin
+            vtrc++;
+            $display("[vrd] cpu_addr=%04h din_fid=%02h tm_vcount=%02h old_din=%02h tm_line=%0d",
+                     cpu_addr, cpu_din_fid, tm_vcount, cpu_din, tm_line);
+        end
 
     xt6502f #(.CLK_SALLY_HZ(100_000_000), .PHI2_HZ(1_785_714)) u_fid_core (
         .clk       (clk_sally),
         .rst       (rst_sally),
         .phi2_tick (phi2_tick_fid),
         .addr      (cpu_addr),
-        .data_in   (cpu_din),
+        .data_in   (cpu_din_fid),
         .data_out  (cpu_dout),
         .rw        (cpu_rw),
         .rdy       (fid_rdy),
         .irq_n     (irq_n_sync),
-        .nmi_n     (nmi_n_sync),
+        .nmi_n     (use_tm ? tm_nmi_n : nmi_n_sync),
         .sync      (),
         .dbg_pc    (fdbg_pc), .dbg_a (), .dbg_x (), .dbg_y (), .dbg_s (), .dbg_p (),
         .dbg_sub   (fid_sub), .dbg_ir (fdbg_ir),
@@ -783,12 +866,15 @@ module tb_fid_raster;
                         u_sally_mem.mem[16'h2C0A]=8'h2C;
                     end
                     // handler: PHA TSX LDA $0103,X STA $0600 PLA RTI
+                    // (psel==6 installs its own marker handlers — skip)
+                    if (psel != 6) begin
                     u_sally_mem.mem[16'h2100]=8'h48; u_sally_mem.mem[16'h2101]=8'hBA;
                     u_sally_mem.mem[16'h2102]=8'hBD; u_sally_mem.mem[16'h2103]=8'h03;
                     u_sally_mem.mem[16'h2104]=8'h01; u_sally_mem.mem[16'h2105]=8'h8D;
                     u_sally_mem.mem[16'h2106]=8'h00; u_sally_mem.mem[16'h2107]=8'h06;
                     u_sally_mem.mem[16'h2108]=8'h68; u_sally_mem.mem[16'h2109]=8'h40;
                     u_sally_mem.mem[16'hFFFA]=8'h00; u_sally_mem.mem[16'hFFFB]=8'h21;
+                    end
                     if (psel == 6) begin
                         u_sally_mem.mem[16'hFFFA]=8'h10; u_sally_mem.mem[16'hFFFB]=8'h21;
                     end
@@ -854,9 +940,18 @@ module tb_fid_raster;
     // the last commit of the $202C instruction.
     // ====================================================================
     int chain_runs = 0;
+    // prog-scoped run-complete watch list (unconditional PCs collide with
+    // other progs' handler/sled bytes: $2103 is mid-LDA in the prog-1/2/3
+    // handler, $2035 is a prog-B sled NOP).
+    int wpsel; initial if (!$value$plusargs("prog=%d", wpsel)) wpsel = 0;
+    wire watch_hit = (wpsel == 0 && fdbg_pc == 16'h203E)
+                  || (wpsel >= 1 && wpsel <= 3 && fdbg_pc == 16'h2036)
+                  || (wpsel == 4 && fdbg_pc == 16'h206A)
+                  || (wpsel == 6 && (fdbg_pc == 16'h2103 || fdbg_pc == 16'h2113
+                                     || fdbg_pc == 16'h2035));
     reg watch_q = 0;
     always @(posedge clk_sally) if (u_fid_core.slot_commit && u_fid_core.rdy)
-        watch_q <= (fdbg_pc == 16'h203E || fdbg_pc == 16'h2036 || fdbg_pc == 16'h206A || fdbg_pc == 16'h2103 || fdbg_pc == 16'h2113 || fdbg_pc == 16'h2035);
+        watch_q <= watch_hit;
     // walker-state tracer: cycle-6 snapshot of the DLI decision inputs.
     always @(posedge clk_sys) begin
         if (u_antic_top.phi2_tick && u_antic_top.ar_phi2_in_line == 8'd6
@@ -976,8 +1071,7 @@ module tb_fid_raster;
                      u_antic_top.ar_scanline, u_antic_top.ar_phi2_in_line);
         end
         if (!rst_sally && u_fid_core.slot_commit && u_fid_core.rdy
-            && (fdbg_pc == 16'h203E || fdbg_pc == 16'h2036 || fdbg_pc == 16'h206A || fdbg_pc == 16'h2103 || fdbg_pc == 16'h2113 || fdbg_pc == 16'h2035)
-            && !watch_q) begin // JMP w0 (prog A/B) or JMP p1 (prog 4) — once per hit
+            && watch_hit && !watch_q) begin // once per hit, prog-scoped
             chain_runs++;
             $display("[probe] kicks=%0d dl_starts=%0d sp=%0d scan_now=%0d", kick_cnt, dls_cnt, sp_cnt, u_antic_top.ar_scanline);
             $display("[chain] ---- run %0d @PC=%04h: NMIST=$%02h VCOUNT=$%02h PCL=$%02h m602=$%02h parse=%0d act=%0d ph=%0d ----",

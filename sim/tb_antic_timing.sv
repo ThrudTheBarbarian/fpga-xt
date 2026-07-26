@@ -4,7 +4,7 @@
 //
 //   T1  the line counter advances entering cycle 111 (VCOUNT increment)
 //   T2  WSYNC: write in cycle K -> /RDY still high in K+1 (delay slot),
-//       low in K+2; release -> first ready cycle is 105
+//       low in K+2; release -> first ready cycle is 103
 //   T3  VBI: NMIST bit6 entering (248,7); /NMI 2-cycle pulse when enabled;
 //       NMIRES clears
 //   T4  DL machine on the nmist probe list (70 70 70 F0 F0 41): DLI NMIST
@@ -104,11 +104,11 @@ module tb_antic_timing;
             run_to(9'd30, wc + 7'd2);
             if (rdy_n_w !== 1'b0) begin $display("FAIL T2: not stalled at K+2"); nfail++; end
         end
-        run_to(9'd30, 7'd104);
-        if (rdy_n_w !== 1'b0) begin $display("FAIL T2: released early (ready during 104)"); nfail++; end
-        run_to(9'd30, 7'd105);
-        if (rdy_n_w !== 1'b1) begin $display("FAIL T2: first ready cycle not 105"); nfail++; end
-        $display("  ok  T2: WSYNC delay slot + release -> first ready cycle 105");
+        run_to(9'd30, 7'd102);
+        if (rdy_n_w !== 1'b0) begin $display("FAIL T2: released early (ready during 102)"); nfail++; end
+        run_to(9'd30, 7'd103);
+        if (rdy_n_w !== 1'b1) begin $display("FAIL T2: first ready cycle not 103"); nfail++; end
+        $display("  ok  T2: WSYNC delay slot + release -> first ready cycle 103");
 
         // ---------------- T3: VBI at (248,7), pulse, NMIRES --------------
         wr(4'hE, 8'h40);                    // NMIEN = VBI

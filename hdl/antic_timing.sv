@@ -38,15 +38,16 @@
 //
 // WSYNC ($D40A write in cycle K): latch falls entering K+1, /RDY (one more
 // stage) falls entering K+2 — exactly one instruction cycle runs after the
-// write (Avery's delay slot).  Release: latch rises entering RELEASE (104),
-// /RDY rises entering 105 — the CPU's first executed cycle is 105 (MiSTer:
-// "process from 105 on").  Same-domain: what you see is what the core
-// samples.  Clear beats set (the late-INC straddle).
+// write (Avery's delay slot).  Release: latch rises entering RELEASE (102),
+// /RDY rises entering 103 — the CPU's first executed cycle is 103 (Avery's
+// own annotations: `mva #$40 nmien ;*, 104, 105..` — the * is 103; MiSTer's
+// "105" uses a different hcount origin).  Same-domain: what you see is what
+// the core samples.  Clear beats set (the late-INC straddle).
 
 `default_nettype none
 
 module antic_timing #(
-    parameter [6:0] RELEASE_CYCLE = 7'd104,
+    parameter [6:0] RELEASE_CYCLE = 7'd102,  // first executed CPU cycle = 103 (Avery: mva ;*=103,104..)
     parameter [8:0] VBI_LINE      = 9'd248,
     parameter [8:0] RESTART_LINE  = 9'd8      // first display line
 ) (

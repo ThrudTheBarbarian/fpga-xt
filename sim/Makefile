@@ -1204,6 +1204,6 @@ fid_raster: $(BUILD_DIR)/tb_fid_raster.vvp
 	    (echo "FAIL: tb_fid_raster did not complete"; exit 1)
 	@echo "PASS: tb_fid_raster"
 
-$(BUILD_DIR)/tb_fid_raster.vvp: $(BOOT_CPU) $(BOOT_SYS_HDL) $(BOOT_ANTIC_HDL) $(HDL_DIR)/xt6502f/xt6502f.sv axi_slave_mem.sv peri_rp_idle.sv tb_fid_raster.sv | $(BUILD_DIR)
+$(BUILD_DIR)/tb_fid_raster.vvp: $(BOOT_CPU) $(BOOT_SYS_HDL) $(BOOT_ANTIC_HDL) $(HDL_DIR)/xt6502f/xt6502f.sv $(HDL_DIR)/antic_timing.sv axi_slave_mem.sv peri_rp_idle.sv tb_fid_raster.sv | $(BUILD_DIR)
 	$(IVERILOG) $(SV_FLAGS) $(BOOT_DEFINES) -o $@ -s tb_fid_raster \
-	    $(BOOT_CPU) $(BOOT_SYS_HDL) $(BOOT_ANTIC_HDL) $(HDL_DIR)/xt6502f/xt6502f.sv axi_slave_mem.sv peri_rp_idle.sv tb_fid_raster.sv
+	    $(BOOT_CPU) $(BOOT_SYS_HDL) $(BOOT_ANTIC_HDL) $(HDL_DIR)/xt6502f/xt6502f.sv $(HDL_DIR)/antic_timing.sv axi_slave_mem.sv peri_rp_idle.sv tb_fid_raster.sv
