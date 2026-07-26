@@ -24,46 +24,77 @@ build regenerates the ps7_init tree under the JTAG scripts).
 ### 0i. ANTIC timing machine — authority calibration (Sun 07-26, LIVE)
 The cycle-serial machine (docs/Design/antic-timing-machine.md,
 hdl/antic_timing.sv) is ON THE BOARD behind sallyrst[2] (CTRL 0x31C
-bit 2; xexload preserves it since fdf5991).  Legacy default = 31/57.
-Iterate SINGLE-TEST on a fresh board (~3 min/test): set the bit,
-xexload -h, read Y, acid-shots for the assert text.  Full sweeps under
-authority are NOT the debug loop — B4's error cascade was cumulative
-xexload-retry stress, not steady state.
+bit 2; xexload preserves it since fdf5991).  Legacy default = 31/57;
+the board is LEFT ON LEGACY after every probe.  Migration status and
+the phase plan live in the design doc — read that first.
 
-AUTHORITY SCOREBOARD (build 51b, c58f8ac+fc95f47):
-  PASS  antic_blockednmi, antic_wsync (all six bytes!), cpu_clisei
-  FAIL  antic_vcount   -> 'rollover #1 (NTSC)' (asserts 1-3 now pass)
-  FAIL  antic_nmist    -> 'DLI bit set too early' (reset-early passes)
-  FAIL  antic_dlitiming (expected: recognition depth still legacy-tuned)
-Both remaining fails are FIXED in 77ae654 (awaiting build 52b):
-  * VCOUNT single-cycle rollover: 131 for exactly one cycle at the end
-    of 261 (increment into 262, reset entering 112).
-  * NMIST changes entering cycle 7, DLI compare on the cycle-6 VSCROL
-    sample = Altirra mLatchedVScroll2 exactly; /NMI pulse 9-10.
+**Iterate SINGLE-TEST, never by sweep.**  ~3 min/test: set the bit,
+`xexload -h`, read Y, `acid-shots` for the assert text.  THREE probe
+hygiene rules learned the hard way today:
+ 1. RETRY each load (3x) and report `loadfail` distinctly — a BOOT
+    ERROR screen looks exactly like an assert failure in the Y register
+    and cost an incorrect "regression" diagnosis.
+ 2. Run the test you care about FIRST: a failed test leaves the core in
+    a state that boot-errors the NEXT load (antic_blockednmi showed
+    BOOT ERROR for two builds purely as contamination).
+ 3. Build directives are DETERMINISTIC — re-spinning the same directive
+    reproduces the WNS exactly (52 and 52c, both medium, both
+    clk_sys -0.236).  Rotate: medium / high / Explore.
 
-CALIBRATED CONSTANTS (all HW-derived, each from one named assert):
+AUTHORITY SCOREBOARD (build 54b, 47405af — retried, so solid):
+  PASS  antic_vcount (incl. the single-cycle rollover), antic_wsync
+        (all six bytes), cpu_clisei
+  FAIL  antic_nmist       -> the NMIEN sub-tests (see below)
+  FAIL  antic_blockednmi  -> 'BRK handler should not have executed'
+                            (test #3: an EARLY edge must still hijack;
+                            passed at pulse 8-9 on build 51b, so the
+                            pulse position and the NMIEN window are
+                            coupled and must be solved together)
+  FAIL  antic_vscroll     -> test #5 'expected 15, got 1' (the oversize
+                            frame-spanning DL: the machine restarts at
+                            line 8 unconditionally; real ANTIC keeps
+                            fetching to the VBI)
+
+**THE NMIEN WINDOW — SOLVED IN STRUCTURE, UNVERIFIED ON HW.**  Four
+asserts measured from both directions bracket it:
+  enable  on cycle 6 -> MUST activate    (gate at 7 failed this)
+  enable  on cycle 7 -> must NOT activate(gate at 9 failed this)
+  disable on cycle 5 -> MUST deactivate
+  disable on cycle 6 -> must NOT deactivate (gate at 8 failed this)
+No single sample point can satisfy those.  Altirra (antic.cpp ~594,
+640-666) takes TWO samples and combines them asymmetrically:
+    mX==7: early  = NMIEN
+    mX==8: early2 = NMIEN
+           cumulative     = pending & early           -> assert NOW
+           cumulativeLate  = pending & early2 & ~early -> assert +1 cycle
+An enable at the first sample fires promptly; an enable arriving
+between the samples fires one cycle late; a disable after the first
+sample CANNOT cancel.  Implemented in antic_timing (nmi_en_early /
+nmi_en_late, samples entering 8 and 9, pulse at 9 or 10) — benches
+green, NOT yet on hardware.  NEXT BUILD carries this.
+
+CALIBRATED CONSTANTS (each from one named assert, HW-derived):
   RELEASE_CYCLE   = 104   (fid data-sample sits one window ahead of
                            commit; prog=7 replica reads 01/02/03)
-  NMIST change    = entering 7 (visible to a data-cycle-6 read)
-  /NMI pulse      = 9-10  (status+2; folds the NMOS internal /NMI sync
-                           stage the fid's per-clk edge latch skips)
+  NMIST change    = entering 7, DLI compare on the cycle-6 VSCROL
+                    sample (= Altirra mLatchedVScroll2 exactly)
   status set      = dominant over a same-cycle NMIRES (re-assert at 8)
+  VCOUNT rollover = 131 for exactly one cycle at the end of line 261
   PF DMA windows  = Altirra UpdateDMAPattern (steps 2/4/8, starts
                     10/18/26, char data +3, bitmap +2, HSCROL widens
                     one step + delays HSCROL/2, >=105 virtual)
-  DL capture      = AT the launch tick (dl_pc advances same tick)
+  DL capture      = AT the launch tick (dl_pc advances the same tick)
 
-SIM INSTRUMENTS (all committed, all fast to re-run):
+SIM INSTRUMENTS (committed, fast):
   make -C sim antic_timing        T1-T6 directed anchors
   tb_fid_raster +tmauth=1         machine drives /RDY,/NMI,VCOUNT,NMIST
                 +tmskew=N         arbitrary HW raster phase (proven immune)
                 +prog=7           antic_vcount d0/d1/d2 replica
                 +prog=6           antic_blockednmi #1 replica
                 +prog=4           antic_vscroldli bracket
-LESSON THAT COST A CYCLE: mixed authority is unsound — tm WSYNC/VCOUNT
-with legacy-raster steals shifts every post-WSYNC stream by the
-arbitrary phase offset.  Under authority the steal gate MUST follow the
-machine.
+LESSON: mixed authority is unsound — machine WSYNC/VCOUNT with
+legacy-raster steals shifts every post-WSYNC stream by the arbitrary
+phase offset.  Steal authority must move with the rest.
 
 ### 0h. Overnight 07-25→26 ledger (builds 44-46)
 Score stayed 30/57 across the night but FOUR structural fixes landed,
