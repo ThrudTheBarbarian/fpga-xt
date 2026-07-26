@@ -39,11 +39,34 @@ now fully documented (0e/0f/0g + below).  Build history:
    killed mid-frame -> the current DL control byte keeps firing its
    DLI every row-end forever, across the VBI) — live-DMACTL cluster,
    not the budget-stop carry (which is correct per Altirra restart).
- * build 46 (af09c8f): NMOS blocked-NMI — genuine BRK's vector fetch
-   consumes a late NMI edge (lost forever); early edge still hijacks;
-   hijacked BRK drains the recognition pipeline (latent double-NMI
-   fixed).  tb_xt6502f_irq T5/T6 prove all three mechanisms.  Target:
-   antic_blockednmi.
+ * build 46b (af09c8f, AltSpreadLogic_high; 46's AltSpreadLogic_medium
+   spin missed on the KNOWN-thin sally_mem->axi_rdata_q and
+   display_shadow->compositor paths — placer variance, not the change):
+   NMOS blocked-NMI — genuine BRK's vector fetch consumes a late NMI
+   edge (lost forever); early edge still hijacks; hijacked BRK drains
+   the recognition pipeline (latent double-NMI fixed).  tb_xt6502f_irq
+   T5/T6 prove all three mechanisms.  30/57 held; antic_blockednmi did
+   NOT flip — tb_fid_raster +prog=6 (exact test-#1 replica, committed)
+   reproduces the HW failure and pins the cause: the post-WSYNC resume
+   runs +3 vs Avery (LDA# at 106-107 vs 103-104; BRK4 at cycle 10, VBI
+   pend at 9 -> pend arrives BEFORE the decision = legit hijack).
+
+THE +3 RESUME RESIDUAL — full accounting (now gates THREE tests:
+blockednmi, nmist exactness, dlitiming's alignment):
+  release pulse @104 (rel_adj-pinned by vcount)
+    -> wsync_gen registered set/clear: latch high @105
+    -> q1 history tap: @106
+    -> phi2_fall mid-cycle retime + fid commit-slot sample: resume ~107.
+Each stage is there for a HW-proven reason (registered set = the late-
+INC straddle; q1 shape = the six antic_wsync bytes — tools/wsyncrtl.py).
+rel_adj can't move (vcount pins the release RELATIVE to the raster).
+The fix must shave the RISE path only: candidates = shape_sel 110
+(latch|q1: rise immediate, fall 1 behind — runtime-sweepable, model it
+in wsyncrtl.py first against all six wsync bytes), or moving the fid
+rdy sample earlier in the subcycle window.  Sweep shape_sel on HW
+(cfg knob, NO rebuild) with antic_wsync+vcount as anchors, then chase
+the remaining ticks in the CDC/sample stage.  Instruments: prog=6
+(blockednmi), prog A (nmist+vcount chains), scan-247 tracer window.
 Stale-tb discovery: tb_hscrol_e2e + tb_antic_display fail at HEAD —
 pre-walker-rework benches (never step the walker); recorded in
 NextSteps, excluded from the gate.
