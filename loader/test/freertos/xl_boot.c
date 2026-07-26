@@ -429,9 +429,12 @@ int xl_boot(const char *path, int drive)
 {
     static uint8_t img[0x10000];        /* kernel BSS; single caller (task ctx) */
 
-    /* Preserve the currently-selected core across the cold-boot (power-on default
-     * = fidelity; `6502 core turbo` is the explicit opt-in that clears bit1). */
-    uint32_t sel = GP0_SALLYRST & CPUSEL_FID;
+    /* Preserve ALL control bits across the cold-boot except the reset-hold
+     * itself (bit0): bit1 = core select (`6502 core turbo` clears it), bit2 =
+     * ANTIC timing-machine authority (sallyrst[2]) — masking with CPUSEL_FID
+     * alone silently stripped bit2 on every xexload, turning the timing
+     * machine off mid-sweep. */
+    uint32_t sel = GP0_SALLYRST & ~1u;
 
     if (!path) {                        /* eject everything, back to BASIC */
         GP0_SALLYRST = sel | 1u; __asm__ volatile("dsb");
