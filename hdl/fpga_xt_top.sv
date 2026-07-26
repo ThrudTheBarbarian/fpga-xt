@@ -997,8 +997,13 @@ module fpga_xt_top (
     // Local same-cycle VCOUNT/NMIST read (tm authority): served from the
     // machine, bypassing the hwreg read CDC round-trip.  The CDC read still
     // runs underneath and paces mem_ok; its data is simply not consumed.
-    wire [7:0] fid_din_mux = (tm_auth && fid_rw && fid_addr == 16'hD40B) ? tm_vcount :
-                             (tm_auth && fid_rw && fid_addr == 16'hD40F) ? tm_nmist  :
+    // ANTIC decodes only the low nibble: every register mirrors through
+    // $D400-$D4FF (ACID antic_addrmirror reads VCOUNT at $D41B etc.).
+    // Matching the exact address let mirrored reads fall through to the
+    // legacy CDC path and return the OTHER raster's value under authority.
+    wire fid_d4 = (fid_addr[15:8] == 8'hD4);
+    wire [7:0] fid_din_mux = (tm_auth && fid_rw && fid_d4 && fid_addr[3:0] == 4'hB) ? tm_vcount :
+                             (tm_auth && fid_rw && fid_d4 && fid_addr[3:0] == 4'hF) ? tm_nmist  :
                              cpu_din;
 
     xt6502f #(.CLK_SALLY_HZ(100_000_000), .PHI2_HZ(1_785_714)) u_fid_core (  // N = 56
