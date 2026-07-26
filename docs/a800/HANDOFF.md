@@ -43,6 +43,38 @@ future DMA work should decode this table and diff it against
 `make -C sim antic_timing` + `+pfdump=1`, which dumps the machine's own
 schedule for a forced mode-2 line.  Do not hand-guess cycle offsets.
 
+SOLVED FROM THE ORACLE (2026-07-27 early hours):
+ * REFRESH SLIPS, AND LATE REFRESHES ARE DROPPED.  Altirra's
+   ATAnticSetRefreshCycles is the spec and is now implemented verbatim:
+       r = 24; for (x = 25; x < 61; x += 4) { if (r >= x) continue;
+                r = x; while (r < 107) if (free(r)) {place(r); break;} r++; }
+   Nine nominal slots every 4 from 25; a blocked refresh moves to the
+   next free cycle; a refresh still seeking when the next nominal slot
+   arrives is DROPPED (not queued — that was my first, wrong model).
+   The arm must be COMBINATIONAL or every refresh lands one cycle late.
+   RESULT: our narrow non-first-row schedule matches mode2b
+   CYCLE-FOR-CYCLE across the whole line, including the point near 59
+   where the refreshes are spent and the pattern relaxes to data-every-2.
+ * BITMAP MODES START 2 CYCLES LATER than char modes: Altirra
+   mPFDMAStart = (mode < 8) ? {26,18,10} : {28,20,12} for
+   narrow/normal/wide.  Ours used the char start for every mode.
+ * P/M DMA is display-region only (lines 8..247), and the PLAYER enable
+   forces missile DMA (DMACTL & 0x0C).
+ * cycle_type must stay COMBINATIONAL.  Registering it to match
+   rdy_n_q's depth shifts the whole pattern +1 — the WSYNC register is
+   already absorbed into RELEASE_CYCLE, so the paths must agree with
+   the RASTER, not with each other (I made and then reverted this).
+
+STILL OPEN — the first-row ("badline") extent: mode2a's mask runs solid
+to cycle 99 where our narrow row-0 schedule stops at 91 (names 26..88
+every 2, data 29..91 every 2, refresh at 25 and 90).  Eight cycles
+unaccounted.  Altirra's own refresh comment notes "the latest a refresh
+cycle will ever run is 106, which happens on a wide 40 char badline",
+so first rows evidently fetch more than names+data as modelled.  The
+next step is Altirra's rotating DMA-clock model (kClockPattern /
+kModeToFetchRate, antic.cpp ~2830+) rather than the start+step
+approximation used here.
+
 Progress so far: the machine's mode-2 pattern is structurally correct
 (names every 2 from the width start, char data +3 then every 2, 40+40
 fetches at normal width, nothing >= 105).  Two DELIVERY bugs found and
