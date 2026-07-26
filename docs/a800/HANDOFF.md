@@ -21,34 +21,49 @@ build regenerates the ps7_init tree under the JTAG scripts).
 
 ## 0. 2026-07-25 sessions (newest)
 
-### 0i. ANTIC timing machine — authority calibration loop (Sun 07-26 afternoon)
-The cycle-serial machine (docs/Design/antic-timing-machine.md, hdl/
-antic_timing.sv) is ON THE BOARD behind sallyrst[2] (CTRL 0x31C bit 2;
-xexload preserves it since fdf5991).  Legacy default = 31/57 (blockednmi
-green via the core-side 2-cycle-rule fixes).  Authority iteration is
-SINGLE-TEST on a fresh board (~3 min/test): set bit, xexload, read Y,
-acid-shots for the assert text.  B4's error cascade = CUMULATIVE
-xexload-retry stress, NOT steady state — fresh boards load fine.
+### 0i. ANTIC timing machine — authority calibration (Sun 07-26, LIVE)
+The cycle-serial machine (docs/Design/antic-timing-machine.md,
+hdl/antic_timing.sv) is ON THE BOARD behind sallyrst[2] (CTRL 0x31C
+bit 2; xexload preserves it since fdf5991).  Legacy default = 31/57.
+Iterate SINGLE-TEST on a fresh board (~3 min/test): set the bit,
+xexload -h, read Y, acid-shots for the assert text.  Full sweeps under
+authority are NOT the debug loop — B4's error cascade was cumulative
+xexload-retry stress, not steady state.
 
-Build 49 (c58f8ac) authority scoreboard: antic_wsync PASS (all six
-bytes on the new grid — the hardest calibration survived), cpu_clisei
-PASS, and three one-assert-deep failures:
- * antic_vcount '#3: \$02 != \$03' — the d2 probe (bit \$0100 + lda
-   vcount, data cycle 111) reads OLD.  Release 102->103 did not move
-   it; the fid stall-exit mechanics (stalled cycle completes at
-   release+1, next instruction starts +2?) vs Avery's grid needs the
-   CO-SIM REPLICA (prog=7: sync, 2x wsync, bit \$0100, lda vcount,
-   store) — measure the data-cycle window directly, stop guessing.
- * antic_blockednmi 'BRK handler should not have executed' — test #1
-   (swallow) now PASSES; #3 (early edge MUST hijack) misses under the
-   8-9 pulse + d1 rule.  Replica prog=8 = Avery's #3 chain.
- * antic_nmist 'VBI bit was reset too early' — the too-late assert
-   PASSES (NMIST@6 correct); something clears bit6 before the test's
-   read.  Read the test listing for the exact read position first.
-Constants as of c58f8ac: RELEASE_CYCLE=103, NMIST entering 6 (live
-VSCROL = the latch-6 sample), /NMI pulse 8-9 (real CPU's internal /NMI
-sync folded into delivery), PF DMA per Altirra pattern, full steal
-authority, launch-tick DL capture, +tmskew skew-immunity proven.
+AUTHORITY SCOREBOARD (build 51b, c58f8ac+fc95f47):
+  PASS  antic_blockednmi, antic_wsync (all six bytes!), cpu_clisei
+  FAIL  antic_vcount   -> 'rollover #1 (NTSC)' (asserts 1-3 now pass)
+  FAIL  antic_nmist    -> 'DLI bit set too early' (reset-early passes)
+  FAIL  antic_dlitiming (expected: recognition depth still legacy-tuned)
+Both remaining fails are FIXED in 77ae654 (awaiting build 52b):
+  * VCOUNT single-cycle rollover: 131 for exactly one cycle at the end
+    of 261 (increment into 262, reset entering 112).
+  * NMIST changes entering cycle 7, DLI compare on the cycle-6 VSCROL
+    sample = Altirra mLatchedVScroll2 exactly; /NMI pulse 9-10.
+
+CALIBRATED CONSTANTS (all HW-derived, each from one named assert):
+  RELEASE_CYCLE   = 104   (fid data-sample sits one window ahead of
+                           commit; prog=7 replica reads 01/02/03)
+  NMIST change    = entering 7 (visible to a data-cycle-6 read)
+  /NMI pulse      = 9-10  (status+2; folds the NMOS internal /NMI sync
+                           stage the fid's per-clk edge latch skips)
+  status set      = dominant over a same-cycle NMIRES (re-assert at 8)
+  PF DMA windows  = Altirra UpdateDMAPattern (steps 2/4/8, starts
+                    10/18/26, char data +3, bitmap +2, HSCROL widens
+                    one step + delays HSCROL/2, >=105 virtual)
+  DL capture      = AT the launch tick (dl_pc advances same tick)
+
+SIM INSTRUMENTS (all committed, all fast to re-run):
+  make -C sim antic_timing        T1-T6 directed anchors
+  tb_fid_raster +tmauth=1         machine drives /RDY,/NMI,VCOUNT,NMIST
+                +tmskew=N         arbitrary HW raster phase (proven immune)
+                +prog=7           antic_vcount d0/d1/d2 replica
+                +prog=6           antic_blockednmi #1 replica
+                +prog=4           antic_vscroldli bracket
+LESSON THAT COST A CYCLE: mixed authority is unsound — tm WSYNC/VCOUNT
+with legacy-raster steals shifts every post-WSYNC stream by the
+arbitrary phase offset.  Under authority the steal gate MUST follow the
+machine.
 
 ### 0h. Overnight 07-25→26 ledger (builds 44-46)
 Score stayed 30/57 across the night but FOUR structural fixes landed,
