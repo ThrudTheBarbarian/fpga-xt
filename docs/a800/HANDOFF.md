@@ -73,6 +73,12 @@ rdy sample earlier in the subcycle window.  Sweep shape_sel on HW
 (cfg knob, NO rebuild) with antic_wsync+vcount as anchors, then chase
 the remaining ticks in the CDC/sample stage.  Instruments: prog=6
 (blockednmi), prog A (nmist+vcount chains), scan-247 tracer window.
+Cluster note (dawn analysis): antic_charcontrol verifies its rendering
+via P/M COLLISIONS (players parked over the playfield, collision regs
+read back) — its 'chactl=$00 expected $10 got $00' failure is the
+per-colour-clock P/M evaluation cluster (with gtia_hiresbug/pmoverlap/
+pmresize/vdelay), NOT a CHACTL register bug.  One P/M colour-clock
+engine likely moves 5-6 tests.
 Stale-tb discovery: tb_hscrol_e2e + tb_antic_display fail at HEAD —
 pre-walker-rework benches (never step the walker); recorded in
 NextSteps, excluded from the gate.
