@@ -228,7 +228,12 @@ module dl_parser (
     logic [3:0]  w_dctr;            // ANTIC DCTR (sub-row within the line)
     logic        w_prev_vs;         // previous displayed line's VSCROL bit
     logic        w_carry_vs;
-    logic        w_carry_dli;        // VS bit carried across the frame boundary:
+    logic        w_carry_dli;
+    logic        carry_row0_q;    // REGISTERED: high exactly while the walker is
+                                  // on the frame's first row and the carry is set
+                                  // (keeps the dli_at cone free of row compares —
+                                  // build 45/45b closed negative with a
+                                  // combinational dli_row==0 term here)        // VS bit carried across the frame boundary:
                                     // a line straddling the vertical blank keeps
                                     // its VSCROL state into the next frame's
                                     // first line (antic_vscroll #5)
@@ -294,7 +299,7 @@ module dl_parser (
             if (k < ph_act_cnt && ph_act[k] == dli_row) ph_hit = 1'b1;
     end
     assign dli_at = (cur_dli && w_is_last_dli && cur_mode != 4'h0) || ph_hit
-                  || (w_carry_dli && dli_row == 8'd0);
+                  || carry_row0_q;
 
     assign dbg_dli_cnt   = act_dli_cnt;
     assign dbg_act_count = act_count;
@@ -361,6 +366,7 @@ module dl_parser (
             w_prev_vs       <= 1'b0;
             w_carry_vs      <= 1'b0;
             w_carry_dli     <= 1'b0;
+            carry_row0_q    <= 1'b0;
             w_boot          <= 1'b0;
             cur_sc_m1       <= 4'd0;
             cur_mode        <= 4'd0;
@@ -648,6 +654,7 @@ module dl_parser (
                 w_carry_vs <= act_carry_vs;
                 w_carry_dli <= act_carry_dli;
             end else if (line_start) begin
+                carry_row0_q <= w_boot ? w_carry_dli : 1'b0;
                 if (w_boot) begin
                     // First displayed row of the frame: load entry 0.
                     w_boot    <= 1'b0;

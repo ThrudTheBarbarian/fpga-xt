@@ -402,9 +402,10 @@ module tb_dl_parse;
         end
         cur_walk_row = -1;
         step_row();                       // frame_start latches w_carry_dli; row 0
-        dli_row_r = 8'd0; @(posedge clk); #1;
+        @(posedge clk); #1;
         if (dli_at_w !== 1'b1) begin $display("FAIL dlicarry: no dli_at@row0"); fail_count++; end
-        dli_row_r = 8'd1; @(posedge clk); #1;
+        step_row();                       // row 1: registered carry must drop
+        @(posedge clk); #1;
         if (dli_at_w !== 1'b0) begin $display("FAIL dlicarry: dli_at@row1"); fail_count++; end
 
         if (fail_count == 0) begin
