@@ -693,6 +693,42 @@ module tb_fid_raster;
                         u_sally_mem.mem[16'h2030]=8'hA5;  // LDA $80
                         u_sally_mem.mem[16'h2031]=8'h80;
                     end
+                    if (psel == 6) begin
+                        // ACID800 antic_blockednmi test #1 replica: VBI edge
+                        // lands during the BRK vector fetch -> must be LOST.
+                        // $0600 = IRQ/BRK-handler marker (expected 1),
+                        // $0601 = NMI/VBI-handler marker (expected 0),
+                        // $0602 = fell-past-BRK marker (expected 0).
+                        static logic [7:0] progn [0:55] = '{
+                            8'hA9,8'h20, 8'h8D,8'h00,8'hD4,   // LDA #$20 / STA DMACTL
+                            8'hA9,8'h00, 8'h8D,8'h0E,8'hD4,   // LDA #0   / STA NMIEN
+                            8'hA9,8'h00, 8'h8D,8'h02,8'hD4,   // LDA #0   / STA DLISTL
+                            8'hA9,8'h2C, 8'h8D,8'h03,8'hD4,   // LDA #$2C / STA DLISTH
+                            8'hA9,8'h7B,                       // LDA #123 (vcount: scan 246/247)
+                            8'hCD,8'h0B,8'hD4, 8'hF0,8'hFB,    // CMP VCOUNT / BEQ
+                            8'hCD,8'h0B,8'hD4, 8'hD0,8'hFB,    // CMP VCOUNT / BNE
+                            8'h8D,8'h0A,8'hD4,                 // STA WSYNC (end 246)
+                            8'h8D,8'h0A,8'hD4,                 // STA WSYNC (end 247)
+                            8'hA9,8'h40, 8'h8D,8'h0E,8'hD4,    // LDA #$40 / STA NMIEN  *,104-108
+                            8'hAD,8'h00,8'h01,                 // LDA $0100  109-112
+                            8'hEA,                             // NOP 113,0
+                            8'hEA,                             // NOP 1,2
+                            8'h00,                             // BRK 3..9 ($2030)
+                            8'hEA,                             // pad
+                            8'hEE,8'h02,8'h06,                 // INC $0602 (must not run)
+                            8'h4C,8'h35,8'h20 };               // JMP $2035
+                        for (int k = 0; k < 56; k++) u_sally_mem.mem[16'h2000+k] = progn[k];
+                        // IRQ/BRK handler: INC $0600, spin at $2103
+                        u_sally_mem.mem[16'h2100]=8'hEE; u_sally_mem.mem[16'h2101]=8'h00;
+                        u_sally_mem.mem[16'h2102]=8'h06; u_sally_mem.mem[16'h2103]=8'h4C;
+                        u_sally_mem.mem[16'h2104]=8'h03; u_sally_mem.mem[16'h2105]=8'h21;
+                        // NMI handler: INC $0601, spin at $2113
+                        u_sally_mem.mem[16'h2110]=8'hEE; u_sally_mem.mem[16'h2111]=8'h01;
+                        u_sally_mem.mem[16'h2112]=8'h06; u_sally_mem.mem[16'h2113]=8'h4C;
+                        u_sally_mem.mem[16'h2114]=8'h13; u_sally_mem.mem[16'h2115]=8'h21;
+                        u_sally_mem.mem[16'hFFFE]=8'h00; u_sally_mem.mem[16'hFFFF]=8'h21;
+                        // (FFFA/B set to $2110 below overrides the common $2100)
+                    end
                     if (psel == 4) begin
                         // ACID800 antic_vscroldli replica (Avery's two-probe
                         // bracket).  DL = the real test's: VS mode-8 block +
@@ -753,6 +789,9 @@ module tb_fid_raster;
                     u_sally_mem.mem[16'h2106]=8'h00; u_sally_mem.mem[16'h2107]=8'h06;
                     u_sally_mem.mem[16'h2108]=8'h68; u_sally_mem.mem[16'h2109]=8'h40;
                     u_sally_mem.mem[16'hFFFA]=8'h00; u_sally_mem.mem[16'hFFFB]=8'h21;
+                    if (psel == 6) begin
+                        u_sally_mem.mem[16'hFFFA]=8'h10; u_sally_mem.mem[16'hFFFB]=8'h21;
+                    end
                 end
             end
             // probe DL (nmist's): 3x blank-8, 2x blank-8+DLI, JVB self
@@ -817,7 +856,7 @@ module tb_fid_raster;
     int chain_runs = 0;
     reg watch_q = 0;
     always @(posedge clk_sally) if (u_fid_core.slot_commit && u_fid_core.rdy)
-        watch_q <= (fdbg_pc == 16'h203E || fdbg_pc == 16'h2036 || fdbg_pc == 16'h206A);
+        watch_q <= (fdbg_pc == 16'h203E || fdbg_pc == 16'h2036 || fdbg_pc == 16'h206A || fdbg_pc == 16'h2103 || fdbg_pc == 16'h2113 || fdbg_pc == 16'h2035);
     // walker-state tracer: cycle-6 snapshot of the DLI decision inputs.
     always @(posedge clk_sys) begin
         if (u_antic_top.phi2_tick && u_antic_top.ar_phi2_in_line == 8'd6
@@ -861,12 +900,16 @@ module tb_fid_raster;
                      u_antic_top.ar_scanline, u_antic_top.ar_phi2_in_line,
                      u_fid_core.sub);
         if (u_fid_core.slot_commit && fid_rdy
-            && u_antic_top.ar_scanline == 9'd39
-            && u_antic_top.ar_phi2_in_line <= 8'd14)
-            $display("[nmi] commit @ scan=39 cyc=%0d PC=%04h IR=%02h pend=%b d1=%b p1=%b p2=%b",
+            && ((u_antic_top.ar_scanline == 9'd39 && u_antic_top.ar_phi2_in_line <= 8'd14)
+                || (u_antic_top.ar_scanline == 9'd248 && u_antic_top.ar_phi2_in_line <= 8'd14)
+                || (u_antic_top.ar_scanline == 9'd247 && u_antic_top.ar_phi2_in_line >= 8'd98)))
+            $display("[nmi] commit @ scan=%0d cyc=%0d PC=%04h IR=%02h st=%0d pend=%b d1=%b p1=%b p2=%b svc=%b intr=%b",
+                     u_antic_top.ar_scanline,
                      u_antic_top.ar_phi2_in_line, fdbg_pc, fdbg_ir,
+                     u_fid_core.state,
                      u_fid_core.nmi_pend, u_fid_core.nmi_d1,
-                     u_fid_core.nmi_polled, 1'b0);
+                     u_fid_core.nmi_polled, u_fid_core.nmi_polled2,
+                     u_fid_core.nmi_svc, u_fid_core.intr);
     end
     // Parse-path probe: count start_parse pulses + dl_start kicks, and dump
     // the parser's state transitions for the first few.
@@ -933,13 +976,13 @@ module tb_fid_raster;
                      u_antic_top.ar_scanline, u_antic_top.ar_phi2_in_line);
         end
         if (!rst_sally && u_fid_core.slot_commit && u_fid_core.rdy
-            && (fdbg_pc == 16'h203E || fdbg_pc == 16'h2036 || fdbg_pc == 16'h206A)
+            && (fdbg_pc == 16'h203E || fdbg_pc == 16'h2036 || fdbg_pc == 16'h206A || fdbg_pc == 16'h2103 || fdbg_pc == 16'h2113 || fdbg_pc == 16'h2035)
             && !watch_q) begin // JMP w0 (prog A/B) or JMP p1 (prog 4) — once per hit
             chain_runs++;
             $display("[probe] kicks=%0d dl_starts=%0d sp=%0d scan_now=%0d", kick_cnt, dls_cnt, sp_cnt, u_antic_top.ar_scanline);
-            $display("[chain] ---- run %0d: NMIST=$%02h VCOUNT=$%02h PCL=$%02h parse=%0d act=%0d ph=%0d ----",
-                     chain_runs, u_sally_mem.mem[16'h0600], u_sally_mem.mem[16'h0601],
-                     u_sally_mem.mem[16'h0600],
+            $display("[chain] ---- run %0d @PC=%04h: NMIST=$%02h VCOUNT=$%02h PCL=$%02h m602=$%02h parse=%0d act=%0d ph=%0d ----",
+                     chain_runs, fdbg_pc, u_sally_mem.mem[16'h0600], u_sally_mem.mem[16'h0601],
+                     u_sally_mem.mem[16'h0600], u_sally_mem.mem[16'h0602],
                      u_antic_top.u_dl_parser.parse_count,
                      u_antic_top.u_dl_parser.act_count,
                      u_antic_top.u_dl_parser.ph_act_cnt);
