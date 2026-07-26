@@ -61,7 +61,7 @@ HDL_SRCS := \
 
 BUILD_DIR := build
 
-.PHONY: all smoke snoop read vbeam dl_parse prior nmi wsync palette dma_master mem_read_mux draw_regs pokey pokey_i2s sally sally_mem sally_mem_page sally_arb bank_xlat cdc_flag_data hwreg_rd_cdc legacy_upscale plane_compositor plane_fetch axi_line_writer antic_writeback xl_buffer_ctrl antic_raster antic_seq antic_modes cmp_fetch hscrol hscrol_e2e antic_display pia_regs peri_link joy_link joy_bridge peri_bridge os_rom_load klaus lint clean xt_blitter sally_stack sally_isa sprite_regs sprite_fetcher sprite_compositor xt6502 boot boot_trace plane_vscale disp_modef_wrap antic_dma_steal antic_dli antic_dli_cdc
+.PHONY: antic_timing all smoke snoop read vbeam dl_parse prior nmi wsync palette dma_master mem_read_mux draw_regs pokey pokey_i2s sally sally_mem sally_mem_page sally_arb bank_xlat cdc_flag_data hwreg_rd_cdc legacy_upscale plane_compositor plane_fetch axi_line_writer antic_writeback xl_buffer_ctrl antic_raster antic_seq antic_modes cmp_fetch hscrol hscrol_e2e antic_display pia_regs peri_link joy_link joy_bridge peri_bridge os_rom_load klaus lint clean xt_blitter sally_stack sally_isa sprite_regs sprite_fetcher sprite_compositor xt6502 boot boot_trace plane_vscale disp_modef_wrap antic_dma_steal antic_dli antic_dli_cdc
 
 # Retired tests (2026-05-25): rp_bus, mode_f, char_modes, gfx_modes, pm, scroll,
 # dma_int, visual all instantiated the v1 rp_bus injection harness
@@ -913,6 +913,13 @@ $(BUILD_DIR)/tb_antic_dli.vvp: $(HDL_SRCS) tb_antic_dli.sv | $(BUILD_DIR)
 # strobe regen pipeline instead of the snoop bus.  Passes on EITHER verdict
 # (BUG-REPRODUCED or NOT-REPRODUCED) — it's a diagnostic bench; it only fails
 # on INCONCLUSIVE (write lost) or watchdog.
+# ---- antic_timing — the cycle-serial ANTIC timing machine (directed) ------
+$(BUILD_DIR)/tb_antic_timing.vvp: ../hdl/antic_timing.sv tb_antic_timing.sv | $(BUILD_DIR)
+	iverilog -g2012 -Wall -Wno-timescale -I../hdl -o $@ -s tb_antic_timing $^
+
+antic_timing: $(BUILD_DIR)/tb_antic_timing.vvp
+	@vvp -N $< | tee /dev/stderr | grep -q "ANTIC_TIMING OK" && echo "PASS: tb_antic_timing" || (echo "FAIL: tb_antic_timing" ; exit 1)
+
 antic_dli_cdc: $(BUILD_DIR)/tb_antic_dli_cdc.vvp
 	@echo "=== antic_dli_cdc — DLI coincidence through the register-write CDC ==="
 	@$(VVP) -N $< | tee $(BUILD_DIR)/tb_antic_dli_cdc.log
