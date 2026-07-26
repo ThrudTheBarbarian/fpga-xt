@@ -211,12 +211,49 @@ module tb_fid_raster;
     // ====================================================================
     wire        tm_mem_req;
     wire [15:0] tm_mem_addr;
-    reg  [7:0]  tm_mem_rdata;
-    always @(posedge clk_sally) if (tm_mem_req) tm_mem_rdata <= u_sally_mem.mem[tm_mem_addr];
+    wire [7:0]  tm_mem_rdata;
+    // FAITHFUL fetch path: a real display_shadow instance wired exactly as
+    // production (mirror tap from sally_mem, port-A read for the machine).
+    // The hierarchical u_sally_mem.mem shortcut hid this path from sim —
+    // on HW it is the machine's only view of the display list.
+    display_shadow u_tm_shadow (
+        .clk_cpu  (clk_sally),
+        .mir_we   (u_sally_mem.mirror_we_q),
+        .mir_addr (u_sally_mem.mirror_addr_q),
+        .mir_din  (u_sally_mem.mirror_din_q),
+        .tm_addr  (tm_mem_addr),
+        .tm_data  (tm_mem_rdata),
+        .clk_disp (clk_sys),
+        .rd_addr  (16'h0000),
+        .rd_data  ()
+    );
+    // The shadow only sees WRITES: pre-load its array with the same injected
+    // image the test pokes into sally_mem (production equivalence: the OS/
+    // test writes everything it uses through the CPU; the tb pokes arrays).
+    initial begin
+        wait (rst_sys == 1'b1);
+        @(negedge rst_sys);   // injection happens during reset; copy at release
+        for (int k = 0; k < 65536; k++) u_tm_shadow.mem[k] = u_sally_mem.mem[k];
+    end
+    // Arbitrary raster skew (+tmskew=N machine cycles): holds the machine in
+    // reset N ticks past rst_sys release, reproducing the arbitrary phase
+    // offset between the machine and the legacy raster on hardware.
+    int tmskew_i; initial if (!$value$plusargs("tmskew=%d", tmskew_i)) tmskew_i = 0;
+    reg tm_rst = 1'b1;
+    int tmskew_ctr = 0;
+    always @(posedge clk_sally) begin
+        if (rst_sys) begin tm_rst <= 1'b1; tmskew_ctr <= 0; end
+        else if (tm_rst) begin
+            if (phi2_tick_fid) begin
+                tmskew_ctr <= tmskew_ctr + 1;
+                if (tmskew_ctr >= tmskew_i) tm_rst <= 1'b0;
+            end
+        end
+    end
 
 
     antic_timing u_tm (
-        .clk(clk_sally), .rst(rst_sys),   // released with ANTIC, before the CPU
+        .clk(clk_sally), .rst(tm_rst),    // +tmskew delays release (HW phase model)
         .phi2_tick(phi2_tick_fid), .cold(1'b0),
         .reg_we(hwreg_we && hwreg_addr[15:8] == 8'hD4),
         .reg_addr(hwreg_addr[3:0]),

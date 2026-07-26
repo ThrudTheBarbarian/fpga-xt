@@ -93,7 +93,7 @@ module antic_timing #(
     // =====================================================================
     // Registers (snooped — zero latency, same domain as the CPU)
     // =====================================================================
-    logic [7:0] dmactl_q, nmien_q, vscrol_q;
+    logic [7:0] dmactl_q, nmien_q, vscrol_q, hscrol_q;
     logic [7:0] dlistl_q, dlisth_q;
     logic       wsync_armed;
 
@@ -127,7 +127,6 @@ module antic_timing #(
     logic [3:0]  vs_latch109;         // row-stop latch (write-through < 109)
     logic [7:0]  inst_q;
     logic [7:0]  addr_lo_q;
-    logic        cap_inst, cap_lo, cap_hi;   // sample mem_rdata at end of cycle
 
     assign dbg_rowctr = row_ctr;
     assign dbg_dlctl  = dl_ctl;
@@ -188,9 +187,53 @@ module antic_timing #(
     wire pm_missile   = (hcount == 7'd0) && (dmactl_q[3:2] != 2'b00);
     wire pm_player    = (hcount >= 7'd2) && (hcount <= 7'd5) && dmactl_q[3];
 
+    // ---- Playfield DMA windows (phase 2d; Altirra UpdateDMAPattern) ------
+    // Character name clock: every 2 (modes 2-5) / 4 (6-7) from S =
+    // {wide 10, normal 18, narrow 26}; char DATA = the same clock +3;
+    // bitmap data (8-F) = +2 with step 8 (8-9), 4 (A-C), 2 (D-F).  HSCROL
+    // (when the line enables HS) bumps the fetch width one step wider and
+    // delays the whole grid by one clock per 2 of HSCROL.  Cycles 105-113
+    // are VIRTUAL: the clock runs, the bus is NOT stolen.  Fetch counts by
+    // width: step2 = 48/40/32, step4 = 24/20/16, step8 = 12/10/8.
+    wire       pf_line     = dl_active && (mode >= 4'h2);   // a mode line
+    wire       hs_en       = pf_line && dl_ctl[4];
+    wire [1:0] w_raw       = dmactl_q[1:0];
+    wire [1:0] pf_w        = (hs_en && (w_raw == 2'd1 || w_raw == 2'd2))
+                             ? w_raw + 2'd1 : w_raw;        // HS widens 1 step
+    wire       pf_on       = pf_line && (pf_w != 2'd0);
+    wire [6:0] hs_delay    = {4'd0, hscrol_q[3:1]};
+    wire [6:0] name_start  = ((pf_w == 2'd3) ? 7'd10 :
+                              (pf_w == 2'd2) ? 7'd18 : 7'd26) + hs_delay;
+    wire       is_char     = (mode >= 4'h2) && (mode <= 4'h7);
+    wire       step4       = (mode == 4'h6) || (mode == 4'h7) ||
+                             (mode >= 4'hA && mode <= 4'hC);
+    wire       step8       = (mode == 4'h8) || (mode == 4'h9);
+    // data clock start: names+3 for char modes, names+2 for bitmap
+    wire [6:0] data_start  = name_start + (is_char ? 7'd3 : 7'd2);
+    // fetch counts: step2 48/40/32, step4 24/20/16, step8 12/10/8
+    wire [6:0] n_fetch     = step8 ? ((pf_w == 2'd3) ? 7'd12 : (pf_w == 2'd2) ? 7'd10 : 7'd8)
+                           : step4 ? ((pf_w == 2'd3) ? 7'd24 : (pf_w == 2'd2) ? 7'd20 : 7'd16)
+                                   : ((pf_w == 2'd3) ? 7'd48 : (pf_w == 2'd2) ? 7'd40 : 7'd32);
+    wire [3:0] stepv       = step8 ? 4'd8 : step4 ? 4'd4 : 4'd2;
+    wire [8:0] name_end    = {2'd0, name_start} + ({2'd0, n_fetch} * {5'd0, stepv});
+    wire [8:0] data_end    = {2'd0, data_start} + ({2'd0, n_fetch} * {5'd0, stepv});
+    // grid hits (virtual >= 105: no steal)
+    wire [6:0] name_rel    = hcount - name_start;
+    wire [6:0] data_rel    = hcount - data_start;
+    wire name_hit = pf_on && is_char && (row_ctr == 4'd0)          // names: first row line
+                    && (hcount >= name_start) && ({2'd0, hcount} < name_end)
+                    && ((name_rel & (stepv[3:0] - 4'd1)) == 7'd0)
+                    && (hcount < 7'd105);
+    wire data_hit = pf_on
+                    && (hcount >= data_start) && ({2'd0, hcount} < data_end)
+                    && ((data_rel & (stepv[3:0] - 4'd1)) == 7'd0)
+                    && (hcount < 7'd105);
+    wire pf_steal = name_hit || data_hit;
+
     always_comb begin
         if (dl_inst_slot || dl_lo_slot || dl_hi_slot) cycle_type = CT_DL;
         else if (pm_missile || pm_player)             cycle_type = CT_PM;
+        else if (pf_steal)                            cycle_type = CT_PF;
         else if (refresh_slot)                        cycle_type = CT_REFRESH;
         else                                          cycle_type = CT_CPU;
     end
@@ -210,7 +253,7 @@ module antic_timing #(
     // =====================================================================
     always_ff @(posedge clk or posedge rst) begin
         if (rst) begin
-            dmactl_q <= 8'h00; nmien_q <= 8'h00; vscrol_q <= 8'h00;
+            dmactl_q <= 8'h00; nmien_q <= 8'h00; vscrol_q <= 8'h00; hscrol_q <= 8'h00;
             dlistl_q <= 8'h00; dlisth_q <= 8'h00;
             wsync_armed <= 1'b0; dlist_dirty <= 1'b1;
             hcount <= 7'd0; line <= 9'd0;
@@ -219,7 +262,6 @@ module antic_timing #(
             dl_active <= 1'b0; need_inst <= 1'b0; need_addr <= 1'b0; is_jvb <= 1'b0;
             vs_prev <= 1'b0; vs_latch6 <= 4'd0; vs_latch109 <= 4'd0;
             inst_q <= 8'h00; addr_lo_q <= 8'h00;
-            cap_inst <= 1'b0; cap_lo <= 1'b0; cap_hi <= 1'b0;
             nmist_hi <= 2'b00; nmi_ext <= 1'b0; nmi_n <= 1'b1;
             wsync_latch_n <= 1'b1; rdy_n_q <= 1'b1;
         end else begin
@@ -233,6 +275,7 @@ module antic_timing #(
                     4'h0: dmactl_q <= reg_wdata;
                     4'h2: begin dlistl_q <= reg_wdata; dlist_dirty <= 1'b1; end
                     4'h3: begin dlisth_q <= reg_wdata; dlist_dirty <= 1'b1; end
+                    4'h4: hscrol_q <= reg_wdata;
                     4'h5: begin
                         vscrol_q <= reg_wdata;
                         if (hcount < 7'd109) vs_latch109 <= reg_wdata[3:0];
@@ -245,30 +288,30 @@ module antic_timing #(
             end
 
             if (phi2_tick) begin
-                // ---- capture the cycle's DL fetch data (end of cycle) ---
-                if (cap_inst) begin inst_q    <= mem_rdata; cap_inst <= 1'b0; end
-                if (cap_lo)   begin addr_lo_q <= mem_rdata; cap_lo   <= 1'b0; end
-                if (cap_hi) begin
-                    cap_hi <= 1'b0;
+                // ---- DL fetch data: capture AT the launch tick ----------
+                // mem_rdata (the shadow's port-A register) refreshes every
+                // non-write clk of the slot cycle and holds mem[dl_pc] at
+                // this tick; dl_pc increments on the SAME tick, so a delayed
+                // capture would read the NEXT byte (measured: the JVB read
+                // its own operand and never parked).
+                if (dl_inst_slot) begin
+                    inst_q <= mem_rdata;
+                    dl_pc  <= {dl_pc[15:10], dl_pc[9:0] + 10'd1};
+                end
+                if (dl_lo_slot) begin
+                    addr_lo_q <= mem_rdata;
+                    dl_pc     <= {dl_pc[15:10], dl_pc[9:0] + 10'd1};
+                end
+                if (dl_hi_slot) begin
                     need_addr <= 1'b0;
                     if (is_jvb) begin
                         dl_pc <= {mem_rdata, addr_lo_q};
                         if (inst_q[6]) dl_active <= 1'b0;    // JVB parks
                         is_jvb <= 1'b0;
+                    end else begin
+                        dl_pc <= {dl_pc[15:10], dl_pc[9:0] + 10'd1};
                     end
                     // (LMS target: renderer's concern in phases 1-3)
-                end
-                if (dl_inst_slot) begin
-                    cap_inst <= 1'b1;
-                    dl_pc <= {dl_pc[15:10], dl_pc[9:0] + 10'd1};
-                end
-                if (dl_lo_slot) begin
-                    cap_lo <= 1'b1;
-                    dl_pc <= {dl_pc[15:10], dl_pc[9:0] + 10'd1};
-                end
-                if (dl_hi_slot) begin
-                    cap_hi <= 1'b1;
-                    dl_pc <= {dl_pc[15:10], dl_pc[9:0] + 10'd1};
                 end
 
                 // ---- entering cycle 2: decode a just-fetched instruction -

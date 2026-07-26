@@ -950,7 +950,13 @@ module fpga_xt_top (
         immune_s2 <= immune_s1;
     end
     wire       fid_wsync_rdy = (tm_auth ? tm_rdy_n : wsync_rdy_n) | (~fid_rw & immune_s2);   // writes immune to WSYNC unless disabled
-    wire       fid_rdy = cpu_sel & fid_mem_ok & ~dma_steal_sally & fid_wsync_rdy & ~fdbg_cpu_halt;  // owns bus; /HALT + WSYNC + busy + dbg-halt aware
+    // Under machine authority the steal gate ALSO comes from the machine:
+    // mixed authority (tm WSYNC/VCOUNT + legacy-raster steals) is unsound —
+    // the two rasters' phase offset is arbitrary on hardware, so legacy
+    // steals land on random machine-cycles and shift every post-WSYNC
+    // stream (measured: VCOUNT #1 read +2, build 47b sweep B3).
+    wire       fid_steal = tm_auth ? (tm_cycle_type != 3'd0) : dma_steal_sally;
+    wire       fid_rdy = cpu_sel & fid_mem_ok & ~fid_steal & fid_wsync_rdy & ~fdbg_cpu_halt;  // owns bus; /HALT + WSYNC + busy + dbg-halt aware
     // sally_mem's read-latch (bram_dout_q) AND every write/bank-latch/hwreg-strobe are gated
     // by its `rdy` — a "the CPU took a step" pulse. For the turbo core that is sally_rdy. The
     // fidelity core drives a STABLE address for the whole window and samples data at SUB_DATA=49,
