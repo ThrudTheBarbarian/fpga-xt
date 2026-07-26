@@ -179,6 +179,10 @@ module antic_timing #(
     logic [1:0] nmist_hi;             // {DLI, VBI}
     logic       nmi_ext;              // extend the pulse one more cycle
     logic       nmi_arm_q;            // DLI/VBI decision at 6 -> pulse at 8
+    logic [1:0] nmist_hold_q;         // cycle-6 status set is DOMINANT: re-assert
+                                      // entering 7 so a same-cycle-6 NMIRES write
+                                      // cannot erase it (ACID nmist 'VBI bit was
+                                      // reset too early'); a cycle-7+ NMIRES clears.
     logic       wsync_latch_n;
     assign nmist = {nmist_hi, 6'h1F};
 
@@ -268,7 +272,7 @@ module antic_timing #(
             dl_active <= 1'b0; need_inst <= 1'b0; need_addr <= 1'b0; is_jvb <= 1'b0;
             vs_prev <= 1'b0; vs_latch6 <= 4'd0; vs_latch109 <= 4'd0;
             inst_q <= 8'h00; addr_lo_q <= 8'h00;
-            nmist_hi <= 2'b00; nmi_ext <= 1'b0; nmi_n <= 1'b1; nmi_arm_q <= 1'b0;
+            nmist_hi <= 2'b00; nmi_ext <= 1'b0; nmi_n <= 1'b1; nmi_arm_q <= 1'b0; nmist_hold_q <= 2'b00;
             wsync_latch_n <= 1'b1; rdy_n_q <= 1'b1;
         end else begin
             // ---------- register snoop (every clk, zero latency) ----------
@@ -353,6 +357,7 @@ module antic_timing #(
                 if (hc_next == 7'd6) begin
                     if (line == VBI_LINE) begin
                         nmist_hi  <= 2'b01;
+                        nmist_hold_q <= 2'b01;
                         nmi_arm_q <= nmien_q[6];
                         dl_ctl_prev <= dl_ctl;               // save across the VBI
                         dl_ctl      <= dl_ctl & 8'h20;       // VS survives
@@ -362,10 +367,16 @@ module antic_timing #(
                         // DLI: mode lines, blank+DLI lines, and the parked
                         // JVB wait region alike (Race In Space).
                         nmist_hi  <= 2'b10;
+                        nmist_hold_q <= 2'b10;
                         nmi_arm_q <= nmien_q[7];
                     end else begin
                         nmi_arm_q <= 1'b0;
                     end
+                end
+                // entering 7: the cycle-6 set survives a same-cycle NMIRES
+                if (hc_next == 7'd7 && nmist_hold_q != 2'b00) begin
+                    nmist_hi     <= nmist_hold_q;
+                    nmist_hold_q <= 2'b00;
                 end
                 // ---- entering cycle 8: /NMI pulse (cycles 8-9) ----------
                 // One cycle after the real chip's 7-8 pulse: the NMOS core's
