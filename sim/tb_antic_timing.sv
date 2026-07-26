@@ -203,6 +203,20 @@ module tb_antic_timing;
             nfail++;
         end else $display("  ok  T7: VS state carried across the VBI restart");
 
+        // ---------------- T8: DL DMA stops for the vertical blank --------
+        // Real ANTIC fetches the display list only between the first
+        // display line and the VBI; a list still running at line 248 is
+        // suspended and resumes next frame (ACID antic_vscroll #5).
+        wr(4'h2, 8'h00); wr(4'h3, 8'h2C); wr(4'h0, 8'h22);
+        // (line 20 = still walking the list; by 200 it has parked on its JVB)
+        run_to(9'd20, 7'd20);
+        if (dut.dl_active !== 1'b1) begin $display("FAIL T8: DL inactive mid-frame"); nfail++; end
+        run_to(9'd250, 7'd20);
+        if (dut.dl_active !== 1'b0) begin $display("FAIL T8: DL still active during VBI"); nfail++; end
+        run_to(9'd20, 7'd20);
+        if (dut.dl_active !== 1'b1) begin $display("FAIL T8: DL did not resume after the VBI"); nfail++; end
+        $display("  ok  T8: DL DMA suspended across the vertical blank");
+
         if (nfail == 0) $display("*** ANTIC_TIMING OK ***");
         else            $display("*** ANTIC_TIMING FAIL *** %0d failure(s)", nfail);
         $finish;

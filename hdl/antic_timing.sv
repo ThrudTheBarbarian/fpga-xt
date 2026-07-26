@@ -368,6 +368,15 @@ module antic_timing #(
                         nmi_arm_vbi_q <= 1'b1;
                         dl_ctl_prev <= dl_ctl;               // save across the VBI
                         dl_ctl      <= dl_ctl & 8'h20;       // VS survives
+                        // DL DMA STOPS for the vertical blank (Altirra
+                        // mbDLActive = false at line 248, true again at the
+                        // first display line).  Without this the list keeps
+                        // being fetched through lines 248..261..7 and the
+                        // next line's DLI fires in the blanking region —
+                        // ACID antic_vscroll #5, whose 5th DLI must land on
+                        // line 15 of the frame AFTER the straddle (vcount
+                        // 7+8=15); we measured 1, i.e. around line 1.
+                        dl_active   <= 1'b0;
                     end else if (dl_ctl[7] && (row_ctr == stop_dli)) begin
                         // DLI: mode lines, blank+DLI lines, and the parked
                         // JVB wait region alike (Race In Space).
