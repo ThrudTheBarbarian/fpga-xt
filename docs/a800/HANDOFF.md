@@ -15,6 +15,39 @@ build regenerates the ps7_init tree under the JTAG scripts).
 
 ## 0. 2026-07-25 sessions (newest)
 
+### 0h. Overnight 07-25→26 ledger (builds 44-46)
+Score stayed 30/57 across the night but FOUR structural fixes landed,
+two failure modes moved to their next assert, and three root causes are
+now fully documented (0e/0f/0g + below).  Build history:
+ * build 44 (39c634b, AltSpreadLogic_medium): Altirra VSCROL dual
+   latches.  30/57 held, no regressions; vscroldli residual root-caused
+   to the walker's 24-row raster skew + parse-time phantom rows (§0g).
+   NOTE: a false alarm nearly rolled this build back — see
+   [[ssh-stdin-script-broken]]: `ssh board sh -s < script` regressed to
+   executing ONE line, masquerading as xexload/GP0 wedges; `strace` on
+   the board proved the fabric fine.  Sweeps now cat-push the script.
+ * build 45/45b: FAILED TIMING (clk_sally -0.190 / -0.311) — the
+   VBLANK DLI-carry as a combinational (carry && dli_row==0) term in
+   the dli_at cone.  Lesson: keep that cone free of comparators.
+ * build 45c (9c36eaa, AltSpreadLogic_medium, +0.087/+0.010): DLI
+   carry REGISTERED (carry_row0_q) + real POKEY SKSTAT layout/SKRES.
+   30/57 held.  pokey_skstat MOVED: framing assert passes, now blocks
+   on 'Timeout occurred while sending status command' = the M25
+   serial-output engine (same wall as serclock/sertiming/serdirect/
+   twotone — one serial engine unblocks five tests).  antic_dlistwrap
+   test #2 needs the live-DMACTL stuck-control-byte model (DL DMA
+   killed mid-frame -> the current DL control byte keeps firing its
+   DLI every row-end forever, across the VBI) — live-DMACTL cluster,
+   not the budget-stop carry (which is correct per Altirra restart).
+ * build 46 (af09c8f): NMOS blocked-NMI — genuine BRK's vector fetch
+   consumes a late NMI edge (lost forever); early edge still hijacks;
+   hijacked BRK drains the recognition pipeline (latent double-NMI
+   fixed).  tb_xt6502f_irq T5/T6 prove all three mechanisms.  Target:
+   antic_blockednmi.
+Stale-tb discovery: tb_hscrol_e2e + tb_antic_display fail at HEAD —
+pre-walker-rework benches (never step the walker); recorded in
+NextSteps, excluded from the gate.
+
 ### 0g. antic_vscroldli ROOT CAUSE (overnight 07-25→26 — DEFINITIVE, fix deferred)
 Instrument: `tb_fid_raster +prog=4` — full replica of Avery's two-probe
 bracket (real DL: VS mode-8 block + 1-line VS-exit blank+DLI rows at
