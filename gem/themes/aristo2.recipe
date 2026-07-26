@@ -80,6 +80,13 @@ slider.circular.knob sprite slider-circular-knob
 stepper.up          h3      stepper-bezel-big-up-left stepper-bezel-big-up-center stepper-bezel-big-up-right
 stepper.down        h3      stepper-bezel-big-down-left stepper-bezel-big-down-center stepper-bezel-big-down-right
 
+# --- progress bar ------------------------------------------------------------
+# The rounded bezel is the trough; the bar is the determinate blue fill drawn over the done portion;
+# indeterminate is the diagonally-striped fill.  (Aristo2 had no progress slices baked in before.)
+progress               h3   progress-indicator-bezel-border-left progress-indicator-bezel-border-center progress-indicator-bezel-border-right
+progress.bar           h3   progress-indicator-bar-left progress-indicator-bar-center progress-indicator-bar-right
+progress.indeterminate h3   progress-indicator-indeterminate-bar-left progress-indicator-indeterminate-bar-center progress-indicator-indeterminate-bar-right
+
 # --- menu --------------------------------------------------------------------
 menu                nine    menu-window-rounded-0 menu-window-1 menu-window-rounded-2 menu-window-3 menu-window-4 menu-window-5 menu-window-rounded-6 menu-window-7 menu-window-rounded-8
 menu.tick           sprite  menu-item-on-state
