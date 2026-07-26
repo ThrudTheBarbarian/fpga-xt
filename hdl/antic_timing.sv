@@ -79,7 +79,7 @@ module antic_timing #(
     output wire  [7:0]  nmist,      // $D40F read value
     output logic        nmi_n,       // /NMI to the core (2-cycle low pulse)
     output logic        rdy_n_q,     // /RDY (1 = ready), registered, same grid
-    output logic [2:0]  cycle_type,  // THIS cycle's bus owner (CT_*)
+    output logic [2:0]  cycle_type,  // bus owner, registered to rdy_n_q's depth
 
     // ---- Debug / diff taps ----------------------------------------------
     output wire  [6:0]  dbg_hcount,
@@ -243,12 +243,23 @@ module antic_timing #(
                     && (hcount < 7'd105);
     wire pf_steal = name_hit || data_hit;
 
+    logic [2:0] cycle_type_c;
     always_comb begin
-        if (dl_inst_slot || dl_lo_slot || dl_hi_slot) cycle_type = CT_DL;
-        else if (pm_missile || pm_player)             cycle_type = CT_PM;
-        else if (pf_steal)                            cycle_type = CT_PF;
-        else if (refresh_slot)                        cycle_type = CT_REFRESH;
-        else                                          cycle_type = CT_CPU;
+        if (dl_inst_slot || dl_lo_slot || dl_hi_slot) cycle_type_c = CT_DL;
+        else if (pm_missile || pm_player)             cycle_type_c = CT_PM;
+        else if (pf_steal)                            cycle_type_c = CT_PF;
+        else if (refresh_slot)                        cycle_type_c = CT_REFRESH;
+        else                                          cycle_type_c = CT_CPU;
+    end
+    // CPU-FACING copy, registered to the SAME DEPTH as rdy_n_q.  /RDY reaches
+    // the core through one register stage (rdy_n_q <= wsync_latch_n), which is
+    // what the release-104 calibration pinned; a combinational steal gate would
+    // land every stolen cycle one machine cycle earlier than the WSYNC path and
+    // skew the whole DMA pattern uniformly — ACID antic_dmapattern maps every
+    // blocked cycle with an LFSR, so it fails on its very first sub-case.
+    always_ff @(posedge clk or posedge rst) begin
+        if (rst)            cycle_type <= CT_CPU;
+        else if (phi2_tick) cycle_type <= cycle_type_c;
     end
 
     always_comb begin

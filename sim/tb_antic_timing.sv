@@ -59,6 +59,29 @@ module tb_antic_timing;
     );
 
     int nfail = 0;
+    // +pfdump: force a mode-2 playfield line and print its bus schedule
+    // (ACID antic_dmapattern maps every blocked cycle with an LFSR).
+    int pfdump; initial if (!$value$plusargs("pfdump=%d", pfdump)) pfdump = 0;
+    initial if (pfdump) begin
+        wait (rst == 1'b0);
+        repeat (200) @(posedge clk);
+        force dut.dl_active = 1'b1;
+        force dut.dl_ctl    = 8'h02;      // mode 2, no VS/HS/DLI
+        force dut.row_ctr   = 4'd0;       // first row: names + char data
+        force dut.dmactl_q  = 8'h22;      // normal width, DL DMA on
+        repeat (400) @(posedge clk);
+        $display("[pf] --- mode 2, normal width, row 0 ---");
+        for (int c = 0; c < 114; c++) begin
+            while (!(phi2_tick && hc_w == c[6:0])) @(posedge clk);
+            if (ct_w != 3'd0) $display("[pf] cyc=%0d type=%0d", hc_w, ct_w);
+            @(posedge clk);
+        end
+        $finish;
+    end
+    // +dump=<line>: print the bus schedule for one scanline (DMA-pattern work)
+    int dump_line; initial if (!$value$plusargs("dump=%d", dump_line)) dump_line = -1;
+    always @(posedge clk) if (phi2_tick && dump_line >= 0 && line_w == dump_line[8:0])
+        $display("[ct] cyc=%0d type=%0d row=%0d mode=%h", hc_w, ct_w, rowctr_w, dlctl_w[3:0]);
 
     task automatic wr(input [3:0] a, input [7:0] d);
         @(negedge clk); reg_we = 1; reg_addr = a; reg_wdata = d;
