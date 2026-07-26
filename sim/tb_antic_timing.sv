@@ -104,11 +104,11 @@ module tb_antic_timing;
             run_to(9'd30, wc + 7'd2);
             if (rdy_n_w !== 1'b0) begin $display("FAIL T2: not stalled at K+2"); nfail++; end
         end
-        run_to(9'd30, 7'd103);
-        if (rdy_n_w !== 1'b0) begin $display("FAIL T2: released early (ready during 103)"); nfail++; end
         run_to(9'd30, 7'd104);
-        if (rdy_n_w !== 1'b1) begin $display("FAIL T2: first ready cycle not 104"); nfail++; end
-        $display("  ok  T2: WSYNC delay slot + release -> first ready cycle 104");
+        if (rdy_n_w !== 1'b0) begin $display("FAIL T2: released early (ready during 104)"); nfail++; end
+        run_to(9'd30, 7'd105);
+        if (rdy_n_w !== 1'b1) begin $display("FAIL T2: /RDY not up entering 105"); nfail++; end
+        $display("  ok  T2: WSYNC release -> /RDY up entering 105 (fid-effective resume 104)");
 
         // ---------------- T3: VBI NMIST at (248,6), pulse 8-9, NMIRES ----
         wr(4'hE, 8'h40);                    // NMIEN = VBI

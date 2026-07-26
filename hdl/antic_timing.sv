@@ -47,7 +47,12 @@
 `default_nettype none
 
 module antic_timing #(
-    parameter [6:0] RELEASE_CYCLE = 7'd103,  // first executed CPU cycle = 104 (HW-calibrated: antic_vcount d2 reads NEW count at data cycle 111)
+    parameter [6:0] RELEASE_CYCLE = 7'd104,  // fid-effective resume = 104: the core's
+                                             // SUB_DATA sample sits one window ahead of
+                                             // its commit, so /RDY rising entering 105
+                                             // puts the first data-visible cycle at 104
+                                             // (measured: prog=7 d2 sample tm-110 at
+                                             // release 103 -> needs +1 for data@111)
     parameter [8:0] VBI_LINE      = 9'd248,
     parameter [8:0] RESTART_LINE  = 9'd8      // first display line
 ) (

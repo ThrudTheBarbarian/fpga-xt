@@ -813,6 +813,36 @@ module tb_fid_raster;
                         u_sally_mem.mem[16'h2030]=8'hA5;  // LDA $80
                         u_sally_mem.mem[16'h2031]=8'h80;
                     end
+                    if (psel == 7) begin
+                        // antic_vcount d0/d1/d2 replica: wsync-stepped VCOUNT
+                        // reads on lines 3/4/5.  $0600 expect $01 (data 110),
+                        // $0601 expect $02 (data 110), $0602 expect $03 (the
+                        // failing d2: bit $0100 pads the read to data 111 =
+                        // AT the increment; real reads the NEW count).
+                        static logic [7:0] progv7 [0:71] = '{
+                            8'hA9,8'h20, 8'h8D,8'h00,8'hD4,
+                            8'hA9,8'h00, 8'h8D,8'h0E,8'hD4,
+                            8'hA9,8'h00, 8'h8D,8'h02,8'hD4,
+                            8'hA9,8'h2C, 8'h8D,8'h03,8'hD4,
+                            8'hA9,8'h01,                       // LDA #1 (vcount: lines 2-3)
+                            8'hCD,8'h0B,8'hD4, 8'hF0,8'hFB,
+                            8'hCD,8'h0B,8'hD4, 8'hD0,8'hFB,
+                            8'h8D,8'h0A,8'hD4,                 // WSYNC (end 2)
+                            8'h8D,8'h0A,8'hD4,                 // WSYNC (end 3)
+                            8'h24,8'h00,                       // BIT $00
+                            8'hAD,8'h0B,8'hD4,                 // LDA VCOUNT (data 110)
+                            8'h8D,8'h00,8'h06,                 // STA $0600
+                            8'h8D,8'h0A,8'hD4,                 // WSYNC (end 4)
+                            8'h24,8'h00,
+                            8'hAD,8'h0B,8'hD4,
+                            8'h8D,8'h01,8'h06,                 // STA $0601
+                            8'h8D,8'h0A,8'hD4,                 // WSYNC (end 5)
+                            8'h2C,8'h00,8'h01,                 // BIT $0100 (4 cyc)
+                            8'hAD,8'h0B,8'hD4,                 // LDA VCOUNT (data 111)
+                            8'h8D,8'h02,8'h06,                 // STA $0602
+                            8'h4C,8'h45,8'h20 };               // spin $2045
+                        for (int k = 0; k < 72; k++) u_sally_mem.mem[16'h2000+k] = progv7[k];
+                    end
                     if (psel == 6) begin
                         // ACID800 antic_blockednmi test #1 replica: VBI edge
                         // lands during the BRK vector fetch -> must be LOST.
@@ -981,7 +1011,8 @@ module tb_fid_raster;
     // other progs' handler/sled bytes: $2103 is mid-LDA in the prog-1/2/3
     // handler, $2035 is a prog-B sled NOP).
     int wpsel; initial if (!$value$plusargs("prog=%d", wpsel)) wpsel = 0;
-    wire watch_hit = (wpsel == 0 && fdbg_pc == 16'h203E)
+    wire watch_hit = (wpsel == 7 && fdbg_pc == 16'h2045)
+                  || (wpsel == 0 && fdbg_pc == 16'h203E)
                   || (wpsel >= 1 && wpsel <= 3 && fdbg_pc == 16'h2036)
                   || (wpsel == 4 && fdbg_pc == 16'h206A)
                   || (wpsel == 6 && (fdbg_pc == 16'h2103 || fdbg_pc == 16'h2113
@@ -989,6 +1020,22 @@ module tb_fid_raster;
     reg watch_q = 0;
     always @(posedge clk_sally) if (u_fid_core.slot_commit && u_fid_core.rdy)
         watch_q <= watch_hit;
+    // prog=7 data-sample tracer: the exact moment the fid latches VCOUNT.
+    always @(posedge clk_sally) begin
+        if (wpsel == 7 && u_fid_core.sub == 8'd49 && cpu_rw && cpu_addr == 16'hD40B
+            && u_antic_top.ar_scanline >= 9'd2 && u_antic_top.ar_scanline <= 9'd6)
+            $display("[v7s] SAMPLE sub49 tm=(%0d,%0d) din_fid=%02h tmvc=%02h line=%0d",
+                     tm_line, tm_hc, cpu_din_fid, tm_vcount, tm_line);
+    end
+    // prog=7 probe tracer: post-WSYNC commits on lines 2-6 with tm coords.
+    always @(posedge clk_sally) begin
+        if (!rst_sally && u_fid_core.slot_commit && fid_rdy && wpsel == 7
+            && u_antic_top.ar_scanline >= 9'd2 && u_antic_top.ar_scanline <= 9'd6
+            && (u_antic_top.ar_phi2_in_line >= 8'd100 || u_antic_top.ar_phi2_in_line <= 8'd2))
+            $display("[v7] ar=(%0d,%0d) tm=(%0d,%0d) PC=%04h IR=%02h tmvc=%02h",
+                     u_antic_top.ar_scanline, u_antic_top.ar_phi2_in_line,
+                     tm_line, tm_hc, fdbg_pc, fdbg_ir, tm_vcount);
+    end
     // walker-state tracer: cycle-6 snapshot of the DLI decision inputs.
     always @(posedge clk_sys) begin
         if (u_antic_top.phi2_tick && u_antic_top.ar_phi2_in_line == 8'd6
@@ -1117,7 +1164,7 @@ module tb_fid_raster;
                      u_antic_top.u_dl_parser.parse_count,
                      u_antic_top.u_dl_parser.act_count,
                      u_antic_top.u_dl_parser.ph_act_cnt);
-            if (chain_runs == 3) begin
+            if (chain_runs == 3 || (wpsel == 7 && chain_runs == 1)) begin
                 $display("*** FID_RASTER done: chain runs traced ***");
                 $finish;
             end
