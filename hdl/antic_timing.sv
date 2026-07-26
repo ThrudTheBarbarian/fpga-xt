@@ -405,21 +405,32 @@ module antic_timing #(
                 // satisfy 'enable on cycle 6 activates' and 'disable on
                 // cycle 6 does NOT deactivate' simultaneously (measured
                 // from both directions on builds 52d/53/54b).
+                // SAMPLE POINTS, pinned by four ACID asserts.  In this
+                // machine's own frame a CPU write with Avery data-cycle N
+                // becomes visible in nmien_q entering N+2 (consistent across
+                // every probe taken on builds 52d/53/54b/55).  Therefore:
+                //   disable@5 must deactivate      -> deciding sample >= 7
+                //   disable@6 must NOT deactivate  -> deciding sample <= 7
+                //   enable@6  must activate        -> a sample at 8
+                //   enable@7  must NOT activate    -> no sample after 8
+                // => early sample entering 7 (the decision tick), late
+                //    sample entering 8.  Early fires at 8, late at 9.
+                // (select the bit from the LIVE line compare — nmi_arm_vbi_q
+                //  is written on this same tick and would read stale here)
+                if (hc_next == 7'd7)
+                    nmi_en_early <= (line == VBI_LINE) ? nmien_q[6] : nmien_q[7];
                 if (hc_next == 7'd8) begin
-                    nmi_en_early <= nmi_arm_vbi_q ? nmien_q[6] : nmien_q[7];
-                end
-                if (hc_next == 7'd9) begin
-                    nmi_en_late <= (nmi_arm_vbi_q ? nmien_q[6] : nmien_q[7])
+                    nmi_en_late <= ((line == VBI_LINE) ? nmien_q[6] : nmien_q[7])
                                    & ~nmi_en_early;
                     if (nmi_arm_q && nmi_en_early) begin
                         nmi_n <= 1'b0; nmi_ext <= 1'b1; nmi_arm_q <= 1'b0;
                     end
                 end
-                // late enable: the pulse slips one cycle
-                if (hc_next == 7'd10 && nmi_arm_q && nmi_en_late) begin
+                // late enable (arrived between the samples): pulse slips one
+                if (hc_next == 7'd9 && nmi_arm_q && nmi_en_late) begin
                     nmi_n <= 1'b0; nmi_ext <= 1'b1; nmi_arm_q <= 1'b0;
                 end
-                if (hc_next == 7'd11) begin
+                if (hc_next == 7'd10) begin
                     nmi_arm_q <= 1'b0; nmi_en_late <= 1'b0;
                 end
 

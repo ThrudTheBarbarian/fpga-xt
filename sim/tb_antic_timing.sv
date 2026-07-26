@@ -116,16 +116,16 @@ module tb_antic_timing;
         if (nmist_w[6] !== 1'b0) begin $display("FAIL T3: VBI bit early"); nfail++; end
         run_to(9'd248, 7'd7);
         if (nmist_w[6] !== 1'b1) begin $display("FAIL T3: no VBI bit at (248,7)"); nfail++; end
+        run_to(9'd248, 7'd8);
+        if (nmi_n_w  !== 1'b0)  begin $display("FAIL T3: /NMI not low at 8"); nfail++; end
         run_to(9'd248, 7'd9);
         if (nmi_n_w  !== 1'b0)  begin $display("FAIL T3: /NMI not low at 9"); nfail++; end
         run_to(9'd248, 7'd10);
-        if (nmi_n_w  !== 1'b0)  begin $display("FAIL T3: /NMI not low at 10"); nfail++; end
-        run_to(9'd248, 7'd11);
-        if (nmi_n_w  !== 1'b1)  begin $display("FAIL T3: /NMI still low at 11"); nfail++; end
+        if (nmi_n_w  !== 1'b1)  begin $display("FAIL T3: /NMI still low at 10"); nfail++; end
         wr(4'hF, 8'h00);                    // NMIRES
         mc(2);
         if (nmist_w[7:6] !== 2'b00) begin $display("FAIL T3: NMIRES did not clear"); nfail++; end
-        $display("  ok  T3: VBI NMIST at (248,7), /NMI pulse 9-10, NMIRES clears");
+        $display("  ok  T3: VBI NMIST at (248,7), /NMI pulse 8-9, NMIRES clears");
 
         // ---------------- T4: DL DLIs on the nmist list ------------------
         wr(4'h2, 8'h00); wr(4'h3, 8'h2C);   // DLIST = $2C00
