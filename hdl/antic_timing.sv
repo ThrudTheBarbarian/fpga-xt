@@ -197,8 +197,15 @@ module antic_timing #(
     wire dl_inst_slot = (hcount == 7'd1) && dl_dma_on && dl_active && need_inst;
     wire dl_lo_slot   = (hcount == 7'd6) && dl_dma_on && dl_active && need_addr;
     wire dl_hi_slot   = (hcount == 7'd7) && dl_dma_on && dl_active && need_addr;
-    wire pm_missile   = (hcount == 7'd0) && (dmactl_q[3:2] != 2'b00);
-    wire pm_player    = (hcount >= 7'd2) && (hcount <= 7'd5) && dmactl_q[3];
+    // P/M DMA runs only in the DISPLAY REGION — Altirra gates both on
+    // (mY - 8) < 240, i.e. lines 8..247.  Without the gate the machine
+    // stole 5 cycles per line right through the vertical blank, which
+    // shifts every CPU-timed measurement that spans the VBI.
+    wire pm_region    = (line >= 9'd8) && (line < 9'd248);
+    // Missile DMA is forced by the PLAYER enable too (Altirra: "player DMA
+    // also forces missile DMA — Run For the Money requires this").
+    wire pm_missile   = (hcount == 7'd0) && (dmactl_q[3:2] != 2'b00) && pm_region;
+    wire pm_player    = (hcount >= 7'd2) && (hcount <= 7'd5) && dmactl_q[3] && pm_region;
 
     // ---- Playfield DMA windows (phase 2d; Altirra UpdateDMAPattern) ------
     // Character name clock: every 2 (modes 2-5) / 4 (6-7) from S =
