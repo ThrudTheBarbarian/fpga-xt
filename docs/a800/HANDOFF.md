@@ -26,11 +26,19 @@ antic_dmapattern embeds its EXPECTED cycle-blocking bitmasks as a table
 at $3800 in the test image (labels mode2a/2b/3a/3b/... in the .lst,
 ~line 2334), with a cycle-number header comment directly above:
     mode2a dta $08,%01000011,%00000000,%00000000,%01101111,%11111111...
-Byte 0 = (mode << 2) | variant; the remaining bytes are a bit-per-cycle
-blocked mask running from cycle 0, terminated by $A5.  Decoding mode2a
-gives blocked = {1, 6, 7} then {25, 26, 28, 29, 30, 31} then solid to
-~99 — i.e. DL fetch at 1, LMS operands at 6/7, refresh at 25, and the
-playfield starting at 26 with cycle 27 free.  THAT IS THE ORACLE: any
+FORMAT (confirmed): entries are 16 bytes each, contiguous from $3800 in
+table order (mode2a $3800, mode2b $3810, mode3a $3820, ...).  Byte 0 is
+a descriptor ~= mode*4 | variant; bytes 1..14 are a BIT-PER-CYCLE
+blocked mask starting at cycle 0 (MSB first), byte 15 = $A5 terminator.
+The mask is self-validating: mode2a's first blocked cycles decode to
+{1, 6, 7}, which is exactly the DL instruction fetch at 1 plus the LMS
+operand fetches at 6/7 that the machine already implements — so both
+the format reading and our DL model are confirmed correct.
+mode2a full decode: {1,6,7} u {25,26} u {28..99}.  NOTE this does NOT
+match a plain names-every-2-from-{10,18,26} + data+3 model for any
+width (that predicts a gap at cycle 90 for narrow, and different
+extents), so the playfield START/EXTENT rules still need deriving from
+these masks rather than from the prose.  THAT IS THE ORACLE: any
 future DMA work should decode this table and diff it against
 `make -C sim antic_timing` + `+pfdump=1`, which dumps the machine's own
 schedule for a forced mode-2 line.  Do not hand-guess cycle offsets.
