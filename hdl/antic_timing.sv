@@ -348,22 +348,23 @@ module antic_timing #(
                 if (nmi_ext) begin nmi_ext <= 1'b0; nmi_n <= 1'b0; end
                 else               nmi_n   <= 1'b1;
 
-                // ---- entering cycle 6: NMIST changes --------------------
-                // The status bit must be VISIBLE to a CPU read whose data
-                // cycle is 6 (ACID antic_nmist 'set too late (>cycle 6)';
-                // MiSTer sets it in the latter half of cycle 6).  The DLI
-                // decision here uses the live VSCROL — this tick IS the
-                // latch-6 sample point.
-                if (hc_next == 7'd6) begin
+                // ---- entering cycle 7: NMIST changes --------------------
+                // Visible to a CPU read whose data cycle is 6 and not one
+                // earlier: on the release-104 grid the fid's data sample
+                // sits one window ahead of its commit, so 'entering 7' is
+                // what the CPU sees as cycle 6 (measured: entering 6 gave
+                // ACID nmist 'set too early (<cycle 6)', entering 7 on the
+                // OLD release-102 grid gave 'too late').  The DLI compare
+                // uses the cycle-6 VSCROL sample — Altirra mLatchedVScroll2,
+                // sampled at 6 and used at 7.
+                if (hc_next == 7'd7) begin
                     if (line == VBI_LINE) begin
                         nmist_hi  <= 2'b01;
                         nmist_hold_q <= 2'b01;
                         nmi_arm_q <= nmien_q[6];
                         dl_ctl_prev <= dl_ctl;               // save across the VBI
                         dl_ctl      <= dl_ctl & 8'h20;       // VS survives
-                    end else if (dl_ctl[7]
-                                 && (row_ctr == (vs_exit ? vscrol_q[3:0]
-                                                          : row_height_m1))) begin
+                    end else if (dl_ctl[7] && (row_ctr == stop_dli)) begin
                         // DLI: mode lines, blank+DLI lines, and the parked
                         // JVB wait region alike (Race In Space).
                         nmist_hi  <= 2'b10;
@@ -373,17 +374,19 @@ module antic_timing #(
                         nmi_arm_q <= 1'b0;
                     end
                 end
-                // entering 7: the cycle-6 set survives a same-cycle NMIRES
-                if (hc_next == 7'd7 && nmist_hold_q != 2'b00) begin
+                // entering 8: the cycle-7 set survives a same-cycle NMIRES
+                // (ACID nmist 'VBI bit was reset too early')
+                if (hc_next == 7'd8 && nmist_hold_q != 2'b00) begin
                     nmist_hi     <= nmist_hold_q;
                     nmist_hold_q <= 2'b00;
                 end
-                // ---- entering cycle 8: /NMI pulse (cycles 8-9) ----------
-                // One cycle after the real chip's 7-8 pulse: the NMOS core's
-                // internal /NMI synchronizer stage (which our per-clk edge
-                // latch skips) is folded into the delivery here, so the
-                // core-visible pend timing matches silicon.
-                if (hc_next == 7'd8 && nmi_arm_q) begin
+                // ---- entering cycle 9: /NMI pulse (cycles 9-10) ---------
+                // Two cycles after the status set, mirroring the real chip's
+                // 7-8 pulse relative to its cycle-6 status change plus the
+                // NMOS core's internal /NMI synchronizer stage (which the
+                // fid's per-clk edge latch skips).  HW-verified: blockednmi
+                // passes under authority on this grid.
+                if (hc_next == 7'd9 && nmi_arm_q) begin
                     nmi_n <= 1'b0; nmi_ext <= 1'b1; nmi_arm_q <= 1'b0;
                 end
 
@@ -394,8 +397,13 @@ module antic_timing #(
                 rdy_n_q     <= wsync_latch_n;
 
                 // ---- entering cycle 111: line advance (VCOUNT) ----------
-                if (hc_next == 7'd111)
-                    line <= (line == 9'd261) ? 9'd0 : line + 9'd1;
+                // The last line does NOT wrap here: ANTIC increments into
+                // 262 so VCOUNT reads 131 for exactly ONE cycle before
+                // resetting (ACID antic_vcount 'rollover #1 (NTSC) wrong' —
+                // Avery's "nasty one: single cycle rollover", expects 131).
+                if (hc_next == 7'd111) line <= line + 9'd1;
+                // ---- entering cycle 112: the rollover completes ---------
+                if (hc_next == 7'd112 && line == 9'd262) line <= 9'd0;
 
                 // ---- entering cycle 112: row-advance decision -----------
                 if (hc_next == 7'd112) begin

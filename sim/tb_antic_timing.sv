@@ -112,20 +112,20 @@ module tb_antic_timing;
 
         // ---------------- T3: VBI NMIST at (248,6), pulse 8-9, NMIRES ----
         wr(4'hE, 8'h40);                    // NMIEN = VBI
-        run_to(9'd248, 7'd5);
-        if (nmist_w[6] !== 1'b0) begin $display("FAIL T3: VBI bit early"); nfail++; end
         run_to(9'd248, 7'd6);
-        if (nmist_w[6] !== 1'b1) begin $display("FAIL T3: no VBI bit at (248,6)"); nfail++; end
-        run_to(9'd248, 7'd8);
-        if (nmi_n_w  !== 1'b0)  begin $display("FAIL T3: /NMI not low at 8"); nfail++; end
+        if (nmist_w[6] !== 1'b0) begin $display("FAIL T3: VBI bit early"); nfail++; end
+        run_to(9'd248, 7'd7);
+        if (nmist_w[6] !== 1'b1) begin $display("FAIL T3: no VBI bit at (248,7)"); nfail++; end
         run_to(9'd248, 7'd9);
         if (nmi_n_w  !== 1'b0)  begin $display("FAIL T3: /NMI not low at 9"); nfail++; end
         run_to(9'd248, 7'd10);
-        if (nmi_n_w  !== 1'b1)  begin $display("FAIL T3: /NMI still low at 10"); nfail++; end
+        if (nmi_n_w  !== 1'b0)  begin $display("FAIL T3: /NMI not low at 10"); nfail++; end
+        run_to(9'd248, 7'd11);
+        if (nmi_n_w  !== 1'b1)  begin $display("FAIL T3: /NMI still low at 11"); nfail++; end
         wr(4'hF, 8'h00);                    // NMIRES
         mc(2);
         if (nmist_w[7:6] !== 2'b00) begin $display("FAIL T3: NMIRES did not clear"); nfail++; end
-        $display("  ok  T3: VBI NMIST at (248,6), /NMI pulse 8-9, NMIRES clears");
+        $display("  ok  T3: VBI NMIST at (248,7), /NMI pulse 9-10, NMIRES clears");
 
         // ---------------- T4: DL DLIs on the nmist list ------------------
         wr(4'h2, 8'h00); wr(4'h3, 8'h2C);   // DLIST = $2C00
@@ -134,12 +134,12 @@ module tb_antic_timing;
         // next frame: blanks 8-31, F0 32-39 (DLI at 39), F0 40-47 (DLI 47)
         run_to(9'd39, 7'd4);
         wr(4'hF, 8'h00);                    // clear
-        run_to(9'd39, 7'd6);
-        if (nmist_w[7] !== 1'b1) begin $display("FAIL T4: no DLI at (39,6) nmist=%02h dlctl=%02h row=%0d", nmist_w, dlctl_w, rowctr_w); nfail++; end
+        run_to(9'd39, 7'd7);
+        if (nmist_w[7] !== 1'b1) begin $display("FAIL T4: no DLI at (39,7) nmist=%02h dlctl=%02h row=%0d", nmist_w, dlctl_w, rowctr_w); nfail++; end
         run_to(9'd47, 7'd4);
         wr(4'hF, 8'h00);
-        run_to(9'd47, 7'd6);
-        if (nmist_w[7] !== 1'b1) begin $display("FAIL T4: no DLI at (47,6)"); nfail++; end
+        run_to(9'd47, 7'd7);
+        if (nmist_w[7] !== 1'b1) begin $display("FAIL T4: no DLI at (47,7)"); nfail++; end
         run_to(9'd60, 7'd0);
         wr(4'hF, 8'h00);
         run_to(9'd200, 7'd10);
@@ -173,6 +173,20 @@ module tb_antic_timing;
         if (nmist_w[7] !== 1'b1) begin $display("FAIL T5b: DLI missing despite late write (nmist=%02h row=%0d dlctl=%02h)", nmist_w, rowctr_w, dlctl_w); nfail++; end
         wr(4'h5, 8'h00);
         $display("  ok  T5: vscroldli bracket — cycle-3 write suppresses, cycle-7 write doesn't");
+
+        // ---------------- T6: single-cycle VCOUNT rollover ---------------
+        // Avery's "nasty one": VCOUNT reads 131 for exactly one cycle at
+        // the end of line 261 (NTSC) before resetting to 0.
+        // NOTE ON COORDINATES: a line BEGINS at its cycle 111 (the counter
+        // advances there), so "line 261, cycle 110" is late in that line and
+        // the rollover tick is where line becomes 262.
+        run_to(9'd261, 7'd110);
+        if (vcount_w !== 8'd130) begin $display("FAIL T6: vcount=%0d at (261,110), want 130", vcount_w); nfail++; end
+        run_to(9'd262, 7'd111);
+        if (vcount_w !== 8'd131) begin $display("FAIL T6: vcount=%0d at the rollover tick, want 131 (single-cycle)", vcount_w); nfail++; end
+        run_to(9'd0, 7'd112);
+        if (vcount_w !== 8'd0)   begin $display("FAIL T6: vcount=%0d at 112, want 0", vcount_w); nfail++; end
+        $display("  ok  T6: VCOUNT single-cycle rollover (130 -> 131 for one cycle -> 0)");
 
         if (nfail == 0) $display("*** ANTIC_TIMING OK ***");
         else            $display("*** ANTIC_TIMING FAIL *** %0d failure(s)", nfail);
