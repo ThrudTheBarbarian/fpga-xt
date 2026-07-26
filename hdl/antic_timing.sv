@@ -79,7 +79,7 @@ module antic_timing #(
     output wire  [7:0]  nmist,      // $D40F read value
     output logic        nmi_n,       // /NMI to the core (2-cycle low pulse)
     output logic        rdy_n_q,     // /RDY (1 = ready), registered, same grid
-    output logic [2:0]  cycle_type,  // bus owner, registered to rdy_n_q's depth
+    output wire  [2:0]  cycle_type,  // bus owner for THIS cycle (combinational)
 
     // ---- Debug / diff taps ----------------------------------------------
     output wire  [6:0]  dbg_hcount,
@@ -192,8 +192,21 @@ module antic_timing #(
     // =====================================================================
     // Bus schedule for the CURRENT cycle (combinational)
     // =====================================================================
-    wire refresh_slot = (hcount >= 7'd25) && (hcount <= 7'd57)
-                        && (((hcount - 7'd25) % 7'd4) == 7'd0);
+    // MEMORY REFRESH: 9 cycles, nominally every 4 from 25 — but a refresh
+    // blocked by playfield DMA SLIPS to the next free cycle, it is not
+    // dropped.  Decoded straight out of antic_dmapattern's own expected
+    // masks: mode2b (a non-first row: char data every 2 from 29) shows
+    // blocked 29,30,31 / free 32 / blocked 33,34,35 / free 36 ... which is
+    // data-every-2 UNION refresh slipping to 30,34,38.  mode2a (a first
+    // row, playfield saturating 28..91) then shows a solid run to 99 —
+    // the eight deferred refreshes queueing up immediately after the
+    // playfield releases the bus.
+    wire refresh_due_tick = (hcount >= 7'd25) && (hcount <= 7'd57)
+                            && (((hcount - 7'd25) % 7'd4) == 7'd0);
+    logic [3:0] rfsh_due;              // refreshes owed but not yet placed
+    wire        rfsh_blocked;          // a higher-priority DMA owns this cycle
+    wire rfsh_want    = (rfsh_due != 4'd0) || refresh_due_tick;
+    wire refresh_slot = rfsh_want && !rfsh_blocked;
     wire dl_inst_slot = (hcount == 7'd1) && dl_dma_on && dl_active && need_inst;
     wire dl_lo_slot   = (hcount == 7'd6) && dl_dma_on && dl_active && need_addr;
     wire dl_hi_slot   = (hcount == 7'd7) && dl_dma_on && dl_active && need_addr;
@@ -258,15 +271,28 @@ module antic_timing #(
         else if (refresh_slot)                        cycle_type_c = CT_REFRESH;
         else                                          cycle_type_c = CT_CPU;
     end
-    // CPU-FACING copy, registered to the SAME DEPTH as rdy_n_q.  /RDY reaches
-    // the core through one register stage (rdy_n_q <= wsync_latch_n), which is
-    // what the release-104 calibration pinned; a combinational steal gate would
-    // land every stolen cycle one machine cycle earlier than the WSYNC path and
-    // skew the whole DMA pattern uniformly — ACID antic_dmapattern maps every
-    // blocked cycle with an LFSR, so it fails on its very first sub-case.
+    // NOT registered: dumped against antic_dmapattern's own expected masks,
+    // the COMBINATIONAL signal matches Avery's cycle numbering exactly while
+    // a registered copy shifted the whole pattern +1.  The WSYNC path's
+    // register is already absorbed into RELEASE_CYCLE, so the two paths need
+    // to agree with the RASTER, not with each other's depth.
+    assign cycle_type = cycle_type_c;
+
+    // Refresh queue: each nominal tick adds one owed refresh; an owed
+    // refresh is retired on any cycle where no higher-priority DMA (DL,
+    // P/M, playfield) claims the bus.
+    assign rfsh_blocked = dl_inst_slot || dl_lo_slot || dl_hi_slot
+                          || pm_missile || pm_player || pf_steal;
+    // owed += arrived; owed -= placed.  The due tick and the placement happen
+    // on the SAME cycle in the common unblocked case — counting them
+    // separately produced a spurious extra refresh right after each due tick.
     always_ff @(posedge clk or posedge rst) begin
-        if (rst)            cycle_type <= CT_CPU;
-        else if (phi2_tick) cycle_type <= cycle_type_c;
+        if (rst) rfsh_due <= 4'd0;
+        else if (phi2_tick) begin
+            if (hc_next == 7'd0) rfsh_due <= 4'd0;          // fresh line
+            else rfsh_due <= rfsh_due + (refresh_due_tick ? 4'd1 : 4'd0)
+                                      - (refresh_slot     ? 4'd1 : 4'd0);
+        end
     end
 
     always_comb begin

@@ -62,18 +62,20 @@ module tb_antic_timing;
     // +pfdump: force a mode-2 playfield line and print its bus schedule
     // (ACID antic_dmapattern maps every blocked cycle with an LFSR).
     int pfdump; initial if (!$value$plusargs("pfdump=%d", pfdump)) pfdump = 0;
+    int pfrow;  initial if (!$value$plusargs("pfrow=%d",  pfrow))  pfrow  = 0;
+    int pfw;    initial if (!$value$plusargs("pfw=%d",    pfw))    pfw    = 1; // 1=narrow
     initial if (pfdump) begin
         wait (rst == 1'b0);
         repeat (200) @(posedge clk);
         force dut.dl_active = 1'b1;
         force dut.dl_ctl    = 8'h02;      // mode 2, no VS/HS/DLI
-        force dut.row_ctr   = 4'd0;       // first row: names + char data
-        force dut.dmactl_q  = 8'h22;      // normal width, DL DMA on
+        force dut.row_ctr   = pfrow[3:0];  // 0 = first row (names + data)
+        force dut.dmactl_q  = {6'b001000, pfw[1:0]};   // width from +pfw
         repeat (400) @(posedge clk);
-        $display("[pf] --- mode 2, normal width, row 0 ---");
+        $display("[pf] --- mode 2, width=%0d, row %0d ---", pfw, pfrow);
         for (int c = 0; c < 114; c++) begin
             while (!(phi2_tick && hc_w == c[6:0])) @(posedge clk);
-            if (ct_w != 3'd0) $display("[pf] cyc=%0d type=%0d", hc_w, ct_w);
+            if (dut.cycle_type_c != 3'd0) $display("[pf] cyc=%0d type=%0d", hc_w, dut.cycle_type_c);
             @(posedge clk);
         end
         $finish;
