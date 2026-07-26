@@ -1,8 +1,14 @@
 # ACID800 conformance — session handoff
 
-**Status: 28 / 57 passing** (2026-07-25 overnight: `pia_irq` + `antic_addresswrap`
-flipped GREEN; `pokey_irqtiming`/`antic_nmist` earlier flips hold except nmist —
-see the walker section. Run records `2026-07-24-4` and `2026-07-25-1`.)
+**Status: 30 / 57 passing** (board: build 46b/af09c8f, run `2026-07-26-4`.
+Greens incl. `antic_nmist`, `antic_vscroll`, `antic_addresswrap`, `pia_irq`,
+`pokey_irqtiming`, wsync/vcount/clisei anchors — all HELD across builds
+44-46b. The overnight 07-25→26 ledger is §0h: four structural fixes landed
+(VSCROL latches, VBLANK DLI carry, real SKSTAT/SKRES, NMOS blocked-NMI),
+two failures moved to their next assert, and the three biggest remaining
+blockers are each root-caused with committed sim instruments: the +3
+WSYNC-resume residual (§0h), the walker 24-row raster skew (§0g), and the
+dlitiming penultimate-poll rule (§0f).)
 
 Branch: `fix-antic-nmi-pulse`. Board: `192.168.192.179` (a.k.a. `xtos.local`,
 but mDNS is flaky — **use the IP**). Build host: `valhalla` over SSH.
