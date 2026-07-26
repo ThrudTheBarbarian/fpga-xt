@@ -71,26 +71,79 @@ exactly as today; in phase 4 it consumes this machine's per-line decode
 (mode, LMS, DCTR span) instead of maintaining its own truth, and the
 phantom list / carry flags / latch ticks / steal gating are deleted.
 
-## Migration plan (each step board-sweepable, renderer untouched)
+## Migration plan — status as of 2026-07-26 evening
 
-0. Design doc (this file) + module skeleton + directed tb.
-1. Machine runs headless alongside the current model; tb_fid_raster
-   instantiates both; a diff tracer compares VCOUNT / NMIST / NMI edge
-   times / RDY edges cycle-by-cycle.  Acceptance: progs A, 1-6
-   reproduce Avery's cycle numbers (the harness already encodes them).
-2. Switch consumers one at a time, sweep after each:
-   a. VCOUNT read  → antic_timing (anchor: antic_vcount)
-   b. NMIST + NMI  → antic_timing (anchors: nmist, dlitiming legs,
-      blockednmi — expected first flips)
-   c. /RDY         → antic_timing (anchors: wsync bytes d0-d5, vcount)
-   d. steal schedule → antic_timing (anchors: nmist chain cycles,
-      dmapattern/virtdma expected to move or flip)
-3. Delete wsync_gen/nmi_gen/antic_dma_steal + the calibration register
-   bits they consumed.
-4. Renderer fed from the machine's line decode; delete phantoms,
-   carries, latch ticks; revisit vscroldli (needs the renderer's DLI
-   source to be this machine — it already is by then) and the walker's
-   24-row skew (render-only concern at that point).
+Legend: **[done]** landed + committed · **[part]** partially landed ·
+**[todo]** not started.  "Sweepable" = the runtime A/B bit (sallyrst[2])
+means every step can be measured against legacy on the same bitstream.
+
+**0. Skeleton + directed bench — [done]**
+`hdl/antic_timing.sv` (~420 lines) + `sim/tb_antic_timing.sv` (T1-T6,
+`make -C sim antic_timing`).  Anchors: VCOUNT advance at 111, WSYNC
+delay slot + release, VBI NMIST + /NMI pulse, DL-driven DLIs + JVB
+park, the vscroldli write-timing bracket, VCOUNT single-cycle rollover.
+
+**1. Headless co-sim + diff — [done]**
+`tb_fid_raster` instantiates the machine alongside the legacy model
+with a real `display_shadow` on its fetch port (the production path —
+the earlier hierarchical shortcut hid a capture-timing bug).
+`+tmskew=N` reproduces the arbitrary hardware phase offset between the
+machine and the render raster; under full authority the offset is
+provably invisible.  Replicas of Avery's chains: `+prog=7` (vcount
+d0/d1/d2), `+prog=6` (blockednmi #1), `+prog=4` (vscroldli bracket).
+
+**2. Consumer switch — [done], but as ONE step, not four**
+Wired in `fpga_xt_top` behind `sallyrst[2]` (CTRL 0x31C bit 2, power-on
+0 = legacy, gated to the fid core; the turbo core never sees it).
+  a. VCOUNT read     — local same-cycle mux at the fid data-in [done]
+  b. NMIST + /NMI    — muxed at the fid glue                   [done]
+  c. /RDY            — muxed at the fid glue                   [done]
+  d. steal schedule  — full Altirra playfield DMA windows      [done]
+**Lesson that cost a build cycle:** these can NOT be switched
+independently.  Mixed authority (machine WSYNC/VCOUNT + legacy-raster
+steals) shifts every post-WSYNC instruction stream by the arbitrary
+phase offset between the two rasters — measured as `antic_vcount`
+"#1 wrong: $02 != $01" on build 47b.  Steal authority must move with
+the rest, which is why 2d was pulled forward.
+
+Hardware state after step 2 (build 51b, single-test probes under
+authority): `antic_blockednmi`, `antic_wsync` (all six bytes),
+`cpu_clisei` **pass**; `antic_vcount` and `antic_nmist` each advanced
+to a later assert and are fixed in 77ae654 (build 52x pending).
+This step buys PARITY with legacy, not new greens — see step 4.
+
+**3. Delete the legacy timing path — [todo]**
+Remove `wsync_gen`, `nmi_gen`, `antic_dma_steal`, and the calibration
+register bits they consumed (shape masks, `rel_adj`, comb fallback,
+write-immunity toggle).  Gated on step 2 holding every anchor on
+hardware, and on a decision to make authority the default.
+
+**4. Renderer fed from the machine — [todo] — THIS IS WHERE THE REDS ARE**
+Steps 0-2 only make the CPU's VIEW of ANTIC exact.  The renderer still
+maintains its own truth (parse-per-frame + row walker), so the tests
+that need render-time and CPU-time to agree are still red.  This step
+feeds the parse/walk pipeline from the machine's per-line decode and
+deletes the compensation layers: phantom DLI rows, `act_carry_vs` /
+`act_carry_dli` / `carry_row0_q`, the VSCROL latch ticks, and
+`meta_dl_active` steal gating.
+Expected to unblock, in rough order of confidence:
+  * `antic_vscroldli`  — needs the renderer's DLI source to be the
+    machine (whose bracket already passes in the bench)
+  * `antic_dlistwrap`  — test #2 needs the live-DMACTL stuck-control-
+    byte behaviour, which the machine already implements
+  * `antic_dmapattern`, `antic_virtdma` — need the machine's DMA
+    schedule to be the one the renderer actually fetches on
+  * `antic_pfstarttiming`, `antic_pfstoptiming`, `antic_hscrolbug`,
+    `antic_linebuffering` — mid-scanline DMACTL/HSCROL effects
+Also resolves the walker's 24-row raster skew (a render-only concern
+once timing is elsewhere).
+
+**Not on this plan at all** (the majority of the remaining reds): the
+POKEY serial engine (serclock/serdirect/sertiming/twotone/skstat), the
+POKEY timer/IRQ pair, and the GTIA per-colour-clock P/M engine
+(hiresbug/pmoverlap/pmresize/pmretrigger/vdelay/collision2/psuedomodee/
+charcontrol/phantomdma).  Sixteen of the twenty-six failures are in
+those two clusters and no amount of ANTIC work touches them.
 
 ## Reference sources
 
