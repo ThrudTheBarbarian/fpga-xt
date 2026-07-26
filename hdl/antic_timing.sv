@@ -203,10 +203,23 @@ module antic_timing #(
     // playfield releases the bus.
     wire refresh_due_tick = (hcount >= 7'd25) && (hcount <= 7'd57)
                             && (((hcount - 7'd25) % 7'd4) == 7'd0);
-    logic [3:0] rfsh_due;              // refreshes owed but not yet placed
+    // Altirra's algorithm verbatim (antic.cpp ATAnticSetRefreshCycles):
+    //     int r = 24;
+    //     for (int x = 25; x < 61; x += 4) {
+    //         if (r >= x) continue;              // LATE REFRESHES ARE DROPPED
+    //         r = x;
+    //         while (r < 107) if (cycle r free) { place at r; break; } else r++;
+    //     }
+    // The drop rule matters: refreshes do NOT queue up.  A refresh still
+    // seeking when the next nominal slot arrives simply consumes it.
+    logic       rfsh_seek;             // a refresh is looking for a free cycle
+    logic [6:0] rfsh_r;                // cycle where the last refresh landed
     wire        rfsh_blocked;          // a higher-priority DMA owns this cycle
-    wire rfsh_want    = (rfsh_due != 4'd0) || refresh_due_tick;
-    wire refresh_slot = rfsh_want && !rfsh_blocked;
+    // The arm is COMBINATIONAL so a refresh can land on its own nominal
+    // cycle (registering it put every refresh one cycle late).
+    wire rfsh_arm     = refresh_due_tick && (rfsh_r < hcount);
+    wire refresh_slot = (rfsh_seek || rfsh_arm) && !rfsh_blocked
+                        && (hcount < 7'd107);
     wire dl_inst_slot = (hcount == 7'd1) && dl_dma_on && dl_active && need_inst;
     wire dl_lo_slot   = (hcount == 7'd6) && dl_dma_on && dl_active && need_addr;
     wire dl_hi_slot   = (hcount == 7'd7) && dl_dma_on && dl_active && need_addr;
@@ -235,8 +248,12 @@ module antic_timing #(
                              ? w_raw + 2'd1 : w_raw;        // HS widens 1 step
     wire       pf_on       = pf_line && (pf_w != 2'd0);
     wire [6:0] hs_delay    = {4'd0, hscrol_q[3:1]};
-    wire [6:0] name_start  = ((pf_w == 2'd3) ? 7'd10 :
-                              (pf_w == 2'd2) ? 7'd18 : 7'd26) + hs_delay;
+    // Altirra: mPFDMAStart = mode < 8 ? {26,18,10} : {28,20,12} — BITMAP
+    // modes start two cycles later than character modes at every width.
+    wire [6:0] pf_base     = (pf_w == 2'd3) ? ((mode < 4'h8) ? 7'd10 : 7'd12)
+                           : (pf_w == 2'd2) ? ((mode < 4'h8) ? 7'd18 : 7'd20)
+                                            : ((mode < 4'h8) ? 7'd26 : 7'd28);
+    wire [6:0] name_start  = pf_base + hs_delay;
     wire       is_char     = (mode >= 4'h2) && (mode <= 4'h7);
     wire       step4       = (mode == 4'h6) || (mode == 4'h7) ||
                              (mode >= 4'hA && mode <= 4'hC);
@@ -287,11 +304,20 @@ module antic_timing #(
     // on the SAME cycle in the common unblocked case — counting them
     // separately produced a spurious extra refresh right after each due tick.
     always_ff @(posedge clk or posedge rst) begin
-        if (rst) rfsh_due <= 4'd0;
+        if (rst) begin rfsh_seek <= 1'b0; rfsh_r <= 7'd24; end
         else if (phi2_tick) begin
-            if (hc_next == 7'd0) rfsh_due <= 4'd0;          // fresh line
-            else rfsh_due <= rfsh_due + (refresh_due_tick ? 4'd1 : 4'd0)
-                                      - (refresh_slot     ? 4'd1 : 4'd0);
+            if (hc_next == 7'd0) begin                      // fresh line
+                rfsh_seek <= 1'b0; rfsh_r <= 7'd24;
+            end else begin
+                // a nominal slot arms a new seek unless the previous refresh
+                // already landed at/after it (then it is dropped)
+                if (refresh_slot) begin
+                    rfsh_seek <= 1'b0;
+                    rfsh_r    <= hcount;      // landed here
+                end else if (rfsh_arm) begin
+                    rfsh_seek <= 1'b1;        // blocked: keep looking
+                end
+            end
         end
     end
 
