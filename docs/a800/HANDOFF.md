@@ -21,6 +21,34 @@ build regenerates the ps7_init tree under the JTAG scripts).
 
 ## 0. 2026-07-25 sessions (newest)
 
+### 0j. DMA-pattern cluster — ground truth located (Sun night)
+antic_dmapattern embeds its EXPECTED cycle-blocking bitmasks as a table
+at $3800 in the test image (labels mode2a/2b/3a/3b/... in the .lst,
+~line 2334), with a cycle-number header comment directly above:
+    mode2a dta $08,%01000011,%00000000,%00000000,%01101111,%11111111...
+Byte 0 = (mode << 2) | variant; the remaining bytes are a bit-per-cycle
+blocked mask running from cycle 0, terminated by $A5.  Decoding mode2a
+gives blocked = {1, 6, 7} then {25, 26, 28, 29, 30, 31} then solid to
+~99 — i.e. DL fetch at 1, LMS operands at 6/7, refresh at 25, and the
+playfield starting at 26 with cycle 27 free.  THAT IS THE ORACLE: any
+future DMA work should decode this table and diff it against
+`make -C sim antic_timing` + `+pfdump=1`, which dumps the machine's own
+schedule for a forced mode-2 line.  Do not hand-guess cycle offsets.
+
+Progress so far: the machine's mode-2 pattern is structurally correct
+(names every 2 from the width start, char data +3 then every 2, 40+40
+fetches at normal width, nothing >= 105).  Two DELIVERY bugs found and
+fixed by comparing paths rather than guessing:
+  * the CPU-facing steal gate was combinational while /RDY goes through
+    one register (rdy_n_q) — every stolen cycle landed one machine
+    cycle earlier than the calibrated WSYNC path (c17f56c);
+  * P/M DMA ran on every scanline; Altirra gates it to lines 8..247, so
+    the machine was stealing 5 cycles/line through the VBI, where the
+    tests do their setup (dc3efe6).
+antic_pfstarttiming MOVED in response (stride 20 -> 12), confirming the
+cluster is sensitive to these.  Still red: dmapattern (mode 02-a),
+virtdma, pfstart/pfstop, hscrolbug.
+
 ### 0i. ANTIC timing machine — authority calibration (Sun 07-26, LIVE)
 The cycle-serial machine (docs/Design/antic-timing-machine.md,
 hdl/antic_timing.sv) is ON THE BOARD behind sallyrst[2] (CTRL 0x31C
