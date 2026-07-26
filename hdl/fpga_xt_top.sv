@@ -874,6 +874,43 @@ module fpga_xt_top (
         else begin phi2f_s0<=antic_phi2_level; phi2f_s1<=phi2f_s0; phi2f_s2<=phi2f_s1; end
     end
     wire       phi2_tick_fid = phi2f_s1 & ~phi2f_s2;  // rising edge of ANTIC's phi2 = machine-cycle start
+
+    // =========================================================================
+    // ANTIC timing machine (docs/Design/antic-timing-machine.md), phase 2a-c.
+    // Runs unconditionally on the fid grid; AUTHORITY is opt-in per sallyrst[2]
+    // (CTRL 0x31C bit 2, power-on 0 = legacy paths) and fid-core-only.  When
+    // on, /RDY, /NMI and the VCOUNT/NMIST read values come from the machine —
+    // same-domain, same-grid with the core.  The DMA-steal gate stays on the
+    // legacy model until the machine's playfield windows land (phase 2d).
+    (* ASYNC_REG = "TRUE" *) reg [1:0] tmauth_sync = 2'b00;
+    always_ff @(posedge clk_sally) tmauth_sync <= {tmauth_sync[0], sallyrst[2]};
+    wire tm_auth = tmauth_sync[1] & cpu_sel;          // fid-only authority
+
+    wire        tm_mem_req;
+    wire [15:0] tm_mem_addr;
+    wire [7:0]  tm_mem_rdata;                          // display_shadow port-A read
+    wire [7:0]  tm_vcount, tm_nmist;
+    wire        tm_nmi_n, tm_rdy_n;
+    wire [2:0]  tm_cycle_type;
+
+    antic_timing u_antic_timing (
+        .clk        (clk_sally),
+        .rst        (rst_sally),
+        .phi2_tick  (phi2_tick_fid),
+        .cold       (sallyrst_sync[1]),               // SALLYRST cold: clear NMIEN/DMACTL
+        .reg_we     (hwreg_we && hwreg_addr[15:8] == 8'hD4),
+        .reg_addr   (hwreg_addr[3:0]),
+        .reg_wdata  (hwreg_din),
+        .mem_req    (tm_mem_req),
+        .mem_addr   (tm_mem_addr),
+        .mem_rdata  (tm_mem_rdata),
+        .vcount     (tm_vcount),
+        .nmist      (tm_nmist),
+        .nmi_n      (tm_nmi_n),
+        .rdy_n_q    (tm_rdy_n),
+        .cycle_type (tm_cycle_type),
+        .dbg_hcount (), .dbg_line (), .dbg_rowctr (), .dbg_dlctl (), .dbg_dlpc ()
+    );
     wire [7:0] fid_sub;
     wire [15:0] fdbg_pc;             // TEMP: fid core live PC  -> diag8
     wire  [7:0] fdbg_ir;             // TEMP: fid core current opcode -> diag8
@@ -912,7 +949,7 @@ module fpga_xt_top (
         immune_s1 <= antic_wsync_write_immune;
         immune_s2 <= immune_s1;
     end
-    wire       fid_wsync_rdy = wsync_rdy_n | (~fid_rw & immune_s2);   // writes immune to WSYNC unless disabled
+    wire       fid_wsync_rdy = (tm_auth ? tm_rdy_n : wsync_rdy_n) | (~fid_rw & immune_s2);   // writes immune to WSYNC unless disabled
     wire       fid_rdy = cpu_sel & fid_mem_ok & ~dma_steal_sally & fid_wsync_rdy & ~fdbg_cpu_halt;  // owns bus; /HALT + WSYNC + busy + dbg-halt aware
     // sally_mem's read-latch (bram_dout_q) AND every write/bank-latch/hwreg-strobe are gated
     // by its `rdy` — a "the CPU took a step" pulse. For the turbo core that is sally_rdy. The
@@ -951,17 +988,24 @@ module fpga_xt_top (
     wire [7:0]  fid_in_s  = fwaxys_s2[31:24];
     wire [7:0]  fid_in_p  = fwpsh_s2[7:0];                // wpsh: [7:0]P [11:8]S_high (unused on fid)
 
+    // Local same-cycle VCOUNT/NMIST read (tm authority): served from the
+    // machine, bypassing the hwreg read CDC round-trip.  The CDC read still
+    // runs underneath and paces mem_ok; its data is simply not consumed.
+    wire [7:0] fid_din_mux = (tm_auth && fid_rw && fid_addr == 16'hD40B) ? tm_vcount :
+                             (tm_auth && fid_rw && fid_addr == 16'hD40F) ? tm_nmist  :
+                             cpu_din;
+
     xt6502f #(.CLK_SALLY_HZ(100_000_000), .PHI2_HZ(1_785_714)) u_fid_core (  // N = 56
         .clk       (clk_sally),
         .rst       (rst_sally_core),
         .phi2_tick (phi2_tick_fid),
         .addr      (fid_addr),
-        .data_in   (cpu_din),
+        .data_in   (fid_din_mux),
         .data_out  (fid_dout),
         .rw        (fid_rw),
         .rdy       (fid_rdy),
         .irq_n     (irq_n_sync),
-        .nmi_n     (nmi_n_sync),
+        .nmi_n     (tm_auth ? tm_nmi_n : nmi_n_sync),
         .sync      (fid_sync),
         .dbg_pc    (fdbg_pc), .dbg_a (fdbg_a), .dbg_x (fdbg_x), .dbg_y (fdbg_y), .dbg_s (fdbg_s), .dbg_p (fdbg_p),
         .dbg_sub   (fid_sub), .dbg_ir (fdbg_ir),
@@ -1210,6 +1254,8 @@ module fpga_xt_top (
         .mir_we   (mirror_we_w),
         .mir_addr (mirror_addr_w),
         .mir_din  (mirror_din_w),
+        .tm_addr  (tm_mem_addr),
+        .tm_data  (tm_mem_rdata),
         .clk_disp (clk_sys),
         .rd_addr  (antic_cmpram_addr),
         .rd_data  (shadow_rdata)

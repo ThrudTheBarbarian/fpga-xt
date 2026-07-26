@@ -265,6 +265,8 @@ module tb_boot;
         .mir_we   (mirror_we_w),
         .mir_addr (mirror_addr_w),
         .mir_din  (mirror_din_w),
+        .tm_addr  (16'h0000),
+        .tm_data  (),
         .clk_disp (clk_sys),
         .rd_addr  (antic_cmpram_addr),
         .rd_data  (antic_cmpram_rdata)

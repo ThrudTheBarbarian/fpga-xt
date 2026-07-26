@@ -54,6 +54,8 @@ module antic_timing #(
     input  wire        clk,          // clk_sally
     input  wire        rst,
     input  wire        phi2_tick,    // machine-cycle grid (the tick the fid core paces on)
+    input  wire        cold,         // SALLYRST cold-boot: power-on-clear NMIEN/DMACTL
+                                     // (xexload relies on it; counters keep running)
 
     // ---- Register write snoop (same-domain, pre-CDC) --------------------
     input  wire        reg_we,       // 1-clk strobe: CPU write to $D4xx
@@ -222,6 +224,10 @@ module antic_timing #(
             wsync_latch_n <= 1'b1; rdy_n_q <= 1'b1;
         end else begin
             // ---------- register snoop (every clk, zero latency) ----------
+            if (cold) begin
+                dmactl_q <= 8'h00;
+                nmien_q  <= 8'h00;
+            end
             if (reg_we) begin
                 case (reg_addr)
                     4'h0: dmactl_q <= reg_wdata;

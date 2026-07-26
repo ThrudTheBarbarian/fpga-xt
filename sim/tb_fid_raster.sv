@@ -217,7 +217,7 @@ module tb_fid_raster;
 
     antic_timing u_tm (
         .clk(clk_sally), .rst(rst_sys),   // released with ANTIC, before the CPU
-        .phi2_tick(phi2_tick_fid),
+        .phi2_tick(phi2_tick_fid), .cold(1'b0),
         .reg_we(hwreg_we && hwreg_addr[15:8] == 8'hD4),
         .reg_addr(hwreg_addr[3:0]),
         .reg_wdata(hwreg_din),

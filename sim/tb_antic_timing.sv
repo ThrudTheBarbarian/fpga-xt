@@ -49,7 +49,7 @@ module tb_antic_timing;
     wire [15:0] dlpc_w;
 
     antic_timing dut (
-        .clk(clk), .rst(rst), .phi2_tick(phi2_tick),
+        .clk(clk), .rst(rst), .phi2_tick(phi2_tick), .cold(1'b0),
         .reg_we(reg_we), .reg_addr(reg_addr), .reg_wdata(reg_wdata),
         .mem_req(mem_req), .mem_addr(mem_addr), .mem_rdata(mem_rdata),
         .vcount(vcount_w), .nmist(nmist_w), .nmi_n(nmi_n_w),

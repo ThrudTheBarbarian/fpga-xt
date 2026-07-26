@@ -25,6 +25,14 @@ module display_shadow (
     input  wire [15:0] mir_addr,
     input  wire [7:0]  mir_din,
 
+    // Timing-machine DL-fetch read, SAME PORT (clk_sally): the port reads
+    // whenever it is not mirror-writing.  The consumer (antic_timing) holds
+    // its address for a whole 56-clk machine cycle and samples at the end;
+    // mirror writes occupy at most one clk per cycle, so the read always
+    // lands.  This turns the inferred SDP into a TDP RAMB — same fabric.
+    input  wire [15:0] tm_addr,
+    output wire [7:0]  tm_data,
+
     // Display read side (clk_sys).
     input  wire        clk_disp,
     input  wire [15:0] rd_addr,
@@ -33,9 +41,12 @@ module display_shadow (
 
     logic [7:0] mem [0:65535];
 
+    logic [7:0] tm_q;
     always_ff @(posedge clk_cpu) begin
         if (mir_we) mem[mir_addr] <= mir_din;
+        else        tm_q <= mem[tm_addr];
     end
+    assign tm_data = tm_q;
 
     logic [7:0] rd_q;
     always_ff @(posedge clk_disp) begin
