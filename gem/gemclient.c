@@ -15,8 +15,35 @@
  * scaffolding for one client, and M2 removed it.
  */
 #include <string.h>
+#include <stdio.h>
+#include <dirent.h>
+#include <sys/stat.h>
 #include "gemclient.h"
 #include "usys.h"
+
+/* xg_listdir — a portable directory listing for XG's toolkit file panel (GEM has no OS file
+ * selector).  Writes one "t name\n" line per entry into buf (t = 'd' for a directory, 'f' for a
+ * file), dot-entries skipped.  Returns the entry count, or -1 if the directory can't be opened.
+ * Lives here because gemclient.c is compiled into libGEM on BOTH the host and the arm9 build, so the
+ * struct-dirent layout is whatever each platform's headers say — the XG client never sees it. */
+int xg_listdir(const char *path, char *buf, int cap) {
+    DIR *d = opendir(path);
+    if (!d) return -1;
+    int n = 0, off = 0;
+    struct dirent *de;
+    while ((de = readdir(d)) != 0 && off < cap - 300) {
+        const char *nm = de->d_name;
+        if (nm[0] == '.' && (nm[1] == 0 || (nm[1] == '.' && nm[2] == 0))) continue;   /* skip . and .. */
+        char full[1024];
+        snprintf(full, sizeof full, "%s/%s", path, nm);
+        struct stat st;
+        int isdir = (stat(full, &st) == 0) && S_ISDIR(st.st_mode);
+        off += snprintf(buf + off, cap - off, "%c %s\n", isdir ? 'd' : 'f', nm);
+        n++;
+    }
+    closedir(d);
+    return n;
+}
 
 /* How long gem_connect() will WAIT for the "gem" service to appear before giving up — and
  * giving up is now FATAL (wind_client_attach exits): on XTOS there is no single-process mode
