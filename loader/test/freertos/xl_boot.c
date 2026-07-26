@@ -587,7 +587,10 @@ static int xex_run_init(cpu6502 *r, uint16_t initad)
 int xex_boot(const char *path, int turbo, int hold)
 {
     static uint8_t img[0x10000];        /* kernel BSS; single caller (task ctx) */
-    uint32_t sel = turbo ? 0u : CPUSEL_FID;  /* default = fidelity core (cycle-exact ref) */
+    /* Core select per arg; every OTHER control bit (e.g. sallyrst[2] = ANTIC
+     * timing-machine authority) is preserved — this path hardcoded sel and
+     * stripped them on every xexload. */
+    uint32_t sel = (GP0_SALLYRST & ~3u) | (turbo ? 0u : CPUSEL_FID);
 
     if (!path) return -22;
 
@@ -624,7 +627,7 @@ int xex_boot(const char *path, int turbo, int hold)
     xl_unmount_all();
     if (build_patched_os(img) != 0) {
         frtos_free(atr, NULL); frtos_free(xex, NULL);
-        GP0_SALLYRST = 0; __asm__ volatile("dsb");
+        GP0_SALLYRST = sel; __asm__ volatile("dsb");
         return -5;
     }
     upload_image(img);
