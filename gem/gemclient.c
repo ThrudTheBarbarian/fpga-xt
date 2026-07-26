@@ -18,6 +18,7 @@
 #include <stdio.h>
 #include <dirent.h>
 #include <sys/stat.h>
+#include <unistd.h>
 #include "gemclient.h"
 #include "usys.h"
 
@@ -43,6 +44,18 @@ int xg_listdir(const char *path, char *buf, int cap) {
     }
     closedir(d);
     return n;
+}
+
+/* File operations for XG's toolkit file panel (rename/delete/copy), 1 on success, 0 on failure. */
+int xg_unlink(const char *path)              { return unlink(path) == 0 ? 1 : 0; }
+int xg_rename(const char *a, const char *b)  { return rename(a, b) == 0 ? 1 : 0; }
+int xg_copyfile(const char *a, const char *b) {
+    FILE *in = fopen(a, "rb"); if (!in) return 0;
+    FILE *out = fopen(b, "wb"); if (!out) { fclose(in); return 0; }
+    char buf[8192]; size_t n; int ok = 1;
+    while ((n = fread(buf, 1, sizeof buf, in)) > 0) { if (fwrite(buf, 1, n, out) != n) { ok = 0; break; } }
+    fclose(in); fclose(out);
+    return ok;
 }
 
 /* How long gem_connect() will WAIT for the "gem" service to appear before giving up — and
