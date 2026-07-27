@@ -45,11 +45,24 @@ board back-to-back:
 reproducible and must be treated as spurious.  CORRECTED SCORE:
 AUTHORITY = 32/57 (legacy 31): +vscroldli +dlistwrap -collision.
 Still ahead, by one rather than two.
-STILL TO FIND: which of the night's machine-side changes broke it.
-Bisect the archived bitstreams — 57 (passed in isolation), 62, 65b, 67
-— all are in vivado/archive/.  Load one, force sallyrst 0x06, run
-gtia_collision FIRST on a cold board.  That is ~10 min per point and
-needs no rebuild.
+BISECT DONE — IT IS NOT A REGRESSION AT ALL.  Archived bitstreams run
+cold with sallyrst forced to 0x06, gtia_collision first:
+    build 57 (before the DMA work) ... FAIL
+    build 62 (refresh slip + PM gate). FAIL
+    build 67 (stuck control byte) .... FAIL
+    build 69b (current) .............. FAIL
+    ALL of them pass under LEGACY on the same bitstream.
+So gtia_collision has NEVER passed under machine authority; the two
+"passes" in the record were artifacts (one chunked-sweep row that does
+not reproduce, and one acid-shots screen).  Nothing the night's work
+did broke it.
+
+This is therefore the step-4 class after all, just DETERMINISTIC rather
+than per-boot random: collisions are computed by the renderer, which
+still runs on the legacy raster, while the CPU is paced by the machine.
+The offset between those domains is fixed for a given build, so the
+test fails the same way every time.  It resolves when the renderer is
+fed from the machine (step 4), not before — do not hunt it as a bug.
 
 SUPERSEDED NOTE — gtia_collision history across builds:
     57  isolation .......... PASS
