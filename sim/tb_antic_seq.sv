@@ -105,6 +105,7 @@ module tb_antic_seq;
         .chbase(8'h0), .chactl(8'h0), .pmbase(8'h0), .dmactl(8'h0), .gractl(8'h0),
         .hposp0(8'h0), .hposp1(8'h0), .hposp2(8'h0), .hposp3(8'h0),
         .hposm0(8'h0), .hposm1(8'h0), .hposm2(8'h0), .hposm3(8'h0),
+        .sizep_early_flat(8'h00), .sizep_chg_x_flat({4{12'h7FF}}),
         .sizep0(2'h0), .sizep1(2'h0), .sizep2(2'h0), .sizep3(2'h0),
         .sizem(8'h0), .vdelay(8'h0), .hscrol(4'h0), .vscrol(4'h0), .prior(8'h0),
         .mem_raddr(cmp_mem_raddr), .mem_rdata(8'h0),

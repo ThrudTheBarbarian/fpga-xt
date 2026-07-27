@@ -1597,6 +1597,40 @@ module antic_top #(
     wire        cmp_done;
     wire [31:0] cmp_count;
 
+    // ---- Mid-scanline SIZEP capture (ACID800 gtia_pmresize) -------------
+    // Per player, remember the SIZEP value as it stood at line start and the
+    // atari-x at which the FIRST mid-line write to that register landed.  The
+    // compositor composes a row in one burst, so without this a write partway
+    // along the scanline is simply invisible to the render.
+    // atari-x maps from the ANTIC cycle as x = 4*cycle - 96 (two colour clocks
+    // per machine cycle, two atari pixels per colour clock, and HPOS 48 = x 0).
+    localparam [11:0] SIZEP_CHG_NONE = 12'h7FF;
+    logic [1:0]  sizep_early_q [0:3];
+    logic [11:0] sizep_chg_x_q [0:3];
+    wire  [11:0] cc_x_now = ({4'd0, ar_phi2_in_line} << 2) >= 12'd96
+                            ? (({4'd0, ar_phi2_in_line} << 2) - 12'd96) : 12'd0;
+    wire         sizep_we = snoop_we_gtia && (snoop_addr[7:2] == 6'b000010);  // $D008-$D00B
+    always_ff @(posedge clk_bus or posedge rst_bus) begin
+        if (rst_bus) begin
+            for (int i = 0; i < 4; i++) begin
+                sizep_early_q[i] <= 2'd0;
+                sizep_chg_x_q[i] <= SIZEP_CHG_NONE;
+            end
+        end else if (line_start_pulse_bus) begin
+            for (int i = 0; i < 4; i++) begin
+                sizep_early_q[i] <= sizep_q[i][1:0];
+                sizep_chg_x_q[i] <= SIZEP_CHG_NONE;
+            end
+        end else if (sizep_we) begin
+            if (sizep_chg_x_q[snoop_addr[1:0]] == SIZEP_CHG_NONE)
+                sizep_chg_x_q[snoop_addr[1:0]] <= cc_x_now;
+        end
+    end
+    wire  [7:0] sizep_early_flat_w = {sizep_early_q[3], sizep_early_q[2],
+                                      sizep_early_q[1], sizep_early_q[0]};
+    wire [47:0] sizep_chg_x_flat_w = {sizep_chg_x_q[3], sizep_chg_x_q[2],
+                                      sizep_chg_x_q[1], sizep_chg_x_q[0]};
+
     compositor u_compositor (
         .clk(clk_bus), .rst(rst_bus), .start_compose(cmp_start_pulse),
         .row_in(ar_atari_row),                 // compose this row
@@ -1611,6 +1645,8 @@ module antic_top #(
         .hposp2(hposp_q[2]), .hposp3(hposp_q[3]),
         .hposm0(hposm_q[0]), .hposm1(hposm_q[1]),
         .hposm2(hposm_q[2]), .hposm3(hposm_q[3]),
+        .sizep_early_flat(sizep_early_flat_w),
+        .sizep_chg_x_flat(sizep_chg_x_flat_w),
         .sizep0(sizep_q[0][1:0]), .sizep1(sizep_q[1][1:0]),
         .sizep2(sizep_q[2][1:0]), .sizep3(sizep_q[3][1:0]),
         .sizem(sizem_q), .vdelay(vdelay_q),

@@ -99,6 +99,17 @@ module compositor #(
     input  wire  [7:0]  hposm1,            // HPOSM1 ($D005)
     input  wire  [7:0]  hposm2,            // HPOSM2 ($D006)
     input  wire  [7:0]  hposm3,            // HPOSM3 ($D007)
+    // Mid-scanline SIZEP support.  The compositor composes a whole row in
+    // one burst, so it normally sees only the register values standing at
+    // burst time and a CPU write partway along the scanline is invisible.
+    // ACID800 gtia_pmresize changes SIZEP0 mid-line and reads the resulting
+    // width back through the player-player collision registers.  antic_top
+    // supplies, per player: the SIZEP value as it stood at line start, and
+    // the atari-x at which the first mid-line write landed (a sentinel of
+    // 12'h7FF = "no write this line", which makes the early value apply for
+    // the whole row — identical to the old behaviour).
+    input  wire  [7:0]  sizep_early_flat,  // {p3,p2,p1,p0} x 2 bits
+    input  wire [47:0]  sizep_chg_x_flat,  // {p3,p2,p1,p0} x 12 bits
     input  wire  [1:0]  sizep0,            // SIZEP0 ($D008) — 00=1x, 01=2x, 10=1x, 11=4x
     input  wire  [1:0]  sizep1,
     input  wire  [1:0]  sizep2,
@@ -713,10 +724,21 @@ module compositor #(
         ms_eff[3:2] = vdelay[1] ? ms_byte_prev[3:2] : ms_byte[3:2];
         ms_eff[5:4] = vdelay[2] ? ms_byte_prev[5:4] : ms_byte[5:4];
         ms_eff[7:6] = vdelay[3] ? ms_byte_prev[7:6] : ms_byte[7:6];
-        p0p = player_covers(atari_x, hposp0, p0_shape, sizep0);
-        p1p = player_covers(atari_x, hposp1, p1_shape, sizep1);
-        p2p = player_covers(atari_x, hposp2, p2_shape, sizep2);
-        p3p = player_covers(atari_x, hposp3, p3_shape, sizep3);
+        // Pick the size in force AT THIS PIXEL: before the mid-line write
+        // position the line-start value applies, at or after it the live
+        // register does.
+        p0p = player_covers(atari_x, hposp0, p0_shape,
+                  (atari_x < $signed({1'b0, sizep_chg_x_flat[11:0]}))
+                      ? sizep_early_flat[1:0] : sizep0);
+        p1p = player_covers(atari_x, hposp1, p1_shape,
+                  (atari_x < $signed({1'b0, sizep_chg_x_flat[23:12]}))
+                      ? sizep_early_flat[3:2] : sizep1);
+        p2p = player_covers(atari_x, hposp2, p2_shape,
+                  (atari_x < $signed({1'b0, sizep_chg_x_flat[35:24]}))
+                      ? sizep_early_flat[5:4] : sizep2);
+        p3p = player_covers(atari_x, hposp3, p3_shape,
+                  (atari_x < $signed({1'b0, sizep_chg_x_flat[47:36]}))
+                      ? sizep_early_flat[7:6] : sizep3);
         m0p = missile_covers(atari_x, hposm0, ms_eff[1:0], sizem[1:0]);
         m1p = missile_covers(atari_x, hposm1, ms_eff[3:2], sizem[3:2]);
         m2p = missile_covers(atari_x, hposm2, ms_eff[5:4], sizem[5:4]);
