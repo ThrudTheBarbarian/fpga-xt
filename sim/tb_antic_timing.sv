@@ -242,6 +242,19 @@ module tb_antic_timing;
         if (dut.dl_active !== 1'b1) begin $display("FAIL T8: DL did not resume after the VBI"); nfail++; end
         $display("  ok  T8: DL DMA suspended across the vertical blank");
 
+        // ---------------- T9: DL DMA off leaves the control byte STUCK ---
+        // ACID antic_dlistwrap #2 kills DMACTL mid-frame and still expects
+        // the last control byte's DLI to keep firing: ANTIC always begins
+        // the display region, DL DMA only gates FETCHING.
+        wr(4'h2, 8'h00); wr(4'h3, 8'h2C); wr(4'h0, 8'h22);
+        run_to(9'd40, 7'd20);
+        wr(4'h0, 8'h00);                    // DL DMA off mid-frame
+        run_to(9'd20, 7'd20);               // next frame, well past the restart
+        if (dut.dl_active !== 1'b1) begin
+            $display("FAIL T9: display stopped with DL DMA off (stuck byte lost)");
+            nfail++;
+        end else $display("  ok  T9: DL DMA off -> control byte stays stuck, display continues");
+
         if (nfail == 0) $display("*** ANTIC_TIMING OK ***");
         else            $display("*** ANTIC_TIMING FAIL *** %0d failure(s)", nfail);
         $finish;

@@ -558,10 +558,19 @@ module antic_timing #(
                 end
 
                 // ---- end of line 7: (re)start the DL for line 8 ---------
-                if (line_wraps && line == RESTART_LINE && dl_dma_on) begin
+                // NOT gated on dl_dma_on: ANTIC always begins the display
+                // region.  What DL DMA gates is FETCHING (dl_inst_slot etc).
+                // With DMA off the control byte is STUCK at its last value
+                // and its rows keep cycling — so its DLI keeps firing every
+                // row-end, which is exactly what ACID antic_dlistwrap #2
+                // measures ("DLI was not carried over around VBLANK": the
+                // test kills DMACTL mid-frame and still expects DLIs).
+                // Clearing dl_active here stopped the display dead instead.
+                if (line_wraps && line == RESTART_LINE) begin
                     dl_active <= 1'b1;
                     need_inst <= 1'b1;
-                    dl_pc     <= dlist_dirty ? {dlisth_q, dlistl_q} : dl_pc;
+                    dl_pc     <= (dlist_dirty && dl_dma_on) ? {dlisth_q, dlistl_q}
+                                                            : dl_pc;
                     dlist_dirty <= 1'b0;
                     dl_ctl    <= dl_ctl_prev;                // Altirra restart
                     row_height_m1 <= ctl_height_m1(dl_ctl_prev);
