@@ -21,6 +21,32 @@ build regenerates the ps7_init tree under the JTAG scripts).
 
 ## 0. 2026-07-25 sessions (newest)
 
+### 0n. MEASUREMENT HEALTH + one UNRESOLVED item (end of night)
+THE BOARD DEGRADES over a long session: after ~6 hours of sweeps and
+reboots, a chunk that scored cleanly earlier returned 7 load errors,
+and tests that had just passed reported fail.  A JTAG reset+load does
+NOT fully recover it — the fix is a PHYSICAL POWER-CYCLE.  Treat any
+sweep taken late in a session as suspect and re-measure from cold.
+Concretely: the build-69b full sweep reads 30 and is NOT trustworthy;
+the last clean number is 33/57 on build 67 (zero errors).
+
+UNRESOLVED — gtia_collision.  History across builds:
+    57  isolation .......... PASS
+    65b/66 isolation ....... fail
+    67  chunked sweep ...... pass
+    68  3rd-in-sequence .... fail
+    69b FIRST on a cold board  fail
+Failing as the first test on a freshly booted board is NOT the flaky
+signature, so treat this as a REAL open regression rather than noise.
+Suspects, in order: (a) something in the night's DMA-schedule work
+shifting CPU timing relative to the renderer — collisions are computed
+by the renderer, which is still on the legacy raster (the step-4 phase
+split, see 0k); (b) the POKEY linked-timer change (ce75e89) if the test
+schedules its measurement off a timer.  DISCRIMINATOR: clear sallyrst
+bit 2 (legacy timing) and re-run — collision passed under legacy on
+build 66, so if it still passes there the cause is on the machine side.
+Do this from a cold board.
+
 ### 0m. POKEY timers — linked period fixed, cascade reload still open
 pokey_timertiming moved one assert deeper.  WAS "1.79MHz 16-bit lo
 timer triggered too late (loop #1)"; NOW "...too early (loop #2)".
