@@ -187,6 +187,26 @@ entirely and key off the instruction boundary (the ~21 `state <=
 ST_FETCH` sites) as 0f originally specified.
 Do not re-try a plain rdy gate.
 
+### 1c. BOARD STATE 2026-07-27 ~22:05 — NEEDS A PHYSICAL POWER-CYCLE
+Build 77 closed timing (clk_sys +0.004, clk_sally +0.016, clk_pix
++0.223) and the bitstream is archived at
+    vivado/archive/fpga_xt_top.build77-hposp-midline.bit
+I then ran `jtag-valhalla.sh load` OVER THE LIVE build-72 IMAGE without
+a power-cycle first.  The load reported success, but the board has been
+off the network ever since: no ping and no ssh on 192.168.192.179,
+mDNS xtos.local does not resolve, ~4 minutes of polling.  This is the
+known non-cold-load flake ([[jtag_noncold_load_flake]]) and it is NOT
+evidence of anything wrong with build 77 — the RTL was never exercised.
+TO RESUME: power-cycle the board (physical), then
+    ./vivado/jtag-valhalla.sh load
+    ssh 192.168.192.179 sh /tmp/pmchunk.sh     (script generated, not yet pushed)
+The P/M sweep script is ready at
+    <scratchpad>/pmchunk.sh
+covering gtia_pmresize / pmoverlap / pmretrigger / collision,
+antic_pmdma, gtia_vdelay plus four anchors (nmist, vscroldli,
+dlistwrap, wsync) to confirm no regression.
+LESSON: do not run a non-cold load unattended — recovery is physical.
+
 ### 1b. The HPOSP select had to be made CHEAPER, not just correct
 Build 75 (mid-line HPOSP, ExtraTimingOpt): clk_sys WNS -0.145 ns FAIL.
 Build 76 (same RTL, PLACE_DIRECTIVE=Explore): -0.547 ns, WORSE.  So
