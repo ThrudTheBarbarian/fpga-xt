@@ -516,10 +516,15 @@ module antic_timing #(
                     end
                 end
                 // late enable (arrived between the samples): pulse slips one
-                if (hc_next == 7'd9 && nmi_arm_q && nmi_en_late) begin
+                // LATE leg fires at 10.  The two dlitiming sleds differ only
+                // in whether NMIEN was already on (early leg) or armed late
+                // (late leg), so their pulse positions are independently
+                // adjustable — with 1-stage recognition the early sled wants
+                // pulse 8 ($2C) and the late sled one more ($32).
+                if (hc_next == 7'd10 && nmi_arm_q && nmi_en_late) begin
                     nmi_n <= 1'b0; nmi_ext <= 1'b1; nmi_arm_q <= 1'b0;
                 end
-                if (hc_next == 7'd10) begin
+                if (hc_next == 7'd11) begin
                     nmi_arm_q <= 1'b0; nmi_en_late <= 1'b0;
                 end
 
