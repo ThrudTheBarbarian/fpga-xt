@@ -261,13 +261,14 @@ module antic_timing #(
     wire       step8       = (mode == 4'h8) || (mode == 4'h9);
     // data clock start: names+3 for char modes, names+2 for bitmap
     wire [6:0] data_start  = name_start + (is_char ? 7'd3 : 7'd2);
-    // fetch counts: step2 48/40/32, step4 24/20/16, step8 12/10/8
-    wire [6:0] n_fetch     = step8 ? ((pf_w == 2'd3) ? 7'd12 : (pf_w == 2'd2) ? 7'd10 : 7'd8)
-                           : step4 ? ((pf_w == 2'd3) ? 7'd24 : (pf_w == 2'd2) ? 7'd20 : 7'd16)
-                                   : ((pf_w == 2'd3) ? 7'd48 : (pf_w == 2'd2) ? 7'd40 : 7'd32);
+    // The playfield spans the SAME number of cycles in every mode — only the
+    // fetch density differs (48 every 2 == 24 every 4 == 12 every 8 == 96
+    // cycles at wide).  So the extent is a width lookup, not a multiply:
+    // this removes two combinational multipliers from the steal cone.
     wire [3:0] stepv       = step8 ? 4'd8 : step4 ? 4'd4 : 4'd2;
-    wire [8:0] name_end    = {2'd0, name_start} + ({2'd0, n_fetch} * {5'd0, stepv});
-    wire [8:0] data_end    = {2'd0, data_start} + ({2'd0, n_fetch} * {5'd0, stepv});
+    wire [6:0] pf_span     = (pf_w == 2'd3) ? 7'd96 : (pf_w == 2'd2) ? 7'd80 : 7'd64;
+    wire [8:0] name_end    = {2'd0, name_start} + {2'd0, pf_span};
+    wire [8:0] data_end    = {2'd0, data_start} + {2'd0, pf_span};
     // grid hits (virtual >= 105: no steal)
     wire [6:0] name_rel    = hcount - name_start;
     wire [6:0] data_rel    = hcount - data_start;
