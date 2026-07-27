@@ -813,6 +813,30 @@ module tb_fid_raster;
                         u_sally_mem.mem[16'h2030]=8'hA5;  // LDA $80
                         u_sally_mem.mem[16'h2031]=8'h80;
                     end
+                    if (psel == 8) begin
+                        // PLAYFIELD-DMA case: DMACTL=$22 (normal width + DL
+                        // DMA) with a mode-2 list.  EVERY other prog uses
+                        // $20 — DL DMA but NO playfield — so the PF steal
+                        // path had never been exercised with a real CPU,
+                        // which is exactly what antic_dmapattern measures.
+                        static logic [7:0] progp [0:34] = '{
+                            8'hA9, 8'h22, 8'h8D, 8'h00, 8'hD4,
+                            8'hA9, 8'h00, 8'h8D, 8'h0E, 8'hD4,
+                            8'hA9, 8'h00, 8'h8D, 8'h02, 8'hD4,
+                            8'hA9, 8'h2C, 8'h8D, 8'h03, 8'hD4,
+                            8'hEA, 8'hEA, 8'hEA, 8'hEA, 8'hEA,
+                            8'hEA, 8'hEA, 8'hEA, 8'hEA, 8'hEA,
+                            8'h4C, 8'h14, 8'h20, 8'hEA, 8'hEA };
+                        for (int k = 0; k <= $high(progp); k++) u_sally_mem.mem[16'h2000+k] = progp[k];
+                        u_sally_mem.mem[16'h2C00]=8'h70; u_sally_mem.mem[16'h2C01]=8'h70;
+                        u_sally_mem.mem[16'h2C02]=8'h70;
+                        u_sally_mem.mem[16'h2C03]=8'h42;
+                        u_sally_mem.mem[16'h2C04]=8'h00; u_sally_mem.mem[16'h2C05]=8'h40;
+                        u_sally_mem.mem[16'h2C06]=8'h02; u_sally_mem.mem[16'h2C07]=8'h02;
+                        u_sally_mem.mem[16'h2C08]=8'h02; u_sally_mem.mem[16'h2C09]=8'h02;
+                        u_sally_mem.mem[16'h2C0A]=8'h41; u_sally_mem.mem[16'h2C0B]=8'h00;
+                        u_sally_mem.mem[16'h2C0C]=8'h2C;
+                    end
                     if (psel == 7) begin
                         // antic_vcount d0/d1/d2 replica: wsync-stepped VCOUNT
                         // reads on lines 3/4/5.  $0600 expect $01 (data 110),
@@ -1011,7 +1035,8 @@ module tb_fid_raster;
     // other progs' handler/sled bytes: $2103 is mid-LDA in the prog-1/2/3
     // handler, $2035 is a prog-B sled NOP).
     int wpsel; initial if (!$value$plusargs("prog=%d", wpsel)) wpsel = 0;
-    wire watch_hit = (wpsel == 7 && fdbg_pc == 16'h2045)
+    wire watch_hit = (wpsel == 8 && fdbg_pc == 16'h2020)
+                  || (wpsel == 7 && fdbg_pc == 16'h2045)
                   || (wpsel == 0 && fdbg_pc == 16'h203E)
                   || (wpsel >= 1 && wpsel <= 3 && fdbg_pc == 16'h2036)
                   || (wpsel == 4 && fdbg_pc == 16'h206A)
@@ -1020,6 +1045,41 @@ module tb_fid_raster;
     reg watch_q = 0;
     always @(posedge clk_sally) if (u_fid_core.slot_commit && u_fid_core.rdy)
         watch_q <= watch_hit;
+    // ---- STEAL ACCOUNTING (+stealacct=1) ------------------------------
+    // The open dmapattern question: does each stolen cycle consume EXACTLY
+    // one machine cycle of CPU time?  Per scanline, count the machine
+    // cycles the machine claims (cycle_type != CPU) and the machine cycles
+    // in which the fid core actually retired work.  They must sum to 114.
+    int sa_on; initial if (!$value$plusargs("stealacct=%d", sa_on)) sa_on = 0;
+    int sa_steal = 0, sa_commit = 0, sa_ticks = 0, sa_line = -1, sa_rep = 0;
+    int sa_both = 0, sa_neither = 0;
+    reg sa_did_commit = 0;
+    always @(posedge clk_sally) begin
+        if (u_fid_core.slot_commit && fid_rdy) sa_did_commit <= 1'b1;
+        if (sa_on && phi2_tick_fid && !rst_sally) begin
+            sa_ticks++;
+            if (tm_ct != 3'd0)  sa_steal++;
+            if (sa_did_commit)  sa_commit++;
+            // POSITIONAL check: a cycle the machine claims must be a cycle
+            // the CPU did NOT retire in, and vice versa.  Counts alone can
+            // match while positions are skewed — and antic_dmapattern
+            // measures POSITIONS.
+            if ((tm_ct != 3'd0) &&  sa_did_commit) sa_both++;
+            if ((tm_ct == 3'd0) && !sa_did_commit) sa_neither++;
+            sa_did_commit <= 1'b0;
+            if (tm_hc == 7'd113) begin
+                if (tm_line != sa_line && sa_rep < 8 && sa_ticks > 100
+                    && tm_line > 9'd38) begin
+                    sa_line = tm_line; sa_rep++;
+                    $display("[acct] line=%0d ticks=%0d steals=%0d cpu=%0d sum=%0d  OVERLAP both=%0d neither=%0d",
+                             tm_line, sa_ticks, sa_steal, sa_commit,
+                             sa_steal + sa_commit, sa_both, sa_neither);
+                end
+                sa_ticks = 0; sa_steal = 0; sa_commit = 0;
+                sa_both = 0; sa_neither = 0;
+            end
+        end
+    end
     // prog=7 data-sample tracer: the exact moment the fid latches VCOUNT.
     always @(posedge clk_sally) begin
         if (wpsel == 7 && u_fid_core.sub == 8'd49 && cpu_rw && cpu_addr == 16'hD40B
