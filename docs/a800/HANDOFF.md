@@ -168,6 +168,25 @@ timer triggered too late (loop #1)"; NOW "...too early (loop #2)".
  * NO REGRESSION: pokey_timergranularity, pokey_timerirq and
    pokey_irqtiming all still pass on the same build.
 
+### 0r. Penultimate-poll: a THIRD config measured and rejected
+Tried (and reverted): gate the WHOLE recognition pipeline on rdy, not
+just its second stage, and recognise on the 2-stage value.  Reasoning
+was that during a WSYNC stall nmi_d1 kept tracking live pend while
+nmi_polled froze, so a mid-stall edge surfaced one commit too early.
+MEASURED (tb_fid_raster prog=1/2/3, expected $32/$32/$2C):
+    config A  2-stage, d1 ungated   : plain $2C ok , delayed-odd $31 -1
+    config B  3-stage, d1 ungated   : plain $2D +1 , delayed-odd $32 ok   <- SHIPPING
+    config D  2-stage, d1 rdy-gated : plain $2D +1 , delayed-odd $31 -1   <- WORSE, reverted
+WHY IT FAILED, and this is the useful part: rdy is ALSO low for every
+DMA steal, not just for WSYNC stalls — nine refresh cycles a line at
+minimum.  Gating the pipeline on rdy therefore freezes recognition
+during ordinary steals too, which is why it delayed the PLAIN case
+while doing nothing for the delayed one.  Any future attempt must
+distinguish "halted by WSYNC" from "halted by DMA", or avoid rdy
+entirely and key off the instruction boundary (the ~21 `state <=
+ST_FETCH` sites) as 0f originally specified.
+Do not re-try a plain rdy gate.
+
 ### 0q. CURRENT STATE (2026-07-27 afternoon) — build 72, 33/57
 BOARD: build 72 (a73c5e3), authority is the POWER-ON DEFAULT
 (sallyrst 0x06).  Board and source are IN SYNC (build 71b had the
