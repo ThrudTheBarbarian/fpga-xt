@@ -21,6 +21,28 @@ build regenerates the ps7_init tree under the JTAG scripts).
 
 ## 0. 2026-07-25 sessions (newest)
 
+### 0m. POKEY timers — linked period fixed, cascade reload still open
+pokey_timertiming moved one assert deeper.  WAS "1.79MHz 16-bit lo
+timer triggered too late (loop #1)"; NOW "...too early (loop #2)".
+ * FIXED (ce75e89): linked 16-bit timers use the SAME N+4 machine-clock
+   period as unlinked.  The old model added 3 cycles for the pair "to
+   settle" (N+7).  The test pins it exactly: AUDF1=$10, AUDF2=$00,
+   AUDCTL=$50 requires the IRQ unfired 19 cycles after STIMER and fired
+   by 20 => period 20 = N+4.  tb_pokey's phase-N bound was derived from
+   N+7 and was RECOMPUTED (not widened): AUDF16=9 gives 104 fabric clks
+   per edge => ~158 toggles over 16384, which is what we now measure.
+ * STILL OPEN — loop #2 tests the SECOND period: STIMER, delay 15,
+   IRQEN=0 then =1, check at ~42 cycles that the IRQ has NOT yet fired.
+   Ours fires early, so the reload after the first underflow is too
+   short.  This is the 16-bit CASCADE semantics (low byte wraps to $FF
+   and the high byte decrements; the full 16-bit value is not simply
+   re-loaded), which is a different mechanism from the initial period.
+   Model it from Altirra's pokey timer code before touching the RTL —
+   the initial-period constant is now confirmed correct, so do not
+   perturb it.
+ * NO REGRESSION: pokey_timergranularity, pokey_timerirq and
+   pokey_irqtiming all still pass on the same build.
+
 ### 0l. MORNING STATE (2026-07-27) — THE NEW ANTIC IS THE DEFAULT
 BOARD: build 68 (3fdcbe1).  sallyrst now powers on at 0x06 = fidelity
 core + ANTIC TIMING-MACHINE AUTHORITY.  Verified from cold: the
