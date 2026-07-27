@@ -1611,7 +1611,12 @@ module antic_top #(
     // along the scanline is simply invisible to the render.
     // atari-x maps from the ANTIC cycle as x = 4*cycle - 96 (two colour clocks
     // per machine cycle, two atari pixels per colour clock, and HPOS 48 = x 0).
-    localparam [11:0] SIZEP_CHG_NONE = 12'h7FF;
+    // 12'h800 = -2048 when read as SIGNED, so an untouched line fails
+    // `atari_x < chg_x` for every atari_x the sweep can produce (the
+    // border/collision sweep probes NEGATIVE colour clocks, which is why
+    // a 0 sentinel will not do).  This lets the per-pixel select in
+    // compositor.sv drop its explicit sentinel comparison entirely.
+    localparam [11:0] SIZEP_CHG_NONE = 12'h800;
     logic [1:0]  sizep_early_q [0:3];
     logic [11:0] sizep_chg_x_q [0:3];
     wire  [11:0] cc_x_now = ({4'd0, ar_phi2_in_line} << 2) >= 12'd96

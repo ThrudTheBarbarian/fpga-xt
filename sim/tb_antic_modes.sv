@@ -99,10 +99,10 @@ module tb_antic_modes;
         // (Leaving these dangling resolves the select to X and blanks the
         // players, which is exactly what a missing tie-off looked like.)
         .hposp_early_flat({hposp_r[3], hposp_r[2], hposp_r[1], hposp_r[0]}),
-        .hposp_chg_x_flat({4{12'h7FF}}),
+        .hposp_chg_x_flat({4{12'h800}}),
         .sizep_early_flat({sizep_r[3][1:0], sizep_r[2][1:0],
                            sizep_r[1][1:0], sizep_r[0][1:0]}),
-        .sizep_chg_x_flat({4{12'h7FF}}),
+        .sizep_chg_x_flat({4{12'h800}}),
         .sizep0(sizep_r[0]), .sizep1(sizep_r[1]), .sizep2(sizep_r[2]), .sizep3(sizep_r[3]),
         .sizem(sizem_r), .vdelay(vdelay_r), .hscrol(4'h0), .vscrol(4'h0), .prior(8'h0),
         .grafp0(grafp_r[0]), .grafp1(grafp_r[1]), .grafp2(grafp_r[2]), .grafp3(grafp_r[3]),

@@ -736,32 +736,24 @@ module compositor #(
         // position the line-start value applies, at or after it the live
         // register does.
         p0p = player_covers(atari_x,
-                  ((hposp_chg_x_flat[11:0] != 12'h7FF) &&
-                   (atari_x < $signed({1'b0, hposp_chg_x_flat[11:0]})))
+                  (atari_x < $signed(hposp_chg_x_flat[11:0]))
                       ? hposp_early_flat[7:0] : hposp0, p0_shape,
-                  ((sizep_chg_x_flat[11:0] != 12'h7FF) &&
-                   (atari_x < $signed({1'b0, sizep_chg_x_flat[11:0]})))
+                  (atari_x < $signed(sizep_chg_x_flat[11:0]))
                       ? sizep_early_flat[1:0] : sizep0);
         p1p = player_covers(atari_x,
-                  ((hposp_chg_x_flat[23:12] != 12'h7FF) &&
-                   (atari_x < $signed({1'b0, hposp_chg_x_flat[23:12]})))
+                  (atari_x < $signed(hposp_chg_x_flat[23:12]))
                       ? hposp_early_flat[15:8] : hposp1, p1_shape,
-                  ((sizep_chg_x_flat[23:12] != 12'h7FF) &&
-                   (atari_x < $signed({1'b0, sizep_chg_x_flat[23:12]})))
+                  (atari_x < $signed(sizep_chg_x_flat[23:12]))
                       ? sizep_early_flat[3:2] : sizep1);
         p2p = player_covers(atari_x,
-                  ((hposp_chg_x_flat[35:24] != 12'h7FF) &&
-                   (atari_x < $signed({1'b0, hposp_chg_x_flat[35:24]})))
+                  (atari_x < $signed(hposp_chg_x_flat[35:24]))
                       ? hposp_early_flat[23:16] : hposp2, p2_shape,
-                  ((sizep_chg_x_flat[35:24] != 12'h7FF) &&
-                   (atari_x < $signed({1'b0, sizep_chg_x_flat[35:24]})))
+                  (atari_x < $signed(sizep_chg_x_flat[35:24]))
                       ? sizep_early_flat[5:4] : sizep2);
         p3p = player_covers(atari_x,
-                  ((hposp_chg_x_flat[47:36] != 12'h7FF) &&
-                   (atari_x < $signed({1'b0, hposp_chg_x_flat[47:36]})))
+                  (atari_x < $signed(hposp_chg_x_flat[47:36]))
                       ? hposp_early_flat[31:24] : hposp3, p3_shape,
-                  ((sizep_chg_x_flat[47:36] != 12'h7FF) &&
-                   (atari_x < $signed({1'b0, sizep_chg_x_flat[47:36]})))
+                  (atari_x < $signed(sizep_chg_x_flat[47:36]))
                       ? sizep_early_flat[7:6] : sizep3);
         m0p = missile_covers(atari_x, hposm0, ms_eff[1:0], sizem[1:0]);
         m1p = missile_covers(atari_x, hposm1, ms_eff[3:2], sizem[3:2]);

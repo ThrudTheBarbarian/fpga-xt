@@ -187,6 +187,29 @@ entirely and key off the instruction boundary (the ~21 `state <=
 ST_FETCH` sites) as 0f originally specified.
 Do not re-try a plain rdy gate.
 
+### 1b. The HPOSP select had to be made CHEAPER, not just correct
+Build 75 (mid-line HPOSP, ExtraTimingOpt): clk_sys WNS -0.145 ns FAIL.
+Build 76 (same RTL, PLACE_DIRECTIVE=Explore): -0.547 ns, WORSE.  So
+this is NOT placer variance — the added logic is genuinely over
+budget.  pm_presence_s is evaluated PER PIXEL (and twice per pixel in
+the collision sweep), so the naive select added four 12-bit magnitude
+compares AND four 12-bit equality compares (the sentinel test) to the
+hottest combinational path in the design.
+Fix: the sentinel test is avoidable.  CHG_NONE moves from 12'h7FF to
+12'h800, which is -2048 read as SIGNED, and the select compares signed
+on both sides.  An untouched line then naturally fails
+"atari_x < chg_x" for EVERY atari_x the sweep produces — including the
+negative colour clocks the border/collision sweep probes, which is
+precisely why a plain 0 sentinel will not do.  The equality compare
+disappears; each select costs one signed compare, the same as the
+original SIZEP select before this work.  Legitimate chg_x values are
+0..~356, comfortably positive in signed 12-bit.
+Regression after slimming: antic_modes, sprite_compositor,
+antic_raster, antic_seq, plane_compositor all 0.
+NOTE clk_sally_unbuf came in at 0.000 ns on build 76 — the design is
+at the edge on that clock too, so treat any new per-pixel logic as
+expensive by default.
+
 ### 1a. Mid-line HPOSP capture — the actual P/M bug
 Following 0z (stamp proven correct, phase eliminated), the real defect
 is that ONLY SIZEP had mid-scanline capture.  HPOSP had none, so a
