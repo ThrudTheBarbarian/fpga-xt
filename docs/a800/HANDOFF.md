@@ -168,6 +168,42 @@ timer triggered too late (loop #1)"; NOW "...too early (loop #2)".
  * NO REGRESSION: pokey_timergranularity, pokey_timerirq and
    pokey_irqtiming all still pass on the same build.
 
+### 0q. CURRENT STATE (2026-07-27 afternoon) — build 72, 33/57
+BOARD: build 72 (a73c5e3), authority is the POWER-ON DEFAULT
+(sallyrst 0x06).  Board and source are IN SYNC (build 71b had the
+compose-late change that was later reverted; 72 resyncs).
+SCORE: 33/57 by the standard chunked sweep vs legacy's 31 on the same
+method — +antic_vscroldli +antic_dlistwrap, nothing lost.
+
+gtia_collision MEASUREMENT AMBIGUITY, stated plainly so nobody
+"discovers" it again: it PASSES in chunked sweeps (runs -2 and -4) but
+FAILS run in isolation on a cold board under authority, on EVERY
+archived bitstream tried (57/62/67/69b), while passing under legacy.
+So 33 is the sweep-comparable number and 32 the isolation-conservative
+one; the gap is entirely this test's dependence on preceding state.
+Do not "fix" it without first deciding which measurement you trust.
+
+WHAT IS LEFT, and why each needs real engineering rather than
+calibration (the one-cycle fixes are genuinely exhausted):
+ * RENDER cluster (pmresize, pmoverlap, pmretrigger, vdelay, collision2,
+   phantomdma, hiresbug, psuedomodee, charcontrol, pmdma, linebuffering)
+   — needs BEAM-TIME register sampling in the compositor.  Two burst-
+   timing attempts both failed; see 0p.  ~11 tests.
+ * DMA cluster (dmapattern, virtdma, pfstart/pfstop, hscrolbug) — the
+   schedule is verified correct against the test's own oracle for four
+   cases and the CPU steal path is verified exact (0j), and dmapattern
+   fails under LEGACY too, so it is not an authority issue.  Next step
+   is HW capture of the CPU cycle stream, not more sim.  ~5 tests.
+ * POKEY serial (serclock, serdirect, sertiming, twotone, skstat) —
+   needs a real serial engine; ours is paravirtual (peri_bridge to the
+   companion MCU).  CAUTION: that same path is how the board loads
+   tests, so a naive replacement can break test loading itself.
+   ~5 tests.
+ * pokey_inittiming + antic_dlitiming — the penultimate-poll rewrite in
+   xt6502f (0f).  Contained and fully sim-verifiable BEFORE building
+   (tb_xt6502f_irq T1-T6 + tb_fid_raster prog=1/2/3), but it touches
+   interrupt recognition for every timing test.  ~2 tests.
+
 ### 0l. MORNING STATE (2026-07-27) — THE NEW ANTIC IS THE DEFAULT
 BOARD: build 68 (3fdcbe1).  sallyrst now powers on at 0x06 = fidelity
 core + ANTIC TIMING-MACHINE AUTHORITY.  Verified from cold: the
