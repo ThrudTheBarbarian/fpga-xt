@@ -188,7 +188,32 @@ So the DMA SCHEDULE IS NOT THE BUG.  Neither is the delivery phase
 POKEY RANDOM (it free-runs on phi2 exactly as real POKEY does — which
 is what lets the test see stalled cycles at all — and pokey_noise
 passes).
-REMAINING CANDIDATE, and it is CPU-SIDE not ANTIC-side: how a stolen
+CPU-SIDE NOW ALSO ELIMINATED (2026-07-27 late morning).
+tb_fid_raster +stealacct=1 counts, per scanline, the cycles the machine
+claims vs the cycles the fid core retires in, AND cross-checks their
+POSITIONS.  With +prog=8 (DMACTL=$22 + a mode-2 LMS list — the first
+prog to enable PLAYFIELD DMA at all; every other one uses $20):
+    non-first rows: 49 steals = 40 char-data + 9 refresh
+    first row     : 82 steals = 40 names + 40 data + refresh + DL fetch
+    every line    : steals + cpu = 114, overlap both=0 neither=0
+So the schedule is right, playfield DMA really does schedule in the
+real flow, each stolen cycle consumes exactly one machine cycle of CPU
+time, and the stolen cycles are the exact cycles the CPU misses.
+HARNESS TRAP that cost an hour and one wrong conclusion: the common
+nmist probe DL is written to $2C00 AFTER the prog-specific injection,
+so a prog that installs its own list must ALSO re-override afterwards
+(prog=4 did; prog=8 did not, and its mode-2 list was silently replaced
+by blanks).  Symptom: the machine reports dlctl=$f0 when you expect
+$42.  Check dl_ctl in the trace before concluding anything.
+
+WHAT IS LEFT for antic_dmapattern: nothing on the ANTIC side and
+nothing in the CPU stall path — both are now verified against the
+test's own oracle and by direct instrumentation.  The next place to
+look is the MEASUREMENT on hardware: capture the CPU cycle stream with
+the GP0 debug trace ring while the real test runs and compare it to the
+sim, rather than adding more sim checks.
+
+SUPERSEDED — earlier framing: how a stolen
 cycle presents to the fid core — whether a steal is indistinguishable
 from a WSYNC stall from the CPU's point of view, and whether each
 stolen cycle consumes exactly one machine cycle of CPU time.  Settle it
