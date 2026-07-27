@@ -173,7 +173,30 @@ THE MIX DIFFERS, AND THE DIFFERENCE IS INSTRUCTIVE:
     is fed from the machine.  Expect more of this class until then.
     (Verified: collision PASSES under legacy on the same bitstream.)
 
-DMA CLUSTER — SCHEDULE PROVEN, DELIVERY EXCLUDED, CAUSE STILL OPEN.
+DMA CLUSTER — SCHEDULE NOW VERIFIED FOR *FOUR* ORACLE CASES.
+Our schedule matches antic_dmapattern's own expected masks EXACTLY for
+every case the dump can check:
+    mode2a  narrow, first row  : 25, 26, 28..91
+    mode2b  narrow, later rows : 25, 29/30/31, 33/34/35 ... 61,63,65
+    mode2c  normal, first row  : 18, then 20..99 (98 is the refresh)
+    mode2d  normal, later rows : 21,23, 25/26/27, 29/30/31 ...
+(6 and 7 are LMS operand cycles, absent from the dump only because it
+forces a non-LMS control byte.)  Reproduce with
+    vvp -N build/tb_antic_timing.vvp +pfdump=1 +pfrow=<0|1> +pfw=<1|2>
+So the DMA SCHEDULE IS NOT THE BUG.  Neither is the delivery phase
+(both combinational and one-cycle-delayed excluded on hardware), nor
+POKEY RANDOM (it free-runs on phi2 exactly as real POKEY does — which
+is what lets the test see stalled cycles at all — and pokey_noise
+passes).
+REMAINING CANDIDATE, and it is CPU-SIDE not ANTIC-side: how a stolen
+cycle presents to the fid core — whether a steal is indistinguishable
+from a WSYNC stall from the CPU's point of view, and whether each
+stolen cycle consumes exactly one machine cycle of CPU time.  Settle it
+by instrumenting the committed-cycle stream against RANDOM in
+tb_fid_raster (the test's own technique), not by comparing schedules
+again.
+
+SUPERSEDED — earlier framing:
 The schedule now matches Avery's own expected masks CYCLE-FOR-CYCLE for
 narrow mode 2, both first row (mode2a: 25,26,28..91) and later rows
 (mode2b: 25,29/30/31,33/34/35...61,63,65...).  Reproduce any time with
