@@ -409,10 +409,10 @@ module xt6502f #(
                 ST_FETCH: begin
                     has_idx <= 1'b0; pgx <= 1'b0; is_store <= 1'b0; is_rmw <= 1'b0; op <= OP_LD; sax <= 1'b0;
                     combo <= 1'b0; ushx <= 1'b0; ushx_tas <= 1'b0;
-                  if (nmi_d1 || (irq_polled && !i_poll)) begin // HW interrupt (NMI priority): discard opcode, PC held
+                  if (nmi_polled2 || (irq_polled && !i_poll)) begin // HW interrupt (NMI priority): discard opcode, PC held
                                                                   // (RDY-gated poll latch: the calibrated NMOS rule)
-                    intr <= 1'b1; nmi_svc <= nmi_d1; ir <= 8'h00;
-                    if (nmi_d1) begin nmi_pend <= 1'b0; nmi_d1 <= 1'b0; nmi_polled <= 1'b0; nmi_polled2 <= 1'b0; end
+                    intr <= 1'b1; nmi_svc <= nmi_polled2; ir <= 8'h00;
+                    if (nmi_polled2) begin nmi_pend <= 1'b0; nmi_d1 <= 1'b0; nmi_polled <= 1'b0; nmi_polled2 <= 1'b0; end
                     state <= ST_IRQ2;
                   end else begin
                     ir <= din_r; PC <= PC + 16'd1;
