@@ -931,7 +931,6 @@ module antic_top #(
     // the u_antic_seq instance further down.)
     logic dl_start_pulse;
     logic cmp_start_pulse;
-    wire  compose_tick_bus = phi2_tick && (ar_phi2_in_line == 8'd112);
     logic dma_mode_q;
     always_ff @(posedge clk_bus or posedge rst_bus) begin
         if (rst_bus)
@@ -1024,17 +1023,14 @@ module antic_top #(
         .clk        (clk_bus),
         .rst        (rst_bus),
         .vbi_start  (parse_kick_pulse),     // parse trigger: LATE-vblank kick (see PARSE_KICK_LINE)
-        // COMPOSE LATE IN THE LINE, not at line_start.  The compositor
-        // composes a whole row in one burst; triggering that burst at the
-        // start of the scanline means every mid-line CPU register write
-        // (SIZEP/HPOSP/GRAFP) lands AFTER the row was already built, so the
-        // render can never reflect it — ACID800 gtia_pmresize and friends.
-        // The composed row goes to the framebuffer through writeback rather
-        // than being scanned out in-line, so there is slack to compose at
-        // the end of the line instead, once all of that line's writes have
-        // been seen.  ar_atari_row still names the same row at cycle 112
-        // (the walker flips at the next line_start).
-        .line_start (compose_tick_bus),
+        // NOTE: composing at the END of the line was tried (build 71b) so
+        // that mid-line SIZEP/HPOSP/GRAFP writes would be visible to the
+        // burst.  It changed NOTHING on gtia_pmresize (identical $E0 vs
+        // $80) while moving when mid-line writes take effect — a real risk
+        // to raster effects for no measured gain — so it is reverted.  The
+        // render needs BEAM-TIME register sampling, not a different burst
+        // instant; see docs/a800/HANDOFF.md 0o.
+        .line_start (line_start_pulse_bus),
         .active_row (ar_atari_row != 8'hFF),
         .parse_done (dl_done),
         .dl_start   (dl_start_pulse),
