@@ -187,6 +187,36 @@ entirely and key off the instruction boundary (the ~21 `state <=
 ST_FETCH` sites) as 0f originally specified.
 Do not re-try a plain rdy gate.
 
+### 1a. Mid-line HPOSP capture — the actual P/M bug
+Following 0z (stamp proven correct, phase eliminated), the real defect
+is that ONLY SIZEP had mid-scanline capture.  HPOSP had none, so a
+mid-line move composed the whole row at the FINAL position and the
+move was invisible.
+ACID800 gtia_pmretrigger does exactly this: after a WSYNC it writes
+HPOSP0 partway along the line (its own source annotates the target
+cycles - 60-63, 23-27, 86-89) and checks the player re-triggers at the
+new position for the REMAINDER of that line.
+Fix: hposp_early_q/hposp_chg_x_q in antic_top.sv mirroring the SIZEP
+pattern, plus a per-pixel select in compositor.sv.
+TWO TRAPS, both hit and both fixed:
+ 1. The select MUST test the CHG_NONE sentinel explicitly.  $7FF is
+    larger than any visible atari_x, so a bare "atari_x < chg_x" is
+    TRUE on every untouched line and pins the render to the line-start
+    value forever.  Benign for SIZEP (early == current); fatal for
+    HPOS, where an uncaptured 0 parks the player off-screen left.
+ 2. tb_antic_modes instantiates `compositor` DIRECTLY and left the new
+    ports dangling -> the select resolves to X and blanks all players
+    (13 spurious FAILs that looked exactly like an RTL regression).
+    Tie-offs added; any future direct-instantiation TB needs the same.
+Regression status: antic_modes 0 (baseline 0).  antic_display 9 and
+hscrol_e2e 5 are PRE-EXISTING (verified by stashing).  alpha_hole,
+antic_seq, disp_modef_wrap, plane_compositor, plane_vscale,
+sprite_compositor, antic_raster all 0.
+LIMITATION: only the FIRST write per line per register is captured, so
+multiple mid-line moves are still mis-modelled — same limitation SIZEP
+has always had.  gtia_pmretrigger writes once per line, so it should
+be covered; pmoverlap may not be.
+
 ### 0z. The SIZEP stamp is CORRECT — phase is NOT the P/M bug
 tb_fid_raster gained +prog=10, the first co-sim program that writes
 GTIA at all (HPOSP0 / GRAFP0 / SIZEP0 after a WSYNC-anchored sync to

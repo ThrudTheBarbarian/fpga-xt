@@ -1638,6 +1638,36 @@ module antic_top #(
     wire [47:0] sizep_chg_x_flat_w = {sizep_chg_x_q[3], sizep_chg_x_q[2],
                                       sizep_chg_x_q[1], sizep_chg_x_q[0]};
 
+    // Same treatment for HPOSP.  ACID800 gtia_pmretrigger writes HPOSP0
+    // partway along a WSYNC-anchored scanline (its own source annotates the
+    // target cycles: 60-63, 23-27, 86-89) and checks that the player
+    // re-triggers at the NEW position for the remainder of that line.  With
+    // only the SIZEP capture present the whole row composed at the final
+    // HPOS, so the move was invisible and the retrigger never happened.
+    logic [7:0]  hposp_early_q [0:3];
+    logic [11:0] hposp_chg_x_q [0:3];
+    wire         hposp_we = snoop_we_gtia && (snoop_addr[7:2] == 6'b000000); // $D000-$D003
+    always_ff @(posedge clk_bus or posedge rst_bus) begin
+        if (rst_bus) begin
+            for (int i = 0; i < 4; i++) begin
+                hposp_early_q[i] <= 8'd0;
+                hposp_chg_x_q[i] <= SIZEP_CHG_NONE;
+            end
+        end else if (line_start_pulse_bus) begin
+            for (int i = 0; i < 4; i++) begin
+                hposp_early_q[i] <= hposp_q[i];
+                hposp_chg_x_q[i] <= SIZEP_CHG_NONE;
+            end
+        end else if (hposp_we) begin
+            if (hposp_chg_x_q[snoop_addr[1:0]] == SIZEP_CHG_NONE)
+                hposp_chg_x_q[snoop_addr[1:0]] <= cc_x_now;
+        end
+    end
+    wire [31:0] hposp_early_flat_w = {hposp_early_q[3], hposp_early_q[2],
+                                      hposp_early_q[1], hposp_early_q[0]};
+    wire [47:0] hposp_chg_x_flat_w = {hposp_chg_x_q[3], hposp_chg_x_q[2],
+                                      hposp_chg_x_q[1], hposp_chg_x_q[0]};
+
     compositor u_compositor (
         .clk(clk_bus), .rst(rst_bus), .start_compose(cmp_start_pulse),
         .row_in(ar_atari_row),                 // compose this row
@@ -1652,6 +1682,8 @@ module antic_top #(
         .hposp2(hposp_q[2]), .hposp3(hposp_q[3]),
         .hposm0(hposm_q[0]), .hposm1(hposm_q[1]),
         .hposm2(hposm_q[2]), .hposm3(hposm_q[3]),
+        .hposp_early_flat(hposp_early_flat_w),
+        .hposp_chg_x_flat(hposp_chg_x_flat_w),
         .sizep_early_flat(sizep_early_flat_w),
         .sizep_chg_x_flat(sizep_chg_x_flat_w),
         .sizep0(sizep_q[0][1:0]), .sizep1(sizep_q[1][1:0]),
