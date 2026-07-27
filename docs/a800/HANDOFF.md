@@ -187,6 +187,33 @@ entirely and key off the instruction boundary (the ~21 `state <=
 ST_FETCH` sites) as 0f originally specified.
 Do not re-try a plain rdy gate.
 
+### 0t. dlitiming: BOTH sleds have now been seen correct — in DIFFERENT
+configs.  The residual is ONE CYCLE of delivery, not pipeline depth.
+Measured on hardware, same test, two builds:
+    build 72 (3-stage recognition, late pulse 9):
+        "Odd count incorrect: $0A != $09"   odd LATE, even ok
+    build 73b (1-stage recognition, late pulse 10):
+        "Even count incorrect: $09 != $0a"  even EARLY, odd ok
+So each sled has been correct at some point; no configuration has had
+both.  73b was REVERTED (db72b25): it does not fix the test, it only
+moves which sled fails, while changing global NMI recognition depth —
+risk without gain.  Build 72's configuration is the verified 33/57 one.
+
+WHY A FIXED DEPTH CANNOT WORK, stated precisely so the next attempt
+starts from the right model: the NMOS rule polls at the instruction's
+PENULTIMATE cycle.  For a 2-cycle NOP that is the fetch cycle itself;
+for a 3-cycle instruction it is one earlier.  The odd and even sleds
+start one cycle apart, so the /NMI edge lands at a different point
+WITHIN an instruction in each — and a pipeline of fixed depth measures
+from the END of the instruction, not from its penultimate cycle.  The
+implementation 0f specified is still the right one: do not advance the
+recognition capture on the FINAL commit of an instruction, which needs
+a real "last cycle" marker (the ~21 `state <= ST_FETCH` sites).
+NOTE the sim probes are NOT sufficient on their own: prog=1/2/3 cover
+plain-ODD and both delayed cases but there is NO plain-EVEN probe,
+which is why 73b measured three-for-three in sim and still failed on
+hardware.  ADD A PLAIN-EVEN PROBE before the next attempt.
+
 ### 0s. dlitiming under AUTHORITY is already 2-of-3 — and the last one
 is structurally blocked
 Re-measured the recognition probes with the machine in charge (the
