@@ -187,6 +187,29 @@ entirely and key off the instruction boundary (the ~21 `state <=
 ST_FETCH` sites) as 0f originally specified.
 Do not re-try a plain rdy gate.
 
+### 0w. dlitiming: CLOSED from the CPU side — every knob is a uniform shift
+The penultimate-cycle poll rule was implemented properly (is_last_cycle
+mirroring all 22 `state <= ST_FETCH` retires including the conditional
+ones: no-page-cross ABX/IYRD loads, untaken branches, in-page taken
+branches) and measured against the full four-probe set.  Result:
+    plain-odd  $2D -> $2E     plain-even  $2E -> $2F
+    delayed-odd $32 -> $33
+i.e. a UNIFORM +1 on every probe.  No separation.
+Reason: for a 2-cycle NOP the cycles are ST_FETCH then ST_IMPL, so
+"skip the final cycle" simply halves the poll rate for BOTH sleds
+equally.  Combined with the earlier results this is now exhaustive —
+recognition depth (1/2/3-stage), early-leg pulse position, late-leg
+pulse position, rdy gating and penultimate-poll ALL move the sleds
+together, and any two of them compose to a plain uniform offset.
+CONCLUSION: the odd/even split does NOT originate in the CPU's
+interrupt recognition.  It must come from the RASTER side — the /NMI
+pulse's own position relative to the sled, i.e. antic_timing's DLI
+emission, or the phase relationship between the timing machine's
+cycle numbering and the fid core's commit windows.  Do not spend more
+build cycles on xt6502f for this test; the next attempt belongs in
+antic_timing.sv with a parity-aware look at DLI emission.
+The change was reverted; the four probes remain in tb_fid_raster.
+
 ### 0v. dlitiming: the FULL four-probe matrix now exists
 tb_fid_raster gained +prog=9, the PLAIN-EVEN sled that was missing.
 Measured in the shipping config (3-stage recognition, late pulse 9,
