@@ -239,6 +239,26 @@ module tb_fid_raster;
     // reset N ticks past rst_sys release, reproducing the arbitrary phase
     // offset between the machine and the legacy raster on hardware.
     int tmskew_i; initial if (!$value$plusargs("tmskew=%d", tmskew_i)) tmskew_i = 0;
+
+    // +phasedrift=1 : sample (legacy raster cycle) - (timing machine hcount)
+    // once per frame.  A CONSTANT delta means the two counters are locked and
+    // the SIZEP/P-M change-x stamp can be corrected with one constant; a
+    // WALKING delta means they free-run and the stamp must move into the
+    // machine's own domain.  This is the step-4 render-phase question.
+    int pd_en; initial if (!$value$plusargs("phasedrift=%d", pd_en)) pd_en = 0;
+
+
+    int pd_seen = 0;
+    always @(posedge clk_sys) begin
+        if (pd_en && !rst_sys && u_antic_top.phi2_tick
+            && u_antic_top.ar_phi2_in_line == 8'd20
+            && u_antic_top.ar_scanline == 9'd100) begin
+            pd_seen = pd_seen + 1;
+            $display("[phase] frame=%0d legacy_cyc=%0d tm_hc=%0d tm_line=%0d delta=%0d",
+                     pd_seen, u_antic_top.ar_phi2_in_line, tm_hc, tm_line,
+                     $signed({1'b0,u_antic_top.ar_phi2_in_line[6:0]}) - $signed({1'b0,tm_hc}));
+        end
+    end
     reg tm_rst = 1'b1;
     int tmskew_ctr = 0;
     always @(posedge clk_sally) begin
@@ -322,6 +342,29 @@ module tb_fid_raster;
         .dbg_y_in  (8'h0), .dbg_s_in (8'h0), .dbg_p_in (8'h0),
         .dbg_cyc_addr (), .dbg_cyc_val (), .dbg_cyc_rw (), .dbg_cyc_valid ()
     );
+
+    // +sizeplat=1 : end-to-end SIZEP stamp error.  Prints the timing-machine
+    // hcount at the CPU's write to $D008-$D00B, and again the legacy raster
+    // cycle when the write finally lands as snoop_we_gtia in antic_top (the
+    // cycle cc_x_now stamps it with).  The gap is the correction the
+    // per-pixel SIZEP select needs.
+    int sl_en; initial if (!$value$plusargs("sizeplat=%d", sl_en)) sl_en = 0;
+    int sl_hc_at_write = -1;
+    always @(posedge clk_sally) begin
+        if (sl_en && !rst_sys && u_fid_core.slot_commit && !cpu_rw
+            && cpu_addr[15:8] == 8'hD0) begin
+            sl_hc_at_write <= tm_hc;
+            $display("[sizep] CPU write $%04h tm_hc=%0d tm_line=%0d",
+                     cpu_addr, tm_hc, tm_line);
+        end
+    end
+    always @(posedge clk_sys) begin
+        if (sl_en && !rst_sys && u_antic_top.sizep_we)
+            $display("[sizep]   snoop lands legacy_cyc=%0d line=%0d  (write was tm_hc=%0d) STAMP_ERR=%0d",
+                     u_antic_top.ar_phi2_in_line, u_antic_top.ar_scanline,
+                     sl_hc_at_write,
+                     $signed({1'b0,u_antic_top.ar_phi2_in_line[6:0]}) - sl_hc_at_write);
+    end
     assign cpu_stack_op = 1'b0;                 // fid uses plain $01xx stack accesses
     assign cpu_s_high   = 4'h0;
     wire sally_step = 1'b0;                     // unused in fid pacing

@@ -187,6 +187,36 @@ entirely and key off the instruction boundary (the ~21 `state <=
 ST_FETCH` sites) as 0f originally specified.
 Do not re-try a plain rdy gate.
 
+### 0x. STEP 4 IS SMALLER THAN FEARED — the two rasters are PHASE-LOCKED
+New probe `+phasedrift=1` in tb_fid_raster samples the legacy raster
+cycle against the timing machine's hcount once per frame at a fixed
+point (line 100, cycle 20):
+    frame=1 legacy_cyc=20 tm_hc=19 tm_line=100 delta=1
+    frame=2 legacy_cyc=20 tm_hc=19 tm_line=100 delta=1
+    frame=3 legacy_cyc=20 tm_hc=19 tm_line=100 delta=1
+CONSTANT delta of exactly ONE machine cycle, and the line numbers are
+identical.  The counters do NOT free-run against each other.
+This matters a lot: the "phase split" between the machine-paced CPU
+and the legacy clk_sys renderer is a FIXED OFFSET, not drift.  The
+render cluster therefore does NOT need the renderer moved into the
+machine's domain — it needs the beam-time register stamp corrected by
+a constant.  That is a far smaller change than step 4 was scoped as.
+
+### 0y. WHY the P/M cluster has resisted: there is NO instrument
+Probe `+sizeplat=1` was added to measure the end-to-end SIZEP stamp
+error (timing-machine hcount at the CPU's $D008-$D00B write vs the
+legacy raster cycle that cc_x_now stamps it with).  It printed
+nothing.  Widening it to ANY write in $D0xx and running progs 1, 4
+and 8 gives ZERO hits: **no co-sim program writes GTIA at all.**
+So every P/M and collision test has been debugged blind — the mid-
+scanline SIZEP capture in antic_top and the per-pixel select in
+compositor have never once been exercised in simulation.  That, not
+any particular RTL bug, is why the cluster has not moved.
+NEXT: write a P/M co-sim program (mid-scanline SIZEP/HPOS/GRAFP
+writes at known cycles) so the stamp error becomes measurable, then
+apply the constant correction from 0x.  Build nothing until the
+probe reads a number.
+
 ### 0w. dlitiming: CLOSED from the CPU side — every knob is a uniform shift
 The penultimate-cycle poll rule was implemented properly (is_last_cycle
 mirroring all 22 `state <= ST_FETCH` retires including the conditional
