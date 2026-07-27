@@ -21,6 +21,30 @@ build regenerates the ps7_init tree under the JTAG scripts).
 
 ## 0. 2026-07-25 sessions (newest)
 
+### 0o. P/M + GTIA cluster — it is a FEATURE gap, not calibration
+Triaged 2026-07-27 by reading the asserts and the tests' own setup code:
+  antic_pmdma     "One-line P0 data bad at line 8: $00 != $08"
+  gtia_pmresize   "4x-to-1x failed at index 0: expected $80, got $E0"
+  gtia_vdelay     "No delay 1/4 failed: 00 != $01"
+  antic_linebuffering "Readout incorrect for initial mode E: 00000000"
+The two P/M render bugs recorded in [[pm-grafp-render-bug]] are BOTH
+FIXED in the current tree — player display no longer gates on DMA, and
+grafp_q/grafm_q are wired into the compositor with the CPU-written
+shape used when DMA is off.  The PMBASE masking for 1-line/2-line
+alignment is right too.  DO NOT RE-HUNT THAT PATH.
+What actually blocks the cluster: these tests depend on GTIA DISPLAY
+MODES.  antic_pmdma sets PRIOR=$80 — PRIOR[7:6]=10 selects GTIA mode
+10 — and detects drawn player bits through the P0PF COLLISION register,
+so with the GTIA modes unimplemented the playfield never renders as
+expected and P0PF reads $00.  gtia_psuedomodee is the same gap stated
+directly.
+=> The cluster (pmdma, pmoverlap, pmresize, pmretrigger, vdelay,
+collision2, phantomdma, hiresbug, psuedomodee, charcontrol) needs GTIA
+mode 9/10/11 rendering plus per-colour-clock P/M evaluation.  That is a
+FEATURE piece of work in the compositor, comparable in size to the
+timing machine itself — roughly 9-10 tests behind it, the largest
+single block left on the board.
+
 ### 0n. MEASUREMENT HEALTH + one UNRESOLVED item (end of night)
 THE BOARD DEGRADES over a long session: after ~6 hours of sweeps and
 reboots, a chunk that scored cleanly earlier returned 7 load errors,
