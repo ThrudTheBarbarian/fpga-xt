@@ -32,18 +32,28 @@ FIXED in the current tree — player display no longer gates on DMA, and
 grafp_q/grafm_q are wired into the compositor with the CPU-written
 shape used when DMA is off.  The PMBASE masking for 1-line/2-line
 alignment is right too.  DO NOT RE-HUNT THAT PATH.
-What actually blocks the cluster: these tests depend on GTIA DISPLAY
-MODES.  antic_pmdma sets PRIOR=$80 — PRIOR[7:6]=10 selects GTIA mode
-10 — and detects drawn player bits through the P0PF COLLISION register,
-so with the GTIA modes unimplemented the playfield never renders as
-expected and P0PF reads $00.  gtia_psuedomodee is the same gap stated
-directly.
-=> The cluster (pmdma, pmoverlap, pmresize, pmretrigger, vdelay,
-collision2, phantomdma, hiresbug, psuedomodee, charcontrol) needs GTIA
-mode 9/10/11 rendering plus per-colour-clock P/M evaluation.  That is a
-FEATURE piece of work in the compositor, comparable in size to the
-timing machine itself — roughly 9-10 tests behind it, the largest
-single block left on the board.
+CORRECTION (same session): GTIA modes 9/10/11 ARE ALREADY IMPLEMENTED
+— color_resolver.sv decodes all three (mode 9 = {colbk[7:4],nibble},
+mode 10 = the 9-colour COLPM0-3/COLPF0-3/COLBK palette, mode 11 =
+{nibble,colbk[3:0]}) and compositor.sv has prior[7:6]-aware paths.  My
+first reading, that the cluster was blocked on a missing GTIA feature,
+was WRONG.  What the tests actually report:
+    gtia_psuedomodee  "Cycle 14 test failed: 00"
+    antic_charcontrol "chactl=$00 on mode 2 at row 0: expected $10, got $00"
+    antic_pmdma       "One-line P0 data bad at line 8: $00 != $08"
+    gtia_pmresize     "4x-to-1x failed at index 0: expected $80, got $E0"
+Note the shape of these: psuedomodee is a CYCLE-position test ("cycle
+14"), charcontrol reads back through P/M collisions, pmdma reads P0PF.
+Several of them are really measuring WHEN a register change takes
+effect within a scanline, through the collision registers as the
+read-back channel — i.e. mid-scanline register timing in the RENDER
+path, which is on the legacy clk_sys raster and NOT yet fed by the
+timing machine.  That points at step 4 again rather than at a missing
+GTIA feature.  gtia_pmresize ($E0 vs $80 = a 4x-wide player where a 1x
+was expected) is the clearest single lead: SIZEP is being applied with
+the wrong timing/latching, and it is self-contained in the P/M render.
+DO NOT re-hunt the GRAFP path ([[pm-grafp-render-bug]] is fixed) and do
+not rebuild the GTIA modes; start from gtia_pmresize's SIZEP latching.
 
 ### 0n. MEASUREMENT HEALTH + one UNRESOLVED item (end of night)
 THE BOARD DEGRADES over a long session: after ~6 hours of sweeps and
