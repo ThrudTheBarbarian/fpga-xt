@@ -805,6 +805,20 @@ module tb_fid_raster;
                         u_sally_mem.mem[16'h2006]=8'h80;   // LDA #$80 -> STA NMIEN (init on)
                         for (int k=0;k<13;k++) u_sally_mem.mem[16'h2023+k]=8'hEA;
                     end
+                    if (psel == 9) begin
+                        // PLAIN-EVEN shape — the case the probe set was
+                        // MISSING, and the reason build 73b measured
+                        // three-for-three in sim yet failed on hardware
+                        // ("Even count incorrect").  Same as plain-odd
+                        // (NMIEN on from init, NOP sled at t6) but with the
+                        // sled shifted one cycle by a leading 3-cycle
+                        // instruction, so the /NMI edge lands at the other
+                        // parity within an instruction.
+                        u_sally_mem.mem[16'h2006]=8'h80;   // NMIEN on from init
+                        u_sally_mem.mem[16'h2023]=8'hA5;   // LDA $80 (3 cycles)
+                        u_sally_mem.mem[16'h2024]=8'h80;
+                        for (int k=2;k<13;k++) u_sally_mem.mem[16'h2023+k]=8'hEA;
+                    end
                     if (psel == 2) begin
                         // delayed-EVEN shape: LDA $80 spans cycles 7-9 so the
                         // cycle-8 edge lands mid-instruction; real NMOS's
@@ -1050,9 +1064,11 @@ module tb_fid_raster;
     // prog=8 has no run marker — it spins deliberately so the steal
     // accounting can observe many playfield lines; let the cycle budget
     // end it rather than a PC match (the spin would trip one instantly).
-    wire watch_hit = (wpsel == 7 && fdbg_pc == 16'h2045)
+    wire watch_hit = (wpsel == 9 && fdbg_pc == 16'h2036)
+                  || (wpsel == 7 && fdbg_pc == 16'h2045)
                   || (wpsel == 0 && fdbg_pc == 16'h203E)
                   || (wpsel >= 1 && wpsel <= 3 && fdbg_pc == 16'h2036)
+                  || (wpsel == 9 && fdbg_pc == 16'h2036)
                   || (wpsel == 4 && fdbg_pc == 16'h206A)
                   || (wpsel == 6 && (fdbg_pc == 16'h2103 || fdbg_pc == 16'h2113
                                      || fdbg_pc == 16'h2035));

@@ -187,6 +187,29 @@ entirely and key off the instruction boundary (the ~21 `state <=
 ST_FETCH` sites) as 0f originally specified.
 Do not re-try a plain rdy gate.
 
+### 0v. dlitiming: the FULL four-probe matrix now exists
+tb_fid_raster gained +prog=9, the PLAIN-EVEN sled that was missing.
+Measured in the shipping config (3-stage recognition, late pulse 9,
++tmauth=1):
+    prog=3 plain-odd    $2D   want $2C   (one late)
+    prog=9 plain-even   $2E   want $2E   CORRECT
+    prog=1 delayed-odd  $32   want $32   CORRECT
+    prog=2 delayed-even $32   want $32   CORRECT
+and with 1-stage recognition (build 73b) BOTH plain sleds moved one
+earlier together: odd $2C correct, even $2D wrong.  That is the whole
+problem in one line — the two plain sleds need DIFFERENT shifts, and
+every knob tried so far (recognition depth, early-leg pulse position,
+late-leg pulse position, rdy gating) moves them TOGETHER.
+Note both sleds are NOP sleds, so instruction LENGTH is identical in
+each; the difference is purely where the /NMI edge falls relative to
+the commit boundary.  So an instruction-length-aware poll (the naive
+reading of "penultimate cycle") would NOT separate them either — the
+next attempt needs sub-cycle edge-arrival information, e.g. capturing
+WHERE in the 56-subcycle window the pulse arrived and using that to
+decide whether the current commit still sees it.
+Use all FOUR probes for any future attempt; three of them agreeing is
+exactly how build 73b passed sim and failed hardware.
+
 ### 0u. BOARD STATE after the dlitiming experiment (2026-07-27 evening)
 The board runs the ARCHIVED build-72 bitstream, which is byte-for-byte
 the current source: reverting bfe2717 restored the RTL exactly to
