@@ -293,7 +293,11 @@ module xt_gp0_regs (
             w_byte         <= 8'd0;
             gp0_ctrl       <= 8'h00;   // boot to the compositor; bars are debug-only
             cmpcfg         <= 32'h0000_0210;  // depth desktop0/overlay1/XL2, all opaque = shipping
-            sallyrst       <= 8'h02;          // power-on core = FIDELITY (bit1=1); bit0=0 = realm running. Turbo is a PS opt-in (CTRL_SALLYRST bit1=0)
+            sallyrst       <= 8'h06;          // power-on: bit1 = FIDELITY core, bit2 = ANTIC TIMING-MACHINE AUTHORITY.
+                                             // bit0=0 = realm running.  Turbo is a PS opt-in (bit1=0); the
+                                             // legacy ANTIC timing path is a PS opt-out (bit2=0).
+                                             // Authority became the default once it measured 33/57 against
+                                             // the legacy path's 31 with no regressions (run 2026-07-27-2).
             joy_ovr        <= 32'h0000_0000;  // override off: joy_bridge drives PORTA/TRIG0
             consol_keys    <= 8'h07;           // no console keys pressed (BASIC on) until the kernel sets it
             xt_unlock_we   <= 1'b0;
