@@ -1006,7 +1006,7 @@ module tb_pokey;
         // per rising edge = 128 fabric clks. Over 16384 clks → 128
         // rising edges. The OLD (no-fudge) model would give 16384 /
         // ((9 + 0 + 1) × 2 × 4) = 205 — distinguishable.
-        $display("[N] linked machine-clock N+7 period");
+        $display("[N] linked machine-clock N+4 period");
         begin
             int t2;
             do_write(8'h08, 8'h50);    // AUDCTL = $50 (PAIR12 + CH1_HF)
@@ -1019,9 +1019,13 @@ module tb_pokey;
             do_write(8'h09, 8'h00);    // STIMER to align
             @(posedge clk);
             count_toggles(16384, 1, t2);
-            $display("[N] ch2 toggles in linked-MC mode: %0d (expected ~128, N+7 period)", t2);
-            if (t2 < 115 || t2 > 140) begin
-                $display("FAIL N: ch2 toggles=%0d outside [115,140] (linked MC period broken)",
+            // AUDF16 = 9 at 1.79MHz linked.  Period N+4 -> (9+4)*2*4 = 104
+            // fabric clks per rising edge -> 16384/104 ~= 158.  (The old
+            // N+7 model predicted 128; ACID800 pokey_timertiming brackets
+            // the real period at N+4 — see hdl/pokey_audio.sv.)
+            $display("[N] ch2 toggles in linked-MC mode: %0d (expected ~158, N+4 period)", t2);
+            if (t2 < 145 || t2 > 170) begin
+                $display("FAIL N: ch2 toggles=%0d outside [145,170] (linked MC period broken)",
                          t2);
                 fail_count++;
             end

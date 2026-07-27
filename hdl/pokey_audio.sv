@@ -366,13 +366,18 @@ module pokey_audio #(
 
     // ---- Machine-clock period fudge (audit fix #7) ----
     // Per Altirra §5.3: at 1.79 MHz the timer has 3 cycles of pipeline
-    // delay between underflow and reload, so the unlinked period is
-    // N+4 (not N+1). For linked timers the cascade reset adds 3 more
-    // cycles for the pair to settle, giving a linked period of N+7.
+    // delay between underflow and reload, so the period is N+4 (not
+    // N+1) — and that holds for LINKED pairs too.
+    //
+    // The old model added 3 more for a linked pair "to settle" (N+7).
+    // ACID800 pokey_timertiming disproves it: with AUDF1=$10, AUDF2=$00
+    // and AUDCTL=$50 (1.79MHz, 16-bit paired) it requires the IRQ to be
+    // unfired 19 cycles after STIMER and fired by 20 — i.e. period 20 =
+    // N+4, exactly the unlinked figure.  N+7 fired three cycles late
+    // ("1.79MHz 16-bit lo timer triggered too late").
     //
     // We implement this by adding to the AUDF-reload value:
-    //   unlinked machine-clock:  reload = AUDF + 3   → period = N+4
-    //   linked   machine-clock:  reload = AUDF + 6   → period = N+7
+    //   machine-clock (linked or not): reload = AUDF + 3 → period = N+4
     //   any ref-clock mode:      reload = AUDF       → period = N+1
     //                                                   (3-cycle delay
     //                                                   absorbed in
@@ -382,8 +387,8 @@ module pokey_audio #(
     // Inner FF-wraps in linked mode (low timer wrap-to-FF on every
     // 256-tick underflow that ISN'T a cascade) are unaffected — they
     // wrap to $FF without any fudge.
-    wire [7:0] audf1_reload = audctl[6] ? (ch12_paired ? audf1 + 8'd6 : audf1 + 8'd3) : audf1;
-    wire [7:0] audf3_reload = audctl[5] ? (ch34_paired ? audf3 + 8'd6 : audf3 + 8'd3) : audf3;
+    wire [7:0] audf1_reload = audctl[6] ? (audf1 + 8'd3) : audf1;
+    wire [7:0] audf3_reload = audctl[5] ? (audf3 + 8'd3) : audf3;
 
     // STIMER start lag: the write's reload lands 4 machine cycles later
     // (see the comment at the apply site).
