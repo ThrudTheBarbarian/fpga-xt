@@ -891,7 +891,7 @@ module fpga_xt_top (
     wire [7:0]  tm_mem_rdata;                          // display_shadow port-A read
     wire [7:0]  tm_vcount, tm_nmist;
     wire        tm_nmi_n, tm_rdy_n;
-    wire [2:0]  tm_cycle_type;
+    wire [2:0]  tm_cycle_type, tm_cycle_type_q;
 
     antic_timing u_antic_timing (
         .clk        (clk_sally),
@@ -909,6 +909,7 @@ module fpga_xt_top (
         .nmi_n      (tm_nmi_n),
         .rdy_n_q    (tm_rdy_n),
         .cycle_type (tm_cycle_type),
+        .cycle_type_q (tm_cycle_type_q),
         .dbg_hcount (), .dbg_line (), .dbg_rowctr (), .dbg_dlctl (), .dbg_dlpc ()
     );
     wire [7:0] fid_sub;
@@ -955,7 +956,14 @@ module fpga_xt_top (
     // the two rasters' phase offset is arbitrary on hardware, so legacy
     // steals land on random machine-cycles and shift every post-WSYNC
     // stream (measured: VCOUNT #1 read +2, build 47b sweep B3).
-    wire       fid_steal = tm_auth ? (tm_cycle_type != 3'd0) : dma_steal_sally;
+    // sallyrst[3] picks which view of the DMA schedule the CPU sees: 0 =
+    // the cycle's own owner (matches Avery's cycle numbering in the dump),
+    // 1 = delayed one machine cycle.  Runtime-selectable because the sim
+    // dump proves the SCHEDULE but not the DELIVERY phase.
+    (* ASYNC_REG = "TRUE" *) reg [1:0] stealsel_sync = 2'b00;
+    always_ff @(posedge clk_sally) stealsel_sync <= {stealsel_sync[0], sallyrst[3]};
+    wire [2:0] tm_ct_sel = stealsel_sync[1] ? tm_cycle_type_q : tm_cycle_type;
+    wire       fid_steal = tm_auth ? (tm_ct_sel != 3'd0) : dma_steal_sally;
     wire       fid_rdy = cpu_sel & fid_mem_ok & ~fid_steal & fid_wsync_rdy & ~fdbg_cpu_halt;  // owns bus; /HALT + WSYNC + busy + dbg-halt aware
     // sally_mem's read-latch (bram_dout_q) AND every write/bank-latch/hwreg-strobe are gated
     // by its `rdy` — a "the CPU took a step" pulse. For the turbo core that is sally_rdy. The

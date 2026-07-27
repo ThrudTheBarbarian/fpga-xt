@@ -80,6 +80,7 @@ module antic_timing #(
     output logic        nmi_n,       // /NMI to the core (2-cycle low pulse)
     output logic        rdy_n_q,     // /RDY (1 = ready), registered, same grid
     output wire  [2:0]  cycle_type,  // bus owner for THIS cycle (combinational)
+    output logic [2:0]  cycle_type_q,// same, delayed one machine cycle
 
     // ---- Debug / diff taps ----------------------------------------------
     output wire  [6:0]  dbg_hcount,
@@ -294,6 +295,14 @@ module antic_timing #(
     // register is already absorbed into RELEASE_CYCLE, so the two paths need
     // to agree with the RASTER, not with each other's depth.
     assign cycle_type = cycle_type_c;
+    // A one-machine-cycle-delayed copy.  Which of the two the CPU should see
+    // is a DELIVERY question the schedule dump cannot answer (both are
+    // correct views of the same schedule, one cycle apart), so fpga_xt_top
+    // selects at runtime via sallyrst[3] and the board decides.
+    always_ff @(posedge clk or posedge rst) begin
+        if (rst)            cycle_type_q <= CT_CPU;
+        else if (phi2_tick) cycle_type_q <= cycle_type_c;
+    end
 
     // Refresh queue: each nominal tick adds one owed refresh; an owed
     // refresh is retired on any cycle where no higher-priority DMA (DL,
