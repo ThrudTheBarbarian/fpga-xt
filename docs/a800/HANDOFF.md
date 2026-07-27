@@ -21,6 +21,37 @@ build regenerates the ps7_init tree under the JTAG scripts).
 
 ## 0. 2026-07-25 sessions (newest)
 
+### 0p. P/M render: TWO attempts, both negative — read before trying again
+Target was gtia_pmresize ("4x-to-1x failed at index 0: expected $80,
+got $E0").  Its kernel sets SIZEP0=4x at cycle 112, writes GRAFP0, then
+changes SIZEP0 to 1x AT CYCLE ~44 and reads the resulting player width
+back through the player-player collision registers.
+
+ATTEMPT 1 (b587da5, KEPT): antic_top captures, per player, the SIZEP
+value at line start plus the atari-x of the first mid-line write
+(x = 4*cycle - 96); the compositor picks per pixel between them.
+Sentinel 12'h7FF = "no write this line" so untouched lines are
+bit-identical to before.  Result on HW: NO CHANGE.  Kept anyway — it is
+inert today and is the right shape for the real fix.
+
+ATTEMPT 2 (56e431e, REVERTED in a73c5e3): move cmp_start from
+line_start to cycle 112, so the compose burst happens AFTER that line's
+register writes have landed.  Result: IDENTICAL failure ($E0 vs $80),
+i.e. zero benefit, while changing when mid-line writes take effect
+(current row instead of next) — a real risk to raster effects that the
+ACID anchors do not cover.  Reverted.  Display was verified healthy on
+HW while it was in, so the change is safe if ever needed; it just does
+not help.
+
+WHAT THIS MEANS: the compositor composes a row as ONE BURST from
+register values sampled at a single instant.  No choice of instant, and
+no two-value interpolation, reproduces a player whose width changes
+PART-WAY ALONG the scanline — the render has to sample P/M registers in
+BEAM TIME.  That is the same step-4 conclusion reached from three other
+directions now (gtia_collision, charcontrol, psuedomodee).  Do not
+spend more build cycles on burst-timing variations; the next real step
+is per-colour-clock register sampling in the render path.
+
 ### 0o. P/M + GTIA cluster — it is a FEATURE gap, not calibration
 Triaged 2026-07-27 by reading the asserts and the tests' own setup code:
   antic_pmdma     "One-line P0 data bad at line 8: $00 != $08"
