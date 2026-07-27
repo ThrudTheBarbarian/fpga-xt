@@ -980,6 +980,18 @@ module tb_fid_raster;
                 int psel2;
                 // prog=4 (vscroldli) uses the REAL test's DL — re-apply it
                 // over the common nmist DL written just above.
+                if ($value$plusargs("prog=%d", psel2) && psel2 == 8) begin
+                    // prog=8 needs a MODE-2 list (playfield DMA); the common
+                    // nmist probe DL above would overwrite it with blanks.
+                    u_sally_mem.mem[16'h2C00]=8'h70; u_sally_mem.mem[16'h2C01]=8'h70;
+                    u_sally_mem.mem[16'h2C02]=8'h70;
+                    u_sally_mem.mem[16'h2C03]=8'h42;      // mode 2 + LMS
+                    u_sally_mem.mem[16'h2C04]=8'h00; u_sally_mem.mem[16'h2C05]=8'h40;
+                    u_sally_mem.mem[16'h2C06]=8'h02; u_sally_mem.mem[16'h2C07]=8'h02;
+                    u_sally_mem.mem[16'h2C08]=8'h02; u_sally_mem.mem[16'h2C09]=8'h02;
+                    u_sally_mem.mem[16'h2C0A]=8'h41; u_sally_mem.mem[16'h2C0B]=8'h00;
+                    u_sally_mem.mem[16'h2C0C]=8'h2C;
+                end
                 if ($value$plusargs("prog=%d", psel2) && psel2 == 4) begin
                     u_sally_mem.mem[16'h2C00]=8'h70; u_sally_mem.mem[16'h2C01]=8'h70;
                     u_sally_mem.mem[16'h2C02]=8'h70; u_sally_mem.mem[16'h2C03]=8'h28;
@@ -1035,8 +1047,10 @@ module tb_fid_raster;
     // other progs' handler/sled bytes: $2103 is mid-LDA in the prog-1/2/3
     // handler, $2035 is a prog-B sled NOP).
     int wpsel; initial if (!$value$plusargs("prog=%d", wpsel)) wpsel = 0;
-    wire watch_hit = (wpsel == 8 && fdbg_pc == 16'h2020)
-                  || (wpsel == 7 && fdbg_pc == 16'h2045)
+    // prog=8 has no run marker — it spins deliberately so the steal
+    // accounting can observe many playfield lines; let the cycle budget
+    // end it rather than a PC match (the spin would trip one instantly).
+    wire watch_hit = (wpsel == 7 && fdbg_pc == 16'h2045)
                   || (wpsel == 0 && fdbg_pc == 16'h203E)
                   || (wpsel >= 1 && wpsel <= 3 && fdbg_pc == 16'h2036)
                   || (wpsel == 4 && fdbg_pc == 16'h206A)
@@ -1067,6 +1081,10 @@ module tb_fid_raster;
             if ((tm_ct != 3'd0) &&  sa_did_commit) sa_both++;
             if ((tm_ct == 3'd0) && !sa_did_commit) sa_neither++;
             sa_did_commit <= 1'b0;
+            if (tm_hc == 7'd60 && tm_line > 9'd30 && tm_line < 9'd48)
+                $display("[tmst] line=%0d dlctl=%02h dmactl=%02h dlactive=%b row=%0d pf_on=%b pf_w=%0d",
+                         tm_line, u_tm.dl_ctl, u_tm.dmactl_q, u_tm.dl_active,
+                         u_tm.row_ctr, u_tm.pf_on, u_tm.pf_w);
             if (tm_hc == 7'd113) begin
                 if (tm_line != sa_line && sa_rep < 8 && sa_ticks > 100
                     && tm_line > 9'd38) begin
