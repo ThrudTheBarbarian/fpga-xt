@@ -187,6 +187,32 @@ entirely and key off the instruction boundary (the ~21 `state <=
 ST_FETCH` sites) as 0f originally specified.
 Do not re-try a plain rdy gate.
 
+### 0s. dlitiming under AUTHORITY is already 2-of-3 — and the last one
+is structurally blocked
+Re-measured the recognition probes with the machine in charge (the
+shipping configuration; earlier matrices in 0f were taken on the LEGACY
+path and are misleading now):
+    prog=1 delayed-odd  $32  CORRECT
+    prog=2 delayed-even $32  CORRECT
+    prog=3 plain-odd    $2D  one late (want $2C)
+The machine's exact two-sample NMIEN gating has absorbed what the third
+recognition stage used to compensate for: switching the core between
+2-stage and 3-stage recognition now makes NO difference to any of the
+three under authority.  So the residual is the PULSE POSITION, not the
+core.
+ATTEMPTED: move only the EARLY-enable leg of the /NMI pulse from cycle
+8 to 7 (the delayed cases take the LATE leg at 9, so they would be
+untouched).  IMPOSSIBLE AS WRITTEN: the DLI/VBI decision itself is made
+ENTERING cycle 7 and nmi_arm_q is registered there, so a pulse keyed on
+the same tick reads the arm stale and never fires (bench T3 caught it
+immediately: /NMI low at neither 7 nor 8).  Cycle 8 is the earliest a
+pulse can follow a cycle-7 decision.
+To go earlier the DECISION must move earlier too — i.e. take the DLI
+row-compare at cycle 6 alongside the VSCROL sample and keep only the
+status write at 7.  That is a real change to 0i's calibrated
+constants and needs the whole anchor set re-measured, so it is a
+deliberate piece of work, not a tweak.
+
 ### 0q. CURRENT STATE (2026-07-27 afternoon) — build 72, 33/57
 BOARD: build 72 (a73c5e3), authority is the POWER-ON DEFAULT
 (sallyrst 0x06).  Board and source are IN SYNC (build 71b had the
