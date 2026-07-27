@@ -30,7 +30,28 @@ sweep taken late in a session as suspect and re-measure from cold.
 Concretely: the build-69b full sweep reads 30 and is NOT trustworthy;
 the last clean number is 33/57 on build 67 (zero errors).
 
-UNRESOLVED — gtia_collision.  History across builds:
+RESOLVED (partly) — gtia_collision is a DETERMINISTIC authority-only
+failure, and my earlier "33" was one too high.  Evidence, all on one
+board back-to-back:
+  * same build, toggling only sallyrst bit 2: AUTHORITY fails ($80),
+    LEGACY passes ($00).  The POKEY linked-timer change (ce75e89) is
+    live in BOTH, so it is exonerated.
+  * three consecutive COLD BOOTS under authority: fail, fail, fail —
+    so it is NOT the arbitrary CPU/renderer phase alignment I first
+    supposed (that would vary per boot).
+  * the ARCHIVED build-67 bitstream, authority forced: ALSO FAILS.
+    So the regression predates the POKEY work entirely.
+=> The build-67 chunked sweep's gtia_collision "pass" is NOT
+reproducible and must be treated as spurious.  CORRECTED SCORE:
+AUTHORITY = 32/57 (legacy 31): +vscroldli +dlistwrap -collision.
+Still ahead, by one rather than two.
+STILL TO FIND: which of the night's machine-side changes broke it.
+Bisect the archived bitstreams — 57 (passed in isolation), 62, 65b, 67
+— all are in vivado/archive/.  Load one, force sallyrst 0x06, run
+gtia_collision FIRST on a cold board.  That is ~10 min per point and
+needs no rebuild.
+
+SUPERSEDED NOTE — gtia_collision history across builds:
     57  isolation .......... PASS
     65b/66 isolation ....... fail
     67  chunked sweep ...... pass
