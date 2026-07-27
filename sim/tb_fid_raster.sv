@@ -352,7 +352,7 @@ module tb_fid_raster;
     int sl_hc_at_write = -1;
     always @(posedge clk_sally) begin
         if (sl_en && !rst_sys && u_fid_core.slot_commit && !cpu_rw
-            && cpu_addr[15:8] == 8'hD0) begin
+            && cpu_addr[15:4] == 12'hD00 && cpu_addr[3:2] == 2'b10) begin
             sl_hc_at_write <= tm_hc;
             $display("[sizep] CPU write $%04h tm_hc=%0d tm_line=%0d",
                      cpu_addr, tm_hc, tm_line);
@@ -836,6 +836,34 @@ module tb_fid_raster;
                         8'hEA,8'hEA,8'hEA,8'hEA,8'hEA,8'hEA, // NOP sled $2030-2035
                         8'h4C,8'h14,8'h20 };               // JMP w0 ($2036)
                     for (int k = 0; k < 57; k++) u_sally_mem.mem[16'h2000+k] = progb[k];
+                    if (psel == 10) begin
+                        // P/M INSTRUMENT (0y): the first co-sim program that
+                        // writes GTIA at all.  Sync to vcount 19, WSYNC to end
+                        // line 38, then at t6 set up a player and change SIZEP0
+                        // mid-line.  +pmdelay=N inserts N NOPs before the
+                        // SIZEP0 store, walking the change across the scanline
+                        // so the per-pixel select is exercised INSIDE the
+                        // visible region (the resize tests' actual case), not
+                        // just in the off-screen prologue.  NMIEN stays 0 so no
+                        // DLI perturbs the cycle positions.
+                        int nd; int a;
+                        if (!$value$plusargs("pmdelay=%d", nd)) nd = 0;
+                        a = 16'h2023;
+                        u_sally_mem.mem[a+0]=8'hA9; u_sally_mem.mem[a+1]=8'h40;
+                        u_sally_mem.mem[a+2]=8'h8D; u_sally_mem.mem[a+3]=8'h00;
+                        u_sally_mem.mem[a+4]=8'hD0;             // STA HPOSP0
+                        u_sally_mem.mem[a+5]=8'hA9; u_sally_mem.mem[a+6]=8'hFF;
+                        u_sally_mem.mem[a+7]=8'h8D; u_sally_mem.mem[a+8]=8'h0D;
+                        u_sally_mem.mem[a+9]=8'hD0;             // STA GRAFP0
+                        a = a + 10;
+                        for (int k=0;k<nd;k++) u_sally_mem.mem[a+k]=8'hEA;  // NOP pad
+                        a = a + nd;
+                        u_sally_mem.mem[a+0]=8'hA9; u_sally_mem.mem[a+1]=8'h03;
+                        u_sally_mem.mem[a+2]=8'h8D; u_sally_mem.mem[a+3]=8'h08;
+                        u_sally_mem.mem[a+4]=8'hD0;             // STA SIZEP0
+                        u_sally_mem.mem[a+5]=8'h4C; u_sally_mem.mem[a+6]=8'h14;
+                        u_sally_mem.mem[a+7]=8'h20;             // JMP w0
+                    end
                     if (psel == 3) begin
                         // PLAIN-odd shape: NMIEN=$80 from the start (before
                         // the sync), INC WSYNC, then the sled.  Expected per

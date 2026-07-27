@@ -187,6 +187,25 @@ entirely and key off the instruction boundary (the ~21 `state <=
 ST_FETCH` sites) as 0f originally specified.
 Do not re-try a plain rdy gate.
 
+### 0z. The SIZEP stamp is CORRECT — phase is NOT the P/M bug
+tb_fid_raster gained +prog=10, the first co-sim program that writes
+GTIA at all (HPOSP0 / GRAFP0 / SIZEP0 after a WSYNC-anchored sync to
+line 39), plus +pmdelay=N to walk the SIZEP change across the line.
+Measured with +sizeplat=1, steady state:
+    CPU write $D008 at tm_hc=8  ->  snoop lands legacy_cyc=9, line 39
+    STAMP_ERR = 1
+and 1 is EXACTLY the constant counter offset from 0x (legacy = tm+1).
+So the snoop lands at the SAME PHYSICAL BEAM INSTANT as the CPU write:
+the mid-scanline capture and the cc_x_now stamp have ZERO real error.
+This kills the hypothesis the whole step-4 plan rested on.  The P/M
+and collision failures are NOT caused by the machine/renderer phase
+split, and no constant correction is needed.  Do not "fix" the stamp.
+The remaining suspects, in order: the per-pixel select semantics in
+compositor.sv (sizep_chg_x vs atari_x origin), P/M DMA fetch timing,
+and the resize/overlap semantics themselves.
+NOTE the first line of every +sizeplat run shows a garbage STAMP_ERR
+(latch still -1); read the SECOND landing onward.
+
 ### 0x. STEP 4 IS SMALLER THAN FEARED — the two rasters are PHASE-LOCKED
 New probe `+phasedrift=1` in tb_fid_raster samples the legacy raster
 cycle against the timing machine's hcount once per frame at a fixed
