@@ -21,6 +21,49 @@ build regenerates the ps7_init tree under the JTAG scripts).
 
 ## 0. 2026-07-25 sessions (newest)
 
+### 0k. Night of 2026-07-26/27 — where things stand (READ THIS FIRST)
+BOARD: build 66 (400d414) loaded, LEGACY default (sallyrst[2]=0) = 31/57.
+Machine authority (sallyrst[2]=1) is ALSO 31/57, measured with a clean
+chunked sweep (6 blocks, reboot between each) and ZERO errors — the
+cascade that wrecked earlier authority sweeps is gone.
+
+THE MIX DIFFERS, AND THE DIFFERENCE IS INSTRUCTIVE:
+  authority GAINS antic_vscroldli — structurally impossible for the old
+    parse/walk architecture (needs a CPU write at cycle 3 to interact
+    with the row-end decision made on the SAME scanline).
+  authority LOSES gtia_collision — and this is a CLASS, not a bug.
+    Collisions are computed by the RENDERER, which still runs on the
+    legacy raster, while under authority the CPU is paced by the timing
+    machine.  Any test whose result depends on CPU-write timing
+    RELATIVE TO RENDERED OUTPUT is therefore sensitive to the phase
+    between the two domains.  That is exactly the step-4 gap in
+    docs/Design/antic-timing-machine.md and it closes when the renderer
+    is fed from the machine.  Expect more of this class until then.
+    (Verified: collision PASSES under legacy on the same bitstream.)
+
+DMA CLUSTER — SCHEDULE PROVEN, DELIVERY EXCLUDED, CAUSE STILL OPEN.
+The schedule now matches Avery's own expected masks CYCLE-FOR-CYCLE for
+narrow mode 2, both first row (mode2a: 25,26,28..91) and later rows
+(mode2b: 25,29/30/31,33/34/35...61,63,65...).  Reproduce any time with
+    make -C sim antic_timing && vvp -N build/tb_antic_timing.vvp \
+        +pfdump=1 +pfrow=<0|1> +pfw=<1|2|3>
+Both DELIVERY phases have been excluded experimentally on hardware:
+combinational (builds 62, 66) and one-cycle-delayed (65b) — neither
+moves any cluster test, and the delayed one costs gtia_collision, so
+the combinational view is what is checked in.  antic_dmapattern still
+reports "mode 02-a", which IS the narrow-first-row case that matches in
+sim.  So the error is neither the schedule nor the delivery phase.
+NEXT SUSPECTS (untested): whether POKEY RANDOM advances exactly once
+per machine cycle (the test measures cycle positions by sampling it —
+if RANDOM is off, every mode fails regardless of DMA), and whether the
+test's per-sub-test DMACTL writes are seen by the machine at the right
+cycle.  Check RANDOM first; it invalidates the whole measurement.
+
+CORRECTION TO AN EARLIER NOTE: there is no missing "badline" fetch
+mechanism.  That claim came from decoding a .lst line TRUNCATED at 150
+columns; re-read untruncated, mode2a ends at cycle 91 exactly as we
+produce.  Always `cut -c1-400` those table lines.
+
 ### 0j. DMA-pattern cluster — ground truth located (Sun night)
 antic_dmapattern embeds its EXPECTED cycle-blocking bitmasks as a table
 at $3800 in the test image (labels mode2a/2b/3a/3b/... in the .lst,
