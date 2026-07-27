@@ -187,6 +187,17 @@ entirely and key off the instruction boundary (the ~21 `state <=
 ST_FETCH` sites) as 0f originally specified.
 Do not re-try a plain rdy gate.
 
+### 0u. BOARD STATE after the dlitiming experiment (2026-07-27 evening)
+The board runs the ARCHIVED build-72 bitstream, which is byte-for-byte
+the current source: reverting bfe2717 restored the RTL exactly to
+a73c5e3 (`git diff a73c5e3 HEAD -- hdl/` is empty), so build 74 was
+unnecessary and its timing miss is irrelevant.  Verified on the board:
+authority default (0x06), nmist/vscroldli/dlistwrap all PASS,
+dlitiming fails (odd sled late, the known state).
+USEFUL TRICK: when a change is reverted, check whether an archived
+bitstream already matches the resulting source — `git diff <that build's
+commit> HEAD -- hdl/` — and just reload it.  Saves a 25-minute build.
+
 ### 0t. dlitiming: BOTH sleds have now been seen correct — in DIFFERENT
 configs.  The residual is ONE CYCLE of delivery, not pipeline depth.
 Measured on hardware, same test, two builds:
