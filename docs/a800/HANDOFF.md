@@ -21,6 +21,56 @@ build regenerates the ps7_init tree under the JTAG scripts).
 
 ## 0. 2026-07-25 sessions (newest)
 
+### 0l. MORNING STATE (2026-07-27) — THE NEW ANTIC IS THE DEFAULT
+BOARD: build 68 (3fdcbe1).  sallyrst now powers on at 0x06 = fidelity
+core + ANTIC TIMING-MACHINE AUTHORITY.  Verified from cold: the
+register reads 0x06, the desktop boots, and the new greens score
+without poking anything.  The legacy timing path is now an OPT-OUT
+(clear bit 2), not the default.
+
+SCORE: 33/57 under the machine (run 2026-07-27-2, chunked sweep, zero
+errors) vs 31/57 for the legacy path on the SAME bitstream — +2 with
+NOTHING lost in either direction.
+  gained: antic_vscroldli  (needs a CPU write at cycle 3 to interact
+          with the row-end decision made on the SAME scanline)
+          antic_dlistwrap  (needs the display list to keep running with
+          DL DMA disabled — the stuck control byte)
+Both are structurally impossible for the parse/walk architecture; this
+is the migration thesis paying off rather than a calibration win.
+
+FLAKY, NOT BROKEN: gtia_collision.  Passes in the chunked sweep and in
+isolation on a fresh board; fails when run 3rd+ in a rapid sequence.
+Treat a single failure as noise — confirm with a reboot first.
+
+WHAT LANDED TONIGHT (all validated against Avery's own data):
+  * refresh cycles SLIP to the next free cycle, and a refresh still
+    seeking when the next nominal slot arrives is DROPPED — Altirra's
+    ATAnticSetRefreshCycles verbatim.  Our schedule now matches
+    antic_dmapattern's embedded masks CYCLE-FOR-CYCLE for narrow mode 2
+    (both first and later rows).
+  * bitmap modes start 2 cycles later than char modes (28/20/12 vs
+    26/18/10 by width).
+  * P/M DMA is display-region only (lines 8..247); the player enable
+    forces missile DMA.
+  * ANTIC always begins the display region; DL DMA gates FETCHING only.
+  * playfield extent is a width lookup (96/80/64), not a multiply —
+    removing two combinational multipliers from the steal cone
+    recovered clk_sally from -0.269 to +0.001.
+  * cycle_type stays COMBINATIONAL (registering it shifts the pattern
+    +1 and costs gtia_collision; both delivery phases now excluded
+    experimentally).
+
+DMA CLUSTER STILL RED (dmapattern, virtdma, pfstart/pfstop, hscrolbug,
+linebuffering, pmdma).  Schedule proven correct, both delivery phases
+excluded, POKEY RANDOM ruled out (it free-runs on phi2 exactly as real
+POKEY does, and pokey_noise passes).  The next lead is Altirra's
+rotating DMA-clock model (kClockPattern / kModeToFetchRate,
+antic.cpp ~2830+) which is more general than the start+step
+approximation we use — likely relevant to HSCROL and the mid-scanline
+DMACTL cases.  Reproduce our schedule any time with:
+    make -C sim antic_timing
+    vvp -N build/tb_antic_timing.vvp +pfdump=1 +pfrow=<0|1> +pfw=<1|2|3>
+
 ### 0k. Night of 2026-07-26/27 — where things stand (READ THIS FIRST)
 BOARD: build 66 (400d414) loaded, LEGACY default (sallyrst[2]=0) = 31/57.
 Machine authority (sallyrst[2]=1) is ALSO 31/57, measured with a clean
