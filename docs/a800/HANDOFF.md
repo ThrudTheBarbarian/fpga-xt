@@ -187,18 +187,52 @@ entirely and key off the instruction boundary (the ~21 `state <=
 ST_FETCH` sites) as 0f originally specified.
 Do not re-try a plain rdy gate.
 
-### 1c. BOARD STATE 2026-07-27 ~22:05 — NEEDS A PHYSICAL POWER-CYCLE
+### 1d. THE CRUX: the row is composed at line START, so mid-line writes
+###      can never affect their own line
+Build 77 on HW: all four anchors PASS (nmist, vscroldli, dlistwrap,
+wsync) — no regression — but all six P/M tests still FAIL, including
+gtia_pmretrigger.  The mid-line HPOSP capture was necessary and is not
+sufficient.
+Why: antic_top wires `cmp_start_pulse` to `line_start`, so the
+compositor composes the whole row in a burst at the START of the line.
+gtia_pmretrigger writes HPOSP0 at cycle 60 — by then that row has
+ALREADY been composed.  chg_x is duly recorded, but it is cleared at
+the next line_start before it can ever be used.  The early/chg_x
+mechanism is structurally dead as built, for SIZEP as much as HPOSP.
+This also reframes build 71b.  Composing at end-of-line was tried then
+and "changed NOTHING", but only the SIZEP capture existed and the
+whole line simply took the new value.  The two halves are only useful
+TOGETHER: compose at end-of-line so the write is visible, AND the
+early/chg_x split so the part of the line before the write keeps the
+old value.
+What gtia_pmretrigger actually asserts (its own source, $2066):
+    sta hposp0 / inc wsync / lda p0pl / and #$06 -> expect $06
+so it reads the player-player COLLISION register and requires player 0
+to have collided with BOTH p1 and p2 — i.e. the retrigger must make p0
+appear TWICE on the line.  Our collision sweep does call pm_presence_s,
+so the split select reaches it; the only missing piece is that the
+compose happens too early to see the write.
+NEXT (the real step 4): move cmp_start to end-of-line AND give every
+register the compositor samples the early/chg_x treatment — not just
+SIZEP and HPOSP.  Moving the burst alone would regress the uncaptured
+registers (a mid-line COLPF write would wrongly recolour the whole
+current line instead of the next), which is exactly the raster-effect
+risk that got 71b reverted.  Snapshot the whole sampled set at
+cmp_start so compose duration cannot race the next line's reset.
+
+### 1c. BOARD STATE 2026-07-27 — recovered without a power-cycle
 Build 77 closed timing (clk_sys +0.004, clk_sally +0.016, clk_pix
 +0.223) and the bitstream is archived at
     vivado/archive/fpga_xt_top.build77-hposp-midline.bit
-I then ran `jtag-valhalla.sh load` OVER THE LIVE build-72 IMAGE without
-a power-cycle first.  The load reported success, but the board has been
-off the network ever since: no ping and no ssh on 192.168.192.179,
-mDNS xtos.local does not resolve, ~4 minutes of polling.  This is the
-known non-cold-load flake ([[jtag_noncold_load_flake]]) and it is NOT
-evidence of anything wrong with build 77 — the RTL was never exercised.
-TO RESUME: power-cycle the board (physical), then
+A `jtag-valhalla.sh load` over the live build-72 image dropped the
+board off the network entirely (no ping, no ssh, mDNS dead).  NO POWER
+CYCLE IS NEEDED to recover this — the standard sequence
+    ./vivado/jtag-valhalla.sh reset
     ./vivado/jtag-valhalla.sh load
+brought it straight back, and has not failed once since it was adopted
+on 2026-07-14.  I wrongly recorded recovery as physical and stopped
+work; that was wrong and the memories have been corrected.  Build 77
+is on the board and verified (mem 43C0031C = 0x00000006).
     ssh 192.168.192.179 sh /tmp/pmchunk.sh     (script generated, not yet pushed)
 The P/M sweep script is ready at
     <scratchpad>/pmchunk.sh
