@@ -187,6 +187,39 @@ entirely and key off the instruction boundary (the ~21 `state <=
 ST_FETCH` sites) as 0f originally specified.
 Do not re-try a plain rdy gate.
 
+### 1l. BUILD 83 RESULT — one real fix, but the board went unmeasurable
+Build 83 PASSES the gate (clk_sys +0.003, clk_sally +0.183, clk_pix
++0.373).  NOTE clk_sys is essentially UNCHANGED from build 80's +0.004
+— the emit pipelining did NOT buy margin on the clock it targeted, so
+either the limiter moved or that path was never the binding one after
+placement.  Do not claim the pipelining as a timing win; it is defensible
+on structure (the long cones now end at their own flops) but the
+measurement does not support a margin claim.
+GOOD EVIDENCE: gtia_collision's RESULT SCREEN now reads
+    "GTIA: Collision test...Pass"
+where on build 80 it read
+    "FAIL.  P/M collisions were detected in VBLANK."
+That is exactly the bug the active_line gate fixes, so the fix is
+almost certainly right.
+BUT THE SWEEP DISAGREES, and the board is why.  After the day's loads
+the results degraded into `error` (xexload failing outright) and the
+screen grabs into "BOOT ERROR":
+    run A: collision fail, 2 anchors error
+    run B (after reset+load): collision fail, 3 anchors error
+    3x gtia_collision in isolation: fail, error, error
+`error` means the test never loaded/halted — that is the loader, not
+the RTL.  reset+load was performed and did NOT clear it, so this is the
+slower degradation mode, distinct from the wedged-board case that
+reset+load does fix ([[jtag_noncold_load_flake]]).
+DELIBERATELY NOT UPDATED: docs/a800/runs/ has no entry for build 83.
+Recording a sweep taken from a degraded board would poison the
+dashboard's history with failures that are load errors.  Re-run the
+full chunked sweep on a healthy board, then add the run file.
+STILL OPEN AND UNCHANGED: gtia_pmretrigger ("Player did not retrigger
+properly"), and gtia_pmoverlap gave a new detail worth keeping —
+"Pass 0.0: Pos=64, Expected F0, Got 00" — though that grab came from a
+BOOT ERROR screen so treat it as a lead, not a datum.
+
 ### 1j. MEASUREMENT BUG — never count grep hits as "failures"
 The check used throughout this work was
     make <tb> | grep -ciE "\berror\b|FAIL"
