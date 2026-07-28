@@ -187,6 +187,35 @@ entirely and key off the instruction boundary (the ~21 `state <=
 ST_FETCH` sites) as 0f originally specified.
 Do not re-try a plain rdy gate.
 
+### 1f. BEAM-TIME COLLISION — the as-you-go path (hdl/gtia_pm_collide.sv)
+The burst cannot model mid-line collision reads at all: the line's whole
+contribution is either absent or present, so chasing gtia_pmretrigger by
+choosing a compose cycle that happens to sit between the write (60) and
+the read (~105) is a timing coincidence, not a model.
+gtia_pm_collide does it the silicon way — it walks the beam and
+accumulates.  Two evaluations per machine cycle (one per colour clock),
+each computing the 8-bit presence vector, using the LIVE P/M registers.
+That is CHEAPER than what it supersedes: the compositor's collision
+sweep does two evaluations per PIXEL.  Given clk_sys and clk_sally are
+both at the edge, that direction matters.
+STAGE 1 SCOPE: P/M-to-P/M only (P0PL..P3PL, M0PL..M3PL) — these need no
+playfield data and no P/M DMA, so the module is standalone and takes
+CPU-written GRAFP/GRAFM.  That covers the register-path tests
+(pmretrigger / pmoverlap / pmresize).  Playfield collisions (xxPF) stay
+on the compositor sweep; they need a per-x playfield-presence line
+buffer.  antic_pmdma needs the P/M DMA fetch hoisted to the start of
+the line as on real hardware.  Both are stage 2.
+tb_pm_collide validates it against the real assertion's geometry:
+  p1 @ hpos 60 (cycles ~30-33), p2 @ hpos 100 (cycles ~50-53),
+  p0 starts on p1 and MOVES onto p2 at cycle 40
+  -> P0PL = $06, collided with BOTH.  Exactly what ACID asserts.
+6/6 checks pass, including symmetry, the never-collides-with-itself
+diagonal, and a mid-line HITCLR that correctly drops only the earlier
+hit.
+NOTE tb_antic_modes instantiates `compositor` directly, so it does NOT
+exercise this module — its collision goldens still test the burst
+sweep.  Do not read a green antic_modes as validation of beam time.
+
 ### 1e. STEP 4 LANDED — beam-time compose, in two safe stages
 Stage A: cmp_start moves from line_start to line_end (antic_seq gains a
 `line_end` input; antic_top pulses it at cycle 110 of 114), AND every

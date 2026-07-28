@@ -56,6 +56,7 @@ HDL_SRCS := \
     $(HDL_DIR)/antic_raster.sv    \
     $(HDL_DIR)/antic_seq.sv       \
     $(HDL_DIR)/antic_top.sv       \
+    $(HDL_DIR)/gtia_pm_collide.sv \
     $(HDL_DIR)/antic_dma_steal.sv \
     $(HDL_DIR)/cdc_sync_bit.sv
 
@@ -503,6 +504,7 @@ BOOT_ANTIC_HDL := \
     $(HDL_DIR)/antic_raster.sv    \
     $(HDL_DIR)/antic_seq.sv       \
     $(HDL_DIR)/antic_top.sv       \
+    $(HDL_DIR)/gtia_pm_collide.sv \
     $(HDL_DIR)/antic_dma_steal.sv
 
 BOOT_SYS_HDL := \
@@ -1207,3 +1209,10 @@ fid_raster: $(BUILD_DIR)/tb_fid_raster.vvp
 $(BUILD_DIR)/tb_fid_raster.vvp: $(BOOT_CPU) $(BOOT_SYS_HDL) $(BOOT_ANTIC_HDL) $(HDL_DIR)/xt6502f/xt6502f.sv $(HDL_DIR)/antic_timing.sv axi_slave_mem.sv peri_rp_idle.sv tb_fid_raster.sv | $(BUILD_DIR)
 	$(IVERILOG) $(SV_FLAGS) $(BOOT_DEFINES) -o $@ -s tb_fid_raster \
 	    $(BOOT_CPU) $(BOOT_SYS_HDL) $(BOOT_ANTIC_HDL) $(HDL_DIR)/xt6502f/xt6502f.sv $(HDL_DIR)/antic_timing.sv axi_slave_mem.sv peri_rp_idle.sv tb_fid_raster.sv
+
+pm_collide: build/tb_pm_collide.vvp
+	@vvp -N $<
+
+build/tb_pm_collide.vvp: tb_pm_collide.sv $(HDL_DIR)/gtia_pm_collide.sv | build
+	iverilog -g2012 -Wall -Wno-timescale -I$(HDL_DIR) -o $@ -s tb_pm_collide \
+	    $(HDL_DIR)/gtia_pm_collide.sv tb_pm_collide.sv

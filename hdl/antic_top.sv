@@ -597,6 +597,7 @@ module antic_top #(
     wire [15:0] cmp_ppf_q;
     wire [15:0] cmp_mpl_q;
     wire [15:0] cmp_ppl_q;
+    wire [15:0] bt_mpl_q, bt_ppl_q;   // beam-time P/M-to-P/M collisions
     wire [7:0]  m_pf_in [0:3];
     wire [7:0]  p_pf_in [0:3];
     wire [7:0]  m_pl_in [0:3];
@@ -632,8 +633,11 @@ module antic_top #(
         for (i = 0; i < 4; i++) begin : g_collision
             assign m_pf_in[i] = {4'h0, cmp_mpf_q[4*i +: 4]};
             assign p_pf_in[i] = {4'h0, cmp_ppf_q[4*i +: 4]};
-            assign m_pl_in[i] = {4'h0, cmp_mpl_q[4*i +: 4]};
-            assign p_pl_in[i] = {4'h0, cmp_ppl_q[4*i +: 4]};
+            // P/M-to-P/M collisions come from the BEAM-TIME engine, not the
+            // compose burst: they accumulate as the beam sweeps, so a read
+            // partway along the line sees only what has been drawn so far.
+            assign m_pl_in[i] = {4'h0, bt_mpl_q[4*i +: 4]};
+            assign p_pl_in[i] = {4'h0, bt_ppl_q[4*i +: 4]};
             // M25-1: TRIG0..TRIG3 sourced from pia_joy_fire[i] (active-low
             // shadow → active-high "pressed" semantics matching GTIA's trig_in
             // (bit 0 = 1 when pressed). The gtia_regs read flips bit 0 to match
@@ -1745,6 +1749,28 @@ module antic_top #(
             end
         end
     end
+
+    // ---- beam-time P/M collision engine ---------------------------------
+    // Walks the beam and accumulates, the way GTIA does, instead of deriving
+    // collisions from the compose burst.  Uses the LIVE registers (not the
+    // compose snapshot) because that is the whole point: a mid-line HPOSP
+    // write must affect the remainder of the line as the beam reaches it.
+    gtia_pm_collide u_pm_collide (
+        .clk(clk_bus), .rst(rst_bus),
+        .phi2_tick(phi2_tick), .cyc(ar_phi2_in_line),
+        .hposp0(hposp_q[0]), .hposp1(hposp_q[1]),
+        .hposp2(hposp_q[2]), .hposp3(hposp_q[3]),
+        .hposm0(hposm_q[0]), .hposm1(hposm_q[1]),
+        .hposm2(hposm_q[2]), .hposm3(hposm_q[3]),
+        .sizep0(sizep_q[0][1:0]), .sizep1(sizep_q[1][1:0]),
+        .sizep2(sizep_q[2][1:0]), .sizep3(sizep_q[3][1:0]),
+        .sizem(sizem_q),
+        .grafp0(grafp_q[0]), .grafp1(grafp_q[1]),
+        .grafp2(grafp_q[2]), .grafp3(grafp_q[3]),
+        .grafm(grafm_q),
+        .hitclr(hitclr_strobe),
+        .mpl_q(bt_mpl_q), .ppl_q(bt_ppl_q)
+    );
 
     compositor u_compositor (
         .clk(clk_bus), .rst(rst_bus), .start_compose(cmp_start_pulse),
