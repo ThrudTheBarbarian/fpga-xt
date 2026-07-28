@@ -187,6 +187,48 @@ entirely and key off the instruction boundary (the ~21 `state <=
 ST_FETCH` sites) as 0f originally specified.
 Do not re-try a plain rdy gate.
 
+### 1j. MEASUREMENT BUG — never count grep hits as "failures"
+The check used throughout this work was
+    make <tb> | grep -ciE "\berror\b|FAIL"
+which conflates THREE different things: real FAIL assertions, iverilog
+elaboration errors, and incidental lines containing "error".  It is
+biased in the worst possible direction: when a testbench breaks badly
+enough to stop compiling, the count DROPS, and that reads as progress.
+That is exactly what happened.  Introducing the line_end_pulse_bus
+forward reference stopped tb_antic_display elaborating; the two
+"N error(s) during elaboration" lines counted as 4, against a real
+baseline of 9, and was reported — twice, including in a commit message
+— as "antic_display improved 9 -> 4".  There was no improvement.
+Bisection with the output actually READ shows antic_display's 6 real
+failures are byte-identical at 6a722b6 (before the beam-time compose)
+and at HEAD.  Pre-existing, untouched.
+USE INSTEAD: treat elaboration failure as its own hard state and count
+only real assertions:
+    out=$(make $t 2>&1)
+    if echo "$out" | grep -q "error(s) during elaboration"; then ELAB-ERROR
+    else echo "$out" | grep -c "^FAIL"; fi
+True state at HEAD: antic_modes, pm_collide, antic_raster, antic_seq,
+sprite_compositor, plane_compositor, alpha_hole, disp_modef_wrap PASS;
+antic_display 7 and hscrol_e2e 3, both pre-existing.
+
+### 1k. Pipelining the clk_sys limiter (1i)
+cmd_data was a REGISTERED output fed by
+    display_shadow BRAM -> pack_pair -> apply_pm_overlay -> cmd_data_reg
+where apply_pm_overlay itself recomputes pm_presence.  But the
+compositor ALREADY registers both expensive cones for the collision
+path (col_raw_q from pack_pair, col_presL/H_q from pm_presence) — the
+pixel path just re-derived them combinationally.
+Fix: apply_pm_overlay_p() takes the presence vectors directly, and
+cmd_data becomes COMBINATIONAL off col_raw_q/col_pres*_q.  The long
+cones then terminate at their own flops with nothing stacked on top;
+only the shallow overlay sits between those flops and the port.
+NO throughput cost and no extra state: the col_* registers only change
+on the next emit, so cmd_data is stable for as long as cmd_valid is
+held and the SET handshake is untouched.  This matters — a naive extra
+pipeline STAGE would have cost a cycle per pair, stretching compose
+from ~4 to ~6 machine cycles and pushing its completion from ~100
+toward the ~105 post-WSYNC read window that 1d is about.
+
 ### 1i. clk_sys IS A COIN FLIP — one compositor path dominates it
 Build 81 (VBLANK gate only, a single AND term on top of build 80's
 PASSING netlist) came in at clk_sys -1.367 ns, against build 80's
@@ -300,10 +342,14 @@ chg_x, as one coherent set.  The compositor then renders
     x >= chg_x  ->  value as at line end (post mid-line write)
 Latching one cycle before cmp_start means a write landing during the
 burst cannot tear the row.
-RESULT IN SIM: antic_display 9 -> 4 failures (a real improvement on a
-suite that had been stuck at 9).  antic_modes, antic_seq, antic_raster,
-sprite_compositor, plane_compositor, alpha_hole, disp_modef_wrap all 0.
-hscrol_e2e unchanged at its pre-existing 5.
+RESULT IN SIM: antic_modes, antic_seq, antic_raster,
+sprite_compositor, plane_compositor, alpha_hole, disp_modef_wrap all
+pass.  antic_display and hscrol_e2e keep their PRE-EXISTING failures.
+CORRECTION: an earlier version of this entry claimed antic_display
+improved 9 -> 4.  THAT WAS FALSE — see 1j.  The suite had stopped
+elaborating and the "4" was miscounted error lines.  Bisection shows
+antic_display's 6 real failures are byte-identical before this work
+(6a722b6) and after, so nothing here improved OR regressed it.
 tb_antic_seq needed updating: it asserted cmp_start aligns to
 line_start, which is now line_end.
 

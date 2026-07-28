@@ -151,7 +151,9 @@ module compositor #(
     // rp_tx command issuance — SET opcodes only.
     output logic [1:0]  cmd_tag,
     output logic [23:0] cmd_addr,
-    output logic [23:0] cmd_data,        // 2× 12-bit pixels (M10c widened from 16-bit)
+    output wire  [23:0] cmd_data,        // 2× 12-bit pixels (M10c widened from 16-bit)
+                                         // COMBINATIONAL off col_raw_q/col_pres*_q
+                                         // — see apply_pm_overlay_p
     output logic        cmd_valid,
     input  wire         cmd_ready,
 
@@ -785,6 +787,34 @@ module compositor #(
     // exactly the original PF + P|M-shared encoding; the M-only nibble
     // sits in bits[11:8] of the storage cell and is invisible to byte-
     // level reads.
+    // Same overlay, but taking the presence vectors DIRECTLY instead of
+    // recomputing them from x.  This is what lets cmd_data be driven off the
+    // already-registered col_* values: the expensive cones (BRAM -> pack_pair,
+    // and pm_presence) then terminate at their own flops with nothing stacked
+    // on top, which is precisely the clk_sys limiter identified in HANDOFF 1i
+    // (display_shadow BRAM -> compositor/cmd_data_reg, 8 logic levels).
+    function automatic logic [23:0] apply_pm_overlay_p(logic [15:0] packed_pair,
+                                                       logic [7:0]  pres_lo,
+                                                       logic [7:0]  pres_hi);
+        logic [7:0] lo, hi;
+        logic [3:0] m_lo, m_hi;
+        begin
+            lo = packed_pair[7:0];
+            hi = packed_pair[15:8];
+            if (pres_lo[0] | pres_lo[4]) lo = lo | 8'h10;
+            if (pres_hi[0] | pres_hi[4]) hi = hi | 8'h10;
+            if (pres_lo[1] | pres_lo[5]) lo = lo | 8'h20;
+            if (pres_hi[1] | pres_hi[5]) hi = hi | 8'h20;
+            if (pres_lo[2] | pres_lo[6]) lo = lo | 8'h40;
+            if (pres_hi[2] | pres_hi[6]) hi = hi | 8'h40;
+            if (pres_lo[3] | pres_lo[7]) lo = lo | 8'h80;
+            if (pres_hi[3] | pres_hi[7]) hi = hi | 8'h80;
+            m_lo = pres_lo[3:0];
+            m_hi = pres_hi[3:0];
+            return {m_hi, m_lo, hi, lo};
+        end
+    endfunction
+
     function automatic logic [23:0] apply_pm_overlay(logic [15:0] packed_pair,
                                                       logic [9:0]  atari_x_lo);
         logic [7:0] lo, hi;
@@ -1066,9 +1096,22 @@ module compositor #(
     //                 P/P matrix from the registered values and ORs into the
     //                 latches.
     // Collisions simply lag the beam by one clk_bus cycle.
+    //
+    // cmd_data is driven COMBINATIONALLY from those same registered values.
+    // It is stable for as long as cmd_valid is held (the col_* registers only
+    // change on the next emit), so the SET handshake is unaffected and there is
+    // no throughput cost — no extra state, no stall, same cycles per pair.
+    logic        col_blank_q;      // 1 = this pair is blank (emit COLBK)
     logic [15:0] col_raw_q;        // PF-bit pair, registered for the combine
     logic [7:0]  col_presL_q;      // P/M presence at the pair's low  atari_x
     logic [7:0]  col_presH_q;      // P/M presence at the pair's high atari_x
+
+    // The emit-path output.  Long cones (BRAM -> pack_pair, pm_presence) end at
+    // col_raw_q / col_pres*_q; only the shallow overlay sits between those flops
+    // and the port.
+    assign cmd_data = col_blank_q
+                    ? 24'h0
+                    : apply_pm_overlay_p(col_raw_q, col_presL_q, col_presH_q);
     logic        col_valid_q;
 
     always_ff @(posedge clk or posedge rst) begin
@@ -1100,7 +1143,7 @@ module compositor #(
             cmd_valid       <= 1'b0;
             cmd_tag         <= `BUS_TAG_NOP;
             cmd_addr        <= '0;
-            cmd_data        <= 24'h0;
+            col_blank_q     <= 1'b1;
             blank_col       <= 9'd0;
             sweep_x         <= 12'sd0;
             mem_raddr       <= 16'h0;
@@ -1248,7 +1291,7 @@ module compositor #(
                     pair_idx  <= 4'd0;
                     cmd_tag   <= `BUS_TAG_SET;
                     cmd_addr  <= set_addr;
-                    cmd_data  <= apply_pm_overlay(raw_f, atari_x_lo_q);
+                    col_blank_q <= 1'b0;   // cmd_data is driven combinationally
                     cmd_valid <= 1'b1;
                     col_raw_q   <= raw_f;           // combined + accumulated next cycle
                     col_presL_q <= pm_presence(atari_x_lo_q);
@@ -1302,7 +1345,7 @@ module compositor #(
                     pair_idx  <= 4'd0;
                     cmd_tag   <= `BUS_TAG_SET;
                     cmd_addr  <= set_addr;
-                    cmd_data  <= apply_pm_overlay(idx_h, atari_x_lo_q);
+                    col_blank_q <= 1'b0;   // cmd_data is driven combinationally
                     cmd_valid <= 1'b1;
                     col_raw_q   <= raw_h;           // combined + accumulated next cycle
                     col_presL_q <= pm_presence(atari_x_lo_q);
@@ -1417,7 +1460,7 @@ module compositor #(
                         pair_idx  <= 4'd0;
                         cmd_tag   <= `BUS_TAG_SET;
                         cmd_addr  <= set_addr;
-                        cmd_data  <= apply_pm_overlay(raw_t, atari_x_lo_q);
+                        col_blank_q <= 1'b0;   // cmd_data is driven combinationally
                         cmd_valid <= 1'b1;
                         col_raw_q   <= raw_t;           // combined + accumulated next cycle
                         col_presL_q <= pm_presence(atari_x_lo_q);
@@ -1518,7 +1561,7 @@ module compositor #(
                             pair_idx <= next_p;
                             cmd_addr <= row_base + unit_offset
                                       + {next_p, 1'b0};
-                            cmd_data <= apply_pm_overlay(idx_a, atari_x_lo_q);
+                            col_blank_q <= 1'b0;   // cmd_data is driven combinationally
                             col_raw_q   <= raw_a;           // combined + accumulated next cycle
                             col_presL_q <= pm_presence(atari_x_lo_q);
                             col_presH_q <= pm_presence(atari_x_lo_q + 10'd1);
@@ -1538,7 +1581,7 @@ module compositor #(
                 S_BLANK_FILL: begin
                     cmd_tag   <= `BUS_TAG_SET;
                     cmd_addr  <= row_base + {blank_col, 1'b0};
-                    cmd_data  <= 24'h0;            // both pixels of the pair -> COLBK
+                    col_blank_q <= 1'b1;           // both pixels of the pair -> COLBK
                     cmd_valid <= 1'b1;
                     if (cmd_valid && cmd_ready) begin
                         if (blank_col == BLANK_PAIRS[8:0] - 9'd1) begin
