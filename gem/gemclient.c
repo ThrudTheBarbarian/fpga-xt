@@ -22,6 +22,25 @@
 #include "gemclient.h"
 #include "usys.h"
 
+/* xg_now_ms — milliseconds since an arbitrary fixed point, for XG's toolkit (the event recorder
+ * stamps captures with it; animation and double-click timing want the same clock).  Only
+ * DIFFERENCES are meaningful.  Same split the rest of the host build uses: over the POSIX shim the
+ * raw XTOS trap is not available to a CLIENT — libSystem's own __syscall resolves first and traps
+ * SIGSYS on an XTOS call number — so ask POSIX there and keep the trap for the board. */
+#ifdef GEM_HOST
+#include <sys/time.h>
+int xg_now_ms(void) {
+    struct timeval tv; gettimeofday(&tv, 0);
+    return (int)((long long)tv.tv_sec * 1000ll + tv.tv_usec / 1000);
+}
+#else
+int xg_now_ms(void) {
+    unsigned tv[4] = {0,0,0,0};                 /* four words: see gemd_us — a 16-byte writer */
+    __syscall(SYS_gettimeofday, (long)tv, 0, 0);
+    return (int)((long long)tv[0] * 1000ll + tv[2] / 1000);
+}
+#endif
+
 /* xg_listdir — a portable directory listing for XG's toolkit file panel (GEM has no OS file
  * selector).  Writes one "t\tsize\tname\n" line per entry into buf (t = 'd' for a directory, 'f' for
  * a file; size is bytes, 0 for directories), dot-entries skipped.  Returns the entry count, or -1 if
