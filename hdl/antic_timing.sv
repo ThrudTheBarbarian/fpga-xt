@@ -359,9 +359,50 @@ module antic_timing #(
             wsync_latch_n <= 1'b1; rdy_n_q <= 1'b1;
         end else begin
             // ---------- register snoop (every clk, zero latency) ----------
+            // SALLYRST cold-boot.  This MUST clear the whole display-list
+            // machine and the interrupt/WSYNC state, not just DMACTL/NMIEN.
+            // Clearing only those two left a cold-booted program inheriting the
+            // PREVIOUS program's DL machine — mid-list dl_pc, a part-way
+            // row_ctr, possibly parked in JVB, sometimes with wsync_armed set or
+            // an NMI still armed.  That is a real cross-test state leak and the
+            // mechanism behind the run-order-dependent ACID800 results
+            // (antic_vscroldli / antic_dlistwrap measured 1 pass in 7 on ONE
+            // bitstream; see docs/a800/HANDOFF.md 1m).
+            // hcount/line deliberately KEEP RUNNING: a cold reset does not stop
+            // the beam on real hardware, and xexload relies on that.
             if (cold) begin
-                dmactl_q <= 8'h00;
-                nmien_q  <= 8'h00;
+                dmactl_q  <= 8'h00;
+                nmien_q   <= 8'h00;
+                vscrol_q  <= 8'h00;
+                hscrol_q  <= 8'h00;
+                dlistl_q  <= 8'h00;
+                dlisth_q  <= 8'h00;
+                dlist_dirty <= 1'b0;
+                dl_pc     <= 16'h0000;
+                dl_ctl    <= 8'h00;
+                dl_ctl_prev <= 8'h00;
+                row_ctr   <= 4'd0;
+                row_height_m1 <= 4'd0;
+                dl_active <= 1'b0;
+                need_inst <= 1'b0;
+                need_addr <= 1'b0;
+                is_jvb    <= 1'b0;
+                inst_q    <= 8'h00;
+                addr_lo_q <= 8'h00;
+                wsync_armed   <= 1'b0;
+                wsync_latch_n <= 1'b1;
+                rdy_n_q       <= 1'b1;
+                nmist_hi      <= 2'b00;
+                nmist_hold_q  <= 2'b00;
+                nmi_arm_q     <= 1'b0;
+                nmi_arm_vbi_q <= 1'b0;
+                nmi_en_early  <= 1'b0;
+                nmi_en_late   <= 1'b0;
+                nmi_ext       <= 1'b0;
+                nmi_n         <= 1'b1;
+                vs_prev       <= 1'b0;
+                vs_latch6     <= 4'd0;
+                vs_latch109   <= 4'd0;
             end
             if (reg_we) begin
                 case (reg_addr)
