@@ -233,6 +233,50 @@ Described as "loader-level virtualization" — it solves the oldest ugly problem
 C libraries (static global state defeating multiple instances) without forking the
 upstream code.
 
+> **Assessment.** Feasible, but with a caveat that inverts the difficulty: the
+> technique works for the case you don't need it for, and fails for the case you do.
+>
+> It comes down to how the variable is reached. **Exported globals** in PIC go
+> through the GOT, which the dynamic linker fills at load time — redirecting those
+> is just interposition, and the hook already exists. **`static` file-scope
+> variables** are the problem: the compiler knows they cannot be preempted, so on
+> ARM it reaches them PC-relative or via a literal pool, *not* through the GOT.
+> There is no indirection to patch. Redirecting them means locating every access
+> site and rewriting instructions — and since PC-relative accesses frequently leave
+> no relocation behind, that means disassembling to find them. Fragile. And
+> "library statics" are, definitionally, mostly this second kind.
+>
+> **The better mechanism, given we own the loader: private instances.** This is
+> glibc's `dlmopen(LM_ID_NEWLM)` — load a second, independent copy of the .so into
+> its own link-map namespace, with its own data segment and relocations. Strictly
+> more general than wrap-and-redirect:
+>
+> - handles `static`, exported globals and any other hidden state uniformly
+> - zero per-library work — no bespoke wrapper per dependency
+> - cheap: only data/BSS duplicates. Text is read-only PIC, so the same physical
+>   pages map into both virtual ranges, exactly as two processes share libc text
+>   today. The PC-relative text→data distance is identical in both mappings.
+>
+> A bounded addition to a linker we already wrote, and it pays off for freetype,
+> libtomcrypt and anything else carrying hidden state.
+>
+> **Measure before building either.** `nm --defined-only` over the built
+> libdom/libcss/hubbub objects, filtered for `b`/`B`/`d`/`D`, answers this in about
+> a minute. Five symbols means hand-wrap and move on; two hundred means build the
+> namespace loader.
+>
+> **And neither may be needed.** NetSurf is multi-window by design, so its
+> libraries mostly thread context through explicit structs rather than globals —
+> that is why `browser_window` is a parameter everywhere. The static problem may be
+> far smaller than it looks.
+>
+> Failing that, there is a zero-engineering escape hatch that turn 17 already sets
+> up: **process per window.** gemd does not care whether thirty windows come from
+> one process or thirty, the .so text is shared across them regardless, and windows
+> are genuinely independent so there is no IPC to pay for. It is also what every
+> real browser does, for isolation. If libdom turns out to be static-riddled, that
+> is the answer and it costs nothing.
+
 Also here: the **flashing damage-rect debug overlay** idea was accepted. Render
 dirty regions in neon green on the *host* (macOS/Linux via xg) and layout
 inefficiencies become visible instantly — if a typing cursor flashes a 400×400 box,
