@@ -103,6 +103,11 @@ because `document` is undefined. Two paths:
 
 ### 6. "I want arbitrary HTML, so libdom. Networking does TLS."
 
+> **Correction — the TLS claim is not true.** Verified against the tree afterwards:
+> there is no TLS anywhere. See "Secure networking: the premise doesn't hold" below.
+> Everything the assistant says from here on about fetching live pages over HTTPS
+> rests on a capability that does not exist yet.
+
 This is the pivot point. NetSurf's component breakdown:
 
 | Library | Role |
@@ -338,7 +343,8 @@ Language      xtc — ARC, classes, Foundation, autoboxing, try/catch/defer,
               bound functions, DWARF #import of foreign .so, self-hosting on A9
 Concurrency   Operation / OperationQueue, generic Params dictionary payloads,
               MainQueue (high) + BackgroundQueue (low), shared process heap
-OS            FreeRTOS + VM, dynamic linking, VFS, BSD sockets w/ TLS, signals
+OS            FreeRTOS + VM, dynamic linking, VFS, BSD sockets (plaintext only —
+              no TLS yet), signals
 Graphics      gemd retained compositor, per-window virtual workstations, RGBA32
               only, 64MB system-wide LRU glyph cache, 1024-deep ~800MB/s blitter
               with alpha, affine transforms and bilinear filtering
@@ -459,6 +465,67 @@ off-thread:
   enough that the hand-off costs more than it saves
 
 That is a useful amount of Core 1 without a single lock on the DOM.
+
+---
+
+## Secure networking: the premise doesn't hold
+
+Turn 6 asserts "the networking handles secure sockets (i ssh into the board)", and
+every later turn about fetching live pages builds on it. Verified against the tree,
+it is wrong: **SSH is not TLS.** They are different protocols that share primitives.
+
+What actually exists:
+
+- **Dropbear** at `third_party/dropbear`, built to `dropbear.so` — a complete SSH
+  implementation with its own key exchange, handshake and record format.
+- Crypto from `libtomcrypt.a` + `libtommath.a`, built by
+  `loader/tools/build-dropbear.sh`, which notes *"linker pulls only referenced
+  members"*. So the binary contains exactly what SSH needed — AES, SHA, RSA, ECC,
+  curve25519, chacha20-poly1305 — and nothing more. It is not a general crypto
+  facility.
+- **No TLS library.** No mbedtls, wolfSSL, BearSSL or OpenSSL vendored. The only
+  mbedtls references are lwIP's optional `altcp_tls` shim, which requires mbedtls
+  to be supplied; `LWIP_ALTCP` / `LWIP_ALTCP_TLS` appear nowhere in the config, so
+  the shim is dead code.
+- **No X.509, no trust store, no hostname verification.** SSH does not need them —
+  it uses trust-on-first-use with host key fingerprints. TLS cannot work without.
+- **No HTTP client.** Only `loader/test/freertos/progs/httpd.c`, a server.
+- The socket ABI (`loader/kernel/xtsys.h:261`, block `0x320`) has no secure-socket
+  concept: `SYS_socket(type: 1=TCP, 2=UDP)`, `SYS_connect(fd, ip_be32, port)`.
+
+### Is this Foundation-First material?
+
+Partly, but less so than threading. TLS does not belong in the kernel — mbedtls and
+peers normally sit in userspace over read/write callbacks, so it can be a library
+over existing socket fds without touching the frozen ABI. That makes it genuinely
+deferrable in a way ARC atomicity is not.
+
+Three things *are* foundation-shaped:
+
+1. **The hostname problem — the sharp one.** `SYS_connect` takes a raw `be32` IP.
+   TLS needs the *hostname* for SNI and for certificate verification. If the
+   Foundation networking API resolves DNS early and passes only an address
+   downward, the name needed for verification is gone, and no library work recovers
+   it. Cheap to avoid now, expensive later.
+2. **Where the trust store lives.** A root-CA bundle needs a path convention, and
+   that is a namespace decision (`/System` romfs versus `/OS` on SD).
+3. **Scheme dispatch.** If anything like `URLSession` is coming, the `http:` /
+   `https:` split wants designing once rather than bolting on.
+
+### What is already solved
+
+The two classic embedded-TLS blockers are both handled:
+
+- **Entropy** — hardware TRNG (`hdl/xt_trng.sv`), wired through GP0, exposed via
+  devfs, with `sys/random.h` in libc-compat.
+- **Wall clock** — `SYS_gettimeofday` / `SYS_settime` plus kernel SNTP on an hourly
+  re-sync, started by `SYS_net_up`. Certificate validity windows need a real clock;
+  boards without one usually end up disabling verification. This one will not have
+  to.
+
+So the expensive prerequisites exist. What is missing is a TLS stack and a CA
+bundle — and note that browsing the modern web without HTTPS is not a partial
+capability, it is close to no capability at all.
 
 ---
 
