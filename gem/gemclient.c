@@ -41,6 +41,43 @@ int xg_now_ms(void) {
 }
 #endif
 
+/* xg_now_utc — the wall clock for XG's XGDate.currentDate, as UTC civil components:
+ *     out7 = { year, month(1..12), day, hour, minute, second, microsecond }
+ * Components rather than an epoch count because that is what the toolkit wants and epoch
+ * milliseconds do not fit its 32-bit int.  The civil conversion is done HERE, in integer arithmetic
+ * (Hinnant's civil_from_days), so the target does not need a gmtime: the board's libc is not the
+ * host's, and this file is compiled into libGEM for both. */
+static void xg_civil_from_days(int z, int *y, int *m, int *d) {
+    z += 719468;
+    int era = (z >= 0 ? z : z - 146096) / 146097;
+    int doe = z - era * 146097;
+    int yoe = (doe - doe/1460 + doe/36524 - doe/146096) / 365;
+    int yy  = yoe + era * 400;
+    int doy = doe - (365*yoe + yoe/4 - yoe/100);
+    int mp  = (5*doy + 2) / 153;
+    int dd  = doy - (153*mp + 2)/5 + 1;
+    int mm  = mp + (mp < 10 ? 3 : -9);
+    if (mm <= 2) yy++;
+    *y = yy; *m = mm; *d = dd;
+}
+void xg_now_utc(int *out7) {
+    long secs = 0, usecs = 0;
+#ifdef GEM_HOST
+    { struct timeval tv; gettimeofday(&tv, 0); secs = (long)tv.tv_sec; usecs = (long)tv.tv_usec; }
+#else
+    { unsigned tv[4] = {0,0,0,0};
+      __syscall(SYS_gettimeofday, (long)tv, 0, 0);
+      secs = (long)tv[0]; usecs = (long)tv[2]; }
+#endif
+    long days = secs / 86400, rem = secs % 86400;
+    if (rem < 0) { rem += 86400; days--; }                 /* floor, so pre-1970 lands right */
+    int y = 1970, m = 1, d = 1;
+    xg_civil_from_days((int)days, &y, &m, &d);
+    out7[0] = y; out7[1] = m; out7[2] = d;
+    out7[3] = (int)(rem / 3600); out7[4] = (int)((rem % 3600) / 60); out7[5] = (int)(rem % 60);
+    out7[6] = (int)usecs;
+}
+
 /* xg_listdir — a portable directory listing for XG's toolkit file panel (GEM has no OS file
  * selector).  Writes one "t\tsize\tname\n" line per entry into buf (t = 'd' for a directory, 'f' for
  * a file; size is bytes, 0 for directories), dot-entries skipped.  Returns the entry count, or -1 if
