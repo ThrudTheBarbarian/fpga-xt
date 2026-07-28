@@ -663,13 +663,15 @@ typedef struct { const menu_item *items; int n; popup_geom g; int hov, subrow, o
  * rounded corners blend to whatever is behind.  The content callback draws the SAME rows through the
  * same helper, with the geometry rebased to the window's own 0,0. */
 static void pop_panel_draw_cb(int hd,int x,int y,int w,int h,void *ud){
-    (void)hd;(void)x;(void)y;
+    (void)hd;
     popup_panel *p=(popup_panel*)ud;
     if(!p || !p->items) return;
     { gfx_surface *ts=vdi_screen_target();          // clear to transparent so the corners the themed
-      if(ts){ for(int yy=0;yy<h && yy<ts->h;yy++){  // slice does not cover stay alpha-0 (gemd blends
-          uint32_t *r=ts->px+(size_t)yy*ts->stride; // them to the desktop rather than to stale pixels)
-          for(int xx=0;xx<w && xx<ts->w;xx++) r[xx]=0; } } }
+      if(ts){ for(int yy=y; yy<y+h && yy<ts->h; yy++){   // slice does not cover stay alpha-0 (gemd
+          if(yy<0) continue;                            // blends them to the desktop, not to stale
+          uint32_t *r=ts->px+(size_t)yy*ts->stride;     // pixels).  THE GIVEN RECT, not the whole
+          for(int xx=x; xx<x+w && xx<ts->w; xx++)       // panel: a hover repaint asks for two rows,
+              if(xx>=0) r[xx]=0; } } }                  // and clearing row 0 instead would eat them
     popup_pens();
     popup_geom local=p->g; local.x=0; local.y=0;    // same box, drawn at the window's origin
     draw_popup(p->items,&local,p->hov);
@@ -697,6 +699,28 @@ static void panel_close(popup_panel *p){
     if(is_client()){ if(p->wh){ wind_close(p->wh); wind_delete(p->wh); p->wh=0; } return; }
 #endif
     psav_pop();
+}
+#ifdef GEM_XTOS
+// Panel-local top of row `i` (mi_row_top is in the panel's screen space).
+static int panel_row_top(const popup_panel *p, int i){ return mi_row_top(p->items,&p->g,i) - p->g.y; }
+#endif
+// Hover moved between two rows: repaint just those, not the panel.  Sliding down an eight-row menu
+// was eight FULL-panel repaints (~17kpx each) for a highlight that moves 22 pixels at a time.
+static void panel_redraw_rows(popup_panel *p, int a, int b){
+    (void)a; (void)b;                       // server mode redraws the panel whole (it draws direct)
+#ifdef GEM_XTOS
+    if(is_client() && p->wh){
+        int rows[2]={a,b};
+        for(int k=0;k<2;k++){
+            int i=rows[k];
+            if(i<0 || i>=p->n) continue;
+            if(k==1 && a==b) continue;
+            wind_redraw_rect(p->wh, 0, panel_row_top(p,i), p->g.w, mi_row_h(p->items,i));
+        }
+        return;
+    }
+#endif
+    draw_popup(p->items,&p->g,p->hov);
 }
 static void panel_redraw(popup_panel *p){
 #ifdef GEM_XTOS
@@ -794,7 +818,7 @@ static int menu_popup_run(const menu_item *items, int n, int x, int y,
             if(scan==XK_DOWN || scan==XK_UP){
                 int dir = scan==XK_DOWN ? 1 : -1;
                 int nx=menu_popup_nav(top->items,top->n,top->hov,dir);
-                if(nx!=top->hov){ top->hov=nx; panel_redraw(top); }
+                if(nx!=top->hov){ int was=top->hov; top->hov=nx; panel_redraw_rows(top,was,nx); }
                 continue;
             }
             if(scan==XK_RIGHT){                                        // always cascade (explicit)
@@ -832,11 +856,11 @@ static int menu_popup_run(const menu_item *items, int n, int x, int y,
             popup_panel *p=&st[pi];
             int row=menu_popup_hit(&p->g,p->items,ev.mx,ev.my);
             if(depth>pi+1 && row==p->subrow){                          // still over the open cascade's row
-                if(p->hov!=row){ p->hov=row; panel_redraw(p); }
+                if(p->hov!=row){ int was=p->hov; p->hov=row; panel_redraw_rows(p,was,row); }
                 continue;                                              // keep it open (no flicker)
             }
             close_above(st,&depth,pi);                                 // a different row: drop cascades
-            if(row!=p->hov){ p->hov=row; panel_redraw(p); }
+            if(row!=p->hov){ int was=p->hov; p->hov=row; panel_redraw_rows(p,was,row); }
             if(row>=0 && mi_has_sub(&p->items[row]))                   // hover a sub item -> cascade
                 open_cascade(st,&depth,pi,row);
             continue;

@@ -24,6 +24,9 @@
  *     the desktop side by side, and an app is launched from a shell. EOF fires for everyone.
  */
 #include <stdio.h>
+#ifdef GEM_HOST
+#include <sys/time.h>      /* hostgem: POSIX clock, see gemd_us */
+#endif
 #include <stdlib.h>
 #include <string.h>
 #include <stdarg.h>
@@ -73,9 +76,17 @@ static int         g_blitfd = -1;    /* /dev/blitter: the present is the ENGINE'
 /* µs clock — NOT profiler-only: the §9 liveness clock (last_recv) runs on it. */
 static long long gemd_us(void)
 {
+#ifdef GEM_HOST
+    /* hostgem: the shim answers this trap by calling macOS gettimeofday, whose struct timeval is
+     * 16 bytes — four more than the XTOS layout below.  Ask POSIX directly rather than hand a
+     * 12-byte buffer to a 16-byte writer. */
+    struct timeval htv; gettimeofday(&htv, 0);
+    return (long long)htv.tv_sec * 1000000ll + htv.tv_usec;
+#else
     unsigned tv[3];
     __syscall(SYS_gettimeofday, (long)tv, 0, 0);
     return (long long)tv[0] * 1000000ll + tv[2];
+#endif
 }
 #ifdef INSTRUMENTATION
 /* Drag-lag profiler: where does a resize-drag millisecond actually go? Accumulates
