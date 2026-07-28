@@ -25,6 +25,7 @@ module tb_pm_collide;
     logic [7:0] cyc;
     logic [7:0] hposp0;
     logic       hitclr;
+    logic       active_line;
     logic       border_mode;    // 1 = stack all 8 objects at border_hpos
     logic [7:0] border_hpos;
 
@@ -48,6 +49,7 @@ module tb_pm_collide;
         .grafp2(border_mode ? 8'h80 : 8'hFF),
         .grafp3(border_mode ? 8'h80 : 8'h00),
         .grafm (border_mode ? 8'hAA : 8'h00),
+        .active_line(active_line),
         .hitclr(hitclr),
         .mpl_q(mpl_q), .ppl_q(ppl_q)
     );
@@ -97,7 +99,7 @@ module tb_pm_collide;
     endtask
 
     initial begin
-        border_mode = 0; border_hpos = 8'h22;
+        border_mode = 0; border_hpos = 8'h22; active_line = 1'b1;
         phi2_tick = 0; cyc = 0; hitclr = 0; hposp0 = 8'd60;
         repeat (4) @(posedge clk);
         rst = 0;
@@ -175,6 +177,21 @@ module tb_pm_collide;
         // exact boundary, which is why they are worth keeping.
         border_test(8'h22, 16'hFFFF, 16'h7BDE, "T7 border $22");
         border_test(8'h21, 16'h0000, 16'h0000, "T8 border $21 HBLANK");
+
+        // ---- T9: VBLANK must not collide at all ---------------------------
+        // ACID800 gtia_collision asserts this explicitly ("P/M collisions were
+        // detected in VBLANK"), and horizontal windowing alone does not give
+        // it: the beam sweeps the same x range on every line of the frame.
+        clear_latches();
+        active_line = 1'b0;
+        hposp0 = 8'd60;
+        sweep_line(255, 8'd0);
+        active_line = 1'b1;
+        if (ppl_q !== 16'h0 || mpl_q !== 16'h0) begin
+            $display("FAIL T9 VBLANK: ppl=%04h mpl=%04h expected 0000/0000",
+                     ppl_q, mpl_q);
+            fail++;
+        end
 
         if (fail == 0) $display("tb_pm_collide: all checks PASS");
         else           $display("tb_pm_collide: %0d FAIL", fail);

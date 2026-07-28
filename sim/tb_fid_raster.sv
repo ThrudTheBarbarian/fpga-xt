@@ -836,6 +836,60 @@ module tb_fid_raster;
                         8'hEA,8'hEA,8'hEA,8'hEA,8'hEA,8'hEA, // NOP sled $2030-2035
                         8'h4C,8'h14,8'h20 };               // JMP w0 ($2036)
                     for (int k = 0; k < 57; k++) u_sally_mem.mem[16'h2000+k] = progb[k];
+                    if (psel == 11) begin
+                        // BEAM-TIME COLLISION probe.  Replicates ACID800
+                        // gtia_pmretrigger: park p1 at hpos 60 (x 24..39,
+                        // cycles ~30-33) and p2 at hpos 100 (x 104..119,
+                        // cycles ~50-53), start p0 on p1, then MOVE p0 onto p2
+                        // partway along the line.  Reads P0PL into $0602, which
+                        // the chain printer shows as m602.  Expect $06 (hit
+                        // BOTH); $02 or $04 means only one position registered;
+                        // $00 means the read path never reaches the engine.
+                        int a; a = 16'h2023;
+                        // --- setup on this line
+                        u_sally_mem.mem[a+0]=8'hA9; u_sally_mem.mem[a+1]=8'hFF;
+                        u_sally_mem.mem[a+2]=8'h8D; u_sally_mem.mem[a+3]=8'h0D;
+                        u_sally_mem.mem[a+4]=8'hD0;              // GRAFP0=$FF
+                        u_sally_mem.mem[a+5]=8'h8D; u_sally_mem.mem[a+6]=8'h0E;
+                        u_sally_mem.mem[a+7]=8'hD0;              // GRAFP1=$FF
+                        u_sally_mem.mem[a+8]=8'h8D; u_sally_mem.mem[a+9]=8'h0F;
+                        u_sally_mem.mem[a+10]=8'hD0;             // GRAFP2=$FF
+                        u_sally_mem.mem[a+11]=8'hA9; u_sally_mem.mem[a+12]=8'h3C;
+                        u_sally_mem.mem[a+13]=8'h8D; u_sally_mem.mem[a+14]=8'h01;
+                        u_sally_mem.mem[a+15]=8'hD0;             // HPOSP1=60
+                        u_sally_mem.mem[a+16]=8'hA9; u_sally_mem.mem[a+17]=8'h64;
+                        u_sally_mem.mem[a+18]=8'h8D; u_sally_mem.mem[a+19]=8'h02;
+                        u_sally_mem.mem[a+20]=8'hD0;             // HPOSP2=100
+                        u_sally_mem.mem[a+21]=8'hA9; u_sally_mem.mem[a+22]=8'h00;
+                        u_sally_mem.mem[a+23]=8'h8D; u_sally_mem.mem[a+24]=8'h08;
+                        u_sally_mem.mem[a+25]=8'hD0;             // SIZEP0=0
+                        u_sally_mem.mem[a+26]=8'h8D; u_sally_mem.mem[a+27]=8'h09;
+                        u_sally_mem.mem[a+28]=8'hD0;             // SIZEP1=0
+                        u_sally_mem.mem[a+29]=8'h8D; u_sally_mem.mem[a+30]=8'h0A;
+                        u_sally_mem.mem[a+31]=8'hD0;             // SIZEP2=0
+                        u_sally_mem.mem[a+32]=8'h8D; u_sally_mem.mem[a+33]=8'h1E;
+                        u_sally_mem.mem[a+34]=8'hD0;             // HITCLR
+                        u_sally_mem.mem[a+35]=8'hA9; u_sally_mem.mem[a+36]=8'h3C;
+                        u_sally_mem.mem[a+37]=8'h8D; u_sally_mem.mem[a+38]=8'h00;
+                        u_sally_mem.mem[a+39]=8'hD0;             // HPOSP0=60
+                        u_sally_mem.mem[a+40]=8'h8D; u_sally_mem.mem[a+41]=8'h0A;
+                        u_sally_mem.mem[a+42]=8'hD4;             // WSYNC
+                        a = a + 43;
+                        // --- next line: let the beam pass p1, then move onto p2
+                        for (int k=0;k<22;k++) u_sally_mem.mem[a+k]=8'hEA;
+                        a = a + 22;
+                        u_sally_mem.mem[a+0]=8'hA9; u_sally_mem.mem[a+1]=8'h64;
+                        u_sally_mem.mem[a+2]=8'h8D; u_sally_mem.mem[a+3]=8'h00;
+                        u_sally_mem.mem[a+4]=8'hD0;              // HPOSP0=100
+                        u_sally_mem.mem[a+5]=8'h8D; u_sally_mem.mem[a+6]=8'h0A;
+                        u_sally_mem.mem[a+7]=8'hD4;              // WSYNC
+                        u_sally_mem.mem[a+8]=8'hAD; u_sally_mem.mem[a+9]=8'h0C;
+                        u_sally_mem.mem[a+10]=8'hD0;             // LDA P0PL
+                        u_sally_mem.mem[a+11]=8'h8D; u_sally_mem.mem[a+12]=8'h02;
+                        u_sally_mem.mem[a+13]=8'h06;             // STA $0602
+                        u_sally_mem.mem[a+14]=8'h4C; u_sally_mem.mem[a+15]=8'h14;
+                        u_sally_mem.mem[a+16]=8'h20;             // JMP w0
+                    end
                     if (psel == 10) begin
                         // P/M INSTRUMENT (0y): the first co-sim program that
                         // writes GTIA at all.  Sync to vcount 19, WSYNC to end
@@ -1135,7 +1189,8 @@ module tb_fid_raster;
     // prog=8 has no run marker — it spins deliberately so the steal
     // accounting can observe many playfield lines; let the cycle budget
     // end it rather than a PC match (the spin would trip one instantly).
-    wire watch_hit = (wpsel == 9 && fdbg_pc == 16'h2036)
+    wire watch_hit = (wpsel == 11 && fdbg_pc == 16'h2072)
+                  || (wpsel == 9 && fdbg_pc == 16'h2036)
                   || (wpsel == 7 && fdbg_pc == 16'h2045)
                   || (wpsel == 0 && fdbg_pc == 16'h203E)
                   || (wpsel >= 1 && wpsel <= 3 && fdbg_pc == 16'h2036)

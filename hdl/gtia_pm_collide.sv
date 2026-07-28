@@ -56,6 +56,12 @@ module gtia_pm_collide (
     input  wire [7:0]  grafp0, grafp1, grafp2, grafp3,
     input  wire [7:0]  grafm,
 
+    // 1 while the beam is on an ACTIVE display line.  GTIA does not compare
+    // during vertical blank, so without this the latches accumulate all the way
+    // down the frame and ACID800 gtia_collision reports "P/M collisions were
+    // detected in VBLANK".  Horizontal windowing alone is not enough.
+    input  wire        active_line,
+
     input  wire        hitclr,       // 1-clk strobe: clear all latches
 
     output logic [15:0] mpl_q,       // {M3PL,M2PL,M1PL,M0PL}, 4 bits each
@@ -75,8 +81,8 @@ module gtia_pm_collide (
     // pins both halves of that edge.
     localparam signed [11:0] X_LO = -12'sd28;
     localparam signed [11:0] X_HI =  12'sd346;
-    wire in_a = (x_base            >= X_LO) && (x_base            <= X_HI);
-    wire in_b = ((x_base + 12'sd2) >= X_LO) && ((x_base + 12'sd2) <= X_HI);
+    wire in_a = active_line && (x_base          >= X_LO) && (x_base            <= X_HI);
+    wire in_b = active_line && ((x_base + 12'sd2) >= X_LO) && ((x_base + 12'sd2) <= X_HI);
 
     // ---- coverage helpers (semantics identical to compositor.sv) ---------
     function automatic logic player_covers(input logic signed [11:0] ax,

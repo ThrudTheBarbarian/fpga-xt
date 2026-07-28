@@ -187,6 +187,47 @@ entirely and key off the instruction boundary (the ~21 `state <=
 ST_FETCH` sites) as 0f originally specified.
 Do not re-try a plain rdy gate.
 
+### 1g. THE FAILURE TEXTS — and what they actually mean
+tools/acid-shots.sh + bmp2text decoded the result screens on build 80.
+This is the first real diagnosis of the P/M cluster:
+    gtia_pmretrigger : "Player did not retrigger properly."
+    gtia_pmresize    : "4x-to-1x failed at index 0: expected $80, got $E0"
+    gtia_collision   : "P/M collisions were detected in VBLANK."
+Three separate causes, NOT one:
+1. gtia_collision was MY BUG, introduced with the beam-time engine: it
+   gated the HORIZONTAL window but accumulated on every line of the
+   frame, vertical blank included.  Horizontal windowing alone cannot
+   give this — the beam sweeps the same x range on every line.  Fixed
+   with an active_line input (ar_atari_row != $FF) and pinned by
+   tb_pm_collide T9.
+2. gtia_pmresize is a RENDER-MODEL defect, not a sampling one.  We pick
+   SIZEP per pixel and recompute bit_sel from dx with the NEW size,
+   which RE-INDEXES the whole shape.  Real GTIA clocks a shift register
+   whose ADVANCE RATE changes; already-emitted pixels stand and the
+   register continues from where it was.  Hence 4x->1x gives us $E0
+   (3 px) where hardware gives $80 (1 px).  Fixing this properly means
+   beam-time PLAYER RENDERING with an actual shift register — the same
+   as-you-go move made for collision, applied to the pixel path.  A
+   positional formula cannot express it.
+3. gtia_pmretrigger still fails its FIRST assertion, even though the
+   mechanism is verified end-to-end (below).  So the remaining gap is
+   the test's exact geometry/cycle, not the architecture.
+
+### 1h. Beam-time collision VERIFIED end-to-end (co-sim prog=11)
+tb_fid_raster prog=11 replicates the retrigger through the FULL path —
+fid core -> antic_top -> gtia_pm_collide -> CPU register read — parking
+p1 at hpos 60 and p2 at hpos 100, starting p0 on p1 and moving it onto
+p2 mid-line, then reading P0PL into $0602:
+    run 1/2/3: m602=$06
+$06 = collided with BOTH, exactly what ACID asserts.  So the engine and
+its read path are correct; a burst could never produce this.
+NOTE ON REGRESSION COVERAGE: line_end_pulse_bus was declared AFTER its
+use.  Vivado accepted the forward reference and built three bitstreams;
+iverilog rejected it outright.  Neither tb_antic_modes nor tb_antic_seq
+caught it because both instantiate their DUT directly and never
+elaborate antic_top.  The full-stack sim (tb_fid_raster) is the only
+thing that compiles antic_top — run it before trusting a green suite.
+
 ### 1f. BEAM-TIME COLLISION — the as-you-go path (hdl/gtia_pm_collide.sv)
 The burst cannot model mid-line collision reads at all: the line's whole
 contribution is either absent or present, so chasing gtia_pmretrigger by

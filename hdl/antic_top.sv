@@ -501,6 +501,17 @@ module antic_top #(
     wire        vbi_start_pulse_bus  = ar_vbi_start;
     wire        line_start_pulse_bus = ar_line_start;
 
+    // Compose at cycle 96, NOT at the very end of the line.  ACID800
+    // gtia_pmretrigger writes HPOSP0 at cycle 60, does `inc wsync` (halting to
+    // RELEASE_CYCLE 104) and then reads p0pl at ~105-108 — the collision result
+    // for the line it just drew.  Composing at 110 would land AFTER that read,
+    // so the row must be composed inside the window between the write and the
+    // WSYNC release.  96 leaves the compose (a few hundred clk_bus, ~4 phi2)
+    // finished by ~100, comfortably before the read.
+    // It is also the more faithful choice: a register write at 104+ is in
+    // horizontal blank and SHOULD affect the next line, not this one.
+    wire line_end_pulse_bus = phi2_tick && (ar_phi2_in_line == 8'd96);
+
     // fmax: register unlock_antic at the boundary so the quasi-static unlock bit
     // arrives inside antic_top as a clean local FF — it must NOT sit on a long
     // cross-die combinational route into the timing-critical compositor/GTIA
@@ -1678,16 +1689,7 @@ module antic_top #(
     wire [47:0] hposp_chg_x_flat_w = {hposp_chg_x_q[3], hposp_chg_x_q[2],
                                       hposp_chg_x_q[1], hposp_chg_x_q[0]};
 
-    // Compose at cycle 96, NOT at the very end of the line.  ACID800
-    // gtia_pmretrigger writes HPOSP0 at cycle 60, does `inc wsync` (halting to
-    // RELEASE_CYCLE 104) and then reads p0pl at ~105-108 — the collision result
-    // for the line it just drew.  Composing at 110 would land AFTER that read,
-    // so the row must be composed inside the window between the write and the
-    // WSYNC release.  96 leaves the compose (a few hundred clk_bus, ~4 phi2)
-    // finished by ~100, comfortably before the read.
-    // It is also the more faithful choice: a register write at 104+ is in
-    // horizontal blank and SHOULD affect the next line, not this one.
-    wire line_end_pulse_bus = phi2_tick && (ar_phi2_in_line == 8'd96);
+
 
     // ---- compose-time register snapshot ---------------------------------
     // The row is now composed at the END of the line (antic_seq.line_end) so
@@ -1758,6 +1760,7 @@ module antic_top #(
     gtia_pm_collide u_pm_collide (
         .clk(clk_bus), .rst(rst_bus),
         .phi2_tick(phi2_tick), .cyc(ar_phi2_in_line),
+        .active_line(ar_atari_row != 8'hFF),
         .hposp0(hposp_q[0]), .hposp1(hposp_q[1]),
         .hposp2(hposp_q[2]), .hposp3(hposp_q[3]),
         .hposm0(hposm_q[0]), .hposm1(hposm_q[1]),
