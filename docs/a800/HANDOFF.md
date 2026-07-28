@@ -187,6 +187,32 @@ entirely and key off the instruction boundary (the ~21 `state <=
 ST_FETCH` sites) as 0f originally specified.
 Do not re-try a plain rdy gate.
 
+### 1m. antic_vscroldli / antic_dlistwrap ARE FLAKY — there was no regression
+Claimed in 1l that builds 81-83 regressed these two.  WRONG.  Measured
+properly on BUILD 80 — the bitstream they supposedly passed on:
+    single run (reg.sh, fresh load) : vscroldli PASS, dlistwrap PASS
+    3 repeats (same session)        : both FAIL, 3/3
+    3 repeats (after a FRESH JTAG reset+load): both FAIL, 3/3
+That is 1 pass in 7 samples on ONE bitstream with the load state
+controlled.  These tests are NON-DETERMINISTIC; the "regression" was a
+lucky sample on build 80 compared against an unlucky one on build 83.
+This is the SAME class of problem already known for gtia_collision
+("passes in chunked sweeps, fails in isolation").  At least THREE tests
+in the suite are non-deterministic, and the dashboard records a single
+sample per test per run as if it were truth.
+CONSEQUENCE — this is the important part: with flaky tests recorded as
+point samples, the score cannot distinguish a real change from noise in
+either direction.  Every "gained N / lost N" claim in this document
+that rests on one sample per bitstream is suspect, including the
++1 GTIA / -2 ANTIC trade asserted in 1l.
+WHAT TO DO: before any further pass/fail claims, characterise the flaky
+set (repeat each test N times and record a RATE, not a verdict), and
+find why a cold-booted test inherits state.  One concrete suspect
+already visible in the RTL: gtia_pm_collide's mpl_q/ppl_q are cleared
+only by hitclr or rst — NOT by the `cold` strobe — so a cold-booted
+test starts with the previous test's collision latches.  That is a real
+bug regardless of whether it explains these two.
+
 ### 1l. BUILD 83 RESULT — one real fix, but the board went unmeasurable
 Build 83 PASSES the gate (clk_sys +0.003, clk_sally +0.183, clk_pix
 +0.373).  NOTE clk_sys is essentially UNCHANGED from build 80's +0.004
