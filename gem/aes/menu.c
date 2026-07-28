@@ -10,6 +10,8 @@
 #include <ctype.h>
 
 gfx_surface *vdi_screen_target(void);   // the physical workstation surface (VDI core)
+extern font_face *g_default_face;       // vdi/core.c — measured against in the panel layouts below
+extern font_face *g_default_face;       // vdi/core.c — measured against in the panel layouts below
 
 #define BARH   AES_MENUBAR_H   /* one height, shared with gemd's top reserve (aes.h) */
 #define ITEMH  20
@@ -73,7 +75,6 @@ static int bar_is_sep(const char *s);
 // Measure with the DEFAULT FACE at the draw size directly. text_w goes through the current VDI
 // workstation, whose font state under-sizes it here (measures ~half); the dropdown draws with
 // g_default_face at 14, so measure the same way — box, draw and hit-test then agree.
-extern font_face *g_default_face;       // vdi/core.c
 static int dd_text_w(const char *s){
     font *f = g_default_face ? font_at(g_default_face, BARH>=14?14:BARH) : 0;
     return f ? font_text_width(f, s) : text_w(s);
@@ -426,7 +427,11 @@ int menu_handle_click(int mx, int my){
 // theme element + PEN_HILITE as the bar pull-down (draw_items above); this path
 // adds the accel column, separators, disabled greying, and submenu triangles.
 
-#define P_ITEMH  20     // selectable row height
+// The row text is drawn at the SAME size as ordinary UI text (labels, buttons) — a popup that reads
+// smaller than the dialog it belongs to looks like a different widget set.  The row height and the
+// baseline follow from it, so changing P_FONT alone re-proportions the panel.
+#define P_FONT   16     // row text size (the VDI default the toolkit draws labels at)
+#define P_ITEMH  22     // selectable row height: P_FONT + breathing room
 #define P_SEPH   9      // separator row height (a thin divider)
 #define P_PADX   22     // left pad (leaves room for the check tick)
 #define P_RPAD   14     // right pad
@@ -462,14 +467,22 @@ static int mi_mnemonic_idx(const menu_item *items, int n, int row){
 }
 
 // ---- geometry ----------------------------------------------------------
+// Measure with the default face AT THE DRAW SIZE.  text_w() goes through the current workstation,
+// whose font state under-measures here (the same trap dd_text_w documents for the bar dropdown), so
+// the box came out too narrow for its own text.
+static int pop_text_w(const char *s){
+    font *f = g_default_face ? font_at(g_default_face, P_FONT) : 0;
+    return f ? font_text_width(f, s) : text_w(s);
+}
+
 void menu_popup_layout(const menu_item *items, int n, int x, int y, popup_geom *g){
-    vst_height(H(),14,0,0,0,0);
+    vst_height(H(),P_FONT,0,0,0,0);
     int lw=0, aw=0, has_sub=0, h=P_PADY*2;
     for(int i=0;i<n;i++){
         h += mi_row_h(items,i);
         if(mi_is_sep(&items[i])) continue;
-        int w=text_w(items[i].label); if(w>lw) lw=w;
-        if(items[i].accel){ int a=text_w(items[i].accel); if(a>aw) aw=a; }
+        int w=pop_text_w(items[i].label); if(w>lw) lw=w;
+        if(items[i].accel){ int a=pop_text_w(items[i].accel); if(a>aw) aw=a; }
         if(mi_has_sub(&items[i])) has_sub=1;
     }
     int rightw = aw;                                  // accel column width
@@ -545,7 +558,7 @@ static void popup_underline(const char *s, int idx, int tx, int uy, int pen){
 
 static void draw_popup(const menu_item *items, const popup_geom *g, int hov){
     theme_draw(H(),aes_theme(),"menu",g->x,g->y,g->w,g->h);
-    vst_height(H(),14,0,0,0,0);
+    vst_height(H(),P_FONT,0,0,0,0);
     for(int i=0;i<g->n;i++){
         int ty=mi_row_top(items,g,i), rh=mi_row_h(items,i);
         if(mi_is_sep(&items[i])){                                  // thin divider line
@@ -562,7 +575,7 @@ static void draw_popup(const menu_item *items, const popup_geom *g, int hov){
         int apen = lpen;                              // accel matches the label pen: black when
                                                       // enabled (grey would read as disabled),
                                                       // grey only on a genuinely disabled row
-        int cy = ty+rh/2-7;
+        int cy = ty+rh/2-P_FONT/2;              // vertically centred for the row's own font size
         if(items[i].flags & MI_CHECKED){                                  // a drawn check tick
             int cx=g->x+7, cym=ty+rh/2;
             vsl_color(H(), sel?0:1); vsl_width(H(),2);
@@ -573,7 +586,7 @@ static void draw_popup(const menu_item *items, const popup_geom *g, int hov){
         v_gtext(H(), g->x+g->labelx, cy, items[i].label);
         if(!disabled && !sel){                                      // mnemonic underline
             int mi=mi_mnemonic_idx(items,g->n,i);
-            if(mi>=0) popup_underline(items[i].label, mi, g->x+g->labelx, cy+16, lpen);
+            if(mi>=0) popup_underline(items[i].label, mi, g->x+g->labelx, cy+P_FONT+2, lpen);
         }
         if(mi_has_sub(&items[i])){                                  // right-pointing triangle
             int tx=g->x+g->w-P_RPAD-P_TRIW+3, tym=ty+rh/2;
@@ -633,19 +646,55 @@ static void         *g_expandctx;
 // subrow = the row of this panel whose cascade is currently open (-1 = none),
 // so hovering that same row again doesn't flicker the submenu closed/open.
 // owned = this panel's items were malloc'd by the lazy provider (free on close).
-typedef struct { const menu_item *items; int n; popup_geom g; int hov, subrow, owned; } popup_panel;
+typedef struct { const menu_item *items; int n; popup_geom g; int hov, subrow, owned; int wh; } popup_panel;
+
+#ifdef GEM_XTOS
+/* A client cannot save-under and cannot draw on the screen: its drawable is its own surface.  So a
+ * panel is a WINDOW there, exactly as the bar's pull-down is (dd_panel_open, §10) — W_ALPHA so the
+ * rounded corners blend to whatever is behind.  The content callback draws the SAME rows through the
+ * same helper, with the geometry rebased to the window's own 0,0. */
+static void pop_panel_draw_cb(int hd,int x,int y,int w,int h,void *ud){
+    (void)hd;(void)x;(void)y;
+    popup_panel *p=(popup_panel*)ud;
+    if(!p || !p->items) return;
+    { gfx_surface *ts=vdi_screen_target();          // clear to transparent so the corners the themed
+      if(ts){ for(int yy=0;yy<h && yy<ts->h;yy++){  // slice does not cover stay alpha-0 (gemd blends
+          uint32_t *r=ts->px+(size_t)yy*ts->stride; // them to the desktop rather than to stale pixels)
+          for(int xx=0;xx<w && xx<ts->w;xx++) r[xx]=0; } } }
+    popup_pens();
+    popup_geom local=p->g; local.x=0; local.y=0;    // same box, drawn at the window's origin
+    draw_popup(p->items,&local,p->hov);
+    (void)w;
+}
+#endif
 
 static void panel_open(popup_panel *p, const menu_item *items, int n, int x, int y){
-    p->items=items; p->n=n; p->hov=-1; p->subrow=-1; p->owned=0;
+    p->items=items; p->n=n; p->hov=-1; p->subrow=-1; p->owned=0; p->wh=0;
     menu_popup_layout(items,n,x,y,&p->g);
+#ifdef GEM_XTOS
+    if(is_client()){
+        p->wh=wind_create(W_ALPHA, p->g.x, p->g.y, p->g.w, p->g.h);
+        if(p->wh){ wind_content(p->wh, pop_panel_draw_cb, p);
+                   wind_open(p->wh, p->g.x, p->g.y, p->g.w, p->g.h); }
+        return;
+    }
+#endif
     psav_push(p->g.x,p->g.y,p->g.w,p->g.h);
     draw_popup(items,&p->g,-1);
 }
 static void panel_close(popup_panel *p){
     if(p->owned && p->items){ free((void*)p->items); p->items=NULL; p->owned=0; }
+#ifdef GEM_XTOS
+    if(is_client()){ if(p->wh){ wind_close(p->wh); wind_delete(p->wh); p->wh=0; } return; }
+#endif
     psav_pop();
 }
-static void panel_redraw(popup_panel *p){ draw_popup(p->items,&p->g,p->hov); }
+static void panel_redraw(popup_panel *p){
+#ifdef GEM_XTOS
+    if(is_client()){ if(p->wh) wind_redraw_win(p->wh); return; }
+#endif
+    draw_popup(p->items,&p->g,p->hov);
+}
 
 // Topmost open panel whose box contains (mx,my); -1 if over none.
 static int panel_at(popup_panel *st, int depth, int mx, int my){
@@ -714,6 +763,18 @@ static int menu_popup_run(const menu_item *items, int n, int x, int y,
             for(int i=0;i<depth;i++) panel_redraw(&st[i]);
         }
         if(t==AES_QUIT){ result=-1; break; }
+#ifdef GEM_XTOS
+        // The panels are laid out in SCREEN space, but a client's input is localised to the window it
+        // was delivered to.  Lift a panel's own event back to screen space; anything belonging to some
+        // OTHER window is genuinely outside every panel, so push it far away rather than let its
+        // window-local coordinates alias into a panel's box and read as a hit.
+        if(is_client() && (t==AES_MOTION || t==AES_BTN_DOWN || t==AES_BTN_UP)){
+            int ew=aes_event_win(), lifted=0;
+            for(int i=0;i<depth;i++)
+                if(st[i].wh && st[i].wh==ew){ ev.mx+=st[i].g.x; ev.my+=st[i].g.y; lifted=1; break; }
+            if(!lifted && ew!=0){ ev.mx=-30000; ev.my=-30000; }
+        }
+#endif
 
         if(t==AES_KEY){
             int ascii=ev.key&0xFF, scan=(ev.key>>8)&0xFF;
