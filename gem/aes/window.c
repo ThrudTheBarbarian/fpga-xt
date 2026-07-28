@@ -1105,7 +1105,13 @@ static int client_dispatch(const gem_msg *m, aes_event *ev){
     case GEM_MSG_MENUCLK: {                                // a press in OUR strip (§10): run the menu
         extern void menu_client_click(int x);
         menu_client_click(m->w[2]);
-        return 0;
+        // AES_MESAG, not 0: the pull-down appl_write()s MN_SELECTED, and "0" means "nothing to
+        // read" — so evnt_multi went straight back to sleep with the selection unread, and the app
+        // only acted on it when the NEXT input event happened to wake the loop.  That is the whole
+        // of "picking a Windows-menu item does nothing until I move another window".  Every other
+        // case that posts a message (MOVED / SIZED / CLOSED) already returns this.  Harmless when
+        // the menu was dismissed without a choice: the pipe is simply empty.
+        return AES_MESAG;
     }
     case GEM_MSG_GRAB_REVOKED: {                           // §9: the clock fired; dismiss whoever
         extern void menu_grab_revoked(void);              // held it (menu or dialog — exclusive)
