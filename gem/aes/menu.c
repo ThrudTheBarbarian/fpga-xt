@@ -489,10 +489,19 @@ void menu_popup_layout(const menu_item *items, int n, int x, int y, popup_geom *
     if(has_sub && P_TRIW>rightw) rightw = P_TRIW;     // ...or the triangle column
     int w = P_PADX + lw + (rightw ? P_GAP+rightw : 0) + P_RPAD;
 
-    gfx_surface *scr = vdi_screen_target();
-    int sw = scr?scr->w:640, sh = scr?scr->h:480;
-    if(x+w > sw) x = sw-w;   if(x<0) x=0;             // clamp fully on-screen
-    if(y+h > sh) y = sh-h;   if(y<0) y=0;
+    // Clamp fully on-SCREEN.  vdi_screen_target() is the wrong yardstick for a client: its drawable
+    // is its own window surface, so the panel got clamped into the WINDOW's box (a 490x424 dialog
+    // pinned a popup to 378,240 no matter where its button was).  A client asks the AES for the
+    // screen work area instead — gemd hands it over at wind_create — which also keeps a popup from
+    // covering the menu bar, since that area starts below it.
+    int sx=0, sy=0, sw, sh;
+#ifdef GEM_XTOS
+    if(is_client()){ wind_get(0, WF_WORKXYWH, &sx,&sy,&sw,&sh); }
+    else
+#endif
+    { gfx_surface *scr = vdi_screen_target(); sw = scr?scr->w:640; sh = scr?scr->h:480; }
+    if(x+w > sx+sw) x = sx+sw-w;   if(x<sx) x=sx;
+    if(y+h > sy+sh) y = sy+sh-h;   if(y<sy) y=sy;
 
     g->x=x; g->y=y; g->w=w; g->h=h;
     g->rowh=P_ITEMH; g->seph=P_SEPH; g->pady=P_PADY; g->labelx=P_PADX; g->n=n;
