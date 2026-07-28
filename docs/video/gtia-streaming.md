@@ -3,6 +3,24 @@
 Holistic review of the Atari video path, why the current shape keeps costing
 us ACID800 tests, and what each stage should be worth.
 
+## Naming trap — read this first
+
+There are TWO modules called a compositor, and both are instantiated as
+`u_compositor`:
+
+| module | instantiated at | scope |
+|---|---|---|
+| `compositor.sv` | `antic_top.sv:1778` | **Atari only** — ANTIC mode decode + P/M overlay, one row per burst |
+| `plane_compositor.sv` | `fpga_xt_top.sv:2310` | **system** — `N_PLANES=3`: desktop (depth 0), drag overlay (depth 1), XL window (depth 2) |
+
+Everything below about "the compositor" being the blocker means
+**`compositor.sv` only**. `plane_compositor.sv` is generic depth-ordering,
+integer scaling and clipping over DDR surfaces — it does not know what an Atari
+is, it is what the GEM desktop and the m68k/XL windows ride on, and this work
+does not touch it. `sprite_engine.sv` (hardware cursor) is separate again.
+
+Renaming one of them is overdue.
+
 ## The pipeline as built
 
 | stage | lines | what it does | time base |
@@ -74,10 +92,16 @@ GTIA stage that happens to emit only collisions.
 
 * **`antic_timing`** — earns its place, already beam-accurate. Extend it to
   emit the playfield byte stream (it already schedules the fetches).
-* **`compositor`** — *dissolves*. Today its 1680 lines do two chips' jobs at
-  the wrong time base: ANTIC mode decode and GTIA overlay. Mode decode belongs
-  in the ANTIC stage, overlay in the GTIA stage. This is a net simplification,
-  not new code on top.
+* **`compositor.sv`** — *re-sited and re-timed, NOT deleted*. Today its 1680
+  lines do two chips' jobs at the wrong time base: ANTIC mode decode and GTIA
+  overlay. Mode decode belongs in the ANTIC stage, overlay in the GTIA stage.
+  Be honest about the scale: the decode logic does **not** vanish — sixteen
+  modes, HSCROL windowing, char modes and the hi-res collision quirk are real
+  work, and most of `pack_pair` and its tables MIGRATE rather than disappear.
+  What is actually deleted is the burst scaffolding: the 25-state FSM, the
+  `early`/`chg_x` bolt-ons for SIZEP and HPOSP, the shared-register coupling
+  between the emit and collision paths, and the tuned compose instant. That is
+  the simplification; the decode tables are moved, not saved.
 * **`color_resolver`** — keep the function, move the sampling. It is correct
   logic fed at the wrong instant; in `gtia_stream` it is fed per colour clock
   from live registers, which is what its own header always intended.
