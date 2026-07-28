@@ -29,6 +29,7 @@
  * SIGSYS on an XTOS call number — so ask POSIX there and keep the trap for the board. */
 #ifdef GEM_HOST
 #include <sys/time.h>
+#include <time.h>
 int xg_now_ms(void) {
     struct timeval tv; gettimeofday(&tv, 0);
     return (int)((long long)tv.tv_sec * 1000ll + tv.tv_usec / 1000);
@@ -76,6 +77,20 @@ void xg_now_utc(int *out7) {
     out7[0] = y; out7[1] = m; out7[2] = d;
     out7[3] = (int)(rem / 3600); out7[4] = (int)((rem % 3600) / 60); out7[5] = (int)(rem % 60);
     out7[6] = (int)usecs;
+}
+
+/* xg_local_offset_minutes — the host's current UTC offset, DST already applied by whoever owns the
+ * rules.  The BOARD has no timezone database and no notion of local time, so it answers 0 (UTC) —
+ * honestly, rather than inventing an offset.  A tz-aware XTOS would replace this one function. */
+int xg_local_offset_minutes(void) {
+#ifdef GEM_HOST
+    time_t t = time(0);
+    struct tm l;
+    localtime_r(&t, &l);
+    return (int)(l.tm_gmtoff / 60);
+#else
+    return 0;                            /* XTOS runs on UTC */
+#endif
 }
 
 /* xg_listdir — a portable directory listing for XG's toolkit file panel (GEM has no OS file
