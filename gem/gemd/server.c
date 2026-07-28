@@ -25,6 +25,7 @@
  */
 #include <stdio.h>
 #ifdef GEM_HOST
+#include "xtos_host.h"   /* hostgem: the framebuffer lock, see gemd_present */
 #include <sys/time.h>      /* hostgem: POSIX clock, see gemd_us */
 #endif
 #include <stdlib.h>
@@ -210,6 +211,9 @@ static void gemd_present(int x, int y, int w, int h)
     }
 
     long long tc = PROF_NOW();
+#ifdef GEM_HOST
+    xtos_host_fb_lock();        /* the SDL thread uploads this buffer; a half-copied rect tears */
+#endif
     const uint32_t *src = g_plane.px + (size_t)y * g_plane.stride + x;
     uint32_t *dst = (uint32_t *)g_scan.addr + (size_t)y * g_scan.stride + x;
     for (int yy = 0; yy < h; yy++) {
@@ -217,6 +221,9 @@ static void gemd_present(int x, int y, int w, int h)
         src += g_plane.stride; dst += g_scan.stride;
     }
     sys_fb_present();                            /* dsb: the compositor scans DDR */
+#ifdef GEM_HOST
+    xtos_host_fb_unlock();
+#endif
     PROF_ADD(cpu, PROF_NOW() - tc); PROF_INC(presents);
 }
 static gsurface    g_surf[GEMD_MAXW];   /* the backing store per WINDOW HANDLE. gemd keeps its own
