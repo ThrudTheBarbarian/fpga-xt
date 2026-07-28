@@ -1101,15 +1101,19 @@ module compositor #(
     // It is stable for as long as cmd_valid is held (the col_* registers only
     // change on the next emit), so the SET handshake is unaffected and there is
     // no throughput cost — no extra state, no stall, same cycles per pair.
-    // Dedicated EMIT-path copies.  cmd_data must NOT be driven from col_raw_q /
-    // col_pres*_q: those are also written by the border sweep (S_PMSWEEP),
-    // which runs after the playfield with cmd_valid being torn down.  Sharing
-    // them lets sweep values reach cmd_data while cmd_valid is still asserted,
-    // emitting a garbage SET per row — extra DDR writes whose HP-port
-    // contention perturbs the display_shadow reads ANTIC depends on.
-    logic [15:0] emit_raw_q;
-    logic [7:0]  emit_presL_q;
-    logic [7:0]  emit_presH_q;
+    // The border sweep (S_PMSWEEP) gets its OWN presence registers rather than
+    // reusing col_pres*_q.  Two reasons:
+    //   * correctness — the sweep runs after the playfield while cmd_valid is
+    //     being torn down, and sharing let sweep values reach cmd_data while
+    //     cmd_valid was still asserted, emitting a garbage SET per row.
+    //   * timing — the earlier fix duplicated the EMIT side instead, which
+    //     doubled the fanout of the expensive pack_pair cone and cost ~0.12ns
+    //     on clk_sys (builds 84-86 all failed).  Splitting the SWEEP side is
+    //     free by comparison: it is fed by pm_presence_s off sweep_x, a much
+    //     shallower cone, and nothing downstream of it is timing-critical.
+    logic [7:0]  sweep_presL_q;
+    logic [7:0]  sweep_presH_q;
+    logic        sweep_active_q;
     logic        col_blank_q;      // 1 = this pair is blank (emit COLBK)
     logic [15:0] col_raw_q;        // PF-bit pair, registered for the combine
     logic [7:0]  col_presL_q;      // P/M presence at the pair's low  atari_x
@@ -1120,7 +1124,7 @@ module compositor #(
     // and the port.
     assign cmd_data = col_blank_q
                     ? 24'h0
-                    : apply_pm_overlay_p(emit_raw_q, emit_presL_q, emit_presH_q);
+                    : apply_pm_overlay_p(col_raw_q, col_presL_q, col_presH_q);
     logic        col_valid_q;
 
     always_ff @(posedge clk or posedge rst) begin
@@ -1153,9 +1157,9 @@ module compositor #(
             cmd_tag         <= `BUS_TAG_NOP;
             cmd_addr        <= '0;
             col_blank_q     <= 1'b1;
-            emit_raw_q      <= 16'h0;
-            emit_presL_q    <= 8'h0;
-            emit_presH_q    <= 8'h0;
+            sweep_presL_q   <= 8'h0;
+            sweep_presH_q   <= 8'h0;
+            sweep_active_q  <= 1'b0;
             blank_col       <= 9'd0;
             sweep_x         <= 12'sd0;
             mem_raddr       <= 16'h0;
@@ -1305,13 +1309,11 @@ module compositor #(
                     cmd_addr  <= set_addr;
                     col_blank_q <= 1'b0;   // cmd_data is driven combinationally
                     cmd_valid <= 1'b1;
-                    col_raw_q   <= raw_f;
-                    emit_raw_q   <= raw_f;
-                    emit_presL_q <= pm_presence(atari_x_lo_q);
-                    emit_presH_q <= pm_presence(atari_x_lo_q + 10'd1);           // combined + accumulated next cycle
+                    col_raw_q   <= raw_f;           // combined + accumulated next cycle
                     col_presL_q <= pm_presence(atari_x_lo_q);
                     col_presH_q <= pm_presence(atari_x_lo_q + 10'd1);
                     col_valid_q <= 1'b1;
+                    sweep_active_q <= 1'b0;
                     atari_x_lo_q<= atari_x_lo_q + 10'd2;   // advance to the next pair's low px
                     state     <= S_ISSUE_SET;
                 end
@@ -1362,13 +1364,11 @@ module compositor #(
                     cmd_addr  <= set_addr;
                     col_blank_q <= 1'b0;   // cmd_data is driven combinationally
                     cmd_valid <= 1'b1;
-                    col_raw_q   <= raw_h;
-                    emit_raw_q   <= raw_h;
-                    emit_presL_q <= pm_presence(atari_x_lo_q);
-                    emit_presH_q <= pm_presence(atari_x_lo_q + 10'd1);           // combined + accumulated next cycle
+                    col_raw_q   <= raw_h;           // combined + accumulated next cycle
                     col_presL_q <= pm_presence(atari_x_lo_q);
                     col_presH_q <= pm_presence(atari_x_lo_q + 10'd1);
                     col_valid_q <= 1'b1;
+                    sweep_active_q <= 1'b0;
                     atari_x_lo_q<= atari_x_lo_q + 10'd2;   // advance to the next pair's low px
                     state     <= S_ISSUE_SET;
                 end
@@ -1480,13 +1480,11 @@ module compositor #(
                         cmd_addr  <= set_addr;
                         col_blank_q <= 1'b0;   // cmd_data is driven combinationally
                         cmd_valid <= 1'b1;
-                        col_raw_q   <= raw_t;
-                    emit_raw_q   <= raw_t;
-                    emit_presL_q <= pm_presence(atari_x_lo_q);
-                    emit_presH_q <= pm_presence(atari_x_lo_q + 10'd1);           // combined + accumulated next cycle
+                        col_raw_q   <= raw_t;           // combined + accumulated next cycle
                         col_presL_q <= pm_presence(atari_x_lo_q);
                         col_presH_q <= pm_presence(atari_x_lo_q + 10'd1);
                         col_valid_q <= 1'b1;
+                    sweep_active_q <= 1'b0;
                         atari_x_lo_q<= atari_x_lo_q + 10'd2;   // advance to the next pair's low px
                         state     <= S_ISSUE_SET;
                     end
@@ -1583,13 +1581,11 @@ module compositor #(
                             cmd_addr <= row_base + unit_offset
                                       + {next_p, 1'b0};
                             col_blank_q <= 1'b0;   // cmd_data is driven combinationally
-                            col_raw_q   <= raw_a;
-                    emit_raw_q   <= raw_a;
-                    emit_presL_q <= pm_presence(atari_x_lo_q);
-                    emit_presH_q <= pm_presence(atari_x_lo_q + 10'd1);           // combined + accumulated next cycle
+                            col_raw_q   <= raw_a;           // combined + accumulated next cycle
                             col_presL_q <= pm_presence(atari_x_lo_q);
                             col_presH_q <= pm_presence(atari_x_lo_q + 10'd1);
                             col_valid_q <= 1'b1;
+                    sweep_active_q <= 1'b0;
                             atari_x_lo_q<= atari_x_lo_q + 10'd2;   // advance to the next pair's low px
                         end
                     end
@@ -1629,9 +1625,9 @@ module compositor #(
                 // playfield extent is needed.
                 S_PMSWEEP: begin
                     col_raw_q   <= 16'h0;
-                    emit_raw_q   <= 16'h0;
-                    col_presL_q <= pm_presence_s(sweep_x);
-                    col_presH_q <= pm_presence_s(sweep_x + 12'sd1);
+                    sweep_presL_q  <= pm_presence_s(sweep_x);
+                    sweep_presH_q  <= pm_presence_s(sweep_x + 12'sd1);
+                    sweep_active_q <= 1'b1;
                     col_valid_q <= 1'b1;
                     if (sweep_x >= SWEEP_X_HI)
                         state   <= S_NEXT_ROW;
@@ -1657,7 +1653,9 @@ module compositor #(
             // path.  (HITCLR below still wins over this same-cycle update.)
             if (col_valid_q) begin : sblk_col_acc
                 logic [63:0] cc;
-                cc = collision_combine(cur_mode, col_raw_q, col_presL_q, col_presH_q);
+                cc = sweep_active_q
+                   ? collision_combine(cur_mode, 16'h0, sweep_presL_q, sweep_presH_q)
+                   : collision_combine(cur_mode, col_raw_q, col_presL_q, col_presH_q);
                 mpf_q <= mpf_q | cc[15:0];
                 ppf_q <= ppf_q | cc[31:16];
                 mpl_q <= mpl_q | cc[47:32];
