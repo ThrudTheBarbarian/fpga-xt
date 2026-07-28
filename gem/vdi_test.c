@@ -284,12 +284,16 @@ int main(void) {
     vdi_set_face(sysf);                                 // system font (id 1)
     vdi_set_font_dir("fonts");
     CHECK(vdi_load_system_font() != NULL);             // System.font pointer resolves a face
-    CHECK(vst_load_fonts(1, 0) == 1);                  // one extra font mapped (id 2)
+    // How MANY faces the directory holds is not this test's business — gem/fonts is a real
+    // directory that gains faces (it went from one to eight when the chooser needed a choice).
+    // Assert the registry mapped some and derive the "unknown" id from the count.
+    int nfonts = vst_load_fonts(1, 0);
+    CHECK(nfonts >= 1);                                // at least one extra font mapped (id 2..)
     char fnm[40] = {0};
     CHECK(vqt_name(1, 1, fnm) == 1); CHECK(fnm[0] != '\0');   // system family name
     char fnm2[40] = {0};
     CHECK(vqt_name(1, 2, fnm2) == 2); CHECK(fnm2[0] != '\0'); // mapped file name
-    CHECK(vqt_name(1, 9, fnm2) == 0);                  // unknown id
+    CHECK(vqt_name(1, nfonts + 2, fnm2) == 0);         // one past the last mapped id -> unknown
 
     gfx_surface *rf = gfx_surface_alloc(80, 30);
     for (int i = 0; i < 80 * 30; i++) rf->px[i] = 0;
