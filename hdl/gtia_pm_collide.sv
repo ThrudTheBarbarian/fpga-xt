@@ -83,65 +83,61 @@ module gtia_pm_collide (
     localparam signed [11:0] X_HI =  12'sd346;
     wire in_a = active_line && (x_base          >= X_LO) && (x_base            <= X_HI);
     wire in_b = active_line && ((x_base + 12'sd2) >= X_LO) && ((x_base + 12'sd2) <= X_HI);
+    // cc = 2*cyc; the two colour clocks covered by this machine cycle
+    wire [7:0] cc_a = {cyc[6:0], 1'b0};
+    wire [7:0] cc_b = {cyc[6:0], 1'b1};
 
-    // ---- coverage helpers (semantics identical to compositor.sv) ---------
-    function automatic logic player_covers(input logic signed [11:0] ax,
-                                           input logic [7:0] hposp,
-                                           input logic [7:0] shape,
-                                           input logic [1:0] sizep);
-        logic signed [11:0] x_left, dx, width;
-        logic [2:0]         bit_sel;
-        begin
-            if (shape == 8'h00) return 1'b0;
-            x_left = ($signed({4'd0, hposp}) - 12'sd48) <<< 1;
-            dx     = ax - x_left;
-            case (sizep)
-                2'b01:   begin width = 12'sd32; bit_sel = 3'd7 - dx[4:2]; end
-                2'b11:   begin width = 12'sd64; bit_sel = 3'd7 - dx[5:3]; end
-                default: begin width = 12'sd16; bit_sel = 3'd7 - dx[3:1]; end
-            endcase
-            if (dx < 0 || dx >= width) return 1'b0;
-            return shape[bit_sel];
-        end
+    // ---- per-object shift registers (the silicon model) ------------------
+    // GTIA does not compute player pixels from a position formula.  Each
+    // object has a shift register that LOADS when the horizontal counter
+    // matches its HPOS, and then clocks out one bit every 1/2/4 colour clocks
+    // according to SIZE.  Two consequences that a positional formula cannot
+    // express, and which ACID800 tests directly:
+    //
+    //   * changing SIZE mid-draw changes the ADVANCE RATE only.  Pixels
+    //     already emitted stand and the register continues from where it is.
+    //     A formula recomputes the bit index from dx and so RE-INDEXES the
+    //     whole shape — which is why 4x->1x gave $E0 where hardware gives $80
+    //     (gtia_pmresize "4x-to-1x failed at index 0").
+    //   * if HPOS matches AGAIN later in the line the register RELOADS and the
+    //     player is drawn a SECOND time.  That is the whole of
+    //     gtia_pmretrigger; a formula yields at most one draw per line.
+    //
+    // Colour-clock index: atari_x = 2*(cc - 48) and atari_x = 4*cyc - 96, so
+    // cc = 2*cyc, and HPOS compares directly against cc.
+    logic [7:0] p_sr    [0:3];   // player shift registers
+    logic [2:0] p_bit   [0:3];   // bits emitted so far
+    logic [1:0] p_sub   [0:3];   // sub-count within the current bit
+    logic       p_act   [0:3];
+    logic [1:0] m_sr    [0:3];   // missile shift registers (2 bits)
+    logic [0:0] m_bit   [0:3];
+    logic [1:0] m_sub   [0:3];
+    logic       m_act   [0:3];
+
+    function automatic logic [1:0] size_max(input logic [1:0] sz);
+        // colour clocks per bit, minus 1: 1x -> 1cc, 2x -> 2cc, 4x -> 4cc
+        case (sz)
+            2'b01:   size_max = 2'd1;
+            2'b11:   size_max = 2'd3;
+            default: size_max = 2'd0;
+        endcase
     endfunction
 
-    function automatic logic missile_covers(input logic signed [11:0] ax,
-                                            input logic [7:0] hposm,
-                                            input logic [1:0] m_shape,
-                                            input logic [1:0] m_size);
-        logic signed [11:0] x_left, dx, width;
-        logic               bit_sel;
-        begin
-            if (m_shape == 2'h0) return 1'b0;
-            x_left = ($signed({4'd0, hposm}) - 12'sd48) <<< 1;
-            dx     = ax - x_left;
-            case (m_size)
-                2'b01:   begin width = 12'sd8;  bit_sel = ~dx[2]; end
-                2'b11:   begin width = 12'sd16; bit_sel = ~dx[3]; end
-                default: begin width = 12'sd4;  bit_sel = ~dx[1]; end
-            endcase
-            if (dx < 0 || dx >= width) return 1'b0;
-            return m_shape[bit_sel];
-        end
-    endfunction
+    wire [7:0] hposp_v [0:3];
+    wire [1:0] sizep_v [0:3];
+    wire [7:0] grafp_v [0:3];
+    wire [7:0] hposm_v [0:3];
+    assign hposp_v[0] = hposp0; assign hposp_v[1] = hposp1;
+    assign hposp_v[2] = hposp2; assign hposp_v[3] = hposp3;
+    assign sizep_v[0] = sizep0; assign sizep_v[1] = sizep1;
+    assign sizep_v[2] = sizep2; assign sizep_v[3] = sizep3;
+    assign grafp_v[0] = grafp0; assign grafp_v[1] = grafp1;
+    assign grafp_v[2] = grafp2; assign grafp_v[3] = grafp3;
+    assign hposm_v[0] = hposm0; assign hposm_v[1] = hposm1;
+    assign hposm_v[2] = hposm2; assign hposm_v[3] = hposm3;
 
-    // presence vector {P3,P2,P1,P0,M3,M2,M1,M0} at one atari_x
-    function automatic logic [7:0] presence(input logic signed [11:0] ax);
-        begin
-            presence[4] = player_covers (ax, hposp0, grafp0, sizep0);
-            presence[5] = player_covers (ax, hposp1, grafp1, sizep1);
-            presence[6] = player_covers (ax, hposp2, grafp2, sizep2);
-            presence[7] = player_covers (ax, hposp3, grafp3, sizep3);
-            presence[0] = missile_covers(ax, hposm0, grafm[1:0], sizem[1:0]);
-            presence[1] = missile_covers(ax, hposm1, grafm[3:2], sizem[3:2]);
-            presence[2] = missile_covers(ax, hposm2, grafm[5:4], sizem[5:4]);
-            presence[3] = missile_covers(ax, hposm3, grafm[7:6], sizem[7:6]);
-        end
-    endfunction
-
-    // Both colour clocks of this machine cycle.
-    wire [7:0] pres_a = presence(x_base);
-    wire [7:0] pres_b = presence(x_base + 12'sd2);
+    // Presence of every object at the colour clock currently being stepped.
+    logic [7:0] pres_now;
 
     // A player never registers a collision with itself, so P<i>PL bit i is
     // always 0; the diagonal is masked below.
@@ -166,20 +162,121 @@ module gtia_pm_collide (
         end
     endfunction
 
+    // Stepping is written as a pure combinational next-state block feeding a
+    // registered one.  An earlier version stepped the registers with blocking
+    // assignments inside the always_ff and wrote them back non-blocking; that
+    // simulates correctly but mixes assignment styles on the same signal, which
+    // is a synthesis hazard.  Keep this split.
+    logic [7:0] n_p_sr  [0:3];
+    logic [2:0] n_p_bit [0:3];
+    logic [1:0] n_p_sub [0:3];
+    logic       n_p_act [0:3];
+    logic [1:0] n_m_sr  [0:3];
+    logic [0:0] n_m_bit [0:3];
+    logic [1:0] n_m_sub [0:3];
+    logic       n_m_act [0:3];
+    logic [15:0] n_ppl, n_mpl;
+
+    always_comb begin
+        int i, pass;
+        logic [7:0] cc;
+        logic [7:0] pres;
+        logic       win;
+        logic [7:0] tsr;    // temporaries: avoid part-selecting an array
+        logic [1:0] tmsr;   // element in place, which iverilog cannot narrow
+
+        for (i = 0; i < 4; i++) begin
+            n_p_sr[i]  = p_sr[i];  n_p_bit[i] = p_bit[i];
+            n_p_sub[i] = p_sub[i]; n_p_act[i] = p_act[i];
+            n_m_sr[i]  = m_sr[i];  n_m_bit[i] = m_bit[i];
+            n_m_sub[i] = m_sub[i]; n_m_act[i] = m_act[i];
+        end
+        n_ppl = ppl_q;
+        n_mpl = mpl_q;
+
+        // both colour clocks of this machine cycle, in order
+        for (pass = 0; pass < 2; pass++) begin
+            cc   = (pass == 0) ? cc_a : cc_b;
+            win  = (pass == 0) ? in_a : in_b;
+            pres = 8'd0;
+
+            for (i = 0; i < 4; i++) begin
+                // ---- players: reload on HPOS match, else clock at SIZE rate
+                if (cc == hposp_v[i]) begin
+                    n_p_sr[i]  = grafp_v[i];
+                    n_p_bit[i] = 3'd0;
+                    n_p_sub[i] = 2'd0;
+                    n_p_act[i] = 1'b1;
+                end else if (n_p_act[i]) begin
+                    if (n_p_sub[i] == size_max(sizep_v[i])) begin
+                        n_p_sub[i] = 2'd0;
+                        if (n_p_bit[i] == 3'd7) n_p_act[i] = 1'b0;
+                        else begin
+                            n_p_bit[i] = n_p_bit[i] + 3'd1;
+                            tsr        = n_p_sr[i];
+                            n_p_sr[i]  = {tsr[6:0], 1'b0};
+                        end
+                    end else n_p_sub[i] = n_p_sub[i] + 2'd1;
+                end
+                tsr = n_p_sr[i];
+                pres[4 + i] = n_p_act[i] & tsr[7];
+
+                // ---- missiles: 2-bit shape, per-missile size field
+                if (cc == hposm_v[i]) begin
+                    n_m_sr[i]  = grafm[2*i +: 2];
+                    n_m_bit[i] = 1'd0;
+                    n_m_sub[i] = 2'd0;
+                    n_m_act[i] = 1'b1;
+                end else if (n_m_act[i]) begin
+                    if (n_m_sub[i] == size_max(sizem[2*i +: 2])) begin
+                        n_m_sub[i] = 2'd0;
+                        if (n_m_bit[i] == 1'd1) n_m_act[i] = 1'b0;
+                        else begin
+                            n_m_bit[i] = n_m_bit[i] + 1'd1;
+                            tmsr       = n_m_sr[i];
+                            n_m_sr[i]  = {tmsr[0], 1'b0};
+                        end
+                    end else n_m_sub[i] = n_m_sub[i] + 2'd1;
+                end
+                tmsr = n_m_sr[i];
+                pres[i] = n_m_act[i] & tmsr[1];
+            end
+
+            if (win) begin
+                n_ppl = n_ppl | ppl_of(pres);
+                n_mpl = n_mpl | mpl_of(pres);
+            end
+        end
+    end
+
     always_ff @(posedge clk or posedge rst) begin
+        int i;
         if (rst) begin
             mpl_q <= 16'd0;
             ppl_q <= 16'd0;
-        end else if (hitclr) begin
+            for (i = 0; i < 4; i++) begin
+                p_sr[i] <= 8'd0; p_bit[i] <= 3'd0; p_sub[i] <= 2'd0; p_act[i] <= 1'b0;
+                m_sr[i] <= 2'd0; m_bit[i] <= 1'd0; m_sub[i] <= 2'd0; m_act[i] <= 1'b0;
+            end
+        end else begin
             // HITCLR takes effect at the exact cycle it is written, so any
-            // accumulation later in the same line starts from clear.
-            mpl_q <= 16'd0;
-            ppl_q <= 16'd0;
-        end else if (phi2_tick) begin
-            ppl_q <= ppl_q | (in_a ? ppl_of(pres_a) : 16'd0)
-                           | (in_b ? ppl_of(pres_b) : 16'd0);
-            mpl_q <= mpl_q | (in_a ? mpl_of(pres_a) : 16'd0)
-                           | (in_b ? mpl_of(pres_b) : 16'd0);
+            // accumulation later in the same line starts from clear.  The shift
+            // registers are display state and are NOT disturbed by it.
+            if (hitclr) begin
+                mpl_q <= 16'd0;
+                ppl_q <= 16'd0;
+            end else if (phi2_tick) begin
+                ppl_q <= n_ppl;
+                mpl_q <= n_mpl;
+            end
+            if (phi2_tick) begin
+                for (i = 0; i < 4; i++) begin
+                    p_sr[i]  <= n_p_sr[i];  p_bit[i] <= n_p_bit[i];
+                    p_sub[i] <= n_p_sub[i]; p_act[i] <= n_p_act[i];
+                    m_sr[i]  <= n_m_sr[i];  m_bit[i] <= n_m_bit[i];
+                    m_sub[i] <= n_m_sub[i]; m_act[i] <= n_m_act[i];
+                end
+            end
         end
     end
 
