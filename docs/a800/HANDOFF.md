@@ -187,6 +187,32 @@ entirely and key off the instruction boundary (the ~21 `state <=
 ST_FETCH` sites) as 0f originally specified.
 Do not re-try a plain rdy gate.
 
+### 1i. clk_sys IS A COIN FLIP — one compositor path dominates it
+Build 81 (VBLANK gate only, a single AND term on top of build 80's
+PASSING netlist) came in at clk_sys -1.367 ns, against build 80's
++0.004.  A one-gate change cannot cost 1.37 ns; the netlist is simply
+balanced on a knife edge and re-placement swings it.
+The violating path, from post_route_timing.rpt:
+    Source      : u_display_shadow/mem_reg_1_0_0  (RAMB36E1)
+    Destination : u_antic_top/u_compositor/cmd_data_reg[9]
+    Data Path   : 8.354 ns vs a 7.500 ns requirement
+    Logic Levels: 8  (LUT3 x2, LUT6 x5, RAMB36E1)
+    Split       : logic 3.615 ns (43%), route 4.739 ns (57%)
+This is the compositor's PIXEL EMIT path — BRAM read, unpack, pack,
+into cmd_data.  It is NOT the collision engine.  The same net shows up
+in the phys_opt logs of builds 78 and 80, so it has been the binding
+constraint throughout; build 80's +0.004 was luck, not headroom.
+CONSEQUENCE: do not read a passing build as evidence that a change is
+timing-neutral, and do not read a failing one as evidence it is
+expensive.  Attribution across builds is unreliable while this path is
+the limiter.
+THE REAL FIX is to pipeline the BRAM->cmd_data path (a register stage
+after the BRAM read, or the BRAM output register), which costs a cycle
+of compose latency and needs the compositor FSM adjusted to match.
+That is the honest next infrastructure task; rotating placer directives
+is treating the symptom.  Route dominates (57%), so a pipeline stage
+that lets the placer spread the cone should pay well.
+
 ### 1g. THE FAILURE TEXTS — and what they actually mean
 tools/acid-shots.sh + bmp2text decoded the result screens on build 80.
 This is the first real diagnosis of the P/M cluster:
