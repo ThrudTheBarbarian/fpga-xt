@@ -146,8 +146,15 @@ static struct { long long us; long units; int n; } g_gp[GEM_PROF_NSLOTS];
 
 long long gem_prof_now(void)
 {
-#ifdef GEM_XTOS
-    unsigned tv[3];
+// GEM_HOST: the XTOS stack built against the POSIX shim (hostgem).  GEM_XTOS is still on there — it
+// IS the XTOS client/server stack — but the raw trap below is not available to every binary in that
+// build: a CLIENT reaches __syscall through the dylib, where libSystem's real __syscall(2) resolves
+// first and traps SIGSYS on an XTOS call number.  (The server links the shim directly, so its own
+// wins — which is why only the client died, and only with -DINSTRUMENTATION.)  Use POSIX time there.
+#if defined(GEM_XTOS) && !defined(GEM_HOST)
+    // FOUR words, not three: XTOS returns {sec,?,usec} in 12 bytes; sized for the larger layout so a
+    // host-side caller of the shim's gettimeofday cannot overrun it.
+    unsigned tv[4] = {0,0,0,0};
     __syscall(SYS_gettimeofday, (long)tv, 0, 0);
     return (long long)tv[0] * 1000000ll + tv[2];
 #else
