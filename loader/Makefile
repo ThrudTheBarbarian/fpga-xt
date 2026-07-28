@@ -290,6 +290,7 @@ RSC_ENGINE_OBJ := $(BUILD)/gem_rsc.o
 GEMSRC := $(GEM)/gfx_soft.c $(GEM)/font.c $(GEM)/wm.c $(GEM)/theme.c $(GEM)/img.c \
           $(wildcard $(GEM)/vdi/*.c) $(wildcard $(GEM)/aes/*.c) \
           $(GEM)/gemclient.c $(wildcard $(GEM)/gemd/*.c) \
+          $(GEM)/xg_settings.c \
           ../gem/gem_pdf_stub.c test/freertos/libs/gem_stubs.c
 FTSRC  := $(wildcard $(FT)/tu/*.c)
 GEMINC := -Itest/freertos/libs/shim -I$(GEM) -I$(GEM)/vdi -I$(FT)/include -Inewlib-pic/include -Ikernel -Itest/qemu
@@ -340,9 +341,16 @@ $(BUILD)/sqlite3.so: test/freertos/progs/sqlite3.c $(BUILD)/sqlite3.o $(BUILD)/s
 $(RSC_ENGINE_OBJ): $(FPGAGEM)/rsc.c $(GEM)/aes/aes.h | $(BUILD)
 	$(ARMCC) $(GEMCFLAGS) -include aes/aes.h -c $< -o $@
 
-$(BUILD)/libGEM.so: $(GEMSRC) $(FTSRC) $(RSC_ENGINE_OBJ) $(BUILD)/libc.so $(BUILD)/libm.so | $(BUILD)
-	$(ARMCC) $(GEMCFLAGS) -shared -nostdlib -Wl,-soname,libGEM.so \
-	    $(GEMSRC) $(FTSRC) $(RSC_ENGINE_OBJ) $(BUILD)/libc.so $(BUILD)/libm.so -o $@
+# SQLite rides INSIDE libGEM.so rather than being linked into each program that wants the registry:
+# it is a shared library, so that is one copy for the whole system instead of one per app — and it
+# is what lets an XG app keep its preferences (xg_settings.c -> registry.c) by linking libGEM alone.
+# desktop.so therefore no longer links its own registry.o/sqlite3.o: two copies of sqlite_vfs.c in
+# one process would each register a VFS, and only one of them would hold the file state.
+$(BUILD)/libGEM.so: $(GEMSRC) $(FTSRC) $(RSC_ENGINE_OBJ) $(BUILD)/registry.o $(BUILD)/sqlite3.o \
+                    $(BUILD)/sqlite_vfs.o $(BUILD)/libc.so $(BUILD)/libm.so | $(BUILD)
+	$(ARMCC) $(GEMCFLAGS) -I$(SQLITE) -shared -nostdlib -Wl,-soname,libGEM.so \
+	    $(GEMSRC) $(FTSRC) $(RSC_ENGINE_OBJ) $(BUILD)/registry.o $(BUILD)/sqlite3.o \
+	    $(BUILD)/sqlite_vfs.o $(BUILD)/libc.so $(BUILD)/libm.so -o $@
 
 # gemd — THE WINDOW SERVER (M1). Thin: the loop lives in libGEM.so's gem/gemd/ half.
 $(BUILD)/gemd.so: test/freertos/progs/gemd.c $(BUILD)/libGEM.so $(BUILD)/libc.so | $(BUILD)
@@ -360,9 +368,11 @@ $(BUILD)/fujiclient.o: $(GEM)/fujiclient.c $(GEM)/fujiclient.h | $(BUILD)
 # desktop — THE desktop (AES-based). Was `desktop`; it took the name when the old
 # gem_wm demo `desktop` was retired. Keep this full link line -- the retired rule had a
 # much shorter one, and reusing that is the easy way to break this.
-$(BUILD)/desktop.so: test/freertos/progs/desktop.c $(BUILD)/registry.o $(BUILD)/fujiclient.o $(BUILD)/net_shim.o $(BUILD)/sqlite3.o $(BUILD)/sqlite_vfs.o $(BUILD)/libGEM.so $(BUILD)/libc.so $(BUILD)/libm.so | $(BUILD)
+# registry.o + sqlite3.o + sqlite_vfs.o come from libGEM.so now (see its rule): one copy per system
+# rather than one per program, and — the part that matters — ONE registered VFS in the process.
+$(BUILD)/desktop.so: test/freertos/progs/desktop.c $(BUILD)/fujiclient.o $(BUILD)/net_shim.o $(BUILD)/libGEM.so $(BUILD)/libc.so $(BUILD)/libm.so | $(BUILD)
 	$(ARMCC) $(GEMCFLAGS) -I$(SQLITE) -Itest/qemu -DDESKTOP_BUILD='"$(BUILD_ID) $(BUILD_DATE)"' -c $< -o $(BUILD)/desktop.o
-	$(LLD) -shared --hash-style=sysv -o $@ $(BUILD)/desktop.o $(BUILD)/registry.o $(BUILD)/fujiclient.o $(BUILD)/net_shim.o $(BUILD)/sqlite3.o $(BUILD)/sqlite_vfs.o $(BUILD)/libGEM.so $(BUILD)/libc.so $(BUILD)/libm.so
+	$(LLD) -shared --hash-style=sysv -o $@ $(BUILD)/desktop.o $(BUILD)/fujiclient.o $(BUILD)/net_shim.o $(BUILD)/libGEM.so $(BUILD)/libc.so $(BUILD)/libm.so
 
 # lua.so — /System/bin/lua: the Lua interpreter/REPL (real Lua 5.4 core from
 # xtos/lua + lua.c, linked against libc.so/libm.so). Boot scripts that are Lua
