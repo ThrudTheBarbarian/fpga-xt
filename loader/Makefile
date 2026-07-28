@@ -757,8 +757,14 @@ sdstage: $(BUILD)/toybox.so $(BUILD)/sqlite3.so $(BUILD)/fbgrab.so $(BUILD)/blit
 	# reachable in qemu but NOT on the card, so it could never be run on the real display.
 	# `-` because the directory is legitimately empty in a clean tree.
 	-cp romfs-overlay/bin/* $(SDSTAGE)/OS/bin/ 2>/dev/null || true
-	# font + theme atlas — user-modifiable content, off the read-only romfs
-	cp ../gem/fonts/AovelSansRounded.ttf $(SDSTAGE)/OS/fonts/AovelSansRounded.ttf
+	# font + theme atlas — user-modifiable content, off the read-only romfs.
+	# EVERY face in gem/fonts, not just the system one: vst_load_fonts maps the whole directory
+	# (id 2..N, sorted by name) and that map is what a font chooser lists, so a card carrying one
+	# font offers a choice of one.  Wildcarded so dropping a face into gem/fonts reaches the card
+	# on the next stage — the same "drop it in and it appears" the host build already gets.
+	# System.font names the face used as font id 1 (there are no symlinks on FAT).
+	cp ../gem/fonts/*.ttf $(SDSTAGE)/OS/fonts/
+	cp ../gem/fonts/System.font $(SDSTAGE)/OS/fonts/
 	cp ../gem/themes/Aristo2/1x/artwork.tex ../gem/themes/Aristo2/1x/locations.txt \
 	   ../gem/themes/Aristo2/1x/theme.ini $(SDSTAGE)/OS/themes/Aristo2/1x/
 	@printf 'Aristo2\n' > $(SDSTAGE)/OS/themes/Default   # read_default() -> theme name
