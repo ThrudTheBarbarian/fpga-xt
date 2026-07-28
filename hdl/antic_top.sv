@@ -1674,7 +1674,16 @@ module antic_top #(
     wire [47:0] hposp_chg_x_flat_w = {hposp_chg_x_q[3], hposp_chg_x_q[2],
                                       hposp_chg_x_q[1], hposp_chg_x_q[0]};
 
-    wire line_end_pulse_bus = phi2_tick && (ar_phi2_in_line == 8'd110);
+    // Compose at cycle 96, NOT at the very end of the line.  ACID800
+    // gtia_pmretrigger writes HPOSP0 at cycle 60, does `inc wsync` (halting to
+    // RELEASE_CYCLE 104) and then reads p0pl at ~105-108 — the collision result
+    // for the line it just drew.  Composing at 110 would land AFTER that read,
+    // so the row must be composed inside the window between the write and the
+    // WSYNC release.  96 leaves the compose (a few hundred clk_bus, ~4 phi2)
+    // finished by ~100, comfortably before the read.
+    // It is also the more faithful choice: a register write at 104+ is in
+    // horizontal blank and SHOULD affect the next line, not this one.
+    wire line_end_pulse_bus = phi2_tick && (ar_phi2_in_line == 8'd96);
 
     // ---- compose-time register snapshot ---------------------------------
     // The row is now composed at the END of the line (antic_seq.line_end) so
