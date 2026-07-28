@@ -1031,6 +1031,7 @@ module antic_top #(
         // render needs BEAM-TIME register sampling, not a different burst
         // instant; see docs/a800/HANDOFF.md 0o.
         .line_start (line_start_pulse_bus),
+        .line_end   (line_end_pulse_bus),
         .active_row (ar_atari_row != 8'hFF),
         .parse_done (dl_done),
         .dl_start   (dl_start_pulse),
@@ -1673,6 +1674,69 @@ module antic_top #(
     wire [47:0] hposp_chg_x_flat_w = {hposp_chg_x_q[3], hposp_chg_x_q[2],
                                       hposp_chg_x_q[1], hposp_chg_x_q[0]};
 
+    wire line_end_pulse_bus = phi2_tick && (ar_phi2_in_line == 8'd110);
+
+    // ---- compose-time register snapshot ---------------------------------
+    // The row is now composed at the END of the line (antic_seq.line_end) so
+    // that mid-line writes are visible to the row they belong to.  Moving the
+    // burst must NOT move when a write takes effect for the registers that do
+    // not carry an early/chg_x split, so every register the compositor samples
+    // is latched HERE at line START and the compositor reads the snapshot.
+    // Net effect of this stage: byte-identical rendering to composing at
+    // line_start, but the burst instant is now decoupled from the sampling
+    // instant — which is what lets the early/chg_x split mean anything.
+    logic [7:0] snap_chbase, snap_chactl, snap_pmbase, snap_dmactl, snap_gractl;
+    logic [7:0] snap_hposp [0:3];
+    logic [7:0] snap_hposm [0:3];
+    logic [7:0] snap_sizep [0:3];
+    logic [7:0] snap_sizem, snap_vdelay, snap_hscrol, snap_vscrol, snap_prior;
+    logic [7:0] snap_grafp [0:3];
+    logic [7:0] snap_grafm;
+    logic [7:0]  snap_hposp_early [0:3];
+    logic [11:0] snap_hposp_chgx  [0:3];
+    logic [1:0]  snap_sizep_early [0:3];
+    logic [11:0] snap_sizep_chgx  [0:3];
+    always_ff @(posedge clk_bus or posedge rst_bus) begin
+        if (rst_bus) begin
+            snap_chbase <= 8'd0; snap_chactl <= 8'd0; snap_pmbase <= 8'd0;
+            snap_dmactl <= 8'd0; snap_gractl <= 8'd0;
+            snap_sizem  <= 8'd0; snap_vdelay <= 8'd0; snap_hscrol <= 8'd0;
+            snap_vscrol <= 8'd0; snap_prior  <= 8'd0; snap_grafm  <= 8'd0;
+            for (int i = 0; i < 4; i++) begin
+                snap_hposp[i] <= 8'd0; snap_hposm[i] <= 8'd0;
+                snap_sizep[i] <= 8'd0; snap_grafp[i] <= 8'd0;
+                snap_hposp_early[i] <= 8'd0;
+                snap_sizep_early[i] <= 2'd0;
+                snap_hposp_chgx[i]  <= SIZEP_CHG_NONE;
+                snap_sizep_chgx[i]  <= SIZEP_CHG_NONE;
+            end
+        end else if (line_end_pulse_bus) begin
+            // HPOSP/SIZEP carry an early/chg_x split, so the compositor needs
+            // the value as it stands at the END of the line (post mid-line
+            // write) for the x >= chg_x part of the row.  Latched here, one
+            // cycle before cmp_start, so a write landing during the burst
+            // cannot tear the row.
+            for (int i = 0; i < 4; i++) begin
+                snap_hposp[i]       <= hposp_q[i];
+                snap_sizep[i]       <= sizep_q[i];
+                snap_hposp_early[i] <= hposp_early_q[i];
+                snap_hposp_chgx[i]  <= hposp_chg_x_q[i];
+                snap_sizep_early[i] <= sizep_early_q[i][1:0];
+                snap_sizep_chgx[i]  <= sizep_chg_x_q[i];
+            end
+        end else if (line_start_pulse_bus) begin
+            snap_chbase <= chbase_q; snap_chactl <= chactl_q;
+            snap_pmbase <= pmbase_q; snap_dmactl <= dmactl_q;
+            snap_gractl <= gractl_q;
+            snap_sizem  <= sizem_q;  snap_vdelay <= vdelay_q;
+            snap_hscrol <= hscrol_q; snap_vscrol <= vscrol_q;
+            snap_prior  <= prior_q;  snap_grafm  <= grafm_q;
+            for (int i = 0; i < 4; i++) begin
+                snap_hposm[i] <= hposm_q[i]; snap_grafp[i] <= grafp_q[i];
+            end
+        end
+    end
+
     compositor u_compositor (
         .clk(clk_bus), .rst(rst_bus), .start_compose(cmp_start_pulse),
         .row_in(ar_atari_row),                 // compose this row
@@ -1681,26 +1745,30 @@ module antic_top #(
         .meta_sub_row(dl_meta_sub),
         .meta_hscrol_en(dl_meta_hscrol_en),
         .meta_vscrol_en(dl_meta_vscrol_en),
-        .chbase(chbase_q), .chactl(chactl_q),
-        .pmbase(pmbase_q), .dmactl(dmactl_q), .gractl(gractl_q),
-        .hposp0(hposp_q[0]), .hposp1(hposp_q[1]),
-        .hposp2(hposp_q[2]), .hposp3(hposp_q[3]),
-        .hposm0(hposm_q[0]), .hposm1(hposm_q[1]),
-        .hposm2(hposm_q[2]), .hposm3(hposm_q[3]),
-        .hposp_early_flat(hposp_early_flat_w),
-        .hposp_chg_x_flat(hposp_chg_x_flat_w),
-        .sizep_early_flat(sizep_early_flat_w),
-        .sizep_chg_x_flat(sizep_chg_x_flat_w),
-        .sizep0(sizep_q[0][1:0]), .sizep1(sizep_q[1][1:0]),
-        .sizep2(sizep_q[2][1:0]), .sizep3(sizep_q[3][1:0]),
-        .sizem(sizem_q), .vdelay(vdelay_q),
-        .hscrol(hscrol_q[3:0]), .vscrol(vscrol_q[3:0]),
-        .prior(prior_q),
+        .chbase(snap_chbase), .chactl(snap_chactl),
+        .pmbase(snap_pmbase), .dmactl(snap_dmactl), .gractl(snap_gractl),
+        .hposp0(snap_hposp[0]), .hposp1(snap_hposp[1]),
+        .hposp2(snap_hposp[2]), .hposp3(snap_hposp[3]),
+        .hposm0(snap_hposm[0]), .hposm1(snap_hposm[1]),
+        .hposm2(snap_hposm[2]), .hposm3(snap_hposm[3]),
+        .hposp_early_flat({snap_hposp_early[3], snap_hposp_early[2],
+                           snap_hposp_early[1], snap_hposp_early[0]}),
+        .hposp_chg_x_flat({snap_hposp_chgx[3], snap_hposp_chgx[2],
+                           snap_hposp_chgx[1], snap_hposp_chgx[0]}),
+        .sizep_early_flat({snap_sizep_early[3], snap_sizep_early[2],
+                           snap_sizep_early[1], snap_sizep_early[0]}),
+        .sizep_chg_x_flat({snap_sizep_chgx[3], snap_sizep_chgx[2],
+                           snap_sizep_chgx[1], snap_sizep_chgx[0]}),
+        .sizep0(snap_sizep[0][1:0]), .sizep1(snap_sizep[1][1:0]),
+        .sizep2(snap_sizep[2][1:0]), .sizep3(snap_sizep[3][1:0]),
+        .sizem(snap_sizem), .vdelay(snap_vdelay),
+        .hscrol(snap_hscrol[3:0]), .vscrol(snap_vscrol[3:0]),
+        .prior(snap_prior),
         // GRAFPx/GRAFM shape registers — CPU-written shapes render without DMA;
         // the P/M DMA fetch overwrites them per scanline when DMA is enabled.
-        .grafp0(grafp_q[0]), .grafp1(grafp_q[1]),
-        .grafp2(grafp_q[2]), .grafp3(grafp_q[3]),
-        .grafm(grafm_q),
+        .grafp0(snap_grafp[0]), .grafp1(snap_grafp[1]),
+        .grafp2(snap_grafp[2]), .grafp3(snap_grafp[3]),
+        .grafm(snap_grafm),
         .mpf_q(cmp_mpf_q), .ppf_q(cmp_ppf_q),
         .mpl_q(cmp_mpl_q), .ppl_q(cmp_ppl_q),
         .hitclr(hitclr_strobe),

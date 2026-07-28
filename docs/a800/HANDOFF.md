@@ -187,6 +187,30 @@ entirely and key off the instruction boundary (the ~21 `state <=
 ST_FETCH` sites) as 0f originally specified.
 Do not re-try a plain rdy gate.
 
+### 1e. STEP 4 LANDED — beam-time compose, in two safe stages
+Stage A: cmp_start moves from line_start to line_end (antic_seq gains a
+`line_end` input; antic_top pulses it at cycle 110 of 114), AND every
+register the compositor samples is latched at line START into a
+snapshot the compositor reads.  Net effect: byte-identical rendering to
+before, but the BURST instant is now decoupled from the SAMPLING
+instant.  That decoupling is the whole point — it is what stops the
+move from regressing the uncaptured registers (a mid-line COLPF write
+must still affect the NEXT line, not the current one), which is the
+raster-effect risk that got build 71b reverted.
+Stage B: the two registers that DO carry a split (HPOSP, SIZEP) are
+instead latched at line END, together with their early value and
+chg_x, as one coherent set.  The compositor then renders
+    x <  chg_x  ->  value as at line start
+    x >= chg_x  ->  value as at line end (post mid-line write)
+Latching one cycle before cmp_start means a write landing during the
+burst cannot tear the row.
+RESULT IN SIM: antic_display 9 -> 4 failures (a real improvement on a
+suite that had been stuck at 9).  antic_modes, antic_seq, antic_raster,
+sprite_compositor, plane_compositor, alpha_hole, disp_modef_wrap all 0.
+hscrol_e2e unchanged at its pre-existing 5.
+tb_antic_seq needed updating: it asserted cmp_start aligns to
+line_start, which is now line_end.
+
 ### 1d. THE CRUX: the row is composed at line START, so mid-line writes
 ###      can never affect their own line
 Build 77 on HW: all four anchors PASS (nmist, vscroldli, dlistwrap,
