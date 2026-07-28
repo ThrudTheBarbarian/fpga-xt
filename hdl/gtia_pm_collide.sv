@@ -67,6 +67,17 @@ module gtia_pm_collide (
     // Signed, because the beam legitimately probes negative x in the border.
     wire signed [11:0] x_base = $signed({4'd0, cyc} << 2) - 12'sd96;
 
+    // GTIA only compares within the visible window; horizontal blank does not
+    // collide.  These bounds are the same ones the compositor's border sweep
+    // uses, and they are load-bearing: with GRAFP=$80 (leftmost two pixels lit)
+    // an object at HPOS $22 sits exactly ON the low bound and MUST register,
+    // while the same object at $21 falls just outside and must NOT.  ACID800
+    // pins both halves of that edge.
+    localparam signed [11:0] X_LO = -12'sd28;
+    localparam signed [11:0] X_HI =  12'sd346;
+    wire in_a = (x_base            >= X_LO) && (x_base            <= X_HI);
+    wire in_b = ((x_base + 12'sd2) >= X_LO) && ((x_base + 12'sd2) <= X_HI);
+
     // ---- coverage helpers (semantics identical to compositor.sv) ---------
     function automatic logic player_covers(input logic signed [11:0] ax,
                                            input logic [7:0] hposp,
@@ -159,8 +170,10 @@ module gtia_pm_collide (
             mpl_q <= 16'd0;
             ppl_q <= 16'd0;
         end else if (phi2_tick) begin
-            ppl_q <= ppl_q | ppl_of(pres_a) | ppl_of(pres_b);
-            mpl_q <= mpl_q | mpl_of(pres_a) | mpl_of(pres_b);
+            ppl_q <= ppl_q | (in_a ? ppl_of(pres_a) : 16'd0)
+                           | (in_b ? ppl_of(pres_b) : 16'd0);
+            mpl_q <= mpl_q | (in_a ? mpl_of(pres_a) : 16'd0)
+                           | (in_b ? mpl_of(pres_b) : 16'd0);
         end
     end
 

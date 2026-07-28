@@ -25,18 +25,29 @@ module tb_pm_collide;
     logic [7:0] cyc;
     logic [7:0] hposp0;
     logic       hitclr;
+    logic       border_mode;    // 1 = stack all 8 objects at border_hpos
+    logic [7:0] border_hpos;
 
     logic [15:0] mpl_q, ppl_q;
 
     gtia_pm_collide dut (
         .clk(clk), .rst(rst),
         .phi2_tick(phi2_tick), .cyc(cyc),
-        .hposp0(hposp0), .hposp1(8'd60), .hposp2(8'd100), .hposp3(8'd0),
-        .hposm0(8'd0), .hposm1(8'd0), .hposm2(8'd0), .hposm3(8'd0),
+        .hposp0(border_mode ? border_hpos : hposp0),
+        .hposp1(border_mode ? border_hpos : 8'd60),
+        .hposp2(border_mode ? border_hpos : 8'd100),
+        .hposp3(border_mode ? border_hpos : 8'd0),
+        .hposm0(border_mode ? border_hpos : 8'd0),
+        .hposm1(border_mode ? border_hpos : 8'd0),
+        .hposm2(border_mode ? border_hpos : 8'd0),
+        .hposm3(border_mode ? border_hpos : 8'd0),
         .sizep0(2'b00), .sizep1(2'b00), .sizep2(2'b00), .sizep3(2'b00),
         .sizem(8'h00),
-        .grafp0(8'hFF), .grafp1(8'hFF), .grafp2(8'hFF), .grafp3(8'h00),
-        .grafm(8'h00),
+        .grafp0(border_mode ? 8'h80 : 8'hFF),
+        .grafp1(border_mode ? 8'h80 : 8'hFF),
+        .grafp2(border_mode ? 8'h80 : 8'hFF),
+        .grafp3(border_mode ? 8'h80 : 8'h00),
+        .grafm (border_mode ? 8'hAA : 8'h00),
         .hitclr(hitclr),
         .mpl_q(mpl_q), .ppl_q(ppl_q)
     );
@@ -64,7 +75,29 @@ module tb_pm_collide;
         end
     endtask
 
+    // Stack every player and missile at one HPOS and sweep a line.
+    task automatic border_test(input logic [7:0] hp,
+                               input logic [15:0] exp_mpl,
+                               input logic [15:0] exp_ppl,
+                               input string tag);
+        begin
+            clear_latches();
+            border_hpos = hp; border_mode = 1'b1;
+            sweep_line(255, 8'd0);
+            if (mpl_q !== exp_mpl) begin
+                $display("FAIL %s: mpl=%04h expected %04h", tag, mpl_q, exp_mpl);
+                fail++;
+            end
+            if (ppl_q !== exp_ppl) begin
+                $display("FAIL %s: ppl=%04h expected %04h", tag, ppl_q, exp_ppl);
+                fail++;
+            end
+            border_mode = 1'b0;
+        end
+    endtask
+
     initial begin
+        border_mode = 0; border_hpos = 8'h22;
         phi2_tick = 0; cyc = 0; hitclr = 0; hposp0 = 8'd60;
         repeat (4) @(posedge clk);
         rst = 0;
@@ -133,6 +166,15 @@ module tb_pm_collide;
             $display("FAIL T6 mid-line HITCLR: P0PL=$%01h expected $4 (p1 hit cleared)", ppl_q[3:0]);
             fail++;
         end
+
+        // ---- T7/T8: the left border edge, ported from tb_antic_modes ------
+        // All 4 players and all 4 missiles stacked at HPOS $22 with GRAFP=$80
+        // (leftmost two pixels lit) land exactly ON the visible low bound and
+        // must all collide mutually.  One colour clock further left ($21) is
+        // horizontal blank and must produce nothing.  Together these pin the
+        // exact boundary, which is why they are worth keeping.
+        border_test(8'h22, 16'hFFFF, 16'h7BDE, "T7 border $22");
+        border_test(8'h21, 16'h0000, 16'h0000, "T8 border $21 HBLANK");
 
         if (fail == 0) $display("tb_pm_collide: all checks PASS");
         else           $display("tb_pm_collide: %0d FAIL", fail);

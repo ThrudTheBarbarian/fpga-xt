@@ -869,17 +869,16 @@ module compositor #(
             if (pres_hi[i+4])   ppf_c[4*i +: 4] = ppf_c[4*i +: 4] | pf_hi;
         end
 
-        // M[i] vs P[j] and P[i] vs P[j] (P-vs-P excludes self).
-        for (i = 0; i < 4; i = i + 1) begin
-            for (j = 0; j < 4; j = j + 1) begin
-                if (pres_lo[i]   && pres_lo[j+4]) mpl_c[4*i + j] = 1'b1;
-                if (pres_hi[i]   && pres_hi[j+4]) mpl_c[4*i + j] = 1'b1;
-                if (i != j) begin
-                    if (pres_lo[i+4] && pres_lo[j+4]) ppl_c[4*i + j] = 1'b1;
-                    if (pres_hi[i+4] && pres_hi[j+4]) ppl_c[4*i + j] = 1'b1;
-                end
-            end
-        end
+        // M-vs-P and P-vs-P are NOT computed here any more.  They moved to
+        // hdl/gtia_pm_collide.sv, which walks the beam and accumulates as GTIA
+        // does, so that a mid-line HPOSP move or a mid-line HITCLR lands at the
+        // right point in the line — something a once-per-row burst cannot
+        // represent at all.  antic_top reads P0PL..P3PL / M0PL..M3PL from that
+        // engine; mpl_q/ppl_q here stay wired for the standalone compositor
+        // testbenches but carry no collision information.  Dropping the 4x4
+        // matrix also gives clk_sys back the slack the beam-time engine costs.
+        // Playfield collisions (mpf/ppf) are still computed here — they need
+        // per-x playfield content, which the beam-time path does not yet have.
 
         return {ppl_c, mpl_c, ppf_c, mpf_c};
     endfunction

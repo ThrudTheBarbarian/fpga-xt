@@ -309,15 +309,20 @@ module tb_antic_modes;
         mem[16'h3600 + PM_ROW_OFFSET] = 8'hFF; mem[16'h3700 + PM_ROW_OFFSET] = 8'hFF;   // P2/P3 shapes
         compose_row(4'hF, 4'd0, CHB);
         $display("  collisions: mpf=%04h ppf=%04h mpl=%04h ppl=%04h", mpf, ppf, mpl, ppl);
-        if (mpf === 16'h0 && ppf === 16'h0 && mpl === 16'h0 && ppl === 16'h0) begin
-            $display("FAIL collision: all latches zero (scenario did not exercise P/M)");
+        // NOTE mpl/ppl (M-vs-P, P-vs-P) are NO LONGER produced here: they
+        // moved to hdl/gtia_pm_collide.sv, which accumulates in beam time so a
+        // mid-line HPOSP move or HITCLR lands at the right point in the line.
+        // Their golden lives in sim/tb_pm_collide.sv.  Only the PLAYFIELD
+        // collisions (mpf/ppf) are the compositor's job now.
+        if (mpf === 16'h0 && ppf === 16'h0) begin
+            $display("FAIL collision: PF latches zero (scenario did not exercise P/M vs playfield)");
             fail++;
         end
-        if (mpf !== EXP_MPF || ppf !== EXP_PPF || mpl !== EXP_MPL || ppl !== EXP_PPL) begin
-            $display("FAIL collision golden: got mpf=%04h ppf=%04h mpl=%04h ppl=%04h  exp mpf=%04h ppf=%04h mpl=%04h ppl=%04h",
-                     mpf, ppf, mpl, ppl, EXP_MPF, EXP_PPF, EXP_MPL, EXP_PPL);
+        if (mpf !== EXP_MPF || ppf !== EXP_PPF) begin
+            $display("FAIL collision golden: got mpf=%04h ppf=%04h  exp mpf=%04h ppf=%04h",
+                     mpf, ppf, EXP_MPF, EXP_PPF);
             fail++;
-        end else $display("  collisions OK (match golden)");
+        end else $display("  PF collisions OK (match golden)");
 
         // ---- P/M from the shape REGISTER, no DMA (the $D00D-$D011 fix) ------
         // Real GTIA renders players/missiles from the live GRAFPx/GRAFM shape
@@ -611,20 +616,16 @@ module tb_antic_modes;
                  mpl, ppl, mpf, ppf,
                  mpl[3:0]&mpl[7:4]&mpl[11:8]&mpl[15:12],
                  ppl[3:0], ppl[7:4], ppl[11:8], ppl[15:12]);
-        if (mpl !== 16'hFFFF) begin
-            $display("FAIL border-coll: mpl=%04h expected $FFFF (each M?PL=$0F over 4 players at $22)", mpl);
-            fail++;
-        end
-        if (ppl !== 16'h7BDE) begin
-            $display("FAIL border-coll: ppl=%04h expected $7BDE (P0PL=$0E P1=$0D P2=$0B P3=$07)", ppl);
-            fail++;
-        end
+        // mpl/ppl border behaviour now lives in sim/tb_pm_collide.sv (T7/T8),
+        // which pins the same $22-collides / $21-does-not boundary against the
+        // beam-time engine.  Only the "no false PF collision" half is the
+        // compositor's business here.
         if (mpf !== 16'h0 || ppf !== 16'h0) begin
             $display("FAIL border-coll: off-screen objects false-positive PF collision mpf=%04h ppf=%04h", mpf, ppf);
             fail++;
         end
-        if (mpl === 16'hFFFF && ppl === 16'h7BDE && mpf === 16'h0 && ppf === 16'h0)
-            $display("  border-coll OK (left-edge $22 M/P + P/P collisions register; no PF)");
+        if (mpf === 16'h0 && ppf === 16'h0)
+            $display("  border-coll OK (off-screen objects make no PF collision)");
 
         // ---- Negative control: hpos $21 = HBLANK, one colour clock further left
         // ($21 -> atari-x -30), past the visible edge -> NO collision at all.
@@ -634,11 +635,8 @@ module tb_antic_modes;
             hposp_r[i] = 8'h21; hposm_r[i] = 8'h21;
         end
         compose_row(4'hF, 4'd0, CHB);
-        $display("  border-coll($21 HBLANK): mpl=%04h ppl=%04h (want 0000/0000)", mpl, ppl);
-        if (mpl !== 16'h0 || ppl !== 16'h0) begin
-            $display("FAIL border-coll: hpos $21 (HBLANK, atari-x -30) collided mpl=%04h ppl=%04h — left bound wrong", mpl, ppl);
-            fail++;
-        end else $display("  border-coll($21) OK (HBLANK edge: no collision)");
+        // The $21/$22 left-bound discrimination moved to tb_pm_collide T7/T8.
+        $display("  border-coll($21 HBLANK): PF-only check (mpl/ppl now in tb_pm_collide)");
 
         if (fail == 0) begin
             $display("*** ANTIC_MODES OK *** modes F/2/E, %0d pairs each", NPAIR);
