@@ -756,6 +756,17 @@ static int menu_popup_run(const menu_item *items, int n, int x, int y,
     g_expand=expand; g_expandctx=ctx;
     popup_pens();
     popup_panel st[POPMAX_INTERNAL]; int depth=0;
+#ifdef GEM_XTOS
+    // Take the input GRAB for the popup's lifetime, the way the bar's pull-down does
+    // (menu_client_click).  Two things follow, both of which a popup needs:
+    //   - EVERY event reaches us, including presses gemd would otherwise consume as its own chrome.
+    //     Without it, dragging a window's title bar never reached the client, so the click-out test
+    //     below never fired and the panel just sat there while the window moved out from under it.
+    //   - Grab events carry SCREEN coordinates and no window tag (route.c: "m.w[1] = -1"), which is
+    //     the space the panels are laid out and hit-tested in, so the loop's math needs no fixing up.
+    int grabbed=0;
+    if(is_client()){ g_mrevoked=0; menu_grab(1); grabbed=1; }
+#endif
     panel_open(&st[0], items, n, x, y); depth=1;
     int result=-1;
     // A popup opened by a click must ignore the button-RELEASE of that same click:
@@ -773,16 +784,7 @@ static int menu_popup_run(const menu_item *items, int n, int x, int y,
         }
         if(t==AES_QUIT){ result=-1; break; }
 #ifdef GEM_XTOS
-        // The panels are laid out in SCREEN space, but a client's input is localised to the window it
-        // was delivered to.  Lift a panel's own event back to screen space; anything belonging to some
-        // OTHER window is genuinely outside every panel, so push it far away rather than let its
-        // window-local coordinates alias into a panel's box and read as a hit.
-        if(is_client() && (t==AES_MOTION || t==AES_BTN_DOWN || t==AES_BTN_UP)){
-            int ew=aes_event_win(), lifted=0;
-            for(int i=0;i<depth;i++)
-                if(st[i].wh && st[i].wh==ew){ ev.mx+=st[i].g.x; ev.my+=st[i].g.y; lifted=1; break; }
-            if(!lifted && ew!=0){ ev.mx=-30000; ev.my=-30000; }
-        }
+        if(g_mrevoked){ result=-1; break; }              /* §9: the clock took our grab */
 #endif
 
         if(t==AES_KEY){
@@ -859,6 +861,9 @@ static int menu_popup_run(const menu_item *items, int n, int x, int y,
         }
     }
     while(depth>0){ panel_close(&st[depth-1]); depth--; }             // restore all save-unders
+#ifdef GEM_XTOS
+    if(grabbed && !g_mrevoked) menu_grab(0);          // gemd already dropped it if it revoked
+#endif
     g_expand=NULL; g_expandctx=NULL;
     return result;
 }
