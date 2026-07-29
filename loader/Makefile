@@ -736,7 +736,8 @@ SDSTAGE := $(BUILD)/sdstage
 .PHONY: sdstage
 sdstage: $(BUILD)/toybox.so $(BUILD)/sqlite3.so $(BUILD)/fbgrab.so $(BUILD)/blitbench.so $(BUILD)/libGEM.so $(BUILD)/libxtos.so $(BUILD)/libm.so $(BUILD)/libutil.so $(BUILD)/desktop.so $(BUILD)/gemtext.so $(BUILD)/gemd.so $(BUILD)/regtest.so $(BUILD)/tnfs.so $(BUILD)/fujinetd.so $(BUILD)/fuji.so $(DESKTOP_RSC) $(ROMFS_OVERLAY_FILES) $(ROMFS_ASSET_FILES)
 	@rm -rf $(SDSTAGE)
-	@mkdir -p $(SDSTAGE)/OS/bin $(SDSTAGE)/OS/library $(SDSTAGE)/OS/etc $(SDSTAGE)/OS/boot $(SDSTAGE)/OS/fonts $(SDSTAGE)/OS/themes/Aristo2/1x $(SDSTAGE)/OS/Apps/Desktop/Spaces/1
+	@# /OS/var: the kernel writes the across-boot entropy seed there at startup
+	@mkdir -p $(SDSTAGE)/OS/bin $(SDSTAGE)/OS/library $(SDSTAGE)/OS/etc $(SDSTAGE)/OS/boot $(SDSTAGE)/OS/fonts $(SDSTAGE)/OS/themes/Aristo2/1x $(SDSTAGE)/OS/Apps/Desktop/Spaces/1 $(SDSTAGE)/OS/var
 	cp sd/boot/* $(SDSTAGE)/OS/boot/
 	cp $(DESKTOP_RSC) $(SDSTAGE)/OS/Apps/Desktop/desktop.rsc
 	cp $(BUILD)/toybox.so  $(SDSTAGE)/OS/bin/toybox

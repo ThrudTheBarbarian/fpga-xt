@@ -195,7 +195,9 @@ static void shell_task(void *arg)
      * save at shutdown, and cannot be — SYS_reboot masks interrupts and resets
      * the PS, so no filesystem write survives it; rewriting at boot gives the
      * same no-replay guarantee and covers a power cut too. */
-    { extern void xt_random_seed_boot(const char *); xt_random_seed_boot("/OS/var/random-seed"); }
+    { extern int xt_random_seed_boot(const char *);
+      if (xt_random_seed_boot("/OS/var/random-seed") != 0)
+          puts0("[random] no writable /OS/var — entropy will not carry across boots\n"); }
     /* networking is NOT started here: /boot/20-Networking runs /bin/netup
      * (SYS_net_up) — stack bring-up is an explicit boot-script decision.
      * Headless/qemu: run `netup` at the console. */

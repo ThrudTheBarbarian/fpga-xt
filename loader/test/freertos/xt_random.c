@@ -314,10 +314,11 @@ int xt_random_gather(void) { return rekey(); }
  * no seed, and the pool does not depend on one. It matters most on qemu and in
  * the window before the TRNG's first gather, which is exactly when the machine
  * would otherwise be reduced to clock seeding. */
-void xt_random_seed_boot(const char *path)
+int xt_random_seed_boot(const char *path)
 {
     uint8_t seed[32];
     vfs_file f;
+    long wrote = -1;
 
     if (vfs_open(path, 0, &f) == 0) {
         long got = vfs_read(&f, seed, sizeof seed);
@@ -327,9 +328,28 @@ void xt_random_seed_boot(const char *path)
     }
 
     xt_random_save_seed(seed);
-    if (vfs_open(path, VFS_O_WRONLY | VFS_O_CREAT | VFS_O_TRUNC, &f) == 0) {
-        vfs_write(&f, seed, sizeof seed);
-        vfs_close(&f);
+    if (vfs_open(path, VFS_O_WRONLY | VFS_O_CREAT | VFS_O_TRUNC, &f) != 0) {
+        /* The directory may not exist yet on a card staged before this file
+         * did. Create it once and retry; if it still will not open, say so
+         * (the caller logs) rather than returning as though a seed had been
+         * written — a seed silently not persisted is the whole feature quietly
+         * absent, and it would look identical to a working one. */
+        char dir[128];
+        size_t n = 0;
+        while (path[n] && n < sizeof dir - 1) n++;
+        while (n && path[n] != '/') n--;
+        if (n) {
+            memcpy(dir, path, n);
+            dir[n] = 0;
+            vfs_mkdir(dir);
+        }
+        if (vfs_open(path, VFS_O_WRONLY | VFS_O_CREAT | VFS_O_TRUNC, &f) != 0) {
+            memset(seed, 0, sizeof seed);
+            return -1;
+        }
     }
+    wrote = vfs_write(&f, seed, sizeof seed);
+    vfs_close(&f);
     memset(seed, 0, sizeof seed);
+    return wrote == (long)sizeof seed ? 0 : -1;
 }

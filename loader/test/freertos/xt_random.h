@@ -46,7 +46,11 @@ int xt_random_gather(void);
 
 /* Read the across-boot seed from `path`, mix it in, and immediately overwrite
  * it with fresh bytes. Call once from TASK context after the filesystem holding
- * `path` is mounted — it does real file I/O. */
-void xt_random_seed_boot(const char *path);
+ * `path` is mounted — it does real file I/O. Returns 0 when the replacement
+ * seed was written, -1 when it could not be (no writable filesystem there):
+ * the caller should LOG that, because a seed that silently fails to persist
+ * looks exactly like one that works. A missing seed on the way IN is not an
+ * error — the first boot of a fresh card has none. */
+int xt_random_seed_boot(const char *path);
 
 #endif
