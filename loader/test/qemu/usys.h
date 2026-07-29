@@ -90,6 +90,11 @@ static inline long sys_readdir(const char *path, int index, struct xt_dirent *en
 static inline long sys_mkdir(const char *path, int mode)
 { return __syscall(SYS_mkdir, (long)path, mode, 0); }
 static inline long sys_chdir(const char *path) { return __syscall(SYS_chdir, (long)path, 0, 0); }
+/* the kernel CSPRNG -> bytes written, or -errno (-EIO = the TRNG never went
+ * fresh; the clock-seeded bytes you would otherwise get are offered only to a
+ * caller who asks with GRND_NONBLOCK and so knows what they are taking) */
+static inline long sys_getrandom(void *buf, unsigned len, unsigned flags)
+{ return __syscall(SYS_getrandom, (long)buf, (long)len, (long)flags); }
 static inline long sys_getcwd(char *buf, unsigned size)
 { return __syscall(SYS_getcwd, (long)buf, (long)size, 0); }
 static inline long sys_rename(const char *oldp, const char *newp)

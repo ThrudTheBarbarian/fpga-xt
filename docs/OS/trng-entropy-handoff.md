@@ -4,6 +4,34 @@
 **From:** the RTL thread. All hardware changes below are committed; nothing
 further is needed in `hdl/`. This document is the software work that remains.
 
+> **Status 2026-07-29: all five items are implemented**, in
+> `loader/test/freertos/xt_random.c` (+ `.h`). `/dev/random`, `/dev/urandom`,
+> `getentropy()`, `getrandom()` and Dropbear now draw from one pool: ChaCha20
+> keyed by SHA-256-conditioned words, each gathered behind `TRNG_STAT[8]`.
+> Two deliberate deviations from the plan below, both noted where they land in
+> the code:
+>
+> - **Item 2, "prefer reusing Dropbear's ChaCha20/SHA-256":** not possible.
+>   Dropbear is a userspace `.so` and `vfs_devfs.c` is in the FreeRTOS kernel
+>   image, so there is no link path between them. Both primitives are written
+>   out plainly in `xt_random.c` instead.
+> - **Item 4, "persist 32 bytes at shutdown":** there is no shutdown hook to
+>   hang it on — `SYS_reboot` masks interrupts and resets the PS, so no
+>   filesystem write can run there. The seed is instead read at boot and
+>   **immediately overwritten** with fresh bytes (`xt_random_seed_boot`, called
+>   from `shell_task` once the SD is mounted). Same no-replay guarantee, and it
+>   covers a power cut too.
+>
+> Item 5's blocking contract holds wherever a TRNG exists to wait for: on
+> hardware the default blocks for a gather and returns `EIO` if the TRNG is
+> faulted, never clock-seeded bytes, and `GRND_NONBLOCK` gets `EAGAIN` — the
+> path Dropbear's `dbrandom.c` probes with (`HAVE_GETRANDOM` is now forced on in
+> `tools/build-dropbear.sh`, since configure's link test links against newlib
+> alone and cannot see the shim's definition). On qemu there is nothing to wait
+> for, so neither branch applies; `xt_random_is_hw()` tells the cases apart.
+>
+> Not yet run on hardware — built only. The verification below is still to do.
+
 ## The problem
 
 `/dev/random` and `/dev/urandom` (same node, `loader/test/freertos/vfs_devfs.c`,

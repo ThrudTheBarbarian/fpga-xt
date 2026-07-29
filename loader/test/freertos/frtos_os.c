@@ -2982,6 +2982,34 @@ static long do_syscall(uint32_t num, long a0, long a1, long a2)
         vTaskDelay(ticks ? ticks : 1);      /* >=1 tick so other tasks (net RX pump) run */
         return 0;
     }
+    case SYS_getrandom: {                                   /* (buf, len, flags) -> bytes / -errno */
+        extern void xt_random_bytes(void *, uint32_t);
+        extern int  xt_random_is_hw(void), xt_random_hw_present(void), xt_random_gather(void);
+        void *buf = (void *)a0;
+        uint32_t len = (uint32_t)a1;
+        if (!buf) return -22;                               /* -EINVAL */
+        /* Where a TRNG exists, an uninitialised pool is a WAIT, not a result:
+         * block (bounded) for a gather, and say -EAGAIN to a caller who asked
+         * not to wait — the Linux contract, and the one dropbear's dbrandom.c
+         * is written against (GRND_NONBLOCK probe, then a blocking retry). The
+         * bound matters: a TRNG that never goes fresh is a hardware fault, and
+         * waiting on it forever would wedge every caller of uuidgen, so the
+         * last word is -EIO. Clock-seeded bytes are never returned in place of
+         * hardware ones — that substitution is the bug this replaces.
+         *
+         * On qemu there is no TRNG to wait for, so neither branch applies and
+         * the pool serves what it has. */
+        if (xt_random_hw_present() && !xt_random_is_hw()) {
+            if ((uint32_t)a2 & GRND_NONBLOCK) return -11;   /* -EAGAIN */
+            for (int tries = 0; tries < 8 && !xt_random_is_hw(); tries++) {
+                if (xt_random_gather() == 0) break;
+                vTaskDelay(pdMS_TO_TICKS(10));              /* task ctx: a real yield */
+            }
+            if (!xt_random_is_hw()) return -5;              /* -EIO */
+        }
+        xt_random_bytes(buf, len);
+        return (long)len;
+    }
     default:         return -38;                             /* -ENOSYS */
     }
 }
@@ -3043,6 +3071,7 @@ static int needs_task_ctx(struct k_regs *regs, uint32_t num)
     case SYS_recvfrom:
         return 1;                                  /* netconn calls block in lwIP */
     case SYS_nanosleep: return 1;                  /* vTaskDelay must run in task ctx */
+    case SYS_getrandom: return 1;                  /* may vTaskDelay between gather retries */
     case SYS_net_up:  return 1;                    /* xTaskCreate (kernel heap) -> task ctx */
     case SYS_statfs:  return 1;                    /* fs task queries FatFs f_getfree */
     case SYS_getdents: return 1;                   /* fs task packs the dir batch page */
@@ -3086,6 +3115,7 @@ static const char *strace_name(uint32_t n)
     case SYS_dup2: return "dup2";       case SYS_kill: return "kill";
     case SYS_nanosleep: return "nanosleep"; case SYS_gettimeofday: return "gettimeofday";
     case SYS_klog: return "klog";       case SYS_devmem: return "devmem";
+    case SYS_getrandom: return "getrandom";
     case SYS_boot_done: return "boot_done";
     case SYS_getcwd: return "getcwd";
     case SYS_socket: return "socket";   case SYS_accept: return "accept";
@@ -3784,7 +3814,7 @@ void frtos_set_host(const xtld_host *h) { g_khost = h; }
 K(_sbrk)
 K(_write) K(_read) K(_exit) K(_close) K(_lseek) K(_fstat) K(_isatty)
 K(_open) K(_stat) K(_kill) K(_getpid) K(_gettimeofday) K(_times) K(_link)
-K(_unlink) K(_fork) K(_execve) K(_fcntl) K(_getentropy) K(_mkdir)
+K(_unlink) K(_fork) K(_execve) K(_fcntl) K(_getentropy) K(_getrandom) K(_mkdir)
 K(_init) K(_fini) K(_jp2uc_l) K(_uc2jp_l) K(_wait)
 extern int regcomp(void*,const void*,int); extern int regexec(const void*,const void*,unsigned,void*,int);
 extern void regfree(void*); extern int sigprocmask(int,const void*,void*);
@@ -3817,6 +3847,7 @@ uintptr_t frtos_ksym(const char *name, void *u)
         {"_gettimeofday",(void*)_gettimeofday},{"_times",(void*)_times},
         {"_link",(void*)_link},{"_unlink",(void*)_unlink},{"_fork",(void*)_fork},
         {"_execve",(void*)_execve},{"_fcntl",(void*)_fcntl},{"_getentropy",(void*)_getentropy},
+        {"_getrandom",(void*)_getrandom},
         {"_mkdir",(void*)_mkdir},{"_init",(void*)_init},{"_fini",(void*)_fini},
         {"_jp2uc_l",(void*)_jp2uc_l},{"_uc2jp_l",(void*)_uc2jp_l},{"_wait",(void*)_wait},
         {"regcomp",(void*)regcomp},{"regexec",(void*)regexec},

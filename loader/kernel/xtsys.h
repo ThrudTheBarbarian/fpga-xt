@@ -342,6 +342,18 @@ struct xt_dirent { unsigned mode; char name[256]; };
                                 * because a resident init never exits. (It tried, and the machine
                                 * came up with no console at all — see docs/OS/gemd-plan.md.)
                                 * init(1) only; anyone else gets -EPERM. */
+#define SYS_getrandom    0x406 /* (buf, len, flags) -> bytes written, or -errno. The kernel
+                                * CSPRNG (xt_random.c): ChaCha20 keyed by SHA-256-conditioned
+                                * words gathered from the PL TRNG, each gated on TRNG_STAT[8].
+                                * On hardware the default (flags = 0) BLOCKS until a gather has
+                                * succeeded — the Linux contract — and returns -EIO rather than
+                                * clock-seeded bytes if the TRNG never comes good, so a caller
+                                * asking for entropy is never quietly handed less. GRND_NONBLOCK
+                                * (1) returns -EAGAIN instead of waiting, as on Linux. Where
+                                * there is no TRNG (qemu) there is nothing to wait for: neither
+                                * applies and the pool serves what it has. */
+#define GRND_NONBLOCK    0x0001 /* SYS_getrandom flags: -EAGAIN rather than wait for a gather */
+#define GRND_RANDOM      0x0002 /* accepted and ignored — one pool, as on modern Linux */
 
 /* networking control — block 0x800. Bringing the stack up is a BOOT-SCRIPT decision
  * (/boot/20-Networking runs /bin/netup), not kernel magic. */

@@ -124,7 +124,7 @@ FRSRC := $(FR)/tasks.c $(FR)/queue.c $(FR)/list.c $(FR)/timers.c $(FR)/event_gro
          test/freertos/mathcop.c test/freertos/xl_boot.c \
          test/freertos/romfs.c test/freertos/syscalls.c test/freertos/main.c test/freertos/blitter.c \
          newlib-pic/libm.a \
-         test/freertos/blkdev.c test/freertos/vfs.c test/freertos/vfs_romfs.c test/freertos/vfs_ramfs.c test/freertos/vfs_lockfs.c test/freertos/vfs_devfs.c test/freertos/vfs_procfs.c \
+         test/freertos/blkdev.c test/freertos/vfs.c test/freertos/vfs_romfs.c test/freertos/vfs_ramfs.c test/freertos/vfs_lockfs.c test/freertos/vfs_devfs.c test/freertos/xt_random.c test/freertos/vfs_procfs.c \
          test/qemu/bare_rt.c test/qemu/bare_libc.c xtld.c \
          test/freertos/storage/ff.c test/freertos/storage/ffsystem.c \
          test/freertos/storage/ffunicode.c test/freertos/storage/diskio.c \

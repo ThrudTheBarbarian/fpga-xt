@@ -1803,22 +1803,25 @@ void syslog(int pri, const char *fmt, ...)
     va_end(ap);
 }
 
-/* entropy: no hardware RNG surfaced yet — timer-seeded xorshift (uuidgen,
- * mktemp randomness; NOT cryptographic) */
+/* entropy: SYS_getrandom — the kernel CSPRNG (ChaCha20 keyed from the gated PL
+ * TRNG through SHA-256). This replaced a timer-seeded xorshift that emitted its
+ * own state as output, so a handful of bytes gave you every byte before and
+ * after them; nothing here keeps generator state in the process at all.
+ *
+ * Both entry points fail rather than substitute weaker bytes. That is the whole
+ * reason they exist: a caller asking for entropy and silently getting a clock
+ * is worse than one that gets an error and can say so. */
+ssize_t getrandom(void *buf, size_t len, unsigned flags)
+{
+    long r = __syscall(SYS_getrandom, (long)buf, (long)len, (long)flags);
+    if (r < 0) { errno = (int)-r; return -1; }
+    return (ssize_t)r;
+}
+
 int getentropy(void *buf, size_t len)
 {
-    static unsigned s;
-    unsigned char *b = buf;
-    if (!s) {
-        struct timeval tv;
-        gettimeofday(&tv, 0);
-        s = (unsigned)tv.tv_usec ^ ((unsigned)tv.tv_sec << 12) ^ ((unsigned)sys_getpid() << 24) ^ 0x9e3779b9u;
-    }
-    for (size_t i = 0; i < len; i++) {
-        s ^= s << 13; s ^= s >> 17; s ^= s << 5;
-        b[i] = (unsigned char)s;
-    }
-    return 0;
+    if (len > 256) { errno = EIO; return -1; }      /* getentropy's documented cap */
+    return getrandom(buf, len, 0) == (ssize_t)len ? 0 : -1;
 }
 
 /* newlib's mkstemp probes candidates through the kernel's _stat stub; do the
