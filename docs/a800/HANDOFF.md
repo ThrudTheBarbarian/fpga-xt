@@ -187,6 +187,40 @@ entirely and key off the instruction boundary (the ~21 `state <=
 ST_FETCH` sites) as 0f originally specified.
 Do not re-try a plain rdy gate.
 
+### 1s. clk_sally: directives exhausted, and forcing CSE made it WORSE
+Placer directives on the same netlist (deterministic, so this is the
+whole space, not samples):
+    ExtraTimingOpt (default)  -0.027   <- best
+    Explore                   -0.063
+    ExtraNetDelay_high        -0.145
+    AltSpreadLogic_medium     -0.170
+Then a "safe" refactor was tried: the turbo core writes out
+`(di == 8'h00)` eight times and `di[7]` seven times, once per flag-update
+site, so they were hoisted into single shared `di_zero`/`di_neg` wires.
+Behaviour-identical, tb_xt6502 passes — and clk_sally got WORSE:
+    -0.027  duplicated comparators
+    -0.217  single shared comparator     (build 95)
+Forcing the common sub-expression created ONE high-fanout net that
+routes worse than the duplicates did; the placer had been putting each
+comparator next to its consumer.  REVERTED.  Do not retry this, and
+treat "obviously redundant logic" near a routing-dominated limiter (60%
+route here) with suspicion — duplication can be the placer's friend.
+DECISION (user, 2026-07-29): the turbo core has NO instruction-level
+parity requirement — "if we can do insns faster on the turbo core, we
+should".  That removes the constraint that made these deep paths
+untouchable, so PIPELINING is now the sanctioned fix.  Klaus stays a
+valid gate because it tests functional correctness, not cycle counts.
+See [[turbo_no_cycle_parity]].
+Worth noting what that unlocks: fpga_xt_top's MMCM comment records that
+clk_sally was dropped from 120 MHz to 100 MHz because "the binding path
+is the CPU<->memory round-trip + routing, not the xt6502 datapath itself
+(true core ceiling ~133-155 MHz)".  That is this exact path.  So
+pipelining it closes the gate AND unlocks ~20% more turbo speed, since
+turbo's rate IS clk_sally's.
+NOT viable: a multicycle constraint on the turbo core's paths.  It is
+gated by `rdy`, but turbo CAN run at full rate (the ~56x capability), so
+rdy is not guaranteed slow and the paths are genuinely single-cycle.
+
 ### 1r. The clk_sally limiter is the TURBO core, which we do not boot
 post_route_timing on build 92 names both limiters:
   clk_sally -0.170:  u_sally_mem BRAM -> u_sally_core/P_reg[1]
