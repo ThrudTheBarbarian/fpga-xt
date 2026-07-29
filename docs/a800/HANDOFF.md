@@ -187,6 +187,40 @@ entirely and key off the instruction boundary (the ~21 `state <=
 ST_FETCH` sites) as 0f originally specified.
 Do not re-try a plain rdy gate.
 
+### 1u. THE BUILD COIN-FLIP IS SLICE CONGESTION, not any one path
+Roughly 2 of the last 6 builds passed the gate, on essentially unchanged
+logic, with swings like clk_sys +0.160 -> -0.833 -> -0.127 -> -0.370.
+That is far too much for placement noise on a healthy device.  It is
+not.  post_route_util:
+    LUTs       29,858 / 53,200   56%
+    Registers  41,801 / 106,400  39%
+    SLICES     12,939 / 13,300   97.3%      <-- the problem
+    Unique control sets  1,685
+56% LUT usage is consuming 97% of SLICES, so the placer has almost no
+freedom and every run lands somewhere different.  It also explains why
+the critical paths are 60% ROUTE — congestion, not logic depth.
+WHY the gap: a slice packs flip-flops only when they share clock,
+ENABLE and RESET.  Registers by type:
+    37,340  clock-enable + SYNCHRONOUS reset
+     3,800  clock-enable + ASYNCHRONOUS reset
+       680  set variants
+1,685 distinct control sets fragment the packing, and the async/sync
+reset split adds a whole second family that cannot share slices with
+the first.  [[clk_sally_marginal]] already records that clk_sys uses
+synchronous reset ON PURPOSE — the 3,800 async holdouts are working
+against that policy.
+CONSEQUENCE FOR STRATEGY: trimming individual logic cones cannot fix
+this, which is why the pack-path split (build 100) and the Z-flag move
+gave inconsistent results.  Two levers actually apply:
+  1. Reduce control-set diversity — convert the remaining async-reset
+     flops to synchronous.  Bounded and mechanical.
+  2. Reduce logic outright — the streaming GTIA rewrite DELETES the
+     burst compositor's 25-state FSM and its overlay/colour role, which
+     is the single largest block on clk_sys.
+Both point the same way as the video work already in flight.  Until
+slice pressure drops, treat EVERY gate result as a sample, not a
+measurement of the change under test.
+
 ### 1t. Build 96 — clk_sally CLOSED; POKEY timer model refined
 clk_sally +0.093 (was -0.027) and clk_sys +0.160 after moving the CPU's
 Z-flag reduction into sally_mem.  Klaus passes at the IDENTICAL baseline
