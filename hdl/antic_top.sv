@@ -1772,7 +1772,10 @@ module antic_top #(
         .grafp2(grafp_q[2]), .grafp3(grafp_q[3]),
         .grafm(grafm_q),
         .hitclr(hitclr_strobe),
-        .mpl_q(bt_mpl_q), .ppl_q(bt_ppl_q)
+        .mpl_q(bt_mpl_q), .ppl_q(bt_ppl_q),
+        // per-colour-clock presence for the streaming pixel stage — unused
+        // until gtia_stream lands (docs/video/gtia-streaming.md)
+        .pres_cc0(), .pres_cc1(), .pres_valid()
     );
 
     compositor u_compositor (

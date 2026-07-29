@@ -65,7 +65,17 @@ module gtia_pm_collide (
     input  wire        hitclr,       // 1-clk strobe: clear all latches
 
     output logic [15:0] mpl_q,       // {M3PL,M2PL,M1PL,M0PL}, 4 bits each
-    output logic [15:0] ppl_q        // {P3PL,P2PL,P1PL,P0PL}, 4 bits each
+    output logic [15:0] ppl_q,       // {P3PL,P2PL,P1PL,P0PL}, 4 bits each
+
+    // ---- per-colour-clock presence (streaming-GTIA pixel path) -----------
+    // {P3,P2,P1,P0,M3,M2,M1,M0} for each of the two colour clocks this machine
+    // cycle covers.  The shift-register walk already computes these to
+    // accumulate collisions; exposing them lets the pixel stage share the walk
+    // instead of a second positional model re-deriving the same thing — which
+    // is exactly the duplication that made the burst compositor wrong.
+    output logic [7:0]  pres_cc0,
+    output logic [7:0]  pres_cc1,
+    output logic        pres_valid   // 1-clk with the pair above
 );
 
     // atari_x maps from the ANTIC cycle as x = 4*cyc - 96: two colour clocks
@@ -176,6 +186,7 @@ module gtia_pm_collide (
     logic [1:0] n_m_sub [0:3];
     logic       n_m_act [0:3];
     logic [15:0] n_ppl, n_mpl;
+    logic [7:0]  n_pres0, n_pres1;
 
     always_comb begin
         int i, pass;
@@ -246,6 +257,7 @@ module gtia_pm_collide (
                 n_ppl = n_ppl | ppl_of(pres);
                 n_mpl = n_mpl | mpl_of(pres);
             end
+            if (pass == 0) n_pres0 = pres; else n_pres1 = pres;
         end
     end
 
@@ -254,6 +266,7 @@ module gtia_pm_collide (
         if (rst) begin
             mpl_q <= 16'd0;
             ppl_q <= 16'd0;
+            pres_cc0 <= 8'd0; pres_cc1 <= 8'd0; pres_valid <= 1'b0;
             for (i = 0; i < 4; i++) begin
                 p_sr[i] <= 8'd0; p_bit[i] <= 3'd0; p_sub[i] <= 2'd0; p_act[i] <= 1'b0;
                 m_sr[i] <= 2'd0; m_bit[i] <= 1'd0; m_sub[i] <= 2'd0; m_act[i] <= 1'b0;
@@ -269,7 +282,10 @@ module gtia_pm_collide (
                 ppl_q <= n_ppl;
                 mpl_q <= n_mpl;
             end
+            pres_valid <= phi2_tick;
             if (phi2_tick) begin
+                pres_cc0 <= n_pres0;
+                pres_cc1 <= n_pres1;
                 for (i = 0; i < 4; i++) begin
                     p_sr[i]  <= n_p_sr[i];  p_bit[i] <= n_p_bit[i];
                     p_sub[i] <= n_p_sub[i]; p_act[i] <= n_p_act[i];
