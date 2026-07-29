@@ -387,8 +387,22 @@ module pokey_audio #(
     // Inner FF-wraps in linked mode (low timer wrap-to-FF on every
     // 256-tick underflow that ISN'T a cascade) are unaffected — they
     // wrap to $FF without any fudge.
-    wire [7:0] audf1_reload = audctl[6] ? (audf1 + 8'd3) : audf1;
-    wire [7:0] audf3_reload = audctl[5] ? (audf3 + 8'd3) : audf3;
+    // FIRST period after STIMER is N+7; every period after that is N+4.
+    // ACID800 pokey_timertiming states both in its own golden table, and the
+    // figures are identical for the 8-bit and 16-bit cases:
+    //     AUDF1=0    first  7c/ 8c   then 11c/12c   -> N+7 then N+4
+    //     AUDF1=16   first 23c/24c   then 43c/44c   -> N+7 then N+4
+    // A uniform N+4 (the previous model) puts the first underflow 3 cycles
+    // early.  Loop 1 does not catch it — it only asks for "unfired at 19", and
+    // 20 clears that — but loop 2 clears IRQEN, re-enables it 27 cycles after
+    // STIMER and reads at 42, so it needs NO underflow in [27,42].  N+4 gives
+    // 20 and 40, and 40 lands inside: "16-bit lo timer triggered too early
+    // (loop #2)".  N+7-then-N+4 gives 23 and 43, both outside.
+    // (An older model used a uniform N+7, which fired the SECOND underflow
+    // late; the fix is that the two periods differ, not that one is right.)
+    logic ch1_first, ch3_first;
+    wire [7:0] audf1_reload = audctl[6] ? (audf1 + (ch1_first ? 8'd6 : 8'd3)) : audf1;
+    wire [7:0] audf3_reload = audctl[5] ? (audf3 + (ch3_first ? 8'd6 : 8'd3)) : audf3;
 
     // STIMER start lag: the write's reload lands 4 machine cycles later
     // (see the comment at the apply site).
@@ -403,6 +417,7 @@ module pokey_audio #(
     always_ff @(posedge clk or posedge rst) begin
         if (rst) begin
             ch1_cnt <= 8'h00; ch1_state <= 1'b0;
+            ch1_first <= 1'b0; ch3_first <= 1'b0;
             ch2_cnt <= 8'h00; ch2_state <= 1'b0;
             ch3_cnt <= 8'h00; ch3_state <= 1'b0;
             ch4_cnt <= 8'h00; ch4_state <= 1'b0;
@@ -477,7 +492,14 @@ module pokey_audio #(
             // stays AUDF+4.  (Altirra also skips the reset for a timer
             // whose borrow lands within 1 cycle of the reset — not yet
             // modelled here.)
+            // The first period ends at the channel's first underflow; every
+            // reload after that uses the shorter N+4 figure.
+            if (ch1_wrap) ch1_first <= 1'b0;
+            if (ch3_wrap) ch3_first <= 1'b0;
+
             if (stimer_apply) begin
+                ch1_first <= 1'b1;        // next reload is the FIRST period
+                ch3_first <= 1'b1;
                 ch1_cnt <= audf1_reload;  ch1_state <= 1'b1;
                 ch2_cnt <= audf2;         ch2_state <= 1'b1;
                 ch3_cnt <= audf3_reload;  ch3_state <= 1'b1;
