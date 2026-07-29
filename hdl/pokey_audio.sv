@@ -401,8 +401,16 @@ module pokey_audio #(
     // (An older model used a uniform N+7, which fired the SECOND underflow
     // late; the fix is that the two periods differ, not that one is right.)
     logic ch1_first, ch3_first;
-    wire [7:0] audf1_reload = audctl[6] ? (audf1 + (ch1_first ? 8'd6 : 8'd3)) : audf1;
-    wire [7:0] audf3_reload = audctl[5] ? (audf3 + (ch3_first ? 8'd6 : 8'd3)) : audf3;
+    // Both offsets are computed in PARALLEL and the flag selects the result.
+    // Putting the mux on the adder INPUT instead (audf + (first ? 6 : 3)) puts
+    // it in series with the carry chain and cost 0.2ns on clk_sally, which
+    // POKEY sits on (build 90).
+    wire [7:0] audf1_p3 = audf1 + 8'd3;
+    wire [7:0] audf1_p6 = audf1 + 8'd6;
+    wire [7:0] audf3_p3 = audf3 + 8'd3;
+    wire [7:0] audf3_p6 = audf3 + 8'd6;
+    wire [7:0] audf1_reload = audctl[6] ? (ch1_first ? audf1_p6 : audf1_p3) : audf1;
+    wire [7:0] audf3_reload = audctl[5] ? (ch3_first ? audf3_p6 : audf3_p3) : audf3;
 
     // STIMER start lag: the write's reload lands 4 machine cycles later
     // (see the comment at the apply site).
