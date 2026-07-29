@@ -416,8 +416,13 @@ module pokey_audio #(
     // so the two modes genuinely differ and the discriminator is AUDCTL[4]
     // (ch1+2 paired).  Unlinked stays uniform N+4; linked gets N+7 on the
     // first period after STIMER, N+4 thereafter.
-    wire [7:0] audf1_reload = audctl[6] ? ((ch1_first && ch12_paired) ? audf1_p6 : audf1_p3) : audf1;
-    wire [7:0] audf3_reload = audctl[5] ? ((ch3_first && ch34_paired) ? audf3_p6 : audf3_p3) : audf3;
+    // The pairing test is folded into ch1_first's SET condition below rather
+    // than ANDed here: this mux feeds the reload path, which is on clk_sally's
+    // critical cone, and build 97 lost 0.4ns on clk_sally / 0.8ns on clk_sys
+    // with the AND in this expression.  Setting the flag only when linked
+    // gives the identical result with nothing added to the hot path.
+    wire [7:0] audf1_reload = audctl[6] ? (ch1_first ? audf1_p6 : audf1_p3) : audf1;
+    wire [7:0] audf3_reload = audctl[5] ? (ch3_first ? audf3_p6 : audf3_p3) : audf3;
 
     // STIMER start lag: the write's reload lands 4 machine cycles later
     // (see the comment at the apply site).
@@ -513,8 +518,11 @@ module pokey_audio #(
             if (ch3_wrap) ch3_first <= 1'b0;
 
             if (stimer_apply) begin
-                ch1_first <= 1'b1;        // next reload is the FIRST period
-                ch3_first <= 1'b1;
+                // Only the LINKED (16-bit) case takes the extended first
+                // period; unlinked stays uniform N+4.  Deciding it HERE keeps
+                // the pairing term off the reload mux.
+                ch1_first <= ch12_paired;
+                ch3_first <= ch34_paired;
                 ch1_cnt <= audf1_reload;  ch1_state <= 1'b1;
                 ch2_cnt <= audf2;         ch2_state <= 1'b1;
                 ch3_cnt <= audf3_reload;  ch3_state <= 1'b1;
