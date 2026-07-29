@@ -1216,3 +1216,10 @@ pm_collide: build/tb_pm_collide.vvp
 build/tb_pm_collide.vvp: tb_pm_collide.sv $(HDL_DIR)/gtia_pm_collide.sv | build
 	iverilog -g2012 -Wall -Wno-timescale -I$(HDL_DIR) -o $@ -s tb_pm_collide \
 	    $(HDL_DIR)/gtia_pm_collide.sv tb_pm_collide.sv
+
+gtia_stream: build/tb_gtia_stream.vvp
+	@vvp -N $<
+
+build/tb_gtia_stream.vvp: tb_gtia_stream.sv $(HDL_DIR)/gtia_stream.sv $(HDL_DIR)/color_resolver.sv | build
+	iverilog -g2012 -Wall -Wno-timescale -I$(HDL_DIR) -o $@ -s tb_gtia_stream \
+	    $(HDL_DIR)/gtia_stream.sv $(HDL_DIR)/color_resolver.sv tb_gtia_stream.sv
