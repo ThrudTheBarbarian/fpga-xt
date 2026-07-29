@@ -209,7 +209,14 @@ module compositor #(
         S_BLANK_FILL        = 5'd23,    // paint a full row of COLBK (idx 0) for
                                         // blank ($x0) / unsupported-mode lines
 
-        S_PMSWEEP           = 5'd24     // border P/M mutual-collision sweep
+        S_PMSWEEP           = 5'd24,    // border P/M mutual-collision sweep
+        // Mode-F first pair: pack from the REGISTERED byte, not straight off
+        // the BRAM.  The clk_sys limiter is display_shadow BRAM -> pack_pair ->
+        // col_raw_q, and only the FIRST pair of each byte sits on it (later
+        // pairs already use cur_byte).  Splitting the latch cuts that cone for
+        // one extra clk_sys cycle per BYTE — negligible against the ~10,260
+        // clk_bus cycles in a scanline.
+        S_F_PACK0           = 5'd25
                                         // (visible scanline outside playfield)
     } state_t;
 
@@ -1300,10 +1307,16 @@ module compositor #(
 
                 S_F_WAIT_BYTE: if (mem_ready) state <= S_F_LATCH_BYTE;
 
-                S_F_LATCH_BYTE: begin : sblk_f_latch
+                // Latch only — the pack moves to S_F_PACK0 so the BRAM output
+                // terminates at cur_byte instead of feeding pack_pair.
+                S_F_LATCH_BYTE: begin
+                    cur_byte <= mem_rdata;
+                    state    <= S_F_PACK0;
+                end
+
+                S_F_PACK0: begin : sblk_f_latch
                     logic [15:0] raw_f;
-                    raw_f     = pack_pair(cur_mode, mem_rdata, 8'h0, 4'd0);
-                    cur_byte  <= mem_rdata;
+                    raw_f     = pack_pair(cur_mode, cur_byte, 8'h0, 4'd0);
                     pair_idx  <= 4'd0;
                     cmd_tag   <= `BUS_TAG_SET;
                     cmd_addr  <= set_addr;
