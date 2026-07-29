@@ -144,6 +144,65 @@ module tb_pokey;
         we    = 1'b0;
     endtask
 
+
+    // Probe the linked second-period machinery while the replica runs.
+    int probe_on = 0;
+    always @(posedge clk) if (probe_on && u_dut.u_audio.ch1_wrap)
+        $display("[Qp]   ch1_wrap: ch1_first=%b ext1_q=%b paired=%b reload=$%02h",
+                 u_dut.u_audio.ch1_first, u_dut.u_audio.ext1_q,
+                 u_dut.u_audio.ch12_paired, u_dut.u_audio.audf1_reload);
+
+    // ---- ACID800 pokey_timertiming replica ------------------------------
+    // Three hardware round-trips were spent on this test at ~1h each; running
+    // its exact sequence here means the model iterates in seconds.  It samples
+    // IRQST at precise machine-cycle offsets from STIMER, with IRQEN cleared
+    // and re-armed in between, so only underflows AFTER the re-arm can latch:
+    //     STIMER          t=0
+    //     IRQEN = 0       (clears the latch)
+    //     IRQEN = $01     t=rearm
+    //     read IRQST      t=t_lo (must be UNFIRED) and t=t_hi (must be FIRED)
+    // Valid in this testbench despite its scaled REF_* parameters because
+    // AUDCTL[6] selects the MACHINE clock, which counts phi2_tick directly.
+    task automatic acid_case(input [7:0] audctl_v, input [7:0] audf1_v,
+                             input string tag,
+                             input int rearm, input int t_lo, input int t_hi);
+        int  t, fire_at;
+        bit  fired_lo, fired_hi;
+        begin
+            do_write(8'h0E, 8'h00);          // IRQEN = 0
+            do_write(8'h08, audctl_v);       // AUDCTL
+            do_write(8'h00, audf1_v);        // AUDF1
+            do_write(8'h02, 8'h00);          // AUDF2
+            probe_on = 1;
+            do_write(8'h09, 8'h00);          // STIMER -> t = 0
+            t = 0; fired_lo = 1'b0; fired_hi = 1'b0; fire_at = -1;
+            while (t <= t_hi + 20) begin
+                @(posedge clk);
+                if (phi2_tick) begin
+                    t = t + 1;
+                    if (t == rearm) begin
+                        we = 1'b1; waddr = 8'h0E; wdata = 8'h01;
+                        @(posedge clk); we = 1'b0;
+                    end
+                    if (t == t_lo) fired_lo = u_dut.u_regs.irq_latch_q[0];
+                    if (t == t_hi) fired_hi = u_dut.u_regs.irq_latch_q[0];
+                    if (fire_at < 0 && u_dut.u_regs.irq_latch_q[0]) fire_at = t;
+                end
+            end
+            if (fired_lo) begin
+                $display("FAIL Q %s: fired by cycle %0d (too EARLY)", tag, t_lo);
+                fail_count++;
+            end
+            if (!fired_hi) begin
+                $display("FAIL Q %s: not fired by cycle %0d (too LATE)", tag, t_hi);
+                fail_count++;
+            end
+            probe_on = 0;
+            $display("[Q] %s: latch set at cycle %0d (want unfired %0d / fired %0d)",
+                     tag, fire_at, t_lo, t_hi);
+        end
+    endtask
+
     task automatic expect_eq(input string label,
                              input [31:0] got, input [31:0] want);
         if (got !== want) begin
@@ -1107,6 +1166,19 @@ module tb_pokey;
             do_write(8'h06, 8'hFF);
             do_write(8'h0F, 8'h00);
         end
+
+        // ===== Phase Q — ACID800 pokey_timertiming replica =================
+        $display("[Q] ACID pokey_timertiming replica");
+        // Offsets carry a +5 CALIBRATION: this bench counts phi2 ticks from
+        // when do_write() returns, whereas ACID counts from the cycle the
+        // STIMER write COMMITS, five machine cycles earlier.  Calibrated
+        // against 8-bit loop 1, which passes on hardware, so the three other
+        // cases are measured against a known-good reference rather than an
+        // assumption.
+        acid_case(8'h40, 8'h10, "8-bit  loop1", 12+5, 19+5, 20+5);
+        acid_case(8'h40, 8'h10, "8-bit  loop2", 24+5, 39+5, 40+5);
+        acid_case(8'h50, 8'h10, "16-bit loop1", 12+5, 19+5, 20+5);
+        acid_case(8'h50, 8'h10, "16-bit loop2", 27+5, 42+5, 43+5);
 
         if (fail_count == 0) begin
             $display("*** POKEY OK *** audio + RANDOM + AUDCTL + keyboard + POT + IRQ/serial + STIMER");

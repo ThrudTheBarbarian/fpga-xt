@@ -417,21 +417,30 @@ module pokey_audio #(
     // so the two modes genuinely differ and the discriminator is AUDCTL[4]
     // (ch1+2 paired).  Unlinked stays uniform N+4; linked gets N+7 on the
     // first period after STIMER, N+4 thereafter.
-    // LINKED mode: the extended period is on the reloads AFTER the first, not
-    // on the first itself.  Derived from the loop budgets rather than the
-    // summary tables (which give IRQST VISIBILITY, not underflow):
-    //   8-bit  (AUDCTL=$40, unlinked): loop 1 reads 19/20 and needs the first
-    //          underflow at 20; loop 2 re-enables IRQEN at 24 and reads 39/40,
-    //          needing one at 40.  Uniform N+4 satisfies both.
-    //   16-bit (AUDCTL=$50, linked):   loop 1 ALSO needs the first at 20, but
-    //          loop 2 needs NOTHING in [27,42].  Uniform 20 puts the second at
-    //          40, inside.  23-then-20 puts the first at 23 and loop 1 fails
-    //          "too late".  Only N+4 first / N+7 after satisfies both — the
-    //          cascade latency lands on the reloads that follow.
-    // ext*_q is registered so the pairing term stays off this mux, which sits
-    // on clk_sally's critical cone (build 97 lost 0.4ns to an AND here).
-    wire [7:0] audf1_reload = audctl[6] ? (ext1_q ? audf1_p6 : audf1_p3) : audf1;
-    wire [7:0] audf3_reload = audctl[5] ? (ext3_q ? audf3_p6 : audf3_p3) : audf3;
+    // LINKED mode: the SECOND period is the extended one — the cascade reload
+    // costs its three cycles once.  Derived from the ACID800 loop budgets:
+    //   8-bit (unlinked): loop 1 needs the first underflow at 20, loop 2 needs
+    //     one at 40.  Uniform N+4 satisfies both.
+    //   16-bit (linked):  loop 1 ALSO needs the first at 20, but loop 2 needs
+    //     NOTHING in [27,42].  So period 1 = N+4 and period 2 = N+7, putting
+    //     the underflows at 20 and 43.
+    //
+    // That needs TWO reload values, because the STIMER reload and the reload
+    // taken AT the first wrap happen while the same flag is set:
+    //   STIMER  -> always the short value (period 1 = N+4)
+    //   wrap 1  -> the long value when linked (period 2 = N+7)
+    //   wrap 2+ -> short again
+    // A single wire cannot express that: gating on ext*_q (set AFTER wrap 1)
+    // pushed the extension onto period 3, which is what the in-sim ACID
+    // replica caught — the probe showed reload=$13 at wrap 1 and $16 at wrap 2.
+    wire [7:0] audf1_reload_stimer = audctl[6] ? audf1_p3 : audf1;
+    wire [7:0] audf3_reload_stimer = audctl[5] ? audf3_p3 : audf3;
+    wire [7:0] audf1_reload = audctl[6]
+                            ? ((ch1_first && ch12_paired) ? audf1_p6 : audf1_p3)
+                            : audf1;
+    wire [7:0] audf3_reload = audctl[5]
+                            ? ((ch3_first && ch34_paired) ? audf3_p6 : audf3_p3)
+                            : audf3;
 
     // STIMER start lag: the write's reload lands 4 machine cycles later
     // (see the comment at the apply site).
@@ -544,9 +553,9 @@ module pokey_audio #(
                 ch3_first <= 1'b1;
                 ext1_q    <= 1'b0;
                 ext3_q    <= 1'b0;
-                ch1_cnt <= audf1_reload;  ch1_state <= 1'b1;
+                ch1_cnt <= audf1_reload_stimer;  ch1_state <= 1'b1;
                 ch2_cnt <= audf2;         ch2_state <= 1'b1;
-                ch3_cnt <= audf3_reload;  ch3_state <= 1'b1;
+                ch3_cnt <= audf3_reload_stimer;  ch3_state <= 1'b1;
                 ch4_cnt <= audf4;         ch4_state <= 1'b1;
             end
         end
