@@ -1230,3 +1230,11 @@ pokey_serial: build/tb_pokey_serial.vvp
 build/tb_pokey_serial.vvp: tb_pokey_serial.sv $(HDL_DIR)/pokey_serial.sv | build
 	iverilog -g2012 -Wall -Wno-timescale -I$(HDL_DIR) -o $@ -s tb_pokey_serial \
 	    $(HDL_DIR)/pokey_serial.sv tb_pokey_serial.sv
+
+pf_serial: build/tb_pf_serial.vvp
+	@vvp -N $<
+
+build/tb_pf_serial.vvp: tb_pf_serial.sv $(HDL_DIR)/antic_pf_serial.sv $(HDL_DIR)/gtia_stream.sv $(HDL_DIR)/color_resolver.sv | build
+	iverilog -g2012 -Wall -Wno-timescale -I$(HDL_DIR) -o $@ -s tb_pf_serial \
+	    $(HDL_DIR)/antic_pf_serial.sv $(HDL_DIR)/gtia_stream.sv \
+	    $(HDL_DIR)/color_resolver.sv tb_pf_serial.sv
