@@ -910,6 +910,9 @@ module fpga_xt_top (
         .rdy_n_q    (tm_rdy_n),
         .cycle_type (tm_cycle_type),
         .cycle_type_q (tm_cycle_type_q),
+        // playfield byte stream — consumed by the streaming GTIA stage
+        // (docs/video/gtia-streaming.md); unused until that lands.
+        .pf_valid (), .pf_byte (), .pf_code (), .pf_hpos (), .pf_is_char (),
         .dbg_hcount (), .dbg_line (), .dbg_rowctr (), .dbg_dlctl (), .dbg_dlpc ()
     );
     wire [7:0] fid_sub;

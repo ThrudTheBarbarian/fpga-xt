@@ -282,6 +282,9 @@ module tb_fid_raster;
         .vcount(tm_vcount), .nmist(tm_nmist), .nmi_n(tm_nmi_n),
         .rdy_n_q(tm_rdy_n), .cycle_type(tm_ct),
         .dbg_hcount(tm_hc), .dbg_line(tm_line), .dbg_rowctr(tm_row),
+        // playfield byte stream — consumed by the streaming GTIA stage
+        // (docs/video/gtia-streaming.md); unused until that lands.
+        .pf_valid (), .pf_byte (), .pf_code (), .pf_hpos (), .pf_is_char (),
         .dbg_dlctl(tm_dlctl), .dbg_dlpc(tm_dlpc)
     );
 

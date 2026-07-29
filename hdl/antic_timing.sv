@@ -82,6 +82,17 @@ module antic_timing #(
     output wire  [2:0]  cycle_type,  // bus owner for THIS cycle (combinational)
     output logic [2:0]  cycle_type_q,// same, delayed one machine cycle
 
+    // ---- Playfield byte stream (streaming-GTIA source) -------------------
+    // docs/video/gtia-streaming.md.  antic_timing already SCHEDULES the
+    // playfield fetches (name_hit/data_hit); this actually performs them and
+    // emits the bytes in beam order, so a streaming GTIA stage can consume
+    // them per colour clock instead of a burst re-deriving the whole row.
+    output logic        pf_valid,     // 1-clk: pf_byte is a fresh playfield byte
+    output logic [7:0]  pf_byte,      // graphics byte (bitmap) / glyph (char)
+    output logic [7:0]  pf_code,      // char code that produced it (char modes)
+    output logic [6:0]  pf_hpos,      // ANTIC cycle the byte belongs to
+    output logic        pf_is_char,   // 1 = char mode (pf_code meaningful)
+
     // ---- Debug / diff taps ----------------------------------------------
     output wire  [6:0]  dbg_hcount,
     output wire  [8:0]  dbg_line,
@@ -100,6 +111,13 @@ module antic_timing #(
     // Registers (snooped — zero latency, same domain as the CPU)
     // =====================================================================
     logic [7:0] dmactl_q, nmien_q, vscrol_q, hscrol_q;
+    logic [7:0] chbase_q, chactl_q;
+    // Playfield memory scan pointer.  Loaded from an LMS operand, then stepped
+    // once per fetched unit.  ANTIC wraps the scan within a 4K page (the low
+    // 12 bits), which is what antic_addresswrap exercises.
+    logic [15:0] scan_addr;
+    logic [7:0]  name_q;      // char code fetched at name_hit, awaiting its glyph
+    logic        name_pend;
     logic [7:0] dlistl_q, dlisth_q;
     logic       wsync_armed;
 
@@ -282,6 +300,20 @@ module antic_timing #(
                     && (hcount < 7'd105);
     wire pf_steal = name_hit || data_hit;
 
+    // Delayed copies: the fetch is ISSUED in the slot cycle, its data lands on
+    // the following tick, so the capture below keys on these.
+    logic name_hit_d, data_hit_d, is_char_d;
+    logic [6:0] hcount_d;
+    always_ff @(posedge clk or posedge rst) begin
+        if (rst) begin
+            name_hit_d <= 1'b0; data_hit_d <= 1'b0;
+            is_char_d  <= 1'b0; hcount_d   <= 7'd0;
+        end else if (phi2_tick) begin
+            name_hit_d <= name_hit; data_hit_d <= data_hit;
+            is_char_d  <= is_char;  hcount_d   <= hcount;
+        end
+    end
+
     logic [2:0] cycle_type_c;
     always_comb begin
         if (dl_inst_slot || dl_lo_slot || dl_hi_slot) cycle_type_c = CT_DL;
@@ -332,8 +364,19 @@ module antic_timing #(
     end
 
     always_comb begin
-        mem_req  = dl_inst_slot || dl_lo_slot || dl_hi_slot;
-        mem_addr = dl_pc;
+        // DL slots (cycles 1/6/7) and playfield slots never collide, so one
+        // request port serves both.
+        mem_req  = dl_inst_slot || dl_lo_slot || dl_hi_slot || name_hit || data_hit;
+        if (dl_inst_slot || dl_lo_slot || dl_hi_slot)
+            mem_addr = dl_pc;
+        else if (name_hit)
+            mem_addr = scan_addr;                       // character name
+        else if (data_hit && is_char)
+            // glyph: CHBASE[7:2] : code[6:0] : row.  Modes 2/3 are 8-line;
+            // 4/5 are 8-line too, 6/7 are 16-line and use one fewer code bit.
+            mem_addr = {chbase_q[7:2], name_q[6:0], row_ctr[2:0]};
+        else
+            mem_addr = scan_addr;                       // bitmap graphics byte
     end
 
     // Instruction byte as seen by the cycle-2 decode.  The decode tick IS
@@ -353,6 +396,10 @@ module antic_timing #(
             dl_ctl <= 8'h00; dl_ctl_prev <= 8'h00; dl_pc <= 16'h0000;
             row_ctr <= 4'd0; row_height_m1 <= 4'd0;
             dl_active <= 1'b0; need_inst <= 1'b0; need_addr <= 1'b0; is_jvb <= 1'b0;
+            chbase_q <= 8'h00; chactl_q <= 8'h00;
+            scan_addr <= 16'h0000; pf_valid <= 1'b0; pf_byte <= 8'h00;
+            pf_code <= 8'h00; pf_hpos <= 7'd0; pf_is_char <= 1'b0;
+            name_q <= 8'h00; name_pend <= 1'b0;
             vs_prev <= 1'b0; vs_latch6 <= 4'd0; vs_latch109 <= 4'd0;
             inst_q <= 8'h00; addr_lo_q <= 8'h00;
             nmist_hi <= 2'b00; nmi_ext <= 1'b0; nmi_n <= 1'b1; nmi_arm_q <= 1'b0; nmi_arm_vbi_q <= 1'b0; nmi_en_early <= 1'b0; nmi_en_late <= 1'b0; nmist_hold_q <= 2'b00;
@@ -373,6 +420,8 @@ module antic_timing #(
             if (cold) begin
                 dmactl_q  <= 8'h00;
                 nmien_q   <= 8'h00;
+                chbase_q  <= 8'h00;
+                chactl_q  <= 8'h00;
                 vscrol_q  <= 8'h00;
                 hscrol_q  <= 8'h00;
                 dlistl_q  <= 8'h00;
@@ -409,7 +458,9 @@ module antic_timing #(
                     4'h0: dmactl_q <= reg_wdata;
                     4'h2: begin dlistl_q <= reg_wdata; dlist_dirty <= 1'b1; end
                     4'h3: begin dlisth_q <= reg_wdata; dlist_dirty <= 1'b1; end
+                    4'h1: chactl_q <= reg_wdata;
                     4'h4: hscrol_q <= reg_wdata;
+                    4'h9: chbase_q <= reg_wdata;
                     4'h5: begin
                         vscrol_q <= reg_wdata;
                         if (hcount < 7'd109) vs_latch109 <= reg_wdata[3:0];
@@ -445,7 +496,33 @@ module antic_timing #(
                     end else begin
                         dl_pc <= {dl_pc[15:10], dl_pc[9:0] + 10'd1};
                     end
-                    // (LMS target: renderer's concern in phases 1-3)
+                    // LMS operand IS the playfield scan pointer.  Previously
+                    // discarded ("renderer's concern"), which is exactly why
+                    // the burst compositor had to re-derive it from the meta
+                    // table; the streaming path needs it live here.
+                    if (!is_jvb) scan_addr <= {mem_rdata, addr_lo_q};
+                end
+
+                // ---- playfield fetch: capture bytes, step the scan ------
+                // mem_rdata is valid on the tick ENDING the requested cycle, so
+                // a slot asserted at hcount N is consumed here at N+1.
+                pf_valid <= 1'b0;
+                if (name_hit_d) begin
+                    // character name: hold it for the glyph fetch 3 cycles on,
+                    // and step the scan (4K wrap — antic_addresswrap).
+                    name_q    <= mem_rdata;
+                    name_pend <= 1'b1;
+                    scan_addr <= {scan_addr[15:12], scan_addr[11:0] + 12'd1};
+                end
+                if (data_hit_d) begin
+                    pf_valid   <= 1'b1;
+                    pf_byte    <= mem_rdata;
+                    pf_code    <= is_char_d ? name_q : 8'h00;
+                    pf_hpos    <= hcount_d;
+                    pf_is_char <= is_char_d;
+                    if (!is_char_d)
+                        scan_addr <= {scan_addr[15:12], scan_addr[11:0] + 12'd1};
+                    name_pend <= 1'b0;
                 end
 
                 // ---- entering cycle 2: decode a just-fetched instruction -
