@@ -247,6 +247,25 @@ module tb_fid_raster;
     // machine's own domain.  This is the step-4 render-phase question.
     int pd_en; initial if (!$value$plusargs("phasedrift=%d", pd_en)) pd_en = 0;
 
+    // +collдbg=1 : why does M0PL survive vblank?  Two candidates, and they are
+    // distinguishable: HITCLR never reaching the engine, versus the active_line
+    // gate failing to block accumulation outside the display band.
+    int cdbg; initial if (!$value$plusargs("colldbg=%d", cdbg)) cdbg = 0;
+    always @(posedge clk_sys) begin
+        if (cdbg && !rst_sys) begin
+            if (u_antic_top.hitclr_strobe)
+                $display("[coll] HITCLR strobe @scanline=%0d cyc=%0d  mpl_before=%04h",
+                         u_antic_top.ar_scanline, u_antic_top.ar_phi2_in_line,
+                         u_antic_top.bt_mpl_q);
+            // any accumulation while the beam is OUTSIDE the active band
+            if (u_antic_top.phi2_tick && (u_antic_top.ar_atari_row == 8'hFF)
+                && (u_antic_top.bt_mpl_q != 16'h0))
+                $display("[coll] NONZERO in vblank: scanline=%0d row=%02h mpl=%04h",
+                         u_antic_top.ar_scanline, u_antic_top.ar_atari_row,
+                         u_antic_top.bt_mpl_q);
+        end
+    end
+
 
     int pd_seen = 0;
     always @(posedge clk_sys) begin
@@ -839,6 +858,51 @@ module tb_fid_raster;
                         8'hEA,8'hEA,8'hEA,8'hEA,8'hEA,8'hEA, // NOP sled $2030-2035
                         8'h4C,8'h14,8'h20 };               // JMP w0 ($2036)
                     for (int k = 0; k < 57; k++) u_sally_mem.mem[16'h2000+k] = progb[k];
+                    if (psel == 12) begin
+                        // VBLANK-COLLISION probe — replicates ACID800
+                        // gtia_collision's vblank check ($2551..) PROPERLY.
+                        // The first version did HITCLR at line 39 and then let
+                        // the beam run the whole active display before reading,
+                        // so it legitimately accumulated overlaps: the probe was
+                        // wrong, not the RTL.  The real test waits for VCOUNT
+                        // 124 (scanline 248, INSIDE vblank) so that no active
+                        // line follows the clear.
+                        int a; a = 16'h2023;
+                        // spin until VCOUNT == $7C (124)
+                        u_sally_mem.mem[a+0]=8'hAD; u_sally_mem.mem[a+1]=8'h0B;
+                        u_sally_mem.mem[a+2]=8'hD4;                  // v: LDA VCOUNT
+                        u_sally_mem.mem[a+3]=8'hC9; u_sally_mem.mem[a+4]=8'h7C;
+                        u_sally_mem.mem[a+5]=8'hD0; u_sally_mem.mem[a+6]=8'hF9;  // BNE v
+                        a = a + 7;
+                        u_sally_mem.mem[a+0]=8'hA9; u_sally_mem.mem[a+1]=8'h80;
+                        u_sally_mem.mem[a+2]=8'h8D; u_sally_mem.mem[a+3]=8'h00;
+                        u_sally_mem.mem[a+4]=8'hD0;                  // HPOSP0=$80
+                        u_sally_mem.mem[a+5]=8'h8D; u_sally_mem.mem[a+6]=8'h01;
+                        u_sally_mem.mem[a+7]=8'hD0;                  // HPOSP1
+                        u_sally_mem.mem[a+8]=8'h8D; u_sally_mem.mem[a+9]=8'h04;
+                        u_sally_mem.mem[a+10]=8'hD0;                 // HPOSM0
+                        u_sally_mem.mem[a+11]=8'hA9; u_sally_mem.mem[a+12]=8'hFF;
+                        u_sally_mem.mem[a+13]=8'h8D; u_sally_mem.mem[a+14]=8'h0D;
+                        u_sally_mem.mem[a+15]=8'hD0;                 // GRAFP0=$FF
+                        u_sally_mem.mem[a+16]=8'h8D; u_sally_mem.mem[a+17]=8'h0E;
+                        u_sally_mem.mem[a+18]=8'hD0;                 // GRAFP1=$FF
+                        u_sally_mem.mem[a+19]=8'h8D; u_sally_mem.mem[a+20]=8'h11;
+                        u_sally_mem.mem[a+21]=8'hD0;                 // GRAFM=$FF
+                        u_sally_mem.mem[a+22]=8'h8D; u_sally_mem.mem[a+23]=8'h1E;
+                        u_sally_mem.mem[a+24]=8'hD0;                 // HITCLR
+                        a = a + 25;
+                        // spin until VCOUNT wraps to 0, then read M0PL
+                        u_sally_mem.mem[a+0]=8'hAD; u_sally_mem.mem[a+1]=8'h0B;
+                        u_sally_mem.mem[a+2]=8'hD4;                  // w: LDA VCOUNT
+                        u_sally_mem.mem[a+3]=8'hC9; u_sally_mem.mem[a+4]=8'h00;
+                        u_sally_mem.mem[a+5]=8'hD0; u_sally_mem.mem[a+6]=8'hF9;  // BNE w
+                        u_sally_mem.mem[a+7]=8'hAD; u_sally_mem.mem[a+8]=8'h08;
+                        u_sally_mem.mem[a+9]=8'hD0;                  // LDA M0PL
+                        u_sally_mem.mem[a+10]=8'h8D; u_sally_mem.mem[a+11]=8'h02;
+                        u_sally_mem.mem[a+12]=8'h06;                 // STA $0602
+                        u_sally_mem.mem[a+13]=8'h4C; u_sally_mem.mem[a+14]=8'h14;
+                        u_sally_mem.mem[a+15]=8'h20;                 // JMP w0
+                    end
                     if (psel == 11) begin
                         // BEAM-TIME COLLISION probe.  Replicates ACID800
                         // gtia_pmretrigger: park p1 at hpos 60 (x 24..39,
@@ -1192,7 +1256,8 @@ module tb_fid_raster;
     // prog=8 has no run marker — it spins deliberately so the steal
     // accounting can observe many playfield lines; let the cycle budget
     // end it rather than a PC match (the spin would trip one instantly).
-    wire watch_hit = (wpsel == 11 && fdbg_pc == 16'h2072)
+    wire watch_hit = (wpsel == 12 && fdbg_pc == 16'h2050)
+                  || (wpsel == 11 && fdbg_pc == 16'h2072)
                   || (wpsel == 9 && fdbg_pc == 16'h2036)
                   || (wpsel == 7 && fdbg_pc == 16'h2045)
                   || (wpsel == 0 && fdbg_pc == 16'h203E)
