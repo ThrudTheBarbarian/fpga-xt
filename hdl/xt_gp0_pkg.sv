@@ -71,6 +71,7 @@ package xt_gp0_pkg;
     localparam logic [7:0] MATH_STAT        = 8'h08;  // R [0]=engine busy, [1]=chunk resident/ready, [2]=evt FIFO non-empty, [15:8]=resident chunk, [23:16]=evt FIFO fill
     // TRNG
     localparam logic [7:0] TRNG_RND         = 8'h00;  // R whitened 32-bit entropy word (free-running pool snapshot); read repeatedly for fresh words. Entropy SOURCE for the OS pool, not raw crypto output
+    localparam logic [7:0] TRNG_STAT        = 8'h04;  // R R [5:0]=debiased entropy bits accumulated since the last TRNG_RND read (saturates at 32), [8]=fresh (>=32 bits, i.e. a FULLY re-seeded word). Reading TRNG_RND CONSUMES and clears the counter. Poll bit 8 before taking key material: the pool refills ~32 bits per microsecond, far slower than back-to-back AXI reads, so un-gated reads return an LFSR-stretched pool rather than fresh entropy
     // DEBUG
     localparam logic [7:0] DBG_HALT         = 8'h00;  // W write (any) -> run to the next instruction boundary, then freeze (state preserved). Also arms halt-at-reset when combined with a SALLYRST pulse
     localparam logic [7:0] DBG_GO           = 8'h04;  // W write (any) -> release the core, run at the configured speed

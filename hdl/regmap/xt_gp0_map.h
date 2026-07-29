@@ -93,6 +93,7 @@
 
 /* ---- TRNG block --------------------------------------------------- */
 #define XT_TRNG_RND          (XT_BLK_TRNG + 0x00u)        /* R whitened 32-bit entropy word (free-running pool snapshot); read repeatedly for fresh words. Entropy SOURCE for the OS pool, not raw crypto output */
+#define XT_TRNG_STAT         (XT_BLK_TRNG + 0x04u)        /* R R [5:0]=debiased entropy bits accumulated since the last TRNG_RND read (saturates at 32), [8]=fresh (>=32 bits, i.e. a FULLY re-seeded word). Reading TRNG_RND CONSUMES and clears the counter. Poll bit 8 before taking key material: the pool refills ~32 bits per microsecond, far slower than back-to-back AXI reads, so un-gated reads return an LFSR-stretched pool rather than fresh entropy */
 
 /* ---- DEBUG block --------------------------------------------------- */
 #define XT_DBG_HALT          (XT_BLK_DEBUG + 0x00u)       /* W write (any) -> run to the next instruction boundary, then freeze (state preserved). Also arms halt-at-reset when combined with a SALLYRST pulse */

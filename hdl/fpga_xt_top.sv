@@ -3294,10 +3294,18 @@ module fpga_xt_top (
     // into /dev/urandom.  clk_sys is always-on (unlike clk_pix, which the new
     // video-sleep bit can gate), so entropy keeps flowing with the display asleep.
     wire [31:0] trng_word;
+    wire [5:0] trng_bits_avail;
+    wire       trng_fresh;
+    wire       trng_rd_pop;
+    wire [31:0] trng_stat_word = {23'd0, trng_fresh, 2'd0, trng_bits_avail};
+
     xt_trng #(.N_RO(24), .STAGES(3)) u_trng (
-        .clk   (clk_sys),
-        .rst_n (rst_sys_n),
-        .rnd   (trng_word)
+        .clk        (clk_sys),
+        .rst_n      (rst_sys_n),
+        .rnd        (trng_word),
+        .rd_stb     (trng_rd_pop),
+        .bits_avail (trng_bits_avail),
+        .fresh      (trng_fresh)
     );
 
     xt_gp0_regs u_axi_bridge (
@@ -3343,6 +3351,8 @@ module fpga_xt_top (
         .diag7_word      (diag7_word),
         .diag8_word      (diag8_word),
         .diag9_word      (diag9_word),
+        .trng_stat_word (trng_stat_word),
+        .trng_rd_pop    (trng_rd_pop),
         .trng_word       (trng_word),        // ring-oscillator entropy (0x7xx)
         .clock_mult      (eff_clock_mult_sys), // effective $D4CA speed, read back at GP0 offset 0x1E
         .gp0_ctrl        (gp0_ctrl),

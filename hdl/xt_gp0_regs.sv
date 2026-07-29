@@ -123,6 +123,8 @@ module xt_gp0_regs (
     input  wire [31:0] diag9_word,      // TEMP: ROM-window upload diag (last addr/data)
     // ---- hardware entropy (clk_sys) — read in the 0x7xx block --------------
     input  wire [31:0] trng_word,
+    input  wire [31:0] trng_stat_word,   // {23'd0, fresh, 2'd0, bits_avail}
+    output reg         trng_rd_pop,      // 1-clk: TRNG_RND was read — consume
 
     // ---- SALLY speed/clock_mult read-back (clk_sys) ------------------------
     input  wire [7:0]  clock_mult,
@@ -505,9 +507,11 @@ module xt_gp0_regs (
             s_axi_rresp   <= 2'b00;
             s_axi_rvalid  <= 1'b0;
             math_evt_pop  <= 1'b0;
+            trng_rd_pop   <= 1'b0;
         end else begin
             s_axi_arready <= 1'b0;
             math_evt_pop  <= 1'b0;
+            trng_rd_pop   <= 1'b0;
 
             unique case (rstate)
                 RST_IDLE: begin
@@ -550,7 +554,15 @@ module xt_gp0_regs (
                                 end
                                 else if (ar_off == MATH_STAT) s_axi_rdata <= math_stat_word;
                             BLK_TRNG:
-                                if (ar_off == TRNG_RND) s_axi_rdata <= trng_word;
+                                // read-to-consume, same shape as MATH_EVT: the
+                                // read restarts the freshness count so the next
+                                // `fresh` genuinely means 32 NEW debiased bits.
+                                if (ar_off == TRNG_RND) begin
+                                    s_axi_rdata <= trng_word;
+                                    trng_rd_pop <= 1'b1;
+                                end
+                                else if (ar_off == TRNG_STAT)
+                                    s_axi_rdata <= trng_stat_word;
                             // ---- 0x8xx DEBUG (6502 debugger read-back) ------
                             // Snapshots are coherent only when halted (static core);
                             // the halted flag itself is 2-FF synced (dbg_stat_s).

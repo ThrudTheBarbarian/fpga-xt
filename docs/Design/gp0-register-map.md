@@ -104,6 +104,7 @@ hardware entropy (ring-oscillator TRNG in the PL; A9-only, read-only)
 | Offset | Acc | Width | C macro | SV | Meaning |
 |--------|-----|-------|---------|----|---------|
 | 0x00 | R | 32 | `XT_TRNG_RND` | `TRNG_RND` | whitened 32-bit entropy word (free-running pool snapshot); read repeatedly for fresh words. Entropy SOURCE for the OS pool, not raw crypto output |
+| 0x04 | R | 32 | `XT_TRNG_STAT` | `TRNG_STAT` | R [5:0]=debiased entropy bits accumulated since the last TRNG_RND read (saturates at 32), [8]=fresh (>=32 bits, i.e. a FULLY re-seeded word). Reading TRNG_RND CONSUMES and clears the counter. Poll bit 8 before taking key material: the pool refills ~32 bits per microsecond, far slower than back-to-back AXI reads, so un-gated reads return an LFSR-stretched pool rather than fresh entropy |
 
 ## 0x800 — DEBUG  (`XT_BLK_DEBUG`)
 
