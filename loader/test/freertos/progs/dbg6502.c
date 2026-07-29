@@ -332,7 +332,13 @@ void _app_entry(int argc, char **argv)
     }
 
     if (streq(cmd, "reset")) {
-        unsigned long sel = rd(CTRL_SALLYRST) & 2ul;   /* preserve the selected core */
+        /* Preserve EVERYTHING except the reset strobe (bit 0) — the mask used
+         * to be `& 2ul`, which kept the core select but silently dropped bit 2,
+         * the ANTIC timing-machine AUTHORITY bit.  Any `6502 reset` therefore
+         * moved the realm back onto the legacy ANTIC without saying so, and
+         * ACID800 sweeps that reset between tests measured the wrong hardware.
+         * xl_boot.c has always used `& ~1u`; match it. */
+        unsigned long sel = rd(CTRL_SALLYRST) & ~1ul;
         wr(CTRL_SALLYRST, sel | 1ul); wr(CTRL_SALLYRST, sel);
         if (rd(DBG_CFG) & 2u) poll_halt();       /* halt_at_reset armed -> wait */
         status(); sys_exit(0);
