@@ -187,6 +187,29 @@ entirely and key off the instruction boundary (the ~21 `state <=
 ST_FETCH` sites) as 0f originally specified.
 Do not re-try a plain rdy gate.
 
+### 1p. The serial cluster is SAFE to attempt — the paths are disjoint
+1o flagged a hazard: xexload loads every ACID test over the paravirtual
+SIO path, so a real POKEY serial engine might break test loading and
+leave nothing measurable.  CHECKED, and the hazard does not exist.
+tools/xl_sio_stub.s (the paravirtual stub the OS's SIOV vector is
+redirected to) touches ONLY $D5C6/$D5C7/$D5C8 — XT-specific registers —
+and contains ZERO references to $D2xx.  Test loading never goes near
+POKEY's serial registers, so the two paths cannot collide.
+WHAT EXISTS ALREADY: pokey_regs has the register surface (SEROUT/SERIN
+at $D20D, serout_strobe, serin_q, IRQ latch bits 3/4/5, SKSTAT inputs)
+but the pulses that drive it — ser_out_ready_pulse, ser_in_byte_pulse,
+ser_framing_err, ser_input_overrun — come from the STM32 companion SPI
+bridge, i.e. from real data transport.  POKEY's OWN serial timing is not
+modelled at all: no baud generation off timer 2/4 per SKCTL[6:4], no
+shift-register framing, no timing-derived status bits.
+That is exactly what skstat/serclock/sertiming/serdirect measure, and
+none of them need a peripheral on the other end.
+SO THE WORK IS: a POKEY-internal serial engine that generates the shift
+clock from the timers per SKCTL, shifts SEROUT/SERIN with correct
+framing, and raises IRQ bits 3/4/5 and the SKSTAT bits at the right
+instants — while leaving the SPI bridge as the transport for real SIO.
+Keep the two sources muxed, not merged.
+
 ### 1o. POKEY cluster: two fixed, five behind a serial engine
 Diagnosed from the on-screen assertion text (tools/acid-shots.sh):
     pokey_timertiming  "1.79MHz 16-bit lo timer triggered too early (loop #2)"
