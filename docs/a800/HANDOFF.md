@@ -187,6 +187,41 @@ entirely and key off the instruction boundary (the ~21 `state <=
 ST_FETCH` sites) as 0f originally specified.
 Do not re-try a plain rdy gate.
 
+### 1n. THE FLAKINESS WAS MY OWN TOOLING — `6502 reset` dropped AUTHORITY
+Retract 1m.  antic_vscroldli and antic_dlistwrap are NOT flaky.
+`6502 reset` in loader/test/freertos/progs/dbg6502.c masked SALLYRST
+with `& 2ul`, which keeps the core select but DROPS BIT 2 — the ANTIC
+timing-machine authority bit.  Every reset silently moved the realm back
+onto the LEGACY ANTIC.
+I introduced the exposure myself: the "robust retry" added to beat the
+xexload flake calls `6502 reset` between attempts, so from the first
+retry onward a chunk measured the WRONG HARDWARE, and whether a given
+test ran on the timing machine or the legacy raster depended on whether
+a retry had fired earlier in that chunk.  That is the entire source of
+the "non-determinism".
+Measured, 6 reps each, same bitstream (build 89):
+                        authority DROPPED     authority PRESERVED
+    antic_vscroldli     1 pass / 5 fail       4 pass, 2 error
+    antic_dlistwrap     1 pass / 5 fail       5 pass, 1 error
+    antic_wsync         6 pass                5 pass, 1 error
+    gtia_collision      5 pass / 1 fail       1 pass / 5 fail
+With authority preserved there are NO `fail` results for the ANTIC
+tests at all — the residue is `error`, i.e. the xexload load flake,
+which is a separate and honest failure mode.
+CONSEQUENCES:
+ * run 2026-07-28-1 is INVALID and its -2 "regression" was this bug.
+ * every pass/fail claim made between introducing the 5x retry and this
+   fix is suspect, in both directions.
+ * gtia_collision INVERTS: it passes on the legacy ANTIC and fails under
+   authority.  So the beam-time collision engine has a real defect that
+   the authority bug was masking — chase it, do not celebrate the
+   earlier "pass".
+FIXED: dbg6502.c now uses `& ~1ul`, matching xl_boot.c, which always
+did.  Verified on hardware: SALLYRST reads 0x06 before AND after
+`6502 reset`.
+LESSON: assert the authority bit in the harness itself, per test, rather
+than trusting it to persist.
+
 ### 1m. antic_vscroldli / antic_dlistwrap ARE FLAKY — there was no regression
 Claimed in 1l that builds 81-83 regressed these two.  WRONG.  Measured
 properly on BUILD 80 — the bitstream they supposedly passed on:
