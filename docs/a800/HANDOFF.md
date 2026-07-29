@@ -187,6 +187,28 @@ entirely and key off the instruction boundary (the ~21 `state <=
 ST_FETCH` sites) as 0f originally specified.
 Do not re-try a plain rdy gate.
 
+### 1t. Build 96 — clk_sally CLOSED; POKEY timer model refined
+clk_sally +0.093 (was -0.027) and clk_sys +0.160 after moving the CPU's
+Z-flag reduction into sally_mem.  Klaus passes at the IDENTICAL baseline
+cycle count, so that change is behaviour-neutral.
+Sweep: 32 pass — one BELOW the 33 baseline.  No gains.  The single loss
+is gtia_collision, the known authority-dependent case (1n), not a new
+regression.
+POKEY timer: the failure MESSAGE CHANGED, which is the useful part:
+    before (uniform N+4):  "16-bit lo timer triggered too EARLY (loop #2)"
+    after  (N+7 first):    "8-bit timer triggered too LATE (loop #2)"
+N+7 fixed the 16-bit case and broke the 8-bit one, so the two modes
+genuinely differ; the discriminator is AUDCTL[4] (ch1+2 paired).  The
+extended first period now applies to the LINKED case only.
+Note the test's own header (line 1849): the XXc/YYc tables give the
+cycle at which the IRQST change is VISIBLE when read, NOT the underflow
+cycle.  Those figures include IRQ propagation, which is how the first
+N+7 model was mis-derived.
+REL_SKEW 3 -> 4 had NO observable effect: pokey_inittiming still reads
+exactly $1E on the odd sled.  The comment claims it was HW-measured, but
+it is evidently not controlling this measurement.  Do not bump it again
+without first proving it moves the number.
+
 ### 1s. clk_sally: directives exhausted, and forcing CSE made it WORSE
 Placer directives on the same netlist (deterministic, so this is the
 whole space, not samples):
