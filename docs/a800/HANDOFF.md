@@ -187,6 +187,31 @@ entirely and key off the instruction boundary (the ~21 `state <=
 ST_FETCH` sites) as 0f originally specified.
 Do not re-try a plain rdy gate.
 
+### 1r. The clk_sally limiter is the TURBO core, which we do not boot
+post_route_timing on build 92 names both limiters:
+  clk_sally -0.170:  u_sally_mem BRAM -> u_sally_core/P_reg[1]
+                     12 logic levels, 9.805ns of a 10.000ns budget,
+                     60% route.  That is load-data -> ALU -> status
+                     flags.
+  clk_sys   -0.110:  display_shadow BRAM -> compositor/col_raw_q
+                     7 logic levels — the pack_pair cone the streaming
+                     rewrite removes (1i, gtia-streaming.md).
+`u_sally_core` is `xt6502` — the TURBO core.  Per
+[[fid_first_class_core]] fid is the boot default and turbo is opt-in,
+and every ACID800 test runs on fid.  So the clock that keeps failing the
+gate is limited by a core the tests never execute on.
+Options, in order of honesty:
+ 1. Pipeline the turbo core's memory-data -> flags path.  Correct, but
+    it changes that core's cycle behaviour and it is not the core under
+    test.
+ 2. Leave it and accept directive variance — which is what has been
+    happening, and it is a coin flip: build 89 passed at +0.001 with
+    AltSpreadLogic_medium, build 92 failed at -0.170 with the SAME
+    directive on a different netlist.
+ 3. Reconsider whether turbo needs to share clk_sally at full rate.
+Do NOT read a passing build as evidence a change is timing-neutral
+while this path is the limiter — the same caveat as 1i.
+
 ### 1q. Serial engine — the design facts, gathered
 SKCTL[6:4] selects the shift-clock source (confirmed against the
 Altirra reference, read for UNDERSTANDING only — never copy, see
