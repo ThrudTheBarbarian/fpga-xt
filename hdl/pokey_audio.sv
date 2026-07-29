@@ -56,7 +56,7 @@ module pokey_audio #(
     parameter int unsigned REF_PHI2_LO = 114,  // 15 kHz period in phi2 cycles
     parameter int unsigned REF_REL_HI  = 22,   // first 64k tick after init release
     parameter int unsigned REF_REL_LO  = 81,   // first 15k tick after init release
-    parameter int unsigned REL_SKEW    = 4,    // write-commit vs phi2_tick alignment (HW-measured)
+    parameter int unsigned REL_SKEW    = 5,    // write-commit vs phi2_tick alignment (HW-measured)
     // Clock-rate parameter for the reference dividers.
     parameter int unsigned CLK_BUS_HZ   = 161_079_525,
     parameter int unsigned REF_HZ_M23_1 = 64_000,    // M23-3 high-rate ref (AUDCTL[0]=0)
