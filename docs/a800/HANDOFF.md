@@ -187,6 +187,36 @@ entirely and key off the instruction boundary (the ~21 `state <=
 ST_FETCH` sites) as 0f originally specified.
 Do not re-try a plain rdy gate.
 
+### 1q. Serial engine — the design facts, gathered
+SKCTL[6:4] selects the shift-clock source (confirmed against the
+Altirra reference, read for UNDERSTANDING only — never copy, see
+[[altirra_golden_reference]]):
+    0x00  external clock  (this mode also RESETS the internal serial
+                           clock phase flip-flop)
+    0x20  timer 4 as transmit clock
+    0x40  asynchronous receive mode
+    0x60  timer 2 as transmit clock
+pokey_sertiming sets AUDCTL=$78 (ch1+2 paired 16-bit, ch1 machine
+clock), AUDF1=3/AUDF2=0 so the pair's period is 10, and SKCTL=$63 —
+which is mode 0x60, i.e. TIMER 2 drives the shift clock.  So the serial
+engine hangs off the same timer chain the N+7/N+4 work just corrected;
+get that wrong and the serial timing is wrong downstream.
+It then reads IRQST bit 3 and asserts on the instant the byte moves
+from SEROUT into the shift register — "Serial output register was
+loaded too early" / "too late".  So the test measures the SEROUT ->
+shifter TRANSFER instant, not the bit rate.
+Engine sketch:
+  * shift clock = timer2_pulse (mode 0x60) / timer4_pulse (0x20) /
+    external (0x00); halted in init mode per SKCTL[1:0].
+  * serout_strobe loads a holding register; when the shifter is idle the
+    byte transfers to it and IRQST bit 4 (output data required) fires.
+  * shift 10 bits — start, 8 data, stop — at the clock rate; on the last
+    bit IRQST bit 3 (transmission finished) fires.
+  * SKSTAT framing/overrun derived from the receive path.
+Keep this MUXED with the STM32 SPI bridge rather than merged: the bridge
+stays the transport for real SIO, the engine supplies POKEY's own
+timing and status.
+
 ### 1p. The serial cluster is SAFE to attempt — the paths are disjoint
 1o flagged a hazard: xexload loads every ACID test over the paravirtual
 SIO path, so a real POKEY serial engine might break test loading and
