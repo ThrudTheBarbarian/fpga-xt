@@ -36,6 +36,10 @@ module xt6502 (
     output wire [7:0]  data_out,
     output wire        rw,         // 1 = read, 0 = write
     input  wire        rdy,        // 1 = run, 0 = stall/clock-enable-low
+    // (data_in == 0), computed in sally_mem next to the data rather than here.
+    // The Z-flag bit is the clk_sally limiter and the path is route-dominated,
+    // so the 8-input reduction must not sit at the far end of the crossing.
+    input  wire        di_zero_in,
 
     input  wire        irq_n,
     input  wire        nmi_n,
@@ -905,24 +909,24 @@ module xt6502 (
 
             if (state == ST_PULL2) begin
                 case (IR)
-                    8'h68: begin A <= di; P[N_BIT] <= di[7]; P[Z_BIT] <= (di == 8'h00); end // PLA
-                    8'h64: begin X <= di; P[N_BIT] <= di[7]; P[Z_BIT] <= (di == 8'h00); end // POP X
-                    8'h74: begin Y <= di; P[N_BIT] <= di[7]; P[Z_BIT] <= (di == 8'h00); end // POP Y
+                    8'h68: begin A <= di; P[N_BIT] <= di[7]; P[Z_BIT] <= di_zero_in; end // PLA
+                    8'h64: begin X <= di; P[N_BIT] <= di[7]; P[Z_BIT] <= di_zero_in; end // POP X
+                    8'h74: begin Y <= di; P[N_BIT] <= di[7]; P[Z_BIT] <= di_zero_in; end // POP Y
                     default: P <= di | 8'h20;           // PLP → P (force U=1)
                 endcase
             end
             // SP-relative scalar load writeback (di = stack value).
             if (state == ST_SP_WB) begin
                 case (IR)
-                    8'hB2: begin A <= di; P[N_BIT] <= di[7]; P[Z_BIT] <= (di == 8'h00); end // LDA d,SP
-                    8'h42: begin X <= di; P[N_BIT] <= di[7]; P[Z_BIT] <= (di == 8'h00); end // LDX d,SP
-                    8'h52: begin Y <= di; P[N_BIT] <= di[7]; P[Z_BIT] <= (di == 8'h00); end // LDY d,SP
+                    8'hB2: begin A <= di; P[N_BIT] <= di[7]; P[Z_BIT] <= di_zero_in; end // LDA d,SP
+                    8'h42: begin X <= di; P[N_BIT] <= di[7]; P[Z_BIT] <= di_zero_in; end // LDX d,SP
+                    8'h52: begin Y <= di; P[N_BIT] <= di[7]; P[Z_BIT] <= di_zero_in; end // LDY d,SP
                     8'h72, 8'hF2: begin                                                     // ADC/SBC d,SP
                         A <= alu_r; P[N_BIT] <= alu_n; P[Z_BIT] <= alu_z;
                         P[C_BIT] <= alu_c; P[V_BIT] <= alu_v;
                     end
                     8'hD2: begin P[N_BIT] <= alu_n; P[Z_BIT] <= alu_z; P[C_BIT] <= alu_c; end // CMP d,SP
-                    8'h23: begin A <= di; P[N_BIT] <= di[7]; P[Z_BIT] <= (di == 8'h00); end // LDA d,SP,X
+                    8'h23: begin A <= di; P[N_BIT] <= di[7]; P[Z_BIT] <= di_zero_in; end // LDA d,SP,X
                     default: ;
                 endcase
             end

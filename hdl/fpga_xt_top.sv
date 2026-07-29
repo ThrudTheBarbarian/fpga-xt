@@ -823,11 +823,14 @@ module fpga_xt_top (
     wire        fid_cyc_rw, fid_cyc_valid;
     wire        fdbg_cpu_halt;          // u_fid_dbg.cpu_halt — ANDed into fid_rdy to freeze
 
+    wire cpu_din_zero;   // (cpu_din == 0) from sally_mem — turbo Z-flag path
+
     xt6502 u_sally_core (
         .clk      (clk_sally),
         .rst      (rst_sally_core),          // A9-held for cold-boot-per-launch
         .addr     (turbo_addr),
         .data_in  (cpu_din),
+        .di_zero_in (cpu_din_zero),
         .data_out (turbo_dout),
         .rw       (turbo_rw),
         .rdy      (sally_rdy & dbg_core_run & ~cpu_sel), // owns the bus only when cpu_sel=0
@@ -1298,6 +1301,7 @@ module fpga_xt_top (
         .data_in    (cpu_dout),
         .rw         (cpu_rw),
         .data_out   (cpu_din),
+        .data_out_zero (cpu_din_zero),
         .rdy        (mem_rdy),       // steps with the ACTIVE core (turbo: sally_rdy; fid: early-window pulse)
         .stack_op   (cpu_stack_op),
         .s_high     (cpu_s_high),

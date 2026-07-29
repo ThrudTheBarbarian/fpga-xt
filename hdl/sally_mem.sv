@@ -104,6 +104,7 @@ module sally_mem #(
     input  wire [7:0]  data_in,
     input  wire        rw,
     output logic [7:0] data_out,
+    output wire        data_out_zero,   // (data_out == 0), computed at the source
     input  wire        rdy,
     output wire        busy,           // 1 when banked_axi_reader in flight
 
@@ -886,6 +887,22 @@ module sally_mem #(
                                                : overlay_active ? ovl_dout_qq
                                                : bram_dout_q;
     assign data_out = cpu_rdata;
+
+    // ---- zero flag, computed HERE rather than in the CPU ----------------
+    // The clk_sally limiter is sally_mem BRAM -> u_sally_core/P_reg[1]: the
+    // CPU's Z-flag bit.  In the core that is `(di == 8'h00)`, an 8-input
+    // reduction sitting at the FAR end of a route-dominated path (60% route),
+    // so the comparator delay lands after the full crossing.
+    //
+    // Computing it at the source instead means only a 1-bit result makes that
+    // crossing, with the comparator next to the data it reduces.  NOTE this is
+    // NOT the same as hoisting the core's eight duplicated comparators into one
+    // shared wire — that was tried (build 95) and made things WORSE, because
+    // the shared net was still computed from late-arriving `di` inside the core
+    // (HANDOFF 1s).  Here the reduction happens before the crossing.
+    assign data_out_zero = use_early      ? (rare_dout   == 8'h00)
+                         : overlay_active ? (ovl_dout_qq == 8'h00)
+                         :                  (bram_dout_q == 8'h00);
 
     // ---- Hardware-register write passthrough ----------------------
     // rdy-gated so each write commits exactly once per CPU step (mirrors the
