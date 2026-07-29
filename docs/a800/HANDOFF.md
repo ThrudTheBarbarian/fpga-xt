@@ -187,6 +187,37 @@ entirely and key off the instruction boundary (the ~21 `state <=
 ST_FETCH` sites) as 0f originally specified.
 Do not re-try a plain rdy gate.
 
+### 1o. POKEY cluster: two fixed, five behind a serial engine
+Diagnosed from the on-screen assertion text (tools/acid-shots.sh):
+    pokey_timertiming  "1.79MHz 16-bit lo timer triggered too early (loop #2)"
+    pokey_inittiming   "Incorrect 15KHz cycle count (odd): $1E"
+    pokey_skstat       "Timeout occurred while sending status command."
+    pokey_twotone      "Too many timer 2 interrupts on mark: 48 (should be 16)"
+FIXED (both awaiting a bitstream):
+ * timertiming — the FIRST timer period after STIMER is N+7, every one
+   after is N+4.  The test embeds its own golden table and the figures
+   are identical for 8-bit and 16-bit:
+       AUDF1=0   first  7c/ 8c  then 11c/12c
+       AUDF1=16  first 23c/24c  then 43c/44c
+   A uniform N+4 puts the first underflow 3 cycles early.  Loop 1 cannot
+   see it (it only asks "unfired at 19"); loop 2 clears IRQEN, re-enables
+   at 27 and reads at 42, so it needs NO underflow in [27,42] — N+4 gives
+   20 and 40 and 40 lands inside.  N+7-then-N+4 gives 23 and 43.
+ * inittiming — REL_SKEW 3 -> 4.  It was fitted at 3 under the LEGACY
+   ANTIC; with the timing machine driving the CPU the SKCTL write-commit
+   instant relative to phi2_tick has moved.  This is fitting against one
+   test, not a derived value.
+NOT FIXED — the serial cluster (skstat, serclock, sertiming, serdirect,
+twotone) needs a real POKEY serial engine.  SKCTL[3] (two-tone) is not
+implemented at all: only [1:0] (poly init) and [4] (async recv) are.
+twotone's 48-vs-16 is timer 2 free-running where two-tone mode should be
+resetting it.
+HAZARD BEFORE STARTING THAT WORK: every ACID test is loaded over the
+PARAVIRTUAL SIO path by xexload.  A real serial engine that collides
+with it breaks test loading outright, at which point nothing can be
+measured at all.  Establish how the paravirtual hook intercepts SIO
+FIRST, and keep the two paths disjoint.
+
 ### 1n. THE FLAKINESS WAS MY OWN TOOLING — `6502 reset` dropped AUTHORITY
 Retract 1m.  antic_vscroldli and antic_dlistwrap are NOT flaky.
 `6502 reset` in loader/test/freertos/progs/dbg6502.c masked SALLYRST
