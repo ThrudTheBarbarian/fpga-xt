@@ -401,6 +401,7 @@ module pokey_audio #(
     // (An older model used a uniform N+7, which fired the SECOND underflow
     // late; the fix is that the two periods differ, not that one is right.)
     logic ch1_first, ch3_first;
+    logic ext1_q, ext3_q;      // 1 = use the extended (linked) reload period
     // Both offsets are computed in PARALLEL and the flag selects the result.
     // Putting the mux on the adder INPUT instead (audf + (first ? 6 : 3)) puts
     // it in series with the carry chain and cost 0.2ns on clk_sally, which
@@ -416,13 +417,21 @@ module pokey_audio #(
     // so the two modes genuinely differ and the discriminator is AUDCTL[4]
     // (ch1+2 paired).  Unlinked stays uniform N+4; linked gets N+7 on the
     // first period after STIMER, N+4 thereafter.
-    // The pairing test is folded into ch1_first's SET condition below rather
-    // than ANDed here: this mux feeds the reload path, which is on clk_sally's
-    // critical cone, and build 97 lost 0.4ns on clk_sally / 0.8ns on clk_sys
-    // with the AND in this expression.  Setting the flag only when linked
-    // gives the identical result with nothing added to the hot path.
-    wire [7:0] audf1_reload = audctl[6] ? (ch1_first ? audf1_p6 : audf1_p3) : audf1;
-    wire [7:0] audf3_reload = audctl[5] ? (ch3_first ? audf3_p6 : audf3_p3) : audf3;
+    // LINKED mode: the extended period is on the reloads AFTER the first, not
+    // on the first itself.  Derived from the loop budgets rather than the
+    // summary tables (which give IRQST VISIBILITY, not underflow):
+    //   8-bit  (AUDCTL=$40, unlinked): loop 1 reads 19/20 and needs the first
+    //          underflow at 20; loop 2 re-enables IRQEN at 24 and reads 39/40,
+    //          needing one at 40.  Uniform N+4 satisfies both.
+    //   16-bit (AUDCTL=$50, linked):   loop 1 ALSO needs the first at 20, but
+    //          loop 2 needs NOTHING in [27,42].  Uniform 20 puts the second at
+    //          40, inside.  23-then-20 puts the first at 23 and loop 1 fails
+    //          "too late".  Only N+4 first / N+7 after satisfies both — the
+    //          cascade latency lands on the reloads that follow.
+    // ext*_q is registered so the pairing term stays off this mux, which sits
+    // on clk_sally's critical cone (build 97 lost 0.4ns to an AND here).
+    wire [7:0] audf1_reload = audctl[6] ? (ext1_q ? audf1_p6 : audf1_p3) : audf1;
+    wire [7:0] audf3_reload = audctl[5] ? (ext3_q ? audf3_p6 : audf3_p3) : audf3;
 
     // STIMER start lag: the write's reload lands 4 machine cycles later
     // (see the comment at the apply site).
@@ -438,6 +447,7 @@ module pokey_audio #(
         if (rst) begin
             ch1_cnt <= 8'h00; ch1_state <= 1'b0;
             ch1_first <= 1'b0; ch3_first <= 1'b0;
+            ext1_q <= 1'b0; ext3_q <= 1'b0;
             ch2_cnt <= 8'h00; ch2_state <= 1'b0;
             ch3_cnt <= 8'h00; ch3_state <= 1'b0;
             ch4_cnt <= 8'h00; ch4_state <= 1'b0;
@@ -514,15 +524,26 @@ module pokey_audio #(
             // modelled here.)
             // The first period ends at the channel's first underflow; every
             // reload after that uses the shorter N+4 figure.
-            if (ch1_wrap) ch1_first <= 1'b0;
-            if (ch3_wrap) ch3_first <= 1'b0;
+            // Only the SECOND period of a LINKED pair is extended: the
+            // cascade reload costs its 3 cycles once, not on every wrap.
+            // tb_pokey check N pins the SUSTAINED linked machine-clock rate at
+            // N+4 (158 toggles) — extending every reload gave 129 — while
+            // ACID800's 16-bit loop 2 only needs the SECOND underflow to land
+            // past cycle 42.  So: P1 = N+4, P2 = N+7, P3.. = N+4.
+            if (ch1_wrap) begin
+                ch1_first <= 1'b0;
+                ext1_q    <= ch1_first ? ch12_paired : 1'b0;
+            end
+            if (ch3_wrap) begin
+                ch3_first <= 1'b0;
+                ext3_q    <= ch3_first ? ch34_paired : 1'b0;
+            end
 
             if (stimer_apply) begin
-                // Only the LINKED (16-bit) case takes the extended first
-                // period; unlinked stays uniform N+4.  Deciding it HERE keeps
-                // the pairing term off the reload mux.
-                ch1_first <= ch12_paired;
-                ch3_first <= ch34_paired;
+                ch1_first <= 1'b1;        // the first period is the SHORT one
+                ch3_first <= 1'b1;
+                ext1_q    <= 1'b0;
+                ext3_q    <= 1'b0;
                 ch1_cnt <= audf1_reload;  ch1_state <= 1'b1;
                 ch2_cnt <= audf2;         ch2_state <= 1'b1;
                 ch3_cnt <= audf3_reload;  ch3_state <= 1'b1;
