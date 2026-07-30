@@ -256,6 +256,7 @@ Steps 1-4 are built and green. Thirteen modules, each with its own testbench in
 | `gtia_obj_walk` | 7 | the serial object walk: 8 objects, one datapath |
 | `gtia_priority` | 10 | the priority walk, all four orderings |
 | `gtia_collide` | 8 | the sixteen collision latches |
+| `gtia_stage` | 8 | one colour clock of GTIA, schedule measured |
 
 Two structural decisions were forced by evidence rather than chosen:
 
@@ -281,41 +282,53 @@ Two bugs were caught by the testbenches rather than by hardware:
   advanced a clock after `px_val` was sampled, so pixel 0 of every byte was
   written twice and the whole line shifted by one.
 
-### The GTIA stage needs a one-colour-clock pipeline
+### The GTIA stage, and why it is a pipeline
 
-Wiring the three GTIA walks into `antic_scanline` is not just connection, and the
-clock budget says why. Object presence changes once per **colour clock**, but the
-playfield source changes once per **hi-res pixel** — mode F has one pixel per
-hi-res pixel — so priority has to be resolved twice per colour clock:
+Object presence changes once per **colour clock**, but the playfield source
+changes once per **hi-res pixel** — mode F has one pixel per hi-res pixel — so
+priority resolves twice per colour clock. The first attempt did not fit:
 
 ```
   28 fabric clocks per colour clock at 100 MHz
-   8   object walk (once per colour clock)
+   9   object walk (once per colour clock)
   10   priority walk for hi-res pixel A
   10   priority walk for hi-res pixel B
   ---
-  28   exactly the budget, with nothing spare
+  29   over budget
 ```
 
-Two consequences, both to be settled before writing the stage:
+Two cuts fixed it, and both made the circuit *smaller*:
 
-* **The priority walk should visit fewer sources.** It currently walks nine
-  candidates, but the playfield contributes exactly *one* source — plus PF3 when
-  the fifth-player bit is set and a missile is present. So the four playfield
-  steps collapse to at most two, giving 4 players + 2 playfield + background =
-  7 steps + settle = 8, and 8 + 8 + 8 = 24 of 28. That is also the smaller
-  circuit and the more faithful one; walking four playfield candidates when only
-  one can be present is exactly the kind of thing the smell test is for.
-* **The stage must be pipelined by one colour clock,** consuming a colour clock's
-  pair of playfield pixels and emitting the resolved pair one colour clock later,
-  with the line buffer write delayed to match. Real GTIA has such a delay. The
-  thing to avoid is resolving at some instant chosen to make a test pass — that
-  is the mistake the whole rewrite exists to undo.
+* **The background is not walked.** It is always present and always ranks last,
+  so it wins exactly when nothing else was found — which the running minimum
+  already says. That also removed the only place where "unset" and "found
+  source 0" had to be told apart.
+* **The playfield contributes at most two candidates, not four** — the one the
+  beam is over, plus PF3 again under the fifth-player bit. Walking four when at
+  most two can be present is what the smell test is for.
 
-Not yet started: the GTIA stage integration above, special modes (`vdelay`,
-`psuedomodee`, `collision2`, GTIA modes 9/10/11), DLI emission, the DMA schedule,
-and the drop of turbo / `math_cop` / banking. Nothing is wired to the CPU yet, so
-no ACID score has moved.
+With the two handshakes made combinational as well, the measured worst case is
+**26 of 28**. `tb_gtia_stage` T1 *counts* the clocks rather than asserting them
+and fails above 28, because every other check could pass while the design
+silently failed to fit in real time.
+
+The stage is pipelined by **two colour clocks**, and the reason is structural
+rather than a fudge: a colour clock's pair of playfield pixels is not complete
+until its second hi-res pixel has been emitted, so the walk for colour clock N
+cannot start until N+1 begins, and the answer arrives 26 clocks into N+1 — so the
+pair is written during N+2. That is a uniform four-hi-res-pixel delay on
+playfield, objects and border alike, and the line buffer's rewind is delayed by
+the same four so each line still receives exactly its own 456 pixels.
+
+`tb_antic_scanline` runs at the real 56-clocks-per-machine-cycle ratio for this
+reason — a compressed ratio would not exercise the schedule at all — and checks
+that a player at `HPOSP0 = 60` lands at buffer pixels 120..135, a position
+derived from the geometry beforehand rather than read off the simulator.
+
+Not yet started: special modes (`vdelay`, `psuedomodee`, `collision2`, GTIA modes
+9/10/11), DLI emission, the DMA schedule, the register file, and the drop of
+turbo / `math_cop` / banking. Nothing is wired to the CPU yet, so no ACID score
+has moved.
 
 ## Open questions
 

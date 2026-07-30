@@ -1341,7 +1341,9 @@ build/tb_antic_scanline.vvp: tb_antic_scanline.sv $(HDL_DIR)/antic_scanline.sv \
 	    $(HDL_DIR)/antic_line_render.sv $(HDL_DIR)/antic_line_buf.sv \
 	    $(HDL_DIR)/antic_mode_tbl.sv $(HDL_DIR)/antic_pixel_shift.sv \
 	    $(HDL_DIR)/antic_pf_source.sv $(HDL_DIR)/antic_color_sel.sv \
-	    $(HDL_DIR)/antic_char_ctl.sv | build
+	    $(HDL_DIR)/antic_char_ctl.sv $(HDL_DIR)/antic_pm_fetch.sv \
+	    $(HDL_DIR)/gtia_stage.sv $(HDL_DIR)/gtia_obj_walk.sv \
+	    $(HDL_DIR)/gtia_priority.sv $(HDL_DIR)/gtia_collide.sv | build
 	iverilog -g2012 -Wall -Wno-timescale -I$(HDL_DIR) -o $@ -s tb_antic_scanline \
 	    $(HDL_DIR)/antic_scanline.sv $(HDL_DIR)/antic_beam.sv \
 	    $(HDL_DIR)/antic_dl.sv $(HDL_DIR)/antic_pf_geom.sv \
@@ -1349,6 +1351,9 @@ build/tb_antic_scanline.vvp: tb_antic_scanline.sv $(HDL_DIR)/antic_scanline.sv \
 	    $(HDL_DIR)/antic_line_buf.sv $(HDL_DIR)/antic_mode_tbl.sv \
 	    $(HDL_DIR)/antic_pixel_shift.sv $(HDL_DIR)/antic_pf_source.sv \
 	    $(HDL_DIR)/antic_color_sel.sv $(HDL_DIR)/antic_char_ctl.sv \
+	    $(HDL_DIR)/antic_pm_fetch.sv $(HDL_DIR)/gtia_stage.sv \
+	    $(HDL_DIR)/gtia_obj_walk.sv $(HDL_DIR)/gtia_priority.sv \
+	    $(HDL_DIR)/gtia_collide.sv \
 	    tb_antic_scanline.sv
 
 antic_pm_fetch: build/tb_antic_pm_fetch.vvp
