@@ -42,7 +42,11 @@ module antic_beam #(
     wire last_line  = (line   == 9'(LINES_PER_FRAME - 1));
 
     assign vcount     = line[8:1];
-    assign line_start = tick && (hcount == 7'd0);
+    // line_start marks the BOUNDARY: it fires on the tick that wraps hcount to
+    // zero, so the pixel written on that same edge is the last of the outgoing
+    // line and the next one is pixel 0 of the new line.  Firing it during cycle
+    // 0 instead would put the line buffer four pixels out of step with the beam.
+    assign line_start = tick && last_cycle;
     assign in_display = (line >= 9'(DISPLAY_TOP)) &&
                         (line <  9'(DISPLAY_TOP + DISPLAY_LINES));
     assign in_vblank  = !in_display;
