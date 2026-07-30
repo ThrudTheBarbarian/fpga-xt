@@ -232,6 +232,55 @@ lessons already paid for:
 7. **Special modes**, then **DLI emission**, then the **DMA schedule** last.
 8. **Drop** turbo, `math_cop`, banking; re-measure slice occupancy.
 
+## Build status
+
+Steps 1-4 are built and green. Thirteen modules, each with its own testbench in
+`sim/`; run any of them with `make -C sim <name>`.
+
+| Module | Testbench | What it owns |
+|---|---|---|
+| `antic_line_buf` | 7 checks | ping-pong scanline, one resolved Atari colour per pixel |
+| `antic_expander` | 5 | line buffer -> palette -> RGBA32 -> DDR |
+| `antic_mode_tbl` | 7 | the shape of all 14 display modes |
+| `antic_pixel_shift` | 7 | the one shifter every mode uses |
+| `antic_pf_source` | - | pixel value -> playfield source |
+| `antic_color_sel` | - | source -> colour byte, including the hi-res trick |
+| `antic_char_ctl` | 6 | CHACTL blank / invert / reflect |
+| `antic_pf_fetch` | 11 | ANTIC's internal 48-byte line buffer, the scan pointer |
+| `antic_line_render` | 10 | buffer -> shifter -> colour, paced by the beam |
+| `antic_beam` | 6 | the counter chain and the cycle-111 VCOUNT advance |
+| `antic_dl` | 10 | display list: 1K wrap, LMS, JVB, DCTR, VSCROL |
+| `antic_pf_geom` | 7 | playfield start / stop / width / HSCROL |
+| `antic_scanline` | 7 | the sequencer: all of the above, end to end |
+
+Two structural decisions were forced by evidence rather than chosen:
+
+* **Fetch is split from emit.** Emission is paced by the beam and stops when the
+  display window closes; fetching must always consume `bytes_per_line` bytes so
+  the scan pointer lands correctly for the next scanline. A scrolled narrow line
+  fetches 40 bytes and displays 32 — coupled, the pointer drifts 8 bytes per
+  scanline. This is also what the hardware does: `antic_hscrolbug` dumps the
+  internal buffer's contents, so it demonstrably exists.
+* **The DMA window follows the FETCH width.** Read out of `antic_hscrolbug`'s own
+  cycle map, which shows a scrolled *narrow* mode E fetching forty bytes at
+  cycles 20, 22 ... 98 — the *normal* window. The same map pins the display list
+  fetch at cycle 1 and nine refresh cycles at 25, 29 ... 57, both of which the
+  DMA schedule step will need.
+
+Two bugs were caught by the testbenches rather than by hardware:
+
+* On a **blank-line instruction bits [6:4] are the line count**, so the standard
+  `$70 $70 $70` display-list opener has bit 5 set. Reading it as the VSCROL bit
+  made the block after it believe it was closing a scroll region and end after a
+  single scanline.
+* The renderer's **emit strobes must be combinational**. Registered, the shifter
+  advanced a clock after `px_val` was sampled, so pixel 0 of every byte was
+  written twice and the whole line shifted by one.
+
+Not yet started: P/M DMA and the object walk (step 5-6), special modes, DLI
+emission, the DMA schedule, and the drop of turbo / `math_cop` / banking.
+Nothing is wired to the CPU yet, so no ACID score has moved.
+
 ## Open questions
 
 * Does `/HALT` as an input really leave `xt6502f` unchanged?
