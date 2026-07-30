@@ -258,6 +258,7 @@ Steps 1-4 are built and green. Thirteen modules, each with its own testbench in
 | `gtia_collide` | 8 | the sixteen collision latches |
 | `gtia_stage` | 8 | one colour clock of GTIA, schedule measured |
 | `gtia_special` | 9 | GTIA modes 9/10/11 colour decode |
+| `antic_nmi` | 9 | NMIEN, NMIST and the /NMI line |
 
 Two structural decisions were forced by evidence rather than chosen:
 
@@ -387,9 +388,38 @@ gate drops half the updates instead of delaying by a line. That is not a special
 case being tolerated — it is what the hardware does with the same circuit, and
 why VDELAY is documented as a two-line-resolution feature.
 
-Next: DLI emission, the DMA schedule, the register file, and the drop of turbo /
-`math_cop` / banking. Nothing is wired to the CPU yet, so no ACID score has
-moved.
+### DLI emission: the status and the /NMI are on different cycles
+
+This is what `antic_dlitiming` was really about. The notes recorded that the CPU
+side had been closed out — recognition depth, both pulse positions, RDY gating
+and penultimate-poll all moved the two delivery sleds *together*, so the split
+was not in the CPU. It is here: the status bit is set one machine cycle **before**
+/NMI is asserted, so a CPU read of NMIST landing between them already sees the
+flag. Modelling them as a single event is what made the sleds move together.
+
+The absolute placement (status 7, /NMI 8) is carried across from the old path,
+where both were bisected against hardware — `antic_nmist` fails "set too late" at
+8 and "set too early" at 6. They are parameters on `antic_nmi` and will need
+re-bisecting once the CPU is attached; the *relationship* between them is the
+structural fact.
+
+Two other behaviours worth recording, both carried rather than invented:
+
+* **The two flags are a latch, not two independent bits.** A DLI sets NMIST to
+  `$80` and clears the VBI bit; a VBI sets `$40` and clears the DLI bit. A
+  program that misses an interrupt therefore never sees both at once. A
+  coincidence goes to the VBI.
+* **NMIEN gates the interrupt, not the status**, so a polling program still sees
+  the event with interrupts off — and a set beats a coincident NMIRES, otherwise
+  an interrupt arriving during its own acknowledge would vanish.
+
+`antic_beam` also gains a `vbi_line` output, and its display height default moves
+from 192 to ANTIC's actual maximum of 240 — the height is the display list's
+business, not the counter chain's. That puts the display at lines 8..247 and the
+vertical blank interrupt on 248, where the hardware has it.
+
+Next: the DMA schedule, the register file, and the drop of turbo / `math_cop` /
+banking. Nothing is wired to the CPU yet, so no ACID score has moved.
 
 ## Open questions
 

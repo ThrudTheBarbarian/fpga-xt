@@ -37,14 +37,15 @@ module tb_antic_scanline;
     wire [6:0] hcount;
     wire [8:0] line;
     wire [7:0] vcount;
-    wire       line_start, in_display, in_vblank;
+    wire       line_start, in_display, in_vblank, vbi_line;
 
     antic_beam #(.CYCLES_PER_LINE(CYC), .LINES_PER_FRAME(LINES),
                  .DISPLAY_TOP(8), .DISPLAY_LINES(192))
     u_beam (
         .clk(clk), .rst(rst), .tick(tick),
         .hcount(hcount), .line(line), .vcount(vcount),
-        .line_start(line_start), .in_display(in_display), .in_vblank(in_vblank)
+        .line_start(line_start), .in_display(in_display), .in_vblank(in_vblank),
+        .vbi_line(vbi_line)
     );
 
     logic [7:0] dmactl, chbase, pmbase;
@@ -55,7 +56,8 @@ module tb_antic_scanline;
     logic [7:0] sizem, prior;
     logic [7:0] colpm0, colpm1, colpm2, colpm3;
     logic       hitclr, active_line;
-    logic [7:0] vdelay;
+    logic [7:0] vdelay, nmien;
+    logic       nmires;
     logic [3:0] hscrol, vscrol;
     logic       dlist_we_l, dlist_we_h;
     logic [7:0] dlist_wdata;
@@ -70,6 +72,8 @@ module tb_antic_scanline;
     wire [2:0]  pm_obj;
     wire [7:0]  pm_data, pm_mask;
     wire [15:0] m_pf, p_pf, m_pl, p_pl;
+    wire [7:0]  nmist;
+    wire        nmi_n;
 
     // GRAFM and GRAFP0-3 have ONE copy each, written either by P/M DMA or by
     // the CPU — whoever wrote last wins.  That is the register file's job, and
@@ -89,8 +93,9 @@ module tb_antic_scanline;
 
     antic_scanline u_sl (
         .clk(clk), .rst(rst), .cold(cold),
-        .line_start(line_start), .px_tick(px_tick), .hcount(hcount),
-        .line(line), .in_vblank(in_vblank),
+        .line_start(line_start), .tick(tick), .px_tick(px_tick), .hcount(hcount),
+        .line(line), .in_vblank(in_vblank), .vbi_line(vbi_line),
+        .nmien(nmien), .nmires(nmires),
         .dmactl(dmactl), .chactl(chactl),
         .dlist_we_l(dlist_we_l), .dlist_we_h(dlist_we_h),
         .dlist_wdata(dlist_wdata),
@@ -109,6 +114,7 @@ module tb_antic_scanline;
         .lb_wr(lb_wr), .lb_color(lb_color), .lb_line_start(lb_line_start),
         .pm_we(pm_we), .pm_obj(pm_obj), .pm_data(pm_data), .pm_mask(pm_mask),
         .m_pf(m_pf), .p_pf(p_pf), .m_pl(m_pl), .p_pl(p_pl),
+        .nmist(nmist), .nmi_n(nmi_n),
         .dli(dli), .dlpc(dlpc)
     );
 
@@ -144,6 +150,20 @@ module tb_antic_scanline;
 
     int fail = 0;
     int pixels_this_line;
+
+    // Catch the /NMI falling edge and record WHICH MACHINE CYCLE triggered it.
+    // The edge is detected one clock after the trigger, and hcount has already
+    // advanced by then, so the delayed copy is the one that names the cycle.
+    logic       nmi_n_d, nmi_seen;
+    logic [6:0] hcount_d, nmi_fall_hcount;
+    always_ff @(posedge clk) begin
+        nmi_n_d  <= nmi_n;
+        hcount_d <= hcount;
+        if (!rst && nmi_n_d && !nmi_n) begin
+            nmi_fall_hcount <= hcount_d;
+            nmi_seen        <= 1'b1;
+        end
+    end
     int samp_line [0:7];
     logic [7:0] samp_graf [0:7];
 
@@ -206,6 +226,8 @@ module tb_antic_scanline;
         hposm0 = 8'd200; hposm1 = 8'd200; hposm2 = 8'd200; hposm3 = 8'd200;
         sizep0 = 0; sizep1 = 0; sizep2 = 0; sizep3 = 0; sizem = 0;
         prior = 8'h01; hitclr = 0; active_line = 1; vdelay = 8'h00;
+        nmien = 8'h00; nmires = 1'b0;
+        nmi_seen = 1'b0; nmi_n_d = 1'b1; nmi_fall_hcount = 7'd0; hcount_d = 7'd0;
         colpm0 = 8'h30; colpm1 = 8'h44; colpm2 = 8'h68; colpm3 = 8'h7A;
         grafm = 0; grafp0 = 0; grafp1 = 0; grafp2 = 0; grafp3 = 0;
         hscrol = 4'd0; vscrol = 4'd0;
@@ -628,6 +650,90 @@ module tb_antic_scanline;
                 fail++;
             end
         @(negedge clk); vdelay = 8'h00; dmactl = 8'h22;
+
+        // ================================================================
+        // T13: a display list DLI fires the NMI at cycle 8
+        // ================================================================
+        @(negedge clk);
+        mem[16'h3004] = 8'h8F;                  // mode F + DLI
+        nmien = 8'h80;                          // DLI enabled, VBI not
+        // The list has no JVB, so the pointer has walked well past $3004 by
+        // now; aim it back at the top before expecting the DLI.
+        @(negedge clk); dlist_wdata = 8'h00; dlist_we_l = 1'b1;
+        @(negedge clk); dlist_we_l = 1'b0;
+                        dlist_wdata = 8'h30; dlist_we_h = 1'b1;
+        @(negedge clk); dlist_we_h = 1'b0;
+        @(negedge clk); nmires = 1'b1;
+        @(negedge clk); nmires = 1'b0;
+                        nmi_seen = 1'b0;
+        repeat (8) next_line();
+        if (!nmi_seen) begin
+            $display("FAIL T13: a display list DLI never pulled /NMI low"); fail++;
+        end else if (nmi_fall_hcount !== 7'd8) begin
+            $display("FAIL T13b: /NMI fell at cycle %0d, expected 8", nmi_fall_hcount);
+            fail++;
+        end
+        if (nmist[7] !== 1'b1) begin
+            $display("FAIL T13c: NMIST[7] not set after a DLI (nmist $%02h)", nmist);
+            fail++;
+        end
+
+        // With the interrupt disabled the status still latches, so a polling
+        // program sees the event.
+        @(negedge clk); nmien = 8'h00;
+        @(negedge clk); dlist_wdata = 8'h00; dlist_we_l = 1'b1;
+        @(negedge clk); dlist_we_l = 1'b0;
+                        dlist_wdata = 8'h30; dlist_we_h = 1'b1;
+        @(negedge clk); dlist_we_h = 1'b0;
+        @(negedge clk); nmires = 1'b1;
+        @(negedge clk); nmires = 1'b0;
+                        nmi_seen = 1'b0;
+        repeat (4) next_line();
+        if (nmi_seen) begin
+            $display("FAIL T13d: /NMI fired with NMIEN clear"); fail++;
+        end
+        if (nmist[7] !== 1'b1) begin
+            $display("FAIL T13e: the DLI status did not latch with NMIEN clear"); fail++;
+        end
+
+        // Take the DLI bit away and nothing happens at all.
+        @(negedge clk); mem[16'h3004] = 8'h0F; nmien = 8'h80;
+        @(negedge clk); dlist_wdata = 8'h00; dlist_we_l = 1'b1;
+        @(negedge clk); dlist_we_l = 1'b0;
+                        dlist_wdata = 8'h30; dlist_we_h = 1'b1;
+        @(negedge clk); dlist_we_h = 1'b0;
+        @(negedge clk); nmires = 1'b1;
+        @(negedge clk); nmires = 1'b0;
+                        nmi_seen = 1'b0;
+        repeat (6) next_line();
+        if (nmi_seen) begin
+            $display("FAIL T13f: /NMI fired on a display list with no DLI"); fail++;
+        end
+        if (nmist[7] !== 1'b0) begin
+            $display("FAIL T13g: NMIST[7] set with no DLI in the list"); fail++;
+        end
+
+        // ================================================================
+        // T14: the vertical blank interrupt, on the first vblank line
+        // ================================================================
+        @(negedge clk); nmien = 8'h40;          // VBI only
+        @(negedge clk); nmires = 1'b1;
+        @(negedge clk); nmires = 1'b0;
+                        nmi_seen = 1'b0;
+        // A whole frame, so the VBI line is certain to go by.
+        repeat (270) next_line();
+        if (!nmi_seen) begin
+            $display("FAIL T14: no VBI in a whole frame"); fail++;
+        end else if (nmi_fall_hcount !== 7'd8) begin
+            $display("FAIL T14b: the VBI fell at cycle %0d, expected 8 — the same cycle as a DLI",
+                     nmi_fall_hcount);
+            fail++;
+        end
+        if (nmist[6] !== 1'b1) begin
+            $display("FAIL T14c: NMIST[6] not set after a VBI (nmist $%02h)", nmist);
+            fail++;
+        end
+        @(negedge clk); nmien = 8'h00;
 
         if (fail == 0) $display("tb_antic_scanline: all checks PASS");
         else           $display("tb_antic_scanline: %0d FAIL", fail);

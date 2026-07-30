@@ -13,6 +13,11 @@
 // VCOUNT is the scanline number halved — it counts every other line, so a
 // 262-line frame reads 0..130.
 //
+// DISPLAY_LINES defaults to ANTIC's maximum of 240, not the 192 the OS display
+// list happens to use — the height is the display list's business, not the
+// counter chain's.  That puts the display at lines 8..247 and the vertical blank
+// interrupt on line 248, which is where the hardware has it.
+//
 // CLOCK BUDGET: one counter chain, advanced once per machine cycle.  Everything
 // here is a compare against a constant; there is nothing to spread out.
 //
@@ -22,7 +27,7 @@ module antic_beam #(
     parameter int CYCLES_PER_LINE = 114,   // machine cycles per scanline
     parameter int LINES_PER_FRAME = 262,
     parameter int DISPLAY_TOP     = 8,     // first line the playfield may use
-    parameter int DISPLAY_LINES   = 192,
+    parameter int DISPLAY_LINES   = 240,   // ANTIC's maximum, not the OS's 192
     parameter int VCOUNT_ADVANCE  = 111    // <-- antic_vcount pins this
 ) (
     input  wire        clk,
@@ -35,7 +40,8 @@ module antic_beam #(
 
     output wire        line_start,         // 1-clk at the start of each line
     output wire        in_display,         // this line may draw playfield
-    output wire        in_vblank
+    output wire        in_vblank,
+    output wire        vbi_line            // the FIRST line of vertical blank
 );
 
     wire last_cycle = (hcount == 7'(CYCLES_PER_LINE - 1));
@@ -50,6 +56,10 @@ module antic_beam #(
     assign in_display = (line >= 9'(DISPLAY_TOP)) &&
                         (line <  9'(DISPLAY_TOP + DISPLAY_LINES));
     assign in_vblank  = !in_display;
+
+    // The vertical blank interrupt belongs to the first line of vertical blank,
+    // which with ANTIC's full 240-line display is scanline 248.
+    assign vbi_line   = (line == 9'(DISPLAY_TOP + DISPLAY_LINES));
 
     always_ff @(posedge clk or posedge rst) begin
         if (rst) begin

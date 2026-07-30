@@ -60,10 +60,12 @@ module antic_scanline (
 
     // ---- from the beam ---------------------------------------------------
     input  wire        line_start,     // 1-clk at the start of each scanline
+    input  wire        tick,           // 1-clk per machine cycle
     input  wire        px_tick,        // 1-clk per hi-res pixel, 4 per cycle
     input  wire [6:0]  hcount,
     input  wire [8:0]  line,
     input  wire        in_vblank,
+    input  wire        vbi_line,       // the first line of vertical blank
 
     // ---- live registers --------------------------------------------------
     input  wire [7:0]  dmactl,         // $D400
@@ -86,6 +88,8 @@ module antic_scanline (
     input  wire [7:0]  grafm,
     input  wire [7:0]  prior,          // $D01B
     input  wire [7:0]  colpm0, colpm1, colpm2, colpm3,
+    input  wire [7:0]  nmien,          // $D40E
+    input  wire        nmires,         // 1-clk: write to $D40F
     input  wire [7:0]  vdelay,         // $D01C
     input  wire        hitclr,         // $D01E write
     input  wire        active_line,    // an active display line
@@ -112,6 +116,8 @@ module antic_scanline (
     output wire [15:0] p_pl,
 
     // ---- out -------------------------------------------------------------
+    output wire [7:0]  nmist,          // $D40F read
+    output wire        nmi_n,          // active low, to the CPU
     output wire        dli,
     output wire [15:0] dlpc
 );
@@ -147,6 +153,17 @@ module antic_scanline (
         .line_ready(dl_line_ready), .mode(dl_mode), .scan_addr(dl_scan_addr),
         .row(dl_row), .hscrol_en(dl_hscrol_en), .line_valid(dl_line_valid),
         .dli(dli), .dlpc(dlpc)
+    );
+
+    // ---- interrupts ------------------------------------------------------
+    // The display list says WHICH scanlines carry a DLI; this says WHEN on the
+    // scanline the status and the /NMI happen, and they are not the same cycle.
+    antic_nmi u_nmi (
+        .clk(clk), .rst(rst),
+        .tick(tick), .hcount(hcount), .line_start(line_start),
+        .dli(dli), .vbi_line(vbi_line),
+        .nmien(nmien), .nmires(nmires),
+        .nmist(nmist), .nmi_n(nmi_n)
     );
 
     // ---- geometry for this line's mode -----------------------------------

@@ -29,7 +29,8 @@ module tb_antic_beam;
     dut (
         .clk(clk), .rst(rst), .tick(tick),
         .hcount(hcount), .line(line), .vcount(vcount),
-        .line_start(line_start), .in_display(in_display), .in_vblank(in_vblank)
+        .line_start(line_start), .in_display(in_display), .in_vblank(in_vblank),
+        .vbi_line()
     );
 
     int fail = 0;

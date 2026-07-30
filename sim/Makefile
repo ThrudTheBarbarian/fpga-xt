@@ -1344,7 +1344,7 @@ build/tb_antic_scanline.vvp: tb_antic_scanline.sv $(HDL_DIR)/antic_scanline.sv \
 	    $(HDL_DIR)/antic_char_ctl.sv $(HDL_DIR)/antic_pm_fetch.sv \
 	    $(HDL_DIR)/gtia_stage.sv $(HDL_DIR)/gtia_obj_walk.sv \
 	    $(HDL_DIR)/gtia_priority.sv $(HDL_DIR)/gtia_collide.sv \
-	    $(HDL_DIR)/gtia_special.sv | build
+	    $(HDL_DIR)/gtia_special.sv $(HDL_DIR)/antic_nmi.sv | build
 	iverilog -g2012 -Wall -Wno-timescale -I$(HDL_DIR) -o $@ -s tb_antic_scanline \
 	    $(HDL_DIR)/antic_scanline.sv $(HDL_DIR)/antic_beam.sv \
 	    $(HDL_DIR)/antic_dl.sv $(HDL_DIR)/antic_pf_geom.sv \
@@ -1355,6 +1355,7 @@ build/tb_antic_scanline.vvp: tb_antic_scanline.sv $(HDL_DIR)/antic_scanline.sv \
 	    $(HDL_DIR)/antic_pm_fetch.sv $(HDL_DIR)/gtia_stage.sv \
 	    $(HDL_DIR)/gtia_obj_walk.sv $(HDL_DIR)/gtia_priority.sv \
 	    $(HDL_DIR)/gtia_collide.sv $(HDL_DIR)/gtia_special.sv \
+	    $(HDL_DIR)/antic_nmi.sv \
 	    tb_antic_scanline.sv
 
 antic_pm_fetch: build/tb_antic_pm_fetch.vvp
@@ -1404,3 +1405,10 @@ gtia_special: build/tb_gtia_special.vvp
 build/tb_gtia_special.vvp: tb_gtia_special.sv $(HDL_DIR)/gtia_special.sv | build
 	iverilog -g2012 -Wall -Wno-timescale -I$(HDL_DIR) -o $@ -s tb_gtia_special \
 	    $(HDL_DIR)/gtia_special.sv tb_gtia_special.sv
+
+antic_nmi: build/tb_antic_nmi.vvp
+	@vvp -N $<
+
+build/tb_antic_nmi.vvp: tb_antic_nmi.sv $(HDL_DIR)/antic_nmi.sv | build
+	iverilog -g2012 -Wall -Wno-timescale -I$(HDL_DIR) -o $@ -s tb_antic_nmi \
+	    $(HDL_DIR)/antic_nmi.sv tb_antic_nmi.sv
