@@ -111,3 +111,10 @@ Baseline to beat: **32 of 63** on the legacy path (run `2026-07-29-3`).
   **`graboverlay`** for anything on the Atari display.
 - A `.bit` **is** written even when the timing gate reports FAIL. Check the gate
   output, not the file's existence.
+- `run-valhalla.sh` **exits 0 when synthesis fails.** Same class as the above:
+  grep the log for `ERROR:` / `Elaboration failed`, never trust `$?`.
+- A block that touches a RAM array **must not carry an asynchronous reset**, or
+  it is not a dual-port BRAM template — with `ram_style="block"` Vivado errors
+  out (`Unsupported Dual Port Block-RAM template`) rather than falling back.
+  Keep the RAM access and the reset-bearing pointer/state in separate
+  `always_ff` blocks, as `math_cop` and `screen_bank` do.

@@ -717,6 +717,32 @@
           "desc": "ANTIC timebase probe capture: ring entry selected by DBG_TB_CFG.read_idx = {[24:16]=scanline (0..261), [15:8]=phi2_in_line (machine-cycle 0..113), [7:0]=data (write byte for write modes, ANTIC read byte for read mode, 0 for event modes)}"
         }
       ]
+    },
+    {
+      "name": "SIO",
+      "sel": "0xA",
+      "base": "0xA00",
+      "base_macro": "XT_BLK_SIO",
+      "sv_sel": "BLK_SIO",
+      "desc": "paravirtual SIO mailbox (xt_sio_mbox): the 512 B page the XL OS boot stub shares with the A9, plus its data window. The doorbell/completion/status legs are the MATH block's ($D5C7 done, MATH_EVT, MATH_DONE, IRQ_F2P[1]) so the worker-task and IRQ wiring are unchanged; only the payload window is here. Sel 0x9 stays RESERVED for the ANTIC debugger. See hdl/xt_sio_mbox.sv",
+      "regs": [
+        {
+          "off": "0x00",
+          "access": "W",
+          "width": 9,
+          "c": "XT_SIO_PTR",
+          "sv": "SIO_PTR",
+          "desc": "byte pointer into the 512 B mailbox (word-aligned; [1:0] ignored). Writing it re-aims the window; each SIO_DAT access then auto-increments by 4, so a run of bytes is one seek plus N accesses"
+        },
+        {
+          "off": "0x04",
+          "access": "RW",
+          "width": 32,
+          "c": "XT_SIO_DAT",
+          "sv": "SIO_DAT",
+          "desc": "32-bit little-endian word at the pointer; read or write auto-increments the pointer by 4. The BRAM read register tracks the pointer continuously and consecutive AXI transactions are tens of clocks apart, so a read always returns settled data"
+        }
+      ]
     }
   ]
 }

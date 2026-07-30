@@ -1483,3 +1483,17 @@ antic_wb_adapt: build/tb_antic_wb_adapt.vvp
 build/tb_antic_wb_adapt.vvp: tb_antic_wb_adapt.sv $(HDL_DIR)/antic_wb_adapt.sv | build
 	iverilog -g2012 -Wall -Wno-timescale -I$(HDL_DIR) -o $@ -s tb_antic_wb_adapt \
 	    $(HDL_DIR)/antic_wb_adapt.sv tb_antic_wb_adapt.sv
+
+xt_sio_mbox: build/tb_xt_sio_mbox.vvp
+	@vvp -N $<
+
+build/tb_xt_sio_mbox.vvp: tb_xt_sio_mbox.sv $(HDL_DIR)/xt_sio_mbox.sv | build
+	iverilog -g2012 -Wall -Wno-timescale -I$(HDL_DIR) -o $@ -s tb_xt_sio_mbox \
+	    $(HDL_DIR)/xt_sio_mbox.sv tb_xt_sio_mbox.sv
+
+xt_mbit_cdc: build/tb_xt_mbit_cdc.vvp
+	@vvp -N $<
+
+build/tb_xt_mbit_cdc.vvp: tb_xt_mbit_cdc.sv $(HDL_DIR)/xt_mbit_cdc.sv | build
+	iverilog -g2012 -Wall -Wno-timescale -I$(HDL_DIR) -o $@ -s tb_xt_mbit_cdc \
+	    $(HDL_DIR)/xt_mbit_cdc.sv tb_xt_mbit_cdc.sv

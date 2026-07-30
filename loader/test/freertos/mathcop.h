@@ -112,6 +112,13 @@
  * slot state in other chunks is untouched. */
 #define MC_OP_SIO           0x25        /* (retired: the stub uses the magic byte) */
 #define MC_SIO_CHUNK        0xFF        /* $D5C8 while the stub runs */
+/* Where the SIO mailbox physically lives, and it MUST match the fabric:
+ *   1 = xt_sio_mbox, 512 B of BRAM behind the GP0 0xAxx window (math_cop NOT
+ *       built — the g_no_math_cop branch of the generate in fpga_xt_top.sv)
+ *   0 = math_cop's DDR-backed 8 KB page at MC_CHUNK_BASE (math_cop built)
+ * Get this wrong and the worker services the wrong memory, the stub never sees
+ * its answer, and the 6502 spins on $D5C7 for ever. */
+#define MC_SIO_VIA_MBOX     1
 #define MC_OFF_SIO_MAGIC    0x0005      /* u8: $5A = this chunk is an SIO request
                                          * (the compact stub sets this instead of
                                          * a 1-op math program; the worker routes

@@ -1048,10 +1048,26 @@ module fpga_xt_top (
     // $D400-$D4FF (ACID antic_addrmirror reads VCOUNT at $D41B etc.).
     // Matching the exact address let mirrored reads fall through to the
     // legacy CDC path and return the OTHER raster's value under authority.
+    // Rewrite VCOUNT/NMIST carried into clk_sally (crossing instantiated with
+    // the rewrite itself, further down); declared here because fid_din_mux is
+    // the consumer.
+    wire [15:0] rw_vn_sally;
+    wire [7:0]  rw_vcount_sally = rw_vn_sally[7:0];
+    wire [7:0]  rw_nmist_sally  = rw_vn_sally[15:8];
+
     wire fid_d4 = (fid_addr[15:8] == 8'hD4);
-    wire [7:0] fid_din_mux = (tm_auth && fid_rw && fid_d4 && fid_addr[3:0] == 4'hB) ? tm_vcount :
-                             (tm_auth && fid_rw && fid_d4 && fid_addr[3:0] == 4'hF) ? tm_nmist  :
-                             cpu_din;
+    // rw_auth outranks tm_auth, exactly as it does for rdy/steal/nmi below.
+    // Getting this wrong is not a small error: with sallyrst = $0E BOTH bits are
+    // set, so the CPU took its NMI from the rewrite but read NMIST from the
+    // timing machine -- two rasters disagreeing about whether an interrupt had
+    // happened, which is why $0E scored worse than $06.
+    wire [7:0] fid_din_mux = (fid_rw && fid_d4 && fid_addr[3:0] == 4'hB)
+                                 ? (rw_auth ? rw_vcount_sally :
+                                    tm_auth ? tm_vcount       : cpu_din)
+                           : (fid_rw && fid_d4 && fid_addr[3:0] == 4'hF)
+                                 ? (rw_auth ? rw_nmist_sally  :
+                                    tm_auth ? tm_nmist        : cpu_din)
+                           : cpu_din;
 
     xt6502f #(.CLK_SALLY_HZ(100_000_000), .PHI2_HZ(1_785_714)) u_fid_core (  // N = 56
         .clk       (clk_sally),
@@ -1578,6 +1594,8 @@ module fpga_xt_top (
     // snoop_we_screen inside antic_top.
     wire [7:0]  antic_bus_data_out;
     wire        antic_bus_data_oe;
+    wire [7:0]  rw_vcount_sys;     // rewrite VCOUNT/NMIST (clk_sys); the
+    wire [7:0]  rw_nmist_sys;      // clk_sally copies are declared up by fid_din_mux
     wire [7:0]  antic_rdata_top;   // legacy ANTIC's ungated read mux
     wire [7:0]  antic_rdata_int;   // ANTIC's UNGATED read mux for the internal CPU's
                                    // hwreg read-back CDC (bus_data_out is ext-bus-gated)
@@ -1843,13 +1861,41 @@ module fpga_xt_top (
         .pal_sense(8'h0E), .consol_keys(consol_keys),
         .lb_wr(rw_lb_wr), .lb_color(rw_lb_color),
         .lb_line_start(rw_lb_line_start),
-        .hcount(), .line(rw_line), .vcount(), .line_start(), .dlpc()
+        .hcount(), .line(rw_line), .vcount(rw_vcount_sys), .line_start(), .dlpc(),
+        .nmist_o(rw_nmist_sys)
     );
+
+    // ---- VCOUNT/NMIST across to the CPU's clock -------------------------
+    // The rewrite lives in clk_sys; the fid core reads these in clk_sally and
+    // needs them in the SAME machine cycle (see fid_din_mux).  Both change at
+    // most once a scanline, which is ~6,400 clk_sys -- three orders of
+    // magnitude slower than the crossing -- so xt_mbit_cdc's stability
+    // constraint is met with enormous margin.  ONE 16-bit crossing, not two
+    // 8-bit ones, so a read can never mix a new VCOUNT with an old NMIST.
+    xt_mbit_cdc #(.W(16)) u_rw_vn_cdc (
+        .src_clk (clk_sys),    .src_rst (rst_sys),
+        .src_data({rw_nmist_sys, rw_vcount_sys}),
+        .dst_clk (clk_sally),  .dst_rst (rst_sally),
+        .dst_data(rw_vn_sally)
+    );
+
 
     // Whoever holds authority drives the fetch address and answers reads.
     assign antic_bram_addr   = rw_auth_sys ? rw_mem_addr : antic_bram_addr_top;
     assign antic_cmpram_addr = antic_cmpram_addr_top;
-    assign antic_rdata_int   = rw_auth_sys ? rw_rdata    : antic_rdata_top;
+    // The rewrite answers ONLY the two pages it decodes.  antic_rdata_top is
+    // not "the legacy raster's read mux" -- it is antic_top's WHOLE-CHIPSET mux
+    // ($D0xx GTIA, $D2xx POKEY, $D3xx PIA, $D4xx ANTIC), and antic_top is the
+    // whole chipset.  Handing every read to the rewrite therefore answered
+    // POKEY and PIA out of a block that does not decode them: PACTL read back
+    // $FF instead of $3F, RANDOM read $FF so the polys looked frozen, and every
+    // IRQST poll saw "no interrupt".  That is ~10 ACID failures with nothing
+    // wrong in the rewrite -- pia_basic/pia_irq, six pokey_*, cpu_clisei,
+    // mmu_xlbanking (PORTB), and antic_wsync, which reads RANDOM before it ever
+    // reaches WSYNC.  Gate on the same decode that drives cs_antic/cs_gtia.
+    wire rw_serves_rd = ~d4xx_n_antic | ~d0xx_n_antic;
+    assign antic_rdata_int   = (rw_auth_sys & rw_serves_rd) ? rw_rdata
+                                                            : antic_rdata_top;
 
     antic_wb_adapt u_antic_wb_adapt (
         .clk(clk_sys), .rst(rst_sys),
@@ -1980,6 +2026,24 @@ module fpga_xt_top (
     wire        math_done_we   = 1'b0;
 `endif
 
+    // ---- SIO mailbox data window (0xAxx) ----------------------------------
+    // Same PS-BD-only shape as the mailbox strobes above: the A9 drives these
+    // through xt_gp0_regs, and the OOC/sim path ties them off.
+    wire [31:0] sio_rdata;
+`ifdef USE_PS_BD
+    wire [8:0]  sio_ptr;
+    wire        sio_ptr_we;
+    wire [31:0] sio_wdata;
+    wire        sio_we;
+    wire        sio_rd;
+`else
+    wire [8:0]  sio_ptr    = 9'd0;
+    wire        sio_ptr_we = 1'b0;
+    wire [31:0] sio_wdata  = 32'd0;
+    wire        sio_we     = 1'b0;
+    wire        sio_rd     = 1'b0;
+`endif
+
     // ================================================================
     // Math coprocessor — NOT BUILT
     // ================================================================
@@ -1996,6 +2060,12 @@ module fpga_xt_top (
 
     generate
     if (ENABLE_MATH_COP) begin : g_math_cop
+        // With the maths engine back, IT owns the $D5C6/$D5C7/$D5C8 + $4000
+        // contract and the SIO mailbox is not built, so its window reads 0.
+        // NOTE: paravirtual SIO does not work in this configuration — the boot
+        // stub's page would be math_cop's DDR-backed one again, which also means
+        // flipping MC_SIO_VIA_MBOX to 0 in mathcop.h.
+        assign sio_rdata = 32'd0;
         math_cop #(.STACK_BASE(32'h2080_0000), .APERTURE_LOG2(13)) u_math_cop (
             .clk          (clk_sys),       .rst        (rst_sys),
             .clk_cpu      (clk_sally),
@@ -2022,13 +2092,39 @@ module fpga_xt_top (
             .e_axi_bvalid (mc_bvalid),  .e_axi_bready(mc_bready)
         );
     end else begin : g_no_math_cop
-        assign math_cpu_rdata  = 8'h00;
-        assign math_done       = 1'b0;
-        assign math_busy       = 1'b0;
-        assign math_chunk_ready= 1'b0;
-        assign math_evt_data   = 9'd0;
-        assign math_irq        = 1'b0;
-        assign math_stat_word  = 32'd0;
+        // ------------------------------------------------------------------
+        // No maths engine — but the $D5C6/$D5C7/$D5C8 + $4000 aperture contract
+        // is NOT the maths engine's alone: the XL OS boot stub borrows it to
+        // reach the A9 for paravirtual SIO.  Tying math_done to 1'b0 here (the
+        // first cut of this drop) is exactly the bit that stub polls, so every
+        // cold boot wedged at $CB8A and no .xex or .atr could be launched.
+        //
+        // xt_sio_mbox serves that contract on its own: 512 B of dual-port BRAM
+        // and a two-toggle handshake, no DDR engine, no AXI master.  See
+        // hdl/xt_sio_mbox.sv.
+        xt_sio_mbox #(.APERTURE_LOG2(13), .MBOX_LOG2(9)) u_sio_mbox (
+            .clk        (clk_sys),        .rst      (rst_sys),
+            .evt_data   (math_evt_data),  .evt_pop  (math_evt_pop),
+            .evt_irq    (math_irq),
+            .done_we    (math_done_we),   .stat_word(math_stat_word),
+            .a9_ptr     (sio_ptr),        .a9_ptr_we(sio_ptr_we),
+            .a9_wdata   (sio_wdata),      .a9_we    (sio_we),
+            .a9_rd      (sio_rd),         .a9_rdata (sio_rdata),
+            .clk_cpu    (clk_sally),      .rst_cpu  (rst_sally),
+            .cpu_addr   (scrn_cpu_addr),  .cpu_we   (math_cpu_we),
+            .cpu_wdata  (scrn_cpu_wdata),
+            // mem_rdy, NOT sally_rdy: this gate exists so the page read register
+            // tracks sally_mem's bram_dout_q exactly, and sally_mem steps on
+            // mem_rdy.  The two are the same signal only for the turbo core;
+            // for the fid core (the one that is built) mem_rdy is the
+            // early-window pulse, so math_cop's original .cpu_rden(sally_rdy)
+            // would have frozen on the wrong edge and returned neighbouring
+            // bytes on any stalled cycle.
+            .cpu_rden   (mem_rdy),        .cpu_rdata(math_cpu_rdata),
+            .exec_we    (math_exec_we),
+            .done       (math_done),      .busy     (math_busy),
+            .chunk_ready(math_chunk_ready)
+        );
         assign mc_araddr       = '0;
         assign mc_arlen        = 4'd0;
         assign mc_arsize       = 3'd0;
@@ -3556,6 +3652,12 @@ module fpga_xt_top (
         .math_done_word  (math_done_word),
         .math_done_we    (math_done_we),
         .math_stat_word  (math_stat_word),
+        .sio_ptr         (sio_ptr),          // paravirtual SIO mailbox window (0xAxx)
+        .sio_ptr_we      (sio_ptr_we),
+        .sio_wdata       (sio_wdata),
+        .sio_we          (sio_we),
+        .sio_rd          (sio_rd),
+        .sio_rdata       (sio_rdata),
         // ---- 6502 debugger control/status (0x8xx) ----
         .dbg_halt_tog    (gdbg_halt_tog),
         .dbg_go_tog      (gdbg_go_tog),

@@ -145,3 +145,12 @@ in-fabric 6502 debugger (xt6502_debug): halt/step/breakpoint/register access, dr
 | 0x78 | RW | 29 | `XT_DBG_TB_CFG` | `DBG_TB_CFG` | ANTIC timebase probe config: [2:0]=mode (0=off 1=$D4xx write@match 2=$D4xx read@match 3=DLI-line 4=VBI 5=WSYNC($D40A wr) 6=any $D4xx wr 7=every line_start), [11:4]=match_addr (low byte of $D4xx reg), [19:16]=read_idx (0..15 ring entry selected into DBG_TB_CAP), [24]=clear (write with a mode to arm+reset the ring for a fresh capture), [25]=circular (0=stop-on-full: hold the FIRST 16 triggers then freeze; 1=wrap: hold the LAST 16 triggers, DBG_TB_STAT.wr_idx = oldest entry), [28:26]=WSYNC /RDY shape mask {latch,q1,q2} (0 = default = 011 q1|q2; see wsync_gen.sv; [14]=comb fallback, [15]=disable write immunity, [23:20]=signed release-cycle offset from 103). 2-FF synced into the ANTIC clk_bus domain. |
 | 0x7C | R | 26 | `XT_DBG_TB_STAT` | `DBG_TB_STAT` | ANTIC timebase probe status (2-FF synced from clk_bus): [15:0]=trig_count (16-bit saturating # of triggers since clear), [20:16]=wr_idx (0..16; 16=full), [24]=full (ring holds 16 entries), [25]=armed (set by a clear write) |
 | 0x80 | R | 25 | `XT_DBG_TB_CAP` | `DBG_TB_CAP` | ANTIC timebase probe capture: ring entry selected by DBG_TB_CFG.read_idx = {[24:16]=scanline (0..261), [15:8]=phi2_in_line (machine-cycle 0..113), [7:0]=data (write byte for write modes, ANTIC read byte for read mode, 0 for event modes)} |
+
+## 0xA00 — SIO  (`XT_BLK_SIO`)
+
+paravirtual SIO mailbox (xt_sio_mbox): the 512 B page the XL OS boot stub shares with the A9, plus its data window. The doorbell/completion/status legs are the MATH block's ($D5C7 done, MATH_EVT, MATH_DONE, IRQ_F2P[1]) so the worker-task and IRQ wiring are unchanged; only the payload window is here. Sel 0x9 stays RESERVED for the ANTIC debugger. See hdl/xt_sio_mbox.sv
+
+| Offset | Acc | Width | C macro | SV | Meaning |
+|--------|-----|-------|---------|----|---------|
+| 0x00 | W | 9 | `XT_SIO_PTR` | `SIO_PTR` | byte pointer into the 512 B mailbox (word-aligned; [1:0] ignored). Writing it re-aims the window; each SIO_DAT access then auto-increments by 4, so a run of bytes is one seek plus N accesses |
+| 0x04 | RW | 32 | `XT_SIO_DAT` | `SIO_DAT` | 32-bit little-endian word at the pointer; read or write auto-increments the pointer by 4. The BRAM read register tracks the pointer continuously and consecutive AXI transactions are tens of clocks apart, so a read always returns settled data |

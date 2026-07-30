@@ -12,6 +12,8 @@ rom offset $1800 + ($E000-$D800) = $2000.
 """
 import sys, struct
 
+VERBOSE = False
+
 import os
 ROM = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "rsrc", "atari-xl.rom")
 
@@ -57,34 +59,67 @@ def read_bmp(path):
     return w, h, px
 
 
+def _decode_at(px, w, h, bg, font, dx, dy):
+    """Decode with the character grid anchored at (dx, dy). Returns
+    (lines, hits) where hits counts cells that matched a real glyph."""
+    out, hits = [], 0
+    cy = dy
+    while cy + 8 <= h:
+        line = []
+        cx = dx
+        while cx + 8 <= w:
+            bits = []
+            for r in range(8):
+                b = 0
+                row = px[cy + r]
+                for c in range(8):
+                    if row[cx + c] != bg:
+                        b |= 0x80 >> c
+                bits.append(b)
+            code = font.get(tuple(bits))
+            if code is not None:
+                line.append(scr2asc(code))
+                if any(bits):
+                    hits += 1           # a BLANK cell matches everywhere; don't score it
+            else:
+                line.append(' ')
+            cx += 8
+        out.append(''.join(line).rstrip())
+        cy += 8
+    return out, hits
+
+
 def decode(path, font):
+    """The grid origin is NOT always (0,0).
+
+    The plane is grabbed as a raw 320x192 window, and where the OS puts its
+    text within that window depends on the display list — a blank-line count,
+    a scroll, or a rewrite that starts the playfield a scanline early all shift
+    every glyph off the assumed 8-pixel lattice, and then EVERY lookup misses
+    and the decode comes back empty.  So find the anchor instead of assuming it:
+    score all 64 offsets and keep the one that matches the most glyphs."""
     w, h, px = read_bmp(path)
-    cols, rows = w // 8, h // 8
-    # Background is whatever is most common; a set pixel differs from it.
     hist = {}
     for row in px:
         for v in row:
             hist[v] = hist.get(v, 0) + 1
     bg = max(hist, key=hist.get)
-    out = []
-    for cy in range(rows):
-        line = []
-        for cx in range(cols):
-            bits = []
-            for r in range(8):
-                b = 0
-                for c in range(8):
-                    if px[cy*8 + r][cx*8 + c] != bg:
-                        b |= 0x80 >> c
-                bits.append(b)
-            code = font.get(tuple(bits))
-            line.append(scr2asc(code) if code is not None else ' ')
-        out.append(''.join(line).rstrip())
-    return out
+
+    best, best_hits, best_at = [], -1, (0, 0)
+    for dy in range(8):
+        for dx in range(8):
+            lines, hits = _decode_at(px, w, h, bg, font, dx, dy)
+            if hits > best_hits:
+                best, best_hits, best_at = lines, hits, (dx, dy)
+    if VERBOSE:
+        sys.stderr.write(f"[bmp2text] grid origin {best_at}, {best_hits} glyphs\n")
+    return best
 
 
 if __name__ == "__main__":
-    font = load_font(sys.argv[2] if len(sys.argv) > 2 else ROM)
-    for ln in decode(sys.argv[1], font):
+    VERBOSE = "-v" in sys.argv
+    args = [a for a in sys.argv[1:] if a != "-v"]
+    font = load_font(args[1] if len(args) > 1 else ROM)
+    for ln in decode(args[0], font):
         if ln.strip():
             print(ln)

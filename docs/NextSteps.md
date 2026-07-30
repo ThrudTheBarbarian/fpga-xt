@@ -67,7 +67,7 @@ AND ANTIC breakpoints; step DLIs with beam position (wire DBG_BEAM).
 
 **XL app-launch — WORKING END-TO-END 2026-07-18.** `xlboot DespatchRider.atr` boots:
 HW dmesg shows SIO STATUS ($53) + READ ($52) of boot sectors 1..$27 into $0400 via
-the doorbell→math-mailbox→A9 SIO worker, all st=01; the 6502 runs boot+game code
+the doorbell→SIO-mailbox→A9 SIO worker, all st=01; the 6502 runs boot+game code
 (351 distinct PCs). Two real blockers, both found with the new debug tools:
 1. **Bulk ROM-window upload dropped the OS patch.** `sally_rom_loader` does NOT
    back-pressure; a tight 49 KB `romwin_write` store loop outran its depth-4 CDC

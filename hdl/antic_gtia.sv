@@ -81,7 +81,13 @@ module antic_gtia #(
     output wire [8:0]  line,
     output wire [7:0]  vcount,
     output wire        line_start,
-    output wire [15:0] dlpc
+    output wire [15:0] dlpc,
+    // NMIST as the register file serves it.  Exposed alongside vcount because
+    // whoever holds timing authority must also answer the CPU's VCOUNT/NMIST
+    // reads: served from the far side of the hwreg read CDC they come back a
+    // round-trip stale, which is fatal to the cycle-accurate tests
+    // (antic_vcount measures the exact cycle VCOUNT steps on).
+    output wire [7:0]  nmist_o
 );
 
     // ---- the beam --------------------------------------------------------
@@ -103,6 +109,7 @@ module antic_gtia #(
     wire       dlist_we_l, dlist_we_h, nmires;
     wire [7:0] dlist_wdata;
     wire [7:0] nmist;
+    assign nmist_o = nmist;
 
     antic_reg_file u_aregs (
         .clk(clk), .rst(rst), .tick(tick), .hcount(hcount),

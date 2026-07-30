@@ -297,6 +297,67 @@ void xl_sio_service(volatile uint8_t *page)
 #endif
 }
 
+/* ---- the mailbox window (xt_sio_mbox, GP0 0xAxx) --------------------------
+ * math_cop used to hold this page in DDR, so the worker could hand
+ * xl_sio_service() a plain pointer.  With the maths engine dropped the page is
+ * fabric BRAM reached through a seek/auto-increment window, so the service runs
+ * against a BOUNCE BUFFER instead: pull in the bytes it reads, run it
+ * UNCHANGED, push back the bytes it writes.  That keeps the disk semantics in
+ * one place and the transport in another.
+ *
+ * ~70 word accesses per sector.  The 6502 is spinning on $D5C7 throughout, but
+ * that is a poll loop, not a bus timeout — the stub waits as long as we take.
+ *
+ * ALWAYS signal completion, even on a request we do not understand: the one
+ * unrecoverable outcome is leaving $D5C7.0 low, which is a 6502 wedged for ever
+ * (it is exactly how the maths-drop regression presented). */
+#define SIO_PTR        (*(volatile uint32_t *)0x43C00A00u)   /* XT_SIO_PTR */
+#define SIO_DAT        (*(volatile uint32_t *)0x43C00A04u)   /* XT_SIO_DAT */
+#define SIO_DONE_REG   (*(volatile uint32_t *)0x43C00604u)   /* XT_MATH_DONE: raises $D5C7.0 */
+#define SIO_MBOX_BYTES 512u
+
+/* off and n are word-aligned by construction (the mathcop.h offsets are). */
+static void sio_mbox_read(uint32_t off, uint8_t *dst, uint32_t n)
+{
+    SIO_PTR = off & ~3u; __asm__ volatile("dsb");
+    for (uint32_t i = 0; i < n; i += 4) {
+        uint32_t w = SIO_DAT;                     /* pointer auto-increments */
+        dst[i] = (uint8_t)w;         dst[i + 1] = (uint8_t)(w >> 8);
+        dst[i + 2] = (uint8_t)(w >> 16); dst[i + 3] = (uint8_t)(w >> 24);
+    }
+}
+
+static void sio_mbox_write(uint32_t off, const uint8_t *src, uint32_t n)
+{
+    SIO_PTR = off & ~3u; __asm__ volatile("dsb");
+    for (uint32_t i = 0; i < n; i += 4) {
+        SIO_DAT = (uint32_t)src[i]            | ((uint32_t)src[i + 1] << 8) |
+                  ((uint32_t)src[i + 2] << 16) | ((uint32_t)src[i + 3] << 24);
+        __asm__ volatile("dsb");
+    }
+}
+
+/* Called from the mathcop worker task on a MC_SIO_CHUNK doorbell. */
+void xl_sio_mbox_service(void)
+{
+    static uint8_t page[SIO_MBOX_BYTES];          /* kernel BSS; single caller */
+
+    /* Words $000 and $004 carry STATUS/FLAGS/MAGIC; $040 the DCB. Nothing else
+     * is read by the service. */
+    sio_mbox_read(0, page, 8);
+    sio_mbox_read(MC_OFF_SIO_DCB, page + MC_OFF_SIO_DCB, 12);
+
+    if (page[MC_OFF_SIO_MAGIC] == MC_SIO_MAGIC) {
+        xl_sio_service(page);
+        page[MC_OFF_SIO_MAGIC] = 0;               /* consume it */
+        sio_mbox_write(0, page, 8);               /* status + flags back */
+        sio_mbox_write(MC_OFF_SIO_DATA, page + MC_OFF_SIO_DATA, 256);
+    }
+
+    SIO_DONE_REG = MC_SIO_CHUNK;                  /* -> $D5C7.0: the stub may proceed */
+    __asm__ volatile("dsb");
+}
+
 /* ---- OS image build + patch ----------------------------------------------- */
 static int read_whole(const char *path, uint8_t *dst, uint32_t cap, uint32_t *out_len)
 {
@@ -743,6 +804,7 @@ int xex_boot(const char *path, int turbo, int hold)
 #else  /* qemu: no fabric 6502 */
 
 void xl_sio_service(volatile uint8_t *page) { (void)page; }
+void xl_sio_mbox_service(void) { }
 int  xl_boot(const char *path, int drive) { (void)path; (void)drive; return -19; }
 int  xex_boot(const char *path, int turbo, int hold) { (void)path; (void)turbo; (void)hold; return -19; }
 

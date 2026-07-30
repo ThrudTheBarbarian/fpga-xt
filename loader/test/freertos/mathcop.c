@@ -493,6 +493,18 @@ static void mc_run_ops(volatile uint8_t *page, const uint32_t *ops, unsigned nop
 /* ---- run one chunk's program --------------------------------------------- */
 static void mc_run_chunk(uint8_t chunk)
 {
+#if MC_SIO_VIA_MBOX
+    /* Paravirtual SIO no longer shares the maths page: with math_cop dropped it
+     * has its own BRAM mailbox behind the GP0 0xAxx window, so route the SIO
+     * chunk out BEFORE touching MC_CHUNK_BASE — that DDR is not a mailbox in
+     * this build and invalidating/reading it would be meaningless work on a
+     * path the 6502 is spin-waiting on.  See hdl/xt_sio_mbox.sv. */
+    if (chunk == MC_SIO_CHUNK) {
+        extern void xl_sio_mbox_service(void);
+        xl_sio_mbox_service();
+        return;
+    }
+#endif
     volatile uint8_t *page =
         (volatile uint8_t *)(MC_CHUNK_BASE + (uint32_t)chunk * MC_CHUNK_SIZE);
     uint8_t st = 0;

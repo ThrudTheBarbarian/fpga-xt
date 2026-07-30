@@ -186,6 +186,16 @@ module xt_gp0_regs (
     output reg         math_done_we,       // 1-cycle strobe on a MATH_DONE write
     input  wire [31:0] math_stat_word,     // MATH_STAT readback
 
+    // ---- SIO mailbox data window (clk_sys, wired to xt_sio_mbox) ------------
+    // The doorbell/completion legs stay on the MATH block above (so IRQ_F2P[1]
+    // and the worker task are untouched); only the payload window lives here.
+    output reg  [8:0]  sio_ptr,            // SIO_PTR: byte pointer into the mailbox
+    output reg         sio_ptr_we,         // 1-cycle strobe on a SIO_PTR write
+    output reg  [31:0] sio_wdata,          // SIO_DAT write data
+    output reg         sio_we,             // 1-cycle strobe on a SIO_DAT write
+    output reg         sio_rd,             // 1-cycle strobe on a SIO_DAT read (auto-increment)
+    input  wire [31:0] sio_rdata,          // SIO_DAT readback
+
     // ---- DEBUG block (in-fabric 6502 debugger, xt6502_debug @ clk_sally) ------
     // Control OUT (clk_sys): command toggles flip on each write; levels are values.
     output reg         dbg_halt_tog,
@@ -322,6 +332,10 @@ module xt_gp0_regs (
             spr_reg_we     <= 1'b0;
             math_done_word <= 24'd0;
             math_done_we   <= 1'b0;
+            sio_ptr        <= 9'd0;
+            sio_ptr_we     <= 1'b0;
+            sio_wdata      <= 32'd0;
+            sio_we         <= 1'b0;
             dbg_halt_tog   <= 1'b0;
             dbg_go_tog     <= 1'b0;
             dbg_step_tog   <= 1'b0;
@@ -347,6 +361,8 @@ module xt_gp0_regs (
             spr_reg_we    <= 1'b0;
             xl_win_we     <= 1'b0;
             math_done_we  <= 1'b0;
+            sio_ptr_we    <= 1'b0;
+            sio_we        <= 1'b0;
 
             unique case (wstate)
                 WST_IDLE: begin
@@ -443,6 +459,16 @@ module xt_gp0_regs (
                                     math_done_we   <= 1'b1;
                                 end
                             end
+                            // ---- 0xAxx SIO (mailbox data window) ------------
+                            BLK_SIO: begin
+                                unique case (aw_off)
+                                    SIO_PTR: begin sio_ptr    <= w_data[8:0];
+                                                   sio_ptr_we <= 1'b1; end
+                                    SIO_DAT: begin sio_wdata  <= w_data;
+                                                   sio_we     <= 1'b1; end
+                                    default: ;
+                                endcase
+                            end
                             // ---- 0x8xx DEBUG (6502 debugger) ----------------
                             // Command regs toggle a bit (edge-detected in clk_sally);
                             // value regs latch. DBG_STEP carries the count + a pulse.
@@ -508,10 +534,12 @@ module xt_gp0_regs (
             s_axi_rvalid  <= 1'b0;
             math_evt_pop  <= 1'b0;
             trng_rd_pop   <= 1'b0;
+            sio_rd        <= 1'b0;
         end else begin
             s_axi_arready <= 1'b0;
             math_evt_pop  <= 1'b0;
             trng_rd_pop   <= 1'b0;
+            sio_rd        <= 1'b0;
 
             unique case (rstate)
                 RST_IDLE: begin
@@ -553,6 +581,15 @@ module xt_gp0_regs (
                                     math_evt_pop <= 1'b1;
                                 end
                                 else if (ar_off == MATH_STAT) s_axi_rdata <= math_stat_word;
+                            // ---- 0xAxx SIO (mailbox data window) ------------
+                            // Like MATH_EVT this is a read WITH a side effect: the
+                            // pointer auto-increments, so a run of words is one seek
+                            // plus N reads rather than a seek per word.
+                            BLK_SIO:
+                                if (ar_off == SIO_DAT) begin
+                                    s_axi_rdata <= sio_rdata;
+                                    sio_rd      <= 1'b1;
+                                end
                             BLK_TRNG:
                                 // read-to-consume, same shape as MATH_EVT: the
                                 // read restarts the freshness count so the next

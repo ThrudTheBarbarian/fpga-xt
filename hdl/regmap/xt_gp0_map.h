@@ -17,6 +17,7 @@
  *   0x600  MATH        math-coprocessor mailbox (A9-only); 6502 side = $D5C6-$D5C8 + the $4000-$5FFF math page
  *   0x700  TRNG        hardware entropy (ring-oscillator TRNG in the PL; A9-only, read-only)
  *   0x800  DEBUG       in-fabric 6502 debugger (xt6502_debug): halt/step/breakpoint/register access, driving /bin/6502. Halt is a non-destructive rdy-gate (state preserved); all actions align to the ST_FETCH instruction boundary. Status is coherent when halted (a halted core is static). Sel 0x9 is RESERVED for the future ANTIC debugger. See docs/OS/6502-debug.md
+ *   0xA00  SIO         paravirtual SIO mailbox (xt_sio_mbox): the 512 B page the XL OS boot stub shares with the A9, plus its data window. The doorbell/completion/status legs are the MATH block's ($D5C7 done, MATH_EVT, MATH_DONE, IRQ_F2P[1]) so the worker-task and IRQ wiring are unchanged; only the payload window is here. Sel 0x9 stays RESERVED for the ANTIC debugger. See hdl/xt_sio_mbox.sv
  */
 #ifndef XT_GP0_MAP_H_
 #define XT_GP0_MAP_H_
@@ -35,6 +36,7 @@
 #define XT_BLK_MATH      (XT_GP0_BASE + 0x600u)
 #define XT_BLK_TRNG      (XT_GP0_BASE + 0x700u)
 #define XT_BLK_DEBUG     (XT_GP0_BASE + 0x800u)
+#define XT_BLK_SIO       (XT_GP0_BASE + 0xA00u)
 
 /* ---- BLITTER block --------------------------------------------------- */
 /*   0x00..0x18  W  blitter registers DST/PAT/CMD/SRC/FLAGS (bl_addr = offset); see blitter.h XT_BL_* */
@@ -129,5 +131,9 @@
 #define XT_DBG_TB_CFG        (XT_BLK_DEBUG + 0x78u)       /* RW ANTIC timebase probe config: [2:0]=mode (0=off 1=$D4xx write@match 2=$D4xx read@match 3=DLI-line 4=VBI 5=WSYNC($D40A wr) 6=any $D4xx wr 7=every line_start), [11:4]=match_addr (low byte of $D4xx reg), [19:16]=read_idx (0..15 ring entry selected into DBG_TB_CAP), [24]=clear (write with a mode to arm+reset the ring for a fresh capture), [25]=circular (0=stop-on-full: hold the FIRST 16 triggers then freeze; 1=wrap: hold the LAST 16 triggers, DBG_TB_STAT.wr_idx = oldest entry), [28:26]=WSYNC /RDY shape mask {latch,q1,q2} (0 = default = 011 q1|q2; see wsync_gen.sv; [14]=comb fallback, [15]=disable write immunity, [23:20]=signed release-cycle offset from 103). 2-FF synced into the ANTIC clk_bus domain. */
 #define XT_DBG_TB_STAT       (XT_BLK_DEBUG + 0x7Cu)       /* R ANTIC timebase probe status (2-FF synced from clk_bus): [15:0]=trig_count (16-bit saturating # of triggers since clear), [20:16]=wr_idx (0..16; 16=full), [24]=full (ring holds 16 entries), [25]=armed (set by a clear write) */
 #define XT_DBG_TB_CAP        (XT_BLK_DEBUG + 0x80u)       /* R ANTIC timebase probe capture: ring entry selected by DBG_TB_CFG.read_idx = {[24:16]=scanline (0..261), [15:8]=phi2_in_line (machine-cycle 0..113), [7:0]=data (write byte for write modes, ANTIC read byte for read mode, 0 for event modes)} */
+
+/* ---- SIO block --------------------------------------------------- */
+#define XT_SIO_PTR           (XT_BLK_SIO + 0x00u)         /* W byte pointer into the 512 B mailbox (word-aligned; [1:0] ignored). Writing it re-aims the window; each SIO_DAT access then auto-increments by 4, so a run of bytes is one seek plus N accesses */
+#define XT_SIO_DAT           (XT_BLK_SIO + 0x04u)         /* RW 32-bit little-endian word at the pointer; read or write auto-increments the pointer by 4. The BRAM read register tracks the pointer continuously and consecutive AXI transactions are tens of clocks apart, so a read always returns settled data */
 
 #endif /* XT_GP0_MAP_H_ */

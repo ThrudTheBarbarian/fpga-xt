@@ -92,6 +92,14 @@ module tb_gtia_stage;
         end
     endtask
 
+    // Park the beam at a given colour clock. The collision window is a real
+    // horizontal range now, so a test that wants a hit must stand inside it.
+    task automatic seek_cc(input int n);
+        begin
+            cc = n;
+        end
+    endtask
+
     task automatic clear_hits;
         begin
             @(negedge clk); hitclr = 1'b1;
@@ -210,7 +218,8 @@ module tb_gtia_stage;
         // ================================================================
         new_line();
         clear_hits();
-        hposp0 = 8'd0; hposp1 = 8'd0; grafp0 = 8'hFF; grafp1 = 8'hFF;
+        seek_cc(60);                            // ON SCREEN — see T8d
+        hposp0 = 8'd60; hposp1 = 8'd60; grafp0 = 8'hFF; grafp1 = 8'hFF;
         step_cc(3'd2, 3'd2);                    // both players over PF1
         if (p_pf[3:0] !== 4'b0010) begin
             $display("FAIL T8: P0PF %04b, expected PF1", p_pf[3:0]); fail++;
@@ -226,7 +235,85 @@ module tb_gtia_stage;
             $display("FAIL T8c: collisions accumulated with active low"); fail++;
         end
         active = 1'b1;
+
+        // ----------------------------------------------------------------
+        // T8d: the HORIZONTAL window, both halves of the edge.
+        // GTIA does not compare in horizontal blank. ACID's gtia_collision
+        // reports "P/P collisions were detected in HBLANK on left" when it
+        // does, and antic_addresswrap fails too because its pass condition is
+        // simply P0PF == $00. HPOS $22 is INSIDE and must register; $21 is
+        // outside and must not. This is the check the per-line `active` gate
+        // cannot make.
+        // ----------------------------------------------------------------
+        new_line();
+        clear_hits();
+        hposp0 = 8'h21; hposp1 = 8'h21;
+        seek_cc('h21);
+        step_cc(3'd2, 3'd2);
+        if (p_pf !== 16'h0 || p_pl !== 16'h0) begin
+            $display("FAIL T8d: collided at HPOS $21, outside the window"); fail++;
+        end
+
+        new_line();
+        clear_hits();
+        hposp0 = 8'h22; hposp1 = 8'h22;
+        seek_cc('h22);
+        step_cc(3'd2, 3'd2);
+        if (p_pf[3:0] !== 4'b0010) begin
+            $display("FAIL T8e: no PF collision at HPOS $22, on the bound"); fail++;
+        end
+        if (p_pl[3:0] !== 4'b0010) begin
+            $display("FAIL T8f: no P/P collision at HPOS $22"); fail++;
+        end
+
+        // HPOS $DD is the RIGHT bound and is INSIDE it. ACID's gtia_collision
+        // parks all eight objects there, one colour clock wide (GRAFP=$80,
+        // GRAFM=$AA), and requires every missile to collide with every player:
+        // "Missing P/M collisions on right at $DD."
+        new_line();
+        clear_hits();
+        hposp0 = 8'hDD; hposp1 = 8'hDD; grafp0 = 8'h80; grafp1 = 8'h80;
+        seek_cc('hDD);
+        step_cc(3'd2, 3'd2);
+        if (p_pl[3:0] !== 4'b0010) begin
+            $display("FAIL T8g: no P/P collision at HPOS $DD, ON the right bound (got %04b)", p_pl[3:0]);
+            fail++;
+        end
+
+        // The assertion ACID actually makes there is about MISSILES:
+        // m0pl & m1pl & m2pl & m3pl & $0f == $0f, with GRAFM=$AA so every
+        // missile is one colour clock wide at its own HPOS.
+        new_line();
+        clear_hits();
+        hposp0 = 8'hDD; hposp1 = 8'hDD; hposp2 = 8'hDD; hposp3 = 8'hDD;
+        hposm0 = 8'hDD; hposm1 = 8'hDD; hposm2 = 8'hDD; hposm3 = 8'hDD;
+        grafp0 = 8'h80; grafp1 = 8'h80; grafp2 = 8'h80; grafp3 = 8'h80;
+        grafm  = 8'hAA;
+        seek_cc('hDD);
+        step_cc(3'd2, 3'd2);
+        if ((m_pl[3:0] & m_pl[7:4] & m_pl[11:8] & m_pl[15:12]) !== 4'b1111) begin
+            $display("FAIL T8g2: missiles at $DD missed players: m_pl=%04h", m_pl);
+            fail++;
+        end
+        grafm = 8'h00;
+        hposm0 = 8'd0; hposm1 = 8'd0; hposm2 = 8'd0; hposm3 = 8'd0;
+        hposp2 = 8'd0; hposp3 = 8'd0; grafp2 = 8'h00; grafp3 = 8'h00;
+        grafp0 = 8'hFF; grafp1 = 8'hFF;
+
+        // ...and one past it does not.
+        new_line();
+        clear_hits();
+        hposp0 = 8'd222; hposp1 = 8'd222;
+        seek_cc(222);
+        step_cc(3'd2, 3'd2);
+        if (p_pf !== 16'h0 || p_pl !== 16'h0) begin
+            $display("FAIL T8h: collided at cc 222, past the right bound"); fail++;
+        end
+
+        new_line();
+        clear_hits();
         grafp1 = 8'h00; hposp1 = 8'd200;
+        seek_cc(0);
 
         // ================================================================
         // T11: GTIA modes — two bits a colour clock, two colour clocks a nibble

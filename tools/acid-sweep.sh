@@ -6,10 +6,16 @@
 # after about 30 connections and the sweep collapses to garbage na results.
 # This loops all tests locally and writes ONE file the Mac pulls once.
 #
-# Mac side:
-#   ssh BOARD sh -s < tools/acid-sweep.sh
+# Mac side — push the script as a FILE, then run it:
+#   cat tools/acid-sweep.sh | ssh BOARD 'cat > /tmp/acid-sweep.sh'
+#   ssh BOARD sh /tmp/acid-sweep.sh
 #   ssh BOARD cat /tmp/acid-sweep.tsv > local.tsv
 #   python3 docs/a800/tsv2run.py local.tsv
+#
+# NOT `ssh BOARD sh -s < tools/acid-sweep.sh` — on this board that runs LINE ONE
+# and exits, so the sweep silently produces nothing. Use ONE ssh connection for
+# the whole run (multiplex with -M/-S): Dropbear rate-limits after ~30 new
+# connections and the sweep then collapses into `na` results.
 #
 # Per test: xexload -h cold-boots the fabric 6502 and runs the XEX with a HW
 # breakpoint at the ACID framework _testEnd 1D93, so the CPU HALTS on the

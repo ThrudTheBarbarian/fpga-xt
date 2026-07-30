@@ -142,10 +142,33 @@ module gtia_stage (
         .valid(pri_valid)
     );
 
+    // ---- the collision window --------------------------------------------
+    // GTIA does not compare in HORIZONTAL blank either, and the per-line
+    // `active` gate does not cover it: without this, objects parked off-screen
+    // in the border still latch collisions, and every ACID test that asserts
+    // "no collision" fails on a hit that never appeared on screen —
+    // gtia_collision says so in as many words ("P/P collisions were detected in
+    // HBLANK on left"), and antic_addresswrap fails the same way while looking
+    // like a display-list bug, because its whole pass condition is P0PF == $00.
+    //
+    // The bound is an EDGE, not an approximation: with GRAFP=$80 an object at
+    // HPOS $22 sits exactly ON it and MUST register, while the same object at
+    // $21 falls just outside and must NOT. ACID pins both halves.
+    //
+    // Carried across from the legacy path, which passes this test, but restated
+    // in this design's coordinates rather than lifted: there the window was
+    // x in [-28, 346] with x = 2*cc - 96, so cc = (x + 96)/2 gives [34, 221] --
+    // and 34 is $22, which is the check the comment above describes.
+    // `cc_pos` is the same coordinate HPOS is compared against in the object
+    // walk, so an object is inside the window exactly when its own HPOS is.
+    localparam logic [7:0] CC_LO = 8'd34;    // HPOS $22
+    localparam logic [7:0] CC_HI = 8'd221;
+    wire cc_in_window = (cc_pos >= CC_LO) && (cc_pos <= CC_HI);
+
     gtia_collide u_col (
         .clk(clk), .rst(rst),
         .start(col_start), .pres(pres), .pf_src(cur_pf),
-        .active(active), .hitclr(hitclr),
+        .active(active && cc_in_window), .hitclr(hitclr),
         .m_pf(m_pf), .p_pf(p_pf), .m_pl(m_pl), .p_pl(p_pl), .busy()
     );
 
