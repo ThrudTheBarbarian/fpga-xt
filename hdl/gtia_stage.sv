@@ -38,6 +38,20 @@
 // compositor's compose instant had to be TUNED until it fell inside a test's
 // read window, which is a coincidence rather than a model.
 //
+// A GTIA MODE COSTS ONE MORE PAIR OF COLOUR CLOCKS, and that is causal rather
+// than a choice.  A GTIA pixel's nibble is only complete once BOTH of its colour
+// clocks have delivered their two bits, so it cannot be displayed until the
+// following aligned pair.  Real GR.9/10/11 displays sit shifted for the same
+// reason.  The shift is uniform within a GTIA mode, so nothing moves relative to
+// anything else while one is selected.
+//
+// THE GTIA COLOUR REPLACES THE PLAYFIELD, NOT THE PICTURE.  Priority still runs
+// normally and a player that wins still shows its own colour; only a playfield
+// or background win is recoloured, and only inside the playfield window — the
+// border is not part of the playfield and stays COLBK.  In a GTIA mode the
+// playfield is always present, which is why a background win is recoloured too:
+// there are no gaps for the background to show through.
+//
 // MULTI-COLOUR PLAYERS are applied by ORing the two COLPM registers together
 // before the colour select, not by adding a case to it: where P0 and P1 overlap
 // both take COLPM0|COLPM1, so feeding the select the combined value gives the
@@ -61,6 +75,10 @@ module gtia_stage (
     // ---- the playfield pair for this colour clock ------------------------
     input  wire [2:0] pf_src_a,         // first hi-res pixel
     input  wire [2:0] pf_src_b,         // second
+
+    // ---- what a GTIA mode sees instead -----------------------------------
+    input  wire [1:0] an_pair,          // this colour clock's two playfield bits
+    input  wire       pf_win,           // ...and whether it is inside the window
 
     // ---- live registers --------------------------------------------------
     input  wire [7:0] hposp0, hposp1, hposp2, hposp3,
@@ -131,6 +149,46 @@ module gtia_stage (
         .m_pf(m_pf), .p_pf(p_pf), .m_pl(m_pl), .p_pl(p_pl), .busy()
     );
 
+    // ---- the GTIA-mode nibble --------------------------------------------
+    // Two bits per colour clock, two colour clocks to a nibble.  It takes two
+    // registers, not one: the pair COMPLETES on an odd colour clock, but it must
+    // go on display for a whole aligned pair, so it waits in nib_ready and is
+    // handed over on the next even clock.  With a single register the second
+    // half of every GTIA pixel showed the following pixel instead.
+    logic [1:0] an_prev;
+    logic [3:0] nib_ready, gtia_nib;
+    logic       win_ready, gtia_win;
+
+    always_ff @(posedge clk or posedge rst) begin
+        if (rst || line_start) begin
+            an_prev   <= 2'd0;
+            nib_ready <= 4'd0;
+            gtia_nib  <= 4'd0;
+            win_ready <= 1'b0;
+            gtia_win  <= 1'b0;
+        end else if (cc_tick) begin
+            an_prev <= an_pair;
+            if (cc_pos[0]) begin
+                // The pair is complete; hold it until the next pair begins.
+                nib_ready <= {an_prev, an_pair};
+                win_ready <= pf_win;
+            end else begin
+                gtia_nib <= nib_ready;
+                gtia_win <= win_ready;
+            end
+        end
+    end
+
+    wire       gtia_active;
+    wire [7:0] gtia_color;
+
+    gtia_special u_special (
+        .gtia_mode(prior[7:6]), .nibble(gtia_nib), .colbk(colbk),
+        .colpf0(colpf0), .colpf1(colpf1), .colpf2(colpf2), .colpf3(colpf3),
+        .colpm0(colpm0), .colpm1(colpm1), .colpm2(colpm2), .colpm3(colpm3),
+        .active(gtia_active), .color(gtia_color)
+    );
+
     // ---- colour ----------------------------------------------------------
     // Multi-colour players OR the pair's registers together before the select,
     // so whichever of the two won produces the same combined colour.
@@ -154,7 +212,14 @@ module gtia_stage (
         .color(sel_color)
     );
 
-    wire [7:0] resolved = win_black ? 8'h00 : sel_color;
+    // Players win as normal and keep their own colour; a playfield or
+    // background win inside the window is recoloured by the GTIA mode.
+    wire win_is_object = (win_src >= 4'd6);
+
+    wire [7:0] resolved =
+        win_black                                        ? 8'h00       :
+        (gtia_active && gtia_win && !win_is_object)      ? gtia_color  :
+                                                           sel_color;
 
     // ---- the sequence ----------------------------------------------------
     always_ff @(posedge clk or posedge rst) begin

@@ -353,12 +353,25 @@ guessing would be the plausible-but-wrong modelling this rewrite exists to avoid
 The colour path is complete and tested on its own; the collision path is left
 alone until those two can be measured.
 
-Next: assemble the nibble in `gtia_stage` (renderer publishes the raw 2-bit
-playfield value, the stage shifts two colour clocks together and holds the
-resulting colour for the four hi-res pixels of a GTIA pixel), then `vdelay`, DLI
-emission, the DMA schedule, the register file, and the drop of turbo /
-`math_cop` / banking. Nothing is wired to the CPU yet, so no ACID score has
-moved.
+The nibble assembly is now wired through: the renderer publishes the raw 2-bit
+playfield value, `antic_scanline` forms the colour clock's two bits, and
+`gtia_stage` shifts two colour clocks together. A GTIA mode therefore costs one
+more *pair* of colour clocks than a normal one, and that is causal rather than a
+choice — a GTIA pixel's nibble is not complete until both of its colour clocks
+have delivered their bits, so it cannot go on display until the following aligned
+pair. Real GR.9/10/11 displays sit shifted for the same reason.
+
+Holding it there takes **two** registers, not one: the pair completes on an odd
+colour clock but must be displayed across a whole aligned pair. With a single
+register the second half of every GTIA pixel showed the *following* pixel.
+
+`tb_antic_scanline` T11 runs a real mode F line of `$E4` under mode 9 and checks
+the GTIA pixels land at pixels 84-87 (`$5E`) and 88-91 (`$54`), positions worked
+out from the byte's bit layout beforehand.
+
+Next: `vdelay`, DLI emission, the DMA schedule, the register file, and the drop
+of turbo / `math_cop` / banking. Nothing is wired to the CPU yet, so no ACID
+score has moved.
 
 ## Open questions
 

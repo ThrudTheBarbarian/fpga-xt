@@ -53,6 +53,7 @@ module tb_antic_line_render;
         .colpf2(colpf2), .colpf3(colpf3),
         .rd_idx(rd_idx), .rd_data(rd_data), .rd_code(rd_code),
         .lb_wr(lb_wr), .lb_color(lb_color), .lb_pf_src(),
+        .lb_px_val(), .lb_is_hires(),
         .busy(r_busy), .done(r_done)
     );
 

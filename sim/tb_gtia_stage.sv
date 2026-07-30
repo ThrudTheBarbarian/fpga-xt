@@ -22,6 +22,8 @@ module tb_gtia_stage;
     logic       line_start, cc_tick, active, hitclr;
     logic [7:0] cc_pos;
     logic [2:0] pf_src_a, pf_src_b;
+    logic [1:0] an_pair;
+    logic       pf_win;
 
     logic [7:0] hposp0, hposp1, hposp2, hposp3;
     logic [7:0] hposm0, hposm1, hposm2, hposm3;
@@ -41,6 +43,7 @@ module tb_gtia_stage;
         .line_start(line_start), .cc_tick(cc_tick), .cc_pos(cc_pos),
         .active(active), .hitclr(hitclr),
         .pf_src_a(pf_src_a), .pf_src_b(pf_src_b),
+        .an_pair(an_pair), .pf_win(pf_win),
         .hposp0(hposp0), .hposp1(hposp1), .hposp2(hposp2), .hposp3(hposp3),
         .hposm0(hposm0), .hposm1(hposm1), .hposm2(hposm2), .hposm3(hposm3),
         .sizep0(sizep0), .sizep1(sizep1), .sizep2(sizep2), .sizep3(sizep3),
@@ -108,6 +111,7 @@ module tb_gtia_stage;
     initial begin
         line_start = 0; cc_tick = 0; active = 1; hitclr = 0;
         cc_pos = 0; pf_src_a = 3'd0; pf_src_b = 3'd0; cc = 0; worst_latency = 0;
+        an_pair = 2'd0; pf_win = 1'b0;
         hposp0 = 8'd200; hposp1 = 8'd200; hposp2 = 8'd200; hposp3 = 8'd200;
         hposm0 = 8'd200; hposm1 = 8'd200; hposm2 = 8'd200; hposm3 = 8'd200;
         sizep0 = 0; sizep1 = 0; sizep2 = 0; sizep3 = 0; sizem = 0;
@@ -223,6 +227,63 @@ module tb_gtia_stage;
         end
         active = 1'b1;
         grafp1 = 8'h00; hposp1 = 8'd200;
+
+        // ================================================================
+        // T11: GTIA modes — two bits a colour clock, two colour clocks a nibble
+        // ================================================================
+        // The nibble for an aligned PAIR of colour clocks is only complete once
+        // the second has delivered its bits, so it goes on display for the NEXT
+        // pair.  That is causal, not a choice, and real GR.9/10/11 displays sit
+        // shifted for the same reason.
+        new_line();
+        hposp0 = 8'd200; grafp0 = 8'h00;        // no objects in the way
+        prior = 8'h41;                          // GTIA mode 9 + priority $01
+        pf_win = 1'b1;
+        colbk = 8'h50;                          // hue 5, luma 0
+        an_pair = 2'b10; step_cc(3'd0, 3'd0);   // cc 0
+        an_pair = 2'b11; step_cc(3'd0, 3'd0);   // cc 1: nibble $B is complete
+        an_pair = 2'b00; step_cc(3'd0, 3'd0);   // cc 2: it goes on display
+        chk(got_a, 8'h5B, "T11 mode 9 nibble $B -> hue 5 luma B");
+        chk(got_b, 8'h5B, "T11b both halves of the colour clock");
+        an_pair = 2'b00; step_cc(3'd0, 3'd0);   // cc 3: still the same pixel
+        chk(got_a, 8'h5B, "T11c a GTIA pixel spans two colour clocks");
+        an_pair = 2'b00; step_cc(3'd0, 3'd0);   // cc 4: the next nibble, $0
+        chk(got_a, 8'h50, "T11d the following GTIA pixel");
+
+        // Mode 11 is the mirror: the nibble is the hue.
+        new_line();
+        prior = 8'hC1;
+        an_pair = 2'b10; step_cc(3'd0, 3'd0);
+        an_pair = 2'b11; step_cc(3'd0, 3'd0);
+        an_pair = 2'b00; step_cc(3'd0, 3'd0);
+        chk(got_a, 8'hB0, "T11e mode 11 nibble $B -> hue B luma 0");
+
+        // Mode 10 indexes the colour registers.
+        new_line();
+        prior = 8'h81;
+        an_pair = 2'b01; step_cc(3'd0, 3'd0);
+        an_pair = 2'b01; step_cc(3'd0, 3'd0);   // nibble 0101 = 5 -> COLPF1
+        an_pair = 2'b00; step_cc(3'd0, 3'd0);
+        chk(got_a, colpf1, "T11f mode 10 nibble 5 -> COLPF1");
+
+        // A player still wins and keeps its OWN colour: a GTIA mode recolours
+        // the playfield, not the picture.
+        new_line();
+        prior = 8'h41; hposp0 = 8'd2; grafp0 = 8'hFF;
+        an_pair = 2'b11; step_cc(3'd0, 3'd0);
+        an_pair = 2'b11; step_cc(3'd0, 3'd0);
+        an_pair = 2'b11; step_cc(3'd0, 3'd0);   // cc 2: the player is here
+        chk(got_a, colpm0, "T11g a player over a GTIA-mode playfield");
+        hposp0 = 8'd200; grafp0 = 8'h00;
+
+        // Outside the playfield window the border is untouched.
+        new_line();
+        pf_win = 1'b0;
+        an_pair = 2'b11; step_cc(3'd0, 3'd0);
+        an_pair = 2'b11; step_cc(3'd0, 3'd0);
+        an_pair = 2'b11; step_cc(3'd0, 3'd0);
+        chk(got_a, colbk, "T11h the border is not recoloured by a GTIA mode");
+        prior = 8'h01; colbk = 8'h00;
 
         // ================================================================
         // T1: the schedule fits in a colour clock

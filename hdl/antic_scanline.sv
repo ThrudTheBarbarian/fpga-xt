@@ -244,6 +244,8 @@ module antic_scanline (
     wire        pf_wr;
     wire [7:0]  pf_color;
     wire [2:0]  pf_src_now;
+    wire [1:0]  px_val_now;
+    wire        is_hires_now;
 
     antic_line_render u_render (
         .clk(clk), .rst(rst),
@@ -253,6 +255,7 @@ module antic_scanline (
         .colpf2(colpf2), .colpf3(colpf3),
         .rd_idx(rd_idx), .rd_data(rd_data), .rd_code(rd_code),
         .lb_wr(pf_wr), .lb_color(pf_color), .lb_pf_src(pf_src_now),
+        .lb_px_val(px_val_now), .lb_is_hires(is_hires_now),
         .busy(), .done()
     );
 
@@ -265,15 +268,32 @@ module antic_scanline (
     wire [2:0] this_px_src = pf_wr ? pf_src_now : SRC_BK;
 
     logic [2:0] pf_cap_a, pf_cap_b;
+    logic [1:0] pv_cap_a, pv_cap_b;
+    logic       win_cap;
     always_ff @(posedge clk or posedge rst) begin
         if (rst) begin
             pf_cap_a <= SRC_BK;
             pf_cap_b <= SRC_BK;
+            pv_cap_a <= 2'd0;
+            pv_cap_b <= 2'd0;
+            win_cap  <= 1'b0;
         end else if (px_tick) begin
-            if (!sub[0]) pf_cap_a <= this_px_src;
-            else         pf_cap_b <= this_px_src;
+            if (!sub[0]) begin
+                pf_cap_a <= this_px_src;
+                pv_cap_a <= pf_wr ? px_val_now : 2'd0;
+                win_cap  <= in_window;
+            end else begin
+                pf_cap_b <= this_px_src;
+                pv_cap_b <= pf_wr ? px_val_now : 2'd0;
+            end
         end
     end
+
+    // ANTIC sends GTIA two playfield bits per colour clock whatever mode it is
+    // in.  A hi-res colour clock carries two one-bit pixels; every other mode
+    // carries one pixel whose value is already two bits wide.  That single fact
+    // is the whole of "pseudo mode E" — see gtia_special.
+    wire [1:0] an_pair = is_hires_now ? {pv_cap_a[0], pv_cap_b[0]} : pv_cap_a;
 
     // A colour clock starts on the even hi-res pixel.  At that same edge
     // gtia_stage samples pf_cap_a/b, which still hold the PREVIOUS colour
@@ -293,6 +313,7 @@ module antic_scanline (
         .line_start(line_start), .cc_tick(cc_tick), .cc_pos(cc_pos),
         .active(active_line), .hitclr(hitclr),
         .pf_src_a(pf_cap_a), .pf_src_b(pf_cap_b),
+        .an_pair(an_pair), .pf_win(win_cap),
         .hposp0(hposp0), .hposp1(hposp1), .hposp2(hposp2), .hposp3(hposp3),
         .hposm0(hposm0), .hposm1(hposm1), .hposm2(hposm2), .hposm3(hposm3),
         .sizep0(sizep0), .sizep1(sizep1), .sizep2(sizep2), .sizep3(sizep3),

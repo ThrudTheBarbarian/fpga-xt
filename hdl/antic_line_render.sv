@@ -52,6 +52,11 @@ module antic_line_render (
     // GTIA needs the SOURCE, not the colour: priority and collisions are
     // decided on which playfield this is, and only then coloured.
     output wire  [2:0] lb_pf_src,
+    // ...and in a GTIA mode it needs the RAW value instead, because those modes
+    // do not interpret it as a playfield at all.  Two bits per colour clock is
+    // what ANTIC sends whatever mode it is in; see gtia_special.
+    output wire  [1:0] lb_px_val,
+    output wire        lb_is_hires,
 
     output logic       busy,
     output logic       done            // 1-clk when the last byte is emitted
@@ -118,7 +123,9 @@ module antic_line_render (
     assign sh_tick  = (state == S_EMIT) && !exhausted && emit_en;
     assign lb_wr    = (state == S_EMIT) && !exhausted && emit_en;
     assign lb_color = pixel_color;
-    assign lb_pf_src = pf_src;
+    assign lb_pf_src   = pf_src;
+    assign lb_px_val   = px_val;
+    assign lb_is_hires = is_hires;
 
     always_ff @(posedge clk or posedge rst) begin
         if (rst) begin

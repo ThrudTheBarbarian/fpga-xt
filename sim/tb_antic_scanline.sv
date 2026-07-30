@@ -504,6 +504,64 @@ module tb_antic_scanline;
             end
         @(negedge clk); dmactl = 8'h22; hposp0 = 8'd200;
 
+        // ================================================================
+        // T11: a real mode F line under GTIA mode 9
+        // ================================================================
+        // $E4 = 1110_0100, so each byte carries two GTIA pixels, $E then $4.
+        // The playfield starts at pixel 80 = colour clock 40, and byte 0's bits
+        // land like this:
+        //     cc 40 (px 80,81) = b7,b6 = 11   } nibble $E, on display at cc 42,43
+        //     cc 41 (px 82,83) = b5,b4 = 10   }
+        //     cc 42 (px 84,85) = b3,b2 = 01   } nibble $4, on display at cc 44,45
+        //     cc 43 (px 86,87) = b1,b0 = 00   }
+        // The four-pixel offset is the GTIA pixel's own delay: its nibble is not
+        // complete until both of its colour clocks have delivered their bits.
+        @(negedge clk);
+        mem[16'h3001] = 8'h4F;                  // mode F + LMS
+        for (int i = 4; i < 200; i++) mem[16'h3000 + i] = 8'h0F;
+        for (int i = 0; i < 4096; i++) mem[16'h8000 + i] = 8'hE4;
+        colbk = 8'h50;                          // hue 5
+        prior = 8'h41;                          // GTIA mode 9, priority $01
+        repeat (4) next_line();
+
+        for (int i = 84; i <= 87; i++)
+            if (shadow[i] !== 8'h5E) begin
+                $display("FAIL T11: pixel %0d is $%02h, expected $5E (nibble $E at hue 5)",
+                         i, shadow[i]);
+                fail++;
+            end
+        for (int i = 88; i <= 91; i++)
+            if (shadow[i] !== 8'h54) begin
+                $display("FAIL T11b: pixel %0d is $%02h, expected $54 (nibble $4)",
+                         i, shadow[i]);
+                fail++;
+            end
+        // ...and it repeats for the whole line: every byte is the same.
+        for (int i = 92; i <= 95; i++)
+            if (shadow[i] !== 8'h5E) begin
+                $display("FAIL T11c: pixel %0d is $%02h, expected $5E again", i, shadow[i]);
+                fail++;
+            end
+
+        // Mode 11 is the mirror: nibble $E becomes the HUE.
+        @(negedge clk); prior = 8'hC1;
+        repeat (3) next_line();
+        for (int i = 84; i <= 87; i++)
+            if (shadow[i] !== 8'hE0) begin
+                $display("FAIL T11d: pixel %0d is $%02h, expected $E0 (nibble $E as hue)",
+                         i, shadow[i]);
+                fail++;
+            end
+
+        // The border is not a GTIA pixel.
+        for (int i = 0; i < 78; i++)
+            if (shadow[i] !== colbk) begin
+                $display("FAIL T11e: border pixel %0d is $%02h, expected COLBK $%02h",
+                         i, shadow[i], colbk);
+                fail++;
+            end
+        @(negedge clk); prior = 8'h01; colbk = 8'h00;
+
         if (fail == 0) $display("tb_antic_scanline: all checks PASS");
         else           $display("tb_antic_scanline: %0d FAIL", fail);
         $finish;
