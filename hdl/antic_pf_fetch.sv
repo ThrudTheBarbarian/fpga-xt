@@ -15,6 +15,19 @@
 // line fetches 40 bytes and displays 32 — tie the two together and the scan
 // pointer drifts 8 bytes per scanline.
 //
+// A CHARACTER NAME IS FETCHED ONCE PER MODE LINE, NOT ONCE PER SCANLINE, and
+// that is the buffer's real purpose.  antic_dmapattern's own DMA maps settle it:
+// a later scanline of a narrow mode 2 line has exactly 32 fetches for 32
+// characters, and a normal one exactly 40 for 40 — one each, where the first
+// scanline has two.  The names sit in the buffer for the whole block and only
+// the glyph is re-read, because only the glyph ROW changes.
+//
+// A BITMAP MODE WITH SEVERAL ROWS FETCHES NOTHING AT ALL on its later scanlines:
+// mode 8's eight scanlines all show the same bytes, so they are read once and
+// replayed.  The same maps show mode8b, mode9b, modeAb, modeBb and modeDb as
+// refresh cycles and nothing else.  Halving — and for bitmap modes eliminating —
+// the playfield DMA on later rows is most of what the CPU gets back.
+//
 // ONE 16-BIT ENTRY PER BYTE, holding the character code alongside the glyph.
 // Real ANTIC splits these; we do not, because a 48x16 distributed RAM is a
 // single primitive and the character code is needed at display time anyway to
@@ -27,6 +40,12 @@
 //     their rows 0 and 1 come from glyph rows 6 and 7 and rows 2..9 from glyph
 //     rows 0..7.  Ordinary characters use rows 0..7 and are BLANK on rows 8/9.
 // CHACTL applies on both sides of the glyph fetch (see antic_char_ctl).
+//
+// THE SCAN POINTER THEREFORE ADVANCES ONCE PER MODE LINE, not once per
+// scanline, which falls out of the above rather than needing its own rule: a
+// later row does not fetch names, and it is the name fetch that steps the
+// pointer.  Advancing it every scanline would have run a mode 2 block through
+// 320 bytes instead of 40.
 //
 // CLOCK BUDGET: 2 clocks per fetch, 2 fetches per character.  Worst case is 48
 // characters = ~192 clocks out of the ~6,300 in a 1.79 MHz scanline, and it all
@@ -42,6 +61,7 @@ module antic_pf_fetch #(
 
     // ---- what to fetch ---------------------------------------------------
     input  wire        start,           // 1-clk: fetch this scanline
+    input  wire        first_row,       // first scanline of this mode line
     input  wire [3:0]  mode,
     input  wire [15:0] scan_addr_in,
     input  wire [4:0]  row,
@@ -74,7 +94,18 @@ module antic_pf_fetch #(
         .rows(rows), .descender(descender), .is_display(is_display)
     );
 
-    logic [7:0] char_code;
+    // ---- the buffer ------------------------------------------------------
+    logic [15:0] buf_mem [0:ENTRIES-1];
+    logic [5:0]  wr_idx;
+
+    assign rd_code = buf_mem[rd_idx][15:8];
+    assign rd_data = buf_mem[rd_idx][7:0];
+
+    // On the first scanline the name has just been fetched; on later ones it is
+    // already in the buffer, so the glyph address comes from there.
+    logic [7:0] char_code_q;
+    wire  [7:0] char_code = (is_char && !first_row) ? buf_mem[wr_idx][15:8]
+                                                    : char_code_q;
 
     // ---- glyph row -------------------------------------------------------
     logic [2:0] glyph_row;
@@ -111,13 +142,6 @@ module antic_pf_fetch #(
 
     wire [15:0] glyph_addr = {chbase[7:2], char_code[6:0], glyph_row_ctl};
 
-    // ---- the buffer ------------------------------------------------------
-    logic [15:0] buf_mem [0:ENTRIES-1];
-    logic [5:0]  wr_idx;
-
-    assign rd_code = buf_mem[rd_idx][15:8];
-    assign rd_data = buf_mem[rd_idx][7:0];
-
     // ---- the walk --------------------------------------------------------
     typedef enum logic [2:0] {
         S_IDLE, S_NAME, S_NAME_D, S_DATA, S_DATA_D, S_DONE
@@ -135,7 +159,7 @@ module antic_pf_fetch #(
             scan_q    <= 16'h0000;
             left      <= 8'd0;
             wr_idx    <= 6'd0;
-            char_code <= 8'h00;
+            char_code_q <= 8'h00;
             busy      <= 1'b0;
             done      <= 1'b0;
         end else begin
@@ -148,9 +172,14 @@ module antic_pf_fetch #(
                 left   <= bytes_per_line;
                 wr_idx <= 6'd0;
                 busy   <= 1'b1;
-                if (!is_display || bytes_per_line == 8'd0) state <= S_DONE;
-                else if (is_char)                          state <= S_NAME;
-                else                                       state <= S_DATA;
+                if (!is_display || bytes_per_line == 8'd0)  state <= S_DONE;
+                // A bitmap block is read once and replayed for its other rows.
+                else if (!is_char && !first_row)            state <= S_DONE;
+                // A character name is read once per block; later rows re-read
+                // only the glyph, using the name already in the buffer.
+                else if (is_char && !first_row)             state <= S_DATA;
+                else if (is_char)                           state <= S_NAME;
+                else                                        state <= S_DATA;
             end else
             case (state)
                 S_IDLE: busy <= 1'b0;
@@ -158,7 +187,7 @@ module antic_pf_fetch #(
                 // ---- character name ------------------------------------
                 S_NAME:   state <= S_NAME_D;
                 S_NAME_D: begin
-                    char_code <= mem_data;
+                    char_code_q <= mem_data;
                     // The playfield scan pointer wraps within 4K
                     // (antic_addresswrap).
                     scan_q    <= {scan_q[15:12], scan_q[11:0] + 12'd1};
@@ -179,8 +208,11 @@ module antic_pf_fetch #(
                         state <= S_DONE;
                     end else begin
                         left  <= left - 8'd1;
-                        if (is_char) state <= S_NAME;
-                        else         state <= S_DATA;
+                        // Only a FIRST row goes back for another name; a later
+                        // one reads glyph after glyph straight out of the
+                        // buffer, which is what halves its DMA.
+                        if (is_char && first_row) state <= S_NAME;
+                        else                      state <= S_DATA;
                     end
                 end
 

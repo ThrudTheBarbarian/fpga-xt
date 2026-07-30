@@ -418,8 +418,43 @@ from 192 to ANTIC's actual maximum of 240 — the height is the display list's
 business, not the counter chain's. That puts the display at lines 8..247 and the
 vertical blank interrupt on 248, where the hardware has it.
 
-Next: the DMA schedule, the register file, and the drop of turbo / `math_cop` /
-banking. Nothing is wired to the CPU yet, so no ACID score has moved.
+### The DMA maps, and the bug they found
+
+`antic_dmapattern` carries its own expected DMA patterns as bit masks at `$3800`.
+Decoding them out of the binary gives an exact, per-mode, per-width,
+first-row/later-row cycle map for a whole scanline — recorded in
+[antic-dma-maps.md](antic-dma-maps.md). They confirm the display list fetch at
+cycle 1, LMS operands at 6 and 7, refresh as 9 slots every 4 from cycle 25, and
+every playfield window `antic_pf_geom` already computes.
+
+They also found a real bug in what was already built:
+
+* **A character name is fetched once per mode line, not once per scanline.** A
+  later scanline of a narrow mode 2 line has exactly 32 fetches for 32
+  characters, and a normal one exactly 40 for 40 — one each, where the first
+  scanline has two. The names sit in the internal buffer for the whole block and
+  only the glyph is re-read, because only the glyph *row* changes. That is what
+  the buffer is actually for.
+* **A bitmap mode with several rows fetches nothing at all on its later
+  scanlines** — `mode8b`, `mode9b`, `modeAb`, `modeBb` and `modeDb` are refresh
+  and nothing else.
+* And therefore **the scan pointer advances once per mode line, not per
+  scanline**, which falls out rather than needing its own rule: a later row does
+  not fetch names, and it is the name fetch that steps the pointer. The previous
+  code advanced it every scanline, which would have run a mode 2 block through
+  320 bytes instead of 40. No existing test caught it, because every display
+  list in the testbenches used one-row modes.
+
+**Still open:** the later-row maps are now reproduced exactly, including the
+refresh collision rule (refresh keeps its slot, the playfield fetch slips one
+cycle — which turns `mode2b`'s natural odd slots 29,31,33… into the observed
+30,31,34,35,38,39…). The **first-row** maps are not: they show one isolated fetch
+at the window start, a one-cycle gap, then a solid run, and that interaction is
+still unexplained. That is what `antic_dmapattern` is failing on.
+
+Next: finish the first-row DMA schedule, the register file, and the drop of
+turbo / `math_cop` / banking. Nothing is wired to the CPU yet, so no ACID score
+has moved.
 
 ## Open questions
 

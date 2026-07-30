@@ -17,7 +17,7 @@ module tb_antic_pf_fetch;
     logic clk = 0, rst = 1;
     always #5 clk = ~clk;
 
-    logic        start;
+    logic        start, first_row;
     logic [3:0]  mode;
     logic [15:0] scan_addr_in;
     logic [4:0]  row;
@@ -33,7 +33,7 @@ module tb_antic_pf_fetch;
 
     antic_pf_fetch dut (
         .clk(clk), .rst(rst),
-        .start(start), .mode(mode), .scan_addr_in(scan_addr_in), .row(row),
+        .start(start), .first_row(first_row), .mode(mode), .scan_addr_in(scan_addr_in), .row(row),
         .chbase(chbase), .chactl(chactl), .bytes_per_line(bytes_per_line),
         .mem_addr(mem_addr), .mem_data(mem_data),
         .rd_idx(rd_idx), .rd_data(rd_data), .rd_code(rd_code),
@@ -79,7 +79,7 @@ module tb_antic_pf_fetch;
     endtask
 
     initial begin
-        start = 0; mode = 0; scan_addr_in = 0; row = 0; chbase = 8'hE0;
+        start = 0; first_row = 1'b1; mode = 0; scan_addr_in = 0; row = 0; chbase = 8'hE0;
         bytes_per_line = 0; chactl = 3'b000; rd_idx = 0; fetches = 0;
         for (int i = 0; i < 65536; i++) mem[i] = 8'h00;
 
@@ -252,6 +252,85 @@ module tb_antic_pf_fetch;
                      scan_addr_out);
             fail++;
         end
+
+        // ================================================================
+        // T12: a character NAME is fetched once per mode line
+        // ================================================================
+        // From antic_dmapattern's own maps: a later scanline of a narrow mode 2
+        // line has exactly 32 fetches for 32 characters, where the first has 64.
+        // The names stay in the buffer; only the glyph row changes.
+        mem[16'h4100] = 8'h41;
+        mem[16'hE208] = 8'hC0;                  // char $41 glyph row 0
+        mem[16'hE209] = 8'h18;                  // ...row 1
+        first_row = 1'b1;
+        fetch_line(4'h2, 16'h4100, 5'd0, 8'd1);
+        chk(0, 8'hC0, "T12 first row glyph");
+
+        // Now the LATER row: the name is not re-read, but the glyph is, from
+        // the new row of the SAME character.
+        first_row = 1'b0;
+        mem[16'h4100] = 8'h7F;                  // change memory to prove it is
+                                                // not re-read
+        fetch_line(4'h2, 16'h4100, 5'd1, 8'd1);
+        chk(0, 8'h18, "T12b later row re-reads the glyph, not the name");
+        rd_idx = 6'd0; #1;
+        if (rd_code !== 8'h41) begin
+            $display("FAIL T12c: the later row re-read the name (code $%02h, expected $41)",
+                     rd_code);
+            fail++;
+        end
+        // ...and the scan pointer does NOT move, because it is the name fetch
+        // that steps it.  Advancing every scanline would run a mode 2 block
+        // through 320 bytes instead of 40.
+        if (scan_addr_out !== 16'h4100) begin
+            $display("FAIL T12d: a later character row moved the scan pointer to $%04h",
+                     scan_addr_out);
+            fail++;
+        end
+        mem[16'h4100] = 8'h41;
+
+        // A later row costs HALF the DMA of a first row.
+        first_row = 1'b1;
+        fetches = 0;
+        fetch_line(4'h2, 16'h4100, 5'd0, 8'd40);
+        begin
+            int first_clocks;
+            first_clocks = fetches;
+            first_row = 1'b0;
+            fetches = 0;
+            fetch_line(4'h2, 16'h4100, 5'd1, 8'd40);
+            if (fetches > first_clocks * 3 / 5) begin
+                $display("FAIL T12e: a later character row took %0d clocks against %0d for the first — it should be about half",
+                         fetches, first_clocks);
+                fail++;
+            end
+        end
+
+        // ================================================================
+        // T13: a multi-row BITMAP mode fetches nothing on later rows
+        // ================================================================
+        // mode8b, mode9b, modeAb, modeBb and modeDb in the maps are refresh
+        // cycles and nothing else: the bytes are read once and replayed.
+        for (int i = 0; i < 16; i++) mem[16'h4200 + i] = 8'hA5;
+        first_row = 1'b1;
+        fetch_line(4'h8, 16'h4200, 5'd0, 8'd10);
+        chk(0, 8'hA5, "T13 first row of a mode 8 block");
+        first_row = 1'b0;
+        for (int i = 0; i < 16; i++) mem[16'h4200 + i] = 8'h5A;
+        fetches = 0;
+        fetch_line(4'h8, 16'h4200, 5'd1, 8'd10);
+        if (fetches > 4) begin
+            $display("FAIL T13b: a later bitmap row took %0d clocks — it should fetch nothing",
+                     fetches);
+            fail++;
+        end
+        chk(0, 8'hA5, "T13c the buffer still holds the first row's bytes");
+        if (scan_addr_out !== 16'h4200) begin
+            $display("FAIL T13d: a later bitmap row moved the scan pointer to $%04h",
+                     scan_addr_out);
+            fail++;
+        end
+        first_row = 1'b1;
 
         if (fail == 0) $display("tb_antic_pf_fetch: all checks PASS");
         else           $display("tb_antic_pf_fetch: %0d FAIL", fail);

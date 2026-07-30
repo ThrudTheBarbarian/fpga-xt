@@ -133,7 +133,7 @@ module antic_scanline (
     wire [8:0] px_pos = {hcount, sub};
 
     // ---- the display list ------------------------------------------------
-    wire        dl_line_ready, dl_line_valid, dl_hscrol_en;
+    wire        dl_line_ready, dl_line_valid, dl_hscrol_en, dl_first_row;
     wire [3:0]  dl_mode, dl_row;
     wire [15:0] dl_scan_addr, dl_addr;
 
@@ -152,6 +152,7 @@ module antic_scanline (
         .scan_ret(fetch_scan_out), .scan_we(line_start),
         .line_ready(dl_line_ready), .mode(dl_mode), .scan_addr(dl_scan_addr),
         .row(dl_row), .hscrol_en(dl_hscrol_en), .line_valid(dl_line_valid),
+        .first_row(dl_first_row),
         .dli(dli), .dlpc(dlpc)
     );
 
@@ -238,7 +239,8 @@ module antic_scanline (
 
     antic_pf_fetch u_fetch (
         .clk(clk), .rst(rst),
-        .start(fetch_start), .mode(dl_mode), .scan_addr_in(dl_scan_addr),
+        .start(fetch_start), .first_row(dl_first_row),
+        .mode(dl_mode), .scan_addr_in(dl_scan_addr),
         .row({1'b0, dl_row}), .chbase(chbase), .chactl(chactl),
         .bytes_per_line(bytes_per_line),
         .mem_addr(fetch_addr), .mem_data(mem_data),

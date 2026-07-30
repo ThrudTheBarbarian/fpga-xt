@@ -84,6 +84,7 @@ module antic_dl (
     output logic [3:0]  row,           // DCTR
     output logic        hscrol_en,
     output logic        line_valid,    // 0 = blank scanline, draw background
+    output logic        first_row,     // first scanline of this mode line
     output logic        dli,           // 1-clk with line_ready: fire the NMI
 
     output wire  [15:0] dlpc           // live DL pointer, for readback
@@ -167,6 +168,7 @@ module antic_dl (
             chain          <= 3'd0;
             line_ready     <= 1'b0;
             line_valid     <= 1'b0;
+            first_row      <= 1'b0;
             dli            <= 1'b0;
             mode           <= 4'h0;
             scan_addr      <= 16'h0000;
@@ -270,6 +272,7 @@ module antic_dl (
 
                 // ---- first scanline of a mode line ---------------------
                 S_BEGIN: begin
+                    first_row      <= 1'b1;
                     row            <= row_start_v;
                     row_last       <= row_last_v;
                     vscroll_active <= vs_bit;
@@ -278,6 +281,7 @@ module antic_dl (
 
                 // ---- a later scanline of the same mode line ------------
                 S_STEP: begin
+                    first_row <= 1'b0;
                     row   <= row + 4'd1;    // 4-bit, wraps: the vscroll bug
                     state <= S_EMIT;
                 end

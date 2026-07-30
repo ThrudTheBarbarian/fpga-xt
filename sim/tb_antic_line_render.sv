@@ -38,7 +38,7 @@ module tb_antic_line_render;
 
     antic_pf_fetch u_fetch (
         .clk(clk), .rst(rst),
-        .start(f_start), .mode(mode), .scan_addr_in(scan_addr_in), .row(row),
+        .start(f_start), .first_row(1'b1), .mode(mode), .scan_addr_in(scan_addr_in), .row(row),
         .chbase(chbase), .chactl(chactl), .bytes_per_line(bytes_per_line),
         .mem_addr(mem_addr), .mem_data(mem_data),
         .rd_idx(rd_idx), .rd_data(rd_data), .rd_code(rd_code),
