@@ -687,6 +687,32 @@ module tb_antic_scanline;
             end
         @(negedge clk); vdelay = 8'h00; dmactl = 8'h22;
 
+        // ----------------------------------------------------------------
+        // T12d: ONE-LINE resolution indexes P/M memory by the scanline
+        // itself, not the scanline halved -- and it uses a different base
+        // (PMBASE is 2K-aligned, regions are 256 bytes) so it exercises a
+        // different arm of the address formula entirely.  Everything above
+        // is two-line, which is why a one-line fault would survive it; ACID
+        // antic_pmdma reports exactly that case ("One-line P0 data bad").
+        // ----------------------------------------------------------------
+        @(negedge clk);
+        for (int i = 0; i < 256; i++) mem[16'h7400 + i] = 8'(i);
+        dmactl = 8'h3A;                         // player DMA + ONE-line res
+        repeat (3) next_line();
+        for (int i = 0; i < 6; i++) begin
+            at_cycle(60);
+            samp_line[i] = int'(line);
+            samp_graf[i] = grafp0;
+            at_cycle(0);
+        end
+        for (int i = 0; i < 6; i++)
+            if (int'(samp_graf[i]) != (samp_line[i] & 8'hFF)) begin
+                $display("FAIL T12d: one-line, scanline %0d holds index %0d, expected %0d",
+                         samp_line[i], samp_graf[i], samp_line[i] & 8'hFF);
+                fail++;
+            end
+        @(negedge clk); dmactl = 8'h22;
+
         // ================================================================
         // T13: a display list DLI fires the NMI at cycle 8
         // ================================================================

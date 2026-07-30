@@ -84,7 +84,28 @@ module gtia_collide (
     wire [3:0] players = pres[3:0];
     wire [3:0] vs_players = is_miss ? players : (players & ~(4'b0001 << n));
 
-    wire hit = walking && active && pres[i];
+    // `active` is LATCHED at the start of the walk, not sampled through it.
+    //
+    // The walk takes eight clocks, one per object, and missile 3 is the last.
+    // While `active` was only ever a per-LINE signal that never moved mid-walk,
+    // sampling it live was harmless.  It stopped being harmless the moment the
+    // horizontal collision window was folded into it (gtia_stage): a walk that
+    // starts on the last colour clock GTIA compares in has the window go false
+    // underneath it as the beam steps on, and the tail of the walk is silently
+    // dropped.
+    //
+    // That is a beautifully specific bug: everything collides normally, but the
+    // LAST object of the walk stops colliding at the RIGHT-HAND edge of the
+    // screen only.  Measured on hardware with all eight objects at HPOS $DD --
+    // M0PL/M1PL/M2PL all $0F, M3PL $00 -- which is exactly what ACID
+    // gtia_collision reports as "Missing P/M collisions on right at $DD".
+    logic gate_q;
+    always_ff @(posedge clk or posedge rst) begin
+        if (rst)        gate_q <= 1'b0;
+        else if (start) gate_q <= active;
+    end
+
+    wire hit = walking && gate_q && pres[i];
 
     always_ff @(posedge clk or posedge rst) begin
         if (rst) begin

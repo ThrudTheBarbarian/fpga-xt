@@ -184,6 +184,40 @@ module tb_gtia_collide;
         end
         chk(nib(p_pl, 2), 4'b1011, "T8d P2PL is all but itself");
 
+        // ================================================================
+        // T9: the gate is LATCHED at the start of the walk, not sampled
+        // through it.
+        // ================================================================
+        // Missile 3 is the eighth and last object visited.  gtia_stage folds
+        // the horizontal collision window into `active`, so a walk that begins
+        // on the last colour clock GTIA compares in sees the gate go false
+        // underneath it — and before this was latched, the tail of the walk was
+        // dropped in silence.  On hardware that read as M0PL/M1PL/M2PL = $0F
+        // with M3PL = $00, which is ACID gtia_collision's "Missing P/M
+        // collisions on right at $DD" exactly.
+        clear();
+        pres = 8'hFF; pf_src = 3'd4;
+        @(negedge clk); start = 1'b1;
+        @(negedge clk); start = 1'b0;
+        @(negedge clk);                        // one object in...
+        active = 1'b0;                         // ...and the window closes
+        while (busy) @(negedge clk);
+        @(negedge clk);
+        active = 1'b1;
+        for (int n = 0; n < 4; n++)
+            chk(nib(m_pl, n), 4'b1111, $sformatf("T9 M%0dPL survived the gate dropping mid-walk", n));
+        chk(nib(m_pf, 3), 4'b1000, "T9b M3PF — the LAST object of the walk");
+
+        // ...and a walk that starts with the gate already closed still records
+        // nothing, which is the property T5 pins.
+        clear();
+        active = 1'b0;
+        cc(8'hFF, 3'd4);
+        active = 1'b1;
+        if (m_pl !== 16'h0 || p_pl !== 16'h0) begin
+            $display("FAIL T9c: latched gate let a closed-window walk accumulate"); fail++;
+        end
+
         if (fail == 0) $display("tb_gtia_collide: all checks PASS");
         else           $display("tb_gtia_collide: %0d FAIL", fail);
         $finish;
