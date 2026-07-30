@@ -33,8 +33,14 @@ Load: `./vivado/jtag-valhalla.sh reset` then `... load`.
 
 **The ACID sweep has never completed.** Two problems, not yet separated:
 
-1. The sweep harness crashes the A9 shell (null deref in libc) after 1–2 tests.
-   `antic_addresswrap` returned `error`, then it died.
+1. The sweep harness returns `error` for EVERY test, not a pass/fail. A later
+   run got through at least six (`antic_addresswrap`, `addrmirror`,
+   `blockednmi`, `charcontrol`, `default`, `dlistwrap`) and every one was
+   `error` — including `antic_default`, which only reads reset values and
+   cannot legitimately fail. So the harness is not classifying at all: suspect
+   the breakpoint/poll path in `acid-sweep.sh` rather than the rewrite. It also
+   crashed the A9 shell (null deref in libc) on an earlier attempt, and
+   `/tmp/acid-sweep.tsv` did not survive.
 2. After tests run, the 6502 ends up stuck near `$CB8A` with `icnt` *resetting*,
    where a clean boot sits happily at `$C046`–`$C052`. Could be a rewrite bug
    that specific DMACTL/display-list combinations trigger, or the harness
