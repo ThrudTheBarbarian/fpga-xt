@@ -6,15 +6,27 @@ we already know about it. **Read the row for a module before writing that
 module** — the point is that test knowledge shapes the design rather than being
 retrofitted afterwards.
 
+**This is a reset.** Module names below are the NEW modules to be written, not
+the existing ones. No ANTIC/GTIA RTL carries over; where a current module is
+named it is a source of *facts*, not a foundation. Everything is re-derived under
+the serial rule — one shared datapath walked across objects and colour clocks,
+never N parallel evaluations. Each module states its per-colour-clock clock
+budget (~28 available at 100 MHz).
+
 Status is from run `2026-07-29-3` (build 99). `PASS` rows are regressions to
 protect, not work to do — several were hard-won and are easy to break.
 
 ---
 
-## 1. `antic_timing` — counters, DL machine, DMA schedule, interrupts
+## 1. Counters, DL machine, DMA schedule, interrupts
 
-The spine. Already beam-accurate and carrying most of these; the rewrite must
-not regress them.
+The existing `antic_timing` satisfies most of these and is the best available
+reference for their behaviour — but it is a REFERENCE, not a foundation. It
+still contains parallel constructs (`cycle_type_c` is a priority mux; playfield
+start/span are parallel lookup tables) and must be re-derived serially.
+
+These rows are mostly PASS today, which makes them the constraints most at risk
+in a rewrite: they were hard-won and there is no credit for re-breaking them.
 
 | Test | Now | What it pins |
 |---|---|---|
@@ -40,10 +52,10 @@ concern", which is why the burst had to re-derive it.
 
 ---
 
-## 2. `antic_pf_serial` + mode decode — playfield fetch and unpack
+## 2. Playfield fetch and mode decode
 
-The byte stream exists; the mode decode migrates here from `pack_pair`. **These
-are the static-first tests** — most need no CPU.
+Written fresh, serially. **These are the static-first tests** — most need no CPU
+at all, so they are the cheapest possible feedback on a new mode decoder.
 
 | Test | Now | What it pins |
 |---|---|---|
@@ -63,10 +75,12 @@ consumer the previous colour clock's pixel (caught in `tb_pf_serial`).
 
 ---
 
-## 3. `gtia_pm_collide` — players, missiles, collisions
+## 3. Players, missiles, collisions — the serial object walk
 
-Already walks the beam with per-object shift registers. Three of these are the
-reason it exists.
+The shift-register MODEL is correct and hard-won; the current implementation of
+it is not — it unrolls 16 object-steps into one combinational block every machine
+cycle. Rewritten as ONE object datapath stepped 8 times per colour clock, with
+collisions accumulating during the same walk.
 
 | Test | Now | What it pins |
 |---|---|---|
@@ -87,7 +101,12 @@ registers.
 
 ---
 
-## 4. `gtia_stream` + `color_resolver` — priority and colour
+## 4. Priority and colour — the serial priority walk
+
+`color_resolver` is the clearest example of what this rewrite exists to remove:
+one wide combinational cone resolving four players, four missiles, PM5 masking
+and the priority case simultaneously per pixel. Replaced by a priority WALK —
+visit objects in PRIOR order, first hit wins — sharing the object datapath above.
 
 | Test | Now | What it pins |
 |---|---|---|
