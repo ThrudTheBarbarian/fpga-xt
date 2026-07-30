@@ -523,7 +523,8 @@ module fpga_xt_top (
     //     BRAM write-mirrored from sally_mem's single write site).
     wire [15:0] antic_bram_addr;
     wire [7:0]  antic_bram_rdata;
-    wire [15:0] antic_cmpram_addr;
+    wire [15:0] antic_cmpram_addr_top;   // legacy compositor's fetch address
+    wire [15:0] antic_cmpram_addr;        // ...muxed with the rewrite's (below)
     wire [7:0]  antic_cmpram_rdata;
     wire [7:0]  shadow_rdata;
     // Screen-bank overlay mux ($4000-$5FFF banked screen) follows the
@@ -889,6 +890,26 @@ module fpga_xt_top (
     always_ff @(posedge clk_sally) tmauth_sync <= {tmauth_sync[0], sallyrst[2]};
     wire tm_auth = tmauth_sync[1] & cpu_sel;          // fid-only authority
 
+    // ---- ANTIC/GTIA rewrite authority (docs/ANTIC-rewrite.md) ------------
+    // Same shape as the timing machine one bit down, and fid-only for the same
+    // reason.  The rewrite lives in clk_sys, so its three control signals cross
+    // here -- SINGLE BIT each, which is the crossing this design has precedent
+    // for (dma_steal_sally, nmi_n_sync).  VCOUNT and NMIST deliberately do NOT
+    // cross as data: they are register reads and ride the existing
+    // hwreg_rd_cdc handshake instead, so no multi-bit crossing is added.
+    (* ASYNC_REG = "TRUE" *) reg [1:0] rwauth_sync = 2'b00;
+    always_ff @(posedge clk_sally) rwauth_sync <= {rwauth_sync[0], sallyrst[3]};
+    wire rw_auth = rwauth_sync[1] & cpu_sel;
+
+    (* ASYNC_REG = "TRUE" *) reg [1:0] rwsteal_s = 2'b00;
+    (* ASYNC_REG = "TRUE" *) reg [1:0] rwrdy_s   = 2'b00;
+    (* ASYNC_REG = "TRUE" *) reg [1:0] rwnmi_s   = 2'b11;
+    always_ff @(posedge clk_sally) begin
+        rwsteal_s <= {rwsteal_s[0], rw_steal};
+        rwrdy_s   <= {rwrdy_s[0],   rw_rdy_n};
+        rwnmi_s   <= {rwnmi_s[0],   rw_nmi_n};
+    end
+
     wire        tm_mem_req;
     wire [15:0] tm_mem_addr;
     wire [7:0]  tm_mem_rdata;                          // display_shadow port-A read
@@ -956,7 +977,9 @@ module fpga_xt_top (
         immune_s1 <= antic_wsync_write_immune;
         immune_s2 <= immune_s1;
     end
-    wire       fid_wsync_rdy = (tm_auth ? tm_rdy_n : wsync_rdy_n) | (~fid_rw & immune_s2);   // writes immune to WSYNC unless disabled
+    wire       fid_wsync_rdy = (rw_auth ? ~rwrdy_s[1] :
+                                 tm_auth ?  tm_rdy_n   : wsync_rdy_n)
+                              | (~fid_rw & immune_s2);   // writes immune to WSYNC unless disabled
     // Under machine authority the steal gate ALSO comes from the machine:
     // mixed authority (tm WSYNC/VCOUNT + legacy-raster steals) is unsound —
     // the two rasters' phase offset is arbitrary on hardware, so legacy
@@ -967,7 +990,8 @@ module fpga_xt_top (
     // dump.  The delayed view was tried on build 65b: it did NOT move any
     // DMA-cluster test and gtia_collision regressed (it passes in isolation
     // on build 57, fails on 65b), so it costs a green for nothing.
-    wire       fid_steal = tm_auth ? (tm_cycle_type != 3'd0) : dma_steal_sally;
+    wire       fid_steal = rw_auth ? rwsteal_s[1] :
+                           tm_auth ? (tm_cycle_type != 3'd0) : dma_steal_sally;
     wire       fid_rdy = cpu_sel & fid_mem_ok & ~fid_steal & fid_wsync_rdy & ~fdbg_cpu_halt;  // owns bus; /HALT + WSYNC + busy + dbg-halt aware
     // sally_mem's read-latch (bram_dout_q) AND every write/bank-latch/hwreg-strobe are gated
     // by its `rdy` — a "the CPU took a step" pulse. For the turbo core that is sally_rdy. The
@@ -1028,7 +1052,8 @@ module fpga_xt_top (
         .rw        (fid_rw),
         .rdy       (fid_rdy),
         .irq_n     (irq_n_sync),
-        .nmi_n     (tm_auth ? tm_nmi_n : nmi_n_sync),
+        .nmi_n     (rw_auth ? rwnmi_s[1] :
+                    tm_auth ? tm_nmi_n    : nmi_n_sync),
         .sync      (fid_sync),
         .dbg_pc    (fdbg_pc), .dbg_a (fdbg_a), .dbg_x (fdbg_x), .dbg_y (fdbg_y), .dbg_s (fdbg_s), .dbg_p (fdbg_p),
         .dbg_sub   (fid_sub), .dbg_ir (fdbg_ir),
@@ -1542,6 +1567,7 @@ module fpga_xt_top (
     // snoop_we_screen inside antic_top.
     wire [7:0]  antic_bus_data_out;
     wire        antic_bus_data_oe;
+    wire [7:0]  antic_rdata_top;   // legacy ANTIC's ungated read mux
     wire [7:0]  antic_rdata_int;   // ANTIC's UNGATED read mux for the internal CPU's
                                    // hwreg read-back CDC (bus_data_out is ext-bus-gated)
     wire        antic_nmi_n, antic_halt_n, antic_rdy_n, antic_irq_n;
@@ -1591,6 +1617,25 @@ module fpga_xt_top (
     wire        antic_wb_pal_we;
     wire [7:0]  antic_wb_pal_idx;
     wire [23:0] antic_wb_pal_rgb;
+
+    // ================================================================
+    // ANTIC/GTIA rewrite (docs/ANTIC-rewrite.md)
+    // ================================================================
+    // Runs alongside the legacy path rather than replacing it: antic_top is
+    // the whole chipset -- POKEY, PIA, the sprite engine and the writeback tap
+    // all live in there -- so the rewrite covers only the display chips and
+    // takes AUTHORITY per sallyrst[3], the same shape as the timing machine on
+    // bit 2.  Power-on 0 keeps every existing path in charge, so a bitstream
+    // carrying this is no riskier to boot than one without it.
+    wire        rw_auth_sys = sallyrst[3];        // sallyrst is clk_sys
+    wire [15:0] rw_mem_addr;
+    wire [7:0]  rw_rdata;
+    wire        rw_steal, rw_rdy_n, rw_nmi_n;
+    wire        rw_lb_wr, rw_lb_line_start;
+    wire [7:0]  rw_lb_color;
+    wire [8:0]  rw_line;
+    wire        rw_wb_pix_valid, rw_wb_row_flush;
+    wire [7:0]  rw_wb_pix_pair, rw_wb_color_lo, rw_wb_color_hi, rw_wb_atari_row;
     wire [31:0] antic_dbg_gtia;   // TEMP: {colpf0,colpf1,colpf2,colbk}  -> diag8 @ GP0 0x41C
     wire [31:0] antic_dbg_antic;  // TEMP: {colpf3,prior,chbase,dmactl}  -> diag9 @ GP0 0x420
     // ANTIC timebase debug probe (DBG_TB_*) between xt_gp0_regs and antic_top.
@@ -1613,7 +1658,7 @@ module fpga_xt_top (
         .d4xx_n             (d4xx_n_antic),
         .bus_data_out       (antic_bus_data_out),
         .bus_data_oe        (antic_bus_data_oe),
-        .bus_rdata_int      (antic_rdata_int),   // ungated read mux for hwreg_rd_cdc
+        .bus_rdata_int      (antic_rdata_top),   // ungated read mux for hwreg_rd_cdc
 
         .phi2_level_o       (antic_phi2_level),  // timing master → fid-core pacing (clk_sally CDC)
         .nmi_n              (antic_nmi_n),
@@ -1652,7 +1697,7 @@ module fpga_xt_top (
         // ANTIC's BRAM read port — connects to sally_mem's dma port.
         .bram_addr          (antic_bram_addr),
         .bram_rdata         (antic_bram_rdata),
-        .cmp_bram_addr      (antic_cmpram_addr),
+        .cmp_bram_addr      (antic_cmpram_addr_top),
         .cmp_bram_rdata     (antic_cmpram_rdata),
         // PORTB state — consumed by sally_mem for ROM vs RAM control.
         .portb_q            (portb_q),
@@ -1733,18 +1778,75 @@ module fpga_xt_top (
         .disp_vbi    (fb_vbi_start)            // scan-out entered vblank: adopt newest
     );
 
+    // ================================================================
+    // ANTIC/GTIA rewrite — clk_sys, paced by the legacy ANTIC's phi2
+    // ================================================================
+    // It shares the timing master rather than generating its own: two rasters
+    // free-running against each other would put the steal gate on a phase the
+    // CPU never sees.  Edge-detecting antic_phi2_level keeps them in lockstep
+    // whichever holds authority.
+    reg  rw_phi2_q;
+    always_ff @(posedge clk_sys) rw_phi2_q <= antic_phi2_level;
+    wire rw_tick = antic_phi2_level & ~rw_phi2_q;
+
+    // Four hi-res pixels to a machine cycle.  At 150 MHz against 1.79 MHz that
+    // is ~84 clk_sys per cycle, so ~21 per pixel and ~42 per colour clock --
+    // gtia_stage needs 26 of those.  The counter restarts on every tick, so it
+    // re-locks each machine cycle and cannot drift.
+    reg [6:0] rw_px_cnt;
+    always_ff @(posedge clk_sys) begin
+        if (rw_tick)                  rw_px_cnt <= 7'd0;
+        else if (rw_px_cnt != 7'd127) rw_px_cnt <= rw_px_cnt + 7'd1;
+    end
+    wire rw_px_tick = rw_tick || (rw_px_cnt == 7'd20)
+                              || (rw_px_cnt == 7'd41)
+                              || (rw_px_cnt == 7'd62);
+
+    antic_gtia u_antic_gtia (
+        .clk(clk_sys), .rst(rst_sys), .cold(sallyrst[0]),
+        .tick(rw_tick), .px_tick(rw_px_tick),
+        .cs_antic(~d4xx_n_antic), .cs_gtia(~d0xx_n_antic),
+        .addr(bus_addr_antic[7:0]),
+        .we(~bus_rw_antic & (~d4xx_n_antic | ~d0xx_n_antic)),
+        .wdata(bus_data_in_antic),
+        .rdata(rw_rdata),
+        .rdy_n(rw_rdy_n), .nmi_n(rw_nmi_n), .dma_steal(rw_steal),
+        // The compositor's display-shadow port: a full 64 KB copy that already
+        // exists, so the rewrite needs no BRAM of its own.
+        .mem_addr(rw_mem_addr), .mem_data(antic_cmpram_rdata),
+        .trig0(8'h01), .trig1(8'h01), .trig2(8'h01), .trig3(8'h01),
+        .pal_sense(8'h0E), .consol_keys(consol_keys),
+        .lb_wr(rw_lb_wr), .lb_color(rw_lb_color),
+        .lb_line_start(rw_lb_line_start),
+        .hcount(), .line(rw_line), .vcount(), .line_start(), .dlpc()
+    );
+
+    // Whoever holds authority drives the fetch address and answers reads.
+    assign antic_cmpram_addr = rw_auth_sys ? rw_mem_addr : antic_cmpram_addr_top;
+    assign antic_rdata_int   = rw_auth_sys ? rw_rdata    : antic_rdata_top;
+
+    antic_wb_adapt u_antic_wb_adapt (
+        .clk(clk_sys), .rst(rst_sys),
+        .lb_wr(rw_lb_wr), .lb_color(rw_lb_color),
+        .lb_line_start(rw_lb_line_start), .line(rw_line),
+        .pix_valid(rw_wb_pix_valid), .pix_pair(rw_wb_pix_pair),
+        .color_lo(rw_wb_color_lo), .color_hi(rw_wb_color_hi),
+        .atari_row(rw_wb_atari_row), .row_flush(rw_wb_row_flush)
+    );
+
     // The scan-out palette is baked in via the ANTIC_PALETTE_HEX macro in
     // antic_writeback.sv (Atari NTSC table); $D483-$D486 can override at runtime.
     antic_writeback u_antic_writeback (
         .clk_sys      (clk_sys),
         .rst_sys      (rst_sys),
         // Render tap (clk_sys) from antic_top
-        .pix_valid    (antic_wb_pix_valid),
-        .pix_pair     (antic_wb_pix_pair),
-        .color_lo     (antic_wb_color_lo),
-        .color_hi     (antic_wb_color_hi),
-        .atari_row    (antic_wb_atari_row),
-        .row_flush    (antic_wb_row_flush & ddr_warm),   // held off until DDR/AXI up
+        .pix_valid    (rw_auth_sys ? rw_wb_pix_valid : antic_wb_pix_valid),
+        .pix_pair     (rw_auth_sys ? rw_wb_pix_pair  : antic_wb_pix_pair),
+        .color_lo     (rw_auth_sys ? rw_wb_color_lo  : antic_wb_color_lo),
+        .color_hi     (rw_auth_sys ? rw_wb_color_hi  : antic_wb_color_hi),
+        .atari_row    (rw_auth_sys ? rw_wb_atari_row : antic_wb_atari_row),
+        .row_flush    ((rw_auth_sys ? rw_wb_row_flush
+                                    : antic_wb_row_flush) & ddr_warm),   // held off until DDR/AXI up
         // Palette writes (mirror ANTIC's palette)
         .pal_we       (antic_wb_pal_we),
         .pal_idx      (antic_wb_pal_idx),
