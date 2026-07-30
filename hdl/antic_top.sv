@@ -1778,48 +1778,90 @@ module antic_top #(
         .pres_cc0(), .pres_cc1(), .pres_valid()
     );
 
-    compositor u_compositor (
-        .clk(clk_bus), .rst(rst_bus), .start_compose(cmp_start_pulse),
-        .row_in(ar_atari_row),                 // compose this row
-        .meta_row(meta_row_q),
-        .meta_mode(dl_meta_mode), .meta_lms_addr(dl_meta_lms),
-        .meta_sub_row(dl_meta_sub),
-        .meta_hscrol_en(dl_meta_hscrol_en),
-        .meta_vscrol_en(dl_meta_vscrol_en),
-        .chbase(snap_chbase), .chactl(snap_chactl),
-        .pmbase(snap_pmbase), .dmactl(snap_dmactl), .gractl(snap_gractl),
-        .hposp0(snap_hposp[0]), .hposp1(snap_hposp[1]),
-        .hposp2(snap_hposp[2]), .hposp3(snap_hposp[3]),
-        .hposm0(snap_hposm[0]), .hposm1(snap_hposm[1]),
-        .hposm2(snap_hposm[2]), .hposm3(snap_hposm[3]),
-        .hposp_early_flat({snap_hposp_early[3], snap_hposp_early[2],
-                           snap_hposp_early[1], snap_hposp_early[0]}),
-        .hposp_chg_x_flat({snap_hposp_chgx[3], snap_hposp_chgx[2],
-                           snap_hposp_chgx[1], snap_hposp_chgx[0]}),
-        .sizep_early_flat({snap_sizep_early[3], snap_sizep_early[2],
-                           snap_sizep_early[1], snap_sizep_early[0]}),
-        .sizep_chg_x_flat({snap_sizep_chgx[3], snap_sizep_chgx[2],
-                           snap_sizep_chgx[1], snap_sizep_chgx[0]}),
-        .sizep0(snap_sizep[0][1:0]), .sizep1(snap_sizep[1][1:0]),
-        .sizep2(snap_sizep[2][1:0]), .sizep3(snap_sizep[3][1:0]),
-        .sizem(snap_sizem), .vdelay(snap_vdelay),
-        .hscrol(snap_hscrol[3:0]), .vscrol(snap_vscrol[3:0]),
-        .prior(snap_prior),
-        // GRAFPx/GRAFM shape registers — CPU-written shapes render without DMA;
-        // the P/M DMA fetch overwrites them per scanline when DMA is enabled.
-        .grafp0(snap_grafp[0]), .grafp1(snap_grafp[1]),
-        .grafp2(snap_grafp[2]), .grafp3(snap_grafp[3]),
-        .grafm(snap_grafm),
-        .mpf_q(cmp_mpf_q), .ppf_q(cmp_ppf_q),
-        .mpl_q(cmp_mpl_q), .ppl_q(cmp_ppl_q),
-        .hitclr(hitclr_strobe),
-        .mem_raddr(cmp_raddr), .mem_rdata(cmp_rdata),
-        .mem_req(cmp_req), .mem_ready(cmp_ready),
-        .cmd_tag(cmp_cmd_tag), .cmd_addr(cmp_cmd_addr),
-        .cmd_data(cmp_cmd_data), .cmd_valid(cmp_cmd_valid),
-        .cmd_ready(cmp_cmd_ready),
-        .compose_done(cmp_done), .compose_count(cmp_count)
-    );
+    // ================================================================
+    // Legacy raster — NOT BUILT
+    // ================================================================
+    // The ANTIC/GTIA rewrite (docs/ANTIC-rewrite.md) replaces this, and the
+    // board cannot carry both: at 99.62% slice occupancy the compositor's read
+    // out of display_shadow WAS the clk_sys critical path, and dropping a whole
+    // second 6502 plus the maths co-pro freed 2,494 LUTs but only 82 slices.
+    // This design is packing-limited, so the way to give clk_sys room is to
+    // stop building the raster the rewrite exists to replace.
+    //
+    // Only the compositor is gated.  dl_parser, gtia_pm_collide and both
+    // color_resolvers feed it and nothing else, so with it gone they are dead
+    // logic and synthesis removes them -- no need to tie off their forty-odd
+    // nets by hand and risk getting one wrong.
+    //
+    // POKEY, PIA, the sprite engine and the keyboard are NOT part of this and
+    // are untouched: antic_top is the whole chipset, not just ANTIC.
+    //
+    // This removes the A/B fallback -- sallyrst[3] stops selecting between two
+    // rasters and the rewrite becomes the only one.  Reverting is this one bit
+    // plus a build.
+    localparam bit LEGACY_RASTER = 1'b0;
+
+    generate
+    if (LEGACY_RASTER) begin : g_legacy_raster
+        compositor u_compositor (
+            .clk(clk_bus), .rst(rst_bus), .start_compose(cmp_start_pulse),
+            .row_in(ar_atari_row),                 // compose this row
+            .meta_row(meta_row_q),
+            .meta_mode(dl_meta_mode), .meta_lms_addr(dl_meta_lms),
+            .meta_sub_row(dl_meta_sub),
+            .meta_hscrol_en(dl_meta_hscrol_en),
+            .meta_vscrol_en(dl_meta_vscrol_en),
+            .chbase(snap_chbase), .chactl(snap_chactl),
+            .pmbase(snap_pmbase), .dmactl(snap_dmactl), .gractl(snap_gractl),
+            .hposp0(snap_hposp[0]), .hposp1(snap_hposp[1]),
+            .hposp2(snap_hposp[2]), .hposp3(snap_hposp[3]),
+            .hposm0(snap_hposm[0]), .hposm1(snap_hposm[1]),
+            .hposm2(snap_hposm[2]), .hposm3(snap_hposm[3]),
+            .hposp_early_flat({snap_hposp_early[3], snap_hposp_early[2],
+                               snap_hposp_early[1], snap_hposp_early[0]}),
+            .hposp_chg_x_flat({snap_hposp_chgx[3], snap_hposp_chgx[2],
+                               snap_hposp_chgx[1], snap_hposp_chgx[0]}),
+            .sizep_early_flat({snap_sizep_early[3], snap_sizep_early[2],
+                               snap_sizep_early[1], snap_sizep_early[0]}),
+            .sizep_chg_x_flat({snap_sizep_chgx[3], snap_sizep_chgx[2],
+                               snap_sizep_chgx[1], snap_sizep_chgx[0]}),
+            .sizep0(snap_sizep[0][1:0]), .sizep1(snap_sizep[1][1:0]),
+            .sizep2(snap_sizep[2][1:0]), .sizep3(snap_sizep[3][1:0]),
+            .sizem(snap_sizem), .vdelay(snap_vdelay),
+            .hscrol(snap_hscrol[3:0]), .vscrol(snap_vscrol[3:0]),
+            .prior(snap_prior),
+            // GRAFPx/GRAFM shape registers — CPU-written shapes render without DMA;
+            // the P/M DMA fetch overwrites them per scanline when DMA is enabled.
+            .grafp0(snap_grafp[0]), .grafp1(snap_grafp[1]),
+            .grafp2(snap_grafp[2]), .grafp3(snap_grafp[3]),
+            .grafm(snap_grafm),
+            .mpf_q(cmp_mpf_q), .ppf_q(cmp_ppf_q),
+            .mpl_q(cmp_mpl_q), .ppl_q(cmp_ppl_q),
+            .hitclr(hitclr_strobe),
+            .mem_raddr(cmp_raddr), .mem_rdata(cmp_rdata),
+            .mem_req(cmp_req), .mem_ready(cmp_ready),
+            .cmd_tag(cmp_cmd_tag), .cmd_addr(cmp_cmd_addr),
+            .cmd_data(cmp_cmd_data), .cmd_valid(cmp_cmd_valid),
+            .cmd_ready(cmp_cmd_ready),
+            .compose_done(cmp_done), .compose_count(cmp_count)
+        );
+    end else begin : g_no_legacy_raster
+        assign meta_row_q    = '0;
+        assign cmp_mpf_q     = '0;
+        assign cmp_ppf_q     = '0;
+        assign cmp_mpl_q     = '0;
+        assign cmp_ppl_q     = '0;
+        assign cmp_raddr     = '0;
+        assign cmp_req       = 1'b0;
+        assign cmp_cmd_tag   = '0;
+        assign cmp_cmd_addr  = '0;
+        assign cmp_cmd_data  = '0;
+        assign cmp_cmd_valid = 1'b0;
+        assign cmp_done      = 1'b0;
+        assign cmp_count     = '0;
+    end
+    endgenerate
+
 
     // ---- DRAW chiplet-ext register port (M17-2) ------------------------
     // Software stages opcode + 5 16-bit args at $D488-$D492, strobes

@@ -1637,7 +1637,16 @@ module fpga_xt_top (
     // takes AUTHORITY per sallyrst[3], the same shape as the timing machine on
     // bit 2.  Power-on 0 keeps every existing path in charge, so a bitstream
     // carrying this is no riskier to boot than one without it.
-    wire        rw_auth_sys = sallyrst[3];        // sallyrst is clk_sys
+    // The DISPLAY half is no longer a choice: the legacy raster is not built
+    // (LEGACY_RASTER in antic_top), so its writeback tap and fetch address are
+    // tied off and selecting them would give a blank screen.  Leaving this on
+    // sallyrst[3] would have meant the board booting to nothing by default and
+    // looking bricked.
+    //
+    // The TIMING authority further down stays on sallyrst[3], because the
+    // legacy vcount/wsync/NMI generators are NOT part of the compositor and are
+    // still built -- so rdy/steal/NMI can still be A/B'd against them.
+    wire        rw_auth_sys = 1'b1;
     wire [15:0] rw_mem_addr;
     wire [7:0]  rw_rdata;
     wire        rw_steal, rw_rdy_n, rw_nmi_n;
