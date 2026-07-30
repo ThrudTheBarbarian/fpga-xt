@@ -58,6 +58,54 @@ and packs well — but the logic around them collapses by roughly 8×.
 Every module in this rewrite states its per-colour-clock clock budget in its
 header. A module that cannot say how many clocks it uses is not finished.
 
+## The complexity check: ANTIC was ~2000-3000 transistors
+
+If emulating an ANTIC effect needs something complicated, we have missed the
+mechanism and are doing it wrong. This is a falsifiable check, not a slogan.
+
+Work the budget. ANTIC's architectural state is roughly:
+
+| | bits | | bits |
+|---|---|---|---|
+| DLIST pointer | 16 | DMACTL | 6 |
+| memory scan | 16 | CHACTL | 3 |
+| data shift register | 16 | HSCROL | 4 |
+| char name + glyph | 16 | VSCROL | 4 |
+| vertical counter | 9 | PMBASE | 6 |
+| horizontal counter | 8 | CHBASE | 6 |
+| instruction register | 8 | NMIST | 3 |
+| DCTR row counter | 4 | NMIEN | 2 |
+
+**~127 bits.** As NMOS latches at 6-10 transistors per bit that is
+**760-1,270 transistors of state alone**, leaving roughly **120-560 gates for
+ALL the logic** at 4-6 transistors per gate.
+
+That budget buys: a counter chain, a handful of comparators, a small PLA for
+instruction decode, and a shift register with a variable shift rate. It does not
+buy anything else. So whenever a design here needs more than that, the mechanism
+has been missed.
+
+**Worked example — the sixteen "modes" are not sixteen cases.** ANTIC cannot
+afford sixteen decoders. The mode nibble indexes a handful of parameters:
+
+* bits per pixel (1 or 2)
+* colour clocks per pixel (1, 2 or 4)
+* source: character (name fetch, then glyph lookup) or direct bitmap
+* scanlines per row (1, 2, 3, 4, 8, 16)
+* the mode-3 descender quirk
+
+One small parameter table feeding **one** datapath. The current `pack_pair` is a
+sixteen-arm case statement with per-mode windowing — that is the smell this check
+exists to catch.
+
+The same reasoning applies to GTIA (a separate chip, similarly small): four
+player shift registers, four 2-bit missile registers, position comparators, a
+priority encoder and collision latches. A wide combinational priority cone
+resolving everything per pixel is not something that chip could contain.
+
+**Rule of thumb:** if a module cannot be described as "a counter, a comparator, a
+shifter and a small decoder", stop and find the mechanism.
+
 ## What carries over: knowledge, not code
 
 **No ANTIC/GTIA RTL is reused.** `compositor`, `color_resolver`, `gtia_stream`,
