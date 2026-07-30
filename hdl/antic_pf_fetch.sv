@@ -102,10 +102,12 @@ module antic_pf_fetch #(
     assign rd_data = buf_mem[rd_idx][7:0];
 
     // On the first scanline the name has just been fetched; on later ones it is
-    // already in the buffer, so the glyph address comes from there.
-    logic [7:0] char_code_q;
-    wire  [7:0] char_code = (is_char && !first_row) ? buf_mem[wr_idx][15:8]
-                                                    : char_code_q;
+    // read back out of the buffer -- but through a REGISTER, never combinationally.
+    // Feeding buf_mem's output straight into glyph_addr puts a distributed RAM
+    // in the memory address path: RAMD64E plus five MUXF stages out to the
+    // screen bank's read register, and 8 ns of mostly-routing on clk_sys.  The
+    // fetcher has thousands of spare clocks a scanline, so it spends one.
+    logic [7:0] char_code;
 
     // ---- glyph row -------------------------------------------------------
     logic [2:0] glyph_row;
@@ -144,7 +146,7 @@ module antic_pf_fetch #(
 
     // ---- the walk --------------------------------------------------------
     typedef enum logic [2:0] {
-        S_IDLE, S_NAME, S_NAME_D, S_DATA, S_DATA_D, S_DONE
+        S_IDLE, S_NAME, S_NAME_D, S_CODE, S_DATA, S_DATA_D, S_DONE
     } state_t;
     state_t state;
 
@@ -159,7 +161,7 @@ module antic_pf_fetch #(
             scan_q    <= 16'h0000;
             left      <= 8'd0;
             wr_idx    <= 6'd0;
-            char_code_q <= 8'h00;
+            char_code <= 8'h00;
             busy      <= 1'b0;
             done      <= 1'b0;
         end else begin
@@ -177,7 +179,7 @@ module antic_pf_fetch #(
                 else if (!is_char && !first_row)            state <= S_DONE;
                 // A character name is read once per block; later rows re-read
                 // only the glyph, using the name already in the buffer.
-                else if (is_char && !first_row)             state <= S_DATA;
+                else if (is_char && !first_row)             state <= S_CODE;
                 else if (is_char)                           state <= S_NAME;
                 else                                        state <= S_DATA;
             end else
@@ -187,10 +189,17 @@ module antic_pf_fetch #(
                 // ---- character name ------------------------------------
                 S_NAME:   state <= S_NAME_D;
                 S_NAME_D: begin
-                    char_code_q <= mem_data;
+                    char_code <= mem_data;
                     // The playfield scan pointer wraps within 4K
                     // (antic_addresswrap).
                     scan_q    <= {scan_q[15:12], scan_q[11:0] + 12'd1};
+                    state     <= S_DATA;
+                end
+
+                // A later character row takes its name from the buffer.  One
+                // clock, so glyph_addr comes off a flop rather than out of a RAM.
+                S_CODE: begin
+                    char_code <= buf_mem[wr_idx][15:8];
                     state     <= S_DATA;
                 end
 
@@ -211,8 +220,9 @@ module antic_pf_fetch #(
                         // Only a FIRST row goes back for another name; a later
                         // one reads glyph after glyph straight out of the
                         // buffer, which is what halves its DMA.
-                        if (is_char && first_row) state <= S_NAME;
-                        else                      state <= S_DATA;
+                        if (is_char && first_row)  state <= S_NAME;
+                        else if (is_char)          state <= S_CODE;
+                        else                       state <= S_DATA;
                     end
                 end
 
@@ -231,7 +241,8 @@ module antic_pf_fetch #(
     // pointer.  S_NAME_D is included because the address must be settled the
     // cycle BEFORE S_DATA samples it.
     always_comb begin
-        if (is_char && (state == S_DATA || state == S_NAME_D)) mem_addr = glyph_addr;
+        if (is_char && (state == S_DATA || state == S_NAME_D ||
+                        state == S_CODE)) mem_addr = glyph_addr;
         else                                                   mem_addr = scan_q;
     end
 

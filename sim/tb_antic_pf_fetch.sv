@@ -289,7 +289,15 @@ module tb_antic_pf_fetch;
         end
         mem[16'h4100] = 8'h41;
 
-        // A later row costs HALF the DMA of a first row.
+        // A later row is cheaper than a first row.  Not half, though: reading
+        // the stored name back through a REGISTER rather than combinationally
+        // costs a clock per byte, which keeps a distributed RAM out of the
+        // memory address path (it cost 8ns of mostly-routing on clk_sys).
+        //
+        // Fabric clocks here are not the DMA cost anyway -- what the CPU loses
+        // is antic_dma_sched's business, and that is checked against ACID's own
+        // maps.  All this has to do is finish well before the window opens:
+        // 40 bytes at 3 clocks is 120 of the several thousand in a scanline.
         first_row = 1'b1;
         fetches = 0;
         fetch_line(4'h2, 16'h4100, 5'd0, 8'd40);
@@ -299,9 +307,14 @@ module tb_antic_pf_fetch;
             first_row = 1'b0;
             fetches = 0;
             fetch_line(4'h2, 16'h4100, 5'd1, 8'd40);
-            if (fetches > first_clocks * 3 / 5) begin
-                $display("FAIL T12e: a later character row took %0d clocks against %0d for the first — it should be about half",
+            if (fetches >= first_clocks) begin
+                $display("FAIL T12e: a later character row took %0d clocks against %0d for the first — it must be cheaper",
                          fetches, first_clocks);
+                fail++;
+            end
+            if (fetches > 400) begin
+                $display("FAIL T12f: a later row took %0d clocks — it must finish long before the display window",
+                         fetches);
                 fail++;
             end
         end
