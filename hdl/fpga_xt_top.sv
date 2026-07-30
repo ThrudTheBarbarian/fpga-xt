@@ -1857,8 +1857,18 @@ module fpga_xt_top (
         // GR.0 background, with no text on it.  The legacy dl_parser used this
         // port for the same reason, and it is free now.
         .mem_addr(rw_mem_addr), .mem_data(scrn_shadow_rdata),
+        // TRIG0-3 released. The legacy path feeds these from the PIA joystick
+        // (antic_top's trig_high); nothing in ACID presses one, but a game
+        // would need them threaded through here.
         .trig0(8'h01), .trig1(8'h01), .trig2(8'h01), .trig3(8'h01),
-        .pal_sense(8'h0E), .consol_keys(consol_keys),
+        // $D014 PAL: $0F = NTSC, and this machine IS NTSC —
+        // LINES_PER_FRAME is 262, so VCOUNT only ever reaches 130.  Reporting
+        // $0E told software it was PAL while the beam kept NTSC time, and
+        // antic_vcount HUNG on it for ever: it reads $D014, picks 155 as the
+        // last VCOUNT of a PAL frame, and then waits for a value that cannot
+        // occur.  antic_top says `.pal_sense_in(8'h0F), // NTSC` and this must
+        // agree with it — the OS reads the same register to set up VBI timing.
+        .pal_sense(8'h0F), .consol_keys(consol_keys),
         .lb_wr(rw_lb_wr), .lb_color(rw_lb_color),
         .lb_line_start(rw_lb_line_start),
         .hcount(), .line(rw_line), .vcount(rw_vcount_sys), .line_start(), .dlpc(),
