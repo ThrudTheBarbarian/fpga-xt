@@ -1476,3 +1476,10 @@ acid: build/tb_acid.vvp
 build/tb_acid.vvp: tb_acid.sv $(A8_CORE_SRC) | build
 	iverilog -g2012 -Wall -Wno-timescale -I$(HDL_DIR) -I$(HDL_DIR)/xt6502f \
 	    -DTESTNAME='"$(TEST)"' -o $@ -s tb_acid $(A8_CORE_SRC) tb_acid.sv
+
+antic_wb_adapt: build/tb_antic_wb_adapt.vvp
+	@vvp -N $<
+
+build/tb_antic_wb_adapt.vvp: tb_antic_wb_adapt.sv $(HDL_DIR)/antic_wb_adapt.sv | build
+	iverilog -g2012 -Wall -Wno-timescale -I$(HDL_DIR) -o $@ -s tb_antic_wb_adapt \
+	    $(HDL_DIR)/antic_wb_adapt.sv tb_antic_wb_adapt.sv
