@@ -1,21 +1,23 @@
 `timescale 1ns/1ps
 `default_nettype none
 //
-// tb_antic_line_render — a whole scanline, pixel-perfect.
+// tb_antic_line_render — a whole scanline, pixel-perfect, fetch through emit.
 //
 // These are the STATIC tests from docs/ANTIC-rewrite.md: a known display mode
 // over known memory, compared against a hand-computed expectation. No CPU, no
 // display list — just "put these bytes in memory and check every pixel".
 //
-// The whole pixel path is exercised for real: mode table -> shifter ->
-// playfield source -> colour select, with a behavioural memory behind it.
+// It drives the real pair, antic_pf_fetch -> antic_line_render, because the
+// interesting failures live at the join: a byte fetched into the wrong buffer
+// slot and a byte shifted out at the wrong moment look identical from either
+// side alone.
 //
 module tb_antic_line_render;
 
     logic clk = 0, rst = 1;
     always #5 clk = ~clk;
 
-    logic        start;
+    logic        f_start, r_start;
     logic [3:0]  mode;
     logic [15:0] scan_addr_in;
     logic [4:0]  row;
@@ -25,19 +27,33 @@ module tb_antic_line_render;
 
     wire [15:0] mem_addr;
     logic [7:0] mem_data;
-    wire        lb_wr, busy, done;
-    wire [7:0]  lb_color;
     wire [15:0] scan_addr_out;
+    wire        f_busy, f_done;
 
-    antic_line_render dut (
+    wire [5:0]  rd_idx;
+    wire [7:0]  rd_data, rd_code;
+
+    wire        lb_wr, r_busy, r_done;
+    wire [7:0]  lb_color;
+
+    antic_pf_fetch u_fetch (
         .clk(clk), .rst(rst),
-        .start(start), .emit_en(1'b1), .mode(mode), .scan_addr_in(scan_addr_in), .row(row),
+        .start(f_start), .mode(mode), .scan_addr_in(scan_addr_in), .row(row),
         .chbase(chbase), .chactl(chactl), .bytes_per_line(bytes_per_line),
+        .mem_addr(mem_addr), .mem_data(mem_data),
+        .rd_idx(rd_idx), .rd_data(rd_data), .rd_code(rd_code),
+        .scan_addr_out(scan_addr_out), .busy(f_busy), .done(f_done)
+    );
+
+    antic_line_render u_render (
+        .clk(clk), .rst(rst),
+        .start(r_start), .emit_en(1'b1),
+        .mode(mode), .bytes_per_line(bytes_per_line),
         .colbk(colbk), .colpf0(colpf0), .colpf1(colpf1),
         .colpf2(colpf2), .colpf3(colpf3),
-        .mem_addr(mem_addr), .mem_data(mem_data),
+        .rd_idx(rd_idx), .rd_data(rd_data), .rd_code(rd_code),
         .lb_wr(lb_wr), .lb_color(lb_color),
-        .scan_addr_out(scan_addr_out), .busy(busy), .done(done)
+        .busy(r_busy), .done(r_done)
     );
 
     // Behavioural memory: 1-clock read latency, like a BRAM.
@@ -55,20 +71,35 @@ module tb_antic_line_render;
 
     task automatic render(input [3:0] m, input [15:0] sa, input [4:0] r,
                           input [7:0] nb);
+        int guard;
         begin
             mode = m; scan_addr_in = sa; row = r; bytes_per_line = nb;
+            @(negedge clk); f_start = 1'b1;
+            @(negedge clk); f_start = 1'b0;
+            guard = 0;
+            while (!f_done && guard < 2000) begin @(negedge clk); guard++; end
+            if (guard >= 2000) begin
+                $display("FAIL: fetch never completed"); fail++;
+            end
+            @(negedge clk); r_start = 1'b1;
+            @(negedge clk); r_start = 1'b0;
+            // Count from the restart, not from the fetch: emit_en is tied high
+            // here, so a line left part-emitted would otherwise keep trickling
+            // pixels out during the next line's fetch.  In the real design the
+            // window gate stops it.
             npx = 0;
-            @(negedge clk); start = 1'b1;
-            @(negedge clk); start = 1'b0;
-            wait (done == 1'b1);
+            guard = 0;
+            while (!r_done && guard < 4000) begin @(negedge clk); guard++; end
+            if (guard >= 4000) begin
+                $display("FAIL: render never completed"); fail++;
+            end
             @(negedge clk);
         end
     endtask
 
     initial begin
-        start = 0; mode = 0; scan_addr_in = 0; row = 0; chbase = 8'hE0;
-        chactl = 3'b000;
-        bytes_per_line = 0;
+        f_start = 0; r_start = 0; mode = 0; scan_addr_in = 0; row = 0;
+        chbase = 8'hE0; chactl = 3'b000; bytes_per_line = 0;
         colbk = 8'h00; colpf0 = 8'h28; colpf1 = 8'h3A; colpf2 = 8'h94;
         colpf3 = 8'h56;
         for (int i = 0; i < 65536; i++) mem[i] = 8'h00;
@@ -81,7 +112,7 @@ module tb_antic_line_render;
         // T1: MODE F (1bpp hi-res) — 2 bytes, alternating bits
         // ================================================================
         // $80 = 1000_0000 -> lit, then 7 background.
-        // Hi-res: lit = PF2 hue + PF1 luma = $9A>>... COLPF2=$94 hue 9,
+        // Hi-res: lit = PF2 hue + PF1 luma.  COLPF2=$94 hue 9,
         // COLPF1=$3A luma bits [3:1] = 101 -> $9A.  Background = COLPF2 = $94.
         mem[16'h1000] = 8'h80;
         mem[16'h1001] = 8'hFF;
@@ -162,8 +193,6 @@ module tb_antic_line_render;
         // ================================================================
         // T5: the scan pointer advances once per BYTE, not per fetch
         // ================================================================
-        // Character modes fetch twice per character (name + glyph) but the
-        // scan pointer must only step for the name.
         render(4'h2, 16'h3000, 5'd0, 8'd4);
         if (scan_addr_out !== 16'h3004) begin
             $display("FAIL T5: char mode scan advanced to $%04h, expected $3004",
@@ -197,6 +226,11 @@ module tb_antic_line_render;
         render(4'h8, 16'h2000, 5'd0, 8'd10);
         if (npx != 320) begin
             $display("FAIL T7b: mode 8 10 bytes gave %0d px, expected 320", npx); fail++;
+        end
+        // ...and a wide line is 384, which is the widest the buffer holds.
+        render(4'hE, 16'h2000, 5'd0, 8'd48);
+        if (npx != 384) begin
+            $display("FAIL T7c: mode E 48 bytes gave %0d px, expected 384", npx); fail++;
         end
 
         // ================================================================
@@ -281,13 +315,43 @@ module tb_antic_line_render;
             end
         chactl = 3'b000;
 
+        // ================================================================
+        // T10: emission can be cut short without disturbing the fetch
+        // ================================================================
+        // The scrolled case in miniature: fetch a full line, then stop emitting
+        // partway.  The scan pointer must still reflect the whole FETCH.
+        mode = 4'hE; scan_addr_in = 16'h2000; row = 5'd0; bytes_per_line = 8'd40;
+        @(negedge clk); f_start = 1'b1;
+        @(negedge clk); f_start = 1'b0;
+        while (!f_done) @(negedge clk);
+        @(negedge clk); r_start = 1'b1;
+        @(negedge clk); r_start = 1'b0;
+        npx = 0;
+        repeat (60) @(negedge clk);         // let only part of the line emit
+        if (npx >= 320) begin
+            $display("FAIL T10: the whole line emitted before it could be cut short");
+            fail++;
+        end
+        if (scan_addr_out !== 16'h2028) begin
+            $display("FAIL T10b: a part-emitted line left the scan pointer at $%04h, expected $2028",
+                     scan_addr_out);
+            fail++;
+        end
+        // A fresh start must abandon the leftovers and begin at pixel 0 again.
+        render(4'hE, 16'h2000, 5'd0, 8'd40);
+        if (npx != 320) begin
+            $display("FAIL T10c: restart after a cut-short line gave %0d px, expected 320",
+                     npx);
+            fail++;
+        end
+
         if (fail == 0) $display("tb_antic_line_render: all checks PASS");
         else           $display("tb_antic_line_render: %0d FAIL", fail);
         $finish;
     end
 
     initial begin
-        #500000;
+        #2000000;
         $display("FAIL: timeout");
         $finish;
     end

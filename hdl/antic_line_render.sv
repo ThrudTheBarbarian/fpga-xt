@@ -1,45 +1,30 @@
 `default_nettype none
 //
-// antic_line_render — render one scanline into the line buffer.
+// antic_line_render — turn the fetched line into coloured pixels.
 //
-// docs/ANTIC-rewrite.md.  Given a mode, a memory-scan address and which row of
-// the character/graphics block we are on, this walks the line: fetch a byte,
-// emit its pixels, fetch the next.  It drives antic_pixel_shift ->
-// antic_pf_source -> antic_color_sel and writes the resulting colour bytes into
-// antic_line_buf.
+// docs/ANTIC-rewrite.md.  antic_pf_fetch has already filled ANTIC's internal
+// line buffer; this walks it, shifts out pixels and resolves each one to an
+// Atari colour byte.  It drives antic_pixel_shift -> antic_pf_source ->
+// antic_color_sel.
 //
-// FETCH-THEN-EMIT IS NOT THE BURST MISTAKE.  The old compositor decided a whole
-// row's pixels at one instant, so a register written partway along the line
-// could not affect it.  Here the colour registers are sampled AS EACH PIXEL IS
-// EMITTED, so a mid-line COLPF write lands exactly where the beam was.  What
-// this model does not yet reproduce is WHICH CYCLE each fetch happens on — that
-// is the DMA schedule, and it matters for CPU cycle stealing, not for pixel
-// correctness.  It arrives when the CPU is reattached.
+// EMISSION IS PACED BY THE BEAM.  emit_en pulses once per hi-res pixel and only
+// inside the live display window, so the colour registers are sampled AS EACH
+// PIXEL IS EMITTED and a mid-line COLPF write lands exactly where the beam was.
+// The old compositor decided a whole row at one instant and could not express
+// that — it is why roughly half the ANTIC failures were unreachable.
 //
-// Character modes cost two fetches per character: the NAME from the scan
-// address, then the GLYPH from CHBASE.  Bitmap modes fetch once.  CHACTL sits
-// on both sides of that second fetch — reflect XORs the row going in, blank and
-// invert rewrite the data coming out (antic_char_ctl).
+// A LINE NEED NOT FINISH.  A scrolled narrow line has 40 bytes in the buffer and
+// a 32-byte window; when the window closes emission simply stops, and `start`
+// restarts the walk for the next scanline.  Nothing downstream cares, because
+// the scan pointer is the fetcher's business, not ours.
 //
-// GLYPH ROW SELECTION carries the two quirks the hardware has:
-//   * 16-row modes (5, 7) show each glyph row twice, so the glyph row is
-//     row >> 1.
-//   * mode 3 has a 10-row cell.  Characters with code[6:5] == 11 are
-//     descenders: their rows 0 and 1 come from glyph rows 6 and 7, and rows
-//     2..9 from glyph rows 0..7.  Ordinary characters use rows 0..7 and are
-//     BLANK on rows 8 and 9.
+// Everything to do with WHERE the bytes came from — the scan pointer, the two
+// fetches a character costs, glyph row selection, CHACTL — lives in
+// antic_pf_fetch.  This module only ever sees a buffer index.
 //
-// EMISSION IS PACED BY THE BEAM, fetching is not.  emit_en pulses once per
-// hi-res pixel and only inside the live display window, so the playfield edges
-// move when DMACTL or HSCROL is written partway along a scanline — that is
-// pfstarttiming, pfstoptiming and hscrolbug.  Fetching runs at fabric speed
-// ahead of it, so the shifter always has a byte waiting.  A line whose fetch is
-// wider than its window (scrolling) simply never finishes; `start` restarts the
-// walk from any state, which is how the next scanline reclaims it.
-//
-// CLOCK BUDGET: 2 clocks per fetch plus one per hi-res pixel.  Worst case is a
-// character mode at 40 characters: 40*(2+2) fetch clocks + 320 pixel clocks =
-// ~480 of the ~6,300 clocks in a 1.79 MHz scanline.
+// CLOCK BUDGET: one clock per hi-res pixel, plus two to reload the shifter every
+// 8 pixels.  At 4 pixels per machine cycle there are ~14 fabric clocks between
+// pixels, so the reload has ample room and never stalls the emit.
 //
 `timescale 1ns/1ps
 
@@ -47,41 +32,37 @@ module antic_line_render (
     input  wire        clk,
     input  wire        rst,
 
-    // ---- what to draw ---------------------------------------------------
-    input  wire        start,          // 1-clk: render a line (restarts from any state)
-    input  wire        emit_en,        // 1-clk per hi-res pixel, gated by the window
+    // ---- what to draw ----------------------------------------------------
+    input  wire        start,          // 1-clk: begin this line (restarts)
+    input  wire        emit_en,        // 1-clk per hi-res pixel, window-gated
     input  wire [3:0]  mode,
-    input  wire [15:0] scan_addr_in,   // memory scan pointer for this line
-    input  wire [4:0]  row,            // row within the block, 0..rows-1
-    input  wire [7:0]  chbase,
-    input  wire [2:0]  chactl,         // $D401 blank/invert/reflect
-    input  wire [7:0]  bytes_per_line, // 40, 20 or 10 (width-dependent)
+    input  wire [7:0]  bytes_per_line,
 
     // ---- colour registers, sampled as each pixel is emitted -------------
     input  wire [7:0]  colbk, colpf0, colpf1, colpf2, colpf3,
 
-    // ---- memory (1-clock read latency, no wait states) -------------------
-    output logic [15:0] mem_addr,
-    input  wire  [7:0]  mem_data,
+    // ---- ANTIC's internal line buffer ------------------------------------
+    output logic [5:0] rd_idx,
+    input  wire  [7:0] rd_data,        // glyph or graphics byte
+    input  wire  [7:0] rd_code,        // character code, for the colour select
 
-    // ---- line buffer write port ----------------------------------------
-    output wire         lb_wr,
-    output wire  [7:0]  lb_color,
+    // ---- line buffer write port ------------------------------------------
+    output wire        lb_wr,
+    output wire  [7:0] lb_color,
 
-    output logic [15:0] scan_addr_out,  // advanced past this line
-    output logic        busy,
-    output logic        done            // 1-clk when the line is complete
+    output logic       busy,
+    output logic       done            // 1-clk when the last byte is emitted
 );
 
     // ---- mode parameters -------------------------------------------------
-    wire       is_char, descender, is_display;
+    wire       is_char, descender_u, is_display;
     wire [1:0] bpp;
     wire [3:0] px_width;
-    wire [4:0] rows;
+    wire [4:0] rows_u;
 
     antic_mode_tbl u_tbl (
         .mode(mode), .is_char(is_char), .bpp(bpp), .px_width(px_width),
-        .rows(rows), .descender(descender), .is_display(is_display)
+        .rows(rows_u), .descender(descender_u), .is_display(is_display)
     );
 
     wire is_hires = (px_width == 4'd1) && (bpp == 2'd1);
@@ -99,12 +80,13 @@ module antic_line_render (
         .px_val(px_val), .exhausted(exhausted)
     );
 
-    logic [7:0] char_code;
-    wire  [2:0] pf_src;
+    wire [2:0] pf_src;
 
+    // rd_code is combinational from rd_idx, which holds still for the whole
+    // byte, so the colour select sees the right character with no register.
     antic_pf_source u_src (
         .is_char(is_char), .bpp(bpp), .is_hires(is_hires),
-        .px_val(px_val), .char_code(char_code), .pf_src(pf_src)
+        .px_val(px_val), .char_code(rd_code), .pf_src(pf_src)
     );
 
     wire [7:0] pixel_color;
@@ -117,50 +99,13 @@ module antic_line_render (
         .color(pixel_color)
     );
 
-    // ---- glyph row -------------------------------------------------------
-    // 16-row modes show each glyph row twice; mode 3's descenders rotate.
-    logic [2:0] glyph_row;
-    logic       row_blank;             // mode 3 rows 8/9 of a non-descender
-
-    always_comb begin
-        row_blank = 1'b0;
-        if (descender) begin
-            if (char_code[6:5] == 2'b11) begin
-                // Descender: rows 0/1 come from glyph rows 6/7, then 0..7.
-                glyph_row = (row < 5'd2) ? (3'd6 + row[0]) : 3'(row - 5'd2);
-            end else begin
-                glyph_row = row[2:0];
-                if (row >= 5'd8) row_blank = 1'b1;
-            end
-        end else if (rows == 5'd16) begin
-            glyph_row = row[3:1];
-        end else begin
-            glyph_row = row[2:0];
-        end
-    end
-
-    // CHACTL sits between the row counter and the character set on the way in,
-    // and between the character set and the shifter on the way out.
-    wire [2:0] glyph_row_ctl;
-    wire [7:0] glyph_data_ctl;
-
-    antic_char_ctl u_chactl (
-        .chactl(chactl), .is_char(is_char), .bpp(bpp), .px_width(px_width),
-        .char_code(char_code),
-        .glyph_row_in(glyph_row), .glyph_data_in(mem_data),
-        .glyph_row(glyph_row_ctl), .glyph_data(glyph_data_ctl)
-    );
-
-    wire [15:0] glyph_addr = {chbase[7:2], char_code[6:0], glyph_row_ctl};
-
     // ---- the walk --------------------------------------------------------
     typedef enum logic [2:0] {
-        S_IDLE, S_NAME, S_NAME_D, S_DATA, S_DATA_D, S_LOADED, S_EMIT, S_DONE
+        S_IDLE, S_LOAD, S_LOADED, S_EMIT, S_DONE
     } state_t;
     state_t state;
 
-    logic [15:0] scan_q;
-    logic [7:0]  left;                 // bytes still to draw on this line
+    logic [7:0] left;                  // bytes still to emit
 
     // Emit strobes are COMBINATIONAL, not registered.  With a registered tick
     // the shifter advanced one cycle AFTER px_val was sampled, so the first
@@ -171,54 +116,33 @@ module antic_line_render (
     assign lb_wr    = (state == S_EMIT) && !exhausted && emit_en;
     assign lb_color = pixel_color;
 
-
     always_ff @(posedge clk or posedge rst) begin
         if (rst) begin
-            state     <= S_IDLE;
-            scan_q    <= 16'h0000;
-            left      <= 8'd0;
-            char_code <= 8'h00;
-            sh_load   <= 1'b0;
-            sh_data   <= 8'h00;
-            busy      <= 1'b0;
-            done      <= 1'b0;
+            state   <= S_IDLE;
+            rd_idx  <= 6'd0;
+            left    <= 8'd0;
+            sh_load <= 1'b0;
+            sh_data <= 8'h00;
+            busy    <= 1'b0;
+            done    <= 1'b0;
         end else begin
             sh_load <= 1'b0;
             done    <= 1'b0;
 
             if (start) begin
-                // A restart, not just an idle-state entry: the previous line
-                // may still have pixels left over when the window closed.
-                scan_q <= scan_addr_in;
+                rd_idx <= 6'd0;
                 left   <= bytes_per_line;
                 busy   <= 1'b1;
-                // if/else rather than a ternary: assigning an enum from a
-                // conditional expression needs an explicit cast.
-                if (!is_display)  state <= S_DONE;
-                else if (is_char) state <= S_NAME;
-                else              state <= S_DATA;
+                if (!is_display || bytes_per_line == 8'd0) state <= S_DONE;
+                else                                       state <= S_LOAD;
             end else
             case (state)
                 S_IDLE: busy <= 1'b0;
 
-                // ---- character name ------------------------------------
-                S_NAME:   state <= S_NAME_D;
-                S_NAME_D: begin
-                    char_code <= mem_data;
-                    scan_q    <= {scan_q[15:12], scan_q[11:0] + 12'd1};  // 4K wrap
-                    state     <= S_DATA;
-                end
-
-                // ---- graphics byte or glyph ----------------------------
-                S_DATA:   state <= S_DATA_D;
-                S_DATA_D: begin
-                    // A blanked mode-3 row still occupies its pixels, so feed
-                    // the shifter zeros rather than skipping it.
-                    sh_data <= row_blank ? 8'h00 : glyph_data_ctl;
+                S_LOAD: begin
+                    sh_data <= rd_data;
                     sh_load <= 1'b1;
-                    if (!is_char)
-                        scan_q <= {scan_q[15:12], scan_q[11:0] + 12'd1};
-                    state <= S_LOADED;
+                    state   <= S_LOADED;
                 end
 
                 // One cycle for sh_load to land.  Without it S_EMIT would
@@ -228,14 +152,14 @@ module antic_line_render (
                 // render being short by a non-integer number of pixels.
                 S_LOADED: state <= S_EMIT;
 
-                // ---- emit this byte's pixels ---------------------------
                 S_EMIT: begin
                     if (exhausted) begin
-                        if (left <= 8'd1) state <= S_DONE;
-                        else begin
-                            left <= left - 8'd1;
-                            if (is_char) state <= S_NAME;
-                            else         state <= S_DATA;
+                        if (left <= 8'd1) begin
+                            state <= S_DONE;
+                        end else begin
+                            left   <= left - 8'd1;
+                            rd_idx <= rd_idx + 6'd1;
+                            state  <= S_LOAD;
                         end
                     end
                 end
@@ -249,14 +173,6 @@ module antic_line_render (
                 default: state <= S_IDLE;
             endcase
         end
-    end
-
-    assign scan_addr_out = scan_q;
-
-    // The glyph fetch reads CHBASE; everything else reads the scan pointer.
-    always_comb begin
-        if (is_char && (state == S_DATA || state == S_NAME_D)) mem_addr = glyph_addr;
-        else                                                   mem_addr = scan_q;
     end
 
 endmodule

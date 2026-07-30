@@ -1287,7 +1287,8 @@ antic_line_render: build/tb_antic_line_render.vvp
 
 build/tb_antic_line_render.vvp: tb_antic_line_render.sv $(HDL_DIR)/antic_line_render.sv $(HDL_DIR)/antic_mode_tbl.sv $(HDL_DIR)/antic_pixel_shift.sv $(HDL_DIR)/antic_pf_source.sv $(HDL_DIR)/antic_color_sel.sv | build
 	iverilog -g2012 -Wall -Wno-timescale -I$(HDL_DIR) -o $@ -s tb_antic_line_render \
-	    $(HDL_DIR)/antic_line_render.sv $(HDL_DIR)/antic_mode_tbl.sv \
+	    $(HDL_DIR)/antic_line_render.sv $(HDL_DIR)/antic_pf_fetch.sv \
+	    $(HDL_DIR)/antic_mode_tbl.sv \
 	    $(HDL_DIR)/antic_pixel_shift.sv $(HDL_DIR)/antic_pf_source.sv \
 	    $(HDL_DIR)/antic_color_sel.sv $(HDL_DIR)/antic_char_ctl.sv \
 	    tb_antic_line_render.sv
