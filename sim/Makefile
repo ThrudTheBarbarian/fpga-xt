@@ -1436,3 +1436,22 @@ gtia_reg_file: build/tb_gtia_reg_file.vvp
 build/tb_gtia_reg_file.vvp: tb_gtia_reg_file.sv $(HDL_DIR)/gtia_reg_file.sv | build
 	iverilog -g2012 -Wall -Wno-timescale -I$(HDL_DIR) -o $@ -s tb_gtia_reg_file \
 	    $(HDL_DIR)/gtia_reg_file.sv tb_gtia_reg_file.sv
+
+ANTIC_GTIA_SRC = $(HDL_DIR)/antic_gtia.sv $(HDL_DIR)/antic_scanline.sv \
+	    $(HDL_DIR)/antic_beam.sv $(HDL_DIR)/antic_dl.sv \
+	    $(HDL_DIR)/antic_pf_geom.sv $(HDL_DIR)/antic_pf_fetch.sv \
+	    $(HDL_DIR)/antic_line_render.sv $(HDL_DIR)/antic_mode_tbl.sv \
+	    $(HDL_DIR)/antic_pixel_shift.sv $(HDL_DIR)/antic_pf_source.sv \
+	    $(HDL_DIR)/antic_color_sel.sv $(HDL_DIR)/antic_char_ctl.sv \
+	    $(HDL_DIR)/antic_pm_fetch.sv $(HDL_DIR)/antic_nmi.sv \
+	    $(HDL_DIR)/antic_dma_sched.sv $(HDL_DIR)/antic_reg_file.sv \
+	    $(HDL_DIR)/gtia_reg_file.sv $(HDL_DIR)/gtia_stage.sv \
+	    $(HDL_DIR)/gtia_obj_walk.sv $(HDL_DIR)/gtia_priority.sv \
+	    $(HDL_DIR)/gtia_collide.sv $(HDL_DIR)/gtia_special.sv
+
+antic_gtia: build/tb_antic_gtia.vvp
+	@vvp -N $<
+
+build/tb_antic_gtia.vvp: tb_antic_gtia.sv $(ANTIC_GTIA_SRC) | build
+	iverilog -g2012 -Wall -Wno-timescale -I$(HDL_DIR) -o $@ -s tb_antic_gtia \
+	    $(ANTIC_GTIA_SRC) tb_antic_gtia.sv

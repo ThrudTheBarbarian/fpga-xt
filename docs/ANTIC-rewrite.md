@@ -262,6 +262,7 @@ Steps 1-4 are built and green. Thirteen modules, each with its own testbench in
 | `antic_dma_sched` | 50 maps | which machine cycles ANTIC takes from the CPU |
 | `antic_reg_file` | 8 | ANTIC's registers, $D400-$D40F, and WSYNC |
 | `gtia_reg_file` | 7 | GTIA's registers, $D000-$D01F |
+| `antic_gtia` | 8 | the pair as one addressable block, driven over the CPU bus |
 
 Two structural decisions were forced by evidence rather than chosen:
 
@@ -493,10 +494,30 @@ worth stating because they are not what a register file usually does:
 makes ANTIC *fetch* a shape and GRACTL makes GTIA *latch* it, and both are
 needed. Turning off either leaves the last shape standing.
 
-Next: connect the register files to the CPU bus and to `antic_scanline`, which is
-the point at which ACID can run against this at all, then the drop of turbo /
-`math_cop` / banking. Nothing is wired to the CPU yet, so no ACID score has
-moved.
+### The pair is now addressable
+
+`antic_gtia` wires beam, registers and raster path together behind a CPU bus, and
+`tb_antic_gtia` drives it the way a 6502 does — nothing but writes to `$D4xx` and
+`$D0xx` and reads on the same bus. It brings a display up from nothing (display
+list pointer, colours, DMACTL), moves a player, reads collisions back and clears
+them with HITCLR, takes a WSYNC stall, and catches a DLI as an NMI with the
+status readable at `$D40F`.
+
+That matters more than another unit test: a register wired to the wrong place is
+precisely the mistake that survives module-level testing and then costs a day on
+hardware. It runs at the real 56 clocks per machine cycle for the same reason —
+the GTIA stage needs 26 of the 28 in a colour clock, so a compressed ratio would
+not exercise the schedule at all.
+
+`dma_steal` and `rdy_n` come out separately and are deliberately not the same
+signal: a stolen cycle is ANTIC using the bus for its own fetch, WSYNC is the CPU
+asking to be parked until the end of the line. A core needs both, for different
+reasons, and `antic_dmapattern` and `antic_wsync` test them apart.
+
+Next: attach the fid core, which is the point ACID can finally run against this
+rather than against decoded oracles, then the drop of turbo / `math_cop` /
+banking and a re-measure of slice occupancy. Nothing is wired to the CPU yet, so
+no ACID score has moved.
 
 ## Open questions
 
