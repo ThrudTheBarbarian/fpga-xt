@@ -6,64 +6,161 @@ raster**. Plan and rationale: `docs/ANTIC-rewrite.md`. DMA oracle:
 
 ## State
 
-26 new modules in `hdl/`, 26 testbenches in `sim/`, all green
-(`make -C sim <name>`). Timing closes on every clock; a bitstream is built and
-loaded.
+26 new modules in `hdl/`, 29 testbenches in `sim/`, all green
+(`make -C sim <name>`). Timing closes on every clock.
 
 | | |
 |---|---|
-| clk_sys WNS | **+0.278 ns** (was −9.707 at first attempt) |
-| clk_sally / clk_pix | +0.658 / +0.415 |
-| Slices | **94.28%** (was 99.62%) |
-| Slice LUTs / Registers | 25,150 / 31,210 |
+| clk_sys WNS | **+0.215 ns** |
+| clk_sally / clk_pix | +0.483 / +0.161 |
+| Slices | **93%** (was 99.62% before the drops) |
 
 Board: `192.168.192.179` (**use the IP** — mDNS drops out and is not a sign the
 board is down). Build: `./vivado/run-valhalla.sh bit` from the **repo root**.
 Load: `./vivado/jtag-valhalla.sh reset` then `... load`.
+
+## ACID800: the sweep runs, and where it stands
+
+**31 of 63** at `sallyrst = $06`, against a legacy baseline of 32
+(run `2026-07-29-3`). It was 21 when the sweep first completed.
+
+`sallyrst` picks who drives the CPU-facing timing, and it MATTERS which:
+
+| value | rdy/steal/NMI | pass |
+|---|---|---|
+| **`$06`** | legacy timing machine (rewrite draws) | **31** |
+| `$0A` | the rewrite | 23 |
+| `$0E` | **do not use** — both bits set | 14 |
+
+`$0E` is incoherent, not merely worse: `rw_auth` wins for rdy/steal/NMI while
+`tm_auth` still answered VCOUNT/NMIST, so the CPU took interrupts from one
+raster and read the status flags of another. That is fixed (both now follow
+authority), but the config is still meaningless — set one bit or the other.
+
+The rewrite's own timing authority is **7 tests behind** the legacy timing
+machine, and the gap is entirely the NMI/VCOUNT cluster (`antic_nmist`,
+`antic_blockednmi`, `antic_dlistwrap`, `antic_vscroldli`, `antic_vscroll`,
+`antic_wsync`, `mmu_xlbanking`). That machine carries a lot of bisected
+constants; the rewrite has not had that tuning yet. **`$06` is the config to
+use and to optimise** until it has.
+
+Of the 63: 5 `mod_*` never halt by design and `cpu_65c816` is a probe, so the
+achievable ceiling is **57**.
+
+### What was wrong, and how it was found
+
+Three root causes, all integration rather than the rewrite's raster logic —
+every one of the 26 module testbenches was green throughout.
+
+1. **Paravirtual SIO had been riding on math_cop's mailbox**, so dropping the
+   maths engine wedged every cold boot spinning at `$CB8A` and no `.xex` would
+   load at all. That is why the sweep had never completed and every test came
+   back `error`. Fixed by `hdl/xt_sio_mbox.sv`; see
+   [[sio_mailbox_decoupled_from_mathcop]] in the memory notes.
+
+2. **`antic_rdata_top` is antic_top's WHOLE-CHIPSET read mux**, not the legacy
+   raster's, and `rw_auth_sys` is hardwired to 1 — so every POKEY and PIA read
+   was answered by a block that decodes neither. PACTL read `$FF` instead of
+   `$3F`, RANDOM read `$FF` so the polys looked frozen, every IRQST poll saw
+   "no interrupt". **Nine failures, nothing wrong in the rewrite.**
+
+3. **`$D014` reported PAL on a 262-line NTSC machine.** `antic_vcount` reads
+   it, picks 155 as the last VCOUNT of a PAL frame, and waits for a value that
+   cannot occur — it did not fail, it *hung*, and scored `na`.
+
+The technique that found (3) is the one to reuse: **run the test by hand and
+read the 6502 registers against the `.lst`.** `X=$9B` was 155, which is the PAL
+constant, which named the bug in one step. `tools/bmp2text.py` now finds the
+character grid instead of assuming it sits at (0,0) — without that the result
+screens decoded to nothing, and the assertion text is what makes a failure
+diagnosable at all.
 
 ## Proven on hardware
 
 - Glyphs render (cursor visible), COLPF2 background correct for hi-res
 - Attract-mode colour cycling → the OS VBI is being delivered
 - 6502 runs the real XL OS at **~387k instructions/sec** in its idle loop
+- `.xex` load + run works end to end (paravirtual SIO serves the boot sectors)
 - Cycle stealing measured in sim at 52 held cycles/line with a normal mode E
   playfield, 12 without — exactly 40 fetches + 9 refresh + 1 DL + 2 LMS
 
 ## NOT proven — the open work
 
-**The ACID sweep has never completed.** Two problems, not yet separated:
+**Two tests remain behind the legacy baseline**, and both are collision
+assertions:
 
-1. The sweep harness returns `error` for EVERY test, not a pass/fail. A later
-   run got through at least six (`antic_addresswrap`, `addrmirror`,
-   `blockednmi`, `charcontrol`, `default`, `dlistwrap`) and every one was
-   `error` — including `antic_default`, which only reads reset values and
-   cannot legitimately fail. So the harness is not classifying at all: suspect
-   the breakpoint/poll path in `acid-sweep.sh` rather than the rewrite. It also
-   crashed the A9 shell (null deref in libc) on an earlier attempt, and
-   `/tmp/acid-sweep.tsv` did not survive.
-2. After tests run, the 6502 ends up stuck near `$CB8A` with `icnt` *resetting*,
-   where a clean boot sits happily at `$C046`–`$C052`. Could be a rewrite bug
-   that specific DMACTL/display-list combinations trigger, or the harness
-   leaving a halted core behind. **Unresolved.**
+* `antic_addresswrap` — its pass condition is simply `P0PF == $00`, so a single
+  spurious collision fails it while the message still blames the display list.
+  The DL PC wrap itself is correct: `pc_next = {pc[15:10], pc[9:0] + 1}` is
+  applied at all three fetch states (instruction, both LMS operand bytes), so
+  an LMS operand straddling a 1K boundary wraps as it should.
+* `gtia_collision` — now reaches **"Missing P/M collisions on right at `$DD`"**,
+  four assertions further than it used to. `$DD` is the last colour clock GTIA
+  compares in and `$DE` is already blank, so the window bound is right, and
+  `tb_gtia_stage` T8g/T8g2 and `tb_antic_scanline` T9c both show objects at
+  `$DD` colliding correctly **in simulation**. Whatever drops it is above the
+  scanline model and needs hardware visibility, not more static reading.
 
-Baseline to beat: **32 of 63** on the legacy path (run `2026-07-29-3`).
+The other 24 real failures are ones the **legacy path fails too** — the
+mid-line-register-change cluster this rewrite exists to fix. Nothing has been
+attempted on them yet.
+
+Useful shape in the messages: `antic_linebuffering` reads its result back
+through collisions and returns a repeating byte (`01010101`, then `04040404`
+after later fixes), and `gtia_vdelay` gets `00` from
+`p0pf & p2pf & m0pf & m2pf` where its players are DMA-fed and its missiles are
+CPU-written. `antic_pm_fetch` was checked closely against this and its address
+formula, its walk over disabled objects and its VDELAY bit indices are all
+correct, so the P/M suspicion is **not** confirmed — treat those messages as a
+lead, not a diagnosis.
 
 ### Next steps, in order
 
-1. Run **one** ACID test by hand, watching 6502 state — separates "harness is
-   fragile" from "rewrite wedges".
-2. If it's the rewrite: build the **full-machine sim harness** (OS ROM at $C000
-   from `rsrc/atari-xl.rom`, `pokey.sv`, `pia_regs.sv`, cold boot, then inject
-   the XEX as `xexload` does). All pieces are in the repo. `sim/tb_acid.sv`
-   exists but is **marked NOT VALID** — it runs without an OS, so the framework's
-   NMI dispatch is absent and results are meaningless.
-3. Wire in `rsrc/atari-basic.rom`. Right now correct and broken look identical
+1. **Get hardware visibility into GTIA**, then close `gtia_collision` at `$DD`
+   and `antic_addresswrap`. Both are one spurious/missing collision and both
+   are invisible to the module testbenches, which pass. The streaming trace
+   (`6502 trace`) sees the CPU, not the raster — this needs a raster-side
+   probe, which is what the reserved ANTIC-debugger GP0 slot (sel `0x9`) is
+   for.
+2. **Tune the rewrite's timing authority** until `$0A` beats `$06`, which is
+   what makes the rewrite standalone. The whole 7-test gap is the NMI/VCOUNT
+   cluster, and the legacy timing machine's constants (`antic_nmist` bisected
+   to status 7 / NMI 8, `/RDY` release at 104, VCOUNT at cycle 111) are the
+   reference to reproduce.
+3. The 24 shared failures — the actual point of the rewrite. `antic_charcontrol`,
+   `antic_linebuffering`, `antic_virtdma` and `antic_hscrolbug` all read ANTIC's
+   internal line buffer back and are the natural family to take first.
+4. Wire in `rsrc/atari-basic.rom`. Right now correct and broken look identical
    (blank screen either way); a `READY` prompt makes regressions obvious.
-4. Drop code/data banking (`BANKED_CACHE` in `sally_mem` — add a `NONE` branch;
+5. Drop code/data banking (`BANKED_CACHE` in `sally_mem` — add a `NONE` branch;
    validate with `make boot`). Authorised, still outstanding. Area only — it is
    in clk_sally which has margin.
-5. Widen the playfield past 320 (see `antic_wb_adapt` header for everything that
+6. Widen the playfield past 320 (see `antic_wb_adapt` header for everything that
    has to move with it).
+
+### How to run the sweep
+
+```
+cat tools/acid-sweep.sh | ssh BOARD 'cat > /tmp/acid-sweep.sh'
+ssh BOARD sh /tmp/acid-sweep.sh          # ~20 min, 63 tests
+ssh BOARD cat /tmp/acid-sweep.tsv > local.tsv
+```
+
+Use ONE multiplexed ssh connection (`-M -S`) for the whole run: Dropbear
+rate-limits after ~30 new connections and the sweep then collapses into `na`.
+For the failure text — which is what makes a failure diagnosable — grab the
+result screens and decode them:
+
+```
+cat tools/acid-shots.sh | ssh BOARD 'cat > /media/6502/acid-shots.sh'
+ssh BOARD sh /media/6502/acid-shots.sh <names...>
+ssh BOARD tar cf - -C /media/6502/acid-shots . > shots.tar
+python3 tools/bmp2text.py shot.bmp
+```
+
+`/media/6502/acid-shots` accumulates across sessions and is NOT cleared by the
+script, so old prefixed grabs (`b10_`, `tri_`, …) sit alongside new ones —
+clear it first or you will read a months-old failure as today's.
 
 ## Where things attach
 
