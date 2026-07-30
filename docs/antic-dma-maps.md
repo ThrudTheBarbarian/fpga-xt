@@ -25,11 +25,55 @@ identically.
 | **Bitmap multi-row modes fetch NOTHING on later scanlines** | `mode8b`, `mode9b`, `modeAb`, `modeBb`, `modeDb` are refresh-only |
 | Refresh wins a collision; the playfield fetch **slips one cycle** | `mode2b`: natural odd slots 29,31,33... become 30,31,34,35,38,39... exactly where refresh sits |
 
-The last row of that table reproduces every later-row map exactly. The
-**first-row** maps are not yet reproduced: they show one isolated fetch at the
-window start, a one-cycle gap, then a solid run (narrow char `26, _, 28..91`;
-normal char `18, _, 20..99`), and the refresh interaction there is still open.
-That is the part `antic_dmapattern` is still failing on.
+## The model, and how far it goes
+
+**38 of the 50 maps are reproduced exactly** by the rules below. The residue is
+confined to character *first* rows and is characterised at the end.
+
+**Fixed slots.** Cycle 0 missile DMA, 1 display list instruction, 2-5 player
+DMA, 6-7 the LMS operands. The display list and its operands are first-row only.
+
+**Playfield slots**, over a window of 64 cycles (narrow) or 80 (normal) starting
+at `dma_start`, with `step = span / bytes_per_line`:
+
+| | first row | later rows |
+|---|---|---|
+| bitmap | `dma_start + step*k`, one per byte | **nothing** — read once, replayed |
+| character | see below | `dma_start + 3 + step*k`, one glyph per byte |
+
+**Refresh.** Nine requests at cycles 25, 29 … 57. The playfield has absolute
+priority; a blocked refresh slips forward to the next free cycle, and if the next
+request arrives while it is still seeking, the seeking one is **dropped**. That
+single rule accounts for every refresh position in every map — including the
+extreme case of a narrow character first row, where the playfield is solid from
+26 to 90 and exactly two refreshes survive: the one at 25, before the playfield
+starts, and one that finally lands at 91 after it ends.
+
+Note that "playfield wins and refresh slips" and "refresh wins and the playfield
+slips" produce the *same union* wherever a single collision is involved, so the
+maps cannot distinguish them and it does not matter for the question these maps
+answer.
+
+### What is not yet reproduced
+
+Character **first** rows, where each character costs two fetches. The maps show
+an isolated fetch at the window start, then **adjacent pairs** at `step`
+intervals, then an isolated fetch at the end — a name, then (glyph, next name)
+pairs, then the last glyph. `mode6a` makes it plain once refresh is subtracted:
+
+```
+26   (30,31) (34,35) (38,39) ... (58,59)   (61,62) (65,66) ... (85,86)   89
+```
+
+with the pairs before cycle 57 displaced one cycle by refresh and those after it
+sitting at their natural 29, 33 … 85.
+
+The unresolved part is the **phase**: mode 6 places its first pair at
+`dma_start+3` while mode 2 places its at `dma_start+2`. Both readings fit their
+own map and neither fits both, and the refresh collisions blur the evidence
+exactly where it would settle the question. Rather than pick one and have it be
+plausible-but-wrong, this is left open — it needs a hardware measurement, or a
+test whose playfield is sparse enough that no refresh collides.
 
 ## The maps
 

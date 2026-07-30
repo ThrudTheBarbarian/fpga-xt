@@ -445,16 +445,25 @@ They also found a real bug in what was already built:
   320 bytes instead of 40. No existing test caught it, because every display
   list in the testbenches used one-row modes.
 
-**Still open:** the later-row maps are now reproduced exactly, including the
-refresh collision rule (refresh keeps its slot, the playfield fetch slips one
-cycle — which turns `mode2b`'s natural odd slots 29,31,33… into the observed
-30,31,34,35,38,39…). The **first-row** maps are not: they show one isolated fetch
-at the window start, a one-cycle gap, then a solid run, and that interaction is
-still unexplained. That is what `antic_dmapattern` is failing on.
+**The schedule model now reproduces 38 of the 50 maps exactly** — fixed slots,
+playfield stepping, and one refresh rule: nine requests every 4 cycles from 25,
+the playfield has absolute priority, a blocked refresh slips to the next free
+cycle, and one still seeking when the next request arrives is dropped. That
+accounts for every refresh position in every map, including the extreme case
+where a narrow character first row leaves exactly two refreshes alive.
 
-Next: finish the first-row DMA schedule, the register file, and the drop of
-turbo / `math_cop` / banking. Nothing is wired to the CPU yet, so no ACID score
-has moved.
+**Still open, and deliberately not guessed at:** the *phase* of the fetch pairs
+on character first rows. Mode 6 places its first pair at `dma_start+3`, mode 2 at
+`dma_start+2`; each reading fits its own map and neither fits both, and refresh
+collisions blur the evidence exactly where it would settle it. The RTL module is
+not written until that is resolved — a schedule that is 76% right would be
+precisely the plausible-but-wrong modelling this rewrite exists to remove. It
+needs a hardware measurement, or a test case whose playfield is sparse enough
+that no refresh collides.
+
+Next: the register file (which is what lets any of this be measured against ACID
+at all), then the drop of turbo / `math_cop` / banking. Nothing is wired to the
+CPU yet, so no ACID score has moved.
 
 ## Open questions
 
