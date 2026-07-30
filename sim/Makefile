@@ -1238,3 +1238,18 @@ build/tb_pf_serial.vvp: tb_pf_serial.sv $(HDL_DIR)/antic_pf_serial.sv $(HDL_DIR)
 	iverilog -g2012 -Wall -Wno-timescale -I$(HDL_DIR) -o $@ -s tb_pf_serial \
 	    $(HDL_DIR)/antic_pf_serial.sv $(HDL_DIR)/gtia_stream.sv \
 	    $(HDL_DIR)/color_resolver.sv tb_pf_serial.sv
+
+antic_line_buf: build/tb_antic_line_buf.vvp
+	@vvp -N $<
+
+build/tb_antic_line_buf.vvp: tb_antic_line_buf.sv $(HDL_DIR)/antic_line_buf.sv | build
+	iverilog -g2012 -Wall -Wno-timescale -I$(HDL_DIR) -o $@ -s tb_antic_line_buf \
+	    $(HDL_DIR)/antic_line_buf.sv tb_antic_line_buf.sv
+
+antic_expander: build/tb_antic_expander.vvp
+	@vvp -N $<
+
+build/tb_antic_expander.vvp: tb_antic_expander.sv $(HDL_DIR)/antic_expander.sv $(HDL_DIR)/antic_line_buf.sv $(HDL_DIR)/palette_lut.sv | build
+	iverilog -g2012 -Wall -Wno-timescale -I$(HDL_DIR) -o $@ -s tb_antic_expander \
+	    $(HDL_DIR)/antic_expander.sv $(HDL_DIR)/antic_line_buf.sv \
+	    $(HDL_DIR)/palette_lut.sv tb_antic_expander.sv
