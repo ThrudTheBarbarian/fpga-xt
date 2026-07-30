@@ -17,6 +17,14 @@
 // clipped, which is what the old path does too — the framebuffer geometry is a
 // property of the scan-out, not of DMACTL.
 //
+// WIDENING PAST 320 IS WANTED EVENTUALLY (a wide playfield is 384, and the
+// border either side is real picture on a lot of software).  X0 and W are
+// parameters so this module is ready, but it is not the only thing to change:
+// XL_SRC_W and XL_STRIDE in fpga_xt_top size the DDR triple buffer, and the
+// plane window and scale factor downstream assume 320 too.  Deliberately left
+// at 320 for now so the rewrite lands against an unchanged scan-out and any
+// difference on screen is the rewrite's, not the geometry's.
+//
 // THE ROW REPORTED IS THE ONE THAT JUST FINISHED.  lb_line_start arrives four
 // hi-res pixels into the NEXT line (the rewrite's pipeline delay), so the line
 // number has already moved on and the previous one has to be latched.  Getting

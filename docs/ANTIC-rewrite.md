@@ -559,8 +559,47 @@ Three things had to be right for that, and two of them were wrong first:
   ANTIC miss fetches only when the CPU happens to be storing, which is
   data-dependent and would look like random display glitches.
 
-Next: run ACID against this, which is now possible for the first time, then the
-drop of turbo / `math_cop` / banking and a re-measure of slice occupancy.
+### Integrating into fpga_xt_top
+
+The survey changed the shape of this. **`antic_top` is not ANTIC** — POKEY
+(audio, keyboard, SIO, pot), PIA, the sprite engine and the writeback path all
+live inside it, so the rewrite cannot replace it. Cutting it out would take the
+machine's keyboard and sound with it.
+
+The top already has the right pattern, built for the timing machine: that runs
+**unconditionally on the fid grid in `clk_sally`**, with AUTHORITY opt-in on
+`sallyrst[2]`, and overrides exactly
+
+```
+rdy · steal · VCOUNT · NMIST · NMI
+```
+
+which is precisely the set `antic_gtia` produces. `sallyrst[3]` is free, so the
+rewrite becomes a third authority alongside it — A/B-able on hardware without
+disturbing either existing path, which matters when every attempt costs a
+bitstream.
+
+**The plan, concretely:**
+
+| Piece | How |
+|---|---|
+| authority | `sallyrst[3]`, synced like `tmauth_sync` |
+| where it runs | `clk_sys`, as `antic_top` does; `tick` from `antic_phi2_level`, `px_tick` from a 4x divider (84 `clk_sys` per machine cycle at 150 MHz, so 21 per pixel and 42 per colour clock — the GTIA stage needs 26) |
+| memory | the compositor's `antic_cmpram_*` port, a full 64 KB display shadow that already exists, muxed on authority |
+| registers | the existing `bus_*_antic` / `d0xx_n` / `d4xx_n` decode, already in `clk_sys` |
+| display | `antic_wb_adapt` onto the unchanged `antic_writeback` tap, muxed on authority |
+| control | single-bit CDC of steal / rdy / nmi into `clk_sally`, exactly as the old path already does for `dma_steal_sally` and `nmi_n_sync` |
+
+Single-bit CDC only, and with precedent: the recurring bug class in this project
+is multi-bit crossings, and the pixel stream stays entirely in `clk_sys` so none
+is needed for it.
+
+**`fpga_xt_top` cannot be elaborated locally** — it instantiates Xilinx
+primitives — so every attempt costs a ~40 minute build on valhalla. That makes
+it worth doing in one careful pass rather than iterating.
+
+Next: make that edit, build, and run ACID on hardware. Then the drop of turbo /
+`math_cop` / banking and a re-measure of slice occupancy.
 
 ## Open questions
 
