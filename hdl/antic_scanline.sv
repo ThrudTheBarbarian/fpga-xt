@@ -181,7 +181,7 @@ module antic_scanline (
     );
 
     wire       pf_on;
-    wire [7:0] bytes_per_line;
+    wire [7:0] bytes_per_line, pf_step;
     wire [6:0] dma_start, dma_stop, disp_start, disp_stop;
     wire [8:0] px_start, px_stop;
     wire [2:0] hs_delay;
@@ -190,7 +190,7 @@ module antic_scanline (
     antic_pf_geom u_geom (
         .pf_width(dmactl[1:0]), .hscrol_en(dl_hscrol_en), .hscrol(hscrol),
         .is_char(g_is_char), .bpp(g_bpp), .px_width(g_px_width),
-        .pf_on(pf_on), .bytes_per_line(bytes_per_line),
+        .pf_on(pf_on), .bytes_per_line(bytes_per_line), .pf_step(pf_step),
         .dma_start(dma_start), .dma_stop(dma_stop),
         .disp_start(disp_start), .disp_stop(disp_stop),
         .px_start(px_start), .px_stop(px_stop),
@@ -203,15 +203,12 @@ module antic_scanline (
     // fetchers decide WHAT is read, this decides WHICH machine cycle the CPU
     // loses, and antic_dmapattern tests the second without caring about the
     // first.
-    wire [7:0] sched_span = (dmactl[1:0] == 2'd1) ? 8'd64 :
-                            (dmactl[1:0] == 2'd2) ? 8'd80 : 8'd96;
-
     antic_dma_sched u_sched (
         .clk(clk), .rst(rst),
         .line_start(line_start), .tick(tick), .hcount(hcount),
         .first_row(dl_first_row), .is_char(g_is_char),
         .is_display(dl_line_valid), .bytes_per_line(bytes_per_line),
-        .dma_start(dma_start), .span(sched_span), .lms(1'b1),
+        .dma_start(dma_start), .step(pf_step), .lms(1'b1),
         .dl_dma_en(dmactl[5]), .missile_dma_en(dmactl[2]),
         .player_dma_en(dmactl[3]),
         .steal(dma_steal)

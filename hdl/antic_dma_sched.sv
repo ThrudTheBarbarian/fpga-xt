@@ -19,8 +19,12 @@
 //     2-5    player DMA                 }
 //     6-7    the LMS operands           } first scanline, and only with LMS
 //
-// PLAYFIELD SLOTS across a window of `span` cycles from `dma_start`, with
-// step = span / bytes_per_line:
+// PLAYFIELD SLOTS from `dma_start`, one every `step` machine cycles.  The step
+// comes in from antic_pf_geom rather than being derived here: it is
+// span/bytes_per_line, but computing that as a division synthesises a divider
+// -- 22 carry chains and a 17 ns path off the mode register, which was the
+// whole of a -9.7 ns clk_sys violation.  It is a shift, and pf_geom already
+// has the shift amount.
 //
 //                first scanline                     later scanlines
 //   bitmap       one per byte, step apart            NOTHING — read once,
@@ -76,7 +80,7 @@ module antic_dma_sched (
     input  wire       is_display,
     input  wire [7:0] bytes_per_line,
     input  wire [6:0] dma_start,
-    input  wire [7:0] span,                 // 64 narrow, 80 normal, 96 wide
+    input  wire [7:0] step,                 // machine cycles between fetches
     input  wire       lms,                  // the instruction carries operands
 
     // ---- live enables ----------------------------------------------------
@@ -101,13 +105,6 @@ module antic_dma_sched (
     // row and is replayed from the internal buffer.
     wire [8:0] n_fetch = (!is_display || (!is_char && !first_row))
                        ? 9'd0 : {1'b0, bytes_per_line};
-
-    // step is span/bytes, and every mode makes that an exact power of two.
-    logic [7:0] step;
-    always_comb begin
-        if (bytes_per_line == 8'd0) step = 8'd1;
-        else                        step = 8'(span / bytes_per_line);
-    end
 
     // Where the first (glyph, next name) pair sits, relative to the opening
     // name.  step is 2 or 4 for every character mode there is, giving 2 or 3.

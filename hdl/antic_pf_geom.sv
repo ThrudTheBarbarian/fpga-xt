@@ -81,6 +81,7 @@ module antic_pf_geom (
     // ---- geometry --------------------------------------------------------
     output wire       pf_on,           // DMACTL width is non-zero
     output logic [7:0] bytes_per_line,
+    output logic [7:0] pf_step,        // machine cycles between fetches
     output logic [6:0] dma_start,      // first machine cycle of playfield DMA
     output logic [6:0] dma_stop,       // one past the last fetch cycle
     output logic [6:0] disp_start,     // first machine cycle displayed, unscrolled
@@ -129,6 +130,15 @@ module antic_pf_geom (
     wire [2:0] px_shift = pw_log2 + ((bpp == 2'd2) ? 3'd2 : 3'd3);
 
     always_comb bytes_per_line = 8'((fetch_px >> px_shift));
+
+    // Machine cycles between playfield fetches.  This is span/bytes_per_line,
+    // but writing it as a division synthesises a real divider: 22 carry chains
+    // and a 17 ns path from the mode register, which was the whole of a -9.7 ns
+    // clk_sys violation on the first build.  It is a SHIFT, and always was --
+    // span is fetch_px/4 and bytes_per_line is fetch_px >> px_shift, so the
+    // quotient is 2^(px_shift-2) and the width cancels out entirely.  A step
+    // depends only on how many hi-res pixels a byte carries.
+    always_comb pf_step = 8'd1 << (px_shift - 3'd2);
 
     // One window table, read twice: by the PROGRAMMED width for what is
     // displayed and by the FETCH width for what is fetched.

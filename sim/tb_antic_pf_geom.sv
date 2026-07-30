@@ -22,7 +22,7 @@ module tb_antic_pf_geom;
     logic [3:0] px_width;
 
     wire        pf_on;
-    wire [7:0]  bytes_per_line;
+    wire [7:0]  bytes_per_line, pf_step;
     wire [6:0]  dma_start, dma_stop, disp_start, disp_stop;
     wire [2:0]  hs_delay;
     wire        hs_fine;
@@ -30,7 +30,7 @@ module tb_antic_pf_geom;
     antic_pf_geom dut (
         .pf_width(pf_width), .hscrol_en(hscrol_en), .hscrol(hscrol),
         .is_char(is_char), .bpp(bpp), .px_width(px_width),
-        .pf_on(pf_on), .bytes_per_line(bytes_per_line),
+        .pf_on(pf_on), .bytes_per_line(bytes_per_line), .pf_step(pf_step),
         .dma_start(dma_start), .dma_stop(dma_stop),
         .disp_start(disp_start), .disp_stop(disp_stop),
         .hs_delay(hs_delay), .hs_fine(hs_fine)
@@ -276,6 +276,37 @@ module tb_antic_pf_geom;
             fail++;
         end
         hscrol_en = 0;
+
+        // ================================================================
+        // T8: the fetch step is span/bytes -- as a shift, not a division
+        // ================================================================
+        // Writing this as a divide cost 22 carry chains and a 17ns path off
+        // the mode register: the whole of a -9.7ns clk_sys violation.
+        hscrol_en = 0;
+        for (int w = 1; w <= 3; w++) begin
+            pf_width = 2'(w);
+            want_px = (w == 1) ? 64 : (w == 2) ? 80 : 96;
+            for (int mm = 2; mm <= 15; mm++) begin
+                m = 4'(mm); #1;
+                is_char = t_is_char; bpp = t_bpp; px_width = t_px_width; #1;
+                if (int'(pf_step) * int'(bytes_per_line) != want_px) begin
+                    $display("FAIL T8: mode %0h width %0d step %0d x %0d bytes = %0d, expected a %0d-cycle window",
+                             mm, w, pf_step, bytes_per_line,
+                             pf_step * bytes_per_line, want_px);
+                    fail++;
+                end
+            end
+        end
+        // ...and it does not depend on the width at all, only on how many
+        // hi-res pixels a byte carries.
+        m = 4'h2; #1; is_char = t_is_char; bpp = t_bpp; px_width = t_px_width;
+        pf_width = 2'd1; #1; want_px = int'(pf_step);
+        pf_width = 2'd3; #1;
+        if (int'(pf_step) != want_px) begin
+            $display("FAIL T8b: mode 2 step changed with width (%0d -> %0d)",
+                     want_px, pf_step);
+            fail++;
+        end
 
         if (fail == 0) $display("tb_antic_pf_geom: all checks PASS");
         else           $display("tb_antic_pf_geom: %0d FAIL", fail);

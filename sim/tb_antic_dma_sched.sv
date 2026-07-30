@@ -43,7 +43,7 @@ module tb_antic_dma_sched;
     );
 
     wire       pf_on;
-    wire [7:0] bytes_per_line;
+    wire [7:0] bytes_per_line, pf_step;
     wire [6:0] dma_start, dma_stop, disp_start, disp_stop;
     wire [8:0] px_start, px_stop;
     wire [2:0] hs_delay;
@@ -52,7 +52,7 @@ module tb_antic_dma_sched;
     antic_pf_geom u_geom (
         .pf_width(pf_width), .hscrol_en(1'b0), .hscrol(4'd0),
         .is_char(is_char), .bpp(bpp), .px_width(px_width),
-        .pf_on(pf_on), .bytes_per_line(bytes_per_line),
+        .pf_on(pf_on), .bytes_per_line(bytes_per_line), .pf_step(pf_step),
         .dma_start(dma_start), .dma_stop(dma_stop),
         .disp_start(disp_start), .disp_stop(disp_stop),
         .px_start(px_start), .px_stop(px_stop),
@@ -68,7 +68,7 @@ module tb_antic_dma_sched;
         .clk(clk), .rst(rst), .line_start(line_start), .tick(tick),
         .hcount(hcount), .first_row(first_row), .is_char(is_char),
         .is_display(is_display), .bytes_per_line(bytes_per_line),
-        .dma_start(dma_start), .span(span), .lms(1'b1),
+        .dma_start(dma_start), .step(pf_step), .lms(1'b1),
         .dl_dma_en(1'b1), .missile_dma_en(1'b0), .player_dma_en(1'b0),
         .steal(steal)
     );
