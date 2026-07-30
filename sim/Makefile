@@ -1274,3 +1274,10 @@ antic_pf_source: build/tb_antic_pf_source.vvp
 build/tb_antic_pf_source.vvp: tb_antic_pf_source.sv $(HDL_DIR)/antic_pf_source.sv $(HDL_DIR)/antic_mode_tbl.sv | build
 	iverilog -g2012 -Wall -Wno-timescale -I$(HDL_DIR) -o $@ -s tb_antic_pf_source \
 	    $(HDL_DIR)/antic_pf_source.sv $(HDL_DIR)/antic_mode_tbl.sv tb_antic_pf_source.sv
+
+antic_color_sel: build/tb_antic_color_sel.vvp
+	@vvp -N $<
+
+build/tb_antic_color_sel.vvp: tb_antic_color_sel.sv $(HDL_DIR)/antic_color_sel.sv | build
+	iverilog -g2012 -Wall -Wno-timescale -I$(HDL_DIR) -o $@ -s tb_antic_color_sel \
+	    $(HDL_DIR)/antic_color_sel.sv tb_antic_color_sel.sv
