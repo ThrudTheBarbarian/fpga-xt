@@ -1357,3 +1357,10 @@ antic_pm_fetch: build/tb_antic_pm_fetch.vvp
 build/tb_antic_pm_fetch.vvp: tb_antic_pm_fetch.sv $(HDL_DIR)/antic_pm_fetch.sv | build
 	iverilog -g2012 -Wall -Wno-timescale -I$(HDL_DIR) -o $@ -s tb_antic_pm_fetch \
 	    $(HDL_DIR)/antic_pm_fetch.sv tb_antic_pm_fetch.sv
+
+gtia_obj_walk: build/tb_gtia_obj_walk.vvp
+	@vvp -N $<
+
+build/tb_gtia_obj_walk.vvp: tb_gtia_obj_walk.sv $(HDL_DIR)/gtia_obj_walk.sv | build
+	iverilog -g2012 -Wall -Wno-timescale -I$(HDL_DIR) -o $@ -s tb_gtia_obj_walk \
+	    $(HDL_DIR)/gtia_obj_walk.sv tb_gtia_obj_walk.sv
