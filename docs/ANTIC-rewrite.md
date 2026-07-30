@@ -58,35 +58,25 @@ and packs well — but the logic around them collapses by roughly 8×.
 Every module in this rewrite states its per-colour-clock clock budget in its
 header. A module that cannot say how many clocks it uses is not finished.
 
-## The complexity check: ANTIC was ~2000-3000 transistors
+## The complexity smell test: ANTIC was ~2000-3000 transistors
 
-If emulating an ANTIC effect needs something complicated, we have missed the
-mechanism and are doing it wrong. This is a falsifiable check, not a slogan.
+**This is a diagnostic, not a budget.** We are not trying to fit in 3,000 gates —
+an FPGA spends resources completely differently, and some things we need had no
+1979 analogue at all. The message is narrower and more useful:
 
-Work the budget. ANTIC's architectural state is roughly:
+> If modelling an ANTIC or GTIA behaviour needs a big complicated structure, we
+> have probably missed the mechanism.
 
-| | bits | | bits |
-|---|---|---|---|
-| DLIST pointer | 16 | DMACTL | 6 |
-| memory scan | 16 | CHACTL | 3 |
-| data shift register | 16 | HSCROL | 4 |
-| char name + glyph | 16 | VSCROL | 4 |
-| vertical counter | 9 | PMBASE | 6 |
-| horizontal counter | 8 | CHBASE | 6 |
-| instruction register | 8 | NMIST | 3 |
-| DCTR row counter | 4 | NMIEN | 2 |
+Why that carries weight: ANTIC's architectural state alone is ~127 bits, which as
+NMOS latches is most of the transistor budget. Whatever logic remained was on the
+order of a few hundred gates — a counter chain, some comparators, a small decode
+PLA, and a shift register with a variable rate. Every behaviour those chips
+exhibit *emerges from that*, so a faithful model should be able to emerge from
+something similarly small. When ours doesn't, that is information.
 
-**~127 bits.** As NMOS latches at 6-10 transistors per bit that is
-**760-1,270 transistors of state alone**, leaving roughly **120-560 gates for
-ALL the logic** at 4-6 transistors per gate.
-
-That budget buys: a counter chain, a handful of comparators, a small PLA for
-instruction decode, and a shift register with a variable shift rate. It does not
-buy anything else. So whenever a design here needs more than that, the mechanism
-has been missed.
-
-**Worked example — the sixteen "modes" are not sixteen cases.** ANTIC cannot
-afford sixteen decoders. The mode nibble indexes a handful of parameters:
+**Worked example — the sixteen "modes" are not sixteen cases.** ANTIC could not
+afford sixteen decoders, so it doesn't have them. The mode nibble selects a few
+parameters:
 
 * bits per pixel (1 or 2)
 * colour clocks per pixel (1, 2 or 4)
@@ -94,17 +84,28 @@ afford sixteen decoders. The mode nibble indexes a handful of parameters:
 * scanlines per row (1, 2, 3, 4, 8, 16)
 * the mode-3 descender quirk
 
-One small parameter table feeding **one** datapath. The current `pack_pair` is a
-sixteen-arm case statement with per-mode windowing — that is the smell this check
-exists to catch.
+One small parameter table feeding **one** datapath. Our `pack_pair` is a
+sixteen-arm case statement with per-mode windowing — that is the smell.
 
-The same reasoning applies to GTIA (a separate chip, similarly small): four
-player shift registers, four 2-bit missile registers, position comparators, a
-priority encoder and collision latches. A wide combinational priority cone
-resolving everything per pixel is not something that chip could contain.
+Likewise GTIA: four player shift registers, four 2-bit missile registers,
+position comparators, a priority encoder, collision latches. A wide combinational
+cone resolving every object per pixel is not something that chip could contain,
+which is independent confirmation — arrived at from silicon rather than from a
+timing report — that `color_resolver` is the wrong shape.
 
-**Rule of thumb:** if a module cannot be described as "a counter, a comparator, a
-shifter and a small decoder", stop and find the mechanism.
+**Where the analogy does NOT apply.** These are legitimate, not missed mechanisms:
+
+* the **line buffer** — ANTIC had none, it fed GTIA in real time into a CRT; we
+  target a framebuffer, so a buffer is a real structural difference
+* the **expander**, DDR traffic, clock-domain crossings, HDMI — no 1979 analogue
+* **pipelining for fmax** where ANTIC ran comfortably at 1.79 MHz
+
+So: apply the smell test to the *behavioural* modelling of ANTIC and GTIA. Do not
+apply it to the plumbing that gets pixels to a modern display.
+
+**Rule of thumb:** if the ANTIC/GTIA behaviour in a module cannot be described as
+"a counter, a comparator, a shifter and a small decoder", stop and look for the
+mechanism before writing more.
 
 ## What carries over: knowledge, not code
 
