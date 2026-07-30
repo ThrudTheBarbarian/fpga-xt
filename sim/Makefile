@@ -1260,3 +1260,10 @@ antic_mode_tbl: build/tb_antic_mode_tbl.vvp
 build/tb_antic_mode_tbl.vvp: tb_antic_mode_tbl.sv $(HDL_DIR)/antic_mode_tbl.sv | build
 	iverilog -g2012 -Wall -Wno-timescale -I$(HDL_DIR) -o $@ -s tb_antic_mode_tbl \
 	    $(HDL_DIR)/antic_mode_tbl.sv tb_antic_mode_tbl.sv
+
+antic_pixel_shift: build/tb_antic_pixel_shift.vvp
+	@vvp -N $<
+
+build/tb_antic_pixel_shift.vvp: tb_antic_pixel_shift.sv $(HDL_DIR)/antic_pixel_shift.sv $(HDL_DIR)/antic_mode_tbl.sv | build
+	iverilog -g2012 -Wall -Wno-timescale -I$(HDL_DIR) -o $@ -s tb_antic_pixel_shift \
+	    $(HDL_DIR)/antic_pixel_shift.sv $(HDL_DIR)/antic_mode_tbl.sv tb_antic_pixel_shift.sv
