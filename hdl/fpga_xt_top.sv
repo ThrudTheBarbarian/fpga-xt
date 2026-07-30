@@ -306,11 +306,21 @@ module fpga_xt_top (
     wire [7:0]  turbo_dout, fid_dout;
     wire        turbo_rw,   fid_rw;
     wire        turbo_stackop; wire [3:0] turbo_shigh;
-    // cpu_sel: 0 = turbo owns the bus, 1 = fidelity core owns it (PS-set via CTRL_SALLYRST bit1)
-    // Power-on init 2'b11 matches the fid-default reset of sallyrst[1] (xt_gp0_regs.sv).
-    (* ASYNC_REG = "TRUE" *) reg [1:0] cpusel_sync = 2'b11;
-    always_ff @(posedge clk_sally) cpusel_sync <= {cpusel_sync[0], sallyrst[1]};
-    wire        cpu_sel = cpusel_sync[1];
+    // cpu_sel: 0 = turbo owns the bus, 1 = fidelity core owns it.
+    //
+    // TIED TO FIDELITY.  The reset decision (docs/ANTIC-rewrite.md) drops the
+    // turbo core from the build but KEEPS the HDL, and this is how: with the
+    // select constant, every turbo_* mux folds, the core's outputs feed nothing
+    // and synthesis prunes the whole of xt6502 -- no instantiation is deleted
+    // and no wiring is disturbed, so putting it back is one line.
+    //
+    // The area is the point.  This design routed at 99.62% slice occupancy with
+    // 2,003 control sets while LUTs sat at 61%, which is packing starvation, and
+    // it is why an unrelated change misses the timing gate two builds in three.
+    // Turbo is a whole second 6502 that the machine does not use: fidelity is
+    // the boot default and the only core ACID timing is meaningful on.
+    localparam bit CPU_SEL_FIDELITY = 1'b1;
+    wire        cpu_sel = CPU_SEL_FIDELITY;
     wire        sally_rdy;
 
     // sally_clock wires
