@@ -1455,3 +1455,13 @@ antic_gtia: build/tb_antic_gtia.vvp
 build/tb_antic_gtia.vvp: tb_antic_gtia.sv $(ANTIC_GTIA_SRC) | build
 	iverilog -g2012 -Wall -Wno-timescale -I$(HDL_DIR) -o $@ -s tb_antic_gtia \
 	    $(ANTIC_GTIA_SRC) tb_antic_gtia.sv
+
+A8_CORE_SRC = $(HDL_DIR)/a8_core.sv $(ANTIC_GTIA_SRC) \
+	    $(HDL_DIR)/xt6502f/xt6502f.sv
+
+a8_core: build/tb_a8_core.vvp
+	@vvp -N $<
+
+build/tb_a8_core.vvp: tb_a8_core.sv $(A8_CORE_SRC) | build
+	iverilog -g2012 -Wall -Wno-timescale -I$(HDL_DIR) -I$(HDL_DIR)/xt6502f \
+	    -o $@ -s tb_a8_core $(A8_CORE_SRC) tb_a8_core.sv

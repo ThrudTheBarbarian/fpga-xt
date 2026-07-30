@@ -263,6 +263,7 @@ Steps 1-4 are built and green. Thirteen modules, each with its own testbench in
 | `antic_reg_file` | 8 | ANTIC's registers, $D400-$D40F, and WSYNC |
 | `gtia_reg_file` | 7 | GTIA's registers, $D000-$D01F |
 | `antic_gtia` | 8 | the pair as one addressable block, driven over the CPU bus |
+| `a8_core` | 3 | the fid CPU joined to the display chips |
 
 Two structural decisions were forced by evidence rather than chosen:
 
@@ -529,10 +530,37 @@ signal: a stolen cycle is ANTIC using the bus for its own fetch, WSYNC is the CP
 asking to be parked until the end of the line. A core needs both, for different
 reasons, and `antic_dmapattern` and `antic_wsync` test them apart.
 
-Next: attach the fid core, which is the point ACID can finally run against this
-rather than against decoded oracles, then the drop of turbo / `math_cop` /
-banking and a re-measure of slice occupancy. Nothing is wired to the CPU yet, so
-no ACID score has moved.
+### The CPU is attached
+
+`a8_core` joins `xt6502f` to `antic_gtia`, and `tb_a8_core` runs a hand-assembled
+6502 program: the core fetches it through the reset vector and the display comes
+up because the CPU executed stores to `$D4xx` and `$D0xx`. Nothing is poked from
+outside.
+
+The cycle stealing measures **52 machine cycles held per scanline with a normal
+mode E playfield, and 12 without** — which is 40 playfield fetches + 9 refresh +
+1 display list + 2 LMS operands, and 12 when only the last three remain. Those
+fall straight out of the DMA maps.
+
+Three things had to be right for that, and two of them were wrong first:
+
+* **`rdy` is a LEVEL for the fid core, not a pulse.** The turbo core takes `rdy`
+  as its clock enable and needs a pulse; the fid core paces itself from
+  `phi2_tick` and samples `rdy` at a commit slot inside the machine cycle. ANDing
+  `phi2_tick` into it means the core never reaches a commit with `rdy` high — it
+  sat on the reset vector for ever.
+* **`dma_steal` had to become a level too**, for the same reason: a tick-aligned
+  pulse is invisible at the commit slot, so the CPU lost nothing at all.
+* **HALT and RDY are composed differently**, which is the whole reason SALLY
+  exists rather than a stock 6502. WSYNC's RDY *cannot stall a write* — the CPU
+  is driving the bus and cannot let go. ANTIC's HALT is *unconditional*, because
+  a stock 6502's RDY could never guarantee ANTIC the cycle it needs. Getting
+  those the same way round is a silent-corruption bug: a write-immune HALT makes
+  ANTIC miss fetches only when the CPU happens to be storing, which is
+  data-dependent and would look like random display glitches.
+
+Next: run ACID against this, which is now possible for the first time, then the
+drop of turbo / `math_cop` / banking and a re-measure of slice occupancy.
 
 ## Open questions
 

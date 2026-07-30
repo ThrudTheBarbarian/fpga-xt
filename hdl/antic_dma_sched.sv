@@ -122,12 +122,20 @@ module antic_dma_sched (
     logic [8:0] pf_k;                       // how many bytes are done
     logic [8:0] pf_n;                       // how many this line needs
 
-    wire pf_hit = tick && (hcount == pf_at) &&
-                  (pstate == P_FIRST || pstate == P_PAIR_A ||
-                   pstate == P_PLAIN);
-    wire pf_hit_b = tick && (hcount == pf_at) && (pstate == P_PAIR_B);
+    // `steal` is a LEVEL across the machine cycle, not a pulse at the tick.
+    // The fid core is paced by phi2_tick and samples its rdy input at a commit
+    // slot well inside the cycle, so a tick-aligned pulse is invisible to it and
+    // the CPU loses nothing.  hcount and the walk state are both stable between
+    // ticks, so the comparison is valid throughout the cycle either way.
+    wire pf_want   = (hcount == pf_at) &&
+                     (pstate == P_FIRST || pstate == P_PAIR_A ||
+                      pstate == P_PLAIN);
+    wire pf_want_b = (hcount == pf_at) && (pstate == P_PAIR_B);
 
-    wire pf_steal = pf_hit || pf_hit_b;
+    wire pf_hit    = tick && pf_want;
+    wire pf_hit_b  = tick && pf_want_b;
+
+    wire pf_steal  = pf_want || pf_want_b;
 
     // ---- refresh ---------------------------------------------------------
     // Nine requests, four cycles apart.  A single pending bit IS the drop rule:
@@ -136,11 +144,12 @@ module antic_dma_sched (
     logic [6:0] ref_slot;
     logic       ref_pending;
 
-    wire ref_req  = tick && (ref_left != 4'd0) && (hcount == ref_slot);
-    wire ref_want = ref_pending || ref_req;
-    wire ref_steal = tick && ref_want && !hdr_steal && !pf_steal;
+    wire ref_due   = (ref_left != 4'd0) && (hcount == ref_slot);
+    wire ref_req   = tick && ref_due;
+    wire ref_want  = ref_pending || ref_due;
+    wire ref_steal = ref_want && !hdr_steal && !pf_steal;
 
-    assign steal = tick && (hdr_steal || pf_steal || ref_steal);
+    assign steal = hdr_steal || pf_steal || ref_steal;
 
     always_ff @(posedge clk or posedge rst) begin
         if (rst) begin
