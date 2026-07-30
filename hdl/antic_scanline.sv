@@ -186,7 +186,7 @@ module antic_scanline (
         .colbk(colbk), .colpf0(colpf0), .colpf1(colpf1),
         .colpf2(colpf2), .colpf3(colpf3),
         .rd_idx(rd_idx), .rd_data(rd_data), .rd_code(rd_code),
-        .lb_wr(pf_wr), .lb_color(pf_color),
+        .lb_wr(pf_wr), .lb_color(pf_color), .lb_pf_src(),
         .busy(), .done()
     );
 

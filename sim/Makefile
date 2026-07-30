@@ -1378,3 +1378,14 @@ gtia_collide: build/tb_gtia_collide.vvp
 build/tb_gtia_collide.vvp: tb_gtia_collide.sv $(HDL_DIR)/gtia_collide.sv | build
 	iverilog -g2012 -Wall -Wno-timescale -I$(HDL_DIR) -o $@ -s tb_gtia_collide \
 	    $(HDL_DIR)/gtia_collide.sv tb_gtia_collide.sv
+
+gtia_stage: build/tb_gtia_stage.vvp
+	@vvp -N $<
+
+build/tb_gtia_stage.vvp: tb_gtia_stage.sv $(HDL_DIR)/gtia_stage.sv \
+	    $(HDL_DIR)/gtia_obj_walk.sv $(HDL_DIR)/gtia_priority.sv \
+	    $(HDL_DIR)/gtia_collide.sv $(HDL_DIR)/antic_color_sel.sv | build
+	iverilog -g2012 -Wall -Wno-timescale -I$(HDL_DIR) -o $@ -s tb_gtia_stage \
+	    $(HDL_DIR)/gtia_stage.sv $(HDL_DIR)/gtia_obj_walk.sv \
+	    $(HDL_DIR)/gtia_priority.sv $(HDL_DIR)/gtia_collide.sv \
+	    $(HDL_DIR)/antic_color_sel.sv tb_gtia_stage.sv

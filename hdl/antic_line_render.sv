@@ -49,6 +49,9 @@ module antic_line_render (
     // ---- line buffer write port ------------------------------------------
     output wire        lb_wr,
     output wire  [7:0] lb_color,
+    // GTIA needs the SOURCE, not the colour: priority and collisions are
+    // decided on which playfield this is, and only then coloured.
+    output wire  [2:0] lb_pf_src,
 
     output logic       busy,
     output logic       done            // 1-clk when the last byte is emitted
@@ -115,6 +118,7 @@ module antic_line_render (
     assign sh_tick  = (state == S_EMIT) && !exhausted && emit_en;
     assign lb_wr    = (state == S_EMIT) && !exhausted && emit_en;
     assign lb_color = pixel_color;
+    assign lb_pf_src = pf_src;
 
     always_ff @(posedge clk or posedge rst) begin
         if (rst) begin
