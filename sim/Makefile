@@ -1350,3 +1350,10 @@ build/tb_antic_scanline.vvp: tb_antic_scanline.sv $(HDL_DIR)/antic_scanline.sv \
 	    $(HDL_DIR)/antic_pixel_shift.sv $(HDL_DIR)/antic_pf_source.sv \
 	    $(HDL_DIR)/antic_color_sel.sv $(HDL_DIR)/antic_char_ctl.sv \
 	    tb_antic_scanline.sv
+
+antic_pm_fetch: build/tb_antic_pm_fetch.vvp
+	@vvp -N $<
+
+build/tb_antic_pm_fetch.vvp: tb_antic_pm_fetch.sv $(HDL_DIR)/antic_pm_fetch.sv | build
+	iverilog -g2012 -Wall -Wno-timescale -I$(HDL_DIR) -o $@ -s tb_antic_pm_fetch \
+	    $(HDL_DIR)/antic_pm_fetch.sv tb_antic_pm_fetch.sv
