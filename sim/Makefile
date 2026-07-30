@@ -1297,3 +1297,11 @@ antic_beam: build/tb_antic_beam.vvp
 build/tb_antic_beam.vvp: tb_antic_beam.sv $(HDL_DIR)/antic_beam.sv | build
 	iverilog -g2012 -Wall -Wno-timescale -I$(HDL_DIR) -o $@ -s tb_antic_beam \
 	    $(HDL_DIR)/antic_beam.sv tb_antic_beam.sv
+
+antic_dl: build/tb_antic_dl.vvp
+	@vvp -N $<
+
+build/tb_antic_dl.vvp: tb_antic_dl.sv $(HDL_DIR)/antic_dl.sv \
+	    $(HDL_DIR)/antic_mode_tbl.sv | build
+	iverilog -g2012 -Wall -Wno-timescale -I$(HDL_DIR) -o $@ -s tb_antic_dl \
+	    $(HDL_DIR)/antic_dl.sv $(HDL_DIR)/antic_mode_tbl.sv tb_antic_dl.sv
