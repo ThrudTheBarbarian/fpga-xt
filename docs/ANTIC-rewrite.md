@@ -259,6 +259,7 @@ Steps 1-4 are built and green. Thirteen modules, each with its own testbench in
 | `gtia_stage` | 8 | one colour clock of GTIA, schedule measured |
 | `gtia_special` | 9 | GTIA modes 9/10/11 colour decode |
 | `antic_nmi` | 9 | NMIEN, NMIST and the /NMI line |
+| `antic_dma_sched` | 50 maps | which machine cycles ANTIC takes from the CPU |
 
 Two structural decisions were forced by evidence rather than chosen:
 
@@ -445,21 +446,25 @@ They also found a real bug in what was already built:
   320 bytes instead of 40. No existing test caught it, because every display
   list in the testbenches used one-row modes.
 
-**The schedule model now reproduces 38 of the 50 maps exactly** — fixed slots,
-playfield stepping, and one refresh rule: nine requests every 4 cycles from 25,
-the playfield has absolute priority, a blocked refresh slips to the next free
-cycle, and one still seeking when the next request arrives is dropped. That
-accounts for every refresh position in every map, including the extreme case
-where a narrow character first row leaves exactly two refreshes alive.
+`antic_dma_sched` reproduces **all 50 maps exactly** — fixed slots, playfield
+stepping, and one refresh rule: nine requests every 4 cycles from 25, the
+playfield has absolute priority, a blocked refresh slips to the next free cycle,
+and one still seeking when the next request arrives is dropped. That accounts for
+every refresh position in every map, including the extreme case where a narrow
+character first row leaves exactly two refreshes alive — the one at 25 before the
+playfield starts and one that finally lands at 91 after it ends.
 
-**Still open, and deliberately not guessed at:** the *phase* of the fetch pairs
-on character first rows. Mode 6 places its first pair at `dma_start+3`, mode 2 at
-`dma_start+2`; each reading fits its own map and neither fits both, and refresh
-collisions blur the evidence exactly where it would settle it. The RTL module is
-not written until that is resolved — a schedule that is 76% right would be
-precisely the plausible-but-wrong modelling this rewrite exists to remove. It
-needs a hardware measurement, or a test case whose playfield is sparse enough
-that no refresh collides.
+This is the bus-master half of ANTIC and is not optional: `dma_steal` becomes
+/HALT to the core, so without it the CPU runs unimpeded and every cycle-timing
+test is wrong however correct the picture is. It is a separate module from the
+fetchers on purpose — the fetchers decide *what* is read, this decides *which*
+machine cycle the CPU loses, and `antic_dmapattern` tests the second without
+caring about the first.
+
+The character first-row phase, which looked like an unsettleable constant, turned
+out to be `step/2 + 1` — modes 2/3/4/5 and modes 6/7 are exactly the character
+modes with step 2 and step 4, and those are the only two steps a character mode
+can have.
 
 Next: the register file (which is what lets any of this be measured against ACID
 at all), then the drop of turbo / `math_cop` / banking. Nothing is wired to the

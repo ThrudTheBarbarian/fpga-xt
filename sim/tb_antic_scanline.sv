@@ -73,7 +73,7 @@ module tb_antic_scanline;
     wire [7:0]  pm_data, pm_mask;
     wire [15:0] m_pf, p_pf, m_pl, p_pl;
     wire [7:0]  nmist;
-    wire        nmi_n;
+    wire        nmi_n, dma_steal;
 
     // GRAFM and GRAFP0-3 have ONE copy each, written either by P/M DMA or by
     // the CPU — whoever wrote last wins.  That is the register file's job, and
@@ -114,7 +114,7 @@ module tb_antic_scanline;
         .lb_wr(lb_wr), .lb_color(lb_color), .lb_line_start(lb_line_start),
         .pm_we(pm_we), .pm_obj(pm_obj), .pm_data(pm_data), .pm_mask(pm_mask),
         .m_pf(m_pf), .p_pf(p_pf), .m_pl(m_pl), .p_pl(p_pl),
-        .nmist(nmist), .nmi_n(nmi_n),
+        .nmist(nmist), .nmi_n(nmi_n), .dma_steal(dma_steal),
         .dli(dli), .dlpc(dlpc)
     );
 

@@ -27,8 +27,9 @@ identically.
 
 ## The model, and how far it goes
 
-**38 of the 50 maps are reproduced exactly** by the rules below. The residue is
-confined to character *first* rows and is characterised at the end.
+**All 50 maps are reproduced exactly** by the rules below — every display mode,
+both playfield widths, first and later scanlines. `antic_dma_sched` implements
+them and `tb_antic_dma_sched` checks against these masks on every run.
 
 **Fixed slots.** Cycle 0 missile DMA, 1 display list instruction, 2-5 player
 DMA, 6-7 the LMS operands. The display list and its operands are first-row only.
@@ -54,12 +55,12 @@ slips" produce the *same union* wherever a single collision is involved, so the
 maps cannot distinguish them and it does not matter for the question these maps
 answer.
 
-### What is not yet reproduced
+### Character first rows
 
-Character **first** rows, where each character costs two fetches. The maps show
-an isolated fetch at the window start, then **adjacent pairs** at `step`
-intervals, then an isolated fetch at the end — a name, then (glyph, next name)
-pairs, then the last glyph. `mode6a` makes it plain once refresh is subtracted:
+Each character costs two fetches. The maps show an isolated fetch at the window
+start, then **adjacent pairs** at `step` intervals, then an isolated fetch at the
+end — a name, then (glyph, next name) pairs, then the last glyph. `mode6a` makes
+it plain once refresh is subtracted:
 
 ```
 26   (30,31) (34,35) (38,39) ... (58,59)   (61,62) (65,66) ... (85,86)   89
@@ -68,12 +69,15 @@ pairs, then the last glyph. `mode6a` makes it plain once refresh is subtracted:
 with the pairs before cycle 57 displaced one cycle by refresh and those after it
 sitting at their natural 29, 33 … 85.
 
-The unresolved part is the **phase**: mode 6 places its first pair at
-`dma_start+3` while mode 2 places its at `dma_start+2`. Both readings fit their
-own map and neither fits both, and the refresh collisions blur the evidence
-exactly where it would settle the question. Rather than pick one and have it be
-plausible-but-wrong, this is left open — it needs a hardware measurement, or a
-test whose playfield is sparse enough that no refresh collides.
+The pairs begin at `dma_start + step/2 + 1`. This looked at first like a free
+constant that the maps could not settle — modes 2/3/4/5 want 2 and modes 6/7 want
+3, each fitting its own map and neither fitting both. It is not free: those are
+exactly the character modes with `step` 2 and `step` 4.
+
+Two data points would normally be a poor basis for a formula. Here it is complete
+coverage rather than extrapolation: the character modes are 2, 3, 4, 5, 6 and 7,
+they pack either 8 or 16 hi-res pixels per byte, so `step` is 2 or 4 and never
+anything else. There is no third case to be wrong about.
 
 ## The maps
 

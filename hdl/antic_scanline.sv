@@ -116,6 +116,7 @@ module antic_scanline (
     output wire [15:0] p_pl,
 
     // ---- out -------------------------------------------------------------
+    output wire        dma_steal,      // this machine cycle belongs to ANTIC
     output wire [7:0]  nmist,          // $D40F read
     output wire        nmi_n,          // active low, to the CPU
     output wire        dli,
@@ -194,6 +195,26 @@ module antic_scanline (
         .disp_start(disp_start), .disp_stop(disp_stop),
         .px_start(px_start), .px_stop(px_stop),
         .hs_delay(hs_delay), .hs_fine(hs_fine)
+    );
+
+    // ---- which cycles ANTIC takes from the CPU ---------------------------
+    // This is the bus-master half of ANTIC: `dma_steal` becomes /HALT to the
+    // core.  It is a separate module from the fetchers on purpose — the
+    // fetchers decide WHAT is read, this decides WHICH machine cycle the CPU
+    // loses, and antic_dmapattern tests the second without caring about the
+    // first.
+    wire [7:0] sched_span = (dmactl[1:0] == 2'd1) ? 8'd64 :
+                            (dmactl[1:0] == 2'd2) ? 8'd80 : 8'd96;
+
+    antic_dma_sched u_sched (
+        .clk(clk), .rst(rst),
+        .line_start(line_start), .tick(tick), .hcount(hcount),
+        .first_row(dl_first_row), .is_char(g_is_char),
+        .is_display(dl_line_valid), .bytes_per_line(bytes_per_line),
+        .dma_start(dma_start), .span(sched_span), .lms(1'b1),
+        .dl_dma_en(dmactl[5]), .missile_dma_en(dmactl[2]),
+        .player_dma_en(dmactl[3]),
+        .steal(dma_steal)
     );
 
     // ---- memory handoff: display list, then P/M DMA, then playfield ------
