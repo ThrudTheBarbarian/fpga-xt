@@ -1,4 +1,23 @@
 #!/bin/sh
+#
+# NOT VALID YET — DO NOT TRUST RESULTS FROM THIS HARNESS.
+#
+# It runs the test image with NO OS ROM.  The ACID framework installs handlers
+# in the OS vectors (VDSLST, VVBLKI) and relies on the OS ROM's NMI dispatcher
+# at $FFFA to read NMIST and jump through them.  The XEX does not cover $FFFA —
+# antic_vcount's segments are $1A20-$1F30, $2000-$21F2, $02E0-$02E1 — so with
+# no ROM that vector is RAM, reads as zero, and the first DLI or VBI kills the
+# machine.  There is also no VBI, no SIO and no E: handler.
+#
+# A result out of this harness therefore means nothing, and it will still print
+# a confident PASS or FAIL, which is worse than printing nothing.
+#
+# What it needs to be real: RAM + the XL OS ROM at $C000 (rsrc/atari-xl.rom) +
+# PIA for PORTB banking (pia_regs.sv) + POKEY (pokey.sv) + the display chips,
+# cold-booted, with the XEX injected afterwards the way loader/test/freertos/
+# progs/xexload.c does it on the board.  Every piece is already in the repo.
+#
+
 # acid-sim.sh — run ACID800 tests against the ANTIC rewrite in SIMULATION.
 #
 # This is not the hardware sweep (tools/acid-sweep.sh).  It runs each test
