@@ -31,7 +31,7 @@ module tb_antic_line_render;
 
     antic_line_render dut (
         .clk(clk), .rst(rst),
-        .start(start), .mode(mode), .scan_addr_in(scan_addr_in), .row(row),
+        .start(start), .emit_en(1'b1), .mode(mode), .scan_addr_in(scan_addr_in), .row(row),
         .chbase(chbase), .chactl(chactl), .bytes_per_line(bytes_per_line),
         .colbk(colbk), .colpf0(colpf0), .colpf1(colpf1),
         .colpf2(colpf2), .colpf3(colpf3),

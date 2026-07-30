@@ -29,6 +29,14 @@
 //     2..9 from glyph rows 0..7.  Ordinary characters use rows 0..7 and are
 //     BLANK on rows 8 and 9.
 //
+// EMISSION IS PACED BY THE BEAM, fetching is not.  emit_en pulses once per
+// hi-res pixel and only inside the live display window, so the playfield edges
+// move when DMACTL or HSCROL is written partway along a scanline — that is
+// pfstarttiming, pfstoptiming and hscrolbug.  Fetching runs at fabric speed
+// ahead of it, so the shifter always has a byte waiting.  A line whose fetch is
+// wider than its window (scrolling) simply never finishes; `start` restarts the
+// walk from any state, which is how the next scanline reclaims it.
+//
 // CLOCK BUDGET: 2 clocks per fetch plus one per hi-res pixel.  Worst case is a
 // character mode at 40 characters: 40*(2+2) fetch clocks + 320 pixel clocks =
 // ~480 of the ~6,300 clocks in a 1.79 MHz scanline.
@@ -40,7 +48,8 @@ module antic_line_render (
     input  wire        rst,
 
     // ---- what to draw ---------------------------------------------------
-    input  wire        start,          // 1-clk: render a line
+    input  wire        start,          // 1-clk: render a line (restarts from any state)
+    input  wire        emit_en,        // 1-clk per hi-res pixel, gated by the window
     input  wire [3:0]  mode,
     input  wire [15:0] scan_addr_in,   // memory scan pointer for this line
     input  wire [4:0]  row,            // row within the block, 0..rows-1
@@ -158,8 +167,8 @@ module antic_line_render (
     // pixel of every byte was written twice and the whole line shifted by one.
     // Driving both from the same condition puts the line-buffer capture and the
     // shifter advance on the same clock edge.
-    assign sh_tick  = (state == S_EMIT) && !exhausted;
-    assign lb_wr    = (state == S_EMIT) && !exhausted;
+    assign sh_tick  = (state == S_EMIT) && !exhausted && emit_en;
+    assign lb_wr    = (state == S_EMIT) && !exhausted && emit_en;
     assign lb_color = pixel_color;
 
 
@@ -177,20 +186,20 @@ module antic_line_render (
             sh_load <= 1'b0;
             done    <= 1'b0;
 
+            if (start) begin
+                // A restart, not just an idle-state entry: the previous line
+                // may still have pixels left over when the window closed.
+                scan_q <= scan_addr_in;
+                left   <= bytes_per_line;
+                busy   <= 1'b1;
+                // if/else rather than a ternary: assigning an enum from a
+                // conditional expression needs an explicit cast.
+                if (!is_display)  state <= S_DONE;
+                else if (is_char) state <= S_NAME;
+                else              state <= S_DATA;
+            end else
             case (state)
-                S_IDLE: begin
-                    busy <= 1'b0;
-                    if (start) begin
-                        scan_q <= scan_addr_in;
-                        left   <= bytes_per_line;
-                        busy   <= 1'b1;
-                        // if/else rather than a ternary: assigning an enum
-                        // from a conditional expression needs an explicit cast.
-                        if (!is_display)  state <= S_DONE;
-                        else if (is_char) state <= S_NAME;
-                        else              state <= S_DATA;
-                    end
-                end
+                S_IDLE: busy <= 1'b0;
 
                 // ---- character name ------------------------------------
                 S_NAME:   state <= S_NAME_D;

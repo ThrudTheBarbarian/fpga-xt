@@ -1321,3 +1321,12 @@ antic_char_ctl: build/tb_antic_char_ctl.vvp
 build/tb_antic_char_ctl.vvp: tb_antic_char_ctl.sv $(HDL_DIR)/antic_char_ctl.sv | build
 	iverilog -g2012 -Wall -Wno-timescale -I$(HDL_DIR) -o $@ -s tb_antic_char_ctl \
 	    $(HDL_DIR)/antic_char_ctl.sv tb_antic_char_ctl.sv
+
+antic_pf_fetch: build/tb_antic_pf_fetch.vvp
+	@vvp -N $<
+
+build/tb_antic_pf_fetch.vvp: tb_antic_pf_fetch.sv $(HDL_DIR)/antic_pf_fetch.sv \
+	    $(HDL_DIR)/antic_mode_tbl.sv $(HDL_DIR)/antic_char_ctl.sv | build
+	iverilog -g2012 -Wall -Wno-timescale -I$(HDL_DIR) -o $@ -s tb_antic_pf_fetch \
+	    $(HDL_DIR)/antic_pf_fetch.sv $(HDL_DIR)/antic_mode_tbl.sv \
+	    $(HDL_DIR)/antic_char_ctl.sv tb_antic_pf_fetch.sv

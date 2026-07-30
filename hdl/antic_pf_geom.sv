@@ -46,6 +46,15 @@
 // cycle 1 and nine refresh cycles at 25, 29 ... 57, which the DMA schedule
 // module will need later.
 //
+// WHERE HSCROL PUTS THE PICTURE.  The scroll is one adder on the existing start
+// comparator, not a "discard some of the middle" mechanism: with scrolling on,
+// the display begins at the WIDER window's start plus HSCROL.  So HSCROL=0 sits
+// 16 colour clocks right of the unscrolled position and HSCROL=15 brings it back
+// to within half a colour clock of it, giving the full 16-colour-clock range the
+// extra fetch pays for — and explaining why merely enabling the scroll bit moves
+// the display.  One adder is the small answer; "display the middle 256 of the
+// fetched 320" is not.  antic_hscrolbug is the arbiter.
+//
 // THE 320 INVARIANT ties this to the mode table and is the most useful
 // cross-check in the whole design:
 //     bytes_per_line * (8/bpp) * px_width == hi-res pixels
@@ -74,8 +83,10 @@ module antic_pf_geom (
     output logic [7:0] bytes_per_line,
     output logic [6:0] dma_start,      // first machine cycle of playfield DMA
     output logic [6:0] dma_stop,       // one past the last fetch cycle
-    output logic [6:0] disp_start,     // first machine cycle displayed
+    output logic [6:0] disp_start,     // first machine cycle displayed, unscrolled
     output logic [6:0] disp_stop,      // one past the last displayed
+    output logic [8:0] px_start,       // first hi-res pixel displayed, HSCROL applied
+    output logic [8:0] px_stop,        // one past the last
     output wire  [2:0] hs_delay,       // HSCROL in whole machine cycles
     output wire        hs_fine         // ...and the odd colour clock
 );
@@ -142,6 +153,22 @@ module antic_pf_geom (
     always_comb begin
         disp_start = win_start(pf_width);
         disp_stop  = win_stop(pf_width);
+    end
+
+    // The live display window in hi-res pixels: four per machine cycle, plus the
+    // odd colour clock HSCROL can add.  The consumer compares the beam against
+    // THIS every pixel, so a mid-line DMACTL or HSCROL write moves the edge
+    // mid-line.
+    logic [6:0] eff_start_cyc;
+    always_comb begin
+        if (hscrol_en && pf_on) eff_start_cyc = win_start(fetch_width) + {4'd0, hs_delay};
+        else                    eff_start_cyc = win_start(pf_width);
+    end
+
+    always_comb begin
+        px_start = {eff_start_cyc, 2'b00}
+                 + ((hscrol_en && pf_on) ? {7'd0, hs_fine, 1'b0} : 9'd0);
+        px_stop  = px_start + {2'd0, (win_stop(pf_width) - win_start(pf_width)), 2'b00};
     end
 
     // Character modes start fetching two cycles early: name, then glyph.
