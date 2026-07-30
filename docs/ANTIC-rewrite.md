@@ -113,6 +113,19 @@ and sim-verified over 2026-07-28/29:
 
 Missing: char-mode decode migration, the line buffer itself, and the expander.
 
+## Which tests hit which module
+
+**See `docs/ANTIC-rewrite-tests.md`** — every ANTIC and GTIA test mapped to the
+module that must satisfy it, with what it actually checks and what is already
+known about each failure. Read the row for a module BEFORE writing that module.
+
+That file also carries the ordering these dependencies imply, which differs from
+the naive one: mode decode first (static, no CPU), then per-colour-clock
+playfield start/stop/HSCROL as one mechanism, then the P/M DMA hoist (which
+unblocks two tests AND a limitation in the collision engine), then P/M geometry,
+special modes, DLI emission, and finally the DMA schedule — the least understood,
+left until the surrounding model is trustworthy.
+
 ## Test strategy
 
 **Static first.** Before any CPU is involved: preload memory with a known
