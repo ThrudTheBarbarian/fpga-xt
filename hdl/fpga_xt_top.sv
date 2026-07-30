@@ -1964,31 +1964,74 @@ module fpga_xt_top (
     wire        math_done_we   = 1'b0;
 `endif
 
-    math_cop #(.STACK_BASE(32'h2080_0000), .APERTURE_LOG2(13)) u_math_cop (
-        .clk          (clk_sys),       .rst        (rst_sys),
-        .clk_cpu      (clk_sally),
-        .cpu_addr     (scrn_cpu_addr), .cpu_we     (math_cpu_we), .cpu_wdata (scrn_cpu_wdata),
-        .cpu_rden     (sally_rdy),     // freeze the page read register while the CPU stalls
-        .cpu_rdata    (math_cpu_rdata),
-        .exec_we      (math_exec_we),
-        .chunk_wval   (scrn_bank_wval), .chunk_we  (math_chunk_we),
-        .math_done    (math_done),
-        .math_busy    (math_busy),
-        .chunk_ready  (math_chunk_ready),
-        .evt_data     (math_evt_data),  .evt_pop   (math_evt_pop),
-        .evt_irq      (math_irq),
-        .done_word    (math_done_word), .done_we   (math_done_we),
-        .stat_word    (math_stat_word),
-        .e_axi_araddr (mc_araddr),  .e_axi_arlen (mc_arlen),  .e_axi_arsize (mc_arsize),
-        .e_axi_arburst(mc_arburst), .e_axi_arvalid(mc_arvalid),.e_axi_arready(mc_arready),
-        .e_axi_rdata  (mc_rdata),   .e_axi_rvalid(mc_rvalid),  .e_axi_rlast (mc_rlast),
-        .e_axi_rready (mc_rready),
-        .e_axi_awaddr (mc_awaddr),  .e_axi_awlen (mc_awlen),  .e_axi_awsize (mc_awsize),
-        .e_axi_awburst(mc_awburst), .e_axi_awvalid(mc_awvalid),.e_axi_awready(mc_awready),
-        .e_axi_wdata  (mc_wdata),   .e_axi_wstrb (mc_wstrb),  .e_axi_wlast (mc_wlast),
-        .e_axi_wvalid (mc_wvalid),  .e_axi_wready(mc_wready),
-        .e_axi_bvalid (mc_bvalid),  .e_axi_bready(mc_bready)
-    );
+    // ================================================================
+    // Math coprocessor — NOT BUILT
+    // ================================================================
+    // Dropped with the turbo core: the maths co-pro and the code/data banking
+    // exist for supersally and nothing else uses them, so they go together
+    // (docs/ANTIC-rewrite.md, the reset decision).  Gated by a generate rather
+    // than deleted -- the instantiation and every connection stay exactly as
+    // they were, so bringing it back is one bit.
+    //
+    // A module with live AXI master outputs is NOT pruned by tying its inputs
+    // off, which is why this needs the generate: the engine would sit there
+    // occupying slices in a design already at 99.62%.
+    localparam bit ENABLE_MATH_COP = 1'b0;
+
+    generate
+    if (ENABLE_MATH_COP) begin : g_math_cop
+        math_cop #(.STACK_BASE(32'h2080_0000), .APERTURE_LOG2(13)) u_math_cop (
+            .clk          (clk_sys),       .rst        (rst_sys),
+            .clk_cpu      (clk_sally),
+            .cpu_addr     (scrn_cpu_addr), .cpu_we     (math_cpu_we), .cpu_wdata (scrn_cpu_wdata),
+            .cpu_rden     (sally_rdy),     // freeze the page read register while the CPU stalls
+            .cpu_rdata    (math_cpu_rdata),
+            .exec_we      (math_exec_we),
+            .chunk_wval   (scrn_bank_wval), .chunk_we  (math_chunk_we),
+            .math_done    (math_done),
+            .math_busy    (math_busy),
+            .chunk_ready  (math_chunk_ready),
+            .evt_data     (math_evt_data),  .evt_pop   (math_evt_pop),
+            .evt_irq      (math_irq),
+            .done_word    (math_done_word), .done_we   (math_done_we),
+            .stat_word    (math_stat_word),
+            .e_axi_araddr (mc_araddr),  .e_axi_arlen (mc_arlen),  .e_axi_arsize (mc_arsize),
+            .e_axi_arburst(mc_arburst), .e_axi_arvalid(mc_arvalid),.e_axi_arready(mc_arready),
+            .e_axi_rdata  (mc_rdata),   .e_axi_rvalid(mc_rvalid),  .e_axi_rlast (mc_rlast),
+            .e_axi_rready (mc_rready),
+            .e_axi_awaddr (mc_awaddr),  .e_axi_awlen (mc_awlen),  .e_axi_awsize (mc_awsize),
+            .e_axi_awburst(mc_awburst), .e_axi_awvalid(mc_awvalid),.e_axi_awready(mc_awready),
+            .e_axi_wdata  (mc_wdata),   .e_axi_wstrb (mc_wstrb),  .e_axi_wlast (mc_wlast),
+            .e_axi_wvalid (mc_wvalid),  .e_axi_wready(mc_wready),
+            .e_axi_bvalid (mc_bvalid),  .e_axi_bready(mc_bready)
+        );
+    end else begin : g_no_math_cop
+        assign math_cpu_rdata  = 8'h00;
+        assign math_done       = 1'b0;
+        assign math_busy       = 1'b0;
+        assign math_chunk_ready= 1'b0;
+        assign math_evt_data   = 9'd0;
+        assign math_irq        = 1'b0;
+        assign math_stat_word  = 32'd0;
+        assign mc_araddr       = '0;
+        assign mc_arlen        = 4'd0;
+        assign mc_arsize       = 3'd0;
+        assign mc_arburst      = 2'd0;
+        assign mc_arvalid      = 1'b0;
+        assign mc_rready       = 1'b0;
+        assign mc_awaddr       = '0;
+        assign mc_awlen        = 4'd0;
+        assign mc_awsize       = 3'd0;
+        assign mc_awburst      = 2'd0;
+        assign mc_awvalid      = 1'b0;
+        assign mc_wdata        = 32'd0;
+        assign mc_wstrb        = 4'd0;
+        assign mc_wlast        = 1'b0;
+        assign mc_wvalid       = 1'b0;
+        assign mc_bready       = 1'b0;
+    end
+    endgenerate
+
 
     gp0_axi_mux u_gp0_axi_mux (
         .clk        (clk_sys),      .rst        (rst_sys),
