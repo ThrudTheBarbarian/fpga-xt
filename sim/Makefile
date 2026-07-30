@@ -1253,3 +1253,10 @@ build/tb_antic_expander.vvp: tb_antic_expander.sv $(HDL_DIR)/antic_expander.sv $
 	iverilog -g2012 -Wall -Wno-timescale -I$(HDL_DIR) -o $@ -s tb_antic_expander \
 	    $(HDL_DIR)/antic_expander.sv $(HDL_DIR)/antic_line_buf.sv \
 	    $(HDL_DIR)/palette_lut.sv tb_antic_expander.sv
+
+antic_mode_tbl: build/tb_antic_mode_tbl.vvp
+	@vvp -N $<
+
+build/tb_antic_mode_tbl.vvp: tb_antic_mode_tbl.sv $(HDL_DIR)/antic_mode_tbl.sv | build
+	iverilog -g2012 -Wall -Wno-timescale -I$(HDL_DIR) -o $@ -s tb_antic_mode_tbl \
+	    $(HDL_DIR)/antic_mode_tbl.sv tb_antic_mode_tbl.sv
