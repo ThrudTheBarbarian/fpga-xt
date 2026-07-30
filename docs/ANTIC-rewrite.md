@@ -252,6 +252,10 @@ Steps 1-4 are built and green. Thirteen modules, each with its own testbench in
 | `antic_dl` | 10 | display list: 1K wrap, LMS, JVB, DCTR, VSCROL |
 | `antic_pf_geom` | 7 | playfield start / stop / width / HSCROL |
 | `antic_scanline` | 7 | the sequencer: all of the above, end to end |
+| `antic_pm_fetch` | 5 | player/missile DMA, hoisted to line start |
+| `gtia_obj_walk` | 7 | the serial object walk: 8 objects, one datapath |
+| `gtia_priority` | 10 | the priority walk, all four orderings |
+| `gtia_collide` | 8 | the sixteen collision latches |
 
 Two structural decisions were forced by evidence rather than chosen:
 
@@ -277,9 +281,41 @@ Two bugs were caught by the testbenches rather than by hardware:
   advanced a clock after `px_val` was sampled, so pixel 0 of every byte was
   written twice and the whole line shifted by one.
 
-Not yet started: P/M DMA and the object walk (step 5-6), special modes, DLI
-emission, the DMA schedule, and the drop of turbo / `math_cop` / banking.
-Nothing is wired to the CPU yet, so no ACID score has moved.
+### The GTIA stage needs a one-colour-clock pipeline
+
+Wiring the three GTIA walks into `antic_scanline` is not just connection, and the
+clock budget says why. Object presence changes once per **colour clock**, but the
+playfield source changes once per **hi-res pixel** — mode F has one pixel per
+hi-res pixel — so priority has to be resolved twice per colour clock:
+
+```
+  28 fabric clocks per colour clock at 100 MHz
+   8   object walk (once per colour clock)
+  10   priority walk for hi-res pixel A
+  10   priority walk for hi-res pixel B
+  ---
+  28   exactly the budget, with nothing spare
+```
+
+Two consequences, both to be settled before writing the stage:
+
+* **The priority walk should visit fewer sources.** It currently walks nine
+  candidates, but the playfield contributes exactly *one* source — plus PF3 when
+  the fifth-player bit is set and a missile is present. So the four playfield
+  steps collapse to at most two, giving 4 players + 2 playfield + background =
+  7 steps + settle = 8, and 8 + 8 + 8 = 24 of 28. That is also the smaller
+  circuit and the more faithful one; walking four playfield candidates when only
+  one can be present is exactly the kind of thing the smell test is for.
+* **The stage must be pipelined by one colour clock,** consuming a colour clock's
+  pair of playfield pixels and emitting the resolved pair one colour clock later,
+  with the line buffer write delayed to match. Real GTIA has such a delay. The
+  thing to avoid is resolving at some instant chosen to make a test pass — that
+  is the mistake the whole rewrite exists to undo.
+
+Not yet started: the GTIA stage integration above, special modes (`vdelay`,
+`psuedomodee`, `collision2`, GTIA modes 9/10/11), DLI emission, the DMA schedule,
+and the drop of turbo / `math_cop` / banking. Nothing is wired to the CPU yet, so
+no ACID score has moved.
 
 ## Open questions
 
