@@ -1305,3 +1305,11 @@ build/tb_antic_dl.vvp: tb_antic_dl.sv $(HDL_DIR)/antic_dl.sv \
 	    $(HDL_DIR)/antic_mode_tbl.sv | build
 	iverilog -g2012 -Wall -Wno-timescale -I$(HDL_DIR) -o $@ -s tb_antic_dl \
 	    $(HDL_DIR)/antic_dl.sv $(HDL_DIR)/antic_mode_tbl.sv tb_antic_dl.sv
+
+antic_pf_geom: build/tb_antic_pf_geom.vvp
+	@vvp -N $<
+
+build/tb_antic_pf_geom.vvp: tb_antic_pf_geom.sv $(HDL_DIR)/antic_pf_geom.sv \
+	    $(HDL_DIR)/antic_mode_tbl.sv | build
+	iverilog -g2012 -Wall -Wno-timescale -I$(HDL_DIR) -o $@ -s tb_antic_pf_geom \
+	    $(HDL_DIR)/antic_pf_geom.sv $(HDL_DIR)/antic_mode_tbl.sv tb_antic_pf_geom.sv
