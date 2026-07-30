@@ -26,11 +26,38 @@ Load: `./vivado/jtag-valhalla.sh reset` then `... load`.
 
 `sallyrst` picks who drives the CPU-facing timing, and it MATTERS which:
 
-| value | rdy/steal/NMI | pass |
-|---|---|---|
-| **`$06`** | legacy timing machine (rewrite draws) | **31** |
-| `$0A` | the rewrite | 23 |
-| `$0E` | **do not use** — both bits set | 14 |
+| value | rdy/steal/NMI | VCOUNT the CPU reads | pass |
+|---|---|---|---|
+| **`$06`** | legacy timing machine | the timing machine's | **30-31** |
+| `$0A` | the rewrite | the rewrite's | 24 |
+| `$0E` | **do not use** — both bits set | incoherent | 14 |
+
+### NEITHER configuration is coherent, and this is the key thing to know
+
+`$06` scores best, but it is **two rasters running out of phase vertically**.
+The CPU reads the timing machine's VCOUNT while the picture and the collisions
+come from the rewrite's beam, and nothing aligns their line counters — the
+rewrite's `antic_beam` free-runs from `tick`, and no frame-start pulse ties it
+to the legacy raster.
+
+Measured directly, with a hand-assembled probe (`pmVBL.xex`) that does exactly
+what ACID's VBLANK check does — wait VCOUNT 124, park all eight objects
+overlapping, HITCLR, wait VCOUNT 0, read M0PL:
+
+```
+sallyrst $06   M0PL = $0F     collisions recorded "during vertical blank"
+sallyrst $0A   M0PL = $00     correct
+```
+
+Same bitstream, same program. At `$06` the beam is simply somewhere else than
+the VCOUNT the program synchronised on, so every test that syncs on VCOUNT and
+then observes the raster is looking at the wrong lines. That is a large part of
+the remaining `$06` failure set and it is **not** a bug in any raster module.
+
+So the 30-vs-24 gap is not "the legacy raster is better". It is: `$06` wins 7
+tests on the timing machine's well-tuned rdy/steal/NMI, and loses an unknown
+number to raster incoherence. `$0A` is the coherent machine and is where the
+rewrite has to end up — `gtia_collision` passes there and nowhere else.
 
 `$0E` is incoherent, not merely worse: `rw_auth` wins for rdy/steal/NMI while
 `tm_auth` still answered VCOUNT/NMIST, so the CPU took interrupts from one
@@ -116,12 +143,17 @@ lead, not a diagnosis.
 
 ### Next steps, in order
 
-1. **Get hardware visibility into GTIA**, then close `gtia_collision` at `$DD`
-   and `antic_addresswrap`. Both are one spurious/missing collision and both
-   are invisible to the module testbenches, which pass. The streaming trace
-   (`6502 trace`) sees the CPU, not the raster — this needs a raster-side
-   probe, which is what the reserved ANTIC-debugger GP0 slot (sel `0x9`) is
-   for.
+1. **Tune the rewrite's timing authority so `$0A` beats `$06`.** This is the
+   whole game: `$0A` is the only coherent machine, and its entire deficit is
+   the 7-test NMI/VCOUNT cluster (`antic_nmist`, `antic_blockednmi`,
+   `antic_dlistwrap`, `antic_vscroldli`, `antic_vscroll`, `antic_wsync`,
+   `antic_vcount`). The timing machine's constants are the reference to
+   reproduce — status 7 / NMI 8, `/RDY` release at 104, VCOUNT at cycle 111.
+   Every raster fix made after that is measured on a machine that is telling
+   the truth about itself.
+   *(Alternative if `$06` must keep working: give `antic_beam` a frame-sync
+   input and align it to the legacy raster. Cheaper, but it keeps two rasters
+   alive and the whole point of the rewrite is that there should be one.)*
 2. **Tune the rewrite's timing authority** until `$0A` beats `$06`, which is
    what makes the rewrite standalone. The whole 7-test gap is the NMI/VCOUNT
    cluster, and the legacy timing machine's constants (`antic_nmist` bisected
