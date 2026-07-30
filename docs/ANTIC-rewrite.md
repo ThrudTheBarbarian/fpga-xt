@@ -257,6 +257,7 @@ Steps 1-4 are built and green. Thirteen modules, each with its own testbench in
 | `gtia_priority` | 10 | the priority walk, all four orderings |
 | `gtia_collide` | 8 | the sixteen collision latches |
 | `gtia_stage` | 8 | one colour clock of GTIA, schedule measured |
+| `gtia_special` | 9 | GTIA modes 9/10/11 colour decode |
 
 Two structural decisions were forced by evidence rather than chosen:
 
@@ -325,10 +326,39 @@ reason — a compressed ratio would not exercise the schedule at all — and che
 that a player at `HPOSP0 = 60` lands at buffer pixels 120..135, a position
 derived from the geometry beforehand rather than read off the simulator.
 
-Not yet started: special modes (`vdelay`, `psuedomodee`, `collision2`, GTIA modes
-9/10/11), DLI emission, the DMA schedule, the register file, and the drop of
-turbo / `math_cop` / banking. Nothing is wired to the CPU yet, so no ACID score
-has moved.
+### Where the GTIA-mode nibble comes from — and what pseudo mode E is
+
+`gtia_special` decodes modes 9/10/11 and is done. The interesting part was
+working out where its 4-bit input comes from, because the obvious framing —
+"mode F data reinterpreted" — is too narrow and hides the mechanism.
+
+ANTIC hands GTIA **two playfield bits per colour clock** whatever mode it is in,
+and GTIA shifts two colour clocks' worth together into a nibble:
+
+| ANTIC mode | per colour clock | |
+|---|---|---|
+| F | two hi-res pixels of one bit each | 2 bits |
+| E | one 2-bit pixel spanning both | 2 bits |
+
+So a GTIA mode laid over mode E assembles its nibbles out of *pairs of mode E
+pixel values* — which is exactly the display `gtia_psuedomodee` probes. There is
+no special case for it: the same two bits arrive either way. That is the
+mechanism the smell test was asking for.
+
+**What is deliberately not settled:** collisions under a GTIA mode.
+`gtia_psuedomodee` asserts particular `P0PF` values across a mid-line PRIOR
+change (`$04`, then `$0f`) and `gtia_collision2` depends on the same behaviour.
+Feeding the playfield source through unchanged does not reproduce it, and
+guessing would be the plausible-but-wrong modelling this rewrite exists to avoid.
+The colour path is complete and tested on its own; the collision path is left
+alone until those two can be measured.
+
+Next: assemble the nibble in `gtia_stage` (renderer publishes the raw 2-bit
+playfield value, the stage shifts two colour clocks together and holds the
+resulting colour for the four hi-res pixels of a GTIA pixel), then `vdelay`, DLI
+emission, the DMA schedule, the register file, and the drop of turbo /
+`math_cop` / banking. Nothing is wired to the CPU yet, so no ACID score has
+moved.
 
 ## Open questions
 
