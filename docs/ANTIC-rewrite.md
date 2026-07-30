@@ -260,6 +260,8 @@ Steps 1-4 are built and green. Thirteen modules, each with its own testbench in
 | `gtia_special` | 9 | GTIA modes 9/10/11 colour decode |
 | `antic_nmi` | 9 | NMIEN, NMIST and the /NMI line |
 | `antic_dma_sched` | 50 maps | which machine cycles ANTIC takes from the CPU |
+| `antic_reg_file` | 8 | ANTIC's registers, $D400-$D40F, and WSYNC |
+| `gtia_reg_file` | 7 | GTIA's registers, $D000-$D01F |
 
 Two structural decisions were forced by evidence rather than chosen:
 
@@ -466,9 +468,35 @@ out to be `step/2 + 1` — modes 2/3/4/5 and modes 6/7 are exactly the character
 modes with step 2 and step 4, and those are the only two steps a character mode
 can have.
 
-Next: the register file (which is what lets any of this be measured against ACID
-at all), then the drop of turbo / `math_cop` / banking. Nothing is wired to the
-CPU yet, so no ACID score has moved.
+### The register files
+
+Both chips' registers now exist as their own modules. Three things in them are
+worth stating because they are not what a register file usually does:
+
+* **Almost nothing reads back what was written.** GTIA's `$D000-$D00F` write the
+  object positions and sizes but read the collision latches, and `$D015-$D01E`
+  are write-only — returning `$0F`, not open bus and not zero, because the chip
+  leaves D4-D7 low and drives D0-D3 high. ANTIC is starker still: only VCOUNT and
+  NMIST read anything at all, everything else is `$FF`. Those values are what
+  `antic_default` and `gtia_default` measure.
+* **The display list pointer is not held in the register file.** DLISTL/DLISTH
+  are `antic_dl`'s live counter, so the file forwards the writes rather than
+  keeping a copy.
+* **WSYNC is a strobe and it has to be an edge.** Derived from the write level,
+  a stalled bus cycle holds it asserted and re-arms WSYNC the instant /RDY is
+  released, and the machine never restarts — `antic_strobe_level_deadlock`. And
+  a read-modify-write writes `$D40A` twice, with the delay arming on the *first*
+  write; arming on both regresses VCOUNT — `wsync_rmw_rearm`. Both are pinned by
+  `tb_antic_reg_file` T5 and T6.
+
+`gtia_reg_file` also carries the two-key gate `gtia_phantomdma` tests on: DMACTL
+makes ANTIC *fetch* a shape and GRACTL makes GTIA *latch* it, and both are
+needed. Turning off either leaves the last shape standing.
+
+Next: connect the register files to the CPU bus and to `antic_scanline`, which is
+the point at which ACID can run against this at all, then the drop of turbo /
+`math_cop` / banking. Nothing is wired to the CPU yet, so no ACID score has
+moved.
 
 ## Open questions
 

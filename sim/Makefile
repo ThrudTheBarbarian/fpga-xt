@@ -1422,3 +1422,17 @@ build/tb_antic_dma_sched.vvp: tb_antic_dma_sched.sv $(HDL_DIR)/antic_dma_sched.s
 	iverilog -g2012 -Wall -Wno-timescale -I$(HDL_DIR) -o $@ -s tb_antic_dma_sched \
 	    $(HDL_DIR)/antic_dma_sched.sv $(HDL_DIR)/antic_mode_tbl.sv \
 	    $(HDL_DIR)/antic_pf_geom.sv tb_antic_dma_sched.sv
+
+antic_reg_file: build/tb_antic_reg_file.vvp
+	@vvp -N $<
+
+build/tb_antic_reg_file.vvp: tb_antic_reg_file.sv $(HDL_DIR)/antic_reg_file.sv | build
+	iverilog -g2012 -Wall -Wno-timescale -I$(HDL_DIR) -o $@ -s tb_antic_reg_file \
+	    $(HDL_DIR)/antic_reg_file.sv tb_antic_reg_file.sv
+
+gtia_reg_file: build/tb_gtia_reg_file.vvp
+	@vvp -N $<
+
+build/tb_gtia_reg_file.vvp: tb_gtia_reg_file.sv $(HDL_DIR)/gtia_reg_file.sv | build
+	iverilog -g2012 -Wall -Wno-timescale -I$(HDL_DIR) -o $@ -s tb_gtia_reg_file \
+	    $(HDL_DIR)/gtia_reg_file.sv tb_gtia_reg_file.sv
