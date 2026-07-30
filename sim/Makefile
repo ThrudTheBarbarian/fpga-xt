@@ -1465,3 +1465,14 @@ a8_core: build/tb_a8_core.vvp
 build/tb_a8_core.vvp: tb_a8_core.sv $(A8_CORE_SRC) | build
 	iverilog -g2012 -Wall -Wno-timescale -I$(HDL_DIR) -I$(HDL_DIR)/xt6502f \
 	    -o $@ -s tb_a8_core $(A8_CORE_SRC) tb_a8_core.sv
+
+# One ACID800 standalone test against the rewrite.  Regenerate the image first:
+#   python3 ../tools/acid2mem.py <name> && make acid TEST=<name>
+TEST ?= antic_vcount
+
+acid: build/tb_acid.vvp
+	@vvp -N $<
+
+build/tb_acid.vvp: tb_acid.sv $(A8_CORE_SRC) | build
+	iverilog -g2012 -Wall -Wno-timescale -I$(HDL_DIR) -I$(HDL_DIR)/xt6502f \
+	    -DTESTNAME='"$(TEST)"' -o $@ -s tb_acid $(A8_CORE_SRC) tb_acid.sv
