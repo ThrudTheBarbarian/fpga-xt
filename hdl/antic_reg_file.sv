@@ -16,19 +16,39 @@
 // than keeping a copy — see antic_dl.  A CPU write moves the fetch point
 // immediately, and reading gives $FF because ANTIC never drives the bus for it.
 //
-// WSYNC IS A STROBE, NOT A REGISTER.  Writing $D40A halts the CPU by releasing
-// /RDY, and it is released again at cycle 104.  Two things about it are
-// hard-won and easy to undo:
+// WSYNC IS A LATCH WITH A DELAY SLOT, and all three parts of that matter.
 //
-//   * the strobe must be an EDGE, not a level.  A `we`-derived level held
-//     across a stalled write re-arms WSYNC as soon as it is released, and the
-//     machine never restarts (recorded in antic_strobe_level_deadlock).
-//   * a read-modify-write instruction writes $D40A twice, and the delay arms on
-//     the FIRST write.  Arming uniformly on every write regresses VCOUNT
-//     (wsync_rmw_rearm).
+// ANTIC holds a LATCH, not a countdown: any write to $D40A sets it, the value
+// written is irrelevant, and the release point clears it once per scanline.
 //
-// So the arm is `we && !we_d` — one clock, on the leading edge — and re-arming
-// while already waiting is ignored.
+// /RDY IS A REGISTERED OUTPUT OF THAT LATCH, one machine cycle behind it in
+// BOTH directions.  Avery Lee, from a logic-analyser capture of a real XE:
+// "there is a one-cycle delay before RDY is pulled.  That delay is on ANTIC's
+// side, so it is one cycle regardless of whether the next cycle is a DMA or CPU
+// cycle."  Cycles numbered from the opcode fetch:
+//
+//     STA wsync                      INC wsync
+//     3: write to wsync              4: write ORIGINAL value
+//     4: /RDY still high             5: write NEW value, /RDY still high
+//     5: /RDY low, CPU stalls        6: /RDY low, CPU stalls
+//
+// A combinational /RDY has no delay slot at all, so a plain STA parks the CPU
+// one position early.  The delay has to be on BOTH edges: delaying only the
+// assert breaks the case where an RMW's two writes straddle the release.
+//
+// A read-modify-write writes $D40A twice.  Because the latch is level state the
+// second write merely re-sets an already-set latch and changes nothing — the
+// stall is timed from the FIRST write, and the extra machine cycle the RMW
+// spends is exactly the one the delay slot allows.  That is the whole
+// difference between STA WSYNC and INC WSYNC in antic_wsync.
+//
+// CLEAR BEATS SET.  A write landing on the same cycle as the release does not
+// start a fresh line-long stall; the release wins and the CPU carries on.  That
+// is antic_wsync's "Late INC WSYNC" case.
+//
+// The other strobes are EDGES, not levels: a `we`-derived level held across a
+// stalled bus cycle re-triggers as soon as it is released
+// (antic_strobe_level_deadlock).
 //
 // NMIRES is the same shape: writing $D40F is a strobe that clears the interrupt
 // status, and reading the same address returns it.
@@ -115,20 +135,24 @@ module antic_reg_file #(
     end
 
     // ---- WSYNC -------------------------------------------------------------
-    // Arm on the LEADING edge of the first write.  A read-modify-write
-    // instruction writes twice; arming on both regresses VCOUNT.
-    logic waiting;
+    wire wsync_set = we_edge && (a == 4'hA);
+    wire wsync_clr = tick && (hcount == 7'(WSYNC_RELEASE));
+
+    logic latch;
     always_ff @(posedge clk or posedge rst) begin
-        if (rst) begin
-            waiting <= 1'b0;
-        end else if (we_edge && (a == 4'hA) && !waiting) begin
-            waiting <= 1'b1;
-        end else if (waiting && tick && (hcount == 7'(WSYNC_RELEASE))) begin
-            waiting <= 1'b0;
-        end
+        if (rst)             latch <= 1'b0;
+        else if (wsync_clr)  latch <= 1'b0;   // clear beats a coincident set
+        else if (wsync_set)  latch <= 1'b1;
     end
 
-    assign rdy_n = waiting;
+    // One machine cycle behind the latch, both edges: this is the delay slot.
+    logic rdy_q;
+    always_ff @(posedge clk or posedge rst) begin
+        if (rst)       rdy_q <= 1'b0;
+        else if (tick) rdy_q <= latch;
+    end
+
+    assign rdy_n = rdy_q;
 
     // ---- reads -------------------------------------------------------------
     always_comb begin

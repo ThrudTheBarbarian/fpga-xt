@@ -223,12 +223,27 @@ module tb_antic_gtia;
         poke(0, 8'h0D, 8'h00);          // put the player away
 
         // ================================================================
-        // T6: WSYNC holds the CPU and lets go at 104
+        // T6: WSYNC holds the CPU, after its delay slot
         // ================================================================
+        // /RDY trails the latch by a MACHINE cycle -- 56 fabric clocks here --
+        // so it is deliberately still high immediately after the write.  That
+        // gap is the delay slot an RMW needs; see antic_reg_file.
         poke(1, 8'h0A, 8'h00);
         @(negedge clk);
-        if (!rdy_n) begin
-            $display("FAIL T6: WSYNC did not hold the CPU"); fail++;
+        if (rdy_n) begin
+            $display("FAIL T6: /RDY fell in the same fabric clock as the write — the delay slot is gone");
+            fail++;
+        end
+        begin
+            int guard; logic held;
+            held = 1'b0; guard = 0;
+            while (!held && guard < 200) begin
+                @(posedge clk); if (rdy_n) held = 1'b1;
+                guard++;
+            end
+            if (!held) begin
+                $display("FAIL T6b: WSYNC never held the CPU"); fail++;
+            end
         end
         // Wait for the release and check where it happened.
         begin
@@ -236,7 +251,7 @@ module tb_antic_gtia;
             guard = 0;
             while (rdy_n && guard < 200000) begin @(posedge clk); guard++; end
             if (rdy_n) begin
-                $display("FAIL T6b: /RDY never came back"); fail++;
+                $display("FAIL T6c: /RDY never came back"); fail++;
             end
         end
 

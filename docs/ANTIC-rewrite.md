@@ -483,12 +483,27 @@ worth stating because they are not what a register file usually does:
 * **The display list pointer is not held in the register file.** DLISTL/DLISTH
   are `antic_dl`'s live counter, so the file forwards the writes rather than
   keeping a copy.
-* **WSYNC is a strobe and it has to be an edge.** Derived from the write level,
-  a stalled bus cycle holds it asserted and re-arms WSYNC the instant /RDY is
-  released, and the machine never restarts — `antic_strobe_level_deadlock`. And
-  a read-modify-write writes `$D40A` twice, with the delay arming on the *first*
-  write; arming on both regresses VCOUNT — `wsync_rmw_rearm`. Both are pinned by
-  `tb_antic_reg_file` T5 and T6.
+* **WSYNC is a latch with a one-machine-cycle delay slot.** ANTIC holds a
+  latch, not a countdown, and **/RDY is a registered output of it, one machine
+  cycle behind in *both* directions**. Avery Lee, from a logic-analyser capture
+  of a real XE: *"there is a one-cycle delay before RDY is pulled. That delay is
+  on ANTIC's side, so it is one cycle regardless of whether the next cycle is a
+  DMA or CPU cycle."* A combinational /RDY has no delay slot and parks the CPU
+  a position early; delaying only the assert breaks the case where an RMW's two
+  writes straddle the release. A read-modify-write writes `$D40A` twice, and
+  because the latch is level state the second write changes nothing — the extra
+  machine cycle the RMW spends is exactly the one the delay slot allows, which
+  is the whole difference between `STA WSYNC` and `INC WSYNC` in `antic_wsync`.
+  And **clear beats set**: a write landing on the release must not start a fresh
+  line-long stall. All four are pinned by `tb_antic_reg_file` T5-T8.
+
+  **The DMA steal has no such delay.** `dma_steal` says "this machine cycle is
+  ANTIC's" and applies in that cycle — the asymmetry is real and makes sense: a
+  stolen cycle is ANTIC taking the bus now, whereas WSYNC is a request
+  propagating through ANTIC's latch. Neither is instruction-granular; both are
+  cycle-granular, and the read/write gating (a CPU write cannot be stalled,
+  because the CPU is driving the bus) belongs to whoever drives the core's
+  `rdy` — the `xt6502f` port comment says as much.
 
 `gtia_reg_file` also carries the two-key gate `gtia_phantomdma` tests on: DMACTL
 makes ANTIC *fetch* a shape and GRACTL makes GTIA *latch* it, and both are

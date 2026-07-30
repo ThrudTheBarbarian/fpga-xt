@@ -3,13 +3,17 @@
 //
 // tb_antic_reg_file — ANTIC's registers, $D400-$D40F.
 //
-// T5 and T6 are the two that were hard-won and are easy to undo:
+// T5-T8 are the WSYNC behaviours, and they are the hard-won ones:
 //
-//   T5  the WSYNC strobe must be an EDGE. Derived from the write level instead,
-//       a stalled write holds it asserted and re-arms WSYNC the instant /RDY is
-//       released, and the machine never restarts.
-//   T6  a read-modify-write instruction writes $D40A twice and the delay arms
-//       on the FIRST write. Arming on every write regresses VCOUNT.
+//   T5  /RDY trails the latch by ONE MACHINE CYCLE. Avery Lee's capture of a
+//       real XE: a write in cycle N leaves /RDY high through N and stalls from
+//       N+1. A combinational /RDY has no delay slot and parks the CPU a
+//       position early.
+//   T6  the delay is on BOTH edges, so the release trails too.
+//   T7  a read-modify-write writes $D40A twice; the latch is level state, so
+//       the second write changes nothing and the stall is timed from the first.
+//   T8  CLEAR BEATS SET — a write coinciding with the release must not start a
+//       fresh line-long stall (antic_wsync's "Late INC WSYNC").
 //
 module tb_antic_reg_file;
 
@@ -147,51 +151,76 @@ module tb_antic_reg_file;
             $display("FAIL T4c: DLISTL read $%02h — ANTIC never drives it", v); fail++;
         end
 
-        // ---- T5: the WSYNC strobe is an EDGE ------------------------------
-        // A held write must arm ONCE.  Held as a level, WSYNC re-arms the
-        // instant /RDY is released and the machine never restarts.
-        hcount = 7'd0;
-        wr_held(8'h0A, 8'h00, 12);      // a long, stalled write
-        @(negedge clk);
-        if (!rdy_n) begin
-            $display("FAIL T5: WSYNC did not hold the CPU"); fail++;
-        end
-        // Run to the release cycle with the write still recently held.
-        while (hcount != 7'd104) step();
-        step();
+        // ---- T5: /RDY trails the latch by one machine cycle ---------------
+        // The write lands in cycle N; /RDY is still high through N and the CPU
+        // stalls from N+1.  That gap is the delay slot an RMW needs.
+        hcount = 7'd20;
+        wr(8'h0A, 8'h00);               // the write, inside cycle 20
         if (rdy_n) begin
-            $display("FAIL T5b: /RDY never came back — the strobe re-armed itself");
+            $display("FAIL T5: /RDY went low in the same cycle as the write — there is no delay slot");
+            fail++;
+        end
+        step();                          // finish cycle 20, enter 21
+        if (!rdy_n) begin
+            $display("FAIL T5b: /RDY did not go low one cycle after the write");
             fail++;
         end
 
-        // ---- T6: a read-modify-write arms on the FIRST write --------------
-        // RMW writes $D40A twice.  Arming on both regresses VCOUNT.
-        hcount = 7'd0;
-        wr(8'h0A, 8'h00);               // first write
-        step(); step();
-        wr(8'h0A, 8'h00);               // the RMW's second write
-        @(negedge clk);
-        if (!rdy_n) begin
-            $display("FAIL T6: not waiting after an RMW WSYNC"); fail++;
-        end
+        // ---- T6: the delay is on BOTH edges -------------------------------
+        // Delaying only the assert breaks the straddle-the-release case.
         while (hcount != 7'd104) step();
-        step();
+        if (!rdy_n) begin
+            $display("FAIL T6: /RDY came back before the release cycle"); fail++;
+        end
+        step();                          // cycle 104: the latch clears...
+        if (!rdy_n) begin
+            $display("FAIL T6b: /RDY came back in the release cycle itself — the release is delayed too");
+            fail++;
+        end
+        step();                          // ...and /RDY follows one cycle later
         if (rdy_n) begin
-            $display("FAIL T6b: the second write of an RMW re-armed WSYNC"); fail++;
+            $display("FAIL T6c: /RDY did not come back one cycle after the release");
+            fail++;
         end
 
-        // ---- T7: WSYNC releases at 104, not before ------------------------
-        hcount = 7'd0;
-        wr(8'h0A, 8'h00);
-        @(negedge clk);
-        while (hcount != 7'd103) step();
+        // ---- T7: an RMW's second write changes nothing --------------------
+        // The latch is level state, so the stall is timed from the FIRST write
+        // and the RMW's extra machine cycle is the delay slot it needs.
+        hcount = 7'd20;
+        wr(8'h0A, 8'h00);               // the RMW's first write
+        step();
+        wr(8'h0A, 8'h00);               // ...and its second
         if (!rdy_n) begin
-            $display("FAIL T7: /RDY came back before cycle 104"); fail++;
+            $display("FAIL T7: not stalled after an RMW WSYNC"); fail++;
         end
-        step();                          // 103 -> 104
-        step();                          // the release
+        while (hcount != 7'd104) step();
+        step(); step();
         if (rdy_n) begin
-            $display("FAIL T7b: /RDY did not come back at cycle 104"); fail++;
+            $display("FAIL T7b: the RMW's second write extended the stall past the release");
+            fail++;
+        end
+
+        // ---- T8: CLEAR BEATS SET ------------------------------------------
+        // A write landing on the release cycle must not park the CPU for a
+        // whole fresh scanline.
+        while (hcount != 7'd104) step();
+        wr(8'h0A, 8'h00);               // straddles the release
+        step(); step(); step();
+        if (rdy_n) begin
+            $display("FAIL T8: a write on the release cycle started a new line-long stall");
+            fail++;
+        end
+
+        // ---- T8b: a held write still only sets a level --------------------
+        // Held as an edge-triggered strobe this is harmless; held as a level
+        // that re-arms, the machine would never restart.
+        hcount = 7'd20;
+        wr_held(8'h0A, 8'h00, 12);
+        while (hcount != 7'd104) step();
+        step(); step();
+        if (rdy_n) begin
+            $display("FAIL T8b: /RDY never came back after a long held write");
+            fail++;
         end
 
         // ---- T8: NMIRES is a one-clock strobe ------------------------------
