@@ -494,6 +494,42 @@ module tb_antic_scanline;
         end
 
         // ================================================================
+        // T9c: an object ON the right edge of the collision window, over a
+        // REAL scanline.  ACID gtia_collision parks all eight objects at
+        // HPOS $DD -- the last colour clock GTIA compares in -- and requires
+        // them all to collide; $DE, one further right, is already horizontal
+        // blank and must not.  gtia_stage passes this in isolation, so if it
+        // fails here the loss is happening at the line level (the walk being
+        // reset, or the pair never being resolved that late in the line)
+        // rather than in the window arithmetic.
+        // ================================================================
+        @(negedge clk);
+        hposp0 = 8'hDD; hposp1 = 8'hDD;
+        grafp0 = 8'h80; grafp1 = 8'h80;
+        sizep0 = 2'b00; sizep1 = 2'b00;
+        hitclr = 1'b1; @(negedge clk); hitclr = 1'b0;
+        next_line();
+        next_line();
+        if (p_pl[3:0] !== 4'b0010) begin
+            $display("FAIL T9c: P0PL is %04b at HPOS $DD, expected P1 (window right edge)",
+                     p_pl[3:0]);
+            fail++;
+        end
+
+        // ...and $DE is outside it.
+        @(negedge clk);
+        hposp0 = 8'hDE; hposp1 = 8'hDE;
+        hitclr = 1'b1; @(negedge clk); hitclr = 1'b0;
+        next_line();
+        next_line();
+        if (p_pl !== 16'h0000) begin
+            $display("FAIL T9d: collision at HPOS $DE, which is horizontal blank (%04h)", p_pl);
+            fail++;
+        end
+        @(negedge clk);
+        hposp0 = 8'd60; hposp1 = 8'd200; grafp0 = 8'hFF; grafp1 = 8'h00;
+
+        // ================================================================
         // T10: P/M DMA feeds the shape registers on a real line
         // ================================================================
         // Two-line resolution, PMBASE $70 -> base $7000, player 0 at +$200.
