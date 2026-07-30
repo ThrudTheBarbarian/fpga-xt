@@ -55,6 +55,7 @@ module tb_antic_scanline;
     logic [7:0] sizem, prior;
     logic [7:0] colpm0, colpm1, colpm2, colpm3;
     logic       hitclr, active_line;
+    logic [7:0] vdelay;
     logic [3:0] hscrol, vscrol;
     logic       dlist_we_l, dlist_we_h;
     logic [7:0] dlist_wdata;
@@ -67,20 +68,22 @@ module tb_antic_scanline;
     wire [15:0] dlpc;
     wire        pm_we;
     wire [2:0]  pm_obj;
-    wire [7:0]  pm_data;
+    wire [7:0]  pm_data, pm_mask;
     wire [15:0] m_pf, p_pf, m_pl, p_pl;
 
     // GRAFM and GRAFP0-3 have ONE copy each, written either by P/M DMA or by
     // the CPU — whoever wrote last wins.  That is the register file's job, and
     // it is modelled here because there is not one yet.
     logic [7:0] grafm, grafp0, grafp1, grafp2, grafp3;
+    // VDELAY arrives as a per-bit mask, so the store is a merge rather than an
+    // assignment -- the four missiles share GRAFM and can be delayed apart.
     always_ff @(posedge clk) if (!rst && pm_we) begin
         case (pm_obj)
-            3'd0: grafm  <= pm_data;
-            3'd1: grafp0 <= pm_data;
-            3'd2: grafp1 <= pm_data;
-            3'd3: grafp2 <= pm_data;
-            default: grafp3 <= pm_data;
+            3'd0: grafm  <= (grafm  & ~pm_mask) | (pm_data & pm_mask);
+            3'd1: grafp0 <= (grafp0 & ~pm_mask) | (pm_data & pm_mask);
+            3'd2: grafp1 <= (grafp1 & ~pm_mask) | (pm_data & pm_mask);
+            3'd3: grafp2 <= (grafp2 & ~pm_mask) | (pm_data & pm_mask);
+            default: grafp3 <= (grafp3 & ~pm_mask) | (pm_data & pm_mask);
         endcase
     end
 
@@ -101,10 +104,10 @@ module tb_antic_scanline;
         .grafp0(grafp0), .grafp1(grafp1), .grafp2(grafp2), .grafp3(grafp3),
         .grafm(grafm), .prior(prior),
         .colpm0(colpm0), .colpm1(colpm1), .colpm2(colpm2), .colpm3(colpm3),
-        .hitclr(hitclr), .active_line(active_line),
+        .vdelay(vdelay), .hitclr(hitclr), .active_line(active_line),
         .mem_addr(mem_addr), .mem_data(mem_data),
         .lb_wr(lb_wr), .lb_color(lb_color), .lb_line_start(lb_line_start),
-        .pm_we(pm_we), .pm_obj(pm_obj), .pm_data(pm_data),
+        .pm_we(pm_we), .pm_obj(pm_obj), .pm_data(pm_data), .pm_mask(pm_mask),
         .m_pf(m_pf), .p_pf(p_pf), .m_pl(m_pl), .p_pl(p_pl),
         .dli(dli), .dlpc(dlpc)
     );
@@ -141,6 +144,8 @@ module tb_antic_scanline;
 
     int fail = 0;
     int pixels_this_line;
+    int samp_line [0:7];
+    logic [7:0] samp_graf [0:7];
 
     task automatic next_line;
         begin
@@ -200,7 +205,7 @@ module tb_antic_scanline;
         hposp0 = 8'd200; hposp1 = 8'd200; hposp2 = 8'd200; hposp3 = 8'd200;
         hposm0 = 8'd200; hposm1 = 8'd200; hposm2 = 8'd200; hposm3 = 8'd200;
         sizep0 = 0; sizep1 = 0; sizep2 = 0; sizep3 = 0; sizem = 0;
-        prior = 8'h01; hitclr = 0; active_line = 1;
+        prior = 8'h01; hitclr = 0; active_line = 1; vdelay = 8'h00;
         colpm0 = 8'h30; colpm1 = 8'h44; colpm2 = 8'h68; colpm3 = 8'h7A;
         grafm = 0; grafp0 = 0; grafp1 = 0; grafp2 = 0; grafp3 = 0;
         hscrol = 4'd0; vscrol = 4'd0;
@@ -561,6 +566,68 @@ module tb_antic_scanline;
                 fail++;
             end
         @(negedge clk); prior = 8'h01; colbk = 8'h00;
+
+        // ================================================================
+        // T12: VDELAY delays the shape by one scanline
+        // ================================================================
+        // Fill P/M memory so each index holds its own number; then the shape
+        // register says directly which index was last stored.  In two-line
+        // resolution both scanlines of a pair fetch the same index, so
+        // inhibiting the even one leaves the register a line behind.
+        @(negedge clk);
+        for (int i = 0; i < 256; i++) mem[16'h7200 + i] = 8'(i);
+        dmactl = 8'h2A;                         // player DMA, two-line
+        vdelay = 8'h00;
+        repeat (3) next_line();
+        for (int i = 0; i < 6; i++) begin
+            at_cycle(60);
+            samp_line[i] = int'(line);
+            samp_graf[i] = grafp0;
+            at_cycle(0);
+        end
+        for (int i = 0; i < 6; i++)
+            if (int'(samp_graf[i]) != samp_line[i] / 2) begin
+                $display("FAIL T12: line %0d holds index %0d, expected %0d",
+                         samp_line[i], samp_graf[i], samp_line[i] / 2);
+                fail++;
+            end
+
+        // With player 0 delayed, an EVEN line still holds the previous index.
+        @(negedge clk); vdelay = 8'h10;
+        repeat (3) next_line();
+        for (int i = 0; i < 6; i++) begin
+            at_cycle(60);
+            samp_line[i] = int'(line);
+            samp_graf[i] = grafp0;
+            at_cycle(0);
+        end
+        for (int i = 0; i < 6; i++) begin
+            int want;
+            want = (samp_line[i] % 2 == 1) ? samp_line[i] / 2
+                                           : samp_line[i] / 2 - 1;
+            if (int'(samp_graf[i]) != want) begin
+                $display("FAIL T12b: delayed, line %0d holds index %0d, expected %0d",
+                         samp_line[i], samp_graf[i], want);
+                fail++;
+            end
+        end
+
+        // A missile VDELAY must not touch the players.
+        @(negedge clk); vdelay = 8'h0F;
+        repeat (3) next_line();
+        for (int i = 0; i < 4; i++) begin
+            at_cycle(60);
+            samp_line[i] = int'(line);
+            samp_graf[i] = grafp0;
+            at_cycle(0);
+        end
+        for (int i = 0; i < 4; i++)
+            if (int'(samp_graf[i]) != samp_line[i] / 2) begin
+                $display("FAIL T12c: a missile VDELAY delayed player 0 (line %0d holds %0d)",
+                         samp_line[i], samp_graf[i]);
+                fail++;
+            end
+        @(negedge clk); vdelay = 8'h00; dmactl = 8'h22;
 
         if (fail == 0) $display("tb_antic_scanline: all checks PASS");
         else           $display("tb_antic_scanline: %0d FAIL", fail);

@@ -22,20 +22,22 @@ module tb_antic_pm_fetch;
     logic [8:0]  line;
     logic [7:0]  pmbase;
     logic        player_dma_en, missile_dma_en, res_1line;
+    logic [7:0]  vdelay;
 
     wire [15:0] mem_addr;
     logic [7:0] mem_data;
     wire        pm_we, busy, done;
     wire [2:0]  pm_obj;
-    wire [7:0]  pm_data;
+    wire [7:0]  pm_data, pm_mask;
 
     antic_pm_fetch dut (
         .clk(clk), .rst(rst),
         .start(start), .line(line),
         .pmbase(pmbase), .player_dma_en(player_dma_en),
         .missile_dma_en(missile_dma_en), .res_1line(res_1line),
+        .vdelay(vdelay),
         .mem_addr(mem_addr), .mem_data(mem_data),
-        .pm_we(pm_we), .pm_obj(pm_obj), .pm_data(pm_data),
+        .pm_we(pm_we), .pm_obj(pm_obj), .pm_data(pm_data), .pm_mask(pm_mask),
         .busy(busy), .done(done)
     );
 
@@ -49,6 +51,7 @@ module tb_antic_pm_fetch;
     logic [7:0] got  [0:4];
     logic       seen [0:4];
     logic [15:0] addr_of [0:4];
+    logic [7:0]  mask_of [0:4];
     logic [15:0] addr_d;
 
     always_ff @(posedge clk) addr_d <= mem_addr;
@@ -56,6 +59,7 @@ module tb_antic_pm_fetch;
         got[pm_obj]     <= pm_data;
         seen[pm_obj]    <= 1'b1;
         addr_of[pm_obj] <= addr_d;
+        mask_of[pm_obj] <= pm_mask;
     end
 
     task automatic do_line(input int ln);
@@ -89,9 +93,11 @@ module tb_antic_pm_fetch;
 
     initial begin
         start = 0; line = 0; pmbase = 8'h30;
-        player_dma_en = 1; missile_dma_en = 1; res_1line = 1;
+        player_dma_en = 1; missile_dma_en = 1; res_1line = 1; vdelay = 8'h00;
         for (int i = 0; i < 65536; i++) mem[i] = 8'h00;
-        for (int i = 0; i < 5; i++) begin seen[i] = 0; got[i] = 0; addr_of[i] = 0; end
+        for (int i = 0; i < 5; i++) begin
+            seen[i] = 0; got[i] = 0; addr_of[i] = 0; mask_of[i] = 0;
+        end
 
         // ---- ONE-LINE layout: base $3000, 2K aligned --------------------
         // missiles +$300, players +$400/$500/$600/$700, indexed by scanline.
@@ -219,6 +225,101 @@ module tb_antic_pm_fetch;
                      addr_of[0]);
             fail++;
         end
+
+        // ================================================================
+        // T6: VDELAY masks the store on EVEN scanlines
+        // ================================================================
+        // In two-line resolution both scanlines of a pair fetch the same byte,
+        // so inhibiting the even one makes the object change on the odd one --
+        // which is the object one scanline lower.
+        pmbase = 8'h30; res_1line = 1'b0; vdelay = 8'h00;
+        do_line(50);
+        if (mask_of[1] !== 8'hFF) begin
+            $display("FAIL T6: no VDELAY gave player mask $%02h, expected $FF",
+                     mask_of[1]);
+            fail++;
+        end
+        vdelay = 8'h10;                 // player 0 delayed
+        do_line(50);                    // even scanline: inhibited
+        if (mask_of[1] !== 8'h00) begin
+            $display("FAIL T6b: delayed player on an even line gave mask $%02h, expected $00",
+                     mask_of[1]);
+            fail++;
+        end
+        do_line(51);                    // odd scanline: it goes through
+        if (mask_of[1] !== 8'hFF) begin
+            $display("FAIL T6c: delayed player on an odd line gave mask $%02h, expected $FF",
+                     mask_of[1]);
+            fail++;
+        end
+        // ...and only the player that was named.
+        do_line(50);
+        for (int o = 2; o <= 4; o++)
+            if (mask_of[o] !== 8'hFF) begin
+                $display("FAIL T6d: player %0d masked by another player's VDELAY", o - 1);
+                fail++;
+            end
+        vdelay = 8'h80;                 // player 3 delayed instead
+        do_line(50);
+        if (mask_of[4] !== 8'h00 || mask_of[1] !== 8'hFF) begin
+            $display("FAIL T6e: VDELAY bit 7 should delay player 3, not player 0 (masks $%02h / $%02h)",
+                     mask_of[4], mask_of[1]);
+            fail++;
+        end
+
+        // ================================================================
+        // T7: the missile byte is masked TWO BITS AT A TIME
+        // ================================================================
+        // Four missiles with four independent delay bits share one register, so
+        // an all-or-nothing store enable cannot express this.
+        vdelay = 8'h00;
+        do_line(50);
+        if (mask_of[0] !== 8'hFF) begin
+            $display("FAIL T7: no VDELAY gave missile mask $%02h, expected $FF",
+                     mask_of[0]);
+            fail++;
+        end
+        vdelay = 8'h01;                 // missile 0 only
+        do_line(50);
+        if (mask_of[0] !== 8'hFC) begin
+            $display("FAIL T7b: missile 0 delayed gave mask $%02h, expected $FC",
+                     mask_of[0]);
+            fail++;
+        end
+        vdelay = 8'h08;                 // missile 3 only
+        do_line(50);
+        if (mask_of[0] !== 8'h3F) begin
+            $display("FAIL T7c: missile 3 delayed gave mask $%02h, expected $3F",
+                     mask_of[0]);
+            fail++;
+        end
+        vdelay = 8'h05;                 // missiles 0 and 2
+        do_line(50);
+        if (mask_of[0] !== 8'hCC) begin
+            $display("FAIL T7d: missiles 0 and 2 delayed gave mask $%02h, expected $CC",
+                     mask_of[0]);
+            fail++;
+        end
+        // On the odd line everything goes through regardless.
+        do_line(51);
+        if (mask_of[0] !== 8'hFF) begin
+            $display("FAIL T7e: odd line gave missile mask $%02h, expected $FF",
+                     mask_of[0]);
+            fail++;
+        end
+        // Missile delays must not touch the players, or the other way round.
+        vdelay = 8'h0F;
+        do_line(50);
+        for (int o = 1; o <= 4; o++)
+            if (mask_of[o] !== 8'hFF) begin
+                $display("FAIL T7f: a missile VDELAY masked player %0d", o - 1); fail++;
+            end
+        vdelay = 8'hF0;
+        do_line(50);
+        if (mask_of[0] !== 8'hFF) begin
+            $display("FAIL T7g: a player VDELAY masked the missiles"); fail++;
+        end
+        vdelay = 8'h00; res_1line = 1'b1;
 
         if (fail == 0) $display("tb_antic_pm_fetch: all checks PASS");
         else           $display("tb_antic_pm_fetch: %0d FAIL", fail);

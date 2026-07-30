@@ -369,9 +369,27 @@ register the second half of every GTIA pixel showed the *following* pixel.
 the GTIA pixels land at pixels 84-87 (`$5E`) and 88-91 (`$54`), positions worked
 out from the byte's bit layout beforehand.
 
-Next: `vdelay`, DLI emission, the DMA schedule, the register file, and the drop
-of turbo / `math_cop` / banking. Nothing is wired to the CPU yet, so no ACID
-score has moved.
+### VDELAY is a write mask
+
+`VDELAY` ($D01C) inhibits the P/M store on **even** scanlines. In two-line
+resolution both scanlines of a pair fetch the same byte, so an object that only
+stores on the odd one changes a scanline later — which is the object appearing a
+scanline lower. One gate.
+
+It has to be a per-bit **mask** rather than a store enable, because the single
+missile byte carries four missiles with four independent delay bits and they
+share one register: missile 0 can be delayed while missile 1 is not. So the
+fetcher emits a mask alongside the data and the register file merges, which also
+keeps GRAFM one register as the CPU sees it.
+
+In one-line resolution consecutive scanlines fetch *different* bytes, so the same
+gate drops half the updates instead of delaying by a line. That is not a special
+case being tolerated — it is what the hardware does with the same circuit, and
+why VDELAY is documented as a two-line-resolution feature.
+
+Next: DLI emission, the DMA schedule, the register file, and the drop of turbo /
+`math_cop` / banking. Nothing is wired to the CPU yet, so no ACID score has
+moved.
 
 ## Open questions
 

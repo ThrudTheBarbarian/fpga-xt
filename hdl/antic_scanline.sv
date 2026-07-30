@@ -86,6 +86,7 @@ module antic_scanline (
     input  wire [7:0]  grafm,
     input  wire [7:0]  prior,          // $D01B
     input  wire [7:0]  colpm0, colpm1, colpm2, colpm3,
+    input  wire [7:0]  vdelay,         // $D01C
     input  wire        hitclr,         // $D01E write
     input  wire        active_line,    // an active display line
 
@@ -102,6 +103,7 @@ module antic_scanline (
     output wire        pm_we,
     output wire [2:0]  pm_obj,
     output wire [7:0]  pm_data,
+    output wire [7:0]  pm_mask,        // which bits VDELAY lets through
 
     // ---- collision latches ------------------------------------------------
     output wire [15:0] m_pf,
@@ -206,9 +208,9 @@ module antic_scanline (
         .clk(clk), .rst(rst),
         .start(dl_line_ready), .line(line),
         .pmbase(pmbase), .player_dma_en(dmactl[3]),
-        .missile_dma_en(dmactl[2]), .res_1line(dmactl[4]),
+        .missile_dma_en(dmactl[2]), .res_1line(dmactl[4]), .vdelay(vdelay),
         .mem_addr(pm_addr), .mem_data(mem_data),
-        .pm_we(pm_we), .pm_obj(pm_obj), .pm_data(pm_data),
+        .pm_we(pm_we), .pm_obj(pm_obj), .pm_data(pm_data), .pm_mask(pm_mask),
         .busy(), .done(pm_done)
     );
 

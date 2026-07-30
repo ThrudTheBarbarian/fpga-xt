@@ -31,10 +31,22 @@
 // bytes, so a 262-line frame runs slightly past the end of a region.  Real
 // hardware does the same; it is not special-cased away.
 //
-// VDELAY IS NOT HERE.  One missile byte carries four missiles with four
-// independent VDELAY bits, so the delay cannot be a fetch-address adjustment —
-// it has to select between this line's byte and the last one, per object, at
-// display time.  That belongs with the object walk.
+// VDELAY IS A WRITE MASK, and that is the whole of it.  In two-line resolution
+// both scanlines of a pair fetch the same byte, so an object whose store is
+// inhibited on EVEN scanlines only changes on the odd one — which is the object
+// appearing one scanline lower.  One gate.
+//
+// It has to be a mask rather than a store enable because the single missile byte
+// carries four missiles with four independent delay bits: missile 0 may be
+// delayed while missile 1 is not, and they share a register.  So the fetcher
+// emits a per-bit mask alongside the data and the register file merges,
+// which also keeps GRAFM one register as the CPU sees it.  For a player the mask
+// is all or nothing.
+//
+// In ONE-line resolution consecutive scanlines fetch DIFFERENT bytes, so the
+// same gate drops half the updates instead of delaying by a line.  That is not a
+// special case being tolerated — it is what the hardware does with the same
+// circuit, and why VDELAY is documented as a two-line-resolution feature.
 //
 // CLOCK BUDGET: 2 clocks per fetch, 5 fetches — 10 fabric clocks at the very
 // start of a scanline, out of ~6,300.
@@ -53,6 +65,7 @@ module antic_pm_fetch (
     input  wire        player_dma_en,  // DMACTL[3]
     input  wire        missile_dma_en, // DMACTL[2]
     input  wire        res_1line,      // DMACTL[4]
+    input  wire [7:0]  vdelay,         // $D01C: [3:0] missiles, [7:4] players
 
     // ---- memory ----------------------------------------------------------
     output logic [15:0] mem_addr,
@@ -62,6 +75,7 @@ module antic_pm_fetch (
     output logic        pm_we,         // 1-clk
     output logic [2:0]  pm_obj,        // 0 = missiles, 1..4 = players 0..3
     output logic [7:0]  pm_data,
+    output logic [7:0]  pm_mask,       // which bits VDELAY lets through
 
     output logic        busy,
     output logic        done            // 1-clk when the line's fetches are in
@@ -84,6 +98,21 @@ module antic_pm_fetch (
     // simply not fetched — its register keeps whatever the CPU last wrote.
     wire obj_enabled = (obj == 3'd0) ? missile_dma_en : player_dma_en;
 
+    // VDELAY inhibits the store on even scanlines.  A player is all or nothing;
+    // the missile byte is masked two bits at a time, because its four missiles
+    // have four independent delay bits and share one register.
+    wire odd_line = line[0];
+
+    logic [7:0] vd_mask;
+    always_comb begin
+        if (obj == 3'd0) begin
+            for (int k = 0; k < 4; k++)
+                vd_mask[k*2 +: 2] = (!vdelay[k] || odd_line) ? 2'b11 : 2'b00;
+        end else begin
+            vd_mask = (!vdelay[3 + obj] || odd_line) ? 8'hFF : 8'h00;
+        end
+    end
+
     // ---- the walk --------------------------------------------------------
     typedef enum logic [1:0] { S_IDLE, S_ADDR, S_DATA, S_DONE } state_t;
     state_t state;
@@ -95,6 +124,7 @@ module antic_pm_fetch (
             pm_we   <= 1'b0;
             pm_obj  <= 3'd0;
             pm_data <= 8'h00;
+            pm_mask <= 8'h00;
             busy    <= 1'b0;
             done    <= 1'b0;
         end else begin
@@ -116,6 +146,7 @@ module antic_pm_fetch (
                         pm_we   <= 1'b1;
                         pm_obj  <= obj;
                         pm_data <= mem_data;
+                        pm_mask <= vd_mask;
                     end
                     if (obj == 3'd4) begin
                         state <= S_DONE;
