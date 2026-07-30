@@ -531,7 +531,8 @@ module fpga_xt_top (
     //     the A9 OVL peek still hijacks this port via peek_en).
     //   - compositor: antic_cmpram_* -> the display_shadow copy (a 64 KB
     //     BRAM write-mirrored from sally_mem's single write site).
-    wire [15:0] antic_bram_addr;
+    wire [15:0] antic_bram_addr_top;  // legacy dl_parser's fetch address
+    wire [15:0] antic_bram_addr;       // ...muxed with the rewrite's (below)
     wire [7:0]  antic_bram_rdata;
     wire [15:0] antic_cmpram_addr_top;   // legacy compositor's fetch address
     wire [15:0] antic_cmpram_addr;        // ...muxed with the rewrite's (below)
@@ -1714,7 +1715,7 @@ module fpga_xt_top (
         .joy_spi_cs_n       (),
         .joy_spi_int_n      (1'b1),
         // ANTIC's BRAM read port — connects to sally_mem's dma port.
-        .bram_addr          (antic_bram_addr),
+        .bram_addr          (antic_bram_addr_top),
         .bram_rdata         (antic_bram_rdata),
         .cmp_bram_addr      (antic_cmpram_addr_top),
         .cmp_bram_rdata     (antic_cmpram_rdata),
@@ -1830,9 +1831,14 @@ module fpga_xt_top (
         .wdata(bus_data_in_antic),
         .rdata(rw_rdata),
         .rdy_n(rw_rdy_n), .nmi_n(rw_nmi_n), .dma_steal(rw_steal),
-        // The compositor's display-shadow port: a full 64 KB copy that already
-        // exists, so the rewrite needs no BRAM of its own.
-        .mem_addr(rw_mem_addr), .mem_data(antic_cmpram_rdata),
+        // sally_mem's DMA port -- the REAL 64 K, ROM included.  Not the
+        // compositor's display shadow: that is write-MIRRORED, so it carries
+        // what the CPU has stored but not the OS character set at $E000.  With
+        // the shadow, mode 2 rendered correctly and every glyph came back $00,
+        // which put a uniform COLPF2 blue on screen -- the right colour for a
+        // GR.0 background, with no text on it.  The legacy dl_parser used this
+        // port for the same reason, and it is free now.
+        .mem_addr(rw_mem_addr), .mem_data(scrn_shadow_rdata),
         .trig0(8'h01), .trig1(8'h01), .trig2(8'h01), .trig3(8'h01),
         .pal_sense(8'h0E), .consol_keys(consol_keys),
         .lb_wr(rw_lb_wr), .lb_color(rw_lb_color),
@@ -1841,7 +1847,8 @@ module fpga_xt_top (
     );
 
     // Whoever holds authority drives the fetch address and answers reads.
-    assign antic_cmpram_addr = rw_auth_sys ? rw_mem_addr : antic_cmpram_addr_top;
+    assign antic_bram_addr   = rw_auth_sys ? rw_mem_addr : antic_bram_addr_top;
+    assign antic_cmpram_addr = antic_cmpram_addr_top;
     assign antic_rdata_int   = rw_auth_sys ? rw_rdata    : antic_rdata_top;
 
     antic_wb_adapt u_antic_wb_adapt (
