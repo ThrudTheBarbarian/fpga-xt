@@ -1364,3 +1364,17 @@ gtia_obj_walk: build/tb_gtia_obj_walk.vvp
 build/tb_gtia_obj_walk.vvp: tb_gtia_obj_walk.sv $(HDL_DIR)/gtia_obj_walk.sv | build
 	iverilog -g2012 -Wall -Wno-timescale -I$(HDL_DIR) -o $@ -s tb_gtia_obj_walk \
 	    $(HDL_DIR)/gtia_obj_walk.sv tb_gtia_obj_walk.sv
+
+gtia_priority: build/tb_gtia_priority.vvp
+	@vvp -N $<
+
+build/tb_gtia_priority.vvp: tb_gtia_priority.sv $(HDL_DIR)/gtia_priority.sv | build
+	iverilog -g2012 -Wall -Wno-timescale -I$(HDL_DIR) -o $@ -s tb_gtia_priority \
+	    $(HDL_DIR)/gtia_priority.sv tb_gtia_priority.sv
+
+gtia_collide: build/tb_gtia_collide.vvp
+	@vvp -N $<
+
+build/tb_gtia_collide.vvp: tb_gtia_collide.sv $(HDL_DIR)/gtia_collide.sv | build
+	iverilog -g2012 -Wall -Wno-timescale -I$(HDL_DIR) -o $@ -s tb_gtia_collide \
+	    $(HDL_DIR)/gtia_collide.sv tb_gtia_collide.sv
