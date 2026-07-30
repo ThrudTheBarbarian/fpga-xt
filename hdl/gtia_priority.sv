@@ -40,9 +40,17 @@
 // COLPF1 luma over COLPF2 hue but ranks — and collides — as playfield 2.  So the
 // playfield source is mapped to PF2 for the walk and restored afterwards.
 //
-// CLOCK BUDGET: 9 steps, one per source, plus one to compare the winners.
+// THE WALK VISITS SEVEN CANDIDATES, NOT NINE.  There are nine possible sources
+// but only seven can be present at once, because the playfield contributes
+// exactly ONE — plus PF3 again when the fifth-player bit is set and a missile is
+// there.  Walking four playfield candidates when at most two can be present is
+// the kind of thing the smell test exists to catch, and the shorter walk is what
+// makes the whole colour clock fit: 8 clocks for the object walk, 8 here and 8
+// again for the second hi-res pixel is 24 of the 28 available.  Nine steps would
+// have needed 28 exactly, with nothing spare.
+//
+// CLOCK BUDGET: 7 steps, one per candidate, plus one to compare the winners.
 // Four 4-bit running minima; the rank table is 4 x 9 x 4 bits of constants.
-// With the object walk's 8 clocks that is ~19 of the ~28 in a colour clock.
 //
 `timescale 1ns/1ps
 
@@ -87,17 +95,8 @@ module gtia_priority (
     // it simply joins that player's presence.  With it, all four join PF3.
     wire any_missile = |pres[7:4];
 
-    wire [8:0] present = {
-        1'b1,                                                   // 8: BAK
-        (pf_pri == SRC_PF3) | (pm5 & any_missile),              // 7: PF3
-        (pf_pri == SRC_PF2),                                    // 6: PF2
-        (pf_pri == SRC_PF1),                                    // 5: PF1
-        (pf_pri == SRC_PF0),                                    // 4: PF0
-        pres[3] | (~pm5 & pres[7]),                             // 3: P3
-        pres[2] | (~pm5 & pres[6]),                             // 2: P2
-        pres[1] | (~pm5 & pres[5]),                             // 1: P1
-        pres[0] | (~pm5 & pres[4])                              // 0: P0
-    };
+    wire [3:0] p_present = pres[3:0] | ({4{~pm5}} & pres[7:4]);
+    wire       pf_here   = (pf_pri >= SRC_PF0) && (pf_pri <= SRC_PF3);
 
     // ---- the four orderings, as ranks ------------------------------------
     // Rank 0 is highest.  Written as a table because it IS a table: four
@@ -141,12 +140,36 @@ module gtia_priority (
     wire [3:0] sch_en = (prior[3:0] == 4'd0) ? 4'b1111 : prior[3:0];
 
     // ---- the walk --------------------------------------------------------
-    logic [3:0] step;                  // 0..8 walking, 9 = idle
+    // Steps 0-3 are the players, 4 is whichever playfield the beam is over, 5 is
+    // PF3 again for the fifth player, 6 is the background.
+    logic [3:0] step;                  // 0..6 walking, 7 = compare, 8 = idle
     logic [3:0] best_rank [0:3];
     logic [3:0] best_src  [0:3];
 
-    wire        walking = (step < 4'd9);
-    wire [3:0]  s       = step;
+    wire walking = (step < 4'd7);
+
+    logic [3:0] s;                     // which source this step considers
+    logic       s_present;
+    always_comb begin
+        case (step)
+            4'd0, 4'd1, 4'd2, 4'd3: begin
+                s         = step;
+                s_present = p_present[step[1:0]];
+            end
+            4'd4: begin                                  // the playfield source
+                s         = 4'd4 + {1'b0, pf_pri} - 4'd1;
+                s_present = pf_here;
+            end
+            4'd5: begin                                  // PF3, fifth player
+                s         = 4'd7;
+                s_present = pm5 && any_missile;
+            end
+            default: begin                               // background
+                s         = 4'd8;
+                s_present = 1'b1;
+            end
+        endcase
+    end
 
     // ---- the winner ------------------------------------------------------
     // Every ordering always has a winner, because BAK is always present and
@@ -185,7 +208,7 @@ module gtia_priority (
 
     always_ff @(posedge clk or posedge rst) begin
         if (rst) begin
-            step        <= 4'd9;
+            step        <= 4'd8;
             valid       <= 1'b0;
             win_src     <= 4'd0;
             win_black   <= 1'b0;
@@ -205,7 +228,7 @@ module gtia_priority (
                     best_src[k]  <= 4'd15;
                 end
             end else if (walking) begin
-                if (present[s]) begin
+                if (s_present) begin
                     for (int k = 0; k < 4; k++) begin
                         if (rank_of(k, int'(s)) < best_rank[k]) begin
                             best_rank[k] <= rank_of(k, int'(s));
@@ -214,22 +237,18 @@ module gtia_priority (
                     end
                 end
 
-                if (step == 4'd8) begin
-                    step <= 4'd9;
-                end else begin
-                    step <= step + 4'd1;
-                end
-            end else if (step == 4'd9 && !valid) begin
+                step <= step + 4'd1;
+            end else if (step == 4'd7 && !valid) begin
                 // One settling clock after the walk so the running minima have
                 // landed before the winners are compared.
-                step        <= 4'd10;
+                step        <= 4'd8;
                 win_black   <= disagree;
                 win_src     <= mapped;
                 // Multi-colour applies where BOTH of a pair are present and the
                 // winner is one of them; it recolours, it does not re-rank.
-                win_multi01 <= multi && present[0] && present[1] &&
+                win_multi01 <= multi && p_present[0] && p_present[1] &&
                                (won == 4'd0 || won == 4'd1);
-                win_multi23 <= multi && present[2] && present[3] &&
+                win_multi23 <= multi && p_present[2] && p_present[3] &&
                                (won == 4'd2 || won == 4'd3);
                 valid       <= 1'b1;
             end
