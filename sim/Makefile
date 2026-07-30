@@ -1290,3 +1290,10 @@ build/tb_antic_line_render.vvp: tb_antic_line_render.sv $(HDL_DIR)/antic_line_re
 	    $(HDL_DIR)/antic_line_render.sv $(HDL_DIR)/antic_mode_tbl.sv \
 	    $(HDL_DIR)/antic_pixel_shift.sv $(HDL_DIR)/antic_pf_source.sv \
 	    $(HDL_DIR)/antic_color_sel.sv tb_antic_line_render.sv
+
+antic_beam: build/tb_antic_beam.vvp
+	@vvp -N $<
+
+build/tb_antic_beam.vvp: tb_antic_beam.sv $(HDL_DIR)/antic_beam.sv | build
+	iverilog -g2012 -Wall -Wno-timescale -I$(HDL_DIR) -o $@ -s tb_antic_beam \
+	    $(HDL_DIR)/antic_beam.sv tb_antic_beam.sv
