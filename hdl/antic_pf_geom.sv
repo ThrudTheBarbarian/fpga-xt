@@ -38,6 +38,14 @@
 // something off the edge to scroll in.  Wide stays wide and simply runs out.
 // The DISPLAY window does not widen — only the fetch does.
 //
+// AND THE FETCH WINDOW MOVES WITH IT, which is not a guess: antic_hscrolbug
+// prints the DMA map for a scrolled NARROW mode E and it fetches at cycles
+// 20, 22 ... 98 — forty fetches over the NORMAL window, not the narrow one.
+// So dma_start/dma_stop follow the fetch width while disp_start/disp_stop
+// follow the programmed width.  The same map puts the display list fetch at
+// cycle 1 and nine refresh cycles at 25, 29 ... 57, which the DMA schedule
+// module will need later.
+//
 // THE 320 INVARIANT ties this to the mode table and is the most useful
 // cross-check in the whole design:
 //     bytes_per_line * (8/bpp) * px_width == hi-res pixels
@@ -65,6 +73,7 @@ module antic_pf_geom (
     output wire       pf_on,           // DMACTL width is non-zero
     output logic [7:0] bytes_per_line,
     output logic [6:0] dma_start,      // first machine cycle of playfield DMA
+    output logic [6:0] dma_stop,       // one past the last fetch cycle
     output logic [6:0] disp_start,     // first machine cycle displayed
     output logic [6:0] disp_stop,      // one past the last displayed
     output wire  [2:0] hs_delay,       // HSCROL in whole machine cycles
@@ -110,21 +119,40 @@ module antic_pf_geom (
 
     always_comb bytes_per_line = 8'((fetch_px >> px_shift));
 
-    // The display window is set by the PROGRAMMED width, not the fetch width.
-    always_comb begin
-        case (pf_width)
-            2'd1: begin disp_start = 7'd28; disp_stop = 7'd92;  end  // narrow
-            2'd2: begin disp_start = 7'd20; disp_stop = 7'd100; end  // normal
-            2'd3: begin disp_start = 7'd12; disp_stop = 7'd108; end  // wide
-            default: begin disp_start = 7'd0; disp_stop = 7'd0; end  // off
+    // One window table, read twice: by the PROGRAMMED width for what is
+    // displayed and by the FETCH width for what is fetched.
+    function automatic logic [6:0] win_start(input logic [1:0] w);
+        case (w)
+            2'd1:    win_start = 7'd28;   // narrow
+            2'd2:    win_start = 7'd20;   // normal
+            2'd3:    win_start = 7'd12;   // wide
+            default: win_start = 7'd0;
         endcase
+    endfunction
+
+    function automatic logic [6:0] win_stop(input logic [1:0] w);
+        case (w)
+            2'd1:    win_stop = 7'd92;
+            2'd2:    win_stop = 7'd100;
+            2'd3:    win_stop = 7'd108;
+            default: win_stop = 7'd0;
+        endcase
+    endfunction
+
+    always_comb begin
+        disp_start = win_start(pf_width);
+        disp_stop  = win_stop(pf_width);
     end
 
     // Character modes start fetching two cycles early: name, then glyph.
     always_comb begin
-        if (!pf_on)      dma_start = 7'd0;
-        else if (is_char) dma_start = disp_start - 7'd2;
-        else              dma_start = disp_start;
+        if (!pf_on) begin
+            dma_start = 7'd0;
+            dma_stop  = 7'd0;
+        end else begin
+            dma_start = win_start(fetch_width) - (is_char ? 7'd2 : 7'd0);
+            dma_stop  = win_stop(fetch_width);
+        end
     end
 
 endmodule

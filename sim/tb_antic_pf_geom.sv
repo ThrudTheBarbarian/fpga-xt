@@ -23,7 +23,7 @@ module tb_antic_pf_geom;
 
     wire        pf_on;
     wire [7:0]  bytes_per_line;
-    wire [6:0]  dma_start, disp_start, disp_stop;
+    wire [6:0]  dma_start, dma_stop, disp_start, disp_stop;
     wire [2:0]  hs_delay;
     wire        hs_fine;
 
@@ -31,7 +31,8 @@ module tb_antic_pf_geom;
         .pf_width(pf_width), .hscrol_en(hscrol_en), .hscrol(hscrol),
         .is_char(is_char), .bpp(bpp), .px_width(px_width),
         .pf_on(pf_on), .bytes_per_line(bytes_per_line),
-        .dma_start(dma_start), .disp_start(disp_start), .disp_stop(disp_stop),
+        .dma_start(dma_start), .dma_stop(dma_stop),
+        .disp_start(disp_start), .disp_stop(disp_stop),
         .hs_delay(hs_delay), .hs_fine(hs_fine)
     );
 
@@ -236,6 +237,45 @@ module tb_antic_pf_geom;
                      bytes_per_line);
             fail++;
         end
+
+        // ================================================================
+        // T7: the antic_hscrolbug oracle, verbatim
+        // ================================================================
+        // The test prints ANTIC's own DMA map for a scrolled NARROW mode E:
+        // forty fetches at cycles 20, 22 ... 98.  That is the NORMAL window,
+        // so widening the fetch moves the fetch WINDOW too — while the
+        // display window stays narrow.
+        m = 4'hE; #1; is_char = t_is_char; bpp = t_bpp; px_width = t_px_width;
+        pf_width = 2'd1; hscrol_en = 1; hscrol = 4'd0; #1;
+        if (bytes_per_line !== 8'd40) begin
+            $display("FAIL T7: scrolled narrow mode E = %0d bytes, the oracle shows 40",
+                     bytes_per_line);
+            fail++;
+        end
+        if (dma_start !== 7'd20) begin
+            $display("FAIL T7b: scrolled narrow mode E fetches from cycle %0d, the oracle shows 20",
+                     dma_start);
+            fail++;
+        end
+        if (dma_stop !== 7'd100) begin
+            $display("FAIL T7c: scrolled narrow mode E fetch ends %0d, the oracle's last fetch is 98",
+                     dma_stop);
+            fail++;
+        end
+        // Mode E takes one fetch per two machine cycles, so the window has to
+        // hold exactly bytes_per_line of them: 20,22...98.
+        if ((int'(dma_stop) - int'(dma_start)) / 2 != int'(bytes_per_line)) begin
+            $display("FAIL T7d: %0d-cycle fetch window holds %0d fetches, not %0d bytes",
+                     dma_stop - dma_start, (dma_stop - dma_start) / 2, bytes_per_line);
+            fail++;
+        end
+        // The DISPLAY window must still be the narrow one.
+        if (disp_start !== 7'd28 || disp_stop !== 7'd92) begin
+            $display("FAIL T7e: scrolling widened the display window to %0d..%0d",
+                     disp_start, disp_stop);
+            fail++;
+        end
+        hscrol_en = 0;
 
         if (fail == 0) $display("tb_antic_pf_geom: all checks PASS");
         else           $display("tb_antic_pf_geom: %0d FAIL", fail);
