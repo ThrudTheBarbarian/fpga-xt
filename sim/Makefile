@@ -1289,7 +1289,8 @@ build/tb_antic_line_render.vvp: tb_antic_line_render.sv $(HDL_DIR)/antic_line_re
 	iverilog -g2012 -Wall -Wno-timescale -I$(HDL_DIR) -o $@ -s tb_antic_line_render \
 	    $(HDL_DIR)/antic_line_render.sv $(HDL_DIR)/antic_mode_tbl.sv \
 	    $(HDL_DIR)/antic_pixel_shift.sv $(HDL_DIR)/antic_pf_source.sv \
-	    $(HDL_DIR)/antic_color_sel.sv tb_antic_line_render.sv
+	    $(HDL_DIR)/antic_color_sel.sv $(HDL_DIR)/antic_char_ctl.sv \
+	    tb_antic_line_render.sv
 
 antic_beam: build/tb_antic_beam.vvp
 	@vvp -N $<
@@ -1313,3 +1314,10 @@ build/tb_antic_pf_geom.vvp: tb_antic_pf_geom.sv $(HDL_DIR)/antic_pf_geom.sv \
 	    $(HDL_DIR)/antic_mode_tbl.sv | build
 	iverilog -g2012 -Wall -Wno-timescale -I$(HDL_DIR) -o $@ -s tb_antic_pf_geom \
 	    $(HDL_DIR)/antic_pf_geom.sv $(HDL_DIR)/antic_mode_tbl.sv tb_antic_pf_geom.sv
+
+antic_char_ctl: build/tb_antic_char_ctl.vvp
+	@vvp -N $<
+
+build/tb_antic_char_ctl.vvp: tb_antic_char_ctl.sv $(HDL_DIR)/antic_char_ctl.sv | build
+	iverilog -g2012 -Wall -Wno-timescale -I$(HDL_DIR) -o $@ -s tb_antic_char_ctl \
+	    $(HDL_DIR)/antic_char_ctl.sv tb_antic_char_ctl.sv

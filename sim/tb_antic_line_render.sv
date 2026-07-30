@@ -20,6 +20,7 @@ module tb_antic_line_render;
     logic [15:0] scan_addr_in;
     logic [4:0]  row;
     logic [7:0]  chbase, bytes_per_line;
+    logic [2:0]  chactl;
     logic [7:0]  colbk, colpf0, colpf1, colpf2, colpf3;
 
     wire [15:0] mem_addr;
@@ -31,7 +32,7 @@ module tb_antic_line_render;
     antic_line_render dut (
         .clk(clk), .rst(rst),
         .start(start), .mode(mode), .scan_addr_in(scan_addr_in), .row(row),
-        .chbase(chbase), .bytes_per_line(bytes_per_line),
+        .chbase(chbase), .chactl(chactl), .bytes_per_line(bytes_per_line),
         .colbk(colbk), .colpf0(colpf0), .colpf1(colpf1),
         .colpf2(colpf2), .colpf3(colpf3),
         .mem_addr(mem_addr), .mem_data(mem_data),
@@ -66,6 +67,7 @@ module tb_antic_line_render;
 
     initial begin
         start = 0; mode = 0; scan_addr_in = 0; row = 0; chbase = 8'hE0;
+        chactl = 3'b000;
         bytes_per_line = 0;
         colbk = 8'h00; colpf0 = 8'h28; colpf1 = 8'h3A; colpf2 = 8'h94;
         colpf3 = 8'h56;
@@ -219,6 +221,65 @@ module tb_antic_line_render;
                          i, px[i]);
                 fail++;
             end
+
+        // ================================================================
+        // T9: CHACTL, end to end through the real pixel path
+        // ================================================================
+        // Char $C1 is $41 with the inverse-video bit set; its glyph is the
+        // same one T3 used, so the expected pixels are known.
+        mem[16'h5000] = 8'hC1;
+
+        chactl = 3'b000;                    // baseline: an inverse char is
+        render(4'h2, 16'h5000, 5'd0, 8'd1); // drawn exactly like a plain one
+        if (px[0] !== 8'h9A || px[1] !== 8'h9A) begin
+            $display("FAIL T9: chactl $00 px0=$%02h px1=$%02h expected $9A",
+                     px[0], px[1]);
+            fail++;
+        end
+        for (int i = 2; i < 8; i++)
+            if (px[i] !== 8'h94) begin
+                $display("FAIL T9b: chactl $00 px%0d=$%02h expected bg", i, px[i]);
+                fail++;
+            end
+
+        chactl = 3'b010;                    // invert: $C0 -> $3F
+        render(4'h2, 16'h5000, 5'd0, 8'd1);
+        if (px[0] !== 8'h94 || px[1] !== 8'h94) begin
+            $display("FAIL T9c: inverted px0=$%02h px1=$%02h expected bg $94",
+                     px[0], px[1]);
+            fail++;
+        end
+        for (int i = 2; i < 8; i++)
+            if (px[i] !== 8'h9A) begin
+                $display("FAIL T9d: inverted px%0d=$%02h expected lit $9A", i, px[i]);
+                fail++;
+            end
+
+        chactl = 3'b001;                    // blank: the whole cell is bg
+        render(4'h2, 16'h5000, 5'd0, 8'd1);
+        for (int i = 0; i < 8; i++)
+            if (px[i] !== 8'h94) begin
+                $display("FAIL T9e: blanked px%0d=$%02h expected bg", i, px[i]);
+                fail++;
+            end
+
+        // Reflect pulls the glyph from the mirrored row: row 0 of a reflected
+        // cell is glyph row 7.
+        chactl = 3'b100;
+        mem[16'h5001] = 8'h41;
+        mem[16'hE20F] = 8'h03;              // glyph row 7 of char $41
+        render(4'h2, 16'h5001, 5'd0, 8'd1);
+        if (px[6] !== 8'h9A || px[7] !== 8'h9A) begin
+            $display("FAIL T9f: reflected row 0 px6=$%02h px7=$%02h expected $9A",
+                     px[6], px[7]);
+            fail++;
+        end
+        for (int i = 0; i < 6; i++)
+            if (px[i] !== 8'h94) begin
+                $display("FAIL T9g: reflected px%0d=$%02h expected bg", i, px[i]);
+                fail++;
+            end
+        chactl = 3'b000;
 
         if (fail == 0) $display("tb_antic_line_render: all checks PASS");
         else           $display("tb_antic_line_render: %0d FAIL", fail);

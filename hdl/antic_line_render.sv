@@ -17,7 +17,9 @@
 // correctness.  It arrives when the CPU is reattached.
 //
 // Character modes cost two fetches per character: the NAME from the scan
-// address, then the GLYPH from CHBASE.  Bitmap modes fetch once.
+// address, then the GLYPH from CHBASE.  Bitmap modes fetch once.  CHACTL sits
+// on both sides of that second fetch — reflect XORs the row going in, blank and
+// invert rewrite the data coming out (antic_char_ctl).
 //
 // GLYPH ROW SELECTION carries the two quirks the hardware has:
 //   * 16-row modes (5, 7) show each glyph row twice, so the glyph row is
@@ -43,6 +45,7 @@ module antic_line_render (
     input  wire [15:0] scan_addr_in,   // memory scan pointer for this line
     input  wire [4:0]  row,            // row within the block, 0..rows-1
     input  wire [7:0]  chbase,
+    input  wire [2:0]  chactl,         // $D401 blank/invert/reflect
     input  wire [7:0]  bytes_per_line, // 40, 20 or 10 (width-dependent)
 
     // ---- colour registers, sampled as each pixel is emitted -------------
@@ -127,7 +130,19 @@ module antic_line_render (
         end
     end
 
-    wire [15:0] glyph_addr = {chbase[7:2], char_code[6:0], glyph_row};
+    // CHACTL sits between the row counter and the character set on the way in,
+    // and between the character set and the shifter on the way out.
+    wire [2:0] glyph_row_ctl;
+    wire [7:0] glyph_data_ctl;
+
+    antic_char_ctl u_chactl (
+        .chactl(chactl), .is_char(is_char), .bpp(bpp), .px_width(px_width),
+        .char_code(char_code),
+        .glyph_row_in(glyph_row), .glyph_data_in(mem_data),
+        .glyph_row(glyph_row_ctl), .glyph_data(glyph_data_ctl)
+    );
+
+    wire [15:0] glyph_addr = {chbase[7:2], char_code[6:0], glyph_row_ctl};
 
     // ---- the walk --------------------------------------------------------
     typedef enum logic [2:0] {
@@ -190,7 +205,7 @@ module antic_line_render (
                 S_DATA_D: begin
                     // A blanked mode-3 row still occupies its pixels, so feed
                     // the shifter zeros rather than skipping it.
-                    sh_data <= row_blank ? 8'h00 : mem_data;
+                    sh_data <= row_blank ? 8'h00 : glyph_data_ctl;
                     sh_load <= 1'b1;
                     if (!is_char)
                         scan_q <= {scan_q[15:12], scan_q[11:0] + 12'd1};
