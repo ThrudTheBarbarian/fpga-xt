@@ -269,16 +269,25 @@ module tb_gtia_obj_walk;
         run_to(68);                                          // into the 2nd bit
         sizep0 = 2'b00;                                      // ...now normal
         run_to(120);
-        // bit 0 lit over cc 60-63, bit 1 lit over 64-68 (stretched by one: the
-        // size counter compares for equality and was already past the new
-        // limit, so it wraps before matching), then bits 2-7 are clear.
-        if (span_first(0) != 60 || span_last(0) != 68) begin
-            $display("FAIL T5: resized player spans %0d..%0d, expected 60..68",
+        // bit 0 lit over cc 60-63 (quad), bit 1 over 64-67, then bits 2-7 clear.
+        //
+        // This USED to expect 60..68 — bit 1 stretched by one — and the comment
+        // here said why: "the size counter compares for equality and was
+        // already past the new limit, so it wraps before matching".  That is a
+        // description of an implementation artefact, not of hardware: a
+        // mid-draw SHRINK left cnt above the new size_max, so the equality
+        // never hit and the object stalled until the 2-bit counter wrapped all
+        // the way round.  The advance compare is now >=, so the rate changes on
+        // the very next colour clock, which is what "the SIZE change changes the
+        // advance RATE" means.  Hardware arbitrates: ACID gtia_pmresize reports
+        // $40 where $80 is required, a one-bit-position shift.
+        if (span_first(0) != 60 || span_last(0) != 67) begin
+            $display("FAIL T5: resized player spans %0d..%0d, expected 60..67",
                      span_first(0), span_last(0));
             fail++;
         end
-        if (span_count(0) != 9) begin
-            $display("FAIL T5b: resized player present %0d cc, expected 9",
+        if (span_count(0) != 8) begin
+            $display("FAIL T5b: resized player present %0d cc, expected 8",
                      span_count(0));
             fail++;
         end

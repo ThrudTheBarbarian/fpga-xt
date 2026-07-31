@@ -134,7 +134,14 @@ module gtia_obj_walk (
     // ---- one object's step ------------------------------------------------
     wire       walking  = (step < 4'd8);
     wire       match    = walking && (cc_pos == obj_hpos);
-    wire       advance  = walking && live[i] && !match && (cnt[i] == size_max);
+    // >=, not ==.  SIZEP/SIZEM can change PART WAY THROUGH a bit: ACID
+    // gtia_pmresize shrinks a player from quad to normal mid-draw and requires
+    // the already-emitted pixels to stand while the ADVANCE RATE changes
+    // immediately.  With an equality the counter has already passed the new
+    // (smaller) size_max, so it never matches — the object stalls until the
+    // 2-bit counter wraps all the way round, three colour clocks late, and the
+    // shape comes out shifted a bit position ($40 where $80 is required).
+    wire       advance  = walking && live[i] && !match && (cnt[i] >= size_max);
     wire       finished = advance && (bits[i] == last_bit);
 
     wire [7:0] sr_next   = match   ? obj_graf
