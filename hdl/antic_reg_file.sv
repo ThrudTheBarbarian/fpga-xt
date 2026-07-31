@@ -147,6 +147,25 @@ module antic_reg_file #(
     end
 
     // One machine cycle behind the latch, both edges: this is the delay slot.
+    //
+    // TWO OTHER SHAPES WERE TRIED ON HARDWARE AND ARE WORSE, recorded so they
+    // are not tried again.  ACID antic_wsync uses POKEY's RANDOM as a cycle
+    // clock and reports INC WSYNC as $1B where $0D is required; decoding the
+    // 9-bit poly (taps q[0]^q[5], which reproduce all four asserted values at
+    // steps 113/342/569/1253) puts $1B at step 341 against $0D at 342 —
+    // the read-modify-write resumes exactly one machine cycle early.
+    //
+    //   * retiming this edge MID-CYCLE (wsync_gen's shape for the legacy
+    //     machine) moves it the WRONG WAY: the fid core samples rdy at a commit
+    //     slot near the END of its window, so a mid-cycle edge lands one window
+    //     EARLIER.  Cost antic_blockednmi and cpu_bugs.
+    //   * q1 | q2 (the latch delayed one ORed with two) does lengthen the
+    //     stall, but antic_wsync's reading did not move at all — still $1B —
+    //     while antic_blockednmi broke.  Net zero, so not the mechanism.
+    //
+    // The missing cycle is therefore NOT in this shape; it is in where the
+    // RMW's two writes land relative to the release.  Left as q1 until that is
+    // measured directly.
     logic rdy_q;
     always_ff @(posedge clk or posedge rst) begin
         if (rst)       rdy_q <= 1'b0;

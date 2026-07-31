@@ -38,8 +38,13 @@
 module antic_gtia #(
     parameter int CYCLES_PER_LINE = 114,
     parameter int LINES_PER_FRAME = 262,
-    parameter int STATUS_CYCLE_P   = 7,     // NMIST set  (ACID antic_nmist)
-    parameter int NMI_CYCLE_P      = 8,     // /NMI       (one cycle later)
+    // Bisected on hardware against ACID via CTRL_RWTUNE, one register write per
+    // step: antic_blockednmi passes with the /NMI cycle at 9 and fails at 8 or
+    // 10, which is a clean single-cycle window.  The status keeps its
+    // one-machine-cycle lead — that relationship is structural (the CPU can read
+    // NMIST between the two), only the absolute placement was out.
+    parameter int STATUS_CYCLE_P   = 8,     // NMIST set  (ACID antic_nmist)
+    parameter int NMI_CYCLE_P      = 9,     // /NMI       (one cycle later)
     parameter int WSYNC_RELEASE_P  = 104,   // /RDY back  (ACID antic_wsync)
     parameter int VCOUNT_ADV_P     = 111,   // VCOUNT++   (ACID antic_vcount)
     parameter int DISPLAY_TOP     = 8,
@@ -102,6 +107,17 @@ module antic_gtia #(
 
     output wire [7:0]  nmist_o
 );
+
+    // Mid-machine-cycle strobe: the second of the four hi-res pixel ticks.
+    // Only /RDY uses it, and only so its edges sit half a cycle away from the
+    // fid core's rdy sample point (see antic_reg_file).
+    logic [1:0] px_idx;
+    always_ff @(posedge clk or posedge rst) begin
+        if (rst)           px_idx <= 2'd0;
+        else if (tick)     px_idx <= 2'd0;
+        else if (px_tick)  px_idx <= px_idx + 2'd1;
+    end
+    wire mid_tick = px_tick && (px_idx == 2'd1);
 
     // ---- the tuned cycle numbers -----------------------------------------
     function automatic [6:0] adj(input int base, input logic [3:0] d);
