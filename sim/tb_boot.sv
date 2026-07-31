@@ -204,6 +204,7 @@ module tb_boot;
     ) u_sally_mem (
         .clk        (clk_sally),
         .rst        (rst_sally),
+        .cold       (1'b0),
         .addr       (cpu_addr),
         .data_in    (cpu_dout),
         .rw         (cpu_rw),

@@ -171,6 +171,16 @@ module sally_mem #(
     // undisturbed.  See docs/Zynq/register-unlock.md (BANK group).
     input  wire        unlock_bank,
 
+    // SALLYRST held (2-FF synced into this domain).  A cold boot must not
+    // inherit XT state a stock guest cannot know about -- the same rule that
+    // made SALLYRST clear ANTIC's NMIEN.  The $4000-$5FFF aperture overlay is
+    // the one that bites: the XL OS boot stub sets $D5C6.0 for a paravirtual
+    // SIO transaction and clears it afterwards, so a core halted mid-stub (or
+    // reset between the two) leaves the overlay ON, and every read of
+    // $4000-$5FFF then returns the mailbox instead of RAM.  ACID mmu_xlbanking
+    // catches exactly that: it banks out every ROM and finds $5000 is not RAM.
+    input  wire        cold,
+
     // PORTB ($D301) from PIA — controls ROM vs banked/BRAM visibility.
     // Stock XL/XE: bit0 = OS ROM enable (active HIGH), bit1 = BASIC enable
     // (active LOW).  See the memory-map header.
@@ -388,7 +398,7 @@ module sally_mem #(
     logic       math_map;
     logic [7:0] math_chunk;
     always_ff @(posedge clk or posedge rst) begin
-        if (rst) begin
+        if (rst || cold) begin
             math_map   <= 1'b0;
             math_chunk <= 8'h00;
         end else if (rdy && !rw && unlock_bank_q) begin

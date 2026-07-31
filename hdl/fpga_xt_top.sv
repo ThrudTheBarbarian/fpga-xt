@@ -1355,6 +1355,7 @@ module fpga_xt_top (
         .data_out   (cpu_din),
         .data_out_zero (cpu_din_zero),
         .rdy        (mem_rdy),       // steps with the ACTIVE core (turbo: sally_rdy; fid: early-window pulse)
+        .cold       (sallyrst_sync[1]),  // SALLYRST: drop the $4000 aperture overlay
         .stack_op   (cpu_stack_op),
         .s_high     (cpu_s_high),
         .busy       (mem_busy_n),
