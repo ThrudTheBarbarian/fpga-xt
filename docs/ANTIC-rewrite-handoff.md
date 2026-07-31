@@ -143,6 +143,27 @@ lead, not a diagnosis.
 
 ### Next steps, in order
 
+0. **MEASURED, and the two instruments now disagree — resolve this first.**
+   With DBG_BEAM (new) and the Altirra trace (new) both available:
+
+   * Altirra's reference for the INC WSYNC step is **108 machine cycles**
+     (`$2033 inc wsync` -> `$2036 lda random`).
+   * Our RANDOM reading says we take **107** (poly step 341 against 342).
+   * But DBG_BEAM says our `inc wsync` STARTS at ANTIC cycle **113**, where
+     ACID's own annotation says **111** — the CPU arrives two cycles late.
+
+   Something is inconsistent between "the CPU is 2 cycles late to the
+   instruction" and "the poly reads 1 step early". The most likely explanation
+   is that POKEY's phi2 and the rewrite's beam are not advancing in lockstep;
+   POKEY is clocked from antic_top's own divider while the rewrite's beam
+   counts `antic_phi2_level` edges in clk_sys, and the two counters have
+   independent zero points. **Measure that directly before changing anything.**
+
+   NOTE the trap that cost time here: **halting the CPU does NOT stop ANTIC.**
+   The beam ran on 50 scanlines while the core sat at a breakpoint, so DBG_BEAM
+   cannot measure an interval across two halts — only the beam at a single
+   halt, reached without an intervening stop.
+
 1. **antic_wsync — the RMW's missing cycle.** Measured exactly: POKEY's RANDOM
    is a cycle clock, the 9-bit poly's taps are `q[0]^q[5]` (they reproduce the
    test's four asserted values at steps 113/342/569/1253), and our `$1B` is
