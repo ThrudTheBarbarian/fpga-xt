@@ -38,6 +38,10 @@
 module antic_gtia #(
     parameter int CYCLES_PER_LINE = 114,
     parameter int LINES_PER_FRAME = 262,
+    parameter int STATUS_CYCLE_P   = 7,     // NMIST set  (ACID antic_nmist)
+    parameter int NMI_CYCLE_P      = 8,     // /NMI       (one cycle later)
+    parameter int WSYNC_RELEASE_P  = 104,   // /RDY back  (ACID antic_wsync)
+    parameter int VCOUNT_ADV_P     = 111,   // VCOUNT++   (ACID antic_vcount)
     parameter int DISPLAY_TOP     = 8,
     parameter int DISPLAY_LINES   = 240
 ) (
@@ -87,8 +91,26 @@ module antic_gtia #(
     // reads: served from the far side of the hwreg read CDC they come back a
     // round-trip stale, which is fatal to the cycle-accurate tests
     // (antic_vcount measures the exact cycle VCOUNT steps on).
+    // ---- timing tune (GP0 CTRL_RWTUNE) -----------------------------------
+    // Four SIGNED nibble offsets on the cycle numbers ACID bisects.  They exist
+    // so a cycle question costs a register write instead of a 25-minute
+    // bitstream: the legacy timing machine already does this for its WSYNC
+    // release, and that is how its constants were found in the first place.
+    // tune = 0 is exactly the parameter defaults.
+    //   [3:0] NMIST status   [7:4] /NMI   [11:8] WSYNC release  [15:12] VCOUNT
+    input  wire [15:0] tune,
+
     output wire [7:0]  nmist_o
 );
+
+    // ---- the tuned cycle numbers -----------------------------------------
+    function automatic [6:0] adj(input int base, input logic [3:0] d);
+        adj = 7'(base + $signed(d));
+    endfunction
+    wire [6:0] cyc_status = adj(STATUS_CYCLE_P,  tune[3:0]);
+    wire [6:0] cyc_nmi    = adj(NMI_CYCLE_P,     tune[7:4]);
+    wire [6:0] cyc_wsync  = adj(WSYNC_RELEASE_P, tune[11:8]);
+    wire [6:0] cyc_vcount = adj(VCOUNT_ADV_P,    tune[15:12]);
 
     // ---- the beam --------------------------------------------------------
     wire in_display, in_vblank, vbi_line;
@@ -97,7 +119,7 @@ module antic_gtia #(
         .CYCLES_PER_LINE(CYCLES_PER_LINE), .LINES_PER_FRAME(LINES_PER_FRAME),
         .DISPLAY_TOP(DISPLAY_TOP), .DISPLAY_LINES(DISPLAY_LINES)
     ) u_beam (
-        .clk(clk), .rst(rst), .tick(tick),
+        .clk(clk), .rst(rst), .tick(tick), .vcount_adv(cyc_vcount),
         .hcount(hcount), .line(line), .vcount(vcount),
         .line_start(line_start), .in_display(in_display),
         .in_vblank(in_vblank), .vbi_line(vbi_line)
@@ -112,6 +134,7 @@ module antic_gtia #(
     assign nmist_o = nmist;
 
     antic_reg_file u_aregs (
+        .wsync_rel(cyc_wsync),
         .clk(clk), .rst(rst), .tick(tick), .hcount(hcount),
         .addr(addr), .we(we && cs_antic), .wdata(wdata), .rdata(a_rdata),
         .vcount(vcount), .nmist(nmist),
@@ -162,6 +185,7 @@ module antic_gtia #(
 
     // ---- the raster path ---------------------------------------------------
     antic_scanline u_sl (
+        .status_cyc(cyc_status), .nmi_cyc(cyc_nmi),
         .clk(clk), .rst(rst), .cold(cold),
         .line_start(line_start), .tick(tick), .px_tick(px_tick),
         .hcount(hcount), .line(line), .in_vblank(in_vblank),

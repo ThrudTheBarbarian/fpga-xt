@@ -146,6 +146,10 @@ module xt_gp0_regs (
     // Reset 0 = running, so a bitstream load boots exactly as before.
     output reg  [7:0]  sallyrst,
 
+    // ---- ANTIC-rewrite timing tune (clk_sys, straight to antic_gtia) -------
+    // Signed nibble offsets on the cycle numbers ACID bisects; 0 = RTL default.
+    output reg  [15:0] rw_tune,
+
     // ---- Keypad->joystick override (clk_sys; routed to antic_top) ----------
     // [31]=enable, [7:0]=PORTA pin value (active-low STICK0/1), [8]=TRIG0 fire
     // (active-low). antic_top muxes this into pia_regs PORTA + GTIA TRIG0 when
@@ -306,6 +310,7 @@ module xt_gp0_regs (
             gp0_ctrl       <= 8'h00;   // boot to the compositor; bars are debug-only
             cmpcfg         <= 32'h0000_0210;  // depth desktop0/overlay1/XL2, all opaque = shipping
             sallyrst       <= 8'h06;          // power-on: bit1 = FIDELITY core, bit2 = ANTIC TIMING-MACHINE AUTHORITY.
+            rw_tune        <= 16'd0;          // the RTL's own cycle numbers
                                              // bit0=0 = realm running.  Turbo is a PS opt-in (bit1=0); the
                                              // legacy ANTIC timing path is a PS opt-out (bit2=0).
                                              // Authority became the default once it measured 33/57 against
@@ -427,6 +432,7 @@ module xt_gp0_regs (
                                     CTRL_GP0:   gp0_ctrl <= w_byte;            // [0]bars/compositor [3:1]XL-scale [4]DMACTL-blank [5]video-sleep
                                     CTRL_CMPCFG: cmpcfg  <= w_data;            // per-plane depth + alpha_en (whole word)
                                     CTRL_SALLYRST: sallyrst <= w_byte;         // [0] = hold the 6502 realm in reset
+                                    CTRL_RWTUNE:   rw_tune  <= w_data[15:0];
                                     CTRL_JOY_OVR:  joy_ovr  <= w_data;         // keypad->joystick override (whole word)
                                     CTRL_CONSOL:   consol_keys <= w_byte;       // CONSOL keys (kernel holds OPTION=$03 to keep BASIC off for games)
                                     CTRL_SPEED: begin bl_addr <= 6'h1A; bl_we <= 1'b1; end // clock_mult -> $D4CA

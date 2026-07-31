@@ -42,6 +42,7 @@ module tb_antic_scanline;
     antic_beam #(.CYCLES_PER_LINE(CYC), .LINES_PER_FRAME(LINES),
                  .DISPLAY_TOP(8), .DISPLAY_LINES(192))
     u_beam (
+        .vcount_adv(7'd111),
         .clk(clk), .rst(rst), .tick(tick),
         .hcount(hcount), .line(line), .vcount(vcount),
         .line_start(line_start), .in_display(in_display), .in_vblank(in_vblank),
@@ -92,6 +93,7 @@ module tb_antic_scanline;
     end
 
     antic_scanline u_sl (
+        .status_cyc(7'd7), .nmi_cyc(7'd8),
         .clk(clk), .rst(rst), .cold(cold),
         .line_start(line_start), .tick(tick), .px_tick(px_tick), .hcount(hcount),
         .line(line), .in_vblank(in_vblank), .vbi_line(vbi_line),

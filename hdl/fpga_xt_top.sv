@@ -1595,6 +1595,7 @@ module fpga_xt_top (
     // snoop_we_screen inside antic_top.
     wire [7:0]  antic_bus_data_out;
     wire        antic_bus_data_oe;
+    wire [15:0] rw_tune;           // CTRL_RWTUNE -> antic_gtia cycle offsets
     wire [7:0]  rw_vcount_sys;     // rewrite VCOUNT/NMIST (clk_sys); the
     wire [7:0]  rw_nmist_sys;      // clk_sally copies are declared up by fid_din_mux
     wire [7:0]  antic_rdata_top;   // legacy ANTIC's ungated read mux
@@ -1870,6 +1871,7 @@ module fpga_xt_top (
         // occur.  antic_top says `.pal_sense_in(8'h0F), // NTSC` and this must
         // agree with it — the OS reads the same register to set up VBI timing.
         .pal_sense(8'h0F), .consol_keys(consol_keys),
+        .tune(rw_tune),
         .lb_wr(rw_lb_wr), .lb_color(rw_lb_color),
         .lb_line_start(rw_lb_line_start),
         .hcount(), .line(rw_line), .vcount(rw_vcount_sys), .line_start(), .dlpc(),
@@ -3669,6 +3671,7 @@ module fpga_xt_top (
         .sio_we          (sio_we),
         .sio_rd          (sio_rd),
         .sio_rdata       (sio_rdata),
+        .rw_tune         (rw_tune),          // ANTIC-rewrite cycle tune (0xCTRL+0x28)
         // ---- 6502 debugger control/status (0x8xx) ----
         .dbg_halt_tog    (gdbg_halt_tog),
         .dbg_go_tog      (gdbg_go_tog),

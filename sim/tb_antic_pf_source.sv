@@ -35,7 +35,8 @@ module tb_antic_pf_source;
     );
 
     localparam logic [2:0] SRC_BK=3'd0, SRC_PF0=3'd1, SRC_PF1=3'd2,
-                           SRC_PF2=3'd3, SRC_PF3=3'd4, SRC_HIRES=3'd5;
+                           SRC_PF2=3'd3, SRC_PF3=3'd4, SRC_HIRES=3'd5,
+                           SRC_HIRES_BK=3'd6;
 
     int fail = 0;
     // Module scope: iverilog rejects `automatic` locals in procedural blocks.
@@ -54,14 +55,22 @@ module tb_antic_pf_source;
     endtask
 
     initial begin
-        // ---- T1: hi-res modes — background is PF2, lit is DISTINCT --------
-        // If lit collapsed to SRC_PF2 the display would lose the luma trick;
-        // if background collapsed to SRC_BK the wrong register would show.
-        chk(4'h2, 2'b00, 8'h00, SRC_PF2,   "T1 mode2 bg");
+        // ---- T1: hi-res modes — THREE distinct sources, not two -----------
+        // Lit and unlit are BOTH distinct from plain PF2, for different
+        // reasons.  Lit needs its own code or the display loses the luma trick
+        // (COLPF1 luma over COLPF2 hue).  UNLIT needs its own because it is
+        // DRAWN in COLPF2 but must COLLIDE as background: ANTIC sends the
+        // background code for a 0 bit in modes 2/3/F.  Collapsing unlit to
+        // SRC_PF2 makes an object over blank hi-res register a playfield
+        // collision real hardware does not — which is what ACID
+        // antic_addresswrap fails on (all-zero mode F, quad-width player over
+        // it, P0PF must read $00) while its message blames the display list.
+        // Both map back to COLPF2 downstream, so the picture is unchanged.
+        chk(4'h2, 2'b00, 8'h00, SRC_HIRES_BK, "T1 mode2 bg");
         chk(4'h2, 2'b01, 8'h00, SRC_HIRES, "T1 mode2 lit");
-        chk(4'h3, 2'b00, 8'h00, SRC_PF2,   "T1 mode3 bg");
+        chk(4'h3, 2'b00, 8'h00, SRC_HIRES_BK, "T1 mode3 bg");
         chk(4'h3, 2'b01, 8'h00, SRC_HIRES, "T1 mode3 lit");
-        chk(4'hF, 2'b00, 8'h00, SRC_PF2,   "T1 modeF bg");
+        chk(4'hF, 2'b00, 8'h00, SRC_HIRES_BK, "T1 modeF bg");
         chk(4'hF, 2'b01, 8'h00, SRC_HIRES, "T1 modeF lit");
 
         // ---- T2: 2bpp bitmap modes — the plain mapping --------------------

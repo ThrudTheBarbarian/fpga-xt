@@ -55,6 +55,11 @@ module antic_nmi #(
     input  wire       dli,              // 1-clk from the display list machine
     input  wire       vbi_line,         // this scanline is the VBI line
 
+    // Cycle numbers, live rather than parameterised, so the pair can be
+    // bisected against ACID on HARDWARE instead of one bitstream per guess.
+    // Reset to STATUS_CYCLE/NMI_CYCLE, so tune=0 is exactly the old behaviour.
+    input  wire [6:0] status_cyc,       // NMIST is set here...
+    input  wire [6:0] nmi_cyc,          // ...and /NMI asserted here
     input  wire [7:0] nmien,            // $D40E
     input  wire       nmires,           // 1-clk: write to $D40F
 
@@ -71,8 +76,8 @@ module antic_nmi #(
         else if (line_start)  dli_armed <= 1'b0;
     end
 
-    wire at_status = tick && (hcount == 7'(STATUS_CYCLE));
-    wire at_nmi    = tick && (hcount == 7'(NMI_CYCLE));
+    wire at_status = tick && (hcount == status_cyc);
+    wire at_nmi    = tick && (hcount == nmi_cyc);
 
     wire dli_status = at_status && dli_armed;
     wire vbi_status = at_status && vbi_line;

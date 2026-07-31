@@ -34,6 +34,7 @@ module tb_antic_reg_file;
     wire [7:0] dlist_wdata;
 
     antic_reg_file dut (
+        .wsync_rel(7'd104),
         .clk(clk), .rst(rst), .tick(tick), .hcount(hcount),
         .addr(addr), .we(we), .wdata(wdata), .rdata(rdata),
         .vcount(vcount), .nmist(nmist),

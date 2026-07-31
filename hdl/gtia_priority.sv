@@ -92,7 +92,9 @@ module gtia_priority (
     wire multi = prior[5];
 
     // A hi-res lit pixel ranks and collides as playfield 2.
-    wire [2:0] pf_pri = (pf_src == SRC_HIRES_LIT) ? SRC_PF2 : pf_src;
+    localparam logic [2:0] SRC_HIRES_BK  = 3'd6;   // unlit hi-res: drawn as PF2
+    wire [2:0] pf_pri = (pf_src == SRC_HIRES_LIT ||
+                         pf_src == SRC_HIRES_BK) ? SRC_PF2 : pf_src;
     wire       hires  = (pf_src == SRC_HIRES_LIT);
 
     // ---- who is present --------------------------------------------------

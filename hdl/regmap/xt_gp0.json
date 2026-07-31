@@ -241,6 +241,14 @@
           "c": "XT_CTRL_CONSOL",
           "sv": "CTRL_CONSOL",
           "desc": "console-keys value the 6502 reads as CONSOL ($D01F). ACTIVE-LOW: bit0=START bit1=SELECT bit2=OPTION (0=pressed). Reset $07 (none). The kernel holds OPTION ($03) across a game coldstart so the XL OS leaves BASIC DISABLED ($A000-$BFFF stays RAM) \u2014 no game boots with BASIC mapped, and BASIC shadowing RAM was crashing games; releases to $07 for boot-to-BASIC (READY). Replaces the hardwired 8'h07 in antic_top"
+        },
+        {
+          "off": "0x28",
+          "access": "W",
+          "width": 16,
+          "c": "XT_CTRL_RWTUNE",
+          "sv": "CTRL_RWTUNE",
+          "desc": "ANTIC-rewrite timing tune (A9-only; reset 0 = the RTL defaults). Four SIGNED nibble offsets on the cycle numbers ACID bisects, so a cycle question costs a register write instead of a 25-minute bitstream: [3:0] NMIST status cycle (default 7), [7:4] /NMI cycle (8), [11:8] WSYNC /RDY release (104), [15:12] VCOUNT advance (111). The legacy timing machine has the same facility for its WSYNC release and that is how its constants were found. Only meaningful under rewrite timing authority (sallyrst[3])"
         }
       ]
     },

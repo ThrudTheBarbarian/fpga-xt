@@ -99,8 +99,12 @@ module antic_line_render (
 
     wire [7:0] pixel_color;
 
+    // Unlit hi-res (pf_src 6) DRAWS as playfield 2; only its collision differs,
+    // and antic_color_sel's 6 means PM0, so map it here rather than there.
+    wire [3:0] col_src = (pf_src == 3'd6) ? 4'd3 : {1'b0, pf_src};
+
     antic_color_sel u_col (
-        .src({1'b0, pf_src}),
+        .src(col_src),
         .colbk(colbk), .colpf0(colpf0), .colpf1(colpf1),
         .colpf2(colpf2), .colpf3(colpf3),
         .colpm0(8'h00), .colpm1(8'h00), .colpm2(8'h00), .colpm3(8'h00),

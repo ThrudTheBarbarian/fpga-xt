@@ -27,7 +27,7 @@ module tb_antic_beam;
     antic_beam #(.CYCLES_PER_LINE(CYC), .LINES_PER_FRAME(LINES),
                  .DISPLAY_TOP(8), .DISPLAY_LINES(192), .VCOUNT_ADVANCE(ADV))
     dut (
-        .clk(clk), .rst(rst), .tick(tick),
+        .clk(clk), .rst(rst), .tick(tick), .vcount_adv(7'(ADV)),
         .hcount(hcount), .line(line), .vcount(vcount),
         .line_start(line_start), .in_display(in_display), .in_vblank(in_vblank),
         .vbi_line()

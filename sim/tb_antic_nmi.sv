@@ -28,6 +28,7 @@ module tb_antic_nmi;
     wire       nmi_n;
 
     antic_nmi dut (
+        .status_cyc(7'd7), .nmi_cyc(7'd8),
         .clk(clk), .rst(rst),
         .tick(tick), .hcount(hcount), .line_start(line_start),
         .dli(dli), .vbi_line(vbi_line),

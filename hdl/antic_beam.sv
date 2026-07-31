@@ -32,7 +32,8 @@ module antic_beam #(
 ) (
     input  wire        clk,
     input  wire        rst,
-    input  wire        tick,               // 1-clk per machine cycle (phi2)
+    input  wire        tick,           // 1-clk per machine cycle (phi2)
+    input  wire  [6:0] vcount_adv,     // live VCOUNT_ADVANCE (bisectable on HW)
 
     output logic [6:0] hcount,             // 0 .. CYCLES_PER_LINE-1
     output logic [8:0] line,               // 0 .. LINES_PER_FRAME-1
@@ -72,7 +73,7 @@ module antic_beam #(
             // next line for the last few cycles of this one.  This is the
             // behaviour antic_vcount measures; advancing at the wrap instead
             // puts every VCOUNT read three cycles late.
-            if (hcount == 7'(VCOUNT_ADVANCE - 1))
+            if (hcount == (vcount_adv - 7'd1))
                 line <= last_line ? 9'd0 : line + 9'd1;
         end
     end

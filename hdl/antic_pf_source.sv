@@ -56,11 +56,20 @@ module antic_pf_source (
     localparam logic [2:0] SRC_PF2       = 3'd3;
     localparam logic [2:0] SRC_PF3       = 3'd4;
     localparam logic [2:0] SRC_HIRES_LIT = 3'd5;
+    // Unlit hi-res is NOT playfield 2, even though it is DRAWN in COLPF2.
+    // ANTIC sends the background code for a 0 bit in modes 2/3/F, so an object
+    // sitting over blank hi-res must record no playfield collision at all.
+    // ACID antic_addresswrap turns on exactly this: it renders an all-zero
+    // mode F line, parks a quad-width player over it and requires P0PF == $00 —
+    // and then blames the display list when a collision appears.  Colour and
+    // priority still treat it as PF2 (the consumers below map it back), so the
+    // picture is unchanged; only the collision differs.
+    localparam logic [2:0] SRC_HIRES_BK  = 3'd6;
 
     always_comb begin
         if (is_hires) begin
             // Modes 2/3/F: background is COLPF2, not COLBK.
-            pf_src = px_val[0] ? SRC_HIRES_LIT : SRC_PF2;
+            pf_src = px_val[0] ? SRC_HIRES_LIT : SRC_HIRES_BK;
         end else if (bpp == 2'd2) begin
             unique case (px_val)
                 2'b00:   pf_src = SRC_BK;

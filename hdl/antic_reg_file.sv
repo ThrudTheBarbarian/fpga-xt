@@ -66,6 +66,7 @@ module antic_reg_file #(
 
     input  wire       tick,             // 1-clk per machine cycle
     input  wire [6:0] hcount,
+    input  wire [6:0] wsync_rel,      // live WSYNC_RELEASE (bisectable on HW)
 
     // ---- CPU bus ---------------------------------------------------------
     input  wire [7:0] addr,             // low byte of $D4xx
@@ -136,7 +137,7 @@ module antic_reg_file #(
 
     // ---- WSYNC -------------------------------------------------------------
     wire wsync_set = we_edge && (a == 4'hA);
-    wire wsync_clr = tick && (hcount == 7'(WSYNC_RELEASE));
+    wire wsync_clr = tick && (hcount == wsync_rel);
 
     logic latch;
     always_ff @(posedge clk or posedge rst) begin

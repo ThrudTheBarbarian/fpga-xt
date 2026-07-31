@@ -129,6 +129,7 @@ module a8_core #(
 
     // ---- the display chips -------------------------------------------------
     antic_gtia u_video (
+        .tune(16'd0),
         .clk(clk), .rst(rst), .cold(cold),
         .tick(tick), .px_tick(px_tick),
         .cs_antic(cs_antic), .cs_gtia(cs_gtia),

@@ -92,6 +92,8 @@ module antic_scanline (
     input  wire        nmires,         // 1-clk: write to $D40F
     input  wire [7:0]  vdelay,         // $D01C
     input  wire        hitclr,         // $D01E write
+    input  wire  [6:0] status_cyc,     // NMIST/NMI cycle numbers, tuned in antic_gtia
+    input  wire  [6:0] nmi_cyc,
     input  wire        active_line,    // an active display line
 
     // ---- memory ----------------------------------------------------------
@@ -161,6 +163,7 @@ module antic_scanline (
     // The display list says WHICH scanlines carry a DLI; this says WHEN on the
     // scanline the status and the /NMI happen, and they are not the same cycle.
     antic_nmi u_nmi (
+        .status_cyc(status_cyc), .nmi_cyc(nmi_cyc),
         .clk(clk), .rst(rst),
         .tick(tick), .hcount(hcount), .line_start(line_start),
         .dli(dli), .vbi_line(vbi_line),
