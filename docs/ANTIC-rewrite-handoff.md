@@ -164,17 +164,37 @@ lead, not a diagnosis.
    DBG_BEAM cannot measure an interval across two halts — only the beam at a
    single halt reached without an intervening stop.
 
-1. **antic_wsync — the RMW's missing cycle.** Measured exactly: POKEY's RANDOM
-   is a cycle clock, the 9-bit poly's taps are `q[0]^q[5]` (they reproduce the
-   test's four asserted values at steps 113/342/569/1253), and our `$1B` is
-   step 341 against the required `$0D` at 342. One machine cycle early on the
-   read-modify-write; plain STA is already right. Two /RDY shapes are ruled out
-   on hardware and recorded in `antic_reg_file.sv` — mid-cycle retiming (moves
-   it the wrong way; the fid core samples near the END of its window) and
-   `q1|q2` (lengthens the stall but the reading does not move at all). Since
-   delaying the release provably does NOT change the measurement, look at the
-   CPU side: `xt6502f`'s rdy sampling, or where the RMW's two writes land
-   relative to cycle 104.
+1. **antic_wsync — the RMW's missing cycle, and how to finish measuring it.**
+   Two independent instruments agree the read-modify-write is one machine cycle
+   short: Altirra's trace makes the `$2033 inc wsync` -> `$2036 lda random` step
+   **108 cycles**, and our RANDOM reading (`$1B`, poly step 341, against `$0D`
+   at 342) makes it **107**.  Plain STA WSYNC is already correct.
+
+   DBG_BEAM reproduces Altirra's timeline for the run-up EXACTLY — `$202E`->
+   `$2031` is 105 cycles and `$2031`->`$2033` is 3 in both — so the instrument
+   and the model agree right up to the instruction that fails.
+
+   **The limitation to design around:** each hardware reading needs its own
+   `xexload`, the debugger has ONE breakpoint, and the test's absolute beam
+   position VARIES between runs (measured: the same instruction landed on lines
+   253, 254, 259 and 260 across four runs).  So beam readings cannot be chained
+   across runs, and the tempting `(hcount_b - hcount_a) mod 114` is only valid
+   if both came from the SAME run.  Halting does not help either — **the beam
+   keeps running while the CPU is stopped** (50 scanlines elapsed during one
+   breakpoint), so two halts in one run do not give an interval.
+
+   To close it, one of:
+   * a second breakpoint (or a beam snapshot latched on a chosen PC without
+     halting), so the interval comes from one run; or
+   * put the beam into the trace-ring entries, which already stream instruction
+     boundaries — that turns every instruction into a beam-stamped sample.
+
+   Two /RDY shapes are already ruled out on hardware and recorded in
+   `antic_reg_file.sv`: mid-cycle retiming (moves it the wrong way — the fid
+   core samples near the END of its window) and `q1|q2` (lengthens the stall but
+   the reading does not move at all).  Since delaying the release provably does
+   NOT change the measurement, look at the CPU side or at where the RMW's two
+   writes land relative to cycle 104.
 
 2. **antic_dlitiming — even is right, odd is one out.** The even count is now
    `$0A` as required (it was `$C3`); only the odd count is wrong, by one. A
