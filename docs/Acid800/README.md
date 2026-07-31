@@ -95,11 +95,18 @@ means the four cycles of that store landed on 100, 101, 102 and 103.
 
 Landmarks established by the tests (and matching this project's fabric work):
 
-| cycle | what |
-|---|---|
-| 104 | WSYNC releases `/RDY` — the first CPU cycle after a WSYNC halt is **105** |
-| 111 | VCOUNT advances |
-| 8   | DLI fires (on the mapped physical scanline) |
+| cycle | what | established by |
+|---|---|---|
+| 3 / 4 | `VSCROL` still affects the current row / too late | `antic_vscroldli` |
+| 6 | `NMIST` status bits are set; `NMIEN` is sampled for arming | `antic_nmist` |
+| 7 | `NMIRES` takes effect (it cannot cancel the bit being set on 6) | `antic_nmist` |
+| 104 | WSYNC releases `/RDY` — the first CPU cycle after a halt is **105** | `antic_wsync` |
+| 111 | VCOUNT advances | `antic_vcount` |
+
+The fabric work records a DLI landmark of *"cycle 8"*, which is about when the
+NMI is **delivered**; cycle 6 above is when the **status bit appears** and when
+`NMIEN` is sampled. Not necessarily in conflict, but worth resolving explicitly
+once the software model can measure both — see `antic_nmist.md`.
 
 ## Index
 
