@@ -180,7 +180,16 @@ module antic_dma_sched (
                     ref_slot <= ref_slot + 7'd4;
                     ref_left <= ref_left - 4'd1;
                 end
-                if (tick) ref_pending <= ref_want && !ref_steal;
+                // ONE cycle of deferral, then the refresh is LOST.  Seeding
+                // this from ref_want re-seeks every cycle until the next
+                // request, so with a solid playfield every refresh eventually
+                // finds a gap and the CPU is charged all nine.  Real ANTIC
+                // defers a refresh onto the NEXT cycle only and drops it
+                // otherwise (antic_dma_steal's is_defer rule), so a hi-res
+                // first line preempts refresh to almost nothing.  Measured on
+                // hardware over a 100-cycle span, screen on, normal width:
+                // legacy steals 45, this stole 51.
+                if (tick) ref_pending <= ref_due && !ref_steal;
 
                 case (pstate)
                     // The opening name of a character first row, on its own.
