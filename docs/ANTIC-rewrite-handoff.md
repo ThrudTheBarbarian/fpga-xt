@@ -143,32 +143,46 @@ lead, not a diagnosis.
 
 ### Next steps, in order
 
-1. **Tune the rewrite's timing authority so `$0A` beats `$06`.** This is the
-   whole game: `$0A` is the only coherent machine, and its entire deficit is
-   the 7-test NMI/VCOUNT cluster (`antic_nmist`, `antic_blockednmi`,
-   `antic_dlistwrap`, `antic_vscroldli`, `antic_vscroll`, `antic_wsync`,
-   `antic_vcount`). The timing machine's constants are the reference to
-   reproduce — status 7 / NMI 8, `/RDY` release at 104, VCOUNT at cycle 111.
-   Every raster fix made after that is measured on a machine that is telling
-   the truth about itself.
-   *(Alternative if `$06` must keep working: give `antic_beam` a frame-sync
-   input and align it to the legacy raster. Cheaper, but it keeps two rasters
-   alive and the whole point of the rewrite is that there should be one.)*
-2. **Tune the rewrite's timing authority** until `$0A` beats `$06`, which is
-   what makes the rewrite standalone. The whole 7-test gap is the NMI/VCOUNT
-   cluster, and the legacy timing machine's constants (`antic_nmist` bisected
-   to status 7 / NMI 8, `/RDY` release at 104, VCOUNT at cycle 111) are the
-   reference to reproduce.
-3. The 24 shared failures — the actual point of the rewrite. `antic_charcontrol`,
-   `antic_linebuffering`, `antic_virtdma` and `antic_hscrolbug` all read ANTIC's
-   internal line buffer back and are the natural family to take first.
-4. Wire in `rsrc/atari-basic.rom`. Right now correct and broken look identical
-   (blank screen either way); a `READY` prompt makes regressions obvious.
-5. Drop code/data banking (`BANKED_CACHE` in `sally_mem` — add a `NONE` branch;
-   validate with `make boot`). Authorised, still outstanding. Area only — it is
-   in clk_sally which has margin.
-6. Widen the playfield past 320 (see `antic_wb_adapt` header for everything that
-   has to move with it).
+1. **antic_wsync — the RMW's missing cycle.** Measured exactly: POKEY's RANDOM
+   is a cycle clock, the 9-bit poly's taps are `q[0]^q[5]` (they reproduce the
+   test's four asserted values at steps 113/342/569/1253), and our `$1B` is
+   step 341 against the required `$0D` at 342. One machine cycle early on the
+   read-modify-write; plain STA is already right. Two /RDY shapes are ruled out
+   on hardware and recorded in `antic_reg_file.sv` — mid-cycle retiming (moves
+   it the wrong way; the fid core samples near the END of its window) and
+   `q1|q2` (lengthens the stall but the reading does not move at all). Since
+   delaying the release provably does NOT change the measurement, look at the
+   CPU side: `xt6502f`'s rdy sampling, or where the RMW's two writes land
+   relative to cycle 104.
+
+2. **antic_dlitiming — even is right, odd is one out.** The even count is now
+   `$0A` as required (it was `$C3`); only the odd count is wrong, by one. A
+   per-line-PARITY effect, which is a much narrower target than it was.
+
+3. **antic_vcount** reads `$02` where `$01` is required at cycle 110 of line 3 —
+   before the 111 advance, so by construction it should be right. No advance
+   offset fixes it, and a negative WSYNC offset moves it several assertions
+   further on, so its alignment depends on where the CPU resumes from WSYNC:
+   likely falls out of (1).
+
+4. The remaining ~24 are ones the **legacy path fails too** — the real prize,
+   because they lift the score above the baseline. Known shape: five of the
+   GTIA P/M tests report `00` at their FIRST sample. That is NOT a broad P/M
+   DMA break — a probe with a solid mode-F playfield shows a DMA-fed player and
+   a CPU-written one both collide correctly — so it is configuration-specific
+   (one-line resolution, missiles, VDELAY, GRACTL gating).
+
+5. Wire in `rsrc/atari-basic.rom` so a `READY` prompt makes regressions obvious.
+6. Drop code/data banking (`BANKED_CACHE` in `sally_mem`; validate with
+   `make boot`). Authorised, still outstanding.
+
+### Probe .xex files are the sharpest tool here
+
+Hand-assembled, ~60 bytes, no assembler and no bitstream: set the registers,
+read ONE register, `JMP` to self, then `6502 break` on the loop and read A/X/Y.
+Scratchpad has a dozen (`pm*.xex`, `dli*.xex`, `nx*.xex`, `bank5000.xex`).
+They isolated missile 3 dropping at HPOS `$DD`, the 23-scanline frame
+displacement, the stuck aperture bit, and the PAL/NTSC hang — each in minutes.
 
 ### How to run the sweep
 
