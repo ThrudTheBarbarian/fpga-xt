@@ -988,6 +988,17 @@ module fpga_xt_top (
         immune_s1 <= antic_wsync_write_immune;
         immune_s2 <= immune_s1;
     end
+    // THREE /RDY SHAPES HAVE BEEN TRIED ON HARDWARE AND ALL ARE NEUTRAL OR
+    // WORSE.  Recorded so they are not retried:
+    //   * retiming the edge mid-cycle inside antic_reg_file (clk_sys, BEFORE
+    //     the crossing) — cost antic_blockednmi and cpu_bugs;
+    //   * q1|q2 there — antic_wsync's reading did not move at all;
+    //   * retiming mid-cycle HERE (clk_sally, AFTER the crossing, at
+    //     fid_sub 28, which is what wsync_gen does for the legacy machine) —
+    //     exactly neutral, 27 either way with no test changing.
+    // The last one is the shape the legacy model prescribes, and it still does
+    // nothing, which is good evidence the missing cycle is NOT in the /RDY
+    // waveform at all.  Look at the CPU's rdy sampling or at the write path.
     wire       fid_wsync_rdy = (rw_auth ? ~rwrdy_s[1] :
                                  tm_auth ?  tm_rdy_n   : wsync_rdy_n)
                               | (~fid_rw & immune_s2);   // writes immune to WSYNC unless disabled
