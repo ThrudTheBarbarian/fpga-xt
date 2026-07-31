@@ -72,6 +72,18 @@ therefore 8-bit indexed and that is the *native* format, not a compromise —
 index→RGBA32 through the palette LUT plus scaling is small RTL, and the plane
 compositor, palette LUT and scaler all already exist.
 
+## Dependency order (learned from the write-ups)
+
+Several ANTIC tests read their answer out through **GTIA collision registers** —
+`antic_pfstarttiming`, `antic_pfstoptiming` and `antic_linebuffering` all
+measure the playfield by seeing what players/missiles collided with. So:
+
+> **Bring GTIA collision detection up BEFORE playfield timing.** Otherwise a
+> failure in those tests is ambiguous and you end up chasing an ANTIC bug that
+> is really a GTIA one.
+
+That inverts the obvious order (ANTIC first, GTIA after) for this subset.
+
 ## Corner-cases to design in, not bolt on
 
 These are the ones that are cheap now and expensive later:
