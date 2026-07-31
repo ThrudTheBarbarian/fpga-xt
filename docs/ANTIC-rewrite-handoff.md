@@ -21,58 +21,58 @@ Load: `./vivado/jtag-valhalla.sh reset` then `... load`.
 
 ## ACID800: the sweep runs, and where it stands
 
-**31 of 63** at `sallyrst = $06`, against a legacy baseline of 32
-(run `2026-07-29-3`). It was 21 when the sweep first completed.
-
-`sallyrst` picks who drives the CPU-facing timing, and it MATTERS which:
+**32 of 63** at `sallyrst = $06` — level with the legacy baseline (run
+`2026-07-29-3`). It was **21** when the sweep first completed.
 
 | value | rdy/steal/NMI | VCOUNT the CPU reads | pass |
 |---|---|---|---|
-| **`$06`** | legacy timing machine | the timing machine's | **30-31** |
-| `$0A` | the rewrite | the rewrite's | 24 |
+| **`$06`** | legacy timing machine | the timing machine's | **32** |
+| `$0A` | the rewrite | the rewrite's | 27 |
 | `$0E` | **do not use** — both bits set | incoherent | 14 |
+
+Of the 63: 5 `mod_*` never halt by design and `cpu_65c816` is a probe, so the
+achievable ceiling is **57**.
 
 ### NEITHER configuration is coherent, and this is the key thing to know
 
 `$06` scores best, but it is **two rasters running out of phase vertically**.
 The CPU reads the timing machine's VCOUNT while the picture and the collisions
-come from the rewrite's beam, and nothing aligns their line counters — the
-rewrite's `antic_beam` free-runs from `tick`, and no frame-start pulse ties it
-to the legacy raster.
+come from the rewrite's beam, and nothing aligns their line counters.
 
-Measured directly, with a hand-assembled probe (`pmVBL.xex`) that does exactly
-what ACID's VBLANK check does — wait VCOUNT 124, park all eight objects
-overlapping, HITCLR, wait VCOUNT 0, read M0PL:
+Measured with a hand-assembled probe (`pmVBL.xex`) doing exactly what ACID's
+VBLANK check does — wait VCOUNT 124, park all eight objects overlapping,
+HITCLR, wait VCOUNT 0, read M0PL:
 
 ```
 sallyrst $06   M0PL = $0F     collisions recorded "during vertical blank"
 sallyrst $0A   M0PL = $00     correct
 ```
 
-Same bitstream, same program. At `$06` the beam is simply somewhere else than
-the VCOUNT the program synchronised on, so every test that syncs on VCOUNT and
-then observes the raster is looking at the wrong lines. That is a large part of
-the remaining `$06` failure set and it is **not** a bug in any raster module.
+Same bitstream, same program. So at `$06` every test that syncs on VCOUNT and
+then observes the raster is looking at the wrong lines. `$0A` is the coherent
+machine and is where the rewrite has to end up — `gtia_collision` passes there
+and nowhere else.
 
-So the 30-vs-24 gap is not "the legacy raster is better". It is: `$06` wins 7
-tests on the timing machine's well-tuned rdy/steal/NMI, and loses an unknown
-number to raster incoherence. `$0A` is the coherent machine and is where the
-rewrite has to end up — `gtia_collision` passes there and nowhere else.
+### CTRL_RWTUNE: bisect cycle numbers without a bitstream
 
-`$0E` is incoherent, not merely worse: `rw_auth` wins for rdy/steal/NMI while
-`tm_auth` still answered VCOUNT/NMIST, so the CPU took interrupts from one
-raster and read the status flags of another. That is fixed (both now follow
-authority), but the config is still meaningless — set one bit or the other.
+GP0 `0x328`, four **signed nibble** offsets on exactly the cycle numbers ACID
+pins — `[3:0]` NMIST status, `[7:4]` /NMI, `[11:8]` WSYNC release, `[15:12]`
+VCOUNT advance. `tune = 0` is the RTL defaults (a sweep confirms it scores
+identically). Only meaningful under rewrite authority.
 
-The rewrite's own timing authority is **7 tests behind** the legacy timing
-machine, and the gap is entirely the NMI/VCOUNT cluster (`antic_nmist`,
-`antic_blockednmi`, `antic_dlistwrap`, `antic_vscroldli`, `antic_vscroll`,
-`antic_wsync`, `mmu_xlbanking`). That machine carries a lot of bisected
-constants; the rewrite has not had that tuning yet. **`$06` is the config to
-use and to optimise** until it has.
+This changes how the remaining timing work is done: a cycle question costs a
+register write, not 25 minutes. It found /NMI = 9 in one pass over eight
+offsets, and it has already ruled things OUT cheaply — WSYNC release 103 is two
+tests worse than 104, so 104 stands.
 
-Of the 63: 5 `mod_*` never halt by design and `cpu_65c816` is a probe, so the
-achievable ceiling is **57**.
+```
+mem -w 0x43C0031C 0x0A      # rewrite authority
+mem -w 0x43C00328 0x0011    # status +1, /NMI +1
+```
+
+**Read the failure TEXT, not the pass/fail bit** — a test that moves from one
+assertion to a later one is progress the boolean hides. That is how the JVB and
+collision-window fixes were confirmed.
 
 ### What was wrong, and how it was found
 
