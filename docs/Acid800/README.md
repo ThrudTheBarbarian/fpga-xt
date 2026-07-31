@@ -47,6 +47,11 @@ main:   ldy #>testname / lda #<testname / jsr _testInit
   expected value**. That is why these tests are self-documenting: every
   assertion carries its own specification.
 * Result convention: **Y = `$00` pass / `$80` fail** at `_testEnd`.
+* Other macros seen: **`_ASSERTA expected, msg`** (asserts the accumulator),
+  **`_INITTEST name`**, **`_SKIP msg`** (bail out — used to skip NMOS-only tests
+  on a CMOS CPU), and **`_FAIL msg`**. Several tests assert by **control flow**
+  rather than by value: they place `_FAIL` in handlers that must never run, so
+  "which handler was entered" is the answer.
 
 ## The one idiom you must implement first: POKEY RANDOM as a cycle clock
 
