@@ -500,6 +500,27 @@ the doorbell→SIO-mailbox→A9 SIO worker, all st=01; the 6502 runs boot+game c
 
 
 # Future targets
+
+## JIT 6502 as a performance "core" (PARKED — gated on the fidelity core first)
+Simon, 2026-07-31: a dynamic recompiler could give a performance core alongside
+the cycle-exact one (ref: jahej.com "JIT CPU emulation: a 6502 to x86 dynamic
+recompiler"). **Explicitly gated: only once the fidelity core is up and
+running.** Notes so the option stays open rather than being designed out:
+- It maps onto the **turbo** role, not the fidelity role — the same split the
+  fabric already has (`xt6502` turbo vs `xt6502f` fidelity, cold-switched at app
+  launch, docs/Design/dual-cpu-resident-mux.md). A recompiler cannot be
+  cycle-exact per bus cycle *and* fast; that is the whole trade.
+- **The interaction to watch is with ANTIC, and it is the crux.** The software
+  design has ANTIC running INSIDE the CPU's bus-cycle callback (emu/antic-design.md).
+  A JIT's speed comes from *not* leaving a basic block per cycle — so a naive JIT
+  and a cycle-exact ANTIC are mutually exclusive. The workable shapes are: run the
+  JIT only when DMA is off/uncontended and fall back to the interpreter when ANTIC
+  is stealing; or compile per-block with a cycle budget and check the budget at
+  block boundaries. Decide this BEFORE writing a JIT, not after.
+- Other 6502-JIT hazards, cheap to note now: self-modifying code (needs page
+  invalidation of compiled blocks — Atari software does this), computed jumps
+  into mid-block addresses, and the undocumented opcodes already implemented here.
+
 ## SSH (HW-VALIDATED end-to-end; docs/OS/ssh-server.md)
 Server + client + scp all work — HW-confirmed: clean boot (Networking/SecureShell/
 Desktop all [OK]), `ssh xtos.local` login, exec, scp both ways, boot-script start,
