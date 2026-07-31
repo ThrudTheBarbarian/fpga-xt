@@ -127,7 +127,7 @@ in-fabric 6502 debugger (xt6502_debug): halt/step/breakpoint/register access, dr
 | 0x2C | R | 32 | `XT_DBG_AXYS` | `DBG_AXYS` | reg snapshot: [7:0]=A [15:8]=X [23:16]=Y [31:24]=SP(low) |
 | 0x30 | R | 12 | `XT_DBG_PSH` | `DBG_PSH` | snapshot: [7:0]=P [11:8]=SP high nibble |
 | 0x34 | R | 32 | `XT_DBG_ICNT` | `DBG_ICNT` | retired-instruction count since SALLYRST (increments on each ST_FETCH boundary) |
-| 0x38 | R | 32 | `XT_DBG_BEAM` | `DBG_BEAM` | RESERVED (reads 0 for now): display beam position at the last boundary — [15:0]=scanline [31:16]=beam-x — for future ANTIC/DLI correlation |
+| 0x38 | R | 32 | `XT_DBG_BEAM` | `DBG_BEAM` | R ANTIC beam position latched when the core HALTED at an instruction boundary: [15:0]=scanline (0..261), [22:16]=beam X in ANTIC machine cycles (0..113). Lets an instruction be read off against the cycle numbers ACID annotates its kernels with; the trace ring records PC but not the beam. Reflects the REWRITE's beam (antic_gtia), whichever authority is selected |
 | 0x3C | RW | 2 | `XT_DBG_TRC_CTRL` | `DBG_TRC_CTRL` | instruction-trace ring: [0]=enable (capture {PC,A,X,Y,SP,P} every ST_DECODE boundary), [1]=break_on_full (halt the core when the ring wraps). Ring is 4096 deep; readable only when halted (static). |
 | 0x40 | R | 32 | `XT_DBG_TRC_WPTR` | `DBG_TRC_WPTR` | trace write pointer: [11:0]=next write slot (newest = WPTR-1), [16]=wrapped (ring has been full at least once), [17]=broke_on_full |
 | 0x44 | W | 12 | `XT_DBG_TRC_IDX` | `DBG_TRC_IDX` | set the ring read index (0..4095); the entry appears in DBG_TRC_PC/AXYS/P |

@@ -89,7 +89,7 @@ package xt_gp0_pkg;
     localparam logic [7:0] DBG_AXYS         = 8'h2C;  // R reg snapshot: [7:0]=A [15:8]=X [23:16]=Y [31:24]=SP(low)
     localparam logic [7:0] DBG_PSH          = 8'h30;  // R snapshot: [7:0]=P [11:8]=SP high nibble
     localparam logic [7:0] DBG_ICNT         = 8'h34;  // R retired-instruction count since SALLYRST (increments on each ST_FETCH boundary)
-    localparam logic [7:0] DBG_BEAM         = 8'h38;  // R RESERVED (reads 0 for now): display beam position at the last boundary — [15:0]=scanline [31:16]=beam-x — for future ANTIC/DLI correlation
+    localparam logic [7:0] DBG_BEAM         = 8'h38;  // R R ANTIC beam position latched when the core HALTED at an instruction boundary: [15:0]=scanline (0..261), [22:16]=beam X in ANTIC machine cycles (0..113). Lets an instruction be read off against the cycle numbers ACID annotates its kernels with; the trace ring records PC but not the beam. Reflects the REWRITE's beam (antic_gtia), whichever authority is selected
     localparam logic [7:0] DBG_TRC_CTRL     = 8'h3C;  // RW instruction-trace ring: [0]=enable (capture {PC,A,X,Y,SP,P} every ST_DECODE boundary), [1]=break_on_full (halt the core when the ring wraps). Ring is 4096 deep; readable only when halted (static).
     localparam logic [7:0] DBG_TRC_WPTR     = 8'h40;  // R trace write pointer: [11:0]=next write slot (newest = WPTR-1), [16]=wrapped (ring has been full at least once), [17]=broke_on_full
     localparam logic [7:0] DBG_TRC_IDX      = 8'h44;  // W set the ring read index (0..4095); the entry appears in DBG_TRC_PC/AXYS/P

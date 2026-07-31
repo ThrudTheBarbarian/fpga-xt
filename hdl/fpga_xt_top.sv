@@ -1596,6 +1596,7 @@ module fpga_xt_top (
     wire [7:0]  antic_bus_data_out;
     wire        antic_bus_data_oe;
     wire [15:0] rw_tune;           // CTRL_RWTUNE -> antic_gtia cycle offsets
+    wire [6:0]  rw_hcount;         // rewrite beam X, for DBG_BEAM
     wire [7:0]  rw_vcount_sys;     // rewrite VCOUNT/NMIST (clk_sys); the
     wire [7:0]  rw_nmist_sys;      // clk_sally copies are declared up by fid_din_mux
     wire [7:0]  antic_rdata_top;   // legacy ANTIC's ungated read mux
@@ -1874,7 +1875,7 @@ module fpga_xt_top (
         .tune(rw_tune),
         .lb_wr(rw_lb_wr), .lb_color(rw_lb_color),
         .lb_line_start(rw_lb_line_start),
-        .hcount(), .line(rw_line), .vcount(rw_vcount_sys), .line_start(), .dlpc(),
+        .hcount(rw_hcount), .line(rw_line), .vcount(rw_vcount_sys), .line_start(), .dlpc(),
         .nmist_o(rw_nmist_sys)
     );
 
@@ -1892,6 +1893,29 @@ module fpga_xt_top (
         .dst_data(rw_vn_sally)
     );
 
+
+    // ---- DBG_BEAM: where the beam was when the core stopped ---------------
+    // /bin/6502 halts the CPU at an instruction boundary; this latches ANTIC's
+    // position at that moment, so an instruction can be read off against the
+    // cycle numbers ACID annotates its kernels with (104, 105, ... 113, 0, 1).
+    // Every remaining timing failure is of the form "this instruction ran one
+    // cycle early/late" and until now there was no way to see WHICH cycle any
+    // instruction actually ran on -- the trace ring records PC, not the beam.
+    //
+    // Only the halt flag crosses (one bit, 2-FF); the beam itself is sampled in
+    // its own domain on the synchronised edge, so nothing multi-bit crosses.
+    (* ASYNC_REG = "TRUE" *) reg [1:0] beam_halt_s;
+    reg [31:0] rw_beam_q;
+    always_ff @(posedge clk_sys or posedge rst_sys) begin
+        if (rst_sys) begin
+            beam_halt_s <= 2'b00;
+            rw_beam_q   <= 32'd0;
+        end else begin
+            beam_halt_s <= {beam_halt_s[0], fdbg_cpu_halt};
+            if (beam_halt_s[0] & ~beam_halt_s[1])       // rising edge of "halted"
+                rw_beam_q <= {9'd0, rw_hcount, 7'd0, rw_line};
+        end
+    end
 
     // Whoever holds authority drives the fetch address and answers reads.
     assign antic_bram_addr   = rw_auth_sys ? rw_mem_addr : antic_bram_addr_top;
@@ -3691,7 +3715,7 @@ module fpga_xt_top (
         .dbg_snap_axys   (sdbg_axys),
         .dbg_snap_psh    (sdbg_psh),
         .dbg_icnt        (sdbg_icnt),
-        .dbg_beam        (32'd0),            // reserved (future ANTIC/DLI correlation)
+        .dbg_beam        (rw_beam_q),        // ANTIC beam at the halt boundary
         .dbg_trc_ctrl    (gdbg_trc_ctrl),
         .dbg_trc_idx     (gdbg_trc_idx),
         .dbg_trc_wptr    (sdbg_trc_wptr),

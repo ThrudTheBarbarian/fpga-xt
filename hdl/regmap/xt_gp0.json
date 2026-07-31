@@ -578,7 +578,7 @@
           "width": 32,
           "c": "XT_DBG_BEAM",
           "sv": "DBG_BEAM",
-          "desc": "RESERVED (reads 0 for now): display beam position at the last boundary \u2014 [15:0]=scanline [31:16]=beam-x \u2014 for future ANTIC/DLI correlation"
+          "desc": "R ANTIC beam position latched when the core HALTED at an instruction boundary: [15:0]=scanline (0..261), [22:16]=beam X in ANTIC machine cycles (0..113). Lets an instruction be read off against the cycle numbers ACID annotates its kernels with; the trace ring records PC but not the beam. Reflects the REWRITE's beam (antic_gtia), whichever authority is selected"
         },
         {
           "off": "0x3C",
