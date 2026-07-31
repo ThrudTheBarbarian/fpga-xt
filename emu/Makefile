@@ -9,7 +9,8 @@
 #   make harte      Tom Harte, all 256 opcodes, exact bus traces
 #   make klaus      Klaus Dormann functional test
 #   make irq        directed interrupt-timing tests (ACID800 cpu_clisei, as C)
-#   make test       all three — THE gate before ANTIC work counts as progress
+#   make pokey      POKEY RANDOM LFSR — the ANTIC timing tests' cycle clock
+#   make test       all of them — THE gate before ANTIC work counts as progress
 #   make clean
 
 BUILD := build
@@ -19,8 +20,8 @@ CFLAGS := -std=c11 $(WARN) -O2 -g
 
 CORE := xt6502.c
 
-.PHONY: all test harte klaus irq clean
-all: $(BUILD)/harte $(BUILD)/klaus $(BUILD)/irq
+.PHONY: all test harte klaus irq pokey clean
+all: $(BUILD)/harte $(BUILD)/klaus $(BUILD)/irq $(BUILD)/pokey
 
 $(BUILD):
 	@mkdir -p $(BUILD)
@@ -34,6 +35,9 @@ $(BUILD)/klaus: test/klaus.c $(CORE) xt6502.h | $(BUILD)
 $(BUILD)/irq: test/irq.c $(CORE) xt6502.h | $(BUILD)
 	$(CC) $(CFLAGS) test/irq.c $(CORE) -o $@
 
+$(BUILD)/pokey: test/pokey.c pokey_rand.c pokey_rand.h | $(BUILD)
+	$(CC) $(CFLAGS) test/pokey.c pokey_rand.c -o $@
+
 harte: $(BUILD)/harte
 	@./$(BUILD)/harte
 
@@ -43,7 +47,10 @@ klaus: $(BUILD)/klaus
 irq: $(BUILD)/irq
 	@./$(BUILD)/irq
 
-test: harte klaus irq
+pokey: $(BUILD)/pokey
+	@./$(BUILD)/pokey
+
+test: harte klaus irq pokey
 
 clean:
 	rm -rf $(BUILD)
