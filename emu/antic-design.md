@@ -94,8 +94,14 @@ These are the ones that are cheap now and expensive later:
    start/stop timing interact; a hard-coded 40-byte window fails four tests.
 3. **WSYNC is a level released at a specific cycle**, and an RMW writes it
    twice.
-4. **DLI is scanline-mapped and fires at a fixed cycle**, independent of the DL
-   row structure.
+4. **DLI: the CYCLE within the line is fixed, the SCANLINE is not.** An earlier
+   draft of this list said the DLI was "scanline-mapped, independent of the DL
+   row structure" — `antic_vscroldli` shows that is wrong. A `VSCROL` write
+   landing by cycle 3 extends the current row, and the following row's DLI moves
+   with it. So DLI scheduling must derive from the **real, dynamic row length**;
+   an ANTIC that precomputes which scanline each DLI falls on cannot pass that
+   test at all. What *is* fixed is the cycle within the scanline (`NMIST` set at
+   6, `NMIEN` sampled at 6, `NMIRES` effective from 7 — `antic_nmist`).
 5. **Collisions are per colour clock**, so the pixel pipeline has to exist before
    GTIA collision tests can pass — do not build a scanline-at-a-time renderer.
 
