@@ -1596,6 +1596,8 @@ module fpga_xt_top (
     wire [7:0]  antic_bus_data_out;
     wire        antic_bus_data_oe;
     wire [15:0] rw_tune;           // CTRL_RWTUNE -> antic_gtia cycle offsets
+    wire [15:0] dbg_beampc;        // GP0 DBG_BEAMPC (clk_sys)
+    wire [15:0] beampc_sally;      // ...carried into the CPU's domain
     wire [6:0]  rw_hcount;         // rewrite beam X, for DBG_BEAM
     wire [7:0]  rw_vcount_sys;     // rewrite VCOUNT/NMIST (clk_sys); the
     wire [7:0]  rw_nmist_sys;      // clk_sally copies are declared up by fid_din_mux
@@ -1904,6 +1906,16 @@ module fpga_xt_top (
     //
     // Only the halt flag crosses (one bit, 2-FF); the beam itself is sampled in
     // its own domain on the synchronised edge, so nothing multi-bit crosses.
+    //
+    // DBG_BEAM2 is the same idea WITHOUT halting: it stamps the beam when the
+    // core reaches DBG_BEAMPC.  That is what makes an INTERVAL measurable, and
+    // an interval is what every remaining timing failure is about.  Two beam
+    // readings from two separate xexloads cannot be subtracted -- the test
+    // lands on a different scanline each run (measured: the same instruction on
+    // lines 253, 254, 259, 260) -- and two halts in one run do not work either,
+    // because the beam keeps running while the CPU is stopped.  Stamping one
+    // instruction in flight and halting on a later one gives both ends of the
+    // interval from a single run.
     (* ASYNC_REG = "TRUE" *) reg [1:0] beam_halt_s;
     reg [31:0] rw_beam_q;
     always_ff @(posedge clk_sys or posedge rst_sys) begin
@@ -1914,6 +1926,36 @@ module fpga_xt_top (
             beam_halt_s <= {beam_halt_s[0], fdbg_cpu_halt};
             if (beam_halt_s[0] & ~beam_halt_s[1])       // rising edge of "halted"
                 rw_beam_q <= {9'd0, rw_hcount, 7'd0, rw_line};
+        end
+    end
+
+    // beampc is quasi-static (written once per experiment) but it is still 16
+    // bits crossing a domain, so it goes through the tested crossing rather
+    // than a hand-rolled 2-FF.
+    xt_mbit_cdc #(.W(16)) u_beampc_cdc (
+        .src_clk(clk_sys),   .src_rst(rst_sys),  .src_data(dbg_beampc),
+        .dst_clk(clk_sally), .dst_rst(rst_sally),.dst_data(beampc_sally)
+    );
+
+    // fid_sync_d is already maintained by the icnt counter above; reuse it
+    // rather than keeping a second copy of the same edge.
+    wire fid_bnd  = fid_sync & ~fid_sync_d;              // instruction boundary
+    reg  beam_tgl;
+    always_ff @(posedge clk_sally or posedge rst_sally) begin
+        if (rst_sally)                                   beam_tgl <= 1'b0;
+        else if (fid_bnd && (fdbg_pc == beampc_sally))   beam_tgl <= ~beam_tgl;
+    end
+
+    (* ASYNC_REG = "TRUE" *) reg [2:0] beam_tgl_s;
+    reg [31:0] rw_beam2_q;
+    always_ff @(posedge clk_sys or posedge rst_sys) begin
+        if (rst_sys) begin
+            beam_tgl_s <= 3'b000;
+            rw_beam2_q <= 32'd0;
+        end else begin
+            beam_tgl_s <= {beam_tgl_s[1:0], beam_tgl};
+            if (beam_tgl_s[2] ^ beam_tgl_s[1])
+                rw_beam2_q <= {9'd0, rw_hcount, 7'd0, rw_line};
         end
     end
 
@@ -3716,6 +3758,8 @@ module fpga_xt_top (
         .dbg_snap_psh    (sdbg_psh),
         .dbg_icnt        (sdbg_icnt),
         .dbg_beam        (rw_beam_q),        // ANTIC beam at the halt boundary
+        .dbg_beampc      (dbg_beampc),
+        .dbg_beam2       (rw_beam2_q),       // ANTIC beam at DBG_BEAMPC (no halt)
         .dbg_trc_ctrl    (gdbg_trc_ctrl),
         .dbg_trc_idx     (gdbg_trc_idx),
         .dbg_trc_wptr    (sdbg_trc_wptr),

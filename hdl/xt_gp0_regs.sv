@@ -221,7 +221,9 @@ module xt_gp0_regs (
     input  wire [31:0] dbg_snap_axys,
     input  wire [11:0] dbg_snap_psh,
     input  wire [31:0] dbg_icnt,
-    input  wire [31:0] dbg_beam,          // reserved (0)
+    input  wire [31:0] dbg_beam,          // beam at the halt boundary
+    output reg  [15:0] dbg_beampc,        // PC to beam-stamp (no halt)
+    input  wire [31:0] dbg_beam2,         // beam at that PC
     // trace ring: control out (levels), status/data in
     output reg  [1:0]  dbg_trc_ctrl,      // [0]=enable [1]=break_on_full
     output reg  [11:0] dbg_trc_idx,       // read index
@@ -347,6 +349,7 @@ module xt_gp0_regs (
             dbg_commit_tog <= 1'b0;
             dbg_cfg        <= 2'b00;
             dbg_bkpt_addr  <= 16'd0;
+            dbg_beampc     <= 16'd0;
             dbg_wp_addr    <= 16'd0;
             dbg_wp_cfg     <= 3'b000;
             dbg_step_count <= 16'd1;
@@ -486,6 +489,7 @@ module xt_gp0_regs (
                                                       dbg_step_tog   <= ~dbg_step_tog; end
                                     DBG_CFG:    dbg_cfg        <= w_data[1:0];
                                     DBG_BKPT:   dbg_bkpt_addr  <= w_data[15:0];
+                                    DBG_BEAMPC: dbg_beampc     <= w_data[15:0];
                                     DBG_WP:     dbg_wp_addr    <= w_data[15:0];
                                     DBG_WPCFG:  dbg_wp_cfg     <= w_data[2:0];
                                     DBG_COMMIT: dbg_commit_tog <= ~dbg_commit_tog;
@@ -625,6 +629,7 @@ module xt_gp0_regs (
                                     DBG_PSH:   s_axi_rdata <= {20'd0, dbg_snap_psh};
                                     DBG_ICNT:  s_axi_rdata <= dbg_icnt;
                                     DBG_BEAM:  s_axi_rdata <= dbg_beam;
+                                    DBG_BEAM2: s_axi_rdata <= dbg_beam2;
                                     DBG_TRC_CTRL: s_axi_rdata <= {30'd0, dbg_trc_ctrl};
                                     DBG_TRC_WPTR: s_axi_rdata <= dbg_trc_wptr;
                                     DBG_TRC_PC:   s_axi_rdata <= {16'd0, dbg_trc_pc};

@@ -723,6 +723,22 @@
           "c": "XT_DBG_TB_CAP",
           "sv": "DBG_TB_CAP",
           "desc": "ANTIC timebase probe capture: ring entry selected by DBG_TB_CFG.read_idx = {[24:16]=scanline (0..261), [15:8]=phi2_in_line (machine-cycle 0..113), [7:0]=data (write byte for write modes, ANTIC read byte for read mode, 0 for event modes)}"
+        },
+        {
+          "off": "0x3C",
+          "access": "W",
+          "width": 16,
+          "c": "XT_DBG_BEAMPC",
+          "sv": "DBG_BEAMPC",
+          "desc": "W [15:0]=PC to beam-stamp. When the core reaches this instruction boundary the ANTIC beam is latched into DBG_BEAM2 WITHOUT halting, so an interval can be measured inside ONE run: set this to the first instruction, put the breakpoint on the second, and read DBG_BEAM2 and DBG_BEAM when it stops. Necessary because each xexload lands the test on a different scanline, so beam readings from separate runs cannot be subtracted"
+        },
+        {
+          "off": "0x40",
+          "access": "R",
+          "width": 32,
+          "c": "XT_DBG_BEAM2",
+          "sv": "DBG_BEAM2",
+          "desc": "R ANTIC beam latched at the DBG_BEAMPC instruction boundary (no halt): [15:0]=scanline, [22:16]=beam X in machine cycles. Same layout as DBG_BEAM"
         }
       ]
     },
