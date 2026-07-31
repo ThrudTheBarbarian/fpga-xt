@@ -4,6 +4,32 @@
 
 # Immediate targets
 
+## >>> CURRENT DIRECTION: software 6502/ANTIC investigation (Simon, 2026-07-31) <<<
+
+**Start here.** Full brief: `docs/Design/software-emulation-investigation.md`.
+
+Investigate moving the 6502 and ANTIC/GTIA into SOFTWARE, rendering to an
+8-bit palette-index framebuffer in DDR that hardware converts to RGBA32 per
+vblank.  **POKEY STAYS IN HARDWARE**, register-driven.
+
+* This is a **feasibility + performance investigation, NOT a rewrite**.  Do not
+  delete or regress the fabric path -- it is the fallback and the baseline.
+* Stage order: (1) prove an app can be launched on the OTHER A9 core so it is
+  dedicated; (2) write the 6502/ANTIC shape, gated on Klaus + illegal opcodes
+  before ACID800 comes in as input; (3) Mac first, integrate onto the A9 at
+  staged points.
+* Writing it may well expose the fabric bug -- a sequential model has no CDC,
+  no two-raster phase, no /RDY sampling window, so a disagreement localises it.
+* Measured going in: libatari800 headless = 267x realtime on the Mac; the A9 is
+  only 6-7.5x slower than the Mac (caches fine, 64 KB == 4 KB) => ~35x realtime
+  on one A9.  **Throughput is not the obstacle.**
+* Licensing: atari800/Altirra are GPL, this repo is permissive-only.  Write
+  fresh against the Altirra Hardware Reference Manual; use libatari800 and
+  AltirraSDL as measurement + oracle only, never vendor.
+* ACID baseline to preserve and beat: **32/63 at sallyrst $06, 27 at $0A**,
+  ceiling 57.  Latest bitstream build19.
+
+
 - **tb_hscrol_e2e AND tb_antic_display are STALE (fail at HEAD, pre-existing).** Both
   predate the dl_parser walker rework: they tie `frame_start`/`line_start`/`prep_tick`
   low, so the walker never steps and `meta_*` (now the walker's current-row registers)
