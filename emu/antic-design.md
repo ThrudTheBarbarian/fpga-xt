@@ -43,10 +43,14 @@ a 56-slot window) cannot be expressed in it.
   in the fabric work, `antic_timing_fixes`).
 - `antic_nmist`, `antic_blockednmi` — NMIST latching and what happens when NMIs
   are blocked/disabled around the boundary.
-- `antic_dlitiming`, `antic_vscroldli` — DLI delivery is a **physical-scanline
-  map fired at cycle 8**, not a display-list-row map. Blank-line DLIs are mapped
-  differently and are a known fabric bug (`acid800_dli_cluster`) — get it right
-  here first, and that alone may localise the RTL fault.
+- `antic_dlitiming`, `antic_vscroldli` — DLI delivery. See corner-case 4 below
+  for the rule (the cycle is fixed, the scanline is dynamic). `antic_dlitiming`
+  puts **every one of its DLIs on a blank-line instruction** (`$90`), firing on
+  the last scanline of the block — precisely the case the fabric `dl_parser`
+  gets wrong (`acid800_dli_cluster`). It also measures interrupt latency **to
+  the instruction**, by having the handler read its own return address off the
+  stack, so its failure pattern localises an off-by-one rather than just
+  reporting one. Point a new ANTIC at this test first.
 
 ### Display list and addressing
 - `antic_default`, `antic_dlistwrap`, `antic_addresswrap`, `antic_addrmirror` —
