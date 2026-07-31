@@ -10,8 +10,11 @@ playfield width.
 
 ## The test carries the specification as data
 
-The `testdata` table is a literal per-cycle blocked/not-blocked bitmask for every
-mode, in three blocks — **narrow**, **normal** and **wide** playfield:
+The `testdata` table is a literal per-cycle mask for every mode, in **two**
+blocks — **narrow** and **normal** playfield. That is 50 rows, matching the
+test's own "We have 50 tests to do". There is no wide-playfield block: wide is
+covered by [`antic_virtdma`](antic_virtdma.md) instead, which is where the extra
+fetches with nothing to display get measured.
 
 ```
 ;              0123456  78901234  56789012  34567890  ...
@@ -22,8 +25,20 @@ dta $0c,%01000011,...
 
 Each row is: **mode byte**, then 14 mask bytes walking the scanline cycle by
 cycle, then `$A5` as a terminator. The column header above each block gives the
-cycle numbering, and the first mask byte is 7 wide (cycles 0–6) with the
-remainder in groups of 8.
+cycle numbering: a 7-wide first group then thirteen 8-wide groups = 111 cycles,
+against 14 mask bytes = 112 bits — so **one bit of the first byte is padding**,
+and whether the cycles occupy bits 7..1 or 6..0 is not settled by the ruler
+alone.
+
+Polarity is not stated either, but the evidence points one way: for a narrow
+mode-8 line, which fetches very few bytes, the middle mask bytes are `$FF` —
+consistent with **1 = CPU-available (unhalted)** rather than 1 = blocked. The
+test's own comment says it walks the mask *"counting off the unhalted cycles"*.
+
+Both questions are answerable from the scan loop in the test source, and should
+be settled there rather than fitted to whatever our ANTIC happens to do.
+`tools/acid800_dmatable.py` therefore emits the **raw** bytes
+(`emu/acid_dmatable.h`) so no guess is baked into the data.
 
 The mode byte is the display-list instruction, so it encodes more than the mode
 number — e.g. `$08` vs `$09` (the same mode with and without DLI/scroll bits)
