@@ -41,6 +41,7 @@ _Static_assert(offsetof(cpu1_mbox, fault_dfar) == CPU1_MB_FAULT_DFAR, "mbox layo
 extern void klog(const char *);
 extern void klog_u(unsigned);
 extern void mmu_poke_phys0(const uint32_t *w, int n);   /* mmu.c */
+extern uint32_t *mmu_master_table(void);                /* mmu.c */
 
 /* CPU1's reset vector lives at physical 0.  `ldr pc, [pc, #-4]` reads the word
  * that follows it (PC reads as +8, so 8-4 = 4) and jumps there. */
@@ -147,6 +148,15 @@ uint32_t cpu1_actlr(void)
  * `pen_state` reports what the pen held on entry, for the caller's diagnostics. */
 static int cpu1_release(uint32_t *pen_state)
 {
+    /* Hand CPU1 the master table so it can run cached.  Uncached it is 14x
+     * slower than CPU0 (133 ns/iter vs 9.35), which the software 6502/ANTIC
+     * cannot afford.  It shares CPU0's MASTER table and never switches it — the
+     * map is flat identity, the AMP region is already non-cacheable there and
+     * peripherals are already Device, so the mailbox stays coherent exactly as
+     * before while code and stack become cacheable. */
+    mb->ttbr = (uint32_t)(uintptr_t)mmu_master_table() | XTOS_TTBR_ATTR;
+    dsb();
+
     volatile uint32_t *pen = (volatile uint32_t *)CPU1_PEN_ADDR;
     if (pen_state) *pen_state = *pen;
 

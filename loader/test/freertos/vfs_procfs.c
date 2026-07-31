@@ -10,6 +10,7 @@
  *   /OS/proc/meminfo         static totals (tools want it to exist)
  *   /OS/proc/limits          fixed-size kernel pools: cur/max/high-water
  *   /OS/proc/cpu1            the second A9 (AMP): live ping + benchmark
+ *   /OS/proc/cpuinfo         both A9s, Linux-shaped stanzas
  *
  * Content is generated at OPEN into an allocated buffer (a moment-in-time
  * snapshot; the fd then reads in-memory via vf.data), freed at close. Opens
@@ -346,6 +347,67 @@ int g_temp_die = -1000000, g_temp_die_peak = -1000000;   /* PS XADC (die)   */
 /* /OS/proc/temp — board (I2C 0x49) + die (PS XADC) temps with a boot timestamp,
  * so a `while : ; do cat /OS/proc/temp; sleep 1; done` log lines up with HDMI
  * drops.  Columns aligned: labels to the ':' , values to the '('. */
+/* /OS/proc/cpuinfo — both A9s, in the shape Linux uses (one stanza per
+ * processor, blank-line separated) but with the fields that are actually true
+ * here.  MIDR/SCTLR/ACTLR for CPU1 are values CPU1 read of ITSELF and published
+ * through the mailbox, not values CPU0 assumed on its behalf — the distinction
+ * matters, because "we set the MMU bit" and "the MMU is on" were not the same
+ * thing more than once during bring-up. */
+static void pf_cpu_stanza(pfb *o, int n, uint32_t midr, uint32_t sctlr,
+                          uint32_t actlr, uint32_t mpidr, const char *state)
+{
+    pfb_s(o, "processor\t: "); pfb_d(o, n); pfb_c(o, '\n');
+    pfb_s(o, "model name\t: ARMv7 Processor (Cortex-A9)\n");
+    pfb_s(o, "CPU implementer\t: 0x"); {
+        static const char h[] = "0123456789abcdef";
+        pfb_c(o, h[(midr >> 28) & 0xf]); pfb_c(o, h[(midr >> 24) & 0xf]); }
+    pfb_c(o, '\n');
+    pfb_s(o, "CPU architecture: 7\n");
+    pfb_s(o, "CPU variant\t: 0x"); pfb_d(o, (int)((midr >> 20) & 0xf)); pfb_c(o, '\n');
+    pfb_s(o, "CPU part\t: 0x"); {
+        static const char h[] = "0123456789abcdef";
+        pfb_c(o, h[(midr >> 12) & 0xf]); pfb_c(o, h[(midr >> 8) & 0xf]);
+        pfb_c(o, h[(midr >> 4) & 0xf]); }
+    pfb_c(o, '\n');
+    pfb_s(o, "CPU revision\t: "); pfb_d(o, (int)(midr & 0xf)); pfb_c(o, '\n');
+    pfb_s(o, "MPIDR\t\t: "); pfb_x8(o, mpidr); pfb_c(o, '\n');
+    pfb_s(o, "SCTLR\t\t: "); pfb_x8(o, sctlr);
+    pfb_s(o, "  mmu="); pfb_s(o, (sctlr & 1u) ? "on" : "OFF");
+    pfb_s(o, " dcache="); pfb_s(o, (sctlr & (1u << 2)) ? "on" : "OFF");
+    pfb_s(o, " icache="); pfb_s(o, (sctlr & (1u << 12)) ? "on" : "OFF");
+    pfb_s(o, " bpred="); pfb_s(o, (sctlr & (1u << 11)) ? "on" : "OFF");
+    pfb_c(o, '\n');
+    pfb_s(o, "ACTLR\t\t: "); pfb_x8(o, actlr);
+    pfb_s(o, "  smp="); pfb_s(o, (actlr & (1u << 6)) ? "on" : "OFF");
+    pfb_c(o, '\n');
+    pfb_s(o, "state\t\t: "); pfb_s(o, state); pfb_c(o, '\n');
+}
+
+static int pf_gen_cpuinfo(char *buf, int sz)
+{
+    pfb o = { buf, 0, sz };
+    cpu1_mbox *m = cpu1_box();
+    uint32_t midr, sctlr;
+    __asm__ volatile("mrc p15, 0, %0, c0, c0, 0" : "=r"(midr));
+    __asm__ volatile("mrc p15, 0, %0, c1, c0, 0" : "=r"(sctlr));
+
+    pf_cpu_stanza(&o, 0, midr, sctlr, cpu1_actlr(), 0x80000000u, "running (kernel)");
+    pfb_c(&o, '\n');
+
+    if (cpu1_alive()) {
+        pf_cpu_stanza(&o, 1, m->midr, m->sctlr, m->actlr, m->mpidr, "running (AMP)");
+        pfb_s(&o, "beats\t\t: "); pfb_d(&o, (int)m->heartbeat);
+        pfb_s(&o, " +"); pfb_d(&o, (int)cpu1_heartbeat_delta(2000)); pfb_c(&o, '\n');
+    } else {
+        pfb_s(&o, "processor\t: 1\nstate\t\t: down (see /OS/proc/cpu1)\n");
+    }
+    pfb_c(&o, '\n');
+    pfb_s(&o, "SCU\t\t: "); pfb_x8(&o, cpu1_scu_ctrl());
+    pfb_s(&o, "  enabled="); pfb_s(&o, (cpu1_scu_ctrl() & 1u) ? "yes" : "no");
+    pfb_c(&o, '\n');
+    return o.n;
+}
+
 /* The second A9 (see cpu1.h).  Reading this file does not just print counters:
  * it PINGS CPU1 and BENCHMARKS it live, so a core that died five minutes ago
  * cannot masquerade as a running one behind a stale heartbeat.  The ping's
@@ -572,6 +634,7 @@ static int pf_open(vfs_mount *m, const char *rel, int flags, vfs_file *f)
     else if (!strcmp(rel, "/temp"))    len = pf_gen_temp(buf, PF_BUF);
     else if (!strcmp(rel, "/limits"))  len = pf_gen_limits(buf, PF_BUF);
     else if (!strcmp(rel, "/cpu1"))    len = pf_gen_cpu1(buf, PF_BUF);
+    else if (!strcmp(rel, "/cpuinfo")) len = pf_gen_cpuinfo(buf, PF_BUF);
     else if (!strcmp(rel, "/mounts"))  { extern int vfs_mounts_str(char *, int); len = vfs_mounts_str(buf, PF_BUF); }
     else if (!strncmp(rel, "/net/", 5)) { extern int xt_procnet(const char *, char *, int); len = xt_procnet(rel + 5, buf, cap); }
     else if (rel[0] == '/' && (k = pf_num(rel + 1, &pid)) > 0) {
@@ -599,7 +662,7 @@ static int pf_stat(vfs_mount *m, const char *rel, struct xt_stat *st)
         !strcmp(rel, "/video")  || !strcmp(rel, "/video-sii") || !strcmp(rel, "/video-kick") ||
         !strcmp(rel, "/video-sleep") ||
         !strcmp(rel, "/temp") || !strcmp(rel, "/limits") ||
-        !strcmp(rel, "/cpu1")) { st->mode = XT_S_IFREG; return 0; }
+        !strcmp(rel, "/cpu1") || !strcmp(rel, "/cpuinfo")) { st->mode = XT_S_IFREG; return 0; }
     if (!strcmp(rel, "/net")) { st->mode = XT_S_IFDIR; return 0; }
     if (!strncmp(rel, "/net/", 5)) {
         for (int i = 0; xt_procnet_leaves[i]; i++)
@@ -637,7 +700,7 @@ static int pf_readdir(vfs_mount *m, const char *rel, int index,
                 return 1;
             }
         }
-        const char *fixed[] = { "uptime", "meminfo", "kmsg", "mounts", "video", "video-sii", "video-kick", "video-sleep", "temp", "limits", "cpu1" };
+        const char *fixed[] = { "uptime", "meminfo", "kmsg", "mounts", "video", "video-sii", "video-kick", "video-sleep", "temp", "limits", "cpu1", "cpuinfo" };
         int fi = index - emitted;
         if (fi >= 0 && fi < (int)(sizeof fixed / sizeof fixed[0])) {
             pfb o = { name, 0, nsz };

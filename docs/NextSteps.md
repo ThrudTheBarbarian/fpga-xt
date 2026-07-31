@@ -29,11 +29,15 @@ the `cpu1-amp-bringup` memory. Two things worth knowing:
     SEV never wakes CPU1 even with the SCU on and ACTLR.SMP set. What works is
     Linux's method: a trampoline at physical 0 plus an SLCR reset pulse. An SLCR
     core reset does *not* re-enter the BootROM, so CPU1 restarts at address 0.
-  - **CPU1 currently runs MMU-off and caches-off, so it is ~14x slower than
-    CPU0** — 133 ns/iter against `memprobe`'s 9.35 ns/iter for the same loop.
-    **NEXT: give CPU1 an MMU + caches and re-measure**, because the ~35x-realtime
-    premise below assumes working caches. Until then CPU1 may touch only the
-    uncached AMP region at `0x2100_0000`.
+  - **MMU + caches are ON and CPU1 is at PARITY with CPU0.** Uncached it ran at
+    133 ns/iter against CPU0's 9.35; with MMU + D-cache + I-cache + branch
+    prediction it measures **9.00 ns/iter**. So the ~35x-realtime premise below
+    holds on the second core. CPU1 shares CPU0's *master* table (flat identity,
+    AMP region already non-cacheable, peripherals already Device) and never
+    switches TTBR. `/OS/proc/cpuinfo` reports both cores Linux-style.
+  - Still true: kernel pages are not marked Shareable, so CPU1 must touch only
+    the uncached AMP region at `0x2100_0000` plus read-only kernel text — never
+    CPU0's mutable cached data. That is why CPU1's code lives in its own file.
 * Writing it may well expose the fabric bug -- a sequential model has no CDC,
   no two-raster phase, no /RDY sampling window, so a disagreement localises it.
 * Measured going in: libatari800 headless = 267x realtime on the Mac; the A9 is

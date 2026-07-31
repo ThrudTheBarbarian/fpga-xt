@@ -90,6 +90,10 @@
 #define CPU1_MB_FAULT_SPSR 0x40
 #define CPU1_MB_FAULT_DFSR 0x44       /* CP15 c5,c0,0 — why the data abort */
 #define CPU1_MB_FAULT_DFAR 0x48       /* CP15 c6,c0,0 — the address it faulted on */
+#define CPU1_MB_TTBR       0x4c       /* CPU0 -> CPU1: the table to run on */
+#define CPU1_MB_MIDR       0x50       /* CPU1 -> CPU0: its own identity + state */
+#define CPU1_MB_SCTLR      0x54
+#define CPU1_MB_ACTLR      0x58
 
 /* fault_kind values stored by CPU1's own vector table */
 #define CPU1_FAULT_NONE  0
@@ -131,6 +135,19 @@ typedef struct {
     volatile uint32_t fault_spsr;  /* mode/state CPU1 faulted from */
     volatile uint32_t fault_dfsr;  /* data-fault status */
     volatile uint32_t fault_dfar;  /* data-fault address */
+
+    volatile uint32_t ttbr;        /* CPU0 -> CPU1: TTBR0 value (table | attrs).
+                                    * CPU1 shares CPU0's MASTER table rather than
+                                    * building its own: it is a flat identity map
+                                    * with the AMP region already non-cacheable
+                                    * and peripherals already Device, which is
+                                    * exactly what CPU1 wants.  CPU1 never
+                                    * switches it (per-process tables are CPU0's
+                                    * business), so vm_switch cannot pull the
+                                    * ground out from under it. */
+    volatile uint32_t midr;        /* CPU1 -> CPU0: identity + post-enable state, */
+    volatile uint32_t sctlr;       /* so /OS/proc/cpuinfo can report the real */
+    volatile uint32_t actlr;       /* thing rather than what we hoped we set. */
 } cpu1_mbox;
 
 /* ---- CPU0 side (cpu1.c) --------------------------------------------------- */
