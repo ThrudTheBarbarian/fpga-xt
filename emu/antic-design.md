@@ -104,6 +104,21 @@ These are the ones that are cheap now and expensive later:
    6, `NMIEN` sampled at 6, `NMIRES` effective from 7 — `antic_nmist`).
 5. **Collisions are per colour clock**, so the pixel pipeline has to exist before
    GTIA collision tests can pass — do not build a scanline-at-a-time renderer.
+   `gtia_collision` requires a sprite straddling the left HBLANK edge to collide
+   on its visible clocks only, which a scanline-at-a-time renderer cannot say.
+6. **Playfield stop is a CYCLE COMPARISON, not a byte count.** `antic_hscrolbug`
+   works by glitching `HSCROL` so the stop cycle is *missed* and ANTIC keeps
+   fetching through HBLANK. Implement the stop as "after N bytes" and that test
+   is unreachable, because a byte count cannot fail to terminate.
+7. **Memory refresh steals cycles too.** `antic_hscrolbug`'s DMA map legend has
+   `R` for refresh interleaved with the playfield fetches, and a `#` for a
+   playfield fetch whose DMA cycle is *suppressed* — so fetch and
+   cycle-consumption are separate events. A DMA model counting only playfield,
+   display-list and P/M fetches is missing a class of stolen cycle.
+8. **Hi-res collides as PF2.** In Gr.8 any set pixel in a colour clock collides
+   as PF2 (`gtia_collision2`), regardless of which half of the pair it is. That
+   single rule is the mechanism behind `antic_hiresbug`. Mode 9 produces no
+   playfield collisions at all; mode 10 is shifted one colour clock.
 
 ## Iteration
 
