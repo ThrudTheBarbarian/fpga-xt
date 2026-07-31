@@ -148,24 +148,32 @@ module antic_reg_file #(
 
     // One machine cycle behind the latch, both edges: this is the delay slot.
     //
-    // TWO OTHER SHAPES WERE TRIED ON HARDWARE AND ARE WORSE, recorded so they
-    // are not tried again.  ACID antic_wsync uses POKEY's RANDOM as a cycle
-    // clock and reports INC WSYNC as $1B where $0D is required; decoding the
-    // 9-bit poly (taps q[0]^q[5], which reproduce all four asserted values at
-    // steps 113/342/569/1253) puts $1B at step 341 against $0D at 342 —
-    // the read-modify-write resumes exactly one machine cycle early.
+    // DO NOT TUNE THIS AGAINST antic_wsync.  That test CANNOT SEE the release
+    // cycle at all, which was proved on hardware: sweeping the release over
+    // 96..111 (CTRL_RWTUNE [11:8], offsets -8..+7) leaves all six of the test's
+    // RANDOM samples BIT-IDENTICAL.  The reason is structural — the poly is
+    // released from reset just after a WSYNC and every `lda random` is a fixed
+    // number of cycles after a WSYNC release, so moving the release moves the
+    // poly's zero and the read TOGETHER and the delta never changes.  The test
+    // measures WSYNC's RELATIVE behaviour only.
     //
-    //   * retiming this edge MID-CYCLE (wsync_gen's shape for the legacy
-    //     machine) moves it the WRONG WAY: the fid core samples rdy at a commit
-    //     slot near the END of its window, so a mid-cycle edge lands one window
-    //     EARLIER.  Cost antic_blockednmi and cpu_bugs.
-    //   * q1 | q2 (the latch delayed one ORed with two) does lengthen the
-    //     stall, but antic_wsync's reading did not move at all — still $1B —
-    //     while antic_blockednmi broke.  Net zero, so not the mechanism.
+    // Four shapes have been burned on this misreading; none of them could ever
+    // have worked, and they are recorded so nobody repeats them:
+    //   * retiming this edge MID-CYCLE (wsync_gen's shape) — cost
+    //     antic_blockednmi and cpu_bugs;
+    //   * q1 | q2 — antic_wsync's reading did not move at all;
+    //   * the same mid-cycle retiming in clk_sally AFTER the crossing —
+    //     exactly neutral, 27 of 63 either way;
+    //   * release cycles 96..111 — six identical readings.
+    // The tune field itself is LIVE: release 111 flips antic_blockednmi and
+    // cpu_bugs pass->fail, because those anchor to the raster, not to WSYNC.
     //
-    // The missing cycle is therefore NOT in this shape; it is in where the
-    // RMW's two writes land relative to the release.  Left as q1 until that is
-    // measured directly.
+    // Where the real error is: antic_wsync PASSES OUTRIGHT at sallyrst $06, so
+    // the legacy wsync_gen is correct and this is a reimplementation of a solved
+    // thing.  At $0A, d0/d1 are right and d2/d3/d4/d5 wrong; d0/d1 contain no
+    // long code while d3/d4/d5 each run a 19-iteration dex loop, so they
+    // accumulate any per-line cycle-accounting error.  Look at the DMA schedule
+    // (antic_dma_sched), not at this latch.
     logic rdy_q;
     always_ff @(posedge clk or posedge rst) begin
         if (rst)       rdy_q <= 1'b0;
