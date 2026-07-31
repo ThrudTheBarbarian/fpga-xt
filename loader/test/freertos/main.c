@@ -388,6 +388,7 @@ int main(void)
     { extern void uart1_rx_init(void); uart1_rx_init(); }   /* interrupt-driven console RX (blocking con_tty_readc) */
 #endif
     { extern void gtimer_init(void); gtimer_init(); }   /* A9 global timer -> gettimeofday wall clock */
+    { extern void cpu1_init(void); cpu1_init(); }        /* release the second A9 (AMP); needs the global timer */
     { extern void hdmi_init(void); hdmi_init(); }        /* SiI9022 HDMI bring-up (HW build only; no-op on qemu) */
     { extern void gfxplane_init(void); gfxplane_init(); } /* clear the compositor plane (else scan-out shows uninit DDR) */
 #ifdef XT_HW

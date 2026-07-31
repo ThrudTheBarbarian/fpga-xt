@@ -18,6 +18,22 @@ vblank.  **POKEY STAYS IN HARDWARE**, register-driven.
   dedicated; (2) write the 6502/ANTIC shape, gated on Klaus + illegal opcodes
   before ACID800 comes in as input; (3) Mac first, integrate onto the A9 at
   staged points.
+
+**STAGE 1 IS DONE (2026-07-31) — CPU1 runs our code.** `cat /OS/proc/cpu1` on
+the board: `mpidr 0x80000001` (affinity 1, so genuinely the second core) plus a
+live ping whose answer CPU0 never computed, a climbing heartbeat, and a
+benchmark. Code: `loader/test/freertos/cpu1.{h,c}` (CPU0 side), `cpu1_core.c`
+(runs ON CPU1), `cpu1_boot.S`, `mmu_poke_phys0()` in `mmu.c`. Full write-up in
+the `cpu1-amp-bringup` memory. Two things worth knowing:
+  - **The documented release (`0xFFFFFFF0` + SEV) does not work on this board.**
+    SEV never wakes CPU1 even with the SCU on and ACTLR.SMP set. What works is
+    Linux's method: a trampoline at physical 0 plus an SLCR reset pulse. An SLCR
+    core reset does *not* re-enter the BootROM, so CPU1 restarts at address 0.
+  - **CPU1 currently runs MMU-off and caches-off, so it is ~14x slower than
+    CPU0** — 133 ns/iter against `memprobe`'s 9.35 ns/iter for the same loop.
+    **NEXT: give CPU1 an MMU + caches and re-measure**, because the ~35x-realtime
+    premise below assumes working caches. Until then CPU1 may touch only the
+    uncached AMP region at `0x2100_0000`.
 * Writing it may well expose the fabric bug -- a sequential model has no CDC,
   no two-raster phase, no /RDY sampling window, so a disagreement localises it.
 * Measured going in: libatari800 headless = 267x realtime on the Mac; the A9 is

@@ -103,6 +103,41 @@ void mmu_sync_caches(void *addr, unsigned long len, void *user)
  * copies of this so the kernel + wired regions are mapped in every space. */
 uint32_t *mmu_master_table(void) { return (uint32_t *)l1; }
 
+/* ---- write physical address 0 (CPU1's reset vector) ------------------------
+ * Section 0 is the NULL trap (l1[0] = 0), so the kernel cannot write address 0
+ * — which is exactly where CPU1 restarts after an SLCR reset, and therefore
+ * where its secondary-boot trampoline has to live (cpu1.c).  Open a window over
+ * section 0 just long enough to copy the words in, then close it: leaving the
+ * NULL trap disarmed would turn every null-pointer store in the kernel into a
+ * silent success.  IRQs are held off across the window so nothing else runs
+ * while the trap is down.
+ *
+ * The lines are cleaned to the point of COHERENCY, not just unification: CPU1
+ * fetches them with its MMU and caches OFF, so anything still sitting in CPU0's
+ * D-cache is invisible to it. */
+void mmu_poke_phys0(const uint32_t *w, int n)
+{
+    unsigned f = xt_irq_save();
+    uint32_t saved = l1[0];
+    l1[0] = 0x00000000u | SEC_KDATA;              /* PA 0, PL1 RW, XN */
+    asm volatile("dsb; isb");
+    asm volatile("mcr p15,0,%0,c8,c7,0" :: "r"(0u));   /* invalidate TLB */
+    asm volatile("dsb; isb");
+
+    volatile uint32_t *p = (volatile uint32_t *)0;
+    for (int i = 0; i < n; i++) p[i] = w[i];
+    asm volatile("dsb");
+    for (int i = 0; i < n; i++)
+        asm volatile("mcr p15,0,%0,c7,c10,1" :: "r"((uint32_t)(uintptr_t)&p[i]));  /* DCCMVAC */
+    asm volatile("dsb");
+
+    l1[0] = saved;                                 /* re-arm the NULL trap */
+    asm volatile("dsb; isb");
+    asm volatile("mcr p15,0,%0,c8,c7,0" :: "r"(0u));
+    asm volatile("dsb; isb");
+    xt_irq_restore(f);
+}
+
 void mmu_init(void)
 {
     /* Domain 0 = CLIENT (AP enforced). The background identity map denies PL0:

@@ -9,6 +9,7 @@
  *   /OS/proc/uptime          monotonic seconds since boot (global timer)
  *   /OS/proc/meminfo         static totals (tools want it to exist)
  *   /OS/proc/limits          fixed-size kernel pools: cur/max/high-water
+ *   /OS/proc/cpu1            the second A9 (AMP): live ping + benchmark
  *
  * Content is generated at OPEN into an allocated buffer (a moment-in-time
  * snapshot; the fd then reads in-memory via vf.data), freed at close. Opens
@@ -16,6 +17,7 @@
  */
 #include "vfs.h"
 #include "frtos_os.h"
+#include "cpu1.h"
 #include <stdint.h>
 #include <string.h>
 
@@ -62,6 +64,13 @@ static void pfb_d(pfb *o, int v)
     unsigned u = v < 0 ? (pfb_c(o, '-'), (unsigned)(-v)) : (unsigned)v;
     do { t[k++] = (char)('0' + u % 10); u /= 10; } while (u);
     while (k) pfb_c(o, t[--k]);
+}
+
+static void pfb_x8(pfb *o, uint32_t v)
+{
+    static const char h[] = "0123456789abcdef";
+    pfb_s(o, "0x");
+    for (int i = 28; i >= 0; i -= 4) pfb_c(o, h[(v >> i) & 0xf]);
 }
 
 /* ---- content generators (into buf, returns length) ------------------------ */
@@ -337,6 +346,96 @@ int g_temp_die = -1000000, g_temp_die_peak = -1000000;   /* PS XADC (die)   */
 /* /OS/proc/temp — board (I2C 0x49) + die (PS XADC) temps with a boot timestamp,
  * so a `while : ; do cat /OS/proc/temp; sleep 1; done` log lines up with HDMI
  * drops.  Columns aligned: labels to the ':' , values to the '('. */
+/* The second A9 (see cpu1.h).  Reading this file does not just print counters:
+ * it PINGS CPU1 and BENCHMARKS it live, so a core that died five minutes ago
+ * cannot masquerade as a running one behind a stale heartbeat.  The ping's
+ * answer is one CPU0 never computed, and the benchmark is the same integer loop
+ * progs/memprobe.c runs on CPU0 — so the two ns/iter figures are directly
+ * comparable, which is the number the software-6502 investigation needs. */
+static int pf_gen_cpu1(char *buf, int sz)
+{
+    pfb o = { buf, 0, sz };
+    cpu1_mbox *m = cpu1_box();
+    uint32_t arg[4] = { 0, 0, 0, 0 }, res[4] = { 0, 0, 0, 0 };
+    int p;
+
+    /* If CPU1 is not up, RETRY the release on this read.  A core that missed
+     * its wake at boot should not need a reboot to recover — and while this is
+     * being brought up it means an experiment costs an ssh round-trip instead
+     * of a bitstream load. */
+    int retried = 0;
+    if (!cpu1_alive()) { cpu1_retry(); retried = 1; }
+
+    pfb_s(&o, "state   : "); p = o.n;
+    pfb_s(&o, cpu1_alive() ? (retried ? "up (released by this read)" : "up") : "down");
+    pfb_pad(&o, p, 28); pfb_s(&o, "(second Cortex-A9, AMP)\n");
+
+    pfb_s(&o, "scu     : "); p = o.n;
+    pfb_s(&o, "ctrl "); pfb_x8(&o, cpu1_scu_ctrl());
+    pfb_s(&o, " actlr "); pfb_x8(&o, cpu1_actlr());
+    pfb_pad(&o, p, 28); pfb_s(&o, "(SCU bit0 = on, ACTLR bit6 = SMP)\n");
+
+    { uint32_t d[5]; cpu1_debug(d);
+      pfb_s(&o, "release : "); p = o.n;
+      pfb_s(&o, "pen armed "); pfb_x8(&o, d[0]);
+      pfb_s(&o, " -> final "); pfb_x8(&o, d[1]);
+      pfb_pad(&o, p, 28); pfb_s(&o, "(sentinel here = BootROM rearmed it)\n");
+      pfb_s(&o, "rstctrl : "); p = o.n;
+      pfb_x8(&o, d[2]); pfb_s(&o, " held "); pfb_x8(&o, d[3]);
+      pfb_s(&o, " -> "); pfb_x8(&o, d[4]);
+      pfb_pad(&o, p, 28); pfb_s(&o, "(A9_CPU_RST_CTRL; held must show bits 1+5)\n"); }
+
+    /* Everything below is reported even when CPU0 declared CPU1 down — a core
+     * that woke late, or woke and then faulted, leaves its evidence in the
+     * mailbox, and hiding it behind the `up` flag is exactly how a late boot
+     * gets misread as a dead one. */
+    pfb_s(&o, "magic   : "); p = o.n; pfb_x8(&o, m->magic);
+    pfb_pad(&o, p, 28);
+    pfb_s(&o, m->magic == (uint32_t)CPU1_MAGIC ? "(CPU1 reached cpu1_main)\n"
+                                               : "(never reached cpu1_main)\n");
+
+    pfb_s(&o, "mpidr   : "); p = o.n; pfb_x8(&o, m->mpidr);
+    pfb_pad(&o, p, 28); pfb_s(&o, "(affinity 1 = really CPU1)\n");
+
+    pfb_s(&o, "beats   : "); p = o.n; pfb_d(&o, (int)m->heartbeat);
+    pfb_s(&o, " +"); pfb_d(&o, (int)cpu1_heartbeat_delta(2000));
+    pfb_pad(&o, p, 28); pfb_s(&o, "(idle counter, and its 2 ms delta)\n");
+
+    pfb_s(&o, "fault   : "); p = o.n;
+    if (!m->fault_kind) pfb_s(&o, "none");
+    else { pfb_s(&o, "kind "); pfb_d(&o, (int)m->fault_kind);
+           pfb_s(&o, " pc "); pfb_x8(&o, m->fault_pc);
+           pfb_s(&o, " spsr "); pfb_x8(&o, m->fault_spsr);
+           pfb_s(&o, " dfsr "); pfb_x8(&o, m->fault_dfsr);
+           pfb_s(&o, " dfar "); pfb_x8(&o, m->fault_dfar); }
+    pfb_pad(&o, p, 28); pfb_s(&o, "(first fault only)\n");
+
+    if (!cpu1_alive()) return o.n;      /* the command channel is not armed */
+
+    arg[0] = 0x12345678;
+    pfb_s(&o, "ping    : "); p = o.n;
+    if (cpu1_call(CPU1_CMD_PING, arg, res, 10000) == 0)
+        pfb_s(&o, res[0] == (0x12345678u ^ 0xA5A5A5A5u) ? "ok" : "WRONG ANSWER");
+    else
+        pfb_s(&o, "TIMED OUT");
+    pfb_pad(&o, p, 28); pfb_s(&o, "(live round-trip, this read)\n");
+
+    /* ~200k iterations is a couple of ms on an A9 — long enough to measure,
+     * short enough that the busy-wait in cpu1_call stays a diagnostic and not
+     * a stall.  ticks are PERIPHCLK (CPU/2 = 333.33 MHz) = exactly 3 ns. */
+    arg[0] = 200000;
+    pfb_s(&o, "bench   : "); p = o.n;
+    if (cpu1_call(CPU1_CMD_BENCH, arg, res, 100000) == 0 && res[0]) {
+        uint64_t ns100 = ((uint64_t)res[0] * 300ULL) / 200000ULL;   /* ns/iter x100 */
+        pfb_d(&o, (int)(ns100 / 100)); pfb_c(&o, '.');
+        pfb_2d(&o, (int)(ns100 % 100)); pfb_s(&o, " ns/iter");
+    } else {
+        pfb_s(&o, "TIMED OUT");
+    }
+    pfb_pad(&o, p, 28); pfb_s(&o, "(200k-iteration integer loop)\n");
+    return o.n;
+}
+
 static int pf_gen_temp(char *buf, int sz)
 {
     pfb o = { buf, 0, sz };
@@ -472,6 +571,7 @@ static int pf_open(vfs_mount *m, const char *rel, int flags, vfs_file *f)
     else if (!strcmp(rel, "/video-sleep")) len = pf_gen_video_sleep(buf, PF_BUF);
     else if (!strcmp(rel, "/temp"))    len = pf_gen_temp(buf, PF_BUF);
     else if (!strcmp(rel, "/limits"))  len = pf_gen_limits(buf, PF_BUF);
+    else if (!strcmp(rel, "/cpu1"))    len = pf_gen_cpu1(buf, PF_BUF);
     else if (!strcmp(rel, "/mounts"))  { extern int vfs_mounts_str(char *, int); len = vfs_mounts_str(buf, PF_BUF); }
     else if (!strncmp(rel, "/net/", 5)) { extern int xt_procnet(const char *, char *, int); len = xt_procnet(rel + 5, buf, cap); }
     else if (rel[0] == '/' && (k = pf_num(rel + 1, &pid)) > 0) {
@@ -498,7 +598,8 @@ static int pf_stat(vfs_mount *m, const char *rel, struct xt_stat *st)
     if (!strcmp(rel, "/uptime") || !strcmp(rel, "/meminfo") || !strcmp(rel, "/kmsg") || !strcmp(rel, "/mounts") ||
         !strcmp(rel, "/video")  || !strcmp(rel, "/video-sii") || !strcmp(rel, "/video-kick") ||
         !strcmp(rel, "/video-sleep") ||
-        !strcmp(rel, "/temp") || !strcmp(rel, "/limits")) { st->mode = XT_S_IFREG; return 0; }
+        !strcmp(rel, "/temp") || !strcmp(rel, "/limits") ||
+        !strcmp(rel, "/cpu1")) { st->mode = XT_S_IFREG; return 0; }
     if (!strcmp(rel, "/net")) { st->mode = XT_S_IFDIR; return 0; }
     if (!strncmp(rel, "/net/", 5)) {
         for (int i = 0; xt_procnet_leaves[i]; i++)
@@ -536,7 +637,7 @@ static int pf_readdir(vfs_mount *m, const char *rel, int index,
                 return 1;
             }
         }
-        const char *fixed[] = { "uptime", "meminfo", "kmsg", "mounts", "video", "video-sii", "video-kick", "video-sleep", "temp", "limits" };
+        const char *fixed[] = { "uptime", "meminfo", "kmsg", "mounts", "video", "video-sii", "video-kick", "video-sleep", "temp", "limits", "cpu1" };
         int fi = index - emitted;
         if (fi >= 0 && fi < (int)(sizeof fixed / sizeof fixed[0])) {
             pfb o = { name, 0, nsz };
