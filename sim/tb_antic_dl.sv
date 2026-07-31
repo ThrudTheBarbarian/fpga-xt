@@ -287,18 +287,41 @@ module tb_antic_dl;
                 $display("FAIL T6e: parked pc moved to $%04h", dlpc); fail++;
             end
         end
-        // Vertical blank releases it.
+        // Vertical blank does NOT release it — the END of vertical blank does.
+        //
+        // Releasing at the START of vblank restarts the display list on line
+        // 248 instead of line 8, which displaces the ENTIRE frame by the length
+        // of the vertical blank.  Measured on hardware against the timing
+        // machine, with a DLI on a known scanline and 0/1/3 blank-line openers:
+        // the correct VCOUNTs are $07/$0B/$13, and releasing at the start of
+        // vblank gives $7F/$00/$08 — every DLI 23 scanlines early, wrapped
+        // through the top of the frame.  ACID antic_nmist waits for a specific
+        // VCOUNT and then counts WSYNCs, so this desynchronises it completely.
         in_vblank = 1;
+        for (int i = 0; i < 3; i++) begin
+            do_line();
+            if (g_valid) begin
+                $display("FAIL T6f: parked vblank line %0d drew playfield", i); fail++;
+            end
+            if (!g_dli) begin
+                $display("FAIL T6g: parked vblank line %0d stopped firing its DLI", i);
+                fail++;
+            end
+            if (dlpc !== 16'h3210) begin
+                $display("FAIL T6h: park released DURING vblank (pc $%04h)", dlpc); fail++;
+            end
+        end
+        // Now vertical blank ends: the list resumes at the top of the display.
+        in_vblank = 0;
         do_line();
         if (dlpc !== 16'h3211) begin
-            $display("FAIL T6f: vblank did not release the park (pc $%04h, expected $3211)",
+            $display("FAIL T6i: the end of vblank did not release the park (pc $%04h, expected $3211)",
                      dlpc);
             fail++;
         end
         if (g_dli) begin
-            $display("FAIL T6g: the resumed line fired a DLI it does not own"); fail++;
+            $display("FAIL T6j: the resumed line fired a DLI it does not own"); fail++;
         end
-        in_vblank = 0;
 
         // ================================================================
         // T8: VSCROL shortens the top of the region and the bottom of the

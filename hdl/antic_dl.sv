@@ -134,7 +134,8 @@ module antic_dl (
     logic [3:0]  row_last;
     logic        vscroll_active;
     logic        need_instr;            // the current block is finished
-    logic        parked;                // JVB: DMA halted until vblank
+    logic        parked;                // JVB: DMA halted until vblank ENDS
+    logic        saw_vblank;            // ...and we have been through it
     logic        park_dli;              // the parked instruction's DLI bit
     logic        pend_dli;              // DLI owed by the blank line in flight
     logic [2:0]  chain;                 // runaway-jump guard, see below
@@ -154,6 +155,7 @@ module antic_dl (
     always_ff @(posedge clk or posedge rst) begin
         if (rst || cold) begin
             state          <= S_IDLE;
+            saw_vblank     <= 1'b0;
             pc             <= 16'h0000;
             memscan        <= 16'h0000;
             instr          <= 8'h00;
@@ -194,13 +196,30 @@ module antic_dl (
                         chain <= 3'd0;
                         if (parked) begin
                             // JVB has already loaded the target; DMA stays off
-                            // until vertical blank.  antic_dlistwrap pins that
-                            // the DLI keeps firing while parked.
+                            // until vertical blank is OVER.  antic_dlistwrap
+                            // pins that the DLI keeps firing while parked.
+                            //
+                            // RESUME AT THE FIRST DISPLAY LINE, not at the
+                            // first line of vertical blank.  Releasing on
+                            // `in_vblank` restarts the list at line 248, so the
+                            // whole frame is displaced by the length of the
+                            // vertical blank -- every DLI, every scroll and
+                            // every VCOUNT-relative wait lands 23 scanlines
+                            // early, wrapping through the top of the frame.
+                            // Measured against the timing machine with a DLI on
+                            // a known scanline: expected VCOUNT $07/$0B/$13 for
+                            // 0/1/3 blank-line openers, this path gave
+                            // $7F/$00/$08 -- exactly "list started at 248".
                             if (in_vblank) begin
-                                parked <= 1'b0;
-                                state  <= S_FETCH;
+                                saw_vblank <= 1'b1;      // ...wait it out...
+                                pend_dli   <= park_dli;
+                                state      <= S_BLANK;
+                            end else if (saw_vblank) begin
+                                saw_vblank <= 1'b0;      // ...and resume here
+                                parked     <= 1'b0;
+                                state      <= S_FETCH;
                             end else begin
-                                pend_dli <= park_dli;
+                                pend_dli <= park_dli;    // rest of THIS frame
                                 state    <= S_BLANK;
                             end
                         end else if (!dl_dma_en) begin
