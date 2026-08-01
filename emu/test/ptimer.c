@@ -84,7 +84,9 @@ int main(void)
     pokey_timer_write(&p, 0xD206, 0xFF);         /* AUDF4 long */
     pokey_timer_write(&p, 0xD209, 0);
     for (int i = 0; i < 2000; i++) pokey_timer_tick(&p);
-    expect("channel 3 raises no interrupt", pokey_timer_irqst(&p), 0xFF);
+    /* SEROC's bit is always low, so mask it out — this is about the timers. */
+    expect("channel 3 raises no interrupt",
+           pokey_timer_irqst(&p) | POKEY_IRQ_SEROC, 0xFF);
 
     /* ---- IRQST reads ACTIVE LOW, and IRQEN=0 CLEARS a standing request --- */
     setup(&p, 0x00, POKEY_IRQ_TIMER1);

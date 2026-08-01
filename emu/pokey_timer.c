@@ -137,9 +137,17 @@ void pokey_timer_write(pokey_timer *p, uint16_t addr, uint8_t val)
         p->irqen = val;
         p->irqst = (uint8_t)(p->irqst | ~val);
         if ((uint8_t)~p->irqst == 0) p->irq = 0;
+        /* Enabling SEROC while the level stands fires immediately — and it must
+         * be decided AFTER the clear above, or the clear undoes it. */
+        if (val & POKEY_IRQ_SEROC) p->irq = 1;
         break;
     default: break;
     }
 }
 
-uint8_t pokey_timer_irqst(const pokey_timer *p) { return p->irqst; }
+uint8_t pokey_timer_irqst(const pokey_timer *p)
+{
+    /* SEROC is a level and ignores the mask: with nothing being transmitted the
+     * output has "long completed", so its bit reads low whatever IRQEN says. */
+    return (uint8_t)(p->irqst & ~POKEY_IRQ_SEROC);
+}

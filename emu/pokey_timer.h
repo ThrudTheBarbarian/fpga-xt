@@ -26,6 +26,12 @@
 #define POKEY_IRQ_TIMER1 0x01
 #define POKEY_IRQ_TIMER2 0x02
 #define POKEY_IRQ_TIMER4 0x04
+/* Serial output complete.  Unlike the timer bits this is a LEVEL, not a latched
+ * event: it reads as asserted in IRQST whenever no transmission is in progress,
+ * even with IRQEN's bit clear.  pokey_seroc says so in as many words — "SEROC is
+ * special and should be set even when disabled" — and then re-enables it to
+ * check that doing so fires an interrupt immediately. */
+#define POKEY_IRQ_SEROC  0x08
 
 typedef struct {
     uint8_t  audf[4];      /* $D200/2/4/6 */
