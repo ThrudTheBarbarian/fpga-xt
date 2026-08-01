@@ -449,6 +449,13 @@ test wants the tick 196 cycles after that write, i.e. 200 after the release —
 base tick.
 
 So the remaining question is what the SKCTL release actually leaves the serial
-divider at. It is NOT a full period. Note this is the same suspicious 28 as the
+divider at. It is NOT a full period — and it is not a free-running chain either:
+removing the reload on release gives `cnt0 = 218` at the write, against the 196
+the boundary requires. Two measured values, neither right:
+
+| SKCTL release behaviour | cnt0 at the SEROUT write | needed |
+|---|---|---|
+| reload channel counters (current) | 224 | 196 |
+| no reload, chain free-runs | 218 | 196 | Note this is the same suspicious 28 as the
 still-open `pokey_inittiming` gap, which is likely the same underlying
 mis-modelling of the divider chain seen from another angle.
