@@ -146,7 +146,14 @@ int main(void)
     pokey_timer_write(&p, 0xD202, 0x00);         /* AUDF2 = 0 */
     pokey_timer_write(&p, 0xD20E, POKEY_IRQ_SEROR);
     pokey_timer_write(&p, 0xD20D, 0x55);
-    expect("a running clock takes the byte at once, emptying SEROUT",
+    /* The byte waits for a serial clock TICK — it is not taken at the write.
+     * pokey_sertiming pins this to the cycle: its 195-cycle delay spans 217
+     * machine cycles and must NOT see the take, its 196-cycle delay spans 218
+     * and must. */
+    expect("SEROUT is still full before the next tick",
+           pokey_timer_irqst(&p) & POKEY_IRQ_SEROR, POKEY_IRQ_SEROR);
+    for (int i = 0; i < 28; i++) pokey_timer_tick(&p);
+    expect("a tick takes the byte, emptying SEROUT",
            pokey_timer_irqst(&p) & POKEY_IRQ_SEROR, 0);
     expect("which deasserts SEROC",
            pokey_timer_irqst(&p) & POKEY_IRQ_SEROC, POKEY_IRQ_SEROC);

@@ -30,6 +30,7 @@ typedef struct {
     pokey_timer pt;
     pia        pia;
     uint8_t    pm_prev_p[4], pm_prev_m;  /* one fetch back, for VDELAY */
+    unsigned long long ser_mark;
     int        col_probe;
     int        pf_probe;   /* debug: dump the pixel stream on this scanline */
     uint8_t    nmi_hold;   /* ANTIC's /NMI pulse, held until the CPU latches it */

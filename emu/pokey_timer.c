@@ -48,7 +48,7 @@ void pokey_timer_reset(pokey_timer *p)
     p->audctl = 0;
     p->irqen  = 0;
     p->irqst  = 0xFF;      /* active low: nothing pending */
-    p->cycles = 0;
+    p->base_div = BASE_64K;
     p->irq = 0;
     p->seroc = 1;
     p->ser_bits = 0;
@@ -136,8 +136,15 @@ void pokey_timer_skctl(pokey_timer *p, uint8_t val)
         p->serout_full = 0;
         p->seroc = 1;
     }
-    if (p->init && !now)                       /* released: reload the channels */
-        for (int i = 0; i < 4; i++) reload(p, i);
+    if (p->init && !now) {
+        /* The divider chain FREE-RUNS through the release — it is not reloaded.
+         * Measured directly: pokey_sertiming's 195-cycle delay spans 217 MACHINE
+         * cycles once refresh is counted, and its one-cycle boundary therefore
+         * needs 218 left on the divider at the SEROUT write.  Free-running gives
+         * exactly 218; reloading a full period gives 224 and reloading
+         * period-28 gives 196, and both fail. */
+        (void)0;   /* nothing: the chain FREE-RUNS through the release */
+    }
     p->init = now;
 }
 
@@ -162,8 +169,9 @@ void pokey_timer_tick(pokey_timer *p)
     if (fast1 && --p->cnt[0] <= 0) underflow(p, linked1 ? 1 : 0);
     if (fast3 && --p->cnt[2] <= 0) underflow(p, linked3 ? 3 : 2);
 
-    if ((p->cycles++ + POKEY_BASE_PHASE) % (unsigned long)base_period(p) != 0)
+    if (--p->base_div > 0)
         return;
+    p->base_div = base_period(p);
 
     if (!fast1) {
         if (--p->cnt[0] <= 0) underflow(p, linked1 ? 1 : 0);
@@ -208,7 +216,6 @@ void pokey_timer_write(pokey_timer *p, uint16_t addr, uint8_t val)
          * to have dropped by its very next instruction.  With the clock stopped
          * nothing happens, which is pokey_serclock's "the shift register should
          * never load in this mode". */
-        if (ser_clock_ch(p) >= 0) ser_take(p);
         break;
     case 0x0E:
         /* IRQEN both masks and CLEARS: a bit written as zero drops any request

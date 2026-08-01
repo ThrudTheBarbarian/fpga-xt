@@ -423,39 +423,37 @@ own annotations disagree with each other here: `antic_nmist`'s seven-cycle
 `pha:pla` spanning 104..109 puts its first cycle at 103, while `antic_vcount`'s
 four-cycle `bit $0100` spanning 105..107 plus an unnumbered first puts it at 104.
 
-## Open: pokey_sertiming is a ONE-CYCLE boundary, and the tick is 28 cycles late
+## Resolved: pokey_sertiming, and how the divider phase was actually measured
 
-An earlier note here claimed sertiming's two blocks differ in that one has a
-195-cycle delay and the other none, and guessed the resolution lay in STIMER.
-**Both parts were wrong.** Read properly, the blocks are:
+`pokey_sertiming` passes. The chain of mistakes is worth keeping, because each
+correction came from measuring rather than reasoning:
 
-* block A — `sta serout`, delay **195**, expect SEROC still ASSERTED;
-* block B — `sta serout`, delay **196**, expect SEROC DEASSERTED.
+1. I recorded twice that its two blocks differ structurally — one delaying 195
+   cycles, the other "no delay" — and hypothesised STIMER. Wrong: block B has
+   `_DELAY_CYCLES_X 196`. **Re-read the delay macros.** It is an ordinary
+   one-cycle boundary.
+2. That reframed it as "the serial take happens 196 cycles after the SEROUT
+   write", so I looked for a divider phase giving 196. Also wrong, and the
+   reason is the interesting part: **195 CPU cycles is not 195 machine cycles.**
+   Instrumented directly, the delay spans **217** machine cycles once memory
+   refresh is counted, and 196 spans 218.
+3. So the divider needs **218** left at the SEROUT write, not 196. Three
+   candidate behaviours were measured:
 
-One cycle apart, on the same 228-cycle clock. This is the suite's usual
-one-cycle boundary, not a structural difference, and it says exactly when the
-shift register takes the byte: **196 cycles after the SEROUT write**.
+   | SKCTL release behaviour | cnt0 at the write | result |
+   |---|---|---|
+   | reload to a full period | 224 | no tick in either block |
+   | reload to period - 28 | 196 | tick in both blocks |
+   | **free-running, no reload** | **218** | **217 no tick, 218 tick** |
 
-Measured with a probe on the SEROUT write (`ACID_COLPROBE` prints SKCTL, both
-divider counts, ser_bits and serout_full): both blocks present *identical* state
-— same scanline, same cycle, `cnt0 = 224`. So the divider-phase hypothesis is
-dead too: no model that depends only on POKEY's state can distinguish them,
-because there is nothing to distinguish.
+   The chain free-runs through the release, and the take is tick-driven.
 
-224 is explained: both blocks write `skctl = $00` then `$63`, and the release
-from init reloads the counters to 228, four cycles before the `sta serout`. The
-test wants the tick 196 cycles after that write, i.e. 200 after the release —
-**28 cycles earlier than this model produces**, and 28 is exactly one 64 kHz
-base tick.
+The lesson that generalises: when a test's delay is quoted in CPU cycles, convert
+it by measuring, not by counting instructions — DMA and refresh make the two
+differ by roughly 11% here, which is far more than the one-cycle boundary being
+probed.
 
-So the remaining question is what the SKCTL release actually leaves the serial
-divider at. It is NOT a full period — and it is not a free-running chain either:
-removing the reload on release gives `cnt0 = 218` at the write, against the 196
-the boundary requires. Two measured values, neither right:
+The 28-cycle offset that looked so promising — it is exactly one 64 kHz tick, and
+`pokey_inittiming` shows the same gap — was a red herring for THIS test. It may
+still be right for `pokey_inittiming`, which remains open.
 
-| SKCTL release behaviour | cnt0 at the SEROUT write | needed |
-|---|---|---|
-| reload channel counters (current) | 224 | 196 |
-| no reload, chain free-runs | 218 | 196 | Note this is the same suspicious 28 as the
-still-open `pokey_inittiming` gap, which is likely the same underlying
-mis-modelling of the divider chain seen from another angle.

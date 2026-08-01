@@ -181,7 +181,12 @@ static uint8_t io_read(atari *s, uint16_t a)
         return gtia_read(&s->gt, a);
     case 0xD200:
         /* $D20E reads back IRQST, ACTIVE LOW — it is IRQEN only on write. */
-        if ((a & 0x0F) == 0x0E) return pokey_timer_irqst(&s->pt);
+        if ((a & 0x0F) == 0x0E) {
+            if (s->col_probe && s->ser_mark)
+                fprintf(stderr, "  IRQST read %llu machine cycles after SEROUT\n",
+                        (unsigned long long)(s->cycles - s->ser_mark));
+            return pokey_timer_irqst(&s->pt);
+        }
         if ((a & 0x0F) == 0x0A) {
             if (!s->dbg_rand_seen) { s->dbg_rand_at = s->pk_ticks; s->dbg_rand_seen = 1; }
             return pokey_rand_read(&s->pk);
@@ -213,7 +218,8 @@ static void io_write(atari *s, uint16_t a, uint8_t v)
             fprintf(stderr, "  SEROUT <- $%02X sl %3d cyc %3d skctl $%02X "
                     "cnt0 %5d cnt2 %5d bits %d full %d\n",
                     v, s->an.scanline, s->an.cycle, s->pt.skctl,
-                    s->pt.cnt[0], s->pt.cnt[2], s->pt.ser_bits, s->pt.serout_full);
+                    s->pt.cnt[0], s->pt.cnt[2], s->pt.ser_bits, s->pt.serout_full),
+            s->ser_mark = s->cycles;
         pokey_timer_write(&s->pt, a, v);
         if ((a & 0x0F) == 0x08) pokey_rand_audctl(&s->pk, v);
         if ((a & 0x0F) == 0x0F) {
