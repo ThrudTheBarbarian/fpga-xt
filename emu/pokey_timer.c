@@ -104,8 +104,19 @@ static void ser_tick(pokey_timer *p)
     ser_take(p);
 }
 
+/* Asynchronous receive mode holds timer 4: POKEY is waiting for a start bit, so
+ * the divider does not run and its interrupt cannot fire.  pokey_asyncrecv
+ * enables it with SKCTL $13 and requires timer 4's IRQ to stay silent, saying so
+ * outright — "we shouldn't, since POKEY is waiting for a start bit". */
+static int timer4_held(const pokey_timer *p)
+{
+    return (p->skctl & 0x10) != 0;
+}
+
 static void underflow(pokey_timer *p, int ch)
 {
+    if (ch == 3 && timer4_held(p)) return;
+
     if (ch == ser_clock_ch(p)) ser_tick(p);
     /* a linked pair reloads its own low half, so only the unlinked case
      * reloads here */
