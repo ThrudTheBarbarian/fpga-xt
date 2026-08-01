@@ -58,7 +58,12 @@ static void render_cycle(atari *s, int cyc)
         int gmode = (s->gt.prior >> 6) & 3;
         if (gmode && (s->an.dl_insn & 0x0F) == 0x0F) {
             int nib = antic_pf_nibble(&s->an, cc, gmode == GTIA_MODE_10 ? 1 : 0);
-            pf = (gmode == GTIA_MODE_10 && nib >= 4 && nib <= 7) ? nib - 4 : -1;
+            /* In mode 10 the nibble's BIT 2 selects playfield, and bits 1:0 the
+             * class — so $4..$7 and $C..$F all collide as PF0..PF3 while
+             * $0..$3 and $8..$B collide as nothing.  gtia_collision2 asserts all
+             * sixteen; a "4..7" range check gets the low half right and reports
+             * background for the whole top half. */
+            pf = (gmode == GTIA_MODE_10 && (nib & 4)) ? (nib & 3) : -1;
         } else {
             pf = antic_pf_at(&s->an, cc, &hires);
         }
