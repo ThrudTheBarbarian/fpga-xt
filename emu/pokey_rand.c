@@ -13,10 +13,25 @@ void pokey_rand_reset(pokey_rand *p)
     p->audctl = 0;
     p->skctl  = 0;
     p->init   = 1;       /* SKCTL[1:0] == 0 out of reset */
+    p->release_cycle = 0;
 }
 
 void pokey_rand_tick(pokey_rand *p)
 {
+    /* The SKCTL write that leaves init happens DURING a machine cycle, and that
+     * cycle's advance still belongs to the pre-release state — the counters are
+     * free from the FOLLOWING cycle.
+     *
+     * Measured, not assumed.  antic_wsync writes SKCTL on the 4th cycle of an
+     * STA and reads RANDOM on the 4th cycle of an LDY exactly one scanline
+     * later, which is 114 machine cycles; the hardware answer is step 113.  The
+     * release cycle is the only cycle that can account for the difference. */
+    if (p->release_cycle) {
+        p->release_cycle = 0;
+        p->lfsr9  = ((p->lfsr9  >> 1) | (1u <<  8)) & M9;
+        p->lfsr17 = ((p->lfsr17 >> 1) | (1u << 16)) & M17;
+        return;
+    }
     if (p->init) {
         /* Init keeps SHIFTING and feeds in ones — it does not snap to $FF, so
          * RANDOM reads a partially-filled value on the way there. */
@@ -42,6 +57,8 @@ void pokey_rand_audctl(pokey_rand *p, uint8_t v) { p->audctl = v; }
 
 void pokey_rand_skctl(pokey_rand *p, uint8_t v)
 {
+    uint8_t was_init = p->init;
     p->skctl = v;
     p->init  = (uint8_t)((v & 0x03u) == 0);
+    if (was_init && !p->init) p->release_cycle = 1;
 }

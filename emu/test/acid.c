@@ -135,7 +135,16 @@ static int run_one(const char *dir, const char *name, unsigned long long *cyc)
     s.cpu.p  = XTF_I | XTF_U;
 
     if (trace_on) memset(pc_hits, 0, sizeof pc_hits);
+    int armed = 0;
     while (s.cycles < MAX_CYCLES) {
+        /* Trace the bus around the SKCTL release, which is where the ANTIC
+         * timing tests start counting.  Their own comments state the scanline
+         * cycles each instruction should occupy, so the trace is directly
+         * comparable against the source. */
+        if (trace_on && !armed && s.dbg_skctl_at && !s.dbg_rand_seen) {
+            armed = 1;
+            s.dbg_trace = 20;
+        }
         if (s.cpu.pc == t_pass) { *cyc = s.cycles; return 0; }
         if (s.cpu.pc == t_fail) {
             *cyc = s.cycles;
@@ -143,9 +152,9 @@ static int run_one(const char *dir, const char *name, unsigned long long *cyc)
              * _ASSERT macros compare — so on a failure they say WHICH value was
              * wrong, not merely that one was. */
             if (trace_on && s.dbg_rand_seen)
-                printf("      LFSR ticks from SKCTL release to first RANDOM read: %llu"
-                       " (hardware: 113)\n",
-                       (unsigned long long)(s.dbg_rand_at - s.dbg_skctl_at));
+                printf("      LFSR advances from SKCTL release to first RANDOM read:"
+                       " %llu (hardware: 113)\n",
+                       (unsigned long long)(s.dbg_rand_at - s.dbg_skctl_at - 1));
             if (trace_on)
                 printf("      d0..d5 = %02X %02X %02X %02X %02X %02X\n",
                        s.ram[0xC8], s.ram[0xC9], s.ram[0xCA],

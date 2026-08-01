@@ -35,6 +35,7 @@ typedef struct {
     uint64_t   dbg_skctl_at;  /* pk_ticks when SKCTL last released the counters */
     uint64_t   dbg_rand_at;   /* pk_ticks at the first RANDOM read after that */
     int        dbg_rand_seen;
+    int        dbg_trace;     /* >0: print this many more bus accesses */
 } atari;
 
 void atari_init(atari *s);

@@ -52,6 +52,9 @@ typedef struct {
     uint8_t  audctl;   /* bit 7 selects the 9-bit poly for RANDOM */
     uint8_t  skctl;
     uint8_t  init;     /* SKCTL[1:0] == 0: counters held in init */
+    uint8_t  release_cycle;  /* the write that released init happened DURING a
+                              * machine cycle, and that cycle's advance belongs
+                              * to the pre-release state — see the .c */
 } pokey_rand;
 
 void    pokey_rand_reset(pokey_rand *p);

@@ -18,7 +18,11 @@ static uint8_t at(uint8_t audctl, int n)
     pokey_rand_reset(&p);
     pokey_rand_audctl(&p, audctl);
     pokey_rand_skctl(&p, 0x03);           /* leave init: seed is all-ones */
-    for (int i = 0; i < n; i++) pokey_rand_tick(&p);
+    /* +1: the release happens DURING a machine cycle and that cycle's advance
+     * belongs to the pre-release state, so "n cycles after the release" is n+1
+     * ticks from here.  Modelling the same physical situation as the system
+     * path is the point — see pokey_rand.c. */
+    for (int i = 0; i <= n; i++) pokey_rand_tick(&p);
     return pokey_rand_read(&p);
 }
 
@@ -48,7 +52,7 @@ int main(void)
         pokey_rand_reset(&p);
         pokey_rand_audctl(&p, 0x80);
         pokey_rand_skctl(&p, 0x03);
-        for (int i = 0; i < 113; i++) pokey_rand_tick(&p);
+        for (int i = 0; i <= 113; i++) pokey_rand_tick(&p);
         expect("pre-init", pokey_rand_read(&p), 0x95);   /* $95 = 10010101 */
 
         pokey_rand_skctl(&p, 0x00);                      /* enter init "hot" */
@@ -64,7 +68,7 @@ int main(void)
         pokey_rand p;
         pokey_rand_reset(&p);
         pokey_rand_skctl(&p, 0x03);
-        for (int i = 0; i < 113; i++) pokey_rand_tick(&p);
+        for (int i = 0; i <= 113; i++) pokey_rand_tick(&p);   /* +1: release cycle */
         pokey_rand_audctl(&p, 0x00);
         uint8_t v17 = pokey_rand_read(&p);
         pokey_rand_audctl(&p, 0x80);

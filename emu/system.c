@@ -2,6 +2,7 @@
  * system.c — the machine.  See system.h.
  */
 #include "system.h"
+#include <stdio.h>
 
 /* ANTIC's own fetches go straight to memory: they are already accounted for as
  * DMA cycles, so they must not recurse into the CPU's cycle path. */
@@ -61,10 +62,20 @@ static void io_write(atari *s, uint16_t a, uint8_t v)
     }
 }
 
+static void dbg(atari *s, uint16_t a, int wr)
+{
+    if (s->dbg_trace <= 0) return;
+    s->dbg_trace--;
+    printf("    line %3d cyc %3d  %s $%04X   pk=%llu\n",
+           s->an.scanline, s->an.cycle, wr ? "W" : "R", a,
+           (unsigned long long)(s->pk_ticks - s->dbg_skctl_at));
+}
+
 static uint8_t bus_rd(void *ctx, uint16_t a)
 {
     atari *s = ctx;
     sys_cycle(s);
+    dbg(s, a, 0);
     uint8_t v = (a >= 0xD000 && a < 0xD800) ? io_read(s, a) : s->ram[a];
     cpu_cycle_done(s);
     return v;
@@ -74,6 +85,7 @@ static void bus_wr(void *ctx, uint16_t a, uint8_t v)
 {
     atari *s = ctx;
     sys_cycle(s);
+    dbg(s, a, 1);
     if (a >= 0xD000 && a < 0xD800) io_write(s, a, v);
     else                           s->ram[a] = v;
     cpu_cycle_done(s);
