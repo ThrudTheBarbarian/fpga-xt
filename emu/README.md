@@ -49,7 +49,7 @@ literally the same tests.
   scanline and its later ones.
 * **ANTIC DMA schedule: 50/50**, timing core, display-list execution and line
   buffer all in; **GTIA collisions** in.
-* **The real ACID800 binaries run**: `make acid` → 39 pass / 15 fail / 4 jammed
+* **The real ACID800 binaries run**: `make acid` → 40 pass / 14 fail / 4 jammed
   / 1 looping / 4 skipped, of 63. Not directly comparable to the fabric's 33/63:
   that runs on hardware with a full POKEY and an OS ROM, whereas POKEY here is
   the RANDOM LFSR, the timers and the serial OUTPUT path only, and the five
@@ -614,3 +614,36 @@ the k'th cycle of a `BRK` — the only hook that runs once per machine cycle, so
 it is the only way to place the edge inside an instruction. It checks both the
 vector taken and, for the late cases, that the NMI does not come back on the
 following step.
+
+
+## CLOSED: /NMI follows the status bit by a cycle, and a late NMIEN costs two
+
+`antic_dlitiming` is the sharpest instrument in the suite for this: its DLI
+handler reads its own return address off the stack, so `d0` is *where the DLI
+interrupted*, and the test converts that to an instruction offset from a labelled
+origin. Five phasings of the instruction stream in part 1, two NMIEN-toggle cases
+in part 2, one WSYNC case in part 3.
+
+Three of the five phasings are insensitive to a one-cycle shift in the request;
+the other two are not, and both said it was arriving early — `d1` got `$09` for
+`$0a`, `d3` got `$0c` for `$0e`. **The status bit and the interrupt line are one
+cycle apart**: NMIST lands at `ANTIC_CYC_NMIST` (7, which `antic_nmist` pins by
+reading the register) and `/NMI` at `ANTIC_CYC_NMI` (8).
+
+That is a RELATIVE constraint against the BRK hijack, so `antic_blockednmi` and
+`cpu_bugs` move with it: the vector is committed after the **PCL** push, the
+sequence's fourth cycle. Both still pass.
+
+Part 2 then needed one more thing. Both its cases disable NMIEN across the DLI
+point and re-enable it at scanline cycle 7 — the same cycle the status sets — and
+both must deliver at the same instruction. They only do if the **write** path
+takes two cycles where the status path takes one. So `/NMI` is now a countdown
+rather than a fixed cycle: the status set arms it at 1, a same-cycle NMIEN write
+arms it at 2, and the pulse is one cycle wide either way.
+
+Ruled out on the way: dropping the WSYNC re-arm delay so `inc wsync` releases at
+104 the way `antic_dlitiming`'s annotations say it does. That breaks `antic_wsync`
+and `antic_dmapattern`, which pin the re-arm directly. The suite's annotations
+disagree with each other about `inc wsync` exactly as they do about the release.
+
+39 -> 40, and `antic_dlitiming` passes whole, part 3 included.

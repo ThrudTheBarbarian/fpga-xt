@@ -97,6 +97,12 @@ after the DLI point does not retroactively deliver the interrupt at the moment
 of the write — the latched request is delivered on a fixed schedule, so the two
 phasings converge.
 
+The schedule is not the same as the status path's, though. Both cases re-enable
+`NMIEN` on scanline cycle 7, the same cycle the status bit sets, and the two
+assertions are only both satisfiable if the **write** path takes one cycle more
+than the status path: the status set raises `/NMI` at cycle 8, a same-cycle
+`NMIEN` write raises it at 9.
+
 ## Assertions, part 3 — DLI after WSYNC
 
 ```
@@ -123,7 +129,9 @@ WSYNC release at 104.
 1. **Blank-line DLIs firing on the last scanline of the blank block** — the
    known fabric defect.
 2. NMI recognised at an instruction boundary with the in-flight instruction
-   completing, consistent across all five instruction phasings.
+   completing, consistent across all five instruction phasings — and `/NMI`
+   asserted **one cycle after** the NMIST bit, not with it. Three of the five
+   phasings cannot tell the difference; `d1` and `d3` can.
 3. `NMIEN` re-enable **not** retroactively delivering at the write.
 4. The DLI landing exactly one instruction after a WSYNC release.
 5. A working `VDSLST` vector and NMI push sequence (the handler reads its own

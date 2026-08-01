@@ -391,6 +391,22 @@ int antic_tick(antic *a)
         if (a->dli_line) a->dli_fired = 1;
     }
 
+    /* /NMI is a ONE-CYCLE PULSE that follows the status by one cycle, and it is
+     * run as a countdown rather than off a fixed cycle because a request armed
+     * by a LATE NMIEN WRITE costs one cycle more than one armed by the status
+     * set itself.  antic_dlitiming's two delay tests are what separate them:
+     * both disable NMIEN across the DLI point and re-enable it at scanline
+     * cycle 7, and both must deliver at the same place, which they only do if
+     * the write path takes two cycles where the status path takes one.
+     *
+     * The pulse is not a held line: real DLI handlers do not write NMIRES —
+     * they PHA, set a colour, PLA, RTI — yet multi-DLI kernels work, so each
+     * event has to produce its own edge.  Holding it high gives the CPU exactly
+     * ONE NMI for an entire run.  system.c latches it so a pulse landing inside
+     * a DMA burst, where the CPU is not being serviced, is still seen. */
+    if (a->nmi) a->nmi = 0;
+    if (a->nmi_arm && --a->nmi_arm == 0) a->nmi = 1;
+
     /* ---- status and interrupt timing, all at fixed cycles ------------------
      * NMIST bits set at cycle 6 REGARDLESS of NMIEN — NMIEN gates the
      * interrupt, not the status — and NMIEN is sampled at the same cycle to
@@ -409,19 +425,7 @@ int antic_tick(antic *a)
             if (a->nmien & ANTIC_NMI_VBI) a->nmi_arm = 1;
         }
     }
-    /* /NMI is a PULSE, not a line held until NMIRES.  Real DLI handlers do not
-     * write NMIRES — they PHA, set a colour, PLA, RTI — yet multi-DLI kernels
-     * work, so each event has to produce its own edge.  Holding it high gives
-     * the CPU exactly ONE NMI for the entire run, which is what it was doing:
-     * every ACID800 test measured exactly one delivery.
-     * The system layer latches this so a pulse landing inside a DMA burst,
-     * where the CPU is not being serviced, is still seen (see system.c). */
-    if (c == ANTIC_CYC_NMI) {
-        a->nmi = a->nmi_arm;
-        a->nmi_arm = 0;
-    }
-    if (c == ANTIC_CYC_NMI + 1)
-        a->nmi = 0;
+
 
     /* VCOUNT is scanline>>1, so it advances at cycle 111 of every ODD scanline.
      * Because that advance happens on the LAST scanline too (261 is odd), it
@@ -616,8 +620,11 @@ void antic_write(antic *a, uint16_t addr, uint8_t val)
         /* A NMIEN write landing in the SAME cycle as the status set DOES take
          * effect — the mirror of the NMIRES rule below.  antic_nmist requires a
          * write on cycle 6 to activate the DLI that was latched on that cycle. */
-        if (a->nmist_set_now && (a->nmist & val & (ANTIC_NMI_DLI | ANTIC_NMI_VBI)))
-            a->nmi_arm = 1;
+        /* A NMIEN write in the SAME cycle as the status set still delivers, but
+         * one cycle later than the status path — see the countdown above. */
+        if (a->nmist_set_now && (a->nmist & val & (ANTIC_NMI_DLI | ANTIC_NMI_VBI))
+            && !a->nmi_arm)
+            a->nmi_arm = 2;
         break;
     case 0x0F:
         /* NMIRES clears the STATUS but must not retract an interrupt already
