@@ -128,10 +128,51 @@ static antic_width width_of(uint8_t dmactl)
  * schedule from the LIVE state.  Nothing here is precomputed for the frame —
  * VSCROL can change a row's height while it is running, which moves the next
  * row's DLI with it (antic_vscroldli). */
+/* Player/missile DMA.  Three things here are each their own ACID800 assertion:
+ *
+ *  - DMACTL's player-DMA bit IMPLIES missile DMA.  They are not the two
+ *    independent gates the bit names suggest.
+ *  - PMBASE bit 2 is masked at ADDRESS-GENERATION time by the current
+ *    resolution, not filtered when the register is written: one-line resolution
+ *    needs a 2 KB-aligned region so the bit is dormant, two-line needs only 1 KB
+ *    so it is live.  antic_pmdma sets it in one resolution and switches to the
+ *    other without rewriting PMBASE.
+ *  - the row index is the SCANLINE in one-line resolution and scanline>>1 in
+ *    two-line, which is the whole difference in fetch cadence. */
+static void pm_dma(antic *a)
+{
+    int player  = (a->dmactl & 0x08) != 0;
+    int missile = (a->dmactl & 0x04) != 0 || player;
+    if (!player && !missile)
+        return;
+
+    if (a->dmactl & 0x10) {                 /* one-line resolution, 2 KB region */
+        uint16_t base = (uint16_t)((a->pmbase & 0xF8) << 8);
+        uint16_t idx  = (uint16_t)(a->scanline & 0xFF);
+        if (missile) a->pm_m = a->fetch(a->ctx, (uint16_t)(base + 0x300 + idx));
+        if (player)
+            for (int i = 0; i < 4; i++)
+                a->pm_p[i] = a->fetch(a->ctx,
+                             (uint16_t)(base + 0x400 + i * 0x100 + idx));
+    } else {                                /* two-line resolution, 1 KB region */
+        uint16_t base = (uint16_t)((a->pmbase & 0xFC) << 8);
+        uint16_t idx  = (uint16_t)((a->scanline >> 1) & 0x7F);
+        if (missile) a->pm_m = a->fetch(a->ctx, (uint16_t)(base + 0x180 + idx));
+        if (player)
+            for (int i = 0; i < 4; i++)
+                a->pm_p[i] = a->fetch(a->ctx,
+                             (uint16_t)(base + 0x200 + i * 0x80 + idx));
+    }
+    a->pm_fetched = 1;
+}
+
 static void line_start(antic *a)
 {
     memset(a->blocked, 0, sizeof a->blocked);
     a->dli_line = 0;
+
+    if (a->fetch)
+        pm_dma(a);
 
     /* Display-list EXECUTION has no bottom cutoff — the list runs until it
      * executes a JVB, so a list longer than the visible region carries on past

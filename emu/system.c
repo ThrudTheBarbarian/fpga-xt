@@ -13,10 +13,23 @@ static uint8_t antic_fetch(void *ctx, uint16_t addr)
 
 /* Advance the world by machine cycles until ANTIC yields one to the CPU.  This
  * is the whole architecture in five lines: ANTIC decides, the CPU waits. */
+/* ANTIC fetched P/M data; GRACTL decides whether GTIA latches it — players and
+ * missiles separately, and independently of whether ANTIC fetched at all. */
+static void pm_latch(atari *s)
+{
+    if (!s->an.pm_fetched) return;
+    s->an.pm_fetched = 0;
+    if (s->gt.gractl & 0x02)
+        for (int i = 0; i < 4; i++) s->gt.grafp[i] = s->an.pm_p[i];
+    if (s->gt.gractl & 0x01)
+        s->gt.grafm = s->an.pm_m;
+}
+
 static void sys_cycle(atari *s)
 {
     for (;;) {
         int took = antic_tick(&s->an);
+        pm_latch(s);
         s->cycles++;
         /* Hold ANTIC's one-cycle /NMI pulse until the CPU latches the edge, then
          * drop it so the NEXT event raises a fresh one.  The real 6502 clocks

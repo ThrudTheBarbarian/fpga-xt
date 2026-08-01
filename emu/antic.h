@@ -75,7 +75,14 @@ typedef struct {
     /* ---- display-list execution ---------------------------------------- */
     uint16_t dl_addr;     /* display-list program counter */
     uint16_t pf_addr;     /* playfield memory scan address (LMS target) */
-    uint8_t  dl_insn;     /* the instruction driving the current row */
+    uint8_t  dl_insn;
+
+    /* ---- player/missile DMA -------------------------------------------------
+     * ANTIC FETCHES this data; whether GTIA latches it is GRACTL's business, and
+     * GRACTL lives in GTIA — so the bytes are exposed here and system.c applies
+     * the gate.  antic_pmdma checks the two are separate. */
+    uint8_t  pm_p[4], pm_m;
+    uint8_t  pm_fetched;     /* the instruction driving the current row */
     int      row_line;    /* scanline within the current row */
     int      row_height;  /* DYNAMIC — VSCROL can extend it mid-row, so the
                            * next row's DLI moves with it and DLI scanlines
