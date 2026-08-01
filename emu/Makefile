@@ -10,6 +10,8 @@
 #   make klaus      Klaus Dormann functional test
 #   make irq        directed interrupt-timing tests (ACID800 cpu_clisei, as C)
 #   make pokey      POKEY RANDOM LFSR — the ANTIC timing tests' cycle clock
+#   make dma        score the ANTIC DMA schedule against ACID800's own table
+#                   (NOT yet in `make test` — it is a work-in-progress score)
 #   make test       all of them — THE gate before ANTIC work counts as progress
 #   make clean
 
@@ -20,8 +22,8 @@ CFLAGS := -std=c11 $(WARN) -O2 -g
 
 CORE := xt6502.c
 
-.PHONY: all test harte klaus irq pokey clean
-all: $(BUILD)/harte $(BUILD)/klaus $(BUILD)/irq $(BUILD)/pokey
+.PHONY: all test harte klaus irq pokey dma clean
+all: $(BUILD)/harte $(BUILD)/klaus $(BUILD)/irq $(BUILD)/pokey $(BUILD)/dma
 
 $(BUILD):
 	@mkdir -p $(BUILD)
@@ -38,6 +40,9 @@ $(BUILD)/irq: test/irq.c $(CORE) xt6502.h | $(BUILD)
 $(BUILD)/pokey: test/pokey.c pokey_rand.c pokey_rand.h | $(BUILD)
 	$(CC) $(CFLAGS) test/pokey.c pokey_rand.c -o $@
 
+$(BUILD)/dma: test/dma.c antic_dma.c antic_dma.h acid_dmatable.h | $(BUILD)
+	$(CC) $(CFLAGS) test/dma.c antic_dma.c -o $@
+
 harte: $(BUILD)/harte
 	@./$(BUILD)/harte
 
@@ -49,6 +54,9 @@ irq: $(BUILD)/irq
 
 pokey: $(BUILD)/pokey
 	@./$(BUILD)/pokey
+
+dma: $(BUILD)/dma
+	@./$(BUILD)/dma || true
 
 test: harte klaus irq pokey
 
