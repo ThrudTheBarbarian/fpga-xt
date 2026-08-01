@@ -13,6 +13,7 @@
 #   make dma        the ANTIC DMA schedule vs ACID800's own table (50/50)
 #   make antic      ANTIC timing core: VCOUNT, WSYNC, NMIST landmarks
 #   make gtia       GTIA collisions + registers
+#   make acid       run the real ACID800 .xex suite (work in progress)
 #   make test       all of them — THE gate before ANTIC work counts as progress
 #   make clean
 
@@ -23,7 +24,7 @@ CFLAGS := -std=c11 $(WARN) -O2 -g
 
 CORE := xt6502.c
 
-.PHONY: all test harte klaus irq pokey dma antic gtia clean
+.PHONY: all test harte klaus irq pokey dma antic gtia acid clean
 all: $(BUILD)/harte $(BUILD)/klaus $(BUILD)/irq $(BUILD)/pokey $(BUILD)/dma $(BUILD)/antic $(BUILD)/gtia
 
 $(BUILD):
@@ -50,6 +51,10 @@ $(BUILD)/antic: test/antic.c antic.c antic_dma.c antic.h antic_dma.h | $(BUILD)
 $(BUILD)/gtia: test/gtia.c gtia.c gtia.h | $(BUILD)
 	$(CC) $(CFLAGS) test/gtia.c gtia.c -o $@
 
+SYS := system.c xt6502.c antic.c antic_dma.c gtia.c pokey_rand.c
+$(BUILD)/acid: test/acid.c $(SYS) system.h | $(BUILD)
+	$(CC) $(CFLAGS) test/acid.c $(SYS) -o $@
+
 harte: $(BUILD)/harte
 	@./$(BUILD)/harte
 
@@ -70,6 +75,9 @@ antic: $(BUILD)/antic
 
 gtia: $(BUILD)/gtia
 	@./$(BUILD)/gtia
+
+acid: $(BUILD)/acid
+	@./$(BUILD)/acid
 
 test: harte klaus irq pokey dma antic gtia
 
