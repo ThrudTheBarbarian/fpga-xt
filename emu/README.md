@@ -1941,3 +1941,40 @@ a derivation by symmetry, and it is **6**.
 
 47 -> 48 of 63, and the only line that changes anywhere in the suite is
 `antic_virtdma` itself.
+
+## gtia_pmoverlap is not a colour test at all
+
+It has been carried as "needs a colour/priority model that does not exist" for a
+long time. Reading it, that is simply wrong — and the label alone was enough to
+keep it untouched.
+
+Its structure: twelve passes, each setting a different `SIZEP0` and a different
+missile start position, with `GRAFP0 = $81` — bits 7 and 0, the player's two
+EDGE pixels — and four missiles at consecutive positions. For each pass it
+sweeps the player's HPOS from `$64` to `$7f`, and at each position assembles
+`m0pl`..`m3pl` into an index, looks that up in a shift table and compares.
+
+So it measures, for every width and every position, exactly which missile the
+resized player's edge bits land on. That is not colour or priority; it is the
+same question `gtia_pmresize` asks, asked over a wider grid — the SIZEP
+divider's exact bit positions. The two almost certainly share a root cause, and
+`gtia_pmresize`'s own blocker is the WSYNC question below.
+
+Ours fails at pass 3, `Y = $65`, wanting `$70` and getting `$00` — no missile
+collisions registered at all where hardware sees a pattern.
+
+## WSYNC RMW: two more mechanisms ruled out
+
+**Write timing cannot explain it.** In `antic_wsync` both sequences put their
+LAST write on the same cycle: `sta wsync` writes at cycle 2, and `inc wsync`
+writes at 1 AND 2. Same last write, same halt point, and yet the following
+instruction resumes one cycle later after the INC. So no rule of the form "the
+halt begins when the write lands" can produce the difference, which is why
+`wsync_extra` — "the CPU is charged for the cycle it took while halted" —
+remains the simplest expression of the measurement even though it is not a
+mechanism.
+
+**`gtia_pmresize` is not compensating for a GTIA phase error.** Sweeping
+`GTIA_CC_ORIGIN` 4..8 with the correct WSYNC model leaves its 4x-to-1x block
+failing at every value (rule v). Whatever `WSYNC_RMW_EXTRA=0` is buying that
+test, it is not a colour-clock offset.
