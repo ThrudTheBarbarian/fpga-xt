@@ -492,7 +492,7 @@ The 28-cycle offset that looked so promising — it is exactly one 64 kHz tick, 
 still be right for `pokey_inittiming`, which remains open.
 
 
-## Open: pokey_inittiming's 64 kHz case — two cycles, and the test says why
+## PARTLY CLOSED: pokey_inittiming — the 64 kHz tap LEADS the 15 kHz one by two
 
 The two base clocks are now ONE chain: a tick for period P happens when
 `chain % P == 0`, and the SKCTL release restarts the chain at 28. Both of the
@@ -667,3 +667,35 @@ POKEY is waiting for a start bit and the bit-time divider has to begin its count
 from that edge. Suppressing the underflow instead leaves the counter sitting past
 zero, so it fires on the very first tick after release — which is exactly the
 sub-case 3 failure. 40 -> 41.
+
+
+## Open: pokey_inittiming's two 15 kHz measurements disagree by one sled step
+
+`pokey_inittiming`'s 64 kHz cycle counts now pass. Its own arithmetic is what
+gives the answer: it states 86-87 machine cycles to the first **15 kHz** tick
+after the SKCTL release and, for the 64 kHz case, "84 - 28*2 = 28" with the
+note that the two extra timer periods exist only "to clear memory refresh", so
+the first **64 kHz** tick is at 26-27.
+
+No single phase on one shared chain produces both — a residue that puts 15 kHz
+at 86 puts 64 kHz at 28, and a residue that puts 64 kHz at 26 puts 15 kHz at 84.
+So the two taps have different phases out of the release, and the 64 kHz one
+**leads by two machine cycles** (`BASE_64K_LEAD`). Only a test that anchors both
+to the same event can see it, which is why nothing before this measured it.
+
+What remains open is a **one sled step (two machine cycle)** tension inside the
+15 kHz side, between the test's two different measurement paths:
+
+* the `result1`/`result2` counts go through the real IRQ sequence — `cli`, a NOP
+  sled, and a handler that reads its own return address — and pass at
+  `BASE_15K_LEAD` 0 or 1;
+* the IRQST sub-tests poll `$D20E` directly with no interrupt at all, and need
+  2 or more.
+
+Swept 0..6: 0 and 1 fail "15KHz IRQ fired too late", 2 fails the odd count, 3+
+fail the even count. Since the divider phase is common to both paths and only
+one of them involves the CPU, the remaining two cycles are most likely in the
+**recognition path** rather than in POKEY — note that `cpu_cycle_done()` ticks
+POKEY *after* the CPU's access, so an `lda irqst` deliberately sees the state as
+of the start of its cycle (which is what `RANDOM` requires). Worth checking
+whether IRQST should be sampled the other way round from RANDOM.

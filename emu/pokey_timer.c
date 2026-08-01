@@ -10,6 +10,12 @@
 /* Base-clock periods in machine cycles: 1.79 MHz / 28 is the 64 kHz clock,
  * / 114 the 15 kHz one (which is also exactly one scanline). */
 #define BASE_64K  28
+#ifndef BASE_64K_LEAD
+#define BASE_64K_LEAD 2
+#endif
+#ifndef BASE_15K_LEAD
+#define BASE_15K_LEAD 0
+#endif
 #define BASE_15K 114
 
 static int base_period(const pokey_timer *p)
@@ -228,7 +234,16 @@ void pokey_timer_tick(pokey_timer *p)
     if (fast1 && --p->cnt[0] <= 0) underflow(p, linked1 ? 1 : 0);
     if (!held34 && fast3 && --p->cnt[2] <= 0) underflow(p, linked3 ? 3 : 2);
 
-    if (++p->chain % (unsigned long)base_period(p) != 0)
+    /* The 64 kHz tap LEADS the 15 kHz one by two machine cycles out of the
+     * SKCTL release.  pokey_inittiming measures both from the same release and
+     * its own arithmetic gives 86-87 cycles to the first 15 kHz tick and 26-27
+     * to the first 64 kHz one, which no single phase on one chain can produce:
+     * a residue that puts 15 kHz at 86 puts 64 kHz at 28.  Two cycles is the
+     * gap, and it is only visible because the test anchors both to the same
+     * event. */
+    ++p->chain;
+    if ((p->chain + (base_period(p) == BASE_64K ? BASE_64K_LEAD : BASE_15K_LEAD))
+        % (unsigned long)base_period(p) != 0)
         return;
 
     if (!fast1) {
