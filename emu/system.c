@@ -125,6 +125,7 @@ static void render_cycle(atari *s, int cyc)
 
 static void sys_cycle(atari *s)
 {
+    int was_halted = s->an.wsync_halt;
     for (;;) {
         int cyc  = s->an.cycle;
         int took = antic_tick(&s->an);
@@ -139,7 +140,12 @@ static void sys_cycle(atari *s)
         if (s->an.nmi) s->nmi_hold = 1;
         s->cpu.nmi = s->nmi_hold;
         if (s->cpu.nmi_pend) s->nmi_hold = 0;
-        if (!took) return;          /* the CPU gets this one */
+        if (!took) {                /* the CPU gets this one */
+            if (was_halted && s->col_probe)
+                fprintf(stderr, "  WSYNC release: CPU resumes sl %3d cyc %3d\n",
+                        s->an.scanline, cyc);
+            return;
+        }
         pokey_rand_tick(&s->pk); s->pk_ticks++;   /* ANTIC's cycles advance it here */
     }
 }
