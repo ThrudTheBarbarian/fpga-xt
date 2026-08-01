@@ -39,6 +39,17 @@ typedef struct {
     /* collision registers — 4 bits each */
     uint8_t mpf[4], ppf[4], mpl[4], ppl[4];
 
+    /* ---- live object state ------------------------------------------------
+     * Players and missiles are shifted out by a DIVIDER, not recomputed from
+     * (hpos, hposp, sizep) each clock.  That distinction is the whole of
+     * gtia_pmresize: its two "alt" cases reach the SAME size by different
+     * routes and expect DIFFERENT results, which is only possible if the
+     * outcome depends on the counter's PHASE when SIZEP changed, and not just
+     * on the old and new sizes.  A recomputed-from-scratch model cannot express
+     * any of its seven transitions. */
+    int p_active[4], p_bit[4], p_phase[4];
+    int m_active[4], m_bit[4], m_phase[4];
+
     /* per-scanline state */
     int hires;      /* the playfield this line is an ANTIC hi-res mode */
     int vblank;
@@ -55,8 +66,9 @@ void    gtia_clock(gtia *g, int hpos, int pf, int hires_lit);
 uint8_t gtia_read(gtia *g, uint16_t addr);
 void    gtia_write(gtia *g, uint16_t addr, uint8_t val);
 
-/* Exposed for the tests: is player/missile `i` lit at this colour clock? */
-int     gtia_player_lit(const gtia *g, int i, int hpos);
-int     gtia_missile_lit(const gtia *g, int i, int hpos);
+/* Is player/missile `i` lit right now?  A query of the live divider state, so
+ * it is only meaningful between gtia_clock() calls. */
+int     gtia_player_lit(const gtia *g, int i);
+int     gtia_missile_lit(const gtia *g, int i);
 
 #endif /* GTIA_H */

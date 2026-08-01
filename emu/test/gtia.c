@@ -114,6 +114,55 @@ int main(void)
                gtia_read(&g, 0xD00C) & 0x02, 0x02);
     }
 
+    /* ---- the player width is a LIVE DIVIDER, and its PHASE matters --------
+     * gtia_pmresize's two "alt" cases reach the same size by different routes
+     * and expect DIFFERENT results.  That is only possible if the outcome
+     * depends on the counter's phase when SIZEP changed.  Here: a player that
+     * is 2x throughout versus one switched from 1x to 2x part-way through must
+     * NOT produce the same pixel run. */
+    {
+        char always2x[64], switched[64];
+        int n1 = 0, n2 = 0;
+
+        gtia_init(&g);
+        gtia_write(&g, 0xD00D, 0xB4);          /* GRAFP0, an asymmetric pattern */
+        gtia_write(&g, 0xD000, 0x40);          /* HPOSP0 */
+        gtia_write(&g, 0xD008, 0x01);          /* SIZEP0 = 2x from the start */
+        for (int h = 0x3E; h < 0x70; h++) {
+            gtia_clock(&g, h, -1, 0);
+            always2x[n1++] = (char)('0' + gtia_player_lit(&g, 0));
+        }
+
+        gtia_init(&g);
+        gtia_write(&g, 0xD00D, 0xB4);
+        gtia_write(&g, 0xD000, 0x40);
+        gtia_write(&g, 0xD008, 0x00);          /* start 1x */
+        for (int h = 0x3E; h < 0x70; h++) {
+            if (h == 0x43) gtia_write(&g, 0xD008, 0x01);   /* -> 2x mid-object */
+            gtia_clock(&g, h, -1, 0);
+            switched[n2++] = (char)('0' + gtia_player_lit(&g, 0));
+        }
+
+        if (n1 == n2 && !memcmp(always2x, switched, (size_t)n1)) {
+            printf("  FAIL SIZEP phase: 1x->2x mid-object matched always-2x, so the\n"
+                   "       width is being recomputed rather than divided\n");
+            fails++;
+        }
+    }
+
+    /* ---- HPOS retrigger still works through the divider ------------------- */
+    {
+        gtia_init(&g);
+        gtia_write(&g, 0xD00D, 0xFF);
+        gtia_write(&g, 0xD000, 0x40);
+        int lit_early = 0, lit_late = 0;
+        for (int h = 0x40; h < 0x50; h++) { gtia_clock(&g, h, -1, 0); lit_early += gtia_player_lit(&g, 0); }
+        gtia_write(&g, 0xD000, 0x60);          /* move it ahead of the beam */
+        for (int h = 0x50; h < 0x70; h++) { gtia_clock(&g, h, -1, 0); lit_late += gtia_player_lit(&g, 0); }
+        expect("player emitted before the move", lit_early > 0, 1);
+        expect("player emitted AGAIN after the move", lit_late > 0, 1);
+    }
+
     /* ---- HITCLR clears every class --------------------------------------- */
     gtia_write(&g, 0xD01E, 0);
     expect("HITCLR clears P/P", gtia_read(&g, 0xD00C), 0x00);

@@ -20,37 +20,63 @@ static int size_scale(uint8_t s)
     }
 }
 
-/* HPOS is compared against the LIVE colour-clock position, with no once-a-line
- * "already emitted" interlock — which is why moving HPOS mid-line makes the
- * comparator match again and redraws the player (gtia_pmretrigger). */
-int gtia_player_lit(const gtia *g, int i, int hpos)
+int gtia_player_lit(const gtia *g, int i)
 {
-    int w = size_scale(g->sizep[i]);
-    int d = hpos - g->hposp[i];
-    if (d < 0 || d >= 8 * w) return 0;
-    return (g->grafp[i] >> (7 - (d / w))) & 1;
+    return g->p_active[i] && ((g->grafp[i] >> (7 - g->p_bit[i])) & 1);
 }
 
-int gtia_missile_lit(const gtia *g, int i, int hpos)
+int gtia_missile_lit(const gtia *g, int i)
 {
-    int w = size_scale((uint8_t)(g->sizem >> (2 * i)));
-    int d = hpos - g->hposm[i];
-    if (d < 0 || d >= 2 * w) return 0;
-    return (g->grafm >> (2 * i + (1 - (d / w)))) & 1;
+    return g->m_active[i] && ((g->grafm >> (2 * i + (1 - g->m_bit[i]))) & 1);
+}
+
+/* Advance every object by one colour clock.
+ *
+ * HPOS is compared against the LIVE position with no once-a-line "already
+ * emitted" interlock, so a match (re)starts the object — which is why moving
+ * HPOS mid-line redraws the player (gtia_pmretrigger).
+ *
+ * The divider then runs at the CURRENT width.  Changing SIZEP mid-object
+ * changes the divide ratio with the phase counter part-way through, and the
+ * phase is NOT reset — that is what makes two routes to the same size differ
+ * (gtia_pmresize's "alt" cases). */
+static void obj_step(gtia *g, int hpos)
+{
+    for (int i = 0; i < 4; i++) {
+        if (hpos == g->hposp[i]) {
+            g->p_active[i] = 1; g->p_bit[i] = 0; g->p_phase[i] = 0;
+        } else if (g->p_active[i]) {
+            if (++g->p_phase[i] >= size_scale(g->sizep[i])) {
+                g->p_phase[i] = 0;
+                if (++g->p_bit[i] >= 8) g->p_active[i] = 0;
+            }
+        }
+        if (hpos == g->hposm[i]) {
+            g->m_active[i] = 1; g->m_bit[i] = 0; g->m_phase[i] = 0;
+        } else if (g->m_active[i]) {
+            if (++g->m_phase[i] >= size_scale((uint8_t)(g->sizem >> (2 * i)))) {
+                g->m_phase[i] = 0;
+                if (++g->m_bit[i] >= 2) g->m_active[i] = 0;
+            }
+        }
+    }
 }
 
 void gtia_clock(gtia *g, int hpos, int pf, int hires_lit)
 {
+    obj_step(g, hpos);
+
     /* No collisions of ANY kind during vertical blank — four separate
-     * assertions in gtia_collision cover this. */
+     * assertions in gtia_collision cover this.  The objects still SHIFT, they
+     * simply do not register. */
     if (g->vblank) return;
 
     int visible = hpos >= GTIA_VISIBLE_L && hpos <= GTIA_VISIBLE_R;
 
     int p[4], m[4];
     for (int i = 0; i < 4; i++) {
-        p[i] = gtia_player_lit(g, i, hpos);
-        m[i] = gtia_missile_lit(g, i, hpos);
+        p[i] = gtia_player_lit(g, i);
+        m[i] = gtia_missile_lit(g, i);
     }
 
     /* HBLANK is NOT a uniform "collisions off": missile/player still registers
