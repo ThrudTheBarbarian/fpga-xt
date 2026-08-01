@@ -46,6 +46,9 @@ typedef struct {
     int      cnt[4];       /* the four dividers */
     uint8_t  irq;          /* the /IRQ line to the CPU */
     uint8_t  init;         /* SKCTL[1:0] == 0: dividers held */
+    uint8_t  seroc;        /* serial output COMPLETE.  1 when nothing is being
+                            * transmitted, which is the resting state. */
+    int      ser_bits;     /* bits left to shift out: start + 8 data + stop */
 } pokey_timer;
 
 void    pokey_timer_reset(pokey_timer *p);

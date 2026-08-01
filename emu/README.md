@@ -422,3 +422,23 @@ after the halt, rather than about when the halt ends. Note also that the suite's
 own annotations disagree with each other here: `antic_nmist`'s seven-cycle
 `pha:pla` spanning 104..109 puts its first cycle at 103, while `antic_vcount`'s
 four-cycle `bit $0100` spanning 105..107 plus an unnumbered first puts it at 104.
+
+## Open: the POKEY serial OUTPUT rate
+
+`pokey_seroc` is done — SEROC is a level that bypasses the IRQ mask, rests
+asserted, and fires the moment it is enabled. Loading SEROUT deasserts it, which
+`pokey_sertiming` requires immediately after the write.
+
+What is left is the RATE. `pokey_sertiming` has two nearly identical blocks:
+both do `skctl = $00` then `$63`, load SEROUT, wait, and read IRQST — but one
+waits long enough for the transmission to have COMPLETED (SEROC back low) and
+the other does not. So the ten bit times have to take the right number of
+cycles, which means resolving which timer clocks the shift register.
+
+SKCTL bits 6-4 select the serial mode, and `$63` is `110`. The current model
+assumes timer 2 unconditionally; the mode field almost certainly picks between
+timer 2, timer 4 and an external clock, so that table is the next thing to
+establish. `pokey_serclock` is likely the test that states it.
+
+Still blocked behind the same question: `pokey_serdirect` (jams at $0014),
+`pokey_skstat` (loops), `pokey_asyncrecv`, `pokey_twotone`.

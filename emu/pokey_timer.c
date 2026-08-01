@@ -50,6 +50,8 @@ void pokey_timer_reset(pokey_timer *p)
     p->irqst  = 0xFF;      /* active low: nothing pending */
     p->cycles = 0;
     p->irq = 0;
+    p->seroc = 1;
+    p->ser_bits = 0;
     p->init = 0;
 }
 
@@ -66,7 +68,14 @@ static void underflow(pokey_timer *p, int ch)
     reload(p, ch);
     switch (ch) {
     case 0: raise(p, POKEY_IRQ_TIMER1); break;
-    case 1: raise(p, POKEY_IRQ_TIMER2); break;
+    case 1:
+        raise(p, POKEY_IRQ_TIMER2);
+        /* timer 2 is the serial output clock */
+        if (p->ser_bits && --p->ser_bits == 0) {
+            p->seroc = 1;
+            if (p->irqen & POKEY_IRQ_SEROC) p->irq = 1;
+        }
+        break;
     case 3: raise(p, POKEY_IRQ_TIMER4); break;
     default: break;                            /* channel 3 has no interrupt */
     }
@@ -131,6 +140,14 @@ void pokey_timer_write(pokey_timer *p, uint16_t addr, uint8_t val)
          * test makes deterministic by syncing with two WSYNCs first. */
         for (int i = 0; i < 4; i++) reload(p, i);
         break;
+    case 0x0D:
+        /* Loading SEROUT starts a transmission, so the output is no longer
+         * complete: pokey_sertiming writes it and immediately requires IRQST's
+         * SEROC bit to read HIGH.  Ten bit times go out — start, eight data,
+         * stop — clocked by timer 2. */
+        p->seroc = 0;
+        p->ser_bits = 10;
+        break;
     case 0x0E:
         /* IRQEN both masks and CLEARS: a bit written as zero drops any request
          * already standing, which is how a handler acknowledges. */
@@ -139,7 +156,7 @@ void pokey_timer_write(pokey_timer *p, uint16_t addr, uint8_t val)
         if ((uint8_t)~p->irqst == 0) p->irq = 0;
         /* Enabling SEROC while the level stands fires immediately — and it must
          * be decided AFTER the clear above, or the clear undoes it. */
-        if (val & POKEY_IRQ_SEROC) p->irq = 1;
+        if ((val & POKEY_IRQ_SEROC) && p->seroc) p->irq = 1;
         break;
     default: break;
     }
@@ -147,7 +164,9 @@ void pokey_timer_write(pokey_timer *p, uint16_t addr, uint8_t val)
 
 uint8_t pokey_timer_irqst(const pokey_timer *p)
 {
-    /* SEROC is a level and ignores the mask: with nothing being transmitted the
-     * output has "long completed", so its bit reads low whatever IRQEN says. */
-    return (uint8_t)(p->irqst & ~POKEY_IRQ_SEROC);
+    /* SEROC is a level and ignores the mask: while nothing is being transmitted
+     * the output has "long completed", so its bit reads low whatever IRQEN says;
+     * once SEROUT is loaded it reads high until the last bit is out. */
+    if (p->seroc) return (uint8_t)(p->irqst & ~POKEY_IRQ_SEROC);
+    return (uint8_t)(p->irqst | POKEY_IRQ_SEROC);
 }

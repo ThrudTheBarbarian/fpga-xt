@@ -115,6 +115,18 @@ int main(void)
     expect("linked 1+2 counts 16 bits",
            irq_period(&p, POKEY_IRQ_TIMER2, 40000), 256 * 28);
 
+    /* ---- SEROC: a LEVEL, not a latched event ---------------------------- */
+    pokey_timer_reset(&p);
+    expect("SEROC rests asserted, even with IRQEN clear",
+           pokey_timer_irqst(&p) & POKEY_IRQ_SEROC, 0);
+    pokey_timer_write(&p, 0xD20E, POKEY_IRQ_SEROC);
+    expect("enabling SEROC while it stands fires at once", p.irq, 1);
+
+    /* loading SEROUT starts a transmission, so it is no longer complete */
+    pokey_timer_write(&p, 0xD20D, 0x55);
+    expect("SEROUT deasserts SEROC",
+           pokey_timer_irqst(&p) & POKEY_IRQ_SEROC, POKEY_IRQ_SEROC);
+
     printf("ptimer: %s\n", fails ? "FAIL" : "all POKEY timer tests pass");
     return fails ? 1 : 0;
 }
