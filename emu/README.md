@@ -2126,6 +2126,39 @@ alongside. That is the well-known Atari artefact of a player appearing twice
 when it is moved mid-line, and scoring it gives **634/672** — ten better than the
 current model, and the reason to prefer it is the mechanism rather than the ten.
 
-Still not 672, so it is not implemented. The write instant barely matters
-(identical at cc `$62` and `$64`, worse from `$66`), which says the remaining 38
-are a different effect again, not this one mistimed.
+Still not 672. And the 38 that remain are not spread: they sit entirely in
+passes 3 and 7.
+
+### The second effect: the write RE-ALIGNS the running emission's divider
+
+Pass 3's wanted values cycle `7, 3, 1, 0` as Y advances — period FOUR, the quad
+width. A period in Y means a bit BOUNDARY moving with Y, so the running
+emission's divider boundaries shift to line up with the newly written position
+while its bit counter keeps counting. Worked through by hand for pass 3, every
+row falls out; scored, it takes that pass from 33 misses to 3 and the whole test
+to **660/672**.
+
+```
+  noreload       322/672
+  restart        624/672     what gtia.c does today
+  union          634/672     a match ADDS an emission
+  union_realign  660/672     ...and the write realigns the running one
+```
+
+The two effects are independent, which is the good kind of evidence: `union`
+alone gains 10 and fixes `p10`'s two-emissions cell, `realign` alone is what
+pass 3's period-4 repeat demands, and together they gain 36.
+
+**Not implemented — 660 is not 672, and the test needs every cell.** Putting it
+in `gtia.c` would gain no ACID800 pass while risking the P/M tests that do pass.
+
+The residual 12 has a shape worth recording: pass 3 `sp $78` at Y `$7d`..`$7f`
+(we light where hardware does not) and pass 7 `sp $6c` at odd Y (we light one
+clock too many). Both are us lighting MORE than hardware, so the missing piece
+SUPPRESSES rather than adds — an emission being cut short or refused, not
+another one starting.
+
+One process note: the first version of the realign scored 615 and looked
+disproved. The bug was in the simulation, not the model — running emissions were
+not advanced on the clock where a new one started. A model that contradicts a
+hand derivation is worth re-reading the simulator for before it is discarded.

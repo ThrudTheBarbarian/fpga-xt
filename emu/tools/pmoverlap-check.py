@@ -88,6 +88,40 @@ def m_union(width, Y, write_cc):
     return lit
 
 
+@_reg("union_realign")
+def m_union_realign(width, Y, write_cc):
+    """union, PLUS: the HPOS write re-aligns every running emission's divider
+    phase to the new position.  660/672 — the best known, and the two effects
+    are independent: union alone is 634, realign is what takes pass 3 from 33
+    misses to 3.
+
+    The realign is what pass 3's period-FOUR repeat in Y demands.  Its wanted
+    values cycle 7,3,1,0 as Y advances, which is a bit boundary moving with
+    Y mod width — the running emission's boundaries shift to line up with the
+    newly written position while its bit counter keeps counting.
+
+    Residual 12: pass 3 sp $78 at Y $7d..$7f (we light, hardware does not) and
+    pass 7 sp $6c at odd Y (we light one clock too many).  Both are us lighting
+    MORE than hardware, so whatever is missing SUPPRESSES rather than adds."""
+    em, lit = [], set()
+    for cc in range(0x50, 0xB0):
+        hp = 0x60 if cc < write_cc else Y
+        for e in em:
+            e[1] += 1
+            if e[1] >= width:
+                e[1], e[0] = 0, e[0] + 1
+        if cc == write_cc:
+            d = (Y - cc) % width or width
+            for e in em:
+                e[1] = width - d
+        if cc == hp:
+            em.append([0, 0])
+        for e in em:
+            if e[0] < 8 and (0x81 >> (7 - e[0])) & 1:
+                lit.add(cc)
+    return lit
+
+
 @_reg("noreload")
 def m_noreload(width, Y, write_cc):
     """Repositions but never reloads the shift register.  330/672 — DISPROVED,
