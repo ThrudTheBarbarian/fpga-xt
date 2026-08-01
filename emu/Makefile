@@ -12,6 +12,7 @@
 #   make pokey      POKEY RANDOM LFSR — the ANTIC timing tests' cycle clock
 #   make dma        the ANTIC DMA schedule vs ACID800's own table (50/50)
 #   make antic      ANTIC timing core: VCOUNT, WSYNC, NMIST landmarks
+#   make gtia       GTIA collisions + registers
 #   make test       all of them — THE gate before ANTIC work counts as progress
 #   make clean
 
@@ -22,8 +23,8 @@ CFLAGS := -std=c11 $(WARN) -O2 -g
 
 CORE := xt6502.c
 
-.PHONY: all test harte klaus irq pokey dma antic clean
-all: $(BUILD)/harte $(BUILD)/klaus $(BUILD)/irq $(BUILD)/pokey $(BUILD)/dma $(BUILD)/antic
+.PHONY: all test harte klaus irq pokey dma antic gtia clean
+all: $(BUILD)/harte $(BUILD)/klaus $(BUILD)/irq $(BUILD)/pokey $(BUILD)/dma $(BUILD)/antic $(BUILD)/gtia
 
 $(BUILD):
 	@mkdir -p $(BUILD)
@@ -46,6 +47,9 @@ $(BUILD)/dma: test/dma.c antic_dma.c antic_dma.h acid_dmatable.h | $(BUILD)
 $(BUILD)/antic: test/antic.c antic.c antic_dma.c antic.h antic_dma.h | $(BUILD)
 	$(CC) $(CFLAGS) test/antic.c antic.c antic_dma.c -o $@
 
+$(BUILD)/gtia: test/gtia.c gtia.c gtia.h | $(BUILD)
+	$(CC) $(CFLAGS) test/gtia.c gtia.c -o $@
+
 harte: $(BUILD)/harte
 	@./$(BUILD)/harte
 
@@ -64,7 +68,10 @@ dma: $(BUILD)/dma
 antic: $(BUILD)/antic
 	@./$(BUILD)/antic
 
-test: harte klaus irq pokey dma antic
+gtia: $(BUILD)/gtia
+	@./$(BUILD)/gtia
+
+test: harte klaus irq pokey dma antic gtia
 
 clean:
 	rm -rf $(BUILD)
