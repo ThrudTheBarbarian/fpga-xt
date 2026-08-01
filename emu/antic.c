@@ -13,6 +13,30 @@ const uint8_t antic_row_height[16] = {
     [14] = 1, [15] = 1,
 };
 
+/* Playfield bytes across, by width and mode.  Character modes 6-7 and the
+ * coarser bitmap modes cover the same width in fewer bytes. */
+int antic_pf_bytes(uint8_t dmactl, uint8_t mode)
+{
+    static const uint8_t narrow[16] = {
+        [2]=32,[3]=32,[4]=32,[5]=32,[6]=16,[7]=16,
+        [8]=8,[9]=8,[10]=16,[11]=16,[12]=16,[13]=32,[14]=32,[15]=32,
+    };
+    if (mode > 15) return 0;
+    int n = narrow[mode];
+    switch (dmactl & 0x03) {
+    case 0:  return 0;
+    case 1:  return n;                    /* narrow */
+    case 3:  return n + n / 2;            /* wide   */
+    default: return n + n / 4;            /* normal */
+    }
+}
+
+uint8_t antic_display_byte(const antic *a, int i)
+{
+    if (i < 0 || i >= (int)sizeof a->linebuf) return 0;
+    return a->linebuf[i];
+}
+
 /* Fetch a display-list byte and advance the DL counter within its 1 KB page. */
 static uint8_t dl_fetch(antic *a)
 {
@@ -118,9 +142,25 @@ static void line_start(antic *a)
     a->dli_line = (a->dl_insn & 0x80) && (a->row_line == a->row_height - 1);
 
     int mode = a->dl_insn & 0x0F;
-    if (mode >= 2)
+    if (mode >= 2) {
         antic_dma_line((uint8_t)mode, width_of(a->dmactl),
                        a->row_line == 0, a->hscrol, a->blocked);
+
+        /* FETCH into the line buffer.  The playfield counter wraps at 4 KB
+         * during the fetch, so a row crossing that boundary reads from the
+         * bottom of the same 4 KB page (antic_addresswrap).
+         *
+         * Note what is NOT done here: the buffer is not cleared first.  If
+         * playfield DMA is off this line, the previous contents stay and are
+         * displayed again — which is what antic_linebuffering's
+         * "mid-interrupted" and "replayed" cases check. */
+        int n = antic_pf_bytes(a->dmactl, (uint8_t)mode);
+        for (int i = 0; i < n && i < (int)sizeof a->linebuf; i++) {
+            a->linebuf[i] = a->fetch ? a->fetch(a->ctx, a->pf_addr) : 0xFF;
+            a->pf_addr = antic_pf_next(a->pf_addr);
+        }
+        a->lb_len = n;
+    }
 
     a->row_line++;
 }

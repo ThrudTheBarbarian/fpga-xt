@@ -177,6 +177,42 @@ int main(void)
         }
     }
 
+    /* ---- the line buffer -------------------------------------------------
+     * Fetch happens at one moment, display at another.  antic_linebuffering
+     * checks that separation three ways; these are the same three. */
+    {
+        static uint8_t lm[65536];
+        for (int i = 0; i < 64; i++) lm[0x3000 + i] = (uint8_t)(0xA0 + i);
+        lm[0x2C00] = 0x4F; lm[0x2C01] = 0x00; lm[0x2C02] = 0x30;  /* LMS mode F @ $3000 */
+        lm[0x2C03] = 0x0F;                                        /* mode F */
+        lm[0x2C04] = 0x41; lm[0x2C05] = 0x00; lm[0x2C06] = 0x2C;  /* JVB */
+
+        antic e;
+        antic_init(&e, mem_fetch, lm, ANTIC_LINES_NTSC);
+        e.dlist = 0x2C00; e.dl_addr = 0x2C00;
+        e.dmactl = 0x22;                       /* DL on, NORMAL width */
+        e.row_line = e.row_height = 0;
+        run_to(&e, ANTIC_DISPLAY_TOP + 1, 0);
+        expect("fetched at normal width", e.lb_len, 40);
+        expect("line buffer holds the fetched bytes", antic_display_byte(&e, 0), 0xA0);
+
+        /* 1. ALIASING: narrow the playfield AFTER the fetch.  The buffer still
+         *    holds what was fetched under the old width. */
+        e.dmactl = 0x21;                       /* now narrow */
+        expect("buffer unchanged by a later DMACTL write", antic_display_byte(&e, 39), 0xA0 + 39);
+
+        /* 2. MID-LINE INTERRUPTION: kill playfield DMA entirely.  The rest of
+         *    the line is not blanked — the buffer still holds it. */
+        e.dmactl = 0x20;                       /* DL DMA only, no playfield */
+        run_to(&e, ANTIC_DISPLAY_TOP + 3, 0);
+        expect("buffer survives playfield DMA being turned off",
+               antic_display_byte(&e, 10), 0xA0 + 10);
+
+        /* 3. RE-DISPLAYABLE: still there several lines later. */
+        run_to(&e, ANTIC_DISPLAY_TOP + 6, 0);
+        expect("buffer is re-displayable", antic_display_byte(&e, 20), 0xA0 + 20);
+    }
+
     printf("antic: %s\n", fails ? "FAIL" : "all timing-core tests pass");
     return fails ? 1 : 0;
 }

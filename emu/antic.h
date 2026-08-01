@@ -87,6 +87,19 @@ typedef struct {
                            * Recomputed per line, never precomputed for the
                            * frame (antic_vscroldli). */
 
+    /* ---- the line buffer -------------------------------------------------
+     * ANTIC fetches into this and displays FROM it, so fetch time and display
+     * time are different instants.  antic_linebuffering proves the separation:
+     * change DMACTL between the two and the buffer still holds what was fetched
+     * under the OLD width; interrupt playfield DMA mid-line and the rest of the
+     * line is NOT blanked, because the buffer still holds it; and the contents
+     * can be displayed again.
+     *
+     * So it is deliberately NOT cleared per line — persistence is the observable
+     * behaviour, not an accident. */
+    uint8_t linebuf[64];   /* wide playfield is 48 bytes; 64 is room to spare */
+    int     lb_len;        /* bytes fetched on the last line that fetched any */
+
     /* the DMA schedule for the scanline in progress */
     uint8_t blocked[ANTIC_LINE_CYCLES];
 } antic;
@@ -106,6 +119,14 @@ void    antic_dl_exec(antic *a);
  * VBI arrives at 248. */
 #define ANTIC_DISPLAY_TOP     8
 #define ANTIC_DISPLAY_BOTTOM 248
+
+/* Bytes across the playfield at a given DMACTL width. */
+int     antic_pf_bytes(uint8_t dmactl, uint8_t mode);
+
+/* Read the line buffer as the DISPLAY side sees it now.  Deliberately separate
+ * from the fetch: the width used here is the CURRENT one, which is what makes
+ * a mid-line DMACTL change alias. */
+uint8_t antic_display_byte(const antic *a, int i);
 
 uint8_t antic_read(antic *a, uint16_t addr);
 void    antic_write(antic *a, uint16_t addr, uint8_t val);
