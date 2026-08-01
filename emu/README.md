@@ -2162,3 +2162,24 @@ One process note: the first version of the realign scored 615 and looked
 disproved. The bug was in the simulation, not the model — running emissions were
 not advanced on the clock where a new one started. A model that contradicts a
 hand derivation is worth re-reading the simulator for before it is discarded.
+
+### PARKED at 660/672
+
+Searched the suppressing family the residual pointed at — a cap on how many
+emissions can be live (1, 2, 3, unlimited), killing the running one when a new
+one starts, and applying the realign to all / newest / oldest — across write
+instants `$63`..`$65`. Twenty-four combinations, and **every one of the top
+scorers is 660**. The plateau is flat: none of those levers touches the last 12
+cells at all.
+
+That is rule (v) at model level. The last 12 are not a parameter of this family,
+so the next attempt needs a different kind of mechanism, and there is no cheap
+way to guess which. Two mechanisms are established and written down, the scorer
+makes any future candidate a one-second test, and the residual's shape (we light
+MORE than hardware, in exactly two pass/scanpos combinations) is recorded.
+
+Worth being plain about the economics: `gtia_pmoverlap` needs all 672 cells, so
+660 is worth exactly zero ACID800 passes. Several iterations have gone into it
+and the last one bought nothing. The remaining open work — this, the HSCROL trio,
+`pokey_timertiming` — is all in the same condition: understood in outline,
+resistant in detail, and expensive per unit of score.
