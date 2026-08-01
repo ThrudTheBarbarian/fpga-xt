@@ -74,8 +74,13 @@ int main(void)
             if (antic_tick(&a)) held++;
             else if (released_at < 0 && held) released_at = c;
         }
-        /* /RDY is released AT 104, so the first cycle the CPU gets is 105. */
-        expect("first CPU cycle after WSYNC", released_at, ANTIC_CYC_WSYNC + 1);
+        /* ANTIC_CYC_WSYNC is the first cycle the CPU gets BACK, not the last
+         * one ANTIC keeps.  antic_wsync cannot settle this — its probes are
+         * anchored to the release, so shifting it moves them with it — but
+         * gtia_pmretrigger can: with memory refresh correctly present on every
+         * scanline, giving the CPU 104 takes that test from failing its first
+         * case to failing its fourth, i.e. three more sub-tests pass. */
+        expect("first CPU cycle after WSYNC", released_at, ANTIC_CYC_WSYNC);
     }
 
     /* ---- unused ANTIC reads are $FF (antic_default) ---------------------- */

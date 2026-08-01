@@ -410,14 +410,15 @@ int antic_tick(antic *a)
     if (c == ANTIC_CYC_VCOUNT && (a->scanline & 1))
         a->vcount++;
 
-    /* WSYNC releases /RDY at 104: the first CPU cycle after a halt is 105. */
+    /* WSYNC: ANTIC_CYC_WSYNC is the first cycle the CPU gets BACK. */
     if (a->wsync_halt) {
-        /* Cycle 104 is where /RDY is RELEASED, and it is still ANTIC's — the
-         * first cycle the CPU gets is 105.  Letting the CPU have 104 makes
-         * every WSYNC-anchored measurement one machine cycle early, which is
-         * what antic_wsync's d0 caught. */
-        took = 1;
+        /* antic_wsync cannot settle where this boundary sits — its probes are
+         * anchored to the release, so moving it moves them too.  gtia_pmretrigger
+         * can, because it times an HPOS write against the beam: with memory
+         * refresh correctly present on every scanline, giving the CPU 104 takes
+         * it from failing its first case to failing its fourth. */
         if (c == ANTIC_CYC_WSYNC) a->wsync_halt = 0;
+        else                      took = 1;
     }
 
     if (!took && c < ANTIC_LINE_CYCLES && a->blocked[c])
