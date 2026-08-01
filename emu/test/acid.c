@@ -127,6 +127,21 @@ static int run_one(const char *dir, const char *name, unsigned long long *cyc)
 
     if (t_init) s.ram[t_init] = 0x60;            /* RTS — see the header */
 
+    /* The suite's character output goes through `jmp (_vputchar)`, a vector the
+     * OS fills in when _testInit opens IOCB0 — which is exactly the call we
+     * stub out above, so the vector stays zero and the first _print sends the
+     * CPU to $0000.  Point it at an RTS: printing becomes a no-op and the
+     * module runs on.  This is the same accommodation as the _testInit stub,
+     * for the same reason: we have no OS, and the MEASUREMENT does not need
+     * one.  The four mod_* modules do nothing BUT print and draw, so without it
+     * they cannot get past their first line of output. */
+    { uint16_t vput = 0;
+      if (lab_lookup(lab, "_vputchar", &vput)) {
+          s.ram[0xFF50] = 0x60;                  /* RTS */
+          s.ram[vput]     = 0x50;
+          s.ram[vput + 1] = 0xFF;
+      } }
+
     /* ---- the OS's NMI dispatcher, in fourteen bytes ---------------------- */
     static const uint8_t nmi_stub[] = {
         0x48,                    /* $FF00  PHA                              */

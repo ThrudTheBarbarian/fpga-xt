@@ -1558,3 +1558,42 @@ after its STA read, one scanline plus one. So both sides are real measurements
 and the reconciliation is still missing.
 
 Kept at 1, which is the known-good 47.
+
+## The four `mod_*` JAMs are not hardware tests
+
+Never diagnosed before, and worth writing down so nobody spends a day on them.
+
+`ACID_TRAPOUT=1` puts `mod_options` at `$0000` after twenty-one instructions,
+with the last few in `_print`/`_imprint` ending at `jmp (_vputchar)`. That vector
+is filled in by the OS when `_testInit` opens IOCB0 — the exact call we stub to
+RTS, having no OS ROM. So it stays zero and the first line of output sends the
+CPU to address zero.
+
+Stubbing `_vputchar` to an RTS is the same accommodation as the `_testInit`
+stub, for the same reason, and is now done: printing becomes a no-op and the
+module runs on. `mod_options` goes from JAM to LOOP.
+
+LOOP, not PASS, and the other three still derail — because of what they then do:
+
+```
+_waitKeyPrompt:
+    jsr _imprint / dta c"Press a key...",0
+    lda #0 / sta ch
+    lda:req ch                  ;spin until a HUMAN presses a key
+```
+
+These four are the suite's INTERACTIVE modules: they draw a pattern, print
+"Press a key...", and wait for someone to look at the screen and decide. Their
+assertion is a pair of human eyes. There is nothing here for a headless run to
+measure, and simulating a keypress would produce a "pass" that means precisely
+nothing.
+
+**They are deliberately NOT reclassified as `na`.** The dashboard excludes `na`
+from its pass/total, so marking them would take the score from 47/59 to 47/55
+without a single new thing working — a bookkeeping change that reads exactly
+like progress. They stay counted, and this section says why they can never go
+green.
+
+The `_vputchar` stub is kept anyway: it is correct independently of these four,
+because any test that prints before it fails would otherwise derail to `$0000`
+rather than reaching `_testFailed`.
