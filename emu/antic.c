@@ -211,11 +211,19 @@ static void line_start(antic *a)
          * displayed again — which is what antic_linebuffering's
          * "mid-interrupted" and "replayed" cases check. */
         int n = antic_pf_bytes(a->dmactl, (uint8_t)mode);
-        for (int i = 0; i < n && i < (int)sizeof a->linebuf; i++) {
-            a->linebuf[i] = a->fetch ? a->fetch(a->ctx, a->pf_addr) : 0xFF;
-            a->pf_addr = antic_pf_next(a->pf_addr);
+
+        /* A CHARACTER mode fetches its names ONCE, on the first scanline of the
+         * row, and re-uses them from the line buffer for the rest — only the
+         * glyph row is re-fetched.  A BITMAP mode fetches fresh data every
+         * scanline.  That difference is the whole reason the buffer exists, and
+         * antic_dma.c already carries it as separate first/rest strides. */
+        if (mode >= 8 || a->row_line == 0) {
+            for (int i = 0; i < n && i < (int)sizeof a->linebuf; i++) {
+                a->linebuf[i] = a->fetch ? a->fetch(a->ctx, a->pf_addr) : 0xFF;
+                a->pf_addr = antic_pf_next(a->pf_addr);
+            }
+            a->lb_len = n;
         }
-        a->lb_len = n;
 
         /* Character modes fetch the glyph row as well as the name.  CHACTL's
          * vertical reflect picks a different row of the SAME character, so it

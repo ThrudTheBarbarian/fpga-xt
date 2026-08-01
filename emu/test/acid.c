@@ -211,7 +211,7 @@ static int run_one(const char *dir, const char *name, unsigned long long *cyc)
                 }
                 printf("\"\n");
             }
-            /* d0..d5 are the suite's scratch at $C8..$CD, and they are what the
+            /* d0..d7 are the suite's scratch at $C8..$CF, and they are what the
              * _ASSERT macros compare — so on a failure they say WHICH value was
              * wrong, not merely that one was. */
             if (trace_on && s.dbg_rand_seen)
@@ -219,9 +219,9 @@ static int run_one(const char *dir, const char *name, unsigned long long *cyc)
                        " %llu (hardware: 113)\n",
                        (unsigned long long)(s.dbg_rand_at - s.dbg_skctl_at - 1));
             if (trace_on)
-                printf("      d0..d5 = %02X %02X %02X %02X %02X %02X\n",
-                       s.ram[0xC8], s.ram[0xC9], s.ram[0xCA],
-                       s.ram[0xCB], s.ram[0xCC], s.ram[0xCD]);
+                printf("      d0..d7 = %02X %02X %02X %02X %02X %02X %02X %02X\n",
+                       s.ram[0xC8], s.ram[0xC9], s.ram[0xCA], s.ram[0xCB],
+                       s.ram[0xCC], s.ram[0xCD], s.ram[0xCE], s.ram[0xCF]);
             return 1;
         }
         if (s.cpu.jammed) {
