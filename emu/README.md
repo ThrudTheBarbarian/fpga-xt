@@ -771,11 +771,40 @@ normal stream's prefetch is at cycle 18 — so the start is committed **one to t
 cycles before the first fetch**, and a write completing at the end of 17 is too
 late for it but still in time for the stop.
 
-To finish: `rebuild_line()` has to keep the OLD start geometry when the stream
-has already committed (`from >= old_start`) while taking the STOP from the live
-registers. The pair loop is now bounded by a stop CYCLE rather than by its count,
-which is the prerequisite; what it still lacks is a way to say "this start, that
-stop" in one call. `antic_hscrolbug` ("Unstopped PF DMA test failed") is the same
-mechanism seen from the other side — it glitches HSCROL so the stop is MISSED
-entirely and fetching runs on into horizontal blank, which only a cycle
-comparison can do.
+### Tried and REVERTED: pinning the start, and the prefetch as a non-name
+
+Both were implemented in full and both traded passes away, so they are back out.
+What they established is worth more than the attempt:
+
+**The two tests have OPPOSITE polarity, which is easy to miss.**
+`antic_pfstarttiming` loads `A = $21` (narrow) and `X = $22` (normal), so it runs
+the row NORMAL and NARROWS it mid-line. `antic_pfstoptiming` loads `A = $22` and
+`X = $21` — it runs the row NARROW and WIDENS it. Their assertions read
+accordingly:
+
+| test | polarity | early | late |
+|---|---|---|---|
+| `antic_pfstarttiming` | normal, narrowed | 16 | 18 |
+| `antic_pfstoptiming` | narrow, widened | 18 | **16** |
+
+**`pfstoptiming`'s late case wanting 16 — pure narrow — is the strongest single
+fact here.** A widening that arrives after the stream has already stopped cannot
+restart it. So the STOP commits too; it is not simply "compared live for ever".
+Any rebuild that re-adds fetch slots past the old stop gets this wrong, which is
+exactly what the reverted attempt did (it read 18).
+
+**The prefetch IS name 0**, on the 4-cycle pair grid as well as the dense one.
+Treating it as a non-name — which makes the pure-width counts come out the same,
+so it looks free — breaks `antic_charcontrol` immediately, at row 0 of the first
+character row.
+
+**With the start pinned to the old window and the stop taken live, the pair grid
+comes out ONE byte over** (19 where 18 is wanted). The bitmap case of the same
+test lands exactly: mode $A pinned at the normal start, stopping at narrow's stop
+cycle, gives 20,24,...,88 = 18 slots. So the geometry is right for bitmap and one
+short of right for the character pair grid, and that single byte is the thing to
+find. Do the BITMAP assertions first next time — same rule, far simpler stream.
+
+`antic_hscrolbug` ("Unstopped PF DMA test failed") is the same mechanism from a
+third side: it glitches HSCROL so the stop is MISSED entirely and fetching runs
+on into horizontal blank, which only a cycle comparison can express.
