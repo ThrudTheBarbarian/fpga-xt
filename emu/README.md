@@ -450,3 +450,12 @@ clock specifically — if STIMER makes the shift register sample immediately, or
 starts the bit clock in a state that takes the byte at once, both blocks work
 with a tick-driven take. That is the next thing to test, and it is checkable:
 block A must see NO tick in 195 cycles while block B sees one straight away.
+
+**Tried, and partially right.** Gating the immediate take on "a STIMER has
+happened since the last take" keeps `serclock` passing and moves the failure to
+block A's "loaded too early" — i.e. block B is satisfied — but block A still
+takes immediately, because the flag survives from a STIMER earlier in the test
+and nothing has consumed it in between. So the flag is too coarse: what matters
+is presumably how far the serial divider is from its next tick at the moment
+SEROUT is written, not merely whether a STIMER has ever occurred. Reverted; the
+committed state is the plain immediate take at 34.
