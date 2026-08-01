@@ -851,3 +851,32 @@ find. Do the BITMAP assertions first next time — same rule, far simpler stream
 `antic_hscrolbug` ("Unstopped PF DMA test failed") is the same mechanism from a
 third side: it glitches HSCROL so the stop is MISSED entirely and fetching runs
 on into horizontal blank, which only a cycle comparison can express.
+
+
+## Open: gtia_pmresize reads ZERO player-to-player collisions
+
+`gtia_pmresize` fails on its very first case — `d0..d7 = 70 00 80 E0 48 F0 00 00`,
+so index 0, expected `$80`, got `$00`.
+
+Its method is worth knowing because three GTIA tests share it: player 0 carries
+`GRAFP0 = $AA` and is resized MID-LINE, while players 1-3 (`GRAFP = $80`, at
+HPOS `$61/$62/$63`) and the four missiles (`GRAFM = $AA`, at `$64`-`$67`) sit
+still as a **ruler**. The seven `P1PL`/`P2PL`/`P3PL`/`M0PL`..`M3PL` reads are
+rotated into one byte, so the answer is literally a picture of how wide player 0
+was at each position.
+
+Zero means player 0 overlapped none of them. Both halves of the machinery it
+needs are already present and are NOT the gap:
+
+* player-to-player and missile-to-player collisions are implemented —
+  `gtia.c` sets `ppl[]` and `mpl[]`, and `P1PL`/`M0PL` read back correctly;
+* `SIZEP` is implemented with a per-object width divider that deliberately does
+  NOT reset its phase, which is the behaviour `pmresize`'s own "alt" cases exist
+  to check.
+
+A 4x player at HPOS `$48` with `GRAFP0 = $AA` should span `$48`-`$67` — exactly
+the ruler's range — so the first thing to establish is whether player 0 is being
+drawn at 4x at all. `ACID_COLPROBE=1` prints every collision as it registers;
+compare against the ruler positions. Note the test runs with the screen OFF
+(`_screenOff`, so DMACTL = 0) and waits for `VCOUNT = 8`, i.e. it is inside the
+visible region with no playfield — so nothing here depends on ANTIC emitting.
