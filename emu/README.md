@@ -1677,10 +1677,47 @@ one below them. Computing the display start as
 and changes no test.
 
 Both are left in behind flags, both OFF (rule o), because neither is confirmed
-by an assertion. The remaining resolution is presumably in the mode-6 decode
-itself: the probe is two 4-clock players over 8-colour-clock characters, so what
-still has to become sensitive to a single colour clock is which bit of which
-character lands under each half of the ruler.
+by an assertion.
+
+### And the display is not the lever either
+
+`HSCROL_CC_DISPLAY` does exactly what it claims. Tabulating `antic_pf_at`'s
+class across the probe's colour clocks in mode 6 narrow, one row per HSCROL:
+
+```
+              cc120 .............. cc140
+OFF  hscrol 5  1...1...1...1...1...1
+     hscrol 6  ..1...1...1...1...1..
+     hscrol 7  ..1...1...1...1...1..     <- 6 and 7 identical
+     hscrol 8  1...1...1...1...1...1     <- 8 back to 5's phase
+
+ON   hscrol 5  ...1...1...1...1...1.
+     hscrol 6  ..1...1...1...1...1..
+     hscrol 7  .1...1...1...1...1...
+     hscrol 8  1...1...1...1...1...1     <- every unit its own clock
+```
+
+Off, odd HSCROL values are invisible; on, each unit moves the pattern exactly
+one colour clock. The resolution really was missing and really is restored.
+
+It changes no assertion. All four combinations of the two flags leave
+`antic_pfstarttiming`'s late case at 16, and re-running the reachability sweep
+with the resolution ON gives stride 16 for effective HSCROL 1, 3, 5 AND 7 — the
+value is now MORE uniform, not less.
+
+So, decisively (rule v, third time): **the wanted 17 is unreachable through the
+HSCROL value and unreachable through the display start.** Neither is the lever.
+
+That points at the FETCH, and the test's own word for what it measures says so —
+"stride", which is exact (rule f), not a display edge but how far the row's scan
+address advanced. What must differ by one between the early and late cases is
+the NUMBER OF BYTES the row fetches, which is `rebuild_line`'s map and byte
+count, not `antic_pf_at`'s window. `antic_pfstoptiming` is consistent with that
+reading: its HSCROL cases want 21 and 20, the opposite polarity to
+`antic_pfstarttiming`'s 16 and 17 (rule i), which is what a fetch COUNT does
+when a window is widened from one side rather than the other.
+
+That is where the next attempt goes.
 
 `antic_pfstoptiming` fails on its own HSCROL early case (19 where 16 is wanted)
 and `antic_hscrolbug` on "Unstopped PF DMA", so all three are almost certainly
