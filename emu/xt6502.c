@@ -506,13 +506,13 @@ void xt6502_step(xt6502 *c)
     case 0xC8: rd(c, c->pc); c->y++; setnz(c, c->y); break;
     case 0xCA: rd(c, c->pc); c->x--; setnz(c, c->x); break;
     case 0x88: rd(c, c->pc); c->y--; setnz(c, c->y); break;
-    case 0x18: rd(c, c->pc); c->p &= ~XTF_C; break;
+    case 0x18: rd(c, c->pc); c->p &= (uint8_t)~XTF_C; break;
     case 0x38: rd(c, c->pc); c->p |=  XTF_C; break;
-    case 0x58: rd(c, c->pc); c->p &= ~XTF_I; break;
+    case 0x58: rd(c, c->pc); c->p &= (uint8_t)~XTF_I; break;
     case 0x78: rd(c, c->pc); c->p |=  XTF_I; break;
-    case 0xD8: rd(c, c->pc); c->p &= ~XTF_D; break;
+    case 0xD8: rd(c, c->pc); c->p &= (uint8_t)~XTF_D; break;
     case 0xF8: rd(c, c->pc); c->p |=  XTF_D; break;
-    case 0xB8: rd(c, c->pc); c->p &= ~XTF_V; break;
+    case 0xB8: rd(c, c->pc); c->p &= (uint8_t)~XTF_V; break;
     case 0xEA: rd(c, c->pc); break;                          /* NOP */
 
     /* ---- stack ---- */

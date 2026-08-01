@@ -478,7 +478,10 @@ void pokey_timer_write(pokey_timer *p, uint16_t addr, uint8_t val)
          * already standing, which is how a handler acknowledges. */
         p->irqen = val;
         p->irqst = (uint8_t)(p->irqst | ~val);
-        if ((uint8_t)~p->irqst == 0) { p->irq = 0; p->irq_arm = 0; }
+        /* nothing pending any more.  Written as a comparison against $FF
+         * rather than `(uint8_t)~irqst == 0`: that form is correct but reads as
+         * a bug, and gcc warns about it on the cross-build. */
+        if (p->irqst == 0xFF) { p->irq = 0; p->irq_arm = 0; }
         /* Enabling SEROC while the level stands fires immediately — and it must
          * be decided AFTER the clear above, or the clear undoes it. */
         if ((val & POKEY_IRQ_SEROC) && p->seroc) p->irq = 1;

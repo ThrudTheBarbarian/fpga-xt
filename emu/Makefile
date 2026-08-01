@@ -2,8 +2,9 @@
 #
 # Part of the software-emulation investigation
 # (docs/Design/software-emulation-investigation.md).  Builds natively for the
-# dev machine; the same sources are meant to cross-compile for the A9 later,
-# so nothing here may depend on the host being 64-bit or little-endian.
+# dev machine; the same sources must cross-compile for the A9, so nothing here
+# may depend on the host being 64-bit or little-endian.  That is not a hope —
+# `make arm` checks it, and the core builds warning-free for a Cortex-A9.
 #
 #   make            build the gates
 #   make harte      Tom Harte, all 256 opcodes, exact bus traces
@@ -15,6 +16,8 @@
 #   make gtia       GTIA collisions + registers
 #   make sys       whole-machine wiring: who drives the bus, when a latch samples
 #   make bench     what a frame COSTS, and what that projects to on one A9
+#   make arm       cross-compile the core for the A9, warning-free (needs
+#                  arm-none-eabi-gcc; skips itself with a note if absent)
 #   make acid       run the real ACID800 .xex suite (work in progress)
 #   make test       all of them — THE gate before ANTIC work counts as progress
 #   make clean
@@ -29,7 +32,7 @@ CORE := xt6502.c
 # PREVIOUS run's score, which reads exactly like a change that did nothing
 HDRS := xt6502.h antic.h antic_dma.h gtia.h pokey_rand.h pokey_timer.h pia.h system.h acid_dmatable.h
 
-.PHONY: all test harte klaus irq pokey ptimer dma antic gtia pia sys acid bench clean
+.PHONY: all test harte klaus irq pokey ptimer dma antic gtia pia sys acid bench arm clean
 all: $(BUILD)/harte $(BUILD)/klaus $(BUILD)/irq $(BUILD)/pokey $(BUILD)/ptimer $(BUILD)/dma $(BUILD)/antic $(BUILD)/gtia $(BUILD)/pia $(BUILD)/sys
 
 $(BUILD):
@@ -105,10 +108,23 @@ sys: $(BUILD)/sys
 bench: $(BUILD)/bench
 	@./$(BUILD)/bench
 
+# The A9 cross-build.  The claim in the header was carried a long time without
+# anyone testing it; this is the test.  -Wconversion is the one that matters,
+# because it catches the width assumptions a 64-bit host hides.
+ARMCC    := arm-none-eabi-gcc
+ARMFLAGS := -std=c11 -O2 -mcpu=cortex-a9 -Wall -Wextra -Wconversion \
+            -Wno-sign-conversion -Werror
+arm:
+	@command -v $(ARMCC) >/dev/null 2>&1 || \
+	  { echo "arm: $(ARMCC) not installed — skipping the A9 cross-build"; exit 0; }; \
+	 $(ARMCC) $(ARMFLAGS) -I. -c $(SYS) && \
+	 echo "arm: core cross-compiles for Cortex-A9, warning-free ($$($(ARMCC) -dumpversion))"; \
+	 rm -f $(notdir $(SYS:.c=.o))
+
 acid: $(BUILD)/acid
 	@./$(BUILD)/acid
 
-test: harte klaus irq pokey ptimer dma antic gtia pia sys
+test: harte klaus irq pokey ptimer dma antic gtia pia sys arm
 
 clean:
 	rm -rf $(BUILD)

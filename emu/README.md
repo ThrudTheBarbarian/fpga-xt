@@ -46,16 +46,51 @@ literally the same tests.
   `RANDOM` as a one-cycle-resolution clock, so this is their prerequisite.
 * **ANTIC DMA schedule: 50/50** against the table ACID800's `antic_dmapattern`
   carries as data — every mode 2–15 at narrow and normal width, on a row's first
-  scanline and its later ones.
-* **ANTIC DMA schedule: 50/50**, timing core, display-list execution and line
-  buffer all in; **GTIA collisions** in.
-* **The real ACID800 binaries run**: `make acid` → 42 pass / 12 fail / 4 jammed
-  / 1 looping / 4 skipped, of 63. Recorded on the conformance dashboard beside
-  the fabric sweeps — `python3 docs/a800/from-emu.py --note "..."`. Not directly comparable to the fabric's 33/63:
-  that runs on hardware with a full POKEY and an OS ROM, whereas POKEY here is
-  the RANDOM LFSR, the timers and the serial OUTPUT path only, and the five
-  `mod_*` are menu-loaded modules that cannot run standalone at all. **Every
-  `cpu_*` test passes.**
+  scanline and its later ones. Note what that table does NOT cover: it has no
+  WIDE rows at all, so wide geometry is pinned solely by `antic_virtdma`.
+* Timing core, display-list execution and the line buffer are in; **GTIA
+  collisions** in.
+* **The real ACID800 binaries run**: `make acid` → **48 pass** / 6 fail / 3
+  jammed / 2 looping / 4 skipped, of 63, against **32** for the fabric at
+  `sallyrst $06`. Recorded on the conformance dashboard beside the fabric sweeps
+  — `python3 docs/a800/from-emu.py --note "..."`. **Every `cpu_*` test passes.**
+  Five of the non-passing are `mod_*` modules that print "Press a key..." and
+  spin: their assertion is a pair of human eyes and they can never go green
+  headlessly. They are left COUNTED rather than reclassified, because excluding
+  them would move the score without anything working.
+* **Cost: `make bench` → 808 frames/s, 13.5x realtime, 41 ns per machine
+  cycle**, on a deliberately expensive workload (mode 2 with playfield DMA, P/M
+  DMA and four missiles). Projected onto one A9 at the measured 6–7.5x
+  host:A9 ratio that is 108–135 fps, or 1.8–2.2x realtime — it fits. The A9
+  figure is a projection, not a run there, and excludes POKEY audio rendering
+  and video scan-out.
+
+* **It cross-compiles for the A9.** The Makefile carried "the same sources are
+  meant to cross-compile for the A9 later, so nothing here may depend on the
+  host being 64-bit or little-endian" for a long time without anyone testing it.
+  `make arm` is now that test and runs as part of `make test`: the eight core
+  files build for a Cortex-A9 under `-Wconversion -Werror`, warning-free, in
+  43.5 KB of ARM text. Two real warnings had to be fixed to get there — four
+  flag clears where `~FLAG` promoted to `int`, and an `(uint8_t)~irqst == 0`
+  that is correct but reads as a bug and warns on gcc.
+
+## How to read this file
+
+It is a **notebook in chronological order**, not a specification. Sections are
+appended as work happens, so a later section may supersede an earlier one, and
+the headings carry the verdict:
+
+* **SOLVED / CLOSED / Resolved** — established, with the test that establishes it.
+* **Open / PARKED** — still unknown; PARKED means the cheap avenues are
+  exhausted and what has been ruled out is written down.
+* **SUPERSEDED** — kept because the reasoning or the disproof is still worth
+  reading, but a later section has the current answer.
+* **Disproved** — a hypothesis that was tested and failed. These are as valuable
+  as the confirmed ones: most of them look right, and several cost an iteration
+  each to kill.
+
+The rules distilled from all of it live in the loop prompt rather than here;
+what this file holds is the evidence.
 
 ### CLOSED: antic_wsync's absolute cycle alignment
 
@@ -133,7 +168,7 @@ without first explaining how `cpu_timing` can still pass.
 The stack-page derails therefore remain unexplained and are still worth chasing —
 just not from this direction.
 
-## The next structural gap: nothing renders pixels
+## SUPERSEDED — the next structural gap: nothing renders pixels
 
 `gtia.c` is complete enough to be unit-gated — collisions come off the emitted
 pixel stream one colour clock at a time, and `gtia_clock(g, hpos, pf,
@@ -232,7 +267,7 @@ So the rule is nearly right and something about the bottom edge is wrong. Worth
 resolving from `antic_vscroldli`'s side first — find out why a list that parks on
 a JVB cares about the cutoff at all — rather than by tuning the window.
 
-## Open: gtia_pmresize, and a third WSYNC-anchored test
+## SUPERSEDED — gtia_pmresize, and a third WSYNC-anchored test
 
 `gtia_pmresize` sets player 0 at HPOS `$48` with GRAFP0 = `$aa`, narrows SIZEP0
 mid-object, and reads back which of eight probes — players at `$61..$63`,
@@ -260,7 +295,7 @@ test anchored to the parked absolute-alignment question, alongside `antic_wsync`
 cycle, so alignment is probably not the whole story — but it should be settled
 before the divider is tuned to fit.
 
-## Blocked on an OS ROM: antic_virtdma
+## SUPERSEDED — Blocked on an OS ROM: antic_virtdma
 
 `antic_virtdma` displays a mode 7 screen and reads back where the playfield
 reaches by colliding four missiles parked at the right border (`$da`..`$dd`).
@@ -287,7 +322,7 @@ be counted against the pixel decode. Note the same trap applies to any other
 character-mode test that does not set CHBASE itself — `antic_charcontrol` passes
 precisely because it supplies its own character set at `$2c00`.
 
-## Resolved: the WSYNC release is cycle 103, and refresh is why it was unmeasurable
+## SUPERSEDED — the WSYNC release is cycle 103 (it is 104)
 
 This was claimed twice in this file before it was right — first that the release
 was "two cycles late", then that 105 was correct. The sequence is worth keeping,
@@ -364,7 +399,7 @@ It fell out with the WSYNC release, and needed no DMA change at all: the burst
 was in the right place, the CPU reading it was one cycle early. See "CLOSED: the
 recurring ONE CYCLE early".
 
-## Open: POKEY divider phase — the free-running tap is the wrong SHAPE
+## SUPERSEDED — POKEY divider phase: the free-running tap is the wrong SHAPE
 
 `pokey_inittiming` sets AUDF1 = 0 and measures how long after the SKCTL write
 that leaves init the first timer-1 interrupt arrives. Its own comments give the
@@ -493,7 +528,7 @@ The 28-cycle offset that looked so promising — it is exactly one 64 kHz tick, 
 still be right for `pokey_inittiming`, which remains open.
 
 
-## PARTLY CLOSED: pokey_inittiming — the 64 kHz tap LEADS the 15 kHz one by two
+## SUPERSEDED — pokey_inittiming: the 64 kHz tap LEADS the 15 kHz one by two
 
 The two base clocks are now ONE chain: a tick for period P happens when
 `chain % P == 0`, and the SKCTL release restarts the chain at 28. Both of the
@@ -519,7 +554,7 @@ cycles refresh takes relative to the release rather than about the divider at
 all. Note the same test's odd-offset variant accepts `$1d-$1e`, i.e. a
 two-cycle spread, so the even case is the sharper of the pair.
 
-## Open: the POKEY serial cluster needs an INPUT path
+## SUPERSEDED — the POKEY serial cluster needs an INPUT path
 
 Output is largely done — `pokey_serclock`, `pokey_sertiming` and `pokey_seroc`
 pass. What is left in this cluster mostly needs the RECEIVE side, which is not
@@ -670,7 +705,7 @@ zero, so it fires on the very first tick after release — which is exactly the
 sub-case 3 failure. 40 -> 41.
 
 
-## Open: pokey_inittiming's two 15 kHz measurements disagree by one sled step
+## SUPERSEDED — pokey_inittiming's two 15 kHz measurements disagree
 
 `pokey_inittiming`'s 64 kHz cycle counts now pass. Its own arithmetic is what
 gives the answer: it states 86-87 machine cycles to the first **15 kHz** tick
@@ -853,7 +888,7 @@ third side: it glitches HSCROL so the stop is MISSED entirely and fetching runs
 on into horizontal blank, which only a cycle comparison can express.
 
 
-## Open: gtia_pmresize reads ZERO player-to-player collisions
+## SUPERSEDED — gtia_pmresize reads ZERO player-to-player collisions
 
 `gtia_pmresize` fails on its very first case — `d0..d7 = 70 00 80 E0 48 F0 00 00`,
 so index 0, expected `$80`, got `$00`.
