@@ -874,9 +874,36 @@ needs are already present and are NOT the gap:
   NOT reset its phase, which is the behaviour `pmresize`'s own "alt" cases exist
   to check.
 
-A 4x player at HPOS `$48` with `GRAFP0 = $AA` should span `$48`-`$67` — exactly
-the ruler's range — so the first thing to establish is whether player 0 is being
-drawn at 4x at all. `ACID_COLPROBE=1` prints every collision as it registers;
-compare against the ruler positions. Note the test runs with the screen OFF
-(`_screenOff`, so DMACTL = 0) and waits for `VCOUNT = 8`, i.e. it is inside the
-visible region with no playfield — so nothing here depends on ANTIC emitting.
+**The diagnosis is now exact, and nothing is missing — it is one machine cycle
+of write ordering.** Correcting an earlier misreading first: `d3` is the GOT
+value and `d2` the WANTED one, so this is `$E0` against `$80`, not `$00` against
+`$80`. `$E0` means player 0 collided with players 1, 2 AND 3; `$80` means it
+should have hit only player 1.
+
+Everything up to that point works, and `ACID_COLPROBE=1` now shows it end to end:
+
+```
+COLLIDE sl 17 cc $61 ... ppl 21
+COLLIDE sl 17 cc $62 ... ppl 61
+COLLIDE sl 17 cc $63 ... ppl e1
+PLREAD $D00D sl 18 cyc  9 -> $01      <- P1PL, read back correctly
+PLREAD $D00E sl 18 cyc 20 -> $01
+PLREAD $D00F sl 18 cyc 33 -> $01
+PLREAD $D008 sl 18 cyc 48 -> $00      <- M0PL..M3PL, correctly clear
+```
+
+The player is drawn, the collisions register, and the registers read back. The
+row is one colour clock too WIDE at the end.
+
+`GRAFP0 = $AA` at 4x from `$48` puts its last lit bit (bit 1) across
+`$60`-`$63`, which is machine cycles 45 and 46. The test resizes to 1x with
+`sty sizep0` annotated `42, 43, 44*, 45, 46++`, so the write lands on cycle
+**46** — and cycle 46 is where colour clocks `$62` and `$63` are emitted. We
+render a cycle's two colour clocks BEFORE servicing the CPU's access for it, so
+those two clocks are still drawn at 4x and collide; hardware evidently applies
+the write first, leaving them dark.
+
+So the question is the ORDER of `render_cycle()` against the CPU access within a
+machine cycle, not anything about players, sizes or collisions. That ordering is
+load-bearing elsewhere — `gtia_pmretrigger` pins a mid-line HPOS write against
+the beam — so it wants changing deliberately and A/B-ing, not flipping.

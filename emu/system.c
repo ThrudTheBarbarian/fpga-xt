@@ -172,6 +172,9 @@ static uint8_t io_read(atari *s, uint16_t a)
 {
     switch (a & 0xFF00) {
     case 0xD000:
+        if (s->col_probe && (a & 0x1F) >= 0x08 && (a & 0x1F) <= 0x0F)
+            fprintf(stderr, "  PLREAD $%04X sl %3d cyc %3d -> $%02X\n",
+                    a, s->an.scanline, s->an.cycle, gtia_read(&s->gt, a));
         if (s->col_probe && ((a & 0x1F) == 0x04 || (a & 0x1F) == 0x0C))
             fprintf(stderr, "  SAMPLE sl %3d cyc %3d ppf %x%x%x%x mpf %x%x%x%x\n",
                     s->an.scanline, s->an.cycle,
