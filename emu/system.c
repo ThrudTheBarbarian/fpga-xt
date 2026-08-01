@@ -45,8 +45,16 @@ static void render_cycle(atari *s, int cyc)
     s->gt.vblank = (s->an.scanline < ANTIC_DISPLAY_TOP ||
                     s->an.scanline >= ANTIC_DISPLAY_BOTTOM) && !emitting;
     for (int h = 0; h < 2; h++) {
-        int cc = cyc * 2 + h;
-        if (cc >= GTIA_CLOCKS) break;
+        /* ANTIC's cycle 0 is NOT colour clock 0 — GTIA's counter leads it by six
+         * clocks.  gtia_pmretrigger pins this: its second case commits an HPOS
+         * write on scanline cycle 29 and requires the player to have ALREADY
+         * been drawn at $40, so cc(29) must be just past $40 = 64, i.e.
+         * 2*29 + 6.  With no offset the write lands at 58 and the first draw
+         * never happens.
+         *
+         * Playfield alignment is untouched: antic_pf_at's window already starts
+         * at 2*(pf_nominal + 3) = 2*pf_nominal + 6, an absolute colour clock. */
+        int cc = (cyc * 2 + h + GTIA_CC_ORIGIN) % GTIA_CLOCKS;
         int hires = 0, pf;
         /* PRIOR bits 7-6 select the GTIA modes, which reinterpret ANTIC mode F's
          * hi-res bits as nibbles picking a colour register:
@@ -133,8 +141,6 @@ static uint8_t io_read(atari *s, uint16_t a)
                     s->an.scanline, s->an.cycle,
                     s->gt.ppf[0], s->gt.ppf[1], s->gt.ppf[2], s->gt.ppf[3],
                     s->gt.mpf[0], s->gt.mpf[1], s->gt.mpf[2], s->gt.mpf[3]);
-        if (s->col_probe && (a & 0x1F) == 0x1E)
-            fprintf(stderr, "  HITCLR sl %3d\n", s->an.scanline);
         return gtia_read(&s->gt, a);
     case 0xD200:
         if ((a & 0x0F) == 0x0A) {
@@ -151,8 +157,13 @@ static void io_write(atari *s, uint16_t a, uint8_t v)
 {
     switch (a & 0xFF00) {
     case 0xD000:
+        if (s->col_probe && (a & 0x1F) == 0x00)
+            fprintf(stderr, "  HPOSP0 <- $%02X  sl %3d cyc %3d\n", v, s->an.scanline, s->an.cycle);
         if (s->col_probe && (a & 0x1F) == 0x1E)
             fprintf(stderr, "  HITCLR  sl %3d cyc %3d\n", s->an.scanline, s->an.cycle);
+        if (s->col_probe && (a & 0x1F) < 0x08)
+            fprintf(stderr, "  HPOS%d <- $%02X sl %3d cyc %3d\n",
+                    a & 0x07, v, s->an.scanline, s->an.cycle);
         gtia_write(&s->gt, a, v);
         break;
     case 0xD200:

@@ -19,6 +19,8 @@
 /* A scanline is 228 colour clocks; the visible region runs $22..$DD
  * (gtia_collision names both edges). */
 #define GTIA_CLOCKS      228
+/* GTIA's colour-clock counter leads ANTIC's machine-cycle counter by this much */
+#define GTIA_CC_ORIGIN     6
 #define GTIA_VISIBLE_L  0x22
 #define GTIA_VISIBLE_R  0xDD
 
