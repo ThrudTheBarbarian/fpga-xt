@@ -9,6 +9,7 @@
 #include "../antic.h"
 
 static uint8_t nofetch(void *ctx, uint16_t a) { (void)ctx; (void)a; return 0; }
+static uint8_t mem_fetch(void *ctx, uint16_t a) { return ((const uint8_t *)ctx)[a]; }
 
 static int fails;
 static void expect(const char *what, long got, long want)
@@ -90,6 +91,57 @@ int main(void)
     antic_write(&a, 0xD40F, 0);           /* NMIRES */
     expect("NMIRES clears status", antic_read(&a, 0xD40F) & ANTIC_NMI_VBI, 0);
     expect("NMIRES does NOT retract the request", a.nmi, 1);
+
+    /* ---- the two address counters ----------------------------------------
+     * Both are narrower than 16 bits and both wrap MID-INSTRUCTION.  Written as
+     * plain 16-bit adders they pass casual testing and fail antic_addresswrap
+     * immediately, which is why they are checked explicitly. */
+    expect("DL counter wraps within its 1KB page",
+           antic_dl_next(0x27FF), 0x2400);
+    expect("DL counter otherwise increments",
+           antic_dl_next(0x27FB), 0x27FC);
+    expect("playfield counter wraps at 4KB",
+           antic_pf_next(0x2FFF), 0x2000);
+    expect("playfield counter otherwise increments",
+           antic_pf_next(0x2FF0), 0x2FF1);
+
+    /* ---- display-list decode --------------------------------------------
+     * The list antic_addresswrap uses: an LMS whose operand straddles the 1 KB
+     * boundary, so the high byte comes from AFTER the wrap. */
+    {
+        static uint8_t mem[65536];
+        mem[0x27FB] = 0x4F;          /* LMS + mode F */
+        mem[0x27FC] = 0xF0;          /* operand low  */
+        mem[0x27FD] = 0x3F;          /* operand high */
+        mem[0x2400] = 0x2F;          /* what a WRAPPED fetch would read */
+
+        antic b;
+        antic_init(&b, mem_fetch, mem, ANTIC_LINES_NTSC);
+        b.dl_addr = 0x27FB;
+        antic_dl_exec(&b);
+        expect("LMS mode", b.dl_insn & 0x0F, 0x0F);
+        expect("LMS operand assembled", b.pf_addr, 0x3FF0);
+        expect("mode F row height", b.row_height, 1);
+
+        /* now the straddling case: operand high byte lands after the wrap */
+        mem[0x27FE] = 0x4F;
+        mem[0x27FF] = 0xF0;
+        antic_init(&b, mem_fetch, mem, ANTIC_LINES_NTSC);
+        b.dl_addr = 0x27FE;
+        antic_dl_exec(&b);
+        expect("LMS operand straddling the 1KB wrap", b.pf_addr, 0x2FF0);
+    }
+
+    /* blank-line instruction: bits 6-4 plus one */
+    {
+        static uint8_t mem2[65536];
+        mem2[0x2000] = 0x70;         /* 8 blank lines */
+        antic c;
+        antic_init(&c, mem_fetch, mem2, ANTIC_LINES_NTSC);
+        c.dl_addr = 0x2000;
+        antic_dl_exec(&c);
+        expect("blank-line count", c.row_height, 8);
+    }
 
     printf("antic: %s\n", fails ? "FAIL" : "all timing-core tests pass");
     return fails ? 1 : 0;

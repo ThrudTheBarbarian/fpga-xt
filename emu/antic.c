@@ -4,6 +4,64 @@
 #include "antic.h"
 #include <string.h>
 
+/* Scanlines per row.  Mode 3 is ten rather than eight — its last two carry the
+ * descenders for characters $60-$7F (antic_charcontrol). */
+const uint8_t antic_row_height[16] = {
+    [2] = 8,  [3] = 10, [4] = 8,  [5] = 16,
+    [6] = 8,  [7] = 16, [8] = 8,  [9] = 4,
+    [10] = 4, [11] = 2, [12] = 1, [13] = 2,
+    [14] = 1, [15] = 1,
+};
+
+/* Fetch a display-list byte and advance the DL counter within its 1 KB page. */
+static uint8_t dl_fetch(antic *a)
+{
+    uint8_t v = a->fetch ? a->fetch(a->ctx, a->dl_addr) : 0xFF;
+    a->dl_addr = antic_dl_next(a->dl_addr);
+    return v;
+}
+
+void antic_dl_exec(antic *a)
+{
+    uint8_t insn = dl_fetch(a);
+    a->dl_insn   = insn;
+    a->row_line  = 0;
+
+    int mode = insn & 0x0F;
+
+    if (mode == 0x01) {                       /* jump */
+        uint8_t lo = dl_fetch(a);
+        uint8_t hi = dl_fetch(a);
+        a->dl_addr = (uint16_t)(lo | (hi << 8));
+        a->dl_done = (insn & 0x40) != 0;      /* JVB: wait for vertical blank */
+        a->row_height = 1;
+        return;
+    }
+
+    if (insn & 0x40) {                        /* LMS: reload the playfield scan
+                                               * address.  The operand fetches
+                                               * go through the same 1 KB-wrapping
+                                               * counter, which is what
+                                               * antic_addresswrap exploits. */
+        uint8_t lo = dl_fetch(a);
+        uint8_t hi = dl_fetch(a);
+        a->pf_addr = (uint16_t)(lo | (hi << 8));
+    }
+
+    if (mode == 0x00) {                       /* blank lines: bits 6-4 + 1 */
+        a->row_height = ((insn >> 4) & 0x07) + 1;
+        return;
+    }
+
+    a->row_height = antic_row_height[mode];
+
+    /* VSCROL shortens the first row of a scrolled region and lengthens the
+     * last.  Sampled live (by cycle 3), never precomputed. */
+    if (insn & 0x20)
+        a->row_height -= (a->vscrol & 0x0F);
+    if (a->row_height < 1) a->row_height = 1;
+}
+
 void antic_init(antic *a, antic_fetch_fn fetch, void *ctx, int lines)
 {
     memset(a, 0, sizeof *a);
