@@ -911,7 +911,39 @@ render a cycle's two colour clocks BEFORE servicing the CPU's access for it, so
 those two clocks are still drawn at 4x and collide; hardware evidently applies
 the write first, leaving them dark.
 
-So the question is the ORDER of `render_cycle()` against the CPU access within a
-machine cycle, not anything about players, sizes or collisions. That ordering is
-load-bearing elsewhere — `gtia_pmretrigger` pins a mid-line HPOS write against
-the beam — so it wants changing deliberately and A/B-ing, not flipping.
+That ordering change was made and kept — a CPU cycle's colour clocks are now
+rendered after its bus access — but `gtia_pmretrigger` is what cashed it and
+`pmresize` did not move.
+
+### Two eliminations on the remaining colour clock
+
+`ACID_PFPROBE` shows player 0's lit clocks on the measured line, and the last lit
+bit is plainly still four wide where it should end at `$61`:
+
+```
+$48 $49 $4A $4B   $50 $51 $52 $53   $58 $59 $5A $5B   $60 $61 $62 $63
+```
+
+The whole line runs one cycle late against its annotations: the resizing
+`sty sizep0` starts on scanline cycle **43** where the listing says **42**, and
+every instruction after the `inc wsync` measures one later than annotated. That
+is the WSYNC RMW re-arm doing its job — `inc wsync` writes `$D40A` twice, so the
+release is 105 rather than 104.
+
+**Tried: a back-to-back RMW second write costing nothing.** If the two writes
+land on consecutive cycles, do not charge the extra. 42 -> **39**. The re-arm
+delay is real even for the RMW's own second write, which is the case it exists
+for — so the release genuinely is 105 here and the annotation genuinely
+disagrees.
+
+**Tried: `REFRESH_FIRST` 24 instead of 25.** This test's annotations mark steals
+at 24, 28, 32, 36, 40, 44 — a refresh phase one earlier than ours, which would
+put the `sty`'s write on cycle 46 rather than 47 even with the release at 105.
+42 -> **41**, and `pmresize` is unmoved at `$E0` regardless.
+
+So the remaining colour clock is NOT simply where the write lands, and both
+obvious cycle-level levers are out. `REFRESH_FIRST` is left overridable for
+future sweeps. What has not been checked is what a mid-BIT size change does to
+the width divider: `size_scale` is read live, so shrinking mid-bit ends that bit
+early, and the test's "alt" cases exist precisely because the phase is NOT reset.
+Whether the CURRENT bit should finish at its old width is the open question.
