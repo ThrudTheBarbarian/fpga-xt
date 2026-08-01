@@ -188,7 +188,14 @@ void antic_dma_line_map(uint8_t mode, antic_width width, int first_line,
         name_slot(name_at, start, 0, names);
         fi = 1;
         int left = n - 1;                         /* the prefetch was one of them */
-        for (int p = nom; left > 0 && p < ANTIC_LINE_CYCLES; p += 4) {
+        /* ...but the real bound is the STOP CYCLE, not the count.  Each
+         * character takes a 4-cycle grid point, so the stream runs to
+         * nom + 4*chars; when DMACTL narrows mid-line the START may already be
+         * committed while the STOP moves, and the row then fetches a count that
+         * belongs to NEITHER width.  That hybrid is what antic_pfstarttiming
+         * and antic_pfstoptiming measure with their "late" writes. */
+        int pstop = nom + 4 * chars;
+        for (int p = nom; left > 0 && p < pstop && p < ANTIC_LINE_CYCLES; p += 4) {
             int c = is_refresh(p) ? p + 1 : p;
             for (int k = 0; k < 2 && left > 0 && c + k < ANTIC_LINE_CYCLES;
                  k++, left--, fi++) {

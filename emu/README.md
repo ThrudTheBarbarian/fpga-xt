@@ -50,7 +50,8 @@ literally the same tests.
 * **ANTIC DMA schedule: 50/50**, timing core, display-list execution and line
   buffer all in; **GTIA collisions** in.
 * **The real ACID800 binaries run**: `make acid` → 41 pass / 13 fail / 4 jammed
-  / 1 looping / 4 skipped, of 63. Not directly comparable to the fabric's 33/63:
+  / 1 looping / 4 skipped, of 63. Recorded on the conformance dashboard beside
+  the fabric sweeps — `python3 docs/a800/from-emu.py --note "..."`. Not directly comparable to the fabric's 33/63:
   that runs on hardware with a full POKEY and an OS ROM, whereas POKEY here is
   the RANDOM LFSR, the timers and the serial OUTPUT path only, and the five
   `mod_*` are menu-loaded modules that cannot run standalone at all. **Every
@@ -701,7 +702,7 @@ of the start of its cycle (which is what `RANDOM` requires). Worth checking
 whether IRQST should be sampled the other way round from RANDOM.
 
 
-## Open: antic_pfstarttiming / pfstoptiming — now a STRIDE, not a blank
+## Open: antic_pfstarttiming / pfstoptiming — the START commits before the STOP
 
 Both report **"Character mode DMACTL early test failed: stride=%d"** with
 `d1 = 12`, and 12 is the `add #12` with nothing added: `(p0pf << 2) | p1pf` came
@@ -742,16 +743,39 @@ row AFTER it — and because that row has no LMS, what it displays depends entir
 on how far the one-scanline row advanced `pf_addr`. That is the "stride" the
 test's message names.
 
-**What is left is a genuine model limitation.** `d1` is now `$14` = 20, against a
-wanted 16: the stride is right for NORMAL width and the test wants NARROW. It
-writes DMACTL at scanline cycle 16, before the playfield DMA window opens at ~25,
-so the hardware fetches 16 bytes; we fetch the whole row at `line_start`, cycle 0,
-and never see the write. The companion assertion wants **18** from a DMACTL write
-*during* the fetch, so a "sample the width when the window opens" patch is not
-enough either — closing these needs the fetch made **progressive**, one byte at
-the cycle the DMA schedule actually assigns it. `antic_hscrolbug` is likely the
-same shape.
+The fetch is now **progressive** — one byte at the cycle the DMA schedule assigns
+it — and DMACTL/HSCROL writes rebuild the rest of the line, so the **first**
+assertion of each test passes: a write at scanline cycle 16, before the window
+opens, narrows the whole row and the stride is 16.
 
-That is a real restructuring of `line_start` and it puts `antic_linebuffering`,
-`antic_charcontrol`, `antic_addresswrap` and `antic_dmapattern` at risk, so it
-wants doing deliberately rather than as a quick patch.
+What is left is the **"late" write**, one cycle later, which wants **18**:
+
+| test | got | want |
+|---|---|---|
+| `antic_pfstarttiming` | 16 | 18 |
+| `antic_pfstoptiming` | 17 | 18 |
+
+18 belongs to neither width — normal is 20 and narrow is 16 — so the row is
+fetching under a **hybrid**: the START is already committed at the old (normal)
+position while the STOP moves to the new (narrow) one. That is the reading the
+arithmetic supports. Mode 6 on a row's first line puts a name/glyph pair on each
+4-cycle grid point, so the stream runs from `nom` to `nom + 4*chars`:
+
+* normal — grid from 21, stop 101, 20 names
+* narrow — grid from 29, stop 93, 16 names
+* **start normal, stop narrow** — grid from 21 to 93, ~18-19 names
+
+which lands on the wanted value where neither pure width does. The write that
+still moves the start lands at cycle 16 and the one that does not at 17, and the
+normal stream's prefetch is at cycle 18 — so the start is committed **one to two
+cycles before the first fetch**, and a write completing at the end of 17 is too
+late for it but still in time for the stop.
+
+To finish: `rebuild_line()` has to keep the OLD start geometry when the stream
+has already committed (`from >= old_start`) while taking the STOP from the live
+registers. The pair loop is now bounded by a stop CYCLE rather than by its count,
+which is the prerequisite; what it still lacks is a way to say "this start, that
+stop" in one call. `antic_hscrolbug` ("Unstopped PF DMA test failed") is the same
+mechanism seen from the other side — it glitches HSCROL so the stop is MISSED
+entirely and fetching runs on into horizontal blank, which only a cycle
+comparison can do.
