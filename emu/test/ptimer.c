@@ -287,6 +287,31 @@ int main(void)
         expect("both halves of a linked pair interrupt", a > 0 && b > 0, 1);
     }
 
+    /* ---- the STATUS BIT and the /IRQ LINE are not the same instant ---------
+     * pokey_inittiming measures one underflow BOTH ways: a NOP sled, which
+     * times when the CPU acknowledges, and a pair of IRQST reads one machine
+     * cycle apart, which times when the flag becomes readable.  No single tap
+     * phase satisfies both — the sled wants the underflow two cycles later than
+     * the bracket does — so IRQST is set at the underflow and the line to the
+     * CPU follows one cycle behind.
+     *
+     * The property to gate is the SEPARATION, not either number on its own:
+     * there must be at least one cycle in which the flag reads pending and the
+     * CPU has not been asked yet. */
+    {
+        setup(&p, 0x00, POKEY_IRQ_TIMER1);           /* 64 kHz base, timer 1 */
+        pokey_timer_write(&p, 0xD200, 0x02);         /* AUDF1 = 2 */
+        long flag = -1, line = -1;
+        for (long i = 1; i <= 400; i++) {
+            pokey_timer_tick(&p);
+            if (flag < 0 && !(pokey_timer_irqst(&p) & POKEY_IRQ_TIMER1)) flag = i;
+            if (line < 0 && p.irq) line = i;
+            if (flag > 0 && line > 0) break;
+        }
+        expect("IRQST precedes the /IRQ line", flag > 0 && line > flag, 1);
+        expect("...by exactly the modelled lag", line - flag, 1);
+    }
+
     printf("ptimer: %s\n", fails ? "FAIL" : "all POKEY timer tests pass");
     return fails ? 1 : 0;
 }

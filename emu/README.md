@@ -1380,3 +1380,59 @@ entering init does and not a measurement of it. It now checks `$4A` — the
 ordinary next step of the sequence — then the fill beginning one cycle later.
 Assertions are the authority; a gate that encodes an inference is only as good
 as the inference.
+
+## SOLVED: IRQST and the /IRQ line are one cycle apart
+
+`pokey_inittiming` measures the SAME underflow twice, and that is the whole
+trick of the test. Its first half runs a NOP sled and records the return address
+the IRQ handler pushed — which times when the CPU **acknowledged** the
+interrupt. Its second half brackets the event between two `lda irqst` reads one
+machine cycle apart — which times when the **flag became readable**:
+
+```
+    sty skctl / stx irqen   ;release, then enable
+    jsr delay36 / jsr delay24 / nop / nop / nop
+    lda irqst : and #1 : _ASSERTA $01   ;must NOT be pending  (release+82)
+        ...same sequence with one more cycle of padding...
+    lda irqst : and #1 : _ASSERTA $00   ;must     be pending  (release+83)
+```
+
+Two reads, one cycle apart, opposite polarity: the edge is pinned to a single
+machine cycle. Sweeping the 15 kHz tap phase against BOTH halves gives
+
+| `BASE_15K_LEAD` | result |
+|---|---|
+| 0, 1 | "15KHz IRQ fired too late" — the bracket |
+| 2 | "Incorrect 15KHz cycle count (odd)" — the sled |
+| 3, 4 | "Incorrect 15KHz cycle count (even)" — the sled |
+
+which is rule (q) in its purest form: no value of one constant satisfies both,
+so the shape is wrong. The sled wants the underflow two cycles LATER than the
+bracket does, and the two observations differ in exactly one respect — one
+watches the status bit, the other watches the interrupt line. **They are not the
+same instant.** IRQST is set at the underflow; the line to the CPU follows
+`IRQ_LINE_LAG` cycles behind.
+
+One cycle of line lag is what fits, together with a tap lead of two — and the
+second number is the corroboration rather than a second free parameter, because
+the 64 kHz tap already led by two and the 15 kHz one led by ZERO. That split
+existed only to absorb this error. With the lag modelled, **both taps lead by
+the same two** and `BASE_64K_LEAD`/`BASE_15K_LEAD` collapse into a single
+`BASE_LEAD` — the model got smaller, not larger.
+
+`pokey_irqtiming` passed at the same time, unprompted.
+
+Gated in `test/ptimer.c` on the SEPARATION rather than on either number alone:
+there must be at least one cycle in which the flag reads pending and the CPU has
+not been asked yet.
+
+Two probes earned their keep and are worth keeping in mind:
+
+* `ACID_IRQPROBE=1` prints every IRQST transition with its scanline cycle and
+  machine cycle. Instruction granularity cannot answer "which cycle did it fire
+  on", and that is the only question these tests ask.
+* `ACID_PCWATCH` shows the ANTIC state at the INSTRUCTION BOUNDARY, which is
+  before a pending WSYNC halt has been serviced. It reported the release write
+  at line 20 cycle 110 when `ACID_COLPROBE` showed it actually landing at line
+  21 cycle 108 — a whole scanline out. Rule (k) again: for anything downstream
+  of a WSYNC, watch the WRITE, not the PC.

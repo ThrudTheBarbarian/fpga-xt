@@ -45,6 +45,8 @@ typedef struct {
     uint8_t  audctl;       /* $D208 */
     uint8_t  irqen;        /* $D20E write */
     uint8_t  irqst;        /* $D20E read, ACTIVE LOW */
+    uint8_t irq_arm;       /* countdown: the /IRQ line catching up with the
+                            * IRQST status bit — see raise() in the .c */
     unsigned long chain;   /* the ONE divider chain both base clocks tap.  A tick
                             * for period P happens when chain % P == 0, so the
                             * 64 kHz and 15 kHz taps keep a fixed relationship

@@ -109,6 +109,21 @@ static void pm_latch(atari *s)
     s->pm_prev_m = s->an.pm_m;
 }
 
+/* ACID_IRQPROBE=1: every IRQST transition with the cycle it happened on.  The
+ * POKEY timing tests bracket an interrupt between two reads one machine cycle
+ * apart, so "which cycle did it fire on" is the whole question and instruction
+ * granularity cannot answer it. */
+static void irq_note(atari *s)
+{
+    if (!s->irq_probe || s->pt.irqst == s->irq_shadow) return;
+    fprintf(stderr, "  IRQST $%02X -> $%02X  sl %3d cyc %3d  (machine cycle %llu)"
+                    "  chain %lu cnt0 %d audctl $%02X irqen $%02X\n",
+            s->irq_shadow, s->pt.irqst, s->an.scanline, s->an.cycle,
+            (unsigned long long)s->cycles, (unsigned long)s->pt.chain,
+            s->pt.cnt[0], s->pt.audctl, s->pt.irqen);
+    s->irq_shadow = s->pt.irqst;
+}
+
 /* One machine cycle is TWO colour clocks, and GTIA is clocked on every one of
  * them — collisions come off the emitted pixel stream, so a renderer that
  * decides object positions once per scanline cannot express gtia_collision
@@ -227,6 +242,7 @@ static void sys_cycle(atari *s)
         pokey_rand_tick(&s->pk); s->pk_ticks++;   /* ANTIC's cycles advance it here */
         pokey_timer_tick(&s->pt);
         s->cpu.irq = (uint8_t)(s->pt.irq | s->pia.irq);
+        irq_note(s);
     }
 }
 
@@ -245,6 +261,7 @@ static void cpu_cycle_done(atari *s)
     pokey_rand_tick(&s->pk); s->pk_ticks++;
     pokey_timer_tick(&s->pt);
     s->cpu.irq = (uint8_t)(s->pt.irq | s->pia.irq);
+    irq_note(s);
 }
 
 static uint8_t io_read(atari *s, uint16_t a)

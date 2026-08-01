@@ -39,6 +39,8 @@ typedef struct {
     int        col_probe;
     int        pf_probe;   /* debug: dump the pixel stream on this scanline */
     int        bus_probe;  /* debug: trace every bus cycle of this scanline */
+    int        irq_probe;  /* debug: report every IRQST change with its cycle */
+    uint8_t    irq_shadow; /* previous IRQST, for the probe */
     uint8_t    nmi_hold;   /* ANTIC's /NMI pulse, held until the CPU latches it */
     uint64_t   cycles;
 

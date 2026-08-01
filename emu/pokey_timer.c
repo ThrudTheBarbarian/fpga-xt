@@ -52,13 +52,27 @@
 #define STIMER_EXTRA 4
 #endif
 #define BASE_64K  28
-#ifndef BASE_64K_LEAD
-#define BASE_64K_LEAD 2
-#endif
-#ifndef BASE_15K_LEAD
-#define BASE_15K_LEAD 0
-#endif
 #define BASE_15K 114
+/* BOTH taps lead the chain by the same two cycles.  They were once split — 2
+ * for 64 kHz and 0 for 15 kHz — because pokey_inittiming's two 15 kHz
+ * measurements could not be reconciled without it, and the split was absorbing
+ * an error that was really in IRQ_LINE_LAG below.  With that modelled, one
+ * number does both clocks. */
+#ifndef BASE_LEAD
+#define BASE_LEAD 2
+#endif
+
+/* How many machine cycles the /IRQ LINE to the CPU lags the IRQST STATUS BIT.
+ * pokey_inittiming measures the same underflow BOTH ways — a NOP sled, which
+ * times when the CPU acknowledges, and a pair of IRQST reads one machine cycle
+ * apart, which times when the flag becomes readable — and no single tap phase
+ * satisfies both: the sled wants the underflow two cycles later than the
+ * bracket does.  They are not the same instant.  One cycle of line lag plus a
+ * uniform tap lead of two satisfies every assertion in the test, and takes
+ * pokey_irqtiming with it. */
+#ifndef IRQ_LINE_LAG
+#define IRQ_LINE_LAG 1
+#endif
 
 static int base_period(const pokey_timer *p)
 {
@@ -125,6 +139,7 @@ void pokey_timer_reset(pokey_timer *p)
     p->audctl = 0;
     p->irqen  = 0;
     p->irqst  = 0xFF;      /* active low: nothing pending */
+    p->irq_arm = 0;
     p->chain = BASE_64K;
     p->irq = 0;
     p->seroc = 1;
@@ -134,11 +149,19 @@ void pokey_timer_reset(pokey_timer *p)
     p->init = 0;
 }
 
+/* The STATUS BIT and the /IRQ LINE are not the same instant.  pokey_inittiming
+ * measures the same underflow twice — once through a NOP sled, which times when
+ * the CPU ACKNOWLEDGES the interrupt, and once through a pair of IRQST reads one
+ * machine cycle apart, which times when the FLAG becomes readable — and the two
+ * cannot be satisfied by one tap phase: the sled wants the underflow two cycles
+ * later than the bracket does.  So IRQST is set at the underflow and the line to
+ * the CPU follows IRQ_LINE_LAG cycles behind it. */
 static void raise(pokey_timer *p, uint8_t bit)
 {
     if (!(p->irqen & bit)) return;             /* masked: no request at all */
     p->irqst = (uint8_t)(p->irqst & ~bit);     /* active low */
-    p->irq = 1;
+    if (IRQ_LINE_LAG) p->irq_arm = IRQ_LINE_LAG;
+    else              p->irq = 1;
 }
 
 /* Fire channel `ch`, which has just underflowed. */
@@ -300,6 +323,9 @@ void pokey_timer_tick(pokey_timer *p)
 {
     if (p->init) return;                       /* held in init */
 
+    /* the line catching up with the status bit — see raise() */
+    if (p->irq_arm && --p->irq_arm == 0) p->irq = 1;
+
     for (int i = 0; i < 4; i++) {
         for (int k = AUDF_PIPE - 1; k > 0; k--) p->audf_d[i][k] = p->audf_d[i][k - 1];
         if (AUDF_PIPE) p->audf_d[i][0] = p->audf[i];
@@ -354,16 +380,13 @@ void pokey_timer_tick(pokey_timer *p)
     if (fast1 && --p->cnt[0] <= 0) underflow(p, linked1 ? 1 : 0);
     if (!held34 && fast3 && --p->cnt[2] <= 0) underflow(p, linked3 ? 3 : 2);
 
-    /* The 64 kHz tap LEADS the 15 kHz one by two machine cycles out of the
-     * SKCTL release.  pokey_inittiming measures both from the same release and
-     * its own arithmetic gives 86-87 cycles to the first 15 kHz tick and 26-27
-     * to the first 64 kHz one, which no single phase on one chain can produce:
-     * a residue that puts 15 kHz at 86 puts 64 kHz at 28.  Two cycles is the
-     * gap, and it is only visible because the test anchors both to the same
-     * event. */
+    /* Both taps lead the chain by BASE_LEAD out of the SKCTL release, which
+     * with the chain restarting at 28 puts the first 64 kHz tick 26 machine
+     * cycles later and the first 15 kHz one 112 — and the /IRQ line one behind
+     * each.  pokey_inittiming anchors both clocks to the same release, so it
+     * measures the pair together. */
     ++p->chain;
-    if ((p->chain + (base_period(p) == BASE_64K ? BASE_64K_LEAD : BASE_15K_LEAD))
-        % (unsigned long)base_period(p) != 0)
+    if ((p->chain + BASE_LEAD) % (unsigned long)base_period(p) != 0)
         return;
 
     if (LINK_TWO_COUNTERS && linked1 && !fast1 && --p->locnt[0] <= 0) {
@@ -455,7 +478,7 @@ void pokey_timer_write(pokey_timer *p, uint16_t addr, uint8_t val)
          * already standing, which is how a handler acknowledges. */
         p->irqen = val;
         p->irqst = (uint8_t)(p->irqst | ~val);
-        if ((uint8_t)~p->irqst == 0) p->irq = 0;
+        if ((uint8_t)~p->irqst == 0) { p->irq = 0; p->irq_arm = 0; }
         /* Enabling SEROC while the level stands fires immediately — and it must
          * be decided AFTER the clear above, or the clear undoes it. */
         if ((val & POKEY_IRQ_SEROC) && p->seroc) p->irq = 1;
