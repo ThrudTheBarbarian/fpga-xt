@@ -46,10 +46,23 @@ four wrong.
 `VCOUNT` is the scanline counter's **upper 8 bits of 9** — i.e. it reports the
 scanline number **divided by two**. So it runs:
 
-| region | scanlines | VCOUNT range |
-|---|---|---|
-| NTSC | 262 | 0 … 130, then a final **131**, then 0 |
-| PAL  | 312 | 0 … 155, then a final **156**, then 0 |
+| region | scanlines | `scanline >> 1` max | test expects |
+|---|---|---|---|
+| NTSC | 262 | 130 | **131** |
+| PAL  | 312 | 155 | **156** |
+
+**Where the extra value comes from.** Both frame heights are EVEN, so
+`scanline >> 1` never reaches 131 or 156 — an earlier draft of this note claimed
+the frame had an odd number of scanlines and the last one "had no partner",
+which is simply wrong. The real mechanism follows from part 1: **VCOUNT advances
+at cycle 111 of every scanline, including the last one.** On the final scanline
+it therefore advances to `lines / 2`, and the frame wrap at the *end* of that
+line resets it to 0.
+
+So `VCOUNT` reads 131 (NTSC) for only cycles 111–113 of the last scanline of the
+frame — about three cycles a frame. That is exactly why the test calls this
+*"the nasty one -- single cycle rollover"* and why it has to arrive with
+cycle-accurate timing to observe it at all.
 
 The test detects the region by reading `PAL` (`$D014`; `$0F` means NTSC), waits
 for `VCOUNT` to reach 130 (NTSC) or 155 (PAL), and then asserts:
@@ -59,14 +72,14 @@ for `VCOUNT` to reach 130 (NTSC) or 155 (PAL), and then asserts:
 | `d0` | 131 | 156 | there IS a scanline on which VCOUNT reads one past the nominal maximum |
 | `d1` | 0 | 0 | and the very next one has wrapped to zero |
 
-Because the frame has an odd number of scanlines, the last one has no partner to
-pair with, so the halved counter shows a value one above the maximum for exactly
-one line before wrapping. A model that wraps at 130/155 — the obvious reading of
-"262 lines / 2" — fails `d0`. A model that wraps one line late fails `d1`.
+A model that clamps at 130/155 — the obvious reading of "262 lines / 2" — never
+produces `d0`. A model that resets VCOUNT when the scanline counter wraps at the
+START of the line, rather than at the end, misses the window too.
 
 ## To pass this test you must have
 
 1. `VCOUNT` advancing at scanline cycle **111**.
 2. `VCOUNT` = scanline >> 1, **9-bit**, not an 8-bit counter that wraps early.
-3. The odd final scanline showing 131 (NTSC) / 156 (PAL) for one line.
+3. The advance at cycle 111 happening on the LAST scanline too, so VCOUNT
+   momentarily reads 131 (NTSC) / 156 (PAL) before the frame wrap clears it.
 4. `PAL` (`$D014`) reporting the region, since the expected values depend on it.
