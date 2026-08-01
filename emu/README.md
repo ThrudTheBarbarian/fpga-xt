@@ -1042,7 +1042,44 @@ Also tried and reverted: having the PAIR's reload restart its low half, the
 intuitive reading of a 16-bit borrow chain. It puts loop #1 back to failing, so
 the low half keeps its own phase.
 
-`pokey_timertiming` now clears its 8-bit group and both 16-bit loop #1 bounds,
-failing on **"16-bit lo too early (loop #2)"** — the SECOND low-half period,
-which our model reloads to `AUDF1 + 4` where a real 16-bit borrow chain would
-reload the low byte to `$FF`. That is the next thing to try.
+### The low half's first period is UNLINKED, the rest are LINKED
+
+Loop #2 measures the low half's SECOND period, and sweeping its reload settles it
+without any theory:
+
+| reload | result |
+|---|---|
+| `AUDF1 + 4` (the unlinked period) | too early |
+| 16..18 | too early |
+| **19** | **passes, and moves on to the 16-bit HI group** |
+| 20..22 | too late |
+| 255 / 256 (a `$FF` borrow chain) | far too late |
+
+With `AUDF1 = 16` the unique answer is a reload of 23, and 23 is `AUDF1 + 7` —
+`LINK_FAST` exactly. So the low half's **first** period after STIMER is the
+unlinked one (`AUDF1 + 4`, plus `LO_EXTRA`) and every period after it is the
+**linked** one. Notably it is NOT a plain 16-bit low byte: a true `$FF` reload
+fires far too late.
+
+`pokey_timertiming` now clears its whole 16-bit LO group and fails on **"16-bit
+hi too early (loop #1)"**.
+
+### Open: the pair's own period cannot be a separate constant
+
+The high half now fires too early, and the obvious fix — give the PAIR the same
+STIMER extra the low half gets — is forced BOTH ways by two different tests:
+
+| `LINK_EXTRA` | `pokey_timertiming` | `pokey_sertiming` |
+|---|---|---|
+| 0 | 16-bit hi too early | **passes** |
+| 1..3 | 16-bit hi too early | fails |
+| **4** | reaches a much later section ("8-bit timer fired too late after 23c change") | fails |
+
+That is not a constant to be fitted; it is a sign the pair's period should not be
+an independent number at all. `pokey_timertiming` uses `AUDF2 = 0`, where the
+pair completes on the low half's very first borrow, so the low half's STIMER extra
+propagates straight into it; `pokey_sertiming` drives a 16-bit period with
+`AUDF2` non-zero, where it does not. A proper borrow chain — the high byte
+counting LOW-HALF UNDERFLOWS rather than running its own divider — produces both
+behaviours from one rule. That is the next piece of work, and `LINK_EXTRA` should
+disappear when it lands.

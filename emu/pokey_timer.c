@@ -22,6 +22,12 @@
  * LINK_FAST 7 is the unlinked fast period's 4 plus that same 3 of propagation.
  * What was missing is the low half's own interrupt, so this adds a counter for
  * it rather than restructuring the divider. */
+/* The low half's FIRST period after STIMER is the unlinked one (AUDF1 + 4, plus
+ * LO_EXTRA); every period after it is the LINKED one, AUDF1 + LINK_FAST.  Swept
+ * directly: with AUDF1 = 16 only a reload of 23 satisfies pokey_timertiming's
+ * 16-bit lo loop #2, and 23 is AUDF1 + 7 exactly.  A true $FF borrow-chain
+ * reload (259) fires far too late, so the low half is NOT a plain 16-bit low
+ * byte. */
 #ifndef LO_EXTRA
 #define LO_EXTRA 4
 #endif
@@ -260,7 +266,7 @@ void pokey_timer_tick(pokey_timer *p)
     if (held34) { reload(p, 2); reload(p, 3); }
 
     if (LINK_TWO_COUNTERS && linked1 && fast1 && --p->locnt[0] <= 0) {
-        p->locnt[0] = p->audf[0] + 4;
+        p->locnt[0] = p->audf[0] + LINK_FAST;
         raise(p, POKEY_IRQ_TIMER1);
     }
     if (fast1 && --p->cnt[0] <= 0) underflow(p, linked1 ? 1 : 0);
