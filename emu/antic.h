@@ -134,6 +134,14 @@ int     antic_pf_bytes(uint8_t dmactl, uint8_t mode);
  * a mid-line DMACTL change alias. */
 uint8_t antic_display_byte(const antic *a, int i);
 
+/* The playfield colour class at colour clock `cc` (0..227): -1 for background,
+ * else 0..3 for PF0..PF3.  Computed LIVE rather than tabulated per line —
+ * antic_pfstarttiming and antic_pfstoptiming write DMACTL and HSCROL
+ * mid-scanline and expect the edges to move, which a per-line table cannot
+ * express.  `hires_lit` reports whether either half-clock pixel is set, which
+ * is all GTIA is shown of a hi-res mode. */
+int antic_pf_at(const antic *a, int cc, int *hires_lit);
+
 uint8_t antic_read(antic *a, uint16_t addr);
 void    antic_write(antic *a, uint16_t addr, uint8_t val);
 

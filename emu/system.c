@@ -25,10 +25,31 @@ static void pm_latch(atari *s)
         s->gt.grafm = s->an.pm_m;
 }
 
+/* One machine cycle is TWO colour clocks, and GTIA is clocked on every one of
+ * them — collisions come off the emitted pixel stream, so a renderer that
+ * decides object positions once per scanline cannot express gtia_collision
+ * (a sprite straddling the blanking edge collides on its visible clocks only)
+ * or gtia_pmretrigger (a mid-line HPOS write redraws the player on that line). */
+static void render_cycle(atari *s, int cyc)
+{
+    s->gt.vblank = (s->an.scanline < ANTIC_DISPLAY_TOP ||
+                    s->an.scanline >= ANTIC_DISPLAY_BOTTOM);
+    for (int h = 0; h < 2; h++) {
+        int cc = cyc * 2 + h;
+        if (cc >= GTIA_CLOCKS) break;
+        int hires = 0;
+        int pf = antic_pf_at(&s->an, cc, &hires);
+        s->gt.hires = (s->an.dl_insn & 0x0F) == 0x0F;
+        gtia_clock(&s->gt, cc, pf, hires);
+    }
+}
+
 static void sys_cycle(atari *s)
 {
     for (;;) {
+        int cyc  = s->an.cycle;
         int took = antic_tick(&s->an);
+        render_cycle(s, cyc);
         pm_latch(s);
         s->cycles++;
         /* Hold ANTIC's one-cycle /NMI pulse until the CPU latches the edge, then

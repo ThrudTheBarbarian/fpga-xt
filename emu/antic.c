@@ -300,6 +300,53 @@ int antic_tick(antic *a)
     return took;
 }
 
+/* Colour clocks per pixel and bits per pixel, for the BITMAP modes.  The
+ * character modes (2..7) need a CHBASE glyph fetch and are not decoded yet. */
+static const uint8_t pf_ccpp[16] = { 0,0,0,0,0,0,0,0, 4,2,2,1,1,1,1,1 };
+static const uint8_t pf_bpp [16] = { 0,0,0,0,0,0,0,0, 2,1,2,1,1,2,2,1 };
+
+int antic_pf_at(const antic *a, int cc, int *hires_lit)
+{
+    *hires_lit = 0;
+    int mode = a->dl_insn & 0x0F;
+    if (mode < 8 || !(a->dmactl & 0x20))
+        return -1;
+
+    /* A 40-char normal playfield is 160 colour clocks starting at $40; narrow
+     * (32 chars, 128 clocks) and wide (48, 192) are centred on the same middle,
+     * so they start at $50 and $30.  HSCROL shifts the window left in colour
+     * clocks, the same sense as antic_dma.c's pf_nominal. */
+    antic_width w = width_of(a->dmactl);
+    int start = 0x40 + (w == ANTIC_NARROW ? 16 : w == ANTIC_WIDE ? -16 : 0)
+              - (a->hscrol & 0x0F);
+    int span  = (w == ANTIC_NARROW) ? 128 : (w == ANTIC_WIDE) ? 192 : 160;
+
+    int off = cc - start;
+    if (off < 0 || off >= span)
+        return -1;
+
+    if (mode == 0x0F) {                   /* hi-res: TWO pixels per colour clock */
+        int p  = off * 2;
+        int i0 = (p >> 3) % (int)sizeof a->linebuf;
+        int i1 = ((p + 1) >> 3) % (int)sizeof a->linebuf;
+        int b0 = (a->linebuf[i0] >> (7 - (p & 7))) & 1;
+        int b1 = (a->linebuf[i1] >> (7 - ((p + 1) & 7))) & 1;
+        *hires_lit = b0 | b1;
+        return (b0 | b1) ? 2 : -1;        /* GTIA is shown hi-res as PF2 */
+    }
+
+    int px     = off / pf_ccpp[mode];
+    int bits   = pf_bpp[mode];
+    int bitpos = px * bits;
+    uint8_t byte = a->linebuf[(bitpos >> 3) % (int)sizeof a->linebuf];
+
+    if (bits == 1)
+        return ((byte >> (7 - (bitpos & 7))) & 1) ? 0 : -1;   /* 2-colour: PF0 */
+
+    int v = (byte >> (6 - (bitpos & 7))) & 3;
+    return v ? v - 1 : -1;                /* 01->PF0, 10->PF1, 11->PF2 */
+}
+
 uint8_t antic_read(antic *a, uint16_t addr)
 {
     switch (addr & 0x0F) {          /* ANTIC decodes 4 bits; $D400-$D40F
