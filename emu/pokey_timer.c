@@ -22,8 +22,14 @@
  * LINK_FAST 7 is the unlinked fast period's 4 plus that same 3 of propagation.
  * What was missing is the low half's own interrupt, so this adds a counter for
  * it rather than restructuring the divider. */
+#ifndef LO_EXTRA
+#define LO_EXTRA 4
+#endif
+#ifndef LINK_EXTRA
+#define LINK_EXTRA 0
+#endif
 #ifndef LINK_TWO_COUNTERS
-#define LINK_TWO_COUNTERS 0
+#define LINK_TWO_COUNTERS 1
 #endif
 #ifndef STIMER_EXTRA
 #define STIMER_EXTRA 4
@@ -310,8 +316,8 @@ void pokey_timer_write(pokey_timer *p, uint16_t addr, uint8_t val)
          * the free-running divider happened to be from its next tick, which the
          * test makes deterministic by syncing with two WSYNCs first. */
         for (int i = 0; i < 4; i++) reload(p, i);
-        p->locnt[0] = p->audf[0] + ((p->audctl & 0x40) ? 4 : 1) + STIMER_EXTRA;
-        p->locnt[1] = p->audf[2] + ((p->audctl & 0x20) ? 4 : 1) + STIMER_EXTRA;
+        p->locnt[0] = p->audf[0] + ((p->audctl & 0x40) ? 4 : 1) + LO_EXTRA;
+        p->locnt[1] = p->audf[2] + ((p->audctl & 0x20) ? 4 : 1) + LO_EXTRA;
         /* EXPERIMENT: the first period after STIMER runs long.  pokey_timertiming
          * tabulates it: with AUDF1 = 0 on the 1.79 MHz clock the first interrupt
          * lands 7-8 cycles after the STIMER write and the second 11-12, so the
@@ -325,7 +331,12 @@ void pokey_timer_write(pokey_timer *p, uint16_t addr, uint8_t val)
             for (int i = 0; i < 4; i++) {
                 int inpair = (i <= 1) ? linked1 : linked3;
                 int fast   = (i <= 1) ? fast1   : fast3;
-                if (fast && !inpair) p->cnt[i] += STIMER_EXTRA;
+                /* The extra was scoped to UNLINKED channels while a pair was
+                 * modelled as one divider — the only thing that fired, so it had
+                 * to carry the whole delay.  With the pair's LOW half counting
+                 * separately both halves take it, which is what puts them three
+                 * cycles apart instead of one ahead of the other. */
+                if (fast) p->cnt[i] += inpair ? LINK_EXTRA : STIMER_EXTRA;
             }
         }
         break;

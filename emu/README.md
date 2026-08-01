@@ -1007,9 +1007,7 @@ is why no period constant can help. The fix is structural: the low counter
 underflows and reloads on its own period, raising its own interrupt, and the high
 counter decrements on each of those underflows.
 
-It was built behind `LINK_TWO_COUNTERS` and A/B'd. **It is off by default**, and
-the reason is worth recording, because the direction is right and the phases are
-not.
+It was built behind `LINK_TWO_COUNTERS` and is now **on by default**.
 
 With the flag on, nothing regresses — `pokey_serclock`, `pokey_twotone`,
 `pokey_timerirq`, `pokey_timergranularity` and `pokey_sertiming` all still pass,
@@ -1017,20 +1015,34 @@ the score stays 42 — and `pokey_timertiming` advances two assertion groups, fr
 "16-bit lo too late (loop #1)" to "16-bit lo too **early** (loop #2)". So the low
 half's own interrupt is real and loop #1's boundary is now met.
 
-What killed it is a gate written to state the rule directly: with `AUDF1 = 16`,
-`AUDF2 = 0` and the pair fast-clocked, the LOW half must interrupt **before** the
-high half. It does not. The pair counter is `AUDF16 + 7 = 23` and the low counter
-is `AUDF1 + 4 + 4 = 24`, because the low half takes the STIMER first-period extra
-while the pair does not — so the high fires first, backwards from what the test's
-own boundaries say (19/20 against 22/23). The ACID assertions happen not to catch
-it at those particular offsets; the gate does.
+### The gate that vetoed it, and why it was WITHDRAWN
 
-Also tried and reverted within the flag: having the PAIR's reload restart its low
-half. That is the intuitive reading of a 16-bit borrow chain and it puts loop #1
-back to failing, so the low half keeps its own phase.
+The first attempt was held back by a gate asserting that the low half must
+interrupt **before** the high, which reads straight off the test's 19/20 against
+22/23. Under our counts the low is `AUDF1 + 4 + 4 = 24` and the pair
+`AUDF16 + 7 = 23`, so the high fires first and the gate failed.
 
-So the next attempt needs the two periods and the STIMER extra made consistent
-with "low first, high three cycles later" — probably meaning the pair's period is
-not `AUDF16 + 7` at all once the low half is modelled separately, since that +7
-was fitted to a single divider. The gate that catches it is worth re-adding as
-the first thing next time.
+Three sweeps then established that the gate, not the model, was wrong:
+
+* `LINK_EXTRA` (a STIMER extra for the PAIR) 0..4 — only **0** works.
+  Anything else breaks `pokey_sertiming`, which clocks a fast linked pair.
+* `LO_EXTRA` (the extra for the linked LOW half) 0..4 — only **4** works.
+  Anything less puts `pokey_timertiming`'s 16-bit lo back to failing loop #1.
+* those two are forced independently, and together they give exactly the 24
+  against 23 the gate objects to.
+
+So the configuration the ACID assertions demand is the one the gate calls
+backwards. The inference was the weak link: 19/20 and 22/23 are measured through
+**different instruction paths with different masks**, and the raw firing order
+does not follow from comparing them. The assertions are the authority (reading
+rules (d) and (e)); the gate over-claimed and is not re-added. What IS gated is
+the part that is certain — both halves interrupt at all.
+
+Also tried and reverted: having the PAIR's reload restart its low half, the
+intuitive reading of a 16-bit borrow chain. It puts loop #1 back to failing, so
+the low half keeps its own phase.
+
+`pokey_timertiming` now clears its 8-bit group and both 16-bit loop #1 bounds,
+failing on **"16-bit lo too early (loop #2)"** — the SECOND low-half period,
+which our model reloads to `AUDF1 + 4` where a real 16-bit borrow chain would
+reload the low byte to `$FF`. That is the next thing to try.

@@ -236,6 +236,33 @@ int main(void)
         expect("and the ones after it are not", second, 4);
     }
 
+    /* ---- a LINKED pair interrupts on BOTH halves ------------------------
+     * pokey_timertiming checks them with different masks — $01 for the low half,
+     * $02 for the high — and its 16-bit-hi row requires bit 1 still SET while
+     * bit 0 has already cleared, so both are live at once.  Modelling the pair
+     * as one divider whose event belongs to the high channel silences TIMER1
+     * entirely, which is what this catches.
+     *
+     * Deliberately NOT asserted here: that the low half fires BEFORE the high.
+     * That reads straight off the test's 19/20 against 22/23 boundaries, but
+     * those are measured through different instruction paths and the inference
+     * does not survive contact — see emu/README.md. */
+    {
+        setup(&p, 0x50, POKEY_IRQ_TIMER1);           /* 1+2 linked, 1.79 MHz */
+        pokey_timer_write(&p, 0xD200, 0x10);         /* AUDF1 = 16 */
+        pokey_timer_write(&p, 0xD202, 0x00);         /* AUDF2 = 0  */
+        pokey_timer_write(&p, 0xD209, 0x00);         /* STIMER */
+        expect("a linked pair's LOW half still interrupts",
+               cycles_to_irq(&p, POKEY_IRQ_TIMER1, 400) > 0, 1);
+
+        setup(&p, 0x50, POKEY_IRQ_TIMER2);
+        pokey_timer_write(&p, 0xD200, 0x10);
+        pokey_timer_write(&p, 0xD202, 0x00);
+        pokey_timer_write(&p, 0xD209, 0x00);
+        expect("...and so does its HIGH half",
+               cycles_to_irq(&p, POKEY_IRQ_TIMER2, 400) > 0, 1);
+    }
+
     printf("ptimer: %s\n", fails ? "FAIL" : "all POKEY timer tests pass");
     return fails ? 1 : 0;
 }
