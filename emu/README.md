@@ -1075,11 +1075,27 @@ STIMER extra the low half gets — is forced BOTH ways by two different tests:
 | 1..3 | 16-bit hi too early | fails |
 | **4** | reaches a much later section ("8-bit timer fired too late after 23c change") | fails |
 
-That is not a constant to be fitted; it is a sign the pair's period should not be
-an independent number at all. `pokey_timertiming` uses `AUDF2 = 0`, where the
-pair completes on the low half's very first borrow, so the low half's STIMER extra
-propagates straight into it; `pokey_sertiming` drives a 16-bit period with
-`AUDF2` non-zero, where it does not. A proper borrow chain — the high byte
-counting LOW-HALF UNDERFLOWS rather than running its own divider — produces both
-behaviours from one rule. That is the next piece of work, and `LINK_EXTRA` should
-disappear when it lands.
+That is not a constant to be fitted. The first guess — that the extra applies
+only when the high byte is zero, so the pair completes on the low half's first
+borrow — was **tested and is wrong**, because both tests have `AUDF2 = 0`:
+
+| | `pokey_timertiming` | `pokey_sertiming` |
+|---|---|---|
+| AUDCTL | `$50` (1+2 linked, fast) | `$78` (both pairs linked, both fast) |
+| AUDF1 / AUDF2 | 16 / **0** | 221 / **0** |
+| serial clock | not used | SKCTL `$63` -> **timer 2**, i.e. the same pair event |
+
+Gating the extra on `AUDF2 == 0` sends `pokey_timertiming` a long way forward —
+past every 16-bit group to its "8-bit timer fired too late after 23c change"
+section — and breaks `pokey_sertiming`, because both land in the same branch.
+
+So the two tests really are in the same timer configuration and still want
+different timing. What differs is WHAT THEY MEASURE: `timertiming` watches
+`TIMER2`'s **interrupt**, `sertiming` watches the **serial shift** (SEROR/SEROC).
+Our model drives both from the one pair underflow. The evidence says those are
+two edges, and only the interrupt carries the STIMER extra.
+
+That is the next piece of work — splitting the pair event into an interrupt edge
+and a serial-clock edge — and `LINK_EXTRA` should disappear when it lands. Note
+how far it reaches: with the extra applied, `pokey_timertiming` clears every
+16-bit assertion it has.
