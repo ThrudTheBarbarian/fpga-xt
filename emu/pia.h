@@ -21,6 +21,9 @@ typedef struct {
     uint8_t ddr[2];    /* direction: 1 = output */
     uint8_t ctl[2];    /* PACTL, PBCTL */
     uint8_t in[2];     /* external lines; idle high with nothing plugged in */
+    uint8_t c2[2];     /* the CA2/CB2 line level.  Driven from control bit 3
+                        * while bit 5 selects OUTPUT; otherwise it follows the
+                        * external line, which idles high. */
     uint8_t irq;       /* the /IRQ line to the CPU */
 } pia;
 

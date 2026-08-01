@@ -153,7 +153,7 @@ static void sys_cycle(atari *s)
         }
         pokey_rand_tick(&s->pk); s->pk_ticks++;   /* ANTIC's cycles advance it here */
         pokey_timer_tick(&s->pt);
-        s->cpu.irq = s->pt.irq;
+        s->cpu.irq = (uint8_t)(s->pt.irq | s->pia.irq);
     }
 }
 
@@ -166,7 +166,7 @@ static void cpu_cycle_done(atari *s)
 {
     pokey_rand_tick(&s->pk); s->pk_ticks++;
     pokey_timer_tick(&s->pt);
-    s->cpu.irq = s->pt.irq;
+    s->cpu.irq = (uint8_t)(s->pt.irq | s->pia.irq);
 }
 
 static uint8_t io_read(atari *s, uint16_t a)
