@@ -53,6 +53,21 @@ Test sources (readable `.lst` mads listings) are under
 `rsrc/acid800/Acid800/standalone/<name>.lst` — the assertion that failed maps straight to the
 detail string shown in the dashboard.
 
+## Software-emulator runs
+
+`core: "emu"` runs come from `emu/` — the software 6502/ANTIC investigation — not
+from hardware, and are recorded with:
+
+```sh
+python3 docs/a800/from-emu.py --note "what changed"
+```
+
+That builds via `make acid` (never the stale binary), parses the score straight
+out of its stdout, writes `runs/<date>-<seq>.json`, and regenerates the page.
+They are **not** directly comparable with a fabric sweep: there is no OS ROM, and
+POKEY there is the RANDOM LFSR, the timers and the serial output path only. They
+are on the same page so the two cores can be read against each other.
+
 **Architecture + remaining timing cluster:** see
 [single-phi2-and-timing.md](single-phi2-and-timing.md) — the fid-core single-phi2 fix,
 the exact ANTIC horizontal contracts (WSYNC@105, VCOUNT@110, DLI@8, DMA schedule), the
