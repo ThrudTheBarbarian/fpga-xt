@@ -96,6 +96,22 @@ void antic_dma_line(uint8_t mode, antic_width width, int first_line,
     antic_dma_line_map(mode, width, first_line, hscrol, blocked, NULL);
 }
 
+int antic_pf_start(uint8_t mode, antic_width w, int first, int hscrol)
+{
+    return pf_start(mode, w, first, hscrol);
+}
+
+int antic_pf_grid(uint8_t mode, int first)
+{
+    if (mode < 2 || mode > 15) return 1;
+    const mode_shape *s = &shapes[mode];
+    if (mode >= 8) return first ? s->stride_first : s->stride_rest;
+    /* Character modes 6-7 lay their name/glyph PAIRS on a 4-cycle grid on a
+     * row's first line; 2-5 merge into a solid run at one cycle each. */
+    if (first) return (mode <= 5) ? 1 : 4;
+    return s->stride_rest;
+}
+
 /* Record that cycle `c` fetches line-buffer byte `i` from the scan address. */
 static void name_slot(int8_t *name_at, int c, int i, int chars)
 {
@@ -103,9 +119,15 @@ static void name_slot(int8_t *name_at, int c, int i, int chars)
         name_at[c] = (int8_t)i;
 }
 
-void antic_dma_line_map(uint8_t mode, antic_width width, int first_line,
-                        int hscrol, uint8_t blocked[ANTIC_LINE_CYCLES],
-                        int8_t name_at[ANTIC_LINE_CYCLES])
+/* `nom` overrides where the grid is laid out from (-1 = derive from `width`),
+ * and `cyc_stop` overrides where the stream ends (-1 = derive from the byte
+ * count).  Both exist for one reason: ANTIC commits the START of the fetch a
+ * cycle or two ahead, while the STOP goes on being compared against the
+ * horizontal counter, so a DMACTL or HSCROL write landing in between leaves the
+ * row fetching from the OLD window to the NEW window's last cycle. */
+static void build(uint8_t mode, antic_width width, int first_line, int hscrol,
+                  int nom_in, int cyc_stop, uint8_t blocked[ANTIC_LINE_CYCLES],
+                  int8_t name_at[ANTIC_LINE_CYCLES])
 {
     memset(blocked, 0, ANTIC_LINE_CYCLES);
     if (name_at) memset(name_at, -1, ANTIC_LINE_CYCLES);
@@ -123,8 +145,8 @@ void antic_dma_line_map(uint8_t mode, antic_width width, int first_line,
     int stride = first_line ? s->stride_first : s->stride_rest;
     if (!stride) return;
 
-    int start = pf_start(mode, width, first_line, hscrol);
-    int nom   = pf_nominal(width, hscrol);
+    int nom   = (nom_in >= 0) ? nom_in : pf_nominal(width, hscrol);
+    int start = (mode >= 8) ? nom - 1 : (first_line ? nom - 3 : nom);
 
     /* Bytes across.  WIDE is narrow + half again, the same relation
      * antic_pf_bytes uses — without it the fetch map is eight bytes short of
@@ -142,6 +164,14 @@ void antic_dma_line_map(uint8_t mode, antic_width width, int first_line,
      * mode issues two fetches per character on a row's first line. */
     int stop = (mode >= 8) ? start + chars * stride
                            : start + 2 + chars * (first_line ? 2 : 1);
+    /* A pinned stream runs to the LIVE window's last fetch cycle instead, with
+     * no byte count bounding it — the count belongs to a width the row is no
+     * longer using. */
+    if (cyc_stop >= 0) {
+        stop  = cyc_stop + 1;
+        chars = 128;
+        names = 128;
+    }
 
     /* Bitmap modes fetch `chars` BYTES once per row — no name/data pair, and
      * their stream sits on its own grid rather than the refresh one. */
@@ -155,6 +185,7 @@ void antic_dma_line_map(uint8_t mode, antic_width width, int first_line,
     }
 
     int n = first_line ? chars * 2 : chars;       /* name+data, or data only */
+    if (cyc_stop >= 0) n = 256;                  /* bounded by the cycle, not n */
 
     if (stride == 1) {
         /* Dense character modes: one prefetch, a free cycle, then a solid run.
@@ -194,7 +225,7 @@ void antic_dma_line_map(uint8_t mode, antic_width width, int first_line,
          * committed while the STOP moves, and the row then fetches a count that
          * belongs to NEITHER width.  That hybrid is what antic_pfstarttiming
          * and antic_pfstoptiming measure with their "late" writes. */
-        int pstop = nom + 4 * chars;
+        int pstop = (cyc_stop >= 0) ? cyc_stop + 1 : nom + 4 * chars;
         for (int p = nom; left > 0 && p < pstop && p < ANTIC_LINE_CYCLES; p += 4) {
             int c = is_refresh(p) ? p + 1 : p;
             for (int k = 0; k < 2 && left > 0 && c + k < ANTIC_LINE_CYCLES;
@@ -217,4 +248,34 @@ void antic_dma_line_map(uint8_t mode, antic_width width, int first_line,
         int c = is_refresh(p) ? p + 1 : p;
         if (c < ANTIC_LINE_CYCLES) blocked[c] = 1;
     }
+}
+
+void antic_dma_line_map(uint8_t mode, antic_width width, int first_line,
+                        int hscrol, uint8_t blocked[ANTIC_LINE_CYCLES],
+                        int8_t name_at[ANTIC_LINE_CYCLES])
+{
+    build(mode, width, first_line, hscrol, -1, -1, blocked, name_at);
+}
+
+void antic_dma_line_map_at(uint8_t mode, antic_width width, int first_line,
+                           int hscrol, int nom_start,
+                           uint8_t blocked[ANTIC_LINE_CYCLES],
+                           int8_t name_at[ANTIC_LINE_CYCLES])
+{
+    if (nom_start < 0) {
+        build(mode, width, first_line, hscrol, -1, -1, blocked, name_at);
+        return;
+    }
+    /* Where THIS width's stream would have ended.  That cycle is the bound, not
+     * a byte count: the row keeps its old grid and stops where the new window
+     * says to.  Both halves of antic_pfstarttiming and antic_pfstoptiming fall
+     * out of it — see the worked cycle lists in emu/README.md. */
+    uint8_t b2[ANTIC_LINE_CYCLES];
+    int8_t  m2[ANTIC_LINE_CYCLES];
+    build(mode, width, first_line, hscrol, -1, -1, b2, m2);
+    int last = -1;
+    for (int c = 0; c < ANTIC_LINE_CYCLES; c++)
+        if (m2[c] >= 0) last = c;
+    if (last < 0) { build(mode, width, first_line, hscrol, -1, -1, blocked, name_at); return; }
+    build(mode, width, first_line, hscrol, nom_start, last, blocked, name_at);
 }

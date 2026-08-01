@@ -379,7 +379,23 @@ static void line_start(antic *a)
  * count carries on — so shortening the window mid-fetch truncates the row and
  * widening it extends it, which is exactly what antic_pfstarttiming,
  * antic_pfstoptiming and antic_hscrolbug measure. */
-static void rebuild_line(antic *a)
+/* The playfield window as the registers stand right now, in machine cycles:
+ * where it opens, and how wide it is (128/160/192 colour clocks). */
+static int pf_window(const antic *a)
+{
+    return antic_pf_nominal(width_of(a->dmactl), hscrol_of(a));
+}
+
+static int pf_span(const antic *a)
+{
+    switch (width_of(a->dmactl)) {
+    case ANTIC_NARROW: return 64;
+    case ANTIC_WIDE:   return 96;
+    default:           return 80;
+    }
+}
+
+static void rebuild_line(antic *a, int old_nom, int old_span)
 {
     int from = a->cycle;                    /* the next cycle to run */
     if (from < 0 || from >= ANTIC_LINE_CYCLES) return;
@@ -389,8 +405,31 @@ static void rebuild_line(antic *a)
     int mode = a->dl_insn & 0x0F;
     int on   = mode >= 2 && (a->dmactl & 0x20);
 
-    antic_dma_line_map(on ? (uint8_t)mode : 0, width_of(a->dmactl), a->row_first,
-                       hscrol_of(a), blk, map);
+    /* The window this line was running under: where it opened and where it
+     * closes.  The commit point is the window's own earliest fetch — nom - 3,
+     * the character prefetch position — for EVERY mode, not the class-specific
+     * start: a bitmap row starts at nom - 1 and still ignores a write that
+     * lands at nom - 3.  The close is the window's edge, NOT the last actual
+     * fetch: antic_pfstoptiming widens after the last narrow fetch has already
+     * happened and still expects the stream to extend, so it is the comparator
+     * that is still open, not the fetcher that is still running.  The window is
+     * `span` machine cycles long measured FROM that same start, which puts the
+     * narrow close at 26 + 64 = 90 — after narrow's last fetch at 86, and before
+     * the next grid point it would have taken. */
+    int old_start = old_nom - 3;
+    int old_close = old_nom + old_span
+                  - antic_pf_grid((uint8_t)mode, a->row_first);
+
+    /* ANTIC commits the START of the fetch a cycle or two ahead of it, but goes
+     * on comparing the STOP against the horizontal counter.  A write landing in
+     * between therefore leaves the row running on its OLD grid to the NEW
+     * window's last fetch cycle, and its byte count belongs to neither width —
+     * which is exactly the 18 that antic_pfstarttiming and antic_pfstoptiming
+     * both ask for, from opposite directions. */
+    int pin = (from >= old_start) ? old_nom : -1;
+
+    antic_dma_line_map_at(on ? (uint8_t)mode : 0, width_of(a->dmactl),
+                          a->row_first, hscrol_of(a), pin, blk, map);
 
     /* Turning playfield DMA OFF part way down a line does not stall the line
      * buffer — ANTIC keeps clocking it and latches whatever is on the bus, so
@@ -403,7 +442,11 @@ static void rebuild_line(antic *a)
      *
      * A row that STARTS with DMA off is a different case, handled in
      * line_start: nothing is fetched at all and the previous row is redisplayed. */
-    int keep_map = !on || antic_pf_bytes(a->dmactl, (uint8_t)mode) == 0;
+    int keep_map = !on || antic_pf_bytes(a->dmactl, (uint8_t)mode) == 0
+                /* ...and once the stream has ENDED it cannot be restarted:
+                 * antic_pfstoptiming's late case widens the playfield after the
+                 * row has finished fetching and requires the narrow count. */
+                || from > old_close;
 
     for (int c = from; c < ANTIC_LINE_CYCLES; c++) {
         a->blocked[c] = blk[c];
@@ -695,14 +738,26 @@ uint8_t antic_read(antic *a, uint16_t addr)
 void antic_write(antic *a, uint16_t addr, uint8_t val)
 {
     switch (addr & 0x0F) {
-    case 0x00: a->dmactl = val; rebuild_line(a); break;
+    case 0x00: {
+        int old_nom = pf_window(a);           /* the window BEFORE the write */
+        int old_span = pf_span(a);
+        a->dmactl = val;
+        rebuild_line(a, old_nom, old_span);
+        break;
+    }
     case 0x01: a->chactl = val; break;
     /* DLISTL/H IS the display-list counter, not a latch that seeds one: ANTIC
      * increments it in place as it fetches, so a write sets where the list
      * resumes from and there is nothing to reload it from later. */
     case 0x02: a->dl_addr = (uint16_t)((a->dl_addr & 0xFF00) | val); break;
     case 0x03: a->dl_addr = (uint16_t)((a->dl_addr & 0x00FF) | (val << 8)); break;
-    case 0x04: a->hscrol = val; rebuild_line(a); break;
+    case 0x04: {
+        int old_nom = pf_window(a);
+        int old_span = pf_span(a);
+        a->hscrol = val;
+        rebuild_line(a, old_nom, old_span);
+        break;
+    }
     case 0x05: a->vscrol = val; break;
     case 0x07: a->pmbase = val; break;
     case 0x09: a->chbase = val; break;

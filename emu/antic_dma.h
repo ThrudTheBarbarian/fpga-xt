@@ -60,4 +60,22 @@ void antic_dma_line_map(uint8_t mode, antic_width width, int first_line,
                         int hscrol, uint8_t blocked[ANTIC_LINE_CYCLES],
                         int8_t name_at[ANTIC_LINE_CYCLES]);
 
+/* Where the fetch stream begins, in machine cycles.  Exposed so antic.c can tell
+ * whether a mid-line DMACTL or HSCROL write arrived before or after it. */
+int antic_pf_start(uint8_t mode, antic_width w, int first, int hscrol);
+
+/* The fetch stream's grid step in machine cycles, so antic.c can say where the
+ * LAST fetch the window could still schedule would land. */
+int antic_pf_grid(uint8_t mode, int first);
+
+/* The same schedule with the grid PINNED to `nom_start` while the stream still
+ * ends where `width`'s own last fetch cycle is (-1 = derive both, i.e. plain
+ * antic_dma_line_map).  ANTIC commits the START of the fetch a cycle or two
+ * ahead but goes on comparing the STOP against the horizontal counter, so a
+ * write landing in between produces a row belonging to NEITHER width. */
+void antic_dma_line_map_at(uint8_t mode, antic_width width, int first_line,
+                           int hscrol, int nom_start,
+                           uint8_t blocked[ANTIC_LINE_CYCLES],
+                           int8_t name_at[ANTIC_LINE_CYCLES]);
+
 #endif /* ANTIC_DMA_H */
