@@ -3,7 +3,6 @@
  */
 #include "system.h"
 #include <stdio.h>
-#include <stdio.h>
 
 /* ANTIC's own fetches go straight to memory: they are already accounted for as
  * DMA cycles, so they must not recurse into the CPU's cycle path. */

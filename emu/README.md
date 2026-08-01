@@ -699,3 +699,34 @@ one of them involves the CPU, the remaining two cycles are most likely in the
 POKEY *after* the CPU's access, so an `lda irqst` deliberately sees the state as
 of the start of its cycle (which is what `RANDOM` requires). Worth checking
 whether IRQST should be sampled the other way round from RANDOM.
+
+
+## Open: antic_pfstarttiming / pfstoptiming — the playfield reads as background
+
+Both report **"Character mode DMACTL early test failed: stride=%d"** with
+`d1 = 12`, and 12 is the `add #12` with nothing added: `(p0pf << 2) | p1pf` came
+back **zero**, so no player-playfield collision registered at all. The wanted
+value is 16, i.e. `p0pf = 1` (PF0) and `p1pf = 0`.
+
+What is already ruled out, from `ACID_PFPROBE`:
+
+* the players ARE being drawn — `objs $80` at colour clock `$80`, which is where
+  HPOSP0 puts player 0;
+* the display list IS executing correctly — the measured line reports mode 10 at
+  `row_line 1`, i.e. the row after the one-scanline VSCROL=7 mode-6 row, exactly
+  as the list intends;
+* `lb_len` is 20, which is right for ANTIC mode $A at normal width (80 pixels,
+  two bits each);
+* the window is right — the decode reaches the bitmap branch rather than falling
+  out of `off < 0 || off >= span`.
+
+So the decode runs and returns background: `v` is zero, meaning the **line buffer
+holds zeros** where `framedata` should be. The next thing to check is whether the
+mode-10 row re-fetched at all, or is still showing the mode-6 row's 20 bytes —
+both modes take 20 bytes at normal width, so `lb_len` alone cannot tell them
+apart. Dump `linebuf` on the measured line and compare against `framedata`.
+
+Note the geometry this test is built on, which is easy to misread: `dta $66` with
+VSCROL = 7 is a **one-scanline** row (the first scrolled row starts at row VSCROL
+and ends at the mode's last row, and 7 == 7), so the DLI's two WSYNCs land the
+measurement on the row AFTER it.
