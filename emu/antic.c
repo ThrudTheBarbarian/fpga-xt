@@ -49,11 +49,30 @@ static uint8_t dl_fetch(antic *a)
 
 void antic_dl_exec(antic *a)
 {
+    uint16_t at = a->dl_addr;
     uint8_t insn = dl_fetch(a);
+    if (antic_glyph_probe > 1)
+        fprintf(stderr, "  DLEXEC sl %3d $%04X insn $%02X dmactl $%02X\n",
+                a->scanline, at, insn, a->dmactl);
     a->dl_insn   = insn;
     a->row_line  = 0;
 
     int mode = insn & 0x0F;
+
+    /* Vertical scrolling is a ROW-COUNTER trick, not a height adjustment:
+     *   entering a scrolled region — the counter STARTS at VSCROL, so the first
+     *     row is short by that much;
+     *   leaving one — the next row starts at 0 and ends when the counter
+     *     reaches VSCROL, compared LIVE every scanline.
+     * That live compare is the whole of antic_vscroldli: a VSCROL write one
+     * cycle either side of the comparison moves the row's end, and with it the
+     * following DLI.  Deriving a fixed height at fetch time cannot express it.
+     * The blank-line instruction takes part too — the $F0 after the scrolled
+     * mode 8 row is what the test actually measures. */
+    int vs = (mode >= 2) && (insn & 0x20);
+    int leaving = a->vscrol_prev && !vs;
+    int entering = vs && !a->vscrol_prev;
+    a->vscrol_prev = (uint8_t)vs;
 
     if (mode == 0x01) {                       /* jump */
         uint8_t lo = dl_fetch(a);
@@ -71,6 +90,7 @@ void antic_dl_exec(antic *a)
          * like an LMS and eats two bytes of the display list, which derails
          * everything after it. */
         a->row_height = ((insn >> 4) & 0x07) + 1;
+        a->row_end = leaving ? -1 : a->row_height - 1;
         return;
     }
 
@@ -85,12 +105,18 @@ void antic_dl_exec(antic *a)
     }
 
     a->row_height = antic_row_height[mode];
+    a->row_end    = a->row_height - 1;
+    if (entering)
+        a->row_line = a->vscrol & 0x0F;       /* start high: short first row */
+    if (leaving)
+        a->row_end = -1;                      /* end on the LIVE VSCROL compare */
+}
 
-    /* VSCROL shortens the first row of a scrolled region and lengthens the
-     * last.  Sampled live (by cycle 3), never precomputed. */
-    if (insn & 0x20)
-        a->row_height -= (a->vscrol & 0x0F);
-    if (a->row_height < 1) a->row_height = 1;
+/* The row's last scanline, resolved NOW.  -1 in row_end means the comparison is
+ * against VSCROL as it stands at this instant. */
+static int row_last(const antic *a)
+{
+    return a->row_end < 0 ? (a->vscrol & 0x0F) : a->row_end;
 }
 
 void antic_init(antic *a, antic_fetch_fn fetch, void *ctx, int lines)
@@ -110,7 +136,8 @@ void antic_reset(antic *a)
      * only ever begins after vertical blank ends, and the release at scanline 8
      * is what puts it there.  Starting unparked runs the list from scanline 0
      * and shifts every DLI eight lines early. */
-    a->dl_done = 1;
+    a->dl_done  = 1;
+    a->row_ends = 1;      /* armed, so the first line after the release fetches */
     a->nmi = 0;
     a->nmist = 0;
     a->nmien = 0;
@@ -188,8 +215,10 @@ static void line_start(antic *a)
     /* Only FETCHING a new instruction needs display-list DMA.  A row already in
      * progress keeps running — and keeps its DLI — when DMACTL is cleared out
      * from under it. */
-    if (a->row_line >= a->row_height) {
-        if (!(a->dmactl & 0x20))
+    if (a->row_ends) {
+        a->row_ends = 0;
+        if (!(a->dmactl & 0x20) ||
+            a->scanline < ANTIC_DISPLAY_TOP || a->scanline >= ANTIC_DISPLAY_BOTTOM)
             return;
         antic_dl_exec(a);
     }
@@ -197,7 +226,8 @@ static void line_start(antic *a)
     /* The DLI belongs to the LAST scanline of the row — including a BLANK-LINE
      * row, which is the case antic_dlitiming is built out of and the fabric
      * dl_parser gets wrong. */
-    a->dli_line = (a->dl_insn & 0x80) && (a->row_line == a->row_height - 1);
+    /* the DLI's own row-end compare is made live at NMIST time, not here — see
+     * antic_tick */
 
     int mode = a->dl_insn & 0x0F;
     if (mode >= 2 && (a->dmactl & 0x20)) {
@@ -291,6 +321,20 @@ int antic_tick(antic *a)
 
     if (c == 0) line_start(a);
 
+    /* Whether the row finishes with this scanline is decided PART WAY THROUGH
+     * it, not at its start: that is the only way a VSCROL write on cycle 3 can
+     * still land while one on cycle 4 is too late.  row_line has already been
+     * incremented past this scanline by line_start, hence the -1. */
+    if (c == ANTIC_CYC_ROWEND) {
+        int last = row_last(a);
+        a->row_ends = (uint8_t)(a->row_line - 1 >= last);
+        /* The DLI's compare is taken from the SAME sample, not re-read at NMIST
+         * time: NMIST lands on cycle 6, so re-reading there would let a VSCROL
+         * write on cycle 4 count, and antic_vscroldli's second probe requires
+         * exactly that write to be too late. */
+        a->dli_line = (uint8_t)((a->dl_insn & 0x80) && (a->row_line - 1 == last));
+    }
+
     /* ---- status and interrupt timing, all at fixed cycles ------------------
      * NMIST bits set at cycle 6 REGARDLESS of NMIEN — NMIEN gates the
      * interrupt, not the status — and NMIEN is sampled at the same cycle to
@@ -357,7 +401,7 @@ int antic_tick(antic *a)
          * antic_dlistwrap's DLI actually lands. */
         if (a->scanline == ANTIC_DISPLAY_TOP && a->dl_done) {
             a->dl_done  = 0;
-            a->row_line = a->row_height;    /* force a fetch on the first line */
+            a->row_ends = 1;                /* force a fetch on the first line */
         }
     }
     return took;

@@ -163,7 +163,41 @@ Suggested order: playfield decode for the bitmap modes first (no CHBASE
 dependency), wire `gtia_clock` into the scanline loop, confirm a collision
 registers at all, then add the character modes.
 
-## Open: re-anchoring the display list to scanline 8
+## Resolved: re-anchoring, and VSCROL as a row-counter compare
+
+The tension recorded below turned out to be two separate corrections, both of
+which the code was missing, and `antic_vscroldli` was **passing by accident**
+before either of them.
+
+**The display list is only FETCHED from scanline 8 onward.** A row already in
+progress still runs, which is what carries a list past the bottom of the frame,
+but a list waiting for its next instruction waits for the top of the display.
+Proof that this is right rather than merely convenient: `antic_vscroldli`'s own
+display list is annotated with the scanline each instruction should land on
+(`8, 16, 24, 32, 40`), and only the gated version produces those. Ungated, the
+list started at scanline **253** and every row was eight lines early — the test
+passed anyway, on a misaligned display.
+
+**VSCROL is a row-counter trick, not a height adjustment.** Entering a scrolled
+region the counter STARTS at VSCROL, so the first row is short by that much;
+leaving one, the next row starts at 0 and ends when the counter reaches VSCROL,
+compared LIVE every scanline. The blank-line instruction takes part — the `$f0`
+after the scrolled mode 8 row is what `antic_vscroldli` actually measures. The
+comparison is sampled once, at cycle 4, and the DLI's own row-end test reads
+that same sample rather than re-reading at NMIST time on cycle 6.
+
+Together these cost `antic_vscroldli` and gain `antic_dlistwrap` outright —
+including its second test, the "DLI carried over around VBLANK" case that had no
+explanation at all before. `antic_linebuffering` advances from its baseline to
+its second scenario.
+
+`antic_vscroldli` now fails for a reason worth naming: its two probes are one
+cycle apart and both are anchored to a `sta wsync` release, so it is blocked by
+the same absolute-alignment question as `antic_nmist` — moving the VSCROL sample
+one cycle satisfies whichever probe the other then breaks. It belongs with the
+PARKED group until that is settled.
+
+## Original note: re-anchoring the display list to scanline 8
 
 `antic_linebuffering` fails its very first readout, and the cause is not the
 pixel decode — the geometry is provably right. Its `framedata` byte 5 is `$E4`,

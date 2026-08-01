@@ -32,6 +32,7 @@ typedef uint8_t (*antic_fetch_fn)(void *ctx, uint16_t addr);
 
 /* Scanlines per row, by ANTIC mode.  Modes 0 (blank) and 1 (jump) are not
  * display modes and are handled separately. */
+#define ANTIC_CYC_ROWEND 4   /* VSCROL is sampled for the row-end compare here */
 extern const uint8_t antic_row_height[16];
 extern int antic_glyph_probe;   /* debug: trace glyph-row selection */
 
@@ -77,6 +78,16 @@ typedef struct {
     uint16_t dl_addr;     /* display-list program counter */
     uint16_t pf_addr;     /* playfield memory scan address (LMS target) */
     uint8_t  dl_insn;
+    uint8_t  vscrol_prev;  /* did the PREVIOUS instruction have the VSCROL bit? */
+    uint8_t  row_ends;     /* latched at ANTIC_CYC_ROWEND: does the row finish
+                            * with THIS scanline?  Sampling VSCROL here rather
+                            * than at line_start is what separates a write on
+                            * cycle 3 from one on cycle 4 (antic_vscroldli). */
+    int      row_end;      /* row ends when row_line passes this.  -1 means "use
+                            * VSCROL, compared LIVE" — the row after a scrolled
+                            * region ends when the row counter reaches VSCROL, so
+                            * a write lands or misses to the cycle
+                            * (antic_vscroldli). */
 
     /* ---- player/missile DMA -------------------------------------------------
      * ANTIC FETCHES this data; whether GTIA latches it is GRACTL's business, and
