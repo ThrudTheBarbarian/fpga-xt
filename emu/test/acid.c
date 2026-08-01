@@ -203,6 +203,16 @@ static int run_one(const char *dir, const char *name, unsigned long long *cyc)
     for (unsigned v = 0xE453; v <= 0xE459; v += 3) {
         s.ram[v] = 0x4C; s.ram[v + 1] = 0x80; s.ram[v + 2] = 0xE4;   /* JMP $E480 */
     }
+
+    /* IOCB 0's PUT-CHARACTER vector.  The library prints through it —
+     * _vputchar is loaded from ICPTL ($0346) and then INCREMENTED, because the
+     * OS stores these vectors as address-1 for its RTS despatch.  On a real
+     * machine it points into the E: screen handler; here it is zero, so
+     * "jmp (_vputchar)" lands on $0001 and every module that prints derails.
+     * Discarding the character lets them run. */
+    s.ram[0xE490] = 0xA0; s.ram[0xE491] = 0x01;      /* LDY #1  (success)      */
+    s.ram[0xE492] = 0x60;                            /* RTS                    */
+    s.ram[0x0346] = 0x8F; s.ram[0x0347] = 0xE4;      /* ICPTL/H = $E490 - 1    */
     /* and POKEY itself: a booted OS has already taken the poly counters OUT of
      * init.  antic_dmapattern never writes SKCTL at all — the library call that
      * would is on a path it does not take — so left at the hardware reset value

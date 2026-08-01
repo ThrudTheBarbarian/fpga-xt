@@ -506,25 +506,30 @@ modelled at all:
 `pokey_inittiming`'s 64 kHz case remains two cycles out and is unrelated to the
 input path.
 
-## Open: the five mod_* derails, and a tool for chasing them
 
-`ACID_TRAPOUT=1` remembers the last PCs and dumps them the first time execution
-reaches a byte the XEX never loaded — the moment of a derail, rather than
-anywhere along the BRK-walk through zeroed RAM that follows. `ACID_TRAP=<hex>`
-does the same for a specific address. The "loaded" map comes from the loader
-itself, so both work on any test.
+## VERIFIED: the five mod_* are not standalone tests
 
-That is what showed `pokey_skstat` and `pokey_serdirect` were asking for a disk
-rather than stalling on SKSTAT, and it gives the mod_* group a starting point:
+The docs called these "non-terminating demo modules" — unverified, and wrong in
+detail. Traced with `ACID_TRAPOUT`:
 
-* `mod_options` — derails to `$0000` after only **21 instructions**, coming out
-  of the library's `_imprint` at `$1b7b`..`$1b80`. That is the inline-string
-  printer: it pulls its own return address, steps past the string, and calls
-  `_print`. Worth checking whether it reaches `_print` at all.
-* `mod_dispmin` — derails to `$0ab4` after 8468 instructions, from a tight loop
-  at `$280a`..`$2811` in its own code.
+`mod_options` derails after **21 instructions**. Its RUN vector is `$3800`,
+whose first instruction is `jsr showMenu`, which calls the library's `_imprint`
+— and `_imprint` ends at `jmp (_vputchar)`, a vector the library declares as
+`dta a(0)`. Nothing has initialised it, so the jump goes to `$0000` and the CPU
+BRK-walks from there.
 
-Note both figures are small enough to trace instruction by instruction if
-needed. The docs' claim that these are "non-terminating demo modules" is still
-UNVERIFIED and now looks doubtful: a module designed not to terminate would not
-derail into unloaded memory 21 instructions in.
+The routine that WOULD initialise it is in the same module at `$3987`: it opens
+`E:` through CIOV and only then copies `ICPTL` into `_vputchar`. Nothing calls
+it before `main` prints. So these files cannot run on their own on real hardware
+either — they are **modules loaded by the Acid800 menu program**, which opens E:
+and sets the vector before handing over, exactly as the library's
+`_loadSeg`/`_runSeg` pair implies.
+
+Seeding `ICPTL` in the runner (done — it points at a discard stub, since the
+library reads that vector as address-1 and increments it) does not help on its
+own, because the module never reaches the code that reads it.
+
+They are therefore not conformance tests, and their JAM status is not a defect
+in this emulator. Reporting them as skips would mean special-casing five
+filenames in the runner, which is worse than leaving the count honest with the
+reason recorded here.
