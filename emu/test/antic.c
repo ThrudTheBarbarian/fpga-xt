@@ -234,6 +234,45 @@ int main(void)
         expect("buffer is re-displayable", antic_display_byte(&e, 20), 0xA0 + 20);
     }
 
+    /* ---- mode F's data has TWO decodes ------------------------------------
+     * Normally GTIA is shown mode F as hi-res: two pixels per colour clock
+     * reduced to "lit or not", and lit collides as PF2.  Pseudo mode E is the
+     * SAME data read as two-bit pairs indexing PF0..PF3 directly — not mode E's
+     * mapping, where 00 is background.
+     *
+     * gtia_psuedomodee is what forces the distinction: $E4 is `11 10 01 00`, so
+     * the hi-res decode gives PF2 three clocks out of four ($04) and the pair
+     * decode gives all four classes ($0F).  No phasing of the hi-res decode can
+     * produce four classes, which is what says the pair decode exists at all.
+     * Which of the two is used is system.c's per-line latch; that the two
+     * differ this way is ANTIC's, and is what is checked here. */
+    {
+        static uint8_t pm[65536];
+        for (int i = 0; i < 48; i++) pm[0x3000 + i] = 0xE4;
+        pm[0x2C00] = 0x4F; pm[0x2C01] = 0x00; pm[0x2C02] = 0x30;
+        pm[0x2C03] = 0x41; pm[0x2C04] = 0x00; pm[0x2C05] = 0x2C;
+
+        antic f;
+        antic_init(&f, mem_fetch, pm, ANTIC_LINES_NTSC);
+        f.dl_addr = 0x2C00;
+        f.dmactl = 0x22;                       /* DL on, normal width */
+        f.row_line = f.row_height = 0;
+        run_to(&f, ANTIC_DISPLAY_TOP + 1, 0);
+        expect("mode F fetched", f.lb_len, 40);
+
+        /* the normal-width window opens at colour clock 48 */
+        int hires_classes = 0, pair_classes = 0;
+        for (int cc = 48; cc < 48 + 4; cc++) {
+            int lit = 0, c = antic_pf_at(&f, cc, &lit);
+            if (c >= 0) hires_classes |= 1 << c;
+            int v = antic_pf_pair(&f, cc);
+            expect("pair is in range", v >= 0 && v <= 3, 1);
+            pair_classes |= 1 << v;
+        }
+        expect("hi-res decode of $E4 is PF2 alone", hires_classes, 1 << 2);
+        expect("pair decode of $E4 is all four classes", pair_classes, 0x0F);
+    }
+
     printf("antic: %s\n", fails ? "FAIL" : "all timing-core tests pass");
     return fails ? 1 : 0;
 }

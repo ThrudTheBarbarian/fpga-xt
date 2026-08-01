@@ -210,6 +210,10 @@ int antic_pf_at(const antic *a, int cc, int *hires_lit);
  * colour clocks each, so they need the DATA, not a colour class. */
 int antic_pf_nibble(const antic *a, int cc, int shift);
 
+/* The raw two-bit pixel pair at colour clock `cc` in mode F — what pseudo mode
+ * E decodes as a playfield index. */
+int antic_pf_pair(const antic *a, int cc);
+
 uint8_t antic_read(antic *a, uint16_t addr);
 void    antic_write(antic *a, uint16_t addr, uint8_t val);
 

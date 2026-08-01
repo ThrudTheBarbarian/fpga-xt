@@ -716,6 +716,30 @@ int antic_pf_at(const antic *a, int cc, int *hires_lit)
     return v ? v - 1 : -1;                /* 01->PF0, 10->PF1, 11->PF2 */
 }
 
+/* The RAW two-bit pixel pair at colour clock `cc` of an ANTIC mode F line, or
+ * -1 outside the playfield window.  Mode F is hi-res — two pixels per colour
+ * clock — and GTIA normally reduces that pair to "lit or not".  Pseudo mode E
+ * does not: it decodes the pair as a playfield INDEX, which is why the same
+ * data gives four colour classes instead of one.  See system.c. */
+int antic_pf_pair(const antic *a, int cc)
+{
+    if (!(a->dmactl & 0x20) || (a->dl_insn & 0x0F) != 0x0F)
+        return -1;
+    antic_width w = width_of(a->dmactl);
+    int start = 2 * (antic_pf_nominal(w, hscrol_of(a)) + PF_DISPLAY_LEAD);
+    int span  = (w == ANTIC_NARROW) ? 128 : (w == ANTIC_WIDE) ? 192 : 160;
+
+    int off = cc - start;
+    if (off < 0 || off >= span)
+        return -1;
+    int p  = off * 2;
+    int i0 = (p >> 3) % (int)sizeof a->linebuf;
+    int i1 = ((p + 1) >> 3) % (int)sizeof a->linebuf;
+    int b0 = (a->linebuf[i0] >> (7 - (p & 7))) & 1;
+    int b1 = (a->linebuf[i1] >> (7 - ((p + 1) & 7))) & 1;
+    return (b0 << 1) | b1;
+}
+
 int antic_pf_nibble(const antic *a, int cc, int shift)
 {
     if (!(a->dmactl & 0x20) || (a->dl_insn & 0x0F) != 0x0F)

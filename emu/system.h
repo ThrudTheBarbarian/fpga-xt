@@ -41,6 +41,8 @@ typedef struct {
     int        bus_probe;  /* debug: trace every bus cycle of this scanline */
     int        irq_probe;  /* debug: report every IRQST change with its cycle */
     uint8_t    irq_shadow; /* previous IRQST, for the probe */
+    uint8_t    hires_ok;   /* mode F is hi-res THIS scanline — latched once per
+                            * line, see render_cycle's pseudo mode E */
     uint8_t    nmi_hold;   /* ANTIC's /NMI pulse, held until the CPU latches it */
     uint64_t   cycles;
 

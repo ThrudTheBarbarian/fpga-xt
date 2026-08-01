@@ -20,6 +20,34 @@
 #ifndef PM_SLOT_M
 #define PM_SLOT_M 2
 #endif
+
+/* ---- pseudo mode E -------------------------------------------------------
+ * gtia_psuedomodee switches PRIOR into GTIA mode 10 near the end of one
+ * scanline and back out early in the next, and its two cases differ ONLY in
+ * whether the restoring write lands on cycle 14 or cycle 15.  Cycle 14 gives an
+ * ordinary hi-res line, whose $E4 pattern collides as PF2 alone ($04).  Cycle
+ * 15 gives $0F — all four playfield classes — from the same data, which the
+ * hi-res decode cannot produce however it is phased.
+ *
+ * $E4 is `11 10 01 00`, so four classes from four colour clocks means the
+ * two-bit pairs are being read as a playfield INDEX.  Not mode E's mapping,
+ * where `00` is background: a direct index, `00` -> PF0.  That is what the test
+ * is named for — it looks like mode E and its colours are not mode E's.
+ *
+ * So GTIA decides ONCE PER SCANLINE whether mode F is hi-res, and a GTIA mode
+ * still selected at that instant disables hi-res for the whole line.  Leave the
+ * GTIA mode afterwards and the playfield keeps arriving with hi-res off, which
+ * is the pair-as-index decode.
+ *
+ * Cycle 15 is MEASURED, and the two cases bracket it from both sides: at 14 and
+ * below the "cycle 14" case also goes pseudo, at 16 and above the "cycle 15"
+ * case does not go pseudo at all.  Exactly one value separates them. */
+#ifndef PSEUDO_MODE_E
+#define PSEUDO_MODE_E 1
+#endif
+#ifndef GTIA_MODE_LATCH
+#define GTIA_MODE_LATCH 15
+#endif
 #include <stdio.h>
 
 /* ANTIC's own fetches go straight to memory: they are already accounted for as
@@ -140,6 +168,8 @@ static void render_cycle(atari *s, int cyc)
      * or $CF (mode F). */
     int an_mode = s->an.dl_insn & 0x0F;
     int emitting = an_mode >= 2 && (s->an.dmactl & 0x20);
+    if (cyc == 0) s->hires_ok = 1;
+    if (cyc == GTIA_MODE_LATCH) s->hires_ok = (uint8_t)!((s->gt.prior >> 6) & 3);
     s->gt.vblank = (s->an.scanline < ANTIC_DISPLAY_TOP ||
                     s->an.scanline >= ANTIC_DISPLAY_BOTTOM) && !emitting;
     for (int h = 0; h < 2; h++) {
@@ -170,13 +200,16 @@ static void render_cycle(atari *s, int cyc)
              * sixteen; a "4..7" range check gets the low half right and reports
              * background for the whole top half. */
             pf = (gmode == GTIA_MODE_10 && (nib & 4)) ? (nib & 3) : -1;
+        } else if (PSEUDO_MODE_E && !s->hires_ok && (s->an.dl_insn & 0x0F) == 0x0F) {
+            pf = antic_pf_pair(&s->an, cc);      /* the pair IS the index */
         } else {
             pf = antic_pf_at(&s->an, cc, &hires);
         }
         /* A GTIA mode re-reads mode F's bits as NIBBLES, so the playfield is no
          * longer hi-res: leaving this set makes GTIA apply the "lit collides as
          * PF2" rule and throw the nibble's colour class away. */
-        s->gt.hires = (s->an.dl_insn & 0x0F) == 0x0F && !gmode;
+        s->gt.hires = (s->an.dl_insn & 0x0F) == 0x0F && !gmode &&
+                      !(PSEUDO_MODE_E && !s->hires_ok);
         uint8_t before = (uint8_t)(s->gt.ppf[0] | s->gt.ppf[1] | s->gt.ppf[2] |
                                    s->gt.ppf[3] | s->gt.ppl[0] | s->gt.ppl[1]);
         gtia_clock(&s->gt, cc, pf, hires);

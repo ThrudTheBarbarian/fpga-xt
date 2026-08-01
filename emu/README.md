@@ -1436,3 +1436,55 @@ Two probes earned their keep and are worth keeping in mind:
   at line 20 cycle 110 when `ACID_COLPROBE` showed it actually landing at line
   21 cycle 108 — a whole scanline out. Rule (k) again: for anything downstream
   of a WSYNC, watch the WRITE, not the PC.
+
+## SOLVED: pseudo mode E — GTIA latches hi-res once per line
+
+`gtia_psuedomodee`'s two cases are the same code twice, and the ONLY difference
+is one cycle:
+
+```
+    sta grafp0      ;7, 8, 9, 10        sta grafp0,y   ;7, 8, 9, 10, 11
+    sty prior       ;11, 12, 13, (14)   sty prior      ;12, 13, 14, (15)
+```
+
+`sta grafp0,y` is a cycle longer than `sta grafp0` — indexed stores always take
+their dummy read — so the write that leaves GTIA mode 10 lands on cycle 14 in
+one case and cycle 15 in the other. Cycle 14 wants `$04`; cycle 15 wants `$0F`.
+
+Everything else is identical, and in particular the player is at HPOS `$80`,
+quad width, so it sits over colour clocks `$80..$9F` — a hundred colour clocks
+after either write. The mode change cannot be affecting the display where the
+collision happens. It has to be changing STATE that lasts the rest of the line.
+
+What state? Read `$0F` (rule y). The playfield is `$E4` everywhere, and the
+window is normal width, so each byte covers four colour clocks. `$E4` is
+`11 10 01 00`. Four playfield classes out of four colour clocks of one repeated
+byte means the two-bit pairs ARE the class index — and not mode E's mapping,
+where `00` is background and the answer would be `$07`. A direct index, `00` ->
+PF0. That is what the test is named for: it looks like mode E and its colours
+are not mode E's.
+
+The hi-res decode cannot produce it however it is phased — it reduces each pair
+to "lit or not" and reports PF2, which is the `$04` the other case wants. So:
+
+**GTIA decides ONCE PER SCANLINE whether mode F is hi-res.** A GTIA mode still
+selected at that instant disables hi-res for the whole line; leave the GTIA mode
+afterwards and the playfield keeps arriving with hi-res off, which is the
+pair-as-index decode.
+
+The latch cycle is **15**, and the two cases bracket it from both sides:
+
+| `GTIA_MODE_LATCH` | result |
+|---|---|
+| 11, 12, 13, 14 | "Cycle 14 test failed" — that case goes pseudo too |
+| **15** | **PASS** |
+| 16 | "Cycle 15 test failed" — that case does not go pseudo at all |
+
+Exactly one value separates them, which is what a well-built pair of cases is
+for. A live `PRIOR` read cannot express any of this: both writes are long past
+before the playfield window opens, so without the latch the two cases are
+identical by construction — which is exactly what we saw, `$04` twice.
+
+Gated in `test/antic.c` on the part that is ANTIC's: the same line buffer read
+two ways, `antic_pf_at` giving PF2 alone and `antic_pf_pair` giving all four.
+Which decode is in force is `system.c`'s latch.
