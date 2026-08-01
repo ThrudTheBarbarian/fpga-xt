@@ -1988,8 +1988,8 @@ REMAINING bits are drawn. Then the lit bit 0 — index 7 — lands at `Y + 4*(7-
 where `j` is the bit index reached when the write landed, and the observed
 `Y + 20` gives `j = 2`.
 
-**But that reading does not survive the `$64` row**, and it is worth being exact
-about which part is evidence and which is inference. `Y = $64` with `j = 2` puts
+**And it does not survive the full table either — DISPROVED.** It is worth
+being exact about which part is evidence and which is inference. `Y = $64` with `j = 2` puts
 the lit bit at `$78`..`$7b` — all four missiles — index `$F`. The table says 0.
 So a uniform "relocate keeping the bit index" cannot be the whole rule either:
 something makes `$64` behave like no relocation at all while `$65` onwards
@@ -2072,3 +2072,34 @@ So the working hypothesis is now that there is NO WSYNC conflict — that
 `wsync_extra` is right, and `gtia_pmresize` was never evidence against it. The
 way to settle that is to fix the mid-draw object first and re-test, not to keep
 looking for a discriminator between five tests and one.
+
+## The mid-draw object: measured, modelled, and disproved on the full table
+
+The mid-line `sty hposp0` lands at ANTIC cycle 48 — colour clock `$66` — with
+`HPOSP0 = $60` written back at cc `$14` each line (`ACID_COLPROBE`). That turns
+the pass-3 rows into arithmetic rather than a fit, and a clean mechanism drops
+out of it:
+
+**An HPOS write repositions the player but never RELOADS its graphics shift
+register.** GRAFP0 is a shift register, not an indexed array: bits already
+clocked out are gone. Restarting at `Y` therefore emits whatever is left, so the
+lit bit 0 appears five bits along — `Y + 20` for a quad player — which is
+exactly the left edge the table shows, with no need for a bit index that GRAFP0
+does not have set.
+
+With the write taken as live at cc `$65` rather than `$66`, all four of pass 3's
+first rows come out right: 0, 7, 3, 1.
+
+**And that is as far as it goes.** Checked against every cell of the test — 12
+passes x 2 missile positions x 28 player positions = 672 — it matches 330. The
+four-row agreement was coincidence. Failures are spread across every pass, from
+4/28 to 28/28, so this is not an edge case needing a tweak; the shape is wrong.
+
+Rule (tt) is what saved this one: the same reading was written up two commits
+ago as fitting "every row" on the strength of four, and this time it was scored
+before any code was written.
+
+`tools/pmoverlap-check.py` now scores an arbitrary model against all 672 cells
+in about a second, with the geometry documented at the top and the disproved
+model left in as a worked example of the shape an answer takes. Any future
+attempt costs one command, not an emulator build.
