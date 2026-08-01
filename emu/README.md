@@ -1229,3 +1229,30 @@ This test has now given up five rules (the STIMER first period, both halves
 interrupting, the interrupt/serial edge split, the AUDF capture delay, and the
 end-decided period). The remaining assertion pair is deep in diminishing returns;
 better value elsewhere.
+
+
+## Open: gtia_phantomdma needs a PER-SLOT phantom latch
+
+Never examined before, and the name is exact. The test sets `DMACTL = $21` —
+narrow playfield, display-list DMA on, and **P/M DMA off** — while `GRACTL = $02`
+tells GTIA to latch player graphics anyway. With no P/M fetch happening, the
+latch captures whatever ANTIC last drove onto the bus: display-list and playfield
+bytes. That is the "phantom" data.
+
+Our `pm_latch()` only ran when `an.pm_fetched` was set, so the objects kept the
+`$FF` the test wrote directly and `d0` read back `$FF`.
+
+A first cut — track the last byte ANTIC fetched and latch it into every object at
+line start when GRACTL enables the latch and no P/M fetch happened — moves `d0`
+from `$FF` to **`$88`**, which is a `framebuf` byte. So the phantom path is real
+and now captures bus data. It is still wrong, and the wanted value says why:
+`$AD` = `1010 1101` is a COLLISION pattern built from `p0pf` and the low bit of
+each of `m0pl`..`m3pl`, and four objects cannot produce four different bits from
+one shared byte.
+
+So each player and missile latches on **its own slot**, capturing whatever ANTIC
+drove at that particular cycle — four consecutive fetches, four different bytes.
+The single-`last_fetch` version is left OFF (`PHANTOM_PM`) because it is
+confidently wrong in detail even though it scores the same 42; implementing the
+per-slot version needs the P/M slot cycles, which `antic_dma.c` already derives
+for the case where P/M DMA IS on.

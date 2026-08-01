@@ -2,13 +2,22 @@
  * system.c — the machine.  See system.h.
  */
 #include "system.h"
+#ifndef PHANTOM_PM
+#define PHANTOM_PM 0
+#endif
 #include <stdio.h>
 
 /* ANTIC's own fetches go straight to memory: they are already accounted for as
  * DMA cycles, so they must not recurse into the CPU's cycle path. */
 static uint8_t antic_fetch(void *ctx, uint16_t addr)
 {
-    return ((atari *)ctx)->ram[addr];
+    atari *s = (atari *)ctx;
+    /* Remember what ANTIC last drove onto the bus.  GTIA latches its P/M
+     * graphics on fixed slots whether or not ANTIC actually fetched P/M data
+     * there, so with GRACTL enabling the latch and DMACTL's P/M DMA OFF it
+     * captures whatever went past — gtia_phantomdma's whole subject. */
+    s->last_fetch = s->ram[addr];
+    return s->last_fetch;
 }
 
 /* Advance the world by machine cycles until ANTIC yields one to the CPU.  This
@@ -17,6 +26,13 @@ static uint8_t antic_fetch(void *ctx, uint16_t addr)
  * missiles separately, and independently of whether ANTIC fetched at all. */
 static void pm_latch(atari *s)
 {
+    if (PHANTOM_PM && !s->an.pm_fetched && s->an.cycle == 0) {
+        /* No P/M DMA this line, but GRACTL still latches: every object takes
+         * the last byte ANTIC drove. */
+        if (s->gt.gractl & 0x02)
+            for (int i = 0; i < 4; i++) s->gt.grafp[i] = s->last_fetch;
+        if (s->gt.gractl & 0x01) s->gt.grafm = s->last_fetch;
+    }
     if (!s->an.pm_fetched) return;
     s->an.pm_fetched = 0;
 
