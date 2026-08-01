@@ -347,3 +347,21 @@ early". Two hypotheses, two measurements, no sweeping.
 
 Also settled alongside: a NMIRES landing in the same cycle as a status set loses
 to it, while a NMIEN write in that same cycle wins.
+
+## Open: antic_dmapattern measures the DMA pattern LIVE
+
+Now that POKEY starts out of poly init (the runner seeds it, since this test
+never writes SKCTL), `antic_dmapattern` decodes its random pair and runs to a
+real assertion instead of spinning. It reports **"Incorrect timing for mode 2-a"**
+— read that off d1 = $02 and d2 = $61 = 'a'; the message string the runner prints
+for this one is garbage, because the failure arrives through a path that has no
+inline text.
+
+The interesting part: `make dma` matches ACID's own DMA table 50/50, so the
+tabulated pattern is right. This test measures the pattern **live**, by timing
+RANDOM, so it is checking something the table cannot — when each cycle is
+actually taken, not merely which ones. Mode 2 variant 'a' is where it first
+disagrees.
+
+The LFSR-decode technique applies directly here: the test reads RANDOM either
+side of a DMA burst, so a wrong value converts to an exact cycle count.
