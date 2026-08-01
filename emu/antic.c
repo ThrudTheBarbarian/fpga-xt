@@ -254,7 +254,13 @@ static void line_start(antic *a)
          * turns playfield DMA off, lets a mode 8 row START under that, then
          * turns DMA back on mid-row and checks the STALE buffer is what gets
          * displayed.  Re-fetching every scanline quietly refills it. */
-        if (a->row_line == 0) {
+        /* A DMACTL width of zero means no playfield DMA at all, and then the
+         * buffer is left ENTIRELY alone — contents and length both.  Zeroing
+         * lb_len here still wipes the stale data as far as the decode is
+         * concerned, which is what antic_linebuffering's "aliased mode F"
+         * case catches: the row starts with DMA off, so nothing is fetched, and
+         * the previous row's 40 bytes must still be there to be re-displayed. */
+        if (n > 0 && a->row_line == 0) {
             for (int i = 0; i < n && i < (int)sizeof a->linebuf; i++) {
                 a->linebuf[i] = a->fetch ? a->fetch(a->ctx, a->pf_addr) : 0xFF;
                 a->pf_addr = antic_pf_next(a->pf_addr);
@@ -265,7 +271,7 @@ static void line_start(antic *a)
         /* Character modes fetch the glyph row as well as the name.  CHACTL's
          * vertical reflect picks a different row of the SAME character, so it
          * belongs here with the fetch, not in the pixel decode. */
-        if (mode >= 2 && mode <= 7) {
+        if (mode >= 2 && mode <= 7 && n > 0) {
             int row = a->row_line;
             uint16_t cbase = (mode <= 5)
                 ? (uint16_t)((a->chbase & 0xFC) << 8)
@@ -316,7 +322,7 @@ static void line_start(antic *a)
         }
     }
 
-    a->row_line++;
+    a->row_line = (a->row_line + 1) & 0x0F;
 }
 
 int antic_tick(antic *a)
@@ -332,12 +338,18 @@ int antic_tick(antic *a)
      * incremented past this scanline by line_start, hence the -1. */
     if (c == ANTIC_CYC_ROWEND) {
         int last = row_last(a);
-        a->row_ends = (uint8_t)(a->row_line - 1 >= last);
+        /* The row counter is FOUR BITS and the end test is EQUALITY, so a
+         * VSCROL that overshoots the mode's height makes the row run all the
+         * way round rather than ending immediately.  antic_linebuffering's
+         * $2f is mode F — height ONE — entered with VSCROL = 1, and its display
+         * list says that row spans sixteen scanlines: 1,2,..15,0. */
+        a->row_ends = (uint8_t)(((a->row_line - 1) & 0x0F) == last);
         /* The DLI's compare is taken from the SAME sample, not re-read at NMIST
          * time: NMIST lands on cycle 6, so re-reading there would let a VSCROL
          * write on cycle 4 count, and antic_vscroldli's second probe requires
          * exactly that write to be too late. */
-        a->dli_line = (uint8_t)((a->dl_insn & 0x80) && (a->row_line - 1 == last));
+        a->dli_line = (uint8_t)((a->dl_insn & 0x80) &&
+                                (((a->row_line - 1) & 0x0F) == last));
     }
 
     /* ---- status and interrupt timing, all at fixed cycles ------------------
