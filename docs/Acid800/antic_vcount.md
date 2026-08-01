@@ -59,10 +59,22 @@ at cycle 111 of every scanline, including the last one.** On the final scanline
 it therefore advances to `lines / 2`, and the frame wrap at the *end* of that
 line resets it to 0.
 
-So `VCOUNT` reads 131 (NTSC) for only cycles 111–113 of the last scanline of the
-frame — about three cycles a frame. That is exactly why the test calls this
-*"the nasty one -- single cycle rollover"* and why it has to arrive with
-cycle-accurate timing to observe it at all.
+It is cleared **one cycle later**, at 112, by a comparator — not at the end of
+the line. So `VCOUNT` reads 131 (NTSC) for **exactly one cycle per frame**, which
+is what the test's name means literally.
+
+The two rollover probes make that unmistakable once you notice they sit on the
+**same scanline** and differ only in how many cycles they burn after the WSYNC:
+
+```
+d0:  bit $0100        ;*, 105, 106, 107
+     lda vcount       ;108, 109, 110, 111   -> reads on 111, must be 131
+d1:  bit $00          ;*, 105, 106
+     nop              ;107, 108
+     lda vcount       ;109, 110, 111, 112   -> reads on 112, must be 0
+```
+
+A model that clears `VCOUNT` at the line wrap gives 131 for both.
 
 The test detects the region by reading `PAL` (`$D014`; `$0F` means NTSC), waits
 for `VCOUNT` to reach 130 (NTSC) or 155 (PAL), and then asserts:
@@ -80,6 +92,7 @@ START of the line, rather than at the end, misses the window too.
 
 1. `VCOUNT` advancing at scanline cycle **111**.
 2. `VCOUNT` = scanline >> 1, **9-bit**, not an 8-bit counter that wraps early.
-3. The advance at cycle 111 happening on the LAST scanline too, so VCOUNT
-   momentarily reads 131 (NTSC) / 156 (PAL) before the frame wrap clears it.
+3. The advance at cycle 111 happening on the LAST scanline too, so VCOUNT reads
+   131 (NTSC) / 156 (PAL) for exactly one cycle, cleared at 112 rather than at
+   the end of the line.
 4. `PAL` (`$D014`) reporting the region, since the expected values depend on it.

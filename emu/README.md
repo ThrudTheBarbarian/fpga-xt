@@ -49,7 +49,7 @@ literally the same tests.
   scanline and its later ones.
 * **ANTIC DMA schedule: 50/50**, timing core, display-list execution and line
   buffer all in; **GTIA collisions** in.
-* **The real ACID800 binaries run**: `make acid` → 38 pass / 16 fail / 4 jammed
+* **The real ACID800 binaries run**: `make acid` → 39 pass / 15 fail / 4 jammed
   / 1 looping / 4 skipped, of 63. Not directly comparable to the fabric's 33/63:
   that runs on hardware with a full POKEY and an OS ROM, whereas POKEY here is
   the RANDOM LFSR, the timers and the serial OUTPUT path only, and the five
@@ -439,6 +439,13 @@ moves with the release:
 
 That retune took `antic_vcount` part 1, `antic_dmapattern`, `antic_nmist` and
 `antic_vscroldli` together, 37 -> 38.
+
+`antic_vcount` part 2 — "the nasty one, single cycle rollover" — then needed one
+more thing, and the name is meant literally. Its two rollover probes sit on the
+**same scanline** and differ only in the read cycle: 111 must read 131, and 112
+must read **0**. So the 9-bit counter is not cleared by the line wrap at all; a
+comparator clears it ONE CYCLE after the advance, and VCOUNT reads its maximum
+for exactly one cycle per frame. 38 -> 39.
 
 The suite's own inline annotations are NOT a usable cross-check and cost real
 time here: `antic_nmist`'s seven-cycle `pha:pla` spanning `*, 104..109` reads as

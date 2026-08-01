@@ -421,10 +421,15 @@ int antic_tick(antic *a)
 
     /* VCOUNT is scanline>>1, so it advances at cycle 111 of every ODD scanline.
      * Because that advance happens on the LAST scanline too (261 is odd), it
-     * momentarily reads lines/2 = 131 for cycles 111-113 before the frame wrap
-     * clears it — antic_vcount's "nasty one, single cycle rollover". */
+     * momentarily reads lines/2 = 131 — and then a comparator clears it ONE
+     * CYCLE LATER, not at the end of the line.  That single cycle is the whole
+     * of antic_vcount's "nasty one, single cycle rollover": its two rollover
+     * probes sit on the SAME scanline and differ only in the read cycle, 111
+     * (must read 131) against 112 (must read 0). */
     if (c == ANTIC_CYC_VCOUNT && (a->scanline & 1))
         a->vcount++;
+    if (c == ANTIC_CYC_VCOUNT + 1 && a->scanline == a->lines - 1)
+        a->vcount = 0;
 
     /* WSYNC: ANTIC_CYC_WSYNC is the first cycle the CPU gets BACK. */
     if (a->wsync_halt) {
@@ -449,7 +454,6 @@ int antic_tick(antic *a)
         a->cycle = 0;
         if (++a->scanline >= a->lines) {
             a->scanline = 0;
-            a->vcount   = 0;     /* the wrap is at the END of the last line */
             /* Nothing reloads the display-list counter here.  A list that ran
              * past the bottom of the frame simply CONTINUES into the next one —
              * a list returns to its start only by executing a JVB, which has
