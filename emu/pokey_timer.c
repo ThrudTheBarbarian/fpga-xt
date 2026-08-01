@@ -77,26 +77,32 @@ static int ser_clock_ch(const pokey_timer *p)
 }
 
 /* One serial bit time has elapsed. */
+/* Take a byte from SEROUT into the shift register, if there is one and the
+ * register is free.  Deliberately SEPARATE from advancing a bit time: the two
+ * happen together on a clock tick, but loading SEROUT triggers only this one,
+ * and doing it by calling the tick routine disturbs the shift clock's phase. */
+static void ser_take(pokey_timer *p)
+{
+    if (!p->serout_full || p->ser_bits) return;
+    p->serout_full = 0;
+    p->seroc = 0;
+    /* TWENTY timer underflows, not ten: the timer produces the serial clock's
+     * edges, so a bit time is two underflows.  pokey_serclock pins it — with
+     * timer 3+4 at 456 cycles it expects a VCOUNT delta of 40, i.e. 80
+     * scanlines, i.e. 9120 cycles, i.e. 20 periods for one byte. */
+    p->ser_bits = 20;
+    raise(p, POKEY_IRQ_SEROR);             /* SEROUT is free again */
+}
+
+/* One serial bit time. */
 static void ser_tick(pokey_timer *p)
 {
-    if (p->ser_bits) {
-        if (--p->ser_bits != 0) return;
+    if (p->ser_bits && --p->ser_bits == 0) {
         p->seroc = 1;
         if (p->irqen & POKEY_IRQ_SEROC) p->irq = 1;
-        /* fall through: a byte already waiting in SEROUT is taken on THIS tick,
-         * not the next.  Waiting cost one whole serial period, which
-         * pokey_serclock sees as 42 where it wants 40. */
     }
-    if (p->serout_full) {                  /* take the byte from SEROUT */
-        p->serout_full = 0;
-        p->seroc = 0;
-        /* TWENTY timer underflows, not ten: the timer produces the serial
-         * clock's edges, so a bit time is two underflows.  pokey_serclock pins
-         * it — with timer 3+4 at 456 cycles it expects a VCOUNT delta of 40,
-         * i.e. 80 scanlines, i.e. 9120 cycles, i.e. 20 periods for one byte. */
-        p->ser_bits = 20;
-        raise(p, POKEY_IRQ_SEROR);         /* SEROUT is free again */
-    }
+    /* a byte already waiting is taken on THIS tick, not the next */
+    ser_take(p);
 }
 
 static void underflow(pokey_timer *p, int ch)

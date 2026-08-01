@@ -423,30 +423,34 @@ own annotations disagree with each other here: `antic_nmist`'s seven-cycle
 `pha:pla` spanning 104..109 puts its first cycle at 103, while `antic_vcount`'s
 four-cycle `bit $0100` spanning 105..107 plus an unnumbered first puts it at 104.
 
-## Open: SEROUT transfer timing — sertiming and serclock pull opposite ways
+## Open: pokey_sertiming — and why the immediate SEROUT take is ruled OUT
 
-The serial output clock, its mode table and the shift register are done and
-`pokey_serclock` passes. What is left is exactly when the byte moves from SEROUT
-into the shift register, and the two tests disagree about it:
+`pokey_serclock` passes with a purely tick-driven transfer: the byte moves from
+SEROUT into the shift register only on a serial clock tick. `pokey_sertiming`
+loads SEROUT with timer 2 running and reports "loaded too late", which looks
+like it wants the transfer to be immediate.
 
-* `pokey_serclock` loads SEROUT with the clock **external** (SKCTL $03) and
-  requires SEROC to stay ASSERTED — "the shift register should never load in
-  this mode";
-* `pokey_sertiming` loads it with timer 2 **running** and requires SEROC to drop
-  straight away, reporting "loaded too late" otherwise.
+**It is not that.** Making the take immediate was tried twice — once by calling
+the tick routine wholesale, once with "take the byte" properly separated from
+"advance a bit time" — and both break `serclock`, 34 down to 33. The separated
+version is still in the code and is the better structure; only the immediate
+call at the SEROUT write was removed.
 
-Modelling the transfer as tick-driven satisfies the first and fails the second.
-Making it immediate whenever the serial clock is running satisfies the second
-and BREAKS `serclock` — 34 drops to 33 — so it is not simply a matter of gating
-on whether the clock runs. Measured, not guessed: that variant takes sertiming
-from "loaded too late" to "loaded too early", i.e. past one assertion and into
-the next, while serclock regresses.
+The reason is worth writing down, because it rules the idea out rather than
+merely scoring it. `serclock`'s MeasureSerOutRate does:
 
-The likely shape is that the transfer is immediate but must not disturb the
-shift clock's PHASE, which the immediate variant does by borrowing the tick
-routine wholesale. Worth separating the two actions — "take the byte" and
-"advance a bit time" — before trying again.
+```
+sta stimer / sta serout / sta irqen / jsr waitready
+```
 
-Still behind this: `pokey_sertiming`, `pokey_serdirect` (jams at $0014),
-`pokey_skstat` (loops), `pokey_asyncrecv` ("Timer #4 IRQ fired with async recv
-mode active"), `pokey_twotone` ("Too many timer 2 interrupts on mark").
+SEROUT is written while **IRQEN is still zero**. An immediate take raises SEROR
+right there, where it is masked and lost; the test then waits for a SEROR that
+never comes and measures a delta of 0. With a tick-driven take the first
+transfer happens after IRQEN is enabled, and the measurement works.
+
+So `sertiming` is failing for some other reason, and the likely candidate is the
+serial RATE in its configuration rather than the transfer rule — if timer 2's
+period there is short enough, a tick falls between its `sta serout` and its
+`lda irqst` and the tick-driven model already satisfies it. Check what AUDCTL
+and AUDF2 it sets, and whether that channel is being clocked at the rate the
+test intends, before touching the transfer again.
