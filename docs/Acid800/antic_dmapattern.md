@@ -23,27 +23,53 @@ dta $09,%00000000,%00000000,%00000000,%01000111,%01110111, ... ,$A5
 dta $0c,%01000011,...
 ```
 
-Each row is: **mode byte**, then 14 mask bytes walking the scanline cycle by
-cycle, then `$A5` as a terminator. The column header above each block gives the
-cycle numbering: a 7-wide first group then thirteen 8-wide groups = 111 cycles,
-against 14 mask bytes = 112 bits — so **one bit of the first byte is padding**,
-and whether the cycles occupy bits 7..1 or 6..0 is not settled by the ruler
-alone.
+Each row is: a **key byte**, then 14 mask bytes walking the scanline, then `$A5`
+as a terminator.
 
-Polarity is not stated either, but the evidence points one way: for a narrow
-mode-8 line, which fetches very few bytes, the middle mask bytes are `$FF` —
-consistent with **1 = CPU-available (unhalted)** rather than 1 = blocked. The
-test's own comment says it walks the mask *"counting off the unhalted cycles"*.
+**The key byte is not a display-list instruction.** The test's own failure path
+decodes it:
 
-Both questions are answerable from the scan loop in the test source, and should
-be settled there rather than fitted to whatever our ANTIC happens to do.
-`tools/acid800_dmatable.py` therefore emits the **raw** bytes
-(`emu/acid_dmatable.h`) so no guess is baked into the data.
+```
+lda (testptr),y / lsr / lsr           -> mode      (printed as %x)
+lda (testptr),y / and #3 / adc #'a'   -> variant   (printed as %c)
+_FAIL c"Incorrect timing for mode %x-%c"
+```
 
-The mode byte is the display-list instruction, so it encodes more than the mode
-number — e.g. `$08` vs `$09` (the same mode with and without DLI/scroll bits)
-have visibly different patterns, and `$28`/`$2c` (VSCROL set) differ from
-`$20`/`$24`.
+so it is `(mode << 2) | variant`, giving **ANTIC modes 2–15** with variants
+`a`,`b` in the narrow block and `c`,`d` in the normal block. `$08` is mode 2
+variant a, not "display-list instruction $08".
+
+### The mask encoding, settled from the scan loop
+
+```
+bitloop:
+isblocked:  iny            ; a machine cycle passes
+            rol            ; mask <<= 1, MSB -> C      (MSB FIRST)
+            rol d2         ; stash the bit
+            ...
+samebyte:   ror d2         ; recover it
+            bcs isblocked  ; bit==1 -> blocked: advance, do NOT count
+            dex            ; bit==0 -> an UNBLOCKED cycle, count it
+            bne bitloop
+```
+
+`X` is *"number of unblocked cycles left to advance"*, and only a **zero** bit
+decrements it. Therefore:
+
+* bits are consumed **MSB-first**, 8 per byte, 14 bytes = **112 cycles (0–111)**;
+* **a 1 bit is a BLOCKED (DMA) cycle**; a 0 is one the CPU got.
+
+That is the opposite of what the `$FF` runs suggest at a glance — but they are
+real. Mode 2 variant `a` fetches character **names and data**, so every cycle
+across the playfield genuinely is blocked; variant `b` fetches only data and
+shows the sparser `$77`/`$55` patterns.
+
+One cosmetic discrepancy remains and is harmless: the ruler comment draws a
+7-wide first group then thirteen 8-wide groups = 111 columns, while the code
+consumes all 8 bits of all 14 bytes = 112. The ruler is drawn one short; the
+code is authoritative.
+
+`tools/acid800_dmatable.py` emits all of this to `emu/acid_dmatable.h`.
 
 Reading the table directly is the fastest way to get ANTIC's DMA right; it is
 the thing this project has been inferring one hypothesis at a time.

@@ -9,7 +9,17 @@ schedule one hypothesis at a time, which is what this project has been doing.
 
 Row format (verified against the source):
 
-    dta $<mode>, %<m0>, ... %<m13>, $A5      -- 16 fields: mode, 14 masks, terminator
+    dta $<key>, %<m0>, ... %<m13>, $A5       -- 16 fields: key, 14 masks, terminator
+
+The first byte is NOT a display-list instruction.  The test's own failure path
+decodes it:
+
+    lda (testptr),y / lsr / lsr        -> mode      (printed as %x)
+    lda (testptr),y / and #3 / adc #'a' -> variant  (printed as %c)
+    _FAIL c"Incorrect timing for mode %x-%c"
+
+so it is (mode << 2) | variant, giving ANTIC modes 2..15 with variants a,b in
+the narrow block and c,d in the normal block.
 
 The blocks are introduced by comments.  There are TWO of them — narrow and
 normal — giving 50 rows, which matches the test's own statement that "We have 50
@@ -46,7 +56,7 @@ WIDTHS = ('narrow', 'normal', 'wide')   # 'wide' never appears; kept so a
 
 
 def parse(path):
-    """-> [(width, mode_byte, [14 mask bytes])]"""
+    """-> [(width, key, mode, variant, [14 mask bytes])]"""
     rows, width = [], None
     started = False
     for raw in open(path, encoding='latin-1'):
@@ -68,7 +78,8 @@ def parse(path):
             continue
         if not f[0].startswith('$'):
             continue
-        rows.append((width, int(f[0][1:], 16),
+        key = int(f[0][1:], 16)
+        rows.append((width, key, key >> 2, chr((key & 3) + ord('a')),
                      [int(x[1:], 2) for x in f[1:15]]))
     return rows
 
@@ -82,27 +93,28 @@ def main():
                 ' * ANTIC DMA cycle allocation, extracted from ACID800\n'
                 ' * antic_dmapattern\'s testdata table (MIT, Avery Lee).\n'
                 ' *\n'
-                ' * Each row: the display-list instruction byte, then 14 mask\n'
-                ' * bytes walking the scanline.  See the generator for the two\n'
-                ' * questions deliberately NOT resolved here (first-byte bit\n'
-                ' * alignment, and mask polarity).\n'
+                ' * Masks are MSB-FIRST, 8 bits per byte, 14 bytes = 112\n'
+                ' * cycles (0..111).  A 1 BIT IS A BLOCKED (DMA) CYCLE; a 0 is\n'
+                ' * one the CPU got.  Both settled from the test\'s scan loop --\n'
+                ' * see tools/acid800_dmatable.py.\n'
                 ' */\n'
                 '#ifndef ACID_DMATABLE_H\n#define ACID_DMATABLE_H\n\n'
                 '#include <stdint.h>\n\n'
                 'typedef struct {\n'
-                '    const char *width;   /* "narrow" | "normal" | "wide" */\n'
-                '    uint8_t     mode;    /* display-list instruction byte */\n'
-                '    uint8_t     mask[14];\n'
+                '    const char *width;   /* "narrow" | "normal" */\n'
+                '    uint8_t     mode;    /* ANTIC mode, 2..15 */\n'
+                '    char        variant; /* \'a\'..\'d\', as the test reports it */\n'
+                '    uint8_t     mask[14];/* MSB-first; 1 = blocked */\n'
                 '} acid_dma_row;\n\n'
                 'static const acid_dma_row acid_dma_rows[] = {\n')
-        for w, mode, m in rows:
-            f.write('    { "%s", 0x%02X, { %s } },\n'
-                    % (w, mode, ', '.join('0x%02X' % b for b in m)))
+        for w, _key, mode, var, m in rows:
+            f.write('    { "%s", %2d, \'%s\', { %s } },\n'
+                    % (w, mode, var, ', '.join('0x%02X' % b for b in m)))
         f.write('};\n\n#define ACID_DMA_NROWS '
                 '((int)(sizeof acid_dma_rows / sizeof acid_dma_rows[0]))\n\n'
                 '#endif\n')
     by = {}
-    for w, _, _ in rows:
+    for w, _k, _m, _v, _ in rows:
         by[w] = by.get(w, 0) + 1
     print('%d rows: %s' % (len(rows), ', '.join('%s=%d' % kv for kv in by.items())))
 
