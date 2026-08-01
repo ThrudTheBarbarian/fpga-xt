@@ -1183,7 +1183,27 @@ every tick fixes it: the period is decided near its end. `LO_UPCOUNT` is on by
 default, 42 with all ten gates green, and `pokey_timertiming`'s "+22c" 16-bit
 case now passes.
 
-It fails on the companion **"+23c"** case instead, which wants that write NOT to
-land — and at 85 it is still far from the 101 capture point, so the one-cycle
-boundary there is something other than the second period's end. That is the next
-thing to measure.
+It fails on the companion **"+23c"** case instead, and measuring that one says
+something awkward about the low half's FIRST period rather than about capture.
+
+Both 16-bit blocks are identical — `AUDCTL $50`, `AUDF1 = $0d` = 13 — and differ
+only in the write:
+
+```
++22c block   sta stimer -> 62      sty audf1 -> 84    must LAND
++23c block   sta stimer -> 62      sty audf1 -> 85    must MISS
+```
+
+Under our model the low half's first period is `13 + 4 + 4` = 21, so its first
+underflow is at **83** and its second at **103** with a capture at 101. Both
+writes are after 83 and both are long before 101, so nothing in the current model
+distinguishes them — and no capture rule can, because the boundary sits at 84/85
+while our candidate points are 81, 83 and 101.
+
+The 84/85 boundary is exactly `underflow - 2` / `underflow - 1` for an underflow
+at **86** — which is what the unlinked 8-bit case has (`AUDF1 = 16`, first period
+24, from 62). So the likely error is that the linked low half's FIRST period is
+misplaced: 21 where 24 would put the boundary exactly where the test wants it.
+`LO_EXTRA` and the `+4` were both pinned with `AUDF1 = 16` on the UNLINKED path,
+so rule (p) applies — they are suspect on the linked one. Sweep the low half's
+first-period constants against these two assertions specifically.
