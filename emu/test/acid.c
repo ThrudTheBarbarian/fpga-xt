@@ -191,6 +191,20 @@ static int run_one(const char *dir, const char *name, unsigned long long *cyc)
         if (t_skip && s.cpu.pc == t_skip) { *cyc = s.cycles; return R_SKIP; }
         if (s.cpu.pc == t_fail) {
             *cyc = s.cycles;
+            /* _testFailed is reached by JSR with its message inline immediately
+             * after the call, so the return address on the stack points one byte
+             * short of the text.  That names the exact assertion that broke,
+             * which d0..d5 alone never do. */
+            {
+                uint16_t sp = (uint16_t)(0x0100 + s.cpu.s);
+                uint16_t ra = (uint16_t)(s.ram[sp + 1] | (s.ram[sp + 2] << 8));
+                printf("      \"");
+                for (int i = 1; i <= 72 && s.ram[ra + i]; i++) {
+                    uint8_t ch = s.ram[ra + i];
+                    putchar(ch >= 0x20 && ch < 0x7F ? ch : '.');
+                }
+                printf("\"\n");
+            }
             /* d0..d5 are the suite's scratch at $C8..$CD, and they are what the
              * _ASSERT macros compare — so on a failure they say WHICH value was
              * wrong, not merely that one was. */
