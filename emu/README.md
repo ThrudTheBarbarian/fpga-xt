@@ -1252,7 +1252,33 @@ one shared byte.
 
 So each player and missile latches on **its own slot**, capturing whatever ANTIC
 drove at that particular cycle — four consecutive fetches, four different bytes.
-The single-`last_fetch` version is left OFF (`PHANTOM_PM`) because it is
-confidently wrong in detail even though it scores the same 42; implementing the
-per-slot version needs the P/M slot cycles, which `antic_dma.c` already derives
-for the case where P/M DMA IS on.
+
+The per-slot version is now implemented behind `PHANTOM_PM`, with `PM_SLOT_P` /
+`PM_SLOT_M` for the slot cycles (our `pm_dma()` does all four fetches at
+`line_start`, so the schedule has no P/M slot positions to reuse — they have to
+be chosen and pinned). Sweeping `PM_SLOT_P` moves the answer, which confirms the
+machinery works:
+
+| `PM_SLOT_P` | `d0` |
+|---|---|
+| 0 | `$88` |
+| 2, 4, 6, 8 | `$0F` |
+
+Wanted is `$AD`. Still off, and decoding what `$AD` actually demands shows why it
+is a three-way constraint rather than one byte:
+
+* `d0 = (p0pf << 4) | m0pl.0 | m1pl.0 | m2pl.0 | m3pl.0`, so the low nibble
+  `1101` says missiles 0, 1 and 3 hit player 0 and missile 2 MISSES. The missiles
+  sit at HPOS `$89/$8b/$8d/$8f` and player 0 at `$81` with `SIZEP0 = 1` (2x, so
+  two colour clocks per bit), which puts them on player-0 bits 3, 2, 1 and 0. So
+  the phantom byte's low nibble must be `1101` — and none of the obvious bus
+  bytes (`$70`, `$4F`, `$12`, `$24`, `$0F`, `$88`, `$76`, `$54`) ends in `$D`.
+* `p0pf = $A` means player 0 overlaps PF1 AND PF3. **`PRIOR = $81` puts GTIA in
+  mode 10**, so the playfield nibbles pick PF0-PF3 by bit 2 — and the `$88` body
+  of `framebuf` has bit 2 CLEAR (not playfield at all), while its `$76,$54` tail
+  gives exactly PF3, PF2, PF1, PF0. So the collision comes from the last two
+  bytes of the buffer, not its body.
+
+Left OFF. The next step is to work out which bus byte can end in `$D` — most
+likely the answer is that the slot captures something other than the last
+playfield fetch, e.g. a display-list or refresh-cycle value.
