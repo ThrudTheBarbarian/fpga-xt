@@ -13,6 +13,7 @@
 
 int main(int argc, char **argv)
 {
+    (void)argv;
     int verbose = (argc > 1);
     int pass = 0;
 
