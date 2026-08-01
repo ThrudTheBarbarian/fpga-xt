@@ -48,7 +48,7 @@ void pokey_timer_reset(pokey_timer *p)
     p->audctl = 0;
     p->irqen  = 0;
     p->irqst  = 0xFF;      /* active low: nothing pending */
-    p->base_div = BASE_64K;
+    p->chain = BASE_64K;
     p->irq = 0;
     p->seroc = 1;
     p->ser_bits = 0;
@@ -150,8 +150,15 @@ void pokey_timer_skctl(pokey_timer *p, uint8_t val)
          * clocks its channel off the 15 kHz base, so the release DOES set its
          * phase — and it wants the first tick 86 machine cycles later, which is
          * 114 - 28, one 64 kHz period in. */
-        p->base_div = base_period(p) - BASE_64K;
-        if (p->base_div < 1) p->base_div = 1;
+        /* Releasing init restarts the chain at ONE 64 kHz period in, and both
+         * taps follow from that single number:
+         *   64 kHz — 28 % 28 == 0, so the next tick is a full 28 away.
+         *     pokey_inittiming's own arithmetic says so: "84 - 28*2 = 28" with
+         *     AUDF1 = 2, i.e. the third tick, 84 cycles after the write.
+         *   15 kHz — 28 % 114 == 28, so the next tick is 114 - 28 = 86 away,
+         *     which is exactly what the same test wants for that clock.
+         * Two independent expectations from one constant. */
+        p->chain = BASE_64K;
     }
     p->init = now;
 }
@@ -177,9 +184,8 @@ void pokey_timer_tick(pokey_timer *p)
     if (fast1 && --p->cnt[0] <= 0) underflow(p, linked1 ? 1 : 0);
     if (fast3 && --p->cnt[2] <= 0) underflow(p, linked3 ? 3 : 2);
 
-    if (--p->base_div > 0)
+    if (++p->chain % (unsigned long)base_period(p) != 0)
         return;
-    p->base_div = base_period(p);
 
     if (!fast1) {
         if (--p->cnt[0] <= 0) underflow(p, linked1 ? 1 : 0);

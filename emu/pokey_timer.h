@@ -42,11 +42,12 @@ typedef struct {
     uint8_t  audctl;       /* $D208 */
     uint8_t  irqen;        /* $D20E write */
     uint8_t  irqst;        /* $D20E read, ACTIVE LOW */
-    int      base_div;     /* machine cycles until the next base tick.  Counts
-                            * down freely — STIMER does NOT reload it, so the
-                            * delay to the first interrupt after a STIMER is a
-                            * PHASE, not a period.  Only the SKCTL release sets
-                            * it, because init holds the whole chain. */
+    unsigned long chain;   /* the ONE divider chain both base clocks tap.  A tick
+                            * for period P happens when chain % P == 0, so the
+                            * 64 kHz and 15 kHz taps keep a fixed relationship
+                            * instead of being independent counters.  STIMER does
+                            * not touch it; only the SKCTL release does, because
+                            * init holds the chain. */
     int      cnt[4];       /* the four dividers */
     uint8_t  irq;          /* the /IRQ line to the CPU */
     uint8_t  init;         /* SKCTL[1:0] == 0: dividers held */

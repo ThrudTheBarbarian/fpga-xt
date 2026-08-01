@@ -458,20 +458,28 @@ The 28-cycle offset that looked so promising — it is exactly one 64 kHz tick, 
 still be right for `pokey_inittiming`, which remains open.
 
 
-## Open: pokey_inittiming's 64 kHz case
+## Open: pokey_inittiming's 64 kHz case — two cycles, and the test says why
 
-The SKCTL release restarts the BASE divider one 64 kHz period in — `base_period
-- 28` — while leaving the channel counters free-running. That distinction is
-what lets `pokey_sertiming` (1.79 MHz channel, counter not fed by the base
-divider, free-runs to 218) and `pokey_inittiming`'s 15 kHz case (wants the first
-tick 86 machine cycles later, which is 114 - 28) both hold at once.
+The two base clocks are now ONE chain: a tick for period P happens when
+`chain % P == 0`, and the SKCTL release restarts the chain at 28. Both of the
+test's expectations follow from that single constant —
 
-`inittiming` now passes both 15 kHz assertions and fails the 64 kHz one by a
-single NOP: it reports $1f where $1e is wanted, i.e. two machine cycles late.
-The 28-cycle offset degenerates there, because the 64 kHz period IS 28 — the
-subtraction gives zero and is clamped to 1.
+* 64 kHz: `28 % 28 == 0`, so the next tick is a full 28 away. The test's own
+  arithmetic agrees: *"84 - 28*2 = 28"* with `AUDF1 = 2`, i.e. the THIRD tick,
+  84 cycles after the write.
+* 15 kHz: `28 % 114 == 28`, so the next tick is `114 - 28 = 86` away, which is
+  what the same test wants there.
 
-Worth noting the test expects the 64 kHz interrupt about 83 cycles after the
-SKCTL write, which is three 28-cycle periods, not one. So either its AUDF is not
-zero in that block, or something else divides. Read that block's setup before
-adjusting the clamp — tuning it to 2 would fit this assertion and mean nothing.
+Two independent expectations from one number, which is why this replaced the
+earlier `base_period - 28` clamp even though the score did not move.
+
+What remains is **two machine cycles** on the 64 kHz case: it reports `$1f`
+where `$1e` is wanted, one NOP late. The 15 kHz case accepts `$1f` or `$20` and
+passes, so the residual is only visible on the tighter assertion.
+
+The test says where to look: *"We set the timer to run two extra cycles to clear
+memory refresh, so this is actually 26-27 cycles."* So its 83-84 figure is
+constructed to straddle refresh, and the two cycles are probably about WHICH
+cycles refresh takes relative to the release rather than about the divider at
+all. Note the same test's odd-offset variant accepts `$1d-$1e`, i.e. a
+two-cycle spread, so the even case is the sharper of the pair.
