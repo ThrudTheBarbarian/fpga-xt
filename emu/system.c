@@ -152,6 +152,8 @@ static void sys_cycle(atari *s)
             return;
         }
         pokey_rand_tick(&s->pk); s->pk_ticks++;   /* ANTIC's cycles advance it here */
+        pokey_timer_tick(&s->pt);
+        s->cpu.irq = s->pt.irq;
     }
 }
 
@@ -160,7 +162,12 @@ static void sys_cycle(atari *s)
  * put every RANDOM read exactly one machine cycle late, which
  * tools/pokey-random-decode.py named precisely from antic_wsync's d0 ($4A where
  * $95 was wanted, step 114 against step 113). */
-static void cpu_cycle_done(atari *s) { pokey_rand_tick(&s->pk); s->pk_ticks++; }
+static void cpu_cycle_done(atari *s)
+{
+    pokey_rand_tick(&s->pk); s->pk_ticks++;
+    pokey_timer_tick(&s->pt);
+    s->cpu.irq = s->pt.irq;
+}
 
 static uint8_t io_read(atari *s, uint16_t a)
 {
@@ -173,6 +180,8 @@ static uint8_t io_read(atari *s, uint16_t a)
                     s->gt.mpf[0], s->gt.mpf[1], s->gt.mpf[2], s->gt.mpf[3]);
         return gtia_read(&s->gt, a);
     case 0xD200:
+        /* $D20E reads back IRQST, ACTIVE LOW — it is IRQEN only on write. */
+        if ((a & 0x0F) == 0x0E) return pokey_timer_irqst(&s->pt);
         if ((a & 0x0F) == 0x0A) {
             if (!s->dbg_rand_seen) { s->dbg_rand_at = s->pk_ticks; s->dbg_rand_seen = 1; }
             return pokey_rand_read(&s->pk);
@@ -199,6 +208,7 @@ static void io_write(atari *s, uint16_t a, uint8_t v)
         gtia_write(&s->gt, a, v);
         break;
     case 0xD200:
+        pokey_timer_write(&s->pt, a, v);
         if ((a & 0x0F) == 0x08) pokey_rand_audctl(&s->pk, v);
         if ((a & 0x0F) == 0x0F) {
             if ((v & 3) && s->pk.init) { s->dbg_skctl_at = s->pk_ticks; s->dbg_rand_seen = 0; }
@@ -259,6 +269,7 @@ void atari_init(atari *s)
     antic_init(&s->an, antic_fetch, s, ANTIC_LINES_NTSC);
     gtia_init(&s->gt);
     pokey_rand_reset(&s->pk);
+    pokey_timer_reset(&s->pt);
     s->cycles = 0;
 }
 

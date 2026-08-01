@@ -18,6 +18,7 @@
 #include "antic.h"
 #include "gtia.h"
 #include "pokey_rand.h"
+#include "pokey_timer.h"
 
 typedef struct {
     uint8_t    ram[65536];
@@ -25,6 +26,7 @@ typedef struct {
     antic      an;
     gtia       gt;
     pokey_rand pk;
+    pokey_timer pt;
     uint8_t    pm_prev_p[4], pm_prev_m;  /* one fetch back, for VDELAY */
     int        col_probe;
     int        pf_probe;   /* debug: dump the pixel stream on this scanline */
