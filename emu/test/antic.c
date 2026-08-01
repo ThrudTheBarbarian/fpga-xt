@@ -94,9 +94,19 @@ int main(void)
     antic_tick(&a);
     expect("NMIST VBI set at cycle 6", antic_read(&a, 0xD40F) & ANTIC_NMI_VBI, ANTIC_NMI_VBI);
     expect("NMI raised", a.nmi, 1);
+    /* /NMI is a one-cycle PULSE, so it is already down by the next cycle and the
+     * "NMIRES must not retract a raised request" rule lives in the CPU's edge
+     * latch, not in ANTIC's output.  Model that latch explicitly. */
+    int cpu_latched = a.nmi;
+    /* Strike NMIRES on a LATER cycle than the set.  One landing in the SAME
+     * cycle loses to it — antic_nmist strikes on cycle 6, where the VBI bit is
+     * set, and requires the bit to still read as set — so writing it here would
+     * be testing that rule rather than this one. */
+    antic_tick(&a);
     antic_write(&a, 0xD40F, 0);           /* NMIRES */
     expect("NMIRES clears status", antic_read(&a, 0xD40F) & ANTIC_NMI_VBI, 0);
-    expect("NMIRES does NOT retract the request", a.nmi, 1);
+    expect("NMIRES does NOT retract a request the CPU already latched",
+           cpu_latched, 1);
 
     /* ---- the two address counters ----------------------------------------
      * Both are narrower than 16 bits and both wrap MID-INSTRUCTION.  Written as

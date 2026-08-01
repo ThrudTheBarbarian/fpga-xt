@@ -348,6 +348,10 @@ int antic_tick(antic *a)
     int c = a->cycle;
     int took = 0;
 
+    /* Cleared here rather than at the end, so it is still standing when the CPU
+     * makes its access for the cycle just ticked — see the NMIRES case. */
+    a->nmist_set_now = 0;
+
     if (c == 0) line_start(a);
 
     /* Whether the row finishes with this scanline is decided PART WAY THROUGH
@@ -394,12 +398,14 @@ int antic_tick(antic *a)
     if (c == ANTIC_CYC_NMIST) {
         if (a->dli_line) {
             a->nmist = (uint8_t)((a->nmist & ~ANTIC_NMI_VBI) | ANTIC_NMI_DLI);
+            a->nmist_set_now = 1;
             if (a->nmien & ANTIC_NMI_DLI) a->nmi = 1;
         }
         int vbi = (a->scanline == ANTIC_DISPLAY_BOTTOM);
         if (vbi) {
             /* the DLI and VBI status bits clear each other on arrival */
             a->nmist = (uint8_t)((a->nmist & ~ANTIC_NMI_DLI) | ANTIC_NMI_VBI);
+            a->nmist_set_now = 1;
             if (a->nmien & ANTIC_NMI_VBI) a->nmi = 1;
         }
     }
@@ -595,8 +601,14 @@ void antic_write(antic *a, uint16_t addr, uint8_t val)
     case 0x0E: a->nmien = val; break;
     case 0x0F:
         /* NMIRES clears the STATUS but must not retract an interrupt already
-         * raised — "VBI was blocked by NMIRES" is a failure (antic_nmist). */
-        a->nmist = 0;
+         * raised — "VBI was blocked by NMIRES" is a failure (antic_nmist).
+         *
+         * It also LOSES to a status set landing in the same cycle: the same
+         * test strikes NMIRES on cycle 6, where the VBI bit is set, and
+         * requires the bit to still read as set; a strike on cycle 7 clears it
+         * normally. */
+        if (!a->nmist_set_now)
+            a->nmist = 0;
         break;
     default: break;
     }

@@ -202,7 +202,12 @@ static void io_write(atari *s, uint16_t a, uint8_t v)
             pokey_rand_skctl(&s->pk, v);
         }
         break;
-    case 0xD400: antic_write(&s->an, a, v); break;
+    case 0xD400:
+        if (s->col_probe && (a & 0x0F) == 0x0F)
+            fprintf(stderr, "  NMIRES write sl %3d cyc %3d (set_now %d nmist $%02X)\n",
+                    s->an.scanline, s->an.cycle - 1, s->an.nmist_set_now, s->an.nmist);
+        antic_write(&s->an, a, v);
+        break;
     default:     s->ram[a] = v; break;
     }
 }
