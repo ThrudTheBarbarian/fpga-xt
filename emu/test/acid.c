@@ -172,6 +172,18 @@ static int run_one(const char *dir, const char *name, unsigned long long *cyc)
     s.ram[0xFFFA] = 0x00; s.ram[0xFFFB] = 0xFF;      /* NMI -> dispatcher */
     s.ram[0xFFFE] = 0x20; s.ram[0xFFFF] = 0xFF;      /* IRQ/BRK -> dispatcher */
     if (!s.ram[0x0217]) { s.ram[0x0216] = 0x40; s.ram[0x0217] = 0xFF; }  /* VIMIRQ */
+
+    /* OS SHADOW REGISTERS.  The library sets SKCTL = 3 at init but later
+     * restores it from SSKCTL ($0232), which a booted OS holds at 3 and a bare
+     * XEX run leaves at zero — putting POKEY's poly counters back into init, so
+     * RANDOM reads $ff forever.  antic_dmapattern never writes SKCTL itself and
+     * cannot decode its random pair without this. */
+    s.ram[0x0232] = 0x03;                            /* SSKCTL */
+    /* and POKEY itself: a booted OS has already taken the poly counters OUT of
+     * init.  antic_dmapattern never writes SKCTL at all — the library call that
+     * would is on a path it does not take — so left at the hardware reset value
+     * the counters stay held and RANDOM reads $ff forever. */
+    pokey_rand_skctl(&s.pk, 0x03);
     if (!s.ram[0x0201]) { s.ram[0x0200] = 0x40; s.ram[0x0201] = 0xFF; }  /* VDSLST */
     if (!s.ram[0x0223]) { s.ram[0x0222] = 0x30; s.ram[0x0223] = 0xFF; }  /* VVBLKI */
 

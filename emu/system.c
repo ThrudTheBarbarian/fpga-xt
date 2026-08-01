@@ -117,8 +117,9 @@ static void render_cycle(atari *s, int cyc)
                 if (gtia_missile_lit(&s->gt, i)) lit |= 0x08 >> i;
             }
             if (lit || pf >= 0)
-                fprintf(stderr, "  mode %2d chactl $%02X cc $%02X pf %2d objs $%02X lb5 $%02X lblen %d\n",
-                        s->an.dl_insn & 0x0F, s->an.chactl, cc, pf, lit, s->an.linebuf[5], s->an.lb_len);
+                fprintf(stderr, "  f%-3llu mode %2d chactl $%02X cc $%02X pf %2d objs $%02X hp0 $%02X act%d bit%d\n",
+                        (unsigned long long)(s->cycles / (114ULL * 262ULL)),
+                        s->an.dl_insn & 0x0F, s->an.chactl, cc, pf, lit, s->gt.hposp[0], s->gt.p_active[0], s->gt.p_bit[0]);
         }
     }
 }
@@ -201,6 +202,9 @@ static void io_write(atari *s, uint16_t a, uint8_t v)
         if ((a & 0x0F) == 0x08) pokey_rand_audctl(&s->pk, v);
         if ((a & 0x0F) == 0x0F) {
             if ((v & 3) && s->pk.init) { s->dbg_skctl_at = s->pk_ticks; s->dbg_rand_seen = 0; }
+            if (s->col_probe)
+                fprintf(stderr, "  SKCTL <- $%02X sl %3d cyc %3d\n",
+                        v, s->an.scanline, s->an.cycle);
             pokey_rand_skctl(&s->pk, v);
         }
         break;
