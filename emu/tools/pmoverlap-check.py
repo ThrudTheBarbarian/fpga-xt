@@ -40,22 +40,66 @@ def load(path):
     return mem
 
 
-def model(width, Y, write_cc):
-    """Return the set of colour clocks player 0 lights on one scan line.
+MODELS = {}
 
-    THIS is the thing under test — replace it and re-run.  The version here is
-    "an HPOS write repositions the player but never reloads its graphics shift
-    register", which is DISPROVED (342/672).  It is left in as a worked example
-    of the shape an answer takes.
-    """
+
+def _reg(name):
+    def d(f):
+        MODELS[name] = f
+        return f
+    return d
+
+
+@_reg("restart")
+def m_restart(width, Y, write_cc):
+    """Every HPOS match retriggers the object from bit 0, cancelling the
+    emission in progress.  THIS IS WHAT gtia.c DOES TODAY.  624/672."""
+    lit, active, bit, ph = set(), False, 0, 0
+    for cc in range(0x50, 0xB0):
+        hp = 0x60 if cc < write_cc else Y
+        if cc == hp:
+            active, bit, ph = True, 0, 0
+        elif active:
+            ph += 1
+            if ph >= width:
+                ph, bit = 0, bit + 1
+                if bit >= 8:
+                    active = False
+        if active and bit < 8 and (0x81 >> (7 - bit)) & 1:
+            lit.add(cc)
+    return lit
+
+
+@_reg("union")
+def m_union(width, Y, write_cc):
+    """A match starts a NEW emission and leaves any already running alone, so a
+    player moved mid-line can appear twice.  634/672 — the best so far, and the
+    reason to believe it: pass 10 wants BOTH the original emission's lit bit at
+    $67 AND the new one's at $64, which no single-emission model can give."""
+    lit, starts = set(), []
+    for cc in range(0x50, 0xB0):
+        hp = 0x60 if cc < write_cc else Y
+        if cc == hp:
+            starts.append(cc)
+        for s in starts:
+            k = (cc - s) // width
+            if 0 <= k < 8 and (0x81 >> (7 - k)) & 1:
+                lit.add(cc)
+    return lit
+
+
+@_reg("noreload")
+def m_noreload(width, Y, write_cc):
+    """Repositions but never reloads the shift register.  330/672 — DISPROVED,
+    kept because it fits pass 3's first four rows exactly and is exactly the
+    kind of subset-fit that looks like an answer."""
     lit, start = set(), 0x60
-    if Y < write_cc:                       # comparator already passed: no restart
+    if Y < write_cc:
         for k in range(8):
             if (0x81 >> (7 - k)) & 1:
                 lit |= set(range(start + width*k, start + width*k + width))
     else:
-        consumed = (write_cc - start)//width + 1
-        for n, k in enumerate(range(consumed, 8)):
+        for n, k in enumerate(range((write_cc - start)//width + 1, 8)):
             if (0x81 >> (7 - k)) & 1:
                 lit |= set(range(Y + width*n, Y + width*n + width))
     return lit
@@ -64,14 +108,22 @@ def model(width, Y, write_cc):
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--lst", default="../rsrc/acid800/Acid800/standalone/gtia_pmoverlap.lst")
-    ap.add_argument("--write-cc", type=lambda s: int(s, 0), default=0x65)
+    ap.add_argument("--write-cc", type=lambda s: int(s, 0), default=0x64)
     ap.add_argument("--verbose", action="store_true")
+    ap.add_argument("--model", default=None, choices=sorted(MODELS))
     a = ap.parse_args()
 
     mem = load(a.lst)
     if not mem:
         sys.exit("no table bytes parsed — wrong --lst path?")
 
+    names = [a.model] if a.model else sorted(MODELS)
+    for name in names:
+        score(mem, MODELS[name], name, a)
+    return 0
+
+
+def score(mem, model, name, a):
     bad = tot = 0
     for p in range(12):
         w = WIDTH[SIZEP[p]]
@@ -90,10 +142,9 @@ def main():
                 if got != want:
                     bad += 1
                     if a.verbose and bad <= 20:
-                        print("  pass %2d sizep %d sp $%02X Y $%02X: want %X got %X"
+                        print("    pass %2d sizep %d sp $%02X Y $%02X: want %X got %X"
                               % (p, SIZEP[p], sp, Y, want, got))
-    print("pmoverlap: %d/%d cells match (%d wrong)" % (tot - bad, tot, bad))
-    return 1 if bad else 0
+    print("  %-9s %3d/%d cells" % (name, tot - bad, tot))
 
 
 if __name__ == "__main__":

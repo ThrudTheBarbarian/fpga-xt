@@ -2100,6 +2100,32 @@ ago as fitting "every row" on the strength of four, and this time it was scored
 before any code was written.
 
 `tools/pmoverlap-check.py` now scores an arbitrary model against all 672 cells
-in about a second, with the geometry documented at the top and the disproved
-model left in as a worked example of the shape an answer takes. Any future
-attempt costs one command, not an emulator build.
+in about a second, with the geometry documented at the top. It carries a
+leaderboard rather than one model, so the next attempt starts from evidence:
+
+```
+  noreload  322/672      repositions, never reloads the shift register
+  restart   624/672      retrigger from bit 0 — WHAT gtia.c DOES TODAY
+  union     634/672      a match ADDS an emission, leaving running ones alone
+```
+
+### Our current model is nearly right, and misses in four places
+
+`restart` is what `gtia.c` implements, and it is not a poor model — 624 of 672.
+The 48 misses are not spread: they sit in exactly four (pass, scanpos) cells,
+`p3/$78` (15), `p3/$7c` (21), `p7/$6c` (9) and `p10/$64` (3).
+
+`p10` is the one that explains itself. It wants 9 where we give 8: the missile at
+`$67` should be hit and is not. In normal size the player at `$60` puts its lit
+bit 7 exactly at `$67`, and the new emission at `$64` puts its lit bit 0 at
+`$64`. Hardware registers BOTH. A single-emission model cannot — retriggering at
+`$64` cancels the run that would have lit `$67`.
+
+So a match does not cancel the emission in progress; it starts another one
+alongside. That is the well-known Atari artefact of a player appearing twice
+when it is moved mid-line, and scoring it gives **634/672** — ten better than the
+current model, and the reason to prefer it is the mechanism rather than the ten.
+
+Still not 672, so it is not implemented. The write instant barely matters
+(identical at cc `$62` and `$64`, worse from `$66`), which says the remaining 38
+are a different effect again, not this one mistimed.
