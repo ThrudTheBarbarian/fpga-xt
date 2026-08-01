@@ -162,3 +162,36 @@ that is missing.
 Suggested order: playfield decode for the bitmap modes first (no CHBASE
 dependency), wire `gtia_clock` into the scanline loop, confirm a collision
 registers at all, then add the character modes.
+
+## Open: re-anchoring the display list to scanline 8
+
+`antic_linebuffering` fails its very first readout, and the cause is not the
+pixel decode — the geometry is provably right. Its `framedata` byte 5 is `$E4`,
+i.e. the 2-bit pairs `11,10,01,00`, and it lands exactly on the four missiles at
+`$44..$47`, which is what the test wants to read back as PF2, PF1, PF0,
+background.
+
+The problem is WHICH display-list instruction is running there. The test does
+`_screenOff` (DMACTL = 0), then `_waitVBL`, then writes DLISTL/H and DMACTL.
+**`_waitVBL` returns at scanline 248**, so the list resumes fetching right there
+instead of at the top of the next display, and every row lands eight scanlines
+early — scanline 32 shows a blank-line instruction instead of the mode E row.
+
+The obvious fix is to fetch instructions only inside the display region. It
+works: the baseline readout passes and the test moves on to its second scenario
+(`aliased mode 8`). **But it costs `antic_vscroldli`** — net 16 against 17 — and
+the reason is not yet understood, because that test's list ends in a JVB, parks,
+and is released at scanline 8 anyway, so the bottom cutoff should never come
+into play for it.
+
+Tried and measured:
+
+| gate on the instruction fetch | score | linebuffering baseline |
+|---|---|---|
+| none (current) | 17 | fails, reads `04 04 04 04` |
+| `scanline < 8` only | 17 | fails, reads `00 00 00 00` |
+| `scanline < 8 \|\| scanline >= 248` | 16 | **passes**, fails at scenario 2 |
+
+So the rule is nearly right and something about the bottom edge is wrong. Worth
+resolving from `antic_vscroldli`'s side first — find out why a list that parks on
+a JVB cares about the cutoff at all — rather than by tuning the window.
