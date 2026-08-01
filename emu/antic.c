@@ -2,6 +2,13 @@
  * antic.c — the ANTIC timing core.  See antic.h.
  */
 #include "antic.h"
+
+/* An RMW writes WSYNC twice; the second write arriving while the halt is
+ * already armed pushes the release out by this many cycles.  Overridable so it
+ * can be A/B'd — gtia_pmresize's whole cycle chain sits one late with it. */
+#ifndef WSYNC_RMW_EXTRA
+#define WSYNC_RMW_EXTRA 1
+#endif
 #include <stdio.h>
 int antic_glyph_probe;
 #include <string.h>
@@ -800,7 +807,7 @@ void antic_write(antic *a, uint16_t addr, uint8_t val)
         /* WSYNC.  Arms on the FIRST write — an RMW writes it twice and the
          * halt must not re-arm on the second (antic_wsync, d5). */
         if (!a->wsync_halt) a->wsync_halt = 1;
-        else                a->wsync_extra = 1;
+        else                a->wsync_extra = WSYNC_RMW_EXTRA;
         break;
     case 0x0E:
         a->nmien = val;

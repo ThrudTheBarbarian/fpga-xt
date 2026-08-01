@@ -1488,3 +1488,45 @@ identical by construction — which is exactly what we saw, `$04` twice.
 Gated in `test/antic.c` on the part that is ANTIC's: the same line buffer read
 two ways, `antic_pf_at` giving PF2 alone and `antic_pf_pair` giving all four.
 Which decode is in force is `system.c`'s latch.
+
+## OPEN: `inc wsync`'s release cycle is forced to two different values
+
+`gtia_pmresize` is blocked on ONE machine cycle, and it is not a GTIA cycle.
+
+Its `runtest` is annotated end to end, and measuring ours against it (`ACID_PCWATCH`
+on each instruction) shows a uniform offset that appears at the very first step
+and never grows:
+
+| instruction | annotated | ours |
+|---|---|---|
+| `stx hposp0` | 108 | 109 |
+| `sta sizep0` | 112 | 113 |
+| `lda #$aa`   | 2   | 3   |
+| `lda $0100`  | 8   | 9   |
+| `sty sizep0` | 42  | 43  |
+
+Every gap between them matches exactly, DMA steals included — so the whole error
+is at the resume from the leading `inc wsync`. We release an RMW's WSYNC at 105;
+this test's arithmetic wants 104. That one cycle is two colour clocks, which is
+exactly how far the player's resize lands late: the test resizes 4x -> 1x under a
+player at HPOS `$48` and probes colour clocks `$61`..`$67`, wanting `$80` (only
+the `$61` probe hit) and getting `$E0` (`$61`, `$62` and `$63`).
+
+Removing the extra confirms the diagnosis and cannot be kept:
+
+```
+WSYNC_RMW_EXTRA=0:  the ENTIRE 4x-to-1x block passes (all 256 iterations)
+                    and the failure moves on to 4x-to-2x
+                    ...and antic_wsync, antic_dlitiming, antic_dmapattern,
+                       gtia_phantomdma and gtia_psuedomodee all break.
+                    47 -> 42.
+```
+
+Five tests force 105 and one forces 104, from one constant. By rule (q) that
+means the SHAPE is wrong, not the value: "the second write of an RMW pushes the
+release out by one" is the wrong generalisation of whatever the hardware does.
+The next move is to find what DISTINGUISHES the two groups — most likely where
+in the scanline the two writes land relative to the release point, which
+`ACID_COLPROBE`'s "WSYNC release" line reports for every case in both groups.
+
+Kept at 1, which is the known-good 47.
