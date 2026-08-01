@@ -16,15 +16,27 @@
 #include "antic_dma.h"
 
 /* Scanline cycle landmarks (docs/Acid800/). */
-#define ANTIC_CYC_NMIST   6     /* NMIST bits set; NMIEN sampled  (antic_nmist) */
-#define ANTIC_CYC_NMIRES  7     /* NMIRES takes effect from here  (antic_nmist) */
-#define ANTIC_CYC_WSYNC 103     /* first cycle the CPU gets BACK  (see below) */
+#define ANTIC_CYC_NMIST   7     /* NMIST bits set; NMIEN sampled  (antic_nmist) */
+#define ANTIC_CYC_NMIRES  8     /* NMIRES takes effect from here  (antic_nmist) */
+#define ANTIC_CYC_WSYNC 104     /* first cycle the CPU gets BACK  (see below) */
 /* Where this boundary sits cannot be read off antic_wsync — its probes are
  * anchored to the release, so moving it moves them too and the reading cancels.
- * Two other tests annotate it directly and they agree on 103: antic_nmist's
- * "pha:pla ;*, 104..109" is seven cycles, so the * is 103, and antic_vscroldli
- * passes only at this value.  gtia_pmretrigger's "sta hitclr ;*, 105, 106, 107"
- * reads as 104, but that annotation is one slot short for a four-cycle STA. */
+ * antic_vcount pins it on its own, from an INEQUALITY on both sides.  Its four
+ * part-1 measurements all read VCOUNT after a WSYNC and differ only in how many
+ * cycles they burn first, and `lda abs` reads on its fourth cycle:
+ *
+ *   d0,d1  bit $00   (3) then lda vcount -> the read lands on WSYNC+6
+ *   d2,d3  bit $0100 (4) then lda vcount -> the read lands on WSYNC+7
+ *
+ * d0/d1 must see the OLD value and d2/d3 the NEW one, so WSYNC+6 < 111 <=
+ * WSYNC+7 — which admits exactly one release cycle, 104.  Every other landmark
+ * here was calibrated by reading it THROUGH the CPU, so all of them move with
+ * it: NMIST/NMIRES to 7/8 (antic_nmist) and the VSCROL sample to 5
+ * (antic_vscroldli).  VCOUNT is unmoved because 111 is what the inequality
+ * above solves for.  The suite's own inline cycle annotations are not a usable
+ * cross-check: antic_nmist's "pha:pla ;*, 104..109" reads as a release at 103
+ * while antic_vcount's "bit $0100 ;*, 105, 106, 107" reads as 104, and they
+ * cannot both be right.  Trust the assertions, not the comments. */
 #define ANTIC_CYC_VCOUNT 111    /* VCOUNT advances                (antic_vcount) */
 
 #define ANTIC_LINES_NTSC 262
@@ -38,7 +50,7 @@ typedef uint8_t (*antic_fetch_fn)(void *ctx, uint16_t addr);
 
 /* Scanlines per row, by ANTIC mode.  Modes 0 (blank) and 1 (jump) are not
  * display modes and are handled separately. */
-#define ANTIC_CYC_ROWEND 4   /* VSCROL is sampled for the row-end compare here */
+#define ANTIC_CYC_ROWEND 5   /* VSCROL is sampled for the row-end compare here */
 extern const uint8_t antic_row_height[16];
 extern int antic_glyph_probe;   /* debug: trace glyph-row selection */
 

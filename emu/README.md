@@ -49,7 +49,7 @@ literally the same tests.
   scanline and its later ones.
 * **ANTIC DMA schedule: 50/50**, timing core, display-list execution and line
   buffer all in; **GTIA collisions** in.
-* **The real ACID800 binaries run**: `make acid` → 37 pass / 17 fail / 4 jammed
+* **The real ACID800 binaries run**: `make acid` → 38 pass / 16 fail / 4 jammed
   / 1 looping / 4 skipped, of 63. Not directly comparable to the fabric's 33/63:
   that runs on hardware with a full POKEY and an OS ROM, whereas POKEY here is
   the RANDOM LFSR, the timers and the serial OUTPUT path only, and the five
@@ -349,23 +349,19 @@ early". Two hypotheses, two measurements, no sweeping.
 Also settled alongside: a NMIRES landing in the same cycle as a status set loses
 to it, while a NMIEN write in that same cycle wins.
 
-## Open: antic_dmapattern measures the DMA pattern LIVE
+## CLOSED: antic_dmapattern measures the DMA pattern LIVE
 
-Now that POKEY starts out of poly init (the runner seeds it, since this test
-never writes SKCTL), `antic_dmapattern` decodes its random pair and runs to a
-real assertion instead of spinning. It reports **"Incorrect timing for mode 2-a"**
-— read that off d1 = $02 and d2 = $61 = 'a'; the message string the runner prints
-for this one is garbage, because the failure arrives through a path that has no
-inline text.
+`make dma` matches ACID's own DMA table 50/50, so the tabulated pattern was
+never in doubt. This test measures the pattern **live**, by reading RANDOM
+either side of a DMA burst, so it checks something the table cannot: when each
+cycle is actually taken, not merely which ones. It reported **"Incorrect timing
+for mode 2-a"** — read off d1 = $02 and d2 = $61 = 'a', since the message string
+the runner prints for this one is garbage (the failure arrives through a path
+with no inline text).
 
-The interesting part: `make dma` matches ACID's own DMA table 50/50, so the
-tabulated pattern is right. This test measures the pattern **live**, by timing
-RANDOM, so it is checking something the table cannot — when each cycle is
-actually taken, not merely which ones. Mode 2 variant 'a' is where it first
-disagrees.
-
-The LFSR-decode technique applies directly here: the test reads RANDOM either
-side of a DMA burst, so a wrong value converts to an exact cycle count.
+It fell out with the WSYNC release, and needed no DMA change at all: the burst
+was in the right place, the CPU reading it was one cycle early. See "CLOSED: the
+recurring ONE CYCLE early".
 
 ## Open: POKEY divider phase — the free-running tap is the wrong SHAPE
 
@@ -401,28 +397,58 @@ cycle difference between the two measured delays is the thing to reproduce.
 `pokey_irqtiming` ("Incorrect IRQEN delay count") is likely the same question
 from the interrupt-latency side, and `pokey_timertiming` may be too.
 
-## Open: a recurring ONE CYCLE early in the post-WSYNC instruction stream
+## CLOSED: the recurring ONE CYCLE early — the release is 104, not 103
 
-Three tests now fail the same way, and it is not the release cycle:
+Three tests failed the same way:
 
 * `antic_vcount` d2 — `sta wsync / bit $0100 / lda vcount`, annotated so the read
-  lands on cycle 111. It lands on 110.
-* `gtia_pmretrigger` #2 — its `sta hposp0` lands on CPU cycle 28 where the
-  annotation says 29, so the player misses its trigger at $40.
+  lands on cycle 111. It landed on 110.
+* `gtia_pmretrigger` #2 — its `sta hposp0` landed on CPU cycle 28 where the
+  annotation says 29, so the player missed its trigger at $40.
 * `antic_dlitiming`'s "Even count".
 
-The release itself has been re-swept with everything else in place —
-102/103/104/105 score 29/31/30/29 — so 103 stands, and `antic_wsync`,
-`antic_nmist` and `antic_vscroldli` all pass at it. What is one cycle short is
-the instruction stream AFTER the release, in cases whose first instruction is
-short: `bit $0100` (4 cycles) and `sta abs` (4), where the tests that pass open
-with `pha:pla` (7).
+It was the release after all — but no sweep could show that, because a bare
+sweep scores the whole suite while every other landmark stays pinned at values
+that were themselves calibrated against 103. Moving the release alone breaks
+`antic_nmist` and `antic_vscroldli`, which is what a sweep sees; moving the
+landmarks WITH it does not.
 
-That asymmetry is the clue worth chasing — something about the first instruction
-after the halt, rather than about when the halt ends. Note also that the suite's
-own annotations disagree with each other here: `antic_nmist`'s seven-cycle
-`pha:pla` spanning 104..109 puts its first cycle at 103, while `antic_vcount`'s
-four-cycle `bit $0100` spanning 105..107 plus an unnumbered first puts it at 104.
+`antic_vcount` settles it alone, from an inequality on both sides. Its four
+part-1 measurements differ only in how many cycles they burn after the WSYNC,
+and `lda abs` reads on its fourth cycle:
+
+| vars | preamble | the read lands on |
+|---|---|---|
+| `d0`, `d1` | `bit $00` (3 cycles) | WSYNC + 6 |
+| `d2`, `d3` | `bit $0100` (4 cycles) | WSYNC + 7 |
+
+`d0`/`d1` must see the OLD VCOUNT and `d2`/`d3` the NEW one, so
+`WSYNC+6 < 111 <= WSYNC+7`. That admits exactly one value: **the release is
+104**. At 103 the second pair reads at 110 and sees the old value — the "one
+cycle early".
+
+Everything else here was calibrated by reading it THROUGH the CPU, so all of it
+moves with the release:
+
+* `ANTIC_CYC_NMIST` 6 -> **7** (and NMIRES 7 -> 8) — `antic_nmist` fails with
+  *"DLI bit set too early"* at 6 once the CPU is a cycle later, and passes at 7.
+* `ANTIC_CYC_ROWEND` 4 -> **5** — `antic_vscroldli` fails with *"VSCROL took
+  effect too late"* at 4, passes at 5.
+* `ANTIC_CYC_VCOUNT` stays **111**: it is what the inequality above solves for,
+  not something read through the CPU.
+
+That retune took `antic_vcount` part 1, `antic_dmapattern`, `antic_nmist` and
+`antic_vscroldli` together, 37 -> 38.
+
+The suite's own inline annotations are NOT a usable cross-check and cost real
+time here: `antic_nmist`'s seven-cycle `pha:pla` spanning `*, 104..109` reads as
+a release at 103, while `antic_vcount`'s four-cycle `bit $0100` spanning
+`*, 105, 106, 107` reads as 104. They cannot both be right. Trust the
+assertions, not the comments.
+
+Independent corroboration: the FABRIC path converged on the same two numbers
+from its own hardware runs — see `vivado/archive/known-good-2f81408-wsync104.bit`
+and `build52d-tm-rollover-nmist7.bit`.
 
 ## Resolved: pokey_sertiming, and how the divider phase was actually measured
 
