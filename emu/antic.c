@@ -433,8 +433,12 @@ int antic_tick(antic *a)
          * can, because it times an HPOS write against the beam: with memory
          * refresh correctly present on every scanline, giving the CPU 104 takes
          * it from failing its first case to failing its fourth. */
-        if (c == ANTIC_CYC_WSYNC) a->wsync_halt = 0;
-        else                      took = 1;
+        if (c == ANTIC_CYC_WSYNC + a->wsync_extra) {
+            a->wsync_halt = 0;
+            a->wsync_extra = 0;
+        } else if (!a->cpu_writing) {
+            took = 1;
+        }
     }
 
     if (!took && c < ANTIC_LINE_CYCLES && a->blocked[c])
@@ -597,6 +601,7 @@ void antic_write(antic *a, uint16_t addr, uint8_t val)
         /* WSYNC.  Arms on the FIRST write — an RMW writes it twice and the
          * halt must not re-arm on the second (antic_wsync, d5). */
         if (!a->wsync_halt) a->wsync_halt = 1;
+        else                a->wsync_extra = 1;
         break;
     case 0x0E:
         a->nmien = val;

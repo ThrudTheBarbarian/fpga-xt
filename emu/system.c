@@ -241,7 +241,9 @@ static uint8_t bus_rd(void *ctx, uint16_t a)
 static void bus_wr(void *ctx, uint16_t a, uint8_t v)
 {
     atari *s = ctx;
+    s->an.cpu_writing = 1;
     sys_cycle(s);
+    s->an.cpu_writing = 0;
     dbg(s, a, 1);
     if (a >= 0xD000 && a < 0xD800) io_write(s, a, v);
     else                           s->ram[a] = v;

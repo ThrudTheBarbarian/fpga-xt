@@ -85,6 +85,14 @@ typedef struct {
     uint16_t pf_addr;     /* playfield memory scan address (LMS target) */
     uint8_t  dl_insn;
     uint8_t  vscrol_prev;  /* did the PREVIOUS instruction have the VSCROL bit? */
+    uint8_t  wsync_extra;  /* a WSYNC write arriving while the halt is ALREADY
+                            * armed pushes the release out by one cycle — an
+                            * RMW writes twice (antic_wsync's INC cases) */
+    uint8_t  cpu_writing;  /* the CPU's pending access is a WRITE.  /RDY — which
+                            * is what WSYNC pulls — does not stop a write cycle;
+                            * ANTIC's /HALT for DMA does.  Modelling both the
+                            * same way makes an INC WSYNC re-arm on its second
+                            * write and cost a whole extra scanline. */
     uint8_t  nmist_set_now;/* NMIST was set THIS cycle — a NMIRES landing in the
                             * same cycle must not undo it (antic_nmist) */
     uint8_t  dli_fired;    /* this instruction's DLI has already been raised */
