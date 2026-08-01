@@ -113,6 +113,7 @@ static int run_one(const char *dir, const char *name, unsigned long long *cyc)
 
     static atari s;
     atari_init(&s);
+    { const char *p = getenv("ACID_PFPROBE"); if (p) s.pf_probe = atoi(p); }
     if (!load_xex(&s, xex, &run) || !run) return R_SKIP;
 
     if (t_init) s.ram[t_init] = 0x60;            /* RTS — see the header */

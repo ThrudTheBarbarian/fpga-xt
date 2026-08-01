@@ -31,6 +31,13 @@ typedef enum { ANTIC_NARROW = 0, ANTIC_NORMAL = 1, ANTIC_WIDE = 2 } antic_width;
  *               not tabulated, because antic_pfstarttiming/antic_pfstoptiming
  *               write both mid-scanline and expect the edges to move.
  */
+/* Where the playfield WINDOW nominally starts, in machine cycles.  Exposed
+ * because the pixel decode must start from the same geometry the DMA schedule
+ * uses: display begins exactly PF_DISPLAY_LEAD cycles after this, for every
+ * width, so the two cannot drift apart. */
+int antic_pf_nominal(antic_width w, int hscrol);
+#define PF_DISPLAY_LEAD 3
+
 void antic_dma_line(uint8_t mode, antic_width width, int first_line,
                     int hscrol, uint8_t blocked[ANTIC_LINE_CYCLES]);
 

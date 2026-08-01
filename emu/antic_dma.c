@@ -66,12 +66,13 @@ static int is_refresh(int c)
 #define PF_NOMINAL_NORMAL 21
 #define PF_WIDTH_STEP      8
 
-static int pf_nominal(antic_width w, int hscrol)
+int antic_pf_nominal(antic_width w, int hscrol)
 {
     return PF_NOMINAL_NORMAL
          + ((int)ANTIC_NORMAL - (int)w) * PF_WIDTH_STEP
          - (hscrol >> 1);
 }
+#define pf_nominal antic_pf_nominal
 
 /* Where the fetch stream begins, relative to the window.  Bitmap modes start
  * one cycle early; character modes issue a prefetch three cycles early on a

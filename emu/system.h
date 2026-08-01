@@ -25,6 +25,7 @@ typedef struct {
     antic      an;
     gtia       gt;
     pokey_rand pk;
+    int        pf_probe;   /* debug: dump the pixel stream on this scanline */
     uint8_t    nmi_hold;   /* ANTIC's /NMI pulse, held until the CPU latches it */
     uint64_t   cycles;
 

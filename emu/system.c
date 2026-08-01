@@ -3,6 +3,7 @@
  */
 #include "system.h"
 #include <stdio.h>
+#include <stdio.h>
 
 /* ANTIC's own fetches go straight to memory: they are already accounted for as
  * DMA cycles, so they must not recurse into the CPU's cycle path. */
@@ -37,10 +38,32 @@ static void render_cycle(atari *s, int cyc)
     for (int h = 0; h < 2; h++) {
         int cc = cyc * 2 + h;
         if (cc >= GTIA_CLOCKS) break;
-        int hires = 0;
-        int pf = antic_pf_at(&s->an, cc, &hires);
-        s->gt.hires = (s->an.dl_insn & 0x0F) == 0x0F;
+        int hires = 0, pf;
+        /* PRIOR bits 7-6 select the GTIA modes, which reinterpret ANTIC mode F's
+         * hi-res bits as nibbles picking a colour register:
+         *   mode  9 ($40) — 16 lumas of COLBK, and NO playfield collisions
+         *   mode 10 ($80) — nibbles 4..7 are COLPF0..3, and the playfield is
+         *                   shifted one colour clock; 0..3 are the player
+         *                   colours, which are not playfield for collisions
+         *   mode 11 ($C0) — 16 hues, likewise no playfield collisions */
+        int gmode = (s->gt.prior >> 6) & 3;
+        if (gmode && (s->an.dl_insn & 0x0F) == 0x0F) {
+            int nib = antic_pf_nibble(&s->an, cc, gmode == GTIA_MODE_10 ? 1 : 0);
+            pf = (gmode == GTIA_MODE_10 && nib >= 4 && nib <= 7) ? nib - 4 : -1;
+        } else {
+            pf = antic_pf_at(&s->an, cc, &hires);
+        }
+        /* A GTIA mode re-reads mode F's bits as NIBBLES, so the playfield is no
+         * longer hi-res: leaving this set makes GTIA apply the "lit collides as
+         * PF2" rule and throw the nibble's colour class away. */
+        s->gt.hires = (s->an.dl_insn & 0x0F) == 0x0F && !gmode;
         gtia_clock(&s->gt, cc, pf, hires);
+        if (s->pf_probe && s->an.scanline == s->pf_probe) {
+            if (gtia_player_lit(&s->gt, 0) || pf >= 0)
+                fprintf(stderr, "  cc $%02X pf %d lit %d nib %d graf $%02X\n",
+                        cc, pf, gtia_player_lit(&s->gt, 0),
+                        antic_pf_nibble(&s->an, cc, 1), s->gt.grafp[0]);
+        }
     }
 }
 

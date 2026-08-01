@@ -216,6 +216,22 @@ static void line_start(antic *a)
             a->pf_addr = antic_pf_next(a->pf_addr);
         }
         a->lb_len = n;
+
+        /* Character modes fetch the glyph row as well as the name.  CHACTL's
+         * vertical reflect picks a different row of the SAME character, so it
+         * belongs here with the fetch, not in the pixel decode. */
+        if (mode >= 2 && mode <= 7) {
+            int row = a->row_line;
+            if (a->chactl & 0x04) row = a->row_height - 1 - row;
+            if (row < 0) row = 0;
+            uint16_t cbase = (mode <= 5)
+                ? (uint16_t)((a->chbase & 0xFC) << 8)
+                : (uint16_t)((a->chbase & 0xFE) << 8);
+            uint8_t  cmask = (mode <= 5) ? 0x7F : 0x3F;
+            for (int i = 0; i < n && i < (int)sizeof a->glyphbuf; i++)
+                a->glyphbuf[i] = a->fetch(a->ctx,
+                    (uint16_t)(cbase + (a->linebuf[i] & cmask) * 8 + row));
+        }
     }
 
     a->row_line++;
@@ -309,21 +325,57 @@ int antic_pf_at(const antic *a, int cc, int *hires_lit)
 {
     *hires_lit = 0;
     int mode = a->dl_insn & 0x0F;
-    if (mode < 8 || !(a->dmactl & 0x20))
+    if (mode < 2 || !(a->dmactl & 0x20))
         return -1;
 
-    /* A 40-char normal playfield is 160 colour clocks starting at $40; narrow
-     * (32 chars, 128 clocks) and wide (48, 192) are centred on the same middle,
-     * so they start at $50 and $30.  HSCROL shifts the window left in colour
-     * clocks, the same sense as antic_dma.c's pf_nominal. */
+    /* Display starts a fixed THREE machine cycles after the nominal fetch
+     * window — ANTIC fetches that far ahead — so the decode is anchored to the
+     * very geometry the DMA schedule uses rather than to its own constants.
+     * That gives $30 normal, $40 narrow, $20 wide, and antic_pmdma confirms it:
+     * it parks player 0 at "$41-8" for a left-edge collision against a NARROW
+     * playfield, which only overlaps if narrow begins at $40.  Independent
+     * constants put it at $50 and no collision ever registered. */
     antic_width w = width_of(a->dmactl);
-    int start = 0x40 + (w == ANTIC_NARROW ? 16 : w == ANTIC_WIDE ? -16 : 0)
-              - (a->hscrol & 0x0F);
+    int start = 2 * (antic_pf_nominal(w, a->hscrol & 0x0F) + PF_DISPLAY_LEAD);
     int span  = (w == ANTIC_NARROW) ? 128 : (w == ANTIC_WIDE) ? 192 : 160;
 
     int off = cc - start;
     if (off < 0 || off >= span)
         return -1;
+
+    if (mode <= 7) {                      /* character modes */
+        /* 40 characters of 4 colour clocks in modes 2..5, 20 of 8 in 6..7. */
+        int cw = (mode <= 5) ? 4 : 8;
+        int ci = off / cw;
+        if (ci >= a->lb_len || ci >= (int)sizeof a->glyphbuf)
+            return -1;
+        uint8_t name  = a->linebuf[ci];
+        uint8_t glyph = a->glyphbuf[ci];
+        int within = off % cw;
+
+        if (mode <= 3) {                  /* hi-res text, two pixels per clock */
+            /* CHACTL blank and inverse act on characters with bit 7 set, and
+             * blank wins over inverse. */
+            if (name & 0x80) {
+                if      (a->chactl & 0x01) glyph = 0x00;
+                else if (a->chactl & 0x02) glyph = (uint8_t)~glyph;
+            }
+            int p  = within * 2;
+            int b0 = (glyph >> (7 - p)) & 1;
+            int b1 = (glyph >> (6 - p)) & 1;
+            *hires_lit = b0 | b1;
+            return (b0 | b1) ? 2 : -1;
+        }
+        if (mode <= 5) {                  /* 4-colour text, bit 7 picks PF3 */
+            int v = (glyph >> (6 - within * 2)) & 3;
+            if (!v) return -1;
+            if (v == 3) return (name & 0x80) ? 3 : 2;
+            return v - 1;
+        }
+        /* modes 6,7: one bit per pixel, the character's top two bits pick the
+         * playfield colour */
+        return ((glyph >> (7 - within)) & 1) ? (name >> 6) : -1;
+    }
 
     if (mode == 0x0F) {                   /* hi-res: TWO pixels per colour clock */
         int p  = off * 2;
@@ -345,6 +397,24 @@ int antic_pf_at(const antic *a, int cc, int *hires_lit)
 
     int v = (byte >> (6 - (bitpos & 7))) & 3;
     return v ? v - 1 : -1;                /* 01->PF0, 10->PF1, 11->PF2 */
+}
+
+int antic_pf_nibble(const antic *a, int cc, int shift)
+{
+    if (!(a->dmactl & 0x20) || (a->dl_insn & 0x0F) != 0x0F)
+        return -1;
+    antic_width w = width_of(a->dmactl);
+    int start = 2 * (antic_pf_nominal(w, a->hscrol & 0x0F) + PF_DISPLAY_LEAD);
+    int span  = (w == ANTIC_NARROW) ? 128 : (w == ANTIC_WIDE) ? 192 : 160;
+
+    int off = cc - start - shift;
+    if (off < 0 || off >= span)
+        return -1;
+    int nib = off / 2;                    /* two colour clocks per nibble */
+    int i   = nib / 2;
+    if (i >= a->lb_len || i >= (int)sizeof a->linebuf)
+        return -1;
+    return (nib & 1) ? (a->linebuf[i] & 0x0F) : (a->linebuf[i] >> 4);
 }
 
 uint8_t antic_read(antic *a, uint16_t addr)

@@ -104,6 +104,8 @@ typedef struct {
      * So it is deliberately NOT cleared per line — persistence is the observable
      * behaviour, not an accident. */
     uint8_t linebuf[64];   /* wide playfield is 48 bytes; 64 is room to spare */
+    uint8_t glyphbuf[64];  /* character modes fetch a GLYPH per name byte — two
+                            * fetches per character, so the decode has both */
     int     lb_len;        /* bytes fetched on the last line that fetched any */
 
     /* the DMA schedule for the scanline in progress */
@@ -141,6 +143,11 @@ uint8_t antic_display_byte(const antic *a, int i);
  * express.  `hires_lit` reports whether either half-clock pixel is set, which
  * is all GTIA is shown of a hi-res mode. */
 int antic_pf_at(const antic *a, int cc, int *hires_lit);
+
+/* The raw 4-bit playfield value at colour clock `cc`, or -1 outside the window.
+ * The GTIA modes reinterpret ANTIC mode F's 320 hi-res bits as 80 nibbles of two
+ * colour clocks each, so they need the DATA, not a colour class. */
+int antic_pf_nibble(const antic *a, int cc, int shift);
 
 uint8_t antic_read(antic *a, uint16_t addr);
 void    antic_write(antic *a, uint16_t addr, uint8_t val);
