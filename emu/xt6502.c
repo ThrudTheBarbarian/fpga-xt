@@ -271,14 +271,32 @@ static void interrupt(xt6502 *c, uint16_t vec, int brk)
     if (brk) c->pc++;
     else     rd(c, c->pc);
     push(c, (uint8_t)(c->pc >> 8));
+    /* ---- the vector is committed HERE, after the PCH push ------------------
+     * i.e. at the end of the sequence's THIRD cycle, which for a BRK is its
+     * third cycle too (the opcode fetch is cycle one).  An NMI latched up to
+     * and including this cycle diverts the vector to $FFFA; one latched later
+     * does NOT — and is not merely deferred either, it is SWALLOWED, because
+     * the edge detector stays held reset for the rest of the sequence.
+     *
+     * Both halves of ACID800 antic_blockednmi turn on this one cycle.  The VBI
+     * request appears at scanline cycle 6 (ANTIC_CYC_NMIST); the test places a
+     * BRK at scanline cycles 3-9 and then, one cycle later, at 4-10.  The first
+     * lands the request on BRK cycle 4 and the BRK must complete through $FFFE
+     * with the NMI lost for good; the second lands it on cycle 3 and the NMI
+     * must take over with the BRK's own pushes and its pushed PC intact. */
+    if (c->nmi_pend) { vec = 0xFFFA; c->nmi_pend = 0; }
     push(c, (uint8_t)c->pc);
     push(c, (uint8_t)(brk ? (c->p | XTF_B | XTF_U) : ((c->p | XTF_U) & ~XTF_B)));
-    /* NMI hijacks a BRK/IRQ already in flight: the vector is chosen HERE, after
-     * the pushes, so an NMI that arrived during them wins. */
-    if (c->nmi_pend) { vec = 0xFFFA; c->nmi_pend = 0; }
     c->p |= XTF_I;
     uint8_t lo = rd(c, vec);
     uint8_t hi = rd(c, (uint16_t)(vec + 1));
+    /* Anything latched after the commit dies with the sequence.  The poll is
+     * cleared with it: poll_prev at this point is the sample taken during the
+     * vector fetch, and leaving it set would hand the swallowed NMI straight
+     * back at the next instruction boundary.  I is set, so a pending IRQ is
+     * masked and re-polled on its own the moment the handler enables it. */
+    c->nmi_pend = 0;
+    c->poll = c->poll_prev = 0;
     c->pc = (uint16_t)(lo | (hi << 8));
 }
 

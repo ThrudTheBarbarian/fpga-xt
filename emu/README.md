@@ -39,9 +39,9 @@ literally the same tests.
   and `/RDY` interact with the dummy reads and the RMW double write.
 * Speed: Klaus runs 96.2M 6502 cycles in 0.24 s ≈ **400M cycles/s**, ~224x
   realtime for the CPU alone on an M-series Mac.
-* **Interrupt timing: passes**, from ACID800 `cpu_clisei`'s three scenarios plus
-  NMI edge/one-shot. Harte ties the interrupt lines inactive, so this is ground
-  it cannot cover.
+* **Interrupt timing: passes**, from ACID800 `cpu_clisei`'s three scenarios, NMI
+  edge/one-shot, and the **NMI/BRK hijack boundary** swept cycle by cycle.
+  Harte ties the interrupt lines inactive, so this is ground it cannot cover.
 * **POKEY RANDOM LFSR: passes.** Not a sound model — the ANTIC timing tests use
   `RANDOM` as a one-cycle-resolution clock, so this is their prerequisite.
 * **ANTIC DMA schedule: 50/50** against the table ACID800's `antic_dmapattern`
@@ -49,11 +49,12 @@ literally the same tests.
   scanline and its later ones.
 * **ANTIC DMA schedule: 50/50**, timing core, display-list execution and line
   buffer all in; **GTIA collisions** in.
-* **The real ACID800 binaries run**: `make acid` → 11 pass / 38 fail / 9 jammed
-  / 2 looping / 3 skipped, of 63. Not comparable to the fabric's 32/63 — that runs on hardware with a
-  full POKEY and an OS ROM, whereas POKEY here is only the RANDOM LFSR, the five
-  `mod_*` never halt, and OS-dependent tests hang because `_SKIP` needs the OS.
-  Every `cpu_*` test that completes passes.
+* **The real ACID800 binaries run**: `make acid` → 37 pass / 17 fail / 4 jammed
+  / 1 looping / 4 skipped, of 63. Not directly comparable to the fabric's 33/63:
+  that runs on hardware with a full POKEY and an OS ROM, whereas POKEY here is
+  the RANDOM LFSR, the timers and the serial OUTPUT path only, and the five
+  `mod_*` are menu-loaded modules that cannot run standalone at all. **Every
+  `cpu_*` test passes.**
 
 ### CLOSED: antic_wsync's absolute cycle alignment
 
@@ -533,3 +534,50 @@ They are therefore not conformance tests, and their JAM status is not a defect
 in this emulator. Reporting them as skips would mean special-casing five
 filenames in the runner, which is worse than leaving the count honest with the
 reason recorded here.
+
+## CLOSED: the NMI/BRK hijack boundary, and where the vector is committed
+
+`antic_blockednmi` failed with *"VBI handler should not have executed."* It
+asserts by control flow rather than by value — four handlers, three of which
+call `_FAIL` if they are ever entered — so which handler runs **is** the answer.
+
+Both halves arm a VBI and then place a `BRK` across the request, one cycle
+apart:
+
+```
+half 1:  brk    ;3, 4, 5, 6, 7, 8, 9    -> must reach `irq`  ($FFFE)
+half 2:  brk    ;4, 5, 6, 7, 8, 9, 10   -> must reach `nmi2` ($FFFA)
+```
+
+The request itself lands at scanline cycle **6** — `ANTIC_CYC_NMIST`, already
+pinned by `antic_nmist`. A new `ACID_PCWATCH=<hex>` probe prints the scanline
+and cycle at which a given PC is fetched, and confirmed our instruction stream
+sits exactly where the test's own annotations say: `lda $0100` at 109, the two
+`nop`s at 113 and 1, the `brk` at 3. So the request lands on **BRK cycle 4** in
+half 1 and **BRK cycle 3** in half 2, and those must give opposite outcomes.
+
+That places the commit point precisely:
+
+> The vector is committed at the end of the sequence's **third** cycle, right
+> after the PCH push. An NMI latched up to and including that cycle diverts the
+> vector to `$FFFA`; one latched after it does not.
+
+The second half of the rule is the part that is easy to miss. A late NMI is not
+merely *deferred* — half 1 would still fail, because the `irq` handler does not
+clear `NMIEN` until several instructions in, so a deferred NMI would be taken at
+the very next instruction boundary and run the forbidden handler. It has to be
+**swallowed**: the edge detector stays held reset for the rest of the sequence,
+so `nmi_pend` is cleared unconditionally when the sequence ends. The poll must be
+cleared with it, or `poll_prev` — sampled during the vector fetch, when the flag
+was still set — hands the dead NMI straight back.
+
+Previously `interrupt()` chose the vector *after* the status push, i.e. after
+cycle 5, and never swallowed anything: every NMI hijacked. That passed half 2
+and `cpu_bugs` and failed half 1. Moving the commit two cycles earlier and adding
+the swallow passes all three.
+
+`test/irq.c` now sweeps `k = 1..7`, raising `/NMI` from the bus callback during
+the k'th cycle of a `BRK` — the only hook that runs once per machine cycle, so
+it is the only way to place the edge inside an instruction. It checks both the
+vector taken and, for the late cases, that the NMI does not come back on the
+following step.

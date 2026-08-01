@@ -92,7 +92,13 @@ polls the NMI at the correct cycle within the BRK sequence passes both.
 ## To pass this test you must have
 
 1. NMI recognition at the correct cycle *inside* the BRK sequence, not merely at
-   instruction boundaries.
+   instruction boundaries. The VBI request lands at scanline cycle 6, so half 1
+   puts it on BRK cycle 4 and half 2 on BRK cycle 3: **the vector is committed
+   at the end of the sequence's third cycle**, immediately after the PCH push.
+   An NMI latched at or before that cycle diverts; one latched after it is
+   **swallowed** — not deferred, since half 1's `irq` handler does not clear
+   `NMIEN` for several instructions and a deferred NMI would run the forbidden
+   handler at the very next instruction boundary.
 2. The hijack replacing **only the vector** — the pushed PC and the `B` flag stay
    BRK's.
 3. `NMIEN` enabling the VBI mid-scanline generating (or not generating) the

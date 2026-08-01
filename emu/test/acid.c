@@ -282,6 +282,10 @@ static int run_one(const char *dir, const char *name, unsigned long long *cyc)
             armed = 1;
             s.dbg_trace = 20;
         }
+        { const char *pw = getenv("ACID_PCWATCH");
+          if (pw && s.cpu.pc == (uint16_t)strtoul(pw, NULL, 16))
+              fprintf(stderr, "  [pc %04X] line %d cycle %d\n",
+                      s.cpu.pc, s.an.scanline, s.an.cycle); }
         if (getenv("ACID_NMIPROBE") && s.cpu.pc == 0xFF00) {
             static int n; if (++n <= 6 || getenv("ACID_NMICOUNT"))
                 fprintf(stderr, "  [nmi #%d] cycle %llu nmist $%02X nmien $%02X dl_addr $%04X\n",
