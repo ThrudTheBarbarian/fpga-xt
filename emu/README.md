@@ -1760,3 +1760,44 @@ the split cheaper than re-deriving it.
 `antic_pfstoptiming` fails on its own HSCROL early case (19 where 16 is wanted)
 and `antic_hscrolbug` on "Unstopped PF DMA", so all three are almost certainly
 one idea.
+
+## antic_virtdma: a playfield slot that latches the CPU's bus byte
+
+Never examined before, and it decodes in one step. Four consecutive scanlines
+each end with a `lda abs` from a different address, and nothing else about them
+differs:
+
+| scanline | instruction | wanted pattern |
+|---|---|---|
+| 33 | `lda $0100` | `$00` |
+| 34 | `lda $5000` | `$05` |
+| 35 | `lda $c000` | `$0c` |
+| 36 | `lda $f000` | `$0f` |
+
+The wanted value is the HIGH NIBBLE OF THE ADDRESS. `lda abs` is `AD lo hi`, so
+its third cycle fetches the operand's high byte — `$01`, `$50`, `$c0`, `$f0` —
+and the test's own cycle map marks that cycle "(sampled by playfield DMA)". The
+patterns are read back through four missiles parked along the right border at
+`$da`..`$dd`, one colour clock each, so the nibble is read out of the playfield
+by collision.
+
+So: **one playfield DMA slot per line is VIRTUAL.** ANTIC accounts for the slot
+and clocks its line buffer, but does not drive the bus, so what lands in the
+buffer is whatever the CPU's own access put there. Its map comment marks that
+slot `V` where the real fetches are `C` and refresh is `R`.
+
+That is the same rule as `gtia_phantomdma`'s — a latch taking the DATA BUS
+rather than a fetch — and half of it is already written down here: killing
+playfield DMA mid-line does not stall the line buffer, "ANTIC keeps clocking it
+and latches whatever is on the bus", which `antic_linebuffering` deliberately
+does not check ("from the bus, but we don't test that yet"). `antic_virtdma` is
+the test that does check it.
+
+We produce `$00` for all four patterns, which is why pattern #1 passes and #2
+fails immediately: the buffer holds memory content, never the bus byte.
+
+Two things are needed. The virtual slot has to EXIST in the DMA schedule — the
+test runs wide playfield (`DMACTL $23`) with `HSCROL 2` on scrolled mode 7 rows,
+which is what creates a slot with no data behind it. And `antic.c` needs the bus
+byte, which today only `system.c` has (`last_bus`, added for the phantom P/M
+latch); the fetch callback is the natural place to hand it over.
