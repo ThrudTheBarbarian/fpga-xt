@@ -3,45 +3,85 @@
  */
 #include "system.h"
 #ifndef PHANTOM_PM
-#define PHANTOM_PM 0
+#define PHANTOM_PM 1
+#endif
+/* Player 0's slot, MEASURED: gtia_phantomdma wants $AD in GRAFP0, and cycle 3
+ * of its scanline is the only cycle carrying a byte whose low nibble is $D —
+ * the opcode fetch of the test's own `lda $0100`.  Players 1..3 follow it. */
+#ifndef PM_SLOT_P
+#define PM_SLOT_P 3
+#endif
+/* The missile latch works the same way, but NO test in the suite pins its slot:
+ * gtia_phantomdma leaves GRACTL bit 0 clear and writes GRAFM directly.  So the
+ * mechanism is written down and left OFF rather than run on a guessed cycle. */
+#ifndef PHANTOM_PM_M
+#define PHANTOM_PM_M 0
 #endif
 #ifndef PM_SLOT_M
-#define PM_SLOT_M 0
-#endif
-#ifndef PM_SLOT_P
-#define PM_SLOT_P 2
+#define PM_SLOT_M 2
 #endif
 #include <stdio.h>
 
 /* ANTIC's own fetches go straight to memory: they are already accounted for as
  * DMA cycles, so they must not recurse into the CPU's cycle path. */
+static void bus_note(atari *s, int cyc, const char *who, uint16_t addr, uint8_t v)
+{
+    s->last_bus = v;
+    if (s->bus_probe && s->an.scanline == s->bus_probe)
+        fprintf(stderr, "  BUS sl %3d cyc %3d %-5s $%04X -> $%02X\n",
+                s->an.scanline, cyc, who, addr, v);
+}
+
 static uint8_t antic_fetch(void *ctx, uint16_t addr)
 {
     atari *s = (atari *)ctx;
-    /* Remember what ANTIC last drove onto the bus.  GTIA latches its P/M
-     * graphics on fixed slots whether or not ANTIC actually fetched P/M data
-     * there, so with GRACTL enabling the latch and DMACTL's P/M DMA OFF it
-     * captures whatever went past — gtia_phantomdma's whole subject. */
-    s->last_fetch = s->ram[addr];
-    return s->last_fetch;
+    /* Remember what ANTIC drove onto the bus.  GTIA latches its P/M graphics on
+     * fixed slots whether or not ANTIC actually fetched P/M data there, so with
+     * GRACTL enabling the latch and DMACTL's P/M DMA OFF it captures whatever
+     * went past — gtia_phantomdma's whole subject. */
+    bus_note(s, s->an.cycle, "ANTIC", addr, s->ram[addr]);
+    return s->last_bus;
 }
 
 /* Advance the world by machine cycles until ANTIC yields one to the CPU.  This
  * is the whole architecture in five lines: ANTIC decides, the CPU waits. */
+/* The PHANTOM latch: GRACTL opens the P/M latches on fixed scanline slots
+ * whether or not DMACTL asked ANTIC to fetch anything there, so each object
+ * captures whatever was ON THE BUS at its own slot.
+ *
+ * The source is the BUS, not ANTIC.  gtia_phantomdma is built on precisely
+ * that: DMACTL is $21, so ANTIC does no P/M DMA at all and the CPU is the one
+ * driving those cycles — it arranges an `lda $0100` to straddle them, and the
+ * byte it wants latched into GRAFP0 is $AD, which is that instruction's own
+ * OPCODE fetch.  Nothing ANTIC touches on that line ends in $D.
+ *
+ * It therefore has to run AFTER the cycle's access, which is why it is not part
+ * of pm_latch(): on a cycle the CPU gets, sys_cycle() has returned long before
+ * the read happens. */
+static void phantom_latch(atari *s, int c)
+{
+    /* Only where DMACTL is NOT driving that object.  Where it is, ANTIC really
+     * does put the P/M byte on the bus at the slot and the ordinary path in
+     * pm_latch() below has already taken it — with VDELAY applied, which the
+     * phantom has no business overriding.  Gating this on "ANTIC fetched
+     * nothing THIS cycle" instead cost antic_pmdma, antic_charcontrol and
+     * gtia_vdelay: pm_dma() does its fetches at line_start, so by the slot
+     * cycles the flag is long since consumed and the phantom clobbered a
+     * perfectly good latch.  Player DMA drags missile DMA along with it, so the
+     * missile gate has to test both bits — as pm_dma() itself does. */
+    if (!PHANTOM_PM) return;
+    int player  = (s->an.dmactl & 0x08) != 0;
+    int missile = (s->an.dmactl & 0x04) != 0 || player;
+    if (PHANTOM_PM_M && !missile && (s->gt.gractl & 0x01) && c == PM_SLOT_M)
+        s->gt.grafm = s->last_bus;
+    if (!player && (s->gt.gractl & 0x02) && c >= PM_SLOT_P && c < PM_SLOT_P + 4)
+        s->gt.grafp[c - PM_SLOT_P] = s->last_bus;
+}
+
 /* ANTIC fetched P/M data; GRACTL decides whether GTIA latches it — players and
  * missiles separately, and independently of whether ANTIC fetched at all. */
 static void pm_latch(atari *s)
 {
-    /* No P/M DMA this line, but GRACTL still latches on its fixed slots, so each
-     * object captures whatever ANTIC drove at ITS slot — four consecutive
-     * cycles, four different bytes.  A single shared byte cannot be right:
-     * gtia_phantomdma needs its four missiles to see four different values. */
-    if (PHANTOM_PM && !s->an.pm_fetched) {
-        int c = s->an.cycle;
-        if (s->gt.gractl & 0x01 && c == PM_SLOT_M) s->gt.grafm = s->last_fetch;
-        if (s->gt.gractl & 0x02 && c >= PM_SLOT_P && c < PM_SLOT_P + 4)
-            s->gt.grafp[c - PM_SLOT_P] = s->last_fetch;
-    }
     if (!s->an.pm_fetched) return;
     s->an.pm_fetched = 0;
 
@@ -166,7 +206,7 @@ static void sys_cycle(atari *s)
          *
          * The stored value is cycle + 1 so that zero means "nothing deferred"
          * — cycle 0 is a real cycle. */
-        if (took) render_cycle(s, cyc);
+        if (took) { phantom_latch(s, cyc); render_cycle(s, cyc); }
         else      s->pending_render = cyc + 1;
         pm_latch(s);
         s->cycles++;
@@ -198,6 +238,7 @@ static void sys_cycle(atari *s)
 static void cpu_cycle_done(atari *s)
 {
     if (s->pending_render) {
+        phantom_latch(s, s->pending_render - 1);
         render_cycle(s, s->pending_render - 1);
         s->pending_render = 0;
     }
@@ -300,6 +341,7 @@ static uint8_t bus_rd(void *ctx, uint16_t a)
     sys_cycle(s);
     dbg(s, a, 0);
     uint8_t v = (a >= 0xD000 && a < 0xD800) ? io_read(s, a) : s->ram[a];
+    bus_note(s, s->pending_render - 1, "CPU-R", a, v);
     cpu_cycle_done(s);
     return v;
 }
@@ -313,6 +355,7 @@ static void bus_wr(void *ctx, uint16_t a, uint8_t v)
     dbg(s, a, 1);
     if (a >= 0xD000 && a < 0xD800) io_write(s, a, v);
     else                           s->ram[a] = v;
+    bus_note(s, s->pending_render - 1, "CPU-W", a, v);
     cpu_cycle_done(s);
 }
 

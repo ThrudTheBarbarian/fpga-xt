@@ -28,13 +28,17 @@ typedef struct {
     gtia       gt;
     pokey_rand pk;
     pokey_timer pt;
-    uint8_t     last_fetch;  /* the last byte ANTIC drove onto the bus */
+    uint8_t     last_bus;    /* the byte on the data bus this cycle, whoever
+                              * drove it — ANTIC's fetch OR the CPU's own access.
+                              * gtia_phantomdma's phantom latch takes the BUS,
+                              * not ANTIC, so a CPU cycle counts (see below). */
     int         pending_render;  /* cycle+1 whose colour clocks are deferred */
     pia        pia;
     uint8_t    pm_prev_p[4], pm_prev_m;  /* one fetch back, for VDELAY */
     unsigned long long ser_mark;
     int        col_probe;
     int        pf_probe;   /* debug: dump the pixel stream on this scanline */
+    int        bus_probe;  /* debug: trace every bus cycle of this scanline */
     uint8_t    nmi_hold;   /* ANTIC's /NMI pulse, held until the CPU latches it */
     uint64_t   cycles;
 

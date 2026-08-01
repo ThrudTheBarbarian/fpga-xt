@@ -119,6 +119,7 @@ static int run_one(const char *dir, const char *name, unsigned long long *cyc)
     static atari s;
     atari_init(&s);
     { const char *p = getenv("ACID_PFPROBE"); if (p) s.pf_probe = atoi(p); }
+    { const char *p = getenv("ACID_BUSTRACE"); if (p) s.bus_probe = atoi(p); }
     if (getenv("ACID_GLYPHPROBE")) antic_glyph_probe = atoi(getenv("ACID_GLYPHPROBE"));
     if (getenv("ACID_COLPROBE")) s.col_probe = 1;
     if (!load_xex(&s, xex, &run) || !run) return R_SKIP;

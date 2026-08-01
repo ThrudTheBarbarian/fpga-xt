@@ -13,6 +13,7 @@
 #   make dma        the ANTIC DMA schedule vs ACID800's own table (50/50)
 #   make antic      ANTIC timing core: VCOUNT, WSYNC, NMIST landmarks
 #   make gtia       GTIA collisions + registers
+#   make sys       whole-machine wiring: who drives the bus, when a latch samples
 #   make acid       run the real ACID800 .xex suite (work in progress)
 #   make test       all of them — THE gate before ANTIC work counts as progress
 #   make clean
@@ -27,8 +28,8 @@ CORE := xt6502.c
 # PREVIOUS run's score, which reads exactly like a change that did nothing
 HDRS := xt6502.h antic.h antic_dma.h gtia.h pokey_rand.h pokey_timer.h pia.h system.h acid_dmatable.h
 
-.PHONY: all test harte klaus irq pokey ptimer dma antic gtia pia acid clean
-all: $(BUILD)/harte $(BUILD)/klaus $(BUILD)/irq $(BUILD)/pokey $(BUILD)/ptimer $(BUILD)/dma $(BUILD)/antic $(BUILD)/gtia $(BUILD)/pia
+.PHONY: all test harte klaus irq pokey ptimer dma antic gtia pia sys acid clean
+all: $(BUILD)/harte $(BUILD)/klaus $(BUILD)/irq $(BUILD)/pokey $(BUILD)/ptimer $(BUILD)/dma $(BUILD)/antic $(BUILD)/gtia $(BUILD)/pia $(BUILD)/sys
 
 $(BUILD):
 	@mkdir -p $(BUILD)
@@ -64,6 +65,9 @@ SYS := system.c xt6502.c antic.c antic_dma.c gtia.c pokey_rand.c pokey_timer.c p
 $(BUILD)/acid: test/acid.c $(SYS) $(HDRS) | $(BUILD)
 	$(CC) $(CFLAGS) test/acid.c $(SYS) -o $@
 
+$(BUILD)/sys: test/sys.c $(SYS) $(HDRS) | $(BUILD)
+	$(CC) $(CFLAGS) test/sys.c $(SYS) -o $@
+
 harte: $(BUILD)/harte
 	@./$(BUILD)/harte
 
@@ -91,10 +95,13 @@ antic: $(BUILD)/antic
 gtia: $(BUILD)/gtia
 	@./$(BUILD)/gtia
 
+sys: $(BUILD)/sys
+	@./$(BUILD)/sys
+
 acid: $(BUILD)/acid
 	@./$(BUILD)/acid
 
-test: harte klaus irq pokey ptimer dma antic gtia pia
+test: harte klaus irq pokey ptimer dma antic gtia pia sys
 
 clean:
 	rm -rf $(BUILD)

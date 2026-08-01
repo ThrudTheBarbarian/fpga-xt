@@ -1231,7 +1231,7 @@ end-decided period). The remaining assertion pair is deep in diminishing returns
 better value elsewhere.
 
 
-## Open: gtia_phantomdma needs a PER-SLOT phantom latch
+## SOLVED: gtia_phantomdma latches the BUS, and the CPU is on it
 
 Never examined before, and the name is exact. The test sets `DMACTL = $21` —
 narrow playfield, display-list DMA on, and **P/M DMA off** — while `GRACTL = $02`
@@ -1279,6 +1279,63 @@ is a three-way constraint rather than one byte:
   gives exactly PF3, PF2, PF1, PF0. So the collision comes from the last two
   bytes of the buffer, not its body.
 
-Left OFF. The next step is to work out which bus byte can end in `$D` — most
-likely the answer is that the slot captures something other than the last
-playfield fetch, e.g. a display-list or refresh-cycle value.
+Which is what settled it, because the answer to "which bus byte can end in `$D`"
+turned out to be **none of ANTIC's**. A bus trace of the measured scanline
+(`ACID_BUSTRACE=<scanline>`, printing every access with its cycle and its
+driver) says so directly:
+
+```
+  BUS sl  33 cyc   0 ANTIC $2406 -> $0F
+  BUS sl  33 cyc   0 CPU-R $2098 -> $00
+  BUS sl  33 cyc   2 CPU-R $0000 -> $00
+  BUS sl  33 cyc   3 CPU-R $2099 -> $AD      <-- the only low nibble $D on the line
+  BUS sl  33 cyc   4 CPU-R $209A -> $00
+  BUS sl  33 cyc   5 CPU-R $209B -> $01
+  BUS sl  33 cyc   8 CPU-R $0100 -> $00
+  BUS sl  33 cyc  28 ANTIC $2432 -> $88      <-- ... and everything ANTIC fetches
+```
+
+`$AD` is the OPCODE of the test's own `lda $0100`. The test positions that
+instruction — `inc wsync`, `sta hitclr`, two `nop`s, `lda $00` — so that its
+opcode fetch lands on the player-0 slot, and asserts the opcode byte comes back
+out of GRAFP0. So:
+
+**The phantom latch samples the DATA BUS, not ANTIC.** On a cycle DMACTL has not
+given to ANTIC, the CPU is the one driving, and GTIA latches the CPU's byte.
+
+Two consequences for where the code goes. The source is a `last_bus` updated by
+**every** access — `antic_fetch`, `bus_rd` and `bus_wr` alike — not the old
+`last_fetch`. And the latch has to run **after** the cycle's access, so it could
+not stay in `pm_latch()`: on a cycle the CPU gets, `sys_cycle()` has returned
+long before the read happens. It is now its own `phantom_latch()`, called from
+the ANTIC path after `antic_tick()` and from `cpu_cycle_done()` for the CPU's
+own cycle.
+
+`PM_SLOT_P = 3`, measured. That single value satisfies **both** of the
+constraints above at once, which is the cross-check that this is a model and not
+a fit: `$AD` in GRAFP0 lights player-0 bits 3, 2 and 0 (missiles 0, 1 and 3 hit,
+missile 2 misses, low nibble `$D`), and the *same* lit bits put player 0 over
+`framebuf`'s `$76,$54` at colour clocks `$81,$82` and `$85,$86` — PF3 and PF1,
+`p0pf = $A` — via the mode-10 one-colour-clock playfield shift that was already
+in `antic_pf_nibble()`. Nothing was tuned to make the second half come out.
+
+Two things had to be got right beyond the slot:
+
+* **Gate it on DMACTL, not on "ANTIC fetched nothing this cycle".** The first
+  version tested `!an.pm_fetched`, and since `pm_dma()` does its fetches at
+  `line_start` that flag is long since consumed by the time the slot cycles come
+  round — so the phantom clobbered a perfectly good latch and cost
+  `antic_pmdma`, `antic_charcontrol` and `gtia_vdelay`. One test up, three down:
+  the full suite caught it, a single-test sweep would not have.
+* **Player DMA drags missile DMA with it**, so the missile gate tests both
+  DMACTL bits, as `pm_dma()` itself does.
+
+The MISSILE phantom is written down but left OFF (`PHANTOM_PM_M`): no test in
+the suite pins its slot, because `gtia_phantomdma` leaves `GRACTL` bit 0 clear
+and writes GRAFM directly. The mechanism is certain, that one constant is not.
+
+Gated in `test/sys.c` — a new `make sys`, the first host gate that links the
+whole machine rather than one chip. The rules that live in `system.c` (who
+drives the bus on a cycle, when a latch samples it, render-after-access) had no
+gate at all before this, and they are exactly the kind a later refactor reverts
+without anything noticing.
