@@ -55,7 +55,7 @@ literally the same tests.
   `mod_*` never halt, and OS-dependent tests hang because `_SKIP` needs the OS.
   Every `cpu_*` test that completes passes.
 
-### Open: antic_wsync's absolute cycle alignment
+### CLOSED: antic_wsync's absolute cycle alignment
 
 `d0..d5` reads `95 D1 D1 D0 E2 34` against the wanted `95 4B 0D 44 E2 34` — d0,
 d4 and d5 correct. The remaining three are all WSYNC-duration measurements and
@@ -317,3 +317,33 @@ short for a four-cycle STA, so it is the odd one out rather than the arbiter.
 
 Still open on this axis: `antic_wsync` itself, `antic_nmist` ("VBI bit was reset
 too early"), `gtia_pmretrigger` #2 and `gtia_pmresize`.
+
+## CLOSED: the WSYNC axis, and what actually finished it
+
+All three tests parked on this question now pass — `antic_vscroldli`,
+`antic_nmist` and `antic_wsync` itself. Four separate things were missing, and
+no sweep of the release cycle alone could ever have found them:
+
+1. **Memory refresh** takes nine cycles of every scanline whatever DMACTL says.
+   Without it the CPU ran nine cycles a line too fast with the screen off, which
+   is what made the release look unmeasurable — moving it broke other cases.
+2. **The release is cycle 103**, the first cycle the CPU gets back.
+3. **/RDY does not stop write cycles.** WSYNC pulls /RDY; ANTIC's /HALT for DMA
+   is a different signal and does stop them. Modelling both the same way made an
+   `INC WSYNC` re-arm on its second write — that write landed after the release,
+   found the halt clear, and cost a whole extra scanline. This is NOT the
+   disproved "DMA must not stall writes" change, which broke `cpu_timing` and is
+   still wrong.
+4. **A WSYNC write arriving while the halt is already armed delays the release
+   by one cycle** rather than re-arming. That is exactly the difference between
+   the suite's own annotations: after `sta wsync` the next instruction starts at
+   104, after `inc wsync` it starts at 105.
+
+The technique that made the last two findable: `antic_wsync` reads POKEY's
+RANDOM at 113, 227 and 342 cycles after the SKCTL release, so **a wrong value
+names the exact cycle error**. Decoding the LFSR backwards turned "d2 is wrong"
+into "d2 is 455, i.e. one scanline late" and then "d2 is 341, i.e. one cycle
+early". Two hypotheses, two measurements, no sweeping.
+
+Also settled alongside: a NMIRES landing in the same cycle as a status set loses
+to it, while a NMIEN write in that same cycle wins.

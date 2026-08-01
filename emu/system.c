@@ -190,8 +190,6 @@ static void io_write(atari *s, uint16_t a, uint8_t v)
 {
     switch (a & 0xFF00) {
     case 0xD000:
-        if (s->col_probe && (a & 0x1F) == 0x00)
-            fprintf(stderr, "  HPOSP0 <- $%02X  sl %3d cyc %3d\n", v, s->an.scanline, s->an.cycle);
         if (s->col_probe && (a & 0x1F) == 0x1E)
             fprintf(stderr, "  HITCLR  sl %3d cyc %3d\n", s->an.scanline, s->an.cycle);
         if (s->col_probe && (a & 0x1F) < 0x08)
