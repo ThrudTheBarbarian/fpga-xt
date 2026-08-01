@@ -64,6 +64,17 @@ static int base_period(const pokey_timer *p)
 
 /* A divider counts AUDF+1 of its input ticks.  Linked pairs count
  * (hi<<8 | lo) + 1 of the LOW channel's input. */
+/* The AUDF a reload will use.  MEASURED, not modelled: pokey_timertiming's
+ * STIMER write lands on machine cycle 62 and AUDF1 = 16 puts the first underflow
+ * at 62 + 24 = 86; its "+22c" write lands at 84 and must take effect, its "+23c"
+ * write lands at 85 and must not.  So the value is captured TWO cycles before
+ * the underflow — expressed as a delay line, never as a freeze, because a
+ * channel with AUDF = 0 has a period of one and a freeze would stick for ever. */
+static uint8_t af(const pokey_timer *p, int ch)
+{
+    return AUDF_PIPE ? p->audf_d[ch][AUDF_PIPE - 1] : p->audf[ch];
+}
+
 static int period_of(const pokey_timer *p, int ch)
 {
     /* The divider reloads with AUDF+1 of its input ticks — except off the 1.79
@@ -74,12 +85,20 @@ static int period_of(const pokey_timer *p, int ch)
     int fast3 = (p->audctl & 0x20) != 0;
 
     if (ch == 0 && (p->audctl & 0x10))          /* 1+2 linked, 1 is the low half */
-        return ((p->audf[1] << 8) | p->audf[0]) + (fast1 ? LINK_FAST : 1);
+        return ((af(p, 1) << 8) | af(p, 0)) + (fast1 ? LINK_FAST : 1);
     if (ch == 2 && (p->audctl & 0x08))          /* 3+4 linked */
-        return ((p->audf[3] << 8) | p->audf[2]) + (fast3 ? LINK_FAST : 1);
-    if (ch == 0 && fast1) return p->audf[0] + 4;
-    if (ch == 2 && fast3) return p->audf[2] + 4;
-    return p->audf[ch] + 1;
+        return ((af(p, 3) << 8) | af(p, 2)) + (fast3 ? LINK_FAST : 1);
+    if (ch == 0 && fast1) return af(p, 0) + 4;
+    if (ch == 2 && fast3) return af(p, 2) + 4;
+    return af(p, ch) + 1;
+}
+
+/* Prime the capture path when the counter is far enough from its underflow that
+ * the delay could not have mattered. */
+static void audf_prime(pokey_timer *p, int ch)
+{
+    if (p->cnt[ch] > AUDF_PIPE)
+        for (int k = 0; k < AUDF_PIPE; k++) p->audf_d[ch][k] = p->audf[ch];
 }
 
 static void reload(pokey_timer *p, int ch)
@@ -268,6 +287,11 @@ void pokey_timer_tick(pokey_timer *p)
 {
     if (p->init) return;                       /* held in init */
 
+    for (int i = 0; i < 4; i++) {
+        for (int k = AUDF_PIPE - 1; k > 0; k--) p->audf_d[i][k] = p->audf_d[i][k - 1];
+        if (AUDF_PIPE) p->audf_d[i][0] = p->audf[i];
+    }
+
     /* An interrupt edge the pair still owes from an earlier underflow. */
     for (int i = 0; i < 2; i++)
         if (p->hi_lag[i] && --p->hi_lag[i] == 0)
@@ -333,10 +357,15 @@ void pokey_timer_tick(pokey_timer *p)
 void pokey_timer_write(pokey_timer *p, uint16_t addr, uint8_t val)
 {
     switch (addr & 0x0F) {
-    case 0x00: p->audf[0] = val; break;
-    case 0x02: p->audf[1] = val; break;
-    case 0x04: p->audf[2] = val; break;
-    case 0x06: p->audf[3] = val; break;
+    /* An AUDF write while the counter is still far from its underflow primes the
+     * capture path directly: the delay only matters for a write that arrives
+     * inside the capture window.  Without this the FIRST period after a fresh
+     * AUDF write would use whatever the line held, which the ptimer gate — which
+     * starts from reset — catches immediately. */
+    case 0x00: p->audf[0] = val; audf_prime(p, 0); break;
+    case 0x02: p->audf[1] = val; audf_prime(p, 1); break;
+    case 0x04: p->audf[2] = val; audf_prime(p, 2); break;
+    case 0x06: p->audf[3] = val; audf_prime(p, 3); break;
     case 0x08: p->audctl = val; break;
     case 0x09:
         /* STIMER reloads the four CHANNEL counters but does NOT touch the base
@@ -346,6 +375,11 @@ void pokey_timer_write(pokey_timer *p, uint16_t addr, uint8_t val)
          * differ by 86.  So the delay is not a period at all; it is however far
          * the free-running divider happened to be from its next tick, which the
          * test makes deterministic by syncing with two WSYNCs first. */
+        /* STIMER is an explicit "load now", so it primes the capture path too —
+         * otherwise the first period after it would use whatever the delay line
+         * happened to hold. */
+        for (int i = 0; i < 4; i++)
+            for (int k = 0; k < AUDF_PIPE; k++) p->audf_d[i][k] = p->audf[i];
         for (int i = 0; i < 4; i++) reload(p, i);
         p->locnt[0] = p->audf[0] + ((p->audctl & 0x40) ? 4 : 1) + LO_EXTRA;
         p->locnt[1] = p->audf[2] + ((p->audctl & 0x20) ? 4 : 1) + LO_EXTRA;

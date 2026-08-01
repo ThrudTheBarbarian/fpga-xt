@@ -1137,8 +1137,32 @@ Two shapes tried, both reverted:
   previous cycle's value). No sticking, but it overshoots — 41, and
   `pokey_timertiming` then fails the **+22c** case instead of the +23c one.
 
-So the capture point is real but sits between those two: later than "one whole
-tick early", earlier than "live at the underflow". Since +22c and +23c are CPU
-cycles and DMA steals make those unequal in machine cycles, the next attempt
-should measure where each write actually LANDS (`ACID_PCWATCH` on the `sty
-audf1`) before choosing a shape.
+### CLOSED: AUDF is captured TWO cycles before the underflow
+
+Measuring first settled it in one pass. `ACID_PCWATCH` on the STIMER store and
+on both `sty audf1` sites:
+
+```
+sta stimer   line 25 cycle 59  -> 4-cycle STA, no refresh past 57, writes on 62
+sty audf1    line 25 cycle 82  -> writes on 85   (the "+23c" case)
+sty audf1    line 19 cycle 81  -> writes on 84   (the "+22c" case)
+```
+
+`AUDF1 = 16` gives a first period of `16 + 4 + 4` = 24, so the first underflow is
+at `62 + 24` = **86**. The write that must LAND is at 84, two cycles before it;
+the one that must MISS is at 85, one cycle before. So the counter captures AUDF
+**two cycles ahead of its underflow**.
+
+Expressed as a **delay line** (`AUDF_PIPE = 2`), never a freeze. Swept with the
+full suite each time: 1 still fails the +23c case, 2 passes both 8-bit change
+assertions at 42, 3 overshoots and fails +22c.
+
+Two initialisation points are needed, and the `ptimer` gate found both: STIMER
+primes the line because it is an explicit "load now", and so does an AUDF write
+that arrives while the counter is further than the pipe from its underflow —
+without them the first period after a fresh write uses whatever the line held.
+
+`pokey_timertiming` now clears both 8-bit change assertions and fails on the
+16-bit lo one, **"fired too early after 22c change (<43c)"** — the same capture
+rule applied to a linked pair's low half, whose reload path does not go through
+the delay line yet.

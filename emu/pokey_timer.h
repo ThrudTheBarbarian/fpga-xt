@@ -18,6 +18,9 @@
  *    written to zero in IRQEN both masks and CLEARS the corresponding request.
  *  - STIMER ($D209) resets all four dividers together.
  */
+#ifndef AUDF_PIPE
+#define AUDF_PIPE 2
+#endif
 #ifndef POKEY_TIMER_H
 #define POKEY_TIMER_H
 
@@ -49,6 +52,9 @@ typedef struct {
                             * not touch it; only the SKCTL release does, because
                             * init holds the chain. */
     int      cnt[4];       /* the four dividers */
+    uint8_t  audf_d[4][AUDF_PIPE]; /* AUDF delay line: a reload uses the value as
+                                    * it stood AUDF_PIPE ticks ago, because the
+                                    * counter captures it before the underflow */
     int      locnt[2];     /* a LINKED pair's LOW half, which keeps its own
                             * period and raises its own interrupt — see
                             * LINK_TWO_COUNTERS in the .c */
