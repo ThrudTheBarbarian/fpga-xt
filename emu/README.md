@@ -365,3 +365,21 @@ disagrees.
 
 The LFSR-decode technique applies directly here: the test reads RANDOM either
 side of a DMA burst, so a wrong value converts to an exact cycle count.
+
+## Open: POKEY divider PHASE after the SKCTL release
+
+`pokey_inittiming` measures how long after the `sta skctl` that releases init the
+first 15 kHz timer interrupt arrives. It accepts $1f or $20 — 31 or 32 NOPs —
+and its own comment works the total out as **85 to 87 machine cycles**, refresh
+included. This model reports $30, i.e. 48 NOPs.
+
+SKCTL's init state holding the dividers, and releasing it restarting them, is
+modelled and is correct in itself — but it is not sufficient. With AUDF = 0 a
+15 kHz divider reloaded to a full period gives the first underflow 114 cycles
+later, and the hardware answer is ~86. The gap is about 28 cycles, which is
+suspiciously exactly one 64 kHz base tick, so the likely shape is that the 15 kHz
+clock is DERIVED by further dividing the 64 kHz one rather than being an
+independent divide-by-114, and that the release leaves it part-way through.
+
+`pokey_irqtiming` ("Incorrect IRQEN delay count") is probably the same question
+seen from the interrupt-latency side.

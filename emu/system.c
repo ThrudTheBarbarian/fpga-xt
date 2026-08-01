@@ -216,6 +216,7 @@ static void io_write(atari *s, uint16_t a, uint8_t v)
                 fprintf(stderr, "  SKCTL <- $%02X sl %3d cyc %3d\n",
                         v, s->an.scanline, s->an.cycle);
             pokey_rand_skctl(&s->pk, v);
+            pokey_timer_skctl(&s->pt, v);
         }
         break;
     case 0xD400:

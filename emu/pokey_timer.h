@@ -35,9 +35,15 @@ typedef struct {
     int      base_div;     /* machine cycles left in the current base tick */
     int      cnt[4];       /* the four dividers */
     uint8_t  irq;          /* the /IRQ line to the CPU */
+    uint8_t  init;         /* SKCTL[1:0] == 0: dividers held */
 } pokey_timer;
 
 void    pokey_timer_reset(pokey_timer *p);
+/* SKCTL's init state ($D20F bits 1:0 == 0) holds the base clock divider as well
+ * as the poly counters, and RELEASING it restarts the divider from zero.
+ * pokey_inittiming measures the first 15 kHz interrupt from the SKCTL write, not
+ * from STIMER, so without this the phase is wherever it happened to be. */
+void    pokey_timer_skctl(pokey_timer *p, uint8_t val);
 void    pokey_timer_tick(pokey_timer *p);          /* one machine cycle */
 void    pokey_timer_write(pokey_timer *p, uint16_t addr, uint8_t val);
 uint8_t pokey_timer_irqst(const pokey_timer *p);

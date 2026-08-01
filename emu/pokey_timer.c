@@ -43,6 +43,7 @@ void pokey_timer_reset(pokey_timer *p)
     p->irqst  = 0xFF;      /* active low: nothing pending */
     p->base_div = BASE_64K;
     p->irq = 0;
+    p->init = 0;
 }
 
 static void raise(pokey_timer *p, uint8_t bit)
@@ -64,8 +65,20 @@ static void underflow(pokey_timer *p, int ch)
     }
 }
 
+void pokey_timer_skctl(pokey_timer *p, uint8_t val)
+{
+    uint8_t now = (val & 0x03) == 0;
+    if (p->init && !now) {                     /* released: restart the divider */
+        p->base_div = base_period(p);
+        for (int i = 0; i < 4; i++) reload(p, i);
+    }
+    p->init = now;
+}
+
 void pokey_timer_tick(pokey_timer *p)
 {
+    if (p->init) return;                       /* held in init */
+
     /* Channels 1 and 3 can be clocked straight off the machine clock; that is
      * the only way to get a divider shorter than the 64 kHz base tick, and it
      * is what pokey_timergranularity measures. */
