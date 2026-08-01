@@ -285,15 +285,35 @@ be counted against the pixel decode. Note the same trap applies to any other
 character-mode test that does not set CHBASE itself — `antic_charcontrol` passes
 precisely because it supplies its own character set at `$2c00`.
 
-## Correction: the WSYNC release is NOT two cycles late
+## Resolved: the WSYNC release is cycle 103, and refresh is why it was unmeasurable
 
-An earlier note claimed gtia_pmretrigger measured the release as two cycles
-late. That was wrong twice over and is withdrawn: the probe printed an.cycle
-after antic_tick incremented it (one artefact cycle), and releasing a cycle
-earlier so the CPU gets 104 makes gtia_pmretrigger fail its SECOND case again,
-having previously reached its fourth. The CPU's first cycle after a WSYNC halt
-is 105, as modelled.
+This was claimed twice in this file before it was right — first that the release
+was "two cycles late", then that 105 was correct. The sequence is worth keeping,
+because the first two readings were UNMEASURABLE for a reason rather than merely
+mistaken.
 
-gtia_pmretrigger #4 remains open but the cause is elsewhere: its sta hposp0
-lands on cycle 83 against an annotated 90, which no release offset explains.
-delay82 is the thing to instrument.
+**The instrument lied once.** The probe printed `an.cycle` after `antic_tick`
+had already incremented it, so a write reported on 109 actually committed on 108.
+
+**The model was missing memory refresh.** Refresh takes nine cycles of every
+scanline whatever DMACTL says — even with the screen off, where no other DMA
+does. Building the schedule only along the playfield path let the CPU run nine
+cycles a line too fast whenever DMA was off. That is exactly the gap
+`gtia_pmretrigger`'s fourth case showed: it calls `_screenOff`, then `delay82`,
+and its `sta hposp0` landed on cycle 81 against an annotated 90. `delay82` really
+is 82 CPU cycles; the missing nine were refresh. Fixing it also made
+`cpu_illtiming` pass outright — a test that runs each illegal opcode 210 times
+specifically *with* DMA and refresh present, and one of the four real jams.
+
+**Only then could the release be measured.** Before the refresh fix, moving the
+release broke `gtia_pmretrigger`'s second case, which made 105 look right. With
+refresh present, sweeping 103/104/105 scores 24/23/23, and 103 is what two tests
+annotate directly: `antic_nmist`'s seven-cycle `pha:pla` spanning 104..109 puts
+its unnumbered first cycle at 103, and `antic_vscroldli` — parked until now —
+passes only at that value.
+
+`gtia_pmretrigger`'s own `sta hitclr` annotation reads as 104, but it is one slot
+short for a four-cycle STA, so it is the odd one out rather than the arbiter.
+
+Still open on this axis: `antic_wsync` itself, `antic_nmist` ("VBI bit was reset
+too early"), `gtia_pmretrigger` #2 and `gtia_pmresize`.
