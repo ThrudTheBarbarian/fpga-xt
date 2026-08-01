@@ -127,6 +127,10 @@ static void sys_cycle(atari *s)
 {
     int was_halted = s->an.wsync_halt;
     for (;;) {
+        /* Catch a pulse raised since the last tick — a NMIEN write landing in
+         * the same cycle as the status set raises /NMI from antic_write, and
+         * the next tick would clear it again before it was ever sampled. */
+        if (s->an.nmi) s->nmi_hold = 1;
         int cyc  = s->an.cycle;
         int took = antic_tick(&s->an);
         render_cycle(s, cyc);
@@ -203,6 +207,9 @@ static void io_write(atari *s, uint16_t a, uint8_t v)
         }
         break;
     case 0xD400:
+        if (s->col_probe && (a & 0x0F) == 0x0E)
+            fprintf(stderr, "  NMIEN  write $%02X sl %3d cyc %3d (set_now %d nmist $%02X)\n",
+                    v, s->an.scanline, s->an.cycle - 1, s->an.nmist_set_now, s->an.nmist);
         if (s->col_probe && (a & 0x0F) == 0x0F)
             fprintf(stderr, "  NMIRES write sl %3d cyc %3d (set_now %d nmist $%02X)\n",
                     s->an.scanline, s->an.cycle - 1, s->an.nmist_set_now, s->an.nmist);

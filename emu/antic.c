@@ -598,7 +598,14 @@ void antic_write(antic *a, uint16_t addr, uint8_t val)
          * halt must not re-arm on the second (antic_wsync, d5). */
         if (!a->wsync_halt) a->wsync_halt = 1;
         break;
-    case 0x0E: a->nmien = val; break;
+    case 0x0E:
+        a->nmien = val;
+        /* A NMIEN write landing in the SAME cycle as the status set DOES take
+         * effect — the mirror of the NMIRES rule below.  antic_nmist requires a
+         * write on cycle 6 to activate the DLI that was latched on that cycle. */
+        if (a->nmist_set_now && (a->nmist & val & (ANTIC_NMI_DLI | ANTIC_NMI_VBI)))
+            a->nmi = 1;
+        break;
     case 0x0F:
         /* NMIRES clears the STATUS but must not retract an interrupt already
          * raised — "VBI was blocked by NMIRES" is a failure (antic_nmist).
