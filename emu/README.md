@@ -49,7 +49,7 @@ literally the same tests.
   scanline and its later ones.
 * **ANTIC DMA schedule: 50/50**, timing core, display-list execution and line
   buffer all in; **GTIA collisions** in.
-* **The real ACID800 binaries run**: `make acid` → 41 pass / 13 fail / 4 jammed
+* **The real ACID800 binaries run**: `make acid` → 42 pass / 12 fail / 4 jammed
   / 1 looping / 4 skipped, of 63. Recorded on the conformance dashboard beside
   the fabric sweeps — `python3 docs/a800/from-emu.py --note "..."`. Not directly comparable to the fabric's 33/63:
   that runs on hardware with a full POKEY and an OS ROM, whereas POKEY here is
@@ -874,8 +874,16 @@ needs are already present and are NOT the gap:
   NOT reset its phase, which is the behaviour `pmresize`'s own "alt" cases exist
   to check.
 
-**The diagnosis is now exact, and nothing is missing — it is one machine cycle
-of write ordering.** Correcting an earlier misreading first: `d3` is the GOT
+**The diagnosis was exact about the mechanism and wrong about the test.** The
+render order WAS the missing piece — a cycle the CPU gets is now rendered after
+its bus access, so a GTIA write lands before the two colour clocks that cycle
+emits — but the test that turns on it is `gtia_pmretrigger`, not this one.
+`pmresize` is unmoved. Keeping the reasoning below because it is still the right
+frame for the remaining failure; only the conclusion about which test benefits
+was wrong.
+
+**Everything on this path is verified working, and it is one colour clock too
+wide at the end.** Correcting an earlier misreading first: `d3` is the GOT
 value and `d2` the WANTED one, so this is `$E0` against `$80`, not `$00` against
 `$80`. `$E0` means player 0 collided with players 1, 2 AND 3; `$80` means it
 should have hit only player 1.
