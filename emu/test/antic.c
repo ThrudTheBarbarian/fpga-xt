@@ -77,9 +77,9 @@ int main(void)
         /* ANTIC_CYC_WSYNC is the first cycle the CPU gets BACK, not the last
          * one ANTIC keeps.  antic_wsync cannot settle this — its probes are
          * anchored to the release, so shifting it moves them with it — but
-         * gtia_pmretrigger can: with memory refresh correctly present on every
-         * scanline, giving the CPU 104 takes that test from failing its first
-         * case to failing its fourth, i.e. three more sub-tests pass. */
+         * two other tests annotate it directly and agree on 103: antic_nmist's
+         * seven-cycle "pha:pla ;*, 104..109" puts the * there, and
+         * antic_vscroldli — parked until now — passes only at that value. */
         expect("first CPU cycle after WSYNC", released_at, ANTIC_CYC_WSYNC);
     }
 

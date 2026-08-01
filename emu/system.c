@@ -173,7 +173,11 @@ static uint8_t io_read(atari *s, uint16_t a)
             return pokey_rand_read(&s->pk);
         }
         return 0xFF;
-    case 0xD400: return antic_read(&s->an, a);
+    case 0xD400:
+        if (s->col_probe && (a & 0x0F) == 0x0F)
+            fprintf(stderr, "  NMIST read sl %3d cyc %3d -> $%02X\n",
+                    s->an.scanline, s->an.cycle - 1, s->an.nmist);
+        return antic_read(&s->an, a);
     default:     return s->ram[a];
     }
 }

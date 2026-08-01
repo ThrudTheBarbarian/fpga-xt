@@ -18,7 +18,13 @@
 /* Scanline cycle landmarks (docs/Acid800/). */
 #define ANTIC_CYC_NMIST   6     /* NMIST bits set; NMIEN sampled  (antic_nmist) */
 #define ANTIC_CYC_NMIRES  7     /* NMIRES takes effect from here  (antic_nmist) */
-#define ANTIC_CYC_WSYNC 104     /* WSYNC releases /RDY            (antic_wsync) */
+#define ANTIC_CYC_WSYNC 103     /* first cycle the CPU gets BACK  (see below) */
+/* Where this boundary sits cannot be read off antic_wsync — its probes are
+ * anchored to the release, so moving it moves them too and the reading cancels.
+ * Two other tests annotate it directly and they agree on 103: antic_nmist's
+ * "pha:pla ;*, 104..109" is seven cycles, so the * is 103, and antic_vscroldli
+ * passes only at this value.  gtia_pmretrigger's "sta hitclr ;*, 105, 106, 107"
+ * reads as 104, but that annotation is one slot short for a four-cycle STA. */
 #define ANTIC_CYC_VCOUNT 111    /* VCOUNT advances                (antic_vcount) */
 
 #define ANTIC_LINES_NTSC 262
