@@ -57,14 +57,17 @@ static void render_cycle(atari *s, int cyc)
          * longer hi-res: leaving this set makes GTIA apply the "lit collides as
          * PF2" rule and throw the nibble's colour class away. */
         s->gt.hires = (s->an.dl_insn & 0x0F) == 0x0F && !gmode;
-        uint8_t before = (uint8_t)(s->gt.ppf[0] | s->gt.ppf[1] | s->gt.ppf[2] | s->gt.ppf[3]);
+        uint8_t before = (uint8_t)(s->gt.ppf[0] | s->gt.ppf[1] | s->gt.ppf[2] |
+                                   s->gt.ppf[3] | s->gt.ppl[0] | s->gt.ppl[1]);
         gtia_clock(&s->gt, cc, pf, hires);
         if (s->col_probe) {
-            uint8_t after = (uint8_t)(s->gt.ppf[0] | s->gt.ppf[1] | s->gt.ppf[2] | s->gt.ppf[3]);
+            uint8_t after = (uint8_t)(s->gt.ppf[0] | s->gt.ppf[1] | s->gt.ppf[2] |
+                                      s->gt.ppf[3] | s->gt.ppl[0] | s->gt.ppl[1]);
             if (after != before)
-                fprintf(stderr, "  COLLIDE sl %3d cc $%02X mode %2d chactl $%02X ppf %x%x%x%x\n",
-                        s->an.scanline, cc, s->an.dl_insn & 0x0F, s->an.chactl,
-                        s->gt.ppf[0], s->gt.ppf[1], s->gt.ppf[2], s->gt.ppf[3]);
+                fprintf(stderr, "  COLLIDE sl %3d cc $%02X mode %2d ppf %x%x%x%x ppl %x%x vbl %d\n",
+                        s->an.scanline, cc, s->an.dl_insn & 0x0F,
+                        s->gt.ppf[0], s->gt.ppf[1], s->gt.ppf[2], s->gt.ppf[3],
+                        s->gt.ppl[0], s->gt.ppl[1], s->gt.vblank);
         }
         if (s->pf_probe && s->an.scanline == s->pf_probe) {
             int lit = 0;
@@ -111,9 +114,9 @@ static uint8_t io_read(atari *s, uint16_t a)
 {
     switch (a & 0xFF00) {
     case 0xD000:
-        if (s->col_probe && (a & 0x1F) == 0x04)
-            fprintf(stderr, "  SAMPLE sl %3d chactl $%02X ppf %x%x%x%x mpf %x%x%x%x\n",
-                    s->an.scanline, s->an.chactl,
+        if (s->col_probe && ((a & 0x1F) == 0x04 || (a & 0x1F) == 0x0C))
+            fprintf(stderr, "  SAMPLE sl %3d cyc %3d ppf %x%x%x%x mpf %x%x%x%x\n",
+                    s->an.scanline, s->an.cycle,
                     s->gt.ppf[0], s->gt.ppf[1], s->gt.ppf[2], s->gt.ppf[3],
                     s->gt.mpf[0], s->gt.mpf[1], s->gt.mpf[2], s->gt.mpf[3]);
         if (s->col_probe && (a & 0x1F) == 0x1E)
@@ -133,7 +136,11 @@ static uint8_t io_read(atari *s, uint16_t a)
 static void io_write(atari *s, uint16_t a, uint8_t v)
 {
     switch (a & 0xFF00) {
-    case 0xD000: gtia_write(&s->gt, a, v); break;
+    case 0xD000:
+        if (s->col_probe && (a & 0x1F) == 0x1E)
+            fprintf(stderr, "  HITCLR  sl %3d cyc %3d\n", s->an.scanline, s->an.cycle);
+        gtia_write(&s->gt, a, v);
+        break;
     case 0xD200:
         if ((a & 0x0F) == 0x08) pokey_rand_audctl(&s->pk, v);
         if ((a & 0x0F) == 0x0F) {

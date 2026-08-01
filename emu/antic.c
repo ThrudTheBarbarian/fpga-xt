@@ -56,6 +56,7 @@ void antic_dl_exec(antic *a)
                 a->scanline, at, insn, a->dmactl);
     a->dl_insn   = insn;
     a->row_line  = 0;
+    a->dli_fired = 0;
 
     int mode = insn & 0x0F;
 
@@ -348,8 +349,25 @@ int antic_tick(antic *a)
          * time: NMIST lands on cycle 6, so re-reading there would let a VSCROL
          * write on cycle 4 count, and antic_vscroldli's second probe requires
          * exactly that write to be too late. */
-        a->dli_line = (uint8_t)((a->dl_insn & 0x80) &&
+        /* Once the row's last scanline has passed and the next fetch cannot
+         * happen, the row-end condition stays true and the latched instruction
+         * keeps its DLI bit — so the DLI would re-fire every scanline.  Whether
+         * it does depends on WHY the fetch is stalled, and the suite pins both
+         * halves:
+         *   DL DMA switched off mid-display — it DOES keep re-firing, which is
+         *     how antic_dlistwrap's second test still sees its DLI a frame
+         *     later, with DMACTL at zero throughout;
+         *   vertical blank — it does NOT.  antic_hiresbug's handler re-entered
+         *     every three scanlines, exactly its own length, and read a
+         *     collision from a display line it should never have reached.
+         * A first firing outside the display region is still allowed: that is
+         * antic_dlistwrap's FIRST test, whose DLI lands on scanline 1 of the
+         * next frame from a row that overran the bottom. */
+        int blanking = a->scanline < ANTIC_DISPLAY_TOP ||
+                       a->scanline >= ANTIC_DISPLAY_BOTTOM;
+        a->dli_line = (uint8_t)((a->dl_insn & 0x80) && !(blanking && a->dli_fired) &&
                                 (((a->row_line - 1) & 0x0F) == last));
+        if (a->dli_line) a->dli_fired = 1;
     }
 
     /* ---- status and interrupt timing, all at fixed cycles ------------------

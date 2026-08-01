@@ -79,6 +79,7 @@ typedef struct {
     uint16_t pf_addr;     /* playfield memory scan address (LMS target) */
     uint8_t  dl_insn;
     uint8_t  vscrol_prev;  /* did the PREVIOUS instruction have the VSCROL bit? */
+    uint8_t  dli_fired;    /* this instruction's DLI has already been raised */
     uint8_t  row_ends;     /* latched at ANTIC_CYC_ROWEND: does the row finish
                             * with THIS scanline?  Sampling VSCROL here rather
                             * than at line_start is what separates a write on
