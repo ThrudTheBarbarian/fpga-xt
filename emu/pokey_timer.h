@@ -57,6 +57,8 @@ typedef struct {
                             * register, not of SEROUT.  Loading SEROUT while the
                             * clock is stopped leaves this asserted, because the
                             * byte never reaches the shift register at all. */
+    uint8_t  serout_val;   /* the byte sitting in SEROUT */
+    uint8_t  ser_byte;     /* the byte in the shift register, for two-tone mode */
     int      ser_bits;     /* bits left to shift out: start + 8 data + stop */
 } pokey_timer;
 

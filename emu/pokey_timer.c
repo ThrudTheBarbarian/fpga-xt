@@ -85,6 +85,7 @@ static void ser_take(pokey_timer *p)
 {
     if (!p->serout_full || p->ser_bits) return;
     p->serout_full = 0;
+    p->ser_byte = p->serout_val;
     p->seroc = 0;
     /* TWENTY timer underflows, not ten: the timer produces the serial clock's
      * edges, so a bit time is two underflows.  pokey_serclock pins it — with
@@ -104,6 +105,28 @@ static void ser_tick(pokey_timer *p)
     ser_take(p);
 }
 
+/* The serial output line's current level: 0 is a SPACE, 1 a MARK.  Twenty ticks
+ * carry ten bit times — start (always 0), eight data bits LSB first, then stop
+ * (always 1) — and an idle line sits at mark. */
+static int ser_out_bit(const pokey_timer *p)
+{
+    if (!p->ser_bits) return 1;                /* idle: mark */
+    int i = (20 - p->ser_bits) / 2;
+    if (i == 0) return 0;                      /* start bit */
+    if (i >= 9) return 1;                      /* stop bit */
+    return (p->ser_byte >> (i - 1)) & 1;
+}
+
+/* Two-tone mode (SKCTL bit 3) keys the output between two tones, and holds
+ * timer 2 while the line is a MARK.  pokey_twotone transmits $fc, whose start
+ * bit and two low data bits give three spaces followed by three marks, and
+ * requires timer 2 to produce 28..49 interrupts across the spaces but fewer
+ * than 19 across the marks.  Free-running gives 48 in both. */
+static int timer2_held(const pokey_timer *p)
+{
+    return (p->skctl & 0x08) && ser_out_bit(p);
+}
+
 /* Asynchronous receive mode holds timer 4: POKEY is waiting for a start bit, so
  * the divider does not run and its interrupt cannot fire.  pokey_asyncrecv
  * enables it with SKCTL $13 and requires timer 4's IRQ to stay silent, saying so
@@ -116,6 +139,7 @@ static int timer4_held(const pokey_timer *p)
 static void underflow(pokey_timer *p, int ch)
 {
     if (ch == 3 && timer4_held(p)) return;
+    if (ch == 1 && timer2_held(p)) return;
 
     if (ch == ser_clock_ch(p)) ser_tick(p);
     /* a linked pair reloads its own low half, so only the unlinked case
@@ -236,11 +260,7 @@ void pokey_timer_write(pokey_timer *p, uint16_t addr, uint8_t val)
          * register on a serial clock tick, which is why pokey_serclock can load
          * it with the clock stopped and still see SEROC asserted. */
         p->serout_full = 1;
-        /* With the serial clock RUNNING the shift register takes the byte at
-         * once — pokey_sertiming uses a 228-cycle clock and still requires SEROC
-         * to have dropped by its very next instruction.  With the clock stopped
-         * nothing happens, which is pokey_serclock's "the shift register should
-         * never load in this mode". */
+        p->serout_val  = val;
         break;
     case 0x0E:
         /* IRQEN both masks and CLEARS: a bit written as zero drops any request

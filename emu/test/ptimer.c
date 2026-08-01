@@ -163,6 +163,27 @@ int main(void)
     expect("and twenty clock periods later it completes",
            pokey_timer_irqst(&p) & POKEY_IRQ_SEROC, 0);
 
+    /* ---- two-tone mode (SKCTL bit 3) holds timer 2 while the serial output
+     * line is a MARK.  Twenty ticks carry ten bit times: start (0), eight data
+     * bits LSB first, stop (1); an idle line sits at mark. ---------------- */
+    setup(&p, 0x00, POKEY_IRQ_TIMER2);
+    pokey_timer_skctl(&p, 0x2B);                 /* two-tone + timer-clocked */
+    pokey_timer_write(&p, 0xD202, 0x00);         /* AUDF2 = 0 */
+    pokey_timer_write(&p, 0xD206, 0x00);         /* AUDF4 = 0, the serial clock */
+    expect("an idle line is a mark, so timer 2 is held",
+           cycles_to_irq(&p, POKEY_IRQ_TIMER2, 4000), -1);
+
+    /* transmit $00: start bit plus eight zero data bits is a long SPACE, and
+     * timer 2 runs again */
+    pokey_timer_reset(&p);
+    pokey_timer_skctl(&p, 0x2B);
+    pokey_timer_write(&p, 0xD202, 0x00);
+    pokey_timer_write(&p, 0xD206, 0x00);
+    pokey_timer_write(&p, 0xD20E, POKEY_IRQ_TIMER2);
+    pokey_timer_write(&p, 0xD20D, 0x00);
+    expect("a space lets timer 2 run",
+           cycles_to_irq(&p, POKEY_IRQ_TIMER2, 4000) > 0, 1);
+
     printf("ptimer: %s\n", fails ? "FAIL" : "all POKEY timer tests pass");
     return fails ? 1 : 0;
 }
