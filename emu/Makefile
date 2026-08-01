@@ -23,6 +23,9 @@ WARN  := -Wall -Wextra -Wshadow -Wconversion -Wno-sign-conversion
 CFLAGS := -std=c11 $(WARN) -O2 -g
 
 CORE := xt6502.c
+# every header, listed against every target: a stale binary silently reports the
+# PREVIOUS run's score, which reads exactly like a change that did nothing
+HDRS := xt6502.h antic.h antic_dma.h gtia.h pokey_rand.h system.h acid_dmatable.h
 
 .PHONY: all test harte klaus irq pokey dma antic gtia acid clean
 all: $(BUILD)/harte $(BUILD)/klaus $(BUILD)/irq $(BUILD)/pokey $(BUILD)/dma $(BUILD)/antic $(BUILD)/gtia
@@ -45,14 +48,14 @@ $(BUILD)/pokey: test/pokey.c pokey_rand.c pokey_rand.h | $(BUILD)
 $(BUILD)/dma: test/dma.c antic_dma.c antic_dma.h acid_dmatable.h | $(BUILD)
 	$(CC) $(CFLAGS) test/dma.c antic_dma.c -o $@
 
-$(BUILD)/antic: test/antic.c antic.c antic_dma.c antic.h antic_dma.h | $(BUILD)
+$(BUILD)/antic: test/antic.c antic.c antic_dma.c $(HDRS) | $(BUILD)
 	$(CC) $(CFLAGS) test/antic.c antic.c antic_dma.c -o $@
 
 $(BUILD)/gtia: test/gtia.c gtia.c gtia.h | $(BUILD)
 	$(CC) $(CFLAGS) test/gtia.c gtia.c -o $@
 
 SYS := system.c xt6502.c antic.c antic_dma.c gtia.c pokey_rand.c
-$(BUILD)/acid: test/acid.c $(SYS) system.h | $(BUILD)
+$(BUILD)/acid: test/acid.c $(SYS) $(HDRS) | $(BUILD)
 	$(CC) $(CFLAGS) test/acid.c $(SYS) -o $@
 
 harte: $(BUILD)/harte

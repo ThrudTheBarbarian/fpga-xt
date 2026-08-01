@@ -188,7 +188,7 @@ static int run_one(const char *dir, const char *name, unsigned long long *cyc)
             s.dbg_trace = 20;
         }
         if (getenv("ACID_NMIPROBE") && s.cpu.pc == 0xFF00) {
-            static int n; if (++n <= 6)
+            static int n; if (++n <= 6 || getenv("ACID_NMICOUNT"))
                 fprintf(stderr, "  [nmi #%d] cycle %llu nmist $%02X nmien $%02X dl_addr $%04X\n",
                         n, (unsigned long long)s.cycles, s.an.nmist, s.an.nmien, s.an.dl_addr);
         }

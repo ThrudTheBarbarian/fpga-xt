@@ -139,11 +139,17 @@ static void line_start(antic *a)
      * exactly that case: 248 blank lines then a DLI, which lands around
      * scanline 256 and must still fire.  Bounding this by the display window is
      * the intuitive reading and silently drops that DLI. */
-    if (!(a->dmactl & 0x20) || a->dl_done)
+    if (a->dl_done)
         return;
 
-    if (a->row_line >= a->row_height)
+    /* Only FETCHING a new instruction needs display-list DMA.  A row already in
+     * progress keeps running — and keeps its DLI — when DMACTL is cleared out
+     * from under it. */
+    if (a->row_line >= a->row_height) {
+        if (!(a->dmactl & 0x20))
+            return;
         antic_dl_exec(a);
+    }
 
     /* The DLI belongs to the LAST scanline of the row — including a BLANK-LINE
      * row, which is the case antic_dlitiming is built out of and the fabric
@@ -151,7 +157,7 @@ static void line_start(antic *a)
     a->dli_line = (a->dl_insn & 0x80) && (a->row_line == a->row_height - 1);
 
     int mode = a->dl_insn & 0x0F;
-    if (mode >= 2) {
+    if (mode >= 2 && (a->dmactl & 0x20)) {
         antic_dma_line((uint8_t)mode, width_of(a->dmactl),
                        a->row_line == 0, a->hscrol, a->blocked);
 
