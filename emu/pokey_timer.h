@@ -49,6 +49,9 @@ typedef struct {
                             * not touch it; only the SKCTL release does, because
                             * init holds the chain. */
     int      cnt[4];       /* the four dividers */
+    int      locnt[2];     /* a LINKED pair's LOW half, which keeps its own
+                            * period and raises its own interrupt — see
+                            * LINK_TWO_COUNTERS in the .c */
     uint8_t  irq;          /* the /IRQ line to the CPU */
     uint8_t  init;         /* SKCTL[1:0] == 0: dividers held */
     uint8_t  skctl;        /* $D20F: bits 6-4 select the serial clocking mode */

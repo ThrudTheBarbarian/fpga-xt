@@ -12,6 +12,19 @@
 #ifndef LINK_FAST
 #define LINK_FAST 7
 #endif
+/* A LINKED pair is TWO counters, not one.  pokey_timertiming checks the halves
+ * separately and its boundaries are decisive: the LOW half's interrupt fires at
+ * exactly the same time linked as unlinked (both 19/20 with AUDF1 = 16), and the
+ * HIGH half's three cycles later — and its 16-bit-hi row requires bit 1 still SET
+ * at 22 while bit 0 has ALREADY cleared, so both interrupts are live at once.
+ *
+ * The pair counter here already produces the HIGH half's time correctly:
+ * LINK_FAST 7 is the unlinked fast period's 4 plus that same 3 of propagation.
+ * What was missing is the low half's own interrupt, so this adds a counter for
+ * it rather than restructuring the divider. */
+#ifndef LINK_TWO_COUNTERS
+#define LINK_TWO_COUNTERS 0
+#endif
 #ifndef STIMER_EXTRA
 #define STIMER_EXTRA 4
 #endif
@@ -163,7 +176,10 @@ static void underflow(pokey_timer *p, int ch)
     /* a linked pair reloads its own low half, so only the unlinked case
      * reloads here */
 
-    /* a linked pair's counter IS the low channel's, so reload that one */
+    /* a linked pair's counter IS the low channel's, so reload that one.  The
+     * pair's reload does NOT restart its low half — tried, and it puts
+     * pokey_timertiming's 16-bit lo back to failing loop #1; the low half keeps
+     * its own phase. */
     if (ch == 1 && (p->audctl & 0x10))      reload(p, 0);
     else if (ch == 3 && (p->audctl & 0x08)) reload(p, 2);
     else                                    reload(p, ch);
@@ -237,6 +253,10 @@ void pokey_timer_tick(pokey_timer *p)
     int held34  = timer34_held(p);
     if (held34) { reload(p, 2); reload(p, 3); }
 
+    if (LINK_TWO_COUNTERS && linked1 && fast1 && --p->locnt[0] <= 0) {
+        p->locnt[0] = p->audf[0] + 4;
+        raise(p, POKEY_IRQ_TIMER1);
+    }
     if (fast1 && --p->cnt[0] <= 0) underflow(p, linked1 ? 1 : 0);
     if (!held34 && fast3 && --p->cnt[2] <= 0) underflow(p, linked3 ? 3 : 2);
 
@@ -252,6 +272,10 @@ void pokey_timer_tick(pokey_timer *p)
         % (unsigned long)base_period(p) != 0)
         return;
 
+    if (LINK_TWO_COUNTERS && linked1 && !fast1 && --p->locnt[0] <= 0) {
+        p->locnt[0] = p->audf[0] + 1;
+        raise(p, POKEY_IRQ_TIMER1);
+    }
     if (!fast1) {
         if (--p->cnt[0] <= 0) underflow(p, linked1 ? 1 : 0);
         if (!linked1 && --p->cnt[1] <= 0) underflow(p, 1);
@@ -286,6 +310,8 @@ void pokey_timer_write(pokey_timer *p, uint16_t addr, uint8_t val)
          * the free-running divider happened to be from its next tick, which the
          * test makes deterministic by syncing with two WSYNCs first. */
         for (int i = 0; i < 4; i++) reload(p, i);
+        p->locnt[0] = p->audf[0] + ((p->audctl & 0x40) ? 4 : 1) + STIMER_EXTRA;
+        p->locnt[1] = p->audf[2] + ((p->audctl & 0x20) ? 4 : 1) + STIMER_EXTRA;
         /* EXPERIMENT: the first period after STIMER runs long.  pokey_timertiming
          * tabulates it: with AUDF1 = 0 on the 1.79 MHz clock the first interrupt
          * lands 7-8 cycles after the STIMER write and the second 11-12, so the

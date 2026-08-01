@@ -1007,7 +1007,30 @@ is why no period constant can help. The fix is structural: the low counter
 underflows and reloads on its own period, raising its own interrupt, and the high
 counter decrements on each of those underflows.
 
-That is not a small change — `pokey_serclock`, `pokey_twotone`, `pokey_timerirq`
-and the `ptimer` gate all rest on the single-divider model, and the "event belongs
-to the HIGH channel" rule came from `pokey_serclock` — so it wants building behind
-a compile flag and A/B-ing, not editing in place.
+It was built behind `LINK_TWO_COUNTERS` and A/B'd. **It is off by default**, and
+the reason is worth recording, because the direction is right and the phases are
+not.
+
+With the flag on, nothing regresses — `pokey_serclock`, `pokey_twotone`,
+`pokey_timerirq`, `pokey_timergranularity` and `pokey_sertiming` all still pass,
+the score stays 42 — and `pokey_timertiming` advances two assertion groups, from
+"16-bit lo too late (loop #1)" to "16-bit lo too **early** (loop #2)". So the low
+half's own interrupt is real and loop #1's boundary is now met.
+
+What killed it is a gate written to state the rule directly: with `AUDF1 = 16`,
+`AUDF2 = 0` and the pair fast-clocked, the LOW half must interrupt **before** the
+high half. It does not. The pair counter is `AUDF16 + 7 = 23` and the low counter
+is `AUDF1 + 4 + 4 = 24`, because the low half takes the STIMER first-period extra
+while the pair does not — so the high fires first, backwards from what the test's
+own boundaries say (19/20 against 22/23). The ACID assertions happen not to catch
+it at those particular offsets; the gate does.
+
+Also tried and reverted within the flag: having the PAIR's reload restart its low
+half. That is the intuitive reading of a 16-bit borrow chain and it puts loop #1
+back to failing, so the low half keeps its own phase.
+
+So the next attempt needs the two periods and the STIMER extra made consistent
+with "low first, high three cycles later" — probably meaning the pair's period is
+not `AUDF16 + 7` at all once the low half is modelled separately, since that +7
+was fitted to a single divider. The gate that catches it is worth re-adding as
+the first thing next time.
