@@ -91,7 +91,6 @@ static void ser_take(pokey_timer *p)
      * timer 3+4 at 456 cycles it expects a VCOUNT delta of 40, i.e. 80
      * scanlines, i.e. 9120 cycles, i.e. 20 periods for one byte. */
     p->ser_bits = 20;
-    raise(p, POKEY_IRQ_SEROR);             /* SEROUT is free again */
 }
 
 /* One serial bit time. */
@@ -204,6 +203,12 @@ void pokey_timer_write(pokey_timer *p, uint16_t addr, uint8_t val)
          * register on a serial clock tick, which is why pokey_serclock can load
          * it with the clock stopped and still see SEROC asserted. */
         p->serout_full = 1;
+        /* With the serial clock RUNNING the shift register takes the byte at
+         * once — pokey_sertiming uses a 228-cycle clock and still requires SEROC
+         * to have dropped by its very next instruction.  With the clock stopped
+         * nothing happens, which is pokey_serclock's "the shift register should
+         * never load in this mode". */
+        if (ser_clock_ch(p) >= 0) ser_take(p);
         break;
     case 0x0E:
         /* IRQEN both masks and CLEARS: a bit written as zero drops any request
@@ -221,9 +226,17 @@ void pokey_timer_write(pokey_timer *p, uint16_t addr, uint8_t val)
 
 uint8_t pokey_timer_irqst(const pokey_timer *p)
 {
-    /* SEROC is a level and ignores the mask: while nothing is being transmitted
-     * the output has "long completed", so its bit reads low whatever IRQEN says;
-     * once SEROUT is loaded it reads high until the last bit is out. */
-    if (p->seroc) return (uint8_t)(p->irqst & ~POKEY_IRQ_SEROC);
-    return (uint8_t)(p->irqst | POKEY_IRQ_SEROC);
+    /* BOTH serial output bits are LEVELS, not latched events, and both ignore
+     * the mask in IRQST:
+     *   SEROC (bit 3) — the SHIFT register is idle;
+     *   SEROR (bit 4) — SEROUT is empty and can take another byte.
+     * That is what reconciles the two tests.  pokey_serclock enables SEROR while
+     * SEROUT is already empty and expects it pending at once; it also loads
+     * SEROUT with the clock stopped and expects SEROR to stay HIGH, because the
+     * byte is still sitting there.  pokey_sertiming loads SEROUT with the clock
+     * running and expects SEROC HIGH immediately, the register having taken it. */
+    uint8_t v = p->irqst;
+    v = (uint8_t)(p->seroc       ? (v & ~POKEY_IRQ_SEROC) : (v | POKEY_IRQ_SEROC));
+    v = (uint8_t)(p->serout_full ? (v |  POKEY_IRQ_SEROR) : (v & ~POKEY_IRQ_SEROR));
+    return v;
 }

@@ -84,9 +84,9 @@ int main(void)
     pokey_timer_write(&p, 0xD206, 0xFF);         /* AUDF4 long */
     pokey_timer_write(&p, 0xD209, 0);
     for (int i = 0; i < 2000; i++) pokey_timer_tick(&p);
-    /* SEROC's bit is always low, so mask it out — this is about the timers. */
+    /* Both serial bits are levels, so mask them out — this is about timers. */
     expect("channel 3 raises no interrupt",
-           pokey_timer_irqst(&p) | POKEY_IRQ_SEROC, 0xFF);
+           pokey_timer_irqst(&p) | POKEY_IRQ_SEROC | POKEY_IRQ_SEROR, 0xFF);
 
     /* ---- IRQST reads ACTIVE LOW, and IRQEN=0 CLEARS a standing request --- */
     setup(&p, 0x00, POKEY_IRQ_TIMER1);
@@ -128,10 +128,12 @@ int main(void)
      * should never load in this mode". */
     pokey_timer_reset(&p);
     pokey_timer_skctl(&p, 0x03);                 /* external clock */
+    expect("SEROR rests asserted while SEROUT is empty",
+           pokey_timer_irqst(&p) & POKEY_IRQ_SEROR, 0);
     pokey_timer_write(&p, 0xD20E, POKEY_IRQ_SEROR);
     pokey_timer_write(&p, 0xD20D, 0x55);
     for (int i = 0; i < 20000; i++) pokey_timer_tick(&p);
-    expect("a stopped serial clock never loads the shift register",
+    expect("a stopped serial clock never empties SEROUT",
            pokey_timer_irqst(&p) & POKEY_IRQ_SEROR, POKEY_IRQ_SEROR);
     expect("and SEROC stays asserted",
            pokey_timer_irqst(&p) & POKEY_IRQ_SEROC, 0);
@@ -144,8 +146,7 @@ int main(void)
     pokey_timer_write(&p, 0xD202, 0x00);         /* AUDF2 = 0 */
     pokey_timer_write(&p, 0xD20E, POKEY_IRQ_SEROR);
     pokey_timer_write(&p, 0xD20D, 0x55);
-    for (int i = 0; i < 28 * 2; i++) pokey_timer_tick(&p);
-    expect("a running clock loads the shift register",
+    expect("a running clock takes the byte at once, emptying SEROUT",
            pokey_timer_irqst(&p) & POKEY_IRQ_SEROR, 0);
     expect("which deasserts SEROC",
            pokey_timer_irqst(&p) & POKEY_IRQ_SEROC, POKEY_IRQ_SEROC);
