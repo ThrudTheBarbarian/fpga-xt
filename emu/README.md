@@ -130,3 +130,35 @@ without first explaining how `cpu_timing` can still pass.
 
 The stack-page derails therefore remain unexplained and are still worth chasing —
 just not from this direction.
+
+## The next structural gap: nothing renders pixels
+
+`gtia.c` is complete enough to be unit-gated — collisions come off the emitted
+pixel stream one colour clock at a time, and `gtia_clock(g, hpos, pf,
+hires_lit)` is the entry point. **But `system.c` never calls it.** GTIA is wired
+for register reads and writes only, so in a full-system run no object is ever
+shifted out and no collision can ever register.
+
+That single gap is what several failures actually reduce to:
+
+* `antic_pmdma` verifies player DMA by reading `P0PF` — a *collision* register.
+  The P/M DMA that feeds it now works, and the test still reads `$00`, because
+  nothing collides.
+* `antic_virtdma`, `antic_linebuffering` and `antic_charcontrol` all read back
+  what was displayed rather than what was fetched.
+* The whole of the GTIA object-rendering work (VDELAY's two-line extent, mode 10
+  shifted one colour clock, player/player overlap colour) is unobservable from
+  the suite until the stream exists.
+
+Closing it needs one thing ANTIC does not yet have: a **pixel decode**.
+`line_start` fetches playfield bytes into `linebuf`, but nothing turns those
+bytes into a playfield colour class per colour clock. That means, per mode:
+the character-set fetch through `CHBASE` for the character modes, the
+bit-unpacking for the bitmap modes, and placement against the playfield window
+(narrow/normal/wide) and `HSCROL`. `antic_dma.c` already derives that window —
+`pf_nominal(w, hscrol)` — so the geometry is settled; it is the decode itself
+that is missing.
+
+Suggested order: playfield decode for the bitmap modes first (no CHBASE
+dependency), wire `gtia_clock` into the scanline loop, confirm a collision
+registers at all, then add the character modes.
