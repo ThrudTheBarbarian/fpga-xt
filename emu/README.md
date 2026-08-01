@@ -284,3 +284,29 @@ way a booted OS would. It is not a defect in the ANTIC model, and it should not
 be counted against the pixel decode. Note the same trap applies to any other
 character-mode test that does not set CHBASE itself — `antic_charcontrol` passes
 precisely because it supplies its own character set at `$2c00`.
+
+## New evidence on the parked WSYNC alignment: it is TWO cycles
+
+`gtia_pmretrigger` gives an independent measurement of the release offset, from
+a test that is not about WSYNC at all.
+
+Its fourth case does `sta wsync` then `sta hitclr`, annotated `*, 105, 106, 107`
+— the CPU resumes on cycle 104 with the opcode fetch, and the write commits on
+**107**. Under this model `ACID_COLPROBE` reports that write landing on cycle
+**109**. So the CPU is being released two cycles late, consistently, in a test
+whose own arithmetic is independent of `antic_wsync`'s.
+
+That is worth more than another sweep against `antic_wsync` itself, whose probes
+are anchored to the release and therefore cancel. Two further consequences are
+already visible:
+
+* the same case's `sta hposp0` lands on cycle 83 against an annotated 90, so the
+  discrepancy is not a constant offset — something in between is also short, and
+  `delay82` is the obvious suspect to instrument next;
+* `antic_vscroldli`'s two probes sit one cycle apart either side of this same
+  boundary, which is why moving the VSCROL sample satisfies whichever one the
+  other then breaks.
+
+Next step when this is unparked: instrument the CPU's resume cycle directly
+after a `sta wsync` — the probe infrastructure already prints scanline and cycle
+for every GTIA write — rather than inferring it from a test's expected values.
