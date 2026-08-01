@@ -1614,6 +1614,15 @@ Both pairs are the same probe — `(p0pf << 2) | p1pf` plus a per-block constant
 rows. One machine cycle of extra delay moves the DMACTL edge by TWO units and
 the HSCROL edge by ONE.
 
+The probe says what a unit IS. Player 0 sits at HPOS `$80` and player 1 at
+`$84`, both `SIZEP = 0` with `GRAFP = $F0`, so each is four lit colour clocks
+and together they tile colour clocks 128..135 — an eight-clock ruler laid across
+the playfield's left edge, read at COLOUR-CLOCK resolution. So a unit is one
+colour clock, and the DMACTL row's "2" is simply a machine cycle being two of
+them. The HSCROL row's "1" is a HALF machine cycle, which is HSCROL's own
+granularity: it counts in colour clocks, and the window start is
+`nominal - hscrol/2` machine cycles.
+
 Two units per machine cycle is the natural rate: a machine cycle is two colour
 clocks. **HSCROL moves at half that** — which is the same half-cycle-per-clock
 relation `make dma` already reports for the window derivation, showing up again
