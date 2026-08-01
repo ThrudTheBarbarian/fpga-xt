@@ -127,6 +127,13 @@ static int run_one(const char *dir, const char *name, unsigned long long *cyc)
         0x68,                    /* $FF0A  PLA            vbi:              */
         0x6C, 0x22, 0x02,        /* $FF0B  JMP (VVBLKI)                     */
     };
+    /* The OS also dispatches IRQ/BRK through VIMIRQ.  Without it a BRK returns
+     * immediately from a bare RTI, the test's handler never runs, and the
+     * return address it was relying on is wrong — which showed up as the CPU
+     * executing the STACK PAGE ($01FE, $01F9) and jamming there. */
+    static const uint8_t irq_stub[] = {
+        0x6C, 0x16, 0x02,        /* $FF20  JMP (VIMIRQ) */
+    };
     /* default handlers: tick RTCLOK (what _waitVBL polls), then RTI */
     static const uint8_t dflt[] = {
         0xE6, 0x14,              /* $FF30  INC RTCLOK+2                     */
@@ -137,9 +144,11 @@ static int run_one(const char *dir, const char *name, unsigned long long *cyc)
         0x40,                    /* $FF3A  RTI            done:             */
     };
     memcpy(&s.ram[0xFF00], nmi_stub, sizeof nmi_stub);
+    memcpy(&s.ram[0xFF20], irq_stub, sizeof irq_stub);
     memcpy(&s.ram[0xFF30], dflt,     sizeof dflt);
-    s.ram[0xFFFA] = 0x00; s.ram[0xFFFB] = 0xFF;      /* NMI  -> $FF00 */
-    s.ram[0xFFFE] = 0x3A; s.ram[0xFFFF] = 0xFF;      /* IRQ  -> bare RTI */
+    s.ram[0xFFFA] = 0x00; s.ram[0xFFFB] = 0xFF;      /* NMI -> dispatcher */
+    s.ram[0xFFFE] = 0x20; s.ram[0xFFFF] = 0xFF;      /* IRQ/BRK -> dispatcher */
+    if (!s.ram[0x0217]) { s.ram[0x0216] = 0x3A; s.ram[0x0217] = 0xFF; }  /* VIMIRQ */
     if (!s.ram[0x0201]) { s.ram[0x0200] = 0x3A; s.ram[0x0201] = 0xFF; }  /* VDSLST */
     if (!s.ram[0x0223]) { s.ram[0x0222] = 0x30; s.ram[0x0223] = 0xFF; }  /* VVBLKI */
 
@@ -175,7 +184,15 @@ static int run_one(const char *dir, const char *name, unsigned long long *cyc)
                        s.ram[0xCB], s.ram[0xCC], s.ram[0xCD]);
             return 1;
         }
-        if (s.cpu.jammed)       { *cyc = s.cycles; return R_JAM; }
+        if (s.cpu.jammed) {
+            *cyc = s.cycles;
+            /* where it died, and the opcode that killed it — a JAM is always a
+             * derail, so the address is the first question. */
+            if (trace_on)
+                printf("      jammed at $%04X on opcode $%02X\n",
+                       s.cpu.pc, s.ram[s.cpu.pc]);
+            return R_JAM;
+        }
         if (trace_on) pc_hits[s.cpu.pc]++;
         atari_step(&s);
     }
