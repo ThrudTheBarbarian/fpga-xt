@@ -1796,8 +1796,42 @@ the test that does check it.
 We produce `$00` for all four patterns, which is why pattern #1 passes and #2
 fails immediately: the buffer holds memory content, never the bus byte.
 
-Two things are needed. The virtual slot has to EXIST in the DMA schedule — the
-test runs wide playfield (`DMACTL $23`) with `HSCROL 2` on scrolled mode 7 rows,
-which is what creates a slot with no data behind it. And `antic.c` needs the bus
-byte, which today only `system.c` has (`last_bus`, added for the phantom P/M
-latch); the fetch callback is the natural place to hand it over.
+### Its comment is also the only map we have for WIDE playfield
+
+The test documents the DMA pattern it expects, and decoding that comment gives
+fetches at cycles 14, 18 ... 102, refreshes at 25, 29 ... 57, and one `V` at
+**106**. Ours, tabulated for the same geometry (mode 7, wide, HSCROL 2,
+scrolled):
+
+```
+  test  ...C...C...C..RC..RC..  ...  ...C...V.......   23 fetches + 1 virtual
+  ours  .R....RR.C..RC..RC..RC  ...  ..RC..R.........  24 fetches at 9,13..101
+```
+
+Two differences, and the first one matters beyond this test: **`ANTIC_WIDE` is
+not covered by any validated table.** `antic_dmapattern`'s testdata — the source
+of `acid_dmatable.h` and of `make dma`'s 50/50 — contains only `narrow` and
+`normal` rows. The wide window's phase has never been checked against anything,
+and `antic_virtdma`'s comment is the one independent measurement of it.
+
+Against that measurement our wide fetches sit one cycle early: dropping our
+prefetch at 9, ours run 13, 17 ... 101 where the test has 14, 18 ... 102.
+`PF_WIDE_ADJ` exists to shift them and with it at 1 the last real fetch lands on
+102, exactly as the test has it.
+
+It is NOT sufficient on its own and is left at 0. Shifting the phase also moves
+the fetches through the refresh region, and there ours come out at 27, 31, 35
+where the test has 26, 30, 34 — so our refresh-versus-fetch arbitration for wide
+differs as well, and one constant will not fix both.
+
+The second difference is the point of the test: the test's 24th slot, at 106, is
+the VIRTUAL one, and we do not schedule it at all. That slot is the "scrolled
+row fetches one width step more" extra — and the test's execution trace shows
+the CPU keeping cycles 104, 105 AND 106, so **the virtual slot does not steal a
+cycle**. It only clocks the line buffer, which latches the bus.
+
+So the build needs three things, not two: the wide phase (`PF_WIDE_ADJ`) AND the
+wide refresh arbitration together, the extra scrolled slot scheduled as
+non-blocking, and `antic.c` given the bus byte that today only `system.c` has
+(`last_bus`, from the phantom P/M latch) — the fetch callback being the natural
+place to hand it over.

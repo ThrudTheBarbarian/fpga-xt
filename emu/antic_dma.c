@@ -73,10 +73,21 @@ static int is_refresh(int c)
  * that at all. */
 #define PF_NOMINAL_NORMAL 21
 #define PF_WIDTH_STEP      8
+/* See antic_pf_nominal: the wide window's phase, which no validated table
+ * covers.  0 keeps the shape that was there before antic_virtdma was read. */
+#ifndef PF_WIDE_ADJ
+#define PF_WIDE_ADJ 0
+#endif
 
 int antic_pf_nominal(antic_width w, int hscrol)
 {
+    /* WIDE is not in ACID800's DMA table — antic_dmapattern only tabulates
+     * narrow and normal, so `make dma`'s 50/50 says nothing about it.  The one
+     * independent map we have for it is antic_virtdma's own comment (mode 7,
+     * wide, HSCROL 2, scrolled), which puts the fetches at 14, 18 ... 102 where
+     * we put them at 13, 17 ... 101 — a uniform one cycle. */
     return PF_NOMINAL_NORMAL
+         + (w == ANTIC_WIDE ? PF_WIDE_ADJ : 0)
          + ((int)ANTIC_NORMAL - (int)w) * PF_WIDTH_STEP
          - (hscrol >> 1);
 }
