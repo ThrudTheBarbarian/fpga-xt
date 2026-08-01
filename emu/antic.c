@@ -41,6 +41,10 @@
 #ifndef WSYNC_RMW_EXTRA
 #define WSYNC_RMW_EXTRA 1
 #endif
+/* Whether a READ of WSYNC arms the halt — see antic_read. */
+#ifndef WSYNC_READ_ARMS
+#define WSYNC_READ_ARMS 0
+#endif
 /* ...and whether that only applies when the two writes are ADJACENT.  An RMW's
  * writes are on consecutive CPU cycles, but a DMA cycle can fall between them:
  * antic_wsync's INC lands its pair at scanline cycles 1 and 2, gtia_pmresize's
@@ -880,6 +884,15 @@ uint8_t antic_read(antic *a, uint16_t addr)
 {
     switch (addr & 0x0F) {          /* ANTIC decodes 4 bits; $D400-$D40F
                                      * mirrors across the page (antic_addrmirror) */
+    case 0x0A:
+        /* WSYNC is write-only, but a READ-MODIFY-WRITE reads it before it
+         * writes it — `inc wsync` is read, write-old, write-new — and the two
+         * tests that disagree about the release both use INC, so the read's
+         * timing is the one thing that differs between them (cycle 0 for
+         * antic_wsync, ~31 for gtia_pmresize).  WSYNC_READ_ARMS tests whether
+         * the read arms the halt in its own right. */
+        if (WSYNC_READ_ARMS && !a->wsync_halt) a->wsync_halt = 1;
+        return 0xFF;
     case 0x0B: return (uint8_t)a->vcount;         /* VCOUNT */
     case 0x0F: return a->nmist;                   /* NMIST  */
     default:   return 0xFF;                       /* antic_default: unused

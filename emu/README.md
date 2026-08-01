@@ -2026,3 +2026,49 @@ mechanism.
 `GTIA_CC_ORIGIN` 4..8 with the correct WSYNC model leaves its 4x-to-1x block
 failing at every value (rule v). Whatever `WSYNC_RMW_EXTRA=0` is buying that
 test, it is not a colour-clock offset.
+
+## The RMW's read of WSYNC: disproved, and what it turned up
+
+`inc wsync` is read, write-old, write-new, and both tests that disagree about
+the release use it — so the READ's timing is the one thing that differs between
+them (cycle 0 for `antic_wsync`, ~31 for `gtia_pmresize`). `WSYNC_READ_ARMS`
+tests whether the read arms the halt in its own right.
+
+It does not. Turning it on breaks `antic_wsync` — but on an assertion that had
+never come up before, "Late INC WSYNC", and that one is worth having:
+
+```
+206A 2C 00 01  bit $0100   ;95-98
+206D EE 0A D4  inc wsync   ;99-104     <- read at 102, writes at 103 and 104
+```
+
+Its `inc wsync` STRADDLES the release point: the first write lands at 103 and
+the second AT 104. So `antic_wsync` pins three INC cases, not one — writes at
+1/2, and writes at 103/104 — and our model satisfies both today. Any replacement
+has to as well, which kills most of the simple reformulations.
+
+### Which reopens whether the WSYNC conflict is real at all
+
+Collecting every INC in the suite:
+
+| test | write pair | wants |
+|---|---|---|
+| `antic_wsync` early | 1, 2 | extra |
+| `antic_wsync` late | 103, 104 | extra |
+| `pokey_noise` | 11, 12 and 113, 0 | extra |
+| `antic_dlitiming` | 5, 6 / 96, 97 / 109, 110 | extra |
+| `gtia_pmresize` | 32, 34 | **no extra** |
+
+One outlier out of five, and it is the test whose OTHER problem we now
+understand: `gtia_pmresize` changes SIZEP mid-line, which is exactly the
+mid-draw object question `gtia_pmoverlap` has just shown we get wrong. If our
+objects restart where hardware relocates, its geometry is wrong independently of
+WSYNC — and shifting the whole line by one machine cycle moves the player two
+colour clocks, which could easily line one block up by accident and then fail
+the next. That is precisely what `WSYNC_RMW_EXTRA=0` does: the 4x-to-1x block
+passes and the failure moves to 4x-to-2x.
+
+So the working hypothesis is now that there is NO WSYNC conflict — that
+`wsync_extra` is right, and `gtia_pmresize` was never evidence against it. The
+way to settle that is to fix the mid-draw object first and re-test, not to keep
+looking for a discriminator between five tests and one.
