@@ -164,6 +164,65 @@ static antic_width width_of(uint8_t dmactl)
     }
 }
 
+/* Fetch the glyph row that goes with line-buffer entry `i`.
+ *
+ * Split out of line_start because the NAME is read PROGRESSIVELY across the
+ * scanline now, so the glyph belonging to it has to be read at that same
+ * moment.  The later scanlines of a character row still rebuild the whole array
+ * up front: they re-read only the glyph, and the names are already in the
+ * buffer.
+ *
+ * CHACTL's vertical reflect picks a different row of the SAME character, so it
+ * belongs here with the fetch, not in the pixel decode. */
+static void fetch_glyph(antic *a, int mode, int i)
+{
+    if (i < 0 || i >= (int)sizeof a->glyphbuf) return;
+
+    int row = a->glyph_row;
+    uint16_t cbase = (mode <= 5) ? (uint16_t)((a->chbase & 0xFC) << 8)
+                                 : (uint16_t)((a->chbase & 0xFE) << 8);
+    uint8_t  cmask = (mode <= 5) ? 0x7F : 0x3F;
+    uint8_t  name  = a->linebuf[i];
+    int grow = row;
+
+    /* Modes 5 and 7 are 16 scanlines tall over an 8-row glyph, so each glyph
+     * row is shown twice. */
+    if (mode == 5 || mode == 7)
+        grow >>= 1;
+
+    /* Mode 3 is TEN scanlines over an eight-row glyph.  The row counter runs
+     * 0..9 and the glyph is indexed by its LOW THREE BITS, so rows 8 and 9 come
+     * back round to glyph rows 0 and 1; which two rows are blanked is what the
+     * character selects.  $60..$7F — the lowercase descenders — blank rows 0..1,
+     * everything else blanks 8..9.
+     *
+     * It is NOT a downward shift.  antic_charcontrol's descender table expects
+     * rows 2..7 to show glyph rows 2..7 and rows 8..9 to show glyph rows 0..1;
+     * subtracting two puts every row one object to the left of where the test
+     * looks for it. */
+    if (mode == 3) {
+        int blank = ((name & 0x60) == 0x60) ? (grow < 2) : (grow >= 8);
+        if (blank) { a->glyphbuf[i] = 0; return; }
+        grow &= 7;
+    }
+
+    /* CHACTL's vertical reflect mirrors the GLYPH's eight rows, not the row
+     * counter.  In mode 3 that matters: the counter runs to ten, and reflecting
+     * it would move the two blank rows from 8..9 up to 0..1 — antic_charcontrol's
+     * reflect table keeps them at 8..9 and reverses only the eight rows that
+     * carry the glyph. */
+    if (a->chactl & 0x04)
+        grow = 7 - grow;
+
+    a->glyphbuf[i] = a->fetch(a->ctx,
+        (uint16_t)(cbase + (name & cmask) * 8 + grow));
+    if (i == 0 && antic_glyph_probe)
+        fprintf(stderr, "  sl %3d mode %d chactl $%02X chbase $%02X row_line %d "
+                "row_height %d row %d grow %d name $%02X glyph $%02X\n",
+                a->scanline, mode, a->chactl, a->chbase, a->row_line,
+                a->row_height, row, grow, name, a->glyphbuf[i]);
+}
+
 /* Start of a scanline: advance the display list if the current row has
  * finished, work out whether a DLI is due, and rebuild this line's DMA
  * schedule from the LIVE state.  Nothing here is precomputed for the frame —
@@ -210,6 +269,7 @@ static void pm_dma(antic *a)
 static void line_start(antic *a)
 {
     memset(a->blocked, 0, sizeof a->blocked);
+    memset(a->pf_at, -1, sizeof a->pf_at);
     a->dli_line = 0;
 
     /* Memory refresh is taken on EVERY scanline, whatever DMACTL says — nine
@@ -250,8 +310,8 @@ static void line_start(antic *a)
 
     int mode = a->dl_insn & 0x0F;
     if (mode >= 2 && (a->dmactl & 0x20)) {
-        antic_dma_line((uint8_t)mode, width_of(a->dmactl),
-                       a->row_first, hscrol_of(a), a->blocked);
+        antic_dma_line_map((uint8_t)mode, width_of(a->dmactl),
+                           a->row_first, hscrol_of(a), a->blocked, a->pf_at);
 
         /* FETCH into the line buffer.  The playfield counter wraps at 4 KB
          * during the fetch, so a row crossing that boundary reads from the
@@ -279,68 +339,33 @@ static void line_start(antic *a)
          * concerned, which is what antic_linebuffering's "aliased mode F"
          * case catches: the row starts with DMA off, so nothing is fetched, and
          * the previous row's 40 bytes must still be there to be re-displayed. */
-        if (n > 0 && a->row_first) {
-            for (int i = 0; i < n && i < (int)sizeof a->linebuf; i++) {
-                a->linebuf[i] = a->fetch ? a->fetch(a->ctx, a->pf_addr) : 0xFF;
-                a->pf_addr = antic_pf_next(a->pf_addr);
-            }
-            a->lb_len = n;
-        }
+        /* The bytes themselves arrive one at a time during antic_tick, at the
+         * cycles pf_at names.  Only the LENGTH is settled here, because the
+         * decode has to know how wide the row is before the first byte lands —
+         * and because leaving it alone is what makes a DMA-off line re-display
+         * the previous row.  Display lags the fetch by PF_DISPLAY_LEAD cycles,
+         * so a position is always filled before it is shown. */
+        /* A DMACTL width of ZERO is not a width — it is no playfield DMA at
+         * all.  width_of() maps it to NORMAL (which is what the blocked map has
+         * always assumed), so the fetch map has to be dropped explicitly or a
+         * screen with playfield DMA off would quietly fetch a normal row.  That
+         * is exactly what antic_linebuffering's "survives DMA being turned off"
+         * and "re-displayable" cases catch. */
+        if (n == 0) memset(a->pf_at, -1, sizeof a->pf_at);
+        if (n > 0 && a->row_first) a->lb_len = n;
 
-        /* Character modes fetch the glyph row as well as the name.  CHACTL's
-         * vertical reflect picks a different row of the SAME character, so it
-         * belongs here with the fetch, not in the pixel decode. */
-        if (mode >= 2 && mode <= 7 && n > 0) {
-            int row = a->row_line;
-            uint16_t cbase = (mode <= 5)
-                ? (uint16_t)((a->chbase & 0xFC) << 8)
-                : (uint16_t)((a->chbase & 0xFE) << 8);
-            uint8_t  cmask = (mode <= 5) ? 0x7F : 0x3F;
-            for (int i = 0; i < n && i < (int)sizeof a->glyphbuf; i++) {
-                uint8_t name = a->linebuf[i];
-                int grow = row;
-
-                /* Modes 5 and 7 are 16 scanlines tall over an 8-row glyph, so
-                 * each glyph row is shown twice. */
-                if (mode == 5 || mode == 7)
-                    grow >>= 1;
-
-                /* Mode 3 is TEN scanlines over an eight-row glyph.  The row
-                 * counter runs 0..9 and the glyph is indexed by its LOW THREE
-                 * BITS, so rows 8 and 9 come back round to glyph rows 0 and 1;
-                 * which two rows are blanked is what the character selects.
-                 * $60..$7F — the lowercase descenders — blank rows 0..1,
-                 * everything else blanks 8..9.
-                 *
-                 * It is NOT a downward shift.  antic_charcontrol's descender
-                 * table expects rows 2..7 to show glyph rows 2..7 and rows 8..9
-                 * to show glyph rows 0..1; subtracting two puts every row one
-                 * object to the left of where the test looks for it. */
-                if (mode == 3) {
-                    int blank = ((name & 0x60) == 0x60) ? (grow < 2) : (grow >= 8);
-                    if (blank) { a->glyphbuf[i] = 0; continue; }
-                    grow &= 7;
-                }
-
-                /* CHACTL's vertical reflect mirrors the GLYPH's eight rows, not
-                 * the row counter.  In mode 3 that matters: the counter runs to
-                 * ten, and reflecting it would move the two blank rows from 8..9
-                 * up to 0..1 — antic_charcontrol's reflect table keeps them at
-                 * 8..9 and reverses only the eight rows that carry the glyph. */
-                if (a->chactl & 0x04)
-                    grow = 7 - grow;
-
-                a->glyphbuf[i] = a->fetch(a->ctx,
-                    (uint16_t)(cbase + (name & cmask) * 8 + grow));
-                if (i == 0 && antic_glyph_probe)
-                    fprintf(stderr, "  sl %3d mode %d chactl $%02X chbase $%02X row_line %d "
-                            "row_height %d row %d grow %d name $%02X glyph $%02X\n",
-                            a->scanline, mode, a->chactl, a->chbase, a->row_line,
-                            a->row_height, row, grow, name, a->glyphbuf[i]);
-            }
-        }
+        /* Later scanlines of a character row re-read only the GLYPH — the
+         * names are already in the buffer, so the whole array can be rebuilt
+         * here.  A row's FIRST line reads each glyph as its name arrives, in
+         * the progressive fetch below. */
+        a->glyph_row = (uint8_t)a->row_line;
+        if (mode >= 2 && mode <= 7 && n > 0 && !a->row_first)
+            for (int i = 0; i < n; i++) fetch_glyph(a, mode, i);
     }
 
+    /* The glyph row for THIS scanline, captured before the counter moves on —
+     * the progressive fetch runs after line_start has advanced it. */
+    a->glyph_row = (uint8_t)a->row_line;
     a->row_first = 0;
     a->row_line = (a->row_line + 1) & 0x0F;
 }
@@ -355,6 +380,26 @@ int antic_tick(antic *a)
     a->nmist_set_now = 0;
 
     if (c == 0) line_start(a);
+
+    /* ---- the playfield fetch, one byte at the cycle that reads it ----------
+     * ANTIC reads the playfield ACROSS the scanline, not in one go at its
+     * start, and three ACID800 tests are built entirely on that: a DMACTL or
+     * HSCROL write part way down the line moves the window under a fetch that
+     * is already running (antic_pfstarttiming, antic_pfstoptiming,
+     * antic_hscrolbug).  pf_at was built at line_start from the geometry the
+     * DMA schedule uses, so the byte and the stolen cycle cannot disagree.
+     *
+     * The scan address advances per ACTUAL fetch, which is what makes the
+     * STRIDE those tests measure fall out rather than being asserted. */
+    if (c < ANTIC_LINE_CYCLES && a->pf_at[c] >= 0) {
+        int i = a->pf_at[c];
+        if (i < (int)sizeof a->linebuf) {
+            a->linebuf[i] = a->fetch ? a->fetch(a->ctx, a->pf_addr) : 0xFF;
+            a->pf_addr = antic_pf_next(a->pf_addr);
+            int m = a->dl_insn & 0x0F;
+            if (m >= 2 && m <= 7 && a->fetch) fetch_glyph(a, m, i);
+        }
+    }
 
     /* Whether the row finishes with this scanline is decided PART WAY THROUGH
      * it, not at its start: that is the only way a VSCROL write on cycle 3 can

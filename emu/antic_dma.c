@@ -93,7 +93,22 @@ static int pf_start(uint8_t mode, antic_width w, int first, int hscrol)
 void antic_dma_line(uint8_t mode, antic_width width, int first_line,
                     int hscrol, uint8_t blocked[ANTIC_LINE_CYCLES])
 {
+    antic_dma_line_map(mode, width, first_line, hscrol, blocked, NULL);
+}
+
+/* Record that cycle `c` fetches line-buffer byte `i` from the scan address. */
+static void name_slot(int8_t *name_at, int c, int i, int chars)
+{
+    if (name_at && c >= 0 && c < ANTIC_LINE_CYCLES && i < chars && i < 128)
+        name_at[c] = (int8_t)i;
+}
+
+void antic_dma_line_map(uint8_t mode, antic_width width, int first_line,
+                        int hscrol, uint8_t blocked[ANTIC_LINE_CYCLES],
+                        int8_t name_at[ANTIC_LINE_CYCLES])
+{
     memset(blocked, 0, ANTIC_LINE_CYCLES);
+    if (name_at) memset(name_at, -1, ANTIC_LINE_CYCLES);
 
     for (int i = 0, c = REFRESH_FIRST; i < REFRESH_COUNT; i++, c += REFRESH_STEP)
         blocked[c] = 1;
@@ -111,7 +126,13 @@ void antic_dma_line(uint8_t mode, antic_width width, int first_line,
     int start = pf_start(mode, width, first_line, hscrol);
     int nom   = pf_nominal(width, hscrol);
 
+    /* Bytes across.  WIDE is narrow + half again, the same relation
+     * antic_pf_bytes uses — without it the fetch map is eight bytes short of
+     * the row on a wide line and the scan address ends the line in the wrong
+     * place. */
     int chars = (width == ANTIC_NARROW) ? s->chars_narrow : s->chars_normal;
+    int names = (width == ANTIC_WIDE) ? s->chars_narrow + s->chars_narrow / 2
+                                      : chars;
 
     /* The playfield STOP is a CYCLE COMPARISON, never a byte count.
      * antic_hscrolbug works by glitching HSCROL so the stop is MISSED and
@@ -125,8 +146,11 @@ void antic_dma_line(uint8_t mode, antic_width width, int first_line,
     /* Bitmap modes fetch `chars` BYTES once per row — no name/data pair, and
      * their stream sits on its own grid rather than the refresh one. */
     if (mode >= 8) {
-        for (int c = start; c < stop && c < ANTIC_LINE_CYCLES; c += stride)
+        int i = 0;
+        for (int c = start; c < stop && c < ANTIC_LINE_CYCLES; c += stride, i++) {
             blocked[c] = 1;
+            name_slot(name_at, c, i, names);
+        }
         return;
     }
 
@@ -137,10 +161,18 @@ void antic_dma_line(uint8_t mode, antic_width width, int first_line,
          * The run displaces refresh entirely — 64 fetches plus 9 refresh slots
          * do not fit in the window, so refresh loses.  That is the "preempted
          * refresh is LOST, not re-sought" behaviour this project already knows
-         * from the fabric DMA scheduler. */
+         * from the fabric DMA scheduler.
+         *
+         * The stream alternates NAME, glyph, NAME, glyph... with the prefetch
+         * as name 0, so every other fetch advances the scan address. */
+        int fi = 0;
         blocked[start] = 1;
-        for (int c = start + 2; c < stop && c < ANTIC_LINE_CYCLES; c++)
+        name_slot(name_at, start, 0, names);
+        fi = 1;
+        for (int c = start + 2; c < stop && c < ANTIC_LINE_CYCLES; c++, fi++) {
             blocked[c] = 1;
+            if ((fi & 1) == 0) name_slot(name_at, c, fi / 2, names);
+        }
         return;
     }
 
@@ -151,12 +183,18 @@ void antic_dma_line(uint8_t mode, antic_width width, int first_line,
      * the budget has left.  Modes 2-5 are the same structure at a 2-cycle grid,
      * where consecutive pairs merge into the solid run handled above. */
     if (first_line) {
-        blocked[start] = 1;                       /* the prefetch */
+        int fi = 0;
+        blocked[start] = 1;                       /* the prefetch — name 0 */
+        name_slot(name_at, start, 0, names);
+        fi = 1;
         int left = n - 1;                         /* the prefetch was one of them */
         for (int p = nom; left > 0 && p < ANTIC_LINE_CYCLES; p += 4) {
             int c = is_refresh(p) ? p + 1 : p;
-            for (int k = 0; k < 2 && left > 0 && c + k < ANTIC_LINE_CYCLES; k++, left--)
+            for (int k = 0; k < 2 && left > 0 && c + k < ANTIC_LINE_CYCLES;
+                 k++, left--, fi++) {
                 blocked[c + k] = 1;
+                if ((fi & 1) == 0) name_slot(name_at, c + k, fi / 2, names);
+            }
         }
         return;
     }

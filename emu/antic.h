@@ -98,6 +98,10 @@ typedef struct {
     uint16_t pf_addr;     /* playfield memory scan address (LMS target) */
     uint8_t  dl_insn;
     uint8_t  vscrol_prev;  /* did the PREVIOUS instruction have the VSCROL bit? */
+    int8_t   pf_at[ANTIC_LINE_CYCLES]; /* which line-buffer byte each cycle
+                                        * fetches from the scan address, -1 for
+                                        * none — see antic_dma_line_map */
+    uint8_t  glyph_row;    /* the row within the glyph for THIS scanline */
     uint8_t  row_first;    /* this scanline is the row's FIRST, which is NOT the
                             * same as row_line == 0: a row ENTERING a vertically
                             * scrolled region starts its counter at VSCROL, and

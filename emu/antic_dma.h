@@ -45,4 +45,19 @@ void antic_dma_refresh(uint8_t blocked[ANTIC_LINE_CYCLES]);
 void antic_dma_line(uint8_t mode, antic_width width, int first_line,
                     int hscrol, uint8_t blocked[ANTIC_LINE_CYCLES]);
 
+/* The same schedule, plus WHICH playfield byte each cycle fetches.
+ * `name_at[c]` is the index into the line buffer of the byte fetched from the
+ * playfield scan address on cycle `c`, or -1 for every other cycle — refresh,
+ * the display-list fetches, and (in the character modes) the glyph half of each
+ * name/glyph pair, none of which advance the scan address.
+ *
+ * This exists so the fetch can be PROGRESSIVE.  ANTIC reads the playfield
+ * across the scanline, so a DMACTL or HSCROL write part way down the line moves
+ * the window under a fetch that is already running — which is the whole of
+ * antic_pfstarttiming, antic_pfstoptiming and antic_hscrolbug.  A model that
+ * fetches the row in one go at cycle 0 cannot express any of them. */
+void antic_dma_line_map(uint8_t mode, antic_width width, int first_line,
+                        int hscrol, uint8_t blocked[ANTIC_LINE_CYCLES],
+                        int8_t name_at[ANTIC_LINE_CYCLES]);
+
 #endif /* ANTIC_DMA_H */
