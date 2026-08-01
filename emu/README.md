@@ -257,3 +257,30 @@ test anchored to the parked absolute-alignment question, alongside `antic_wsync`
 `antic_nmist` and `antic_vscroldli`. The discrepancy here is larger than one
 cycle, so alignment is probably not the whole story — but it should be settled
 before the divider is tuned to fit.
+
+## Blocked on an OS ROM: antic_virtdma
+
+`antic_virtdma` displays a mode 7 screen and reads back where the playfield
+reaches by colliding four missiles parked at the right border (`$da`..`$dd`).
+It cannot register anything here, and the reason is environmental rather than a
+modelling error:
+
+* its `framebuf` is 48 bytes of `$00` and is never written, so every character
+  cell holds character 0;
+* it never sets `CHBASE`. On a booted machine the OS leaves it pointing at the
+  ROM character set; under the bare-XEX runner it is `$00`, so the "glyphs" are
+  read out of zero page and every one of them is blank.
+
+With no lit playfield pixel anywhere on the line, no missile can collide, so all
+four patterns read `$00` — which is why pattern #1 (expected `$00`) "passes" and
+#2 (expected `$05`) does not. Confirmed by tracing the glyph fetch: `chbase $00`,
+`name $00`, `glyph $00` on every scanline of the row.
+
+Filling `$f800` with `$ff` changes nothing, because CHBASE is not `$f8` — the
+`mva #$f8 chbase` in the library sits in a path this test never calls.
+
+So this one needs either an OS ROM image or a runner that initialises CHBASE the
+way a booted OS would. It is not a defect in the ANTIC model, and it should not
+be counted against the pixel decode. Note the same trap applies to any other
+character-mode test that does not set CHBASE itself — `antic_charcontrol` passes
+precisely because it supplies its own character set at `$2c00`.

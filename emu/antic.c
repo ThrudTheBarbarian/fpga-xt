@@ -315,9 +315,9 @@ static void line_start(antic *a)
                 a->glyphbuf[i] = a->fetch(a->ctx,
                     (uint16_t)(cbase + (name & cmask) * 8 + grow));
                 if (i == 0 && antic_glyph_probe)
-                    fprintf(stderr, "  sl %3d mode %d chactl $%02X row_line %d "
+                    fprintf(stderr, "  sl %3d mode %d chactl $%02X chbase $%02X row_line %d "
                             "row_height %d row %d grow %d name $%02X glyph $%02X\n",
-                            a->scanline, mode, a->chactl, a->row_line,
+                            a->scanline, mode, a->chactl, a->chbase, a->row_line,
                             a->row_height, row, grow, name, a->glyphbuf[i]);
             }
         }
