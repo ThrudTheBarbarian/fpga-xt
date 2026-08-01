@@ -49,8 +49,8 @@ literally the same tests.
   scanline and its later ones.
 * **ANTIC DMA schedule: 50/50**, timing core, display-list execution and line
   buffer all in; **GTIA collisions** in.
-* **The real ACID800 binaries run**: `make acid` → 11 pass / 38 fail / 14 hung
-  of 63. Not comparable to the fabric's 32/63 — that runs on hardware with a
+* **The real ACID800 binaries run**: `make acid` → 11 pass / 38 fail / 9 jammed
+  / 2 looping / 3 skipped, of 63. Not comparable to the fabric's 32/63 — that runs on hardware with a
   full POKEY and an OS ROM, whereas POKEY here is only the RANDOM LFSR, the five
   `mod_*` never halt, and OS-dependent tests hang because `_SKIP` needs the OS.
   Every `cpu_*` test that completes passes.

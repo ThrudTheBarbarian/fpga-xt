@@ -86,21 +86,34 @@ static int load_xex(atari *s, const char *path, uint16_t *runaddr)
 static unsigned long pc_hits[65536];
 static int trace_on;
 
-/* -1 hung, 0 pass, 1 fail */
+/* Outcomes.  JAM and TIMEOUT were both reported as "hung", which hid the
+ * difference between a test that DERAILED into an illegal opcode and one that
+ * is genuinely looping — very different faults needing very different work. */
+#define R_PASS     0
+#define R_FAIL     1
+#define R_JAM     -1
+#define R_TIMEOUT -3
+#define R_SKIP    -2
+
 static int run_one(const char *dir, const char *name, unsigned long long *cyc)
 {
     char xex[512], lab[512];
     snprintf(xex, sizeof xex, "%s/%s.xex", dir, name);
     snprintf(lab, sizeof lab, "%s/%s.lab", dir, name);
 
-    uint16_t t_init = 0, t_pass = 0, t_fail = 0, run = 0;
-    if (!lab_lookup(lab, "_testPassed", &t_pass)) return -2;
-    if (!lab_lookup(lab, "_testFailed", &t_fail)) return -2;
+    uint16_t t_init = 0, t_pass = 0, t_fail = 0, t_skip = 0, run = 0;
+    if (!lab_lookup(lab, "_testPassed", &t_pass)) return R_SKIP;
+    if (!lab_lookup(lab, "_testFailed", &t_fail)) return R_SKIP;
     lab_lookup(lab, "_testInit", &t_init);
+    /* The suite has its own SKIP path — _SKIP jumps here when a test decides it
+     * cannot run (a 65C816 probe on a 6502, <64K of memory, a POKEY IRQ source
+     * that is not responding).  Reaching it is a legitimate outcome, not a
+     * failure of ours, and treating it as one was reporting these as JAMs. */
+    lab_lookup(lab, "_testSkipped", &t_skip);
 
     static atari s;
     atari_init(&s);
-    if (!load_xex(&s, xex, &run) || !run) return -2;
+    if (!load_xex(&s, xex, &run) || !run) return R_SKIP;
 
     if (t_init) s.ram[t_init] = 0x60;            /* RTS — see the header */
 
@@ -146,6 +159,7 @@ static int run_one(const char *dir, const char *name, unsigned long long *cyc)
             s.dbg_trace = 20;
         }
         if (s.cpu.pc == t_pass) { *cyc = s.cycles; return 0; }
+        if (t_skip && s.cpu.pc == t_skip) { *cyc = s.cycles; return R_SKIP; }
         if (s.cpu.pc == t_fail) {
             *cyc = s.cycles;
             /* d0..d5 are the suite's scratch at $C8..$CD, and they are what the
@@ -161,12 +175,12 @@ static int run_one(const char *dir, const char *name, unsigned long long *cyc)
                        s.ram[0xCB], s.ram[0xCC], s.ram[0xCD]);
             return 1;
         }
-        if (s.cpu.jammed)       { *cyc = s.cycles; return -1; }
+        if (s.cpu.jammed)       { *cyc = s.cycles; return R_JAM; }
         if (trace_on) pc_hits[s.cpu.pc]++;
         atari_step(&s);
     }
     *cyc = s.cycles;
-    return -1;
+    return R_TIMEOUT;
 }
 
 int main(int argc, char **argv)
@@ -198,16 +212,16 @@ int main(int argc, char **argv)
                 }
     }
 
-    int pass = 0, fail = 0, hung = 0, skip = 0;
+    int pass = 0, fail = 0, jam = 0, loop = 0, skip = 0;
     for (int i = 0; i < n; i++) {
         unsigned long long cyc = 0;
         int r = run_one(dir, names[i], &cyc);
-        const char *tag = r == 0 ? "PASS" : r == 1 ? "fail"
-                        : r == -1 ? "HUNG" : "skip";
-        if (r == 0) pass++; else if (r == 1) fail++;
-        else if (r == -1) hung++; else skip++;
+        const char *tag = r == R_PASS ? "PASS" : r == R_FAIL ? "fail"
+                        : r == R_JAM  ? "JAM " : r == R_TIMEOUT ? "LOOP" : "skip";
+        if (r == R_PASS) pass++; else if (r == R_FAIL) fail++;
+        else if (r == R_JAM) jam++; else if (r == R_TIMEOUT) loop++; else skip++;
         printf("  %-24s %s  %llu cycles\n", names[i], tag, cyc);
-        if (trace_on && r == -1) {
+        if (trace_on && (r == R_JAM || r == R_TIMEOUT)) {
             /* top spinning addresses — look these up in <name>.lst */
             for (int k = 0; k < 8; k++) {
                 unsigned long best = 0; int at = -1;
@@ -219,7 +233,7 @@ int main(int argc, char **argv)
             }
         }
     }
-    printf("acid800: %d pass, %d fail, %d hung, %d skipped (of %d)\n",
-           pass, fail, hung, skip, n);
+    printf("acid800: %d pass, %d fail, %d jammed, %d looping, %d skipped (of %d)\n",
+           pass, fail, jam, loop, skip, n);
     return 0;
 }
