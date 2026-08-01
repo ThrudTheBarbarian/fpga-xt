@@ -1862,13 +1862,42 @@ the missiles sit over four PIXELS of that character and in mode 7 a pixel is one
 colour clock — four bits of the glyph byte, the top four, which is the high
 nibble the test asserts.
 
-All of it still reports `$00`. **And the reachability check was skipped** — rule
-(v)/(jj), which this notebook states twice, says to prove the wanted output can
-be produced before building the rule that produces it, and the question here is
-whether the missiles at `$da`..`$dd` overlie the VIRTUAL character's pixels at
-all. With the wide window starting near colour clock 42 and eight clocks per
-character, clock 218 falls around character 22, not the 24th. That is the first
-thing to measure next time, and it should have been the first thing measured
-this time.
+All of it still reports `$00`, and the reachability check that should have come
+first was skipped. Run properly, it inverts the assumption behind the phase
+work:
 
-Everything is left OFF and the tree is at the known-good 47.
+| `PF_WIDE_ADJ` | display start | character index at cc `$da` |
+|---|---|---|
+| 0 (default) | 30 | **23** — the virtual slot, but its LAST four pixels |
+| 1 | 32 | 23 |
+| **2** | **34** | **23, and `$da` is its FIRST pixel** |
+| 3 | 36 | 22 |
+| 5 (the DMA-map fit) | 40 | 22 — off the virtual character entirely |
+
+Character 23 is the last of the twenty-four, so it IS the virtual slot, and the
+test reads the HIGH nibble — the character's first four pixels. Only
+`PF_WIDE_ADJ = 2` puts `$da`..`$dd` there. **The value the DMA map argued for, 5,
+moves the probe off the virtual character altogether.**
+
+So the fetch schedule and the display window do not want the same phase, which
+is a real finding in itself and says the two are related by something other than
+`PF_DISPLAY_LEAD`.
+
+### Why the latch almost never fires
+
+With `PF_WIDE_ADJ = 2` and `VIRT_DMA = 1` it still reports `$00`, and a probe on
+the latch itself (`ACID_GLYPHPROBE=7`) says why in one line:
+
+```
+  VIRT sl  32 cyc 103 idx 23 <- $00
+```
+
+ONE latch in the entire run, on scanline 32 — the mode 7 row's FIRST line. The
+test measures scanlines 33 to 37. Our line map carries name fetches only on a
+row's first line (ACID800's own DMA table has the same split, its `a` rows
+against its `b` rows), so `pf_at` is empty on every later line and `virt_cyc`
+comes out -1.
+
+That is the next thing to build: on a row's later lines the virtual slot is a
+GLYPH-only slot, and it has to be found from the glyph schedule rather than from
+`pf_at`. Everything remains OFF and the tree is at the known-good 47.

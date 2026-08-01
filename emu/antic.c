@@ -556,7 +556,12 @@ int antic_tick(antic *a)
              * PIXELS of that character, which in mode 7 is four bits of its
              * glyph byte — the top four, giving the high nibble the test
              * asserts. */
-            if (c == a->virt_cyc)             a->glyphbuf[i] = a->bus_byte;
+            if (c == a->virt_cyc) {
+                a->glyphbuf[i] = a->bus_byte;
+                if (antic_glyph_probe == 7)
+                    fprintf(stderr, "  VIRT sl %3d cyc %3d idx %2d <- $%02X\n",
+                            a->scanline, c, i, a->bus_byte);
+            }
             else if (m >= 2 && m <= 7 && a->fetch) fetch_glyph(a, m, i);
         }
     }
