@@ -14,10 +14,19 @@ static int base_period(const pokey_timer *p)
  * (hi<<8 | lo) + 1 of the LOW channel's input. */
 static int period_of(const pokey_timer *p, int ch)
 {
+    /* The divider reloads with AUDF+1 of its input ticks — except off the 1.79
+     * MHz clock, where the extra pipeline stages make it AUDF+4 unlinked and
+     * +7 for a 16-bit pair.  pokey_timertiming catches the difference directly:
+     * with +1 the timer "triggered too early". */
+    int fast1 = (p->audctl & 0x40) != 0;
+    int fast3 = (p->audctl & 0x20) != 0;
+
     if (ch == 0 && (p->audctl & 0x10))          /* 1+2 linked, 1 is the low half */
-        return ((p->audf[1] << 8) | p->audf[0]) + 1;
+        return ((p->audf[1] << 8) | p->audf[0]) + (fast1 ? 7 : 1);
     if (ch == 2 && (p->audctl & 0x08))          /* 3+4 linked */
-        return ((p->audf[3] << 8) | p->audf[2]) + 1;
+        return ((p->audf[3] << 8) | p->audf[2]) + (fast3 ? 7 : 1);
+    if (ch == 0 && fast1) return p->audf[0] + 4;
+    if (ch == 2 && fast3) return p->audf[2] + 4;
     return p->audf[ch] + 1;
 }
 

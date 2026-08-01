@@ -27,8 +27,8 @@ CORE := xt6502.c
 # PREVIOUS run's score, which reads exactly like a change that did nothing
 HDRS := xt6502.h antic.h antic_dma.h gtia.h pokey_rand.h pokey_timer.h system.h acid_dmatable.h
 
-.PHONY: all test harte klaus irq pokey dma antic gtia acid clean
-all: $(BUILD)/harte $(BUILD)/klaus $(BUILD)/irq $(BUILD)/pokey $(BUILD)/dma $(BUILD)/antic $(BUILD)/gtia
+.PHONY: all test harte klaus irq pokey ptimer dma antic gtia acid clean
+all: $(BUILD)/harte $(BUILD)/klaus $(BUILD)/irq $(BUILD)/pokey $(BUILD)/ptimer $(BUILD)/dma $(BUILD)/antic $(BUILD)/gtia
 
 $(BUILD):
 	@mkdir -p $(BUILD)
@@ -51,6 +51,9 @@ $(BUILD)/dma: test/dma.c antic_dma.c antic_dma.h acid_dmatable.h | $(BUILD)
 $(BUILD)/antic: test/antic.c antic.c antic_dma.c $(HDRS) | $(BUILD)
 	$(CC) $(CFLAGS) test/antic.c antic.c antic_dma.c -o $@
 
+$(BUILD)/ptimer: test/ptimer.c pokey_timer.c pokey_timer.h | $(BUILD)
+	$(CC) $(CFLAGS) test/ptimer.c pokey_timer.c -o $@
+
 $(BUILD)/gtia: test/gtia.c gtia.c gtia.h | $(BUILD)
 	$(CC) $(CFLAGS) test/gtia.c gtia.c -o $@
 
@@ -70,6 +73,9 @@ irq: $(BUILD)/irq
 pokey: $(BUILD)/pokey
 	@./$(BUILD)/pokey
 
+ptimer: $(BUILD)/ptimer
+	@./$(BUILD)/ptimer
+
 dma: $(BUILD)/dma
 	@./$(BUILD)/dma
 
@@ -82,7 +88,7 @@ gtia: $(BUILD)/gtia
 acid: $(BUILD)/acid
 	@./$(BUILD)/acid
 
-test: harte klaus irq pokey dma antic gtia
+test: harte klaus irq pokey ptimer dma antic gtia
 
 clean:
 	rm -rf $(BUILD)
