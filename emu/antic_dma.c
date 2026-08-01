@@ -45,6 +45,12 @@ static const mode_shape shapes[16] = {
     [15] = { 2, 0, 32, 40 },
 };
 
+void antic_dma_refresh(uint8_t blocked[ANTIC_LINE_CYCLES])
+{
+    for (int i = 0, c = REFRESH_FIRST; i < REFRESH_COUNT; i++, c += REFRESH_STEP)
+        blocked[c] = 1;
+}
+
 static int is_refresh(int c)
 {
     return c >= REFRESH_FIRST

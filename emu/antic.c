@@ -201,6 +201,13 @@ static void line_start(antic *a)
     memset(a->blocked, 0, sizeof a->blocked);
     a->dli_line = 0;
 
+    /* Memory refresh is taken on EVERY scanline, whatever DMACTL says — nine
+     * cycles the CPU does not get even with the screen off.  Building it only
+     * along the playfield path let the CPU run nine cycles a line too fast
+     * whenever DMA was off, which is exactly the gap gtia_pmretrigger's fourth
+     * case shows: its "sta hposp0" landed on cycle 81 against an annotated 90. */
+    antic_dma_refresh(a->blocked);
+
     if (a->fetch)
         pm_dma(a);
 

@@ -36,6 +36,10 @@ typedef enum { ANTIC_NARROW = 0, ANTIC_NORMAL = 1, ANTIC_WIDE = 2 } antic_width;
  * uses: display begins exactly PF_DISPLAY_LEAD cycles after this, for every
  * width, so the two cannot drift apart. */
 int antic_pf_nominal(antic_width w, int hscrol);
+
+/* Memory refresh: nine cycles a scanline, taken whatever DMACTL says.  Exposed
+ * because it happens even with the screen off, where no other DMA does. */
+void antic_dma_refresh(uint8_t blocked[ANTIC_LINE_CYCLES]);
 #define PF_DISPLAY_LEAD 3
 
 void antic_dma_line(uint8_t mode, antic_width width, int first_line,
