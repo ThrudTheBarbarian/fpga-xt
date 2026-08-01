@@ -187,6 +187,7 @@ static uint8_t io_read(atari *s, uint16_t a)
             return pokey_rand_read(&s->pk);
         }
         return 0xFF;
+    case 0xD300: return pia_read(&s->pia, a);
     case 0xD400:
         if (s->col_probe && (a & 0x0F) == 0x0F)
             fprintf(stderr, "  NMIST read sl %3d cyc %3d -> $%02X\n",
@@ -219,6 +220,7 @@ static void io_write(atari *s, uint16_t a, uint8_t v)
             pokey_timer_skctl(&s->pt, v);
         }
         break;
+    case 0xD300: pia_write(&s->pia, a, v); break;
     case 0xD400:
         if (s->col_probe && (a & 0x0F) == 0x0E)
             fprintf(stderr, "  NMIEN  write $%02X sl %3d cyc %3d (set_now %d nmist $%02X)\n",
@@ -271,6 +273,7 @@ void atari_init(atari *s)
     gtia_init(&s->gt);
     pokey_rand_reset(&s->pk);
     pokey_timer_reset(&s->pt);
+    pia_reset(&s->pia);
     s->cycles = 0;
 }
 

@@ -25,10 +25,10 @@ CFLAGS := -std=c11 $(WARN) -O2 -g
 CORE := xt6502.c
 # every header, listed against every target: a stale binary silently reports the
 # PREVIOUS run's score, which reads exactly like a change that did nothing
-HDRS := xt6502.h antic.h antic_dma.h gtia.h pokey_rand.h pokey_timer.h system.h acid_dmatable.h
+HDRS := xt6502.h antic.h antic_dma.h gtia.h pokey_rand.h pokey_timer.h pia.h system.h acid_dmatable.h
 
-.PHONY: all test harte klaus irq pokey ptimer dma antic gtia acid clean
-all: $(BUILD)/harte $(BUILD)/klaus $(BUILD)/irq $(BUILD)/pokey $(BUILD)/ptimer $(BUILD)/dma $(BUILD)/antic $(BUILD)/gtia
+.PHONY: all test harte klaus irq pokey ptimer dma antic gtia pia acid clean
+all: $(BUILD)/harte $(BUILD)/klaus $(BUILD)/irq $(BUILD)/pokey $(BUILD)/ptimer $(BUILD)/dma $(BUILD)/antic $(BUILD)/gtia $(BUILD)/pia
 
 $(BUILD):
 	@mkdir -p $(BUILD)
@@ -54,10 +54,13 @@ $(BUILD)/antic: test/antic.c antic.c antic_dma.c $(HDRS) | $(BUILD)
 $(BUILD)/ptimer: test/ptimer.c pokey_timer.c pokey_timer.h | $(BUILD)
 	$(CC) $(CFLAGS) test/ptimer.c pokey_timer.c -o $@
 
+$(BUILD)/pia: test/pia.c pia.c pia.h | $(BUILD)
+	$(CC) $(CFLAGS) test/pia.c pia.c -o $@
+
 $(BUILD)/gtia: test/gtia.c gtia.c gtia.h | $(BUILD)
 	$(CC) $(CFLAGS) test/gtia.c gtia.c -o $@
 
-SYS := system.c xt6502.c antic.c antic_dma.c gtia.c pokey_rand.c pokey_timer.c
+SYS := system.c xt6502.c antic.c antic_dma.c gtia.c pokey_rand.c pokey_timer.c pia.c
 $(BUILD)/acid: test/acid.c $(SYS) $(HDRS) | $(BUILD)
 	$(CC) $(CFLAGS) test/acid.c $(SYS) -o $@
 
@@ -76,6 +79,9 @@ pokey: $(BUILD)/pokey
 ptimer: $(BUILD)/ptimer
 	@./$(BUILD)/ptimer
 
+pia: $(BUILD)/pia
+	@./$(BUILD)/pia
+
 dma: $(BUILD)/dma
 	@./$(BUILD)/dma
 
@@ -88,7 +94,7 @@ gtia: $(BUILD)/gtia
 acid: $(BUILD)/acid
 	@./$(BUILD)/acid
 
-test: harte klaus irq pokey ptimer dma antic gtia
+test: harte klaus irq pokey ptimer dma antic gtia pia
 
 clean:
 	rm -rf $(BUILD)
