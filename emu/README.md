@@ -229,3 +229,31 @@ Tried and measured:
 So the rule is nearly right and something about the bottom edge is wrong. Worth
 resolving from `antic_vscroldli`'s side first — find out why a list that parks on
 a JVB cares about the cutoff at all — rather than by tuning the window.
+
+## Open: gtia_pmresize, and a third WSYNC-anchored test
+
+`gtia_pmresize` sets player 0 at HPOS `$48` with GRAFP0 = `$aa`, narrows SIZEP0
+mid-object, and reads back which of eight probes — players at `$61..$63`,
+missiles at `$64..$67` — the object reached. At 4x an eight-bit player spans
+exactly `$48..$67`, so the probes sit at the far end and report where the resize
+truncated it.
+
+The first case expects `$80`: **only** the probe at `$61` is hit. That is the
+sharp constraint — a 4x bit covers four colour clocks, so any 4x bit reaching
+`$61` would also cover `$62` and `$63` and light three probes. One probe alone
+means the object is emitting at 1x granularity by the time it gets there, i.e.
+it is still running at `$61`. This model ends it around `$5f` and reports `$00`.
+
+Tried and rejected: making the phase counter two bits with an EQUALITY compare,
+so that narrowing the width while the counter has already passed the new target
+makes it miss and wrap — the same shape as the ANTIC row-counter fix, and the
+obvious candidate for the "lockup" the test names in its `1xalt` case. It
+changes nothing here (still `$00`) and is not kept, since there is no evidence
+for it either way.
+
+Worth noting before spending more on it: `runtest` opens with `inc wsync` and
+every cycle annotation in it flows from that release, so this is a **third**
+test anchored to the parked absolute-alignment question, alongside `antic_wsync`,
+`antic_nmist` and `antic_vscroldli`. The discrepancy here is larger than one
+cycle, so alignment is probably not the whole story — but it should be settled
+before the divider is tuned to fit.
