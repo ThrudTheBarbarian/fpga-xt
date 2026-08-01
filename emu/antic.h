@@ -124,6 +124,7 @@ typedef struct {
                             * system.c keeps it fresh; the VIRTUAL playfield
                             * slot latches it instead of fetching. */
     int      virt_cyc;     /* the line's VIRTUAL playfield slot, -1 for none */
+    uint8_t  virt_idx;     /* which line-buffer entry that slot feeds */
     uint8_t  nmi_arm;      /* the status set at cycle 7 raises /NMI at 8 */
     unsigned long ticks;   /* free-running machine cycles since reset */
     unsigned long wsync_wr_at; /* `ticks` of the last WSYNC write.  An RMW's two
@@ -227,6 +228,10 @@ int antic_pf_nibble(const antic *a, int cc, int shift);
 /* The raw two-bit pixel pair at colour clock `cc` in mode F — what pseudo mode
  * E decodes as a playfield index. */
 int antic_pf_pair(const antic *a, int cc);
+
+/* Latch the data bus into the line's VIRTUAL playfield slot, if this cycle is
+ * it.  Called from the bus path so it sees its own cycle's byte. */
+void antic_virt_latch(antic *a, int cyc, uint8_t v);
 
 uint8_t antic_read(antic *a, uint16_t addr);
 void    antic_write(antic *a, uint16_t addr, uint8_t val);

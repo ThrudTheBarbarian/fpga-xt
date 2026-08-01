@@ -1898,6 +1898,46 @@ row's first line (ACID800's own DMA table has the same split, its `a` rows
 against its `b` rows), so `pf_at` is empty on every later line and `virt_cyc`
 comes out -1.
 
-That is the next thing to build: on a row's later lines the virtual slot is a
-GLYPH-only slot, and it has to be found from the glyph schedule rather than from
-`pf_at`. Everything remains OFF and the tree is at the known-good 47.
+### SOLVED
+
+Three things, each one measured before it was built.
+
+**The virtual slot on a row's LATER lines.** Tabulating the map for
+`first_line = 0` shows zero name fetches and glyph slots at 12, 16 ... 104.
+Refresh is long finished by then, so the last blocked cycle of such a line IS
+the last glyph slot, and that is the virtual one. The test's display list is
+`$57` — a sixteen-line mode 7 row — and it reads scanlines 33..37, all later
+lines, which is why the first-line path never fired for it.
+
+**`PF_WIDE_ADJ = 2`, and it is the LATER-line map that fits.** With it, those
+glyph slots land at 14, 18 ... 106 — exactly the map in the test's own comment,
+virtual slot at 106 included. The earlier fit of 5 was against the FIRST-line
+map, the wrong variant, and 5 moves the probe off character 23 altogether. Two
+independent measurements now agree on 2: this one, and the display alignment
+that puts colour clock `$da` on character 23's first pixel.
+
+**The latch must run AFTER its own cycle's access.** At tick time the CPU has
+not made its access yet, so the bus still holds the PREVIOUS cycle's byte — we
+latched `$00` where the trace plainly showed `$50` arriving one cycle later:
+
+```
+  BUS sl  34 cyc 104 CPU-R $2082 -> $AD
+  BUS sl  34 cyc 105 CPU-R $2083 -> $00
+  BUS sl  34 cyc 106 CPU-R $2084 -> $50      <- and the slot is cycle 106
+```
+
+So `antic_virt_latch()` is called from the bus path, not from `antic_tick()`.
+That is the same rule the phantom P/M latch needed, and it was already written
+down here — worth reaching for sooner next time.
+
+**WIDE only.** Un-blocking the last playfield cycle on every line costs
+`antic_dmapattern` and `antic_linebuffering`, whose narrow and normal geometries
+the DMA table says ARE blocked there. One test up, two down until the gate went
+in — rule (gg) again.
+
+The `dma` gate had to be CORRECTED, not obeyed. It asserted a width step of 8 in
+both directions, but only narrow->normal is in ACID800's table; normal->wide was
+a derivation by symmetry, and it is **6**.
+
+47 -> 48 of 63, and the only line that changes anywhere in the suite is
+`antic_virtdma` itself.

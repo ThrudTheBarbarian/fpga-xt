@@ -69,8 +69,15 @@ int main(int argc, char **argv)
          * a naive "first blocked cycle" finds refresh rather than the playfield
          * whenever the window starts after 25. */
         int fn = first_fetch(n), fm = first_fetch(m), fw = first_fetch(w);
+        /* narrow->normal is 8, and THAT one the table proves: antic_dmapattern
+         * tabulates both widths.  normal->wide is NOT 8, and the 8 that used to
+         * be asserted here was a derivation by symmetry, not a measurement —
+         * the table has no wide rows at all.  antic_virtdma measures it, from
+         * two independent sides: it puts colour clock $da on the first pixel of
+         * the character its missiles read, and it puts a row's later-line glyph
+         * slots exactly where the map in its own comment has them.  Six. */
         if (fn - fm != 8) { printf("  FAIL width step: narrow-normal = %d, want 8\n", fn - fm); extra++; }
-        if (fm - fw != 8) { printf("  FAIL width step: normal-wide  = %d, want 8\n", fm - fw); extra++; }
+        if (fm - fw != 6) { printf("  FAIL width step: normal-wide  = %d, want 6\n", fm - fw); extra++; }
 
         uint8_t h0[ANTIC_LINE_CYCLES], h8[ANTIC_LINE_CYCLES];
         antic_dma_line(8, ANTIC_NORMAL, 1, 0, h0);
@@ -78,7 +85,7 @@ int main(int argc, char **argv)
         int a = first_fetch(h0), b = first_fetch(h8);
         if (a - b != 4) { printf("  FAIL hscrol=8 shift: %d cycles, want 4\n", a - b); extra++; }
     }
-    if (!extra) printf("dma: window derivation ok (width step 8 cycles, HSCROL half-cycle per clock)\n");
+    if (!extra) printf("dma: window derivation ok (width step 8 narrow->normal, 6 normal->wide, HSCROL half-cycle per clock)\n");
 
     printf("dma: %d/%d ACID800 DMA rows match\n", pass, ACID_DMA_NROWS);
     return (pass == ACID_DMA_NROWS && !extra) ? 0 : 1;

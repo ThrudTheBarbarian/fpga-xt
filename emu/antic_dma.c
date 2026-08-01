@@ -74,9 +74,17 @@ static int is_refresh(int c)
 #define PF_NOMINAL_NORMAL 21
 #define PF_WIDTH_STEP      8
 /* See antic_pf_nominal: the wide window's phase, which no validated table
- * covers.  0 keeps the shape that was there before antic_virtdma was read. */
+ * covers — antic_dmapattern tabulates only narrow and normal.  MEASURED at 2
+ * against antic_virtdma, which is the one place in the suite wide geometry is
+ * pinned, and from BOTH sides: it puts colour clock $da on the first pixel of
+ * character 23 (where the test's missiles read the high nibble), and it puts a
+ * row's later-line glyph slots at 14, 18 ... 106, matching the map in the
+ * test's own comment including its virtual slot at 106.
+ *
+ * Note which map: the FIRST-line map fits at 5 instead, and 5 moves the probe
+ * off character 23 entirely.  antic_virtdma measures a row's LATER lines. */
 #ifndef PF_WIDE_ADJ
-#define PF_WIDE_ADJ 0
+#define PF_WIDE_ADJ 2
 #endif
 
 int antic_pf_nominal(antic_width w, int hscrol)

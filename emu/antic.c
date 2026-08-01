@@ -16,9 +16,9 @@
  *   REACH - cycle units of scroll, the rate-based rule antic_pfstarttiming's
  *   one-unit delta seems to call for.  It does clamp (8 early, 7 late) and the
  *   measured stride does not move, because the stride quantises in fours. */
-/* Whether a scrolled row's last playfield slot is VIRTUAL — see line_start. */
+/* Whether a wide row's last playfield slot is VIRTUAL — see line_start. */
 #ifndef VIRT_DMA
-#define VIRT_DMA 0
+#define VIRT_DMA 1
 #endif
 
 #ifndef HSCROL_CC_DISPLAY
@@ -316,6 +316,8 @@ static void pm_dma(antic *a)
 static void line_start(antic *a)
 {
     a->hscrol_line = a->hscrol;           /* the clamp is per-line */
+    a->virt_cyc = -1;                     /* no virtual slot unless one is built */
+    a->virt_idx = 0;
     memset(a->blocked, 0, sizeof a->blocked);
     memset(a->pf_at, -1, sizeof a->pf_at);
     a->pf_next = 0;
@@ -370,10 +372,29 @@ static void line_start(antic *a)
          * keeping 104, 105 and 106) and what the buffer takes is whatever the
          * CPU's access left on the bus.  That is the same rule as the phantom
          * P/M latch's, one slot further on. */
-        a->virt_cyc = -1;
-        if (VIRT_DMA) {
+        /* WIDE only.  antic_dmapattern tabulates narrow and normal and says
+         * their last playfield cycle IS blocked, so un-blocking one everywhere
+         * costs that test and antic_linebuffering.  The virtual slot exists
+         * because a wide scrolled row asks for one more byte than the row has
+         * — the geometry antic_virtdma runs. */
+        if (VIRT_DMA && width_of(a->dmactl) == ANTIC_WIDE) {
             for (int c = ANTIC_LINE_CYCLES - 1; c >= 0; c--)
-                if (a->pf_at[c] >= 0) { a->virt_cyc = c; break; }
+                if (a->pf_at[c] >= 0) {
+                    a->virt_cyc = c; a->virt_idx = (uint8_t)a->pf_at[c]; break;
+                }
+            /* A row's LATER lines have no name fetches at all — the map's `b`
+             * variant is glyph slots only — so the virtual slot has to be found
+             * from those instead.  Refresh is long finished by then, so the
+             * last blocked cycle of the line IS the last glyph slot.  This is
+             * the case antic_virtdma actually measures: its display list is
+             * `$57`, a sixteen-line mode 7 row, and it reads scanlines 33..37. */
+            if (a->virt_cyc < 0)
+                for (int c = ANTIC_LINE_CYCLES - 1; c >= 0; c--)
+                    if (a->blocked[c]) {
+                        a->virt_cyc = c;
+                        a->virt_idx = (uint8_t)(a->lb_len ? a->lb_len - 1 : 0);
+                        break;
+                    }
             if (a->virt_cyc >= 0) a->blocked[a->virt_cyc] = 0;
         }
 
@@ -865,6 +886,20 @@ uint8_t antic_read(antic *a, uint16_t addr)
                                                    * ANTIC reads are $FF, unlike
                                                    * GTIA's $0F */
     }
+}
+
+/* The VIRTUAL slot's latch, called from the bus path rather than from the tick.
+ * It has to see the byte from ITS OWN cycle, and the cycle is one the CPU gets
+ * (the slot does not steal it) — so at tick time the access has not happened
+ * yet and the bus still holds the previous cycle's byte.  Exactly the rule the
+ * phantom P/M latch needed: run AFTER the access, not before it. */
+void antic_virt_latch(antic *a, int cyc, uint8_t v)
+{
+    if (!VIRT_DMA || cyc != a->virt_cyc) return;
+    a->glyphbuf[a->virt_idx] = v;
+    if (antic_glyph_probe == 7)
+        fprintf(stderr, "  VIRT sl %3d cyc %3d idx %2d <- $%02X\n",
+                a->scanline, cyc, a->virt_idx, v);
 }
 
 void antic_write(antic *a, uint16_t addr, uint8_t val)
