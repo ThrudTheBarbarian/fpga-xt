@@ -14,6 +14,14 @@
  * the part being built.  A test whose measurement never terminates shows as
  * "hung" rather than silently as either result.
  *
+ * One more thing the OS normally supplies and the tests genuinely need: the NMI
+ * DISPATCHER.  Without it the NMI vector at $FFFA is zero, so the first VBI
+ * sends the CPU to address 0 and every test that enables interrupts derails —
+ * which is exactly what the PC histogram showed, 28 million hits at $0000.  So
+ * install the smallest stub that does what the OS does: read NMIST, and jump
+ * through VDSLST for a DLI or VVBLKI for a VBI.  The default VBI handler ticks
+ * RTCLOK, because _waitVBL polls it.
+ *
  *   emu/build/acid <dir>          run every .xex in <dir>
  *   emu/build/acid <dir> <name>   run one
  */
@@ -72,6 +80,12 @@ static int load_xex(atari *s, const char *path, uint16_t *runaddr)
     return 1;
 }
 
+/* Where a hung test is spinning.  A histogram rather than a trace: a test that
+ * never terminates is in a loop, and the loop's addresses are what identify it
+ * in the .lst. */
+static unsigned long pc_hits[65536];
+static int trace_on;
+
 /* -1 hung, 0 pass, 1 fail */
 static int run_one(const char *dir, const char *name, unsigned long long *cyc)
 {
@@ -90,14 +104,42 @@ static int run_one(const char *dir, const char *name, unsigned long long *cyc)
 
     if (t_init) s.ram[t_init] = 0x60;            /* RTS — see the header */
 
+    /* ---- the OS's NMI dispatcher, in fourteen bytes ---------------------- */
+    static const uint8_t nmi_stub[] = {
+        0x48,                    /* $FF00  PHA                              */
+        0xAD, 0x0F, 0xD4,        /* $FF01  LDA NMIST                        */
+        0x10, 0x04,              /* $FF04  BPL vbi                          */
+        0x68,                    /* $FF06  PLA                              */
+        0x6C, 0x00, 0x02,        /* $FF07  JMP (VDSLST)                     */
+        0x68,                    /* $FF0A  PLA            vbi:              */
+        0x6C, 0x22, 0x02,        /* $FF0B  JMP (VVBLKI)                     */
+    };
+    /* default handlers: tick RTCLOK (what _waitVBL polls), then RTI */
+    static const uint8_t dflt[] = {
+        0xE6, 0x14,              /* $FF30  INC RTCLOK+2                     */
+        0xD0, 0x06,              /* $FF32  BNE done                         */
+        0xE6, 0x13,              /* $FF34  INC RTCLOK+1                     */
+        0xD0, 0x02,              /* $FF36  BNE done                         */
+        0xE6, 0x12,              /* $FF38  INC RTCLOK                       */
+        0x40,                    /* $FF3A  RTI            done:             */
+    };
+    memcpy(&s.ram[0xFF00], nmi_stub, sizeof nmi_stub);
+    memcpy(&s.ram[0xFF30], dflt,     sizeof dflt);
+    s.ram[0xFFFA] = 0x00; s.ram[0xFFFB] = 0xFF;      /* NMI  -> $FF00 */
+    s.ram[0xFFFE] = 0x3A; s.ram[0xFFFF] = 0xFF;      /* IRQ  -> bare RTI */
+    if (!s.ram[0x0201]) { s.ram[0x0200] = 0x3A; s.ram[0x0201] = 0xFF; }  /* VDSLST */
+    if (!s.ram[0x0223]) { s.ram[0x0222] = 0x30; s.ram[0x0223] = 0xFF; }  /* VVBLKI */
+
     s.cpu.pc = run;
     s.cpu.s  = 0xFD;
     s.cpu.p  = XTF_I | XTF_U;
 
+    if (trace_on) memset(pc_hits, 0, sizeof pc_hits);
     while (s.cycles < MAX_CYCLES) {
         if (s.cpu.pc == t_pass) { *cyc = s.cycles; return 0; }
         if (s.cpu.pc == t_fail) { *cyc = s.cycles; return 1; }
         if (s.cpu.jammed)       { *cyc = s.cycles; return -1; }
+        if (trace_on) pc_hits[s.cpu.pc]++;
         atari_step(&s);
     }
     *cyc = s.cycles;
@@ -110,7 +152,10 @@ int main(int argc, char **argv)
     char names[128][64];
     int n = 0;
 
-    if (argc > 2) {
+    if (argc > 2 && !strcmp(argv[2], "-t")) {
+        trace_on = 1;
+        if (argc > 3) snprintf(names[n++], 64, "%s", argv[3]);
+    } else if (argc > 2) {
         snprintf(names[n++], 64, "%s", argv[2]);
     } else {
         DIR *d = opendir(dir);
@@ -139,6 +184,17 @@ int main(int argc, char **argv)
         if (r == 0) pass++; else if (r == 1) fail++;
         else if (r == -1) hung++; else skip++;
         printf("  %-24s %s  %llu cycles\n", names[i], tag, cyc);
+        if (trace_on && r == -1) {
+            /* top spinning addresses — look these up in <name>.lst */
+            for (int k = 0; k < 8; k++) {
+                unsigned long best = 0; int at = -1;
+                for (int q = 0; q < 65536; q++)
+                    if (pc_hits[q] > best) { best = pc_hits[q]; at = q; }
+                if (at < 0 || !best) break;
+                printf("      spin $%04X  %lu hits\n", at, best);
+                pc_hits[at] = 0;
+            }
+        }
     }
     printf("acid800: %d pass, %d fail, %d hung, %d skipped (of %d)\n",
            pass, fail, hung, skip, n);
