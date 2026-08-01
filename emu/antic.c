@@ -416,7 +416,7 @@ static void rebuild_line(antic *a, int old_nom, int old_span)
      * `span` machine cycles long measured FROM that same start, which puts the
      * narrow close at 26 + 64 = 90 — after narrow's last fetch at 86, and before
      * the next grid point it would have taken. */
-    int old_start = old_nom - 3;
+    int old_start = old_nom - PF_COMMIT_LEAD;
     int old_close = old_nom + old_span
                   - antic_pf_grid((uint8_t)mode, a->row_first);
 

@@ -794,7 +794,20 @@ One cycle later gives exactly one more byte in `pfstarttiming` and one FEWER in
 `pfstoptiming`. On a 4-cycle pair grid a single cycle should not change the count
 at all, so near the boundary the stream must be resolvable at 1-cycle
 granularity — each pair is two ADJACENT cycles, and a write landing between the
-two halves plausibly drops one of them. That is the next thing to test.
+two halves plausibly drops one of them.
+
+**Swept and ruled out: the commit lead.** `PF_COMMIT_LEAD` over 0..6 leaves both
+HSCROL answers unmoved, and only 3 lets either test reach its HSCROL section at
+all (0-2 and 4+ break a DMACTL assertion instead). So the lever is not where the
+start commits.
+
+Measured on the way, from `ACID_GLYPHPROBE=9`: `pfstoptiming`'s scrolled row is
+fetching **19** where 21 is wanted, at cycles `26 31 35 ... 94 98`. Note it
+begins the line UNSCROLLED — HSCROL is 0 at `line_start` and only written to 8
+mid-line — so the "scrolled rows fetch a width step more" rule does not apply
+when the schedule is first built, and the row's count depends entirely on what
+the rebuild does. 21 is one MORE than a fully scrolled narrow row's 20, which no
+combination of the current start/stop rules produces.
 
 `antic_hscrolbug` ("Unstopped PF DMA test failed") has started producing data
 rather than nothing — `d1..d3` are now `01 01 01` where they were `00 00 00`. It

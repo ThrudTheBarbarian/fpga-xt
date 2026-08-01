@@ -16,6 +16,13 @@
 #include "antic_dma.h"
 
 /* Scanline cycle landmarks (docs/Acid800/). */
+/* How far ahead of its window the playfield fetch COMMITS its start, in machine
+ * cycles.  Swept 0..6 against antic_pfstarttiming and antic_pfstoptiming: only 3
+ * lets either test reach its HSCROL section, and it is the same 3 as the
+ * character prefetch's own lead, which is why it holds for bitmap rows too. */
+#ifndef PF_COMMIT_LEAD
+#define PF_COMMIT_LEAD 3
+#endif
 #define ANTIC_CYC_NMIST   7     /* NMIST bits set; NMIEN sampled  (antic_nmist) */
 #define ANTIC_CYC_NMI     8     /* /NMI asserted, ONE cycle after the status */
 #define ANTIC_CYC_NMIRES  8     /* NMIRES takes effect from here  (antic_nmist) */
