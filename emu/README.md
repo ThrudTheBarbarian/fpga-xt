@@ -980,7 +980,34 @@ in the `docs/a800` history. Both cannot be right about the same silicon. The
 software side is what the ACID assertions bound here, but this is a good candidate
 for re-checking on hardware.
 
-`pokey_timertiming` now clears its whole 8-bit group and fails further in, on
-**"1.79MHz 16-bit lo timer triggered too late"** — the linked pair fires late,
-which was invisible until the 8-bit case passed. Our fast linked period is
-`AUDF16 + 7`; that constant is the next thing to bound.
+### Next: a linked pair is TWO counters, not one
+
+`pokey_timertiming` now clears its whole 8-bit group and fails on **"1.79MHz
+16-bit lo timer triggered too late"**. Sweeping the fast linked period constant
+`LINK_FAST` over 4..9 moves the answer **not at all**, which rules it out — and
+points straight at the reason.
+
+The test checks the two halves of a linked pair SEPARATELY, and its own boundaries
+give the structure away:
+
+| case | AUDCTL | mask | boundary |
+|---|---|---|---|
+| 8-bit, `AUDF1 = 16` | `$40` | `#$01` | 19 / 20 |
+| 16-bit **lo**, `AUDF16 = 16` | `$50` | `#$01` | 19 / 20 |
+| 16-bit **hi**, `AUDF16 = 16` | `$50` | `#$02` | 22 / 23 |
+
+The low half's interrupt fires at **exactly the same time linked as unlinked**,
+and the high half's fires three cycles later. The 16-bit-hi case is the clincher:
+it masks `#$02` and requires bit 1 still set at 22 while bit 0 has already
+cleared, so **both interrupts exist independently while linked**.
+
+Our model treats a linked pair as ONE divider of `AUDF16 + 7` whose event belongs
+to the high channel, so `POKEY_IRQ_TIMER1` never fires at all when linked — which
+is why no period constant can help. The fix is structural: the low counter
+underflows and reloads on its own period, raising its own interrupt, and the high
+counter decrements on each of those underflows.
+
+That is not a small change — `pokey_serclock`, `pokey_twotone`, `pokey_timerirq`
+and the `ptimer` gate all rest on the single-divider model, and the "event belongs
+to the HIGH channel" rule came from `pokey_serclock` — so it wants building behind
+a compile flag and A/B-ing, not editing in place.

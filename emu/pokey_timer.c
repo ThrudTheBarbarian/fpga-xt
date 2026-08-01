@@ -9,6 +9,9 @@
 
 /* Base-clock periods in machine cycles: 1.79 MHz / 28 is the 64 kHz clock,
  * / 114 the 15 kHz one (which is also exactly one scanline). */
+#ifndef LINK_FAST
+#define LINK_FAST 7
+#endif
 #ifndef STIMER_EXTRA
 #define STIMER_EXTRA 4
 #endif
@@ -38,9 +41,9 @@ static int period_of(const pokey_timer *p, int ch)
     int fast3 = (p->audctl & 0x20) != 0;
 
     if (ch == 0 && (p->audctl & 0x10))          /* 1+2 linked, 1 is the low half */
-        return ((p->audf[1] << 8) | p->audf[0]) + (fast1 ? 7 : 1);
+        return ((p->audf[1] << 8) | p->audf[0]) + (fast1 ? LINK_FAST : 1);
     if (ch == 2 && (p->audctl & 0x08))          /* 3+4 linked */
-        return ((p->audf[3] << 8) | p->audf[2]) + (fast3 ? 7 : 1);
+        return ((p->audf[3] << 8) | p->audf[2]) + (fast3 ? LINK_FAST : 1);
     if (ch == 0 && fast1) return p->audf[0] + 4;
     if (ch == 2 && fast3) return p->audf[2] + 4;
     return p->audf[ch] + 1;
