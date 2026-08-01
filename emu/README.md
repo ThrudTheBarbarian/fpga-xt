@@ -1162,7 +1162,28 @@ primes the line because it is an explicit "load now", and so does an AUDF write
 that arrives while the counter is further than the pipe from its underflow —
 without them the first period after a fresh write uses whatever the line held.
 
-`pokey_timertiming` now clears both 8-bit change assertions and fails on the
-16-bit lo one, **"fired too early after 22c change (<43c)"** — the same capture
-rule applied to a linked pair's low half, whose reload path does not go through
-the delay line yet.
+### The period is decided near its END, not fixed at its start
+
+Routing the low half's reload through the delay line changed **nothing**, and
+measuring said why. For the 16-bit block (`AUDCTL $50`, `AUDF1 = 13`):
+
+```
+sta stimer   line 31 cycle 59  -> writes on 62
+sty audf1    line 31 cycle 81  -> writes on 84   ("+22c")
+```
+
+The low half's first period is `13 + 4 + 4` = 21, so its first underflow is at
+`62 + 21` = **83** — one cycle BEFORE the write. The write can only affect the
+SECOND period, which ends around 103, and its capture point is 101. Our
+down-counter reloaded at 83 using the value from 81, so it captured two cycles
+before the underflow that was *finishing* rather than the one about to *start*.
+
+Counting **up** and comparing the elapsed count against a live (delayed) AUDF
+every tick fixes it: the period is decided near its end. `LO_UPCOUNT` is on by
+default, 42 with all ten gates green, and `pokey_timertiming`'s "+22c" 16-bit
+case now passes.
+
+It fails on the companion **"+23c"** case instead, which wants that write NOT to
+land — and at 85 it is still far from the 101 capture point, so the one-cycle
+boundary there is something other than the second period's end. That is the next
+thing to measure.

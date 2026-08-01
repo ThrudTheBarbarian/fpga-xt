@@ -55,6 +55,13 @@ typedef struct {
     uint8_t  audf_d[4][AUDF_PIPE]; /* AUDF delay line: a reload uses the value as
                                     * it stood AUDF_PIPE ticks ago, because the
                                     * counter captures it before the underflow */
+    uint8_t  audf_lo_d[2][AUDF_PIPE]; /* the same line for a linked pair's LOW
+                                       * half, whose capture window follows ITS
+                                       * counter rather than the pair's */
+    int      lo_el[2];     /* the low half counting UP, so its period can be
+                            * compared against a LIVE (delayed) AUDF — see
+                            * LO_UPCOUNT in the .c */
+    int      lo_first[2];  /* still on the first period after STIMER */
     int      locnt[2];     /* a LINKED pair's LOW half, which keeps its own
                             * period and raises its own interrupt — see
                             * LINK_TWO_COUNTERS in the .c */

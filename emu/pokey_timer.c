@@ -33,6 +33,9 @@
  * fast, both linked — and want different timing; the only thing that differs is
  * which edge they watch.  The lag applies to EVERY pair underflow, not just the
  * first after STIMER. */
+#ifndef LO_UPCOUNT
+#define LO_UPCOUNT 1
+#endif
 #ifndef PAIR_IRQ_LAG
 #define PAIR_IRQ_LAG 4
 #endif
@@ -99,6 +102,16 @@ static void audf_prime(pokey_timer *p, int ch)
 {
     if (p->cnt[ch] > AUDF_PIPE)
         for (int k = 0; k < AUDF_PIPE; k++) p->audf_d[ch][k] = p->audf[ch];
+    /* the low half of a linked pair runs its own counter, so its window is its
+     * own too */
+    if ((ch == 0 || ch == 2) && p->locnt[ch / 2] > AUDF_PIPE)
+        for (int k = 0; k < AUDF_PIPE; k++) p->audf_lo_d[ch / 2][k] = p->audf[ch];
+}
+
+/* AUDF for a linked pair's LOW half, through its own delay line. */
+static uint8_t af_lo(const pokey_timer *p, int pair)
+{
+    return AUDF_PIPE ? p->audf_lo_d[pair][AUDF_PIPE - 1] : p->audf[2 * pair];
 }
 
 static void reload(pokey_timer *p, int ch)
@@ -291,6 +304,11 @@ void pokey_timer_tick(pokey_timer *p)
         for (int k = AUDF_PIPE - 1; k > 0; k--) p->audf_d[i][k] = p->audf_d[i][k - 1];
         if (AUDF_PIPE) p->audf_d[i][0] = p->audf[i];
     }
+    for (int i = 0; i < 2; i++) {
+        for (int k = AUDF_PIPE - 1; k > 0; k--)
+            p->audf_lo_d[i][k] = p->audf_lo_d[i][k - 1];
+        if (AUDF_PIPE) p->audf_lo_d[i][0] = p->audf[2 * i];
+    }
 
     /* An interrupt edge the pair still owes from an earlier underflow. */
     for (int i = 0; i < 2; i++)
@@ -314,9 +332,24 @@ void pokey_timer_tick(pokey_timer *p)
     int held34  = timer34_held(p);
     if (held34) { reload(p, 2); reload(p, 3); }
 
-    if (LINK_TWO_COUNTERS && linked1 && fast1 && --p->locnt[0] <= 0) {
-        p->locnt[0] = p->audf[0] + LINK_FAST;
-        raise(p, POKEY_IRQ_TIMER1);
+    if (LINK_TWO_COUNTERS && linked1 && fast1) {
+        if (LO_UPCOUNT) {
+            /* Counting UP and comparing against the DELAYED AUDF each tick is
+             * what makes a mid-count rewrite land: the period is decided near
+             * its END, not fixed at its start.  Reloading a down-counter at the
+             * underflow captures the value two cycles before the WRONG
+             * underflow — the one just finishing, not the one about to start. */
+            int target = p->lo_first[0] ? af_lo(p, 0) + 4 + LO_EXTRA
+                                        : af_lo(p, 0) + LINK_FAST;
+            if (++p->lo_el[0] >= target) {
+                p->lo_el[0] = 0;
+                p->lo_first[0] = 0;
+                raise(p, POKEY_IRQ_TIMER1);
+            }
+        } else if (--p->locnt[0] <= 0) {
+            p->locnt[0] = af_lo(p, 0) + LINK_FAST;
+            raise(p, POKEY_IRQ_TIMER1);
+        }
     }
     if (fast1 && --p->cnt[0] <= 0) underflow(p, linked1 ? 1 : 0);
     if (!held34 && fast3 && --p->cnt[2] <= 0) underflow(p, linked3 ? 3 : 2);
@@ -334,7 +367,7 @@ void pokey_timer_tick(pokey_timer *p)
         return;
 
     if (LINK_TWO_COUNTERS && linked1 && !fast1 && --p->locnt[0] <= 0) {
-        p->locnt[0] = p->audf[0] + 1;
+        p->locnt[0] = af_lo(p, 0) + 1;
         raise(p, POKEY_IRQ_TIMER1);
     }
     if (!fast1) {
@@ -380,8 +413,12 @@ void pokey_timer_write(pokey_timer *p, uint16_t addr, uint8_t val)
          * happened to hold. */
         for (int i = 0; i < 4; i++)
             for (int k = 0; k < AUDF_PIPE; k++) p->audf_d[i][k] = p->audf[i];
+        for (int i = 0; i < 2; i++)
+            for (int k = 0; k < AUDF_PIPE; k++) p->audf_lo_d[i][k] = p->audf[2 * i];
         for (int i = 0; i < 4; i++) reload(p, i);
         p->locnt[0] = p->audf[0] + ((p->audctl & 0x40) ? 4 : 1) + LO_EXTRA;
+        p->lo_el[0] = p->lo_el[1] = 0;
+        p->lo_first[0] = p->lo_first[1] = 1;
         p->locnt[1] = p->audf[2] + ((p->audctl & 0x20) ? 4 : 1) + LO_EXTRA;
         p->hi_lag[0] = p->hi_lag[1] = 0;
         /* EXPERIMENT: the first period after STIMER runs long.  pokey_timertiming
