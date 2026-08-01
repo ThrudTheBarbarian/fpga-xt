@@ -122,10 +122,38 @@ int main(void)
     pokey_timer_write(&p, 0xD20E, POKEY_IRQ_SEROC);
     expect("enabling SEROC while it stands fires at once", p.irq, 1);
 
-    /* loading SEROUT starts a transmission, so it is no longer complete */
+    /* SEROUT is a HOLDING register: with the serial clock STOPPED (SKCTL bit 5
+     * clear) the byte never reaches the shift register, so SEROC stays
+     * asserted.  pokey_serclock checks exactly this — "the shift register
+     * should never load in this mode". */
+    pokey_timer_reset(&p);
+    pokey_timer_skctl(&p, 0x03);                 /* external clock */
+    pokey_timer_write(&p, 0xD20E, POKEY_IRQ_SEROR);
     pokey_timer_write(&p, 0xD20D, 0x55);
-    expect("SEROUT deasserts SEROC",
+    for (int i = 0; i < 20000; i++) pokey_timer_tick(&p);
+    expect("a stopped serial clock never loads the shift register",
+           pokey_timer_irqst(&p) & POKEY_IRQ_SEROR, POKEY_IRQ_SEROR);
+    expect("and SEROC stays asserted",
+           pokey_timer_irqst(&p) & POKEY_IRQ_SEROC, 0);
+
+    /* With timer 2 clocking it (SKCTL $63) the byte transfers, SEROC drops, and
+     * SEROUT reports itself free. */
+    pokey_timer_reset(&p);
+    pokey_timer_skctl(&p, 0x63);
+    pokey_timer_write(&p, 0xD208, 0x00);         /* 64 kHz base */
+    pokey_timer_write(&p, 0xD202, 0x00);         /* AUDF2 = 0 */
+    pokey_timer_write(&p, 0xD20E, POKEY_IRQ_SEROR);
+    pokey_timer_write(&p, 0xD20D, 0x55);
+    for (int i = 0; i < 28 * 2; i++) pokey_timer_tick(&p);
+    expect("a running clock loads the shift register",
+           pokey_timer_irqst(&p) & POKEY_IRQ_SEROR, 0);
+    expect("which deasserts SEROC",
            pokey_timer_irqst(&p) & POKEY_IRQ_SEROC, POKEY_IRQ_SEROC);
+
+    /* ten bit times later it is complete again */
+    for (int i = 0; i < 28 * 21; i++) pokey_timer_tick(&p);
+    expect("and twenty clock periods later it completes",
+           pokey_timer_irqst(&p) & POKEY_IRQ_SEROC, 0);
 
     printf("ptimer: %s\n", fails ? "FAIL" : "all POKEY timer tests pass");
     return fails ? 1 : 0;

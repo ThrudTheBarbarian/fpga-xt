@@ -32,6 +32,10 @@
  * special and should be set even when disabled" — and then re-enables it to
  * check that doing so fires an interrupt immediately. */
 #define POKEY_IRQ_SEROC  0x08
+/* Serial output data required: the shift register has taken the byte, so SEROUT
+ * is free again.  pokey_serclock enables just this one and checks it NEVER
+ * fires with the clock stopped. */
+#define POKEY_IRQ_SEROR  0x10
 
 typedef struct {
     uint8_t  audf[4];      /* $D200/2/4/6 */
@@ -46,8 +50,12 @@ typedef struct {
     int      cnt[4];       /* the four dividers */
     uint8_t  irq;          /* the /IRQ line to the CPU */
     uint8_t  init;         /* SKCTL[1:0] == 0: dividers held */
-    uint8_t  seroc;        /* serial output COMPLETE.  1 when nothing is being
-                            * transmitted, which is the resting state. */
+    uint8_t  skctl;        /* $D20F: bits 6-4 select the serial clocking mode */
+    uint8_t  serout_full;  /* SEROUT holds a byte waiting for the shift register */
+    uint8_t  seroc;        /* serial output COMPLETE — a property of the SHIFT
+                            * register, not of SEROUT.  Loading SEROUT while the
+                            * clock is stopped leaves this asserted, because the
+                            * byte never reaches the shift register at all. */
     int      ser_bits;     /* bits left to shift out: start + 8 data + stop */
 } pokey_timer;
 
