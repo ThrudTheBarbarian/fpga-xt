@@ -1525,8 +1525,36 @@ WSYNC_RMW_EXTRA=0:  the ENTIRE 4x-to-1x block passes (all 256 iterations)
 Five tests force 105 and one forces 104, from one constant. By rule (q) that
 means the SHAPE is wrong, not the value: "the second write of an RMW pushes the
 release out by one" is the wrong generalisation of whatever the hardware does.
-The next move is to find what DISTINGUISHES the two groups — most likely where
-in the scanline the two writes land relative to the release point, which
-`ACID_COLPROBE`'s "WSYNC release" line reports for every case in both groups.
+
+Logging every WSYNC write with its scanline cycle (`ACID_COLPROBE` now prints
+them) gives four cases, and exactly one structural difference between them:
+
+| test | RMW write pair | wants |
+|---|---|---|
+| `antic_wsync` | 1, 2 | extra |
+| `pokey_noise` | 11, 12 and 113, 0 | extra |
+| `antic_dlitiming` | 5, 6 / 96, 97 / 109, 110 | extra |
+| `gtia_pmresize` | 32, **34** | NO extra |
+
+Every case that wants the extra has its two writes on ADJACENT cycles; the one
+that does not has a memory refresh at cycle 33 sitting between them. That looked
+decisive, and it is wrong — **DISPROVED**. With the extra applied only to
+adjacent pairs the suite stays at 47 and `gtia_pmresize` still fails, just one
+iteration later: index 0 now passes and index 1 does not. Its loop runs 256
+times and the pair's alignment drifts, so adjacency buys the iterations where a
+refresh happens to fall between the writes and nothing else. On hardware all 256
+behave the same, so DMA alignment cannot be the discriminator.
+
+(That first attempt also failed for a second, separate reason worth remembering:
+the pair can STRADDLE A LINE BOUNDARY — `pokey_noise` writes at 113 and 0 — so
+"adjacent" cannot be tested on scanline cycles. `antic.ticks`, a free-running
+machine-cycle count, was added for it and is worth keeping.)
+
+Two shapes down. What is still true is that ONE machine cycle at this boundary
+is all that stands between `gtia_pmresize` and its first 256 assertions, and
+that the five tests wanting the extra measure it directly — `antic_wsync` reads
+RANDOM after each and the LFSR decoder puts its INC read exactly 115 cycles
+after its STA read, one scanline plus one. So both sides are real measurements
+and the reconciliation is still missing.
 
 Kept at 1, which is the known-good 47.

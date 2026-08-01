@@ -9,6 +9,14 @@
 #ifndef WSYNC_RMW_EXTRA
 #define WSYNC_RMW_EXTRA 1
 #endif
+/* ...and whether that only applies when the two writes are ADJACENT.  An RMW's
+ * writes are on consecutive CPU cycles, but a DMA cycle can fall between them:
+ * antic_wsync's INC lands its pair at scanline cycles 1 and 2, gtia_pmresize's
+ * at 32 and 34 with a memory refresh at 33.  That is the only structural
+ * difference between the two, and they want different releases. */
+#ifndef WSYNC_RMW_ADJACENT
+#define WSYNC_RMW_ADJACENT 0
+#endif
 #include <stdio.h>
 int antic_glyph_probe;
 #include <string.h>
@@ -602,6 +610,7 @@ int antic_tick(antic *a)
         took = 1;
 
     /* ---- advance ---------------------------------------------------------- */
+    a->ticks++;
     if (++a->cycle >= ANTIC_LINE_CYCLES) {
         /* ACID_GLYPHPROBE=9: this line's finished fetch map.  Printed HERE, at
          * the line's end, so it shows the schedule as a mid-line DMACTL or
@@ -807,7 +816,9 @@ void antic_write(antic *a, uint16_t addr, uint8_t val)
         /* WSYNC.  Arms on the FIRST write — an RMW writes it twice and the
          * halt must not re-arm on the second (antic_wsync, d5). */
         if (!a->wsync_halt) a->wsync_halt = 1;
-        else                a->wsync_extra = WSYNC_RMW_EXTRA;
+        else if (!WSYNC_RMW_ADJACENT || a->wsync_wr_at + 1 == a->ticks)
+            a->wsync_extra = WSYNC_RMW_EXTRA;
+        a->wsync_wr_at = a->ticks;
         break;
     case 0x0E:
         a->nmien = val;

@@ -367,6 +367,10 @@ static void io_write(atari *s, uint16_t a, uint8_t v)
         if (s->col_probe && (a & 0x0F) == 0x0E)
             fprintf(stderr, "  NMIEN  write $%02X sl %3d cyc %3d (set_now %d nmist $%02X)\n",
                     v, s->an.scanline, s->an.cycle - 1, s->an.nmist_set_now, s->an.nmist);
+        if (s->col_probe && (a & 0x0F) == 0x0A)
+            fprintf(stderr, "  WSYNC  write sl %3d cyc %3d (halt %d extra %d)\n",
+                    s->an.scanline, s->an.cycle - 1, s->an.wsync_halt,
+                    s->an.wsync_extra);
         if (s->col_probe && (a & 0x0F) == 0x0F)
             fprintf(stderr, "  NMIRES write sl %3d cyc %3d (set_now %d nmist $%02X)\n",
                     s->an.scanline, s->an.cycle - 1, s->an.nmist_set_now, s->an.nmist);

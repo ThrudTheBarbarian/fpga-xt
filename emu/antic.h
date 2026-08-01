@@ -117,6 +117,12 @@ typedef struct {
                             * never fetched at all and never advanced the
                             * playfield scan address (antic_pfstarttiming). */
     uint8_t  nmi_arm;      /* the status set at cycle 7 raises /NMI at 8 */
+    unsigned long ticks;   /* free-running machine cycles since reset */
+    unsigned long wsync_wr_at; /* `ticks` of the last WSYNC write.  An RMW's two
+                            * writes are only ADJACENT when no DMA falls between
+                            * them, and the pair can straddle a line boundary —
+                            * pokey_noise writes at 113 and 0 — so this cannot
+                            * be a scanline cycle. */
     uint8_t  wsync_extra;  /* a WSYNC write arriving while the halt is ALREADY
                             * armed pushes the release out by one cycle — an
                             * RMW writes twice (antic_wsync's INC cases) */
