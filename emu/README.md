@@ -694,12 +694,25 @@ What remains open is a **one sled step (two machine cycle)** tension inside the
   2 or more.
 
 Swept 0..6: 0 and 1 fail "15KHz IRQ fired too late", 2 fails the odd count, 3+
-fail the even count. Since the divider phase is common to both paths and only
-one of them involves the CPU, the remaining two cycles are most likely in the
-**recognition path** rather than in POKEY — note that `cpu_cycle_done()` ticks
-POKEY *after* the CPU's access, so an `lda irqst` deliberately sees the state as
-of the start of its cycle (which is what `RANDOM` requires). Worth checking
-whether IRQST should be sampled the other way round from RANDOM.
+fail the even count.
+
+**Tried: sampling IRQST at the END of its cycle** instead of the start (`RANDOM`
+must be read as of the start — `antic_wsync`'s LFSR decode pins that — but IRQST
+need not follow it). It works, in the narrow sense: with `BASE_15K_LEAD = 1` and
+a late IRQST sample, **the whole of `pokey_inittiming` passes**, all four groups.
+
+It is not a win, though, because it costs `pokey_sertiming`, and the two cancel
+exactly. `pokey_sertiming` is a one-cycle boundary read through the SAME
+register — its 195-cycle delay must NOT see the SEROUT take and its 196-cycle
+delay must — so moving the IRQST sample moves that boundary too. Net 41 either
+way, and a two-parameter fit (lead AND sample phase) against one test while
+breaking another is not evidence.
+
+What this does establish: `pokey_inittiming` IS satisfiable, and the disagreement
+is a single cycle in when a POKEY register read is observed relative to the
+divider. The next thing to test is whether `ser_take`'s tick should move with it,
+which would let both tests hold at once — but only if that has its own
+justification rather than being fitted to restore the score.
 
 
 ## Open: antic_pfstarttiming / pfstoptiming — the START commits before the STOP
