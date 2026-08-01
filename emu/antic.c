@@ -104,6 +104,11 @@ void antic_reset(antic *a)
 {
     a->cycle = a->scanline = a->vcount = 0;
     a->wsync_halt = 0;
+    /* Start PARKED, as if a JVB had just executed: a well-formed display list
+     * only ever begins after vertical blank ends, and the release at scanline 8
+     * is what puts it there.  Starting unparked runs the list from scanline 0
+     * and shifts every DLI eight lines early. */
+    a->dl_done = 1;
     a->nmi = 0;
     a->nmist = 0;
     a->nmien = 0;
@@ -128,9 +133,13 @@ static void line_start(antic *a)
     memset(a->blocked, 0, sizeof a->blocked);
     a->dli_line = 0;
 
-    int visible = a->scanline >= ANTIC_DISPLAY_TOP
-               && a->scanline <  ANTIC_DISPLAY_BOTTOM;
-    if (!visible || !(a->dmactl & 0x20) || a->dl_done)
+    /* Display-list EXECUTION has no bottom cutoff — the list runs until it
+     * executes a JVB, so a list longer than the visible region carries on past
+     * the bottom of the frame and into the next one.  antic_dlistwrap builds
+     * exactly that case: 248 blank lines then a DLI, which lands around
+     * scanline 256 and must still fire.  Bounding this by the display window is
+     * the intuitive reading and silently drops that DLI. */
+    if (!(a->dmactl & 0x20) || a->dl_done)
         return;
 
     if (a->row_line >= a->row_height)
@@ -215,12 +224,21 @@ int antic_tick(antic *a)
         if (++a->scanline >= a->lines) {
             a->scanline = 0;
             a->vcount   = 0;     /* the wrap is at the END of the last line */
-            /* A new frame restarts the display list, but a DL that ran past
-             * the bottom simply continues — and a DLI already raised survives
-             * the boundary (antic_dlistwrap). */
-            a->dl_addr   = a->dlist;
-            a->row_line  = a->row_height;   /* force a fetch on the first line */
-            a->dl_done   = 0;
+            /* Nothing reloads the display-list counter here.  A list that ran
+             * past the bottom of the frame simply CONTINUES into the next one —
+             * a list returns to its start only by executing a JVB, which has
+             * already loaded dl_addr with its operand.  Reloading from a DLIST
+             * latch each frame is the intuitive model and it fails
+             * antic_dlistwrap's first assertion outright.  Nor is row_line
+             * reset: an overrunning row carries on across the boundary. */
+        }
+        /* A JVB parks the list until VERTICAL BLANK ENDS, which is scanline 8 —
+         * not until the frame wraps.  That distinction is what lets a list which
+         * overran keep executing through scanlines 0..7 of the new frame, where
+         * antic_dlistwrap's DLI actually lands. */
+        if (a->scanline == ANTIC_DISPLAY_TOP && a->dl_done) {
+            a->dl_done  = 0;
+            a->row_line = a->row_height;    /* force a fetch on the first line */
         }
     }
     return took;
@@ -243,8 +261,11 @@ void antic_write(antic *a, uint16_t addr, uint8_t val)
     switch (addr & 0x0F) {
     case 0x00: a->dmactl = val; break;
     case 0x01: a->chactl = val; break;
-    case 0x02: a->dlist  = (uint16_t)((a->dlist & 0xFF00) | val); break;
-    case 0x03: a->dlist  = (uint16_t)((a->dlist & 0x00FF) | (val << 8)); break;
+    /* DLISTL/H IS the display-list counter, not a latch that seeds one: ANTIC
+     * increments it in place as it fetches, so a write sets where the list
+     * resumes from and there is nothing to reload it from later. */
+    case 0x02: a->dl_addr = (uint16_t)((a->dl_addr & 0xFF00) | val); break;
+    case 0x03: a->dl_addr = (uint16_t)((a->dl_addr & 0x00FF) | (val << 8)); break;
     case 0x04: a->hscrol = val; break;
     case 0x05: a->vscrol = val; break;
     case 0x07: a->pmbase = val; break;

@@ -187,6 +187,11 @@ static int run_one(const char *dir, const char *name, unsigned long long *cyc)
             armed = 1;
             s.dbg_trace = 20;
         }
+        if (getenv("ACID_NMIPROBE") && s.cpu.pc == 0xFF00) {
+            static int n; if (++n <= 6)
+                fprintf(stderr, "  [nmi #%d] cycle %llu nmist $%02X nmien $%02X dl_addr $%04X\n",
+                        n, (unsigned long long)s.cycles, s.an.nmist, s.an.nmien, s.an.dl_addr);
+        }
         if (s.cpu.pc == t_pass) { *cyc = s.cycles; return 0; }
         if (t_skip && s.cpu.pc == t_skip) { *cyc = s.cycles; return R_SKIP; }
         if (s.cpu.pc == t_fail) {

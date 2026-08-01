@@ -56,7 +56,6 @@ typedef struct {
     /* registers */
     uint8_t  dmactl, chactl, hscrol, vscrol, pmbase, chbase;
     uint8_t  nmien, nmist;
-    uint16_t dlist;
 
     /* timing */
     int cycle;        /* 0..113 within the scanline */

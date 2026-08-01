@@ -160,7 +160,7 @@ int main(void)
 
         antic d;
         antic_init(&d, mem_fetch, dm, ANTIC_LINES_NTSC);
-        d.dlist = 0x2C00; d.dl_addr = 0x2C00;
+        d.dl_addr = 0x2C00;
         d.dmactl = 0x22;                      /* DL DMA on, normal width */
         d.nmien  = ANTIC_NMI_DLI;
         d.row_line = d.row_height = 0;
@@ -190,7 +190,7 @@ int main(void)
 
         antic e;
         antic_init(&e, mem_fetch, lm, ANTIC_LINES_NTSC);
-        e.dlist = 0x2C00; e.dl_addr = 0x2C00;
+        e.dl_addr = 0x2C00;
         e.dmactl = 0x22;                       /* DL on, NORMAL width */
         e.row_line = e.row_height = 0;
         run_to(&e, ANTIC_DISPLAY_TOP + 1, 0);
