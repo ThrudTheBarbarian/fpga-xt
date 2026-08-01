@@ -495,15 +495,17 @@ modelled at all:
   past that. Its next assertion checks that timers 3+4 are RESET when the start
   bit arrives, and expects the interrupt about twelve scanlines after STIMER, so
   it needs a start bit to arrive at all.
-* `pokey_serdirect` (jams at $0014) and `pokey_skstat` (loops) both very likely
-  want SERIN and the SKSTAT input bits.
-* `pokey_twotone` is separate: SKCTL bit 3 keys the serial output between two
-  tones, and its counts are "6 cycles on timer 4, 32 on timer 2" for three
-  spaces against 16 on timer 2 for three marks. This model gives 48 for the
-  marks, exactly 3x, so timer 2 is running free where two-tone should be
-  gating or resetting it. Read that test's mark/space comments closely — they
-  give the expected counts for both phases, which is enough to pin the rule
-  without guessing at the modulation.
+* `pokey_serdirect` (jams at $0014) very likely wants SERIN and the SKSTAT input
+  bits.
+* `pokey_skstat` is a DIFFERENT problem and should not be lumped in with the
+  input path: it is not waiting on anything, it has DERAILED. The PC histogram
+  shows 26 million hits at `$3720`, well outside its own code, in a data area —
+  a tight loop on garbage — while 25,234 interrupts are taken and dispatched
+  harmlessly through the runner's default VIMIRQ. Find what sends it there
+  before modelling SKSTAT; the derail is upstream of whatever it wanted to
+  measure.
+* `pokey_twotone` is DONE — two-tone holds timer 2 while the output line is a
+  mark, which satisfied both its phases at once.
 
 `pokey_inittiming`'s 64 kHz case remains two cycles out and is unrelated to the
 input path.
