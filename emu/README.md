@@ -1201,9 +1201,31 @@ distinguishes them — and no capture rule can, because the boundary sits at 84/
 while our candidate points are 81, 83 and 101.
 
 The 84/85 boundary is exactly `underflow - 2` / `underflow - 1` for an underflow
-at **86** — which is what the unlinked 8-bit case has (`AUDF1 = 16`, first period
-24, from 62). So the likely error is that the linked low half's FIRST period is
-misplaced: 21 where 24 would put the boundary exactly where the test wants it.
-`LO_EXTRA` and the `+4` were both pinned with `AUDF1 = 16` on the UNLINKED path,
-so rule (p) applies — they are suspect on the linked one. Sweep the low half's
-first-period constants against these two assertions specifically.
+at **86**, so 24 looked like the answer. It is not, and the sweeps say why.
+
+**The linked low half's first period is forced to two different values.**
+
+| first period | `16-bit lo loop #1` (`AUDF1 = 16`) | the change block (`AUDF1 = 13`) |
+|---|---|---|
+| `AUDF1 + 8` — 24 and 21 | passes | +22c passes, +23c fails |
+| constant 22 or 23 | fails, too early | — |
+| **constant 24** | passes | **+22c fails, too late** |
+| constant 25+ | fails, too late | — |
+
+Loop #1 wants 24 and gets it either way, because its `AUDF1` is 16. The change
+block wants 21 from the `+22c` assertion and 24 from the boundary arithmetic.
+Tried with both counter shapes — up-count and down-count — and neither
+combination satisfies both. The `Y` written by the change blocks is `$0f` = 15
+against `AUDF1 = 13`, so landing LENGTHENS the period by two, which is consistent
+either way and does not break the tie.
+
+By rule (q) that is a shape problem, not a constant: something about the linked
+low half's first period differs between the two blocks beyond `AUDF1`, and
+nothing measured so far distinguishes them. Left at the known-good configuration
+— `LO_UPCOUNT` with the AUDF-dependent first period, where `+22c` passes and
+`+23c` fails.
+
+This test has now given up five rules (the STIMER first period, both halves
+interrupting, the interrupt/serial edge split, the AUDF capture delay, and the
+end-decided period). The remaining assertion pair is deep in diminishing returns;
+better value elsewhere.
