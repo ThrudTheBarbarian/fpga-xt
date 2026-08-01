@@ -483,3 +483,27 @@ constructed to straddle refresh, and the two cycles are probably about WHICH
 cycles refresh takes relative to the release rather than about the divider at
 all. Note the same test's odd-offset variant accepts `$1d-$1e`, i.e. a
 two-cycle spread, so the even case is the sharper of the pair.
+
+## Open: the POKEY serial cluster needs an INPUT path
+
+Output is largely done — `pokey_serclock`, `pokey_sertiming` and `pokey_seroc`
+pass. What is left in this cluster mostly needs the RECEIVE side, which is not
+modelled at all:
+
+* `pokey_asyncrecv` — asynchronous receive mode (SKCTL bit 4) now correctly
+  HOLDS timer 4, since POKEY is waiting for a start bit, and the test advances
+  past that. Its next assertion checks that timers 3+4 are RESET when the start
+  bit arrives, and expects the interrupt about twelve scanlines after STIMER, so
+  it needs a start bit to arrive at all.
+* `pokey_serdirect` (jams at $0014) and `pokey_skstat` (loops) both very likely
+  want SERIN and the SKSTAT input bits.
+* `pokey_twotone` is separate: SKCTL bit 3 keys the serial output between two
+  tones, and its counts are "6 cycles on timer 4, 32 on timer 2" for three
+  spaces against 16 on timer 2 for three marks. This model gives 48 for the
+  marks, exactly 3x, so timer 2 is running free where two-tone should be
+  gating or resetting it. Read that test's mark/space comments closely — they
+  give the expected counts for both phases, which is enough to pin the rule
+  without guessing at the modulation.
+
+`pokey_inittiming`'s 64 kHz case remains two cycles out and is unrelated to the
+input path.
