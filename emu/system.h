@@ -28,6 +28,7 @@ typedef struct {
     gtia       gt;
     pokey_rand pk;
     pokey_timer pt;
+    int         pending_render;  /* cycle+1 whose colour clocks are deferred */
     pia        pia;
     uint8_t    pm_prev_p[4], pm_prev_m;  /* one fetch back, for VDELAY */
     unsigned long long ser_mark;

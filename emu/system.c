@@ -133,7 +133,16 @@ static void sys_cycle(atari *s)
         if (s->an.nmi) s->nmi_hold = 1;
         int cyc  = s->an.cycle;
         int took = antic_tick(&s->an);
-        render_cycle(s, cyc);
+        /* A cycle ANTIC takes is rendered here; a cycle the CPU gets is rendered
+         * AFTER its bus access, so a GTIA register write lands before the two
+         * colour clocks that same cycle emits.  gtia_pmretrigger is what pins
+         * this: it writes HPOSP0 mid-line and times the redraw against the
+         * beam, and it only passes with the write applied first.
+         *
+         * The stored value is cycle + 1 so that zero means "nothing deferred"
+         * — cycle 0 is a real cycle. */
+        if (took) render_cycle(s, cyc);
+        else      s->pending_render = cyc + 1;
         pm_latch(s);
         s->cycles++;
         /* Hold ANTIC's one-cycle /NMI pulse until the CPU latches the edge, then
@@ -163,6 +172,10 @@ static void sys_cycle(atari *s)
  * $95 was wanted, step 114 against step 113). */
 static void cpu_cycle_done(atari *s)
 {
+    if (s->pending_render) {
+        render_cycle(s, s->pending_render - 1);
+        s->pending_render = 0;
+    }
     pokey_rand_tick(&s->pk); s->pk_ticks++;
     pokey_timer_tick(&s->pt);
     s->cpu.irq = (uint8_t)(s->pt.irq | s->pia.irq);
