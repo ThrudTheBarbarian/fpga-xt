@@ -209,6 +209,11 @@ static void io_write(atari *s, uint16_t a, uint8_t v)
         gtia_write(&s->gt, a, v);
         break;
     case 0xD200:
+        if (s->col_probe && (a & 0x0F) == 0x0D)
+            fprintf(stderr, "  SEROUT <- $%02X sl %3d cyc %3d skctl $%02X "
+                    "cnt0 %5d cnt2 %5d bits %d full %d\n",
+                    v, s->an.scanline, s->an.cycle, s->pt.skctl,
+                    s->pt.cnt[0], s->pt.cnt[2], s->pt.ser_bits, s->pt.serout_full);
         pokey_timer_write(&s->pt, a, v);
         if ((a & 0x0F) == 0x08) pokey_rand_audctl(&s->pk, v);
         if ((a & 0x0F) == 0x0F) {

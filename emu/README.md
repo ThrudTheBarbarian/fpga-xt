@@ -423,39 +423,32 @@ own annotations disagree with each other here: `antic_nmist`'s seven-cycle
 `pha:pla` spanning 104..109 puts its first cycle at 103, while `antic_vcount`'s
 four-cycle `bit $0100` spanning 105..107 plus an unnumbered first puts it at 104.
 
-## Open: pokey_sertiming's two blocks disagree about the SEROUT take
+## Open: pokey_sertiming is a ONE-CYCLE boundary, and the tick is 28 cycles late
 
-SEROR and SEROC are both LEVELS (see the commit), which reconciled
-`pokey_serclock` with `pokey_sertiming`'s second block and is settled. What is
-left is that sertiming's own two blocks want opposite things from the SAME
-228-cycle clock:
+An earlier note here claimed sertiming's two blocks differ in that one has a
+195-cycle delay and the other none, and guessed the resolution lay in STIMER.
+**Both parts were wrong.** Read properly, the blocks are:
 
-* **Block A** (`.lst` lines 135-145): reset SKCTL, `sta serout`, delay **195
-  cycles**, read IRQST, expect `$00` — SEROC still ASSERTED, i.e. the shift
-  register has NOT taken the byte. Fails as "loaded too early".
-* **Block B** (lines 151-167): two WSYNCs, **STIMER**, reset SKCTL,
-  `sta serout`, read IRQST immediately, expect `$08` — SEROC DEASSERTED, i.e. it
-  HAS taken it. Fails as "loaded too late".
+* block A — `sta serout`, delay **195**, expect SEROC still ASSERTED;
+* block B — `sta serout`, delay **196**, expect SEROC DEASSERTED.
 
-Both follow the same `audctl $78 / audf 228-7` and neither reconfigures it.
-Measured: an immediate take passes serclock and block B and fails block A; a
-tick-driven take passes serclock and block A and fails block B. Both score 34.
-The immediate take is what is currently in, because it is what reconciled the
-serclock contradiction.
+One cycle apart, on the same 228-cycle clock. This is the suite's usual
+one-cycle boundary, not a structural difference, and it says exactly when the
+shift register takes the byte: **196 cycles after the SEROUT write**.
 
-The difference between the blocks is that **B does STIMER and A does not**, and
-A relies on the free-running divider still having more than 195 of its 228
-cycles left. So the resolution is probably about what STIMER does to the serial
-clock specifically — if STIMER makes the shift register sample immediately, or
-starts the bit clock in a state that takes the byte at once, both blocks work
-with a tick-driven take. That is the next thing to test, and it is checkable:
-block A must see NO tick in 195 cycles while block B sees one straight away.
+Measured with a probe on the SEROUT write (`ACID_COLPROBE` prints SKCTL, both
+divider counts, ser_bits and serout_full): both blocks present *identical* state
+— same scanline, same cycle, `cnt0 = 224`. So the divider-phase hypothesis is
+dead too: no model that depends only on POKEY's state can distinguish them,
+because there is nothing to distinguish.
 
-**Tried, and partially right.** Gating the immediate take on "a STIMER has
-happened since the last take" keeps `serclock` passing and moves the failure to
-block A's "loaded too early" — i.e. block B is satisfied — but block A still
-takes immediately, because the flag survives from a STIMER earlier in the test
-and nothing has consumed it in between. So the flag is too coarse: what matters
-is presumably how far the serial divider is from its next tick at the moment
-SEROUT is written, not merely whether a STIMER has ever occurred. Reverted; the
-committed state is the plain immediate take at 34.
+224 is explained: both blocks write `skctl = $00` then `$63`, and the release
+from init reloads the counters to 228, four cycles before the `sta serout`. The
+test wants the tick 196 cycles after that write, i.e. 200 after the release —
+**28 cycles earlier than this model produces**, and 28 is exactly one 64 kHz
+base tick.
+
+So the remaining question is what the SKCTL release actually leaves the serial
+divider at. It is NOT a full period. Note this is the same suspicious 28 as the
+still-open `pokey_inittiming` gap, which is likely the same underlying
+mis-modelling of the divider chain seen from another angle.
