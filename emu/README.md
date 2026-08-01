@@ -1597,3 +1597,50 @@ green.
 The `_vputchar` stub is kept anyway: it is correct independently of these four,
 because any test that prints before it fails would otherwise derail to `$0000`
 rather than reaching `_testFailed`.
+
+## The HSCROL trio: the rate is the clue, not the constant
+
+`antic_pfstarttiming` runs the SAME experiment twice — once moving DMACTL and
+once moving HSCROL — with the write one cycle later in the "late" case each
+time. Comparing the two pairs as DELTAS (rule c) is what the test is for:
+
+| written mid-line | early (write at 13-16) | late (write at 14-17) | delta |
+|---|---|---|---|
+| DMACTL | 16 | 18 | **2** |
+| HSCROL | 16 | 17 | **1** |
+
+Both pairs are the same probe — `(p0pf << 2) | p1pf` plus a per-block constant
+(rule j: `+12` for DMACTL, `+10` for HSCROL) — so the unit is the same in both
+rows. One machine cycle of extra delay moves the DMACTL edge by TWO units and
+the HSCROL edge by ONE.
+
+Two units per machine cycle is the natural rate: a machine cycle is two colour
+clocks. **HSCROL moves at half that** — which is the same half-cycle-per-clock
+relation `make dma` already reports for the window derivation, showing up again
+in the mid-line write path.
+
+We get the DMACTL row right and the HSCROL row flat: 16 and 16. The reason is
+visible in `rebuild_line`. Both writes go through it identically, and the
+decision is
+
+```c
+int old_start = old_nom - PF_COMMIT_LEAD;      /* narrow: 26 - 3 = 23 */
+int pin = (from >= old_start) ? old_nom : -1;
+```
+
+The HSCROL writes land at cycles 16 and 17, so `from` is 17 and 18 — BOTH below
+23, both giving `pin = -1`, both rebuilding the whole line from the new HSCROL.
+Identical by construction, which is exactly the symptom. The DMACTL pair works
+because those writes straddle a boundary this rule does happen to place
+correctly.
+
+So the missing piece is not another value for `PF_COMMIT_LEAD` — that is
+already disproved as the lever, and a binary commit/don't-commit test cannot
+produce a ONE-unit shift anyway. It needs a rule where a mid-line HSCROL write's
+effect on the window start moves at HALF a machine cycle per machine cycle of
+delay, rather than all-or-nothing. That is the shape to build next, and the
+delta table above is the thing to fit it against.
+
+`antic_pfstoptiming` fails on its own HSCROL early case (19 where 16 is wanted)
+and `antic_hscrolbug` on "Unstopped PF DMA", so all three are almost certainly
+one idea.
