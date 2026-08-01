@@ -244,12 +244,17 @@ static void line_start(antic *a)
          * "mid-interrupted" and "replayed" cases check. */
         int n = antic_pf_bytes(a->dmactl, (uint8_t)mode);
 
-        /* A CHARACTER mode fetches its names ONCE, on the first scanline of the
-         * row, and re-uses them from the line buffer for the rest — only the
-         * glyph row is re-fetched.  A BITMAP mode fetches fresh data every
-         * scanline.  That difference is the whole reason the buffer exists, and
-         * antic_dma.c already carries it as separate first/rest strides. */
-        if (mode >= 8 || a->row_line == 0) {
+        /* Playfield data is fetched ONCE, on the row's first scanline, and
+         * re-displayed from the buffer for the rest of the row — for BITMAP
+         * modes as much as character ones.  antic_dma.c already says so: every
+         * mode from 8 up has stride_rest = 0, i.e. no fetch on later scanlines.
+         * Only the character modes re-fetch, and only their glyph row.
+         *
+         * That is the whole of antic_linebuffering's "aliased" scenarios: it
+         * turns playfield DMA off, lets a mode 8 row START under that, then
+         * turns DMA back on mid-row and checks the STALE buffer is what gets
+         * displayed.  Re-fetching every scanline quietly refills it. */
+        if (a->row_line == 0) {
             for (int i = 0; i < n && i < (int)sizeof a->linebuf; i++) {
                 a->linebuf[i] = a->fetch ? a->fetch(a->ctx, a->pf_addr) : 0xFF;
                 a->pf_addr = antic_pf_next(a->pf_addr);

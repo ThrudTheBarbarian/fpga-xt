@@ -73,8 +73,8 @@ static void render_cycle(atari *s, int cyc)
                 if (gtia_missile_lit(&s->gt, i)) lit |= 0x08 >> i;
             }
             if (lit || pf >= 0)
-                fprintf(stderr, "  mode %2d chactl $%02X cc $%02X pf %2d objs $%02X glyph0 $%02X\n",
-                        s->an.dl_insn & 0x0F, s->an.chactl, cc, pf, lit, s->an.glyphbuf[0]);
+                fprintf(stderr, "  mode %2d chactl $%02X cc $%02X pf %2d objs $%02X lb5 $%02X lblen %d\n",
+                        s->an.dl_insn & 0x0F, s->an.chactl, cc, pf, lit, s->an.linebuf[5], s->an.lb_len);
         }
     }
 }
