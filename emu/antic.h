@@ -101,6 +101,7 @@ typedef struct {
     int8_t   pf_at[ANTIC_LINE_CYCLES]; /* which line-buffer byte each cycle
                                         * fetches from the scan address, -1 for
                                         * none — see antic_dma_line_map */
+    uint8_t  pf_next;      /* how many playfield bytes this line has fetched */
     uint8_t  glyph_row;    /* the row within the glyph for THIS scanline */
     uint8_t  row_first;    /* this scanline is the row's FIRST, which is NOT the
                             * same as row_line == 0: a row ENTERING a vertically

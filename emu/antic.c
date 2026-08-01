@@ -270,6 +270,7 @@ static void line_start(antic *a)
 {
     memset(a->blocked, 0, sizeof a->blocked);
     memset(a->pf_at, -1, sizeof a->pf_at);
+    a->pf_next = 0;
     a->dli_line = 0;
 
     /* Memory refresh is taken on EVERY scanline, whatever DMACTL says — nine
@@ -366,8 +367,48 @@ static void line_start(antic *a)
     /* The glyph row for THIS scanline, captured before the counter moves on —
      * the progressive fetch runs after line_start has advanced it. */
     a->glyph_row = (uint8_t)a->row_line;
-    a->row_first = 0;
     a->row_line = (a->row_line + 1) & 0x0F;
+}
+
+/* Rebuild the rest of this scanline's schedule from the LIVE registers.
+ *
+ * ANTIC does not latch DMACTL or HSCROL for the line; the window edges are
+ * compared against the horizontal counter as it runs, so a write part way down
+ * the line moves the edges for whatever is still to come.  Cycles already past
+ * keep what they did — the bytes they fetched stay fetched, and the running
+ * count carries on — so shortening the window mid-fetch truncates the row and
+ * widening it extends it, which is exactly what antic_pfstarttiming,
+ * antic_pfstoptiming and antic_hscrolbug measure. */
+static void rebuild_line(antic *a)
+{
+    int from = a->cycle;                    /* the next cycle to run */
+    if (from < 0 || from >= ANTIC_LINE_CYCLES) return;
+
+    uint8_t blk[ANTIC_LINE_CYCLES];
+    int8_t  map[ANTIC_LINE_CYCLES];
+    int mode = a->dl_insn & 0x0F;
+    int on   = mode >= 2 && (a->dmactl & 0x20);
+
+    antic_dma_line_map(on ? (uint8_t)mode : 0, width_of(a->dmactl), a->row_first,
+                       hscrol_of(a), blk, map);
+
+    /* Turning playfield DMA OFF part way down a line does not stall the line
+     * buffer — ANTIC keeps clocking it and latches whatever is on the bus, so
+     * the buffer position and the scan address both carry on.  Only the CPU
+     * gets those cycles back.  antic_linebuffering's test 5 is built on exactly
+     * that: it kills DMACTL across the centre of a mode 8 row, does NOT check
+     * the bytes in the gap ("from the bus, but we don't test that yet"), and
+     * requires the bytes to the RIGHT of it to be unshifted.  Dropping the
+     * fetch slots here would slide the rest of the row left.
+     *
+     * A row that STARTS with DMA off is a different case, handled in
+     * line_start: nothing is fetched at all and the previous row is redisplayed. */
+    int keep_map = !on || antic_pf_bytes(a->dmactl, (uint8_t)mode) == 0;
+
+    for (int c = from; c < ANTIC_LINE_CYCLES; c++) {
+        a->blocked[c] = blk[c];
+        if (!keep_map) a->pf_at[c] = map[c];
+    }
 }
 
 int antic_tick(antic *a)
@@ -392,7 +433,13 @@ int antic_tick(antic *a)
      * The scan address advances per ACTUAL fetch, which is what makes the
      * STRIDE those tests measure fall out rather than being asserted. */
     if (c < ANTIC_LINE_CYCLES && a->pf_at[c] >= 0) {
-        int i = a->pf_at[c];
+        /* The index is a RUNNING COUNT, not the map's own number, because the
+         * map can be rebuilt mid-line when DMACTL or HSCROL moves the window.
+         * Bytes already fetched stay fetched and the sequence carries on, so
+         * the row's byte count follows from how many fetch cycles actually
+         * happened — which is the "STOP is a cycle comparison, never a count"
+         * rule antic_dma.c states and antic_hscrolbug depends on. */
+        int i = a->pf_next++;
         if (i < (int)sizeof a->linebuf) {
             a->linebuf[i] = a->fetch ? a->fetch(a->ctx, a->pf_addr) : 0xFF;
             a->pf_addr = antic_pf_next(a->pf_addr);
@@ -507,6 +554,9 @@ int antic_tick(antic *a)
     /* ---- advance ---------------------------------------------------------- */
     if (++a->cycle >= ANTIC_LINE_CYCLES) {
         a->cycle = 0;
+        /* row_first has to stay standing for the WHOLE line: rebuild_line needs
+         * to know which schedule shape this line has. */
+        a->row_first = 0;
         if (++a->scanline >= a->lines) {
             a->scanline = 0;
             /* Nothing reloads the display-list counter here.  A list that ran
@@ -645,14 +695,14 @@ uint8_t antic_read(antic *a, uint16_t addr)
 void antic_write(antic *a, uint16_t addr, uint8_t val)
 {
     switch (addr & 0x0F) {
-    case 0x00: a->dmactl = val; break;
+    case 0x00: a->dmactl = val; rebuild_line(a); break;
     case 0x01: a->chactl = val; break;
     /* DLISTL/H IS the display-list counter, not a latch that seeds one: ANTIC
      * increments it in place as it fetches, so a write sets where the list
      * resumes from and there is nothing to reload it from later. */
     case 0x02: a->dl_addr = (uint16_t)((a->dl_addr & 0xFF00) | val); break;
     case 0x03: a->dl_addr = (uint16_t)((a->dl_addr & 0x00FF) | (val << 8)); break;
-    case 0x04: a->hscrol = val; break;
+    case 0x04: a->hscrol = val; rebuild_line(a); break;
     case 0x05: a->vscrol = val; break;
     case 0x07: a->pmbase = val; break;
     case 0x09: a->chbase = val; break;
