@@ -137,7 +137,17 @@ static int run_one(const char *dir, const char *name, unsigned long long *cyc)
     if (trace_on) memset(pc_hits, 0, sizeof pc_hits);
     while (s.cycles < MAX_CYCLES) {
         if (s.cpu.pc == t_pass) { *cyc = s.cycles; return 0; }
-        if (s.cpu.pc == t_fail) { *cyc = s.cycles; return 1; }
+        if (s.cpu.pc == t_fail) {
+            *cyc = s.cycles;
+            /* d0..d5 are the suite's scratch at $C8..$CD, and they are what the
+             * _ASSERT macros compare — so on a failure they say WHICH value was
+             * wrong, not merely that one was. */
+            if (trace_on)
+                printf("      d0..d5 = %02X %02X %02X %02X %02X %02X\n",
+                       s.ram[0xC8], s.ram[0xC9], s.ram[0xCA],
+                       s.ram[0xCB], s.ram[0xCC], s.ram[0xCD]);
+            return 1;
+        }
         if (s.cpu.jammed)       { *cyc = s.cycles; return -1; }
         if (trace_on) pc_hits[s.cpu.pc]++;
         atari_step(&s);

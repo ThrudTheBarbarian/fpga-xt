@@ -74,7 +74,8 @@ int main(void)
             if (antic_tick(&a)) held++;
             else if (released_at < 0 && held) released_at = c;
         }
-        expect("WSYNC releases at", released_at, ANTIC_CYC_WSYNC);
+        /* /RDY is released AT 104, so the first cycle the CPU gets is 105. */
+        expect("first CPU cycle after WSYNC", released_at, ANTIC_CYC_WSYNC + 1);
     }
 
     /* ---- unused ANTIC reads are $FF (antic_default) ---------------------- */

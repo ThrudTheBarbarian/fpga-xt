@@ -16,12 +16,19 @@ static void sys_cycle(atari *s)
 {
     for (;;) {
         int took = antic_tick(&s->an);
-        pokey_rand_tick(&s->pk);
         s->cycles++;
         s->cpu.nmi = (uint8_t)s->an.nmi;
-        if (!took) return;
+        if (!took) return;          /* the CPU gets this one */
+        pokey_rand_tick(&s->pk);    /* ANTIC's cycles advance the LFSR here */
     }
 }
+
+/* The CPU's own cycle advances the LFSR only AFTER its access is serviced.
+ * Reading $D20A must see the state as of the START of the cycle: ticking first
+ * put every RANDOM read exactly one machine cycle late, which
+ * tools/pokey-random-decode.py named precisely from antic_wsync's d0 ($4A where
+ * $95 was wanted, step 114 against step 113). */
+static void cpu_cycle_done(atari *s) { pokey_rand_tick(&s->pk); }
 
 static uint8_t io_read(atari *s, uint16_t a)
 {
@@ -52,7 +59,9 @@ static uint8_t bus_rd(void *ctx, uint16_t a)
 {
     atari *s = ctx;
     sys_cycle(s);
-    return (a >= 0xD000 && a < 0xD800) ? io_read(s, a) : s->ram[a];
+    uint8_t v = (a >= 0xD000 && a < 0xD800) ? io_read(s, a) : s->ram[a];
+    cpu_cycle_done(s);
+    return v;
 }
 
 static void bus_wr(void *ctx, uint16_t a, uint8_t v)
@@ -61,6 +70,7 @@ static void bus_wr(void *ctx, uint16_t a, uint8_t v)
     sys_cycle(s);
     if (a >= 0xD000 && a < 0xD800) io_write(s, a, v);
     else                           s->ram[a] = v;
+    cpu_cycle_done(s);
 }
 
 void atari_init(atari *s)
