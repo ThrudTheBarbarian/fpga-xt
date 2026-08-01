@@ -51,6 +51,10 @@ typedef struct {
 
     uint8_t  jammed;       /* a KIL/JAM opcode was executed */
     uint8_t  jam_cnt;      /* drives the lock-up address dance (saturates) */
+    uint16_t jam_pc;       /* where it died — the address IS the diagnosis, since
+                            * a derail lands somewhere nothing should execute */
+    uint8_t  jam_op;       /* the opcode that jammed (NOT the byte at pc: the
+                            * lock-up dance leaves pc pointing elsewhere) */
 
     /* penultimate-cycle interrupt poll (see the header comment) */
     uint8_t  poll, poll_prev;

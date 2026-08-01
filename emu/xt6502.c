@@ -691,6 +691,8 @@ void xt6502_step(xt6502 *c)
         rd(c, c->pc);
         c->jammed = 1;
         c->jam_cnt = 0;
+        c->jam_pc  = (uint16_t)(c->pc - 1);   /* pc advanced past the opcode */
+        c->jam_op  = op;
         break;
     }
 }

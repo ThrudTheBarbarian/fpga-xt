@@ -124,8 +124,20 @@ static int run_one(const char *dir, const char *name, unsigned long long *cyc)
         0x10, 0x04,              /* $FF04  BPL vbi                          */
         0x68,                    /* $FF06  PLA                              */
         0x6C, 0x00, 0x02,        /* $FF07  JMP (VDSLST)                     */
-        0x68,                    /* $FF0A  PLA            vbi:              */
-        0x6C, 0x22, 0x02,        /* $FF0B  JMP (VVBLKI)                     */
+        /* The two NMI paths push DIFFERENT amounts, and the handlers read their
+         * own return address off the stack, so this is load-bearing:
+         *   DLI  pushes NOTHING  (antic_dlitiming reads PCL at $0104,X after
+         *                         two pushes of its own)
+         *   VBI  pushes A, X, Y  (cpu_bugs reads PCL at $0105,X and PCH at
+         *                         $0106,X with no pushes of its own, and its
+         *                         bail-out path pulls exactly three registers)
+         * A is already on the stack from the PHA above — the original value,
+         * since LDA NMIST clobbered the register but not the copy. */
+        0x8A,                    /* $FF0A  TXA            vbi:              */
+        0x48,                    /* $FF0B  PHA                              */
+        0x98,                    /* $FF0C  TYA                              */
+        0x48,                    /* $FF0D  PHA                              */
+        0x6C, 0x22, 0x02,        /* $FF0E  JMP (VVBLKI)                     */
     };
     /* The OS also dispatches IRQ/BRK through VIMIRQ.  Without it a BRK returns
      * immediately from a bare RTI, the test's handler never runs, and the
@@ -141,15 +153,23 @@ static int run_one(const char *dir, const char *name, unsigned long long *cyc)
         0xE6, 0x13,              /* $FF34  INC RTCLOK+1                     */
         0xD0, 0x02,              /* $FF36  BNE done                         */
         0xE6, 0x12,              /* $FF38  INC RTCLOK                       */
-        0x40,                    /* $FF3A  RTI            done:             */
+        /* the VBI dispatch pushed A,X,Y — unwind them, or the RTI returns to
+         * whatever the registers happened to hold */
+        0x68,                    /* $FF3A  PLA            done:             */
+        0xA8,                    /* $FF3B  TAY                              */
+        0x68,                    /* $FF3C  PLA                              */
+        0xAA,                    /* $FF3D  TAX                              */
+        0x68,                    /* $FF3E  PLA                              */
+        0x40,                    /* $FF3F  RTI                              */
+        0x40,                    /* $FF40  RTI    — bare, for DLI and IRQ   */
     };
     memcpy(&s.ram[0xFF00], nmi_stub, sizeof nmi_stub);
     memcpy(&s.ram[0xFF20], irq_stub, sizeof irq_stub);
     memcpy(&s.ram[0xFF30], dflt,     sizeof dflt);
     s.ram[0xFFFA] = 0x00; s.ram[0xFFFB] = 0xFF;      /* NMI -> dispatcher */
     s.ram[0xFFFE] = 0x20; s.ram[0xFFFF] = 0xFF;      /* IRQ/BRK -> dispatcher */
-    if (!s.ram[0x0217]) { s.ram[0x0216] = 0x3A; s.ram[0x0217] = 0xFF; }  /* VIMIRQ */
-    if (!s.ram[0x0201]) { s.ram[0x0200] = 0x3A; s.ram[0x0201] = 0xFF; }  /* VDSLST */
+    if (!s.ram[0x0217]) { s.ram[0x0216] = 0x40; s.ram[0x0217] = 0xFF; }  /* VIMIRQ */
+    if (!s.ram[0x0201]) { s.ram[0x0200] = 0x40; s.ram[0x0201] = 0xFF; }  /* VDSLST */
     if (!s.ram[0x0223]) { s.ram[0x0222] = 0x30; s.ram[0x0223] = 0xFF; }  /* VVBLKI */
 
     s.cpu.pc = run;
@@ -190,7 +210,7 @@ static int run_one(const char *dir, const char *name, unsigned long long *cyc)
              * derail, so the address is the first question. */
             if (trace_on)
                 printf("      jammed at $%04X on opcode $%02X\n",
-                       s.cpu.pc, s.ram[s.cpu.pc]);
+                       s.cpu.jam_pc, s.cpu.jam_op);
             return R_JAM;
         }
         if (trace_on) pc_hits[s.cpu.pc]++;

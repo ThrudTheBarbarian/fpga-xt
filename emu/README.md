@@ -107,3 +107,26 @@ difference to chase.
 | `pokey_rand.{h,c}` | POKEY's polynomial counters + `RANDOM` |
 | `antic_dma.{h,c}` | ANTIC's per-scanline DMA schedule |
 | `acid_dmatable.h` | generated from ACID800's own DMA table |
+
+## Disproved: "DMA must not stall write cycles"
+
+SALLY ignores /HALT on write cycles — that is real, documented, and the reason a
+read-modify-write's three write cycles survive DMA. It is tempting as an
+explanation for the remaining derails, because **every one of them lands in the
+stack page or zero page** ($01F6, $01F8, $00E1, $0014), which is exactly what
+corrupted pushes look like.
+
+It is not the cause. Making `bus_wr` advance ANTIC exactly one cycle instead of
+looping until ANTIC yields:
+
+* left every jam in place — `cpu_illtiming` still died at the same address, with
+  its cycle count moving only 38231 -> 38229;
+* **broke `cpu_timing`**, which is the suite's direct authority on CPU cycle
+  timing under DMA.
+
+So the current model (a halted CPU is simply a callback that takes longer, on
+reads and writes alike) is the one `cpu_timing` agrees with. Do not re-try this
+without first explaining how `cpu_timing` can still pass.
+
+The stack-page derails therefore remain unexplained and are still worth chasing —
+just not from this direction.
