@@ -715,74 +715,69 @@ which would let both tests hold at once — but only if that has its own
 justification rather than being fitted to restore the score.
 
 
-## Open: antic_pfstarttiming / pfstoptiming — the START commits before the STOP
+## CLOSED (the DMACTL half): the window commits its start early and closes at its last grid point
 
-Both report **"Character mode DMACTL early test failed: stride=%d"** with
-`d1 = 12`, and 12 is the `add #12` with nothing added: `(p0pf << 2) | p1pf` came
-back **zero**, so no player-playfield collision registered at all. The wanted
-value is 16, i.e. `p0pf = 1` (PF0) and `p1pf = 0`.
+All EIGHT DMACTL assertions across `antic_pfstarttiming` and `antic_pfstoptiming`
+pass — character and bitmap, early and late, both polarities — from one rule.
+**Check the polarity first**: `pfstarttiming` loads `A = $21` (narrow) and
+`X = $22`, so it runs the row NORMAL and narrows it; `pfstoptiming` loads
+`A = $22` and `X = $21` and runs it NARROW, widening. I built a whole model on
+having that backwards.
 
-What is already ruled out, from `ACID_PFPROBE`:
+| test | polarity | early | late |
+|---|---|---|---|
+| `antic_pfstarttiming` | normal, narrowed | 16 | 18 |
+| `antic_pfstoptiming` | narrow, widened | 18 | 16 |
 
-* the players ARE being drawn — `objs $80` at colour clock `$80`, which is where
-  HPOSP0 puts player 0;
-* the display list IS executing correctly — the measured line reports mode 10 at
-  `row_line 1`, i.e. the row after the one-scanline VSCROL=7 mode-6 row, exactly
-  as the list intends;
-* `lb_len` is 20, which is right for ANTIC mode $A at normal width (80 pixels,
-  two bits each);
-* the window is right — the decode reaches the bitmap branch rather than falling
-  out of `off < 0 || off >= span`.
+A mid-line DMACTL or HSCROL write finds the window in one of three states:
 
-That was a real bug, and a general one: **a row entering a vertically scrolled
-region never fetched at all.** A per-line trace made it obvious —
+| write lands | what happens |
+|---|---|
+| before `nom - 3` | the whole window moves; the row is the new width outright |
+| `nom - 3` … `nom + span - grid` | the START is committed but the STOP is still being compared — the row runs on its OLD grid to the NEW window's last fetch cycle, and its byte count belongs to NEITHER width |
+| after `nom + span - grid` | the window has closed; a widening cannot restart it |
+
+Three things had to be right together:
+
+* **the commit point is `nom - 3` for every mode**, not the class-specific start.
+  A bitmap row begins at `nom - 1` and still ignores a write landing at `nom - 3`.
+* **the close is the window's LAST GRID POINT**, `nom + span - grid` — not the
+  last actual fetch, and not the window edge. `pfstoptiming` widens *after* the
+  last narrow fetch has already happened and still expects the stream to extend,
+  so it is the comparator that is open rather than the fetcher that is running;
+  four cycles later still, it expects nothing.
+* **the pinned stream is bounded by a CYCLE, never a byte count.** The count
+  belongs to a width the row is no longer using.
+
+The rule was predicted from the raw fetch-cycle lists before being wired in, and
+both predictions came out exactly:
 
 ```
-LS sl  33 insn $66 row_line  7 n 20 pf_addr $2D00     <- no fetch
-LS sl  34 insn $0A row_line  0 n 20 pf_addr $2D00
-LS sl  35 insn $0A row_line  1 n 20 pf_addr $2D14
+mode $A pinned normal, bounded by narrow's last:  20 24 ... 88   = 18
+mode 6  pinned narrow, bounded by normal's last:  26 31 ... 94   = 18
 ```
 
-— the fetch was gated on `row_line == 0`, but the first row of a scrolled region
-**starts its counter at VSCROL**. So the mode-6 row skipped its fetch and, worse,
-never advanced `pf_addr`; the mode-10 row after it then read `framedata[0..19]`,
-which this test deliberately fills with zeros. The gate is now an explicit
-`row_first` flag set when a new instruction is latched.
+`antic_dma_line_map_at()` takes the pinned window position; `rebuild_line()`
+decides which of the three states applies.
 
-Note the geometry, which is easy to misread: `dta $66` with VSCROL = 7 is a
-**one-scanline** row (the first scrolled row starts at row VSCROL and ends at the
-mode's last row, and 7 == 7), so the DLI's two WSYNCs land the measurement on the
-row AFTER it — and because that row has no LMS, what it displays depends entirely
-on how far the one-scanline row advanced `pf_addr`. That is the "stride" the
-test's message names.
+### Still open: the HSCROL half, and antic_hscrolbug
 
-The fetch is now **progressive** — one byte at the cycle the DMA schedule assigns
-it — and DMACTL/HSCROL writes rebuild the rest of the line, so the **first**
-assertion of each test passes: a write at scanline cycle 16, before the window
-opens, narrows the whole row and the stride is 16.
+Both tests now fail in their HSCROL section. `pfstarttiming`'s first HSCROL
+assertion wants 16 and gets **12** — and 12 is its `add #10` with a raw
+collision of 2, i.e. `p0pf = 0` and `p1pf = 2` where `p0pf = 1, p1pf = 2` is
+wanted. So this one is NOT a byte count: player 1 collides correctly and player 0
+sees background, which is a POSITION error of a colour clock or two rather than a
+stride error. `pfstoptiming`'s same assertion gets 16.
 
-What is left is the **"late" write**, one cycle later, which wants **18**:
+Note the shape of the HSCROL blocks: DMACTL is set narrow and HSCROL to 0 at the
+row's start, HSCROL is written to **8** mid-line (a 4-machine-cycle window
+shift), and restored to 0 before the measured line. The rows carry `dta $76` —
+mode 6 with the HSCROL bit — so the shift applies to the fetch window but the
+measured row (`$0a`, no bit 4) displays unshifted.
 
-| test | got | want |
-|---|---|---|
-| `antic_pfstarttiming` | 16 | 18 |
-| `antic_pfstoptiming` | 17 | 18 |
-
-18 belongs to neither width — normal is 20 and narrow is 16 — so the row is
-fetching under a **hybrid**: the START is already committed at the old (normal)
-position while the STOP moves to the new (narrow) one. That is the reading the
-arithmetic supports. Mode 6 on a row's first line puts a name/glyph pair on each
-4-cycle grid point, so the stream runs from `nom` to `nom + 4*chars`:
-
-* normal — grid from 21, stop 101, 20 names
-* narrow — grid from 29, stop 93, 16 names
-* **start normal, stop narrow** — grid from 21 to 93, ~18-19 names
-
-which lands on the wanted value where neither pure width does. The write that
-still moves the start lands at cycle 16 and the one that does not at 17, and the
-normal stream's prefetch is at cycle 18 — so the start is committed **one to two
-cycles before the first fetch**, and a write completing at the end of 17 is too
-late for it but still in time for the stop.
+`antic_hscrolbug` ("Unstopped PF DMA test failed") is the same mechanism from a
+third side: it glitches HSCROL so the stop is MISSED entirely and fetching runs
+on into horizontal blank.
 
 ### Tried and REVERTED: pinning the start, and the prefetch as a non-name
 
