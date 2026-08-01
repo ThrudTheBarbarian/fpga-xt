@@ -2,6 +2,8 @@
  * antic.c — the ANTIC timing core.  See antic.h.
  */
 #include "antic.h"
+#include <stdio.h>
+int antic_glyph_probe;
 #include <string.h>
 
 /* Scanlines per row.  Mode 3 is ten rather than eight — its last two carry the
@@ -230,15 +232,52 @@ static void line_start(antic *a)
          * belongs here with the fetch, not in the pixel decode. */
         if (mode >= 2 && mode <= 7) {
             int row = a->row_line;
-            if (a->chactl & 0x04) row = a->row_height - 1 - row;
-            if (row < 0) row = 0;
             uint16_t cbase = (mode <= 5)
                 ? (uint16_t)((a->chbase & 0xFC) << 8)
                 : (uint16_t)((a->chbase & 0xFE) << 8);
             uint8_t  cmask = (mode <= 5) ? 0x7F : 0x3F;
-            for (int i = 0; i < n && i < (int)sizeof a->glyphbuf; i++)
+            for (int i = 0; i < n && i < (int)sizeof a->glyphbuf; i++) {
+                uint8_t name = a->linebuf[i];
+                int grow = row;
+
+                /* Modes 5 and 7 are 16 scanlines tall over an 8-row glyph, so
+                 * each glyph row is shown twice. */
+                if (mode == 5 || mode == 7)
+                    grow >>= 1;
+
+                /* Mode 3 is TEN scanlines over an eight-row glyph.  The row
+                 * counter runs 0..9 and the glyph is indexed by its LOW THREE
+                 * BITS, so rows 8 and 9 come back round to glyph rows 0 and 1;
+                 * which two rows are blanked is what the character selects.
+                 * $60..$7F — the lowercase descenders — blank rows 0..1,
+                 * everything else blanks 8..9.
+                 *
+                 * It is NOT a downward shift.  antic_charcontrol's descender
+                 * table expects rows 2..7 to show glyph rows 2..7 and rows 8..9
+                 * to show glyph rows 0..1; subtracting two puts every row one
+                 * object to the left of where the test looks for it. */
+                if (mode == 3) {
+                    int blank = ((name & 0x60) == 0x60) ? (grow < 2) : (grow >= 8);
+                    if (blank) { a->glyphbuf[i] = 0; continue; }
+                    grow &= 7;
+                }
+
+                /* CHACTL's vertical reflect mirrors the GLYPH's eight rows, not
+                 * the row counter.  In mode 3 that matters: the counter runs to
+                 * ten, and reflecting it would move the two blank rows from 8..9
+                 * up to 0..1 — antic_charcontrol's reflect table keeps them at
+                 * 8..9 and reverses only the eight rows that carry the glyph. */
+                if (a->chactl & 0x04)
+                    grow = 7 - grow;
+
                 a->glyphbuf[i] = a->fetch(a->ctx,
-                    (uint16_t)(cbase + (a->linebuf[i] & cmask) * 8 + row));
+                    (uint16_t)(cbase + (name & cmask) * 8 + grow));
+                if (i == 0 && antic_glyph_probe)
+                    fprintf(stderr, "  sl %3d mode %d chactl $%02X row_line %d "
+                            "row_height %d row %d grow %d name $%02X glyph $%02X\n",
+                            a->scanline, mode, a->chactl, a->row_line,
+                            a->row_height, row, grow, name, a->glyphbuf[i]);
+            }
         }
     }
 

@@ -57,12 +57,24 @@ static void render_cycle(atari *s, int cyc)
          * longer hi-res: leaving this set makes GTIA apply the "lit collides as
          * PF2" rule and throw the nibble's colour class away. */
         s->gt.hires = (s->an.dl_insn & 0x0F) == 0x0F && !gmode;
+        uint8_t before = (uint8_t)(s->gt.ppf[0] | s->gt.ppf[1] | s->gt.ppf[2] | s->gt.ppf[3]);
         gtia_clock(&s->gt, cc, pf, hires);
+        if (s->col_probe) {
+            uint8_t after = (uint8_t)(s->gt.ppf[0] | s->gt.ppf[1] | s->gt.ppf[2] | s->gt.ppf[3]);
+            if (after != before)
+                fprintf(stderr, "  COLLIDE sl %3d cc $%02X mode %2d chactl $%02X ppf %x%x%x%x\n",
+                        s->an.scanline, cc, s->an.dl_insn & 0x0F, s->an.chactl,
+                        s->gt.ppf[0], s->gt.ppf[1], s->gt.ppf[2], s->gt.ppf[3]);
+        }
         if (s->pf_probe && s->an.scanline == s->pf_probe) {
-            if (gtia_player_lit(&s->gt, 0) || pf >= 0)
-                fprintf(stderr, "  cc $%02X pf %d lit %d nib %d graf $%02X\n",
-                        cc, pf, gtia_player_lit(&s->gt, 0),
-                        antic_pf_nibble(&s->an, cc, 1), s->gt.grafp[0]);
+            int lit = 0;
+            for (int i = 0; i < 4; i++) {
+                if (gtia_player_lit(&s->gt, i))  lit |= 0x80 >> i;
+                if (gtia_missile_lit(&s->gt, i)) lit |= 0x08 >> i;
+            }
+            if (lit || pf >= 0)
+                fprintf(stderr, "  mode %2d chactl $%02X cc $%02X pf %2d objs $%02X glyph0 $%02X\n",
+                        s->an.dl_insn & 0x0F, s->an.chactl, cc, pf, lit, s->an.glyphbuf[0]);
         }
     }
 }
@@ -98,7 +110,15 @@ static void cpu_cycle_done(atari *s) { pokey_rand_tick(&s->pk); s->pk_ticks++; }
 static uint8_t io_read(atari *s, uint16_t a)
 {
     switch (a & 0xFF00) {
-    case 0xD000: return gtia_read(&s->gt, a);
+    case 0xD000:
+        if (s->col_probe && (a & 0x1F) == 0x04)
+            fprintf(stderr, "  SAMPLE sl %3d chactl $%02X ppf %x%x%x%x mpf %x%x%x%x\n",
+                    s->an.scanline, s->an.chactl,
+                    s->gt.ppf[0], s->gt.ppf[1], s->gt.ppf[2], s->gt.ppf[3],
+                    s->gt.mpf[0], s->gt.mpf[1], s->gt.mpf[2], s->gt.mpf[3]);
+        if (s->col_probe && (a & 0x1F) == 0x1E)
+            fprintf(stderr, "  HITCLR sl %3d\n", s->an.scanline);
+        return gtia_read(&s->gt, a);
     case 0xD200:
         if ((a & 0x0F) == 0x0A) {
             if (!s->dbg_rand_seen) { s->dbg_rand_at = s->pk_ticks; s->dbg_rand_seen = 1; }

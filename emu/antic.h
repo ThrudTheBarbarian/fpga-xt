@@ -33,6 +33,7 @@ typedef uint8_t (*antic_fetch_fn)(void *ctx, uint16_t addr);
 /* Scanlines per row, by ANTIC mode.  Modes 0 (blank) and 1 (jump) are not
  * display modes and are handled separately. */
 extern const uint8_t antic_row_height[16];
+extern int antic_glyph_probe;   /* debug: trace glyph-row selection */
 
 /* ---- the two address counters ---------------------------------------------
  * Both are narrower than 16 bits and BOTH wrap mid-instruction, which is what
