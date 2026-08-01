@@ -179,6 +179,25 @@ static int run_one(const char *dir, const char *name, unsigned long long *cyc)
      * RANDOM reads $ff forever.  antic_dmapattern never writes SKCTL itself and
      * cannot decode its random pair without this. */
     s.ram[0x0232] = 0x03;                            /* SSKCTL */
+
+    /* OS ENTRY VECTORS.  pokey_skstat opens with "jsr dskinv" to ask D1: for a
+     * status, and SKIPS itself if that fails — but with no OS ROM the call lands
+     * in unloaded RAM and the CPU BRK-walks the whole address space instead.
+     * Answering "no device" turns a derail into the skip the test intends.
+     * Returning with N set is what its "bpl disk_ok" tests. */
+    static const uint8_t nodev[] = {
+        0xA9, 0x80,              /* LDA #$80   — N set: operation failed */
+        0x8D, 0x03, 0x03,        /* STA DSTATS                          */
+        0xA0, 0x8A,              /* LDY #$8A   — device does not respond */
+        0x60,                    /* RTS                                  */
+    };
+    /* The vectors are three bytes apart because in ROM each is a JMP, so the
+     * handler goes elsewhere and each vector jumps to it — writing the handler
+     * at all three addresses would have them overlap and corrupt each other. */
+    memcpy(&s.ram[0xE480], nodev, sizeof nodev);
+    for (unsigned v = 0xE453; v <= 0xE459; v += 3) {
+        s.ram[v] = 0x4C; s.ram[v + 1] = 0x80; s.ram[v + 2] = 0xE4;   /* JMP $E480 */
+    }
     /* and POKEY itself: a booted OS has already taken the poly counters OUT of
      * init.  antic_dmapattern never writes SKCTL at all — the library call that
      * would is on a path it does not take — so left at the hardware reset value
@@ -192,8 +211,50 @@ static int run_one(const char *dir, const char *name, unsigned long long *cyc)
     s.cpu.p  = XTF_I | XTF_U;
 
     if (trace_on) memset(pc_hits, 0, sizeof pc_hits);
+    /* ACID_TRAP=<hex addr>: remember the last PCs and dump them the first time
+     * execution reaches that address.  Several tests DERAIL rather than fail —
+     * pokey_skstat spins on uninitialised RAM at $3720, and the five mod_* jam
+     * in the stack or zero page — and for those the useful question is not what
+     * they assert but how they got there. */
+    unsigned trap = 0;
+    int trapout = getenv("ACID_TRAPOUT") != NULL;
+    { const char *t = getenv("ACID_TRAP"); if (t) trap = (unsigned)strtoul(t, NULL, 16); }
+    uint16_t hist[8192] = {0}; int hn = 0, hcount = 0, trapped = 0;
+
     int armed = 0;
     while (s.cycles < MAX_CYCLES) {
+        if (trapout && !trapped) {
+            /* The first PC outside the loaded code — the moment of the derail
+             * itself, rather than anywhere along the BRK-walk through zeroed
+             * RAM that follows it. */
+            uint16_t pc = s.cpu.pc;
+            int inside = (pc >= 0x1A20 && pc <= 0x22C8) || (pc >= 0xFF00 && pc <= 0xFF4F);
+            if (!inside) {
+                trapped = 1;
+                int n = hcount < 40 ? hcount : 40;
+                fprintf(stderr, "  DERAIL to $%04X after %d instructions; last %d PCs:\n",
+                        pc, hcount, n);
+                fprintf(stderr, "    VIMIRQ $%02X%02X  VDSLST $%02X%02X  VVBLKI $%02X%02X"
+                        "  irqen $%02X irqst $%02X pia.irq %d P $%02X\n",
+                        s.ram[0x0217], s.ram[0x0216], s.ram[0x0201], s.ram[0x0200],
+                        s.ram[0x0223], s.ram[0x0222], s.pt.irqen,
+                        pokey_timer_irqst(&s.pt), s.pia.irq, s.cpu.p);
+                for (int i = n; i > 0; i--)
+                    fprintf(stderr, "    $%04X\n", hist[(hn - i + 8192) % 8192]);
+            }
+            hist[hn] = pc; hn = (hn + 1) % 8192; hcount++;
+        }
+        if (trap) {
+            if (!trapped && s.cpu.pc == trap) {
+                trapped = 1;
+                fprintf(stderr, "  TRAP $%04X reached; previous PCs (oldest first):\n", trap);
+                for (int i = 0; i < 40; i++) {
+                    uint16_t pc = hist[(hn + i) % 8192];
+                    if (pc) fprintf(stderr, "    $%04X\n", pc);
+                }
+            }
+            hist[hn] = s.cpu.pc; hn = (hn + 1) % 8192;
+        }
         /* Trace the bus around the SKCTL release, which is where the ANTIC
          * timing tests start counting.  Their own comments state the scanline
          * cycles each instruction should occupy, so the trace is directly

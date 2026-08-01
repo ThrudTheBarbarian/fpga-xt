@@ -495,15 +495,11 @@ modelled at all:
   past that. Its next assertion checks that timers 3+4 are RESET when the start
   bit arrives, and expects the interrupt about twelve scanlines after STIMER, so
   it needs a start bit to arrive at all.
-* `pokey_serdirect` (jams at $0014) very likely wants SERIN and the SKSTAT input
-  bits.
-* `pokey_skstat` is a DIFFERENT problem and should not be lumped in with the
-  input path: it is not waiting on anything, it has DERAILED. The PC histogram
-  shows 26 million hits at `$3720`, well outside its own code, in a data area —
-  a tight loop on garbage — while 25,234 interrupts are taken and dispatched
-  harmlessly through the runner's default VIMIRQ. Find what sends it there
-  before modelling SKSTAT; the derail is upstream of whatever it wanted to
-  measure.
+* `pokey_serdirect` and `pokey_skstat` turned out to need neither — both open by
+  asking **D1: for a disk status** through the OS vector `DSKINV` ($e453) and
+  SKIP themselves if it fails. With no OS ROM that call landed in unloaded RAM
+  and the CPU BRK-walked the address space. The runner now answers "no device"
+  at DSKINV/CIOV/SIOV, and both take the skip path they were written to take.
 * `pokey_twotone` is DONE — two-tone holds timer 2 while the output line is a
   mark, which satisfied both its phases at once.
 
