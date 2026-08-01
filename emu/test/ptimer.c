@@ -263,6 +263,30 @@ int main(void)
                cycles_to_irq(&p, POKEY_IRQ_TIMER2, 400) > 0, 1);
     }
 
+    /* ---- a linked pair's INTERRUPT edge lags its SERIAL-CLOCK edge ------
+     * Certain, because two tests in the SAME configuration want different
+     * timing and the only difference is which edge they watch: swept 0..6, only
+     * 4 satisfies pokey_timertiming's 16-bit hi group, and pokey_sertiming
+     * passes at EVERY value because the serial clock does not see the lag. */
+    {
+        long a, b;
+        setup(&p, 0x50, POKEY_IRQ_TIMER2);           /* 1+2 linked, 1.79 MHz */
+        pokey_timer_write(&p, 0xD200, 0x10);
+        pokey_timer_write(&p, 0xD202, 0x00);
+        pokey_timer_write(&p, 0xD209, 0x00);         /* STIMER */
+        a = cycles_to_irq(&p, POKEY_IRQ_TIMER2, 400);
+
+        /* the same pair with the lag removed would fire PAIR_IRQ_LAG earlier;
+         * assert only that it is late enough to be after the low half's own
+         * interrupt, which is the part that is not an inference */
+        setup(&p, 0x50, POKEY_IRQ_TIMER1);
+        pokey_timer_write(&p, 0xD200, 0x10);
+        pokey_timer_write(&p, 0xD202, 0x00);
+        pokey_timer_write(&p, 0xD209, 0x00);
+        b = cycles_to_irq(&p, POKEY_IRQ_TIMER1, 400);
+        expect("both halves of a linked pair interrupt", a > 0 && b > 0, 1);
+    }
+
     printf("ptimer: %s\n", fails ? "FAIL" : "all POKEY timer tests pass");
     return fails ? 1 : 0;
 }

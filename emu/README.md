@@ -1095,7 +1095,26 @@ different timing. What differs is WHAT THEY MEASURE: `timertiming` watches
 Our model drives both from the one pair underflow. The evidence says those are
 two edges, and only the interrupt carries the STIMER extra.
 
-That is the next piece of work — splitting the pair event into an interrupt edge
-and a serial-clock edge — and `LINK_EXTRA` should disappear when it lands. Note
-how far it reaches: with the extra applied, `pokey_timertiming` clears every
-16-bit assertion it has.
+### CLOSED: the pair's interrupt edge LAGS its serial-clock edge, by four, always
+
+Splitting them does it. The serial tick happens on the pair's underflow as
+before; the interrupt is raised `PAIR_IRQ_LAG` ticks later. Swept 0..6:
+
+| lag | `pokey_timertiming` | `pokey_sertiming` |
+|---|---|---|
+| 0..3 | 16-bit hi too early | passes |
+| **4** | **clears every 16-bit group**, on to the "23c change" section | passes |
+| 5..6 | 16-bit hi too late | passes |
+
+`pokey_sertiming` passing at **every** value is the independent confirmation:
+the serial clock genuinely does not see this lag, which is why one pair event
+could never satisfy both tests.
+
+The lag applies to EVERY pair underflow, not just the first after STIMER — tried
+both, and only "every" gets past loop #2. So it is a property of the pair's
+interrupt path, not another STIMER first-period effect, and `LINK_EXTRA` is gone.
+
+`pokey_timertiming` now clears its 8-bit group, both 16-bit groups and all four
+loop bounds, and fails much later on **"1.79MHz 8-bit timer fired too late after
+23c change (>44c)"** — a section that rewrites AUDF1 mid-count and checks the
+change lands in time to affect the SECOND period.

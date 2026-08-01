@@ -28,6 +28,14 @@
  * 16-bit lo loop #2, and 23 is AUDF1 + 7 exactly.  A true $FF borrow-chain
  * reload (259) fires far too late, so the low half is NOT a plain 16-bit low
  * byte. */
+/* A linked pair's INTERRUPT edge lags its SERIAL-CLOCK edge.  pokey_timertiming
+ * and pokey_sertiming sit in the SAME timer configuration — both AUDF2 = 0, both
+ * fast, both linked — and want different timing; the only thing that differs is
+ * which edge they watch.  The lag applies to EVERY pair underflow, not just the
+ * first after STIMER. */
+#ifndef PAIR_IRQ_LAG
+#define PAIR_IRQ_LAG 4
+#endif
 #ifndef LO_EXTRA
 #define LO_EXTRA 4
 #endif
@@ -195,6 +203,18 @@ static void underflow(pokey_timer *p, int ch)
     if (ch == 1 && (p->audctl & 0x10))      reload(p, 0);
     else if (ch == 3 && (p->audctl & 0x08)) reload(p, 2);
     else                                    reload(p, ch);
+    /* A linked pair's INTERRUPT edge and its SERIAL-CLOCK edge are not the same
+     * event.  pokey_timertiming and pokey_sertiming sit in the SAME timer
+     * configuration — both AUDF2 = 0, both fast, both linked — and want
+     * different timing, and the only thing that differs is which edge they
+     * watch.  So the serial tick above is immediate and the interrupt can owe a
+     * lag, which is where the STIMER first-period extra lives for the pair. */
+    int pair   = (ch == 1) ? 0 : 1;
+    int linked = (ch == 1) ? (p->audctl & 0x10) : (p->audctl & 0x08);
+    if (PAIR_IRQ_LAG && linked && (ch == 1 || ch == 3)) {
+        p->hi_lag[pair] = PAIR_IRQ_LAG;
+        return;
+    }
     switch (ch) {
     case 0: raise(p, POKEY_IRQ_TIMER1); break;
     case 1: raise(p, POKEY_IRQ_TIMER2); break;
@@ -247,6 +267,11 @@ void pokey_timer_skctl(pokey_timer *p, uint8_t val)
 void pokey_timer_tick(pokey_timer *p)
 {
     if (p->init) return;                       /* held in init */
+
+    /* An interrupt edge the pair still owes from an earlier underflow. */
+    for (int i = 0; i < 2; i++)
+        if (p->hi_lag[i] && --p->hi_lag[i] == 0)
+            raise(p, i == 0 ? POKEY_IRQ_TIMER2 : POKEY_IRQ_TIMER4);
 
     /* Channels 1 and 3 can be clocked straight off the machine clock instead of
      * the base divider — the only way to get a period shorter than a base tick,
@@ -324,6 +349,7 @@ void pokey_timer_write(pokey_timer *p, uint16_t addr, uint8_t val)
         for (int i = 0; i < 4; i++) reload(p, i);
         p->locnt[0] = p->audf[0] + ((p->audctl & 0x40) ? 4 : 1) + LO_EXTRA;
         p->locnt[1] = p->audf[2] + ((p->audctl & 0x20) ? 4 : 1) + LO_EXTRA;
+        p->hi_lag[0] = p->hi_lag[1] = 0;
         /* EXPERIMENT: the first period after STIMER runs long.  pokey_timertiming
          * tabulates it: with AUDF1 = 0 on the 1.79 MHz clock the first interrupt
          * lands 7-8 cycles after the STIMER write and the second 11-12, so the

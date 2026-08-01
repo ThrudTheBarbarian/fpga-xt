@@ -52,6 +52,9 @@ typedef struct {
     int      locnt[2];     /* a LINKED pair's LOW half, which keeps its own
                             * period and raises its own interrupt — see
                             * LINK_TWO_COUNTERS in the .c */
+    int      hi_lag[2];    /* ticks still owed before a linked pair's INTERRUPT
+                            * edge, which is not the same event as its
+                            * serial-clock edge — see SPLIT_PAIR_EDGE */
     uint8_t  irq;          /* the /IRQ line to the CPU */
     uint8_t  init;         /* SKCTL[1:0] == 0: dividers held */
     uint8_t  skctl;        /* $D20F: bits 6-4 select the serial clocking mode */
