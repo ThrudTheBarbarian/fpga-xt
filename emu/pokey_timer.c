@@ -143,7 +143,15 @@ void pokey_timer_skctl(pokey_timer *p, uint8_t val)
          * needs 218 left on the divider at the SEROUT write.  Free-running gives
          * exactly 218; reloading a full period gives 224 and reloading
          * period-28 gives 196, and both fail. */
-        (void)0;   /* nothing: the chain FREE-RUNS through the release */
+        /* The release restarts the BASE divider but leaves the channel counters
+         * alone.  That distinction is what satisfies both tests: pokey_sertiming
+         * clocks its channel at 1.79 MHz, so its counter is not fed by the base
+         * divider at all and free-runs to the measured 218; pokey_inittiming
+         * clocks its channel off the 15 kHz base, so the release DOES set its
+         * phase — and it wants the first tick 86 machine cycles later, which is
+         * 114 - 28, one 64 kHz period in. */
+        p->base_div = base_period(p) - BASE_64K;
+        if (p->base_div < 1) p->base_div = 1;
     }
     p->init = now;
 }

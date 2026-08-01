@@ -457,3 +457,21 @@ The 28-cycle offset that looked so promising — it is exactly one 64 kHz tick, 
 `pokey_inittiming` shows the same gap — was a red herring for THIS test. It may
 still be right for `pokey_inittiming`, which remains open.
 
+
+## Open: pokey_inittiming's 64 kHz case
+
+The SKCTL release restarts the BASE divider one 64 kHz period in — `base_period
+- 28` — while leaving the channel counters free-running. That distinction is
+what lets `pokey_sertiming` (1.79 MHz channel, counter not fed by the base
+divider, free-runs to 218) and `pokey_inittiming`'s 15 kHz case (wants the first
+tick 86 machine cycles later, which is 114 - 28) both hold at once.
+
+`inittiming` now passes both 15 kHz assertions and fails the 64 kHz one by a
+single NOP: it reports $1f where $1e is wanted, i.e. two machine cycles late.
+The 28-cycle offset degenerates there, because the 64 kHz period IS 28 — the
+subtraction gives zero and is clamped to 1.
+
+Worth noting the test expects the 64 kHz interrupt about 83 cycles after the
+SKCTL write, which is three 28-cycle periods, not one. So either its AUDF is not
+zero in that block, or something else divides. Read that block's setup before
+adjusting the clamp — tuning it to 2 would fit this assertion and mean nothing.
