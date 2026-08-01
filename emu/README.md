@@ -47,7 +47,34 @@ literally the same tests.
 * **ANTIC DMA schedule: 50/50** against the table ACID800's `antic_dmapattern`
   carries as data — every mode 2–15 at narrow and normal width, on a row's first
   scanline and its later ones.
-* ANTIC rendering + GTIA: next.
+* **ANTIC DMA schedule: 50/50**, timing core, display-list execution and line
+  buffer all in; **GTIA collisions** in.
+* **The real ACID800 binaries run**: `make acid` → 11 pass / 38 fail / 14 hung
+  of 63. Not comparable to the fabric's 32/63 — that runs on hardware with a
+  full POKEY and an OS ROM, whereas POKEY here is only the RANDOM LFSR, the five
+  `mod_*` never halt, and OS-dependent tests hang because `_SKIP` needs the OS.
+  Every `cpu_*` test that completes passes.
+
+### Open: antic_wsync's absolute cycle alignment
+
+`d0..d5` reads `95 D1 D1 D0 E2 34` against the wanted `95 4B 0D 44 E2 34` — d0,
+d4 and d5 correct. The remaining three are all WSYNC-duration measurements and
+share one cause: **our instruction stream sits about three scanline cycles ahead
+of where the test's annotations put it.** The bus trace shows `sta wsync`
+writing `$D40A` on scanline cycle 113, while the source annotates that store as
+occupying `113, 0, 1, 2` — i.e. the write belongs on cycle 2 of the next line.
+`tools/pokey-random-decode.py` puts d1 eleven machine cycles early.
+
+Ruled out by measurement, so do not re-test these: the POKEY tick ordering
+around the CPU access (a uniform phase shift cannot change an elapsed count);
+the WSYNC *release* cycle (104 vs 105 — byte-identical output either way); and
+the LFSR model, which reproduces all four of its hardware-pinned constants.
+
+The live question is what sets the stream's ABSOLUTE alignment to the scanline
+— which cycle of a multi-cycle instruction the emulator attributes a device
+access to, and where the CPU resumes after a halt. Harte pins the bus *trace*
+(the order of accesses) but not their placement against an external clock, so
+this is genuinely outside what the strongest existing gate can catch.
 
 ## The shape, and why
 
