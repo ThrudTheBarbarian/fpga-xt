@@ -423,22 +423,30 @@ own annotations disagree with each other here: `antic_nmist`'s seven-cycle
 `pha:pla` spanning 104..109 puts its first cycle at 103, while `antic_vcount`'s
 four-cycle `bit $0100` spanning 105..107 plus an unnumbered first puts it at 104.
 
-## Open: the POKEY serial OUTPUT rate
+## Open: SEROUT transfer timing — sertiming and serclock pull opposite ways
 
-`pokey_seroc` is done — SEROC is a level that bypasses the IRQ mask, rests
-asserted, and fires the moment it is enabled. Loading SEROUT deasserts it, which
-`pokey_sertiming` requires immediately after the write.
+The serial output clock, its mode table and the shift register are done and
+`pokey_serclock` passes. What is left is exactly when the byte moves from SEROUT
+into the shift register, and the two tests disagree about it:
 
-What is left is the RATE. `pokey_sertiming` has two nearly identical blocks:
-both do `skctl = $00` then `$63`, load SEROUT, wait, and read IRQST — but one
-waits long enough for the transmission to have COMPLETED (SEROC back low) and
-the other does not. So the ten bit times have to take the right number of
-cycles, which means resolving which timer clocks the shift register.
+* `pokey_serclock` loads SEROUT with the clock **external** (SKCTL $03) and
+  requires SEROC to stay ASSERTED — "the shift register should never load in
+  this mode";
+* `pokey_sertiming` loads it with timer 2 **running** and requires SEROC to drop
+  straight away, reporting "loaded too late" otherwise.
 
-SKCTL bits 6-4 select the serial mode, and `$63` is `110`. The current model
-assumes timer 2 unconditionally; the mode field almost certainly picks between
-timer 2, timer 4 and an external clock, so that table is the next thing to
-establish. `pokey_serclock` is likely the test that states it.
+Modelling the transfer as tick-driven satisfies the first and fails the second.
+Making it immediate whenever the serial clock is running satisfies the second
+and BREAKS `serclock` — 34 drops to 33 — so it is not simply a matter of gating
+on whether the clock runs. Measured, not guessed: that variant takes sertiming
+from "loaded too late" to "loaded too early", i.e. past one assertion and into
+the next, while serclock regresses.
 
-Still blocked behind the same question: `pokey_serdirect` (jams at $0014),
-`pokey_skstat` (loops), `pokey_asyncrecv`, `pokey_twotone`.
+The likely shape is that the transfer is immediate but must not disturb the
+shift clock's PHASE, which the immediate variant does by borrowing the tick
+routine wholesale. Worth separating the two actions — "take the byte" and
+"advance a bit time" — before trying again.
+
+Still behind this: `pokey_sertiming`, `pokey_serdirect` (jams at $0014),
+`pokey_skstat` (loops), `pokey_asyncrecv` ("Timer #4 IRQ fired with async recv
+mode active"), `pokey_twotone` ("Too many timer 2 interrupts on mark").
