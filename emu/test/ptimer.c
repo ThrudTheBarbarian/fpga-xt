@@ -217,6 +217,25 @@ int main(void)
                after_hold > free_run * 3 / 4, 1);
     }
 
+    /* ---- STIMER makes the FIRST period of a fast unlinked timer longer ----
+     * pokey_timertiming tabulates it outright: with AUDF1 = 0 on the 1.79 MHz
+     * clock the first interrupt lands 7-8 cycles after the STIMER write and the
+     * second 11-12.  So the PERIOD is AUDF + 4, which the divider already had,
+     * and only the first one carries the extra.  Swept 0..8 against that test:
+     * 4 is the only value that satisfies both its early and its late bound. */
+    {
+        long first, second;
+        setup(&p, 0x40, POKEY_IRQ_TIMER1);           /* timer 1 at 1.79 MHz */
+        pokey_timer_write(&p, 0xD200, 0x00);         /* AUDF1 = 0 -> period 4 */
+        pokey_timer_write(&p, 0xD209, 0x00);         /* STIMER */
+        first = cycles_to_irq(&p, POKEY_IRQ_TIMER1, 200);
+        pokey_timer_write(&p, 0xD20E, 0x00);         /* ack */
+        pokey_timer_write(&p, 0xD20E, POKEY_IRQ_TIMER1);
+        second = cycles_to_irq(&p, POKEY_IRQ_TIMER1, 200);
+        expect("first fast period after STIMER is four longer", first, 8);
+        expect("and the ones after it are not", second, 4);
+    }
+
     printf("ptimer: %s\n", fails ? "FAIL" : "all POKEY timer tests pass");
     return fails ? 1 : 0;
 }

@@ -947,3 +947,40 @@ future sweeps. What has not been checked is what a mid-BIT size change does to
 the width divider: `size_scale` is read live, so shrinking mid-bit ends that bit
 early, and the test's "alt" cases exist precisely because the phase is NOT reset.
 Whether the CURRENT bit should finish at its old width is the open question.
+
+
+## CLOSED: STIMER makes the first period of a fast unlinked timer longer
+
+`pokey_timertiming` hands the answer over in its own comment table, which is
+reading rule (c) paying off again:
+
+```
+; A/B values are cycles after STIMER write before/after bit 0 is
+; cleared for timer 1.
+;           IRQST1      IRQST2
+; AUDF1=0    7c/ 8c     11c/12c
+; AUDF1=16  23c/24c     43c/44c
+```
+
+Read the deltas rather than the absolutes. Between the two AUDF values the first
+interrupt moves by 16 and the second by 32, so the PERIOD is `AUDF + 4` — which
+the divider already had. What it did not have is that the FIRST period after a
+STIMER write is **four cycles longer**: 7-8 rather than 4 for `AUDF1 = 0`, with
+every period after it back to 4.
+
+Swept 0..8: 4 is the only value satisfying both the "too early" and "too late"
+bounds. The extra applies to **fast, unlinked** channels only — applying it to
+the base-clocked ones breaks the `ptimer` gate's 15 kHz tick outright, and
+applying it to a linked pair leaves `pokey_timertiming`'s own 16-bit case firing
+late.
+
+Worth flagging a tension with the fabric, which reached the opposite conclusion —
+see the commit *"pokey: extended first timer period applies to LINKED mode only"*
+in the `docs/a800` history. Both cannot be right about the same silicon. The
+software side is what the ACID assertions bound here, but this is a good candidate
+for re-checking on hardware.
+
+`pokey_timertiming` now clears its whole 8-bit group and fails further in, on
+**"1.79MHz 16-bit lo timer triggered too late"** — the linked pair fires late,
+which was invisible until the 8-bit case passed. Our fast linked period is
+`AUDF16 + 7`; that constant is the next thing to bound.

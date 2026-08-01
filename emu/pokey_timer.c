@@ -9,6 +9,9 @@
 
 /* Base-clock periods in machine cycles: 1.79 MHz / 28 is the 64 kHz clock,
  * / 114 the 15 kHz one (which is also exactly one scanline). */
+#ifndef STIMER_EXTRA
+#define STIMER_EXTRA 4
+#endif
 #define BASE_64K  28
 #ifndef BASE_64K_LEAD
 #define BASE_64K_LEAD 2
@@ -280,6 +283,22 @@ void pokey_timer_write(pokey_timer *p, uint16_t addr, uint8_t val)
          * the free-running divider happened to be from its next tick, which the
          * test makes deterministic by syncing with two WSYNCs first. */
         for (int i = 0; i < 4; i++) reload(p, i);
+        /* EXPERIMENT: the first period after STIMER runs long.  pokey_timertiming
+         * tabulates it: with AUDF1 = 0 on the 1.79 MHz clock the first interrupt
+         * lands 7-8 cycles after the STIMER write and the second 11-12, so the
+         * PERIOD is 4 (= AUDF + 4, which we already have) but the first one is
+         * three or four cycles longer. */
+        {
+            int linked1 = (p->audctl & 0x10) != 0;
+            int linked3 = (p->audctl & 0x08) != 0;
+            int fast1   = (p->audctl & 0x40) != 0;
+            int fast3   = (p->audctl & 0x20) != 0;
+            for (int i = 0; i < 4; i++) {
+                int inpair = (i <= 1) ? linked1 : linked3;
+                int fast   = (i <= 1) ? fast1   : fast3;
+                if (fast && !inpair) p->cnt[i] += STIMER_EXTRA;
+            }
+        }
         break;
     case 0x0D:
         /* SEROUT is a HOLDING register.  The byte only reaches the shift
