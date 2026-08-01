@@ -1339,3 +1339,44 @@ whole machine rather than one chip. The rules that live in `system.c` (who
 drives the bus on a cycle, when a latch samples it, render-after-access) had no
 gate at all before this, and they are exactly the kind a later refactor reverts
 without anything noticing.
+
+## SOLVED: pokey_noise's hot stop — entering init lags one cycle too
+
+The release from SKCTL init was already modelled as taking effect one cycle late
+(`release_cycle`): the write lands during a machine cycle whose advance still
+belongs to the pre-release state. The way back IN is the same, and
+`pokey_noise`'s "hot stop" measures it.
+
+That section frees the counters, runs them one scanline, drops back into init
+and reads RANDOM four cycles later:
+
+```
+    lda #3 / sta skctl      ;free
+    sta wsync               ;one scanline
+    lda #0 / sta skctl      ;back into init -- the "hot" stop
+    lda random
+```
+
+Init does not snap the register to `$FF`; it keeps shifting and feeds ONES in.
+So the byte read is a free-run value with its top bits already filled, and **the
+number of leading ones counts how many of those four cycles were init cycles**.
+That makes the assertion readable directly rather than by search:
+
+| | leading ones | underlying free-run value |
+|---|---|---|
+| hardware `$E9` = `1110 1001` | 3 | `$4x` |
+| ours `$F9` = `1111 1001` | 4 | `$9x` |
+
+Four init cycles against three, and the remainder one free-run step further on —
+the same total number of shifts with one moved from one side of the boundary to
+the other. So the counters take one more real step after the write that enters
+init. `STOP_LAG`, symmetric with `release_cycle`, and the 17-bit half of the
+same test (`$F0`) falls out with it — a second constraint the one cycle had to
+satisfy and was not tuned against.
+
+The `pokey` gate had to be corrected rather than merely extended: its "init +1"
+expectation was `$CA`, a one already at the top, which was my DERIVATION of what
+entering init does and not a measurement of it. It now checks `$4A` — the
+ordinary next step of the sequence — then the fill beginning one cycle later.
+Assertions are the authority; a gate that encodes an inference is only as good
+as the inference.

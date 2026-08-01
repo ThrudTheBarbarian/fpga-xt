@@ -6,6 +6,12 @@
 #define M9   0x000001FFu
 #define M17  0x0001FFFFu
 
+/* How many further FREE-RUNNING cycles the counters take after the SKCTL write
+ * that enters init — see the tick.  Overridable so it can be A/B'd. */
+#ifndef STOP_LAG
+#define STOP_LAG 1
+#endif
+
 void pokey_rand_reset(pokey_rand *p)
 {
     p->lfsr9  = M9;      /* all-ones: leaving init always starts from here */
@@ -14,6 +20,7 @@ void pokey_rand_reset(pokey_rand *p)
     p->skctl  = 0;
     p->init   = 1;       /* SKCTL[1:0] == 0 out of reset */
     p->release_cycle = 0;
+    p->stop_cycle    = 0;
 }
 
 void pokey_rand_tick(pokey_rand *p)
@@ -30,6 +37,25 @@ void pokey_rand_tick(pokey_rand *p)
         p->release_cycle = 0;
         p->lfsr9  = ((p->lfsr9  >> 1) | (1u <<  8)) & M9;
         p->lfsr17 = ((p->lfsr17 >> 1) | (1u << 16)) & M17;
+        return;
+    }
+    /* ...and the SAME on the way IN.  The write that ENTERS init lands during a
+     * machine cycle whose advance still belongs to the free-running state, so
+     * the counters take one more real step before the ones start coming in.
+     *
+     * Measured on pokey_noise's "hot stop": it frees the counters, runs them one
+     * scanline, drops back into init and reads RANDOM four cycles later, so the
+     * byte is a free-run value with its top bits already filled with ones — and
+     * the number of ones says directly how many of those four cycles were init
+     * cycles.  Hardware's $E9 has THREE leading ones where our $F9 had four, and
+     * its underlying value is one free-run step further on.  Same total shifts,
+     * one moved from one side of the boundary to the other. */
+    if (p->stop_cycle) {
+        p->stop_cycle = 0;
+        uint32_t f9  = (p->lfsr9  ^ (p->lfsr9  >> 5)) & 1u;
+        uint32_t f17 = (p->lfsr17 ^ (p->lfsr17 >> 5)) & 1u;
+        p->lfsr9  = ((p->lfsr9  >> 1) | (f9  <<  8)) & M9;
+        p->lfsr17 = ((p->lfsr17 >> 1) | (f17 << 16)) & M17;
         return;
     }
     if (p->init) {
@@ -61,4 +87,5 @@ void pokey_rand_skctl(pokey_rand *p, uint8_t v)
     p->skctl = v;
     p->init  = (uint8_t)((v & 0x03u) == 0);
     if (was_init && !p->init) p->release_cycle = 1;
+    if (!was_init && p->init) p->stop_cycle = STOP_LAG;
 }

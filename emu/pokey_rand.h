@@ -55,6 +55,8 @@ typedef struct {
     uint8_t  release_cycle;  /* the write that released init happened DURING a
                               * machine cycle, and that cycle's advance belongs
                               * to the pre-release state — see the .c */
+    uint8_t  stop_cycle;     /* and the same on the way back IN: one more
+                              * free-running cycle before the ones start */
 } pokey_rand;
 
 void    pokey_rand_reset(pokey_rand *p);

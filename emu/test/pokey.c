@@ -44,9 +44,17 @@ int main(void)
     /* 17-bit poly (AUDCTL[7] clear) — pokey_noise's single constraint. */
     expect("17-bit @113", at(0x00, 113), 0x08);
 
-    /* Init FILLS PROGRESSIVELY rather than snapping to $FF.  RANDOM is bits
-     * [8:1] of the 9-bit register, so exactly 8 init shifts fill it — the
-     * property to check is that it is not $FF BEFORE then, and is $FF after. */
+    /* Init FILLS PROGRESSIVELY rather than snapping to $FF, and it starts ONE
+     * CYCLE LATE.  The write that enters init lands during a machine cycle
+     * whose advance still belongs to the free-running state — exactly the
+     * mirror of the release, which is already delayed the same way.
+     *
+     * pokey_noise's "hot stop" is what measures it: it frees the counters, runs
+     * them a scanline, drops back into init and reads RANDOM four cycles later.
+     * The number of leading ones in that byte counts how many of the four were
+     * init cycles, and hardware's $E9 has THREE where a fill-immediately model
+     * gives four ($F9) — with the rest of the byte one free-run step further
+     * on.  Same total shifts, one moved across the boundary. */
     {
         pokey_rand p;
         pokey_rand_reset(&p);
@@ -57,10 +65,15 @@ int main(void)
 
         pokey_rand_skctl(&p, 0x00);                      /* enter init "hot" */
         pokey_rand_tick(&p);
-        /* one shift: a one enters at the top, the rest is the surviving state */
-        expect("init +1 (partial fill)", pokey_rand_read(&p), 0xCA);
-        for (int i = 1; i < 8; i++) pokey_rand_tick(&p);
-        expect("init +8 (now full)", pokey_rand_read(&p), 0xFF);
+        /* NOT a fill: $95 >> 1 with a zero feedback bit, the ordinary next
+         * step of the sequence.  A one at the top here would be $CA. */
+        expect("init +1 (still free)", pokey_rand_read(&p), 0x4A);
+        pokey_rand_tick(&p);
+        /* now the ones start: $4A >> 1 with a one entering at the top */
+        expect("init +2 (fill begins)", pokey_rand_read(&p), 0xA5);
+        /* RANDOM is bits [8:1], so eight fill shifts fill it completely */
+        for (int i = 2; i < 9; i++) pokey_rand_tick(&p);
+        expect("init +9 (now full)", pokey_rand_read(&p), 0xFF);
     }
 
     /* AUDCTL[7] switches which REGISTER is read, not just its width. */
