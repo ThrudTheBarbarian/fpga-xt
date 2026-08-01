@@ -399,3 +399,26 @@ cycle difference between the two measured delays is the thing to reproduce.
 
 `pokey_irqtiming` ("Incorrect IRQEN delay count") is likely the same question
 from the interrupt-latency side, and `pokey_timertiming` may be too.
+
+## Open: a recurring ONE CYCLE early in the post-WSYNC instruction stream
+
+Three tests now fail the same way, and it is not the release cycle:
+
+* `antic_vcount` d2 — `sta wsync / bit $0100 / lda vcount`, annotated so the read
+  lands on cycle 111. It lands on 110.
+* `gtia_pmretrigger` #2 — its `sta hposp0` lands on CPU cycle 28 where the
+  annotation says 29, so the player misses its trigger at $40.
+* `antic_dlitiming`'s "Even count".
+
+The release itself has been re-swept with everything else in place —
+102/103/104/105 score 29/31/30/29 — so 103 stands, and `antic_wsync`,
+`antic_nmist` and `antic_vscroldli` all pass at it. What is one cycle short is
+the instruction stream AFTER the release, in cases whose first instruction is
+short: `bit $0100` (4 cycles) and `sta abs` (4), where the tests that pass open
+with `pha:pla` (7).
+
+That asymmetry is the clue worth chasing — something about the first instruction
+after the halt, rather than about when the halt ends. Note also that the suite's
+own annotations disagree with each other here: `antic_nmist`'s seven-cycle
+`pha:pla` spanning 104..109 puts its first cycle at 103, while `antic_vcount`'s
+four-cycle `bit $0100` spanning 105..107 plus an unnumbered first puts it at 104.
