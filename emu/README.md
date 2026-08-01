@@ -1645,10 +1645,42 @@ correctly.
 
 So the missing piece is not another value for `PF_COMMIT_LEAD` — that is
 already disproved as the lever, and a binary commit/don't-commit test cannot
-produce a ONE-unit shift anyway. It needs a rule where a mid-line HSCROL write's
-effect on the window start moves at HALF a machine cycle per machine cycle of
-delay, rather than all-or-nothing. That is the shape to build next, and the
-delta table above is the thing to fit it against.
+produce a ONE-unit shift anyway.
+
+### Two attempts, both parked ON, both landing nowhere
+
+**A rate-based clamp** (`HSCROL_CLAMP`, `HSCROL_REACH`). If a write one cycle
+later yields one unit less scroll, the obvious rule is that the beam takes the
+scroll away a unit at a time: `hscrol_eff = min(written, REACH - cycle)`, with
+`REACH = 25` giving 8 for the early write and 7 for the late one. It does
+exactly that — the probe confirms `hscrol_line` coming out 8 and 7 — and the
+measured stride does not move.
+
+Sweeping `REACH` says why, and it is rule (v): **no value of HSCROL can produce
+the wanted 17.**
+
+| effective HSCROL (late case) | stride |
+|---|---|
+| 0, 1 | 12 |
+| 4, 5, 6, 7, 8 | 16 |
+
+Our stride quantises in steps of FOUR where the test resolves single units, so
+the resolution is missing upstream of the value, not in the value.
+
+**Colour-clock display resolution** (`HSCROL_CC_DISPLAY`). Part of that
+upstream: `antic_pf_nominal` folds HSCROL in as `hscrol >> 1`, which is right
+for the FETCH GRID — half a machine cycle per unit, as `make dma` reports — and
+throws the odd colour clock away for the DISPLAY, where a unit is a whole
+colour clock. Odd HSCROL values are therefore indistinguishable from the even
+one below them. Computing the display start as
+`2*(nominal_at_0 + LEAD) - hscrol` fixes that, looks right on its own terms,
+and changes no test.
+
+Both are left in behind flags, both OFF (rule o), because neither is confirmed
+by an assertion. The remaining resolution is presumably in the mode-6 decode
+itself: the probe is two 4-clock players over 8-colour-clock characters, so what
+still has to become sensitive to a single colour clock is which bit of which
+character lands under each half of the ruler.
 
 `antic_pfstoptiming` fails on its own HSCROL early case (19 where 16 is wanted)
 and `antic_hscrolbug` on "Unstopped PF DMA", so all three are almost certainly

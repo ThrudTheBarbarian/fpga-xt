@@ -3,6 +3,29 @@
  */
 #include "antic.h"
 
+/* ---- two HSCROL experiments, both OFF ------------------------------------
+ * Neither is confirmed by any assertion, so neither runs by default; the code
+ * and the reasoning are kept because the analysis behind them is sound and the
+ * next attempt should not start from scratch.  See emu/README.md.
+ *
+ * HSCROL_CC_DISPLAY — antic_pf_nominal folds HSCROL into the fetch grid as
+ *   `hscrol >> 1`, which is right for the grid (half a machine cycle per unit)
+ *   and throws the odd colour clock away for the DISPLAY, where a unit is a
+ *   whole colour clock.  Correct-looking on its own; changes no test.
+ * HSCROL_CLAMP / HSCROL_REACH — a mid-line HSCROL write claiming only
+ *   REACH - cycle units of scroll, the rate-based rule antic_pfstarttiming's
+ *   one-unit delta seems to call for.  It does clamp (8 early, 7 late) and the
+ *   measured stride does not move, because the stride quantises in fours. */
+#ifndef HSCROL_CC_DISPLAY
+#define HSCROL_CC_DISPLAY 0
+#endif
+#ifndef HSCROL_CLAMP
+#define HSCROL_CLAMP 0
+#endif
+#ifndef HSCROL_REACH
+#define HSCROL_REACH 25
+#endif
+
 /* An RMW writes WSYNC twice; the second write arriving while the halt is
  * already armed pushes the release out by this many cycles.  Overridable so it
  * can be A/B'd — gtia_pmresize's whole cycle chain sits one late with it. */
@@ -167,7 +190,7 @@ void antic_reset(antic *a)
  * to hit. */
 static int hscrol_of(const antic *a)
 {
-    return (a->dl_insn & 0x10) ? (a->hscrol & 0x0F) : 0;
+    return (a->dl_insn & 0x10) ? (a->hscrol_line & 0x0F) : 0;
 }
 
 static antic_width width_of(uint8_t dmactl)
@@ -283,6 +306,7 @@ static void pm_dma(antic *a)
 
 static void line_start(antic *a)
 {
+    a->hscrol_line = a->hscrol;           /* the clamp is per-line */
     memset(a->blocked, 0, sizeof a->blocked);
     memset(a->pf_at, -1, sizeof a->pf_at);
     a->pf_next = 0;
@@ -669,7 +693,14 @@ int antic_pf_at(const antic *a, int cc, int *hires_lit)
      * playfield, which only overlaps if narrow begins at $40.  Independent
      * constants put it at $50 and no collision ever registered. */
     antic_width w = width_of(a->dmactl);
-    int start = 2 * (antic_pf_nominal(w, hscrol_of(a)) + PF_DISPLAY_LEAD);
+    /* HSCROL moves the DISPLAY a full colour clock per unit, but the FETCH grid
+     * only half a machine cycle — antic_pf_nominal's `hscrol >> 1` is right for
+     * the grid and throws the odd clock away here.  Losing it makes odd HSCROL
+     * values indistinguishable from the even one below, which is why
+     * antic_pfstarttiming's stride quantised in steps of four where the test
+     * resolves single units. */
+    int start = 2 * (antic_pf_nominal(w, 0) + PF_DISPLAY_LEAD)
+              - (HSCROL_CC_DISPLAY ? hscrol_of(a) : 2 * (hscrol_of(a) >> 1));
     int span  = (w == ANTIC_NARROW) ? 128 : (w == ANTIC_WIDE) ? 192 : 160;
 
     int off = cc - start;
@@ -742,7 +773,14 @@ int antic_pf_pair(const antic *a, int cc)
     if (!(a->dmactl & 0x20) || (a->dl_insn & 0x0F) != 0x0F)
         return -1;
     antic_width w = width_of(a->dmactl);
-    int start = 2 * (antic_pf_nominal(w, hscrol_of(a)) + PF_DISPLAY_LEAD);
+    /* HSCROL moves the DISPLAY a full colour clock per unit, but the FETCH grid
+     * only half a machine cycle — antic_pf_nominal's `hscrol >> 1` is right for
+     * the grid and throws the odd clock away here.  Losing it makes odd HSCROL
+     * values indistinguishable from the even one below, which is why
+     * antic_pfstarttiming's stride quantised in steps of four where the test
+     * resolves single units. */
+    int start = 2 * (antic_pf_nominal(w, 0) + PF_DISPLAY_LEAD)
+              - (HSCROL_CC_DISPLAY ? hscrol_of(a) : 2 * (hscrol_of(a) >> 1));
     int span  = (w == ANTIC_NARROW) ? 128 : (w == ANTIC_WIDE) ? 192 : 160;
 
     int off = cc - start;
@@ -761,7 +799,14 @@ int antic_pf_nibble(const antic *a, int cc, int shift)
     if (!(a->dmactl & 0x20) || (a->dl_insn & 0x0F) != 0x0F)
         return -1;
     antic_width w = width_of(a->dmactl);
-    int start = 2 * (antic_pf_nominal(w, hscrol_of(a)) + PF_DISPLAY_LEAD);
+    /* HSCROL moves the DISPLAY a full colour clock per unit, but the FETCH grid
+     * only half a machine cycle — antic_pf_nominal's `hscrol >> 1` is right for
+     * the grid and throws the odd clock away here.  Losing it makes odd HSCROL
+     * values indistinguishable from the even one below, which is why
+     * antic_pfstarttiming's stride quantised in steps of four where the test
+     * resolves single units. */
+    int start = 2 * (antic_pf_nominal(w, 0) + PF_DISPLAY_LEAD)
+              - (HSCROL_CC_DISPLAY ? hscrol_of(a) : 2 * (hscrol_of(a) >> 1));
     int span  = (w == ANTIC_NARROW) ? 128 : (w == ANTIC_WIDE) ? 192 : 160;
 
     int off = cc - start - shift;
@@ -806,6 +851,21 @@ void antic_write(antic *a, uint16_t addr, uint8_t val)
         int old_nom = pf_window(a);
         int old_span = pf_span(a);
         a->hscrol = val;
+        /* HSCROL moves the playfield's left edge by ONE COLOUR CLOCK per unit —
+         * the window start is `nominal - hscrol/2` machine cycles, so the edge
+         * in colour clocks is `2*nominal - hscrol + 2*lead`.  A mid-line write
+         * therefore cannot be all-or-nothing: antic_pfstarttiming writes the
+         * same $08 one machine cycle apart and gets edges ONE COLOUR CLOCK
+         * apart, which no commit/don't-commit test can express (its DMACTL pair,
+         * measured with the same probe, moves TWO clocks for the same one-cycle
+         * delay, because a machine cycle is two of them).
+         *
+         * The beam takes the scroll away a unit at a time: whatever the write
+         * asks for, only HSCROL_REACH - cycle units of it are still claimable. */
+        int reach = HSCROL_REACH - a->cycle;
+        int want  = val & 0x0F;
+        a->hscrol_line = (uint8_t)(!HSCROL_CLAMP ? want
+                                 : want < reach ? want : (reach < 0 ? 0 : reach));
         rebuild_line(a, old_nom, old_span);
         break;
     }

@@ -83,6 +83,10 @@ static inline uint16_t antic_pf_next(uint16_t a)
 typedef struct {
     /* registers */
     uint8_t  dmactl, chactl, hscrol, vscrol, pmbase, chbase;
+    uint8_t  hscrol_line;  /* the HSCROL in force for the REST of this line.  A
+                            * mid-line write cannot claim scroll the beam has
+                            * already gone past, and it is limited a unit at a
+                            * time — see antic_write's HSCROL case. */
     uint8_t  nmien, nmist;
 
     /* timing */
