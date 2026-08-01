@@ -107,6 +107,24 @@ void antic_dma_line(uint8_t mode, antic_width width, int first_line,
         return;
     }
 
+    /* Character modes 6-7 on a row's first line: the name and data fetches come
+     * in PAIRS on a 4-cycle grid.  A grid point that lands on a refresh slot
+     * pushes its whole pair one cycle later (so the refresh cycle plus the pair
+     * read as a triple), and the last grid point emits only as many fetches as
+     * the budget has left.  Modes 2-5 are the same structure at a 2-cycle grid,
+     * where consecutive pairs merge into the solid run handled above. */
+    if (first_line) {
+        blocked[start] = 1;                       /* the prefetch */
+        int nom = (width == ANTIC_NARROW) ? 29 : 21;
+        int left = n - 1;                         /* the prefetch was one of them */
+        for (int p = nom; left > 0 && p < ANTIC_LINE_CYCLES; p += 4) {
+            int c = is_refresh(p) ? p + 1 : p;
+            for (int k = 0; k < 2 && left > 0 && c + k < ANTIC_LINE_CYCLES; k++, left--)
+                blocked[c + k] = 1;
+        }
+        return;
+    }
+
     /* Sparse streams: the nominal fetch slots run at `stride` from cycle 29,
      * and a fetch landing on a REFRESH slot is DEFERRED BY ONE CYCLE — refresh
      * has priority and the fetch slips.  That is what produces the 30,31 /
@@ -115,7 +133,6 @@ void antic_dma_line(uint8_t mode, antic_width width, int first_line,
     /* The nominal grid starts where the playfield does, which is earlier for a
      * normal-width line than a narrow one. */
     int nominal = (width == ANTIC_NARROW) ? 29 : 21;
-    if (first_line) blocked[start] = 1;           /* the prefetch */
     for (int i = 0, p = nominal; i < n && p < ANTIC_LINE_CYCLES; i++, p += stride) {
         int c = is_refresh(p) ? p + 1 : p;
         if (c < ANTIC_LINE_CYCLES) blocked[c] = 1;

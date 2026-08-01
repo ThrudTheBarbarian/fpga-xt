@@ -17,9 +17,12 @@ Manual* (a document, not code), the MOS datasheet, and this repo's own
 ## Build and test
 
 ```sh
-make test     # Tom Harte (all 256 opcodes) + Klaus — the gate
-make harte    # just Harte;  ./build/harte 6b 8b   for named opcodes
-make klaus    # just Klaus
+make test     # the gate: harte + klaus + irq + pokey + dma
+make harte    # Tom Harte, all 256 opcodes;  ./build/harte 6b 8b  for named ones
+make klaus    # Klaus Dormann functional test
+make irq      # interrupt timing, from ACID800 cpu_clisei
+make pokey    # POKEY RANDOM LFSR — the ANTIC timing tests' cycle clock
+make dma      # ANTIC's DMA schedule vs ACID800's own table;  -v to see diffs
 ```
 
 Both reuse the vectors already vendored for the fabric core
@@ -36,7 +39,15 @@ literally the same tests.
   and `/RDY` interact with the dummy reads and the RMW double write.
 * Speed: Klaus runs 96.2M 6502 cycles in 0.24 s ≈ **400M cycles/s**, ~224x
   realtime for the CPU alone on an M-series Mac.
-* ANTIC/GTIA: next.
+* **Interrupt timing: passes**, from ACID800 `cpu_clisei`'s three scenarios plus
+  NMI edge/one-shot. Harte ties the interrupt lines inactive, so this is ground
+  it cannot cover.
+* **POKEY RANDOM LFSR: passes.** Not a sound model — the ANTIC timing tests use
+  `RANDOM` as a one-cycle-resolution clock, so this is their prerequisite.
+* **ANTIC DMA schedule: 50/50** against the table ACID800's `antic_dmapattern`
+  carries as data — every mode 2–15 at narrow and normal width, on a row's first
+  scanline and its later ones.
+* ANTIC rendering + GTIA: next.
 
 ## The shape, and why
 
@@ -65,3 +76,7 @@ difference to chase.
 | `xt6502.h` / `xt6502.c` | the cycle-exact CPU |
 | `test/harte.c` | Harte vectors, exact bus traces |
 | `test/klaus.c` | Klaus Dormann functional test |
+| `test/irq.c` | interrupt timing (ACID800 `cpu_clisei`, as C) |
+| `pokey_rand.{h,c}` | POKEY's polynomial counters + `RANDOM` |
+| `antic_dma.{h,c}` | ANTIC's per-scanline DMA schedule |
+| `acid_dmatable.h` | generated from ACID800's own DMA table |
