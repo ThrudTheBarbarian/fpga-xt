@@ -38,6 +38,16 @@ void antic_dl_exec(antic *a)
         return;
     }
 
+    if (mode == 0x00) {
+        /* A BLANK-LINE instruction has no option bits except the DLI: bits 6-4
+         * are its LINE COUNT, plus one.  Reading bit 6 as LMS here — as the
+         * obvious "decode the option bits first" ordering does — makes $70 look
+         * like an LMS and eats two bytes of the display list, which derails
+         * everything after it. */
+        a->row_height = ((insn >> 4) & 0x07) + 1;
+        return;
+    }
+
     if (insn & 0x40) {                        /* LMS: reload the playfield scan
                                                * address.  The operand fetches
                                                * go through the same 1 KB-wrapping
@@ -46,11 +56,6 @@ void antic_dl_exec(antic *a)
         uint8_t lo = dl_fetch(a);
         uint8_t hi = dl_fetch(a);
         a->pf_addr = (uint16_t)(lo | (hi << 8));
-    }
-
-    if (mode == 0x00) {                       /* blank lines: bits 6-4 + 1 */
-        a->row_height = ((insn >> 4) & 0x07) + 1;
-        return;
     }
 
     a->row_height = antic_row_height[mode];
@@ -80,17 +85,63 @@ void antic_reset(antic *a)
     a->nmien = 0;
 }
 
+static antic_width width_of(uint8_t dmactl)
+{
+    switch (dmactl & 0x03) {
+    case 1:  return ANTIC_NARROW;
+    case 3:  return ANTIC_WIDE;
+    default: return ANTIC_NORMAL;
+    }
+}
+
+/* Start of a scanline: advance the display list if the current row has
+ * finished, work out whether a DLI is due, and rebuild this line's DMA
+ * schedule from the LIVE state.  Nothing here is precomputed for the frame —
+ * VSCROL can change a row's height while it is running, which moves the next
+ * row's DLI with it (antic_vscroldli). */
+static void line_start(antic *a)
+{
+    memset(a->blocked, 0, sizeof a->blocked);
+    a->dli_line = 0;
+
+    int visible = a->scanline >= ANTIC_DISPLAY_TOP
+               && a->scanline <  ANTIC_DISPLAY_BOTTOM;
+    if (!visible || !(a->dmactl & 0x20) || a->dl_done)
+        return;
+
+    if (a->row_line >= a->row_height)
+        antic_dl_exec(a);
+
+    /* The DLI belongs to the LAST scanline of the row — including a BLANK-LINE
+     * row, which is the case antic_dlitiming is built out of and the fabric
+     * dl_parser gets wrong. */
+    a->dli_line = (a->dl_insn & 0x80) && (a->row_line == a->row_height - 1);
+
+    int mode = a->dl_insn & 0x0F;
+    if (mode >= 2)
+        antic_dma_line((uint8_t)mode, width_of(a->dmactl),
+                       a->row_line == 0, a->hscrol, a->blocked);
+
+    a->row_line++;
+}
+
 int antic_tick(antic *a)
 {
     int c = a->cycle;
     int took = 0;
+
+    if (c == 0) line_start(a);
 
     /* ---- status and interrupt timing, all at fixed cycles ------------------
      * NMIST bits set at cycle 6 REGARDLESS of NMIEN — NMIEN gates the
      * interrupt, not the status — and NMIEN is sampled at the same cycle to
      * decide whether the interrupt is raised (antic_nmist). */
     if (c == ANTIC_CYC_NMIST) {
-        int vbi = (a->scanline == 248);
+        if (a->dli_line) {
+            a->nmist = (uint8_t)((a->nmist & ~ANTIC_NMI_VBI) | ANTIC_NMI_DLI);
+            if (a->nmien & ANTIC_NMI_DLI) a->nmi = 1;
+        }
+        int vbi = (a->scanline == ANTIC_DISPLAY_BOTTOM);
         if (vbi) {
             /* the DLI and VBI status bits clear each other on arrival */
             a->nmist = (uint8_t)((a->nmist & ~ANTIC_NMI_DLI) | ANTIC_NMI_VBI);
@@ -120,6 +171,12 @@ int antic_tick(antic *a)
         if (++a->scanline >= a->lines) {
             a->scanline = 0;
             a->vcount   = 0;     /* the wrap is at the END of the last line */
+            /* A new frame restarts the display list, but a DL that ran past
+             * the bottom simply continues — and a DLI already raised survives
+             * the boundary (antic_dlistwrap). */
+            a->dl_addr   = a->dlist;
+            a->row_line  = a->row_height;   /* force a fetch on the first line */
+            a->dl_done   = 0;
         }
     }
     return took;

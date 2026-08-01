@@ -32,8 +32,8 @@ interrupt latency to the instruction.
 ## The display list
 
 ```
-dlist:  dta $70        ; 8 blank lines            -> scanline 8
-        dta $90        ; 8 blank + DLI            -> DLI on 17
+dlist:  dta $70        ; 8 blank lines            -> scanlines 8..15
+        dta $90        ; 2 blank + DLI            -> DLI on 17
         dta $90        ;                          -> DLI on 19
         dta $90        ;                          -> DLI on 21
         dta $90        ;                          -> DLI on 23
@@ -41,8 +41,15 @@ dlist:  dta $70        ; 8 blank lines            -> scanline 8
         dta $41,a(dlist)
 ```
 
-**Every DLI here is on a BLANK-LINE instruction** (`$90` = 8 blank scanlines
-with the DLI bit set), and it fires on the **last** scanline of the blank block.
+**Every DLI here is on a BLANK-LINE instruction**, and it fires on the **last**
+scanline of the block.
+
+Note the encoding, which is easy to get wrong: on a blank-line instruction bits
+6–4 are the **line count minus one**, *not* option bits. So `$70` is **8** blank
+lines and `$90` is **2** — the DLI bit is bit 7, and bit 6 is part of the count
+rather than an LMS flag. Decoding LMS before checking for mode 0 makes `$70`
+look like an LMS, eats two bytes of the display list, and derails everything
+after it.
 That is precisely the case this project's fabric `dl_parser` gets wrong — see
 the `acid800_dli_cluster` note — so this test is the one to point a new ANTIC at
 first.

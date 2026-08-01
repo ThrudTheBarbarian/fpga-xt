@@ -82,6 +82,10 @@ typedef struct {
                            * next row's DLI moves with it and DLI scanlines
                            * must never be precomputed (antic_vscroldli) */
     int      dl_done;     /* JVB seen: wait for vertical blank */
+    int      dli_line;    /* this scanline is the row's LAST and the row's
+                           * instruction has bit 7 — so a DLI is due at cycle 6.
+                           * Recomputed per line, never precomputed for the
+                           * frame (antic_vscroldli). */
 
     /* the DMA schedule for the scanline in progress */
     uint8_t blocked[ANTIC_LINE_CYCLES];
@@ -97,6 +101,11 @@ int     antic_tick(antic *a);
 /* Execute one display-list instruction: fetch it, apply its option bits, set
  * up the row.  Called when the previous row completes. */
 void    antic_dl_exec(antic *a);
+
+/* Visible display region.  ANTIC starts the display list at scanline 8 and the
+ * VBI arrives at 248. */
+#define ANTIC_DISPLAY_TOP     8
+#define ANTIC_DISPLAY_BOTTOM 248
 
 uint8_t antic_read(antic *a, uint16_t addr);
 void    antic_write(antic *a, uint16_t addr, uint8_t val);

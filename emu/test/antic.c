@@ -143,6 +143,40 @@ int main(void)
         expect("blank-line count", c.row_height, 8);
     }
 
+    /* ---- the blank-line DLI ---------------------------------------------
+     * antic_dlitiming's display list is $70 (8 blank) then four $90.  A blank
+     * instruction's line count is bits 6-4 PLUS ONE, so $90 is TWO blank lines
+     * with the DLI bit — not eight.  The DLI belongs to the LAST scanline of
+     * each block, which is the case the fabric dl_parser gets wrong, so the
+     * DLIs land on 17 and 19 — exactly the scanlines that test's own comments
+     * name. */
+    {
+        static uint8_t dm[65536];
+        dm[0x2C00] = 0x70;                    /* 8 blank -> scanlines 8..15   */
+        dm[0x2C01] = 0x90;                    /* 2 blank + DLI -> 16,17       */
+        dm[0x2C02] = 0x90;                    /* 2 blank + DLI -> 18,19       */
+        dm[0x2C03] = 0x41; dm[0x2C04] = 0x00; dm[0x2C05] = 0x2C;   /* JVB */
+
+        antic d;
+        antic_init(&d, mem_fetch, dm, ANTIC_LINES_NTSC);
+        d.dlist = 0x2C00; d.dl_addr = 0x2C00;
+        d.dmactl = 0x22;                      /* DL DMA on, normal width */
+        d.nmien  = ANTIC_NMI_DLI;
+        d.row_line = d.row_height = 0;
+
+        int dli_lines[8], n = 0;
+        for (int i = 0; i < ANTIC_LINE_CYCLES * 40; i++) {
+            int before = d.nmi;
+            antic_tick(&d);
+            if (!before && d.nmi && n < 8) { dli_lines[n++] = d.scanline; d.nmi = 0; }
+        }
+        expect("blank-line DLI count", n, 2);
+        if (n >= 2) {
+            expect("first blank-line DLI on the block's LAST scanline", dli_lines[0], 17);
+            expect("second blank-line DLI",                              dli_lines[1], 19);
+        }
+    }
+
     printf("antic: %s\n", fails ? "FAIL" : "all timing-core tests pass");
     return fails ? 1 : 0;
 }
