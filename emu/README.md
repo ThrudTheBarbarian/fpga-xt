@@ -1830,8 +1830,45 @@ row fetches one width step more" extra — and the test's execution trace shows
 the CPU keeping cycles 104, 105 AND 106, so **the virtual slot does not steal a
 cycle**. It only clocks the line buffer, which latches the bus.
 
-So the build needs three things, not two: the wide phase (`PF_WIDE_ADJ`) AND the
-wide refresh arbitration together, the extra scrolled slot scheduled as
-non-blocking, and `antic.c` given the bus byte that today only `system.c` has
-(`last_bus`, from the phantom P/M latch) — the fetch callback being the natural
-place to hand it over.
+### PF_WIDE_ADJ = 5 aligns fifteen of the twenty-four slots
+
+Sweeping the phase against the test's map, `PF_WIDE_ADJ = 5` gives
+
+```
+  test   14 18 22 | 26 30 34 38 42 46 50 54 58 | 62 66 ... 102 | V 106
+  ours   14 18 22 | 27 31 35 39 43 47 51 55 59 | 62 66 ... 102 |   106
+```
+
+The first three and the last twelve match EXACTLY, including a slot at 106 where
+the test puts its virtual one. Only the nine inside the refresh region differ,
+each by one: ours are displaced because our glyph fetch sits one cycle before
+the name and collides with refresh, where the test's name fetches stay uniform.
+(The test's map marks one slot per character and does not show glyph fetches at
+all, so it cannot arbitrate that directly — but a displaced name fetch would
+have shown up in it, and does not.)
+
+`PF_WIDE_ADJ = 5` is SUITE-NEUTRAL: with it the score stays 47 and the only line
+that changes anywhere is `antic_virtdma`'s own cycle count. That is exactly what
+"wide is unvalidated" predicts, and it means the constant is safe — but safe is
+not proven, so it stays at 0.
+
+### The virtual slot and the bus latch are built, and do not move it
+
+Behind `VIRT_DMA`: the line's last playfield slot is un-blocked (so it does not
+steal the cycle, matching the test's trace of the CPU keeping 104, 105 AND 106)
+and the line buffer takes `antic.bus_byte`, which `system.c` now keeps fresh
+alongside `last_bus`. The byte goes into the GLYPH rather than the name, because
+the missiles sit over four PIXELS of that character and in mode 7 a pixel is one
+colour clock — four bits of the glyph byte, the top four, which is the high
+nibble the test asserts.
+
+All of it still reports `$00`. **And the reachability check was skipped** — rule
+(v)/(jj), which this notebook states twice, says to prove the wanted output can
+be produced before building the rule that produces it, and the question here is
+whether the missiles at `$da`..`$dd` overlie the VIRTUAL character's pixels at
+all. With the wide window starting near colour clock 42 and eight clocks per
+character, clock 218 falls around character 22, not the 24th. That is the first
+thing to measure next time, and it should have been the first thing measured
+this time.
+
+Everything is left OFF and the tree is at the known-good 47.

@@ -120,6 +120,10 @@ typedef struct {
                             * gating the fetch on the counter meant such a row
                             * never fetched at all and never advanced the
                             * playfield scan address (antic_pfstarttiming). */
+    uint8_t  bus_byte;     /* what was last on the DATA BUS, whoever drove it.
+                            * system.c keeps it fresh; the VIRTUAL playfield
+                            * slot latches it instead of fetching. */
+    int      virt_cyc;     /* the line's VIRTUAL playfield slot, -1 for none */
     uint8_t  nmi_arm;      /* the status set at cycle 7 raises /NMI at 8 */
     unsigned long ticks;   /* free-running machine cycles since reset */
     unsigned long wsync_wr_at; /* `ticks` of the last WSYNC write.  An RMW's two

@@ -16,6 +16,11 @@
  *   REACH - cycle units of scroll, the rate-based rule antic_pfstarttiming's
  *   one-unit delta seems to call for.  It does clamp (8 early, 7 late) and the
  *   measured stride does not move, because the stride quantises in fours. */
+/* Whether a scrolled row's last playfield slot is VIRTUAL — see line_start. */
+#ifndef VIRT_DMA
+#define VIRT_DMA 0
+#endif
+
 #ifndef HSCROL_CC_DISPLAY
 #define HSCROL_CC_DISPLAY 0
 #endif
@@ -357,6 +362,21 @@ static void line_start(antic *a)
         antic_dma_line_map((uint8_t)mode, width_of(a->dmactl),
                            a->row_first, hscrol_of(a), a->blocked, a->pf_at);
 
+        /* The LAST playfield slot of a scrolled row is VIRTUAL.  antic_virtdma
+         * documents the pattern for mode 7 wide with HSCROL 2 and marks its
+         * final slot `V` where the real fetches are `C`: ANTIC accounts for it
+         * and clocks the line buffer, but drives neither address nor data — so
+         * it does NOT steal the cycle (the test's own trace shows the CPU
+         * keeping 104, 105 and 106) and what the buffer takes is whatever the
+         * CPU's access left on the bus.  That is the same rule as the phantom
+         * P/M latch's, one slot further on. */
+        a->virt_cyc = -1;
+        if (VIRT_DMA) {
+            for (int c = ANTIC_LINE_CYCLES - 1; c >= 0; c--)
+                if (a->pf_at[c] >= 0) { a->virt_cyc = c; break; }
+            if (a->virt_cyc >= 0) a->blocked[a->virt_cyc] = 0;
+        }
+
         /* FETCH into the line buffer.  The playfield counter wraps at 4 KB
          * during the fetch, so a row crossing that boundary reads from the
          * bottom of the same 4 KB page (antic_addresswrap).
@@ -527,10 +547,17 @@ int antic_tick(antic *a)
          * rule antic_dma.c states and antic_hscrolbug depends on. */
         int i = a->pf_next++;
         if (i < (int)sizeof a->linebuf) {
-            a->linebuf[i] = a->fetch ? a->fetch(a->ctx, a->pf_addr) : 0xFF;
+            a->linebuf[i] = (c == a->virt_cyc) ? a->bus_byte
+                          : a->fetch ? a->fetch(a->ctx, a->pf_addr) : 0xFF;
             a->pf_addr = antic_pf_next(a->pf_addr);
             int m = a->dl_insn & 0x0F;
-            if (m >= 2 && m <= 7 && a->fetch) fetch_glyph(a, m, i);
+            /* On the virtual slot BOTH accesses are virtual, and it is the
+             * GLYPH that is displayed: antic_virtdma's missiles sit over four
+             * PIXELS of that character, which in mode 7 is four bits of its
+             * glyph byte — the top four, giving the high nibble the test
+             * asserts. */
+            if (c == a->virt_cyc)             a->glyphbuf[i] = a->bus_byte;
+            else if (m >= 2 && m <= 7 && a->fetch) fetch_glyph(a, m, i);
         }
     }
 

@@ -55,6 +55,7 @@
 static void bus_note(atari *s, int cyc, const char *who, uint16_t addr, uint8_t v)
 {
     s->last_bus = v;
+    s->an.bus_byte = v;              /* ANTIC's virtual slot latches this */
     if (s->bus_probe && s->an.scanline == s->bus_probe)
         fprintf(stderr, "  BUS sl %3d cyc %3d %-5s $%04X -> $%02X\n",
                 s->an.scanline, cyc, who, addr, v);
