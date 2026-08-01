@@ -32,7 +32,11 @@ typedef struct {
     uint8_t  audctl;       /* $D208 */
     uint8_t  irqen;        /* $D20E write */
     uint8_t  irqst;        /* $D20E read, ACTIVE LOW */
-    int      base_div;     /* machine cycles left in the current base tick */
+    unsigned long cycles;  /* free-running machine-cycle counter.  The base
+                            * divider is a TAP off this, not something STIMER
+                            * reloads, so a tick's phase is fixed by the absolute
+                            * cycle and the delay to the FIRST interrupt after
+                            * STIMER is a phase rather than a period. */
     int      cnt[4];       /* the four dividers */
     uint8_t  irq;          /* the /IRQ line to the CPU */
     uint8_t  init;         /* SKCTL[1:0] == 0: dividers held */

@@ -366,20 +366,36 @@ disagrees.
 The LFSR-decode technique applies directly here: the test reads RANDOM either
 side of a DMA burst, so a wrong value converts to an exact cycle count.
 
-## Open: POKEY divider PHASE after the SKCTL release
+## Open: POKEY divider phase — the free-running tap is the wrong SHAPE
 
-`pokey_inittiming` measures how long after the `sta skctl` that releases init the
-first 15 kHz timer interrupt arrives. It accepts $1f or $20 — 31 or 32 NOPs —
-and its own comment works the total out as **85 to 87 machine cycles**, refresh
-included. This model reports $30, i.e. 48 NOPs.
+`pokey_inittiming` sets AUDF1 = 0 and measures how long after the SKCTL write
+that leaves init the first timer-1 interrupt arrives. Its own comments give the
+answer twice:
 
-SKCTL's init state holding the dividers, and releasing it restarting them, is
-modelled and is correct in itself — but it is not sufficient. With AUDF = 0 a
-15 kHz divider reloaded to a full period gives the first underflow 114 cycles
-later, and the hardware answer is ~86. The gap is about 28 cycles, which is
-suspiciously exactly one 64 kHz base tick, so the likely shape is that the 15 kHz
-clock is DERIVED by further dividing the 64 kHz one rather than being an
-independent divide-by-114, and that the release leaves it part-way through.
+* 15 kHz clock — **86 to 87 machine cycles**, accepted as $1f or $20;
+* 64 kHz clock — **83 to 84**, accepted as $1e.
 
-`pokey_irqtiming` ("Incorrect IRQEN delay count") is probably the same question
-seen from the interrupt-latency side.
+**Three cycles apart, from clocks whose periods differ by 86.** So the delay is
+not a period. It is however far a FREE-RUNNING divider happened to be from its
+next tick, which the test makes reproducible by syncing with two WSYNCs first.
+
+That much is now modelled: STIMER reloads the four channel counters but does not
+touch the base divider, which is a tap off the machine-cycle count. The
+`ptimer` gate measures the INTERVAL between consecutive interrupts rather than
+the delay to the first, because for a free-running divider only the spacing is a
+property of the configuration.
+
+**But a single phase constant cannot make the test pass.** Sweeping
+`POKEY_BASE_PHASE` across the whole 0..112 range fails at every value, and the
+reported count does not even vary monotonically with it (38 -> 33, 40 -> 45,
+42 -> 44, 44 -> 30). So the remaining error is structural, not a calibration:
+something about how the two base clocks relate, or about IRQ latency, is wrong.
+Do not tune the constant — it has been swept exhaustively and no value works.
+
+Worth trying next: the 64 kHz and 15 kHz clocks are probably not independent
+divisions of the master clock but taps off ONE chain, in which case their phases
+are locked to each other in a way two separate moduli cannot express. The three
+cycle difference between the two measured delays is the thing to reproduce.
+
+`pokey_irqtiming` ("Incorrect IRQEN delay count") is likely the same question
+from the interrupt-latency side, and `pokey_timertiming` may be too.

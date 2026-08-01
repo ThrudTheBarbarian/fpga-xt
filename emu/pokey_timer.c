@@ -1,5 +1,12 @@
 #include "pokey_timer.h"
 
+/* Where the free-running base divider sits relative to the machine-cycle count.
+ * A real POKEY shares its master clock with ANTIC, so this phase is fixed by
+ * power-on alignment; pokey_inittiming measures it. */
+#ifndef POKEY_BASE_PHASE
+#define POKEY_BASE_PHASE 0
+#endif
+
 /* Base-clock periods in machine cycles: 1.79 MHz / 28 is the 64 kHz clock,
  * / 114 the 15 kHz one (which is also exactly one scanline). */
 #define BASE_64K  28
@@ -41,7 +48,7 @@ void pokey_timer_reset(pokey_timer *p)
     p->audctl = 0;
     p->irqen  = 0;
     p->irqst  = 0xFF;      /* active low: nothing pending */
-    p->base_div = BASE_64K;
+    p->cycles = 0;
     p->irq = 0;
     p->init = 0;
 }
@@ -68,10 +75,8 @@ static void underflow(pokey_timer *p, int ch)
 void pokey_timer_skctl(pokey_timer *p, uint8_t val)
 {
     uint8_t now = (val & 0x03) == 0;
-    if (p->init && !now) {                     /* released: restart the divider */
-        p->base_div = base_period(p);
+    if (p->init && !now)                       /* released: reload the channels */
         for (int i = 0; i < 4; i++) reload(p, i);
-    }
     p->init = now;
 }
 
@@ -88,9 +93,8 @@ void pokey_timer_tick(pokey_timer *p)
     if (fast1 && !(p->audctl & 0x10) && --p->cnt[0] <= 0) underflow(p, 0);
     if (fast3 && !(p->audctl & 0x08) && --p->cnt[2] <= 0) underflow(p, 2);
 
-    if (--p->base_div > 0)
+    if ((p->cycles++ + POKEY_BASE_PHASE) % (unsigned long)base_period(p) != 0)
         return;
-    p->base_div = base_period(p);
 
     /* A linked pair is driven as one counter off the LOW channel's clock, and
      * only the HIGH channel's underflow raises the interrupt. */
@@ -117,9 +121,15 @@ void pokey_timer_write(pokey_timer *p, uint16_t addr, uint8_t val)
     case 0x04: p->audf[2] = val; break;
     case 0x06: p->audf[3] = val; break;
     case 0x08: p->audctl = val; break;
-    case 0x09:                                 /* STIMER resets all dividers */
+    case 0x09:
+        /* STIMER reloads the four CHANNEL counters but does NOT touch the base
+         * clock divider, which free-runs.  pokey_inittiming shows why: with
+         * AUDF = 0 it measures the first interrupt at 86 cycles on the 15 kHz
+         * clock and 83 on the 64 kHz one — only three apart, though the periods
+         * differ by 86.  So the delay is not a period at all; it is however far
+         * the free-running divider happened to be from its next tick, which the
+         * test makes deterministic by syncing with two WSYNCs first. */
         for (int i = 0; i < 4; i++) reload(p, i);
-        p->base_div = base_period(p);
         break;
     case 0x0E:
         /* IRQEN both masks and CLEARS: a bit written as zero drops any request
