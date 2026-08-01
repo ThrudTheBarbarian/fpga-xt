@@ -1986,7 +1986,17 @@ It resolves if the mid-line `sty hposp0` does NOT restart the player. Suppose
 the shift register keeps its bit counter and the new HPOS only says where the
 REMAINING bits are drawn. Then the lit bit 0 — index 7 — lands at `Y + 4*(7-j)`
 where `j` is the bit index reached when the write landed, and the observed
-`Y + 20` gives `j = 2` for every row of the table.
+`Y + 20` gives `j = 2`.
+
+**But that reading does not survive the `$64` row**, and it is worth being exact
+about which part is evidence and which is inference. `Y = $64` with `j = 2` puts
+the lit bit at `$78`..`$7b` — all four missiles — index `$F`. The table says 0.
+So a uniform "relocate keeping the bit index" cannot be the whole rule either:
+something makes `$64` behave like no relocation at all while `$65` onwards
+relocate. The three rows `$65`, `$66`, `$67` are consistent with each other and
+with `j = 2`; the `$64` row is the one that says the mechanism has a THRESHOLD
+in it, most likely the beam position at which the write lands relative to the
+new HPOS.
 
 **So a mid-line HPOS write RELOCATES a player that is already drawing, rather
 than retriggering it from bit 0.** Our `obj_step` does the opposite: any match
