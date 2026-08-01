@@ -144,6 +144,16 @@ void antic_reset(antic *a)
     a->nmien = 0;
 }
 
+/* HSCROL only applies to a row whose display-list instruction ASKS for
+ * horizontal scrolling (bit 4).  Applying it to every row shifts unscrolled
+ * playfields by up to fifteen colour clocks whenever the register happens to be
+ * non-zero, which the register's leftover value from an earlier row makes easy
+ * to hit. */
+static int hscrol_of(const antic *a)
+{
+    return (a->dl_insn & 0x10) ? (a->hscrol & 0x0F) : 0;
+}
+
 static antic_width width_of(uint8_t dmactl)
 {
     switch (dmactl & 0x03) {
@@ -240,7 +250,7 @@ static void line_start(antic *a)
     int mode = a->dl_insn & 0x0F;
     if (mode >= 2 && (a->dmactl & 0x20)) {
         antic_dma_line((uint8_t)mode, width_of(a->dmactl),
-                       a->row_line == 0, a->hscrol, a->blocked);
+                       a->row_line == 0, hscrol_of(a), a->blocked);
 
         /* FETCH into the line buffer.  The playfield counter wraps at 4 KB
          * during the fetch, so a row crossing that boundary reads from the
@@ -470,7 +480,7 @@ int antic_pf_at(const antic *a, int cc, int *hires_lit)
      * playfield, which only overlaps if narrow begins at $40.  Independent
      * constants put it at $50 and no collision ever registered. */
     antic_width w = width_of(a->dmactl);
-    int start = 2 * (antic_pf_nominal(w, a->hscrol & 0x0F) + PF_DISPLAY_LEAD);
+    int start = 2 * (antic_pf_nominal(w, hscrol_of(a)) + PF_DISPLAY_LEAD);
     int span  = (w == ANTIC_NARROW) ? 128 : (w == ANTIC_WIDE) ? 192 : 160;
 
     int off = cc - start;
@@ -538,7 +548,7 @@ int antic_pf_nibble(const antic *a, int cc, int shift)
     if (!(a->dmactl & 0x20) || (a->dl_insn & 0x0F) != 0x0F)
         return -1;
     antic_width w = width_of(a->dmactl);
-    int start = 2 * (antic_pf_nominal(w, a->hscrol & 0x0F) + PF_DISPLAY_LEAD);
+    int start = 2 * (antic_pf_nominal(w, hscrol_of(a)) + PF_DISPLAY_LEAD);
     int span  = (w == ANTIC_NARROW) ? 128 : (w == ANTIC_WIDE) ? 192 : 160;
 
     int off = cc - start - shift;
