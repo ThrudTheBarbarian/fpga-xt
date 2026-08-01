@@ -142,6 +142,10 @@ static int run_one(const char *dir, const char *name, unsigned long long *cyc)
             /* d0..d5 are the suite's scratch at $C8..$CD, and they are what the
              * _ASSERT macros compare — so on a failure they say WHICH value was
              * wrong, not merely that one was. */
+            if (trace_on && s.dbg_rand_seen)
+                printf("      LFSR ticks from SKCTL release to first RANDOM read: %llu"
+                       " (hardware: 113)\n",
+                       (unsigned long long)(s.dbg_rand_at - s.dbg_skctl_at));
             if (trace_on)
                 printf("      d0..d5 = %02X %02X %02X %02X %02X %02X\n",
                        s.ram[0xC8], s.ram[0xC9], s.ram[0xCA],

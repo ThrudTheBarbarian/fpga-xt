@@ -26,6 +26,15 @@ typedef struct {
     gtia       gt;
     pokey_rand pk;
     uint64_t   cycles;
+
+    /* Diagnosis for the RANDOM-as-a-cycle-clock path.  The ANTIC timing tests
+     * measure elapsed MACHINE CYCLES between taking POKEY out of SKCTL init and
+     * reading $D20A, so counting the LFSR's own ticks between those two events
+     * says directly whether the system path is off, and by how much. */
+    uint64_t   pk_ticks;      /* LFSR advances since reset */
+    uint64_t   dbg_skctl_at;  /* pk_ticks when SKCTL last released the counters */
+    uint64_t   dbg_rand_at;   /* pk_ticks at the first RANDOM read after that */
+    int        dbg_rand_seen;
 } atari;
 
 void atari_init(atari *s);

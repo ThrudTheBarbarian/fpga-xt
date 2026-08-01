@@ -19,7 +19,7 @@ static void sys_cycle(atari *s)
         s->cycles++;
         s->cpu.nmi = (uint8_t)s->an.nmi;
         if (!took) return;          /* the CPU gets this one */
-        pokey_rand_tick(&s->pk);    /* ANTIC's cycles advance the LFSR here */
+        pokey_rand_tick(&s->pk); s->pk_ticks++;   /* ANTIC's cycles advance it here */
     }
 }
 
@@ -28,14 +28,17 @@ static void sys_cycle(atari *s)
  * put every RANDOM read exactly one machine cycle late, which
  * tools/pokey-random-decode.py named precisely from antic_wsync's d0 ($4A where
  * $95 was wanted, step 114 against step 113). */
-static void cpu_cycle_done(atari *s) { pokey_rand_tick(&s->pk); }
+static void cpu_cycle_done(atari *s) { pokey_rand_tick(&s->pk); s->pk_ticks++; }
 
 static uint8_t io_read(atari *s, uint16_t a)
 {
     switch (a & 0xFF00) {
     case 0xD000: return gtia_read(&s->gt, a);
     case 0xD200:
-        if ((a & 0x0F) == 0x0A) return pokey_rand_read(&s->pk);
+        if ((a & 0x0F) == 0x0A) {
+            if (!s->dbg_rand_seen) { s->dbg_rand_at = s->pk_ticks; s->dbg_rand_seen = 1; }
+            return pokey_rand_read(&s->pk);
+        }
         return 0xFF;
     case 0xD400: return antic_read(&s->an, a);
     default:     return s->ram[a];
@@ -48,7 +51,10 @@ static void io_write(atari *s, uint16_t a, uint8_t v)
     case 0xD000: gtia_write(&s->gt, a, v); break;
     case 0xD200:
         if ((a & 0x0F) == 0x08) pokey_rand_audctl(&s->pk, v);
-        if ((a & 0x0F) == 0x0F) pokey_rand_skctl(&s->pk, v);
+        if ((a & 0x0F) == 0x0F) {
+            if ((v & 3) && s->pk.init) { s->dbg_skctl_at = s->pk_ticks; s->dbg_rand_seen = 0; }
+            pokey_rand_skctl(&s->pk, v);
+        }
         break;
     case 0xD400: antic_write(&s->an, a, v); break;
     default:     s->ram[a] = v; break;
