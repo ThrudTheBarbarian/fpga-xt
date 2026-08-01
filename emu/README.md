@@ -505,3 +505,26 @@ modelled at all:
 
 `pokey_inittiming`'s 64 kHz case remains two cycles out and is unrelated to the
 input path.
+
+## Open: the five mod_* derails, and a tool for chasing them
+
+`ACID_TRAPOUT=1` remembers the last PCs and dumps them the first time execution
+reaches a byte the XEX never loaded — the moment of a derail, rather than
+anywhere along the BRK-walk through zeroed RAM that follows. `ACID_TRAP=<hex>`
+does the same for a specific address. The "loaded" map comes from the loader
+itself, so both work on any test.
+
+That is what showed `pokey_skstat` and `pokey_serdirect` were asking for a disk
+rather than stalling on SKSTAT, and it gives the mod_* group a starting point:
+
+* `mod_options` — derails to `$0000` after only **21 instructions**, coming out
+  of the library's `_imprint` at `$1b7b`..`$1b80`. That is the inline-string
+  printer: it pulls its own return address, steps past the string, and calls
+  `_print`. Worth checking whether it reaches `_print` at all.
+* `mod_dispmin` — derails to `$0ab4` after 8468 instructions, from a tight loop
+  at `$280a`..`$2811` in its own code.
+
+Note both figures are small enough to trace instruction by instruction if
+needed. The docs' claim that these are "non-terminating demo modules" is still
+UNVERIFIED and now looks doubtful: a module designed not to terminate would not
+derail into unloaded memory 21 instructions in.

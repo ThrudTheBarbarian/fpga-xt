@@ -48,6 +48,10 @@ static int lab_lookup(const char *path, const char *sym, uint16_t *out)
     return found;
 }
 
+/* Which bytes the XEX actually put down.  ACID_TRAPOUT uses this to recognise
+ * the moment execution leaves real code, on any test. */
+static uint8_t loaded[65536];
+
 /* Load an Atari XEX: $FFFF header (optional per segment), then start/end/data.
  * Returns the RUN address from $02E0, or 0. */
 static int load_xex(atari *s, const char *path, uint16_t *runaddr)
@@ -71,6 +75,7 @@ static int load_xex(atari *s, const char *path, uint16_t *runaddr)
             int c = fgetc(f);
             if (c < 0) { fclose(f); return first ? 0 : 1; }
             s->ram[(start + i) & 0xFFFF] = (uint8_t)c;
+            loaded[(start + i) & 0xFFFF] = 1;
         }
         if (start <= 0x02E1 && end >= 0x02E0)
             *runaddr = (uint16_t)(s->ram[0x02E0] | (s->ram[0x02E1] << 8));
@@ -228,7 +233,11 @@ static int run_one(const char *dir, const char *name, unsigned long long *cyc)
              * itself, rather than anywhere along the BRK-walk through zeroed
              * RAM that follows it. */
             uint16_t pc = s.cpu.pc;
-            int inside = (pc >= 0x1A20 && pc <= 0x22C8) || (pc >= 0xFF00 && pc <= 0xFF4F);
+            /* "Inside" means a byte the XEX actually loaded, or one of the
+             * runner's own stubs.  Deriving it from the load map rather than
+             * hardcoding a range is what makes this usable on any test. */
+            int inside = loaded[pc] || (pc >= 0xFF00 && pc <= 0xFF4F)
+                                    || (pc >= 0xE453 && pc <= 0xE488);
             if (!inside) {
                 trapped = 1;
                 int n = hcount < 40 ? hcount : 40;
