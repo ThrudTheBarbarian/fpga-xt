@@ -107,6 +107,7 @@ void antic_dl_exec(antic *a)
 
     a->row_height = antic_row_height[mode];
     a->row_end    = a->row_height - 1;
+    a->row_first  = 1;
     if (entering)
         a->row_line = a->vscrol & 0x0F;       /* start high: short first row */
     if (leaving)
@@ -250,7 +251,7 @@ static void line_start(antic *a)
     int mode = a->dl_insn & 0x0F;
     if (mode >= 2 && (a->dmactl & 0x20)) {
         antic_dma_line((uint8_t)mode, width_of(a->dmactl),
-                       a->row_line == 0, hscrol_of(a), a->blocked);
+                       a->row_first, hscrol_of(a), a->blocked);
 
         /* FETCH into the line buffer.  The playfield counter wraps at 4 KB
          * during the fetch, so a row crossing that boundary reads from the
@@ -278,7 +279,7 @@ static void line_start(antic *a)
          * concerned, which is what antic_linebuffering's "aliased mode F"
          * case catches: the row starts with DMA off, so nothing is fetched, and
          * the previous row's 40 bytes must still be there to be re-displayed. */
-        if (n > 0 && a->row_line == 0) {
+        if (n > 0 && a->row_first) {
             for (int i = 0; i < n && i < (int)sizeof a->linebuf; i++) {
                 a->linebuf[i] = a->fetch ? a->fetch(a->ctx, a->pf_addr) : 0xFF;
                 a->pf_addr = antic_pf_next(a->pf_addr);
@@ -340,6 +341,7 @@ static void line_start(antic *a)
         }
     }
 
+    a->row_first = 0;
     a->row_line = (a->row_line + 1) & 0x0F;
 }
 

@@ -701,7 +701,7 @@ of the start of its cycle (which is what `RANDOM` requires). Worth checking
 whether IRQST should be sampled the other way round from RANDOM.
 
 
-## Open: antic_pfstarttiming / pfstoptiming — the playfield reads as background
+## Open: antic_pfstarttiming / pfstoptiming — now a STRIDE, not a blank
 
 Both report **"Character mode DMACTL early test failed: stride=%d"** with
 `d1 = 12`, and 12 is the `add #12` with nothing added: `(p0pf << 2) | p1pf` came
@@ -720,13 +720,38 @@ What is already ruled out, from `ACID_PFPROBE`:
 * the window is right — the decode reaches the bitmap branch rather than falling
   out of `off < 0 || off >= span`.
 
-So the decode runs and returns background: `v` is zero, meaning the **line buffer
-holds zeros** where `framedata` should be. The next thing to check is whether the
-mode-10 row re-fetched at all, or is still showing the mode-6 row's 20 bytes —
-both modes take 20 bytes at normal width, so `lb_len` alone cannot tell them
-apart. Dump `linebuf` on the measured line and compare against `framedata`.
+That was a real bug, and a general one: **a row entering a vertically scrolled
+region never fetched at all.** A per-line trace made it obvious —
 
-Note the geometry this test is built on, which is easy to misread: `dta $66` with
-VSCROL = 7 is a **one-scanline** row (the first scrolled row starts at row VSCROL
-and ends at the mode's last row, and 7 == 7), so the DLI's two WSYNCs land the
-measurement on the row AFTER it.
+```
+LS sl  33 insn $66 row_line  7 n 20 pf_addr $2D00     <- no fetch
+LS sl  34 insn $0A row_line  0 n 20 pf_addr $2D00
+LS sl  35 insn $0A row_line  1 n 20 pf_addr $2D14
+```
+
+— the fetch was gated on `row_line == 0`, but the first row of a scrolled region
+**starts its counter at VSCROL**. So the mode-6 row skipped its fetch and, worse,
+never advanced `pf_addr`; the mode-10 row after it then read `framedata[0..19]`,
+which this test deliberately fills with zeros. The gate is now an explicit
+`row_first` flag set when a new instruction is latched.
+
+Note the geometry, which is easy to misread: `dta $66` with VSCROL = 7 is a
+**one-scanline** row (the first scrolled row starts at row VSCROL and ends at the
+mode's last row, and 7 == 7), so the DLI's two WSYNCs land the measurement on the
+row AFTER it — and because that row has no LMS, what it displays depends entirely
+on how far the one-scanline row advanced `pf_addr`. That is the "stride" the
+test's message names.
+
+**What is left is a genuine model limitation.** `d1` is now `$14` = 20, against a
+wanted 16: the stride is right for NORMAL width and the test wants NARROW. It
+writes DMACTL at scanline cycle 16, before the playfield DMA window opens at ~25,
+so the hardware fetches 16 bytes; we fetch the whole row at `line_start`, cycle 0,
+and never see the write. The companion assertion wants **18** from a DMACTL write
+*during* the fetch, so a "sample the width when the window opens" patch is not
+enough either — closing these needs the fetch made **progressive**, one byte at
+the cycle the DMA schedule actually assigns it. `antic_hscrolbug` is likely the
+same shape.
+
+That is a real restructuring of `line_start` and it puts `antic_linebuffering`,
+`antic_charcontrol`, `antic_addresswrap` and `antic_dmapattern` at risk, so it
+wants doing deliberately rather than as a quick patch.

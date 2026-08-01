@@ -98,6 +98,12 @@ typedef struct {
     uint16_t pf_addr;     /* playfield memory scan address (LMS target) */
     uint8_t  dl_insn;
     uint8_t  vscrol_prev;  /* did the PREVIOUS instruction have the VSCROL bit? */
+    uint8_t  row_first;    /* this scanline is the row's FIRST, which is NOT the
+                            * same as row_line == 0: a row ENTERING a vertically
+                            * scrolled region starts its counter at VSCROL, and
+                            * gating the fetch on the counter meant such a row
+                            * never fetched at all and never advanced the
+                            * playfield scan address (antic_pfstarttiming). */
     uint8_t  nmi_arm;      /* the status set at cycle 7 raises /NMI at 8 */
     uint8_t  wsync_extra;  /* a WSYNC write arriving while the halt is ALREADY
                             * armed pushes the release out by one cycle — an
