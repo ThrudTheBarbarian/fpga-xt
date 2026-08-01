@@ -52,19 +52,39 @@ static int is_refresh(int c)
         && ((c - REFRESH_FIRST) % REFRESH_STEP) == 0;
 }
 
-/* Playfield start cycle, read off the ACID table.  TODO: derive from DMACTL
- * width and HSCROL with the cycle-16/17 sampling point, per
- * docs/Acid800/antic_pfstarttiming.md — a fixed table cannot express the
- * mid-scanline register writes those tests make. */
-static int pf_start(uint8_t mode, antic_width w, int first)
+/* ---- the playfield window -------------------------------------------------
+ * DERIVED, not tabulated.  One DMACTL width step is 32 colour clocks = 16
+ * machine cycles, 8 at EACH edge, so the window's left edge moves 8 machine
+ * cycles per step: normal 21, narrow 29, wide 13.  That single rule reproduces
+ * every start cycle in the ACID table.
+ *
+ * HSCROL shifts the window left by HSCROL colour clocks = HSCROL/2 machine
+ * cycles.  It is a parameter here rather than a constant because
+ * antic_pfstarttiming and antic_pfstoptiming write DMACTL and HSCROL
+ * MID-SCANLINE and expect the edges to move — a tabulated start cannot express
+ * that at all. */
+#define PF_NOMINAL_NORMAL 21
+#define PF_WIDTH_STEP      8
+
+static int pf_nominal(antic_width w, int hscrol)
 {
-    int bitmap = (mode >= 8);
-    if (w == ANTIC_NARROW) return bitmap ? 28 : (first ? 26 : 30);
-    return bitmap ? 20 : (first ? 18 : 21);
+    return PF_NOMINAL_NORMAL
+         + ((int)ANTIC_NORMAL - (int)w) * PF_WIDTH_STEP
+         - (hscrol >> 1);
+}
+
+/* Where the fetch stream begins, relative to the window.  Bitmap modes start
+ * one cycle early; character modes issue a prefetch three cycles early on a
+ * row's first line and otherwise sit on the window itself. */
+static int pf_start(uint8_t mode, antic_width w, int first, int hscrol)
+{
+    int nom = pf_nominal(w, hscrol);
+    if (mode >= 8) return nom - 1;
+    return first ? nom - 3 : nom;
 }
 
 void antic_dma_line(uint8_t mode, antic_width width, int first_line,
-                    uint8_t blocked[ANTIC_LINE_CYCLES])
+                    int hscrol, uint8_t blocked[ANTIC_LINE_CYCLES])
 {
     memset(blocked, 0, ANTIC_LINE_CYCLES);
 
@@ -81,14 +101,24 @@ void antic_dma_line(uint8_t mode, antic_width width, int first_line,
     int stride = first_line ? s->stride_first : s->stride_rest;
     if (!stride) return;
 
+    int start = pf_start(mode, width, first_line, hscrol);
+    int nom   = pf_nominal(width, hscrol);
+
     int chars = (width == ANTIC_NARROW) ? s->chars_narrow : s->chars_normal;
-    int start = pf_start(mode, width, first_line);
+
+    /* The playfield STOP is a CYCLE COMPARISON, never a byte count.
+     * antic_hscrolbug works by glitching HSCROL so the stop is MISSED and
+     * fetching runs on into horizontal blank; a count cannot fail to
+     * terminate, so a count would make that test unreachable.  The span
+     * differs by class: a bitmap mode strides over `chars` bytes, a character
+     * mode issues two fetches per character on a row's first line. */
+    int stop = (mode >= 8) ? start + chars * stride
+                           : start + 2 + chars * (first_line ? 2 : 1);
 
     /* Bitmap modes fetch `chars` BYTES once per row — no name/data pair, and
      * their stream sits on its own grid rather than the refresh one. */
     if (mode >= 8) {
-        for (int i = 0, c = start; i < chars && c < ANTIC_LINE_CYCLES;
-             i++, c += stride)
+        for (int c = start; c < stop && c < ANTIC_LINE_CYCLES; c += stride)
             blocked[c] = 1;
         return;
     }
@@ -102,7 +132,7 @@ void antic_dma_line(uint8_t mode, antic_width width, int first_line,
          * refresh is LOST, not re-sought" behaviour this project already knows
          * from the fabric DMA scheduler. */
         blocked[start] = 1;
-        for (int i = 0, c = start + 2; i < n && c < ANTIC_LINE_CYCLES; i++, c++)
+        for (int c = start + 2; c < stop && c < ANTIC_LINE_CYCLES; c++)
             blocked[c] = 1;
         return;
     }
@@ -115,7 +145,6 @@ void antic_dma_line(uint8_t mode, antic_width width, int first_line,
      * where consecutive pairs merge into the solid run handled above. */
     if (first_line) {
         blocked[start] = 1;                       /* the prefetch */
-        int nom = (width == ANTIC_NARROW) ? 29 : 21;
         int left = n - 1;                         /* the prefetch was one of them */
         for (int p = nom; left > 0 && p < ANTIC_LINE_CYCLES; p += 4) {
             int c = is_refresh(p) ? p + 1 : p;
@@ -132,8 +161,7 @@ void antic_dma_line(uint8_t mode, antic_width width, int first_line,
      * fetch-versus-consumed-cycle distinction antic_hscrolbug's map draws. */
     /* The nominal grid starts where the playfield does, which is earlier for a
      * normal-width line than a narrow one. */
-    int nominal = (width == ANTIC_NARROW) ? 29 : 21;
-    for (int i = 0, p = nominal; i < n && p < ANTIC_LINE_CYCLES; i++, p += stride) {
+    for (int i = 0, p = nom; i < n && p < ANTIC_LINE_CYCLES; i++, p += stride) {
         int c = is_refresh(p) ? p + 1 : p;
         if (c < ANTIC_LINE_CYCLES) blocked[c] = 1;
     }

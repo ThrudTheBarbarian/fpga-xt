@@ -26,8 +26,12 @@ typedef enum { ANTIC_NARROW = 0, ANTIC_NORMAL = 1, ANTIC_WIDE = 2 } antic_width;
  *   first_line  1 on a display-list row's FIRST scanline (display-list fetch
  *               plus, for character modes, the name fetches); 0 on the
  *               subsequent scanlines of the same row.
+ *   hscrol      HSCROL, in colour clocks (0-15).  Shifts the playfield window
+ *               left; the window edges are DERIVED from this and the width,
+ *               not tabulated, because antic_pfstarttiming/antic_pfstoptiming
+ *               write both mid-scanline and expect the edges to move.
  */
 void antic_dma_line(uint8_t mode, antic_width width, int first_line,
-                    uint8_t blocked[ANTIC_LINE_CYCLES]);
+                    int hscrol, uint8_t blocked[ANTIC_LINE_CYCLES]);
 
 #endif /* ANTIC_DMA_H */
