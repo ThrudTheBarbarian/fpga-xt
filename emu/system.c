@@ -33,8 +33,17 @@ static void pm_latch(atari *s)
  * or gtia_pmretrigger (a mid-line HPOS write redraws the player on that line). */
 static void render_cycle(atari *s, int cyc)
 {
+    /* GTIA blanks on what ANTIC is EMITTING, not on the scanline number.  Past
+     * the bottom of the display the list is stalled on whatever instruction it
+     * last latched: a blank-line instruction really does blank, but a DISPLAY
+     * mode keeps feeding GTIA and collisions keep registering.  That is
+     * antic_hiresbug — the same handler, the same players, the same DMACTL, and
+     * the only difference is whether the DLI's own instruction is $80 (blank)
+     * or $CF (mode F). */
+    int an_mode = s->an.dl_insn & 0x0F;
+    int emitting = an_mode >= 2 && (s->an.dmactl & 0x20);
     s->gt.vblank = (s->an.scanline < ANTIC_DISPLAY_TOP ||
-                    s->an.scanline >= ANTIC_DISPLAY_BOTTOM);
+                    s->an.scanline >= ANTIC_DISPLAY_BOTTOM) && !emitting;
     for (int h = 0; h < 2; h++) {
         int cc = cyc * 2 + h;
         if (cc >= GTIA_CLOCKS) break;
