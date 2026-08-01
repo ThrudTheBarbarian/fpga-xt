@@ -25,6 +25,10 @@
 #ifndef HSCROL_REACH
 #define HSCROL_REACH 25
 #endif
+/* HSCROL's own commit lead, separate from DMACTL's PF_COMMIT_LEAD. */
+#ifndef HSCROL_COMMIT_LEAD
+#define HSCROL_COMMIT_LEAD PF_COMMIT_LEAD
+#endif
 
 /* An RMW writes WSYNC twice; the second write arriving while the halt is
  * already armed pushes the release out by this many cycles.  Overridable so it
@@ -434,7 +438,7 @@ static int pf_span(const antic *a)
     }
 }
 
-static void rebuild_line(antic *a, int old_nom, int old_span)
+static void rebuild_line(antic *a, int old_nom, int old_span, int lead)
 {
     int from = a->cycle;                    /* the next cycle to run */
     if (from < 0 || from >= ANTIC_LINE_CYCLES) return;
@@ -455,7 +459,7 @@ static void rebuild_line(antic *a, int old_nom, int old_span)
      * `span` machine cycles long measured FROM that same start, which puts the
      * narrow close at 26 + 64 = 90 — after narrow's last fetch at 86, and before
      * the next grid point it would have taken. */
-    int old_start = old_nom - PF_COMMIT_LEAD;
+    int old_start = old_nom - lead;
     int old_close = old_nom + old_span
                   - antic_pf_grid((uint8_t)mode, a->row_first);
 
@@ -838,7 +842,7 @@ void antic_write(antic *a, uint16_t addr, uint8_t val)
         int old_nom = pf_window(a);           /* the window BEFORE the write */
         int old_span = pf_span(a);
         a->dmactl = val;
-        rebuild_line(a, old_nom, old_span);
+        rebuild_line(a, old_nom, old_span, PF_COMMIT_LEAD);
         break;
     }
     case 0x01: a->chactl = val; break;
@@ -866,7 +870,12 @@ void antic_write(antic *a, uint16_t addr, uint8_t val)
         int want  = val & 0x0F;
         a->hscrol_line = (uint8_t)(!HSCROL_CLAMP ? want
                                  : want < reach ? want : (reach < 0 ? 0 : reach));
-        rebuild_line(a, old_nom, old_span);
+        /* HSCROL commits its own start EARLIER than DMACTL does.  The fetch
+         * count is what antic_pfstarttiming calls the stride, and it changes by
+         * exactly one when the write crosses this boundary — so the boundary is
+         * what its early/late pair straddles, and DMACTL's own pair (which
+         * passes) says the two registers cannot share it. */
+        rebuild_line(a, old_nom, old_span, HSCROL_COMMIT_LEAD);
         break;
     }
     case 0x05: a->vscrol = val; break;

@@ -1717,7 +1717,45 @@ reading: its HSCROL cases want 21 and 20, the opposite polarity to
 `antic_pfstarttiming`'s 16 and 17 (rule i), which is what a fetch COUNT does
 when a window is widened from one side rather than the other.
 
-That is where the next attempt goes.
+### ...and the fetch count is not the lever either. PARKED.
+
+Tabulated with a scratch harness against `antic_dma_line_map` before building
+anything (rule v), writing HSCROL `$08` at each cycle of the row's first line:
+
+```
+  write at  -1 (none)  -> fetches 16
+  write at  10 .. 22   -> fetches 20
+  write at  23, 24     -> fetches 19
+```
+
+Cycles 16 and 17 sit in the middle of a flat run. The count DOES change, but at
+23, and the change is not the commit pin: giving HSCROL its own commit lead
+(`HSCROL_COMMIT_LEAD`, so its boundary can sit between 16 and 17 independently
+of DMACTL's) moves nothing at all — the boundary stays at 23 for every lead.
+What actually changes the count there is simply how many of the new window's
+fetch slots are still in the future, which moves in WHOLE SLOTS, four cycles
+apart in mode 6 narrow. It can never separate two adjacent cycles.
+
+So four levers are now disproved by direct measurement:
+
+| lever | why it cannot work |
+|---|---|
+| `PF_COMMIT_LEAD` / any binary commit test | a binary test cannot yield a ONE-unit shift (rule ii) |
+| the effective HSCROL value | 17 unreachable for any value, with or without the display fix |
+| the display start | all four flag combinations leave the late case at 16 |
+| the fetch count | flat across cycles 10..22; changes only in whole slots |
+
+**Parked.** Three tests share the idea and it is worth real money, but four
+measured dead ends say the missing mechanism is not any quantity currently in
+the model — it is something that distinguishes two ADJACENT machine cycles in a
+row that is already running, and nothing we compute has that resolution. The
+next person should start by asking what in ANTIC could possibly be sampled at
+colour-clock rather than machine-cycle granularity during a scrolled row,
+because that is the only kind of thing left that could tell 16 from 17.
+
+`HSCROL_COMMIT_LEAD` is left in place (defaulting to `PF_COMMIT_LEAD`, so no
+behaviour change) because it costs one `#define` and makes the next attempt at
+the split cheaper than re-deriving it.
 
 `antic_pfstoptiming` fails on its own HSCROL early case (19 where 16 is wanted)
 and `antic_hscrolbug` on "Unstopped PF DMA", so all three are almost certainly
