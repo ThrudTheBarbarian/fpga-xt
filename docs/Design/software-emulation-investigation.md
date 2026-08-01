@@ -80,3 +80,49 @@ because reproducing them would localise the fabric bug:
 * Both the WSYNC-release and VCOUNT-advance tune nibbles are **provably inert**
   against the NMI/VCOUNT cluster — see `hdl/antic_reg_file.sv`, which explains
   why (the test is WSYNC-anchored, so a uniform release shift cancels).
+
+
+## Where it stands
+
+**ACID800: 48 of 63 with the software core**, against 32 for the fabric at
+`sallyrst $06` — the number this was set up to beat. Eleven host gates
+(`cd emu && make test`) run on every build: Tom Harte all 256 opcodes, Klaus,
+directed interrupt timing, the POKEY LFSR and timers, the ANTIC DMA schedule
+against ACID800's own table, the ANTIC timing core, GTIA collisions, PIA, and a
+whole-machine `sys` gate for rules that live in the wiring rather than one chip.
+
+Every rule the software core encodes is a MEASURED ACID800 result with the test
+that establishes it named in the source; `emu/README.md` is the working notebook,
+including the disproved hypotheses, which are worth as much as the confirmed ones.
+
+Six tests still fail and all six are documented in that notebook with what has
+been ruled out. Three (`antic_hscrolbug`, `antic_pfstarttiming`,
+`antic_pfstoptiming`) share one unknown; two (`gtia_pmoverlap`, `gtia_pmresize`)
+share another, worked out to 660 of `gtia_pmoverlap`'s 672 cells with two
+mechanisms established and a scorer (`emu/tools/pmoverlap-check.py`) that tests
+any future model in a second. Five `mod_*` modules can never pass headlessly:
+they draw a pattern, print "Press a key..." and wait for a human, so their
+assertion is a pair of eyes. They are left COUNTED rather than reclassified,
+because excluding them would move the score without anything working.
+
+## Does it fit on one A9?
+
+`make bench` measures the real core rather than modelling it — a mode 2 screen
+with playfield DMA, player/missile DMA and four missiles, so every scanline pays
+for the DMA schedule, the line buffer, the P/M latch and 228 colour clocks of
+GTIA:
+
+```
+  808 frames/s on the dev host    41 ns per machine cycle    13.5x realtime
+  projected on one A9 at 6.0x slower:  135 fps   2.2x realtime
+  projected on one A9 at 7.5x slower:  108 fps   1.8x realtime
+```
+
+So **yes, with roughly twice the headroom it needs**, on the expensive workload
+rather than a friendly one. Two honest caveats: the A9 figure is projected from
+the separate `memprobe` measurement of this host against an A9 (6 to 7.5x), not
+from running there; and it counts the machine only — POKEY audio rendering and
+video scan-out are not in it.
+
+That supersedes `loader/test/freertos/progs/cycbench.c`, which measured the
+dispatch SHAPE before any emulator existed and could only ever be a lower bound.
