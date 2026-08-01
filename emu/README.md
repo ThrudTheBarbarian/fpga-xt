@@ -423,34 +423,30 @@ own annotations disagree with each other here: `antic_nmist`'s seven-cycle
 `pha:pla` spanning 104..109 puts its first cycle at 103, while `antic_vcount`'s
 four-cycle `bit $0100` spanning 105..107 plus an unnumbered first puts it at 104.
 
-## Open: pokey_sertiming — and why the immediate SEROUT take is ruled OUT
+## Open: pokey_sertiming's two blocks disagree about the SEROUT take
 
-`pokey_serclock` passes with a purely tick-driven transfer: the byte moves from
-SEROUT into the shift register only on a serial clock tick. `pokey_sertiming`
-loads SEROUT with timer 2 running and reports "loaded too late", which looks
-like it wants the transfer to be immediate.
+SEROR and SEROC are both LEVELS (see the commit), which reconciled
+`pokey_serclock` with `pokey_sertiming`'s second block and is settled. What is
+left is that sertiming's own two blocks want opposite things from the SAME
+228-cycle clock:
 
-**It is not that.** Making the take immediate was tried twice — once by calling
-the tick routine wholesale, once with "take the byte" properly separated from
-"advance a bit time" — and both break `serclock`, 34 down to 33. The separated
-version is still in the code and is the better structure; only the immediate
-call at the SEROUT write was removed.
+* **Block A** (`.lst` lines 135-145): reset SKCTL, `sta serout`, delay **195
+  cycles**, read IRQST, expect `$00` — SEROC still ASSERTED, i.e. the shift
+  register has NOT taken the byte. Fails as "loaded too early".
+* **Block B** (lines 151-167): two WSYNCs, **STIMER**, reset SKCTL,
+  `sta serout`, read IRQST immediately, expect `$08` — SEROC DEASSERTED, i.e. it
+  HAS taken it. Fails as "loaded too late".
 
-The reason is worth writing down, because it rules the idea out rather than
-merely scoring it. `serclock`'s MeasureSerOutRate does:
+Both follow the same `audctl $78 / audf 228-7` and neither reconfigures it.
+Measured: an immediate take passes serclock and block B and fails block A; a
+tick-driven take passes serclock and block A and fails block B. Both score 34.
+The immediate take is what is currently in, because it is what reconciled the
+serclock contradiction.
 
-```
-sta stimer / sta serout / sta irqen / jsr waitready
-```
-
-SEROUT is written while **IRQEN is still zero**. An immediate take raises SEROR
-right there, where it is masked and lost; the test then waits for a SEROR that
-never comes and measures a delta of 0. With a tick-driven take the first
-transfer happens after IRQEN is enabled, and the measurement works.
-
-So `sertiming` is failing for some other reason, and the likely candidate is the
-serial RATE in its configuration rather than the transfer rule — if timer 2's
-period there is short enough, a tick falls between its `sta serout` and its
-`lda irqst` and the tick-driven model already satisfies it. Check what AUDCTL
-and AUDF2 it sets, and whether that channel is being clocked at the rate the
-test intends, before touching the transfer again.
+The difference between the blocks is that **B does STIMER and A does not**, and
+A relies on the free-running divider still having more than 195 of its 228
+cycles left. So the resolution is probably about what STIMER does to the serial
+clock specifically — if STIMER makes the shift register sample immediately, or
+starts the bit clock in a state that takes the byte at once, both blocks work
+with a tick-driven take. That is the next thing to test, and it is checkable:
+block A must see NO tick in 195 cycles while block B sees one straight away.
