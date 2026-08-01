@@ -271,21 +271,21 @@ static void interrupt(xt6502 *c, uint16_t vec, int brk)
     if (brk) c->pc++;
     else     rd(c, c->pc);
     push(c, (uint8_t)(c->pc >> 8));
-    /* ---- the vector is committed HERE, after the PCH push ------------------
-     * i.e. at the end of the sequence's THIRD cycle, which for a BRK is its
-     * third cycle too (the opcode fetch is cycle one).  An NMI latched up to
+    /* ---- the vector is committed HERE, after the PCL push ------------------
+     * i.e. at the end of the sequence's FOURTH cycle, which for a BRK is its
+     * fourth cycle too (the opcode fetch is cycle one).  An NMI latched up to
      * and including this cycle diverts the vector to $FFFA; one latched later
      * does NOT — and is not merely deferred either, it is SWALLOWED, because
      * the edge detector stays held reset for the rest of the sequence.
      *
-     * Both halves of ACID800 antic_blockednmi turn on this one cycle.  The VBI
-     * request appears at scanline cycle 6 (ANTIC_CYC_NMIST); the test places a
-     * BRK at scanline cycles 3-9 and then, one cycle later, at 4-10.  The first
-     * lands the request on BRK cycle 4 and the BRK must complete through $FFFE
-     * with the NMI lost for good; the second lands it on cycle 3 and the NMI
-     * must take over with the BRK's own pushes and its pushed PC intact. */
-    if (c->nmi_pend) { vec = 0xFFFA; c->nmi_pend = 0; }
+     * Both halves of ACID800 antic_blockednmi turn on this one cycle.  /NMI is
+     * asserted at scanline cycle 8 (ANTIC_CYC_NMI); the test places a BRK at
+     * scanline cycles 4-10 and then, one cycle later, at 5-11.  The first lands
+     * the request on BRK cycle 5 and the BRK must complete through $FFFE with
+     * the NMI lost for good; the second lands it on cycle 4 and the NMI must
+     * take over with the BRK's own pushes and its pushed PC intact. */
     push(c, (uint8_t)c->pc);
+    if (c->nmi_pend) { vec = 0xFFFA; c->nmi_pend = 0; }
     push(c, (uint8_t)(brk ? (c->p | XTF_B | XTF_U) : ((c->p | XTF_U) & ~XTF_B)));
     c->p |= XTF_I;
     uint8_t lo = rd(c, vec);

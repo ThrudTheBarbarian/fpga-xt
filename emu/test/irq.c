@@ -165,16 +165,16 @@ int main(void)
     }
 
     /* ---- 5: the NMI/BRK hijack boundary ---------------------------------
-     * The vector is committed after the PCH push — the sequence's THIRD cycle.
+     * The vector is committed after the PCL push — the sequence's FOURTH cycle.
      * An NMI latched at or before it diverts the vector to $FFFA with the BRK's
      * own pushes intact; one latched after it is not deferred, it is SWALLOWED
      * for good.  ACID800 antic_blockednmi turns on exactly this boundary: the
-     * VBI request lands on BRK cycle 4 in its first half (BRK must complete
-     * through $FFFE and the NMI must never happen) and on cycle 3 in its
+     * VBI request lands on BRK cycle 5 in its first half (BRK must complete
+     * through $FFFE and the NMI must never happen) and on cycle 4 in its
      * second (the NMI must take over). */
     for (int k = 1; k <= 7; k++) {
         static const uint8_t prog[] = { 0x00, 0xEA, 0xEA, 0xEA, 0xEA, 0xEA };
-        int hijack = (k <= 3);
+        int hijack = (k <= 4);
         setup(&c, prog, sizeof prog, 0x2000);
         c.irq = 0;
         mem[0xFFFA] = NMI_HANDLER & 0xff;

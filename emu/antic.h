@@ -17,6 +17,7 @@
 
 /* Scanline cycle landmarks (docs/Acid800/). */
 #define ANTIC_CYC_NMIST   7     /* NMIST bits set; NMIEN sampled  (antic_nmist) */
+#define ANTIC_CYC_NMI     8     /* /NMI asserted, ONE cycle after the status */
 #define ANTIC_CYC_NMIRES  8     /* NMIRES takes effect from here  (antic_nmist) */
 #define ANTIC_CYC_WSYNC 104     /* first cycle the CPU gets BACK  (see below) */
 /* Where this boundary sits cannot be read off antic_wsync — its probes are
@@ -97,6 +98,7 @@ typedef struct {
     uint16_t pf_addr;     /* playfield memory scan address (LMS target) */
     uint8_t  dl_insn;
     uint8_t  vscrol_prev;  /* did the PREVIOUS instruction have the VSCROL bit? */
+    uint8_t  nmi_arm;      /* the status set at cycle 7 raises /NMI at 8 */
     uint8_t  wsync_extra;  /* a WSYNC write arriving while the halt is ALREADY
                             * armed pushes the release out by one cycle — an
                             * RMW writes twice (antic_wsync's INC cases) */

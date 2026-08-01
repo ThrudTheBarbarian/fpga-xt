@@ -399,14 +399,14 @@ int antic_tick(antic *a)
         if (a->dli_line) {
             a->nmist = (uint8_t)((a->nmist & ~ANTIC_NMI_VBI) | ANTIC_NMI_DLI);
             a->nmist_set_now = 1;
-            if (a->nmien & ANTIC_NMI_DLI) a->nmi = 1;
+            if (a->nmien & ANTIC_NMI_DLI) a->nmi_arm = 1;
         }
         int vbi = (a->scanline == ANTIC_DISPLAY_BOTTOM);
         if (vbi) {
             /* the DLI and VBI status bits clear each other on arrival */
             a->nmist = (uint8_t)((a->nmist & ~ANTIC_NMI_DLI) | ANTIC_NMI_VBI);
             a->nmist_set_now = 1;
-            if (a->nmien & ANTIC_NMI_VBI) a->nmi = 1;
+            if (a->nmien & ANTIC_NMI_VBI) a->nmi_arm = 1;
         }
     }
     /* /NMI is a PULSE, not a line held until NMIRES.  Real DLI handlers do not
@@ -416,7 +416,11 @@ int antic_tick(antic *a)
      * every ACID800 test measured exactly one delivery.
      * The system layer latches this so a pulse landing inside a DMA burst,
      * where the CPU is not being serviced, is still seen (see system.c). */
-    if (c == ANTIC_CYC_NMIST + 1)
+    if (c == ANTIC_CYC_NMI) {
+        a->nmi = a->nmi_arm;
+        a->nmi_arm = 0;
+    }
+    if (c == ANTIC_CYC_NMI + 1)
         a->nmi = 0;
 
     /* VCOUNT is scanline>>1, so it advances at cycle 111 of every ODD scanline.
@@ -613,7 +617,7 @@ void antic_write(antic *a, uint16_t addr, uint8_t val)
          * effect — the mirror of the NMIRES rule below.  antic_nmist requires a
          * write on cycle 6 to activate the DLI that was latched on that cycle. */
         if (a->nmist_set_now && (a->nmist & val & (ANTIC_NMI_DLI | ANTIC_NMI_VBI)))
-            a->nmi = 1;
+            a->nmi_arm = 1;
         break;
     case 0x0F:
         /* NMIRES clears the STATUS but must not retract an interrupt already

@@ -86,23 +86,28 @@ int main(void)
     /* ---- unused ANTIC reads are $FF (antic_default) ---------------------- */
     expect("unused ANTIC read", antic_read(&a, 0xD406), 0xFF);
 
-    /* ---- NMIST: VBI sets bit 6 at cycle 6, NMIRES clears status ---------- */
+    /* ---- NMIST: VBI sets bit 6 at cycle 7, /NMI follows at 8 ------------ */
     antic_init(&a, nofetch, NULL, ANTIC_LINES_NTSC);
     a.nmien = ANTIC_NMI_VBI;
     run_to(&a, 248, ANTIC_CYC_NMIST);
-    expect("NMIST before cycle 6", antic_read(&a, 0xD40F) & ANTIC_NMI_VBI, 0);
+    expect("NMIST before the set cycle", antic_read(&a, 0xD40F) & ANTIC_NMI_VBI, 0);
     antic_tick(&a);
     expect("NMIST VBI set at cycle 6", antic_read(&a, 0xD40F) & ANTIC_NMI_VBI, ANTIC_NMI_VBI);
-    expect("NMI raised", a.nmi, 1);
+    /* The STATUS bit and the /NMI line are one cycle apart: the bit lands at
+     * ANTIC_CYC_NMIST and the line at ANTIC_CYC_NMI.  antic_dlitiming measures
+     * the gap, by reporting which instruction the DLI interrupted for five
+     * different phasings of the instruction stream. */
+    expect("/NMI not yet raised with the status", a.nmi, 0);
+    antic_tick(&a);
+    expect("NMI raised one cycle later", a.nmi, 1);
     /* /NMI is a one-cycle PULSE, so it is already down by the next cycle and the
      * "NMIRES must not retract a raised request" rule lives in the CPU's edge
      * latch, not in ANTIC's output.  Model that latch explicitly. */
     int cpu_latched = a.nmi;
     /* Strike NMIRES on a LATER cycle than the set.  One landing in the SAME
-     * cycle loses to it — antic_nmist strikes on cycle 6, where the VBI bit is
-     * set, and requires the bit to still read as set — so writing it here would
-     * be testing that rule rather than this one. */
-    antic_tick(&a);
+     * cycle loses to it — antic_nmist strikes on the set cycle itself and
+     * requires the bit to still read as set — so writing it here would be
+     * testing that rule rather than this one. */
     antic_write(&a, 0xD40F, 0);           /* NMIRES */
     expect("NMIRES clears status", antic_read(&a, 0xD40F) & ANTIC_NMI_VBI, 0);
     expect("NMIRES does NOT retract a request the CPU already latched",
