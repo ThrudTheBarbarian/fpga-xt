@@ -156,6 +156,21 @@ static void build(uint8_t mode, antic_width width, int first_line, int hscrol,
     int names = (width == ANTIC_WIDE) ? s->chars_narrow + s->chars_narrow / 2
                                       : chars;
 
+    /* A horizontally SCROLLED row fetches at the next width up — narrow reads a
+     * normal row's worth, normal reads a wide one's — because the window has to
+     * have something to show once it shifts.  The window POSITION still comes
+     * from the row's own width (less HSCROL/2); only the byte count steps.
+     *
+     * Measured, not assumed: sweeping the extra byte count 0..4 against
+     * antic_pfstarttiming's first HSCROL assertion moves its answer 12,13,14,15,
+     * 16 one for one, and 16 is the wanted value.  Four extra on a narrow mode 6
+     * row is 16 -> 20, exactly normal's count. */
+    if (hscrol) {
+        int step = s->chars_narrow / 4;       /* narrow -> normal is + a quarter */
+        chars += step;
+        names += step;
+    }
+
     /* The playfield STOP is a CYCLE COMPARISON, never a byte count.
      * antic_hscrolbug works by glitching HSCROL so the stop is MISSED and
      * fetching runs on into horizontal blank; a count cannot fail to

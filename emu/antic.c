@@ -596,6 +596,17 @@ int antic_tick(antic *a)
 
     /* ---- advance ---------------------------------------------------------- */
     if (++a->cycle >= ANTIC_LINE_CYCLES) {
+        /* ACID_GLYPHPROBE=9: this line's finished fetch map.  Printed HERE, at
+         * the line's end, so it shows the schedule as a mid-line DMACTL or
+         * HSCROL write left it — printing it from line_start shows only what
+         * was planned at cycle 0, which is what the write is about to change. */
+        if (antic_glyph_probe == 9) {
+            fprintf(stderr, "  LN %3d insn $%02X dmactl $%02X hscrol $%02X n %d fetch:",
+                    a->scanline, a->dl_insn, a->dmactl, a->hscrol, a->pf_next);
+            for (int k = 0; k < ANTIC_LINE_CYCLES; k++)
+                if (a->pf_at[k] >= 0) fprintf(stderr, " %d", k);
+            fprintf(stderr, "\n");
+        }
         a->cycle = 0;
         /* row_first has to stay standing for the WHOLE line: rebuild_line needs
          * to know which schedule shape this line has. */

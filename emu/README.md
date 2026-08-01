@@ -760,24 +760,46 @@ mode 6  pinned narrow, bounded by normal's last:  26 31 ... 94   = 18
 `antic_dma_line_map_at()` takes the pinned window position; `rebuild_line()`
 decides which of the three states applies.
 
-### Still open: the HSCROL half, and antic_hscrolbug
+### The HSCROL half: a scrolled row fetches one width step MORE
 
-Both tests now fail in their HSCROL section. `pfstarttiming`'s first HSCROL
-assertion wants 16 and gets **12** — and 12 is its `add #10` with a raw
-collision of 2, i.e. `p0pf = 0` and `p1pf = 2` where `p0pf = 1, p1pf = 2` is
-wanted. So this one is NOT a byte count: player 1 collides correctly and player 0
-sees background, which is a POSITION error of a colour clock or two rather than a
-stride error. `pfstoptiming`'s same assertion gets 16.
+`antic_pfstarttiming`'s first HSCROL assertion now passes too. The rule is that a
+horizontally scrolled row **fetches at the next width up** — narrow reads a
+normal row's worth, normal reads a wide one's — because the window has to have
+something to show once it shifts. The window POSITION still comes from the row's
+own width, less HSCROL/2.
 
-Note the shape of the HSCROL blocks: DMACTL is set narrow and HSCROL to 0 at the
-row's start, HSCROL is written to **8** mid-line (a 4-machine-cycle window
-shift), and restored to 0 before the measured line. The rows carry `dta $76` —
-mode 6 with the HSCROL bit — so the shift applies to the fetch window but the
-measured row (`$0a`, no bit 4) displays unshifted.
+Measured rather than assumed: sweeping an "extra bytes" parameter 0..4 against
+that assertion moved its answer 12, 13, 14, 15, **16** one for one, and 16 is the
+wanted value. Four extra on a narrow mode 6 row is 16 -> 20, exactly normal's
+count, which is what makes it a width step rather than a magic constant.
 
-`antic_hscrolbug` ("Unstopped PF DMA test failed") is the same mechanism from a
-third side: it glitches HSCROL so the stop is MISSED entirely and fetching runs
-on into horizontal blank.
+Caveat worth knowing: the extra is currently keyed on `hscrol != 0`, because
+`antic_dma_line()` is handed the VALUE and not the row's scroll bit. Real ANTIC
+widens whenever the bit is set, HSCROL = 0 included. No test in the suite
+distinguishes them yet.
+
+### Still open: the last HSCROL cycle, and antic_hscrolbug
+
+What remains is a **one byte per one cycle of write delay** boundary, and both
+tests show it from opposite sides:
+
+| test | write cycle | want | got |
+|---|---|---|---|
+| `pfstarttiming` HSCROL early | 16 | 16 | 16 ✓ |
+| `pfstarttiming` HSCROL late | 17 | 17 | 16 |
+| `pfstoptiming` HSCROL early | 95 | 21 | 19 |
+| `pfstoptiming` HSCROL late | 96 | 20 | — |
+
+One cycle later gives exactly one more byte in `pfstarttiming` and one FEWER in
+`pfstoptiming`. On a 4-cycle pair grid a single cycle should not change the count
+at all, so near the boundary the stream must be resolvable at 1-cycle
+granularity — each pair is two ADJACENT cycles, and a write landing between the
+two halves plausibly drops one of them. That is the next thing to test.
+
+`antic_hscrolbug` ("Unstopped PF DMA test failed") has started producing data
+rather than nothing — `d1..d3` are now `01 01 01` where they were `00 00 00`. It
+glitches HSCROL so the stop is MISSED entirely and fetching runs on into
+horizontal blank.
 
 ### Tried and REVERTED: pinning the start, and the prefetch as a non-name
 
