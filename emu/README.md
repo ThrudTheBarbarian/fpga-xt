@@ -1115,6 +1115,30 @@ both, and only "every" gets past loop #2. So it is a property of the pair's
 interrupt path, not another STIMER first-period effect, and `LINK_EXTRA` is gone.
 
 `pokey_timertiming` now clears its 8-bit group, both 16-bit groups and all four
-loop bounds, and fails much later on **"1.79MHz 8-bit timer fired too late after
-23c change (>44c)"** — a section that rewrites AUDF1 mid-count and checks the
-change lands in time to affect the SECOND period.
+loop bounds, and fails much later on the AUDF-rewrite section.
+
+### Open: AUDF is captured BEFORE the underflow, and one tick is too coarse
+
+The test states the boundary in its own comments — a `sty audf1` at **+22c** past
+STIMER is "written in time to affect second period" and one at **+23c** is
+"written too late". Our `reload()` reads `audf[]` live at the underflow, so both
+land, and the +23c case fires late.
+
+Two shapes tried, both reverted:
+
+* **Freeze the value while the counter is near zero** (`audf_sh` updated only
+  while `cnt > LEAD`). At `LEAD = 1` this passes both 8-bit change assertions and
+  advances to the 16-bit lo one — but over the full suite it scores **38**,
+  breaking `pokey_asyncrecv`, `pokey_serclock`, `pokey_timerirq` and
+  `pokey_twotone`. The trap is worth remembering: a channel with `AUDF = 0` has a
+  period of ONE, so its counter is never far from zero, the shadow sticks at
+  whatever it was initialised with, and the timer runs on a stale value for ever.
+* **Delay it by a whole tick** (shadow copied at end of tick, reload uses the
+  previous cycle's value). No sticking, but it overshoots — 41, and
+  `pokey_timertiming` then fails the **+22c** case instead of the +23c one.
+
+So the capture point is real but sits between those two: later than "one whole
+tick early", earlier than "live at the underflow". Since +22c and +23c are CPU
+cycles and DMA steals make those unequal in machine cycles, the next attempt
+should measure where each write actually LANDS (`ACID_PCWATCH` on the `sty
+audf1`) before choosing a shape.
