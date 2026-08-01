@@ -49,7 +49,7 @@ literally the same tests.
   scanline and its later ones.
 * **ANTIC DMA schedule: 50/50**, timing core, display-list execution and line
   buffer all in; **GTIA collisions** in.
-* **The real ACID800 binaries run**: `make acid` → 40 pass / 14 fail / 4 jammed
+* **The real ACID800 binaries run**: `make acid` → 41 pass / 13 fail / 4 jammed
   / 1 looping / 4 skipped, of 63. Not directly comparable to the fabric's 33/63:
   that runs on hardware with a full POKEY and an OS ROM, whereas POKEY here is
   the RANDOM LFSR, the timers and the serial OUTPUT path only, and the five
@@ -647,3 +647,23 @@ and `antic_dmapattern`, which pin the re-arm directly. The suite's annotations
 disagree with each other about `inc wsync` exactly as they do about the release.
 
 39 -> 40, and `antic_dlitiming` passes whole, part 3 included.
+
+
+## CLOSED: pokey_asyncrecv wanted a RESET, not an input path
+
+Worth recording because the obvious reading of the name was wrong: this test
+never feeds POKEY a serial byte. It is entirely about what SKCTL bit 4 does to
+the **timers**, and needs no SERIN, no SKSTAT input bits and no SKRES.
+
+Its first three sub-tests only need the mode to silence timer 4, which
+suppressing the underflow already did. The fourth is the real one: with 3+4
+linked at 456 cycles it turns the mode on **mid-count**, off two lines later, and
+then requires the next interrupt a full period after the mode ended — checking
+both that it did not fire early (`skiptest_fail3`) and that it did fire by the
+end (`skiptest_fail4`).
+
+So async receive holds timers 3 **and** 4 in **reset**, not merely stopped:
+POKEY is waiting for a start bit and the bit-time divider has to begin its count
+from that edge. Suppressing the underflow instead leaves the counter sitting past
+zero, so it fires on the very first tick after release — which is exactly the
+sub-case 3 failure. 40 -> 41.

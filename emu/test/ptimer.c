@@ -184,6 +184,39 @@ int main(void)
     expect("a space lets timer 2 run",
            cycles_to_irq(&p, POKEY_IRQ_TIMER2, 4000) > 0, 1);
 
+    /* ---- asynchronous receive (SKCTL bit 4) holds timers 3+4 in RESET ----
+     * Not merely stopped: POKEY is waiting for a start bit and the bit-time
+     * divider has to begin its count from that edge.  So leaving the mode must
+     * cost a FULL period, not the remainder of the count that was interrupted.
+     * pokey_asyncrecv proves it with 3+4 linked at 456 cycles, turning the mode
+     * on mid-count and off two lines later. */
+    {
+        long free_run, after_hold;
+        setup(&p, 0x08, POKEY_IRQ_TIMER4);           /* link 3+4, 15 kHz base */
+        pokey_timer_write(&p, 0xD204, 0x03);         /* AUDF3 -> period 4 base ticks */
+        pokey_timer_write(&p, 0xD206, 0x00);
+        pokey_timer_write(&p, 0xD209, 0x00);         /* STIMER */
+        free_run = cycles_to_irq(&p, POKEY_IRQ_TIMER4, 20000);
+        expect("linked 3+4 fires at all", free_run > 0, 1);
+
+        setup(&p, 0x08, POKEY_IRQ_TIMER4);
+        pokey_timer_write(&p, 0xD204, 0x03);
+        pokey_timer_write(&p, 0xD206, 0x00);
+        pokey_timer_write(&p, 0xD209, 0x00);
+        for (long i = 0; i < free_run / 2; i++) pokey_timer_tick(&p);
+        expect("no interrupt yet, half way through the count",
+               pokey_timer_irqst(&p) & POKEY_IRQ_TIMER4, POKEY_IRQ_TIMER4);
+        pokey_timer_skctl(&p, 0x13);                 /* async receive ON */
+        for (int i = 0; i < 500; i++) pokey_timer_tick(&p);
+        expect("held: still no interrupt after 500 cycles",
+               pokey_timer_irqst(&p) & POKEY_IRQ_TIMER4, POKEY_IRQ_TIMER4);
+        pokey_timer_skctl(&p, 0x03);                 /* async receive OFF */
+        after_hold = cycles_to_irq(&p, POKEY_IRQ_TIMER4, 20000);
+        /* A full period from the release, NOT the half that was left */
+        expect("the release restarts the whole count",
+               after_hold > free_run * 3 / 4, 1);
+    }
+
     printf("ptimer: %s\n", fails ? "FAIL" : "all POKEY timer tests pass");
     return fails ? 1 : 0;
 }

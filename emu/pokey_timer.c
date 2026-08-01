@@ -127,18 +127,24 @@ static int timer2_held(const pokey_timer *p)
     return (p->skctl & 0x08) && ser_out_bit(p);
 }
 
-/* Asynchronous receive mode holds timer 4: POKEY is waiting for a start bit, so
- * the divider does not run and its interrupt cannot fire.  pokey_asyncrecv
- * enables it with SKCTL $13 and requires timer 4's IRQ to stay silent, saying so
- * outright — "we shouldn't, since POKEY is waiting for a start bit". */
-static int timer4_held(const pokey_timer *p)
+/* Asynchronous receive mode holds timers 3 AND 4 in RESET: POKEY is waiting for
+ * a start bit, and the bit-time divider must begin its count FROM that edge, so
+ * the counters are not merely stopped — they are reloaded for as long as the
+ * mode is on.  pokey_asyncrecv enables it with SKCTL $13 and requires timer 4's
+ * IRQ to stay silent, saying so outright ("we shouldn't, since POKEY is waiting
+ * for a start bit"), and then proves the RESET separately: with 3+4 linked at
+ * 456 cycles it turns the mode on mid-count and off again two lines later, and
+ * requires the next interrupt a full period after the mode ended rather than
+ * where the interrupted count would have put it.  Merely suppressing the
+ * underflow leaves the counter past zero and fires immediately on release,
+ * which is how this failed (sub-case 3). */
+static int timer34_held(const pokey_timer *p)
 {
     return (p->skctl & 0x10) != 0;
 }
 
 static void underflow(pokey_timer *p, int ch)
 {
-    if (ch == 3 && timer4_held(p)) return;
     if (ch == 1 && timer2_held(p)) return;
 
     if (ch == ser_clock_ch(p)) ser_tick(p);
@@ -216,8 +222,11 @@ void pokey_timer_tick(pokey_timer *p)
     int linked1 = (p->audctl & 0x10) != 0;
     int linked3 = (p->audctl & 0x08) != 0;
 
+    int held34  = timer34_held(p);
+    if (held34) { reload(p, 2); reload(p, 3); }
+
     if (fast1 && --p->cnt[0] <= 0) underflow(p, linked1 ? 1 : 0);
-    if (fast3 && --p->cnt[2] <= 0) underflow(p, linked3 ? 3 : 2);
+    if (!held34 && fast3 && --p->cnt[2] <= 0) underflow(p, linked3 ? 3 : 2);
 
     if (++p->chain % (unsigned long)base_period(p) != 0)
         return;
@@ -229,7 +238,9 @@ void pokey_timer_tick(pokey_timer *p)
         if (--p->cnt[1] <= 0) underflow(p, 1);
     }
 
-    if (!fast3) {
+    if (held34) {
+        /* nothing: the counters were reloaded above and stay there */
+    } else if (!fast3) {
         if (--p->cnt[2] <= 0) underflow(p, linked3 ? 3 : 2);
         if (!linked3 && --p->cnt[3] <= 0) underflow(p, 3);
     } else if (!linked3) {
