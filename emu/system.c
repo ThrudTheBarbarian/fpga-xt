@@ -20,10 +20,29 @@ static void pm_latch(atari *s)
 {
     if (!s->an.pm_fetched) return;
     s->an.pm_fetched = 0;
+
+    /* VDELAY shifts an object DOWN one scanline, preserving its two-line
+     * extent: gtia_vdelay wants on,on,off,off without it and off,on,on,off with
+     * it.  In two-line resolution the same byte is fetched for both scanlines
+     * of a pair, so delaying the LATCH by one fetch is exactly that shift —
+     * whereas "skip the first line" gives on,off,on,off and fails half the
+     * assertions.  VDELAY has a bit per object: 0..3 missiles, 4..7 players. */
     if (s->gt.gractl & 0x02)
-        for (int i = 0; i < 4; i++) s->gt.grafp[i] = s->an.pm_p[i];
-    if (s->gt.gractl & 0x01)
-        s->gt.grafm = s->an.pm_m;
+        for (int i = 0; i < 4; i++)
+            s->gt.grafp[i] = (s->gt.vdelay & (0x10 << i)) ? s->pm_prev_p[i]
+                                                          : s->an.pm_p[i];
+    if (s->gt.gractl & 0x01) {
+        /* the four missiles share GRAFM two bits each, and are delayed
+         * independently */
+        uint8_t g = 0;
+        for (int i = 0; i < 4; i++) {
+            uint8_t src = (s->gt.vdelay & (1 << i)) ? s->pm_prev_m : s->an.pm_m;
+            g |= (uint8_t)(src & (0x03 << (2 * i)));
+        }
+        s->gt.grafm = g;
+    }
+    for (int i = 0; i < 4; i++) s->pm_prev_p[i] = s->an.pm_p[i];
+    s->pm_prev_m = s->an.pm_m;
 }
 
 /* One machine cycle is TWO colour clocks, and GTIA is clocked on every one of
