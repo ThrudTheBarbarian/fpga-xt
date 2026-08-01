@@ -16,7 +16,9 @@
  * this is the exact set common to ALL 50 rows of the ACID table, and 9 per line
  * is 18 per two scanlines, which is precisely the budget cpu_illtiming states
  * ("228 cycles - 18 refresh cycles").  Two independent sources agreeing. */
+#ifndef REFRESH_FIRST
 #define REFRESH_FIRST 25
+#endif
 #define REFRESH_STEP   4
 #define REFRESH_COUNT  9
 
