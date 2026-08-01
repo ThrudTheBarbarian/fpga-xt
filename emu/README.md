@@ -1963,6 +1963,44 @@ divider's exact bit positions. The two almost certainly share a root cause, and
 Ours fails at pass 3, `Y = $65`, wanting `$70` and getting `$00` — no missile
 collisions registered at all where hardware sees a pattern.
 
+### What its expected curve says: the player is RELOCATED, not restarted
+
+Pass 3 is `SIZEP0 = $03` (quad) with the missile block at `$78`..`$7b`, and its
+table (`wide_data_4`, indexed by `Y eor $60`) gives, for the even-`scanpos`
+half:
+
+| `Y` | expected index | missiles hit | lit clocks implied |
+|---|---|---|---|
+| `$64` | 0 | none | — |
+| `$65` | 7 | m1, m2, m3 | `$79`, `$7a`, `$7b` |
+| `$66` | 3 | m2, m3 | `$7a`, `$7b` |
+| `$67` | 1 | m3 | `$7b` |
+
+The missiles only see `$78`..`$7b`, so what this actually shows is a lit region
+whose LEFT EDGE is `Y + $14` and which continues to the right. Twenty colour
+clocks is five bits of a quad player, so the lit thing is the player's bit
+INDEX 5 counted from `Y`... except `GRAFP0 = $81` has only bits 7 and 0 set,
+which are indices 0 and 7. Index 5 is clear and cannot be lit.
+
+It resolves if the mid-line `sty hposp0` does NOT restart the player. Suppose
+the shift register keeps its bit counter and the new HPOS only says where the
+REMAINING bits are drawn. Then the lit bit 0 — index 7 — lands at `Y + 4*(7-j)`
+where `j` is the bit index reached when the write landed, and the observed
+`Y + 20` gives `j = 2` for every row of the table.
+
+**So a mid-line HPOS write RELOCATES a player that is already drawing, rather
+than retriggering it from bit 0.** Our `obj_step` does the opposite: any match
+against the live HPOS sets `bit = 0`. Tabulated on `gtia.c` alone, ours puts the
+quad player at `$65`..`$68` and `$81`..`$84`, which misses the missile block
+entirely — exactly the `$00` observed.
+
+This is not a contradiction of `gtia_pmretrigger`, which passes today: a match
+may well still start an object that has NOT yet begun this line. The two rules
+differ only for an object caught MID-DRAW, which is what `gtia_pmoverlap` sweeps
+and `gtia_pmretrigger` does not. Implementing it needs that distinction kept, and
+`gtia_pmresize` is the same family — a mid-draw SIZEP change, where the question
+is again whether the object restarts or carries on.
+
 ## WSYNC RMW: two more mechanisms ruled out
 
 **Write timing cannot explain it.** In `antic_wsync` both sequences put their
