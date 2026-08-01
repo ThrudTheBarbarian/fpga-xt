@@ -203,6 +203,15 @@ int antic_tick(antic *a)
             if (a->nmien & ANTIC_NMI_VBI) a->nmi = 1;
         }
     }
+    /* /NMI is a PULSE, not a line held until NMIRES.  Real DLI handlers do not
+     * write NMIRES — they PHA, set a colour, PLA, RTI — yet multi-DLI kernels
+     * work, so each event has to produce its own edge.  Holding it high gives
+     * the CPU exactly ONE NMI for the entire run, which is what it was doing:
+     * every ACID800 test measured exactly one delivery.
+     * The system layer latches this so a pulse landing inside a DMA burst,
+     * where the CPU is not being serviced, is still seen (see system.c). */
+    if (c == ANTIC_CYC_NMIST + 1)
+        a->nmi = 0;
 
     /* VCOUNT is scanline>>1, so it advances at cycle 111 of every ODD scanline.
      * Because that advance happens on the LAST scanline too (261 is odd), it

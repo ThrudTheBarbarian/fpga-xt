@@ -18,7 +18,14 @@ static void sys_cycle(atari *s)
     for (;;) {
         int took = antic_tick(&s->an);
         s->cycles++;
-        s->cpu.nmi = (uint8_t)s->an.nmi;
+        /* Hold ANTIC's one-cycle /NMI pulse until the CPU latches the edge, then
+         * drop it so the NEXT event raises a fresh one.  The real 6502 clocks
+         * its NMI edge detector every cycle, including cycles it is halted for
+         * DMA, so the pulse must not be lost just because the CPU is not being
+         * serviced on that cycle. */
+        if (s->an.nmi) s->nmi_hold = 1;
+        s->cpu.nmi = s->nmi_hold;
+        if (s->cpu.nmi_pend) s->nmi_hold = 0;
         if (!took) return;          /* the CPU gets this one */
         pokey_rand_tick(&s->pk); s->pk_ticks++;   /* ANTIC's cycles advance it here */
     }

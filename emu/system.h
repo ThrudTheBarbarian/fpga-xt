@@ -25,6 +25,7 @@ typedef struct {
     antic      an;
     gtia       gt;
     pokey_rand pk;
+    uint8_t    nmi_hold;   /* ANTIC's /NMI pulse, held until the CPU latches it */
     uint64_t   cycles;
 
     /* Diagnosis for the RANDOM-as-a-cycle-clock path.  The ANTIC timing tests
