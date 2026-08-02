@@ -1033,6 +1033,20 @@ void pokey_timer_write(pokey_timer *p, uint16_t addr, uint8_t val)
     }
 }
 
+/* ACID_PTPROBE=1 also reports WHEN the guest READS IRQST, in the same frame the
+ * underflow and "readable at" lines use -- ticks since the last STIMER.  Without
+ * that the two cannot be compared, and ACID_PCWATCH is no substitute: it fires
+ * when PC BECOMES the address, which for an instruction after `sta wsync` is
+ * before the halt is felt, not when the read happens. */
+uint8_t pokey_timer_irqst_probe(const pokey_timer *p)
+{
+    if (pokey_timer_probe)
+        fprintf(stderr, "  IRQST read at +%llu -> $%02X\n",
+                (unsigned long long)(p->ticks - p->stimer_at),
+                (uint8_t)(p->irqst | 0xE0));
+    return 0;
+}
+
 uint8_t pokey_timer_irqst(const pokey_timer *p)
 {
     /* BOTH serial output bits are LEVELS, not latched events, and both ignore

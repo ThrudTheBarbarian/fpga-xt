@@ -113,5 +113,6 @@ void    pokey_timer_skctl(pokey_timer *p, uint8_t val);
 void    pokey_timer_tick(pokey_timer *p);          /* one machine cycle */
 void    pokey_timer_write(pokey_timer *p, uint16_t addr, uint8_t val);
 uint8_t pokey_timer_irqst(const pokey_timer *p);
+uint8_t pokey_timer_irqst_probe(const pokey_timer *p);
 
 #endif /* POKEY_TIMER_H */

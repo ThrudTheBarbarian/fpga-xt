@@ -318,6 +318,7 @@ static uint8_t io_read(atari *s, uint16_t a)
             if (s->col_probe && s->ser_mark)
                 fprintf(stderr, "  IRQST read %llu machine cycles after SEROUT\n",
                         (unsigned long long)(s->cycles - s->ser_mark));
+            (void)pokey_timer_irqst_probe(&s->pt);
             return pokey_timer_irqst(&s->pt);
         }
         if ((a & 0x0F) == 0x0A) {
