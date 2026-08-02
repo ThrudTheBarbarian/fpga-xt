@@ -63,6 +63,27 @@
 #define BASE_LEAD 2
 #endif
 
+/* What the SKCTL release restarts the chain at.  EXPERIMENT: the two taps are
+ * read off ONE chain, so a restart value moves both -- but not by the same
+ * amount, because they wrap at different periods.  With 28 the 64 kHz tap is
+ * 26 machine cycles away and the 15 kHz tap 84.  pokey_timertiming's last
+ * section needs the 64 kHz tap at 24 while pokey_inittiming pins the 15 kHz one
+ * where it is, and (chain + BASE_LEAD) == 4 mod 28 with == 30 mod 114 solves at
+ * 144 -- so a restart of 142 moves the 64 kHz tap two earlier and leaves the
+ * 15 kHz tap untouched.  142 is BASE_15K + BASE_64K.
+ *
+ * DISPROVED, kept with its result.  pokey_inittiming pins BOTH taps, from both
+ * sides: BASE_LEAD=4 (which moves them together) breaks its 15 kHz count, and
+ * CHAIN_RELEASE=142 (which moves only the 64 kHz one) breaks its 64 kHz count.
+ * So the base phase is not what is wrong.  pokey_timertiming's last section
+ * says in PROSE that the first base tick is 24 cycles after the SKCTL write
+ * where ours is 26 -- but that is a comment, and inittiming's are assertions.
+ * The five cycles the cancellation test needs have to come from TIMER 1, not
+ * from the base clock. */
+#ifndef CHAIN_RELEASE
+#define CHAIN_RELEASE BASE_64K
+#endif
+
 /* How many machine cycles the /IRQ LINE to the CPU lags the IRQST STATUS BIT.
  * pokey_inittiming measures the same underflow BOTH ways — a NOP sled, which
  * times when the CPU acknowledges, and a pair of IRQST reads one machine cycle
@@ -660,7 +681,7 @@ void pokey_timer_skctl(pokey_timer *p, uint8_t val)
          *   15 kHz — 28 % 114 == 28, so the next tick is 114 - 28 = 86 away,
          *     which is exactly what the same test wants for that clock.
          * Two independent expectations from one constant. */
-        p->chain = BASE_64K;
+        p->chain = CHAIN_RELEASE;
     }
     p->init = now;
 }
