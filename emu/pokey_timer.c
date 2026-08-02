@@ -669,6 +669,9 @@ static void underflow(pokey_timer *p, int ch)
 void pokey_timer_skctl(pokey_timer *p, uint8_t val)
 {
     uint8_t now = (val & 0x03) == 0;
+    if (pokey_timer_probe)
+        fprintf(stderr, "  SKCTL <- $%02X at tick %llu (init %d -> %d)\n",
+                val, (unsigned long long)p->ticks, p->init, now);
     p->skctl = val;
     if (now) {
         /* SKCTL's init state RESETS the serial port: the shift register is
