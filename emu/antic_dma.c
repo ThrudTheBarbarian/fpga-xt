@@ -173,10 +173,44 @@ static void name_slot(int8_t *name_at, int c, int i, int chars)
  * cycle or two ahead, while the STOP goes on being compared against the
  * horizontal counter, so a DMACTL or HSCROL write landing in between leaves the
  * row fetching from the OLD window to the NEW window's last cycle. */
+/* ---- the stop is MISSABLE ---------------------------------------------------
+ * antic_hscrolbug is built entirely on this and nothing else in the suite is.
+ * ANTIC's playfield sequencer runs on its OWN fetch clock — every `stride`
+ * machine cycles — and compares the horizontal counter against the window's
+ * stop on each of its own ticks, not on every cycle.  So a stop position of the
+ * wrong PARITY is never looked at, and the counter free-runs.
+ *
+ * The test's map (its lines 98-102) is the whole derivation, and it needs no
+ * constant of its own.  Narrow scrolled mode E at HSCROL 0: start 20, forty
+ * bytes at stride 2, so stop = 20 + 80 = 100 — even, sampled, last fetch 98.
+ * Glitch HSCROL to 2 and the window moves one cycle left: start 19, stop 99 —
+ * ODD, and an even grid never sees it.  Restore HSCROL to 0 and the stop is
+ * back at 100 with the counter already past it.  Neither is ever matched, so
+ * the row fetches on to the end of the line and the NEXT line resumes on the
+ * carried phase at cycle 0, until its own stop at 100 finally matches.  That is
+ * 47 and 50 fetches against a normal 40 — the "17 extra fetches in HBLANK" the
+ * comment names, and why the following line displays shifted left by 17 bytes.
+ *
+ * `carry_in` is the cycle on THIS line at which an already-running stream takes
+ * its next fetch (-1 when the line starts idle); `carry_out` reports the same
+ * for the next line.  A count cannot express any of this: a count always
+ * terminates. */
+#ifndef PF_RUNON
+#define PF_RUNON 1
+#endif
+/* Fetches from here on are still made — the line buffer fills and the scan
+ * address advances — but the cycle is NOT stolen from the CPU, which is what
+ * the map's `#` versus `F` distinction marks.  Horizontal blank. */
+#ifndef PF_HBLANK_FIRST
+#define PF_HBLANK_FIRST 106
+#endif
+
 static void build(uint8_t mode, antic_width width, int first_line, int hscrol,
-                  int nom_in, int cyc_stop, uint8_t blocked[ANTIC_LINE_CYCLES],
+                  int nom_in, int cyc_stop, int carry_in, int *carry_out,
+                  uint8_t blocked[ANTIC_LINE_CYCLES],
                   int8_t name_at[ANTIC_LINE_CYCLES])
 {
+    if (carry_out) *carry_out = -1;
     /* Bit 4 of the display-list instruction is the row's SCROLL bit, and the
      * callers that know it pass it through in `mode`.  A caller that does not
      * (the gates, which tabulate ACID's table and have only an HSCROL column)
@@ -253,10 +287,21 @@ static void build(uint8_t mode, antic_width width, int first_line, int hscrol,
      * their stream sits on its own grid rather than the refresh one. */
     if (mode >= 8) {
         int i = 0;
-        for (int c = start; c < stop && c < ANTIC_LINE_CYCLES; c += stride, i++) {
-            blocked[c] = 1;
+        int c = (PF_RUNON && carry_in >= 0) ? carry_in : start;
+        int running = 1;
+        if (PF_RUNON && carry_in >= 0) names = 128;   /* bounded by the stop only */
+        for (; c < ANTIC_LINE_CYCLES; c += stride, i++) {
+            /* the comparator, sampled on the sequencer's OWN tick */
+            /* A PINNED stream (a mid-line DMACTL/HSCROL write, cyc_stop >= 0)
+             * is bounded by the new window's LAST FETCH rather than by its stop
+             * comparator, so it is not parity-sensitive and cannot run on.
+             * Making it so is the next step — see emu/README.md. */
+            if (cyc_stop >= 0 ? c >= stop : c == stop) { running = 0; break; }
+            if (!PF_RUNON && i >= chars) { running = 0; break; }
+            if (c < PF_HBLANK_FIRST) blocked[c] = 1;
             name_slot(name_at, c, i, names);
         }
+        if (carry_out && running) *carry_out = c - ANTIC_LINE_CYCLES;
         return;
     }
 
@@ -330,7 +375,7 @@ void antic_dma_line_map(uint8_t mode, antic_width width, int first_line,
                         int hscrol, uint8_t blocked[ANTIC_LINE_CYCLES],
                         int8_t name_at[ANTIC_LINE_CYCLES])
 {
-    build(mode, width, first_line, hscrol, -1, -1, blocked, name_at);
+    build(mode, width, first_line, hscrol, -1, -1, -1, NULL, blocked, name_at);
 }
 
 void antic_dma_line_map_at(uint8_t mode, antic_width width, int first_line,
@@ -339,7 +384,7 @@ void antic_dma_line_map_at(uint8_t mode, antic_width width, int first_line,
                            int8_t name_at[ANTIC_LINE_CYCLES])
 {
     if (nom_start < 0) {
-        build(mode, width, first_line, hscrol, -1, -1, blocked, name_at);
+        build(mode, width, first_line, hscrol, -1, -1, -1, NULL, blocked, name_at);
         return;
     }
     /* Where THIS width's stream would have ended.  That cycle is the bound, not
@@ -348,10 +393,10 @@ void antic_dma_line_map_at(uint8_t mode, antic_width width, int first_line,
      * out of it — see the worked cycle lists in emu/README.md. */
     uint8_t b2[ANTIC_LINE_CYCLES];
     int8_t  m2[ANTIC_LINE_CYCLES];
-    build(mode, width, first_line, hscrol, -1, -1, b2, m2);
+    build(mode, width, first_line, hscrol, -1, -1, -1, NULL, b2, m2);
     int last = -1;
     for (int c = 0; c < ANTIC_LINE_CYCLES; c++)
         if (m2[c] >= 0) last = c;
-    if (last < 0) { build(mode, width, first_line, hscrol, -1, -1, blocked, name_at); return; }
-    build(mode, width, first_line, hscrol, nom_start, last, blocked, name_at);
+    if (last < 0) { build(mode, width, first_line, hscrol, -1, -1, -1, NULL, blocked, name_at); return; }
+    build(mode, width, first_line, hscrol, nom_start, last, -1, NULL, blocked, name_at);
 }
