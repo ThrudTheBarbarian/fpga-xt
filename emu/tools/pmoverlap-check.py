@@ -88,6 +88,142 @@ def m_union(width, Y, write_cc):
     return lit
 
 
+@_reg("freerun")
+def m_freerun(width, Y, write_cc):
+    """The size divider is GLOBAL and FREE-RUNNING, not restarted per object.
+
+    Every model above restarts a divider when an object starts, so a run's bit
+    boundaries are measured from its own start.  If instead the divider is one
+    counter running off the colour clock, boundaries fall at cc % width == 0 for
+    everything, and an object starting off-boundary gets a SHORT first pixel.
+    That produces Y-dependence with period exactly `width` without any realign
+    step -- which is what pass 3's period-four repeat in Y was evidence for."""
+    em, lit = [], set()
+    for cc in range(0x50, 0xB0):
+        hp = 0x60 if cc < write_cc else Y
+        if cc % width == 0:
+            for e in em:
+                e[0] += 1
+        if cc == hp:
+            em.append([0])
+        for e in em:
+            if e[0] < 8 and (0x81 >> (7 - e[0])) & 1:
+                lit.add(cc)
+    return lit
+
+
+@_reg("freerun_one")
+def m_freerun_one(width, Y, write_cc):
+    """freerun, but ONE object at a time: a new start replaces the run in
+    progress rather than adding to it (GTIA has one shift register per player).
+    Distinguishes "union" from "the divider is what is shared"."""
+    em, lit = None, set()
+    for cc in range(0x50, 0xB0):
+        hp = 0x60 if cc < write_cc else Y
+        if cc % width == 0 and em is not None:
+            em[0] += 1
+        if cc == hp:
+            em = [0]
+        if em is not None and em[0] < 8 and (0x81 >> (7 - em[0])) & 1:
+            lit.add(cc)
+    return lit
+
+
+@_reg("realign_at_match")
+def m_realign_at_match(width, Y, write_cc):
+    """union_realign, but the re-anchor happens when the BEAM REACHES the new
+    position -- not when HPOS is written.
+
+    The write-time version's residual splits by Y in a way a constant offset
+    cannot: pass 7 (width 2) sp $6c wants the REALIGNED boundary at odd Y up to
+    $6d and the UNREALIGNED one from $6f on.  The switch is exactly where the
+    new position overtakes the old emission's last pixel ($6e,$6f), which says
+    the re-anchor is the position COMPARATOR firing, not the register write.
+    A run that has already emitted past the new position never sees it.
+
+    DISPROVED AS STATED: 611/672, worse than the 660 it was meant to beat.  It
+    does predict pass 7's split correctly; what it loses is pass 3's EARLY Y,
+    and the diff says why.  union_realign's re-anchor sets the phase to
+    width - d and the NEXT increment then rolls it, so the bit counter is pushed
+    one bit FORWARD as well as re-phased.  Setting the phase to 0 at the match
+    delays the roll instead, so bit 7 lands four clocks late and the missile
+    window sees nothing (want 7 got 0 for pass 3 sp $78 Y $65).
+
+    So the re-anchor carries TWO effects -- a phase and a bit-advance -- and any
+    replacement has to reproduce both.  Rolling at the match supplies the
+    advance but then costs pass 7 Y $6f, where hardware keeps emitting bit 7
+    through the match cycle."""
+    em, lit = [], set()
+    for cc in range(0x50, 0xB0):
+        hp = 0x60 if cc < write_cc else Y
+        for e in em:
+            e[1] += 1
+            if e[1] >= width:
+                e[1], e[0] = 0, e[0] + 1
+        if cc == hp:
+            d = (Y - cc) % width or width
+            for e in em:
+                e[1] = width - d
+            em.append([0, 0])
+        for e in em:
+            if e[0] < 8 and (0x81 >> (7 - e[0])) & 1:
+                lit.add(cc)
+    return lit
+
+
+@_reg("realign_at_match_roll")
+def m_realign_at_match_roll(width, Y, write_cc):
+    """realign_at_match WITH the bit-advance: the match rolls the run's bit
+    counter as well as re-phasing it, which is the half realign_at_match was
+    missing.  Scored rather than argued -- see its result in the run."""
+    em, lit = [], set()
+    for cc in range(0x50, 0xB0):
+        hp = 0x60 if cc < write_cc else Y
+        for e in em:
+            e[1] += 1
+            if e[1] >= width:
+                e[1], e[0] = 0, e[0] + 1
+        if cc == hp and cc >= write_cc:
+            for e in em:
+                e[1], e[0] = 0, e[0] + 1
+        if cc == hp:
+            em.append([0, 0])
+        for e in em:
+            if e[0] < 8 and (0x81 >> (7 - e[0])) & 1:
+                lit.add(cc)
+    return lit
+
+
+@_reg("realign_at_match_roll2")
+def m_realign_at_match_roll2(width, Y, write_cc):
+    """realign_at_match_roll, except the match does not roll a run that has
+    ALREADY rolled on this same clock.
+
+    realign_at_match_roll's whole residual sits on Y aligned to the width grid
+    -- $64/$68/$6c/$70/$74/$78 at width 4, the even Y at width 2, and every Y at
+    width 1 -- which is exactly where the run's own boundary already falls on the
+    match cycle.  Rolling there advances the bit counter twice for one boundary.
+    Phase 0 after the increment IS "a boundary just happened", so the test is
+    free."""
+    em, lit = [], set()
+    for cc in range(0x50, 0xB0):
+        hp = 0x60 if cc < write_cc else Y
+        for e in em:
+            e[1] += 1
+            if e[1] >= width:
+                e[1], e[0] = 0, e[0] + 1
+        if cc == hp and cc >= write_cc:
+            for e in em:
+                if e[1] != 0:
+                    e[1], e[0] = 0, e[0] + 1
+        if cc == hp:
+            em.append([0, 0])
+        for e in em:
+            if e[0] < 8 and (0x81 >> (7 - e[0])) & 1:
+                lit.add(cc)
+    return lit
+
+
 @_reg("union_realign")
 def m_union_realign(width, Y, write_cc):
     """union, PLUS: the HPOS write re-aligns every running emission's divider
@@ -449,7 +585,7 @@ def score(mem, model, name, a):
                 tot += 1
                 if got != want:
                     bad += 1
-                    if a.verbose and bad <= 20:
+                    if a.verbose and bad <= 60:
                         print("    pass %2d sizep %d sp $%02X Y $%02X: want %X got %X"
                               % (p, SIZEP[p], sp, Y, want, got))
     print("  %-9s %3d/%d cells" % (name, tot - bad, tot))
