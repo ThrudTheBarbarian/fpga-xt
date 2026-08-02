@@ -36,6 +36,10 @@ typedef enum { ANTIC_NARROW = 0, ANTIC_NORMAL = 1, ANTIC_WIDE = 2 } antic_width;
  * uses: display begins exactly PF_DISPLAY_LEAD cycles after this, for every
  * width, so the two cannot drift apart. */
 int antic_pf_nominal(antic_width w, int hscrol);
+/* As antic_pf_nominal, but told explicitly whether the row is SCROLLED — a
+ * scrolled row runs the next width up, and it can be scrolled with HSCROL=0.
+ * antic_pf_nominal keeps the old inference (scrolled iff HSCROL != 0). */
+int antic_pf_nominal_s(antic_width w, int hscrol, int scrolled);
 
 /* Memory refresh: nine cycles a scanline, taken whatever DMACTL says.  Exposed
  * because it happens even with the screen off, where no other DMA does. */

@@ -87,6 +87,33 @@ static int is_refresh(int c)
 #define PF_WIDE_ADJ 2
 #endif
 
+/* A HORIZONTALLY SCROLLED row runs the NEXT WIDTH UP entirely — the window's
+ * position as well as its byte count.  Not a guess and not a sweep:
+ * antic_hscrolbug's own DMA map (its lines 98-102) is a narrow, scrolled mode E
+ * row at HSCROL=0, and it fetches forty bytes at cycles 20,22...98.  Narrow's
+ * own window is 32 bytes at 28...90; a NORMAL window at HSCROL 0 is 40 bytes
+ * from cycle 20.  The map is normal's, exactly.
+ *
+ * The earlier model here — the row's own window position, plus a quarter more
+ * bytes, and only when HSCROL was non-zero — got the count right for a scrolled
+ * narrow row and the position wrong by eight cycles, and missed the case the
+ * map is built on: a row can be scrolled with HSCROL=0 and still fetch wide. */
+#ifndef SCROLL_NEXT_WIDTH
+#define SCROLL_NEXT_WIDTH 1
+#endif
+
+static antic_width eff_width(antic_width w, int scrolled)
+{
+    if (SCROLL_NEXT_WIDTH && scrolled && w != ANTIC_WIDE)
+        return (antic_width)((int)w + 1);
+    return w;
+}
+
+int antic_pf_nominal_s(antic_width w, int hscrol, int scrolled)
+{
+    return antic_pf_nominal(eff_width(w, scrolled), hscrol);
+}
+
 int antic_pf_nominal(antic_width w, int hscrol)
 {
     /* WIDE is not in ACID800's DMA table — antic_dmapattern only tabulates
@@ -150,6 +177,15 @@ static void build(uint8_t mode, antic_width width, int first_line, int hscrol,
                   int nom_in, int cyc_stop, uint8_t blocked[ANTIC_LINE_CYCLES],
                   int8_t name_at[ANTIC_LINE_CYCLES])
 {
+    /* Bit 4 of the display-list instruction is the row's SCROLL bit, and the
+     * callers that know it pass it through in `mode`.  A caller that does not
+     * (the gates, which tabulate ACID's table and have only an HSCROL column)
+     * still gets the old behaviour via a non-zero HSCROL. */
+    int scrolled = (mode & 0x10) != 0 || hscrol != 0;
+    mode &= 0x0F;
+    antic_width w_in = width;
+    width = eff_width(width, scrolled);
+
     memset(blocked, 0, ANTIC_LINE_CYCLES);
     if (name_at) memset(name_at, -1, ANTIC_LINE_CYCLES);
 
@@ -186,7 +222,11 @@ static void build(uint8_t mode, antic_width width, int first_line, int hscrol,
      * antic_pfstarttiming's first HSCROL assertion moves its answer 12,13,14,15,
      * 16 one for one, and 16 is the wanted value.  Four extra on a narrow mode 6
      * row is 16 -> 20, exactly normal's count. */
-    if (hscrol) {
+    /* A scrolled row that is ALREADY wide has no next width to step up to, and
+     * antic_virtdma — the one test that pins wide geometry, mode 7 wide with
+     * HSCROL 2 — still wants the extra bytes.  So a wide scrolled row keeps the
+     * count bump on its own window. */
+    if ((!SCROLL_NEXT_WIDTH && hscrol) || (scrolled && w_in == ANTIC_WIDE)) {
         int step = s->chars_narrow / 4;       /* narrow -> normal is + a quarter */
         chars += step;
         names += step;

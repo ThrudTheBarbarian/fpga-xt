@@ -79,9 +79,13 @@ int main(int argc, char **argv)
         if (fn - fm != 8) { printf("  FAIL width step: narrow-normal = %d, want 8\n", fn - fm); extra++; }
         if (fm - fw != 6) { printf("  FAIL width step: normal-wide  = %d, want 6\n", fm - fw); extra++; }
 
+        /* Both rows SCROLLED (mode bit 4), so this measures HSCROL alone.  A
+         * scrolled row runs the next width up, so comparing an unscrolled
+         * HSCROL=0 row against a scrolled HSCROL=8 one would fold a whole
+         * width step into the answer — see antic_hscrolbug's DMA map. */
         uint8_t h0[ANTIC_LINE_CYCLES], h8[ANTIC_LINE_CYCLES];
-        antic_dma_line(8, ANTIC_NORMAL, 1, 0, h0);
-        antic_dma_line(8, ANTIC_NORMAL, 1, 8, h8);
+        antic_dma_line(8 | 0x10, ANTIC_NORMAL, 1, 0, h0);
+        antic_dma_line(8 | 0x10, ANTIC_NORMAL, 1, 8, h8);
         int a = first_fetch(h0), b = first_fetch(h8);
         if (a - b != 4) { printf("  FAIL hscrol=8 shift: %d cycles, want 4\n", a - b); extra++; }
     }

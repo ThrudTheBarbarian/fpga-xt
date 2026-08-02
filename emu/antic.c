@@ -206,6 +206,19 @@ static int hscrol_of(const antic *a)
     return (a->dl_insn & 0x10) ? (a->hscrol_line & 0x0F) : 0;
 }
 
+/* A row is SCROLLED when the display-list instruction says so, whatever HSCROL
+ * happens to hold — a scrolled row at HSCROL=0 still runs the next width up.
+ * The DMA map is told by carrying bit 4 through in the mode byte. */
+static int scrolled_of(const antic *a)
+{
+    return (a->dl_insn & 0x10) != 0;
+}
+
+static uint8_t dma_mode(const antic *a, int mode)
+{
+    return (uint8_t)(mode | (a->dl_insn & 0x10));
+}
+
 static antic_width width_of(uint8_t dmactl)
 {
     switch (dmactl & 0x03) {
@@ -365,7 +378,7 @@ static void line_start(antic *a)
 
     int mode = a->dl_insn & 0x0F;
     if (mode >= 2 && (a->dmactl & 0x20)) {
-        antic_dma_line_map((uint8_t)mode, width_of(a->dmactl),
+        antic_dma_line_map(dma_mode(a, mode), width_of(a->dmactl),
                            a->row_first, hscrol_of(a), a->blocked, a->pf_at);
 
         /* The LAST playfield slot of a scrolled row is VIRTUAL.  antic_virtdma
@@ -471,7 +484,7 @@ static void line_start(antic *a)
  * where it opens, and how wide it is (128/160/192 colour clocks). */
 static int pf_window(const antic *a)
 {
-    return antic_pf_nominal(width_of(a->dmactl), hscrol_of(a));
+    return antic_pf_nominal_s(width_of(a->dmactl), hscrol_of(a), scrolled_of(a));
 }
 
 static int pf_span(const antic *a)
@@ -516,7 +529,7 @@ static void rebuild_line(antic *a, int old_nom, int old_span, int lead)
      * both ask for, from opposite directions. */
     int pin = (from >= old_start) ? old_nom : -1;
 
-    antic_dma_line_map_at(on ? (uint8_t)mode : 0, width_of(a->dmactl),
+    antic_dma_line_map_at(on ? dma_mode(a, mode) : 0, width_of(a->dmactl),
                           a->row_first, hscrol_of(a), pin, blk, map);
 
     /* Turning playfield DMA OFF part way down a line does not stall the line
@@ -760,7 +773,7 @@ int antic_pf_at(const antic *a, int cc, int *hires_lit)
      * values indistinguishable from the even one below, which is why
      * antic_pfstarttiming's stride quantised in steps of four where the test
      * resolves single units. */
-    int start = 2 * (antic_pf_nominal(w, 0) + PF_DISPLAY_LEAD)
+    int start = 2 * (antic_pf_nominal_s(w, 0, scrolled_of(a)) + PF_DISPLAY_LEAD)
               - (HSCROL_CC_DISPLAY ? hscrol_of(a) : 2 * (hscrol_of(a) >> 1));
     int span  = (w == ANTIC_NARROW) ? 128 : (w == ANTIC_WIDE) ? 192 : 160;
 
@@ -840,7 +853,7 @@ int antic_pf_pair(const antic *a, int cc)
      * values indistinguishable from the even one below, which is why
      * antic_pfstarttiming's stride quantised in steps of four where the test
      * resolves single units. */
-    int start = 2 * (antic_pf_nominal(w, 0) + PF_DISPLAY_LEAD)
+    int start = 2 * (antic_pf_nominal_s(w, 0, scrolled_of(a)) + PF_DISPLAY_LEAD)
               - (HSCROL_CC_DISPLAY ? hscrol_of(a) : 2 * (hscrol_of(a) >> 1));
     int span  = (w == ANTIC_NARROW) ? 128 : (w == ANTIC_WIDE) ? 192 : 160;
 
@@ -866,7 +879,7 @@ int antic_pf_nibble(const antic *a, int cc, int shift)
      * values indistinguishable from the even one below, which is why
      * antic_pfstarttiming's stride quantised in steps of four where the test
      * resolves single units. */
-    int start = 2 * (antic_pf_nominal(w, 0) + PF_DISPLAY_LEAD)
+    int start = 2 * (antic_pf_nominal_s(w, 0, scrolled_of(a)) + PF_DISPLAY_LEAD)
               - (HSCROL_CC_DISPLAY ? hscrol_of(a) : 2 * (hscrol_of(a) >> 1));
     int span  = (w == ANTIC_NARROW) ? 128 : (w == ANTIC_WIDE) ? 192 : 160;
 

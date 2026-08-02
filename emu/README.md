@@ -800,18 +800,51 @@ decides which of the three states applies.
 `antic_pfstarttiming`'s first HSCROL assertion now passes too. The rule is that a
 horizontally scrolled row **fetches at the next width up** — narrow reads a
 normal row's worth, normal reads a wide one's — because the window has to have
-something to show once it shifts. The window POSITION still comes from the row's
-own width, less HSCROL/2.
+something to show once it shifts. **The window POSITION comes from the next
+width up as well** (corrected — see below); a scrolled narrow row simply *is* a
+normal row for DMA purposes.
 
 Measured rather than assumed: sweeping an "extra bytes" parameter 0..4 against
 that assertion moved its answer 12, 13, 14, 15, **16** one for one, and 16 is the
 wanted value. Four extra on a narrow mode 6 row is 16 -> 20, exactly normal's
 count, which is what makes it a width step rather than a magic constant.
 
-Caveat worth knowing: the extra is currently keyed on `hscrol != 0`, because
-`antic_dma_line()` is handed the VALUE and not the row's scroll bit. Real ANTIC
-widens whenever the bit is set, HSCROL = 0 included. No test in the suite
-distinguishes them yet.
+That paragraph used to end with a caveat: the extra was keyed on `hscrol != 0`
+rather than the row's scroll bit, and "no test in the suite distinguishes them
+yet". **Both halves of that were wrong**, and `antic_hscrolbug`'s own comment
+says so — see the next section. It is a good example of a caveat that was
+recorded honestly and then never re-tested: it sat here for a dozen iterations
+while four tuning levers were swept above it.
+
+### CORRECTED: position too, and keyed on the scroll BIT
+
+`antic_hscrolbug` prints its own DMA map (lines 98-102 of the source) for a
+**narrow, scrolled mode E row at HSCROL = 0**:
+
+```
+.D..................F.F.FRF.FRF.FRF.  ->  fetches at 20,22 ... 98   (40 bytes)
+```
+
+Forty bytes from cycle 20. Narrow's own window is 32 bytes from cycle 28; a
+NORMAL window at HSCROL 0 is 40 bytes from cycle 20. The map is normal's,
+exactly — so the step up moves the POSITION as well as the count, and it happens
+at HSCROL = 0, which only the scroll bit can express. We were emitting 32 bytes
+at 28...90 against hardware's 40 at 20...98.
+
+Fixed by carrying the scroll bit through in the mode byte (`mode | 0x10`) so
+`build()` can see it, and stepping the effective width once. Two consequences
+worth noting:
+
+* a WIDE scrolled row has no next width to step up to, and `antic_virtdma` still
+  wants the extra bytes — so wide keeps the old count bump on its own window.
+  Dropping it cost a test, which is how the case was found;
+* `make dma`'s "HSCROL = 8 shifts by 4 cycles" check was comparing an UNSCROLLED
+  HSCROL-0 row against a SCROLLED HSCROL-8 one, so it folded a whole width step
+  into the answer. Rule (bb) again: the gate encoded a derivation. Both rows now
+  set the scroll bit.
+
+The suite score is unchanged at 48 — this is a correctness fix under the tests
+that already passed, and the prerequisite for the run-on below.
 
 ### Still open: the last HSCROL cycle, and antic_hscrolbug
 
