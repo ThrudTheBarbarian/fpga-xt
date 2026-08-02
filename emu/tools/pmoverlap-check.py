@@ -122,6 +122,79 @@ def m_union_realign(width, Y, write_cc):
     return lit
 
 
+@_reg("realign_capped")
+def m_realign_capped(width, Y, write_cc):
+    """union_realign, but an emission stops at its ORIGINAL end -- start plus
+    eight pixel-widths -- so the re-align may move its internal boundaries but
+    cannot lengthen the run.  Tests the residual's shape directly: "we light
+    one clock too many" is a run ending one clock late, not a whole extra run."""
+    em, lit = [], set()
+    for cc in range(0x50, 0xB0):
+        hp = 0x60 if cc < write_cc else Y
+        for e in em:
+            e[1] += 1
+            if e[1] >= width:
+                e[1], e[0] = 0, e[0] + 1
+        if cc == write_cc:
+            d = (Y - cc) % width or width
+            for e in em:
+                e[1] = width - d
+        if cc == hp:
+            em.append([0, 0, cc])
+        for e in em:
+            if cc >= e[2] + 8 * width:
+                continue
+            if e[0] < 8 and (0x81 >> (7 - e[0])) & 1:
+                lit.add(cc)
+    return lit
+
+
+@_reg("realign_killold")
+def m_realign_killold(width, Y, write_cc):
+    """union_realign, but the OLD emission STOPS the moment the new one
+    triggers -- one shift register per player, so a re-trigger reloads it and
+    what stayed on screen is only what had already been emitted.  Tests the
+    "whatever is missing SUPPRESSES" reading of union_realign's residual."""
+    em, lit = [], set()
+    for cc in range(0x50, 0xB0):
+        hp = 0x60 if cc < write_cc else Y
+        for e in em:
+            e[1] += 1
+            if e[1] >= width:
+                e[1], e[0] = 0, e[0] + 1
+        if cc == write_cc:
+            d = (Y - cc) % width or width
+            for e in em:
+                e[1] = width - d
+        if cc == hp:
+            em = [[0, 0]]                 # reload: the old run is gone
+        for e in em:
+            if e[0] < 8 and (0x81 >> (7 - e[0])) & 1:
+                lit.add(cc)
+    return lit
+
+
+@_reg("realign_stopatwrite")
+def m_realign_stopatwrite(width, Y, write_cc):
+    """union_realign, but a running emission is cut at the HPOS WRITE rather
+    than at the new trigger -- the write itself ends the old run."""
+    em, lit = [], set()
+    for cc in range(0x50, 0xB0):
+        hp = 0x60 if cc < write_cc else Y
+        for e in em:
+            e[1] += 1
+            if e[1] >= width:
+                e[1], e[0] = 0, e[0] + 1
+        if cc == write_cc:
+            em = []
+        if cc == hp:
+            em.append([0, 0])
+        for e in em:
+            if e[0] < 8 and (0x81 >> (7 - e[0])) & 1:
+                lit.add(cc)
+    return lit
+
+
 @_reg("noreload")
 def m_noreload(width, Y, write_cc):
     """Repositions but never reloads the shift register.  330/672 — DISPROVED,
