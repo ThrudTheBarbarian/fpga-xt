@@ -162,6 +162,42 @@
 #ifndef WSYNC_RMW_ADJ_CYCLE
 #define WSYNC_RMW_ADJ_CYCLE 0
 #endif
+
+/* WHERE IN THE LINE the RMW's second write lands.  Only ONE of the three cases
+ * that bracket this needs the extra, and it is the one whose RMW straddles the
+ * line boundary:
+ *
+ *   antic_wsync $2033  `inc wsync ;111,112,113,0,1,2`  writes at 1 and 2
+ *       -> `lda random ;105,106,107,108`, d2 = $0D.  NEEDS the extra.
+ *   antic_wsync $206D  `inc wsync ;99-104`             writes at 103 and 104
+ *       -> d5 = $34.  INSENSITIVE -- measured $34 with the extra and without,
+ *          so it constrains nothing (its second write lands ON the release).
+ *   gtia_pmresize $233B                                writes at 30-55
+ *       -> `sta hitclr ;104,105,106,107`.  Must NOT take the extra.
+ *
+ * So the discriminator is the line boundary, not adjacency and not DMA.  Held
+ * as a cycle threshold because that is what is measured; the mechanism behind
+ * it is NOT established -- a write this soon after the previous line's release
+ * behaving differently is a plausible story and no more than that.
+ *
+ * Swept 2..31 against those three: it fails at 2 and holds from 3 upward, and
+ * at 3 BOTH antic_wsync and pmresize's release are right for the first time.
+ *
+ * DISPROVED ANYWAY, by the rest of the suite: 51/63, costing antic_dlitiming,
+ * antic_dmapattern, gtia_phantomdma, gtia_psuedomodee and pokey_noise.  They
+ * need the extra for an `inc wsync` at the OTHER end of the line -- the
+ * profileDelay ladder in antic_dmapattern ($2347 on) is `sta wsync` then `inc
+ * wsync`, writing around 109-110.  So the extra is wanted at cycles 1-2 AND at
+ * 109-110 and unwanted at 30-55, which no threshold expresses: position in the
+ * line is the wrong variable.  Kept at 0.
+ *
+ * NEXT LEAD: those delay routines write WSYNC TWICE WITHOUT AN RMW --
+ * `sta wsync / sta wsync` back to back -- and this branch fires for any second
+ * write while the halt still stands, not just for an RMW's pair.  Measure WHICH
+ * pair each of the five actually depends on before assuming it is the `inc`. */
+#ifndef WSYNC_RMW_EARLY
+#define WSYNC_RMW_EARLY 0
+#endif
 #include <stdio.h>
 int antic_glyph_probe;
 #include <string.h>
@@ -1364,7 +1400,8 @@ void antic_write(antic *a, uint16_t addr, uint8_t val)
         /* WSYNC.  Arms on the FIRST write — an RMW writes it twice and the
          * halt must not re-arm on the second (antic_wsync, d5). */
         if (!a->wsync_halt) a->wsync_halt = 1;
-        else if (WSYNC_RMW_ADJ_CYCLE
+        else if (WSYNC_RMW_EARLY  ? a->cycle <= WSYNC_RMW_EARLY
+               : WSYNC_RMW_ADJ_CYCLE
                      ? (a->wsync_wr_sl == a->scanline
                         && a->wsync_wr_cyc + 1 == a->cycle)
                      : (!WSYNC_RMW_ADJACENT || a->wsync_wr_at + 1 == a->cpu_acc))
