@@ -90,6 +90,7 @@ void antic_dma_line_map_carry(uint8_t mode, antic_width width, int first_line,
 void antic_dma_line_map_at(uint8_t mode, antic_width width, int first_line,
                            int hscrol, int nom_start,
                            uint8_t blocked[ANTIC_LINE_CYCLES],
-                           int8_t name_at[ANTIC_LINE_CYCLES]);
+                           int8_t name_at[ANTIC_LINE_CYCLES],
+                           int *carry_out);
 
 #endif /* ANTIC_DMA_H */

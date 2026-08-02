@@ -204,11 +204,22 @@ static void name_slot(int8_t *name_at, int c, int i, int chars)
 #ifndef PF_HBLANK_FIRST
 #define PF_HBLANK_FIRST 106
 #endif
+/* Whether a PINNED stream (a mid-line DMACTL/HSCROL write) compares against the
+ * new window's STOP VALUE, and so can miss it, or against its last fetch, which
+ * it cannot.  antic_pfstarttiming and antic_pfstoptiming are the tests that
+ * path exists for, so this is the A/B to watch. */
+#ifndef PF_PIN_COMPARATOR
+#define PF_PIN_COMPARATOR 1
+#endif
 
-static void build(uint8_t mode, antic_width width, int first_line, int hscrol,
-                  int nom_in, int cyc_stop, int carry_in, int *carry_out,
-                  uint8_t blocked[ANTIC_LINE_CYCLES],
-                  int8_t name_at[ANTIC_LINE_CYCLES])
+/* Returns the STOP the stream ran against — the horizontal-counter value the
+ * sequencer compares on its own ticks — so a caller rebuilding the line
+ * mid-scanline can pin the OLD grid against the NEW window's stop without
+ * recomputing the geometry or scanning for a last fetch. */
+static int build(uint8_t mode, antic_width width, int first_line, int hscrol,
+                 int nom_in, int cyc_stop, int carry_in, int *carry_out,
+                 uint8_t blocked[ANTIC_LINE_CYCLES],
+                 int8_t name_at[ANTIC_LINE_CYCLES])
 {
     if (carry_out) *carry_out = -1;
     /* Bit 4 of the display-list instruction is the row's SCROLL bit, and the
@@ -231,10 +242,10 @@ static void build(uint8_t mode, antic_width width, int first_line, int hscrol,
         blocked[6] = blocked[7] = 1; /* its operand fetches */
     }
 
-    if (mode < 2 || mode > 15) return;
+    if (mode < 2 || mode > 15) return -1;
     const mode_shape *s = &shapes[mode];
     int stride = first_line ? s->stride_first : s->stride_rest;
-    if (!stride) return;
+    if (!stride) return -1;
 
     int nom   = (nom_in >= 0) ? nom_in : pf_nominal(width, hscrol);
     int start = (mode >= 8) ? nom - 1 : (first_line ? nom - 3 : nom);
@@ -247,15 +258,9 @@ static void build(uint8_t mode, antic_width width, int first_line, int hscrol,
     int names = (width == ANTIC_WIDE) ? s->chars_narrow + s->chars_narrow / 2
                                       : chars;
 
-    /* A horizontally SCROLLED row fetches at the next width up — narrow reads a
-     * normal row's worth, normal reads a wide one's — because the window has to
-     * have something to show once it shifts.  The window POSITION still comes
-     * from the row's own width (less HSCROL/2); only the byte count steps.
-     *
-     * Measured, not assumed: sweeping the extra byte count 0..4 against
-     * antic_pfstarttiming's first HSCROL assertion moves its answer 12,13,14,15,
-     * 16 one for one, and 16 is the wanted value.  Four extra on a narrow mode 6
-     * row is 16 -> 20, exactly normal's count. */
+    /* The step up a scrolled row takes is applied above, in eff_width, and moves
+     * the window POSITION as well as this count — see the note on eff_width.
+     */
     /* A scrolled row that is ALREADY wide has no next width to step up to, and
      * antic_virtdma — the one test that pins wide geometry, mode 7 wide with
      * HSCROL 2 — still wants the extra bytes.  So a wide scrolled row keeps the
@@ -278,7 +283,13 @@ static void build(uint8_t mode, antic_width width, int first_line, int hscrol,
      * no byte count bounding it — the count belongs to a width the row is no
      * longer using. */
     if (cyc_stop >= 0) {
-        stop  = cyc_stop + 1;
+        /* A PINNED stream keeps its OLD grid and is compared against the NEW
+         * window's stop.  Under PF_PIN_COMPARATOR that is the stop VALUE, so
+         * the comparison is parity-sensitive exactly as it is on an unpinned
+         * line and a mid-line HSCROL write can MISS it — which is the whole of
+         * antic_hscrolbug.  The old semantics passed the new window's LAST
+         * FETCH and bounded with `>=`, which can never miss. */
+        stop  = PF_PIN_COMPARATOR ? cyc_stop : cyc_stop + 1;
         chars = 128;
         names = 128;
     }
@@ -296,13 +307,15 @@ static void build(uint8_t mode, antic_width width, int first_line, int hscrol,
              * is bounded by the new window's LAST FETCH rather than by its stop
              * comparator, so it is not parity-sensitive and cannot run on.
              * Making it so is the next step — see emu/README.md. */
-            if (cyc_stop >= 0 ? c >= stop : c == stop) { running = 0; break; }
+            if (PF_PIN_COMPARATOR || cyc_stop < 0
+                ? c == stop
+                : c >= stop) { running = 0; break; }
             if (!PF_RUNON && i >= chars) { running = 0; break; }
             if (c < PF_HBLANK_FIRST) blocked[c] = 1;
             name_slot(name_at, c, i, names);
         }
         if (carry_out && running) *carry_out = c - ANTIC_LINE_CYCLES;
-        return;
+        return stop;
     }
 
     int n = first_line ? chars * 2 : chars;       /* name+data, or data only */
@@ -325,7 +338,7 @@ static void build(uint8_t mode, antic_width width, int first_line, int hscrol,
             blocked[c] = 1;
             if ((fi & 1) == 0) name_slot(name_at, c, fi / 2, names);
         }
-        return;
+        return stop;
     }
 
     /* Character modes 6-7 on a row's first line: the name and data fetches come
@@ -355,7 +368,7 @@ static void build(uint8_t mode, antic_width width, int first_line, int hscrol,
                 if ((fi & 1) == 0) name_slot(name_at, c + k, fi / 2, names);
             }
         }
-        return;
+        return stop;
     }
 
     /* Sparse streams: the nominal fetch slots run at `stride` from cycle 29,
@@ -369,6 +382,7 @@ static void build(uint8_t mode, antic_width width, int first_line, int hscrol,
         int c = is_refresh(p) ? p + 1 : p;
         if (c < ANTIC_LINE_CYCLES) blocked[c] = 1;
     }
+    return stop;
 }
 
 void antic_dma_line_map(uint8_t mode, antic_width width, int first_line,
@@ -391,8 +405,10 @@ void antic_dma_line_map_carry(uint8_t mode, antic_width width, int first_line,
 void antic_dma_line_map_at(uint8_t mode, antic_width width, int first_line,
                            int hscrol, int nom_start,
                            uint8_t blocked[ANTIC_LINE_CYCLES],
-                           int8_t name_at[ANTIC_LINE_CYCLES])
+                           int8_t name_at[ANTIC_LINE_CYCLES],
+                           int *carry_out)
 {
+    if (carry_out) *carry_out = -1;
     if (nom_start < 0) {
         build(mode, width, first_line, hscrol, -1, -1, -1, NULL, blocked, name_at);
         return;
@@ -403,10 +419,17 @@ void antic_dma_line_map_at(uint8_t mode, antic_width width, int first_line,
      * out of it — see the worked cycle lists in emu/README.md. */
     uint8_t b2[ANTIC_LINE_CYCLES];
     int8_t  m2[ANTIC_LINE_CYCLES];
-    build(mode, width, first_line, hscrol, -1, -1, -1, NULL, b2, m2);
-    int last = -1;
-    for (int c = 0; c < ANTIC_LINE_CYCLES; c++)
-        if (m2[c] >= 0) last = c;
-    if (last < 0) { build(mode, width, first_line, hscrol, -1, -1, -1, NULL, blocked, name_at); return; }
-    build(mode, width, first_line, hscrol, nom_start, last, -1, NULL, blocked, name_at);
+    int newstop = build(mode, width, first_line, hscrol, -1, -1, -1, NULL, b2, m2);
+    int bound = newstop;
+    if (!PF_PIN_COMPARATOR) {
+        bound = -1;
+        for (int c = 0; c < ANTIC_LINE_CYCLES; c++)
+            if (m2[c] >= 0) bound = c;
+    }
+    if (bound < 0) {
+        build(mode, width, first_line, hscrol, -1, -1, -1, carry_out, blocked, name_at);
+        return;
+    }
+    build(mode, width, first_line, hscrol, nom_start, bound, -1, carry_out,
+          blocked, name_at);
 }

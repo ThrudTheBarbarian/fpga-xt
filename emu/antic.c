@@ -537,8 +537,13 @@ static void rebuild_line(antic *a, int old_nom, int old_span, int lead)
      * both ask for, from opposite directions. */
     int pin = (from >= old_start) ? old_nom : -1;
 
+    /* A rebuild can leave the stream RUNNING past the end of the line — a
+     * mid-line HSCROL write that moves the stop out of the grid's parity, which
+     * is antic_hscrolbug's whole mechanism.  The carry replaces whatever the
+     * line's original build reported. */
     antic_dma_line_map_at(on ? dma_mode(a, mode) : 0, width_of(a->dmactl),
-                          a->row_first, hscrol_of(a), pin, blk, map);
+                          a->row_first, hscrol_of(a), pin, blk, map,
+                          &a->pf_carry);
 
     /* Turning playfield DMA OFF part way down a line does not stall the line
      * buffer — ANTIC keeps clocking it and latches whatever is on the bus, so
