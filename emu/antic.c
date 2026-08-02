@@ -64,6 +64,22 @@
 /* An RMW writes WSYNC twice; the second write arriving while the halt is
  * already armed pushes the release out by this many cycles.  Overridable so it
  * can be A/B'd — gtia_pmresize's whole cycle chain sits one late with it. */
+/* An RMW write to WSYNC (INC WSYNC writes twice) pushes the release out by one,
+ * so the CPU resumes at 105 rather than ANTIC_CYC_WSYNC's 104.
+ *
+ * MEASURED AGAINST gtia_pmresize AND IT IS A REAL TRADE, not a free fix.  That
+ * test opens each pass with `inc wsync` and annotates its own cycles, and with
+ * this at 0 our whole store sequence matches those annotations EXACTLY -- HITCLR
+ * 107, HPOSP0 111, SIZEP0 1, the resize 46 -- which lands the resize at colour
+ * clock $62, where tools/pmresize-check.py pins it.  With SIZEP_DELAY=1 as well,
+ * gtia_pmresize gets through FIVE of its seven transitions and runs 32057 ->
+ * 73895 cycles before failing in 2x-to-1xalt.
+ *
+ * And it costs FIVE TESTS: 48 pass against 53, with antic_wsync the direct
+ * victim.  antic_wsync is anchored ON the release, so moving the release moves
+ * what it measures -- exactly the compensation shape where a provably-wrong
+ * constant cannot simply be corrected.  Left at 1 until the pair can be
+ * satisfied together; the numbers are here so this is not re-run blind. */
 #ifndef WSYNC_RMW_EXTRA
 #define WSYNC_RMW_EXTRA 1
 #endif
