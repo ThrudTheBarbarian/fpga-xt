@@ -167,6 +167,17 @@ static int period_of(const pokey_timer *p, int ch)
  * have succeeded" assertion at 38294 cycles to the "+16c should have succeeded"
  * one at 38066 -- something now fires that must not.  Whatever lets that
  * underflow through is narrower than a blanket deferral of the mask. */
+/* THE MIRROR OF STIMER_CANCELS_FRESH.  A STIMER strobe cancels an interrupt
+ * raised on the last tick; an IRQEN ENABLE one cycle after a masked underflow
+ * picks that underflow back up.  pokey_timertiming's two-tone reprogramming
+ * sub-test is built on it: IRQEN is held at 0, the second period underflows at
+ * +26, and IRQEN is enabled by a write on cycle 26 -- one cycle after the
+ * underflow's tick -- and the bit is then required at +30.  Same window, same
+ * "raised on the tick the write follows", opposite sign. */
+#ifndef IRQEN_UNMASKS_FRESH
+#define IRQEN_UNMASKS_FRESH 1
+#endif
+
 #ifndef MASK_AT_SURFACE
 #define MASK_AT_SURFACE 0
 #endif
@@ -259,7 +270,22 @@ static void audf_prime(pokey_timer *p, int ch)
                    : (ch == 2) ? (p->audctl & 0x08)
                    : (ch == 1) ? (p->audctl & 0x10) : (p->audctl & 0x08);
         int fast   = (ch <= 1) ? (p->audctl & 0x40) : (p->audctl & 0x20);
-        if (CH_LATCH_LAG && !linked && p->ch_age[ch] < CH_LATCH_LAG) {
+        /* The window is a fixed distance before the NEXT underflow, so when
+         * two-tone lengthens the period the window moves out with it.  The
+         * two-tone reprogramming sub-tests are the ordinary ones with the
+         * deadline shifted by exactly TWOTONE_EXTRA: AUDF1 $08 -> $FF written 16
+         * cycles past STIMER must lengthen the next period and written at 17
+         * must not, against +22/+23 with no two-tone.  The underflow is at +12
+         * either way, so the ages are 4 and 5 where they were 2 and 3.
+         *
+         * This looked like a no-op when it was first tried, because the sub-test
+         * that needs it was passing for the WRONG REASON: its underflow was
+         * being masked (see IRQEN_UNMASKS_FRESH), so nothing fired whether the
+         * write landed or not.  Fixing the mask is what made it measurable. */
+        int lag = CH_LATCH_LAG
+                + ((ch == 0 && (p->skctl & 0x08) && !p->ch_first[0])
+                   ? TWOTONE_EXTRA : 0);
+        if (CH_LATCH_LAG && !linked && p->ch_age[ch] < lag) {
             int per = p->audf[ch] + ((fast && (ch == 0 || ch == 2)) ? 4 : 1)
                     + ((ch == 0 && (p->skctl & 0x08) && !p->ch_first[0])
                        ? TWOTONE_EXTRA : 0);
@@ -325,6 +351,7 @@ void pokey_timer_reset(pokey_timer *p)
     p->hi_age[0] = p->hi_age[1] = 0;
     p->lo_age[0] = p->lo_age[1] = 0;
     for (int i = 0; i < 4; i++) p->ch_age[i] = p->ch_first[i] = 0;
+    p->fresh_mask = 0;
     p->ticks = p->stimer_at = 0;
     for (int i = 0; i < 4; i++) { p->audf[i] = 0; p->cnt[i] = 1; }
     p->audctl = 0;
@@ -394,7 +421,10 @@ static void raise(pokey_timer *p, uint8_t bit)
      * reprogramming sub-test enables IRQEN on the SAME cycle its second period
      * underflows (+26) and then requires the bit READ at +30 -- so the underflow
      * has to survive a mask that is lifted at the moment it happens. */
-    if (!MASK_AT_SURFACE && !(p->irqen & bit)) return;   /* masked: no request */
+    if (!MASK_AT_SURFACE && !(p->irqen & bit)) {
+        p->fresh_mask |= bit;    /* an enable NEXT CYCLE can still take it */
+        return;                                          /* masked: no request */
+    }
     /* THE UNDERFLOW AND THE READABLE STATUS BIT ARE FOUR CYCLES APART.
      * pokey_timertiming tabulates the same timer twice, and the two tables
      * differ by exactly that on every row they share.  Its STIMER-preemption
@@ -592,6 +622,9 @@ void pokey_timer_skctl(pokey_timer *p, uint8_t val)
 void pokey_timer_tick(pokey_timer *p)
 {
     p->ticks++;
+    /* Cleared BEFORE this tick's raises, so a masked underflow is visible to
+     * the access on the next cycle and to nothing after it. */
+    p->fresh_mask = 0;
     for (int i = 0; i < 8; i++)
         if (p->st_lag[i] && --p->st_lag[i] == 0) {
             /* The mask is read HERE under MASK_AT_SURFACE: the underflow enters
@@ -892,6 +925,14 @@ void pokey_timer_write(pokey_timer *p, uint16_t addr, uint8_t val)
         /* Enabling SEROC while the level stands fires immediately — and it must
          * be decided AFTER the clear above, or the clear undoes it. */
         if ((val & POKEY_IRQ_SEROC) && p->seroc) p->irq = 1;
+        /* ...and an enable takes up an underflow masked on the last tick.  After
+         * the clear above, which would otherwise undo it. */
+        if (IRQEN_UNMASKS_FRESH) {
+            uint8_t take = (uint8_t)(p->fresh_mask & val);
+            p->fresh_mask = (uint8_t)(p->fresh_mask & ~take);
+            for (int i = 0; i < 8; i++)
+                if (take & (1u << i)) raise(p, (uint8_t)(1u << i));
+        }
         break;
     default: break;
     }
