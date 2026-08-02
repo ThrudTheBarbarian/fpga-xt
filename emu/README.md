@@ -981,39 +981,36 @@ because the oracle demands it independently of the tests: a row that is narrow
 for part of a line and normal for the rest cannot fetch fewer bytes than either.
 Twelve gates green, suite unchanged at 48.
 
-### pokey_timertiming: the assertion decoded, and the knobs are at a local optimum
+### pokey_timertiming: our 16-bit lo timer is TWO CYCLES EARLY, uniformly
 
-Read at last, and it is a DEADLINE PAIR rather than a value. After `STIMER` the
-test writes `AUDF1` at **+23c** and then reads `IRQST`:
+The test states its own model in a comment (source lines 628-629): the IRQST
+bit-0 boundary sits at **AUDF1 + 9 / AUDF1 + 10** cycles past the STIMER write.
 
 ```
-lda irqst   ;+40c (should be last cycle NOT fired)   _ASSERTA $01
-lda irqst   ;+41c (should be first cycle fired)      _ASSERTA $00
+; AUDF1=0    9c/10c   *extrapolated
+; AUDF1=13  22c/23c
 ```
 
-IRQST is ACTIVE LOW, so `$00` means fired. The two assertions bracket the fire
-moment to the boundary between cycle 40 and 41. AUDF1 starts at `$0d` and is
-rewritten mid-count; the pair's period is "13 + 7 = 20 cycles" by the test's own
-comment.
+`tools/pokey-16bit-curve.c` drives `pokey_timer` directly and prints our own
+boundary. We give **AUDF1 + 8** for every value of AUDF1 from 0 to 16 — a
+UNIFORM two-cycle offset, not a shape error.
 
-We PASS the +40c bound (we do not fire early) and FAIL the +41c one, returning
-`$01` — so our 16-bit lo timer fires at least one cycle LATE, and the residual is
-a magnitude with a known sign.
+Checked against the test's exact sequence, not a convenient one: the test clears
+and re-arms IRQEN AFTER the STIMER write, at +6c and +12c. Doing the same leaves
+AUDF1 >= 5 unchanged; only AUDF1 0..4 distort, and those are the cases where the
+timer would fire before the re-arm, so the measurement there is contaminated
+rather than different. The offset is real.
 
-Swept the six plausible constants against it. `LO_UPCOUNT=1` leaves the failure
-where it is; **every other setting fails an EARLIER assertion that currently
-passes**:
+`make ptimer` PASSES with this two-cycle error in place, so that gate encodes a
+derivation rather than this measurement — rule (bb) again, the third time this
+session.
 
-| setting | result |
-|---|---|
-| `LO_EXTRA=0`, `LO_EXTRA=2` | "lo timer triggered too early (loop #...)" |
-| `PAIR_IRQ_LAG=0`, `=2` | "hi timer triggered too early (loop #...)" |
-| `LINK_FAST=0` | "lo timer triggered too early (loop #...)" |
-| `LO_UPCOUNT=1` | unchanged — still the +41c deadline |
-
-So the current constants are at a LOCAL OPTIMUM and no single one separates this
-case: by rule (v) the error is upstream of them, in the shape of the linked-pair
-model rather than its numbers.
+CAUTION on the obvious next move: the failing assertion is the REPROGRAMMED case
+(AUDF1 rewritten mid-count at +23c), and there we fire one cycle LATE, not
+early. Two residuals of opposite sign, so a single constant will not satisfy
+both — which is consistent with the earlier sweep, where every constant tried
+broke an assertion that currently passes. Note also that sweep only moved
+LO_EXTRA DOWNWARD from its default of 4; upward was never tried.
 
 ### PARKED: antic_hscrolbug's test #2
 
