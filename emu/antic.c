@@ -184,6 +184,7 @@ void antic_init(antic *a, antic_fetch_fn fetch, void *ctx, int lines)
 void antic_reset(antic *a)
 {
     a->cycle = a->scanline = a->vcount = 0;
+    a->pf_carry = -1;                     /* no stream running across the reset */
     a->wsync_halt = 0;
     /* Start PARKED, as if a JVB had just executed: a well-formed display list
      * only ever begins after vertical blank ends, and the release at scanline 8
@@ -377,9 +378,16 @@ static void line_start(antic *a)
      * antic_tick */
 
     int mode = a->dl_insn & 0x0F;
+    /* A stream whose stop was never matched on the PREVIOUS scanline is still
+     * running when this one starts, and takes its next fetch on the carried
+     * phase — cycle 0 in antic_hscrolbug's case.  Consumed here, so a line that
+     * fetches nothing drops it. */
+    int carry_in = a->pf_carry;
+    a->pf_carry = -1;
     if (mode >= 2 && (a->dmactl & 0x20)) {
-        antic_dma_line_map(dma_mode(a, mode), width_of(a->dmactl),
-                           a->row_first, hscrol_of(a), a->blocked, a->pf_at);
+        antic_dma_line_map_carry(dma_mode(a, mode), width_of(a->dmactl),
+                                 a->row_first, hscrol_of(a), carry_in,
+                                 a->blocked, a->pf_at, &a->pf_carry);
 
         /* The LAST playfield slot of a scrolled row is VIRTUAL.  antic_virtdma
          * documents the pattern for mode 7 wide with HSCROL 2 and marks its

@@ -113,6 +113,10 @@ typedef struct {
                                         * fetches from the scan address, -1 for
                                         * none — see antic_dma_line_map */
     uint8_t  pf_next;      /* how many playfield bytes this line has fetched */
+    /* A playfield stream whose STOP was never matched runs on past the end of
+     * the scanline; this is the cycle on the NEXT line at which its next fetch
+     * falls, or -1 when the line starts idle.  antic_hscrolbug is built on it. */
+    int      pf_carry;
     uint8_t  glyph_row;    /* the row within the glyph for THIS scanline */
     uint8_t  row_first;    /* this scanline is the row's FIRST, which is NOT the
                             * same as row_line == 0: a row ENTERING a vertically

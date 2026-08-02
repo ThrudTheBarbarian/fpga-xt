@@ -77,6 +77,16 @@ int antic_pf_grid(uint8_t mode, int first);
  * antic_dma_line_map).  ANTIC commits the START of the fetch a cycle or two
  * ahead but goes on comparing the STOP against the horizontal counter, so a
  * write landing in between produces a row belonging to NEITHER width. */
+/* As antic_dma_line_map, but for a stream that may already be RUNNING when the
+ * scanline starts (`carry_in` = the cycle of its next fetch, -1 for idle) and
+ * that may still be running when the scanline ends (`*carry_out`, likewise).
+ * See the stop-comparator note in antic_dma.c: the stop is missable. */
+void antic_dma_line_map_carry(uint8_t mode, antic_width width, int first_line,
+                              int hscrol, int carry_in,
+                              uint8_t blocked[ANTIC_LINE_CYCLES],
+                              int8_t name_at[ANTIC_LINE_CYCLES],
+                              int *carry_out);
+
 void antic_dma_line_map_at(uint8_t mode, antic_width width, int first_line,
                            int hscrol, int nom_start,
                            uint8_t blocked[ANTIC_LINE_CYCLES],
