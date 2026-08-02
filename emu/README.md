@@ -944,6 +944,37 @@ reports zero fetches only because a bitmap mode's `stride_rest` is 0 and
 one iteration, on a probe that had not printed enough columns to say which
 line's state it was showing.
 
+### CORRECTED: "stride" is a COLLISION BITFIELD, not a byte count
+
+This notebook, and every iteration that swept a fetch-side constant at these two
+tests, was working from the failure STRING — "stride=%d" — instead of the
+arithmetic behind it. The arithmetic is:
+
+```
+lda p0pf / asl / asl / ora p1pf / add #12   ; pfstarttiming, wants 18
+lda p0pf / asl / asl / ora p1pf / add #14   ; pfstoptiming,  wants 18
+```
+
+So the reported number is `(p0pf << 2) | p1pf` plus a LITERAL OFFSET, and the
+two offsets DIFFER. The shared "18" is a coincidence of those constants, not a
+shared quantity, and nothing here is a byte count at all:
+
+| test | offset | wanted bits | ours | meaning |
+|---|---|---|---|---|
+| `pfstarttiming` late | +12 | 6 | **0** | P0 must hit PF0 and P1 must hit PF1; NEITHER collides for us |
+| `pfstoptiming` early | +14 | 4 | **2** | P0 must hit PF0 and P1 must hit nothing; we have it exactly backwards |
+
+Two players are parked at the left and right edges of the playfield window and
+the test asks which of them the playfield actually reaches after a mid-line
+DMACTL write. The quantity is the window's EDGES IN COLOUR CLOCKS — display-side
+geometry, `antic_pf_at`'s `start` and `span` — and NOT the fetch schedule.
+
+That is why every fetch-side sweep came back flat or saturating. The earlier
+framing recorded here ("both want 18, the hybrid count belonging to neither
+width, both SHORT so the mechanism ADDS") was wrong in every part: they do not
+want the same thing, 18 is not a count, and one of them is not short but
+INVERTED.
+
 ### The trio MOVED: pfstarttiming and pfstoptiming now fail elsewhere
 
 Worth re-reading a failure before trusting any summary of it. Both tests used to
